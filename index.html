@@ -542,7 +542,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   <canvas id="menu-bg-canvas"></canvas>
   <div class="menu-glass">
     <div class="menu-logo">DART MEADOW</div>
-    <div class="menu-tagline">Speed of Light³ · Interstellar Zero-G Flight</div>
+    <div class="menu-tagline">Journey of the Skyboard</div>
     <button class="menu-btn gold" id="resume-btn" onclick="launchFlight()" style="display:none;">▶ RESUME GAME</button>
     <button class="menu-btn gold" onclick="goScreen('builder')">⚡ BUILD YOUR SKYBOARD</button>
     <button class="menu-btn" onclick="openSaveModal('load')">▶ LOAD PROFILE / GAME</button>
@@ -550,6 +550,9 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     <button class="menu-btn" onclick="openSettings()">⚙ SETTINGS &amp; GRAPHICS</button>
     <button class="menu-btn" onclick="showGfxScreen(true)" style="font-size:0.62rem;">🖥 GRAPHICS SETUP / BENCHMARK</button>
     <button class="menu-btn" onclick="openGalaxyMap()">🌌 GALAXY MAP</button>
+    <hr class="menu-sep">
+    <button class="menu-btn" onclick="openAbout()" style="font-size:0.62rem;border-color:rgba(0,245,255,0.25);color:rgba(0,245,255,0.6);">ℹ ABOUT · DART MEADOW</button>
+    <button class="menu-btn" onclick="promptExit()" style="font-size:0.62rem;border-color:rgba(255,59,92,0.35);color:rgba(255,59,92,0.7);background:rgba(255,59,92,0.06);">✕ EXIT GAME</button>
     <button class="menu-btn" onclick="openSaveModal('save')" style="font-size:0.6rem;opacity:0.7;margin-top:0.3rem;">💾 SAVE / EXPORT PROFILE</button>
     <hr class="menu-sep">
     <button class="menu-btn gold" onclick="openSupport()" style="font-size:0.64rem;">❤ SUPPORT DART MEADOW DEVELOPMENT</button>
@@ -4785,6 +4788,8 @@ window.addEventListener('resize',()=>{if(menuAnim){const c=$('menu-bg-canvas');c
 //  EXIT SYSTEM
 // ══════════════════════════════════════════════════════════════
 function promptExit(){$('exit-modal').classList.add('open');}
+function openAbout(){document.getElementById('about-modal').style.display='flex';}
+function closeAbout(){document.getElementById('about-modal').style.display='none';}
 function closeExitModal(){$('exit-modal').classList.remove('open');}
 function exitWithSave(){
   exportProfile();
@@ -4792,9 +4797,17 @@ function exitWithSave(){
 }
 function doExit(){
   $('exit-modal').classList.remove('open');
-  // Redirect to dartmeadow.com
-  document.body.innerHTML='<div style="position:fixed;inset:0;background:#000308;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:\'Orbitron\',monospace;"><div style="font-size:1.5rem;color:#00f5ff;letter-spacing:.3em;text-shadow:0 0 30px #00f5ff;margin-bottom:.5rem;">DART MEADOW</div><div style="font-size:.65rem;color:rgba(0,245,255,.5);letter-spacing:.2em;margin-bottom:2rem;">REDIRECTING TO BASE...</div><div style="width:200px;height:2px;background:rgba(0,245,255,.1);border-radius:2px;overflow:hidden;"><div style="height:100%;background:#00f5ff;animation:ld 1.5s ease-in-out forwards;border-radius:2px;"></div></div><style>@keyframes ld{from{width:0}to{width:100%}}</style></div>';
-  setTimeout(()=>{window.location.href='https://dartmeadow.com/';},1600);
+  try{ window.close(); }catch(e){}
+  setTimeout(()=>{
+    if(!window.closed){
+      document.body.innerHTML='<div style="position:fixed;inset:0;background:#000308;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:Orbitron,monospace;gap:1.2rem;">'
+        +'<div style="font-size:1.5rem;color:#00f5ff;letter-spacing:.3em;text-shadow:0 0 30px #00f5ff;">DART MEADOW</div>'
+        +'<div style="font-size:.65rem;color:rgba(0,245,255,.5);letter-spacing:.2em;">SESSION ENDED</div>'
+        +'<div style="font-size:.58rem;color:rgba(0,245,255,.35);letter-spacing:.12em;">You can close this tab.</div>'
+        +'<a href="https://dartmeadow.com/" style="margin-top:.5rem;font-size:.58rem;color:rgba(0,245,255,.4);letter-spacing:.12em;text-decoration:none;">← DART MEADOW HOME</a>'
+        +'</div>';
+    }
+  },300);
 }
 // Wire the art-btn EXIT to prompt instead of direct goScreen
 document.addEventListener('DOMContentLoaded',()=>{
@@ -6128,5 +6141,18 @@ function warpToDestination(di){
 
 toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 </script>
+
+<div id="about-modal" style="position:fixed;inset:0;z-index:6500;background:rgba(0,0,0,0.82);backdrop-filter:blur(14px);display:none;align-items:center;justify-content:center;">
+  <div style="background:rgba(4,10,22,0.98);border:1px solid rgba(0,245,255,0.2);border-radius:4px;padding:2rem 2.4rem;width:min(440px,92vw);text-align:center;">
+    <div style="font-family:var(--font-hud);font-size:1.1rem;font-weight:900;color:var(--cyan);letter-spacing:0.22em;text-shadow:var(--glow-md);margin-bottom:0.3rem;">DART MEADOW</div>
+    <div style="font-family:var(--font-mono);font-size:0.58rem;color:var(--text-dim);letter-spacing:0.2em;margin-bottom:1.4rem;">JOURNEY OF THE SKYBOARD</div>
+    <div style="font-size:0.72rem;color:var(--text);line-height:1.75;margin-bottom:1.4rem;">Zero-gravity interstellar flight simulator.<br>Build your skyboard. Chart the galaxy. Ride at c³.</div>
+    <a href="https://dartmeadow.com/" target="_blank" rel="noopener"
+       style="display:inline-block;margin-bottom:1.2rem;padding:0.6rem 1.6rem;border:1px solid rgba(0,245,255,0.35);border-radius:2px;color:rgba(0,245,255,0.75);font-family:var(--font-hud);font-size:0.6rem;letter-spacing:0.15em;text-decoration:none;background:rgba(0,245,255,0.06);">
+      🌐 DARTMEADOW.COM
+    </a><br>
+    <button onclick="closeAbout()" style="margin-top:0.8rem;padding:0.55rem 2rem;background:transparent;border:1px solid rgba(0,245,255,0.2);border-radius:2px;color:var(--text-dim);font-family:var(--font-hud);font-size:0.58rem;letter-spacing:0.15em;cursor:pointer;">CLOSE</button>
+  </div>
+</div>
 </body>
 </html>
