@@ -1254,7 +1254,12 @@ function openSaveModal(mode){
     const btns=div.querySelector('.save-slot-btns');
     if(mode==='save'){
       const b=document.createElement('button');b.className='btn primary';b.textContent='SAVE';b.style.fontSize='0.58rem';
-      b.onclick=()=>{saveToSlot(i);closeSaveModal();};btns.appendChild(b);
+      b.onclick=()=>{
+        const def=s?(s.slotName||('Save '+(i+1))):(STATE.boardConfig.name||('Save '+(i+1)));
+        const nm=prompt('Name this save:',def);
+        if(nm===null)return; // cancelled — leave slot untouched
+        saveToSlot(i,nm.trim()||def);closeSaveModal();
+      };btns.appendChild(b);
     } else {
       if(s){
         const b=document.createElement('button');b.className='btn primary';b.textContent='LOAD';b.style.fontSize='0.58rem';
@@ -2566,7 +2571,6 @@ function initFlightScene(){
   try{buildFlightBoard();}catch(e){console.warn('board:',e);}
   try{addSunLight();}catch(e){console.warn('sun:',e);}
   try{initJoysticks();}catch(e){console.warn('joy:',e);}
-  try{initDeviceOrientation();}catch(e){}
   try{initPostFX();}catch(e){console.warn('postfx:',e);}
   // Build env-map reflections (browser-real stand-in for ray-traced reflections)
   if(GFX.envReflections){
@@ -3073,62 +3077,8 @@ function buildFlightBoard(){
   _followInit=false; // camera snaps to follow position on first frame
 }
 
-// ── Device Orientation (tilt controls) ───────────────────────
-let deviceOrientEnabled=false,devBeta=0,devGamma=0;
-let _devBetaRef=0,_devGammaRef=0,_devCalibrated=false;
-
-function initDeviceOrientation(){
-  // Device orientation is opt-in only — tapping the button activates it.
-  // We do NOT auto-enable because the resting phone position constantly
-  // fires non-zero values that cause unwanted camera drift.
-  if(typeof DeviceOrientationEvent==='undefined')return;
-
-  const ob=document.createElement('button');
-  ob.style.cssText='position:absolute;bottom:195px;left:50%;transform:translateX(-50%);z-index:200;padding:5px 12px;background:rgba(0,245,255,.08);border:1px solid rgba(0,245,255,.35);color:rgba(0,245,255,.7);font-family:var(--font-hud);font-size:.48rem;letter-spacing:.1em;border-radius:2px;cursor:pointer;white-space:nowrap;';
-  ob.textContent='🔄 TILT CONTROLS';ob.id='orient-btn';
-  $('screen-flight').appendChild(ob);
-
-  ob.onclick=()=>{
-    const enable=()=>{
-      window.addEventListener('deviceorientation',handleOrientation,true);
-      deviceOrientEnabled=true;
-      _devCalibrated=false; // will calibrate on first reading
-      ob.textContent='🔄 TILT: ON';ob.style.color='var(--cyan)';
-    };
-    if(deviceOrientEnabled){
-      // Toggle off
-      window.removeEventListener('deviceorientation',handleOrientation,true);
-      deviceOrientEnabled=false;devBeta=0;devGamma=0;
-      ob.textContent='🔄 TILT CONTROLS';ob.style.color='rgba(0,245,255,.7)';
-    } else if(typeof DeviceOrientationEvent.requestPermission==='function'){
-      DeviceOrientationEvent.requestPermission().then(r=>{if(r==='granted')enable();});
-    } else {
-      enable();
-    }
-  };
-
-  window.addEventListener('orientationchange',()=>{
-    setTimeout(()=>{
-      _devCalibrated=false; // recalibrate after rotation
-      if(flightRenderer){
-        const W=window.innerWidth,H=window.innerHeight;
-        flightRenderer.setSize(W,H);flightCamera.aspect=W/H;flightCamera.updateProjectionMatrix();
-      }
-    },300);
-  });
-}
-
-function handleOrientation(e){
-  if(!deviceOrientEnabled)return;
-  const b=e.beta||0,g=e.gamma||0;
-  if(!_devCalibrated){
-    // Calibrate: store current resting position as zero reference
-    _devBetaRef=b;_devGammaRef=g;_devCalibrated=true;
-  }
-  // Only send delta from calibrated rest position
-  devBeta  = b - _devBetaRef;
-  devGamma = g - _devGammaRef;
-}
+// (Tilt controls removed — will revisit as part of a proper device-motion /
+// AR control scheme later, rather than the old opt-in toggle button.)
 
 function initJoysticks(){
   setupJoy('jL',JOY,'L');setupJoy('jR',JOY,'R');
@@ -3560,10 +3510,6 @@ function updateFlight(dt){
   const ls=0.8*dt; // reduced from 2.2 — comfortable look speed
   sp.camYaw  -= JOY.Lx*ls;
   sp.camPitch = clamp(sp.camPitch - JOY.Ly*ls, -Math.PI*.42, Math.PI*.32);
-  if(deviceOrientEnabled&&_devCalibrated){
-    sp.camYaw  -= clamp(devGamma/45,-1,1)*ls*.5;
-    sp.camPitch = clamp(sp.camPitch-clamp(devBeta/45,-1,1)*ls*.35,-Math.PI*.42,Math.PI*.32);
-  }
   if(KEYS["ArrowLeft"]) sp.camYaw+=0.9*dt;
   if(KEYS["ArrowRight"])sp.camYaw-=0.9*dt;
   if(KEYS["ArrowUp"])   sp.camPitch=clamp(sp.camPitch+0.9*dt,-Math.PI*.42,Math.PI*.32);
