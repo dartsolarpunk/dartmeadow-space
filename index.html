@@ -4888,7 +4888,7 @@ window.addEventListener('resize',()=>{if(menuAnim){const c=$('menu-bg-canvas');c
 //  _writeFile does, tag it source:'dartmeadow'), just fill in the URL
 //  below and the direct-write path activates automatically.
 // ══════════════════════════════════════════════════════════════
-const FEEDBACK_GAS_URL=''; // e.g. 'https://script.google.com/macros/s/XXXX/exec'
+const FEEDBACK_GAS_URL='https://script.google.com/macros/s/AKfycbyzkQxLR5miUXP6oDw-1AR1GIjgpzlw9iLw0gO_ZTeLfL849LWbNX7WVz_kf7yLWBKA_w/exec'; // Autumn's existing GAS proxy — needs an 'action=feedback' handler added server-side (see chat) before this succeeds; falls back to mailto until then
 const FEEDBACK_MAILTO='radicaldeepscale@gmail.com';
 let _fbCat='BUG REPORT';
 
@@ -4914,6 +4914,14 @@ document.addEventListener('DOMContentLoaded',()=>{
   if(ta)ta.addEventListener('input',()=>{$('fb-counter').textContent=ta.value.length+' / 1000';});
 });
 
+function _fbMailtoFallback(entry){
+  const subject=encodeURIComponent('DART Meadow feedback — '+entry.cat);
+  const body=encodeURIComponent(entry.msg+'\n\n—\ncategory: '+entry.cat+'\nfrom: '+entry.user+'\nts: '+entry.ts);
+  window.location.href='mailto:'+FEEDBACK_MAILTO+'?subject='+subject+'&body='+body;
+  $('fb-status').textContent='✉ Opening your email app…';
+  $('fb-submit-btn').disabled=false;
+  setTimeout(closeFeedback,1200);
+}
 function submitFeedback(){
   const msg=($('fb-ta').value||'').trim();
   if(!msg){$('fb-status').textContent='⚠ Please enter a message';return;}
@@ -4922,16 +4930,7 @@ function submitFeedback(){
     id:Date.now().toString(16)+'-'+Math.random().toString(16).slice(2,6),
     ts:new Date().toISOString(), cat:_fbCat, msg, user, source:'dartmeadow'
   };
-  if(!FEEDBACK_GAS_URL){
-    // No proxy configured yet — fall back to email so this still reaches
-    // someone instead of silently failing.
-    const subject=encodeURIComponent('DART Meadow feedback — '+_fbCat);
-    const body=encodeURIComponent(msg+'\n\n—\ncategory: '+_fbCat+'\nfrom: '+user+'\nts: '+entry.ts);
-    window.location.href='mailto:'+FEEDBACK_MAILTO+'?subject='+subject+'&body='+body;
-    $('fb-status').textContent='✉ Opening your email app…';
-    setTimeout(closeFeedback,1200);
-    return;
-  }
+  if(!FEEDBACK_GAS_URL){ _fbMailtoFallback(entry); return; }
   $('fb-status').textContent='SUBMITTING…';
   $('fb-submit-btn').disabled=true;
   fetch(FEEDBACK_GAS_URL+'?action=feedback',{
@@ -4944,12 +4943,12 @@ function submitFeedback(){
       $('fb-status').textContent='✓ FEEDBACK SUBMITTED — THANK YOU';
       setTimeout(closeFeedback,1600);
     } else {
-      $('fb-status').textContent='⚠ Submission failed — please try again';
-      $('fb-submit-btn').disabled=false;
+      // Endpoint reachable but didn't confirm success (e.g. no feedback
+      // action implemented there yet) — don't dead-end, fall back to email.
+      _fbMailtoFallback(entry);
     }
   }).catch(()=>{
-    $('fb-status').textContent='⚠ Submission failed — please try again';
-    $('fb-submit-btn').disabled=false;
+    _fbMailtoFallback(entry);
   });
 }
 
