@@ -307,6 +307,19 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;background:var(--c0);co
 .menu-btn:hover{background:rgba(0,245,255,0.22);box-shadow:0 0 20px -2px currentColor,inset 0 0 16px -5px currentColor;}
 .menu-btn.gold{border-color:var(--gold);color:var(--gold);background:var(--dim-gold);}
 .menu-btn.gold:hover{background:rgba(245,196,0,0.24);}
+/* Compact side-by-side rows — two half-width buttons per row so more fits
+   in the same vertical space without the panel getting taller. */
+.menu-row{display:flex;gap:0.5rem;width:100%;margin-bottom:0.6rem;}
+.menu-row .menu-btn{width:auto;flex:1;margin-bottom:0;padding:0.7rem 0.5rem;font-size:0.56rem;letter-spacing:0.1em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.menu-feedback-form{display:flex;flex-direction:column;gap:0.7rem;text-align:left;}
+.fb-cats{display:flex;gap:0.4rem;flex-wrap:wrap;}
+.fb-cat{font-family:var(--font-hud);font-size:0.5rem;letter-spacing:0.08em;padding:5px 10px;border-radius:3px;border:1px solid var(--border);background:transparent;color:var(--text-dim);cursor:pointer;transition:var(--trans);}
+.fb-cat.sel{background:var(--dim-cyan);border-color:var(--cyan);color:var(--cyan);}
+#fb-ta{width:100%;min-height:110px;background:rgba(0,245,255,0.05);border:1px solid var(--border);border-radius:3px;color:var(--text);font-size:0.72rem;line-height:1.6;padding:0.6rem 0.7rem;resize:vertical;outline:none;box-sizing:border-box;font-family:var(--font-body);}
+#fb-ta:focus{border-color:var(--cyan);}
+#fb-counter{font-size:0.55rem;color:var(--text-dim);text-align:right;margin-top:-0.4rem;}
+#fb-status{font-size:0.6rem;letter-spacing:0.05em;color:var(--text-dim);text-align:center;min-height:1rem;}
+.fb-notice{font-size:0.58rem;line-height:1.6;color:var(--text-dim);border:1px solid var(--border2);border-radius:3px;padding:0.5rem 0.6rem;background:rgba(0,245,255,0.03);}
 .menu-sep{border:none;border-top:1px solid var(--border2);margin:1rem 0;}
 .menu-version{font-family:var(--font-mono);font-size:0.55rem;color:rgba(0,245,255,0.25);margin-top:0.8rem;}
 /* Short viewports (phone LANDSCAPE especially) — compact the whole panel so it fits without scrolling */
@@ -315,6 +328,8 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;background:var(--c0);co
   .menu-logo{font-size:1.25rem;margin-bottom:0.05rem;}
   .menu-tagline{margin-bottom:0.6rem;font-size:0.55rem;}
   .menu-btn{padding:0.42rem 0.8rem;margin-bottom:0.3rem;font-size:0.58rem;}
+  .menu-row{margin-bottom:0.3rem;}
+  .menu-row .menu-btn{padding:0.42rem 0.4rem;font-size:0.5rem;}
   .menu-sep{margin:0.4rem 0;}
   .menu-version{margin-top:0.4rem;font-size:0.46rem;}
 }
@@ -323,6 +338,8 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;background:var(--c0);co
   .menu-logo{font-size:1rem;}
   .menu-tagline{margin-bottom:0.35rem;font-size:0.5rem;}
   .menu-btn{padding:0.28rem 0.7rem;margin-bottom:0.2rem;font-size:0.52rem;}
+  .menu-row{margin-bottom:0.2rem;}
+  .menu-row .menu-btn{padding:0.28rem 0.35rem;font-size:0.45rem;}
   .menu-sep{margin:0.25rem 0;}
 }
 
@@ -583,16 +600,26 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     <div class="menu-logo">DART MEADOW</div>
     <div class="menu-tagline">Journey of the Skyboard</div>
     <button class="menu-btn gold" id="resume-btn" onclick="launchFlight()" style="display:none;">▶ RESUME GAME</button>
-    <button class="menu-btn gold" onclick="goScreen('builder')">⚡ BUILD YOUR SKYBOARD</button>
-    <button class="menu-btn" onclick="openSaveModal('load')">▶ LOAD PROFILE / GAME</button>
+    <button class="menu-btn gold" onclick="startGame()">▶ START GAME</button>
+    <div class="menu-row">
+      <button class="menu-btn" onclick="goScreen('builder')">⚡ BUILD SKYBOARD</button>
+      <button class="menu-btn" onclick="openSaveModal('load')">📂 LOAD GAME</button>
+    </div>
     <hr class="menu-sep">
-    <button class="menu-btn" onclick="openSettings()">⚙ SETTINGS &amp; GRAPHICS</button>
-    <button class="menu-btn" onclick="showGfxScreen(true)" style="font-size:0.62rem;">🖥 GRAPHICS SETUP / BENCHMARK</button>
-    <button class="menu-btn" onclick="openGalaxyMap()">🌌 GALAXY MAP</button>
+    <div class="menu-row">
+      <button class="menu-btn" onclick="openSettings()">⚙ SETTINGS</button>
+      <button class="menu-btn" onclick="showGfxScreen(true)">🖥 GRAPHICS SETUP</button>
+    </div>
+    <div class="menu-row">
+      <button class="menu-btn" onclick="openGalaxyMap()">🌌 GALAXY MAP</button>
+      <button class="menu-btn" onclick="openSaveModal('save')">💾 SAVE / EXPORT</button>
+    </div>
     <hr class="menu-sep">
-    <button class="menu-btn" onclick="openAbout()" style="font-size:0.62rem;border-color:rgba(0,245,255,0.25);color:rgba(0,245,255,0.6);">ℹ ABOUT · DART MEADOW</button>
+    <div class="menu-row">
+      <button class="menu-btn" onclick="openAbout()" style="border-color:rgba(0,245,255,0.25);color:rgba(0,245,255,0.6);">ℹ ABOUT</button>
+      <button class="menu-btn" onclick="openFeedback()" style="border-color:rgba(0,245,255,0.25);color:rgba(0,245,255,0.6);">✉ FEEDBACK</button>
+    </div>
     <button class="menu-btn" onclick="promptExit()" style="font-size:0.62rem;border-color:rgba(255,59,92,0.5);color:rgba(255,80,105,0.9);background:rgba(255,59,92,0.08);">✕ EXIT GAME</button>
-    <button class="menu-btn" onclick="openSaveModal('save')" style="font-size:0.6rem;opacity:0.7;margin-top:0.3rem;">💾 SAVE / EXPORT PROFILE</button>
     <hr class="menu-sep">
     <button class="menu-btn gold" onclick="openSupport()" style="font-size:0.64rem;">❤ SUPPORT DART MEADOW DEVELOPMENT</button>
     <div class="menu-version">DART MEADOW v3 · DART ENERGY RING SYSTEMS</div>
@@ -1033,6 +1060,29 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   </div>
 </div>
 
+<!-- FEEDBACK -->
+<div id="feedback-modal" style="position:fixed;inset:0;z-index:9800;background:rgba(0,0,0,0.7);backdrop-filter:blur(10px);display:none;align-items:center;justify-content:center;">
+  <div class="modal-box" style="width:min(420px,92vw);">
+    <div class="modal-title">✉ SUBMIT FEEDBACK</div>
+    <div class="menu-feedback-form">
+      <div class="fb-notice">We don't collect personal information. If you choose to share identifying details, that's your call. Feedback is reviewed by Radical Deepscale LLC and isn't publicly visible.</div>
+      <div class="fb-cats" id="fb-cats">
+        <button type="button" class="fb-cat sel" data-cat="BUG REPORT">BUG REPORT</button>
+        <button type="button" class="fb-cat" data-cat="FEATURE REQUEST">FEATURE REQUEST</button>
+        <button type="button" class="fb-cat" data-cat="GENERAL">GENERAL</button>
+        <button type="button" class="fb-cat" data-cat="OTHER">OTHER</button>
+      </div>
+      <textarea id="fb-ta" maxlength="1000" placeholder="Share your thoughts, report a bug, or suggest a feature…"></textarea>
+      <div id="fb-counter">0 / 1000</div>
+      <div id="fb-status"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn primary" onclick="submitFeedback()" id="fb-submit-btn">▲ SUBMIT</button>
+      <button class="btn" onclick="closeFeedback()">CANCEL</button>
+    </div>
+  </div>
+</div>
+
 </div><!-- /app -->
 
 <!-- SETTINGS -->
@@ -1298,6 +1348,14 @@ function goScreen(name){
 function showFloatingMusic(){
   if(AUDIO&&AUDIO.stopped)return;
   const fm=$('float-music');if(fm)fm.style.display='flex';
+}
+// "START GAME" — skips the builder entirely and flies with whatever board
+// config is currently active (factory defaults for a first-time player,
+// their own last customization for a returning one). Players can still go
+// back to the menu and open the builder afterward if they want to customize.
+function startGame(){
+  toast('🚀 Launching with your current skyboard…');
+  launchFlight();
 }
 function launchFlight(){
   goScreen('flight');
@@ -4807,6 +4865,93 @@ function applySettings(){
 }
 
 window.addEventListener('resize',()=>{if(menuAnim){const c=$('menu-bg-canvas');c.width=innerWidth;c.height=innerHeight;}});
+
+// ══════════════════════════════════════════════════════════════
+//  ✦ FEEDBACK — feeds the same admin console as the Autumn web app
+// ────────────────────────────────────────────────────────────────
+//  Autumn's own feedback module writes straight to the GitHub Contents API
+//  using a hardcoded write-scoped PAT in client-side JS. That token is
+//  publicly visible in Autumn's repo today, and GitHub's own push
+//  protection refused to let the equivalent code be committed here
+//  (secret scanning caught it) — so the same approach is NOT repeated.
+//
+//  Instead this posts to a Google Apps Script endpoint (the same kind of
+//  proxy Autumn already uses for its OAuth code→token exchange), which can
+//  hold a write credential server-side and do the actual GitHub write
+//  itself — the client never sees a secret. FEEDBACK_GAS_URL is left
+//  blank until that endpoint exists; until then, submissions fall back to
+//  opening the player's email client with everything pre-filled, so this
+//  is never a dead end even before the backend is wired up. Once you add
+//  a feedback action to the GAS script (mirroring whatever it already
+//  does for the OAuth exchange — read the entry, write/append it into
+//  DART-Skyboard/leatr-ash · feedback/inbox.json the same way Autumn's
+//  _writeFile does, tag it source:'dartmeadow'), just fill in the URL
+//  below and the direct-write path activates automatically.
+// ══════════════════════════════════════════════════════════════
+const FEEDBACK_GAS_URL=''; // e.g. 'https://script.google.com/macros/s/XXXX/exec'
+const FEEDBACK_MAILTO='radicaldeepscale@gmail.com';
+let _fbCat='BUG REPORT';
+
+function openFeedback(){
+  $('fb-ta').value='';
+  $('fb-counter').textContent='0 / 1000';
+  $('fb-status').textContent='';
+  _fbCat='BUG REPORT';
+  document.querySelectorAll('#fb-cats .fb-cat').forEach(b=>b.classList.toggle('sel',b.dataset.cat===_fbCat));
+  $('fb-submit-btn').disabled=false;
+  $('feedback-modal').style.display='flex';
+}
+function closeFeedback(){$('feedback-modal').style.display='none';}
+
+document.addEventListener('DOMContentLoaded',()=>{
+  const cats=$('fb-cats');
+  if(cats)cats.addEventListener('click',e=>{
+    const b=e.target.closest('.fb-cat');if(!b)return;
+    _fbCat=b.dataset.cat;
+    cats.querySelectorAll('.fb-cat').forEach(x=>x.classList.toggle('sel',x===b));
+  });
+  const ta=$('fb-ta');
+  if(ta)ta.addEventListener('input',()=>{$('fb-counter').textContent=ta.value.length+' / 1000';});
+});
+
+function submitFeedback(){
+  const msg=($('fb-ta').value||'').trim();
+  if(!msg){$('fb-status').textContent='⚠ Please enter a message';return;}
+  const user=(window._ghAuth&&window._ghAuth.username)?window._ghAuth.username:'guest';
+  const entry={
+    id:Date.now().toString(16)+'-'+Math.random().toString(16).slice(2,6),
+    ts:new Date().toISOString(), cat:_fbCat, msg, user, source:'dartmeadow'
+  };
+  if(!FEEDBACK_GAS_URL){
+    // No proxy configured yet — fall back to email so this still reaches
+    // someone instead of silently failing.
+    const subject=encodeURIComponent('DART Meadow feedback — '+_fbCat);
+    const body=encodeURIComponent(msg+'\n\n—\ncategory: '+_fbCat+'\nfrom: '+user+'\nts: '+entry.ts);
+    window.location.href='mailto:'+FEEDBACK_MAILTO+'?subject='+subject+'&body='+body;
+    $('fb-status').textContent='✉ Opening your email app…';
+    setTimeout(closeFeedback,1200);
+    return;
+  }
+  $('fb-status').textContent='SUBMITTING…';
+  $('fb-submit-btn').disabled=true;
+  fetch(FEEDBACK_GAS_URL+'?action=feedback',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(entry),
+    signal:AbortSignal.timeout(10000)
+  }).then(r=>r.json()).then(d=>{
+    if(d&&!d.error){
+      $('fb-status').textContent='✓ FEEDBACK SUBMITTED — THANK YOU';
+      setTimeout(closeFeedback,1600);
+    } else {
+      $('fb-status').textContent='⚠ Submission failed — please try again';
+      $('fb-submit-btn').disabled=false;
+    }
+  }).catch(()=>{
+    $('fb-status').textContent='⚠ Submission failed — please try again';
+    $('fb-submit-btn').disabled=false;
+  });
+}
 
 // ══════════════════════════════════════════════════════════════
 //  EXIT SYSTEM
