@@ -307,6 +307,13 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;background:var(--c0);co
 .menu-btn:hover{background:rgba(0,245,255,0.22);box-shadow:0 0 20px -2px currentColor,inset 0 0 16px -5px currentColor;}
 .menu-btn.gold{border-color:var(--gold);color:var(--gold);background:var(--dim-gold);}
 .menu-btn.gold:hover{background:rgba(245,196,0,0.24);}
+#account-chip{display:inline-flex;align-items:center;gap:6px;margin:0 auto 0.9rem;padding:0.35rem 0.8rem;border:1px solid var(--border);border-radius:20px;background:rgba(0,245,255,0.05);color:var(--text-dim);font-family:var(--font-hud);font-size:0.55rem;letter-spacing:0.08em;cursor:pointer;transition:var(--trans);}
+#account-chip:hover{border-color:var(--cyan);color:var(--cyan);}
+#account-chip img{width:16px;height:16px;border-radius:50%;}
+.acct-provider-btn{width:100%;padding:0.7rem 1rem;margin-bottom:0.6rem;border-radius:3px;border:1px solid var(--border);background:rgba(255,255,255,0.04);color:var(--text);font-family:var(--font-body);font-size:0.75rem;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:0.6rem;transition:var(--trans);}
+.acct-provider-btn:hover{border-color:var(--cyan);background:rgba(0,245,255,0.08);}
+.acct-provider-btn:disabled{opacity:0.4;cursor:not-allowed;}
+.acct-guest-note{font-size:0.6rem;color:var(--text-dim);text-align:center;margin-top:0.4rem;line-height:1.5;}
 /* Compact side-by-side rows — two half-width buttons per row so more fits
    in the same vertical space without the panel getting taller. */
 .menu-row{display:flex;gap:0.5rem;width:100%;margin-bottom:0.6rem;}
@@ -536,7 +543,72 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 .exit-btn.cancel{background:var(--dim-cyan);border:1px solid var(--border);color:var(--text-dim);}
 .exit-btn.cancel:hover{border-color:var(--cyan);color:var(--cyan);}
 
-</style>
+<!-- ══════════════════════════════════════════════════════════════
+     FIREBASE AUTH — project: dart-meadow-gamedev
+     This is the public, client-safe web app config (not a secret — Firebase
+     access control comes from Security Rules, not from hiding this object).
+     Google sign-in works immediately. Apple sign-in needs the Apple-side
+     Services ID/Team ID/Key ID/private key configured in the Firebase
+     console (Authentication → Sign-in method → Apple) before it'll succeed;
+     the button is wired up and ready for whenever that's done.
+     ══════════════════════════════════════════════════════════════ -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js";
+  import {
+    getAuth, GoogleAuthProvider, OAuthProvider,
+    signInWithPopup, signInWithRedirect, getRedirectResult,
+    onAuthStateChanged, signOut
+  } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyBxsQrX1SkEkpbq7NzgDkVHoZWOOruz6UM",
+    authDomain: "dart-meadow-gamedev.firebaseapp.com",
+    projectId: "dart-meadow-gamedev",
+    storageBucket: "dart-meadow-gamedev.firebasestorage.app",
+    messagingSenderId: "279342113339",
+    appId: "1:279342113339:web:b4a5dfc675d3562748321e",
+    measurementId: "G-MZCJ628YRY"
+  };
+
+  const fbApp = initializeApp(firebaseConfig);
+  const fbAuth = getAuth(fbApp);
+  window._fbAuth = fbAuth;
+  window._fbUser = null;
+
+  onAuthStateChanged(fbAuth, (user) => {
+    window._fbUser = user;
+    if (typeof window._onAcctStateChanged === 'function') window._onAcctStateChanged(user);
+  });
+
+  function _handleSignInError(err, provider){
+    const st = document.getElementById('acct-status');
+    // Popups get blocked/dismissed easily, especially on mobile — fall back
+    // to a full-page redirect flow rather than just showing an error.
+    if (err && err.code === 'auth/popup-blocked') { signInWithRedirect(fbAuth, provider); return; }
+    if (err && (err.code === 'auth/cancelled-popup-request' || err.code === 'auth/popup-closed-by-user')) return; // user just closed it
+    if (st) st.textContent = '⚠ Sign-in failed — please try again';
+    console.warn('sign-in error:', err);
+  }
+
+  window.signInWithGoogle = function(){
+    const provider = new GoogleAuthProvider();
+    const btn = document.getElementById('acct-google-btn'); if(btn) btn.disabled = true;
+    signInWithPopup(fbAuth, provider)
+      .catch(err => _handleSignInError(err, provider))
+      .finally(() => { if(btn) btn.disabled = false; });
+  };
+  window.signInWithApple = function(){
+    const provider = new OAuthProvider('apple.com');
+    const btn = document.getElementById('acct-apple-btn'); if(btn) btn.disabled = true;
+    signInWithPopup(fbAuth, provider)
+      .catch(err => _handleSignInError(err, provider))
+      .finally(() => { if(btn) btn.disabled = false; });
+  };
+  window.signOutOfAccount = function(){ signOut(fbAuth); };
+
+  // Picks up the result if signInWithRedirect was used (popup-blocked fallback)
+  getRedirectResult(fbAuth).catch(err => console.warn('redirect result:', err));
+</script>
 </head>
 <body>
 <!-- LOADING -->
@@ -599,6 +671,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   <div class="menu-glass">
     <div class="menu-logo">DART MEADOW</div>
     <div class="menu-tagline">Journey of the Skyboard</div>
+    <div id="account-chip" onclick="openAccountModal()">🔑 SIGN IN</div>
     <button class="menu-btn gold" id="resume-btn" onclick="launchFlight()" style="display:none;">▶ RESUME GAME</button>
     <button class="menu-btn gold" onclick="startGame()">▶ START GAME</button>
     <div class="menu-row">
@@ -1079,6 +1152,29 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     <div class="modal-footer">
       <button class="btn primary" onclick="submitFeedback()" id="fb-submit-btn">▲ SUBMIT</button>
       <button class="btn" onclick="closeFeedback()">CANCEL</button>
+    </div>
+  </div>
+</div>
+
+<!-- ACCOUNT -->
+<div id="account-modal" style="position:fixed;inset:0;z-index:9800;background:rgba(0,0,0,0.7);backdrop-filter:blur(10px);display:none;align-items:center;justify-content:center;">
+  <div class="modal-box" style="width:min(380px,92vw);text-align:center;">
+    <div id="acct-signed-out">
+      <div class="modal-title" style="text-align:center;">🔑 SIGN IN</div>
+      <div class="acct-guest-note" style="margin-bottom:1rem;">You can always play as a guest — signing in just lets you keep a permanent gamer tag and carries your profile across devices.</div>
+      <button class="acct-provider-btn" id="acct-google-btn" onclick="signInWithGoogle()">🇬 Sign in with Google</button>
+      <button class="acct-provider-btn" id="acct-apple-btn" onclick="signInWithApple()"> Sign in with Apple</button>
+      <div class="acct-guest-note" id="acct-status"></div>
+    </div>
+    <div id="acct-signed-in" style="display:none;">
+      <div class="modal-title" style="text-align:center;">ACCOUNT</div>
+      <img id="acct-avatar" src="" alt="" style="width:56px;height:56px;border-radius:50%;margin-bottom:0.6rem;display:none;">
+      <div id="acct-name" style="font-family:var(--font-hud);color:var(--cyan);font-size:0.8rem;letter-spacing:0.08em;margin-bottom:0.3rem;"></div>
+      <div id="acct-email" style="font-size:0.6rem;color:var(--text-dim);margin-bottom:1rem;"></div>
+      <button class="btn" onclick="signOutOfAccount()" style="width:100%;">SIGN OUT</button>
+    </div>
+    <div class="modal-footer" style="margin-top:1rem;">
+      <button class="btn" onclick="closeAccountModal()" style="width:100%;">CLOSE</button>
     </div>
   </div>
 </div>
@@ -4891,6 +4987,36 @@ window.addEventListener('resize',()=>{if(menuAnim){const c=$('menu-bg-canvas');c
 const FEEDBACK_GAS_URL='https://script.google.com/macros/s/AKfycbyzkQxLR5miUXP6oDw-1AR1GIjgpzlw9iLw0gO_ZTeLfL849LWbNX7WVz_kf7yLWBKA_w/exec'; // Autumn's existing GAS proxy — needs an 'action=feedback' handler added server-side (see chat) before this succeeds; falls back to mailto until then
 const FEEDBACK_MAILTO='radicaldeepscale@gmail.com';
 let _fbCat='BUG REPORT';
+
+// ══════════════════════════════════════════════════════════════
+//  ✦ ACCOUNT — Firebase Auth (Google / Apple)
+// ══════════════════════════════════════════════════════════════
+function openAccountModal(){
+  const st=$('acct-status');if(st)st.textContent='';
+  $('account-modal').style.display='flex';
+}
+function closeAccountModal(){$('account-modal').style.display='none';}
+
+// Called from the Firebase module script (see <head>) whenever sign-in
+// state changes — updates the menu chip and the modal's two views.
+window._onAcctStateChanged=function(user){
+  const chip=$('account-chip');
+  const so=$('acct-signed-out'),si=$('acct-signed-in');
+  if(!chip)return;
+  if(user){
+    chip.innerHTML=(user.photoURL?`<img src="${user.photoURL}" alt="">`:'')+'<span>'+(user.displayName||user.email||'Signed in')+'</span>';
+    if(so)so.style.display='none';
+    if(si)si.style.display='block';
+    if($('acct-name'))$('acct-name').textContent=user.displayName||'Pilot';
+    if($('acct-email'))$('acct-email').textContent=user.email||'';
+    const av=$('acct-avatar');
+    if(av){ if(user.photoURL){av.src=user.photoURL;av.style.display='inline-block';} else av.style.display='none'; }
+  } else {
+    chip.textContent='🔑 SIGN IN';
+    if(so)so.style.display='block';
+    if(si)si.style.display='none';
+  }
+};
 
 function openFeedback(){
   $('fb-ta').value='';
