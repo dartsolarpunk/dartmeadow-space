@@ -5556,6 +5556,7 @@ const MACH_UNITS=70; // scene units/sec per Mach 1 (tuned for feel)
 const ATMO_CEILING=2600; // climb past this → exit atmosphere to space
 let atmoActive=false,atmoRenderer,atmoScene,atmoCamera,atmoAnimId=null;
 let atmoBoard=null,_atmoBody=null,_atmoSite=null,_atmoHeight=null,_atmoCamInit=false;
+let _atmoTerrainMesh=null,_atmoWaterMesh=null,_atmoTerrainOx=0,_atmoTerrainOz=0,_atmoPal=null;
 let atmoPreset=0,atmoThrottle=0,atmoMach=0;
 let atmoSteer={x:0,y:0},atmoClimb={x:0,y:0};
 let atmoState=null;
@@ -5622,34 +5623,50 @@ function enterAtmosphericFlight(body,site){
 }
 
 // Build terrain for the atmospheric scene (reuses the CLOD terrain system).
-function atmoBuildTerrain(pal){
+function atmoBuildTerrain(pal,ox,oz){
+  ox=ox||0;oz=oz||0;
+  _atmoPal=pal;_atmoTerrainOx=ox;_atmoTerrainOz=oz;
   const seed=(_atmoBody?_atmoBody.name.length:5)*13+1;
+  // Same stylized curvature heuristic as walk mode (see buildSurfaceTerrain).
+  const g=(_atmoBody&&_atmoBody.gravity!==undefined)?_atmoBody.gravity:0.6;
+  const curveR=THREE.MathUtils.lerp(1400,9000,Math.min(1,Math.max(0,g))/1.2);
   function H(x,z){
     let h=_fbm(x*0.012+100,z*0.012+100,seed,5)*22;
     h+=_fbm(x*0.04,z*0.04,seed+3,3)*5;
     const m=_fbm(x*0.005,z*0.005,seed+7,4);
     if(m>0.6)h+=(m-0.6)*120;
+    const d2=x*x+z*z;
+    h-=d2/(2*curveR);
     return h;
   }
   _atmoHeight=H;
-  // a wide static heightmesh (atmospheric flight ranges far, so a big coarse
-  // mesh reads better than streaming tiny tiles at speed)
+  // Drop any previous terrain window before building the new one, so
+  // recentring doesn't leak geometry/materials.
+  if(_atmoTerrainMesh){atmoScene.remove(_atmoTerrainMesh);_atmoTerrainMesh.geometry.dispose();_atmoTerrainMesh.material.dispose();_atmoTerrainMesh=null;}
+  if(_atmoWaterMesh){atmoScene.remove(_atmoWaterMesh);_atmoWaterMesh.geometry.dispose();_atmoWaterMesh.material.dispose();_atmoWaterMesh=null;}
+  // a wide static heightmesh window, recentred on the board as it flies
+  // (atmospheric flight covers ground fast, so a big coarse mesh that
+  // follows the board reads better than tiny streaming tiles at speed) —
+  // vertices sample H at absolute world coords (local+origin) so the window
+  // always shows the correct ground no matter where it's currently centred.
   const SZ=5000,SEG=120;
   const geo=new THREE.PlaneGeometry(SZ,SZ,SEG,SEG);geo.rotateX(-Math.PI/2);
   const pos=geo.attributes.position;const col=[];
   const c1=new THREE.Color(pal.ground),c2=new THREE.Color(pal.ground2),cr=new THREE.Color(pal.rock);
   for(let i=0;i<pos.count;i++){
-    const x=pos.getX(i),z=pos.getZ(i);const h=H(x,z);pos.setY(i,h);
+    const x=pos.getX(i),z=pos.getZ(i);const h=H(x+ox,z+oz);pos.setY(i,h);
     let c;const t=Math.min(1,Math.max(0,h/60));
     if(h>55)c=new THREE.Color(0xffffff).lerp(cr,0.3);
     else if(h>22)c=cr.clone();else c=c1.clone().lerp(c2,t*0.4+0.15);
     col.push(c.r,c.g,c.b);
   }
   geo.setAttribute('color',new THREE.Float32BufferAttribute(col,3));geo.computeVertexNormals();
-  atmoScene.add(new THREE.Mesh(geo,new THREE.MeshStandardMaterial({vertexColors:true,roughness:0.95})));
+  const mesh=new THREE.Mesh(geo,new THREE.MeshStandardMaterial({vertexColors:true,roughness:0.95}));
+  mesh.position.set(ox,0,oz);
+  atmoScene.add(mesh);_atmoTerrainMesh=mesh;
   if(pal.water){
     const wm=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ),new THREE.MeshStandardMaterial({color:0x1a4a7a,transparent:true,opacity:0.8,roughness:0.2,metalness:0.4}));
-    wm.rotation.x=-Math.PI/2;wm.position.y=2;atmoScene.add(wm);
+    wm.rotation.x=-Math.PI/2;wm.position.set(ox,2,oz);atmoScene.add(wm);_atmoWaterMesh=wm;
   }
 }
 
@@ -5686,6 +5703,12 @@ function updateAtmoFlight(dt){
   // terrain floor
   const groundH=_atmoHeight?_atmoHeight(s.pos.x,s.pos.z):0;
   if(s.pos.y<groundH+4){s.pos.y=groundH+4;}
+  // Recentre the terrain window once the board nears its edge — this is what
+  // lets atmospheric flight cover unlimited ground instead of running off a
+  // fixed-size mesh into empty space.
+  if(Math.hypot(s.pos.x-_atmoTerrainOx,s.pos.z-_atmoTerrainOz)>1600&&_atmoPal){
+    atmoBuildTerrain(_atmoPal,s.pos.x,s.pos.z);
+  }
   // exit to space if climbing past the atmosphere ceiling
   if(s.pos.y>ATMO_CEILING){ atmoExitToSpace(); return; }
   // ── Orient & place the board the SAME way as space flight ───────────────
@@ -5752,6 +5775,7 @@ function _atmoCleanup(){
   $('atmo-overlay').style.display='none';
   if(atmoRenderer)atmoRenderer.dispose();
   atmoScene=null;atmoBoard=null;atmoState=null;
+  _atmoTerrainMesh=null;_atmoWaterMesh=null;_atmoTerrainOx=0;_atmoTerrainOz=0;_atmoPal=null;_atmoHeight=null;
 }
 
 function enterSurface(body,site){
@@ -5776,7 +5800,7 @@ function enterSurface(body,site){
   }
   surfScene=new THREE.Scene();
   surfScene.background=new THREE.Color(pal.sky[1]);
-  if(pal.atmos)surfScene.fog=new THREE.Fog(pal.fog,40,420);
+  if(pal.atmos)surfScene.fog=new THREE.Fog(pal.fog,40,drawDistanceTier().fogFar);
   surfCamera=new THREE.PerspectiveCamera(72,W/H,0.1,2000);
   surfCamera.position.set(0,3.2,0);
   surfCamera.rotation.order='YXZ';
@@ -5874,22 +5898,67 @@ const TERRAIN={
   tiles:new Map(),    // key -> {mesh, depth, cx, cz, size}
   group:null,
   pal:null, H:null, seed:0,
-  lastRebuildX:1e9, lastRebuildZ:1e9
+  lastRebuildX:1e9, lastRebuildZ:1e9,
+  // ── Floating-origin streaming ──────────────────────────────────
+  // The quadtree root used to sit fixed at world (0,0), which is why walking
+  // ~1200 units in any direction meant walking off the edge of generated
+  // ground into void. originX/Z is where the root is CURRENTLY centred; it
+  // only jumps (in one discrete recentre + rebuild) once the player nears
+  // the edge of the current window, so tiles stay perfectly stable underfoot
+  // between recentres — no continuous drift, no ground sliding. Recentring
+  // this way lets the player walk indefinitely in any direction; the window
+  // just keeps following them, so there is no longer a hard boundary.
+  originX:0, originZ:0, recenterMargin:500,
+  // Stylized horizon-curvature radius (world units) — see buildTerrainTile.
+  // Not physically accurate (real planetary curvature is invisible at this
+  // scale); tuned per-body so it *reads* like a AAA planet-exploration game.
+  curveR:6000,
 };
+
+// Maps the existing "Draw Distance" graphics setting (Near/Standard/Far —
+// STATE.settings.fov, originally built for the space-flight camera's far
+// clip plane) onto walking-scale terrain generation. Standard reproduces
+// the exact previous hardcoded values (2400/6/420) so nobody's experience
+// changes unless they explicitly pick Near or Far.
+function drawDistanceTier(){
+  const f=(STATE&&STATE.settings)?STATE.settings.fov:50000;
+  if(f<=5000)   return {rootSize:1600, maxDepth:5, fogFar:280};
+  if(f>=300000) return {rootSize:3600, maxDepth:7, fogFar:820};
+  return          {rootSize:2400, maxDepth:6, fogFar:420};
+}
 
 function buildSurfaceTerrain(pal){
   const seed=(_surfBody?_surfBody.name.length:5)*13+1;
-  // height function (kept from the original, drives collision + tiles)
+  // height function (kept from the original, drives collision + tiles).
+  // Curvature falloff lives HERE (not duplicated in buildTerrainTile) so
+  // collision and the visual mesh can never disagree about ground height —
+  // both call this same function. TERRAIN.curveR is set just below, before
+  // this is ever invoked.
   function H(x,z){
     let h=_fbm(x*0.012+100,z*0.012+100,seed,5)*22;
     h+=_fbm(x*0.04,z*0.04,seed+3,3)*5;
     const m=_fbm(x*0.005,z*0.005,seed+7,4);
     if(m>0.6)h+=(m-0.6)*120;
+    // Stylized horizon curvature: the ground drops away the farther you are
+    // from the landing spot (0,0), like standing on a sphere — not
+    // physically exact, tuned to actually read on-screen at this scale.
+    const d2=x*x+z*z;
+    h-=d2/(2*(TERRAIN.curveR||6000));
     return h;
   }
   _surfHeight=H;
+  const dd=drawDistanceTier();
+  TERRAIN.rootSize=dd.rootSize; TERRAIN.maxDepth=dd.maxDepth;
+  TERRAIN.recenterMargin=Math.min(600,dd.rootSize*0.25);
+  // Bigger/heavier bodies read as having a gentler (larger-radius) horizon
+  // curve; small ones curve away sooner. gravity is the only real size proxy
+  // in the body data model today, so it's used as a heuristic, not a true
+  // measured planetary radius.
+  const g=(_surfBody&&_surfBody.gravity!==undefined)?_surfBody.gravity:(pal.grav||0.6);
+  TERRAIN.curveR=THREE.MathUtils.lerp(1400,9000,Math.min(1,Math.max(0,g))/1.2);
   TERRAIN.pal=pal;TERRAIN.H=H;TERRAIN.seed=seed;
   TERRAIN.tiles.clear();TERRAIN.lastRebuildX=1e9;TERRAIN.lastRebuildZ=1e9;
+  TERRAIN.originX=0;TERRAIN.originZ=0;
   TERRAIN.group=new THREE.Group();surfScene.add(TERRAIN.group);
   surfTerrainMesh=TERRAIN.group; // for collision/exit references
   // initial build around origin (player spawn)
@@ -5980,7 +6049,7 @@ function _terrainQuad(cx,cz,size,depth,focusX,focusZ,wanted){
 function rebuildTerrainLOD(px,pz){
   if(!TERRAIN.group)return;
   const wanted=new Map();
-  _terrainQuad(0,0,TERRAIN.rootSize,0,px,pz,wanted);
+  _terrainQuad(TERRAIN.originX,TERRAIN.originZ,TERRAIN.rootSize,0,px,pz,wanted);
   // remove tiles no longer wanted
   for(const [key,t] of TERRAIN.tiles){
     if(!wanted.has(key)){ TERRAIN.group.remove(t.mesh); t.mesh.geometry.dispose(); t.mesh.material.dispose(); TERRAIN.tiles.delete(key); }
@@ -6000,6 +6069,17 @@ function rebuildTerrainLOD(px,pz){
 // moved enough that the tile layout should change (throttled to avoid churn).
 function updateTerrainLOD(px,pz){
   if(!TERRAIN.group)return;
+  // Approaching the edge of the current generated window? Recentre the whole
+  // root on the player and rebuild — this is what lets the player keep
+  // walking forever in any direction instead of hitting a boundary. Tiles
+  // are keyed off absolute world position, so anything within the new
+  // window that already existed gets reused rather than rebuilt.
+  const distFromOrigin=Math.hypot(px-TERRAIN.originX,pz-TERRAIN.originZ);
+  if(distFromOrigin>TERRAIN.rootSize/2-TERRAIN.recenterMargin){
+    TERRAIN.originX=px;TERRAIN.originZ=pz;
+    rebuildTerrainLOD(px,pz);
+    return;
+  }
   const moved=Math.hypot(px-TERRAIN.lastRebuildX,pz-TERRAIN.lastRebuildZ);
   // smallest tile size sets the rebuild cadence
   const smallest=TERRAIN.rootSize/Math.pow(2,TERRAIN.maxDepth);
