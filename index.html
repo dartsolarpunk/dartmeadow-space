@@ -315,7 +315,7 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;background:var(--c0);co
 #start-game-btn{
   width:100%;
   aspect-ratio:1/1;
-  max-width:196px;
+  max-width:140px;
   margin:0.3rem auto 1rem;
   display:block;
   cursor:pointer;
@@ -1840,7 +1840,7 @@ function initStartBtnTurntable(){
   const host=$('start-game-btn');
   if(!host||typeof THREE==='undefined')return;
 
-  const w=host.clientWidth||196, h=host.clientHeight||196;
+  const w=host.clientWidth||140, h=host.clientHeight||140;
 
   sgScene=new THREE.Scene();
   sgScene.background=null;
@@ -1855,31 +1855,24 @@ function initStartBtnTurntable(){
   if(sgRenderer.outputEncoding!==undefined) sgRenderer.outputEncoding=THREE.sRGBEncoding;
   host.insertBefore(sgRenderer.domElement,host.firstChild);
 
-  // ── Studio lighting rig (recreated from latedecember.glb reference) ──
-  const key=new THREE.DirectionalLight(0x87919f,1.15);
-  key.position.set(0.6,1,1.2);
-  sgScene.add(key);
-
-  const fill=new THREE.AmbientLight(0x404050,0.55);
-  sgScene.add(fill);
-
-  const spotPink=new THREE.PointLight(0xff2ebb,1.4,4,2);
-  spotPink.position.set(-0.7,0.3,0.6);
-  sgScene.add(spotPink);
-
-  const spotCyan=new THREE.PointLight(0x81a0ff,1.0,4,2);
-  spotCyan.position.set(0.7,-0.3,0.5);
-  sgScene.add(spotCyan);
-
-  const spotGold=new THREE.PointLight(0xffc748,0.9,4,2);
-  spotGold.position.set(0,0.8,-0.5);
-  sgScene.add(spotGold);
-
   const loader=_getGLBLoader();
   if(!loader){sgInited=false;return;}
 
   loader.load('latedecemberSG.glb', gltf=>{
     sgModel=gltf.scene;
+
+    // Use the lighting rig authored in the GLB itself (KHR_lights_punctual,
+    // parsed natively by GLTFLoader) — do NOT add our own lights on top.
+    let bakedLightCount=0;
+    sgModel.traverse(o=>{ if(o.isLight) bakedLightCount++; });
+
+    // Only add a minimal safety fallback if the file truly has no lights.
+    if(bakedLightCount===0){
+      sgScene.add(new THREE.HemisphereLight(0xaab4ff,0x2a1a10,0.9));
+      const key=new THREE.DirectionalLight(0xffffff,0.8);
+      key.position.set(0.6,1,1.2);
+      sgScene.add(key);
+    }
 
     // Auto-frame: center model at origin, scale to fill view
     const box=new THREE.Box3().setFromObject(sgModel);
@@ -1900,8 +1893,6 @@ function initStartBtnTurntable(){
       sgAnimId=requestAnimationFrame(frame);
       t+=0.012;
       if(sgModel) sgModel.rotation.y=t;
-      spotPink.position.x=-0.7*Math.cos(t*0.6);
-      spotCyan.position.z=0.5*Math.sin(t*0.6+1);
       sgRenderer.render(sgScene,sgCamera);
     })();
   }, undefined, err=>{
@@ -1911,7 +1902,7 @@ function initStartBtnTurntable(){
 
   window.addEventListener('resize',()=>{
     if(!sgRenderer||!host)return;
-    const nw=host.clientWidth||196, nh=host.clientHeight||196;
+    const nw=host.clientWidth||140, nh=host.clientHeight||140;
     sgRenderer.setSize(nw,nh);
     sgCamera.aspect=nw/nh;
     sgCamera.updateProjectionMatrix();
