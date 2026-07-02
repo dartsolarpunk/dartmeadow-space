@@ -688,7 +688,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <input type="file" id="music-file-input" accept="audio/*,.mp3,.wav,.ogg,.m4a,.flac" multiple style="display:none;">
 
 <!-- Floating music control — visible across menus/settings until in-game -->
-<div id="float-music" style="display:none;position:fixed;top:90px;right:14px;z-index:9600;display:flex;align-items:center;gap:6px;background:rgba(4,10,22,0.82);border:1px solid rgba(0,245,255,0.25);border-radius:20px;padding:5px 8px 5px 12px;backdrop-filter:blur(10px);">
+<div id="float-music" style="display:none;position:fixed;top:134px;right:14px;z-index:9600;display:flex;align-items:center;gap:6px;background:rgba(4,10,22,0.82);border:1px solid rgba(0,245,255,0.25);border-radius:20px;padding:5px 8px 5px 12px;backdrop-filter:blur(10px);">
   <span id="float-music-icon" style="font-size:0.7rem;">♫</span>
   <span style="font-family:var(--font-mono);font-size:0.52rem;color:rgba(0,245,255,0.7);letter-spacing:0.06em;">CLINICAL BLOOM</span>
   <button onclick="audioToggle()" id="float-music-toggle" title="Play / Pause" style="background:rgba(0,245,255,0.1);border:1px solid rgba(0,245,255,0.3);color:var(--cyan);width:22px;height:22px;border-radius:50%;cursor:pointer;font-size:0.6rem;display:flex;align-items:center;justify-content:center;">⏸</button>
@@ -808,14 +808,12 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
           <button type="button" id="tmpl-proc" class="tmpl-btn" onclick="setBoardTemplate('procedural')">PROCEDURAL</button>
         </div>
         <div id="zone-colors" style="display:none;">
-          <span class="sec-label">Skyboard Zones</span>
-          <div class="ctrl-row"><label>Deck</label><input type="color" id="z-deck" value="#5905b3" oninput="onZoneColor()"></div>
-          <div class="ctrl-row"><label>DART Glow</label><input type="color" id="z-dart" value="#1c86ff" oninput="onZoneColor()"></div>
-          <div class="ctrl-row"><label>Ornaments</label><input type="color" id="z-orn" value="#ff290d" oninput="onZoneColor()"></div>
-          <div class="ctrl-row"><label>Staff/Pole</label><input type="checkbox" id="z-staff" checked onchange="onZoneColor()"></div>
+          <span class="sec-label">Part Customization</span>
+          <button type="button" onclick="autoColorBoard()" style="display:block;width:100%;margin:4px 0 8px;padding:9px;background:rgba(245,196,0,.1);border:1px solid var(--gold,#f5c400);color:var(--gold,#f5c400);font-family:var(--font-hud);font-size:.6rem;letter-spacing:.14em;cursor:pointer;border-radius:3px;">🎲 AUTO COLOR — NEW SCHEME</button>
+          <div id="part-styles"><div style="font-size:0.58rem;color:var(--text-dim);padding:6px 0;">Loading skyboard parts…</div></div>
           <div class="ctrl-row"><label>Glow Intensity</label><input type="range" id="z-glow" min="0" max="1" step="0.05" value="0.3" oninput="onZoneColor()"><span class="val" id="v-zglow">0.30</span></div>
           <div class="ctrl-row"><label>Metalness</label><input type="range" id="z-metal" min="0" max="1" step="0.05" value="0.6" oninput="onZoneColor()"><span class="val" id="v-zmetal">0.60</span></div>
-          <div style="font-size:0.58rem;color:var(--text-dim);line-height:1.5;padding:4px 0;">Sculpted Nomad model — recolor each mesh zone. The procedural shape controls below apply only to the PROCEDURAL template.</div>
+          <div style="font-size:0.58rem;color:var(--text-dim);line-height:1.5;padding:4px 0;">Every named part of the sculpted Nomad model is individually paintable — solid, linear, or radial gradients with up to 3 color stops. The procedural shape controls below apply only to the PROCEDURAL template.</div>
         </div>
         <span class="sec-label">Hull — Center Body</span>
         <div class="ctrl-row"><label>Length</label><input type="range" id="b-length" min="1.2" max="4.5" step="0.1" value="2.8" oninput="rb()"><span class="val" id="v-length">2.8m</span></div>
@@ -1341,7 +1339,12 @@ const STATE={
     // second option, procedural is third. Default zone colors are the user's
     // chosen scheme (purple deck / blue DART glow / red-orange ornaments).
     template:'B',
-    zoneDeck:'#5905b3', zoneDart:'#1c86ff', zoneOrn:'#ff290d', showStaff:true
+    zoneDeck:'#5905b3', zoneDart:'#1c86ff', zoneOrn:'#ff290d', showStaff:true,
+    // Per-part gradient styling for GLB templates. Keyed by template ('A'/'B'),
+    // then by the part name authored in the GLB (dart/deck/ornament/staff — and
+    // any future names like fwd_ornament/aft_ornament auto-discover). Each part:
+    // {visible, mode:'solid'|'linear'|'radial', axis:'x'|'y'|'z', stops:[hex,…max 3]}
+    partStyles:{}
   },
   flight:{speed:0,dart:false,energy:100,hull:100,shield:100,destIdx:0,time:0,
     camPitch:0,camYaw:0,thrust:0,strafe:0,lift:0,
@@ -1502,7 +1505,7 @@ function launchFlight(){
   // rebuild the board if the template OR zone colors changed in the editor.
   if(typeof flightInited!=='undefined'&&flightInited){
     const tmpl=STATE.boardConfig.template||'procedural';
-    const colorSig=tmpl+'|'+(STATE.boardConfig.zoneDeck||'')+'|'+(STATE.boardConfig.zoneDart||'')+'|'+(STATE.boardConfig.zoneOrn||'')+'|'+(STATE.boardConfig.col1||'')+'|'+(STATE.boardConfig.emit||'');
+    const colorSig=boardStyleSig();
     if(colorSig!==_builtBoardTemplate){
       try{
         if(boardFlight&&flightScene)flightScene.remove(boardFlight);
@@ -1853,7 +1856,35 @@ function initStartBtnTurntable(){
   sgRenderer.setSize(w,h);
   sgRenderer.setClearColor(0x000000,0);
   if(sgRenderer.outputEncoding!==undefined) sgRenderer.outputEncoding=THREE.sRGBEncoding;
+  sgRenderer.toneMapping=THREE.ACESFilmicToneMapping;
+  sgRenderer.toneMappingExposure=1.35;
   host.insertBefore(sgRenderer.domElement,host.firstChild);
+
+  // ── IMAGE-BASED ENVIRONMENT LIGHT (the real reason the button was dim) ──
+  // Nomad Sculpt's viewport is lit primarily by its built-in HDRI environment;
+  // only the 4 punctual accent lights export into the GLB. Three.js has no
+  // environment unless we give it one, so the diffuse (roughness=1) vertex-
+  // colored materials in this file render nearly black between the narrow spot
+  // cones no matter how much their intensity is multiplied. Fix: bake a small
+  // procedural "studio room" into a PMREM environment map — bright neutral top
+  // panel + warm/magenta/blue side cards echoing the Nomad accent palette.
+  try{
+    const envScene=new THREE.Scene();
+    const room=new THREE.Mesh(new THREE.BoxGeometry(10,10,10),
+      new THREE.MeshBasicMaterial({color:0x233042,side:THREE.BackSide}));
+    envScene.add(room);
+    const panel=(col,x,y,z,rx,ry)=>{
+      const p=new THREE.Mesh(new THREE.PlaneGeometry(4,4),new THREE.MeshBasicMaterial({color:col}));
+      p.position.set(x,y,z);p.rotation.set(rx,ry,0);envScene.add(p);
+    };
+    panel(0xffffff, 0, 4.6, 0, Math.PI/2, 0);   // bright white top key
+    panel(0xffd9a0, -4.6, 0.5, 0, 0,  Math.PI/2); // warm gold left
+    panel(0xff5ad0,  4.6, 0.5, 0, 0, -Math.PI/2); // magenta right
+    panel(0x7fb4ff, 0, 0.2, -4.6, 0, 0);          // cool blue back
+    const pmrem=new THREE.PMREMGenerator(sgRenderer);
+    sgScene.environment=pmrem.fromScene(envScene,0.06).texture;
+    pmrem.dispose();
+  }catch(e){console.warn('start-btn env map failed, punctual lights only',e);}
 
   const loader=_getGLBLoader();
   if(!loader){sgInited=false;return;}
@@ -1873,7 +1904,11 @@ function initStartBtnTurntable(){
     // ran, because it's gated behind "no lights found in the file" — this
     // file DOES have 4 lights, so editing those two numbers in the code had
     // zero visible effect. Boosting the real baked lights is what's needed.
-    const BAKED_LIGHT_BOOST = 9;
+    // With the PMREM environment above carrying the base illumination (same
+    // role Nomad's HDRI plays), the baked spots return to their intended job:
+    // colored ACCENTS. Boost still needed because Nomad exports raw internal
+    // "power" (~0.03–0.54) which is 10-20x below three.js's light scale.
+    const BAKED_LIGHT_BOOST = 12;
     let bakedLightCount=0;
     sgModel.traverse(o=>{
       if(o.isLight){
@@ -1886,7 +1921,7 @@ function initStartBtnTurntable(){
     if(bakedLightCount>0){
       // Gentle neutral fill so the rotating model never shows a fully black
       // face in between the colored accent lights sweeping past it.
-      sgScene.add(new THREE.HemisphereLight(0xbcd2ff,0x1a1220,0.55));
+      sgScene.add(new THREE.HemisphereLight(0xbcd2ff,0x1a1220,0.75));
     }
 
     // Only add a full studio 3-point rig if the GLB truly has no lights.
@@ -2031,6 +2066,7 @@ function setBoardTemplate(key){
   ['proc','A','B'].forEach(k=>{const b=$('tmpl-'+k);if(b)b.classList.toggle('active',(k==='proc'?'procedural':k)===key);});
   const zc=$('zone-colors');if(zc)zc.style.display=(key==='procedural')?'none':'block';
   if(key!=='procedural'){try{preloadSkyboardTemplates();}catch(e){}}
+  try{renderPartPanels();}catch(e){}
   rb();
 }
 
@@ -2078,7 +2114,7 @@ function initBuilderScene(){
   sg.setAttribute('position',new THREE.BufferAttribute(sp,3));sg.setAttribute('color',new THREE.BufferAttribute(sc,3));
   builderScene.add(new THREE.Points(sg,new THREE.PointsMaterial({size:0.12,sizeAttenuation:true,vertexColors:true})));
   boardGroup=new THREE.Group();builderScene.add(boardGroup);
-  try{readBoardConfig();_rebuildBoard();}catch(e){console.error("Board build error:",e);}
+  try{readBoardConfig();renderPartPanels();_rebuildBoard();}catch(e){console.error("Board build error:",e);}
   // Force initial size — screen may have just become visible
   function resizeBuilderRenderer(){
     const W=cv.offsetWidth||Math.max(100,window.innerWidth-310);
@@ -3282,35 +3318,215 @@ function preloadSkyboardTemplates(){
 
       // Store the root directly (no wrapper group with pending rotations)
       _glbCache[url]=root;
+
+      // ── PART DISCOVERY: record every named part in this template so the
+      // builder can offer per-part customization. Names come from the GLB
+      // authoring (dart/deck/ornament/staff today; any future naming like
+      // fwd_ornament / aft_ornament / main_deck auto-appears here).
+      const parts=[];
+      root.traverse(o=>{ if(o.isMesh){const p=_partNameOf(o); if(p&&!parts.includes(p))parts.push(p);} });
+      SKYBOARD_PARTS[k]=parts;
+      // If the builder is open on this template, (re)render its part panels now.
+      try{ if(STATE.boardConfig.template===k){renderPartPanels(); if(typeof _rebuildBoard==='function'&&builderInited)_rebuildBoard();} }catch(e){}
     }, undefined, err=>{ console.warn('GLB load failed',url,err); });
   });
 }
 
-// Build a board from a loaded GLB template, tinting each named zone.
+// ══════════════════════════════════════════════════════════════
+//  PER-PART GRADIENT CUSTOMIZATION
+//  Every named part in a skyboard GLB (dart / deck / ornament / staff, plus
+//  whatever names future exports carry) can be painted individually with a
+//  solid color or a 2-3 stop linear/radial gradient, toggled on/off, and
+//  randomized as a full harmonious scheme via the AUTO COLOR button.
+//  Styles live in STATE.boardConfig.partStyles[tmpl][part] and therefore
+//  serialize into save slots / profile automatically.
+// ══════════════════════════════════════════════════════════════
+const SKYBOARD_PARTS={};   // tmplKey -> [partName,…] discovered at preload
+
+// Resolve which authored "part" a mesh belongs to: walk up past auto-generated
+// mesh/group names to the nearest human-authored node name.
+function _partNameOf(o){
+  let n=o;
+  while(n){
+    const nm=(n.name||'').trim();
+    if(nm && !/^mesh\d|_mesh$|^Group$|^Skyboard$|^Scene$|^RootNode$/i.test(nm)) return nm.toLowerCase();
+    n=n.parent;
+  }
+  return 'deck';
+}
+
+// Legacy fallback: derive a solid style from the old 3-zone colors so boards
+// saved before this feature (and templates missing explicit styles) still look
+// exactly as they did.
+function _legacyStyleForPart(part,c){
+  const z=part.toLowerCase();
+  let col;
+  if(z.includes('dart'))col=c.zoneDart||c.emit||'#00f5ff';
+  else if(z.includes('orn')||z.includes('staff'))col=c.zoneOrn||'#d9b060';
+  else col=c.zoneDeck||'#6a5a38';
+  return {visible:(z.includes('staff')?(c.showStaff!==false):true),mode:'solid',axis:'x',stops:[col]};
+}
+
+function _stylesFor(tmplKey){
+  const c=STATE.boardConfig;
+  c.partStyles=c.partStyles||{};
+  return c.partStyles[tmplKey]=c.partStyles[tmplKey]||{};
+}
+
+// Paint one mesh: writes per-vertex colors sampled from the part's gradient
+// (linear along a chosen axis of the part's own bounding box, or radial from
+// its center), on a fresh MeshStandardMaterial. Geometry is cloned first so
+// the shared template cache is never mutated.
+function applyPartStyle(mesh, style, zd){
+  mesh.geometry=mesh.geometry.clone();
+  const g=mesh.geometry;
+  g.computeBoundingBox();
+  const bb=g.boundingBox;
+  const size=new THREE.Vector3();bb.getSize(size);
+  const ctr=new THREE.Vector3();bb.getCenter(ctr);
+  const pos=g.attributes.position;
+  const stops=((style.stops&&style.stops.length)?style.stops:['#888888']).slice(0,3).map(h=>new THREE.Color(h));
+  const arr=new Float32Array(pos.count*3);
+  const axis=style.axis||'x';
+  const maxR=Math.max(size.x,size.y,size.z)*0.5||1;
+  const tmp=new THREE.Color();
+  for(let i=0;i<pos.count;i++){
+    let t=0;
+    if(stops.length>1){
+      if(style.mode==='radial'){
+        const dx=pos.getX(i)-ctr.x,dy=pos.getY(i)-ctr.y,dz=pos.getZ(i)-ctr.z;
+        t=Math.min(1,Math.sqrt(dx*dx+dy*dy+dz*dz)/maxR);
+      }else{
+        const v=axis==='y'?pos.getY(i):axis==='z'?pos.getZ(i):pos.getX(i);
+        const mn=axis==='y'?bb.min.y:axis==='z'?bb.min.z:bb.min.x;
+        const sz=(axis==='y'?size.y:axis==='z'?size.z:size.x)||1;
+        t=Math.min(1,Math.max(0,(v-mn)/sz));
+      }
+    }
+    if(stops.length===1)tmp.copy(stops[0]);
+    else{
+      const seg=(stops.length-1)*t,i0=Math.min(stops.length-2,Math.floor(seg));
+      tmp.copy(stops[i0]).lerp(stops[i0+1],Math.min(1,Math.max(0,seg-i0)));
+    }
+    arr[i*3]=tmp.r;arr[i*3+1]=tmp.g;arr[i*3+2]=tmp.b;
+  }
+  g.setAttribute('color',new THREE.BufferAttribute(arr,3));
+  // emissive zones (dart rings, ornaments) glow with their gradient's middle color
+  const mid=stops[Math.floor((stops.length-1)/2)];
+  mesh.material=new THREE.MeshStandardMaterial({
+    color:0xffffff, vertexColors:true,
+    metalness:zd.metal, roughness:zd.rough,
+    emissive:zd.emissiveInt>0?mid.clone():new THREE.Color(0x000000),
+    emissiveIntensity:zd.emissiveInt||0
+  });
+}
+
+// Build a board from a loaded GLB template, painting each named part with its
+// individual gradient style (or a legacy zone-color fallback).
 function buildBoardFromGLB(tmplKey){
   const url=SKYBOARD_TEMPLATES[tmplKey];
   const cached=_glbCache[url];
   if(!cached) return null;            // not loaded yet → caller falls back
   const grp=cached.clone(true);
   const c=STATE.boardConfig;
-  const deckC=new THREE.Color(c.zoneDeck||'#6a5a38');
-  const dartC=new THREE.Color(c.zoneDart||c.emit||'#00f5ff');
-  const ornC =new THREE.Color(c.zoneOrn||'#d9b060');
+  const styles=(c.partStyles&&c.partStyles[tmplKey])||{};
   grp.traverse(o=>{
     if(!o.isMesh)return;
-    const zone=(o.name||'').toLowerCase()+' '+((o.parent&&o.parent.name)||'').toLowerCase();
-    // give every mesh a fresh standard material we control
-    let base, emissive=0x000000, emissiveInt=0, metal=c.metal!=null?c.metal:0.6, rough=0.4;
-    if(zone.includes('dart')){ base=dartC; emissive=dartC; emissiveInt=(c.glow!=null?c.glow:0.3)*6+1.2; metal=0.9; rough=0.15; }
-    else if(zone.includes('ornament')||zone.includes('orn')){ base=ornC; emissive=ornC; emissiveInt=0.25; metal=0.7; rough=0.25; }
-    else if(zone.includes('staff')){ if(!c.showStaff){o.visible=false;} base=ornC; metal=0.6; rough=0.3; }
-    else { base=deckC; metal=metal; rough=0.45; } // deck + everything else
-    o.material=new THREE.MeshStandardMaterial({color:base,emissive:emissive,emissiveIntensity:emissiveInt,metalness:metal,roughness:rough});
-    if(o.material.emissive&&emissiveInt>0)o.material.emissiveIntensity=emissiveInt;
+    const part=_partNameOf(o), z=part.toLowerCase();
+    // zone material character (metal/rough/glow behavior) stays authored per zone
+    let zd;
+    if(z.includes('dart'))       zd={metal:0.9,rough:0.15,emissiveInt:(c.glow!=null?c.glow:0.3)*6+1.2};
+    else if(z.includes('orn'))   zd={metal:0.7,rough:0.25,emissiveInt:0.25};
+    else if(z.includes('staff')) zd={metal:0.6,rough:0.3,emissiveInt:0};
+    else                         zd={metal:(c.metal!=null?c.metal:0.6),rough:0.45,emissiveInt:0};
+    const st=styles[part]||_legacyStyleForPart(part,c);
+    if(st.visible===false){o.visible=false;return;}
+    o.visible=true;
+    applyPartStyle(o,st,zd);
   });
   // soft accent light so the board reads even in dim space
+  const dartSt=styles['dart'];
+  const dartC=new THREE.Color((dartSt&&dartSt.stops&&dartSt.stops[0])||c.zoneDart||c.emit||'#00f5ff');
   const pl=new THREE.PointLight(dartC,(c.glow!=null?c.glow:0.3)*2+0.5,6);pl.position.set(0,0.4,0);grp.add(pl);
   return grp;
+}
+
+// Compact signature of everything that affects GLB board appearance — used to
+// decide when the flight board must be rebuilt after editor changes.
+function boardStyleSig(){
+  const c=STATE.boardConfig;
+  return (c.template||'procedural')+'|'+(c.zoneDeck||'')+'|'+(c.zoneDart||'')+'|'+(c.zoneOrn||'')+'|'+(c.col1||'')+'|'+(c.emit||'')+'|'+(c.glow!=null?c.glow:'')+'|'+(c.metal!=null?c.metal:'')+'|'+JSON.stringify(c.partStyles||{});
+}
+
+// ── Builder UI: one collapsible panel per discovered part ──────
+function renderPartPanels(){
+  const host=$('part-styles');if(!host)return;
+  const tmpl=STATE.boardConfig.template;
+  if(!tmpl||tmpl==='procedural'){host.innerHTML='';return;}
+  const parts=SKYBOARD_PARTS[tmpl];
+  if(!parts||!parts.length){host.innerHTML='<div style="font-size:0.58rem;color:var(--text-dim);padding:6px 0;">Loading skyboard parts…</div>';try{preloadSkyboardTemplates();}catch(e){}return;}
+  const styles=_stylesFor(tmpl);
+  const c=STATE.boardConfig;
+  parts.forEach(p=>{ if(!styles[p])styles[p]=_legacyStyleForPart(p,c); });
+  host.innerHTML=parts.map(p=>{
+    const st=styles[p];
+    const stops=st.stops||['#888888'];
+    const stopInputs=stops.map((s,i)=>`<input type="color" value="${s}" oninput="onPartStop('${p}',${i},this.value)" style="width:30px;height:26px;padding:0;border:1px solid var(--border);background:none;cursor:pointer;">`).join('');
+    return `<div style="border:1px solid var(--border);border-radius:4px;padding:7px 8px;margin:0 0 7px;background:rgba(0,245,255,0.03);">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;">
+        <span style="font-family:var(--font-hud);font-size:0.6rem;letter-spacing:0.12em;color:var(--cyan);text-transform:uppercase;">${p}</span>
+        <label style="font-size:0.55rem;color:var(--text-dim);display:flex;align-items:center;gap:4px;cursor:pointer;">ON <input type="checkbox" ${st.visible!==false?'checked':''} onchange="onPartVisible('${p}',this.checked)"></label>
+      </div>
+      <div style="display:flex;gap:5px;align-items:center;margin-bottom:5px;">
+        <select onchange="onPartMode('${p}',this.value)" style="flex:1;background:#06131f;color:var(--cyan);border:1px solid var(--border);font-family:var(--font-mono);font-size:0.58rem;padding:3px;border-radius:2px;">
+          <option value="solid" ${st.mode==='solid'?'selected':''}>SOLID</option>
+          <option value="linear" ${st.mode==='linear'?'selected':''}>LINEAR GRADIENT</option>
+          <option value="radial" ${st.mode==='radial'?'selected':''}>RADIAL GRADIENT</option>
+        </select>
+        <select onchange="onPartAxis('${p}',this.value)" style="width:52px;background:#06131f;color:var(--cyan);border:1px solid var(--border);font-family:var(--font-mono);font-size:0.58rem;padding:3px;border-radius:2px;${st.mode==='linear'?'':'display:none;'}">
+          <option value="x" ${st.axis==='x'?'selected':''}>X</option>
+          <option value="y" ${st.axis==='y'?'selected':''}>Y</option>
+          <option value="z" ${st.axis==='z'?'selected':''}>Z</option>
+        </select>
+      </div>
+      <div style="display:flex;gap:5px;align-items:center;">
+        ${stopInputs}
+        <button type="button" onclick="onPartAddStop('${p}')" ${stops.length>=3?'disabled':''} style="width:26px;height:26px;background:rgba(0,245,255,0.08);border:1px solid var(--border);color:var(--cyan);cursor:pointer;border-radius:2px;${stops.length>=3?'opacity:0.3;':''}">+</button>
+        <button type="button" onclick="onPartDelStop('${p}')" ${stops.length<=1?'disabled':''} style="width:26px;height:26px;background:rgba(255,60,60,0.08);border:1px solid var(--border);color:#ff6a6a;cursor:pointer;border-radius:2px;${stops.length<=1?'opacity:0.3;':''}">−</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+function _partStyle(p){return _stylesFor(STATE.boardConfig.template)[p];}
+function onPartVisible(p,v){const st=_partStyle(p);if(!st)return;st.visible=v;if(p.toLowerCase().includes('staff'))STATE.boardConfig.showStaff=v;rb();}
+function onPartMode(p,m){const st=_partStyle(p);if(!st)return;st.mode=m;if(m!=='solid'&&(!st.stops||st.stops.length<2)){st.stops=st.stops||['#888888'];st.stops.push('#'+new THREE.Color(st.stops[0]).offsetHSL(0.12,0,0.1).getHexString());}renderPartPanels();rb();}
+function onPartAxis(p,a){const st=_partStyle(p);if(!st)return;st.axis=a;rb();}
+function onPartStop(p,i,v){const st=_partStyle(p);if(!st||!st.stops)return;st.stops[i]=v;rb();}
+function onPartAddStop(p){const st=_partStyle(p);if(!st)return;st.stops=st.stops||['#888888'];if(st.stops.length>=3)return;st.stops.push('#'+new THREE.Color(st.stops[st.stops.length-1]).offsetHSL(0.15,0,0).getHexString());if(st.mode==='solid')st.mode='linear';renderPartPanels();rb();}
+function onPartDelStop(p){const st=_partStyle(p);if(!st||!st.stops||st.stops.length<=1)return;st.stops.pop();if(st.stops.length===1)st.mode='solid';renderPartPanels();rb();}
+
+// AUTO COLOR — golden-ratio hue walk across all parts; a fresh harmonious
+// scheme (colors, gradient modes, axes, stop counts) every press.
+function autoColorBoard(){
+  const tmpl=STATE.boardConfig.template;
+  if(!tmpl||tmpl==='procedural'){toast('Auto color works on Skyboard A / B templates');return;}
+  const parts=SKYBOARD_PARTS[tmpl];
+  if(!parts||!parts.length){toast('Skyboard still loading…');try{preloadSkyboardTemplates();}catch(e){}return;}
+  const styles=_stylesFor(tmpl);
+  const baseH=Math.random();
+  parts.forEach((p,i)=>{
+    const h=(baseH+i*0.618034)%1;
+    const n=1+Math.floor(Math.random()*3); // 1–3 stops
+    const stops=[];
+    for(let s=0;s<n;s++){
+      const hh=((h+(s-(n-1)/2)*0.09)%1+1)%1;
+      stops.push('#'+new THREE.Color().setHSL(hh,0.55+Math.random()*0.4,0.32+Math.random()*0.36).getHexString());
+    }
+    const prevVis=styles[p]?styles[p].visible!==false:true;
+    styles[p]={visible:prevVis,mode:n===1?'solid':(Math.random()<0.35?'radial':'linear'),axis:['x','y','z'][Math.floor(Math.random()*3)],stops};
+  });
+  renderPartPanels();rb();
+  toast('🎨 New color scheme applied — press again for another');
 }
 
 // Builds the skyboard mesh (the same craft used everywhere — space flight AND
@@ -3357,7 +3573,7 @@ function buildBoardMesh(){
 function buildFlightBoard(){
   boardFlight=buildBoardMesh();
   const c=STATE.boardConfig;
-  _builtBoardTemplate=(c.template||'procedural')+'|'+(c.zoneDeck||'')+'|'+(c.zoneDart||'')+'|'+(c.zoneOrn||'')+'|'+(c.col1||'')+'|'+(c.emit||'');
+  _builtBoardTemplate=boardStyleSig();
   // ── FOLLOW-CAM MODEL: the board is a WORLD entity that flies through space;
   // the camera trails behind and above it (drone/follow style) so you actually
   // SEE the board out in front of you — the whole point of the game. The board
