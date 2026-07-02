@@ -1862,11 +1862,34 @@ function initStartBtnTurntable(){
     sgModel=gltf.scene;
 
     // Use the lighting rig authored in the GLB itself (KHR_lights_punctual,
-    // parsed natively by GLTFLoader) — do NOT add our own lights on top.
+    // parsed natively by GLTFLoader). The 4 baked lights carry the exact
+    // colors from the Nomad Sculpt scene (warm-red, magenta, blue, gold) —
+    // that part was always correct. What was actually dim: Nomad exports its
+    // internal light "power" straight into the glTF intensity field, and
+    // those raw values (~0.03–0.54) are 10-20x too small for how three.js's
+    // default (non-physical) light scale expects intensity to be specified —
+    // a normal "bright" accent light there is usually ~1-4. The old fallback
+    // rig below (HemisphereLight/DirectionalLight at 2.0/1.8) never actually
+    // ran, because it's gated behind "no lights found in the file" — this
+    // file DOES have 4 lights, so editing those two numbers in the code had
+    // zero visible effect. Boosting the real baked lights is what's needed.
+    const BAKED_LIGHT_BOOST = 9;
     let bakedLightCount=0;
-    sgModel.traverse(o=>{ if(o.isLight) bakedLightCount++; });
+    sgModel.traverse(o=>{
+      if(o.isLight){
+        bakedLightCount++;
+        o.intensity *= BAKED_LIGHT_BOOST;
+        o.castShadow = false; // decorative menu icon — skip shadow cost
+      }
+    });
 
-    // Only add a minimal safety fallback if the file truly has no lights.
+    if(bakedLightCount>0){
+      // Gentle neutral fill so the rotating model never shows a fully black
+      // face in between the colored accent lights sweeping past it.
+      sgScene.add(new THREE.HemisphereLight(0xbcd2ff,0x1a1220,0.55));
+    }
+
+    // Only add a full studio 3-point rig if the GLB truly has no lights.
     if(bakedLightCount===0){
       sgScene.add(new THREE.HemisphereLight(0xaab4ff,0x2a1a10,2.0));
       const key=new THREE.DirectionalLight(0xffffff,1.8);
