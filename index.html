@@ -599,7 +599,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js";
 
   const firebaseConfig = {
-    apiKey: "AIzaSyBxsQrX1SkEkpbq7NzgDkVHoZWOOruz6UM",
+    apiKey: "void",
     authDomain: "dart-meadow-gamedev.firebaseapp.com",
     projectId: "dart-meadow-gamedev",
     storageBucket: "dart-meadow-gamedev.firebasestorage.app",
@@ -656,7 +656,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   <div id="ls-sub">Journey of the Skyboard</div>
   <div id="ls-bar-wrap"><div id="ls-bar"></div></div>
   <div id="ls-status">Initializing stellar cartography...</div>
-  <button id="ls-enter" onclick="enterApp()">LAUNCH SEQUENCE ⟶</button>
+  <button id="ls-enter" onclick="enterApp()">SEQUENCE DART ⟶</button>
 </div>
 
 <!-- GRAPHICS PRESET SELECTION (first launch / on request) -->
@@ -713,7 +713,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     <button class="menu-btn gold" id="resume-btn" onclick="launchFlight()" style="display:none;">▶ RESUME GAME</button>
     <button id="start-game-btn" onclick="startGame()" title="Start Game">
       <div class="sg-loading" id="sg-loading">LOADING…</div>
-      <span class="sg-hint">TAP TO LAUNCH</span>
+      <span class="sg-hint">DART</span>
     </button>
     <div class="menu-row">
       <button class="menu-btn" onclick="goScreen('builder')">⚡ BUILD SKYBOARD</button>
@@ -787,7 +787,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   <div id="builder-sidebar">
     <div id="builder-header">
       <div class="bh-title">SKYBOARD FORGE</div>
-      <div class="bh-sub">Design your zero-gravity craft · DART energy ring systems</div>
+      <div class="bh-sub">Design your Skyboard · DART energy ring systems</div>
     </div>
     <div id="builder-tabs">
       <button class="btab active" onclick="switchBTab('shape')">SHAPE</button>
@@ -1868,8 +1868,8 @@ function initStartBtnTurntable(){
 
     // Only add a minimal safety fallback if the file truly has no lights.
     if(bakedLightCount===0){
-      sgScene.add(new THREE.HemisphereLight(0xaab4ff,0x2a1a10,0.9));
-      const key=new THREE.DirectionalLight(0xffffff,0.8);
+      sgScene.add(new THREE.HemisphereLight(0xaab4ff,0x2a1a10,2.0));
+      const key=new THREE.DirectionalLight(0xffffff,1.8);
       key.position.set(0.6,1,1.2);
       sgScene.add(key);
     }
