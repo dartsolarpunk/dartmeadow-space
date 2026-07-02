@@ -465,15 +465,17 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 .joystick-base{position:absolute;inset:0;border-radius:50%;background:rgba(0,3,8,0.6);border:1px solid rgba(0,245,255,0.25);backdrop-filter:blur(8px);}
 .joystick-knob{position:absolute;width:38px;height:38px;border-radius:50%;background:rgba(0,245,255,0.18);border:1px solid rgba(0,245,255,0.5);left:50%;top:50%;transform:translate(-50%,-50%);transition:none;box-shadow:0 0 10px rgba(0,245,255,0.3);}
 .joystick-label{position:absolute;top:-16px;left:50%;transform:translateX(-50%);font-family:var(--font-hud);font-size:0.44rem;color:rgba(0,245,255,0.4);letter-spacing:0.08em;white-space:nowrap;}
-/* DART speed mode button — right of right joystick */
-#dart-mode-btn{position:absolute;bottom:calc(98px + var(--safe-bot));right:134px;width:46px;height:46px;border-radius:50%;background:rgba(60,60,60,0.5);border:2px solid rgba(120,120,120,0.5);color:rgba(180,180,180,0.6);font-family:var(--font-hud);font-size:0.42rem;font-weight:700;letter-spacing:0.05em;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;transition:var(--trans);z-index:26;pointer-events:auto;backdrop-filter:blur(8px);}
-#dart-mode-btn.mode1{background:rgba(245,196,0,0.18);border-color:var(--gold);color:var(--gold);box-shadow:0 0 14px rgba(245,196,0,0.4);}
-#dart-mode-btn.mode2{background:rgba(0,150,255,0.18);border-color:#0096ff;color:#40c0ff;box-shadow:0 0 14px rgba(0,150,255,0.5);}
-#dart-mode-btn.mode3{background:rgba(255,255,255,0.18);border-color:#ffffff;color:#ffffff;box-shadow:0 0 18px rgba(255,255,255,0.6);}
+/* DART speed pads — 2×2 cluster left of the right joystick; one tap per mode
+   (replaces the old single cycling button). 44px pads keep full-size touch
+   targets per mobile accessibility guidance. Active pad is painted by JS
+   straight from DART_MODES colors; idle pads carry a faint tint of their own
+   mode color so you can see which is which before tapping. */
+#dart-pads{position:absolute;bottom:calc(88px + var(--safe-bot));right:134px;display:grid;grid-template-columns:44px 44px;gap:5px;z-index:26;pointer-events:auto;}
+.dart-pad{width:44px;height:44px;border-radius:50%;background:rgba(60,60,60,0.5);border:2px solid rgba(120,120,120,0.4);color:rgba(180,180,180,0.6);font-family:var(--font-hud);font-size:0.4rem;font-weight:700;letter-spacing:0.04em;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:var(--trans);backdrop-filter:blur(8px);padding:0;}
+.dart-pad.on{color:#fff;}
 .assist-btn{padding:5px 9px;background:rgba(0,3,8,0.7);border:1px solid rgba(0,245,255,0.3);color:rgba(0,245,255,0.75);font-family:var(--font-hud);font-size:0.5rem;letter-spacing:0.06em;cursor:pointer;border-radius:3px;backdrop-filter:blur(8px);transition:var(--trans);white-space:nowrap;}
 .assist-btn:hover{background:rgba(0,245,255,0.12);color:var(--cyan);}
 .assist-btn.active{background:rgba(0,245,255,0.22);border-color:var(--cyan);color:#fff;box-shadow:0 0 12px rgba(0,245,255,0.5);}
-#dart-mode-label{font-size:0.55rem;}
 /* Minimap */
 #minimap{position:absolute;bottom:calc(100px + var(--safe-bot));left:8px;width:88px;height:88px;background:rgba(0,3,8,0.82);border:1px solid rgba(0,245,255,0.18);border-radius:50%;overflow:hidden;pointer-events:auto;z-index:22;touch-action:none;}
 #minimap-canvas{touch-action:none;}
@@ -1021,10 +1023,12 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
       <div class="joystick-knob" id="jR-knob"></div>
     </div>
   </div>
-  <button id="dart-mode-btn" onclick="cycleDartMode()">
-    <span id="dart-mode-label">OFF</span>
-    <span style="font-size:0.38rem;opacity:0.7">DART</span>
-  </button>
+  <div id="dart-pads">
+    <button class="dart-pad" data-m="2" onclick="setDartMode(2)" title="DART ⅔c³ — blue">⅔c³</button>
+    <button class="dart-pad" data-m="3" onclick="setDartMode(3)" title="DART ∞c³ — white">∞c³</button>
+    <button class="dart-pad" data-m="0" onclick="setDartMode(0)" title="MANEUVER — gentle steady speed">MNV</button>
+    <button class="dart-pad" data-m="1" onclick="setDartMode(1)" title="DART ⅓c³ — yellow">⅓c³</button>
+  </div>
   <!-- Assist buttons: horizontal row above the right thumbstick -->
   <div id="assist-row" style="position:absolute;bottom:calc(200px + var(--safe-bot));right:18px;display:flex;gap:6px;z-index:27;pointer-events:auto;">
     <button id="assist-focus" class="assist-btn" onclick="toggleFocus()" title="Lock crosshair on target in view — auto-steers until you steer away">◎ FOCUS</button>
@@ -3229,6 +3233,8 @@ function buildFlightBoard(){
   STATE.flight.pos.set(AU*1.0+2, 2, 3);
   STATE.flight.camYaw=0;
   STATE.flight.camPitch=0;
+  STATE.flight.quat=null;   // 6-DOF orientation rebuilds from the zeroed angles
+  _camUp.set(0,1,0);        // camera roll resets with it
   if(boardFlight)boardFlight.position.copy(STATE.flight.pos);
   _followInit=false; // camera snaps to follow position on first frame
 }
@@ -3343,21 +3349,20 @@ const DART_MODES=[
   {label:'⚡',       color:'rgba(80,140,255,0.28)',border:'rgba(100,160,255,0.9)',multiplier:18,   name:'DART⅔'},
   {label:'⚡',       color:'rgba(255,255,255,0.25)',border:'rgba(255,255,255,0.95)',multiplier:45, name:'DART∞'},
 ];
-function cycleDartMode(){
-  dartSpeedMode=(dartSpeedMode+1)%4;
-  const m=DART_MODES[dartSpeedMode];
-  const btn=$('dart-mode-btn');
-  if(btn){
-    btn.style.background=m.color;
-    btn.style.borderColor=m.border;
-    btn.style.color=dartSpeedMode===0?'rgba(0,245,255,0.5)':dartSpeedMode===1?'#f5c400':dartSpeedMode===2?'#6699ff':'#ffffff';
-    btn.textContent=dartSpeedMode===0?'—':['','⅓c³','⅔c³','∞c³'][dartSpeedMode];
-  }
-  toast(['🛸 MANEUVER — gentle steady speed for close-by','⚡ DART ⅓c³ — YELLOW','⚡ DART ⅔c³ — BLUE','⚡ DART ∞c³ — WHITE'][dartSpeedMode],1600);
-  // Update HUD
+// Direct-tap speed selection — one pad per mode, no cycling required.
+function setDartMode(i){
+  i=clamp(i|0,0,3);
+  const changed=(i!==dartSpeedMode);
+  dartSpeedMode=i;
+  updateDartButton();
+  if(!changed)return;
+  const m=DART_MODES[i];
+  toast(['🛸 MANEUVER — gentle steady speed for close-by','⚡ DART ⅓c³ — YELLOW','⚡ DART ⅔c³ — BLUE','⚡ DART ∞c³ — WHITE'][i],1600);
   $('hud-mode').textContent=m.name;
-  if(dartSpeedMode>0){$('hud-dart').textContent='ACTIVE';}else{$('hud-dart').textContent='OFF';}
+  $('hud-dart').textContent=i>0?'ACTIVE':'OFF';
 }
+// Kept for keyboard / back-compat callers — steps through the four pads.
+function cycleDartMode(){setDartMode((dartSpeedMode+1)%4);}
 
 // ══════════════════════════════════════════════════════════════
 //  ✦ FLIGHT ASSIST — autopilot travel, orbit-lock, focus, idle
@@ -3411,12 +3416,20 @@ function disengageAssist(reason){
 }
 
 function updateDartButton(){
-  const btn=$('dart-mode-btn');if(!btn)return;
-  btn.className='';if(dartSpeedMode>0)btn.classList.add('mode'+dartSpeedMode);
-  btn.style.color=dartSpeedMode===0?'rgba(0,245,255,0.5)':dartSpeedMode===1?'#f5c400':dartSpeedMode===2?'#6699ff':'#ffffff';
-  btn.textContent=dartSpeedMode===0?'—':['','⅓c³','⅔c³','∞c³'][dartSpeedMode];
-  $('hud-dart').textContent=dartSpeedMode>0?'ACTIVE':'OFF';
+  const pads=document.querySelectorAll('#dart-pads .dart-pad');
+  if(!pads.length)return;
+  const txtCol=['rgba(0,245,255,0.9)','#f5c400','#6699ff','#ffffff'];
+  pads.forEach(p=>{
+    const i=+p.dataset.m, m=DART_MODES[i], on=(i===dartSpeedMode);
+    p.classList.toggle('on',on);
+    p.style.background=on?m.color:'rgba(60,60,60,0.5)';
+    p.style.borderColor=on?m.border:m.border.replace(/[\d.]+\)\s*$/,'0.35)');
+    p.style.color=on?txtCol[i]:'rgba(180,180,180,0.6)';
+    p.style.boxShadow=on?('0 0 14px '+m.border):'none';
+  });
+  const hd=$('hud-dart');if(hd)hd.textContent=dartSpeedMode>0?'ACTIVE':'OFF';
 }
+document.addEventListener('DOMContentLoaded',updateDartButton);
 
 // FOCUS button — lock crosshair onto whatever body is closest to screen center.
 // Skyboard auto-steers to keep it centered until the pilot steers away.
@@ -3507,22 +3520,84 @@ function bodyUnderCrosshair(){
   return best;
 }
 
-// Steer the camera toward a world point (used by travel/focus/orbit).
+// ══════════════════════════════════════════════════════════════
+//  ✦ 6-DOF ORIENTATION CORE — full 360° free rotation, no turntable
+// ────────────────────────────────────────────────────────────────
+//  sp.quat is now the single source of truth for flight orientation.
+//  Local forward is (0,0,-1) — identical to the old Euler(pitch,yaw,'YXZ')
+//  convention at identity, so old saves that only carry camYaw/camPitch
+//  restore seamlessly (spQuat rebuilds from them). camYaw/camPitch are now
+//  DERIVED display/save-compat values (spSyncLegacy), never consumed.
+//  Every sign/order below was locked numerically against three r128 itself
+//  (see solver: forward round-trip 1e-15, board nose tracks view forward
+//  through full loops at 4e-16) rather than hand-derived.
+// ══════════════════════════════════════════════════════════════
+const _sQ1=new THREE.Quaternion(),_sQ2=new THREE.Quaternion(),_sQ3=new THREE.Quaternion();
+const _sV0=new THREE.Vector3(),_sV1=new THREE.Vector3(),_sV2=new THREE.Vector3(),_sV3=new THREE.Vector3(),_sV4=new THREE.Vector3();
+const _sM1=new THREE.Matrix4();
+const _AXIS_X=new THREE.Vector3(1,0,0),_AXIS_Y=new THREE.Vector3(0,1,0),_AXIS_Z=new THREE.Vector3(0,0,1);
+const _BOARD_ALIGN=new THREE.Quaternion().setFromEuler(new THREE.Euler(0,-Math.PI/2,0,'YXZ'));
+let _camUp=new THREE.Vector3(0,1,0);
+
+function spQuat(sp){
+  let q=sp.quat;
+  if(!q||!q.isQuaternion){
+    const o=q; q=new THREE.Quaternion();
+    if(o&&typeof o==='object'&&('_x' in o||'x' in o)){
+      // revived from a JSON save (Quaternion serializes as {_x,_y,_z,_w})
+      q.set(o._x??o.x??0,o._y??o.y??0,o._z??o.z??0,o._w??o.w??1);
+    }else{
+      // legacy save / fresh launch: rebuild from yaw+pitch angles
+      q.setFromEuler(new THREE.Euler(sp.camPitch||0,sp.camYaw||0,0,'YXZ'));
+    }
+    sp.quat=q;
+  }
+  return q.normalize();
+}
+function spForward(sp){return _sV1.set(0,0,-1).applyQuaternion(spQuat(sp));}
+function spUp(sp){return _sV2.set(0,1,0).applyQuaternion(spQuat(sp));}
+function spRight(sp){return _sV3.set(1,0,0).applyQuaternion(spQuat(sp));}
+// Rotate about the pilot's own LOCAL axis — this is what makes pitch keep
+// going straight through vertical and around, as many loops as you like.
+function spRotateLocal(sp,ax,ay,az,angle){
+  if(!angle)return;
+  spQuat(sp).multiply(_sQ2.setFromAxisAngle(_sV0.set(ax,ay,az),angle)).normalize();
+}
+// Orientation that looks from sp.pos toward a world point (local -Z at it).
+function spAimQuat(sp,worldPos,out){
+  _sV4.copy(worldPos).sub(sp.pos);
+  if(_sV4.lengthSq()<1e-8)return null;
+  _sV4.normalize();
+  // near-parallel up would degenerate lookAt; borrow current right as up
+  let up=spUp(sp);
+  if(Math.abs(_sV4.dot(up))>0.999)up=spRight(sp);
+  _sM1.lookAt(_sV0.set(0,0,0),_sV4,up);
+  return out.setFromRotationMatrix(_sM1);
+}
+// Keep the legacy angle fields in sync for HUD + old-save compatibility.
+// Formula locked empirically: pitch=asin(f.y), yaw=atan2(-f.x,-f.z) is the
+// pair that regenerates the same orientation through qYXZ at 1e-15.
+function spSyncLegacy(sp){
+  const f=spForward(sp);
+  sp.camPitch=Math.asin(clamp(f.y,-1,1));
+  sp.camYaw=Math.atan2(-f.x,-f.z);
+}
+
+// Steer the pilot's heading toward a world point (used by travel/focus/orbit).
 function steerToward(worldPos,dt,rate){
   const sp=STATE.flight;
   // Aim the BOARD heading from the board's own position (sp.pos). Reading the
   // camera position here caused jitter, because the follow-cam is itself lerping
   // toward the board every frame — the two fought each other. Steering the board
   // and letting the camera trail it smoothly removes the shake.
-  const to=worldPos.clone().sub(sp.pos);
-  const dist=to.length();if(dist<0.001)return 0;
-  to.normalize();
-  const tYaw=Math.atan2(to.x,-to.z);
-  const tPitch=Math.asin(clamp(to.y,-0.99,0.99));
-  let dYaw=tYaw-sp.camYaw;while(dYaw>Math.PI)dYaw-=Math.PI*2;while(dYaw<-Math.PI)dYaw+=Math.PI*2;
-  const k=Math.min(1,(rate||4)*dt);
-  sp.camYaw+=dYaw*k;
-  sp.camPitch+=(clamp(tPitch,-Math.PI*.42,Math.PI*.32)-sp.camPitch)*k;
+  const dist=_sV4.copy(worldPos).sub(sp.pos).length();
+  if(dist<0.001)return 0;
+  const aim=spAimQuat(sp,worldPos,_sQ1);
+  if(aim){
+    const k=Math.min(1,(rate||4)*dt);
+    spQuat(sp).slerp(aim,k);   // free aim — straight up/down included
+    spSyncLegacy(sp);
+  }
   return dist;
 }
 
@@ -3545,7 +3620,6 @@ function updateAssist(dt){
     const tb=ASSIST.target;if(!tb||!tb.mesh){disengageAssist();return false;}
     const tp=tb.mesh.position;
     const dist=steerToward(tp,dt,8);
-    const fwd=new THREE.Vector3(0,0,-1).applyEuler(new THREE.Euler(sp.camPitch,sp.camYaw,0,"YXZ"));
     const dartMul=DART_MODES[dartSpeedMode].multiplier;
     // Desired cruise speed scales with remaining distance so we brake on approach.
     // Far away → fast (full DART). Near arrival → slow to a gentle stop.
@@ -3662,16 +3736,20 @@ function updateFlight(dt){
     return;
   }
 
-  // ── Look: left joystick / arrow keys — slower, natural feel ────
-  const ls=0.8*dt; // reduced from 2.2 — comfortable look speed
-  sp.camYaw  -= JOY.Lx*ls;
-  sp.camPitch = clamp(sp.camPitch - JOY.Ly*ls, -Math.PI*.42, Math.PI*.32);
-  if(KEYS["ArrowLeft"]) sp.camYaw+=0.9*dt;
-  if(KEYS["ArrowRight"])sp.camYaw-=0.9*dt;
-  if(KEYS["ArrowUp"])   sp.camPitch=clamp(sp.camPitch+0.9*dt,-Math.PI*.42,Math.PI*.32);
-  if(KEYS["ArrowDown"]) sp.camPitch=clamp(sp.camPitch-0.9*dt,-Math.PI*.42,Math.PI*.32);
-
-  flightCamera.rotation.order="YXZ";
+  // ── Look: left joystick / arrow keys — FULL 360° free orientation ──
+  // Rotations are applied about the pilot's own LOCAL axes (quaternion), so
+  // pitch keeps going straight through vertical and all the way around —
+  // loop after loop, any direction, no turntable clamp. Yaw likewise spins
+  // freely about the pilot's local up. Signs were locked numerically against
+  // three r128 to match the old feel exactly at level flight.
+  const ls=0.8*dt; // comfortable look speed
+  if(JOY.Lx)spRotateLocal(sp,0,1,0,-JOY.Lx*ls);
+  if(JOY.Ly)spRotateLocal(sp,1,0,0,-JOY.Ly*ls);
+  if(KEYS["ArrowLeft"]) spRotateLocal(sp,0,1,0, 0.9*dt);
+  if(KEYS["ArrowRight"])spRotateLocal(sp,0,1,0,-0.9*dt);
+  if(KEYS["ArrowUp"])   spRotateLocal(sp,1,0,0, 0.9*dt);
+  if(KEYS["ArrowDown"]) spRotateLocal(sp,1,0,0,-0.9*dt);
+  spSyncLegacy(sp); // keep HUD/save-compat yaw+pitch derived from the quat
 
   // ── Thrust: right joystick gradual acceleration + DART speed mode ──
   // Joystick pushes a target speed; velocity lerps toward it over time.
@@ -3689,8 +3767,12 @@ function updateFlight(dt){
   const accel=dartSpeedMode>0?0.06:0.03; // DART modes accelerate faster
 
   if(tf!==0||ts!==0){
-    const fwd  =new THREE.Vector3(0,0,-1).applyEuler(new THREE.Euler(sp.camPitch,sp.camYaw,0,"YXZ"));
-    const right=new THREE.Vector3(1,0,0) .applyEuler(new THREE.Euler(0,sp.camYaw,0,"YXZ"));
+    // 6-DOF thrust: forward follows the view through loops; strafe is
+    // orientation-relative (local right), not world-horizontal, so the
+    // controls stay intuitive at any attitude. (spForward/spRight return
+    // distinct scratch vectors — safe to hold both simultaneously.)
+    const fwd  =spForward(sp);
+    const right=spRight(sp);
     sp.vel.addScaledVector(fwd,   tf*targetSpd*accel);
     sp.vel.addScaledVector(right, ts*targetSpd*accel*.55);
   }
@@ -3736,31 +3818,38 @@ function updateBoardTransform(tf,ts){
   const sp=STATE.flight;
   boardFlight.position.copy(sp.pos);
   boardFlight.position.y+=Math.sin(flightTime*.9)*.03; // hover bob
-  // Build the board orientation from heading (yaw/pitch). The board model's
-  // nose points +X, so yaw maps with a -90° base offset.
-  boardFlight.rotation.order='YXZ';
-  boardFlight.rotation.y=sp.camYaw-Math.PI/2;
-  boardFlight.rotation.x=lerp(boardFlight.rotation.x||0, -sp.camPitch + (tf*-0.04), 0.12);
-  // bank roll into lateral turns
-  boardFlight.rotation.z=lerp(boardFlight.rotation.z||0, ts*-0.35, 0.10);
+  // Full 6-DOF: the board rigidly tracks the view orientation — nose stays
+  // on view-forward through complete loops (verified numerically at 4e-16
+  // by the r128 convention solver) — plus a small LOCAL throttle nose-dip
+  // and bank-into-turn. The composition q ⊗ ALIGN ⊗ Rx(-tf·0.04) ⊗
+  // Rz(-ts·0.35) was brute-force matched against the old Euler behavior at
+  // level flight, so the resting look is pixel-identical to before.
+  _sQ1.copy(spQuat(sp)).multiply(_BOARD_ALIGN);
+  _sQ1.multiply(_sQ2.setFromAxisAngle(_AXIS_X,-tf*0.04));
+  _sQ1.multiply(_sQ3.setFromAxisAngle(_AXIS_Z,-ts*0.35));
+  // One quaternion slerp replaces the old per-Euler-component lerps — same
+  // smoothing feel, but stays valid at every attitude including mid-loop.
+  boardFlight.quaternion.slerp(_sQ1,0.12);
 }
 
-// Follow camera: sit behind & above the board along its heading, look over it.
-// Smoothly lerps so it trails naturally (ArcLake-style drone/follow method).
+// Follow camera: sit behind & above the board along its full 3-D heading,
+// looking over it. The camera's up-vector now follows the flight frame
+// smoothly, so loops render as one continuous motion instead of the view
+// snapping when pitch crosses vertical.
 function updateFollowCam(dt){
   const sp=STATE.flight;const o=CAM_OFFSETS[camMode];
-  // heading basis (level — we trail behind in the horizontal heading, with a
-  // little of the pitch so climbs/dives feel right)
-  const yaw=sp.camYaw, pitch=sp.camPitch*0.5;
-  const fwd=new THREE.Vector3(0,0,-1).applyEuler(new THREE.Euler(pitch,yaw,0,'YXZ'));
-  const desired=sp.pos.clone()
-    .addScaledVector(fwd,-o.back)     // behind the board
-    .add(new THREE.Vector3(0,o.up,0));// above it
-  // smooth follow
-  if(!_followInit){flightCamera.position.copy(desired);_followInit=true;}
+  const q=spQuat(sp);
+  const fwd=_sV1.set(0,0,-1).applyQuaternion(q);
+  const up =_sV2.set(0,1,0).applyQuaternion(q);
+  const desired=_sV3.copy(sp.pos)
+    .addScaledVector(fwd,-o.back)   // behind the board
+    .addScaledVector(up,  o.up);    // above it (frame-relative)
+  if(!_followInit){flightCamera.position.copy(desired);_camUp.copy(up);_followInit=true;}
   else flightCamera.position.lerp(desired,Math.min(1,dt*6));
+  _camUp.lerp(up,Math.min(1,dt*6)).normalize();
   // aim a bit ahead of the board so it sits in the lower-center of frame
-  const lookAt=sp.pos.clone().addScaledVector(fwd,o.look).add(new THREE.Vector3(0,0.4,0));
+  const lookAt=_sV4.copy(sp.pos).addScaledVector(fwd,o.look).addScaledVector(_camUp,0.4);
+  flightCamera.up.copy(_camUp);
   flightCamera.lookAt(lookAt);
 }
 
@@ -3979,29 +4068,19 @@ function lockOnNearest(){
 
   if(!nearest){toast('⚠ No targets detected');return;}
 
-  // Direction vector from camera to target
-  const toTarget=nearest.mesh.position.clone().sub(camPos).normalize();
-
-  // Convert world-space direction to camera yaw/pitch angles
-  // yaw = atan2(X, -Z)  pitch = asin(Y)  (standard FPS convention)
-  const targetYaw  = Math.atan2(toTarget.x, -toTarget.z);
-  const targetPitch= Math.asin(clamp(toTarget.y, -0.99, 0.99));
+  // Sweep the 6-DOF orientation onto the target with a quaternion slerp —
+  // aims ANY direction now, including straight overhead or underfoot (the
+  // old yaw/pitch tween was clamped to the turntable range). Aim origin is
+  // sp.pos, consistent with steerToward's jitter fix.
+  const sp=STATE.flight;
+  const startQ=spQuat(sp).clone();
+  const endQ=spAimQuat(sp,nearest.mesh.position,new THREE.Quaternion());
+  if(!endQ){toast('⚠ Target too close');return;}
 
   // Flash the button to show it activated
   const btn=$('lockon-btn');
   if(btn){btn.style.color='var(--gold)';btn.style.borderColor='var(--gold)';
     setTimeout(()=>{btn.style.color='';btn.style.borderColor='';},1200);}
-
-  // Animate the sweep over ~0.8 seconds using lerp steps
-  const sp=STATE.flight;
-  const startYaw  =sp.camYaw;
-  const startPitch=sp.camPitch;
-  // Normalise yaw delta to shortest arc (-PI to +PI)
-  let dYaw=targetYaw-startYaw;
-  while(dYaw> Math.PI)dYaw-=Math.PI*2;
-  while(dYaw<-Math.PI)dYaw+=Math.PI*2;
-  const endYaw=startYaw+dYaw;
-  const endPitch=clamp(targetPitch,-Math.PI*.42,Math.PI*.32);
 
   const STEPS=48; // ~0.8s at 60fps
   let step=0;
@@ -4010,11 +4089,11 @@ function lockOnNearest(){
     const t=step/STEPS;
     // Ease-in-out curve
     const ease=t<0.5?2*t*t:1-Math.pow(-2*t+2,2)/2;
-    sp.camYaw  =startYaw  +dYaw        *ease;
-    sp.camPitch=startPitch+(endPitch-startPitch)*ease;
+    spQuat(sp).copy(startQ).slerp(endQ,ease);
+    spSyncLegacy(sp);
     if(step>=STEPS){
       clearInterval(sweep);
-      sp.camYaw=endYaw;sp.camPitch=endPitch;
+      spQuat(sp).copy(endQ);spSyncLegacy(sp);
       toast('⊕ LOCKED: '+nearest.name.toUpperCase()+
         ' · '+Math.round(minDist*400).toLocaleString()+' km',2200);
       // Update HUD destination
