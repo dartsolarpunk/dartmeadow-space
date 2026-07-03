@@ -466,11 +466,29 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;background:var(--c0);co
 .aud-btn:hover{background:rgba(0,245,255,0.15);color:var(--cyan);}
 .aud-btn.playing{color:#00ff88;}
 #fs-exit:hover,#fs-enter:hover{opacity:1 !important;background:rgba(0,245,255,0.18) !important;color:var(--cyan) !important;}
+#fs-exit,#fs-enter{opacity:0.78 !important;}
+/* Small square toggle buttons stacked upper-left, matching the fullscreen
+   button's look. fs-exit/fs-enter moved from top:10 to top:35 (25px lower)
+   so they clear the AR-top header title in non-fullscreen mode; the two new
+   buttons stack directly beneath. */
+.hud-toggle-btn{position:absolute;left:10px;width:34px;height:34px;border-radius:8px;background:rgba(4,10,22,0.55);border:1px solid rgba(0,245,255,0.3);color:rgba(0,245,255,0.85);font-size:0.85rem;cursor:pointer;backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;transition:opacity .2s,background .2s;opacity:0.78;z-index:31;}
+.hud-toggle-btn:hover,.hud-toggle-btn.active{opacity:1;background:rgba(0,245,255,0.18);border-color:var(--cyan);}
+#logs-toggle-btn{top:79px;}
+#qt-toggle-btn{top:123px;}
+/* HUD readout panels — now toggled by the LOGS button instead of always-on */
+#ar-left,#ar-right{display:none;}
+#ar-left.open,#ar-right.open{display:flex;}
+/* Quick-travel: was a permanent footer bar; now a toggled overlay panel
+   with a click-outside-to-close backdrop, freeing the 3D viewport's
+   bottom edge (the canvas is already full-bleed, so nothing to reflow). */
+#qt-backdrop{display:none;position:fixed;inset:0;background:rgba(0,3,8,0.45);z-index:21;}
+#ar-bottom{display:none;}
+#ar-bottom.open{display:flex;}
 /* iPhone immersive fallback: maximize usable area, hide overflow chrome */
 html.immersive,html.immersive body{height:100vh;height:100dvh;overflow:hidden;}
 html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 /* HUD panels */
-#ar-left{position:absolute;left:8px;top:50px;width:180px;display:flex;flex-direction:column;gap:4px;pointer-events:none;z-index:22;}
+#ar-left{position:absolute;left:8px;top:165px;width:180px;display:flex;flex-direction:column;gap:4px;pointer-events:none;z-index:22;}
 #ar-right{position:absolute;right:8px;top:50px;width:175px;display:flex;flex-direction:column;gap:4px;pointer-events:none;z-index:22;}
 .ar-panel{background:rgba(0,3,8,0.72);border:1px solid rgba(0,245,255,0.14);border-radius:3px;padding:7px 9px;backdrop-filter:blur(8px);}
 .ar-panel-title{font-family:var(--font-hud);font-size:0.48rem;font-weight:700;letter-spacing:0.15em;color:rgba(0,245,255,0.5);margin-bottom:4px;text-transform:uppercase;}
@@ -706,10 +724,10 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 </div>
 
 <!-- ⛶ FULLSCREEN exit button — top-left, only while in fullscreen -->
-<button id="fs-exit" onclick="exitFullscreen()" title="Exit fullscreen (Esc or F)" style="display:none;position:fixed;top:10px;left:10px;z-index:9700;width:34px;height:34px;border-radius:8px;background:rgba(4,10,22,0.55);border:1px solid rgba(0,245,255,0.3);color:rgba(0,245,255,0.8);font-size:0.85rem;cursor:pointer;backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;transition:opacity .2s;opacity:0.55;">⤢</button>
+<button id="fs-exit" onclick="exitFullscreen()" title="Exit fullscreen (Esc or F)" style="display:none;position:fixed;top:35px;left:10px;z-index:9700;width:34px;height:34px;border-radius:8px;background:rgba(4,10,22,0.55);border:1px solid rgba(0,245,255,0.3);color:rgba(0,245,255,0.8);font-size:0.85rem;cursor:pointer;backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;transition:opacity .2s;">⤢</button>
 
 <!-- ⛶ Re-enter fullscreen button — shows when not fullscreen on capable devices -->
-<button id="fs-enter" onclick="requestFullscreenNow()" title="Go fullscreen (F)" style="display:none;position:fixed;top:10px;left:10px;z-index:9700;width:34px;height:34px;border-radius:8px;background:rgba(4,10,22,0.55);border:1px solid rgba(0,245,255,0.3);color:rgba(0,245,255,0.8);font-size:0.85rem;cursor:pointer;backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;transition:opacity .2s;opacity:0.55;">⛶</button>
+<button id="fs-enter" onclick="requestFullscreenNow()" title="Go fullscreen (F)" style="display:none;position:fixed;top:35px;left:10px;z-index:9700;width:34px;height:34px;border-radius:8px;background:rgba(4,10,22,0.55);border:1px solid rgba(0,245,255,0.3);color:rgba(0,245,255,0.8);font-size:0.85rem;cursor:pointer;backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;transition:opacity .2s;">⛶</button>
 
 <div id="app">
 <!-- MENU -->
@@ -979,6 +997,13 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <div id="screen-flight" class="screen">
   <div class="ar-corner arc-tl"></div><div class="ar-corner arc-tr"></div>
   <div class="ar-corner arc-bl"></div><div class="ar-corner arc-br"></div>
+  <!-- LOGS toggles the ar-left/ar-right HUD readout panels (previously
+       always-on); QT toggles the quick-travel destination overlay
+       (previously an always-visible footer bar). Both scoped to
+       #screen-flight so they only render during flight. -->
+  <button id="logs-toggle-btn" class="hud-toggle-btn" onclick="toggleHudLogs()" title="Show/hide navigation & status readouts">☰</button>
+  <button id="qt-toggle-btn" class="hud-toggle-btn" onclick="toggleQuickTravel(event)" title="Quick travel">⟶</button>
+  <div id="qt-backdrop" onclick="closeQuickTravel()"></div>
   <div id="ar-top">
     <div class="art-logo">DART MEADOW</div>
     <div class="art-stats">
@@ -2867,10 +2892,34 @@ function buildDestinations(){
   defs.forEach(d=>DESTINATIONS.push(d));
 }
 
+// ── HUD Logs toggle — pops the readout panels (nav/board/nearest-body/
+// flight/staff) on and off instead of always rendering them ──────
+function toggleHudLogs(){
+  const open=!$('ar-left').classList.contains('open');
+  $('ar-left').classList.toggle('open',open);
+  $('ar-right').classList.toggle('open',open);
+  $('logs-toggle-btn').classList.toggle('active',open);
+}
+// ── Quick Travel overlay — was a permanent footer bar; now pops up over
+// a click-outside-to-close backdrop. Canvas is already full-bleed so
+// hiding the footer by default reclaims that space for free. ──────
+function toggleQuickTravel(e){
+  if(e)e.stopPropagation();
+  const open=!$('ar-bottom').classList.contains('open');
+  $('ar-bottom').classList.toggle('open',open);
+  $('qt-backdrop').style.display=open?'block':'none';
+  $('qt-toggle-btn').classList.toggle('active',open);
+}
+function closeQuickTravel(){
+  $('ar-bottom').classList.remove('open');
+  $('qt-backdrop').style.display='none';
+  $('qt-toggle-btn').classList.remove('active');
+}
+
 function buildDestinationUI(){
   const sc=$('dest-scroll');sc.innerHTML='';
   DESTINATIONS.forEach((d,i)=>{const card=document.createElement('div');card.className='dest-card'+(i===0?' active':'');card.innerHTML=`<div class="dest-icon">${d.icon}</div><div class="dest-name">${d.name}</div><div class="dest-dist">${d.dist}</div><div class="dest-type">${d.type}</div>`;
-    card.onclick=()=>{document.querySelectorAll('.dest-card').forEach((c,ci)=>c.classList.toggle('active',ci===i));STATE.flight.destIdx=i;$('hud-dest').textContent=d.name;plotCourse(i);};sc.appendChild(card);});
+    card.onclick=()=>{document.querySelectorAll('.dest-card').forEach((c,ci)=>c.classList.toggle('active',ci===i));STATE.flight.destIdx=i;$('hud-dest').textContent=d.name;plotCourse(i);closeQuickTravel();};sc.appendChild(card);});
 }
 
 function initFlightScene(){
