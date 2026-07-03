@@ -50,7 +50,20 @@
     setSafeBot();
   }
   setH();
-  window.addEventListener('resize',setH);
+  // Debounced — was a bare window.addEventListener('resize',setH), firing
+  // setH() (which writes --safe-bot, a root CSS custom property referenced
+  // by every touch-control element's `bottom:calc(...+var(--safe-bot))`) on
+  // EVERY raw resize event with zero throttle. Android Chrome's dynamic
+  // toolbar is well known to fire 'resize' repeatedly/rapidly (far more
+  // than iOS Safari, which keeps the viewport comparatively stable) — this
+  // is the same class of bug already fixed once in the flight loop's own
+  // resize handling (_queueFlightResize), just an earlier, separate
+  // instance that predates the game logic entirely. A 100ms debounce here
+  // costs nothing visually (safe-area/viewport changes aren't visually
+  // time-critical) and removes an undebounced style-recalc source that
+  // could fire many times per second on Android.
+  var _setHDebounce=null;
+  window.addEventListener('resize',function(){clearTimeout(_setHDebounce);_setHDebounce=setTimeout(setH,100);});
   window.addEventListener('orientationchange',function(){setH();setTimeout(setH,200);setTimeout(setH,600);});
   window.addEventListener('load',function(){setH();setTimeout(setH,200);setTimeout(setH,600);});
   document.addEventListener('visibilitychange',function(){if(!document.hidden)setTimeout(setH,150);});
@@ -2022,12 +2035,16 @@ function initStartBtnTurntable(){
     host.innerHTML='<span style="font-family:var(--font-hud);font-weight:700;letter-spacing:0.16em;color:var(--gold);">▶ START GAME</span>';
   });
 
+  var _sgResizeT=null;
   window.addEventListener('resize',()=>{
-    if(!sgRenderer||!host)return;
-    const nw=host.clientWidth||140, nh=host.clientHeight||140;
-    sgRenderer.setSize(nw,nh);
-    sgCamera.aspect=nw/nh;
-    sgCamera.updateProjectionMatrix();
+    clearTimeout(_sgResizeT);
+    _sgResizeT=setTimeout(()=>{
+      if(!sgRenderer||!host)return;
+      const nw=host.clientWidth||140, nh=host.clientHeight||140;
+      sgRenderer.setSize(nw,nh);
+      sgCamera.aspect=nw/nh;
+      sgCamera.updateProjectionMatrix();
+    },100);
   });
 }
 
@@ -5673,7 +5690,8 @@ function applySettings(){
   toast(needsRebuild?'✅ Settings applied — re-enter flight for shadows/quality':'✅ Settings applied');
 }
 
-window.addEventListener('resize',()=>{if(menuAnim){const c=$('menu-bg-canvas');c.width=innerWidth;c.height=innerHeight;}});
+let _menuBgResizeT=null;
+window.addEventListener('resize',()=>{clearTimeout(_menuBgResizeT);_menuBgResizeT=setTimeout(()=>{if(menuAnim){const c=$('menu-bg-canvas');c.width=innerWidth;c.height=innerHeight;}},100);});
 
 // ══════════════════════════════════════════════════════════════
 //  ✦ FEEDBACK — feeds the same admin console as the Autumn web app
