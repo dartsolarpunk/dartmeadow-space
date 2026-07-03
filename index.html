@@ -4870,6 +4870,15 @@ function buildGalaxyTiers(fid){
   buildIntergalactic(ig,fid);
   const sn=new THREE.Group();gmTierGroups.stellar=sn;gmScene.add(sn);
   buildStellarNeighborhood(sn,fid);
+  // The always-visible backdrop (buildGalaxyBackdrop, below) bakes a 0.5-rad
+  // tilt into its star positions so the galaxy "reads as a band across the
+  // sky" from any tier. buildStellarNeighborhood's real nearby stars (Sol,
+  // Procyon, Sirius, etc.) were placed at raw, UNTILTED coordinates — two
+  // different frames sharing one view, which is why the named stars appeared
+  // to float below/outside the visible particle band instead of within it.
+  // Rotating the whole group by the same 0.5 rad puts them back in the same
+  // frame as the backdrop they're meant to sit inside.
+  sn.rotation.x=0.5;
   gmTierGroups.intergalactic.visible=false;
   // Persistent backdrop: a dim, always-visible shell of the surrounding galaxy
   // so that when you zoom into the solar system you still see the Milky Way's
