@@ -510,6 +510,16 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 .assist-btn{padding:5px 9px;background:rgba(0,3,8,0.7);border:1px solid rgba(0,245,255,0.3);color:rgba(0,245,255,0.75);font-family:var(--font-hud);font-size:0.5rem;letter-spacing:0.06em;cursor:pointer;border-radius:3px;backdrop-filter:blur(8px);transition:var(--trans);white-space:nowrap;}
 .assist-btn:hover{background:rgba(0,245,255,0.12);color:var(--cyan);}
 .assist-btn.active{background:rgba(0,245,255,0.22);border-color:var(--cyan);color:#fff;box-shadow:0 0 12px rgba(0,245,255,0.5);}
+/* Left-stick side pads — circular 44px touch targets matching the DART pads.
+   #roll-row mirrors #assist-row's position on the LEFT side (hold-to-roll);
+   #level-stack is a vertical 2-button column just right of the left stick
+   (one-tap auto-level to galaxy plane / nearest system plane). */
+#roll-row{position:absolute;bottom:calc(200px + var(--safe-bot));left:18px;display:flex;gap:16px;z-index:27;pointer-events:auto;}
+#level-stack{position:absolute;bottom:calc(88px + var(--safe-bot));left:130px;display:flex;flex-direction:column;gap:8px;z-index:26;pointer-events:auto;}
+.side-pad{width:44px;height:44px;border-radius:50%;background:rgba(0,3,8,0.7);border:2px solid rgba(0,245,255,0.3);color:rgba(0,245,255,0.75);font-family:var(--font-hud);font-size:0.42rem;font-weight:700;letter-spacing:0.03em;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;transition:var(--trans);backdrop-filter:blur(8px);padding:0;touch-action:none;-webkit-user-select:none;user-select:none;line-height:1;}
+.side-pad .sp-ico{font-size:0.72rem;pointer-events:none;}
+.side-pad:hover{background:rgba(0,245,255,0.12);color:var(--cyan);}
+.side-pad.held,.side-pad.active{background:rgba(0,245,255,0.25);border-color:var(--cyan);color:#fff;box-shadow:0 0 14px rgba(0,245,255,0.55);}
 /* Minimap */
 #minimap{position:absolute;bottom:calc(100px + var(--safe-bot));left:8px;width:88px;height:88px;background:rgba(0,3,8,0.82);border:1px solid rgba(0,245,255,0.18);border-radius:50%;overflow:hidden;pointer-events:auto;z-index:22;touch-action:none;}
 #minimap-canvas{touch-action:none;}
@@ -1068,6 +1078,18 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   <div id="assist-row" style="position:absolute;bottom:calc(200px + var(--safe-bot));right:18px;display:flex;gap:6px;z-index:27;pointer-events:auto;">
     <button id="assist-focus" class="assist-btn" onclick="toggleFocus()" title="Lock crosshair on target in view — auto-steers until you steer away">◎ FOCUS</button>
     <button id="assist-idle" class="assist-btn" onclick="toggleIdle()" title="Full stop & hover in place">⏸ IDLE</button>
+  </div>
+  <!-- Roll hold pads: horizontal pair above the LEFT thumbstick (hold to roll, release to stop) -->
+  <div id="roll-row">
+    <button id="roll-left-btn" class="side-pad" title="Hold to roll left (also KeyQ)"><span class="sp-ico">⟲</span>ROLL</button>
+    <button id="roll-right-btn" class="side-pad" title="Hold to roll right (also KeyE)"><span class="sp-ico">⟳</span>ROLL</button>
+  </div>
+  <!-- Auto-level pads: vertical stack right of the LEFT thumbstick.
+       Top = level to the galactic plane. Bottom = level to the nearest
+       visitable system's orbital plane. -->
+  <div id="level-stack">
+    <button id="level-galaxy-btn" class="side-pad" onclick="autoLevel('galaxy')" title="Auto-level to the galactic plane"><span class="sp-ico">🌌</span>GAL</button>
+    <button id="level-system-btn" class="side-pad" onclick="autoLevel('system')" title="Auto-level to the nearest system's orbital plane"><span class="sp-ico">🪐</span>SYS</button>
   </div>
   <div id="land-prompt" onclick="if(_landTargetBody)openOrbitApproach(_landTargetBody);" style="display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,245,255,.12);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.6rem;letter-spacing:.15em;padding:.5rem 1.2rem;border-radius:3px;pointer-events:none;z-index:30;text-align:center;"></div>
   <div id="ar-bottom">
@@ -3603,6 +3625,28 @@ function buildFlightBoard(){
 
 function initJoysticks(){
   setupJoy('jL',JOY,'L');setupJoy('jR',JOY,'R');
+  setupRollHold();
+}
+
+// ── Hold-to-roll pads (left-stick side) ──────────────────────────
+// ROLL_HOLD: +1 = roll left, -1 = roll right, 0 = released. Consumed
+// per-frame in updateFlight via spRotateLocal about the pilot's LOCAL Z,
+// so it composes correctly with the 6-DOF quat at any attitude.
+let ROLL_HOLD=0;
+function setupRollHold(){
+  const bind=(id,dir)=>{
+    const b=$(id);if(!b)return;
+    const down=e=>{e.preventDefault();ROLL_HOLD=dir;b.classList.add('held');
+      if(b.setPointerCapture&&e.pointerId!==undefined){try{b.setPointerCapture(e.pointerId);}catch(_){}}};
+    const up=()=>{if(ROLL_HOLD===dir)ROLL_HOLD=0;b.classList.remove('held');};
+    b.addEventListener('pointerdown',down);
+    b.addEventListener('pointerup',up);
+    b.addEventListener('pointercancel',up);
+    b.addEventListener('lostpointercapture',up);
+    b.addEventListener('contextmenu',e=>e.preventDefault());
+  };
+  bind('roll-left-btn', 1);   // +Z local rotation banks left (locked to quat core signs)
+  bind('roll-right-btn',-1);
 }
 function setupJoy(zoneId,joy,side){
   const zone=$(zoneId);const knob=$(zoneId+'-knob');
@@ -3967,7 +4011,7 @@ function updateAssist(dt){
   if(ASSIST.mode==='manual')return false;
 
   // Any meaningful manual joystick input breaks focus/orbit lock immediately.
-  const manualInput=(Math.abs(JOY.Lx)+Math.abs(JOY.Ly)+Math.abs(JOY.Rx)+Math.abs(JOY.Ry))>0.18;
+  const manualInput=(Math.abs(JOY.Lx)+Math.abs(JOY.Ly)+Math.abs(JOY.Rx)+Math.abs(JOY.Ry)+Math.abs(ROLL_HOLD))>0.18;
 
   if(ASSIST.mode==='idle'){
     sp.vel.multiplyScalar(0.80);
@@ -4108,6 +4152,11 @@ function updateFlight(dt){
   if(KEYS["ArrowRight"])spRotateLocal(sp,0,1,0,-0.9*dt);
   if(KEYS["ArrowUp"])   spRotateLocal(sp,1,0,0, 0.9*dt);
   if(KEYS["ArrowDown"]) spRotateLocal(sp,1,0,0,-0.9*dt);
+  // ── Roll: hold pads (mobile) + Q/E (desktop) about the pilot's LOCAL Z ──
+  let rollIn=ROLL_HOLD;
+  if(KEYS["KeyQ"])rollIn= 1;
+  if(KEYS["KeyE"])rollIn=-1;
+  if(rollIn){spRotateLocal(sp,0,0,1,rollIn*1.4*dt);cancelAutoLevel();}
   spSyncLegacy(sp); // keep HUD/save-compat yaw+pitch derived from the quat
 
   // ── Thrust: right joystick gradual acceleration + DART speed mode ──
@@ -4457,6 +4506,72 @@ function lockOnNearest(){
         ' · '+Math.round(minDist*400).toLocaleString()+' km',2200);
       // Update HUD destination
       $('hud-dest').textContent=nearest.name;
+    }
+  },16);
+}
+
+// ── Auto-level: one-tap re-orient onto a reference plane ─────────
+// 'galaxy'  → the visible galactic disc. Its plane is defined by the same
+//             Euler tilt applied to the flight-scene galaxy group
+//             (galGroup.rotation.set(0.5,0.3,0.1)), so the board settles
+//             visually flat WITH the band of stars you see.
+// 'system'  → the nearest visitable system's orbital plane. Every orbit in
+//             updateBodies advances in world XZ with a fixed Y (planets
+//             never leave y=const), so today ALL system planes share the
+//             world-up normal (0,1,0). Kept behind planeNormal() so a
+//             per-system inclination can slot in later without touching
+//             callers. (Known limitation: once orbital rings get true
+//             inclinations, this must read the system's own normal.)
+// Leveling = project current forward onto the plane (heading preserved),
+// up snapped to the plane normal, then a ~0.9s eased quaternion sweep.
+const GALAXY_PLANE_EULER=new THREE.Euler(0.5,0.3,0.1); // keep in sync with galGroup.rotation
+let _levelAnim=null;
+function cancelAutoLevel(){
+  if(_levelAnim){clearInterval(_levelAnim);_levelAnim=null;
+    const g=$('level-galaxy-btn'),s=$('level-system-btn');
+    if(g)g.classList.remove('active');if(s)s.classList.remove('active');}
+}
+function planeNormal(kind){
+  if(kind==='galaxy')return new THREE.Vector3(0,1,0).applyEuler(GALAXY_PLANE_EULER);
+  return new THREE.Vector3(0,1,0); // all orbital planes are world-XZ today (see note above)
+}
+function autoLevel(kind){
+  const sp=STATE.flight;if(!sp||!STATE.inFlight)return;
+  cancelAutoLevel();
+  if(ASSIST.mode!=='manual')disengageAssist('Leveling out');
+  const n=planeNormal(kind).normalize();
+  // Preserve heading: project forward onto the plane. If we're staring
+  // straight along the normal (projection degenerates), fall back to the
+  // pilot's current right vector projected instead.
+  let f=spForward(sp).clone().addScaledVector(n,-spForward(sp).dot(n));
+  if(f.lengthSq()<1e-6){const r=spRight(sp).clone();f=r.addScaledVector(n,-r.dot(n)).cross(n);}
+  if(f.lengthSq()<1e-6)f=Math.abs(n.y)<0.99?new THREE.Vector3(0,1,0).cross(n):new THREE.Vector3(1,0,0).cross(n); // any in-plane dir
+  f.normalize();
+  const m=new THREE.Matrix4().lookAt(new THREE.Vector3(0,0,0),f,n);
+  const endQ=new THREE.Quaternion().setFromRotationMatrix(m);
+  const startQ=spQuat(sp).clone();
+  // toast context: which system are we leveling to?
+  if(kind==='system'){
+    let nearest=null,minD=Infinity;
+    (celestialBodies||[]).forEach(b=>{if(!b.mesh)return;const d=b.mesh.position.distanceTo(sp.pos);if(d<minD){minD=d;nearest=b;}});
+    toast('⟂ LEVELING — '+(nearest?nearest.name.toUpperCase()+' SYSTEM':'SYSTEM')+' PLANE',1800);
+  }else{
+    toast('⟂ LEVELING — GALACTIC PLANE',1800);
+  }
+  const btn=$(kind==='galaxy'?'level-galaxy-btn':'level-system-btn');
+  if(btn)btn.classList.add('active');
+  const STEPS=54;let step=0; // ~0.9s at 60fps, eased
+  _levelAnim=setInterval(()=>{
+    // manual joystick/roll input aborts the sweep — pilot wins
+    if((Math.abs(JOY.Lx)+Math.abs(JOY.Ly)+Math.abs(ROLL_HOLD))>0.18){cancelAutoLevel();return;}
+    step++;
+    const t=step/STEPS;
+    const ease=t<0.5?2*t*t:1-Math.pow(-2*t+2,2)/2;
+    spQuat(sp).copy(startQ).slerp(endQ,ease);
+    spSyncLegacy(sp);
+    if(step>=STEPS){
+      spQuat(sp).copy(endQ);spSyncLegacy(sp);
+      cancelAutoLevel();
     }
   },16);
 }
