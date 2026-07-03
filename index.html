@@ -7009,6 +7009,14 @@ function buildSurfaceTerrain(pal){
   // both call this same function. TERRAIN.curveR is set just below, before
   // this is ever invoked.
   function H(x,z){
+    // Reverted to a single fixed-size patch (see below) — past the edge of
+    // the generated square there is deliberately no ground, so flying/
+    // walking off it actually falls rather than standing on invisible-but-
+    // still-solid terrain. Matches the pre-continuous-generation behavior:
+    // pick a landing spot, get one bounded square, fly to its edge and
+    // drop off.
+    const half=TERRAIN.rootSize/2;
+    if(Math.abs(x)>half||Math.abs(z)>half)return -99999;
     let h=_fbm(x*0.012+100,z*0.012+100,seed,5)*22;
     h+=_fbm(x*0.04,z*0.04,seed+3,3)*5;
     const m=_fbm(x*0.005,z*0.005,seed+7,4);
@@ -7035,8 +7043,24 @@ function buildSurfaceTerrain(pal){
   TERRAIN.originX=0;TERRAIN.originZ=0;
   TERRAIN.group=new THREE.Group();surfScene.add(TERRAIN.group);
   surfTerrainMesh=TERRAIN.group; // for collision/exit references
-  // initial build around origin (player spawn)
-  rebuildTerrainLOD(0,0);
+  // Reverted to a single fixed-size patch built ONCE, per request — no
+  // ongoing rebuilds, no recentering, no walking indefinitely. This is what
+  // was there before continuous quadtree streaming was added: pick a
+  // landing spot, get one bounded square (rootSize) to explore, fly to its
+  // edge and there's nothing past it (see the boundary check added to H
+  // above). tileSeg is bumped way up just for this one build so the whole
+  // span still has reasonable close-up resolution despite being a single
+  // mesh instead of many nested LOD tiles — this only costs time once, at
+  // landing, not on every subsequent frame the way the streaming rebuilds
+  // did. rebuildTerrainLOD/_terrainQuad are unused now but left in place
+  // (dead code, zero runtime cost) rather than deleted, in case continuous
+  // streaming comes back later in a lighter-weight form.
+  const _savedSeg=TERRAIN.tileSeg;
+  TERRAIN.tileSeg=160;
+  const patch=buildTerrainTile(0,0,TERRAIN.rootSize,0);
+  TERRAIN.tileSeg=_savedSeg;
+  TERRAIN.group.add(patch);
+  TERRAIN.tiles.set('0.0_0.0_0',{mesh:patch,cx:0,cz:0,size:TERRAIN.rootSize,depth:0});
 
   // water + caustics (unchanged) — sized to the full terrain span
   const SZ=TERRAIN.rootSize;
@@ -7142,26 +7166,12 @@ function rebuildTerrainLOD(px,pz){
 // Called each frame from updateSurface — rebuilds LOD when the player has
 // moved enough that the tile layout should change (throttled to avoid churn).
 function updateTerrainLOD(px,pz){
-  if(!TERRAIN.group)return;
-  // Approaching the edge of the current generated window? Recentre the whole
-  // root on the player and rebuild — this is what lets the player keep
-  // walking forever in any direction instead of hitting a boundary. Tiles
-  // are keyed off absolute world position, so anything within the new
-  // window that already existed gets reused rather than rebuilt.
-  const distFromOrigin=Math.hypot(px-TERRAIN.originX,pz-TERRAIN.originZ);
-  if(distFromOrigin>TERRAIN.rootSize/2-TERRAIN.recenterMargin){
-    TERRAIN.originX=px;TERRAIN.originZ=pz;
-    rebuildTerrainLOD(px,pz);
-    return;
-  }
-  const moved=Math.hypot(px-TERRAIN.lastRebuildX,pz-TERRAIN.lastRebuildZ);
-  // smallest tile size sets the rebuild cadence
-  const smallest=TERRAIN.rootSize/Math.pow(2,TERRAIN.maxDepth);
-  // Cooldown: even if the player has moved enough to warrant a rebuild,
-  // don't do it more than ~4x/sec. Without this, fast movement (e.g. atmo
-  // flight skimming low, or just running) could trigger back-to-back
-  // rebuilds with no gap between them — each one a real CPU spike.
-  if(moved>smallest*0.5 && performance.now()-TERRAIN.lastRebuildT>250) rebuildTerrainLOD(px,pz);
+  // No-op — reverted to a single fixed-size patch built once at landing
+  // (see buildSurfaceTerrain). Left as a no-op rather than removing the
+  // call site in updateSurface, so nothing else needs to change; this is
+  // the entire fix for 'stop the continuous rebuild cost', since it's now
+  // simply never invoked.
+  return;
 }
 // Animated caustic pattern — interfering sine ripples drawn each frame
 let surfWater=null,surfCausticCanvas=null,surfCausticCtx=null,surfCausticTex=null,_causticT=0;
