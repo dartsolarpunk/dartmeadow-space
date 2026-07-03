@@ -474,8 +474,8 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;background:var(--c0);co
 .hud-toggle-btn{position:absolute;left:10px;height:30px;padding:0 12px;border-radius:15px;background:rgba(4,10,22,0.55);border:1px solid rgba(0,245,255,0.3);color:rgba(0,245,255,0.85);font-family:var(--font-hud);font-size:0.48rem;font-weight:700;letter-spacing:0.08em;cursor:pointer;backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;gap:5px;white-space:nowrap;transition:opacity .2s,background .2s;opacity:0.78;z-index:31;}
 .hud-toggle-btn .htb-ico{font-size:0.68rem;}
 .hud-toggle-btn:hover,.hud-toggle-btn.active{opacity:1;background:rgba(0,245,255,0.18);border-color:var(--cyan);}
-#logs-toggle-btn{top:84px;}
-#qt-toggle-btn{top:122px;}
+#logs-toggle-btn{top:91px;}
+#qt-toggle-btn{top:129px;}
 /* Combined HUD readout panel — was two separate floating stacks
    (ar-left/ar-right); merged into one, toggled by the LOGS button.
    display:none lives ONLY here now — the legacy #ar-left/#ar-right/
@@ -489,7 +489,7 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;background:var(--c0);co
 html.immersive,html.immersive body{height:100vh;height:100dvh;overflow:hidden;}
 html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 /* HUD panels */
-#hud-logs-panel{position:absolute;left:10px;top:161px;width:190px;max-height:calc(100% - 220px);overflow-y:auto;flex-direction:column;gap:4px;pointer-events:none;z-index:22;}
+#hud-logs-panel{position:absolute;left:10px;top:168px;width:190px;max-height:calc(100% - 220px);overflow-y:auto;flex-direction:column;gap:4px;pointer-events:none;z-index:22;}
 .ar-panel{background:rgba(0,3,8,0.72);border:1px solid rgba(0,245,255,0.14);border-radius:3px;padding:7px 9px;backdrop-filter:blur(8px);}
 .ar-panel-title{font-family:var(--font-hud);font-size:0.48rem;font-weight:700;letter-spacing:0.15em;color:rgba(0,245,255,0.5);margin-bottom:4px;text-transform:uppercase;}
 .ar-row{display:flex;justify-content:space-between;padding:1px 0;font-family:var(--font-mono);font-size:0.55rem;}
@@ -506,7 +506,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
    #qt-panel is a compact anchored dropdown in the same visual language
    as #hud-logs-panel — no screen-darkening, no sense of a new page. */
 #ar-bottom{position:fixed;inset:0;background:transparent;pointer-events:auto;z-index:32;}
-#qt-panel{position:absolute;left:10px;top:161px;width:220px;max-height:calc(100% - 220px);overflow-y:auto;background:rgba(0,3,8,0.85);border:1px solid rgba(0,245,255,0.2);border-radius:4px;padding:8px 9px;backdrop-filter:blur(10px);box-shadow:0 0 24px rgba(0,245,255,0.08);}
+#qt-panel{position:absolute;left:10px;top:168px;width:220px;max-height:calc(100% - 220px);overflow-y:auto;background:rgba(0,3,8,0.85);border:1px solid rgba(0,245,255,0.2);border-radius:4px;padding:8px 9px;backdrop-filter:blur(10px);box-shadow:0 0 24px rgba(0,245,255,0.08);}
 #ar-dest-title{font-family:var(--font-hud);font-size:0.5rem;color:rgba(0,245,255,0.45);letter-spacing:0.2em;text-transform:uppercase;margin-bottom:0.6rem;}
 #dest-scroll{display:grid;grid-template-columns:repeat(2,1fr);gap:0.4rem;}
 .dest-card{width:auto;padding:0.4rem 0.5rem;background:rgba(0,245,255,0.05);border:1px solid rgba(0,245,255,0.14);border-radius:3px;cursor:pointer;transition:var(--trans);font-family:var(--font-mono);}
@@ -742,10 +742,10 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 </div>
 
 <!-- ⛶ FULLSCREEN exit button — top-left, only while in fullscreen -->
-<button id="fs-exit" onclick="exitFullscreen()" title="Exit fullscreen (Esc or F)" style="display:none;position:fixed;top:40px;left:10px;z-index:9700;width:34px;height:34px;border-radius:8px;background:rgba(4,10,22,0.55);border:1px solid rgba(0,245,255,0.3);color:rgba(0,245,255,0.8);font-size:0.85rem;cursor:pointer;backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;transition:opacity .2s;">⤢</button>
+<button id="fs-exit" onclick="exitFullscreen()" title="Exit fullscreen (Esc or F)" style="display:none;position:fixed;top:47px;left:10px;z-index:9700;width:34px;height:34px;border-radius:8px;background:rgba(4,10,22,0.55);border:1px solid rgba(0,245,255,0.3);color:rgba(0,245,255,0.8);font-size:0.85rem;cursor:pointer;backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;transition:opacity .2s;">⤢</button>
 
 <!-- ⛶ Re-enter fullscreen button — shows when not fullscreen on capable devices -->
-<button id="fs-enter" onclick="requestFullscreenNow()" title="Go fullscreen (F)" style="display:none;position:fixed;top:40px;left:10px;z-index:9700;width:34px;height:34px;border-radius:8px;background:rgba(4,10,22,0.55);border:1px solid rgba(0,245,255,0.3);color:rgba(0,245,255,0.8);font-size:0.85rem;cursor:pointer;backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;transition:opacity .2s;">⛶</button>
+<button id="fs-enter" onclick="requestFullscreenNow()" title="Go fullscreen (F)" style="display:none;position:fixed;top:47px;left:10px;z-index:9700;width:34px;height:34px;border-radius:8px;background:rgba(4,10,22,0.55);border:1px solid rgba(0,245,255,0.3);color:rgba(0,245,255,0.8);font-size:0.85rem;cursor:pointer;backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;transition:opacity .2s;">⛶</button>
 
 <div id="app">
 <!-- MENU -->
