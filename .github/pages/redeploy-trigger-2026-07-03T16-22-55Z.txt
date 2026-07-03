@@ -1,0 +1,1 @@
+Second redeploy nudge — first two attempts hit GitHub Pages' generic 'Deployment failed, try again later' with no official incident reported (checked githubstatus.com, all systems operational). 2026-07-03T16-22-55Z
