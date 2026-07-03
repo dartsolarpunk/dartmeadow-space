@@ -517,7 +517,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 .dest-dist{font-size:0.48rem;color:var(--text-dim);}
 .dest-type{font-size:0.46rem;color:var(--purple);}
 /* Dual joysticks — above bottom bar, respects safe area */
-#joysticks{position:absolute;bottom:calc(88px + var(--safe-bot));left:0;right:0;display:flex;justify-content:space-between;padding:0 20px;pointer-events:none;z-index:25;}
+#joysticks{position:absolute;bottom:calc(20px + var(--safe-bot));left:0;right:0;display:flex;justify-content:space-between;padding:0 20px;pointer-events:none;z-index:25;}
 .joystick-zone{width:100px;height:100px;position:relative;pointer-events:auto;}
 .joystick-base{position:absolute;inset:0;border-radius:50%;background:rgba(0,3,8,0.6);border:1px solid rgba(0,245,255,0.25);backdrop-filter:blur(8px);}
 .joystick-knob{position:absolute;width:38px;height:38px;border-radius:50%;background:rgba(0,245,255,0.18);border:1px solid rgba(0,245,255,0.5);left:50%;top:50%;transform:translate(-50%,-50%);transition:none;box-shadow:0 0 10px rgba(0,245,255,0.3);}
@@ -527,7 +527,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
    targets per mobile accessibility guidance. Active pad is painted by JS
    straight from DART_MODES colors; idle pads carry a faint tint of their own
    mode color so you can see which is which before tapping. */
-#dart-pads{position:absolute;bottom:calc(88px + var(--safe-bot));right:134px;display:grid;grid-template-columns:44px 44px;gap:5px;z-index:26;pointer-events:auto;}
+#dart-pads{position:absolute;bottom:calc(20px + var(--safe-bot));right:134px;display:grid;grid-template-columns:44px 44px;gap:5px;z-index:26;pointer-events:auto;}
 .dart-pad{width:44px;height:44px;border-radius:50%;background:rgba(60,60,60,0.5);border:2px solid rgba(120,120,120,0.4);color:rgba(180,180,180,0.6);font-family:var(--font-hud);font-size:0.4rem;font-weight:700;letter-spacing:0.04em;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:var(--trans);backdrop-filter:blur(8px);padding:0;}
 .dart-pad.on{color:#fff;}
 .assist-btn{padding:5px 9px;background:rgba(0,3,8,0.7);border:1px solid rgba(0,245,255,0.3);color:rgba(0,245,255,0.75);font-family:var(--font-hud);font-size:0.5rem;letter-spacing:0.06em;cursor:pointer;border-radius:3px;backdrop-filter:blur(8px);transition:var(--trans);white-space:nowrap;}
@@ -537,8 +537,21 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
    #roll-row mirrors #assist-row's position on the LEFT side (hold-to-roll);
    #level-stack is a vertical 2-button column just right of the left stick
    (one-tap auto-level to galaxy plane / nearest system plane). */
-#roll-row{position:absolute;bottom:calc(200px + var(--safe-bot));left:18px;display:flex;gap:16px;z-index:27;pointer-events:auto;}
-#level-stack{position:absolute;bottom:calc(88px + var(--safe-bot));left:130px;display:flex;flex-direction:column;gap:8px;z-index:26;pointer-events:auto;}
+#roll-row{position:absolute;bottom:calc(132px + var(--safe-bot));left:18px;display:flex;gap:16px;z-index:27;pointer-events:auto;}
+#level-stack{position:absolute;bottom:calc(20px + var(--safe-bot));left:130px;display:flex;flex-direction:column;gap:8px;z-index:26;pointer-events:auto;}
+/* Portrait reflow — landscape spreads roll-row/level-stack beside the left
+   stick and dart-pads/assist-row beside the right stick; that layout was
+   tuned for landscape's extra width and crowds or overlaps in portrait's
+   narrower viewport. In portrait, stack each side's sub-buttons in a single
+   vertical column directly above its joystick instead, then let CSS
+   auto-revert on rotation back to landscape — no JS needed, the media
+   query re-evaluates live on orientationchange. */
+@media (orientation:portrait){
+  #roll-row{bottom:calc(236px + var(--safe-bot));left:20px;}
+  #level-stack{bottom:calc(130px + var(--safe-bot));left:20px;}
+  #dart-pads{bottom:calc(130px + var(--safe-bot));right:20px;}
+  #assist-row{bottom:calc(233px + var(--safe-bot)) !important;right:20px !important;}
+}
 .side-pad{width:44px;height:44px;border-radius:50%;background:rgba(0,3,8,0.7);border:2px solid rgba(0,245,255,0.3);color:rgba(0,245,255,0.75);font-family:var(--font-hud);font-size:0.42rem;font-weight:700;letter-spacing:0.03em;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;transition:var(--trans);backdrop-filter:blur(8px);padding:0;touch-action:none;-webkit-user-select:none;user-select:none;line-height:1;}
 .side-pad .sp-ico{font-size:0.72rem;pointer-events:none;}
 .side-pad:hover{background:rgba(0,245,255,0.12);color:var(--cyan);}
@@ -1102,7 +1115,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     <button class="dart-pad" data-m="1" onclick="setDartMode(1)" title="DART ⅓c³ — yellow">⅓c³</button>
   </div>
   <!-- Assist buttons: horizontal row above the right thumbstick -->
-  <div id="assist-row" style="position:absolute;bottom:calc(200px + var(--safe-bot));right:18px;display:flex;gap:6px;z-index:27;pointer-events:auto;">
+  <div id="assist-row" style="position:absolute;bottom:calc(132px + var(--safe-bot));right:18px;display:flex;gap:6px;z-index:27;pointer-events:auto;">
     <button id="assist-focus" class="assist-btn" onclick="toggleFocus()" title="Lock crosshair on target in view — auto-steers until you steer away">◎ FOCUS</button>
     <button id="assist-idle" class="assist-btn" onclick="toggleIdle()" title="Full stop & hover in place">⏸ IDLE</button>
   </div>
