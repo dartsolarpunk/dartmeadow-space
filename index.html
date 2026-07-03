@@ -471,7 +471,9 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;background:var(--c0);co
 .art-logo{font-family:var(--font-hud);font-size:0.65rem;font-weight:900;letter-spacing:0.2em;color:var(--cyan);text-shadow:var(--glow-sm);}
 .art-stats{display:flex;gap:1.2rem;font-family:var(--font-mono);font-size:0.55rem;color:var(--text-dim);}
 .art-stats span{color:var(--cyan);}
-.art-btns{display:flex;gap:0.4rem;}
+.art-btns{display:flex;gap:0.4rem;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;max-width:100%;min-width:0;flex-shrink:1;}
+.art-btns::-webkit-scrollbar{display:none;}
+.art-btns>*{flex-shrink:0;}
 .art-btn{padding:4px 10px;background:rgba(0,245,255,0.08);border:1px solid rgba(0,245,255,0.25);color:rgba(0,245,255,0.8);font-family:var(--font-hud);font-size:0.5rem;letter-spacing:0.1em;cursor:pointer;transition:var(--trans);border-radius:2px;pointer-events:auto;}
 .art-btn:hover{background:var(--dim-cyan);color:var(--cyan);}
 .art-btn.active{background:rgba(0,245,255,0.2);color:var(--cyan);}
@@ -5675,9 +5677,20 @@ function applySettings(){
     const rs=parseFloat($('set-resscale').value);
     if(GFX.resScale!==rs){
       GFX.resScale=rs;
-      // resolution scale applies live — no rebuild needed
-      if(flightRenderer)flightRenderer.setPixelRatio(effectivePixelRatio());
-      if(surfRenderer)surfRenderer.setPixelRatio(effectivePixelRatio());
+      // resolution scale applies live — no rebuild needed.
+      // BUG FIX: setPixelRatio() alone does NOT resize the canvas's actual
+      // drawing buffer in Three.js — it only changes the ratio used by the
+      // NEXT setSize() call. Without a setSize() call right after, the
+      // canvas kept its old backing-buffer resolution while the renderer's
+      // internal viewport math assumed the new ratio — a mismatch that
+      // rendered as a black/broken screen until something else (like
+      // rotating the device, which triggers a real setSize() via the
+      // orientationchange handler) happened to fix it. That's exactly the
+      // 'rotate to portrait and it comes back' workaround — now applied
+      // automatically instead of needing an incidental rotation.
+      const _rw=window.innerWidth,_rh=window.innerHeight;
+      if(flightRenderer){flightRenderer.setPixelRatio(effectivePixelRatio());flightRenderer.setSize(_rw,_rh);}
+      if(surfRenderer){surfRenderer.setPixelRatio(effectivePixelRatio());surfRenderer.setSize(_rw,_rh);}
       resizePostFX();
     }
   }
@@ -5692,6 +5705,17 @@ function applySettings(){
   STATE.settings.caustics=GFX.caustics;STATE.settings.gi=GFX.fakeGI;
   saveGfxChoice(); // remember last setting until changed again
   try{ if(typeof applyRenderSettings==='function')applyRenderSettings(); }catch(e){ console.warn('render apply deferred:',e); }
+  // Safety net: force a real setSize() + resizePostFX regardless of which
+  // setting changed, so closing this modal can never leave the canvas in
+  // the mismatched state above — even for settings that still need a full
+  // re-enter-flight rebuild to take complete effect (shadows/quality),
+  // the screen itself should never go black in the meantime.
+  try{
+    const _rw2=window.innerWidth,_rh2=window.innerHeight;
+    if(flightRenderer){flightRenderer.setSize(_rw2,_rh2);}
+    if(surfRenderer){surfRenderer.setSize(_rw2,_rh2);}
+    resizePostFX();
+  }catch(e){}
   closeSettings();
   toast(needsRebuild?'✅ Settings applied — re-enter flight for shadows/quality':'✅ Settings applied');
 }
