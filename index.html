@@ -4113,7 +4113,8 @@ function updateAssist(dt){
 
 // Track previous positions of bodies so orbit-lock can match their velocity.
 function recordBodyPositions(){
-  celestialBodies.forEach(b=>{if(b.mesh)b._lastPos=b.mesh.position.clone();});
+  // reuse each body's vector — .clone() here made N allocations/frame (GC fix)
+  celestialBodies.forEach(b=>{if(b.mesh)(b._lastPos||(b._lastPos=new THREE.Vector3())).copy(b.mesh.position);});
 }
 
 // Sync the 3 assist buttons' active states.
@@ -4264,15 +4265,18 @@ function updateFollowCam(dt){
 function updateBodies(dt){
   _approachBestDist=Infinity;_approachBestBody=null;
   celestialBodies.forEach(b=>{
+    // GC fix: _frameDelta is now a REUSED per-body vector (was 1-2 fresh
+    // Vector3 allocations per body per frame → thousands/sec of garbage,
+    // the main driver of the periodic full-GC freeze spikes).
+    if(!b._frameDelta)b._frameDelta=new THREE.Vector3();
     if(b.orbitR>0){
-      // remember where it was, move it, store the per-frame delta
       const px=b.mesh.position.x, pz=b.mesh.position.z;
       b.angle+=b.orbitSpd*dt*60;
       b.mesh.position.x=Math.cos(b.angle)*b.orbitR;
       b.mesh.position.z=Math.sin(b.angle)*b.orbitR;
-      b._frameDelta=new THREE.Vector3(b.mesh.position.x-px,0,b.mesh.position.z-pz);
+      b._frameDelta.set(b.mesh.position.x-px,0,b.mesh.position.z-pz);
     } else {
-      b._frameDelta=new THREE.Vector3(0,0,0);
+      b._frameDelta.set(0,0,0);
     }
     // Gentle self-rotation
     b.mesh.rotation.y+=.001;
@@ -4283,9 +4287,17 @@ function updateBodies(dt){
     // LOD — increase geometry detail when close, reduce when far
     const dist=b.mesh.position.distanceTo(STATE.flight.pos);
     if(checkMesh.geometry && checkMesh.geometry.parameters && checkMesh.geometry.parameters.radius){
+      // LOD re-tessellation with a per-body cooldown. Without it, hovering
+      // near a band boundary (dist≈5/20/80) rebuilt+disposed the sphere
+      // geometry over and over — each rebuild is a main-thread spike, and
+      // clusters of them showed up as the repeated glitch-freezes when
+      // flying close to planets. Now: only rebuild when the band actually
+      // changes AND at most once per 1.2s per body.
       const seg=dist<5?48:dist<20?32:dist<80?16:8;
       const curSeg=checkMesh.geometry.parameters.widthSegments||checkMesh.geometry.parameters.radialSegments||16;
-      if(Math.abs(curSeg-seg)>8){
+      const now=performance.now();
+      if(Math.abs(curSeg-seg)>8&&(!b._lodT||now-b._lodT>1200)){
+        b._lodT=now;
         const r=checkMesh.geometry.parameters.radius;
         const newGeo=new THREE.SphereGeometry(r,seg,seg);
         checkMesh.geometry.dispose();checkMesh.geometry=newGeo;
@@ -4306,11 +4318,14 @@ function updateBodies(dt){
   if(ld){
     if(_approachBestBody){
       const b=_approachBestBody;
-      const landable=isBodyLandable(b);
-      ld.style.display='block';ld.style.pointerEvents='auto';ld.style.cursor='pointer';
-      ld.innerHTML='🛰 TAP TO APPROACH '+b.name.toUpperCase();
-      _landTargetBody=b;
-    } else {
+      // Only touch the DOM when the target actually CHANGES — this ran
+      // innerHTML + 4 style writes every frame while near any body.
+      if(_landTargetBody!==b){
+        ld.style.display='block';ld.style.pointerEvents='auto';ld.style.cursor='pointer';
+        ld.innerHTML='🛰 TAP TO APPROACH '+b.name.toUpperCase();
+        _landTargetBody=b;
+      }
+    } else if(_landTargetBody!==null){
       ld.style.display='none';_landTargetBody=null;
     }
   }
@@ -4319,8 +4334,16 @@ function updateBodies(dt){
 }
 
 
+let _hudT=0;
+const _hudSunDir=new THREE.Vector3(),_hudZero=new THREE.Vector3(0,0,0);
 function updateHUD(){
   if(!boardFlight)return;
+  // Throttle to 5 Hz. Readable numbers don't need 60fps, and this function
+  // was doing ~16 DOM text/style writes + string building + 2 Vector3
+  // allocations EVERY frame — steady GC feed behind the periodic freezes.
+  const _now=performance.now();
+  if(_now-_hudT<200)return;
+  _hudT=_now;
   const pos=STATE.flight.pos;const sp=STATE.flight;
   $('hud-speed').textContent=sp.speed.toFixed(3);
   $('hud-alt').textContent=Math.round(pos.length()*400)+'km';
@@ -4338,9 +4361,9 @@ function updateHUD(){
   $('hud-grav').textContent=pos.length()<35?'1.0 g':'0.0 g';
   // Update Earth day/night shader sun direction — sun may be group or mesh
   if(earthMesh&&earthMesh.material&&earthMesh.material.uniforms){
-    const sunPos = sunMesh ? (sunMesh.parent && sunMesh.parent.isGroup ? sunMesh.parent.position : sunMesh.position) : new THREE.Vector3(0,0,0);
-    const sd=new THREE.Vector3().subVectors(sunPos,earthMesh.position).normalize();
-    earthMesh.material.uniforms.sunDir.value.copy(sd);
+    const sunPos = sunMesh ? (sunMesh.parent && sunMesh.parent.isGroup ? sunMesh.parent.position : sunMesh.position) : _hudZero;
+    _hudSunDir.subVectors(sunPos,earthMesh.position).normalize();   // reused scratch (GC fix)
+    earthMesh.material.uniforms.sunDir.value.copy(_hudSunDir);
   }
   // (approach prompt is managed in updateBodies based on the closest body)
 }
@@ -4391,7 +4414,14 @@ function initMinimapGestures(){
   window.addEventListener('mouseup',()=>{mdrag=null;});
 }
 
+let _mmT=0;
 function drawMinimap(){
+  // Throttle to 10 Hz — full canvas clear/redraw every frame is wasted work
+  // (galaxy mode also built a radial gradient + ~600 random fillRects per
+  // frame). 100ms cadence is visually identical for a 88px map.
+  const _now=performance.now();
+  if(_now-_mmT<100)return;
+  _mmT=_now;
   const cv=$('minimap-canvas'),ctx=cv.getContext('2d'),W=cv.width,H=cv.height,cx=W/2,cy=H/2;
   ctx.clearRect(0,0,W,H);ctx.fillStyle='rgba(0,3,8,.92)';ctx.fillRect(0,0,W,H);
   ctx.beginPath();ctx.arc(cx,cy,W/2-1,0,Math.PI*2);ctx.strokeStyle='rgba(0,245,255,.22)';ctx.lineWidth=1;ctx.stroke();
