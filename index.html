@@ -5140,13 +5140,28 @@ function buildStellarNeighborhood(group,fid){
     const lt=new THREE.CanvasTexture(lc);const ls=new THREE.Sprite(new THREE.SpriteMaterial({map:lt,transparent:true,depthTest:false}));
     ls.scale.set(110,22,1);ls.position.set(px+st.s+6,py+st.s+6,pz);group.add(ls);
   });
-  // faint local dust (Orion arm material)
-  const dn=Math.round(4000*fid);const dp=new Float32Array(dn*3),dc=new Float32Array(dn*3);
+  // Local star field — this is what the named stars should visually read as
+  // sitting WITHIN. Previously this was a faint, dim (brightness 0.08-0.2),
+  // fairly tight (spread ~900 units) accent cloud, while the actually-visible
+  // 'galaxy' the player sees is the always-on backdrop (buildGalaxyBackdrop),
+  // which is deliberately SPARSE near world origin (its radial distribution
+  // weights density toward large r) and pushes its brightest core structure
+  // ~10,000+ units away in one fixed direction. Rotating this group to match
+  // the backdrop's tilt (see buildGalaxyTiers) fixed the ORIENTATION mismatch
+  // but not this: the backdrop was never going to look populated right where
+  // Sol sits, at any tilt, because it isn't meant to be dense there. Rather
+  // than chase the distant backdrop, this local field is now bright and
+  // dense enough to itself read as 'a field of stars' — so the named
+  // destinations sit inside something, regardless of what the far-off
+  // backdrop is doing. Widened spread (900→1300) to comfortably cover the
+  // farthest named star (Trappist-1, ~2400 units out) instead of thinning
+  // out well before it.
+  const dn=Math.round(12000*fid);const dp=new Float32Array(dn*3),dc=new Float32Array(dn*3);
   for(let i=0;i<dn;i++){
-    dp[i*3]=gaussian()*900;dp[i*3+1]=gaussian()*220;dp[i*3+2]=gaussian()*900;
-    const b=0.08+Math.random()*0.12;dc[i*3]=0.5*b;dc[i*3+1]=0.55*b;dc[i*3+2]=0.8*b;
+    dp[i*3]=gaussian()*1300;dp[i*3+1]=gaussian()*300;dp[i*3+2]=gaussian()*1300;
+    const b=0.22+Math.random()*0.35;dc[i*3]=0.55*b;dc[i*3+1]=0.62*b;dc[i*3+2]=0.95*b;
   }
-  addPoints(group,dp,dc,null,1.4,true);
+  addPoints(group,dp,dc,null,1.6,true);
 }
 
 let gmGalaxyLODs=[]; // progressive-detail records for the intergalactic tier
