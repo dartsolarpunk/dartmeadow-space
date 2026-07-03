@@ -2954,6 +2954,36 @@ function initFlightScene(){
   _startFlightLoop();
 }
 let _flightLoopCv=null,_flightLoopLast=0;
+// Debounced resize handling for the flight canvas. Previously the loop read
+// window.innerWidth/innerHeight PLUS cv.clientWidth (a forced synchronous
+// layout read) EVERY FRAME, and any single-frame fluctuation triggered a
+// full flightRenderer.setSize()+resizePostFX() — which disposes and
+// reallocates 4 WebGL render targets, an expensive GPU call that shows up
+// as a visible hitch. Android Chrome's dynamic toolbar/system-UI is known
+// to perturb innerWidth/innerHeight by a few px far more often than iOS
+// Safari — the likely reason the freeze was Android-only. Fix: detect
+// resize via real 'resize'/'orientationchange' events, debounced 120ms;
+// the loop itself just checks a cheap boolean each frame — no layout
+// reads, no GPU calls unless a genuine resize settled.
+let _flightPendingResize=null,_flightResizeDebounce=null;
+function _queueFlightResize(){
+  clearTimeout(_flightResizeDebounce);
+  _flightResizeDebounce=setTimeout(()=>{
+    const nW=window.innerWidth,nH=window.innerHeight;
+    if(nW>10&&nH>10)_flightPendingResize={w:nW,h:nH};
+  },120);
+}
+window.addEventListener('resize',_queueFlightResize);
+window.addEventListener('orientationchange',_queueFlightResize);
+function _applyFlightResizeIfPending(){
+  if(!_flightPendingResize)return;
+  const {w:nW,h:nH}=_flightPendingResize;_flightPendingResize=null;
+  flightRenderer.setPixelRatio(effectivePixelRatio());
+  flightRenderer.setSize(nW,nH);
+  flightCamera.aspect=nW/nH;
+  flightCamera.updateProjectionMatrix();
+  resizePostFX();
+}
 function _startFlightLoop(){
   if(flightAnimId)return; // already running
   const cv=_flightLoopCv;
@@ -2964,16 +2994,7 @@ function _startFlightLoop(){
     const dt=Math.min((now-_flightLoopLast)/1000,0.05);
     _flightLoopLast=now;flightTime+=dt;
 
-    // Sync to actual window size each frame (compare CSS size, not buffer size)
-    const nW=window.innerWidth;const nH=window.innerHeight;
-    const curW=parseInt(cv.style.width)||cv.clientWidth||0;
-    if(nW>10&&nH>10&&Math.abs(curW-nW)>1){
-      flightRenderer.setPixelRatio(effectivePixelRatio());
-      flightRenderer.setSize(nW,nH);
-      flightCamera.aspect=nW/nH;
-      flightCamera.updateProjectionMatrix();
-      resizePostFX();
-    }
+    _applyFlightResizeIfPending();
 
     try{updateFlight(dt);}catch(e){}
     try{updateBodies(dt);}catch(e){}
@@ -7071,9 +7092,7 @@ function exitSurface(){
     (function loop(){
       flightAnimId=requestAnimationFrame(loop);
       const now=performance.now();const dt=Math.min((now-last)/1000,0.05);last=now;flightTime+=dt;
-      const cv=$('flight-canvas');const nW=window.innerWidth,nH=window.innerHeight;
-      const curW=cv?(parseInt(cv.style.width)||cv.clientWidth||0):0;
-      if(cv&&nW>10&&nH>10&&Math.abs(curW-nW)>1){flightRenderer.setPixelRatio(effectivePixelRatio());flightRenderer.setSize(nW,nH);flightCamera.aspect=nW/nH;flightCamera.updateProjectionMatrix();resizePostFX();}
+      _applyFlightResizeIfPending(); // see _queueFlightResize — debounced, event-driven (Android jitter fix)
       try{updateFlight(dt);}catch(e){}
       try{updateBodies(dt);}catch(e){}
       try{updateDistantSystems(dt);}catch(e){}
