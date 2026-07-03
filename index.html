@@ -1322,6 +1322,10 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     <div class="setting-row"><div><div class="setting-label">Star Field Density</div><div class="setting-sub">Volumetric parallax stars</div></div><label class="toggle-switch"><input type="checkbox" id="set-stars" checked><span class="toggle-track"></span></label></div>
     <div class="setting-row"><div><div class="setting-label">Galaxy Dust Clouds</div><div class="setting-sub">Nebula particle systems</div></div><label class="toggle-switch"><input type="checkbox" id="set-dust" checked><span class="toggle-track"></span></label></div>
     <div class="setting-row"><div><div class="setting-label">Bloom / Glow</div><div class="setting-sub">Emissive object halo</div></div><label class="toggle-switch"><input type="checkbox" id="set-bloom" checked><span class="toggle-track"></span></label></div>
+    <div class="setting-row">
+      <div><div class="setting-label">Bloom Intensity</div><div class="setting-sub">How strong the glow is when on</div></div>
+      <input type="range" id="set-bloom-intensity" min="0" max="1" step="0.05" value="0.5" style="width:110px;accent-color:var(--cyan);">
+    </div>
     <div class="setting-row"><div><div class="setting-label">Motion Blur</div><div class="setting-sub">Velocity-based frame blending</div></div><label class="toggle-switch"><input type="checkbox" id="set-motion" checked><span class="toggle-track"></span></label></div>
     <div class="setting-row"><div><div class="setting-label">Procedural Textures</div><div class="setting-sub">High-detail planet surfaces</div></div><label class="toggle-switch"><input type="checkbox" id="set-textures" checked><span class="toggle-track"></span></label></div>
     <div class="setting-row"><div><div class="setting-label">Galaxy Point Cloud</div><div class="setting-sub">In-flight Milky Way band</div></div><label class="toggle-switch"><input type="checkbox" id="set-galaxyband" checked><span class="toggle-track"></span></label></div>
@@ -1426,7 +1430,7 @@ const STATE={
   flight:{speed:0,dart:false,energy:100,hull:100,shield:100,destIdx:0,time:0,
     camPitch:0,camYaw:0,thrust:0,strafe:0,lift:0,
     pos:new THREE.Vector3(28,2,3),vel:new THREE.Vector3()},
-  settings:{stars:true,dust:true,bloom:true,motion:true,textures:true,galaxyband:true,particles:'med',fov:50000,dartSpeed:15,gfxQuality:'auto',resScale:1.0,shadows:true,reflections:true,caustics:true,gi:true}
+  settings:{stars:true,dust:true,bloom:true,bloomIntensity:0.5,motion:true,textures:true,galaxyband:true,particles:'med',fov:50000,dartSpeed:15,gfxQuality:'auto',resScale:1.0,shadows:true,reflections:true,caustics:true,gi:true}
 };
 
 // ── Save System ───────────────────────────────────────────────
@@ -2694,6 +2698,7 @@ function syncSettingsUIFromState(){
     if($('set-stars'))$('set-stars').checked=s.stars;
     if($('set-dust'))$('set-dust').checked=s.dust;
     if($('set-bloom'))$('set-bloom').checked=s.bloom;
+    if($('set-bloom-intensity'))$('set-bloom-intensity').value=String(s.bloomIntensity!==undefined?s.bloomIntensity:0.5);
     if($('set-motion'))$('set-motion').checked=s.motion;
     if($('set-textures'))$('set-textures').checked=s.textures;
     if($('set-galaxyband'))$('set-galaxyband').checked=s.galaxyband;
@@ -5657,6 +5662,7 @@ function openSettings(){
 function closeSettings(){$('settings-modal').classList.remove('open');}
 function applySettings(){
   STATE.settings.stars=$('set-stars').checked;STATE.settings.dust=$('set-dust').checked;STATE.settings.bloom=$('set-bloom').checked;
+  if($('set-bloom-intensity'))STATE.settings.bloomIntensity=parseFloat($('set-bloom-intensity').value);
   STATE.settings.motion=$('set-motion')?$('set-motion').checked:true;
   STATE.settings.textures=$('set-textures')?$('set-textures').checked:true;
   STATE.settings.galaxyband=$('set-galaxyband')?$('set-galaxyband').checked:true;
@@ -6128,7 +6134,11 @@ function initPostFX(){
   _fsCam=new THREE.OrthographicCamera(-1,1,1,-1,0,1);
   // bright-pass: extract highlights
   _brightMat=new THREE.ShaderMaterial({
-    uniforms:{tDiffuse:{value:null},threshold:{value:0.62}},
+    // threshold raised 0.62→0.78: at 0.62, a lot of moderately-lit scenery
+    // (not just actual light sources) crossed into bloom, which read as a
+    // general soft/blurry look across the whole scene rather than glow
+    // specifically around bright things like the Sun or emissive highlights.
+    uniforms:{tDiffuse:{value:null},threshold:{value:0.78}},
     vertexShader:'varying vec2 vUv;void main(){vUv=uv;gl_Position=vec4(position.xy,0.,1.);}',
     fragmentShader:'uniform sampler2D tDiffuse;uniform float threshold;varying vec2 vUv;void main(){vec4 c=texture2D(tDiffuse,vUv);float l=dot(c.rgb,vec3(0.299,0.587,0.114));float f=smoothstep(threshold,threshold+0.25,l);gl_FragColor=vec4(c.rgb*f,1.0);}'
   });
@@ -6140,7 +6150,7 @@ function initPostFX(){
   });
   // composite scene + bloom, then motion-blur blend with previous frame
   _compMat=new THREE.ShaderMaterial({
-    uniforms:{tScene:{value:null},tBloom:{value:null},tPrev:{value:null},bloomStr:{value:0.9},motionAmt:{value:0.0}},
+    uniforms:{tScene:{value:null},tBloom:{value:null},tPrev:{value:null},bloomStr:{value:0.5},motionAmt:{value:0.0}},
     vertexShader:'varying vec2 vUv;void main(){vUv=uv;gl_Position=vec4(position.xy,0.,1.);}',
     fragmentShader:'uniform sampler2D tScene;uniform sampler2D tBloom;uniform sampler2D tPrev;uniform float bloomStr;uniform float motionAmt;varying vec2 vUv;void main(){vec4 sc=texture2D(tScene,vUv);vec4 bl=texture2D(tBloom,vUv);vec3 col=sc.rgb+bl.rgb*bloomStr;vec4 pv=texture2D(tPrev,vUv);col=mix(col,pv.rgb,motionAmt);gl_FragColor=vec4(col,1.0);}'
   });
@@ -6177,7 +6187,7 @@ function renderWithPostFX(){
   _fsQuad.material=_compMat;
   _compMat.uniforms.tScene.value=_rtScene.texture;
   _compMat.uniforms.tBloom.value=useBloom?_rtA.texture:_rtScene.texture;
-  _compMat.uniforms.bloomStr.value=useBloom?0.9:0.0;
+  _compMat.uniforms.bloomStr.value=useBloom?(STATE.settings.bloomIntensity!==undefined?STATE.settings.bloomIntensity:0.5):0.0;
   _compMat.uniforms.tPrev.value=_rtPrev.texture;
   // motion blur amount scales with ship speed for a sense of velocity
   let mb=0;
