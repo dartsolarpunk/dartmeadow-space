@@ -3246,11 +3246,30 @@ function buildSolarSystem(){
     orbit.rotation.x=Math.PI/2;
     flightScene.add(orbit);
 
-    // Saturn rings — parented to mesh so they orbit together
+    // Saturn-style rings — was a single chunky torus (tube radius p.r*.42,
+    // nearly as thick as the planet itself). Real ring systems are thin and
+    // flat with multiple distinct bands (gaps between them), not one solid
+    // doughnut. Rebuilt as several stacked flat RingGeometry annuli (each
+    // genuinely flat, not tube-shaped) with small gaps and varying
+    // shade/opacity per band, parented together so they still orbit with
+    // the planet as one unit.
     if(p.hasRings){
-      const rg=new THREE.Mesh(new THREE.TorusGeometry(p.r*1.65,p.r*.42,4,72),new THREE.MeshStandardMaterial({color:0xddcc88,transparent:true,opacity:.72,side:THREE.DoubleSide}));
-      rg.rotation.x=Math.PI*.42;
-      mesh.add(rg); // parented to planet
+      const ringGroup=new THREE.Group();
+      const bands=4+Math.floor(Math.random()*2); // 4-5 bands per ringed planet
+      let rIn=p.r*1.4;
+      for(let b=0;b<bands;b++){
+        const bw=p.r*(0.14+Math.random()*0.22);   // band width — thin relative to planet radius
+        const gap=p.r*(0.025+Math.random()*0.045); // visible gap before the next band
+        const rOut=rIn+bw;
+        const shade=0.55+Math.random()*0.45;
+        const col=new THREE.Color(0xddcc88).multiplyScalar(shade);
+        const ringGeo=new THREE.RingGeometry(rIn,rOut,72,1);
+        const ringMat=new THREE.MeshStandardMaterial({color:col,transparent:true,opacity:0.35+Math.random()*0.4,side:THREE.DoubleSide,roughness:0.9,metalness:0.0});
+        ringGroup.add(new THREE.Mesh(ringGeo,ringMat));
+        rIn=rOut+gap;
+      }
+      ringGroup.rotation.x=Math.PI*.42; // same stylistic tilt as before
+      mesh.add(ringGroup); // parented to planet, orbits together
     }
 
     // Moon — parented to planet mesh so it orbits with Earth
@@ -7021,11 +7040,14 @@ function buildSurfaceTerrain(pal){
     h+=_fbm(x*0.04,z*0.04,seed+3,3)*5;
     const m=_fbm(x*0.005,z*0.005,seed+7,4);
     if(m>0.6)h+=(m-0.6)*120;
-    // Stylized horizon curvature: the ground drops away the farther you are
-    // from the landing spot (0,0), like standing on a sphere — not
-    // physically exact, tuned to actually read on-screen at this scale.
-    const d2=x*x+z*z;
-    h-=d2/(2*(TERRAIN.curveR||6000));
+    // No large-scale curvature falloff — the last working build (before
+    // yesterday's enhancement pass) was a flat patch with local noise
+    // deformation only, not a stylized spherical curve. The curveR falloff
+    // that used to live here was part of what changed when continuous
+    // generation was added; removed to match what was actually asked for
+    // and actually didn't freeze. Local hills/dips from the noise above
+    // stay — 'flat' means no planet-scale curve, not literally billiard-
+    // ball smooth.
     return h;
   }
   _surfHeight=H;
