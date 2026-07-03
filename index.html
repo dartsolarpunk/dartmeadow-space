@@ -6760,9 +6760,37 @@ function _atmoCleanup(){
   if(!atmoActive)return;atmoActive=false;
   if(atmoAnimId){cancelAnimationFrame(atmoAnimId);atmoAnimId=null;}
   $('atmo-overlay').style.display='none';
+  if(atmoScene)disposeObject3D(atmoScene); // free terrain/water/skyboard GPU memory (see disposeObject3D)
   if(atmoRenderer)atmoRenderer.dispose();
   atmoScene=null;atmoBoard=null;atmoState=null;
   _atmoTerrainMesh=null;_atmoWaterMesh=null;_atmoTerrainOx=0;_atmoTerrainOz=0;_atmoPal=null;_atmoHeight=null;
+}
+
+// Recursively dispose every mesh's geometry + material(s) + any textures
+// under `root` (a Scene or Object3D). Setting a variable to null only drops
+// the JS reference — it does NOT free the GPU-side geometry/texture memory
+// Three.js allocated; that requires an explicit .dispose() call per object.
+// Surface-walk and atmospheric-flight exit paths were nulling out their
+// terrain mesh/water/skyboard-model references without ever calling this,
+// so every planet visit orphaned that visit's GPU memory permanently — a
+// leak that compounds across a play session (worse the more planets
+// visited), growing the retained heap and, most likely, the severity of
+// the periodic GC-pause freeze. Catches everything in one traversal rather
+// than hand-tracking every named mesh variable in each scene.
+function disposeObject3D(root){
+  if(!root)return;
+  root.traverse(o=>{
+    if(o.isMesh||o.isPoints||o.isLine){
+      if(o.geometry)o.geometry.dispose();
+      const mats=Array.isArray(o.material)?o.material:[o.material];
+      mats.forEach(m=>{
+        if(!m)return;
+        ['map','normalMap','roughnessMap','metalnessMap','emissiveMap','aoMap','alphaMap','envMap','bumpMap','displacementMap','lightMap','specularMap']
+          .forEach(k=>{if(m[k]&&m[k].dispose)m[k].dispose();});
+        m.dispose();
+      });
+    }
+  });
 }
 
 function enterSurface(body,site){
@@ -7177,6 +7205,7 @@ function surfRemountSkyboard(){
   window.removeEventListener('keydown',_surfKeyDown);
   window.removeEventListener('keyup',_surfKeyUp);
   $('surface-overlay').style.display='none';
+  if(surfScene)disposeObject3D(surfScene); // free terrain/water/skyboard GPU memory (see disposeObject3D)
   if(surfRenderer)surfRenderer.dispose();
   surfScene=null;surfPlayer=null;surfBoard=null;surfTerrainMesh=null;
   TERRAIN.tiles.clear();TERRAIN.group=null;
@@ -7190,6 +7219,7 @@ function exitSurface(){
   window.removeEventListener('keyup',_surfKeyUp);
   $('surface-overlay').style.display='none';
   // dispose surface scene
+  if(surfScene)disposeObject3D(surfScene); // free terrain/water/skyboard GPU memory (see disposeObject3D)
   if(surfRenderer){surfRenderer.dispose();}
   surfScene=null;surfPlayer=null;surfBoard=null;surfTerrainMesh=null;
   TERRAIN.tiles.clear();TERRAIN.group=null;
@@ -7203,6 +7233,7 @@ function exitSurface(){
       try{updateFlight(dt);}catch(e){}
       try{updateBodies(dt);}catch(e){}
       try{updateDistantSystems(dt);}catch(e){}
+      try{updateVolumetricDust(dt);}catch(e){}
       try{updateHUD();}catch(e){}
       try{drawMinimap();}catch(e){}
       renderWithPostFX();
