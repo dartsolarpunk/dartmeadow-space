@@ -3126,8 +3126,12 @@ function buildSolarSystem(){
     flightScene.add(mesh);
     if(p.name==='Earth')earthMesh=mesh;
 
-    // Orbit ring
+    // Orbit ring — TorusGeometry defaults to lying flat in the XY plane, but
+    // planets orbit in world XZ (see updateBodies: x=cos(angle)*oR, z=sin(angle)*oR,
+    // y fixed). Without this rotation the ring rendered perpendicular to the
+    // actual path the planet travels. Rotate -90° about X so the ring lies flat in XZ.
     const orbit=new THREE.Mesh(new THREE.TorusGeometry(p.oR,.04,3,Math.max(64,Math.round(p.oR*0.8))),new THREE.MeshBasicMaterial({color:0x223344,transparent:true,opacity:.3}));
+    orbit.rotation.x=Math.PI/2;
     flightScene.add(orbit);
 
     // Saturn rings — parented to mesh so they orbit together
@@ -4566,7 +4570,7 @@ function planeNormal(kind){
   return new THREE.Vector3(0,1,0); // all orbital planes are world-XZ today (see note above)
 }
 function autoLevel(kind){
-  const sp=STATE.flight;if(!sp||!STATE.inFlight)return;
+  const sp=STATE.flight;if(!sp||STATE.screen!=='flight')return;
   cancelAutoLevel();
   if(ASSIST.mode!=='manual')disengageAssist('Leveling out');
   const n=planeNormal(kind).normalize();
