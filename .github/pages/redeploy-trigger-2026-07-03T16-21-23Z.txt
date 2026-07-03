@@ -1,0 +1,1 @@
+Redeploy trigger — nudging GitHub Pages after a transient 'Deployment failed, try again later' infra error on run 78 (commit b95e100 built fine, deploy step alone failed). 2026-07-03T16-21-23Z
