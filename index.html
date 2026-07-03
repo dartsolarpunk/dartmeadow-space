@@ -474,8 +474,8 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;background:var(--c0);co
 .hud-toggle-btn{position:absolute;left:10px;height:30px;padding:0 12px;border-radius:15px;background:rgba(4,10,22,0.55);border:1px solid rgba(0,245,255,0.3);color:rgba(0,245,255,0.85);font-family:var(--font-hud);font-size:0.48rem;font-weight:700;letter-spacing:0.08em;cursor:pointer;backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;gap:5px;white-space:nowrap;transition:opacity .2s,background .2s;opacity:0.78;z-index:31;}
 .hud-toggle-btn .htb-ico{font-size:0.68rem;}
 .hud-toggle-btn:hover,.hud-toggle-btn.active{opacity:1;background:rgba(0,245,255,0.18);border-color:var(--cyan);}
-#logs-toggle-btn{top:79px;}
-#qt-toggle-btn{top:117px;}
+#logs-toggle-btn{top:84px;}
+#qt-toggle-btn{top:122px;}
 /* Combined HUD readout panel — was two separate floating stacks
    (ar-left/ar-right); merged into one, toggled by the LOGS button.
    display:none lives ONLY here now — the legacy #ar-left/#ar-right/
@@ -489,7 +489,7 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;background:var(--c0);co
 html.immersive,html.immersive body{height:100vh;height:100dvh;overflow:hidden;}
 html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 /* HUD panels */
-#hud-logs-panel{position:absolute;left:10px;top:155px;width:190px;max-height:calc(100% - 220px);overflow-y:auto;flex-direction:column;gap:4px;pointer-events:none;z-index:22;}
+#hud-logs-panel{position:absolute;left:10px;top:161px;width:190px;max-height:calc(100% - 220px);overflow-y:auto;flex-direction:column;gap:4px;pointer-events:none;z-index:22;}
 .ar-panel{background:rgba(0,3,8,0.72);border:1px solid rgba(0,245,255,0.14);border-radius:3px;padding:7px 9px;backdrop-filter:blur(8px);}
 .ar-panel-title{font-family:var(--font-hud);font-size:0.48rem;font-weight:700;letter-spacing:0.15em;color:rgba(0,245,255,0.5);margin-bottom:4px;text-transform:uppercase;}
 .ar-row{display:flex;justify-content:space-between;padding:1px 0;font-family:var(--font-mono);font-size:0.55rem;}
@@ -506,7 +506,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
    #qt-panel is a compact anchored dropdown in the same visual language
    as #hud-logs-panel — no screen-darkening, no sense of a new page. */
 #ar-bottom{position:fixed;inset:0;background:transparent;pointer-events:auto;z-index:32;}
-#qt-panel{position:absolute;left:10px;top:155px;width:220px;max-height:calc(100% - 220px);overflow-y:auto;background:rgba(0,3,8,0.85);border:1px solid rgba(0,245,255,0.2);border-radius:4px;padding:8px 9px;backdrop-filter:blur(10px);box-shadow:0 0 24px rgba(0,245,255,0.08);}
+#qt-panel{position:absolute;left:10px;top:161px;width:220px;max-height:calc(100% - 220px);overflow-y:auto;background:rgba(0,3,8,0.85);border:1px solid rgba(0,245,255,0.2);border-radius:4px;padding:8px 9px;backdrop-filter:blur(10px);box-shadow:0 0 24px rgba(0,245,255,0.08);}
 #ar-dest-title{font-family:var(--font-hud);font-size:0.5rem;color:rgba(0,245,255,0.45);letter-spacing:0.2em;text-transform:uppercase;margin-bottom:0.6rem;}
 #dest-scroll{display:grid;grid-template-columns:repeat(2,1fr);gap:0.4rem;}
 .dest-card{width:auto;padding:0.4rem 0.5rem;background:rgba(0,245,255,0.05);border:1px solid rgba(0,245,255,0.14);border-radius:3px;cursor:pointer;transition:var(--trans);font-family:var(--font-mono);}
@@ -742,10 +742,10 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 </div>
 
 <!-- ⛶ FULLSCREEN exit button — top-left, only while in fullscreen -->
-<button id="fs-exit" onclick="exitFullscreen()" title="Exit fullscreen (Esc or F)" style="display:none;position:fixed;top:35px;left:10px;z-index:9700;width:34px;height:34px;border-radius:8px;background:rgba(4,10,22,0.55);border:1px solid rgba(0,245,255,0.3);color:rgba(0,245,255,0.8);font-size:0.85rem;cursor:pointer;backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;transition:opacity .2s;">⤢</button>
+<button id="fs-exit" onclick="exitFullscreen()" title="Exit fullscreen (Esc or F)" style="display:none;position:fixed;top:40px;left:10px;z-index:9700;width:34px;height:34px;border-radius:8px;background:rgba(4,10,22,0.55);border:1px solid rgba(0,245,255,0.3);color:rgba(0,245,255,0.8);font-size:0.85rem;cursor:pointer;backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;transition:opacity .2s;">⤢</button>
 
 <!-- ⛶ Re-enter fullscreen button — shows when not fullscreen on capable devices -->
-<button id="fs-enter" onclick="requestFullscreenNow()" title="Go fullscreen (F)" style="display:none;position:fixed;top:35px;left:10px;z-index:9700;width:34px;height:34px;border-radius:8px;background:rgba(4,10,22,0.55);border:1px solid rgba(0,245,255,0.3);color:rgba(0,245,255,0.8);font-size:0.85rem;cursor:pointer;backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;transition:opacity .2s;">⛶</button>
+<button id="fs-enter" onclick="requestFullscreenNow()" title="Go fullscreen (F)" style="display:none;position:fixed;top:40px;left:10px;z-index:9700;width:34px;height:34px;border-radius:8px;background:rgba(4,10,22,0.55);border:1px solid rgba(0,245,255,0.3);color:rgba(0,245,255,0.8);font-size:0.85rem;cursor:pointer;backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;transition:opacity .2s;">⛶</button>
 
 <div id="app">
 <!-- MENU -->
@@ -6907,13 +6907,20 @@ let surfBoard=null,surfTerrainMesh=null,_surfHeight=null;
 // ════════════════════════════════════════════════════════════════════
 const TERRAIN={
   rootSize:2400,      // full terrain span (world units) — far horizon
-  maxDepth:6,         // quadtree depth → smallest tile = rootSize/2^6
+  // maxDepth was 6 (smallest tile = 37.5 units) — a lot of tiles near the
+  // player, each rebuild running multi-octave fbm noise + full vertex-color
+  // computation per vertex. Dialed back to 4 (smallest tile = 150 units) —
+  // coarser close-up detail, but a rebuild is roughly 4x fewer tiles and
+  // vertices to evaluate. This is the 'lighten the generation logic' pass;
+  // continuous walk-anywhere streaming stays, just cheaper per rebuild.
+  maxDepth:4,
   tileSeg:16,         // grid segments per tile (constant; density comes from depth)
   splitFactor:2.2,    // subdivide when camera closer than tileSize*splitFactor
   tiles:new Map(),    // key -> {mesh, depth, cx, cz, size}
   group:null,
   pal:null, H:null, seed:0,
   lastRebuildX:1e9, lastRebuildZ:1e9,
+  lastRebuildT:0,     // performance.now() of the last rebuild — see updateTerrainLOD cooldown
   // ── Floating-origin streaming ──────────────────────────────────
   // The quadtree root used to sit fixed at world (0,0), which is why walking
   // ~1200 units in any direction meant walking off the edge of generated
@@ -7077,7 +7084,7 @@ function rebuildTerrainLOD(px,pz){
       TERRAIN.tiles.set(key,{mesh,...w});
     }
   }
-  TERRAIN.lastRebuildX=px;TERRAIN.lastRebuildZ=pz;
+  TERRAIN.lastRebuildX=px;TERRAIN.lastRebuildZ=pz;TERRAIN.lastRebuildT=performance.now();
 }
 
 // Called each frame from updateSurface — rebuilds LOD when the player has
@@ -7098,7 +7105,11 @@ function updateTerrainLOD(px,pz){
   const moved=Math.hypot(px-TERRAIN.lastRebuildX,pz-TERRAIN.lastRebuildZ);
   // smallest tile size sets the rebuild cadence
   const smallest=TERRAIN.rootSize/Math.pow(2,TERRAIN.maxDepth);
-  if(moved>smallest*0.5) rebuildTerrainLOD(px,pz);
+  // Cooldown: even if the player has moved enough to warrant a rebuild,
+  // don't do it more than ~4x/sec. Without this, fast movement (e.g. atmo
+  // flight skimming low, or just running) could trigger back-to-back
+  // rebuilds with no gap between them — each one a real CPU spike.
+  if(moved>smallest*0.5 && performance.now()-TERRAIN.lastRebuildT>250) rebuildTerrainLOD(px,pz);
 }
 // Animated caustic pattern — interfering sine ripples drawn each frame
 let surfWater=null,surfCausticCanvas=null,surfCausticCtx=null,surfCausticTex=null,_causticT=0;
