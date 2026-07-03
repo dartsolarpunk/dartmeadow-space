@@ -471,25 +471,25 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;background:var(--c0);co
    button's look. fs-exit/fs-enter moved from top:10 to top:35 (25px lower)
    so they clear the AR-top header title in non-fullscreen mode; the two new
    buttons stack directly beneath. */
-.hud-toggle-btn{position:absolute;left:10px;width:34px;height:34px;border-radius:8px;background:rgba(4,10,22,0.55);border:1px solid rgba(0,245,255,0.3);color:rgba(0,245,255,0.85);font-size:0.85rem;cursor:pointer;backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;transition:opacity .2s,background .2s;opacity:0.78;z-index:31;}
+.hud-toggle-btn{position:absolute;left:10px;height:30px;padding:0 12px;border-radius:15px;background:rgba(4,10,22,0.55);border:1px solid rgba(0,245,255,0.3);color:rgba(0,245,255,0.85);font-family:var(--font-hud);font-size:0.48rem;font-weight:700;letter-spacing:0.08em;cursor:pointer;backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;gap:5px;white-space:nowrap;transition:opacity .2s,background .2s;opacity:0.78;z-index:31;}
+.hud-toggle-btn .htb-ico{font-size:0.68rem;}
 .hud-toggle-btn:hover,.hud-toggle-btn.active{opacity:1;background:rgba(0,245,255,0.18);border-color:var(--cyan);}
 #logs-toggle-btn{top:79px;}
-#qt-toggle-btn{top:123px;}
-/* HUD readout panels — now toggled by the LOGS button instead of always-on */
-#ar-left,#ar-right{display:none;}
-#ar-left.open,#ar-right.open{display:flex;}
-/* Quick-travel: was a permanent footer bar; now a toggled overlay panel
-   with a click-outside-to-close backdrop, freeing the 3D viewport's
-   bottom edge (the canvas is already full-bleed, so nothing to reflow). */
-#qt-backdrop{display:none;position:fixed;inset:0;background:rgba(0,3,8,0.45);z-index:21;}
+#qt-toggle-btn{top:117px;}
+/* Combined HUD readout panel — was two separate floating stacks
+   (ar-left/ar-right); merged into one, toggled by the LOGS button.
+   display:none lives ONLY here now — the legacy #ar-left/#ar-right/
+   #ar-bottom base rules below must never set display themselves again,
+   or they win the cascade (that's what silently kept everything always-on). */
+#hud-logs-panel{display:none;}
+#hud-logs-panel.open{display:flex;}
 #ar-bottom{display:none;}
 #ar-bottom.open{display:flex;}
 /* iPhone immersive fallback: maximize usable area, hide overflow chrome */
 html.immersive,html.immersive body{height:100vh;height:100dvh;overflow:hidden;}
 html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 /* HUD panels */
-#ar-left{position:absolute;left:8px;top:165px;width:180px;display:flex;flex-direction:column;gap:4px;pointer-events:none;z-index:22;}
-#ar-right{position:absolute;right:8px;top:50px;width:175px;display:flex;flex-direction:column;gap:4px;pointer-events:none;z-index:22;}
+#hud-logs-panel{position:absolute;left:10px;top:155px;width:190px;max-height:calc(100% - 220px);overflow-y:auto;flex-direction:column;gap:4px;pointer-events:none;z-index:22;}
 .ar-panel{background:rgba(0,3,8,0.72);border:1px solid rgba(0,245,255,0.14);border-radius:3px;padding:7px 9px;backdrop-filter:blur(8px);}
 .ar-panel-title{font-family:var(--font-hud);font-size:0.48rem;font-weight:700;letter-spacing:0.15em;color:rgba(0,245,255,0.5);margin-bottom:4px;text-transform:uppercase;}
 .ar-row{display:flex;justify-content:space-between;padding:1px 0;font-family:var(--font-mono);font-size:0.55rem;}
@@ -500,11 +500,11 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 .ar-bar-fill{height:100%;border-radius:2px;transition:width 0.3s ease;}
 #ar-crosshair{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;z-index:22;}
 /* Destination bar */
-#ar-bottom{position:absolute;bottom:0;left:0;right:0;background:rgba(0,3,8,0.85);border-top:1px solid rgba(0,245,255,0.12);backdrop-filter:blur(12px);padding:0.5rem 0.9rem calc(0.5rem + var(--safe-bot));pointer-events:auto;z-index:22;display:flex;flex-direction:column;gap:0.3rem;}
-#ar-dest-title{font-family:var(--font-hud);font-size:0.5rem;color:rgba(0,245,255,0.45);letter-spacing:0.2em;text-transform:uppercase;}
-#dest-scroll{display:flex;gap:0.4rem;overflow-x:auto;scrollbar-width:none;padding-bottom:2px;}
-#dest-scroll::-webkit-scrollbar{display:none;}
-.dest-card{flex-shrink:0;width:100px;padding:0.4rem 0.5rem;background:rgba(0,245,255,0.05);border:1px solid rgba(0,245,255,0.14);border-radius:3px;cursor:pointer;transition:var(--trans);font-family:var(--font-mono);}
+#ar-bottom{position:fixed;inset:0;background:rgba(0,3,8,0.55);backdrop-filter:blur(4px);align-items:center;justify-content:center;padding:20px;pointer-events:auto;z-index:32;}
+#qt-panel{background:rgba(4,10,22,0.92);border:1px solid rgba(0,245,255,0.25);border-radius:6px;padding:0.9rem 1rem calc(0.9rem + var(--safe-bot));backdrop-filter:blur(14px);max-width:420px;width:100%;max-height:80vh;overflow-y:auto;box-shadow:0 0 40px rgba(0,245,255,0.1);}
+#ar-dest-title{font-family:var(--font-hud);font-size:0.5rem;color:rgba(0,245,255,0.45);letter-spacing:0.2em;text-transform:uppercase;margin-bottom:0.6rem;}
+#dest-scroll{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:0.5rem;}
+.dest-card{width:auto;padding:0.4rem 0.5rem;background:rgba(0,245,255,0.05);border:1px solid rgba(0,245,255,0.14);border-radius:3px;cursor:pointer;transition:var(--trans);font-family:var(--font-mono);}
 .dest-card:hover{border-color:rgba(0,245,255,0.4);background:rgba(0,245,255,0.1);}
 .dest-card.active{border-color:var(--cyan);background:rgba(0,245,255,0.14);}
 .dest-icon{font-size:1rem;margin-bottom:2px;}
@@ -1001,9 +1001,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
        always-on); QT toggles the quick-travel destination overlay
        (previously an always-visible footer bar). Both scoped to
        #screen-flight so they only render during flight. -->
-  <button id="logs-toggle-btn" class="hud-toggle-btn" onclick="toggleHudLogs()" title="Show/hide navigation & status readouts">☰</button>
-  <button id="qt-toggle-btn" class="hud-toggle-btn" onclick="toggleQuickTravel(event)" title="Quick travel">⟶</button>
-  <div id="qt-backdrop" onclick="closeQuickTravel()"></div>
+  <button id="logs-toggle-btn" class="hud-toggle-btn" onclick="toggleHudLogs()" title="Show/hide navigation & status readouts"><span class="htb-ico">☰</span>LOGS</button>
+  <button id="qt-toggle-btn" class="hud-toggle-btn" onclick="toggleQuickTravel(event)" title="Quick travel"><span class="htb-ico">⟶</span>TRAVEL</button>
   <div id="ar-top">
     <div class="art-logo">DART MEADOW</div>
     <div class="art-stats">
@@ -1031,7 +1030,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
       <button class="art-btn" onclick="promptExit()">EXIT</button>
     </div>
   </div>
-  <div id="ar-left">
+  <div id="hud-logs-panel">
     <div class="ar-panel">
       <div class="ar-panel-title">Navigation</div>
       <div class="ar-row"><span class="ar-label">LAT</span><span class="ar-val" id="hud-lat">25.46°</span></div>
@@ -1047,8 +1046,6 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
       <div class="ar-row" style="margin-top:3px;"><span class="ar-label">SHIELD</span><span class="ar-val" id="hud-shield">100%</span></div>
       <div class="ar-bar-wrap"><div class="ar-bar"><div class="ar-bar-fill" id="bar-shield" style="width:100%;background:var(--purple);"></div></div></div>
     </div>
-  </div>
-  <div id="ar-right">
     <div class="ar-panel">
       <div class="ar-panel-title">Nearest Body</div>
       <div class="ar-row"><span class="ar-label">NAME</span><span class="ar-val" id="hud-body">Earth</span></div>
@@ -1117,9 +1114,11 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     <button id="level-system-btn" class="side-pad" onclick="autoLevel('system')" title="Auto-level to the nearest system's orbital plane"><span class="sp-ico">🪐</span>SYS</button>
   </div>
   <div id="land-prompt" onclick="if(_landTargetBody)openOrbitApproach(_landTargetBody);" style="display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,245,255,.12);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.6rem;letter-spacing:.15em;padding:.5rem 1.2rem;border-radius:3px;pointer-events:none;z-index:30;text-align:center;"></div>
-  <div id="ar-bottom">
-    <div id="ar-dest-title">⟶ DESTINATION</div>
-    <div id="dest-scroll"></div>
+  <div id="ar-bottom" onclick="closeQuickTravel()">
+    <div id="qt-panel" onclick="event.stopPropagation()">
+      <div id="ar-dest-title">⟶ QUICK TRAVEL</div>
+      <div id="dest-scroll"></div>
+    </div>
   </div>
 </div>
 
@@ -2892,27 +2891,26 @@ function buildDestinations(){
   defs.forEach(d=>DESTINATIONS.push(d));
 }
 
-// ── HUD Logs toggle — pops the readout panels (nav/board/nearest-body/
-// flight/staff) on and off instead of always rendering them ──────
+// ── HUD Logs toggle — one merged panel (nav/board/nearest-body/flight/
+// staff), off by default. Tap to open for a quick reference, tap the
+// button again (or the panel scrolls off-screen) to close. ──────
 function toggleHudLogs(){
-  const open=!$('ar-left').classList.contains('open');
-  $('ar-left').classList.toggle('open',open);
-  $('ar-right').classList.toggle('open',open);
+  const open=!$('hud-logs-panel').classList.contains('open');
+  $('hud-logs-panel').classList.toggle('open',open);
   $('logs-toggle-btn').classList.toggle('active',open);
 }
-// ── Quick Travel overlay — was a permanent footer bar; now pops up over
-// a click-outside-to-close backdrop. Canvas is already full-bleed so
-// hiding the footer by default reclaims that space for free. ──────
+// ── Quick Travel overlay — was a permanent footer bar; now a centered
+// grid modal. #ar-bottom IS the full-screen backdrop (tap it to close);
+// #qt-panel stops propagation so tapping the card grid itself doesn't
+// close it. Picking a destination auto-closes (see buildDestinationUI).
 function toggleQuickTravel(e){
   if(e)e.stopPropagation();
   const open=!$('ar-bottom').classList.contains('open');
   $('ar-bottom').classList.toggle('open',open);
-  $('qt-backdrop').style.display=open?'block':'none';
   $('qt-toggle-btn').classList.toggle('active',open);
 }
 function closeQuickTravel(){
   $('ar-bottom').classList.remove('open');
-  $('qt-backdrop').style.display='none';
   $('qt-toggle-btn').classList.remove('active');
 }
 
