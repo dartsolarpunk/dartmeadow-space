@@ -500,10 +500,15 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 .ar-bar-fill{height:100%;border-radius:2px;transition:width 0.3s ease;}
 #ar-crosshair{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;z-index:22;}
 /* Destination bar */
-#ar-bottom{position:fixed;inset:0;background:rgba(0,3,8,0.55);backdrop-filter:blur(4px);align-items:center;justify-content:center;padding:20px;pointer-events:auto;z-index:32;}
-#qt-panel{background:rgba(4,10,22,0.92);border:1px solid rgba(0,245,255,0.25);border-radius:6px;padding:0.9rem 1rem calc(0.9rem + var(--safe-bot));backdrop-filter:blur(14px);max-width:420px;width:100%;max-height:80vh;overflow-y:auto;box-shadow:0 0 40px rgba(0,245,255,0.1);}
+/* Was a dark full-screen modal — felt like leaving the game entirely.
+   Now: #ar-bottom is just an invisible full-screen click-catcher (tap
+   anywhere outside the small panel to close, same as before), and
+   #qt-panel is a compact anchored dropdown in the same visual language
+   as #hud-logs-panel — no screen-darkening, no sense of a new page. */
+#ar-bottom{position:fixed;inset:0;background:transparent;pointer-events:auto;z-index:32;}
+#qt-panel{position:absolute;left:10px;top:155px;width:220px;max-height:calc(100% - 220px);overflow-y:auto;background:rgba(0,3,8,0.85);border:1px solid rgba(0,245,255,0.2);border-radius:4px;padding:8px 9px;backdrop-filter:blur(10px);box-shadow:0 0 24px rgba(0,245,255,0.08);}
 #ar-dest-title{font-family:var(--font-hud);font-size:0.5rem;color:rgba(0,245,255,0.45);letter-spacing:0.2em;text-transform:uppercase;margin-bottom:0.6rem;}
-#dest-scroll{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:0.5rem;}
+#dest-scroll{display:grid;grid-template-columns:repeat(2,1fr);gap:0.4rem;}
 .dest-card{width:auto;padding:0.4rem 0.5rem;background:rgba(0,245,255,0.05);border:1px solid rgba(0,245,255,0.14);border-radius:3px;cursor:pointer;transition:var(--trans);font-family:var(--font-mono);}
 .dest-card:hover{border-color:rgba(0,245,255,0.4);background:rgba(0,245,255,0.1);}
 .dest-card.active{border-color:var(--cyan);background:rgba(0,245,255,0.14);}
@@ -2898,6 +2903,7 @@ function toggleHudLogs(){
   const open=!$('hud-logs-panel').classList.contains('open');
   $('hud-logs-panel').classList.toggle('open',open);
   $('logs-toggle-btn').classList.toggle('active',open);
+  if(open)closeQuickTravel(); // panels share the same anchor spot — only one at a time
 }
 // ── Quick Travel overlay — was a permanent footer bar; now a centered
 // grid modal. #ar-bottom IS the full-screen backdrop (tap it to close);
@@ -2908,6 +2914,7 @@ function toggleQuickTravel(e){
   const open=!$('ar-bottom').classList.contains('open');
   $('ar-bottom').classList.toggle('open',open);
   $('qt-toggle-btn').classList.toggle('active',open);
+  if(open){$('hud-logs-panel').classList.remove('open');$('logs-toggle-btn').classList.remove('active');}
 }
 function closeQuickTravel(){
   $('ar-bottom').classList.remove('open');
@@ -4185,8 +4192,12 @@ function updateAssist(dt){
 
 // Track previous positions of bodies so orbit-lock can match their velocity.
 function recordBodyPositions(){
-  // reuse each body's vector — .clone() here made N allocations/frame (GC fix)
-  celestialBodies.forEach(b=>{if(b.mesh)(b._lastPos||(b._lastPos=new THREE.Vector3())).copy(b.mesh.position);});
+  // reuse each body's vector — .clone() here made N allocations/frame (GC fix).
+  // Plain for-loop (not .forEach) — avoids allocating a new closure every frame.
+  for(let i=0;i<celestialBodies.length;i++){
+    const b=celestialBodies[i];
+    if(b.mesh)(b._lastPos||(b._lastPos=new THREE.Vector3())).copy(b.mesh.position);
+  }
 }
 
 // Sync the 3 assist buttons' active states.
@@ -4272,14 +4283,17 @@ function updateFlight(dt){
 
   // Animate DART rings faster in higher modes
   const ringSpd=1+dartSpeedMode*1.5;
-  boardFlight.children.forEach(child=>{
+  // for-loop, not .forEach — avoids a fresh closure allocation every frame
+  const _bfc=boardFlight.children;
+  for(let _ci=0;_ci<_bfc.length;_ci++){
+    const child=_bfc[_ci];
     if(child.isGroup&&child.children.length>2){
       const t=flightTime;
       if(child.children[0])child.children[0].rotation.z=t*1.2*ringSpd;
       if(child.children[1])child.children[1].rotation.z=-t*1.8*ringSpd;
       if(child.children[2]){child.children[2].rotation.y=t*2.5;child.children[2].scale.setScalar(1+Math.sin(t*3*ringSpd)*.12);}
     }
-  });
+  }
 
   // ── Place the board in the world at sp.pos, oriented to its heading, with a
   //    little banking lean into turns and a gentle hover bob ───────────────
@@ -4336,10 +4350,15 @@ function updateFollowCam(dt){
 
 function updateBodies(dt){
   _approachBestDist=Infinity;_approachBestBody=null;
-  celestialBodies.forEach(b=>{
-    // GC fix: _frameDelta is now a REUSED per-body vector (was 1-2 fresh
-    // Vector3 allocations per body per frame → thousands/sec of garbage,
-    // the main driver of the periodic full-GC freeze spikes).
+  // Plain for-loop instead of .forEach(b=>{...}) — the arrow-function
+  // callback was a NEW closure object allocated every single frame
+  // (60/sec), on top of the Vector3 fix above. Small individually, but
+  // steady garbage adds up to periodic GC pauses even after the bigger
+  // fixes — this was the next thing showing up in a freeze recording
+  // taken after those fixes (freeze interval had gone from ~1-2s to
+  // ~6-7s, not fully gone).
+  for(let _bi=0;_bi<celestialBodies.length;_bi++){
+    const b=celestialBodies[_bi];
     if(!b._frameDelta)b._frameDelta=new THREE.Vector3();
     if(b.orbitR>0){
       const px=b.mesh.position.x, pz=b.mesh.position.z;
@@ -4384,7 +4403,7 @@ function updateBodies(dt){
         if(dist<_approachBestDist){_approachBestDist=dist;_approachBestBody=b;}
       }
     }
-  });
+  }
   // Show the approach prompt for the closest eligible body this frame.
   const ld=$('land-prompt');
   if(ld){
@@ -6022,13 +6041,17 @@ function buildDistantStarSystems(){
   });
 }
 function updateDistantSystems(dt){
-  distantSystems.forEach(s=>{
-    s.planets.forEach(p=>{
+  // Nested for-loops instead of nested .forEach — two fresh closures were
+  // being allocated every frame (outer + inner) for every distant system.
+  for(let _si=0;_si<distantSystems.length;_si++){
+    const planets=distantSystems[_si].planets;
+    for(let _pi=0;_pi<planets.length;_pi++){
+      const p=planets[_pi];
       const u=p.mesh.userData;u.ang+=u.spd*dt*60;
       p.mesh.position.set(Math.cos(u.ang)*u.oR,Math.sin(u.ang*0.4)*u.oR*0.1,Math.sin(u.ang)*u.oR);
       p.mesh.rotation.y+=0.003;
-    });
-  });
+    }
+  }
 }
 
 // ── 4. POST-PROCESSING: bloom + motion blur (r128, no addons) ────
