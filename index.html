@@ -1320,6 +1320,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <div id="temple-hub-modal">
   <div class="modal-box" style="width:min(340px,90vw);">
     <div class="modal-title" style="color:#fff;">🕊 BIRD TEMPLE</div>
+    <canvas id="temple-hub-canvas" width="280" height="280" style="width:100%;aspect-ratio:1;border-radius:4px;margin-bottom:0.6rem;"></canvas>
+    <div id="temple-hub-status" style="font-family:var(--font-mono);font-size:0.6rem;color:var(--text-dim);margin-bottom:0.8rem;text-align:center;"></div>
     <button class="temple-btn" onclick="openAltarGame()">🎮 OPEN ALTAR GAME</button>
     <button id="temple-hub-shard-btn" class="temple-btn" onclick="summonBirdShard()">✨ SUMMON BIRD SHARD</button>
     <button class="temple-btn" style="background:transparent;border-color:var(--border2);" onclick="closeTempleHub()">CLOSE</button>
@@ -3460,12 +3462,61 @@ function travelToBirdTemple(){
 function openTempleHub(){
   const bt=BIRD_TEMPLE;
   if(!bt.group){toast('Bird Temple is still loading…',1500);return;}
-  const shardOut=bt.shardState!=='docked';
-  $('temple-hub-shard-btn').textContent=shardOut?'🕊 RETURN BIRD SHARD':'✨ SUMMON BIRD SHARD';
-  $('temple-hub-shard-btn').onclick=shardOut?returnBirdShard:summonBirdShard;
   $('temple-hub-modal').classList.add('open');
+  drawTempleHubMap();
+  // Live-refresh the little map while the modal is open — the ship (and
+  // shard, once summoned) keep moving in the background even with the
+  // menu up, so a one-time snapshot would go stale immediately.
+  clearInterval(_templeHubMapTimer);
+  _templeHubMapTimer=setInterval(drawTempleHubMap,300);
 }
-function closeTempleHub(){$('temple-hub-modal').classList.remove('open');}
+let _templeHubMapTimer=null;
+function closeTempleHub(){$('temple-hub-modal').classList.remove('open');clearInterval(_templeHubMapTimer);}
+// Small position readout — where the ship (and the shard, if it's out) are
+// relative to the player and the home star, in the currently-loaded
+// system. Not a full galaxy/cross-system tracker yet (see summonBirdShard
+// notes on the ship not leaving the loaded system in this pass) but a real
+// live indicator rather than a plain button list.
+function drawTempleHubMap(){
+  const cv=$('temple-hub-canvas');if(!cv||!cv.getContext)return;
+  const ctx=cv.getContext('2d'),W=cv.width,H=cv.height,cx=W/2,cy=H/2;
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='rgba(255,255,255,0.04)';ctx.fillRect(0,0,W,H);
+  const AU=28,scale=(AU*4.2)/(W*0.44);
+  const bt=BIRD_TEMPLE,sp=STATE.flight;
+  // Sun at center
+  ctx.beginPath();ctx.arc(cx,cy,5,0,Math.PI*2);ctx.fillStyle='#ffdd88';ctx.fill();
+  ctx.font='8px monospace';ctx.fillStyle='rgba(255,221,136,0.8)';ctx.fillText('SUN',cx+7,cy+3);
+  // Player
+  if(sp){
+    const px=cx+sp.pos.x/scale, py=cy+sp.pos.z/scale;
+    ctx.beginPath();ctx.arc(px,py,4,0,Math.PI*2);ctx.fillStyle='#00f5ff';ctx.fill();
+    ctx.fillStyle='rgba(0,245,255,0.85)';ctx.fillText('YOU',px+6,py+3);
+  }
+  // Ship
+  if(bt.group){
+    const sx=cx+bt.group.position.x/scale, sy=cy+bt.group.position.z/scale;
+    ctx.beginPath();ctx.arc(sx,sy,5,0,Math.PI*2);ctx.fillStyle='#ffffff';ctx.fill();
+    ctx.strokeStyle='rgba(255,255,255,0.5)';ctx.lineWidth=1;ctx.beginPath();ctx.arc(sx,sy,9,0,Math.PI*2);ctx.stroke();
+    ctx.fillStyle='rgba(255,255,255,0.85)';ctx.fillText('TEMPLE',sx+7,sy+3);
+  }
+  // Shard, only when it's actually detached and out in the world
+  if(bt.shard&&(bt.shardState==='following'||bt.shardState==='toPlayer')){
+    const hx=cx+bt.shard.position.x/scale, hy=cy+bt.shard.position.z/scale;
+    ctx.beginPath();ctx.arc(hx,hy,3,0,Math.PI*2);ctx.fillStyle='#ffcc00';ctx.fill();
+    ctx.fillStyle='rgba(255,204,0,0.85)';ctx.fillText('SHARD',hx+6,hy+3);
+  }
+  // Status line
+  const statusEl=$('temple-hub-status');
+  if(statusEl&&bt.group&&sp){
+    const d=Math.round(bt.group.position.distanceTo(sp.pos));
+    const shardTxt=bt.shardState==='docked'?'docked at Temple':bt.shardState==='following'?'with you':'en route';
+    statusEl.textContent=`Temple: ${d}m away · Shard: ${shardTxt}`;
+  }
+  const shardOut=bt.shardState!=='docked';
+  const btn=$('temple-hub-shard-btn');
+  if(btn){btn.textContent=shardOut?'🕊 RETURN BIRD SHARD':'✨ SUMMON BIRD SHARD';btn.onclick=shardOut?returnBirdShard:summonBirdShard;}
+}
 
 // ══════════════════════════════════════════════════════════════
 // Bird Shard — task 2: summon the Levitation group off the ship as a
@@ -3477,14 +3528,31 @@ function summonBirdShard(){
   if(bt.shardState!=='docked'){toast('The Bird Shard is already out.',1500);return;}
   const node=bt.group.getObjectByName('Levitation group');
   if(!node){toast('Could not find the Levitation group in the model.',2000);return;}
-  // Detach while preserving its current WORLD transform, so it doesn't jump
-  // visually the instant it's pulled off the ship's local hierarchy.
-  const worldPos=new THREE.Vector3(),worldQuat=new THREE.Quaternion(),worldScale=new THREE.Vector3();
-  node.getWorldPosition(worldPos);node.getWorldQuaternion(worldQuat);node.getWorldScale(worldScale);
+  // Detach while preserving its current WORLD transform via the matrix
+  // directly (more robust than decomposing getWorldPosition/Quaternion/
+  // Scale separately), so it doesn't jump visually the instant it's pulled
+  // off the ship's local hierarchy.
+  node.updateWorldMatrix(true,false);
+  const worldMatrix=node.matrixWorld.clone();
   bt.shardHomeLocal={pos:node.position.clone(),quat:node.quaternion.clone(),scale:node.scale.clone(),parent:node.parent};
   node.parent.remove(node);
-  node.position.copy(worldPos);node.quaternion.copy(worldQuat);node.scale.copy(worldScale);
   flightScene.add(node);
+  node.matrix.copy(worldMatrix);
+  node.matrix.decompose(node.position,node.quaternion,node.scale);
+  node.updateMatrixWorld(true);
+  // Real bug from the last report: 'Levitation group' isn't just a small
+  // ring — per the GLB's own hierarchy it also contains an obelisk and the
+  // staff base, a genuinely large sub-assembly. At full ship scale (3.2x)
+  // sitting only ~3-4 units from the camera (the follow offset below), it
+  // filled most of the screen and read as 'the whole ship got summoned' —
+  // not a position bug, just the wrong size for something meant to be a
+  // travelling companion. Measure its actual footprint and rescale it down
+  // to a consistent companion size before it starts flying to the player.
+  const box=new THREE.Box3().setFromObject(node);
+  const size=box.getSize(new THREE.Vector3());
+  const maxDim=Math.max(size.x,size.y,size.z)||1;
+  const TARGET_SIZE=2.4; // reads as a companion object, not a landmark
+  node.scale.multiplyScalar(TARGET_SIZE/maxDim);
   bt.shard=node;
   bt.shardState='toPlayer';
   bt.shardPlayedNear=false;
@@ -3502,7 +3570,7 @@ function updateBirdShard(dt){
   const SHARD_SPEED=10; // faster than the ship's own wander — it's darting to catch up
   if(bt.shardState==='toPlayer'||bt.shardState==='following'){
     // desired spot: hovering just off the board's side, like the staff sidekick
-    const off=new THREE.Vector3(3.2,1.4,-2.0).applyQuaternion(spQuat(sp));
+    const off=new THREE.Vector3(4.5,2.2,-3.5).applyQuaternion(spQuat(sp));
     const dest=sp.pos.clone().add(off);
     const toDest=dest.clone().sub(bt.shard.position);
     const d=toDest.length();
