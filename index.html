@@ -594,8 +594,11 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 /* Settings */
 #settings-modal{position:fixed;inset:0;z-index:5000;background:rgba(0,0,0,0.7);backdrop-filter:blur(10px);display:none;align-items:center;justify-content:center;}
 #settings-modal.open{display:flex;}
-#temple-hub-modal,#altar-game-modal{position:fixed;inset:0;z-index:5100;background:rgba(0,0,0,0.7);backdrop-filter:blur(10px);display:none;align-items:center;justify-content:center;}
-#temple-hub-modal.open,#altar-game-modal.open{display:flex;}
+#temple-hub-modal{position:fixed;inset:0;z-index:5100;background:transparent;display:none;}
+#temple-hub-modal.open{display:block;}
+#altar-game-modal{position:fixed;inset:0;z-index:5100;background:rgba(0,0,0,0.7);backdrop-filter:blur(10px);display:none;align-items:center;justify-content:center;}
+#altar-game-modal.open{display:flex;}
+#temple-hub-panel{position:absolute;left:10px;top:211px;width:230px;max-height:calc(100% - 220px);overflow-y:auto;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.35);border-radius:6px;padding:12px 14px;backdrop-filter:blur(16px);box-shadow:0 0 24px rgba(255,255,255,0.08);}
 .temple-btn{display:block;width:100%;padding:0.7rem;margin-bottom:0.6rem;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.25);color:#fff;font-family:var(--font-hud);font-size:0.65rem;letter-spacing:0.1em;border-radius:3px;cursor:pointer;}
 .temple-btn:hover{background:rgba(255,255,255,0.14);}
 .ag-row{padding:0.5rem 0;border-bottom:1px solid var(--border2);}
@@ -1325,8 +1328,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 </div><!-- /app -->
 
 <!-- SETTINGS -->
-<div id="temple-hub-modal">
-  <div class="modal-box" style="width:min(340px,90vw);">
+<div id="temple-hub-modal" onclick="closeTempleHub()">
+  <div id="temple-hub-panel" onclick="event.stopPropagation()">
     <div class="modal-title" style="color:#fff;">🕊 BIRD TEMPLE</div>
     <canvas id="temple-hub-canvas" width="280" height="280" style="width:100%;aspect-ratio:1;border-radius:4px;margin-bottom:0.6rem;"></canvas>
     <div id="temple-hub-status" style="font-family:var(--font-mono);font-size:0.6rem;color:var(--text-dim);margin-bottom:0.8rem;text-align:center;"></div>
@@ -3399,6 +3402,19 @@ function buildSolarSystem(){
     // unaffected by them, no matter how close the ship happens to drift.
     const SHIP_LIGHT_LAYER=10;
     t.traverse(o=>{ if(o.isMesh)o.layers.enable(SHIP_LIGHT_LAYER); });
+    // The actual root cause, found by reading the GLB's embedded
+    // KHR_lights_punctual data directly: the file ships with its own baked
+    // light ('Light 3', a point light) at a raw intensity of 121,081 — a
+    // physically-based value from the Nomad Sculpt export. GLTFLoader
+    // auto-instantiates this as a real THREE.PointLight the instant the
+    // model loads, and no amount of tuning materials or adding local
+    // lights could ever compensate for something that overwhelming sitting
+    // in the scene the whole time. Disabling every light that comes baked
+    // into the file (catches this and anything else of the same kind,
+    // rather than hunting for it by name) — the ship gets lit entirely by
+    // the local rig below instead. No KHR environment-map extension was
+    // present in the file itself to disable, per direct inspection.
+    t.traverse(o=>{ if(o.isLight)o.intensity=0; });
     t.traverse(o=>{
       if(o.isMesh&&o.material){
         const mats=Array.isArray(o.material)?o.material:[o.material];
@@ -3407,9 +3423,7 @@ function buildSolarSystem(){
     });
     const altarNode=t.getObjectByName('Altar Group');
     if(altarNode){
-      // ~1.8x the rig's average intensity — 'heavenly' over the altar
-      // without overpowering it, per the requested ~1.5x relative ask.
-      const altarLight=new THREE.PointLight(0xfff2cc,0.9,7,2);
+      const altarLight=new THREE.PointLight(0xfff2cc,0.1,7,2);
       altarLight.position.set(0,1.2,0); // local to Altar Group's own origin
       altarLight.layers.set(SHIP_LIGHT_LAYER);
       altarNode.add(altarLight);
