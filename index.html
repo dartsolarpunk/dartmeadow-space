@@ -1089,6 +1089,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
         <button class="aud-btn" onclick="audioStop()" title="Stop">■</button>
         <button class="aud-btn" onclick="audioNext()" title="Next track">⏭</button>
         <button class="aud-btn" onclick="audioPickFiles()" title="Load music from your device">📁</button>
+        <button class="aud-btn" onclick="openMusicBrowser()" title="Browse the soundtrack">📜</button>
         <button class="aud-btn" onclick="audioLoadDefault()" title="Reload game soundtrack">♫</button>
       </div>
       <button class="art-btn active" id="cam-btn" onclick="cycleCamMode()">CAM 1</button>
@@ -1342,6 +1343,13 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 </div><!-- /app -->
 
 <!-- SETTINGS -->
+<div id="music-browser-modal" onclick="closeMusicBrowser()" style="position:fixed;inset:0;z-index:5200;background:rgba(0,0,0,0.6);backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;">
+  <div onclick="event.stopPropagation()" style="background:rgba(4,10,22,0.95);border:1px solid var(--border);border-radius:6px;padding:1.2rem;width:min(320px,88vw);">
+    <div class="modal-title" style="margin-bottom:0.8rem;">♫ SOUNDTRACK</div>
+    <div id="music-browser-list"></div>
+    <button class="temple-btn" style="background:transparent;border-color:var(--border2);margin-top:0.6rem;" onclick="closeMusicBrowser()">CLOSE</button>
+  </div>
+</div>
 <div id="temple-hub-modal" onclick="closeTempleHub()">
   <div id="temple-hub-panel" onclick="event.stopPropagation()">
     <div class="modal-title" style="color:#fff;">🕊 BIRD TEMPLE</div>
@@ -1836,23 +1844,35 @@ function disableImmersiveMode(){
 // ══════════════════════════════════════════════════════════════
 const AUDIO = {
   el:null,
-  defaultSrc:'clinical_bloom.mp3',
-  defaultName:'CLINICAL BLOOM',
+  bundled:[ // the embedded soundtrack — shuffled into the playlist by default
+    {name:'CLINICAL BLOOM',src:'clinical_bloom.mp3'},
+    {name:'COLD FLORIDA AIR',src:'cold_florida_air.mp3'},
+    {name:'ARC LAKE',src:'arc_lake.mp3'},
+    {name:'VELVET HORIZON',src:'velvet_horizon.mp3'},
+    {name:'THE SAME AS ITSELF',src:'the_same_as_itself.mp3'},
+  ],
   playlist:[],          // [{name, src, isObjectUrl}]
   index:-1,
   stopped:false,        // user explicitly stopped (don't autoplay)
   started:false,
   userInteracted:false,
 };
+function _shuffledBundled(){
+  const arr=AUDIO.bundled.map(t=>({name:t.name,src:t.src,isObjectUrl:false}));
+  for(let i=arr.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[arr[i],arr[j]]=[arr[j],arr[i]];}
+  return arr;
+}
 
 function initAudio(){
   AUDIO.el=$('game-audio');
   if(!AUDIO.el)return;
-  // seed playlist with the bundled soundtrack
-  AUDIO.playlist=[{name:AUDIO.defaultName,src:AUDIO.defaultSrc,isObjectUrl:false}];
+  // seed playlist with all 5 bundled tracks, shuffled — was just the one
+  // default track before; now a real default rotation, with a browse list
+  // (see openMusicBrowser) so the player can pick a specific one directly.
+  AUDIO.playlist=_shuffledBundled();
   AUDIO.index=0;
-  AUDIO.el.src=AUDIO.defaultSrc;
-  AUDIO.el.loop=false; // we handle next-track on end (loop single via playlist of 1)
+  AUDIO.el.src=AUDIO.playlist[0].src;
+  AUDIO.el.loop=false; // we handle next-track on end
   AUDIO.el.addEventListener('ended',()=>{ audioNext(); });
   AUDIO.el.addEventListener('play',()=>syncAudioUI(true));
   AUDIO.el.addEventListener('pause',()=>syncAudioUI(false));
@@ -1930,10 +1950,31 @@ function onMusicFilesPicked(e){
   loadTrack(0,true);
   toast('♫ Loaded '+newList.length+' track'+(newList.length>1?'s':''));
 }
-function audioLoadDefault(){
-  // restore bundled soundtrack
+// Pop-up list of the 5 bundled tracks — tap one to jump straight to it,
+// separate from the automatic shuffle. Per request: 'a pop-up overlay
+// list when they select the embedded MP3s... they can select between
+// them'.
+function openMusicBrowser(){
+  const list=$('music-browser-list');
+  if(list)list.innerHTML=AUDIO.bundled.map((t,i)=>
+    `<button class="temple-btn" style="text-align:left;" onclick="playBundledTrack(${i})">${AUDIO.playlist[AUDIO.index]&&AUDIO.playlist[AUDIO.index].src===t.src?'▶ ':''}${t.name}</button>`
+  ).join('');
+  $('music-browser-modal').style.display='flex';
+}
+function closeMusicBrowser(){$('music-browser-modal').style.display='none';}
+function playBundledTrack(i){
+  // Switch to the full bundled list (unshuffled, so order is predictable
+  // once someone's deliberately picked a track) starting at the chosen one.
   AUDIO.playlist.forEach(t=>{if(t.isObjectUrl)try{URL.revokeObjectURL(t.src);}catch(_){}});
-  AUDIO.playlist=[{name:AUDIO.defaultName,src:AUDIO.defaultSrc,isObjectUrl:false}];
+  AUDIO.playlist=AUDIO.bundled.map(t=>({name:t.name,src:t.src,isObjectUrl:false}));
+  AUDIO.stopped=false;
+  loadTrack(i,true);
+  closeMusicBrowser();
+}
+function audioLoadDefault(){
+  // restore bundled soundtrack — all 5, shuffled
+  AUDIO.playlist.forEach(t=>{if(t.isObjectUrl)try{URL.revokeObjectURL(t.src);}catch(_){}});
+  AUDIO.playlist=_shuffledBundled();
   AUDIO.index=0;AUDIO.stopped=false;
   loadTrack(0,true);
   toast('♫ Game soundtrack loaded');
@@ -3488,7 +3529,7 @@ function buildSolarSystem(){
     });
     const altarNode=t.getObjectByName('Altar Group');
     if(altarNode){
-      const altarLight=new THREE.PointLight(0xfff2cc,35,7,2);
+      const altarLight=new THREE.PointLight(0xfff2cc,100,7,2);
       altarLight.position.set(0,1.2,0); // local to Altar Group's own origin
       altarLight.layers.set(SHIP_LIGHT_LAYER);
       altarNode.add(altarLight);
