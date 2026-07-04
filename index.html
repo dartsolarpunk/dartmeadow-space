@@ -3619,10 +3619,16 @@ function buildSolarSystem(){
         col.needsUpdate=true;
       });
     }
-    brightenVertexColors(t.getObjectByName('Hull'),0.5);
-    brightenVertexColors(t.getObjectByName('Upper maze'),0.5);
-    brightenVertexColors(t.getObjectByName('Lower maze'),0.5);
-    brightenVertexColors(t.getObjectByName('Staff base'),0.5);
+    // Was scoped to just 4 named parts (Hull, both mazes, staff base) —
+    // the ones specifically called out at the time. But the near-black
+    // vertex-color grading was described as affecting MOST of the ship on
+    // export, not just those 4 pieces. A solid black surface rendered
+    // against the black void of space is visually indistinguishable from
+    // a hole straight through the mesh — not a compositing/transparency
+    // bug at all, just black-on-black. Applying this across the WHOLE
+    // model now, not a curated subset, so nothing on the ship can end up
+    // that dark anywhere.
+    brightenVertexColors(t,0.5);
     const hullNode=t.getObjectByName('Hull')||t;
     const rig=[
       {pos:[0,25,60], intensity:0.6, dist:22},   // key — from above/front
