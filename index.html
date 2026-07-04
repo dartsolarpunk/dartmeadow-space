@@ -3382,17 +3382,22 @@ function buildSolarSystem(){
     t.scale.setScalar(1); // raw model scale — see wrapper group below for the real scale
     t.position.set(0,0,0);
     t.traverse(o=>{ if(o.isMesh){ o.castShadow=GFX.shadows; o.receiveShadow=GFX.shadows; }});
-    // Brightness fix, round 2 — "turn it down a lot more, it's insanely
-    // bright even from far away, my board turns white". The material dim
-    // alone wasn't enough against this scene's strong, effectively-
-    // unlimited-range Sun light (the same light every planet uses, working
-    // fine for them since they're textured, not flat white). Pushed the
-    // dim much further (0.62→0.4, i.e. 60% reduction total) and replaced
-    // the single altar point light with a genuinely tight, dim one PLUS a
-    // proper local 3-point rig (key/fill/rim, short range, modest
-    // intensity) for the REST of the hull — like room lamps, not sunlight
-    // — so the general ship is visible without any single hotspot reading
-    // as blindingly bright from a distance.
+    // Brightness fix, round 3 — the real bug behind 'light reaches Saturn/
+    // my board from miles away' isn't the distance number on the lights.
+    // Three.js lights illuminate EVERY object within range regardless of
+    // scene-graph parent/child relationships — parenting a light to the
+    // ship only moves the light's own position, it does NOT confine what
+    // it lights. If the ship happens to be wandering near Saturn (a real
+    // possibility — its wander target picks a random celestial body 60%
+    // of the time), these lights were illuminating Saturn and the board
+    // too, at whatever distance they happened to be within range.
+    // Properly isolated with Three.js layers instead: the ship's own
+    // lights live on a private layer that ONLY the ship's own meshes are
+    // enabled to receive, while everything else in the game (Saturn, the
+    // board, other bodies) stays on the default layer and is completely
+    // unaffected by them, no matter how close the ship happens to drift.
+    const SHIP_LIGHT_LAYER=10;
+    t.traverse(o=>{ if(o.isMesh)o.layers.enable(SHIP_LIGHT_LAYER); });
     t.traverse(o=>{
       if(o.isMesh&&o.material){
         const mats=Array.isArray(o.material)?o.material:[o.material];
@@ -3401,20 +3406,16 @@ function buildSolarSystem(){
     });
     const altarNode=t.getObjectByName('Altar Group');
     if(altarNode){
-      // Tight and dim — only the altar's own immediate floor, not a glow
-      // visible from far outside the ship.
+      // ~1.8x the rig's average intensity — 'heavenly' over the altar
+      // without overpowering it, per the requested ~1.5x relative ask.
       const altarLight=new THREE.PointLight(0xfff2cc,0.9,7,2);
       altarLight.position.set(0,1.2,0); // local to Altar Group's own origin
+      altarLight.layers.set(SHIP_LIGHT_LAYER);
       altarNode.add(altarLight);
     }
-    // Local 3-point rig for the general hull — short range so it never
-    // reaches out into open space, just lights the ship the way a lamp
-    // lights a room. Positions are rough (front/back/top of the raw Hull
+    // Local 3-point rig for the general hull — like room lamps, not
+    // sunlight. Positions are rough (front/back/top of the raw Hull
     // bounding box, ~63x40x179 units) rather than hand-tuned per part.
-    // Range kept well under the ship's own ~73-unit length on purpose —
-    // the first attempt used 60-70 unit ranges, almost as long as the
-    // whole ship, which would still reach an approaching player's board
-    // from well outside the hull.
     const hullNode=t.getObjectByName('Hull')||t;
     const rig=[
       {pos:[0,25,60], intensity:0.6, dist:22},   // key — from above/front
@@ -3424,6 +3425,7 @@ function buildSolarSystem(){
     rig.forEach(r=>{
       const l=new THREE.PointLight(0xdfe8ff,r.intensity,r.dist,2);
       l.position.set(r.pos[0],r.pos[1],r.pos[2]);
+      l.layers.set(SHIP_LIGHT_LAYER);
       hullNode.add(l);
     });
     // Wrap the whole model in an empty parent group and scale THAT, per
@@ -3782,15 +3784,17 @@ function summonBirdShard(){
   bt.shard=combined;
   bt.shardState='toPlayer';
   bt.shardPlayedNear=false;
-  // Real bug from the last report: SHARD_SPEED was a FIXED absolute speed
-  // (10 units/sec), which worked fine when the ship spawned nearby, but
-  // since the ship can now spawn up to ~15 AU away (~420 units, per the
-  // randomized-spawn fix), a fixed speed could take 40+ seconds to arrive
-  // — in a 30-second test clip that looks exactly like 'it didn't summon
-  // at all'. Compute a per-summon speed instead, sized so the trip always
-  // takes about the same ~5 seconds regardless of how far away the ship
-  // happened to wander to.
-  const startDist=combined.position.distanceTo(STATE.flight.pos);
+  // Real bug found on re-check: this used combined.position for the
+  // distance calc below, but `combined` is an empty wrapper THREE.Group
+  // whose own .position is NEVER set — it stays at world origin (0,0,0)
+  // forever; the actual halo/shard position lives in the CHILDREN's local
+  // transforms, not the group's own. So the 'fix' last time was silently
+  // computing 'distance from world origin to you' (a small, roughly
+  // constant number) instead of the real distance from wherever the ship
+  // actually is — which is exactly why it still looked broken even after
+  // that pass. Using the box's center (already measured above for the
+  // rescale) instead, which reflects the real world position.
+  const startDist=box.getCenter(new THREE.Vector3()).distanceTo(STATE.flight.pos);
   bt.shardTravelSpeed=Math.max(10,startDist/5);
   $('shard-game-btn').style.display='flex';
   $('shard-return-btn').style.display='flex';
