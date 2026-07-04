@@ -3740,7 +3740,13 @@ function drawTempleHubMap(){
   const statusEl=$('temple-hub-status');
   if(statusEl&&bt.group&&sp){
     const d=Math.round(bt.group.position.distanceTo(sp.pos));
-    const shardTxt=bt.shardState==='docked'?'docked at Temple':bt.shardState==='following'?'with you':'en route';
+    let shardTxt=bt.shardState==='docked'?'docked at Temple':bt.shardState==='following'?'with you':'en route';
+    if(bt.shard&&(bt.shardState==='toPlayer'||bt.shardState==='toShip')){
+      // Live distance-to-target while actively travelling — should visibly
+      // count DOWN over a couple of seconds if it's really moving.
+      const target=bt.shardState==='toPlayer'?sp.pos:bt.group.position;
+      shardTxt+=` (${Math.round(bt.shard.position.distanceTo(target))}u to go)`;
+    }
     statusEl.textContent=`Temple: ${d}m away · Shard: ${shardTxt}`;
   }
   const shardOut=bt.shardState!=='docked';
@@ -3806,7 +3812,15 @@ function summonBirdShard(){
   bt.shardTravelSpeed=Math.max(10,startDist/5);
   $('shard-game-btn').style.display='flex';
   $('shard-return-btn').style.display='flex';
-  toast('✨ Bird Shard summoned',2000);
+  // Diagnostic — reading this code fresh, the movement logic looks
+  // correct, so rather than guess at a fourth hypothetical bug blind,
+  // surfacing the actual computed numbers. If the next test still shows
+  // no movement, these numbers (not another guess) are what actually
+  // narrows it down: e.g. startDist near 0 would mean the ship position
+  // itself is wrong; a huge startDist with normal speed would mean it's
+  // moving but still far off-screen; NaN would point at the box
+  // measurement itself.
+  toast(`✨ Bird Shard summoned — dist ${startDist.toFixed(1)}u, speed ${bt.shardTravelSpeed.toFixed(1)}u/s`,4000);
 }
 function returnBirdShard(){
   const bt=BIRD_TEMPLE;
