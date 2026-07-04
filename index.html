@@ -3454,12 +3454,12 @@ function buildSolarSystem(){
     t.traverse(o=>{
       if(o.isMesh&&o.material){
         const mats=Array.isArray(o.material)?o.material:[o.material];
-        mats.forEach(m=>{ if(m.color)m.color.multiplyScalar(0.4); });
+        mats.forEach(m=>{ if(m.color)m.color.multiplyScalar(0.4); if('side' in m){m.side=THREE.DoubleSide;m.needsUpdate=true;} });
       }
     });
     const altarNode=t.getObjectByName('Altar Group');
     if(altarNode){
-      const altarLight=new THREE.PointLight(0xfff2cc,0.1,7,2);
+      const altarLight=new THREE.PointLight(0xfff2cc,10,7,2);
       altarLight.position.set(0,1.2,0); // local to Altar Group's own origin
       altarLight.layers.set(SHIP_LIGHT_LAYER);
       altarNode.add(altarLight);
@@ -3887,9 +3887,23 @@ function summonBirdShard(){
   // for the ride. Detach just the two floating siblings individually (each
   // preserving its own world transform via matrix), and combine them into
   // a new group of their own.
-  const haloSrc=bt.group.getObjectByName('Levitation halo');
-  const shardSrc=bt.group.getObjectByName('Levitation shard');
-  if(!haloSrc||!shardSrc){toast('Could not find the Levitation halo/shard in the model.',2000);return;}
+  let haloSrc=bt.group.getObjectByName('Levitation halo');
+  let shardSrc=bt.group.getObjectByName('Levitation shard');
+  // Fallback: search the whole scene, not just bt.group, in case either
+  // piece ended up detached/reparented somewhere unexpected (e.g. a stale
+  // state from an earlier interrupted summon). Reading the raw GLB
+  // directly has confirmed these exact names exist in the file every time
+  // this has been checked, so if this still fails, it's a real runtime
+  // state issue worth seeing the actual data for rather than guessing
+  // again — logging every child name actually under bt.group right now.
+  if(!haloSrc)haloSrc=flightScene.getObjectByName('Levitation halo');
+  if(!shardSrc)shardSrc=flightScene.getObjectByName('Levitation shard');
+  if(!haloSrc||!shardSrc){
+    const names=[];bt.group.traverse(o=>{if(o.name)names.push(o.name);});
+    console.warn('Bird Shard summon failed to find halo/shard. Children currently under bt.group:',names);
+    toast('Could not find the Levitation halo/shard in the model. (See console for details — this may be a stale cached page; try a hard refresh.)',4000);
+    return;
+  }
   const combined=new THREE.Group();
   bt.shardHomeLocal=[];
   [haloSrc,shardSrc].forEach(node=>{
