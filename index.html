@@ -3382,28 +3382,50 @@ function buildSolarSystem(){
     t.scale.setScalar(1); // raw model scale — see wrapper group below for the real scale
     t.position.set(0,0,0);
     t.traverse(o=>{ if(o.isMesh){ o.castShadow=GFX.shadows; o.receiveShadow=GFX.shadows; }});
-    // Brightness fix: every material in this file is pure white
-    // (baseColorFactor [1,1,1,1]), fully rough, with NO baked emissive at
-    // all (confirmed by reading the GLB's material definitions directly) —
-    // so the blown-out look wasn't a broken asset, it's just a plain white
-    // diffuse surface catching this scene's strong sunlight uniformly
-    // across the whole hull. Dimmed ~38% (within the requested 35-40%
-    // range) so the general hull reads normally, then added a real local
-    // light specifically at the altar (there's no baked emissive to lean
-    // on for 'the altar should glow', so this is an actual light source)
-    // so brightness concentrates there instead of everywhere evenly.
+    // Brightness fix, round 2 — "turn it down a lot more, it's insanely
+    // bright even from far away, my board turns white". The material dim
+    // alone wasn't enough against this scene's strong, effectively-
+    // unlimited-range Sun light (the same light every planet uses, working
+    // fine for them since they're textured, not flat white). Pushed the
+    // dim much further (0.62→0.4, i.e. 60% reduction total) and replaced
+    // the single altar point light with a genuinely tight, dim one PLUS a
+    // proper local 3-point rig (key/fill/rim, short range, modest
+    // intensity) for the REST of the hull — like room lamps, not sunlight
+    // — so the general ship is visible without any single hotspot reading
+    // as blindingly bright from a distance.
     t.traverse(o=>{
       if(o.isMesh&&o.material){
         const mats=Array.isArray(o.material)?o.material:[o.material];
-        mats.forEach(m=>{ if(m.color)m.color.multiplyScalar(0.62); });
+        mats.forEach(m=>{ if(m.color)m.color.multiplyScalar(0.4); });
       }
     });
     const altarNode=t.getObjectByName('Altar Group');
     if(altarNode){
-      const altarLight=new THREE.PointLight(0xfff2cc,2.2,14,2);
-      altarLight.position.set(0,1.5,0); // local to Altar Group's own origin
+      // Tight and dim — only the altar's own immediate floor, not a glow
+      // visible from far outside the ship.
+      const altarLight=new THREE.PointLight(0xfff2cc,0.9,7,2);
+      altarLight.position.set(0,1.2,0); // local to Altar Group's own origin
       altarNode.add(altarLight);
     }
+    // Local 3-point rig for the general hull — short range so it never
+    // reaches out into open space, just lights the ship the way a lamp
+    // lights a room. Positions are rough (front/back/top of the raw Hull
+    // bounding box, ~63x40x179 units) rather than hand-tuned per part.
+    // Range kept well under the ship's own ~73-unit length on purpose —
+    // the first attempt used 60-70 unit ranges, almost as long as the
+    // whole ship, which would still reach an approaching player's board
+    // from well outside the hull.
+    const hullNode=t.getObjectByName('Hull')||t;
+    const rig=[
+      {pos:[0,25,60], intensity:0.6, dist:22},   // key — from above/front
+      {pos:[0,15,-70], intensity:0.45, dist:22}, // fill — from the back
+      {pos:[30,10,0], intensity:0.4, dist:18},   // rim — from the side
+    ];
+    rig.forEach(r=>{
+      const l=new THREE.PointLight(0xdfe8ff,r.intensity,r.dist,2);
+      l.position.set(r.pos[0],r.pos[1],r.pos[2]);
+      hullNode.add(l);
+    });
     // Wrap the whole model in an empty parent group and scale THAT, per
     // request — one uniform transform for everything inside, rather than
     // scaling the loaded scene root directly. The default 3.2 was a guess
@@ -3523,6 +3545,18 @@ function updateBirdTemple(dt){
 
   // ── Bird Shard: fly-to-player / follow / return-to-ship ─────────
   updateBirdShard(dt);
+  // Subtle sentinel patrol even while docked — a small continuous drift on
+  // top of its resting position so it reads as 'watching over the ship'
+  // rather than a static prop, without touching the docking architecture.
+  if(bt.shardState==='docked'){
+    const halo=bt.group.getObjectByName('Levitation halo'),shard=bt.group.getObjectByName('Levitation shard');
+    [halo,shard].forEach(n=>{
+      if(!n)return;
+      if(!n._dockBase)n._dockBase=n.position.clone();
+      const off=_sentinelOffset(0.35,0.5); // small — this is LOCAL to the ship, not world scale
+      n.position.set(n._dockBase.x+off.x,n._dockBase.y+off.y*0.4,n._dockBase.z+off.z);
+    });
+  }
 
   // ── Proximity cues — only relevant while actually flying toward the
   // ship; none of this applies once you're already walking on it ──────
@@ -3748,6 +3782,16 @@ function summonBirdShard(){
   bt.shard=combined;
   bt.shardState='toPlayer';
   bt.shardPlayedNear=false;
+  // Real bug from the last report: SHARD_SPEED was a FIXED absolute speed
+  // (10 units/sec), which worked fine when the ship spawned nearby, but
+  // since the ship can now spawn up to ~15 AU away (~420 units, per the
+  // randomized-spawn fix), a fixed speed could take 40+ seconds to arrive
+  // — in a 30-second test clip that looks exactly like 'it didn't summon
+  // at all'. Compute a per-summon speed instead, sized so the trip always
+  // takes about the same ~5 seconds regardless of how far away the ship
+  // happened to wander to.
+  const startDist=combined.position.distanceTo(STATE.flight.pos);
+  bt.shardTravelSpeed=Math.max(10,startDist/5);
   $('shard-game-btn').style.display='flex';
   $('shard-return-btn').style.display='flex';
   toast('✨ Bird Shard summoned',2000);
@@ -3756,16 +3800,36 @@ function returnBirdShard(){
   const bt=BIRD_TEMPLE;
   if(bt.shardState==='docked'||!bt.shard){toast('The Bird Shard is already at the Temple.',1500);return;}
   bt.shardState='toShip';
+  // Same fixed-arrival-time fix as summon, in the other direction.
+  const dest=new THREE.Vector3();bt.group.getWorldPosition(dest);
+  bt.shardTravelSpeed=Math.max(10,bt.shard.position.distanceTo(dest)/5);
   toast('🕊 Bird Shard returning to the Temple',2000);
+}
+// ── Sentinel hover-patrol ────────────────────────────────────────
+// Both the docked shard (patrolling near the ship) and the summoned shard
+// (patrolling near the player) drift continuously across a sphere around
+// their anchor point, instead of sitting at one fixed offset — reads as
+// 'watching over' rather than 'glued to one spot'. Two slowly-evolving
+// angles trace a smooth, never-repeating wander across the sphere's
+// surface; anchorRadius interprets the requested '~50m, 360 spherical'
+// as a proportionate hover distance for this game's scene-unit scale.
+let _sentinelT=0;
+function _sentinelOffset(radius,speedMul){
+  const th=_sentinelT*0.35*speedMul, ph=Math.sin(_sentinelT*0.22*speedMul)*1.1;
+  return new THREE.Vector3(
+    Math.cos(th)*Math.cos(ph)*radius,
+    Math.sin(ph)*radius*0.6+radius*0.15, // biased slightly upward — hovers ABOVE more than below
+    Math.sin(th)*Math.cos(ph)*radius
+  );
 }
 function updateBirdShard(dt){
   const bt=BIRD_TEMPLE,sp=STATE.flight;
-  if(!bt.shard||!sp)return;
-  const SHARD_SPEED=10; // faster than the ship's own wander — it's darting to catch up
-  if(bt.shardState==='toPlayer'||bt.shardState==='following'){
-    // desired spot: hovering just off the board's side, like the staff sidekick
-    const off=new THREE.Vector3(4.5,2.2,-3.5).applyQuaternion(spQuat(sp));
-    const dest=sp.pos.clone().add(off);
+  if(!sp)return;
+  _sentinelT+=dt;
+  const SHARD_SPEED=bt.shardTravelSpeed||10;
+  if(bt.shard&&(bt.shardState==='toPlayer'||bt.shardState==='following')){
+    const HOVER_RADIUS=9; // proportionate stand-in for the requested '~50m' at this game's scale
+    const dest=sp.pos.clone().add(_sentinelOffset(HOVER_RADIUS,bt.shardState==='toPlayer'?0:1));
     const toDest=dest.clone().sub(bt.shard.position);
     const d=toDest.length();
     if(bt.shardState==='toPlayer'){
@@ -3774,11 +3838,11 @@ function updateBirdShard(dt){
       // audio cue once it's within ~100ft (≈30 world units) of the player, per the notes
       if(!bt.shardPlayedNear&&bt.shard.position.distanceTo(sp.pos)<30){bt.shardPlayedNear=true;_btPlayChime();}
     } else {
-      // following: smooth trail, like the staff does
-      bt.shard.position.lerp(dest,Math.min(1,dt*3));
+      // following: continuously chase the slowly-drifting sentinel point
+      bt.shard.position.lerp(dest,Math.min(1,dt*1.6));
     }
     bt.shard.rotation.y+=dt*0.6;
-  } else if(bt.shardState==='toShip'){
+  } else if(bt.shard&&bt.shardState==='toShip'){
     const dest=new THREE.Vector3();bt.group.getWorldPosition(dest);
     // dock it back near where it started, offset above the ship — scaled
     // down to match the corrected (much smaller) ship scale
