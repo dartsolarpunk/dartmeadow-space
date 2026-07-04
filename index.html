@@ -1158,6 +1158,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   <div id="roll-row">
     <button id="roll-left-btn" class="side-pad" title="Hold to roll left (also KeyQ)"><span class="sp-ico">⟲</span>ROLL</button>
     <button id="roll-right-btn" class="side-pad" title="Hold to roll right (also KeyE)"><span class="sp-ico">⟳</span>ROLL</button>
+    <button id="anchor-btn" class="side-pad" onclick="toggleAnchor()" title="Anchor your position to whatever's under the crosshair — look freely, move with it. Tap again to release."><span class="sp-ico">⚓</span>ANCHOR</button>
   </div>
   <!-- Auto-level pads: vertical stack right of the LEFT thumbstick.
        Top = level to the galactic plane. Bottom = level to the nearest
@@ -3527,6 +3528,12 @@ function updateBirdTemple(dt){
 
   bt.t+=dt;
 
+  // Per-frame movement delta — lets the ANCHOR feature move the player
+  // along with the ship the same way it already works for celestial
+  // bodies, if the ship happens to be what's anchored to.
+  if(!bt._frameDelta)bt._frameDelta=new THREE.Vector3();
+  const _btPrevPos=bt.group.position.clone();
+
   // ── Task 1: randomized autonomous travel between waypoints ──────
   if(bt.t>=bt.wanderIdleUntil){
     const toTarget=bt.target.clone().sub(bt.group.position);
@@ -3544,6 +3551,7 @@ function updateBirdTemple(dt){
     }
   }
   bt.group.position.y+=Math.sin(bt.t*0.4)*0.02; // small hover bob regardless of travel state
+  bt._frameDelta.subVectors(bt.group.position,_btPrevPos);
 
   // ── Bird Shard: fly-to-player / follow / return-to-ship ─────────
   updateBirdShard(dt);
@@ -4627,6 +4635,41 @@ function toggleFocus(){
   toast('◎ FOCUS LOCKED: '+body.name.toUpperCase()+' — tracking');
 }
 
+// ── ANCHOR — parents the player's ORIGIN (position) to whatever's under
+// the crosshair, so they move WITH it, while orientation/look stays
+// completely free (unlike FOCUS, which auto-steers to keep looking at the
+// target and drops out the moment you steer away). Anchoring persists
+// through manual input and stays on until toggled off again — it's a
+// position tether, not a steering assist, so it deliberately does NOT
+// live inside the ASSIST system's 'manual input disengages' logic.
+const ANCHOR_STATE={active:false,target:null};
+function toggleAnchor(){
+  if(ANCHOR_STATE.active){
+    ANCHOR_STATE.active=false;ANCHOR_STATE.target=null;
+    toast('⚓ Anchor released');updateAnchorButton();return;
+  }
+  const target=bodyUnderCrosshair();
+  if(!target){toast('⚠ No object under crosshair to anchor to');return;}
+  ANCHOR_STATE.active=true;ANCHOR_STATE.target=target;
+  toast('⚓ ANCHORED to '+target.name.toUpperCase()+' — look freely, you\'ll move with it');
+  updateAnchorButton();
+}
+function updateAnchorButton(){
+  const b=$('anchor-btn');if(!b)return;
+  b.classList.toggle('active',ANCHOR_STATE.active);
+}
+// bodyUnderCrosshair() returns a throwaway object literal for the Bird
+// Temple (rebuilt fresh each call) and for distant systems, so they don't
+// carry a persistent ._frameDelta the way real celestialBodies entries do
+// — resolve to the actual persistent source in each case.
+function _getAnchorDelta(){
+  const t=ANCHOR_STATE.target;
+  if(!t)return null;
+  if(t.isBirdTemple)return BIRD_TEMPLE._frameDelta||null;
+  if(t.isSystem)return null; // distant systems don't move frame-to-frame currently
+  return t._frameDelta||null;
+}
+
 // IDLE button — full stop, hover in place.
 function toggleIdle(){
   if(ASSIST.mode==='idle'){disengageAssist('IDLE off');return;}
@@ -4681,6 +4724,7 @@ function bodyUnderCrosshair(){
   let best=null,bestScore=-Infinity;
   const candidates=[...celestialBodies];
   (distantSystems||[]).forEach(s=>candidates.push({name:s.name,mesh:{position:s.pos},isSystem:true}));
+  if(BIRD_TEMPLE.group&&BIRD_TEMPLE.spawned)candidates.push({name:'Bird Temple',mesh:{position:BIRD_TEMPLE.group.position},isBirdTemple:true});
   candidates.forEach(b=>{
     if(!b.mesh||b.name==='Sun')return;
     const to=b.mesh.position.clone().sub(camPos);
@@ -4909,6 +4953,7 @@ function updateFlight(dt){
   if(assistConsumed){
     // assist drives sp.vel; move the BOARD and let the camera follow it
     sp.pos.addScaledVector(sp.vel,1);
+    if(ANCHOR_STATE.active){const ad=_getAnchorDelta();if(ad)sp.pos.add(ad);}
     sp.speed=sp.vel.length();
     updateBoardTransform(0,0);
     updateFollowCam(dt);
@@ -4973,6 +5018,7 @@ function updateFlight(dt){
   if(!throttling&&sp.vel.length()<0.002)sp.vel.set(0,0,0);
   // The BOARD is what moves through the world now.
   sp.pos.addScaledVector(sp.vel,1);
+  if(ANCHOR_STATE.active){const ad=_getAnchorDelta();if(ad)sp.pos.add(ad);}
 
   // Animate DART rings faster in higher modes
   const ringSpd=1+dartSpeedMode*1.5;
