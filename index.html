@@ -30,6 +30,20 @@
 <meta name="twitter:image" content="https://dartmeadow.space/static/og-share.jpg">
 
 <title>DART Meadow - Journey of the Skyboard</title>
+<!-- On-device debug console — visit the site with ?debug added to the URL
+     (e.g. https://dartmeadow.space/?debug) to get a floating console panel
+     right on the phone/tablet screen, showing every console.log/warn/error
+     including the Bird Shard diagnostic output. No computer, no remote
+     debugging, no Developer Options needed. Does nothing at all without
+     ?debug in the URL — regular play is completely unaffected. -->
+<script>
+if(location.search.indexOf('debug')!==-1){
+  var _erudaScript=document.createElement('script');
+  _erudaScript.src='https://cdn.jsdelivr.net/npm/eruda@3/eruda.min.js';
+  _erudaScript.onload=function(){ eruda.init(); };
+  document.head.appendChild(_erudaScript);
+}
+</script>
 <!-- Dynamic true viewport height — handles browser chrome, PWA, notch -->
 <script>(function(){
   var dvhOK = !!(window.CSS && CSS.supports && CSS.supports('height','100dvh'));
