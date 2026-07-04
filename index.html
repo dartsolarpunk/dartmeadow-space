@@ -594,6 +594,16 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 /* Settings */
 #settings-modal{position:fixed;inset:0;z-index:5000;background:rgba(0,0,0,0.7);backdrop-filter:blur(10px);display:none;align-items:center;justify-content:center;}
 #settings-modal.open{display:flex;}
+#temple-hub-modal,#altar-game-modal{position:fixed;inset:0;z-index:5100;background:rgba(0,0,0,0.7);backdrop-filter:blur(10px);display:none;align-items:center;justify-content:center;}
+#temple-hub-modal.open,#altar-game-modal.open{display:flex;}
+.temple-btn{display:block;width:100%;padding:0.7rem;margin-bottom:0.6rem;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.25);color:#fff;font-family:var(--font-hud);font-size:0.65rem;letter-spacing:0.1em;border-radius:3px;cursor:pointer;}
+.temple-btn:hover{background:rgba(255,255,255,0.14);}
+.ag-row{padding:0.5rem 0;border-bottom:1px solid var(--border2);}
+.ag-label{font-size:0.6rem;letter-spacing:0.1em;color:var(--text-dim);margin-bottom:0.3rem;}
+.ag-val{font-family:var(--font-mono);color:var(--cyan);margin-left:0.5rem;font-size:0.7rem;}
+.ag-check{display:inline-block;margin-right:0.8rem;font-size:0.65rem;color:var(--text);}
+#altar-game-body input[type=range]{width:70%;vertical-align:middle;accent-color:var(--cyan);}
+#altar-game-body select{background:rgba(0,245,255,0.06);border:1px solid var(--border);color:var(--text);padding:2px 6px;border-radius:2px;}
 .modal-box{background:rgba(4,10,22,0.98);border:1px solid var(--border);border-radius:4px;padding:1.8rem;width:min(500px,92vw);max-height:85vh;overflow-y:auto;}
 .modal-title{font-family:var(--font-hud);font-size:0.8rem;font-weight:900;color:var(--cyan);letter-spacing:0.2em;margin-bottom:1.2rem;}
 .setting-row{display:flex;align-items:center;justify-content:space-between;padding:0.5rem 0;border-bottom:1px solid var(--border2);}
@@ -1307,6 +1317,22 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 </div><!-- /app -->
 
 <!-- SETTINGS -->
+<div id="temple-hub-modal">
+  <div class="modal-box" style="width:min(340px,90vw);">
+    <div class="modal-title" style="color:#fff;">🕊 BIRD TEMPLE</div>
+    <button class="temple-btn" onclick="openAltarGame()">🎮 OPEN ALTAR GAME</button>
+    <button id="temple-hub-shard-btn" class="temple-btn" onclick="summonBirdShard()">✨ SUMMON BIRD SHARD</button>
+    <button class="temple-btn" style="background:transparent;border-color:var(--border2);" onclick="closeTempleHub()">CLOSE</button>
+  </div>
+</div>
+<div id="altar-game-modal">
+  <div class="modal-box" style="width:min(420px,92vw);">
+    <div class="modal-title">⛩ ALTAR SEQUENCE</div>
+    <div id="altar-game-body"></div>
+    <button class="temple-btn" style="margin-top:0.8rem;background:rgba(0,245,255,0.1);border-color:var(--cyan);color:var(--cyan);" onclick="sequenceAltar()">⟳ SEQUENCE ALTAR</button>
+    <button class="temple-btn" style="background:transparent;border-color:var(--border2);" onclick="closeAltarGame()">CANCEL</button>
+  </div>
+</div>
 <div id="settings-modal">
   <div class="modal-box">
     <div class="modal-title">⚙ GRAPHICS &amp; RENDER</div>
@@ -3347,45 +3373,246 @@ function buildSolarSystem(){
 // alongside the planets, but kept as its own object (not pushed into
 // celestialBodies) since it isn't a landable planet and shouldn't be
 // picked up by the LOD/nearest-body/orbit-ring logic built for those.
-const BIRD_TEMPLE={group:null,basePos:new THREE.Vector3(),t:0,nearPromptShown:false,audioEl:null};
+const BIRD_TEMPLE={
+  group:null,basePos:new THREE.Vector3(),t:0,nearPromptShown:false,audioEl:null,
+  // ── Autonomous wander (task 1) ──────────────────────────────────
+  target:new THREE.Vector3(),wanderSpeed:1.5, // ~1/10th of base cruise speed (0.25u/frame*60fps=15u/s)
+  wanderIdleUntil:0,
+  // ── Bird Shard summon (task 2) ───────────────────────────────────
+  shard:null,          // the detached 'Levitation group' node once pulled off the ship
+  shardState:'docked', // 'docked' | 'toPlayer' | 'following' | 'toShip'
+  shardHomeLocal:null, // original local transform, to dock it back exactly
+  shardPlayedNear:false,
+};
+function _btPickWanderTarget(){
+  // Prefer near a random celestial body sometimes, otherwise open space —
+  // real autonomous movement around the currently-loaded system. Full
+  // cross-galaxy travel would need the ship's location to persist across
+  // system loads, which is a bigger architectural piece; this wanders
+  // continuously within whatever system is currently loaded.
+  const AU=28;
+  if(typeof celestialBodies!=='undefined'&&celestialBodies&&celestialBodies.length&&Math.random()<0.6){
+    const b=celestialBodies[Math.floor(Math.random()*celestialBodies.length)];
+    if(b&&b.mesh&&b.name!=='Sun'){
+      const ang=Math.random()*Math.PI*2, r=25+Math.random()*70;
+      return new THREE.Vector3(b.mesh.position.x+Math.cos(ang)*r, b.mesh.position.y+(Math.random()*30-15), b.mesh.position.z+Math.sin(ang)*r);
+    }
+  }
+  const ang=Math.random()*Math.PI*2, r=AU*(0.4+Math.random()*3);
+  return new THREE.Vector3(Math.cos(ang)*r,(Math.random()*80-40),Math.sin(ang)*r);
+}
 function updateBirdTemple(dt){
   const bt=BIRD_TEMPLE;
   if(!bt.group)return;
   bt.t+=dt;
-  // Gentle idle drift — a small slow orbit around its base spot, not the
-  // full 'wanders the entire galaxy' AI from the spec.
-  bt.group.position.x=bt.basePos.x+Math.sin(bt.t*0.03)*40;
-  bt.group.position.z=bt.basePos.z+Math.cos(bt.t*0.03)*40;
-  bt.group.position.y=bt.basePos.y+Math.sin(bt.t*0.11)*2;
-  bt.group.rotation.y+=0.02*dt;
-  // Proximity: within ~90 units, play the ohm-ni-kai cue once (let it
-  // finish if already playing, matching the spec) and show an approach
-  // toast. This is a simple stand-in for the full 300m 'lazy tow' + 50m
-  // 'land and walk the halls' flow described in the notes.
+
+  // ── Task 1: randomized autonomous travel between waypoints ──────
+  if(bt.t>=bt.wanderIdleUntil){
+    const toTarget=bt.target.clone().sub(bt.group.position);
+    const d=toTarget.length();
+    if(d<8||bt.target.lengthSq()===0){
+      // arrived (or first run) — pick a new destination, pause briefly first
+      bt.target.copy(_btPickWanderTarget());
+      bt.wanderIdleUntil=bt.t+4+Math.random()*6; // idle/'moored' pause before next leg
+    } else {
+      const step=Math.min(d,bt.wanderSpeed*dt);
+      bt.group.position.addScaledVector(toTarget.normalize(),step);
+      // face travel direction
+      const yaw=Math.atan2(toTarget.x,toTarget.z);
+      bt.group.rotation.y+=((yaw-bt.group.rotation.y+Math.PI*3)%(Math.PI*2)-Math.PI)*Math.min(1,dt*0.8);
+    }
+  }
+  bt.group.position.y+=Math.sin(bt.t*0.4)*0.02; // small hover bob regardless of travel state
+
+  // ── Bird Shard: fly-to-player / follow / return-to-ship ─────────
+  updateBirdShard(dt);
+
+  // ── Proximity cue near the ship itself ──────────────────────────
   const sp=STATE.flight;if(!sp)return;
   const dist=bt.group.position.distanceTo(sp.pos);
   if(dist<90){
     if(!bt.nearPromptShown){
       bt.nearPromptShown=true;
-      toast('🕊 Approaching the Bird Temple',2200);
-      if(!bt.audioEl){bt.audioEl=new Audio('ohm-ni-kai.mp3');}
-      if(bt.audioEl.paused)bt.audioEl.play().catch(()=>{});
+      toast('🕊 Approaching the Bird Temple — tap TEMPLE for options',2400);
+      _btPlayChime();
     }
   } else {
     bt.nearPromptShown=false;
   }
 }
-// Quick-travel to the Bird Temple — places the player a short, safe
-// distance from the ship rather than exactly on top of it. Bound to the
-// new TEMPLE button (see HTML). Full version quick-travels to wherever the
-// ship currently is in the galaxy; this slice's ship stays in the home
-// system, so this just moves the player there directly.
+function _btPlayChime(){
+  const bt=BIRD_TEMPLE;
+  if(!bt.audioEl)bt.audioEl=new Audio('ohm-ni-kai.mp3');
+  if(bt.audioEl.paused)bt.audioEl.play().catch(()=>{});
+}
+// Quick-travel to wherever the Bird Temple currently is (it wanders, so this
+// reads its LIVE position each time rather than a fixed spot).
 function travelToBirdTemple(){
   const sp=STATE.flight;if(!sp||!BIRD_TEMPLE.group){toast('Bird Temple is still loading…',1500);return;}
   const p=BIRD_TEMPLE.group.position;
-  sp.pos.set(p.x+60,p.y+15,p.z+60);
-  sp.vel.set(0,0,0);
-  toast('🕊 Arrived near the Bird Temple',2000);
+  if(p.distanceTo(sp.pos)>120){
+    sp.pos.set(p.x+60,p.y+15,p.z+60);
+    sp.vel.set(0,0,0);
+    toast('🕊 Arrived near the Bird Temple',2000);
+  }
+  openTempleHub();
+}
+function openTempleHub(){
+  const bt=BIRD_TEMPLE;
+  if(!bt.group){toast('Bird Temple is still loading…',1500);return;}
+  const shardOut=bt.shardState!=='docked';
+  $('temple-hub-shard-btn').textContent=shardOut?'🕊 RETURN BIRD SHARD':'✨ SUMMON BIRD SHARD';
+  $('temple-hub-shard-btn').onclick=shardOut?returnBirdShard:summonBirdShard;
+  $('temple-hub-modal').classList.add('open');
+}
+function closeTempleHub(){$('temple-hub-modal').classList.remove('open');}
+
+// ══════════════════════════════════════════════════════════════
+// Bird Shard — task 2: summon the Levitation group off the ship as a
+// travelling sidekick, and send it back.
+// ══════════════════════════════════════════════════════════════
+function summonBirdShard(){
+  const bt=BIRD_TEMPLE;
+  if(!bt.group){toast('Bird Temple is still loading…',1500);return;}
+  if(bt.shardState!=='docked'){toast('The Bird Shard is already out.',1500);return;}
+  const node=bt.group.getObjectByName('Levitation group');
+  if(!node){toast('Could not find the Levitation group in the model.',2000);return;}
+  // Detach while preserving its current WORLD transform, so it doesn't jump
+  // visually the instant it's pulled off the ship's local hierarchy.
+  const worldPos=new THREE.Vector3(),worldQuat=new THREE.Quaternion(),worldScale=new THREE.Vector3();
+  node.getWorldPosition(worldPos);node.getWorldQuaternion(worldQuat);node.getWorldScale(worldScale);
+  bt.shardHomeLocal={pos:node.position.clone(),quat:node.quaternion.clone(),scale:node.scale.clone(),parent:node.parent};
+  node.parent.remove(node);
+  node.position.copy(worldPos);node.quaternion.copy(worldQuat);node.scale.copy(worldScale);
+  flightScene.add(node);
+  bt.shard=node;
+  bt.shardState='toPlayer';
+  bt.shardPlayedNear=false;
+  toast('✨ Bird Shard summoned',2000);
+}
+function returnBirdShard(){
+  const bt=BIRD_TEMPLE;
+  if(bt.shardState==='docked'||!bt.shard){toast('The Bird Shard is already at the Temple.',1500);return;}
+  bt.shardState='toShip';
+  toast('🕊 Bird Shard returning to the Temple',2000);
+}
+function updateBirdShard(dt){
+  const bt=BIRD_TEMPLE,sp=STATE.flight;
+  if(!bt.shard||!sp)return;
+  const SHARD_SPEED=10; // faster than the ship's own wander — it's darting to catch up
+  if(bt.shardState==='toPlayer'||bt.shardState==='following'){
+    // desired spot: hovering just off the board's side, like the staff sidekick
+    const off=new THREE.Vector3(3.2,1.4,-2.0).applyQuaternion(spQuat(sp));
+    const dest=sp.pos.clone().add(off);
+    const toDest=dest.clone().sub(bt.shard.position);
+    const d=toDest.length();
+    if(bt.shardState==='toPlayer'){
+      if(d>0.5)bt.shard.position.addScaledVector(toDest.normalize(),Math.min(d,SHARD_SPEED*dt));
+      else bt.shardState='following';
+      // audio cue once it's within ~100ft (≈30 world units) of the player, per the notes
+      if(!bt.shardPlayedNear&&bt.shard.position.distanceTo(sp.pos)<30){bt.shardPlayedNear=true;_btPlayChime();}
+    } else {
+      // following: smooth trail, like the staff does
+      bt.shard.position.lerp(dest,Math.min(1,dt*3));
+    }
+    bt.shard.rotation.y+=dt*0.6;
+  } else if(bt.shardState==='toShip'){
+    const dest=new THREE.Vector3();bt.group.getWorldPosition(dest);
+    // dock it back near where it started, offset above the ship
+    dest.y+=6;
+    const toDest=dest.clone().sub(bt.shard.position);
+    const d=toDest.length();
+    if(d>1)bt.shard.position.addScaledVector(toDest.normalize(),Math.min(d,SHARD_SPEED*dt));
+    else{
+      // re-parent back into the ship hierarchy at its original local transform
+      flightScene.remove(bt.shard);
+      const home=bt.shardHomeLocal;
+      bt.shard.position.copy(home.pos);bt.shard.quaternion.copy(home.quat);bt.shard.scale.copy(home.scale);
+      home.parent.add(bt.shard);
+      bt.shard=null;bt.shardState='docked';
+      toast('🕊 Bird Shard docked',1800);
+    }
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// Altar mini-game — tasks 3 & 4: available both aboard the ship (near
+// the Bird Temple) and while the Bird Shard is summoned/following. Picks
+// ring focus + staff/obelisk/shard angles, then plays a ~10s animated
+// sequence on the REAL loaded model applying those choices — not a
+// separate rendered mini-scene (that's a bigger follow-up), a direct
+// selection UI that animates the actual altar/shard components in place.
+// ══════════════════════════════════════════════════════════════
+const ALTAR_RING_NAMES=['House Angels','Gods','Angels','Human halo'];
+function openAltarGame(){
+  const bt=BIRD_TEMPLE;
+  if(!bt.group){toast('Bird Temple is still loading…',1500);return;}
+  const nearShip=bt.group.position.distanceTo(STATE.flight.pos)<120;
+  const shardOut=bt.shardState==='following'||bt.shardState==='toPlayer';
+  if(!nearShip&&!shardOut){toast('Get closer to the Bird Temple, or summon the Bird Shard, to open the altar.',2600);return;}
+  closeTempleHub();
+  buildAltarGameUI();
+  $('altar-game-modal').classList.add('open');
+}
+function closeAltarGame(){$('altar-game-modal').classList.remove('open');}
+function buildAltarGameUI(){
+  const el=$('altar-game-body');if(!el)return;
+  el.innerHTML=`
+    <div class="ag-row"><div class="ag-label">RING FOCUS</div>
+      <div id="ag-rings">${ALTAR_RING_NAMES.map((n,i)=>`<label class="ag-check"><input type="checkbox" data-ring="${n}" ${i<1?'checked':''}> ${n}</label>`).join('')}</div>
+    </div>
+    <div class="ag-row"><div class="ag-label">STAFF ANGLE</div><input type="range" id="ag-staff-ang" min="0" max="360" value="${Math.floor(Math.random()*360)}"><span id="ag-staff-val" class="ag-val"></span></div>
+    <div class="ag-row"><div class="ag-label">OBELISK ANGLE</div><input type="range" id="ag-obulus-ang" min="0" max="360" value="${Math.floor(Math.random()*360)}"><span id="ag-obulus-val" class="ag-val"></span></div>
+    <div class="ag-row"><div class="ag-label">HALOS TO USE</div>
+      <select id="ag-halo-count"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option></select>
+    </div>
+    <div class="ag-row"><div class="ag-label">LEVITATION SHARD — AZIMUTH</div><input type="range" id="ag-shard-az" min="0" max="360" value="${Math.floor(Math.random()*360)}"><span id="ag-shard-az-val" class="ag-val"></span></div>
+    <div class="ag-row"><div class="ag-label">LEVITATION SHARD — TILT</div><input type="range" id="ag-shard-el" min="-90" max="90" value="${Math.floor(Math.random()*180-90)}"><span id="ag-shard-el-val" class="ag-val"></span></div>
+  `;
+  const sync=()=>{
+    $('ag-staff-val').textContent=$('ag-staff-ang').value+'°';
+    $('ag-obulus-val').textContent=$('ag-obulus-ang').value+'°';
+    $('ag-shard-az-val').textContent=$('ag-shard-az').value+'°';
+    $('ag-shard-el-val').textContent=$('ag-shard-el').value+'°';
+  };
+  ['ag-staff-ang','ag-obulus-ang','ag-shard-az','ag-shard-el'].forEach(id=>$(id).addEventListener('input',sync));
+  sync();
+}
+function sequenceAltar(){
+  const bt=BIRD_TEMPLE;
+  const checkedRings=Array.from(document.querySelectorAll('#ag-rings input:checked')).map(i=>i.dataset.ring);
+  const staffAng=THREE.MathUtils.degToRad(parseFloat($('ag-staff-ang').value));
+  const obAng=THREE.MathUtils.degToRad(parseFloat($('ag-obulus-ang').value));
+  const haloCount=parseInt($('ag-halo-count').value);
+  const shardAz=THREE.MathUtils.degToRad(parseFloat($('ag-shard-az').value));
+  const shardEl=THREE.MathUtils.degToRad(parseFloat($('ag-shard-el').value));
+  closeAltarGame();
+  toast('⟳ Sequencing the altar…',2000);
+  const DUR=10; // seconds, per the notes
+  const t0=performance.now();
+  // Gather target nodes — rings actually chosen, capped to haloCount of them
+  const ringNodes=checkedRings.slice(0,haloCount).map(n=>bt.group.getObjectByName(n)).filter(Boolean);
+  const staffNode=bt.group.getObjectByName('Staff');
+  const obNode=bt.group.getObjectByName('Starboard obulisque')||bt.group.getObjectByName('Port Obulisque');
+  // Shard: whichever is currently 'live' — the docked ship node, or the
+  // detached, summoned one if the Bird Shard is out.
+  const shardNode=(bt.shardState==='following'||bt.shardState==='toPlayer')?bt.shard:bt.group.getObjectByName('Levitation shard');
+  const startRot=new Map();
+  [...ringNodes,staffNode,obNode,shardNode].forEach(n=>{if(n)startRot.set(n,n.rotation.clone());});
+  (function anim(){
+    const t=Math.min(1,(performance.now()-t0)/1000/DUR);
+    const ease=t<0.5?2*t*t:1-Math.pow(-2*t+2,2)/2;
+    ringNodes.forEach((n,i)=>{const s=startRot.get(n);n.rotation.y=s.y+ease*Math.PI*2*(i%2===0?1:-1);});
+    if(staffNode){const s=startRot.get(staffNode);staffNode.rotation.y=s.y+ease*staffAng;}
+    if(obNode){const s=startRot.get(obNode);obNode.rotation.y=s.y+ease*obAng;}
+    if(shardNode){
+      const s=startRot.get(shardNode);
+      shardNode.rotation.y=s.y+ease*shardAz;
+      shardNode.rotation.x=s.x+ease*shardEl;
+    }
+    if(t<1)requestAnimationFrame(anim);
+    else toast('✅ Altar sequence complete',2200);
+  })();
 }
 function addSunLight(){
   // Sun point light — range extends past Neptune (~842 scene units at AU=28)
