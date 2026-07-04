@@ -3968,12 +3968,12 @@ function buildAltarGameUI(){
   const el=$('altar-game-body');if(!el)return;
   el.innerHTML=`
     <div class="ag-row"><div class="ag-label">RING FOCUS</div>
-      <div id="ag-rings">${ALTAR_RING_NAMES.map((n,i)=>`<label class="ag-check"><input type="checkbox" data-ring="${n}" ${i<1?'checked':''}> ${n}</label>`).join('')}</div>
+      <div id="ag-rings">${ALTAR_RING_NAMES.map((n)=>`<label class="ag-check"><input type="checkbox" data-ring="${n}" checked> ${n}</label>`).join('')}</div>
     </div>
     <div class="ag-row"><div class="ag-label">STAFF ANGLE</div><input type="range" id="ag-staff-ang" min="0" max="360" value="${Math.floor(Math.random()*360)}"><span id="ag-staff-val" class="ag-val"></span></div>
     <div class="ag-row"><div class="ag-label">OBELISK ANGLE</div><input type="range" id="ag-obulus-ang" min="0" max="360" value="${Math.floor(Math.random()*360)}"><span id="ag-obulus-val" class="ag-val"></span></div>
     <div class="ag-row"><div class="ag-label">HALOS TO USE</div>
-      <select id="ag-halo-count"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option></select>
+      <select id="ag-halo-count"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4" selected>4 (All)</option></select>
     </div>
     <div class="ag-row"><div class="ag-label">LEVITATION SHARD — AZIMUTH</div><input type="range" id="ag-shard-az" min="0" max="360" value="${Math.floor(Math.random()*360)}"><span id="ag-shard-az-val" class="ag-val"></span></div>
     <div class="ag-row"><div class="ag-label">LEVITATION SHARD — TILT</div><input type="range" id="ag-shard-el" min="-90" max="90" value="${Math.floor(Math.random()*180-90)}"><span id="ag-shard-el-val" class="ag-val"></span></div>
@@ -4000,7 +4000,13 @@ function sequenceAltar(){
   const DUR=10; // seconds, per the notes
   const t0=performance.now();
   // Gather target nodes — rings actually chosen, capped to haloCount of them
-  const ringNodes=checkedRings.slice(0,haloCount).map(n=>bt.group.getObjectByName(n)).filter(Boolean);
+  const pickedNames=checkedRings.slice(0,haloCount);
+  const ringNodes=pickedNames.map(n=>bt.group.getObjectByName(n)).filter(Boolean);
+  if(ringNodes.length<pickedNames.length){
+    const missing=pickedNames.filter(n=>!bt.group.getObjectByName(n));
+    console.warn('Altar sequence: could not find these ring nodes in the model:',missing);
+    toast('⚠ Some rings not found in model: '+missing.join(', '),3000);
+  }
   const staffNode=bt.group.getObjectByName('Staff');
   const obNode=bt.group.getObjectByName('Starboard obulisque')||bt.group.getObjectByName('Port Obulisque');
   // Shard: whichever is currently 'live' — the docked ship node, or the
