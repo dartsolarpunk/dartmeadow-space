@@ -1167,6 +1167,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     <button id="level-system-btn" class="side-pad" onclick="autoLevel('system')" title="Auto-level to the nearest system's orbital plane"><span class="sp-ico">🪐</span>SYS</button>
   </div>
   <div id="land-prompt" onclick="if(_landTargetBody)openOrbitApproach(_landTargetBody);" style="display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,245,255,.12);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.6rem;letter-spacing:.15em;padding:.5rem 1.2rem;border-radius:3px;pointer-events:none;z-index:30;text-align:center;"></div>
+  <div id="ship-land-prompt" onclick="enterShipWalk()" style="display:none;position:absolute;top:56%;left:50%;transform:translate(-50%,-50%);background:rgba(255,255,255,.12);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.6rem;letter-spacing:.15em;padding:.5rem 1.2rem;border-radius:3px;pointer-events:auto;cursor:pointer;z-index:30;text-align:center;">🕊 TAP TO LAND ON THE BIRD TEMPLE</div>
+  <button id="ship-liftoff-btn" onclick="exitShipWalk()" style="display:none;position:absolute;bottom:calc(20px + var(--safe-bot));left:50%;transform:translateX(-50%);pointer-events:auto;padding:8px 20px;background:rgba(255,255,255,.12);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.6rem;letter-spacing:.15em;cursor:pointer;border-radius:3px;z-index:31;">🚀 LIFTOFF</button>
   <div id="ar-bottom" onclick="closeQuickTravel()">
     <div id="qt-panel" onclick="event.stopPropagation()">
       <div id="ar-dest-title">⟶ QUICK TRAVEL</div>
@@ -3380,6 +3382,28 @@ function buildSolarSystem(){
     t.scale.setScalar(1); // raw model scale — see wrapper group below for the real scale
     t.position.set(0,0,0);
     t.traverse(o=>{ if(o.isMesh){ o.castShadow=GFX.shadows; o.receiveShadow=GFX.shadows; }});
+    // Brightness fix: every material in this file is pure white
+    // (baseColorFactor [1,1,1,1]), fully rough, with NO baked emissive at
+    // all (confirmed by reading the GLB's material definitions directly) —
+    // so the blown-out look wasn't a broken asset, it's just a plain white
+    // diffuse surface catching this scene's strong sunlight uniformly
+    // across the whole hull. Dimmed ~38% (within the requested 35-40%
+    // range) so the general hull reads normally, then added a real local
+    // light specifically at the altar (there's no baked emissive to lean
+    // on for 'the altar should glow', so this is an actual light source)
+    // so brightness concentrates there instead of everywhere evenly.
+    t.traverse(o=>{
+      if(o.isMesh&&o.material){
+        const mats=Array.isArray(o.material)?o.material:[o.material];
+        mats.forEach(m=>{ if(m.color)m.color.multiplyScalar(0.62); });
+      }
+    });
+    const altarNode=t.getObjectByName('Altar Group');
+    if(altarNode){
+      const altarLight=new THREE.PointLight(0xfff2cc,2.2,14,2);
+      altarLight.position.set(0,1.5,0); // local to Altar Group's own origin
+      altarNode.add(altarLight);
+    }
     // Wrap the whole model in an empty parent group and scale THAT, per
     // request — one uniform transform for everything inside, rather than
     // scaling the loaded scene root directly. The default 3.2 was a guess
@@ -3500,18 +3524,111 @@ function updateBirdTemple(dt){
   // ── Bird Shard: fly-to-player / follow / return-to-ship ─────────
   updateBirdShard(dt);
 
-  // ── Proximity cue near the ship itself ──────────────────────────
-  const sp=STATE.flight;if(!sp)return;
-  const dist=bt.group.position.distanceTo(sp.pos);
-  if(dist<12){ // scaled down to match the corrected ~0.41x ship scale (was tuned for the old 3.2x)
-    if(!bt.nearPromptShown){
-      bt.nearPromptShown=true;
-      toast('🕊 Approaching the Bird Temple — tap TEMPLE for options',2400);
-      _btPlayChime();
+  // ── Proximity cues — only relevant while actually flying toward the
+  // ship; none of this applies once you're already walking on it ──────
+  if(!SHIP_WALK.active){
+    const sp=STATE.flight;if(!sp)return;
+    const dist=bt.group.position.distanceTo(sp.pos);
+    const landPrompt=$('ship-land-prompt');
+    if(dist<12){ // scaled down to match the corrected ~0.41x ship scale (was tuned for the old 3.2x)
+      if(!bt.nearPromptShown){
+        bt.nearPromptShown=true;
+        toast('🕊 Approaching the Bird Temple — tap TEMPLE for options',2400);
+        _btPlayChime();
+      }
+    } else {
+      bt.nearPromptShown=false;
     }
-  } else {
-    bt.nearPromptShown=false;
+    if(landPrompt){
+      if(dist<6)landPrompt.style.display='block';
+      else landPrompt.style.display='none';
+    }
   }
+}
+
+// ══════════════════════════════════════════════════════════════
+// Ship-deck walking. Reuses the EXISTING flight scene/camera/renderer —
+// no separate walk-mode scene like the planet-terrain system — since the
+// ship is already a real object in flightScene. Position is tracked in
+// the ship's OWN LOCAL coordinate space (not world), so it stays correctly
+// attached as the ship wanders/rotates: converting local→world each frame
+// naturally carries the player along, the same way standing on a moving
+// vehicle would work.
+//
+// Ground height comes from actually raycasting straight down against the
+// ship's real mesh geometry, not a hand-tuned height formula — this
+// handles the altar's stair-stepped floor, the maze detail, and the deck
+// itself correctly automatically, however they're actually shaped,
+// without needing to hand-measure and approximate every step by hand.
+//
+// Deliberately simple for this first pass: no jump, no horizontal wall
+// collision (so it's still possible to walk through a vertical structure
+// like the Temple superstructure — flagged, not solved here), matching
+// the same 'ground-follow only' honesty as the note when this was first
+// discussed.
+// ══════════════════════════════════════════════════════════════
+const SHIP_WALK={active:false,localPos:new THREE.Vector3(),yaw:0,pitch:0};
+const _shipWalkRay=new THREE.Raycaster();
+function _shipGroundHeight(worldX,worldZ,fallbackY){
+  const bt=BIRD_TEMPLE;
+  _shipWalkRay.set(new THREE.Vector3(worldX,fallbackY+50,worldZ),new THREE.Vector3(0,-1,0));
+  _shipWalkRay.far=200;
+  const hits=_shipWalkRay.intersectObject(bt.group,true);
+  if(hits.length)return hits[0].point.y;
+  return null; // no ground under this point (walked off the edge)
+}
+function enterShipWalk(){
+  const bt=BIRD_TEMPLE,sp=STATE.flight;
+  if(!bt.group||!sp)return;
+  $('ship-land-prompt').style.display='none';
+  // Find the ground directly beneath the player's current world position.
+  const y=_shipGroundHeight(sp.pos.x,sp.pos.z,sp.pos.y);
+  const landWorld=new THREE.Vector3(sp.pos.x,(y!==null?y:sp.pos.y)+0.4,sp.pos.z);
+  SHIP_WALK.localPos.copy(bt.group.worldToLocal(landWorld.clone()));
+  SHIP_WALK.yaw=STATE.flight.camYaw||0;
+  SHIP_WALK.pitch=0;
+  SHIP_WALK.active=true;
+  if(boardFlight)boardFlight.visible=false;
+  $('ship-liftoff-btn').style.display='block';
+  toast('🚶 Walking the Bird Temple deck',2200);
+}
+function exitShipWalk(){
+  const bt=BIRD_TEMPLE,sp=STATE.flight;
+  const world=bt.group.localToWorld(SHIP_WALK.localPos.clone());
+  sp.pos.copy(world);sp.pos.y+=1.5; // lift off a bit above the deck
+  sp.vel.set(0,0,0);
+  SHIP_WALK.active=false;
+  if(boardFlight)boardFlight.visible=true;
+  $('ship-liftoff-btn').style.display='none';
+  toast('🚀 Lifting off the Bird Temple',2000);
+}
+function updateShipWalk(dt){
+  const bt=BIRD_TEMPLE;
+  if(!bt.group){exitShipWalk();return;}
+  // Look (LEFT stick — same as flight's LOOK/AIM) and move (RIGHT stick —
+  // same as flight's THRUST), matching this game's established mapping
+  // rather than the opposite of what players are already used to.
+  SHIP_WALK.yaw-=JOY.Lx*dt*1.6;
+  SHIP_WALK.pitch=THREE.MathUtils.clamp(SHIP_WALK.pitch-JOY.Ly*dt*1.2,-1.1,1.1);
+  // Move — human-scale walking speed, ship-local X/Z
+  const WALK_SPEED=1.1;
+  const fx=Math.sin(SHIP_WALK.yaw),fz=Math.cos(SHIP_WALK.yaw);
+  const rx=Math.cos(SHIP_WALK.yaw),rz=-Math.sin(SHIP_WALK.yaw);
+  const moveX=(fx*-JOY.Ry+rx*JOY.Rx)*WALK_SPEED*dt;
+  const moveZ=(fz*-JOY.Ry+rz*JOY.Rx)*WALK_SPEED*dt;
+  const desiredLocal=SHIP_WALK.localPos.clone();
+  desiredLocal.x+=moveX;desiredLocal.z+=moveZ;
+  const desiredWorld=bt.group.localToWorld(desiredLocal.clone());
+  const groundY=_shipGroundHeight(desiredWorld.x,desiredWorld.z,desiredWorld.y);
+  if(groundY!==null){
+    // valid ground under the new spot — step there, snapped to its height
+    const snapped=new THREE.Vector3(desiredWorld.x,groundY+0.4,desiredWorld.z);
+    SHIP_WALK.localPos.copy(bt.group.worldToLocal(snapped));
+  }
+  // else: no ground there (edge of the ship) — simply don't move this frame
+  const camWorld=bt.group.localToWorld(SHIP_WALK.localPos.clone());
+  flightCamera.position.copy(camWorld);
+  flightCamera.rotation.set(SHIP_WALK.pitch,SHIP_WALK.yaw,0,'YXZ');
 }
 function _btPlayChime(){
   const bt=BIRD_TEMPLE;
@@ -4715,6 +4832,7 @@ function updateAssistButtons(){
 }
 
 function updateFlight(dt){
+  if(SHIP_WALK.active){updateShipWalk(dt);return;}
   if(!boardFlight)return;
   const sp=STATE.flight;
 
