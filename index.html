@@ -3367,7 +3367,14 @@ function buildSolarSystem(){
   // wandering AI, the tracking map overlay, seamless landing into walk
   // mode, the altar overlay game, halo patrol AI, particle/glow effects)
   // is a separate follow-up.
-  BIRD_TEMPLE.basePos.set(AU*1.3, 6, AU*0.6);
+  // Initial spawn position is deliberately NOT set here. buildSolarSystem()
+  // runs BEFORE buildFlightBoard() sets STATE.flight.pos to its real value
+  // (and before any save-data restore applies a saved position on top of
+  // that) — so anything decided at this point would be using a stale/
+  // default player position, not wherever the player actually ends up.
+  // Instead, bt.spawned stays false until the first updateBirdTemple()
+  // tick, which runs later, safely after the player's true position (saved
+  // or default) is already final — see the spawn logic there.
   _getGLBLoader().load('Halo.glb', gltf=>{
     const t=gltf.scene;
     t.scale.setScalar(1); // raw model scale — see wrapper group below for the real scale
@@ -3388,7 +3395,7 @@ function buildSolarSystem(){
     const wrapper=new THREE.Group();
     wrapper.add(t);
     wrapper.scale.setScalar(SHIP_SCALE);
-    wrapper.position.copy(BIRD_TEMPLE.basePos);
+    wrapper.visible=false; // hidden until it has a real, randomized, safe spawn point
     flightScene.add(wrapper);
     BIRD_TEMPLE.group=wrapper;
   }, undefined, err=>console.warn('Bird Temple (Halo.glb) failed to load:',err));
@@ -3399,6 +3406,7 @@ function buildSolarSystem(){
 // picked up by the LOD/nearest-body/orbit-ring logic built for those.
 const BIRD_TEMPLE={
   group:null,basePos:new THREE.Vector3(),t:0,nearPromptShown:false,audioEl:null,
+  spawned:false, // true once a real, randomized, minimum-distance-checked spawn point has been picked
   // ── Autonomous wander (task 1) ──────────────────────────────────
   target:new THREE.Vector3(),wanderSpeed:1.5, // ~1/10th of base cruise speed (0.25u/frame*60fps=15u/s)
   wanderIdleUntil:0,
@@ -3428,6 +3436,47 @@ function _btPickWanderTarget(){
 function updateBirdTemple(dt){
   const bt=BIRD_TEMPLE;
   if(!bt.group)return;
+
+  // ── One-time initial spawn — never fixed, never near the player ──
+  // Runs exactly once, the first time this update fires after the model
+  // has loaded. By now STATE.flight.pos already holds the player's real,
+  // final position (default LEO spawn, or a restored save) — buildSolarSystem
+  // ran earlier, before that was settled, which is why this couldn't be
+  // decided there. The ship isn't a character following the player; it's
+  // a free-flying asset like a comet or asteroid with no orbital lock, so
+  // per the request it should land wherever chance puts it — just never
+  // on top of, or suspiciously close to, wherever the player happens to be.
+  if(!bt.spawned){
+    const sp=STATE.flight;
+    if(!sp)return; // wait one more frame if flight state isn't ready yet
+    const AU=28;
+    const MIN_DIST=AU*3;      // ~84 units — never closer than this at spawn
+    const FAR_CHANCE=0.2;     // occasionally spawn way out at the edge of
+                              // reachable space, simulating 'could be
+                              // practically a different part of the galaxy'
+                              // — an actual other galaxy/system isn't
+                              // possible yet (the ship only exists in
+                              // whatever system is currently loaded), so
+                              // this is the honest stand-in for that.
+    let pos=null;
+    for(let tries=0;tries<12;tries++){
+      const candidate=_btPickWanderTarget();
+      if(Math.random()<FAR_CHANCE){
+        const ang=Math.random()*Math.PI*2;
+        candidate.set(Math.cos(ang)*AU*15,(Math.random()*200-100),Math.sin(ang)*AU*15);
+      }
+      if(candidate.distanceTo(sp.pos)>=MIN_DIST){pos=candidate;break;}
+    }
+    if(!pos){ // fallback if every random draw happened to land too close (unlikely)
+      pos=sp.pos.clone().add(new THREE.Vector3(MIN_DIST,0,MIN_DIST));
+    }
+    bt.group.position.copy(pos);
+    bt.group.visible=true;
+    bt.spawned=true;
+    bt.target.copy(_btPickWanderTarget());
+    bt.wanderIdleUntil=bt.t+4+Math.random()*6;
+  }
+
   bt.t+=dt;
 
   // ── Task 1: randomized autonomous travel between waypoints ──────
