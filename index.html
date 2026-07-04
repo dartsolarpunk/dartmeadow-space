@@ -3530,6 +3530,44 @@ function buildSolarSystem(){
     // Local 3-point rig for the general hull — like room lamps, not
     // sunlight. Positions are rough (front/back/top of the raw Hull
     // bounding box, ~63x40x179 units) rather than hand-tuned per part.
+    // Vertex-color brightening — the actual fix for 'the floor/altar
+    // floor/mazes/staff base are dark bluish-gray, graded near black on
+    // export'. Confirmed directly against the file: every material stays
+    // plain white (baseColorFactor [1,1,1,1]) everywhere, but these
+    // specific parts carry real per-vertex COLOR_0 data (thousands of
+    // vertices each) — the darkness lives entirely in that vertex-painted
+    // data, which the earlier material.color multiply never touched since
+    // it's a completely different data channel. Reading each named part's
+    // actual geometry color attribute, converting every vertex from RGB to
+    // HSL, and raising lightness toward 0.5 ('about 50%, in the middle
+    // between full value and dark') wherever it's currently darker than
+    // that — preserves the original hue/saturation (keeps the bluish-gray
+    // character) while actually lifting the exported darkness.
+    const _hsl={h:0,s:0,l:0};
+    function brightenVertexColors(node,targetL){
+      if(!node)return;
+      node.traverse(o=>{
+        if(!o.isMesh)return;
+        const col=o.geometry.attributes.color;
+        if(!col)return;
+        const mats=Array.isArray(o.material)?o.material:[o.material];
+        mats.forEach(m=>{ if(m&&'vertexColors' in m){m.vertexColors=true;m.needsUpdate=true;} });
+        const c=new THREE.Color();
+        for(let i=0;i<col.count;i++){
+          c.setRGB(col.getX(i),col.getY(i),col.getZ(i));
+          c.getHSL(_hsl);
+          if(_hsl.l<targetL){
+            c.setHSL(_hsl.h,_hsl.s,targetL);
+            col.setXYZ(i,c.r,c.g,c.b);
+          }
+        }
+        col.needsUpdate=true;
+      });
+    }
+    brightenVertexColors(t.getObjectByName('Hull'),0.5);
+    brightenVertexColors(t.getObjectByName('Upper maze'),0.5);
+    brightenVertexColors(t.getObjectByName('Lower maze'),0.5);
+    brightenVertexColors(t.getObjectByName('Staff base'),0.5);
     const hullNode=t.getObjectByName('Hull')||t;
     const rig=[
       {pos:[0,25,60], intensity:0.6, dist:22},   // key — from above/front
