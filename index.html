@@ -3414,7 +3414,43 @@ function buildSolarSystem(){
     // rather than hunting for it by name) — the ship gets lit entirely by
     // the local rig below instead. No KHR environment-map extension was
     // present in the file itself to disable, per direct inspection.
-    t.traverse(o=>{ if(o.isLight)o.intensity=0; });
+    // Re-checked the file's full extras block this time, not just the
+    // extensions list — confirmed there's genuinely only ONE baked light
+    // ('Light 3'), and found the 'environment light': Nomad's own scene
+    // extras record env_name:'artist_workshop_1k.hdr', env_exposure:0.418
+    // — so that environment setup is real and was correctly remembered,
+    // but it exists ONLY as Nomad's internal viewport metadata, a text
+    // filename reference with no actual HDRI image data attached. glTF has
+    // no standard slot for embedding an environment map the way it does
+    // for lights, so this never had a way to survive export as something
+    // Three.js can actually use — same limitation as the OTHER model from
+    // much earlier this session. Can't 'turn on' data that was never
+    // exported; built a procedural substitute instead (see below) to
+    // approximate that fill-light quality rather than pretend to enable
+    // something that isn't really there. 'Light 3' restored to 0.9 as
+    // requested (was 121,081 raw from the file, now driven directly by our
+    // own value instead of GLTFLoader's conversion of that number).
+    t.traverse(o=>{ if(o.isLight&&o.name==='Light 3')o.intensity=0.9; else if(o.isLight)o.intensity=0; });
+    // Procedural substitute for the (non-exportable) Nomad environment —
+    // same PMREM technique used successfully on the other model earlier
+    // this session. Warm/cool studio-box tones approximating a workshop
+    // HDRI's general character, scoped to the ship's own light layer only.
+    if(!window._birdTempleEnvRT){
+      const envScene=new THREE.Scene();
+      const box=new THREE.Mesh(new THREE.BoxGeometry(20,20,20),new THREE.MeshBasicMaterial({color:0x1a1a22,side:THREE.BackSide}));
+      envScene.add(box);
+      [[0,9,0,0xfff4dd],[9,0,0,0xffb870],[-9,0,0,0x6fa8ff]].forEach(([x,y,z,c])=>{
+        const panel=new THREE.Mesh(new THREE.PlaneGeometry(6,6),new THREE.MeshBasicMaterial({color:c}));
+        panel.position.set(x,y,z);panel.lookAt(0,0,0);envScene.add(panel);
+      });
+      window._birdTempleEnvRT=new THREE.PMREMGenerator(flightRenderer).fromScene(envScene,0.08);
+    }
+    t.traverse(o=>{
+      if(o.isMesh&&o.material){
+        const mats=Array.isArray(o.material)?o.material:[o.material];
+        mats.forEach(m=>{ if('envMap' in m){m.envMap=window._birdTempleEnvRT.texture;m.envMapIntensity=1;m.needsUpdate=true;} });
+      }
+    });
     t.traverse(o=>{
       if(o.isMesh&&o.material){
         const mats=Array.isArray(o.material)?o.material:[o.material];
@@ -4759,7 +4795,7 @@ function bodyUnderCrosshair(){
     const dist=to.length();if(dist<0.01)return;
     to.normalize();
     const dot=to.dot(fwd);              // 1 = dead center
-    if(dot<0.985)return;                // must be near crosshair (~10°)
+    if(dot<0.93)return;                 // must be near crosshair (~22° — widened from ~10°, which was tight enough that a moving target like the Bird Temple could drift out of the cone between aiming and pressing ANCHOR)
     const score=dot - dist*0.00001;     // prefer centered + closer
     if(score>bestScore){bestScore=score;best=b;}
   });
