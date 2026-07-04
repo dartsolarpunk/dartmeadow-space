@@ -3373,14 +3373,29 @@ function buildSolarSystem(){
   // wandering AI, the tracking map overlay, seamless landing into walk
   // mode, the altar overlay game, halo patrol AI, particle/glow effects)
   // is a separate follow-up.
-  // Initial spawn position is deliberately NOT set here. buildSolarSystem()
-  // runs BEFORE buildFlightBoard() sets STATE.flight.pos to its real value
-  // (and before any save-data restore applies a saved position on top of
-  // that) — so anything decided at this point would be using a stale/
-  // default player position, not wherever the player actually ends up.
-  // Instead, bt.spawned stays false until the first updateBirdTemple()
-  // tick, which runs later, safely after the player's true position (saved
-  // or default) is already final — see the spawn logic there.
+  // Real bug found on investigation: buildSolarSystem() (this whole
+  // function) doesn't only run once at startup — it runs AGAIN every time
+  // the player returns to Sol after visiting a procedurally-generated
+  // system (see rebuildFlightForSystem's 'back to Sol' branch). Without a
+  // guard, that re-triggers this exact GLB load every time, creating a
+  // brand new duplicate ship instance and silently reassigning
+  // BIRD_TEMPLE.group to it. Since BIRD_TEMPLE.spawned stays true from the
+  // first load (never reset), the new instance's one-time spawn-and-reveal
+  // step never runs — it sits invisible at the origin forever, while the
+  // ORIGINAL, correctly-wandering, visible ship keeps floating around with
+  // nothing pointing at it anymore. Every subsequent Temple-menu/summon
+  // interaction operates on this new, wrong, invisible reference — exactly
+  // matching a Temple hub showing a plausible-looking distance to
+  // something you can't see, and a summon that can't find nodes because
+  // it's the WRONG instance being asked, not because the file lacks them
+  // (confirmed correct via direct inspection multiple times). Guarded so
+  // the model only loads once per page session — wrapped in an if, NOT an
+  // early return, since the rest of buildSolarSystem() (comets, asteroid
+  // belt, etc., further below) still needs to run every time this
+  // function is called, including on a rebuild-from-procedural-system
+  // return.
+  if(!BIRD_TEMPLE.group&&!BIRD_TEMPLE._loading){
+  BIRD_TEMPLE._loading=true;
   _getGLBLoader().load('Halo.glb', gltf=>{
     const t=gltf.scene;
     t.scale.setScalar(1); // raw model scale — see wrapper group below for the real scale
@@ -3459,7 +3474,7 @@ function buildSolarSystem(){
     });
     const altarNode=t.getObjectByName('Altar Group');
     if(altarNode){
-      const altarLight=new THREE.PointLight(0xfff2cc,10,7,2);
+      const altarLight=new THREE.PointLight(0xfff2cc,35,7,2);
       altarLight.position.set(0,1.2,0); // local to Altar Group's own origin
       altarLight.layers.set(SHIP_LIGHT_LAYER);
       altarNode.add(altarLight);
@@ -3546,6 +3561,7 @@ function buildSolarSystem(){
     flightScene.add(wrapper);
     BIRD_TEMPLE.group=wrapper;
   }, undefined, err=>console.warn('Bird Temple (Halo.glb) failed to load:',err));
+  }
 }
 // Idle motion + proximity trigger — called once per frame from updateBodies
 // alongside the planets, but kept as its own object (not pushed into
