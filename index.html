@@ -8108,6 +8108,31 @@ function buildSurfaceTerrain(pal){
     h+=_fbm(x*0.04,z*0.04,seed+3,3)*5;
     const m=_fbm(x*0.005,z*0.005,seed+7,4);
     if(m>0.6)h+=(m-0.6)*120;
+    // Mountains/plateaus/cliffs — was just hills and dips before. A large,
+    // slow-varying 'region' noise decides per-area terrain character:
+    // low value stays flatland (the hills above, untouched), higher value
+    // blends in real elevation change. Two separate techniques layered in:
+    // ridged noise (1-|noise|) for sharp mountain ridgelines, and a
+    // terraced/quantized noise for flat-topped plateaus with steep sides
+    // between levels — that step discontinuity IS the cliff.
+    //
+    // Honest limitation: this is still a heightmap (one Y value per X/Z),
+    // same as before — it can make dramatic-looking ledges and sheer
+    // faces, but it can't make a TRUE overhang you could walk underneath.
+    // That needs an actually different terrain representation (real 3D
+    // geometry/voxels), not an extension of this function — flagging that
+    // now rather than pretend this covers it.
+    const region=_fbm(x*0.0015+seed*3.1,z*0.0015+seed*3.1,seed+13,3);
+    if(region>0.35){
+      const mtWeight=Math.min(1,(region-0.35)/0.4);
+      const ridge1=1-Math.abs(_fbm(x*0.006,z*0.006,seed+21,4)*2-1);
+      const ridge2=1-Math.abs(_fbm(x*0.018,z*0.018,seed+27,3)*2-1);
+      const mountain=Math.pow(ridge1,2)*180+Math.pow(ridge2,2)*40;
+      const terraceNoise=_fbm(x*0.003,z*0.003,seed+33,3);
+      const STEP=28; // height per terrace level — the step itself reads as a cliff face
+      const plateau=Math.floor(terraceNoise*6)*STEP;
+      h+=mtWeight*(mountain*0.65+plateau*0.55);
+    }
     // No large-scale curvature falloff — the last working build (before
     // yesterday's enhancement pass) was a flat patch with local noise
     // deformation only, not a stylized spherical curve. The curveR falloff
