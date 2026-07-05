@@ -1846,31 +1846,65 @@ function disableImmersiveMode(){
 // ══════════════════════════════════════════════════════════════
 const AUDIO = {
   el:null,
-  bundled:[ // the embedded soundtrack — shuffled into the playlist by default
-    {name:'CLINICAL BLOOM',src:'clinical_bloom.mp3'},
-    {name:'COLD FLORIDA AIR',src:'cold_florida_air.mp3'},
-    {name:'ARC LAKE',src:'arc_lake.mp3'},
-    {name:'VELVET HORIZON',src:'velvet_horizon.mp3'},
-    {name:'THE SAME AS ITSELF',src:'the_same_as_itself.mp3'},
+  // Fallback list — used immediately on load (no waiting on a network
+  // call before the soundtrack can start) and as a safety net if the
+  // dynamic folder scan below ever fails or gets rate-limited. Kept in
+  // sync with the music/ folder's contents at the time of each edit, but
+  // the REAL, self-updating source of truth is _fetchMusicFolderListing().
+  _fallbackBundled:[
+    {name:'CLINICAL BLOOM',src:'music/clinical_bloom.mp3'},
+    {name:'COLD FLORIDA AIR',src:'music/cold_florida_air.mp3'},
+    {name:'ARC LAKE',src:'music/arc_lake.mp3'},
+    {name:'VELVET HORIZON',src:'music/velvet_horizon.mp3'},
+    {name:'THE SAME AS ITSELF',src:'music/the_same_as_itself.mp3'},
   ],
+  bundled:[],           // active list — starts as the fallback, gets replaced by the live folder scan once it resolves
   playlist:[],          // [{name, src, isObjectUrl}]
   index:-1,
   stopped:false,        // user explicitly stopped (don't autoplay)
   started:false,
   userInteracted:false,
 };
+AUDIO.bundled=AUDIO._fallbackBundled;
 function _shuffledBundled(){
   const arr=AUDIO.bundled.map(t=>({name:t.name,src:t.src,isObjectUrl:false}));
   for(let i=arr.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[arr[i],arr[j]]=[arr[j],arr[i]];}
   return arr;
 }
+// Real, self-updating soundtrack source: GitHub's public repo-contents API
+// lists whatever files actually exist in the music/ folder right now, no
+// code changes needed to add or remove a track — just add/delete the
+// file directly in that folder on GitHub. Runs in the background so it
+// never delays the soundtrack starting (which uses the fallback list
+// immediately); once it resolves, AUDIO.bundled is replaced for the next
+// default-reload or browse-list open. Falls back silently (keeps using
+// the hardcoded list above) if the call fails or hits GitHub's rate limit
+// for unauthenticated requests (60/hour per visitor IP — fine for casual
+// traffic, worth knowing about at real scale).
+async function _fetchMusicFolderListing(){
+  try{
+    const res=await fetch('https://api.github.com/repos/dartsolarpunk/dartmeadow-space/contents/music');
+    if(!res.ok){console.warn('[Audio] Music folder scan failed (HTTP '+res.status+') — using fallback list.');return null;}
+    const items=await res.json();
+    if(!Array.isArray(items))return null;
+    const tracks=items
+      .filter(it=>it.type==='file'&&/\.mp3$/i.test(it.name))
+      .map(it=>({ name:it.name.replace(/\.mp3$/i,'').replace(/[_-]+/g,' ').toUpperCase(), src:'music/'+it.name }));
+    return tracks.length?tracks:null;
+  }catch(e){
+    console.warn('[Audio] Music folder scan failed — using fallback list.',e);
+    return null;
+  }
+}
 
 function initAudio(){
   AUDIO.el=$('game-audio');
   if(!AUDIO.el)return;
-  // seed playlist with all 5 bundled tracks, shuffled — was just the one
-  // default track before; now a real default rotation, with a browse list
-  // (see openMusicBrowser) so the player can pick a specific one directly.
+  // seed playlist with the fallback tracks immediately, shuffled — starts
+  // playing right away without waiting on the network. The live folder
+  // scan below runs in parallel and replaces AUDIO.bundled once it
+  // resolves, for the NEXT reshuffle/browse-list open (doesn't yank the
+  // currently-playing track out from under anyone).
   AUDIO.playlist=_shuffledBundled();
   AUDIO.index=0;
   AUDIO.el.src=AUDIO.playlist[0].src;
@@ -1878,6 +1912,12 @@ function initAudio(){
   AUDIO.el.addEventListener('ended',()=>{ audioNext(); });
   AUDIO.el.addEventListener('play',()=>syncAudioUI(true));
   AUDIO.el.addEventListener('pause',()=>syncAudioUI(false));
+  _fetchMusicFolderListing().then(tracks=>{
+    if(tracks){
+      AUDIO.bundled=tracks;
+      console.log('[Audio] Music folder scan found',tracks.length,'track(s) — will be used for the next default-reload or browse-list.');
+    }
+  });
   // music file picker
   const fi=$('music-file-input');
   if(fi)fi.addEventListener('change',onMusicFilesPicked);
