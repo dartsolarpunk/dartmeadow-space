@@ -580,7 +580,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   #level-stack{bottom:calc(130px + var(--safe-bot));left:20px;}
   #dart-pads{bottom:calc(130px + var(--safe-bot));right:20px;}
   #assist-row{bottom:calc(233px + var(--safe-bot)) !important;right:20px !important;}
-  #ship-jump-btn{bottom:calc(294px + var(--safe-bot)) !important;left:20px !important;}
+  #ship-jump-btn{bottom:calc(296px + var(--safe-bot)) !important;left:200px !important;}
 }
 .side-pad{width:44px;height:44px;border-radius:50%;background:rgba(0,3,8,0.7);border:2px solid rgba(0,245,255,0.3);color:rgba(0,245,255,0.75);font-family:var(--font-hud);font-size:0.42rem;font-weight:700;letter-spacing:0.03em;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;transition:var(--trans);backdrop-filter:blur(8px);padding:0;touch-action:none;-webkit-user-select:none;user-select:none;line-height:1;}
 .side-pad .sp-ico{font-size:0.72rem;pointer-events:none;}
@@ -1189,7 +1189,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   <div id="land-prompt" onclick="if(_landTargetBody)openOrbitApproach(_landTargetBody);" style="display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,245,255,.12);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.6rem;letter-spacing:.15em;padding:.5rem 1.2rem;border-radius:3px;pointer-events:none;z-index:30;text-align:center;"></div>
   <div id="ship-land-prompt" onclick="enterShipWalk()" style="display:none;position:absolute;top:56%;left:50%;transform:translate(-50%,-50%);background:rgba(255,255,255,.12);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.6rem;letter-spacing:.15em;padding:.5rem 1.2rem;border-radius:3px;pointer-events:auto;cursor:pointer;z-index:30;text-align:center;">🕊 TAP TO LAND ON THE BIRD TEMPLE</div>
   <button id="ship-liftoff-btn" onclick="exitShipWalk()" style="display:none;position:absolute;bottom:calc(20px + var(--safe-bot));left:50%;transform:translateX(-50%);pointer-events:auto;padding:8px 20px;background:rgba(255,255,255,.12);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.6rem;letter-spacing:.15em;cursor:pointer;border-radius:3px;z-index:31;">🚀 LIFTOFF</button>
-  <button id="ship-jump-btn" onclick="triggerShipJump()" style="display:none;position:absolute;bottom:calc(190px + var(--safe-bot));left:18px;pointer-events:auto;width:56px;height:56px;border-radius:50%;background:rgba(255,255,255,.1);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.6rem;letter-spacing:.08em;cursor:pointer;z-index:31;">JUMP</button>
+  <button id="ship-jump-btn" style="display:none;position:absolute;bottom:calc(190px + var(--safe-bot));left:200px;pointer-events:auto;width:56px;height:56px;border-radius:50%;background:rgba(255,255,255,.1);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.6rem;letter-spacing:.08em;cursor:pointer;z-index:31;touch-action:none;">JUMP</button>
   <div id="ar-bottom" onclick="closeQuickTravel()">
     <div id="qt-panel" onclick="event.stopPropagation()">
       <div id="ar-dest-title">⟶ QUICK TRAVEL</div>
@@ -3556,7 +3556,16 @@ function buildSolarSystem(){
     t.traverse(o=>{
       if(o.isMesh&&o.material){
         const mats=Array.isArray(o.material)?o.material:[o.material];
-        mats.forEach(m=>{ if('side' in m){m.side=THREE.DoubleSide;m.needsUpdate=true;} });
+        // Removed the DoubleSide setting from a few passes back: the
+        // actual cause of the 'see-through' look turned out to be
+        // near-black vertex colors reading as void against space, not
+        // missing backfaces (fixed separately via brightenVertexColors
+        // above). DoubleSide roughly doubles the GPU's per-triangle cost
+        // since it can't cull backfaces at all -- likely the real
+        // explanation for the reported slowdown specifically near this
+        // ship and nowhere else, since nothing else in the scene has this
+        // set. Default single-sided rendering restored.
+        mats.forEach(m=>{ if('vertexColors' in m){m.vertexColors=true;} });
       }
     });
     // Diagnostic: confirm both key group lookups succeed and how many
@@ -3921,6 +3930,22 @@ function enterShipWalk(){
   toast('🚶 Walking the Bird Temple deck',2200);
 }
 function triggerShipJump(){ SHIP_WALK._jumpQueued=true; }
+// Wired with raw touch events instead of onclick — onclick is a synthetic,
+// mouse-compatible event, and relying on it for a button meant to be used
+// AT THE SAME TIME as an active finger already dragging the right
+// joystick was almost certainly why jump-while-moving only ever
+// registered one or the other. The joysticks already solve this correctly
+// (setupJoy tracks each one's own touch identifier); giving this button
+// the same direct, independent touch handling should let it coexist with
+// a simultaneously-active joystick drag rather than competing with it.
+function _wireShipJumpButton(){
+  const btn=document.getElementById('ship-jump-btn');
+  if(!btn)return;
+  const fire=e=>{ e.preventDefault(); triggerShipJump(); };
+  btn.addEventListener('touchstart',fire,{passive:false});
+  btn.addEventListener('mousedown',fire); // desktop fallback
+}
+document.addEventListener('DOMContentLoaded',_wireShipJumpButton);
 function exitShipWalk(){
   const bt=BIRD_TEMPLE,sp=STATE.flight;
   const world=bt.group.localToWorld(SHIP_WALK.localPos.clone());
@@ -4013,14 +4038,27 @@ function updateShipWalk(dt){
   // player, same offset/hover-height pattern as the planet-terrain walk's
   // board, just raycasting the ship's mesh for ground height instead of
   // the procedural height function.
+  // Real bug found on review: this offset (offR/offB) was sized before
+  // the ship's scale got recalibrated down to ~0.11 a few passes back (a
+  // ~3.7x reduction) — the ship's actual deck width is only ~7 world
+  // units now, so a 2.6-unit sideways offset could easily push the
+  // companion board clean off the edge of a narrow deck, landing it
+  // somewhere with no ground underneath (hence not visibly hovering
+  // nearby). Shrunk to match the ship's real current size.
   if(boardFlight){
     const bRx=Math.cos(SHIP_WALK.yaw),bRz=-Math.sin(SHIP_WALK.yaw);
     const bFx=-Math.sin(SHIP_WALK.yaw),bFz=-Math.cos(SHIP_WALK.yaw);
-    const offR=2.6,offB=1.4;
+    const offR=0.9,offB=0.5;
     const btx=camWorld.x+bRx*offR-bFx*offB;
     const btz=camWorld.z+bRz*offR-bFz*offB;
     const boardGroundY=_shipGroundHeight(btx,btz,camWorld.y);
     const hoverY=(boardGroundY!==null?boardGroundY:camWorld.y)+0.6+Math.sin(bt.t*1.6)*0.03;
+    if(bt.t>(bt._lastBoardLog||0)+1.0){
+      bt._lastBoardLog=bt.t;
+      console.log('[ShipWalk board] visible:',boardFlight.visible,'| target xz:',btx.toFixed(2),btz.toFixed(2),
+        '| groundY:',boardGroundY,'| hoverY:',hoverY.toFixed(2),'| current pos:',
+        boardFlight.position.x.toFixed(2),boardFlight.position.y.toFixed(2),boardFlight.position.z.toFixed(2));
+    }
     boardFlight.position.x+=(btx-boardFlight.position.x)*Math.min(1,dt*4);
     boardFlight.position.z+=(btz-boardFlight.position.z)*Math.min(1,dt*4);
     boardFlight.position.y+=(hoverY-boardFlight.position.y)*Math.min(1,dt*5);
