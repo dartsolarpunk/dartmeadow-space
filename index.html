@@ -1188,6 +1188,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   <div id="land-prompt" onclick="if(_landTargetBody)openOrbitApproach(_landTargetBody);" style="display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,245,255,.12);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.6rem;letter-spacing:.15em;padding:.5rem 1.2rem;border-radius:3px;pointer-events:none;z-index:30;text-align:center;"></div>
   <div id="ship-land-prompt" onclick="enterShipWalk()" style="display:none;position:absolute;top:56%;left:50%;transform:translate(-50%,-50%);background:rgba(255,255,255,.12);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.6rem;letter-spacing:.15em;padding:.5rem 1.2rem;border-radius:3px;pointer-events:auto;cursor:pointer;z-index:30;text-align:center;">🕊 TAP TO LAND ON THE BIRD TEMPLE</div>
   <button id="ship-liftoff-btn" onclick="exitShipWalk()" style="display:none;position:absolute;bottom:calc(20px + var(--safe-bot));left:50%;transform:translateX(-50%);pointer-events:auto;padding:8px 20px;background:rgba(255,255,255,.12);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.6rem;letter-spacing:.15em;cursor:pointer;border-radius:3px;z-index:31;">🚀 LIFTOFF</button>
+  <button id="ship-jump-btn" onclick="triggerShipJump()" style="display:none;position:absolute;bottom:calc(160px + var(--safe-bot));left:150px;pointer-events:auto;width:56px;height:56px;border-radius:50%;background:rgba(255,255,255,.1);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.6rem;letter-spacing:.08em;cursor:pointer;z-index:31;">JUMP</button>
   <div id="ar-bottom" onclick="closeQuickTravel()">
     <div id="qt-panel" onclick="event.stopPropagation()">
       <div id="ar-dest-title">⟶ QUICK TRAVEL</div>
@@ -3470,18 +3471,31 @@ function buildSolarSystem(){
     // enabled to receive, while everything else in the game (Saturn, the
     // board, other bodies) stays on the default layer and is completely
     // unaffected by them, no matter how close the ship happens to drift.
-    const SHIP_LIGHT_LAYER=10;
-    t.traverse(o=>{ if(o.isMesh)o.layers.enable(SHIP_LIGHT_LAYER); });
-    // New export (Bird Temple.glb) — confirmed via direct inspection there
-    // is no KHR_lights_punctual extension in this file at all (unlike
-    // Halo.glb, which had one baked light at a raw intensity of 121,081).
-    // No light to find and disable this time; the ship is lit entirely by
+    // Real bug found on review: this file's lighting setup still had the
+    // OLD file's material-dimming fix left in (multiplyScalar(0.4) below,
+    // now removed) — a 60% color reduction that was specifically
+    // compensating for Halo.glb's massive baked light blowing everything
+    // out. This new file has neither that light nor that problem, so that
+    // leftover dimming was making the entire ship 60% darker than it
+    // should be for no reason, directly contributing to 'you didn't add
+    // lights to it'.
+    //
+    // Also reconsidered the layers-based light isolation from the
+    // previous pass: on further thought, I'm not actually confident
+    // Three.js's standard forward-lit MeshStandardMaterial pipeline
+    // filters individual light contributions per-object based on layer
+    // intersection at all in this version — layers are primarily a
+    // camera-visibility mechanism (what a camera renders), not a
+    // per-light-per-mesh illumination filter. Removed that mechanism
+    // rather than keep relying on something I can't verify actually
+    // does what I claimed; falling back to the well-established, reliable
+    // technique instead — tight distance/decay falloff on each light,
+    // which is real, standard, well-tested behavior regardless of version.
+    // No KHR_lights_punctual extension in this file at all (unlike
+    // Halo.glb, which had one baked light at a raw intensity of 121,081) —
+    // no light to find and disable this time; the ship is lit entirely by
     // the fresh rig built below (altar light + procedural environment +
-    // the 3-point hull rig further down).
-    // Procedural substitute for a real environment map (this file has none
-    // embedded at all to even try to recover, unlike the previous file's
-    // Nomad viewport-only reference) — same PMREM technique as before.
-    // Warm/cool studio-box tones, scoped to the ship's own light layer only.
+    // 3-point hull rig).
     if(!window._birdTempleEnvRT){
       const envScene=new THREE.Scene();
       const box=new THREE.Mesh(new THREE.BoxGeometry(20,20,20),new THREE.MeshBasicMaterial({color:0x1a1a22,side:THREE.BackSide}));
@@ -3501,14 +3515,17 @@ function buildSolarSystem(){
     t.traverse(o=>{
       if(o.isMesh&&o.material){
         const mats=Array.isArray(o.material)?o.material:[o.material];
-        mats.forEach(m=>{ if(m.color)m.color.multiplyScalar(0.4); if('side' in m){m.side=THREE.DoubleSide;m.needsUpdate=true;} });
+        mats.forEach(m=>{ if('side' in m){m.side=THREE.DoubleSide;m.needsUpdate=true;} });
       }
     });
+    // Diagnostic: confirm both key group lookups succeed and how many
+    // lights actually get added, rather than silently no-op-ing if a name
+    // lookup fails the way the Bird Shard one did.
     const altarNode=t.getObjectByName('Altar Group');
+    console.log('[Bird Temple] Altar Group found:',!!altarNode,'| Hull found:',!!t.getObjectByName('Hull'));
     if(altarNode){
-      const altarLight=new THREE.PointLight(0xfff2cc,100,7,2);
+      const altarLight=new THREE.PointLight(0xfff2cc,60,5,2);
       altarLight.position.set(0,1.2,0); // local to Altar Group's own origin
-      altarLight.layers.set(SHIP_LIGHT_LAYER);
       altarNode.add(altarLight);
       // Sparkle particles — per the 'Bird Temple effects' notes, repurposing
       // dartpotentials.html's soft-glow point-sprite shader (circular
@@ -3549,7 +3566,6 @@ function buildSolarSystem(){
           }`
       });
       const sparkles=new THREE.Points(sparkGeo,sparkMat);
-      sparkles.layers.set(SHIP_LIGHT_LAYER); // cosmetic only — layer reuse is harmless (points aren't lit by anything)
       altarNode.add(sparkles);
       BIRD_TEMPLE.altarSparkles=sparkMat;
       // Occasional bright color-flash pulses on the ring materials, per
@@ -3607,17 +3623,24 @@ function buildSolarSystem(){
     // that dark anywhere.
     brightenVertexColors(t,0.5);
     const hullNode=t.getObjectByName('Hull')||t;
+    // Light distance/decay are NOT affected by the wrapper's scale
+    // transform (only position is) — they're effectively world-space
+    // values regardless of how small the ship's own raw geometry is. With
+    // the new, much smaller recalibrated scale (~0.11, vs the previous
+    // ~0.41), the ship's total world-space length dropped from ~73 units
+    // to ~20 — retuned these down accordingly, and raised intensity a bit
+    // as a safety margin on top of removing the leftover 0.4x dimming.
     const rig=[
-      {pos:[0,25,60], intensity:0.6, dist:22},   // key — from above/front
-      {pos:[0,15,-70], intensity:0.45, dist:22}, // fill — from the back
-      {pos:[30,10,0], intensity:0.4, dist:18},   // rim — from the side
+      {pos:[0,25,60], intensity:1.2, dist:12},  // key — from above/front
+      {pos:[0,15,-70], intensity:0.9, dist:12}, // fill — from the back
+      {pos:[30,10,0], intensity:0.8, dist:10},  // rim — from the side
     ];
     rig.forEach(r=>{
       const l=new THREE.PointLight(0xdfe8ff,r.intensity,r.dist,2);
       l.position.set(r.pos[0],r.pos[1],r.pos[2]);
-      l.layers.set(SHIP_LIGHT_LAYER);
       hullNode.add(l);
     });
+    console.log('[Bird Temple] lighting rig attached — altar light + 3-point hull rig, total lights added:',1+rig.length);
     // Wrap the whole model in an empty parent group and scale THAT.
     // Recalibrated using the embedded 'Skyboard BT Ornament' reference
     // this export includes specifically for this purpose — a real
@@ -3826,7 +3849,7 @@ function updateBirdTemple(dt){
 // the same 'ground-follow only' honesty as the note when this was first
 // discussed.
 // ══════════════════════════════════════════════════════════════
-const SHIP_WALK={active:false,localPos:new THREE.Vector3(),yaw:0,pitch:0};
+const SHIP_WALK={active:false,localPos:new THREE.Vector3(),yaw:0,pitch:0,velY:0,grounded:true};
 const _shipWalkRay=new THREE.Raycaster();
 function _shipGroundHeight(worldX,worldZ,fallbackY){
   const bt=BIRD_TEMPLE;
@@ -3853,8 +3876,10 @@ function enterShipWalk(){
   // procedural terrain height function.
   if(boardFlight)boardFlight.visible=true;
   $('ship-liftoff-btn').style.display='block';
+  $('ship-jump-btn').style.display='block';
   toast('🚶 Walking the Bird Temple deck',2200);
 }
+function triggerShipJump(){ SHIP_WALK._jumpQueued=true; }
 function exitShipWalk(){
   const bt=BIRD_TEMPLE,sp=STATE.flight;
   const world=bt.group.localToWorld(SHIP_WALK.localPos.clone());
@@ -3863,6 +3888,7 @@ function exitShipWalk(){
   SHIP_WALK.active=false;
   if(boardFlight)boardFlight.visible=true;
   $('ship-liftoff-btn').style.display='none';
+  $('ship-jump-btn').style.display='none';
   toast('🚀 Lifting off the Bird Temple',2000);
 }
 function updateShipWalk(dt){
@@ -3873,22 +3899,59 @@ function updateShipWalk(dt){
   // rather than the opposite of what players are already used to.
   SHIP_WALK.yaw-=JOY.Lx*dt*1.6;
   SHIP_WALK.pitch=THREE.MathUtils.clamp(SHIP_WALK.pitch-JOY.Ly*dt*1.2,-1.1,1.1);
-  // Move — human-scale walking speed, ship-local X/Z
-  const WALK_SPEED=1.1;
+  const WALK_SPEED=1.1, STEP_MAX=0.45, JUMP_VEL=2.4, GRAVITY=6.0;
   const fx=Math.sin(SHIP_WALK.yaw),fz=Math.cos(SHIP_WALK.yaw);
   const rx=Math.cos(SHIP_WALK.yaw),rz=-Math.sin(SHIP_WALK.yaw);
   const moveX=(fx*-JOY.Ry+rx*JOY.Rx)*WALK_SPEED*dt;
   const moveZ=(fz*-JOY.Ry+rz*JOY.Rx)*WALK_SPEED*dt;
-  const desiredLocal=SHIP_WALK.localPos.clone();
-  desiredLocal.x+=moveX;desiredLocal.z+=moveZ;
-  const desiredWorld=bt.group.localToWorld(desiredLocal.clone());
-  const groundY=_shipGroundHeight(desiredWorld.x,desiredWorld.z,desiredWorld.y);
-  if(groundY!==null){
-    // valid ground under the new spot — step there, snapped to its height
-    const snapped=new THREE.Vector3(desiredWorld.x,groundY+0.4,desiredWorld.z);
-    SHIP_WALK.localPos.copy(bt.group.worldToLocal(snapped));
+
+  // Jump — works alongside movement in the same frame, per request ('if
+  // they're moving and press that button simultaneously, they'll walk or
+  // run and jump at the same time').
+  if(SHIP_WALK._jumpQueued&&SHIP_WALK.grounded){
+    SHIP_WALK.velY=JUMP_VEL;
+    SHIP_WALK.grounded=false;
   }
-  // else: no ground there (edge of the ship) — simply don't move this frame
+  SHIP_WALK._jumpQueued=false;
+
+  const curWorld=bt.group.localToWorld(SHIP_WALK.localPos.clone());
+  if(SHIP_WALK.grounded){
+    // Horizontal move with auto step-up for small height differences, per
+    // 'if an object's height is lower than the knees, automatically climb
+    // it like steps' — anything within STEP_MAX steps up smoothly/
+    // instantly (this is what should let the rings on the altar be walked
+    // over casually); anything taller simply blocks the move this frame
+    // (would need an actual jump, or is genuinely too tall to walk up).
+    const desiredWorldXZ=bt.group.localToWorld(new THREE.Vector3(SHIP_WALK.localPos.x+moveX,SHIP_WALK.localPos.y,SHIP_WALK.localPos.z+moveZ));
+    const groundY=_shipGroundHeight(desiredWorldXZ.x,desiredWorldXZ.z,curWorld.y+2);
+    if(groundY!==null){
+      const diff=groundY-(curWorld.y-0.4);
+      if(diff<=STEP_MAX){
+        const snapped=new THREE.Vector3(desiredWorldXZ.x,groundY+0.4,desiredWorldXZ.z);
+        SHIP_WALK.localPos.copy(bt.group.worldToLocal(snapped));
+      }
+      // else: too tall to step onto casually — blocked, matching a wall
+    }
+  } else {
+    // Airborne — free horizontal steering, vertical handled by gravity below
+    SHIP_WALK.localPos.x+=moveX;SHIP_WALK.localPos.z+=moveZ;
+  }
+
+  // Gravity / landing
+  SHIP_WALK.velY-=GRAVITY*dt;
+  const preGravWorld=bt.group.localToWorld(SHIP_WALK.localPos.clone());
+  const newY=preGravWorld.y+SHIP_WALK.velY*dt;
+  const groundHere=_shipGroundHeight(preGravWorld.x,preGravWorld.z,Math.max(newY,preGravWorld.y)+2);
+  if(groundHere!==null&&newY<=groundHere+0.4){
+    const landed=new THREE.Vector3(preGravWorld.x,groundHere+0.4,preGravWorld.z);
+    SHIP_WALK.localPos.copy(bt.group.worldToLocal(landed));
+    SHIP_WALK.velY=0;SHIP_WALK.grounded=true;
+  } else {
+    const airPos=new THREE.Vector3(preGravWorld.x,newY,preGravWorld.z);
+    SHIP_WALK.localPos.copy(bt.group.worldToLocal(airPos));
+    SHIP_WALK.grounded=false;
+  }
+
   const camWorld=bt.group.localToWorld(SHIP_WALK.localPos.clone());
   flightCamera.position.copy(camWorld);
   flightCamera.rotation.set(SHIP_WALK.pitch,SHIP_WALK.yaw,0,'YXZ');
@@ -4006,9 +4069,23 @@ function drawTempleHubMap(){
 // has its own children — only the group (not the leaf mesh, which is a
 // grandchild, not a direct child of Altar Group) can match that.
 function getBirdShardGroup(shipRoot){
-  const altarGroup=shipRoot.getObjectByName('Altar Group');
-  if(!altarGroup)return null;
-  return altarGroup.children.find(c=>c.name==='Bird Shard'&&c.children&&c.children.length>0)||null;
+  const norm=s=>(s||'').trim().toLowerCase();
+  const altarGroup=shipRoot.getObjectByName('Altar Group')
+    || (()=>{ let found=null; shipRoot.traverse(o=>{ if(!found&&norm(o.name)==='altar group')found=o; }); return found; })();
+  console.log('[Bird Temple] getBirdShardGroup: Altar Group found?',!!altarGroup, altarGroup?('direct children: '+altarGroup.children.map(c=>c.name+' (childCount='+c.children.length+')').join(', ')):'');
+  if(altarGroup){
+    const hit=altarGroup.children.find(c=>norm(c.name)==='bird shard'&&c.children&&c.children.length>0);
+    if(hit)return hit;
+  }
+  // Whole-scene fallback: any object anywhere named 'Bird Shard' (case/
+  // whitespace-tolerant) that has its own children — catches it even if
+  // Altar Group itself couldn't be found by name for some reason.
+  let fallback=null;
+  shipRoot.traverse(o=>{
+    if(!fallback&&norm(o.name)==='bird shard'&&o.children&&o.children.length>0)fallback=o;
+  });
+  if(fallback)console.log('[Bird Temple] getBirdShardGroup: found via whole-scene fallback instead of Altar Group direct-children match.');
+  return fallback;
 }
 function summonBirdShard(){
   const bt=BIRD_TEMPLE;
