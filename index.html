@@ -1188,7 +1188,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   <div id="land-prompt" onclick="if(_landTargetBody)openOrbitApproach(_landTargetBody);" style="display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,245,255,.12);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.6rem;letter-spacing:.15em;padding:.5rem 1.2rem;border-radius:3px;pointer-events:none;z-index:30;text-align:center;"></div>
   <div id="ship-land-prompt" onclick="enterShipWalk()" style="display:none;position:absolute;top:56%;left:50%;transform:translate(-50%,-50%);background:rgba(255,255,255,.12);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.6rem;letter-spacing:.15em;padding:.5rem 1.2rem;border-radius:3px;pointer-events:auto;cursor:pointer;z-index:30;text-align:center;">🕊 TAP TO LAND ON THE BIRD TEMPLE</div>
   <button id="ship-liftoff-btn" onclick="exitShipWalk()" style="display:none;position:absolute;bottom:calc(20px + var(--safe-bot));left:50%;transform:translateX(-50%);pointer-events:auto;padding:8px 20px;background:rgba(255,255,255,.12);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.6rem;letter-spacing:.15em;cursor:pointer;border-radius:3px;z-index:31;">🚀 LIFTOFF</button>
-  <button id="ship-jump-btn" onclick="triggerShipJump()" style="display:none;position:absolute;bottom:calc(160px + var(--safe-bot));left:150px;pointer-events:auto;width:56px;height:56px;border-radius:50%;background:rgba(255,255,255,.1);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.6rem;letter-spacing:.08em;cursor:pointer;z-index:31;">JUMP</button>
+  <button id="ship-jump-btn" onclick="triggerShipJump()" style="display:none;position:absolute;bottom:calc(30px + var(--safe-bot));left:260px;pointer-events:auto;width:56px;height:56px;border-radius:50%;background:rgba(255,255,255,.1);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.6rem;letter-spacing:.08em;cursor:pointer;z-index:31;">JUMP</button>
   <div id="ar-bottom" onclick="closeQuickTravel()">
     <div id="qt-panel" onclick="event.stopPropagation()">
       <div id="ar-dest-title">⟶ QUICK TRAVEL</div>
@@ -3924,6 +3924,19 @@ function updateShipWalk(dt){
     // (would need an actual jump, or is genuinely too tall to walk up).
     const desiredWorldXZ=bt.group.localToWorld(new THREE.Vector3(SHIP_WALK.localPos.x+moveX,SHIP_WALK.localPos.y,SHIP_WALK.localPos.z+moveZ));
     const groundY=_shipGroundHeight(desiredWorldXZ.x,desiredWorldXZ.z,curWorld.y+2);
+    // Diagnostic — reported lateral movement doesn't work even on flat
+    // ground, but jump/look both do. Traced the math and raycasting by
+    // hand and found nothing wrong, so logging the actual runtime values
+    // here (throttled, since this runs every frame) instead of guessing a
+    // fifth explanation. Only fires when the stick is actually pushed.
+    if((Math.abs(moveX)>0.0001||Math.abs(moveZ)>0.0001)&&bt.t>(bt._lastWalkLog||0)+0.5){
+      bt._lastWalkLog=bt.t;
+      console.log('[ShipWalk] moveX:',moveX.toFixed(4),'moveZ:',moveZ.toFixed(4),
+        '| desiredXZ:',desiredWorldXZ.x.toFixed(2),desiredWorldXZ.z.toFixed(2),
+        '| groundY:',groundY, '| curWorld.y:',curWorld.y.toFixed(2),
+        '| diff:',groundY!==null?(groundY-(curWorld.y-0.4)).toFixed(3):'N/A',
+        '| STEP_MAX:',STEP_MAX);
+    }
     if(groundY!==null){
       const diff=groundY-(curWorld.y-0.4);
       if(diff<=STEP_MAX){
