@@ -580,6 +580,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   #level-stack{bottom:calc(130px + var(--safe-bot));left:20px;}
   #dart-pads{bottom:calc(130px + var(--safe-bot));right:20px;}
   #assist-row{bottom:calc(233px + var(--safe-bot)) !important;right:20px !important;}
+  #ship-jump-btn{bottom:calc(294px + var(--safe-bot)) !important;left:20px !important;}
 }
 .side-pad{width:44px;height:44px;border-radius:50%;background:rgba(0,3,8,0.7);border:2px solid rgba(0,245,255,0.3);color:rgba(0,245,255,0.75);font-family:var(--font-hud);font-size:0.42rem;font-weight:700;letter-spacing:0.03em;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;transition:var(--trans);backdrop-filter:blur(8px);padding:0;touch-action:none;-webkit-user-select:none;user-select:none;line-height:1;}
 .side-pad .sp-ico{font-size:0.72rem;pointer-events:none;}
@@ -1188,7 +1189,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   <div id="land-prompt" onclick="if(_landTargetBody)openOrbitApproach(_landTargetBody);" style="display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,245,255,.12);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.6rem;letter-spacing:.15em;padding:.5rem 1.2rem;border-radius:3px;pointer-events:none;z-index:30;text-align:center;"></div>
   <div id="ship-land-prompt" onclick="enterShipWalk()" style="display:none;position:absolute;top:56%;left:50%;transform:translate(-50%,-50%);background:rgba(255,255,255,.12);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.6rem;letter-spacing:.15em;padding:.5rem 1.2rem;border-radius:3px;pointer-events:auto;cursor:pointer;z-index:30;text-align:center;">🕊 TAP TO LAND ON THE BIRD TEMPLE</div>
   <button id="ship-liftoff-btn" onclick="exitShipWalk()" style="display:none;position:absolute;bottom:calc(20px + var(--safe-bot));left:50%;transform:translateX(-50%);pointer-events:auto;padding:8px 20px;background:rgba(255,255,255,.12);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.6rem;letter-spacing:.15em;cursor:pointer;border-radius:3px;z-index:31;">🚀 LIFTOFF</button>
-  <button id="ship-jump-btn" onclick="triggerShipJump()" style="display:none;position:absolute;bottom:calc(30px + var(--safe-bot));left:260px;pointer-events:auto;width:56px;height:56px;border-radius:50%;background:rgba(255,255,255,.1);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.6rem;letter-spacing:.08em;cursor:pointer;z-index:31;">JUMP</button>
+  <button id="ship-jump-btn" onclick="triggerShipJump()" style="display:none;position:absolute;bottom:calc(190px + var(--safe-bot));left:18px;pointer-events:auto;width:56px;height:56px;border-radius:50%;background:rgba(255,255,255,.1);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.6rem;letter-spacing:.08em;cursor:pointer;z-index:31;">JUMP</button>
   <div id="ar-bottom" onclick="closeQuickTravel()">
     <div id="qt-panel" onclick="event.stopPropagation()">
       <div id="ar-dest-title">⟶ QUICK TRAVEL</div>
@@ -1851,6 +1852,8 @@ const AUDIO = {
     {name:'ARC LAKE',src:'arc_lake.mp3'},
     {name:'VELVET HORIZON',src:'velvet_horizon.mp3'},
     {name:'THE SAME AS ITSELF',src:'the_same_as_itself.mp3'},
+    {name:'SKYBOARD OVER DART MEADOW',src:'Skyboard_Over_Dart_Meadow.mp3'},
+    {name:'SKYBOARD AT DAWN',src:'Skyboard_at_Dawn.mp3'},
   ],
   playlist:[],          // [{name, src, isObjectUrl}]
   index:-1,
