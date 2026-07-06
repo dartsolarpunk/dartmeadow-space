@@ -3573,8 +3573,8 @@ function buildSolarSystem(){
     // Diagnostic: confirm both key group lookups succeed and how many
     // lights actually get added, rather than silently no-op-ing if a name
     // lookup fails the way the Bird Shard one did.
-    const altarNode=t.getObjectByName('Altar Group');
-    console.log('[Bird Temple] Altar Group found:',!!altarNode,'| Hull found:',!!t.getObjectByName('Hull'));
+    const altarNode=shipNode(t,'Altar Group');
+    console.log('[Bird Temple] Altar Group found:',!!altarNode,'| Hull found:',!!shipNode(t,'Hull'),'(sanitization-aware lookups)');
     if(altarNode){
       const altarLight=new THREE.PointLight(0xfff2cc,60,5,2);
       altarLight.position.set(0,1.2,0); // local to Altar Group's own origin
@@ -3625,7 +3625,7 @@ function buildSolarSystem(){
       // their respective colors' — cheap: just nudges emissive on existing
       // materials once in a while, no new geometry.
       BIRD_TEMPLE.flashRings=['House Angels','Gods','Angels','Human halo']
-        .map(n=>altarNode.parent.getObjectByName(n)).filter(Boolean);
+        .map(n=>shipNode(altarNode.parent,n)).filter(Boolean);
     }
     // Local 3-point rig for the general hull — like room lamps, not
     // sunlight. Positions are rough (front/back/top of the raw Hull
@@ -3674,7 +3674,7 @@ function buildSolarSystem(){
     // model now, not a curated subset, so nothing on the ship can end up
     // that dark anywhere.
     brightenVertexColors(t,0.5);
-    const hullNode=t.getObjectByName('Hull')||t;
+    const hullNode=shipNode(t,'Hull')||t;
     // Light distance/decay are NOT affected by the wrapper's scale
     // transform (only position is) — they're effectively world-space
     // values regardless of how small the ship's own raw geometry is. With
@@ -3714,6 +3714,7 @@ function buildSolarSystem(){
     wrapper.visible=false; // hidden until it has a real, randomized, safe spawn point
     flightScene.add(wrapper);
     BIRD_TEMPLE.group=wrapper;
+    registerPassiveCollider(wrapper,'Bird Temple');
   }, undefined, err=>console.warn('Bird Temple (Bird Temple.glb) failed to load:',err));
   }
 }
@@ -3839,6 +3840,40 @@ function updateBirdTemple(dt){
     }
   }
   bt._frameDelta.subVectors(bt.group.position,_btPrevPos);
+
+  // ── Rigid-body slice: player (active) vs registered passive colliders.
+  // Swept raycast from last frame's position to this frame's — catches
+  // fast movement that would tunnel straight through a wall in a single
+  // frame, which a static overlap test at the new position would miss.
+  // On hit: clamp position to just outside the surface and remove the
+  // velocity component pointing into it (slide along the wall rather
+  // than a dead stop). Only runs when actually near a collider, and not
+  // during ship-walk (which has its own ground collision).
+  if(!SHIP_WALK.active){
+    const spc=STATE.flight;
+    if(spc){
+      if(!RIGID._playerPrev)RIGID._playerPrev=spc.pos.clone();
+      const travel=RIGID._tmpV1.subVectors(spc.pos,RIGID._playerPrev);
+      const dist=travel.length();
+      if(dist>1e-6){
+        for(let i=0;i<RIGID.passive.length;i++){
+          const col=RIGID.passive[i];
+          if(!col.obj||!col.obj.visible)continue;
+          if(spc.pos.distanceTo(col.obj.position)>60)continue; // broad-phase
+          RIGID._ray.set(RIGID._playerPrev,RIGID._tmpV2.copy(travel).normalize());
+          RIGID._ray.far=dist+RIGID.playerRadius;
+          const hits=RIGID._ray.intersectObject(col.obj,true);
+          if(hits.length){
+            const h=hits[0];
+            const n=h.face?h.face.normal.clone().transformDirection(h.object.matrixWorld):RIGID._tmpV2.clone().negate();
+            spc.pos.copy(h.point).addScaledVector(n,RIGID.playerRadius);
+            if(spc.vel){const into=spc.vel.dot(n);if(into<0)spc.vel.addScaledVector(n,-into);}
+          }
+        }
+      }
+      RIGID._playerPrev.copy(spc.pos);
+    }
+  }
 
   // ── Bird Shard: fly-to-player / follow / return-to-ship ─────────
   updateBirdShard(dt);
@@ -4163,23 +4198,16 @@ function drawTempleHubMap(){
 // has its own children — only the group (not the leaf mesh, which is a
 // grandchild, not a direct child of Altar Group) can match that.
 function getBirdShardGroup(shipRoot){
-  const norm=s=>(s||'').trim().toLowerCase();
-  const altarGroup=shipRoot.getObjectByName('Altar Group')
-    || (()=>{ let found=null; shipRoot.traverse(o=>{ if(!found&&norm(o.name)==='altar group')found=o; }); return found; })();
-  console.log('[Bird Temple] getBirdShardGroup: Altar Group found?',!!altarGroup, altarGroup?('direct children: '+altarGroup.children.map(c=>c.name+' (childCount='+c.children.length+')').join(', ')):'');
-  if(altarGroup){
-    const hit=altarGroup.children.find(c=>norm(c.name)==='bird shard'&&c.children&&c.children.length>0);
-    if(hit)return hit;
+  // shipNode() handles GLTFLoader's name sanitization (spaces→underscores,
+  // _N uniqueness suffixes) — the confirmed root cause of every lookup
+  // failure this session. requireChildren=true picks the GROUP named
+  // 'Bird Shard' over the leaf mesh that shares the name in this file.
+  const hit=shipNode(shipRoot,'Bird Shard',true);
+  if(!hit){
+    const names=[];shipRoot.traverse(o=>{if(o.name)names.push(o.name);});
+    console.warn('[Bird Temple] getBirdShardGroup: still not found. All node names:',names);
   }
-  // Whole-scene fallback: any object anywhere named 'Bird Shard' (case/
-  // whitespace-tolerant) that has its own children — catches it even if
-  // Altar Group itself couldn't be found by name for some reason.
-  let fallback=null;
-  shipRoot.traverse(o=>{
-    if(!fallback&&norm(o.name)==='bird shard'&&o.children&&o.children.length>0)fallback=o;
-  });
-  if(fallback)console.log('[Bird Temple] getBirdShardGroup: found via whole-scene fallback instead of Altar Group direct-children match.');
-  return fallback;
+  return hit;
 }
 function summonBirdShard(){
   const bt=BIRD_TEMPLE;
@@ -4409,14 +4437,14 @@ function sequenceAltar(){
   const t0=performance.now();
   // Gather target nodes — rings actually chosen, capped to haloCount of them
   const pickedNames=checkedRings.slice(0,haloCount);
-  const ringNodes=pickedNames.map(n=>bt.group.getObjectByName(n)).filter(Boolean);
+  const ringNodes=pickedNames.map(n=>shipNode(bt.group,n)).filter(Boolean);
   if(ringNodes.length<pickedNames.length){
-    const missing=pickedNames.filter(n=>!bt.group.getObjectByName(n));
+    const missing=pickedNames.filter(n=>!shipNode(bt.group,n));
     console.warn('Altar sequence: could not find these ring nodes in the model:',missing);
     toast('⚠ Some rings not found in model: '+missing.join(', '),3000);
   }
-  const staffNode=bt.group.getObjectByName('Staff');
-  const obNode=bt.group.getObjectByName('Starboard obulisque')||bt.group.getObjectByName('Port Obulisque');
+  const staffNode=shipNode(bt.group,'Staff');
+  const obNode=shipNode(bt.group,'Starboard obulisque')||shipNode(bt.group,'Port Obulisque');
   // Shard: whichever is currently 'live' — the docked ship node, or the
   // detached, summoned one if the Bird Shard is out.
   const shardNode=(bt.shardState==='following'||bt.shardState==='toPlayer')?bt.shard:getBirdShardGroup(bt.group);
@@ -4534,6 +4562,45 @@ const SKYBOARD_TEMPLATES={A:'skyboard_A.glb', B:'skyboard_B.glb'};
 const _glbCache={};           // url -> loaded THREE.Group (template scene)
 let _glbLoader=null;
 function _getGLBLoader(){ if(!_glbLoader&&THREE.GLTFLoader)_glbLoader=new THREE.GLTFLoader(); return _glbLoader; }
+// ROOT CAUSE of the session-long name-lookup failures, confirmed directly
+// against the exact three@0.128.0 + GLTFLoader builds this page ships:
+// GLTFLoader passes every node name through
+// THREE.PropertyBinding.sanitizeNodeName, which does
+// `.replace(/\s/g,'_')` — every SPACE becomes an UNDERSCORE in the live
+// scene ('Altar Group' → 'Altar_Group', 'Bird Shard' → 'Bird_Shard').
+// It ALSO appends _1, _2… to duplicate names (createUniqueName), which
+// this file hits: a leaf mesh and its parent group are both named
+// 'Bird Shard' in the file, so one of them is 'Bird_Shard_1' at runtime.
+// Every getObjectByName call written with a space has therefore silently
+// failed all session, across BOTH GLB files — matching the evidence
+// exactly: 'Gods' and 'Staff' (the only spaceless names) were the only
+// things that ever animated; only 'Hull' (spaceless) ever got vertex
+// brightening; the altar light ('Altar Group') never appeared; the shard
+// summon ('Levitation halo' before, 'Bird Shard' now) never resolved.
+// This helper matches by normalized name: underscores→spaces, trailing
+// _<digits> uniqueness suffix stripped, case/whitespace-insensitive.
+// ── Minimal rigid-body registry: passive colliders are static/kinematic
+// meshes the active bodies (currently: the player) can't pass through.
+// Designed for extension (e.g. the summoned shard as a second active
+// body, planet-surface props as more passives) — each entry is just
+// {obj, name}; the sweep logic lives in updateBirdTemple's frame step.
+const RIGID={passive:[],playerRadius:0.7,_playerPrev:null,
+  _ray:new THREE.Raycaster(),_tmpV1:new THREE.Vector3(),_tmpV2:new THREE.Vector3()};
+function registerPassiveCollider(obj,name){
+  RIGID.passive.push({obj,name:name||obj.name||'collider'});
+  console.log('[Rigid] passive collider registered:',name,'(total',RIGID.passive.length+')');
+}
+function shipNode(root,name,requireChildren){
+  if(!root)return null;
+  const want=name.trim().toLowerCase();
+  const norm=s=>(s||'').replace(/_\d+$/,'').replace(/_/g,' ').trim().toLowerCase();
+  let hit=null;
+  root.traverse(o=>{
+    if(hit)return;
+    if(norm(o.name)===want&&(!requireChildren||(o.children&&o.children.length>0)))hit=o;
+  });
+  return hit;
+}
 
 // Kick off background preload so templates are ready when the editor opens.
 function preloadSkyboardTemplates(){
@@ -8671,28 +8738,56 @@ function buildSurfaceTerrain(pal){
       const caveNoise=_fbm(x*0.05+seed*7.7,z*0.05+seed*7.7,seed+41,3)*_fbm(y*0.08,x*0.02-z*0.02,seed+53,3);
       return base-caveNoise*26;
     }
-    const MC_SIZE=260,MC_RES=64,MC_VMIN=-40,MC_VHEIGHT=140;
-    const mcGeo=marchingCubesMesh(density3D,[-MC_SIZE/2,MC_VMIN,-MC_SIZE/2],MC_SIZE,MC_RES,0);
-    // reuse the same vertex-color-driven terrain material style already
-    // used elsewhere, so this doesn't look out of place next to it
+    // Chunked follow-up to the original single-region build: a 5x5 grid
+    // of chunks around the landing spot (650x650 units total vs 260
+    // before), each chunk sampled at the same effective voxel density as
+    // before (130 units / 32 cells ≈ 4u per cell). Chunks are built
+    // INCREMENTALLY — one per timeout tick — so no single frame ever pays
+    // for more than one chunk's synchronous sampling (~33k samples vs the
+    // old single build's ~275k in one go). Ground appears under the
+    // player first (center chunk is queued first, then rings outward).
+    // A Web Worker would be the next step beyond this if even one chunk
+    // per tick proves too heavy on low-end devices, but incremental
+    // main-thread chunking keeps the density function (which closes over
+    // H/seed/_fbm) directly usable without serializing it into worker
+    // code — the honest tradeoff made here.
+    const MC_CHUNK=130,MC_RES=32,MC_GRID=2,MC_VMIN=-40,MC_VHEIGHT=140; // MC_GRID=2 → offsets -2..2 → 5x5
+    const mcGroup=new THREE.Group();
+    TERRAIN.group.add(mcGroup);
+    TERRAIN.mcGroup=mcGroup;
     const mcMat=new THREE.MeshStandardMaterial({color:pal.ground||0x7a6a52,roughness:0.95,metalness:0.02,flatShading:false});
-    const mcMesh=new THREE.Mesh(mcGeo,mcMat);
-    mcMesh.position.set(0,0,0);
-    TERRAIN.group.add(mcMesh);
-    TERRAIN.mcMesh=mcMesh;
-    console.log('[MarchingCubes] terrain patch built:',mcGeo.attributes.position.count/3,'triangles, region size',MC_SIZE,'at resolution',MC_RES);
-    // Collision inside the marching-cubes region: raycast against the
-    // generated mesh (same proven technique as the Bird Temple's
-    // ship-walk collision) instead of reading H(x,z) directly, since a
-    // true 3D density field can't be losslessly reduced back to a single
-    // height per column the way the plain heightmap terrain can.
+    // center-first ordering: sort chunk offsets by ring distance
+    const order=[];
+    for(let gx=-MC_GRID;gx<=MC_GRID;gx++)for(let gz=-MC_GRID;gz<=MC_GRID;gz++)order.push([gx,gz]);
+    order.sort((a,b)=>(Math.abs(a[0])+Math.abs(a[1]))-(Math.abs(b[0])+Math.abs(b[1])));
+    let built=0;
+    const buildGen=TERRAIN._mcBuildGen=(TERRAIN._mcBuildGen||0)+1; // cancel token: abandoned if terrain rebuilds/exits
+    (function buildNext(){
+      if(TERRAIN._mcBuildGen!==buildGen||!TERRAIN.mcGroup)return; // surface exited or rebuilt — stop quietly
+      if(!order.length){
+        console.log('[MarchingCubes] all',built,'chunks built (5x5 grid,',MC_CHUNK*(MC_GRID*2+1),'units span)');
+        return;
+      }
+      const [gx,gz]=order.shift();
+      const ox=gx*MC_CHUNK-MC_CHUNK/2, oz=gz*MC_CHUNK-MC_CHUNK/2;
+      const geo=marchingCubesMesh(density3D,[ox,MC_VMIN,oz],MC_CHUNK,MC_RES,0);
+      if(geo.attributes.position&&geo.attributes.position.count>0){
+        mcGroup.add(new THREE.Mesh(geo,mcMat));
+      }
+      built++;
+      setTimeout(buildNext,30); // yield to the frame loop between chunks
+    })();
+    // Collision: raycast against ALL built chunks (recursive on the
+    // group). Falls back to H(x,z) outside the covered span or before the
+    // relevant chunk has been built — degrades gracefully mid-build.
+    const SPAN=MC_CHUNK*(MC_GRID*2+1)/2;
     const _mcRay=new THREE.Raycaster();
     _mcRay.far=400;
     const _origSurfHeight=_surfHeight;
     _surfHeight=(x,z)=>{
-      if(Math.abs(x)<MC_SIZE/2&&Math.abs(z)<MC_SIZE/2){
+      if(Math.abs(x)<SPAN&&Math.abs(z)<SPAN&&TERRAIN.mcGroup){
         _mcRay.set(new THREE.Vector3(x,MC_VMIN+MC_VHEIGHT+20,z),new THREE.Vector3(0,-1,0));
-        const hits=_mcRay.intersectObject(mcMesh,false);
+        const hits=_mcRay.intersectObject(TERRAIN.mcGroup,true);
         if(hits.length)return hits[0].point.y;
       }
       return _origSurfHeight(x,z);
@@ -8917,7 +9012,7 @@ function surfRemountSkyboard(){
   $('surface-overlay').style.display='none';
   if(surfScene)disposeObject3D(surfScene); // free terrain/water/skyboard GPU memory (see disposeObject3D)
   if(surfRenderer)surfRenderer.dispose();
-  surfScene=null;surfPlayer=null;surfBoard=null;surfTerrainMesh=null;
+  surfScene=null;surfPlayer=null;surfBoard=null;surfTerrainMesh=null;TERRAIN.mcGroup=null;TERRAIN._mcBuildGen=(TERRAIN._mcBuildGen||0)+1;
   TERRAIN.tiles.clear();TERRAIN.group=null;
   enterAtmosphericFlight(body,site);
 }
@@ -8931,7 +9026,7 @@ function exitSurface(){
   // dispose surface scene
   if(surfScene)disposeObject3D(surfScene); // free terrain/water/skyboard GPU memory (see disposeObject3D)
   if(surfRenderer){surfRenderer.dispose();}
-  surfScene=null;surfPlayer=null;surfBoard=null;surfTerrainMesh=null;
+  surfScene=null;surfPlayer=null;surfBoard=null;surfTerrainMesh=null;TERRAIN.mcGroup=null;TERRAIN._mcBuildGen=(TERRAIN._mcBuildGen||0)+1;
   TERRAIN.tiles.clear();TERRAIN.group=null;
   // resume flight loop
   if(!flightAnimId){
