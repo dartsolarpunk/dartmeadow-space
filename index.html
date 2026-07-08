@@ -1205,6 +1205,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     <span id="surface-title" style="font-family:var(--font-hud);font-size:.62rem;letter-spacing:.15em;color:var(--cyan);">SURFACE</span>
     <span id="surface-grav" style="font-family:var(--font-mono);font-size:.55rem;color:rgba(0,245,255,.7);">GRAV 1.00g</span>
     <div style="display:flex;gap:8px;">
+      <button onclick="openTempleHub()" style="pointer-events:auto;padding:5px 12px;background:rgba(255,255,255,.1);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🕊 TEMPLE</button>
       <button id="surf-fly-btn" onclick="surfRemountSkyboard()" style="pointer-events:auto;padding:5px 12px;background:rgba(0,245,255,.1);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🛹 FLY</button>
       <button id="liftoff-btn" onclick="exitSurface()" style="pointer-events:auto;padding:5px 14px;background:rgba(245,196,0,.12);border:1px solid var(--gold);color:var(--gold);font-family:var(--font-hud);font-size:.52rem;letter-spacing:.12em;cursor:pointer;border-radius:2px;">🚀 LIFTOFF</button>
     </div>
@@ -1255,6 +1256,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     <span id="atmo-title" style="font-family:var(--font-hud);font-size:.6rem;letter-spacing:.14em;color:var(--cyan);">ATMOSPHERIC FLIGHT</span>
     <span id="atmo-speed" style="font-family:var(--font-mono);font-size:.6rem;color:var(--gold);">MACH 0.00</span>
     <div style="display:flex;gap:8px;">
+      <button onclick="openTempleHub()" style="pointer-events:auto;padding:5px 12px;background:rgba(255,255,255,.1);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🕊 TEMPLE</button>
       <button id="atmo-land-btn" onclick="atmoLandHere()" style="pointer-events:auto;padding:5px 12px;background:rgba(245,196,0,.12);border:1px solid var(--gold);color:var(--gold);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🚶 LAND</button>
       <button onclick="atmoExitToSpace()" style="pointer-events:auto;padding:5px 12px;background:rgba(0,245,255,.08);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🚀 TO SPACE</button>
     </div>
@@ -4141,7 +4143,12 @@ function travelToBirdTemple(){
   const p=BIRD_TEMPLE.group.position;
   sp.pos.set(p.x+8,p.y+2,p.z+8); // scaled down to match the corrected ship size
   sp.vel.set(0,0,0);
-  toast('🕊 Arrived near the Bird Temple',2000);
+  // Honest messaging: this only moves the (currently frozen) open-space
+  // flight position — if triggered from surface/atmosphere, that won't be
+  // visible until actually returning to space, so say so rather than
+  // imply an immediate arrival that isn't happening on screen.
+  if(surfaceActive||atmoActive)toast('🕊 Position set near the Bird Temple — you\'ll arrive there when you head back to space',2600);
+  else toast('🕊 Arrived near the Bird Temple',2000);
   drawTempleHubMap();
 }
 function openTempleHub(){
@@ -4358,21 +4365,30 @@ function _sentinelOffset(radius,speedMul){
   );
 }
 function updateBirdShard(dt){
-  const bt=BIRD_TEMPLE,sp=STATE.flight;
+  const bt=BIRD_TEMPLE;
+  // Context-aware player reference — the shard now needs to keep
+  // following correctly whichever scene the player is actually in.
+  // Surface walk uses an entirely separate scene/coordinate system
+  // (surfPlayer.pos), not STATE.flight.pos, which sits frozen wherever it
+  // was when the player left open-space flight (enterSurface cancels the
+  // flight loop entirely). Reparenting of bt.shard itself between
+  // flightScene and surfScene happens in enterSurface/exitSurface.
+  const sp=STATE.flight;
   if(!sp)return;
+  const playerPos=(surfaceActive&&surfPlayer)?surfPlayer.pos:(atmoActive&&atmoState)?atmoState.pos:sp.pos;
   _sentinelT+=dt;
   if(bt.shardDust)bt.shardDust.uniforms.uTime.value+=dt;
   const SHARD_SPEED=bt.shardTravelSpeed||10;
   if(bt.shard&&(bt.shardState==='toPlayer'||bt.shardState==='following')){
     const HOVER_RADIUS=9; // proportionate stand-in for the requested '~50m' at this game's scale
-    const dest=sp.pos.clone().add(_sentinelOffset(HOVER_RADIUS,bt.shardState==='toPlayer'?0:1));
+    const dest=playerPos.clone().add(_sentinelOffset(HOVER_RADIUS,bt.shardState==='toPlayer'?0:1));
     const toDest=dest.clone().sub(bt.shard.position);
     const d=toDest.length();
     if(bt.shardState==='toPlayer'){
       if(d>0.5)bt.shard.position.addScaledVector(toDest.normalize(),Math.min(d,SHARD_SPEED*dt));
       else bt.shardState='following';
       // audio cue once it's within ~100ft (≈30 world units) of the player, per the notes
-      if(!bt.shardPlayedNear&&bt.shard.position.distanceTo(sp.pos)<30){bt.shardPlayedNear=true;_btPlayChime();}
+      if(!bt.shardPlayedNear&&bt.shard.position.distanceTo(playerPos)<30){bt.shardPlayedNear=true;_btPlayChime();}
     } else {
       // following: continuously chase the slowly-drifting sentinel point
       bt.shard.position.lerp(dest,Math.min(1,dt*1.6));
@@ -7934,6 +7950,13 @@ function enterAtmosphericFlight(body,site){
   const startH=(_atmoHeight?_atmoHeight(0,0):0);
   atmoState={pos:new THREE.Vector3(0,startH+46,0),vel:new THREE.Vector3(),yaw:0,pitch:0,roll:0};
   board.position.copy(atmoState.pos);
+  if(BIRD_TEMPLE.shard&&(BIRD_TEMPLE.shardState==='following'||BIRD_TEMPLE.shardState==='toPlayer')&&!BIRD_TEMPLE._shardExternalScene){
+    flightScene.remove(BIRD_TEMPLE.shard);
+    atmoScene.add(BIRD_TEMPLE.shard);
+    BIRD_TEMPLE.shard.position.copy(atmoState.pos).add(new THREE.Vector3(2,1,2));
+    BIRD_TEMPLE.shardState='following';
+    BIRD_TEMPLE._shardExternalScene=atmoScene;
+  }
   // build Mach preset buttons
   buildMachPresets();
   // throttle slider
@@ -7947,6 +7970,7 @@ function enterAtmosphericFlight(body,site){
     atmoAnimId=requestAnimationFrame(aloop);
     const now=performance.now();const dt=Math.min((now-last)/1000,0.05);last=now;
     updateAtmoFlight(dt);
+    try{updateBirdTemple(dt);}catch(e){}
     atmoRenderer.render(atmoScene,atmoCamera);
   })();
 }
@@ -8102,6 +8126,7 @@ function _atmoCleanup(){
   if(!atmoActive)return;atmoActive=false;
   if(atmoAnimId){cancelAnimationFrame(atmoAnimId);atmoAnimId=null;}
   $('atmo-overlay').style.display='none';
+  _reclaimShardToFlight();
   if(atmoScene)disposeObject3D(atmoScene); // free terrain/water/skyboard GPU memory (see disposeObject3D)
   if(atmoRenderer)atmoRenderer.dispose();
   atmoScene=null;atmoBoard=null;atmoState=null;
@@ -8213,6 +8238,20 @@ function enterSurface(body,site){
   }
   // player proxy (first person — invisible; camera is the eyes)
   surfPlayer={pos:new THREE.Vector3(0,3.2,8),vel:new THREE.Vector3(),yaw:0,pitch:0,grav:pal.grav,onGround:true};
+  // If the Bird Shard is currently out and following, bring it along —
+  // per request, it shouldn't just vanish when visiting a planet. Since
+  // surfScene is an entirely separate scene from flightScene, this is a
+  // real reparent (removed from one, added to the other), not a visual
+  // trick — its own position gets reset near the player's surface
+  // starting point so it doesn't have to travel across an unrelated
+  // coordinate system to 'catch up'.
+  if(BIRD_TEMPLE.shard&&(BIRD_TEMPLE.shardState==='following'||BIRD_TEMPLE.shardState==='toPlayer')&&!BIRD_TEMPLE._shardExternalScene){
+    flightScene.remove(BIRD_TEMPLE.shard);
+    surfScene.add(BIRD_TEMPLE.shard);
+    BIRD_TEMPLE.shard.position.copy(surfPlayer.pos).add(new THREE.Vector3(2,1,2));
+    BIRD_TEMPLE.shardState='following';
+    BIRD_TEMPLE._shardExternalScene=surfScene;
+  }
   // input
   window.addEventListener('keydown',_surfKeyDown);
   window.addEventListener('keyup',_surfKeyUp);
@@ -8225,6 +8264,7 @@ function enterSurface(body,site){
     const now=performance.now();const dt=Math.min((now-last)/1000,0.05);last=now;surfTime+=dt;
     updateSurface(dt);
     try{updateCaustics(dt);}catch(e){}
+    try{updateBirdTemple(dt);}catch(e){} // ship keeps wandering + shard keeps following, even off-screen
     surfRenderer.render(surfScene,surfCamera);
   })();
 }
@@ -9191,6 +9231,24 @@ function setupSurfaceJoysticks(){
   mk('surf-move-zone','surf-move-knob',surfLookJoy,false);   // LEFT zone → LOOK
   mk('surf-look-zone','surf-look-knob',surfJoyMove,false);   // RIGHT zone → MOVE
 }
+// Must run BEFORE disposeObject3D() on whatever scene currently holds the
+// Bird Shard, in every exit path — disposal destroys geometries/materials
+// of everything still parented there, which would silently destroy the
+// shard's actual mesh data if it's still there (reparented in via
+// enterSurface/enterAtmosphericFlight). Reclaims it back into flightScene
+// at a reasonable position first. Generalized over bt._shardExternalScene
+// rather than one reclaim function per scene, since there are now two
+// (surface, atmosphere) and potentially more later.
+function _reclaimShardToFlight(){
+  const bt=BIRD_TEMPLE;
+  if(bt._shardExternalScene&&bt.shard){
+    bt._shardExternalScene.remove(bt.shard);
+    flightScene.add(bt.shard);
+    const sp=STATE.flight;
+    if(sp)bt.shard.position.copy(sp.pos).add(new THREE.Vector3(2,1,2));
+    bt._shardExternalScene=null;
+  }
+}
 // From walk mode: get back on the skyboard and fly in the atmosphere.
 function surfRemountSkyboard(){
   if(!surfaceActive)return;
@@ -9200,6 +9258,7 @@ function surfRemountSkyboard(){
   window.removeEventListener('keydown',_surfKeyDown);
   window.removeEventListener('keyup',_surfKeyUp);
   $('surface-overlay').style.display='none';
+  _reclaimShardToFlight();
   if(surfScene)disposeObject3D(surfScene); // free terrain/water/skyboard GPU memory (see disposeObject3D)
   if(surfRenderer)surfRenderer.dispose();
   surfScene=null;surfPlayer=null;surfBoard=null;surfTerrainMesh=null;TERRAIN.mcGroup=null;TERRAIN._mcBuildGen=(TERRAIN._mcBuildGen||0)+1;
@@ -9213,6 +9272,7 @@ function exitSurface(){
   window.removeEventListener('keydown',_surfKeyDown);
   window.removeEventListener('keyup',_surfKeyUp);
   $('surface-overlay').style.display='none';
+  _reclaimShardToFlight();
   // dispose surface scene
   if(surfScene)disposeObject3D(surfScene); // free terrain/water/skyboard GPU memory (see disposeObject3D)
   if(surfRenderer){surfRenderer.dispose();}
