@@ -8671,6 +8671,34 @@ function marchingCubesMesh(densityFn,origin,size,resolution,isoLevel){
   return geo;
 }
 
+// Spherical marching cubes — the 'full distance' extension: a landable
+// asteroid/small planetoid built the same way as the planar terrain
+// above, just with a spherical density field instead of a height-based
+// one. Genuinely reuses marchingCubesMesh() as-is; nothing new needed
+// there since it already samples any densityFn within a box, planar or
+// not. A rocky, lumpy surface comes from layering 3D noise directly onto
+// the sphere's radius rather than a flat height offset — real elevation
+// variation and overhangs on a curved body, not just a bumpy ball.
+// This is a working foundation, not yet wired into the full existing
+// per-asteroid approach/landing flow (which would mean touching the
+// broader celestial-body system this pass didn't have room for) — call
+// it directly to build a landable asteroid mesh wherever needed.
+function buildMarchingCubesAsteroid(radius,seed,resolution){
+  resolution=resolution||56;
+  function densitySphere(x,y,z){
+    const d=Math.sqrt(x*x+y*y+z*z);
+    const lump=_fbm(x*0.04+seed*3.3,z*0.04+seed*3.3,seed+61,4)*_fbm(y*0.04+seed*5.1,x*0.03-z*0.03,seed+67,3);
+    const craterish=Math.max(0,_fbm(x*0.09,z*0.09,seed+71,3)-0.55)*18; // occasional shallow depressions
+    return d-radius-(lump-0.5)*radius*0.35+craterish;
+  }
+  const pad=radius*1.5;
+  const geo=marchingCubesMesh(densitySphere,[-pad,-pad,-pad],pad*2,resolution,0);
+  const mat=new THREE.MeshStandardMaterial({color:0x8a7a68,roughness:0.97,metalness:0.03,flatShading:false});
+  const mesh=new THREE.Mesh(geo,mat);
+  console.log('[MarchingCubes] asteroid built:',geo.attributes.position.count/3,'triangles, radius',radius,'resolution',resolution);
+  return mesh;
+}
+
 function buildSurfaceTerrain(pal){
   const seed=(_surfBody?_surfBody.name.length:5)*13+1;
   // height function (kept from the original, drives collision + tiles).
@@ -8773,7 +8801,7 @@ function buildSurfaceTerrain(pal){
   // build. This proves the technique genuinely works; extending it to
   // cover more area (chunked, likely with a Worker to avoid blocking the
   // main thread) is a bigger follow-up, not attempted here.
-  if(STATE.settings.marchingCubesTerrain){
+if(STATE.settings.marchingCubesTerrain){
     function density3D(x,y,z){
       const base=y-H(x,z);
       const caveNoise=_fbm(x*0.05+seed*7.7,z*0.05+seed*7.7,seed+41,3)*_fbm(y*0.08,x*0.02-z*0.02,seed+53,3);
