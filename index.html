@@ -7963,7 +7963,11 @@ function enterAtmosphericFlight(body,site){
   // lighting
   const sun=new THREE.DirectionalLight(0xfff2e0,2.2);sun.position.set(200,300,120);atmoScene.add(sun);
   atmoScene.add(new THREE.AmbientLight(pal.atmos?0x88aacc:0x223344,0.6));
-  if(GFX.fakeGI)atmoScene.add(new THREE.HemisphereLight(pal.sky?pal.sky[0]:0x88bbff,pal.ground||0x556644,0.7));
+  if(GFX.fakeGI){
+    const _hsl={h:0,s:0,l:0};new THREE.Color(pal.ground||0x556644).getHSL(_hsl);
+    const _bounce=new THREE.Color().setHSL(_hsl.h,_hsl.s*0.35,Math.min(0.3,_hsl.l));
+    atmoScene.add(new THREE.HemisphereLight(pal.sky?pal.sky[0]:0x88bbff,_bounce,0.4));
+  }
   // sky dome
   if(pal.atmos){
     const skyMat=new THREE.ShaderMaterial({side:THREE.BackSide,uniforms:{top:{value:new THREE.Color(pal.sky[1])},bot:{value:new THREE.Color(pal.sky[0])}},
@@ -8246,8 +8250,8 @@ function enterSurface(body,site){
   // desaturated before using it as the light's actual color.
   if(GFX.fakeGI){
     const hslTmp={h:0,s:0,l:0};new THREE.Color(pal.ground).getHSL(hslTmp);
-    const bounceColor=new THREE.Color().setHSL(hslTmp.h,hslTmp.s*0.4,Math.min(0.35,hslTmp.l));
-    const hemi=new THREE.HemisphereLight(pal.sky[0],bounceColor,pal.atmos?0.55:0.35);
+    const bounceColor=new THREE.Color().setHSL(hslTmp.h,hslTmp.s*0.35,Math.min(0.3,hslTmp.l));
+    const hemi=new THREE.HemisphereLight(pal.sky[0],bounceColor,pal.atmos?0.4:0.35);
     surfScene.add(hemi);
   }
   surfScene.add(new THREE.AmbientLight(pal.atmos?0x6688aa:0x222233,pal.atmos?0.5:0.25));
@@ -9088,14 +9092,23 @@ if(STATE.settings.marchingCubesTerrain){
       cm.rotation.x=-Math.PI/2;cm.position.y=2.05;surfScene.add(cm);
     }
   }
-  // scatter rocks / vegetation near spawn (unchanged behaviour)
+  // scatter rocks / vegetation near spawn — per-instance color variation
+  // now, not one shared flat material for every rock. Matches the same
+  // per-tree canopy variation already in place, following the general
+  // technique (vary color per-instance rather than one flat object
+  // color) demonstrated in Sebastian Lague's terrain series.
   const rockGeo=new THREE.DodecahedronGeometry(1,0);
-  const rockMat=new THREE.MeshStandardMaterial({color:pal.rock,roughness:1});
+  const rockBaseHSL={h:0,s:0,l:0};new THREE.Color(pal.rock).getHSL(rockBaseHSL);
   const inst=Math.min(300,({low:60,med:140,high:240,ultra:300})[STATE.settings.particles]||140);
   for(let i=0;i<inst;i++){
     const x=rnd(-280,280),z=rnd(-280,280);const h=H(x,z);
     if(h<3&&pal.water)continue;
-    const rk=new THREE.Mesh(rockGeo,rockMat);
+    const rockCol=new THREE.Color().setHSL(
+      rockBaseHSL.h+(Math.random()-0.5)*0.03,
+      Math.max(0,Math.min(1,rockBaseHSL.s+(Math.random()-0.5)*0.15)),
+      Math.max(0,Math.min(1,rockBaseHSL.l+(Math.random()-0.5)*0.18))
+    );
+    const rk=new THREE.Mesh(rockGeo,new THREE.MeshStandardMaterial({color:rockCol,roughness:rnd(0.85,1)}));
     const s=rnd(0.4,2.4);rk.scale.set(s,s*rnd(0.6,1.2),s);
     rk.position.set(x,h+s*0.3,z);rk.rotation.set(rnd(0,6),rnd(0,6),rnd(0,6));
     if(GFX.shadows){rk.castShadow=true;rk.receiveShadow=true;}
@@ -9111,7 +9124,8 @@ if(STATE.settings.marchingCubesTerrain){
       // head height before any green geometry begins, and the canopy
       // itself is sized so its own base doesn't reach back down that far.
       const trunkH=rnd(2.5,4),trunkR=rnd(0.12,0.22);
-      const trunk=new THREE.Mesh(new THREE.CylinderGeometry(trunkR*0.7,trunkR,trunkH,6),new THREE.MeshStandardMaterial({color:0x4a3220,roughness:1}));
+      const trunkCol=new THREE.Color(0x4a3220).offsetHSL(0,(Math.random()-0.5)*0.05,(Math.random()-0.5)*0.1);
+      const trunk=new THREE.Mesh(new THREE.CylinderGeometry(trunkR*0.7,trunkR,trunkH,6),new THREE.MeshStandardMaterial({color:trunkCol,roughness:1}));
       trunk.position.set(x,h+trunkH/2,z);
       if(GFX.shadows)trunk.castShadow=true;
       surfScene.add(trunk);
