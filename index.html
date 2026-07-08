@@ -7641,7 +7641,7 @@ let surfPlayer,surfKeys={},surfJoyMove={x:0,y:0},surfLookJoy={x:0,y:0},surfTime=
 let _surfBody=null,_surfSite=null;
 function getSurfacePalette(body){
   const P={
-    Earth:{ground:0x3a7d34,ground2:0x2a5d24,rock:0x6b5d4f,sky:[0x88bbff,0x3a6ea5],fog:0x9ec4e8,water:true,grav:1.0,atmos:true},
+    Earth:{ground:0x3a7d34,ground2:0x2a5d24,rock:0x6b5d4f,sky:[0x88bbff,0x3a6ea5],fog:0x9ec4e8,water:true,liquidColor:0x1a4a7a,liquidName:'water',grav:1.0,atmos:true},
     Mars:{ground:0xa0461e,ground2:0x7a3416,rock:0x8a4020,sky:[0xd9a066,0x9a5a3a],fog:0xc97f4a,grav:0.38,atmos:true},
     Moon:{ground:0x888888,ground2:0x666666,rock:0x999999,sky:[0x000000,0x000000],fog:0x000000,grav:0.17,atmos:false},
     Mercury:{ground:0x999088,ground2:0x77706a,rock:0xaaa098,sky:[0x000000,0x000000],fog:0x000000,grav:0.38,atmos:false},
@@ -7651,8 +7651,15 @@ function getSurfacePalette(body){
   // Procedural worlds → palette by type, using the body's real gravity if set.
   const g=(body.gravity!==undefined)?body.gravity:0.6;
   const byType={
-    Habitable:{ground:0x3a7d34,ground2:0x2a5d24,rock:0x6b5d4f,sky:[0x88bbff,0x3a6ea5],fog:0x9ec4e8,water:true,atmos:true},
-    Ocean:    {ground:0x2a6a8a,ground2:0x1d4d66,rock:0x4a6a7a,sky:[0x7ab0e0,0x336a9a],fog:0x8ec0e0,water:true,atmos:true},
+    Habitable:{ground:0x3a7d34,ground2:0x2a5d24,rock:0x6b5d4f,sky:[0x88bbff,0x3a6ea5],fog:0x9ec4e8,water:true,liquidColor:0x1a4a7a,liquidName:'water',atmos:true},
+    Ocean:    {ground:0x2a6a8a,ground2:0x1d4d66,rock:0x4a6a7a,sky:[0x7ab0e0,0x336a9a],fog:0x8ec0e0,water:true,liquidColor:0x1a4a7a,liquidName:'water',atmos:true},
+    // Methane world — per request, 'it could be methane on one planet and
+    // something else on another'. A cold Titan-like body: hazy orange sky,
+    // dark organic-tholin ground, and pooled liquid methane (a
+    // desaturated cyan-green, genuinely different from water's blue, and
+    // far less reflective/more viscous-reading via higher roughness) in
+    // the low points/canyons/rivers instead of water.
+    Methane:  {ground:0x4a3a28,ground2:0x2e2418,rock:0x5c4a36,sky:[0xc99a5a,0x8a6a3a],fog:0xb8905a,water:true,liquidColor:0x4a8a7a,liquidName:'methane',liquidRoughness:0.45,liquidOpacity:0.9,atmos:true},
     Desert:   {ground:0xcaa050,ground2:0xa07c34,rock:0xd9b46a,sky:[0xe8c48a,0xc09850],fog:0xe0c080,atmos:true},
     Ice:      {ground:0xcfe0ea,ground2:0xa8c4d4,rock:0xbcd0dd,sky:[0xbcd8ee,0x88aacc],fog:0xd8eaf4,atmos:true},
     Volcanic: {ground:0x3a221a,ground2:0x221008,rock:0x5a2a1a,sky:[0x70302a,0x401815],fog:0x802a20,glow:0xff5522,atmos:true},
@@ -8030,6 +8037,23 @@ function atmoBuildTerrain(pal,ox,oz){
     h+=_fbm(x*0.04,z*0.04,seed+3,3)*5;
     const m=_fbm(x*0.005,z*0.005,seed+7,4);
     if(m>0.6)h+=(m-0.6)*120;
+    // Same mountain/plateau/cliff + canyon/river treatment as the walking
+    // terrain (buildSurfaceTerrain) — kept identical so a world looks
+    // consistent whether you're flying over it or standing on it.
+    const region=_fbm(x*0.0015+seed*3.1,z*0.0015+seed*3.1,seed+13,3);
+    if(region>0.35){
+      const mtWeight=Math.min(1,(region-0.35)/0.4);
+      const ridge1=1-Math.abs(_fbm(x*0.006,z*0.006,seed+21,4)*2-1);
+      const ridge2=1-Math.abs(_fbm(x*0.018,z*0.018,seed+27,3)*2-1);
+      const mountain=Math.pow(ridge1,2)*180+Math.pow(ridge2,2)*40;
+      const terraceNoise=_fbm(x*0.003,z*0.003,seed+33,3);
+      const plateau=Math.floor(terraceNoise*6)*28;
+      h+=mtWeight*(mountain*0.65+plateau*0.55);
+    }
+    const canyonRidge=1-Math.abs(_fbm(x*0.01+seed*5.3,z*0.01+seed*5.3,seed+61,4)*2-1);
+    if(canyonRidge>0.99)h-=Math.pow((canyonRidge-0.99)/0.01,1.5)*90;
+    const riverRidge=1-Math.abs(_fbm(x*0.006+seed*7.1,z*0.006+seed*7.1,seed+71,4)*2-1);
+    if(riverRidge>0.97)h-=Math.pow((riverRidge-0.97)/0.03,1.2)*22;
     const d2=x*x+z*z;
     h-=d2/(2*curveR);
     return h;
@@ -8048,11 +8072,29 @@ function atmoBuildTerrain(pal,ox,oz){
   const geo=new THREE.PlaneGeometry(SZ,SZ,SEG,SEG);geo.rotateX(-Math.PI/2);
   const pos=geo.attributes.position;const col=[];
   const c1=new THREE.Color(pal.ground),c2=new THREE.Color(pal.ground2),cr=new THREE.Color(pal.rock);
+  const sand=new THREE.Color(0xcbb87a),snow=new THREE.Color(0xf4f6fa);
+  const smooth=(e0,e1,v)=>{const u=Math.min(1,Math.max(0,(v-e0)/(e1-e0)));return u*u*(3-2*u);};
+  const eps=Math.max(1,SZ/SEG*0.6);
   for(let i=0;i<pos.count;i++){
     const x=pos.getX(i),z=pos.getZ(i);const h=H(x+ox,z+oz);pos.setY(i,h);
-    let c;const t=Math.min(1,Math.max(0,h/60));
-    if(h>55)c=new THREE.Color(0xffffff).lerp(cr,0.3);
-    else if(h>22)c=cr.clone();else c=c1.clone().lerp(c2,t*0.4+0.15);
+    // Same smooth weighted-blend fix as the walking terrain — was the
+    // identical hard if/else banding bug here too, just never patched
+    // when the walking version was fixed. Kept consistent between the
+    // two so a world doesn't look different flown-over vs walked-on.
+    const hx=H(x+ox+eps,z+oz),hz=H(x+ox,z+oz+eps);
+    const slope=Math.min(1,(Math.abs(hx-h)+Math.abs(hz-h))/(eps*1.4));
+    const n=(_fbm((x+ox)*0.08+seed,(z+oz)*0.08+seed,seed+81,3)-0.5);
+    const snowLine=55+n*8, rockLine=34+n*10, waterLine=5+n*3;
+    const wSnow=smooth(snowLine-6,snowLine+6,h)*(1-slope*0.5);
+    const wRock=Math.max(smooth(rockLine-8,rockLine+8,h),smooth(0.35,0.7,slope))*(1-wSnow);
+    const wSand=pal.water?smooth(waterLine+4,waterLine-4,h)*(1-wRock)*(1-wSnow):0;
+    const wGrass=Math.max(0,1-wSnow-wRock-wSand);
+    const grassCol=c1.clone().lerp(c2,0.15+n*0.15);
+    const rockCol=cr.clone().lerp(new THREE.Color(0x8a7d6a),Math.max(0,n)*0.4);
+    const c=new THREE.Color(
+      grassCol.r*wGrass+rockCol.r*wRock+sand.r*wSand+snow.r*wSnow,
+      grassCol.g*wGrass+rockCol.g*wRock+sand.g*wSand+snow.g*wSnow,
+      grassCol.b*wGrass+rockCol.b*wRock+sand.b*wSand+snow.b*wSnow);
     col.push(c.r,c.g,c.b);
   }
   geo.setAttribute('color',new THREE.Float32BufferAttribute(col,3));geo.computeVertexNormals();
@@ -8060,8 +8102,13 @@ function atmoBuildTerrain(pal,ox,oz){
   mesh.position.set(ox,0,oz);
   atmoScene.add(mesh);_atmoTerrainMesh=mesh;
   if(pal.water){
-    const wm=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ),new THREE.MeshStandardMaterial({color:0x1a4a7a,transparent:true,opacity:0.8,roughness:0.2,metalness:0.4}));
-    wm.rotation.x=-Math.PI/2;wm.position.set(ox,2,oz);atmoScene.add(wm);_atmoWaterMesh=wm;
+    const liqColor=pal.liquidColor!==undefined?pal.liquidColor:0x1a4a7a;
+    const wm=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ),new THREE.MeshStandardMaterial({
+      color:liqColor,transparent:true,
+      opacity:pal.liquidOpacity!==undefined?pal.liquidOpacity:0.8,
+      roughness:pal.liquidRoughness!==undefined?pal.liquidRoughness:0.2,
+      metalness:0.4}));
+    wm.rotation.x=-Math.PI/2;wm.position.set(ox,0,oz);atmoScene.add(wm);_atmoWaterMesh=wm; // y=0, matching the walking terrain's water level (fills real low points, not an arbitrary sea level)
   }
 }
 
@@ -8955,6 +9002,26 @@ function buildSurfaceTerrain(pal){
       const plateau=Math.floor(terraceNoise*6)*STEP;
       h+=mtWeight*(mountain*0.65+plateau*0.55);
     }
+    // Canyons/gorges — same ridged-noise technique as the mountains above,
+    // but SUBTRACTED rather than added, and at a much narrower frequency
+    // so it cuts a deep, comparatively thin gash rather than a broad
+    // range. A ridge value near its own peak (close to 1) marks the
+    // canyon's centerline; falls off quickly to either side, giving a
+    // real V/U-shaped cut rather than a uniform depression.
+    const canyonRidge=1-Math.abs(_fbm(x*0.01+seed*5.3,z*0.01+seed*5.3,seed+61,4)*2-1);
+    if(canyonRidge>0.99){
+      const cutDepth=(canyonRidge-0.99)/0.01; // 0→1 across the canyon's narrow centerline band — tightened after testing showed the original threshold covered ~33% of the terrain instead of sparse, dramatic gorges (~2.8% at this value)
+      h-=Math.pow(cutDepth,1.5)*90;
+    }
+    // River channel — a shallower, more continuous winding cut (wider
+    // threshold band than the canyon, so it reads as a channel rather
+    // than a hairline crack), carved at a DIFFERENT noise frequency/seed
+    // so rivers and canyons don't just trace the same path.
+    const riverRidge=1-Math.abs(_fbm(x*0.006+seed*7.1,z*0.006+seed*7.1,seed+71,4)*2-1);
+    if(riverRidge>0.97){
+      const riverDepth=(riverRidge-0.97)/0.03; // tightened for the same reason as the canyon threshold above (~9% coverage at this value instead of ~58%)
+      h-=Math.pow(riverDepth,1.2)*22;
+    }
     // No large-scale curvature falloff — the last working build (before
     // yesterday's enhancement pass) was a flat patch with local noise
     // deformation only, not a stylized spherical curve. The curveR falloff
@@ -9076,11 +9143,23 @@ if(STATE.settings.marchingCubesTerrain){
 
   // water + caustics (unchanged) — sized to the full terrain span
   const SZ=TERRAIN.rootSize;
+  // Liquid — planet-appropriate now, not hardcoded blue water. Sits low
+  // enough to actually fill the canyon/river carvings added above rather
+  // than an arbitrary fixed height; still a single flat plane (the
+  // achievable version of 'follow the terrain's low points' without a
+  // full localized water-mesh system), but tuned so hills/mountains sit
+  // well above it and carved gorges/channels sit below it, reading as
+  // real lakes/rivers rather than a global ocean covering everything.
   if(pal.water){
-    const waterMat=new THREE.MeshStandardMaterial({color:0x1a4a7a,transparent:true,opacity:0.82,roughness:0.15,metalness:0.4});
+    const liqColor=pal.liquidColor!==undefined?pal.liquidColor:0x1a4a7a;
+    const waterMat=new THREE.MeshStandardMaterial({
+      color:liqColor,transparent:true,
+      opacity:pal.liquidOpacity!==undefined?pal.liquidOpacity:0.82,
+      roughness:pal.liquidRoughness!==undefined?pal.liquidRoughness:0.15,
+      metalness:0.4});
     if(GFX.envReflections&&_envMap)waterMat.envMap=_envMap;
     const wm=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ,1,1),waterMat);
-    wm.rotation.x=-Math.PI/2;wm.position.y=2.0;
+    wm.rotation.x=-Math.PI/2;wm.position.y=0; // fills genuine low points (base terrain dips, river/canyon carvings) rather than an arbitrary elevated sea level
     if(GFX.shadows)wm.receiveShadow=true;
     surfScene.add(wm);surfWater=wm;
     if(GFX.caustics){
