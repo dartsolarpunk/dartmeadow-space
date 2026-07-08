@@ -9159,24 +9159,36 @@ function buildTerrainTile(cx,cz,size,depth){
     // Lague's terrain-generation Coding Adventure series
     // (youtube.com/@SebastianLague) and the accompanying reference
     // repository already credited elsewhere in this file for the marching
-    // cubes work — his videos are the source or this project's terrain-
-    // coloring approach was modeled after. This is an independent JS
-    // implementation of that general idea, not copied code (his project
-    // is Unity/C#), but the credit belongs with him regardless since the
-    // technique itself is what's being followed here.
-    // Slope estimate via central difference — steep terrain reads as rock
-    // regardless of elevation (a cliff face at low altitude is still
-    // rock, not grass), matching how real terrain-color systems work
-    // rather than a pure height-banded gradient.
+    // cubes work. This is an independent JS implementation of that
+    // general idea, not copied code (his project is Unity/C#), but the
+    // credit belongs with him regardless since the technique itself is
+    // what's being followed here.
+    //
+    // Real bug found and fixed: the previous version picked ONE branch
+    // per vertex via if/else on hard thresholds (h>55, h>20, slope>0.55)
+    // — every vertex was 100% one biome or 100% another, with a sudden
+    // jump exactly at the threshold. Adjacent vertices straddling that
+    // line got assigned completely different colors with nothing in
+    // between, which is what read as a separate, wrong-colored patch
+    // rather than a natural gradient (confirmed on Venus, but this
+    // applied to every planet's terrain equally). Lague's actual approach
+    // computes a continuous WEIGHT per biome layer and blends all of them
+    // together, never a discrete pick — replicated properly below.
     const hx=H(x+eps,z),hz=H(x,z+eps);
     const slope=Math.min(1,(Math.abs(hx-h)+Math.abs(hz-h))/(eps*1.4));
-    const t=Math.min(1,Math.max(0,h/60));
     const n=(_fbm(x*0.08+TERRAIN.seed,z*0.08+TERRAIN.seed,TERRAIN.seed+81,3)-0.5); // organic per-region variation, not a flat band edge
-    let c;
-    if(h>55+n*8)c=snow.clone().lerp(cr,0.15+slope*0.2);
-    else if(h>20+n*10||slope>0.55)c=cr.clone().lerp(new THREE.Color(0x8a7d6a),Math.max(0,n)*0.4);
-    else if(pal.water&&h<5+n*3)c=sand.clone().lerp(c2,Math.max(0,-n)*0.3);
-    else c=c1.clone().lerp(c2,t*0.4+0.15+n*0.15);
+    const smooth=(e0,e1,v)=>{const u=Math.min(1,Math.max(0,(v-e0)/(e1-e0)));return u*u*(3-2*u);};
+    const snowLine=55+n*8, rockLine=34+n*10, waterLine=5+n*3;
+    const wSnow=smooth(snowLine-6,snowLine+6,h)*(1-slope*0.5); // steep faces hold less snow
+    const wRock=Math.max(smooth(rockLine-8,rockLine+8,h), smooth(0.35,0.7,slope))*(1-wSnow);
+    const wSand=pal.water?smooth(waterLine+4,waterLine-4,h)*(1-wRock)*(1-wSnow):0; // descending smoothstep — sand fades OUT as height rises above the waterline
+    const wGrass=Math.max(0,1-wSnow-wRock-wSand);
+    const grassCol=c1.clone().lerp(c2,0.15+n*0.15);
+    const rockCol=cr.clone().lerp(new THREE.Color(0x8a7d6a),Math.max(0,n)*0.4);
+    let c=new THREE.Color(0,0,0);
+    c.r=grassCol.r*wGrass+rockCol.r*wRock+sand.r*wSand+snow.r*wSnow;
+    c.g=grassCol.g*wGrass+rockCol.g*wRock+sand.g*wSand+snow.g*wSnow;
+    c.b=grassCol.b*wGrass+rockCol.b*wRock+sand.b*wSand+snow.b*wSnow;
     col.push(c.r,c.g,c.b);
   }
   geo.setAttribute('color',new THREE.Float32BufferAttribute(col,3));
