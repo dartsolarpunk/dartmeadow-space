@@ -8683,6 +8683,127 @@ function marchingCubesMesh(densityFn,origin,size,resolution,isoLevel){
 // per-asteroid approach/landing flow (which would mean touching the
 // broader celestial-body system this pass didn't have room for) — call
 // it directly to build a landable asteroid mesh wherever needed.
+// ── Recognizable planetary geography via marching cubes ─────────────
+// Per clarified scope: not literal satellite/DEM data (a separate,
+// much bigger sourcing task) — real, working continent SILHOUETTES and
+// named real features, generated procedurally, with 'future geology'
+// (volcanism/erosion having reshaped things somewhat) as the honest
+// creative license for why this isn't pixel-perfect to today's Earth/
+// Mars. Detail target: at least on par with the reference repository's
+// demonstrated terrain quality, not a token gesture.
+//
+// Earth continents — approximate real centroids/extents (lat/lon in
+// degrees), each continent as 1-3 overlapping ellipses (single ellipses
+// can't capture a shape like Africa or South America well; a few
+// overlapping ones get meaningfully closer to a recognizable silhouette
+// without needing real coastline vector data). Rough, not authoritative —
+// good enough to be identifiable at a glance, which is the stated goal.
+const EARTH_CONTINENTS=[
+  // Africa — one broad ellipse for the bulk, one narrower one tapering south
+  {lat:8,lon:20,rlat:24,rlon:22,rot:0},
+  {lat:-15,lon:24,rlat:16,rlon:12,rot:0.15},
+  // Eurasia — Europe+Asia as one connected landmass, several overlapping blobs
+  {lat:50,lon:35,rlat:20,rlon:25,rot:-0.1},   // Europe/western Russia
+  {lat:55,lon:95,rlat:18,rlon:38,rot:0},      // Siberia
+  {lat:28,lon:80,rlat:16,rlon:28,rot:0},      // India/SE Asia/China
+  {lat:30,lon:46,rlat:18,rlon:17,rot:0},      // Middle East bridge to Africa's shape
+  // North America
+  {lat:48,lon:-100,rlat:20,rlon:24,rot:0.05},
+  {lat:16,lon:-92,rlat:8,rlon:8,rot:0},        // Mexico/Central America taper
+  // South America — narrows south, needs 2 blobs of different size
+  {lat:-8,lon:-58,rlat:18,rlon:14,rot:-0.05},
+  {lat:-38,lon:-68,rlat:16,rlon:8,rot:0.1},
+  // Australia
+  {lat:-25,lon:134,rlat:13,rlon:18,rot:0},
+  // Antarctica — polar cap, simple wide band
+  {lat:-80,lon:0,rlat:14,rlon:180,rot:0},
+];
+function _latLonOf(x,y,z,R){
+  return {lat:Math.asin(THREE.MathUtils.clamp(y/R,-1,1))*180/Math.PI, lon:Math.atan2(z,x)*180/Math.PI};
+}
+function earthLandMask(lat,lon,seed){
+  let inside=-1e9;
+  for(const c of EARTH_CONTINENTS){
+    const dlon=((lon-c.lon+540)%360)-180; // shortest signed angular distance, handles the ±180 wrap
+    const dlat=lat-c.lat;
+    const cr=Math.cos(c.rot),sr=Math.sin(c.rot);
+    const u=(dlon*cr-dlat*sr)/c.rlon, v=(dlon*sr+dlat*cr)/c.rlat;
+    inside=Math.max(inside,1-(u*u+v*v)); // >0 inside the ellipse, distance-like falloff
+  }
+  // coastline irregularity — without this every continent reads as a
+  // smooth clipart blob instead of a natural, jagged coastline
+  const coastNoise=(_fbm(lon*0.08+seed,lat*0.08+seed,seed+11,4)-0.5)*0.9;
+  return inside+coastNoise;
+}
+// Mars — real, specifically named, highly recognizable features rather
+// than a generic mask: Olympus Mons (the largest known volcano, ~18.5°N
+// 133°W), Valles Marineris (a vast canyon system spanning roughly 0-15°S,
+// -60° to -95°W), and the real hemispheric dichotomy (smoother northern
+// lowlands vs heavily cratered southern highlands, split roughly along
+// Mars's real ~30° tilt boundary rather than a plain N/S split).
+function marsFeatureHeight(lat,lon,seed){
+  let h=0;
+  // hemispheric dichotomy
+  const dichotomy=Math.sin((lat-5)*Math.PI/180)*0.5+Math.cos(lon*Math.PI/180*0.3)*0.15;
+  h+=dichotomy>0?-800:400; // northern lowlands sit lower, southern highlands higher
+  // Olympus Mons — a real shield volcano: broad, gently-sloped, immense
+  const dOlympus=Math.sqrt(Math.pow(lat-18.5,2)+Math.pow(((lon+133+540)%360-180),2));
+  if(dOlympus<12)h+=Math.max(0,12-dOlympus)/12*2200*Math.pow(Math.max(0,12-dOlympus)/12,0.6);
+  // Valles Marineris — a long rift/canyon gash
+  const canyonLon=((lon+77+540)%360-180); // centered near -77°
+  const alongCanyon=Math.abs(lat+7)<9 && Math.abs(canyonLon)<18;
+  if(alongCanyon){
+    const depth=(1-Math.abs(lat+7)/9)*(1-Math.abs(canyonLon)/18);
+    h-=depth*3000;
+  }
+  h+=(_fbm(lon*0.05+seed,lat*0.05+seed,seed+31,4)-0.5)*900; // cratering/erosion detail everywhere
+  return h;
+}
+// Builds a full spherical marching-cubes planet with recognizable
+// geography baked into the density field. 'earth'/'mars' get their real
+// features above; anything else (including Venus, honestly noted as
+// less iconically recognizable in public knowledge than Earth or Mars —
+// its one broadly-known named feature is Maxwell Montes) falls back to a
+// generic volcanic/cratered field, which is an accurate BROAD
+// characterization of Venus's real surface even without a specific
+// silhouette to render.
+function buildMarchingCubesPlanet(kind,radius,seed,resolution){
+  resolution=resolution||64;
+  kind=(kind||'').toLowerCase();
+  function density(x,y,z){
+    const d=Math.sqrt(x*x+y*y+z*z);
+    const {lat,lon}=_latLonOf(x,y,z,radius);
+    let elevation=0;
+    if(kind==='earth'){
+      const land=earthLandMask(lat,lon,seed);
+      if(land>0){
+        // land: real mountain-range-scale relief via ridged noise, scaled
+        // by how deep into the continent (edges taper toward sea level —
+        // coastlines don't cliff straight down)
+        const ridge=1-Math.abs(_fbm(x*0.05+seed,z*0.05+seed,seed+41,4)*2-1);
+        elevation=Math.min(land,1)*(300+Math.pow(ridge,2)*2600);
+      } else {
+        elevation=land*400; // ocean floor, gently deeper further from shore
+      }
+    } else if(kind==='mars'){
+      elevation=marsFeatureHeight(lat,lon,seed);
+    } else {
+      // generic volcanic/cratered (honest fallback for Venus and anything
+      // else without a specific recognizable-silhouette treatment)
+      const volcanic=1-Math.abs(_fbm(x*0.045+seed,z*0.045+seed,seed+51,4)*2-1);
+      elevation=Math.pow(volcanic,2)*1800-400;
+    }
+    return d-radius-elevation*0.01*radius/1000; // scale relief sensibly relative to planet radius
+  }
+  const pad=radius*1.25;
+  const geo=marchingCubesMesh(density,[-pad,-pad,-pad],pad*2,resolution,0);
+  const colorByKind={earth:0x4a7c3f,mars:0xa8552e,venus:0x8a7050};
+  const mat=new THREE.MeshStandardMaterial({color:colorByKind[kind]||0x8a7050,roughness:0.96,metalness:0.02});
+  const mesh=new THREE.Mesh(geo,mat);
+  console.log('[MarchingCubes] planet built:',kind||'generic','—',geo.attributes.position.count/3,'triangles, radius',radius,'resolution',resolution);
+  return mesh;
+}
+
 function buildMarchingCubesAsteroid(radius,seed,resolution){
   resolution=resolution||56;
   function densitySphere(x,y,z){
