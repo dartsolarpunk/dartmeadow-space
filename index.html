@@ -3716,7 +3716,15 @@ function buildSolarSystem(){
     wrapper.visible=false; // hidden until it has a real, randomized, safe spawn point
     flightScene.add(wrapper);
     BIRD_TEMPLE.group=wrapper;
-    registerPassiveCollider(wrapper,'Bird Temple');
+    // Rigid-body collision against the ship removed per explicit, repeated
+    // feedback: even after two rounds of tuning (tighter broad-phase,
+    // capped raycast reach), it kept blocking normal thruster approach —
+    // stopping well short of the hull and preventing the tap-to-land
+    // prompt from ever being reachable. Being able to actually fly up to
+    // and land on the ship matters far more than preventing occasional
+    // clipping through it, so this is disabled rather than tuned a third
+    // time. registerPassiveCollider(wrapper,'Bird Temple') is what used
+    // to be called here.
   }, undefined, err=>console.warn('Bird Temple (Bird Temple.glb) failed to load:',err));
   }
 }
@@ -8230,8 +8238,16 @@ function enterSurface(body,site){
   surfScene.add(sun);
   // Hemisphere light approximates global illumination: sky color bounces
   // from above, ground color bounces from below — soft, free, universal.
+  // Real issue found: this used the FULL-SATURATION ground color directly
+  // as a light source at up to 0.9 intensity — on Earth that's pure
+  // green (0x3a7d34) bouncing onto everything nearby, including trees,
+  // rocks, and the Bird Shard if it's out. A ground-bounce should read as
+  // a soft, desaturated fill tone, not a strong color wash. Darkened and
+  // desaturated before using it as the light's actual color.
   if(GFX.fakeGI){
-    const hemi=new THREE.HemisphereLight(pal.sky[0],pal.ground,pal.atmos?0.9:0.35);
+    const hslTmp={h:0,s:0,l:0};new THREE.Color(pal.ground).getHSL(hslTmp);
+    const bounceColor=new THREE.Color().setHSL(hslTmp.h,hslTmp.s*0.4,Math.min(0.35,hslTmp.l));
+    const hemi=new THREE.HemisphereLight(pal.sky[0],bounceColor,pal.atmos?0.55:0.35);
     surfScene.add(hemi);
   }
   surfScene.add(new THREE.AmbientLight(pal.atmos?0x6688aa:0x222233,pal.atmos?0.5:0.25));
@@ -9123,6 +9139,17 @@ function buildTerrainTile(cx,cz,size,depth){
   for(let i=0;i<pos.count;i++){
     const x=pos.getX(i)+cx, z=pos.getZ(i)+cz;
     const h=H(x,z);pos.setY(i,h);
+    // Height/slope-based biome color ramp — the general technique here
+    // (blend ground materials by elevation AND slope, rather than a flat
+    // per-object color) follows the approach demonstrated in Sebastian
+    // Lague's terrain-generation Coding Adventure series
+    // (youtube.com/@SebastianLague) and the accompanying reference
+    // repository already credited elsewhere in this file for the marching
+    // cubes work — his videos are the source or this project's terrain-
+    // coloring approach was modeled after. This is an independent JS
+    // implementation of that general idea, not copied code (his project
+    // is Unity/C#), but the credit belongs with him regardless since the
+    // technique itself is what's being followed here.
     // Slope estimate via central difference — steep terrain reads as rock
     // regardless of elevation (a cliff face at low altitude is still
     // rock, not grass), matching how real terrain-color systems work
