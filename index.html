@@ -3801,6 +3801,7 @@ function updateBirdTemple(dt){
   // along with the ship the same way it already works for celestial
   // bodies, if the ship happens to be what's anchored to.
   if(!bt._frameDelta)bt._frameDelta=new THREE.Vector3();
+  bt.group.position.y-=(bt._bobOffset||0); // strip last frame's cosmetic bob back off first — see fix note at the bob line below
   const _btPrevPos=bt.group.position.clone();
 
   // ── Task 1: randomized autonomous travel between waypoints ──────
@@ -3819,7 +3820,6 @@ function updateBirdTemple(dt){
       bt.group.rotation.y+=((yaw-bt.group.rotation.y+Math.PI*3)%(Math.PI*2)-Math.PI)*Math.min(1,dt*0.8);
     }
   }
-  bt.group.position.y+=Math.sin(bt.t*0.4)*0.02; // small hover bob regardless of travel state
   if(bt.altarSparkles)bt.altarSparkles.uniforms.uTime.value=bt.t;
   // Occasional bright flash on a random ring, per the notes ('can randomly
   // create bright flashes of their respective colors'). Cheap: nudges
@@ -3839,7 +3839,18 @@ function updateBirdTemple(dt){
       bt._flashMat.emissive.setRGB(0,0,0);bt._flashMat=null;
     }
   }
-  bt._frameDelta.subVectors(bt.group.position,_btPrevPos);
+  bt._frameDelta.subVectors(bt.group.position,_btPrevPos); // core movement only — wander/travel, NOT the cosmetic bob below
+  // Real bug fix: this used to be `position.y += sin(...)*0.02` every
+  // frame with no corresponding subtraction — not a bob at all, an
+  // unbounded accumulation (the sine's instantaneous value is essentially
+  // never exactly zero at any sampled frame, so it never cancels out),
+  // causing real vertical drift over time AND, since it ran before
+  // _frameDelta was computed, transmitting that same drift/jitter to an
+  // anchored player as visible shake every frame. Now a clean, absolute,
+  // non-accumulating offset applied fresh each frame, entirely separate
+  // from the core position frameDelta already captured just above.
+  bt._bobOffset=Math.sin(bt.t*0.4)*0.02;
+  bt.group.position.y+=bt._bobOffset;
 
   // ── Rigid-body slice: player (active) vs registered passive colliders.
   // Swept raycast from last frame's position to this frame's — catches
@@ -3849,6 +3860,19 @@ function updateBirdTemple(dt){
   // velocity component pointing into it (slide along the wall rather
   // than a dead stop). Only runs when actually near a collider, and not
   // during ship-walk (which has its own ground collision).
+  //
+  // Real regression found and fixed: both the broad-phase gate (60u) and
+  // the raycast's reach (dist+radius, where dist was the player's FULL
+  // per-frame travel) scaled with how far the player moved that frame —
+  // at any real flight speed, let alone dart-speed, a single frame's
+  // travel can be far larger than the ship's own ~20-unit size. That
+  // meant the sweep could detect the hull from very far away and clamp
+  // the player right there, long before they'd ever get close enough to
+  // see the landing prompt — exactly 'blocks me from getting near it'.
+  // Tunnel-prevention only actually needs to matter once genuinely close
+  // enough that this frame's movement could plausibly carry through the
+  // hull, not from an arbitrary warp-speed distance away. Bounded both to
+  // the ship's real scale instead.
   if(!SHIP_WALK.active){
     const spc=STATE.flight;
     if(spc){
@@ -3859,9 +3883,9 @@ function updateBirdTemple(dt){
         for(let i=0;i<RIGID.passive.length;i++){
           const col=RIGID.passive[i];
           if(!col.obj||!col.obj.visible)continue;
-          if(spc.pos.distanceTo(col.obj.position)>60)continue; // broad-phase
+          if(spc.pos.distanceTo(col.obj.position)>25)continue; // broad-phase — tightened to roughly the ship's own size
           RIGID._ray.set(RIGID._playerPrev,RIGID._tmpV2.copy(travel).normalize());
-          RIGID._ray.far=dist+RIGID.playerRadius;
+          RIGID._ray.far=Math.min(dist,25)+RIGID.playerRadius; // capped reach — was unbounded (scaled with full per-frame travel)
           const hits=RIGID._ray.intersectObject(col.obj,true);
           if(hits.length){
             const h=hits[0];
@@ -4363,6 +4387,23 @@ function updateBirdShard(dt){
     const d=toDest.length();
     if(d>1)bt.shard.position.addScaledVector(toDest.normalize(),Math.min(d,SHARD_SPEED*dt));
     else{
+      // Real bug found: the fairy-dust Points object was added as a child
+      // of this same group in summonBirdShard() (combined.add(dust)) but
+      // NEVER removed — bt.shardDust=null below only cleared the JS
+      // reference used for the time-uniform animation, not the actual
+      // object in the scene graph. Every summon/return cycle left one
+      // more orphaned dust cloud permanently attached to this group,
+      // compounding on every subsequent summon — very likely the exact
+      // cause of 'shows as just the particle effect' after the first
+      // cycle (the bounding-box rescale in summonBirdShard measures
+      // whatever's attached, including any stale leftover dust).
+      // Explicitly find and remove it before re-parenting anything.
+      const staleDust=bt.shard.children.filter(c=>c.isPoints);
+      staleDust.forEach(d=>{
+        bt.shard.remove(d);
+        d.geometry.dispose();
+        d.material.dispose();
+      });
       // Re-parent each piece back into the ship hierarchy at its own
       // original local transform — shardHomeLocal has one entry per piece
       // (the Bird Shard combines two siblings: halo + shard). add()
