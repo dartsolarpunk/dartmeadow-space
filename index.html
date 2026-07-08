@@ -4262,9 +4262,30 @@ function summonBirdShard(){
   const worldMatrix=shardSrc.matrixWorld.clone();
   bt.shardHomeLocal=[{node:shardSrc,pos:shardSrc.position.clone(),quat:shardSrc.quaternion.clone(),scale:shardSrc.scale.clone(),parent:shardSrc.parent}];
   shardSrc.parent.remove(shardSrc);
-  flightScene.add(shardSrc);
-  shardSrc.matrix.copy(worldMatrix);
-  shardSrc.matrix.decompose(shardSrc.position,shardSrc.quaternion,shardSrc.scale);
+  // Real bug found: this always added to flightScene regardless of which
+  // scene is actually being rendered right now. Surface walking and
+  // atmosphere flight each run in their own separate scene — if the
+  // player summons while already in one of those, the shard's summon
+  // LOGIC completed correctly (state, toasts, everything) but the mesh
+  // itself was invisible the whole time because it was sitting in a scene
+  // that wasn't on screen, only becoming visible once they returned to
+  // open space. Now adds to whichever scene is actually active.
+  const _activeScene=surfaceActive?surfScene:(atmoActive?atmoScene:flightScene);
+  _activeScene.add(shardSrc);
+  if(_activeScene!==flightScene)bt._shardExternalScene=_activeScene;
+  if(surfaceActive||atmoActive){
+    // The preserved world matrix only makes sense relative to
+    // flightScene's coordinate space (where the ship actually lives) —
+    // meaningless here, since surfScene/atmoScene are separate, locally-
+    // originated coordinate systems. Position directly near the player
+    // in THIS scene instead of trying to preserve a transform that
+    // doesn't carry any meaning across scenes.
+    const herePos=surfaceActive?surfPlayer.pos:atmoState.pos;
+    shardSrc.position.copy(herePos).add(new THREE.Vector3(2,1,2));
+  } else {
+    shardSrc.matrix.copy(worldMatrix);
+    shardSrc.matrix.decompose(shardSrc.position,shardSrc.quaternion,shardSrc.scale);
+  }
   shardSrc.updateMatrixWorld(true);
   const combined=shardSrc;
   // Measure the footprint and rescale to a consistent companion size —
@@ -4341,6 +4362,15 @@ function summonBirdShard(){
 function returnBirdShard(){
   const bt=BIRD_TEMPLE;
   if(bt.shardState==='docked'||!bt.shard){toast('The Bird Shard is already at the Temple.',1500);return;}
+  // If currently in surfScene/atmoScene, that's a completely separate,
+  // locally-originated coordinate system from flightScene (where the ship
+  // actually lives) — animating 'toward the ship' using the shard's
+  // current position there would be comparing numbers from two unrelated
+  // coordinate spaces. Reclaim it to flightScene first (same helper used
+  // on scene-exit), positioned near the player's flight position, THEN
+  // compute the real return trip from there. Same 'you'll see it when you
+  // return to space' pattern already used for quick-travel.
+  if(bt._shardExternalScene)_reclaimShardToFlight();
   bt.shardState='toShip';
   // Same fixed-arrival-time fix as summon, in the other direction.
   const dest=new THREE.Vector3();bt.group.getWorldPosition(dest);
@@ -9055,9 +9085,26 @@ if(STATE.settings.marchingCubesTerrain){
     if(GFX.shadows){rk.castShadow=true;rk.receiveShadow=true;}
     surfScene.add(rk);
     if(pal.ground===0x3a7d34&&Math.random()>0.6&&h>3&&h<40){
-      const tr=new THREE.Mesh(new THREE.ConeGeometry(rnd(1,2.5),rnd(4,9),6),new THREE.MeshStandardMaterial({color:0x1f5520,roughness:1}));
-      tr.position.set(x+rnd(-3,3),h+3,z+rnd(-3,3));
-      if(GFX.shadows)tr.castShadow=true;surfScene.add(tr);
+      // Real bug found: this used to be ONE solid cone, radius up to 2.5,
+      // height up to 9, centered at h+3 — meaning its base could sit
+      // BELOW ground and its body span right through the player's actual
+      // eye height (camera starts at y=3.2). Standing near one meant being
+      // literally inside solid green geometry, which is what read as 'the
+      // sky is green' — not a canopy effect, a camera-inside-mesh bug.
+      // Real trunk+canopy now: a thin trunk raises the canopy well above
+      // head height before any green geometry begins, and the canopy
+      // itself is sized so its own base doesn't reach back down that far.
+      const trunkH=rnd(2.5,4),trunkR=rnd(0.12,0.22);
+      const trunk=new THREE.Mesh(new THREE.CylinderGeometry(trunkR*0.7,trunkR,trunkH,6),new THREE.MeshStandardMaterial({color:0x4a3220,roughness:1}));
+      trunk.position.set(x,h+trunkH/2,z);
+      if(GFX.shadows)trunk.castShadow=true;
+      surfScene.add(trunk);
+      const canopyH=rnd(2.5,4.5),canopyR=rnd(0.9,1.6);
+      const canopyCol=new THREE.Color(0x1f5520).offsetHSL(0,0,(Math.random()-0.5)*0.12); // slight per-tree variation, not one flat color
+      const canopy=new THREE.Mesh(new THREE.ConeGeometry(canopyR,canopyH,7),new THREE.MeshStandardMaterial({color:canopyCol,roughness:1}));
+      canopy.position.set(x,h+trunkH+canopyH*0.35,z); // base of canopy sits ABOVE the trunk, not overlapping eye height
+      if(GFX.shadows)canopy.castShadow=true;
+      surfScene.add(canopy);
     }
   }
 }
@@ -9070,14 +9117,25 @@ function buildTerrainTile(cx,cz,size,depth){
   const pos=geo.attributes.position;
   const H=TERRAIN.H,pal=TERRAIN.pal;
   const c1=new THREE.Color(pal.ground),c2=new THREE.Color(pal.ground2),cr=new THREE.Color(pal.rock);
+  const sand=new THREE.Color(0xcbb87a),snow=new THREE.Color(0xf4f6fa);
+  const eps=Math.max(1,size/seg*0.6); // sample spacing for slope estimate, scaled to this tile's own vertex density
   const col=[];
   for(let i=0;i<pos.count;i++){
     const x=pos.getX(i)+cx, z=pos.getZ(i)+cz;
     const h=H(x,z);pos.setY(i,h);
-    let c;const t=Math.min(1,Math.max(0,h/60));
-    if(h>55)c=new THREE.Color(0xffffff).lerp(cr,0.3);
-    else if(h>22)c=cr.clone();
-    else c=c1.clone().lerp(c2,t*0.4+0.15);
+    // Slope estimate via central difference — steep terrain reads as rock
+    // regardless of elevation (a cliff face at low altitude is still
+    // rock, not grass), matching how real terrain-color systems work
+    // rather than a pure height-banded gradient.
+    const hx=H(x+eps,z),hz=H(x,z+eps);
+    const slope=Math.min(1,(Math.abs(hx-h)+Math.abs(hz-h))/(eps*1.4));
+    const t=Math.min(1,Math.max(0,h/60));
+    const n=(_fbm(x*0.08+TERRAIN.seed,z*0.08+TERRAIN.seed,TERRAIN.seed+81,3)-0.5); // organic per-region variation, not a flat band edge
+    let c;
+    if(h>55+n*8)c=snow.clone().lerp(cr,0.15+slope*0.2);
+    else if(h>20+n*10||slope>0.55)c=cr.clone().lerp(new THREE.Color(0x8a7d6a),Math.max(0,n)*0.4);
+    else if(pal.water&&h<5+n*3)c=sand.clone().lerp(c2,Math.max(0,-n)*0.3);
+    else c=c1.clone().lerp(c2,t*0.4+0.15+n*0.15);
     col.push(c.r,c.g,c.b);
   }
   geo.setAttribute('color',new THREE.Float32BufferAttribute(col,3));
