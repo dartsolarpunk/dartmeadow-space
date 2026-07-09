@@ -105,7 +105,12 @@ if(location.search.indexOf('debug')!==-1){
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
-<script async src="https://js.stripe.com/v3/buy-button.js"></script>
+<!-- Stripe's buy-button script is now lazy-loaded only when Support is
+     opened (see openSupport()), not here on every page load. Loading it
+     immediately meant the <stripe-buy-button> custom elements started
+     initializing right away, before the Support section was ever visited
+     -- likely the cause of an unexpected download prompt appearing while
+     still on the loading screen. -->
 <script>
 // Inline OrbitControls — no external dependency, always works
 // Stripped-down but fully functional implementation
@@ -7006,7 +7011,17 @@ function rebuildFlightForSystem(system){
 // ══════════════════════════════════════════════════════════════
 //  SETTINGS
 // ══════════════════════════════════════════════════════════════
-function openSupport(){const m=$('support-modal');if(m)m.style.display='flex';}
+let _stripeScriptLoaded=false;
+function openSupport(){
+  const m=$('support-modal');if(m)m.style.display='flex';
+  if(!_stripeScriptLoaded){
+    _stripeScriptLoaded=true;
+    const s=document.createElement('script');
+    s.src='https://js.stripe.com/v3/buy-button.js';
+    s.async=true;
+    document.head.appendChild(s);
+  }
+}
 function closeSupport(){const m=$('support-modal');if(m)m.style.display='none';}
 
 function openSettings(){
