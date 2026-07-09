@@ -336,7 +336,11 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;background:var(--c0);co
 /* MENU */
 #screen-menu{background:var(--c0);align-items:center;justify-content:flex-start;padding-left:clamp(50px,6vw,75px);}
 #menu-bg-canvas{position:absolute;inset:0;z-index:0;}
-#menu-pilot{position:absolute;z-index:1;right:1%;bottom:0;height:96%;width:auto;max-width:88vw;object-fit:contain;object-position:right bottom;opacity:0.62;mix-blend-mode:screen;pointer-events:none;filter:drop-shadow(0 0 36px rgba(91,127,255,0.28));-webkit-mask-image:linear-gradient(to top,rgba(0,0,0,1) 70%,rgba(0,0,0,0) 100%);mask-image:linear-gradient(to top,rgba(0,0,0,1) 70%,rgba(0,0,0,0) 100%);transform-origin:right bottom;transform:scaleX(1.6);}
+#menu-pilot{position:absolute;z-index:1;right:1%;bottom:0;height:96%;width:auto;max-width:88vw;object-fit:contain;object-position:right bottom;opacity:0.62;mix-blend-mode:screen;pointer-events:none;filter:drop-shadow(0 0 36px rgba(91,127,255,0.28));-webkit-mask-image:linear-gradient(to top,rgba(0,0,0,1) 70%,rgba(0,0,0,0) 100%);mask-image:linear-gradient(to top,rgba(0,0,0,1) 70%,rgba(0,0,0,0) 100%);}
+/* Undistorted color wash specifically behind the panel's own screen area —
+   gives the frosted glass real visual content to show through without
+   stretching/warping the actual character artwork to reach that far. */
+#menu-glow-wash{position:absolute;z-index:1;left:0;top:0;width:55vw;height:100%;background:radial-gradient(ellipse 70% 60% at 30% 55%,rgba(91,127,255,0.16),rgba(157,92,224,0.08) 55%,transparent 80%);pointer-events:none;}
 /* Portrait phones/tablets: no room for two side-by-side columns — center
    the pilot art behind the panel instead of hiding it entirely, so the
    frosted glass has real background content to actually show through
@@ -347,9 +351,9 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;background:var(--c0);co
 .menu-glass{position:relative;z-index:2;background:rgba(255,255,255,0.025);border:1px solid rgba(255,255,255,0.14);border-radius:3px;padding:2.6rem 1.7rem 2.3rem;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);width:min(360px,82vw);text-align:center;box-shadow:0 0 24px rgba(0,0,0,0.15);max-height:calc(var(--app-h) - 24px);overflow-y:auto;overscroll-behavior:contain;}
 .menu-logo{font-family:var(--font-hud);font-size:1.9rem;font-weight:900;color:var(--cyan);letter-spacing:0.18em;text-shadow:var(--glow-md);margin-bottom:0.2rem;}
 .menu-tagline{font-family:var(--font-mono);font-size:0.62rem;color:var(--text-dim);letter-spacing:0.2em;margin-bottom:1.4rem;}
-.menu-btn{width:100%;padding:0.85rem 1rem;margin-bottom:0.6rem;background:rgba(255,255,255,0.06);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.15);color:var(--cyan);font-family:var(--font-hud);font-size:0.7rem;font-weight:700;letter-spacing:0.18em;cursor:pointer;transition:var(--trans);border-radius:2px;text-transform:uppercase;text-shadow:0 0 4px currentColor;box-shadow:0 0 6px -3px currentColor;}
+.menu-btn{width:100%;padding:0.85rem 1rem;margin-bottom:0.6rem;background:rgba(255,255,255,0.03);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);border:1px solid rgba(255,255,255,0.13);color:var(--cyan);font-family:var(--font-hud);font-size:0.7rem;font-weight:700;letter-spacing:0.18em;cursor:pointer;transition:var(--trans);border-radius:2px;text-transform:uppercase;text-shadow:0 0 4px currentColor;box-shadow:0 0 6px -3px currentColor;}
 .menu-btn:hover{background:rgba(91,127,255,0.22);box-shadow:0 0 20px -2px currentColor,inset 0 0 16px -5px currentColor;}
-.menu-btn.gold{color:var(--gold);background:rgba(255,255,255,0.06);border-color:rgba(255,255,255,0.18);box-shadow:0 0 6px -3px currentColor;}
+.menu-btn.gold{color:var(--gold);background:rgba(255,255,255,0.03);border-color:rgba(255,255,255,0.16);box-shadow:0 0 6px -3px currentColor;}
 .menu-btn.gold:hover{background:rgba(255,79,163,0.24);}
 #account-chip{position:absolute;top:0.75rem;right:0.75rem;display:inline-flex;align-items:center;gap:5px;padding:0.25rem 0.6rem;border:1px solid rgba(91,127,255,0.18);border-radius:20px;background:rgba(91,127,255,0.04);color:rgba(91,127,255,0.45);font-family:var(--font-hud);font-size:0.48rem;letter-spacing:0.08em;cursor:pointer;transition:var(--trans);z-index:2;}
 #account-chip:hover{border-color:var(--cyan);color:var(--cyan);}
@@ -814,6 +818,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <div id="screen-menu" class="screen">
   <canvas id="menu-bg-canvas"></canvas>
   <div id="menu-glow"></div>
+  <div id="menu-glow-wash"></div>
   <img id="menu-pilot" src="static/skyboard-pilot.svg" alt="" aria-hidden="true">
   <div class="menu-glass">
     <div id="account-chip" onclick="openAccountModal()">🔑 SIGN IN</div>
@@ -842,7 +847,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
       <button class="menu-btn" onclick="openAbout()" style="border-color:rgba(91,127,255,0.25);color:rgba(91,127,255,0.6);">ℹ ABOUT</button>
       <button class="menu-btn" onclick="openFeedback()" style="border-color:rgba(91,127,255,0.25);color:rgba(91,127,255,0.6);">✉ FEEDBACK</button>
     </div>
-    <button class="menu-btn" onclick="promptExit()" style="font-size:0.62rem;color:rgba(255,80,105,0.9);background:rgba(255,255,255,0.06);border-color:rgba(255,255,255,0.18);box-shadow:0 0 6px -3px currentColor;">✕ EXIT GAME</button>
+    <button class="menu-btn" onclick="promptExit()" style="font-size:0.62rem;color:rgba(255,80,105,0.9);background:rgba(255,255,255,0.03);border-color:rgba(255,255,255,0.16);box-shadow:0 0 6px -3px currentColor;">✕ EXIT GAME</button>
     <hr class="menu-sep">
     <button class="menu-btn gold" onclick="openSupport()" style="font-size:0.64rem;">❤ SUPPORT DART MEADOW DEVELOPMENT</button>
     <div class="menu-version">DART MEADOW v3 · DART ENERGY RING SYSTEMS</div>
