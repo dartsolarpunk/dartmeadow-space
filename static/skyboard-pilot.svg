@@ -2,33 +2,33 @@
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version= "1.1" width="2529px" height="2529px" viewBox="-654 0 2529 2529">
 <defs>
   <linearGradient id="gradMain" x1="0%" y1="0%" x2="100%" y2="100%">
-    <stop offset="0%" stop-color="#04111f" stop-opacity="0.88"/>
-    <stop offset="22%" stop-color="#00c8e0" stop-opacity="0.55"/>
-    <stop offset="45%" stop-color="#bdf6ff" stop-opacity="0.42"/>
-    <stop offset="62%" stop-color="#00f5ff" stop-opacity="0.5"/>
-    <stop offset="82%" stop-color="#f5c400" stop-opacity="0.42"/>
-    <stop offset="100%" stop-color="#06141f" stop-opacity="0.85"/>
+    <stop offset="0%" stop-color="#120a28" stop-opacity="0.88"/>
+    <stop offset="22%" stop-color="#5B7FFF" stop-opacity="0.55"/>
+    <stop offset="45%" stop-color="#D4C8FF" stop-opacity="0.42"/>
+    <stop offset="62%" stop-color="#7B93FF" stop-opacity="0.5"/>
+    <stop offset="82%" stop-color="#FF4FA3" stop-opacity="0.42"/>
+    <stop offset="100%" stop-color="#150c2e" stop-opacity="0.85"/>
   </linearGradient>
   <linearGradient id="gradDark" x1="10%" y1="0%" x2="90%" y2="100%">
-    <stop offset="0%" stop-color="#010810" stop-opacity="0.82"/>
-    <stop offset="45%" stop-color="#00f5ff" stop-opacity="0.28"/>
-    <stop offset="55%" stop-color="#062230" stop-opacity="0.45"/>
-    <stop offset="100%" stop-color="#010810" stop-opacity="0.78"/>
+    <stop offset="0%" stop-color="#0d0620" stop-opacity="0.82"/>
+    <stop offset="45%" stop-color="#7B93FF" stop-opacity="0.28"/>
+    <stop offset="55%" stop-color="#1c1040" stop-opacity="0.45"/>
+    <stop offset="100%" stop-color="#0d0620" stop-opacity="0.78"/>
   </linearGradient>
   <linearGradient id="gradMetal" x1="0%" y1="0%" x2="100%" y2="100%">
-    <stop offset="0%" stop-color="#e8feff" stop-opacity="0.9"/>
-    <stop offset="40%" stop-color="#00f5ff" stop-opacity="0.7"/>
-    <stop offset="100%" stop-color="#f5c400" stop-opacity="0.65"/>
+    <stop offset="0%" stop-color="#F0EAFF" stop-opacity="0.9"/>
+    <stop offset="40%" stop-color="#7B93FF" stop-opacity="0.7"/>
+    <stop offset="100%" stop-color="#FF4FA3" stop-opacity="0.65"/>
   </linearGradient>
   <linearGradient id="gradMetalLight" x1="0%" y1="0%" x2="100%" y2="100%">
     <stop offset="0%" stop-color="#ffffff" stop-opacity="0.95"/>
-    <stop offset="60%" stop-color="#9beeff" stop-opacity="0.7"/>
-    <stop offset="100%" stop-color="#00f5ff" stop-opacity="0.55"/>
+    <stop offset="60%" stop-color="#B8A8FF" stop-opacity="0.7"/>
+    <stop offset="100%" stop-color="#7B93FF" stop-opacity="0.55"/>
   </linearGradient>
   <radialGradient id="gradSpark" cx="50%" cy="50%" r="60%">
-    <stop offset="0%" stop-color="#fff7d8" stop-opacity="1"/>
-    <stop offset="50%" stop-color="#f5c400" stop-opacity="0.9"/>
-    <stop offset="100%" stop-color="#f5c400" stop-opacity="0.2"/>
+    <stop offset="0%" stop-color="#FFD9C4" stop-opacity="1"/>
+    <stop offset="50%" stop-color="#FF4FA3" stop-opacity="0.9"/>
+    <stop offset="100%" stop-color="#FF4FA3" stop-opacity="0.2"/>
   </radialGradient>
   <filter id="neonBloom" x="-40%" y="-40%" width="180%" height="180%">
     <feGaussianBlur in="SourceGraphic" stdDeviation="10" result="blur1"/>
