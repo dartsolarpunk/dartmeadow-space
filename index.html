@@ -308,8 +308,7 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;background:var(--c0);co
 #ls-stars{position:absolute;inset:0;overflow:hidden;}
 .ls-star{position:absolute;border-radius:50%;background:#fff;animation:twinkle linear infinite;}
 @keyframes twinkle{0%,100%{opacity:0.1;}50%{opacity:1;}}
-#ls-logo{width:min(640px,72vw);position:relative;z-index:2;margin-bottom:1.2rem;filter:drop-shadow(0 0 40px rgba(91,127,255,0.35)) drop-shadow(0 0 80px rgba(255,79,163,0.15));animation:tpulse 3.5s ease-in-out infinite;}
-#ls-sub-spacer{height:1.5rem;}
+#ls-logo{width:auto;height:auto;max-width:min(640px,72vw);max-height:24vh;position:relative;z-index:2;margin-bottom:1.2rem;filter:drop-shadow(0 0 40px rgba(91,127,255,0.35)) drop-shadow(0 0 80px rgba(255,79,163,0.15));animation:tpulse 3.5s ease-in-out infinite;}
 #ls-horizon{position:absolute;inset:0;z-index:0;background:linear-gradient(180deg,#0a0616 0%,#160e2e 35%,#3a1a4a 58%,#8a3a6a 72%,#e0703a 86%,#ffb85a 100%);opacity:0.55;mask-image:linear-gradient(180deg,transparent 0%,black 45%,black 100%);-webkit-mask-image:linear-gradient(180deg,transparent 0%,black 45%,black 100%);}
 @keyframes tpulse{0%,100%{text-shadow:0 0 30px var(--cyan),0 0 80px rgba(91,127,255,0.3);}50%{text-shadow:0 0 60px var(--cyan),0 0 140px rgba(91,127,255,0.6);}}
 #ls-bar-wrap{width:min(340px,80vw);height:3px;background:rgba(91,127,255,0.12);border-radius:2px;overflow:hidden;position:relative;z-index:2;}
@@ -752,7 +751,6 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   <div id="ls-horizon"></div>
   <div id="ls-stars"></div>
   <img id="ls-logo" src="static/dartmeadow-logo.svg" alt="DART Meadow — Journey of the Skyboard">
-  <div id="ls-sub-spacer"></div>
   <div id="ls-bar-wrap"><div id="ls-bar"></div></div>
   <div id="ls-status">Initializing stellar cartography...</div>
   <button id="ls-enter" onclick="enterApp()">SEQUENCE DART ⟶</button>
