@@ -5078,19 +5078,29 @@ function buildFlightBoard(){
   // Character — her default state is mounted on the board, matching
   // 'in space, she's already on the skyboard in her riding stance' per
   // spec. Loads once (cached in CHAR after first load) and mounts as
-  // soon as it's ready. Verifies the mount actually took and retries
-  // once rather than assume success — if CHAR.loaded is true but
-  // boardFlight was somehow still falsy at that exact instant, the
-  // mount call would silently no-op with no error at all.
+  // soon as it's ready. Verifies the mount actually took and keeps
+  // retrying rather than assume success — a single 500ms retry wasn't
+  // enough on a slow connection still downloading the 15MB character
+  // GLB; if that one retry also missed the window she'd stay silently
+  // unmounted (whatever her last raw position/pose was) for the rest
+  // of the session with nothing else ever re-attempting it. Polls
+  // every 400ms instead, up to 10s, until it actually confirms she's
+  // mounted.
   (async()=>{
     if(!CHAR.loaded && !CHAR.loading){ try{ await loadCharacterAssets(); }catch(e){ console.error('Character load failed:',e); try{toast('⚠ Character failed to load: '+(e.message||e),4000);}catch(_){} } }
     if(CHAR.loaded && CHAR.root && boardFlight) mountSkyboard(boardFlight);
     if(CHAR.loaded && !CHAR.mounted){
-      console.warn('Character loaded but did not mount on first attempt — boardFlight was',boardFlight,'— retrying in 500ms.');
-      setTimeout(()=>{
-        if(CHAR.loaded && CHAR.root && boardFlight && !CHAR.mounted) mountSkyboard(boardFlight);
-        if(CHAR.loaded && !CHAR.mounted) console.error('Character still not mounted after retry — boardFlight:',boardFlight,'CHAR.root:',CHAR.root);
-      },500);
+      console.warn('Character loaded but did not mount on first attempt — boardFlight was',boardFlight,'— polling every 400ms until mounted (up to 10s).');
+      let tries=0;
+      const poll=setInterval(()=>{
+        tries++;
+        if(CHAR.mounted || tries>25){
+          clearInterval(poll);
+          if(!CHAR.mounted) console.error('Character still not mounted after 10s of retries — boardFlight:',boardFlight,'CHAR.root:',CHAR.root);
+          return;
+        }
+        if(CHAR.loaded && CHAR.root && boardFlight) mountSkyboard(boardFlight);
+      },400);
     }
   })();
 
@@ -8423,6 +8433,35 @@ async function loadCharacterAssets(){
   } else if(!CHAR.skinnedMesh){
     console.warn('Character load: bones found ('+boneCount+') but no SkinnedMesh — the mesh may render as a static T-pose regardless of animation state.');
   }
+  // ── MATERIAL FIX — real bug found ───────────────────────────────
+  // Meshy's exported material ("Material_1") sets baseColorTexture and
+  // an emissiveTexture at full [1,1,1] strength, but never specifies
+  // pbrMetallicRoughness.metallicFactor/roughnessFactor. Per the glTF
+  // 2.0 spec those default to 1.0/1.0 — i.e. a FULLY METALLIC, fully
+  // rough surface. A pure-metal material has no diffuse term at all;
+  // its look comes entirely from environment reflections, so with no
+  // envMap assigned it renders almost solid black regardless of scene
+  // lighting. Meshy compensates for this in its own viewer via the
+  // KHR_materials_specular extension (specularColorFactor boosted to
+  // [2,2,2]) — but this project runs three.js r128 (2021-era), whose
+  // GLTFLoader doesn't parse that extension at all, so the boost is
+  // silently dropped and only the black-metal default survives. This
+  // is exactly the black-silhouette rendering seen in both the DART
+  // Meadow flight scene and the octarig viewer (which only showed
+  // color where its colored rim lights happened to catch a specular
+  // highlight). Fix: force the material to sane non-metal values so
+  // her actual base-color/emissive texture reads as intended.
+  if(CHAR.skinnedMesh && CHAR.skinnedMesh.material){
+    const mats = Array.isArray(CHAR.skinnedMesh.material) ? CHAR.skinnedMesh.material : [CHAR.skinnedMesh.material];
+    mats.forEach(m=>{
+      if(!m) return;
+      m.metalness = 0.08;   // skin/fabric, not metal — was defaulting to 1.0 (full metal)
+      m.roughness = 0.55;   // was defaulting to 1.0 (fully rough on top of full metal = near-black)
+      if(m.emissiveIntensity===undefined) m.emissiveIntensity = 1.0;
+      m.needsUpdate = true;
+    });
+    console.log('Character material fixed — was defaulting to metalness:1/roughness:1 (near-black with no env map), now metalness:0.08/roughness:0.55.');
+  }
   CHAR.mixer = new THREE.AnimationMixer(CHAR.root);
 
   const loadFbxClip=(name)=>new Promise((res,rej)=>{
@@ -8530,34 +8569,46 @@ function _reversedClipPreservingRoot(clip){
    matching the specified stance: LEFT foot forward (toward the front
    of the board), RIGHT foot back, knees bent, hips dropped, spine
    leaned forward, arms counterbalanced out to the sides. Parametrized
-   so it can be tuned live instead of needing a re-export from Meshy. */
+   so it can be tuned live instead of needing a re-export from Meshy.
+   Values rebuilt against the reference concept art (surfer leaning
+   hard into the wind, front knee deeply bent, torso near-horizontal,
+   arms swept wide for balance) — the original values here (lean 0.12
+   rad / ~7°, armSpread 0.35 rad / ~20°) were subtle enough to read as
+   barely-posed/near-T-pose at a glance, nothing like the dynamic lean
+   in the art. Roughly tripled the lean/crouch/spread magnitudes. */
 const SKYBOARD_STANCE = {
-  stanceWidth: 0.15,   // radians of hip rotation splitting front/back foot
-  lean: 0.12,           // forward spine lean
-  crouch: 0.18,          // hip/knee bend
-  armSpread: 0.35,       // counterbalance arm angle
-  swayAmp: 0.03, swaySpeed: 1.4,  // subtle idle sway on top of the base pose
+  stanceWidth: 0.22,   // radians of hip rotation splitting front/back foot
+  lean: 0.42,           // forward spine lean — was 0.12, way too upright
+  crouch: 0.5,           // hip/knee bend — was 0.18, barely a bend
+  armSpread: 0.85,       // counterbalance arm angle — was 0.35, arms hugged the body
+  swayAmp: 0.035, swaySpeed: 1.4,  // subtle idle sway on top of the base pose
 };
 function applySkyboardStance(t){
   const b = CHAR.bones;
   if(!b.Hips) return;
   const sway = Math.sin((t||0)*SKYBOARD_STANCE.swaySpeed)*SKYBOARD_STANCE.swayAmp;
-  b.Hips.rotation.set(SKYBOARD_STANCE.crouch*0.4, 0, sway*0.5);
+  b.Hips.rotation.set(SKYBOARD_STANCE.crouch*0.55, 0, sway*0.5);
   b.Spine && b.Spine.rotation.set(SKYBOARD_STANCE.lean, 0, -sway*0.3);
   b.Spine01 && b.Spine01.rotation.set(SKYBOARD_STANCE.lean*0.6, 0, 0);
-  // Left foot forward, front knee bent
-  b.LeftUpLeg && b.LeftUpLeg.rotation.set(-SKYBOARD_STANCE.stanceWidth*2.2 - SKYBOARD_STANCE.crouch, 0.08, 0.06);
-  b.LeftLeg   && b.LeftLeg.rotation.set(SKYBOARD_STANCE.crouch*1.6, 0, 0);
-  b.LeftFoot  && b.LeftFoot.rotation.set(-0.1, 0.05, 0);
-  // Right foot back, rear knee bent
-  b.RightUpLeg && b.RightUpLeg.rotation.set(SKYBOARD_STANCE.stanceWidth*2.2 - SKYBOARD_STANCE.crouch, -0.08, -0.06);
-  b.RightLeg   && b.RightLeg.rotation.set(SKYBOARD_STANCE.crouch*1.4, 0, 0);
-  b.RightFoot  && b.RightFoot.rotation.set(-0.05, -0.05, 0);
-  // Counterbalanced arms
-  b.LeftShoulder && b.LeftShoulder.rotation.set(0, 0, SKYBOARD_STANCE.armSpread*0.3);
-  b.LeftArm      && b.LeftArm.rotation.set(0.1+sway*0.4, 0, SKYBOARD_STANCE.armSpread);
-  b.RightShoulder&& b.RightShoulder.rotation.set(0, 0, -SKYBOARD_STANCE.armSpread*0.3);
-  b.RightArm     && b.RightArm.rotation.set(0.1-sway*0.4, 0, -SKYBOARD_STANCE.armSpread);
+  b.Spine02 && b.Spine02.rotation.set(SKYBOARD_STANCE.lean*0.3, 0, 0);
+  // Left foot forward, front knee deeply bent — leading leg absorbing
+  // the ride like a real surf/skate stance, not just a slight taper
+  b.LeftUpLeg && b.LeftUpLeg.rotation.set(-SKYBOARD_STANCE.stanceWidth*2.2 - SKYBOARD_STANCE.crouch, 0.1, 0.08);
+  b.LeftLeg   && b.LeftLeg.rotation.set(SKYBOARD_STANCE.crouch*1.7, 0, 0);
+  b.LeftFoot  && b.LeftFoot.rotation.set(-0.18, 0.06, 0);
+  // Right foot back, rear leg straighter but still braced
+  b.RightUpLeg && b.RightUpLeg.rotation.set(SKYBOARD_STANCE.stanceWidth*2.2 - SKYBOARD_STANCE.crouch*0.7, -0.1, -0.08);
+  b.RightLeg   && b.RightLeg.rotation.set(SKYBOARD_STANCE.crouch*1.1, 0, 0);
+  b.RightFoot  && b.RightFoot.rotation.set(-0.08, -0.06, 0);
+  // Counterbalanced arms swept wide, like leaning into the wind
+  b.LeftShoulder && b.LeftShoulder.rotation.set(0, 0, SKYBOARD_STANCE.armSpread*0.35);
+  b.LeftArm      && b.LeftArm.rotation.set(0.15+sway*0.4, -0.1, SKYBOARD_STANCE.armSpread);
+  b.RightShoulder&& b.RightShoulder.rotation.set(0, 0, -SKYBOARD_STANCE.armSpread*0.35);
+  b.RightArm     && b.RightArm.rotation.set(0.15-sway*0.4, 0.1, -SKYBOARD_STANCE.armSpread);
+  // Counter-rotate the neck against the spine lean so she's looking
+  // ahead into the direction of travel rather than down at the deck —
+  // matches the reference art's head-up, eyes-forward posture.
+  b.neck && b.neck.rotation.set(-SKYBOARD_STANCE.lean*0.85, 0, 0);
 }
 
 /* ── STATE MACHINE ──────────────────────────────────────────────
