@@ -8424,6 +8424,13 @@ function disposeObject3D(root){
    needed here at a fraction of the download size (~900KB total vs 15MB).
 ================================================================== */
 const CHAR_ASSET_BASE = 'characterassests/';
+// She was mounting facing sideways across the board instead of down its
+// length toward the nose — see mountSkyboard(). Every board template
+// (A, B, procedural) normalizes its nose to local +X, so this single
+// offset is applied to her own rotation at mount time and covers all of
+// them. -PI/2 is the current best guess (turn her right 90° per the
+// screenshot); flip the sign here if it turns out to be the wrong way.
+const CHAR_MOUNT_YAW_OFFSET = -Math.PI/2;
 const CHAR_FILES = {
   mesh: 'Meshy_AI_T_Pose_Sentinel_biped_Character_output.glb',
   walk: 'Meshy_AI_T_Pose_Sentinel_biped_Animation_Walking_Woman_without_skin.fbx',
@@ -8572,7 +8579,7 @@ async function loadCharacterAssets(){
   if(CHAR.actions.jump) CHAR.actions.jump.setLoop(THREE.LoopOnce,1);
   if(CHAR.actions.skyboard){
     CHAR.actions.skyboard.setLoop(THREE.LoopPingPong, Infinity);
-    CHAR.actions.skyboard.timeScale = 0.5; // slow, gentle sway rather than a full exercise-speed rep
+    CHAR.actions.skyboard.timeScale = 0.25; // was 0.5 — still read as too fast/twitchy, slowed further to a gentle sway
   } else {
     console.warn('Skyboard stance clip missing — falling back to the static procedural pose in applySkyboardStance().');
   }
@@ -8836,7 +8843,18 @@ function mountSkyboard(boardObj){
   // Use the board's real measured anchor instead.
   const anchor = boardObj.userData.deckAnchor || {x:0,y:0,z:0.1};
   CHAR.root.position.set(anchor.x, anchor.y + (CHAR.feetOffset||0)*CHAR.scaleForBoard, anchor.z);
-  CHAR.root.rotation.set(0,0,0);
+  // Real bug found: she was mounting facing perpendicular to the board
+  // (sideways across the deck) instead of down its length toward the
+  // nose. ALL board templates (A, B, procedural) share the same nose
+  // direction — every one of them goes through the same normalization/
+  // baking pipeline (preloadSkyboardTemplates / buildBoardMesh) that
+  // orients the nose along local +X — so a single fixed yaw here on
+  // her own rotation covers every board type, not just one. If this
+  // turns out to be 90° the wrong way (facing the tail, or still
+  // sideways but the other direction) after a live check, flip the
+  // sign on CHAR_MOUNT_YAW_OFFSET below rather than hunting for this
+  // again — it's the only place this rotation is applied.
+  CHAR.root.rotation.set(0, CHAR_MOUNT_YAW_OFFSET, 0);
   CHAR.root.visible = true;
   if(!CHAR._confirmedMountToast){
     CHAR._confirmedMountToast = true;
