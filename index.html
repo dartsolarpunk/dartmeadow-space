@@ -1135,6 +1135,12 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
        corner, clear of the joystick/roll/GAL/SYS clusters (bottom-left)
        and the FOCUS/IDLE/thrust clusters (bottom-right). -->
   <button id="orbit-skyboard-btn" class="hud-toggle-btn" onclick="toggleCharOrbit()" title="Orbit freely around the skyboard — drag/scroll or pinch to look around" style="left:auto;right:10px;top:56px;background:rgba(255,79,163,0.10);color:#ff4fa3;border-color:rgba(255,79,163,0.35);">🔄 ORBIT</button>
+  <!-- Temporary on-screen diagnostic readout — added because mobile devices
+       (this is being tested on Android/iPhone) have no dev console access,
+       so this surfaces the same mount/state info directly on screen instead.
+       Safe to remove later; harmless if left in (just a small text overlay,
+       pointer-events:none so it never blocks touch input). -->
+  <div id="char-debug-hud" style="position:absolute;top:56px;left:10px;font-family:monospace;font-size:9px;line-height:1.4;color:#7CFC7C;background:rgba(0,0,0,0.55);padding:5px 8px;border-radius:5px;z-index:35;pointer-events:none;white-space:pre;max-width:200px;"></div>
   <div id="hud-logs-panel">
     <div class="ar-panel">
       <div class="ar-panel-title">Navigation</div>
@@ -3294,6 +3300,7 @@ function _startFlightLoop(){
     try{updateBodies(dt);}catch(e){}
     try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){}
     try{ updateCharOrbitCamera(); }catch(e){}
+    try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){}
     try{updateBirdTemple(dt);}catch(e){}
     try{updateDistantSystems(dt);}catch(e){}
     try{updateVolumetricDust(dt);}catch(e){}
@@ -8048,6 +8055,7 @@ function resumeFlightLoop(){
     try{updateBodies(dt);}catch(e){}
     try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){}
     try{ updateCharOrbitCamera(); }catch(e){}
+    try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){}
     try{updateBirdTemple(dt);}catch(e){}
     try{updateDistantSystems(dt);}catch(e){}
     try{updateVolumetricDust(dt);}catch(e){}
@@ -8154,6 +8162,7 @@ function enterAtmosphericFlight(body,site){
     updateAtmoFlight(dt);
     try{ if(CHAR.mounted) applySkyboardStance(now/1000); }catch(e){}
     try{ updateCharOrbitCamera(); }catch(e){}
+    try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){}
     try{updateBirdTemple(dt);}catch(e){}
     atmoRenderer.render(atmoScene,atmoCamera);
   })();
@@ -8745,6 +8754,26 @@ let _charOrbitDrag=null, _charOrbitPinch=null, _charOrbitListenersBound=false;
 
 function _charOrbitCanvas(){
   return (atmoActive && atmoRenderer) ? atmoRenderer.domElement : (flightRenderer ? flightRenderer.domElement : null);
+}
+
+/* ── ON-SCREEN CHARACTER DEBUG READOUT ───────────────────────────
+   Justin's testing on iPhone/Android with no dev console access, so
+   this surfaces the same info a console.log would give directly on
+   screen: whether she's actually mounted, which state/animation is
+   driving her, how many bones were found, who her parent object is,
+   and whether the mesh itself is visible. Cheap (just textContent),
+   safe to leave running. */
+function _updateCharDebugHUD(){
+  const el=document.getElementById('char-debug-hud'); if(!el) return;
+  const parent = CHAR.root && CHAR.root.parent ? (CHAR.root.parent.name || ('obj:'+CHAR.root.parent.uuid.slice(0,6))) : 'NONE';
+  const p = CHAR.root ? CHAR.root.position : null;
+  el.textContent =
+    'mounted: '+CHAR.mounted+'\n'+
+    'state: '+CHAR.state+'\n'+
+    'bones: '+Object.keys(CHAR.bones||{}).length+'\n'+
+    'parent: '+parent+'\n'+
+    'visible: '+(CHAR.root?CHAR.root.visible:'-')+'\n'+
+    'localPos: '+(p?p.x.toFixed(2)+','+p.y.toFixed(2)+','+p.z.toFixed(2):'-');
 }
 
 function updateCharOrbitCamera(){
@@ -10133,6 +10162,7 @@ function exitSurface(){
       try{updateBodies(dt);}catch(e){}
       try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){}
     try{ updateCharOrbitCamera(); }catch(e){}
+    try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){}
       try{updateBirdTemple(dt);}catch(e){}
       try{updateDistantSystems(dt);}catch(e){}
       try{updateVolumetricDust(dt);}catch(e){}
