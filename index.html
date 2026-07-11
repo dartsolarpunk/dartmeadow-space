@@ -8517,10 +8517,13 @@ function _hideMiniLoader(){
 // length toward the nose — see mountSkyboard(). Every board template
 // (A, B, procedural) normalizes its nose to local +X, so this single
 // offset is applied to her own rotation at mount time and covers all of
-// them. Flipped from -PI/2 to +PI/2 per feedback: the first guess had
-// her facing the left side of the board; this mirrors her to face the
-// right side instead. Flip the sign again here if it's still backwards.
-const CHAR_MOUNT_YAW_OFFSET = Math.PI/2;
+// them. Reverted back to -PI/2: the +PI/2 flip was wrong — it turned her
+// 180° to face the tail/staff end instead of the nose. -PI/2 was the
+// correct orientation all along (chest facing the right side of the
+// board, looking out toward the nose/direction of travel); do not flip
+// this again without an actual live screenshot confirming which way
+// she's facing.
+const CHAR_MOUNT_YAW_OFFSET = -Math.PI/2;
 const CHAR_FILES = {
   mesh: 'Meshy_AI_T_Pose_Sentinel_biped_Character_output.glb',
   walk: 'Meshy_AI_T_Pose_Sentinel_biped_Animation_Walking_Woman_without_skin.fbx',
@@ -8671,7 +8674,7 @@ async function loadCharacterAssets(){
   if(CHAR.actions.jump) CHAR.actions.jump.setLoop(THREE.LoopOnce,1);
   if(CHAR.actions.skyboard){
     CHAR.actions.skyboard.setLoop(THREE.LoopPingPong, Infinity);
-    CHAR.actions.skyboard.timeScale = 0.0375; // was 0.25 — still "way too fast", cut to ~15% of that per feedback
+    CHAR.actions.skyboard.timeScale = 0.007; // was 0.0375 — still too fast, cut to ~18% of that per feedback
   } else {
     console.warn('Skyboard stance clip missing — falling back to the static procedural pose in applySkyboardStance().');
   }
