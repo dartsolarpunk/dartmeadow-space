@@ -8474,11 +8474,22 @@ async function loadCharacterAssets(){
   const _rawBox = new THREE.Box3().setFromObject(CHAR.root);
   const _rawHeight = _rawBox.max.y - _rawBox.min.y;
   CHAR.rawHeight = _rawHeight>0.001 ? _rawHeight : 1;
-  CHAR.scaleForBoard = 0.78 / CHAR.rawHeight;
-  CHAR.scaleForTerrain = 3.26 / CHAR.rawHeight;
+  const _clamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
+  // Hard safety clamp: if the raw GLB's native unit scale isn't what was
+  // assumed (a real risk with AI-generated meshes, which sometimes export
+  // at unexpected scales), the derived factor below could otherwise come
+  // out absurdly large or tiny -- clamped to a sane range so a bad
+  // measurement can never produce a screen-filling giant or an invisible
+  // speck, regardless of what the raw height turns out to actually be.
+  CHAR.scaleForBoard = _clamp(0.78 / CHAR.rawHeight, 0.02, 5);
+  CHAR.scaleForTerrain = _clamp(3.26 / CHAR.rawHeight, 0.02, 5);
   // also record how far the model's own origin sits below its lowest
   // point, so 'feet at y=0' positioning stays correct after scaling
   CHAR.feetOffset = -_rawBox.min.y;
+  console.log('Character scale calibration — raw T-pose height:',CHAR.rawHeight.toFixed(4),
+    'game units (unscaled). Derived scaleForBoard:',CHAR.scaleForBoard.toFixed(4),
+    'scaleForTerrain:',CHAR.scaleForTerrain.toFixed(4),
+    '— if rawHeight looks wildly different from ~1.8-3 (a roughly-human-scale T-pose), the GLB\'s native units are not what was assumed and this calibration needs revisiting with that real number.');
 
   CHAR.root.visible = false; // stays hidden until mountSkyboard()/dismountSkyboard() actually places her correctly — otherwise she's visible at whatever fallback position for however long loading + mounting takes
   CHAR.loaded = true; CHAR.loading = false;
