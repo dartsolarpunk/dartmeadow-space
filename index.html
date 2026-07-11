@@ -773,6 +773,24 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   <button id="ls-enter" onclick="enterApp()">SEQUENCE DART ⟶</button>
 </div>
 
+<!-- Small in-scene loading overlay — shown whenever entering flight/atmo/
+     surface while character+board assets are still resolving, so the
+     player never starts moving around before everything's actually
+     ready. Unlike the big intro loading-screen above (which is a fake
+     timed progress bar), this one tracks REAL load state — see
+     LOAD_TRACK / _loadStep() / _loadTotalPct() — weighted across the
+     character mesh (byte-accurate via GLTFLoader's onProgress),
+     animation clips, and the active board template, so 100% actually
+     means everything is loaded. -->
+<div id="mini-loader" style="display:none;position:fixed;inset:0;z-index:8500;background:rgba(0,3,8,0.82);backdrop-filter:blur(6px);display:none;flex-direction:column;align-items:center;justify-content:center;">
+  <img src="static/dartmeadow-logo.svg" alt="" style="width:min(180px,40vw);opacity:0.9;margin-bottom:14px;">
+  <div style="width:min(260px,70vw);height:3px;background:rgba(91,127,255,0.15);border-radius:2px;overflow:hidden;">
+    <div id="mini-loader-bar" style="height:100%;width:0%;background:linear-gradient(90deg,var(--cyan),var(--purple));box-shadow:0 0 10px var(--cyan);transition:width 0.2s ease;"></div>
+  </div>
+  <div id="mini-loader-status" style="margin-top:10px;font-family:var(--font-mono);font-size:0.6rem;letter-spacing:0.1em;color:rgba(91,127,255,0.75);">Loading character...</div>
+  <div id="mini-loader-pct" style="margin-top:2px;font-family:var(--font-hud);font-size:0.55rem;color:var(--cyan);">0%</div>
+</div>
+
 <!-- GRAPHICS PRESET SELECTION (first launch / on request) -->
 <div id="gfx-screen" style="display:none;position:fixed;inset:0;z-index:9000;background:radial-gradient(ellipse at 50% 40%,#061018 0%,#000308 70%);overflow-y:auto;padding:5vh 4vw;">
   <div style="max-width:760px;margin:0 auto;">
@@ -1695,6 +1713,11 @@ function startGame(){
 }
 function launchFlight(){
   goScreen('flight');
+  // Real loading gate — reset the "mounted" step (fresh each entry) and
+  // show the overlay until character+board are genuinely ready, so the
+  // player can't start moving before everything's actually loaded.
+  LOAD_TRACK.steps.mounted = 0;
+  _showMiniLoader();
   // Already in a game? just resume — restart the render loop, but ALSO
   // rebuild the board if the template OR zone colors changed in the editor.
   if(typeof flightInited!=='undefined'&&flightInited){
@@ -4767,8 +4790,10 @@ function shipNode(root,name,requireChildren){
 // Kick off background preload so templates are ready when the editor opens.
 function preloadSkyboardTemplates(){
   const L=_getGLBLoader();if(!L)return;
+  if(!STATE.boardConfig || STATE.boardConfig.template==='procedural') _loadStep('boardTemplate', 1);
   Object.entries(SKYBOARD_TEMPLATES).forEach(([k,url])=>{
-    if(_glbCache[url])return;
+    const isActiveTemplate = (STATE.boardConfig && STATE.boardConfig.template===k);
+    if(_glbCache[url]){ if(isActiveTemplate) _loadStep('boardTemplate', 1); return; }
     L.load(url,gltf=>{
       // Normalize the sculpted model so it matches the procedural board convention:
       //   • long axis along +X (nose forward)
@@ -4826,6 +4851,7 @@ function preloadSkyboardTemplates(){
 
       // Store the root directly (no wrapper group with pending rotations)
       _glbCache[url]=root;
+      if(isActiveTemplate) _loadStep('boardTemplate', 1);
 
       // ── PART DISCOVERY: record every named part in this template so the
       // builder can offer per-part customization. Names come from the GLB
@@ -8094,6 +8120,8 @@ function enterAtmosphericFlight(body,site){
   if(atmoActive)return;
   _atmoBody=body;_atmoSite=site||null;atmoActive=true;
   atmoPreset=0;atmoThrottle=0;atmoMach=0;
+  LOAD_TRACK.steps.mounted = 0;
+  _showMiniLoader();
   if(flightAnimId){cancelAnimationFrame(flightAnimId);flightAnimId=null;}
   const pal=getSurfacePalette(body);
   const ov=$('atmo-overlay');ov.style.display='block';
@@ -8424,13 +8452,63 @@ function disposeObject3D(root){
    needed here at a fraction of the download size (~900KB total vs 15MB).
 ================================================================== */
 const CHAR_ASSET_BASE = 'characterassests/';
+
+/* ── REAL IN-SCENE LOADING TRACKER ────────────────────────────────
+   Weighted across the actual load steps that matter before the player
+   should be allowed to move: the character mesh (by far the biggest
+   single file, so it gets byte-accurate progress via GLTFLoader's own
+   onProgress callback), her animation clips, the active board template,
+   and the final mount-onto-board step. 100% only happens when all of
+   these have genuinely completed — not a timed fake bar. */
+const LOAD_TRACK = {
+  steps: { charMesh:0, charAnims:0, boardTemplate:0, mounted:0 },
+  weights: { charMesh:45, charAnims:25, boardTemplate:25, mounted:5 },
+  labels: { charMesh:'Loading character mesh...', charAnims:'Loading animation data...', boardTemplate:'Loading skyboard...', mounted:'Mounting rider...' },
+};
+function _loadStep(name, frac){
+  if(!(name in LOAD_TRACK.steps)) return;
+  LOAD_TRACK.steps[name] = Math.max(LOAD_TRACK.steps[name], Math.min(1, frac));
+  _renderMiniLoader();
+}
+function _loadTotalPct(){
+  let sum=0, wsum=0;
+  for(const k in LOAD_TRACK.weights){ sum += LOAD_TRACK.weights[k]*(LOAD_TRACK.steps[k]||0); wsum += LOAD_TRACK.weights[k]; }
+  return Math.round(sum/wsum*100)/1; // weights already sum to 100, but keep this safe if they don't
+}
+function _renderMiniLoader(){
+  const pct = _loadTotalPct();
+  const bar=document.getElementById('mini-loader-bar');
+  const status=document.getElementById('mini-loader-status');
+  const pctEl=document.getElementById('mini-loader-pct');
+  if(bar) bar.style.width = pct+'%';
+  if(pctEl) pctEl.textContent = pct+'%';
+  if(status){
+    let cur='Loading...';
+    for(const k of ['charMesh','charAnims','boardTemplate','mounted']){
+      if((LOAD_TRACK.steps[k]||0) < 1){ cur = LOAD_TRACK.labels[k]; break; }
+      cur = 'Ready';
+    }
+    status.textContent = cur;
+  }
+  if(pct>=100) _hideMiniLoader();
+}
+function _showMiniLoader(){
+  const el=document.getElementById('mini-loader');
+  if(el) el.style.display='flex';
+  _renderMiniLoader();
+}
+function _hideMiniLoader(){
+  const el=document.getElementById('mini-loader');
+  if(el) el.style.display='none';
+}
 // She was mounting facing sideways across the board instead of down its
 // length toward the nose — see mountSkyboard(). Every board template
 // (A, B, procedural) normalizes its nose to local +X, so this single
 // offset is applied to her own rotation at mount time and covers all of
-// them. -PI/2 is the current best guess (turn her right 90° per the
-// screenshot); flip the sign here if it turns out to be the wrong way.
-const CHAR_MOUNT_YAW_OFFSET = -Math.PI/2;
+// them. Flipped from -PI/2 to +PI/2 per feedback: the first guess had
+// her facing the left side of the board; this mirrors her to face the
+// right side instead. Flip the sign again here if it's still backwards.
+const CHAR_MOUNT_YAW_OFFSET = Math.PI/2;
 const CHAR_FILES = {
   mesh: 'Meshy_AI_T_Pose_Sentinel_biped_Character_output.glb',
   walk: 'Meshy_AI_T_Pose_Sentinel_biped_Animation_Walking_Woman_without_skin.fbx',
@@ -8479,7 +8557,9 @@ async function loadCharacterAssets(){
   const gltfLoader = _getGLBLoader();
   const fbxLoader = new THREE.FBXLoader();
 
-  const gltf = await new Promise((res,rej)=>gltfLoader.load(CHAR_ASSET_BASE+CHAR_FILES.mesh, res, undefined, rej));
+  const gltf = await new Promise((res,rej)=>gltfLoader.load(CHAR_ASSET_BASE+CHAR_FILES.mesh, res,
+    xhr=>{ if(xhr.lengthComputable) _loadStep('charMesh', xhr.loaded/xhr.total); }, rej));
+  _loadStep('charMesh', 1);
   CHAR.root = gltf.scene;
   CHAR.root.traverse(o=>{
     // o.isBone is the standard GLTFLoader flag, but fall back to
@@ -8579,10 +8659,11 @@ async function loadCharacterAssets(){
   if(CHAR.actions.jump) CHAR.actions.jump.setLoop(THREE.LoopOnce,1);
   if(CHAR.actions.skyboard){
     CHAR.actions.skyboard.setLoop(THREE.LoopPingPong, Infinity);
-    CHAR.actions.skyboard.timeScale = 0.25; // was 0.5 — still read as too fast/twitchy, slowed further to a gentle sway
+    CHAR.actions.skyboard.timeScale = 0.0375; // was 0.25 — still "way too fast", cut to ~15% of that per feedback
   } else {
     console.warn('Skyboard stance clip missing — falling back to the static procedural pose in applySkyboardStance().');
   }
+  _loadStep('charAnims', 1);
 
   // ── AUTO SCALE CALIBRATION ──────────────────────────────────
   // Measures her actual loaded bounding-box height (whatever the raw
@@ -8757,17 +8838,23 @@ function applySkyboardStance(t){
    itself animates the neck/head bones and looks down at the deck the
    entire time (it was authored as a floor exercise, not a stance) —
    overriding BEFORE the mixer update would just get immediately
-   overwritten by the clip's own head track. Forces her to look forward
-   across the board, with a light natural sway tied to the hip's own
-   side-to-side motion (driven by the same clip) so her head doesn't
-   look dead/locked-off relative to the rest of the ping-ponging pose. */
+   overwritten by the clip's own head track. Forces her to look out to
+   the side at roughly 45° (toward the sun/direction of interest),
+   with a light natural sway tied to the hip's own motion (driven by
+   the same clip) so her head doesn't look dead/locked-off. Real bug
+   found in the previous version: it put the "look to the side" value
+   on rotation.z, which is the TILT/roll axis — that reads as cocking
+   her head over toward her shoulder, not turning it. The actual
+   turn-to-look-sideways axis is rotation.y (yaw). */
 function applySkyboardHeadOverride(){
   const b = CHAR.bones;
   if(!b.neck && !b.Head) return;
   const hipsZ = b.Hips ? b.Hips.rotation.z : 0;
   const hipsX = b.Hips ? b.Hips.rotation.x : 0;
-  if(b.neck) b.neck.rotation.set(-hipsX*0.5 - 0.05, 0, -hipsZ*0.6);
-  if(b.Head) b.Head.rotation.set(0.02, 0, -hipsZ*0.2);
+  const lookYaw = 0.78; // ~45 degrees — best-guess sign/direction, flip if it turns out to look the other way
+  const swayYaw = hipsZ*0.3; // gentle turn-sway tied to the clip's own hip motion, same axis as the look
+  if(b.neck) b.neck.rotation.set(-hipsX*0.4 - 0.03, lookYaw*0.55 + swayYaw, 0);
+  if(b.Head) b.Head.rotation.set(0.01, lookYaw*0.45 + swayYaw*0.6, 0);
 }
 
 /* ── STATE MACHINE ──────────────────────────────────────────────
@@ -8856,6 +8943,7 @@ function mountSkyboard(boardObj){
   // again — it's the only place this rotation is applied.
   CHAR.root.rotation.set(0, CHAR_MOUNT_YAW_OFFSET, 0);
   CHAR.root.visible = true;
+  _loadStep('mounted', 1);
   if(!CHAR._confirmedMountToast){
     CHAR._confirmedMountToast = true;
     console.log('Character mounted — scale:',CHAR.scaleForBoard.toFixed(4),'bones:',Object.keys(CHAR.bones).length,'parent:',boardObj.name||boardObj.uuid,'deckAnchor:',anchor);
