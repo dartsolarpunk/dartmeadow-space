@@ -5064,7 +5064,7 @@ function buildFlightBoard(){
   // soon as it's ready; harmless if this fires before the mesh finishes
   // downloading since mountSkyboard() null-guards on CHAR.root.
   (async()=>{
-    if(!CHAR.loaded && !CHAR.loading){ try{ await loadCharacterAssets(); }catch(e){ console.warn('Character load failed:',e); } }
+    if(!CHAR.loaded && !CHAR.loading){ try{ await loadCharacterAssets(); }catch(e){ console.error('Character load failed:',e); try{toast('⚠ Character failed to load: '+(e.message||e),4000);}catch(_){} } }
     if(CHAR.loaded && CHAR.root && boardFlight) mountSkyboard(boardFlight);
   })();
 
@@ -8383,9 +8383,20 @@ async function loadCharacterAssets(){
   const gltf = await new Promise((res,rej)=>gltfLoader.load(CHAR_ASSET_BASE+CHAR_FILES.mesh, res, undefined, rej));
   CHAR.root = gltf.scene;
   CHAR.root.traverse(o=>{
-    if(o.isBone) CHAR.bones[o.name]=o;
+    // o.isBone is the standard GLTFLoader flag, but fall back to
+    // checking the node type/name directly in case this particular
+    // export doesn't set it the expected way — better to catch bones
+    // via a second method than silently end up with an empty bone map.
+    if(o.isBone || o.type==='Bone' || (_fbxBoneMap().includes(o.name) && o.isObject3D)) CHAR.bones[o.name]=o;
     if(o.isSkinnedMesh){ o.castShadow=true; o.receiveShadow=true; CHAR.skinnedMesh=o; }
   });
+  const boneCount = Object.keys(CHAR.bones).length;
+  if(boneCount===0){
+    console.error('Character load: mesh loaded but ZERO bones were found in the traversal — the procedural skyboard stance and animations will silently do nothing. Check that the GLB actually contains a skeleton, not just a static mesh.');
+    try{toast('⚠ Character mesh loaded but no skeleton/bones found — check console',4000);}catch(e){}
+  } else if(!CHAR.skinnedMesh){
+    console.warn('Character load: bones found ('+boneCount+') but no SkinnedMesh — the mesh may render as a static T-pose regardless of animation state.');
+  }
   CHAR.mixer = new THREE.AnimationMixer(CHAR.root);
 
   const loadFbxClip=(name)=>new Promise((res,rej)=>{
@@ -8581,6 +8592,12 @@ function mountSkyboard(boardObj){
   // only happen to look right by chance.
   CHAR.root.position.set(0, (CHAR.feetOffset||0)*CHAR.scaleForBoard, 0.1);
   CHAR.root.rotation.set(0,0,0);
+  CHAR.root.visible = true;
+  if(!CHAR._confirmedMountToast){
+    CHAR._confirmedMountToast = true;
+    console.log('Character mounted — scale:',CHAR.scaleForBoard.toFixed(4),'bones:',Object.keys(CHAR.bones).length,'parent:',boardObj.name||boardObj.uuid);
+    try{toast('👤 Autumn mounted on the skyboard',2000);}catch(e){}
+  }
 }
 function dismountSkyboard(targetScene, worldPos){
   if(!CHAR.root) return;
@@ -8684,7 +8701,7 @@ function enterSurface(body,site){
   // happens every frame in updateSurface(); this just makes sure she's
   // present in the scene and not left parented to a previous scene/board.
   (async()=>{
-    if(!CHAR.loaded && !CHAR.loading){ try{ await loadCharacterAssets(); }catch(e){ console.warn('Character load failed:',e); } }
+    if(!CHAR.loaded && !CHAR.loading){ try{ await loadCharacterAssets(); }catch(e){ console.error('Character load failed:',e); try{toast('⚠ Character failed to load: '+(e.message||e),4000);}catch(_){} } }
     if(CHAR.loaded && CHAR.root){
       if(CHAR.root.parent) CHAR.root.parent.remove(CHAR.root);
       surfScene.add(CHAR.root);
