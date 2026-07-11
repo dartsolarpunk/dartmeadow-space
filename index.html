@@ -1703,6 +1703,23 @@ function launchFlight(){
         if(_wasMounted && CHAR.loaded && CHAR.root) mountSkyboard(boardFlight);
       }catch(e){console.warn('board rebuild:',e);}
     }
+    // Real bug found: the mount call above only ever ran INSIDE the
+    // template-changed branch, and only if she was ALREADY mounted
+    // before that rebuild. If her very first mount attempt ever failed
+    // for any reason, she had zero further chances to mount on any
+    // later resume — a plain resume with no template change skipped
+    // this whole block. Unconditional check here instead: on every
+    // resume, if she's loaded (or still loading) but not currently
+    // mounted, try again.
+    if(CHAR.loaded && CHAR.root && boardFlight && !CHAR.mounted){
+      console.warn('launchFlight resume: character was not mounted, mounting now.');
+      mountSkyboard(boardFlight);
+    } else if(!CHAR.loaded && !CHAR.loading){
+      (async()=>{
+        try{ await loadCharacterAssets(); }catch(e){ console.error('Character load failed on resume:',e); try{toast('⚠ Character failed to load: '+(e.message||e),4000);}catch(_){} }
+        if(CHAR.loaded && CHAR.root && boardFlight && !CHAR.mounted) mountSkyboard(boardFlight);
+      })();
+    }
     try{_startFlightLoop();}catch(e){}
     return;
   }
