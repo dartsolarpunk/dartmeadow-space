@@ -8616,17 +8616,21 @@ function _reversedClipPreservingRoot(clip){
    of the board), RIGHT foot back, knees bent, hips dropped, spine
    leaned forward, arms counterbalanced out to the sides. Parametrized
    so it can be tuned live instead of needing a re-export from Meshy.
-   Values rebuilt against the reference concept art (surfer leaning
-   hard into the wind, front knee deeply bent, torso near-horizontal,
-   arms swept wide for balance) — the original values here (lean 0.12
-   rad / ~7°, armSpread 0.35 rad / ~20°) were subtle enough to read as
-   barely-posed/near-T-pose at a glance, nothing like the dynamic lean
-   in the art. Roughly tripled the lean/crouch/spread magnitudes. */
+   The previous version of these values was never actually rendered —
+   it was tuned by eye against reference art but never checked against
+   the real rig, and the leg formula compounded stanceWidth*2.2 with a
+   full crouch term, producing roughly -56° of hip flexion on the
+   front leg. That's what was reading as a "diving/reaching" pose in
+   the game instead of a stance. This version was verified by actually
+   loading the character GLB into a real three.js scene offline,
+   applying these exact rotations, and rendering it from multiple
+   angles before deploying — the leg formula in particular is toned
+   down to a believable ~15-20° range instead of the old ~56°. */
 const SKYBOARD_STANCE = {
   stanceWidth: 0.22,   // radians of hip rotation splitting front/back foot
-  lean: 0.42,           // forward spine lean — was 0.12, way too upright
-  crouch: 0.5,           // hip/knee bend — was 0.18, barely a bend
-  armSpread: 0.85,       // counterbalance arm angle — was 0.35, arms hugged the body
+  lean: 0.42,           // forward spine lean
+  crouch: 0.3,           // hip/knee bend — was 0.5, combined with the old leg formula this was the main source of the broken pose
+  armSpread: 0.65,       // counterbalance arm angle — was 0.85, slightly toned down alongside the leg fix
   swayAmp: 0.035, swaySpeed: 1.4,  // subtle idle sway on top of the base pose
 };
 function applySkyboardStance(t){
@@ -8637,14 +8641,18 @@ function applySkyboardStance(t){
   b.Spine && b.Spine.rotation.set(SKYBOARD_STANCE.lean, 0, -sway*0.3);
   b.Spine01 && b.Spine01.rotation.set(SKYBOARD_STANCE.lean*0.6, 0, 0);
   b.Spine02 && b.Spine02.rotation.set(SKYBOARD_STANCE.lean*0.3, 0, 0);
-  // Left foot forward, front knee deeply bent — leading leg absorbing
-  // the ride like a real surf/skate stance, not just a slight taper
-  b.LeftUpLeg && b.LeftUpLeg.rotation.set(-SKYBOARD_STANCE.stanceWidth*2.2 - SKYBOARD_STANCE.crouch, 0.1, 0.08);
-  b.LeftLeg   && b.LeftLeg.rotation.set(SKYBOARD_STANCE.crouch*1.7, 0, 0);
-  b.LeftFoot  && b.LeftFoot.rotation.set(-0.18, 0.06, 0);
+  // Left foot forward, front knee bent — leading leg absorbing the ride
+  // like a real surf/skate stance. Real bug found here: the old formula
+  // was -(stanceWidth*2.2 + crouch), which came out to roughly -56° of
+  // hip flexion — that's what was throwing the leg up into a kick/dive
+  // look instead of a forward stance. This is a much smaller, verified
+  // rotation.
+  b.LeftUpLeg && b.LeftUpLeg.rotation.set(-SKYBOARD_STANCE.stanceWidth*0.9 - SKYBOARD_STANCE.crouch*0.5, 0.1, 0.08);
+  b.LeftLeg   && b.LeftLeg.rotation.set(SKYBOARD_STANCE.crouch*1.1, 0, 0);
+  b.LeftFoot  && b.LeftFoot.rotation.set(-0.1, 0.06, 0);
   // Right foot back, rear leg straighter but still braced
-  b.RightUpLeg && b.RightUpLeg.rotation.set(SKYBOARD_STANCE.stanceWidth*2.2 - SKYBOARD_STANCE.crouch*0.7, -0.1, -0.08);
-  b.RightLeg   && b.RightLeg.rotation.set(SKYBOARD_STANCE.crouch*1.1, 0, 0);
+  b.RightUpLeg && b.RightUpLeg.rotation.set(SKYBOARD_STANCE.stanceWidth*0.9 - SKYBOARD_STANCE.crouch*0.3, -0.1, -0.08);
+  b.RightLeg   && b.RightLeg.rotation.set(SKYBOARD_STANCE.crouch*0.7, 0, 0);
   b.RightFoot  && b.RightFoot.rotation.set(-0.08, -0.06, 0);
   // Counterbalanced arms swept wide, like leaning into the wind
   b.LeftShoulder && b.LeftShoulder.rotation.set(0, 0, SKYBOARD_STANCE.armSpread*0.35);
