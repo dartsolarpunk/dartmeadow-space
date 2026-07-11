@@ -5061,11 +5061,20 @@ function buildFlightBoard(){
   // Character — her default state is mounted on the board, matching
   // 'in space, she's already on the skyboard in her riding stance' per
   // spec. Loads once (cached in CHAR after first load) and mounts as
-  // soon as it's ready; harmless if this fires before the mesh finishes
-  // downloading since mountSkyboard() null-guards on CHAR.root.
+  // soon as it's ready. Verifies the mount actually took and retries
+  // once rather than assume success — if CHAR.loaded is true but
+  // boardFlight was somehow still falsy at that exact instant, the
+  // mount call would silently no-op with no error at all.
   (async()=>{
     if(!CHAR.loaded && !CHAR.loading){ try{ await loadCharacterAssets(); }catch(e){ console.error('Character load failed:',e); try{toast('⚠ Character failed to load: '+(e.message||e),4000);}catch(_){} } }
     if(CHAR.loaded && CHAR.root && boardFlight) mountSkyboard(boardFlight);
+    if(CHAR.loaded && !CHAR.mounted){
+      console.warn('Character loaded but did not mount on first attempt — boardFlight was',boardFlight,'— retrying in 500ms.');
+      setTimeout(()=>{
+        if(CHAR.loaded && CHAR.root && boardFlight && !CHAR.mounted) mountSkyboard(boardFlight);
+        if(CHAR.loaded && !CHAR.mounted) console.error('Character still not mounted after retry — boardFlight:',boardFlight,'CHAR.root:',CHAR.root);
+      },500);
+    }
   })();
 
   // Camera starts in Low Earth Orbit — 1 AU from Sun, drifting with Earth
@@ -8454,6 +8463,7 @@ async function loadCharacterAssets(){
   // point, so 'feet at y=0' positioning stays correct after scaling
   CHAR.feetOffset = -_rawBox.min.y;
 
+  CHAR.root.visible = false; // stays hidden until mountSkyboard()/dismountSkyboard() actually places her correctly — otherwise she's visible at whatever fallback position for however long loading + mounting takes
   CHAR.loaded = true; CHAR.loading = false;
 }
 
@@ -8604,6 +8614,7 @@ function dismountSkyboard(targetScene, worldPos){
   const wp = new THREE.Vector3(); CHAR.root.getWorldPosition(wp);
   if(targetScene) targetScene.add(CHAR.root);
   CHAR.root.position.copy(worldPos || wp);
+  CHAR.root.visible = true;
   CHAR.mounted = false;
   CHAR.scene = targetScene;
   setCharState('idle',{fade:0.25});
@@ -8709,6 +8720,7 @@ function enterSurface(body,site){
       CHAR.scene = surfScene;
       CHAR.root.scale.setScalar(CHAR.scaleForTerrain);
       CHAR.root.position.set(surfPlayer.pos.x, surfPlayer.pos.y-3.0, surfPlayer.pos.z);
+      CHAR.root.visible = true;
       setCharState('idle',{force:true,fade:0});
     }
   })();
