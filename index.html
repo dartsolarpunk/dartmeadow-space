@@ -3301,6 +3301,7 @@ function _startFlightLoop(){
     try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){}
     try{ updateCharOrbitCamera(); }catch(e){}
     try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){}
+    try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){}
     try{updateBirdTemple(dt);}catch(e){}
     try{updateDistantSystems(dt);}catch(e){}
     try{updateVolumetricDust(dt);}catch(e){}
@@ -8056,6 +8057,7 @@ function resumeFlightLoop(){
     try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){}
     try{ updateCharOrbitCamera(); }catch(e){}
     try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){}
+    try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){}
     try{updateBirdTemple(dt);}catch(e){}
     try{updateDistantSystems(dt);}catch(e){}
     try{updateVolumetricDust(dt);}catch(e){}
@@ -8163,6 +8165,7 @@ function enterAtmosphericFlight(body,site){
     try{ if(CHAR.mounted) applySkyboardStance(now/1000); }catch(e){}
     try{ updateCharOrbitCamera(); }catch(e){}
     try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){}
+    try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){}
     try{updateBirdTemple(dt);}catch(e){}
     atmoRenderer.render(atmoScene,atmoCamera);
   })();
@@ -8428,6 +8431,13 @@ const CHAR_FILES = {
   jump: 'Meshy_AI_T_Pose_Sentinel_biped_Animation_Wall_Support_Jump_to_Ground_without_skin.fbx',
   climbLoop:   'Meshy_AI_T_Pose_Sentinel_biped_Animation_Fast_Stair_Climb_without_skin.fbx',
   climbFinish: 'Meshy_AI_T_Pose_Sentinel_biped_Animation_Ladder_Climb_Finish_without_skin.fbx',
+  // Justin's newest export — a GLB (mesh+skin+animation together, unlike
+  // the other clips above which are skin-less FBX) containing a
+  // "Step_Right_for_Exercise" clip. Only the animation is used from this
+  // file (see loadCharacterAssets) — the mesh/skin inside it is ignored
+  // since she already has her own skinned mesh from CHAR_FILES.mesh, and
+  // this clip's bone names/hierarchy match that same skeleton 1:1.
+  skyboardStanceSrc: 'Meshy_AI_T_Pose_Sentinel_biped_Animation_Step_Right_for_Exercise_withSkin.glb',
 };
 const CHAR = {
   loaded:false, loading:false,
@@ -8516,9 +8526,18 @@ async function loadCharacterAssets(){
       res(clip||null);
     }, undefined, rej);
   });
-  const [walkClip, runClip, jumpClip, climbLoopClip, climbFinishClip] = await Promise.all([
+  const [walkClip, runClip, jumpClip, climbLoopClip, climbFinishClip, skyboardSrcClip] = await Promise.all([
     loadFbxClip('walk'), loadFbxClip('run'), loadFbxClip('jump'),
-    loadFbxClip('climbLoop'), loadFbxClip('climbFinish')
+    loadFbxClip('climbLoop'), loadFbxClip('climbFinish'),
+    // this one's a GLB (mesh+skin+anim together, not skin-less FBX like the
+    // others) — same skeleton/bone names, so its clip binds directly onto
+    // CHAR.root once loaded. We only want the animation; the mesh/skin
+    // inside this file is discarded (never added to any scene).
+    new Promise((res,rej)=>{
+      gltfLoader.load(CHAR_ASSET_BASE+CHAR_FILES.skyboardStanceSrc, g=>{
+        res((g.animations && g.animations[0]) || null);
+      }, undefined, e=>{ console.warn('skyboard stance clip failed to load:',e); res(null); });
+    })
   ]);
 
   CHAR.clips.walk = walkClip;
@@ -8527,6 +8546,19 @@ async function loadCharacterAssets(){
   CHAR.clips.jumpRise = _reversedClipPreservingRoot(jumpClip); // reversed: launch upward -> apex
   CHAR.clips.climbLoop = climbLoopClip;
   CHAR.clips.climbFinish = climbFinishClip;
+  // The source clip ("Step_Right_for_Exercise") is ~2.53s long and only
+  // reads as a surfboard-riding stance for a short window in the middle —
+  // the rest of it is the walk-up/walk-away part of the exercise move.
+  // Verified this range by actually loading the clip into an offline
+  // three.js scene and scrubbing through it frame-by-frame (see the
+  // render checks done alongside this fix) rather than guessing blind:
+  // roughly t=1.15s to t=1.65s is the wide, crouched, arms-out balance
+  // moment that reads as riding a board. Cropped to just that window and
+  // set to ping-pong so it plays forward then backward continuously —
+  // a natural back-and-forth sway rather than a hard loop-reset snap.
+  if(skyboardSrcClip){
+    CHAR.clips.skyboard = _cropClip(skyboardSrcClip, 1.15, 1.65, 'skyboard_stance_crop');
+  }
 
   Object.keys(CHAR.clips).forEach(name=>{
     const clip = CHAR.clips[name];
@@ -8538,6 +8570,12 @@ async function loadCharacterAssets(){
   if(CHAR.actions.climbFinish) CHAR.actions.climbFinish.setLoop(THREE.LoopOnce,1);
   if(CHAR.actions.jumpRise) CHAR.actions.jumpRise.setLoop(THREE.LoopOnce,1);
   if(CHAR.actions.jump) CHAR.actions.jump.setLoop(THREE.LoopOnce,1);
+  if(CHAR.actions.skyboard){
+    CHAR.actions.skyboard.setLoop(THREE.LoopPingPong, Infinity);
+    CHAR.actions.skyboard.timeScale = 0.5; // slow, gentle sway rather than a full exercise-speed rep
+  } else {
+    console.warn('Skyboard stance clip missing — falling back to the static procedural pose in applySkyboardStance().');
+  }
 
   // ── AUTO SCALE CALIBRATION ──────────────────────────────────
   // Measures her actual loaded bounding-box height (whatever the raw
@@ -8589,6 +8627,37 @@ async function loadCharacterAssets(){
    explicit clone+reverse here so jump-rise can be scrubbed/blended
    independently of the forward landing clip without them fighting over
    the same Action's timeScale sign. */
+/* ── CROP AN ANIMATION CLIP TO A TIME WINDOW ─────────────────────
+   three.js r128 doesn't ship THREE.AnimationUtils.subclip (that landed
+   in a later release), so this is a hand-rolled equivalent: for each
+   track, keep only the keyframes inside [t0,t1], shift their times back
+   to start at 0, and build a new clip from the result. Good enough for
+   a densely-keyframed baked animation like this one (no need for exact
+   boundary interpolation — there are plenty of samples either side of
+   the cut points). */
+function _cropClip(clip, t0, t1, newName){
+  const tracks = clip.tracks.map(track=>{
+    const stride = track.getValueSize();
+    const times = track.times, values = track.values;
+    const keepIdx = [];
+    for(let i=0;i<times.length;i++){ if(times[i]>=t0-1e-4 && times[i]<=t1+1e-4) keepIdx.push(i); }
+    if(keepIdx.length<2){
+      // fallback so a track with no samples in range doesn't break the clip
+      keepIdx.length=0;
+      for(let i=0;i<times.length;i++) keepIdx.push(i);
+    }
+    const newTimes = new Float32Array(keepIdx.length);
+    const newValues = new (values.constructor)(keepIdx.length*stride);
+    keepIdx.forEach((idx,j)=>{
+      newTimes[j]=Math.max(0, times[idx]-t0);
+      for(let k=0;k<stride;k++) newValues[j*stride+k]=values[idx*stride+k];
+    });
+    const TrackCtor = track.constructor;
+    return new TrackCtor(track.name, newTimes, newValues, track.getInterpolation());
+  });
+  return new THREE.AnimationClip(newName||(clip.name+'_crop'), t1-t0, tracks);
+}
+
 function _reversedClipPreservingRoot(clip){
   if(!clip) return null;
   const rev = clip.clone();
@@ -8633,7 +8702,7 @@ const SKYBOARD_STANCE = {
   armSpread: 0.65,       // counterbalance arm angle — was 0.85, slightly toned down alongside the leg fix
   swayAmp: 0.035, swaySpeed: 1.4,  // subtle idle sway on top of the base pose
 };
-function applySkyboardStance(t){
+function _applySkyboardStanceProcedural(t){
   const b = CHAR.bones;
   if(!b.Hips) return;
   const sway = Math.sin((t||0)*SKYBOARD_STANCE.swaySpeed)*SKYBOARD_STANCE.swayAmp;
@@ -8659,10 +8728,39 @@ function applySkyboardStance(t){
   b.LeftArm      && b.LeftArm.rotation.set(0.15+sway*0.4, -0.1, SKYBOARD_STANCE.armSpread);
   b.RightShoulder&& b.RightShoulder.rotation.set(0, 0, -SKYBOARD_STANCE.armSpread*0.35);
   b.RightArm     && b.RightArm.rotation.set(0.15-sway*0.4, 0.1, -SKYBOARD_STANCE.armSpread);
-  // Counter-rotate the neck against the spine lean so she's looking
-  // ahead into the direction of travel rather than down at the deck —
-  // matches the reference art's head-up, eyes-forward posture.
-  b.neck && b.neck.rotation.set(-SKYBOARD_STANCE.lean*0.85, 0, 0);
+}
+
+/* ── SKYBOARD STANCE — now driven by the real cropped animation clip
+   (CHAR.clips.skyboard, see loadCharacterAssets/_cropClip) instead of
+   hand-set bone rotations, per the actual mocap-style reference: her
+   own "Step_Right_for_Exercise" export scrubbed down to the ~0.5s
+   window that reads as a wide, crouched, arms-out board-riding stance,
+   ping-ponging forward/backward continuously. Falls back to the old
+   procedural pose only if that clip failed to load for some reason. */
+function applySkyboardStance(t){
+  if(CHAR.actions && CHAR.actions.skyboard){
+    if(CHAR.state!=='skyboard') setCharState('skyboard',{fade:0.3});
+  } else {
+    _applySkyboardStanceProcedural(t);
+  }
+}
+
+/* ── HEAD/NECK OVERRIDE — applied AFTER CHAR.mixer.update() runs each
+   frame (see the flight-loop call sites), because the source clip
+   itself animates the neck/head bones and looks down at the deck the
+   entire time (it was authored as a floor exercise, not a stance) —
+   overriding BEFORE the mixer update would just get immediately
+   overwritten by the clip's own head track. Forces her to look forward
+   across the board, with a light natural sway tied to the hip's own
+   side-to-side motion (driven by the same clip) so her head doesn't
+   look dead/locked-off relative to the rest of the ping-ponging pose. */
+function applySkyboardHeadOverride(){
+  const b = CHAR.bones;
+  if(!b.neck && !b.Head) return;
+  const hipsZ = b.Hips ? b.Hips.rotation.z : 0;
+  const hipsX = b.Hips ? b.Hips.rotation.x : 0;
+  if(b.neck) b.neck.rotation.set(-hipsX*0.5 - 0.05, 0, -hipsZ*0.6);
+  if(b.Head) b.Head.rotation.set(0.02, 0, -hipsZ*0.2);
 }
 
 /* ── STATE MACHINE ──────────────────────────────────────────────
@@ -10171,6 +10269,7 @@ function exitSurface(){
       try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){}
     try{ updateCharOrbitCamera(); }catch(e){}
     try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){}
+    try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){}
       try{updateBirdTemple(dt);}catch(e){}
       try{updateDistantSystems(dt);}catch(e){}
       try{updateVolumetricDust(dt);}catch(e){}
