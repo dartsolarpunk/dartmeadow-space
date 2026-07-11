@@ -1690,10 +1690,17 @@ function launchFlight(){
     const colorSig=boardStyleSig();
     if(colorSig!==_builtBoardTemplate){
       try{
+        // Same GPU-safety concern as the scene-transition points: if
+        // she's currently mounted on the board about to be removed/
+        // rebuilt, detach her first or she'd be silently lost (still
+        // parented to an object no longer in any scene).
+        const _wasMounted = CHAR.mounted;
+        if(CHAR.loaded && CHAR.root && CHAR.root.parent===boardFlight) CHAR.root.parent.remove(CHAR.root);
         if(boardFlight&&flightScene)flightScene.remove(boardFlight);
         boardFlight=buildBoardMesh();
         _builtBoardTemplate=colorSig;
         if(flightScene)flightScene.add(boardFlight);
+        if(_wasMounted && CHAR.loaded && CHAR.root) mountSkyboard(boardFlight);
       }catch(e){console.warn('board rebuild:',e);}
     }
     try{_startFlightLoop();}catch(e){}
@@ -3262,6 +3269,7 @@ function _startFlightLoop(){
 
     try{updateFlight(dt);}catch(e){}
     try{updateBodies(dt);}catch(e){}
+    try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){}
     try{updateBirdTemple(dt);}catch(e){}
     try{updateDistantSystems(dt);}catch(e){}
     try{updateVolumetricDust(dt);}catch(e){}
@@ -5049,6 +5057,16 @@ function buildFlightBoard(){
   flightScene.add(boardFlight);
   boardFlight.rotation.set(0,0,0);
   _applyCamOffset();
+
+  // Character — her default state is mounted on the board, matching
+  // 'in space, she's already on the skyboard in her riding stance' per
+  // spec. Loads once (cached in CHAR after first load) and mounts as
+  // soon as it's ready; harmless if this fires before the mesh finishes
+  // downloading since mountSkyboard() null-guards on CHAR.root.
+  (async()=>{
+    if(!CHAR.loaded && !CHAR.loading){ try{ await loadCharacterAssets(); }catch(e){ console.warn('Character load failed:',e); } }
+    if(CHAR.loaded && CHAR.root && boardFlight) mountSkyboard(boardFlight);
+  })();
 
   // Camera starts in Low Earth Orbit — 1 AU from Sun, drifting with Earth
   const AU=28;
@@ -7957,6 +7975,7 @@ function resumeFlightLoop(){
     const now=performance.now();const dt=Math.min((now-last)/1000,0.05);last=now;flightTime+=dt;
     try{updateFlight(dt);}catch(e){}
     try{updateBodies(dt);}catch(e){}
+    try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){}
     try{updateBirdTemple(dt);}catch(e){}
     try{updateDistantSystems(dt);}catch(e){}
     try{updateVolumetricDust(dt);}catch(e){}
@@ -8061,6 +8080,7 @@ function enterAtmosphericFlight(body,site){
     atmoAnimId=requestAnimationFrame(aloop);
     const now=performance.now();const dt=Math.min((now-last)/1000,0.05);last=now;
     updateAtmoFlight(dt);
+    try{ if(CHAR.mounted) applySkyboardStance(now/1000); }catch(e){}
     try{updateBirdTemple(dt);}catch(e){}
     atmoRenderer.render(atmoScene,atmoCamera);
   })();
@@ -8250,6 +8270,7 @@ function atmoLandHere(){
 function atmoExitToSpace(){
   const body=_atmoBody;
   _atmoCleanup();
+  if(CHAR.loaded && CHAR.root && boardFlight) mountSkyboard(boardFlight);
   toast('🚀 Left '+(body?body.name:'the')+' atmosphere — back in open space',2600);
   resumeFlightLoop();
 }
@@ -9838,6 +9859,7 @@ function exitSurface(){
       _applyFlightResizeIfPending(); // see _queueFlightResize — debounced, event-driven (Android jitter fix)
       try{updateFlight(dt);}catch(e){}
       try{updateBodies(dt);}catch(e){}
+      try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){}
       try{updateBirdTemple(dt);}catch(e){}
       try{updateDistantSystems(dt);}catch(e){}
       try{updateVolumetricDust(dt);}catch(e){}
