@@ -9818,9 +9818,30 @@ function updateSurface(dt){
     surfBoard.rotation.y += ((p.yaw-Math.PI/2)-surfBoard.rotation.y)*Math.min(1,dt*4);
     surfBoard.rotation.z = Math.sin(surfTime*1.2)*0.04; // gentle idle tilt
   }
-  // apply to camera
-  surfCamera.position.copy(p.pos);
-  surfCamera.rotation.y=p.yaw;surfCamera.rotation.x=p.pitch;
+  // ── Third-person follow camera ──────────────────────────────────
+  //    Real bug found: the camera was being placed at the exact same
+  //    x/z as her own character mesh (only y differed), so the camera
+  //    sat literally inside her torso/head every frame — what looked
+  //    like a broken "falling character" close-up was actually us
+  //    looking out through the inside of her own body. She's a visible
+  //    companion avatar (same as when mounted on the board), so this
+  //    should be a trailing third-person camera, not a first-person
+  //    one colocated with her mesh. Smoothed so it doesn't snap on
+  //    sudden turns, and height/ground-clamped so it doesn't dip below
+  //    terrain when following her downhill.
+  const followDist=4.2, followHeight=1.5;
+  const camTX=p.pos.x - fx*followDist, camTZ=p.pos.z - fz*followDist;
+  const camGroundH=_surfHeight?_surfHeight(camTX,camTZ):groundH;
+  const camTY=Math.max(eye+followHeight, camGroundH+followHeight+1.0);
+  if(!p.camPos)p.camPos=new THREE.Vector3(camTX,camTY,camTZ);
+  const camLerp=Math.min(1,dt*6);
+  p.camPos.x+=(camTX-p.camPos.x)*camLerp;
+  p.camPos.y+=(camTY-p.camPos.y)*camLerp;
+  p.camPos.z+=(camTZ-p.camPos.z)*camLerp;
+  surfCamera.position.copy(p.camPos);
+  surfCamera.rotation.order='YXZ';
+  surfCamera.rotation.y=p.yaw;
+  surfCamera.rotation.x=p.pitch*0.7-0.12; // slight natural downward tilt toward her
 
   // ── Character sync — feet at ground level (not the +3 eye-height
   //    camera position), facing the same way the player's looking.
@@ -9902,11 +9923,25 @@ function exitSurface(){
   window.removeEventListener('keyup',_surfKeyUp);
   $('surface-overlay').style.display='none';
   _reclaimShardToFlight();
+  // Same GPU-safety concern as surfRemountSkyboard()/_atmoCleanup(): she is
+  // currently parented under surfScene (added there in enterSurface()), and
+  // disposeObject3D() below recursively calls .dispose() on every mesh's
+  // geometry + materials under whatever root it's given. Skipping this
+  // detach was a real bug — her actual skinned-mesh GPU buffers were being
+  // freed while she was still a descendant of surfScene, so LIFTOFF back to
+  // space silently corrupted her rendering (still "loaded" per CHAR.loaded,
+  // but drawing disposed geometry). Detach first so she survives intact.
+  if(CHAR.loaded && CHAR.root && CHAR.root.parent) CHAR.root.parent.remove(CHAR.root);
   // dispose surface scene
   if(surfScene)disposeObject3D(surfScene); // free terrain/water/skyboard GPU memory (see disposeObject3D)
   if(surfRenderer){surfRenderer.dispose();}
   surfScene=null;surfPlayer=null;surfBoard=null;surfTerrainMesh=null;TERRAIN.mcGroup=null;TERRAIN._mcBuildGen=(TERRAIN._mcBuildGen||0)+1;
   TERRAIN.tiles.clear();TERRAIN.group=null;
+  // Re-mount her onto the real flight board now that we're back in open
+  // space — mirrors atmoExitToSpace()'s identical re-mount call. Without
+  // this she'd stay detached/invisible until some other transition
+  // happened to mount her again.
+  if(CHAR.loaded && CHAR.root && boardFlight) mountSkyboard(boardFlight);
   // resume flight loop
   if(!flightAnimId){
     let last=performance.now();
