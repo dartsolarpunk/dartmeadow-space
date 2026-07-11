@@ -1158,7 +1158,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
        so this surfaces the same mount/state info directly on screen instead.
        Safe to remove later; harmless if left in (just a small text overlay,
        pointer-events:none so it never blocks touch input). -->
-  <div id="char-debug-hud" style="position:absolute;top:56px;left:10px;font-family:monospace;font-size:9px;line-height:1.4;color:#7CFC7C;background:rgba(0,0,0,0.55);padding:5px 8px;border-radius:5px;z-index:35;pointer-events:none;white-space:pre;max-width:200px;"></div>
+  <div id="char-debug-hud" style="display:none;position:absolute;top:56px;left:10px;font-family:monospace;font-size:9px;line-height:1.4;color:#7CFC7C;background:rgba(0,0,0,0.55);padding:5px 8px;border-radius:5px;z-index:35;pointer-events:none;white-space:pre;max-width:200px;"></div>
   <div id="hud-logs-panel">
     <div class="ar-panel">
       <div class="ar-panel-title">Navigation</div>
@@ -1478,6 +1478,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
         <option value="5">5×</option><option value="15" selected>15×</option><option value="50">50×</option><option value="200">200× (Andromeda)</option>
       </select>
     </div>
+    <div class="setting-row"><div><div class="setting-label">Character Debug Overlay</div><div class="setting-sub">Small on-screen readout (mount state, bones, position) — for troubleshooting only</div></div><label class="toggle-switch"><input type="checkbox" id="set-chardebug"><span class="toggle-track"></span></label></div>
     <div class="modal-footer">
       <button class="btn primary" onclick="applySettings()">APPLY &amp; CLOSE</button>
       <button class="btn" onclick="closeSettings()">CANCEL</button>
@@ -2791,6 +2792,11 @@ const GFX = {
   antialias:true,
   pathTraceAccents:false,// experimental WebGPU only
   maxPixelRatio:2,
+  // Dev/debug overlay (mounted/state/bones/parent/visible/localPos) added
+  // during character-rig troubleshooting — off by default, toggleable in
+  // Settings so it's there for future debugging without being on-screen
+  // clutter day to day.
+  showCharDebug:false,
 };
 
 // Capability ceilings — what a tier is ALLOWED to use is clamped by hardware.
@@ -2943,6 +2949,7 @@ function syncSettingsUIFromState(){
     if($('set-reflections'))$('set-reflections').checked=GFX.envReflections;
     if($('set-caustics'))$('set-caustics').checked=GFX.caustics;
     if($('set-gi'))$('set-gi').checked=GFX.fakeGI;
+    if($('set-chardebug'))$('set-chardebug').checked=!!GFX.showCharDebug;
   }catch(e){}
 }
 
@@ -2971,7 +2978,7 @@ function saveGfxChoice(){
       preset:GFX.preset, resScale:GFX.resScale, shadows:GFX.shadows, shadowSize:GFX.shadowSize,
       envReflections:GFX.envReflections, caustics:GFX.caustics, fakeGI:GFX.fakeGI, refraction:GFX.refraction,
       ssao:GFX.ssao, volumetricDust:GFX.volumetricDust, dustDensity:GFX.dustDensity, aniso:GFX.aniso,
-      antialias:GFX.antialias, pathTraceAccents:GFX.pathTraceAccents, chosen:true
+      antialias:GFX.antialias, pathTraceAccents:GFX.pathTraceAccents, showCharDebug:GFX.showCharDebug, chosen:true
     }));
   }catch(e){}
 }
@@ -7203,6 +7210,11 @@ function applySettings(){
   if($('set-reflections')&&$('set-reflections').checked!==GFX.envReflections){GFX.envReflections=$('set-reflections').checked;GFX.preset='custom';needsRebuild=true;}
   if($('set-caustics'))GFX.caustics=$('set-caustics').checked;
   if($('set-gi'))GFX.fakeGI=$('set-gi').checked;
+  if($('set-chardebug')){
+    GFX.showCharDebug=$('set-chardebug').checked;
+    const el=document.getElementById('char-debug-hud');
+    if(el) el.style.display = GFX.showCharDebug ? 'block' : 'none';
+  }
   clampToHardware();
   STATE.settings.gfxQuality=GFX.preset;STATE.settings.resScale=GFX.resScale;
   STATE.settings.shadows=GFX.shadows;STATE.settings.reflections=GFX.envReflections;
@@ -8977,6 +8989,9 @@ function _charOrbitCanvas(){
    safe to leave running. */
 function _updateCharDebugHUD(){
   const el=document.getElementById('char-debug-hud'); if(!el) return;
+  const show = !!GFX.showCharDebug;
+  el.style.display = show ? 'block' : 'none';
+  if(!show) return; // skip the text update too when hidden — no point doing the work
   const parent = CHAR.root && CHAR.root.parent ? (CHAR.root.parent.name || ('obj:'+CHAR.root.parent.uuid.slice(0,6))) : 'NONE';
   const p = CHAR.root ? CHAR.root.position : null;
   el.textContent =
