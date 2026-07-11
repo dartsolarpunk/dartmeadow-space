@@ -1129,6 +1129,12 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
       <button class="art-btn" onclick="promptExit()">EXIT</button>
     </div>
   </div>
+  <!-- Free 360° orbit around the mounted skyboard/character — drag or
+       mouse to rotate, scroll wheel or pinch to zoom, tap again to
+       leave. Sits below #ar-top (which is ~48px tall) in the top-right
+       corner, clear of the joystick/roll/GAL/SYS clusters (bottom-left)
+       and the FOCUS/IDLE/thrust clusters (bottom-right). -->
+  <button id="orbit-skyboard-btn" class="hud-toggle-btn" onclick="toggleCharOrbit()" title="Orbit freely around the skyboard — drag/scroll or pinch to look around" style="left:auto;right:10px;top:56px;background:rgba(255,79,163,0.10);color:#ff4fa3;border-color:rgba(255,79,163,0.35);">🔄 ORBIT</button>
   <div id="hud-logs-panel">
     <div class="ar-panel">
       <div class="ar-panel-title">Navigation</div>
@@ -3287,6 +3293,7 @@ function _startFlightLoop(){
     try{updateFlight(dt);}catch(e){}
     try{updateBodies(dt);}catch(e){}
     try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){}
+    try{ updateCharOrbitCamera(); }catch(e){}
     try{updateBirdTemple(dt);}catch(e){}
     try{updateDistantSystems(dt);}catch(e){}
     try{updateVolumetricDust(dt);}catch(e){}
@@ -5030,7 +5037,7 @@ function buildBoardMesh(){
   const tmpl=STATE.boardConfig.template;
   if(tmpl&&tmpl!=='procedural'){
     const g=buildBoardFromGLB(tmpl);
-    if(g)return g;
+    if(g){ _computeDeckAnchor(g); return g; }
     // not ready → ensure it's loading, fall through to procedural this frame
     preloadSkyboardTemplates();
   }
@@ -5060,7 +5067,35 @@ function buildBoardMesh(){
   });
   // Engine light
   {const el2=new THREE.PointLight(new THREE.Color(c.emit),c.glow*2,5);el2.position.set(-hL*.7,-T/2-.04,0);grp.add(el2);}
+  _computeDeckAnchor(grp);
   return grp;
+}
+
+/* ── DECK ANCHOR — real bug found ────────────────────────────────
+   mountSkyboard() used to place the character at a hardcoded local
+   (0, y, 0.1), assuming every board's own group origin sits at the
+   visual center of its top deck surface. That's only true for the
+   simple procedural box above. The sculpted GLB templates
+   (skyboard_A.glb / skyboard_B.glb) were exported with every mesh
+   node sharing an identical translation that does NOT bring their
+   raw vertex bounds anywhere near the group's local (0,0,0) — verified
+   directly against the GLB (deck mesh spans roughly x:[-1.1,1.0],
+   z:[-13.2,12.4] in its own local space before that node translation
+   is even added). The old hardcoded mount point was nowhere near the
+   actual deck. Fix: measure the board's real bounding box once, right
+   after it's built (before it's placed anywhere in the world, so its
+   matrixWorld is still identity), and cache the true deck-center/top
+   point on it so mounting always lands on the real surface regardless
+   of a given asset's export quirks. */
+function _computeDeckAnchor(grp){
+  grp.updateMatrixWorld(true);
+  const box=new THREE.Box3().setFromObject(grp);
+  if(!isFinite(box.min.x) || !isFinite(box.max.x)){ grp.userData.deckAnchor={x:0,y:0,z:0.1}; return; }
+  grp.userData.deckAnchor={
+    x:(box.min.x+box.max.x)/2,
+    y:box.max.y,
+    z:(box.min.z+box.max.z)/2
+  };
 }
 
 function buildFlightBoard(){
@@ -8012,6 +8047,7 @@ function resumeFlightLoop(){
     try{updateFlight(dt);}catch(e){}
     try{updateBodies(dt);}catch(e){}
     try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){}
+    try{ updateCharOrbitCamera(); }catch(e){}
     try{updateBirdTemple(dt);}catch(e){}
     try{updateDistantSystems(dt);}catch(e){}
     try{updateVolumetricDust(dt);}catch(e){}
@@ -8117,6 +8153,7 @@ function enterAtmosphericFlight(body,site){
     const now=performance.now();const dt=Math.min((now-last)/1000,0.05);last=now;
     updateAtmoFlight(dt);
     try{ if(CHAR.mounted) applySkyboardStance(now/1000); }catch(e){}
+    try{ updateCharOrbitCamera(); }catch(e){}
     try{updateBirdTemple(dt);}catch(e){}
     atmoRenderer.render(atmoScene,atmoCamera);
   })();
@@ -8675,19 +8712,111 @@ function mountSkyboard(boardObj){
   const worldPos = new THREE.Vector3(); CHAR.root.getWorldPosition(worldPos);
   boardObj.add(CHAR.root);
   CHAR.root.scale.setScalar(CHAR.scaleForBoard);
-  // Feet at deck level: CHAR.feetOffset is how far her own origin sits
-  // above her lowest point (measured once at load time), scaled by the
-  // same factor just applied, rather than a guessed height that would
-  // only happen to look right by chance.
-  CHAR.root.position.set(0, (CHAR.feetOffset||0)*CHAR.scaleForBoard, 0.1);
+  // Real bug found: this used to be a hardcoded (0, feetOffset*scale, 0.1),
+  // assuming the board's own local origin was already at its visual
+  // deck-center. That's only true for the simple procedural box — the
+  // sculpted GLB templates are exported with their meshes offset well
+  // away from that origin (see _computeDeckAnchor), so she was mounting
+  // near an arbitrary export pivot, nowhere close to the actual deck.
+  // Use the board's real measured anchor instead.
+  const anchor = boardObj.userData.deckAnchor || {x:0,y:0,z:0.1};
+  CHAR.root.position.set(anchor.x, anchor.y + (CHAR.feetOffset||0)*CHAR.scaleForBoard, anchor.z);
   CHAR.root.rotation.set(0,0,0);
   CHAR.root.visible = true;
   if(!CHAR._confirmedMountToast){
     CHAR._confirmedMountToast = true;
-    console.log('Character mounted — scale:',CHAR.scaleForBoard.toFixed(4),'bones:',Object.keys(CHAR.bones).length,'parent:',boardObj.name||boardObj.uuid);
+    console.log('Character mounted — scale:',CHAR.scaleForBoard.toFixed(4),'bones:',Object.keys(CHAR.bones).length,'parent:',boardObj.name||boardObj.uuid,'deckAnchor:',anchor);
     try{toast('👤 Autumn mounted on the skyboard',2000);}catch(e){}
   }
 }
+/* ── ORBIT-THE-SKYBOARD VIEW ─────────────────────────────────────
+   Free 360° spherical orbit camera centered on the mounted character
+   (which is itself correctly centered on the deck now, per the
+   deckAnchor fix above) — drag/mouse to rotate, scroll wheel or pinch
+   to zoom, tap the ORBIT button again to leave. Works in both open-
+   space flight (flightCamera/boardFlight) and atmospheric flight
+   (atmoCamera/atmoBoard), auto-detecting which is active via the
+   existing atmoActive flag — same spherical-drag pattern already used
+   by the planet-approach orbit view (openOrbitApproach), just aimed at
+   her instead of a globe, and layered on top of the live flight/atmo
+   render loop rather than opening a separate overlay/renderer. */
+let charOrbitActive=false, charOrbitYaw=0, charOrbitPitch=0.25, charOrbitDist=4.5;
+let _charOrbitDrag=null, _charOrbitPinch=null, _charOrbitListenersBound=false;
+
+function _charOrbitCanvas(){
+  return (atmoActive && atmoRenderer) ? atmoRenderer.domElement : (flightRenderer ? flightRenderer.domElement : null);
+}
+
+function updateCharOrbitCamera(){
+  if(!charOrbitActive) return;
+  const cam = atmoActive ? atmoCamera : flightCamera;
+  if(!cam) return;
+  const target = new THREE.Vector3();
+  // Orbit around HER, not the board's own (possibly off-center) origin —
+  // now that mounting lands her at the true deck anchor this is a clean,
+  // reliable center point regardless of which board asset is in use.
+  if(CHAR.mounted && CHAR.root){ CHAR.root.getWorldPosition(target); target.y += 0.35; }
+  else if(atmoActive && atmoBoard){ atmoBoard.getWorldPosition(target); }
+  else if(boardFlight){ boardFlight.getWorldPosition(target); }
+  else return;
+  const cy=Math.cos(charOrbitYaw), sy=Math.sin(charOrbitYaw), cp=Math.cos(charOrbitPitch), sp=Math.sin(charOrbitPitch);
+  cam.position.set(target.x+sy*cp*charOrbitDist, target.y+sp*charOrbitDist, target.z+cy*cp*charOrbitDist);
+  cam.lookAt(target);
+}
+
+function _bindCharOrbitListenersOnce(){
+  if(_charOrbitListenersBound) return; _charOrbitListenersBound=true;
+  const move=(x,y)=>{
+    if(!_charOrbitDrag) return;
+    const dx=x-_charOrbitDrag.x, dy=y-_charOrbitDrag.y;
+    charOrbitYaw -= dx*0.006;
+    charOrbitPitch = Math.max(-1.45, Math.min(1.45, charOrbitPitch+dy*0.006));
+    _charOrbitDrag={x,y};
+  };
+  window.addEventListener('mousedown', e=>{ if(!charOrbitActive||e.target!==_charOrbitCanvas())return; _charOrbitDrag={x:e.clientX,y:e.clientY}; });
+  window.addEventListener('mousemove', e=>{ if(charOrbitActive) move(e.clientX,e.clientY); });
+  window.addEventListener('mouseup', ()=>{ _charOrbitDrag=null; });
+  window.addEventListener('touchstart', e=>{
+    if(!charOrbitActive||e.target!==_charOrbitCanvas())return;
+    if(e.touches.length===1) _charOrbitDrag={x:e.touches[0].clientX,y:e.touches[0].clientY};
+    else if(e.touches.length===2) _charOrbitPinch=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+  },{passive:true});
+  window.addEventListener('touchmove', e=>{
+    if(!charOrbitActive) return;
+    if(e.touches.length===1){ e.preventDefault(); move(e.touches[0].clientX,e.touches[0].clientY); }
+    else if(e.touches.length===2 && _charOrbitPinch){
+      e.preventDefault();
+      const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+      charOrbitDist=Math.max(1.2,Math.min(30,charOrbitDist*(_charOrbitPinch/d)));
+      _charOrbitPinch=d;
+    }
+  },{passive:false});
+  window.addEventListener('touchend', e=>{ if(e.touches.length===0){ _charOrbitDrag=null; _charOrbitPinch=null; } });
+  window.addEventListener('wheel', e=>{
+    if(!charOrbitActive||e.target!==_charOrbitCanvas())return;
+    e.preventDefault();
+    charOrbitDist=Math.max(1.2,Math.min(30,charOrbitDist*(1+Math.sign(e.deltaY)*0.08)));
+  },{passive:false});
+}
+
+function toggleCharOrbit(){
+  const cam = atmoActive ? atmoCamera : flightCamera;
+  if(!cam || !(CHAR.mounted || boardFlight || atmoBoard)){
+    try{toast('Nothing to orbit yet',2000);}catch(e){}
+    return;
+  }
+  charOrbitActive = !charOrbitActive;
+  const btn=$('orbit-skyboard-btn');
+  if(btn) btn.style.background = charOrbitActive ? 'rgba(255,79,163,0.32)' : 'rgba(255,79,163,0.10)';
+  if(charOrbitActive){
+    _bindCharOrbitListenersOnce();
+    charOrbitYaw=0; charOrbitPitch=0.25; charOrbitDist=4.5;
+    try{toast('🔄 Orbit view — drag/scroll or pinch to look around, tap ORBIT again to exit',3200);}catch(e){}
+  } else {
+    _charOrbitDrag=null; _charOrbitPinch=null;
+  }
+}
+
 function dismountSkyboard(targetScene, worldPos){
   if(!CHAR.root) return;
   const wp = new THREE.Vector3(); CHAR.root.getWorldPosition(wp);
@@ -10003,6 +10132,7 @@ function exitSurface(){
       try{updateFlight(dt);}catch(e){}
       try{updateBodies(dt);}catch(e){}
       try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){}
+    try{ updateCharOrbitCamera(); }catch(e){}
       try{updateBirdTemple(dt);}catch(e){}
       try{updateDistantSystems(dt);}catch(e){}
       try{updateVolumetricDust(dt);}catch(e){}
