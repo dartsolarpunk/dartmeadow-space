@@ -1714,6 +1714,7 @@ function startGame(){
 }
 function launchFlight(){
   goScreen('flight');
+  charOrbitActive = false; // don't let a leftover orbit-view from another scene hijack this camera either
   // Real loading gate — reset the "mounted" step (fresh each entry) and
   // show the overlay until character+board are genuinely ready, so the
   // player can't start moving before everything's actually loaded.
@@ -8132,6 +8133,15 @@ function enterAtmosphericFlight(body,site){
   if(atmoActive)return;
   _atmoBody=body;_atmoSite=site||null;atmoActive=true;
   atmoPreset=0;atmoThrottle=0;atmoMach=0;
+  // Real bug found: charOrbitActive is a global flag only ever toggled by
+  // the ORBIT button — nothing reset it on scene transitions. If it was
+  // left on in open-space flight, updateCharOrbitCamera() (called every
+  // frame in this loop too) would immediately hijack atmoCamera on entry,
+  // which explains both "camera's been repositioned" and her looking
+  // like she's lying flat — that's just whatever leftover orbit angle
+  // was active, not an actual pose bug. Force it off on every fresh
+  // entry into this scene.
+  charOrbitActive = false;
   LOAD_TRACK.steps.mounted = 0;
   _showMiniLoader();
   if(flightAnimId){cancelAnimationFrame(flightAnimId);flightAnimId=null;}
@@ -9108,6 +9118,7 @@ function dismountSkyboard(targetScene, worldPos){
 function enterSurface(body,site){
   if(surfaceActive)return;
   _surfBody=body;_surfSite=site||null;surfaceActive=true;
+  charOrbitActive = false; // same leftover-orbit-state guard as the flight scenes
   if(flightAnimId){cancelAnimationFrame(flightAnimId);flightAnimId=null;}
   const pal=getSurfacePalette(body);
   const ov=$('surface-overlay');ov.style.display='block';
