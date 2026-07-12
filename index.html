@@ -1091,6 +1091,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   <div id="builder-viewport">
     <canvas id="builder-canvas"></canvas>
     <div id="builder-hud"><div id="bh-fps">—</div><div id="bh-poly">—</div></div>
+    <button id="builder-char-toggle" onclick="toggleBuilderCharacter()" title="Show/hide the rider on the board preview" style="position:absolute;top:56px;right:14px;z-index:40;padding:6px 12px;background:rgba(255,79,163,0.18);border:1px solid var(--gold);color:var(--gold);font-family:var(--font-hud);font-size:0.5rem;letter-spacing:0.1em;cursor:pointer;border-radius:2px;">👤 RIDER: ON</button>
     <div id="builder-name-display">UNNAMED BOARD</div>
     <div id="builder-footer">
       <button class="launch-btn" onclick="goScreen('menu')">← MENU</button>
@@ -2306,6 +2307,7 @@ function initStartBtnTurntable(){
 //  BOARD BUILDER — THREE.js
 // ══════════════════════════════════════════════════════════════
 let builderScene,builderRenderer,builderCamera,builderControls,boardGroup,builderAnimId,builderInited=false;
+let BUILDER_SHOW_CHAR=true; // default ON per request — toggle via #builder-char-toggle
 
 const EMBLEMS=[
   {name:'Nebula',draw:(c,cx,cy,r)=>{c.beginPath();c.arc(cx,cy,r,0,Math.PI*2);c.stroke();c.beginPath();c.arc(cx,cy,r*.45,0,Math.PI*2);c.fill();[0,Math.PI/2,Math.PI,Math.PI*1.5].forEach(a=>{c.beginPath();c.moveTo(cx+Math.cos(a)*r*.6,cy+Math.sin(a)*r*.6);c.lineTo(cx+Math.cos(a)*r,cy+Math.sin(a)*r);c.stroke();})}},
@@ -2466,9 +2468,13 @@ function initBuilderScene(){
     if(boardGroup){
       boardGroup.rotation.y+=0.004;
       boardGroup.position.y=Math.sin(Date.now()*.0008)*.06;
-      // Animate DART ring devices — counter-rotate inner rings for energy effect
+      // Animate DART ring devices — counter-rotate inner rings for energy effect.
+      // Real bug avoided here: she's a THREE.Group too (GLTFLoader's
+      // gltf.scene), so without excluding her explicitly this loop would
+      // also try to spin child[1]/[2]/[3] of her own hierarchy as if they
+      // were ring parts — glitchy limb rotation, not an energy effect.
       boardGroup.children.forEach(child=>{
-        if(child.isGroup){
+        if(child.isGroup && child!==CHAR.root){
           const t=Date.now()*.001;
           if(child.children[1])child.children[1].rotation.z=t*1.2;   // ring1 spins
           if(child.children[2])child.children[2].rotation.z=-t*1.8;  // ring2 counter-spins
@@ -2476,10 +2482,71 @@ function initBuilderScene(){
         }
       });
     }
+    if(BUILDER_SHOW_CHAR && CHAR.loaded && CHAR.root && CHAR.root.parent===boardGroup){
+      try{ CHAR.mixer && CHAR.mixer.update(1/60); }catch(e){}
+      try{ applySkyboardHeadOverride(); }catch(e){}
+    }
     resizeBuilderRenderer();
     builderRenderer.render(builderScene,builderCamera);
     const now=Date.now();$('bh-fps').textContent=Math.round(1000/(now-lastFrame))+' fps';lastFrame=now;$('bh-poly').textContent=(builderRenderer.info.render.triangles/1000).toFixed(1)+'k tri';
   })();
+}
+
+/* ── BOARD BUILDER — CHARACTER PREVIEW ───────────────────────────
+   Shows her actually standing on the board while designing it, same
+   mount math as the real game (deck anchor, yaw offset, mirror), so
+   what you see here matches what you'll see in flight. She's parented
+   directly into boardGroup so the builder's existing slow auto-rotate/
+   bob animation carries her along for free. _rebuildBoard() clears
+   ALL of boardGroup's children on every parameter tweak (color, shape,
+   template swap, etc.), which would silently drop her each time — so
+   this must be re-called at the END of every rebuild path, not just
+   once at builder init. Reuses the single shared CHAR.root (same
+   object the game scenes use) rather than cloning a second skinned
+   mesh instance, consistent with how she already moves between
+   flightScene/atmoScene/surfScene/builder — whichever screen is
+   active just re-parents her fresh. */
+function _syncBuilderCharacter(){
+  if(!boardGroup) return;
+  if(!BUILDER_SHOW_CHAR){
+    if(CHAR.root && CHAR.root.parent===boardGroup) boardGroup.remove(CHAR.root);
+    return;
+  }
+  if(!CHAR.loaded){
+    if(!CHAR.loading){ loadCharacterAssets().then(_syncBuilderCharacter).catch(e=>console.warn('builder character load failed:',e)); }
+    return; // will retry once the load resolves
+  }
+  if(!CHAR.root) return;
+  // Measure the board that's already in boardGroup (built moments ago,
+  // before she's added) for a real deck-top anchor — same idea as
+  // _computeDeckAnchor, just done here directly since the builder's
+  // boardGroup is a persistent wrapper reused across rebuilds rather
+  // than a fresh per-template object with its own cached anchor.
+  const box = new THREE.Box3().setFromObject(boardGroup);
+  if(!isFinite(box.min.x) || !isFinite(box.max.x)) return;
+  const anchor = { x:(box.min.x+box.max.x)/2, y:box.max.y, z:(box.min.z+box.max.z)/2 };
+  if(CHAR.root.parent && CHAR.root.parent!==boardGroup) CHAR.root.parent.remove(CHAR.root);
+  boardGroup.add(CHAR.root);
+  CHAR.mounted = true;
+  CHAR.scene = builderScene;
+  CHAR.root.scale.set(CHAR.scaleForBoard, CHAR.scaleForBoard, -CHAR.scaleForBoard); // same mirror as mountSkyboard()
+  if(CHAR.skinnedMesh && CHAR.skinnedMesh.material){
+    const mats = Array.isArray(CHAR.skinnedMesh.material) ? CHAR.skinnedMesh.material : [CHAR.skinnedMesh.material];
+    mats.forEach(m=>{ if(m) m.side = THREE.DoubleSide; });
+  }
+  CHAR.root.position.set(anchor.x, anchor.y + (CHAR.feetOffset||0)*CHAR.scaleForBoard, anchor.z);
+  CHAR.root.rotation.set(0, CHAR_MOUNT_YAW_OFFSET, 0);
+  CHAR.root.visible = true;
+  if(CHAR.state!=='skyboard') setCharState('skyboard',{fade:0.3, speed:SKYBOARD_ANIM_SPEED});
+}
+function toggleBuilderCharacter(){
+  BUILDER_SHOW_CHAR = !BUILDER_SHOW_CHAR;
+  const btn = $('builder-char-toggle');
+  if(btn){
+    btn.textContent = '👤 RIDER: ' + (BUILDER_SHOW_CHAR ? 'ON' : 'OFF');
+    btn.style.background = BUILDER_SHOW_CHAR ? 'rgba(255,79,163,0.18)' : 'rgba(91,127,255,0.08)';
+  }
+  _syncBuilderCharacter();
 }
 
 function _rebuildBoard(){
@@ -2489,7 +2556,7 @@ function _rebuildBoard(){
   // procedural primitives below if it hasn't finished loading yet).
   if(c.template&&c.template!=='procedural'){
     const g=buildBoardFromGLB(c.template);
-    if(g){boardGroup.add(g);return;}
+    if(g){boardGroup.add(g);_syncBuilderCharacter();return;}
     try{preloadSkyboardTemplates();}catch(e){}
     // keep trying until the GLB is ready
     setTimeout(()=>{try{if(STATE.boardConfig.template===c.template)_rebuildBoard();}catch(e){}},400);
@@ -2636,6 +2703,7 @@ function _rebuildBoard(){
   const el=new THREE.PointLight(new THREE.Color(c.emit),c.glow*4,4);el.position.set(-hL*.75,-T/2-.05,0);boardGroup.add(el);
 
   updateBoardStats();
+  _syncBuilderCharacter();
 }
 
 function updateBoardStats(){
