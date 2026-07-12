@@ -8855,6 +8855,27 @@ async function loadCharacterAssets(){
     xhr=>{ if(xhr.lengthComputable) _loadStep('charMesh', xhr.loaded/xhr.total); }, rej));
   _loadStep('charMesh', 1);
   CHAR.root = gltf.scene;
+  // Real root cause found for the character-scale bug, via direct
+  // inspection of the actual GLB file (not guessing from symptoms this
+  // time): the "Armature" node has a hard-baked scale of exactly
+  // [0.01, 0.01, 0.01] — every individual bone's own local scale is
+  // normal (~1.0), only their shared parent carries this 100x downscale.
+  // That means the character's true measured height comes out as
+  // 0.017 instead of the ~1.7 units her raw geometry actually spans
+  // (confirmed directly from the accessor bounds in the file: char1's
+  // POSITION accessor spans y:[0, 1.7]) — exactly a 100x mismatch. The
+  // scale calibration below has no way to know this is an export
+  // artifact rather than her real intended size, so it dutifully
+  // computes an enormous compensating factor and hits its own safety
+  // clamp (5.0), which is what was producing the oversized rider. Reset
+  // it here, before any measurement happens, rather than special-case
+  // around the bad number downstream.
+  CHAR.root.traverse(o=>{
+    if(o.name==='Armature' && o.scale && (o.scale.x<0.5 || o.scale.x>2)){
+      console.warn('Character GLB: Armature node had an unexpected baked scale of',o.scale.x,'— resetting to 1 (this is an export artifact, not intentional sizing; her real height is in the geometry itself).');
+      o.scale.set(1,1,1);
+    }
+  });
   CHAR.root.traverse(o=>{
     // o.isBone is the standard GLTFLoader flag, but fall back to
     // checking the node type/name directly in case this particular
