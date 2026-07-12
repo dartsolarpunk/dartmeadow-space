@@ -2623,7 +2623,7 @@ function _syncBuilderCharacter(){
   boardGroup.add(CHAR.wrapper);
   CHAR.mounted = true;
   CHAR.scene = builderScene;
-  CHAR.wrapper.scale.setScalar(builderScaleForBoard); // was a negative-Z mirror (same as mountSkyboard()) - removed, suspected cause of the giant-limb skinning distortion; see the note at the mountSkyboard() copy of this line
+  CHAR.wrapper.scale.setScalar(builderScaleForBoard);
   if(CHAR.skinnedMesh && CHAR.skinnedMesh.material){
     const mats = Array.isArray(CHAR.skinnedMesh.material) ? CHAR.skinnedMesh.material : [CHAR.skinnedMesh.material];
     mats.forEach(m=>{ if(m) m.side = THREE.DoubleSide; });
@@ -2632,44 +2632,11 @@ function _syncBuilderCharacter(){
   CHAR.wrapper.rotation.set(0, CHAR_MOUNT_YAW_OFFSET, 0);
   CHAR.wrapper.visible = true;
   if(CHAR.state!=='skyboard') setCharState('skyboard',{fade:0.3, speed:SKYBOARD_ANIM_SPEED});
-  // Real, visible diagnostic — the rawHeight/scaleForBoard fix corrected
-  // the INPUT numbers (confirmed: rawHeight now reads 1.7, scaleForBoard
-  // 0.4588), but she's still reported as oversized, which means something
-  // AFTER that calculation doesn't match what was intended. Measuring the
-  // actual final world-space position/scale (not just what was requested)
-  // and the board's own real measured size, so a mismatch between
-  // "what was set" and "what's actually there" would show up directly
-  // instead of needing another guess.
-  boardGroup.updateMatrixWorld(true);
-  const _wp = new THREE.Vector3(), _wq = new THREE.Quaternion(), _ws = new THREE.Vector3();
-  CHAR.wrapper.matrixWorld.decompose(_wp, _wq, _ws);
-  const _boardObj = isGLB ? boardGroup.children[0] : boardGroup;
-  const _boardBox = new THREE.Box3().setFromObject(_boardObj);
-  const _boardSize = new THREE.Vector3(); _boardBox.getSize(_boardSize);
-  let dbg = document.getElementById('builder-scale-debug');
-  if(!dbg){
-    dbg = document.createElement('div');
-    dbg.id = 'builder-scale-debug';
-    // Real bug in the debug tool itself: this was positioned top-right,
-    // directly under the floating music widget, which covered exactly
-    // the two most important lines (CHAR world pos/scale) in the last
-    // screenshot. Moved to bottom-left, clear of every other overlay,
-    // with the most critical line moved to the very top so it can't get
-    // clipped even on a short screen.
-    dbg.style.cssText = 'position:absolute;bottom:14px;left:14px;z-index:41;font-family:monospace;font-size:9px;line-height:1.4;color:#7CFC7C;background:rgba(0,0,0,0.72);padding:6px 9px;border-radius:5px;white-space:pre;pointer-events:none;max-width:260px;';
-    const vp = document.getElementById('builder-viewport');
-    if(vp) vp.appendChild(dbg);
-  }
-  dbg.textContent =
-    'CHAR world scale: '+_ws.x.toFixed(4)+','+_ws.y.toFixed(4)+','+_ws.z.toFixed(4)+'\n'+
-    'CHAR world pos: '+_wp.x.toFixed(3)+','+_wp.y.toFixed(3)+','+_wp.z.toFixed(3)+'\n'+
-    'scale requested: '+builderScaleForBoard.toFixed(4)+'\n'+
-    'template: '+(STATE.boardConfig&&STATE.boardConfig.template)+'\n'+
-    'anchor(local): '+anchor.x.toFixed(3)+','+anchor.y.toFixed(3)+','+anchor.z.toFixed(3)+'\n'+
-    'board world size: '+_boardSize.x.toFixed(3)+','+_boardSize.y.toFixed(3)+','+_boardSize.z.toFixed(3)+'\n'+
-    'camera dist to char: '+builderCamera.position.distanceTo(_wp).toFixed(3)+'\n'+
-    'camera aspect: '+builderCamera.aspect.toFixed(3)+'\n'+
-    'canvas px: '+builderRenderer.domElement.width+'x'+builderRenderer.domElement.height;
+  // On-screen scale diagnostic removed — it did its job (confirmed the
+  // scale math was correct all along and helped pin down the real bugs
+  // elsewhere), no longer needed now that it's fixed.
+  const _existingDbg = document.getElementById('builder-scale-debug');
+  if(_existingDbg) _existingDbg.remove();
 }
 function toggleBuilderCharacter(){
   BUILDER_SHOW_CHAR = !BUILDER_SHOW_CHAR;
