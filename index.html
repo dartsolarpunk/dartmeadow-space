@@ -2579,7 +2579,15 @@ function _rebuildBoard(){
   // procedural primitives below if it hasn't finished loading yet).
   if(c.template&&c.template!=='procedural'){
     const g=buildBoardFromGLB(c.template);
-    if(g){boardGroup.add(g);_syncBuilderCharacter();return;}
+    // Real bug found: this was the actual reason the builder's GLB-template
+    // scale still didn't match gameplay after the last fix — _computeDeckAnchor
+    // was never being called here at all. buildBoardMesh() (used in-game)
+    // calls it right after buildBoardFromGLB() returns, but the builder calls
+    // buildBoardFromGLB() directly, bypassing that step — so g.userData.deckAnchor
+    // was always undefined, _syncBuilderCharacter's isGLB check always silently
+    // failed, and it fell through to the procedural-style proportional scale
+    // path even for the sculpted templates, using an unrelated default length.
+    if(g){ _computeDeckAnchor(g); boardGroup.add(g);_syncBuilderCharacter();return;}
     try{preloadSkyboardTemplates();}catch(e){}
     // keep trying until the GLB is ready
     setTimeout(()=>{try{if(STATE.boardConfig.template===c.template)_rebuildBoard();}catch(e){}},400);
@@ -2726,16 +2734,20 @@ function _rebuildBoard(){
   const el=new THREE.PointLight(new THREE.Color(c.emit),c.glow*4,4);el.position.set(-hL*.75,-T/2-.05,0);boardGroup.add(el);
 
   // Real bug found: same nose-direction bug as the in-game procedural
-  // board (see buildBoardMesh) — flip via an inner wrapper rather than
-  // boardGroup's own rotation, since boardGroup is a persistent object
-  // reused across every rebuild (template switches, slider tweaks) and
-  // a direct rotation there would leak into the GLB-template branch too.
-  {
-    const flipWrap=new THREE.Group();
-    flipWrap.rotation.y=Math.PI;
-    while(boardGroup.children.length) flipWrap.add(boardGroup.children[0]);
-    boardGroup.add(flipWrap);
-  }
+  // board (see buildBoardMesh) — flip in place on each existing child
+  // rather than an inner wrapper group. A wrapper broke updateFlight()'s
+  // DART-ring animation loop, which directly indexes boardFlight.children
+  // looking for "isGroup && children.length>2" to identify the ring
+  // devices — a wrapper group containing everything ALSO satisfies that
+  // exact condition, so it was mistaking the whole board for one giant
+  // ring device and spinning random parts of it continuously (the
+  // "board keeps just spinning in a circle" bug). Rotating each child
+  // 180° in place keeps boardGroup.children flat and unchanged in
+  // count/order, so that code still only matches the real ring groups.
+  boardGroup.children.forEach(child=>{
+    child.position.x*=-1; child.position.z*=-1;
+    child.rotation.y+=Math.PI;
+  });
   updateBoardStats();
   _syncBuilderCharacter();
 }
@@ -5227,18 +5239,20 @@ function buildBoardMesh(){
   // Engine light
   {const el2=new THREE.PointLight(new THREE.Color(c.emit),c.glow*2,5);el2.position.set(-hL*.7,-T/2-.04,0);grp.add(el2);}
   // Real bug found: the procedural board's nose pointed the wrong way by
-  // default (backward relative to the sculpted GLB templates). Flipping
-  // it via grp.rotation.y directly doesn't survive — buildFlightBoard()
-  // explicitly zeroes boardFlight.rotation right after creation (see
-  // there), which would silently wipe that out. Bake the flip into an
-  // inner wrapper instead, which keeps grp's own .rotation free for
-  // other code to set without undoing this.
-  {
-    const flipWrap=new THREE.Group();
-    flipWrap.rotation.y=Math.PI;
-    while(grp.children.length) flipWrap.add(grp.children[0]);
-    grp.add(flipWrap);
-  }
+  // default (backward relative to the sculpted GLB templates). An inner
+  // wrapper group (the first attempt at this fix) broke updateFlight()'s
+  // DART-ring animation loop, which directly indexes boardFlight.children
+  // looking for "isGroup && children.length>2" to find the ring devices —
+  // a wrapper containing the whole board ALSO satisfies that condition,
+  // so it mistook the entire board for one giant ring device and spun
+  // random parts of it continuously (the "board keeps spinning in a
+  // circle" bug). Flip each existing child in place instead — keeps
+  // grp.children flat and unchanged in count/order, so that loop still
+  // only matches the two real ring-device groups.
+  grp.children.forEach(child=>{
+    child.position.x*=-1; child.position.z*=-1;
+    child.rotation.y+=Math.PI;
+  });
   _computeDeckAnchor(grp);
   return grp;
 }
