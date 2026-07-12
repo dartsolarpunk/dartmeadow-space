@@ -2623,7 +2623,7 @@ function _syncBuilderCharacter(){
   boardGroup.add(CHAR.root);
   CHAR.mounted = true;
   CHAR.scene = builderScene;
-  CHAR.root.scale.set(builderScaleForBoard, builderScaleForBoard, -builderScaleForBoard); // same mirror as mountSkyboard()
+  CHAR.root.scale.setScalar(builderScaleForBoard); // was a negative-Z mirror (same as mountSkyboard()) - removed, suspected cause of the giant-limb skinning distortion; see the note at the mountSkyboard() copy of this line
   if(CHAR.skinnedMesh && CHAR.skinnedMesh.material){
     const mats = Array.isArray(CHAR.skinnedMesh.material) ? CHAR.skinnedMesh.material : [CHAR.skinnedMesh.material];
     mats.forEach(m=>{ if(m) m.side = THREE.DoubleSide; });
@@ -9395,19 +9395,23 @@ function mountSkyboard(boardObj){
   CHAR.mounted = true;
   const worldPos = new THREE.Vector3(); CHAR.root.getWorldPosition(worldPos);
   boardObj.add(CHAR.root);
-  // Real bug found: her chest was facing the staff side of the board
-  // instead of away from it. A further yaw rotation can't fix this
-  // without also flipping which way she faces down the board's length
-  // (nose vs tail) — that's exactly the bug from the last two pushes.
-  // Turning "which lateral side she faces" while keeping the same
-  // nose-facing orientation needs an actual mirror, not a rotation —
-  // so this negates her Z scale (the board's lateral/width axis per
-  // the baking convention in preloadSkyboardTemplates, where +X is
-  // always the nose) instead of touching CHAR_MOUNT_YAW_OFFSET again.
-  // DoubleSide on her material below compensates for the mirror
-  // flipping triangle winding, which would otherwise cull the wrong
-  // faces and show her as partially invisible/inside-out.
-  CHAR.root.scale.set(CHAR.scaleForBoard, CHAR.scaleForBoard, -CHAR.scaleForBoard);
+  // Real bug found: the negative-Z "mirror" scale used here to flip which
+  // lateral side her chest faces (see the removed comment below for the
+  // original reasoning) is the leading suspect for the giant, localized
+  // limb-stretching seen in both real gameplay and the builder — a
+  // negative-determinant scale on a SKINNED mesh can break the GPU bone-
+  // skinning math (the orthogonality assumptions it relies on), which
+  // would explain individual limbs deforming to an enormous size while
+  // the root object's own scale property still reads back as correct
+  // (confirmed via the builder's debug panel: CHAR world scale exactly
+  // matched what was requested, yet she was still visibly oversized —
+  // a mismatch that only makes sense if the deformation is happening
+  // downstream of that root transform, i.e. in skinning). Switched to a
+  // plain positive uniform scale. This does mean the "which side her
+  // chest faces" fix from before is reverted for now — that'll need a
+  // different approach (mirroring the stance pose itself rather than
+  // the geometry) as a follow-up, but fixing this takes priority.
+  CHAR.root.scale.setScalar(CHAR.scaleForBoard);
   if(CHAR.skinnedMesh && CHAR.skinnedMesh.material){
     const mats = Array.isArray(CHAR.skinnedMesh.material) ? CHAR.skinnedMesh.material : [CHAR.skinnedMesh.material];
     mats.forEach(m=>{ if(m) m.side = THREE.DoubleSide; });
