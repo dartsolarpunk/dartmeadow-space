@@ -8698,7 +8698,7 @@ async function loadCharacterAssets(){
   // from Walking_Woman's very first frame (a natural mid-stride contact
   // pose, not a T-pose), narrow enough that _cropClip only captures that
   // one keyframe per track.
-  CHAR.clips.idle = walkClip ? _cropClip(walkClip, 0, 0.001, 'idle_held_pose') : null;
+  CHAR.clips.idle = walkClip ? _staticPoseClip(walkClip, 0, 'idle_held_pose') : null;
   // The source clip ("Step_Right_for_Exercise") is ~2.53s long and only
   // reads as a surfboard-riding stance for a short window in the middle —
   // the rest of it is the walk-up/walk-away part of the exercise move.
@@ -8811,6 +8811,29 @@ function _cropClip(clip, t0, t1, newName){
     return new TrackCtor(track.name, newTimes, newValues, track.getInterpolation());
   });
   return new THREE.AnimationClip(newName||(clip.name+'_crop'), t1-t0, tracks);
+}
+
+/* ── SINGLE-FRAME STATIC POSE FROM A CLIP ────────────────────────
+   Real bug avoided here: _cropClip's "too few keyframes in range"
+   fallback keeps the WHOLE original clip rather than break — correct
+   for its normal use (a crop that's meant to have a real duration),
+   but wrong for building a true single-frame held pose (idle), where
+   ending up with only 1 keyframe in range is the intended outcome, not
+   an error case. This samples the clip's actual interpolated pose at
+   time t (via a throwaway mixer) and bakes ONE keyframe per track, so
+   playing it just holds that exact pose forever — no motion, no
+   fallback-to-full-clip risk. */
+function _staticPoseClip(clip, t, newName){
+  const tracks = clip.tracks.map(track=>{
+    const stride = track.getValueSize();
+    // Sample via the track's own interpolant so we get the true
+    // interpolated pose at t, not just the nearest raw keyframe.
+    const interpolant = track.createInterpolant();
+    const sampled = interpolant.evaluate(t).slice(0, stride);
+    const TrackCtor = track.constructor;
+    return new TrackCtor(track.name, new Float32Array([0]), new Float32Array(sampled), track.getInterpolation());
+  });
+  return new THREE.AnimationClip(newName||(clip.name+'_pose'), 1/30, tracks);
 }
 
 function _reversedClipPreservingRoot(clip){
