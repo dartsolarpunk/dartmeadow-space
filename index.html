@@ -1274,6 +1274,12 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     <div style="position:absolute;inset:0;border-radius:50%;background:rgba(0,3,8,.6);border:1px solid rgba(91,127,255,.25);backdrop-filter:blur(8px);"></div>
     <div id="surf-move-knob" style="position:absolute;width:38px;height:38px;border-radius:50%;background:rgba(91,127,255,.18);border:1px solid rgba(91,127,255,.5);left:50%;top:50%;transform:translate(-50%,-50%);box-shadow:0 0 10px rgba(91,127,255,.3);"></div>
   </div>
+  <!-- Jump/Climb buttons — explicit presses only; jumping used to trigger
+       from a momentary onGround physics flicker with no button at all
+       (see updateSurface), so these are the real, only way to jump/climb
+       now. Stacked above the LOOK stick per direct placement request. -->
+  <button id="surf-jump-btn" style="position:absolute;bottom:calc(146px + var(--safe-bot));left:24px;width:66px;padding:7px 0;pointer-events:auto;background:rgba(91,127,255,.12);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.48rem;letter-spacing:.08em;cursor:pointer;border-radius:4px;text-align:center;">⬆ JUMP</button>
+  <button id="surf-climb-btn" style="position:absolute;bottom:calc(186px + var(--safe-bot));left:24px;width:66px;padding:7px 0;pointer-events:auto;background:rgba(255,196,0,.1);border:1px solid var(--gold);color:var(--gold);font-family:var(--font-hud);font-size:.48rem;letter-spacing:.08em;cursor:pointer;border-radius:4px;text-align:center;">⛰ CLIMB</button>
   <div style="position:absolute;bottom:calc(30px + var(--safe-bot));right:24px;width:100px;height:100px;pointer-events:auto;" id="surf-look-zone">
     <div style="position:absolute;top:-16px;left:50%;transform:translateX(-50%);font-family:var(--font-hud);font-size:.44rem;color:rgba(91,127,255,.4);letter-spacing:.08em;">MOVE</div>
     <div style="position:absolute;inset:0;border-radius:50%;background:rgba(0,3,8,.6);border:1px solid rgba(91,127,255,.25);backdrop-filter:blur(8px);"></div>
@@ -7820,6 +7826,7 @@ function updateVolumetricDust(dt){
 // ── 5. PROCEDURAL SURFACE WALK MODE ──────────────────────────────
 let surfaceActive=false,surfRenderer,surfScene,surfCamera,surfAnimId=null;
 let surfPlayer,surfKeys={},surfJoyMove={x:0,y:0},surfLookJoy={x:0,y:0},surfTime=0;
+let surfJumpPressed=false, surfClimbHeld=false; // explicit button state — jump/climb must never trigger from physics alone (see updateSurface)
 let _surfBody=null,_surfSite=null;
 function getSurfacePalette(body){
   const P={
@@ -9149,7 +9156,7 @@ function mountSkyboard(boardObj){
    by the planet-approach orbit view (openOrbitApproach), just aimed at
    her instead of a globe, and layered on top of the live flight/atmo
    render loop rather than opening a separate overlay/renderer. */
-let charOrbitActive=false, charOrbitYaw=0, charOrbitPitch=0.25, charOrbitDist=4.5;
+let charOrbitActive=false, charOrbitYaw=0, charOrbitPitch=0.25, charOrbitDist=9.0; // was 4.5 — too close on entry per feedback, now starts several yards back so the whole asset group is visible
 let _charOrbitDrag=null, _charOrbitPinch=null, _charOrbitListenersBound=false;
 
 function _charOrbitCanvas(){
@@ -9249,7 +9256,7 @@ function toggleCharOrbit(){
   });
   if(charOrbitActive){
     _bindCharOrbitListenersOnce();
-    charOrbitYaw=0; charOrbitPitch=0.25; charOrbitDist=4.5;
+    charOrbitYaw=0; charOrbitPitch=0.25; charOrbitDist=9.0; // matches the new default above
     try{toast('🔄 Orbit view — drag/scroll or pinch to look around, tap ORBIT again to exit',3200);}catch(e){}
   } else {
     _charOrbitDrag=null; _charOrbitPinch=null;
@@ -9354,7 +9361,7 @@ function enterSurface(body,site){
     }catch(e){console.warn('surf env:',e);}
   }
   // player proxy (first person — invisible; camera is the eyes)
-  surfPlayer={pos:new THREE.Vector3(0,3.2,8),vel:new THREE.Vector3(),yaw:0,pitch:0,grav:pal.grav,onGround:true};
+  surfPlayer={pos:new THREE.Vector3(0,3.2,8),vel:new THREE.Vector3(),yaw:0,pitch:0,grav:pal.grav,onGround:true,jumpActive:false};
 
   // Character — load once (cached in CHAR after first load), attach to
   // whichever surface scene is currently active. Position sync/animation
@@ -10388,7 +10395,7 @@ function updateCaustics(dt){
   c.putImageData(img,0,0);
   surfCausticTex.needsUpdate=true;
 }
-function _surfKeyDown(e){surfKeys[e.code]=true;}
+function _surfKeyDown(e){surfKeys[e.code]=true; if(e.code==='Space') surfJumpPressed=true;}
 function _surfKeyUp(e){surfKeys[e.code]=false;}
 function updateSurface(dt){
   const p=surfPlayer;if(!p)return;
@@ -10411,8 +10418,20 @@ function updateSurface(dt){
   p.pos.y+=p.vel.y*dt;
   const groundH=_surfHeight?_surfHeight(p.pos.x,p.pos.z):0;
   const eye=groundH+3.0;
-  if(p.pos.y<=eye){p.pos.y=eye;p.vel.y=0;p.onGround=true;}else p.onGround=false;
-  if((surfKeys['Space'])&&p.onGround){p.vel.y=6*Math.sqrt(p.grav);} // jump
+  if(p.pos.y<=eye){p.pos.y=eye;p.vel.y=0;p.onGround=true;p.jumpActive=false;}else p.onGround=false;
+  // Real bug found: this used to be `const jumping = !p.onGround`, checked
+  // every single frame in the character-sync block below — meaning ANY
+  // momentary airborne frame (walking downhill faster than gravity settles
+  // her, a small terrain height sampling blip, stepping off a ledge a few
+  // inches) would trigger the jump animation with zero connection to an
+  // actual button press. That's the "jumps from time to time" bug. Jumping
+  // now only ever starts from an explicit press (surfJumpPressed, set by
+  // the on-screen JUMP button or Space key), and once started stays active
+  // until she genuinely lands again — not re-derived from onGround each
+  // frame, so a single-frame physics flicker mid-jump can't cut it short
+  // or a flicker while walking can't start one unrequested.
+  if(surfJumpPressed && p.onGround){ p.vel.y=6*Math.sqrt(p.grav); p.jumpActive=true; }
+  surfJumpPressed=false; // consume the press — it's an edge-triggered action, not a held state
   // stream terrain LOD around the player (subdivide nearby, coarsen far)
   updateTerrainLOD(p.pos.x,p.pos.z);
   // ── Hovering companion board: trails beside & slightly behind the player,
@@ -10452,7 +10471,7 @@ function updateSurface(dt){
   //    one colocated with her mesh. Smoothed so it doesn't snap on
   //    sudden turns, and height/ground-clamped so it doesn't dip below
   //    terrain when following her downhill.
-  const followDist=4.2, followHeight=1.5;
+  const followDist=8.5, followHeight=3.2;
   const camTX=p.pos.x - fx*followDist, camTZ=p.pos.z - fz*followDist;
   const camGroundH=_surfHeight?_surfHeight(camTX,camTZ):groundH;
   const camTY=Math.max(eye+followHeight, camGroundH+followHeight+1.0);
@@ -10477,8 +10496,9 @@ function updateSurface(dt){
     const moving = Math.abs(mf)>0.05 || Math.abs(ms)>0.05;
     const running = moving && (surfKeys['ShiftLeft']||surfKeys['ShiftRight']);
     const dirSign = mf<-0.05 ? -1 : 1; // backing up (S / stick pulled back) plays the reversed cycle
-    const jumping = !p.onGround;
-    updateCharacterLocomotion(dt, moving, running, dirSign, jumping, false);
+    const jumping = p.jumpActive;
+    const climbing = surfClimbHeld;
+    updateCharacterLocomotion(dt, moving, running, dirSign, jumping, climbing);
   }
 }
 
@@ -10497,6 +10517,26 @@ function setupSurfaceJoysticks(){
   };
   mk('surf-move-zone','surf-move-knob',surfLookJoy,false);   // LEFT zone → LOOK
   mk('surf-look-zone','surf-look-knob',surfJoyMove,false);   // RIGHT zone → MOVE
+  // Jump: edge-triggered on press (consumed next physics step in
+  // updateSurface, same as the Space key). Climb: held-state toggle for
+  // now — full auto-detection of "she's facing a climbable slope" is a
+  // larger terrain-physics system to build separately; this at least
+  // gives explicit manual control in the meantime rather than nothing.
+  const jumpBtn=$('surf-jump-btn'), climbBtn=$('surf-climb-btn');
+  if(jumpBtn){
+    const press=e=>{ e.preventDefault(); surfJumpPressed=true; };
+    jumpBtn.addEventListener('touchstart',press,{passive:false});
+    jumpBtn.addEventListener('mousedown',press);
+  }
+  if(climbBtn){
+    const toggle=e=>{
+      e.preventDefault();
+      surfClimbHeld=!surfClimbHeld;
+      climbBtn.style.background = surfClimbHeld ? 'rgba(255,196,0,.35)' : 'rgba(255,196,0,.1)';
+    };
+    climbBtn.addEventListener('touchstart',toggle,{passive:false});
+    climbBtn.addEventListener('mousedown',toggle);
+  }
 }
 // Must run BEFORE disposeObject3D() on whatever scene currently holds the
 // Bird Shard, in every exit path — disposal destroys geometries/materials
