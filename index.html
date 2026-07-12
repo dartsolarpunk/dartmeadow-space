@@ -8555,18 +8555,29 @@ function _hideMiniLoader(){
 const CHAR_MOUNT_YAW_OFFSET = Math.PI/2;
 const CHAR_FILES = {
   mesh: 'Meshy_AI_T_Pose_Sentinel_biped_Character_output.glb',
-  walk: 'Meshy_AI_T_Pose_Sentinel_biped_Animation_Walking_Woman_without_skin.fbx',
-  run:  'Meshy_AI_T_Pose_Sentinel_biped_Animation_Running_without_skin.fbx',
-  jump: 'Meshy_AI_T_Pose_Sentinel_biped_Animation_Wall_Support_Jump_to_Ground_without_skin.fbx',
-  climbLoop:   'Meshy_AI_T_Pose_Sentinel_biped_Animation_Fast_Stair_Climb_without_skin.fbx',
-  climbFinish: 'Meshy_AI_T_Pose_Sentinel_biped_Animation_Ladder_Climb_Finish_without_skin.fbx',
-  // Justin's newest export — a GLB (mesh+skin+animation together, unlike
-  // the other clips above which are skin-less FBX) containing a
-  // "Step_Right_for_Exercise" clip. Only the animation is used from this
-  // file (see loadCharacterAssets) — the mesh/skin inside it is ignored
-  // since she already has her own skinned mesh from CHAR_FILES.mesh, and
-  // this clip's bone names/hierarchy match that same skeleton 1:1.
-  skyboardStanceSrc: 'Meshy_AI_T_Pose_Sentinel_biped_Animation_Step_Right_for_Exercise_withSkin.glb',
+  // Justin's newest export — every animation (walk/run/jump/climb/skyboard
+  // stance, plus a few unused extras) bundled into ONE glb, all baked from
+  // the same skeleton/pipeline that produced the confirmed-working skyboard
+  // stance clip. Replaces the old separate skin-less FBX files entirely —
+  // verified each clip's actual bone data (not just visually) before
+  // switching: sampled Hips/Head/foot world positions across the full
+  // duration of Walking_Woman, Running, Wall_Support_Jump_to_Ground,
+  // Fast_Stair_Climb, and Ladder_Climb_Finish, and all of them show clean,
+  // stable, in-place motion with no collapse/drift — the old FBX-based
+  // walk was producing a "falls over face-down" result that this data
+  // shows isn't inherent to the source animation, so it was almost
+  // certainly something specific to the old separate-file export/import
+  // path rather than the motion itself.
+  animSrc: 'Meshy_AI_T_Pose_Sentinel_biped_Meshy_AI_Meshy_Merged_Animations.glb',
+};
+// Maps our internal state names to the clip names actually inside animSrc.
+const CHAR_CLIP_NAMES = {
+  walk: 'Walking_Woman',
+  run: 'Running',
+  jump: 'Wall_Support_Jump_to_Ground',
+  climbLoop: 'Fast_Stair_Climb',
+  climbFinish: 'Ladder_Climb_Finish',
+  skyboard: 'Step_Right_for_Exercise',
 };
 const CHAR = {
   loaded:false, loading:false,
@@ -8652,32 +8663,42 @@ async function loadCharacterAssets(){
   }
   CHAR.mixer = new THREE.AnimationMixer(CHAR.root);
 
-  const loadFbxClip=(name)=>new Promise((res,rej)=>{
-    fbxLoader.load(CHAR_ASSET_BASE+CHAR_FILES[name], obj=>{
-      const clip = obj.animations && obj.animations[0];
-      res(clip||null);
-    }, undefined, rej);
+  // Single consolidated source for every clip now (see CHAR_FILES.animSrc /
+  // CHAR_CLIP_NAMES comments above) — one load instead of five separate
+  // FBX fetches, and every clip verified against real bone-position data
+  // before switching to this file.
+  const animGltf = await new Promise((res,rej)=>{
+    gltfLoader.load(CHAR_ASSET_BASE+CHAR_FILES.animSrc, res,
+      xhr=>{ if(xhr.lengthComputable) _loadStep('charAnims', xhr.loaded/xhr.total*0.9); }, rej);
   });
-  const [walkClip, runClip, jumpClip, climbLoopClip, climbFinishClip, skyboardSrcClip] = await Promise.all([
-    loadFbxClip('walk'), loadFbxClip('run'), loadFbxClip('jump'),
-    loadFbxClip('climbLoop'), loadFbxClip('climbFinish'),
-    // this one's a GLB (mesh+skin+anim together, not skin-less FBX like the
-    // others) — same skeleton/bone names, so its clip binds directly onto
-    // CHAR.root once loaded. We only want the animation; the mesh/skin
-    // inside this file is discarded (never added to any scene).
-    new Promise((res,rej)=>{
-      gltfLoader.load(CHAR_ASSET_BASE+CHAR_FILES.skyboardStanceSrc, g=>{
-        res((g.animations && g.animations[0]) || null);
-      }, undefined, e=>{ console.warn('skyboard stance clip failed to load:',e); res(null); });
-    })
-  ]);
+  const findClip = n => animGltf.animations.find(a=>a.name===n) || null;
+  const walkClip = findClip(CHAR_CLIP_NAMES.walk);
+  const runClip = findClip(CHAR_CLIP_NAMES.run);
+  const jumpClip = findClip(CHAR_CLIP_NAMES.jump);
+  const climbLoopClip = findClip(CHAR_CLIP_NAMES.climbLoop);
+  const climbFinishClip = findClip(CHAR_CLIP_NAMES.climbFinish);
+  const skyboardSrcClip = findClip(CHAR_CLIP_NAMES.skyboard);
+  ['walk','run','jump','climbLoop','climbFinish','skyboard'].forEach((k,i)=>{
+    if(![walkClip,runClip,jumpClip,climbLoopClip,climbFinishClip,skyboardSrcClip][i]) console.warn('Animation clip not found in merged GLB for state "'+k+'" (expected name "'+CHAR_CLIP_NAMES[k]+'") — check CHAR_CLIP_NAMES against the actual clip names in the file.');
+  });
 
   CHAR.clips.walk = walkClip;
   CHAR.clips.run = runClip;
   CHAR.clips.jump = jumpClip;           // forward-playing: falling -> landing (as authored)
-  CHAR.clips.jumpRise = _reversedClipPreservingRoot(jumpClip); // reversed: launch upward -> apex
+  CHAR.clips.jumpRise = jumpClip ? _reversedClipPreservingRoot(jumpClip) : null; // reversed: launch upward -> apex
   CHAR.clips.climbLoop = climbLoopClip;
   CHAR.clips.climbFinish = climbFinishClip;
+  // Real bug found: there was never an actual "idle" clip/pose anywhere in
+  // this codebase — CHAR.actions.idle was always undefined, so
+  // setCharState('idle',...) was a silent no-op for her actual bone poses
+  // (it would fade out whatever was previously playing but fade IN
+  // nothing), leaving every muscle at whatever the mixer's default bind
+  // pose is — a T-pose. That's the "default pose when standing still" bug.
+  // Synthesize a real held pose instead: a single-keyframe "clip" sampled
+  // from Walking_Woman's very first frame (a natural mid-stride contact
+  // pose, not a T-pose), narrow enough that _cropClip only captures that
+  // one keyframe per track.
+  CHAR.clips.idle = walkClip ? _cropClip(walkClip, 0, 0.001, 'idle_held_pose') : null;
   // The source clip ("Step_Right_for_Exercise") is ~2.53s long and only
   // reads as a surfboard-riding stance for a short window in the middle —
   // the rest of it is the walk-up/walk-away part of the exercise move.
@@ -8699,6 +8720,7 @@ async function loadCharacterAssets(){
     action.enabled = true;
     CHAR.actions[name] = action;
   });
+  if(CHAR.actions.idle) CHAR.actions.idle.setLoop(THREE.LoopRepeat, Infinity);
   if(CHAR.actions.climbFinish) CHAR.actions.climbFinish.setLoop(THREE.LoopOnce,1);
   if(CHAR.actions.jumpRise) CHAR.actions.jumpRise.setLoop(THREE.LoopOnce,1);
   if(CHAR.actions.jump) CHAR.actions.jump.setLoop(THREE.LoopOnce,1);
