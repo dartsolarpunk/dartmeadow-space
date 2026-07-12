@@ -2529,12 +2529,25 @@ function _syncBuilderCharacter(){
   boardGroup.add(CHAR.root);
   CHAR.mounted = true;
   CHAR.scene = builderScene;
-  CHAR.root.scale.set(CHAR.scaleForBoard, CHAR.scaleForBoard, -CHAR.scaleForBoard); // same mirror as mountSkyboard()
+  // Real bug found: CHAR.scaleForBoard is a fixed constant calibrated once
+  // against boardFlight's specific baked size in the real flight scene.
+  // The builder's board can be a completely different size — the
+  // procedural template has user-adjustable length/width sliders, and
+  // even the sculpted templates could change — so reusing that fixed
+  // constant here produced a rider scaled for a board that isn't the one
+  // actually in front of her, which is what made her loom huge over it.
+  // Compute her scale fresh from THIS board's actual measured length
+  // instead, using the same real-world ratio the game itself is built
+  // on (a ~6ft rider next to a ~2.8-3.0 unit board == 0.78 units tall).
+  const boardLen = Math.max(box.max.x-box.min.x, box.max.z-box.min.z) || 2.8;
+  const targetHeight = 0.78 * (boardLen/2.8);
+  const builderScaleForBoard = CHAR.rawHeight>0.001 ? clamp(targetHeight/CHAR.rawHeight, 0.02, 5) : CHAR.scaleForBoard;
+  CHAR.root.scale.set(builderScaleForBoard, builderScaleForBoard, -builderScaleForBoard); // same mirror as mountSkyboard()
   if(CHAR.skinnedMesh && CHAR.skinnedMesh.material){
     const mats = Array.isArray(CHAR.skinnedMesh.material) ? CHAR.skinnedMesh.material : [CHAR.skinnedMesh.material];
     mats.forEach(m=>{ if(m) m.side = THREE.DoubleSide; });
   }
-  CHAR.root.position.set(anchor.x, anchor.y + (CHAR.feetOffset||0)*CHAR.scaleForBoard, anchor.z);
+  CHAR.root.position.set(anchor.x, anchor.y + (CHAR.feetOffset||0)*builderScaleForBoard, anchor.z);
   CHAR.root.rotation.set(0, CHAR_MOUNT_YAW_OFFSET, 0);
   CHAR.root.visible = true;
   if(CHAR.state!=='skyboard') setCharState('skyboard',{fade:0.3, speed:SKYBOARD_ANIM_SPEED});
