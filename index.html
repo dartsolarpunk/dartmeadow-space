@@ -2474,8 +2474,16 @@ function initBuilderScene(){
     // Re-entering builder — force resize and rebuild
     setTimeout(()=>{
       const cv=$('builder-canvas');
-      const W=cv.offsetWidth||Math.max(100,window.innerWidth-310);
-      const H=cv.offsetHeight||window.innerHeight;
+      // Real bug found: same stale assumption as the main resize function
+      // below — this fallback assumed a fixed 300px+10px sidebar always
+      // eats into window width, which is wrong now that the sidebar is
+      // an off-canvas drawer on narrow screens. Re-entering the builder
+      // (exactly what happens on repeated menu<->builder testing) runs
+      // this path every time, so a bad fallback here would reproduce
+      // reliably rather than being a rare one-off.
+      const vpEl = document.getElementById('builder-viewport');
+      const W=cv.offsetWidth||(vpEl&&vpEl.offsetWidth)||window.innerWidth;
+      const H=cv.offsetHeight||(vpEl&&vpEl.offsetHeight)||window.innerHeight;
       if(W>10&&H>10){builderRenderer.setSize(W,H);builderCamera.aspect=W/H;builderCamera.updateProjectionMatrix();}
       _rebuildBoard();
     },50);
@@ -2502,10 +2510,23 @@ function initBuilderScene(){
   builderScene.add(new THREE.Points(sg,new THREE.PointsMaterial({size:0.12,sizeAttenuation:true,vertexColors:true})));
   boardGroup=new THREE.Group();builderScene.add(boardGroup);
   try{readBoardConfig();renderPartPanels();_rebuildBoard();}catch(e){console.error("Board build error:",e);}
-  // Force initial size — screen may have just become visible
+  // Real bug found: this fallback used to assume a fixed 300px+10px
+  // sidebar was ALWAYS eaten out of window width — true under the old
+  // permanent-column layout, but wrong now that the sidebar is an
+  // off-canvas drawer on narrow screens (the viewport is full width
+  // there). If cv.offsetWidth was ever momentarily 0 (a real
+  // possibility during layout/orientation changes, which is exactly
+  // when this fallback actually matters), that stale subtraction
+  // produced an artificially tiny width against a tall screen height —
+  // a badly distorted aspect ratio that stretches everything to fill
+  // the frame, which is exactly the "giant, fills the whole screen"
+  // symptom despite every actual 3D number (scale, position) being
+  // provably correct. Use the real current viewport element's width
+  // instead of a stale hardcoded assumption.
   function resizeBuilderRenderer(){
-    const W=cv.offsetWidth||Math.max(100,window.innerWidth-310);
-    const H=cv.offsetHeight||window.innerHeight;
+    const vpEl = document.getElementById('builder-viewport');
+    const W=cv.offsetWidth||(vpEl&&vpEl.offsetWidth)||window.innerWidth;
+    const H=cv.offsetHeight||(vpEl&&vpEl.offsetHeight)||window.innerHeight;
     if(W>10&&H>10&&(builderRenderer.domElement.width!==W||builderRenderer.domElement.height!==H)){
       builderRenderer.setSize(W,H);builderCamera.aspect=W/H;builderCamera.updateProjectionMatrix();
     }
@@ -2646,7 +2667,9 @@ function _syncBuilderCharacter(){
     'template: '+(STATE.boardConfig&&STATE.boardConfig.template)+'\n'+
     'anchor(local): '+anchor.x.toFixed(3)+','+anchor.y.toFixed(3)+','+anchor.z.toFixed(3)+'\n'+
     'board world size: '+_boardSize.x.toFixed(3)+','+_boardSize.y.toFixed(3)+','+_boardSize.z.toFixed(3)+'\n'+
-    'camera dist to char: '+builderCamera.position.distanceTo(_wp).toFixed(3);
+    'camera dist to char: '+builderCamera.position.distanceTo(_wp).toFixed(3)+'\n'+
+    'camera aspect: '+builderCamera.aspect.toFixed(3)+'\n'+
+    'canvas px: '+builderRenderer.domElement.width+'x'+builderRenderer.domElement.height;
 }
 function toggleBuilderCharacter(){
   BUILDER_SHOW_CHAR = !BUILDER_SHOW_CHAR;
