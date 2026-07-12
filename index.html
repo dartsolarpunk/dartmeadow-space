@@ -939,7 +939,6 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
         <div style="display:flex;gap:6px;margin:4px 0 8px;">
           <button type="button" id="tmpl-B" class="tmpl-btn" onclick="setBoardTemplate('B')">SKYBOARD B</button>
           <button type="button" id="tmpl-A" class="tmpl-btn" onclick="setBoardTemplate('A')">SKYBOARD A</button>
-          <button type="button" id="tmpl-proc" class="tmpl-btn" onclick="setBoardTemplate('procedural')">PROCEDURAL</button>
         </div>
         <div id="zone-colors" style="display:none;">
           <span class="sec-label">Part Customization</span>
@@ -947,8 +946,18 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
           <div id="part-styles"><div style="font-size:0.58rem;color:var(--text-dim);padding:6px 0;">Loading skyboard parts…</div></div>
           <div class="ctrl-row"><label>Glow Intensity</label><input type="range" id="z-glow" min="0" max="1" step="0.05" value="0.3" oninput="onZoneColor()"><span class="val" id="v-zglow">0.30</span></div>
           <div class="ctrl-row"><label>Metalness</label><input type="range" id="z-metal" min="0" max="1" step="0.05" value="0.6" oninput="onZoneColor()"><span class="val" id="v-zmetal">0.60</span></div>
-          <div style="font-size:0.58rem;color:var(--text-dim);line-height:1.5;padding:4px 0;">Every named part of the sculpted Nomad model is individually paintable — solid, linear, or radial gradients with up to 3 color stops. The procedural shape controls below apply only to the PROCEDURAL template.</div>
+          <div style="font-size:0.58rem;color:var(--text-dim);line-height:1.5;padding:4px 0;">Every named part of the sculpted Nomad model is individually paintable — solid, linear, or radial gradients with up to 3 color stops.</div>
         </div>
+        <!-- Procedural template removed per request — these controls only
+             ever applied to that template, which is no longer selectable.
+             Left in the DOM (hidden) rather than deleted outright: the
+             internal procedural build path still exists purely as an
+             invisible fallback (e.g. a moment where a GLB hasn't finished
+             loading yet), and a lot of other code reads these input
+             elements' .value directly — ripping them out would mean
+             hunting down and safely stubbing every one of those reads too,
+             which is a lot riskier than just hiding the panel. -->
+        <div id="procedural-only-controls" style="display:none;">
         <span class="sec-label">Hull — Center Body</span>
         <div class="ctrl-row"><label>Length</label><input type="range" id="b-length" min="1.2" max="4.5" step="0.1" value="2.8" oninput="rb()"><span class="val" id="v-length">2.8m</span></div>
         <div class="ctrl-row"><label>Width</label><input type="range" id="b-width" min="0.25" max="1.2" step="0.05" value="0.5" oninput="rb()"><span class="val" id="v-width">0.50m</span></div>
@@ -971,6 +980,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
         <div class="ctrl-row"><label>Emissive</label><input type="color" id="b-emit" value="#00f5ff" oninput="rb()"></div>
         <div class="ctrl-row"><label>Glow</label><input type="range" id="b-glow" min="0" max="1" step="0.05" value="0.3" oninput="rb()"><span class="val" id="v-glow">0.30</span></div>
         <div class="ctrl-row"><label>Metalness</label><input type="range" id="b-metal" min="0" max="1" step="0.05" value="0.85" oninput="rb()"><span class="val" id="v-metal">0.85</span></div>
+        </div>
       </div>
       <!-- MARKINGS -->
       <div class="tab-panel" id="btab-gfx">
@@ -1592,6 +1602,13 @@ function buildSaveData(slot){
 function loadSaveData(data){
   if(!data||data.v!==SAVE_VERSION){toast('Invalid profile file','warn');return false;}
   Object.assign(STATE.boardConfig,data.board);
+  // Real bug found: procedural template has been removed as a selectable
+  // option, but a save made while it was still active would have
+  // template:'procedural' baked into data.board — Object.assign above
+  // would load that right back in on every future launch regardless of
+  // the in-code default, which is almost certainly what caused the
+  // white screen to survive a full page reload. Sanitize on load.
+  if(!STATE.boardConfig.template || STATE.boardConfig.template==='procedural') STATE.boardConfig.template='B';
   if(data.flight){
     STATE.flight.pos.set(data.flight.pos.x,data.flight.pos.y,data.flight.pos.z);
     STATE.flight.destIdx=data.flight.destIdx||0;
@@ -2399,10 +2416,11 @@ function onNameChange(){STATE.boardConfig.name=($('board-name-input').value||'')
 // GLB templates (A = Skyboard_A parts pack, B = full extraction). Shows the
 // zone-color panel for GLB templates and rebuilds the preview.
 function setBoardTemplate(key){
+  if(key==='procedural') key='B'; // procedural removed as a selectable template — see comments near the builder UI markup
   STATE.boardConfig.template=key;
-  ['proc','A','B'].forEach(k=>{const b=$('tmpl-'+k);if(b)b.classList.toggle('active',(k==='proc'?'procedural':k)===key);});
-  const zc=$('zone-colors');if(zc)zc.style.display=(key==='procedural')?'none':'block';
-  if(key!=='procedural'){try{preloadSkyboardTemplates();}catch(e){}}
+  ['A','B'].forEach(k=>{const b=$('tmpl-'+k);if(b)b.classList.toggle('active',k===key);});
+  const zc=$('zone-colors');if(zc)zc.style.display='block'; // always a GLB template now
+  try{preloadSkyboardTemplates();}catch(e){}
   try{renderPartPanels();}catch(e){}
   rb();
 }
@@ -2892,7 +2910,7 @@ function applyBoardPreset(name){
     cruiser:{length:2.4,width:0.95,thick:0.12,nose:0.4,nosetip:.06,noseflare:.6,shard:.55,shardang:32,shardw:.08,col1:'#1a1000',emit:'#f5c400',glow:.28,metal:.75,staffIdx:2},
     void:{length:3.3,width:0.44,thick:0.07,nose:0.9,nosetip:.02,noseflare:.35,shard:.42,shardang:10,shardw:.05,col1:'#080010',emit:'#b060ff',glow:.55,metal:.96,staffIdx:4},
     celestial:{length:2.6,width:0.68,thick:0.09,nose:0.55,nosetip:.04,noseflare:.55,shard:.68,shardang:38,shardw:.07,col1:'#0a1520',emit:'#ffffff',glow:.85,metal:.82,staffIdx:2}};
-  const p=P[name];if(!p)return;Object.assign(STATE.boardConfig,p);syncSlidersToBoardConfig();_rebuildBoard();toast('Preset: '+name.toUpperCase());
+  const p=P[name];if(!p)return;Object.assign(STATE.boardConfig,p);if(STATE.boardConfig.template==='procedural')STATE.boardConfig.template='B';syncSlidersToBoardConfig();_rebuildBoard();toast('Preset: '+name.toUpperCase());
 }
 
 // ══════════════════════════════════════════════════════════════
