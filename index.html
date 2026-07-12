@@ -1279,6 +1279,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
        (see updateSurface), so these are the real, only way to jump/climb
        now. Stacked above the LOOK stick per direct placement request. -->
   <button id="surf-jump-btn" style="position:absolute;bottom:calc(146px + var(--safe-bot));left:24px;width:66px;padding:7px 0;pointer-events:auto;background:rgba(91,127,255,.12);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.48rem;letter-spacing:.08em;cursor:pointer;border-radius:4px;text-align:center;">⬆ JUMP</button>
+  <button id="surf-run-btn" style="position:absolute;bottom:calc(146px + var(--safe-bot));left:96px;width:66px;padding:7px 0;pointer-events:auto;background:rgba(0,255,150,.08);border:1px solid #00ff96;color:#00ff96;font-family:var(--font-hud);font-size:.48rem;letter-spacing:.08em;cursor:pointer;border-radius:4px;text-align:center;">🏃 RUN</button>
   <button id="surf-climb-btn" style="position:absolute;bottom:calc(186px + var(--safe-bot));left:24px;width:66px;padding:7px 0;pointer-events:auto;background:rgba(255,196,0,.1);border:1px solid var(--gold);color:var(--gold);font-family:var(--font-hud);font-size:.48rem;letter-spacing:.08em;cursor:pointer;border-radius:4px;text-align:center;">⛰ CLIMB</button>
   <div style="position:absolute;bottom:calc(30px + var(--safe-bot));right:24px;width:100px;height:100px;pointer-events:auto;" id="surf-look-zone">
     <div style="position:absolute;top:-16px;left:50%;transform:translateX(-50%);font-family:var(--font-hud);font-size:.44rem;color:rgba(91,127,255,.4);letter-spacing:.08em;">MOVE</div>
@@ -7826,7 +7827,7 @@ function updateVolumetricDust(dt){
 // ── 5. PROCEDURAL SURFACE WALK MODE ──────────────────────────────
 let surfaceActive=false,surfRenderer,surfScene,surfCamera,surfAnimId=null;
 let surfPlayer,surfKeys={},surfJoyMove={x:0,y:0},surfLookJoy={x:0,y:0},surfTime=0;
-let surfJumpPressed=false, surfClimbHeld=false; // explicit button state — jump/climb must never trigger from physics alone (see updateSurface)
+let surfJumpPressed=false, surfClimbHeld=false, surfRunToggle=false; // explicit button state — jump/climb must never trigger from physics alone (see updateSurface); run is a plain on/off toggle
 let _surfBody=null,_surfSite=null;
 function getSurfacePalette(body){
   const P={
@@ -10494,7 +10495,7 @@ function updateSurface(dt){
     CHAR.root.position.set(p.pos.x, eye-3.0, p.pos.z);
     CHAR.root.rotation.y = p.yaw - Math.PI/2;
     const moving = Math.abs(mf)>0.05 || Math.abs(ms)>0.05;
-    const running = moving && (surfKeys['ShiftLeft']||surfKeys['ShiftRight']);
+    const running = moving && (surfRunToggle || surfKeys['ShiftLeft']||surfKeys['ShiftRight']);
     const dirSign = mf<-0.05 ? -1 : 1; // backing up (S / stick pulled back) plays the reversed cycle
     const jumping = p.jumpActive;
     const climbing = surfClimbHeld;
@@ -10522,7 +10523,16 @@ function setupSurfaceJoysticks(){
   // now — full auto-detection of "she's facing a climbable slope" is a
   // larger terrain-physics system to build separately; this at least
   // gives explicit manual control in the meantime rather than nothing.
-  const jumpBtn=$('surf-jump-btn'), climbBtn=$('surf-climb-btn');
+  const jumpBtn=$('surf-jump-btn'), climbBtn=$('surf-climb-btn'), runBtn=$('surf-run-btn');
+  if(runBtn){
+    const toggle=e=>{
+      e.preventDefault();
+      surfRunToggle=!surfRunToggle;
+      runBtn.style.background = surfRunToggle ? 'rgba(0,255,150,.4)' : 'rgba(0,255,150,.08)';
+    };
+    runBtn.addEventListener('touchstart',toggle,{passive:false});
+    runBtn.addEventListener('mousedown',toggle);
+  }
   if(jumpBtn){
     const press=e=>{ e.preventDefault(); surfJumpPressed=true; };
     jumpBtn.addEventListener('touchstart',press,{passive:false});
