@@ -1788,7 +1788,7 @@ function launchFlight(){
         // rebuilt, detach her first or she'd be silently lost (still
         // parented to an object no longer in any scene).
         const _wasMounted = CHAR.mounted;
-        if(CHAR.loaded && CHAR.root && CHAR.root.parent===boardFlight) CHAR.root.parent.remove(CHAR.root);
+        if(CHAR.loaded && CHAR.wrapper && CHAR.wrapper.parent===boardFlight) CHAR.wrapper.parent.remove(CHAR.wrapper);
         if(boardFlight&&flightScene)flightScene.remove(boardFlight);
         boardFlight=buildBoardMesh();
         _builtBoardTemplate=colorSig;
@@ -2553,7 +2553,7 @@ function initBuilderScene(){
         }
       });
     }
-    if(BUILDER_SHOW_CHAR && CHAR.loaded && CHAR.root && CHAR.root.parent===boardGroup){
+    if(BUILDER_SHOW_CHAR && CHAR.loaded && CHAR.wrapper && CHAR.wrapper.parent===boardGroup){
       try{ CHAR.mixer && CHAR.mixer.update(1/60); }catch(e){}
       try{ applySkyboardHeadOverride(); }catch(e){}
     }
@@ -2580,7 +2580,7 @@ function initBuilderScene(){
 function _syncBuilderCharacter(){
   if(!boardGroup) return;
   if(!BUILDER_SHOW_CHAR){
-    if(CHAR.root && CHAR.root.parent===boardGroup) boardGroup.remove(CHAR.root);
+    if(CHAR.wrapper && CHAR.wrapper.parent===boardGroup) boardGroup.remove(CHAR.wrapper);
     return;
   }
   if(!CHAR.loaded){
@@ -2619,18 +2619,18 @@ function _syncBuilderCharacter(){
     builderScaleForBoard = CHAR.rawHeight>0.001 ? clamp(targetHeight/CHAR.rawHeight, 0.02, 5) : CHAR.scaleForBoard;
   }
   if(!anchor) return;
-  if(CHAR.root.parent && CHAR.root.parent!==boardGroup) CHAR.root.parent.remove(CHAR.root);
-  boardGroup.add(CHAR.root);
+  if(CHAR.wrapper.parent && CHAR.wrapper.parent!==boardGroup) CHAR.wrapper.parent.remove(CHAR.wrapper);
+  boardGroup.add(CHAR.wrapper);
   CHAR.mounted = true;
   CHAR.scene = builderScene;
-  CHAR.root.scale.setScalar(builderScaleForBoard); // was a negative-Z mirror (same as mountSkyboard()) - removed, suspected cause of the giant-limb skinning distortion; see the note at the mountSkyboard() copy of this line
+  CHAR.wrapper.scale.setScalar(builderScaleForBoard); // was a negative-Z mirror (same as mountSkyboard()) - removed, suspected cause of the giant-limb skinning distortion; see the note at the mountSkyboard() copy of this line
   if(CHAR.skinnedMesh && CHAR.skinnedMesh.material){
     const mats = Array.isArray(CHAR.skinnedMesh.material) ? CHAR.skinnedMesh.material : [CHAR.skinnedMesh.material];
     mats.forEach(m=>{ if(m) m.side = THREE.DoubleSide; });
   }
-  CHAR.root.position.set(anchor.x, anchor.y + (CHAR.feetOffset||0)*builderScaleForBoard, anchor.z);
-  CHAR.root.rotation.set(0, CHAR_MOUNT_YAW_OFFSET, 0);
-  CHAR.root.visible = true;
+  CHAR.wrapper.position.set(anchor.x, anchor.y + (CHAR.feetOffset||0)*builderScaleForBoard, anchor.z);
+  CHAR.wrapper.rotation.set(0, CHAR_MOUNT_YAW_OFFSET, 0);
+  CHAR.wrapper.visible = true;
   if(CHAR.state!=='skyboard') setCharState('skyboard',{fade:0.3, speed:SKYBOARD_ANIM_SPEED});
   // Real, visible diagnostic — the rawHeight/scaleForBoard fix corrected
   // the INPUT numbers (confirmed: rawHeight now reads 1.7, scaleForBoard
@@ -2642,7 +2642,7 @@ function _syncBuilderCharacter(){
   // instead of needing another guess.
   boardGroup.updateMatrixWorld(true);
   const _wp = new THREE.Vector3(), _wq = new THREE.Quaternion(), _ws = new THREE.Vector3();
-  CHAR.root.matrixWorld.decompose(_wp, _wq, _ws);
+  CHAR.wrapper.matrixWorld.decompose(_wp, _wq, _ws);
   const _boardObj = isGLB ? boardGroup.children[0] : boardGroup;
   const _boardBox = new THREE.Box3().setFromObject(_boardObj);
   const _boardSize = new THREE.Vector3(); _boardBox.getSize(_boardSize);
@@ -8714,7 +8714,7 @@ function _atmoCleanup(){
   // about to be disposed. Detach her first so she survives parent-less;
   // enterSurface() (landing) or the space-flight resume path re-attaches
   // her wherever's appropriate next.
-  if(CHAR.loaded && CHAR.root && CHAR.root.parent) CHAR.root.parent.remove(CHAR.root);
+  if(CHAR.loaded && CHAR.wrapper && CHAR.wrapper.parent) CHAR.wrapper.parent.remove(CHAR.wrapper);
   if(atmoScene)disposeObject3D(atmoScene); // free terrain/water/skyboard GPU memory (see disposeObject3D)
   if(atmoRenderer)atmoRenderer.dispose();
   atmoScene=null;atmoBoard=null;atmoState=null;
@@ -8856,7 +8856,8 @@ const CHAR_CLIP_NAMES = {
 };
 const CHAR = {
   loaded:false, loading:false,
-  root:null,            // THREE.Group — the loaded character, parented into whichever scene is active
+  root:null,            // THREE.Group — the loaded character itself. Permanently fixed at identity transform once loaded (see loadCharacterAssets); never repositioned/rescaled/reparented again after setup.
+  wrapper:null,          // THREE.Group — the ONLY thing every scene actually positions/scales/parents. Contains CHAR.root as its one permanent child. This isolation is what keeps repeated mount/dismount/rebuild cycles from ever perturbing her own rig.
   skeleton:null, bones:{},   // name -> THREE.Bone, for direct procedural pose control
   mixer:null,
   clips:{},              // name -> THREE.AnimationClip
@@ -8913,6 +8914,22 @@ async function loadCharacterAssets(){
       o.scale.set(1,1,1);
     }
   });
+  // Architectural fix, per direct request: wrap the loaded character in a
+  // permanent outer group, and from this point on every scene positions/
+  // scales/parents THAT wrapper — never CHAR.root itself again. CHAR.root
+  // (and everything inside it: mesh, skeleton, bones) stays at a fixed
+  // identity transform for the rest of the session. Every mount/dismount/
+  // rebuild cycle across flight, atmo, surface, and the builder was
+  // previously mutating CHAR.root's own scale/position repeatedly — the
+  // same object that's also the skinning reference for her bones. This
+  // isolates "how big/where she appears in a given scene" from "her own
+  // internal rig integrity" completely, so no amount of remounting can
+  // ever again perturb the skeleton itself.
+  CHAR.wrapper = new THREE.Group();
+  CHAR.wrapper.add(CHAR.root);
+  CHAR.root.position.set(0,0,0);
+  CHAR.root.rotation.set(0,0,0);
+  CHAR.root.scale.set(1,1,1);
   CHAR.root.traverse(o=>{
     // o.isBone is the standard GLTFLoader flag, but fall back to
     // checking the node type/name directly in case this particular
@@ -9065,7 +9082,7 @@ async function loadCharacterAssets(){
     'scaleForTerrain:',CHAR.scaleForTerrain.toFixed(4),
     '— if rawHeight looks wildly different from ~1.8-3 (a roughly-human-scale T-pose), the GLB\'s native units are not what was assumed and this calibration needs revisiting with that real number.');
 
-  CHAR.root.visible = false; // stays hidden until mountSkyboard()/dismountSkyboard() actually places her correctly — otherwise she's visible at whatever fallback position for however long loading + mounting takes
+  CHAR.wrapper.visible = false; // stays hidden until mountSkyboard()/dismountSkyboard() actually places her correctly — otherwise she's visible at whatever fallback position for however long loading + mounting takes
   CHAR.loaded = true; CHAR.loading = false;
 }
 
@@ -9322,8 +9339,8 @@ function finishClimb(onComplete){
 function boardMountSequence(targetBoard, hostScene, onComplete){
   if(!CHAR.loaded || !CHAR.root || !targetBoard || !hostScene){ onComplete&&onComplete(); return; }
   CHAR._transitioning = true;
-  const startPos = new THREE.Vector3(); CHAR.root.getWorldPosition(startPos);
-  const startYaw = CHAR.root.rotation.y;
+  const startPos = new THREE.Vector3(); CHAR.wrapper.getWorldPosition(startPos);
+  const startYaw = CHAR.wrapper.rotation.y;
   const boardWP = new THREE.Vector3(); targetBoard.getWorldPosition(boardWP);
   const boardScale = targetBoard.scale.x||1;
   const anchor = targetBoard.userData.deckAnchor || {x:0,y:0,z:0.1};
@@ -9332,10 +9349,10 @@ function boardMountSequence(targetBoard, hostScene, onComplete){
   const endYaw = targetBoard.rotation.y + CHAR_MOUNT_YAW_OFFSET;
   // She needs to be a direct child of the host scene (not the board, not
   // her old parent) to move freely through world space during the hop.
-  if(CHAR.root.parent) CHAR.root.parent.remove(CHAR.root);
-  CHAR.root.position.copy(startPos);
-  hostScene.add(CHAR.root);
-  CHAR.root.scale.setScalar(CHAR.scaleForBoard); // normal (unmirrored) during the hop — the mirror is a mounted-only correction, applied by mountSkyboard() at the end
+  if(CHAR.wrapper.parent) CHAR.wrapper.parent.remove(CHAR.wrapper);
+  CHAR.wrapper.position.copy(startPos);
+  hostScene.add(CHAR.wrapper);
+  CHAR.wrapper.scale.setScalar(CHAR.scaleForBoard); // normal (unmirrored) during the hop — the mirror is a mounted-only correction, applied by mountSkyboard() at the end
   setCharState('jumpRise',{fade:0.15, speed:0.7});
   const action = CHAR.actions.jumpRise;
   const dur = action ? action.getClip().duration/0.7 : 0.9;
@@ -9343,9 +9360,9 @@ function boardMountSequence(targetBoard, hostScene, onComplete){
   (function step(){
     const t = Math.min(1,(performance.now()-t0)/(dur*1000));
     const e = t*t*(3-2*t);
-    CHAR.root.position.lerpVectors(startPos, endPos, e);
+    CHAR.wrapper.position.lerpVectors(startPos, endPos, e);
     let dy = endYaw - startYaw; while(dy>Math.PI)dy-=2*Math.PI; while(dy<-Math.PI)dy+=2*Math.PI;
-    CHAR.root.rotation.y = startYaw + dy*e;
+    CHAR.wrapper.rotation.y = startYaw + dy*e;
     if(t<1){ requestAnimationFrame(step); }
     else {
       CHAR._transitioning = false;
@@ -9357,14 +9374,14 @@ function boardMountSequence(targetBoard, hostScene, onComplete){
 function boardDismountSequence(hostScene, groundY, onComplete){
   if(!CHAR.loaded || !CHAR.root || !hostScene){ onComplete&&onComplete(); return; }
   CHAR._transitioning = true;
-  const startPos = new THREE.Vector3(); CHAR.root.getWorldPosition(startPos);
-  const startYaw = CHAR.root.rotation.y;
+  const startPos = new THREE.Vector3(); CHAR.wrapper.getWorldPosition(startPos);
+  const startYaw = CHAR.wrapper.rotation.y;
   const endPos = new THREE.Vector3(startPos.x, groundY, startPos.z);
-  if(CHAR.root.parent) CHAR.root.parent.remove(CHAR.root);
-  CHAR.root.position.copy(startPos);
-  CHAR.root.rotation.set(0, startYaw, 0);
-  CHAR.root.scale.setScalar(CHAR.scaleForBoard); // drop the mounted-only mirror — she's walking normally again after this
-  hostScene.add(CHAR.root);
+  if(CHAR.wrapper.parent) CHAR.wrapper.parent.remove(CHAR.wrapper);
+  CHAR.wrapper.position.copy(startPos);
+  CHAR.wrapper.rotation.set(0, startYaw, 0);
+  CHAR.wrapper.scale.setScalar(CHAR.scaleForBoard); // drop the mounted-only mirror — she's walking normally again after this
+  hostScene.add(CHAR.wrapper);
   CHAR.mounted = false;
   setCharState('jump',{fade:0.15, speed:0.7, force:true}); // forward half of the pair = fall/land, used here as "step down"
   const action = CHAR.actions.jump;
@@ -9373,7 +9390,7 @@ function boardDismountSequence(hostScene, groundY, onComplete){
   (function step(){
     const t = Math.min(1,(performance.now()-t0)/(dur*1000));
     const e = t*t*(3-2*t);
-    CHAR.root.position.lerpVectors(startPos, endPos, e);
+    CHAR.wrapper.position.lerpVectors(startPos, endPos, e);
     if(t<1){ requestAnimationFrame(step); }
     else {
       CHAR._transitioning = false;
@@ -9393,8 +9410,8 @@ function mountSkyboard(boardObj){
   if(!CHAR.root || !boardObj) return;
   setCharState('idle',{fade:0.2}); // brief settle before the procedural pose takes over
   CHAR.mounted = true;
-  const worldPos = new THREE.Vector3(); CHAR.root.getWorldPosition(worldPos);
-  boardObj.add(CHAR.root);
+  const worldPos = new THREE.Vector3(); CHAR.wrapper.getWorldPosition(worldPos);
+  boardObj.add(CHAR.wrapper);
   // Real bug found: the negative-Z "mirror" scale used here to flip which
   // lateral side her chest faces (see the removed comment below for the
   // original reasoning) is the leading suspect for the giant, localized
@@ -9411,7 +9428,7 @@ function mountSkyboard(boardObj){
   // chest faces" fix from before is reverted for now — that'll need a
   // different approach (mirroring the stance pose itself rather than
   // the geometry) as a follow-up, but fixing this takes priority.
-  CHAR.root.scale.setScalar(CHAR.scaleForBoard);
+  CHAR.wrapper.scale.setScalar(CHAR.scaleForBoard);
   if(CHAR.skinnedMesh && CHAR.skinnedMesh.material){
     const mats = Array.isArray(CHAR.skinnedMesh.material) ? CHAR.skinnedMesh.material : [CHAR.skinnedMesh.material];
     mats.forEach(m=>{ if(m) m.side = THREE.DoubleSide; });
@@ -9424,13 +9441,13 @@ function mountSkyboard(boardObj){
   // near an arbitrary export pivot, nowhere close to the actual deck.
   // Use the board's real measured anchor instead.
   const anchor = boardObj.userData.deckAnchor || {x:0,y:0,z:0.1};
-  CHAR.root.position.set(anchor.x, anchor.y + (CHAR.feetOffset||0)*CHAR.scaleForBoard, anchor.z);
+  CHAR.wrapper.position.set(anchor.x, anchor.y + (CHAR.feetOffset||0)*CHAR.scaleForBoard, anchor.z);
   // -PI/2 is confirmed correct now — do not flip this again without an
   // actual live screenshot; the last two rounds of "fixing" this were
   // both wrong guesses. The remaining left/right issue is the mirror
   // above, not this rotation.
-  CHAR.root.rotation.set(0, CHAR_MOUNT_YAW_OFFSET, 0);
-  CHAR.root.visible = true;
+  CHAR.wrapper.rotation.set(0, CHAR_MOUNT_YAW_OFFSET, 0);
+  CHAR.wrapper.visible = true;
   _loadStep('mounted', 1);
   if(!CHAR._confirmedMountToast){
     CHAR._confirmedMountToast = true;
@@ -9470,14 +9487,14 @@ function _updateCharDebugHUD(){
   const show = !!GFX.showCharDebug;
   el.style.display = show ? 'block' : 'none';
   if(!show) return; // skip the text update too when hidden — no point doing the work
-  const parent = CHAR.root && CHAR.root.parent ? (CHAR.root.parent.name || ('obj:'+CHAR.root.parent.uuid.slice(0,6))) : 'NONE';
-  const p = CHAR.root ? CHAR.root.position : null;
+  const parent = CHAR.wrapper && CHAR.wrapper.parent ? (CHAR.wrapper.parent.name || ('obj:'+CHAR.wrapper.parent.uuid.slice(0,6))) : 'NONE';
+  const p = CHAR.wrapper ? CHAR.wrapper.position : null;
   el.textContent =
     'mounted: '+CHAR.mounted+'\n'+
     'state: '+CHAR.state+'\n'+
     'bones: '+Object.keys(CHAR.bones||{}).length+'\n'+
     'parent: '+parent+'\n'+
-    'visible: '+(CHAR.root?CHAR.root.visible:'-')+'\n'+
+    'visible: '+(CHAR.wrapper?CHAR.wrapper.visible:'-')+'\n'+
     'localPos: '+(p?p.x.toFixed(2)+','+p.y.toFixed(2)+','+p.z.toFixed(2):'-');
 }
 
@@ -9492,7 +9509,7 @@ function updateCharOrbitCamera(){
   // the surface she's never "mounted" (she's walking, board just trails
   // beside her), so orbiting around her CHAR.root directly is correct
   // there too, same as the mounted case.
-  if(CHAR.loaded && CHAR.root && (CHAR.mounted || surfaceActive)){ CHAR.root.getWorldPosition(target); target.y += 0.35; }
+  if(CHAR.loaded && CHAR.wrapper && (CHAR.mounted || surfaceActive)){ CHAR.wrapper.getWorldPosition(target); target.y += 0.35; }
   else if(atmoActive && atmoBoard){ atmoBoard.getWorldPosition(target); }
   else if(boardFlight){ boardFlight.getWorldPosition(target); }
   else return;
@@ -9558,10 +9575,10 @@ function toggleCharOrbit(){
 
 function dismountSkyboard(targetScene, worldPos){
   if(!CHAR.root) return;
-  const wp = new THREE.Vector3(); CHAR.root.getWorldPosition(wp);
-  if(targetScene) targetScene.add(CHAR.root);
-  CHAR.root.position.copy(worldPos || wp);
-  CHAR.root.visible = true;
+  const wp = new THREE.Vector3(); CHAR.wrapper.getWorldPosition(wp);
+  if(targetScene) targetScene.add(CHAR.wrapper);
+  CHAR.wrapper.position.copy(worldPos || wp);
+  CHAR.wrapper.visible = true;
   CHAR.mounted = false;
   CHAR.scene = targetScene;
   setCharState('idle',{fade:0.25});
@@ -9663,13 +9680,13 @@ function enterSurface(body,site){
   (async()=>{
     if(!CHAR.loaded && !CHAR.loading){ try{ await loadCharacterAssets(); }catch(e){ console.error('Character load failed:',e); try{toast('⚠ Character failed to load: '+(e.message||e),4000);}catch(_){} } }
     if(CHAR.loaded && CHAR.root){
-      if(CHAR.root.parent) CHAR.root.parent.remove(CHAR.root);
-      surfScene.add(CHAR.root);
+      if(CHAR.wrapper.parent) CHAR.wrapper.parent.remove(CHAR.wrapper);
+      surfScene.add(CHAR.wrapper);
       CHAR.mounted = false;
       CHAR.scene = surfScene;
-      CHAR.root.scale.setScalar(CHAR.scaleForTerrain);
-      CHAR.root.position.set(surfPlayer.pos.x, surfPlayer.pos.y-3.0, surfPlayer.pos.z);
-      CHAR.root.visible = true;
+      CHAR.wrapper.scale.setScalar(CHAR.scaleForTerrain);
+      CHAR.wrapper.position.set(surfPlayer.pos.x, surfPlayer.pos.y-3.0, surfPlayer.pos.z);
+      CHAR.wrapper.visible = true;
       setCharState('idle',{force:true,fade:0});
     }
   })();
@@ -10784,8 +10801,8 @@ function updateSurface(dt){
   //    computed (mf/ms for movement, onGround for jump state) rather
   //    than re-deriving it separately. ────────────────────────────
   if(CHAR.loaded && CHAR.root && !CHAR._transitioning){
-    CHAR.root.position.set(p.pos.x, eye-3.0, p.pos.z);
-    CHAR.root.rotation.y = p.yaw - Math.PI/2;
+    CHAR.wrapper.position.set(p.pos.x, eye-3.0, p.pos.z);
+    CHAR.wrapper.rotation.y = p.yaw - Math.PI/2;
     const moving = Math.abs(mf)>0.05 || Math.abs(ms)>0.05;
     const running = moving && (surfRunToggle || surfKeys['ShiftLeft']||surfKeys['ShiftRight']);
     const dirSign = mf<-0.05 ? -1 : 1; // backing up (S / stick pulled back) plays the reversed cycle
@@ -10886,7 +10903,7 @@ function _surfRemountSkyboardFinish(){
   // parent-less rather than risk her being a descendant of something that
   // doesn't itself survive -- re-mounted onto the real flight board inside
   // enterAtmosphericFlight() once that board object actually exists.
-  if(CHAR.loaded && CHAR.root && CHAR.root.parent) CHAR.root.parent.remove(CHAR.root);
+  if(CHAR.loaded && CHAR.wrapper && CHAR.wrapper.parent) CHAR.wrapper.parent.remove(CHAR.wrapper);
   if(surfScene)disposeObject3D(surfScene); // free terrain/water/skyboard GPU memory (see disposeObject3D)
   if(surfRenderer)surfRenderer.dispose();
   surfScene=null;surfPlayer=null;surfBoard=null;surfTerrainMesh=null;TERRAIN.mcGroup=null;TERRAIN._mcBuildGen=(TERRAIN._mcBuildGen||0)+1;
@@ -10910,7 +10927,7 @@ function exitSurface(){
   // freed while she was still a descendant of surfScene, so LIFTOFF back to
   // space silently corrupted her rendering (still "loaded" per CHAR.loaded,
   // but drawing disposed geometry). Detach first so she survives intact.
-  if(CHAR.loaded && CHAR.root && CHAR.root.parent) CHAR.root.parent.remove(CHAR.root);
+  if(CHAR.loaded && CHAR.wrapper && CHAR.wrapper.parent) CHAR.wrapper.parent.remove(CHAR.wrapper);
   // dispose surface scene
   if(surfScene)disposeObject3D(surfScene); // free terrain/water/skyboard GPU memory (see disposeObject3D)
   if(surfRenderer){surfRenderer.dispose();}
