@@ -8396,10 +8396,21 @@ function setupAtmoJoysticks(){
 }
 
 // Land from atmospheric flight → walk mode at the current spot.
+// Plays the actual step-down transition (boardDismountSequence) first, in
+// the still-live atmo scene, so the player sees her get off the board for
+// real before anything gets torn down — the old version just teleported
+// her unmounted state instantly with no motion at all.
 function atmoLandHere(){
+  if(CHAR._transitioning) return;
   const body=_atmoBody;
-  _atmoCleanup();
-  enterSurface(body,_atmoSite);
+  if(!CHAR.loaded || !CHAR.root || !atmoBoard || !atmoScene){ _atmoCleanup(); enterSurface(body,_atmoSite); return; }
+  const btn=$('atmo-land-btn'); if(btn) btn.disabled=true;
+  const groundY = (_atmoHeight ? _atmoHeight(atmoBoard.position.x, atmoBoard.position.z) : atmoBoard.position.y-3);
+  boardDismountSequence(atmoScene, groundY, ()=>{
+    if(btn) btn.disabled=false;
+    _atmoCleanup();
+    enterSurface(body,_atmoSite);
+  });
 }
 // Exit atmosphere → back to normal space flight.
 function atmoExitToSpace(){
@@ -8559,6 +8570,7 @@ const CHAR = {
   mounted:false,           // true when riding the skyboard (parented to it, not standing on terrain)
   moveDir:1,               // 1 = forward, -1 = backward (drives timeScale sign for in-place cycles)
   scene:null,              // which THREE.Scene the character currently lives in
+  _transitioning:false,    // true during boardMountSequence/boardDismountSequence — locomotion/mount sync must not fight the transition's own position control
 };
 
 function _fbxBoneMap(){
@@ -8940,6 +8952,85 @@ function finishClimb(onComplete){
   if(!action){ onComplete&&onComplete(); return; }
   const dur = action.getClip().duration;
   setTimeout(()=>{ setCharState('idle',{fade:0.25}); onComplete&&onComplete(); }, dur*1000);
+}
+
+/* ── STEP-ON / STEP-OFF BOARD TRANSITIONS ────────────────────────
+   Real bone-driven mount/dismount, built from the actual jump FBX data
+   rather than an instant teleport-and-swap. There's no literal "step
+   onto a hovering board" clip in the asset set, but jumpRise (launch
+   upward, root motion preserved) and jump (the forward fall/land half
+   of the same pair) are anatomically the right shape for this — a
+   push-off-the-ground-and-land motion — so they're reused here as her
+   boarding/disembarking animation, with her actual world position
+   blended from the ground-stance point to the board's real measured
+   deck anchor (or vice versa) over the clip's own duration, easing
+   in/out with a smoothstep. She stays parented directly to whichever
+   scene is currently active during the transition itself (not the
+   board), and only gets formally mounted (or released) at the end —
+   CHAR._transitioning locks out the normal per-frame locomotion sync
+   in updateSurface() so the two don't fight over her position. */
+function boardMountSequence(targetBoard, hostScene, onComplete){
+  if(!CHAR.loaded || !CHAR.root || !targetBoard || !hostScene){ onComplete&&onComplete(); return; }
+  CHAR._transitioning = true;
+  const startPos = new THREE.Vector3(); CHAR.root.getWorldPosition(startPos);
+  const startYaw = CHAR.root.rotation.y;
+  const boardWP = new THREE.Vector3(); targetBoard.getWorldPosition(boardWP);
+  const boardScale = targetBoard.scale.x||1;
+  const anchor = targetBoard.userData.deckAnchor || {x:0,y:0,z:0.1};
+  const endPos = boardWP.clone().add(new THREE.Vector3(
+    anchor.x*boardScale, (anchor.y*boardScale)+(CHAR.feetOffset||0)*CHAR.scaleForBoard, anchor.z*boardScale));
+  const endYaw = targetBoard.rotation.y + CHAR_MOUNT_YAW_OFFSET;
+  // She needs to be a direct child of the host scene (not the board, not
+  // her old parent) to move freely through world space during the hop.
+  if(CHAR.root.parent) CHAR.root.parent.remove(CHAR.root);
+  CHAR.root.position.copy(startPos);
+  hostScene.add(CHAR.root);
+  CHAR.root.scale.setScalar(CHAR.scaleForBoard); // normal (unmirrored) during the hop — the mirror is a mounted-only correction, applied by mountSkyboard() at the end
+  setCharState('jumpRise',{fade:0.15, speed:0.7});
+  const action = CHAR.actions.jumpRise;
+  const dur = action ? action.getClip().duration/0.7 : 0.9;
+  const t0 = performance.now();
+  (function step(){
+    const t = Math.min(1,(performance.now()-t0)/(dur*1000));
+    const e = t*t*(3-2*t);
+    CHAR.root.position.lerpVectors(startPos, endPos, e);
+    let dy = endYaw - startYaw; while(dy>Math.PI)dy-=2*Math.PI; while(dy<-Math.PI)dy+=2*Math.PI;
+    CHAR.root.rotation.y = startYaw + dy*e;
+    if(t<1){ requestAnimationFrame(step); }
+    else {
+      CHAR._transitioning = false;
+      mountSkyboard(targetBoard); // finalizes position/rotation/scale/mirror precisely and parents her for real
+      onComplete&&onComplete();
+    }
+  })();
+}
+function boardDismountSequence(hostScene, groundY, onComplete){
+  if(!CHAR.loaded || !CHAR.root || !hostScene){ onComplete&&onComplete(); return; }
+  CHAR._transitioning = true;
+  const startPos = new THREE.Vector3(); CHAR.root.getWorldPosition(startPos);
+  const startYaw = CHAR.root.rotation.y;
+  const endPos = new THREE.Vector3(startPos.x, groundY, startPos.z);
+  if(CHAR.root.parent) CHAR.root.parent.remove(CHAR.root);
+  CHAR.root.position.copy(startPos);
+  CHAR.root.rotation.set(0, startYaw, 0);
+  CHAR.root.scale.setScalar(CHAR.scaleForBoard); // drop the mounted-only mirror — she's walking normally again after this
+  hostScene.add(CHAR.root);
+  CHAR.mounted = false;
+  setCharState('jump',{fade:0.15, speed:0.7, force:true}); // forward half of the pair = fall/land, used here as "step down"
+  const action = CHAR.actions.jump;
+  const dur = action ? action.getClip().duration/0.7 : 0.9;
+  const t0 = performance.now();
+  (function step(){
+    const t = Math.min(1,(performance.now()-t0)/(dur*1000));
+    const e = t*t*(3-2*t);
+    CHAR.root.position.lerpVectors(startPos, endPos, e);
+    if(t<1){ requestAnimationFrame(step); }
+    else {
+      CHAR._transitioning = false;
+      setCharState('idle',{fade:0.25});
+      onComplete&&onComplete();
+    }
+  })();
 }
 
 /* ── SKYBOARD MOUNT / DISMOUNT ──────────────────────────────────
@@ -10316,7 +10407,7 @@ function updateSurface(dt){
   //    Animation state driven from the same input this frame already
   //    computed (mf/ms for movement, onGround for jump state) rather
   //    than re-deriving it separately. ────────────────────────────
-  if(CHAR.loaded && CHAR.root){
+  if(CHAR.loaded && CHAR.root && !CHAR._transitioning){
     CHAR.root.position.set(p.pos.x, eye-3.0, p.pos.z);
     CHAR.root.rotation.y = p.yaw - Math.PI/2;
     const moving = Math.abs(mf)>0.05 || Math.abs(ms)>0.05;
@@ -10362,7 +10453,20 @@ function _reclaimShardToFlight(){
   }
 }
 // From walk mode: get back on the skyboard and fly in the atmosphere.
+// Plays the actual step-up transition (boardMountSequence) first, in the
+// still-live surface scene, so the player sees her board the skyboard for
+// real before anything gets torn down — the old version just teleported
+// her mounted state instantly with no motion at all.
 function surfRemountSkyboard(){
+  if(!surfaceActive || CHAR._transitioning)return;
+  if(!CHAR.loaded || !CHAR.root || !surfBoard){ _surfRemountSkyboardFinish(); return; }
+  const btn=$('surf-fly-btn'); if(btn) btn.disabled=true;
+  boardMountSequence(surfBoard, surfScene, ()=>{
+    if(btn) btn.disabled=false;
+    _surfRemountSkyboardFinish();
+  });
+}
+function _surfRemountSkyboardFinish(){
   if(!surfaceActive)return;
   const body=_surfBody,site=_surfSite;
   surfaceActive=false;
@@ -10383,6 +10487,7 @@ function surfRemountSkyboard(){
   TERRAIN.tiles.clear();TERRAIN.group=null;
   enterAtmosphericFlight(body,site);
 }
+
 
 function exitSurface(){
   if(!surfaceActive)return;surfaceActive=false;
