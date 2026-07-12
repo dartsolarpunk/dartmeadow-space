@@ -8517,13 +8517,12 @@ function _hideMiniLoader(){
 // length toward the nose — see mountSkyboard(). Every board template
 // (A, B, procedural) normalizes its nose to local +X, so this single
 // offset is applied to her own rotation at mount time and covers all of
-// them. Reverted back to -PI/2: the +PI/2 flip was wrong — it turned her
-// 180° to face the tail/staff end instead of the nose. -PI/2 was the
-// correct orientation all along (chest facing the right side of the
-// board, looking out toward the nose/direction of travel); do not flip
-// this again without an actual live screenshot confirming which way
-// she's facing.
-const CHAR_MOUNT_YAW_OFFSET = -Math.PI/2;
+// them. CONFIRMED GOOD as of this value — she was at -PI/2 (correct
+// nose/tail orientation, chest-mirror already fixed separately via
+// scale.z), and turned 180° from there per direct confirmation that the
+// pose/animation looked right and this should be the locked-in default.
+// Do not change without an actual live screenshot.
+const CHAR_MOUNT_YAW_OFFSET = Math.PI/2;
 const CHAR_FILES = {
   mesh: 'Meshy_AI_T_Pose_Sentinel_biped_Character_output.glb',
   walk: 'Meshy_AI_T_Pose_Sentinel_biped_Animation_Walking_Woman_without_skin.fbx',
