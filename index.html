@@ -2517,31 +2517,41 @@ function _syncBuilderCharacter(){
     return; // will retry once the load resolves
   }
   if(!CHAR.root) return;
-  // Measure the board that's already in boardGroup (built moments ago,
-  // before she's added) for a real deck-top anchor — same idea as
-  // _computeDeckAnchor, just done here directly since the builder's
-  // boardGroup is a persistent wrapper reused across rebuilds rather
-  // than a fresh per-template object with its own cached anchor.
-  const box = new THREE.Box3().setFromObject(boardGroup);
-  if(!isFinite(box.min.x) || !isFinite(box.max.x)) return;
-  const anchor = { x:(box.min.x+box.max.x)/2, y:box.max.y, z:(box.min.z+box.max.z)/2 };
+  boardGroup.updateMatrixWorld(true);
+  // Real bug found: the previous version always re-measured boardGroup's
+  // own AABB and computed a fresh proportional scale from it — that's
+  // correct for the PROCEDURAL board (genuinely variable size via the
+  // sliders), but WRONG for the sculpted GLB templates (A/B), which are
+  // already baked to the exact same ~3-unit convention CHAR.scaleForBoard
+  // was calibrated against in the real flight scene. Re-deriving a scale
+  // from a fresh AABB measurement for those risked picking up asymmetric
+  // decorative geometry (staff, ornaments) and producing a different
+  // number than the one that's actually correct in-game. Now: GLB
+  // templates reuse their own pre-computed deckAnchor (set by
+  // buildBoardFromGLB/_computeDeckAnchor, same object type used in the
+  // real game) and the same fixed CHAR.scaleForBoard used in-game —
+  // identical math, identical result. Only the procedural board (whose
+  // size the user can actually change) computes its own anchor/scale
+  // fresh each time.
+  const isGLB = STATE.boardConfig && STATE.boardConfig.template && STATE.boardConfig.template!=='procedural';
+  let anchor, builderScaleForBoard;
+  if(isGLB && boardGroup.children[0] && boardGroup.children[0].userData && boardGroup.children[0].userData.deckAnchor){
+    const boardObj = boardGroup.children[0];
+    anchor = boardObj.userData.deckAnchor;
+    builderScaleForBoard = CHAR.scaleForBoard; // same constant, same convention as the real game
+  } else {
+    if(!boardGroup.userData) boardGroup.userData={};
+    _computeDeckAnchor(boardGroup); // procedural parts are direct children of boardGroup, so this measures them directly
+    anchor = boardGroup.userData.deckAnchor;
+    const boardLen = Math.max(2.8, (STATE.boardConfig&&STATE.boardConfig.length) || 2.8);
+    const targetHeight = 0.78 * (boardLen/2.8);
+    builderScaleForBoard = CHAR.rawHeight>0.001 ? clamp(targetHeight/CHAR.rawHeight, 0.02, 5) : CHAR.scaleForBoard;
+  }
+  if(!anchor) return;
   if(CHAR.root.parent && CHAR.root.parent!==boardGroup) CHAR.root.parent.remove(CHAR.root);
   boardGroup.add(CHAR.root);
   CHAR.mounted = true;
   CHAR.scene = builderScene;
-  // Real bug found: CHAR.scaleForBoard is a fixed constant calibrated once
-  // against boardFlight's specific baked size in the real flight scene.
-  // The builder's board can be a completely different size — the
-  // procedural template has user-adjustable length/width sliders, and
-  // even the sculpted templates could change — so reusing that fixed
-  // constant here produced a rider scaled for a board that isn't the one
-  // actually in front of her, which is what made her loom huge over it.
-  // Compute her scale fresh from THIS board's actual measured length
-  // instead, using the same real-world ratio the game itself is built
-  // on (a ~6ft rider next to a ~2.8-3.0 unit board == 0.78 units tall).
-  const boardLen = Math.max(box.max.x-box.min.x, box.max.z-box.min.z) || 2.8;
-  const targetHeight = 0.78 * (boardLen/2.8);
-  const builderScaleForBoard = CHAR.rawHeight>0.001 ? clamp(targetHeight/CHAR.rawHeight, 0.02, 5) : CHAR.scaleForBoard;
   CHAR.root.scale.set(builderScaleForBoard, builderScaleForBoard, -builderScaleForBoard); // same mirror as mountSkyboard()
   if(CHAR.skinnedMesh && CHAR.skinnedMesh.material){
     const mats = Array.isArray(CHAR.skinnedMesh.material) ? CHAR.skinnedMesh.material : [CHAR.skinnedMesh.material];
@@ -2715,6 +2725,17 @@ function _rebuildBoard(){
   // Engine glow light
   const el=new THREE.PointLight(new THREE.Color(c.emit),c.glow*4,4);el.position.set(-hL*.75,-T/2-.05,0);boardGroup.add(el);
 
+  // Real bug found: same nose-direction bug as the in-game procedural
+  // board (see buildBoardMesh) — flip via an inner wrapper rather than
+  // boardGroup's own rotation, since boardGroup is a persistent object
+  // reused across every rebuild (template switches, slider tweaks) and
+  // a direct rotation there would leak into the GLB-template branch too.
+  {
+    const flipWrap=new THREE.Group();
+    flipWrap.rotation.y=Math.PI;
+    while(boardGroup.children.length) flipWrap.add(boardGroup.children[0]);
+    boardGroup.add(flipWrap);
+  }
   updateBoardStats();
   _syncBuilderCharacter();
 }
@@ -5205,6 +5226,19 @@ function buildBoardMesh(){
   });
   // Engine light
   {const el2=new THREE.PointLight(new THREE.Color(c.emit),c.glow*2,5);el2.position.set(-hL*.7,-T/2-.04,0);grp.add(el2);}
+  // Real bug found: the procedural board's nose pointed the wrong way by
+  // default (backward relative to the sculpted GLB templates). Flipping
+  // it via grp.rotation.y directly doesn't survive — buildFlightBoard()
+  // explicitly zeroes boardFlight.rotation right after creation (see
+  // there), which would silently wipe that out. Bake the flip into an
+  // inner wrapper instead, which keeps grp's own .rotation free for
+  // other code to set without undoing this.
+  {
+    const flipWrap=new THREE.Group();
+    flipWrap.rotation.y=Math.PI;
+    while(grp.children.length) flipWrap.add(grp.children[0]);
+    grp.add(flipWrap);
+  }
   _computeDeckAnchor(grp);
   return grp;
 }
@@ -5227,7 +5261,33 @@ function buildBoardMesh(){
    of a given asset's export quirks. */
 function _computeDeckAnchor(grp){
   grp.updateMatrixWorld(true);
-  const box=new THREE.Box3().setFromObject(grp);
+  // Real bug found (Skyboard A specifically reported as off-center):
+  // measuring the WHOLE board including decorative attachments (staff,
+  // ornament) means an asymmetric attachment skews the computed center
+  // away from the actual rideable deck surface. Prefer a box built from
+  // only the main deck/hull/nose parts — named parts whose own name (or
+  // an ancestor's name, since GLB imports can nest these under group
+  // wrappers) contains "staff" or "ornament" are excluded from the
+  // centering measurement. Falls back to the full object if that leaves
+  // nothing (e.g. a template that doesn't use these part names at all).
+  const isDecorative = o=>{
+    let n = o;
+    while(n){
+      const nm = (n.name||'').toLowerCase();
+      if(nm.includes('staff') || nm.includes('ornament')) return true;
+      n = n.parent;
+      if(n===grp.parent) break; // don't walk above grp itself
+    }
+    return false;
+  };
+  const deckBox = new THREE.Box3();
+  let any = false;
+  grp.traverse(o=>{
+    if(!o.isMesh || isDecorative(o)) return;
+    deckBox.expandByObject(o);
+    any = true;
+  });
+  const box = any ? deckBox : new THREE.Box3().setFromObject(grp);
   if(!isFinite(box.min.x) || !isFinite(box.max.x)){ grp.userData.deckAnchor={x:0,y:0,z:0.1}; return; }
   grp.userData.deckAnchor={
     x:(box.min.x+box.max.x)/2,
