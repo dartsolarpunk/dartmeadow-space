@@ -2629,18 +2629,23 @@ function _syncBuilderCharacter(){
   if(!dbg){
     dbg = document.createElement('div');
     dbg.id = 'builder-scale-debug';
-    dbg.style.cssText = 'position:absolute;top:100px;right:14px;z-index:41;font-family:monospace;font-size:9px;line-height:1.4;color:#7CFC7C;background:rgba(0,0,0,0.6);padding:5px 8px;border-radius:5px;white-space:pre;pointer-events:none;';
+    // Real bug in the debug tool itself: this was positioned top-right,
+    // directly under the floating music widget, which covered exactly
+    // the two most important lines (CHAR world pos/scale) in the last
+    // screenshot. Moved to bottom-left, clear of every other overlay,
+    // with the most critical line moved to the very top so it can't get
+    // clipped even on a short screen.
+    dbg.style.cssText = 'position:absolute;bottom:14px;left:14px;z-index:41;font-family:monospace;font-size:9px;line-height:1.4;color:#7CFC7C;background:rgba(0,0,0,0.72);padding:6px 9px;border-radius:5px;white-space:pre;pointer-events:none;max-width:260px;';
     const vp = document.getElementById('builder-viewport');
     if(vp) vp.appendChild(dbg);
   }
   dbg.textContent =
+    'CHAR world scale: '+_ws.x.toFixed(4)+','+_ws.y.toFixed(4)+','+_ws.z.toFixed(4)+'\n'+
+    'CHAR world pos: '+_wp.x.toFixed(3)+','+_wp.y.toFixed(3)+','+_wp.z.toFixed(3)+'\n'+
+    'scale requested: '+builderScaleForBoard.toFixed(4)+'\n'+
     'template: '+(STATE.boardConfig&&STATE.boardConfig.template)+'\n'+
     'anchor(local): '+anchor.x.toFixed(3)+','+anchor.y.toFixed(3)+','+anchor.z.toFixed(3)+'\n'+
-    'scale requested: '+builderScaleForBoard.toFixed(4)+'\n'+
-    'CHAR world pos: '+_wp.x.toFixed(3)+','+_wp.y.toFixed(3)+','+_wp.z.toFixed(3)+'\n'+
-    'CHAR world scale: '+_ws.x.toFixed(4)+','+_ws.y.toFixed(4)+','+_ws.z.toFixed(4)+'\n'+
     'board world size: '+_boardSize.x.toFixed(3)+','+_boardSize.y.toFixed(3)+','+_boardSize.z.toFixed(3)+'\n'+
-    'camera pos: '+builderCamera.position.x.toFixed(2)+','+builderCamera.position.y.toFixed(2)+','+builderCamera.position.z.toFixed(2)+'\n'+
     'camera dist to char: '+builderCamera.position.distanceTo(_wp).toFixed(3);
 }
 function toggleBuilderCharacter(){
