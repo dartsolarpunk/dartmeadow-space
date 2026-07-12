@@ -1152,7 +1152,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
        leave. Sits below #ar-top (which is ~48px tall) in the top-right
        corner, clear of the joystick/roll/GAL/SYS clusters (bottom-left)
        and the FOCUS/IDLE/thrust clusters (bottom-right). -->
-  <button id="orbit-skyboard-btn" class="hud-toggle-btn" onclick="toggleCharOrbit()" title="Orbit freely around the skyboard — drag/scroll or pinch to look around" style="left:auto;right:10px;top:56px;background:rgba(255,79,163,0.10);color:#ff4fa3;border-color:rgba(255,79,163,0.35);">🔄 ORBIT</button>
+  <button id="orbit-skyboard-btn" class="orbit-skyboard-btn hud-toggle-btn" onclick="toggleCharOrbit()" title="Orbit freely around the skyboard — drag/scroll or pinch to look around" style="left:auto;right:10px;top:56px;background:rgba(255,79,163,0.10);color:#ff4fa3;border-color:rgba(255,79,163,0.35);">🔄 ORBIT</button>
   <!-- Temporary on-screen diagnostic readout — added because mobile devices
        (this is being tested on Android/iPhone) have no dev console access,
        so this surfaces the same mount/state info directly on screen instead.
@@ -1267,6 +1267,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
       <button id="liftoff-btn" onclick="exitSurface()" style="pointer-events:auto;padding:5px 14px;background:rgba(255,79,163,.12);border:1px solid var(--gold);color:var(--gold);font-family:var(--font-hud);font-size:.52rem;letter-spacing:.12em;cursor:pointer;border-radius:2px;">🚀 LIFTOFF</button>
     </div>
   </div>
+  <button class="orbit-skyboard-btn hud-toggle-btn" onclick="toggleCharOrbit()" title="Orbit freely around the character — drag/scroll or pinch to look around" style="left:auto;right:10px;top:56px;background:rgba(255,79,163,0.10);color:#ff4fa3;border-color:rgba(255,79,163,0.35);z-index:36;">🔄 ORBIT</button>
   <!-- surface dual joysticks -->
   <div style="position:absolute;bottom:calc(30px + var(--safe-bot));left:24px;width:100px;height:100px;pointer-events:auto;" id="surf-move-zone">
     <div style="position:absolute;top:-16px;left:50%;transform:translateX(-50%);font-family:var(--font-hud);font-size:.44rem;color:rgba(91,127,255,.4);letter-spacing:.08em;">LOOK</div>
@@ -1318,6 +1319,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
       <button onclick="atmoExitToSpace()" style="pointer-events:auto;padding:5px 12px;background:rgba(91,127,255,.08);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🚀 TO SPACE</button>
     </div>
   </div>
+  <button class="orbit-skyboard-btn hud-toggle-btn" onclick="toggleCharOrbit()" title="Orbit freely around the character — drag/scroll or pinch to look around" style="left:auto;right:16px;top:360px;background:rgba(255,79,163,0.10);color:#ff4fa3;border-color:rgba(255,79,163,0.35);z-index:36;">🔄 ORBIT</button>
   <!-- altitude + mach preset selector (left) -->
   <div style="position:absolute;top:64px;left:16px;pointer-events:none;font-family:var(--font-mono);font-size:.52rem;color:rgba(91,127,255,.8);line-height:1.6;">
     <div>ALT <span id="atmo-alt">150</span> ft</div>
@@ -1715,10 +1717,16 @@ function startGame(){
 function launchFlight(){
   goScreen('flight');
   charOrbitActive = false; // don't let a leftover orbit-view from another scene hijack this camera either
-  // Real loading gate — reset the "mounted" step (fresh each entry) and
-  // show the overlay until character+board are genuinely ready, so the
-  // player can't start moving before everything's actually loaded.
-  LOAD_TRACK.steps.mounted = 0;
+  CHAR._transitioning = false; // same leftover-state guard — an interrupted mount/dismount sequence must not permanently freeze her pose/position
+  // Real bug found: this used to unconditionally reset the "mounted" step
+  // to 0 on every entry, including when RESUMING an already-mounted game
+  // (main menu -> return to game) — but the resume path never calls
+  // mountSkyboard() again (she's already mounted, nothing to redo), so
+  // that step never got marked complete again and the loader sat stuck
+  // at 95% forever (45+25+25 of the 45/25/25/5 weights, missing the
+  // final 5%). Only reset it when she's actually about to go through a
+  // real (re)mount; if she's already mounted, mark it done immediately.
+  if(CHAR.mounted) _loadStep('mounted', 1); else LOAD_TRACK.steps.mounted = 0;
   _showMiniLoader();
   // Already in a game? just resume — restart the render loop, but ALSO
   // rebuild the board if the template OR zone colors changed in the editor.
@@ -8142,7 +8150,8 @@ function enterAtmosphericFlight(body,site){
   // was active, not an actual pose bug. Force it off on every fresh
   // entry into this scene.
   charOrbitActive = false;
-  LOAD_TRACK.steps.mounted = 0;
+  CHAR._transitioning = false; // same leftover-state guard as launchFlight()
+  if(CHAR.mounted) _loadStep('mounted', 1); else LOAD_TRACK.steps.mounted = 0; // same stuck-at-95% fix as launchFlight()
   _showMiniLoader();
   if(flightAnimId){cancelAnimationFrame(flightAnimId);flightAnimId=null;}
   const pal=getSurfacePalette(body);
@@ -9099,7 +9108,9 @@ let charOrbitActive=false, charOrbitYaw=0, charOrbitPitch=0.25, charOrbitDist=4.
 let _charOrbitDrag=null, _charOrbitPinch=null, _charOrbitListenersBound=false;
 
 function _charOrbitCanvas(){
-  return (atmoActive && atmoRenderer) ? atmoRenderer.domElement : (flightRenderer ? flightRenderer.domElement : null);
+  if(surfaceActive && surfRenderer) return surfRenderer.domElement;
+  if(atmoActive && atmoRenderer) return atmoRenderer.domElement;
+  return flightRenderer ? flightRenderer.domElement : null;
 }
 
 /* ── ON-SCREEN CHARACTER DEBUG READOUT ───────────────────────────
@@ -9127,13 +9138,16 @@ function _updateCharDebugHUD(){
 
 function updateCharOrbitCamera(){
   if(!charOrbitActive) return;
-  const cam = atmoActive ? atmoCamera : flightCamera;
+  const cam = surfaceActive ? surfCamera : (atmoActive ? atmoCamera : flightCamera);
   if(!cam) return;
   const target = new THREE.Vector3();
   // Orbit around HER, not the board's own (possibly off-center) origin —
   // now that mounting lands her at the true deck anchor this is a clean,
-  // reliable center point regardless of which board asset is in use.
-  if(CHAR.mounted && CHAR.root){ CHAR.root.getWorldPosition(target); target.y += 0.35; }
+  // reliable center point regardless of which board asset is in use. On
+  // the surface she's never "mounted" (she's walking, board just trails
+  // beside her), so orbiting around her CHAR.root directly is correct
+  // there too, same as the mounted case.
+  if(CHAR.loaded && CHAR.root && (CHAR.mounted || surfaceActive)){ CHAR.root.getWorldPosition(target); target.y += 0.35; }
   else if(atmoActive && atmoBoard){ atmoBoard.getWorldPosition(target); }
   else if(boardFlight){ boardFlight.getWorldPosition(target); }
   else return;
@@ -9178,14 +9192,16 @@ function _bindCharOrbitListenersOnce(){
 }
 
 function toggleCharOrbit(){
-  const cam = atmoActive ? atmoCamera : flightCamera;
-  if(!cam || !(CHAR.mounted || boardFlight || atmoBoard)){
+  const cam = surfaceActive ? surfCamera : (atmoActive ? atmoCamera : flightCamera);
+  const hasTarget = surfaceActive ? (CHAR.loaded && CHAR.root) : (CHAR.mounted || boardFlight || atmoBoard);
+  if(!cam || !hasTarget){
     try{toast('Nothing to orbit yet',2000);}catch(e){}
     return;
   }
   charOrbitActive = !charOrbitActive;
-  const btn=$('orbit-skyboard-btn');
-  if(btn) btn.style.background = charOrbitActive ? 'rgba(255,79,163,0.32)' : 'rgba(255,79,163,0.10)';
+  document.querySelectorAll('.orbit-skyboard-btn').forEach(btn=>{
+    btn.style.background = charOrbitActive ? 'rgba(255,79,163,0.32)' : 'rgba(255,79,163,0.10)';
+  });
   if(charOrbitActive){
     _bindCharOrbitListenersOnce();
     charOrbitYaw=0; charOrbitPitch=0.25; charOrbitDist=4.5;
@@ -9210,6 +9226,7 @@ function enterSurface(body,site){
   if(surfaceActive)return;
   _surfBody=body;_surfSite=site||null;surfaceActive=true;
   charOrbitActive = false; // same leftover-orbit-state guard as the flight scenes
+  CHAR._transitioning = false; // same leftover-state guard — an interrupted mount/dismount sequence must not permanently freeze her pose/position
   if(flightAnimId){cancelAnimationFrame(flightAnimId);flightAnimId=null;}
   const pal=getSurfacePalette(body);
   const ov=$('surface-overlay');ov.style.display='block';
@@ -9336,6 +9353,8 @@ function enterSurface(body,site){
     surfAnimId=requestAnimationFrame(sloop);
     const now=performance.now();const dt=Math.min((now-last)/1000,0.05);last=now;surfTime+=dt;
     updateSurface(dt);
+    try{ updateCharOrbitCamera(); }catch(e){}
+    try{ _updateCharDebugHUD(); }catch(e){}
     try{updateCaustics(dt);}catch(e){}
     try{updateBirdTemple(dt);}catch(e){} // ship keeps wandering + shard keeps following, even off-screen
     surfRenderer.render(surfScene,surfCamera);
