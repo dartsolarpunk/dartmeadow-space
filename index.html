@@ -438,8 +438,25 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;background:var(--c0);co
 }
 
 /* BUILDER */
-#screen-builder{flex-direction:row;overflow:hidden;}
-#builder-sidebar{width:300px;min-width:260px;flex-shrink:0;background:rgba(4,8,18,0.97);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;z-index:10;}
+#screen-builder{flex-direction:row;overflow:hidden;position:relative;}
+#builder-sidebar{width:300px;min-width:260px;flex-shrink:0;background:rgba(4,8,18,0.97);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;z-index:10;transition:transform 0.25s ease;}
+/* Real bug found: the sidebar was a fixed 300px pushing the 3D viewport
+   into a razor-thin sliver on narrow/portrait phones (300px of a ~390px
+   screen leaves ~90px for the actual thing you're designing). Below this
+   breakpoint the sidebar becomes an overlay drawer instead of a
+   permanent column — off-canvas by default, toggled by #builder-drawer-btn,
+   sliding in over a full-width viewport rather than squeezing it. Pure
+   CSS (transform + media query), so it reacts to orientation changes
+   live without any JS resize handling needed. */
+@media (max-width:820px){
+  #builder-sidebar{position:absolute;top:0;left:0;bottom:0;width:min(320px,86vw);min-width:0;transform:translateX(-100%);box-shadow:10px 0 30px rgba(0,0,0,0.6);}
+  #screen-builder.sidebar-open #builder-sidebar{transform:translateX(0);}
+  #screen-builder.sidebar-open #builder-drawer-scrim{opacity:1;pointer-events:auto;}
+  #builder-viewport{width:100%;}
+}
+#builder-drawer-scrim{position:absolute;inset:0;z-index:9;background:rgba(0,0,0,0.55);opacity:0;pointer-events:none;transition:opacity 0.25s ease;}
+#builder-drawer-btn{display:none;position:absolute;top:56px;left:10px;z-index:41;width:38px;height:38px;border-radius:6px;background:rgba(4,8,18,0.85);border:1px solid var(--border);color:var(--cyan);font-size:1rem;cursor:pointer;align-items:center;justify-content:center;backdrop-filter:blur(6px);}
+@media (max-width:820px){ #builder-drawer-btn{display:flex;} }
 #builder-header{padding:0.9rem 1rem 0.7rem;border-bottom:1px solid var(--border);background:linear-gradient(to bottom,rgba(91,127,255,0.05),transparent);flex-shrink:0;}
 .bh-title{font-family:var(--font-hud);font-size:0.72rem;font-weight:900;letter-spacing:0.18em;color:var(--cyan);text-shadow:var(--glow-sm);}
 .bh-sub{font-size:0.6rem;color:var(--text-dim);letter-spacing:0.08em;margin-top:2px;}
@@ -922,6 +939,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 
 <!-- BUILDER -->
 <div id="screen-builder" class="screen">
+  <button id="builder-drawer-btn" onclick="toggleBuilderDrawer()" title="Show/hide design panel">☰</button>
   <div id="builder-sidebar">
     <div id="builder-header">
       <div class="bh-title">SKYBOARD FORGE</div>
@@ -943,7 +961,6 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
         <div style="display:flex;gap:6px;margin:4px 0 8px;">
           <button type="button" id="tmpl-B" class="tmpl-btn" onclick="setBoardTemplate('B')">SKYBOARD B</button>
           <button type="button" id="tmpl-A" class="tmpl-btn" onclick="setBoardTemplate('A')">SKYBOARD A</button>
-          <button type="button" id="tmpl-proc" class="tmpl-btn" onclick="setBoardTemplate('procedural')">PROCEDURAL</button>
         </div>
         <div id="zone-colors" style="display:none;">
           <span class="sec-label">Part Customization</span>
@@ -951,8 +968,18 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
           <div id="part-styles"><div style="font-size:0.58rem;color:var(--text-dim);padding:6px 0;">Loading skyboard parts…</div></div>
           <div class="ctrl-row"><label>Glow Intensity</label><input type="range" id="z-glow" min="0" max="1" step="0.05" value="0.3" oninput="onZoneColor()"><span class="val" id="v-zglow">0.30</span></div>
           <div class="ctrl-row"><label>Metalness</label><input type="range" id="z-metal" min="0" max="1" step="0.05" value="0.6" oninput="onZoneColor()"><span class="val" id="v-zmetal">0.60</span></div>
-          <div style="font-size:0.58rem;color:var(--text-dim);line-height:1.5;padding:4px 0;">Every named part of the sculpted Nomad model is individually paintable — solid, linear, or radial gradients with up to 3 color stops. The procedural shape controls below apply only to the PROCEDURAL template.</div>
+          <div style="font-size:0.58rem;color:var(--text-dim);line-height:1.5;padding:4px 0;">Every named part of the sculpted Nomad model is individually paintable — solid, linear, or radial gradients with up to 3 color stops.</div>
         </div>
+        <!-- Procedural template removed per request — these controls only
+             ever applied to that template, which is no longer selectable.
+             Left in the DOM (hidden) rather than deleted outright: the
+             internal procedural build path still exists purely as an
+             invisible fallback (e.g. a moment where a GLB hasn't finished
+             loading yet), and a lot of other code reads these input
+             elements' .value directly — ripping them out would mean
+             hunting down and safely stubbing every one of those reads too,
+             which is a lot riskier than just hiding the panel. -->
+        <div id="procedural-only-controls" style="display:none;">
         <span class="sec-label">Hull — Center Body</span>
         <div class="ctrl-row"><label>Length</label><input type="range" id="b-length" min="1.2" max="4.5" step="0.1" value="2.8" oninput="rb()"><span class="val" id="v-length">2.8m</span></div>
         <div class="ctrl-row"><label>Width</label><input type="range" id="b-width" min="0.25" max="1.2" step="0.05" value="0.5" oninput="rb()"><span class="val" id="v-width">0.50m</span></div>
@@ -975,6 +1002,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
         <div class="ctrl-row"><label>Emissive</label><input type="color" id="b-emit" value="#00f5ff" oninput="rb()"></div>
         <div class="ctrl-row"><label>Glow</label><input type="range" id="b-glow" min="0" max="1" step="0.05" value="0.3" oninput="rb()"><span class="val" id="v-glow">0.30</span></div>
         <div class="ctrl-row"><label>Metalness</label><input type="range" id="b-metal" min="0" max="1" step="0.05" value="0.85" oninput="rb()"><span class="val" id="v-metal">0.85</span></div>
+        </div>
       </div>
       <!-- MARKINGS -->
       <div class="tab-panel" id="btab-gfx">
@@ -1092,6 +1120,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
       </div>
     </div>
   </div>
+  <div id="builder-drawer-scrim" onclick="toggleBuilderDrawer()"></div>
   <div id="builder-viewport">
     <canvas id="builder-canvas"></canvas>
     <div id="builder-hud"><div id="bh-fps">—</div><div id="bh-poly">—</div></div>
@@ -1595,6 +1624,13 @@ function buildSaveData(slot){
 function loadSaveData(data){
   if(!data||data.v!==SAVE_VERSION){toast('Invalid profile file','warn');return false;}
   Object.assign(STATE.boardConfig,data.board);
+  // Real bug found: procedural template has been removed as a selectable
+  // option, but a save made while it was still active would have
+  // template:'procedural' baked into data.board — Object.assign above
+  // would load that right back in on every future launch regardless of
+  // the in-code default, which is almost certainly what caused the
+  // white screen to survive a full page reload. Sanitize on load.
+  if(!STATE.boardConfig.template || STATE.boardConfig.template==='procedural') STATE.boardConfig.template='B';
   if(data.flight){
     STATE.flight.pos.set(data.flight.pos.x,data.flight.pos.y,data.flight.pos.z);
     STATE.flight.destIdx=data.flight.destIdx||0;
@@ -2401,10 +2437,11 @@ function onNameChange(){STATE.boardConfig.name=($('board-name-input').value||'')
 // GLB templates (A = Skyboard_A parts pack, B = full extraction). Shows the
 // zone-color panel for GLB templates and rebuilds the preview.
 function setBoardTemplate(key){
+  if(key==='procedural') key='B'; // procedural removed as a selectable template — see comments near the builder UI markup
   STATE.boardConfig.template=key;
-  ['proc','A','B'].forEach(k=>{const b=$('tmpl-'+k);if(b)b.classList.toggle('active',(k==='proc'?'procedural':k)===key);});
-  const zc=$('zone-colors');if(zc)zc.style.display=(key==='procedural')?'none':'block';
-  if(key!=='procedural'){try{preloadSkyboardTemplates();}catch(e){}}
+  ['A','B'].forEach(k=>{const b=$('tmpl-'+k);if(b)b.classList.toggle('active',k===key);});
+  const zc=$('zone-colors');if(zc)zc.style.display='block'; // always a GLB template now
+  try{preloadSkyboardTemplates();}catch(e){}
   try{renderPartPanels();}catch(e){}
   rb();
 }
@@ -2421,13 +2458,26 @@ function onZoneColor(){
   rb();
 }
 
+// Collapsible sidebar drawer for narrow/portrait viewports (see the
+// #builder-sidebar responsive CSS) — off-canvas by default there, this
+// slides it in/out. No-op visually above the 820px breakpoint since the
+// sidebar is a permanent column there regardless of this class.
+function toggleBuilderDrawer(){
+  const el=$('screen-builder');
+  if(el) el.classList.toggle('sidebar-open');
+}
+
 function initBuilderScene(){
   if(builderInited){
     // Re-entering builder — force resize and rebuild
     setTimeout(()=>{
       const cv=$('builder-canvas');
-      const W=cv.offsetWidth||Math.max(100,window.innerWidth-310);
-      const H=cv.offsetHeight||window.innerHeight;
+      // The old fallback here assumed a fixed 300px sidebar always eats
+      // into window width — wrong now that the sidebar is an off-canvas
+      // drawer on narrow screens (viewport is full width there).
+      const vpEl = document.getElementById('builder-viewport');
+      const W=cv.offsetWidth||(vpEl&&vpEl.offsetWidth)||window.innerWidth;
+      const H=cv.offsetHeight||(vpEl&&vpEl.offsetHeight)||window.innerHeight;
       if(W>10&&H>10){builderRenderer.setSize(W,H);builderCamera.aspect=W/H;builderCamera.updateProjectionMatrix();}
       _rebuildBoard();
     },50);
@@ -2454,10 +2504,14 @@ function initBuilderScene(){
   builderScene.add(new THREE.Points(sg,new THREE.PointsMaterial({size:0.12,sizeAttenuation:true,vertexColors:true})));
   boardGroup=new THREE.Group();builderScene.add(boardGroup);
   try{readBoardConfig();renderPartPanels();_rebuildBoard();}catch(e){console.error("Board build error:",e);}
-  // Force initial size — screen may have just become visible
+  // Force initial size — screen may have just become visible. The old
+  // fallback assumed a fixed 300px sidebar always eats into window
+  // width — wrong now that the sidebar is an off-canvas drawer on
+  // narrow screens (viewport is full width there).
   function resizeBuilderRenderer(){
-    const W=cv.offsetWidth||Math.max(100,window.innerWidth-310);
-    const H=cv.offsetHeight||window.innerHeight;
+    const vpEl = document.getElementById('builder-viewport');
+    const W=cv.offsetWidth||(vpEl&&vpEl.offsetWidth)||window.innerWidth;
+    const H=cv.offsetHeight||(vpEl&&vpEl.offsetHeight)||window.innerHeight;
     if(W>10&&H>10&&(builderRenderer.domElement.width!==W||builderRenderer.domElement.height!==H)){
       builderRenderer.setSize(W,H);builderCamera.aspect=W/H;builderCamera.updateProjectionMatrix();
     }
@@ -2782,7 +2836,7 @@ function applyBoardPreset(name){
     cruiser:{length:2.4,width:0.95,thick:0.12,nose:0.4,nosetip:.06,noseflare:.6,shard:.55,shardang:32,shardw:.08,col1:'#1a1000',emit:'#f5c400',glow:.28,metal:.75,staffIdx:2},
     void:{length:3.3,width:0.44,thick:0.07,nose:0.9,nosetip:.02,noseflare:.35,shard:.42,shardang:10,shardw:.05,col1:'#080010',emit:'#b060ff',glow:.55,metal:.96,staffIdx:4},
     celestial:{length:2.6,width:0.68,thick:0.09,nose:0.55,nosetip:.04,noseflare:.55,shard:.68,shardang:38,shardw:.07,col1:'#0a1520',emit:'#ffffff',glow:.85,metal:.82,staffIdx:2}};
-  const p=P[name];if(!p)return;Object.assign(STATE.boardConfig,p);syncSlidersToBoardConfig();_rebuildBoard();toast('Preset: '+name.toUpperCase());
+  const p=P[name];if(!p)return;Object.assign(STATE.boardConfig,p);if(STATE.boardConfig.template==='procedural')STATE.boardConfig.template='B';syncSlidersToBoardConfig();_rebuildBoard();toast('Preset: '+name.toUpperCase());
 }
 
 // ══════════════════════════════════════════════════════════════
