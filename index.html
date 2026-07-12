@@ -438,25 +438,8 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;background:var(--c0);co
 }
 
 /* BUILDER */
-#screen-builder{flex-direction:row;overflow:hidden;position:relative;}
-#builder-sidebar{width:300px;min-width:260px;flex-shrink:0;background:rgba(4,8,18,0.97);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;z-index:10;transition:transform 0.25s ease;}
-/* Real bug found: the sidebar was a fixed 300px pushing the 3D viewport
-   into a razor-thin sliver on narrow/portrait phones (300px of a ~390px
-   screen leaves ~90px for the actual thing you're designing). Below this
-   breakpoint the sidebar becomes an overlay drawer instead of a
-   permanent column — off-canvas by default, toggled by #builder-drawer-btn,
-   sliding in over a full-width viewport rather than squeezing it. Pure
-   CSS (transform + media query), so it reacts to orientation changes
-   live without any JS resize handling needed. */
-@media (max-width:820px){
-  #builder-sidebar{position:absolute;top:0;left:0;bottom:0;width:min(320px,86vw);min-width:0;transform:translateX(-100%);box-shadow:10px 0 30px rgba(0,0,0,0.6);}
-  #screen-builder.sidebar-open #builder-sidebar{transform:translateX(0);}
-  #screen-builder.sidebar-open #builder-drawer-scrim{opacity:1;pointer-events:auto;}
-  #builder-viewport{width:100%;}
-}
-#builder-drawer-scrim{position:absolute;inset:0;z-index:9;background:rgba(0,0,0,0.55);opacity:0;pointer-events:none;transition:opacity 0.25s ease;}
-#builder-drawer-btn{display:none;position:absolute;top:56px;left:10px;z-index:41;width:38px;height:38px;border-radius:6px;background:rgba(4,8,18,0.85);border:1px solid var(--border);color:var(--cyan);font-size:1rem;cursor:pointer;align-items:center;justify-content:center;backdrop-filter:blur(6px);}
-@media (max-width:820px){ #builder-drawer-btn{display:flex;} }
+#screen-builder{flex-direction:row;overflow:hidden;}
+#builder-sidebar{width:300px;min-width:260px;flex-shrink:0;background:rgba(4,8,18,0.97);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;z-index:10;}
 #builder-header{padding:0.9rem 1rem 0.7rem;border-bottom:1px solid var(--border);background:linear-gradient(to bottom,rgba(91,127,255,0.05),transparent);flex-shrink:0;}
 .bh-title{font-family:var(--font-hud);font-size:0.72rem;font-weight:900;letter-spacing:0.18em;color:var(--cyan);text-shadow:var(--glow-sm);}
 .bh-sub{font-size:0.6rem;color:var(--text-dim);letter-spacing:0.08em;margin-top:2px;}
@@ -939,7 +922,6 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 
 <!-- BUILDER -->
 <div id="screen-builder" class="screen">
-  <button id="builder-drawer-btn" onclick="toggleBuilderDrawer()" title="Show/hide design panel">☰</button>
   <div id="builder-sidebar">
     <div id="builder-header">
       <div class="bh-title">SKYBOARD FORGE</div>
@@ -961,6 +943,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
         <div style="display:flex;gap:6px;margin:4px 0 8px;">
           <button type="button" id="tmpl-B" class="tmpl-btn" onclick="setBoardTemplate('B')">SKYBOARD B</button>
           <button type="button" id="tmpl-A" class="tmpl-btn" onclick="setBoardTemplate('A')">SKYBOARD A</button>
+          <button type="button" id="tmpl-proc" class="tmpl-btn" onclick="setBoardTemplate('procedural')">PROCEDURAL</button>
         </div>
         <div id="zone-colors" style="display:none;">
           <span class="sec-label">Part Customization</span>
@@ -968,18 +951,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
           <div id="part-styles"><div style="font-size:0.58rem;color:var(--text-dim);padding:6px 0;">Loading skyboard parts…</div></div>
           <div class="ctrl-row"><label>Glow Intensity</label><input type="range" id="z-glow" min="0" max="1" step="0.05" value="0.3" oninput="onZoneColor()"><span class="val" id="v-zglow">0.30</span></div>
           <div class="ctrl-row"><label>Metalness</label><input type="range" id="z-metal" min="0" max="1" step="0.05" value="0.6" oninput="onZoneColor()"><span class="val" id="v-zmetal">0.60</span></div>
-          <div style="font-size:0.58rem;color:var(--text-dim);line-height:1.5;padding:4px 0;">Every named part of the sculpted Nomad model is individually paintable — solid, linear, or radial gradients with up to 3 color stops.</div>
+          <div style="font-size:0.58rem;color:var(--text-dim);line-height:1.5;padding:4px 0;">Every named part of the sculpted Nomad model is individually paintable — solid, linear, or radial gradients with up to 3 color stops. The procedural shape controls below apply only to the PROCEDURAL template.</div>
         </div>
-        <!-- Procedural template removed per request — these controls only
-             ever applied to that template, which is no longer selectable.
-             Left in the DOM (hidden) rather than deleted outright: the
-             internal procedural build path still exists purely as an
-             invisible fallback (e.g. a moment where a GLB hasn't finished
-             loading yet), and a lot of other code reads these input
-             elements' .value directly — ripping them out would mean
-             hunting down and safely stubbing every one of those reads too,
-             which is a lot riskier than just hiding the panel. -->
-        <div id="procedural-only-controls" style="display:none;">
         <span class="sec-label">Hull — Center Body</span>
         <div class="ctrl-row"><label>Length</label><input type="range" id="b-length" min="1.2" max="4.5" step="0.1" value="2.8" oninput="rb()"><span class="val" id="v-length">2.8m</span></div>
         <div class="ctrl-row"><label>Width</label><input type="range" id="b-width" min="0.25" max="1.2" step="0.05" value="0.5" oninput="rb()"><span class="val" id="v-width">0.50m</span></div>
@@ -1002,7 +975,6 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
         <div class="ctrl-row"><label>Emissive</label><input type="color" id="b-emit" value="#00f5ff" oninput="rb()"></div>
         <div class="ctrl-row"><label>Glow</label><input type="range" id="b-glow" min="0" max="1" step="0.05" value="0.3" oninput="rb()"><span class="val" id="v-glow">0.30</span></div>
         <div class="ctrl-row"><label>Metalness</label><input type="range" id="b-metal" min="0" max="1" step="0.05" value="0.85" oninput="rb()"><span class="val" id="v-metal">0.85</span></div>
-        </div>
       </div>
       <!-- MARKINGS -->
       <div class="tab-panel" id="btab-gfx">
@@ -1120,11 +1092,9 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
       </div>
     </div>
   </div>
-  <div id="builder-drawer-scrim" onclick="toggleBuilderDrawer()"></div>
   <div id="builder-viewport">
     <canvas id="builder-canvas"></canvas>
     <div id="builder-hud"><div id="bh-fps">—</div><div id="bh-poly">—</div></div>
-    <button id="builder-char-toggle" onclick="toggleBuilderCharacter()" title="Show/hide the rider on the board preview" style="position:absolute;top:56px;right:14px;z-index:40;padding:6px 12px;background:rgba(255,79,163,0.18);border:1px solid var(--gold);color:var(--gold);font-family:var(--font-hud);font-size:0.5rem;letter-spacing:0.1em;cursor:pointer;border-radius:2px;">👤 RIDER: ON</button>
     <div id="builder-name-display">UNNAMED BOARD</div>
     <div id="builder-footer">
       <button class="launch-btn" onclick="goScreen('menu')">← MENU</button>
@@ -1625,13 +1595,6 @@ function buildSaveData(slot){
 function loadSaveData(data){
   if(!data||data.v!==SAVE_VERSION){toast('Invalid profile file','warn');return false;}
   Object.assign(STATE.boardConfig,data.board);
-  // Real bug found: procedural template has been removed as a selectable
-  // option, but a save made while it was still active would have
-  // template:'procedural' baked into data.board — Object.assign above
-  // would load that right back in on every future launch regardless of
-  // the in-code default, which is almost certainly what caused the
-  // white screen to survive a full page reload. Sanitize on load.
-  if(!STATE.boardConfig.template || STATE.boardConfig.template==='procedural') STATE.boardConfig.template='B';
   if(data.flight){
     STATE.flight.pos.set(data.flight.pos.x,data.flight.pos.y,data.flight.pos.z);
     STATE.flight.destIdx=data.flight.destIdx||0;
@@ -1788,7 +1751,7 @@ function launchFlight(){
         // rebuilt, detach her first or she'd be silently lost (still
         // parented to an object no longer in any scene).
         const _wasMounted = CHAR.mounted;
-        if(CHAR.loaded && CHAR.wrapper && CHAR.wrapper.parent===boardFlight) CHAR.wrapper.parent.remove(CHAR.wrapper);
+        if(CHAR.loaded && CHAR.root && CHAR.root.parent===boardFlight) CHAR.root.parent.remove(CHAR.root);
         if(boardFlight&&flightScene)flightScene.remove(boardFlight);
         boardFlight=buildBoardMesh();
         _builtBoardTemplate=colorSig;
@@ -2347,7 +2310,6 @@ function initStartBtnTurntable(){
 //  BOARD BUILDER — THREE.js
 // ══════════════════════════════════════════════════════════════
 let builderScene,builderRenderer,builderCamera,builderControls,boardGroup,builderAnimId,builderInited=false;
-let BUILDER_SHOW_CHAR=true; // default ON per request — toggle via #builder-char-toggle
 
 const EMBLEMS=[
   {name:'Nebula',draw:(c,cx,cy,r)=>{c.beginPath();c.arc(cx,cy,r,0,Math.PI*2);c.stroke();c.beginPath();c.arc(cx,cy,r*.45,0,Math.PI*2);c.fill();[0,Math.PI/2,Math.PI,Math.PI*1.5].forEach(a=>{c.beginPath();c.moveTo(cx+Math.cos(a)*r*.6,cy+Math.sin(a)*r*.6);c.lineTo(cx+Math.cos(a)*r,cy+Math.sin(a)*r);c.stroke();})}},
@@ -2439,11 +2401,10 @@ function onNameChange(){STATE.boardConfig.name=($('board-name-input').value||'')
 // GLB templates (A = Skyboard_A parts pack, B = full extraction). Shows the
 // zone-color panel for GLB templates and rebuilds the preview.
 function setBoardTemplate(key){
-  if(key==='procedural') key='B'; // procedural removed as a selectable template — see comments near the builder UI markup
   STATE.boardConfig.template=key;
-  ['A','B'].forEach(k=>{const b=$('tmpl-'+k);if(b)b.classList.toggle('active',k===key);});
-  const zc=$('zone-colors');if(zc)zc.style.display='block'; // always a GLB template now
-  try{preloadSkyboardTemplates();}catch(e){}
+  ['proc','A','B'].forEach(k=>{const b=$('tmpl-'+k);if(b)b.classList.toggle('active',(k==='proc'?'procedural':k)===key);});
+  const zc=$('zone-colors');if(zc)zc.style.display=(key==='procedural')?'none':'block';
+  if(key!=='procedural'){try{preloadSkyboardTemplates();}catch(e){}}
   try{renderPartPanels();}catch(e){}
   rb();
 }
@@ -2460,30 +2421,13 @@ function onZoneColor(){
   rb();
 }
 
-// Collapsible sidebar drawer for narrow/portrait viewports (see the
-// #builder-sidebar responsive CSS) — off-canvas by default there, this
-// slides it in/out. No-op visually above the 820px breakpoint since the
-// sidebar is a permanent column there regardless of this class.
-function toggleBuilderDrawer(){
-  const el=$('screen-builder');
-  if(el) el.classList.toggle('sidebar-open');
-}
-
 function initBuilderScene(){
   if(builderInited){
     // Re-entering builder — force resize and rebuild
     setTimeout(()=>{
       const cv=$('builder-canvas');
-      // Real bug found: same stale assumption as the main resize function
-      // below — this fallback assumed a fixed 300px+10px sidebar always
-      // eats into window width, which is wrong now that the sidebar is
-      // an off-canvas drawer on narrow screens. Re-entering the builder
-      // (exactly what happens on repeated menu<->builder testing) runs
-      // this path every time, so a bad fallback here would reproduce
-      // reliably rather than being a rare one-off.
-      const vpEl = document.getElementById('builder-viewport');
-      const W=cv.offsetWidth||(vpEl&&vpEl.offsetWidth)||window.innerWidth;
-      const H=cv.offsetHeight||(vpEl&&vpEl.offsetHeight)||window.innerHeight;
+      const W=cv.offsetWidth||Math.max(100,window.innerWidth-310);
+      const H=cv.offsetHeight||window.innerHeight;
       if(W>10&&H>10){builderRenderer.setSize(W,H);builderCamera.aspect=W/H;builderCamera.updateProjectionMatrix();}
       _rebuildBoard();
     },50);
@@ -2510,23 +2454,10 @@ function initBuilderScene(){
   builderScene.add(new THREE.Points(sg,new THREE.PointsMaterial({size:0.12,sizeAttenuation:true,vertexColors:true})));
   boardGroup=new THREE.Group();builderScene.add(boardGroup);
   try{readBoardConfig();renderPartPanels();_rebuildBoard();}catch(e){console.error("Board build error:",e);}
-  // Real bug found: this fallback used to assume a fixed 300px+10px
-  // sidebar was ALWAYS eaten out of window width — true under the old
-  // permanent-column layout, but wrong now that the sidebar is an
-  // off-canvas drawer on narrow screens (the viewport is full width
-  // there). If cv.offsetWidth was ever momentarily 0 (a real
-  // possibility during layout/orientation changes, which is exactly
-  // when this fallback actually matters), that stale subtraction
-  // produced an artificially tiny width against a tall screen height —
-  // a badly distorted aspect ratio that stretches everything to fill
-  // the frame, which is exactly the "giant, fills the whole screen"
-  // symptom despite every actual 3D number (scale, position) being
-  // provably correct. Use the real current viewport element's width
-  // instead of a stale hardcoded assumption.
+  // Force initial size — screen may have just become visible
   function resizeBuilderRenderer(){
-    const vpEl = document.getElementById('builder-viewport');
-    const W=cv.offsetWidth||(vpEl&&vpEl.offsetWidth)||window.innerWidth;
-    const H=cv.offsetHeight||(vpEl&&vpEl.offsetHeight)||window.innerHeight;
+    const W=cv.offsetWidth||Math.max(100,window.innerWidth-310);
+    const H=cv.offsetHeight||window.innerHeight;
     if(W>10&&H>10&&(builderRenderer.domElement.width!==W||builderRenderer.domElement.height!==H)){
       builderRenderer.setSize(W,H);builderCamera.aspect=W/H;builderCamera.updateProjectionMatrix();
     }
@@ -2539,13 +2470,9 @@ function initBuilderScene(){
     if(boardGroup){
       boardGroup.rotation.y+=0.004;
       boardGroup.position.y=Math.sin(Date.now()*.0008)*.06;
-      // Animate DART ring devices — counter-rotate inner rings for energy effect.
-      // Real bug avoided here: she's a THREE.Group too (GLTFLoader's
-      // gltf.scene), so without excluding her explicitly this loop would
-      // also try to spin child[1]/[2]/[3] of her own hierarchy as if they
-      // were ring parts — glitchy limb rotation, not an energy effect.
+      // Animate DART ring devices — counter-rotate inner rings for energy effect
       boardGroup.children.forEach(child=>{
-        if(child.isGroup && child!==CHAR.root){
+        if(child.isGroup){
           const t=Date.now()*.001;
           if(child.children[1])child.children[1].rotation.z=t*1.2;   // ring1 spins
           if(child.children[2])child.children[2].rotation.z=-t*1.8;  // ring2 counter-spins
@@ -2553,99 +2480,10 @@ function initBuilderScene(){
         }
       });
     }
-    if(BUILDER_SHOW_CHAR && CHAR.loaded && CHAR.wrapper && CHAR.wrapper.parent===boardGroup){
-      try{ CHAR.mixer && CHAR.mixer.update(1/60); }catch(e){}
-      try{ applySkyboardHeadOverride(); }catch(e){}
-    }
     resizeBuilderRenderer();
     builderRenderer.render(builderScene,builderCamera);
     const now=Date.now();$('bh-fps').textContent=Math.round(1000/(now-lastFrame))+' fps';lastFrame=now;$('bh-poly').textContent=(builderRenderer.info.render.triangles/1000).toFixed(1)+'k tri';
   })();
-}
-
-/* ── BOARD BUILDER — CHARACTER PREVIEW ───────────────────────────
-   Shows her actually standing on the board while designing it, same
-   mount math as the real game (deck anchor, yaw offset, mirror), so
-   what you see here matches what you'll see in flight. She's parented
-   directly into boardGroup so the builder's existing slow auto-rotate/
-   bob animation carries her along for free. _rebuildBoard() clears
-   ALL of boardGroup's children on every parameter tweak (color, shape,
-   template swap, etc.), which would silently drop her each time — so
-   this must be re-called at the END of every rebuild path, not just
-   once at builder init. Reuses the single shared CHAR.root (same
-   object the game scenes use) rather than cloning a second skinned
-   mesh instance, consistent with how she already moves between
-   flightScene/atmoScene/surfScene/builder — whichever screen is
-   active just re-parents her fresh. */
-function _syncBuilderCharacter(){
-  if(!boardGroup) return;
-  if(!BUILDER_SHOW_CHAR){
-    if(CHAR.wrapper && CHAR.wrapper.parent===boardGroup) boardGroup.remove(CHAR.wrapper);
-    return;
-  }
-  if(!CHAR.loaded){
-    if(!CHAR.loading){ loadCharacterAssets().then(_syncBuilderCharacter).catch(e=>console.warn('builder character load failed:',e)); }
-    return; // will retry once the load resolves
-  }
-  if(!CHAR.root) return;
-  boardGroup.updateMatrixWorld(true);
-  // Real bug found: the previous version always re-measured boardGroup's
-  // own AABB and computed a fresh proportional scale from it — that's
-  // correct for the PROCEDURAL board (genuinely variable size via the
-  // sliders), but WRONG for the sculpted GLB templates (A/B), which are
-  // already baked to the exact same ~3-unit convention CHAR.scaleForBoard
-  // was calibrated against in the real flight scene. Re-deriving a scale
-  // from a fresh AABB measurement for those risked picking up asymmetric
-  // decorative geometry (staff, ornaments) and producing a different
-  // number than the one that's actually correct in-game. Now: GLB
-  // templates reuse their own pre-computed deckAnchor (set by
-  // buildBoardFromGLB/_computeDeckAnchor, same object type used in the
-  // real game) and the same fixed CHAR.scaleForBoard used in-game —
-  // identical math, identical result. Only the procedural board (whose
-  // size the user can actually change) computes its own anchor/scale
-  // fresh each time.
-  const isGLB = STATE.boardConfig && STATE.boardConfig.template && STATE.boardConfig.template!=='procedural';
-  let anchor, builderScaleForBoard;
-  if(isGLB && boardGroup.children[0] && boardGroup.children[0].userData && boardGroup.children[0].userData.deckAnchor){
-    const boardObj = boardGroup.children[0];
-    anchor = boardObj.userData.deckAnchor;
-    builderScaleForBoard = CHAR.scaleForBoard; // same constant, same convention as the real game
-  } else {
-    if(!boardGroup.userData) boardGroup.userData={};
-    _computeDeckAnchor(boardGroup); // procedural parts are direct children of boardGroup, so this measures them directly
-    anchor = boardGroup.userData.deckAnchor;
-    const boardLen = Math.max(2.8, (STATE.boardConfig&&STATE.boardConfig.length) || 2.8);
-    const targetHeight = 0.78 * (boardLen/2.8);
-    builderScaleForBoard = CHAR.rawHeight>0.001 ? clamp(targetHeight/CHAR.rawHeight, 0.02, 5) : CHAR.scaleForBoard;
-  }
-  if(!anchor) return;
-  if(CHAR.wrapper.parent && CHAR.wrapper.parent!==boardGroup) CHAR.wrapper.parent.remove(CHAR.wrapper);
-  boardGroup.add(CHAR.wrapper);
-  CHAR.mounted = true;
-  CHAR.scene = builderScene;
-  CHAR.wrapper.scale.setScalar(builderScaleForBoard);
-  if(CHAR.skinnedMesh && CHAR.skinnedMesh.material){
-    const mats = Array.isArray(CHAR.skinnedMesh.material) ? CHAR.skinnedMesh.material : [CHAR.skinnedMesh.material];
-    mats.forEach(m=>{ if(m) m.side = THREE.DoubleSide; });
-  }
-  CHAR.wrapper.position.set(anchor.x, anchor.y + (CHAR.feetOffset||0)*builderScaleForBoard, anchor.z);
-  CHAR.wrapper.rotation.set(0, CHAR_MOUNT_YAW_OFFSET, 0);
-  CHAR.wrapper.visible = true;
-  if(CHAR.state!=='skyboard') setCharState('skyboard',{fade:0.3, speed:SKYBOARD_ANIM_SPEED});
-  // On-screen scale diagnostic removed — it did its job (confirmed the
-  // scale math was correct all along and helped pin down the real bugs
-  // elsewhere), no longer needed now that it's fixed.
-  const _existingDbg = document.getElementById('builder-scale-debug');
-  if(_existingDbg) _existingDbg.remove();
-}
-function toggleBuilderCharacter(){
-  BUILDER_SHOW_CHAR = !BUILDER_SHOW_CHAR;
-  const btn = $('builder-char-toggle');
-  if(btn){
-    btn.textContent = '👤 RIDER: ' + (BUILDER_SHOW_CHAR ? 'ON' : 'OFF');
-    btn.style.background = BUILDER_SHOW_CHAR ? 'rgba(255,79,163,0.18)' : 'rgba(91,127,255,0.08)';
-  }
-  _syncBuilderCharacter();
 }
 
 function _rebuildBoard(){
@@ -2655,15 +2493,7 @@ function _rebuildBoard(){
   // procedural primitives below if it hasn't finished loading yet).
   if(c.template&&c.template!=='procedural'){
     const g=buildBoardFromGLB(c.template);
-    // Real bug found: this was the actual reason the builder's GLB-template
-    // scale still didn't match gameplay after the last fix — _computeDeckAnchor
-    // was never being called here at all. buildBoardMesh() (used in-game)
-    // calls it right after buildBoardFromGLB() returns, but the builder calls
-    // buildBoardFromGLB() directly, bypassing that step — so g.userData.deckAnchor
-    // was always undefined, _syncBuilderCharacter's isGLB check always silently
-    // failed, and it fell through to the procedural-style proportional scale
-    // path even for the sculpted templates, using an unrelated default length.
-    if(g){ _computeDeckAnchor(g); boardGroup.add(g);_syncBuilderCharacter();return;}
+    if(g){boardGroup.add(g);return;}
     try{preloadSkyboardTemplates();}catch(e){}
     // keep trying until the GLB is ready
     setTimeout(()=>{try{if(STATE.boardConfig.template===c.template)_rebuildBoard();}catch(e){}},400);
@@ -2809,23 +2639,7 @@ function _rebuildBoard(){
   // Engine glow light
   const el=new THREE.PointLight(new THREE.Color(c.emit),c.glow*4,4);el.position.set(-hL*.75,-T/2-.05,0);boardGroup.add(el);
 
-  // Real bug found: same nose-direction bug as the in-game procedural
-  // board (see buildBoardMesh) — flip in place on each existing child
-  // rather than an inner wrapper group. A wrapper broke updateFlight()'s
-  // DART-ring animation loop, which directly indexes boardFlight.children
-  // looking for "isGroup && children.length>2" to identify the ring
-  // devices — a wrapper group containing everything ALSO satisfies that
-  // exact condition, so it was mistaking the whole board for one giant
-  // ring device and spinning random parts of it continuously (the
-  // "board keeps just spinning in a circle" bug). Rotating each child
-  // 180° in place keeps boardGroup.children flat and unchanged in
-  // count/order, so that code still only matches the real ring groups.
-  boardGroup.children.forEach(child=>{
-    child.position.x*=-1; child.position.z*=-1;
-    child.rotation.y+=Math.PI;
-  });
   updateBoardStats();
-  _syncBuilderCharacter();
 }
 
 function updateBoardStats(){
@@ -2968,7 +2782,7 @@ function applyBoardPreset(name){
     cruiser:{length:2.4,width:0.95,thick:0.12,nose:0.4,nosetip:.06,noseflare:.6,shard:.55,shardang:32,shardw:.08,col1:'#1a1000',emit:'#f5c400',glow:.28,metal:.75,staffIdx:2},
     void:{length:3.3,width:0.44,thick:0.07,nose:0.9,nosetip:.02,noseflare:.35,shard:.42,shardang:10,shardw:.05,col1:'#080010',emit:'#b060ff',glow:.55,metal:.96,staffIdx:4},
     celestial:{length:2.6,width:0.68,thick:0.09,nose:0.55,nosetip:.04,noseflare:.55,shard:.68,shardang:38,shardw:.07,col1:'#0a1520',emit:'#ffffff',glow:.85,metal:.82,staffIdx:2}};
-  const p=P[name];if(!p)return;Object.assign(STATE.boardConfig,p);if(STATE.boardConfig.template==='procedural')STATE.boardConfig.template='B';syncSlidersToBoardConfig();_rebuildBoard();toast('Preset: '+name.toUpperCase());
+  const p=P[name];if(!p)return;Object.assign(STATE.boardConfig,p);syncSlidersToBoardConfig();_rebuildBoard();toast('Preset: '+name.toUpperCase());
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -3535,7 +3349,6 @@ function _startFlightLoop(){
     try{updateFlight(dt);}catch(e){}
     try{updateBodies(dt);}catch(e){}
     try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){}
-    try{ if(!CHAR.mounted && CHAR.loaded && CHAR.root && boardFlight) { console.warn('Auto-healing: character loaded but not mounted, mounting onto boardFlight now.'); mountSkyboard(boardFlight); } }catch(e){}
     try{ updateCharOrbitCamera(); }catch(e){}
     try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){}
     try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){}
@@ -5315,21 +5128,6 @@ function buildBoardMesh(){
   });
   // Engine light
   {const el2=new THREE.PointLight(new THREE.Color(c.emit),c.glow*2,5);el2.position.set(-hL*.7,-T/2-.04,0);grp.add(el2);}
-  // Real bug found: the procedural board's nose pointed the wrong way by
-  // default (backward relative to the sculpted GLB templates). An inner
-  // wrapper group (the first attempt at this fix) broke updateFlight()'s
-  // DART-ring animation loop, which directly indexes boardFlight.children
-  // looking for "isGroup && children.length>2" to find the ring devices —
-  // a wrapper containing the whole board ALSO satisfies that condition,
-  // so it mistook the entire board for one giant ring device and spun
-  // random parts of it continuously (the "board keeps spinning in a
-  // circle" bug). Flip each existing child in place instead — keeps
-  // grp.children flat and unchanged in count/order, so that loop still
-  // only matches the two real ring-device groups.
-  grp.children.forEach(child=>{
-    child.position.x*=-1; child.position.z*=-1;
-    child.rotation.y+=Math.PI;
-  });
   _computeDeckAnchor(grp);
   return grp;
 }
@@ -5352,33 +5150,7 @@ function buildBoardMesh(){
    of a given asset's export quirks. */
 function _computeDeckAnchor(grp){
   grp.updateMatrixWorld(true);
-  // Real bug found (Skyboard A specifically reported as off-center):
-  // measuring the WHOLE board including decorative attachments (staff,
-  // ornament) means an asymmetric attachment skews the computed center
-  // away from the actual rideable deck surface. Prefer a box built from
-  // only the main deck/hull/nose parts — named parts whose own name (or
-  // an ancestor's name, since GLB imports can nest these under group
-  // wrappers) contains "staff" or "ornament" are excluded from the
-  // centering measurement. Falls back to the full object if that leaves
-  // nothing (e.g. a template that doesn't use these part names at all).
-  const isDecorative = o=>{
-    let n = o;
-    while(n){
-      const nm = (n.name||'').toLowerCase();
-      if(nm.includes('staff') || nm.includes('ornament')) return true;
-      n = n.parent;
-      if(n===grp.parent) break; // don't walk above grp itself
-    }
-    return false;
-  };
-  const deckBox = new THREE.Box3();
-  let any = false;
-  grp.traverse(o=>{
-    if(!o.isMesh || isDecorative(o)) return;
-    deckBox.expandByObject(o);
-    any = true;
-  });
-  const box = any ? deckBox : new THREE.Box3().setFromObject(grp);
+  const box=new THREE.Box3().setFromObject(grp);
   if(!isFinite(box.min.x) || !isFinite(box.max.x)){ grp.userData.deckAnchor={x:0,y:0,z:0.1}; return; }
   grp.userData.deckAnchor={
     x:(box.min.x+box.max.x)/2,
@@ -8342,7 +8114,6 @@ function resumeFlightLoop(){
     try{updateFlight(dt);}catch(e){}
     try{updateBodies(dt);}catch(e){}
     try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){}
-    try{ if(!CHAR.mounted && CHAR.loaded && CHAR.root && boardFlight) { console.warn('Auto-healing: character loaded but not mounted, mounting onto boardFlight now.'); mountSkyboard(boardFlight); } }catch(e){}
     try{ updateCharOrbitCamera(); }catch(e){}
     try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){}
     try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){}
@@ -8463,7 +8234,6 @@ function enterAtmosphericFlight(body,site){
     const now=performance.now();const dt=Math.min((now-last)/1000,0.05);last=now;
     updateAtmoFlight(dt);
     try{ if(CHAR.mounted) applySkyboardStance(now/1000); }catch(e){}
-    try{ if(!CHAR.mounted && CHAR.loaded && CHAR.root && atmoBoard) { console.warn('Auto-healing: character loaded but not mounted, mounting onto atmoBoard now.'); mountSkyboard(atmoBoard); } }catch(e){}
     try{ updateCharOrbitCamera(); }catch(e){}
     try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){}
     try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){}
@@ -8681,7 +8451,7 @@ function _atmoCleanup(){
   // about to be disposed. Detach her first so she survives parent-less;
   // enterSurface() (landing) or the space-flight resume path re-attaches
   // her wherever's appropriate next.
-  if(CHAR.loaded && CHAR.wrapper && CHAR.wrapper.parent) CHAR.wrapper.parent.remove(CHAR.wrapper);
+  if(CHAR.loaded && CHAR.root && CHAR.root.parent) CHAR.root.parent.remove(CHAR.root);
   if(atmoScene)disposeObject3D(atmoScene); // free terrain/water/skyboard GPU memory (see disposeObject3D)
   if(atmoRenderer)atmoRenderer.dispose();
   atmoScene=null;atmoBoard=null;atmoState=null;
@@ -8823,8 +8593,7 @@ const CHAR_CLIP_NAMES = {
 };
 const CHAR = {
   loaded:false, loading:false,
-  root:null,            // THREE.Group — the loaded character itself. Permanently fixed at identity transform once loaded (see loadCharacterAssets); never repositioned/rescaled/reparented again after setup.
-  wrapper:null,          // THREE.Group — the ONLY thing every scene actually positions/scales/parents. Contains CHAR.root as its one permanent child. This isolation is what keeps repeated mount/dismount/rebuild cycles from ever perturbing her own rig.
+  root:null,            // THREE.Group — the loaded character, parented into whichever scene is active
   skeleton:null, bones:{},   // name -> THREE.Bone, for direct procedural pose control
   mixer:null,
   clips:{},              // name -> THREE.AnimationClip
@@ -8860,43 +8629,6 @@ async function loadCharacterAssets(){
     xhr=>{ if(xhr.lengthComputable) _loadStep('charMesh', xhr.loaded/xhr.total); }, rej));
   _loadStep('charMesh', 1);
   CHAR.root = gltf.scene;
-  // Real root cause found for the character-scale bug, via direct
-  // inspection of the actual GLB file (not guessing from symptoms this
-  // time): the "Armature" node has a hard-baked scale of exactly
-  // [0.01, 0.01, 0.01] — every individual bone's own local scale is
-  // normal (~1.0), only their shared parent carries this 100x downscale.
-  // That means the character's true measured height comes out as
-  // 0.017 instead of the ~1.7 units her raw geometry actually spans
-  // (confirmed directly from the accessor bounds in the file: char1's
-  // POSITION accessor spans y:[0, 1.7]) — exactly a 100x mismatch. The
-  // scale calibration below has no way to know this is an export
-  // artifact rather than her real intended size, so it dutifully
-  // computes an enormous compensating factor and hits its own safety
-  // clamp (5.0), which is what was producing the oversized rider. Reset
-  // it here, before any measurement happens, rather than special-case
-  // around the bad number downstream.
-  CHAR.root.traverse(o=>{
-    if(o.name==='Armature' && o.scale && (o.scale.x<0.5 || o.scale.x>2)){
-      console.warn('Character GLB: Armature node had an unexpected baked scale of',o.scale.x,'— resetting to 1 (this is an export artifact, not intentional sizing; her real height is in the geometry itself).');
-      o.scale.set(1,1,1);
-    }
-  });
-  // Architectural fix, per direct request: wrap the loaded character in a
-  // permanent outer group, and from this point on every scene positions/
-  // scales/parents THAT wrapper — never CHAR.root itself again. CHAR.root
-  // (and everything inside it: mesh, skeleton, bones) stays at a fixed
-  // identity transform for the rest of the session. Every mount/dismount/
-  // rebuild cycle across flight, atmo, surface, and the builder was
-  // previously mutating CHAR.root's own scale/position repeatedly — the
-  // same object that's also the skinning reference for her bones. This
-  // isolates "how big/where she appears in a given scene" from "her own
-  // internal rig integrity" completely, so no amount of remounting can
-  // ever again perturb the skeleton itself.
-  CHAR.wrapper = new THREE.Group();
-  CHAR.wrapper.add(CHAR.root);
-  CHAR.root.position.set(0,0,0);
-  CHAR.root.rotation.set(0,0,0);
-  CHAR.root.scale.set(1,1,1);
   CHAR.root.traverse(o=>{
     // o.isBone is the standard GLTFLoader flag, but fall back to
     // checking the node type/name directly in case this particular
@@ -9049,7 +8781,7 @@ async function loadCharacterAssets(){
     'scaleForTerrain:',CHAR.scaleForTerrain.toFixed(4),
     '— if rawHeight looks wildly different from ~1.8-3 (a roughly-human-scale T-pose), the GLB\'s native units are not what was assumed and this calibration needs revisiting with that real number.');
 
-  CHAR.wrapper.visible = false; // stays hidden until mountSkyboard()/dismountSkyboard() actually places her correctly — otherwise she's visible at whatever fallback position for however long loading + mounting takes
+  CHAR.root.visible = false; // stays hidden until mountSkyboard()/dismountSkyboard() actually places her correctly — otherwise she's visible at whatever fallback position for however long loading + mounting takes
   CHAR.loaded = true; CHAR.loading = false;
 }
 
@@ -9306,8 +9038,8 @@ function finishClimb(onComplete){
 function boardMountSequence(targetBoard, hostScene, onComplete){
   if(!CHAR.loaded || !CHAR.root || !targetBoard || !hostScene){ onComplete&&onComplete(); return; }
   CHAR._transitioning = true;
-  const startPos = new THREE.Vector3(); CHAR.wrapper.getWorldPosition(startPos);
-  const startYaw = CHAR.wrapper.rotation.y;
+  const startPos = new THREE.Vector3(); CHAR.root.getWorldPosition(startPos);
+  const startYaw = CHAR.root.rotation.y;
   const boardWP = new THREE.Vector3(); targetBoard.getWorldPosition(boardWP);
   const boardScale = targetBoard.scale.x||1;
   const anchor = targetBoard.userData.deckAnchor || {x:0,y:0,z:0.1};
@@ -9316,10 +9048,10 @@ function boardMountSequence(targetBoard, hostScene, onComplete){
   const endYaw = targetBoard.rotation.y + CHAR_MOUNT_YAW_OFFSET;
   // She needs to be a direct child of the host scene (not the board, not
   // her old parent) to move freely through world space during the hop.
-  if(CHAR.wrapper.parent) CHAR.wrapper.parent.remove(CHAR.wrapper);
-  CHAR.wrapper.position.copy(startPos);
-  hostScene.add(CHAR.wrapper);
-  CHAR.wrapper.scale.setScalar(CHAR.scaleForBoard); // normal (unmirrored) during the hop — the mirror is a mounted-only correction, applied by mountSkyboard() at the end
+  if(CHAR.root.parent) CHAR.root.parent.remove(CHAR.root);
+  CHAR.root.position.copy(startPos);
+  hostScene.add(CHAR.root);
+  CHAR.root.scale.setScalar(CHAR.scaleForBoard); // normal (unmirrored) during the hop — the mirror is a mounted-only correction, applied by mountSkyboard() at the end
   setCharState('jumpRise',{fade:0.15, speed:0.7});
   const action = CHAR.actions.jumpRise;
   const dur = action ? action.getClip().duration/0.7 : 0.9;
@@ -9327,9 +9059,9 @@ function boardMountSequence(targetBoard, hostScene, onComplete){
   (function step(){
     const t = Math.min(1,(performance.now()-t0)/(dur*1000));
     const e = t*t*(3-2*t);
-    CHAR.wrapper.position.lerpVectors(startPos, endPos, e);
+    CHAR.root.position.lerpVectors(startPos, endPos, e);
     let dy = endYaw - startYaw; while(dy>Math.PI)dy-=2*Math.PI; while(dy<-Math.PI)dy+=2*Math.PI;
-    CHAR.wrapper.rotation.y = startYaw + dy*e;
+    CHAR.root.rotation.y = startYaw + dy*e;
     if(t<1){ requestAnimationFrame(step); }
     else {
       CHAR._transitioning = false;
@@ -9341,14 +9073,14 @@ function boardMountSequence(targetBoard, hostScene, onComplete){
 function boardDismountSequence(hostScene, groundY, onComplete){
   if(!CHAR.loaded || !CHAR.root || !hostScene){ onComplete&&onComplete(); return; }
   CHAR._transitioning = true;
-  const startPos = new THREE.Vector3(); CHAR.wrapper.getWorldPosition(startPos);
-  const startYaw = CHAR.wrapper.rotation.y;
+  const startPos = new THREE.Vector3(); CHAR.root.getWorldPosition(startPos);
+  const startYaw = CHAR.root.rotation.y;
   const endPos = new THREE.Vector3(startPos.x, groundY, startPos.z);
-  if(CHAR.wrapper.parent) CHAR.wrapper.parent.remove(CHAR.wrapper);
-  CHAR.wrapper.position.copy(startPos);
-  CHAR.wrapper.rotation.set(0, startYaw, 0);
-  CHAR.wrapper.scale.setScalar(CHAR.scaleForBoard); // drop the mounted-only mirror — she's walking normally again after this
-  hostScene.add(CHAR.wrapper);
+  if(CHAR.root.parent) CHAR.root.parent.remove(CHAR.root);
+  CHAR.root.position.copy(startPos);
+  CHAR.root.rotation.set(0, startYaw, 0);
+  CHAR.root.scale.setScalar(CHAR.scaleForBoard); // drop the mounted-only mirror — she's walking normally again after this
+  hostScene.add(CHAR.root);
   CHAR.mounted = false;
   setCharState('jump',{fade:0.15, speed:0.7, force:true}); // forward half of the pair = fall/land, used here as "step down"
   const action = CHAR.actions.jump;
@@ -9357,7 +9089,7 @@ function boardDismountSequence(hostScene, groundY, onComplete){
   (function step(){
     const t = Math.min(1,(performance.now()-t0)/(dur*1000));
     const e = t*t*(3-2*t);
-    CHAR.wrapper.position.lerpVectors(startPos, endPos, e);
+    CHAR.root.position.lerpVectors(startPos, endPos, e);
     if(t<1){ requestAnimationFrame(step); }
     else {
       CHAR._transitioning = false;
@@ -9377,25 +9109,21 @@ function mountSkyboard(boardObj){
   if(!CHAR.root || !boardObj) return;
   setCharState('idle',{fade:0.2}); // brief settle before the procedural pose takes over
   CHAR.mounted = true;
-  const worldPos = new THREE.Vector3(); CHAR.wrapper.getWorldPosition(worldPos);
-  boardObj.add(CHAR.wrapper);
-  // Real bug found: the negative-Z "mirror" scale used here to flip which
-  // lateral side her chest faces (see the removed comment below for the
-  // original reasoning) is the leading suspect for the giant, localized
-  // limb-stretching seen in both real gameplay and the builder — a
-  // negative-determinant scale on a SKINNED mesh can break the GPU bone-
-  // skinning math (the orthogonality assumptions it relies on), which
-  // would explain individual limbs deforming to an enormous size while
-  // the root object's own scale property still reads back as correct
-  // (confirmed via the builder's debug panel: CHAR world scale exactly
-  // matched what was requested, yet she was still visibly oversized —
-  // a mismatch that only makes sense if the deformation is happening
-  // downstream of that root transform, i.e. in skinning). Switched to a
-  // plain positive uniform scale. This does mean the "which side her
-  // chest faces" fix from before is reverted for now — that'll need a
-  // different approach (mirroring the stance pose itself rather than
-  // the geometry) as a follow-up, but fixing this takes priority.
-  CHAR.wrapper.scale.setScalar(CHAR.scaleForBoard);
+  const worldPos = new THREE.Vector3(); CHAR.root.getWorldPosition(worldPos);
+  boardObj.add(CHAR.root);
+  // Real bug found: her chest was facing the staff side of the board
+  // instead of away from it. A further yaw rotation can't fix this
+  // without also flipping which way she faces down the board's length
+  // (nose vs tail) — that's exactly the bug from the last two pushes.
+  // Turning "which lateral side she faces" while keeping the same
+  // nose-facing orientation needs an actual mirror, not a rotation —
+  // so this negates her Z scale (the board's lateral/width axis per
+  // the baking convention in preloadSkyboardTemplates, where +X is
+  // always the nose) instead of touching CHAR_MOUNT_YAW_OFFSET again.
+  // DoubleSide on her material below compensates for the mirror
+  // flipping triangle winding, which would otherwise cull the wrong
+  // faces and show her as partially invisible/inside-out.
+  CHAR.root.scale.set(CHAR.scaleForBoard, CHAR.scaleForBoard, -CHAR.scaleForBoard);
   if(CHAR.skinnedMesh && CHAR.skinnedMesh.material){
     const mats = Array.isArray(CHAR.skinnedMesh.material) ? CHAR.skinnedMesh.material : [CHAR.skinnedMesh.material];
     mats.forEach(m=>{ if(m) m.side = THREE.DoubleSide; });
@@ -9408,13 +9136,13 @@ function mountSkyboard(boardObj){
   // near an arbitrary export pivot, nowhere close to the actual deck.
   // Use the board's real measured anchor instead.
   const anchor = boardObj.userData.deckAnchor || {x:0,y:0,z:0.1};
-  CHAR.wrapper.position.set(anchor.x, anchor.y + (CHAR.feetOffset||0)*CHAR.scaleForBoard, anchor.z);
+  CHAR.root.position.set(anchor.x, anchor.y + (CHAR.feetOffset||0)*CHAR.scaleForBoard, anchor.z);
   // -PI/2 is confirmed correct now — do not flip this again without an
   // actual live screenshot; the last two rounds of "fixing" this were
   // both wrong guesses. The remaining left/right issue is the mirror
   // above, not this rotation.
-  CHAR.wrapper.rotation.set(0, CHAR_MOUNT_YAW_OFFSET, 0);
-  CHAR.wrapper.visible = true;
+  CHAR.root.rotation.set(0, CHAR_MOUNT_YAW_OFFSET, 0);
+  CHAR.root.visible = true;
   _loadStep('mounted', 1);
   if(!CHAR._confirmedMountToast){
     CHAR._confirmedMountToast = true;
@@ -9454,14 +9182,14 @@ function _updateCharDebugHUD(){
   const show = !!GFX.showCharDebug;
   el.style.display = show ? 'block' : 'none';
   if(!show) return; // skip the text update too when hidden — no point doing the work
-  const parent = CHAR.wrapper && CHAR.wrapper.parent ? (CHAR.wrapper.parent.name || ('obj:'+CHAR.wrapper.parent.uuid.slice(0,6))) : 'NONE';
-  const p = CHAR.wrapper ? CHAR.wrapper.position : null;
+  const parent = CHAR.root && CHAR.root.parent ? (CHAR.root.parent.name || ('obj:'+CHAR.root.parent.uuid.slice(0,6))) : 'NONE';
+  const p = CHAR.root ? CHAR.root.position : null;
   el.textContent =
     'mounted: '+CHAR.mounted+'\n'+
     'state: '+CHAR.state+'\n'+
     'bones: '+Object.keys(CHAR.bones||{}).length+'\n'+
     'parent: '+parent+'\n'+
-    'visible: '+(CHAR.wrapper?CHAR.wrapper.visible:'-')+'\n'+
+    'visible: '+(CHAR.root?CHAR.root.visible:'-')+'\n'+
     'localPos: '+(p?p.x.toFixed(2)+','+p.y.toFixed(2)+','+p.z.toFixed(2):'-');
 }
 
@@ -9476,7 +9204,7 @@ function updateCharOrbitCamera(){
   // the surface she's never "mounted" (she's walking, board just trails
   // beside her), so orbiting around her CHAR.root directly is correct
   // there too, same as the mounted case.
-  if(CHAR.loaded && CHAR.wrapper && (CHAR.mounted || surfaceActive)){ CHAR.wrapper.getWorldPosition(target); target.y += 0.35; }
+  if(CHAR.loaded && CHAR.root && (CHAR.mounted || surfaceActive)){ CHAR.root.getWorldPosition(target); target.y += 0.35; }
   else if(atmoActive && atmoBoard){ atmoBoard.getWorldPosition(target); }
   else if(boardFlight){ boardFlight.getWorldPosition(target); }
   else return;
@@ -9542,10 +9270,10 @@ function toggleCharOrbit(){
 
 function dismountSkyboard(targetScene, worldPos){
   if(!CHAR.root) return;
-  const wp = new THREE.Vector3(); CHAR.wrapper.getWorldPosition(wp);
-  if(targetScene) targetScene.add(CHAR.wrapper);
-  CHAR.wrapper.position.copy(worldPos || wp);
-  CHAR.wrapper.visible = true;
+  const wp = new THREE.Vector3(); CHAR.root.getWorldPosition(wp);
+  if(targetScene) targetScene.add(CHAR.root);
+  CHAR.root.position.copy(worldPos || wp);
+  CHAR.root.visible = true;
   CHAR.mounted = false;
   CHAR.scene = targetScene;
   setCharState('idle',{fade:0.25});
@@ -9647,13 +9375,13 @@ function enterSurface(body,site){
   (async()=>{
     if(!CHAR.loaded && !CHAR.loading){ try{ await loadCharacterAssets(); }catch(e){ console.error('Character load failed:',e); try{toast('⚠ Character failed to load: '+(e.message||e),4000);}catch(_){} } }
     if(CHAR.loaded && CHAR.root){
-      if(CHAR.wrapper.parent) CHAR.wrapper.parent.remove(CHAR.wrapper);
-      surfScene.add(CHAR.wrapper);
+      if(CHAR.root.parent) CHAR.root.parent.remove(CHAR.root);
+      surfScene.add(CHAR.root);
       CHAR.mounted = false;
       CHAR.scene = surfScene;
-      CHAR.wrapper.scale.setScalar(CHAR.scaleForTerrain);
-      CHAR.wrapper.position.set(surfPlayer.pos.x, surfPlayer.pos.y-3.0, surfPlayer.pos.z);
-      CHAR.wrapper.visible = true;
+      CHAR.root.scale.setScalar(CHAR.scaleForTerrain);
+      CHAR.root.position.set(surfPlayer.pos.x, surfPlayer.pos.y-3.0, surfPlayer.pos.z);
+      CHAR.root.visible = true;
       setCharState('idle',{force:true,fade:0});
     }
   })();
@@ -10768,8 +10496,8 @@ function updateSurface(dt){
   //    computed (mf/ms for movement, onGround for jump state) rather
   //    than re-deriving it separately. ────────────────────────────
   if(CHAR.loaded && CHAR.root && !CHAR._transitioning){
-    CHAR.wrapper.position.set(p.pos.x, eye-3.0, p.pos.z);
-    CHAR.wrapper.rotation.y = p.yaw - Math.PI/2;
+    CHAR.root.position.set(p.pos.x, eye-3.0, p.pos.z);
+    CHAR.root.rotation.y = p.yaw - Math.PI/2;
     const moving = Math.abs(mf)>0.05 || Math.abs(ms)>0.05;
     const running = moving && (surfRunToggle || surfKeys['ShiftLeft']||surfKeys['ShiftRight']);
     const dirSign = mf<-0.05 ? -1 : 1; // backing up (S / stick pulled back) plays the reversed cycle
@@ -10870,7 +10598,7 @@ function _surfRemountSkyboardFinish(){
   // parent-less rather than risk her being a descendant of something that
   // doesn't itself survive -- re-mounted onto the real flight board inside
   // enterAtmosphericFlight() once that board object actually exists.
-  if(CHAR.loaded && CHAR.wrapper && CHAR.wrapper.parent) CHAR.wrapper.parent.remove(CHAR.wrapper);
+  if(CHAR.loaded && CHAR.root && CHAR.root.parent) CHAR.root.parent.remove(CHAR.root);
   if(surfScene)disposeObject3D(surfScene); // free terrain/water/skyboard GPU memory (see disposeObject3D)
   if(surfRenderer)surfRenderer.dispose();
   surfScene=null;surfPlayer=null;surfBoard=null;surfTerrainMesh=null;TERRAIN.mcGroup=null;TERRAIN._mcBuildGen=(TERRAIN._mcBuildGen||0)+1;
@@ -10894,7 +10622,7 @@ function exitSurface(){
   // freed while she was still a descendant of surfScene, so LIFTOFF back to
   // space silently corrupted her rendering (still "loaded" per CHAR.loaded,
   // but drawing disposed geometry). Detach first so she survives intact.
-  if(CHAR.loaded && CHAR.wrapper && CHAR.wrapper.parent) CHAR.wrapper.parent.remove(CHAR.wrapper);
+  if(CHAR.loaded && CHAR.root && CHAR.root.parent) CHAR.root.parent.remove(CHAR.root);
   // dispose surface scene
   if(surfScene)disposeObject3D(surfScene); // free terrain/water/skyboard GPU memory (see disposeObject3D)
   if(surfRenderer){surfRenderer.dispose();}
@@ -10915,7 +10643,6 @@ function exitSurface(){
       try{updateFlight(dt);}catch(e){}
       try{updateBodies(dt);}catch(e){}
       try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){}
-    try{ if(!CHAR.mounted && CHAR.loaded && CHAR.root && boardFlight) { console.warn('Auto-healing: character loaded but not mounted, mounting onto boardFlight now.'); mountSkyboard(boardFlight); } }catch(e){}
     try{ updateCharOrbitCamera(); }catch(e){}
     try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){}
     try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){}
