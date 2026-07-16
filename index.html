@@ -3830,7 +3830,23 @@ async function buildSolarSystem(){
   // don't contend for GPU resources building a whole system at once.
   for(const p of planets){
     const seedVal = p.name.length*7+3; // same seeding convention already used for the old canvas-texture look, kept for continuity
-    const group = await buildProceduralPlanetMesh(p.r, seedVal, p.col||0x888888, p.hasAtm);
+    let group;
+    try{
+      group = await buildProceduralPlanetMesh(p.r, seedVal, p.col||0x888888, p.hasAtm);
+    }catch(e){
+      // Real bug found while chasing 'still seeing the old planets' reports:
+      // this loop had no per-iteration error handling, so if the GPU build
+      // threw for ANY single planet, the whole for-of/await loop aborted
+      // right there - every planet after the failing one (and the failing
+      // one itself) silently never got built, with only a generic 'solar:'
+      // warning from the outer try/catch in initFlightScene to go on.
+      // Logging the specific body and error here, and falling back to a
+      // plain sphere for just that body, so one bad planet can't take the
+      // whole system down or hide which one actually failed.
+      console.warn('[GPU planet] build failed for',p.name,'-',e.message,e);
+      group = new THREE.Group();
+      group.add(new THREE.Mesh(new THREE.SphereGeometry(p.r,24,24), new THREE.MeshStandardMaterial({color:p.col||0x888888,roughness:.85})));
+    }
     const mesh = group; // keep the name "mesh" for the code below, unchanged from before
 
     // Orbit ring — TorusGeometry defaults to lying flat in the XY plane, but
