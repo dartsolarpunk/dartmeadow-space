@@ -1208,13 +1208,14 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
       <div class="ar-row" style="margin-top:3px;"><span class="ar-label">SHIELD</span><span class="ar-val" id="hud-shield">100%</span></div>
       <div class="ar-bar-wrap"><div class="ar-bar"><div class="ar-bar-fill" id="bar-shield" style="width:100%;background:var(--purple);"></div></div></div>
     </div>
-    <div class="ar-panel">
+    <div class="ar-panel" id="nearest-body-panel" style="display:none;">
       <div class="ar-panel-title">Nearest Body</div>
       <div class="ar-row"><span class="ar-label">NAME</span><span class="ar-val" id="hud-body">Earth</span></div>
       <div class="ar-row"><span class="ar-label">DIST</span><span class="ar-val" id="hud-bdist">400 km</span></div>
       <div class="ar-row"><span class="ar-label">TYPE</span><span class="ar-val" id="hud-btype">Planet</span></div>
       <div class="ar-row"><span class="ar-label">TEMP</span><span class="ar-val" id="hud-btemp">288 K</span></div>
     </div>
+    <div id="crosshair-label" style="display:none;position:absolute;top:calc(50% + 34px);left:50%;transform:translate(-50%,0);pointer-events:none;z-index:23;font-family:var(--font-hud);font-size:0.78rem;letter-spacing:0.08em;color:var(--cyan,#5bd6ff);background:rgba(6,10,20,0.55);border:1px solid rgba(91,214,255,0.4);border-radius:3px;padding:4px 12px;white-space:nowrap;text-shadow:0 0 8px rgba(91,214,255,0.5);"></div>
     <div class="ar-panel">
       <div class="ar-panel-title">Flight</div>
       <div class="ar-row"><span class="ar-label">MODE</span><span class="ar-val" id="hud-mode">MANEUVER</span></div>
@@ -3410,6 +3411,7 @@ function _startFlightLoop(){
     try{updateDistantSystems(dt);}catch(e){}
     try{updateVolumetricDust(dt);}catch(e){}
     try{updateHUD();}catch(e){}
+    try{updateCrosshairLabel();}catch(e){}
     try{drawMinimap();}catch(e){}
     renderWithPostFX();
   })();
@@ -5607,6 +5609,32 @@ function bodyUnderCrosshair(){
     if(score>bestScore){bestScore=score;best=b;}
   });
   return best;
+}
+
+// ── Crosshair-triggered name label — replaces the old always-on "Nearest
+// Body" panel, which read as cluttered/tacky for a story-adventure feel
+// (per direct request). Only pops up when the crosshair first lands on a
+// body AND the player is within its solar system's proximity - stays for
+// 4 seconds, then requires moving the crosshair off and back on to show
+// again, rather than continuously re-triggering while held over it.
+// Deliberately separate from the minimap's own labels, which are unaffected
+// and stay always-on there.
+let _lastHoveredBody=null, _labelHideTimer=null;
+const LABEL_PROXIMITY_RANGE = 60; // world units - "within the bounds of the celestial body's habitat/solar system"
+function updateCrosshairLabel(){
+  if(!boardFlight || !flightCamera){ _lastHoveredBody=null; return; }
+  const body = bodyUnderCrosshair();
+  const withinRange = body && body.mesh && flightCamera.position.distanceTo(body.mesh.position) < LABEL_PROXIMITY_RANGE;
+  const currentName = withinRange ? body.name : null;
+
+  if(currentName && currentName !== _lastHoveredBody){
+    const el = $('crosshair-label');
+    el.textContent = currentName;
+    el.style.display = 'block';
+    if(_labelHideTimer) clearTimeout(_labelHideTimer);
+    _labelHideTimer = setTimeout(()=>{ $('crosshair-label').style.display='none'; }, 4000);
+  }
+  _lastHoveredBody = currentName;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -8175,6 +8203,7 @@ function resumeFlightLoop(){
     try{updateDistantSystems(dt);}catch(e){}
     try{updateVolumetricDust(dt);}catch(e){}
     try{updateHUD();}catch(e){}
+    try{updateCrosshairLabel();}catch(e){}
     try{drawMinimap();}catch(e){}
     try{renderWithPostFX();}catch(e){}
   })();
@@ -10719,6 +10748,7 @@ function exitSurface(){
       try{updateDistantSystems(dt);}catch(e){}
       try{updateVolumetricDust(dt);}catch(e){}
       try{updateHUD();}catch(e){}
+    try{updateCrosshairLabel();}catch(e){}
       try{drawMinimap();}catch(e){}
       renderWithPostFX();
     })();
