@@ -3577,7 +3577,7 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
   const densityBuf=new THREE.StorageInstancedBufferAttribute(numPoints,1);
   const densityNode=storage(densityBuf,'float',numPoints);
   const triTableFlat=new Int32Array(256*16);
-  TriangleTable.forEach((row,i)=>{ for(let j=0;j<16;j++) triTableFlat[i*16+j]=row[j]; });
+  GPU_TriangleTable.forEach((row,i)=>{ for(let j=0;j<16;j++) triTableFlat[i*16+j]=row[j]; });
   const triTableAttr=new THREE.StorageBufferAttribute(triTableFlat,1);
   const triTableStorage=storage(triTableAttr,'int',256*16);
   const vertexBuf=new THREE.StorageBufferAttribute(maxVerts,3);
@@ -10495,7 +10495,7 @@ const EdgeMasks = [
 // 16 (max 5 triangles/case) for use as a fixed-stride GPU storage
 // buffer, matching the layout every compute-shader MC implementation
 // expects.
-const _rawTriangleTable = [
+const _rawGPUTriangleTable = [
 [-1],[0,3,8,-1],[0,9,1,-1],[3,8,1,1,8,9,-1],[2,11,3,-1],[8,0,11,11,0,2,-1],[3,2,11,1,0,9,-1],[11,1,2,11,9,1,11,8,9,-1],
 [1,10,2,-1],[0,3,8,2,1,10,-1],[10,2,9,9,2,0,-1],[8,2,3,8,10,2,8,9,10,-1],[11,3,10,10,3,1,-1],[10,0,1,10,8,0,10,11,8,-1],[9,3,0,9,11,3,9,10,11,-1],[8,9,11,11,9,10,-1],
 [4,8,7,-1],[7,4,3,3,4,0,-1],[4,8,7,0,9,1,-1],[1,4,9,1,7,4,1,3,7,-1],[8,7,4,11,3,2,-1],[4,11,7,4,2,11,4,0,2,-1],[0,9,1,8,7,4,11,3,2,-1],[7,4,11,11,4,2,2,4,9,2,9,1,-1],
@@ -10532,7 +10532,7 @@ const _rawTriangleTable = [
 
 // Flatten each entry to fixed-width 16 (padding with -1), matching a
 // classic 256x16 int table layout for direct upload as a GPU buffer.
-const TriangleTable = _rawTriangleTable.map(row=>{
+const GPU_TriangleTable = _rawGPUTriangleTable.map(row=>{
   const out = new Array(16).fill(-1);
   for(let i=0;i<row.length && i<16;i++) out[i] = row[i];
   return out;
@@ -10616,7 +10616,7 @@ async function buildGPUMarchingCubesTerrain(pal,seed,H){
     const densityBuf=new THREE.StorageInstancedBufferAttribute(numPoints,1);
     const densityNode=storage(densityBuf,'float',numPoints);
     const triTableFlat=new Int32Array(256*16);
-    TriangleTable.forEach((row,i)=>{ for(let j=0;j<16;j++) triTableFlat[i*16+j]=row[j]; });
+    GPU_TriangleTable.forEach((row,i)=>{ for(let j=0;j<16;j++) triTableFlat[i*16+j]=row[j]; });
     const triTableAttr=new THREE.StorageBufferAttribute(triTableFlat,1);
     const triTableStorage=storage(triTableAttr,'int',256*16);
     const vertexBuf=new THREE.StorageBufferAttribute(maxVerts,3);
