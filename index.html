@@ -8540,7 +8540,15 @@ function disposeObject3D(root){
 }
 
 /* ══════════════════════════════════════════════════════════════
-   PLAYER CHARACTER — Meshy_AI_T_Pose_Sentinel_biped
+   PLAYER CHARACTER — Autumn (Meshy_AI_Autumn_biped)
+   Switched from the earlier Meshy_AI_T_Pose_Sentinel_biped placeholder
+   (AI-generated from a reference image) to Justin's own hand-sculpted,
+   personally-rigged file. Same bone naming convention confirmed
+   identical before switching, so the pose-control/retargeting code
+   below didn't need to change — only CHAR_FILES and CHAR_CLIP_NAMES
+   above, plus simplifying the jump/climb state logic now that this
+   rig's own clips are complete natural arcs rather than needing the
+   old reversed-clip/separate-finish-clip workarounds.
    Rig confirmed 26 bones, Mixamo-style names (see comment below).
    Root-motion behavior verified by sampling the Hips bone directly
    across each clip's timeline (not assumed from Meshy's docs, which
@@ -8620,30 +8628,34 @@ function _hideMiniLoader(){
 // Do not change without an actual live screenshot.
 const CHAR_MOUNT_YAW_OFFSET = Math.PI/2;
 const CHAR_FILES = {
-  mesh: 'Meshy_AI_T_Pose_Sentinel_biped_Character_output.glb',
-  // Justin's newest export — every animation (walk/run/jump/climb/skyboard
-  // stance, plus a few unused extras) bundled into ONE glb, all baked from
-  // the same skeleton/pipeline that produced the confirmed-working skyboard
-  // stance clip. Replaces the old separate skin-less FBX files entirely —
-  // verified each clip's actual bone data (not just visually) before
-  // switching: sampled Hips/Head/foot world positions across the full
-  // duration of Walking_Woman, Running, Wall_Support_Jump_to_Ground,
-  // Fast_Stair_Climb, and Ladder_Climb_Finish, and all of them show clean,
-  // stable, in-place motion with no collapse/drift — the old FBX-based
-  // walk was producing a "falls over face-down" result that this data
-  // shows isn't inherent to the source animation, so it was almost
-  // certainly something specific to the old separate-file export/import
-  // path rather than the motion itself.
-  animSrc: 'Meshy_AI_T_Pose_Sentinel_biped_Meshy_AI_Meshy_Merged_Animations.glb',
+  // Switched to Autumn's own hand-sculpted GLB, personally rigged by
+  // Justin (not AI-generated from a reference image like the earlier
+  // Sentinel biped placeholder was) — same bone names confirmed
+  // identical via direct inspection before switching (Hips, Spine,
+  // LeftUpLeg, etc. all match 1:1), so none of the bone-name-based code
+  // below (pose control, retargeting) needed to change.
+  mesh: 'Meshy_AI_Autumn_biped_Character_output.glb',
+  // This file's own animation set is richer than the old placeholder's:
+  // real dedicated Jump and climbing-up-wall clips instead of reusing/
+  // reversing unrelated clips for those states, plus swimming. Verified
+  // each clip's actual Hips-bone motion before mapping anything below —
+  // in particular confirmed 'Regular_Jump' is a complete, natural single
+  // arc (crouch->launch->apex->fall->recover, sampled at ~0.1s intervals
+  // across its 1.9s duration) and 'climbing_up_wall' is a complete
+  // climb-to-top arc that levels off and stabilizes in its final third
+  // rather than needing a separate finish clip — both meaningfully
+  // simpler than the old file's workarounds (reversing a fall clip to
+  // fake a rise, bolting a separate finish clip onto a climb loop).
+  animSrc: 'Meshy_AI_Autumn_biped_Meshy_AI_Meshy_Merged_Animations.glb',
 };
 // Maps our internal state names to the clip names actually inside animSrc.
 const CHAR_CLIP_NAMES = {
-  walk: 'Walking_Woman',
+  walk: 'Walking',
   run: 'Running',
-  jump: 'Wall_Support_Jump_to_Ground',
-  climbLoop: 'Fast_Stair_Climb',
-  climbFinish: 'Ladder_Climb_Finish',
-  skyboard: 'Step_Right_for_Exercise',
+  jump: 'Regular_Jump',       // complete natural arc now — see comment above, no more reversed-clip rise phase needed
+  climbLoop: 'climbing_up_wall', // complete climb-to-top arc — see comment above, no separate finish clip needed
+  skyboard: 'Step_Right_for_Exercise', // same clip name as the old file, duration matches almost exactly (2.5s vs 2.53s) suggesting the same underlying stock animation — reused crop window below, but NOT re-verified frame-by-frame against this specific file (no live browser here), so this is an inference from the duration match, not a re-scrub
+  swim: 'Swim_Forward',       // new capability, not present in the old file — not yet wired into a locomotion trigger (needs water-immersion detection first), but loaded and ready
 };
 const CHAR = {
   loaded:false, loading:false,
@@ -8652,7 +8664,7 @@ const CHAR = {
   mixer:null,
   clips:{},              // name -> THREE.AnimationClip
   actions:{},            // name -> THREE.AnimationAction
-  state:'idle',           // idle | walk | run | jump | climbLoop | climbFinish | skyboard
+  state:'idle',           // idle | walk | run | jump | climbLoop | skyboard | swim
   mounted:false,           // true when riding the skyboard (parented to it, not standing on terrain)
   moveDir:1,               // 1 = forward, -1 = backward (drives timeScale sign for in-place cycles)
   scene:null,              // which THREE.Scene the character currently lives in
@@ -8742,18 +8754,24 @@ async function loadCharacterAssets(){
   const runClip = findClip(CHAR_CLIP_NAMES.run);
   const jumpClip = findClip(CHAR_CLIP_NAMES.jump);
   const climbLoopClip = findClip(CHAR_CLIP_NAMES.climbLoop);
-  const climbFinishClip = findClip(CHAR_CLIP_NAMES.climbFinish);
   const skyboardSrcClip = findClip(CHAR_CLIP_NAMES.skyboard);
-  ['walk','run','jump','climbLoop','climbFinish','skyboard'].forEach((k,i)=>{
-    if(![walkClip,runClip,jumpClip,climbLoopClip,climbFinishClip,skyboardSrcClip][i]) console.warn('Animation clip not found in merged GLB for state "'+k+'" (expected name "'+CHAR_CLIP_NAMES[k]+'") — check CHAR_CLIP_NAMES against the actual clip names in the file.');
+  const swimClip = findClip(CHAR_CLIP_NAMES.swim);
+  ['walk','run','jump','climbLoop','skyboard','swim'].forEach((k,i)=>{
+    if(![walkClip,runClip,jumpClip,climbLoopClip,skyboardSrcClip,swimClip][i]) console.warn('Animation clip not found in merged GLB for state "'+k+'" (expected name "'+CHAR_CLIP_NAMES[k]+'") — check CHAR_CLIP_NAMES against the actual clip names in the file.');
   });
 
   CHAR.clips.walk = walkClip;
   CHAR.clips.run = runClip;
-  CHAR.clips.jump = jumpClip;           // forward-playing: falling -> landing (as authored)
-  CHAR.clips.jumpRise = jumpClip ? _reversedClipPreservingRoot(jumpClip) : null; // reversed: launch upward -> apex
+  // Regular_Jump is a complete natural arc (verified: crouch -> launch ->
+  // apex -> fall -> recover, all in one clip) — no more reversed-clip
+  // rise phase needed, so no jumpRise action anymore either. setCharState
+  // and updateCharacterLocomotion below have been simplified to match.
+  CHAR.clips.jump = jumpClip;
+  // climbing_up_wall is a complete climb-to-top arc (verified: rises and
+  // levels off/stabilizes in its final third) — no separate climbFinish
+  // clip needed anymore.
   CHAR.clips.climbLoop = climbLoopClip;
-  CHAR.clips.climbFinish = climbFinishClip;
+  CHAR.clips.swim = swimClip;
   // Real bug found: there was never an actual "idle" clip/pose anywhere in
   // this codebase — CHAR.actions.idle was always undefined, so
   // setCharState('idle',...) was a silent no-op for her actual bone poses
@@ -8787,9 +8805,9 @@ async function loadCharacterAssets(){
     CHAR.actions[name] = action;
   });
   if(CHAR.actions.idle) CHAR.actions.idle.setLoop(THREE.LoopRepeat, Infinity);
-  if(CHAR.actions.climbFinish) CHAR.actions.climbFinish.setLoop(THREE.LoopOnce,1);
-  if(CHAR.actions.jumpRise) CHAR.actions.jumpRise.setLoop(THREE.LoopOnce,1);
   if(CHAR.actions.jump) CHAR.actions.jump.setLoop(THREE.LoopOnce,1);
+  if(CHAR.actions.climbLoop) CHAR.actions.climbLoop.setLoop(THREE.LoopOnce,1); // complete climb-to-top arc, not a repeating cycle — see comment above
+  if(CHAR.actions.swim) CHAR.actions.swim.setLoop(THREE.LoopRepeat, Infinity);
   if(CHAR.actions.skyboard){
     CHAR.actions.skyboard.setLoop(THREE.LoopPingPong, Infinity);
     CHAR.actions.skyboard.timeScale = SKYBOARD_ANIM_SPEED; // real fix is in setCharState('skyboard',...) passing speed explicitly — see applySkyboardStance below; this line alone was being silently overwritten every mount
@@ -9024,12 +9042,15 @@ function applySkyboardHeadOverride(){
 }
 
 /* ── STATE MACHINE ──────────────────────────────────────────────
-   States: idle, walk, run, jump (rise->fall as one continuous action,
-   crossfading jumpRise into jump at the apex), climbLoop, climbFinish,
-   skyboard (procedural pose, not an Action). Forward/backward handled
-   via timeScale sign on the in-place cycles (walk/run/climbLoop) per
-   the verified-safe rule; jump keeps real root motion so its own
-   direction comes from which of jumpRise/jump plays, not a sign flip. */
+   States: idle, walk, run, jump, climbLoop, skyboard (procedural pose,
+   not an Action), swim (loaded, not yet triggered by any gameplay
+   condition). Forward/backward handled via timeScale sign on the
+   in-place cycles (walk/run) per the verified-safe rule. jump and
+   climbLoop are both complete natural one-shot arcs in Autumn's own
+   animation set (crouch->launch->apex->fall->recover for jump;
+   climb->level-off-at-top for climbLoop) — simpler than the old
+   placeholder rig, which had to fake a jump rise by reversing a
+   fall/land clip and bolt a separate finish clip onto its climb loop. */
 function setCharState(next, opts){
   opts = opts||{};
   if(CHAR.state===next && !opts.force) return;
@@ -9046,19 +9067,9 @@ function updateCharacterLocomotion(dt, moving, running, dirSign, jumping, climbi
   if(!CHAR.loaded) return;
   if(CHAR.mounted){ applySkyboardStance(simTime||0); CHAR.mixer && CHAR.mixer.update(0); return; }
   if(jumping){
-    if(CHAR.state!=='jump'){
-      setCharState('jumpRise',{fade:0.15});
-      // Crossfade from the rise into the landing half partway through,
-      // so the two halves of the reversed/forward pair read as one
-      // continuous launch->apex->fall->land motion.
-      const riseAction=CHAR.actions.jumpRise, fallAction=CHAR.actions.jump;
-      if(riseAction && fallAction){
-        const dur = riseAction.getClip().duration;
-        setTimeout(()=>{ if(CHAR.state==='jumpRise'){ fallAction.reset().play(); riseAction.crossFadeTo(fallAction,0.2,false); CHAR.state='jump'; } }, dur*500);
-      }
-    }
+    if(CHAR.state!=='jump') setCharState('jump',{fade:0.15});
   } else if(climbing){
-    if(CHAR.state!=='climbLoop' && CHAR.state!=='climbFinish') setCharState('climbLoop',{fade:0.2});
+    if(CHAR.state!=='climbLoop') setCharState('climbLoop',{fade:0.2});
   } else if(moving){
     setCharState(running?'run':'walk',{fade:0.2, reverse:dirSign<0});
   } else {
@@ -9067,21 +9078,25 @@ function updateCharacterLocomotion(dt, moving, running, dirSign, jumping, climbi
   CHAR.mixer && CHAR.mixer.update(dt);
 }
 function finishClimb(onComplete){
-  setCharState('climbFinish',{fade:0.15});
-  const action = CHAR.actions.climbFinish;
-  if(!action){ onComplete&&onComplete(); return; }
+  // climbLoop is now a complete climb-to-top arc that already ends
+  // stably leveled-off at the top (verified against its own Hips-height
+  // profile before switching to this rig) — just wait for it to finish
+  // playing rather than needing a second, separate finish clip.
+  const action = CHAR.actions.climbLoop;
+  if(!action){ setCharState('idle',{fade:0.25}); onComplete&&onComplete(); return; }
   const dur = action.getClip().duration;
   setTimeout(()=>{ setCharState('idle',{fade:0.25}); onComplete&&onComplete(); }, dur*1000);
 }
 
 /* ── STEP-ON / STEP-OFF BOARD TRANSITIONS ────────────────────────
-   Real bone-driven mount/dismount, built from the actual jump FBX data
-   rather than an instant teleport-and-swap. There's no literal "step
-   onto a hovering board" clip in the asset set, but jumpRise (launch
-   upward, root motion preserved) and jump (the forward fall/land half
-   of the same pair) are anatomically the right shape for this — a
-   push-off-the-ground-and-land motion — so they're reused here as her
-   boarding/disembarking animation, with her actual world position
+   Real bone-driven mount/dismount, built from actual jump animation
+   data rather than an instant teleport-and-swap. Autumn's own rig has
+   a genuine complete jump arc (Regular_Jump: crouch->launch->apex->
+   fall->recover) which reads naturally as a boarding/disembarking hop
+   either direction — mount and dismount both use the same 'jump'
+   action now (the old placeholder rig needed a separate reversed
+   'jumpRise' half for mounting since its own jump clip wasn't a
+   complete arc; not needed anymore). Her actual world position is
    blended from the ground-stance point to the board's real measured
    deck anchor (or vice versa) over the clip's own duration, easing
    in/out with a smoothstep. She stays parented directly to whichever
@@ -9106,8 +9121,8 @@ function boardMountSequence(targetBoard, hostScene, onComplete){
   CHAR.root.position.copy(startPos);
   hostScene.add(CHAR.root);
   CHAR.root.scale.setScalar(CHAR.scaleForBoard); // normal (unmirrored) during the hop — the mirror is a mounted-only correction, applied by mountSkyboard() at the end
-  setCharState('jumpRise',{fade:0.15, speed:0.7});
-  const action = CHAR.actions.jumpRise;
+  setCharState('jump',{fade:0.15, speed:0.7, force:true});
+  const action = CHAR.actions.jump;
   const dur = action ? action.getClip().duration/0.7 : 0.9;
   const t0 = performance.now();
   (function step(){
