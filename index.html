@@ -128,11 +128,24 @@ if(location.search.indexOf('debug')!==-1){
    flight, etc.), never synchronously at parse time, so waiting for this
    event costs nothing in practice; there's substantial user interaction
    time between page load and the first renderer actually being built. */
-import * as THREE from 'three/webgpu';
+import * as THREE_NS from 'three/webgpu';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import * as TSL from 'three/tsl';
 
+// Real bug found and fixed here: `import * as X` creates an ES module
+// namespace object, which is frozen/non-extensible by spec - you cannot
+// add a NEW property to it, only read its existing exports. The original
+// version of this file did `THREE.GLTFLoader = GLTFLoader` directly on
+// that namespace object, which throws "Cannot add property GLTFLoader,
+// object is not extensible" on EVERY single page load - and since that
+// throw happens before the next few lines (TSL attachment, the
+// __THREE_READY__ flag, and the 'three-ready' event dispatch), none of
+// those ever ran either. Everything downstream that waits for
+// 'three-ready' - which is most of the game - was permanently stuck
+// waiting for an event that could never fire. Fixed by copying the
+// namespace's exports into a genuinely plain, mutable object first.
+const THREE = Object.assign({}, THREE_NS);
 window.THREE = THREE;
 THREE.GLTFLoader = GLTFLoader;
 THREE.FBXLoader = FBXLoader;
