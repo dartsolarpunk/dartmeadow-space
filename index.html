@@ -3863,6 +3863,48 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
   group.add(new THREE.Mesh(geo,mat));
 
   if(hasAtmosphere){
+    // Water — ported from the sandbox's depth-aware shell (same technique:
+    // the opaque terrain above renders first in the frame, so by the time
+    // this transparent water fragment shades, viewportLinearDepth already
+    // holds "whatever's behind me" - comparing that to this fragment's own
+    // depth gives live water-column thickness at every point, with no
+    // separate baked mask, same as the sandbox reference). Sized at
+    // radius*1.08 to match the sandbox's own PLANET_RADIUS(40)+3.2 ratio,
+    // sitting inside the terrain's own height variance (±radius*0.12-0.18
+    // per the density function above) so it only submerges low ground.
+    const WATER_R=radius*1.08;
+    const waterMat=new THREE.MeshStandardNodeMaterial({transparent:true,side:THREE.DoubleSide,depthWrite:false,metalness:0.05});
+    const sceneDepthW=viewportLinearDepth;
+    const surfaceDepthW=linearDepth(positionView.z);
+    const depthDiffW=sceneDepthW.sub(surfaceDepthW).max(0.0);
+    const depthFactorW=depthDiffW.mul(3.2).clamp(0.0,1.0);
+    const shallowC=vec3(0.34,0.76,0.72),midC=vec3(0.10,0.45,0.52),deepC=vec3(0.02,0.09,0.20);
+    const baseColorW=mix(mix(shallowC,midC,smoothstep(0.0,0.45,depthFactorW)),deepC,smoothstep(0.35,1.0,depthFactorW));
+    const foamW=float(1.0).sub(smoothstep(0.0,0.05,depthDiffW));
+    const foamNoiseW=mx_fractal_noise_float(positionWorld.mul(8.0).add(vec3(time.mul(0.3),0,time.mul(0.2))),3,2.0,0.5);
+    const foamMaskW=foamW.mul(smoothstep(0.15,0.6,foamNoiseW.mul(0.5).add(0.5)).add(0.35).clamp(0.0,1.0));
+    const wavePosW=positionWorld.mul(2.6).add(vec3(time.mul(0.15),0.0,time.mul(0.11)));
+    const waveNW=mx_fractal_noise_float(wavePosW,4,2.0,0.5);
+    const wavePos2W=positionWorld.mul(2.6).add(vec3(time.mul(0.11).add(50.0),0.0,time.mul(-0.13)));
+    const waveN2W=mx_fractal_noise_float(wavePos2W,4,2.0,0.5);
+    const wavePos3W=positionWorld.mul(9.0).add(vec3(time.mul(0.4).add(12.0),0.0,time.mul(0.33)));
+    const waveN3W=mx_fractal_noise_float(wavePos3W,2,2.0,0.5);
+    const waveNormalW=normalWorld.add(vec3(
+      waveNW.mul(0.12).add(waveN3W.mul(0.035)),
+      waveN2W.mul(0.12).add(waveN3W.mul(0.035)),
+      waveNW.mul(waveN2W).mul(0.08)
+    )).normalize();
+    const viewDirW=positionWorld.sub(cameraPosition).normalize();
+    const fresnelW=float(1.0).sub(viewDirW.dot(waveNormalW).abs()).pow(2.5);
+    const shineW=fresnelW.mul(0.55);
+    waterMat.colorNode=mix(baseColorW,vec3(1,1,1),foamMaskW).add(vec3(0.55,0.65,0.75).mul(shineW));
+    waterMat.opacityNode=clamp(float(0.4).add(depthFactorW.mul(0.5)).add(foamMaskW.mul(0.4)).add(shineW.mul(0.3)),0.0,0.97);
+    waterMat.normalNode=waveNormalW;
+    waterMat.roughnessNode=clamp(float(0.06).add(waveN3W.abs().mul(0.12)),0.03,0.28);
+    const waterMesh=new THREE.Mesh(new THREE.SphereGeometry(WATER_R,64,40),waterMat);
+    waterMesh.renderOrder=1;
+    group.add(waterMesh);
+
     const atmoMat=new THREE.MeshBasicNodeMaterial({transparent:true,side:THREE.BackSide,depthWrite:false,depthTest:false,blending:THREE.AdditiveBlending});
     const scatterCoeffs=uniform(new THREE.Vector3(Math.pow(400/700,4),Math.pow(400/530,4),Math.pow(400/440,4)).multiplyScalar(2.2));
     const sunDirU=uniform(new THREE.Vector3(1,0.3,0.2).normalize());
@@ -3943,13 +3985,30 @@ async function buildSolarSystem(){
 
   // Sun — parent group so glow travels with it
   const sunGroup = new THREE.Group();
-  const sm=new THREE.Mesh(new THREE.SphereGeometry(4,32,32),new THREE.MeshStandardMaterial({color:0xffdd44,emissive:0xffaa00,emissiveIntensity:2.2,roughness:.6}));
+  const sm=new THREE.Mesh(new THREE.SphereGeometry(4,32,32),new THREE.MeshStandardMaterial({color:0xffdd44,emissive:0xffaa00,emissiveIntensity:1.8,roughness:.6}));
   sunGroup.add(sm);
-  // Atmosphere glow sphere — parented to sun so it always follows
-  const sa=new THREE.Mesh(new THREE.SphereGeometry(5.5,16,16),new THREE.MeshBasicMaterial({color:0xffaa00,transparent:true,opacity:.12,side:THREE.BackSide}));
+  // Corona glow — was a perfectly smooth solid-color sphere (guaranteed to
+  // read as a symmetrical circle from any angle, since a sphere's silhouette
+  // always is one) at fairly strong opacity. Replaced with a TSL material
+  // that displaces each vertex outward by a noise value sampled from its own
+  // position, so the actual geometry silhouette becomes irregular/lumpy
+  // (not just an alpha mask on top of a still-circular shape), plus a
+  // softer, lower peak opacity so it reads as a diffuse smoky corona rather
+  // than a bright flat disc. Two layers (inner warmer/tighter, outer
+  // cooler/looser) for depth, same two-sphere structure as before.
+  function _makeCoronaMat(color,peakOpacity){
+    const mat=new THREE.MeshBasicNodeMaterial({transparent:true,side:THREE.BackSide,depthWrite:false,blending:THREE.AdditiveBlending});
+    const n1=mx_fractal_noise_float(positionLocal.mul(1.4),4,2.0,0.5);
+    const n2=mx_fractal_noise_float(positionLocal.mul(3.1).add(vec3(7.3,1.1,4.4)),3,2.0,0.5);
+    const rim=float(1.0).sub(normalize(positionLocal).dot(vec3(0,0,1)).abs()).pow(1.4); // soft view-angle falloff, not a hard edge
+    mat.colorNode=vec3(new THREE.Color(color).r,new THREE.Color(color).g,new THREE.Color(color).b);
+    mat.opacityNode=clamp(rim.mul(peakOpacity).mul(n1.mul(0.5).add(0.5)).mul(n2.mul(0.3).add(0.7)),0.0,1.0);
+    mat.positionNode=positionLocal.add(normalLocal.mul(n1.mul(0.9).add(n2.mul(0.3))));
+    return mat;
+  }
+  const sa=new THREE.Mesh(new THREE.SphereGeometry(5.5,32,24),_makeCoronaMat(0xffaa00,0.22));
   sunGroup.add(sa);
-  // Corona outer glow
-  const sc2=new THREE.Mesh(new THREE.SphereGeometry(7,16,16),new THREE.MeshBasicMaterial({color:0xff8800,transparent:true,opacity:.04,side:THREE.BackSide}));
+  const sc2=new THREE.Mesh(new THREE.SphereGeometry(7,32,24),_makeCoronaMat(0xff8800,0.09));
   sunGroup.add(sc2);
   flightScene.add(sunGroup);
   sunMesh=sm;
@@ -9169,12 +9228,34 @@ function _renderMiniLoader(){
   }
   if(pct>=100) _hideMiniLoader();
 }
+// Safety-net timer handle for the mini-loader force-hide below - cleared
+// whenever the loader legitimately completes or gets hidden some other way,
+// so a fast load doesn't leave a stray timeout waiting to fire later.
+let _miniLoaderSafetyTimer=null;
 function _showMiniLoader(){
   const el=document.getElementById('mini-loader');
   if(el) el.style.display='flex';
   _renderMiniLoader();
+  // Real risk this guards against: this overlay sits at z-index 8500 over
+  // the ENTIRE HUD while visible, intercepting every tap/click - if the
+  // character GLB download stalls on a slow connection, or any future
+  // LOAD_TRACK step fails to mark itself complete for whatever reason, the
+  // player is left with a fully-rendered, seemingly-working scene behind
+  // an invisible-ish (dark, blurred) overlay that eats 100% of input
+  // forever, with zero on-screen indication anything's wrong - exactly the
+  // 'controls aren't doing anything' symptom. Force-hide after a generous
+  // ceiling regardless of tracked progress; the scene is virtually always
+  // usable behind it even if a progress step never technically resolved.
+  clearTimeout(_miniLoaderSafetyTimer);
+  _miniLoaderSafetyTimer=setTimeout(()=>{
+    if(el&&el.style.display!=='none'){
+      console.warn('[mini-loader] Safety-net timeout fired — forcing hide after 20s. LOAD_TRACK steps at that point:',JSON.stringify(LOAD_TRACK.steps));
+      _hideMiniLoader();
+    }
+  },20000);
 }
 function _hideMiniLoader(){
+  clearTimeout(_miniLoaderSafetyTimer);
   const el=document.getElementById('mini-loader');
   if(el) el.style.display='none';
 }
