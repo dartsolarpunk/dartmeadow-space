@@ -8706,6 +8706,14 @@ const CHAR = {
   _transitioning:false,    // true during boardMountSequence/boardDismountSequence — locomotion/mount sync must not fight the transition's own position control
 };
 
+// Reusable scratch vectors for applyFootIK() below — allocated once,
+// not per-frame/per-foot, same allocation-avoidance discipline as the
+// rest of the hot per-frame code in this file.
+const _ikHipPos = new THREE.Vector3();
+const _ikFootPos = new THREE.Vector3();
+const _ikFwd = new THREE.Vector3();
+const _ikUp = new THREE.Vector3(0,1,0);
+
 function _fbxBoneMap(){
   // Every clip shares this exact bone-name set (confirmed across all
   // files during the earlier rig session) — used to retarget an FBX
@@ -9098,6 +9106,71 @@ function setCharState(next, opts){
   }
   CHAR.state = next;
 }
+// Per-foot ground-adaptive IK. Honest scope note: this is a practical
+// analytic approximation (per-foot knee-bend correction + ankle tilt
+// toward the locally-sampled ground normal), NOT a full 3D two-bone/
+// FABRIK solve — that would need this rig's exact per-joint local
+// rotation axes confirmed against a live view, which isn't available
+// in this project (no live browser here, per the established
+// diagnostic-logging-instead-of-visual-check workflow). What this
+// DOES do for real: samples actual marching-cubes terrain collision
+// (_surfHeight/_surfNormal — the same pixel-consistent raycast data
+// driving slope-lean/climb) independently under EACH foot's own
+// current world position, then bends that leg's knee (and nudges the
+// thigh) proportionally to how far off the ground that foot currently
+// is, and tilts the foot bone toward the local surface normal — so
+// two feet on uneven ground (e.g. one on a rock, one in a dip) get
+// genuinely different corrections rather than one shared body-wide
+// lean. Damped per-foot/per-frame to avoid snapping. Additive on top
+// of whatever the walk/run/idle animation already posed, same
+// direct-bone-rotation technique as the crouch-lean/skyboard-stance
+// systems elsewhere in this file.
+function applyFootIK(dt, weight){
+  const b = CHAR.bones;
+  if(!b || !b.LeftUpLeg || !b.LeftLeg || !b.LeftFoot || !b.RightUpLeg || !b.RightLeg || !b.RightFoot) return;
+  if(typeof window._surfHeight!=='function' || typeof window._surfNormal!=='function') return;
+  if(!CHAR.root) return;
+
+  CHAR.root.getWorldDirection(_ikFwd); // character's current facing, world space
+
+  const SIDES = CHAR._ikSides || (CHAR._ikSides=['Left','Right']);
+  for(let i=0;i<SIDES.length;i++){
+    const side = SIDES[i];
+    const upLeg=b[side+'UpLeg'], leg=b[side+'Leg'], foot=b[side+'Foot'];
+    upLeg.updateWorldMatrix(true,false);
+    foot.updateWorldMatrix(true,false);
+    _ikHipPos.setFromMatrixPosition(upLeg.matrixWorld);
+    _ikFootPos.setFromMatrixPosition(foot.matrixWorld);
+    const reach = Math.max(0.3, _ikHipPos.distanceTo(_ikFootPos));
+
+    const groundY = window._surfHeight(_ikFootPos.x, _ikFootPos.z);
+    const rawErr = groundY - _ikFootPos.y; // >0: ground is above the foot (needs more knee bend); <0: ground drops away
+
+    const errKey='_ikErr'+side;
+    CHAR[errKey] = THREE.MathUtils.damp(CHAR[errKey]||0, rawErr, 10, dt);
+    const err = CHAR[errKey];
+
+    // Small-angle approximation: extra knee flex needed to close a
+    // vertical gap of `err` over a leg currently reaching `reach` —
+    // split between knee (most of the correction) and thigh (a
+    // smaller assist), matching the proportion the existing
+    // skyboard-stance pose already uses between these two bones.
+    const bend = THREE.MathUtils.clamp(err/reach, -0.85, 0.85);
+    leg.rotation.x   += bend*0.75*weight;
+    upLeg.rotation.x += bend*0.35*weight;
+
+    // Ankle tilt toward the locally-sampled ground normal under THIS
+    // foot specifically (not the shared body-wide slope reading),
+    // projected onto the character's forward axis for a sagittal-plane
+    // pitch correction — the same projection style already used for
+    // slopeDeg elsewhere in this file, just evaluated per-foot here.
+    const nrm = window._surfNormal(_ikFootPos.x, _ikFootPos.z);
+    const pitch = Math.atan2(-_ikFwd.dot(nrm), Math.max(0.2,nrm.dot(_ikUp)));
+    const ankleKey='_ikAnkle'+side;
+    CHAR[ankleKey] = THREE.MathUtils.damp(CHAR[ankleKey]||0, pitch, 10, dt);
+    foot.rotation.x += CHAR[ankleKey]*0.6*weight;
+  }
+}
 function updateCharacterLocomotion(dt, moving, running, dirSign, jumping, climbing){
   if(!CHAR.loaded) return;
   if(CHAR.mounted){ applySkyboardStance(simTime||0); CHAR.mixer && CHAR.mixer.update(0); return; }
@@ -9111,6 +9184,31 @@ function updateCharacterLocomotion(dt, moving, running, dirSign, jumping, climbi
     setCharState('idle',{fade:0.3});
   }
   CHAR.mixer && CHAR.mixer.update(dt);
+
+  // Slope crouch-lean: added ON TOP of whatever pose the mixer just set,
+  // proportional to CHAR._slopeLeanT (0-1, set where slope is measured) -
+  // not a replacement animation, just a forward hip/spine bend that grows
+  // as the incline gets steeper, same direct-bone-rotation technique the
+  // skyboard stance already uses elsewhere in this file. Skipped while
+  // climbing/jumping (those states have their own full-body poses this
+  // shouldn't fight with).
+  if(!jumping && !climbing && CHAR._slopeLeanT>0.001){
+    const b=CHAR.bones;
+    if(b && b.Spine){
+      const lean=CHAR._slopeLeanT*0.5; // ~28° max forward lean at full steepness
+      b.Spine.rotation.x += lean;
+      b.Spine01 && (b.Spine01.rotation.x += lean*0.5);
+      b.Hips && (b.Hips.rotation.x += CHAR._slopeLeanT*0.25);
+    }
+  }
+
+  // Per-foot ground IK — fades in/out smoothly rather than a hard
+  // on/off, so it never pops when jumping/climbing start or stop.
+  // See applyFootIK's own comment for exactly what this does and
+  // doesn't do.
+  const ikTarget = (!jumping && !climbing) ? 1 : 0;
+  CHAR._footIKWeight = THREE.MathUtils.damp(CHAR._footIKWeight||0, ikTarget, 6, dt);
+  if(CHAR._footIKWeight>0.01) applyFootIK(dt, CHAR._footIKWeight);
 }
 function finishClimb(onComplete){
   // climbLoop is now a complete climb-to-top arc that already ends
@@ -10295,6 +10393,20 @@ if(STATE.settings.marchingCubesTerrain){
       }
       return _origSurfHeight(x,z);
     };
+    // Surface normal at a point - same raycast approach as _surfHeight above,
+    // kept as a separate function (rather than changing _surfHeight's return
+    // type) so nothing that already calls _surfHeight for a plain number
+    // breaks. Used for slope-aware locomotion (crouch/climb blending) below.
+    // Falls back to world-up (flat ground assumption) wherever there's no
+    // marching-cubes chunk built yet, or outside the covered span.
+    window._surfNormal=(x,z)=>{
+      if(Math.abs(x)<SPAN&&Math.abs(z)<SPAN&&TERRAIN.mcGroup){
+        _mcRay.set(new THREE.Vector3(x,MC_VMIN+MC_VHEIGHT+20,z),new THREE.Vector3(0,-1,0));
+        const hits=_mcRay.intersectObject(TERRAIN.mcGroup,true);
+        if(hits.length&&hits[0].face)return hits[0].face.normal.clone().transformDirection(hits[0].object.matrixWorld);
+      }
+      return new THREE.Vector3(0,1,0);
+    };
   }
 
   // water + caustics (unchanged) — sized to the full terrain span
@@ -10606,7 +10718,22 @@ function updateSurface(dt){
     const running = moving && (surfRunToggle || surfKeys['ShiftLeft']||surfKeys['ShiftRight']);
     const dirSign = mf<-0.05 ? -1 : 1; // backing up (S / stick pulled back) plays the reversed cycle
     const jumping = p.jumpActive;
-    const climbing = surfClimbHeld;
+
+    // Slope-aware locomotion: sample the surface normal under her feet and
+    // convert to a steepness angle. Below ~35° reads as normal ground (no
+    // change); between ~35-50° blends in a forward crouch-lean (added on
+    // top of whatever the walk/run animation already set, not overriding
+    // it, so the leg cycle keeps playing normally); above ~50° she's on
+    // a real incline/cliff face and switches to the existing climb
+    // animation automatically, same as if CLIMB had been pressed by hand -
+    // manual toggle and auto-trigger are OR'd together, so pressing CLIMB
+    // still works everywhere it already did.
+    const groundNormal = (typeof window._surfNormal==='function') ? window._surfNormal(p.pos.x,p.pos.z) : new THREE.Vector3(0,1,0);
+    const slopeDeg = THREE.MathUtils.radToDeg(groundNormal.angleTo(new THREE.Vector3(0,1,0)));
+    const autoClimbFromSlope = slopeDeg > 50 && moving;
+    const climbing = surfClimbHeld || autoClimbFromSlope;
+    CHAR._slopeLeanT = THREE.MathUtils.clamp((slopeDeg-35)/15, 0, 1); // 0 at 35°, 1 at 50°+ - read by updateCharacterLocomotion below for the crouch-lean blend
+
     updateCharacterLocomotion(dt, moving, running, dirSign, jumping, climbing);
   }
 }
