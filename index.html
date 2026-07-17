@@ -2276,7 +2276,7 @@ function initMenuBg(){
 // ══════════════════════════════════════════════════════════════
 let sgScene,sgRenderer,sgCamera,sgModel,sgAnimId,sgInited=false,sgLoading=true;
 
-function initStartBtnTurntable(){
+async function initStartBtnTurntable(){
   if(sgInited)return;
   const host=$('start-game-btn');
   if(!host)return;
@@ -2300,7 +2300,19 @@ function initStartBtnTurntable(){
   sgCamera=new THREE.PerspectiveCamera(32,w/h,0.01,10);
   sgCamera.position.set(0,0,1.6);
 
-  sgRenderer=new THREE.WebGLRenderer({antialias:true,alpha:true,powerPreference:'low-power'});
+  // Real bug found via headless-browser pageerror: "THREE.WebGLRenderer
+  // is not a constructor". This file imports THREE from 'three/webgpu'
+  // (the WebGPU-only entry point — see the module bridge script), which
+  // doesn't export WebGLRenderer at all, only WebGPURenderer. Every
+  // other renderer in this game (all 8 of them) already made this
+  // switch during the WebGPU migration; this one small menu preview
+  // was missed, which is exactly why the start-button 3D preview got
+  // stuck on its "LOADING…" placeholder forever — the function threw
+  // synchronously on the very first line that touched the renderer,
+  // before ever reaching the GLB load below. Same async .init()
+  // requirement as flightRenderer/surfRenderer.
+  sgRenderer=new THREE.WebGPURenderer({antialias:true,alpha:true,powerPreference:'low-power'});
+  await sgRenderer.init();
   sgRenderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
   sgRenderer.setSize(w,h);
   sgRenderer.setClearColor(0x000000,0);
@@ -2545,7 +2557,7 @@ function toggleBuilderDrawer(){
   if(el) el.classList.toggle('sidebar-open');
 }
 
-function initBuilderScene(){
+async function initBuilderScene(){
   if(builderInited){
     // Re-entering builder — force resize and rebuild
     setTimeout(()=>{
@@ -2564,7 +2576,13 @@ function initBuilderScene(){
   builderInited=true;
   buildGfxGrids();buildStaffGrid();updateBoardStats();
   const cv=$('builder-canvas');
-  builderRenderer=new THREE.WebGLRenderer({canvas:cv,antialias:true,alpha:false});
+  // Real bug found via headless-browser pageerror (same class as the
+  // menu turntable fix above): 'three/webgpu' doesn't export
+  // WebGLRenderer at all. This is exactly why the skyboard builder
+  // scene never rendered — threw synchronously before the board/
+  // character/lighting setup below ever ran.
+  builderRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:true,alpha:false});
+  await builderRenderer.init();
   builderRenderer.setPixelRatio(Math.min(devicePixelRatio,2));
   builderRenderer.toneMapping=THREE.ACESFilmicToneMapping;builderRenderer.toneMappingExposure=1.1;
   builderScene=new THREE.Scene();builderScene.background=new THREE.Color(0x000308);
@@ -4211,11 +4229,27 @@ async function buildSolarSystem(){
 // alongside the planets, but kept as its own object (not pushed into
 // celestialBodies) since it isn't a landable planet and shouldn't be
 // picked up by the LOD/nearest-body/orbit-ring logic built for those.
+// basePos/target start as plain {x,y,z} placeholders, NOT real
+// THREE.Vector3 instances — this object is defined at top-level parse
+// time in a classic script, which runs before the deferred module
+// script has attached THREE to window (the exact same bug class as
+// the STATE.flight.pos/vel fix earlier tonight; this second instance
+// on BIRD_TEMPLE was missed in that pass — confirmed via a real
+// headless-browser pageerror: "THREE is not defined" at this exact
+// object literal, which was silently killing everything defined
+// AFTER this point in the main script on every page load: the menu's
+// 3D board preview, the skyboard builder scene, and the flight/orbit
+// scene never got built, and the loading-gate/asset-count logic
+// (also defined later in this same script) never got wired up either
+// — matching every symptom reported (blank preview, black builder,
+// gameplay skipping straight past the loading sequence). Upgraded to
+// real Vector3 instances via __whenThreeReady() immediately below,
+// same as STATE.flight.pos/vel.
 const BIRD_TEMPLE={
-  group:null,basePos:new THREE.Vector3(),t:0,nearPromptShown:false,audioEl:null,
+  group:null,basePos:{x:0,y:0,z:0},t:0,nearPromptShown:false,audioEl:null,
   spawned:false, // true once a real, randomized, minimum-distance-checked spawn point has been picked
   // ── Autonomous wander (task 1) ──────────────────────────────────
-  target:new THREE.Vector3(),wanderSpeed:1.5, // ~1/10th of base cruise speed (0.25u/frame*60fps=15u/s)
+  target:{x:0,y:0,z:0},wanderSpeed:1.5, // ~1/10th of base cruise speed (0.25u/frame*60fps=15u/s)
   wanderIdleUntil:0,
   // ── Bird Shard summon (task 2) ───────────────────────────────────
   shard:null,          // the detached 'Bird Shard' group once pulled off the ship
@@ -4223,6 +4257,10 @@ const BIRD_TEMPLE={
   shardHomeLocal:null, // original local transform, to dock it back exactly
   shardPlayedNear:false,
 };
+window.__whenThreeReady(function(){
+  BIRD_TEMPLE.basePos = new THREE.Vector3(BIRD_TEMPLE.basePos.x, BIRD_TEMPLE.basePos.y, BIRD_TEMPLE.basePos.z);
+  BIRD_TEMPLE.target = new THREE.Vector3(BIRD_TEMPLE.target.x, BIRD_TEMPLE.target.y, BIRD_TEMPLE.target.z);
+});
 function _btPickWanderTarget(){
   // Prefer near a random celestial body sometimes, otherwise open space —
   // real autonomous movement around the currently-loaded system. Full
@@ -4449,8 +4487,17 @@ function updateBirdTemple(dt){
 // the same 'ground-follow only' honesty as the note when this was first
 // discussed.
 // ══════════════════════════════════════════════════════════════
-const SHIP_WALK={active:false,localPos:new THREE.Vector3(),yaw:0,pitch:0,velY:0,grounded:true};
-const _shipWalkRay=new THREE.Raycaster();
+// SHIP_WALK.localPos starts as a plain placeholder and _shipWalkRay
+// starts null — same top-level-parse-time issue as BIRD_TEMPLE above
+// (this classic script runs before the deferred module attaches THREE
+// to window), confirmed as the next actual pageerror once BIRD_TEMPLE
+// was fixed. Upgraded via __whenThreeReady immediately below.
+const SHIP_WALK={active:false,localPos:{x:0,y:0,z:0},yaw:0,pitch:0,velY:0,grounded:true};
+let _shipWalkRay=null;
+window.__whenThreeReady(function(){
+  SHIP_WALK.localPos = new THREE.Vector3(SHIP_WALK.localPos.x, SHIP_WALK.localPos.y, SHIP_WALK.localPos.z);
+  _shipWalkRay = new THREE.Raycaster();
+});
 function _shipGroundHeight(worldX,worldZ,fallbackY){
   const bt=BIRD_TEMPLE;
   _shipWalkRay.set(new THREE.Vector3(worldX,fallbackY+50,worldZ),new THREE.Vector3(0,-1,0));
@@ -5159,7 +5206,10 @@ function _getGLBLoader(){ if(!_glbLoader&&THREE.GLTFLoader)_glbLoader=new THREE.
 // body, planet-surface props as more passives) — each entry is just
 // {obj, name}; the sweep logic lives in updateBirdTemple's frame step.
 const RIGID={passive:[],playerRadius:0.7,_playerPrev:null,
-  _ray:new THREE.Raycaster(),_tmpV1:new THREE.Vector3(),_tmpV2:new THREE.Vector3()};
+  _ray:null,_tmpV1:null,_tmpV2:null};
+window.__whenThreeReady(function(){
+  RIGID._ray=new THREE.Raycaster(); RIGID._tmpV1=new THREE.Vector3(); RIGID._tmpV2=new THREE.Vector3();
+});
 function registerPassiveCollider(obj,name){
   RIGID.passive.push({obj,name:name||obj.name||'collider'});
   console.log('[Rigid] passive collider registered:',name,'(total',RIGID.passive.length+')');
@@ -5957,12 +6007,20 @@ function updateCrosshairLabel(){
 //  (see solver: forward round-trip 1e-15, board nose tracks view forward
 //  through full loops at 4e-16) rather than hand-derived.
 // ══════════════════════════════════════════════════════════════
-const _sQ1=new THREE.Quaternion(),_sQ2=new THREE.Quaternion(),_sQ3=new THREE.Quaternion();
-const _sV0=new THREE.Vector3(),_sV1=new THREE.Vector3(),_sV2=new THREE.Vector3(),_sV3=new THREE.Vector3(),_sV4=new THREE.Vector3();
-const _sM1=new THREE.Matrix4();
-const _AXIS_X=new THREE.Vector3(1,0,0),_AXIS_Y=new THREE.Vector3(0,1,0),_AXIS_Z=new THREE.Vector3(0,0,1);
-const _BOARD_ALIGN=new THREE.Quaternion().setFromEuler(new THREE.Euler(0,-Math.PI/2,0,'YXZ'));
-let _camUp=new THREE.Vector3(0,1,0);
+let _sQ1=null,_sQ2=null,_sQ3=null;
+let _sV0=null,_sV1=null,_sV2=null,_sV3=null,_sV4=null;
+let _sM1=null;
+let _AXIS_X=null,_AXIS_Y=null,_AXIS_Z=null;
+let _BOARD_ALIGN=null;
+let _camUp=null;
+window.__whenThreeReady(function(){
+  _sQ1=new THREE.Quaternion();_sQ2=new THREE.Quaternion();_sQ3=new THREE.Quaternion();
+  _sV0=new THREE.Vector3();_sV1=new THREE.Vector3();_sV2=new THREE.Vector3();_sV3=new THREE.Vector3();_sV4=new THREE.Vector3();
+  _sM1=new THREE.Matrix4();
+  _AXIS_X=new THREE.Vector3(1,0,0);_AXIS_Y=new THREE.Vector3(0,1,0);_AXIS_Z=new THREE.Vector3(0,0,1);
+  _BOARD_ALIGN=new THREE.Quaternion().setFromEuler(new THREE.Euler(0,-Math.PI/2,0,'YXZ'));
+  _camUp=new THREE.Vector3(0,1,0);
+});
 
 function spQuat(sp){
   let q=sp.quat;
@@ -6372,7 +6430,8 @@ function updateBodies(dt){
 
 
 let _hudT=0;
-const _hudSunDir=new THREE.Vector3(),_hudZero=new THREE.Vector3(0,0,0);
+let _hudSunDir=null,_hudZero=null;
+window.__whenThreeReady(function(){ _hudSunDir=new THREE.Vector3(); _hudZero=new THREE.Vector3(0,0,0); });
 function updateHUD(){
   if(!boardFlight)return;
   // Throttle to 5 Hz. Readable numbers don't need 60fps, and this function
@@ -6591,7 +6650,8 @@ function lockOnNearest(){
 //             inclinations, this must read the system's own normal.)
 // Leveling = project current forward onto the plane (heading preserved),
 // up snapped to the plane normal, then a ~0.9s eased quaternion sweep.
-const GALAXY_PLANE_EULER=new THREE.Euler(0.5,0.3,0.1); // keep in sync with galGroup.rotation
+let GALAXY_PLANE_EULER=null; // keep in sync with galGroup.rotation
+window.__whenThreeReady(function(){ GALAXY_PLANE_EULER=new THREE.Euler(0.5,0.3,0.1); });
 let _levelAnim=null;
 function cancelAutoLevel(){
   if(_levelAnim){clearInterval(_levelAnim);_levelAnim=null;
@@ -6656,12 +6716,15 @@ function openGalaxyMap(){
 }
 function closeGalaxyMap(){$('galaxy-map').classList.remove('open');}
 
-function initGalaxyMapScene(){
+async function initGalaxyMapScene(){
   gmInited=true;
   const cv=$('gm-canvas');
   const W=Math.min(innerWidth*.92,1100),H=Math.min(innerHeight*.74,640);
   cv.width=W;cv.height=H;
-  gmRenderer=new THREE.WebGLRenderer({canvas:cv,antialias:true,alpha:false,logarithmicDepthBuffer:true});
+  // Same 'three/webgpu' has-no-WebGLRenderer bug as the menu turntable
+  // and builder scene above — this is what kept the galaxy map blank.
+  gmRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:true,alpha:false,logarithmicDepthBuffer:true});
+  await gmRenderer.init();
   gmRenderer.setPixelRatio(Math.min(devicePixelRatio,2));gmRenderer.setSize(W,H);
   gmRenderer.setClearColor(0x000206,1);
   gmScene=new THREE.Scene();
@@ -8324,7 +8387,7 @@ function makeOrbitGlobeTexture(body){
   _orbitTexCache[key]=tex;return tex;
 }
 
-function openOrbitApproach(body){
+async function openOrbitApproach(body){
   if(orbitActive)return;
   _orbitBody=body;orbitActive=true;_orbitSite=null;
   // pause flight loop while orbiting
@@ -8336,7 +8399,12 @@ function openOrbitApproach(body){
   $('orbit-site').textContent='';
   $('orbit-descend').style.display='none';
   const cv=$('orbit-canvas');const W=window.innerWidth,H=window.innerHeight;cv.width=W;cv.height=H;
-  orbitRenderer=new THREE.WebGLRenderer({canvas:cv,antialias:!GFX.isMobile});
+  // Same 'three/webgpu' has-no-WebGLRenderer bug as elsewhere in this
+  // pass — this is what was leaving the ORBIT cockpit view's viewport
+  // black behind a fully-functional HUD (the HUD is plain HTML/CSS,
+  // unaffected; only the actual THREE scene never rendered).
+  orbitRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:!GFX.isMobile});
+  await orbitRenderer.init();
   orbitRenderer.setPixelRatio(effectivePixelRatio());orbitRenderer.setSize(W,H);
   orbitRenderer.outputColorSpace=THREE.SRGBColorSpace;
   orbitScene=new THREE.Scene();
@@ -8540,7 +8608,7 @@ let atmoPreset=0,atmoThrottle=0,atmoMach=0;
 let atmoSteer={x:0,y:0},atmoClimb={x:0,y:0};
 let atmoState=null;
 
-function enterAtmosphericFlight(body,site){
+async function enterAtmosphericFlight(body,site){
   if(atmoActive)return;
   _atmoBody=body;_atmoSite=site||null;atmoActive=true;
   atmoPreset=0;atmoThrottle=0;atmoMach=0;
@@ -8561,7 +8629,9 @@ function enterAtmosphericFlight(body,site){
   const ov=$('atmo-overlay');ov.style.display='block';
   $('atmo-title').textContent='ATMOSPHERIC FLIGHT — '+body.name.toUpperCase();
   const cv=$('atmo-canvas');const W=window.innerWidth,H=window.innerHeight;cv.width=W;cv.height=H;
-  atmoRenderer=new THREE.WebGLRenderer({canvas:cv,antialias:!GFX.isMobile});
+  // Same 'three/webgpu' has-no-WebGLRenderer bug as elsewhere in this pass.
+  atmoRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:!GFX.isMobile});
+  await atmoRenderer.init();
   atmoRenderer.setPixelRatio(effectivePixelRatio());atmoRenderer.setSize(W,H);
   atmoRenderer.outputColorSpace=THREE.SRGBColorSpace;
   atmoScene=new THREE.Scene();
@@ -9010,11 +9080,16 @@ const CHAR = {
 
 // Reusable scratch vectors for applyFootIK() below — allocated once,
 // not per-frame/per-foot, same allocation-avoidance discipline as the
-// rest of the hot per-frame code in this file.
-const _ikHipPos = new THREE.Vector3();
-const _ikFootPos = new THREE.Vector3();
-const _ikFwd = new THREE.Vector3();
-const _ikUp = new THREE.Vector3(0,1,0);
+// rest of the hot per-frame code in this file. Deferred via
+// __whenThreeReady like every other top-level THREE construction in
+// this script (this classic script runs before the deferred module
+// attaches THREE to window) — same bug class as BIRD_TEMPLE/SHIP_WALK/
+// RIGID/etc above, caught this time before shipping instead of after.
+let _ikHipPos=null, _ikFootPos=null, _ikFwd=null, _ikUp=null;
+window.__whenThreeReady(function(){
+  _ikHipPos=new THREE.Vector3(); _ikFootPos=new THREE.Vector3();
+  _ikFwd=new THREE.Vector3(); _ikUp=new THREE.Vector3(0,1,0);
+});
 
 function _fbxBoneMap(){
   // Every clip shares this exact bone-name set (confirmed across all
