@@ -3438,7 +3438,7 @@ async function initFlightScene(){
   try{buildVolumetricDust();}catch(e){console.warn('dust:',e);}
   try{initMinimapGestures();}catch(e){console.warn('mm gestures:',e);}
   try{buildDistantStarSystems();}catch(e){console.warn('systems:',e);}
-  try{buildSolarSystem();}catch(e){console.warn('solar:',e);}
+  try{await buildSolarSystem();}catch(e){console.warn('solar:',e);}
   try{applyProceduralTextures();}catch(e){console.warn('tex:',e);}
   try{buildFlightBoard();}catch(e){console.warn('board:',e);}
   try{addSunLight();}catch(e){console.warn('sun:',e);}
@@ -3599,7 +3599,257 @@ function buildFlightNebulae(){
     flightScene.add(new THREE.Points(g,new THREE.PointsMaterial({size:4,sizeAttenuation:false,vertexColors:true,map:nebTex,alphaTest:0.02,transparent:true,opacity:.4,depthWrite:false})));
   });
 }
-function buildSolarSystem(){
+
+
+async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmosphere){
+  const group = new THREE.Group();
+  if(!(flightRenderer instanceof THREE.WebGPURenderer)){
+    // Fallback so a body still exists (as a plain sphere) if this device
+    // path somehow doesn't have the WebGPU renderer - degrades gracefully
+    // rather than leaving nothing in the scene.
+    const fallback=new THREE.Mesh(new THREE.SphereGeometry(radius,24,24),new THREE.MeshStandardMaterial({color:colorHex,roughness:.85}));
+    group.add(fallback);
+    return group;
+  }
+  const seedU = uniform(seedVal);
+  const N=20, GRID=N+1, HALF=radius*1.3, CELL=(HALF*2)/N;
+  const numPoints=GRID*GRID*GRID, numCells=N*N*N, MAX_TRIS=5, maxVerts=numCells*MAX_TRIS*3;
+
+  const densityBuf=new THREE.StorageInstancedBufferAttribute(numPoints,1);
+  const densityNode=storage(densityBuf,'float',numPoints);
+  const triTableFlat=new Int32Array(256*16);
+  GPU_TriangleTable.forEach((row,i)=>{ for(let j=0;j<16;j++) triTableFlat[i*16+j]=row[j]; });
+  const triTableAttr=new THREE.StorageBufferAttribute(triTableFlat,1);
+  const triTableStorage=storage(triTableAttr,'int',256*16);
+  const vertexBuf=new THREE.StorageBufferAttribute(maxVerts,3);
+  const vertexNode=storage(vertexBuf,'vec3',maxVerts);
+  const normalBuf=new THREE.StorageBufferAttribute(maxVerts,3);
+  const normalNode=storage(normalBuf,'vec3',maxVerts);
+  const colorBuf=new THREE.StorageBufferAttribute(maxVerts,3);
+  const colorNode=storage(colorBuf,'vec3',maxVerts);
+
+  const terrainRadiusAt=Fn(([dir])=>{
+    const n1=mx_fractal_noise_float(dir.mul(2.3).add(seedU),5,2.0,0.5);
+    const ridge=float(1.0).sub(n1.abs());
+    const n2=mx_fractal_noise_float(dir.mul(6.9).add(seedU).add(vec3(9.1,2.3,4.7)),3,2.0,0.5);
+    const billow=n2.abs();
+    const terrain=ridge.mul(ridge).mul(0.9).sub(billow.mul(0.35));
+    const w1=mx_worley_noise_float(dir.mul(4.2).add(seedU));
+    const profile1=exp(w1.mul(w1).mul(-22.0));
+    const w2=mx_worley_noise_float(dir.mul(1.6).add(seedU).add(vec3(31.0,7.0,19.0)));
+    const profile2=exp(w2.mul(w2).mul(-38.0));
+    const bowl=profile1.mul(0.22).add(profile2.mul(0.55));
+    const rim1=smoothstep(0.04,0.22,profile1).sub(smoothstep(0.22,0.42,profile1)).mul(0.06);
+    const rim2=smoothstep(0.03,0.18,profile2).sub(smoothstep(0.18,0.34,profile2)).mul(0.14);
+    const craterRim=rim1.add(rim2);
+    return float(radius).add(terrain.mul(radius*0.12)).sub(bowl.mul(radius*0.06)).add(craterRim.mul(radius*0.06));
+  });
+
+  const densityFn=Fn(()=>{
+    const idx=instanceIndex;
+    const gz=idx.div(uint(GRID*GRID));
+    const rem=idx.mod(uint(GRID*GRID));
+    const gy=rem.div(uint(GRID));
+    const gx=rem.mod(uint(GRID));
+    const p=vec3(gx.toFloat().mul(CELL).sub(HALF),gy.toFloat().mul(CELL).sub(HALF),gz.toFloat().mul(CELL).sub(HALF));
+    const dir=p.normalize();
+    const base=p.length().sub(radius);
+    const groundR=terrainRadiusAt(dir);
+    densityNode.element(idx).assign(base.sub(groundR.sub(radius)));
+  });
+  await flightRenderer.computeAsync(densityFn().compute(numPoints));
+
+  const mcFn=Fn(()=>{
+    const cellIdx=instanceIndex;
+    const cz=cellIdx.div(uint(N*N));
+    const crem=cellIdx.mod(uint(N*N));
+    const cy=crem.div(uint(N));
+    const cx=crem.mod(uint(N));
+    const readCorner=(i)=>{
+      const dx=i&1, dy=(i>>1)&1, dz=(i>>2)&1;
+      const gx=cx.add(dx), gy=cy.add(dy), gz=cz.add(dz);
+      const flat=gx.add(gy.mul(uint(GRID))).add(gz.mul(uint(GRID*GRID)));
+      return {
+        pos: vec3(gx.toFloat().mul(CELL).sub(HALF), gy.toFloat().mul(CELL).sub(HALF), gz.toFloat().mul(CELL).sub(HALF)),
+        density: densityNode.element(flat),
+      };
+    };
+    const c0=readCorner(0),c1=readCorner(1),c2=readCorner(2),c3=readCorner(3),
+          c4=readCorner(4),c5=readCorner(5),c6=readCorner(6),c7=readCorner(7);
+    const corners=[c0,c1,c2,c3,c4,c5,c6,c7];
+    const caseIdx=int(0).toVar();
+    corners.forEach((c,i)=>{ If(c.density.lessThan(0.0), ()=>{ caseIdx.assign(caseIdx.bitOr(int(1<<i))); }); });
+    const outBase=cellIdx.mul(uint(MAX_TRIS*3));
+    Loop(MAX_TRIS*3, ({i})=>{
+      vertexNode.element(outBase.add(uint(i))).assign(vec3(0,0,0));
+      normalNode.element(outBase.add(uint(i))).assign(vec3(0,1,0));
+      colorNode.element(outBase.add(uint(i))).assign(vec3(0,0,0));
+    });
+    Loop(MAX_TRIS, ({i})=>{
+      const triBase=caseIdx.mul(int(16)).add(i.mul(3));
+      const e0=triTableStorage.element(triBase);
+      If(e0.greaterThanEqual(0), ()=>{
+        const e1=triTableStorage.element(triBase.add(1));
+        const e2=triTableStorage.element(triBase.add(2));
+        const interp=(edge)=>{
+          let pa=corners[0].pos, pb=corners[0].pos, da=corners[0].density, db=corners[0].density;
+          EdgeVertexIndices.forEach(([va,vb],k)=>{
+            const match=edge.equal(int(k));
+            pa=select(match,corners[va].pos,pa); pb=select(match,corners[vb].pos,pb);
+            da=select(match,corners[va].density,da); db=select(match,corners[vb].density,db);
+          });
+          const t=da.div(da.sub(db).add(1e-6));
+          return pa.add(pb.sub(pa).mul(t));
+        };
+        const v0=interp(e0), v1=interp(e1), v2=interp(e2);
+        const nrm=v1.sub(v0).cross(v2.sub(v0)).normalize();
+        const baseC=new THREE.Color(colorHex);
+        const rockC=baseC.clone().multiplyScalar(0.65);
+        const snowC=new THREE.Color(0xeef2f6);
+        const colorFor=(v)=>{
+          const up=v.normalize();
+          const slope=float(1).sub(nrm.dot(up).clamp(0,1));
+          const height=v.length().sub(radius);
+          let c=vec3(baseC.r,baseC.g,baseC.b);
+          c=mix(c,vec3(rockC.r,rockC.g,rockC.b),slope.smoothstep(0.35,0.75));
+          c=mix(c,vec3(snowC.r,snowC.g,snowC.b),height.sub(radius*0.09).div(radius*0.05).clamp(0,1));
+          return c;
+        };
+        const col=colorFor(v0).add(colorFor(v1)).add(colorFor(v2)).div(3.0);
+        const slot=i.mul(3);
+        vertexNode.element(outBase.add(slot)).assign(v0);
+        vertexNode.element(outBase.add(slot).add(1)).assign(v1);
+        vertexNode.element(outBase.add(slot).add(2)).assign(v2);
+        normalNode.element(outBase.add(slot)).assign(nrm);
+        normalNode.element(outBase.add(slot).add(1)).assign(nrm);
+        normalNode.element(outBase.add(slot).add(2)).assign(nrm);
+        colorNode.element(outBase.add(slot)).assign(col);
+        colorNode.element(outBase.add(slot).add(1)).assign(col);
+        colorNode.element(outBase.add(slot).add(2)).assign(col);
+      });
+    });
+  });
+  await flightRenderer.computeAsync(mcFn().compute(numCells));
+
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position',vertexBuf);
+  geo.setAttribute('normal',normalBuf);
+  geo.setAttribute('color',colorBuf);
+  geo.boundingSphere=new THREE.Sphere(new THREE.Vector3(0,0,0),HALF*1.5);
+  const mat=new THREE.MeshStandardNodeMaterial({vertexColors:true,roughness:0.92,metalness:0.02});
+  group.add(new THREE.Mesh(geo,mat));
+
+  if(hasAtmosphere){
+    // Water — ported from the sandbox's depth-aware shell (same technique:
+    // the opaque terrain above renders first in the frame, so by the time
+    // this transparent water fragment shades, viewportLinearDepth already
+    // holds "whatever's behind me" - comparing that to this fragment's own
+    // depth gives live water-column thickness at every point, with no
+    // separate baked mask, same as the sandbox reference). Sized at
+    // radius*1.08 to match the sandbox's own PLANET_RADIUS(40)+3.2 ratio,
+    // sitting inside the terrain's own height variance (±radius*0.12-0.18
+    // per the density function above) so it only submerges low ground.
+    const WATER_R=radius*1.08;
+    const waterMat=new THREE.MeshStandardNodeMaterial({transparent:true,side:THREE.DoubleSide,depthWrite:false,metalness:0.05});
+    const sceneDepthW=viewportLinearDepth;
+    const surfaceDepthW=linearDepth(positionView.z);
+    const depthDiffW=sceneDepthW.sub(surfaceDepthW).max(0.0);
+    const depthFactorW=depthDiffW.mul(3.2).clamp(0.0,1.0);
+    const shallowC=vec3(0.34,0.76,0.72),midC=vec3(0.10,0.45,0.52),deepC=vec3(0.02,0.09,0.20);
+    const baseColorW=mix(mix(shallowC,midC,smoothstep(0.0,0.45,depthFactorW)),deepC,smoothstep(0.35,1.0,depthFactorW));
+    const foamW=float(1.0).sub(smoothstep(0.0,0.05,depthDiffW));
+    const foamNoiseW=mx_fractal_noise_float(positionWorld.mul(8.0).add(vec3(time.mul(0.3),0,time.mul(0.2))),3,2.0,0.5);
+    const foamMaskW=foamW.mul(smoothstep(0.15,0.6,foamNoiseW.mul(0.5).add(0.5)).add(0.35).clamp(0.0,1.0));
+    const wavePosW=positionWorld.mul(2.6).add(vec3(time.mul(0.15),0.0,time.mul(0.11)));
+    const waveNW=mx_fractal_noise_float(wavePosW,4,2.0,0.5);
+    const wavePos2W=positionWorld.mul(2.6).add(vec3(time.mul(0.11).add(50.0),0.0,time.mul(-0.13)));
+    const waveN2W=mx_fractal_noise_float(wavePos2W,4,2.0,0.5);
+    const wavePos3W=positionWorld.mul(9.0).add(vec3(time.mul(0.4).add(12.0),0.0,time.mul(0.33)));
+    const waveN3W=mx_fractal_noise_float(wavePos3W,2,2.0,0.5);
+    const waveNormalW=normalWorld.add(vec3(
+      waveNW.mul(0.12).add(waveN3W.mul(0.035)),
+      waveN2W.mul(0.12).add(waveN3W.mul(0.035)),
+      waveNW.mul(waveN2W).mul(0.08)
+    )).normalize();
+    const viewDirW=positionWorld.sub(cameraPosition).normalize();
+    const fresnelW=float(1.0).sub(viewDirW.dot(waveNormalW).abs()).pow(2.5);
+    const shineW=fresnelW.mul(0.55);
+    waterMat.colorNode=mix(baseColorW,vec3(1,1,1),foamMaskW).add(vec3(0.55,0.65,0.75).mul(shineW));
+    waterMat.opacityNode=clamp(float(0.4).add(depthFactorW.mul(0.5)).add(foamMaskW.mul(0.4)).add(shineW.mul(0.3)),0.0,0.97);
+    waterMat.normalNode=waveNormalW;
+    waterMat.roughnessNode=clamp(float(0.06).add(waveN3W.abs().mul(0.12)),0.03,0.28);
+    const waterMesh=new THREE.Mesh(new THREE.SphereGeometry(WATER_R,64,40),waterMat);
+    waterMesh.renderOrder=1;
+    group.add(waterMesh);
+
+    const atmoMat=new THREE.MeshBasicNodeMaterial({transparent:true,side:THREE.BackSide,depthWrite:false,depthTest:false,blending:THREE.AdditiveBlending});
+    const scatterCoeffs=uniform(new THREE.Vector3(Math.pow(400/700,4),Math.pow(400/530,4),Math.pow(400/440,4)).multiplyScalar(2.2));
+    const sunDirU=uniform(new THREE.Vector3(1,0.3,0.2).normalize());
+    const ATMO_R=HALF*1.06;
+    const raySphere=Fn(([center,rad,ro,rd])=>{
+      const offset=ro.sub(center);
+      const b=offset.dot(rd).mul(2.0);
+      const c=offset.dot(offset).sub(rad.mul(rad));
+      const disc=b.mul(b).sub(c.mul(4.0));
+      const result=vec3(0,0,0).toVar();
+      If(disc.greaterThanEqual(0.0), ()=>{
+        const s=disc.sqrt();
+        const near=b.negate().sub(s).div(2.0);
+        const far=b.negate().add(s).div(2.0);
+        If(far.greaterThanEqual(0.0), ()=>{
+          const dToSphere=near.max(0.0);
+          result.assign(vec3(dToSphere,far.sub(dToSphere),1.0));
+        });
+      });
+      return result;
+    });
+    const densityAtPoint=Fn(([sp])=>{
+      const h=sp.length().sub(radius);
+      const h01=h.div(ATMO_R-radius).clamp(0.0,1.0);
+      return exp(h01.negate().mul(5.5)).mul(float(1.0).sub(h01));
+    });
+    const opticalDepth=Fn(([ro,rd,rl])=>{
+      const stepSize=rl.div(5);
+      const p=ro.toVar();
+      const total=float(0).toVar();
+      Loop(5, ()=>{ total.addAssign(densityAtPoint(p).mul(stepSize)); p.addAssign(rd.mul(stepSize)); });
+      return total;
+    });
+    const atmoFn=Fn(()=>{
+      const ro=cameraPosition;
+      const rd=positionWorld.sub(cameraPosition).normalize();
+      const center=vec3(0,0,0);
+      const hit=raySphere(center,float(ATMO_R),ro,rd);
+      const marchStart=hit.x, marchLen=hit.y;
+      const inScatter=vec3(0,0,0).toVar();
+      If(hit.z.greaterThan(0.5), ()=>{
+        const stepSize=marchLen.div(10);
+        const p=ro.add(rd.mul(marchStart)).toVar();
+        const viewOD=float(0).toVar();
+        Loop(10, ()=>{
+          const localDensity=densityAtPoint(p);
+          viewOD.addAssign(localDensity.mul(stepSize));
+          const sunHit=raySphere(center,float(ATMO_R),p,sunDirU);
+          const sunOD=opticalDepth(p,sunDirU,sunHit.y);
+          const transmittance=exp(scatterCoeffs.negate().mul(sunOD.add(viewOD)));
+          inScatter.addAssign(localDensity.mul(transmittance).mul(scatterCoeffs).mul(stepSize));
+          p.addAssign(rd.mul(stepSize));
+        });
+      });
+      return inScatter;
+    });
+    const inS=atmoFn();
+    atmoMat.colorNode=inS;
+    atmoMat.opacityNode=clamp(inS.r.add(inS.g).add(inS.b).mul(0.6),0.0,1.0);
+    const atmoMesh=new THREE.Mesh(new THREE.SphereGeometry(ATMO_R,32,24),atmoMat);
+    atmoMesh.renderOrder=2;
+    group.add(atmoMesh);
+  }
+  return group;
+}
+
+
+async function buildSolarSystem(){
   celestialBodies=[];
 
   // ═══════════════════════════════════════════════════════════════
@@ -3659,19 +3909,28 @@ function buildSolarSystem(){
   });
 
 
-  planets.forEach(p=>{
-    let mat;
-    if(p.useShader){
-      const _vs=['varying vec3 vNormal;','void main(){vNormal=normalize(normalMatrix*normal);gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}'].join('\n');
-      const _fs=['uniform vec3 sunDir;','varying vec3 vNormal;','void main(){float d=dot(vNormal,normalize(sunDir));float t=smoothstep(-0.15,0.18,d);vec3 day=vec3(0.03,0.14,0.42);vec3 night=vec3(0.005,0.015,0.048);vec3 col=mix(night,day,t);float nc=pow(clamp(-d,0.0,1.0),0.9)*0.09;col+=vec3(0.9,0.7,0.3)*nc;float rim=1.0-abs(dot(vNormal,vec3(0.0,0.0,1.0)));col+=vec3(0.0,0.3,0.8)*pow(rim,5.0)*0.3;gl_FragColor=vec4(col,1.0);}'].join('\n');
-      mat=new THREE.ShaderMaterial({uniforms:{sunDir:{value:new THREE.Vector3(1,0.2,0)}},vertexShader:_vs,fragmentShader:_fs});
-    } else {
-      mat=new THREE.MeshStandardMaterial({color:p.col,roughness:.7,metalness:.1});
+  // Sequential (not parallel) so multiple simultaneous compute dispatches
+  // don't contend for GPU resources building a whole system at once.
+  for(const p of planets){
+    const seedVal = p.name.length*7+3; // same seeding convention already used for the old canvas-texture look, kept for continuity
+    let group;
+    try{
+      group = await buildProceduralPlanetMesh(p.r, seedVal, p.col||0x888888, p.hasAtm);
+    }catch(e){
+      // Real bug found while chasing 'still seeing the old planets' reports:
+      // this loop had no per-iteration error handling, so if the GPU build
+      // threw for ANY single planet, the whole for-of/await loop aborted
+      // right there - every planet after the failing one (and the failing
+      // one itself) silently never got built, with only a generic 'solar:'
+      // warning from the outer try/catch in initFlightScene to go on.
+      // Logging the specific body and error here, and falling back to a
+      // plain sphere for just that body, so one bad planet can't take the
+      // whole system down or hide which one actually failed.
+      console.warn('[GPU planet] build failed for',p.name,'-',e.message,e);
+      group = new THREE.Group();
+      group.add(new THREE.Mesh(new THREE.SphereGeometry(p.r,24,24), new THREE.MeshStandardMaterial({color:p.col||0x888888,roughness:.85})));
     }
-    const mesh=new THREE.Mesh(new THREE.SphereGeometry(p.r,24,24),mat);
-    mesh.position.set(p.oR,0,0);
-    flightScene.add(mesh);
-    if(p.name==='Earth')earthMesh=mesh;
+    const mesh = group; // keep the name "mesh" for the code below, unchanged from before
 
     // Orbit ring — TorusGeometry defaults to lying flat in the XY plane, but
     // planets orbit in world XZ (see updateBodies: x=cos(angle)*oR, z=sin(angle)*oR,
@@ -3681,10 +3940,7 @@ function buildSolarSystem(){
     orbit.rotation.x=Math.PI/2;
     flightScene.add(orbit);
 
-    // Saturn-style rings — was a single chunky torus (tube radius p.r*.42,
-    // nearly as thick as the planet itself). Real ring systems are thin and
-    // flat with multiple distinct bands (gaps between them), not one solid
-    // doughnut. Rebuilt as several stacked flat RingGeometry annuli (each
+    // Saturn-style rings — several stacked flat RingGeometry annuli (each
     // genuinely flat, not tube-shaped) with small gaps and varying
     // shade/opacity per band, parented together so they still orbit with
     // the planet as one unit.
@@ -3714,17 +3970,17 @@ function buildSolarSystem(){
       mesh.add(mm); // parented to planet
     }
 
-    // Atmosphere — PARENTED to planet mesh (not scene!) so it follows during orbit
-    if(p.hasAtm){
-      const am=new THREE.Mesh(new THREE.SphereGeometry(p.r*1.09,16,16),new THREE.MeshStandardMaterial({color:0x2244ff,transparent:true,opacity:.13,side:THREE.BackSide}));
-      am.position.set(0,0,0); // local origin — centered on parent planet
-      mesh.add(am); // parented to planet
-    }
+    // Atmosphere is already built INSIDE buildProceduralPlanetMesh (the
+    // sandbox's real ray-marched Rayleigh scattering, not the old fixed-
+    // opacity sphere this replaced) when p.hasAtm is true - nothing more
+    // needed here.
 
     // Set initial position to the deep-future orbital angle
     mesh.position.set(Math.cos(p.angle)*p.oR, 0, Math.sin(p.angle)*p.oR);
+    flightScene.add(mesh);
+    if(p.name==='Earth')earthMesh=mesh;
     celestialBodies.push({mesh,name:p.name,type:p.type,temp:p.temp,orbitR:p.oR,orbitSpd:p.spd,angle:p.angle});
-  });
+  }
 
   // Asteroid belt — between Mars (1.524 AU) and Jupiter (5.203 AU), centered ~2.7 AU
   const beltR = AU * 2.7;
@@ -7415,11 +7671,11 @@ function fastTravelToGalaxy(galaxyId,galaxyName){
 }
 
 // Swap the active flight to a procedural system's bodies (when already flying).
-function rebuildFlightForSystem(system){
+async function rebuildFlightForSystem(system){
   if(!system){ // back to Sol — rebuild the real solar system
     if(typeof buildSolarSystem==='function'){
       celestialBodies.forEach(b=>{if(b.mesh&&b.mesh.parent)b.mesh.parent.remove(b.mesh);});
-      buildSolarSystem();
+      await buildSolarSystem();
       if(STATE.settings.textures&&typeof applyProceduralTextures==='function')applyProceduralTextures();
     }
     buildDestinations();buildDestinationUI();
@@ -10211,6 +10467,108 @@ const MC_TRI_TABLE=[
 [0,3,8,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1],
 [-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1],
 ];
+
+const EdgeVertexIndices = [
+  [0,1],[1,3],[3,2],[2,0],
+  [4,5],[5,7],[7,6],[6,4],
+  [0,4],[1,5],[3,7],[2,6],
+];
+
+// For each of the 256 marching-cubes cases: a 12-bit mask of which
+// edges are cut by the isosurface.
+const EdgeMasks = [
+0x0,0x109,0x203,0x30a,0x80c,0x905,0xa0f,0xb06,
+0x406,0x50f,0x605,0x70c,0xc0a,0xd03,0xe09,0xf00,
+0x190,0x99,0x393,0x29a,0x99c,0x895,0xb9f,0xa96,
+0x596,0x49f,0x795,0x69c,0xd9a,0xc93,0xf99,0xe90,
+0x230,0x339,0x33,0x13a,0xa3c,0xb35,0x83f,0x936,
+0x636,0x73f,0x435,0x53c,0xe3a,0xf33,0xc39,0xd30,
+0x3a0,0x2a9,0x1a3,0xaa,0xbac,0xaa5,0x9af,0x8a6,
+0x7a6,0x6af,0x5a5,0x4ac,0xfaa,0xea3,0xda9,0xca0,
+0x8c0,0x9c9,0xac3,0xbca,0xcc,0x1c5,0x2cf,0x3c6,
+0xcc6,0xdcf,0xec5,0xfcc,0x4ca,0x5c3,0x6c9,0x7c0,
+0x950,0x859,0xb53,0xa5a,0x15c,0x55,0x35f,0x256,
+0xd56,0xc5f,0xf55,0xe5c,0x55a,0x453,0x759,0x650,
+0xaf0,0xbf9,0x8f3,0x9fa,0x2fc,0x3f5,0xff,0x1f6,
+0xef6,0xfff,0xcf5,0xdfc,0x6fa,0x7f3,0x4f9,0x5f0,
+0xb60,0xa69,0x963,0x86a,0x36c,0x265,0x16f,0x66,
+0xf66,0xe6f,0xd65,0xc6c,0x76a,0x663,0x569,0x460,
+0x460,0x569,0x663,0x76a,0xc6c,0xd65,0xe6f,0xf66,
+0x66,0x16f,0x265,0x36c,0x86a,0x963,0xa69,0xb60,
+0x5f0,0x4f9,0x7f3,0x6fa,0xdfc,0xcf5,0xfff,0xef6,
+0x1f6,0xff,0x3f5,0x2fc,0x9fa,0x8f3,0xbf9,0xaf0,
+0x650,0x759,0x453,0x55a,0xe5c,0xf55,0xc5f,0xd56,
+0x256,0x35f,0x55,0x15c,0xa5a,0xb53,0x859,0x950,
+0x7c0,0x6c9,0x5c3,0x4ca,0xfcc,0xec5,0xdcf,0xcc6,
+0x3c6,0x2cf,0x1c5,0xcc,0xbca,0xac3,0x9c9,0x8c0,
+0xca0,0xda9,0xea3,0xfaa,0x4ac,0x5a5,0x6af,0x7a6,
+0x8a6,0x9af,0xaa5,0xbac,0xaa,0x1a3,0x2a9,0x3a0,
+0xd30,0xc39,0xf33,0xe3a,0x53c,0x435,0x73f,0x636,
+0x936,0x83f,0xb35,0xa3c,0x13a,0x33,0x339,0x230,
+0xe90,0xf99,0xc93,0xd9a,0x69c,0x795,0x49f,0x596,
+0xa96,0xb9f,0x895,0x99c,0x29a,0x393,0x99,0x190,
+0xf00,0xe09,0xd03,0xc0a,0x70c,0x605,0x50f,0x406,
+0xb06,0xa0f,0x905,0x80c,0x30a,0x203,0x109,0x0,
+];
+
+// For each of the 256 cases: a flat list of edge-index triples (one
+// triple per triangle), terminated by -1. Padded to a fixed length of
+// 16 (max 5 triangles/case) for use as a fixed-stride GPU storage
+// buffer, matching the layout every compute-shader MC implementation
+// expects.
+const _rawGPUTriangleTable = [
+[-1],[0,3,8,-1],[0,9,1,-1],[3,8,1,1,8,9,-1],[2,11,3,-1],[8,0,11,11,0,2,-1],[3,2,11,1,0,9,-1],[11,1,2,11,9,1,11,8,9,-1],
+[1,10,2,-1],[0,3,8,2,1,10,-1],[10,2,9,9,2,0,-1],[8,2,3,8,10,2,8,9,10,-1],[11,3,10,10,3,1,-1],[10,0,1,10,8,0,10,11,8,-1],[9,3,0,9,11,3,9,10,11,-1],[8,9,11,11,9,10,-1],
+[4,8,7,-1],[7,4,3,3,4,0,-1],[4,8,7,0,9,1,-1],[1,4,9,1,7,4,1,3,7,-1],[8,7,4,11,3,2,-1],[4,11,7,4,2,11,4,0,2,-1],[0,9,1,8,7,4,11,3,2,-1],[7,4,11,11,4,2,2,4,9,2,9,1,-1],
+[4,8,7,2,1,10,-1],[7,4,3,3,4,0,10,2,1,-1],[10,2,9,9,2,0,7,4,8,-1],[10,2,3,10,3,4,3,7,4,9,10,4,-1],[1,10,3,3,10,11,4,8,7,-1],[10,11,1,11,7,4,1,11,4,1,4,0,-1],[7,4,8,9,3,0,9,11,3,9,10,11,-1],[7,4,11,4,9,11,9,10,11,-1],
+[9,4,5,-1],[9,4,5,8,0,3,-1],[4,5,0,0,5,1,-1],[5,8,4,5,3,8,5,1,3,-1],[9,4,5,11,3,2,-1],[2,11,0,0,11,8,5,9,4,-1],[4,5,0,0,5,1,11,3,2,-1],[5,1,4,1,2,11,4,1,11,4,11,8,-1],
+[1,10,2,5,9,4,-1],[9,4,5,0,3,8,2,1,10,-1],[2,5,10,2,4,5,2,0,4,-1],[10,2,5,5,2,4,4,2,3,4,3,8,-1],[11,3,10,10,3,1,4,5,9,-1],[4,5,9,10,0,1,10,8,0,10,11,8,-1],[11,3,0,11,0,5,0,4,5,10,11,5,-1],[4,5,8,5,10,8,10,11,8,-1],
+[8,7,9,9,7,5,-1],[3,9,0,3,5,9,3,7,5,-1],[7,0,8,7,1,0,7,5,1,-1],[7,5,3,3,5,1,-1],[5,9,7,7,9,8,2,11,3,-1],[2,11,7,2,7,9,7,5,9,0,2,9,-1],[2,11,3,7,0,8,7,1,0,7,5,1,-1],[2,11,1,11,7,1,7,5,1,-1],
+[8,7,9,9,7,5,2,1,10,-1],[10,2,1,3,9,0,3,5,9,3,7,5,-1],[7,5,8,5,10,2,8,5,2,8,2,0,-1],[10,2,5,2,3,5,3,7,5,-1],[8,7,5,8,5,9,11,3,10,3,1,10,-1],[5,11,7,10,11,5,1,9,0,-1],[11,5,10,7,5,11,8,3,0,-1],[5,11,7,10,11,5,-1],
+[6,7,11,-1],[7,11,6,3,8,0,-1],[6,7,11,0,9,1,-1],[9,1,8,8,1,3,6,7,11,-1],[3,2,7,7,2,6,-1],[0,7,8,0,6,7,0,2,6,-1],[6,7,2,2,7,3,9,1,0,-1],[6,7,8,6,8,1,8,9,1,2,6,1,-1],
+[11,6,7,10,2,1,-1],[3,8,0,11,6,7,10,2,1,-1],[0,9,2,2,9,10,7,11,6,-1],[6,7,11,8,2,3,8,10,2,8,9,10,-1],[7,10,6,7,1,10,7,3,1,-1],[8,0,7,7,0,6,6,0,1,6,1,10,-1],[7,3,6,3,0,9,6,3,9,6,9,10,-1],[6,7,10,7,8,10,8,9,10,-1],
+[11,6,8,8,6,4,-1],[6,3,11,6,0,3,6,4,0,-1],[11,6,8,8,6,4,1,0,9,-1],[1,3,9,3,11,6,9,3,6,9,6,4,-1],[2,8,3,2,4,8,2,6,4,-1],[4,0,6,6,0,2,-1],[9,1,0,2,8,3,2,4,8,2,6,4,-1],[9,1,4,1,2,4,2,6,4,-1],
+[4,8,6,6,8,11,1,10,2,-1],[1,10,2,6,3,11,6,0,3,6,4,0,-1],[11,6,4,11,4,8,10,2,9,2,0,9,-1],[10,4,9,6,4,10,11,2,3,-1],[4,8,3,4,3,10,3,1,10,6,4,10,-1],[1,10,0,10,6,0,6,4,0,-1],[4,10,6,9,10,4,0,8,3,-1],[4,10,6,9,10,4,-1],
+[6,7,11,4,5,9,-1],[4,5,9,7,11,6,3,8,0,-1],[1,0,5,5,0,4,11,6,7,-1],[11,6,7,5,8,4,5,3,8,5,1,3,-1],[3,2,7,7,2,6,9,4,5,-1],[5,9,4,0,7,8,0,6,7,0,2,6,-1],[3,2,6,3,6,7,1,0,5,0,4,5,-1],[6,1,2,5,1,6,4,7,8,-1],
+[10,2,1,6,7,11,4,5,9,-1],[0,3,8,4,5,9,11,6,7,10,2,1,-1],[7,11,6,2,5,10,2,4,5,2,0,4,-1],[8,4,7,5,10,6,3,11,2,-1],[9,4,5,7,10,6,7,1,10,7,3,1,-1],[10,6,5,7,8,4,1,9,0,-1],[4,3,0,7,3,4,6,5,10,-1],[10,6,5,8,4,7,-1],
+[9,6,5,9,11,6,9,8,11,-1],[11,6,3,3,6,0,0,6,5,0,5,9,-1],[11,6,5,11,5,0,5,1,0,8,11,0,-1],[11,6,3,6,5,3,5,1,3,-1],[9,8,5,8,3,2,5,8,2,5,2,6,-1],[5,9,6,9,0,6,0,2,6,-1],[1,6,5,2,6,1,3,0,8,-1],[1,6,5,2,6,1,-1],
+[2,1,10,9,6,5,9,11,6,9,8,11,-1],[9,0,1,3,11,2,5,10,6,-1],[11,0,8,2,0,11,10,6,5,-1],[3,11,2,5,10,6,-1],[1,8,3,9,8,1,5,10,6,-1],[6,5,10,0,1,9,-1],[8,3,0,5,10,6,-1],[6,5,10,-1],
+[10,5,6,-1],[0,3,8,6,10,5,-1],[10,5,6,9,1,0,-1],[3,8,1,1,8,9,6,10,5,-1],[2,11,3,6,10,5,-1],[8,0,11,11,0,2,5,6,10,-1],[1,0,9,2,11,3,6,10,5,-1],[5,6,10,11,1,2,11,9,1,11,8,9,-1],
+[5,6,1,1,6,2,-1],[5,6,1,1,6,2,8,0,3,-1],[6,9,5,6,0,9,6,2,0,-1],[6,2,5,2,3,8,5,2,8,5,8,9,-1],[3,6,11,3,5,6,3,1,5,-1],[8,0,1,8,1,6,1,5,6,11,8,6,-1],[11,3,6,6,3,5,5,3,0,5,0,9,-1],[5,6,9,6,11,9,11,8,9,-1],
+[5,6,10,7,4,8,-1],[0,3,4,4,3,7,10,5,6,-1],[5,6,10,4,8,7,0,9,1,-1],[6,10,5,1,4,9,1,7,4,1,3,7,-1],[7,4,8,6,10,5,2,11,3,-1],[10,5,6,4,11,7,4,2,11,4,0,2,-1],[4,8,7,6,10,5,3,2,11,1,0,9,-1],[1,2,10,11,7,6,9,5,4,-1],
+[2,1,6,6,1,5,8,7,4,-1],[0,3,7,0,7,4,2,1,6,1,5,6,-1],[8,7,4,6,9,5,6,0,9,6,2,0,-1],[7,2,3,6,2,7,5,4,9,-1],[4,8,7,3,6,11,3,5,6,3,1,5,-1],[5,0,1,4,0,5,7,6,11,-1],[9,5,4,6,11,7,0,8,3,-1],[11,7,6,9,5,4,-1],
+[6,10,4,4,10,9,-1],[6,10,4,4,10,9,3,8,0,-1],[0,10,1,0,6,10,0,4,6,-1],[6,10,1,6,1,8,1,3,8,4,6,8,-1],[9,4,10,10,4,6,3,2,11,-1],[2,11,8,2,8,0,6,10,4,10,9,4,-1],[11,3,2,0,10,1,0,6,10,0,4,6,-1],[6,8,4,11,8,6,2,10,1,-1],
+[4,1,9,4,2,1,4,6,2,-1],[3,8,0,4,1,9,4,2,1,4,6,2,-1],[6,2,4,4,2,0,-1],[3,8,2,8,4,2,4,6,2,-1],[4,6,9,6,11,3,9,6,3,9,3,1,-1],[8,6,11,4,6,8,9,0,1,-1],[11,3,6,3,0,6,0,4,6,-1],[8,6,11,4,6,8,-1],
+[10,7,6,10,8,7,10,9,8,-1],[3,7,0,7,6,10,0,7,10,0,10,9,-1],[6,10,7,7,10,8,8,10,1,8,1,0,-1],[6,10,7,10,1,7,1,3,7,-1],[3,2,11,10,7,6,10,8,7,10,9,8,-1],[2,9,0,10,9,2,6,11,7,-1],[0,8,3,7,6,11,1,2,10,-1],[7,6,11,1,2,10,-1],
+[2,1,9,2,9,7,9,8,7,6,2,7,-1],[2,7,6,3,7,2,0,1,9,-1],[8,7,0,7,6,0,6,2,0,-1],[7,2,3,6,2,7,-1],[8,1,9,3,1,8,11,7,6,-1],[11,7,6,1,9,0,-1],[6,11,7,0,8,3,-1],[11,7,6,-1],
+[7,11,5,5,11,10,-1],[10,5,11,11,5,7,0,3,8,-1],[7,11,5,5,11,10,0,9,1,-1],[7,11,10,7,10,5,3,8,1,8,9,1,-1],[5,2,10,5,3,2,5,7,3,-1],[5,7,10,7,8,0,10,7,0,10,0,2,-1],[0,9,1,5,2,10,5,3,2,5,7,3,-1],[9,7,8,5,7,9,10,1,2,-1],
+[1,11,2,1,7,11,1,5,7,-1],[8,0,3,1,11,2,1,7,11,1,5,7,-1],[7,11,2,7,2,9,2,0,9,5,7,9,-1],[7,9,5,8,9,7,3,11,2,-1],[3,1,7,7,1,5,-1],[8,0,7,0,1,7,1,5,7,-1],[0,9,3,9,5,3,5,7,3,-1],[9,7,8,5,7,9,-1],
+[8,5,4,8,10,5,8,11,10,-1],[0,3,11,0,11,5,11,10,5,4,0,5,-1],[1,0,9,8,5,4,8,10,5,8,11,10,-1],[10,3,11,1,3,10,9,5,4,-1],[3,2,8,8,2,4,4,2,10,4,10,5,-1],[10,5,2,5,4,2,4,0,2,-1],[5,4,9,8,3,0,10,1,2,-1],[2,10,1,4,9,5,-1],
+[8,11,4,11,2,1,4,11,1,4,1,5,-1],[0,5,4,1,5,0,2,3,11,-1],[0,11,2,8,11,0,4,9,5,-1],[5,4,9,2,3,11,-1],[4,8,5,8,3,5,3,1,5,-1],[0,5,4,1,5,0,-1],[5,4,9,3,0,8,-1],[5,4,9,-1],
+[11,4,7,11,9,4,11,10,9,-1],[0,3,8,11,4,7,11,9,4,11,10,9,-1],[11,10,7,10,1,0,7,10,0,7,0,4,-1],[3,10,1,11,10,3,7,8,4,-1],[3,2,10,3,10,4,10,9,4,7,3,4,-1],[9,2,10,0,2,9,8,4,7,-1],[3,4,7,0,4,3,1,2,10,-1],[7,8,4,10,1,2,-1],
+[7,11,4,4,11,9,9,11,2,9,2,1,-1],[1,9,0,4,7,8,2,3,11,-1],[7,11,4,11,2,4,2,0,4,-1],[4,7,8,2,3,11,-1],[9,4,1,4,7,1,7,3,1,-1],[7,8,4,1,9,0,-1],[3,4,7,0,4,3,-1],[7,8,4,-1],
+[11,10,8,8,10,9,-1],[0,3,9,3,11,9,11,10,9,-1],[1,0,10,0,8,10,8,11,10,-1],[10,3,11,1,3,10,-1],[3,2,8,2,10,8,10,9,8,-1],[9,2,10,0,2,9,-1],[8,3,0,10,1,2,-1],[2,10,1,-1],
+[2,1,11,1,9,11,9,8,11,-1],[11,2,3,9,0,1,-1],[11,0,8,2,0,11,-1],[3,11,2,-1],[1,8,3,9,8,1,-1],[1,9,0,-1],[8,3,0,-1],[-1],
+];
+
+// Flatten each entry to fixed-width 16 (padding with -1), matching a
+// classic 256x16 int table layout for direct upload as a GPU buffer.
+const GPU_TriangleTable = _rawGPUTriangleTable.map(row=>{
+  const out = new Array(16).fill(-1);
+  for(let i=0;i<row.length && i<16;i++) out[i] = row[i];
+  return out;
+});
+
+// ── GPU compute-shader marching-cubes terrain. Faithful TSL port of
+// H(x,z) (same _vnoise/_fbm algorithm, same hills/mountains/plateaus/
+// canyons/rivers layers, same constants) so the actual terrain SHAPE
+// stays exactly what was already tuned - only the execution moved from
+// synchronous CPU JS to GPU compute. Cave-carving term is the same one
+// the old CPU marching-cubes block used, now genuinely GPU-parallel
+// instead of ~275k synchronous main-thread samples, and covering the
+// WHOLE rootSize patch at real gameplay scale instead of a bounded
+// 5x5/130-unit proof-of-concept.
+
 
 // Corner offsets for the 8 vertices of a unit cube, in the standard
 // marching-cubes vertex order matching MC_EDGE_TABLE/MC_TRI_TABLE.
