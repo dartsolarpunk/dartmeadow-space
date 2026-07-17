@@ -105,7 +105,7 @@ if(location.search.indexOf('debug')!==-1){
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <script type="importmap">
 { "imports": {
-  "three": "https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js",
+  "three": "https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.module.js",
   "three/webgpu": "https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js",
   "three/tsl": "https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.tsl.js",
   "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.185.0/examples/jsm/"
@@ -128,7 +128,8 @@ if(location.search.indexOf('debug')!==-1){
    flight, etc.), never synchronously at parse time, so waiting for this
    event costs nothing in practice; there's substantial user interaction
    time between page load and the first renderer actually being built. */
-import * as THREE_NS from 'three/webgpu';
+import * as THREE_NS from 'three';
+import { WebGPURenderer } from 'three/webgpu';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import * as TSL from 'three/tsl';
@@ -149,6 +150,19 @@ const THREE = Object.assign({}, THREE_NS);
 window.THREE = THREE;
 THREE.GLTFLoader = GLTFLoader;
 THREE.FBXLoader = FBXLoader;
+// Renderers were reverted from WebGPURenderer back to WebGLRenderer
+// after live testing confirmed a fundamental bug in this Three.js
+// version's WebGPU backend (see the renderer-revert commit). Importing
+// THREE from the standard 'three' build (not 'three/webgpu') restores
+// THREE.WebGLRenderer, which the webgpu-only build doesn't include at
+// all. WebGPURenderer is still attached separately here (even though
+// nothing constructs one anymore) purely so the existing
+// "instanceof THREE.WebGPURenderer" guard checks scattered through the
+// codebase (marching-cubes terrain fallback, PMREM fallback) have a
+// real class to compare against instead of throwing on an undefined
+// right-hand side - they'll all correctly evaluate false now and take
+// their existing fallback paths.
+THREE.WebGPURenderer = WebGPURenderer;
 // TSL functions (Fn, uniform, vec3, If, Loop, mix, texture, etc.) are
 // exposed both as THREE.TSL.* (namespaced, avoids collisions with any
 // existing game code) and individually on window for direct use in the
