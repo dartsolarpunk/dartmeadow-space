@@ -3743,10 +3743,10 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
       return exp(h01.negate().mul(5.5)).mul(float(1.0).sub(h01));
     });
     const opticalDepth=Fn(([ro,rd,rl])=>{
-      const stepSize=rl.div(4);
+      const stepSize=rl.div(5);
       const p=ro.toVar();
       const total=float(0).toVar();
-      Loop(4, ()=>{ total.addAssign(densityAtPoint(p).mul(stepSize)); p.addAssign(rd.mul(stepSize)); });
+      Loop(5, ()=>{ total.addAssign(densityAtPoint(p).mul(stepSize)); p.addAssign(rd.mul(stepSize)); });
       return total;
     });
     const atmoFn=Fn(()=>{
@@ -3757,10 +3757,10 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
       const marchStart=hit.x, marchLen=hit.y;
       const inScatter=vec3(0,0,0).toVar();
       If(hit.z.greaterThan(0.5), ()=>{
-        const stepSize=marchLen.div(6);
+        const stepSize=marchLen.div(10);
         const p=ro.add(rd.mul(marchStart)).toVar();
         const viewOD=float(0).toVar();
-        Loop(6, ()=>{
+        Loop(10, ()=>{
           const localDensity=densityAtPoint(p);
           viewOD.addAssign(localDensity.mul(stepSize));
           const sunHit=raySphere(center,float(ATMO_R),p,sunDirU);
@@ -9008,6 +9008,14 @@ const CHAR = {
   _transitioning:false,    // true during boardMountSequence/boardDismountSequence — locomotion/mount sync must not fight the transition's own position control
 };
 
+// Reusable scratch vectors for applyFootIK() below — allocated once,
+// not per-frame/per-foot, same allocation-avoidance discipline as the
+// rest of the hot per-frame code in this file.
+const _ikHipPos = new THREE.Vector3();
+const _ikFootPos = new THREE.Vector3();
+const _ikFwd = new THREE.Vector3();
+const _ikUp = new THREE.Vector3(0,1,0);
+
 function _fbxBoneMap(){
   // Every clip shares this exact bone-name set (confirmed across all
   // files during the earlier rig session) — used to retarget an FBX
@@ -9400,6 +9408,71 @@ function setCharState(next, opts){
   }
   CHAR.state = next;
 }
+// Per-foot ground-adaptive IK. Honest scope note: this is a practical
+// analytic approximation (per-foot knee-bend correction + ankle tilt
+// toward the locally-sampled ground normal), NOT a full 3D two-bone/
+// FABRIK solve — that would need this rig's exact per-joint local
+// rotation axes confirmed against a live view, which isn't available
+// in this project (no live browser here, per the established
+// diagnostic-logging-instead-of-visual-check workflow). What this
+// DOES do for real: samples actual marching-cubes terrain collision
+// (_surfHeight/_surfNormal — the same pixel-consistent raycast data
+// driving slope-lean/climb) independently under EACH foot's own
+// current world position, then bends that leg's knee (and nudges the
+// thigh) proportionally to how far off the ground that foot currently
+// is, and tilts the foot bone toward the local surface normal — so
+// two feet on uneven ground (e.g. one on a rock, one in a dip) get
+// genuinely different corrections rather than one shared body-wide
+// lean. Damped per-foot/per-frame to avoid snapping. Additive on top
+// of whatever the walk/run/idle animation already posed, same
+// direct-bone-rotation technique as the crouch-lean/skyboard-stance
+// systems elsewhere in this file.
+function applyFootIK(dt, weight){
+  const b = CHAR.bones;
+  if(!b || !b.LeftUpLeg || !b.LeftLeg || !b.LeftFoot || !b.RightUpLeg || !b.RightLeg || !b.RightFoot) return;
+  if(typeof window._surfHeight!=='function' || typeof window._surfNormal!=='function') return;
+  if(!CHAR.root) return;
+
+  CHAR.root.getWorldDirection(_ikFwd); // character's current facing, world space
+
+  const SIDES = CHAR._ikSides || (CHAR._ikSides=['Left','Right']);
+  for(let i=0;i<SIDES.length;i++){
+    const side = SIDES[i];
+    const upLeg=b[side+'UpLeg'], leg=b[side+'Leg'], foot=b[side+'Foot'];
+    upLeg.updateWorldMatrix(true,false);
+    foot.updateWorldMatrix(true,false);
+    _ikHipPos.setFromMatrixPosition(upLeg.matrixWorld);
+    _ikFootPos.setFromMatrixPosition(foot.matrixWorld);
+    const reach = Math.max(0.3, _ikHipPos.distanceTo(_ikFootPos));
+
+    const groundY = window._surfHeight(_ikFootPos.x, _ikFootPos.z);
+    const rawErr = groundY - _ikFootPos.y; // >0: ground is above the foot (needs more knee bend); <0: ground drops away
+
+    const errKey='_ikErr'+side;
+    CHAR[errKey] = THREE.MathUtils.damp(CHAR[errKey]||0, rawErr, 10, dt);
+    const err = CHAR[errKey];
+
+    // Small-angle approximation: extra knee flex needed to close a
+    // vertical gap of `err` over a leg currently reaching `reach` —
+    // split between knee (most of the correction) and thigh (a
+    // smaller assist), matching the proportion the existing
+    // skyboard-stance pose already uses between these two bones.
+    const bend = THREE.MathUtils.clamp(err/reach, -0.85, 0.85);
+    leg.rotation.x   += bend*0.75*weight;
+    upLeg.rotation.x += bend*0.35*weight;
+
+    // Ankle tilt toward the locally-sampled ground normal under THIS
+    // foot specifically (not the shared body-wide slope reading),
+    // projected onto the character's forward axis for a sagittal-plane
+    // pitch correction — the same projection style already used for
+    // slopeDeg elsewhere in this file, just evaluated per-foot here.
+    const nrm = window._surfNormal(_ikFootPos.x, _ikFootPos.z);
+    const pitch = Math.atan2(-_ikFwd.dot(nrm), Math.max(0.2,nrm.dot(_ikUp)));
+    const ankleKey='_ikAnkle'+side;
+    CHAR[ankleKey] = THREE.MathUtils.damp(CHAR[ankleKey]||0, pitch, 10, dt);
+    foot.rotation.x += CHAR[ankleKey]*0.6*weight;
+  }
+}
 function updateCharacterLocomotion(dt, moving, running, dirSign, jumping, climbing){
   if(!CHAR.loaded) return;
   if(CHAR.mounted){ applySkyboardStance(simTime||0); CHAR.mixer && CHAR.mixer.update(0); return; }
@@ -9430,6 +9503,14 @@ function updateCharacterLocomotion(dt, moving, running, dirSign, jumping, climbi
       b.Hips && (b.Hips.rotation.x += CHAR._slopeLeanT*0.25);
     }
   }
+
+  // Per-foot ground IK — fades in/out smoothly rather than a hard
+  // on/off, so it never pops when jumping/climbing start or stop.
+  // See applyFootIK's own comment for exactly what this does and
+  // doesn't do.
+  const ikTarget = (!jumping && !climbing) ? 1 : 0;
+  CHAR._footIKWeight = THREE.MathUtils.damp(CHAR._footIKWeight||0, ikTarget, 6, dt);
+  if(CHAR._footIKWeight>0.01) applyFootIK(dt, CHAR._footIKWeight);
 }
 function finishClimb(onComplete){
   // climbLoop is now a complete climb-to-top arc that already ends
