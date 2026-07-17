@@ -3282,6 +3282,24 @@ function applyGfxScreen(){
 // Build a small cubemap env so PBR materials get reflections everywhere.
 // This is the browser-real stand-in for ray-traced reflections.
 let _envMap=null;
+// TSL replacement for the old GLSL ShaderMaterial sky-gradient dome
+// (top/bottom vertical color mix) - the original used classic
+// vertexShader/fragmentShader strings, incompatible with WebGPURenderer's
+// node-material pipeline (confirmed via live testing: "NodeBuilder:
+// Material ShaderMaterial is not compatible"). Small/cheap enough to
+// properly port rather than bypass, since it's the dominant background
+// fill for atmospheric worlds - losing it entirely would be a visible
+// regression, not just a missing nice-to-have.
+function makeSkyDomeMaterial(topColor,botColor){
+  const mat=new THREE.MeshBasicNodeMaterial({side:THREE.BackSide});
+  const topU=uniform(new THREE.Color(topColor));
+  const botU=uniform(new THREE.Color(botColor));
+  mat.colorNode=Fn(()=>{
+    const h=normalize(positionLocal).y.mul(0.5).add(0.5);
+    return mix(botU,topU,h);
+  })();
+  return mat;
+}
 function buildEnvMap(renderer,scene){
   // THREE.WebGLCubeRenderTarget doesn't exist on the WebGPU build this file
   // now uses, and PMREMGenerator is separately confirmed broken under this
@@ -8000,7 +8018,17 @@ function resizePostFX(){
 }
 function renderWithPostFX(){
   const useBloom=STATE.settings.bloom, useMotion=STATE.settings.motion;
-  if(!useBloom&&!useMotion){ flightRenderer.setRenderTarget(null); flightRenderer.render(flightScene,flightCamera); return; }
+  // This whole pipeline (bright-pass/blur/composite) is built on raw
+  // THREE.ShaderMaterial + THREE.WebGLRenderTarget, both incompatible
+  // with WebGPURenderer's node-material pipeline (confirmed via live
+  // testing: repeated "NodeBuilder: Material ShaderMaterial is not
+  // compatible" warnings every frame). Properly porting a multi-pass
+  // bloom+motion-blur system to TSL is real, substantial work not done
+  // yet - bypassing to a plain render under WebGPU rather than let it
+  // silently degrade every frame is the honest choice here; bloom/
+  // motion-blur are visually absent under WebGPU until that follow-up
+  // work happens, not quietly broken.
+  if(!useBloom&&!useMotion || flightRenderer instanceof THREE.WebGPURenderer){ flightRenderer.setRenderTarget(null); flightRenderer.render(flightScene,flightCamera); return; }
   if(!_postInited)initPostFX();
   const r=flightRenderer;
   // 1. render scene to RT
@@ -8471,9 +8499,7 @@ async function enterAtmosphericFlight(body,site){
   }
   // sky dome
   if(pal.atmos){
-    const skyMat=new THREE.ShaderMaterial({side:THREE.BackSide,uniforms:{top:{value:new THREE.Color(pal.sky[1])},bot:{value:new THREE.Color(pal.sky[0])}},
-      vertexShader:'varying vec3 vp;void main(){vp=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
-      fragmentShader:'varying vec3 vp;uniform vec3 top;uniform vec3 bot;void main(){float h=normalize(vp).y*0.5+0.5;gl_FragColor=vec4(mix(bot,top,h),1.0);}'});
+    const skyMat=makeSkyDomeMaterial(pal.sky[1],pal.sky[0]);
     atmoScene.add(new THREE.Mesh(new THREE.SphereGeometry(4000,24,24),skyMat));
   } else {
     const sn=2500,sp=new Float32Array(sn*3);
@@ -9754,9 +9780,7 @@ async function enterSurface(body,site){
   buildSurfaceTerrain(pal);
   // sky gradient dome
   const skyGeo=new THREE.SphereGeometry(1000,16,16);
-  const skyMat=new THREE.ShaderMaterial({side:THREE.BackSide,uniforms:{top:{value:new THREE.Color(pal.sky[1])},bot:{value:new THREE.Color(pal.sky[0])}},
-    vertexShader:'varying vec3 vp;void main(){vp=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
-    fragmentShader:'varying vec3 vp;uniform vec3 top;uniform vec3 bot;void main(){float h=normalize(vp).y*0.5+0.5;gl_FragColor=vec4(mix(bot,top,h),1.0);}'});
+  const skyMat=makeSkyDomeMaterial(pal.sky[1],pal.sky[0]);
   if(pal.atmos)surfScene.add(new THREE.Mesh(skyGeo,skyMat));
   // the skyboard — the SAME detailed craft, now a hovering companion that
   // follows the player around (rises over obstacles, trails beside them)
