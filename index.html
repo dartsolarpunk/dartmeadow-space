@@ -103,88 +103,10 @@ if(location.search.indexOf('debug')!==-1){
   });
 })();</script>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-<script type="importmap">
-{ "imports": {
-  "three": "https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.module.js",
-  "three/webgpu": "https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js",
-  "three/tsl": "https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.tsl.js",
-  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.185.0/examples/jsm/"
-} }
-</script>
-<script type="module">
-/* ══════════ WEBGPU MIGRATION — FOUNDATION LOADER ══════════
-   Everything else in this file is still classic (non-module) script,
-   written against a global `THREE` object exactly like the old r128
-   CDN build provided — deliberately NOT converting the whole game to
-   ES modules in one pass, since that would touch every scoping
-   assumption in a 10,000+ line file at once. Instead: import the
-   modern WebGPU/TSL build here, attach everything the rest of the
-   game already expects onto `window`, and only then let the rest of
-   the game's startup proceed — via the 'three-ready' event below,
-   since module scripts execute deferred/async relative to classic
-   scripts, and nothing here can be allowed to run before THREE exists.
-   All 8 renderer instances in this game are created LAZILY (inside
-   functions triggered by user interaction — entering a scene, launching
-   flight, etc.), never synchronously at parse time, so waiting for this
-   event costs nothing in practice; there's substantial user interaction
-   time between page load and the first renderer actually being built. */
-import * as THREE_NS from 'three';
-import { WebGPURenderer } from 'three/webgpu';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
-import * as TSL from 'three/tsl';
-
-// Real bug found and fixed here: `import * as X` creates an ES module
-// namespace object, which is frozen/non-extensible by spec - you cannot
-// add a NEW property to it, only read its existing exports. The original
-// version of this file did `THREE.GLTFLoader = GLTFLoader` directly on
-// that namespace object, which throws "Cannot add property GLTFLoader,
-// object is not extensible" on EVERY single page load - and since that
-// throw happens before the next few lines (TSL attachment, the
-// __THREE_READY__ flag, and the 'three-ready' event dispatch), none of
-// those ever ran either. Everything downstream that waits for
-// 'three-ready' - which is most of the game - was permanently stuck
-// waiting for an event that could never fire. Fixed by copying the
-// namespace's exports into a genuinely plain, mutable object first.
-const THREE = Object.assign({}, THREE_NS);
-window.THREE = THREE;
-THREE.GLTFLoader = GLTFLoader;
-THREE.FBXLoader = FBXLoader;
-// Renderers were reverted from WebGPURenderer back to WebGLRenderer
-// after live testing confirmed a fundamental bug in this Three.js
-// version's WebGPU backend (see the renderer-revert commit). Importing
-// THREE from the standard 'three' build (not 'three/webgpu') restores
-// THREE.WebGLRenderer, which the webgpu-only build doesn't include at
-// all. WebGPURenderer is still attached separately here (even though
-// nothing constructs one anymore) purely so the existing
-// "instanceof THREE.WebGPURenderer" guard checks scattered through the
-// codebase (marching-cubes terrain fallback, PMREM fallback) have a
-// real class to compare against instead of throwing on an undefined
-// right-hand side - they'll all correctly evaluate false now and take
-// their existing fallback paths.
-THREE.WebGPURenderer = WebGPURenderer;
-// TSL functions (Fn, uniform, vec3, If, Loop, mix, texture, etc.) are
-// exposed both as THREE.TSL.* (namespaced, avoids collisions with any
-// existing game code) and individually on window for direct use in the
-// atmosphere/water/terrain shader code being ported from the sandbox.
-THREE.TSL = TSL;
-Object.assign(window, TSL);
-
-window.__THREE_READY__ = true;
-window.dispatchEvent(new Event('three-ready'));
-console.log('[WebGPU migration] Three.js r185 (WebGPU + TSL) loaded and attached to window.');
-</script>
-<script>
-// Classic-script gate: anything that runs at parse time (not inside a
-// lazily-invoked function) and touches THREE must wait for the module
-// script above to finish. Nothing currently does — all 8 renderers are
-// built lazily — but this exists as a safety net rather than relying on
-// timing alone in a 10,000+ line file.
-window.__whenThreeReady = function(fn){
-  if(window.__THREE_READY__) fn();
-  else window.addEventListener('three-ready', fn, {once:true});
-};
-</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/libs/fflate.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/FBXLoader.js"></script>
 <!-- Stripe's buy-button script is now lazy-loaded only when Support is
      opened (see openSupport()), not here on every page load. Loading it
      immediately meant the <stripe-buy-button> custom elements started
@@ -194,7 +116,8 @@ window.__whenThreeReady = function(fn){
 <script>
 // Inline OrbitControls — no external dependency, always works
 // Stripped-down but fully functional implementation
-window.__whenThreeReady(function(){
+(function(){
+if(typeof THREE==='undefined')return;
 THREE.OrbitControls=function(camera,domElement){
   var scope=this;
   this.camera=camera;
@@ -356,7 +279,7 @@ THREE.OrbitControls=function(camera,domElement){
   scope.domElement.addEventListener('touchend',onTouchEnd,false);
   scope.domElement.addEventListener('contextmenu',function(e){e.preventDefault();},false);
 };
-});
+})();
 </script>
 <style>
 :root{
@@ -1681,13 +1604,9 @@ const STATE={
   },
   flight:{speed:0,dart:false,energy:100,hull:100,shield:100,destIdx:0,time:0,
     camPitch:0,camYaw:0,thrust:0,strafe:0,lift:0,
-    pos:{x:28,y:2,z:3},vel:{x:0,y:0,z:0}}, // upgraded to real THREE.Vector3 instances below once THREE exists - see __whenThreeReady call right after this object literal
-  settings:{stars:true,dust:true,bloom:true,bloomIntensity:0.5,motion:true,textures:true,galaxyband:true,particles:'med',fov:50000,dartSpeed:15,gfxQuality:'auto',resScale:1.0,shadows:true,reflections:true,caustics:true,gi:true,marchingCubesTerrain:false}
+    pos:new THREE.Vector3(28,2,3),vel:new THREE.Vector3()},
+  settings:{stars:true,dust:true,bloom:true,bloomIntensity:0.5,motion:true,textures:true,galaxyband:true,particles:'med',fov:50000,dartSpeed:15,gfxQuality:'auto',resScale:1.0,shadows:true,reflections:true,caustics:true,gi:true,marchingCubesTerrain:true}
 };
-window.__whenThreeReady(function(){
-  STATE.flight.pos = new THREE.Vector3(STATE.flight.pos.x, STATE.flight.pos.y, STATE.flight.pos.z);
-  STATE.flight.vel = new THREE.Vector3(STATE.flight.vel.x, STATE.flight.vel.y, STATE.flight.vel.z);
-});
 
 // ── Save System ───────────────────────────────────────────────
 const SAVE_VERSION='DM2';
@@ -2085,12 +2004,6 @@ const AUDIO = {
     {name:'ARC LAKE',src:'music/arc_lake.mp3'},
     {name:'VELVET HORIZON',src:'music/velvet_horizon.mp3'},
     {name:'THE SAME AS ITSELF',src:'music/the_same_as_itself.mp3'},
-    {name:'BLUE',src:'music/blue.mp3'},
-    {name:'COLDER THAN THE SUN',src:'music/colder_than_the_sun.mp3'},
-    {name:'LEAVING GRAVITY HERE',src:'music/leaving_gravity_here.mp3'},
-    {name:'LIGHT YEARS IN GLASS',src:'music/light_years_in_glass.mp3'},
-    {name:'THIRTY-FOUR K',src:'music/thirty-four_k.mp3'},
-    {name:'WHERE THE WHITE SHIP SLEEPS',src:'music/where_the_white_ship_sleeps.mp3'},
   ],
   bundled:[],           // active list — starts as the fallback, gets replaced by the live folder scan once it resolves
   playlist:[],          // [{name, src, isObjectUrl}]
@@ -2296,21 +2209,11 @@ function initMenuBg(){
 // ══════════════════════════════════════════════════════════════
 let sgScene,sgRenderer,sgCamera,sgModel,sgAnimId,sgInited=false,sgLoading=true;
 
-async function initStartBtnTurntable(){
+function initStartBtnTurntable(){
   if(sgInited)return;
-  const host=$('start-game-btn');
-  if(!host)return;
-  if(typeof THREE==='undefined'){
-    // Don't mark sgInited yet — genuinely not ready, not skipping on
-    // purpose. Retry once THREE actually loads instead of silently
-    // giving up forever (the old guard here relied on THREE always
-    // being synchronously available already, true for the old classic
-    // <script src> tag but no longer true now that it loads via an
-    // async module).
-    window.__whenThreeReady(initStartBtnTurntable);
-    return;
-  }
   sgInited=true;
+  const host=$('start-game-btn');
+  if(!host||typeof THREE==='undefined')return;
 
   const w=host.clientWidth||140, h=host.clientHeight||140;
 
@@ -2320,22 +2223,11 @@ async function initStartBtnTurntable(){
   sgCamera=new THREE.PerspectiveCamera(32,w/h,0.01,10);
   sgCamera.position.set(0,0,1.6);
 
-  // Real bug found via headless-browser pageerror: "THREE.WebGLRenderer
-  // is not a constructor". This file imports THREE from 'three/webgpu'
-  // (the WebGPU-only entry point — see the module bridge script), which
-  // doesn't export WebGLRenderer at all, only WebGPURenderer. Every
-  // other renderer in this game (all 8 of them) already made this
-  // switch during the WebGPU migration; this one small menu preview
-  // was missed, which is exactly why the start-button 3D preview got
-  // stuck on its "LOADING…" placeholder forever — the function threw
-  // synchronously on the very first line that touched the renderer,
-  // before ever reaching the GLB load below. Same async .init()
-  // requirement as flightRenderer/surfRenderer.
   sgRenderer=new THREE.WebGLRenderer({antialias:true,alpha:true,powerPreference:'low-power'});
   sgRenderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
   sgRenderer.setSize(w,h);
   sgRenderer.setClearColor(0x000000,0);
-  sgRenderer.outputColorSpace=THREE.SRGBColorSpace;
+  if(sgRenderer.outputEncoding!==undefined) sgRenderer.outputEncoding=THREE.sRGBEncoding;
   sgRenderer.toneMapping=THREE.ACESFilmicToneMapping;
   sgRenderer.toneMappingExposure=1.35;
   host.insertBefore(sgRenderer.domElement,host.firstChild);
@@ -2361,21 +2253,9 @@ async function initStartBtnTurntable(){
     panel(0xffd9a0, -4.6, 0.5, 0, 0,  Math.PI/2); // warm gold left
     panel(0xff5ad0,  4.6, 0.5, 0, 0, -Math.PI/2); // magenta right
     panel(0x7fb4ff, 0, 0.2, -4.6, 0, 0);          // cool blue back
-    // PMREMGenerator is confirmed broken under this Three.js version's
-    // WebGPU backend -- verified via live headless-browser testing, not
-    // just theoretical analysis: pmrem.fromScene() throws deep inside its
-    // own internal multi-pass cubemap rendering (GPUTextureViewDescriptor
-    // 'swizzle' property error), and since that happens INSIDE the many
-    // internal render passes PMREM does per call (multiple cubemap faces
-    // x roughness mip levels), wrapping it in try/catch only stops it
-    // from crashing the page -- it doesn't stop it from wasting those
-    // passes or spamming the console once per internal failure. Skipping
-    // it outright under WebGPU is the real fix, not a try/catch band-aid.
-    if(!(sgRenderer instanceof THREE.WebGPURenderer)){
-      const pmrem=new THREE.PMREMGenerator(sgRenderer);
-      sgScene.environment=pmrem.fromScene(envScene,0.06).texture;
-      pmrem.dispose();
-    }
+    const pmrem=new THREE.PMREMGenerator(sgRenderer);
+    sgScene.environment=pmrem.fromScene(envScene,0.06).texture;
+    pmrem.dispose();
   }catch(e){console.warn('start-btn env map failed, punctual lights only',e);}
 
   const loader=_getGLBLoader();
@@ -2588,7 +2468,7 @@ function toggleBuilderDrawer(){
   if(el) el.classList.toggle('sidebar-open');
 }
 
-async function initBuilderScene(){
+function initBuilderScene(){
   if(builderInited){
     // Re-entering builder — force resize and rebuild
     setTimeout(()=>{
@@ -2607,11 +2487,6 @@ async function initBuilderScene(){
   builderInited=true;
   buildGfxGrids();buildStaffGrid();updateBoardStats();
   const cv=$('builder-canvas');
-  // Real bug found via headless-browser pageerror (same class as the
-  // menu turntable fix above): 'three/webgpu' doesn't export
-  // WebGLRenderer at all. This is exactly why the skyboard builder
-  // scene never rendered — threw synchronously before the board/
-  // character/lighting setup below ever ran.
   builderRenderer=new THREE.WebGLRenderer({canvas:cv,antialias:true,alpha:false});
   builderRenderer.setPixelRatio(Math.min(devicePixelRatio,2));
   builderRenderer.toneMapping=THREE.ACESFilmicToneMapping;builderRenderer.toneMappingExposure=1.1;
@@ -3328,30 +3203,7 @@ function applyGfxScreen(){
 // Build a small cubemap env so PBR materials get reflections everywhere.
 // This is the browser-real stand-in for ray-traced reflections.
 let _envMap=null;
-// TSL replacement for the old GLSL ShaderMaterial sky-gradient dome (top/bot
-// vertical color mix) - the original used classic vertexShader/fragmentShader
-// strings, incompatible with WebGPURenderer's node-material pipeline (same
-// bug class as the black-viewport postFX fix above; this one is small/cheap
-// enough to properly port rather than just bypass, since it's the dominant
-// background fill for atmospheric worlds - losing it entirely would be a
-// visible regression, not just a missing nice-to-have).
-function makeSkyDomeMaterial(topColor,botColor){
-  const mat=new THREE.MeshBasicNodeMaterial({side:THREE.BackSide});
-  const topU=uniform(new THREE.Color(topColor));
-  const botU=uniform(new THREE.Color(botColor));
-  mat.colorNode=Fn(()=>{
-    const h=normalize(positionLocal).y.mul(0.5).add(0.5);
-    return mix(botU,topU,h);
-  })();
-  return mat;
-}
 function buildEnvMap(renderer,scene){
-  // THREE.WebGLCubeRenderTarget doesn't exist on the WebGPU-only 'three/webgpu'
-  // import this file uses - real env-map reflections need a TSL/WebGPU-native
-  // cube render target, which is a separate follow-up (this is a cosmetic
-  // reflection stand-in, not load-bearing for the scene rendering at all -
-  // materials just render without envMap set, same as before this existed).
-  if(typeof THREE.WebGLCubeRenderTarget!=='function')return null;
   try{
     const pmrem=new THREE.PMREMGenerator(renderer);
     pmrem.compileEquirectangularShader();
@@ -3371,106 +3223,6 @@ let flightRenderer,flightScene,flightCamera,boardFlight,flightInited=false;
 let _builtBoardTemplate=null; // last template key that was built into boardFlight
 let _landTargetBody=null,_approachBestDist=Infinity,_approachBestBody=null;
 let flightAnimId,flightTime=0,celestialBodies=[],sunMesh,earthMesh;
-let oortCloudGroup=null;
-
-// ── Oort cloud — a sparse debris shell (rocks + a scattering of icy
-// "comet" points) around the outskirts of a system, at the edge of its
-// gravitational influence, seeded per-system so Sol and every
-// procedurally-generated system reached via fast travel (rebuildFlightForSystem)
-// each get their own distinct, but deterministic/repeatable, cloud —
-// re-entering the same system looks the same each time rather than
-// re-rolling randomly. "Randomly-dense" per the original ask: density
-// isn't uniform across the shell — a handful of random cluster centers
-// (also seeded) bias local density up near themselves via rejection
-// sampling, so the cloud reads as clumpy/uneven rather than a perfectly
-// even sprinkle, same as real Oort-cloud renderings.
-// Self-cleaning: removes and disposes any previous cloud before building
-// a new one, since this runs every time buildSolarSystem() or
-// rebuildFlightForSystem() runs (including re-entering Sol after a trip
-// elsewhere) — without this it would silently duplicate on every return
-// trip, the same class of leak the pre-existing asteroid belt/comets
-// already have (not fixed here — out of scope for this pass — but not
-// repeated either).
-function buildOortCloud(opts){
-  if(oortCloudGroup){
-    if(oortCloudGroup.parent)oortCloudGroup.parent.remove(oortCloudGroup);
-    oortCloudGroup.traverse(o=>{
-      if(o.geometry)o.geometry.dispose();
-      if(o.material)(Array.isArray(o.material)?o.material:[o.material]).forEach(m=>m.dispose());
-    });
-    oortCloudGroup=null;
-  }
-  const {innerR,outerR,seedKey='oort',count=850}=opts||{};
-  if(!(outerR>innerR)||count<=0)return null; // degenerate system (e.g. 0-body procedural edge case) - skip rather than build garbage
-
-  const rand=seedRand(hashStr(seedKey));
-  const grp=new THREE.Group();grp.name='OortCloud';
-
-  // A few random cluster centers on the unit sphere bias local density —
-  // this is what makes the cloud read as clumpy rather than uniform.
-  const clusterCount=3+Math.floor(rand()*3);
-  const clusters=[];
-  for(let i=0;i<clusterCount;i++){
-    const u=rand()*2-1,th=rand()*Math.PI*2,sr=Math.sqrt(Math.max(0,1-u*u));
-    clusters.push(new THREE.Vector3(sr*Math.cos(th),u,sr*Math.sin(th)));
-  }
-  const _dir=new THREE.Vector3();
-  function densityAt(dir){
-    let d=0.3; // base density everywhere, so it never reads as fully empty
-    for(const c of clusters)d+=Math.max(0,dir.dot(c)-0.5)*1.7;
-    return d;
-  }
-
-  // Rocks/boulders — cheap low-poly instances, one draw call regardless of count.
-  const rockGeo=new THREE.IcosahedronGeometry(1,0);
-  const rockMat=new THREE.MeshStandardMaterial({color:0x6d6558,roughness:0.95,metalness:0.04,flatShading:true});
-  const inst=new THREE.InstancedMesh(rockGeo,rockMat,count);
-  const pos=new THREE.Vector3(),quat=new THREE.Quaternion(),scl=new THREE.Vector3(),mtx=new THREE.Matrix4();
-  let placed=0,attempts=0;
-  while(placed<count&&attempts<count*4){
-    attempts++;
-    const u=rand()*2-1,th=rand()*Math.PI*2,sr=Math.sqrt(Math.max(0,1-u*u));
-    _dir.set(sr*Math.cos(th),u*0.55,sr*Math.sin(th)).normalize(); // slight flatten toward the ecliptic, still reads as a shell not a disc
-    if(rand()>densityAt(_dir))continue; // rejection sampling -> uneven/clumpy density
-    const r=innerR+rand()*(outerR-innerR);
-    pos.copy(_dir).multiplyScalar(r);
-    const sc=0.6+rand()*2.8; // pebble to small-boulder size variance
-    scl.set(sc,sc*(0.65+rand()*0.7),sc*(0.85+rand()*0.4));
-    quat.setFromEuler(new THREE.Euler(rand()*Math.PI*2,rand()*Math.PI*2,rand()*Math.PI*2));
-    mtx.compose(pos,quat,scl);
-    inst.setMatrixAt(placed,mtx);
-    placed++;
-  }
-  inst.count=placed; // fewer than requested if density rejection ran out of attempts - fine, still non-empty
-  inst.instanceMatrix.needsUpdate=true;
-  grp.add(inst);
-
-  // A sparse scattering of brighter icy "comet" points, same density field
-  // so they cluster in the same regions as the rocks rather than looking
-  // like an unrelated second system.
-  const cometCount=Math.max(20,Math.round(count*0.06));
-  const cp=new Float32Array(cometCount*3),cc=new Float32Array(cometCount*3);
-  let cn=0,cAttempts=0;
-  while(cn<cometCount&&cAttempts<cometCount*6){
-    cAttempts++;
-    const u=rand()*2-1,th=rand()*Math.PI*2,sr=Math.sqrt(Math.max(0,1-u*u));
-    _dir.set(sr*Math.cos(th),u*0.55,sr*Math.sin(th)).normalize();
-    if(rand()>densityAt(_dir))continue;
-    const r=innerR+rand()*(outerR-innerR);
-    cp[cn*3]=_dir.x*r;cp[cn*3+1]=_dir.y*r;cp[cn*3+2]=_dir.z*r;
-    const b=0.75+rand()*0.25;
-    cc[cn*3]=0.72*b;cc[cn*3+1]=0.84*b;cc[cn*3+2]=1.0*b; // icy blue-white, distinct from the warm rocky belt color
-    cn++;
-  }
-  const cg=new THREE.BufferGeometry();
-  cg.setAttribute('position',new THREE.BufferAttribute(cp.subarray(0,cn*3),3));
-  cg.setAttribute('color',new THREE.BufferAttribute(cc.subarray(0,cn*3),3));
-  grp.add(new THREE.Points(cg,new THREE.PointsMaterial({size:1.6,vertexColors:true,transparent:true,opacity:0.9,sizeAttenuation:true,blending:THREE.AdditiveBlending,depthWrite:false})));
-
-  flightScene.add(grp);
-  oortCloudGroup=grp;
-  return grp;
-}
 let _followInit=false;
 let dartActive=false,dartTimer=0;
 const DESTINATIONS=[];
@@ -3526,7 +3278,7 @@ function buildDestinationUI(){
     card.onclick=()=>{document.querySelectorAll('.dest-card').forEach((c,ci)=>c.classList.toggle('active',ci===i));STATE.flight.destIdx=i;$('hud-dest').textContent=d.name;plotCourse(i);closeQuickTravel();};sc.appendChild(card);});
 }
 
-async function initFlightScene(){
+function initFlightScene(){
   if(flightInited)return;flightInited=true;
   buildDestinations();buildDestinationUI();
 
@@ -3545,17 +3297,14 @@ async function initFlightScene(){
   // Detect device capabilities + pick a quality tier before building the renderer
   try{ detectCapabilities(); applyQualityTier(); }catch(e){console.warn('cap init:',e);}
 
-  // Same real prerequisite as surfRenderer: an actual WebGPURenderer with
-  // an awaited .init(), not just WebGLRenderer imported from the new path.
-  // Needed here specifically so buildSolarSystem() below can run compute
-  // shaders for the marching-cubes planet terrain instead of flat spheres.
+  // Renderer — compatibility-first across Safari/Chrome/Edge/Firefox on all OSes
   flightRenderer=new THREE.WebGLRenderer({canvas:cv,antialias:!GFX.isMobile,alpha:false,powerPreference:'high-performance',logarithmicDepthBuffer:true});
   flightRenderer.setPixelRatio(effectivePixelRatio());
   flightRenderer.setClearColor(0x000206,1);
   flightRenderer.setSize(W,H);
   flightRenderer.toneMapping=THREE.ACESFilmicToneMapping;
   flightRenderer.toneMappingExposure=1.0;
-  flightRenderer.outputColorSpace=THREE.SRGBColorSpace;
+  flightRenderer.outputEncoding=THREE.sRGBEncoding;
   // Real-time shadow maps (soft PCF) — disabled on low tier for framerate
   if(GFX.shadows){
     flightRenderer.shadowMap.enabled=true;
@@ -3583,7 +3332,7 @@ async function initFlightScene(){
   try{buildVolumetricDust();}catch(e){console.warn('dust:',e);}
   try{initMinimapGestures();}catch(e){console.warn('mm gestures:',e);}
   try{buildDistantStarSystems();}catch(e){console.warn('systems:',e);}
-  try{await buildSolarSystem();}catch(e){console.warn('solar:',e);}
+  try{buildSolarSystem();}catch(e){console.warn('solar:',e);}
   try{applyProceduralTextures();}catch(e){console.warn('tex:',e);}
   try{buildFlightBoard();}catch(e){console.warn('board:',e);}
   try{addSunLight();}catch(e){console.warn('sun:',e);}
@@ -3735,267 +3484,7 @@ function buildFlightNebulae(){
     flightScene.add(new THREE.Points(g,new THREE.PointsMaterial({size:4,sizeAttenuation:false,vertexColors:true,map:nebTex,alphaTest:0.02,transparent:true,opacity:.4,depthWrite:false})));
   });
 }
-
-// ── Procedural spherical planet mesh: GPU compute marching-cubes terrain
-// (ridge/billow height + Worley-noise craters, same technique proven in
-// the sandbox project) plus real ray-marched Rayleigh-scattering
-// atmosphere when the body has one. Resolution is deliberately low (N=20)
-// since these are viewed from orbital distance, not walked on - keeps a
-// whole system of 8+ bodies affordable to build at once. Returns a Group
-// (terrain mesh + optional atmosphere shell) sized to match the existing
-// p.r radius convention, so orbital mechanics/scale are unchanged.
-// Honest scope note: this is procedural for every body including Earth -
-// shaping named planets from real elevation data (Earth/Mars/etc.) is a
-// separate follow-up, not attempted here.
-async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmosphere){
-  const group = new THREE.Group();
-  if(!(flightRenderer instanceof THREE.WebGPURenderer)){
-    // Fallback so a body still exists (as a plain sphere) if this device
-    // path somehow doesn't have the WebGPU renderer - degrades gracefully
-    // rather than leaving nothing in the scene.
-    const fallback=new THREE.Mesh(new THREE.SphereGeometry(radius,24,24),new THREE.MeshStandardMaterial({color:colorHex,roughness:.85}));
-    group.add(fallback);
-    return group;
-  }
-  const seedU = uniform(seedVal);
-  const N=20, GRID=N+1, HALF=radius*1.3, CELL=(HALF*2)/N;
-  const numPoints=GRID*GRID*GRID, numCells=N*N*N, MAX_TRIS=5, maxVerts=numCells*MAX_TRIS*3;
-
-  const densityBuf=new THREE.StorageInstancedBufferAttribute(numPoints,1);
-  const densityNode=storage(densityBuf,'float',numPoints);
-  const triTableFlat=new Int32Array(256*16);
-  GPU_TriangleTable.forEach((row,i)=>{ for(let j=0;j<16;j++) triTableFlat[i*16+j]=row[j]; });
-  const triTableAttr=new THREE.StorageBufferAttribute(triTableFlat,1);
-  const triTableStorage=storage(triTableAttr,'int',256*16);
-  const vertexBuf=new THREE.StorageBufferAttribute(maxVerts,3);
-  const vertexNode=storage(vertexBuf,'vec3',maxVerts);
-  const normalBuf=new THREE.StorageBufferAttribute(maxVerts,3);
-  const normalNode=storage(normalBuf,'vec3',maxVerts);
-  const colorBuf=new THREE.StorageBufferAttribute(maxVerts,3);
-  const colorNode=storage(colorBuf,'vec3',maxVerts);
-
-  const terrainRadiusAt=Fn(([dir])=>{
-    const n1=mx_fractal_noise_float(dir.mul(2.3).add(seedU),5,2.0,0.5);
-    const ridge=float(1.0).sub(n1.abs());
-    const n2=mx_fractal_noise_float(dir.mul(6.9).add(seedU).add(vec3(9.1,2.3,4.7)),3,2.0,0.5);
-    const billow=n2.abs();
-    const terrain=ridge.mul(ridge).mul(0.9).sub(billow.mul(0.35));
-    const w1=mx_worley_noise_float(dir.mul(4.2).add(seedU));
-    const profile1=exp(w1.mul(w1).mul(-22.0));
-    const w2=mx_worley_noise_float(dir.mul(1.6).add(seedU).add(vec3(31.0,7.0,19.0)));
-    const profile2=exp(w2.mul(w2).mul(-38.0));
-    const bowl=profile1.mul(0.22).add(profile2.mul(0.55));
-    const rim1=smoothstep(0.04,0.22,profile1).sub(smoothstep(0.22,0.42,profile1)).mul(0.06);
-    const rim2=smoothstep(0.03,0.18,profile2).sub(smoothstep(0.18,0.34,profile2)).mul(0.14);
-    const craterRim=rim1.add(rim2);
-    return float(radius).add(terrain.mul(radius*0.12)).sub(bowl.mul(radius*0.06)).add(craterRim.mul(radius*0.06));
-  });
-
-  const densityFn=Fn(()=>{
-    const idx=instanceIndex;
-    const gz=idx.div(uint(GRID*GRID));
-    const rem=idx.mod(uint(GRID*GRID));
-    const gy=rem.div(uint(GRID));
-    const gx=rem.mod(uint(GRID));
-    const p=vec3(gx.toFloat().mul(CELL).sub(HALF),gy.toFloat().mul(CELL).sub(HALF),gz.toFloat().mul(CELL).sub(HALF));
-    const dir=p.normalize();
-    const base=p.length().sub(radius);
-    const groundR=terrainRadiusAt(dir);
-    densityNode.element(idx).assign(base.sub(groundR.sub(radius)));
-  });
-  await flightRenderer.computeAsync(densityFn().compute(numPoints));
-
-  const mcFn=Fn(()=>{
-    const cellIdx=instanceIndex;
-    const cz=cellIdx.div(uint(N*N));
-    const crem=cellIdx.mod(uint(N*N));
-    const cy=crem.div(uint(N));
-    const cx=crem.mod(uint(N));
-    const readCorner=(i)=>{
-      const dx=i&1, dy=(i>>1)&1, dz=(i>>2)&1;
-      const gx=cx.add(dx), gy=cy.add(dy), gz=cz.add(dz);
-      const flat=gx.add(gy.mul(uint(GRID))).add(gz.mul(uint(GRID*GRID)));
-      return {
-        pos: vec3(gx.toFloat().mul(CELL).sub(HALF), gy.toFloat().mul(CELL).sub(HALF), gz.toFloat().mul(CELL).sub(HALF)),
-        density: densityNode.element(flat),
-      };
-    };
-    const c0=readCorner(0),c1=readCorner(1),c2=readCorner(2),c3=readCorner(3),
-          c4=readCorner(4),c5=readCorner(5),c6=readCorner(6),c7=readCorner(7);
-    const corners=[c0,c1,c2,c3,c4,c5,c6,c7];
-    const caseIdx=int(0).toVar();
-    corners.forEach((c,i)=>{ If(c.density.lessThan(0.0), ()=>{ caseIdx.assign(caseIdx.bitOr(int(1<<i))); }); });
-    const outBase=cellIdx.mul(uint(MAX_TRIS*3));
-    Loop(MAX_TRIS*3, ({i})=>{
-      vertexNode.element(outBase.add(uint(i))).assign(vec3(0,0,0));
-      normalNode.element(outBase.add(uint(i))).assign(vec3(0,1,0));
-      colorNode.element(outBase.add(uint(i))).assign(vec3(0,0,0));
-    });
-    Loop(MAX_TRIS, ({i})=>{
-      const triBase=caseIdx.mul(int(16)).add(i.mul(3));
-      const e0=triTableStorage.element(triBase);
-      If(e0.greaterThanEqual(0), ()=>{
-        const e1=triTableStorage.element(triBase.add(1));
-        const e2=triTableStorage.element(triBase.add(2));
-        const interp=(edge)=>{
-          let pa=corners[0].pos, pb=corners[0].pos, da=corners[0].density, db=corners[0].density;
-          EdgeVertexIndices.forEach(([va,vb],k)=>{
-            const match=edge.equal(int(k));
-            pa=select(match,corners[va].pos,pa); pb=select(match,corners[vb].pos,pb);
-            da=select(match,corners[va].density,da); db=select(match,corners[vb].density,db);
-          });
-          const t=da.div(da.sub(db).add(1e-6));
-          return pa.add(pb.sub(pa).mul(t));
-        };
-        const v0=interp(e0), v1=interp(e1), v2=interp(e2);
-        const nrm=v1.sub(v0).cross(v2.sub(v0)).normalize();
-        const baseC=new THREE.Color(colorHex);
-        const rockC=baseC.clone().multiplyScalar(0.65);
-        const snowC=new THREE.Color(0xeef2f6);
-        const colorFor=(v)=>{
-          const up=v.normalize();
-          const slope=float(1).sub(nrm.dot(up).clamp(0,1));
-          const height=v.length().sub(radius);
-          let c=vec3(baseC.r,baseC.g,baseC.b);
-          c=mix(c,vec3(rockC.r,rockC.g,rockC.b),slope.smoothstep(0.35,0.75));
-          c=mix(c,vec3(snowC.r,snowC.g,snowC.b),height.sub(radius*0.09).div(radius*0.05).clamp(0,1));
-          return c;
-        };
-        const col=colorFor(v0).add(colorFor(v1)).add(colorFor(v2)).div(3.0);
-        const slot=i.mul(3);
-        vertexNode.element(outBase.add(slot)).assign(v0);
-        vertexNode.element(outBase.add(slot).add(1)).assign(v1);
-        vertexNode.element(outBase.add(slot).add(2)).assign(v2);
-        normalNode.element(outBase.add(slot)).assign(nrm);
-        normalNode.element(outBase.add(slot).add(1)).assign(nrm);
-        normalNode.element(outBase.add(slot).add(2)).assign(nrm);
-        colorNode.element(outBase.add(slot)).assign(col);
-        colorNode.element(outBase.add(slot).add(1)).assign(col);
-        colorNode.element(outBase.add(slot).add(2)).assign(col);
-      });
-    });
-  });
-  await flightRenderer.computeAsync(mcFn().compute(numCells));
-
-  const geo=new THREE.BufferGeometry();
-  geo.setAttribute('position',vertexBuf);
-  geo.setAttribute('normal',normalBuf);
-  geo.setAttribute('color',colorBuf);
-  geo.boundingSphere=new THREE.Sphere(new THREE.Vector3(0,0,0),HALF*1.5);
-  const mat=new THREE.MeshStandardNodeMaterial({vertexColors:true,roughness:0.92,metalness:0.02});
-  group.add(new THREE.Mesh(geo,mat));
-
-  if(hasAtmosphere){
-    // Water — ported from the sandbox's depth-aware shell (same technique:
-    // the opaque terrain above renders first in the frame, so by the time
-    // this transparent water fragment shades, viewportLinearDepth already
-    // holds "whatever's behind me" - comparing that to this fragment's own
-    // depth gives live water-column thickness at every point, with no
-    // separate baked mask, same as the sandbox reference). Sized at
-    // radius*1.08 to match the sandbox's own PLANET_RADIUS(40)+3.2 ratio,
-    // sitting inside the terrain's own height variance (±radius*0.12-0.18
-    // per the density function above) so it only submerges low ground.
-    const WATER_R=radius*1.08;
-    const waterMat=new THREE.MeshStandardNodeMaterial({transparent:true,side:THREE.DoubleSide,depthWrite:false,metalness:0.05});
-    const sceneDepthW=viewportLinearDepth;
-    const surfaceDepthW=linearDepth(positionView.z);
-    const depthDiffW=sceneDepthW.sub(surfaceDepthW).max(0.0);
-    const depthFactorW=depthDiffW.mul(3.2).clamp(0.0,1.0);
-    const shallowC=vec3(0.34,0.76,0.72),midC=vec3(0.10,0.45,0.52),deepC=vec3(0.02,0.09,0.20);
-    const baseColorW=mix(mix(shallowC,midC,smoothstep(0.0,0.45,depthFactorW)),deepC,smoothstep(0.35,1.0,depthFactorW));
-    const foamW=float(1.0).sub(smoothstep(0.0,0.05,depthDiffW));
-    const foamNoiseW=mx_fractal_noise_float(positionWorld.mul(8.0).add(vec3(time.mul(0.3),0,time.mul(0.2))),3,2.0,0.5);
-    const foamMaskW=foamW.mul(smoothstep(0.15,0.6,foamNoiseW.mul(0.5).add(0.5)).add(0.35).clamp(0.0,1.0));
-    const wavePosW=positionWorld.mul(2.6).add(vec3(time.mul(0.15),0.0,time.mul(0.11)));
-    const waveNW=mx_fractal_noise_float(wavePosW,4,2.0,0.5);
-    const wavePos2W=positionWorld.mul(2.6).add(vec3(time.mul(0.11).add(50.0),0.0,time.mul(-0.13)));
-    const waveN2W=mx_fractal_noise_float(wavePos2W,4,2.0,0.5);
-    const wavePos3W=positionWorld.mul(9.0).add(vec3(time.mul(0.4).add(12.0),0.0,time.mul(0.33)));
-    const waveN3W=mx_fractal_noise_float(wavePos3W,2,2.0,0.5);
-    const waveNormalW=normalWorld.add(vec3(
-      waveNW.mul(0.12).add(waveN3W.mul(0.035)),
-      waveN2W.mul(0.12).add(waveN3W.mul(0.035)),
-      waveNW.mul(waveN2W).mul(0.08)
-    )).normalize();
-    const viewDirW=positionWorld.sub(cameraPosition).normalize();
-    const fresnelW=float(1.0).sub(viewDirW.dot(waveNormalW).abs()).pow(2.5);
-    const shineW=fresnelW.mul(0.55);
-    waterMat.colorNode=mix(baseColorW,vec3(1,1,1),foamMaskW).add(vec3(0.55,0.65,0.75).mul(shineW));
-    waterMat.opacityNode=clamp(float(0.4).add(depthFactorW.mul(0.5)).add(foamMaskW.mul(0.4)).add(shineW.mul(0.3)),0.0,0.97);
-    waterMat.normalNode=waveNormalW;
-    waterMat.roughnessNode=clamp(float(0.06).add(waveN3W.abs().mul(0.12)),0.03,0.28);
-    const waterMesh=new THREE.Mesh(new THREE.SphereGeometry(WATER_R,64,40),waterMat);
-    waterMesh.renderOrder=1;
-    group.add(waterMesh);
-
-    const atmoMat=new THREE.MeshBasicNodeMaterial({transparent:true,side:THREE.BackSide,depthWrite:false,depthTest:false,blending:THREE.AdditiveBlending});
-    const scatterCoeffs=uniform(new THREE.Vector3(Math.pow(400/700,4),Math.pow(400/530,4),Math.pow(400/440,4)).multiplyScalar(2.2));
-    const sunDirU=uniform(new THREE.Vector3(1,0.3,0.2).normalize());
-    const ATMO_R=HALF*1.06;
-    const raySphere=Fn(([center,rad,ro,rd])=>{
-      const offset=ro.sub(center);
-      const b=offset.dot(rd).mul(2.0);
-      const c=offset.dot(offset).sub(rad.mul(rad));
-      const disc=b.mul(b).sub(c.mul(4.0));
-      const result=vec3(0,0,0).toVar();
-      If(disc.greaterThanEqual(0.0), ()=>{
-        const s=disc.sqrt();
-        const near=b.negate().sub(s).div(2.0);
-        const far=b.negate().add(s).div(2.0);
-        If(far.greaterThanEqual(0.0), ()=>{
-          const dToSphere=near.max(0.0);
-          result.assign(vec3(dToSphere,far.sub(dToSphere),1.0));
-        });
-      });
-      return result;
-    });
-    const densityAtPoint=Fn(([sp])=>{
-      const h=sp.length().sub(radius);
-      const h01=h.div(ATMO_R-radius).clamp(0.0,1.0);
-      return exp(h01.negate().mul(5.5)).mul(float(1.0).sub(h01));
-    });
-    const opticalDepth=Fn(([ro,rd,rl])=>{
-      const stepSize=rl.div(5);
-      const p=ro.toVar();
-      const total=float(0).toVar();
-      Loop(5, ()=>{ total.addAssign(densityAtPoint(p).mul(stepSize)); p.addAssign(rd.mul(stepSize)); });
-      return total;
-    });
-    const atmoFn=Fn(()=>{
-      const ro=cameraPosition;
-      const rd=positionWorld.sub(cameraPosition).normalize();
-      const center=vec3(0,0,0);
-      const hit=raySphere(center,float(ATMO_R),ro,rd);
-      const marchStart=hit.x, marchLen=hit.y;
-      const inScatter=vec3(0,0,0).toVar();
-      If(hit.z.greaterThan(0.5), ()=>{
-        const stepSize=marchLen.div(10);
-        const p=ro.add(rd.mul(marchStart)).toVar();
-        const viewOD=float(0).toVar();
-        Loop(10, ()=>{
-          const localDensity=densityAtPoint(p);
-          viewOD.addAssign(localDensity.mul(stepSize));
-          const sunHit=raySphere(center,float(ATMO_R),p,sunDirU);
-          const sunOD=opticalDepth(p,sunDirU,sunHit.y);
-          const transmittance=exp(scatterCoeffs.negate().mul(sunOD.add(viewOD)));
-          inScatter.addAssign(localDensity.mul(transmittance).mul(scatterCoeffs).mul(stepSize));
-          p.addAssign(rd.mul(stepSize));
-        });
-      });
-      return inScatter;
-    });
-    const inS=atmoFn();
-    atmoMat.colorNode=inS;
-    atmoMat.opacityNode=clamp(inS.r.add(inS.g).add(inS.b).mul(0.6),0.0,1.0);
-    const atmoMesh=new THREE.Mesh(new THREE.SphereGeometry(ATMO_R,32,24),atmoMat);
-    atmoMesh.renderOrder=2;
-    group.add(atmoMesh);
-  }
-  return group;
-}
-
-
-async function buildSolarSystem(){
+function buildSolarSystem(){
   celestialBodies=[];
 
   // ═══════════════════════════════════════════════════════════════
@@ -4008,30 +3497,13 @@ async function buildSolarSystem(){
 
   // Sun — parent group so glow travels with it
   const sunGroup = new THREE.Group();
-  const sm=new THREE.Mesh(new THREE.SphereGeometry(4,32,32),new THREE.MeshStandardMaterial({color:0xffdd44,emissive:0xffaa00,emissiveIntensity:1.8,roughness:.6}));
+  const sm=new THREE.Mesh(new THREE.SphereGeometry(4,32,32),new THREE.MeshStandardMaterial({color:0xffdd44,emissive:0xffaa00,emissiveIntensity:2.2,roughness:.6}));
   sunGroup.add(sm);
-  // Corona glow — was a perfectly smooth solid-color sphere (guaranteed to
-  // read as a symmetrical circle from any angle, since a sphere's silhouette
-  // always is one) at fairly strong opacity. Replaced with a TSL material
-  // that displaces each vertex outward by a noise value sampled from its own
-  // position, so the actual geometry silhouette becomes irregular/lumpy
-  // (not just an alpha mask on top of a still-circular shape), plus a
-  // softer, lower peak opacity so it reads as a diffuse smoky corona rather
-  // than a bright flat disc. Two layers (inner warmer/tighter, outer
-  // cooler/looser) for depth, same two-sphere structure as before.
-  function _makeCoronaMat(color,peakOpacity){
-    const mat=new THREE.MeshBasicNodeMaterial({transparent:true,side:THREE.BackSide,depthWrite:false,blending:THREE.AdditiveBlending});
-    const n1=mx_fractal_noise_float(positionLocal.mul(1.4),4,2.0,0.5);
-    const n2=mx_fractal_noise_float(positionLocal.mul(3.1).add(vec3(7.3,1.1,4.4)),3,2.0,0.5);
-    const rim=float(1.0).sub(normalize(positionLocal).dot(vec3(0,0,1)).abs()).pow(1.4); // soft view-angle falloff, not a hard edge
-    mat.colorNode=vec3(new THREE.Color(color).r,new THREE.Color(color).g,new THREE.Color(color).b);
-    mat.opacityNode=clamp(rim.mul(peakOpacity).mul(n1.mul(0.5).add(0.5)).mul(n2.mul(0.3).add(0.7)),0.0,1.0);
-    mat.positionNode=positionLocal.add(normalLocal.mul(n1.mul(0.9).add(n2.mul(0.3))));
-    return mat;
-  }
-  const sa=new THREE.Mesh(new THREE.SphereGeometry(5.5,32,24),_makeCoronaMat(0xffaa00,0.22));
+  // Atmosphere glow sphere — parented to sun so it always follows
+  const sa=new THREE.Mesh(new THREE.SphereGeometry(5.5,16,16),new THREE.MeshBasicMaterial({color:0xffaa00,transparent:true,opacity:.12,side:THREE.BackSide}));
   sunGroup.add(sa);
-  const sc2=new THREE.Mesh(new THREE.SphereGeometry(7,32,24),_makeCoronaMat(0xff8800,0.09));
+  // Corona outer glow
+  const sc2=new THREE.Mesh(new THREE.SphereGeometry(7,16,16),new THREE.MeshBasicMaterial({color:0xff8800,transparent:true,opacity:.04,side:THREE.BackSide}));
   sunGroup.add(sc2);
   flightScene.add(sunGroup);
   sunMesh=sm;
@@ -4072,28 +3544,19 @@ async function buildSolarSystem(){
   });
 
 
-  // Sequential (not parallel) so multiple simultaneous compute dispatches
-  // don't contend for GPU resources building a whole system at once.
-  for(const p of planets){
-    const seedVal = p.name.length*7+3; // same seeding convention already used for the old canvas-texture look, kept for continuity
-    let group;
-    try{
-      group = await buildProceduralPlanetMesh(p.r, seedVal, p.col||0x888888, p.hasAtm);
-    }catch(e){
-      // Real bug found while chasing 'still seeing the old planets' reports:
-      // this loop had no per-iteration error handling, so if the GPU build
-      // threw for ANY single planet, the whole for-of/await loop aborted
-      // right there - every planet after the failing one (and the failing
-      // one itself) silently never got built, with only a generic 'solar:'
-      // warning from the outer try/catch in initFlightScene to go on.
-      // Logging the specific body and error here, and falling back to a
-      // plain sphere for just that body, so one bad planet can't take the
-      // whole system down or hide which one actually failed.
-      console.warn('[GPU planet] build failed for',p.name,'-',e.message,e);
-      group = new THREE.Group();
-      group.add(new THREE.Mesh(new THREE.SphereGeometry(p.r,24,24), new THREE.MeshStandardMaterial({color:p.col||0x888888,roughness:.85})));
+  planets.forEach(p=>{
+    let mat;
+    if(p.useShader){
+      const _vs=['varying vec3 vNormal;','void main(){vNormal=normalize(normalMatrix*normal);gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}'].join('\n');
+      const _fs=['uniform vec3 sunDir;','varying vec3 vNormal;','void main(){float d=dot(vNormal,normalize(sunDir));float t=smoothstep(-0.15,0.18,d);vec3 day=vec3(0.03,0.14,0.42);vec3 night=vec3(0.005,0.015,0.048);vec3 col=mix(night,day,t);float nc=pow(clamp(-d,0.0,1.0),0.9)*0.09;col+=vec3(0.9,0.7,0.3)*nc;float rim=1.0-abs(dot(vNormal,vec3(0.0,0.0,1.0)));col+=vec3(0.0,0.3,0.8)*pow(rim,5.0)*0.3;gl_FragColor=vec4(col,1.0);}'].join('\n');
+      mat=new THREE.ShaderMaterial({uniforms:{sunDir:{value:new THREE.Vector3(1,0.2,0)}},vertexShader:_vs,fragmentShader:_fs});
+    } else {
+      mat=new THREE.MeshStandardMaterial({color:p.col,roughness:.7,metalness:.1});
     }
-    const mesh = group; // keep the name "mesh" for the code below, unchanged from before
+    const mesh=new THREE.Mesh(new THREE.SphereGeometry(p.r,24,24),mat);
+    mesh.position.set(p.oR,0,0);
+    flightScene.add(mesh);
+    if(p.name==='Earth')earthMesh=mesh;
 
     // Orbit ring — TorusGeometry defaults to lying flat in the XY plane, but
     // planets orbit in world XZ (see updateBodies: x=cos(angle)*oR, z=sin(angle)*oR,
@@ -4103,7 +3566,10 @@ async function buildSolarSystem(){
     orbit.rotation.x=Math.PI/2;
     flightScene.add(orbit);
 
-    // Saturn-style rings — several stacked flat RingGeometry annuli (each
+    // Saturn-style rings — was a single chunky torus (tube radius p.r*.42,
+    // nearly as thick as the planet itself). Real ring systems are thin and
+    // flat with multiple distinct bands (gaps between them), not one solid
+    // doughnut. Rebuilt as several stacked flat RingGeometry annuli (each
     // genuinely flat, not tube-shaped) with small gaps and varying
     // shade/opacity per band, parented together so they still orbit with
     // the planet as one unit.
@@ -4133,18 +3599,17 @@ async function buildSolarSystem(){
       mesh.add(mm); // parented to planet
     }
 
-    // Atmosphere is already built INSIDE buildProceduralPlanetMesh (the
-    // sandbox's real ray-marched Rayleigh scattering, not the old fixed-
-    // opacity sphere this replaced) when p.hasAtm is true - nothing more
-    // needed here.
+    // Atmosphere — PARENTED to planet mesh (not scene!) so it follows during orbit
+    if(p.hasAtm){
+      const am=new THREE.Mesh(new THREE.SphereGeometry(p.r*1.09,16,16),new THREE.MeshStandardMaterial({color:0x2244ff,transparent:true,opacity:.13,side:THREE.BackSide}));
+      am.position.set(0,0,0); // local origin — centered on parent planet
+      mesh.add(am); // parented to planet
+    }
 
     // Set initial position to the deep-future orbital angle
     mesh.position.set(Math.cos(p.angle)*p.oR, 0, Math.sin(p.angle)*p.oR);
-    flightScene.add(mesh);
-    p.mesh = mesh; // existing code elsewhere reads p.mesh/b.mesh - keep that contract
-    if(p.name==='Earth')earthMesh=mesh;
     celestialBodies.push({mesh,name:p.name,type:p.type,temp:p.temp,orbitR:p.oR,orbitSpd:p.spd,angle:p.angle});
-  }
+  });
 
   // Asteroid belt — between Mars (1.524 AU) and Jupiter (5.203 AU), centered ~2.7 AU
   const beltR = AU * 2.7;
@@ -4169,11 +3634,6 @@ async function buildSolarSystem(){
     cg.position.set(rnd(-AU*10,AU*10),rnd(-20,20),rnd(-AU*10,AU*10));
     flightScene.add(cg);
   }
-
-  // Oort cloud — well beyond Neptune (AU*30.069 ≈ 842 units), at the
-  // edge of Sol's gravitational influence. Fixed seedKey ('sol') so it
-  // looks the same every time you return here, not re-rolled per visit.
-  buildOortCloud({innerR:AU*46,outerR:AU*72,seedKey:'sol',count:900});
 
   // ── Bird Temple (first slice) ──────────────────────────────────────
   // Full spec is a ship that autonomously roams the whole galaxy, can be
@@ -4262,22 +3722,12 @@ async function buildSolarSystem(){
         const panel=new THREE.Mesh(new THREE.PlaneGeometry(6,6),new THREE.MeshBasicMaterial({color:c}));
         panel.position.set(x,y,z);panel.lookAt(0,0,0);envScene.add(panel);
       });
-      // Same confirmed-broken PMREMGenerator-under-WebGPU issue as the start
-      // button turntable (see that comment for the live-tested root cause) —
-      // this call site had NO guard at all before, meaning it threw
-      // uncaught, which is exactly why Bird Temple's GLB load was failing
-      // outright rather than just missing its env map. Skipping under
-      // WebGPU rather than letting it throw; window._birdTempleEnvRT stays
-      // null, and the envMap-assignment loop below already checks
-      // 'envMap' in m, so it just doesn't get one -- graceful, not broken.
-      if(!(flightRenderer instanceof THREE.WebGPURenderer)){
-        window._birdTempleEnvRT=new THREE.PMREMGenerator(flightRenderer).fromScene(envScene,0.08);
-      }
+      window._birdTempleEnvRT=new THREE.PMREMGenerator(flightRenderer).fromScene(envScene,0.08);
     }
     t.traverse(o=>{
       if(o.isMesh&&o.material){
         const mats=Array.isArray(o.material)?o.material:[o.material];
-        mats.forEach(m=>{ if('envMap' in m && window._birdTempleEnvRT){m.envMap=window._birdTempleEnvRT.texture;m.envMapIntensity=1;m.needsUpdate=true;} });
+        mats.forEach(m=>{ if('envMap' in m){m.envMap=window._birdTempleEnvRT.texture;m.envMapIntensity=1;m.needsUpdate=true;} });
       }
     });
     t.traverse(o=>{
@@ -4455,27 +3905,11 @@ async function buildSolarSystem(){
 // alongside the planets, but kept as its own object (not pushed into
 // celestialBodies) since it isn't a landable planet and shouldn't be
 // picked up by the LOD/nearest-body/orbit-ring logic built for those.
-// basePos/target start as plain {x,y,z} placeholders, NOT real
-// THREE.Vector3 instances — this object is defined at top-level parse
-// time in a classic script, which runs before the deferred module
-// script has attached THREE to window (the exact same bug class as
-// the STATE.flight.pos/vel fix earlier tonight; this second instance
-// on BIRD_TEMPLE was missed in that pass — confirmed via a real
-// headless-browser pageerror: "THREE is not defined" at this exact
-// object literal, which was silently killing everything defined
-// AFTER this point in the main script on every page load: the menu's
-// 3D board preview, the skyboard builder scene, and the flight/orbit
-// scene never got built, and the loading-gate/asset-count logic
-// (also defined later in this same script) never got wired up either
-// — matching every symptom reported (blank preview, black builder,
-// gameplay skipping straight past the loading sequence). Upgraded to
-// real Vector3 instances via __whenThreeReady() immediately below,
-// same as STATE.flight.pos/vel.
 const BIRD_TEMPLE={
-  group:null,basePos:{x:0,y:0,z:0},t:0,nearPromptShown:false,audioEl:null,
+  group:null,basePos:new THREE.Vector3(),t:0,nearPromptShown:false,audioEl:null,
   spawned:false, // true once a real, randomized, minimum-distance-checked spawn point has been picked
   // ── Autonomous wander (task 1) ──────────────────────────────────
-  target:{x:0,y:0,z:0},wanderSpeed:1.5, // ~1/10th of base cruise speed (0.25u/frame*60fps=15u/s)
+  target:new THREE.Vector3(),wanderSpeed:1.5, // ~1/10th of base cruise speed (0.25u/frame*60fps=15u/s)
   wanderIdleUntil:0,
   // ── Bird Shard summon (task 2) ───────────────────────────────────
   shard:null,          // the detached 'Bird Shard' group once pulled off the ship
@@ -4483,10 +3917,6 @@ const BIRD_TEMPLE={
   shardHomeLocal:null, // original local transform, to dock it back exactly
   shardPlayedNear:false,
 };
-window.__whenThreeReady(function(){
-  BIRD_TEMPLE.basePos = new THREE.Vector3(BIRD_TEMPLE.basePos.x, BIRD_TEMPLE.basePos.y, BIRD_TEMPLE.basePos.z);
-  BIRD_TEMPLE.target = new THREE.Vector3(BIRD_TEMPLE.target.x, BIRD_TEMPLE.target.y, BIRD_TEMPLE.target.z);
-});
 function _btPickWanderTarget(){
   // Prefer near a random celestial body sometimes, otherwise open space —
   // real autonomous movement around the currently-loaded system. Full
@@ -4713,17 +4143,8 @@ function updateBirdTemple(dt){
 // the same 'ground-follow only' honesty as the note when this was first
 // discussed.
 // ══════════════════════════════════════════════════════════════
-// SHIP_WALK.localPos starts as a plain placeholder and _shipWalkRay
-// starts null — same top-level-parse-time issue as BIRD_TEMPLE above
-// (this classic script runs before the deferred module attaches THREE
-// to window), confirmed as the next actual pageerror once BIRD_TEMPLE
-// was fixed. Upgraded via __whenThreeReady immediately below.
-const SHIP_WALK={active:false,localPos:{x:0,y:0,z:0},yaw:0,pitch:0,velY:0,grounded:true};
-let _shipWalkRay=null;
-window.__whenThreeReady(function(){
-  SHIP_WALK.localPos = new THREE.Vector3(SHIP_WALK.localPos.x, SHIP_WALK.localPos.y, SHIP_WALK.localPos.z);
-  _shipWalkRay = new THREE.Raycaster();
-});
+const SHIP_WALK={active:false,localPos:new THREE.Vector3(),yaw:0,pitch:0,velY:0,grounded:true};
+const _shipWalkRay=new THREE.Raycaster();
 function _shipGroundHeight(worldX,worldZ,fallbackY){
   const bt=BIRD_TEMPLE;
   _shipWalkRay.set(new THREE.Vector3(worldX,fallbackY+50,worldZ),new THREE.Vector3(0,-1,0));
@@ -5432,10 +4853,7 @@ function _getGLBLoader(){ if(!_glbLoader&&THREE.GLTFLoader)_glbLoader=new THREE.
 // body, planet-surface props as more passives) — each entry is just
 // {obj, name}; the sweep logic lives in updateBirdTemple's frame step.
 const RIGID={passive:[],playerRadius:0.7,_playerPrev:null,
-  _ray:null,_tmpV1:null,_tmpV2:null};
-window.__whenThreeReady(function(){
-  RIGID._ray=new THREE.Raycaster(); RIGID._tmpV1=new THREE.Vector3(); RIGID._tmpV2=new THREE.Vector3();
-});
+  _ray:new THREE.Raycaster(),_tmpV1:new THREE.Vector3(),_tmpV2:new THREE.Vector3()};
 function registerPassiveCollider(obj,name){
   RIGID.passive.push({obj,name:name||obj.name||'collider'});
   console.log('[Rigid] passive collider registered:',name,'(total',RIGID.passive.length+')');
@@ -6210,8 +5628,6 @@ function updateCrosshairLabel(){
   const currentName = withinRange ? body.name : null;
 
   if(currentName && currentName !== _lastHoveredBody){
-    // Crosshair just landed on a (different, or newly in-range) body -
-    // show the popup and start its 4-second countdown.
     const el = $('crosshair-label');
     el.textContent = currentName;
     el.style.display = 'block';
@@ -6233,20 +5649,12 @@ function updateCrosshairLabel(){
 //  (see solver: forward round-trip 1e-15, board nose tracks view forward
 //  through full loops at 4e-16) rather than hand-derived.
 // ══════════════════════════════════════════════════════════════
-let _sQ1=null,_sQ2=null,_sQ3=null;
-let _sV0=null,_sV1=null,_sV2=null,_sV3=null,_sV4=null;
-let _sM1=null;
-let _AXIS_X=null,_AXIS_Y=null,_AXIS_Z=null;
-let _BOARD_ALIGN=null;
-let _camUp=null;
-window.__whenThreeReady(function(){
-  _sQ1=new THREE.Quaternion();_sQ2=new THREE.Quaternion();_sQ3=new THREE.Quaternion();
-  _sV0=new THREE.Vector3();_sV1=new THREE.Vector3();_sV2=new THREE.Vector3();_sV3=new THREE.Vector3();_sV4=new THREE.Vector3();
-  _sM1=new THREE.Matrix4();
-  _AXIS_X=new THREE.Vector3(1,0,0);_AXIS_Y=new THREE.Vector3(0,1,0);_AXIS_Z=new THREE.Vector3(0,0,1);
-  _BOARD_ALIGN=new THREE.Quaternion().setFromEuler(new THREE.Euler(0,-Math.PI/2,0,'YXZ'));
-  _camUp=new THREE.Vector3(0,1,0);
-});
+const _sQ1=new THREE.Quaternion(),_sQ2=new THREE.Quaternion(),_sQ3=new THREE.Quaternion();
+const _sV0=new THREE.Vector3(),_sV1=new THREE.Vector3(),_sV2=new THREE.Vector3(),_sV3=new THREE.Vector3(),_sV4=new THREE.Vector3();
+const _sM1=new THREE.Matrix4();
+const _AXIS_X=new THREE.Vector3(1,0,0),_AXIS_Y=new THREE.Vector3(0,1,0),_AXIS_Z=new THREE.Vector3(0,0,1);
+const _BOARD_ALIGN=new THREE.Quaternion().setFromEuler(new THREE.Euler(0,-Math.PI/2,0,'YXZ'));
+let _camUp=new THREE.Vector3(0,1,0);
 
 function spQuat(sp){
   let q=sp.quat;
@@ -6656,8 +6064,7 @@ function updateBodies(dt){
 
 
 let _hudT=0;
-let _hudSunDir=null,_hudZero=null;
-window.__whenThreeReady(function(){ _hudSunDir=new THREE.Vector3(); _hudZero=new THREE.Vector3(0,0,0); });
+const _hudSunDir=new THREE.Vector3(),_hudZero=new THREE.Vector3(0,0,0);
 function updateHUD(){
   if(!boardFlight)return;
   // Throttle to 5 Hz. Readable numbers don't need 60fps, and this function
@@ -6876,8 +6283,7 @@ function lockOnNearest(){
 //             inclinations, this must read the system's own normal.)
 // Leveling = project current forward onto the plane (heading preserved),
 // up snapped to the plane normal, then a ~0.9s eased quaternion sweep.
-let GALAXY_PLANE_EULER=null; // keep in sync with galGroup.rotation
-window.__whenThreeReady(function(){ GALAXY_PLANE_EULER=new THREE.Euler(0.5,0.3,0.1); });
+const GALAXY_PLANE_EULER=new THREE.Euler(0.5,0.3,0.1); // keep in sync with galGroup.rotation
 let _levelAnim=null;
 function cancelAutoLevel(){
   if(_levelAnim){clearInterval(_levelAnim);_levelAnim=null;
@@ -6942,13 +6348,11 @@ function openGalaxyMap(){
 }
 function closeGalaxyMap(){$('galaxy-map').classList.remove('open');}
 
-async function initGalaxyMapScene(){
+function initGalaxyMapScene(){
   gmInited=true;
   const cv=$('gm-canvas');
   const W=Math.min(innerWidth*.92,1100),H=Math.min(innerHeight*.74,640);
   cv.width=W;cv.height=H;
-  // Same 'three/webgpu' has-no-WebGLRenderer bug as the menu turntable
-  // and builder scene above — this is what kept the galaxy map blank.
   gmRenderer=new THREE.WebGLRenderer({canvas:cv,antialias:true,alpha:false,logarithmicDepthBuffer:true});
   gmRenderer.setPixelRatio(Math.min(devicePixelRatio,2));gmRenderer.setSize(W,H);
   gmRenderer.setClearColor(0x000206,1);
@@ -7835,12 +7239,6 @@ function rebuildFlightForSystem(system){
     celestialBodies.push({mesh:m,name:bd.name,type:bd.type,temp:Math.round(100+Math.random()*400)+' K',
       orbitR:oR,orbitSpd:0.002/(i+1),angle:ang,landable:bd.landable,gravity:bd.gravity});
   });
-  // Oort cloud, sized beyond this system's outermost body (same AU*(1+i*1.4)
-  // spacing formula used just above) and seeded by the system's own name so
-  // it's distinct per star but identical on repeat visits, matching Sol's cloud.
-  const outermostR=AU*(1+(system.bodies.length-1)*1.4);
-  buildOortCloud({innerR:outermostR*1.5,outerR:outermostR*2.3,seedKey:system.name,count:700});
-
   // rebuild destination bar from this system's bodies
   DESTINATIONS.length=0;
   system.bodies.forEach((bd,i)=>{
@@ -8088,7 +7486,7 @@ function doExit(){
 document.addEventListener('DOMContentLoaded',()=>{
   const exitBtns=document.querySelectorAll('.art-btn');
   exitBtns.forEach(b=>{if(b.textContent.trim()==='EXIT')b.onclick=promptExit;});
-  window.__whenThreeReady(()=>{ try{preloadSkyboardTemplates();}catch(e){} });
+  try{preloadSkyboardTemplates();}catch(e){}
 });
 
 // ══════════════════════════════════════════════════════════════
@@ -8412,22 +7810,6 @@ function resizePostFX(){
 }
 function renderWithPostFX(){
   const useBloom=STATE.settings.bloom, useMotion=STATE.settings.motion;
-  // Real bug found via direct pixel inspection (not just error logs - this
-  // one fails SILENTLY, no thrown error to catch): the bloom/motion-blur
-  // pipeline below (_brightMat/_blurMat/_compMat) is built from classic
-  // THREE.ShaderMaterial with raw GLSL strings (texture2D, gl_FragColor,
-  // GLSL ES 1.0 syntax) - a WebGL-render-pipeline construct. WebGPURenderer
-  // doesn't know how to run that; it expects TSL/NodeMaterial-based shaders.
-  // Since STATE.settings.bloom defaults to true, this ran on literally every
-  // frame of real gameplay, producing a black composite with no console
-  // error to point at it - exactly matching the reported symptom (menu and
-  // builder work fine, since neither calls this function; the flight/orbit
-  // scene, which does, went black). Bypassing to the plain render path
-  // unconditionally until a real TSL bloom/motion-blur pass replaces this -
-  // that's a genuine follow-up, not something to fake here blind without
-  // being able to visually verify bloom quality on real hardware.
-  flightRenderer.setRenderTarget(null);flightRenderer.render(flightScene,flightCamera);return;
-  // eslint-disable-next-line no-unreachable
   if(!useBloom&&!useMotion){ flightRenderer.setRenderTarget(null); flightRenderer.render(flightScene,flightCamera); return; }
   if(!_postInited)initPostFX();
   const r=flightRenderer;
@@ -8634,7 +8016,7 @@ function makeOrbitGlobeTexture(body){
   _orbitTexCache[key]=tex;return tex;
 }
 
-async function openOrbitApproach(body){
+function openOrbitApproach(body){
   if(orbitActive)return;
   _orbitBody=body;orbitActive=true;_orbitSite=null;
   // pause flight loop while orbiting
@@ -8646,13 +8028,9 @@ async function openOrbitApproach(body){
   $('orbit-site').textContent='';
   $('orbit-descend').style.display='none';
   const cv=$('orbit-canvas');const W=window.innerWidth,H=window.innerHeight;cv.width=W;cv.height=H;
-  // Same 'three/webgpu' has-no-WebGLRenderer bug as elsewhere in this
-  // pass — this is what was leaving the ORBIT cockpit view's viewport
-  // black behind a fully-functional HUD (the HUD is plain HTML/CSS,
-  // unaffected; only the actual THREE scene never rendered).
   orbitRenderer=new THREE.WebGLRenderer({canvas:cv,antialias:!GFX.isMobile});
   orbitRenderer.setPixelRatio(effectivePixelRatio());orbitRenderer.setSize(W,H);
-  orbitRenderer.outputColorSpace=THREE.SRGBColorSpace;
+  orbitRenderer.outputEncoding=THREE.sRGBEncoding;
   orbitScene=new THREE.Scene();
   orbitCamera=new THREE.PerspectiveCamera(50,W/H,0.01,100);
   orbitCamDist=3.4;orbitYaw=0;orbitPitch=0.2;
@@ -8854,7 +8232,7 @@ let atmoPreset=0,atmoThrottle=0,atmoMach=0;
 let atmoSteer={x:0,y:0},atmoClimb={x:0,y:0};
 let atmoState=null;
 
-async function enterAtmosphericFlight(body,site){
+function enterAtmosphericFlight(body,site){
   if(atmoActive)return;
   _atmoBody=body;_atmoSite=site||null;atmoActive=true;
   atmoPreset=0;atmoThrottle=0;atmoMach=0;
@@ -8875,10 +8253,9 @@ async function enterAtmosphericFlight(body,site){
   const ov=$('atmo-overlay');ov.style.display='block';
   $('atmo-title').textContent='ATMOSPHERIC FLIGHT — '+body.name.toUpperCase();
   const cv=$('atmo-canvas');const W=window.innerWidth,H=window.innerHeight;cv.width=W;cv.height=H;
-  // Same 'three/webgpu' has-no-WebGLRenderer bug as elsewhere in this pass.
   atmoRenderer=new THREE.WebGLRenderer({canvas:cv,antialias:!GFX.isMobile});
   atmoRenderer.setPixelRatio(effectivePixelRatio());atmoRenderer.setSize(W,H);
-  atmoRenderer.outputColorSpace=THREE.SRGBColorSpace;
+  atmoRenderer.outputEncoding=THREE.sRGBEncoding;
   atmoScene=new THREE.Scene();
   atmoScene.background=new THREE.Color(pal.sky?pal.sky[1]:0x223344);
   if(pal.atmos)atmoScene.fog=new THREE.Fog(pal.fog||0x334455,300,2400);
@@ -8893,7 +8270,9 @@ async function enterAtmosphericFlight(body,site){
   }
   // sky dome
   if(pal.atmos){
-    const skyMat=makeSkyDomeMaterial(pal.sky[1],pal.sky[0]);
+    const skyMat=new THREE.ShaderMaterial({side:THREE.BackSide,uniforms:{top:{value:new THREE.Color(pal.sky[1])},bot:{value:new THREE.Color(pal.sky[0])}},
+      vertexShader:'varying vec3 vp;void main(){vp=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
+      fragmentShader:'varying vec3 vp;uniform vec3 top;uniform vec3 bot;void main(){float h=normalize(vp).y*0.5+0.5;gl_FragColor=vec4(mix(bot,top,h),1.0);}'});
     atmoScene.add(new THREE.Mesh(new THREE.SphereGeometry(4000,24,24),skyMat));
   } else {
     const sn=2500,sp=new Float32Array(sn*3);
@@ -9258,34 +8637,12 @@ function _renderMiniLoader(){
   }
   if(pct>=100) _hideMiniLoader();
 }
-// Safety-net timer handle for the mini-loader force-hide below - cleared
-// whenever the loader legitimately completes or gets hidden some other way,
-// so a fast load doesn't leave a stray timeout waiting to fire later.
-let _miniLoaderSafetyTimer=null;
 function _showMiniLoader(){
   const el=document.getElementById('mini-loader');
   if(el) el.style.display='flex';
   _renderMiniLoader();
-  // Real risk this guards against: this overlay sits at z-index 8500 over
-  // the ENTIRE HUD while visible, intercepting every tap/click - if the
-  // character GLB download stalls on a slow connection, or any future
-  // LOAD_TRACK step fails to mark itself complete for whatever reason, the
-  // player is left with a fully-rendered, seemingly-working scene behind
-  // an invisible-ish (dark, blurred) overlay that eats 100% of input
-  // forever, with zero on-screen indication anything's wrong - exactly the
-  // 'controls aren't doing anything' symptom. Force-hide after a generous
-  // ceiling regardless of tracked progress; the scene is virtually always
-  // usable behind it even if a progress step never technically resolved.
-  clearTimeout(_miniLoaderSafetyTimer);
-  _miniLoaderSafetyTimer=setTimeout(()=>{
-    if(el&&el.style.display!=='none'){
-      console.warn('[mini-loader] Safety-net timeout fired — forcing hide after 20s. LOAD_TRACK steps at that point:',JSON.stringify(LOAD_TRACK.steps));
-      _hideMiniLoader();
-    }
-  },20000);
 }
 function _hideMiniLoader(){
-  clearTimeout(_miniLoaderSafetyTimer);
   const el=document.getElementById('mini-loader');
   if(el) el.style.display='none';
 }
@@ -9342,19 +8699,6 @@ const CHAR = {
   scene:null,              // which THREE.Scene the character currently lives in
   _transitioning:false,    // true during boardMountSequence/boardDismountSequence — locomotion/mount sync must not fight the transition's own position control
 };
-
-// Reusable scratch vectors for applyFootIK() below — allocated once,
-// not per-frame/per-foot, same allocation-avoidance discipline as the
-// rest of the hot per-frame code in this file. Deferred via
-// __whenThreeReady like every other top-level THREE construction in
-// this script (this classic script runs before the deferred module
-// attaches THREE to window) — same bug class as BIRD_TEMPLE/SHIP_WALK/
-// RIGID/etc above, caught this time before shipping instead of after.
-let _ikHipPos=null, _ikFootPos=null, _ikFwd=null, _ikUp=null;
-window.__whenThreeReady(function(){
-  _ikHipPos=new THREE.Vector3(); _ikFootPos=new THREE.Vector3();
-  _ikFwd=new THREE.Vector3(); _ikUp=new THREE.Vector3(0,1,0);
-});
 
 function _fbxBoneMap(){
   // Every clip shares this exact bone-name set (confirmed across all
@@ -9748,71 +9092,6 @@ function setCharState(next, opts){
   }
   CHAR.state = next;
 }
-// Per-foot ground-adaptive IK. Honest scope note: this is a practical
-// analytic approximation (per-foot knee-bend correction + ankle tilt
-// toward the locally-sampled ground normal), NOT a full 3D two-bone/
-// FABRIK solve — that would need this rig's exact per-joint local
-// rotation axes confirmed against a live view, which isn't available
-// in this project (no live browser here, per the established
-// diagnostic-logging-instead-of-visual-check workflow). What this
-// DOES do for real: samples actual marching-cubes terrain collision
-// (_surfHeight/_surfNormal — the same pixel-consistent raycast data
-// driving slope-lean/climb) independently under EACH foot's own
-// current world position, then bends that leg's knee (and nudges the
-// thigh) proportionally to how far off the ground that foot currently
-// is, and tilts the foot bone toward the local surface normal — so
-// two feet on uneven ground (e.g. one on a rock, one in a dip) get
-// genuinely different corrections rather than one shared body-wide
-// lean. Damped per-foot/per-frame to avoid snapping. Additive on top
-// of whatever the walk/run/idle animation already posed, same
-// direct-bone-rotation technique as the crouch-lean/skyboard-stance
-// systems elsewhere in this file.
-function applyFootIK(dt, weight){
-  const b = CHAR.bones;
-  if(!b || !b.LeftUpLeg || !b.LeftLeg || !b.LeftFoot || !b.RightUpLeg || !b.RightLeg || !b.RightFoot) return;
-  if(typeof window._surfHeight!=='function' || typeof window._surfNormal!=='function') return;
-  if(!CHAR.root) return;
-
-  CHAR.root.getWorldDirection(_ikFwd); // character's current facing, world space
-
-  const SIDES = CHAR._ikSides || (CHAR._ikSides=['Left','Right']);
-  for(let i=0;i<SIDES.length;i++){
-    const side = SIDES[i];
-    const upLeg=b[side+'UpLeg'], leg=b[side+'Leg'], foot=b[side+'Foot'];
-    upLeg.updateWorldMatrix(true,false);
-    foot.updateWorldMatrix(true,false);
-    _ikHipPos.setFromMatrixPosition(upLeg.matrixWorld);
-    _ikFootPos.setFromMatrixPosition(foot.matrixWorld);
-    const reach = Math.max(0.3, _ikHipPos.distanceTo(_ikFootPos));
-
-    const groundY = window._surfHeight(_ikFootPos.x, _ikFootPos.z);
-    const rawErr = groundY - _ikFootPos.y; // >0: ground is above the foot (needs more knee bend); <0: ground drops away
-
-    const errKey='_ikErr'+side;
-    CHAR[errKey] = THREE.MathUtils.damp(CHAR[errKey]||0, rawErr, 10, dt);
-    const err = CHAR[errKey];
-
-    // Small-angle approximation: extra knee flex needed to close a
-    // vertical gap of `err` over a leg currently reaching `reach` —
-    // split between knee (most of the correction) and thigh (a
-    // smaller assist), matching the proportion the existing
-    // skyboard-stance pose already uses between these two bones.
-    const bend = THREE.MathUtils.clamp(err/reach, -0.85, 0.85);
-    leg.rotation.x   += bend*0.75*weight;
-    upLeg.rotation.x += bend*0.35*weight;
-
-    // Ankle tilt toward the locally-sampled ground normal under THIS
-    // foot specifically (not the shared body-wide slope reading),
-    // projected onto the character's forward axis for a sagittal-plane
-    // pitch correction — the same projection style already used for
-    // slopeDeg elsewhere in this file, just evaluated per-foot here.
-    const nrm = window._surfNormal(_ikFootPos.x, _ikFootPos.z);
-    const pitch = Math.atan2(-_ikFwd.dot(nrm), Math.max(0.2,nrm.dot(_ikUp)));
-    const ankleKey='_ikAnkle'+side;
-    CHAR[ankleKey] = THREE.MathUtils.damp(CHAR[ankleKey]||0, pitch, 10, dt);
-    foot.rotation.x += CHAR[ankleKey]*0.6*weight;
-  }
-}
 function updateCharacterLocomotion(dt, moving, running, dirSign, jumping, climbing){
   if(!CHAR.loaded) return;
   if(CHAR.mounted){ applySkyboardStance(simTime||0); CHAR.mixer && CHAR.mixer.update(0); return; }
@@ -9826,31 +9105,6 @@ function updateCharacterLocomotion(dt, moving, running, dirSign, jumping, climbi
     setCharState('idle',{fade:0.3});
   }
   CHAR.mixer && CHAR.mixer.update(dt);
-
-  // Slope crouch-lean: added ON TOP of whatever pose the mixer just set,
-  // proportional to CHAR._slopeLeanT (0-1, set where slope is measured) -
-  // not a replacement animation, just a forward hip/spine bend that grows
-  // as the incline gets steeper, same direct-bone-rotation technique the
-  // skyboard stance already uses elsewhere in this file. Skipped while
-  // climbing/jumping (those states have their own full-body poses this
-  // shouldn't fight with).
-  if(!jumping && !climbing && CHAR._slopeLeanT>0.001){
-    const b=CHAR.bones;
-    if(b && b.Spine){
-      const lean=CHAR._slopeLeanT*0.5; // ~28° max forward lean at full steepness
-      b.Spine.rotation.x += lean;
-      b.Spine01 && (b.Spine01.rotation.x += lean*0.5);
-      b.Hips && (b.Hips.rotation.x += CHAR._slopeLeanT*0.25);
-    }
-  }
-
-  // Per-foot ground IK — fades in/out smoothly rather than a hard
-  // on/off, so it never pops when jumping/climbing start or stop.
-  // See applyFootIK's own comment for exactly what this does and
-  // doesn't do.
-  const ikTarget = (!jumping && !climbing) ? 1 : 0;
-  CHAR._footIKWeight = THREE.MathUtils.damp(CHAR._footIKWeight||0, ikTarget, 6, dt);
-  if(CHAR._footIKWeight>0.01) applyFootIK(dt, CHAR._footIKWeight);
 }
 function finishClimb(onComplete){
   // climbLoop is now a complete climb-to-top arc that already ends
@@ -10123,7 +9377,7 @@ function dismountSkyboard(targetScene, worldPos){
   setCharState('idle',{fade:0.25});
 }
 
-async function enterSurface(body,site){
+function enterSurface(body,site){
   if(surfaceActive)return;
   _surfBody=body;_surfSite=site||null;surfaceActive=true;
   charOrbitActive = false; // same leftover-orbit-state guard as the flight scenes
@@ -10136,19 +9390,11 @@ async function enterSurface(body,site){
   const cv=$('surface-canvas');
   const W=window.innerWidth,H=window.innerHeight;cv.width=W;cv.height=H;
   if(!GFX.scanned)try{detectCapabilities();loadGfxChoice();applyPreset(GFX.preset);}catch(e){}
-  // Real prerequisite for any compute shader (marching-cubes terrain
-  // included) to run at all: an actual WebGPURenderer instance, not just
-  // importing the class from the new module path. This was the genuine
-  // gap - none of this codebase's 7 renderers had been converted yet.
-  // WebGPURenderer requires an async .init() before first use; every line
-  // of scene/light/terrain setup below is unchanged and simply now runs
-  // after that await resolves, since the rest of this function's code
-  // sequence doesn't need restructuring to work inside an async function.
   surfRenderer=new THREE.WebGLRenderer({canvas:cv,antialias:!GFX.isMobile,powerPreference:'high-performance'});
   surfRenderer.setPixelRatio(effectivePixelRatio());
   surfRenderer.setSize(W,H);
   surfRenderer.toneMapping=THREE.ACESFilmicToneMapping;surfRenderer.toneMappingExposure=1.05;
-  surfRenderer.outputColorSpace=THREE.SRGBColorSpace;
+  surfRenderer.outputEncoding=THREE.sRGBEncoding;
   if(GFX.shadows){
     surfRenderer.shadowMap.enabled=true;
     surfRenderer.shadowMap.type=THREE.PCFSoftShadowMap;
@@ -10196,7 +9442,9 @@ async function enterSurface(body,site){
   buildSurfaceTerrain(pal);
   // sky gradient dome
   const skyGeo=new THREE.SphereGeometry(1000,16,16);
-  const skyMat=makeSkyDomeMaterial(pal.sky[1],pal.sky[0]);
+  const skyMat=new THREE.ShaderMaterial({side:THREE.BackSide,uniforms:{top:{value:new THREE.Color(pal.sky[1])},bot:{value:new THREE.Color(pal.sky[0])}},
+    vertexShader:'varying vec3 vp;void main(){vp=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
+    fragmentShader:'varying vec3 vp;uniform vec3 top;uniform vec3 bot;void main(){float h=normalize(vp).y*0.5+0.5;gl_FragColor=vec4(mix(bot,top,h),1.0);}'});
   if(pal.atmos)surfScene.add(new THREE.Mesh(skyGeo,skyMat));
   // the skyboard — the SAME detailed craft, now a hovering companion that
   // follows the player around (rises over obstacles, trails beside them)
@@ -10206,7 +9454,7 @@ async function enterSurface(body,site){
   board.position.set(3,0.6,8);surfScene.add(board);
   surfBoard=board;
   // Env reflections on the metallic board (browser-real stand-in for RT reflections)
-  if(GFX.envReflections&&typeof THREE.WebGLCubeRenderTarget==='function'){
+  if(GFX.envReflections){
     try{
       const cubeRT=new THREE.WebGLCubeRenderTarget(128,{generateMipmaps:true,minFilter:THREE.LinearMipmapLinearFilter});
       const cubeCam=new THREE.CubeCamera(0.5,1500,cubeRT);
@@ -10348,7 +9596,7 @@ function drawDistanceTier(){
 //     fresh JS implementation of the same underlying algorithm.
 //   - Paul Bourke, "Polygonising a scalar field (Marching
 //     Cubes)," paulbourke.net/geometry/polygonise/, May 1994 —
-//     MC_EDGE_TABLE and TriangleTable below are transcribed
+//     MC_EDGE_TABLE and MC_TRI_TABLE below are transcribed
 //     directly from this page's reference implementation. Bourke
 //     credits the tables themselves to Cory Gene Bloyd. Used here
 //     because this exact table is the long-standing, widely
@@ -10369,7 +9617,7 @@ function drawDistanceTier(){
 // performance issues elsewhere. Toggle it on to try it; the
 // existing terrain stays the default.
 const MC_EDGE_TABLE=[0,265,515,778,1030,1295,1541,1804,2060,2309,2575,2822,3082,3331,3593,3840,400,153,915,666,1430,1183,1941,1692,2460,2197,2975,2710,3482,3219,3993,3728,560,825,51,314,1590,1855,1077,1340,2620,2869,2111,2358,3642,3891,3129,3376,928,681,419,170,1958,1711,1445,1196,2988,2725,2479,2214,4010,3747,3497,3232,1120,1385,1635,1898,102,367,613,876,3180,3429,3695,3942,2154,2403,2665,2912,1520,1273,2035,1786,502,255,1013,764,3580,3317,4095,3830,2554,2291,3065,2800,1616,1881,1107,1370,598,863,85,348,3676,3925,3167,3414,2650,2899,2137,2384,1984,1737,1475,1226,966,719,453,204,4044,3781,3535,3270,3018,2755,2505,2240,2240,2505,2755,3018,3270,3535,3781,4044,204,453,719,966,1226,1475,1737,1984,2384,2137,2899,2650,3414,3167,3925,3676,348,85,863,598,1370,1107,1881,1616,2800,3065,2291,2554,3830,4095,3317,3580,764,1013,255,502,1786,2035,1273,1520,2912,2665,2403,2154,3942,3695,3429,3180,876,613,367,102,1898,1635,1385,1120,3232,3497,3747,4010,2214,2479,2725,2988,1196,1445,1711,1958,170,419,681,928,3376,3129,3891,3642,2358,2111,2869,2620,1340,1077,1855,1590,314,51,825,560,3728,3993,3219,3482,2710,2975,2197,2460,1692,1941,1183,1430,666,915,153,400,3840,3593,3331,3082,2822,2575,2309,2060,1804,1541,1295,1030,778,515,265,0];
-const TriangleTable=[
+const MC_TRI_TABLE=[
 [-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1],
 [0,8,3,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1],
 [0,1,9,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1],
@@ -10629,7 +9877,7 @@ const TriangleTable=[
 ];
 
 // Corner offsets for the 8 vertices of a unit cube, in the standard
-// marching-cubes vertex order matching MC_EDGE_TABLE/TriangleTable.
+// marching-cubes vertex order matching MC_EDGE_TABLE/MC_TRI_TABLE.
 const MC_CORNER_OFFSETS=[
   [0,0,0],[1,0,0],[1,1,0],[0,1,0],
   [0,0,1],[1,0,1],[1,1,1],[0,1,1]
@@ -10692,7 +9940,7 @@ function marchingCubesMesh(densityFn,origin,size,resolution,isoLevel){
           if(v<isoLevel)cubeIndex|=(1<<c);
         }
         if(MC_EDGE_TABLE[cubeIndex]===0)continue; // fully inside or outside — no surface here
-        const tri=TriangleTable[cubeIndex];
+        const tri=MC_TRI_TABLE[cubeIndex];
         for(let i=0;tri[i]!==-1;i+=3){
           for(let k=0;k<3;k++){
             const edge=tri[i+k];
@@ -10859,343 +10107,6 @@ function buildMarchingCubesAsteroid(radius,seed,resolution){
   return mesh;
 }
 
-
-// ── Marching-cubes lookup tables (adapted from the public-domain-style
-// reference tables derived from Paul Bourke's "Polygonising a scalar
-// field", same tables already verified working in the sandbox project). ──
-// ════════════════════════════════════════════════════════════════
-// Marching Cubes lookup tables.
-//
-// Source / license: adapted from the public-domain-style reference
-// tables originally derived from Paul Bourke's "Polygonising a scalar
-// field" (http://paulbourke.net/geometry/polygonise/), based on tables
-// by Cory Gene Bloyd, as re-published (MIT-style, free-to-use) in the
-// widely-circulated gist:
-//   https://gist.github.com/dwilliamson/c041e3454a713e58baf6e4f8e5fffecd
-// which itself documents: "These tables differ from the original paper
-// (Marching Cubes: A High Resolution 3D Surface Construction
-// Algorithm, Lorensen & Cline, SIGGRAPH 1987) — the co-ordinate system
-// used here has more convenient properties for GPU indexing."
-// These are lookup/combinatorial data tables (not creative expression)
-// and are the same data reused across hundreds of open marching-cubes
-// implementations; reproduced here for our own compute-shader version.
-// ════════════════════════════════════════════════════════════════
-
-// Pair of cube-corner vertex indices for each of the 12 cube edges.
-const EdgeVertexIndices = [
-  [0,1],[1,3],[3,2],[2,0],
-  [4,5],[5,7],[7,6],[6,4],
-  [0,4],[1,5],[3,7],[2,6],
-];
-
-// For each of the 256 marching-cubes cases: a 12-bit mask of which
-// edges are cut by the isosurface.
-const EdgeMasks = [
-0x0,0x109,0x203,0x30a,0x80c,0x905,0xa0f,0xb06,
-0x406,0x50f,0x605,0x70c,0xc0a,0xd03,0xe09,0xf00,
-0x190,0x99,0x393,0x29a,0x99c,0x895,0xb9f,0xa96,
-0x596,0x49f,0x795,0x69c,0xd9a,0xc93,0xf99,0xe90,
-0x230,0x339,0x33,0x13a,0xa3c,0xb35,0x83f,0x936,
-0x636,0x73f,0x435,0x53c,0xe3a,0xf33,0xc39,0xd30,
-0x3a0,0x2a9,0x1a3,0xaa,0xbac,0xaa5,0x9af,0x8a6,
-0x7a6,0x6af,0x5a5,0x4ac,0xfaa,0xea3,0xda9,0xca0,
-0x8c0,0x9c9,0xac3,0xbca,0xcc,0x1c5,0x2cf,0x3c6,
-0xcc6,0xdcf,0xec5,0xfcc,0x4ca,0x5c3,0x6c9,0x7c0,
-0x950,0x859,0xb53,0xa5a,0x15c,0x55,0x35f,0x256,
-0xd56,0xc5f,0xf55,0xe5c,0x55a,0x453,0x759,0x650,
-0xaf0,0xbf9,0x8f3,0x9fa,0x2fc,0x3f5,0xff,0x1f6,
-0xef6,0xfff,0xcf5,0xdfc,0x6fa,0x7f3,0x4f9,0x5f0,
-0xb60,0xa69,0x963,0x86a,0x36c,0x265,0x16f,0x66,
-0xf66,0xe6f,0xd65,0xc6c,0x76a,0x663,0x569,0x460,
-0x460,0x569,0x663,0x76a,0xc6c,0xd65,0xe6f,0xf66,
-0x66,0x16f,0x265,0x36c,0x86a,0x963,0xa69,0xb60,
-0x5f0,0x4f9,0x7f3,0x6fa,0xdfc,0xcf5,0xfff,0xef6,
-0x1f6,0xff,0x3f5,0x2fc,0x9fa,0x8f3,0xbf9,0xaf0,
-0x650,0x759,0x453,0x55a,0xe5c,0xf55,0xc5f,0xd56,
-0x256,0x35f,0x55,0x15c,0xa5a,0xb53,0x859,0x950,
-0x7c0,0x6c9,0x5c3,0x4ca,0xfcc,0xec5,0xdcf,0xcc6,
-0x3c6,0x2cf,0x1c5,0xcc,0xbca,0xac3,0x9c9,0x8c0,
-0xca0,0xda9,0xea3,0xfaa,0x4ac,0x5a5,0x6af,0x7a6,
-0x8a6,0x9af,0xaa5,0xbac,0xaa,0x1a3,0x2a9,0x3a0,
-0xd30,0xc39,0xf33,0xe3a,0x53c,0x435,0x73f,0x636,
-0x936,0x83f,0xb35,0xa3c,0x13a,0x33,0x339,0x230,
-0xe90,0xf99,0xc93,0xd9a,0x69c,0x795,0x49f,0x596,
-0xa96,0xb9f,0x895,0x99c,0x29a,0x393,0x99,0x190,
-0xf00,0xe09,0xd03,0xc0a,0x70c,0x605,0x50f,0x406,
-0xb06,0xa0f,0x905,0x80c,0x30a,0x203,0x109,0x0,
-];
-
-// For each of the 256 cases: a flat list of edge-index triples (one
-// triple per triangle), terminated by -1. Padded to a fixed length of
-// 16 (max 5 triangles/case) for use as a fixed-stride GPU storage
-// buffer, matching the layout every compute-shader MC implementation
-// expects.
-const _rawGPUTriangleTable = [
-[-1],[0,3,8,-1],[0,9,1,-1],[3,8,1,1,8,9,-1],[2,11,3,-1],[8,0,11,11,0,2,-1],[3,2,11,1,0,9,-1],[11,1,2,11,9,1,11,8,9,-1],
-[1,10,2,-1],[0,3,8,2,1,10,-1],[10,2,9,9,2,0,-1],[8,2,3,8,10,2,8,9,10,-1],[11,3,10,10,3,1,-1],[10,0,1,10,8,0,10,11,8,-1],[9,3,0,9,11,3,9,10,11,-1],[8,9,11,11,9,10,-1],
-[4,8,7,-1],[7,4,3,3,4,0,-1],[4,8,7,0,9,1,-1],[1,4,9,1,7,4,1,3,7,-1],[8,7,4,11,3,2,-1],[4,11,7,4,2,11,4,0,2,-1],[0,9,1,8,7,4,11,3,2,-1],[7,4,11,11,4,2,2,4,9,2,9,1,-1],
-[4,8,7,2,1,10,-1],[7,4,3,3,4,0,10,2,1,-1],[10,2,9,9,2,0,7,4,8,-1],[10,2,3,10,3,4,3,7,4,9,10,4,-1],[1,10,3,3,10,11,4,8,7,-1],[10,11,1,11,7,4,1,11,4,1,4,0,-1],[7,4,8,9,3,0,9,11,3,9,10,11,-1],[7,4,11,4,9,11,9,10,11,-1],
-[9,4,5,-1],[9,4,5,8,0,3,-1],[4,5,0,0,5,1,-1],[5,8,4,5,3,8,5,1,3,-1],[9,4,5,11,3,2,-1],[2,11,0,0,11,8,5,9,4,-1],[4,5,0,0,5,1,11,3,2,-1],[5,1,4,1,2,11,4,1,11,4,11,8,-1],
-[1,10,2,5,9,4,-1],[9,4,5,0,3,8,2,1,10,-1],[2,5,10,2,4,5,2,0,4,-1],[10,2,5,5,2,4,4,2,3,4,3,8,-1],[11,3,10,10,3,1,4,5,9,-1],[4,5,9,10,0,1,10,8,0,10,11,8,-1],[11,3,0,11,0,5,0,4,5,10,11,5,-1],[4,5,8,5,10,8,10,11,8,-1],
-[8,7,9,9,7,5,-1],[3,9,0,3,5,9,3,7,5,-1],[7,0,8,7,1,0,7,5,1,-1],[7,5,3,3,5,1,-1],[5,9,7,7,9,8,2,11,3,-1],[2,11,7,2,7,9,7,5,9,0,2,9,-1],[2,11,3,7,0,8,7,1,0,7,5,1,-1],[2,11,1,11,7,1,7,5,1,-1],
-[8,7,9,9,7,5,2,1,10,-1],[10,2,1,3,9,0,3,5,9,3,7,5,-1],[7,5,8,5,10,2,8,5,2,8,2,0,-1],[10,2,5,2,3,5,3,7,5,-1],[8,7,5,8,5,9,11,3,10,3,1,10,-1],[5,11,7,10,11,5,1,9,0,-1],[11,5,10,7,5,11,8,3,0,-1],[5,11,7,10,11,5,-1],
-[6,7,11,-1],[7,11,6,3,8,0,-1],[6,7,11,0,9,1,-1],[9,1,8,8,1,3,6,7,11,-1],[3,2,7,7,2,6,-1],[0,7,8,0,6,7,0,2,6,-1],[6,7,2,2,7,3,9,1,0,-1],[6,7,8,6,8,1,8,9,1,2,6,1,-1],
-[11,6,7,10,2,1,-1],[3,8,0,11,6,7,10,2,1,-1],[0,9,2,2,9,10,7,11,6,-1],[6,7,11,8,2,3,8,10,2,8,9,10,-1],[7,10,6,7,1,10,7,3,1,-1],[8,0,7,7,0,6,6,0,1,6,1,10,-1],[7,3,6,3,0,9,6,3,9,6,9,10,-1],[6,7,10,7,8,10,8,9,10,-1],
-[11,6,8,8,6,4,-1],[6,3,11,6,0,3,6,4,0,-1],[11,6,8,8,6,4,1,0,9,-1],[1,3,9,3,11,6,9,3,6,9,6,4,-1],[2,8,3,2,4,8,2,6,4,-1],[4,0,6,6,0,2,-1],[9,1,0,2,8,3,2,4,8,2,6,4,-1],[9,1,4,1,2,4,2,6,4,-1],
-[4,8,6,6,8,11,1,10,2,-1],[1,10,2,6,3,11,6,0,3,6,4,0,-1],[11,6,4,11,4,8,10,2,9,2,0,9,-1],[10,4,9,6,4,10,11,2,3,-1],[4,8,3,4,3,10,3,1,10,6,4,10,-1],[1,10,0,10,6,0,6,4,0,-1],[4,10,6,9,10,4,0,8,3,-1],[4,10,6,9,10,4,-1],
-[6,7,11,4,5,9,-1],[4,5,9,7,11,6,3,8,0,-1],[1,0,5,5,0,4,11,6,7,-1],[11,6,7,5,8,4,5,3,8,5,1,3,-1],[3,2,7,7,2,6,9,4,5,-1],[5,9,4,0,7,8,0,6,7,0,2,6,-1],[3,2,6,3,6,7,1,0,5,0,4,5,-1],[6,1,2,5,1,6,4,7,8,-1],
-[10,2,1,6,7,11,4,5,9,-1],[0,3,8,4,5,9,11,6,7,10,2,1,-1],[7,11,6,2,5,10,2,4,5,2,0,4,-1],[8,4,7,5,10,6,3,11,2,-1],[9,4,5,7,10,6,7,1,10,7,3,1,-1],[10,6,5,7,8,4,1,9,0,-1],[4,3,0,7,3,4,6,5,10,-1],[10,6,5,8,4,7,-1],
-[9,6,5,9,11,6,9,8,11,-1],[11,6,3,3,6,0,0,6,5,0,5,9,-1],[11,6,5,11,5,0,5,1,0,8,11,0,-1],[11,6,3,6,5,3,5,1,3,-1],[9,8,5,8,3,2,5,8,2,5,2,6,-1],[5,9,6,9,0,6,0,2,6,-1],[1,6,5,2,6,1,3,0,8,-1],[1,6,5,2,6,1,-1],
-[2,1,10,9,6,5,9,11,6,9,8,11,-1],[9,0,1,3,11,2,5,10,6,-1],[11,0,8,2,0,11,10,6,5,-1],[3,11,2,5,10,6,-1],[1,8,3,9,8,1,5,10,6,-1],[6,5,10,0,1,9,-1],[8,3,0,5,10,6,-1],[6,5,10,-1],
-[10,5,6,-1],[0,3,8,6,10,5,-1],[10,5,6,9,1,0,-1],[3,8,1,1,8,9,6,10,5,-1],[2,11,3,6,10,5,-1],[8,0,11,11,0,2,5,6,10,-1],[1,0,9,2,11,3,6,10,5,-1],[5,6,10,11,1,2,11,9,1,11,8,9,-1],
-[5,6,1,1,6,2,-1],[5,6,1,1,6,2,8,0,3,-1],[6,9,5,6,0,9,6,2,0,-1],[6,2,5,2,3,8,5,2,8,5,8,9,-1],[3,6,11,3,5,6,3,1,5,-1],[8,0,1,8,1,6,1,5,6,11,8,6,-1],[11,3,6,6,3,5,5,3,0,5,0,9,-1],[5,6,9,6,11,9,11,8,9,-1],
-[5,6,10,7,4,8,-1],[0,3,4,4,3,7,10,5,6,-1],[5,6,10,4,8,7,0,9,1,-1],[6,10,5,1,4,9,1,7,4,1,3,7,-1],[7,4,8,6,10,5,2,11,3,-1],[10,5,6,4,11,7,4,2,11,4,0,2,-1],[4,8,7,6,10,5,3,2,11,1,0,9,-1],[1,2,10,11,7,6,9,5,4,-1],
-[2,1,6,6,1,5,8,7,4,-1],[0,3,7,0,7,4,2,1,6,1,5,6,-1],[8,7,4,6,9,5,6,0,9,6,2,0,-1],[7,2,3,6,2,7,5,4,9,-1],[4,8,7,3,6,11,3,5,6,3,1,5,-1],[5,0,1,4,0,5,7,6,11,-1],[9,5,4,6,11,7,0,8,3,-1],[11,7,6,9,5,4,-1],
-[6,10,4,4,10,9,-1],[6,10,4,4,10,9,3,8,0,-1],[0,10,1,0,6,10,0,4,6,-1],[6,10,1,6,1,8,1,3,8,4,6,8,-1],[9,4,10,10,4,6,3,2,11,-1],[2,11,8,2,8,0,6,10,4,10,9,4,-1],[11,3,2,0,10,1,0,6,10,0,4,6,-1],[6,8,4,11,8,6,2,10,1,-1],
-[4,1,9,4,2,1,4,6,2,-1],[3,8,0,4,1,9,4,2,1,4,6,2,-1],[6,2,4,4,2,0,-1],[3,8,2,8,4,2,4,6,2,-1],[4,6,9,6,11,3,9,6,3,9,3,1,-1],[8,6,11,4,6,8,9,0,1,-1],[11,3,6,3,0,6,0,4,6,-1],[8,6,11,4,6,8,-1],
-[10,7,6,10,8,7,10,9,8,-1],[3,7,0,7,6,10,0,7,10,0,10,9,-1],[6,10,7,7,10,8,8,10,1,8,1,0,-1],[6,10,7,10,1,7,1,3,7,-1],[3,2,11,10,7,6,10,8,7,10,9,8,-1],[2,9,0,10,9,2,6,11,7,-1],[0,8,3,7,6,11,1,2,10,-1],[7,6,11,1,2,10,-1],
-[2,1,9,2,9,7,9,8,7,6,2,7,-1],[2,7,6,3,7,2,0,1,9,-1],[8,7,0,7,6,0,6,2,0,-1],[7,2,3,6,2,7,-1],[8,1,9,3,1,8,11,7,6,-1],[11,7,6,1,9,0,-1],[6,11,7,0,8,3,-1],[11,7,6,-1],
-[7,11,5,5,11,10,-1],[10,5,11,11,5,7,0,3,8,-1],[7,11,5,5,11,10,0,9,1,-1],[7,11,10,7,10,5,3,8,1,8,9,1,-1],[5,2,10,5,3,2,5,7,3,-1],[5,7,10,7,8,0,10,7,0,10,0,2,-1],[0,9,1,5,2,10,5,3,2,5,7,3,-1],[9,7,8,5,7,9,10,1,2,-1],
-[1,11,2,1,7,11,1,5,7,-1],[8,0,3,1,11,2,1,7,11,1,5,7,-1],[7,11,2,7,2,9,2,0,9,5,7,9,-1],[7,9,5,8,9,7,3,11,2,-1],[3,1,7,7,1,5,-1],[8,0,7,0,1,7,1,5,7,-1],[0,9,3,9,5,3,5,7,3,-1],[9,7,8,5,7,9,-1],
-[8,5,4,8,10,5,8,11,10,-1],[0,3,11,0,11,5,11,10,5,4,0,5,-1],[1,0,9,8,5,4,8,10,5,8,11,10,-1],[10,3,11,1,3,10,9,5,4,-1],[3,2,8,8,2,4,4,2,10,4,10,5,-1],[10,5,2,5,4,2,4,0,2,-1],[5,4,9,8,3,0,10,1,2,-1],[2,10,1,4,9,5,-1],
-[8,11,4,11,2,1,4,11,1,4,1,5,-1],[0,5,4,1,5,0,2,3,11,-1],[0,11,2,8,11,0,4,9,5,-1],[5,4,9,2,3,11,-1],[4,8,5,8,3,5,3,1,5,-1],[0,5,4,1,5,0,-1],[5,4,9,3,0,8,-1],[5,4,9,-1],
-[11,4,7,11,9,4,11,10,9,-1],[0,3,8,11,4,7,11,9,4,11,10,9,-1],[11,10,7,10,1,0,7,10,0,7,0,4,-1],[3,10,1,11,10,3,7,8,4,-1],[3,2,10,3,10,4,10,9,4,7,3,4,-1],[9,2,10,0,2,9,8,4,7,-1],[3,4,7,0,4,3,1,2,10,-1],[7,8,4,10,1,2,-1],
-[7,11,4,4,11,9,9,11,2,9,2,1,-1],[1,9,0,4,7,8,2,3,11,-1],[7,11,4,11,2,4,2,0,4,-1],[4,7,8,2,3,11,-1],[9,4,1,4,7,1,7,3,1,-1],[7,8,4,1,9,0,-1],[3,4,7,0,4,3,-1],[7,8,4,-1],
-[11,10,8,8,10,9,-1],[0,3,9,3,11,9,11,10,9,-1],[1,0,10,0,8,10,8,11,10,-1],[10,3,11,1,3,10,-1],[3,2,8,2,10,8,10,9,8,-1],[9,2,10,0,2,9,-1],[8,3,0,10,1,2,-1],[2,10,1,-1],
-[2,1,11,1,9,11,9,8,11,-1],[11,2,3,9,0,1,-1],[11,0,8,2,0,11,-1],[3,11,2,-1],[1,8,3,9,8,1,-1],[1,9,0,-1],[8,3,0,-1],[-1],
-];
-
-// Flatten each entry to fixed-width 16 (padding with -1), matching a
-// classic 256x16 int table layout for direct upload as a GPU buffer.
-const GPU_TriangleTable = _rawGPUTriangleTable.map(row=>{
-  const out = new Array(16).fill(-1);
-  for(let i=0;i<row.length && i<16;i++) out[i] = row[i];
-  return out;
-});
-
-// ── GPU compute-shader marching-cubes terrain. Faithful TSL port of
-// H(x,z) (same _vnoise/_fbm algorithm, same hills/mountains/plateaus/
-// canyons/rivers layers, same constants) so the actual terrain SHAPE
-// stays exactly what was already tuned - only the execution moved from
-// synchronous CPU JS to GPU compute. Cave-carving term is the same one
-// the old CPU marching-cubes block used, now genuinely GPU-parallel
-// instead of ~275k synchronous main-thread samples, and covering the
-// WHOLE rootSize patch at real gameplay scale instead of a bounded
-// 5x5/130-unit proof-of-concept.
-async function buildGPUMarchingCubesTerrain(pal,seed,H){
-  if(!(surfRenderer instanceof THREE.WebGPURenderer)){
-    console.warn('[MarchingCubes GPU] surfRenderer is not WebGPURenderer - skipping.');
-    return;
-  }
-  const seedU = uniform(seed);
-  const vnoise2 = Fn(([x,y,sd])=>{
-    const n = sin(x.mul(12.9898).add(y.mul(78.233)).add(sd.mul(37.719))).mul(43758.5453);
-    return n.sub(floor(n));
-  });
-  function fbm2(x,y,sd,octaves){
-    const amp=float(0.5).toVar(), freq=float(1.0).toVar(), v=float(0).toVar();
-    for(let i=0;i<octaves;i++){
-      const xs=x.mul(freq), ys=y.mul(freq);
-      const xi=floor(xs), yi=floor(ys);
-      const xf=xs.sub(xi), yf=ys.sub(yi);
-      const a=vnoise2(xi,yi,sd), b=vnoise2(xi.add(1),yi,sd);
-      const c=vnoise2(xi,yi.add(1),sd), d=vnoise2(xi.add(1),yi.add(1),sd);
-      const ux=xf.mul(xf).mul(float(3).sub(xf.mul(2)));
-      const uy=yf.mul(yf).mul(float(3).sub(yf.mul(2)));
-      v.addAssign(amp.mul(a.mul(float(1).sub(ux)).add(b.mul(ux)).add(c.sub(a).mul(uy).mul(float(1).sub(ux))).add(d.sub(b).mul(ux).mul(uy))));
-      amp.mulAssign(0.5); freq.mulAssign(2.0);
-    }
-    return v;
-  }
-  const heightAt = Fn(([x,z])=>{
-    const half = float(TERRAIN.rootSize/2);
-    const h = float(0).toVar();
-    h.addAssign(fbm2(x.mul(0.012).add(100),z.mul(0.012).add(100),seedU,5).mul(22));
-    h.addAssign(fbm2(x.mul(0.04),z.mul(0.04),seedU.add(3),3).mul(5));
-    const m = fbm2(x.mul(0.005),z.mul(0.005),seedU.add(7),4);
-    h.addAssign(select(m.greaterThan(0.6), m.sub(0.6).mul(120), float(0)));
-    const region = fbm2(x.mul(0.0015).add(seedU.mul(3.1)),z.mul(0.0015).add(seedU.mul(3.1)),seedU.add(13),3);
-    const mtWeight = select(region.greaterThan(0.35), region.sub(0.35).div(0.4).min(1.0), float(0));
-    const ridge1 = float(1).sub(fbm2(x.mul(0.006),z.mul(0.006),seedU.add(21),4).mul(2).sub(1).abs());
-    const ridge2 = float(1).sub(fbm2(x.mul(0.018),z.mul(0.018),seedU.add(27),3).mul(2).sub(1).abs());
-    const mountain = ridge1.mul(ridge1).mul(180).add(ridge2.mul(ridge2).mul(40));
-    const terraceNoise = fbm2(x.mul(0.003),z.mul(0.003),seedU.add(33),3);
-    const plateau = floor(terraceNoise.mul(6)).mul(28);
-    h.addAssign(mtWeight.mul(mountain.mul(0.65).add(plateau.mul(0.55))));
-    const canyonRidge = float(1).sub(fbm2(x.mul(0.01).add(seedU.mul(5.3)),z.mul(0.01).add(seedU.mul(5.3)),seedU.add(61),4).mul(2).sub(1).abs());
-    const cutDepth = select(canyonRidge.greaterThan(0.99), canyonRidge.sub(0.99).div(0.01), float(0));
-    h.subAssign(pow(cutDepth,1.5).mul(90));
-    const riverRidge = float(1).sub(fbm2(x.mul(0.006).add(seedU.mul(7.1)),z.mul(0.006).add(seedU.mul(7.1)),seedU.add(71),4).mul(2).sub(1).abs());
-    const riverDepth = select(riverRidge.greaterThan(0.97), riverRidge.sub(0.97).div(0.03), float(0));
-    h.subAssign(pow(riverDepth,1.2).mul(22));
-    const outOfBounds = x.abs().greaterThan(half).or(z.abs().greaterThan(half));
-    return select(outOfBounds, float(-99999), h);
-  });
-  const densityAt = Fn(([px,py,pz])=>{
-    const base = py.sub(heightAt(px,pz));
-    const caveA = fbm2(px.mul(0.05).add(seedU.mul(7.7)),pz.mul(0.05).add(seedU.mul(7.7)),seedU.add(41),3);
-    const caveB = fbm2(py.mul(0.08),px.mul(0.02).sub(pz.mul(0.02)),seedU.add(53),3);
-    return base.sub(caveA.mul(caveB).mul(26));
-  });
-
-  const MC_CHUNK=260, MC_RES=48, MC_SPAN=Math.ceil(TERRAIN.rootSize/MC_CHUNK/2);
-  const MC_VMIN=-60, MC_VHEIGHT=340;
-  const mcGroup=new THREE.Group();
-  TERRAIN.group.add(mcGroup);
-  TERRAIN.mcGroup=mcGroup;
-  const mcMat=new THREE.MeshStandardNodeMaterial({vertexColors:true,roughness:0.94,metalness:0.02});
-
-  async function buildGPUChunk(ox,oz){
-    const N=MC_RES, GRID=N+1, CELL=MC_CHUNK/N, HALF=MC_CHUNK/2;
-    const numPoints=GRID*GRID*GRID, numCells=N*N*N, MAX_TRIS=5, maxVerts=numCells*MAX_TRIS*3;
-    const densityBuf=new THREE.StorageInstancedBufferAttribute(numPoints,1);
-    const densityNode=storage(densityBuf,'float',numPoints);
-    const triTableFlat=new Int32Array(256*16);
-    GPU_TriangleTable.forEach((row,i)=>{ for(let j=0;j<16;j++) triTableFlat[i*16+j]=row[j]; });
-    const triTableAttr=new THREE.StorageBufferAttribute(triTableFlat,1);
-    const triTableStorage=storage(triTableAttr,'int',256*16);
-    const vertexBuf=new THREE.StorageBufferAttribute(maxVerts,3);
-    const vertexNode=storage(vertexBuf,'vec3',maxVerts);
-    const normalBuf=new THREE.StorageBufferAttribute(maxVerts,3);
-    const normalNode=storage(normalBuf,'vec3',maxVerts);
-    const colorBuf=new THREE.StorageBufferAttribute(maxVerts,3);
-    const colorNode=storage(colorBuf,'vec3',maxVerts);
-
-    const densityFn=Fn(()=>{
-      const idx=instanceIndex;
-      const gz=idx.div(uint(GRID*GRID));
-      const rem=idx.mod(uint(GRID*GRID));
-      const gy=rem.div(uint(GRID));
-      const gx=rem.mod(uint(GRID));
-      const wx=gx.toFloat().mul(CELL).sub(HALF).add(ox);
-      const wy=gy.toFloat().mul(CELL).add(MC_VMIN);
-      const wz=gz.toFloat().mul(CELL).sub(HALF).add(oz);
-      densityNode.element(idx).assign(densityAt(wx,wy,wz));
-    });
-    await surfRenderer.computeAsync(densityFn().compute(numPoints));
-
-    const mcFn=Fn(()=>{
-      const cellIdx=instanceIndex;
-      const cz=cellIdx.div(uint(N*N));
-      const crem=cellIdx.mod(uint(N*N));
-      const cy=crem.div(uint(N));
-      const cx=crem.mod(uint(N));
-      const readCorner=(i)=>{
-        const dx=i&1, dy=(i>>1)&1, dz=(i>>2)&1;
-        const gx=cx.add(dx), gy=cy.add(dy), gz=cz.add(dz);
-        const flat=gx.add(gy.mul(uint(GRID))).add(gz.mul(uint(GRID*GRID)));
-        return {
-          pos: vec3(gx.toFloat().mul(CELL).sub(HALF).add(ox), gy.toFloat().mul(CELL).add(MC_VMIN), gz.toFloat().mul(CELL).sub(HALF).add(oz)),
-          density: densityNode.element(flat),
-        };
-      };
-      const c0=readCorner(0),c1=readCorner(1),c2=readCorner(2),c3=readCorner(3),
-            c4=readCorner(4),c5=readCorner(5),c6=readCorner(6),c7=readCorner(7);
-      const corners=[c0,c1,c2,c3,c4,c5,c6,c7];
-      const caseIdx=int(0).toVar();
-      corners.forEach((c,i)=>{ If(c.density.lessThan(0.0), ()=>{ caseIdx.assign(caseIdx.bitOr(int(1<<i))); }); });
-      const outBase=cellIdx.mul(uint(MAX_TRIS*3));
-      Loop(MAX_TRIS*3, ({i})=>{
-        vertexNode.element(outBase.add(uint(i))).assign(vec3(0,0,0));
-        normalNode.element(outBase.add(uint(i))).assign(vec3(0,1,0));
-        colorNode.element(outBase.add(uint(i))).assign(vec3(0,0,0));
-      });
-      Loop(MAX_TRIS, ({i})=>{
-        const triBase=caseIdx.mul(int(16)).add(i.mul(3));
-        const e0=triTableStorage.element(triBase);
-        If(e0.greaterThanEqual(0), ()=>{
-          const e1=triTableStorage.element(triBase.add(1));
-          const e2=triTableStorage.element(triBase.add(2));
-          const interp=(edge)=>{
-            let pa=corners[0].pos, pb=corners[0].pos, da=corners[0].density, db=corners[0].density;
-            EdgeVertexIndices.forEach(([va,vb],k)=>{
-              const match=edge.equal(int(k));
-              pa=select(match,corners[va].pos,pa); pb=select(match,corners[vb].pos,pb);
-              da=select(match,corners[va].density,da); db=select(match,corners[vb].density,db);
-            });
-            const t=da.div(da.sub(db).add(1e-6));
-            return pa.add(pb.sub(pa).mul(t));
-          };
-          const v0=interp(e0), v1=interp(e1), v2=interp(e2);
-          const nrm=v1.sub(v0).cross(v2.sub(v0)).normalize();
-          const groundCol=new THREE.Color(pal.ground||0x6a5a40);
-          const rockCol=new THREE.Color(pal.rock||0x554838);
-          const snowCol=new THREE.Color(pal.snow||0xeef2f6);
-          const colorFor=(v)=>{
-            const slope=float(1).sub(nrm.y.clamp(0,1));
-            let c=vec3(groundCol.r,groundCol.g,groundCol.b);
-            c=mix(c,vec3(rockCol.r,rockCol.g,rockCol.b),slope.smoothstep(0.45,0.8));
-            c=mix(c,vec3(snowCol.r,snowCol.g,snowCol.b),v.y.sub(MC_VMIN+MC_VHEIGHT*0.72).div(MC_VHEIGHT*0.2).clamp(0,1));
-            return c;
-          };
-          const col=colorFor(v0).add(colorFor(v1)).add(colorFor(v2)).div(3.0);
-          const slot=i.mul(3);
-          vertexNode.element(outBase.add(slot)).assign(v0);
-          vertexNode.element(outBase.add(slot).add(1)).assign(v1);
-          vertexNode.element(outBase.add(slot).add(2)).assign(v2);
-          normalNode.element(outBase.add(slot)).assign(nrm);
-          normalNode.element(outBase.add(slot).add(1)).assign(nrm);
-          normalNode.element(outBase.add(slot).add(2)).assign(nrm);
-          colorNode.element(outBase.add(slot)).assign(col);
-          colorNode.element(outBase.add(slot).add(1)).assign(col);
-          colorNode.element(outBase.add(slot).add(2)).assign(col);
-        });
-      });
-    });
-    await surfRenderer.computeAsync(mcFn().compute(numCells));
-
-    const geo=new THREE.BufferGeometry();
-    geo.setAttribute('position',vertexBuf);
-    geo.setAttribute('normal',normalBuf);
-    geo.setAttribute('color',colorBuf);
-    geo.boundingSphere=new THREE.Sphere(new THREE.Vector3(ox,0,oz),MC_CHUNK*1.5);
-    if(!TERRAIN.mcGroup) return;
-    TERRAIN.mcGroup.add(new THREE.Mesh(geo,mcMat));
-  }
-
-  const order=[];
-  for(let gx=-MC_SPAN;gx<=MC_SPAN;gx++)for(let gz=-MC_SPAN;gz<=MC_SPAN;gz++)order.push([gx,gz]);
-  order.sort((a,b)=>(Math.abs(a[0])+Math.abs(a[1]))-(Math.abs(b[0])+Math.abs(b[1])));
-  const buildGen=TERRAIN._mcBuildGen=(TERRAIN._mcBuildGen||0)+1;
-  let built=0;
-  (async function buildNext(){
-    if(TERRAIN._mcBuildGen!==buildGen||!TERRAIN.mcGroup)return;
-    if(!order.length){ console.log('[MarchingCubes GPU] all',built,'chunks built, span',MC_CHUNK*(MC_SPAN*2+1),'units'); return; }
-    const [gx,gz]=order.shift();
-    await buildGPUChunk(gx*MC_CHUNK,gz*MC_CHUNK);
-    built++;
-    setTimeout(buildNext,10);
-  })();
-
-  const SPAN=MC_CHUNK*(MC_SPAN*2+1)/2;
-  const _mcRayG=new THREE.Raycaster(); _mcRayG.far=500;
-  const _origSurfHeightG=_surfHeight;
-  _surfHeight=(x,z)=>{
-    if(Math.abs(x)<SPAN&&Math.abs(z)<SPAN&&TERRAIN.mcGroup){
-      _mcRayG.set(new THREE.Vector3(x,MC_VMIN+MC_VHEIGHT+20,z),new THREE.Vector3(0,-1,0));
-      const hits=_mcRayG.intersectObject(TERRAIN.mcGroup,true);
-      if(hits.length)return hits[0].point.y;
-    }
-    return _origSurfHeightG(x,z);
-  };
-  // Surface normal at a point - same raycast approach as _surfHeight above,
-  // kept as a separate function (rather than changing _surfHeight's return
-  // type) so nothing that already calls _surfHeight for a plain number
-  // breaks. Used for slope-aware locomotion (crouch/climb blending) below.
-  // Falls back to world-up (flat ground assumption) wherever there's no
-  // marching-cubes chunk built yet, or outside the covered span.
-  window._surfNormal=(x,z)=>{
-    if(Math.abs(x)<SPAN&&Math.abs(z)<SPAN&&TERRAIN.mcGroup){
-      _mcRayG.set(new THREE.Vector3(x,MC_VMIN+MC_VHEIGHT+20,z),new THREE.Vector3(0,-1,0));
-      const hits=_mcRayG.intersectObject(TERRAIN.mcGroup,true);
-      if(hits.length&&hits[0].face)return hits[0].face.normal.clone().transformDirection(hits[0].object.matrixWorld);
-    }
-    return new THREE.Vector3(0,1,0);
-  };
-}
-
-
-
 function buildSurfaceTerrain(pal){
   const seed=(_surfBody?_surfBody.name.length:5)*13+1;
   // height function (kept from the original, drives collision + tiles).
@@ -11305,17 +10216,80 @@ function buildSurfaceTerrain(pal){
   TERRAIN.group.add(patch);
   TERRAIN.tiles.set('0.0_0.0_0',{mesh:patch,cx:0,cz:0,size:TERRAIN.rootSize,depth:0});
 
-  // ── GPU compute-shader marching-cubes terrain (now the only path -
-  // the CPU version and its settings toggle are gone; this always runs).
-  // Faithful TSL port of H(x,z) above (same _vnoise/_fbm algorithm, same
-  // hills/mountains/plateaus/canyons/rivers layers, same constants) so
-  // the actual terrain SHAPE stays exactly what was already tuned here -
-  // only the execution moved from synchronous CPU JS to GPU compute.
-  // Cave-carving term is the same one the old CPU marching-cubes block
-  // used, now genuinely GPU-parallel instead of ~275k synchronous
-  // main-thread samples, and covering the WHOLE rootSize patch at real
-  // gameplay scale instead of a bounded 5x5/130-unit proof-of-concept.
-  buildGPUMarchingCubesTerrain(pal,seed,H);
+  // ── Marching cubes terrain (experimental, opt-in) ───────────────
+  // A genuine 3D density field, not just a heightmap read in 3D — the
+  // extra term below (caveNoise) can carve solid material away in a
+  // pocket that has nothing to do with the height at that X/Z, which is
+  // exactly what makes a real overhang or cave possible here, unlike H()
+  // above. Deliberately bounded to a modest region centered on the
+  // player's landing spot rather than the whole rootSize footprint —
+  // sampling a 3D grid at usable resolution is real CPU work done
+  // synchronously in JS, and covering the full multi-thousand-unit patch
+  // at fine resolution would be far too slow for a single main-thread
+  // build. This proves the technique genuinely works; extending it to
+  // cover more area (chunked, likely with a Worker to avoid blocking the
+  // main thread) is a bigger follow-up, not attempted here.
+if(STATE.settings.marchingCubesTerrain){
+    function density3D(x,y,z){
+      const base=y-H(x,z);
+      const caveNoise=_fbm(x*0.05+seed*7.7,z*0.05+seed*7.7,seed+41,3)*_fbm(y*0.08,x*0.02-z*0.02,seed+53,3);
+      return base-caveNoise*26;
+    }
+    // Chunked follow-up to the original single-region build: a 5x5 grid
+    // of chunks around the landing spot (650x650 units total vs 260
+    // before), each chunk sampled at the same effective voxel density as
+    // before (130 units / 32 cells ≈ 4u per cell). Chunks are built
+    // INCREMENTALLY — one per timeout tick — so no single frame ever pays
+    // for more than one chunk's synchronous sampling (~33k samples vs the
+    // old single build's ~275k in one go). Ground appears under the
+    // player first (center chunk is queued first, then rings outward).
+    // A Web Worker would be the next step beyond this if even one chunk
+    // per tick proves too heavy on low-end devices, but incremental
+    // main-thread chunking keeps the density function (which closes over
+    // H/seed/_fbm) directly usable without serializing it into worker
+    // code — the honest tradeoff made here.
+    const MC_CHUNK=130,MC_RES=32,MC_GRID=2,MC_VMIN=-40,MC_VHEIGHT=140; // MC_GRID=2 → offsets -2..2 → 5x5
+    const mcGroup=new THREE.Group();
+    TERRAIN.group.add(mcGroup);
+    TERRAIN.mcGroup=mcGroup;
+    const mcMat=new THREE.MeshStandardMaterial({color:pal.ground||0x7a6a52,roughness:0.95,metalness:0.02,flatShading:false});
+    // center-first ordering: sort chunk offsets by ring distance
+    const order=[];
+    for(let gx=-MC_GRID;gx<=MC_GRID;gx++)for(let gz=-MC_GRID;gz<=MC_GRID;gz++)order.push([gx,gz]);
+    order.sort((a,b)=>(Math.abs(a[0])+Math.abs(a[1]))-(Math.abs(b[0])+Math.abs(b[1])));
+    let built=0;
+    const buildGen=TERRAIN._mcBuildGen=(TERRAIN._mcBuildGen||0)+1; // cancel token: abandoned if terrain rebuilds/exits
+    (function buildNext(){
+      if(TERRAIN._mcBuildGen!==buildGen||!TERRAIN.mcGroup)return; // surface exited or rebuilt — stop quietly
+      if(!order.length){
+        console.log('[MarchingCubes] all',built,'chunks built (5x5 grid,',MC_CHUNK*(MC_GRID*2+1),'units span)');
+        return;
+      }
+      const [gx,gz]=order.shift();
+      const ox=gx*MC_CHUNK-MC_CHUNK/2, oz=gz*MC_CHUNK-MC_CHUNK/2;
+      const geo=marchingCubesMesh(density3D,[ox,MC_VMIN,oz],MC_CHUNK,MC_RES,0);
+      if(geo.attributes.position&&geo.attributes.position.count>0){
+        mcGroup.add(new THREE.Mesh(geo,mcMat));
+      }
+      built++;
+      setTimeout(buildNext,30); // yield to the frame loop between chunks
+    })();
+    // Collision: raycast against ALL built chunks (recursive on the
+    // group). Falls back to H(x,z) outside the covered span or before the
+    // relevant chunk has been built — degrades gracefully mid-build.
+    const SPAN=MC_CHUNK*(MC_GRID*2+1)/2;
+    const _mcRay=new THREE.Raycaster();
+    _mcRay.far=400;
+    const _origSurfHeight=_surfHeight;
+    _surfHeight=(x,z)=>{
+      if(Math.abs(x)<SPAN&&Math.abs(z)<SPAN&&TERRAIN.mcGroup){
+        _mcRay.set(new THREE.Vector3(x,MC_VMIN+MC_VHEIGHT+20,z),new THREE.Vector3(0,-1,0));
+        const hits=_mcRay.intersectObject(TERRAIN.mcGroup,true);
+        if(hits.length)return hits[0].point.y;
+      }
+      return _origSurfHeight(x,z);
+    };
+  }
 
   // water + caustics (unchanged) — sized to the full terrain span
   const SZ=TERRAIN.rootSize;
@@ -11626,22 +10600,7 @@ function updateSurface(dt){
     const running = moving && (surfRunToggle || surfKeys['ShiftLeft']||surfKeys['ShiftRight']);
     const dirSign = mf<-0.05 ? -1 : 1; // backing up (S / stick pulled back) plays the reversed cycle
     const jumping = p.jumpActive;
-
-    // Slope-aware locomotion: sample the surface normal under her feet and
-    // convert to a steepness angle. Below ~35° reads as normal ground (no
-    // change); between ~35-50° blends in a forward crouch-lean (added on
-    // top of whatever the walk/run animation already set, not overriding
-    // it, so the leg cycle keeps playing normally); above ~50° she's on
-    // a real incline/cliff face and switches to the existing climb
-    // animation automatically, same as if CLIMB had been pressed by hand -
-    // manual toggle and auto-trigger are OR'd together, so pressing CLIMB
-    // still works everywhere it already did.
-    const groundNormal = (typeof window._surfNormal==='function') ? window._surfNormal(p.pos.x,p.pos.z) : new THREE.Vector3(0,1,0);
-    const slopeDeg = THREE.MathUtils.radToDeg(groundNormal.angleTo(new THREE.Vector3(0,1,0)));
-    const autoClimbFromSlope = slopeDeg > 50 && moving;
-    const climbing = surfClimbHeld || autoClimbFromSlope;
-    CHAR._slopeLeanT = THREE.MathUtils.clamp((slopeDeg-35)/15, 0, 1); // 0 at 35°, 1 at 50°+ - read by updateCharacterLocomotion below for the crouch-lean blend
-
+    const climbing = surfClimbHeld;
     updateCharacterLocomotion(dt, moving, running, dirSign, jumping, climbing);
   }
 }
