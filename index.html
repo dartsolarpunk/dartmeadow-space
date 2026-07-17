@@ -103,10 +103,60 @@ if(location.search.indexOf('debug')!==-1){
   });
 })();</script>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/libs/fflate.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/FBXLoader.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js",
+  "three/webgpu": "https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js",
+  "three/tsl": "https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.tsl.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.185.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+/* ══════════ WEBGPU FOUNDATION LOADER ══════════
+   Rebuilding this properly after a full emergency revert earlier this
+   session, applying every real bug found and fixed then rather than
+   repeating them:
+   - Importing from the webgpu build (not the standard 'three' build) is
+     required, not optional: NodeMaterial classes (MeshBasicNodeMaterial,
+     MeshStandardNodeMaterial) used throughout the terrain/atmosphere/
+     water code below do not exist on the standard build at all -
+     confirmed via a real "not a constructor" runtime error earlier.
+   - `import * as X` creates a frozen/non-extensible ES module namespace
+     object - copying its exports into a genuinely plain object first
+     (Object.assign) before attaching GLTFLoader/FBXLoader/TSL avoids the
+     "Cannot add property" throw that otherwise kills this entire script
+     block (and everything gated on the ready-event below) on every load.
+   Everything else in this file is still classic (non-module) script,
+   deliberately not converted to ES modules in one pass - only this
+   loading mechanism changed. */
+import * as THREE_NS from 'three/webgpu';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+import * as TSL from 'three/tsl';
+
+const THREE = Object.assign({}, THREE_NS);
+window.THREE = THREE;
+THREE.GLTFLoader = GLTFLoader;
+THREE.FBXLoader = FBXLoader;
+THREE.TSL = TSL;
+Object.assign(window, TSL);
+
+window.__THREE_READY__ = true;
+window.dispatchEvent(new Event('three-ready'));
+console.log('[WebGPU] Three.js r185 (WebGPU + TSL) loaded and attached to window.');
+</script>
+<script>
+// Classic-script gate: anything running at parse time (not inside a
+// lazily-invoked function) that touches THREE must wait for the module
+// script above to finish, since module scripts execute deferred/async
+// relative to classic scripts. All renderers in this game are built
+// lazily inside functions triggered by user interaction, so this is a
+// safety net rather than something relied on for the common path.
+window.__whenThreeReady = function(fn){
+  if(window.__THREE_READY__) fn();
+  else window.addEventListener('three-ready', fn, {once:true});
+};
+</script>
 <!-- Stripe's buy-button script is now lazy-loaded only when Support is
      opened (see openSupport()), not here on every page load. Loading it
      immediately meant the <stripe-buy-button> custom elements started
@@ -116,8 +166,7 @@ if(location.search.indexOf('debug')!==-1){
 <script>
 // Inline OrbitControls — no external dependency, always works
 // Stripped-down but fully functional implementation
-(function(){
-if(typeof THREE==='undefined')return;
+window.__whenThreeReady(function(){
 THREE.OrbitControls=function(camera,domElement){
   var scope=this;
   this.camera=camera;
@@ -279,7 +328,7 @@ THREE.OrbitControls=function(camera,domElement){
   scope.domElement.addEventListener('touchend',onTouchEnd,false);
   scope.domElement.addEventListener('contextmenu',function(e){e.preventDefault();},false);
 };
-})();
+});
 </script>
 <style>
 :root{
@@ -1604,9 +1653,13 @@ const STATE={
   },
   flight:{speed:0,dart:false,energy:100,hull:100,shield:100,destIdx:0,time:0,
     camPitch:0,camYaw:0,thrust:0,strafe:0,lift:0,
-    pos:new THREE.Vector3(28,2,3),vel:new THREE.Vector3()},
+    pos:{x:28,y:2,z:3},vel:{x:0,y:0,z:0}}, // upgraded to real THREE.Vector3 instances below once THREE exists
   settings:{stars:true,dust:true,bloom:true,bloomIntensity:0.5,motion:true,textures:true,galaxyband:true,particles:'med',fov:50000,dartSpeed:15,gfxQuality:'auto',resScale:1.0,shadows:true,reflections:true,caustics:true,gi:true,marchingCubesTerrain:true}
 };
+window.__whenThreeReady(function(){
+  STATE.flight.pos = new THREE.Vector3(STATE.flight.pos.x, STATE.flight.pos.y, STATE.flight.pos.z);
+  STATE.flight.vel = new THREE.Vector3(STATE.flight.vel.x, STATE.flight.vel.y, STATE.flight.vel.z);
+});
 
 // ── Save System ───────────────────────────────────────────────
 const SAVE_VERSION='DM2';
@@ -2215,11 +2268,18 @@ function initMenuBg(){
 // ══════════════════════════════════════════════════════════════
 let sgScene,sgRenderer,sgCamera,sgModel,sgAnimId,sgInited=false,sgLoading=true;
 
-function initStartBtnTurntable(){
+async function initStartBtnTurntable(){
   if(sgInited)return;
-  sgInited=true;
   const host=$('start-game-btn');
-  if(!host||typeof THREE==='undefined')return;
+  if(!host)return;
+  if(typeof THREE==='undefined'){
+    // Don't mark sgInited yet — genuinely not ready, not skipping on
+    // purpose. Retry once THREE actually loads instead of silently
+    // giving up forever.
+    window.__whenThreeReady(initStartBtnTurntable);
+    return;
+  }
+  sgInited=true;
 
   const w=host.clientWidth||140, h=host.clientHeight||140;
 
@@ -2229,11 +2289,12 @@ function initStartBtnTurntable(){
   sgCamera=new THREE.PerspectiveCamera(32,w/h,0.01,10);
   sgCamera.position.set(0,0,1.6);
 
-  sgRenderer=new THREE.WebGLRenderer({antialias:true,alpha:true,powerPreference:'low-power'});
+  sgRenderer=new THREE.WebGPURenderer({antialias:true,alpha:true,powerPreference:'low-power'});
+  await sgRenderer.init();
   sgRenderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
   sgRenderer.setSize(w,h);
   sgRenderer.setClearColor(0x000000,0);
-  if(sgRenderer.outputEncoding!==undefined) sgRenderer.outputEncoding=THREE.sRGBEncoding;
+  sgRenderer.outputColorSpace=THREE.SRGBColorSpace;
   sgRenderer.toneMapping=THREE.ACESFilmicToneMapping;
   sgRenderer.toneMappingExposure=1.35;
   host.insertBefore(sgRenderer.domElement,host.firstChild);
@@ -2246,22 +2307,33 @@ function initStartBtnTurntable(){
   // cones no matter how much their intensity is multiplied. Fix: bake a small
   // procedural "studio room" into a PMREM environment map — bright neutral top
   // panel + warm/magenta/blue side cards echoing the Nomad accent palette.
+  //
+  // PMREMGenerator confirmed broken under this Three.js version's WebGPU
+  // backend via live headless-browser testing earlier this session: it
+  // throws deep inside its own internal multi-pass cubemap rendering
+  // (a GPUTextureViewDescriptor 'swizzle' property error), repeatedly,
+  // not just once — wrapping it in try/catch only stops it from crashing
+  // the page, not from wasting those passes or spamming the console.
+  // Skipped entirely under WebGPU; falls through to punctual-lights-only,
+  // same as the existing catch-all below already handled.
   try{
-    const envScene=new THREE.Scene();
-    const room=new THREE.Mesh(new THREE.BoxGeometry(10,10,10),
-      new THREE.MeshBasicMaterial({color:0x233042,side:THREE.BackSide}));
-    envScene.add(room);
-    const panel=(col,x,y,z,rx,ry)=>{
-      const p=new THREE.Mesh(new THREE.PlaneGeometry(4,4),new THREE.MeshBasicMaterial({color:col}));
-      p.position.set(x,y,z);p.rotation.set(rx,ry,0);envScene.add(p);
-    };
-    panel(0xffffff, 0, 4.6, 0, Math.PI/2, 0);   // bright white top key
-    panel(0xffd9a0, -4.6, 0.5, 0, 0,  Math.PI/2); // warm gold left
-    panel(0xff5ad0,  4.6, 0.5, 0, 0, -Math.PI/2); // magenta right
-    panel(0x7fb4ff, 0, 0.2, -4.6, 0, 0);          // cool blue back
-    const pmrem=new THREE.PMREMGenerator(sgRenderer);
-    sgScene.environment=pmrem.fromScene(envScene,0.06).texture;
-    pmrem.dispose();
+    if(!(sgRenderer instanceof THREE.WebGPURenderer)){
+      const envScene=new THREE.Scene();
+      const room=new THREE.Mesh(new THREE.BoxGeometry(10,10,10),
+        new THREE.MeshBasicMaterial({color:0x233042,side:THREE.BackSide}));
+      envScene.add(room);
+      const panel=(col,x,y,z,rx,ry)=>{
+        const p=new THREE.Mesh(new THREE.PlaneGeometry(4,4),new THREE.MeshBasicMaterial({color:col}));
+        p.position.set(x,y,z);p.rotation.set(rx,ry,0);envScene.add(p);
+      };
+      panel(0xffffff, 0, 4.6, 0, Math.PI/2, 0);   // bright white top key
+      panel(0xffd9a0, -4.6, 0.5, 0, 0,  Math.PI/2); // warm gold left
+      panel(0xff5ad0,  4.6, 0.5, 0, 0, -Math.PI/2); // magenta right
+      panel(0x7fb4ff, 0, 0.2, -4.6, 0, 0);          // cool blue back
+      const pmrem=new THREE.PMREMGenerator(sgRenderer);
+      sgScene.environment=pmrem.fromScene(envScene,0.06).texture;
+      pmrem.dispose();
+    }
   }catch(e){console.warn('start-btn env map failed, punctual lights only',e);}
 
   const loader=_getGLBLoader();
@@ -2474,7 +2546,7 @@ function toggleBuilderDrawer(){
   if(el) el.classList.toggle('sidebar-open');
 }
 
-function initBuilderScene(){
+async function initBuilderScene(){
   if(builderInited){
     // Re-entering builder — force resize and rebuild
     setTimeout(()=>{
@@ -2493,7 +2565,8 @@ function initBuilderScene(){
   builderInited=true;
   buildGfxGrids();buildStaffGrid();updateBoardStats();
   const cv=$('builder-canvas');
-  builderRenderer=new THREE.WebGLRenderer({canvas:cv,antialias:true,alpha:false});
+  builderRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:true,alpha:false});
+  await builderRenderer.init();
   builderRenderer.setPixelRatio(Math.min(devicePixelRatio,2));
   builderRenderer.toneMapping=THREE.ACESFilmicToneMapping;builderRenderer.toneMappingExposure=1.1;
   builderScene=new THREE.Scene();builderScene.background=new THREE.Color(0x000308);
@@ -3210,6 +3283,13 @@ function applyGfxScreen(){
 // This is the browser-real stand-in for ray-traced reflections.
 let _envMap=null;
 function buildEnvMap(renderer,scene){
+  // THREE.WebGLCubeRenderTarget doesn't exist on the WebGPU build this file
+  // now uses, and PMREMGenerator is separately confirmed broken under this
+  // Three.js version's WebGPU backend (live-tested earlier this session) -
+  // this is a cosmetic reflection stand-in, not load-bearing for the scene
+  // rendering at all, so skipping it entirely here is safe: materials just
+  // render without envMap set, same as before this existed.
+  if(typeof THREE.WebGLCubeRenderTarget!=='function')return null;
   try{
     const pmrem=new THREE.PMREMGenerator(renderer);
     pmrem.compileEquirectangularShader();
@@ -3285,7 +3365,7 @@ function buildDestinationUI(){
     card.onclick=()=>{document.querySelectorAll('.dest-card').forEach((c,ci)=>c.classList.toggle('active',ci===i));STATE.flight.destIdx=i;$('hud-dest').textContent=d.name;plotCourse(i);closeQuickTravel();};sc.appendChild(card);});
 }
 
-function initFlightScene(){
+async function initFlightScene(){
   if(flightInited)return;flightInited=true;
   buildDestinations();buildDestinationUI();
 
@@ -3305,13 +3385,14 @@ function initFlightScene(){
   try{ detectCapabilities(); applyQualityTier(); }catch(e){console.warn('cap init:',e);}
 
   // Renderer — compatibility-first across Safari/Chrome/Edge/Firefox on all OSes
-  flightRenderer=new THREE.WebGLRenderer({canvas:cv,antialias:!GFX.isMobile,alpha:false,powerPreference:'high-performance',logarithmicDepthBuffer:true});
+  flightRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:!GFX.isMobile,alpha:false,powerPreference:'high-performance',logarithmicDepthBuffer:true});
+  await flightRenderer.init();
   flightRenderer.setPixelRatio(effectivePixelRatio());
   flightRenderer.setClearColor(0x000206,1);
   flightRenderer.setSize(W,H);
   flightRenderer.toneMapping=THREE.ACESFilmicToneMapping;
   flightRenderer.toneMappingExposure=1.0;
-  flightRenderer.outputEncoding=THREE.sRGBEncoding;
+  flightRenderer.outputColorSpace=THREE.SRGBColorSpace;
   // Real-time shadow maps (soft PCF) — disabled on low tier for framerate
   if(GFX.shadows){
     flightRenderer.shadowMap.enabled=true;
@@ -3738,12 +3819,23 @@ function buildSolarSystem(){
         const panel=new THREE.Mesh(new THREE.PlaneGeometry(6,6),new THREE.MeshBasicMaterial({color:c}));
         panel.position.set(x,y,z);panel.lookAt(0,0,0);envScene.add(panel);
       });
-      window._birdTempleEnvRT=new THREE.PMREMGenerator(flightRenderer).fromScene(envScene,0.08);
+      // PMREMGenerator confirmed broken under this Three.js version's WebGPU
+      // backend (live-tested earlier this session — throws deep inside its
+      // own internal multi-pass cubemap rendering). This call site had NO
+      // guard at all before, meaning it threw uncaught, which is very
+      // likely why Bird Temple's GLB load was failing outright rather than
+      // just missing its env map. window._birdTempleEnvRT stays null under
+      // WebGPU; the envMap-assignment loop below already checks 'envMap'
+      // in m AND that window._birdTempleEnvRT exists, so it just doesn't
+      // get one — graceful, not broken.
+      if(!(flightRenderer instanceof THREE.WebGPURenderer)){
+        window._birdTempleEnvRT=new THREE.PMREMGenerator(flightRenderer).fromScene(envScene,0.08);
+      }
     }
     t.traverse(o=>{
       if(o.isMesh&&o.material){
         const mats=Array.isArray(o.material)?o.material:[o.material];
-        mats.forEach(m=>{ if('envMap' in m){m.envMap=window._birdTempleEnvRT.texture;m.envMapIntensity=1;m.needsUpdate=true;} });
+        mats.forEach(m=>{ if('envMap' in m && window._birdTempleEnvRT){m.envMap=window._birdTempleEnvRT.texture;m.envMapIntensity=1;m.needsUpdate=true;} });
       }
     });
     t.traverse(o=>{
@@ -3922,10 +4014,10 @@ function buildSolarSystem(){
 // celestialBodies) since it isn't a landable planet and shouldn't be
 // picked up by the LOD/nearest-body/orbit-ring logic built for those.
 const BIRD_TEMPLE={
-  group:null,basePos:new THREE.Vector3(),t:0,nearPromptShown:false,audioEl:null,
+  group:null,basePos:{x:0,y:0,z:0},t:0,nearPromptShown:false,audioEl:null,
   spawned:false, // true once a real, randomized, minimum-distance-checked spawn point has been picked
   // ── Autonomous wander (task 1) ──────────────────────────────────
-  target:new THREE.Vector3(),wanderSpeed:1.5, // ~1/10th of base cruise speed (0.25u/frame*60fps=15u/s)
+  target:{x:0,y:0,z:0},wanderSpeed:1.5, // ~1/10th of base cruise speed (0.25u/frame*60fps=15u/s)
   wanderIdleUntil:0,
   // ── Bird Shard summon (task 2) ───────────────────────────────────
   shard:null,          // the detached 'Bird Shard' group once pulled off the ship
@@ -3933,6 +4025,10 @@ const BIRD_TEMPLE={
   shardHomeLocal:null, // original local transform, to dock it back exactly
   shardPlayedNear:false,
 };
+window.__whenThreeReady(function(){
+  BIRD_TEMPLE.basePos = new THREE.Vector3(BIRD_TEMPLE.basePos.x, BIRD_TEMPLE.basePos.y, BIRD_TEMPLE.basePos.z);
+  BIRD_TEMPLE.target = new THREE.Vector3(BIRD_TEMPLE.target.x, BIRD_TEMPLE.target.y, BIRD_TEMPLE.target.z);
+});
 function _btPickWanderTarget(){
   // Prefer near a random celestial body sometimes, otherwise open space —
   // real autonomous movement around the currently-loaded system. Full
@@ -6399,12 +6495,13 @@ function openGalaxyMap(){
 }
 function closeGalaxyMap(){$('galaxy-map').classList.remove('open');}
 
-function initGalaxyMapScene(){
+async function initGalaxyMapScene(){
   gmInited=true;
   const cv=$('gm-canvas');
   const W=Math.min(innerWidth*.92,1100),H=Math.min(innerHeight*.74,640);
   cv.width=W;cv.height=H;
-  gmRenderer=new THREE.WebGLRenderer({canvas:cv,antialias:true,alpha:false,logarithmicDepthBuffer:true});
+  gmRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:true,alpha:false,logarithmicDepthBuffer:true});
+  await gmRenderer.init();
   gmRenderer.setPixelRatio(Math.min(devicePixelRatio,2));gmRenderer.setSize(W,H);
   gmRenderer.setClearColor(0x000206,1);
   gmScene=new THREE.Scene();
@@ -7537,7 +7634,7 @@ function doExit(){
 document.addEventListener('DOMContentLoaded',()=>{
   const exitBtns=document.querySelectorAll('.art-btn');
   exitBtns.forEach(b=>{if(b.textContent.trim()==='EXIT')b.onclick=promptExit;});
-  try{preloadSkyboardTemplates();}catch(e){}
+  window.__whenThreeReady(()=>{ try{preloadSkyboardTemplates();}catch(e){} });
 });
 
 // ══════════════════════════════════════════════════════════════
@@ -8067,7 +8164,7 @@ function makeOrbitGlobeTexture(body){
   _orbitTexCache[key]=tex;return tex;
 }
 
-function openOrbitApproach(body){
+async function openOrbitApproach(body){
   if(orbitActive)return;
   _orbitBody=body;orbitActive=true;_orbitSite=null;
   // pause flight loop while orbiting
@@ -8079,9 +8176,10 @@ function openOrbitApproach(body){
   $('orbit-site').textContent='';
   $('orbit-descend').style.display='none';
   const cv=$('orbit-canvas');const W=window.innerWidth,H=window.innerHeight;cv.width=W;cv.height=H;
-  orbitRenderer=new THREE.WebGLRenderer({canvas:cv,antialias:!GFX.isMobile});
+  orbitRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:!GFX.isMobile});
+  await orbitRenderer.init();
   orbitRenderer.setPixelRatio(effectivePixelRatio());orbitRenderer.setSize(W,H);
-  orbitRenderer.outputEncoding=THREE.sRGBEncoding;
+  orbitRenderer.outputColorSpace=THREE.SRGBColorSpace;
   orbitScene=new THREE.Scene();
   orbitCamera=new THREE.PerspectiveCamera(50,W/H,0.01,100);
   orbitCamDist=3.4;orbitYaw=0;orbitPitch=0.2;
@@ -8292,7 +8390,7 @@ let atmoPreset=0,atmoThrottle=0,atmoMach=0;
 let atmoSteer={x:0,y:0},atmoClimb={x:0,y:0};
 let atmoState=null;
 
-function enterAtmosphericFlight(body,site){
+async function enterAtmosphericFlight(body,site){
   if(atmoActive)return;
   _atmoBody=body;_atmoSite=site||null;atmoActive=true;
   atmoPreset=0;atmoThrottle=0;atmoMach=0;
@@ -8313,9 +8411,10 @@ function enterAtmosphericFlight(body,site){
   const ov=$('atmo-overlay');ov.style.display='block';
   $('atmo-title').textContent='ATMOSPHERIC FLIGHT — '+body.name.toUpperCase();
   const cv=$('atmo-canvas');const W=window.innerWidth,H=window.innerHeight;cv.width=W;cv.height=H;
-  atmoRenderer=new THREE.WebGLRenderer({canvas:cv,antialias:!GFX.isMobile});
+  atmoRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:!GFX.isMobile});
+  await atmoRenderer.init();
   atmoRenderer.setPixelRatio(effectivePixelRatio());atmoRenderer.setSize(W,H);
-  atmoRenderer.outputEncoding=THREE.sRGBEncoding;
+  atmoRenderer.outputColorSpace=THREE.SRGBColorSpace;
   atmoScene=new THREE.Scene();
   atmoScene.background=new THREE.Color(pal.sky?pal.sky[1]:0x223344);
   if(pal.atmos)atmoScene.fog=new THREE.Fog(pal.fog||0x334455,300,2400);
@@ -9535,7 +9634,7 @@ function dismountSkyboard(targetScene, worldPos){
   setCharState('idle',{fade:0.25});
 }
 
-function enterSurface(body,site){
+async function enterSurface(body,site){
   if(surfaceActive)return;
   _surfBody=body;_surfSite=site||null;surfaceActive=true;
   charOrbitActive = false; // same leftover-orbit-state guard as the flight scenes
@@ -9548,11 +9647,12 @@ function enterSurface(body,site){
   const cv=$('surface-canvas');
   const W=window.innerWidth,H=window.innerHeight;cv.width=W;cv.height=H;
   if(!GFX.scanned)try{detectCapabilities();loadGfxChoice();applyPreset(GFX.preset);}catch(e){}
-  surfRenderer=new THREE.WebGLRenderer({canvas:cv,antialias:!GFX.isMobile,powerPreference:'high-performance'});
+  surfRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:!GFX.isMobile,powerPreference:'high-performance'});
+  await surfRenderer.init();
   surfRenderer.setPixelRatio(effectivePixelRatio());
   surfRenderer.setSize(W,H);
   surfRenderer.toneMapping=THREE.ACESFilmicToneMapping;surfRenderer.toneMappingExposure=1.05;
-  surfRenderer.outputEncoding=THREE.sRGBEncoding;
+  surfRenderer.outputColorSpace=THREE.SRGBColorSpace;
   if(GFX.shadows){
     surfRenderer.shadowMap.enabled=true;
     surfRenderer.shadowMap.type=THREE.PCFSoftShadowMap;
