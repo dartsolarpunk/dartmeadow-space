@@ -2348,9 +2348,21 @@ async function initStartBtnTurntable(){
     panel(0xffd9a0, -4.6, 0.5, 0, 0,  Math.PI/2); // warm gold left
     panel(0xff5ad0,  4.6, 0.5, 0, 0, -Math.PI/2); // magenta right
     panel(0x7fb4ff, 0, 0.2, -4.6, 0, 0);          // cool blue back
-    const pmrem=new THREE.PMREMGenerator(sgRenderer);
-    sgScene.environment=pmrem.fromScene(envScene,0.06).texture;
-    pmrem.dispose();
+    // PMREMGenerator is confirmed broken under this Three.js version's
+    // WebGPU backend -- verified via live headless-browser testing, not
+    // just theoretical analysis: pmrem.fromScene() throws deep inside its
+    // own internal multi-pass cubemap rendering (GPUTextureViewDescriptor
+    // 'swizzle' property error), and since that happens INSIDE the many
+    // internal render passes PMREM does per call (multiple cubemap faces
+    // x roughness mip levels), wrapping it in try/catch only stops it
+    // from crashing the page -- it doesn't stop it from wasting those
+    // passes or spamming the console once per internal failure. Skipping
+    // it outright under WebGPU is the real fix, not a try/catch band-aid.
+    if(!(sgRenderer instanceof THREE.WebGPURenderer)){
+      const pmrem=new THREE.PMREMGenerator(sgRenderer);
+      sgScene.environment=pmrem.fromScene(envScene,0.06).texture;
+      pmrem.dispose();
+    }
   }catch(e){console.warn('start-btn env map failed, punctual lights only',e);}
 
   const loader=_getGLBLoader();
@@ -4239,12 +4251,22 @@ async function buildSolarSystem(){
         const panel=new THREE.Mesh(new THREE.PlaneGeometry(6,6),new THREE.MeshBasicMaterial({color:c}));
         panel.position.set(x,y,z);panel.lookAt(0,0,0);envScene.add(panel);
       });
-      window._birdTempleEnvRT=new THREE.PMREMGenerator(flightRenderer).fromScene(envScene,0.08);
+      // Same confirmed-broken PMREMGenerator-under-WebGPU issue as the start
+      // button turntable (see that comment for the live-tested root cause) —
+      // this call site had NO guard at all before, meaning it threw
+      // uncaught, which is exactly why Bird Temple's GLB load was failing
+      // outright rather than just missing its env map. Skipping under
+      // WebGPU rather than letting it throw; window._birdTempleEnvRT stays
+      // null, and the envMap-assignment loop below already checks
+      // 'envMap' in m, so it just doesn't get one -- graceful, not broken.
+      if(!(flightRenderer instanceof THREE.WebGPURenderer)){
+        window._birdTempleEnvRT=new THREE.PMREMGenerator(flightRenderer).fromScene(envScene,0.08);
+      }
     }
     t.traverse(o=>{
       if(o.isMesh&&o.material){
         const mats=Array.isArray(o.material)?o.material:[o.material];
-        mats.forEach(m=>{ if('envMap' in m){m.envMap=window._birdTempleEnvRT.texture;m.envMapIntensity=1;m.needsUpdate=true;} });
+        mats.forEach(m=>{ if('envMap' in m && window._birdTempleEnvRT){m.envMap=window._birdTempleEnvRT.texture;m.envMapIntensity=1;m.needsUpdate=true;} });
       }
     });
     t.traverse(o=>{
