@@ -525,10 +525,10 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;background:var(--c0);co
 .arc-bl{bottom:10px;left:10px;}.arc-bl::before{width:2px;height:12px;bottom:0;left:0;}.arc-bl::after{width:12px;height:2px;bottom:0;left:0;}
 .arc-br{bottom:10px;right:10px;}.arc-br::before{width:2px;height:12px;bottom:0;right:0;}.arc-br::after{width:12px;height:2px;bottom:0;right:0;}
 #ar-top{position:absolute;top:0;left:0;right:0;display:flex;align-items:center;justify-content:space-between;padding:8px 14px;background:rgba(0,3,8,0.55);backdrop-filter:blur(10px);border-bottom:1px solid rgba(91,127,255,0.1);pointer-events:auto;z-index:30;}
-.art-logo{font-family:var(--font-hud);font-size:0.65rem;font-weight:900;letter-spacing:0.2em;color:var(--cyan);text-shadow:var(--glow-sm);}
-.art-stats{display:flex;gap:1.2rem;font-family:var(--font-mono);font-size:0.55rem;color:var(--text-dim);}
+.art-logo{font-family:var(--font-hud);font-size:0.65rem;font-weight:900;letter-spacing:0.2em;color:var(--cyan);text-shadow:var(--glow-sm);flex-shrink:0;}
+.art-stats{display:flex;gap:1.2rem;font-family:var(--font-mono);font-size:0.55rem;color:var(--text-dim);flex-shrink:0;}
 .art-stats span{color:var(--cyan);}
-.art-btns{display:flex;gap:0.4rem;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;max-width:100%;min-width:0;flex-shrink:1;}
+.art-btns{display:flex;gap:0.4rem;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;flex:1;min-width:0;justify-content:flex-end;}
 .art-btns::-webkit-scrollbar{display:none;}
 .art-btns>*{flex-shrink:0;}
 .art-btn{padding:4px 10px;background:rgba(91,127,255,0.08);border:1px solid rgba(91,127,255,0.25);color:rgba(91,127,255,0.8);font-family:var(--font-hud);font-size:0.5rem;letter-spacing:0.1em;cursor:pointer;transition:var(--trans);border-radius:2px;pointer-events:auto;}
@@ -3226,6 +3226,7 @@ function buildEnvMap(renderer,scene){
 //  FLIGHT SCENE
 // ══════════════════════════════════════════════════════════════
 let flightRenderer,flightScene,flightCamera,boardFlight,flightInited=false;
+let _charShadowLight=null;
 let _builtBoardTemplate=null; // last template key that was built into boardFlight
 let _landTargetBody=null,_approachBestDist=Infinity,_approachBestBody=null;
 let flightAnimId,flightTime=0,celestialBodies=[],sunMesh,earthMesh;
@@ -3408,6 +3409,15 @@ function _startFlightLoop(){
     _applyFlightResizeIfPending();
 
     try{updateFlight(dt);}catch(e){}
+    try{
+      if(_charShadowLight && boardFlight){
+        const bp=boardFlight.position;
+        const dir=bp.lengthSq()>0.001 ? bp.clone().normalize() : new THREE.Vector3(1,0.3,0.2).normalize();
+        _charShadowLight.position.copy(bp).addScaledVector(dir,-10);
+        _charShadowLight.target.position.copy(bp);
+        _charShadowLight.target.updateMatrixWorld();
+      }
+    }catch(e){}
     try{updateBodies(dt);}catch(e){}
     try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){}
     try{ updateCharOrbitCamera(); }catch(e){}
@@ -5066,6 +5076,12 @@ function buildBoardFromGLB(tmplKey){
     if(st.visible===false){o.visible=false;return;}
     o.visible=true;
     applyPartStyle(o,st,zd);
+    // Real gap found: this board model never set castShadow/receiveShadow
+    // anywhere at all — the character standing on it could never actually
+    // show a shadow on its own deck, and the board itself never shadowed
+    // anything else either, regardless of light angle. Gated on GFX.shadows
+    // to match every other shadow-casting object in this file.
+    if(GFX.shadows){ o.castShadow=true; o.receiveShadow=true; }
   });
   // soft accent light so the board reads even in dim space
   const dartSt=styles['dart'];
@@ -5232,6 +5248,35 @@ function buildFlightBoard(){
   flightScene.add(boardFlight);
   boardFlight.rotation.set(0,0,0);
   _applyCamOffset();
+
+  // Dedicated local shadow-casting light — the main "sun" is a single
+  // PointLight with a 300,000-unit range covering the entire solar
+  // system (see addSunLight), which cannot reasonably cast shadows
+  // itself (a shadow camera would need to span that whole range,
+  // producing both terrible resolution and terrible performance via
+  // PointLight's 6-face cubemap shadow rendering). This is a small,
+  // separate DirectionalLight instead, with a tight shadow-camera
+  // frustum sized just around the board+character, that gets
+  // repositioned every frame (see updateFlight) to sit near the board
+  // and point in the real direction from the sun (world origin) toward
+  // it — so the shadow direction stays physically correct as the board
+  // travels, while the shadow quality/cost stays local and cheap. This
+  // is what actually makes her shadow visible on the board/terrain;
+  // GFX.shadows gates it same as every other shadow source in this file.
+  if(GFX.shadows){
+    _charShadowLight=new THREE.DirectionalLight(0xfff4e0,1.4);
+    _charShadowLight.castShadow=true;
+    _charShadowLight.shadow.mapSize.set(GFX.shadowSize,GFX.shadowSize);
+    _charShadowLight.shadow.camera.near=0.5;
+    _charShadowLight.shadow.camera.far=20;
+    _charShadowLight.shadow.camera.left=-6;
+    _charShadowLight.shadow.camera.right=6;
+    _charShadowLight.shadow.camera.top=6;
+    _charShadowLight.shadow.camera.bottom=-6;
+    _charShadowLight.shadow.bias=-0.0015;
+    flightScene.add(_charShadowLight);
+    flightScene.add(_charShadowLight.target);
+  }
 
   // Character — her default state is mounted on the board, matching
   // 'in space, she's already on the skyboard in her riding stance' per
@@ -8200,6 +8245,15 @@ function resumeFlightLoop(){
     flightAnimId=requestAnimationFrame(loop);
     const now=performance.now();const dt=Math.min((now-last)/1000,0.05);last=now;flightTime+=dt;
     try{updateFlight(dt);}catch(e){}
+    try{
+      if(_charShadowLight && boardFlight){
+        const bp=boardFlight.position;
+        const dir=bp.lengthSq()>0.001 ? bp.clone().normalize() : new THREE.Vector3(1,0.3,0.2).normalize();
+        _charShadowLight.position.copy(bp).addScaledVector(dir,-10);
+        _charShadowLight.target.position.copy(bp);
+        _charShadowLight.target.updateMatrixWorld();
+      }
+    }catch(e){}
     try{updateBodies(dt);}catch(e){}
     try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){}
     try{ updateCharOrbitCamera(); }catch(e){}
@@ -9554,7 +9608,7 @@ function enterSurface(body,site){
   // follows the player around (rises over obstacles, trails beside them)
   const board=buildBoardMesh();
   board.scale.setScalar(1.0);
-  if(GFX.shadows)board.traverse(o=>{if(o.isMesh){o.castShadow=true;}});
+  if(GFX.shadows)board.traverse(o=>{if(o.isMesh){o.castShadow=true;o.receiveShadow=true;}});
   board.position.set(3,0.6,8);surfScene.add(board);
   surfBoard=board;
   // Env reflections on the metallic board (browser-real stand-in for RT reflections)
@@ -10872,6 +10926,15 @@ function exitSurface(){
       const now=performance.now();const dt=Math.min((now-last)/1000,0.05);last=now;flightTime+=dt;
       _applyFlightResizeIfPending(); // see _queueFlightResize — debounced, event-driven (Android jitter fix)
       try{updateFlight(dt);}catch(e){}
+    try{
+      if(_charShadowLight && boardFlight){
+        const bp=boardFlight.position;
+        const dir=bp.lengthSq()>0.001 ? bp.clone().normalize() : new THREE.Vector3(1,0.3,0.2).normalize();
+        _charShadowLight.position.copy(bp).addScaledVector(dir,-10);
+        _charShadowLight.target.position.copy(bp);
+        _charShadowLight.target.updateMatrixWorld();
+      }
+    }catch(e){}
       try{updateBodies(dt);}catch(e){}
       try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){}
     try{ updateCharOrbitCamera(); }catch(e){}
