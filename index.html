@@ -4255,8 +4255,12 @@ function updateBirdTemple(dt){
 // the same 'ground-follow only' honesty as the note when this was first
 // discussed.
 // ══════════════════════════════════════════════════════════════
-const SHIP_WALK={active:false,localPos:new THREE.Vector3(),yaw:0,pitch:0,velY:0,grounded:true};
-const _shipWalkRay=new THREE.Raycaster();
+const SHIP_WALK={active:false,localPos:null,yaw:0,pitch:0,velY:0,grounded:true};
+let _shipWalkRay;
+window.__whenThreeReady(function(){
+  SHIP_WALK.localPos=new THREE.Vector3();
+  _shipWalkRay=new THREE.Raycaster();
+});
 function _shipGroundHeight(worldX,worldZ,fallbackY){
   const bt=BIRD_TEMPLE;
   _shipWalkRay.set(new THREE.Vector3(worldX,fallbackY+50,worldZ),new THREE.Vector3(0,-1,0));
@@ -5796,12 +5800,38 @@ function updateCrosshairLabel(){
 //  (see solver: forward round-trip 1e-15, board nose tracks view forward
 //  through full loops at 4e-16) rather than hand-derived.
 // ══════════════════════════════════════════════════════════════
-const _sQ1=new THREE.Quaternion(),_sQ2=new THREE.Quaternion(),_sQ3=new THREE.Quaternion();
-const _sV0=new THREE.Vector3(),_sV1=new THREE.Vector3(),_sV2=new THREE.Vector3(),_sV3=new THREE.Vector3(),_sV4=new THREE.Vector3();
-const _sM1=new THREE.Matrix4();
-const _AXIS_X=new THREE.Vector3(1,0,0),_AXIS_Y=new THREE.Vector3(0,1,0),_AXIS_Z=new THREE.Vector3(0,0,1);
-const _BOARD_ALIGN=new THREE.Quaternion().setFromEuler(new THREE.Euler(0,-Math.PI/2,0,'YXZ'));
-let _camUp=new THREE.Vector3(0,1,0);
+let _sQ1,_sQ2,_sQ3;
+window.__whenThreeReady(function(){
+  _sQ1=new THREE.Quaternion();
+  _sQ2=new THREE.Quaternion();
+  _sQ3=new THREE.Quaternion();
+});
+let _sV0,_sV1,_sV2,_sV3,_sV4;
+window.__whenThreeReady(function(){
+  _sV0=new THREE.Vector3();
+  _sV1=new THREE.Vector3();
+  _sV2=new THREE.Vector3();
+  _sV3=new THREE.Vector3();
+  _sV4=new THREE.Vector3();
+});
+let _sM1;
+window.__whenThreeReady(function(){
+  _sM1=new THREE.Matrix4();
+});
+let _AXIS_X,_AXIS_Y,_AXIS_Z;
+window.__whenThreeReady(function(){
+  _AXIS_X=new THREE.Vector3(1,0,0);
+  _AXIS_Y=new THREE.Vector3(0,1,0);
+  _AXIS_Z=new THREE.Vector3(0,0,1);
+});
+let _BOARD_ALIGN;
+window.__whenThreeReady(function(){
+  _BOARD_ALIGN=new THREE.Quaternion().setFromEuler(new THREE.Euler(0,-Math.PI/2,0,'YXZ'));
+});
+let _camUp;
+window.__whenThreeReady(function(){
+  _camUp=new THREE.Vector3(0,1,0);
+});
 
 function spQuat(sp){
   let q=sp.quat;
@@ -6211,7 +6241,11 @@ function updateBodies(dt){
 
 
 let _hudT=0;
-const _hudSunDir=new THREE.Vector3(),_hudZero=new THREE.Vector3(0,0,0);
+let _hudSunDir,_hudZero;
+window.__whenThreeReady(function(){
+  _hudSunDir=new THREE.Vector3();
+  _hudZero=new THREE.Vector3(0,0,0);
+});
 function updateHUD(){
   if(!boardFlight)return;
   // Throttle to 5 Hz. Readable numbers don't need 60fps, and this function
@@ -6430,7 +6464,10 @@ function lockOnNearest(){
 //             inclinations, this must read the system's own normal.)
 // Leveling = project current forward onto the plane (heading preserved),
 // up snapped to the plane normal, then a ~0.9s eased quaternion sweep.
-const GALAXY_PLANE_EULER=new THREE.Euler(0.5,0.3,0.1); // keep in sync with galGroup.rotation
+let GALAXY_PLANE_EULER; // keep in sync with galGroup.rotation
+window.__whenThreeReady(function(){
+  GALAXY_PLANE_EULER=new THREE.Euler(0.5,0.3,0.1);
+});
 let _levelAnim=null;
 function cancelAutoLevel(){
   if(_levelAnim){clearInterval(_levelAnim);_levelAnim=null;
@@ -8862,10 +8899,22 @@ const CHAR = {
 // Reusable scratch vectors for applyFootIK() below — allocated once,
 // not per-frame/per-foot, same allocation-avoidance discipline as the
 // rest of the hot per-frame code in this file.
-const _ikHipPos = new THREE.Vector3();
-const _ikFootPos = new THREE.Vector3();
-const _ikFwd = new THREE.Vector3();
-const _ikUp = new THREE.Vector3(0,1,0);
+let _ikHipPos;
+window.__whenThreeReady(function(){
+  _ikHipPos=new THREE.Vector3();
+});
+let _ikFootPos;
+window.__whenThreeReady(function(){
+  _ikFootPos=new THREE.Vector3();
+});
+let _ikFwd;
+window.__whenThreeReady(function(){
+  _ikFwd=new THREE.Vector3();
+});
+let _ikUp;
+window.__whenThreeReady(function(){
+  _ikUp=new THREE.Vector3(0,1,0);
+});
 
 function _fbxBoneMap(){
   // Every clip shares this exact bone-name set (confirmed across all
