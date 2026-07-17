@@ -4969,7 +4969,12 @@ function _getGLBLoader(){ if(!_glbLoader&&THREE.GLTFLoader)_glbLoader=new THREE.
 // body, planet-surface props as more passives) — each entry is just
 // {obj, name}; the sweep logic lives in updateBirdTemple's frame step.
 const RIGID={passive:[],playerRadius:0.7,_playerPrev:null,
-  _ray:new THREE.Raycaster(),_tmpV1:new THREE.Vector3(),_tmpV2:new THREE.Vector3()};
+  _ray:null,_tmpV1:null,_tmpV2:null};
+window.__whenThreeReady(function(){
+  RIGID._ray=new THREE.Raycaster();
+  RIGID._tmpV1=new THREE.Vector3();
+  RIGID._tmpV2=new THREE.Vector3();
+});
 function registerPassiveCollider(obj,name){
   RIGID.passive.push({obj,name:name||obj.name||'collider'});
   console.log('[Rigid] passive collider registered:',name,'(total',RIGID.passive.length+')');
