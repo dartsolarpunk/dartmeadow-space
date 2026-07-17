@@ -3328,6 +3328,106 @@ let _charShadowLight=null;
 let _builtBoardTemplate=null; // last template key that was built into boardFlight
 let _landTargetBody=null,_approachBestDist=Infinity,_approachBestBody=null;
 let flightAnimId,flightTime=0,celestialBodies=[],sunMesh,earthMesh;
+let oortCloudGroup=null;
+
+// ── Oort cloud — a sparse debris shell (rocks + a scattering of icy
+// "comet" points) around the outskirts of a system, at the edge of its
+// gravitational influence, seeded per-system so Sol and every
+// procedurally-generated system reached via fast travel (rebuildFlightForSystem)
+// each get their own distinct, but deterministic/repeatable, cloud —
+// re-entering the same system looks the same each time rather than
+// re-rolling randomly. "Randomly-dense" per the original ask: density
+// isn't uniform across the shell — a handful of random cluster centers
+// (also seeded) bias local density up near themselves via rejection
+// sampling, so the cloud reads as clumpy/uneven rather than a perfectly
+// even sprinkle, same as real Oort-cloud renderings.
+// Self-cleaning: removes and disposes any previous cloud before building
+// a new one, since this runs every time buildSolarSystem() or
+// rebuildFlightForSystem() runs (including re-entering Sol after a trip
+// elsewhere) — without this it would silently duplicate on every return
+// trip, the same class of leak the pre-existing asteroid belt/comets
+// already have (not fixed here — out of scope for this pass — but not
+// repeated either).
+function buildOortCloud(opts){
+  if(oortCloudGroup){
+    if(oortCloudGroup.parent)oortCloudGroup.parent.remove(oortCloudGroup);
+    oortCloudGroup.traverse(o=>{
+      if(o.geometry)o.geometry.dispose();
+      if(o.material)(Array.isArray(o.material)?o.material:[o.material]).forEach(m=>m.dispose());
+    });
+    oortCloudGroup=null;
+  }
+  const {innerR,outerR,seedKey='oort',count=850}=opts||{};
+  if(!(outerR>innerR)||count<=0)return null; // degenerate system (e.g. 0-body procedural edge case) - skip rather than build garbage
+
+  const rand=seedRand(hashStr(seedKey));
+  const grp=new THREE.Group();grp.name='OortCloud';
+
+  // A few random cluster centers on the unit sphere bias local density —
+  // this is what makes the cloud read as clumpy rather than uniform.
+  const clusterCount=3+Math.floor(rand()*3);
+  const clusters=[];
+  for(let i=0;i<clusterCount;i++){
+    const u=rand()*2-1,th=rand()*Math.PI*2,sr=Math.sqrt(Math.max(0,1-u*u));
+    clusters.push(new THREE.Vector3(sr*Math.cos(th),u,sr*Math.sin(th)));
+  }
+  const _dir=new THREE.Vector3();
+  function densityAt(dir){
+    let d=0.3; // base density everywhere, so it never reads as fully empty
+    for(const c of clusters)d+=Math.max(0,dir.dot(c)-0.5)*1.7;
+    return d;
+  }
+
+  // Rocks/boulders — cheap low-poly instances, one draw call regardless of count.
+  const rockGeo=new THREE.IcosahedronGeometry(1,0);
+  const rockMat=new THREE.MeshStandardMaterial({color:0x6d6558,roughness:0.95,metalness:0.04,flatShading:true});
+  const inst=new THREE.InstancedMesh(rockGeo,rockMat,count);
+  const pos=new THREE.Vector3(),quat=new THREE.Quaternion(),scl=new THREE.Vector3(),mtx=new THREE.Matrix4();
+  let placed=0,attempts=0;
+  while(placed<count&&attempts<count*4){
+    attempts++;
+    const u=rand()*2-1,th=rand()*Math.PI*2,sr=Math.sqrt(Math.max(0,1-u*u));
+    _dir.set(sr*Math.cos(th),u*0.55,sr*Math.sin(th)).normalize(); // slight flatten toward the ecliptic, still reads as a shell not a disc
+    if(rand()>densityAt(_dir))continue; // rejection sampling -> uneven/clumpy density
+    const r=innerR+rand()*(outerR-innerR);
+    pos.copy(_dir).multiplyScalar(r);
+    const sc=0.6+rand()*2.8; // pebble to small-boulder size variance
+    scl.set(sc,sc*(0.65+rand()*0.7),sc*(0.85+rand()*0.4));
+    quat.setFromEuler(new THREE.Euler(rand()*Math.PI*2,rand()*Math.PI*2,rand()*Math.PI*2));
+    mtx.compose(pos,quat,scl);
+    inst.setMatrixAt(placed,mtx);
+    placed++;
+  }
+  inst.count=placed; // fewer than requested if density rejection ran out of attempts - fine, still non-empty
+  inst.instanceMatrix.needsUpdate=true;
+  grp.add(inst);
+
+  // A sparse scattering of brighter icy "comet" points, same density field
+  // so they cluster in the same regions as the rocks rather than looking
+  // like an unrelated second system.
+  const cometCount=Math.max(20,Math.round(count*0.06));
+  const cp=new Float32Array(cometCount*3),cc=new Float32Array(cometCount*3);
+  let cn=0,cAttempts=0;
+  while(cn<cometCount&&cAttempts<cometCount*6){
+    cAttempts++;
+    const u=rand()*2-1,th=rand()*Math.PI*2,sr=Math.sqrt(Math.max(0,1-u*u));
+    _dir.set(sr*Math.cos(th),u*0.55,sr*Math.sin(th)).normalize();
+    if(rand()>densityAt(_dir))continue;
+    const r=innerR+rand()*(outerR-innerR);
+    cp[cn*3]=_dir.x*r;cp[cn*3+1]=_dir.y*r;cp[cn*3+2]=_dir.z*r;
+    const b=0.75+rand()*0.25;
+    cc[cn*3]=0.72*b;cc[cn*3+1]=0.84*b;cc[cn*3+2]=1.0*b; // icy blue-white, distinct from the warm rocky belt color
+    cn++;
+  }
+  const cg=new THREE.BufferGeometry();
+  cg.setAttribute('position',new THREE.BufferAttribute(cp.subarray(0,cn*3),3));
+  cg.setAttribute('color',new THREE.BufferAttribute(cc.subarray(0,cn*3),3));
+  grp.add(new THREE.Points(cg,new THREE.PointsMaterial({size:1.6,vertexColors:true,transparent:true,opacity:0.9,sizeAttenuation:true,blending:THREE.AdditiveBlending,depthWrite:false})));
+
+  flightScene.add(grp);
+  oortCloudGroup=grp;
+  return grp;
+}
 let _followInit=false;
 let dartActive=false,dartTimer=0;
 const DESTINATIONS=[];
@@ -4005,6 +4105,11 @@ async function buildSolarSystem(){
     cg.position.set(rnd(-AU*10,AU*10),rnd(-20,20),rnd(-AU*10,AU*10));
     flightScene.add(cg);
   }
+
+  // Oort cloud — well beyond Neptune (AU*30.069 ≈ 842 units), at the
+  // edge of Sol's gravitational influence. Fixed seedKey ('sol') so it
+  // looks the same every time you return here, not re-rolled per visit.
+  buildOortCloud({innerR:AU*46,outerR:AU*72,seedKey:'sol',count:900});
 
   // ── Bird Temple (first slice) ──────────────────────────────────────
   // Full spec is a ship that autonomously roams the whole galaxy, can be
@@ -7703,6 +7808,12 @@ async function rebuildFlightForSystem(system){
     celestialBodies.push({mesh:m,name:bd.name,type:bd.type,temp:Math.round(100+Math.random()*400)+' K',
       orbitR:oR,orbitSpd:0.002/(i+1),angle:ang,landable:bd.landable,gravity:bd.gravity});
   });
+  // Oort cloud, sized beyond this system's outermost body (same AU*(1+i*1.4)
+  // spacing formula used just above) and seeded by the system's own name so
+  // it's distinct per star but identical on repeat visits, matching Sol's cloud.
+  const outermostR=AU*(1+(system.bodies.length-1)*1.4);
+  buildOortCloud({innerR:outermostR*1.5,outerR:outermostR*2.3,seedKey:system.name,count:700});
+
   // rebuild destination bar from this system's bodies
   DESTINATIONS.length=0;
   system.bodies.forEach((bd,i)=>{
