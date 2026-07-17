@@ -2317,8 +2317,7 @@ async function initStartBtnTurntable(){
   // synchronously on the very first line that touched the renderer,
   // before ever reaching the GLB load below. Same async .init()
   // requirement as flightRenderer/surfRenderer.
-  sgRenderer=new THREE.WebGPURenderer({antialias:true,alpha:true,powerPreference:'low-power'});
-  await sgRenderer.init();
+  sgRenderer=new THREE.WebGLRenderer({antialias:true,alpha:true,powerPreference:'low-power'});
   sgRenderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
   sgRenderer.setSize(w,h);
   sgRenderer.setClearColor(0x000000,0);
@@ -2599,8 +2598,7 @@ async function initBuilderScene(){
   // WebGLRenderer at all. This is exactly why the skyboard builder
   // scene never rendered — threw synchronously before the board/
   // character/lighting setup below ever ran.
-  builderRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:true,alpha:false});
-  await builderRenderer.init();
+  builderRenderer=new THREE.WebGLRenderer({canvas:cv,antialias:true,alpha:false});
   builderRenderer.setPixelRatio(Math.min(devicePixelRatio,2));
   builderRenderer.toneMapping=THREE.ACESFilmicToneMapping;builderRenderer.toneMappingExposure=1.1;
   builderScene=new THREE.Scene();builderScene.background=new THREE.Color(0x000308);
@@ -3537,8 +3535,7 @@ async function initFlightScene(){
   // an awaited .init(), not just WebGLRenderer imported from the new path.
   // Needed here specifically so buildSolarSystem() below can run compute
   // shaders for the marching-cubes planet terrain instead of flat spheres.
-  flightRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:!GFX.isMobile,alpha:false,powerPreference:'high-performance',logarithmicDepthBuffer:true});
-  await flightRenderer.init();
+  flightRenderer=new THREE.WebGLRenderer({canvas:cv,antialias:!GFX.isMobile,alpha:false,powerPreference:'high-performance',logarithmicDepthBuffer:true});
   flightRenderer.setPixelRatio(effectivePixelRatio());
   flightRenderer.setClearColor(0x000206,1);
   flightRenderer.setSize(W,H);
@@ -6938,8 +6935,7 @@ async function initGalaxyMapScene(){
   cv.width=W;cv.height=H;
   // Same 'three/webgpu' has-no-WebGLRenderer bug as the menu turntable
   // and builder scene above — this is what kept the galaxy map blank.
-  gmRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:true,alpha:false,logarithmicDepthBuffer:true});
-  await gmRenderer.init();
+  gmRenderer=new THREE.WebGLRenderer({canvas:cv,antialias:true,alpha:false,logarithmicDepthBuffer:true});
   gmRenderer.setPixelRatio(Math.min(devicePixelRatio,2));gmRenderer.setSize(W,H);
   gmRenderer.setClearColor(0x000206,1);
   gmScene=new THREE.Scene();
@@ -8640,8 +8636,7 @@ async function openOrbitApproach(body){
   // pass — this is what was leaving the ORBIT cockpit view's viewport
   // black behind a fully-functional HUD (the HUD is plain HTML/CSS,
   // unaffected; only the actual THREE scene never rendered).
-  orbitRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:!GFX.isMobile});
-  await orbitRenderer.init();
+  orbitRenderer=new THREE.WebGLRenderer({canvas:cv,antialias:!GFX.isMobile});
   orbitRenderer.setPixelRatio(effectivePixelRatio());orbitRenderer.setSize(W,H);
   orbitRenderer.outputColorSpace=THREE.SRGBColorSpace;
   orbitScene=new THREE.Scene();
@@ -8867,8 +8862,7 @@ async function enterAtmosphericFlight(body,site){
   $('atmo-title').textContent='ATMOSPHERIC FLIGHT — '+body.name.toUpperCase();
   const cv=$('atmo-canvas');const W=window.innerWidth,H=window.innerHeight;cv.width=W;cv.height=H;
   // Same 'three/webgpu' has-no-WebGLRenderer bug as elsewhere in this pass.
-  atmoRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:!GFX.isMobile});
-  await atmoRenderer.init();
+  atmoRenderer=new THREE.WebGLRenderer({canvas:cv,antialias:!GFX.isMobile});
   atmoRenderer.setPixelRatio(effectivePixelRatio());atmoRenderer.setSize(W,H);
   atmoRenderer.outputColorSpace=THREE.SRGBColorSpace;
   atmoScene=new THREE.Scene();
@@ -10136,8 +10130,7 @@ async function enterSurface(body,site){
   // of scene/light/terrain setup below is unchanged and simply now runs
   // after that await resolves, since the rest of this function's code
   // sequence doesn't need restructuring to work inside an async function.
-  surfRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:!GFX.isMobile,powerPreference:'high-performance'});
-  await surfRenderer.init();
+  surfRenderer=new THREE.WebGLRenderer({canvas:cv,antialias:!GFX.isMobile,powerPreference:'high-performance'});
   surfRenderer.setPixelRatio(effectivePixelRatio());
   surfRenderer.setSize(W,H);
   surfRenderer.toneMapping=THREE.ACESFilmicToneMapping;surfRenderer.toneMappingExposure=1.05;
