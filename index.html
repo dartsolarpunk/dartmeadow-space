@@ -3551,7 +3551,10 @@ async function initFlightScene(){
   try{buildVolumetricDust();}catch(e){console.warn('dust:',e);}
   try{initMinimapGestures();}catch(e){console.warn('mm gestures:',e);}
   try{buildDistantStarSystems();}catch(e){console.warn('systems:',e);}
+  const _solarT0 = performance.now();
+  console.log('[TIMING] buildSolarSystem starting at', _solarT0.toFixed(0), 'ms');
   try{await buildSolarSystem();}catch(e){console.warn('solar:',e);}
+  console.log('[TIMING] buildSolarSystem finished after', (performance.now()-_solarT0).toFixed(0), 'ms');
   try{applyProceduralTextures();}catch(e){console.warn('tex:',e);}
   try{buildFlightBoard();}catch(e){console.warn('board:',e);}
   try{addSunLight();}catch(e){console.warn('sun:',e);}
@@ -4083,6 +4086,7 @@ async function buildSolarSystem(){
   // Sequential (not parallel) so multiple simultaneous compute dispatches
   // don't contend for GPU resources building a whole system at once.
   for(const p of planets){
+    const _pT0 = performance.now();
     const seedVal = p.name.length*7+3; // same seeding convention already used for the old canvas-texture look, kept for continuity
     let group;
     try{
@@ -4107,6 +4111,7 @@ async function buildSolarSystem(){
       group.add(new THREE.Mesh(new THREE.SphereGeometry(p.r,24,24), new THREE.MeshStandardMaterial({color:p.col||0x888888,roughness:.85})));
     }
     const mesh = group; // keep the name "mesh" for the code below, unchanged from before
+    console.log('[TIMING]', p.name, 'built in', (performance.now()-_pT0).toFixed(0), 'ms');
 
     // Orbit ring — TorusGeometry defaults to lying flat in the XY plane, but
     // planets orbit in world XZ (see updateBodies: x=cos(angle)*oR, z=sin(angle)*oR,
