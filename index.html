@@ -5855,7 +5855,9 @@ function buildFlightBoard(){
   // every 400ms instead, up to 10s, until it actually confirms she's
   // mounted.
   (async()=>{
+    console.log('[TIMING] character-mount IIFE starting at', performance.now().toFixed(0), 'ms, CHAR.loaded:', CHAR.loaded, 'CHAR.loading:', CHAR.loading);
     if(!CHAR.loaded && !CHAR.loading){ try{ await loadCharacterAssets(); }catch(e){ console.error('Character load failed:',e); try{toast('⚠ Character failed to load: '+(e.message||e),4000);}catch(_){} } }
+    console.log('[TIMING] character load attempt finished at', performance.now().toFixed(0), 'ms, CHAR.loaded:', CHAR.loaded);
     if(CHAR.loaded && CHAR.root && boardFlight) mountSkyboard(boardFlight);
     if(!CHAR.mounted){
       console.warn('Character not mounted after first attempt (loaded:',CHAR.loaded,') — boardFlight was',boardFlight,'— polling every 400ms until mounted (up to 20s), retrying the load itself too if it failed.');
