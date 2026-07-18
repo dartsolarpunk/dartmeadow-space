@@ -8382,7 +8382,149 @@ function buildFlightGalaxyBand(){
 
 // ── 3. MULTI-STAR DISTANT SYSTEMS (visible as systems you can fly to) ─
 let distantSystems=[];
+/* Real star surface — same general TSL approach as the gas giant bands
+   (turbulent, animated noise) but tuned for a star: much brighter,
+   emissive, granulation-scale turbulence rather than banding, and a
+   layered corona/flare instead of an atmosphere shell. Reused for every
+   star in the seeded field below, not just the Sun. */
+function buildProceduralStarMesh(radius, seedVal, starColor){
+  const group = new THREE.Group();
+  if(!(flightRenderer instanceof THREE.WebGPURenderer)){
+    const fallback=new THREE.Mesh(new THREE.SphereGeometry(radius,20,20),new THREE.MeshBasicMaterial({color:starColor}));
+    group.add(fallback);
+    return group;
+  }
+  const mat = new THREE.MeshBasicNodeMaterial();
+  const baseCol = uniform(new THREE.Color(starColor));
+  const seedU = uniform(seedVal);
+  mat.colorNode = Fn(()=>{
+    const p = positionWorld.mul(3.0).add(vec3(seedU, seedU.mul(1.7), seedU.mul(0.6)));
+    // Two turbulence layers at different scales/speeds — coarse slow
+    // convection cells plus fine fast granulation, added together, same
+    // layering idea as the water waves elsewhere in this file.
+    const coarse = mx_fractal_noise_float(p.add(vec3(time.mul(0.04),0,0)), 3, 2.0, 0.5);
+    const fine = mx_fractal_noise_float(p.mul(4.0).add(vec3(0,time.mul(0.15),0)), 3, 2.0, 0.5);
+    const turb = coarse.mul(0.6).add(fine.mul(0.4)).mul(0.5).add(0.5);
+    const bright = baseCol.mul(float(0.75).add(turb.mul(0.6)));
+    // Limb brightening fudge — edges (grazing view angle) read slightly
+    // hotter/whiter, a cheap stand-in for real limb darkening's opposite
+    // (works fine visually for a small, distant sprite-scale star).
+    const viewDir = positionWorld.sub(cameraPosition).normalize();
+    const rim = float(1.0).sub(normalWorld.dot(viewDir.negate()).abs()).pow(3.0);
+    return mix(bright, vec3(1,1,1), rim.mul(0.3));
+  })();
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(radius,24,20), mat);
+  group.add(mesh);
+  // Layered glow sprites for the corona — same makeGlowSprite/makeCircleTex
+  // technique already used everywhere else in this file for cheap additive
+  // glow, not a new dependency.
+  try{
+    const hex = '#'+new THREE.Color(starColor).getHexString();
+    const gt = makeCircleTex(64, hex, 1);
+    const spr1 = new THREE.Sprite(new THREE.SpriteMaterial({map:gt,color:starColor,transparent:true,opacity:0.5,blending:THREE.AdditiveBlending,depthWrite:false}));
+    spr1.scale.set(radius*6, radius*6, 1); group.add(spr1);
+    const spr2 = new THREE.Sprite(new THREE.SpriteMaterial({map:gt,color:starColor,transparent:true,opacity:0.22,blending:THREE.AdditiveBlending,depthWrite:false}));
+    spr2.scale.set(radius*12, radius*12, 1); group.add(spr2);
+  }catch(e){}
+  return group;
+}
+/* Real stellar classification, simplified to what's visually/gameplay
+   relevant: color + relative size/brightness by class, weighted so blue
+   giants are rare and red/orange dwarfs are common, matching the real
+   universe's actual stellar population distribution (most stars are
+   small and dim, not blue giants). */
+const STAR_CLASSES = [
+  {name:'O/B Blue Giant',  col:0x9db8ff, rMul:2.6, weight:2},
+  {name:'A White',         col:0xf0f4ff, rMul:1.5, weight:6},
+  {name:'F/G Yellow-White',col:0xfff2d0, rMul:1.1, weight:16},
+  {name:'K Orange',        col:0xffc880, rMul:0.85,weight:24},
+  {name:'M Red Dwarf',     col:0xff8860, rMul:0.55,weight:38},
+  {name:'Red Giant',       col:0xff6a4a, rMul:3.2, weight:3},
+];
+function _pickStarClass(rand){
+  const totalW = STAR_CLASSES.reduce((s,c)=>s+c.weight,0);
+  let r = rand()*totalW;
+  for(const c of STAR_CLASSES){ if(r<c.weight) return c; r-=c.weight; }
+  return STAR_CLASSES[STAR_CLASSES.length-1];
+}
+/* Seeded, arm-aligned star field — uses the EXACT same spiral-arm formula
+   as buildFlightGalaxyBand's particle backdrop (arm winding, log-spiral
+   angle, gaussian scatter) so real, visitable stars line up with the
+   particle field they're embedded in rather than floating independently
+   of it. Deterministic (seedRand, not Math.random) so the same stars
+   appear in the same places every session, not re-randomized each load -
+   a real, persistent galaxy rather than a decorative one. Only a
+   generous "local cluster" near the home system gets built with real
+   geometry; the rest of the galaxy stays the existing cheap particle
+   backdrop until a proper LOD/streaming pass extends this further. */
+function generateSeededStarField(count, seed){
+  const rand = seedRand(seed);
+  const arms=[{base:0,wind:2.4},{base:Math.PI,wind:2.4},{base:Math.PI*0.5,wind:2.3},{base:Math.PI*1.5,wind:2.3}];
+  const RG=42000; // must match buildFlightGalaxyBand's RG for alignment
+  const stars=[];
+  for(let i=0;i<count;i++){
+    const arm = arms[Math.floor(rand()*arms.length)];
+    const t = Math.pow(rand(), 0.6);
+    const r = t*RG;
+    // Keep generated stars within a reasonable flight range of the home
+    // system rather than scattered across the full 42,000-unit galaxy -
+    // most of that radius is far beyond any realistic travel distance
+    // in a single session, so weight toward the inner-to-mid galaxy.
+    if(r>9000) { i--; continue; }
+    const gAng = Math.log(r/600+1)*arm.wind+arm.base+(rand()-0.5)*(0.12+t*0.4)*2;
+    const scatter = r*0.04+300;
+    const px = Math.cos(gAng)*r+(rand()-0.5)*scatter;
+    const pz = Math.sin(gAng)*r+(rand()-0.5)*scatter;
+    const py = (rand()-0.5)*2*(900*(1-t*0.5));
+    const cls = _pickStarClass(rand);
+    const hasPlanets = rand()<0.55; // a bit over half are seeded systems, rest are rogue
+    stars.push({
+      pos:[px,py,pz], cls, radius: (0.9+rand()*0.6)*cls.rMul,
+      hasPlanets, planetCount: hasPlanets ? 1+Math.floor(rand()*4) : 0,
+      seed: Math.floor(rand()*100000),
+      name: hasPlanets ? ('System '+hashStr(px+'_'+pz).toString(36).slice(0,5).toUpperCase())
+                        : ('Rogue Star '+hashStr(px+'_'+pz+'r').toString(36).slice(0,4).toUpperCase()),
+    });
+  }
+  return stars;
+}
 function buildDistantStarSystems(){
+  // Deterministic seed so the same field generates every session — not
+  // re-randomized on each load/rebuild.
+  const STAR_FIELD = generateSeededStarField(60, 918273);
+  STAR_FIELD.forEach(s=>{
+    const grp = buildProceduralStarMesh(s.radius, s.seed, s.cls.col);
+    grp.position.set(s.pos[0], s.pos[1], s.pos[2]);
+    const sysPlanets=[];
+    if(s.hasPlanets){
+      const rand = seedRand(s.seed);
+      for(let i=0;i<s.planetCount;i++){
+        const pr=0.3+rand()*0.6;
+        const types=['Rocky','Gas Giant','Habitable','Ice Giant'];
+        const ty=types[Math.floor(rand()*types.length)];
+        const pcol=ty==='Habitable'?0x3388cc:ty==='Gas Giant'?0xcc9955:ty==='Ice Giant'?0x88ddee:0xaa7755;
+        const pm=new THREE.Mesh(new THREE.SphereGeometry(pr,16,16),
+          new THREE.MeshStandardMaterial({color:pcol,roughness:.9}));
+        const oR=s.radius*4+i*3+rand()*1.5;
+        pm.userData={oR,ang:rand()*6.28,spd:0.0006/(i+1),type:ty};
+        grp.add(pm);
+        sysPlanets.push({mesh:pm,type:ty});
+      }
+    }
+    // real light so any planets are actually lit, matching the old system
+    const pl=new THREE.PointLight(s.cls.col,1.1,s.radius*400);grp.add(pl);
+    flightScene.add(grp);
+    // label sprite — only meant to be legible up close (crosshair-
+    // triggered popup elsewhere handles the "don't clutter with labels
+    // at a distance" requirement); kept simple/cheap here.
+    const lc=document.createElement('canvas');lc.width=256;lc.height=40;const lcx=lc.getContext('2d');
+    lcx.font='bold 18px Orbitron,monospace';lcx.fillStyle='rgba(200,220,255,0.85)';lcx.fillText(s.name,4,26);
+    const ls=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(lc),transparent:true,depthWrite:false}));
+    ls.scale.set(s.radius*20,s.radius*3,1);ls.position.set(s.pos[0],s.pos[1]+s.radius*3,s.pos[2]);flightScene.add(ls);
+    distantSystems.push({group:grp,planets:sysPlanets,name:s.name,pos:new THREE.Vector3(...s.pos),labelSprite:ls,starClass:s.cls.name,rogue:!s.hasPlanets});
+  });
+}
+function buildDistantStarSystems_OLD(){
   // A handful of named star systems scattered in mid-field — each a real
   // light source with planets you can approach. Far enough to read as "stars".
   const defs=[
