@@ -5864,7 +5864,7 @@ function buildFlightBoard(){
       let tries=0;
       const poll=setInterval(async()=>{
         tries++;
-        if(CHAR.mounted || tries>50){
+        if(CHAR.mounted || tries>550){ // ~220s cap — long enough for at least one full retry cycle (both loads can now take up to 90s each before timing out)
           clearInterval(poll);
           if(!CHAR.mounted) console.error('Character still not mounted after 20s of retries — boardFlight:',boardFlight,'CHAR.root:',CHAR.root,'CHAR.loaded:',CHAR.loaded,'CHAR.loading:',CHAR.loading);
           return;
@@ -9615,7 +9615,7 @@ async function loadCharacterAssets(){
   const gltf = await Promise.race([
     new Promise((res,rej)=>gltfLoader.load(CHAR_ASSET_BASE+CHAR_FILES.mesh, res,
       xhr=>{ if(xhr.lengthComputable) _loadStep('charMesh', xhr.loaded/xhr.total); }, rej)),
-    new Promise((_,rej)=>setTimeout(()=>rej(new Error('Character GLB load timed out after 45s — likely GPU contention with planet/terrain compute work')), 45000))
+    new Promise((_,rej)=>setTimeout(()=>rej(new Error('Character GLB load timed out after 90s')), 90000))
   ]).catch(e=>{ CHAR.loading=false; throw e; });
   _loadStep('charMesh', 1);
   CHAR.root = gltf.scene;
@@ -9678,7 +9678,7 @@ async function loadCharacterAssets(){
       gltfLoader.load(CHAR_ASSET_BASE+CHAR_FILES.animSrc, res,
         xhr=>{ if(xhr.lengthComputable) _loadStep('charAnims', xhr.loaded/xhr.total*0.9); }, rej);
     }),
-    new Promise((_,rej)=>setTimeout(()=>rej(new Error('Character animation GLB load timed out after 45s')), 45000))
+    new Promise((_,rej)=>setTimeout(()=>rej(new Error('Character animation GLB load timed out after 90s')), 90000))
   ]).catch(e=>{ CHAR.loading=false; throw e; });
   const findClip = n => animGltf.animations.find(a=>a.name===n) || null;
   const walkClip = findClip(CHAR_CLIP_NAMES.walk);
