@@ -9406,10 +9406,17 @@ async function loadCharacterAssets(){
   // CHAR_CLIP_NAMES comments above) — one load instead of five separate
   // FBX fetches, and every clip verified against real bone-position data
   // before switching to this file.
-  const animGltf = await new Promise((res,rej)=>{
-    gltfLoader.load(CHAR_ASSET_BASE+CHAR_FILES.animSrc, res,
-      xhr=>{ if(xhr.lengthComputable) _loadStep('charAnims', xhr.loaded/xhr.total*0.9); }, rej);
-  });
+  // Real bug found via live testing: this is a SEPARATE await from the
+  // mesh load above, with its own timeout needed — fixing only the first
+  // load's hang wasn't enough, since this second ~8MB fetch could (and
+  // did, confirmed live) hang independently of it.
+  const animGltf = await Promise.race([
+    new Promise((res,rej)=>{
+      gltfLoader.load(CHAR_ASSET_BASE+CHAR_FILES.animSrc, res,
+        xhr=>{ if(xhr.lengthComputable) _loadStep('charAnims', xhr.loaded/xhr.total*0.9); }, rej);
+    }),
+    new Promise((_,rej)=>setTimeout(()=>rej(new Error('Character animation GLB load timed out after 25s')), 25000))
+  ]).catch(e=>{ CHAR.loading=false; throw e; });
   const findClip = n => animGltf.animations.find(a=>a.name===n) || null;
   const walkClip = findClip(CHAR_CLIP_NAMES.walk);
   const runClip = findClip(CHAR_CLIP_NAMES.run);
