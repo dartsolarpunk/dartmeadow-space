@@ -3962,6 +3962,55 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
 }
 
 
+/* Gas/ice giants get their own builder, not buildProceduralPlanetMesh —
+   they have no solid surface at all, so marching-cubes terrain extraction
+   doesn't apply. Real animated cloud bands instead: latitude-based
+   striping, distorted by scrolling FBM noise (so band edges swirl and
+   turbulate rather than sitting as perfectly straight lines), with a
+   per-planet color palette (warm orange/cream/red for Jupiter, pale
+   gold/tan for Saturn, cyan/teal for the ice giants) and a slow second
+   noise layer specifically to read as a moving storm system (Jupiter's
+   Great Red Spot analog) rather than static bands. Same TSL techniques
+   already proven working in the water/atmosphere code above (mx_fractal_
+   noise_float, time-driven scrolling, MeshStandardNodeMaterial.colorNode). */
+function buildGasGiantMesh(radius, palette, hasStorm){
+  const group = new THREE.Group();
+  if(!(flightRenderer instanceof THREE.WebGPURenderer)){
+    const fallback=new THREE.Mesh(new THREE.SphereGeometry(radius,32,32),new THREE.MeshStandardMaterial({color:palette[1],roughness:.8}));
+    group.add(fallback);
+    return group;
+  }
+  const mat = new THREE.MeshStandardNodeMaterial({roughness:0.75,metalness:0.0});
+  const c0=uniform(new THREE.Color(palette[0])), c1=uniform(new THREE.Color(palette[1])),
+        c2=uniform(new THREE.Color(palette[2])), c3=uniform(new THREE.Color(palette[3]));
+  mat.colorNode = Fn(()=>{
+    const p = normalize(positionWorld);
+    const lat = p.y.asin(); // -PI/2..PI/2
+    // Scrolling turbulence distorts the latitude input before banding,
+    // so band boundaries swirl/wobble over time instead of sitting still.
+    const swirl = mx_fractal_noise_float(vec3(p.x.mul(3.0).add(time.mul(0.02)), p.y.mul(3.0), p.z.mul(3.0).add(time.mul(0.015))), 4, 2.0, 0.5);
+    const distortedLat = lat.add(swirl.mul(0.35));
+    const bandT = distortedLat.mul(6.0).sin().mul(0.5).add(0.5); // 0..1 banding pattern
+    let col = mix(c0, c1, smoothstep(0.0,0.5,bandT));
+    col = mix(col, c2, smoothstep(0.45,0.85,bandT));
+    col = mix(col, c3, smoothstep(0.8,1.0,bandT));
+    if(hasStorm){
+      // A single slow-drifting turbulent blob standing in for a Great
+      // Red Spot-style storm — separate, lower-frequency noise so it
+      // reads as one coherent feature rather than more banding noise.
+      const stormCenter = vec3(0.3, -0.15, 0.85);
+      const drift = time.mul(0.008);
+      const sp = p.sub(vec3(stormCenter.x.add(drift.sin().mul(0.15)), stormCenter.y, stormCenter.z));
+      const stormMask = float(1.0).sub(smoothstep(0.0, 0.35, sp.length())).mul(
+        mx_fractal_noise_float(p.mul(5.0).add(vec3(time.mul(0.03),0,0)),3,2.0,0.5).mul(0.3).add(0.85));
+      col = mix(col, vec3(0.85,0.35,0.22), stormMask.clamp(0.0,1.0));
+    }
+    return col;
+  })();
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(radius,48,32), mat);
+  group.add(mesh);
+  return group;
+}
 async function buildSolarSystem(){
   celestialBodies=[];
 
@@ -4022,13 +4071,27 @@ async function buildSolarSystem(){
   });
 
 
+  // Per-planet color palettes for the gas/ice giant band shader —
+  // [deep band, base band, highlight band, pole band], loosely matched
+  // to each real planet's actual banding colors.
+  const GIANT_PALETTES = {
+    'Jupiter': [0x8a5a3a, 0xd9b280, 0xf0e0c0, 0xc47a52],
+    'Saturn':  [0xb89968, 0xe8d3a0, 0xf5ecd0, 0xcfa96a],
+    'Uranus':  [0x2a7a82, 0x6fd0d8, 0xb8ecec, 0x3f9aa0],
+    'Neptune': [0x1a3a8a, 0x3560c0, 0x6a92e0, 0x2848a0],
+  };
   // Sequential (not parallel) so multiple simultaneous compute dispatches
   // don't contend for GPU resources building a whole system at once.
   for(const p of planets){
     const seedVal = p.name.length*7+3; // same seeding convention already used for the old canvas-texture look, kept for continuity
     let group;
     try{
-      group = await buildProceduralPlanetMesh(p.r, seedVal, p.col||0x888888, p.hasAtm);
+      if(p.type==='Gas Giant' || p.type==='Ice Giant'){
+        const palette = GIANT_PALETTES[p.name] || [p.col,p.col,p.col,p.col];
+        group = buildGasGiantMesh(p.r, palette, p.name==='Jupiter');
+      } else {
+        group = await buildProceduralPlanetMesh(p.r, seedVal, p.col||0x888888, p.hasAtm);
+      }
     }catch(e){
       // Real bug found while chasing 'still seeing the old planets' reports:
       // this loop had no per-iteration error handling, so if the GPU build
