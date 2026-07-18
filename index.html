@@ -3714,7 +3714,7 @@ function buildFlightNebulae(){
 }
 
 
-async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmosphere){
+async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmosphere, resolution){
   const group = new THREE.Group();
   if(!(flightRenderer instanceof THREE.WebGPURenderer)){
     // Fallback so a body still exists (as a plain sphere) if this device
@@ -3725,7 +3725,7 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
     return group;
   }
   const seedU = uniform(seedVal);
-  const N=20, GRID=N+1, HALF=radius*1.3, CELL=(HALF*2)/N;
+  const N=resolution||10, GRID=N+1, HALF=radius*1.3, CELL=(HALF*2)/N;
   const numPoints=GRID*GRID*GRID, numCells=N*N*N, MAX_TRIS=5, maxVerts=numCells*MAX_TRIS*3;
 
   const densityBuf=new THREE.StorageInstancedBufferAttribute(numPoints,1);
