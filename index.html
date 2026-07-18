@@ -3485,6 +3485,21 @@ async function initFlightScene(){
   if(flightInited)return;flightInited=true;
   buildDestinations();buildDestinationUI();
 
+  // Fire off a plain network prefetch of both character files as early as
+  // possible — pure fetch(), no GPU/GLTFLoader parsing yet, just gets the
+  // bytes into the browser's HTTP cache while the GPU is busy with the
+  // planet compute work below. loadCharacterAssets() runs after
+  // buildSolarSystem() completes and does the real GLTFLoader.load() calls
+  // then, which should hit this warm cache instead of starting the
+  // network fetch cold at that point — real GPU contention (confirmed via
+  // live testing: her load legitimately took >25s under the planet-
+  // generation compute load) was only ever the GPU-side cost; this at
+  // least removes network latency from stacking on top of that.
+  try{
+    fetch(CHAR_ASSET_BASE+CHAR_FILES.mesh).catch(()=>{});
+    fetch(CHAR_ASSET_BASE+CHAR_FILES.animSrc).catch(()=>{});
+  }catch(e){}
+
   // Use window dimensions directly — container.offsetWidth can be 0 on first paint
   const W=window.innerWidth;
   const H=window.innerHeight;
@@ -9352,7 +9367,7 @@ async function loadCharacterAssets(){
   const gltf = await Promise.race([
     new Promise((res,rej)=>gltfLoader.load(CHAR_ASSET_BASE+CHAR_FILES.mesh, res,
       xhr=>{ if(xhr.lengthComputable) _loadStep('charMesh', xhr.loaded/xhr.total); }, rej)),
-    new Promise((_,rej)=>setTimeout(()=>rej(new Error('Character GLB load timed out after 25s — likely GPU contention with planet/terrain compute work')), 25000))
+    new Promise((_,rej)=>setTimeout(()=>rej(new Error('Character GLB load timed out after 45s — likely GPU contention with planet/terrain compute work')), 45000))
   ]).catch(e=>{ CHAR.loading=false; throw e; });
   _loadStep('charMesh', 1);
   CHAR.root = gltf.scene;
@@ -9415,7 +9430,7 @@ async function loadCharacterAssets(){
       gltfLoader.load(CHAR_ASSET_BASE+CHAR_FILES.animSrc, res,
         xhr=>{ if(xhr.lengthComputable) _loadStep('charAnims', xhr.loaded/xhr.total*0.9); }, rej);
     }),
-    new Promise((_,rej)=>setTimeout(()=>rej(new Error('Character animation GLB load timed out after 25s')), 25000))
+    new Promise((_,rej)=>setTimeout(()=>rej(new Error('Character animation GLB load timed out after 45s')), 45000))
   ]).catch(e=>{ CHAR.loading=false; throw e; });
   const findClip = n => animGltf.animations.find(a=>a.name===n) || null;
   const walkClip = findClip(CHAR_CLIP_NAMES.walk);
