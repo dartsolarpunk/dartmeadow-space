@@ -5776,15 +5776,18 @@ function buildFlightBoard(){
   (async()=>{
     if(!CHAR.loaded && !CHAR.loading){ try{ await loadCharacterAssets(); }catch(e){ console.error('Character load failed:',e); try{toast('⚠ Character failed to load: '+(e.message||e),4000);}catch(_){} } }
     if(CHAR.loaded && CHAR.root && boardFlight) mountSkyboard(boardFlight);
-    if(CHAR.loaded && !CHAR.mounted){
-      console.warn('Character loaded but did not mount on first attempt — boardFlight was',boardFlight,'— polling every 400ms until mounted (up to 10s).');
+    if(!CHAR.mounted){
+      console.warn('Character not mounted after first attempt (loaded:',CHAR.loaded,') — boardFlight was',boardFlight,'— polling every 400ms until mounted (up to 20s), retrying the load itself too if it failed.');
       let tries=0;
-      const poll=setInterval(()=>{
+      const poll=setInterval(async()=>{
         tries++;
-        if(CHAR.mounted || tries>25){
+        if(CHAR.mounted || tries>50){
           clearInterval(poll);
-          if(!CHAR.mounted) console.error('Character still not mounted after 10s of retries — boardFlight:',boardFlight,'CHAR.root:',CHAR.root);
+          if(!CHAR.mounted) console.error('Character still not mounted after 20s of retries — boardFlight:',boardFlight,'CHAR.root:',CHAR.root,'CHAR.loaded:',CHAR.loaded,'CHAR.loading:',CHAR.loading);
           return;
+        }
+        if(!CHAR.loaded && !CHAR.loading){
+          try{ await loadCharacterAssets(); }catch(e){ /* already logged inside loadCharacterAssets' own timeout path */ }
         }
         if(CHAR.loaded && CHAR.root && boardFlight) mountSkyboard(boardFlight);
       },400);
@@ -9244,12 +9247,18 @@ function _hideMiniLoader(){
 // length toward the nose — see mountSkyboard(). Every board template
 // (A, B, procedural) normalizes its nose to local +X, so this single
 // offset is applied to her own rotation at mount time and covers all of
-// them. CONFIRMED GOOD as of this value — she was at -PI/2 (correct
-// nose/tail orientation, chest-mirror already fixed separately via
-// scale.z), and turned 180° from there per direct confirmation that the
-// pose/animation looked right and this should be the locked-in default.
-// Do not change without an actual live screenshot.
-const CHAR_MOUNT_YAW_OFFSET = Math.PI/2;
+// History: she was previously at -PI/2 (confirmed correct nose/tail
+// orientation at the time), then got turned a full 180° from there to
+// reach +PI/2 (this file's previous value) when what was actually asked
+// for was a 90° correction, not 180° — that 180° turn overshot by 90°,
+// landing her facing perpendicular/chest-to-board instead of down the
+// board's length. Per direct, explicit correction: rotate 90° back left
+// (counterclockwise) from that +PI/2 state, landing at 0 — which also
+// checks out as exactly splitting the difference between the original
+// -PI/2 and the accidental +PI/2 overshoot, consistent with "should
+// have been a 90° turn, not 180°." Do not change without an actual live
+// screenshot or another direct, explicit correction like this one.
+const CHAR_MOUNT_YAW_OFFSET = 0;
 const CHAR_FILES = {
   // Switched to Autumn's own hand-sculpted GLB, personally rigged by
   // Justin (not AI-generated from a reference image like the earlier
@@ -9334,8 +9343,20 @@ async function loadCharacterAssets(){
   const gltfLoader = _getGLBLoader();
   const fbxLoader = new THREE.FBXLoader();
 
-  const gltf = await new Promise((res,rej)=>gltfLoader.load(CHAR_ASSET_BASE+CHAR_FILES.mesh, res,
-    xhr=>{ if(xhr.lengthComputable) _loadStep('charMesh', xhr.loaded/xhr.total); }, rej));
+  // Real bug found via live testing: this load can hang indefinitely
+  // (CHAR.loading stuck true forever, the promise below never resolving
+  // OR rejecting) — most likely GPU contention with the much heavier
+  // compute workload now used for marching-cubes planet generation
+  // (confirmed 'GPU stall due to ReadPixels' warnings appearing around
+  // the same time in the console). A silent infinite hang is worse than
+  // an error: CHAR.loading staying true forever blocks every retry path
+  // from ever trying again. Wrapping in a timeout turns that into a
+  // real, catchable rejection instead.
+  const gltf = await Promise.race([
+    new Promise((res,rej)=>gltfLoader.load(CHAR_ASSET_BASE+CHAR_FILES.mesh, res,
+      xhr=>{ if(xhr.lengthComputable) _loadStep('charMesh', xhr.loaded/xhr.total); }, rej)),
+    new Promise((_,rej)=>setTimeout(()=>rej(new Error('Character GLB load timed out after 25s — likely GPU contention with planet/terrain compute work')), 25000))
+  ]).catch(e=>{ CHAR.loading=false; throw e; });
   _loadStep('charMesh', 1);
   CHAR.root = gltf.scene;
   CHAR.root.traverse(o=>{
@@ -9939,10 +9960,9 @@ function mountSkyboard(boardObj){
   // Use the board's real measured anchor instead.
   const anchor = boardObj.userData.deckAnchor || {x:0,y:0,z:0.1};
   CHAR.root.position.set(anchor.x, anchor.y + (CHAR.feetOffset||0)*CHAR.scaleForBoard, anchor.z);
-  // -PI/2 is confirmed correct now — do not flip this again without an
-  // actual live screenshot; the last two rounds of "fixing" this were
-  // both wrong guesses. The remaining left/right issue is the mirror
-  // above, not this rotation.
+  // CHAR_MOUNT_YAW_OFFSET is now 0 per the latest explicit correction —
+  // see its declaration comment for the full history. Change that
+  // constant, not this line, if another correction is ever needed.
   CHAR.root.rotation.set(0, CHAR_MOUNT_YAW_OFFSET, 0);
   CHAR.root.visible = true;
   _loadStep('mounted', 1);
