@@ -4155,7 +4155,7 @@ async function buildSolarSystem(){
     mesh.position.set(Math.cos(p.angle)*p.oR, 0, Math.sin(p.angle)*p.oR);
     flightScene.add(mesh);
     if(p.name==='Earth')earthMesh=mesh;
-    celestialBodies.push({mesh,name:p.name,type:p.type,temp:p.temp,orbitR:p.oR,orbitSpd:p.spd,angle:p.angle});
+    celestialBodies.push({mesh,name:p.name,type:p.type,temp:p.temp,orbitR:p.oR,orbitSpd:p.spd,angle:p.angle,collisionRadius:p.r});
   }
 
   // Asteroid belt — between Mars (1.524 AU) and Jupiter (5.203 AU), centered ~2.7 AU
@@ -6483,6 +6483,42 @@ function updateAssistButtons(){
 }
 
 function updateFlight(dt){
+  // Bounding-sphere collision against celestial bodies, checked once per
+  // frame before any movement this frame is applied. This is a real gap
+  // found on review — flying through a planet had zero physical
+  // consequence before this. Deliberately NOT true mesh-level collision
+  // against the GPU-compute marching-cubes terrain: that geometry lives
+  // in GPU storage buffers, not something the CPU can cheaply raycast
+  // against every frame without an expensive readback. A bounding-sphere
+  // check (can't fly INSIDE a body's visual radius) is the practical,
+  // achievable version — matches how most space games handle large-body
+  // collision at flight scale, reserving pixel-accurate terrain collision
+  // for when you've actually landed and are walking (the existing
+  // surface-walk system already does real per-triangle raycasting there).
+  if(typeof celestialBodies!=='undefined' && celestialBodies && STATE.flight.pos){
+    const sp2=STATE.flight;
+    for(let i=0;i<celestialBodies.length;i++){
+      const b=celestialBodies[i];
+      if(!b.mesh || b.orbitR===0) continue; // skip the sun itself (orbitR=0) — landing/colliding with a star isn't meaningful here
+      const bodyR = b.collisionRadius || (b.mesh.userData && b.mesh.userData.collisionRadius) || 1.2;
+      const dx=sp2.pos.x-b.mesh.position.x, dy=sp2.pos.y-b.mesh.position.y, dz=sp2.pos.z-b.mesh.position.z;
+      const distSq=dx*dx+dy*dy+dz*dz;
+      const minDist=bodyR+0.15; // small clearance so the board doesn't visually clip the surface right at the boundary
+      if(distSq>0.0001 && distSq<minDist*minDist){
+        const dist=Math.sqrt(distSq), push=minDist-dist;
+        const nx=dx/dist, ny=dy/dist, nz=dz/dist;
+        sp2.pos.x+=nx*push; sp2.pos.y+=ny*push; sp2.pos.z+=nz*push;
+        // Kill velocity INTO the surface (dot product with inward normal)
+        // so she doesn't just get shoved back out and immediately re-
+        // penetrate next frame — same idea as sliding along a wall rather
+        // than bouncing off it.
+        if(sp2.vel){
+          const vDotN = sp2.vel.x*nx + sp2.vel.y*ny + sp2.vel.z*nz;
+          if(vDotN<0){ sp2.vel.x-=vDotN*nx; sp2.vel.y-=vDotN*ny; sp2.vel.z-=vDotN*nz; }
+        }
+      }
+    }
+  }
   if(SHIP_WALK.active){updateShipWalk(dt);return;}
   if(!boardFlight)return;
   const sp=STATE.flight;
