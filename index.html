@@ -3644,7 +3644,21 @@ function _startFlightLoop(){
     try{updateHUD();}catch(e){}
     try{updateCrosshairLabel();}catch(e){}
     try{drawMinimap();}catch(e){}
-    renderWithPostFX();
+    // Real fix for confirmed GPU-side contention during character loading
+    // (measured live: her load took 90-130s in the full game context vs
+    // ~12s in isolation) - each full render of the marching-cubes planets
+    // with their complex TSL atmosphere/water shaders is expensive
+    // synchronous main-thread work on this test environment's software
+    // rendering, competing directly with the async load's own GPU upload/
+    // parsing for the same main thread. Render every 4th frame instead of
+    // every frame while she's actively loading, freeing up real time for
+    // that work to actually complete rather than getting starved
+    // indefinitely - the scene is reduced-framerate, not frozen, during
+    // this specific window, and returns to full rate the moment she's
+    // loaded (checked fresh every frame, not a fixed timer).
+    if(!CHAR.loading || (_flightFrameCounter=(_flightFrameCounter||0)+1)%4===0){
+      renderWithPostFX();
+    }
   })();
 }
 
@@ -5920,7 +5934,7 @@ function buildFlightBoard(){
     console.log('[TIMING] character load attempt finished at', performance.now().toFixed(0), 'ms, CHAR.loaded:', CHAR.loaded);
     if(CHAR.loaded && CHAR.root && boardFlight) mountSkyboard(boardFlight);
     if(!CHAR.mounted){
-      console.warn('Character not mounted after first attempt (loaded:',CHAR.loaded,') — boardFlight was',boardFlight,'— polling every 400ms until mounted (up to 20s), retrying the load itself too if it failed.');
+      console.warn('Character not mounted after first attempt (loaded:',CHAR.loaded,') — boardFlight was',boardFlight,'— polling every 400ms until mounted (up to ~220s), retrying the load itself too if it failed.');
       let tries=0;
       const poll=setInterval(async()=>{
         tries++;
