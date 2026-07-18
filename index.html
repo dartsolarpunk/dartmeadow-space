@@ -131,13 +131,11 @@ if(location.search.indexOf('debug')!==-1){
    loading mechanism changed. */
 import * as THREE_NS from 'three/webgpu';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import * as TSL from 'three/tsl';
 
 const THREE = Object.assign({}, THREE_NS);
 window.THREE = THREE;
 THREE.GLTFLoader = GLTFLoader;
-THREE.FBXLoader = FBXLoader;
 THREE.TSL = TSL;
 Object.assign(window, TSL);
 
@@ -9341,7 +9339,6 @@ async function loadCharacterAssets(){
   if(CHAR.loaded || CHAR.loading) return;
   CHAR.loading = true;
   const gltfLoader = _getGLBLoader();
-  const fbxLoader = new THREE.FBXLoader();
 
   // Real bug found via live testing: this load can hang indefinitely
   // (CHAR.loading stuck true forever, the promise below never resolving
