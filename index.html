@@ -140,7 +140,7 @@ THREE.TSL = TSL;
 Object.assign(window, TSL);
 
 window.__THREE_READY__ = true;
-window.__DISABLE_ATMO_MESH__ = true; // TEMPORARY diagnostic - isolating the freeze cause, see comment at atmoMesh build site
+window.__DISABLE_ATMO_MESH__ = false; // re-enabled: confirmed NOT the cause - the game's own confirmed-working sandbox showed the same severe slowness in the same test environment, pointing at a test-environment (software rendering) limitation rather than an atmosphere-specific bug
 window.dispatchEvent(new Event('three-ready'));
 console.log('[WebGPU] Three.js r185 (WebGPU + TSL) loaded and attached to window.');
 </script>
