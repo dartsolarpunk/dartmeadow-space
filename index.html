@@ -3634,6 +3634,7 @@ function _startFlightLoop(){
       }
     }catch(e){}
     try{updateBodies(dt);}catch(e){}
+    try{upgradePlanetLOD(dt);}catch(e){}
     try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){}
     try{ updateCharOrbitCamera(); }catch(e){}
     try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){}
@@ -4212,6 +4213,7 @@ async function buildSolarSystem(){
         rIn=rOut+gap;
       }
       ringGroup.rotation.x=Math.PI*.42; // same stylistic tilt as before
+      ringGroup.isPlanetExtra=true; // preserved across an LOD mesh swap (see upgradePlanetLOD)
       mesh.add(ringGroup); // parented to planet, orbits together
     }
 
@@ -4219,6 +4221,7 @@ async function buildSolarSystem(){
     if(p.hasMoon){
       const mm=new THREE.Mesh(new THREE.SphereGeometry(.26,12,12),new THREE.MeshStandardMaterial({color:0xaaaaaa,roughness:.9}));
       mm.position.set(p.r*2.6,0,0); // local coords relative to Earth
+      mm.isPlanetExtra=true; // preserved across an LOD mesh swap (see upgradePlanetLOD)
       mesh.add(mm); // parented to planet
     }
 
@@ -4231,7 +4234,14 @@ async function buildSolarSystem(){
     mesh.position.set(Math.cos(p.angle)*p.oR, 0, Math.sin(p.angle)*p.oR);
     flightScene.add(mesh);
     if(p.name==='Earth')earthMesh=mesh;
-    celestialBodies.push({mesh,name:p.name,type:p.type,temp:p.temp,orbitR:p.oR,orbitSpd:p.spd,angle:p.angle,collisionRadius:p.r});
+    const isProcedural = !(p.type==='Gas Giant' || p.type==='Ice Giant');
+    celestialBodies.push({mesh,name:p.name,type:p.type,temp:p.temp,orbitR:p.oR,orbitSpd:p.spd,angle:p.angle,collisionRadius:p.r,
+      // Rebuild metadata for proximity-based marching-cubes LOD (see
+      // upgradePlanetLOD, called from updateBodies). isProcedural is false
+      // for gas/ice giants (banded-cloud shader sphere, no terrain to
+      // re-tessellate) and for any body that fell back to a plain sphere
+      // after a GPU build failure above.
+      isProcedural, mcRadius:p.r, mcSeed:seedVal, mcColor:p.col||0x888888, mcHasAtm:!!p.hasAtm, mcRes:10, mcTier:'low'});
   }
 
   // Asteroid belt — between Mars (1.524 AU) and Jupiter (5.203 AU), centered ~2.7 AU
@@ -6817,6 +6827,70 @@ function updateBodies(dt){
 }
 
 
+// ── Proximity LOD for marching-cubes planets ──────────────────────
+// The generic sphere-parameter LOD block above (checkMesh.geometry.
+// parameters.radius) never actually applies to any planet: every planet
+// builder (buildProceduralPlanetMesh, buildGasGiantMesh) returns a
+// THREE.Group, which has no .geometry of its own — only the Sun
+// (via renderMesh) is a bare Mesh. So every marching-cubes planet has
+// stayed at whatever resolution it was first built with (10, the
+// buildProceduralPlanetMesh default — a 10x10x10 compute grid across
+// the whole bounding box) for the entire flight, regardless of how
+// close the player gets. That's genuinely too coarse to read as real
+// terrain up close; this rebuilds the approached body's mesh at a
+// higher resolution, same technique buildProceduralPlanetMesh already
+// uses for the sandbox-derived compute-shader marching cubes, water,
+// and Rayleigh atmosphere — no new rendering system, just re-invoking
+// the existing one with a bigger grid when it's actually worth the cost.
+let _lodPlanetBusy=false;
+function _mcTierFor(dist,radius){
+  if(dist<radius*4)return'high';
+  if(dist<radius*12)return'med';
+  return'low';
+}
+const _MC_TIER_RES={high:40,med:20,low:10};
+async function upgradePlanetLOD(dt){
+  if(_lodPlanetBusy)return; // one rebuild in flight at a time — avoid GPU contention
+  if(!STATE.flight||!STATE.flight.pos)return;
+  let target=null,targetDist=Infinity;
+  for(let i=0;i<celestialBodies.length;i++){
+    const b=celestialBodies[i];
+    if(!b.isProcedural||!b.mesh)continue;
+    const dist=b.mesh.position.distanceTo(STATE.flight.pos);
+    const tier=_mcTierFor(dist,b.mcRadius);
+    if(tier===b.mcTier)continue; // already at the right tier
+    if(b._mcLodT&&performance.now()-b._mcLodT<1500)continue; // per-body cooldown, same pattern as the sphere LOD above
+    // Closest body whose tier actually needs to change wins this frame —
+    // sequential, one at a time, same reasoning as the initial build loop.
+    if(dist<targetDist){targetDist=dist;target=b;target._wantTier=tier;}
+  }
+  if(!target)return;
+  _lodPlanetBusy=true;
+  const b=target, newTier=b._wantTier, newRes=_MC_TIER_RES[newTier];
+  b._mcLodT=performance.now();
+  try{
+    const newGroup=await buildProceduralPlanetMesh(b.mcRadius,b.mcSeed,b.mcColor,b.mcHasAtm,newRes);
+    const oldGroup=b.mesh;
+    // Preserve position/rotation and any tagged extras (rings, moon)
+    newGroup.position.copy(oldGroup.position);
+    newGroup.rotation.copy(oldGroup.rotation);
+    const extras=oldGroup.children.filter(c=>c.isPlanetExtra);
+    extras.forEach(c=>newGroup.add(c));
+    flightScene.add(newGroup);
+    flightScene.remove(oldGroup);
+    oldGroup.traverse(o=>{
+      if(o.isMesh){ if(o.geometry)o.geometry.dispose(); if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(m=>m.dispose());} }
+    });
+    b.mesh=newGroup;
+    b.mcRes=newRes;b.mcTier=newTier;
+    if(b.name==='Earth')earthMesh=newGroup;
+  }catch(e){
+    console.warn('[planet LOD] rebuild failed for',b.name,'at tier',newTier,'-',e.message,e);
+  }finally{
+    _lodPlanetBusy=false;
+  }
+}
+
 let _hudT=0;
 let _hudSunDir,_hudZero;
 window.__whenThreeReady(function(){
@@ -9138,6 +9212,7 @@ function resumeFlightLoop(){
       }
     }catch(e){}
     try{updateBodies(dt);}catch(e){}
+    try{upgradePlanetLOD(dt);}catch(e){}
     try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){}
     try{ updateCharOrbitCamera(); }catch(e){}
     try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){}
@@ -11954,6 +12029,7 @@ function exitSurface(){
       }
     }catch(e){}
       try{updateBodies(dt);}catch(e){}
+    try{upgradePlanetLOD(dt);}catch(e){}
       try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){}
     try{ updateCharOrbitCamera(); }catch(e){}
     try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){}
