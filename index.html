@@ -8733,7 +8733,20 @@ function renderWithPostFX(){
   // silently degrade every frame is the honest choice here; bloom/
   // motion-blur are visually absent under WebGPU until that follow-up
   // work happens, not quietly broken.
-  if(!useBloom&&!useMotion || flightRenderer instanceof THREE.WebGPURenderer){ flightRenderer.setRenderTarget(null); flightRenderer.render(flightScene,flightCamera); return; }
+  if(!useBloom&&!useMotion || flightRenderer instanceof THREE.WebGPURenderer){
+    const _rt0 = performance.now();
+    flightRenderer.setRenderTarget(null);
+    flightRenderer.render(flightScene,flightCamera);
+    const _rtMs = performance.now()-_rt0;
+    if(!window._renderTimingSamples) window._renderTimingSamples=[];
+    window._renderTimingSamples.push(_rtMs);
+    if(window._renderTimingSamples.length>=30 && !window._renderTimingLogged){
+      window._renderTimingLogged=true;
+      const s=window._renderTimingSamples;
+      console.log('[RENDER TIMING] avg:',(s.reduce((a,b)=>a+b,0)/s.length).toFixed(1),'ms max:',Math.max(...s).toFixed(1),'ms min:',Math.min(...s).toFixed(1),'ms over',s.length,'samples');
+    }
+    return;
+  }
   if(!_postInited)initPostFX();
   const r=flightRenderer;
   // 1. render scene to RT
