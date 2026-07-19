@@ -3775,7 +3775,7 @@ function buildFlightNebulae(){
   // properly-shaded cards read as actual volumetric clouds instead of a
   // uniform colored haze.
   [[3000,200,-500,'rgb(0,140,255)'],[8000,-800,2000,'rgb(150,80,255)'],[-5000,400,3000,'rgb(255,110,40)']].forEach(([px,py,pz,col],cloudIdx)=>{
-    const n=26; // fewer, much larger cards instead of 400 tiny points
+    const n=8; // cut hard from 26 given confirmed severe performance issues - each sprite runs multi-octave fractal noise 3x per pixel (shape/shadow/sparkle), real cost at any real count
     for(let i=0;i<n;i++){
       const phi=Math.acos(2*Math.random()-1),th=Math.random()*Math.PI*2;
       const r=550+Math.random()*450;
@@ -3999,10 +3999,10 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
       return exp(h01.negate().mul(5.5)).mul(float(1.0).sub(h01));
     });
     const opticalDepth=Fn(([ro,rd,rl])=>{
-      const stepSize=rl.div(5);
+      const stepSize=rl.div(3);
       const p=ro.toVar();
       const total=float(0).toVar();
-      Loop(5, ()=>{ total.addAssign(densityAtPoint(p).mul(stepSize)); p.addAssign(rd.mul(stepSize)); });
+      Loop(3, ()=>{ total.addAssign(densityAtPoint(p).mul(stepSize)); p.addAssign(rd.mul(stepSize)); });
       return total;
     });
     const atmoFn=Fn(()=>{
@@ -4013,10 +4013,10 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
       const marchStart=hit.x, marchLen=hit.y;
       const inScatter=vec3(0,0,0).toVar();
       If(hit.z.greaterThan(0.5), ()=>{
-        const stepSize=marchLen.div(10);
+        const stepSize=marchLen.div(4);
         const p=ro.add(rd.mul(marchStart)).toVar();
         const viewOD=float(0).toVar();
-        Loop(10, ()=>{
+        Loop(4, ()=>{
           const localDensity=densityAtPoint(p);
           viewOD.addAssign(localDensity.mul(stepSize));
           const sunHit=raySphere(center,float(ATMO_R),p,sunDirU);
