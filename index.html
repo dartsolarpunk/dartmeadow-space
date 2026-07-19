@@ -140,6 +140,7 @@ THREE.TSL = TSL;
 Object.assign(window, TSL);
 
 window.__THREE_READY__ = true;
+window.__DISABLE_ATMO_MESH__ = true; // TEMPORARY diagnostic - isolating the freeze cause, see comment at atmoMesh build site
 window.dispatchEvent(new Event('three-ready'));
 console.log('[WebGPU] Three.js r185 (WebGPU + TSL) loaded and attached to window.');
 </script>
@@ -4033,7 +4034,13 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
     atmoMat.opacityNode=clamp(inS.r.add(inS.g).add(inS.b).mul(0.6),0.0,1.0);
     const atmoMesh=new THREE.Mesh(new THREE.SphereGeometry(ATMO_R,32,24),atmoMat);
     atmoMesh.renderOrder=2;
-    group.add(atmoMesh);
+    // TEMPORARY diagnostic: skip adding the atmosphere mesh to isolate
+    // whether its ray-march is the actual freeze culprit, given confirmed
+    // severe unresponsiveness that reducing its sample count alone didn't
+    // fix. Still built (compute cost the same), just not added to the
+    // scene/rendered - if this resolves the freeze, the atmosphere
+    // shader itself needs more substantial rework, not just fewer samples.
+    if(!window.__DISABLE_ATMO_MESH__) group.add(atmoMesh);
   }
   return group;
 }
