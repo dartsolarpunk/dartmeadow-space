@@ -141,6 +141,27 @@ Object.assign(window, TSL);
 
 window.__THREE_READY__ = true;
 window.__DISABLE_ATMO_MESH__ = false; // re-enabled: confirmed NOT the cause - the game's own confirmed-working sandbox showed the same severe slowness in the same test environment, pointing at a test-environment (software rendering) limitation rather than an atmosphere-specific bug
+
+// ── Real WebGPU-vs-WebGL2-fallback detection ─────────────────────
+// THREE.WebGPURenderer is a universal renderer: it picks a WebGPUBackend
+// when the browser/device actually supports WebGPU, or silently falls
+// back to a WebGLBackend (plain WebGL2 under the hood) when it doesn't --
+// e.g. any Safari below iOS/iPadOS/macOS 26, which is a lot of real
+// iPhones still in use. Critically, `renderer instanceof THREE.
+// WebGPURenderer` is TRUE either way (it's set unconditionally in the
+// constructor: this.isWebGPURenderer = true) -- checking instanceof
+// tells you nothing about which backend actually ended up active. Every
+// "skip this on WebGPU" / "this needs real WebGPU" check in this file
+// was written using that instanceof check, which means every one of
+// them was evaluating a condition that's always true, regardless of the
+// device. The correct signal is the renderer's own .backend object,
+// populated after `await renderer.init()` resolves (which every call
+// site below already awaits before first use).
+function _isRealWebGPU(renderer){
+  return !!(renderer && renderer.backend && renderer.backend.isWebGPUBackend);
+}
+window._isRealWebGPU = _isRealWebGPU; // module-scoped by default; every call site below is in a classic script and needs this on window, same reason THREE/TSL are attached above
+
 window.dispatchEvent(new Event('three-ready'));
 console.log('[WebGPU] Three.js r185 (WebGPU + TSL) loaded and attached to window.');
 </script>
@@ -2316,7 +2337,7 @@ async function initStartBtnTurntable(){
   // Skipped entirely under WebGPU; falls through to punctual-lights-only,
   // same as the existing catch-all below already handled.
   try{
-    if(!(sgRenderer instanceof THREE.WebGPURenderer)){
+    if(!(_isRealWebGPU(sgRenderer))){
       const envScene=new THREE.Scene();
       const room=new THREE.Mesh(new THREE.BoxGeometry(10,10,10),
         new THREE.MeshBasicMaterial({color:0x233042,side:THREE.BackSide}));
@@ -3785,7 +3806,7 @@ function buildFlightNebulae(){
 
 async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmosphere, resolution){
   const group = new THREE.Group();
-  if(!(flightRenderer instanceof THREE.WebGPURenderer)){
+  if(!(_isRealWebGPU(flightRenderer))){
     // Fallback so a body still exists (as a plain sphere) if this device
     // path somehow doesn't have the WebGPU renderer - degrades gracefully
     // rather than leaving nothing in the scene.
@@ -4057,7 +4078,7 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
    noise_float, time-driven scrolling, MeshStandardNodeMaterial.colorNode). */
 function buildGasGiantMesh(radius, palette, hasStorm){
   const group = new THREE.Group();
-  if(!(flightRenderer instanceof THREE.WebGPURenderer)){
+  if(!(_isRealWebGPU(flightRenderer))){
     const fallback=new THREE.Mesh(new THREE.SphereGeometry(radius,32,32),new THREE.MeshStandardMaterial({color:palette[1],roughness:.8}));
     group.add(fallback);
     return group;
@@ -4376,7 +4397,7 @@ async function buildSolarSystem(){
       // WebGPU; the envMap-assignment loop below already checks 'envMap'
       // in m AND that window._birdTempleEnvRT exists, so it just doesn't
       // get one — graceful, not broken.
-      if(!(flightRenderer instanceof THREE.WebGPURenderer)){
+      if(!(_isRealWebGPU(flightRenderer))){
         window._birdTempleEnvRT=new THREE.PMREMGenerator(flightRenderer).fromScene(envScene,0.08);
       }
     }
@@ -6859,6 +6880,14 @@ const _MC_TIER_RES={high:40,med:20,low:10};
 async function upgradePlanetLOD(dt){
   if(_lodPlanetBusy)return; // one rebuild in flight at a time — avoid GPU contention
   if(!STATE.flight||!STATE.flight.pos)return;
+  // Rebuilding at a higher resolution means re-running the marching-cubes
+  // compute pass (see buildProceduralPlanetMesh) — compute shaders don't
+  // exist under the WebGL2 fallback backend at all (Safari below iOS/
+  // iPadOS/macOS 26, etc.), so there's nothing to upgrade to there. Bodies
+  // stay at whatever buildProceduralPlanetMesh already gave them (which
+  // itself degrades to a plain sphere on that path) rather than retrying
+  // a doomed rebuild every 1.5s per nearby body.
+  if(!_isRealWebGPU(flightRenderer))return;
   let target=null,targetDist=Infinity;
   for(let i=0;i<celestialBodies.length;i++){
     const b=celestialBodies[i];
@@ -8548,7 +8577,7 @@ let distantSystems=[];
    star in the seeded field below, not just the Sun. */
 function buildProceduralStarMesh(radius, seedVal, starColor){
   const group = new THREE.Group();
-  if(!(flightRenderer instanceof THREE.WebGPURenderer)){
+  if(!(_isRealWebGPU(flightRenderer))){
     const fallback=new THREE.Mesh(new THREE.SphereGeometry(radius,20,20),new THREE.MeshBasicMaterial({color:starColor}));
     group.add(fallback);
     return group;
@@ -8811,7 +8840,17 @@ function renderWithPostFX(){
   // silently degrade every frame is the honest choice here; bloom/
   // motion-blur are visually absent under WebGPU until that follow-up
   // work happens, not quietly broken.
-  if(!useBloom&&!useMotion || flightRenderer instanceof THREE.WebGPURenderer){
+  // NOTE: this is intentionally NOT gated on _isRealWebGPU like the other
+  // fallback checks in this file. The incompatibility here is with
+  // WebGPURenderer's node-material architecture itself (NodeBuilder),
+  // which is active whether the renderer's active backend is WebGPU or
+  // its WebGL2 fallback -- unlike PMREMGenerator or the compute-shader
+  // planet builders, where the two backends genuinely differ. Detecting
+  // "real WebGPU" here would incorrectly re-enable this ShaderMaterial
+  // pipeline for WebGL2-fallback Safari too, risking the exact same
+  // "NodeBuilder: Material ShaderMaterial is not compatible" breakage
+  // on the devices this needs to be safest for.
+  if(!useBloom&&!useMotion || true){
     const _rt0 = performance.now();
     flightRenderer.setRenderTarget(null);
     flightRenderer.render(flightScene,flightCamera);
