@@ -3824,7 +3824,14 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
     const rim1=smoothstep(0.04,0.22,profile1).sub(smoothstep(0.22,0.42,profile1)).mul(0.06);
     const rim2=smoothstep(0.03,0.18,profile2).sub(smoothstep(0.18,0.34,profile2)).mul(0.14);
     const craterRim=rim1.add(rim2);
-    return float(radius).add(terrain.mul(radius*0.12)).sub(bowl.mul(radius*0.06)).add(craterRim.mul(radius*0.06));
+    // Relief scaled to real-world proportion, not the old 12%-of-radius
+    // (which made mountains ~85x taller relative to the planet than real
+    // Everest is to Earth, and visibly reached toward the atmosphere
+    // shell). True Everest/Earth-radius ratio is ~0.14%; kept at ~1.2%
+    // here — about 10x exaggerated over true scale — since a fully
+    // literal ratio reads as almost perfectly smooth at planet-viewing
+    // distance. Water/crater depth scaled down to match.
+    return float(radius).add(terrain.mul(radius*0.012)).sub(bowl.mul(radius*0.006)).add(craterRim.mul(radius*0.006));
   });
 
   const densityFn=Fn(()=>{
@@ -3931,7 +3938,7 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
     // radius*1.08 to match the sandbox's own PLANET_RADIUS(40)+3.2 ratio,
     // sitting inside the terrain's own height variance (±radius*0.12-0.18
     // per the density function above) so it only submerges low ground.
-    const WATER_R=radius*1.08;
+    const WATER_R=radius*1.008; // matches the new ~1.2%-of-radius relief (was 1.08, tuned to the old 12% relief)
     const waterMat=new THREE.MeshStandardNodeMaterial({transparent:true,side:THREE.DoubleSide,depthWrite:false,metalness:0.05});
     const sceneDepthW=viewportLinearDepth;
     const surfaceDepthW=linearDepth(positionView.z);
