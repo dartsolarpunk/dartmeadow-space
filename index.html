@@ -4125,14 +4125,19 @@ async function buildSolarSystem(){
   // ═══════════════════════════════════════════════════════════════
   const AU = 28; // 1 AU in scene units
 
-  // Sun — parent group so glow travels with it
-  const sunGroup = new THREE.Group();
-  const sm=new THREE.Mesh(new THREE.SphereGeometry(4,32,32),new THREE.MeshStandardMaterial({color:0xffdd44,emissive:0xffaa00,emissiveIntensity:2.2,roughness:.6}));
-  sunGroup.add(sm);
-  // Atmosphere glow sphere — parented to sun so it always follows
+  // Sun — same procedural turbulent-star shader every other star in the
+  // game already gets via buildProceduralStarMesh (real bug found: the
+  // Sun was still on the old plain emissive-sphere construction from
+  // before that shader existed, never swapped over — every OTHER star
+  // got upgraded, the Sun itself didn't. Real fallback to a plain sphere
+  // still applies on WebGL2 (see buildProceduralStarMesh's own guard).
+  const sunGroup = buildProceduralStarMesh(4, 7, 0xffdd44);
+  const sm = sunGroup.children[0];
+  // Extra soft atmosphere/corona glow spheres beyond buildProceduralStarMesh's
+  // own sprite-based corona, kept from the original construction for a
+  // slightly warmer close-in halo.
   const sa=new THREE.Mesh(new THREE.SphereGeometry(5.5,16,16),new THREE.MeshBasicMaterial({color:0xffaa00,transparent:true,opacity:.12,side:THREE.BackSide}));
   sunGroup.add(sa);
-  // Corona outer glow
   const sc2=new THREE.Mesh(new THREE.SphereGeometry(7,16,16),new THREE.MeshBasicMaterial({color:0xff8800,transparent:true,opacity:.04,side:THREE.BackSide}));
   sunGroup.add(sc2);
   flightScene.add(sunGroup);
@@ -8573,25 +8578,44 @@ async function buildFlightGalaxyBandGPU(){
   await flightRenderer.computeAsync(armFn().compute(bandCount));
   await flightRenderer.computeAsync(coreFn().compute(coreCount));
 
-  const tex=makeCircleTex(16,'rgb(255,255,255)',1);
-  const bandGeo=new THREE.BufferGeometry();
-  bandGeo.setAttribute('position',armBuf);
-  bandGeo.setAttribute('color',armColBuf);
-  flightGalaxyBand=new THREE.Points(bandGeo,new THREE.PointsMaterial({
-    size:80,sizeAttenuation:true,vertexColors:true,map:tex,
-    alphaTest:0.02,transparent:true,opacity:0.95,depthWrite:false,blending:THREE.AdditiveBlending
-  }));
+  // Real bug found via docs research (couldn't live-test): THREE.Points
+  // rendered under a real WebGPU backend is HARD-CAPPED at 1 pixel per
+  // point, full stop — the WebGPU point-primitive spec doesn't support a
+  // size parameter at all, unlike WebGL. That's almost certainly why the
+  // whole galaxy showed up as "a little faint light spot": tens of
+  // thousands of 1px additive dots read as near-nothing at this scale.
+  // The documented WebGPU-correct way to draw large/visible GPU-driven
+  // particles is an INSTANCED SPRITE instead of Points — one THREE.Sprite
+  // object, instanced sprite.count times, with positionNode/colorNode
+  // pulling straight from the compute-written storage buffers via
+  // .toAttribute(). Circular falloff is computed directly from uv()
+  // distance-from-center rather than a texture map, matching the
+  // documented pattern exactly.
+  const circleAlpha=Fn(()=>{
+    const d=uv().sub(0.5).length().mul(2.0);
+    return smoothstep(1.0,0.55,d);
+  });
+
+  const bandMat=new THREE.SpriteNodeMaterial({transparent:true,depthWrite:false,blending:THREE.AdditiveBlending});
+  bandMat.positionNode=armPos.toAttribute();
+  bandMat.colorNode=armCol.toAttribute();
+  bandMat.opacityNode=circleAlpha();
+  flightGalaxyBand=new THREE.Sprite(bandMat);
+  flightGalaxyBand.count=bandCount;
+  flightGalaxyBand.scale.set(80,80,1);
   const galGroup=new THREE.Group();
   galGroup.add(flightGalaxyBand);
 
-  const coreGeo=new THREE.BufferGeometry();
-  coreGeo.setAttribute('position',coreBuf);
-  coreGeo.setAttribute('color',coreColBuf);
-  galGroup.add(new THREE.Points(coreGeo,new THREE.PointsMaterial({
-    size:110,sizeAttenuation:true,vertexColors:true,map:tex,transparent:true,opacity:0.95,depthWrite:false,blending:THREE.AdditiveBlending
-  })));
+  const coreMat=new THREE.SpriteNodeMaterial({transparent:true,depthWrite:false,blending:THREE.AdditiveBlending});
+  coreMat.positionNode=corePos.toAttribute();
+  coreMat.colorNode=coreCol.toAttribute();
+  coreMat.opacityNode=circleAlpha();
+  const coreSprite=new THREE.Sprite(coreMat);
+  coreSprite.count=coreCount;
+  coreSprite.scale.set(110,110,1);
+  galGroup.add(coreSprite);
   // Small non-compute glow for Sgr A* itself (a single bright point, not a
-  // flat colored disc) -- cheap enough to leave as a sprite.
+  // flat colored disc) -- cheap enough to leave as a regular sprite.
   galGroup.add(makeGlowSprite('rgba(255,248,225,0.85)',RG*0.05));
 
   galGroup.rotation.set(0.5,0.3,0.1);
