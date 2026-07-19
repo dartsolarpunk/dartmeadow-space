@@ -3546,7 +3546,6 @@ async function initFlightScene(){
   const dl=new THREE.DirectionalLight(0xffffff,1.5);dl.position.set(5,10,5);flightScene.add(dl);
 
   try{buildFlightStars();}catch(e){console.warn('stars:',e);}
-  try{buildFlightGalaxies();}catch(e){console.warn('gal:',e);}
   try{buildFlightNebulae();}catch(e){console.warn('neb:',e);}
   try{buildFlightGalaxyBand();}catch(e){console.warn('mwband:',e);}
   try{buildVolumetricDust();}catch(e){console.warn('dust:',e);}
@@ -3701,15 +3700,6 @@ function buildFlightStars(){
   }
   const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(p,3));g.setAttribute('color',new THREE.BufferAttribute(c,3));
   flightScene.add(new THREE.Points(g,new THREE.PointsMaterial({size:1.8,sizeAttenuation:false,vertexColors:true,map:starTex,alphaTest:0.05,transparent:true,depthWrite:false})));}
-}
-function buildFlightGalaxies(){
-  const galTex=makeCircleTex(12,'rgb(180,220,255)',0.8);
-  [[60000,3000,-20000,5],[80000,-2000,15000,4],[-70000,5000,-30000,6]].forEach(([px,py,pz,na])=>{
-    const n=na*400;const p=new Float32Array(n*3),c=new Float32Array(n*3);const R=6000;const cols=[[0,.9,1],[.7,.5,1],[1,.8,.3]];let idx=0;
-    for(let a=0;a<na;a++){const ba=(a/na)*Math.PI*2;const col=cols[a%3];for(let j=0;j<400;j++){const t=j/400,ang=t*Math.PI*3+ba,d=t*R;p[idx*3]=px+Math.cos(ang)*d+rnd(-200,200);p[idx*3+1]=py+rnd(-150,150);p[idx*3+2]=pz+Math.sin(ang)*d+rnd(-200,200);const b=.2+t*.5;c[idx*3]=col[0]*b;c[idx*3+1]=col[1]*b;c[idx*3+2]=col[2]*b;idx++;}}
-    const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(p.slice(0,idx*3),3));g.setAttribute('color',new THREE.BufferAttribute(c.slice(0,idx*3),3));
-    flightScene.add(new THREE.Points(g,new THREE.PointsMaterial({size:1.5,sizeAttenuation:false,vertexColors:true,map:galTex,alphaTest:0.05,transparent:true,depthWrite:false})));
-  });
 }
 // TSL nebula cloud material — replaces the old flat solid-color point
 // sprites (just a radial-gradient PNG tinted per-particle, no internal
