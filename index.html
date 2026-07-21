@@ -9247,17 +9247,40 @@ function makeOrbitGlobeTexture(body){
   const land =new THREE.Color(pal.ground||0x3a6a3a);
   const land2=new THREE.Color(pal.ground2||0x274d27);
   const img=cx.createImageData(S*2,S);const d=img.data;
+  // Real geography for Earth/Mars — same earthLandMask/marsFeatureHeight
+  // used (via their TSL port) on the actual compute-shader planet now,
+  // so the landing-selection map matches what you fly past instead of
+  // showing an unrelated random fbm blob field. Everything else keeps
+  // the generic procedural look, same as before.
+  const isEarth=body.name==='Earth', isMars=body.name==='Mars';
+  const marsRock=new THREE.Color(0xb5623a), marsDark=new THREE.Color(0x7a3a24), marsIce=new THREE.Color(0xe8d8c8);
   // base shaded surface — landmasses vs water via fbm, polar caps
   for(let y=0;y<S;y++){
     for(let x=0;x<S*2;x++){
-      const u=x/(S*2)*6, v=y/S*3;
-      const n=_fbm(u,v,seed,5);
-      const pole=Math.abs(y/S-0.5)>0.43;
+      const lon=(x/(S*2))*360-180, lat=90-(y/S)*180;
       let r,g,b;
-      const isLand = n>0.5;
-      if(pole){r=225;g=235;b=248;}
-      else if(isLand){const e=(n-0.5)*2.2;r=land.r*255*(0.7+e);g=land.g*255*(0.7+e);b=land.b*255*(0.7+e);}
-      else {const e=n*0.8;r=water.r*255*(0.6+e);g=water.g*255*(0.7+e);b=water.b*255*(0.8+e);}
+      if(isEarth){
+        const landV=earthLandMask(lat,lon,seed);
+        const pole=Math.abs(lat)>72;
+        if(pole){r=225;g=235;b=248;}
+        else if(landV>0){const e=Math.min(landV,1);r=land.r*255*(0.65+e*0.5);g=land.g*255*(0.65+e*0.5);b=land.b*255*(0.65+e*0.5);}
+        else{const e=Math.min(-landV,1)*0.5;r=water.r*255*(0.55+e*0.3);g=water.g*255*(0.6+e*0.3);b=water.b*255*(0.75+e*0.3);}
+      } else if(isMars){
+        const h=marsFeatureHeight(lat,lon,seed);
+        const t=(h+1200)/3400; // roughly normalize to 0..1 across the real range this function produces
+        const tc=THREE.MathUtils.clamp(t,0,1);
+        const base=marsDark.clone().lerp(marsRock,THREE.MathUtils.smoothstep(tc,0.25,0.65));
+        const withIce=base.clone().lerp(marsIce,Math.abs(lat)>78?THREE.MathUtils.smoothstep(tc,0.5,0.9)*0.6:0);
+        r=withIce.r*255;g=withIce.g*255;b=withIce.b*255;
+      } else {
+        const u=x/(S*2)*6, v=y/S*3;
+        const n=_fbm(u,v,seed,5);
+        const pole=Math.abs(y/S-0.5)>0.43;
+        const isLand = n>0.5;
+        if(pole){r=225;g=235;b=248;}
+        else if(isLand){const e=(n-0.5)*2.2;r=land.r*255*(0.7+e);g=land.g*255*(0.7+e);b=land.b*255*(0.7+e);}
+        else {const e=n*0.8;r=water.r*255*(0.6+e);g=water.g*255*(0.7+e);b=water.b*255*(0.8+e);}
+      }
       const i=(y*S*2+x)*4;
       d[i]=Math.min(255,r);d[i+1]=Math.min(255,g);d[i+2]=Math.min(255,b);d[i+3]=255;
     }
@@ -9267,10 +9290,20 @@ function makeOrbitGlobeTexture(body){
   cx.strokeStyle='rgba(80,230,255,0.55)';cx.lineWidth=1.4;cx.shadowColor='rgba(0,229,255,0.8)';cx.shadowBlur=3;
   for(let y=2;y<S-2;y+=1){
     for(let x=2;x<S*2-2;x+=1){
-      const u=x/(S*2)*6,v=y/S*3;
-      const c=_fbm(u,v,seed,5)>0.5;
-      const rn=_fbm((x+1)/(S*2)*6,v,seed,5)>0.5;
-      const dn=_fbm(u,(y+1)/S*3,seed,5)>0.5;
+      let c,rn,dn;
+      if(isEarth){
+        const lon=(x/(S*2))*360-180, lat=90-(y/S)*180;
+        c=earthLandMask(lat,lon,seed)>0;
+        rn=earthLandMask(lat,(x+1)/(S*2)*360-180,seed)>0;
+        dn=earthLandMask(90-(y+1)/S*180,lon,seed)>0;
+      } else if(isMars){
+        c=false;rn=false;dn=false; // no coastlines on Mars — no liquid water surface
+      } else {
+        const u=x/(S*2)*6,v=y/S*3;
+        c=_fbm(u,v,seed,5)>0.5;
+        rn=_fbm((x+1)/(S*2)*6,v,seed,5)>0.5;
+        dn=_fbm(u,(y+1)/S*3,seed,5)>0.5;
+      }
       if(c!==rn||c!==dn){cx.fillStyle='rgba(120,240,255,0.5)';cx.fillRect(x,y,1,1);}
     }
   }
