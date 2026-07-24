@@ -3892,8 +3892,12 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
     if(kind==='earth'){
       const land=_earthLandMaskTSL(dir);
       const ridgeE=float(1.0).sub(mx_fractal_noise_float(dir.mul(9.0).add(seedU),4,2.0,0.5).abs());
-      const landHeight=land.min(1.0).mul(float(0.15).add(ridgeE.mul(ridgeE).mul(0.85)));
-      const oceanHeight=land.mul(0.35); // land<0 here, so this is a gentle negative depression, deeper further from shore
+      // WATER_R sits at radius*1.008 (relief 0.667 on this 0.012 scale) —
+      // land needs a baseline safely above that regardless of ridge value,
+      // or most of it reads as submerged. Ocean gets its own baseline
+      // safely below, deepening a bit further from shore.
+      const landHeight=float(0.8).add(ridgeE.mul(ridgeE).mul(1.2));
+      const oceanHeight=float(-0.3).sub(land.negate().clamp(0.0,1.0).mul(0.4));
       relief=select(land.greaterThan(0.0),landHeight,oceanHeight);
     } else if(kind==='mars'){
       relief=_marsFeatureTSL(dir);
@@ -4204,13 +4208,6 @@ async function buildSolarSystem(){
   // still applies on WebGL2 (see buildProceduralStarMesh's own guard).
   const sunGroup = buildProceduralStarMesh(4, 7, 0xffdd44);
   const sm = sunGroup.children[0];
-  // Extra soft atmosphere/corona glow spheres beyond buildProceduralStarMesh's
-  // own sprite-based corona, kept from the original construction for a
-  // slightly warmer close-in halo.
-  const sa=new THREE.Mesh(new THREE.SphereGeometry(5.5,16,16),new THREE.MeshBasicMaterial({color:0xffaa00,transparent:true,opacity:.12,side:THREE.BackSide}));
-  sunGroup.add(sa);
-  const sc2=new THREE.Mesh(new THREE.SphereGeometry(7,16,16),new THREE.MeshBasicMaterial({color:0xff8800,transparent:true,opacity:.04,side:THREE.BackSide}));
-  sunGroup.add(sc2);
   flightScene.add(sunGroup);
   sunMesh=sm;
   celestialBodies.push({mesh:sunGroup,name:'Sun',type:'Star',temp:'5778 K',orbitR:0,orbitSpd:0,angle:0,renderMesh:sm});
@@ -6956,6 +6953,7 @@ function _mcTierFor(dist,radius){
   if(dist<radius*12)return'med';
   return'low';
 }
+const _MC_TIER_RANK={low:0,med:1,high:2};
 const _MC_TIER_RES={high:40,med:20,low:10};
 async function upgradePlanetLOD(dt){
   if(_lodPlanetBusy)return; // one rebuild in flight at a time — avoid GPU contention
@@ -6972,9 +6970,15 @@ async function upgradePlanetLOD(dt){
   for(let i=0;i<celestialBodies.length;i++){
     const b=celestialBodies[i];
     if(!b.isProcedural||!b.mesh)continue;
+    if(_MC_TIER_RANK[b.mcTier]>=2)continue; // already at 'high' — never rebuilds again for this body
     const dist=b.mesh.position.distanceTo(STATE.flight.pos);
     const tier=_mcTierFor(dist,b.mcRadius);
-    if(tier===b.mcTier)continue; // already at the right tier
+    // Monotonic: only rebuild when moving UP a tier. A body that drifts
+    // back out of range simply keeps its current mesh instead of
+    // rebuilding down and potentially back up again later — bounds every
+    // body to at most 2 rebuilds for its entire lifetime (low->med,
+    // med->high), not an unbounded number over a long session.
+    if(_MC_TIER_RANK[tier]<=_MC_TIER_RANK[b.mcTier])continue;
     if(b._mcLodT&&performance.now()-b._mcLodT<1500)continue; // per-body cooldown, same pattern as the sphere LOD above
     // Closest body whose tier actually needs to change wins this frame —
     // sequential, one at a time, same reasoning as the initial build loop.
@@ -6994,9 +6998,7 @@ async function upgradePlanetLOD(dt){
     extras.forEach(c=>newGroup.add(c));
     flightScene.add(newGroup);
     flightScene.remove(oldGroup);
-    oldGroup.traverse(o=>{
-      if(o.isMesh){ if(o.geometry)o.geometry.dispose(); if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(m=>m.dispose());} }
-    });
+    _disposeObject3D(oldGroup);
     b.mesh=newGroup;
     b.mcRes=newRes;b.mcTier=newTier;
     if(b.name==='Earth')earthMesh=newGroup;
@@ -8545,10 +8547,26 @@ function applyProceduralTextures(){
 
 // ── 2. IN-FLIGHT MILKY WAY BAND (point cloud, scaled, colorful) ──
 let flightGalaxyBand=null,flightGalaxyCore=null,flightNebulae=[];
+function _disposeObject3D(obj){
+  if(!obj)return;
+  obj.traverse(o=>{
+    if(o.geometry)o.geometry.dispose();
+    if(o.material){
+      const mats=Array.isArray(o.material)?o.material:[o.material];
+      mats.forEach(m=>{
+        // Storage buffers (compute-shader output) are held as regular
+        // geometry attributes, so geometry.dispose() above covers them --
+        // but node materials also cache compiled node trees on the
+        // material itself; dispose() releases that too.
+        if(m.dispose)m.dispose();
+      });
+    }
+  });
+}
 function buildFlightGalaxyBand(){
-  if(flightGalaxyBand){flightScene.remove(flightGalaxyBand);flightGalaxyBand=null;}
-  if(flightGalaxyCore){flightScene.remove(flightGalaxyCore);flightGalaxyCore=null;}
-  flightNebulae.forEach(n=>flightScene.remove(n));flightNebulae=[];
+  if(flightGalaxyBand){_disposeObject3D(flightGalaxyBand);flightScene.remove(flightGalaxyBand);flightGalaxyBand=null;}
+  if(flightGalaxyCore){_disposeObject3D(flightGalaxyCore);flightScene.remove(flightGalaxyCore);flightGalaxyCore=null;}
+  flightNebulae.forEach(n=>{_disposeObject3D(n);flightScene.remove(n);});flightNebulae=[];
   if(!STATE.settings.galaxyband)return;
   // Real WebGPU: build the galaxy as an actual compute-shader particle
   // system (see buildFlightGalaxyBandGPU) instead of generating tens of
