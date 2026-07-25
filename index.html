@@ -2079,6 +2079,7 @@ const AUDIO = {
     {name:'THE SAME AS ITSELF',src:'music/the_same_as_itself.mp3'},
     {name:'BLUE',src:'music/blue.mp3'},
     {name:'COLDER THAN THE SUN',src:'music/colder_than_the_sun.mp3'},
+    {name:'CUTTING THE RAIN',src:'music/cutting_the_rain.mp3'},
     {name:'LEAVING GRAVITY HERE',src:'music/leaving_gravity_here.mp3'},
     {name:'LIGHT YEARS IN GLASS',src:'music/light_years_in_glass.mp3'},
     {name:'THIRTY-FOUR K',src:'music/thirty-four_k.mp3'},
@@ -2417,11 +2418,45 @@ async function initStartBtnTurntable(){
     if(loadEl)loadEl.style.opacity='0';
 
     let t=0;
+    // Real bug found via live browser testing: this loop called
+    // requestAnimationFrame FIRST and then rendered with no error
+    // handling at all. When sgRenderer.render() throws — and it does,
+    // repeatably, with "Failed to read the 'swizzle' property from
+    // GPUTextureViewDescriptor" on some browser/driver combinations —
+    // the loop had already rescheduled itself, so it re-threw an
+    // uncaught exception every single frame, forever, for the entire
+    // session. Measured 85 identical uncaught errors in a short test
+    // run. On top of that, sgAnimId was never cancelled anywhere in
+    // the file, so this second WebGPU renderer kept rendering the menu
+    // turntable in the background the whole time the player was
+    // actually in the game — GPU and CPU work for something nobody can
+    // see. Both are fixed here: failures are caught and give up after
+    // a few tries (falling back to the text label, same as a failed
+    // GLB load already does), and the loop skips its work entirely
+    // whenever the menu screen isn't visible.
+    let sgFailCount=0;
     (function frame(){
       sgAnimId=requestAnimationFrame(frame);
+      // Don't render the menu turntable while the player is elsewhere.
+      const menuEl=$('screen-menu');
+      if(menuEl && !menuEl.classList.contains('active')) return;
       t+=0.012;
       if(sgModel) sgModel.rotation.y=t;
-      sgRenderer.render(sgScene,sgCamera);
+      try{
+        sgRenderer.render(sgScene,sgCamera);
+        sgFailCount=0;
+      }catch(err){
+        sgFailCount++;
+        if(sgFailCount===1) console.warn('Start button turntable render failed:',err&&err.message||err);
+        if(sgFailCount>=5){
+          console.warn('Start button turntable disabled after repeated render failures — using text label instead.');
+          cancelAnimationFrame(sgAnimId);
+          sgAnimId=null;
+          try{ if(sgRenderer&&sgRenderer.domElement&&sgRenderer.domElement.parentNode) sgRenderer.domElement.parentNode.removeChild(sgRenderer.domElement); }catch(_){}
+          try{ if(sgRenderer&&sgRenderer.dispose) sgRenderer.dispose(); }catch(_){}
+          host.innerHTML='<span style="font-family:var(--font-hud);font-weight:700;letter-spacing:0.16em;color:var(--gold);">▶ START GAME</span>';
+        }
+      }
     })();
   }, undefined, err=>{
     console.warn('Start button GLB failed to load, falling back to label',err);
@@ -3602,6 +3637,10 @@ async function initFlightScene(){
   _startFlightLoop();
 }
 let _flightLoopCv=null,_flightLoopLast=0;
+// Frame counter used by the flight loop's render-throttle during character
+// loading (see the _flightFrameCounter comment in _startFlightLoop). This
+// declaration was missing entirely, which made every read of it throw.
+let _flightFrameCounter=0;
 // Debounced resize handling for the flight canvas. Previously the loop read
 // window.innerWidth/innerHeight PLUS cv.clientWidth (a forced synchronous
 // layout read) EVERY FRAME, and any single-frame fluctuation triggered a
@@ -3678,7 +3717,19 @@ function _startFlightLoop(){
     // indefinitely - the scene is reduced-framerate, not frozen, during
     // this specific window, and returns to full rate the moment she's
     // loaded (checked fresh every frame, not a fixed timer).
-    if(!CHAR.loading || (_flightFrameCounter=(_flightFrameCounter||0)+1)%4===0){
+    // Real bug found via live browser testing: _flightFrameCounter was
+    // never declared anywhere in the file. Reading an undeclared
+    // variable throws a ReferenceError (only *assignment* to an
+    // undeclared name auto-creates a global — a *read*, which
+    // `_flightFrameCounter||0` does first, always throws). So on every
+    // frame where CHAR.loading was true, this whole condition threw
+    // before renderWithPostFX() could be reached: the scene rendered
+    // NOTHING at all for the entire character-load window, not "every
+    // 4th frame" as intended. On a slow device where that load takes
+    // tens of seconds, that reads exactly like the game freezing and
+    // going black shortly after start. Declared properly below.
+    _flightFrameCounter = (_flightFrameCounter + 1) % 1000000;
+    if(!CHAR.loading || _flightFrameCounter % 4 === 0){
       renderWithPostFX();
     }
   })();
