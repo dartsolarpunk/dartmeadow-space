@@ -10301,7 +10301,12 @@ async function loadCharacterAssets(){
   // out absurdly large or tiny -- clamped to a sane range so a bad
   // measurement can never produce a screen-filling giant or an invisible
   // speck, regardless of what the raw height turns out to actually be.
-  CHAR.scaleForBoard = _clamp(0.78 / CHAR.rawHeight, 0.02, 5);
+  // Board target updated to the project's real-world scale reference
+  // (37ft board / 6ft character) — see CHAR_BOARD_TARGET_UNITS and
+  // _deriveBoardScale() below for the derivation. The old value here was
+  // 0.78, based on a superseded ~20-23ft board estimate, which rendered
+  // her about 1.6x too large relative to the board.
+  CHAR.scaleForBoard = _clamp(CHAR_BOARD_TARGET_UNITS / CHAR.rawHeight, 0.02, 5);
   CHAR.scaleForTerrain = _clamp(3.26 / CHAR.rawHeight, 0.02, 5);
   // also record how far the model's own origin sits below its lowest
   // point, so 'feet at y=0' positioning stays correct after scaling
@@ -10652,8 +10657,55 @@ function finishClimb(onComplete){
    board), and only gets formally mounted (or released) at the end —
    CHAR._transitioning locks out the normal per-frame locomotion sync
    in updateSurface() so the two don't fight over her position. */
+// ── Real-world skyboard/character scale ───────────────────────────
+// From the project's scale reference: the skyboard is about 37 ft long
+// and 2.6 ft wide, and the character is about 6 ft tall. Length is the
+// calibration axis — it's the dominant dimension, the one the board's
+// own in-game size was originally set from, and the one that reads
+// visually in the reference screenshot of her standing on the board.
+//
+// Measured live from the deployed flight board: its world-space bounding
+// box is 3.0 game units along the length axis. So 1 unit = 37/3.0 =
+// ~12.33 ft, and a 6 ft character = 6/12.33 = ~0.486 units tall.
+// (The previous hardcoded target was 0.78 units, derived from an older
+// ~20-23 ft board estimate that the project reference superseded — that
+// made her render roughly 1.6x too large next to the board.)
+const BOARD_REAL_LEN_FT = 37;
+const CHAR_REAL_HEIGHT_FT = 6;
+const BOARD_FALLBACK_GAME_LEN = 3.0; // used only if the real board can't be measured
+const CHAR_BOARD_TARGET_UNITS = CHAR_REAL_HEIGHT_FT / (BOARD_REAL_LEN_FT / BOARD_FALLBACK_GAME_LEN);
+
+// Derive her mounted scale from the board she's ACTUALLY riding, rather
+// than assuming every skyboard is the same length — the sculpted GLB
+// templates (skyboard A/B) and the procedural board don't necessarily
+// share a length, so a single hardcoded number would be right for at
+// most one of them. Must be called BEFORE the character is parented to
+// the board, since setFromObject would otherwise include her in the
+// board's bounding box and inflate the measurement.
+function _deriveBoardScale(boardObj){
+  let lenUnits = BOARD_FALLBACK_GAME_LEN;
+  try{
+    if(boardObj){
+      const size = new THREE.Box3().setFromObject(boardObj).getSize(new THREE.Vector3());
+      const longest = Math.max(size.x, size.y, size.z);
+      if(isFinite(longest) && longest > 0.0001) lenUnits = longest;
+    }
+  }catch(e){ /* fall back to the measured default above */ }
+  const ftPerUnit = BOARD_REAL_LEN_FT / lenUnits;
+  const targetUnits = CHAR_REAL_HEIGHT_FT / ftPerUnit;
+  return _clamp(targetUnits / (CHAR.rawHeight || 1), 0.02, 5);
+}
+// Updates CHAR.scaleForBoard in place from the given board. Safe to call
+// repeatedly; no-op if the character hasn't finished loading yet.
+function _syncBoardScale(boardObj){
+  if(!CHAR || !CHAR.rawHeight || !boardObj) return;
+  if(CHAR.root && CHAR.root.parent === boardObj) return; // already parented — measurement would include her
+  CHAR.scaleForBoard = _deriveBoardScale(boardObj);
+}
+
 function boardMountSequence(targetBoard, hostScene, onComplete){
   if(!CHAR.loaded || !CHAR.root || !targetBoard || !hostScene){ onComplete&&onComplete(); return; }
+  _syncBoardScale(targetBoard); // measure THIS board before she's parented to it
   CHAR._transitioning = true;
   const startPos = new THREE.Vector3(); CHAR.root.getWorldPosition(startPos);
   const startYaw = CHAR.root.rotation.y;
@@ -10727,6 +10779,7 @@ function mountSkyboard(boardObj){
   setCharState('idle',{fade:0.2}); // brief settle before the procedural pose takes over
   CHAR.mounted = true;
   const worldPos = new THREE.Vector3(); CHAR.root.getWorldPosition(worldPos);
+  _syncBoardScale(boardObj); // must happen BEFORE the add() below, or she'd be inside the box being measured
   boardObj.add(CHAR.root);
   // Real bug found: her chest was facing the staff side of the board
   // instead of away from it. A further yaw rotation can't fix this
