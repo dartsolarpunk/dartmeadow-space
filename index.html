@@ -4251,14 +4251,24 @@ async function buildSolarSystem(){
   // ═══════════════════════════════════════════════════════════════
   const AU = 28; // 1 AU in scene units
 
-  // Sun — same procedural turbulent-star shader every other star in the
-  // game already gets via buildProceduralStarMesh (real bug found: the
-  // Sun was still on the old plain emissive-sphere construction from
-  // before that shader existed, never swapped over — every OTHER star
-  // got upgraded, the Sun itself didn't. Real fallback to a plain sphere
-  // still applies on WebGL2 (see buildProceduralStarMesh's own guard).
-  const sunGroup = buildProceduralStarMesh(4, 7, 0xffdd44);
-  const sm = sunGroup.children[0];
+  // Sun — reverted to a cheap, plain material. buildProceduralStarMesh's
+  // turbulent per-pixel shader (two layered noise evaluations plus a rim
+  // term, every fragment) is fine for the small, distant background
+  // stars it's used for elsewhere, but the Sun renders large/close-up on
+  // screen — reported to freeze and crash real mobile devices once it
+  // comes into view, consistent with a fragment-shader-bound GPU hang on
+  // weaker mobile hardware. Stability over visual fanciness here; the
+  // corona glow sprites (cheap additive sprites, not a shader) are kept.
+  const sunGroup = new THREE.Group();
+  const sm = new THREE.Mesh(new THREE.SphereGeometry(4,24,24), new THREE.MeshBasicMaterial({color:0xffdd44}));
+  sunGroup.add(sm);
+  try{
+    const gt = makeCircleTex(64, '#ffdd44', 1);
+    const spr1 = new THREE.Sprite(new THREE.SpriteMaterial({map:gt,color:0xffdd44,transparent:true,opacity:0.5,blending:THREE.AdditiveBlending,depthWrite:false}));
+    spr1.scale.set(24,24,1); sunGroup.add(spr1);
+    const spr2 = new THREE.Sprite(new THREE.SpriteMaterial({map:gt,color:0xffaa00,transparent:true,opacity:0.22,blending:THREE.AdditiveBlending,depthWrite:false}));
+    spr2.scale.set(48,48,1); sunGroup.add(spr2);
+  }catch(e){}
   flightScene.add(sunGroup);
   sunMesh=sm;
   celestialBodies.push({mesh:sunGroup,name:'Sun',type:'Star',temp:'5778 K',orbitR:0,orbitSpd:0,angle:0,renderMesh:sm});
@@ -8619,19 +8629,18 @@ function buildFlightGalaxyBand(){
   if(flightGalaxyCore){_disposeObject3D(flightGalaxyCore);flightScene.remove(flightGalaxyCore);flightGalaxyCore=null;}
   flightNebulae.forEach(n=>{_disposeObject3D(n);flightScene.remove(n);});flightNebulae=[];
   if(!STATE.settings.galaxyband)return;
-  // Real WebGPU: build the galaxy as an actual compute-shader particle
-  // system (see buildFlightGalaxyBandGPU) instead of generating tens of
-  // thousands of points with a JS for-loop on the CPU every time this
-  // rebuilds. WebGL2 fallback (older Safari, pre-iOS26 iPhones, etc.) has
-  // no compute shaders at all, so it keeps the CPU version.
-  if(_isRealWebGPU(flightRenderer)){
-    buildFlightGalaxyBandGPU().catch(e=>{
-      console.warn('[galaxy GPU] compute build failed, falling back to CPU version:',e);
-      buildFlightGalaxyBandCPU();
-    });
-  } else {
-    buildFlightGalaxyBandCPU();
-  }
+  // TEMPORARILY DISABLED: buildFlightGalaxyBandGPU (real WebGPU compute
+  // shader + instanced-Sprite particles) was reported completely
+  // invisible on real devices ("can't point in any direction and find
+  // it") — it uses a rendering pattern (instanced Sprite with position/
+  // color read from compute storage buffers via SpriteNodeMaterial) that
+  // wasn't used anywhere else in this file before, so there's nothing
+  // proven to compare against, and no live device to debug it on here.
+  // Forcing the older, simpler CPU-generated version for everyone until
+  // the compute version can be properly verified — it's less clever but
+  // it's the one that's actually been seen working. Flip this back to
+  // the _isRealWebGPU(flightRenderer) check to re-enable the GPU path.
+  buildFlightGalaxyBandCPU();
 }
 
 // ── GPU compute-shader galaxy: 4-arm spiral + field stars + core bulge ──
