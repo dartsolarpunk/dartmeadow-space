@@ -7015,7 +7015,7 @@ function _mcTierFor(dist,radius){
   return'low';
 }
 const _MC_TIER_RANK={low:0,med:1,high:2};
-const _MC_TIER_RES={high:40,med:20,low:10};
+const _MC_TIER_RES={high:28,med:18,low:10};
 async function upgradePlanetLOD(dt){
   if(_lodPlanetBusy)return; // one rebuild in flight at a time — avoid GPU contention
   if(!STATE.flight||!STATE.flight.pos)return;
@@ -9727,6 +9727,24 @@ function atmoBuildTerrain(pal,ox,oz){
   // Same stylized curvature heuristic as walk mode (see buildSurfaceTerrain).
   const g=(_atmoBody&&_atmoBody.gravity!==undefined)?_atmoBody.gravity:0.6;
   const curveR=THREE.MathUtils.lerp(1400,9000,Math.min(1,Math.max(0,g))/1.2);
+  const siteLandBias=(()=>{
+    // Real Earth geography at the actual landing site, not just generic
+    // noise — earthLandMask/marsFeatureHeight are the same data driving
+    // the orbital-approach view and the landing-selection globe (see
+    // buildProceduralPlanetMesh/makeOrbitGlobeTexture). Without this, a
+    // site picked over open ocean on the approach globe could still
+    // generate dry mountains down here, since this local patch's own
+    // noise has no idea it's supposed to be water. Only applies when we
+    // actually know the site's lat/lon; otherwise generation is
+    // unchanged from before.
+    if(!_atmoSite || typeof _atmoSite.lat!=='number' || typeof _atmoSite.lon!=='number') return 0;
+    if(_atmoBody && _atmoBody.name==='Earth'){
+      const land=earthLandMask(_atmoSite.lat,_atmoSite.lon,seed);
+      // land>0 → comfortably above the existing waterline (~5); land<0 → pulled well below it.
+      return land>0 ? THREE.MathUtils.clamp(land,0,1)*20 : THREE.MathUtils.clamp(land,-1,0)*60;
+    }
+    return 0;
+  })();
   function H(x,z){
     let h=_fbm(x*0.012+100,z*0.012+100,seed,5)*22;
     h+=_fbm(x*0.04,z*0.04,seed+3,3)*5;
@@ -9751,7 +9769,7 @@ function atmoBuildTerrain(pal,ox,oz){
     if(riverRidge>0.97)h-=Math.pow((riverRidge-0.97)/0.03,1.2)*22;
     const d2=x*x+z*z;
     h-=d2/(2*curveR);
-    return h;
+    return h+siteLandBias;
   }
   _atmoHeight=H;
   // Drop any previous terrain window before building the new one, so
@@ -11790,6 +11808,17 @@ function buildMarchingCubesAsteroid(radius,seed,resolution){
 
 function buildSurfaceTerrain(pal){
   const seed=(_surfBody?_surfBody.name.length:5)*13+1;
+  const siteLandBias=(()=>{
+    // Same real-geography site bias as atmoBuildTerrain, using the same
+    // earthLandMask data — keeps flying over a spot and walking on that
+    // same spot consistent with each other (and with the orbital view).
+    if(!_surfSite || typeof _surfSite.lat!=='number' || typeof _surfSite.lon!=='number') return 0;
+    if(_surfBody && _surfBody.name==='Earth'){
+      const land=earthLandMask(_surfSite.lat,_surfSite.lon,seed);
+      return land>0 ? THREE.MathUtils.clamp(land,0,1)*20 : THREE.MathUtils.clamp(land,-1,0)*60;
+    }
+    return 0;
+  })();
   // height function (kept from the original, drives collision + tiles).
   // Curvature falloff lives HERE (not duplicated in buildTerrainTile) so
   // collision and the visual mesh can never disagree about ground height —
@@ -11861,9 +11890,8 @@ function buildSurfaceTerrain(pal){
     // and actually didn't freeze. Local hills/dips from the noise above
     // stay — 'flat' means no planet-scale curve, not literally billiard-
     // ball smooth.
-    return h;
+    return h+siteLandBias;
   }
-  _surfHeight=H;
   const dd=drawDistanceTier();
   TERRAIN.rootSize=dd.rootSize; TERRAIN.maxDepth=dd.maxDepth;
   TERRAIN.recenterMargin=Math.min(600,dd.rootSize*0.25);
