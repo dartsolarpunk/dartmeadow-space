@@ -10285,6 +10285,7 @@ async function loadCharacterAssets(){
   Object.keys(CHAR.clips).forEach(name=>{
     const clip = CHAR.clips[name];
     if(!clip) return;
+    _optimizeCharClipTracks(clip);
     const action = CHAR.mixer.clipAction(clip);
     action.enabled = true;
     CHAR.actions[name] = action;
@@ -10356,6 +10357,84 @@ async function loadCharacterAssets(){
    explicit clone+reverse here so jump-rise can be scrubbed/blended
    independently of the forward landing clip without them fighting over
    the same Action's timeScale sign. */
+/* ── REDUNDANT-KEYFRAME REDUCTION FOR CHARACTER ANIMATION CLIPS ──
+   Technique reference: Web3D Asset Compiler (Blender addon) by Abdul
+   Rafay Khalid, https://github.com/ARafayKhalid/web3d-asset-compiler,
+   licensed GPL-3.0-or-later. Its exporter/binary_exporter.py implements
+   a recursive keyframe-reduction pass for baked character animation
+   tracks (function _reduce_linear_indices, applied per-track before
+   quantized export) — a Ramer-Douglas-Peucker-style simplification:
+   walk each [start,end] span, find the sample whose value differs most
+   from what linear interpolation (slerp for quaternions) between its
+   neighbors would predict, and keep it (recursing into the two new
+   sub-spans) only if that worst-case error exceeds a tolerance.
+   No code from that Python/Blender-API source was copied — this is an
+   independent JS reimplementation of the same algorithm, operating on
+   an already-loaded THREE.AnimationClip's tracks (VectorKeyframeTrack /
+   QuaternionKeyframeTrack) instead of raw sampled glTF data. It trims
+   in-memory keyframe count and per-frame interpolation cost for a clip
+   that's already been downloaded — it does NOT shrink the GLB download
+   itself. For that, Justin: re-exporting the character through this
+   same addon (Draco + animation quantization + keyframe reduction, see
+   its R3F_OPTIMIZED preset) in Blender would meaningfully shrink the
+   actual file size, which this runtime pass can't do on its own.
+   Tolerances below match the addon's own defaults: position/scale in
+   scene units, rotation in radians (its 0.05 default is in degrees). */
+function _optimizeCharClipTracks(clip, posTol, quatTolRad, scaleTol){
+  posTol = posTol!==undefined ? posTol : 0.0001;
+  quatTolRad = quatTolRad!==undefined ? quatTolRad : THREE.MathUtils.degToRad(0.05);
+  scaleTol = scaleTol!==undefined ? scaleTol : 0.0001;
+  const _q1=new THREE.Quaternion(), _q2=new THREE.Quaternion(), _q3=new THREE.Quaternion();
+  const _v1=new THREE.Vector3(), _v2=new THREE.Vector3(), _v3=new THREE.Vector3();
+  clip.tracks.forEach(track=>{
+    const isQuat = track.isQuaternionKeyframeTrack || /\.quaternion$/.test(track.name);
+    const stride = isQuat ? 4 : 3;
+    const times = track.times, values = track.values;
+    const n = times.length;
+    if(n <= 2) return; // nothing to reduce
+    if(values.length !== n*stride) return; // CUBICSPLINE tracks store 3x values/key (in-tangent, value, out-tangent) — this reduction assumes plain LINEAR layout, skip anything that doesn't match rather than risk corrupting it
+    const tol = isQuat ? quatTolRad : (/\.scale$/.test(track.name) ? scaleTol : posTol);
+    const getVal=(i)=>values.subarray(i*stride,(i+1)*stride);
+    const errorAt=(a,b,factor,actual)=>{
+      if(isQuat){
+        _q1.fromArray(a); _q2.fromArray(b); _q3.copy(_q1).slerp(_q2,factor);
+        const dot = Math.min(1, Math.abs(_q3.dot(_q1.set(actual[0],actual[1],actual[2],actual[3]))));
+        return 2*Math.acos(dot);
+      }
+      _v1.fromArray(a); _v2.fromArray(b); _v1.lerp(_v2,factor);
+      _v3.fromArray(actual);
+      return _v1.distanceTo(_v3);
+    };
+    const keep = new Set([0, n-1]);
+    const stack = [[0, n-1]];
+    while(stack.length){
+      const [start,end] = stack.pop();
+      if(end <= start+1) continue;
+      const span = times[end]-times[start];
+      let worstErr=-1, worstIdx=-1;
+      for(let i=start+1;i<end;i++){
+        const factor = Math.abs(span)<=1e-12 ? 0 : (times[i]-times[start])/span;
+        const err = errorAt(getVal(start), getVal(end), factor, getVal(i));
+        if(err>worstErr){ worstErr=err; worstIdx=i; }
+      }
+      if(worstIdx>=0 && worstErr>tol){
+        keep.add(worstIdx);
+        stack.push([start,worstIdx]);
+        stack.push([worstIdx,end]);
+      }
+    }
+    if(keep.size===n) return; // nothing to drop
+    const idxList = Array.from(keep).sort((a,b)=>a-b);
+    const newTimes = new Float32Array(idxList.length);
+    const newValues = new Float32Array(idxList.length*stride);
+    idxList.forEach((srcI,dstI)=>{
+      newTimes[dstI]=times[srcI];
+      newValues.set(getVal(srcI), dstI*stride);
+    });
+    track.times = newTimes;
+    track.values = newValues;
+  });
+}
 /* ── CROP AN ANIMATION CLIP TO A TIME WINDOW ─────────────────────
    three.js r128 doesn't ship THREE.AnimationUtils.subclip (that landed
    in a later release), so this is a hand-rolled equivalent: for each
