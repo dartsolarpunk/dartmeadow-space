@@ -11787,7 +11787,7 @@ window.JOTS_SURFACE = {
   sampleDensity(x,y,z){ return sampleSurfDensityAt(x,y,z); },
   hasGpuDensity(){ return !!(TERRAIN.mcDensityArray && TERRAIN.mcGridInfo); },
   mcTier(){ return TERRAIN.mcTier||'low'; },
-  inWater(x,y,z){ return (typeof window._surfWaterAt==='function') ? !!window._surfWaterAt(x,y,z) : ((typeof window._surfWaterAt==='function') ? !!window._surfWaterAt(x,y,z) : false); },
+  inWater(x,y,z){ const fn=window._surfWaterAt||window._surfInWater; return (typeof fn==='function') ? !!fn(x,y,z) : false; },
   climbProbe(x,y,z){ return (typeof window._surfClimbProbe==='function') ? window._surfClimbProbe(x,y,z) : {climbable:false,normal:new THREE.Vector3(0,1,0),slopeDeg:0}; },
 };
 
@@ -12259,22 +12259,6 @@ function buildMarchingCubesAsteroid(radius,seed,resolution){
   return mesh;
 }
 
-
-window._surfClimbNormal=function(x,y,z){
-  try{
-    if(typeof window._surfNormal!=='function') return null;
-    const n=window._surfNormal(x,z);
-    if(!n) return null;
-    // Steep face: Stabilizer climbing_up_wall / Grab_Bar
-    if(n.y<0.55 && n.y>-0.1){
-      if(TERRAIN && TERRAIN.mcGroup){
-        TERRAIN.mcGroup.traverse(o=>{ if(o.isMesh) o.userData.climbable=true; });
-      }
-      return n.clone();
-    }
-  }catch(e){}
-  return null;
-};
 
 // Stabilizer seam (WORLDS owns terrain side; do not touch CHAR boot):
 //   mesh.userData.waterVolume / mesh.userData.climbable (+ optional rope/cliff tags)
@@ -13144,6 +13128,7 @@ function _surfRemountSkyboardFinish(){
   surfScene=null;surfPlayer=null;surfBoard=null;surfTerrainMesh=null;TERRAIN.mcGroup=null;TERRAIN._mcBuildGen=(TERRAIN._mcBuildGen||0)+1;
   TERRAIN.tiles.clear();TERRAIN.group=null;TERRAIN.mcDensityArray=null;TERRAIN.mcGridInfo=null;
   window._surfWaterAt=function(){ return false; };
+  window._surfInWater=window._surfWaterAt;
   window._surfClimbNormal=function(){ return null; };
   enterAtmosphericFlight(body,site);
 }
@@ -13171,6 +13156,7 @@ function exitSurface(){
   surfScene=null;surfPlayer=null;surfBoard=null;surfTerrainMesh=null;TERRAIN.mcGroup=null;TERRAIN._mcBuildGen=(TERRAIN._mcBuildGen||0)+1;
   TERRAIN.tiles.clear();TERRAIN.group=null;TERRAIN.mcDensityArray=null;TERRAIN.mcGridInfo=null;
   window._surfWaterAt=function(){ return false; };
+  window._surfInWater=window._surfWaterAt;
   window._surfClimbNormal=function(){ return null; };
   // Re-mount her onto the real flight board now that we're back in open
   // space — mirrors atmoExitToSpace()'s identical re-mount call. Without
