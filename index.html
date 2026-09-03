@@ -8667,10 +8667,9 @@ function buildFlightGalaxyBand(){
   if(flightGalaxyCore){_disposeObject3D(flightGalaxyCore);flightScene.remove(flightGalaxyCore);flightGalaxyCore=null;}
   flightNebulae.forEach(n=>{_disposeObject3D(n);flightScene.remove(n);});flightNebulae=[];
   if(!STATE.settings.galaxyband)return;
-  // HARD-OFF: buildFlightGalaxyBandGPU still uses instanced SpriteNodeMaterial —
-  // same path that was invisible on live devices (Watcher HOLD on PR #1). Keep
-  // CPU Points as the only default draw. Flip ENABLE_FLIGHT_GALAXY_BAND_GPU only
-  // after Safari+Chrome device proof; Low/fake always stay CPU regardless.
+  // HARD-OFF until Safari+Chrome device proof: GPU builder now draws InstancedMesh
+  // billboard quads (not SpriteNodeMaterial). Keep CPU Points as the live default.
+  // Flip ENABLE_FLIGHT_GALAXY_BAND_GPU after proof; Low/fake always stay CPU.
   const ENABLE_FLIGHT_GALAXY_BAND_GPU=false;
   const useGpu=ENABLE_FLIGHT_GALAXY_BAND_GPU && _isRealWebGPU(flightRenderer) && GFX.preset!=='low';
   if(useGpu){
@@ -8689,8 +8688,8 @@ function buildFlightGalaxyBand(){
 // Float32Array. Deliberately does NOT include the old flat glow-sprite
 // "nebula cloud" blobs (makeGlowSprite scattered through the arms) --
 // those read as flat colored circles rather than actual clouds, and
-// were never wanted here; the real volumetric nebula clouds are
-// buildFlightNebulae's TSL-shaded sprites, a completely separate system.
+// were never wanted here; live nebulae are buildFlightNebulae's Points
+// particles (separate system), not this galaxy-band builder.
 function _tslHash(n){ return fract(sin(n.mul(12.9898)).mul(43758.5453)); }
 async function buildFlightGalaxyBandGPU(){
   const density=({low:0.4,med:1,high:2,ultra:3.5})[STATE.settings.particles]||1;
@@ -8764,42 +8763,46 @@ async function buildFlightGalaxyBandGPU(){
   await flightRenderer.computeAsync(armFn().compute(bandCount));
   await flightRenderer.computeAsync(coreFn().compute(coreCount));
 
-  // Real bug found via docs research (couldn't live-test): THREE.Points
-  // rendered under a real WebGPU backend is HARD-CAPPED at 1 pixel per
-  // point, full stop — the WebGPU point-primitive spec doesn't support a
-  // size parameter at all, unlike WebGL. That's almost certainly why the
-  // whole galaxy showed up as "a little faint light spot": tens of
-  // thousands of 1px additive dots read as near-nothing at this scale.
-  // The documented WebGPU-correct way to draw large/visible GPU-driven
-  // particles is an INSTANCED SPRITE instead of Points — one THREE.Sprite
-  // object, instanced sprite.count times, with positionNode/colorNode
-  // pulling straight from the compute-written storage buffers via
-  // .toAttribute(). Circular falloff is computed directly from uv()
-  // distance-from-center rather than a texture map, matching the
-  // documented pattern exactly.
+  // Draw path: InstancedMesh camera-facing quads (NOT SpriteNodeMaterial —
+  // that path blanked silently on devices). WebGPU Points stay 1px so they
+  // cannot be the sized draw. Compute still fills storage buffers; each
+  // instance is a PlaneGeometry billboarded in view space via vertexNode.
   const circleAlpha=Fn(()=>{
     const d=uv().sub(0.5).length().mul(2.0);
     return smoothstep(1.0,0.55,d);
   });
+  function _makeGpuBandMesh(posStorage, colStorage, count, quadSize){
+    const geo=new THREE.PlaneGeometry(1,1);
+    const mat=new THREE.MeshBasicNodeMaterial({
+      transparent:true, depthWrite:false, depthTest:true,
+      blending:THREE.AdditiveBlending, side:THREE.DoubleSide
+    });
+    const sizeU=float(quadSize);
+    mat.vertexNode=Fn(()=>{
+      const ip=posStorage.toAttribute();
+      const mv=modelViewMatrix.mul(vec4(ip,1.0));
+      const off=positionLocal.mul(sizeU);
+      // View-space XY offset => camera-facing without SpriteNodeMaterial.
+      const mvBillboard=vec4(mv.x.add(off.x), mv.y.add(off.y), mv.z, mv.w);
+      return cameraProjectionMatrix.mul(mvBillboard);
+    })();
+    mat.colorNode=colStorage.toAttribute();
+    mat.opacityNode=circleAlpha();
+    const mesh=new THREE.InstancedMesh(geo,mat,count);
+    mesh.count=count;
+    mesh.frustumCulled=false;
+    const id=new THREE.Matrix4();
+    for(let i=0;i<count;i++)mesh.setMatrixAt(i,id);
+    mesh.instanceMatrix.needsUpdate=true;
+    return mesh;
+  }
 
-  const bandMat=new THREE.SpriteNodeMaterial({transparent:true,depthWrite:false,blending:THREE.AdditiveBlending});
-  bandMat.positionNode=armPos.toAttribute();
-  bandMat.colorNode=armCol.toAttribute();
-  bandMat.opacityNode=circleAlpha();
-  flightGalaxyBand=new THREE.Sprite(bandMat);
-  flightGalaxyBand.count=bandCount;
-  flightGalaxyBand.scale.set(80,80,1);
+  flightGalaxyBand=_makeGpuBandMesh(armPos, armCol, bandCount, 80);
   const galGroup=new THREE.Group();
   galGroup.add(flightGalaxyBand);
 
-  const coreMat=new THREE.SpriteNodeMaterial({transparent:true,depthWrite:false,blending:THREE.AdditiveBlending});
-  coreMat.positionNode=corePos.toAttribute();
-  coreMat.colorNode=coreCol.toAttribute();
-  coreMat.opacityNode=circleAlpha();
-  const coreSprite=new THREE.Sprite(coreMat);
-  coreSprite.count=coreCount;
-  coreSprite.scale.set(110,110,1);
-  galGroup.add(coreSprite);
+  const coreMesh=_makeGpuBandMesh(corePos, coreCol, coreCount, 110);
+  galGroup.add(coreMesh);
   // Small non-compute glow for Sgr A* itself (a single bright point, not a
   // flat colored disc) -- cheap enough to leave as a regular sprite.
   galGroup.add(makeGlowSprite('rgba(255,248,225,0.4)',RG*0.025));
