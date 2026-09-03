@@ -8646,8 +8646,12 @@ function buildFlightGalaxyBand(){
   if(flightGalaxyCore){_disposeObject3D(flightGalaxyCore);flightScene.remove(flightGalaxyCore);flightGalaxyCore=null;}
   flightNebulae.forEach(n=>{_disposeObject3D(n);flightScene.remove(n);});flightNebulae=[];
   if(!STATE.settings.galaxyband)return;
-  // GPU band only on real WebGPU + non-Low. Low / fake backend keep CPU Points.
-  const useGpu=_isRealWebGPU(flightRenderer) && GFX.preset!=='low';
+  // HARD-OFF: buildFlightGalaxyBandGPU still uses instanced SpriteNodeMaterial —
+  // same path that was invisible on live devices (Watcher HOLD on PR #1). Keep
+  // CPU Points as the only default draw. Flip ENABLE_FLIGHT_GALAXY_BAND_GPU only
+  // after Safari+Chrome device proof; Low/fake always stay CPU regardless.
+  const ENABLE_FLIGHT_GALAXY_BAND_GPU=false;
+  const useGpu=ENABLE_FLIGHT_GALAXY_BAND_GPU && _isRealWebGPU(flightRenderer) && GFX.preset!=='low';
   if(useGpu){
     Promise.resolve(buildFlightGalaxyBandGPU()).catch(e=>{console.warn('mwband gpu:',e);buildFlightGalaxyBandCPU();});
   }else{
