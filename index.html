@@ -11787,30 +11787,11 @@ window.JOTS_SURFACE = {
   sampleDensity(x,y,z){ return sampleSurfDensityAt(x,y,z); },
   hasGpuDensity(){ return !!(TERRAIN.mcDensityArray && TERRAIN.mcGridInfo); },
   mcTier(){ return TERRAIN.mcTier||'low'; },
-  inWater(x,y,z){ const fn=window._surfInWater||window._surfWaterAt; return (typeof fn==='function') ? !!fn(x,y,z) : false; },
-  climbProbe(x,y,z){ return (typeof window._surfClimbProbe==='function') ? window._surfClimbProbe(x,y,z) : {climbable:false,normal:new THREE.Vector3(0,1,0),slopeDeg:0}; },
+  inWater(x,y,z){ return (typeof window._surfWaterAt==='function') ? !!window._surfWaterAt(x,y,z) : false; },
+  climbNormal(x,y,z){ return (typeof window._surfClimbNormal==='function') ? window._surfClimbNormal(x,y,z) : null; },
 };
-
-/** Stabilizer climbing_up_wall / Grab_Bar — steep face near (x,y,z). */
-window._surfClimbProbe=function(x,y,z){
-  // Prefer wall probe installed by buildSurfaceTerrain when available
-  if(typeof window._surfClimbNormal==='function'){
-    const cn = window._surfClimbNormal(x,y,z);
-    if(cn){
-      const slopeDeg = THREE.MathUtils.radToDeg(cn.angleTo(new THREE.Vector3(0,1,0)));
-      return {climbable:true, normal:cn, slopeDeg};
-    }
-  }
-  const n = (typeof window._surfNormal==='function')
-    ? window._surfNormal(x,z)
-    : new THREE.Vector3(0,1,0);
-  const up = new THREE.Vector3(0,1,0);
-  const slopeDeg = THREE.MathUtils.radToDeg(n.angleTo(up));
-  const climbable = slopeDeg > 50; // matches autoClimbFromSlope in updateSurface
-  return {climbable, normal:(n.clone?n.clone():n), slopeDeg};
-};
-window._surfInWater=window._surfInWater||function(){ return false; };
-window._surfWaterAt=window._surfWaterAt||window._surfInWater;
+window._surfWaterAt=window._surfWaterAt||function(){ return false; };
+window._surfClimbNormal=window._surfClimbNormal||function(){ return null; };
 
 /**
  * Build a local GPU MC terrain patch around the landing site.
@@ -12269,11 +12250,12 @@ function buildMarchingCubesAsteroid(radius,seed,resolution){
 }
 
 
-// Stabilizer seam (WORLDS owns terrain side; do not touch CHAR boot):
-//   mesh.userData.waterVolume / mesh.userData.climbable (+ optional rope/cliff tags)
-//   window._surfInWater(x,y,z) -> boolean immersion (Swim_Forward)
-//   window._surfClimbProbe(x,y,z) -> {climbable,normal,slopeDeg} (climbing_up_wall / Grab_Bar)
-//   window._surfClimbNormal(x,y,z) -> THREE.Vector3|null (climbable face normal)
+// Stabilizer surface seams (Worlds → Stabilizer locomotion; do not touch CHAR boot):
+//   mesh.userData.waterVolume  → Swim_Forward
+//   mesh.userData.climbable    → climbing_up_wall / Grab_Bar (+ optional rope/cliff)
+//   window._surfWaterAt(x,y,z) → true when inside a water volume
+//   window._surfClimbNormal(x,y,z) → wall normal Vector3 near climbable face, else null
+// Also: window._surfHeight / window._surfNormal for ground + foot IK.
 async function buildSurfaceTerrain(pal){
   const seed=(_surfBody?_surfBody.name.length:5)*13+1;
   const siteLandBias=(()=>{
@@ -12583,11 +12565,10 @@ async function buildSurfaceTerrain(pal){
     surfScene.add(vol);
     TERRAIN.waterVolume=vol;
     // Stabilizer Swim_Forward probe — (x,y,z) world coords → true inside water volume.
-    window._surfInWater=function(x,y,z){
+    window._surfWaterAt=function(x,y,z){
       const b=vol.userData.bounds;
       return x>=b.minX&&x<=b.maxX&&y>=b.minY&&y<=b.maxY&&z>=b.minZ&&z<=b.maxZ;
     };
-    window._surfWaterAt=window._surfInWater; // alias
     window.JOTS_WATER={
       surfaceY:WATER_SURFACE_Y,
       floorY:WATER_FLOOR_Y,
@@ -12597,13 +12578,13 @@ async function buildSurfaceTerrain(pal){
       /** Axis-aligned volume test — Stabilizer can call without scene traversal. */
       containsPoint(p){
         if(!p) return false;
-        return window._surfInWater(p.x,p.y,p.z);
+        return window._surfWaterAt(p.x,p.y,p.z);
       },
       immersionDepth(p){
         if(!this.containsPoint(p)) return 0;
         return Math.max(0, WATER_SURFACE_Y - p.y);
       },
-      // Stabilizer Swim_Forward: mesh.userData.waterVolume===true || window._surfInWater(x,y,z)
+      // Stabilizer Swim_Forward: mesh.userData.waterVolume===true || window._surfWaterAt(x,y,z)
     };
     if(GFX.caustics){
       const cz=256,cc=document.createElement('canvas');cc.width=cz;cc.height=cz;
@@ -12616,8 +12597,7 @@ async function buildSurfaceTerrain(pal){
   } else {
     TERRAIN.waterVolume=null;
     window.JOTS_WATER=null;
-    window._surfInWater=function(){ return false; };
-    window._surfWaterAt=window._surfInWater;
+    window._surfWaterAt=function(){ return false; };
   }
 
   // Stabilizer climbing_up_wall / Grab_Bar — wall normal near climbable geometry.
@@ -13022,18 +13002,12 @@ function updateSurface(dt){
     // animation automatically, same as if CLIMB had been pressed by hand -
     // manual toggle and auto-trigger are OR'd together, so pressing CLIMB
     // still works everywhere it already did.
-    // Prefer Stabilizer climb probe (climbing_up_wall / Grab_Bar) when present
-    let groundNormal, slopeDeg, autoClimbFromSlope;
-    if(typeof window._surfClimbProbe==='function'){
-      const pr = window._surfClimbProbe(p.pos.x, p.pos.y, p.pos.z);
-      groundNormal = pr.normal || new THREE.Vector3(0,1,0);
-      slopeDeg = pr.slopeDeg!=null ? pr.slopeDeg : THREE.MathUtils.radToDeg(groundNormal.angleTo(new THREE.Vector3(0,1,0)));
-      autoClimbFromSlope = !!(pr.climbable && moving);
-    } else {
-      groundNormal = (typeof window._surfNormal==='function') ? window._surfNormal(p.pos.x,p.pos.z) : new THREE.Vector3(0,1,0);
-      slopeDeg = THREE.MathUtils.radToDeg(groundNormal.angleTo(new THREE.Vector3(0,1,0)));
-      autoClimbFromSlope = slopeDeg > 50 && moving;
-    }
+    // Stabilizer climb seam: _surfClimbNormal → climbing_up_wall / Grab_Bar
+    let groundNormal = (typeof window._surfNormal==='function') ? window._surfNormal(p.pos.x,p.pos.z) : new THREE.Vector3(0,1,0);
+    const climbN = (typeof window._surfClimbNormal==='function') ? window._surfClimbNormal(p.pos.x, p.pos.y, p.pos.z) : null;
+    if(climbN) groundNormal = climbN;
+    const slopeDeg = THREE.MathUtils.radToDeg(groundNormal.angleTo(new THREE.Vector3(0,1,0)));
+    const autoClimbFromSlope = (!!climbN || slopeDeg > 50) && moving;
     const climbing = surfClimbHeld || autoClimbFromSlope;
     CHAR._slopeLeanT = THREE.MathUtils.clamp((slopeDeg-35)/15, 0, 1); // 0 at 35°, 1 at 50°+ - read by updateCharacterLocomotion below for the crouch-lean blend
 
@@ -13138,7 +13112,6 @@ function _surfRemountSkyboardFinish(){
   surfScene=null;surfPlayer=null;surfBoard=null;surfTerrainMesh=null;TERRAIN.mcGroup=null;TERRAIN._mcBuildGen=(TERRAIN._mcBuildGen||0)+1;
   TERRAIN.tiles.clear();TERRAIN.group=null;TERRAIN.mcDensityArray=null;TERRAIN.mcGridInfo=null;
   window._surfWaterAt=function(){ return false; };
-  window._surfInWater=window._surfWaterAt;
   window._surfClimbNormal=function(){ return null; };
   enterAtmosphericFlight(body,site);
 }
@@ -13166,7 +13139,6 @@ function exitSurface(){
   surfScene=null;surfPlayer=null;surfBoard=null;surfTerrainMesh=null;TERRAIN.mcGroup=null;TERRAIN._mcBuildGen=(TERRAIN._mcBuildGen||0)+1;
   TERRAIN.tiles.clear();TERRAIN.group=null;TERRAIN.mcDensityArray=null;TERRAIN.mcGridInfo=null;
   window._surfWaterAt=function(){ return false; };
-  window._surfInWater=window._surfWaterAt;
   window._surfClimbNormal=function(){ return null; };
   // Re-mount her onto the real flight board now that we're back in open
   // space — mirrors atmoExitToSpace()'s identical re-mount call. Without
