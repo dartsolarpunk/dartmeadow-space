@@ -1674,7 +1674,7 @@ const STATE={
   flight:{speed:0,dart:false,energy:100,hull:100,shield:100,destIdx:0,time:0,
     camPitch:0,camYaw:0,thrust:0,strafe:0,lift:0,
     pos:{x:28,y:2,z:3},vel:{x:0,y:0,z:0}}, // upgraded to real THREE.Vector3 instances below once THREE exists
-  settings:{stars:true,dust:true,bloom:true,bloomIntensity:0.5,motion:true,textures:true,galaxyband:true,particles:'med',fov:50000,dartSpeed:15,gfxQuality:'auto',resScale:1.0,shadows:true,reflections:true,caustics:true,gi:true,marchingCubesTerrain:true}
+  settings:{stars:true,dust:true,bloom:true,bloomIntensity:0.32,motion:true,textures:true,galaxyband:true,particles:'med',fov:50000,dartSpeed:15,gfxQuality:'auto',resScale:1.0,shadows:true,reflections:true,caustics:true,gi:true,marchingCubesTerrain:true}
 };
 window.__whenThreeReady(function(){
   STATE.flight.pos = new THREE.Vector3(STATE.flight.pos.x, STATE.flight.pos.y, STATE.flight.pos.z);
@@ -3833,24 +3833,40 @@ function makeNebulaCloudMaterial(baseColorHex, seed){
   return mat;
 }
 function buildFlightNebulae(){
-  // Nebulae: soft diffuse clouds, only visible at the perimeter of dust regions.
-  // Sparse cards of real shaded smoke (see makeNebulaCloudMaterial) rather
-  // than hundreds of tiny flat-colored point sprites — fewer, larger,
-  // properly-shaded cards read as actual volumetric clouds instead of a
-  // uniform colored haze.
-  [[3000,200,-500,'rgb(0,140,255)'],[8000,-800,2000,'rgb(150,80,255)'],[-5000,400,3000,'rgb(255,110,40)']].forEach(([px,py,pz,col],cloudIdx)=>{
-    const n=8; // cut hard from 26 given confirmed severe performance issues - each sprite runs multi-octave fractal noise 3x per pixel (shape/shadow/sparkle), real cost at any real count
+  // Nebulae as Points/GPU particles — NOT Sprite billboards. Live builds showed
+  // the old SpriteNodeMaterial cards as flat tan/colored squares in flight.
+  // Soft circle-mapped Points keep depth without hard-edged quads. Low preset
+  // uses a cheaper particle count. makeNebulaCloudMaterial kept for reference
+  // but is no longer the live dust path.
+  if(STATE.settings && STATE.settings.dust===false)return;
+  const clouds=[
+    [3000,200,-500,[0.0,0.55,1.0]],
+    [8000,-800,2000,[0.59,0.31,1.0]],
+    [-5000,400,3000,[1.0,0.43,0.16]]
+  ];
+  const perCloud=(GFX.preset==='low')?280:900;
+  const tex=makeCircleTex(32,'rgb(255,255,255)',0.85);
+  clouds.forEach(([px,py,pz,col])=>{
+    const n=perCloud;
+    const p=new Float32Array(n*3), c=new Float32Array(n*3);
     for(let i=0;i<n;i++){
       const phi=Math.acos(2*Math.random()-1),th=Math.random()*Math.PI*2;
       const r=550+Math.random()*450;
-      const x=px+r*Math.sin(phi)*Math.cos(th), y=py+r*Math.sin(phi)*Math.sin(th)*.3, z=pz+r*Math.cos(phi);
-      const mat = makeNebulaCloudMaterial(col, cloudIdx*17+i*3.7);
-      const spr = new THREE.Sprite(mat);
-      const sc = 260+Math.random()*340;
-      spr.scale.set(sc,sc,1);
-      spr.position.set(x,y,z);
-      flightScene.add(spr);
+      p[i*3]=px+r*Math.sin(phi)*Math.cos(th);
+      p[i*3+1]=py+r*Math.sin(phi)*Math.sin(th)*.3;
+      p[i*3+2]=pz+r*Math.cos(phi);
+      const b=0.12+Math.random()*0.5;
+      c[i*3]=col[0]*b;c[i*3+1]=col[1]*b;c[i*3+2]=col[2]*b;
     }
+    const g=new THREE.BufferGeometry();
+    g.setAttribute('position',new THREE.BufferAttribute(p,3));
+    g.setAttribute('color',new THREE.BufferAttribute(c,3));
+    const pts=new THREE.Points(g,new THREE.PointsMaterial({
+      size:(GFX.preset==='low')?36:52,sizeAttenuation:true,vertexColors:true,map:tex,
+      transparent:true,opacity:0.5,depthWrite:false,blending:THREE.AdditiveBlending,alphaTest:0.02
+    }));
+    flightScene.add(pts);
+    if(typeof flightNebulae!=='undefined')flightNebulae.push(pts);
   });
 }
 
@@ -4264,10 +4280,10 @@ async function buildSolarSystem(){
   sunGroup.add(sm);
   try{
     const gt = makeCircleTex(64, '#ffdd44', 1);
-    const spr1 = new THREE.Sprite(new THREE.SpriteMaterial({map:gt,color:0xffdd44,transparent:true,opacity:0.5,blending:THREE.AdditiveBlending,depthWrite:false}));
-    spr1.scale.set(24,24,1); sunGroup.add(spr1);
-    const spr2 = new THREE.Sprite(new THREE.SpriteMaterial({map:gt,color:0xffaa00,transparent:true,opacity:0.22,blending:THREE.AdditiveBlending,depthWrite:false}));
-    spr2.scale.set(48,48,1); sunGroup.add(spr2);
+    const spr1 = new THREE.Sprite(new THREE.SpriteMaterial({map:gt,color:0xffdd44,transparent:true,opacity:0.28,blending:THREE.AdditiveBlending,depthWrite:false}));
+    spr1.scale.set(14,14,1); sunGroup.add(spr1);
+    const spr2 = new THREE.Sprite(new THREE.SpriteMaterial({map:gt,color:0xffaa00,transparent:true,opacity:0.12,blending:THREE.AdditiveBlending,depthWrite:false}));
+    spr2.scale.set(26,26,1); sunGroup.add(spr2);
   }catch(e){}
   flightScene.add(sunGroup);
   sunMesh=sm;
@@ -7698,10 +7714,11 @@ function buildGalacticCore(group){
   }
   addPoints(core,dp,dc,null,2.6,true);
   // 3) intense radiant glow from the core (multiple layered sprites)
-  const g1=makeGlowSprite('rgba(255,245,225,1.0)',150);core.add(g1);
-  const g2=makeGlowSprite('rgba(255,200,140,0.8)',300);core.add(g2);
-  const g3=makeGlowSprite('rgba(180,120,255,0.4)',520);core.add(g3); // relativistic blue/violet halo
-  const g4=makeGlowSprite('rgba(120,160,255,0.25)',780);core.add(g4);
+  // Toned-down core glow — large opaque layered sprites were whiteout on Android/Safari.
+  const g1=makeGlowSprite('rgba(255,245,225,0.55)',70);core.add(g1);
+  const g2=makeGlowSprite('rgba(255,200,140,0.35)',140);core.add(g2);
+  const g3=makeGlowSprite('rgba(180,120,255,0.18)',220);core.add(g3);
+  const g4=makeGlowSprite('rgba(120,160,255,0.1)',320);core.add(g4);
   // 4) two relativistic jets perpendicular to the disk
   [-1,1].forEach(dir=>{
     const jn=1400;const jp=new Float32Array(jn*3),jc=new Float32Array(jn*3);
@@ -8629,18 +8646,17 @@ function buildFlightGalaxyBand(){
   if(flightGalaxyCore){_disposeObject3D(flightGalaxyCore);flightScene.remove(flightGalaxyCore);flightGalaxyCore=null;}
   flightNebulae.forEach(n=>{_disposeObject3D(n);flightScene.remove(n);});flightNebulae=[];
   if(!STATE.settings.galaxyband)return;
-  // TEMPORARILY DISABLED: buildFlightGalaxyBandGPU (real WebGPU compute
-  // shader + instanced-Sprite particles) was reported completely
-  // invisible on real devices ("can't point in any direction and find
-  // it") — it uses a rendering pattern (instanced Sprite with position/
-  // color read from compute storage buffers via SpriteNodeMaterial) that
-  // wasn't used anywhere else in this file before, so there's nothing
-  // proven to compare against, and no live device to debug it on here.
-  // Forcing the older, simpler CPU-generated version for everyone until
-  // the compute version can be properly verified — it's less clever but
-  // it's the one that's actually been seen working. Flip this back to
-  // the _isRealWebGPU(flightRenderer) check to re-enable the GPU path.
-  buildFlightGalaxyBandCPU();
+  // HARD-OFF: buildFlightGalaxyBandGPU still uses instanced SpriteNodeMaterial —
+  // same path that was invisible on live devices (Watcher HOLD on PR #1). Keep
+  // CPU Points as the only default draw. Flip ENABLE_FLIGHT_GALAXY_BAND_GPU only
+  // after Safari+Chrome device proof; Low/fake always stay CPU regardless.
+  const ENABLE_FLIGHT_GALAXY_BAND_GPU=false;
+  const useGpu=ENABLE_FLIGHT_GALAXY_BAND_GPU && _isRealWebGPU(flightRenderer) && GFX.preset!=='low';
+  if(useGpu){
+    Promise.resolve(buildFlightGalaxyBandGPU()).catch(e=>{console.warn('mwband gpu:',e);buildFlightGalaxyBandCPU();});
+  }else{
+    buildFlightGalaxyBandCPU();
+  }
 }
 
 // ── GPU compute-shader galaxy: 4-arm spiral + field stars + core bulge ──
@@ -8765,10 +8781,11 @@ async function buildFlightGalaxyBandGPU(){
   galGroup.add(coreSprite);
   // Small non-compute glow for Sgr A* itself (a single bright point, not a
   // flat colored disc) -- cheap enough to leave as a regular sprite.
-  galGroup.add(makeGlowSprite('rgba(255,248,225,0.85)',RG*0.05));
+  galGroup.add(makeGlowSprite('rgba(255,248,225,0.4)',RG*0.025));
 
   galGroup.rotation.set(0.5,0.3,0.1);
-  galGroup.position.set(-RG*0.5,-2600,-RG*0.16);
+  // Sol at scene origin sits IN the disc (Orion Arm), not above it — keep Y≈0.
+  galGroup.position.set(-RG*0.5,0,-RG*0.16);
   flightGalaxyCore=galGroup;
   flightScene.add(galGroup);
 }
@@ -8836,7 +8853,7 @@ function buildFlightGalaxyBandCPU(){
   // Single modest Sgr A* glow marking galactic center — not the old layered
   // stack of 3 large flat-colored halo sprites (cream/orange/violet), which
   // read as flat colored blobs rather than an actual glow at this scale.
-  galGroup.add(makeGlowSprite('rgba(255,246,225,0.85)',RG*0.06));
+  galGroup.add(makeGlowSprite('rgba(255,246,225,0.45)',RG*0.028));
   // Sgr A* accretion disk (hot blue-white inner → orange outer) — a real
   // particle system, not a flat sprite, so it stays.
   const dn=Math.round(2500*density);const dp=[],dc=[];
@@ -8859,9 +8876,9 @@ function buildFlightGalaxyBandCPU(){
   // sprites, a separate system that already reads correctly as smoke.
 
   galGroup.rotation.set(0.5,0.3,0.1);
-  // place Sol ~62% out on the Orion arm: shift the whole galaxy so the core is
-  // off in the distance toward the galactic center, visible from the system
-  galGroup.position.set(-RG*0.5,-2600,-RG*0.16);
+  // place Sol ~62% out on the Orion arm IN the disc plane (Y≈0), core off toward
+  // galactic center — not lifted above/away from the band.
+  galGroup.position.set(-RG*0.5,0,-RG*0.16);
   flightGalaxyCore=galGroup;
   flightScene.add(galGroup);
 }
