@@ -11988,6 +11988,20 @@ function buildSurfaceTerrain(pal){
     // ball smooth.
     return h+siteLandBias;
   }
+  // Restored: ec5ae55 accidentally dropped this assignment. Without it,
+  // default heightmap walk treats ground as Y=0 and foot IK early-returns.
+  _surfHeight=H;
+  if(typeof window!=='undefined'){
+    window._surfHeight=_surfHeight;
+    // Heightmap normal from central differences (MC path overrides with raycast).
+    window._surfNormal=(x,z)=>{
+      const e=0.75;
+      const hx=_surfHeight(x+e,z)-_surfHeight(x-e,z);
+      const hz=_surfHeight(x,z+e)-_surfHeight(x,z-e);
+      const n=new THREE.Vector3(-hx,2*e,-hz).normalize();
+      return n;
+    };
+  }
   const dd=drawDistanceTier();
   TERRAIN.rootSize=dd.rootSize; TERRAIN.maxDepth=dd.maxDepth;
   TERRAIN.recenterMargin=Math.min(600,dd.rootSize*0.25);
@@ -12094,6 +12108,7 @@ if(STATE.settings.marchingCubesTerrain){
       }
       return _origSurfHeight(x,z);
     };
+    if(typeof window!=='undefined') window._surfHeight=_surfHeight;
     // Surface normal at a point - same raycast approach as _surfHeight above,
     // kept as a separate function (rather than changing _surfHeight's return
     // type) so nothing that already calls _surfHeight for a plain number
