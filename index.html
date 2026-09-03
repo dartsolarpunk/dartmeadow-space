@@ -11759,9 +11759,9 @@ function sampleSurfGroundHeight(wx, wz, yHint){
     prevD = d; y = yN;
   }
   if(!found){
-    // Fallback: scan from hint or mid
-    const start = (typeof yHint==='number') ? yHint : (yMin+yMax)*0.5;
-    return start;
+    // Miss: prefer heightmap H(x,z), never a stale yHint (Watcher nit).
+    if(TERRAIN.H) return TERRAIN.H(wx,wz);
+    return (typeof yHint==='number') ? yHint : (yMin+yMax)*0.5;
   }
   for(let i=0;i<8;i++){
     const mid=(lo+hi)*0.5;
