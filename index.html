@@ -3648,6 +3648,16 @@ let _flightLoopCv=null,_flightLoopLast=0;
 // loading (see the _flightFrameCounter comment in _startFlightLoop). This
 // declaration was missing entirely, which made every read of it throw.
 let _flightFrameCounter=0;
+// Rate-limited animate-loop error reporter — empty catch{} used to silent-fail
+// (black canvas / frozen character with no console signal).
+let _animLoopErrAt=0;
+function _animLoopWarn(tag,e){
+  const t=performance.now();
+  if(t-_animLoopErrAt<2500) return;
+  _animLoopErrAt=t;
+  console.error('[animate:'+tag+']', e&&(e.message||e), e);
+  try{ if(tag==='render'||tag==='surf-render') toast('⚠ Render hitch — check console',2500); }catch(_){}
+}
 // Debounced resize handling for the flight canvas. Previously the loop read
 // window.innerWidth/innerHeight PLUS cv.clientWidth (a forced synchronous
 // layout read) EVERY FRAME, and any single-frame fluctuation triggered a
@@ -3690,7 +3700,7 @@ function _startFlightLoop(){
 
     _applyFlightResizeIfPending();
 
-    try{updateFlight(dt);}catch(e){}
+    try{updateFlight(dt);}catch(e){_animLoopWarn('updateFlight',e);}
     try{
       if(_charShadowLight && boardFlight){
         const bp=boardFlight.position;
@@ -3699,19 +3709,19 @@ function _startFlightLoop(){
         _charShadowLight.target.position.copy(bp);
         _charShadowLight.target.updateMatrixWorld();
       }
-    }catch(e){}
-    try{updateBodies(dt);}catch(e){}
-    try{upgradePlanetLOD(dt);}catch(e){}
-    try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){}
-    try{ updateCharOrbitCamera(); }catch(e){}
-    try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){}
-    try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){}
-    try{updateBirdTemple(dt);}catch(e){}
-    try{updateDistantSystems(dt);}catch(e){}
-    try{updateVolumetricDust(dt);}catch(e){}
-    try{updateHUD();}catch(e){}
-    try{updateCrosshairLabel();}catch(e){}
-    try{drawMinimap();}catch(e){}
+    }catch(e){_animLoopWarn('charShadow',e);}
+    try{updateBodies(dt);}catch(e){_animLoopWarn('updateBodies',e);}
+    try{upgradePlanetLOD(dt);}catch(e){_animLoopWarn('upgradePlanetLOD',e);}
+    try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){_animLoopWarn('skyboardStance',e);}
+    try{ updateCharOrbitCamera(); }catch(e){_animLoopWarn('charOrbit',e);}
+    try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){_animLoopWarn('charMixer',e);}
+    try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){_animLoopWarn('headOverride',e);}
+    try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);}
+    try{updateDistantSystems(dt);}catch(e){_animLoopWarn('distantSystems',e);}
+    try{updateVolumetricDust(dt);}catch(e){_animLoopWarn('volumetricDust',e);}
+    try{updateHUD();}catch(e){_animLoopWarn('updateHUD',e);}
+    try{updateCrosshairLabel();}catch(e){_animLoopWarn('crosshair',e);}
+    try{drawMinimap();}catch(e){_animLoopWarn('minimap',e);}
     // Real fix for confirmed GPU-side contention during character loading
     // (measured live: her load took 90-130s in the full game context vs
     // ~12s in isolation) - each full render of the marching-cubes planets
@@ -3737,8 +3747,7 @@ function _startFlightLoop(){
     // going black shortly after start. Declared properly below.
     _flightFrameCounter = (_flightFrameCounter + 1) % 1000000;
     if(!CHAR.loading || _flightFrameCounter % 4 === 0){
-      renderWithPostFX();
-    }
+      try{ renderWithPostFX(); }catch(e){ _animLoopWarn('render',e); }    }
   })();
 }
 
@@ -6157,7 +6166,7 @@ function buildFlightBoard(){
         tries++;
         if(CHAR.mounted || tries>550){ // ~220s cap — long enough for at least one full retry cycle (both loads can now take up to 90s each before timing out)
           clearInterval(poll);
-          if(!CHAR.mounted) console.error('Character still not mounted after 20s of retries — boardFlight:',boardFlight,'CHAR.root:',CHAR.root,'CHAR.loaded:',CHAR.loaded,'CHAR.loading:',CHAR.loading);
+          if(!CHAR.mounted){ console.error('Character still not mounted after ~220s of retries — boardFlight:',boardFlight,'CHAR.root:',CHAR.root,'CHAR.loaded:',CHAR.loaded,'CHAR.loading:',CHAR.loading); try{toast('⚠ Autumn failed to mount — see console',5000);}catch(_){} }
           return;
         }
         if(!CHAR.loaded && !CHAR.loading){
@@ -9626,7 +9635,7 @@ function resumeFlightLoop(){
   (function loop(){
     flightAnimId=requestAnimationFrame(loop);
     const now=performance.now();const dt=Math.min((now-last)/1000,0.05);last=now;flightTime+=dt;
-    try{updateFlight(dt);}catch(e){}
+    try{updateFlight(dt);}catch(e){_animLoopWarn('updateFlight',e);}
     try{
       if(_charShadowLight && boardFlight){
         const bp=boardFlight.position;
@@ -9635,19 +9644,19 @@ function resumeFlightLoop(){
         _charShadowLight.target.position.copy(bp);
         _charShadowLight.target.updateMatrixWorld();
       }
-    }catch(e){}
-    try{updateBodies(dt);}catch(e){}
-    try{upgradePlanetLOD(dt);}catch(e){}
-    try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){}
-    try{ updateCharOrbitCamera(); }catch(e){}
-    try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){}
-    try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){}
-    try{updateBirdTemple(dt);}catch(e){}
-    try{updateDistantSystems(dt);}catch(e){}
-    try{updateVolumetricDust(dt);}catch(e){}
-    try{updateHUD();}catch(e){}
-    try{updateCrosshairLabel();}catch(e){}
-    try{drawMinimap();}catch(e){}
+    }catch(e){_animLoopWarn('charShadow',e);}
+    try{updateBodies(dt);}catch(e){_animLoopWarn('updateBodies',e);}
+    try{upgradePlanetLOD(dt);}catch(e){_animLoopWarn('upgradePlanetLOD',e);}
+    try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){_animLoopWarn('skyboardStance',e);}
+    try{ updateCharOrbitCamera(); }catch(e){_animLoopWarn('charOrbit',e);}
+    try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){_animLoopWarn('charMixer',e);}
+    try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){_animLoopWarn('headOverride',e);}
+    try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);}
+    try{updateDistantSystems(dt);}catch(e){_animLoopWarn('distantSystems',e);}
+    try{updateVolumetricDust(dt);}catch(e){_animLoopWarn('volumetricDust',e);}
+    try{updateHUD();}catch(e){_animLoopWarn('updateHUD',e);}
+    try{updateCrosshairLabel();}catch(e){_animLoopWarn('crosshair',e);}
+    try{drawMinimap();}catch(e){_animLoopWarn('minimap',e);}
     try{renderWithPostFX();}catch(e){}
   })();
 }
@@ -9759,10 +9768,10 @@ async function enterAtmosphericFlight(body,site){
     const now=performance.now();const dt=Math.min((now-last)/1000,0.05);last=now;
     updateAtmoFlight(dt);
     try{ if(CHAR.mounted) applySkyboardStance(now/1000); }catch(e){}
-    try{ updateCharOrbitCamera(); }catch(e){}
-    try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){}
-    try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){}
-    try{updateBirdTemple(dt);}catch(e){}
+    try{ updateCharOrbitCamera(); }catch(e){_animLoopWarn('charOrbit',e);}
+    try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){_animLoopWarn('charMixer',e);}
+    try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){_animLoopWarn('headOverride',e);}
+    try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);}
     atmoRenderer.render(atmoScene,atmoCamera);
   })();
 }
@@ -10287,6 +10296,8 @@ async function loadCharacterAssets(){
     console.log('Character material fixed — was defaulting to metalness:1/roughness:1 (near-black with no env map), now metalness:0.08/roughness:0.55.');
   }
   CHAR.mixer = new THREE.AnimationMixer(CHAR.root);
+  // Yield so concurrent MC / WebGL work can breathe under Safari + Graphics Low.
+  await new Promise(r=>setTimeout(r,0));
 
   // Single consolidated source for every clip now (see CHAR_FILES.animSrc /
   // CHAR_CLIP_NAMES comments above) — one load instead of five separate
@@ -11295,12 +11306,12 @@ async function enterSurface(body,site){
   (function sloop(){
     surfAnimId=requestAnimationFrame(sloop);
     const now=performance.now();const dt=Math.min((now-last)/1000,0.05);last=now;surfTime+=dt;
-    updateSurface(dt);
-    try{ updateCharOrbitCamera(); }catch(e){}
-    try{ _updateCharDebugHUD(); }catch(e){}
-    try{updateCaustics(dt);}catch(e){}
-    try{updateBirdTemple(dt);}catch(e){} // ship keeps wandering + shard keeps following, even off-screen
-    surfRenderer.render(surfScene,surfCamera);
+    try{ updateSurface(dt); }catch(e){ _animLoopWarn('updateSurface',e); }
+    try{ updateCharOrbitCamera(); }catch(e){_animLoopWarn('charOrbit',e);}
+    try{ _updateCharDebugHUD(); }catch(e){_animLoopWarn('charDbg',e);}
+    try{updateCaustics(dt);}catch(e){_animLoopWarn('caustics',e);}
+    try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);} // ship keeps wandering + shard keeps following, even off-screen
+    try{ surfRenderer.render(surfScene,surfCamera); }catch(e){ _animLoopWarn('surf-render',e); }
   })();
 }
 let surfBoard=null,surfTerrainMesh=null,_surfHeight=null;
@@ -13081,21 +13092,23 @@ function updateSurface(dt){
     const climbN = (typeof window._surfClimbNormal==='function') ? window._surfClimbNormal(p.pos.x, p.pos.y, p.pos.z) : null;
     if(climbN) groundNormal = climbN;
     const slopeDeg = THREE.MathUtils.radToDeg(groundNormal.angleTo(new THREE.Vector3(0,1,0)));
-    const autoClimbFromSlope = (!!climbN || slopeDeg > 50) && moving;
-    const climbing = surfClimbHeld || autoClimbFromSlope;
-    CHAR._slopeLeanT = THREE.MathUtils.clamp((slopeDeg-35)/15, 0, 1); // 0 at 35°, 1 at 50°+ - read by updateCharacterLocomotion below for the crouch-lean blend
-
     // Stabilizer swim seam: Worlds installs window._surfWaterAt(x,y,z).
     // Console override CHAR._wantSwim still works for testing without water volumes.
     const feetY = eye-3.0;
-    const inWater = (typeof window._surfWaterAt==='function') ? !!window._surfWaterAt(p.pos.x, feetY, p.pos.z) : false;
+    const inWater = !!CHAR._wantSwim || ((typeof window._surfWaterAt==='function') ? !!window._surfWaterAt(p.pos.x, feetY, p.pos.z) : false);
+    const autoClimbFromSlope = (!!climbN || slopeDeg > 50) && moving;
+    // Swim wins over climb while immersed so Swim_Forward actually plays in water volumes.
+    const climbing = !inWater && (surfClimbHeld || autoClimbFromSlope);
+    CHAR._slopeLeanT = THREE.MathUtils.clamp((slopeDeg-35)/15, 0, 1); // 0 at 35°, 1 at 50°+ - read by updateCharacterLocomotion below for the crouch-lean blend
+    // Mid-slope auto-crouch uses Autumn crouch clip (stanceMode stand only; HUD locked).
+    const autoCrouch = CHAR.stanceMode==='stand' && !inWater && !climbing && CHAR._slopeLeanT>0.45 && moving && !running;
 
     updateCharacterLocomotion(dt, moving, running, dirSign, jumping, climbing, {
-      swim: !!CHAR._wantSwim || inWater,
-      rope: !!CHAR._wantRope,
-      cliff: !!CHAR._wantCliff,
+      swim: inWater,
+      rope: !!CHAR._wantRope, // STUB until rope interactable exists
+      cliff: !!CHAR._wantCliff, // STUB until ledge/userData.cliff trigger exists
       prone: CHAR.stanceMode==='prone',
-      crouch: CHAR.stanceMode==='crouch',
+      crouch: CHAR.stanceMode==='crouch' || autoCrouch,
     });
   }
 }
@@ -13237,7 +13250,7 @@ function exitSurface(){
       flightAnimId=requestAnimationFrame(loop);
       const now=performance.now();const dt=Math.min((now-last)/1000,0.05);last=now;flightTime+=dt;
       _applyFlightResizeIfPending(); // see _queueFlightResize — debounced, event-driven (Android jitter fix)
-      try{updateFlight(dt);}catch(e){}
+      try{updateFlight(dt);}catch(e){_animLoopWarn('updateFlight',e);}
     try{
       if(_charShadowLight && boardFlight){
         const bp=boardFlight.position;
@@ -13246,21 +13259,20 @@ function exitSurface(){
         _charShadowLight.target.position.copy(bp);
         _charShadowLight.target.updateMatrixWorld();
       }
-    }catch(e){}
-      try{updateBodies(dt);}catch(e){}
-    try{upgradePlanetLOD(dt);}catch(e){}
-      try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){}
-    try{ updateCharOrbitCamera(); }catch(e){}
-    try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){}
-    try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){}
-      try{updateBirdTemple(dt);}catch(e){}
-      try{updateDistantSystems(dt);}catch(e){}
-      try{updateVolumetricDust(dt);}catch(e){}
-      try{updateHUD();}catch(e){}
-    try{updateCrosshairLabel();}catch(e){}
-      try{drawMinimap();}catch(e){}
-      renderWithPostFX();
-    })();
+    }catch(e){_animLoopWarn('charShadow',e);}
+      try{updateBodies(dt);}catch(e){_animLoopWarn('updateBodies',e);}
+    try{upgradePlanetLOD(dt);}catch(e){_animLoopWarn('upgradePlanetLOD',e);}
+      try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){_animLoopWarn('skyboardStance',e);}
+    try{ updateCharOrbitCamera(); }catch(e){_animLoopWarn('charOrbit',e);}
+    try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){_animLoopWarn('charMixer',e);}
+    try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){_animLoopWarn('headOverride',e);}
+      try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);}
+      try{updateDistantSystems(dt);}catch(e){_animLoopWarn('distantSystems',e);}
+      try{updateVolumetricDust(dt);}catch(e){_animLoopWarn('volumetricDust',e);}
+      try{updateHUD();}catch(e){_animLoopWarn('updateHUD',e);}
+    try{updateCrosshairLabel();}catch(e){_animLoopWarn('crosshair',e);}
+      try{drawMinimap();}catch(e){_animLoopWarn('minimap',e);}
+      try{ renderWithPostFX(); }catch(e){ _animLoopWarn('render',e); }    })();
   }
   toast('🚀 Back aboard the skyboard');
 }
