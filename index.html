@@ -3946,6 +3946,11 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
     const n2=mx_fractal_noise_float(dir.mul(6.9).add(seedU).add(vec3(9.1,2.3,4.7)),3,2.0,0.5);
     const billow=n2.abs();
     const terrain=ridge.mul(ridge).mul(0.9).sub(billow.mul(0.35));
+    // Plateaus / sharp cliffs — terraced noise (step discontinuity = cliff face)
+    const terrace=mx_fractal_noise_float(dir.mul(1.8).add(seedU).add(vec3(4.2,8.1,1.5)),3,2.0,0.5).mul(0.5).add(0.5);
+    const plateau=terrace.mul(5.0).floor().div(5.0).sub(0.5).mul(0.55);
+    // High peaks — extra ridged punch
+    const peaks=ridge.pow(3.0).mul(0.45);
     const w1=mx_worley_noise_float(dir.mul(4.2).add(seedU));
     const profile1=exp(w1.mul(w1).mul(-22.0));
     const w2=mx_worley_noise_float(dir.mul(1.6).add(seedU).add(vec3(31.0,7.0,19.0)));
@@ -3954,30 +3959,25 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
     const rim1=smoothstep(0.04,0.22,profile1).sub(smoothstep(0.22,0.42,profile1)).mul(0.06);
     const rim2=smoothstep(0.03,0.18,profile2).sub(smoothstep(0.18,0.34,profile2)).mul(0.14);
     const craterRim=rim1.add(rim2);
-    const genericRelief=terrain.mul(0.9).sub(bowl.mul(0.6)).add(craterRim.mul(0.6)); // roughly -1..1, same convention as earth/mars below
+    const genericRelief=terrain.mul(0.9).sub(bowl.mul(0.6)).add(craterRim.mul(0.6)).add(plateau).add(peaks); // roughly -1..1
     let relief;
     if(kind==='earth'){
       const land=_earthLandMaskTSL(dir);
       const ridgeE=float(1.0).sub(mx_fractal_noise_float(dir.mul(9.0).add(seedU),4,2.0,0.5).abs());
+      const ridgeE2=float(1.0).sub(mx_fractal_noise_float(dir.mul(18.0).add(seedU).add(vec3(2,7,1)),3,2.0,0.5).abs());
       // WATER_R sits at radius*1.008 (relief 0.667 on this 0.012 scale) —
-      // land needs a baseline safely above that regardless of ridge value,
-      // or most of it reads as submerged. Ocean gets its own baseline
-      // safely below, deepening a bit further from shore.
-      const landHeight=float(0.8).add(ridgeE.mul(ridgeE).mul(1.2));
+      // land baseline above water; mountains/peaks/plateaus for cliffs.
+      const terraceE=mx_fractal_noise_float(dir.mul(3.2).add(seedU),3,2.0,0.5).mul(0.5).add(0.5);
+      const plateauE=terraceE.mul(4.0).floor().div(4.0).mul(0.35);
+      const landHeight=float(0.8).add(ridgeE.mul(ridgeE).mul(1.15)).add(ridgeE2.pow(3.0).mul(0.55)).add(plateauE);
       const oceanHeight=float(-0.3).sub(land.negate().clamp(0.0,1.0).mul(0.4));
       relief=select(land.greaterThan(0.0),landHeight,oceanHeight);
     } else if(kind==='mars'){
-      relief=_marsFeatureTSL(dir);
+      relief=_marsFeatureTSL(dir).add(plateau.mul(0.35)).add(peaks.mul(0.5));
     } else {
       relief=genericRelief;
     }
-    // Relief scaled to real-world proportion, not the old 12%-of-radius
-    // (which made mountains ~85x taller relative to the planet than real
-    // Everest is to Earth, and visibly reached toward the atmosphere
-    // shell). True Everest/Earth-radius ratio is ~0.14%; kept at ~1.2%
-    // here — about 10x exaggerated over true scale — since a fully
-    // literal ratio reads as almost perfectly smooth at planet-viewing
-    // distance.
+    // ~1.2% of radius relief (readable cliffs/peaks at flight distance without piercing atmo)
     return float(radius).add(relief.mul(radius*0.012));
   });
 
@@ -4132,12 +4132,33 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
     waterMat.roughnessNode=clamp(float(0.06).add(waveN3W.abs().mul(0.12)),0.03,0.28);
     const waterMesh=new THREE.Mesh(new THREE.SphereGeometry(WATER_R,64,40),waterMat);
     waterMesh.renderOrder=1;
+    waterMesh.name='JOTS_PlanetWaterShell';
+    waterMesh.userData.isWaterVolume=true;
+    waterMesh.userData.waterVolume=true; // Stabilizer Swim_Forward (orbital shell marker)
+    waterMesh.userData.liquidName='water';
+    waterMesh.userData.waterRadius=WATER_R;
+    waterMesh.userData.planetRadius=radius;
     group.add(waterMesh);
+    // Optional inner "volume" marker sphere (slightly smaller) for bounds queries
+    const waterVolMarker=new THREE.Mesh(
+      new THREE.SphereGeometry(WATER_R*0.995,16,12),
+      new THREE.MeshBasicMaterial({visible:false})
+    );
+    waterVolMarker.name='JOTS_PlanetWaterVolume';
+    waterVolMarker.userData.isWaterVolume=true;
+    waterVolMarker.userData.waterVolume=true; // Stabilizer Swim_Forward
+    waterVolMarker.userData.liquidName='water';
+    waterVolMarker.userData.waterRadius=WATER_R;
+    waterVolMarker.userData.planetRadius=radius;
+    group.add(waterVolMarker);
 
     const atmoMat=new THREE.MeshBasicNodeMaterial({transparent:true,side:THREE.BackSide,depthWrite:false,depthTest:false,blending:THREE.AdditiveBlending});
-    const scatterCoeffs=uniform(new THREE.Vector3(Math.pow(400/700,4),Math.pow(400/530,4),Math.pow(400/440,4)).multiplyScalar(2.2));
+    // Planet-specific atmosphere thickness: Earth thicker than Mars/small rocky
+    const atmoMul = (kind==='earth') ? 1.20 : (kind==='mars') ? 1.04 : 1.08;
+    const scatterMul = (kind==='earth') ? 3.2 : (kind==='mars') ? 1.5 : 2.4;
+    const scatterCoeffs=uniform(new THREE.Vector3(Math.pow(400/700,4),Math.pow(400/530,4),Math.pow(400/440,4)).multiplyScalar(scatterMul));
     const sunDirU=uniform(new THREE.Vector3(1,0.3,0.2).normalize());
-    const ATMO_R=HALF*1.06;
+    const ATMO_R=HALF*atmoMul;
     const raySphere=Fn(([center,rad,ro,rd])=>{
       const offset=ro.sub(center);
       const b=offset.dot(rd).mul(2.0);
@@ -11133,8 +11154,8 @@ async function enterSurface(body,site){
     const sg=new THREE.BufferGeometry();sg.setAttribute('position',new THREE.BufferAttribute(sp,3));
     surfScene.add(new THREE.Points(sg,new THREE.PointsMaterial({size:1.5,sizeAttenuation:false,color:0xffffff})));
   }
-  // procedural terrain — heightmapped plane
-  buildSurfaceTerrain(pal);
+  // procedural terrain — heightmapped plane (+ GPU MC patch on real WebGPU)
+  await buildSurfaceTerrain(pal);
   // sky gradient dome
   const skyGeo=new THREE.SphereGeometry(1000,16,16);
   const skyMat=makeSkyDomeMaterial(pal.sky[1],pal.sky[0]);
@@ -11671,6 +11692,326 @@ const GPU_TriangleTable = _rawGPUTriangleTable.map(row=>{
 // 5x5/130-unit proof-of-concept.
 
 
+// ── buildGpuSurfacePatch ──────────────────────────────────────────
+// Local Y-up GPU MC patch for surface walk. Sandbox pipeline spirit:
+ // density → MC+biome → water markers → collision readback → walk.
+// Caps grid at ≤28³ (tablet crash history at 40). Shared ridge/billow/
+// plateau/canyon language with orbital terrainRadiusAt / sandbox.
+// Collision samples the SAME density buffer via trilinear readback.
+const SURF_MC_MAX_N = 28;
+TERRAIN.mcTier = 'low';
+TERRAIN.mcRes = 16;
+TERRAIN.mcUpgradeLocked = false;
+TERRAIN.mcDensityArray = null;
+TERRAIN.mcGridInfo = null;
+
+function _surfMcResForTier(tier){
+  if(tier==='high') return Math.min(28, SURF_MC_MAX_N);
+  if(tier==='med') return Math.min(22, SURF_MC_MAX_N);
+  return Math.min(16, SURF_MC_MAX_N);
+}
+
+/** Trilinear sample of the GPU density field (negative = solid). */
+function sampleSurfDensityAt(wx, wy, wz){
+  const info = TERRAIN.mcGridInfo, arr = TERRAIN.mcDensityArray;
+  if(!info || !arr) return 1;
+  const {GRID, CELL, originX, originY, originZ} = info;
+  let gx=(wx-originX)/CELL, gy=(wy-originY)/CELL, gz=(wz-originZ)/CELL;
+  gx=Math.max(0,Math.min(gx,GRID-1.001));
+  gy=Math.max(0,Math.min(gy,GRID-1.001));
+  gz=Math.max(0,Math.min(gz,GRID-1.001));
+  const gx0=Math.floor(gx), gy0=Math.floor(gy), gz0=Math.floor(gz);
+  const gx1=Math.min(gx0+1,GRID-1), gy1=Math.min(gy0+1,GRID-1), gz1=Math.min(gz0+1,GRID-1);
+  const fx=gx-gx0, fy=gy-gy0, fz=gz-gz0;
+  const idx=(x,y,z)=> x + y*GRID + z*GRID*GRID;
+  const c000=arr[idx(gx0,gy0,gz0)], c100=arr[idx(gx1,gy0,gz0)];
+  const c010=arr[idx(gx0,gy1,gz0)], c110=arr[idx(gx1,gy1,gz0)];
+  const c001=arr[idx(gx0,gy0,gz1)], c101=arr[idx(gx1,gy0,gz1)];
+  const c011=arr[idx(gx0,gy1,gz1)], c111=arr[idx(gx1,gy1,gz1)];
+  const x00=c000+(c100-c000)*fx, x10=c010+(c110-c010)*fx;
+  const x01=c001+(c101-c001)*fx, x11=c011+(c111-c011)*fx;
+  const y0=x00+(x10-x00)*fy, y1=x01+(x11-x01)*fy;
+  return y0+(y1-y0)*fz;
+}
+
+/** Ground height from density zero-crossing (consistent with MC mesh). */
+function sampleSurfGroundHeight(wx, wz, yHint){
+  const info = TERRAIN.mcGridInfo;
+  if(!info || !TERRAIN.mcDensityArray){
+    return (TERRAIN.H ? TERRAIN.H(wx,wz) : 0);
+  }
+  const yMin = info.originY, yMax = info.originY + info.CELL*(info.GRID-1);
+  let lo = yMin, hi = yMax;
+  // Coarse march then refine — density < 0 is solid (below surface).
+  let prevD = sampleSurfDensityAt(wx, lo, wz);
+  const step = Math.max(0.35, info.CELL*0.5);
+  let y = lo;
+  let found = false;
+  while(y < hi){
+    const yN = Math.min(hi, y+step);
+    const d = sampleSurfDensityAt(wx, yN, wz);
+    if(prevD < 0 && d >= 0){
+      const t = prevD/(prevD-d+1e-8);
+      lo = y; hi = y + t*step;
+      found = true;
+      break;
+    }
+    prevD = d; y = yN;
+  }
+  if(!found){
+    // Fallback: scan from hint or mid
+    const start = (typeof yHint==='number') ? yHint : (yMin+yMax)*0.5;
+    return start;
+  }
+  for(let i=0;i<8;i++){
+    const mid=(lo+hi)*0.5;
+    if(sampleSurfDensityAt(wx, mid, wz) < 0) lo=mid; else hi=mid;
+  }
+  return (lo+hi)*0.5;
+}
+
+function sampleSurfGroundNormal(wx, wz){
+  const eps = (TERRAIN.mcGridInfo && TERRAIN.mcGridInfo.CELL) ? TERRAIN.mcGridInfo.CELL*0.75 : 1.2;
+  const h=sampleSurfGroundHeight(wx,wz);
+  const hx=sampleSurfGroundHeight(wx+eps,wz);
+  const hz=sampleSurfGroundHeight(wx,wz+eps);
+  const n=new THREE.Vector3(-(hx-h)/eps, 1, -(hz-h)/eps).normalize();
+  return n;
+}
+
+// Public sampling API for character foot IK / Stabilizer coordination.
+// Prefer these over ad-hoc raycasts when GPU MC density is live.
+window.JOTS_SURFACE = {
+  sampleHeight(x,z){ return (typeof window._surfHeight==='function') ? window._surfHeight(x,z) : (TERRAIN.H?TERRAIN.H(x,z):0); },
+  sampleNormal(x,z){ return (typeof window._surfNormal==='function') ? window._surfNormal(x,z) : new THREE.Vector3(0,1,0); },
+  sampleDensity(x,y,z){ return sampleSurfDensityAt(x,y,z); },
+  hasGpuDensity(){ return !!(TERRAIN.mcDensityArray && TERRAIN.mcGridInfo); },
+  mcTier(){ return TERRAIN.mcTier||'low'; },
+};
+
+/**
+ * Build a local GPU MC terrain patch around the landing site.
+ * @returns {Promise<{mesh:THREE.Mesh, half:number}|null>}
+ */
+async function buildGpuSurfacePatch(surfRenderer, opts){
+  opts = opts || {};
+  if(!_isRealWebGPU(surfRenderer)) return null;
+  const seed = opts.seed||1;
+  const pal = opts.pal || {ground:0x3a7d34,ground2:0x2a5d24,rock:0x6b5d4f};
+  const tier = opts.tier || TERRAIN.mcTier || 'low';
+  const N = Math.min(SURF_MC_MAX_N, opts.N || _surfMcResForTier(tier));
+  const half = opts.halfExtent || 90; // world units from center (±half)
+  const yMin = opts.yMin!=null ? opts.yMin : -45;
+  const yMax = opts.yMax!=null ? opts.yMax : 130;
+  const siteBias = opts.siteLandBias||0;
+  const originX = -half, originZ = -half, originY = yMin;
+  const sizeX = half*2, sizeY = yMax-yMin, sizeZ = half*2;
+  const GRID = N+1;
+  const CELLx = sizeX/N, CELLy = sizeY/N, CELLz = sizeZ/N;
+  // Density buffer uses isotropic CELL for simpler indexing; stretch Y via separate scale in position.
+  // Use average cell for flat buffer layout matching flight builder (isotropic grid in a AABB).
+  const CELL = Math.max(CELLx, CELLy, CELLz);
+  // Recompute extents from isotropic CELL so MC cubes stay cubic (required for stable normals).
+  const halfIso = (CELL*N)/2;
+  const oX = -halfIso, oY = yMin, oZ = -halfIso;
+  const numPoints = GRID*GRID*GRID;
+  const numCells = N*N*N;
+  const MAX_TRIS = 5;
+  const maxVerts = numCells*MAX_TRIS*3;
+  const seedU = uniform(seed);
+  const biasU = uniform(siteBias);
+
+  const densityBuf=new THREE.StorageInstancedBufferAttribute(numPoints,1);
+  const densityNode=storage(densityBuf,'float',numPoints);
+  const triTableFlat=new Int32Array(256*16);
+  GPU_TriangleTable.forEach((row,i)=>{ for(let j=0;j<16;j++) triTableFlat[i*16+j]=row[j]; });
+  const triTableAttr=new THREE.StorageBufferAttribute(triTableFlat,1);
+  const triTableStorage=storage(triTableAttr,'int',256*16);
+  const vertexBuf=new THREE.StorageBufferAttribute(maxVerts,3);
+  const vertexNode=storage(vertexBuf,'vec3',maxVerts);
+  const normalBuf=new THREE.StorageBufferAttribute(maxVerts,3);
+  const normalNode=storage(normalBuf,'vec3',maxVerts);
+  const colorBuf=new THREE.StorageBufferAttribute(maxVerts,3);
+  const colorNode=storage(colorBuf,'vec3',maxVerts);
+
+  // Shared noise language with sandbox terrainRadiusAt / orbital builder:
+  // ridged mountains, billow detail, terraced plateaus, canyon/river cuts.
+  const terrainHeightAt=Fn(([p])=>{
+    const xz = vec3(p.x, float(0), p.z);
+    const nHills = mx_fractal_noise_float(xz.mul(0.012).add(vec3(100,seedU,100)),5,2.0,0.5);
+    // mx_fractal ~ -1..1; CPU _fbm is ~0..1 — remap to ~0..1 then scale like H().
+    const hills = nHills.mul(0.5).add(0.5).mul(22.0);
+    const nDetail = mx_fractal_noise_float(xz.mul(0.04).add(seedU).add(vec3(3,0,3)),3,2.0,0.5);
+    const detail = nDetail.mul(0.5).add(0.5).mul(5.0);
+    const nM = mx_fractal_noise_float(xz.mul(0.005).add(seedU).add(vec3(7,0,7)),4,2.0,0.5).mul(0.5).add(0.5);
+    const mtBump = nM.sub(0.6).max(0.0).mul(120.0);
+    // Region mask for mountains/plateaus
+    const region = mx_fractal_noise_float(xz.mul(0.0015).add(seedU.mul(3.1)),3,2.0,0.5).mul(0.5).add(0.5);
+    const mtWeight = region.sub(0.35).div(0.4).clamp(0.0,1.0);
+    const ridge1 = float(1.0).sub(mx_fractal_noise_float(xz.mul(0.006).add(seedU),4,2.0,0.5).abs());
+    const ridge2 = float(1.0).sub(mx_fractal_noise_float(xz.mul(0.018).add(seedU).add(vec3(27,0,0)),3,2.0,0.5).abs());
+    const mountain = ridge1.mul(ridge1).mul(180.0).add(ridge2.mul(ridge2).mul(40.0));
+    // Sharp cliffs via terraced/quantized noise (plateau steps)
+    const terraceNoise = mx_fractal_noise_float(xz.mul(0.003).add(seedU).add(vec3(33,0,0)),3,2.0,0.5).mul(0.5).add(0.5);
+    const STEP = float(28.0);
+    const plateau = terraceNoise.mul(6.0).floor().mul(STEP);
+    // High peaks: extra ridged punch on top of mountains
+    const peak = ridge1.pow(3.0).mul(90.0).mul(mtWeight);
+    // Canyons / rivers (subtracted ridges)
+    const canyonRidge = float(1.0).sub(mx_fractal_noise_float(xz.mul(0.01).add(seedU.mul(5.3)),4,2.0,0.5).abs());
+    const canyonCut = canyonRidge.sub(0.99).max(0.0).div(0.01).pow(1.5).mul(90.0);
+    const riverRidge = float(1.0).sub(mx_fractal_noise_float(xz.mul(0.006).add(seedU.mul(7.1)),4,2.0,0.5).abs());
+    const riverCut = riverRidge.sub(0.97).max(0.0).div(0.03).pow(1.2).mul(22.0);
+    return hills.add(detail).add(mtBump).add(mtWeight.mul(mountain.mul(0.65).add(plateau.mul(0.55)))).add(peak).sub(canyonCut).sub(riverCut).add(biasU);
+  });
+
+  const densityFn=Fn(()=>{
+    const idx=instanceIndex;
+    const gz=idx.div(uint(GRID*GRID));
+    const rem=idx.mod(uint(GRID*GRID));
+    const gy=rem.div(uint(GRID));
+    const gx=rem.mod(uint(GRID));
+    const p=vec3(
+      gx.toFloat().mul(CELL).add(oX),
+      gy.toFloat().mul(CELL).add(oY),
+      gz.toFloat().mul(CELL).add(oZ)
+    );
+    const groundY=terrainHeightAt(p);
+    // Cave/overhang carve — genuine 3D term (not heightmap)
+    const cave = mx_fractal_noise_float(p.mul(vec3(0.05,0.08,0.05)).add(seedU.mul(7.7)),3,2.0,0.5)
+      .mul(mx_fractal_noise_float(p.mul(0.03).add(seedU).add(vec3(53,0,0)),3,2.0,0.5)).mul(18.0);
+    densityNode.element(idx).assign(p.y.sub(groundY).sub(cave));
+  });
+  await surfRenderer.computeAsync(densityFn().compute(numPoints));
+
+  // Density readback — collision stays pixel-consistent with the mesh.
+  TERRAIN.mcGridInfo = {GRID, CELL, originX:oX, originY:oY, originZ:oZ, half:halfIso, N};
+  try{
+    const densityArrBuf = await surfRenderer.getArrayBufferAsync(densityBuf);
+    TERRAIN.mcDensityArray = new Float32Array(densityArrBuf);
+  }catch(e){
+    console.warn('[GPU-MC] density readback failed, falling back to H():', e);
+    TERRAIN.mcDensityArray = null;
+  }
+
+  const gCol=new THREE.Color(pal.ground||0x3a7d34);
+  const g2Col=new THREE.Color(pal.ground2||0x2a5d24);
+  const rCol=new THREE.Color(pal.rock||0x6b5d4f);
+  const sandC=new THREE.Color(0xcbb87a), snowC=new THREE.Color(0xf4f6fa);
+
+  const mcFn=Fn(()=>{
+    const cellIdx=instanceIndex;
+    const cz=cellIdx.div(uint(N*N));
+    const crem=cellIdx.mod(uint(N*N));
+    const cy=crem.div(uint(N));
+    const cx=crem.mod(uint(N));
+    const readCorner=(i)=>{
+      const dx=i&1, dy=(i>>1)&1, dz=(i>>2)&1;
+      const gx=cx.add(dx), gy=cy.add(dy), gz=cz.add(dz);
+      const flat=gx.add(gy.mul(uint(GRID))).add(gz.mul(uint(GRID*GRID)));
+      return {
+        pos: vec3(gx.toFloat().mul(CELL).add(oX), gy.toFloat().mul(CELL).add(oY), gz.toFloat().mul(CELL).add(oZ)),
+        density: densityNode.element(flat),
+      };
+    };
+    const c0=readCorner(0),c1=readCorner(1),c2=readCorner(2),c3=readCorner(3),
+          c4=readCorner(4),c5=readCorner(5),c6=readCorner(6),c7=readCorner(7);
+    const corners=[c0,c1,c2,c3,c4,c5,c6,c7];
+    const caseIdx=int(0).toVar();
+    corners.forEach((c,i)=>{ If(c.density.lessThan(0.0), ()=>{ caseIdx.assign(caseIdx.bitOr(int(1<<i))); }); });
+    const outBase=cellIdx.mul(uint(MAX_TRIS*3));
+    Loop(MAX_TRIS*3, ({i})=>{
+      vertexNode.element(outBase.add(uint(i))).assign(vec3(0,0,0));
+      normalNode.element(outBase.add(uint(i))).assign(vec3(0,1,0));
+      colorNode.element(outBase.add(uint(i))).assign(vec3(0,0,0));
+    });
+    Loop(MAX_TRIS, ({i})=>{
+      const triBase=caseIdx.mul(int(16)).add(i.mul(3));
+      const e0=triTableStorage.element(triBase);
+      If(e0.greaterThanEqual(0), ()=>{
+        const e1=triTableStorage.element(triBase.add(1));
+        const e2=triTableStorage.element(triBase.add(2));
+        const interp=(edge)=>{
+          let pa=corners[0].pos, pb=corners[0].pos, da=corners[0].density, db=corners[0].density;
+          EdgeVertexIndices.forEach(([va,vb],k)=>{
+            const match=edge.equal(int(k));
+            pa=select(match,corners[va].pos,pa); pb=select(match,corners[vb].pos,pb);
+            da=select(match,corners[va].density,da); db=select(match,corners[vb].density,db);
+          });
+          const t=da.div(da.sub(db).add(1e-6));
+          return pa.add(pb.sub(pa).mul(t));
+        };
+        const v0=interp(e0), v1=interp(e1), v2=interp(e2);
+        const nrm=v1.sub(v0).cross(v2.sub(v0)).normalize();
+        const colorFor=(v)=>{
+          const height=v.y;
+          const slope=float(1.0).sub(nrm.y.clamp(0.0,1.0));
+          const grass=mix(vec3(gCol.r,gCol.g,gCol.b),vec3(g2Col.r,g2Col.g,g2Col.b),0.35);
+          const rock=vec3(rCol.r,rCol.g,rCol.b);
+          const sand=vec3(sandC.r,sandC.g,sandC.b);
+          const snow=vec3(snowC.r,snowC.g,snowC.b);
+          let c=mix(sand, grass, height.add(2.0).div(8.0).clamp(0.0,1.0));
+          c=mix(c, rock, slope.smoothstep(0.35,0.75).max(height.sub(34.0).div(20.0).clamp(0.0,1.0)));
+          c=mix(c, snow, height.sub(55.0).div(12.0).clamp(0.0,1.0));
+          return c;
+        };
+        const col=colorFor(v0).add(colorFor(v1)).add(colorFor(v2)).div(3.0);
+        const slot=i.mul(3);
+        vertexNode.element(outBase.add(slot)).assign(v0);
+        vertexNode.element(outBase.add(slot).add(1)).assign(v1);
+        vertexNode.element(outBase.add(slot).add(2)).assign(v2);
+        normalNode.element(outBase.add(slot)).assign(nrm);
+        normalNode.element(outBase.add(slot).add(1)).assign(nrm);
+        normalNode.element(outBase.add(slot).add(2)).assign(nrm);
+        colorNode.element(outBase.add(slot)).assign(col);
+        colorNode.element(outBase.add(slot).add(1)).assign(col);
+        colorNode.element(outBase.add(slot).add(2)).assign(col);
+      });
+    });
+  });
+  await surfRenderer.computeAsync(mcFn().compute(numCells));
+
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position',vertexBuf);
+  geo.setAttribute('normal',normalBuf);
+  geo.setAttribute('color',colorBuf);
+  geo.boundingSphere=new THREE.Sphere(new THREE.Vector3(0,(yMin+yMax)*0.5,0), halfIso*1.6);
+  const mat=new THREE.MeshStandardMaterial({vertexColors:true,roughness:0.92,metalness:0.02,side:THREE.DoubleSide});
+  const mesh=new THREE.Mesh(geo,mat);
+  mesh.name='JOTS_GpuSurfacePatch';
+  mesh.userData.jotsGpuMc=true;
+  mesh.userData.mcTier=tier;
+  mesh.userData.mcRes=N;
+  if(GFX.shadows){mesh.receiveShadow=true;mesh.castShadow=false;}
+  TERRAIN.mcTier=tier;
+  TERRAIN.mcRes=N;
+  console.log('[GPU-MC] surface patch OK —',N+'³ grid, half='+halfIso.toFixed(1)+', tier='+tier+', densityReadback='+!!TERRAIN.mcDensityArray);
+  return {mesh, half:halfIso, N, tier};
+}
+
+/** One-way LOD upgrade for the walk patch (mirrors upgradePlanetLOD lock). */
+async function upgradeSurfaceMcLOD(surfRenderer, pal, seed, siteLandBias){
+  if(!_isRealWebGPU(surfRenderer) || TERRAIN.mcUpgradeLocked) return;
+  if(!surfaceActive || !TERRAIN.group) return;
+  const rank={low:0,med:1,high:2};
+  const cur=TERRAIN.mcTier||'low';
+  if(rank[cur]>=2){ TERRAIN.mcUpgradeLocked=true; return; }
+  const next = cur==='low' ? 'med' : 'high';
+  try{
+    const built = await buildGpuSurfacePatch(surfRenderer,{seed,pal,siteLandBias,tier:next,halfExtent:90});
+    if(!built || !surfaceActive || !TERRAIN.group) return;
+    if(TERRAIN.mcGroup){
+      TERRAIN.group.remove(TERRAIN.mcGroup);
+      TERRAIN.mcGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material)o.material.dispose(); });
+    }
+    const g=new THREE.Group(); g.name='JOTS_GpuMcGroup'; g.add(built.mesh);
+    TERRAIN.group.add(g); TERRAIN.mcGroup=g;
+    TERRAIN.mcTier=next;
+    if(next==='high') TERRAIN.mcUpgradeLocked=true;
+  }catch(e){ console.warn('[GPU-MC] upgrade failed:', e); }
+}
+
+
 // Corner offsets for the 8 vertices of a unit cube, in the standard
 // marching-cubes vertex order matching MC_EDGE_TABLE/MC_TRI_TABLE.
 const MC_CORNER_OFFSETS=[
@@ -11902,7 +12243,7 @@ function buildMarchingCubesAsteroid(radius,seed,resolution){
   return mesh;
 }
 
-function buildSurfaceTerrain(pal){
+async function buildSurfaceTerrain(pal){
   const seed=(_surfBody?_surfBody.name.length:5)*13+1;
   const siteLandBias=(()=>{
     // Same real-geography site bias as atmoBuildTerrain, using the same
@@ -12035,51 +12376,97 @@ function buildSurfaceTerrain(pal){
   TERRAIN.group.add(patch);
   TERRAIN.tiles.set('0.0_0.0_0',{mesh:patch,cx:0,cz:0,size:TERRAIN.rootSize,depth:0});
 
-  // ── Marching cubes terrain (experimental, opt-in) ───────────────
-  // A genuine 3D density field, not just a heightmap read in 3D — the
-  // extra term below (caveNoise) can carve solid material away in a
-  // pocket that has nothing to do with the height at that X/Z, which is
-  // exactly what makes a real overhang or cave possible here, unlike H()
-  // above. Deliberately bounded to a modest region centered on the
-  // player's landing spot rather than the whole rootSize footprint —
-  // sampling a 3D grid at usable resolution is real CPU work done
-  // synchronously in JS, and covering the full multi-thousand-unit patch
-  // at fine resolution would be far too slow for a single main-thread
-  // build. This proves the technique genuinely works; extending it to
-  // cover more area (chunked, likely with a Worker to avoid blocking the
-  // main thread) is a bigger follow-up, not attempted here.
-if(STATE.settings.marchingCubesTerrain){
+  // Baseline collision = heightmap H. GPU MC (or CPU MC) may override inside its span.
+  _surfHeight = function(x,z){ return H(x,z); };
+  window._surfHeight = _surfHeight;
+  window._surfNormal = function(x,z){
+    const eps=1.2;
+    const h=H(x,z), hx=H(x+eps,z), hz=H(x,z+eps);
+    return new THREE.Vector3(-(hx-h)/eps, 1, -(hz-h)/eps).normalize();
+  };
+
+  // ── Marching cubes terrain ──────────────────────────────────────
+  // Real WebGPU: local GPU MC patch (density→MC+biome→readback) around the
+  // landing site. Fake-WebGPU/WebGL2/Low: keep heightmap; optional CPU MC
+  // chunks when #set-mctest is on. Auto-on when real WebGPU is available.
+  const wantMc = !!(STATE.settings.marchingCubesTerrain) || (_isRealWebGPU(surfRenderer));
+  const useGpuMc = wantMc && _isRealWebGPU(surfRenderer);
+  TERRAIN.mcTier = 'low';
+  TERRAIN.mcUpgradeLocked = false;
+  TERRAIN.mcDensityArray = null;
+  TERRAIN.mcGridInfo = null;
+
+  if(useGpuMc){
+    try{
+      // Hide the coarse heightmap under the GPU patch so biome colors read cleanly;
+      // heightmap remains outside the patch span and as Low/fallback path.
+      if(patch) patch.visible = false;
+      const built = await buildGpuSurfacePatch(surfRenderer,{
+        seed, pal, siteLandBias, tier:'low', halfExtent:90, yMin:-45, yMax:130
+      });
+      if(built){
+        const mcGroup=new THREE.Group(); mcGroup.name='JOTS_GpuMcGroup';
+        mcGroup.add(built.mesh);
+        TERRAIN.group.add(mcGroup);
+        TERRAIN.mcGroup=mcGroup;
+        const SPAN=built.half;
+        const _origH=_surfHeight;
+        _surfHeight=(x,z)=>{
+          if(Math.abs(x)<SPAN && Math.abs(z)<SPAN && TERRAIN.mcDensityArray){
+            return sampleSurfGroundHeight(x,z);
+          }
+          if(Math.abs(x)<SPAN && Math.abs(z)<SPAN && TERRAIN.mcGroup){
+            // Mesh raycast fallback if readback missing
+            if(!TERRAIN._mcRay){ TERRAIN._mcRay=new THREE.Raycaster(); TERRAIN._mcRay.far=400; }
+            TERRAIN._mcRay.set(new THREE.Vector3(x,200,z),new THREE.Vector3(0,-1,0));
+            const hits=TERRAIN._mcRay.intersectObject(TERRAIN.mcGroup,true);
+            if(hits.length) return hits[0].point.y;
+          }
+          return _origH(x,z);
+        };
+        window._surfHeight=_surfHeight;
+        window._surfNormal=(x,z)=>{
+          if(Math.abs(x)<SPAN && Math.abs(z)<SPAN && TERRAIN.mcDensityArray){
+            return sampleSurfGroundNormal(x,z);
+          }
+          if(Math.abs(x)<SPAN && Math.abs(z)<SPAN && TERRAIN.mcGroup){
+            if(!TERRAIN._mcRay){ TERRAIN._mcRay=new THREE.Raycaster(); TERRAIN._mcRay.far=400; }
+            TERRAIN._mcRay.set(new THREE.Vector3(x,200,z),new THREE.Vector3(0,-1,0));
+            const hits=TERRAIN._mcRay.intersectObject(TERRAIN.mcGroup,true);
+            if(hits.length&&hits[0].face) return hits[0].face.normal.clone().transformDirection(hits[0].object.matrixWorld);
+          }
+          const eps=1.2; const h=_origH(x,z), hx=_origH(x+eps,z), hz=_origH(x,z+eps);
+          return new THREE.Vector3(-(hx-h)/eps,1,-(hz-h)/eps).normalize();
+        };
+        // Staged LOD upgrade — one-way lock like upgradePlanetLOD (do not overlap CHAR load)
+        setTimeout(()=>{
+          if(!surfaceActive || CHAR.loading) return;
+          upgradeSurfaceMcLOD(surfRenderer, pal, seed, siteLandBias).catch(()=>{});
+        }, 2500);
+      }
+    }catch(e){
+      console.warn('[GPU-MC] surface patch failed, keeping heightmap:', e);
+      if(patch) patch.visible = true;
+    }
+  } else if(STATE.settings.marchingCubesTerrain){
+    // CPU MC chunks (experimental) — unchanged path for non-real-WebGPU
     function density3D(x,y,z){
       const base=y-H(x,z);
       const caveNoise=_fbm(x*0.05+seed*7.7,z*0.05+seed*7.7,seed+41,3)*_fbm(y*0.08,x*0.02-z*0.02,seed+53,3);
       return base-caveNoise*26;
     }
-    // Chunked follow-up to the original single-region build: a 5x5 grid
-    // of chunks around the landing spot (650x650 units total vs 260
-    // before), each chunk sampled at the same effective voxel density as
-    // before (130 units / 32 cells ≈ 4u per cell). Chunks are built
-    // INCREMENTALLY — one per timeout tick — so no single frame ever pays
-    // for more than one chunk's synchronous sampling (~33k samples vs the
-    // old single build's ~275k in one go). Ground appears under the
-    // player first (center chunk is queued first, then rings outward).
-    // A Web Worker would be the next step beyond this if even one chunk
-    // per tick proves too heavy on low-end devices, but incremental
-    // main-thread chunking keeps the density function (which closes over
-    // H/seed/_fbm) directly usable without serializing it into worker
-    // code — the honest tradeoff made here.
-    const MC_CHUNK=130,MC_RES=32,MC_GRID=2,MC_VMIN=-40,MC_VHEIGHT=140; // MC_GRID=2 → offsets -2..2 → 5x5
+    const MC_CHUNK=130,MC_RES=32,MC_GRID=2,MC_VMIN=-40,MC_VHEIGHT=140;
     const mcGroup=new THREE.Group();
     TERRAIN.group.add(mcGroup);
     TERRAIN.mcGroup=mcGroup;
     const mcMat=new THREE.MeshStandardMaterial({color:pal.ground||0x7a6a52,roughness:0.95,metalness:0.02,flatShading:false});
-    // center-first ordering: sort chunk offsets by ring distance
     const order=[];
     for(let gx=-MC_GRID;gx<=MC_GRID;gx++)for(let gz=-MC_GRID;gz<=MC_GRID;gz++)order.push([gx,gz]);
     order.sort((a,b)=>(Math.abs(a[0])+Math.abs(a[1]))-(Math.abs(b[0])+Math.abs(b[1])));
     let built=0;
-    const buildGen=TERRAIN._mcBuildGen=(TERRAIN._mcBuildGen||0)+1; // cancel token: abandoned if terrain rebuilds/exits
+    const buildGen=TERRAIN._mcBuildGen=(TERRAIN._mcBuildGen||0)+1;
     (function buildNext(){
-      if(TERRAIN._mcBuildGen!==buildGen||!TERRAIN.mcGroup)return; // surface exited or rebuilt — stop quietly
+      if(TERRAIN._mcBuildGen!==buildGen||!TERRAIN.mcGroup)return;
       if(!order.length){
         console.log('[MarchingCubes] all',built,'chunks built (5x5 grid,',MC_CHUNK*(MC_GRID*2+1),'units span)');
         return;
@@ -12091,11 +12478,8 @@ if(STATE.settings.marchingCubesTerrain){
         mcGroup.add(new THREE.Mesh(geo,mcMat));
       }
       built++;
-      setTimeout(buildNext,30); // yield to the frame loop between chunks
+      setTimeout(buildNext,30);
     })();
-    // Collision: raycast against ALL built chunks (recursive on the
-    // group). Falls back to H(x,z) outside the covered span or before the
-    // relevant chunk has been built — degrades gracefully mid-build.
     const SPAN=MC_CHUNK*(MC_GRID*2+1)/2;
     const _mcRay=new THREE.Raycaster();
     _mcRay.far=400;
@@ -12108,13 +12492,7 @@ if(STATE.settings.marchingCubesTerrain){
       }
       return _origSurfHeight(x,z);
     };
-    if(typeof window!=='undefined') window._surfHeight=_surfHeight;
-    // Surface normal at a point - same raycast approach as _surfHeight above,
-    // kept as a separate function (rather than changing _surfHeight's return
-    // type) so nothing that already calls _surfHeight for a plain number
-    // breaks. Used for slope-aware locomotion (crouch/climb blending) below.
-    // Falls back to world-up (flat ground assumption) wherever there's no
-    // marching-cubes chunk built yet, or outside the covered span.
+    window._surfHeight=_surfHeight;
     window._surfNormal=(x,z)=>{
       if(Math.abs(x)<SPAN&&Math.abs(z)<SPAN&&TERRAIN.mcGroup){
         _mcRay.set(new THREE.Vector3(x,MC_VMIN+MC_VHEIGHT+20,z),new THREE.Vector3(0,-1,0));
@@ -12142,10 +12520,56 @@ if(STATE.settings.marchingCubesTerrain){
       roughness:pal.liquidRoughness!==undefined?pal.liquidRoughness:0.15,
       metalness:0.4});
     if(GFX.envReflections&&_envMap)waterMat.envMap=_envMap;
+    // Visible surface (shell) — kept for look
+    const WATER_SURFACE_Y=0;
+    const WATER_FLOOR_Y=-36; // volume depth Stabilizer swim can detect
     const wm=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ,1,1),waterMat);
-    wm.rotation.x=-Math.PI/2;wm.position.y=0; // fills genuine low points (base terrain dips, river/canyon carvings) rather than an arbitrary elevated sea level
+    wm.rotation.x=-Math.PI/2;wm.position.y=WATER_SURFACE_Y;
+    wm.name='JOTS_WaterSurface';
+    wm.userData.isWaterSurface=true;
+    wm.userData.liquidName=pal.liquidName||'water';
     if(GFX.shadows)wm.receiveShadow=true;
     surfScene.add(wm);surfWater=wm;
+    // Water VOLUME (not just a shell) — translucent box Stabilizer swim can
+    // test via named mesh / userData / JOTS_WATER.containsPoint without
+    // rewriting Stabilizer locomotion. Bounds documented below.
+    const waterDepth=WATER_SURFACE_Y-WATER_FLOOR_Y;
+    const volMat=new THREE.MeshBasicMaterial({
+      color:liqColor,transparent:true,opacity:0.08,depthWrite:false,side:THREE.DoubleSide
+    });
+    const vol=new THREE.Mesh(new THREE.BoxGeometry(SZ, waterDepth, SZ), volMat);
+    vol.position.set(0, WATER_SURFACE_Y - waterDepth*0.5, 0);
+    vol.name='JOTS_WaterVolume';
+    vol.userData.isWaterVolume=true;
+    vol.userData.waterVolume=true; // Stabilizer Swim_Forward trigger
+    vol.userData.liquidName=pal.liquidName||'water';
+    vol.userData.waterSurfaceY=WATER_SURFACE_Y;
+    vol.userData.waterFloorY=WATER_FLOOR_Y;
+    vol.userData.bounds={minX:-SZ/2,maxX:SZ/2,minY:WATER_FLOOR_Y,maxY:WATER_SURFACE_Y,minZ:-SZ/2,maxZ:SZ/2};
+    surfScene.add(vol);
+    TERRAIN.waterVolume=vol;
+    // Stabilizer swim probe — (x,y,z) world coords → true when inside water volume.
+    window._surfInWater=function(x,y,z){
+      const b=vol.userData.bounds;
+      return x>=b.minX&&x<=b.maxX&&y>=b.minY&&y<=b.maxY&&z>=b.minZ&&z<=b.maxZ;
+    };
+    window.JOTS_WATER={
+      surfaceY:WATER_SURFACE_Y,
+      floorY:WATER_FLOOR_Y,
+      liquidName:pal.liquidName||'water',
+      volumeMesh:vol,
+      surfaceMesh:wm,
+      /** Axis-aligned volume test — Stabilizer can call without scene traversal. */
+      containsPoint(p){
+        if(!p) return false;
+        return window._surfInWater(p.x,p.y,p.z);
+      },
+      immersionDepth(p){
+        if(!this.containsPoint(p)) return 0;
+        return Math.max(0, WATER_SURFACE_Y - p.y);
+      },
+      // Stabilizer Swim_Forward: mesh.userData.waterVolume===true || window._surfInWater(x,y,z)
+    };
     if(GFX.caustics){
       const cz=256,cc=document.createElement('canvas');cc.width=cz;cc.height=cz;
       surfCausticCanvas=cc;surfCausticCtx=cc.getContext('2d');
@@ -12154,6 +12578,10 @@ if(STATE.settings.marchingCubesTerrain){
       const cm=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ),causticMat);
       cm.rotation.x=-Math.PI/2;cm.position.y=2.05;surfScene.add(cm);
     }
+  } else {
+    TERRAIN.waterVolume=null;
+    window.JOTS_WATER=null;
+    window._surfInWater=function(){ return false; };
   }
   // scatter rocks / vegetation near spawn — per-instance color variation
   // now, not one shared flat material for every rock. Matches the same
@@ -12198,7 +12626,47 @@ if(STATE.settings.marchingCubesTerrain){
       canopy.position.set(x,h+trunkH+canopyH*0.35,z); // base of canopy sits ABOVE the trunk, not overlapping eye height
       if(GFX.shadows)canopy.castShadow=true;
       surfScene.add(canopy);
+      // Higher-res canopy detail (extra shell) — gated; skip on Low / low particles to protect tablets
+      const allowHiTree = (STATE.settings.particles!=='low') && (GFX.preset!=='low') && !GFX.isMobile;
+      if(allowHiTree && Math.random()>0.55){
+        const dH=canopyH*0.55, dR=canopyR*0.72;
+        const detail=new THREE.Mesh(
+          new THREE.ConeGeometry(dR,dH,11),
+          new THREE.MeshStandardMaterial({color:canopyCol.clone().offsetHSL(0,0,0.04),roughness:1})
+        );
+        detail.position.set(x,h+trunkH+canopyH*0.55+dH*0.25,z);
+        detail.userData.jotsHiResTree=true;
+        if(GFX.shadows)detail.castShadow=true;
+        surfScene.add(detail);
+      }
     }
+  }
+
+  // Earth wind particles — subtle, GPU-friendly Points; disable/cheap on Low
+  TERRAIN.windPoints=null;
+  const isEarth = !!( _surfBody && (_surfBody.name==='Earth' || (pal.liquidName==='water' && pal.atmos && pal.ground===0x3a7d34)) );
+  const windOk = isEarth && pal.atmos && STATE.settings.particles!=='low' && GFX.preset!=='low';
+  if(windOk){
+    const WN = GFX.isMobile ? 120 : 280;
+    const pos=new Float32Array(WN*3), vel=new Float32Array(WN*3);
+    for(let i=0;i<WN;i++){
+      const x=rnd(-220,220), z=rnd(-220,220);
+      const y=H(x,z)+rnd(1.5,14);
+      pos[i*3]=x; pos[i*3+1]=y; pos[i*3+2]=z;
+      vel[i*3]=rnd(1.2,3.5); vel[i*3+1]=rnd(-0.15,0.25); vel[i*3+2]=rnd(-0.8,0.8);
+    }
+    const wgeo=new THREE.BufferGeometry();
+    wgeo.setAttribute('position', new THREE.BufferAttribute(pos,3));
+    const wmat=new THREE.PointsMaterial({
+      color:0xddeeff, size:0.55, sizeAttenuation:true,
+      transparent:true, opacity:0.35, depthWrite:false
+    });
+    const wp=new THREE.Points(wgeo,wmat);
+    wp.name='JOTS_EarthWind';
+    wp.userData.windVel=vel;
+    wp.frustumCulled=false;
+    surfScene.add(wp);
+    TERRAIN.windPoints=wp;
   }
 }
 
@@ -12336,6 +12804,24 @@ function _surfKeyDown(e){surfKeys[e.code]=true; if(e.code==='Space') surfJumpPre
 function _surfKeyUp(e){surfKeys[e.code]=false;}
 function updateSurface(dt){
   const p=surfPlayer;if(!p)return;
+  // Subtle Earth wind drift (Points) — cheap CPU update of positions only
+  if(TERRAIN.windPoints && TERRAIN.windPoints.geometry){
+    const pos=TERRAIN.windPoints.geometry.attributes.position.array;
+    const vel=TERRAIN.windPoints.userData.windVel;
+    const n=pos.length/3;
+    for(let i=0;i<n;i++){
+      pos[i*3]+=vel[i*3]*dt;
+      pos[i*3+1]+=vel[i*3+1]*dt;
+      pos[i*3+2]+=vel[i*3+2]*dt;
+      if(pos[i*3]>240){ pos[i*3]=-240; pos[i*3+2]=rnd(-220,220); }
+      // Soft vertical wrap near ground
+      const gh=(_surfHeight?_surfHeight(pos[i*3],pos[i*3+2]):0)+1.2;
+      if(pos[i*3+1]<gh) pos[i*3+1]=gh+rnd(0.5,8);
+      if(pos[i*3+1]>gh+18) pos[i*3+1]=gh+rnd(2,10);
+    }
+    TERRAIN.windPoints.geometry.attributes.position.needsUpdate=true;
+  }
+
   // LOOK from LEFT joystick + drag
   p.yaw-=surfLookJoy.x*2.4*dt;
   p.pitch-=surfLookJoy.y*2.0*dt;
