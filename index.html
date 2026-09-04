@@ -3010,7 +3010,7 @@ const GFX = {
 
 // Capability ceilings — what a tier is ALLOWED to use is clamped by hardware.
 const PRESETS = {
-  low:    {resScale:0.7, shadows:false, shadowSize:512,  envReflections:true,  caustics:false, fakeGI:true, refraction:false, ssao:false, volumetricDust:true,  dustDensity:0.45, aniso:1,  antialias:false},
+  low:    {resScale:0.7, shadows:false, shadowSize:512,  envReflections:false, caustics:false, fakeGI:true, refraction:false, ssao:false, volumetricDust:false, dustDensity:0.45, aniso:1,  antialias:false},
   medium: {resScale:0.85,shadows:true,  shadowSize:1024, envReflections:true,  caustics:true,  fakeGI:true, refraction:true,  ssao:false, volumetricDust:true,  dustDensity:0.8,  aniso:2,  antialias:true },
   high:   {resScale:1.0, shadows:true,  shadowSize:2048, envReflections:true,  caustics:true,  fakeGI:true, refraction:true,  ssao:true,  volumetricDust:true,  dustDensity:1.3,  aniso:8,  antialias:true },
   ultra:  {resScale:1.0, shadows:true,  shadowSize:4096, envReflections:true,  caustics:true,  fakeGI:true, refraction:true,  ssao:true,  volumetricDust:true,  dustDensity:2.2,  aniso:16, antialias:true },
@@ -3574,7 +3574,14 @@ async function initFlightScene(){
 
   // Renderer — compatibility-first across Safari/Chrome/Edge/Firefox on all OSes
   flightRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:!GFX.isMobile,alpha:false,powerPreference:'high-performance',logarithmicDepthBuffer:true});
-  await flightRenderer.init();
+  try{
+    await flightRenderer.init();
+  }catch(e){
+    console.warn('flightRenderer.init failed:', e);
+    flightInited=false;
+    try{toast('⚠ Flight renderer failed to init: '+(e&&e.message?e.message:e),5000);}catch(_){}
+    return;
+  }
   flightRenderer.setPixelRatio(effectivePixelRatio());
   flightRenderer.setClearColor(0x000206,1);
   flightRenderer.setSize(W,H);
@@ -3641,6 +3648,16 @@ let _flightLoopCv=null,_flightLoopLast=0;
 // loading (see the _flightFrameCounter comment in _startFlightLoop). This
 // declaration was missing entirely, which made every read of it throw.
 let _flightFrameCounter=0;
+// Rate-limited animate-loop error reporter — empty catch{} used to silent-fail
+// (black canvas / frozen character with no console signal).
+let _animLoopErrAt=0;
+function _animLoopWarn(tag,e){
+  const t=performance.now();
+  if(t-_animLoopErrAt<2500) return;
+  _animLoopErrAt=t;
+  console.error('[animate:'+tag+']', e&&(e.message||e), e);
+  try{ if(tag==='render'||tag==='surf-render') toast('⚠ Render hitch — check console',2500); }catch(_){}
+}
 // Debounced resize handling for the flight canvas. Previously the loop read
 // window.innerWidth/innerHeight PLUS cv.clientWidth (a forced synchronous
 // layout read) EVERY FRAME, and any single-frame fluctuation triggered a
@@ -3683,7 +3700,7 @@ function _startFlightLoop(){
 
     _applyFlightResizeIfPending();
 
-    try{updateFlight(dt);}catch(e){}
+    try{updateFlight(dt);}catch(e){_animLoopWarn('updateFlight',e);}
     try{
       if(_charShadowLight && boardFlight){
         const bp=boardFlight.position;
@@ -3692,19 +3709,19 @@ function _startFlightLoop(){
         _charShadowLight.target.position.copy(bp);
         _charShadowLight.target.updateMatrixWorld();
       }
-    }catch(e){}
-    try{updateBodies(dt);}catch(e){}
-    try{upgradePlanetLOD(dt);}catch(e){}
-    try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){}
-    try{ updateCharOrbitCamera(); }catch(e){}
-    try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){}
-    try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){}
-    try{updateBirdTemple(dt);}catch(e){}
-    try{updateDistantSystems(dt);}catch(e){}
-    try{updateVolumetricDust(dt);}catch(e){}
-    try{updateHUD();}catch(e){}
-    try{updateCrosshairLabel();}catch(e){}
-    try{drawMinimap();}catch(e){}
+    }catch(e){_animLoopWarn('charShadow',e);}
+    try{updateBodies(dt);}catch(e){_animLoopWarn('updateBodies',e);}
+    try{upgradePlanetLOD(dt);}catch(e){_animLoopWarn('upgradePlanetLOD',e);}
+    try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){_animLoopWarn('skyboardStance',e);}
+    try{ updateCharOrbitCamera(); }catch(e){_animLoopWarn('charOrbit',e);}
+    try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){_animLoopWarn('charMixer',e);}
+    try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){_animLoopWarn('headOverride',e);}
+    try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);}
+    try{updateDistantSystems(dt);}catch(e){_animLoopWarn('distantSystems',e);}
+    try{updateVolumetricDust(dt);}catch(e){_animLoopWarn('volumetricDust',e);}
+    try{updateHUD();}catch(e){_animLoopWarn('updateHUD',e);}
+    try{updateCrosshairLabel();}catch(e){_animLoopWarn('crosshair',e);}
+    try{drawMinimap();}catch(e){_animLoopWarn('minimap',e);}
     // Real fix for confirmed GPU-side contention during character loading
     // (measured live: her load took 90-130s in the full game context vs
     // ~12s in isolation) - each full render of the marching-cubes planets
@@ -3730,8 +3747,7 @@ function _startFlightLoop(){
     // going black shortly after start. Declared properly below.
     _flightFrameCounter = (_flightFrameCounter + 1) % 1000000;
     if(!CHAR.loading || _flightFrameCounter % 4 === 0){
-      renderWithPostFX();
-    }
+      try{ renderWithPostFX(); }catch(e){ _animLoopWarn('render',e); }    }
   })();
 }
 
@@ -6150,7 +6166,7 @@ function buildFlightBoard(){
         tries++;
         if(CHAR.mounted || tries>550){ // ~220s cap — long enough for at least one full retry cycle (both loads can now take up to 90s each before timing out)
           clearInterval(poll);
-          if(!CHAR.mounted) console.error('Character still not mounted after 20s of retries — boardFlight:',boardFlight,'CHAR.root:',CHAR.root,'CHAR.loaded:',CHAR.loaded,'CHAR.loading:',CHAR.loading);
+          if(!CHAR.mounted){ console.error('Character still not mounted after ~220s of retries — boardFlight:',boardFlight,'CHAR.root:',CHAR.root,'CHAR.loaded:',CHAR.loaded,'CHAR.loading:',CHAR.loading); try{toast('⚠ Autumn failed to mount — see console',5000);}catch(_){} }
           return;
         }
         if(!CHAR.loaded && !CHAR.loading){
@@ -9619,7 +9635,7 @@ function resumeFlightLoop(){
   (function loop(){
     flightAnimId=requestAnimationFrame(loop);
     const now=performance.now();const dt=Math.min((now-last)/1000,0.05);last=now;flightTime+=dt;
-    try{updateFlight(dt);}catch(e){}
+    try{updateFlight(dt);}catch(e){_animLoopWarn('updateFlight',e);}
     try{
       if(_charShadowLight && boardFlight){
         const bp=boardFlight.position;
@@ -9628,19 +9644,19 @@ function resumeFlightLoop(){
         _charShadowLight.target.position.copy(bp);
         _charShadowLight.target.updateMatrixWorld();
       }
-    }catch(e){}
-    try{updateBodies(dt);}catch(e){}
-    try{upgradePlanetLOD(dt);}catch(e){}
-    try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){}
-    try{ updateCharOrbitCamera(); }catch(e){}
-    try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){}
-    try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){}
-    try{updateBirdTemple(dt);}catch(e){}
-    try{updateDistantSystems(dt);}catch(e){}
-    try{updateVolumetricDust(dt);}catch(e){}
-    try{updateHUD();}catch(e){}
-    try{updateCrosshairLabel();}catch(e){}
-    try{drawMinimap();}catch(e){}
+    }catch(e){_animLoopWarn('charShadow',e);}
+    try{updateBodies(dt);}catch(e){_animLoopWarn('updateBodies',e);}
+    try{upgradePlanetLOD(dt);}catch(e){_animLoopWarn('upgradePlanetLOD',e);}
+    try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){_animLoopWarn('skyboardStance',e);}
+    try{ updateCharOrbitCamera(); }catch(e){_animLoopWarn('charOrbit',e);}
+    try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){_animLoopWarn('charMixer',e);}
+    try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){_animLoopWarn('headOverride',e);}
+    try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);}
+    try{updateDistantSystems(dt);}catch(e){_animLoopWarn('distantSystems',e);}
+    try{updateVolumetricDust(dt);}catch(e){_animLoopWarn('volumetricDust',e);}
+    try{updateHUD();}catch(e){_animLoopWarn('updateHUD',e);}
+    try{updateCrosshairLabel();}catch(e){_animLoopWarn('crosshair',e);}
+    try{drawMinimap();}catch(e){_animLoopWarn('minimap',e);}
     try{renderWithPostFX();}catch(e){}
   })();
 }
@@ -9752,10 +9768,10 @@ async function enterAtmosphericFlight(body,site){
     const now=performance.now();const dt=Math.min((now-last)/1000,0.05);last=now;
     updateAtmoFlight(dt);
     try{ if(CHAR.mounted) applySkyboardStance(now/1000); }catch(e){}
-    try{ updateCharOrbitCamera(); }catch(e){}
-    try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){}
-    try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){}
-    try{updateBirdTemple(dt);}catch(e){}
+    try{ updateCharOrbitCamera(); }catch(e){_animLoopWarn('charOrbit',e);}
+    try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){_animLoopWarn('charMixer',e);}
+    try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){_animLoopWarn('headOverride',e);}
+    try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);}
     atmoRenderer.render(atmoScene,atmoCamera);
   })();
 }
@@ -10137,13 +10153,30 @@ const CHAR_FILES = {
   animSrc: 'Meshy_AI_Autumn_biped_Meshy_AI_Meshy_Merged_Animations.glb',
 };
 // Maps our internal state names to the clip names actually inside animSrc.
+// Autumn merged-anims inventory (verified clip names → internal states):
+//   1. Crawl_Backward_inplace              → prone
+//   2. Crouch_Walk_Right_with_Torch_inplace → crouch
+//   3. Grab_Bar_and_Swing_Forward          → cliff
+//   4. Regular_Jump                        → jump
+//   5. Running                             → run
+//   6. Step_Right_for_Exercise             → skyboard (crop 1.25–1.5, LoopPingPong, SKYBOARD_ANIM_SPEED)
+//   7. Swim_Forward                        → swim
+//   8. Swing_on_Rope_to_Ground             → rope
+//   9. Walking                             → walk
+//  10. climbing_up_wall                    → climbLoop
+// No slide clip in this GLB — intentionally unwired (do not invent a mapping).
 const CHAR_CLIP_NAMES = {
   walk: 'Walking',
   run: 'Running',
-  jump: 'Regular_Jump',       // complete natural arc now — see comment above, no more reversed-clip rise phase needed
-  climbLoop: 'climbing_up_wall', // complete climb-to-top arc — see comment above, no separate finish clip needed
-  skyboard: 'Step_Right_for_Exercise', // same clip name as the old file, duration matches almost exactly (2.5s vs 2.53s) suggesting the same underlying stock animation — reused crop window below, but NOT re-verified frame-by-frame against this specific file (no live browser here), so this is an inference from the duration match, not a re-scrub
-  swim: 'Swim_Forward',       // new capability, not present in the old file — not yet wired into a locomotion trigger (needs water-immersion detection first), but loaded and ready
+  jump: 'Regular_Jump',       // complete natural arc — LoopOnce
+  climbLoop: 'climbing_up_wall', // complete climb-to-top arc — LoopOnce
+  skyboard: 'Step_Right_for_Exercise', // crop 1.25–1.5 + LoopPingPong + SKYBOARD_ANIM_SPEED
+  swim: 'Swim_Forward',
+  crouch: 'Crouch_Walk_Right_with_Torch_inplace',
+  prone: 'Crawl_Backward_inplace',
+  rope: 'Swing_on_Rope_to_Ground',
+  cliff: 'Grab_Bar_and_Swing_Forward',
+  // slide: intentionally unwired — no slide clip in Autumn merged anims
 };
 const CHAR = {
   loaded:false, loading:false,
@@ -10152,7 +10185,11 @@ const CHAR = {
   mixer:null,
   clips:{},              // name -> THREE.AnimationClip
   actions:{},            // name -> THREE.AnimationAction
-  state:'idle',           // idle | walk | run | jump | climbLoop | skyboard | swim
+  state:'idle',           // idle | walk | run | jump | climbLoop | skyboard | swim | crouch | prone | rope | cliff
+  stanceMode:'stand',      // stand | crouch | prone — console testing via window.setCharStance (NOT HUD)
+  _wantSwim:false,         // optional locomotion flags (console / future systems); see updateCharacterLocomotion
+  _wantRope:false,
+  _wantCliff:false,
   mounted:false,           // true when riding the skyboard (parented to it, not standing on terrain)
   moveDir:1,               // 1 = forward, -1 = backward (drives timeScale sign for in-place cycles)
   scene:null,              // which THREE.Scene the character currently lives in
@@ -10211,7 +10248,7 @@ async function loadCharacterAssets(){
     new Promise((res,rej)=>gltfLoader.load(CHAR_ASSET_BASE+CHAR_FILES.mesh, res,
       xhr=>{ if(xhr.lengthComputable) _loadStep('charMesh', xhr.loaded/xhr.total); }, rej)),
     new Promise((_,rej)=>setTimeout(()=>rej(new Error('Character GLB load timed out after 90s')), 90000))
-  ]).catch(e=>{ CHAR.loading=false; throw e; });
+  ]).catch(e=>{ CHAR.loading=false; try{toast('⚠ Character mesh failed to load: '+(e&&e.message?e.message:e),4000);}catch(_){} throw e; });
   _loadStep('charMesh', 1);
   CHAR.root = gltf.scene;
   CHAR.root.traverse(o=>{
@@ -10259,6 +10296,8 @@ async function loadCharacterAssets(){
     console.log('Character material fixed — was defaulting to metalness:1/roughness:1 (near-black with no env map), now metalness:0.08/roughness:0.55.');
   }
   CHAR.mixer = new THREE.AnimationMixer(CHAR.root);
+  // Yield so concurrent MC / WebGL work can breathe under Safari + Graphics Low.
+  await new Promise(r=>setTimeout(r,0));
 
   // Single consolidated source for every clip now (see CHAR_FILES.animSrc /
   // CHAR_CLIP_NAMES comments above) — one load instead of five separate
@@ -10274,30 +10313,23 @@ async function loadCharacterAssets(){
         xhr=>{ if(xhr.lengthComputable) _loadStep('charAnims', xhr.loaded/xhr.total*0.9); }, rej);
     }),
     new Promise((_,rej)=>setTimeout(()=>rej(new Error('Character animation GLB load timed out after 90s')), 90000))
-  ]).catch(e=>{ CHAR.loading=false; throw e; });
+  ]).catch(e=>{ CHAR.loading=false; try{toast('⚠ Character anims failed to load: '+(e&&e.message?e.message:e),4000);}catch(_){} throw e; });
   const findClip = n => animGltf.animations.find(a=>a.name===n) || null;
-  const walkClip = findClip(CHAR_CLIP_NAMES.walk);
-  const runClip = findClip(CHAR_CLIP_NAMES.run);
-  const jumpClip = findClip(CHAR_CLIP_NAMES.jump);
-  const climbLoopClip = findClip(CHAR_CLIP_NAMES.climbLoop);
-  const skyboardSrcClip = findClip(CHAR_CLIP_NAMES.skyboard);
-  const swimClip = findClip(CHAR_CLIP_NAMES.swim);
-  ['walk','run','jump','climbLoop','skyboard','swim'].forEach((k,i)=>{
-    if(![walkClip,runClip,jumpClip,climbLoopClip,skyboardSrcClip,swimClip][i]) console.warn('Animation clip not found in merged GLB for state "'+k+'" (expected name "'+CHAR_CLIP_NAMES[k]+'") — check CHAR_CLIP_NAMES against the actual clip names in the file.');
+  // Load every mapped clip from CHAR_CLIP_NAMES (slide intentionally absent).
+  const mappedKeys = Object.keys(CHAR_CLIP_NAMES);
+  const foundByKey = {};
+  mappedKeys.forEach(k=>{
+    foundByKey[k] = findClip(CHAR_CLIP_NAMES[k]);
+    if(!foundByKey[k]) console.warn('Animation clip not found in merged GLB for state "'+k+'" (expected name "'+CHAR_CLIP_NAMES[k]+'") — check CHAR_CLIP_NAMES against the actual clip names in the file.');
   });
+  const walkClip = foundByKey.walk;
+  const skyboardSrcClip = foundByKey.skyboard;
 
-  CHAR.clips.walk = walkClip;
-  CHAR.clips.run = runClip;
-  // Regular_Jump is a complete natural arc (verified: crouch -> launch ->
-  // apex -> fall -> recover, all in one clip) — no more reversed-clip
-  // rise phase needed, so no jumpRise action anymore either. setCharState
-  // and updateCharacterLocomotion below have been simplified to match.
-  CHAR.clips.jump = jumpClip;
-  // climbing_up_wall is a complete climb-to-top arc (verified: rises and
-  // levels off/stabilizes in its final third) — no separate climbFinish
-  // clip needed anymore.
-  CHAR.clips.climbLoop = climbLoopClip;
-  CHAR.clips.swim = swimClip;
+  mappedKeys.forEach(k=>{
+    if(k==='skyboard') return; // cropped below
+    CHAR.clips[k] = foundByKey[k];
+  });
+  // Regular_Jump / climbing_up_wall are complete one-shot arcs — see CHAR_CLIP_NAMES.
   // Real bug found: there was never an actual "idle" clip/pose anywhere in
   // this codebase — CHAR.actions.idle was always undefined, so
   // setCharState('idle',...) was a silent no-op for her actual bone poses
@@ -10305,22 +10337,18 @@ async function loadCharacterAssets(){
   // nothing), leaving every muscle at whatever the mixer's default bind
   // pose is — a T-pose. That's the "default pose when standing still" bug.
   // Synthesize a real held pose instead: a single-keyframe "clip" sampled
-  // from Walking_Woman's very first frame (a natural mid-stride contact
+  // from Walking's very first frame (a natural mid-stride contact
   // pose, not a T-pose), narrow enough that _cropClip only captures that
   // one keyframe per track.
   CHAR.clips.idle = walkClip ? _staticPoseClip(walkClip, 0, 'idle_held_pose') : null;
   // The source clip ("Step_Right_for_Exercise") is ~2.53s long and only
   // reads as a surfboard-riding stance for a short window in the middle —
   // the rest of it is the walk-up/walk-away part of the exercise move.
-  // Verified this range by actually loading the clip into an offline
-  // three.js scene and scrubbing through it frame-by-frame (see the
-  // render checks done alongside this fix) rather than guessing blind:
-  // roughly t=1.15s to t=1.65s is the wide, crouched, arms-out balance
-  // moment that reads as riding a board. Cropped to just that window and
-  // set to ping-pong so it plays forward then backward continuously —
-  // a natural back-and-forth sway rather than a hard loop-reset snap.
+  // Cropped to [1.25,1.5] and set to ping-pong so it plays forward then
+  // backward continuously — a natural back-and-forth sway rather than a
+  // hard loop-reset snap. Speed via SKYBOARD_ANIM_SPEED.
   if(skyboardSrcClip){
-    CHAR.clips.skyboard = _cropClip(skyboardSrcClip, 1.25, 1.5, 'skyboard_stance_crop'); // narrowed from [1.15,1.65] — less range of motion, calmer stance
+    CHAR.clips.skyboard = _cropClip(skyboardSrcClip, 1.25, 1.5, 'skyboard_stance_crop');
   }
 
   Object.keys(CHAR.clips).forEach(name=>{
@@ -10331,16 +10359,26 @@ async function loadCharacterAssets(){
     action.enabled = true;
     CHAR.actions[name] = action;
   });
-  if(CHAR.actions.idle) CHAR.actions.idle.setLoop(THREE.LoopRepeat, Infinity);
-  if(CHAR.actions.jump) CHAR.actions.jump.setLoop(THREE.LoopOnce,1);
-  if(CHAR.actions.climbLoop) CHAR.actions.climbLoop.setLoop(THREE.LoopOnce,1); // complete climb-to-top arc, not a repeating cycle — see comment above
-  if(CHAR.actions.swim) CHAR.actions.swim.setLoop(THREE.LoopRepeat, Infinity);
+  // Loop policy: LoopRepeat for locomotion cycles; LoopOnce for one-shots;
+  // skyboard uses LoopPingPong on the cropped window.
+  ['idle','walk','run','crouch','prone','swim'].forEach(k=>{
+    if(CHAR.actions[k]) CHAR.actions[k].setLoop(THREE.LoopRepeat, Infinity);
+  });
+  ['jump','climbLoop','rope','cliff'].forEach(k=>{
+    if(CHAR.actions[k]) CHAR.actions[k].setLoop(THREE.LoopOnce, 1);
+  });
   if(CHAR.actions.skyboard){
     CHAR.actions.skyboard.setLoop(THREE.LoopPingPong, Infinity);
     CHAR.actions.skyboard.timeScale = SKYBOARD_ANIM_SPEED; // real fix is in setCharState('skyboard',...) passing speed explicitly — see applySkyboardStance below; this line alone was being silently overwritten every mount
   } else {
     console.warn('Skyboard stance clip missing — falling back to the static procedural pose in applySkyboardStance().');
   }
+  const _loadedKeys = Object.keys(CHAR.actions).filter(k=>!!CHAR.actions[k]);
+  console.log('Character actions loaded:', _loadedKeys.join(', ')||'(none)');
+  try{
+    const miss = mappedKeys.filter(k=>!CHAR.actions[k]);
+    if(miss.length) toast('⚠ Missing Autumn clips: '+miss.join(', '), 4000);
+  }catch(_){}
   _loadStep('charAnims', 1);
 
   // ── AUTO SCALE CALIBRATION ──────────────────────────────────
@@ -10652,15 +10690,13 @@ function applySkyboardHeadOverride(){
 }
 
 /* ── STATE MACHINE ──────────────────────────────────────────────
-   States: idle, walk, run, jump, climbLoop, skyboard (procedural pose,
-   not an Action), swim (loaded, not yet triggered by any gameplay
-   condition). Forward/backward handled via timeScale sign on the
-   in-place cycles (walk/run) per the verified-safe rule. jump and
-   climbLoop are both complete natural one-shot arcs in Autumn's own
-   animation set (crouch->launch->apex->fall->recover for jump;
-   climb->level-off-at-top for climbLoop) — simpler than the old
-   placeholder rig, which had to fake a jump rise by reversing a
-   fall/land clip and bolt a separate finish clip onto its climb loop. */
+   States: idle, walk, run, jump, climbLoop, skyboard, swim, crouch,
+   prone, rope, cliff (slide intentionally unwired). Forward/backward
+   handled via timeScale sign on in-place cycles. jump/climbLoop/rope/
+   cliff are LoopOnce arcs; walk/run/crouch/prone/swim LoopRepeat;
+   skyboard LoopPingPong on cropped window. Optional locomotion flags
+   (swim/rope/cliff/prone/crouch) via updateCharacterLocomotion's last
+   arg — existing call sites stay compatible. */
 function setCharState(next, opts){
   opts = opts||{};
   if(CHAR.state===next && !opts.force) return;
@@ -10673,6 +10709,32 @@ function setCharState(next, opts){
   }
   CHAR.state = next;
 }
+// Console/test helpers only — NOT wired to HUD. Stance feeds the optional
+// flags object at the updateSurface→updateCharacterLocomotion call site.
+window.setCharStance = function(mode){
+  if(mode!=='stand' && mode!=='crouch' && mode!=='prone'){
+    console.warn("setCharStance expected 'stand'|'crouch'|'prone', got:", mode);
+    return;
+  }
+  CHAR.stanceMode = mode;
+  console.log('CHAR.stanceMode =', mode);
+};
+window.playCharClip = function(state){
+  if(!CHAR.loaded){ console.warn('playCharClip: character not loaded yet'); return; }
+  if(!CHAR.actions[state] && state!=='idle'){
+    console.warn('playCharClip: no action for state', state, '— loaded:', Object.keys(CHAR.actions));
+    return;
+  }
+  setCharState(state, {fade:0.2, force:true});
+  console.log('playCharClip →', state);
+};
+window.setCharWant = function(kind, on){
+  // Console/test only — NOT HUD. kind: swim|rope|cliff
+  const key = kind==='swim' ? '_wantSwim' : (kind==='rope' ? '_wantRope' : (kind==='cliff' ? '_wantCliff' : null));
+  if(!key){ console.warn("setCharWant expected 'swim'|'rope'|'cliff', got:", kind); return; }
+  CHAR[key] = !!on;
+  console.log('CHAR.'+key+' =', !!on);
+};
 // Per-foot ground-adaptive IK. Honest scope note: this is a practical
 // analytic approximation (per-foot knee-bend correction + ankle tilt
 // toward the locally-sampled ground normal), NOT a full 3D two-bone/
@@ -10738,13 +10800,32 @@ function applyFootIK(dt, weight){
     foot.rotation.x += CHAR[ankleKey]*0.6*weight;
   }
 }
-function updateCharacterLocomotion(dt, moving, running, dirSign, jumping, climbing){
+function updateCharacterLocomotion(dt, moving, running, dirSign, jumping, climbing, flags){
+  // Optional last `flags` object keeps existing call sites working.
+  // Priority: mounted→skyboard; jump; climb; rope; cliff; swim; prone;
+  // crouch(+move); run/walk; idle.
+  flags = flags || {};
   if(!CHAR.loaded) return;
   if(CHAR.mounted){ applySkyboardStance(simTime||0); CHAR.mixer && CHAR.mixer.update(0); return; }
+  const wantRope = !!(flags.rope);
+  const wantCliff = !!(flags.cliff);
+  const wantSwim = !!(flags.swim);
+  const wantProne = !!(flags.prone);
+  const wantCrouch = !!(flags.crouch);
   if(jumping){
     if(CHAR.state!=='jump') setCharState('jump',{fade:0.15});
   } else if(climbing){
     if(CHAR.state!=='climbLoop') setCharState('climbLoop',{fade:0.2});
+  } else if(wantRope){
+    if(CHAR.state!=='rope') setCharState('rope',{fade:0.2});
+  } else if(wantCliff){
+    if(CHAR.state!=='cliff') setCharState('cliff',{fade:0.2});
+  } else if(wantSwim){
+    setCharState('swim',{fade:0.2, reverse:dirSign<0});
+  } else if(wantProne){
+    setCharState('prone',{fade:0.2, reverse:dirSign<0});
+  } else if(wantCrouch && moving){
+    setCharState('crouch',{fade:0.2, reverse:dirSign<0});
   } else if(moving){
     setCharState(running?'run':'walk',{fade:0.2, reverse:dirSign<0});
   } else {
@@ -10757,9 +10838,10 @@ function updateCharacterLocomotion(dt, moving, running, dirSign, jumping, climbi
   // not a replacement animation, just a forward hip/spine bend that grows
   // as the incline gets steeper, same direct-bone-rotation technique the
   // skyboard stance already uses elsewhere in this file. Skipped while
-  // climbing/jumping (those states have their own full-body poses this
-  // shouldn't fight with).
-  if(!jumping && !climbing && CHAR._slopeLeanT>0.001){
+  // climbing/jumping/rope/cliff/swim/prone (those states have their own
+  // full-body poses this shouldn't fight with).
+  const skipLean = jumping || climbing || wantRope || wantCliff || wantSwim || wantProne;
+  if(!skipLean && CHAR._slopeLeanT>0.001){
     const b=CHAR.bones;
     if(b && b.Spine){
       const lean=CHAR._slopeLeanT*0.5; // ~28° max forward lean at full steepness
@@ -10773,7 +10855,7 @@ function updateCharacterLocomotion(dt, moving, running, dirSign, jumping, climbi
   // on/off, so it never pops when jumping/climbing start or stop.
   // See applyFootIK's own comment for exactly what this does and
   // doesn't do.
-  const ikTarget = (!jumping && !climbing) ? 1 : 0;
+  const ikTarget = (!jumping && !climbing && !wantRope && !wantCliff && !wantSwim && !wantProne) ? 1 : 0;
   CHAR._footIKWeight = THREE.MathUtils.damp(CHAR._footIKWeight||0, ikTarget, 6, dt);
   if(CHAR._footIKWeight>0.01) applyFootIK(dt, CHAR._footIKWeight);
 }
@@ -11224,12 +11306,12 @@ async function enterSurface(body,site){
   (function sloop(){
     surfAnimId=requestAnimationFrame(sloop);
     const now=performance.now();const dt=Math.min((now-last)/1000,0.05);last=now;surfTime+=dt;
-    updateSurface(dt);
-    try{ updateCharOrbitCamera(); }catch(e){}
-    try{ _updateCharDebugHUD(); }catch(e){}
-    try{updateCaustics(dt);}catch(e){}
-    try{updateBirdTemple(dt);}catch(e){} // ship keeps wandering + shard keeps following, even off-screen
-    surfRenderer.render(surfScene,surfCamera);
+    try{ updateSurface(dt); }catch(e){ _animLoopWarn('updateSurface',e); }
+    try{ updateCharOrbitCamera(); }catch(e){_animLoopWarn('charOrbit',e);}
+    try{ _updateCharDebugHUD(); }catch(e){_animLoopWarn('charDbg',e);}
+    try{updateCaustics(dt);}catch(e){_animLoopWarn('caustics',e);}
+    try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);} // ship keeps wandering + shard keeps following, even off-screen
+    try{ surfRenderer.render(surfScene,surfCamera); }catch(e){ _animLoopWarn('surf-render',e); }
   })();
 }
 let surfBoard=null,surfTerrainMesh=null,_surfHeight=null;
@@ -13010,11 +13092,24 @@ function updateSurface(dt){
     const climbN = (typeof window._surfClimbNormal==='function') ? window._surfClimbNormal(p.pos.x, p.pos.y, p.pos.z) : null;
     if(climbN) groundNormal = climbN;
     const slopeDeg = THREE.MathUtils.radToDeg(groundNormal.angleTo(new THREE.Vector3(0,1,0)));
+    // Stabilizer swim seam: Worlds installs window._surfWaterAt(x,y,z).
+    // Console override CHAR._wantSwim still works for testing without water volumes.
+    const feetY = eye-3.0;
+    const inWater = !!CHAR._wantSwim || ((typeof window._surfWaterAt==='function') ? !!window._surfWaterAt(p.pos.x, feetY, p.pos.z) : false);
     const autoClimbFromSlope = (!!climbN || slopeDeg > 50) && moving;
-    const climbing = surfClimbHeld || autoClimbFromSlope;
+    // Swim wins over climb while immersed so Swim_Forward actually plays in water volumes.
+    const climbing = !inWater && (surfClimbHeld || autoClimbFromSlope);
     CHAR._slopeLeanT = THREE.MathUtils.clamp((slopeDeg-35)/15, 0, 1); // 0 at 35°, 1 at 50°+ - read by updateCharacterLocomotion below for the crouch-lean blend
+    // Mid-slope auto-crouch uses Autumn crouch clip (stanceMode stand only; HUD locked).
+    const autoCrouch = CHAR.stanceMode==='stand' && !inWater && !climbing && CHAR._slopeLeanT>0.45 && moving && !running;
 
-    updateCharacterLocomotion(dt, moving, running, dirSign, jumping, climbing);
+    updateCharacterLocomotion(dt, moving, running, dirSign, jumping, climbing, {
+      swim: inWater,
+      rope: !!CHAR._wantRope, // STUB until rope interactable exists
+      cliff: !!CHAR._wantCliff, // STUB until ledge/userData.cliff trigger exists
+      prone: CHAR.stanceMode==='prone',
+      crouch: CHAR.stanceMode==='crouch' || autoCrouch,
+    });
   }
 }
 
@@ -13155,7 +13250,7 @@ function exitSurface(){
       flightAnimId=requestAnimationFrame(loop);
       const now=performance.now();const dt=Math.min((now-last)/1000,0.05);last=now;flightTime+=dt;
       _applyFlightResizeIfPending(); // see _queueFlightResize — debounced, event-driven (Android jitter fix)
-      try{updateFlight(dt);}catch(e){}
+      try{updateFlight(dt);}catch(e){_animLoopWarn('updateFlight',e);}
     try{
       if(_charShadowLight && boardFlight){
         const bp=boardFlight.position;
@@ -13164,21 +13259,20 @@ function exitSurface(){
         _charShadowLight.target.position.copy(bp);
         _charShadowLight.target.updateMatrixWorld();
       }
-    }catch(e){}
-      try{updateBodies(dt);}catch(e){}
-    try{upgradePlanetLOD(dt);}catch(e){}
-      try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){}
-    try{ updateCharOrbitCamera(); }catch(e){}
-    try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){}
-    try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){}
-      try{updateBirdTemple(dt);}catch(e){}
-      try{updateDistantSystems(dt);}catch(e){}
-      try{updateVolumetricDust(dt);}catch(e){}
-      try{updateHUD();}catch(e){}
-    try{updateCrosshairLabel();}catch(e){}
-      try{drawMinimap();}catch(e){}
-      renderWithPostFX();
-    })();
+    }catch(e){_animLoopWarn('charShadow',e);}
+      try{updateBodies(dt);}catch(e){_animLoopWarn('updateBodies',e);}
+    try{upgradePlanetLOD(dt);}catch(e){_animLoopWarn('upgradePlanetLOD',e);}
+      try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){_animLoopWarn('skyboardStance',e);}
+    try{ updateCharOrbitCamera(); }catch(e){_animLoopWarn('charOrbit',e);}
+    try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){_animLoopWarn('charMixer',e);}
+    try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){_animLoopWarn('headOverride',e);}
+      try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);}
+      try{updateDistantSystems(dt);}catch(e){_animLoopWarn('distantSystems',e);}
+      try{updateVolumetricDust(dt);}catch(e){_animLoopWarn('volumetricDust',e);}
+      try{updateHUD();}catch(e){_animLoopWarn('updateHUD',e);}
+    try{updateCrosshairLabel();}catch(e){_animLoopWarn('crosshair',e);}
+      try{drawMinimap();}catch(e){_animLoopWarn('minimap',e);}
+      try{ renderWithPostFX(); }catch(e){ _animLoopWarn('render',e); }    })();
   }
   toast('🚀 Back aboard the skyboard');
 }
