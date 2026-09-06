@@ -3985,25 +3985,86 @@ function _webglPlanetSegForPreset(){
   return 48; // med / auto / custom
 }
 function buildWebGLRichPlanetGroup(radius, seedVal, colorHex, hasAtmosphere, kind, bodyName){
+  // Historian FIX INTENT (f1b8547 WebGL look):
+  // Earth → GLSL day/night + rim (useShader), albedo from continent mask (3adec86)
+  // Others → makePlanetTexture / MeshStandard (canvas continents/bands)
   const group=new THREE.Group();
   group.userData.webglRich=true;
   const seg=_webglPlanetSegForPreset();
-  const tex=makeFlightPlanetTexture(kind, colorHex, seedVal, bodyName);
-  const mat=new THREE.MeshStandardMaterial({
-    map:tex, roughness:0.88, metalness:0.02,
-    color:0xffffff
-  });
-  const mesh=new THREE.Mesh(new THREE.SphereGeometry(radius, seg, seg), mat);
-  mesh.name='JOTS_WebGLPlanet';
+  const k=(kind||'').toLowerCase();
+  const nm=bodyName||kind||'';
+  const isEarth = k==='earth' || nm==='Earth';
+  const isMars = k==='mars' || nm==='Mars';
+  let mesh;
+  if(isEarth){
+    // f1b8547 day/night+rim ShaderMaterial, day color from earthLandMask texture
+    const dayMap=makeFlightPlanetTexture('earth', colorHex||0x2244cc, seedVal, 'Earth');
+    const _vs=[
+      'varying vec3 vNormal;','varying vec2 vUv;',
+      'void main(){',
+      '  vNormal=normalize(normalMatrix*normal);',
+      '  vUv=uv;',
+      '  gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);',
+      '}'
+    ].join('\n');
+    const _fs=[
+      'uniform vec3 sunDir;','uniform sampler2D dayMap;',
+      'varying vec3 vNormal;','varying vec2 vUv;',
+      'void main(){',
+      '  float d=dot(vNormal,normalize(sunDir));',
+      '  float t=smoothstep(-0.15,0.18,d);',
+      '  vec3 day=texture2D(dayMap,vUv).rgb;',
+      '  vec3 night=day*0.12+vec3(0.005,0.015,0.048);',
+      '  vec3 col=mix(night,day,t);',
+      '  float nc=pow(clamp(-d,0.0,1.0),0.9)*0.09;',
+      '  col+=vec3(0.9,0.7,0.3)*nc;',
+      '  float rim=1.0-abs(dot(vNormal,vec3(0.0,0.0,1.0)));',
+      '  col+=vec3(0.0,0.3,0.8)*pow(rim,5.0)*0.35;',
+      '  gl_FragColor=vec4(col,1.0);',
+      '}'
+    ].join('\n');
+    const mat=new THREE.ShaderMaterial({
+      uniforms:{
+        sunDir:{value:new THREE.Vector3(1,0.2,0)},
+        dayMap:{value:dayMap}
+      },
+      vertexShader:_vs,
+      fragmentShader:_fs
+    });
+    mesh=new THREE.Mesh(new THREE.SphereGeometry(radius, seg, seg), mat);
+    mesh.name='JOTS_WebGLPlanet';
+    mesh.userData.useShader=true;
+    group.userData.dayNightMesh=mesh;
+  } else {
+    // Prefer live makePlanetTexture (f1b8547 applyProceduralTextures path)
+    let type='Rocky';
+    if(isMars) type='Rocky';
+    else if(k.includes('gas')||nm==='Jupiter'||nm==='Saturn') type='Gas Giant';
+    else if(k.includes('ice')||nm==='Uranus'||nm==='Neptune') type='Ice Giant';
+    else if(k==='habitable') type='Habitable';
+    const baseHex='#'+new THREE.Color(colorHex||0x888888).getHexString();
+    let tex;
+    try{
+      tex=makePlanetTexture(type, baseHex, (typeof seedVal==='number'?seedVal:5));
+    }catch(e){
+      tex=makeFlightPlanetTexture(kind, colorHex, seedVal, bodyName);
+    }
+    // Mars: prefer named-feature flight texture over generic rocky fbm
+    if(isMars) tex=makeFlightPlanetTexture('mars', colorHex||0xcc4411, seedVal, 'Mars');
+    const mat=new THREE.MeshStandardMaterial({
+      map:tex, color:0xffffff, roughness: type.includes('Giant')?0.85:0.95, metalness:0.02
+    });
+    mesh=new THREE.Mesh(new THREE.SphereGeometry(radius, seg, seg), mat);
+    mesh.name='JOTS_WebGLPlanet';
+  }
   group.add(mesh);
   if(hasAtmosphere){
-    // Cheap Fresnel-ish shell — readable limb glow without ray-march compute
-    const atmoR=radius*1.045;
-    const atmoMat=new THREE.MeshBasicMaterial({
-      color: (kind==='mars'||(bodyName==='Mars')) ? 0xc07040 : 0x6ec8ff,
-      transparent:true, opacity:0.18, side:THREE.BackSide, depthWrite:false
+    const atmoR=radius*1.09; // f1b8547 used ~1.09
+    const atmoMat=new THREE.MeshStandardMaterial({
+      color: isMars ? 0xc07040 : 0x2244ff,
+      transparent:true, opacity:0.13, side:THREE.BackSide, depthWrite:false, roughness:1, metalness:0
     });
-    const atmo=new THREE.Mesh(new THREE.SphereGeometry(atmoR, Math.max(24,seg/2), Math.max(16,seg/2)), atmoMat);
+    const atmo=new THREE.Mesh(new THREE.SphereGeometry(atmoR, Math.max(16,seg/2), Math.max(12,seg/2)), atmoMat);
     atmo.name='JOTS_WebGLAtmo';
     group.add(atmo);
   }
@@ -7364,10 +7425,19 @@ function updateHUD(){
   $('hud-ability').textContent=staff.icon+' '+staff.name+': '+staff.desc;
   $('hud-grav').textContent=pos.length()<35?'1.0 g':'0.0 g';
   // Update Earth day/night shader sun direction — sun may be group or mesh
-  if(earthMesh&&earthMesh.material&&earthMesh.material.uniforms){
+  // Earth may be a Group (GPU MC or WebGL rich). Day/night shader lives on
+  // userData.dayNightMesh or a child with uniforms.sunDir (f1b8547 path).
+  if(earthMesh){
     const sunPos = sunMesh ? (sunMesh.parent && sunMesh.parent.isGroup ? sunMesh.parent.position : sunMesh.position) : _hudZero;
-    _hudSunDir.subVectors(sunPos,earthMesh.position).normalize();   // reused scratch (GC fix)
-    earthMesh.material.uniforms.sunDir.value.copy(_hudSunDir);
+    _hudSunDir.subVectors(sunPos,earthMesh.position).normalize();
+    let dn=earthMesh.userData&&earthMesh.userData.dayNightMesh;
+    if(!dn&&earthMesh.material&&earthMesh.material.uniforms&&earthMesh.material.uniforms.sunDir) dn=earthMesh;
+    if(!dn&&earthMesh.traverse){
+      earthMesh.traverse(o=>{ if(!dn&&o.material&&o.material.uniforms&&o.material.uniforms.sunDir) dn=o; });
+    }
+    if(dn&&dn.material&&dn.material.uniforms&&dn.material.uniforms.sunDir){
+      dn.material.uniforms.sunDir.value.copy(_hudSunDir);
+    }
   }
   // (approach prompt is managed in updateBodies based on the closest body)
 }
@@ -8850,7 +8920,7 @@ const _texCache={};
 function makePlanetTexture(type,baseHex,seed){
   const key=type+baseHex+seed;
   if(_texCache[key])return _texCache[key];
-  const S=256;const cv=document.createElement('canvas');cv.width=S*2;cv.height=S;
+  const S=(GFX&&GFX.preset==='low')?256:512;const cv=document.createElement('canvas');cv.width=S*2;cv.height=S;
   const cx=cv.getContext('2d');
   const base=new THREE.Color(baseHex);
   const img=cx.createImageData(S*2,S);const d=img.data;
@@ -8860,11 +8930,15 @@ function makePlanetTexture(type,baseHex,seed){
       let n=_fbm(u,v,seed,5);
       let r,g,b;
       if(type==='Habitable'){
-        // continents (green/brown) over oceans (blue), polar caps
-        const land=n>0.52;
+        // f1b8547 canvas continents; prefer earthLandMask (3adec86) when present
+        const lon=(x/(S*2))*360-180, lat=90-(y/S)*180;
+        let landN=n>0.52;
+        if(typeof earthLandMask==='function'){
+          landN=earthLandMask(lat,lon,seed)>0;
+        }
         const pole=Math.abs(y/S-0.5)>0.42;
         if(pole){r=235;g=240;b=250;}
-        else if(land){const e=(n-0.52)*3;r=60+e*90;g=110+e*70;b=50+e*30;}
+        else if(landN){const e=Math.max(0,(typeof earthLandMask==='function'?earthLandMask(lat,lon,seed):n-0.52))*3;r=60+e*90;g=110+e*70;b=50+e*30;}
         else {r=20;g=50+n*60;b=110+n*90;}
       } else if(type==='Gas Giant'||type==='Ice Giant'){
         // horizontal banding
