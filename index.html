@@ -8344,11 +8344,13 @@ async function rebuildFlightForSystem(system){
   // procedural bodies
   // Seeded rebuild — same system name → same angles/temps/destinations every visit.
   const sysRand=seedRand(system.seed||hashStr('sys:'+system.name));
+  const bodyAngs=[];
   system.bodies.forEach((bd,i)=>{
     const r=bd.radius;
     const m=new THREE.Mesh(new THREE.SphereGeometry(r,24,24),new THREE.MeshStandardMaterial({color:bd.color,roughness:0.9,metalness:0.05}));
     const oR=AU*(1+i*1.4);
     const ang=sysRand()*Math.PI*2;
+    bodyAngs.push(ang);
     m.position.set(Math.cos(ang)*oR,0,Math.sin(ang)*oR);
     flightScene.add(m);
     if(bd.hasRings){const ring=new THREE.Mesh(new THREE.RingGeometry(r*1.4,r*2.2,32),new THREE.MeshBasicMaterial({color:0xccbb99,side:THREE.DoubleSide,transparent:true,opacity:0.5}));ring.rotation.x=-Math.PI/2.3;m.add(ring);}
@@ -8361,12 +8363,13 @@ async function rebuildFlightForSystem(system){
   const outermostR=AU*(1+(system.bodies.length-1)*1.4);
   buildOortCloud({innerR:outermostR*1.5,outerR:outermostR*2.3,seedKey:system.name,count:700});
 
-  // rebuild destination bar from this system's bodies (seeded angles)
+  // QT markers reuse the same body orbit angles (Watcher nit on PR #6).
   DESTINATIONS.length=0;
   system.bodies.forEach((bd,i)=>{
-    const dang=sysRand()*6.28;
+    const ang=bodyAngs[i];
+    const oR=AU*(1+i*1.4);
     DESTINATIONS.push({name:bd.name,icon:bd.landable?'🪐':'🟠',type:bd.type,dist:(i+1)+' AU',
-      pos:new THREE.Vector3(Math.cos(dang)*AU*(1+i*1.4),2,Math.sin(dang)*AU*(1+i*1.4)),
+      pos:new THREE.Vector3(Math.cos(ang)*oR,2,Math.sin(ang)*oR),
       landable:bd.landable});
   });
   buildDestinationUI();
