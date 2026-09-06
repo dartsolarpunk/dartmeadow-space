@@ -47,6 +47,19 @@ if(location.search.indexOf('debug')!==-1){
 <!-- Dynamic true viewport height — handles browser chrome, PWA, notch -->
 <script>(function(){
   var dvhOK = !!(window.CSS && CSS.supports && CSS.supports('height','100dvh'));
+  // Safari (esp. A2HS / visualViewport) can undersize window.inner* vs the
+  // real layout box. Prefer the max of documentElement, inner, and
+  // visualViewport so full-bleed canvases match #screen-* clients.
+  window.__jotsLayoutSize=function(){
+    var de=document.documentElement;
+    var w=Math.max(de&&de.clientWidth||0, window.innerWidth||0);
+    var h=Math.max(de&&de.clientHeight||0, window.innerHeight||0);
+    if(window.visualViewport){
+      w=Math.max(w, Math.round(window.visualViewport.width)||0);
+      h=Math.max(h, Math.round(window.visualViewport.height)||0);
+    }
+    return {w:w,h:h};
+  };
   function setSafeBot(){
     document.documentElement.style.setProperty('--safe-bot',
       (window.screen&&window.screen.height-window.innerHeight>80)?'20px':'env(safe-area-inset-bottom,0px)');
@@ -58,7 +71,7 @@ if(location.search.indexOf('debug')!==-1){
     // caused the main-menu clipping bug after rotating on phones — so on
     // dvh-capable browsers we only touch --safe-bot, never --app-h.
     if(!dvhOK){
-      const h=window.innerHeight;
+      const h=window.__jotsLayoutSize().h;
       document.documentElement.style.setProperty('--app-h',h+'px');
     }
     setSafeBot();
@@ -77,10 +90,15 @@ if(location.search.indexOf('debug')!==-1){
   // time-critical) and removes an undebounced style-recalc source that
   // could fire many times per second on Android.
   var _setHDebounce=null;
-  window.addEventListener('resize',function(){clearTimeout(_setHDebounce);_setHDebounce=setTimeout(setH,100);});
+  function _queueSetH(){clearTimeout(_setHDebounce);_setHDebounce=setTimeout(setH,100);}
+  window.addEventListener('resize',_queueSetH);
   window.addEventListener('orientationchange',function(){setH();setTimeout(setH,200);setTimeout(setH,600);});
   window.addEventListener('load',function(){setH();setTimeout(setH,200);setTimeout(setH,600);});
   document.addEventListener('visibilitychange',function(){if(!document.hidden)setTimeout(setH,150);});
+  if(window.visualViewport){
+    window.visualViewport.addEventListener('resize',_queueSetH);
+    window.visualViewport.addEventListener('scroll',_queueSetH);
+  }
   // Register service worker — required by Chrome for a real "Install app"
   // prompt; without one it silently falls back to a plain shortcut.
   if('serviceWorker' in navigator){
@@ -421,7 +439,7 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;background:var(--c0);co
 
 /* MENU */
 #screen-menu{background:var(--c0);align-items:center;justify-content:flex-start;padding-left:clamp(50px,6vw,75px);}
-#menu-bg-canvas{position:absolute;inset:0;z-index:0;}
+#menu-bg-canvas{position:absolute;inset:0;width:100%!important;height:100%!important;display:block;z-index:0;}
 #menu-pilot{position:absolute;z-index:1;right:1%;bottom:0;height:96%;width:auto;max-width:88vw;object-fit:contain;object-position:right bottom;opacity:0.62;mix-blend-mode:screen;pointer-events:none;filter:drop-shadow(0 0 36px rgba(91,127,255,0.28));-webkit-mask-image:linear-gradient(to top,rgba(0,0,0,1) 70%,rgba(0,0,0,0) 100%);mask-image:linear-gradient(to top,rgba(0,0,0,1) 70%,rgba(0,0,0,0) 100%);}
 /* Undistorted color wash specifically behind the panel's own screen area —
    gives the frosted glass real visual content to show through without
@@ -598,7 +616,7 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;background:var(--c0);co
 .launch-btn.gold:hover{background:rgba(255,79,163,0.22);}
 
 /* FLIGHT */
-#flight-canvas{position:absolute;top:0;left:0;display:block;touch-action:none;z-index:1;}
+#flight-canvas{position:absolute;inset:0;width:100%!important;height:100%!important;display:block;touch-action:none;z-index:1;}
 /* AR corners */
 .ar-corner{position:absolute;width:22px;height:22px;pointer-events:none;z-index:22;}
 .ar-corner::before,.ar-corner::after{content:'';position:absolute;background:var(--cyan);}
@@ -2382,13 +2400,50 @@ function hideFloatingMusicInGame(){
 
 // ── Menu BG ───────────────────────────────────────────────────
 let menuAnim=null;
+function _menuBgLayoutSize(cv){
+  // Prefer parent layout box (#screen-menu) over window — Safari can set
+  // canvas presentational size from width/height attrs, so bitmap must match
+  // the real full-bleed client, not undersized innerWidth/visualViewport.
+  const parent=cv&&cv.parentElement;
+  let w=parent&&parent.clientWidth||0;
+  let h=parent&&parent.clientHeight||0;
+  if(!(w>10&&h>10)&&typeof window.__jotsLayoutSize==='function'){
+    const s=window.__jotsLayoutSize();
+    w=s.w;h=s.h;
+  }
+  if(!(w>10&&h>10)){w=window.innerWidth||1;h=window.innerHeight||1;}
+  return {w:w|0,h:h|0};
+}
+function sizeMenuBgCanvas(cv,stars,arms){
+  cv=cv||$('menu-bg-canvas');
+  if(!cv)return null;
+  const {w,h}=_menuBgLayoutSize(cv);
+  const prevW=cv.width,prevH=cv.height;
+  if(w===prevW&&h===prevH)return {w,h,changed:false};
+  cv.width=w;cv.height=h;
+  // Re-scale star/arm draw positions if size changed mid-loop so field still fills
+  if(prevW>0&&prevH>0&&(stars||arms)){
+    const sx=w/prevW,sy=h/prevH;
+    if(stars)stars.forEach(s=>{s.x*=sx;s.y*=sy;});
+    if(arms)arms.forEach(pts=>pts.forEach(p=>{p.x*=sx;p.y*=sy;}));
+  }
+  return {w,h,changed:true};
+}
 function initMenuBg(){
   if(menuAnim)return;
-  const cv=$('menu-bg-canvas');cv.width=window.innerWidth;cv.height=window.innerHeight;
+  const cv=$('menu-bg-canvas');
+  sizeMenuBgCanvas(cv);
   const ctx=cv.getContext('2d');
   const stars=Array.from({length:500},()=>({x:rnd(0,cv.width),y:rnd(0,cv.height),r:rnd(0.3,1.8),b:rnd(0.2,1),sp:rnd(0.02,0.1),ph:rnd(0,Math.PI*2)}));
   const arms=Array.from({length:5},(_,a)=>Array.from({length:100},(_,j)=>{const t=j/100,ang=t*Math.PI*3+a*(Math.PI*2/5),d=t*Math.min(cv.width,cv.height)*0.42;return{x:cv.width/2+Math.cos(ang)*d+rnd(-14,14),y:cv.height/2+Math.sin(ang)*d*0.55+rnd(-9,9),al:rnd(0.05,0.3),r:rnd(0.4,1.8),col:['#00f5ff','#b060ff','#f5c400','#00ff88','#ffffff'][a%5]};},));
   let t=0;
+  let _menuBgResizeDebounce=null;
+  function _queueMenuBgResize(){
+    clearTimeout(_menuBgResizeDebounce);
+    _menuBgResizeDebounce=setTimeout(function(){sizeMenuBgCanvas(cv,stars,arms);},100);
+  }
+  window.addEventListener('resize',_queueMenuBgResize);
+  if(window.visualViewport)window.visualViewport.addEventListener('resize',_queueMenuBgResize);
   (function frame(){menuAnim=requestAnimationFrame(frame);ctx.clearRect(0,0,cv.width,cv.height);ctx.fillStyle='#000308';ctx.fillRect(0,0,cv.width,cv.height);
     const grd=ctx.createRadialGradient(cv.width/2,cv.height/2,0,cv.width/2,cv.height/2,Math.min(cv.width,cv.height)*0.35);grd.addColorStop(0,'rgba(91,127,255,0.04)');grd.addColorStop(1,'transparent');ctx.fillStyle=grd;ctx.fillRect(0,0,cv.width,cv.height);
     arms.forEach(pts=>pts.forEach(p=>{ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fillStyle=p.col+Math.floor(p.al*255).toString(16).padStart(2,'0');ctx.fill();}));
@@ -3672,16 +3727,19 @@ async function initFlightScene(){
     fetch(CHAR_ASSET_BASE+CHAR_FILES.animSrc).catch(()=>{});
   }catch(e){}
 
-  // Use window dimensions directly — container.offsetWidth can be 0 on first paint
-  const W=window.innerWidth;
-  const H=window.innerHeight;
+  // Prefer layout-max size (documentElement / inner / visualViewport) — Safari
+  // A2HS and visualViewport can undersize bare innerWidth/innerHeight vs the
+  // real #screen-flight box. container.offsetWidth can still be 0 on first paint.
+  const _ls=(typeof window.__jotsLayoutSize==='function')?window.__jotsLayoutSize():{w:window.innerWidth,h:window.innerHeight};
+  const W=_ls.w||window.innerWidth;
+  const H=_ls.h||window.innerHeight;
   const container=$('screen-flight');
 
   // Create canvas in JS and inject — exactly how mr.html does it
   const cv=document.createElement('canvas');
   cv.id='flight-canvas';
   cv.width=W;cv.height=H;
-  cv.style.cssText='position:absolute;top:0;left:0;display:block;touch-action:none;z-index:1;';
+  cv.style.cssText='position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none;z-index:1;';
   container.insertBefore(cv,container.firstChild);
 
   // Detect device capabilities + pick a quality tier before building the renderer
@@ -3788,12 +3846,14 @@ let _flightPendingResize=null,_flightResizeDebounce=null;
 function _queueFlightResize(){
   clearTimeout(_flightResizeDebounce);
   _flightResizeDebounce=setTimeout(()=>{
-    const nW=window.innerWidth,nH=window.innerHeight;
+    const s=(typeof window.__jotsLayoutSize==='function')?window.__jotsLayoutSize():{w:window.innerWidth,h:window.innerHeight};
+    const nW=s.w,nH=s.h;
     if(nW>10&&nH>10)_flightPendingResize={w:nW,h:nH};
   },120);
 }
 window.addEventListener('resize',_queueFlightResize);
 window.addEventListener('orientationchange',_queueFlightResize);
+if(window.visualViewport)window.visualViewport.addEventListener('resize',_queueFlightResize);
 function _applyFlightResizeIfPending(){
   if(!_flightPendingResize)return;
   const {w:nW,h:nH}=_flightPendingResize;_flightPendingResize=null;
