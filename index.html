@@ -6668,6 +6668,8 @@ function setDartMode(i){
   dartSpeedMode=i;
   updateDartButton();
   if(!changed)return;
+  // Pulse ASSIST so IDLE/orbit/home treat a pad tap as manual input.
+  ASSIST._dartChanged=true;
   const m=DART_MODES[i];
   toast(['🛸 MANEUVER — gentle steady speed for close-by','⚡ DART ⅓c³ — YELLOW','⚡ DART ⅔c³ — BLUE','⚡ DART ∞c³ — WHITE'][i],1600);
   $('hud-mode').textContent=m.name;
@@ -7007,12 +7009,20 @@ function updateAssist(dt){
   const sp=STATE.flight;
   if(ASSIST.mode==='manual')return false;
 
-  // Any meaningful manual joystick input breaks focus/orbit lock immediately.
-  const manualInput=(Math.abs(JOY.Lx)+Math.abs(JOY.Ly)+Math.abs(JOY.Rx)+Math.abs(JOY.Ry)+Math.abs(ROLL_HOLD))>0.18;
+  // Joystick/roll OR keyboard thrust (WASD) OR a dart-mode change counts as
+  // manual input. IDLE used to only watch sticks — WASD felt dead until the
+  // pilot touched JOY/ROLL (Watcher clobber audit on main 33c821d).
+  const keyThrust=!!(KEYS&&(KEYS.KeyW||KEYS.KeyA||KEYS.KeyS||KEYS.KeyD));
+  const dartChanged=!!ASSIST._dartChanged;
+  if(ASSIST._dartChanged)ASSIST._dartChanged=false;
+  const manualInput=((Math.abs(JOY.Lx)+Math.abs(JOY.Ly)+Math.abs(JOY.Rx)+Math.abs(JOY.Ry)+Math.abs(ROLL_HOLD))>0.18)||keyThrust||dartChanged;
 
   if(ASSIST.mode==='idle'){
     sp.vel.multiplyScalar(0.80);
-    if(manualInput)disengageAssist('Manual control resumed');
+    if(manualInput){
+      disengageAssist('Manual control resumed');
+      return false; // same-frame thrust/look must run in updateFlight
+    }
     return true;
   }
 
