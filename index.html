@@ -111,6 +111,10 @@ if(location.search.indexOf('debug')!==-1){
   "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.185.0/examples/jsm/"
 } }
 </script>
+<script>
+// Fail-open: module may never run if CDN/importmap fails on Safari.
+window.__THREE_READY__ = false;
+</script>
 <script type="module">
 /* ══════════ WEBGPU FOUNDATION LOADER ══════════
    Rebuilding this properly after a full emergency revert earlier this
@@ -176,6 +180,15 @@ window.__whenThreeReady = function(fn){
   if(window.__THREE_READY__) fn();
   else window.addEventListener('three-ready', fn, {once:true});
 };
+// If THREE never arrives, still allow splash→menu; warn once when toast exists.
+setTimeout(function(){
+  if(window.__THREE_READY__) return;
+  console.warn('[WebGPU] Three.js not ready — splash/menu still available');
+  window.__THREE_LOAD_FAILED__ = true;
+  try{
+    if(typeof toast==='function') toast('⚠ 3D engine unavailable — try refresh / check network', 4500, 'warn');
+  }catch(e){}
+}, 12000);
 </script>
 <!-- Stripe's buy-button script is now lazy-loaded only when Support is
      opened (see openSupport()), not here on every page load. Loading it
@@ -395,7 +408,7 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;background:var(--c0);co
 #ls-status{font-family:var(--font-mono);font-size:0.6rem;color:rgba(91,127,255,0.4);margin-top:0.8rem;letter-spacing:0.12em;position:relative;z-index:2;}
 #ls-enter{margin-top:2rem;padding:0.85rem 3rem;background:rgba(255,255,255,0.08);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.2);color:var(--cyan);font-family:var(--font-hud);font-size:0.75rem;letter-spacing:0.25em;cursor:pointer;text-transform:uppercase;transition:var(--trans);display:none;position:relative;z-index:2;border-radius:2px;box-shadow:0 0 8px -3px currentColor;}
 #ls-enter:hover{background:var(--dim-cyan);box-shadow:var(--glow-md);}
-#ls-enter.vis{display:block;animation:fadein 0.5s ease forwards;}
+#ls-enter.vis{display:block !important;opacity:1 !important;visibility:visible !important;animation:fadein 0.5s ease forwards;}
 @keyframes fadein{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}
 
 /* APP */
@@ -862,6 +875,78 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   <div id="ls-status">Initializing stellar cartography...</div>
   <button id="ls-enter" onclick="enterApp()">SEQUENCE DART ⟶</button>
 </div>
+<script>
+/* Early splash controller — MUST stay tiny + classic + independent of the
+   ~12k-line game script below. If that script fails to parse/exec (e.g. bad
+   hex literal historically), this still advances the bar and reveals SEQUENCE DART. */
+(function(){
+  if(window.__EARLY_SPLASH__) return;
+  window.__EARLY_SPLASH__ = true;
+  function el(id){ return document.getElementById(id); }
+  function revealEnter(){
+    try{
+      var enter = el('ls-enter');
+      if(!enter) return;
+      enter.classList.add('vis');
+      enter.style.setProperty('display','block','important');
+      enter.style.setProperty('opacity','1','important');
+      enter.style.visibility = 'visible';
+    }catch(e){}
+  }
+  window.__revealSplashEnter = revealEnter;
+  // Stub until the big script redefines enterApp with gfx/fullscreen path.
+  if(typeof window.enterApp !== 'function'){
+    window.enterApp = function(){
+      try{
+        var ls = el('loading-screen');
+        if(ls){ ls.classList.add('out'); ls.style.display = 'none'; }
+        var app = el('app');
+        if(app) app.classList.add('vis');
+        if(typeof goScreen === 'function') goScreen('menu');
+        else if(typeof window.goScreen === 'function') window.goScreen('menu');
+        else {
+          var tip = document.createElement('div');
+          tip.setAttribute('role','status');
+          tip.style.cssText = 'position:fixed;bottom:10%;left:50%;transform:translateX(-50%);z-index:99999;color:#7eb6ff;font:600 12px/1.45 system-ui,sans-serif;text-align:center;max-width:90vw;padding:10px 14px;background:rgba(0,8,16,0.85);border:1px solid rgba(91,127,255,0.35);border-radius:6px;';
+          tip.textContent = 'Core script still loading. If the menu never appears, hard-refresh (clear site data) and try again.';
+          document.body.appendChild(tip);
+        }
+        if(window.__THREE_LOAD_FAILED__ && typeof toast === 'function'){
+          try{ toast('⚠ 3D engine unavailable — try refresh', 4500, 'warn'); }catch(e){}
+        }
+      }catch(e){
+        try{ location.reload(); }catch(_){}
+      }
+    };
+  }
+  try{
+    var msgs = [
+      'Mapping stellar cartography...',
+      'Loading galaxy particle systems...',
+      'Calibrating DART drive...',
+      'Synthesizing celestial bodies...',
+      'Initializing board forge...',
+      'Configuring orbital mechanics...',
+      'Building DART energy ring assemblies...',
+      'All systems nominal.'
+    ];
+    var p = 0;
+    var bar = el('ls-bar'), stat = el('ls-status');
+    function adv(){
+      try{
+        p = Math.min(p + (7 + Math.random() * 11), 100);
+        if(bar) bar.style.width = p + '%';
+        if(stat) stat.textContent = msgs[Math.min(Math.floor(p / 15), msgs.length - 1)];
+        if(p < 100) setTimeout(adv, 180 + Math.random() * 200);
+        else setTimeout(revealEnter, 250);
+      }catch(e){ revealEnter(); }
+    }
+    setTimeout(adv, 180);
+  }catch(e){ revealEnter(); }
+  // Absolute failsafe — never leave Justin without SEQUENCE DART on iOS Safari
+  setTimeout(revealEnter, 5500);
+})();
+</script>
 
 <!-- Small in-scene loading overlay — shown whenever entering flight/atmo/
      surface while character+board assets are still resolving, so the
@@ -1936,19 +2021,29 @@ let _gameInProgress=false;
 
 // ── Loading ───────────────────────────────────────────────────
 (function(){
-  // Splash must never hard-stick: wrap everything so a single throw still reveals SEQUENCE DART.
-  const reveal=()=>{try{const enter=$('ls-enter');if(enter)enter.classList.add('vis');}catch(e){}};
+  // Late splash helpers (stars/audio). Progress + SEQUENCE DART reveal are owned by
+  // the early independent controller; keep a belt-and-suspenders reveal here too.
+  const reveal=()=>{try{
+    if(typeof window.__revealSplashEnter==='function'){window.__revealSplashEnter();return;}
+    const enter=$('ls-enter');
+    if(enter){enter.classList.add('vis');enter.style.setProperty('display','block','important');enter.style.setProperty('opacity','1','important');}
+  }catch(e){}};
   try{
     const c=$('ls-stars');
-    if(c){for(let i=0;i<160;i++){const s=document.createElement('div');s.className='ls-star';const sz=rnd(0.4,2.2);s.style.cssText=`width:${sz}px;height:${sz}px;left:${rnd(0,100)}%;top:${rnd(0,100)}%;animation-duration:${rnd(2,6)}s;animation-delay:${rnd(0,4)}s;`;c.appendChild(s);}}
-    const msgs=['Mapping stellar cartography...','Loading galaxy particle systems...','Calibrating DART drive...','Synthesizing celestial bodies...','Initializing board forge...','Configuring orbital mechanics...','Building DART energy ring assemblies...','All systems nominal.'];
-    let p=0;
-    const bar=$('ls-bar'),stat=$('ls-status'),enter=$('ls-enter');
-    const adv=()=>{try{p=Math.min(p+rnd(7,18),100);if(bar)bar.style.width=p+'%';if(stat)stat.textContent=msgs[Math.min(Math.floor(p/15),msgs.length-1)];if(p<100)setTimeout(adv,rnd(180,380));else setTimeout(reveal,300);}catch(e){reveal();}};
-    setTimeout(adv,350);
+    if(c && !c.dataset.seeded){c.dataset.seeded='1';for(let i=0;i<160;i++){const s=document.createElement('div');s.className='ls-star';const sz=rnd(0.4,2.2);s.style.cssText=`width:${sz}px;height:${sz}px;left:${rnd(0,100)}%;top:${rnd(0,100)}%;animation-duration:${rnd(2,6)}s;animation-delay:${rnd(0,4)}s;`;c.appendChild(s);}}
+    // Only run fake progress if early controller did not install (old cached HTML edge).
+    if(!window.__EARLY_SPLASH__){
+      const msgs=['Mapping stellar cartography...','Loading galaxy particle systems...','Calibrating DART drive...','Synthesizing celestial bodies...','Initializing board forge...','Configuring orbital mechanics...','Building DART energy ring assemblies...','All systems nominal.'];
+      let p=0;
+      const bar=$('ls-bar'),stat=$('ls-status');
+      const adv=()=>{try{p=Math.min(p+rnd(7,18),100);if(bar)bar.style.width=p+'%';if(stat)stat.textContent=msgs[Math.min(Math.floor(p/15),msgs.length-1)];if(p<100)setTimeout(adv,rnd(180,380));else setTimeout(reveal,300);}catch(e){reveal();}};
+      setTimeout(adv,350);
+    } else {
+      // Early path already advancing; ensure reveal eventually even if timers stalled.
+      setTimeout(reveal,7000);
+    }
   }catch(e){console.warn('splash:',e);reveal();}
-  // Absolute failsafe — never leave the player without SEQUENCE DART
-  setTimeout(reveal,8000);
+  setTimeout(reveal,9000);
   setTimeout(()=>{try{initAudio();}catch(e){console.warn('audio:',e);}try{initFullscreenSupport();}catch(e){console.warn('fs init:',e);}},0);
 })();
 function enterApp(){
@@ -1957,11 +2052,17 @@ function enterApp(){
   // First launch → show graphics setup; returning users skip straight in.
   let shown=false;
   try{ shown=showGfxScreen(false); }catch(e){console.warn('gfx screen:',e);}
-  $('loading-screen').classList.add('out');
+  const ls=$('loading-screen');
+  if(ls){ls.classList.add('out');}
   setTimeout(()=>{
-    $('loading-screen').style.display='none';
-    if(!shown){ $('app').classList.add('vis');goScreen('menu');_checkAutosaveResume(); }
-    updateFullscreenButtons();
+    if(ls){ls.style.display='none';ls.style.setProperty('display','none','important');}
+    if(!shown){
+      const app=$('app'); if(app) app.classList.add('vis');
+      try{ goScreen('menu'); }catch(e){console.warn('goScreen:',e);}
+      try{ _checkAutosaveResume(); }catch(e){}
+    }
+    try{ updateFullscreenButtons(); }catch(e){}
+    if(window.__THREE_LOAD_FAILED__){ try{toast('⚠ 3D engine unavailable — try refresh / check network',4500,'warn');}catch(e){} }
     // if shown, the gfx screen sits on top; applyGfxScreen() reveals the menu
   },850);
 }
@@ -3024,7 +3125,7 @@ const GFX = {
 
 // Capability ceilings — what a tier is ALLOWED to use is clamped by hardware.
 const PRESETS = {
-  low:    {resScale:0.7, shadows:false, shadowSize:512,  envReflections:false, caustics:false, fakeGI:true, refraction:false, ssao:false, volumetricDust:false, dustDensity:0.45, aniso:1,  antialias:false},
+  low:    {resScale:0.7, shadows:false, shadowSize:512,  envReflections:false, caustics:false, fakeGI:true, refraction:false, ssao:false, volumetricDust:true,  dustDensity:0.9,  aniso:1,  antialias:false},
   medium: {resScale:0.85,shadows:true,  shadowSize:1024, envReflections:true,  caustics:true,  fakeGI:true, refraction:true,  ssao:false, volumetricDust:true,  dustDensity:0.8,  aniso:2,  antialias:true },
   high:   {resScale:1.0, shadows:true,  shadowSize:2048, envReflections:true,  caustics:true,  fakeGI:true, refraction:true,  ssao:true,  volumetricDust:true,  dustDensity:1.3,  aniso:8,  antialias:true },
   ultra:  {resScale:1.0, shadows:true,  shadowSize:4096, envReflections:true,  caustics:true,  fakeGI:true, refraction:true,  ssao:true,  volumetricDust:true,  dustDensity:2.2,  aniso:16, antialias:true },
@@ -3038,7 +3139,7 @@ const PRESETS = {
 // the newer GFX-side settings. DART Speed is deliberately excluded: it's
 // a gameplay/travel-speed multiplier, not a rendering-fidelity setting.
 const PRESET_SETTINGS_EXTRA = {
-  low:    {stars:true, dust:false, bloom:false, motion:false, textures:false, galaxyband:false, particles:'low',  fov:5000  },
+  low:    {stars:true, dust:true,  bloom:false, motion:false, textures:false, galaxyband:true,  particles:'med',  fov:50000 },
   medium: {stars:true, dust:true,  bloom:true,  motion:false, textures:true,  galaxyband:true,  particles:'med',  fov:50000 },
   high:   {stars:true, dust:true,  bloom:true,  motion:true,  textures:true,  galaxyband:true,  particles:'high', fov:300000},
   ultra:  {stars:true, dust:true,  bloom:true,  motion:true,  textures:true,  galaxyband:true,  particles:'ultra',fov:300000},
@@ -3784,7 +3885,7 @@ function buildFlightStars(){
   const starTex=makeCircleTex(16,'rgb(255,255,255)',1);
 
   // Background star field — thousands of tiny distant points
-  {const n=4000;const p=new Float32Array(n*3),c=new Float32Array(n*3);
+  {const n=6000;const p=new Float32Array(n*3),c=new Float32Array(n*3);
   const pal=[[1,1,1],[.75,.88,1],[1,.94,.78],[.65,.78,1]];
   for(let i=0;i<n;i++){
     const phi=Math.acos(2*Math.random()-1),th=Math.random()*Math.PI*2,r=1500+Math.random()*48000;
@@ -3795,7 +3896,7 @@ function buildFlightStars(){
   flightScene.add(new THREE.Points(g,new THREE.PointsMaterial({size:1.2,sizeAttenuation:false,vertexColors:true,map:starTex,alphaTest:0.05,transparent:true,depthWrite:false})));}
 
   // Mid-field slightly larger stars
-  {const n=800;const p=new Float32Array(n*3),c=new Float32Array(n*3);
+  {const n=1400;const p=new Float32Array(n*3),c=new Float32Array(n*3);
   for(let i=0;i<n;i++){
     const phi=Math.acos(2*Math.random()-1),th=Math.random()*Math.PI*2,r=300+Math.random()*1200;
     p[i*3]=r*Math.sin(phi)*Math.cos(th);p[i*3+1]=r*Math.sin(phi)*Math.sin(th)*0.5;p[i*3+2]=r*Math.cos(phi);
@@ -3869,12 +3970,19 @@ function buildFlightNebulae(){
   // uses a cheaper particle count. makeNebulaCloudMaterial kept for reference
   // but is no longer the live dust path.
   if(STATE.settings && STATE.settings.dust===false)return;
+  // Richer cloud field (Justin iPhone: galaxy felt empty). Extra pockets near
+  // Sol + mid-arms; Low stays cheaper but still visible.
   const clouds=[
     [3000,200,-500,[0.0,0.55,1.0]],
     [8000,-800,2000,[0.59,0.31,1.0]],
-    [-5000,400,3000,[1.0,0.43,0.16]]
+    [-5000,400,3000,[1.0,0.43,0.16]],
+    [1200,80,2200,[0.35,0.75,1.0]],
+    [-2500,-120,-1800,[0.85,0.45,1.0]],
+    [5500,300,-3500,[1.0,0.55,0.25]],
+    [-7000,150,500,[0.2,0.9,0.7]],
+    [200,-400,6500,[0.95,0.75,0.4]]
   ];
-  const perCloud=(GFX.preset==='low')?280:900;
+  const perCloud=(GFX.preset==='low')?420:1300;
   const tex=makeCircleTex(32,'rgb(255,255,255)',0.85);
   clouds.forEach(([px,py,pz,col])=>{
     const n=perCloud;
@@ -3885,15 +3993,15 @@ function buildFlightNebulae(){
       p[i*3]=px+r*Math.sin(phi)*Math.cos(th);
       p[i*3+1]=py+r*Math.sin(phi)*Math.sin(th)*.3;
       p[i*3+2]=pz+r*Math.cos(phi);
-      const b=0.12+Math.random()*0.5;
+      const b=0.14+Math.random()*0.55;
       c[i*3]=col[0]*b;c[i*3+1]=col[1]*b;c[i*3+2]=col[2]*b;
     }
     const g=new THREE.BufferGeometry();
     g.setAttribute('position',new THREE.BufferAttribute(p,3));
     g.setAttribute('color',new THREE.BufferAttribute(c,3));
     const pts=new THREE.Points(g,new THREE.PointsMaterial({
-      size:(GFX.preset==='low')?36:52,sizeAttenuation:true,vertexColors:true,map:tex,
-      transparent:true,opacity:0.5,depthWrite:false,blending:THREE.AdditiveBlending,alphaTest:0.02
+      size:(GFX.preset==='low')?44:64,sizeAttenuation:true,vertexColors:true,map:tex,
+      transparent:true,opacity:0.62,depthWrite:false,blending:THREE.AdditiveBlending,alphaTest:0.02
     }));
     flightScene.add(pts);
     if(typeof flightNebulae!=='undefined')flightNebulae.push(pts);
@@ -4481,7 +4589,7 @@ async function buildSolarSystem(){
   // Seeded ('sol:belt') so return visits keep the same belt, not a reshuffle.
   const beltR = AU * 2.7;
   const beltRand=seedRand(hashStr('sol:belt'));
-  const n=1200;const ap=new Float32Array(n*3);
+  const n=2000;const ap=new Float32Array(n*3);
   for(let i=0;i<n;i++){
     const a=beltRand()*Math.PI*2, r=beltR+(beltRand()-0.5)*AU;
     ap[i*3]=Math.cos(a)*r;
@@ -8197,23 +8305,37 @@ function seedRand(seed){return function(){seed|=0;seed=seed+0x6D2B79F5|0;let t=M
 function hashStr(s){let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619);}return h>>>0;}
 
 function getGalaxySystems(galaxyId,galaxyName,count){
-  // Already charted → return as-is (never reshuffle). New galaxy ids only.
-  if(GALAXY_DB.galaxies[galaxyId])return GALAXY_DB.galaxies[galaxyId];
-  const rnd=seedRand(hashStr('galaxy:'+galaxyId+':'+WORLD_SEED));
-  const systems=[];
-  const n=count||(6+Math.floor(rnd()*6));
-  for(let i=0;i<n;i++){
-    const nm=STAR_NAMES[Math.floor(rnd()*STAR_NAMES.length)]+'-'+(Math.floor(rnd()*900)+100);
-    const starType=['G yellow','K orange','M red dwarf','F white','B blue giant'][Math.floor(rnd()*5)];
-    const bodyCount=2+Math.floor(rnd()*5);
-    const bodies=[];
-    for(let b=0;b<bodyCount;b++){
-      const bt=BODY_TYPES[Math.floor(rnd()*BODY_TYPES.length)];
-      bodies.push({name:nm+' '+'bcdefgh'[b],type:bt.t,color:bt.col,landable:bt.land,gravity:bt.grav,
-        orbitR:(b+1)*0.18+rnd()*0.05,radius:0.5+rnd()*2.5,hasRings:bt.t==='Gas Giant'&&rnd()<0.4,moons:Math.floor(rnd()*3)});
+  // Target richness for charts (Justin iPhone). Existing systems never reshuffle —
+  // we only APPEND when a chart is thinner than the target.
+  const target=count||(12+Math.floor(seedRand(hashStr('galaxy:'+galaxyId+':n:'+WORLD_SEED))()*10));
+  function _genSystems(rnd, startIdx, want){
+    const systems=[];
+    for(let i=0;i<want;i++){
+      const nm=STAR_NAMES[Math.floor(rnd()*STAR_NAMES.length)]+'-'+(Math.floor(rnd()*900)+100);
+      const starType=['G yellow','K orange','M red dwarf','F white','B blue giant'][Math.floor(rnd()*5)];
+      const bodyCount=2+Math.floor(rnd()*5);
+      const bodies=[];
+      for(let b=0;b<bodyCount;b++){
+        const bt=BODY_TYPES[Math.floor(rnd()*BODY_TYPES.length)];
+        bodies.push({name:nm+' '+'bcdefgh'[b],type:bt.t,color:bt.col,landable:bt.land,gravity:bt.grav,
+          orbitR:(b+1)*0.18+rnd()*0.05,radius:0.5+rnd()*2.5,hasRings:bt.t==='Gas Giant'&&rnd()<0.4,moons:Math.floor(rnd()*3)});
+      }
+      // Distinct salt for appended slots so expand streams don't collide with v1 names
+      systems.push({name:nm,starType,bodies,ang:rnd()*Math.PI*2,rad:0.2+rnd()*0.75,seed:hashStr('sys:'+nm+':'+galaxyId+':'+ (startIdx+i))});
     }
-    systems.push({name:nm,starType,bodies,ang:rnd()*Math.PI*2,rad:0.2+rnd()*0.75,seed:hashStr('sys:'+nm+':'+galaxyId)});
+    return systems;
   }
+  const existing=GALAXY_DB.galaxies[galaxyId];
+  if(existing){
+    if((existing.systems||[]).length>=target)return existing;
+    const need=target-existing.systems.length;
+    const rnd=seedRand(hashStr('galaxy:'+galaxyId+':expand:'+existing.systems.length+':'+WORLD_SEED));
+    existing.systems=existing.systems.concat(_genSystems(rnd, existing.systems.length, need));
+    persistGalaxyDb();
+    return existing;
+  }
+  const rnd=seedRand(hashStr('galaxy:'+galaxyId+':'+WORLD_SEED));
+  const systems=_genSystems(rnd, 0, target);
   const g={id:galaxyId,name:galaxyName||galaxyId,systems,seededFrom:WORLD_SEED};
   GALAXY_DB.galaxies[galaxyId]=g;
   persistGalaxyDb();
@@ -8887,7 +9009,8 @@ async function buildFlightGalaxyBandGPU(){
 }
 
 function buildFlightGalaxyBandCPU(){
-  const density=({low:0.4,med:1,high:2,ultra:3.5})[STATE.settings.particles]||1;
+  // Floor density so Low/mobile still reads as a rich Milky Way (Justin iPhone).
+  const density=Math.max(0.85,({low:0.85,med:1.25,high:2.2,ultra:3.5})[STATE.settings.particles]||1.25);
   // Keep the whole galaxy INSIDE the draw distance so it never clips out.
   const RG=42000; // galaxy radius in scene units (fits under the 50k far plane)
   // ── 2 major + 2 minor spiral arms (matches the real Milky Way morphology) ──
@@ -8926,8 +9049,8 @@ function buildFlightGalaxyBandCPU(){
   g.setAttribute('color',new THREE.BufferAttribute(new Float32Array(cols),3));
   const tex=makeCircleTex(16,'rgb(255,255,255)',1);
   flightGalaxyBand=new THREE.Points(g,new THREE.PointsMaterial({
-    size:80,sizeAttenuation:true,vertexColors:true,map:tex,
-    alphaTest:0.02,transparent:true,opacity:0.95,depthWrite:false,blending:THREE.AdditiveBlending
+    size:(GFX.isMobile?120:100),sizeAttenuation:true,vertexColors:true,map:tex,
+    alphaTest:0.02,transparent:true,opacity:0.98,depthWrite:false,blending:THREE.AdditiveBlending
   }));
   // galactic plane tilt so Sol sits within an arm, looking toward the core
   const galGroup=new THREE.Group();
@@ -8944,7 +9067,7 @@ function buildFlightGalaxyBandCPU(){
   const cg=new THREE.BufferGeometry();
   cg.setAttribute('position',new THREE.BufferAttribute(new Float32Array(cp),3));
   cg.setAttribute('color',new THREE.BufferAttribute(new Float32Array(cc),3));
-  galGroup.add(new THREE.Points(cg,new THREE.PointsMaterial({size:120,sizeAttenuation:true,vertexColors:true,map:tex,transparent:true,opacity:0.95,depthWrite:false,blending:THREE.AdditiveBlending})));
+  galGroup.add(new THREE.Points(cg,new THREE.PointsMaterial({size:(GFX.isMobile?150:130),sizeAttenuation:true,vertexColors:true,map:tex,transparent:true,opacity:0.98,depthWrite:false,blending:THREE.AdditiveBlending})));
 
   // Single modest Sgr A* glow marking galactic center — not the old layered
   // stack of 3 large flat-colored halo sprites (cream/orange/violet), which
@@ -9091,7 +9214,8 @@ function buildDistantStarSystems(){
   // Deterministic seed so the same field generates every session — not
   // re-randomized on each load/rebuild. Seed 918273 is frozen (do not change —
   // would reshuffle already-visited local systems).
-  const STAR_FIELD = generateSeededStarField(60, 918273);
+  // 140 accepted local systems (was 60) — same seed keeps the original 60, then adds more.
+  const STAR_FIELD = generateSeededStarField(140, 918273);
   STAR_FIELD.forEach(s=>{
     const grp = buildProceduralStarMesh(s.radius, s.seed, s.cls.col);
     grp.position.set(s.pos[0], s.pos[1], s.pos[2]);
@@ -9323,8 +9447,8 @@ let flightDust=null,_dustVel=null,_dustT=0;
 function buildVolumetricDust(){
   if(flightDust){flightScene.remove(flightDust);flightDust.geometry.dispose();flightDust=null;}
   if(!GFX.volumetricDust){return;}
-  const base=2200;
-  const N=Math.max(200,Math.round(base*(GFX.dustDensity||1)));
+  const base=3800;
+  const N=Math.max(400,Math.round(base*(GFX.dustDensity||1)));
   const p=new Float32Array(N*3),c=new Float32Array(N*3),sz=new Float32Array(N);
   _dustVel=new Float32Array(N*3);
   const R=160; // dust occupies a moving cube around the camera
@@ -9346,8 +9470,8 @@ function buildVolumetricDust(){
   g.setAttribute('asize',new THREE.BufferAttribute(sz,1));
   const tex=makeCircleTex(32,'rgb(200,220,255)',0.7);
   const mat=new THREE.PointsMaterial({
-    size:2.2,sizeAttenuation:true,vertexColors:true,map:tex,
-    transparent:true,opacity:0.6,depthWrite:false,blending:THREE.AdditiveBlending,alphaTest:0.01
+    size:2.9,sizeAttenuation:true,vertexColors:true,map:tex,
+    transparent:true,opacity:0.72,depthWrite:false,blending:THREE.AdditiveBlending,alphaTest:0.01
   });
   flightDust=new THREE.Points(g,mat);
   flightDust.frustumCulled=false;
