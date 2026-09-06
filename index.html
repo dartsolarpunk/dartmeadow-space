@@ -1692,7 +1692,9 @@ function buildSaveData(slot){
       destIdx:STATE.flight.destIdx,
       energy:STATE.flight.energy,hull:STATE.flight.hull,shield:STATE.flight.shield
     },
-    settings:JSON.parse(JSON.stringify(STATE.settings))
+    settings:JSON.parse(JSON.stringify(STATE.settings)),
+    // Charted galaxies/systems — merge-only on load so existing places stay put.
+    galaxyDb:{current:GALAXY_DB.current,galaxies:GALAXY_DB.galaxies,worldSeed:WORLD_SEED}
   };
 }
 function loadSaveData(data){
@@ -1720,6 +1722,13 @@ function loadSaveData(data){
     if(data.settings.reflections!==undefined)GFX.envReflections=data.settings.reflections;
     if(data.settings.caustics!==undefined)GFX.caustics=data.settings.caustics;
     if(data.settings.gi!==undefined)GFX.fakeGI=data.settings.gi;
+  }
+  if(data.galaxyDb&&data.galaxyDb.galaxies){
+    if(data.galaxyDb.current)GALAXY_DB.current=data.galaxyDb.current;
+    Object.keys(data.galaxyDb.galaxies).forEach(id=>{
+      if(!GALAXY_DB.galaxies[id])GALAXY_DB.galaxies[id]=data.galaxyDb.galaxies[id];
+    });
+    persistGalaxyDb();
   }
   return true;
 }
@@ -4464,26 +4473,29 @@ async function buildSolarSystem(){
   }
 
   // Asteroid belt — between Mars (1.524 AU) and Jupiter (5.203 AU), centered ~2.7 AU
+  // Seeded ('sol:belt') so return visits keep the same belt, not a reshuffle.
   const beltR = AU * 2.7;
+  const beltRand=seedRand(hashStr('sol:belt'));
   const n=1200;const ap=new Float32Array(n*3);
   for(let i=0;i<n;i++){
-    const a=Math.random()*Math.PI*2, r=beltR+rnd(-AU*0.5,AU*0.5);
+    const a=beltRand()*Math.PI*2, r=beltR+(beltRand()-0.5)*AU;
     ap[i*3]=Math.cos(a)*r;
-    ap[i*3+1]=rnd(-3,3);
+    ap[i*3+1]=(beltRand()-0.5)*6;
     ap[i*3+2]=Math.sin(a)*r;
   }
   const ag=new THREE.BufferGeometry();ag.setAttribute('position',new THREE.BufferAttribute(ap,3));
   flightScene.add(new THREE.Points(ag,new THREE.PointsMaterial({size:.5,color:0x886644,sizeAttenuation:true})));
 
-  // Comets — scattered through inner and outer solar system
+  // Comets — seeded positions/tails ('sol:comets') for stable returns
+  const cometRand=seedRand(hashStr('sol:comets'));
   for(let i=0;i<6;i++){
     const cg=new THREE.Group();
     cg.add(new THREE.Mesh(new THREE.SphereGeometry(.22,8,8),new THREE.MeshStandardMaterial({color:0xeeeeff,emissive:0x8888ff,emissiveIntensity:1.5})));
     const tp=new Float32Array(180*3);
-    for(let j=0;j<180;j++){tp[j*3]=j*-.08+rnd(-.04,.04);tp[j*3+1]=rnd(-.02,.02);tp[j*3+2]=rnd(-.04,.04);}
+    for(let j=0;j<180;j++){tp[j*3]=j*-.08+(cometRand()-0.5)*0.08;tp[j*3+1]=(cometRand()-0.5)*0.04;tp[j*3+2]=(cometRand()-0.5)*0.08;}
     const tg=new THREE.BufferGeometry();tg.setAttribute('position',new THREE.BufferAttribute(tp,3));
     cg.add(new THREE.Points(tg,new THREE.PointsMaterial({size:.1,color:0x8888ff,transparent:true,opacity:.55})));
-    cg.position.set(rnd(-AU*10,AU*10),rnd(-20,20),rnd(-AU*10,AU*10));
+    cg.position.set((cometRand()-0.5)*AU*20,(cometRand()-0.5)*40,(cometRand()-0.5)*AU*20);
     flightScene.add(cg);
   }
 
@@ -8133,6 +8145,37 @@ function gmLoop(){
 //  ✦ PROCEDURAL GALAXIES, SYSTEMS & FAST TRAVEL
 // ══════════════════════════════════════════════════════════════
 const GALAXY_DB = { current:'milkyway', galaxies:{} };
+// Persistent seeded worldgen (Justin/CoS): same seed → same systems/visitables on
+// return. Newly charted galaxy ids generate once and are stored; never reshuffle
+// already-charted entries. GPU band flag flip is unrelated and stays hard-off.
+const WORLD_SEED = 0xDA27MEAD; // fixed world salt — do not change (would reshuffle all derived content)
+const GALAXY_DB_STORE_KEY = 'dm_galaxy_db_v1';
+function loadGalaxyDb(){
+  try{
+    const raw=localStorage.getItem(GALAXY_DB_STORE_KEY);
+    if(!raw)return;
+    const data=JSON.parse(raw);
+    if(!data||typeof data!=='object')return;
+    if(data.current)GALAXY_DB.current=data.current;
+    if(data.galaxies&&typeof data.galaxies==='object'){
+      // Merge only — never delete already-charted galaxies (no reshuffle).
+      Object.keys(data.galaxies).forEach(id=>{
+        if(!GALAXY_DB.galaxies[id])GALAXY_DB.galaxies[id]=data.galaxies[id];
+      });
+    }
+  }catch(e){}
+}
+function persistGalaxyDb(){
+  try{
+    localStorage.setItem(GALAXY_DB_STORE_KEY, JSON.stringify({
+      current:GALAXY_DB.current,
+      galaxies:GALAXY_DB.galaxies,
+      worldSeed:WORLD_SEED
+    }));
+  }catch(e){}
+}
+loadGalaxyDb();
+
 const STAR_NAMES=['Sol','Kepler','Cygni','Vega','Lyra','Altair','Rigel','Mira','Tau Ceti','Eridani','Wolf','Lalande','Ross','Gliese','Trappist','Proxima','Arcturus','Pollux','Castor','Antares','Deneb','Fomalhaut','Spica','Bellatrix','Achernar','Hadar','Mimosa','Acrux','Gacrux','Naos'];
 const BODY_TYPES=[
   {t:'Rocky',col:0x9c7a5a,land:true,grav:0.38},
@@ -8149,8 +8192,9 @@ function seedRand(seed){return function(){seed|=0;seed=seed+0x6D2B79F5|0;let t=M
 function hashStr(s){let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619);}return h>>>0;}
 
 function getGalaxySystems(galaxyId,galaxyName,count){
+  // Already charted → return as-is (never reshuffle). New galaxy ids only.
   if(GALAXY_DB.galaxies[galaxyId])return GALAXY_DB.galaxies[galaxyId];
-  const rnd=seedRand(hashStr(galaxyId));
+  const rnd=seedRand(hashStr('galaxy:'+galaxyId+':'+WORLD_SEED));
   const systems=[];
   const n=count||(6+Math.floor(rnd()*6));
   for(let i=0;i<n;i++){
@@ -8163,10 +8207,11 @@ function getGalaxySystems(galaxyId,galaxyName,count){
       bodies.push({name:nm+' '+'bcdefgh'[b],type:bt.t,color:bt.col,landable:bt.land,gravity:bt.grav,
         orbitR:(b+1)*0.18+rnd()*0.05,radius:0.5+rnd()*2.5,hasRings:bt.t==='Gas Giant'&&rnd()<0.4,moons:Math.floor(rnd()*3)});
     }
-    systems.push({name:nm,starType,bodies,ang:rnd()*Math.PI*2,rad:0.2+rnd()*0.75});
+    systems.push({name:nm,starType,bodies,ang:rnd()*Math.PI*2,rad:0.2+rnd()*0.75,seed:hashStr('sys:'+nm+':'+galaxyId)});
   }
-  const g={id:galaxyId,name:galaxyName||galaxyId,systems};
+  const g={id:galaxyId,name:galaxyName||galaxyId,systems,seededFrom:WORLD_SEED};
   GALAXY_DB.galaxies[galaxyId]=g;
+  persistGalaxyDb();
   return g;
 }
 
@@ -8297,15 +8342,17 @@ async function rebuildFlightForSystem(system){
   star.position.set(0,0,0);flightScene.add(star);
   celestialBodies.push({mesh:star,name:system.name,type:'Star',temp:'5000 K',orbitR:0,orbitSpd:0,angle:0});
   // procedural bodies
+  // Seeded rebuild — same system name → same angles/temps/destinations every visit.
+  const sysRand=seedRand(system.seed||hashStr('sys:'+system.name));
   system.bodies.forEach((bd,i)=>{
     const r=bd.radius;
     const m=new THREE.Mesh(new THREE.SphereGeometry(r,24,24),new THREE.MeshStandardMaterial({color:bd.color,roughness:0.9,metalness:0.05}));
     const oR=AU*(1+i*1.4);
-    const ang=Math.random()*Math.PI*2;
+    const ang=sysRand()*Math.PI*2;
     m.position.set(Math.cos(ang)*oR,0,Math.sin(ang)*oR);
     flightScene.add(m);
     if(bd.hasRings){const ring=new THREE.Mesh(new THREE.RingGeometry(r*1.4,r*2.2,32),new THREE.MeshBasicMaterial({color:0xccbb99,side:THREE.DoubleSide,transparent:true,opacity:0.5}));ring.rotation.x=-Math.PI/2.3;m.add(ring);}
-    celestialBodies.push({mesh:m,name:bd.name,type:bd.type,temp:Math.round(100+Math.random()*400)+' K',
+    celestialBodies.push({mesh:m,name:bd.name,type:bd.type,temp:Math.round(100+sysRand()*400)+' K',
       orbitR:oR,orbitSpd:0.002/(i+1),angle:ang,landable:bd.landable,gravity:bd.gravity});
   });
   // Oort cloud, sized beyond this system's outermost body (same AU*(1+i*1.4)
@@ -8314,11 +8361,12 @@ async function rebuildFlightForSystem(system){
   const outermostR=AU*(1+(system.bodies.length-1)*1.4);
   buildOortCloud({innerR:outermostR*1.5,outerR:outermostR*2.3,seedKey:system.name,count:700});
 
-  // rebuild destination bar from this system's bodies
+  // rebuild destination bar from this system's bodies (seeded angles)
   DESTINATIONS.length=0;
   system.bodies.forEach((bd,i)=>{
+    const dang=sysRand()*6.28;
     DESTINATIONS.push({name:bd.name,icon:bd.landable?'🪐':'🟠',type:bd.type,dist:(i+1)+' AU',
-      pos:new THREE.Vector3(Math.cos(Math.random()*6.28)*AU*(1+i*1.4),2,Math.sin(Math.random()*6.28)*AU*(1+i*1.4)),
+      pos:new THREE.Vector3(Math.cos(dang)*AU*(1+i*1.4),2,Math.sin(dang)*AU*(1+i*1.4)),
       landable:bd.landable});
   });
   buildDestinationUI();
@@ -9033,7 +9081,8 @@ function generateSeededStarField(count, seed){
 }
 function buildDistantStarSystems(){
   // Deterministic seed so the same field generates every session — not
-  // re-randomized on each load/rebuild.
+  // re-randomized on each load/rebuild. Seed 918273 is frozen (do not change —
+  // would reshuffle already-visited local systems).
   const STAR_FIELD = generateSeededStarField(60, 918273);
   STAR_FIELD.forEach(s=>{
     const grp = buildProceduralStarMesh(s.radius, s.seed, s.cls.col);
