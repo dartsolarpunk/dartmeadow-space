@@ -1936,14 +1936,19 @@ let _gameInProgress=false;
 
 // ── Loading ───────────────────────────────────────────────────
 (function(){
-  const c=$('ls-stars');
-  for(let i=0;i<160;i++){const s=document.createElement('div');s.className='ls-star';const sz=rnd(0.4,2.2);s.style.cssText=`width:${sz}px;height:${sz}px;left:${rnd(0,100)}%;top:${rnd(0,100)}%;animation-duration:${rnd(2,6)}s;animation-delay:${rnd(0,4)}s;`;c.appendChild(s);}
-  const msgs=['Mapping stellar cartography...','Loading galaxy particle systems...','Calibrating DART drive...','Synthesizing celestial bodies...','Initializing board forge...','Configuring orbital mechanics...','Building DART energy ring assemblies...','All systems nominal.'];
-  let p=0;
-  const bar=$('ls-bar'),stat=$('ls-status'),enter=$('ls-enter');
-  const adv=()=>{p=Math.min(p+rnd(7,18),100);bar.style.width=p+'%';stat.textContent=msgs[Math.min(Math.floor(p/15),msgs.length-1)];if(p<100)setTimeout(adv,rnd(180,380));else setTimeout(()=>enter.classList.add('vis'),300);};
-  setTimeout(adv,350);
-  // initAudio deferred — AUDIO const is declared later in this script
+  // Splash must never hard-stick: wrap everything so a single throw still reveals SEQUENCE DART.
+  const reveal=()=>{try{const enter=$('ls-enter');if(enter)enter.classList.add('vis');}catch(e){}};
+  try{
+    const c=$('ls-stars');
+    if(c){for(let i=0;i<160;i++){const s=document.createElement('div');s.className='ls-star';const sz=rnd(0.4,2.2);s.style.cssText=`width:${sz}px;height:${sz}px;left:${rnd(0,100)}%;top:${rnd(0,100)}%;animation-duration:${rnd(2,6)}s;animation-delay:${rnd(0,4)}s;`;c.appendChild(s);}}
+    const msgs=['Mapping stellar cartography...','Loading galaxy particle systems...','Calibrating DART drive...','Synthesizing celestial bodies...','Initializing board forge...','Configuring orbital mechanics...','Building DART energy ring assemblies...','All systems nominal.'];
+    let p=0;
+    const bar=$('ls-bar'),stat=$('ls-status'),enter=$('ls-enter');
+    const adv=()=>{try{p=Math.min(p+rnd(7,18),100);if(bar)bar.style.width=p+'%';if(stat)stat.textContent=msgs[Math.min(Math.floor(p/15),msgs.length-1)];if(p<100)setTimeout(adv,rnd(180,380));else setTimeout(reveal,300);}catch(e){reveal();}};
+    setTimeout(adv,350);
+  }catch(e){console.warn('splash:',e);reveal();}
+  // Absolute failsafe — never leave the player without SEQUENCE DART
+  setTimeout(reveal,8000);
   setTimeout(()=>{try{initAudio();}catch(e){console.warn('audio:',e);}try{initFullscreenSupport();}catch(e){console.warn('fs init:',e);}},0);
 })();
 function enterApp(){
@@ -8148,7 +8153,7 @@ const GALAXY_DB = { current:'milkyway', galaxies:{} };
 // Persistent seeded worldgen (Justin/CoS): same seed → same systems/visitables on
 // return. Newly charted galaxy ids generate once and are stored; never reshuffle
 // already-charted entries. GPU band flag flip is unrelated and stays hard-off.
-const WORLD_SEED = 0xDA27MEAD; // fixed world salt — do not change (would reshuffle all derived content)
+const WORLD_SEED = 0xDA27DEAD; // fixed world salt (hex; was invalid 0xDA27MEAD with non-hex M — broke ALL inline JS parse on every browser)
 const GALAXY_DB_STORE_KEY = 'dm_galaxy_db_v1';
 function loadGalaxyDb(){
   try{
