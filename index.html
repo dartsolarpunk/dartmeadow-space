@@ -4858,7 +4858,9 @@ async function buildSolarSystem(){
   // return.
   if(!BIRD_TEMPLE.group&&!BIRD_TEMPLE._loading){
   BIRD_TEMPLE._loading=true;
-  _getGLBLoader().load('Bird Temple.glb', gltf=>{
+  // Space in filename must be percent-encoded — unencoded 'Bird Temple.glb'
+  // fails fetch on Safari/iOS (and many HTTP clients), leaving group null forever.
+  _getGLBLoader().load(encodeURI('Bird Temple.glb'), gltf=>{
     const t=gltf.scene;
     t.scale.setScalar(1); // raw model scale — see wrapper group below for the real scale
     t.position.set(0,0,0);
@@ -5097,7 +5099,10 @@ async function buildSolarSystem(){
     // clipping through it, so this is disabled rather than tuned a third
     // time. registerPassiveCollider(wrapper,'Bird Temple') is what used
     // to be called here.
-  }, undefined, err=>console.warn('Bird Temple (Bird Temple.glb) failed to load:',err));
+  }, undefined, err=>{
+    console.warn('Bird Temple (Bird Temple.glb) failed to load:',err);
+    BIRD_TEMPLE._loading=false; // allow a later rebuild to retry
+  });
   }
 }
 // Idle motion + proximity trigger — called once per frame from updateBodies
