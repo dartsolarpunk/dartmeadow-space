@@ -423,22 +423,25 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;background:var(--c0);co
 #loading-screen.has-plate-video #ls-horizon{opacity:0.35;}
 #ls-hero-bg{position:absolute;inset:0;z-index:-1;width:100%;height:100%;object-fit:cover;object-position:center 38%;opacity:0;pointer-events:none;}/* stripped flat splash */
 #ls-hero-fade{position:absolute;inset:0;z-index:-1;background:radial-gradient(ellipse at 50% 42%,transparent 0%,rgba(6,3,14,0.35) 45%,rgba(6,3,14,0.88) 78%,rgba(6,3,14,0.98) 100%),linear-gradient(180deg,rgba(6,3,14,0.55) 0%,transparent 22%,transparent 55%,rgba(6,3,14,0.6) 82%,rgba(6,3,14,0.97) 100%);}
-#loading-screen{position:fixed;inset:0;background:var(--c0);z-index:10000;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:opacity 0.8s ease;}
+#loading-screen{position:fixed;inset:0;background:var(--c0);z-index:10000;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding-top:min(12vh,110px);transition:opacity 0.8s ease;}
 #loading-screen.out{opacity:0;pointer-events:none;}
 #ls-stars{position:absolute;inset:0;overflow:hidden;z-index:0;}
 .ls-star{position:absolute;border-radius:50%;background:#fff;animation:twinkle linear infinite;}
 @keyframes twinkle{0%,100%{opacity:0.1;}50%{opacity:1;}}
-#ls-logo{width:auto;height:auto;max-width:min(640px,72vw);max-height:24vh;position:relative;z-index:2;margin-bottom:1.2rem;filter:drop-shadow(0 0 40px rgba(91,127,255,0.35)) drop-shadow(0 0 80px rgba(255,79,163,0.15));animation:tpulse 3.5s ease-in-out infinite;}
+/* UI cluster: ~40% prior size, upper-third (avoid face close-up), hidden until ~8.5s plate clear */
+#ls-ui-cluster{position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;opacity:0;pointer-events:none;transition:opacity 1s ease;will-change:opacity;}
+#ls-ui-cluster.ls-ui-in{opacity:1;pointer-events:auto;}
+#ls-logo{width:auto;height:auto;max-width:min(256px,29vw);max-height:9.6vh;position:relative;z-index:2;margin-bottom:0.48rem;filter:drop-shadow(0 0 16px rgba(91,127,255,0.35)) drop-shadow(0 0 32px rgba(255,79,163,0.15));animation:tpulse 3.5s ease-in-out infinite;}
 #ls-horizon{position:absolute;inset:0;z-index:0;background:radial-gradient(ellipse at 50% 40%,rgba(0,245,255,0.12),transparent 55%),linear-gradient(180deg,#000308 0%,#0a0616 40%,#120a28 70%,#1a0a20 100%);opacity:0.9;mask-image:linear-gradient(180deg,transparent 0%,black 45%,black 100%);-webkit-mask-image:linear-gradient(180deg,transparent 0%,black 45%,black 100%);}
 #ls-clouds{position:absolute;left:0;right:0;bottom:0;width:100%;height:auto;z-index:1;opacity:0.7;filter:drop-shadow(0 0 30px rgba(255,79,163,0.1));pointer-events:none;}
 @keyframes tpulse{0%,100%{text-shadow:0 0 30px var(--cyan),0 0 80px rgba(91,127,255,0.3);}50%{text-shadow:0 0 60px var(--cyan),0 0 140px rgba(91,127,255,0.6);}}
-#ls-bar-wrap{width:min(340px,80vw);height:3px;background:rgba(91,127,255,0.12);border-radius:2px;overflow:hidden;position:relative;z-index:2;}
-#ls-bar{height:100%;background:linear-gradient(90deg,var(--cyan),var(--purple));width:0;transition:width 0.25s ease;border-radius:2px;box-shadow:0 0 12px var(--cyan);}
-#ls-status{font-family:var(--font-mono);font-size:0.6rem;color:rgba(91,127,255,0.4);margin-top:0.8rem;letter-spacing:0.12em;position:relative;z-index:2;}
-#ls-enter{margin-top:2rem;padding:0.85rem 3rem;background:rgba(255,255,255,0.08);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.2);color:var(--cyan);font-family:var(--font-hud);font-size:0.75rem;letter-spacing:0.25em;cursor:pointer;text-transform:uppercase;transition:var(--trans);display:none;position:relative;z-index:2;border-radius:2px;box-shadow:0 0 8px -3px currentColor;}
+#ls-bar-wrap{width:min(136px,32vw);height:2px;background:rgba(91,127,255,0.12);border-radius:2px;overflow:hidden;position:relative;z-index:2;}
+#ls-bar{height:100%;background:linear-gradient(90deg,var(--cyan),var(--purple));width:0;transition:width 0.25s ease;border-radius:2px;box-shadow:0 0 8px var(--cyan);}
+#ls-status{font-family:var(--font-mono);font-size:0.4rem;color:rgba(91,127,255,0.45);margin-top:0.32rem;letter-spacing:0.1em;position:relative;z-index:2;text-align:center;}
+#ls-enter{margin-top:0.8rem;padding:0.34rem 1.2rem;background:rgba(255,255,255,0.08);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.2);color:var(--cyan);font-family:var(--font-hud);font-size:0.45rem;letter-spacing:0.2em;cursor:pointer;text-transform:uppercase;transition:var(--trans);display:none;position:relative;z-index:2;border-radius:2px;box-shadow:0 0 6px -2px currentColor;}
 #ls-enter:hover{background:var(--dim-cyan);box-shadow:var(--glow-md);}
-#ls-enter.vis{display:block !important;opacity:1 !important;visibility:visible !important;animation:fadein 0.5s ease forwards;}
-@keyframes fadein{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}
+#ls-enter.vis{display:block !important;visibility:visible !important;animation:fadein 0.5s ease forwards;}
+@keyframes fadein{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
 
 /* APP */
 #app{position:fixed;inset:0;height:var(--app-h);display:none;}
@@ -917,10 +920,12 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   <div id="ls-horizon"></div>
   <img id="ls-clouds" src="static/loading-clouds.svg" alt="">
   <div id="ls-stars"></div>
-  <img id="ls-logo" src="static/dartmeadow-logo.svg" alt="DART Meadow — Journey of the Skyboard">
-  <div id="ls-bar-wrap"><div id="ls-bar"></div></div>
-  <div id="ls-status">Initializing stellar cartography...</div>
-  <button id="ls-enter" onclick="enterApp()">SEQUENCE DART ⟶</button>
+  <div id="ls-ui-cluster">
+    <img id="ls-logo" src="static/dartmeadow-logo.svg" alt="DART Meadow — Journey of the Skyboard">
+    <div id="ls-bar-wrap"><div id="ls-bar"></div></div>
+    <div id="ls-status">Initializing stellar cartography...</div>
+    <button id="ls-enter" onclick="enterApp()">SEQUENCE DART ⟶</button>
+  </div>
 </div>
 <script>
 /* Early splash controller — MUST stay tiny + classic + independent of the
@@ -930,28 +935,81 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   if(window.__EARLY_SPLASH__) return;
   window.__EARLY_SPLASH__ = true;
   function el(id){ return document.getElementById(id); }
+  var FADE_START = 8.5; /* plate burn-in clear ~9s; start our UI at 8.5s */
+  var loadReady = false;
+  var fadeStarted = false;
+  var playWall0 = null;
+  var syncRaf = 0;
+
+  function showEnterBtn(){
+    try{
+      var enter = el('ls-enter');
+      if(!enter) return;
+      enter.classList.add('vis');
+      enter.style.setProperty('display','block','important');
+      enter.style.visibility = 'visible';
+    }catch(e){}
+  }
+  function syncEnter(){
+    /* SEQUENCE DART only after fade window AND assets/progress ready */
+    if(loadReady && fadeStarted) showEnterBtn();
+  }
+  function markLoadReady(){
+    loadReady = true;
+    syncEnter();
+  }
+  function startUiFade(){
+    if(fadeStarted) return;
+    fadeStarted = true;
+    try{
+      var cluster = el('ls-ui-cluster');
+      if(cluster) cluster.classList.add('ls-ui-in');
+    }catch(e){}
+    syncEnter();
+  }
+  function splashElapsed(){
+    var v = el('ls-plate-video');
+    var wall = (playWall0 != null) ? ((performance.now() - playWall0) / 1000) : null;
+    if(v && !v.paused && isFinite(v.currentTime)){
+      var ct = v.currentTime;
+      /* After loop, currentTime resets — wall clock keeps fade sticky */
+      if(wall != null && wall >= FADE_START && ct < FADE_START) return wall;
+      if(ct > 0) return ct;
+    }
+    return wall;
+  }
+  function tickFade(){
+    try{
+      var t = splashElapsed();
+      if(t != null && t >= FADE_START){ startUiFade(); return; }
+      if(!fadeStarted) syncRaf = requestAnimationFrame(tickFade);
+    }catch(e){
+      if(!fadeStarted) syncRaf = requestAnimationFrame(tickFade);
+    }
+  }
+  function notePlayStart(){
+    if(playWall0 == null) playWall0 = performance.now();
+    if(!fadeStarted && !syncRaf) tickFade();
+  }
+
   try{
     var v=el('ls-plate-video');
     var screen=el('loading-screen');
     if(v&&screen){
       var mark=function(){ screen.classList.add('has-plate-video'); try{v.play();}catch(e){} };
       v.addEventListener('loadeddata', mark, {once:true});
-      v.addEventListener('playing', mark, {once:true});
+      v.addEventListener('playing', function(){ mark(); notePlayStart(); });
+      v.addEventListener('play', notePlayStart);
       if(v.readyState>=2) mark();
-      setTimeout(function(){ try{v.play().then(mark).catch(function(){});}catch(e){} }, 200);
+      setTimeout(function(){ try{v.play().then(function(){ mark(); notePlayStart(); }).catch(function(){ notePlayStart(); });}catch(e){ notePlayStart(); } }, 200);
+    } else {
+      notePlayStart();
     }
-  }catch(e){}
-  function revealEnter(){
-    try{
-      var enter = el('ls-enter');
-      if(!enter) return;
-      enter.classList.add('vis');
-      enter.style.setProperty('display','block','important');
-      enter.style.setProperty('opacity','1','important');
-      enter.style.visibility = 'visible';
-    }catch(e){}
-  }
-  window.__revealSplashEnter = revealEnter;
+  }catch(e){ try{ notePlayStart(); }catch(_){ } }
+
+  /* Public reveal = mark load ready (gated by 8.5s fade) */
+  window.__revealSplashEnter = markLoadReady;
+
   // Stub until the big script redefines enterApp with gfx/fullscreen path.
   if(typeof window.enterApp !== 'function'){
     window.enterApp = function(){
@@ -996,13 +1054,15 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
         if(bar) bar.style.width = p + '%';
         if(stat) stat.textContent = msgs[Math.min(Math.floor(p / 15), msgs.length - 1)];
         if(p < 100) setTimeout(adv, 180 + Math.random() * 200);
-        else setTimeout(revealEnter, 250);
-      }catch(e){ revealEnter(); }
+        else setTimeout(markLoadReady, 250);
+      }catch(e){ markLoadReady(); }
     }
     setTimeout(adv, 180);
-  }catch(e){ revealEnter(); }
-  // Absolute failsafe — never leave Justin without SEQUENCE DART on iOS Safari
-  setTimeout(revealEnter, 5500);
+  }catch(e){ markLoadReady(); }
+  /* Failsafe: mark ready early so enter appears with/after fade — do not force early opacity */
+  setTimeout(markLoadReady, 5500);
+  /* Hard failsafe if video never plays: force fade + enter by ~12s wall */
+  setTimeout(function(){ try{ notePlayStart(); startUiFade(); markLoadReady(); }catch(e){} }, 12000);
 })();
 </script>
 
