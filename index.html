@@ -1691,11 +1691,11 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     <div class="setting-row"><div><div class="setting-label">Global Illumination</div><div class="setting-sub">Hemisphere bounce lighting</div></div><label class="toggle-switch"><input type="checkbox" id="set-gi" checked><span class="toggle-track"></span></label></div>
     <div class="setting-row"><div><div class="setting-label">Star Field Density</div><div class="setting-sub">Volumetric parallax stars</div></div><label class="toggle-switch"><input type="checkbox" id="set-stars" checked><span class="toggle-track"></span></label></div>
     <div class="setting-row"><div><div class="setting-label">Galaxy Dust Clouds</div><div class="setting-sub">Nebula particle systems</div></div><label class="toggle-switch"><input type="checkbox" id="set-dust" checked><span class="toggle-track"></span></label></div>
-    <div class="setting-row"><div><div class="setting-label">Bloom / Glow</div><div class="setting-sub">Emissive object halo</div></div><label class="toggle-switch"><input type="checkbox" id="set-bloom" checked><span class="toggle-track"></span></label></div>
+    <div class="setting-row"><div><div class="setting-label">Bloom / Glow</div><div class="setting-sub">Emissive object halo</div></div><label class="toggle-switch"><input type="checkbox" id="set-bloom"><span class="toggle-track"></span></label></div>
     <div class="setting-row"><div><div class="setting-label">Marching Cubes Terrain (experimental)</div><div class="setting-sub">Real 3D density-field terrain — enables true overhangs/caves, but is heavier than the default terrain. Requires re-landing on a surface to take effect.</div></div><label class="toggle-switch"><input type="checkbox" id="set-mctest"><span class="toggle-track"></span></label></div>
     <div class="setting-row">
       <div><div class="setting-label">Bloom Intensity</div><div class="setting-sub">How strong the glow is when on</div></div>
-      <input type="range" id="set-bloom-intensity" min="0" max="1" step="0.05" value="0.16" style="width:110px;accent-color:var(--cyan);">
+      <input type="range" id="set-bloom-intensity" min="0" max="1" step="0.05" value="0" style="width:110px;accent-color:var(--cyan);">
     </div>
     <div class="setting-row"><div><div class="setting-label">Motion Blur</div><div class="setting-sub">Velocity-based frame blending</div></div><label class="toggle-switch"><input type="checkbox" id="set-motion" checked><span class="toggle-track"></span></label></div>
     <div class="setting-row"><div><div class="setting-label">Procedural Textures</div><div class="setting-sub">High-detail planet surfaces</div></div><label class="toggle-switch"><input type="checkbox" id="set-textures" checked><span class="toggle-track"></span></label></div>
@@ -1802,7 +1802,7 @@ const STATE={
   flight:{speed:0,dart:false,energy:100,hull:100,shield:100,destIdx:0,time:0,
     camPitch:0,camYaw:0,thrust:0,strafe:0,lift:0,
     pos:{x:28,y:2,z:3},vel:{x:0,y:0,z:0}}, // upgraded to real THREE.Vector3 instances below once THREE exists
-  settings:{stars:true,dust:true,bloom:true,bloomIntensity:0.16,motion:true,textures:true,galaxyband:true,particles:'med',fov:50000,dartSpeed:15,gfxQuality:'auto',resScale:1.0,shadows:true,reflections:true,caustics:true,gi:true,marchingCubesTerrain:true}
+  settings:{stars:true,dust:true,bloom:false,bloomIntensity:0,motion:true,textures:true,galaxyband:true,particles:'med',fov:50000,dartSpeed:15,gfxQuality:'auto',resScale:1.0,shadows:true,reflections:true,caustics:true,gi:true,marchingCubesTerrain:true}
 };
 window.__whenThreeReady(function(){
   STATE.flight.pos = new THREE.Vector3(STATE.flight.pos.x, STATE.flight.pos.y, STATE.flight.pos.z);
@@ -3411,7 +3411,7 @@ function syncSettingsUIFromState(){
     if($('set-dust'))$('set-dust').checked=s.dust;
     if($('set-bloom'))$('set-bloom').checked=s.bloom;
     if($('set-mctest'))$('set-mctest').checked=!!s.marchingCubesTerrain;
-    if($('set-bloom-intensity'))$('set-bloom-intensity').value=String(s.bloomIntensity!==undefined?s.bloomIntensity:0.16);
+    if($('set-bloom-intensity'))$('set-bloom-intensity').value=String(s.bloomIntensity!==undefined?s.bloomIntensity:0);
     if($('set-motion'))$('set-motion').checked=s.motion;
     if($('set-textures'))$('set-textures').checked=s.textures;
     if($('set-galaxyband'))$('set-galaxyband').checked=s.galaxyband;
@@ -3871,7 +3871,7 @@ async function ensureQtMiniMap(){
   qtControls=new THREE.OrbitControls(qtCamera,cv);
   qtControls.enableDamping=true;qtControls.dampingFactor=0.1;
   qtControls.rotateSpeed=0.55;qtControls.zoomSpeed=0.85;
-  qtControls.minDistance=200;qtControls.maxDistance=120000;
+  qtControls.minDistance=200;qtControls.maxDistance=160000; // room for intergalactic shell markers
   qtControls.target.set(0,0,0);
   qtControls.touches={ONE:THREE.TOUCH.ROTATE,TWO:THREE.TOUCH.DOLLY_PAN};
   // Ultra-light Milky Way disc (Safari mobile safe — few thousand points)
@@ -3959,11 +3959,15 @@ function rebuildQtMarkers(){
     addMarker(s.pos.clone(),s.rogue?0xff8860:0xa8c4ff,110,
       {qtKind:'system',systemRef:s},showLbl?s.name:null,'rgba(200,220,255,0.88)');
   });
-  // Charted / seeded visitables galaxies (append-only list)
-  (typeof VISITABLE_GALAXIES!=='undefined'?VISITABLE_GALAXIES:[]).forEach(g=>{
+  // Charted visitables on intergalactic shell (Sol-centric QT; MW disc backdrop only)
+  (typeof VISITABLE_GALAXIES!=='undefined'?VISITABLE_GALAXIES:[]).forEach((g,gi)=>{
     const gid=(g.n||'').replace(/[^a-z0-9]/gi,'').toLowerCase();
     const gName=(g.n||'').replace(/\s*\(.+\)/,'');
-    addMarker(new THREE.Vector3(g.x,g.y,g.z),g.c||0xb0c4ff,Math.max(g.r*0.35,400),
+    const raw=new THREE.Vector3(g.x,g.y,g.z);
+    const len=Math.max(raw.length(),1e-6);
+    const shellR=95000+(gi%8)*3500; // 95k-120k — never inside MW disc
+    const gpos=raw.clone().multiplyScalar(shellR/len);
+    addMarker(gpos,g.c||0xb0c4ff,Math.max(g.r*0.35,400),
       {qtKind:'galaxy',galaxyId:gid,galaxyName:gName,dist:g.dist},g.n,'rgba(190,160,255,0.92)');
   });
 }
@@ -4021,7 +4025,13 @@ function onQtMapClick(e){
     const s=u.systemRef;
     const chart=s.systemChart||(typeof systemChartFromArmCell==='function'?systemChartFromArmCell(s):null);
     const sys=chart||{name:s.name,starClass:s.starClass,seed:s.seed,planetCount:s.planetCount||0,pos:s.pos};
-    openFastTravel('FAST TRAVEL — '+s.name.toUpperCase(),'Jump to '+s.name+'?',()=>fastTravelToSystem(sys,GALAXY_DB.current));
+    const bodies=(sys.bodies&&sys.bodies.length)?sys.bodies:[];
+    const planetBits=bodies.length
+      ?bodies.slice(0,6).map(b=>b.name+(b.landable?'*':'')).join(', ')+(bodies.length>6?'…':'')
+      :((sys.planetCount||0)+' planets');
+    openFastTravel('FAST TRAVEL — '+s.name.toUpperCase(),
+      (sys.starType||sys.starClass||s.starClass||'System')+' · '+planetBits+'. Jump to '+s.name+'?',
+      ()=>fastTravelToSystem(sys,GALAXY_DB.current));
     closeQuickTravel();return;
   }
   if(u.qtKind==='galaxy'&&u.galaxyId){
@@ -4091,7 +4101,7 @@ async function initFlightScene(){
     return;
   }
   flightRenderer.setPixelRatio(effectivePixelRatio());
-  flightRenderer.setClearColor(0x000206,1);
+  flightRenderer.setClearColor(0x000000,1); // pure black vacuum
   flightRenderer.setSize(W,H);
   flightRenderer.toneMapping=THREE.ACESFilmicToneMapping;
   flightRenderer.toneMappingExposure=1.0;
@@ -4112,9 +4122,11 @@ async function initFlightScene(){
   // Camera will be positioned in buildFlightBoard — set reasonable default here
   flightCamera.position.set(0,2,10);
 
-  // Strong ambient + directional guarantees scene is always lit
-  flightScene.add(new THREE.AmbientLight(0x334466,2.5));
-  const dl=new THREE.DirectionalLight(0xffffff,1.5);dl.position.set(5,10,5);flightScene.add(dl);
+  // HARD: no scene-wide wash — space is black vacuum. Lighting comes from
+  // Sol PointLight (addSunLight) + emissive materials only. Prior AmbientLight
+  // 0x334466@2.5 + Directional@1.5 stacked into pale blue-grey frame wash.
+  // Tiny residual ambient only so unlit meshes aren't pure silhouette.
+  flightScene.add(new THREE.AmbientLight(0x0a1020,0.08));
 
   try{buildFlightStars();}catch(e){console.warn('stars:',e);}
   try{buildFlightNebulae();}catch(e){console.warn('neb:',e);}
@@ -4998,15 +5010,16 @@ async function buildSolarSystem(){
   // weaker mobile hardware. Stability over visual fanciness here; the
   // corona glow sprites (cheap additive sprites, not a shader) are kept.
   const sunGroup = new THREE.Group();
-  const sm = new THREE.Mesh(new THREE.SphereGeometry(4,24,24), new THREE.MeshBasicMaterial({color:0xffdd44}));
+  const sm = new THREE.Mesh(new THREE.SphereGeometry(4,24,24), new THREE.MeshBasicMaterial({color:0xe8b820}));
   sunGroup.add(sm);
   try{
-    // Soft bloom wash fix: keep a hint of corona, not a white orb (home + close Sol).
-    const gt = makeCircleTex(64, '#ffdd44', 1);
-    const spr1 = new THREE.Sprite(new THREE.SpriteMaterial({map:gt,color:0xffdd44,transparent:true,opacity:0.10,blending:THREE.AdditiveBlending,depthWrite:false}));
-    spr1.scale.set(9,9,1); sunGroup.add(spr1);
-    const spr2 = new THREE.Sprite(new THREE.SpriteMaterial({map:gt,color:0xffaa00,transparent:true,opacity:0.04,blending:THREE.AdditiveBlending,depthWrite:false}));
-    spr2.scale.set(14,14,1); sunGroup.add(spr2);
+    // Aggressive bloom cut: tiny corona only (prev soft cut still whitewashed).
+    const gt = makeCircleTex(64, '#e8b820', 1);
+    const spr1 = new THREE.Sprite(new THREE.SpriteMaterial({map:gt,color:0xe8b820,transparent:true,opacity:0.035,blending:THREE.AdditiveBlending,depthWrite:false}));
+    spr1.scale.set(5.5,5.5,1); sunGroup.add(spr1);
+    // Second sprite nearly removed.
+    const spr2 = new THREE.Sprite(new THREE.SpriteMaterial({map:gt,color:0xd4a010,transparent:true,opacity:0.012,blending:THREE.AdditiveBlending,depthWrite:false}));
+    spr2.scale.set(8,8,1); sunGroup.add(spr2);
   }catch(e){}
   flightScene.add(sunGroup);
   sunMesh=sm;
@@ -6357,12 +6370,11 @@ function sequenceAltar(){
   })();
 }
 function addSunLight(){
-  // Sun point light — range extends past Neptune (~842 scene units at AU=28)
-  const sl=new THREE.PointLight(0xffffee,1.55,300000);sl.position.set(0,0,0);flightScene.add(sl);
-  // Hemisphere fill = cheap global-illumination approximation (universal)
-  if(GFX.fakeGI){flightScene.add(new THREE.HemisphereLight(0x223a55,0x0a0a14,0.4));}
-  flightScene.add(new THREE.PointLight(0x4455ff,0.6,500000));
-  flightScene.add(new THREE.AmbientLight(0x223355,1.2));
+  // Sun point light only — illuminates local planets; no scene wash
+  const sl=new THREE.PointLight(0xffffee,0.7,300000);sl.position.set(0,0,0);flightScene.add(sl);
+  // Hemisphere fakeGI REMOVED — was pale blue-grey vacuum wash (sol-bloom-wash.jpg)
+  // Ambient capped ≤0.15 so space stays black; planets lit by Sol PointLight
+  flightScene.add(new THREE.AmbientLight(0x0a1018,0.12));
   // Load Earth coastlines from proven source
   loadEarthCoastlines();
   // Add procedural surface details to other planets
@@ -10008,6 +10020,19 @@ function buildFlightGalaxyBandCPU(){
   const NOISE_SCALE=6.0;
   const N_ARMS=2; // two strong arms + noise clumps (dark lanes between)
 
+  // Phase-lock spiral so Sol (world origin) sits on an arm crest (max armWave),
+  // not in a dark lane. Sol gal-local = R^{-1} * (-galGroup.position) with the
+  // same euler/pos applied below; offset spiralAngle so phase at Sol = k*pi.
+  const GAL_POS_X=-RG*0.5, GAL_POS_Z=-RG*0.16;
+  const _invQ=new THREE.Quaternion().setFromEuler(new THREE.Euler(0.5,0.3,0.1)).invert();
+  const solLocal=new THREE.Vector3(-GAL_POS_X,0,-GAL_POS_Z).applyQuaternion(_invQ);
+  const solR=Math.hypot(solLocal.x,solLocal.z);
+  const solAng=Math.atan2(solLocal.z,solLocal.x);
+  const solSpiral0=Math.log(1+solR/600)/Math.log(1+RG/600)*TURNS*Math.PI*2;
+  const solPhase=solAng-solSpiral0;
+  const crest=Math.round(solPhase/Math.PI)*Math.PI; // N_ARMS=2 crests at k*pi
+  const SPIRAL_PHASE_LOCK=solPhase-crest;
+
   // Cheap hash / value-noise / fBM — visual-only (does not touch WORLD_SEED).
   function _gh(x,y,z){
     const s=Math.sin(x*127.1+y*311.7+z*74.7)*43758.5453;
@@ -10043,8 +10068,8 @@ function buildFlightGalaxyBandCPU(){
 
     const r=Math.hypot(px,pz);
     const t=Math.min(1,r/RG);
-    // Spiral angle from radial length × wind (Z-axis rotate)
-    const spiralAngle=Math.log(1+r/600)/Math.log(1+RG/600)*TURNS*Math.PI*2;
+    // Spiral angle from radial length × wind (Z-axis rotate) + home phase-lock
+    const spiralAngle=Math.log(1+r/600)/Math.log(1+RG/600)*TURNS*Math.PI*2+SPIRAL_PHASE_LOCK;
     const c=Math.cos(spiralAngle), s=Math.sin(spiralAngle);
     const rx=px*c-pz*s, rz=px*s+pz*c;
     px=rx; pz=rz;
@@ -10092,6 +10117,61 @@ function buildFlightGalaxyBandCPU(){
     cols.push(cr*b,cg*b,cb*b);
     placed++;
   }
+
+  // Extra spiral samples biased near Sol's gal-local neighborhood (~3–5k radius)
+  // so the MW band itself is dense at home (not only the world-space sheath).
+  try{
+    const nearSolBudget=(particles==='low'||gfxLow)?4000:(mobile?6000:8000);
+    const nearSolR=4500;
+    let nearPlaced=0;
+    for(let i=0;i<nearSolBudget*4&&nearPlaced<nearSolBudget;i++){
+      const ox=solLocal.x+(Math.random()-0.5)*nearSolR*2;
+      const oz=solLocal.z+(Math.random()-0.5)*nearSolR*2;
+      const oy=solLocal.y+(Math.random()-0.5)*Math.random()*380;
+      const rr=Math.hypot(ox,oz);
+      if(rr<180||rr>RG*0.95)continue;
+      const sp=Math.log(1+rr/600)/Math.log(1+RG/600)*TURNS*Math.PI*2+SPIRAL_PHASE_LOCK;
+      const ag=Math.atan2(oz,ox);
+      const ph=ag-sp;
+      const aw=Math.pow(Math.abs(Math.cos(ph*N_ARMS*0.5)),1.35);
+      if(aw<0.55)continue; // stay on arm crest near Sol
+      pts.push(ox,oy,oz);
+      const tb=Math.min(1,rr/RG);
+      const bb=(0.75+Math.random()*0.3)*(0.55+aw*0.45);
+      // bright cyan local MW band
+      cols.push(0.38*bb,0.78*bb,1.0*bb);
+      nearPlaced++;placed++;
+    }
+  }catch(e){}
+  // Star-cluster clumps along the two arms: denser pockets (where systems sit).
+  // Brighter + denser toward core so traveling the galaxy reveals cluster structure.
+  try{
+    const nClumps=(particles==='low'||gfxLow)?28:(mobile?48:72);
+    const perClump=(particles==='low'||gfxLow)?40:(mobile?70:110);
+    for(let c=0;c<nClumps;c++){
+      // Prefer arm crest: pick radius, lock angle to spiral + phase lock (+ optional arm pi)
+      const cr=800+Math.pow(Math.random(),0.65)*RG*0.88;
+      const armPick=Math.floor(Math.random()*N_ARMS); // 0 or 1 for two twisted arms
+      const sp=Math.log(1+cr/600)/Math.log(1+RG/600)*TURNS*Math.PI*2+SPIRAL_PHASE_LOCK;
+      const cAng=sp+armPick*Math.PI+(Math.random()-0.5)*0.12;
+      const cx=Math.cos(cAng)*cr, cz=Math.sin(cAng)*cr;
+      const cy=(Math.random()-0.5)*180*(1-cr/RG*0.5);
+      const coreProx=1-Math.min(1,cr/(RG*0.55));
+      const clumpR=180+Math.random()*420*(0.55+coreProx*0.7);
+      const n=Math.round(perClump*(0.55+coreProx*0.9+Math.random()*0.3));
+      for(let k=0;k<n;k++){
+        const u=Math.random(), v=Math.random(), w=Math.random();
+        const rr=clumpR*Math.pow(u,0.55);
+        const th=v*Math.PI*2, ph=Math.acos(2*w-1);
+        pts.push(cx+rr*Math.sin(ph)*Math.cos(th), cy+rr*Math.cos(ph)*0.35, cz+rr*Math.sin(ph)*Math.sin(th));
+        const bb=(0.7+Math.random()*0.4)*(0.65+coreProx*0.55);
+        cols.push(0.45*bb,0.82*bb,1.0*bb);
+        placed++;
+      }
+    }
+  }catch(e){}
+
+
 
   const g=new THREE.BufferGeometry();
   g.setAttribute('position',new THREE.BufferAttribute(new Float32Array(pts),3));
@@ -10189,36 +10269,41 @@ function buildFlightGalaxyBandCPU(){
     }
     const local=new THREE.Group();
     local.rotation.copy(galGroup.rotation);
-    // Player IN the arm: ~10–15k Low/med, brighter cyan, larger sizes + core tongue.
-    const locN=mobile?(gfxLow?10000:12000):(gfxLow?12000:15000);
+    // Dense local arm sheath in world space around Sol: Low ~12k, Med+ ~20–30k.
+    // Flattened ellipsoid along galGroup.rotation; thick/brighter toward core (-X).
+    const locN=(particles==='low'||gfxLow)
+      ?(mobile?12000:14000)
+      :(particles==='high'||particles==='ultra')
+        ?(mobile?24000:30000)
+        :(mobile?20000:26000);
     const lp=new Float32Array(locN*3),lc=new Float32Array(locN*3);
     // Dense flattened ellipsoid around Sol (player is IN the arm)
     for(let i=0;i<locN;i++){
-      const along= (Math.random()-0.5)*6200;          // along arm
-      const across=(Math.random()-0.5)*Math.random()*1100; // arm width
-      const thick=(Math.random()-0.5)*Math.random()*320;  // disc thickness
+      const along= (Math.random()-0.5)*7200;          // along arm
+      const across=(Math.random()-0.5)*Math.random()*1400; // arm width
+      const thick=(Math.random()-0.5)*Math.random()*380;  // disc thickness
       // Bias a brighter tongue toward galactic center (-X in gal local ≈ core)
-      const coreBias=Math.random()*Math.random()*5200;
-      lp[i*3]=along - coreBias*0.55;
+      const coreBias=Math.random()*Math.random()*6200;
+      lp[i*3]=along - coreBias*0.6;
       lp[i*3+1]=thick;
       lp[i*3+2]=across;
-      const t=Math.min(1,Math.hypot(lp[i*3],lp[i*3+2])/5200);
-      const towardCore=Math.max(0, -lp[i*3]/5200);
-      const b=(0.72+Math.random()*0.38)*(1-t*0.22)*(0.85+towardCore*0.45);
-      // brighter cyan-blue local arm (match spiral palette, no warm cream wash)
-      lc[i*3]=0.42*b;lc[i*3+1]=0.82*b;lc[i*3+2]=1.0*b;
+      const t=Math.min(1,Math.hypot(lp[i*3],lp[i*3+2])/5800);
+      const towardCore=Math.max(0, -lp[i*3]/5800);
+      const b=(0.78+Math.random()*0.4)*(1-t*0.18)*(0.88+towardCore*0.55);
+      // bright cyan local arm (unmistakable inside glowing arms)
+      lc[i*3]=0.40*b;lc[i*3+1]=0.85*b;lc[i*3+2]=1.0*b;
     }
     const lg=new THREE.BufferGeometry();
     lg.setAttribute('position',new THREE.BufferAttribute(lp,3));
     lg.setAttribute('color',new THREE.BufferAttribute(lc,3));
-    const locSize=mobile?(gfxLow?48:58):(gfxLow?42:56);
+    const locSize=mobile?(gfxLow?52:64):(gfxLow?48:62);
     local.add(new THREE.Points(lg,new THREE.PointsMaterial({
       size:locSize,sizeAttenuation:true,vertexColors:true,map:tex,
       transparent:true,opacity:0.95,depthWrite:false,blending:THREE.AdditiveBlending,alphaTest:0.02
     })));
     // Mid-field screen-space streak so arm silhouette holds when looking toward core
     try{
-      const midN=Math.min(locN, mobile||gfxLow?3500:5000);
+      const midN=Math.min(locN, mobile||gfxLow?4500:7000);
       const mp=new Float32Array(midN*3), mc=new Float32Array(midN*3);
       for(let i=0;i<midN;i++){
         mp[i*3]=lp[i*3]; mp[i*3+1]=lp[i*3+1]; mp[i*3+2]=lp[i*3+2];
@@ -10233,9 +10318,9 @@ function buildFlightGalaxyBandCPU(){
       })));
     }catch(e){}
     // Soft nearby glow so looking "out" isn't a black void + core direction cue
-    local.add(makeGlowSprite('rgba(120,190,255,0.28)',1100));
-    local.add(makeGlowSprite('rgba(160,210,255,0.16)',2000));
-    local.add(makeGlowSprite('rgba(180,230,255,0.10)',3200));
+    local.add(makeGlowSprite('rgba(120,190,255,0.14)',900));
+    local.add(makeGlowSprite('rgba(160,210,255,0.08)',1600));
+    // skip large third glow — was hazing vacuum black
     flightScene.add(local);
     window._flightLocalArm=local;
   }catch(e){console.warn('local arm:',e);}
@@ -10373,10 +10458,10 @@ function buildCheapStarMarker(radius, starColor){
     const hex='#'+new THREE.Color(starColor).getHexString();
     const gt=makeCircleTex(32,hex,1);
     const spr=new THREE.Sprite(new THREE.SpriteMaterial({
-      map:gt,color:starColor,transparent:true,opacity:0.12,
+      map:gt,color:starColor,transparent:true,opacity:0.08,
       blending:THREE.AdditiveBlending,depthWrite:false
     }));
-    spr.scale.set(radius*3.2,radius*3.2,1);group.add(spr);
+    spr.scale.set(radius*2.4,radius*2.4,1);group.add(spr);
   }catch(e){}
   return group;
 }
@@ -10415,10 +10500,10 @@ function buildProceduralStarMesh(radius, seedVal, starColor){
     // Soft bloom wash: tone corona hard so distant/close stars don't wash white.
     const hex = '#'+new THREE.Color(starColor).getHexString();
     const gt = makeCircleTex(64, hex, 1);
-    const spr1 = new THREE.Sprite(new THREE.SpriteMaterial({map:gt,color:starColor,transparent:true,opacity:0.16,blending:THREE.AdditiveBlending,depthWrite:false}));
-    spr1.scale.set(radius*3.4, radius*3.4, 1); group.add(spr1);
-    const spr2 = new THREE.Sprite(new THREE.SpriteMaterial({map:gt,color:starColor,transparent:true,opacity:0.05,blending:THREE.AdditiveBlending,depthWrite:false}));
-    spr2.scale.set(radius*6.5, radius*6.5, 1); group.add(spr2);
+    const spr1 = new THREE.Sprite(new THREE.SpriteMaterial({map:gt,color:starColor,transparent:true,opacity:0.08,blending:THREE.AdditiveBlending,depthWrite:false}));
+    spr1.scale.set(radius*2.6, radius*2.6, 1); group.add(spr1);
+    const spr2 = new THREE.Sprite(new THREE.SpriteMaterial({map:gt,color:starColor,transparent:true,opacity:0.03,blending:THREE.AdditiveBlending,depthWrite:false}));
+    spr2.scale.set(radius*4.0, radius*4.0, 1); group.add(spr2);
   }catch(e){}
   return group;
 }
@@ -10656,7 +10741,7 @@ function renderWithPostFX(){
   _fsQuad.material=_compMat;
   _compMat.uniforms.tScene.value=_rtScene.texture;
   _compMat.uniforms.tBloom.value=useBloom?_rtA.texture:_rtScene.texture;
-  _compMat.uniforms.bloomStr.value=useBloom?(STATE.settings.bloomIntensity!==undefined?STATE.settings.bloomIntensity:0.16):0.0;
+  _compMat.uniforms.bloomStr.value=0.0; // HARD: no fullscreen bloom wash — space stays black vacuum
   _compMat.uniforms.tPrev.value=_rtPrev.texture;
   // motion blur amount scales with ship speed for a sense of velocity
   let mb=0;
