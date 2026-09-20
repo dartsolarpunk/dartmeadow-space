@@ -6898,8 +6898,12 @@ function buildFlightBoard(){
     if(CHAR.loaded && CHAR.root && boardFlight) remountSkyboard(boardFlight);
     try{
       if(GFX && GFX.isMobile && (!CHAR.mounted || !(CHAR.root&&CHAR.root.visible))){
+        CHAR._autoCharDebug=true;
         GFX.showCharDebug=true;
         const el=document.getElementById('char-debug-hud'); if(el) el.style.display='block';
+      } else if(CHAR._autoCharDebug && CHAR.mounted && CHAR.root && CHAR.root.visible){
+        CHAR._autoCharDebug=false; GFX.showCharDebug=false;
+        const el=document.getElementById('char-debug-hud'); if(el) el.style.display='none';
       }
     }catch(e){}
     if(!CHAR.mounted){
@@ -7906,8 +7910,8 @@ function updateBodies(dt){
           : ('⬇ LAND ON '+b.name.toUpperCase());
         _landTargetBody=b;
       }
-    } else if(_landTargetBody!==null){
-      ld.style.display='none';_landTargetBody=null;
+    } else {
+      try{ _clearLandPrompt(); }catch(e){ ld.style.display='none'; ld.innerHTML=''; _landTargetBody=null; }
     }
   }
   // Sun rotation
@@ -12665,6 +12669,7 @@ function dismountSkyboard(targetScene, worldPos){
 
 async function enterSurface(body,site){
   if(surfaceActive)return;
+  try{ _clearLandPrompt(); }catch(e){}
   _surfBody=body;_surfSite=site||null;surfaceActive=true;
   charOrbitActive = false; // same leftover-orbit-state guard as the flight scenes
   CHAR._transitioning = false; // same leftover-state guard — an interrupted mount/dismount sequence must not permanently freeze her pose/position
@@ -12678,8 +12683,10 @@ async function enterSurface(body,site){
   if(!GFX.scanned)try{detectCapabilities();loadGfxChoice();applyPreset(GFX.preset);}catch(e){}
   surfRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:!GFX.isMobile,powerPreference:'high-performance'});
   await surfRenderer.init();
+  try{ surfRenderer.setClearColor(0x0a1520,1); }catch(e){}
   surfRenderer.setPixelRatio(effectivePixelRatio());
   surfRenderer.setSize(W,H);
+  try{ toast('⏳ Landing…',1200); }catch(e){}
   surfRenderer.toneMapping=THREE.ACESFilmicToneMapping;surfRenderer.toneMappingExposure=1.05;
   surfRenderer.outputColorSpace=THREE.SRGBColorSpace;
   if(GFX.shadows){
@@ -12731,12 +12738,11 @@ async function enterSurface(body,site){
   const skyGeo=new THREE.SphereGeometry(1000,16,16);
   const skyMat=makeSkyDomeMaterial(pal.sky[1],pal.sky[0]);
   if(pal.atmos)surfScene.add(new THREE.Mesh(skyGeo,skyMat));
-  // the skyboard — the SAME detailed craft, now a hovering companion that
-  // follows the player around (rises over obstacles, trails beside them)
+  // Skyboard under spawn feet (Justin LAND: not beside).
   const board=buildBoardMesh();
   board.scale.setScalar(1.0);
   if(GFX.shadows)board.traverse(o=>{if(o.isMesh){o.castShadow=true;o.receiveShadow=true;}});
-  board.position.set(3,0.6,8);surfScene.add(board);
+  board.position.set(0,0.1,8);surfScene.add(board);
   surfBoard=board;
   // Env reflections on the metallic board (browser-real stand-in for RT reflections)
   if(GFX.envReflections){
@@ -12756,16 +12762,33 @@ async function enterSurface(body,site){
   // happens every frame in updateSurface(); this just makes sure she's
   // present in the scene and not left parented to a previous scene/board.
   (async()=>{
-    if(!CHAR.loaded && !CHAR.loading){ try{ await loadCharacterAssets(); }catch(e){ console.error('Character load failed:',e); try{toast('⚠ Character failed to load: '+(e.message||e),4000);}catch(_){} } }
-    if(CHAR.loaded && CHAR.root){
+    if(!CHAR.loaded){
+      try{ await loadCharacterAssets(); }catch(e){ console.error('Character load failed:',e); try{toast('⚠ Character failed to load: '+(e.message||e),4000);}catch(_){} }
+    }
+    if(CHAR.loaded && CHAR.root && surfScene){
       if(CHAR.root.parent) CHAR.root.parent.remove(CHAR.root);
-      surfScene.add(CHAR.root);
+      const s=CHAR.scaleForTerrain||CHAR.scaleForBoard||1;
+      CHAR.root.scale.set(s,s,s);
       CHAR.mounted = false;
       CHAR.scene = surfScene;
-      CHAR.root.scale.setScalar(CHAR.scaleForTerrain);
-      CHAR.root.position.set(surfPlayer.pos.x, surfPlayer.pos.y-3.0, surfPlayer.pos.z);
+      surfScene.add(CHAR.root);
+      const feetY=(surfPlayer.pos.y-3.0);
+      CHAR.root.position.set(surfPlayer.pos.x, feetY, surfPlayer.pos.z);
+      CHAR.root.rotation.set(0, surfPlayer.yaw||0, 0);
       CHAR.root.visible = true;
+      try{ if(CHAR.mixer) CHAR.mixer.stopAllAction(); }catch(e){}
       setCharState('idle',{force:true,fade:0});
+      if(surfBoard){
+        surfBoard.position.set(surfPlayer.pos.x, feetY+0.08, surfPlayer.pos.z);
+        surfBoard.rotation.order='YXZ';
+        surfBoard.rotation.y=(surfPlayer.yaw||0)-Math.PI/2;
+      }
+      try{
+        if(CHAR._autoCharDebug){
+          CHAR._autoCharDebug=false; GFX.showCharDebug=false;
+          const el=document.getElementById('char-debug-hud'); if(el) el.style.display='none';
+        }
+      }catch(e){}
     }
   })();
   // If the Bird Shard is currently out and following, bring it along —
@@ -14475,26 +14498,19 @@ function updateSurface(dt){
   //    hover height tracks the terrain beneath IT) and when the player jumps or
   //    climbs, the board lifts to stay with them. ─────────────────────────────
   if(surfBoard){
-    // desired spot: to the player's right and a bit behind, in player-facing space
-    const rx=Math.cos(p.yaw),rz=-Math.sin(p.yaw);          // right vector
-    const fx=-Math.sin(p.yaw),fz=-Math.cos(p.yaw);          // forward vector
-    const offR=2.6, offB=1.4;
-    const tx=p.pos.x + rx*offR - fx*offB;
-    const tz=p.pos.z + rz*offR - fz*offB;
-    // hover height = max(terrain under the board, player's feet) + hover gap,
-    // so it rises over walls and lifts when the player jumps/climbs
+    // Justin Android LAND: board must stay UNDER her (not trail beside).
+    const fx=-Math.sin(p.yaw),fz=-Math.cos(p.yaw);
+    const tx=p.pos.x, tz=p.pos.z;
     const boardGroundH=_surfHeight?_surfHeight(tx,tz):0;
-    const playerFeet=(p.pos.y-3.0); // eye is feet+3
-    const hover=Math.max(boardGroundH, playerFeet) + 1.6 + Math.sin(surfTime*1.6)*0.12;
-    // smooth follow
-    surfBoard.position.x += (tx-surfBoard.position.x)*Math.min(1,dt*4);
-    surfBoard.position.z += (tz-surfBoard.position.z)*Math.min(1,dt*4);
-    surfBoard.position.y += (hover-surfBoard.position.y)*Math.min(1,dt*5);
-    // face the same way the player faces (nose +X → yaw-PI/2), with a slight
-    // bank toward the player when repositioning
+    const playerFeet=(p.pos.y-3.0);
+    const hover=boardGroundH + (p.onGround?0.08:Math.max(0.08, playerFeet-boardGroundH+0.05)) + Math.sin(surfTime*1.6)*0.02;
+    const lerp=Math.min(1,dt*10);
+    surfBoard.position.x += (tx-surfBoard.position.x)*lerp;
+    surfBoard.position.z += (tz-surfBoard.position.z)*lerp;
+    surfBoard.position.y += (hover-surfBoard.position.y)*lerp;
     surfBoard.rotation.order='YXZ';
-    surfBoard.rotation.y += ((p.yaw-Math.PI/2)-surfBoard.rotation.y)*Math.min(1,dt*4);
-    surfBoard.rotation.z = Math.sin(surfTime*1.2)*0.04; // gentle idle tilt
+    surfBoard.rotation.y += ((p.yaw-Math.PI/2)-surfBoard.rotation.y)*Math.min(1,dt*8);
+    surfBoard.rotation.z *= 0.9;
   }
   // ── Third-person follow camera ──────────────────────────────────
   //    Real bug found: the camera was being placed at the exact same
@@ -14507,10 +14523,11 @@ function updateSurface(dt){
   //    one colocated with her mesh. Smoothed so it doesn't snap on
   //    sudden turns, and height/ground-clamped so it doesn't dip below
   //    terrain when following her downhill.
-  const followDist=8.5, followHeight=3.2;
+  // Pull back for Interstellar-style framing: whole staff + standing-on-board.
+  const followDist=GFX&&GFX.isMobile?16.5:14.5, followHeight=GFX&&GFX.isMobile?5.2:4.6;
   const camTX=p.pos.x - fx*followDist, camTZ=p.pos.z - fz*followDist;
   const camGroundH=_surfHeight?_surfHeight(camTX,camTZ):groundH;
-  const camTY=Math.max(eye+followHeight, camGroundH+followHeight+1.0);
+  const camTY=Math.max(eye+followHeight*0.55, camGroundH+followHeight+1.2);
   if(!p.camPos)p.camPos=new THREE.Vector3(camTX,camTY,camTZ);
   const camLerp=Math.min(1,dt*6);
   p.camPos.x+=(camTX-p.camPos.x)*camLerp;
@@ -14519,7 +14536,7 @@ function updateSurface(dt){
   surfCamera.position.copy(p.camPos);
   surfCamera.rotation.order='YXZ';
   surfCamera.rotation.y=p.yaw;
-  surfCamera.rotation.x=p.pitch*0.7-0.12; // slight natural downward tilt toward her
+  surfCamera.rotation.x=p.pitch*0.55-0.18; // look down enough to keep board+staff in frame
 
   // ── Character sync — feet at ground level (not the +3 eye-height
   //    camera position), facing the same way the player's looking.
@@ -14528,7 +14545,8 @@ function updateSurface(dt){
   //    than re-deriving it separately. ────────────────────────────
   if(CHAR.loaded && CHAR.root && !CHAR._transitioning){
     CHAR.root.position.set(p.pos.x, eye-3.0, p.pos.z);
-    CHAR.root.rotation.y = p.yaw + Math.PI/2;
+    // Board nose is +X (yaw-PI/2). Character faces look dir without extra 90°.
+    CHAR.root.rotation.y = p.yaw;
     const moving = Math.abs(mf)>0.05 || Math.abs(ms)>0.05;
     const running = moving && (surfRunToggle || surfKeys['ShiftLeft']||surfKeys['ShiftRight']);
     const dirSign = mf<-0.05 ? -1 : 1; // backing up (S / stick pulled back) plays the reversed cycle
