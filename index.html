@@ -6890,9 +6890,17 @@ function buildFlightBoard(){
   // mounted.
   (async()=>{
     console.log('[TIMING] character-mount IIFE starting at', performance.now().toFixed(0), 'ms, CHAR.loaded:', CHAR.loaded, 'CHAR.loading:', CHAR.loading);
-    if(!CHAR.loaded && !CHAR.loading){ try{ await loadCharacterAssets(); }catch(e){ console.error('Character load failed:',e); try{toast('⚠ Character failed to load: '+(e.message||e),4000);}catch(_){} } }
-    console.log('[TIMING] character load attempt finished at', performance.now().toFixed(0), 'ms, CHAR.loaded:', CHAR.loaded);
+    if(!CHAR.loaded){
+      try{ await loadCharacterAssets(); }catch(e){ console.error('Character load failed:',e); try{toast('⚠ Character failed to load: '+(e.message||e),4000);}catch(_){} }
+    }
+    console.log('[TIMING] character load attempt finished at', performance.now().toFixed(0), 'ms', _charStatus());
     if(CHAR.loaded && CHAR.root && boardFlight) remountSkyboard(boardFlight);
+    try{
+      if(GFX && GFX.isMobile && (!CHAR.mounted || !(CHAR.root&&CHAR.root.visible))){
+        GFX.showCharDebug=true;
+        const el=document.getElementById('char-debug-hud'); if(el) el.style.display='block';
+      }
+    }catch(e){}
     if(!CHAR.mounted){
       console.warn('Character not mounted after first attempt (loaded:',CHAR.loaded,') — boardFlight was',boardFlight,'— polling every 400ms until mounted (up to ~220s), retrying the load itself too if it failed.');
       let tries=0;
@@ -7764,9 +7772,10 @@ function onLandPromptTap(){
   if(!_landTargetBody)return;
   if(_landTargetBody.isSystemEnter && _landTargetBody.system){
     const sys=_landTargetBody.system;
+    _clearLandPrompt();
     openFastTravel('✦ ENTER '+sys.name.toUpperCase(),
       (sys.starType||'Star')+' · '+(sys.bodies?sys.bodies.length:0)+' bodies · seeded arm-cell system. Descend into local space?',
-      ()=>fastTravelToSystem(sys, typeof GALAXY_DB!=='undefined'?GALAXY_DB.current:'milkyway'));
+      ()=>{ _clearLandPrompt(); fastTravelToSystem(sys, typeof GALAXY_DB!=='undefined'?GALAXY_DB.current:'milkyway'); });
     return;
   }
   if(typeof openOrbitApproach==='function')openOrbitApproach(_landTargetBody);
@@ -9268,6 +9277,7 @@ function flyToStar(starPos,sys){
 
 function fastTravelToSystem(system,galaxyName){
   closeFastTravel();closeGalaxyMap();
+  try{ _clearLandPrompt(); }catch(e){}
   $('warp-overlay').classList.add('active');
   const label=system?system.name.toUpperCase():'SOL SYSTEM';
   $('warp-status').textContent='DART DRIVE — FAST TRAVELING TO '+label+'…';
@@ -9404,6 +9414,8 @@ async function rebuildFlightForSystem(system){
   });
   buildDestinationUI();
   STATE.flight.pos.set(AU*1.2,3,4);if(boardFlight)boardFlight.position.copy(STATE.flight.pos);
+  try{ _clearLandPrompt(); }catch(e){}
+  try{ if(CHAR.loaded && CHAR.root && boardFlight) remountSkyboard(boardFlight); }catch(e){}
   toast('🪐 '+system.name+' — '+bodies.length+' bodies. '+bodies.filter(b=>b.landable).length+' landable.',3500);
 }
 
@@ -11560,10 +11572,55 @@ function _fbxBoneMap(){
     'char1','Armature'];
 }
 
+function _clearLandPrompt(){
+  try{
+    const ld=$('land-prompt');
+    if(ld){ ld.style.display='none'; ld.innerHTML=''; }
+    _landTargetBody=null; _approachBestBody=null; _approachBestDist=Infinity;
+  }catch(e){}
+}
+window._clearLandPrompt=_clearLandPrompt;
+
+function _charStatus(){
+  const parent = CHAR.root && CHAR.root.parent ? (CHAR.root.parent.name || CHAR.root.parent.type || 'obj') : 'NONE';
+  return {
+    loaded:!!CHAR.loaded, loading:!!CHAR.loading, mounted:!!CHAR.mounted,
+    visible:!!(CHAR.root&&CHAR.root.visible), hasRoot:!!CHAR.root,
+    bones:CHAR.bones?Object.keys(CHAR.bones).length:0,
+    parent, scale:CHAR.scaleForBoard||0,
+    actions:CHAR.actions?Object.keys(CHAR.actions).filter(k=>CHAR.actions[k]):[]
+  };
+}
+window.__jotsCharStatus=_charStatus;
+
+function _finalizeCharMeshReady(reason){
+  if(!CHAR.root) return;
+  CHAR.loaded = true;
+  CHAR.loading = false;
+  try{
+    if(typeof boardFlight!=='undefined' && boardFlight){
+      remountSkyboard(boardFlight);
+    }
+  }catch(e){ console.warn('mesh-ready remount failed:',e); }
+  try{
+    const st=_charStatus();
+    console.log('[CHAR] mesh ready ('+reason+')', st);
+    if(!st.mounted || !st.visible){
+      try{toast('⚠ Autumn mesh ready but not visible yet — remounting…',2500);}catch(_){}
+    }
+  }catch(e){}
+}
+
 async function loadCharacterAssets(){
-  if(CHAR.loaded || CHAR.loading) return;
+  if(CHAR.loaded) return CHAR.root;
+  if(CHAR._loadPromise) return CHAR._loadPromise;
   CHAR.loading = true;
   const gltfLoader = _getGLBLoader();
+  if(!gltfLoader){
+    CHAR.loading=false;
+    throw new Error('GLTFLoader unavailable (THREE not ready)');
+  }
+  CHAR._loadPromise = (async()=>{
 
   // Real bug found via live testing: this load can hang indefinitely
   // (CHAR.loading stuck true forever, the promise below never resolving
@@ -11578,7 +11635,7 @@ async function loadCharacterAssets(){
     new Promise((res,rej)=>gltfLoader.load(CHAR_ASSET_BASE+CHAR_FILES.mesh, res,
       xhr=>{ if(xhr.lengthComputable) _loadStep('charMesh', xhr.loaded/xhr.total); }, rej)),
     new Promise((_,rej)=>setTimeout(()=>rej(new Error('Character GLB load timed out after 90s')), 90000))
-  ]).catch(e=>{ CHAR.loading=false; try{toast('⚠ Character mesh failed to load: '+(e&&e.message?e.message:e),4000);}catch(_){} throw e; });
+  ]).catch(e=>{ CHAR.loading=false; CHAR._loadPromise=null; try{toast('⚠ Character mesh failed to load: '+(e&&e.message?e.message:e),4000);}catch(_){} throw e; });
   _loadStep('charMesh', 1);
   CHAR.root = gltf.scene;
   CHAR.root.traverse(o=>{
@@ -11637,13 +11694,38 @@ async function loadCharacterAssets(){
   // mesh load above, with its own timeout needed — fixing only the first
   // load's hang wasn't enough, since this second ~8MB fetch could (and
   // did, confirmed live) hang independently of it.
-  const animGltf = await Promise.race([
-    new Promise((res,rej)=>{
-      gltfLoader.load(CHAR_ASSET_BASE+CHAR_FILES.animSrc, res,
-        xhr=>{ if(xhr.lengthComputable) _loadStep('charAnims', xhr.loaded/xhr.total*0.9); }, rej);
-    }),
-    new Promise((_,rej)=>setTimeout(()=>rej(new Error('Character animation GLB load timed out after 90s')), 90000))
-  ]).catch(e=>{ CHAR.loading=false; try{toast('⚠ Character anims failed to load: '+(e&&e.message?e.message:e),4000);}catch(_){} throw e; });
+  // Mesh-first: mark loaded + remount BEFORE anim GLB (~8MB).
+  // Android smoke: pink board only when anim hang left CHAR.loaded false / visible=false.
+  try{
+    const _rawBox = new THREE.Box3().setFromObject(CHAR.root);
+    const _rawHeight = _rawBox.max.y - _rawBox.min.y;
+    CHAR.rawHeight = _rawHeight>0.001 ? _rawHeight : 1;
+    const _clamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
+    CHAR.scaleForBoard = _clamp(CHAR_BOARD_TARGET_UNITS / CHAR.rawHeight, 0.02, 5);
+    CHAR.scaleForTerrain = _clamp(3.26 / CHAR.rawHeight, 0.02, 5);
+    CHAR.feetOffset = -_rawBox.min.y;
+    CHAR.mixer = CHAR.mixer || new THREE.AnimationMixer(CHAR.root);
+    CHAR.root.visible = false;
+    _finalizeCharMeshReady('pre-anims');
+  }catch(e){ console.warn('mesh-first finalize error',e); }
+
+  let animGltf=null;
+  try{
+    animGltf = await Promise.race([
+      new Promise((res,rej)=>{
+        gltfLoader.load(CHAR_ASSET_BASE+CHAR_FILES.animSrc, res,
+          xhr=>{ if(xhr.lengthComputable) _loadStep('charAnims', xhr.loaded/xhr.total*0.9); }, rej);
+      }),
+      new Promise((_,rej)=>setTimeout(()=>rej(new Error('Character animation GLB load timed out after 45s')), 45000))
+    ]);
+  }catch(e){
+    console.warn('Character anims failed — keeping mesh-only mount:', e);
+    try{toast('⚠ Autumn anims slow/failed — mesh mounted (stance may be static)',4000);}catch(_){}
+    _loadStep('charAnims', 1);
+    CHAR.loading=false;
+    CHAR._loadPromise=null;
+    return CHAR.root;
+  }
   const findClip = n => animGltf.animations.find(a=>a.name===n) || null;
   // Load every mapped clip from CHAR_CLIP_NAMES (slide intentionally absent).
   const mappedKeys = Object.keys(CHAR_CLIP_NAMES);
@@ -11728,33 +11810,29 @@ async function loadCharacterAssets(){
   //    which was already tuned as roughly eye-level for the player — eye
   //    height is conventionally ~92% of standing height, so a 6ft person
   //    standing there should measure roughly 3.0/0.92 ≈ 3.26 units tall.
-  const _rawBox = new THREE.Box3().setFromObject(CHAR.root);
-  const _rawHeight = _rawBox.max.y - _rawBox.min.y;
-  CHAR.rawHeight = _rawHeight>0.001 ? _rawHeight : 1;
-  const _clamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
-  // Hard safety clamp: if the raw GLB's native unit scale isn't what was
-  // assumed (a real risk with AI-generated meshes, which sometimes export
-  // at unexpected scales), the derived factor below could otherwise come
-  // out absurdly large or tiny -- clamped to a sane range so a bad
-  // measurement can never produce a screen-filling giant or an invisible
-  // speck, regardless of what the raw height turns out to actually be.
-  // Board target updated to the project's real-world scale reference
-  // (37ft board / 6ft character) — see CHAR_BOARD_TARGET_UNITS and
-  // _deriveBoardScale() below for the derivation. The old value here was
-  // 0.78, based on a superseded ~20-23ft board estimate, which rendered
-  // her about 1.6x too large relative to the board.
-  CHAR.scaleForBoard = _clamp(CHAR_BOARD_TARGET_UNITS / CHAR.rawHeight, 0.02, 5);
-  CHAR.scaleForTerrain = _clamp(3.26 / CHAR.rawHeight, 0.02, 5);
-  // also record how far the model's own origin sits below its lowest
-  // point, so 'feet at y=0' positioning stays correct after scaling
-  CHAR.feetOffset = -_rawBox.min.y;
-  console.log('Character scale calibration — raw T-pose height:',CHAR.rawHeight.toFixed(4),
-    'game units (unscaled). Derived scaleForBoard:',CHAR.scaleForBoard.toFixed(4),
-    'scaleForTerrain:',CHAR.scaleForTerrain.toFixed(4),
-    '— if rawHeight looks wildly different from ~1.8-3 (a roughly-human-scale T-pose), the GLB\'s native units are not what was assumed and this calibration needs revisiting with that real number.');
+  try{
+    const _rawBox = new THREE.Box3().setFromObject(CHAR.root);
+    const _rawHeight = _rawBox.max.y - _rawBox.min.y;
+    if(_rawHeight>0.001){
+      CHAR.rawHeight = _rawHeight;
+      const _clamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
+      CHAR.scaleForBoard = _clamp(CHAR_BOARD_TARGET_UNITS / CHAR.rawHeight, 0.02, 5);
+      CHAR.scaleForTerrain = _clamp(3.26 / CHAR.rawHeight, 0.02, 5);
+      CHAR.feetOffset = -_rawBox.min.y;
+    }
+    console.log('Character scale calibration — raw T-pose height:',(CHAR.rawHeight||0).toFixed(4),
+      'scaleForBoard:',(CHAR.scaleForBoard||0).toFixed(4));
+  }catch(e){}
 
-  CHAR.root.visible = false; // stays hidden until mountSkyboard()/dismountSkyboard() actually places her correctly — otherwise she's visible at whatever fallback position for however long loading + mounting takes
   CHAR.loaded = true; CHAR.loading = false;
+  try{ if(typeof boardFlight!=='undefined' && boardFlight) remountSkyboard(boardFlight); }catch(e){}
+  CHAR._loadPromise=null;
+  return CHAR.root;
+  })().catch(e=>{
+    CHAR.loading=false; CHAR._loadPromise=null;
+    throw e;
+  });
+  return CHAR._loadPromise;
 }
 
 /* Time-reverses a clip's actual keyframe data (not just timeScale=-1)
