@@ -9355,96 +9355,173 @@ async function buildFlightGalaxyBandGPU(){
 }
 
 function buildFlightGalaxyBandCPU(){
-  // Floor density so Low/mobile still reads as a rich Milky Way (Justin iPhone).
-  const density=Math.max(1.0,({low:1.0,med:1.4,high:2.4,ultra:3.5})[STATE.settings.particles]||1.4);
-  // Keep the whole galaxy INSIDE the draw distance so it never clips out.
-  const RG=42000; // galaxy radius in scene units (fits under the 50k far plane)
-  // ── 2 major + 2 minor spiral arms (matches the real Milky Way morphology) ──
+  // Blender GN recipe → CPU Points (refs: /workspace/jots-cosmos-refs/blender-galaxy):
+  // disk distribute → radial length → Z-axis spiral rotate → 3D noise offset +
+  // noise/arm gate (dark lanes). STRIP: old warm cream/orange field-star wash
+  // that read as a star-sphere. Colors: cyan core → blue arms → deep navy rim.
+  // ENABLE_FLIGHT_GALAXY_BAND_GPU stays false; this is the live path.
 
-  const arms=[{base:0,wind:2.4,major:true},{base:Math.PI,wind:2.4,major:true},
-              {base:Math.PI*0.5,wind:2.3,major:false},{base:Math.PI*1.5,wind:2.3,major:false}];
-  const pts=[],cols=[];
-  const armBlue=[0.55,0.72,1.0],midWhite=[0.95,0.96,1.0],hii=[1.0,0.42,0.6];
-  arms.forEach(arm=>{
-    // Jul peak used 7000/4000×density; bump ~1.4× so Safari/WebGL CPU path
-    // reads as rich as the old GPU band did on capable devices.
-    const per=Math.round((arm.major?10000:5600)*density);
-    for(let j=0;j<per;j++){
-      const t=Math.pow(Math.random(),0.6);
-      const r=t*RG;
-      const ang=Math.log(r/600+1)*arm.wind+arm.base+gaussian()*(0.12+t*0.4);
-      const scatter=r*0.04+300;
-      const px=Math.cos(ang)*r+(Math.random()-.5)*scatter;
-      const pz=Math.sin(ang)*r+(Math.random()-.5)*scatter;
-      const py=gaussian()*(900*(1-t*0.5));
-      pts.push(px,py,pz);
-      let c;const tt=t;
-      if(Math.random()<0.05){c=hii;} // pink star-forming knots
-      else c=[lerp(armBlue[0],midWhite[0],tt),lerp(armBlue[1],midWhite[1],tt),lerp(armBlue[2],midWhite[2],tt)];
-      const b=0.5+Math.random()*0.5;
-      cols.push(c[0]*b,c[1]*b,c[2]*b);
-    }
-  });
-  // inter-arm field stars (warm, fainter)
-  const fieldN=Math.round(12000*density);
-  for(let i=0;i<fieldN;i++){
-    const t=Math.pow(Math.random(),0.7),r=t*RG,ang=Math.random()*Math.PI*2;
-    pts.push(Math.cos(ang)*r,gaussian()*700,Math.sin(ang)*r);
-    const b=0.2+Math.random()*0.25;cols.push(0.95*b,0.85*b,0.65*b);
+  const particles=STATE.settings.particles||'med';
+  const mobile=!!(GFX&&GFX.isMobile);
+  const gfxLow=!!(GFX&&GFX.preset==='low');
+  // High baseline ~50k arms / ~15k core; Low/Safari ~0.2–0.35× (playable).
+  const LOD={
+    low:  {arm:mobile||gfxLow?10000:14000, core:mobile||gfxLow?5000:6000},
+    med:  {arm:mobile?22000:32000, core:mobile?8000:10000},
+    high: {arm:mobile?36000:52000, core:mobile?12000:15000},
+    ultra:{arm:mobile?42000:65000, core:mobile?14000:18000}
+  };
+  let bud=LOD[particles]||LOD.med;
+  if(gfxLow&&particles!=='low'){
+    bud={arm:Math.min(bud.arm, mobile?12000:16000), core:Math.min(bud.core, mobile?5500:7000)};
   }
+  const armBudget=bud.arm, coreBudget=bud.core;
+  const RG=42000;
+  const TURNS=2.25; // ~2.0–2.5 spiral turns (Blender wind)
+  const NOISE_SCALE=6.0;
+  const N_ARMS=2; // two strong arms + noise clumps (dark lanes between)
+
+  // Cheap hash / value-noise / fBM — visual-only (does not touch WORLD_SEED).
+  function _gh(x,y,z){
+    const s=Math.sin(x*127.1+y*311.7+z*74.7)*43758.5453;
+    return s-Math.floor(s);
+  }
+  function _gnoise(x,y,z){
+    const xi=Math.floor(x),yi=Math.floor(y),zi=Math.floor(z);
+    const xf=x-xi,yf=y-yi,zf=z-zi;
+    const u=xf*xf*(3-2*xf),v=yf*yf*(3-2*yf),w=zf*zf*(3-2*zf);
+    const n000=_gh(xi,yi,zi),n100=_gh(xi+1,yi,zi),n010=_gh(xi,yi+1,zi),n110=_gh(xi+1,yi+1,zi);
+    const n001=_gh(xi,yi,zi+1),n101=_gh(xi+1,yi,zi+1),n011=_gh(xi,yi+1,zi+1),n111=_gh(xi+1,yi+1,zi+1);
+    const x00=n000+(n100-n000)*u, x10=n010+(n110-n010)*u;
+    const x01=n001+(n101-n001)*u, x11=n011+(n111-n011)*u;
+    const y0=x00+(x10-x00)*v, y1=x01+(x11-x01)*v;
+    return y0+(y1-y0)*w;
+  }
+  function _gfbm(x,y,z,oct){
+    let a=0.5,f=1,s=0,n=0;
+    for(let i=0;i<oct;i++){s+=a*_gnoise(x*f,y*f,z*f);n+=a;a*=0.55;f*=2.0;}
+    return s/n;
+  }
+
+  const pts=[],cols=[];
+  // Oversample then gate so dark lanes stay empty (reject, don't just dim to warm haze).
+  const attempts=Math.round(armBudget*2.4);
+  let placed=0;
+  for(let i=0;i<attempts&&placed<armBudget;i++){
+    // Uniform disk (sqrt for area)
+    const u=Math.random(), th0=Math.random()*Math.PI*2;
+    const r0=Math.sqrt(u)*RG;
+    let px=Math.cos(th0)*r0, pz=Math.sin(th0)*r0;
+    let py=(Math.random()-0.5)*Math.random()*1400*(1-r0/RG*0.55);
+
+    const r=Math.hypot(px,pz);
+    const t=Math.min(1,r/RG);
+    // Spiral angle from radial length × wind (Z-axis rotate)
+    const spiralAngle=Math.log(1+r/600)/Math.log(1+RG/600)*TURNS*Math.PI*2;
+    const c=Math.cos(spiralAngle), s=Math.sin(spiralAngle);
+    const rx=px*c-pz*s, rz=px*s+pz*c;
+    px=rx; pz=rz;
+
+    // 3D noise offset — clumpy arms (Blender Noise scale ~5–7)
+    const ns=NOISE_SCALE/RG;
+    const nOff=_gfbm(px*ns*RG*0.018, py*ns*0.02+17.3, pz*ns*RG*0.018, 4);
+    const nOff2=_gfbm(px*ns*0.022+40.1, py*ns*0.03, pz*ns*0.022+9.7, 3);
+    const scatter=(280+r*0.035)*(0.55+nOff);
+    px+=(nOff-0.5)*2.0*scatter;
+    pz+=(nOff2-0.5)*2.0*scatter;
+    py+=(nOff-0.5)*420*(1-t*0.4);
+
+    // Arm mask + noise gate → visible dark lanes (reject inter-arm)
+    const ang=Math.atan2(pz,px);
+    const phase=ang-spiralAngle;
+    const armWave=Math.pow(Math.abs(Math.cos(phase*N_ARMS*0.5)), 1.35);
+    const nGate=_gfbm(px*0.00011+3.1, py*0.0004+1.7, pz*0.00011+8.4, 5);
+    const radialFall=Math.exp(-(r*r)/(2*(RG*0.42)*(RG*0.42)));
+    const dens=armWave*(0.35+0.65*nGate)*radialFall;
+    // Soft threshold: keep sparse faint navy wisps only when near arm edges
+    if(dens<0.22)continue;
+    if(dens<0.38&&Math.random()>dens*1.1)continue;
+
+    pts.push(px,py,pz);
+
+    // Cyan-white core → bright cyan/blue inner → deep navy outer (no warm cream)
+    const coreW=Math.exp(-(r*r)/(2*(RG*0.11)*(RG*0.11)));
+    let cr,cg,cb;
+    if(coreW>0.45){
+      // cyan-white
+      cr=lerp(0.55,0.85,coreW); cg=lerp(0.85,0.98,coreW); cb=lerp(1.0,1.0,coreW);
+    }else if(t<0.55){
+      // bright cyan / blue arms
+      const u2=t/0.55;
+      cr=lerp(0.35,0.25,u2); cg=lerp(0.75,0.45,u2); cb=lerp(1.0,0.95,u2);
+    }else{
+      // deep navy rim
+      const u2=(t-0.55)/0.45;
+      cr=lerp(0.18,0.08,u2); cg=lerp(0.32,0.12,u2); cb=lerp(0.75,0.45,u2);
+    }
+    // Rare cool HII knots (magenta-pink, not orange)
+    if(nGate>0.72&&armWave>0.7&&Math.random()<0.03){cr=0.85;cg=0.45;cb=0.95;}
+    const b=(0.45+dens*0.55)*(0.7+Math.random()*0.3);
+    cols.push(cr*b,cg*b,cb*b);
+    placed++;
+  }
+
   const g=new THREE.BufferGeometry();
   g.setAttribute('position',new THREE.BufferAttribute(new Float32Array(pts),3));
   g.setAttribute('color',new THREE.BufferAttribute(new Float32Array(cols),3));
   const tex=makeCircleTex(16,'rgb(255,255,255)',1);
+  // Small sharp points; mobile slightly larger for readability
+  const armSize=mobile?(gfxLow?70:85):(gfxLow?48:58);
   flightGalaxyBand=new THREE.Points(g,new THREE.PointsMaterial({
-    size:(GFX.isMobile?150:120),sizeAttenuation:true,vertexColors:true,map:tex,
-    alphaTest:0.02,transparent:true,opacity:0.98,depthWrite:false,blending:THREE.AdditiveBlending
+    size:armSize,sizeAttenuation:true,vertexColors:true,map:tex,
+    alphaTest:0.02,transparent:true,opacity:0.95,depthWrite:false,blending:THREE.AdditiveBlending
   }));
-  // galactic plane tilt so Sol sits within an arm, looking toward the core
   const galGroup=new THREE.Group();
   galGroup.add(flightGalaxyBand);
 
-  // ── Brilliant glowing CORE BULGE — dense globular swarm of stars ──
-  const coreN=Math.round(13000*density);const cp=[],cc=[];
-  for(let i=0;i<coreN;i++){
-    const r=Math.pow(Math.random(),2.2)*RG*0.13;
+  // ── Core bulge: denser cyan-white swarm (separate buffer) ──
+  const cp=[],cc=[];
+  for(let i=0;i<coreBudget;i++){
+    const r=Math.pow(Math.random(),2.0)*RG*0.12;
     const phi=Math.random()*Math.PI*2,th=Math.acos(2*Math.random()-1);
-    cp.push(r*Math.sin(th)*Math.cos(phi)*1.4,r*Math.cos(th)*0.5,r*Math.sin(th)*Math.sin(phi));
-    const b=0.6+Math.random()*0.4;cc.push(1.0*b,0.88*b,0.62*b);
+    cp.push(r*Math.sin(th)*Math.cos(phi)*1.35, r*Math.cos(th)*0.45, r*Math.sin(th)*Math.sin(phi));
+    const b=0.65+Math.random()*0.35;
+    // cyan-white (not warm cream/orange)
+    cc.push(0.72*b,0.95*b,1.0*b);
   }
   const cg=new THREE.BufferGeometry();
   cg.setAttribute('position',new THREE.BufferAttribute(new Float32Array(cp),3));
   cg.setAttribute('color',new THREE.BufferAttribute(new Float32Array(cc),3));
-  galGroup.add(new THREE.Points(cg,new THREE.PointsMaterial({size:(GFX.isMobile?180:150),sizeAttenuation:true,vertexColors:true,map:tex,transparent:true,opacity:0.98,depthWrite:false,blending:THREE.AdditiveBlending})));
+  const coreSize=mobile?(gfxLow?90:105):(gfxLow?62:72);
+  galGroup.add(new THREE.Points(cg,new THREE.PointsMaterial({
+    size:coreSize,sizeAttenuation:true,vertexColors:true,map:tex,
+    transparent:true,opacity:0.96,depthWrite:false,blending:THREE.AdditiveBlending
+  })));
 
-  // Single modest Sgr A* glow marking galactic center — not the old layered
-  // stack of 3 large flat-colored halo sprites (cream/orange/violet), which
-  // read as flat colored blobs rather than an actual glow at this scale.
-  galGroup.add(makeGlowSprite('rgba(255,246,225,0.45)',RG*0.028));
-  // Sgr A* accretion disk (hot blue-white inner → orange outer) — a real
-  // particle system, not a flat sprite, so it stays.
-  const dn=Math.round(4000*density);const dp=[],dc=[];
+  // Modest cyan Sgr A* glow — no whiteout, no warm cream halo stack
+  galGroup.add(makeGlowSprite('rgba(170,235,255,0.32)',RG*0.02));
+
+  // Thin cool accretion ring (cyan→soft blue), kept small
+  const dn=Math.round(Math.min(2800, coreBudget*0.22));
+  const dp=[],dc=[];
   for(let i=0;i<dn;i++){
-    const rr=RG*0.02+Math.pow(Math.random(),0.7)*RG*0.09;const a=Math.random()*Math.PI*2;
-    const warm=1-(rr/(RG*0.11));
-    dp.push(Math.cos(a)*rr,gaussian()*RG*0.004,Math.sin(a)*rr);
-    const b=0.7+Math.random()*0.5;dc.push(1.0*b,lerp(0.5,0.95,warm)*b,lerp(0.2,1.0,warm)*b);
+    const rr=RG*0.015+Math.pow(Math.random(),0.7)*RG*0.07;
+    const a=Math.random()*Math.PI*2;
+    const warm=1-(rr/(RG*0.085)); // "warm" here = nearer-core brightness only
+    dp.push(Math.cos(a)*rr, gaussian()*RG*0.0035, Math.sin(a)*rr);
+    const b=0.65+Math.random()*0.4;
+    dc.push(lerp(0.45,0.85,warm)*b, lerp(0.7,0.98,warm)*b, 1.0*b);
   }
   const dg=new THREE.BufferGeometry();
   dg.setAttribute('position',new THREE.BufferAttribute(new Float32Array(dp),3));
   dg.setAttribute('color',new THREE.BufferAttribute(new Float32Array(dc),3));
-  galGroup.add(new THREE.Points(dg,new THREE.PointsMaterial({size:90,sizeAttenuation:true,vertexColors:true,map:tex,transparent:true,opacity:0.95,depthWrite:false,blending:THREE.AdditiveBlending})));
-
-  // NOTE: the old "Colorful NEBULA DUST CLOUDS scattered through the arms"
-  // block (7 makeGlowSprite blobs in 5 colors, plus an Orion cloud and a
-  // blue cloud near Sol) was removed entirely -- those were flat colored
-  // circles, not real clouds, and were never part of what was asked for.
-  // The real volumetric nebula clouds are buildFlightNebulae's TSL-shaded
-  // sprites, a separate system that already reads correctly as smoke.
+  galGroup.add(new THREE.Points(dg,new THREE.PointsMaterial({
+    size:mobile?70:55,sizeAttenuation:true,vertexColors:true,map:tex,
+    transparent:true,opacity:0.9,depthWrite:false,blending:THREE.AdditiveBlending
+  })));
 
   galGroup.rotation.set(0.5,0.3,0.1);
-  // place Sol ~62% out on the Orion arm IN the disc plane (Y≈0), core off toward
-  // galactic center — not lifted above/away from the band.
+  // Sol ~62% out on Orion arm IN the disc plane (Y≈0)
   galGroup.position.set(-RG*0.5,0,-RG*0.16);
   flightGalaxyCore=galGroup;
   flightScene.add(galGroup);
