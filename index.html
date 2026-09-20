@@ -9987,6 +9987,116 @@ function buildFlightGalaxyBandCPU(){
   }catch(e){console.warn('local arm:',e);}
 }
 
+// ── Menu / Stabilizer spiral plate (shared Blender GN cyan spiral) ─────
+// Cheap looping particle disc for menu splash behind SVG. Low-only density
+// (~few thousand pts). No GPU path, no WORLD_SEED touch. Stabilizer mounts
+// via window.buildMenuGalaxySpiralPlate(parent, opts).
+const MENU_SPIRAL_DEFAULTS={
+  RG:1.0,           // unit disc radius (caller scales the Group)
+  turns:2.25,
+  noiseScale:6.0,
+  nArms:2,
+  lowCount:2800,    // hard Low budget for menu/splash
+  pointSize:0.028,
+  // cyan core → blue arms → deep navy (matches flight band palette)
+  coreRgb:[0.72,0.95,1.0],
+  armRgb:[0.30,0.60,1.0],
+  rimRgb:[0.10,0.18,0.55]
+};
+function createSpiralGalaxyPoints(budget, opts){
+  const o=Object.assign({}, MENU_SPIRAL_DEFAULTS, opts||{});
+  const N=Math.max(400, Math.min(budget|0, o.lowCount|2800));
+  const RG=+o.RG||1, TURNS=+o.turns||2.25, NOISE_SCALE=+o.noiseScale||6, N_ARMS=+o.nArms||2;
+  function _gh(x,y,z){const s=Math.sin(x*127.1+y*311.7+z*74.7)*43758.5453;return s-Math.floor(s);}
+  function _gnoise(x,y,z){
+    const xi=Math.floor(x),yi=Math.floor(y),zi=Math.floor(z);
+    const xf=x-xi,yf=y-yi,zf=z-zi;
+    const u=xf*xf*(3-2*xf),v=yf*yf*(3-2*yf),w=zf*zf*(3-2*zf);
+    const n000=_gh(xi,yi,zi),n100=_gh(xi+1,yi,zi),n010=_gh(xi,yi+1,zi),n110=_gh(xi+1,yi+1,zi);
+    const n001=_gh(xi,yi,zi+1),n101=_gh(xi+1,yi,zi+1),n011=_gh(xi,yi+1,zi+1),n111=_gh(xi+1,yi+1,zi+1);
+    const x00=n000+(n100-n000)*u,x10=n010+(n110-n010)*u,x01=n001+(n101-n001)*u,x11=n011+(n111-n011)*u;
+    const y0=x00+(x10-x00)*v,y1=x01+(x11-x01)*v;return y0+(y1-y0)*w;
+  }
+  function _gfbm(x,y,z,oct){let a=0.5,f=1,s=0,n=0;for(let i=0;i<oct;i++){s+=a*_gnoise(x*f,y*f,z*f);n+=a;a*=0.55;f*=2;}return s/n;}
+  const pts=[],cols=[];
+  const attempts=Math.round(N*2.2);
+  let placed=0;
+  for(let i=0;i<attempts&&placed<N;i++){
+    const u=Math.random(), th0=Math.random()*Math.PI*2;
+    const r0=Math.sqrt(u)*RG;
+    let px=Math.cos(th0)*r0, pz=Math.sin(th0)*r0;
+    let py=(Math.random()-0.5)*Math.random()*0.04*RG*(1-r0/RG*0.55);
+    const r=Math.hypot(px,pz), t=Math.min(1,r/RG);
+    const spiralAngle=Math.log(1+r/(RG*0.014)+1e-6)/Math.log(1+1/0.014)*TURNS*Math.PI*2;
+    const c=Math.cos(spiralAngle), s=Math.sin(spiralAngle);
+    let rx=px*c-pz*s, rz=px*s+pz*c; px=rx; pz=rz;
+    const ns=NOISE_SCALE;
+    const nOff=_gfbm(px*ns*0.8, py*ns*2+17.3, pz*ns*0.8, 3);
+    const nOff2=_gfbm(px*ns*0.9+40.1, py*ns*2.2, pz*ns*0.9+9.7, 2);
+    const scatter=(0.008+r*0.035)*(0.55+nOff)*RG;
+    px+=(nOff-0.5)*2.0*scatter; pz+=(nOff2-0.5)*2.0*scatter; py+=(nOff-0.5)*0.012*RG;
+    const ang=Math.atan2(pz,px), phase=ang-spiralAngle;
+    const armWave=Math.pow(Math.abs(Math.cos(phase*N_ARMS*0.5)),1.35);
+    const nGate=_gfbm(px*4.5+3.1, py*20+1.7, pz*4.5+8.4, 4);
+    const radialFall=Math.exp(-(r*r)/(2*(RG*0.42)*(RG*0.42)));
+    const dens=armWave*(0.35+0.65*nGate)*radialFall;
+    if(dens<0.22)continue;
+    if(dens<0.38&&Math.random()>dens*1.1)continue;
+    pts.push(px,py,pz);
+    const coreW=Math.exp(-(r*r)/(2*(RG*0.11)*(RG*0.11)));
+    let cr,cg,cb;
+    if(coreW>0.45){cr=o.coreRgb[0];cg=o.coreRgb[1];cb=o.coreRgb[2];}
+    else if(t<0.55){const u2=t/0.55;cr=o.armRgb[0]+(o.rimRgb[0]-o.armRgb[0])*u2*0.3;cg=o.armRgb[1]*(1-u2*0.3);cb=o.armRgb[2];}
+    else{cr=o.rimRgb[0];cg=o.rimRgb[1];cb=o.rimRgb[2];}
+    if(nGate>0.72&&armWave>0.7&&Math.random()<0.03){cr=0.85;cg=0.45;cb=0.95;}
+    const b=(0.45+dens*0.55)*(0.7+Math.random()*0.3);
+    cols.push(cr*b,cg*b,cb*b);
+    placed++;
+  }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.BufferAttribute(new Float32Array(pts),3));
+  g.setAttribute('color',new THREE.BufferAttribute(new Float32Array(cols),3));
+  return g;
+}
+/** Mount a Low-budget cyan spiral plate behind menu SVG.
+ *  @param {THREE.Object3D|THREE.Scene} parent
+ *  @param {object} [opts] — RG, turns, noiseScale, lowCount, pointSize, spin, scale
+ *  @returns {{group:THREE.Group, points:THREE.Points, update:(dt)=>void, dispose:()=>void}}
+ */
+function buildMenuGalaxySpiralPlate(parent, opts){
+  const o=Object.assign({}, MENU_SPIRAL_DEFAULTS, opts||{});
+  const budget=Math.min(o.lowCount||2800, (opts&&opts.budget)||o.lowCount||2800);
+  const geo=createSpiralGalaxyPoints(budget, o);
+  let map=null;
+  try{map=typeof makeCircleTex==='function'?makeCircleTex(16,'rgb(255,255,255)',1):null;}catch(e){}
+  const mat=new THREE.PointsMaterial({
+    size:o.pointSize||0.028, sizeAttenuation:true, vertexColors:true,
+    map:map, transparent:true, opacity:0.92, depthWrite:false,
+    blending:THREE.AdditiveBlending, alphaTest:0.02
+  });
+  const points=new THREE.Points(geo, mat);
+  points.frustumCulled=false;
+  const group=new THREE.Group();
+  group.add(points);
+  const sc=(opts&&opts.scale!=null)?opts.scale:1;
+  group.scale.setScalar(sc);
+  if(opts&&opts.rotation)group.rotation.set(opts.rotation.x||0.55, opts.rotation.y||0.2, opts.rotation.z||0.05);
+  else group.rotation.set(0.55,0.2,0.05);
+  if(parent&&parent.add)parent.add(group);
+  const spin=(opts&&opts.spin!=null)?opts.spin:0.08;
+  return {
+    group, points, settings:o,
+    update(dt){ group.rotation.y += spin*(dt||0.016); },
+    dispose(){
+      try{if(group.parent)group.parent.remove(group);}catch(e){}
+      try{geo.dispose();mat.dispose();if(map&&map.dispose)map.dispose();}catch(e){}
+    }
+  };
+}
+window.MENU_SPIRAL_DEFAULTS=MENU_SPIRAL_DEFAULTS;
+window.createSpiralGalaxyPoints=createSpiralGalaxyPoints;
+window.buildMenuGalaxySpiralPlate=buildMenuGalaxySpiralPlate;
+
 // ── 3. MULTI-STAR DISTANT SYSTEMS (visible as systems you can fly to) ─
 let distantSystems=[];
 /* Real star surface — same general TSL approach as the gas giant bands
