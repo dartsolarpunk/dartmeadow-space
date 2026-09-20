@@ -3208,10 +3208,12 @@ const PRESET_SETTINGS_EXTRA = {
 // Shared render budgets — Cosmos/Worlds MUST read these via getGfxBudgets().
 // Numbers align with spiral CPU LOD (arm/core) and planet/dust cheap paths.
 const GFX_BUDGETS = {
-  low:    {galaxyArm:14000, galaxyCore:6000, dustSprites:400,  nebulaClouds:2, starCount:2000,  planetSeg:24, mcPrefer:false},
-  medium: {galaxyArm:32000, galaxyCore:10000,dustSprites:1200, nebulaClouds:4, starCount:5000,  planetSeg:48, mcPrefer:true},
-  high:   {galaxyArm:52000, galaxyCore:15000,dustSprites:2500, nebulaClouds:6, starCount:12000, planetSeg:72, mcPrefer:true},
-  ultra:  {galaxyArm:65000, galaxyCore:18000,dustSprites:5000, nebulaClouds:8, starCount:20000, planetSeg:96, mcPrefer:true},
+  // mcPlanet* / mcSurf*: WebGPU-first MC grid N (sandbox LOD cite 5135843 high:40).
+  // Low = cheaper N, SAME GPU MC architecture (not a parallel forever-GL stack).
+  low:    {galaxyArm:14000, galaxyCore:6000, dustSprites:400,  nebulaClouds:2, starCount:2000,  planetSeg:24, mcPrefer:true,  mcPlanetHigh:16, mcPlanetMed:12, mcPlanetLow:8,  mcSurfHigh:18, mcSurfMed:14, mcSurfLow:10},
+  medium: {galaxyArm:32000, galaxyCore:10000,dustSprites:1200, nebulaClouds:4, starCount:5000,  planetSeg:48, mcPrefer:true,  mcPlanetHigh:28, mcPlanetMed:18, mcPlanetLow:10, mcSurfHigh:24, mcSurfMed:18, mcSurfLow:14},
+  high:   {galaxyArm:52000, galaxyCore:15000,dustSprites:2500, nebulaClouds:6, starCount:12000, planetSeg:72, mcPrefer:true,  mcPlanetHigh:40, mcPlanetMed:20, mcPlanetLow:10, mcSurfHigh:28, mcSurfMed:22, mcSurfLow:16},
+  ultra:  {galaxyArm:65000, galaxyCore:18000,dustSprites:5000, nebulaClouds:8, starCount:20000, planetSeg:96, mcPrefer:true,  mcPlanetHigh:40, mcPlanetMed:24, mcPlanetLow:12, mcSurfHigh:28, mcSurfMed:24, mcSurfLow:18},
 };
 
 
@@ -4344,10 +4346,20 @@ function makeFlightPlanetTexture(kind, colorHex, seedVal, bodyName){
   return tex;
 }
 function _webglPlanetSegForPreset(){
-  const p=(GFX && GFX.preset)||'med';
+  // Safari / non-WebGPU fallback only — never the default when real WebGPU exists.
+  try{
+    if(typeof getGfxBudgets==='function'){
+      const b=getGfxBudgets()||{};
+      if(typeof b.planetSeg==='number' && b.planetSeg>0) return Math.max(16, Math.min(96, b.planetSeg|0));
+      const r=b.resolved||b.preset;
+      if(r==='low') return 32;
+      if(r==='high'||r==='ultra') return 64;
+    }
+  }catch(e){}
+  const p=(typeof resolvePreset==='function'?resolvePreset():(GFX&&GFX.preset))||'medium';
   if(p==='low') return 32;
-  if(p==='high') return 64;
-  return 48; // med / auto / custom
+  if(p==='high'||p==='ultra') return 64;
+  return 48; // medium / auto / custom
 }
 function buildWebGLRichPlanetGroup(radius, seedVal, colorHex, hasAtmosphere, kind, bodyName){
   // Historian FIX INTENT (f1b8547 WebGL look):
@@ -4483,7 +4495,8 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
     return buildWebGLRichPlanetGroup(radius, seedVal, colorHex, hasAtmosphere, kind, kind);
   }
   const seedU = uniform(seedVal);
-  const N=resolution||10, GRID=N+1, HALF=radius*1.3, CELL=(HALF*2)/N;
+  // Budgeted low-tier N on first build; upgradePlanetLOD raises toward mcPlanetHigh on approach.
+  const N=(typeof resolution==='number'&&resolution>0)?resolution:((typeof _mcTierResTable==='function')?(_mcTierResTable().low||10):10), GRID=N+1, HALF=radius*1.3, CELL=(HALF*2)/N;
   const numPoints=GRID*GRID*GRID, numCells=N*N*N, MAX_TRIS=5, maxVerts=numCells*MAX_TRIS*3;
 
   const densityBuf=new THREE.StorageInstancedBufferAttribute(numPoints,1);
@@ -4501,10 +4514,10 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
 
   // Real geography for Earth/Mars, ported to TSL from the CPU-side
   // earthLandMask/marsFeatureHeight/EARTH_CONTINENTS (originally written
-  // for buildMarchingCubesPlanet, which the live flight scene never
-  // actually calls — this planet builder, buildProceduralPlanetMesh, is
-  // the one that does, and it only ever had generic Worley/fractal noise
-  // for every planet including Earth). Same continent ellipses, same
+  // (CPU buildMarchingCubesPlanet stub removed — dual forever-GL/CPU stack).
+  // This GPU builder, buildProceduralPlanetMesh, is the live path; it used
+  // to only have generic Worley/fractal noise for every planet including
+  // Earth). Same continent ellipses, same
   // named Mars features (Olympus Mons, Valles Marineris, hemispheric
   // dichotomy), rewritten as branchless TSL so they run in the compute
   // shader instead of a per-pixel CPU loop.
@@ -4689,7 +4702,11 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
   geo.setAttribute('color',colorBuf);
   geo.boundingSphere=new THREE.Sphere(new THREE.Vector3(0,0,0),HALF*1.5);
   const mat=new THREE.MeshStandardNodeMaterial({vertexColors:true,roughness:0.92,metalness:0.02});
-  group.add(new THREE.Mesh(geo,mat));
+  const planetMcMesh=new THREE.Mesh(geo,mat);
+  planetMcMesh.name='JOTS_GpuPlanetMC';
+  planetMcMesh.userData.jotsGpuMc=true;
+  if(GFX && GFX.shadows){ planetMcMesh.receiveShadow=true; planetMcMesh.castShadow=true; }
+  group.add(planetMcMesh);
 
   if(hasAtmosphere){
     // Water — ported from the sandbox's depth-aware shell (same technique:
@@ -5049,7 +5066,7 @@ async function buildSolarSystem(){
       // for gas/ice giants (banded-cloud shader sphere, no terrain to
       // re-tessellate) and for any body that fell back to a plain sphere
       // after a GPU build failure above.
-      isProcedural, mcRadius:p.r, mcSeed:seedVal, mcColor:p.col||0x888888, mcHasAtm:!!p.hasAtm, mcKind:p.name, mcRes:10, mcTier:'low'});
+      isProcedural, mcRadius:p.r, mcSeed:seedVal, mcColor:p.col||0x888888, mcHasAtm:!!p.hasAtm, mcKind:p.name, mcRes:(typeof _mcTierResTable==='function'?_mcTierResTable().low:10), mcTier:'low'});
   }
 
   // Asteroid belt — between Mars (1.524 AU) and Jupiter (5.203 AU), centered ~2.7 AU
@@ -7835,6 +7852,7 @@ const _MC_TIER_RANK={low:0,med:1,high:2};
 // high:28 — raise toward sandbox bar on real WebGPU only. Soft-consume
 // Stabilizer budgets via getGfxBudgets() when present (no parallel GFX menu).
 function _mcTierResTable(){
+  // Defaults = sandbox peak (5135843). Stabilizer GFX_BUDGETS.mcPlanet* wins when present.
   let high=40, med=20, low=10;
   try{
     if(typeof getGfxBudgets==='function'){
@@ -7844,12 +7862,12 @@ function _mcTierResTable(){
       if(typeof b.mcPlanetLow==='number')low=b.mcPlanetLow;
     }
   }catch(e){}
-  // Safari / fake WebGPU never hits GPU MC rebuild (upgradeWebGLPlanetLOD),
-  // but keep the table honest if called: stay at the prior live caps.
+  // Non-WebGPU never rebuilds GPU MC (upgradeWebGLPlanetLOD uses planetSeg instead).
   if(typeof _isRealWebGPU==='function' && flightRenderer && !_isRealWebGPU(flightRenderer)){
     high=Math.min(high,28); med=Math.min(med,18);
   }
-  if(GFX && GFX.preset==='low'){ high=Math.min(high,18); med=Math.min(med,12); low=Math.min(low,8); }
+  // Do NOT re-cap via GFX.preset==='low' — auto→low was double-capping past budgets.
+  // Low cheapness lives in GFX_BUDGETS.mcPlanet* (same WebGPU MC architecture, smaller N).
   return {high,med,low};
 }
 const _MC_TIER_RES=_mcTierResTable(); // refreshed at upgrade time too
@@ -7857,19 +7875,28 @@ const _MC_TIER_RES=_mcTierResTable(); // refreshed at upgrade time too
 async function upgradeWebGLPlanetLOD(){
   if(_lodPlanetBusy)return;
   if(!STATE.flight||!STATE.flight.pos)return;
-  if(GFX && GFX.preset==='low')return; // Low stays cheap
+  // Fallback-only path (!real WebGPU). Low resolved preset stays at initial planetSeg.
+  let _resolved='medium', _segCap=64;
+  try{
+    if(typeof getGfxBudgets==='function'){
+      const b=getGfxBudgets()||{};
+      _resolved=b.resolved||b.preset||_resolved;
+      if(typeof b.planetSeg==='number') _segCap=Math.max(24, b.planetSeg|0);
+    } else if(typeof resolvePreset==='function'){ _resolved=resolvePreset(); }
+  }catch(e){}
+  if(_resolved==='low')return;
   let target=null,targetDist=Infinity,wantSeg=0;
   for(let i=0;i<celestialBodies.length;i++){
     const b=celestialBodies[i];
     if(!b.isProcedural||!b.mesh)continue;
     const dist=b.mesh.position.distanceTo(STATE.flight.pos);
     const rad=b.mcRadius||1;
-    // Closer → more segments (cap 72 for iPhone)
+    // Closer → more segments (budget-capped; Safari iPhone stays modest)
     let seg=32;
-    if(dist<rad*12) seg=64;
-    else if(dist<rad*28) seg=48;
+    if(dist<rad*12) seg=Math.min(64, _segCap);
+    else if(dist<rad*28) seg=Math.min(48, _segCap);
     else continue;
-    if(GFX.preset==='high' && dist<rad*8) seg=72;
+    if((_resolved==='high'||_resolved==='ultra') && dist<rad*8) seg=Math.min(72, _segCap);
     const cur=b._webglSeg||0;
     if(seg<=cur)continue;
     if(b._mcLodT&&performance.now()-b._mcLodT<1800)continue;
@@ -7909,9 +7936,8 @@ async function upgradeWebGLPlanetLOD(){
 async function upgradePlanetLOD(dt){
   if(_lodPlanetBusy)return; // one rebuild in flight at a time — avoid GPU contention
   if(!STATE.flight||!STATE.flight.pos)return;
-  // Real WebGPU: rebuild GPU MC at higher N. WebGL/Safari: upgrade rich
-  // canvas-texture sphere segment count (no compute) so approach still
-  // gains detail — Jul-peak readable planets, not forever-24² flats.
+  // WebGPU-first: High/Med/Low share GPU MC + distance LOD (budgeted N).
+  // WebGL/Safari ONLY when !_isRealWebGPU — rich canvas spheres, not a dual forever-GL default.
   if(!_isRealWebGPU(flightRenderer)){
     await upgradeWebGLPlanetLOD();
     return;
@@ -9281,7 +9307,7 @@ async function rebuildFlightForSystem(system){
       collisionRadius:r, hasTerrain:!!isProcedural && bd.landable!==false,
       isProcedural, mcRadius:r, mcSeed:seedVal, mcColor:col, mcHasAtm:hasAtm,
       mcKind:bd.type==='Habitable'?'earth':(bd.name||bd.type||'rocky'),
-      mcRes:10, mcTier:'low'
+      mcRes:(typeof _mcTierResTable==='function'?_mcTierResTable().low:10), mcTier:'low'
     });
   }
 
@@ -13016,9 +13042,19 @@ TERRAIN.mcDensityArray = null;
 TERRAIN.mcGridInfo = null;
 
 function _surfMcResForTier(tier){
-  if(tier==='high') return Math.min(28, SURF_MC_MAX_N);
-  if(tier==='med') return Math.min(22, SURF_MC_MAX_N);
-  return Math.min(16, SURF_MC_MAX_N);
+  // Tablet-safe cap 28³; budgets scale Low cheaper / High toward sandbox.
+  let high=28, med=22, low=16;
+  try{
+    if(typeof getGfxBudgets==='function'){
+      const b=getGfxBudgets()||{};
+      if(typeof b.mcSurfHigh==='number')high=b.mcSurfHigh;
+      if(typeof b.mcSurfMed==='number')med=b.mcSurfMed;
+      if(typeof b.mcSurfLow==='number')low=b.mcSurfLow;
+    }
+  }catch(e){}
+  if(tier==='high') return Math.min(high, SURF_MC_MAX_N);
+  if(tier==='med') return Math.min(med, SURF_MC_MAX_N);
+  return Math.min(low, SURF_MC_MAX_N);
 }
 
 /** Trilinear sample of the GPU density field (negative = solid). */
@@ -13498,50 +13534,9 @@ function marsFeatureHeight(lat,lon,seed){
   h+=(_fbm(lon*0.05+seed,lat*0.05+seed,seed+31,4)-0.5)*900; // cratering/erosion detail everywhere
   return h;
 }
-// Builds a full spherical marching-cubes planet with recognizable
-// geography baked into the density field. 'earth'/'mars' get their real
-// features above; anything else (including Venus, honestly noted as
-// less iconically recognizable in public knowledge than Earth or Mars —
-// its one broadly-known named feature is Maxwell Montes) falls back to a
-// generic volcanic/cratered field, which is an accurate BROAD
-// characterization of Venus's real surface even without a specific
-// silhouette to render.
-function buildMarchingCubesPlanet(kind,radius,seed,resolution){
-  resolution=resolution||64;
-  kind=(kind||'').toLowerCase();
-  function density(x,y,z){
-    const d=Math.sqrt(x*x+y*y+z*z);
-    const {lat,lon}=_latLonOf(x,y,z,radius);
-    let elevation=0;
-    if(kind==='earth'){
-      const land=earthLandMask(lat,lon,seed);
-      if(land>0){
-        // land: real mountain-range-scale relief via ridged noise, scaled
-        // by how deep into the continent (edges taper toward sea level —
-        // coastlines don't cliff straight down)
-        const ridge=1-Math.abs(_fbm(x*0.05+seed,z*0.05+seed,seed+41,4)*2-1);
-        elevation=Math.min(land,1)*(300+Math.pow(ridge,2)*2600);
-      } else {
-        elevation=land*400; // ocean floor, gently deeper further from shore
-      }
-    } else if(kind==='mars'){
-      elevation=marsFeatureHeight(lat,lon,seed);
-    } else {
-      // generic volcanic/cratered (honest fallback for Venus and anything
-      // else without a specific recognizable-silhouette treatment)
-      const volcanic=1-Math.abs(_fbm(x*0.045+seed,z*0.045+seed,seed+51,4)*2-1);
-      elevation=Math.pow(volcanic,2)*1800-400;
-    }
-    return d-radius-elevation*0.01*radius/1000; // scale relief sensibly relative to planet radius
-  }
-  const pad=radius*1.25;
-  const geo=marchingCubesMesh(density,[-pad,-pad,-pad],pad*2,resolution,0);
-  const colorByKind={earth:0x4a7c3f,mars:0xa8552e,venus:0x8a7050};
-  const mat=new THREE.MeshStandardMaterial({color:colorByKind[kind]||0x8a7050,roughness:0.96,metalness:0.02});
-  const mesh=new THREE.Mesh(geo,mat);
-  console.log('[MarchingCubes] planet built:',kind||'generic','—',geo.attributes.position.count/3,'triangles, radius',radius,'resolution',resolution);
-  return mesh;
-}
+// Dead CPU dual-stack planet builder (buildMarchingCubesPlanet) removed —
+// live orbital planets use WebGPU buildProceduralPlanetMesh (MC+water+Rayleigh)
+// or Safari-only buildWebGLRichPlanetGroup. Asteroids keep CPU MC below.
 
 function buildMarchingCubesAsteroid(radius,seed,resolution){
   resolution=resolution||56;
@@ -13709,11 +13704,12 @@ async function buildSurfaceTerrain(pal){
   };
 
   // ── Marching cubes terrain ──────────────────────────────────────
-  // Real WebGPU: local GPU MC patch (density→MC+biome→readback) around the
-  // landing site. Fake-WebGPU/WebGL2/Low: keep heightmap; optional CPU MC
-  // chunks when #set-mctest is on. Auto-on when real WebGPU is available.
-  const wantMc = !!(STATE.settings.marchingCubesTerrain) || (_isRealWebGPU(surfRenderer));
-  const useGpuMc = wantMc && _isRealWebGPU(surfRenderer);
+  // WebGPU-first (sandbox architecture): density compute → MC+biome →
+  // collision readback. High/Med/Low share this path; Low is cheaper via
+  // GFX_BUDGETS.mcSurf*. Fake-WebGPU/WebGL2: heightmap, optional CPU MC
+  // when #set-mctest is on. Never a forever-heightmap fork on real WebGPU.
+  const wantMc = _isRealWebGPU(surfRenderer) || !!(STATE.settings.marchingCubesTerrain);
+  const useGpuMc = _isRealWebGPU(surfRenderer);
   TERRAIN.mcTier = 'low';
   TERRAIN.mcUpgradeLocked = false;
   TERRAIN.mcDensityArray = null;
