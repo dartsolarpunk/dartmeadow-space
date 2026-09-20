@@ -4788,7 +4788,11 @@ async function buildSolarSystem(){
     flightScene.add(mesh);
     if(p.name==='Earth')earthMesh=mesh;
     const isProcedural = !(p.type==='Gas Giant' || p.type==='Ice Giant');
+    // landable: rocky/habitable Sol worlds always; gas/ice giants never.
+    // hasTerrain: procedural MC/WebGL surface path (enables proximity LAND).
+    const _solLandable = isProcedural; // Gas/Ice giants => false
     celestialBodies.push({mesh,name:p.name,type:p.type,temp:p.temp,orbitR:p.oR,orbitSpd:p.spd,angle:p.angle,collisionRadius:p.r,
+      landable:_solLandable, hasTerrain:_solLandable,
       // Rebuild metadata for proximity-based marching-cubes LOD (see
       // upgradePlanetLOD, called from updateBodies). isProcedural is false
       // for gas/ice giants (banded-cloud shader sphere, no terrain to
@@ -4811,6 +4815,40 @@ async function buildSolarSystem(){
   const ag=new THREE.BufferGeometry();ag.setAttribute('position',new THREE.BufferAttribute(ap,3));
   const beltPts=new THREE.Points(ag,new THREE.PointsMaterial({size:.5,color:0x886644,sizeAttenuation:true}));
   flightScene.add(beltPts);if(typeof _trackSystemExtra==='function')_trackSystemExtra(beltPts);
+
+  // Seeded landable asteroids WITH terrain — random SUBSET only (not every
+  // belt particle). Particles above stay visual debris with no LAND prompt;
+  // these few enter celestialBodies with landable+hasTerrain so proximity
+  // LAND works the same as for Earth. Deterministic via 'sol:landables'.
+  if(typeof buildMarchingCubesAsteroid==='function'){
+    const landRand=seedRand(hashStr('sol:landables'));
+    const landNames=['Ceres','Vesta','Pallas','Eros'];
+    for(let li=0;li<landNames.length;li++){
+      const a=landRand()*Math.PI*2, r=beltR+(landRand()-0.5)*AU*0.55;
+      const rad=0.35+landRand()*0.45;
+      const seedVal=hashStr('sol:landable:'+landNames[li]);
+      let amesh;
+      try{
+        amesh=buildMarchingCubesAsteroid(rad, seedVal, 22);
+      }catch(e){
+        console.warn('[landable asteroid] MC build failed for',landNames[li],e&&e.message);
+        amesh=new THREE.Mesh(new THREE.SphereGeometry(rad,16,16),new THREE.MeshStandardMaterial({color:0x8a7a68,roughness:0.97}));
+      }
+      const agroup=new THREE.Group();
+      agroup.add(amesh);
+      agroup.position.set(Math.cos(a)*r,(landRand()-0.5)*4,Math.sin(a)*r);
+      flightScene.add(agroup);
+      if(typeof _trackSystemExtra==='function')_trackSystemExtra(agroup);
+      celestialBodies.push({
+        mesh:agroup, name:landNames[li], type:'Asteroid', temp:'~180 K',
+        orbitR:r, orbitSpd:0.00015/(1+li*0.3), angle:a,
+        collisionRadius:rad, landable:true, hasTerrain:true,
+        isAsteroid:true, isProcedural:false,
+        mcRadius:rad, mcSeed:seedVal, mcColor:0x8a7a68, mcHasAtm:false,
+        mcKind:'asteroid', mcRes:22, mcTier:'low', gravity:0.03
+      });
+    }
+  }
 
   // Comets — seeded positions/tails ('sol:comets') for stable returns
   const cometRand=seedRand(hashStr('sol:comets'));
@@ -7431,18 +7469,27 @@ function updateBodies(dt){
         checkMesh.geometry.dispose();checkMesh.geometry=newGeo;
       }
 
-      // Proximity approach — show the approach prompt when within a generous
-      // radius-relative range so EVERY body (not just Earth) is easy to tap,
-      // including small ones. Track the closest eligible body this frame.
-      const rad=checkMesh.geometry.parameters.radius;
-      const approachRange=Math.max(rad*8, 12); // generous; small planets reachable
-      if(dist<approachRange&&b.name!=='Sun'){
-        if(dist<_approachBestDist){_approachBestDist=dist;_approachBestBody=b;}
+      // (sphere LOD only — Groups have no geometry.parameters; planet MC LOD
+      // is handled separately by upgradePlanetLOD / upgradeWebGLPlanetLOD.)
+    }
+
+    // Proximity LAND — planets are THREE.Groups (no .geometry), so this MUST
+    // sit outside the sphere-parameter LOD gate above. Home-system Earth was
+    // silently missing LAND because the old scan never ran for Groups.
+    // Eligibility: landable planets always; asteroids/comets only if seeded
+    // landable AND hasTerrain. Belt/oort particle fluff never enters
+    // celestialBodies, so they never get a prompt.
+    if(b.name!=='Sun' && b.type!=='Star' && isProximityLandEligible(b)){
+      const rad=b.collisionRadius||b.mcRadius||1;
+      const approachRange=Math.max(rad*8, 12);
+      if(dist<approachRange && dist<_approachBestDist){
+        _approachBestDist=dist;_approachBestBody=b;
       }
     }
   }
   // Arm-cell enter: when near a seeded distant star that has planets, offer
   // system descend (replaces decorative flat-planet stubs at the star).
+  // Keep TAP TO ENTER (not LAND) for arm systems.
   if(typeof distantSystems!=='undefined' && distantSystems && STATE.flight && STATE.flight.pos){
     for(let _si=0;_si<distantSystems.length;_si++){
       const ds=distantSystems[_si];
@@ -7460,7 +7507,9 @@ function updateBodies(dt){
       }
     }
   }
-  // Show the approach prompt for the closest eligible body this frame.
+  // Show proximity prompt — LAND for surface-eligible bodies; TAP TO ENTER
+  // for arm-cell system descend. Brief interact only (hide out of range);
+  // no permanent floating nameplates (Cosmos QT label rule).
   const ld=$('land-prompt');
   if(ld){
     if(_approachBestBody){
@@ -7471,7 +7520,7 @@ function updateBodies(dt){
         ld.style.display='block';ld.style.pointerEvents='auto';ld.style.cursor='pointer';
         ld.innerHTML=b.isSystemEnter
           ? ('✦ TAP TO ENTER '+b.name.toUpperCase())
-          : ('🛰 TAP TO APPROACH '+b.name.toUpperCase());
+          : ('⬇ LAND ON '+b.name.toUpperCase());
         _landTargetBody=b;
       }
     } else if(_landTargetBody!==null){
@@ -8935,7 +8984,7 @@ async function rebuildFlightForSystem(system){
     celestialBodies.push({
       mesh:group,name:bd.name,type:bd.type,temp:Math.round(100+sysRand()*400)+' K',
       orbitR:oR,orbitSpd:0.002/(i+1),angle:ang,landable:bd.landable,gravity:bd.gravity,
-      collisionRadius:r,
+      collisionRadius:r, hasTerrain:!!isProcedural && bd.landable!==false,
       isProcedural, mcRadius:r, mcSeed:seedVal, mcColor:col, mcHasAtm:hasAtm,
       mcKind:bd.type==='Habitable'?'earth':(bd.name||bd.type||'rocky'),
       mcRes:10, mcTier:'low'
@@ -10175,8 +10224,26 @@ async function openOrbitApproach(body){
 }
 
 function isBodyLandable(b){
+  if(!b)return false;
   return (b.landable!==undefined)?b.landable
-    :(['Habitable','Rocky','Ocean','Desert','Ice','Volcanic','Barren Moon'].includes(b.type)||['Mars','Moon','Earth','Mercury','Venus'].includes(b.name));
+    :(['Habitable','Rocky','Ocean','Desert','Ice','Volcanic','Barren Moon','Methane','Asteroid'].includes(b.type)||['Mars','Moon','Earth','Mercury','Venus'].includes(b.name));
+}
+
+/** Proximity LAND prompt eligibility (Worlds land-prompt path only).
+ *  Planets: landable===true (or isBodyLandable fallback).
+ *  Asteroids/comets: must be explicitly landable AND have terrain
+ *  (hasTerrain / isProcedural / MC surface path) — never belt debris.
+ *  Gas giants, stars, rings, oort fluff: never. */
+function isProximityLandEligible(b){
+  if(!b||b.isSystemEnter)return false;
+  if(b.name==='Sun'||b.type==='Star')return false;
+  if(!isBodyLandable(b))return false;
+  const isRock=(b.type==='Asteroid'||b.type==='Comet'||b.isAsteroid||b.isComet);
+  if(isRock){
+    return !!(b.hasTerrain||b.isProcedural||(b.mcRadius!=null&&b.landable));
+  }
+  // Landable planets/moons — always eligible for LAND when near
+  return true;
 }
 
 function setupOrbitInput(cv){
