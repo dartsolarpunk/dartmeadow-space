@@ -678,9 +678,11 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
    #qt-panel is a compact anchored dropdown in the same visual language
    as #hud-logs-panel — no screen-darkening, no sense of a new page. */
 #ar-bottom{position:fixed;inset:0;background:transparent;pointer-events:auto;z-index:32;}
-#qt-panel{position:absolute;left:10px;top:211px;width:220px;max-height:calc(100% - 220px);overflow-y:auto;background:rgba(0,3,8,0.85);border:1px solid rgba(91,127,255,0.2);border-radius:4px;padding:8px 9px;backdrop-filter:blur(10px);box-shadow:0 0 24px rgba(91,127,255,0.08);}
-#ar-dest-title{font-family:var(--font-hud);font-size:0.5rem;color:rgba(91,127,255,0.45);letter-spacing:0.2em;text-transform:uppercase;margin-bottom:0.6rem;}
-#dest-scroll{display:grid;grid-template-columns:repeat(2,1fr);gap:0.4rem;}
+#qt-panel{position:absolute;left:10px;top:167px;width:min(420px,calc(100vw - 20px));max-height:calc(100% - 180px);overflow-y:auto;background:rgba(0,3,8,0.88);border:1px solid rgba(91,127,255,0.22);border-radius:4px;padding:8px 9px;backdrop-filter:blur(10px);box-shadow:0 0 24px rgba(91,127,255,0.08);display:flex;flex-direction:column;gap:6px;}
+#ar-dest-title{font-family:var(--font-hud);font-size:0.5rem;color:rgba(91,127,255,0.45);letter-spacing:0.2em;text-transform:uppercase;margin-bottom:0.15rem;}
+#qt-canvas{width:100%;height:210px;border-radius:3px;border:1px solid rgba(91,127,255,0.18);background:#000208;touch-action:none;display:block;}
+#qt-hint{font-family:var(--font-mono);font-size:0.44rem;color:rgba(91,127,255,0.4);letter-spacing:0.06em;text-align:center;}
+#dest-scroll{display:grid;grid-template-columns:repeat(2,1fr);gap:0.35rem;max-height:140px;overflow-y:auto;}
 .dest-card{width:auto;padding:0.4rem 0.5rem;background:rgba(91,127,255,0.05);border:1px solid rgba(91,127,255,0.14);border-radius:3px;cursor:pointer;transition:var(--trans);font-family:var(--font-mono);}
 .dest-card:hover{border-color:rgba(91,127,255,0.4);background:rgba(91,127,255,0.1);}
 .dest-card.active{border-color:var(--cyan);background:rgba(91,127,255,0.14);}
@@ -1455,7 +1457,9 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   <button id="ship-jump-btn" style="display:none;position:absolute;bottom:calc(190px + var(--safe-bot));left:200px;pointer-events:auto;width:56px;height:56px;border-radius:50%;background:rgba(255,255,255,.1);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.6rem;letter-spacing:.08em;cursor:pointer;z-index:31;touch-action:none;">JUMP</button>
   <div id="ar-bottom" onclick="closeQuickTravel()">
     <div id="qt-panel" onclick="event.stopPropagation()">
-      <div id="ar-dest-title">⟶ QUICK TRAVEL</div>
+      <div id="ar-dest-title">⟶ QUICK TRAVEL · 3D WORLD MAP</div>
+      <canvas id="qt-canvas" width="400" height="210"></canvas>
+      <div id="qt-hint">DRAG TO ORBIT · TAP MARKER / CARD TO JUMP</div>
       <div id="dest-scroll"></div>
     </div>
   </div>
@@ -3596,6 +3600,7 @@ let _charShadowLight=null;
 let _builtBoardTemplate=null; // last template key that was built into boardFlight
 let _landTargetBody=null,_approachBestDist=Infinity,_approachBestBody=null;
 let flightAnimId,flightTime=0,celestialBodies=[],sunMesh,earthMesh;
+let flightFlybys=[]; // comets / belt / other named flybys for proximity labels
 let oortCloudGroup=null;
 
 // ── Oort cloud — a sparse debris shell (rocks + a scattering of icy
@@ -3729,26 +3734,226 @@ function toggleHudLogs(){
   $('logs-toggle-btn').classList.toggle('active',open);
   if(open)closeQuickTravel(); // panels share the same anchor spot — only one at a time
 }
-// ── Quick Travel overlay — was a permanent footer bar; now a centered
-// grid modal. #ar-bottom IS the full-screen backdrop (tap it to close);
-// #qt-panel stops propagation so tapping the card grid itself doesn't
-// close it. Picking a destination auto-closes (see buildDestinationUI).
+// ── Quick Travel — miniature 3D whole-game-world map (not a flat card grid).
+// #ar-bottom is the full-screen click-catcher; #qt-panel holds a compact
+// Three.js chart of Sol destinations + distant systems + charted galaxies.
+// Dead always-visible footer QT was already removed; this is TRAVEL-only.
 function toggleQuickTravel(e){
   if(e)e.stopPropagation();
   const open=!$('ar-bottom').classList.contains('open');
   $('ar-bottom').classList.toggle('open',open);
   $('qt-toggle-btn').classList.toggle('active',open);
-  if(open){$('hud-logs-panel').classList.remove('open');$('logs-toggle-btn').classList.remove('active');}
+  if(open){
+    $('hud-logs-panel').classList.remove('open');$('logs-toggle-btn').classList.remove('active');
+    try{ensureQtMiniMap();}catch(err){console.warn('qt map:',err);}
+    try{refreshQtJumpCards();}catch(err){}
+  }else{
+    try{pauseQtMiniMap();}catch(err){}
+  }
 }
 function closeQuickTravel(){
   $('ar-bottom').classList.remove('open');
   $('qt-toggle-btn').classList.remove('active');
+  try{pauseQtMiniMap();}catch(err){}
 }
 
 function buildDestinationUI(){
-  const sc=$('dest-scroll');sc.innerHTML='';
-  DESTINATIONS.forEach((d,i)=>{const card=document.createElement('div');card.className='dest-card'+(i===0?' active':'');card.innerHTML=`<div class="dest-icon">${d.icon}</div><div class="dest-name">${d.name}</div><div class="dest-dist">${d.dist}</div><div class="dest-type">${d.type}</div>`;
-    card.onclick=()=>{document.querySelectorAll('.dest-card').forEach((c,ci)=>c.classList.toggle('active',ci===i));STATE.flight.destIdx=i;$('hud-dest').textContent=d.name;plotCourse(i);closeQuickTravel();};sc.appendChild(card);});
+  // Cards are rebuilt when QT opens (refreshQtJumpCards) so they include
+  // live distant systems + galaxies, not only the static Sol list.
+  try{refreshQtJumpCards();}catch(e){
+    const sc=$('dest-scroll');if(!sc)return;sc.innerHTML='';
+    DESTINATIONS.forEach((d,i)=>{const card=document.createElement('div');card.className='dest-card'+(i===0?' active':'');card.innerHTML=`<div class="dest-icon">${d.icon}</div><div class="dest-name">${d.name}</div><div class="dest-dist">${d.dist}</div><div class="dest-type">${d.type}</div>`;
+      card.onclick=()=>{document.querySelectorAll('.dest-card').forEach((c,ci)=>c.classList.toggle('active',ci===i));STATE.flight.destIdx=i;$('hud-dest').textContent=d.name;plotCourse(i);closeQuickTravel();};sc.appendChild(card);});
+  }
+}
+
+// ── QT miniature 3D world map ──────────────────────────────────────
+let qtInited=false,qtRenderer=null,qtScene=null,qtCamera=null,qtControls=null;
+let qtAnimId=0,qtRaycaster=null,qtMarkers=[],qtRunning=false;
+function pauseQtMiniMap(){
+  qtRunning=false;
+  if(qtAnimId){cancelAnimationFrame(qtAnimId);qtAnimId=0;}
+}
+async function ensureQtMiniMap(){
+  if(qtInited){qtRunning=true;if(!qtAnimId)qtAnimId=requestAnimationFrame(qtLoop);try{rebuildQtMarkers();}catch(e){}return;}
+  const cv=$('qt-canvas');if(!cv||typeof THREE==='undefined')return;
+  qtInited=true;qtRunning=true;
+  const W=cv.clientWidth||400,H=cv.clientHeight||210;
+  cv.width=W;cv.height=H;
+  qtRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:false,alpha:false,powerPreference:'low-power'});
+  try{await qtRenderer.init();}catch(e){console.warn('qt renderer:',e);qtInited=false;return;}
+  qtRenderer.setPixelRatio(Math.min(devicePixelRatio||1,1.5));
+  qtRenderer.setSize(W,H,false);
+  qtRenderer.setClearColor(0x000208,1);
+  qtScene=new THREE.Scene();
+  qtCamera=new THREE.PerspectiveCamera(50,W/H,1,500000);
+  qtCamera.position.set(9000,14000,22000);
+  qtControls=new THREE.OrbitControls(qtCamera,cv);
+  qtControls.enableDamping=true;qtControls.dampingFactor=0.1;
+  qtControls.rotateSpeed=0.55;qtControls.zoomSpeed=0.85;
+  qtControls.minDistance=200;qtControls.maxDistance=120000;
+  qtControls.target.set(0,0,0);
+  qtControls.touches={ONE:THREE.TOUCH.ROTATE,TWO:THREE.TOUCH.DOLLY_PAN};
+  // Ultra-light Milky Way disc (Safari mobile safe — few thousand points)
+  const n=2200,p=new Float32Array(n*3),c=new Float32Array(n*3),RG=42000;
+  for(let i=0;i<n;i++){
+    const t=Math.pow(Math.random(),0.55),r=t*RG;
+    const a=Math.log(r/600+1)*2.35+(Math.floor(Math.random()*2)*Math.PI)+(Math.random()-0.5)*0.35;
+    p[i*3]=Math.cos(a)*r;p[i*3+1]=(Math.random()-0.5)*900*(1-t*0.5);p[i*3+2]=Math.sin(a)*r;
+    const b=0.35+Math.random()*0.55;
+    c[i*3]=0.35*b;c[i*3+1]=0.65*b;c[i*3+2]=1.0*b;
+  }
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position',new THREE.BufferAttribute(p,3));
+  geo.setAttribute('color',new THREE.BufferAttribute(c,3));
+  const disc=new THREE.Points(geo,new THREE.PointsMaterial({
+    size:90,sizeAttenuation:true,vertexColors:true,transparent:true,opacity:0.85,
+    depthWrite:false,blending:THREE.AdditiveBlending
+  }));
+  disc.rotation.set(0.5,0.3,0.1);
+  disc.position.set(-RG*0.5,0,-RG*0.16);
+  qtScene.add(disc);
+  // Soft core cue
+  try{const coreGlow=makeGlowSprite('rgba(170,235,255,0.45)',RG*0.035);coreGlow.position.copy(disc.position);qtScene.add(coreGlow);}catch(e){}
+  qtRaycaster=new THREE.Raycaster();
+  cv.addEventListener('click',onQtMapClick);
+  cv.addEventListener('touchend',(ev)=>{
+    if(!ev.changedTouches||!ev.changedTouches[0])return;
+    const t=ev.changedTouches[0];
+    onQtMapClick({clientX:t.clientX,clientY:t.clientY});
+  },{passive:true});
+  rebuildQtMarkers();
+  qtAnimId=requestAnimationFrame(qtLoop);
+}
+function _qtMakeLabel(text,color){
+  const lc=document.createElement('canvas');lc.width=256;lc.height=40;
+  const x=lc.getContext('2d');
+  x.fillStyle=color||'rgba(180,210,255,0.92)';
+  x.font='bold 16px Orbitron,monospace';x.fillText(text,4,26);
+  const spr=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(lc),transparent:true,depthTest:false}));
+  spr.scale.set(1400,220,1);
+  return spr;
+}
+function rebuildQtMarkers(){
+  if(!qtScene)return;
+  // Clear prior markers
+  qtMarkers.forEach(m=>{if(m.parent)m.parent.remove(m);});
+  qtMarkers=[];
+  const addMarker=(pos,col,scale,userData,label,labelCol)=>{
+    const m=new THREE.Mesh(
+      new THREE.SphereGeometry(scale,8,8),
+      new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:0.95})
+    );
+    m.position.copy(pos);
+    m.userData=userData;
+    qtScene.add(m);qtMarkers.push(m);
+    if(label){
+      const ls=_qtMakeLabel(label,labelCol);
+      ls.position.set(pos.x,pos.y+scale*2.2,pos.z);
+      ls.userData=userData;
+      qtScene.add(ls);qtMarkers.push(ls);
+    }
+    // Invisible larger hit target
+    const hit=new THREE.Mesh(
+      new THREE.SphereGeometry(Math.max(scale*4,400),8,8),
+      new THREE.MeshBasicMaterial({visible:false})
+    );
+    hit.position.copy(pos);hit.userData=userData;
+    qtScene.add(hit);qtMarkers.push(hit);
+  };
+  // Sol home
+  addMarker(new THREE.Vector3(0,0,0),0xffe066,180,{qtKind:'sol'},'Sol','rgba(255,230,140,0.95)');
+  // Sol destinations (scaled display positions for outer ones)
+  (DESTINATIONS||[]).forEach((d,i)=>{
+    if(!d||!d.pos)return;
+    // Keep solar-system dests near Sol; far ones use their flight pos
+    const far=d.pos.length()>500;
+    const p=far?d.pos.clone():d.pos.clone().multiplyScalar(40);
+    addMarker(p,0x5bd6ff,far?220:70,{qtKind:'dest',destIdx:i},d.name,'rgba(91,214,255,0.9)');
+  });
+  // Distant systems (cap labels for Safari)
+  const systems=(typeof distantSystems!=='undefined'&&distantSystems)?distantSystems:[];
+  systems.forEach((s,i)=>{
+    if(!s||!s.pos)return;
+    const showLbl=i<18;
+    addMarker(s.pos.clone(),s.rogue?0xff8860:0xa8c4ff,110,
+      {qtKind:'system',systemRef:s},showLbl?s.name:null,'rgba(200,220,255,0.88)');
+  });
+  // Charted / seeded visitables galaxies (append-only list)
+  (typeof VISITABLE_GALAXIES!=='undefined'?VISITABLE_GALAXIES:[]).forEach(g=>{
+    const gid=(g.n||'').replace(/[^a-z0-9]/gi,'').toLowerCase();
+    const gName=(g.n||'').replace(/\s*\(.+\)/,'');
+    addMarker(new THREE.Vector3(g.x,g.y,g.z),g.c||0xb0c4ff,Math.max(g.r*0.35,400),
+      {qtKind:'galaxy',galaxyId:gid,galaxyName:gName,dist:g.dist},g.n,'rgba(190,160,255,0.92)');
+  });
+}
+function refreshQtJumpCards(){
+  const sc=$('dest-scroll');if(!sc)return;sc.innerHTML='';
+  const addCard=(icon,name,dist,type,onClick,active)=>{
+    const card=document.createElement('div');
+    card.className='dest-card'+(active?' active':'');
+    card.innerHTML=`<div class="dest-icon">${icon}</div><div class="dest-name">${name}</div><div class="dest-dist">${dist||''}</div><div class="dest-type">${type||''}</div>`;
+    card.onclick=onClick;sc.appendChild(card);
+  };
+  DESTINATIONS.forEach((d,i)=>{
+    addCard(d.icon,d.name,d.dist,d.type,()=>{
+      STATE.flight.destIdx=i;$('hud-dest').textContent=d.name;plotCourse(i);closeQuickTravel();
+    },i===STATE.flight.destIdx);
+  });
+  (distantSystems||[]).slice(0,24).forEach(s=>{
+    addCard(s.rogue?'✧':'⭐',s.name,s.starClass||'System',s.rogue?'Rogue':'Star System',()=>{
+      const chart=s.systemChart||(typeof systemChartFromArmCell==='function'?systemChartFromArmCell(s):null);
+      const sys=chart||{name:s.name,starClass:s.starClass,seed:s.seed,planetCount:s.planetCount||0,pos:s.pos};
+      openFastTravel('FAST TRAVEL — '+s.name.toUpperCase(),'Jump to '+s.name+'?',()=>fastTravelToSystem(sys,GALAXY_DB.current));
+      closeQuickTravel();
+    });
+  });
+  (typeof VISITABLE_GALAXIES!=='undefined'?VISITABLE_GALAXIES:[]).forEach(g=>{
+    const gid=g.n.replace(/[^a-z0-9]/gi,'').toLowerCase();
+    const gName=g.n.replace(/\s*\(.+\)/,'');
+    addCard('🌌',gName,g.dist||'','Galaxy',()=>{
+      openFastTravel('FAST TRAVEL — '+gName.toUpperCase(),'Travel '+(g.dist||'millions of ly')+' to '+gName+'?',()=>fastTravelToGalaxy(gid,gName));
+      closeQuickTravel();
+    });
+  });
+}
+function onQtMapClick(e){
+  if(!qtRenderer||!qtCamera||!qtScene)return;
+  const cv=$('qt-canvas');const rect=cv.getBoundingClientRect();
+  const mx=((e.clientX-rect.left)/rect.width)*2-1;
+  const my=-((e.clientY-rect.top)/rect.height)*2+1;
+  qtRaycaster.setFromCamera(new THREE.Vector2(mx,my),qtCamera);
+  const meshes=qtMarkers.filter(o=>o.isMesh);
+  const hits=qtRaycaster.intersectObjects(meshes,false);
+  if(!hits.length)return;
+  const u=hits[0].object.userData||{};
+  if(u.qtKind==='dest'&&u.destIdx!=null){
+    STATE.flight.destIdx=u.destIdx;
+    const d=DESTINATIONS[u.destIdx];
+    if(d){$('hud-dest').textContent=d.name;plotCourse(u.destIdx);}
+    closeQuickTravel();return;
+  }
+  if(u.qtKind==='sol'){
+    openFastTravel('SOL SYSTEM — HOME','Fast-travel to your home position in the solar system?',()=>fastTravelToSystem(null));
+    closeQuickTravel();return;
+  }
+  if(u.qtKind==='system'&&u.systemRef){
+    const s=u.systemRef;
+    const chart=s.systemChart||(typeof systemChartFromArmCell==='function'?systemChartFromArmCell(s):null);
+    const sys=chart||{name:s.name,starClass:s.starClass,seed:s.seed,planetCount:s.planetCount||0,pos:s.pos};
+    openFastTravel('FAST TRAVEL — '+s.name.toUpperCase(),'Jump to '+s.name+'?',()=>fastTravelToSystem(sys,GALAXY_DB.current));
+    closeQuickTravel();return;
+  }
+  if(u.qtKind==='galaxy'&&u.galaxyId){
+    openFastTravel('FAST TRAVEL — '+u.galaxyName.toUpperCase(),'Travel '+(u.dist||'millions of ly')+' to '+u.galaxyName+'?',()=>fastTravelToGalaxy(u.galaxyId,u.galaxyName));
+    closeQuickTravel();
+  }
+}
+function qtLoop(){
+  if(!qtRunning||!$('ar-bottom')||!$('ar-bottom').classList.contains('open')){qtAnimId=0;return;}
+  qtAnimId=requestAnimationFrame(qtLoop);
+  if(qtControls)qtControls.update();
+  if(qtRenderer&&qtScene&&qtCamera)qtRenderer.render(qtScene,qtCamera);
 }
 
 async function initFlightScene(){
@@ -3784,6 +3989,8 @@ async function initFlightScene(){
   cv.width=W;cv.height=H;
   cv.style.cssText='position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none;z-index:1;';
   container.insertBefore(cv,container.firstChild);
+  // Tap/click under crosshair → brief name label (no always-on sprites)
+  cv.addEventListener('click',()=>{try{labelUnderCrosshairOnClick();}catch(e){};},{passive:true});
 
   // Detect device capabilities + pick a quality tier before building the renderer
   try{ detectCapabilities(); loadGfxChoice(); applyQualityTier(); }catch(e){console.warn('cap init:',e);}
@@ -3987,8 +4194,8 @@ function buildFlightStars(){
   // Deep space is nearly empty — only distant stars as tiny points
   const starTex=makeCircleTex(16,'rgb(255,255,255)',1);
 
-  // Background star field — thousands of tiny distant points
-  {const n=6000;const p=new Float32Array(n*3),c=new Float32Array(n*3);
+  // Background star field — distant points (trimmed; MW band + local arm carry richness)
+  {const n=4000;const p=new Float32Array(n*3),c=new Float32Array(n*3);
   const pal=[[1,1,1],[.75,.88,1],[1,.94,.78],[.65,.78,1]];
   for(let i=0;i<n;i++){
     const phi=Math.acos(2*Math.random()-1),th=Math.random()*Math.PI*2,r=1500+Math.random()*48000;
@@ -3998,10 +4205,11 @@ function buildFlightStars(){
   const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(p,3));g.setAttribute('color',new THREE.BufferAttribute(c,3));
   flightScene.add(new THREE.Points(g,new THREE.PointsMaterial({size:1.2,sizeAttenuation:false,vertexColors:true,map:starTex,alphaTest:0.05,transparent:true,depthWrite:false})));}
 
-  // Mid-field slightly larger stars
-  {const n=1400;const p=new Float32Array(n*3),c=new Float32Array(n*3);
+  // Mid-field accent stars — cut 1400→500 (local arm immersion + MW band
+  // now carry near-field density; this was doubling particle cost at home).
+  {const n=500;const p=new Float32Array(n*3),c=new Float32Array(n*3);
   for(let i=0;i<n;i++){
-    const phi=Math.acos(2*Math.random()-1),th=Math.random()*Math.PI*2,r=300+Math.random()*1200;
+    const phi=Math.acos(2*Math.random()-1),th=Math.random()*Math.PI*2,r=400+Math.random()*1800;
     p[i*3]=r*Math.sin(phi)*Math.cos(th);p[i*3+1]=r*Math.sin(phi)*Math.sin(th)*0.5;p[i*3+2]=r*Math.cos(phi);
     const b=0.6+Math.random()*0.4;c[i*3]=b;c[i*3+1]=b;c[i*3+2]=b;
   }
@@ -4895,6 +5103,9 @@ async function buildSolarSystem(){
 
   // Comets — seeded positions/tails ('sol:comets') for stable returns
   const cometRand=seedRand(hashStr('sol:comets'));
+  const COMET_NAMES=['Halley','Encke','Swift-Tuttle','Tempel-Tuttle','Hyakutake','McNaught'];
+  if(typeof flightFlybys==='undefined')window.flightFlybys=[];
+  else flightFlybys.length=0;
   for(let i=0;i<6;i++){
     const cg=new THREE.Group();
     cg.add(new THREE.Mesh(new THREE.SphereGeometry(.22,8,8),new THREE.MeshStandardMaterial({color:0xeeeeff,emissive:0x8888ff,emissiveIntensity:1.5})));
@@ -4904,7 +5115,10 @@ async function buildSolarSystem(){
     cg.add(new THREE.Points(tg,new THREE.PointsMaterial({size:.1,color:0x8888ff,transparent:true,opacity:.55})));
     cg.position.set((cometRand()-0.5)*AU*20,(cometRand()-0.5)*40,(cometRand()-0.5)*AU*20);
     flightScene.add(cg);if(typeof _trackSystemExtra==='function')_trackSystemExtra(cg);
+    flightFlybys.push({name:'Comet '+COMET_NAMES[i],mesh:cg,labelRange:90});
   }
+  // Asteroid belt as a single flyby label target (belt centroid)
+  flightFlybys.push({name:'Asteroid Belt',mesh:{position:new THREE.Vector3(AU*2.7,0,AU*0.3)},labelRange:120});
 
   // Oort cloud — well beyond Neptune (AU*30.069 ≈ 842 units), at the
   // edge of Sol's gravitational influence. Fixed seedKey ('sol') so it
@@ -6943,7 +7157,10 @@ function bodyUnderCrosshair(){
   const camPos=flightCamera.position;
   let best=null,bestScore=-Infinity;
   const candidates=[...celestialBodies];
-  (distantSystems||[]).forEach(s=>candidates.push({name:s.name,mesh:{position:s.pos},isSystem:true}));
+  (distantSystems||[]).forEach(s=>candidates.push({name:s.name,mesh:{position:s.pos},isSystem:true,labelRange:4500}));
+  (typeof flightFlybys!=='undefined'?flightFlybys:[]).forEach(f=>{
+    if(f&&f.mesh)candidates.push({name:f.name,mesh:f.mesh,isFlyby:true,labelRange:f.labelRange||80});
+  });
   if(BIRD_TEMPLE.group&&BIRD_TEMPLE.spawned)candidates.push({name:'Bird Temple',mesh:{position:BIRD_TEMPLE.group.position},isBirdTemple:true});
   candidates.forEach(b=>{
     if(!b.mesh||b.name==='Sun')return;
@@ -6958,30 +7175,46 @@ function bodyUnderCrosshair(){
   return best;
 }
 
-// ── Crosshair-triggered name label — replaces the old always-on "Nearest
-// Body" panel, which read as cluttered/tacky for a story-adventure feel
-// (per direct request). Only pops up when the crosshair first lands on a
-// body AND the player is within its solar system's proximity - stays for
-// 4 seconds, then requires moving the crosshair off and back on to show
-// again, rather than continuously re-triggering while held over it.
-// Deliberately separate from the minimap's own labels, which are unaffected
-// and stay always-on there.
-let _lastHoveredBody=null, _labelHideTimer=null;
-const LABEL_PROXIMITY_RANGE = 60; // world units - "within the bounds of the celestial body's habitat/solar system"
+// ── Crosshair / proximity name label — no always-on flight sprites.
+// Pops when crosshair first lands on a body (or distant system / flyby)
+// within range; stays ~4s; does not re-spam while held. Minimap + QT/galaxy
+// map navigation labels are unaffected.
+let _lastHoveredBody=null, _labelHideTimer=null, _labelPinnedUntil=0;
+const LABEL_PROXIMITY_RANGE = 60; // local Sol bodies
+function showCrosshairLabel(name, holdMs){
+  if(!name)return;
+  const el=$('crosshair-label');if(!el)return;
+  el.textContent=name;
+  el.style.display='block';
+  if(_labelHideTimer)clearTimeout(_labelHideTimer);
+  const ms=holdMs||4000;
+  _labelPinnedUntil=performance.now()+ms;
+  _labelHideTimer=setTimeout(()=>{el.style.display='none';},ms);
+}
 function updateCrosshairLabel(){
   if(!boardFlight || !flightCamera){ _lastHoveredBody=null; return; }
   const body = bodyUnderCrosshair();
-  const withinRange = body && body.mesh && flightCamera.position.distanceTo(body.mesh.position) < LABEL_PROXIMITY_RANGE;
-  const currentName = withinRange ? body.name : null;
-
+  let currentName=null;
+  if(body&&body.mesh){
+    const dist=flightCamera.position.distanceTo(body.mesh.position);
+    const range=body.labelRange||LABEL_PROXIMITY_RANGE;
+    // Distant systems: crosshair aim alone within generous range is enough
+    // (they're sparse). Local bodies still need proximity.
+    if(body.isSystem){
+      if(dist<range)currentName=body.name;
+    }else if(dist<range){
+      currentName=body.name;
+    }
+  }
   if(currentName && currentName !== _lastHoveredBody){
-    const el = $('crosshair-label');
-    el.textContent = currentName;
-    el.style.display = 'block';
-    if(_labelHideTimer) clearTimeout(_labelHideTimer);
-    _labelHideTimer = setTimeout(()=>{ $('crosshair-label').style.display='none'; }, 4000);
+    showCrosshairLabel(currentName,4000);
   }
   _lastHoveredBody = currentName;
+}
+// Click-to-label: tap a distant system / body under crosshair to force-show.
+function labelUnderCrosshairOnClick(){
+  const body=bodyUnderCrosshair();
+  if(body&&body.name)showCrosshairLabel(body.name,4500);
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -7429,6 +7662,7 @@ function _clearFlightSystemScene(){
     try{ if(typeof _disposeObject3D==='function')_disposeObject3D(o); }catch(e){}
   }
   _flightSystemExtras=[];
+  try{ if(typeof flightFlybys!=='undefined')flightFlybys.length=0; }catch(e){}
 }
 function onLandPromptTap(){
   if(!_landTargetBody)return;
@@ -8470,20 +8704,37 @@ function buildStellarNeighborhood(group,fid){
 }
 
 let gmGalaxyLODs=[]; // progressive-detail records for the intergalactic tier
+// Seeded visitable galaxies (append-only). First 8 keep stable ids/positions;
+// new entries are appended so GALAXY_DB charting via getGalaxySystems stays
+// deterministic for already-visited ids.
+const VISITABLE_GALAXIES=[
+  {n:'Andromeda (M31)',   x:46000, y:6000,  z:-12000, r:2800, c:0x9fb6ff, tilt:0.45, type:'spiral', arms:2, dist:'2.5M ly'},
+  {n:'Triangulum (M33)',  x:52000, y:-7000, z:18000,  r:1200, c:0xb0c4ff, tilt:0.9,  type:'spiral', arms:3, dist:'2.7M ly'},
+  {n:'Sombrero (M104)',   x:-38000,y:9000,  z:30000,  r:1500, c:0xffe6c0, tilt:1.45, type:'sombrero', dist:'29M ly'},
+  {n:'Whirlpool (M51)',   x:30000, y:14000, z:40000,  r:1100, c:0xbcd0ff, tilt:0.2,  type:'spiral', arms:2, dist:'31M ly'},
+  {n:'Pinwheel (M101)',   x:-44000,y:-10000,z:-28000, r:1700, c:0xcfe0ff, tilt:0.15, type:'spiral', arms:5, dist:'21M ly'},
+  {n:'Centaurus A',       x:18000, y:-20000,z:-44000, r:1300, c:0xffd0a0, tilt:0.7,  type:'elliptical', dist:'13M ly'},
+  {n:'LMC',               x:-9000, y:-12000,z:6000,   r:520,  c:0xc8d4ff, tilt:0.3,  type:'irregular', dist:'160k ly'},
+  {n:'SMC',               x:-12000,y:-14000,z:9000,   r:340,  c:0xd0dcff, tilt:0.2,  type:'irregular', dist:'200k ly'},
+  // ── appended visitables (do not reshuffle above) ──
+  {n:"Bode's Galaxy (M81)", x:62000, y:8000,  z:22000,  r:1600, c:0xa8c0ff, tilt:0.55, type:'spiral', arms:2, dist:'12M ly'},
+  {n:'Cigar Galaxy (M82)',  x:64000, y:11000, z:25000,  r:900,  c:0xffb080, tilt:1.2,  type:'irregular', dist:'12M ly'},
+  {n:'Black Eye (M64)',     x:-28000,y:16000, z:48000,  r:1000, c:0xd0b8ff, tilt:0.35, type:'spiral', arms:2, dist:'17M ly'},
+  {n:'Southern Pinwheel (M83)', x:10000,y:-24000,z:52000, r:1400, c:0xc4d8ff, tilt:0.25, type:'spiral', arms:3, dist:'15M ly'},
+  {n:'Sculptor (NGC 253)',  x:-52000,y:-8000, z:16000,  r:1500, c:0xffd8b0, tilt:1.35, type:'spiral', arms:2, dist:'11M ly'},
+  {n:'Fireworks (NGC 6946)',x:40000, y:22000, z:-36000, r:1200, c:0xffa0c0, tilt:0.4,  type:'spiral', arms:4, dist:'25M ly'},
+  {n:'Cartwheel',           x:-20000,y:28000, z:-50000, r:1300, c:0xa0ffe0, tilt:0.1,  type:'spiral', arms:1, dist:'500M ly'},
+  {n:"Hoag's Object",       x:55000, y:-18000,z:-30000, r:800,  c:0xffe0a0, tilt:0.05, type:'elliptical', dist:'600M ly'},
+  {n:'Circinus',            x:-60000,y:4000,  z:-18000, r:950,  c:0xffc090, tilt:0.8,  type:'spiral', arms:2, dist:'13M ly'},
+  {n:'NGC 1300',            x:25000, y:-28000,z:-42000, r:1350, c:0xb8d0ff, tilt:0.5,  type:'spiral', arms:2, dist:'61M ly'},
+  {n:'Leo Triplet (M66)',   x:-15000,y:32000, z:28000,  r:1100, c:0xd8c8ff, tilt:0.65, type:'spiral', arms:2, dist:'35M ly'},
+  {n:'Antennae (NGC 4038)', x:48000, y:5000,  z:55000,  r:1250, c:0xffb0d0, tilt:0.9,  type:'irregular', dist:'45M ly'},
+];
 function buildIntergalactic(group,fid){
   gmGalaxyLODs=[];
   // Milky Way shrinks to a disc here; show real named neighbors with their
   // characteristic morphologies, plus deep-field galaxy clusters beyond.
-  const neighbors=[
-    {n:'Andromeda (M31)',   x:46000, y:6000,  z:-12000, r:2800, c:0x9fb6ff, tilt:0.45, type:'spiral', arms:2, dist:'2.5M ly'},
-    {n:'Triangulum (M33)',  x:52000, y:-7000, z:18000,  r:1200, c:0xb0c4ff, tilt:0.9,  type:'spiral', arms:3, dist:'2.7M ly'},
-    {n:'Sombrero (M104)',   x:-38000,y:9000,  z:30000,  r:1500, c:0xffe6c0, tilt:1.45, type:'sombrero', dist:'29M ly'},
-    {n:'Whirlpool (M51)',   x:30000, y:14000, z:40000,  r:1100, c:0xbcd0ff, tilt:0.2,  type:'spiral', arms:2, dist:'31M ly'},
-    {n:'Pinwheel (M101)',   x:-44000,y:-10000,z:-28000, r:1700, c:0xcfe0ff, tilt:0.15, type:'spiral', arms:5, dist:'21M ly'},
-    {n:'Centaurus A',       x:18000, y:-20000,z:-44000, r:1300, c:0xffd0a0, tilt:0.7,  type:'elliptical', dist:'13M ly'},
-    {n:'LMC',               x:-9000, y:-12000,z:6000,   r:520,  c:0xc8d4ff, tilt:0.3,  type:'irregular', dist:'160k ly'},
-    {n:'SMC',               x:-12000,y:-14000,z:9000,   r:340,  c:0xd0dcff, tilt:0.2,  type:'irregular', dist:'200k ly'},
-  ];
+  const neighbors=VISITABLE_GALAXIES;
   neighbors.forEach(g=>{
     const gid=g.n.replace(/[^a-z0-9]/gi,'').toLowerCase();
     const gName=g.n.replace(/\s*\(.+\)/,'');
@@ -9410,6 +9661,7 @@ function _disposeObject3D(obj){
 function buildFlightGalaxyBand(){
   if(flightGalaxyBand){_disposeObject3D(flightGalaxyBand);flightScene.remove(flightGalaxyBand);flightGalaxyBand=null;}
   if(flightGalaxyCore){_disposeObject3D(flightGalaxyCore);flightScene.remove(flightGalaxyCore);flightGalaxyCore=null;}
+  if(window._flightLocalArm){_disposeObject3D(window._flightLocalArm);flightScene.remove(window._flightLocalArm);window._flightLocalArm=null;}
   flightNebulae.forEach(n=>{_disposeObject3D(n);flightScene.remove(n);});flightNebulae=[];
   if(!STATE.settings.galaxyband)return;
   // HARD-OFF until Safari+Chrome device proof: GPU builder now draws InstancedMesh
@@ -9675,8 +9927,9 @@ function buildFlightGalaxyBandCPU(){
   g.setAttribute('position',new THREE.BufferAttribute(new Float32Array(pts),3));
   g.setAttribute('color',new THREE.BufferAttribute(new Float32Array(cols),3));
   const tex=makeCircleTex(16,'rgb(255,255,255)',1);
-  // Small sharp points; mobile slightly larger for readability
-  const armSize=mobile?(gfxLow?70:85):(gfxLow?48:58);
+  // Home-scale readability: spiral #14 sizes (48–85) read as void from Sol.
+  // Bump for immersion without restoring the old star-sphere wash.
+  const armSize=mobile?(gfxLow?110:130):(gfxLow?78:98);
   flightGalaxyBand=new THREE.Points(g,new THREE.PointsMaterial({
     size:armSize,sizeAttenuation:true,vertexColors:true,map:tex,
     alphaTest:0.02,transparent:true,opacity:0.95,depthWrite:false,blending:THREE.AdditiveBlending
@@ -9697,14 +9950,15 @@ function buildFlightGalaxyBandCPU(){
   const cg=new THREE.BufferGeometry();
   cg.setAttribute('position',new THREE.BufferAttribute(new Float32Array(cp),3));
   cg.setAttribute('color',new THREE.BufferAttribute(new Float32Array(cc),3));
-  const coreSize=mobile?(gfxLow?90:105):(gfxLow?62:72);
+  const coreSize=mobile?(gfxLow?130:155):(gfxLow?95:115);
   galGroup.add(new THREE.Points(cg,new THREE.PointsMaterial({
     size:coreSize,sizeAttenuation:true,vertexColors:true,map:tex,
     transparent:true,opacity:0.96,depthWrite:false,blending:THREE.AdditiveBlending
   })));
 
-  // Modest cyan Sgr A* glow — no whiteout, no warm cream halo stack
-  galGroup.add(makeGlowSprite('rgba(170,235,255,0.32)',RG*0.02));
+  // Brighter Sgr A* cue so home view sees the galactic core direction
+  galGroup.add(makeGlowSprite('rgba(170,235,255,0.5)',RG*0.032));
+  galGroup.add(makeGlowSprite('rgba(200,240,255,0.22)',RG*0.055));
 
   // Thin cool accretion ring (cyan→soft blue), kept small
   const dn=Math.round(Math.min(2800, coreBudget*0.22));
@@ -9730,7 +9984,161 @@ function buildFlightGalaxyBandCPU(){
   galGroup.position.set(-RG*0.5,0,-RG*0.16);
   flightGalaxyCore=galGroup;
   flightScene.add(galGroup);
+
+  // ── LOCAL arm immersion (home-void fix) ──────────────────────────
+  // Spiral band alone is sparse/far at Sol scale. Embed the player in a
+  // dense local Orion-arm cloud + mid-field band streak toward the core.
+  // Parent to flightScene at origin (Sol); oriented with the galactic plane.
+  try{
+    if(window._flightLocalArm){
+      _disposeObject3D(window._flightLocalArm);
+      flightScene.remove(window._flightLocalArm);
+      window._flightLocalArm=null;
+    }
+    const local=new THREE.Group();
+    local.rotation.copy(galGroup.rotation);
+    const locN=mobile?(gfxLow?2800:4200):(gfxLow?5000:7500);
+    const lp=new Float32Array(locN*3),lc=new Float32Array(locN*3);
+    // Dense flattened ellipsoid around Sol (player is IN the arm)
+    for(let i=0;i<locN;i++){
+      const along= (Math.random()-0.5)*5200;          // along arm
+      const across=(Math.random()-0.5)*Math.random()*900; // arm width
+      const thick=(Math.random()-0.5)*Math.random()*280;  // disc thickness
+      // Bias a brighter tongue toward galactic center (-X in gal local ≈ core)
+      const coreBias=Math.random()*Math.random()*3800;
+      lp[i*3]=along - coreBias*0.35;
+      lp[i*3+1]=thick;
+      lp[i*3+2]=across;
+      const t=Math.min(1,Math.hypot(lp[i*3],lp[i*3+2])/4500);
+      const b=(0.55+Math.random()*0.45)*(1-t*0.35);
+      // cyan-blue local arm (match spiral palette, no warm cream wash)
+      lc[i*3]=0.4*b;lc[i*3+1]=0.72*b;lc[i*3+2]=1.0*b;
+    }
+    const lg=new THREE.BufferGeometry();
+    lg.setAttribute('position',new THREE.BufferAttribute(lp,3));
+    lg.setAttribute('color',new THREE.BufferAttribute(lc,3));
+    const locSize=mobile?(gfxLow?28:36):(gfxLow?22:28);
+    local.add(new THREE.Points(lg,new THREE.PointsMaterial({
+      size:locSize,sizeAttenuation:true,vertexColors:true,map:tex,
+      transparent:true,opacity:0.9,depthWrite:false,blending:THREE.AdditiveBlending,alphaTest:0.02
+    })));
+    // Soft nearby glow so looking "out" isn't a black void
+    local.add(makeGlowSprite('rgba(120,180,255,0.18)',900));
+    local.add(makeGlowSprite('rgba(160,210,255,0.10)',1600));
+    flightScene.add(local);
+    window._flightLocalArm=local;
+  }catch(e){console.warn('local arm:',e);}
 }
+
+// ── Menu / Stabilizer spiral plate (shared Blender GN cyan spiral) ─────
+// Cheap looping particle disc for menu splash behind SVG. Low-only density
+// (~few thousand pts). No GPU path, no WORLD_SEED touch. Stabilizer mounts
+// via window.buildMenuGalaxySpiralPlate(parent, opts).
+const MENU_SPIRAL_DEFAULTS={
+  RG:1.0,           // unit disc radius (caller scales the Group)
+  turns:2.25,
+  noiseScale:6.0,
+  nArms:2,
+  lowCount:2800,    // hard Low budget for menu/splash
+  pointSize:0.028,
+  // cyan core → blue arms → deep navy (matches flight band palette)
+  coreRgb:[0.72,0.95,1.0],
+  armRgb:[0.30,0.60,1.0],
+  rimRgb:[0.10,0.18,0.55]
+};
+function createSpiralGalaxyPoints(budget, opts){
+  const o=Object.assign({}, MENU_SPIRAL_DEFAULTS, opts||{});
+  const N=Math.max(400, Math.min(budget|0, o.lowCount|2800));
+  const RG=+o.RG||1, TURNS=+o.turns||2.25, NOISE_SCALE=+o.noiseScale||6, N_ARMS=+o.nArms||2;
+  function _gh(x,y,z){const s=Math.sin(x*127.1+y*311.7+z*74.7)*43758.5453;return s-Math.floor(s);}
+  function _gnoise(x,y,z){
+    const xi=Math.floor(x),yi=Math.floor(y),zi=Math.floor(z);
+    const xf=x-xi,yf=y-yi,zf=z-zi;
+    const u=xf*xf*(3-2*xf),v=yf*yf*(3-2*yf),w=zf*zf*(3-2*zf);
+    const n000=_gh(xi,yi,zi),n100=_gh(xi+1,yi,zi),n010=_gh(xi,yi+1,zi),n110=_gh(xi+1,yi+1,zi);
+    const n001=_gh(xi,yi,zi+1),n101=_gh(xi+1,yi,zi+1),n011=_gh(xi,yi+1,zi+1),n111=_gh(xi+1,yi+1,zi+1);
+    const x00=n000+(n100-n000)*u,x10=n010+(n110-n010)*u,x01=n001+(n101-n001)*u,x11=n011+(n111-n011)*u;
+    const y0=x00+(x10-x00)*v,y1=x01+(x11-x01)*v;return y0+(y1-y0)*w;
+  }
+  function _gfbm(x,y,z,oct){let a=0.5,f=1,s=0,n=0;for(let i=0;i<oct;i++){s+=a*_gnoise(x*f,y*f,z*f);n+=a;a*=0.55;f*=2;}return s/n;}
+  const pts=[],cols=[];
+  const attempts=Math.round(N*2.2);
+  let placed=0;
+  for(let i=0;i<attempts&&placed<N;i++){
+    const u=Math.random(), th0=Math.random()*Math.PI*2;
+    const r0=Math.sqrt(u)*RG;
+    let px=Math.cos(th0)*r0, pz=Math.sin(th0)*r0;
+    let py=(Math.random()-0.5)*Math.random()*0.04*RG*(1-r0/RG*0.55);
+    const r=Math.hypot(px,pz), t=Math.min(1,r/RG);
+    const spiralAngle=Math.log(1+r/(RG*0.014)+1e-6)/Math.log(1+1/0.014)*TURNS*Math.PI*2;
+    const c=Math.cos(spiralAngle), s=Math.sin(spiralAngle);
+    let rx=px*c-pz*s, rz=px*s+pz*c; px=rx; pz=rz;
+    const ns=NOISE_SCALE;
+    const nOff=_gfbm(px*ns*0.8, py*ns*2+17.3, pz*ns*0.8, 3);
+    const nOff2=_gfbm(px*ns*0.9+40.1, py*ns*2.2, pz*ns*0.9+9.7, 2);
+    const scatter=(0.008+r*0.035)*(0.55+nOff)*RG;
+    px+=(nOff-0.5)*2.0*scatter; pz+=(nOff2-0.5)*2.0*scatter; py+=(nOff-0.5)*0.012*RG;
+    const ang=Math.atan2(pz,px), phase=ang-spiralAngle;
+    const armWave=Math.pow(Math.abs(Math.cos(phase*N_ARMS*0.5)),1.35);
+    const nGate=_gfbm(px*4.5+3.1, py*20+1.7, pz*4.5+8.4, 4);
+    const radialFall=Math.exp(-(r*r)/(2*(RG*0.42)*(RG*0.42)));
+    const dens=armWave*(0.35+0.65*nGate)*radialFall;
+    if(dens<0.22)continue;
+    if(dens<0.38&&Math.random()>dens*1.1)continue;
+    pts.push(px,py,pz);
+    const coreW=Math.exp(-(r*r)/(2*(RG*0.11)*(RG*0.11)));
+    let cr,cg,cb;
+    if(coreW>0.45){cr=o.coreRgb[0];cg=o.coreRgb[1];cb=o.coreRgb[2];}
+    else if(t<0.55){const u2=t/0.55;cr=o.armRgb[0]+(o.rimRgb[0]-o.armRgb[0])*u2*0.3;cg=o.armRgb[1]*(1-u2*0.3);cb=o.armRgb[2];}
+    else{cr=o.rimRgb[0];cg=o.rimRgb[1];cb=o.rimRgb[2];}
+    if(nGate>0.72&&armWave>0.7&&Math.random()<0.03){cr=0.85;cg=0.45;cb=0.95;}
+    const b=(0.45+dens*0.55)*(0.7+Math.random()*0.3);
+    cols.push(cr*b,cg*b,cb*b);
+    placed++;
+  }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.BufferAttribute(new Float32Array(pts),3));
+  g.setAttribute('color',new THREE.BufferAttribute(new Float32Array(cols),3));
+  return g;
+}
+/** Mount a Low-budget cyan spiral plate behind menu SVG.
+ *  @param {THREE.Object3D|THREE.Scene} parent
+ *  @param {object} [opts] — RG, turns, noiseScale, lowCount, pointSize, spin, scale
+ *  @returns {{group:THREE.Group, points:THREE.Points, update:(dt)=>void, dispose:()=>void}}
+ */
+function buildMenuGalaxySpiralPlate(parent, opts){
+  const o=Object.assign({}, MENU_SPIRAL_DEFAULTS, opts||{});
+  const budget=Math.min(o.lowCount||2800, (opts&&opts.budget)||o.lowCount||2800);
+  const geo=createSpiralGalaxyPoints(budget, o);
+  let map=null;
+  try{map=typeof makeCircleTex==='function'?makeCircleTex(16,'rgb(255,255,255)',1):null;}catch(e){}
+  const mat=new THREE.PointsMaterial({
+    size:o.pointSize||0.028, sizeAttenuation:true, vertexColors:true,
+    map:map, transparent:true, opacity:0.92, depthWrite:false,
+    blending:THREE.AdditiveBlending, alphaTest:0.02
+  });
+  const points=new THREE.Points(geo, mat);
+  points.frustumCulled=false;
+  const group=new THREE.Group();
+  group.add(points);
+  const sc=(opts&&opts.scale!=null)?opts.scale:1;
+  group.scale.setScalar(sc);
+  if(opts&&opts.rotation)group.rotation.set(opts.rotation.x||0.55, opts.rotation.y||0.2, opts.rotation.z||0.05);
+  else group.rotation.set(0.55,0.2,0.05);
+  if(parent&&parent.add)parent.add(group);
+  const spin=(opts&&opts.spin!=null)?opts.spin:0.08;
+  return {
+    group, points, settings:o,
+    update(dt){ group.rotation.y += spin*(dt||0.016); },
+    dispose(){
+      try{if(group.parent)group.parent.remove(group);}catch(e){}
+      try{geo.dispose();mat.dispose();if(map&&map.dispose)map.dispose();}catch(e){}
+    }
+  };
+}
+window.MENU_SPIRAL_DEFAULTS=MENU_SPIRAL_DEFAULTS;
+window.createSpiralGalaxyPoints=createSpiralGalaxyPoints;
+window.buildMenuGalaxySpiralPlate=buildMenuGalaxySpiralPlate;
 
 // ── 3. MULTI-STAR DISTANT SYSTEMS (visible as systems you can fly to) ─
 let distantSystems=[];
@@ -9739,6 +10147,27 @@ let distantSystems=[];
    emissive, granulation-scale turbulence rather than banding, and a
    layered corona/flare instead of an atmosphere shell. Reused for every
    star in the seeded field below, not just the Sun. */
+// Cheap distant-star marker (Sol-home lag fix). One small sphere + single
+// soft corona sprite — no TSL noise, no PointLight. Used by the seeded
+// field; buildProceduralStarMesh remains for rare close-up uses.
+function buildCheapStarMarker(radius, starColor){
+  const group=new THREE.Group();
+  const mesh=new THREE.Mesh(
+    new THREE.SphereGeometry(radius,12,12),
+    new THREE.MeshBasicMaterial({color:starColor})
+  );
+  group.add(mesh);
+  try{
+    const hex='#'+new THREE.Color(starColor).getHexString();
+    const gt=makeCircleTex(32,hex,1);
+    const spr=new THREE.Sprite(new THREE.SpriteMaterial({
+      map:gt,color:starColor,transparent:true,opacity:0.35,
+      blending:THREE.AdditiveBlending,depthWrite:false
+    }));
+    spr.scale.set(radius*7,radius*7,1);group.add(spr);
+  }catch(e){}
+  return group;
+}
 function buildProceduralStarMesh(radius, seedVal, starColor){
   const group = new THREE.Group();
   if(!(_isRealWebGPU(flightRenderer))){
@@ -9848,23 +10277,23 @@ function buildDistantStarSystems(){
   distantSystems=[];
   const STAR_FIELD = generateSeededStarField(140, 918273);
   STAR_FIELD.forEach(s=>{
-    const grp = buildProceduralStarMesh(s.radius, s.seed, s.cls.col);
+    // Cheap markers only — full TSL star shaders + PointLight×140 were the
+    // home-system lag stack (doubled with Sol corona/sun PointLight). Nearest
+    // lights are enabled lazily in updateDistantSystems.
+    const grp = buildCheapStarMarker(s.radius, s.cls.col);
     grp.position.set(s.pos[0], s.pos[1], s.pos[2]);
-    // Real light so nearby boards read the star; no stub planet meshes.
-    const pl=new THREE.PointLight(s.cls.col,1.1,s.radius*400);grp.add(pl);
     flightScene.add(grp);
-    const lc=document.createElement('canvas');lc.width=256;lc.height=40;const lcx=lc.getContext('2d');
-    lcx.font='bold 18px Orbitron,monospace';lcx.fillStyle='rgba(200,220,255,0.85)';lcx.fillText(s.name,4,26);
-    const ls=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(lc),transparent:true,depthWrite:false}));
-    ls.scale.set(s.radius*20,s.radius*3,1);ls.position.set(s.pos[0],s.pos[1]+s.radius*3,s.pos[2]);flightScene.add(ls);
+    // No always-on label sprites in flight — name lives on the record;
+    // proximity/click crosshair label shows it briefly (see updateCrosshairLabel).
     distantSystems.push({
       group:grp, planets:[], name:s.name, pos:new THREE.Vector3(...s.pos),
-      labelSprite:ls, starClass:s.cls.name, rogue:!s.hasPlanets,
+      labelSprite:null, starClass:s.cls.name, rogue:!s.hasPlanets,
       seed:s.seed, planetCount:s.planetCount||0, starRadius:s.radius,
       systemChart:null // lazy via systemChartFromArmCell on enter
     });
   });
 }
+let _distLightT=0,_distActiveLights=[];
 function updateDistantSystems(dt){
   // Nested for-loops instead of nested .forEach — two fresh closures were
   // being allocated every frame (outer + inner) for every distant system.
@@ -9877,6 +10306,36 @@ function updateDistantSystems(dt){
       p.mesh.rotation.y+=0.003;
     }
   }
+  // Lazily light only the 2 nearest distant stars (never 140 PointLights).
+  _distLightT+=dt;
+  if(_distLightT<0.5||!flightCamera)return;
+  _distLightT=0;
+  const cam=flightCamera.position;
+  const ranked=[];
+  for(let i=0;i<distantSystems.length;i++){
+    const s=distantSystems[i];if(!s||!s.pos)continue;
+    ranked.push({s,d:cam.distanceToSquared(s.pos)});
+  }
+  ranked.sort((a,b)=>a.d-b.d);
+  const keep=new Set(ranked.slice(0,2).map(r=>r.s));
+  // Remove lights no longer needed
+  for(let i=_distActiveLights.length-1;i>=0;i--){
+    const {sys,light}=_distActiveLights[i];
+    if(!keep.has(sys)){
+      if(light.parent)light.parent.remove(light);
+      try{light.dispose&&light.dispose();}catch(e){}
+      _distActiveLights.splice(i,1);
+    }
+  }
+  keep.forEach(sys=>{
+    if(_distActiveLights.some(x=>x.sys===sys))return;
+    if(!sys.group)return;
+    const col=(sys.group.children[0]&&sys.group.children[0].material&&sys.group.children[0].material.color)
+      ?sys.group.children[0].material.color.getHex():0xffeecc;
+    const pl=new THREE.PointLight(col,0.9,(sys.starRadius||1)*350);
+    sys.group.add(pl);
+    _distActiveLights.push({sys,light:pl});
+  });
 }
 
 // ── 4. POST-PROCESSING: bloom + motion blur (r128, no addons) ────
@@ -10009,15 +10468,17 @@ function applyRenderSettings(){
 // ── VOLUMETRIC SPACE DUST / DRIFTING NEBULA VOLUME ──────────────
 // Soft additive point sprites that drift near the camera, giving the
 // universe a sense of depth and atmosphere. Density scales by tier.
-let flightDust=null,_dustVel=null,_dustT=0;
+let flightDust=null,_dustVel=null,_dustT=0,_dustFrame=0;
 function buildVolumetricDust(){
   if(flightDust){flightScene.remove(flightDust);flightDust.geometry.dispose();flightDust=null;}
   if(!GFX.volumetricDust){return;}
-  const base=5200;
-  const N=Math.max(600,Math.round(base*(GFX.dustDensity||1)));
+  // Home-lag fix: was 5200×density rewritten every frame. Cap hard and keep
+  // positions camera-local so we only drift a subset each tick.
+  const base=1800;
+  const N=Math.max(400,Math.round(base*Math.min(1.2,GFX.dustDensity||1)));
   const p=new Float32Array(N*3),c=new Float32Array(N*3),sz=new Float32Array(N);
   _dustVel=new Float32Array(N*3);
-  const R=160; // dust occupies a moving cube around the camera
+  const R=140;
   const tints=[[0.5,0.7,1.0],[0.7,0.55,1.0],[1.0,0.8,0.55],[0.6,0.9,0.85]];
   for(let i=0;i<N;i++){
     p[i*3]=(Math.random()-0.5)*R*2;
@@ -10027,8 +10488,7 @@ function buildVolumetricDust(){
     const b=0.15+Math.random()*0.5;
     c[i*3]=t[0]*b;c[i*3+1]=t[1]*b;c[i*3+2]=t[2]*b;
     sz[i]=rnd(0.6,2.6);
-    // gentle drift
-    _dustVel[i*3]=rnd(-2,2);_dustVel[i*3+1]=rnd(-2,2);_dustVel[i*3+2]=rnd(-2,2);
+    _dustVel[i*3]=rnd(-1.2,1.2);_dustVel[i*3+1]=rnd(-1.2,1.2);_dustVel[i*3+2]=rnd(-1.2,1.2);
   }
   const g=new THREE.BufferGeometry();
   g.setAttribute('position',new THREE.BufferAttribute(p,3));
@@ -10036,8 +10496,8 @@ function buildVolumetricDust(){
   g.setAttribute('asize',new THREE.BufferAttribute(sz,1));
   const tex=makeCircleTex(32,'rgb(200,220,255)',0.7);
   const mat=new THREE.PointsMaterial({
-    size:3.4,sizeAttenuation:true,vertexColors:true,map:tex,
-    transparent:true,opacity:0.78,depthWrite:false,blending:THREE.AdditiveBlending,alphaTest:0.01
+    size:3.2,sizeAttenuation:true,vertexColors:true,map:tex,
+    transparent:true,opacity:0.72,depthWrite:false,blending:THREE.AdditiveBlending,alphaTest:0.01
   });
   flightDust=new THREE.Points(g,mat);
   flightDust.frustumCulled=false;
@@ -10045,21 +10505,21 @@ function buildVolumetricDust(){
 }
 function updateVolumetricDust(dt){
   if(!flightDust||!flightCamera)return;
-  _dustT+=dt;
-  // recenter the dust cube on the camera and wrap particles that drift out
+  _dustT+=dt;_dustFrame++;
+  // Parent-follow camera (no full buffer rewrite for recenter)
   const cam=flightCamera.position;
+  flightDust.position.copy(cam);
+  // Stagger: update 1/3 of particles per frame
   const pos=flightDust.geometry.attributes.position;
-  const R=160;
-  flightDust.position.set(0,0,0);
-  for(let i=0;i<pos.count;i++){
-    let x=pos.getX(i)+_dustVel[i*3]*dt;
-    let y=pos.getY(i)+_dustVel[i*3+1]*dt;
-    let z=pos.getZ(i)+_dustVel[i*3+2]*dt;
-    // wrap relative to camera so dust always surrounds the player
-    const rx=x-cam.x, ry=y-cam.y, rz=z-cam.z;
-    if(rx> R)x-=R*2; else if(rx<-R)x+=R*2;
-    if(ry> R)y-=R*2; else if(ry<-R)y+=R*2;
-    if(rz> R)z-=R*2; else if(rz<-R)z+=R*2;
+  const R=140,N=pos.count,stride=3;
+  const start=_dustFrame%stride;
+  for(let i=start;i<N;i+=stride){
+    let x=pos.getX(i)+_dustVel[i*3]*dt*stride;
+    let y=pos.getY(i)+_dustVel[i*3+1]*dt*stride;
+    let z=pos.getZ(i)+_dustVel[i*3+2]*dt*stride;
+    if(x> R)x-=R*2; else if(x<-R)x+=R*2;
+    if(y> R)y-=R*2; else if(y<-R)y+=R*2;
+    if(z> R)z-=R*2; else if(z<-R)z+=R*2;
     pos.setXYZ(i,x,y,z);
   }
   pos.needsUpdate=true;
