@@ -1449,7 +1449,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     <button id="level-galaxy-btn" class="side-pad" onclick="autoLevel('galaxy')" title="Auto-level to the galactic plane"><span class="sp-ico">🌌</span>GAL</button>
     <button id="level-system-btn" class="side-pad" onclick="autoLevel('system')" title="Auto-level to the nearest system's orbital plane"><span class="sp-ico">🪐</span>SYS</button>
   </div>
-  <div id="land-prompt" onclick="if(_landTargetBody)openOrbitApproach(_landTargetBody);" style="display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(91,127,255,.12);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.6rem;letter-spacing:.15em;padding:.5rem 1.2rem;border-radius:3px;pointer-events:none;z-index:30;text-align:center;"></div>
+  <div id="land-prompt" onclick="onLandPromptTap();" style="display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(91,127,255,.12);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.6rem;letter-spacing:.15em;padding:.5rem 1.2rem;border-radius:3px;pointer-events:none;z-index:30;text-align:center;"></div>
   <div id="ship-land-prompt" onclick="enterShipWalk()" style="display:none;position:absolute;top:56%;left:50%;transform:translate(-50%,-50%);background:rgba(255,255,255,.12);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.6rem;letter-spacing:.15em;padding:.5rem 1.2rem;border-radius:3px;pointer-events:auto;cursor:pointer;z-index:30;text-align:center;">🕊 TAP TO LAND ON THE BIRD TEMPLE</div>
   <button id="ship-liftoff-btn" onclick="exitShipWalk()" style="display:none;position:absolute;bottom:calc(20px + var(--safe-bot));left:50%;transform:translateX(-50%);pointer-events:auto;padding:8px 20px;background:rgba(255,255,255,.12);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.6rem;letter-spacing:.15em;cursor:pointer;border-radius:3px;z-index:31;">🚀 LIFTOFF</button>
   <button id="ship-jump-btn" style="display:none;position:absolute;bottom:calc(190px + var(--safe-bot));left:200px;pointer-events:auto;width:56px;height:56px;border-radius:50%;background:rgba(255,255,255,.1);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.6rem;letter-spacing:.08em;cursor:pointer;z-index:31;touch-action:none;">JUMP</button>
@@ -3965,70 +3965,13 @@ function buildFlightStars(){
   const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(p,3));g.setAttribute('color',new THREE.BufferAttribute(c,3));
   flightScene.add(new THREE.Points(g,new THREE.PointsMaterial({size:1.8,sizeAttenuation:false,vertexColors:true,map:starTex,alphaTest:0.05,transparent:true,depthWrite:false})));}
 }
-// TSL nebula cloud material — replaces the old flat solid-color point
-// sprites (just a radial-gradient PNG tinted per-particle, no internal
-// shape/light/shadow variation at all) with real procedural volumetric-
-// looking smoke: fractal noise for the cloud's own internal density
-// shape, a second darker-tinted noise layer (sampled with a light-
-// direction offset) for self-shadowing within the smoke rather than a
-// flat tint, a third high-frequency noise layer thresholded into bright
-// sparkle highlights in the cloud's own hue, and a soft radial falloff
-// so sprite edges fade rather than cut off hard. SpriteNodeMaterial
-// auto-faces the camera, so no manual billboarding math needed.
-function makeNebulaCloudMaterial(baseColorHex, seed){
-  const mat = new THREE.SpriteNodeMaterial({transparent:true, depthWrite:false, blending:THREE.AdditiveBlending});
-  const baseColor = uniform(new THREE.Color(baseColorHex));
-  const seedU = uniform(seed);
-  const lightDir = uniform(new THREE.Vector2(0.6, 0.35)); // simulated 2D "light" direction across the sprite face, same for every cloud so shading reads consistently
-  mat.colorNode = Fn(()=>{
-    const p = uv().sub(0.5).mul(2.0); // -1..1 across the sprite
-    const r = p.length();
-    // Soft radial mask — circular falloff, not a hard-edged square sprite.
-    const edgeMask = float(1.0).sub(smoothstep(0.35, 1.0, r));
+// Worlds dead stub removed: makeNebulaCloudMaterial (TSL Sprite cards).
+// Live nebulae = buildFlightNebulae Points only — no dual dust stack.
 
-    // Cloud shape: multi-octave fractal noise, animated with a slow drift
-    // so the smoke reads as alive, not a static texture.
-    const drift = vec3(time.mul(0.015), time.mul(0.011), seedU);
-    const shapeN = mx_fractal_noise_float(p.mul(2.2).add(drift.xy), 4, 2.0, 0.55).add(seedU.mul(0.001));
-    const density = clamp(shapeN.mul(1.3).sub(0.15), 0.0, 1.0).mul(edgeMask);
-
-    // Self-shadowing: a second sample of the SAME noise field, offset
-    // along the light direction — where that offset sample reads denser
-    // than the base, this point is "behind" thicker smoke relative to
-    // the light, so it darkens. Where the offset sample is thinner, more
-    // light reaches this point, so it brightens. This is what actually
-    // produces the intertwined light/shadow look asked for, rather than
-    // a single flat density-to-opacity mapping.
-    const shadowSampleN = mx_fractal_noise_float(p.add(lightDir.mul(0.35)).mul(2.2).add(drift.xy), 3, 2.0, 0.55);
-    const lightAmt = clamp(float(1.0).sub(shadowSampleN.sub(shapeN)).mul(0.6).add(0.55), 0.15, 1.4);
-
-    // Sparkle: high-frequency noise, thresholded hard so only scattered
-    // bright points survive rather than a smooth bright patch — reads as
-    // individual glints in the cloud's own hue, not a wash of extra light.
-    const sparkleN = mx_fractal_noise_float(p.mul(9.0).add(vec2(seedU, time.mul(0.05))), 2, 2.0, 0.5);
-    const sparkleMask = smoothstep(0.62, 0.78, sparkleN).mul(density);
-
-    const shadedColor = baseColor.mul(lightAmt);
-    const withSparkle = mix(shadedColor, vec3(1.0,1.0,1.0).mix(baseColor, 0.3), sparkleMask.mul(0.8));
-    return withSparkle;
-  })();
-  mat.opacityNode = Fn(()=>{
-    const p = uv().sub(0.5).mul(2.0);
-    const r = p.length();
-    const edgeMask = float(1.0).sub(smoothstep(0.35, 1.0, r));
-    const drift = vec3(time.mul(0.015), time.mul(0.011), seedU);
-    const shapeN = mx_fractal_noise_float(p.mul(2.2).add(drift.xy), 4, 2.0, 0.55).add(seedU.mul(0.001));
-    const density = clamp(shapeN.mul(1.3).sub(0.15), 0.0, 1.0).mul(edgeMask);
-    return density.mul(0.55);
-  })();
-  return mat;
-}
 function buildFlightNebulae(){
-  // Nebulae as Points/GPU particles — NOT Sprite billboards. Live builds showed
-  // the old SpriteNodeMaterial cards as flat tan/colored squares in flight.
+  // Nebulae as Points — NOT Sprite billboards (flat tan cards on device).
   // Soft circle-mapped Points keep depth without hard-edged quads. Low preset
-  // uses a cheaper particle count. makeNebulaCloudMaterial kept for reference
-  // but is no longer the live dust path.
+  // uses a cheaper particle count.
   if(STATE.settings && STATE.settings.dust===false)return;
   // Richer cloud field (Justin iPhone: galaxy felt empty). Extra pockets near
   // Sol + mid-arms; Low stays cheaper but still visible.
@@ -4682,7 +4625,10 @@ function buildGasGiantMesh(radius, palette, hasStorm){
   return group;
 }
 async function buildSolarSystem(){
-  celestialBodies=[];
+  // Worlds: wipe prior procedural/Sol extras so return visits don't dual-stack
+  // orbit rings / belts / comets on top of the new build.
+  if(typeof _clearFlightSystemScene==='function')_clearFlightSystemScene();
+  else celestialBodies=[];
 
   // ═══════════════════════════════════════════════════════════════
   //  REAL-SCALE SOLAR SYSTEM — Astronomical Unit (AU) spacing
@@ -4798,7 +4744,7 @@ async function buildSolarSystem(){
     // actual path the planet travels. Rotate -90° about X so the ring lies flat in XZ.
     const orbit=new THREE.Mesh(new THREE.TorusGeometry(p.oR,.04,3,Math.max(64,Math.round(p.oR*0.8))),new THREE.MeshBasicMaterial({color:0x223344,transparent:true,opacity:.3}));
     orbit.rotation.x=Math.PI/2;
-    flightScene.add(orbit);
+    flightScene.add(orbit);if(typeof _trackSystemExtra==='function')_trackSystemExtra(orbit);
 
     // Saturn-style rings — several stacked flat RingGeometry annuli (each
     // genuinely flat, not tube-shaped) with small gaps and varying
@@ -4863,7 +4809,8 @@ async function buildSolarSystem(){
     ap[i*3+2]=Math.sin(a)*r;
   }
   const ag=new THREE.BufferGeometry();ag.setAttribute('position',new THREE.BufferAttribute(ap,3));
-  flightScene.add(new THREE.Points(ag,new THREE.PointsMaterial({size:.5,color:0x886644,sizeAttenuation:true})));
+  const beltPts=new THREE.Points(ag,new THREE.PointsMaterial({size:.5,color:0x886644,sizeAttenuation:true}));
+  flightScene.add(beltPts);if(typeof _trackSystemExtra==='function')_trackSystemExtra(beltPts);
 
   // Comets — seeded positions/tails ('sol:comets') for stable returns
   const cometRand=seedRand(hashStr('sol:comets'));
@@ -4875,7 +4822,7 @@ async function buildSolarSystem(){
     const tg=new THREE.BufferGeometry();tg.setAttribute('position',new THREE.BufferAttribute(tp,3));
     cg.add(new THREE.Points(tg,new THREE.PointsMaterial({size:.1,color:0x8888ff,transparent:true,opacity:.55})));
     cg.position.set((cometRand()-0.5)*AU*20,(cometRand()-0.5)*40,(cometRand()-0.5)*AU*20);
-    flightScene.add(cg);
+    flightScene.add(cg);if(typeof _trackSystemExtra==='function')_trackSystemExtra(cg);
   }
 
   // Oort cloud — well beyond Neptune (AU*30.069 ≈ 842 units), at the
@@ -7375,6 +7322,69 @@ function updateFollowCam(dt){
   flightCamera.lookAt(lookAt);
 }
 
+// ── Worlds: arm-cell → seeded system enter (no dual flat-planet stacks) ──
+let _flightSystemExtras=[];
+function _trackSystemExtra(obj){
+  if(obj){ _flightSystemExtras.push(obj); }
+  return obj;
+}
+function _clearFlightSystemScene(){
+  // Remove prior Sol/procedural bodies + orbit rings / belts / oort / comets
+  // tagged via _trackSystemExtra — prevents dual stacks on system swap.
+  for(let i=0;i<celestialBodies.length;i++){
+    const b=celestialBodies[i];
+    if(b&&b.mesh){
+      try{ if(b.mesh.parent)b.mesh.parent.remove(b.mesh); }catch(e){}
+      try{ if(typeof _disposeObject3D==='function')_disposeObject3D(b.mesh); }catch(e){}
+    }
+  }
+  celestialBodies=[];
+  try{ earthMesh=null; }catch(e){}
+  try{ sunMesh=null; }catch(e){}
+  for(let i=0;i<_flightSystemExtras.length;i++){
+    const o=_flightSystemExtras[i];
+    if(!o)continue;
+    try{ if(o.parent)o.parent.remove(o); }catch(e){}
+    try{ if(typeof _disposeObject3D==='function')_disposeObject3D(o); }catch(e){}
+  }
+  _flightSystemExtras=[];
+}
+function onLandPromptTap(){
+  if(!_landTargetBody)return;
+  if(_landTargetBody.isSystemEnter && _landTargetBody.system){
+    const sys=_landTargetBody.system;
+    openFastTravel('✦ ENTER '+sys.name.toUpperCase(),
+      (sys.starType||'Star')+' · '+(sys.bodies?sys.bodies.length:0)+' bodies · seeded arm-cell system. Descend into local space?',
+      ()=>fastTravelToSystem(sys, typeof GALAXY_DB!=='undefined'?GALAXY_DB.current:'milkyway'));
+    return;
+  }
+  if(typeof openOrbitApproach==='function')openOrbitApproach(_landTargetBody);
+}
+/** Build a GALAXY_DB-compatible system chart from an arm-aligned distant star. */
+function systemChartFromArmCell(ds){
+  if(ds.systemChart)return ds.systemChart;
+  const seed=ds.seed||hashStr('arm:'+ds.name);
+  const rand=seedRand(seed);
+  const starType=ds.starClass||'F/G Yellow-White';
+  const bodyCount=ds.planetCount!=null?ds.planetCount:(1+Math.floor(rand()*4));
+  const bodies=[];
+  for(let b=0;b<bodyCount;b++){
+    const bt=BODY_TYPES[Math.floor(rand()*BODY_TYPES.length)];
+    bodies.push({
+      name:ds.name+' '+'bcdefgh'[b],
+      type:bt.t, color:bt.col, landable:bt.land, gravity:bt.grav,
+      orbitR:(b+1)*0.18+rand()*0.05,
+      radius:0.55+rand()*1.8,
+      hasRings:bt.t==='Gas Giant'&&rand()<0.4,
+      moons:Math.floor(rand()*3),
+      hasAtm:!!bt.land && bt.t!=='Rocky' && bt.t!=='Barren Moon'
+    });
+  }
+  const chart={name:ds.name,starType,bodies,seed,ang:rand()*Math.PI*2,rad:0.2+rand()*0.75,fromArmCell:true};
+  ds.systemChart=chart;
+  return chart;
+}
+
 function updateBodies(dt){
   _approachBestDist=Infinity;_approachBestBody=null;
   // Plain for-loop instead of .forEach(b=>{...}) — the arrow-function
@@ -7431,6 +7441,25 @@ function updateBodies(dt){
       }
     }
   }
+  // Arm-cell enter: when near a seeded distant star that has planets, offer
+  // system descend (replaces decorative flat-planet stubs at the star).
+  if(typeof distantSystems!=='undefined' && distantSystems && STATE.flight && STATE.flight.pos){
+    for(let _si=0;_si<distantSystems.length;_si++){
+      const ds=distantSystems[_si];
+      if(!ds||ds.rogue||!ds.pos)continue;
+      const d=ds.pos.distanceTo(STATE.flight.pos);
+      const enterR=Math.max((ds.starRadius||1)*50, 140);
+      if(d<enterR && d<_approachBestDist){
+        _approachBestDist=d;
+        _approachBestBody={
+          name:ds.name,
+          isSystemEnter:true,
+          system:systemChartFromArmCell(ds),
+          mesh:{position:ds.pos}
+        };
+      }
+    }
+  }
   // Show the approach prompt for the closest eligible body this frame.
   const ld=$('land-prompt');
   if(ld){
@@ -7440,7 +7469,9 @@ function updateBodies(dt){
       // innerHTML + 4 style writes every frame while near any body.
       if(_landTargetBody!==b){
         ld.style.display='block';ld.style.pointerEvents='auto';ld.style.cursor='pointer';
-        ld.innerHTML='🛰 TAP TO APPROACH '+b.name.toUpperCase();
+        ld.innerHTML=b.isSystemEnter
+          ? ('✦ TAP TO ENTER '+b.name.toUpperCase())
+          : ('🛰 TAP TO APPROACH '+b.name.toUpperCase());
         _landTargetBody=b;
       }
     } else if(_landTargetBody!==null){
@@ -7474,7 +7505,28 @@ function _mcTierFor(dist,radius){
   return'low';
 }
 const _MC_TIER_RANK={low:0,med:1,high:2};
-const _MC_TIER_RES={high:28,med:18,low:10};
+// Peak cite 5135843 used high:40 / med:20 / low:10. Live had drifted to
+// high:28 — raise toward sandbox bar on real WebGPU only. Soft-consume
+// Stabilizer budgets via getGfxBudgets() when present (no parallel GFX menu).
+function _mcTierResTable(){
+  let high=40, med=20, low=10;
+  try{
+    if(typeof getGfxBudgets==='function'){
+      const b=getGfxBudgets()||{};
+      if(typeof b.mcPlanetHigh==='number')high=b.mcPlanetHigh;
+      if(typeof b.mcPlanetMed==='number')med=b.mcPlanetMed;
+      if(typeof b.mcPlanetLow==='number')low=b.mcPlanetLow;
+    }
+  }catch(e){}
+  // Safari / fake WebGPU never hits GPU MC rebuild (upgradeWebGLPlanetLOD),
+  // but keep the table honest if called: stay at the prior live caps.
+  if(typeof _isRealWebGPU==='function' && flightRenderer && !_isRealWebGPU(flightRenderer)){
+    high=Math.min(high,28); med=Math.min(med,18);
+  }
+  if(GFX && GFX.preset==='low'){ high=Math.min(high,18); med=Math.min(med,12); low=Math.min(low,8); }
+  return {high,med,low};
+}
+const _MC_TIER_RES=_mcTierResTable(); // refreshed at upgrade time too
 
 async function upgradeWebGLPlanetLOD(){
   if(_lodPlanetBusy)return;
@@ -7558,7 +7610,7 @@ async function upgradePlanetLOD(dt){
   }
   if(!target)return;
   _lodPlanetBusy=true;
-  const b=target, newTier=b._wantTier, newRes=_MC_TIER_RES[newTier];
+  const b=target, newTier=b._wantTier, newRes=_mcTierResTable()[newTier];
   b._mcLodT=performance.now();
   try{
     const newGroup=await buildProceduralPlanetMesh(b.mcRadius,b.mcSeed,b.mcColor,b.mcHasAtm,newRes,b.mcKind);
@@ -8790,10 +8842,12 @@ function fastTravelToGalaxy(galaxyId,galaxyName){
 }
 
 // Swap the active flight to a procedural system's bodies (when already flying).
+// Worlds: MC / WebGL-rich planets (no flat SphereGeometry stubs). Uses Cosmos
+// seed (system.seed) so the same arm-cell chart regenerates identically.
 async function rebuildFlightForSystem(system){
   if(!system){ // back to Sol — rebuild the real solar system
+    _clearFlightSystemScene();
     if(typeof buildSolarSystem==='function'){
-      celestialBodies.forEach(b=>{if(b.mesh&&b.mesh.parent)b.mesh.parent.remove(b.mesh);});
       await buildSolarSystem();
       if(STATE.settings.textures&&typeof applyProceduralTextures==='function')applyProceduralTextures();
     }
@@ -8801,40 +8855,99 @@ async function rebuildFlightForSystem(system){
     STATE.flight.pos.set(28*1.0+2,2,3);if(boardFlight)boardFlight.position.copy(STATE.flight.pos);
     return;
   }
-  // remove existing bodies
-  celestialBodies.forEach(b=>{if(b.mesh&&b.mesh.parent)b.mesh.parent.remove(b.mesh);});
-  celestialBodies=[];
-  // central star
+  _clearFlightSystemScene();
   const AU=28;
-  const starCol={'G yellow':0xffee88,'K orange':0xffaa55,'M red dwarf':0xff6644,'F white':0xffffee,'B blue giant':0x99bbff}[system.starType]||0xffee88;
-  const star=new THREE.Mesh(new THREE.SphereGeometry(4,32,32),new THREE.MeshBasicMaterial({color:starCol}));
-  star.position.set(0,0,0);flightScene.add(star);
-  celestialBodies.push({mesh:star,name:system.name,type:'Star',temp:'5000 K',orbitR:0,orbitSpd:0,angle:0});
-  // procedural bodies
-  // Seeded rebuild — same system name → same angles/temps/destinations every visit.
   const sysRand=seedRand(system.seed||hashStr('sys:'+system.name));
+  const starCol={'G yellow':0xffee88,'K orange':0xffaa55,'M red dwarf':0xff6644,'F white':0xffffee,'B blue giant':0x99bbff,
+    'O/B Blue Giant':0x9db8ff,'A White':0xf0f4ff,'F/G Yellow-White':0xfff2d0,'K Orange':0xffc880,'M Red Dwarf':0xff8860,'Red Giant':0xff6a4a
+  }[system.starType]||0xffee88;
+
+  // Central star — cheap mesh (same stability choice as Sol's Sun)
+  const starGroup=new THREE.Group();
+  const starMesh=new THREE.Mesh(new THREE.SphereGeometry(4,24,24),new THREE.MeshBasicMaterial({color:starCol}));
+  starGroup.add(starMesh);
+  try{
+    const gt=makeCircleTex(64,'#'+new THREE.Color(starCol).getHexString(),1);
+    const spr1=new THREE.Sprite(new THREE.SpriteMaterial({map:gt,color:starCol,transparent:true,opacity:0.28,blending:THREE.AdditiveBlending,depthWrite:false}));
+    spr1.scale.set(14,14,1);starGroup.add(spr1);
+  }catch(e){}
+  starGroup.position.set(0,0,0);flightScene.add(starGroup);
+  sunMesh=starMesh;
+  celestialBodies.push({mesh:starGroup,name:system.name,type:'Star',temp:'5000 K',orbitR:0,orbitSpd:0,angle:0,renderMesh:starMesh});
+
+  const GIANT_FALLBACK=[0x8a5a3a,0xd9b280,0xf0e0c0,0xc47a52];
   const bodyAngs=[];
-  system.bodies.forEach((bd,i)=>{
-    const r=bd.radius;
-    const m=new THREE.Mesh(new THREE.SphereGeometry(r,24,24),new THREE.MeshStandardMaterial({color:bd.color,roughness:0.9,metalness:0.05}));
+  const bodies=system.bodies||[];
+  for(let i=0;i<bodies.length;i++){
+    const bd=bodies[i];
+    const r=Math.max(0.35, bd.radius|| (0.5+sysRand()*1.5));
+    const col=bd.color||0x888888;
     const oR=AU*(1+i*1.4);
     const ang=sysRand()*Math.PI*2;
     bodyAngs.push(ang);
-    m.position.set(Math.cos(ang)*oR,0,Math.sin(ang)*oR);
-    flightScene.add(m);
-    if(bd.hasRings){const ring=new THREE.Mesh(new THREE.RingGeometry(r*1.4,r*2.2,32),new THREE.MeshBasicMaterial({color:0xccbb99,side:THREE.DoubleSide,transparent:true,opacity:0.5}));ring.rotation.x=-Math.PI/2.3;m.add(ring);}
-    celestialBodies.push({mesh:m,name:bd.name,type:bd.type,temp:Math.round(100+sysRand()*400)+' K',
-      orbitR:oR,orbitSpd:0.002/(i+1),angle:ang,landable:bd.landable,gravity:bd.gravity});
-  });
-  // Oort cloud, sized beyond this system's outermost body (same AU*(1+i*1.4)
-  // spacing formula used just above) and seeded by the system's own name so
-  // it's distinct per star but identical on repeat visits, matching Sol's cloud.
-  const outermostR=AU*(1+(system.bodies.length-1)*1.4);
+    const isGiant=bd.type==='Gas Giant'||bd.type==='Ice Giant';
+    const hasAtm=bd.hasAtm!=null?!!bd.hasAtm:(!isGiant && bd.landable!==false && bd.type!=='Rocky' && bd.type!=='Barren Moon');
+    const seedVal=(system.seed||0)^(hashStr(bd.name||('b'+i)));
+    let group;
+    try{
+      if(isGiant){
+        const base=new THREE.Color(col);
+        const palette=[
+          base.clone().multiplyScalar(0.55).getHex(),
+          col,
+          base.clone().offsetHSL(0,0,0.15).getHex(),
+          base.clone().offsetHSL(0.02,-0.1,-0.1).getHex()
+        ];
+        group=buildGasGiantMesh(r, palette, bd.type==='Gas Giant' && sysRand()<0.5);
+      } else {
+        group=await buildProceduralPlanetMesh(r, seedVal, col, hasAtm, undefined, bd.type==='Habitable'?'earth':(bd.name||bd.type||'rocky'));
+      }
+    }catch(e){
+      console.warn('[GPU planet] procedural system build failed for',bd.name,'-',e&&e.message,e);
+      group=new THREE.Group();
+      // Last-resort placeholder only — WebGL rich path should have caught Safari.
+      if(typeof buildWebGLRichPlanetGroup==='function'){
+        try{ group=buildWebGLRichPlanetGroup(r, seedVal, col, hasAtm, bd.type, bd.name); }
+        catch(_e){ group.add(new THREE.Mesh(new THREE.SphereGeometry(r,24,24),new THREE.MeshStandardMaterial({color:col,roughness:.85}))); }
+      } else {
+        group.add(new THREE.Mesh(new THREE.SphereGeometry(r,24,24),new THREE.MeshStandardMaterial({color:col,roughness:.85})));
+      }
+    }
+    if(bd.hasRings){
+      const ringGroup=new THREE.Group();
+      const ringGeo=new THREE.RingGeometry(r*1.4,r*2.2,48);
+      const ringMat=new THREE.MeshBasicMaterial({color:0xccbb99,side:THREE.DoubleSide,transparent:true,opacity:0.5});
+      ringGroup.add(new THREE.Mesh(ringGeo,ringMat));
+      ringGroup.rotation.x=-Math.PI/2.3;
+      ringGroup.isPlanetExtra=true;
+      group.add(ringGroup);
+    }
+    const orbit=new THREE.Mesh(
+      new THREE.TorusGeometry(oR,.035,3,Math.max(48,Math.round(oR*0.7))),
+      new THREE.MeshBasicMaterial({color:0x223344,transparent:true,opacity:.28})
+    );
+    orbit.rotation.x=Math.PI/2;
+    flightScene.add(orbit);_trackSystemExtra(orbit);
+
+    group.position.set(Math.cos(ang)*oR,0,Math.sin(ang)*oR);
+    flightScene.add(group);
+    const isProcedural=!isGiant;
+    celestialBodies.push({
+      mesh:group,name:bd.name,type:bd.type,temp:Math.round(100+sysRand()*400)+' K',
+      orbitR:oR,orbitSpd:0.002/(i+1),angle:ang,landable:bd.landable,gravity:bd.gravity,
+      collisionRadius:r,
+      isProcedural, mcRadius:r, mcSeed:seedVal, mcColor:col, mcHasAtm:hasAtm,
+      mcKind:bd.type==='Habitable'?'earth':(bd.name||bd.type||'rocky'),
+      mcRes:10, mcTier:'low'
+    });
+  }
+
+  const outermostR=AU*(1+Math.max(0,bodies.length-1)*1.4);
+  // Oort owns its singleton (buildOortCloud clears prior) — do not dual-track.
   buildOortCloud({innerR:outermostR*1.5,outerR:outermostR*2.3,seedKey:system.name,count:700});
 
-  // QT markers reuse the same body orbit angles (Watcher nit on PR #6).
   DESTINATIONS.length=0;
-  system.bodies.forEach((bd,i)=>{
+  bodies.forEach((bd,i)=>{
     const ang=bodyAngs[i];
     const oR=AU*(1+i*1.4);
     DESTINATIONS.push({name:bd.name,icon:bd.landable?'🪐':'🟠',type:bd.type,dist:(i+1)+' AU',
@@ -8843,7 +8956,7 @@ async function rebuildFlightForSystem(system){
   });
   buildDestinationUI();
   STATE.flight.pos.set(AU*1.2,3,4);if(boardFlight)boardFlight.position.copy(STATE.flight.pos);
-  toast('🪐 '+system.name+' — '+system.bodies.length+' bodies. '+system.bodies.filter(b=>b.landable).length+' landable.',3500);
+  toast('🪐 '+system.name+' — '+bodies.length+' bodies. '+bodies.filter(b=>b.landable).length+' landable.',3500);
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -9636,92 +9749,28 @@ function generateSeededStarField(count, seed){
   return stars;
 }
 function buildDistantStarSystems(){
-  // Deterministic seed so the same field generates every session — not
-  // re-randomized on each load/rebuild. Seed 918273 is frozen (do not change —
-  // would reshuffle already-visited local systems).
-  // 140 accepted local systems (was 60) — same seed keeps the original 60, then adds more.
+  // Deterministic arm-aligned star field (Cosmos seed contract). Markers only —
+  // NO decorative flat SphereGeometry planets (dead dual stack). Entering a
+  // system via arm-cell proximity / fast-travel builds MC / WebGL-rich bodies
+  // in rebuildFlightForSystem from the same seed chart.
+  distantSystems=[];
   const STAR_FIELD = generateSeededStarField(140, 918273);
   STAR_FIELD.forEach(s=>{
     const grp = buildProceduralStarMesh(s.radius, s.seed, s.cls.col);
     grp.position.set(s.pos[0], s.pos[1], s.pos[2]);
-    const sysPlanets=[];
-    if(s.hasPlanets){
-      const rand = seedRand(s.seed);
-      for(let i=0;i<s.planetCount;i++){
-        const pr=0.3+rand()*0.6;
-        const types=['Rocky','Gas Giant','Habitable','Ice Giant'];
-        const ty=types[Math.floor(rand()*types.length)];
-        const pcol=ty==='Habitable'?0x3388cc:ty==='Gas Giant'?0xcc9955:ty==='Ice Giant'?0x88ddee:0xaa7755;
-        const pm=new THREE.Mesh(new THREE.SphereGeometry(pr,16,16),
-          new THREE.MeshStandardMaterial({color:pcol,roughness:.9}));
-        const oR=s.radius*4+i*3+rand()*1.5;
-        pm.userData={oR,ang:rand()*6.28,spd:0.0006/(i+1),type:ty};
-        grp.add(pm);
-        sysPlanets.push({mesh:pm,type:ty});
-      }
-    }
-    // real light so any planets are actually lit, matching the old system
+    // Real light so nearby boards read the star; no stub planet meshes.
     const pl=new THREE.PointLight(s.cls.col,1.1,s.radius*400);grp.add(pl);
     flightScene.add(grp);
-    // label sprite — only meant to be legible up close (crosshair-
-    // triggered popup elsewhere handles the "don't clutter with labels
-    // at a distance" requirement); kept simple/cheap here.
     const lc=document.createElement('canvas');lc.width=256;lc.height=40;const lcx=lc.getContext('2d');
     lcx.font='bold 18px Orbitron,monospace';lcx.fillStyle='rgba(200,220,255,0.85)';lcx.fillText(s.name,4,26);
     const ls=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(lc),transparent:true,depthWrite:false}));
     ls.scale.set(s.radius*20,s.radius*3,1);ls.position.set(s.pos[0],s.pos[1]+s.radius*3,s.pos[2]);flightScene.add(ls);
-    distantSystems.push({group:grp,planets:sysPlanets,name:s.name,pos:new THREE.Vector3(...s.pos),labelSprite:ls,starClass:s.cls.name,rogue:!s.hasPlanets});
-  });
-}
-function buildDistantStarSystems_OLD(){
-  // A handful of named star systems scattered in mid-field — each a real
-  // light source with planets you can approach. Far enough to read as "stars".
-  const defs=[
-    {name:'Alpha Centauri A',pos:[26000,1200,-9000],col:0xfff0d0,binary:true,planets:2},
-    {name:'Alpha Centauri B',pos:[26900,1100,-9400],col:0xffd8a0,planets:1},
-    {name:'Proxima Centauri',pos:[28000,-800,-11000],col:0xff8855,planets:1},
-    {name:'Sirius',pos:[-32000,4000,18000],col:0xcfe0ff,planets:2},
-    {name:'Trappist',pos:[40000,-3000,-22000],col:0xff9966,planets:3},
-    {name:'Vega',pos:[-44000,6000,-30000],col:0xeaeaff,planets:1},
-  ];
-  defs.forEach(s=>{
-    const grp=new THREE.Group();
-    const starMat=new THREE.MeshBasicMaterial({color:s.col});
-    const star=new THREE.Mesh(new THREE.SphereGeometry(120,20,20),starMat);
-    grp.add(star);
-    // glow sprite
-    const gt=makeCircleTex(64,'rgb(255,240,210)',1);
-    const spr=new THREE.Sprite(new THREE.SpriteMaterial({map:gt,color:s.col,transparent:true,blending:THREE.AdditiveBlending,depthWrite:false}));
-    spr.scale.set(900,900,1);grp.add(spr);
-    // companion star (binary)
-    if(s.binary){
-      const c2=new THREE.Mesh(new THREE.SphereGeometry(80,16,16),new THREE.MeshBasicMaterial({color:0xffccaa}));
-      c2.position.set(500,0,0);grp.add(c2);
-    }
-    // planets — small orbiting bodies
-    const sysPlanets=[];
-    for(let i=0;i<s.planets;i++){
-      const pr=30+Math.random()*40;
-      const types=['Rocky','Gas Giant','Habitable','Ice Giant'];
-      const ty=types[Math.floor(Math.random()*types.length)];
-      const pcol=ty==='Habitable'?0x3388cc:ty==='Gas Giant'?0xcc9955:ty==='Ice Giant'?0x88ddee:0xaa7755;
-      const pm=new THREE.Mesh(new THREE.SphereGeometry(pr,18,18),
-        new THREE.MeshStandardMaterial({color:pcol,roughness:.9,map:STATE.settings.textures?makePlanetTexture(ty,'#'+new THREE.Color(pcol).getHexString(),i*11+3):null}));
-      const oR=400+i*350+Math.random()*120;
-      pm.userData={oR,ang:Math.random()*6.28,spd:0.0006/(i+1)};
-      grp.add(pm);
-      sysPlanets.push({mesh:pm,type:ty});
-    }
-    grp.position.set(s.pos[0],s.pos[1],s.pos[2]);
-    // light so its planets are lit
-    const pl=new THREE.PointLight(s.col,1.2,6000);grp.add(pl);
-    flightScene.add(grp);
-    // label sprite
-    const lc=document.createElement('canvas');lc.width=256;lc.height=40;const lcx=lc.getContext('2d');
-    lcx.font='bold 18px Orbitron,monospace';lcx.fillStyle='rgba(200,220,255,0.85)';lcx.fillText(s.name,4,26);
-    const ls=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(lc),transparent:true,depthWrite:false}));
-    ls.scale.set(2600,400,1);ls.position.set(s.pos[0],s.pos[1]+400,s.pos[2]);flightScene.add(ls);
-    distantSystems.push({group:grp,planets:sysPlanets,name:s.name,pos:new THREE.Vector3(...s.pos)});
+    distantSystems.push({
+      group:grp, planets:[], name:s.name, pos:new THREE.Vector3(...s.pos),
+      labelSprite:ls, starClass:s.cls.name, rogue:!s.hasPlanets,
+      seed:s.seed, planetCount:s.planetCount||0, starRadius:s.radius,
+      systemChart:null // lazy via systemChartFromArmCell on enter
+    });
   });
 }
 function updateDistantSystems(dt){
