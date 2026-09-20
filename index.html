@@ -418,6 +418,9 @@ THREE.OrbitControls=function(camera,domElement){
 html,body{width:100%;height:var(--app-h);overflow:hidden;background:var(--c0);color:var(--text);font-family:var(--font-body);font-size:14px;}
 
 /* LOADING */
+#ls-plate-video,.ls-plate-video{position:absolute;inset:0;z-index:-2;width:100%;height:100%;object-fit:cover;object-position:center 40%;pointer-events:none;background:#000308;}
+#loading-screen.has-plate-video #ls-hero-bg,#loading-screen.has-plate-video #ls-stars,#loading-screen.has-plate-video #ls-clouds{opacity:0!important;visibility:hidden;}
+#loading-screen.has-plate-video #ls-horizon{opacity:0.35;}
 #ls-hero-bg{position:absolute;inset:0;z-index:-1;width:100%;height:100%;object-fit:cover;object-position:center 38%;opacity:0;pointer-events:none;}/* stripped flat splash */
 #ls-hero-fade{position:absolute;inset:0;z-index:-1;background:radial-gradient(ellipse at 50% 42%,transparent 0%,rgba(6,3,14,0.35) 45%,rgba(6,3,14,0.88) 78%,rgba(6,3,14,0.98) 100%),linear-gradient(180deg,rgba(6,3,14,0.55) 0%,transparent 22%,transparent 55%,rgba(6,3,14,0.6) 82%,rgba(6,3,14,0.97) 100%);}
 #loading-screen{position:fixed;inset:0;background:var(--c0);z-index:10000;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:opacity 0.8s ease;}
@@ -906,7 +909,10 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <body>
 <!-- LOADING -->
 <div id="loading-screen">
-  <img id="ls-hero-bg" src="static/loading-hero.jpg" alt="A pilot stands on a Skyboard drifting past a black hole, with a space station in the distance">
+  <video id="ls-plate-video" class="ls-plate-video" autoplay muted loop playsinline preload="auto" poster="static/loading-hero.jpg">
+    <source src="static/splash-menu-plate.mp4" type="video/mp4">
+  </video>
+  <img id="ls-hero-bg" src="static/loading-hero.jpg" alt="" aria-hidden="true">
   <div id="ls-hero-fade"></div>
   <div id="ls-horizon"></div>
   <img id="ls-clouds" src="static/loading-clouds.svg" alt="">
@@ -924,6 +930,17 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   if(window.__EARLY_SPLASH__) return;
   window.__EARLY_SPLASH__ = true;
   function el(id){ return document.getElementById(id); }
+  try{
+    var v=el('ls-plate-video');
+    var screen=el('loading-screen');
+    if(v&&screen){
+      var mark=function(){ screen.classList.add('has-plate-video'); try{v.play();}catch(e){} };
+      v.addEventListener('loadeddata', mark, {once:true});
+      v.addEventListener('playing', mark, {once:true});
+      if(v.readyState>=2) mark();
+      setTimeout(function(){ try{v.play().then(mark).catch(function(){});}catch(e){} }, 200);
+    }
+  }catch(e){}
   function revealEnter(){
     try{
       var enter = el('ls-enter');
@@ -2014,16 +2031,10 @@ function launchFlight(){
     // this whole block. Unconditional check here instead: on every
     // resume, if she's loaded (or still loading) but not currently
     // mounted, try again.
-    if(CHAR.loaded && CHAR.root && boardFlight && !CHAR.mounted){
-      console.warn('launchFlight resume: character was not mounted, remounting now.');
-      remountSkyboard(boardFlight);
-    } else if(!CHAR.loaded && !CHAR.loading){
-      (async()=>{
-        try{ await loadCharacterAssets(); }catch(e){ console.error('Character load failed on resume:',e); try{toast('⚠ Character failed to load: '+(e.message||e),4000);}catch(_){} }
-        if(CHAR.loaded && CHAR.root && boardFlight && !CHAR.mounted) mountSkyboard(boardFlight);
-      })();
-    }
-    try{_startFlightLoop();}catch(e){}
+    (async()=>{
+      try{ await ensureAutumnOnBoard('launchFlight-resume'); }catch(e){}
+      try{_startFlightLoop();}catch(e){}
+    })();
     return;
   }
   // Poll until the screen has real pixel dimensions — then init
@@ -2477,11 +2488,64 @@ let _menuSpiralPlate=null,_menuSpiralRenderer=null,_menuSpiralScene=null,_menuSp
 function _initMenuBg2D(cv){
   sizeMenuBgCanvas(cv);
   const ctx=cv.getContext('2d');
-  const stars=Array.from({length:320},()=>({x:rnd(0,cv.width),y:rnd(0,cv.height),r:rnd(0.3,1.6),b:rnd(0.2,1),sp:rnd(0.02,0.1),ph:rnd(0,Math.PI*2)}));
-  let t=0;
-  (function frame(){menuAnim=requestAnimationFrame(frame);sizeMenuBgCanvas(cv,stars);
-    ctx.clearRect(0,0,cv.width,cv.height);ctx.fillStyle='#000308';ctx.fillRect(0,0,cv.width,cv.height);
-    stars.forEach(s=>{const b=s.b*(0.5+0.5*Math.sin(t*s.sp+s.ph));ctx.beginPath();ctx.arc(s.x,s.y,s.r,0,Math.PI*2);ctx.fillStyle=`rgba(180,220,255,${b})`;ctx.fill();});t++;
+  const W=()=>cv.width,H=()=>cv.height;
+  const stars=Array.from({length:520},()=>({x:rnd(0,cv.width),y:rnd(0,cv.height),r:rnd(0.4,2.1),b:rnd(0.25,1),sp:rnd(0.03,0.14),ph:rnd(0,Math.PI*2)}));
+  const arms=Array.from({length:5},(_,a)=>Array.from({length:180},(_,j)=>{
+    const u=j/180, ang=u*Math.PI*3.2+a*(Math.PI*2/5), d=u*Math.min(cv.width,cv.height)*0.48;
+    return {ang0:ang,d0:d,al:rnd(0.08,0.45),r:rnd(0.5,2.4),
+      col:['#00f5ff','#b060ff','#ff4fa3','#f5c400','#88ffcc'][a%5]};
+  }));
+  const gases=[
+    {x:0.48,y:0.45,rx:0.26,col:'#5B7FFF',a:0.08},
+    {x:0.55,y:0.52,rx:0.2,col:'#b060ff',a:0.07},
+    {x:0.42,y:0.5,rx:0.18,col:'#00f5ff',a:0.06},
+    {x:0.6,y:0.4,rx:0.16,col:'#ff4fa3',a:0.05}
+  ];
+  let supernova=null, tick=0;
+  function spawnSN(){ supernova={x:rnd(0.2,0.8)*W(),y:rnd(0.2,0.75)*H(),life:0,max:45+rnd(0,40),hue:rnd(180,320)}; }
+  spawnSN();
+  let _menuBgResizeDebounce=null;
+  function _queueMenuBgResize(){
+    clearTimeout(_menuBgResizeDebounce);
+    _menuBgResizeDebounce=setTimeout(function(){sizeMenuBgCanvas(cv,stars,arms);},100);
+  }
+  window.addEventListener('resize',_queueMenuBgResize);
+  if(window.visualViewport)window.visualViewport.addEventListener('resize',_queueMenuBgResize);
+  function hexRgb(hex){return [parseInt(hex.slice(1,3),16),parseInt(hex.slice(3,5),16),parseInt(hex.slice(5,7),16)];}
+  (function frame(){menuAnim=requestAnimationFrame(frame);sizeMenuBgCanvas(cv,stars,arms);
+    const w=W(),h=H(), cx=w*0.5, cy=h*0.48;
+    ctx.clearRect(0,0,w,h);ctx.fillStyle='#000308';ctx.fillRect(0,0,w,h);
+    gases.forEach(g=>{
+      const [r,gch,b]=hexRgb(g.col);
+      const grd=ctx.createRadialGradient(g.x*w,g.y*h,0,g.x*w,g.y*h,Math.min(w,h)*g.rx);
+      grd.addColorStop(0,'rgba('+r+','+gch+','+b+','+g.a+')');grd.addColorStop(1,'transparent');
+      ctx.fillStyle=grd;ctx.fillRect(0,0,w,h);
+    });
+    const spin=tick*0.004;
+    arms.forEach(pts=>pts.forEach(p=>{
+      const ang=p.ang0+spin, d=p.d0;
+      const x=cx+Math.cos(ang)*d, y=cy+Math.sin(ang)*d*0.58;
+      ctx.beginPath();ctx.arc(x,y,p.r,0,Math.PI*2);
+      ctx.fillStyle=p.col+Math.floor(p.al*220).toString(16).padStart(2,'0');ctx.fill();
+    }));
+    const core=ctx.createRadialGradient(cx,cy,0,cx,cy,Math.min(w,h)*0.22);
+    core.addColorStop(0,'rgba(255,240,200,0.22)');core.addColorStop(0.35,'rgba(91,127,255,0.1)');core.addColorStop(1,'transparent');
+    ctx.fillStyle=core;ctx.fillRect(0,0,w,h);
+    stars.forEach(s=>{const b=s.b*(0.45+0.55*Math.sin(tick*s.sp+s.ph));ctx.beginPath();ctx.arc(s.x,s.y,s.r,0,Math.PI*2);ctx.fillStyle='rgba(210,235,255,'+b+')';ctx.fill();});
+    if(supernova){
+      supernova.life++;
+      const u=supernova.life/supernova.max, a=u<0.2?u/0.2:(1-u)*1.15;
+      if(a>0){
+        const R=8+u*90;
+        const g2=ctx.createRadialGradient(supernova.x,supernova.y,0,supernova.x,supernova.y,R);
+        g2.addColorStop(0,'hsla('+supernova.hue+',100%,85%,'+(0.55*a)+')');
+        g2.addColorStop(0.35,'hsla('+supernova.hue+',90%,60%,'+(0.22*a)+')');
+        g2.addColorStop(1,'transparent');
+        ctx.fillStyle=g2;ctx.beginPath();ctx.arc(supernova.x,supernova.y,R,0,Math.PI*2);ctx.fill();
+      }
+      if(supernova.life>=supernova.max) spawnSN();
+    }
+    tick++;
   })();
 }
 function _initMenuSpiralPlate(cv){
@@ -2497,9 +2561,16 @@ function _initMenuSpiralPlate(cv){
   cam.position.set(0,0,2.4);
   const low=!!(GFX&&(GFX.preset==='low'||(GFX.isMobile&&GFX.preset==='auto')));
   const plate=buildMenuGalaxySpiralPlate(scene,{
-    budget:low?1800:2800, pointSize:low?0.034:0.028, spin:0.06, scale:1.15,
-    rotation:{x:0.55,y:0.15,z:0.04}
+    budget:low?2400:4200, pointSize:low?0.032:0.026, spin:0.07, scale:1.22,
+    rotation:{x:0.52,y:0.12,z:0.03}
   });
+  try{
+    const gasGeo=new THREE.SphereGeometry(1.05,24,16);
+    const gas=new THREE.Mesh(gasGeo,new THREE.MeshBasicMaterial({color:0x5B7FFF,transparent:true,opacity:0.07,depthWrite:false}));
+    gas.scale.set(1.4,0.55,1.4); scene.add(gas);
+    const gas2=new THREE.Mesh(gasGeo,new THREE.MeshBasicMaterial({color:0xb060ff,transparent:true,opacity:0.05,depthWrite:false}));
+    gas2.scale.set(1.1,0.4,1.1); gas2.rotation.y=0.7; scene.add(gas2);
+  }catch(e){}
   _menuSpiralPlate=plate;_menuSpiralRenderer=renderer;_menuSpiralScene=scene;_menuSpiralCam=cam;_menuSpiralLast=performance.now();
   function onResize(){
     sizeMenuBgCanvas(cv);
@@ -2517,14 +2588,25 @@ function _initMenuSpiralPlate(cv){
 }
 function initMenuBg(){
   if(menuAnim)return;
-  try{ensureMenuPilotInline();}catch(e){}
+  try{ ensureMenuPilotInline(); }catch(e){}
+  setTimeout(function(){ try{ ensureMenuPilotInline(); }catch(e){} }, 400);
+  // Prefetch Autumn during menu so first travel boot already has mesh ready.
+  try{
+    window.__whenThreeReady(function(){
+      if(!CHAR.loaded && !CHAR.loading && !CHAR._loadPromise){
+        loadCharacterAssets().catch(function(e){ console.warn('menu prefetch char:',e); });
+      }
+    });
+  }catch(e){}
   const cv=$('menu-bg-canvas'); if(!cv)return;
   const start=()=>{
     try{ _initMenuSpiralPlate(cv); }
-    catch(e){ console.warn('menu spiral plate failed, 2D fallback:',e); _initMenuBg2D(cv); }
+    catch(e){ console.warn('menu spiral plate failed, rich 2D fallback:',e); _initMenuBg2D(cv); }
   };
-  if(typeof THREE==='undefined'){ window.__whenThreeReady(start); }
-  else start();
+  if(typeof THREE==='undefined' || typeof buildMenuGalaxySpiralPlate!=='function'){
+    window.__whenThreeReady(start);
+    setTimeout(function(){ if(!menuAnim) _initMenuBg2D(cv); }, 2500);
+  } else start();
 }
 
 
@@ -4161,7 +4243,18 @@ async function initFlightScene(){
   window.addEventListener('keyup',onKeyUp);
 
   _flightLoopCv=cv;
+  // Block first travel frames until Autumn is on the board (mesh-first).
+  try{ await ensureAutumnOnBoard('initFlightScene'); }catch(e){ console.warn('boot mount:',e); }
   _startFlightLoop();
+  // Keep polling briefly if mesh still catching up after solar build.
+  if(!CHAR.mounted){
+    let _bootTries=0;
+    const _bootPoll=setInterval(async()=>{
+      _bootTries++;
+      try{ await ensureAutumnOnBoard('boot-poll'); }catch(e){}
+      if(CHAR.mounted || _bootTries>40) clearInterval(_bootPoll);
+    },250);
+  }
 }
 let _flightLoopCv=null,_flightLoopLast=0;
 // Frame counter used by the flight loop's render-throttle during character
@@ -6923,11 +7016,7 @@ function buildFlightBoard(){
     console.log('[TIMING] character load attempt finished at', performance.now().toFixed(0), 'ms', _charStatus());
     if(CHAR.loaded && CHAR.root && boardFlight) remountSkyboard(boardFlight);
     try{
-      if(GFX && GFX.isMobile && (!CHAR.mounted || !(CHAR.root&&CHAR.root.visible))){
-        CHAR._autoCharDebug=true;
-        GFX.showCharDebug=true;
-        const el=document.getElementById('char-debug-hud'); if(el) el.style.display='block';
-      } else if(CHAR._autoCharDebug && CHAR.mounted && CHAR.root && CHAR.root.visible){
+      if(CHAR._autoCharDebug){
         CHAR._autoCharDebug=false; GFX.showCharDebug=false;
         const el=document.getElementById('char-debug-hud'); if(el) el.style.display='none';
       }
@@ -11897,11 +11986,11 @@ async function loadCharacterAssets(){
         gltfLoader.load(CHAR_ASSET_BASE+CHAR_FILES.animSrc, res,
           xhr=>{ if(xhr.lengthComputable) _loadStep('charAnims', xhr.loaded/xhr.total*0.9); }, rej);
       }),
-      new Promise((_,rej)=>setTimeout(()=>rej(new Error('Character animation GLB load timed out after 45s')), 45000))
+      new Promise((_,rej)=>setTimeout(()=>rej(new Error('Character animation GLB load timed out after 90s')), 90000))
     ]);
   }catch(e){
     console.warn('Character anims failed — keeping mesh-only mount:', e);
-    try{toast('⚠ Autumn anims slow/failed — mesh mounted (stance may be static)',4000);}catch(_){}
+    try{console.warn('Autumn anims slow/failed — mesh mounted');}catch(_){}
     _loadStep('charAnims', 1);
     CHAR.loading=false;
     CHAR._loadPromise=null;
@@ -12615,6 +12704,22 @@ function remountSkyboard(boardObj){
 }
 window.remountSkyboard = remountSkyboard;
 window.stripCharacterMount = stripCharacterMount;
+async function ensureAutumnOnBoard(reason){
+  // Justin hard: Autumn MUST be visibly on the skyboard at interstellar travel start.
+  if(!CHAR.loaded){
+    try{ await loadCharacterAssets(); }catch(e){ console.error('[CHAR] boot load failed ('+reason+'):',e); }
+  }
+  try{
+    if(CHAR.loaded && CHAR.root && typeof boardFlight!=='undefined' && boardFlight){
+      remountSkyboard(boardFlight);
+      CHAR.root.visible = true;
+      try{ if(CHAR.root.parent!==boardFlight){ boardFlight.add(CHAR.root); CHAR.mounted=true; } }catch(e){}
+    }
+  }catch(e){ console.warn('[CHAR] boot remount failed ('+reason+'):',e); }
+  try{ console.log('[CHAR] ensureAutumnOnBoard', reason, typeof _charStatus==='function'?_charStatus():{mounted:CHAR.mounted,loaded:CHAR.loaded}); }catch(e){}
+  return !!(CHAR.mounted && CHAR.root && CHAR.root.visible && CHAR.root.parent);
+}
+window.ensureAutumnOnBoard = ensureAutumnOnBoard;
 function mountSkyboard(boardObj){
   if(!CHAR.root || !boardObj) return;
   // Always strip first — never add onto a stale parent chain.
