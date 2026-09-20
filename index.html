@@ -419,16 +419,26 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;background:var(--c0);co
 
 /* LOADING */
 #ls-plate-video,.ls-plate-video{position:absolute;inset:0;z-index:-2;width:100%;height:100%;object-fit:cover;object-position:center 40%;pointer-events:none;background:#000308;}
-#loading-screen.has-plate-video #ls-hero-bg,#loading-screen.has-plate-video #ls-stars,#loading-screen.has-plate-video #ls-clouds{opacity:0!important;visibility:hidden;}
-#loading-screen.has-plate-video #ls-horizon{opacity:0.35;}
+/* :has fallback for net kill before JS adds has-plate-video */
+#loading-screen:has(#ls-plate-video) #ls-hero-bg,
+#loading-screen:has(#ls-plate-video) #ls-stars,
+#loading-screen:has(#ls-plate-video) #ls-clouds,
+#loading-screen:has(#ls-plate-video) #ls-hero-fade,
+#loading-screen:has(#ls-plate-video) #ls-horizon{opacity:0!important;visibility:hidden!important;pointer-events:none!important;}
+/* Plate splash: kill legacy net/veil/clouds/stars — video is the only BG */
+#loading-screen.has-plate-video #ls-hero-bg,
+#loading-screen.has-plate-video #ls-stars,
+#loading-screen.has-plate-video #ls-clouds,
+#loading-screen.has-plate-video #ls-hero-fade,
+#loading-screen.has-plate-video #ls-horizon{opacity:0!important;visibility:hidden!important;pointer-events:none!important;}
 #ls-hero-bg{position:absolute;inset:0;z-index:-1;width:100%;height:100%;object-fit:cover;object-position:center 38%;opacity:0;pointer-events:none;}/* stripped flat splash */
 #ls-hero-fade{position:absolute;inset:0;z-index:-1;background:radial-gradient(ellipse at 50% 42%,transparent 0%,rgba(6,3,14,0.35) 45%,rgba(6,3,14,0.88) 78%,rgba(6,3,14,0.98) 100%),linear-gradient(180deg,rgba(6,3,14,0.55) 0%,transparent 22%,transparent 55%,rgba(6,3,14,0.6) 82%,rgba(6,3,14,0.97) 100%);}
-#loading-screen{position:fixed;inset:0;background:var(--c0);z-index:10000;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding-top:min(12vh,110px);transition:opacity 0.8s ease;}
+#loading-screen{position:fixed;inset:0;background:var(--c0);z-index:10000;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:opacity 0.8s ease;}
 #loading-screen.out{opacity:0;pointer-events:none;}
 #ls-stars{position:absolute;inset:0;overflow:hidden;z-index:0;}
 .ls-star{position:absolute;border-radius:50%;background:#fff;animation:twinkle linear infinite;}
 @keyframes twinkle{0%,100%{opacity:0.1;}50%{opacity:1;}}
-/* UI cluster: ~40% prior size, upper-third (avoid face close-up), hidden until ~8.5s plate clear */
+/* UI cluster: ~40% prior size, true center, hidden until ~4s */
 #ls-ui-cluster{position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;opacity:0;pointer-events:none;transition:opacity 1s ease;will-change:opacity;}
 #ls-ui-cluster.ls-ui-in{opacity:1;pointer-events:auto;}
 #ls-logo{width:auto;height:auto;max-width:min(256px,29vw);max-height:9.6vh;position:relative;z-index:2;margin-bottom:0.48rem;filter:drop-shadow(0 0 16px rgba(91,127,255,0.35)) drop-shadow(0 0 32px rgba(255,79,163,0.15));animation:tpulse 3.5s ease-in-out infinite;}
@@ -935,7 +945,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   if(window.__EARLY_SPLASH__) return;
   window.__EARLY_SPLASH__ = true;
   function el(id){ return document.getElementById(id); }
-  var FADE_START = 8.5; /* plate burn-in clear ~9s; start our UI at 8.5s */
+  var FADE_START = 4; /* Justin: fade logo+SEQUENCE DART from ~4s */
   var loadReady = false;
   var fadeStarted = false;
   var playWall0 = null;
@@ -1007,7 +1017,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     }
   }catch(e){ try{ notePlayStart(); }catch(_){ } }
 
-  /* Public reveal = mark load ready (gated by 8.5s fade) */
+  /* Public reveal = mark load ready (gated by ~4s fade) */
   window.__revealSplashEnter = markLoadReady;
 
   // Stub until the big script redefines enterApp with gfx/fullscreen path.
