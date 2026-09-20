@@ -3176,11 +3176,12 @@ const GFX = {
   // Settings so it's there for future debugging without being on-screen
   // clutter day to day.
   showCharDebug:false,
+  budgets:null,           // filled by applyPreset — use getGfxBudgets()
 };
 
 // Capability ceilings — what a tier is ALLOWED to use is clamped by hardware.
 const PRESETS = {
-  low:    {resScale:0.7, shadows:false, shadowSize:512,  envReflections:false, caustics:false, fakeGI:true, refraction:false, ssao:false, volumetricDust:true,  dustDensity:1.15, aniso:1,  antialias:false},
+  low:    {resScale:0.7, shadows:false, shadowSize:512,  envReflections:false, caustics:false, fakeGI:true, refraction:false, ssao:false, volumetricDust:false, dustDensity:0.45, aniso:1,  antialias:false},
   medium: {resScale:0.85,shadows:true,  shadowSize:1024, envReflections:true,  caustics:true,  fakeGI:true, refraction:true,  ssao:false, volumetricDust:true,  dustDensity:1.2,  aniso:2,  antialias:true },
   high:   {resScale:1.0, shadows:true,  shadowSize:2048, envReflections:true,  caustics:true,  fakeGI:true, refraction:true,  ssao:true,  volumetricDust:true,  dustDensity:1.3,  aniso:8,  antialias:true },
   ultra:  {resScale:1.0, shadows:true,  shadowSize:4096, envReflections:true,  caustics:true,  fakeGI:true, refraction:true,  ssao:true,  volumetricDust:true,  dustDensity:2.2,  aniso:16, antialias:true },
@@ -3194,11 +3195,21 @@ const PRESETS = {
 // the newer GFX-side settings. DART Speed is deliberately excluded: it's
 // a gameplay/travel-speed multiplier, not a rendering-fidelity setting.
 const PRESET_SETTINGS_EXTRA = {
-  low:    {stars:true, dust:true,  bloom:false, motion:false, textures:false, galaxyband:true,  particles:'med',  fov:50000 },
+  low:    {stars:true, dust:false, bloom:false, motion:false, textures:false, galaxyband:true,  particles:'low',  fov:50000 },
   medium: {stars:true, dust:true,  bloom:true,  motion:false, textures:true,  galaxyband:true,  particles:'med',  fov:50000 },
   high:   {stars:true, dust:true,  bloom:true,  motion:true,  textures:true,  galaxyband:true,  particles:'high', fov:300000},
   ultra:  {stars:true, dust:true,  bloom:true,  motion:true,  textures:true,  galaxyband:true,  particles:'ultra',fov:300000},
 };
+
+// Shared render budgets — Cosmos/Worlds MUST read these via getGfxBudgets().
+// Numbers align with spiral CPU LOD (arm/core) and planet/dust cheap paths.
+const GFX_BUDGETS = {
+  low:    {galaxyArm:14000, galaxyCore:6000, dustSprites:400,  nebulaClouds:2, starCount:2000,  planetSeg:24, mcPrefer:false},
+  medium: {galaxyArm:32000, galaxyCore:10000,dustSprites:1200, nebulaClouds:4, starCount:5000,  planetSeg:48, mcPrefer:true},
+  high:   {galaxyArm:52000, galaxyCore:15000,dustSprites:2500, nebulaClouds:6, starCount:12000, planetSeg:72, mcPrefer:true},
+  ultra:  {galaxyArm:65000, galaxyCore:18000,dustSprites:5000, nebulaClouds:8, starCount:20000, planetSeg:96, mcPrefer:true},
+};
+
 
 function detectCapabilities(){
   if(GFX.scanned)return;
@@ -3299,10 +3310,13 @@ function applyPreset(name){
   // Drive the legacy STATE.settings toggles too (see PRESET_SETTINGS_EXTRA) —
   // this is what makes a tier, especially Ultra, actually max EVERY graphics
   // option instead of leaving some at whatever they last happened to be.
+  const b=GFX_BUDGETS[t]||GFX_BUDGETS.medium;
+  GFX.budgets=Object.assign({},b);
   if(typeof STATE!=='undefined'&&STATE&&STATE.settings){
     const ex=PRESET_SETTINGS_EXTRA[t]||PRESET_SETTINGS_EXTRA.medium;
     Object.assign(STATE.settings,ex);
     STATE.settings.resScale=GFX.resScale;
+    STATE.settings.gfxQuality=GFX.preset;
     syncSettingsUIFromState();
   }
 }
@@ -3350,27 +3364,56 @@ function effectivePixelRatio(){
 }
 
 // ── Persistence ─────────────────────────────────────────────────
-const GFX_STORE_KEY='dm_gfx_v1';
+const GFX_STORE_KEY='dm_gfx_v2';
+const GFX_KNOB_KEYS=['preset','resScale','shadows','shadowSize','envReflections','caustics','fakeGI','refraction','ssao','volumetricDust','dustDensity','aniso','antialias','pathTraceAccents','showCharDebug'];
 function saveGfxChoice(){
   try{
-    localStorage.setItem(GFX_STORE_KEY,JSON.stringify({
-      preset:GFX.preset, resScale:GFX.resScale, shadows:GFX.shadows, shadowSize:GFX.shadowSize,
-      envReflections:GFX.envReflections, caustics:GFX.caustics, fakeGI:GFX.fakeGI, refraction:GFX.refraction,
-      ssao:GFX.ssao, volumetricDust:GFX.volumetricDust, dustDensity:GFX.dustDensity, aniso:GFX.aniso,
-      antialias:GFX.antialias, pathTraceAccents:GFX.pathTraceAccents, showCharDebug:GFX.showCharDebug, chosen:true
-    }));
+    const payload={chosen:true, resolved:resolvePreset()};
+    GFX_KNOB_KEYS.forEach(k=>{payload[k]=GFX[k];});
+    if(GFX.budgets)payload.budgets=Object.assign({},GFX.budgets);
+    if(typeof STATE!=='undefined'&&STATE&&STATE.settings){
+      payload.settingsExtra={
+        stars:!!STATE.settings.stars, dust:!!STATE.settings.dust, bloom:!!STATE.settings.bloom,
+        motion:!!STATE.settings.motion, textures:!!STATE.settings.textures, galaxyband:!!STATE.settings.galaxyband,
+        particles:STATE.settings.particles, fov:STATE.settings.fov
+      };
+    }
+    localStorage.setItem(GFX_STORE_KEY,JSON.stringify(payload));
+    // Migrate: drop stale v1 so old polluted assigns never win
+    try{localStorage.removeItem('dm_gfx_v1');}catch(_){}
   }catch(e){}
 }
 function loadGfxChoice(){
   try{
-    const raw=localStorage.getItem(GFX_STORE_KEY);
+    let raw=localStorage.getItem(GFX_STORE_KEY);
+    if(!raw){ raw=localStorage.getItem('dm_gfx_v1'); }
     if(!raw)return false;
     const d=JSON.parse(raw);
-    Object.assign(GFX,d);
-    clampToHardware();
-    return !!d.chosen;
+    if(!d||!d.chosen)return false;
+    GFX_KNOB_KEYS.forEach(k=>{ if(d[k]!==undefined)GFX[k]=d[k]; });
+    if(GFX.preset && GFX.preset!=='custom'){
+      applyPreset(GFX.preset);
+    } else {
+      clampToHardware();
+      const tier=resolvePreset();
+      if(tier!=='custom'){ const b=GFX_BUDGETS[tier]||GFX_BUDGETS.medium; GFX.budgets=Object.assign({},b); }
+      if(d.settingsExtra&&typeof STATE!=='undefined'&&STATE&&STATE.settings){
+        Object.assign(STATE.settings,d.settingsExtra);
+      }
+    }
+    return true;
   }catch(e){return false;}
 }
+function getGfxBudgets(){
+  const resolved=resolvePreset();
+  const b=GFX.budgets||GFX_BUDGETS[resolved==='custom'?'medium':resolved]||GFX_BUDGETS.medium;
+  return Object.assign({preset:GFX.preset, resolved:resolved, score:GFX.score, isMobile:!!GFX.isMobile, isSafari:!!GFX.isSafari}, b);
+}
+window.GFX=GFX;
+window.getGfxBudgets=getGfxBudgets;
+window.applyGfxPreset=applyPreset;
+window.saveGfxChoice=saveGfxChoice;
+window.loadGfxChoice=loadGfxChoice;
 
 // ── Preset selection screen ─────────────────────────────────────
 const PRESET_META={
@@ -3743,7 +3786,7 @@ async function initFlightScene(){
   container.insertBefore(cv,container.firstChild);
 
   // Detect device capabilities + pick a quality tier before building the renderer
-  try{ detectCapabilities(); applyQualityTier(); }catch(e){console.warn('cap init:',e);}
+  try{ detectCapabilities(); loadGfxChoice(); applyQualityTier(); }catch(e){console.warn('cap init:',e);}
 
   // Renderer — compatibility-first across Safari/Chrome/Edge/Firefox on all OSes
   flightRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:!GFX.isMobile,alpha:false,powerPreference:'high-performance',logarithmicDepthBuffer:true});
