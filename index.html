@@ -1695,7 +1695,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     <div class="setting-row"><div><div class="setting-label">Marching Cubes Terrain (experimental)</div><div class="setting-sub">Real 3D density-field terrain — enables true overhangs/caves, but is heavier than the default terrain. Requires re-landing on a surface to take effect.</div></div><label class="toggle-switch"><input type="checkbox" id="set-mctest"><span class="toggle-track"></span></label></div>
     <div class="setting-row">
       <div><div class="setting-label">Bloom Intensity</div><div class="setting-sub">How strong the glow is when on</div></div>
-      <input type="range" id="set-bloom-intensity" min="0" max="1" step="0.05" value="0.5" style="width:110px;accent-color:var(--cyan);">
+      <input type="range" id="set-bloom-intensity" min="0" max="1" step="0.05" value="0.16" style="width:110px;accent-color:var(--cyan);">
     </div>
     <div class="setting-row"><div><div class="setting-label">Motion Blur</div><div class="setting-sub">Velocity-based frame blending</div></div><label class="toggle-switch"><input type="checkbox" id="set-motion" checked><span class="toggle-track"></span></label></div>
     <div class="setting-row"><div><div class="setting-label">Procedural Textures</div><div class="setting-sub">High-detail planet surfaces</div></div><label class="toggle-switch"><input type="checkbox" id="set-textures" checked><span class="toggle-track"></span></label></div>
@@ -1802,7 +1802,7 @@ const STATE={
   flight:{speed:0,dart:false,energy:100,hull:100,shield:100,destIdx:0,time:0,
     camPitch:0,camYaw:0,thrust:0,strafe:0,lift:0,
     pos:{x:28,y:2,z:3},vel:{x:0,y:0,z:0}}, // upgraded to real THREE.Vector3 instances below once THREE exists
-  settings:{stars:true,dust:true,bloom:true,bloomIntensity:0.32,motion:true,textures:true,galaxyband:true,particles:'med',fov:50000,dartSpeed:15,gfxQuality:'auto',resScale:1.0,shadows:true,reflections:true,caustics:true,gi:true,marchingCubesTerrain:true}
+  settings:{stars:true,dust:true,bloom:true,bloomIntensity:0.16,motion:true,textures:true,galaxyband:true,particles:'med',fov:50000,dartSpeed:15,gfxQuality:'auto',resScale:1.0,shadows:true,reflections:true,caustics:true,gi:true,marchingCubesTerrain:true}
 };
 window.__whenThreeReady(function(){
   STATE.flight.pos = new THREE.Vector3(STATE.flight.pos.x, STATE.flight.pos.y, STATE.flight.pos.z);
@@ -3411,7 +3411,7 @@ function syncSettingsUIFromState(){
     if($('set-dust'))$('set-dust').checked=s.dust;
     if($('set-bloom'))$('set-bloom').checked=s.bloom;
     if($('set-mctest'))$('set-mctest').checked=!!s.marchingCubesTerrain;
-    if($('set-bloom-intensity'))$('set-bloom-intensity').value=String(s.bloomIntensity!==undefined?s.bloomIntensity:0.5);
+    if($('set-bloom-intensity'))$('set-bloom-intensity').value=String(s.bloomIntensity!==undefined?s.bloomIntensity:0.16);
     if($('set-motion'))$('set-motion').checked=s.motion;
     if($('set-textures'))$('set-textures').checked=s.textures;
     if($('set-galaxyband'))$('set-galaxyband').checked=s.galaxyband;
@@ -4997,11 +4997,12 @@ async function buildSolarSystem(){
   const sm = new THREE.Mesh(new THREE.SphereGeometry(4,24,24), new THREE.MeshBasicMaterial({color:0xffdd44}));
   sunGroup.add(sm);
   try{
+    // Soft bloom wash fix: keep a hint of corona, not a white orb (home + close Sol).
     const gt = makeCircleTex(64, '#ffdd44', 1);
-    const spr1 = new THREE.Sprite(new THREE.SpriteMaterial({map:gt,color:0xffdd44,transparent:true,opacity:0.28,blending:THREE.AdditiveBlending,depthWrite:false}));
-    spr1.scale.set(14,14,1); sunGroup.add(spr1);
-    const spr2 = new THREE.Sprite(new THREE.SpriteMaterial({map:gt,color:0xffaa00,transparent:true,opacity:0.12,blending:THREE.AdditiveBlending,depthWrite:false}));
-    spr2.scale.set(26,26,1); sunGroup.add(spr2);
+    const spr1 = new THREE.Sprite(new THREE.SpriteMaterial({map:gt,color:0xffdd44,transparent:true,opacity:0.10,blending:THREE.AdditiveBlending,depthWrite:false}));
+    spr1.scale.set(9,9,1); sunGroup.add(spr1);
+    const spr2 = new THREE.Sprite(new THREE.SpriteMaterial({map:gt,color:0xffaa00,transparent:true,opacity:0.04,blending:THREE.AdditiveBlending,depthWrite:false}));
+    spr2.scale.set(14,14,1); sunGroup.add(spr2);
   }catch(e){}
   flightScene.add(sunGroup);
   sunMesh=sm;
@@ -6345,7 +6346,7 @@ function sequenceAltar(){
 }
 function addSunLight(){
   // Sun point light — range extends past Neptune (~842 scene units at AU=28)
-  const sl=new THREE.PointLight(0xffffee,3,300000);sl.position.set(0,0,0);flightScene.add(sl);
+  const sl=new THREE.PointLight(0xffffee,1.55,300000);sl.position.set(0,0,0);flightScene.add(sl);
   // Hemisphere fill = cheap global-illumination approximation (universal)
   if(GFX.fakeGI){flightScene.add(new THREE.HemisphereLight(0x223a55,0x0a0a14,0.4));}
   flightScene.add(new THREE.PointLight(0x4455ff,0.6,500000));
@@ -9927,6 +9928,7 @@ function buildFlightGalaxyBandCPU(){
   const mobile=!!(GFX&&GFX.isMobile);
   const gfxLow=!!(GFX&&GFX.preset==='low');
   // High baseline ~50k arms / ~15k core; Low/Safari ~0.2–0.35× (playable).
+  // Prefer Stabilizer getGfxBudgets().galaxyArm/.galaxyCore when present.
   const LOD={
     low:  {arm:mobile||gfxLow?10000:14000, core:mobile||gfxLow?5000:6000},
     med:  {arm:mobile?22000:32000, core:mobile?8000:10000},
@@ -9937,6 +9939,13 @@ function buildFlightGalaxyBandCPU(){
   if(gfxLow&&particles!=='low'){
     bud={arm:Math.min(bud.arm, mobile?12000:16000), core:Math.min(bud.core, mobile?5500:7000)};
   }
+  try{
+    if(typeof getGfxBudgets==='function'){
+      const gb=getGfxBudgets()||{};
+      if(typeof gb.galaxyArm==='number'&&gb.galaxyArm>0) bud.arm=gb.galaxyArm|0;
+      if(typeof gb.galaxyCore==='number'&&gb.galaxyCore>0) bud.core=gb.galaxyCore|0;
+    }
+  }catch(e){}
   const armBudget=bud.arm, coreBudget=bud.core;
   const RG=42000;
   const TURNS=2.25; // ~2.0–2.5 spiral turns (Blender wind)
@@ -10032,15 +10041,36 @@ function buildFlightGalaxyBandCPU(){
   g.setAttribute('position',new THREE.BufferAttribute(new Float32Array(pts),3));
   g.setAttribute('color',new THREE.BufferAttribute(new Float32Array(cols),3));
   const tex=makeCircleTex(16,'rgb(255,255,255)',1);
-  // Home-scale readability: spiral #14 sizes (48–85) read as void from Sol.
-  // Bump for immersion without restoring the old star-sphere wash.
-  const armSize=mobile?(gfxLow?110:130):(gfxLow?78:98);
+  // HOME-VOID FIX: sizeAttenuation:true + world sizes ~78–130 made the band
+  // nearly invisible from Sol (~21k from galGroup). Use screen-space plate
+  // (sizeAttenuation:false) so cyan spiral arms + core read from home like
+  // Blender ref / #14 intent. Optional near attenuated tier kept tiny for
+  // local depth only — far plate carries the silhouette.
+  const armPx=mobile?(gfxLow?2.6:3.2):(gfxLow?2.8:3.6);
   flightGalaxyBand=new THREE.Points(g,new THREE.PointsMaterial({
-    size:armSize,sizeAttenuation:true,vertexColors:true,map:tex,
-    alphaTest:0.02,transparent:true,opacity:0.95,depthWrite:false,blending:THREE.AdditiveBlending
+    size:armPx,sizeAttenuation:false,vertexColors:true,map:tex,
+    alphaTest:0.02,transparent:true,opacity:0.92,depthWrite:false,blending:THREE.AdditiveBlending
   }));
   const galGroup=new THREE.Group();
   galGroup.add(flightGalaxyBand);
+  // Dual-tier near dust: sparse attenuated wisps so flying INTO arms still has depth
+  try{
+    const nearN=Math.min(placed, mobile||gfxLow?1800:3200);
+    const np=new Float32Array(nearN*3), nc=new Float32Array(nearN*3);
+    for(let i=0;i<nearN;i++){
+      const j=(i*3)%(placed*3);
+      np[i*3]=pts[j]; np[i*3+1]=pts[j+1]; np[i*3+2]=pts[j+2];
+      nc[i*3]=cols[j]*0.85; nc[i*3+1]=cols[j+1]*0.85; nc[i*3+2]=cols[j+2]*0.85;
+    }
+    const ng=new THREE.BufferGeometry();
+    ng.setAttribute('position',new THREE.BufferAttribute(np,3));
+    ng.setAttribute('color',new THREE.BufferAttribute(nc,3));
+    const nearSz=mobile?(gfxLow?90:110):(gfxLow?70:95);
+    galGroup.add(new THREE.Points(ng,new THREE.PointsMaterial({
+      size:nearSz,sizeAttenuation:true,vertexColors:true,map:tex,
+      alphaTest:0.03,transparent:true,opacity:0.55,depthWrite:false,blending:THREE.AdditiveBlending
+    })));
+  }catch(e){}
 
   // ── Core bulge: denser cyan-white swarm (separate buffer) ──
   const cp=[],cc=[];
@@ -10055,15 +10085,16 @@ function buildFlightGalaxyBandCPU(){
   const cg=new THREE.BufferGeometry();
   cg.setAttribute('position',new THREE.BufferAttribute(new Float32Array(cp),3));
   cg.setAttribute('color',new THREE.BufferAttribute(new Float32Array(cc),3));
-  const coreSize=mobile?(gfxLow?130:155):(gfxLow?95:115);
+  const corePx=mobile?(gfxLow?3.4:4.2):(gfxLow?3.8:4.8);
   galGroup.add(new THREE.Points(cg,new THREE.PointsMaterial({
-    size:coreSize,sizeAttenuation:true,vertexColors:true,map:tex,
-    transparent:true,opacity:0.96,depthWrite:false,blending:THREE.AdditiveBlending
+    size:corePx,sizeAttenuation:false,vertexColors:true,map:tex,
+    transparent:true,opacity:0.95,depthWrite:false,blending:THREE.AdditiveBlending
   })));
 
-  // Brighter Sgr A* cue so home view sees the galactic core direction
-  galGroup.add(makeGlowSprite('rgba(170,235,255,0.5)',RG*0.032));
-  galGroup.add(makeGlowSprite('rgba(200,240,255,0.22)',RG*0.055));
+  // Brighter Sgr A* cue so home view sees the galactic core direction (-X from Sol)
+  galGroup.add(makeGlowSprite('rgba(170,235,255,0.62)',RG*0.038));
+  galGroup.add(makeGlowSprite('rgba(200,240,255,0.28)',RG*0.068));
+  galGroup.add(makeGlowSprite('rgba(140,200,255,0.12)',RG*0.11));
 
   // Thin cool accretion ring (cyan→soft blue), kept small
   const dn=Math.round(Math.min(2800, coreBudget*0.22));
@@ -10080,8 +10111,8 @@ function buildFlightGalaxyBandCPU(){
   dg.setAttribute('position',new THREE.BufferAttribute(new Float32Array(dp),3));
   dg.setAttribute('color',new THREE.BufferAttribute(new Float32Array(dc),3));
   galGroup.add(new THREE.Points(dg,new THREE.PointsMaterial({
-    size:mobile?70:55,sizeAttenuation:true,vertexColors:true,map:tex,
-    transparent:true,opacity:0.9,depthWrite:false,blending:THREE.AdditiveBlending
+    size:mobile?2.4:2.8,sizeAttenuation:false,vertexColors:true,map:tex,
+    transparent:true,opacity:0.85,depthWrite:false,blending:THREE.AdditiveBlending
   })));
 
   galGroup.rotation.set(0.5,0.3,0.1);
@@ -10102,34 +10133,53 @@ function buildFlightGalaxyBandCPU(){
     }
     const local=new THREE.Group();
     local.rotation.copy(galGroup.rotation);
-    const locN=mobile?(gfxLow?2800:4200):(gfxLow?5000:7500);
+    // Player IN the arm: ~10–15k Low/med, brighter cyan, larger sizes + core tongue.
+    const locN=mobile?(gfxLow?10000:12000):(gfxLow?12000:15000);
     const lp=new Float32Array(locN*3),lc=new Float32Array(locN*3);
     // Dense flattened ellipsoid around Sol (player is IN the arm)
     for(let i=0;i<locN;i++){
-      const along= (Math.random()-0.5)*5200;          // along arm
-      const across=(Math.random()-0.5)*Math.random()*900; // arm width
-      const thick=(Math.random()-0.5)*Math.random()*280;  // disc thickness
+      const along= (Math.random()-0.5)*6200;          // along arm
+      const across=(Math.random()-0.5)*Math.random()*1100; // arm width
+      const thick=(Math.random()-0.5)*Math.random()*320;  // disc thickness
       // Bias a brighter tongue toward galactic center (-X in gal local ≈ core)
-      const coreBias=Math.random()*Math.random()*3800;
-      lp[i*3]=along - coreBias*0.35;
+      const coreBias=Math.random()*Math.random()*5200;
+      lp[i*3]=along - coreBias*0.55;
       lp[i*3+1]=thick;
       lp[i*3+2]=across;
-      const t=Math.min(1,Math.hypot(lp[i*3],lp[i*3+2])/4500);
-      const b=(0.55+Math.random()*0.45)*(1-t*0.35);
-      // cyan-blue local arm (match spiral palette, no warm cream wash)
-      lc[i*3]=0.4*b;lc[i*3+1]=0.72*b;lc[i*3+2]=1.0*b;
+      const t=Math.min(1,Math.hypot(lp[i*3],lp[i*3+2])/5200);
+      const towardCore=Math.max(0, -lp[i*3]/5200);
+      const b=(0.72+Math.random()*0.38)*(1-t*0.22)*(0.85+towardCore*0.45);
+      // brighter cyan-blue local arm (match spiral palette, no warm cream wash)
+      lc[i*3]=0.42*b;lc[i*3+1]=0.82*b;lc[i*3+2]=1.0*b;
     }
     const lg=new THREE.BufferGeometry();
     lg.setAttribute('position',new THREE.BufferAttribute(lp,3));
     lg.setAttribute('color',new THREE.BufferAttribute(lc,3));
-    const locSize=mobile?(gfxLow?28:36):(gfxLow?22:28);
+    const locSize=mobile?(gfxLow?48:58):(gfxLow?42:56);
     local.add(new THREE.Points(lg,new THREE.PointsMaterial({
       size:locSize,sizeAttenuation:true,vertexColors:true,map:tex,
-      transparent:true,opacity:0.9,depthWrite:false,blending:THREE.AdditiveBlending,alphaTest:0.02
+      transparent:true,opacity:0.95,depthWrite:false,blending:THREE.AdditiveBlending,alphaTest:0.02
     })));
-    // Soft nearby glow so looking "out" isn't a black void
-    local.add(makeGlowSprite('rgba(120,180,255,0.18)',900));
-    local.add(makeGlowSprite('rgba(160,210,255,0.10)',1600));
+    // Mid-field screen-space streak so arm silhouette holds when looking toward core
+    try{
+      const midN=Math.min(locN, mobile||gfxLow?3500:5000);
+      const mp=new Float32Array(midN*3), mc=new Float32Array(midN*3);
+      for(let i=0;i<midN;i++){
+        mp[i*3]=lp[i*3]; mp[i*3+1]=lp[i*3+1]; mp[i*3+2]=lp[i*3+2];
+        mc[i*3]=lc[i*3]; mc[i*3+1]=lc[i*3+1]; mc[i*3+2]=lc[i*3+2];
+      }
+      const mg=new THREE.BufferGeometry();
+      mg.setAttribute('position',new THREE.BufferAttribute(mp,3));
+      mg.setAttribute('color',new THREE.BufferAttribute(mc,3));
+      local.add(new THREE.Points(mg,new THREE.PointsMaterial({
+        size:mobile?2.2:2.6,sizeAttenuation:false,vertexColors:true,map:tex,
+        transparent:true,opacity:0.7,depthWrite:false,blending:THREE.AdditiveBlending,alphaTest:0.02
+      })));
+    }catch(e){}
+    // Soft nearby glow so looking "out" isn't a black void + core direction cue
+    local.add(makeGlowSprite('rgba(120,190,255,0.28)',1100));
+    local.add(makeGlowSprite('rgba(160,210,255,0.16)',2000));
+    local.add(makeGlowSprite('rgba(180,230,255,0.10)',3200));
     flightScene.add(local);
     window._flightLocalArm=local;
   }catch(e){console.warn('local arm:',e);}
@@ -10263,13 +10313,14 @@ function buildCheapStarMarker(radius, starColor){
   );
   group.add(mesh);
   try{
+    // Soft bloom wash: distant markers must stay pinpoints, not circular blooms.
     const hex='#'+new THREE.Color(starColor).getHexString();
     const gt=makeCircleTex(32,hex,1);
     const spr=new THREE.Sprite(new THREE.SpriteMaterial({
-      map:gt,color:starColor,transparent:true,opacity:0.35,
+      map:gt,color:starColor,transparent:true,opacity:0.12,
       blending:THREE.AdditiveBlending,depthWrite:false
     }));
-    spr.scale.set(radius*7,radius*7,1);group.add(spr);
+    spr.scale.set(radius*3.2,radius*3.2,1);group.add(spr);
   }catch(e){}
   return group;
 }
@@ -10305,12 +10356,13 @@ function buildProceduralStarMesh(radius, seedVal, starColor){
   // technique already used everywhere else in this file for cheap additive
   // glow, not a new dependency.
   try{
+    // Soft bloom wash: tone corona hard so distant/close stars don't wash white.
     const hex = '#'+new THREE.Color(starColor).getHexString();
     const gt = makeCircleTex(64, hex, 1);
-    const spr1 = new THREE.Sprite(new THREE.SpriteMaterial({map:gt,color:starColor,transparent:true,opacity:0.5,blending:THREE.AdditiveBlending,depthWrite:false}));
-    spr1.scale.set(radius*6, radius*6, 1); group.add(spr1);
-    const spr2 = new THREE.Sprite(new THREE.SpriteMaterial({map:gt,color:starColor,transparent:true,opacity:0.22,blending:THREE.AdditiveBlending,depthWrite:false}));
-    spr2.scale.set(radius*12, radius*12, 1); group.add(spr2);
+    const spr1 = new THREE.Sprite(new THREE.SpriteMaterial({map:gt,color:starColor,transparent:true,opacity:0.16,blending:THREE.AdditiveBlending,depthWrite:false}));
+    spr1.scale.set(radius*3.4, radius*3.4, 1); group.add(spr1);
+    const spr2 = new THREE.Sprite(new THREE.SpriteMaterial({map:gt,color:starColor,transparent:true,opacity:0.05,blending:THREE.AdditiveBlending,depthWrite:false}));
+    spr2.scale.set(radius*6.5, radius*6.5, 1); group.add(spr2);
   }catch(e){}
   return group;
 }
@@ -10478,7 +10530,7 @@ function initPostFX(){
   });
   // composite scene + bloom, then motion-blur blend with previous frame
   _compMat=new THREE.ShaderMaterial({
-    uniforms:{tScene:{value:null},tBloom:{value:null},tPrev:{value:null},bloomStr:{value:0.5},motionAmt:{value:0.0}},
+    uniforms:{tScene:{value:null},tBloom:{value:null},tPrev:{value:null},bloomStr:{value:0.16},motionAmt:{value:0.0}},
     vertexShader:'varying vec2 vUv;void main(){vUv=uv;gl_Position=vec4(position.xy,0.,1.);}',
     fragmentShader:'uniform sampler2D tScene;uniform sampler2D tBloom;uniform sampler2D tPrev;uniform float bloomStr;uniform float motionAmt;varying vec2 vUv;void main(){vec4 sc=texture2D(tScene,vUv);vec4 bl=texture2D(tBloom,vUv);vec3 col=sc.rgb+bl.rgb*bloomStr;vec4 pv=texture2D(tPrev,vUv);col=mix(col,pv.rgb,motionAmt);gl_FragColor=vec4(col,1.0);}'
   });
@@ -10548,7 +10600,7 @@ function renderWithPostFX(){
   _fsQuad.material=_compMat;
   _compMat.uniforms.tScene.value=_rtScene.texture;
   _compMat.uniforms.tBloom.value=useBloom?_rtA.texture:_rtScene.texture;
-  _compMat.uniforms.bloomStr.value=useBloom?(STATE.settings.bloomIntensity!==undefined?STATE.settings.bloomIntensity:0.5):0.0;
+  _compMat.uniforms.bloomStr.value=useBloom?(STATE.settings.bloomIntensity!==undefined?STATE.settings.bloomIntensity:0.16):0.0;
   _compMat.uniforms.tPrev.value=_rtPrev.texture;
   // motion blur amount scales with ship speed for a sense of velocity
   let mb=0;
