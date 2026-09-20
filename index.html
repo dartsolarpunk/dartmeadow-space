@@ -3284,9 +3284,9 @@ const PRESET_SETTINGS_EXTRA = {
 const GFX_BUDGETS = {
   // mcPlanet* / mcSurf*: WebGPU-first MC grid N (sandbox LOD cite 5135843 high:40).
   // Low = cheaper N, SAME GPU MC architecture (not a parallel forever-GL stack).
-  low:    {galaxyArm:14000, galaxyCore:6000, dustSprites:400,  nebulaClouds:2, starCount:2000,  planetSeg:24, mcPrefer:true,  mcPlanetHigh:16, mcPlanetMed:12, mcPlanetLow:8,  mcSurfHigh:18, mcSurfMed:14, mcSurfLow:10},
-  medium: {galaxyArm:32000, galaxyCore:10000,dustSprites:1200, nebulaClouds:4, starCount:5000,  planetSeg:48, mcPrefer:true,  mcPlanetHigh:28, mcPlanetMed:18, mcPlanetLow:10, mcSurfHigh:24, mcSurfMed:18, mcSurfLow:14},
-  high:   {galaxyArm:52000, galaxyCore:15000,dustSprites:2500, nebulaClouds:6, starCount:12000, planetSeg:72, mcPrefer:true,  mcPlanetHigh:40, mcPlanetMed:20, mcPlanetLow:10, mcSurfHigh:28, mcSurfMed:22, mcSurfLow:16},
+  low:    {galaxyArm:14000, galaxyCore:6000, dustSprites:400,  nebulaClouds:2, starCount:2000,  planetSeg:24, mcPrefer:true,  mcPlanetHigh:16, mcPlanetMed:12, mcPlanetLow:8,  mcSurfHigh:20, mcSurfMed:16, mcSurfLow:12},
+  medium: {galaxyArm:32000, galaxyCore:10000,dustSprites:1200, nebulaClouds:4, starCount:5000,  planetSeg:48, mcPrefer:true,  mcPlanetHigh:28, mcPlanetMed:18, mcPlanetLow:10, mcSurfHigh:26, mcSurfMed:20, mcSurfLow:16},
+  high:   {galaxyArm:52000, galaxyCore:15000,dustSprites:2500, nebulaClouds:6, starCount:12000, planetSeg:72, mcPrefer:true,  mcPlanetHigh:40, mcPlanetMed:20, mcPlanetLow:10, mcSurfHigh:28, mcSurfMed:24, mcSurfLow:18},
   ultra:  {galaxyArm:65000, galaxyCore:18000,dustSprites:5000, nebulaClouds:8, starCount:20000, planetSeg:96, mcPrefer:true,  mcPlanetHigh:40, mcPlanetMed:24, mcPlanetLow:12, mcSurfHigh:28, mcSurfMed:24, mcSurfLow:18},
 };
 
@@ -3676,6 +3676,9 @@ let _charShadowLight=null;
 let _builtBoardTemplate=null; // last template key that was built into boardFlight
 let _landTargetBody=null,_approachBestDist=Infinity,_approachBestBody=null;
 let flightAnimId,flightTime=0,celestialBodies=[],sunMesh,earthMesh;
+// Earth-class orbital body scale (scene units). Board≈12.33 ft/u; rider≈0.49 u.
+// Earth visual radius = 1 * PLANET_VIS_SCALE. Near-atmo must fill FOV (not marble).
+const PLANET_VIS_SCALE = 6;
 let flightFlybys=[]; // comets / belt / other named flybys for proximity labels
 let oortCloudGroup=null;
 
@@ -3787,9 +3790,10 @@ function buildDestinations(){
   DESTINATIONS.length=0;
   // AU = 28 scene units. Board starts drifting in LEO near Earth (1 AU from Sun)
   const AU=28;
+  // (PLANET_VIS_SCALE is file-scope — see below near solar-system builders)
   const defs=[
-    {name:'Low Earth Orbit',icon:'🌍',type:'Orbit',dist:'400 km',pos:new THREE.Vector3(AU*1.0+2,2,3)},
-    {name:'Moon',icon:'🌕',type:'Moon',dist:'384k km',pos:new THREE.Vector3(AU*1.0+5,0,3)},
+    {name:'Low Earth Orbit',icon:'🌍',type:'Orbit',dist:'400 km',pos:new THREE.Vector3(AU*1.0+PLANET_VIS_SCALE+3,2,3)},
+    {name:'Moon',icon:'🌕',type:'Moon',dist:'384k km',pos:new THREE.Vector3(AU*1.0+PLANET_VIS_SCALE*2.8,0,3)},
     {name:'Mars',icon:'🔴',type:'Planet',dist:'78M km',pos:new THREE.Vector3(AU*1.524,2,8)},
     {name:'Asteroid Belt',icon:'🪨',type:'Belt',dist:'325M km',pos:new THREE.Vector3(AU*2.7,0,AU*0.3)},
     {name:'Jupiter',icon:'🟠',type:'Gas Giant',dist:'629M km',pos:new THREE.Vector3(AU*5.203,4,-AU*0.5)},
@@ -4980,7 +4984,7 @@ async function buildSolarSystem(){
   // ═══════════════════════════════════════════════════════════════
   //  REAL-SCALE SOLAR SYSTEM — Astronomical Unit (AU) spacing
   //  1 AU = 28 scene units (Earth's orbit radius)
-  //  Planet radii are exaggerated ~100-500x for visibility
+  //  Planet radii: real ratios × PLANET_VIS_SCALE (Earth-class near-field)
   //  Orbital speeds are proportional to real Keplerian ratios
   // ═══════════════════════════════════════════════════════════════
   const AU = 28; // 1 AU in scene units
@@ -5026,11 +5030,18 @@ async function buildSolarSystem(){
     {name:'Uranus', rRatio:4.01, col:0x88ddee,oR:AU*19.191, period:84.011, type:'Ice Giant',temp:'76 K'},
     {name:'Neptune',rRatio:3.88, col:0x3355cc,oR:AU*30.069, period:164.79, type:'Ice Giant',temp:'72 K'}
   ];
-  // Visual radius: scale real ratios but compress the gas-giant range so
-  // Mercury isn't a sub-pixel dot and Jupiter doesn't swallow the screen.
-  // Earth visual = 1.0 unit; giants compressed via a soft curve.
-  const visR = ratio => ratio<=1.2 ? Math.max(0.3, ratio*1.0)
-                       : 1.2 + Math.pow(ratio-1.2, 0.62)*0.9;
+  // Visual radius: real ratios + Earth-class near-field scale.
+  // Board: 1 unit ≈ 12.33 ft (37 ft board / 3 u). Rider ≈ 0.49 u (6 ft).
+  // Old Earth r=1 ≈ 12 ft — marble vs rider. PLANET_VIS_SCALE makes Earth
+  // r≈6 (~74 ft / ~12× rider): near atmo (d≈1.5–2.5 r) fills FOV; AU
+  // spacing unchanged so Sol layout stays coherent (rare conjunction soft-
+  // overlap handled by flight collision push).
+  // Hoisted for rebuildFlightForSystem / asteroid belt (see file-scope PLANET_VIS_SCALE).
+  const visR = ratio => {
+    const base = ratio<=1.2 ? Math.max(0.3, ratio*1.0)
+                 : 1.2 + Math.pow(ratio-1.2, 0.62)*0.9;
+    return base * PLANET_VIS_SCALE;
+  };
   // Time compression: real periods would be imperceptible. One real year
   // maps to TIME_SCALE sim-seconds so motion is visible but ratios stay true.
   const TIME_SCALE = 0.0008; // sim angular speed per real-year-of-period
@@ -5173,7 +5184,8 @@ async function buildSolarSystem(){
     const landNames=['Ceres','Vesta','Pallas','Eros'];
     for(let li=0;li<landNames.length;li++){
       const a=landRand()*Math.PI*2, r=beltR+(landRand()-0.5)*AU*0.55;
-      const rad=0.35+landRand()*0.45;
+      // Match planet near-field scale (was marble-sized 0.35–0.8)
+      const rad=(0.35+landRand()*0.45)*PLANET_VIS_SCALE;
       const seedVal=hashStr('sol:landable:'+landNames[li]);
       let amesh;
       try{
@@ -6376,6 +6388,8 @@ async function loadEarthCoastlines(){
       if(!res.ok)continue;
       const gj=await res.json();
       const mat=new THREE.LineBasicMaterial({color:0x00f5ff,transparent:true,opacity:0.45});
+      const earthBody=celestialBodies.find(b=>b&&b.name==='Earth');
+      const er=(earthBody&&(earthBody.collisionRadius||earthBody.mcRadius))||PLANET_VIS_SCALE;
       (gj.features||[]).forEach(f=>{
         if(!f.geometry)return;
         const type=f.geometry.type;
@@ -6383,15 +6397,15 @@ async function loadEarthCoastlines(){
         rings.forEach(ring=>{
           if(ring.length<2)return;
           // LOCAL coordinates — (0,0,0) center, parented to earthMesh
-          const pts=ring.map(([lo,la])=>latLonToFlightVec3(la,lo,1.005,0,0,0));
+          const pts=ring.map(([lo,la])=>latLonToFlightVec3(la,lo,er*1.005,0,0,0));
           earthMesh.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),mat));
         });
       });
       // Grid lines on Earth — also in local coords, parented to earthMesh
       const faint=new THREE.LineBasicMaterial({color:0x00f5ff,transparent:true,opacity:.055});
       const med=new THREE.LineBasicMaterial({color:0x00f5ff,transparent:true,opacity:.2});
-      for(let lat=-60;lat<=60;lat+=30){const pts=[];for(let lo=0;lo<=360;lo+=3)pts.push(latLonToFlightVec3(lat,lo,1.002,0,0,0));earthMesh.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),lat===0?med:faint));}
-      for(let lo=0;lo<360;lo+=30){const pts=[];for(let lat=-88;lat<=88;lat+=3)pts.push(latLonToFlightVec3(lat,lo,1.002,0,0,0));earthMesh.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),lo===0?med:faint));}
+      for(let lat=-60;lat<=60;lat+=30){const pts=[];for(let lo=0;lo<=360;lo+=3)pts.push(latLonToFlightVec3(lat,lo,er*1.002,0,0,0));earthMesh.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),lat===0?med:faint));}
+      for(let lo=0;lo<360;lo+=30){const pts=[];for(let lat=-88;lat<=88;lat+=3)pts.push(latLonToFlightVec3(lat,lo,er*1.002,0,0,0));earthMesh.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),lo===0?med:faint));}
       break;
     }catch(e){console.warn('Coastline failed:',url);}
   }
@@ -6920,14 +6934,15 @@ function buildFlightBoard(){
     }
   })();
 
-  // Camera starts in Low Earth Orbit — 1 AU from Sun, drifting with Earth
-  const AU=28;
-  flightCamera.position.set(AU*1.0+2, 2, 3); // LEO offset from Earth center
+  // Camera starts in Low Earth Orbit — outside Earth's scaled collision radius
+  // (Earth is at a deep-future orbital angle, not at +X AU).
+  const leo=placeSolLeoOffset(2.8);
+  flightCamera.position.copy(leo);
   flightCamera.rotation.order='YXZ';
   flightCamera.rotation.set(0,0,0);
   flightCamera.near=0.1; flightCamera.far=300000;
   flightCamera.updateProjectionMatrix();
-  STATE.flight.pos.set(AU*1.0+2, 2, 3);
+  STATE.flight.pos.copy(leo);
   STATE.flight.camYaw=0;
   STATE.flight.camPitch=0;
   STATE.flight.quat=null;   // 6-DOF orientation rebuilds from the zeroed angles
@@ -7863,8 +7878,10 @@ function updateBodies(dt){
     // landable AND hasTerrain. Belt/oort particle fluff never enters
     // celestialBodies, so they never get a prompt.
     if(b.name!=='Sun' && b.type!=='Star' && isProximityLandEligible(b)){
-      const rad=b.collisionRadius||b.mcRadius||1;
-      const approachRange=Math.max(rad*8, 12);
+      const rad=b.collisionRadius||b.mcRadius||PLANET_VIS_SCALE;
+      // Near-atmo cue: ~3.5 r puts Earth-class body at horizon-filling angular size
+      // (FOV 60° → ~2*atan(1/2.2)≈49°). Floor raised so small asteroids still prompt.
+      const approachRange=Math.max(rad*3.5, rad*2.2+8, 18);
       if(dist<approachRange && dist<_approachBestDist){
         _approachBestDist=dist;_approachBestBody=b;
       }
@@ -7914,6 +7931,27 @@ function updateBodies(dt){
   if(sunMesh)sunMesh.rotation.y+=.0003;
 }
 
+
+// Place board just outside Earth's (scaled) surface along sun→Earth radial.
+function placeSolLeoOffset(clearance){
+  clearance = (typeof clearance==='number') ? clearance : 2.8;
+  const AU=28;
+  const earthBody = (typeof celestialBodies!=='undefined') && celestialBodies
+    ? celestialBodies.find(b=>b && b.name==='Earth') : null;
+  const er = (earthBody && (earthBody.collisionRadius||earthBody.mcRadius)) || PLANET_VIS_SCALE;
+  if(earthMesh && earthMesh.position){
+    const ep = earthMesh.position;
+    const len = Math.hypot(ep.x, ep.y, ep.z) || AU;
+    const nx = ep.x/len, ny = ep.y/len, nz = ep.z/len;
+    // Slight out-of-plane + tangent so camera sees horizon-filling limb, not nose-in
+    return new THREE.Vector3(
+      ep.x + nx*(er+clearance) + nz*er*0.15,
+      ep.y + ny*(er+clearance) + er*0.12,
+      ep.z + nz*(er+clearance) - nx*er*0.15
+    );
+  }
+  return new THREE.Vector3(AU + er + clearance, er*0.2, er*0.35);
+}
 
 // ── Proximity LOD for marching-cubes planets ──────────────────────
 // The generic sphere-parameter LOD block above (checkMesh.geometry.
@@ -9311,7 +9349,8 @@ async function rebuildFlightForSystem(system){
       if(STATE.settings.textures&&typeof applyProceduralTextures==='function')applyProceduralTextures();
     }
     buildDestinations();buildDestinationUI();
-    STATE.flight.pos.set(28*1.0+2,2,3);if(boardFlight)boardFlight.position.copy(STATE.flight.pos);
+    const leo=placeSolLeoOffset(2.8);
+    STATE.flight.pos.copy(leo);if(boardFlight)boardFlight.position.copy(STATE.flight.pos);
     return;
   }
   _clearFlightSystemScene();
@@ -9339,7 +9378,8 @@ async function rebuildFlightForSystem(system){
   const bodies=system.bodies||[];
   for(let i=0;i<bodies.length;i++){
     const bd=bodies[i];
-    const r=Math.max(0.35, bd.radius|| (0.5+sysRand()*1.5));
+    // Same Earth-class near-field scale as Sol
+    const r=Math.max(0.35*PLANET_VIS_SCALE, (bd.radius|| (0.5+sysRand()*1.5))*PLANET_VIS_SCALE);
     const col=bd.color||0x888888;
     const oR=AU*(1+i*1.4);
     const ang=sysRand()*Math.PI*2;
@@ -13462,10 +13502,18 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
       gz.toFloat().mul(CELL).add(oZ)
     );
     const groundY=terrainHeightAt(p);
-    // Cave/overhang carve — genuine 3D term (not heightmap)
-    const cave = mx_fractal_noise_float(p.mul(vec3(0.05,0.08,0.05)).add(seedU.mul(7.7)),3,2.0,0.5)
-      .mul(mx_fractal_noise_float(p.mul(0.03).add(seedU).add(vec3(53,0,0)),3,2.0,0.5)).mul(18.0);
-    densityNode.element(idx).assign(p.y.sub(groundY).sub(cave));
+    // Cave/overhang carve — genuine 3D term (not heightmap).
+    // Justin Android daytime clips: uncapped *18 carve punched sky-holes
+    // through the mesh (heightmap underlay was hidden). Clamp amp + keep a
+    // solid crust so density→mesh stays continuous in daylight.
+    const caveRaw = mx_fractal_noise_float(p.mul(vec3(0.05,0.08,0.05)).add(seedU.mul(7.7)),3,2.0,0.5)
+      .mul(mx_fractal_noise_float(p.mul(0.03).add(seedU).add(vec3(53,0,0)),3,2.0,0.5)).mul(9.0);
+    const cave = caveRaw.clamp(-5.0, 10.0);
+    const dSurf = p.y.sub(groundY).sub(cave);
+    // Crust floor: always solid below (groundY - CRUST) → no through-holes
+    const CRUST = float(14.0);
+    const dFloor = p.y.sub(groundY.sub(CRUST));
+    densityNode.element(idx).assign(dSurf.min(dFloor));
   });
   await surfRenderer.computeAsync(densityFn().compute(numPoints));
 
@@ -13569,6 +13617,7 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
   mesh.userData.cliff=true;     // steep MC faces read as cliffs
   mesh.userData.mcTier=tier;
   mesh.userData.mcRes=N;
+  mesh.renderOrder=1; // above heightmap underlay
   if(GFX.shadows){mesh.receiveShadow=true;mesh.castShadow=false;}
   TERRAIN.mcTier=tier;
   TERRAIN.mcRes=N;
@@ -13952,9 +14001,9 @@ async function buildSurfaceTerrain(pal){
 
   if(useGpuMc){
     try{
-      // Hide the coarse heightmap under the GPU patch so biome colors read cleanly;
-      // heightmap remains outside the patch span and as Low/fallback path.
-      if(patch) patch.visible = false;
+      // Keep heightmap as underlay (slightly sunk) so any MC micro-gaps never
+      // read as daytime sky-holes; GPU patch draws on top with biome colors.
+      if(patch){ patch.visible = true; patch.position.y = -0.35; patch.renderOrder = 0; }
       const built = await buildGpuSurfacePatch(surfRenderer,{
         seed, pal, siteLandBias, tier:'low', halfExtent:90, yMin:-45, yMax:130
       });
@@ -14007,16 +14056,23 @@ async function buildSurfaceTerrain(pal){
   } else if(STATE.settings.marchingCubesTerrain){
     // CPU MC chunks (experimental) — unchanged path for non-real-WebGPU
     function density3D(x,y,z){
-      const base=y-H(x,z);
+      const groundY=H(x,z);
       const caveNoise=_fbm(x*0.05+seed*7.7,z*0.05+seed*7.7,seed+41,3)*_fbm(y*0.08,x*0.02-z*0.02,seed+53,3);
-      return base-caveNoise*26;
+      const cave=Math.max(-5, Math.min(10, caveNoise*12));
+      const dSurf=y-groundY-cave;
+      const CRUST=14;
+      const dFloor=y-(groundY-CRUST);
+      return Math.min(dSurf, dFloor); // shared iso 0 with mesh; crust kills through-holes
     }
+    // Overlap skirt: adjacent chunks share ~1 cell so iso borders weld
+    // (daytime MC seams / gaps on chunk edges). Step stays MC_CHUNK.
     const MC_CHUNK=130,MC_RES=32,MC_GRID=2,MC_VMIN=-40,MC_VHEIGHT=140;
+    const MC_OVERLAP=MC_CHUNK/MC_RES; // one cell
     const mcGroup=new THREE.Group();
     mcGroup.userData.climbable=true;
     TERRAIN.group.add(mcGroup);
     TERRAIN.mcGroup=mcGroup;
-    const mcMat=new THREE.MeshStandardMaterial({color:pal.ground||0x7a6a52,roughness:0.95,metalness:0.02,flatShading:false});
+    const mcMat=new THREE.MeshStandardMaterial({color:pal.ground||0x7a6a52,roughness:0.95,metalness:0.02,flatShading:false,side:THREE.DoubleSide});
     const order=[];
     for(let gx=-MC_GRID;gx<=MC_GRID;gx++)for(let gz=-MC_GRID;gz<=MC_GRID;gz++)order.push([gx,gz]);
     order.sort((a,b)=>(Math.abs(a[0])+Math.abs(a[1]))-(Math.abs(b[0])+Math.abs(b[1])));
@@ -14025,12 +14081,13 @@ async function buildSurfaceTerrain(pal){
     (function buildNext(){
       if(TERRAIN._mcBuildGen!==buildGen||!TERRAIN.mcGroup)return;
       if(!order.length){
-        console.log('[MarchingCubes] all',built,'chunks built (5x5 grid,',MC_CHUNK*(MC_GRID*2+1),'units span)');
+        console.log('[MarchingCubes] all',built,'chunks built (5x5 grid,',MC_CHUNK*(MC_GRID*2+1),'units span, overlap',MC_OVERLAP.toFixed(2),')');
         return;
       }
       const [gx,gz]=order.shift();
-      const ox=gx*MC_CHUNK-MC_CHUNK/2, oz=gz*MC_CHUNK-MC_CHUNK/2;
-      const geo=marchingCubesMesh(density3D,[ox,MC_VMIN,oz],MC_CHUNK,MC_RES,0);
+      const ox=gx*MC_CHUNK-MC_CHUNK/2-MC_OVERLAP, oz=gz*MC_CHUNK-MC_CHUNK/2-MC_OVERLAP;
+      const span=MC_CHUNK+MC_OVERLAP*2;
+      const geo=marchingCubesMesh(density3D,[ox,MC_VMIN,oz],span,MC_RES,0);
       if(geo.attributes.position&&geo.attributes.position.count>0){
         mcGroup.add(new THREE.Mesh(geo,mcMat));
       }
