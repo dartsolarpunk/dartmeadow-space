@@ -12679,8 +12679,15 @@ function _hideMiniLoader(){
 // without a new live shot or another explicit Justin correction.
 const CHAR_MOUNT_YAW_OFFSET = Math.PI / 2;
 // Terrain walk/land only: lateral gap so board rides beside her (her on board-left).
-// ~0.5 units ≈ 6 ft at board real-scale (37 ft ≈ 3 game units). Atmo/interstellar: no offset.
+// ~0.5 bake-units ≈ 6 ft when board.scale=1 (37 ft ≈ 3 game units). Atmo +
+// surface boards use scale≈2.4 — multiply via _terrainBoardSideWorld so the
+// gap stays ~6ft beside her (not under feet). Atmo/interstellar mount: no
+// side offset (rider centered on deckAnchor).
 const CHAR_TERRAIN_BOARD_SIDE = 0.5;
+function _terrainBoardSideWorld(board){
+  const sc=(board&&board.scale&&isFinite(board.scale.x))?Math.abs(board.scale.x):1;
+  return CHAR_TERRAIN_BOARD_SIDE*Math.max(sc,0.01);
+}
 const CHAR_FILES = {
   // Switched to Autumn's own hand-sculpted GLB, personally rigged by
   // Justin (not AI-generated from a reference image like the earlier
@@ -13563,7 +13570,17 @@ function _deriveBoardScale(boardObj){
   try{
     if(boardObj){
       const size = new THREE.Box3().setFromObject(boardObj).getSize(new THREE.Vector3());
-      const longest = Math.max(size.x, size.y, size.z);
+      let longest = Math.max(size.x, size.y, size.z);
+      // Worlds FLIGHT_BOARD_WORLD_SCALE shrinks the flight parent in WORLD
+      // space. setFromObject sees that shrink — if we bake it into
+      // CHAR.scaleForBoard AND parent her under the scaled board, she
+      // double-shrinks (invisible speck / wrong stance). Measure bake
+      // length in local units so parent scale alone owns the Sol speck.
+      try{
+        const ws=boardObj.getWorldScale(new THREE.Vector3());
+        const sMax=Math.max(Math.abs(ws.x),Math.abs(ws.y),Math.abs(ws.z));
+        if(isFinite(sMax)&&sMax>1e-8) longest/=sMax;
+      }catch(e){}
       if(isFinite(longest) && longest > 0.0001) lenUnits = longest;
     }
   }catch(e){ /* fall back to the measured default above */ }
@@ -13870,9 +13887,13 @@ function mountSkyboard(boardObj){
   // near an arbitrary export pivot, nowhere close to the actual deck.
   // Use the board's real measured anchor instead.
   const anchor = boardObj.userData.deckAnchor || {x:0,y:0,z:0.1};
+  // CENTERED on deck for atmo + interstellar (Justin HARD). Terrain walk
+  // keeps her unmounted with the board offset via _terrainBoardSideWorld —
+  // never apply CHAR_TERRAIN_BOARD_SIDE here.
   CHAR.root.position.set(anchor.x, anchor.y + (CHAR.feetOffset||0)*CHAR.scaleForBoard, anchor.z);
-  // Facing = CHAR_MOUNT_YAW_OFFSET (Justin HARD: +PI/2 = face board nose).
-  // Change that constant, not this line, if another correction is needed.
+  // Facing = CHAR_MOUNT_YAW_OFFSET (Justin HARD: +PI/2 = face board nose /
+  // screen-right when board points screen-right). Change that constant,
+  // not this line, if another correction is needed.
   CHAR.root.rotation.set(0, CHAR_MOUNT_YAW_OFFSET, 0);
   try{ _forceCharVisible(); }catch(e){ CHAR.root.visible = true; }
   _loadStep('mounted', 1);
@@ -14138,7 +14159,7 @@ async function enterSurface(body,site){
       try{ surfBoard.visible=true; }catch(e){}
       const _yaw=surfPlayer.yaw||0;
       const _rx=Math.cos(_yaw),_rz=-Math.sin(_yaw);
-      const _side=CHAR_TERRAIN_BOARD_SIDE;
+      const _side=_terrainBoardSideWorld(surfBoard);
       surfBoard.position.set(surfPlayer.pos.x+_rx*_side, feetY+0.08, surfPlayer.pos.z+_rz*_side);
       surfBoard.rotation.order='YXZ';
       surfBoard.rotation.y=_yaw-Math.PI/2;
@@ -15880,7 +15901,8 @@ function updateSurface(dt){
     // (+X nose, +Y up → +Z is board-left; world right of look = board right.)
     const fx=-Math.sin(p.yaw),fz=-Math.cos(p.yaw);
     const rx=Math.cos(p.yaw),rz=-Math.sin(p.yaw);
-    const side=CHAR_TERRAIN_BOARD_SIDE; // world units (~few feet)
+    // Scale side with board so ~6ft beside holds at terrain board.scale≈2.4
+    const side=_terrainBoardSideWorld(surfBoard);
     const tx=p.pos.x+rx*side, tz=p.pos.z+rz*side;
     const boardGroundH=_surfHeight?_surfHeight(tx,tz):0;
     const playerFeet=(p.pos.y-3.0);
