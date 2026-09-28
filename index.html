@@ -3905,9 +3905,26 @@ let _charShadowLight=null;
 let _builtBoardTemplate=null; // last template key that was built into boardFlight
 let _landTargetBody=null,_approachBestDist=Infinity,_approachBestBody=null;
 let flightAnimId,flightTime=0,celestialBodies=[],sunMesh,earthMesh;
-// Earth-class orbital body scale (scene units). Board≈12.33 ft/u; rider≈0.49 u.
-// Earth visual radius = 1 * PLANET_VIS_SCALE. Near-atmo must fill FOV (not marble).
-const PLANET_VIS_SCALE = 6;
+// ═══════════════════════════════════════════════════════════════
+// SOL SCALE HARD — whole Sol scales up; board/rider stay ~0.5u / 0.49u
+// (1u ≈ 12.33 ft from 37ft board / 3u). Cosmos owns bloom erase + galaxy
+// arm spacing — ping if AU_UNITS footprint needs arm sync.
+// ─────────────────────────────────────────────────────────────
+// Tablet landscape ~16:10, flightCamera vFOV=60° (Three.js vertical):
+//   hFOV = 2·atan(tan(30°)·1.6) ≈ 85.5°
+// Camera at Neptune far-edge (D = R_nep = AU_UNITS·30.069), look at Sun:
+//   orbit L/R extremities subtend 90° → ring touches/slightly overflows
+//   tablet L/R (90/85.5 ≈ 1.05). Angular fill is AU-invariant.
+// Earth r = PLANET_VIS_SCALE ≫ rider (0.49u): at LEO (~0.05·R above limb,
+//   ≈200 mi eq.) rider subtends ~6° (speck, unresolved); near-atmo at
+//   d≈1.5–2.5 R still fills FOV (ang Ø ≈ 67°–44°).
+// Soft #23 was AU=28 / PLANET_VIS_SCALE=6 (Earth≈12× rider) — not hard enough.
+// ═══════════════════════════════════════════════════════════════
+const AU_UNITS = 500;          // 1 AU in scene units (was 28)
+const PLANET_VIS_SCALE = 90;   // Earth visual radius (was 6)
+const SOL_SUN_RADIUS = 140;    // compressed vs real 109×Earth; clears Mercury
+const LEO_ALT_FRAC = 0.05;     // ~200 mi / Earth R → LEO height above limb
+const NEP_ORBIT_AU = 30.069;   // Neptune semi-major (Keplerian)
 let flightFlybys=[]; // comets / belt / other named flybys for proximity labels
 let oortCloudGroup=null;
 
@@ -4017,19 +4034,22 @@ const JOY={Lx:0,Ly:0,Rx:0,Ry:0};
 
 function buildDestinations(){
   DESTINATIONS.length=0;
-  // AU = 28 scene units. Board starts drifting in LEO near Earth (1 AU from Sun)
-  const AU=28;
-  // (PLANET_VIS_SCALE is file-scope — see below near solar-system builders)
+  // AU_UNITS / PLANET_VIS_SCALE are file-scope (SOL SCALE HARD).
+  // LEO marker sits ~LEO_ALT_FRAC·R above Earth's limb along +X (deep-future
+  // Earth angle is applied live via placeSolLeoOffset at spawn).
+  const AU=AU_UNITS;
+  const leoClear=PLANET_VIS_SCALE*LEO_ALT_FRAC;
   const defs=[
-    {name:'Low Earth Orbit',icon:'🌍',type:'Orbit',dist:'400 km',pos:new THREE.Vector3(AU*1.0+PLANET_VIS_SCALE+3,2,3)},
-    {name:'Moon',icon:'🌕',type:'Moon',dist:'384k km',pos:new THREE.Vector3(AU*1.0+PLANET_VIS_SCALE*2.8,0,3)},
-    {name:'Mars',icon:'🔴',type:'Planet',dist:'78M km',pos:new THREE.Vector3(AU*1.524,2,8)},
+    {name:'Low Earth Orbit',icon:'🌍',type:'Orbit',dist:'400 km',pos:new THREE.Vector3(AU*1.0+PLANET_VIS_SCALE+leoClear,PLANET_VIS_SCALE*0.12,PLANET_VIS_SCALE*0.35)},
+    {name:'Moon',icon:'🌕',type:'Moon',dist:'384k km',pos:new THREE.Vector3(AU*1.0+PLANET_VIS_SCALE*3.5,0,PLANET_VIS_SCALE*0.4)},
+    {name:'Mars',icon:'🔴',type:'Planet',dist:'78M km',pos:new THREE.Vector3(AU*1.524,2,AU*0.05)},
     {name:'Asteroid Belt',icon:'🪨',type:'Belt',dist:'325M km',pos:new THREE.Vector3(AU*2.7,0,AU*0.3)},
     {name:'Jupiter',icon:'🟠',type:'Gas Giant',dist:'629M km',pos:new THREE.Vector3(AU*5.203,4,-AU*0.5)},
     {name:'Saturn',icon:'🪐',type:'Gas Giant',dist:'1.2B km',pos:new THREE.Vector3(AU*9.537,5,AU*0.8)},
     {name:'Uranus',icon:'🔵',type:'Ice Giant',dist:'2.7B km',pos:new THREE.Vector3(AU*19.191,6,-AU*1.2)},
-    {name:'Proxima Cen.',icon:'⭐',type:'Star',dist:'4.24 ly',pos:new THREE.Vector3(8000,500,2000)},
-    {name:'Andromeda',icon:'🌌',type:'Galaxy',dist:'2.5M ly',pos:new THREE.Vector3(50000,2000,-8000)},
+    // Beyond Neptune (AU·30.069); keep outside Sol footprint after scale-up
+    {name:'Proxima Cen.',icon:'⭐',type:'Star',dist:'4.24 ly',pos:new THREE.Vector3(AU*55,AU*2,AU*8)},
+    {name:'Andromeda',icon:'🌌',type:'Galaxy',dist:'2.5M ly',pos:new THREE.Vector3(AU*120,AU*8,-AU*20)},
   ];
   defs.forEach(d=>DESTINATIONS.push(d));
 }
@@ -5248,25 +5268,20 @@ async function buildSolarSystem(){
   else celestialBodies=[];
 
   // ═══════════════════════════════════════════════════════════════
-  //  REAL-SCALE SOLAR SYSTEM — Astronomical Unit (AU) spacing
-  //  1 AU = 28 scene units (Earth's orbit radius)
-  //  Planet radii: real ratios × PLANET_VIS_SCALE (Earth-class near-field)
-  //  Orbital speeds are proportional to real Keplerian ratios
+  //  SOL SCALE HARD — Keplerian AU ratios × AU_UNITS absolute scale
+  //  Planet radii: real ratios × PLANET_VIS_SCALE (giants soft-compressed)
+  //  Tablet: Neptune orbit fills ~hFOV from far-edge (see file-scope math)
   // ═══════════════════════════════════════════════════════════════
-  const AU = 28; // 1 AU in scene units
+  const AU = AU_UNITS;
 
-  // Sun — reverted to a cheap, plain material. buildProceduralStarMesh's
-  // turbulent per-pixel shader (two layered noise evaluations plus a rim
-  // term, every fragment) is fine for the small, distant background
-  // stars it's used for elsewhere, but the Sun renders large/close-up on
-  // screen — reported to freeze and crash real mobile devices once it
-  // comes into view, consistent with a fragment-shader-bound GPU hang on
-  // weaker mobile hardware. Stability over visual fanciness here; no corona
+  // Sun — cheap plain material (no turbulent star shader — mobile GPU hang
+  // risk when large on screen). Radius SOL_SUN_RADIUS: compressed vs real
+  // 109×Earth but still >Earth and clears Mercury orbit. No corona
   // glow sprites (they painted a white circular wash around Sol).
   const sunGroup = new THREE.Group();
-  const sm = new THREE.Mesh(new THREE.SphereGeometry(4,24,24), new THREE.MeshBasicMaterial({color:0xe8b820}));
+  const sm = new THREE.Mesh(new THREE.SphereGeometry(SOL_SUN_RADIUS,24,24), new THREE.MeshBasicMaterial({color:0xe8b820}));
   sunGroup.add(sm);
-  // Corona glow sprites DELETED — soft white/cyan discs whitewashed Sol (ref: sol-white-bloom-not-oort).
+  // Corona glow sprites DELETED — soft white/cyan discs whitewashed Sol (ref: sol-white-bloom-not-oort / Cosmos #30).
   // Keep MeshBasicMaterial sun sphere only; asteroid belt + Oort particulate unchanged.
   flightScene.add(sunGroup);
   sunMesh=sm;
@@ -5290,17 +5305,15 @@ async function buildSolarSystem(){
     {name:'Uranus', rRatio:4.01, col:0x88ddee,oR:AU*19.191, period:84.011, type:'Ice Giant',temp:'76 K'},
     {name:'Neptune',rRatio:3.88, col:0x3355cc,oR:AU*30.069, period:164.79, type:'Ice Giant',temp:'72 K'}
   ];
-  // Visual radius: real ratios + Earth-class near-field scale.
-  // Board: 1 unit ≈ 12.33 ft (37 ft board / 3 u). Rider ≈ 0.49 u (6 ft).
-  // Old Earth r=1 ≈ 12 ft — marble vs rider. PLANET_VIS_SCALE makes Earth
-  // r≈6 (~74 ft / ~12× rider): near atmo (d≈1.5–2.5 r) fills FOV; AU
-  // spacing unchanged so Sol layout stays coherent (rare conjunction soft-
-  // overlap handled by flight collision push).
-  // Hoisted for rebuildFlightForSystem / asteroid belt (see file-scope PLANET_VIS_SCALE).
+  // Visual radius: real ratios × PLANET_VIS_SCALE. Terrestrial exact;
+  // giants soft-compressed above 2×Earth but still proportionally huge
+  // (Jupiter ~8×Earth visual). Board/rider stay ~0.5u/0.49u — Earth r =
+  // PLANET_VIS_SCALE makes rider a LEO speck; near-atmo still fills FOV.
+  // Hoisted via file-scope PLANET_VIS_SCALE for rebuildFlightForSystem / belt.
   const visR = ratio => {
-    const base = ratio<=1.2 ? Math.max(0.3, ratio*1.0)
-                 : 1.2 + Math.pow(ratio-1.2, 0.62)*0.9;
-    return base * PLANET_VIS_SCALE;
+    if(ratio<=2) return Math.max(0.28, ratio) * PLANET_VIS_SCALE;
+    const t = ratio - 2;
+    return (2 + Math.pow(t, 0.72) * 1.15) * PLANET_VIS_SCALE;
   };
   // Time compression: real periods would be imperceptible. One real year
   // maps to TIME_SCALE sim-seconds so motion is visible but ratios stay true.
@@ -5361,7 +5374,9 @@ async function buildSolarSystem(){
     // planets orbit in world XZ (see updateBodies: x=cos(angle)*oR, z=sin(angle)*oR,
     // y fixed). Without this rotation the ring rendered perpendicular to the
     // actual path the planet travels. Rotate -90° about X so the ring lies flat in XZ.
-    const orbit=new THREE.Mesh(new THREE.TorusGeometry(p.oR,.04,3,Math.max(64,Math.round(p.oR*0.8))),new THREE.MeshBasicMaterial({color:0x223344,transparent:true,opacity:.3}));
+    // Tube scales with oR so Neptune ring stays readable on tablet at AU_UNITS
+    const orbitTube=Math.max(0.12, p.oR*0.0001);
+    const orbit=new THREE.Mesh(new THREE.TorusGeometry(p.oR,orbitTube,3,Math.max(64,Math.round(p.oR*0.35))),new THREE.MeshBasicMaterial({color:0x223344,transparent:true,opacity:.3}));
     orbit.rotation.x=Math.PI/2;
     flightScene.add(orbit);if(typeof _trackSystemExtra==='function')_trackSystemExtra(orbit);
 
@@ -5391,8 +5406,10 @@ async function buildSolarSystem(){
 
     // Moon — parented to planet mesh so it orbits with Earth
     if(p.hasMoon){
-      const mm=new THREE.Mesh(new THREE.SphereGeometry(.26,12,12),new THREE.MeshStandardMaterial({color:0xaaaaaa,roughness:.9}));
-      mm.position.set(p.r*2.6,0,0); // local coords relative to Earth
+      // Real Moon rRatio≈0.273; distance compressed (~3.5 R vs real 60 R) for playability
+      const moonR=Math.max(0.4, 0.273*PLANET_VIS_SCALE);
+      const mm=new THREE.Mesh(new THREE.SphereGeometry(moonR,12,12),new THREE.MeshStandardMaterial({color:0xaaaaaa,roughness:.9}));
+      mm.position.set(p.r*3.5,0,0);
       mm.isPlanetExtra=true; // preserved across an LOD mesh swap (see upgradePlanetLOD)
       mesh.add(mm); // parented to planet
     }
@@ -5484,14 +5501,14 @@ async function buildSolarSystem(){
     cg.add(new THREE.Points(tg,new THREE.PointsMaterial({size:.1,color:0x8888ff,transparent:true,opacity:.55})));
     cg.position.set((cometRand()-0.5)*AU*20,(cometRand()-0.5)*40,(cometRand()-0.5)*AU*20);
     flightScene.add(cg);if(typeof _trackSystemExtra==='function')_trackSystemExtra(cg);
-    flightFlybys.push({name:'Comet '+COMET_NAMES[i],mesh:cg,labelRange:90});
+    flightFlybys.push({name:'Comet '+COMET_NAMES[i],mesh:cg,labelRange:AU*0.25});
   }
   // Asteroid belt as a single flyby label target (belt centroid)
-  flightFlybys.push({name:'Asteroid Belt',mesh:{position:new THREE.Vector3(AU*2.7,0,AU*0.3)},labelRange:120});
+  flightFlybys.push({name:'Asteroid Belt',mesh:{position:new THREE.Vector3(AU*2.7,0,AU*0.3)},labelRange:AU*0.4});
 
-  // Oort cloud — well beyond Neptune (AU*30.069 ≈ 842 units), at the
-  // edge of Sol's gravitational influence. Fixed seedKey ('sol') so it
-  // looks the same every time you return here, not re-rolled per visit.
+  // Oort cloud — well beyond Neptune (AU·NEP_ORBIT_AU), at the edge of
+  // Sol's gravitational influence. Fixed seedKey ('sol') so return visits
+  // look the same. Camera far must cover AU*72 (see flightCamera.far).
   buildOortCloud({innerR:AU*46,outerR:AU*72,seedKey:'sol',count:900});
 
   // ── Bird Temple (first slice) ──────────────────────────────────────
@@ -5802,7 +5819,7 @@ function _btPickWanderTarget(){
   // cross-galaxy travel would need the ship's location to persist across
   // system loads, which is a bigger architectural piece; this wanders
   // continuously within whatever system is currently loaded.
-  const AU=28;
+  const AU=AU_UNITS;
   if(typeof celestialBodies!=='undefined'&&celestialBodies&&celestialBodies.length&&Math.random()<0.6){
     const b=celestialBodies[Math.floor(Math.random()*celestialBodies.length)];
     if(b&&b.mesh&&b.name!=='Sun'){
@@ -5829,8 +5846,8 @@ function updateBirdTemple(dt){
   if(!bt.spawned){
     const sp=STATE.flight;
     if(!sp)return; // wait one more frame if flight state isn't ready yet
-    const AU=28;
-    const MIN_DIST=AU*3;      // ~84 units — never closer than this at spawn
+    const AU=AU_UNITS;
+    const MIN_DIST=AU*3;      // never closer than this at spawn
     const FAR_CHANCE=0.2;     // occasionally spawn way out at the edge of
                               // reachable space, simulating 'could be
                               // practically a different part of the galaxy'
@@ -6238,7 +6255,7 @@ function drawTempleHubMap(){
   const ctx=cv.getContext('2d'),W=cv.width,H=cv.height,cx=W/2,cy=H/2;
   ctx.clearRect(0,0,W,H);
   ctx.fillStyle='rgba(255,255,255,0.04)';ctx.fillRect(0,0,W,H);
-  const AU=28,scale=(AU*4.2)/(W*0.44);
+  const AU=AU_UNITS,scale=(AU*4.2)/(W*0.44);
   const bt=BIRD_TEMPLE,sp=STATE.flight;
   // Sun at center
   ctx.beginPath();ctx.arc(cx,cy,5,0,Math.PI*2);ctx.fillStyle='#ffdd88';ctx.fill();
@@ -7193,12 +7210,13 @@ function buildFlightBoard(){
     }
   })();
 
-  // Camera starts in Low Earth Orbit — outside Earth's scaled collision radius
-  // (Earth is at a deep-future orbital angle, not at +X AU).
-  const leo=placeSolLeoOffset(2.8);
+  // Camera starts in LEO — ~LEO_ALT_FRAC·R above Earth's limb (≈200 mi eq.).
+  // Earth is at a deep-future orbital angle, not at +X AU.
+  const leo=placeSolLeoOffset();
   flightCamera.position.copy(leo);
   flightCamera.rotation.order='YXZ';
   flightCamera.rotation.set(0,0,0);
+  // Far must cover Oort (AU_UNITS*72 ≈ 36000) — 300000 leaves headroom
   flightCamera.near=0.1; flightCamera.far=300000;
   flightCamera.updateProjectionMatrix();
   STATE.flight.pos.copy(leo);
@@ -8191,13 +8209,14 @@ function updateBodies(dt){
 }
 
 
-// Place board just outside Earth's (scaled) surface along sun→Earth radial.
+// Place board in LEO (~LEO_ALT_FRAC·R ≈ 200 mi eq.) along sun→Earth radial.
 function placeSolLeoOffset(clearance){
-  clearance = (typeof clearance==='number') ? clearance : 2.8;
-  const AU=28;
   const earthBody = (typeof celestialBodies!=='undefined') && celestialBodies
     ? celestialBodies.find(b=>b && b.name==='Earth') : null;
   const er = (earthBody && (earthBody.collisionRadius||earthBody.mcRadius)) || PLANET_VIS_SCALE;
+  // Default clearance = LEO altitude fraction of Earth radius (SCALE HARD)
+  if(typeof clearance!=='number') clearance = er * LEO_ALT_FRAC;
+  const AU=AU_UNITS;
   if(earthMesh && earthMesh.position){
     const ep = earthMesh.position;
     const len = Math.hypot(ep.x, ep.y, ep.z) || AU;
@@ -9623,12 +9642,12 @@ async function rebuildFlightForSystem(system){
       if(STATE.settings.textures&&typeof applyProceduralTextures==='function')applyProceduralTextures();
     }
     buildDestinations();buildDestinationUI();
-    const leo=placeSolLeoOffset(2.8);
+    const leo=placeSolLeoOffset();
     STATE.flight.pos.copy(leo);if(boardFlight)boardFlight.position.copy(STATE.flight.pos);
     return;
   }
   _clearFlightSystemScene();
-  const AU=28;
+  const AU=AU_UNITS;
   const sysRand=seedRand(system.seed||hashStr('sys:'+system.name));
   const starCol={'G yellow':0xffee88,'K orange':0xffaa55,'M red dwarf':0xff6644,'F white':0xffffee,'B blue giant':0x99bbff,
     'O/B Blue Giant':0x9db8ff,'A White':0xf0f4ff,'F/G Yellow-White':0xfff2d0,'K Orange':0xffc880,'M Red Dwarf':0xff8860,'Red Giant':0xff6a4a
@@ -9636,12 +9655,12 @@ async function rebuildFlightForSystem(system){
 
   // Central star — cheap mesh (same stability choice as Sol's Sun)
   const starGroup=new THREE.Group();
-  const starMesh=new THREE.Mesh(new THREE.SphereGeometry(4,24,24),new THREE.MeshBasicMaterial({color:starCol}));
+  const starMesh=new THREE.Mesh(new THREE.SphereGeometry(SOL_SUN_RADIUS,24,24),new THREE.MeshBasicMaterial({color:starCol}));
   starGroup.add(starMesh);
   try{
     const gt=makeCircleTex(64,'#'+new THREE.Color(starCol).getHexString(),1);
     const spr1=new THREE.Sprite(new THREE.SpriteMaterial({map:gt,color:starCol,transparent:true,opacity:0.28,blending:THREE.AdditiveBlending,depthWrite:false}));
-    spr1.scale.set(14,14,1);starGroup.add(spr1);
+    spr1.scale.set(SOL_SUN_RADIUS*1.35,SOL_SUN_RADIUS*1.35,1);starGroup.add(spr1);
   }catch(e){}
   starGroup.position.set(0,0,0);flightScene.add(starGroup);
   sunMesh=starMesh;
@@ -9767,7 +9786,7 @@ function applySettings(){
   STATE.settings.textures=$('set-textures')?$('set-textures').checked:true;
   STATE.settings.galaxyband=$('set-galaxyband')?$('set-galaxyband').checked:true;
   STATE.settings.particles=$('set-particles').value;STATE.settings.fov=parseInt($('set-fov').value);STATE.settings.dartSpeed=parseInt($('set-dart-speed').value);
-  if(flightCamera){flightCamera.far=Math.max(STATE.settings.fov,50000);flightCamera.updateProjectionMatrix();}
+  if(flightCamera){flightCamera.far=Math.max(STATE.settings.fov, AU_UNITS*72, 50000);flightCamera.updateProjectionMatrix();}
   // ── Graphics quality / lighting effects ──
   let needsRebuild=false;
   if($('set-quality')){const q=$('set-quality').value;if(GFX.preset!==q){GFX.preset=q;if(q!=='custom')applyPreset(q);needsRebuild=true;}}
