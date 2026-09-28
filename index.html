@@ -9309,134 +9309,97 @@ let gmBackdrop=null;
 function buildGalaxyBackdrop(fid){
   const grp=new THREE.Group();gmScene.add(grp);gmBackdrop=grp;
   const R=GAL.discR;
-  // 1) a dim disc of stars projected far out (the galaxy seen from inside)
-  const N=Math.round(60000*Math.max(0.5,fid));
-  const pos=new Float32Array(N*3),col=new Float32Array(N*3);
-  const SCALE=18; // push the backdrop far out so it sits behind everything
-  for(let i=0;i<N;i++){
-    const inArm=Math.random()<0.7;
-    let r=Math.pow(Math.random(),0.6)*R;
-    let ang;
-    if(inArm){const arm=GAL.arms[Math.floor(Math.random()*GAL.arms.length)];ang=Math.log(r/28+1)*arm.wind+arm.base+gaussian()*(0.14+r/R*0.4);}
-    else ang=Math.random()*Math.PI*2;
-    let x=Math.cos(ang)*r, z=Math.sin(ang)*r, y=gaussian()*GAL.thickness*1.2;
-    // tilt the backdrop plane a little so it reads as a band across the sky
-    const tilt=0.5;
+  const dens=Math.max(0.5, fid||1);
+  const budget=Math.round(28000*dens);
+  const lock=computeSpiralPhaseLock(42000, 2.25, 2, -42000*0.5, -42000*0.16);
+  const SCALE=18;
+  const geo=createSpiralGalaxyPoints(budget,{
+    RG:R, turns:2.25, nArms:2, phaseLock:lock.phaseLock, lowCount:budget,
+    coreRgb:[0.95,0.96,1.0], armRgb:[0.45,0.70,0.95], rimRgb:[0.06,0.08,0.28],
+    radialAlpha:1.75
+  });
+  const src=geo.attributes.position.array;
+  const scol=geo.attributes.color.array;
+  const n=src.length/3;
+  const pos=new Float32Array(n*3), col=new Float32Array(n*3);
+  const tilt=0.5;
+  for(let i=0;i<n;i++){
+    const x=src[i*3], y=src[i*3+1], z=src[i*3+2];
     const ty=y*Math.cos(tilt)-z*Math.sin(tilt), tz=y*Math.sin(tilt)+z*Math.cos(tilt);
     pos[i*3]=x*SCALE; pos[i*3+1]=ty*SCALE; pos[i*3+2]=tz*SCALE;
-    // dim bluish-white, brighter toward the core
-    const coreNear=1-Math.min(1,r/R);
-    const b=0.18+coreNear*0.4+Math.random()*0.12;
-    col[i*3]=b*0.85; col[i*3+1]=b*0.9; col[i*3+2]=b*1.0;
+    // Dim — backdrop only
+    col[i*3]=scol[i*3]*0.45; col[i*3+1]=scol[i*3+1]*0.45; col[i*3+2]=scol[i*3+2]*0.50;
   }
-  const geo=new THREE.BufferGeometry();
-  geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
-  geo.setAttribute('color',new THREE.BufferAttribute(col,3));
+  try{geo.dispose();}catch(e){}
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  g.setAttribute('color',new THREE.BufferAttribute(col,3));
   const tex=makeCircleTex(16,'rgb(255,255,255)',1);
-  const stars=new THREE.Points(geo,new THREE.PointsMaterial({size:200,sizeAttenuation:true,vertexColors:true,map:tex,transparent:true,opacity:0.8,depthWrite:false,blending:THREE.AdditiveBlending}));
+  const stars=new THREE.Points(g,new THREE.PointsMaterial({size:200,sizeAttenuation:true,vertexColors:true,map:tex,transparent:true,opacity:0.78,depthWrite:false,blending:THREE.AdditiveBlending}));
   grp.add(stars);
-  // 2) a soft glowing core bulge far off toward the galactic center
-  const coreGlow=makeGlowSprite('rgba(255,244,220,0.5)',R*SCALE*0.18);
+  const coreGlow=makeGlowSprite('rgba(255,248,235,0.42)',R*SCALE*0.16);
   coreGlow.position.set(0,-GAL.sunR*SCALE*0.5*Math.sin(0.5),-GAL.sunR*SCALE);
   grp.add(coreGlow);
-  grp.add(makeGlowSprite('rgba(180,150,255,0.22)',R*SCALE*0.3)).position.copy(coreGlow.position);
-  // 3) a faint full-sphere field of distant stars so every direction has depth
-  const fn=Math.round(4000*fid);const fp=new Float32Array(fn*3),fc=new Float32Array(fn*3);
-  for(let i=0;i<fn;i++){
-    const ph=Math.acos(2*Math.random()-1),th=Math.random()*6.28,rr=R*SCALE*1.6;
-    fp[i*3]=rr*Math.sin(ph)*Math.cos(th);fp[i*3+1]=rr*Math.cos(ph);fp[i*3+2]=rr*Math.sin(ph)*Math.sin(th);
-    const b=0.1+Math.random()*0.2;fc[i*3]=b;fc[i*3+1]=b;fc[i*3+2]=b*1.1;
-  }
-  const fg=new THREE.BufferGeometry();fg.setAttribute('position',new THREE.BufferAttribute(fp,3));fg.setAttribute('color',new THREE.BufferAttribute(fc,3));
-  grp.add(new THREE.Points(fg,new THREE.PointsMaterial({size:140,sizeAttenuation:true,vertexColors:true,map:tex,transparent:true,opacity:0.6,depthWrite:false,blending:THREE.AdditiveBlending})));
 }
 
 function buildMilkyWay(group,fid){
+  // Map-tier MW — same cylinder→pinch→twist morph as flight (Justin HARD rebuild).
+  // Dual spiral + dense blown core; Sol marker phase-locks onto crest below.
+  // Credit: Kavan/Kavang — kavang.com/atom / kavan010/Atoms / youtu.be/8-B6ryuBkCM
   const R=GAL.discR;
-  const N=Math.round(170000*fid);
-  const pos=new Float32Array(N*3),col=new Float32Array(N*3),siz=new Float32Array(N);
-  const midWhite=[0.92,0.93,1.0], hii=[1.0,0.42,0.55], oldYellow=[0.95,0.85,0.6];
-  let k=0;
-  // weight major arms heavier than minor
-  const armPick=()=>{ const r=Math.random(); if(r<0.36)return GAL.arms[0]; if(r<0.72)return GAL.arms[1]; if(r<0.86)return GAL.arms[2]; return GAL.arms[3]; };
-  for(let i=0;i<N;i++){
-    const inArm=Math.random()<0.74;
-    let r=Math.pow(Math.random(),0.62)*R;
-    let ang, hue;
-    if(inArm){
-      const arm=armPick();
-      const theta=Math.log(r/28+1)*arm.wind + arm.base;
-      const spread=0.12 + r/R*0.42;       // arms widen outward
-      ang=theta + gaussian()*spread;
-      hue=arm.hue;
-    } else {
-      ang=Math.random()*Math.PI*2;
-      hue=oldYellow;
-    }
-    let x=Math.cos(ang)*r, z=Math.sin(ang)*r;
-    // central bar: squash inner stars into an elongated bar
-    if(r<GAL.barLen){
-      const barAng=0.35; // bar tilt
-      const lx=x*Math.cos(barAng)-z*Math.sin(barAng);
-      const lz=x*Math.sin(barAng)+z*Math.cos(barAng);
-      x=lx; z=lz*0.45; // squeeze
-      const rot=-barAng;
-      const rx=x*Math.cos(rot)-z*Math.sin(rot), rz=x*Math.sin(rot)+z*Math.cos(rot);
-      x=rx; z=rz;
-    }
-    const y=gaussian()*GAL.thickness*(1 - r/R*0.55);
-    pos[k*3]=x;pos[k*3+1]=y;pos[k*3+2]=z;
-    const t=r/R;
-    let c;
-    if(inArm && Math.random()<0.045){c=hii;siz[k]=2.2+Math.random();}
-    else if(inArm){c=[lerp(hue[0],midWhite[0],t),lerp(hue[1],midWhite[1],t),lerp(hue[2],midWhite[2],t)];siz[k]=1.0+Math.random()*0.7;}
-    else {c=oldYellow;siz[k]=0.7+Math.random()*0.5;}
-    const b=0.5+Math.random()*0.5;
-    col[k*3]=c[0]*b;col[k*3+1]=c[1]*b;col[k*3+2]=c[2]*b;
-    k++;
+  const dens=Math.max(0.45, fid||1);
+  const budget=Math.round(48000*dens);
+  const lock=computeSpiralPhaseLock(42000, 2.25, 2, -42000*0.5, -42000*0.16);
+  // Scale flight morph (RG=42000) down into map discR
+  const scale=R/42000;
+  const geo=createSpiralGalaxyPoints(budget,{
+    RG:R, turns:2.25, noiseScale:6.0, nArms:2,
+    phaseLock:lock.phaseLock, lowCount:budget,
+    coreRgb:[1.0,0.97,0.92], armRgb:[0.55,0.82,1.0], rimRgb:[0.08,0.12,0.38],
+    radialAlpha:1.75, sep0:0.105, cylR0:0.030, cylR1:0.068
+  });
+  const pos=geo.attributes.position.array;
+  const col=geo.attributes.color.array;
+  const n=pos.length/3;
+  const p=new Float32Array(n*3), c=new Float32Array(n*3), siz=new Float32Array(n);
+  for(let i=0;i<n;i++){
+    p[i*3]=pos[i*3]; p[i*3+1]=pos[i*3+1]; p[i*3+2]=pos[i*3+2];
+    c[i*3]=col[i*3]; c[i*3+1]=col[i*3+1]; c[i*3+2]=col[i*3+2];
+    const rr=Math.hypot(pos[i*3],pos[i*3+2]);
+    siz[i]=1.0+(1-Math.min(1,rr/R))*1.2+Math.random()*0.4;
   }
-  addPoints(group,pos,col,siz,1.4,true);
+  try{geo.dispose();}catch(e){}
+  addPoints(group,p,c,siz,1.5,true);
 
-  // Orion Spur — a faint short arm segment where the Sun sits
-  const sn=Math.round(6000*fid);const sp2=new Float32Array(sn*3),sc=new Float32Array(sn*3);
-  for(let i=0;i<sn;i++){
-    const r=GAL.sunR*(0.78+Math.random()*0.5);
-    const theta=Math.log(r/28+1)*GAL.orionSpur.wind+GAL.orionSpur.base;
-    const ang=theta+gaussian()*0.06;
-    sp2[i*3]=Math.cos(ang)*r;sp2[i*3+1]=gaussian()*GAL.thickness*0.5;sp2[i*3+2]=Math.sin(ang)*r;
-    const b=0.5+Math.random()*0.5;sc[i*3]=0.7*b;sc[i*3+1]=0.82*b;sc[i*3+2]=1.0*b;
-  }
-  addPoints(group,sp2,sc,null,1.3,true);
-
-  // Central bulge — dense warm bar-shaped core
-  const bn=Math.round(34000*fid);
+  // Dense map core (screen-space bulge) — blown white/cyan
+  const bn=Math.round(22000*dens);
   const bp=new Float32Array(bn*3),bc=new Float32Array(bn*3);
   for(let i=0;i<bn;i++){
-    const rr=Math.pow(Math.random(),1.8)*GAL.bulgeR;
+    const rr=Math.pow(Math.random(),3.0)*GAL.bulgeR;
     const th=Math.random()*Math.PI*2, ph=Math.acos(2*Math.random()-1);
-    bp[i*3]=rr*Math.sin(ph)*Math.cos(th)*1.6; // elongated = bar
-    bp[i*3+1]=rr*Math.cos(ph)*0.5;
-    bp[i*3+2]=rr*Math.sin(ph)*Math.sin(th)*0.85;
-    const b=0.6+Math.random()*0.4;
-    bc[i*3]=1.0*b;bc[i*3+1]=0.86*b;bc[i*3+2]=0.62*b;
+    bp[i*3]=rr*Math.sin(ph)*Math.cos(th)*1.25;
+    bp[i*3+1]=rr*Math.cos(ph)*0.42;
+    bp[i*3+2]=rr*Math.sin(ph)*Math.sin(th);
+    const tw=Math.min(1, rr/GAL.bulgeR);
+    const b=0.75+Math.random()*0.35;
+    bc[i*3]=(1.0-tw*0.05)*b; bc[i*3+1]=(0.96-tw*0.20)*b; bc[i*3+2]=(0.92-tw*0.35)*b;
   }
-  addPoints(group,bp,bc,null,1.9,true);
+  addPoints(group,bp,bc,null,2.0,true);
 
-  // ── Sagittarius A* — the supermassive black hole core ──
-  // The hole itself is dark (light can't escape), but the superheated
-  // accretion disk + stars being torn in blaze with intense radiance.
+  // Sagittarius A* cue (map) — keep accretion disk; glow sprites already toned down
   buildGalacticCore(group);
 
-  // faint stellar halo (globular-cluster sphere)
-  const hn=Math.round(14000*fid);
+  // Soft halo
+  const hn=Math.round(10000*dens);
   const hp=new Float32Array(hn*3),hc=new Float32Array(hn*3);
   for(let i=0;i<hn;i++){
     const rr=R*(0.35+Math.random()*0.95);
     const th=Math.random()*Math.PI*2, ph=Math.acos(2*Math.random()-1);
     hp[i*3]=rr*Math.sin(ph)*Math.cos(th);hp[i*3+1]=rr*Math.cos(ph);hp[i*3+2]=rr*Math.sin(ph)*Math.sin(th);
-    const b=0.12+Math.random()*0.18;hc[i*3]=0.75*b;hc[i*3+1]=0.72*b;hc[i*3+2]=0.85*b;
+    const b=0.10+Math.random()*0.16;hc[i*3]=0.70*b;hc[i*3+1]=0.72*b;hc[i*3+2]=0.90*b;
   }
   addPoints(group,hp,hc,null,1.0,false);
+  void scale; // morph already in map RG=R
 }
 
 // Sagittarius A* — dark event horizon ringed by a brilliant accretion disk.
@@ -9484,26 +9447,30 @@ function buildGalacticCore(group){
 
 function buildSunMarker(){
   const grp=new THREE.Group();
-  // Sun sits on the Orion Spur — between Sagittarius and Perseus arms, on the
-  // outer side toward Perseus, ~26,000 ly from the galactic center.
+  // Sol on dual-arm crest — same phase-lock as flight MW (cylinder→pinch→twist).
+  const R=GAL.discR;
+  const lock=computeSpiralPhaseLock(42000, 2.25, 2, -42000*0.5, -42000*0.16);
+  // Map sunR ≈ Orion distance; place ON crest of arm 0
   const r=GAL.sunR;
-  const ang=Math.log(r/28+1)*GAL.orionSpur.wind + GAL.orionSpur.base;
-  const x=Math.cos(ang)*r, z=Math.sin(ang)*r;
+  const ang=spiralAngleAt(r*(42000/R), 42000, 2.25, lock.phaseLock, 0, 2);
+  // Remap angle into map disc (same crest phase)
+  const mapAng=spiralAngleAt(r, R, 2.25, lock.phaseLock, 0, 2);
+  const x=Math.cos(mapAng)*r, z=Math.sin(mapAng)*r;
   GAL.sunPos=new THREE.Vector3(x,0,z);
-  // pulsing marker ring
+  GAL.orionSpur={base:mapAng - Math.log(r/28+1)*2.35, wind:2.35}; // keep spur consumers honest
   const ring=new THREE.Mesh(new THREE.RingGeometry(14,19,32),new THREE.MeshBasicMaterial({color:0xffd23a,side:THREE.DoubleSide,transparent:true,opacity:0.9}));
   ring.rotation.x=-Math.PI/2;ring.position.set(x,0,z);grp.add(ring);
   const dot=new THREE.Mesh(new THREE.SphereGeometry(5,12,12),new THREE.MeshBasicMaterial({color:0xffe680}));
   dot.position.set(x,0,z);grp.add(dot);
   const glow=makeGlowSprite('rgba(255,220,120,0.7)',60);glow.position.set(x,0,z);grp.add(glow);
-  // "YOU ARE HERE" label
   const lc=document.createElement('canvas');lc.width=360;lc.height=80;const lx=lc.getContext('2d');
   lx.fillStyle='rgba(255,210,58,0.98)';lx.font='bold 20px Orbitron,monospace';lx.fillText('☉ YOU ARE HERE', 8,26);
-  lx.fillStyle='rgba(255,225,140,0.85)';lx.font='13px "Share Tech Mono",monospace';lx.fillText('Sol · Orion Spur · 26,000 ly from core', 8,50);
+  lx.fillStyle='rgba(255,225,140,0.85)';lx.font='13px "Share Tech Mono",monospace';lx.fillText('Sol · Orion arm crest · dual spiral', 8,50);
   lx.fillStyle='rgba(120,200,255,0.7)';lx.font='11px "Share Tech Mono",monospace';lx.fillText('tap to zoom into the solar system', 8,70);
   const lt=new THREE.CanvasTexture(lc);const ls=new THREE.Sprite(new THREE.SpriteMaterial({map:lt,transparent:true,depthTest:false}));
   ls.scale.set(300,66,1);ls.position.set(x+46,46,z);grp.add(ls);
   grp.userData.ring=ring;grp.userData.sunPos=GAL.sunPos;grp.userData.isSun=true;
+  void ang;
   return grp;
 }
 
@@ -10725,32 +10692,29 @@ async function buildFlightGalaxyBandGPU(){
 }
 
 function buildFlightGalaxyBandCPU(){
-  // Dual cylinder volumes → pinch middles together → twist spiral + central bulge
-  // (Justin HARD MW shape). Dust = InstancedMesh low-poly spheres on Med+;
-  // Points fallback on Low/mobile. Shared createSpiralGalaxyPoints feeds arms.
-  // Density: sparse spiral arms + dense SMBH core (Kavang radial CDF / |ψ|²).
+  // Justin HARD rebuild: home MW from refs — dual cylinder→pinch→twist + Local
+  // Group nest elsewhere. Sparse arms (systems sit in crests); EXTREMELY dense
+  // blown core toward SMBH. Dual spiral. Not a density-knob pass.
+  // Refs: jots-cosmos-refs/{blender-galaxy,menu-galaxy,blown-galaxy-core.png}
   // Credit: Kavan / Kavang (kavan010) —
   //   https://www.kavang.com/atom
   //   https://github.com/kavan010/Atoms
   //   https://youtu.be/8-B6ryuBkCM
   //   https://github.com/kavan010/black_hole / https://github.com/kavan010/gravity_sim
-  // STRIP: warm cream field-star wash; colors cyan→blue→navy. No glow-sprite wash.
-  // ENABLE_FLIGHT_GALAXY_BAND_GPU stays false; this is the live path.
+  // STRIP: warm cream field wash; no glow-sprite Sol wash. GPU flag stays false.
 
   const particles=STATE.settings.particles||'med';
   const mobile=!!(GFX&&GFX.isMobile);
   const gfxLow=!!(GFX&&GFX.preset==='low');
-  // Sparse arms + dense core: raise coreBudget (~35–42% of total), keep total≈same.
-  // Prefer Stabilizer getGfxBudgets().galaxyArm/.galaxyCore when present, then redistribute.
   const LOD={
-    low:  {arm:mobile||gfxLow?7000:9500,  core:mobile||gfxLow?8000:10500},
-    med:  {arm:mobile?15000:21000, core:mobile?15000:21000},
-    high: {arm:mobile?24000:34000, core:mobile?24000:33000},
-    ultra:{arm:mobile?28000:42000, core:mobile?28000:41000}
+    low:  {arm:mobile||gfxLow?8000:11000,  core:mobile||gfxLow?7000:9000},
+    med:  {arm:mobile?16000:24000, core:mobile?12000:18000},
+    high: {arm:mobile?26000:38000, core:mobile?20000:28000},
+    ultra:{arm:mobile?30000:46000, core:mobile?24000:34000}
   };
   let bud=LOD[particles]||LOD.med;
   if(gfxLow&&particles!=='low'){
-    bud={arm:Math.min(bud.arm, mobile?8500:11000), core:Math.min(bud.core, mobile?9000:12000)};
+    bud={arm:Math.min(bud.arm, mobile?9500:12000), core:Math.min(bud.core, mobile?8000:11000)};
   }
   try{
     if(typeof getGfxBudgets==='function'){
@@ -10759,38 +10723,29 @@ function buildFlightGalaxyBandCPU(){
       if(typeof gb.galaxyCore==='number'&&gb.galaxyCore>0) bud.core=gb.galaxyCore|0;
     }
   }catch(e){}
-  // HARD: shift ~30–40% of arm count into core bulge (total particle budget stable).
+  // Core ≈40% of total — blown SMBH cue without starving dual arms (ref look)
   {
     const total=(bud.arm|0)+(bud.core|0);
-    const coreFrac=0.46; // EXTREMELY dense SMBH core / sparse arms
+    const coreFrac=0.40;
     bud.core=Math.max(4000, Math.round(total*coreFrac));
-    bud.arm=Math.max(4000, total-bud.core);
+    bud.arm=Math.max(5000, total-bud.core);
   }
   const armBudget=bud.arm, coreBudget=bud.core;
   const RG=42000;
-  const TURNS=2.25; // ~2.0–2.5 spiral turns (Blender wind)
+  const TURNS=2.25;
   const NOISE_SCALE=6.0;
-  const N_ARMS=2; // two strong arms + noise clumps (dark lanes between)
-
-  // Phase-lock spiral so Sol (world origin) sits on an arm crest (max armWave),
-  // not in a dark lane. Sol gal-local = R^{-1} * (-galGroup.position) with the
-  // same euler/pos applied below; offset spiralAngle so phase at Sol = k*pi.
+  const N_ARMS=2;
   const GAL_POS_X=-RG*0.5, GAL_POS_Z=-RG*0.16;
-  const _invQ=new THREE.Quaternion().setFromEuler(new THREE.Euler(0.5,0.3,0.1)).invert();
-  const solLocal=new THREE.Vector3(-GAL_POS_X,0,-GAL_POS_Z).applyQuaternion(_invQ);
-  const solR=Math.hypot(solLocal.x,solLocal.z);
-  const solAng=Math.atan2(solLocal.z,solLocal.x);
-  const solSpiral0=Math.log(1+solR/(RG*0.014)+1e-6)/Math.log(1+1/0.014)*TURNS*Math.PI*2;
-  const solPhase=solAng-solSpiral0;
-  const crest=Math.round(solPhase/Math.PI)*Math.PI; // N_ARMS=2 crests at k*pi
-  const SPIRAL_PHASE_LOCK=solPhase-crest;
+  const lock=computeSpiralPhaseLock(RG,TURNS,N_ARMS,GAL_POS_X,GAL_POS_Z);
+  const SPIRAL_PHASE_LOCK=lock.phaseLock;
+  const solLocal=lock.solLocal;
 
-  // Main disc: shared createSpiralGalaxyPoints (cyan→blue→navy, 2 arms, bright core).
-  // Magenta HII deleted; phase-lock keeps Sol on arm crest. No glow-sprite wash.
+  // Main disc — shared morph (cylinder→pinch→twist). Phase-lock Sol on crest.
   const spiralGeo=createSpiralGalaxyPoints(armBudget,{
     RG:RG, turns:TURNS, noiseScale:NOISE_SCALE, nArms:N_ARMS,
     phaseLock:SPIRAL_PHASE_LOCK, lowCount:armBudget,
-    coreRgb:[1.0,0.96,0.88], armRgb:[0.72,0.86,1.0], rimRgb:[0.10,0.14,0.42]
+    coreRgb:[1.0,0.97,0.92], armRgb:[0.55,0.82,1.0], rimRgb:[0.08,0.12,0.38],
+    radialAlpha:1.75, sep0:0.105, cylR0:0.030, cylR1:0.068
   });
   const _sp=spiralGeo.attributes.position.array;
   const _sc=spiralGeo.attributes.color.array;
@@ -10800,77 +10755,61 @@ function buildFlightGalaxyBandCPU(){
   let placed=(_sp.length/3)|0;
   try{spiralGeo.dispose();}catch(e){}
 
-  // Extra spiral samples biased near Sol's gal-local neighborhood (~3–5k radius)
-  // so the MW band itself is dense at home (not only the world-space sheath).
+  // Near-Sol crest samples — MW readable as dual-arm sky from LEO (same morph)
   try{
-    // Slightly thinner Orion near-Sol samples (#37 plate still reads dual arms).
-    const nearSolBudget=(particles==='low'||gfxLow)?4500:(mobile?7000:9000);
-    const nearSolR=4200;
+    const nearSolBudget=(particles==='low'||gfxLow)?3500:(mobile?5500:7500);
+    const nearSolR=3800;
     let nearPlaced=0;
-    for(let i=0;i<nearSolBudget*4&&nearPlaced<nearSolBudget;i++){
+    for(let i=0;i<nearSolBudget*5&&nearPlaced<nearSolBudget;i++){
       const ox=solLocal.x+(Math.random()-0.5)*nearSolR*2;
       const oz=solLocal.z+(Math.random()-0.5)*nearSolR*2;
-      const oy=solLocal.y+(Math.random()-0.5)*Math.random()*380;
+      const oy=solLocal.y+(Math.random()-0.5)*Math.random()*320;
       const rr=Math.hypot(ox,oz);
-      if(rr<180||rr>RG*0.95)continue;
-      const sp=Math.log(1+rr/(RG*0.014)+1e-6)/Math.log(1+1/0.014)*TURNS*Math.PI*2+SPIRAL_PHASE_LOCK;
+      if(rr<200||rr>RG*0.95)continue;
+      const sp=spiralAngleAt(rr,RG,TURNS,SPIRAL_PHASE_LOCK,0,N_ARMS);
       const ag=Math.atan2(oz,ox);
       const ph=ag-sp;
       const aw=Math.pow(Math.abs(Math.cos(ph*N_ARMS*0.5)),1.35);
-      if(aw<0.55)continue; // stay on arm crest near Sol
+      if(aw<0.50)continue;
       pts.push(ox,oy,oz);
-      const tb=Math.min(1,rr/RG);
-      const bb=(0.75+Math.random()*0.3)*(0.55+aw*0.45);
-      // bright cyan local MW band (louder from Sol)
-      cols.push(0.45*bb,0.88*bb,1.0*bb);
+      const bb=(0.78+Math.random()*0.28)*(0.55+aw*0.45);
+      cols.push(0.50*bb,0.86*bb,1.0*bb);
       nearPlaced++;placed++;
     }
   }catch(e){}
-  // Star-cluster clumps along arms: denser inner (r<0.25 RG), fewer/smaller outer.
-  // Systems nest in arms → arm dust stays thin so systems aren't overcrowded.
+
+  // Sparse arm-crest clumps (systems nest here — keep dust thin mid-arm)
   try{
-    const nClumps=(particles==='low'||gfxLow)?22:(mobile?36:52);
-    const perClump=(particles==='low'||gfxLow)?36:(mobile?60:95);
+    const nClumps=(particles==='low'||gfxLow)?18:(mobile?28:42);
+    const perClump=(particles==='low'||gfxLow)?28:(mobile?48:72);
     for(let c=0;c<nClumps;c++){
-      // Kavang-style radial bias: more clumps toward core (pow>1)
-      const cr=600+Math.pow(Math.random(),1.85)*RG*0.90;
-      const armPick=Math.floor(Math.random()*N_ARMS); // 0 or 1 for two twisted arms
-      const sp=Math.log(1+cr/(RG*0.014)+1e-6)/Math.log(1+1/0.014)*TURNS*Math.PI*2+SPIRAL_PHASE_LOCK;
-      const cAng=sp+armPick*Math.PI+(Math.random()-0.5)*0.10;
+      const cr=700+Math.pow(Math.random(),1.55)*RG*0.88;
+      const armPick=Math.floor(Math.random()*N_ARMS);
+      const sp=spiralAngleAt(cr,RG,TURNS,SPIRAL_PHASE_LOCK,armPick,N_ARMS);
+      const cAng=sp+(Math.random()-0.5)*0.08;
       const cx=Math.cos(cAng)*cr, cz=Math.sin(cAng)*cr;
-      const cy=(Math.random()-0.5)*160*(1-cr/RG*0.5);
-      const inner=cr<(RG*0.25);
+      const cy=(Math.random()-0.5)*140*(1-cr/RG*0.5);
       const coreProx=1-Math.min(1,cr/(RG*0.50));
-      // Inner clumps denser+larger; outer fewer particles / smaller radius
-      const clumpR=inner
-        ?(220+Math.random()*480*(0.7+coreProx*0.6))
-        :(90+Math.random()*220*(0.45+coreProx*0.4));
-      const nMul=inner?(1.15+coreProx*0.85):(0.35+coreProx*0.45);
-      const n=Math.round(perClump*nMul*(0.7+Math.random()*0.35));
+      const inner=cr<(RG*0.22);
+      const clumpR=inner?(200+Math.random()*400):(80+Math.random()*200);
+      const n=Math.round(perClump*(inner?1.1:0.45)*(0.7+Math.random()*0.35)*(0.55+coreProx*0.55));
       for(let k=0;k<n;k++){
         const u=Math.random(), v=Math.random(), w=Math.random();
         const rr=clumpR*Math.pow(u,0.55);
         const th=v*Math.PI*2, ph=Math.acos(2*w-1);
         pts.push(cx+rr*Math.sin(ph)*Math.cos(th), cy+rr*Math.cos(ph)*0.35, cz+rr*Math.sin(ph)*Math.sin(th));
-        const bb=(0.7+Math.random()*0.4)*(0.60+coreProx*0.65);
-        cols.push(0.45*bb,0.82*bb,1.0*bb);
+        const bb=(0.7+Math.random()*0.35)*(0.55+coreProx*0.55);
+        cols.push(0.48*bb,0.80*bb,1.0*bb);
         placed++;
       }
     }
   }catch(e){}
 
-
-
   const tex=makeCircleTex(16,'rgb(255,255,255)',1);
   const galGroup=new THREE.Group();
-  // HOME-VOID: keep a thin screen-space Points silhouette so arms read from Sol
-  // (~21k from galGroup). Primary volumetric dust = InstancedMesh spheres (Med+).
-  // HOME MW sky: screen-space plate sizes must read as dual spiral bands from Sol
-  // (~21k from galGroup). Prior ~2.6–3.6px was a faint arc; bump hard.
   const armPx=mobile?(gfxLow?5.0:6.5):(gfxLow?6.5:8.5);
   const useInstances=!(mobile||gfxLow||particles==='low');
   if(useInstances){
-    // Subsample for instances (fill-rate); full pts still feed silhouette plate
     const instN=Math.min(placed, particles==='ultra'?28000:particles==='high'?22000:16000);
     const ip=new Float32Array(instN*3), ic=new Float32Array(instN*3);
     const step=Math.max(1, Math.floor(placed/instN));
@@ -10885,19 +10824,16 @@ function buildFlightGalaxyBandCPU(){
       lit:true, instanceRadius:instRad, opacity:0.88
     });
     if(flightGalaxyBand)galGroup.add(flightGalaxyBand);
-    // Dense screen-space plate = home silhouette (InstancedMesh spheres stay for
-    // near immersion but are angularly tiny from Sol; plate carries dual-arm sky).
     const plateN=Math.min(placed, particles==='ultra'?28000:particles==='high'?24000:20000);
     const pp=new Float32Array(plateN*3), pc=new Float32Array(plateN*3);
     const pstep=Math.max(1, Math.floor(placed/plateN));
     let pw=0;
     for(let i=0;i<placed&&pw<plateN;i+=pstep){
       pp[pw*3]=pts[i*3]; pp[pw*3+1]=pts[i*3+1]; pp[pw*3+2]=pts[i*3+2];
-      // Brighten toward cyan so arms + core silhouette read loud from Sol LEO
       const cr=cols[i*3], cg=cols[i*3+1], cb=cols[i*3+2];
-      pc[pw*3]=Math.min(1, cr*1.2+0.10);
-      pc[pw*3+1]=Math.min(1, cg*1.35+0.12);
-      pc[pw*3+2]=Math.min(1, cb*1.15+0.08);
+      pc[pw*3]=Math.min(1, cr*1.15+0.08);
+      pc[pw*3+1]=Math.min(1, cg*1.28+0.10);
+      pc[pw*3+2]=Math.min(1, cb*1.12+0.06);
       pw++;
     }
     const plate=_buildGalaxyDustDraw(pp,pc,{
@@ -10910,9 +10846,8 @@ function buildFlightGalaxyBandCPU(){
     });
     if(flightGalaxyBand)galGroup.add(flightGalaxyBand);
   }
-  // Dual-tier near dust: sparse attenuated wisps so flying INTO arms still has depth
   try{
-    const nearN=Math.min(placed, mobile||gfxLow?1800:3200);
+    const nearN=Math.min(placed, mobile||gfxLow?1600:2800);
     const np=new Float32Array(nearN*3), nc=new Float32Array(nearN*3);
     for(let i=0;i<nearN;i++){
       const j=(i*3)%(placed*3);
@@ -10920,90 +10855,78 @@ function buildFlightGalaxyBandCPU(){
       nc[i*3]=cols[j]*0.85; nc[i*3+1]=cols[j+1]*0.85; nc[i*3+2]=cols[j+2]*0.85;
     }
     const nearSz=mobile?(gfxLow?90:110):(gfxLow?70:95);
-    // Near depth: small InstancedMesh spheres on Med+, Points on Low
     const nearDraw=_buildGalaxyDustDraw(np,nc, useInstances
       ?{lit:true, instanceRadius:Math.max(28, nearSz*0.35), opacity:0.55}
       :{forcePoints:true, pointSize:nearSz, sizeAttenuation:true, opacity:0.55});
     if(nearDraw)galGroup.add(nearDraw);
   }catch(e){}
 
-  // ── Core bulge: EXTREMELY dense — particles merge into blown white/warm (Kavang).
-  // No dark SMBH hole: core fully obscured; denser toward center (accretion dance).
-  // Soft glow discs DELETED — additive Points only (no 900/1600 wash discs).
-  // Credit: https://youtu.be/8-B6ryuBkCM / https://www.kavang.com/atom / Atoms
+  // Core bulge — blown white/cyan particulate (ref blown-galaxy-core.png)
   const cp=[],cc=[];
   for(let i=0;i<coreBudget;i++){
-    // Radial CDF: pow>>1 → solid packed center (blown-out additive merge)
-    const r=Math.pow(Math.random(),3.4)*RG*0.15;
+    const r=Math.pow(Math.random(),3.3)*RG*0.14;
     const phi=Math.random()*Math.PI*2,th=Math.acos(2*Math.random()-1);
-    cp.push(r*Math.sin(th)*Math.cos(phi)*1.20, r*Math.cos(th)*0.40, r*Math.sin(th)*Math.sin(phi));
-    const tw=Math.min(1, r/(RG*0.15));
+    cp.push(r*Math.sin(th)*Math.cos(phi)*1.15, r*Math.cos(th)*0.38, r*Math.sin(th)*Math.sin(phi));
+    const tw=Math.min(1, r/(RG*0.14));
     const b=0.92+Math.random()*0.28;
-    // white center → yellow/orange fringe (match blown-galaxy-core.png)
-    cc.push((1.0-tw*0.02)*b, (0.97-tw*0.30)*b, (0.90-tw*0.58)*b);
+    cc.push((1.0-tw*0.03)*b, (0.97-tw*0.22)*b, (0.94-tw*0.40)*b);
   }
-  // Force Points so additive screen-space merge reads as solid blown core from Sol
   const corePx=mobile?(gfxLow?6.5:8.0):(gfxLow?7.5:9.5);
   const coreDraw=_buildGalaxyDustDraw(cp,cc,{
     forcePoints:true, pointSize:corePx, sizeAttenuation:false, opacity:0.99
   });
   if(coreDraw)galGroup.add(coreDraw);
 
-  // Thin accretion ring cue (warm inner → soft blue outer) — keep, no huge corona
-  const dn=Math.round(Math.min(3200, coreBudget*0.18));
+  // Thin accretion ring cue
+  const dn=Math.round(Math.min(2800, coreBudget*0.16));
   const dp=[],dc=[];
   for(let i=0;i<dn;i++){
-    const rr=RG*0.012+Math.pow(Math.random(),0.75)*RG*0.065;
+    const rr=RG*0.012+Math.pow(Math.random(),0.75)*RG*0.060;
     const a=Math.random()*Math.PI*2;
-    const warm=1-(rr/(RG*0.08));
-    dp.push(Math.cos(a)*rr, gaussian()*RG*0.0032, Math.sin(a)*rr);
+    const warm=1-(rr/(RG*0.075));
+    dp.push(Math.cos(a)*rr, gaussian()*RG*0.0030, Math.sin(a)*rr);
     const b=0.70+Math.random()*0.35;
-    // warmer inner rim (orange/yellow) → pale blue outer
-    dc.push(lerp(0.55,1.0,warm)*b, lerp(0.65,0.92,warm)*b, lerp(1.0,0.55,warm)*b);
+    dc.push(lerp(0.55,1.0,warm)*b, lerp(0.70,0.94,warm)*b, lerp(1.0,0.60,warm)*b);
   }
   const ringDraw=_buildGalaxyDustDraw(dp,dc,{
-    forcePoints:true, pointSize:mobile?4.0:5.2, sizeAttenuation:false, opacity:0.95
+    forcePoints:true, pointSize:mobile?3.8:5.0, sizeAttenuation:false, opacity:0.94
   });
   if(ringDraw)galGroup.add(ringDraw);
 
-  // Soft navy/magenta nebula particulate pockets near core (SPARSE — not Sol wash discs)
+  // Soft navy/magenta nebula pockets near core (sparse — not Sol wash)
   try{
-    const nebPockets=(particles==='low'||gfxLow)?3:(mobile?5:7);
-    const nebPer=(particles==='low'||gfxLow)?180:(mobile?280:420);
+    const nebPockets=(particles==='low'||gfxLow)?3:(mobile?4:6);
+    const nebPer=(particles==='low'||gfxLow)?160:(mobile?240:360);
     const np=[],nc=[];
     for(let p=0;p<nebPockets;p++){
-      const nr=(0.06+Math.random()*0.14)*RG;
+      const nr=(0.06+Math.random()*0.12)*RG;
       const na=Math.random()*Math.PI*2;
       const nx=Math.cos(na)*nr, nz=Math.sin(na)*nr;
-      const ny=(Math.random()-0.5)*RG*0.02;
-      const nR=RG*(0.018+Math.random()*0.035);
-      const magentaBias=Math.random()<0.45;
+      const ny=(Math.random()-0.5)*RG*0.018;
+      const nR=RG*(0.016+Math.random()*0.030);
+      const magentaBias=Math.random()<0.42;
       for(let k=0;k<nebPer;k++){
         const u=Math.random(), v=Math.random(), w=Math.random();
         const rr=nR*Math.pow(u,0.7);
         const th=v*Math.PI*2, ph=Math.acos(2*w-1);
         np.push(nx+rr*Math.sin(ph)*Math.cos(th), ny+rr*Math.cos(ph)*0.45, nz+rr*Math.sin(ph)*Math.sin(th));
-        const bb=0.35+Math.random()*0.35;
-        if(magentaBias){nc.push(0.55*bb,0.28*bb,0.72*bb);} // soft magenta
-        else{nc.push(0.18*bb,0.22*bb,0.55*bb);} // soft navy
+        const bb=0.32+Math.random()*0.32;
+        if(magentaBias){nc.push(0.52*bb,0.26*bb,0.70*bb);}
+        else{nc.push(0.16*bb,0.20*bb,0.52*bb);}
       }
     }
     const nebDraw=_buildGalaxyDustDraw(np,nc,{
-      forcePoints:true, pointSize:mobile?3.2:4.2, sizeAttenuation:false, opacity:0.55
+      forcePoints:true, pointSize:mobile?3.0:4.0, sizeAttenuation:false, opacity:0.52
     });
     if(nebDraw)galGroup.add(nebDraw);
   }catch(e){}
 
   galGroup.rotation.set(0.5,0.3,0.1);
-  // Sol ~62% out on Orion arm IN the disc plane (Y≈0)
-  galGroup.position.set(-RG*0.5,0,-RG*0.16);
+  galGroup.position.set(GAL_POS_X,0,GAL_POS_Z);
   flightGalaxyCore=galGroup;
   flightScene.add(galGroup);
 
-  // ── LOCAL arm immersion (home-void fix) ──────────────────────────
-  // Spiral band alone is sparse/far at Sol scale. Embed the player in a
-  // dense local Orion-arm cloud + mid-field band streak toward the core.
-  // Parent to flightScene at origin (Sol); oriented with the galactic plane.
+  // Local Orion sheath — thinner than #37 so dual arms read; particulate only
   try{
     if(window._flightLocalArm){
       _disposeObject3D(window._flightLocalArm);
@@ -11012,41 +10935,35 @@ function buildFlightGalaxyBandCPU(){
     }
     const local=new THREE.Group();
     local.rotation.copy(galGroup.rotation);
-    // Local Orion sheath (#37 MW-from-Sol): slightly thinner so arms not overcrowded;
-    // plate/armPx/sheath still read dual spiral. Particulate only — no glow discs.
     const locN=(particles==='low'||gfxLow)
-      ?(mobile?14000:17000)
+      ?(mobile?10000:13000)
       :(particles==='high'||particles==='ultra')
-        ?(mobile?25000:32000)
-        :(mobile?20000:26000);
+        ?(mobile?18000:24000)
+        :(mobile?14000:19000);
     const lp=new Float32Array(locN*3),lc=new Float32Array(locN*3);
-    // Dense flattened ellipsoid around Sol (player is IN the arm)
     for(let i=0;i<locN;i++){
-      const along= (Math.random()-0.5)*7200;          // along arm
-      const across=(Math.random()-0.5)*Math.random()*1400; // arm width
-      const thick=(Math.random()-0.5)*Math.random()*380;  // disc thickness
-      // Bias a brighter tongue toward galactic center (-X in gal local ≈ core)
-      const coreBias=Math.random()*Math.random()*6200;
-      lp[i*3]=along - coreBias*0.6;
+      const along=(Math.random()-0.5)*6400;
+      const across=(Math.random()-0.5)*Math.random()*1100;
+      const thick=(Math.random()-0.5)*Math.random()*300;
+      const coreBias=Math.random()*Math.random()*5200;
+      lp[i*3]=along-coreBias*0.55;
       lp[i*3+1]=thick;
       lp[i*3+2]=across;
-      const t=Math.min(1,Math.hypot(lp[i*3],lp[i*3+2])/5800);
-      const towardCore=Math.max(0, -lp[i*3]/5800);
-      const b=(0.95+Math.random()*0.45)*(1-t*0.12)*(0.92+towardCore*0.7);
-      // pale blue local arm (#37 readable from Sol LEO — Points only, not wash discs)
-      lc[i*3]=0.62*b;lc[i*3+1]=0.82*b;lc[i*3+2]=1.0*b;
+      const t=Math.min(1,Math.hypot(lp[i*3],lp[i*3+2])/5200);
+      const towardCore=Math.max(0, -lp[i*3]/5200);
+      const b=(0.90+Math.random()*0.40)*(1-t*0.14)*(0.90+towardCore*0.55);
+      lc[i*3]=0.55*b;lc[i*3+1]=0.80*b;lc[i*3+2]=1.0*b;
     }
     const lg=new THREE.BufferGeometry();
     lg.setAttribute('position',new THREE.BufferAttribute(lp,3));
     lg.setAttribute('color',new THREE.BufferAttribute(lc,3));
-    const locSize=mobile?(gfxLow?78:95):(gfxLow?72:90);
+    const locSize=mobile?(gfxLow?72:88):(gfxLow?66:82);
     local.add(new THREE.Points(lg,new THREE.PointsMaterial({
       size:locSize,sizeAttenuation:true,vertexColors:true,map:tex,
-      transparent:true,opacity:0.98,depthWrite:false,blending:THREE.AdditiveBlending,alphaTest:0.02
+      transparent:true,opacity:0.92,depthWrite:false,blending:THREE.AdditiveBlending,alphaTest:0.02
     })));
-    // Mid-field screen-space streak so arm silhouette holds when looking toward core
     try{
-      const midN=Math.min(locN, mobile||gfxLow?8000:12000);
+      const midN=Math.min(locN, mobile||gfxLow?6000:9000);
       const mp=new Float32Array(midN*3), mc=new Float32Array(midN*3);
       for(let i=0;i<midN;i++){
         mp[i*3]=lp[i*3]; mp[i*3+1]=lp[i*3+1]; mp[i*3+2]=lp[i*3+2];
@@ -11056,41 +10973,141 @@ function buildFlightGalaxyBandCPU(){
       mg.setAttribute('position',new THREE.BufferAttribute(mp,3));
       mg.setAttribute('color',new THREE.BufferAttribute(mc,3));
       local.add(new THREE.Points(mg,new THREE.PointsMaterial({
-        size:mobile?5.0:6.5,sizeAttenuation:false,vertexColors:true,map:tex,
-        transparent:true,opacity:0.92,depthWrite:false,blending:THREE.AdditiveBlending,alphaTest:0.02
+        size:mobile?4.5:6.0,sizeAttenuation:false,vertexColors:true,map:tex,
+        transparent:true,opacity:0.88,depthWrite:false,blending:THREE.AdditiveBlending,alphaTest:0.02
       })));
     }catch(e){}
-    // Glow sprites DELETED (ref: sol-white-bloom-not-oort) — local arm is Points only.
     flightScene.add(local);
     window._flightLocalArm=local;
   }catch(e){console.warn('local arm:',e);}
 }
 
-// ── Menu / Stabilizer spiral plate (shared Blender GN cyan spiral) ─────
-// Cheap looping particle disc for menu splash behind SVG. Low-only density
-// (~few thousand pts). No GPU path, no WORLD_SEED touch. Stabilizer mounts
-// via window.buildMenuGalaxySpiralPlate(parent, opts).
+// ── Shared spiral morph (Blender GN + Kavang cylinder→pinch→twist) ─────
+// Refs: /workspace/jots-cosmos-refs/{blender-galaxy,menu-galaxy,blown-galaxy-core.png}
+// Method: dual side-by-side cylinders → pinch middles at core → log-twist spiral
+// + noise clumps + blown SMBH core. Dual arms; denser toward center; dark lanes.
+// Credit: Kavan / Kavang (kavan010) —
+//   https://www.kavang.com/atom
+//   https://github.com/kavan010/Atoms
+//   https://youtu.be/8-B6ryuBkCM
+//   https://github.com/kavan010/black_hole / https://github.com/kavan010/gravity_sim
+// Adapt morphology only — no proprietary blobs. ENABLE_FLIGHT_GALAXY_BAND_GPU stays false.
 const MENU_SPIRAL_DEFAULTS={
-  RG:1.0,           // disc radius (unit for menu; world units for flight/QT/named)
+  RG:1.0,
   turns:2.25,
   noiseScale:6.0,
   nArms:2,
-  lowCount:7000,    // denser particulate (menu/flight may override via budget+lowCount)
+  lowCount:7000,
   pointSize:0.018,
-  phaseLock:0,      // angle offset so Sol sits on arm crest (flight)
-  // Kavang video palette: warm-white core, white/pale-blue arms, navy rim
-  // (soft navy/magenta nebula pockets added separately — no Sol wash discs)
-  coreRgb:[1.0,0.96,0.88],
-  armRgb:[0.72,0.86,1.0],
-  rimRgb:[0.10,0.14,0.42]
+  phaseLock:0,
+  // Menu / flight palette: warm-white core, cyan-blue arms, navy rim (refs)
+  coreRgb:[1.0,0.97,0.92],
+  armRgb:[0.55,0.82,1.0],
+  rimRgb:[0.08,0.12,0.38],
+  // Cylinder morph (fraction of RG)
+  sep0:0.105,
+  cylR0:0.030,
+  cylR1:0.068,
+  radialAlpha:1.75, // core bias without starving arms (ref dual-spiral read)
+  pinchPow:0.82
 };
+/** Shared spiral angle at radius r (gal-local disc). */
+function spiralAngleAt(r, RG, turns, phase, arm, nArms){
+  const T=+turns||2.25, R=+RG||1, P=+phase||0, A=((arm|0)%Math.max(2,nArms|2));
+  const NA=Math.max(2,nArms|2);
+  return Math.log(1+r/(R*0.014)+1e-6)/Math.log(1+1/0.014)*T*Math.PI*2+P+A*(Math.PI*2/NA);
+}
+/** Phase-lock so world-origin Sol sits on a dual-arm crest (flight band). */
+function computeSpiralPhaseLock(RG, turns, nArms, galPosX, galPosZ){
+  const R=+RG||42000, T=+turns||2.25, NA=Math.max(2,nArms|2);
+  const gx=(galPosX!=null)?galPosX:(-R*0.5), gz=(galPosZ!=null)?galPosZ:(-R*0.16);
+  const _invQ=new THREE.Quaternion().setFromEuler(new THREE.Euler(0.5,0.3,0.1)).invert();
+  const solLocal=new THREE.Vector3(-gx,0,-gz).applyQuaternion(_invQ);
+  const solR=Math.hypot(solLocal.x,solLocal.z);
+  const solAng=Math.atan2(solLocal.z,solLocal.x);
+  const solSpiral0=spiralAngleAt(solR,R,T,0,0,NA);
+  const solPhase=solAng-solSpiral0;
+  const crest=Math.round(solPhase/Math.PI)*Math.PI; // N_ARMS=2 crests at k*pi
+  return {phaseLock:solPhase-crest, solLocal};
+}
+/**
+ * Sample one point in dual-cylinder → pinch → twist volume (Kavang/Blender morph).
+ * rand(): 0..1. Returns {x,y,z,armWave,t,dens} or null if rejected (dark lane).
+ */
+function sampleCylinderSpiralPoint(rand, opts){
+  const o=Object.assign({}, MENU_SPIRAL_DEFAULTS, opts||{});
+  const RG=+o.RG||1, TURNS=+o.turns||2.25, NOISE_SCALE=+o.noiseScale||6;
+  const N_ARMS=Math.max(2,o.nArms|2), PHASE=+o.phaseLock||0;
+  const RADIAL_ALPHA=+o.radialAlpha||1.75;
+  const SEP0=+o.sep0||0.105, CYL_R0=+o.cylR0||0.030, CYL_R1=+o.cylR1||0.068;
+  const PINCH_POW=+o.pinchPow||0.82;
+  function _gh(x,y,z){const s=Math.sin(x*127.1+y*311.7+z*74.7)*43758.5453;return s-Math.floor(s);}
+  function _gnoise(x,y,z){
+    const xi=Math.floor(x),yi=Math.floor(y),zi=Math.floor(z);
+    const xf=x-xi,yf=y-yi,zf=z-zi;
+    const u=xf*xf*(3-2*xf),v=yf*yf*(3-2*yf),w=zf*zf*(3-2*zf);
+    const n000=_gh(xi,yi,zi),n100=_gh(xi+1,yi,zi),n010=_gh(xi,yi+1,zi),n110=_gh(xi+1,yi+1,zi);
+    const n001=_gh(xi,yi,zi+1),n101=_gh(xi+1,yi,zi+1),n011=_gh(xi,yi+1,zi+1),n111=_gh(xi+1,yi+1,zi+1);
+    const x00=n000+(n100-n000)*u,x10=n010+(n110-n010)*u,x01=n001+(n101-n001)*u,x11=n011+(n111-n011)*u;
+    const y0=x00+(x10-x00)*v,y1=x01+(x11-x01)*v;return y0+(y1-y0)*w;
+  }
+  function _gfbm(x,y,z,oct){let a=0.5,f=1,s=0,n=0;for(let i=0;i<oct;i++){s+=a*_gnoise(x*f,y*f,z*f);n+=a;a*=0.55;f*=2;}return s/n;}
+  const u=Math.pow(rand(), RADIAL_ALPHA); // 0 core → 1 rim
+  const arm=Math.floor(rand()*N_ARMS)%N_ARMS;
+  const side=(arm%2===0)?-1:1;
+  const r=u*RG;
+  const pinch=Math.pow(u, PINCH_POW);
+  const sep=SEP0*RG*pinch;
+  const cylR=(CYL_R0+(CYL_R1-CYL_R0)*u)*RG;
+  const th=rand()*Math.PI*2;
+  const rho=Math.pow(rand(),0.50+u*0.30)*cylR;
+  let px=r;
+  let py=Math.sin(th)*rho*0.36;
+  let pz=side*sep+Math.cos(th)*rho;
+  const ns=NOISE_SCALE;
+  const nOff=_gfbm((px/RG)*ns*0.8, (py/RG)*ns*2+17.3, (pz/RG)*ns*0.8, 3);
+  const nOff2=_gfbm((px/RG)*ns*0.9+40.1, (py/RG)*ns*2.2, (pz/RG)*ns*0.9+9.7, 2);
+  const scatter=(0.005+u*0.022)*(0.55+nOff)*RG;
+  px+=(nOff-0.5)*2.0*scatter; pz+=(nOff2-0.5)*2.0*scatter; py+=(nOff-0.5)*0.012*RG;
+  const spiralAngle=spiralAngleAt(r,RG,TURNS,PHASE,arm,N_ARMS);
+  const c=Math.cos(spiralAngle), s=Math.sin(spiralAngle);
+  const rx=px*c-pz*s, rz=px*s+pz*c; px=rx; pz=rz;
+  const rr=Math.hypot(px,pz), t=Math.min(1,rr/RG);
+  const ang=Math.atan2(pz,px), phase=ang-spiralAngle;
+  const armWave=Math.pow(Math.abs(Math.cos(phase*N_ARMS*0.5)),1.55+u*0.70);
+  const nGate=_gfbm((px/RG)*4.5+3.1, (py/RG)*20+1.7, (pz/RG)*4.5+8.4, 4);
+  const radialFall=Math.exp(-(rr*rr)/(2*(RG*0.28)*(RG*0.28)))*(0.22+0.78*Math.pow(1-t,1.55));
+  const dens=armWave*(0.32+0.68*nGate)*radialFall*(0.80+0.20*(1-pinch));
+  const densFloor=0.16+u*0.36;
+  if(dens<densFloor)return null;
+  if(armWave<0.32+u*0.22)return null; // dark lanes
+  if(rand()>dens*(1.15-u*0.45))return null;
+  return {x:px,y:py,z:pz,armWave,t,dens,rr,nGate,coreW:Math.exp(-(rr*rr)/(2*(RG*0.07)*(RG*0.07))),fringeW:Math.exp(-(rr*rr)/(2*(RG*0.14)*(RG*0.14)))};
+}
+/** Crest-only sample for visitables (systems sit IN arms, sparse). Always accepts. */
+function sampleSpiralArmCrest(rand, opts){
+  const o=Object.assign({}, MENU_SPIRAL_DEFAULTS, opts||{});
+  const RG=+o.RG||42000, TURNS=+o.turns||2.25, N_ARMS=Math.max(2,o.nArms|2), PHASE=+o.phaseLock||0;
+  const RADIAL_ALPHA=+o.radialAlpha||1.35; // visitables: less core pile than dust
+  const maxR=(o.maxR!=null)?+o.maxR:RG*0.22; // local flight bubble
+  const minR=(o.minR!=null)?+o.minR:400;
+  let r,arm;
+  for(let tries=0;tries<12;tries++){
+    const u=Math.pow(rand(), RADIAL_ALPHA);
+    r=minR+u*(maxR-minR);
+    arm=Math.floor(rand()*N_ARMS)%N_ARMS;
+    if(r<=maxR)break;
+  }
+  const crestJitter=(rand()-0.5)*0.10; // stay near crest
+  const ang=spiralAngleAt(r,RG,TURNS,PHASE,arm,N_ARMS)+crestJitter;
+  const scatter=r*0.025+180;
+  const px=Math.cos(ang)*r+(rand()-0.5)*scatter;
+  const pz=Math.sin(ang)*r+(rand()-0.5)*scatter;
+  const t=Math.min(1,r/RG);
+  const py=(rand()-0.5)*2*(700*(1-t*0.5));
+  return {x:px,y:py,z:pz,r,arm};
+}
 // Build galaxy dust draw: InstancedMesh low-poly spheres (Med+) or Points (Low/mobile).
-// Lit-sphere star dust — NOT visitables. Prefer Additive MeshBasic (self-lit in vacuum;
-// flight AmbientLight is ~0.1 so Standard alone would read black). Soft Lambert/Standard
-// emissive path when opts.lit && not Low.
-// Spiral / particle-star logic credit: Kavan/Kavang (kavan010) —
-// https://www.kavang.com/atom / https://github.com/kavan010/Atoms / https://youtu.be/8-B6ryuBkCM
-// https://github.com/kavan010/black_hole / https://github.com/kavan010/gravity_sim
 function _buildGalaxyDustDraw(positions, colors, opts){
   opts=opts||{};
   const n=(positions.length/3)|0;
@@ -11114,7 +11131,6 @@ function _buildGalaxyDustDraw(positions, colors, opts){
     });
     const pts=new THREE.Points(g,mat);pts.frustumCulled=false;return pts;
   }
-  // Low-poly sphere instances (icosahedron detail 0 = 20 tris)
   const rad=opts.instanceRadius!=null?opts.instanceRadius:70;
   const geo=new THREE.IcosahedronGeometry(rad,0);
   const useLit=!!opts.lit && !(GFX&&GFX.preset==='low');
@@ -11160,112 +11176,46 @@ function _buildGalaxyDustDraw(positions, colors, opts){
 }
 
 function createSpiralGalaxyPoints(budget, opts){
-  // Dual cylinder → pinch mid → twist spiral (Justin HARD MW shape) — shape STAYS.
-  // Density only: radial CDF / power-law sampling (uniform u → r biased to center),
-  // like |ψ|² CDF on kavang.com/atom — sparse outer arms, dense SMBH bulge.
-  // Credit: Kavan / Kavang (kavan010) —
-  //   https://www.kavang.com/atom
-  //   https://github.com/kavan010/Atoms
-  //   https://youtu.be/8-B6ryuBkCM
-  //   https://github.com/kavan010/black_hole / https://github.com/kavan010/gravity_sim
-  // Adapt idea only (cylinder volumes + central density) — no proprietary blobs.
+  // Dual cylinder → pinch mid → twist spiral + blown SMBH core (Justin HARD rebuild).
+  // Refs: blender-galaxy GN + menu-galaxy spiral look + blown-galaxy-core.png
   const o=Object.assign({}, MENU_SPIRAL_DEFAULTS, opts||{});
   const cap=Math.max(o.lowCount|7000, budget|0);
   const N=Math.max(400, Math.min(budget|0, cap));
-  const RG=+o.RG||1, TURNS=+o.turns||2.25, NOISE_SCALE=+o.noiseScale||6, N_ARMS=+o.nArms||2;
-  const PHASE=+o.phaseLock||0;
-  // Radial CDF exponent: r = RG * u^RADIAL_ALPHA with ALPHA>1 → PDF piles at r→0.
-  // (Inverse-CDF of F(r)=(r/RG)^(1/ALPHA); Kavang Atoms / |ψ|²-style sample.)
-  const RADIAL_ALPHA=2.55;
-  function _gh(x,y,z){const s=Math.sin(x*127.1+y*311.7+z*74.7)*43758.5453;return s-Math.floor(s);}
-  function _gnoise(x,y,z){
-    const xi=Math.floor(x),yi=Math.floor(y),zi=Math.floor(z);
-    const xf=x-xi,yf=y-yi,zf=z-zi;
-    const u=xf*xf*(3-2*xf),v=yf*yf*(3-2*yf),w=zf*zf*(3-2*zf);
-    const n000=_gh(xi,yi,zi),n100=_gh(xi+1,yi,zi),n010=_gh(xi,yi+1,zi),n110=_gh(xi+1,yi+1,zi);
-    const n001=_gh(xi,yi,zi+1),n101=_gh(xi+1,yi,zi+1),n011=_gh(xi,yi+1,zi+1),n111=_gh(xi+1,yi+1,zi+1);
-    const x00=n000+(n100-n000)*u,x10=n010+(n110-n010)*u,x01=n001+(n101-n001)*u,x11=n011+(n111-n011)*u;
-    const y0=x00+(x10-x00)*v,y1=x01+(x11-x01)*v;return y0+(y1-y0)*w;
-  }
-  function _gfbm(x,y,z,oct){let a=0.5,f=1,s=0,n=0;for(let i=0;i<oct;i++){s+=a*_gnoise(x*f,y*f,z*f);n+=a;a*=0.55;f*=2;}return s/n;}
+  const RG=+o.RG||1;
   const pts=[],cols=[];
-  // Higher attempts: outer arms reject harder (thin crest fill).
-  const attempts=Math.round(N*5.0);
+  const attempts=Math.round(N*4.5);
   let placed=0;
-  // Side-by-side cylinder half-separation at rim (fraction of RG); pinch→0 at core.
-  const SEP0=0.11;
-  const CYL_R0=0.028; // cylinder cross-section radius at core
-  const CYL_R1=0.062; // thinner outer arm tube (was 0.075) — systems less crowded
+  const _rand=Math.random;
   for(let i=0;i<attempts&&placed<N;i++){
-    // Kavang radial CDF: u^RADIAL_ALPHA piles particles toward galactic center
-    const u=Math.pow(Math.random(), RADIAL_ALPHA); // 0..1 along cylinder (core→rim)
-    const arm=Math.floor(Math.random()*Math.max(2,N_ARMS))%Math.max(2,N_ARMS);
-    const side=(arm%2===0)?-1:1;
-    const r=u*RG;
-    const pinch=Math.pow(u,0.82); // 0 at core (cylinders meet), 1 at rim
-    const sep=SEP0*RG*pinch;
-    const cylR=(CYL_R0+(CYL_R1-CYL_R0)*u)*RG;
-    // Volumetric sample in cylinder cross-section (disc of radius cylR)
-    const th=Math.random()*Math.PI*2;
-    // Slightly tighter cross-section fill at mid/outer radii
-    const rho=Math.pow(Math.random(),0.55+u*0.35)*cylR;
-    let px=r;
-    let py=Math.sin(th)*rho*0.38; // flatten disc thickness
-    let pz=side*sep+Math.cos(th)*rho;
-    // Soft noise offset (RG-invariant) — clumps / dark lanes between crests
-    const ns=NOISE_SCALE;
-    const nOff=_gfbm((px/RG)*ns*0.8, (py/RG)*ns*2+17.3, (pz/RG)*ns*0.8, 3);
-    const nOff2=_gfbm((px/RG)*ns*0.9+40.1, (py/RG)*ns*2.2, (pz/RG)*ns*0.9+9.7, 2);
-    const scatter=(0.004+u*0.018)*(0.50+nOff)*RG; // less scatter outer → thinner arms
-    px+=(nOff-0.5)*2.0*scatter; pz+=(nOff2-0.5)*2.0*scatter; py+=(nOff-0.5)*0.01*RG;
-    // Twist into log-spiral (same wind language as prior band + phase-lock for Sol-on-crest)
-    const spiralAngle=Math.log(1+r/(RG*0.014)+1e-6)/Math.log(1+1/0.014)*TURNS*Math.PI*2+PHASE+arm*(Math.PI*2/Math.max(2,N_ARMS));
-    const c=Math.cos(spiralAngle), s=Math.sin(spiralAngle);
-    const rx=px*c-pz*s, rz=px*s+pz*c; px=rx; pz=rz;
-    const rr=Math.hypot(px,pz), t=Math.min(1,rr/RG);
-    // Gate: medium-low arm density + sharp dark dust lanes (high off-crest reject).
-    // Kavang video: distinct spaced points on crest; inter-arm = near-empty.
-    const ang=Math.atan2(pz,px), phase=ang-spiralAngle;
-    const armWave=Math.pow(Math.abs(Math.cos(phase*Math.max(2,N_ARMS)*0.5)),1.85+u*0.90);
-    const nGate=_gfbm((px/RG)*4.5+3.1, (py/RG)*20+1.7, (pz/RG)*4.5+8.4, 4);
-    // Sharper radial bulge — EXTREMELY dense core, sparse mid/outer arms
-    const radialFall=Math.exp(-(rr*rr)/(2*(RG*0.22)*(RG*0.22)))*(0.15+0.85*Math.pow(1-t,2.05));
-    const dens=armWave*(0.28+0.72*nGate)*radialFall*(0.75+0.25*(1-pinch));
-    // Dark lanes: hard reject off-crest; outer fill rate drops hard
-    const densFloor=0.22+u*0.48;
-    if(dens<densFloor)continue;
-    if(armWave<0.42+u*0.28)continue; // sharp density drop between arms
-    if(Math.random()>dens*(1.05-u*0.60))continue;
-    pts.push(px,py,pz);
-    const coreW=Math.exp(-(rr*rr)/(2*(RG*0.07)*(RG*0.07)));
-    const fringeW=Math.exp(-(rr*rr)/(2*(RG*0.14)*(RG*0.14)));
+    const s=sampleCylinderSpiralPoint(_rand, o);
+    if(!s)continue;
+    pts.push(s.x,s.y,s.z);
     let cr,cg,cb;
-    // Core: blown white → yellow/orange fringe (Kavang video); arms: white/pale blue
-    if(coreW>0.45){cr=1.0;cg=0.97;cb=0.92;}
-    else if(fringeW>0.35){
-      const fw=(fringeW-0.35)/0.65;
-      cr=0.95+0.05*fw; cg=0.72+0.20*fw; cb=0.42+0.40*fw; // warm orange fringe
+    if(s.coreW>0.45){cr=1.0;cg=0.97;cb=0.94;} // blown white-cyan core
+    else if(s.fringeW>0.35){
+      const fw=(s.fringeW-0.35)/0.65;
+      cr=0.92+0.08*fw; cg=0.78+0.16*fw; cb=0.55+0.35*fw; // warm fringe only
     }
-    else if(t<0.55){const u2=t/0.55;cr=o.armRgb[0]+(o.rimRgb[0]-o.armRgb[0])*u2*0.25;cg=o.armRgb[1]*(1-u2*0.2);cb=o.armRgb[2];}
-    else{cr=o.rimRgb[0];cg=o.rimRgb[1];cb=o.rimRgb[2];}
-    // pale white sparkle on crest — no Sol wash discs
-    if(nGate>0.72&&armWave>0.75&&Math.random()<0.025){cr=0.95;cg=0.97;cb=1.0;}
-    const b=(0.45+dens*0.55)*(0.68+Math.random()*0.32)*(0.78+coreW*0.70);
+    else if(s.t<0.55){
+      const u2=s.t/0.55;
+      cr=o.armRgb[0]+(o.rimRgb[0]-o.armRgb[0])*u2*0.35;
+      cg=o.armRgb[1]*(1-u2*0.18);
+      cb=o.armRgb[2];
+    }else{cr=o.rimRgb[0];cg=o.rimRgb[1];cb=o.rimRgb[2];}
+    if(s.nGate>0.72&&s.armWave>0.75&&_rand()<0.03){cr=0.95;cg=0.98;cb=1.0;}
+    const b=(0.48+s.dens*0.52)*(0.70+_rand()*0.30)*(0.80+s.coreW*0.65);
     cols.push(cr*b,cg*b,cb*b);
     placed++;
   }
-  // Central bulge / SMBH cue — EXTREMELY dense (particles merge → blown white/warm).
-  // No dark hole: core fully obscured by particulate glow; denser toward center
-  // (accretion dance). Kavang Atoms / |ψ|² radial CDF.
-  const bulgeN=Math.min(Math.round(N*0.34), Math.max(220, Math.round(N*0.28)));
+  // Central bulge — EXTREMELY dense blown white/warm (particles merge on screen)
+  const bulgeN=Math.min(Math.round(N*0.38), Math.max(280, Math.round(N*0.32)));
   for(let i=0;i<bulgeN;i++){
-    const br=Math.pow(Math.random(),3.1)*RG*0.14;
-    const phi=Math.random()*Math.PI*2, th=Math.acos(2*Math.random()-1);
-    pts.push(br*Math.sin(th)*Math.cos(phi)*1.15, br*Math.cos(th)*0.38, br*Math.sin(th)*Math.sin(phi));
-    const tw=Math.min(1, br/(RG*0.14));
-    const bb=0.88+Math.random()*0.28;
-    // white center → yellow/orange fringe
-    cols.push((1.0-tw*0.05)*bb, (0.96-tw*0.28)*bb, (0.90-tw*0.55)*bb);
+    const br=Math.pow(_rand(),3.2)*RG*0.13;
+    const phi=_rand()*Math.PI*2, th=Math.acos(2*_rand()-1);
+    pts.push(br*Math.sin(th)*Math.cos(phi)*1.12, br*Math.cos(th)*0.36, br*Math.sin(th)*Math.sin(phi));
+    const tw=Math.min(1, br/(RG*0.13));
+    const bb=0.90+_rand()*0.28;
+    cols.push((1.0-tw*0.04)*bb, (0.97-tw*0.22)*bb, (0.94-tw*0.42)*bb);
     placed++;
   }
   const g=new THREE.BufferGeometry();
@@ -11273,11 +11223,7 @@ function createSpiralGalaxyPoints(budget, opts){
   g.setAttribute('color',new THREE.BufferAttribute(new Float32Array(cols),3));
   return g;
 }
-/** Mount a Low-budget cyan spiral plate behind menu SVG.
- *  @param {THREE.Object3D|THREE.Scene} parent
- *  @param {object} [opts] — RG, turns, noiseScale, lowCount, pointSize, spin, scale
- *  @returns {{group:THREE.Group, points:THREE.Points, update:(dt)=>void, dispose:()=>void}}
- */
+/** Mount a Low-budget cyan spiral plate behind menu SVG. */
 function buildMenuGalaxySpiralPlate(parent, opts){
   const o=Object.assign({}, MENU_SPIRAL_DEFAULTS, opts||{});
   const budget=Math.min(o.lowCount||2800, (opts&&opts.budget)||o.lowCount||2800);
@@ -11309,6 +11255,10 @@ function buildMenuGalaxySpiralPlate(parent, opts){
   };
 }
 window.MENU_SPIRAL_DEFAULTS=MENU_SPIRAL_DEFAULTS;
+window.spiralAngleAt=spiralAngleAt;
+window.computeSpiralPhaseLock=computeSpiralPhaseLock;
+window.sampleCylinderSpiralPoint=sampleCylinderSpiralPoint;
+window.sampleSpiralArmCrest=sampleSpiralArmCrest;
 window.createSpiralGalaxyPoints=createSpiralGalaxyPoints;
 window.buildMenuGalaxySpiralPlate=buildMenuGalaxySpiralPlate;
 
@@ -11555,38 +11505,28 @@ function _pickStarClass(rand){
   for(const c of STAR_CLASSES){ if(r<c.weight) return c; r-=c.weight; }
   return STAR_CLASSES[STAR_CLASSES.length-1];
 }
-/* Seeded, arm-aligned star field — visitables sparse ON arm crests.
-   Formula MUST stay byte-stable for generateSeededStarField(140, 918273):
-   never reshuffle existing systems; append-only if count grows later.
-   Positions nest inside the same spiral volumes as dust arms (flight band
-   phase-locks Sol onto a crest). Deterministic seedRand — persistent world. */
+/* Seeded visitables — sparse ON dual-arm crests (cylinder→pinch→twist morph).
+   Justin HARD rebuild (2026-09-28): same crest math as dust arms / map MW.
+   Call site generateSeededStarField(140, 918273) kept; positions re-nest onto
+   shared sampleSpiralArmCrest (phase-locked). Deterministic seedRand. */
 function generateSeededStarField(count, seed){
   const rand = seedRand(seed);
-  const arms=[{base:0,wind:2.4},{base:Math.PI,wind:2.4},{base:Math.PI*0.5,wind:2.3},{base:Math.PI*1.5,wind:2.3}];
-  const RG=42000; // must match buildFlightGalaxyBand's RG for alignment
+  const RG=42000;
+  const lock=computeSpiralPhaseLock(RG, 2.25, 2, -RG*0.5, -RG*0.16);
   const stars=[];
   for(let i=0;i<count;i++){
-    const arm = arms[Math.floor(rand()*arms.length)];
-    const t = Math.pow(rand(), 0.6);
-    const r = t*RG;
-    // Keep generated stars within a reasonable flight range of the home
-    // system rather than scattered across the full 42,000-unit galaxy -
-    // most of that radius is far beyond any realistic travel distance
-    // in a single session, so weight toward the inner-to-mid galaxy.
-    if(r>9000) { i--; continue; }
-    const gAng = Math.log(r/600+1)*arm.wind+arm.base+(rand()-0.5)*(0.12+t*0.4)*2;
-    const scatter = r*0.04+300;
-    const px = Math.cos(gAng)*r+(rand()-0.5)*scatter;
-    const pz = Math.sin(gAng)*r+(rand()-0.5)*scatter;
-    const py = (rand()-0.5)*2*(900*(1-t*0.5));
+    const s=sampleSpiralArmCrest(rand, {
+      RG:RG, turns:2.25, nArms:2, phaseLock:lock.phaseLock,
+      maxR:9000, minR:500, radialAlpha:1.35
+    });
     const cls = _pickStarClass(rand);
-    const hasPlanets = rand()<0.55; // a bit over half are seeded systems, rest are rogue
+    const hasPlanets = rand()<0.55;
     stars.push({
-      pos:[px,py,pz], cls, radius: (0.9+rand()*0.6)*cls.rMul,
+      pos:[s.x,s.y,s.z], cls, radius: (0.9+rand()*0.6)*cls.rMul,
       hasPlanets, planetCount: hasPlanets ? 1+Math.floor(rand()*4) : 0,
       seed: Math.floor(rand()*100000),
-      name: hasPlanets ? ('System '+hashStr(px+'_'+pz).toString(36).slice(0,5).toUpperCase())
-                        : ('Rogue Star '+hashStr(px+'_'+pz+'r').toString(36).slice(0,4).toUpperCase()),
+      name: hasPlanets ? ('System '+hashStr(s.x+'_'+s.z).toString(36).slice(0,5).toUpperCase())
+                        : ('Rogue Star '+hashStr(s.x+'_'+s.z+'r').toString(36).slice(0,4).toUpperCase()),
     });
   }
   return stars;
