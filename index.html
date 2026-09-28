@@ -2066,6 +2066,7 @@ function launchFlight(){
         if(boardFlight&&flightScene)flightScene.remove(boardFlight);
         boardFlight=buildBoardMesh();
         if(typeof FLIGHT_BOARD_WORLD_SCALE==='number') boardFlight.scale.setScalar(FLIGHT_BOARD_WORLD_SCALE);
+        if(typeof window.jotsResyncRiderToBoard==='function') window.jotsResyncRiderToBoard('worlds-scale');
         _builtBoardTemplate=colorSig;
         if(flightScene)flightScene.add(boardFlight);
         if(_wasMounted && CHAR.loaded && CHAR.root) remountSkyboard(boardFlight);
@@ -7467,6 +7468,7 @@ function buildFlightBoard(){
   // CHAR parented here inherits scale — remountSkyboard / CHAR_FILES untouched.
   // Surface/atmo local scenes keep bake scale (human walk / atmo terrain).
   if(typeof FLIGHT_BOARD_WORLD_SCALE==='number') boardFlight.scale.setScalar(FLIGHT_BOARD_WORLD_SCALE);
+  if(typeof window.jotsResyncRiderToBoard==='function') window.jotsResyncRiderToBoard('worlds-scale');
   // ── FOLLOW-CAM MODEL: the board is a WORLD entity that flies through space;
   // the camera trails behind and above it (drone/follow style) so you actually
   // SEE the board out in front of you — the whole point of the game. The board
