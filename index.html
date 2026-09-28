@@ -13527,11 +13527,16 @@ function _boardMeshHealthy(boardObj){
   return saw && ok;
 }
 
+/** Reentrancy: heal may call jotsResyncRiderToBoard; resync must not re-enter heal. */
+let _jotsBoardHealBusy=false;
+
 /** Rebuild flight skyboard if land/atmo dispose killed shared buffers. */
 function rebuildFlightBoardIfBroken(reason){
   if(typeof boardFlight==='undefined' || !boardFlight) return false;
   if(_boardMeshHealthy(boardFlight)) return false;
+  if(_jotsBoardHealBusy) return false;
   console.warn('[BOARD] unhealthy after', reason||'?', '— rebuilding flight skyboard');
+  _jotsBoardHealBusy=true;
   try{
     const wasMounted=!!(CHAR&&CHAR.mounted&&CHAR.root&&CHAR.root.parent===boardFlight);
     if(CHAR&&CHAR.loaded&&CHAR.root&&CHAR.root.parent===boardFlight){
@@ -13541,18 +13546,27 @@ function rebuildFlightBoardIfBroken(reason){
     try{ if(flightScene) flightScene.remove(boardFlight); }catch(e){}
     try{ disposeObject3D(boardFlight); }catch(e){}
     boardFlight=buildBoardMesh();
+    // Worlds #40: buildBoardMesh is bake ~3u; flight parent must re-apply
+    // FLIGHT_BOARD_WORLD_SCALE or heal snaps craft huge vs Earth/Sun.
+    // Constant is Worlds-owned — apply only when defined (no hardcode).
+    if(typeof FLIGHT_BOARD_WORLD_SCALE==='number') boardFlight.scale.setScalar(FLIGHT_BOARD_WORLD_SCALE);
     _builtBoardTemplate=boardStyleSig();
     if(flightScene) flightScene.add(boardFlight);
     try{ boardFlight.visible=true; }catch(e){}
     if(STATE&&STATE.flight&&STATE.flight.pos) boardFlight.position.copy(STATE.flight.pos);
-    if(wasMounted || (CHAR&&CHAR.loaded&&CHAR.root)){
-      try{ remountSkyboard(boardFlight); }catch(e){}
+    // CoS/Watcher: after heal scale, resync rider (guard skips nested heal).
+    if(typeof window.jotsResyncRiderToBoard==='function' && CHAR&&CHAR.loaded&&CHAR.root){
+      try{ window.jotsResyncRiderToBoard('heal-'+(reason||'rebuild')); }catch(e){}
+    }else if(wasMounted || (CHAR&&CHAR.loaded&&CHAR.root)){
+      try{ remountSkyboard(boardFlight); _forceCharVisible(); }catch(e){}
     }
     try{toast('🛹 Skyboard restored',1800);}catch(_){}
     return true;
   }catch(e){
     console.error('[BOARD] rebuild failed', e);
     return false;
+  }finally{
+    _jotsBoardHealBusy=false;
   }
 }
 
@@ -13560,7 +13574,8 @@ function rebuildFlightBoardIfBroken(reason){
  *  re-derive CHAR.scaleForBoard from the live board and remount. */
 function jotsResyncRiderToBoard(reason){
   if(typeof boardFlight==='undefined' || !boardFlight) return false;
-  rebuildFlightBoardIfBroken(reason||'resync');
+  // Skip heal while heal is calling us (re-apply scale already done).
+  if(!_jotsBoardHealBusy) rebuildFlightBoardIfBroken(reason||'resync');
   if(!(CHAR&&CHAR.loaded&&CHAR.root)) return false;
   try{
     if(CHAR.root.parent===boardFlight) CHAR.root.parent.remove(CHAR.root);
