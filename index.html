@@ -4378,32 +4378,46 @@ async function initFlightScene(){
   window.addEventListener('keyup',onKeyUp);
 
   _flightLoopCv=cv;
-  // Gate first travel frames: await mount until true OR ~20s timeout.
-  // Do NOT start the flight loop until Autumn is parented+visible, or timeout.
-  const _mountDeadline = performance.now() + 20000;
+  // Gate first travel frames until Autumn is parented+visible.
+  // Cold cache (Justin Android after site-data erase): mesh+anims are ~15MB and
+  // each GLB race is 90s — a 20s gate gave up before bytes arrived, leaving an
+  // empty board until optional polls lucked out. Budget matches load timeouts.
+  const _mountDeadline = performance.now() + 120000;
   let _bootMounted = false;
   try{
     while(performance.now() < _mountDeadline){
       _bootMounted = await ensureAutumnOnBoard('initFlightScene');
       if(_bootMounted) break;
-      await new Promise(r=>setTimeout(r,200));
+      await new Promise(r=>setTimeout(r,300));
     }
   }catch(e){ console.warn('boot mount:',e); }
   if(!_bootMounted){
-    console.warn('[CHAR] initFlightScene mount timeout (~20s) — starting loop with aggressive remount safety net', _charStatus());
-    try{toast('⚠ Autumn mount slow — remounting in flight…',3500);}catch(_){}
+    console.warn('[CHAR] initFlightScene mount timeout (~120s) — starting loop with long remount watch', _charStatus());
+    try{toast('⚠ Autumn still loading — will mount when ready…',3500);}catch(_){}
   }
   _startFlightLoop();
-  // Keep aggressive remount if still not mounted after timeout.
-  if(!CHAR.mounted || !(CHAR.root&&CHAR.root.parent===boardFlight&&CHAR.root.visible)){
-    let _bootTries=0;
-    const _bootPoll=setInterval(async()=>{
-      _bootTries++;
-      try{ await ensureAutumnOnBoard('boot-poll'); }catch(e){}
-      const ok = !!(CHAR.mounted && CHAR.root && CHAR.root.parent===boardFlight && CHAR.root.visible);
-      if(ok || _bootTries>100) clearInterval(_bootPoll); // ~20s more at 200ms
-    },200);
-  }
+  // Persist until mounted (or ~3 min). Cold cache + GPU contention can finish
+  // after the gate; flight-loop 30-frame safety alone is not enough if load
+  // is still in flight and remount no-ops without a root.
+  (function _armColdMountWatch(){
+    if(CHAR._coldMountWatch) return;
+    let tries=0, toasted=false;
+    CHAR._coldMountWatch=setInterval(async()=>{
+      tries++;
+      try{ await ensureAutumnOnBoard('cold-watch'); }catch(e){}
+      const ok=!!(CHAR.mounted && CHAR.root && boardFlight && CHAR.root.parent===boardFlight && CHAR.root.visible);
+      if(ok){
+        clearInterval(CHAR._coldMountWatch); CHAR._coldMountWatch=null;
+        if(!toasted && tries>3){ toasted=true; try{toast('👤 Autumn mounted on the skyboard',2000);}catch(_){} }
+        return;
+      }
+      if(tries>600){ // ~3 min at 300ms
+        clearInterval(CHAR._coldMountWatch); CHAR._coldMountWatch=null;
+        console.error('[CHAR] cold-watch gave up', _charStatus());
+        try{toast('⚠ Autumn failed to mount after cold load — hard-refresh',5000);}catch(_){}
+      }
+    },300);
+  })();
 }
 let _flightLoopCv=null,_flightLoopLast=0;
 // Frame counter used by the flight loop's render-throttle during character
@@ -12267,6 +12281,12 @@ async function loadCharacterAssets(){
   // callers (ensureAutumnOnBoard) must await anims + final remount.
   if(CHAR._loadPromise) return CHAR._loadPromise;
   if(CHAR.loaded) return CHAR.root;
+  // Cold-cache / interrupted load: loading stuck true with no promise blocked
+  // every retry forever. Clear the sticky flag before starting again.
+  if(CHAR.loading && !CHAR._loadPromise){
+    console.warn('[CHAR] clearing sticky loading flag with no in-flight promise');
+    CHAR.loading=false;
+  }
   CHAR.loading = true;
   const gltfLoader = _getGLBLoader();
   if(!gltfLoader){
@@ -13110,11 +13130,12 @@ window.stripCharacterMount = stripCharacterMount;
 async function ensureAutumnOnBoard(reason){
   // Justin hard: Autumn MUST be visibly parented to boardFlight at travel start.
   // Await in-flight mesh-first promise even when CHAR.loaded was flipped early.
+  // Cold cache: never abort on a missing boardFlight mid-retry — wait for it.
   const _sleep = ms => new Promise(r=>setTimeout(r,ms));
   const _ok = () => !!(CHAR.root && typeof boardFlight!=='undefined' && boardFlight
     && CHAR.root.parent===boardFlight && CHAR.mounted && CHAR.root.visible);
 
-  for(let attempt=1; attempt<=5; attempt++){
+  for(let attempt=1; attempt<=8; attempt++){
     try{
       if(CHAR._loadPromise){
         try{ await CHAR._loadPromise; }catch(e){ console.warn('[CHAR] ensure await _loadPromise failed ('+reason+'):',e); }
@@ -13123,11 +13144,12 @@ async function ensureAutumnOnBoard(reason){
       }
       if(typeof boardFlight==='undefined' || !boardFlight){
         try{ console.log('[CHAR] ensureAutumnOnBoard', reason, 'attempt', attempt, 'NO boardFlight', _charStatus()); }catch(e){}
-        return false;
+        if(attempt<8) await _sleep(300);
+        continue;
       }
       if(!CHAR.root || !CHAR.loaded){
         try{ console.log('[CHAR] ensureAutumnOnBoard', reason, 'attempt', attempt, 'no root/loaded', _charStatus()); }catch(e){}
-        if(attempt<5) await _sleep(200);
+        if(attempt<8) await _sleep(400);
         continue;
       }
       remountSkyboard(boardFlight);
@@ -13137,13 +13159,15 @@ async function ensureAutumnOnBoard(reason){
         try{ boardFlight.add(CHAR.root); CHAR.mounted=true; }catch(e){}
         try{ _forceCharVisible(); }catch(e){}
       }
+      // Board itself must be visible in the flight scene (cache-clear path).
+      try{ boardFlight.visible=true; }catch(e){}
       try{ console.log('[CHAR] ensureAutumnOnBoard', reason, 'attempt', attempt, _charStatus()); }catch(e){}
       if(_ok()) return true;
     }catch(e){
       console.warn('[CHAR] ensureAutumnOnBoard error ('+reason+') attempt', attempt, e);
       try{ console.log('[CHAR] ensureAutumnOnBoard', reason, 'attempt', attempt, _charStatus()); }catch(_){}
     }
-    if(attempt<5) await _sleep(200);
+    if(attempt<8) await _sleep(300);
   }
   try{ console.warn('[CHAR] ensureAutumnOnBoard FAILED after retries', reason, _charStatus()); }catch(e){}
   return _ok();
