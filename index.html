@@ -417,33 +417,14 @@ THREE.OrbitControls=function(camera,domElement){
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
 html,body{width:100%;height:var(--app-h);overflow:hidden;background:var(--c0);color:var(--text);font-family:var(--font-body);font-size:14px;}
 
-/* LOADING */
+/* LOADING — video BG only (no legacy hero still / clouds / stars / horizon) */
 #ls-plate-video,.ls-plate-video{position:absolute;inset:0;z-index:-2;width:100%;height:100%;object-fit:cover;object-position:center 40%;pointer-events:none;background:#000308;}
-/* :has fallback for net kill before JS adds has-plate-video */
-#loading-screen:has(#ls-plate-video) #ls-hero-bg,
-#loading-screen:has(#ls-plate-video) #ls-stars,
-#loading-screen:has(#ls-plate-video) #ls-clouds,
-#loading-screen:has(#ls-plate-video) #ls-hero-fade,
-#loading-screen:has(#ls-plate-video) #ls-horizon{opacity:0!important;visibility:hidden!important;pointer-events:none!important;}
-/* Plate splash: kill legacy net/veil/clouds/stars — video is the only BG */
-#loading-screen.has-plate-video #ls-hero-bg,
-#loading-screen.has-plate-video #ls-stars,
-#loading-screen.has-plate-video #ls-clouds,
-#loading-screen.has-plate-video #ls-hero-fade,
-#loading-screen.has-plate-video #ls-horizon{opacity:0!important;visibility:hidden!important;pointer-events:none!important;}
-#ls-hero-bg{position:absolute;inset:0;z-index:-1;width:100%;height:100%;object-fit:cover;object-position:center 38%;opacity:0;pointer-events:none;}/* stripped flat splash */
-#ls-hero-fade{position:absolute;inset:0;z-index:-1;background:radial-gradient(ellipse at 50% 42%,transparent 0%,rgba(6,3,14,0.35) 45%,rgba(6,3,14,0.88) 78%,rgba(6,3,14,0.98) 100%),linear-gradient(180deg,rgba(6,3,14,0.55) 0%,transparent 22%,transparent 55%,rgba(6,3,14,0.6) 82%,rgba(6,3,14,0.97) 100%);}
-#loading-screen{position:fixed;inset:0;background:var(--c0);z-index:10000;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:opacity 0.8s ease;}
+#loading-screen{position:fixed;inset:0;background:#000308;z-index:10000;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:opacity 0.8s ease;}
 #loading-screen.out{opacity:0;pointer-events:none;}
-#ls-stars{position:absolute;inset:0;overflow:hidden;z-index:0;}
-.ls-star{position:absolute;border-radius:50%;background:#fff;animation:twinkle linear infinite;}
-@keyframes twinkle{0%,100%{opacity:0.1;}50%{opacity:1;}}
 /* UI cluster: ~40% prior size, true center, hidden until ~4s */
 #ls-ui-cluster{position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;opacity:0;pointer-events:none;transition:opacity 1s ease;will-change:opacity;}
 #ls-ui-cluster.ls-ui-in{opacity:1;pointer-events:auto;}
 #ls-logo{width:auto;height:auto;max-width:min(256px,29vw);max-height:9.6vh;position:relative;z-index:2;margin-bottom:0.48rem;filter:drop-shadow(0 0 16px rgba(91,127,255,0.35)) drop-shadow(0 0 32px rgba(255,79,163,0.15));animation:tpulse 3.5s ease-in-out infinite;}
-#ls-horizon{position:absolute;inset:0;z-index:0;background:radial-gradient(ellipse at 50% 40%,rgba(0,245,255,0.12),transparent 55%),linear-gradient(180deg,#000308 0%,#0a0616 40%,#120a28 70%,#1a0a20 100%);opacity:0.9;mask-image:linear-gradient(180deg,transparent 0%,black 45%,black 100%);-webkit-mask-image:linear-gradient(180deg,transparent 0%,black 45%,black 100%);}
-#ls-clouds{position:absolute;left:0;right:0;bottom:0;width:100%;height:auto;z-index:1;opacity:0.7;filter:drop-shadow(0 0 30px rgba(255,79,163,0.1));pointer-events:none;}
 @keyframes tpulse{0%,100%{text-shadow:0 0 30px var(--cyan),0 0 80px rgba(91,127,255,0.3);}50%{text-shadow:0 0 60px var(--cyan),0 0 140px rgba(91,127,255,0.6);}}
 #ls-bar-wrap{width:min(136px,32vw);height:2px;background:rgba(91,127,255,0.12);border-radius:2px;overflow:hidden;position:relative;z-index:2;}
 #ls-bar{height:100%;background:linear-gradient(90deg,var(--cyan),var(--purple));width:0;transition:width 0.25s ease;border-radius:2px;box-shadow:0 0 8px var(--cyan);}
@@ -922,14 +903,10 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <body>
 <!-- LOADING -->
 <div id="loading-screen">
-  <video id="ls-plate-video" class="ls-plate-video" autoplay muted loop playsinline preload="auto" poster="static/loading-hero.jpg">
+  <video id="ls-plate-video" class="ls-plate-video" autoplay muted loop playsinline preload="auto">
     <source src="static/splash-menu-plate.mp4" type="video/mp4">
   </video>
-  <img id="ls-hero-bg" src="static/loading-hero.jpg" alt="" aria-hidden="true">
-  <div id="ls-hero-fade"></div>
-  <div id="ls-horizon"></div>
-  <img id="ls-clouds" src="static/loading-clouds.svg" alt="">
-  <div id="ls-stars"></div>
+  <!-- Boot BG = plate video only; old rifle still / clouds / stars / horizon removed -->
   <div id="ls-ui-cluster">
     <img id="ls-logo" src="static/dartmeadow-logo.svg" alt="DART Meadow — Journey of the Skyboard">
     <div id="ls-bar-wrap"><div id="ls-bar"></div></div>
@@ -2145,7 +2122,7 @@ let _gameInProgress=false;
 
 // ── Loading ───────────────────────────────────────────────────
 (function(){
-  // Late splash helpers (stars/audio). Progress + SEQUENCE DART reveal are owned by
+  // Late splash helpers (audio; legacy stars DOM removed). Progress + SEQUENCE DART owned by
   // the early independent controller; keep a belt-and-suspenders reveal here too.
   const reveal=()=>{try{
     if(typeof window.__revealSplashEnter==='function'){window.__revealSplashEnter();return;}
