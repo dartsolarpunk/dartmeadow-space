@@ -13541,12 +13541,18 @@ function rebuildFlightBoardIfBroken(reason){
     try{ if(flightScene) flightScene.remove(boardFlight); }catch(e){}
     try{ disposeObject3D(boardFlight); }catch(e){}
     boardFlight=buildBoardMesh();
+    // Worlds #40: buildBoardMesh is bake ~3u; flight parent must re-apply
+    // FLIGHT_BOARD_WORLD_SCALE or heal snaps craft huge vs Earth/Sun.
+    // Constant is Worlds-owned — apply only when defined (no hardcode).
+    if(typeof FLIGHT_BOARD_WORLD_SCALE==='number') boardFlight.scale.setScalar(FLIGHT_BOARD_WORLD_SCALE);
     _builtBoardTemplate=boardStyleSig();
     if(flightScene) flightScene.add(boardFlight);
     try{ boardFlight.visible=true; }catch(e){}
     if(STATE&&STATE.flight&&STATE.flight.pos) boardFlight.position.copy(STATE.flight.pos);
+    // Remount derives CHAR.scaleForBoard from live board (incl. world scale).
+    // Do NOT call jotsResyncRiderToBoard here — it invokes this heal fn (recurse).
     if(wasMounted || (CHAR&&CHAR.loaded&&CHAR.root)){
-      try{ remountSkyboard(boardFlight); }catch(e){}
+      try{ remountSkyboard(boardFlight); _forceCharVisible(); }catch(e){}
     }
     try{toast('🛹 Skyboard restored',1800);}catch(_){}
     return true;
