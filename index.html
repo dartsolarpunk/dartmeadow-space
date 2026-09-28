@@ -7782,6 +7782,37 @@ function updateDartButton(){
 }
 document.addEventListener('DOMContentLoaded',updateDartButton);
 
+// True visual / collision radius for assist standoffs. FOCUS used to read
+// body.mesh.geometry.parameters.radius — but Sol planets are Groups (GPU/MC
+// or gas-giant), so that was undefined → fallback 1 → want=4, which yanks
+// the board+follow-cam INSIDE Saturn (~visR 16) = tan fill + violent jitter.
+function _bodyVisRadius(b){
+  if(!b)return (typeof PLANET_VIS_SCALE==='number'?PLANET_VIS_SCALE:6);
+  if(b.collisionRadius>0)return b.collisionRadius;
+  if(b.mcRadius>0)return b.mcRadius;
+  const rm=b.renderMesh||null;
+  if(rm&&rm.geometry&&rm.geometry.parameters&&rm.geometry.parameters.radius>0)return rm.geometry.parameters.radius;
+  const m=b.mesh;
+  if(m&&m.geometry&&m.geometry.parameters&&m.geometry.parameters.radius>0)return m.geometry.parameters.radius;
+  if(m&&m.children){
+    for(let i=0;i<m.children.length;i++){
+      const c=m.children[i];
+      if(c&&c.geometry&&c.geometry.parameters&&c.geometry.parameters.radius>0)return c.geometry.parameters.radius;
+    }
+  }
+  return (typeof PLANET_VIS_SCALE==='number'?PLANET_VIS_SCALE:6);
+}
+// Min board↔body center distance so follow-cam never clips into surface/rings.
+function _bodyFocusClearDist(b){
+  const r=_bodyVisRadius(b);
+  // Rings start ~1.4R and span outward; atmo limb ~1.15–1.4R. Gas giants need
+  // the ring-safe standoff; atm bodies get a softer limb pad.
+  let mul=1.35;
+  if(b&&(b.type==='Gas Giant'||b.type==='Ice Giant'||b.hasRings))mul=3.2;
+  else if(b&&(b.hasAtm||b.mcHasAtm))mul=1.5;
+  return Math.max(r*mul, r*1.25+2, 8);
+}
+
 // FOCUS button — lock crosshair onto whatever body is closest to screen center.
 // Skyboard auto-steers to keep it centered until the pilot steers away.
 function toggleFocus(){
@@ -7796,9 +7827,13 @@ function toggleFocus(){
   // so FOCUS hugs the body's orbit instead of trailing way out.
   const sp=STATE.flight;
   let off=sp.pos.clone().sub(body.mesh.position);
-  const r=(body.mesh.geometry&&body.mesh.geometry.parameters&&body.mesh.geometry.parameters.radius)||1;
-  const want=Math.max(r*4,3); // close follow distance
-  if(off.length()>want*1.6||off.length()<0.001) off.setLength(want);
+  const r=_bodyVisRadius(body);
+  const clear=_bodyFocusClearDist(body);
+  // Hug close, but NEVER inside visR/rings/atmo — that puts follow-cam in the
+  // mesh (Android: extreme close-up → tan fill ↔ space jitter).
+  const want=Math.max(r*4, clear);
+  const d=off.length();
+  if(d<clear||d>want*1.6||d<0.001) off.setLength(want);
   ASSIST.lockOffset=off;
   updateAssistButtons();
   toast('◎ FOCUS LOCKED: '+body.name.toUpperCase()+' — tracking');
@@ -7811,15 +7846,15 @@ function toggleFocus(){
 // through manual input and stays on until toggled off again — it's a
 // position tether, not a steering assist, so it deliberately does NOT
 // live inside the ASSIST system's 'manual input disengages' logic.
-const ANCHOR_STATE={active:false,target:null};
+const ANCHOR_STATE={active:false,target:null,_lastPos:null};
 function toggleAnchor(){
   if(ANCHOR_STATE.active){
-    ANCHOR_STATE.active=false;ANCHOR_STATE.target=null;
+    ANCHOR_STATE.active=false;ANCHOR_STATE.target=null;ANCHOR_STATE._lastPos=null;
     toast('⚓ Anchor released');updateAnchorButton();return;
   }
   const target=bodyUnderCrosshair();
   if(!target){toast('⚠ No object under crosshair to anchor to');return;}
-  ANCHOR_STATE.active=true;ANCHOR_STATE.target=target;
+  ANCHOR_STATE.active=true;ANCHOR_STATE.target=target;ANCHOR_STATE._lastPos=null;
   toast('⚓ ANCHORED to '+target.name.toUpperCase()+' — look freely, you\'ll move with it');
   updateAnchorButton();
 }
@@ -7827,16 +7862,41 @@ function updateAnchorButton(){
   const b=$('anchor-btn');if(!b)return;
   b.classList.toggle('active',ANCHOR_STATE.active);
 }
-// bodyUnderCrosshair() returns a throwaway object literal for the Bird
-// Temple (rebuilt fresh each call) and for distant systems, so they don't
-// carry a persistent ._frameDelta the way real celestialBodies entries do
-// — resolve to the actual persistent source in each case.
-function _getAnchorDelta(){
+// Resolve the live mesh position for whatever ANCHOR is tethered to.
+// bodyUnderCrosshair() returns throwaways for Bird Temple / systems / flybys,
+// so we never trust t._frameDelta on the stored target object.
+function _anchorTargetPos(){
   const t=ANCHOR_STATE.target;
   if(!t)return null;
-  if(t.isBirdTemple)return BIRD_TEMPLE._frameDelta||null;
+  if(t.isBirdTemple)return (BIRD_TEMPLE.group&&BIRD_TEMPLE.spawned)?BIRD_TEMPLE.group.position:null;
   if(t.isSystem)return null; // distant systems don't move frame-to-frame currently
-  return t._frameDelta||null;
+  return (t.mesh&&t.mesh.position)?t.mesh.position:null;
+}
+// Apply the target's real mesh motion since last sample. updateFlight runs
+// BEFORE updateBodies, so body._frameDelta is always one frame stale and
+// mismatches variable-dt Android — measuring mesh delta vs our own _lastPos
+// stays exact across that ordering.
+function _applyAnchorDelta(){
+  if(!ANCHOR_STATE.active)return;
+  const t=ANCHOR_STATE.target;
+  if(!t)return;
+  // Bird Temple: curated _frameDelta excludes cosmetic bob. Sampling mesh
+  // lastPos would reintroduce bob-as-anchor-shake (already fixed once).
+  if(t.isBirdTemple){
+    const ad=BIRD_TEMPLE._frameDelta;if(ad)STATE.flight.pos.add(ad);
+    return;
+  }
+  const pos=_anchorTargetPos();
+  if(!pos)return;
+  if(!ANCHOR_STATE._lastPos){
+    ANCHOR_STATE._lastPos=pos.clone();
+    return;
+  }
+  const dx=pos.x-ANCHOR_STATE._lastPos.x;
+  const dy=pos.y-ANCHOR_STATE._lastPos.y;
+  const dz=pos.z-ANCHOR_STATE._lastPos.z;
+  ANCHOR_STATE._lastPos.copy(pos);
+  if(dx||dy||dz){STATE.flight.pos.x+=dx;STATE.flight.pos.y+=dy;STATE.flight.pos.z+=dz;}
 }
 
 // IDLE button — full stop, hover in place.
@@ -8124,14 +8184,17 @@ function updateAssist(dt){
     // ship trails the body with no geometry-jitter.
     if(!ASSIST.orbitOffset){
       let dir=flightCamera.position.clone().sub(tp);
-      const r=(tb.renderMesh||tb.mesh)?.geometry?.parameters?.radius||2;
-      const want=Math.max(r*5,8);
+      const clear=_bodyFocusClearDist(tb);
+      const want=Math.max(_bodyVisRadius(tb)*5, clear);
       if(dir.lengthSq()<0.01)dir.set(0,0.25,1);
       dir.normalize();dir.y=Math.max(dir.y,0.12);dir.normalize();
       ASSIST.orbitOffset=dir.multiplyScalar(want);
+    } else {
+      const clear=_bodyFocusClearDist(tb);
+      if(ASSIST.orbitOffset.length()<clear)ASSIST.orbitOffset.setLength(Math.max(clear,_bodyVisRadius(tb)*4));
     }
     const desired=tp.clone().add(ASSIST.orbitOffset);
-    sp.pos.lerp(desired, Math.min(1,3.5*dt));
+    sp.pos.lerp(desired, Math.min(1,2.5*dt));
     sp.vel.copy(tb._frameDelta||new THREE.Vector3());
     steerToward(tp,dt,5);
     sp.speed=sp.vel.length();
@@ -8145,7 +8208,7 @@ function updateAssist(dt){
     // Trail behind Earth at the fixed home offset, keeping Earth + Moon in view.
     if(!ASSIST.homeOffset)enterHomeTrail(tb);
     const desired=tp.clone().add(ASSIST.homeOffset);
-    sp.pos.lerp(desired, Math.min(1,3*dt));   // smooth, no jitter
+    sp.pos.lerp(desired, Math.min(1,2.2*dt));   // smooth, no jitter
     sp.vel.copy(tb._frameDelta||new THREE.Vector3());
     steerToward(tp,dt,5);                                    // crosshair on Earth
     sp.speed=sp.vel.length();
@@ -8160,9 +8223,13 @@ function updateAssist(dt){
     // Move WITH the body: hold the captured offset so the ship trails along
     // from its current position instead of flying over to the body.
     if(ASSIST.lockOffset){
+      // Per-frame clamp — if a prior bug or scale change left lockOffset
+      // inside visR, push out before lerp (stops cam-in-mesh stutter).
+      const clear=_bodyFocusClearDist(tb);
+      if(ASSIST.lockOffset.length()<clear)ASSIST.lockOffset.setLength(Math.max(clear,_bodyVisRadius(tb)*4));
       const desired=tp.clone().add(ASSIST.lockOffset);
-      // smoothly settle into the moving anchor (no big jumps)
-      sp.pos.lerp(desired, Math.min(1, 4*dt));
+      // Damped settle (was 4*dt) — less two-frame cam stutter on Android.
+      sp.pos.lerp(desired, Math.min(1, 2.2*dt));
       // velocity = how fast the anchor moves, so motion looks natural
       sp.vel.copy(tb._frameDelta||new THREE.Vector3());
     }
@@ -8235,9 +8302,22 @@ function updateFlight(dt){
   // ── Flight assist (autopilot/orbit/focus/idle) runs first ──
   const assistConsumed=updateAssist(dt);
   if(assistConsumed){
-    // assist drives sp.vel; move the BOARD and let the camera follow it
-    sp.pos.addScaledVector(sp.vel,1);
-    if(ANCHOR_STATE.active){const ad=_getAnchorDelta();if(ad)sp.pos.add(ad);}
+    // focus/orbit/home already placed sp.pos via lerp to body+offset and set
+    // sp.vel = body._frameDelta for HUD/speed only. Integrating vel again
+    // double-applied orbit motion (glitchy tracking; worse on variable-dt
+    // Android). travel/idle still need vel integration.
+    const bodyTrack=ASSIST.mode==='focus'||ASSIST.mode==='orbit'||ASSIST.mode==='home';
+    if(!bodyTrack)sp.pos.addScaledVector(sp.vel,1);
+    // FOCUS fully owns the frame — stacking ANCHOR on a body-track assist
+    // triple-applied the same delta when targets matched. Manual+ANCHOR still
+    // applies on the non-assist path below.
+    if(!bodyTrack)_applyAnchorDelta();
+    else if(ANCHOR_STATE.active){
+      // Keep lastPos fresh while FOCUS owns the frame so releasing FOCUS
+      // does not dump a backlog mesh delta in one hitch.
+      const pos=_anchorTargetPos();
+      if(pos){if(!ANCHOR_STATE._lastPos)ANCHOR_STATE._lastPos=pos.clone();else ANCHOR_STATE._lastPos.copy(pos);}
+    }
     sp.speed=sp.vel.length();
     updateBoardTransform(0,0);
     updateFollowCam(dt);
@@ -8302,7 +8382,7 @@ function updateFlight(dt){
   if(!throttling&&sp.vel.length()<0.002)sp.vel.set(0,0,0);
   // The BOARD is what moves through the world now.
   sp.pos.addScaledVector(sp.vel,1);
-  if(ANCHOR_STATE.active){const ad=_getAnchorDelta();if(ad)sp.pos.add(ad);}
+  _applyAnchorDelta();
 
   // Animate DART rings faster in higher modes
   const ringSpd=1+dartSpeedMode*1.5;
