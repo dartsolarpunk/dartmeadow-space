@@ -3916,6 +3916,19 @@ const NEP_ORBIT_AU = 30.069;   // Neptune semi-major (Keplerian)
 // CHAR_FILES. Prior Earth=90 → scale 1; Earth=6 → scale 6/90.
 const FLIGHT_BOARD_REF_EARTH = 90; // Earth radius under prior SOL SCALE HARD
 const FLIGHT_BOARD_WORLD_SCALE = PLANET_VIS_SCALE / FLIGHT_BOARD_REF_EARTH;
+
+// ── Sol sim clock (documented) ──────────────────────────────────
+// 1 Earth year = SOL_GAME_DAYS_PER_EARTH_YEAR game days (sidereal).
+// Wall mapping: one Earth orbit completes in SOL_EARTH_YEAR_WALL_SEC
+// wall-seconds (playable; ~prior 20-min Earth-year feel).
+// Other planets use true sidereal period ratios via Kepler n ∝ 1/P:
+//   meanMotion = SOL_EARTH_MEAN_MOTION / periodYears
+// orbitSpd / meanMotion convention matches updateBodies:
+//   angle += spd * dt * 60  →  wall rad/s = spd * 60
+const SOL_GAME_DAYS_PER_EARTH_YEAR = 365.256363; // sidereal
+const SOL_EARTH_YEAR_WALL_SEC = 20 * 60;         // playable wall seconds / Earth year
+const SOL_EARTH_MEAN_MOTION = (2 * Math.PI / SOL_EARTH_YEAR_WALL_SEC) / 60;
+
 let flightFlybys=[]; // comets / belt / other named flybys for proximity labels
 let oortCloudGroup=null;
 
@@ -5618,21 +5631,22 @@ async function buildSolarSystem(){
 
   // Real AU distances: Mercury 0.387, Venus 0.723, Earth 1.0, Mars 1.524
   // Jupiter 5.203, Saturn 9.537, Uranus 19.191, Neptune 30.069
-  // ── Real relative scale (kept playable) + true Keplerian periods ──
+  // ── Real relative scale (kept playable) + true Keplerian a, e, P ──
   // Radii use real ratios vs Earth (Earth=1.0 visual), distances use true AU.
-  // Orbital periods are real (years); we advance each body 650,000 years
-  // into the future so the game's era is set in deep time (~652,026 AD).
   // period = sidereal orbital period in Earth years (real values).
-  const FUTURE_YEARS = 650000;
+  // ecc = orbital eccentricity (real). oR = semi-major axis in scene units.
+  // lon0Deg ≈ heliocentric ecliptic mean longitude at epoch 2026-09-28
+  // (approx, not SPICE — deterministic present-day-ish starting angles).
+  // Clock: see file-scope SOL_GAME_DAYS_PER_EARTH_YEAR / SOL_EARTH_YEAR_WALL_SEC.
   const planets=[
-    {name:'Mercury',rRatio:0.383,col:0x9c8a7a,oR:AU*0.387,  period:0.2408, type:'Rocky',    temp:'440 K'},
-    {name:'Venus',  rRatio:0.949,col:0xddaa44,oR:AU*0.723,  period:0.6152, type:'Rocky',    temp:'737 K',hasAtm:true},
-    {name:'Earth',  rRatio:1.000,col:0x2244cc,oR:AU*1.0,    period:1.0000, type:'Habitable',temp:'288 K',hasMoon:true,hasAtm:true,useShader:true},
-    {name:'Mars',   rRatio:0.532,col:0xcc4411,oR:AU*1.524,  period:1.8808, type:'Rocky',    temp:'210 K',hasAtm:true},
-    {name:'Jupiter',rRatio:11.21,col:0xcc9944,oR:AU*5.203,  period:11.862, type:'Gas Giant',temp:'165 K'},
-    {name:'Saturn', rRatio:9.45, col:0xddcc88,oR:AU*9.537,  period:29.457, type:'Gas Giant',temp:'134 K',hasRings:true},
-    {name:'Uranus', rRatio:4.01, col:0x88ddee,oR:AU*19.191, period:84.011, type:'Ice Giant',temp:'76 K'},
-    {name:'Neptune',rRatio:3.88, col:0x3355cc,oR:AU*30.069, period:164.79, type:'Ice Giant',temp:'72 K'}
+    {name:'Mercury',rRatio:0.383,col:0x9c8a7a,oR:AU*0.387,  period:0.2408, ecc:0.2056, lon0Deg:221, type:'Rocky',    temp:'440 K'},
+    {name:'Venus',  rRatio:0.949,col:0xddaa44,oR:AU*0.723,  period:0.6152, ecc:0.0068, lon0Deg:48,  type:'Rocky',    temp:'737 K',hasAtm:true},
+    {name:'Earth',  rRatio:1.000,col:0x2244cc,oR:AU*1.0,    period:1.0000, ecc:0.0167, lon0Deg:185, type:'Habitable',temp:'288 K',hasMoon:true,hasAtm:true,useShader:true},
+    {name:'Mars',   rRatio:0.532,col:0xcc4411,oR:AU*1.524,  period:1.8808, ecc:0.0934, lon0Deg:35,  type:'Rocky',    temp:'210 K',hasAtm:true},
+    {name:'Jupiter',rRatio:11.21,col:0xcc9944,oR:AU*5.203,  period:11.862, ecc:0.0489, lon0Deg:65,  type:'Gas Giant',temp:'165 K'},
+    {name:'Saturn', rRatio:9.45, col:0xddcc88,oR:AU*9.537,  period:29.457, ecc:0.0565, lon0Deg:340, type:'Gas Giant',temp:'134 K',hasRings:true},
+    {name:'Uranus', rRatio:4.01, col:0x88ddee,oR:AU*19.191, period:84.011, ecc:0.0457, lon0Deg:55,  type:'Ice Giant',temp:'76 K'},
+    {name:'Neptune',rRatio:3.88, col:0x3355cc,oR:AU*30.069, period:164.79, ecc:0.0113, lon0Deg:5,   type:'Ice Giant',temp:'72 K'}
   ];
   // Visual radius: terrestrial exact × PLANET_VIS_SCALE; giants strongly
   // soft-compressed so Jupiter/Saturn never approach SOL_SUN_RADIUS.
@@ -5645,15 +5659,15 @@ async function buildSolarSystem(){
     const t = ratio - 2;
     return (2 + Math.pow(t, 0.30) * 0.35) * PLANET_VIS_SCALE;
   };
-  // Time compression: real periods would be imperceptible. One real year
-  // maps to TIME_SCALE sim-seconds so motion is visible but ratios stay true.
-  const TIME_SCALE = 0.0008; // sim angular speed per real-year-of-period
+  // Mean motion from documented Sol clock; other planets n = n_earth / P.
   planets.forEach(pl=>{
     pl.r = visR(pl.rRatio);
-    pl.spd = (2*Math.PI/pl.period) * TIME_SCALE; // true relative angular speed
-    // Advance 650,000 years: where is this body in its orbit after that?
-    const revolutions = FUTURE_YEARS / pl.period;
-    pl.angle = (revolutions % 1) * Math.PI*2; // deterministic future position
+    pl.semiMajor = pl.oR;
+    pl.meanMotion = SOL_EARTH_MEAN_MOTION / pl.period; // orbitSpd convention
+    pl.spd = pl.meanMotion;
+    // Present-day epoch mean anomaly ≈ mean longitude (radians); no Math.random
+    pl.meanAnom = pl.lon0Deg * Math.PI / 180;
+    pl.angle = pl.meanAnom;
   });
 
 
@@ -5738,15 +5752,22 @@ async function buildSolarSystem(){
     // opacity sphere this replaced) when p.hasAtm is true - nothing more
     // needed here.
 
-    // Set initial position to the deep-future orbital angle
-    mesh.position.set(Math.cos(p.angle)*p.oR, 0, Math.sin(p.angle)*p.oR);
+    // Present-day elliptical position (Kepler: M→E→ν→r) at epoch 2026-09-28
+    {
+      const ke=solKeplerAnomaly(p.meanAnom, p.ecc);
+      const rr=p.semiMajor*ke.rFactor;
+      mesh.position.set(rr*Math.cos(ke.nu), 0, rr*Math.sin(ke.nu));
+    }
     flightScene.add(mesh);
     if(p.name==='Earth')earthMesh=mesh;
     const isProcedural = !(p.type==='Gas Giant' || p.type==='Ice Giant');
     // landable: rocky/habitable Sol worlds always; gas/ice giants never.
     // hasTerrain: procedural MC/WebGL surface path (enables proximity LAND).
     const _solLandable = isProcedural; // Gas/Ice giants => false
-    celestialBodies.push({mesh,name:p.name,type:p.type,temp:p.temp,orbitR:p.oR,orbitSpd:p.spd,angle:p.angle,collisionRadius:p.r,
+    celestialBodies.push({mesh,name:p.name,type:p.type,temp:p.temp,
+      orbitR:p.oR, // keep semi-major for LAND/maps that read orbitR
+      orbitSpd:p.spd, angle:p.angle, collisionRadius:p.r,
+      semiMajor:p.semiMajor, ecc:p.ecc, meanAnom:p.meanAnom, meanMotion:p.meanMotion,
       landable:_solLandable, hasTerrain:_solLandable,
       // Rebuild metadata for proximity-based marching-cubes LOD (see
       // upgradePlanetLOD, called from updateBodies). isProcedural is false
@@ -5795,9 +5816,12 @@ async function buildSolarSystem(){
       agroup.position.set(Math.cos(a)*r,(landRand()-0.5)*4,Math.sin(a)*r);
       flightScene.add(agroup);
       if(typeof _trackSystemExtra==='function')_trackSystemExtra(agroup);
+      // Kepler at belt r: P_years = (r/AU)^1.5 on the same Sol clock
+      const aPeriodYrs=Math.pow(r/AU, 1.5);
+      const aSpd=SOL_EARTH_MEAN_MOTION/aPeriodYrs;
       celestialBodies.push({
         mesh:agroup, name:landNames[li], type:'Asteroid', temp:'~180 K',
-        orbitR:r, orbitSpd:0.00015/(1+li*0.3), angle:a,
+        orbitR:r, orbitSpd:aSpd, angle:a,
         collisionRadius:rad, landable:true, hasTerrain:true,
         isAsteroid:true, isProcedural:false,
         mcRadius:rad, mcSeed:seedVal, mcColor:0x8a7a68, mcHasAtm:false,
@@ -8516,6 +8540,23 @@ function systemChartFromArmCell(ds){
   return chart;
 }
 
+// Sol Kepler solver: E − e sin E = M (~6 Newton iters) → true anomaly ν,
+// radial factor r/a = (1−e²)/(1+e cos ν). Used by elliptical Sol planets.
+function solKeplerAnomaly(M, e){
+  let m = M % (Math.PI*2);
+  if(m>Math.PI) m-=Math.PI*2;
+  if(m<-Math.PI) m+=Math.PI*2;
+  let E = m;
+  for(let i=0;i<6;i++){
+    const denom = 1 - e*Math.cos(E);
+    if(Math.abs(denom)<1e-12) break;
+    E -= (E - e*Math.sin(E) - m) / denom;
+  }
+  const cosE=Math.cos(E), sinE=Math.sin(E);
+  const nu=Math.atan2(Math.sqrt(Math.max(0,1-e*e))*sinE, cosE-e);
+  const rFactor=(1-e*e)/(1+e*Math.cos(nu));
+  return {E, nu, rFactor};
+}
 function updateBodies(dt){
   _approachBestDist=Infinity;_approachBestBody=null;
   // Plain for-loop instead of .forEach(b=>{...}) — the arrow-function
@@ -8530,9 +8571,20 @@ function updateBodies(dt){
     if(!b._frameDelta)b._frameDelta=new THREE.Vector3();
     if(b.orbitR>0){
       const px=b.mesh.position.x, pz=b.mesh.position.z;
-      b.angle+=b.orbitSpd*dt*60;
-      b.mesh.position.x=Math.cos(b.angle)*b.orbitR;
-      b.mesh.position.z=Math.sin(b.angle)*b.orbitR;
+      // Elliptical Sol planets (ecc/semiMajor set); else circular path
+      // (asteroids, comets, procedural systems).
+      if(b.ecc!=null && b.semiMajor!=null){
+        b.meanAnom += b.meanMotion*dt*60;
+        b.angle = b.meanAnom;
+        const ke=solKeplerAnomaly(b.meanAnom, b.ecc);
+        const rr=b.semiMajor*ke.rFactor;
+        b.mesh.position.x=rr*Math.cos(ke.nu);
+        b.mesh.position.z=rr*Math.sin(ke.nu);
+      } else {
+        b.angle+=b.orbitSpd*dt*60;
+        b.mesh.position.x=Math.cos(b.angle)*b.orbitR;
+        b.mesh.position.z=Math.sin(b.angle)*b.orbitR;
+      }
       b._frameDelta.set(b.mesh.position.x-px,0,b.mesh.position.z-pz);
     } else {
       b._frameDelta.set(0,0,0);
