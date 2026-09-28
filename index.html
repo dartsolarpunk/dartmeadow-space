@@ -7811,15 +7811,15 @@ function toggleFocus(){
 // through manual input and stays on until toggled off again — it's a
 // position tether, not a steering assist, so it deliberately does NOT
 // live inside the ASSIST system's 'manual input disengages' logic.
-const ANCHOR_STATE={active:false,target:null};
+const ANCHOR_STATE={active:false,target:null,_lastPos:null};
 function toggleAnchor(){
   if(ANCHOR_STATE.active){
-    ANCHOR_STATE.active=false;ANCHOR_STATE.target=null;
+    ANCHOR_STATE.active=false;ANCHOR_STATE.target=null;ANCHOR_STATE._lastPos=null;
     toast('⚓ Anchor released');updateAnchorButton();return;
   }
   const target=bodyUnderCrosshair();
   if(!target){toast('⚠ No object under crosshair to anchor to');return;}
-  ANCHOR_STATE.active=true;ANCHOR_STATE.target=target;
+  ANCHOR_STATE.active=true;ANCHOR_STATE.target=target;ANCHOR_STATE._lastPos=null;
   toast('⚓ ANCHORED to '+target.name.toUpperCase()+' — look freely, you\'ll move with it');
   updateAnchorButton();
 }
@@ -7827,16 +7827,41 @@ function updateAnchorButton(){
   const b=$('anchor-btn');if(!b)return;
   b.classList.toggle('active',ANCHOR_STATE.active);
 }
-// bodyUnderCrosshair() returns a throwaway object literal for the Bird
-// Temple (rebuilt fresh each call) and for distant systems, so they don't
-// carry a persistent ._frameDelta the way real celestialBodies entries do
-// — resolve to the actual persistent source in each case.
-function _getAnchorDelta(){
+// Resolve the live mesh position for whatever ANCHOR is tethered to.
+// bodyUnderCrosshair() returns throwaways for Bird Temple / systems / flybys,
+// so we never trust t._frameDelta on the stored target object.
+function _anchorTargetPos(){
   const t=ANCHOR_STATE.target;
   if(!t)return null;
-  if(t.isBirdTemple)return BIRD_TEMPLE._frameDelta||null;
+  if(t.isBirdTemple)return (BIRD_TEMPLE.group&&BIRD_TEMPLE.spawned)?BIRD_TEMPLE.group.position:null;
   if(t.isSystem)return null; // distant systems don't move frame-to-frame currently
-  return t._frameDelta||null;
+  return (t.mesh&&t.mesh.position)?t.mesh.position:null;
+}
+// Apply the target's real mesh motion since last sample. updateFlight runs
+// BEFORE updateBodies, so body._frameDelta is always one frame stale and
+// mismatches variable-dt Android — measuring mesh delta vs our own _lastPos
+// stays exact across that ordering.
+function _applyAnchorDelta(){
+  if(!ANCHOR_STATE.active)return;
+  const t=ANCHOR_STATE.target;
+  if(!t)return;
+  // Bird Temple: curated _frameDelta excludes cosmetic bob. Sampling mesh
+  // lastPos would reintroduce bob-as-anchor-shake (already fixed once).
+  if(t.isBirdTemple){
+    const ad=BIRD_TEMPLE._frameDelta;if(ad)STATE.flight.pos.add(ad);
+    return;
+  }
+  const pos=_anchorTargetPos();
+  if(!pos)return;
+  if(!ANCHOR_STATE._lastPos){
+    ANCHOR_STATE._lastPos=pos.clone();
+    return;
+  }
+  const dx=pos.x-ANCHOR_STATE._lastPos.x;
+  const dy=pos.y-ANCHOR_STATE._lastPos.y;
+  const dz=pos.z-ANCHOR_STATE._lastPos.z;
+  ANCHOR_STATE._lastPos.copy(pos);
+  if(dx||dy||dz){STATE.flight.pos.x+=dx;STATE.flight.pos.y+=dy;STATE.flight.pos.z+=dz;}
 }
 
 // IDLE button — full stop, hover in place.
@@ -8235,9 +8260,22 @@ function updateFlight(dt){
   // ── Flight assist (autopilot/orbit/focus/idle) runs first ──
   const assistConsumed=updateAssist(dt);
   if(assistConsumed){
-    // assist drives sp.vel; move the BOARD and let the camera follow it
-    sp.pos.addScaledVector(sp.vel,1);
-    if(ANCHOR_STATE.active){const ad=_getAnchorDelta();if(ad)sp.pos.add(ad);}
+    // focus/orbit/home already placed sp.pos via lerp to body+offset and set
+    // sp.vel = body._frameDelta for HUD/speed only. Integrating vel again
+    // double-applied orbit motion (glitchy tracking; worse on variable-dt
+    // Android). travel/idle still need vel integration.
+    const bodyTrack=ASSIST.mode==='focus'||ASSIST.mode==='orbit'||ASSIST.mode==='home';
+    if(!bodyTrack)sp.pos.addScaledVector(sp.vel,1);
+    // FOCUS fully owns the frame — stacking ANCHOR on a body-track assist
+    // triple-applied the same delta when targets matched. Manual+ANCHOR still
+    // applies on the non-assist path below.
+    if(!bodyTrack)_applyAnchorDelta();
+    else if(ANCHOR_STATE.active){
+      // Keep lastPos fresh while FOCUS owns the frame so releasing FOCUS
+      // does not dump a backlog mesh delta in one hitch.
+      const pos=_anchorTargetPos();
+      if(pos){if(!ANCHOR_STATE._lastPos)ANCHOR_STATE._lastPos=pos.clone();else ANCHOR_STATE._lastPos.copy(pos);}
+    }
     sp.speed=sp.vel.length();
     updateBoardTransform(0,0);
     updateFollowCam(dt);
@@ -8302,7 +8340,7 @@ function updateFlight(dt){
   if(!throttling&&sp.vel.length()<0.002)sp.vel.set(0,0,0);
   // The BOARD is what moves through the world now.
   sp.pos.addScaledVector(sp.vel,1);
-  if(ANCHOR_STATE.active){const ad=_getAnchorDelta();if(ad)sp.pos.add(ad);}
+  _applyAnchorDelta();
 
   // Animate DART rings faster in higher modes
   const ringSpd=1+dartSpeedMode*1.5;
