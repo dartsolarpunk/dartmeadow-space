@@ -12520,11 +12520,29 @@ function atmoLandHere(){
   if(!CHAR.loaded || !CHAR.root || !atmoBoard || !atmoScene){ _atmoCleanup(); enterSurface(body,_atmoSite); return; }
   const btn=$('atmo-land-btn'); if(btn) btn.disabled=true;
   const groundY = (_atmoHeight ? _atmoHeight(atmoBoard.position.x, atmoBoard.position.z) : atmoBoard.position.y-3);
-  boardDismountSequence(atmoScene, groundY, ()=>{
-    if(btn) btn.disabled=false;
-    _atmoCleanup();
-    enterSurface(body,_atmoSite);
-  });
+  // Brief board descent → step off beside (board-left) → surface walk.
+  // Clamp side so atmo board.scale≈2.4 does not make a 30ft hop.
+  const side = Math.min(_terrainBoardSideWorld(atmoBoard), 1.4);
+  const yaw = (atmoState && isFinite(atmoState.yaw)) ? atmoState.yaw : 0;
+  const endYaw = (yaw - Math.PI/2) + CHAR_MOUNT_YAW_OFFSET + CHAR_TERRAIN_YAW_EXTRA;
+  const boardStartY = atmoBoard.position.y;
+  const boardLandY = groundY + 0.08;
+  CHAR._transitioning = true;
+  const t0 = performance.now();
+  const descendDur = 420;
+  (function descend(){
+    const t = Math.min(1,(performance.now()-t0)/descendDur);
+    const e = t*t*(3-2*t);
+    atmoBoard.position.y = boardStartY + (boardLandY - boardStartY)*e;
+    if(t<1){ requestAnimationFrame(descend); }
+    else {
+      boardDismountSequence(atmoScene, groundY, ()=>{
+        if(btn) btn.disabled=false;
+        _atmoCleanup();
+        enterSurface(body,_atmoSite);
+      }, {board:atmoBoard, sideOffset:side, yaw:yaw, endYaw:endYaw});
+    }
+  })();
 }
 // Exit atmosphere → back to normal space flight.
 function atmoExitToSpace(){
@@ -12670,12 +12688,16 @@ function _hideMiniLoader(){
 // From prior 0: left turn = +PI/2 (Three.js Y-up CCW). Do not change
 // without a new live shot or another explicit Justin correction.
 const CHAR_MOUNT_YAW_OFFSET = Math.PI / 2;
+// SURFACE walk ONLY: +PI so unmounted mesh faces travel / board nose.
+// Mounted flight keeps CHAR_MOUNT_YAW_OFFSET alone (Z-mirror on mount) —
+// never add this in mountSkyboard() / boardMountSequence.
+const CHAR_TERRAIN_YAW_EXTRA = Math.PI;
 // Terrain walk/land only: lateral gap so board rides beside her (her on board-left).
-// ~0.5 bake-units ≈ 6 ft when board.scale=1 (37 ft ≈ 3 game units). Atmo +
-// surface boards use scale≈2.4 — multiply via _terrainBoardSideWorld so the
-// gap stays ~6ft beside her (not under feet). Atmo/interstellar mount: no
-// side offset (rider centered on deckAnchor).
-const CHAR_TERRAIN_BOARD_SIDE = 0.5;
+// Justin video: 0.5 still read underfoot — bump to ~1.0 so gap is clearly
+// beside (≈12ft at scale=1). Multiply via _terrainBoardSideWorld so the
+// gap scales with board.scale. Atmo/interstellar mount: no side offset
+// (rider centered on deckAnchor).
+const CHAR_TERRAIN_BOARD_SIDE = 1.0;
 function _terrainBoardSideWorld(board){
   const sc=(board&&board.scale&&isFinite(board.scale.x))?Math.abs(board.scale.x):1;
   return CHAR_TERRAIN_BOARD_SIDE*Math.max(sc,0.01);
@@ -13624,12 +13646,31 @@ function boardMountSequence(targetBoard, hostScene, onComplete){
     }
   })();
 }
-function boardDismountSequence(hostScene, groundY, onComplete){
+function boardDismountSequence(hostScene, groundY, onComplete, opts){
+  // opts: {board, sideOffset, yaw, endYaw} — step off to board-left (beside),
+  // not straight down under the deck (Justin SURFACE: board on her RIGHT).
+  opts = opts||{};
   if(!CHAR.loaded || !CHAR.root || !hostScene){ onComplete&&onComplete(); return; }
   CHAR._transitioning = true;
   const startPos = new THREE.Vector3(); CHAR.root.getWorldPosition(startPos);
   const startYaw = CHAR.root.rotation.y;
-  const endPos = new THREE.Vector3(startPos.x, groundY, startPos.z);
+  let endX = startPos.x, endZ = startPos.z;
+  const side = (opts.sideOffset!=null && isFinite(opts.sideOffset)) ? opts.sideOffset : 0;
+  if(Math.abs(side)>0.01){
+    // Board-left = local +Z (nose=+X). Prefer live board quaternion; else look-yaw right→negate.
+    if(opts.board){
+      try{
+        const q = opts.board.getWorldQuaternion(new THREE.Quaternion());
+        const left = new THREE.Vector3(0,0,1).applyQuaternion(q); left.y=0;
+        if(left.lengthSq()>1e-8){ left.normalize(); endX = startPos.x + left.x*side; endZ = startPos.z + left.z*side; }
+      }catch(e){}
+    } else if(opts.yaw!=null && isFinite(opts.yaw)){
+      const rx=Math.cos(opts.yaw), rz=-Math.sin(opts.yaw); // world-right of look = board-right
+      endX = startPos.x - rx*side; endZ = startPos.z - rz*side; // step to board-left
+    }
+  }
+  const endPos = new THREE.Vector3(endX, groundY, endZ);
+  let endYaw = (opts.endYaw!=null && isFinite(opts.endYaw)) ? opts.endYaw : startYaw;
   if(CHAR.root.parent) CHAR.root.parent.remove(CHAR.root);
   CHAR.root.position.copy(startPos);
   CHAR.root.rotation.set(0, startYaw, 0);
@@ -13644,10 +13685,12 @@ function boardDismountSequence(hostScene, groundY, onComplete){
     const t = Math.min(1,(performance.now()-t0)/(dur*1000));
     const e = t*t*(3-2*t);
     CHAR.root.position.lerpVectors(startPos, endPos, e);
+    let dy = endYaw - startYaw; while(dy>Math.PI)dy-=2*Math.PI; while(dy<-Math.PI)dy+=2*Math.PI;
+    CHAR.root.rotation.y = startYaw + dy*e;
     if(t<1){ requestAnimationFrame(step); }
     else {
       CHAR._transitioning = false;
-      setCharState('idle',{fade:0.25});
+      setCharState('idle',{fade:0.25, force:true}); // standing idle (walk-derived), not skyboard/seated
       onComplete&&onComplete();
     }
   })();
@@ -14137,25 +14180,61 @@ async function enterSurface(body,site){
     if(!surfScene) return;
     if(CHAR.root.parent) CHAR.root.parent.remove(CHAR.root);
     const s=CHAR.scaleForTerrain||CHAR.scaleForBoard||1;
-    CHAR.root.scale.set(s,s,s);
+    CHAR.root.scale.set(s,s,s); // unmirrored standing scale — not mounted Z-flip
     CHAR.mounted = false;
+    CHAR.stanceMode = 'stand'; // standing locomotion only on surface (not seated/skyboard)
     CHAR.scene = surfScene;
     surfScene.add(CHAR.root);
-    const feetY=(surfPlayer.pos.y-3.0);
-    CHAR.root.position.set(surfPlayer.pos.x, feetY, surfPlayer.pos.z);
-    CHAR.root.rotation.set(0, ((surfPlayer.yaw||0) - Math.PI/2) + CHAR_MOUNT_YAW_OFFSET, 0);
     try{ _forceCharVisible(); }catch(e){ CHAR.root.visible = true; }
-    try{ if(CHAR.mixer) CHAR.mixer.stopAllAction(); }catch(e){}
-    setCharState('idle',{force:true,fade:0});
+    // Soft-coord: if feet still float/sink after this, Worlds MC height is the
+    // owner — Stabilizer owns yaw/offset/transitions only (p.pos.y-3 / eye-3).
+    const feetY=(surfPlayer.pos.y-3.0);
+    const _yaw=surfPlayer.yaw||0;
+    const _rx=Math.cos(_yaw),_rz=-Math.sin(_yaw);
+    const _side=surfBoard?_terrainBoardSideWorld(surfBoard):CHAR_TERRAIN_BOARD_SIDE;
+    const standX=surfPlayer.pos.x, standZ=surfPlayer.pos.z;
+    const terrainYaw=(_yaw - Math.PI/2) + CHAR_MOUNT_YAW_OFFSET + CHAR_TERRAIN_YAW_EXTRA;
     if(surfBoard){
       try{ surfBoard.visible=true; }catch(e){}
-      const _yaw=surfPlayer.yaw||0;
-      const _rx=Math.cos(_yaw),_rz=-Math.sin(_yaw);
-      const _side=_terrainBoardSideWorld(surfBoard);
-      surfBoard.position.set(surfPlayer.pos.x+_rx*_side, feetY+0.08, surfPlayer.pos.z+_rz*_side);
+      // Board starts slightly high, settles beside (her RIGHT / board-left of nose).
+      surfBoard.position.set(standX+_rx*_side, feetY+0.85, standZ+_rz*_side);
       surfBoard.rotation.order='YXZ';
       surfBoard.rotation.y=_yaw-Math.PI/2;
     }
+    // Brief land settle: she steps off near-board → standing beside; board lowers.
+    // Avoids instant teleport/fall-off glitch. Reuses jump clip like boardDismount.
+    try{ if(CHAR.mixer) CHAR.mixer.stopAllAction(); }catch(e){}
+    CHAR._transitioning = true;
+    const startPos = new THREE.Vector3(
+      surfBoard ? (standX+_rx*_side*0.35) : standX,
+      feetY+0.55,
+      surfBoard ? (standZ+_rz*_side*0.35) : standZ
+    );
+    const endPos = new THREE.Vector3(standX, feetY, standZ);
+    CHAR.root.position.copy(startPos);
+    CHAR.root.rotation.set(0, terrainYaw, 0);
+    setCharState('jump',{fade:0.1, speed:0.85, force:true});
+    const _t0=performance.now();
+    const _dur=680;
+    (function _landSettle(){
+      if(!surfScene || !CHAR.root){ CHAR._transitioning=false; return; }
+      const t=Math.min(1,(performance.now()-_t0)/_dur);
+      const e=t*t*(3-2*t);
+      CHAR.root.position.lerpVectors(startPos, endPos, e);
+      CHAR.root.rotation.y = terrainYaw;
+      if(surfBoard){
+        const by0=feetY+0.85, by1=feetY+0.08;
+        surfBoard.position.y = by0 + (by1-by0)*e;
+        surfBoard.position.x = standX+_rx*_side;
+        surfBoard.position.z = standZ+_rz*_side;
+      }
+      if(t<1){ requestAnimationFrame(_landSettle); }
+      else {
+        CHAR.root.position.copy(endPos);
+        CHAR._transitioning = false;
+        setCharState('idle',{force:true,fade:0.2}); // standing idle (walk-derived pose)
+      }
+    })();
     try{
       if(CHAR._autoCharDebug){
         CHAR._autoCharDebug=false; GFX.showCharDebug=false;
@@ -15940,9 +16019,9 @@ function updateSurface(dt){
   //    than re-deriving it separately. ────────────────────────────
   if(CHAR.loaded && CHAR.root && !CHAR._transitioning){
     CHAR.root.position.set(p.pos.x, eye-3.0, p.pos.z);
-    // Same facing as mounted flight: board.yaw (=look-PI/2) + CHAR_MOUNT_YAW_OFFSET.
-    // With +PI/2 that equals look yaw — faces board-forward (Justin HARD 2026-09-28).
-    CHAR.root.rotation.y = (p.yaw - Math.PI/2) + CHAR_MOUNT_YAW_OFFSET;
+    // SURFACE facing: mount formula + CHAR_TERRAIN_YAW_EXTRA (+PI) so she faces
+    // travel / board nose (unmounted lacks mount Z-mirror). Mount/atmo unchanged.
+    CHAR.root.rotation.y = (p.yaw - Math.PI/2) + CHAR_MOUNT_YAW_OFFSET + CHAR_TERRAIN_YAW_EXTRA;
     const moving = Math.abs(mf)>0.05 || Math.abs(ms)>0.05;
     const running = moving && (surfRunToggle || surfKeys['ShiftLeft']||surfKeys['ShiftRight']);
     const dirSign = mf<-0.05 ? -1 : 1; // backing up (S / stick pulled back) plays the reversed cycle
@@ -16086,6 +16165,20 @@ function _surfRemountSkyboardFinish(){
 
 
 function exitSurface(){
+  // LIFTOFF: hop onto board facing mount yaw (CHAR_MOUNT_YAW_OFFSET only —
+  // no CHAR_TERRAIN_YAW_EXTRA), then tear down surface → open-space flight.
+  if(!surfaceActive || CHAR._transitioning)return;
+  if(CHAR.loaded && CHAR.root && surfBoard && surfScene){
+    const btn=$('liftoff-btn'); if(btn) btn.disabled=true;
+    boardMountSequence(surfBoard, surfScene, ()=>{
+      if(btn) btn.disabled=false;
+      _exitSurfaceFinish();
+    });
+    return;
+  }
+  _exitSurfaceFinish();
+}
+function _exitSurfaceFinish(){
   if(!surfaceActive)return;surfaceActive=false;
   if(surfAnimId){cancelAnimationFrame(surfAnimId);surfAnimId=null;}
   window.removeEventListener('keydown',_surfKeyDown);
