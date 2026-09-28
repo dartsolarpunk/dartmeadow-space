@@ -7256,6 +7256,20 @@ function buildBoardFromGLB(tmplKey){
   const cached=_glbCache[url];
   if(!cached) return null;            // not loaded yet → caller falls back
   const grp=cached.clone(true);
+  // HARD: Object3D.clone shares geometry+materials with the preload cache.
+  // enterSurface / enterAtmosphericFlight build a ride board then
+  // disposeObject3D(surfScene|atmoScene) on exit — that disposed the SHARED
+  // buffers and left boardFlight (and every later clone) with dead GPU
+  // meshes: empty Sol LEO after a land, pink board gone, Autumn "not loading".
+  // Own every instance so land/atmo dispose cannot kill flight or the cache.
+  grp.traverse(function(o){
+    if(!o.isMesh && !o.isSkinnedMesh) return;
+    try{ if(o.geometry) o.geometry=o.geometry.clone(); }catch(e){}
+    try{
+      if(Array.isArray(o.material)) o.material=o.material.map(function(m){ return m&&m.clone?m.clone():m; });
+      else if(o.material&&o.material.clone) o.material=o.material.clone();
+    }catch(e){}
+  });
   const c=STATE.boardConfig;
   const styles=(c.partStyles&&c.partStyles[tmplKey])||{};
   grp.traverse(o=>{
@@ -12104,7 +12118,9 @@ async function enterAtmosphericFlight(body,site){
   // Character rejoins here, mounted onto the real flight board — she was
   // left parent-less by surfRemountSkyboard() specifically so she'd
   // survive the surface scene's disposal; this is where she reappears.
-  if(CHAR.loaded && CHAR.root) mountSkyboard(board);
+  if(CHAR.loaded && CHAR.root){
+    try{ mountSkyboard(board); _forceCharVisible(); board.visible=true; }catch(e){ mountSkyboard(board); }
+  }
   if(BIRD_TEMPLE.shard&&(BIRD_TEMPLE.shardState==='following'||BIRD_TEMPLE.shardState==='toPlayer')&&!BIRD_TEMPLE._shardExternalScene){
     flightScene.remove(BIRD_TEMPLE.shard);
     atmoScene.add(BIRD_TEMPLE.shard);
@@ -12347,7 +12363,10 @@ function atmoLandHere(){
 function atmoExitToSpace(){
   const body=_atmoBody;
   _atmoCleanup();
-  if(CHAR.loaded && CHAR.root && boardFlight) mountSkyboard(boardFlight);
+  try{ rebuildFlightBoardIfBroken('atmoExitToSpace'); }catch(e){}
+  if(CHAR.loaded && CHAR.root && boardFlight){
+    try{ mountSkyboard(boardFlight); _forceCharVisible(); boardFlight.visible=true; }catch(e){}
+  }
   toast('🚀 Left '+(body?body.name:'the')+' atmosphere — back in open space',2600);
   resumeFlightLoop();
 }
@@ -13468,6 +13487,75 @@ function stripCharacterMount(){
     CHAR.root.visible = true;
   }
 }
+/** True if board still has live GPU buffers (not disposeObject3D'd). */
+function _boardMeshHealthy(boardObj){
+  if(!boardObj) return false;
+  let saw=false, ok=true;
+  try{
+    boardObj.traverse(function(o){
+      if(!(o.isMesh||o.isSkinnedMesh)) return;
+      saw=true;
+      const g=o.geometry;
+      if(!g || g.disposed===true){ ok=false; return; }
+      try{
+        if(g.attributes && !g.attributes.position){ ok=false; return; }
+      }catch(e){ ok=false; }
+    });
+  }catch(e){ return false; }
+  return saw && ok;
+}
+
+/** Rebuild flight skyboard if land/atmo dispose killed shared buffers. */
+function rebuildFlightBoardIfBroken(reason){
+  if(typeof boardFlight==='undefined' || !boardFlight) return false;
+  if(_boardMeshHealthy(boardFlight)) return false;
+  console.warn('[BOARD] unhealthy after', reason||'?', '— rebuilding flight skyboard');
+  try{
+    const wasMounted=!!(CHAR&&CHAR.mounted&&CHAR.root&&CHAR.root.parent===boardFlight);
+    if(CHAR&&CHAR.loaded&&CHAR.root&&CHAR.root.parent===boardFlight){
+      try{ CHAR.root.parent.remove(CHAR.root); }catch(e){}
+      CHAR.mounted=false;
+    }
+    try{ if(flightScene) flightScene.remove(boardFlight); }catch(e){}
+    try{ disposeObject3D(boardFlight); }catch(e){}
+    boardFlight=buildBoardMesh();
+    _builtBoardTemplate=boardStyleSig();
+    if(flightScene) flightScene.add(boardFlight);
+    try{ boardFlight.visible=true; }catch(e){}
+    if(STATE&&STATE.flight&&STATE.flight.pos) boardFlight.position.copy(STATE.flight.pos);
+    if(wasMounted || (CHAR&&CHAR.loaded&&CHAR.root)){
+      try{ remountSkyboard(boardFlight); }catch(e){}
+    }
+    try{toast('🛹 Skyboard restored',1800);}catch(_){}
+    return true;
+  }catch(e){
+    console.error('[BOARD] rebuild failed', e);
+    return false;
+  }
+}
+
+/** Worlds soft-coord: after changing boardFlight.scale / planet vis scale,
+ *  re-derive CHAR.scaleForBoard from the live board and remount. */
+function jotsResyncRiderToBoard(reason){
+  if(typeof boardFlight==='undefined' || !boardFlight) return false;
+  rebuildFlightBoardIfBroken(reason||'resync');
+  if(!(CHAR&&CHAR.loaded&&CHAR.root)) return false;
+  try{
+    if(CHAR.root.parent===boardFlight) CHAR.root.parent.remove(CHAR.root);
+    CHAR.mounted=false;
+    _syncBoardScale(boardFlight);
+    remountSkyboard(boardFlight);
+    _forceCharVisible();
+    boardFlight.visible=true;
+    return true;
+  }catch(e){
+    console.warn('[CHAR] jotsResyncRiderToBoard', e);
+    return false;
+  }
+}
+window.jotsResyncRiderToBoard = jotsResyncRiderToBoard;
+window.rebuildFlightBoardIfBroken = rebuildFlightBoardIfBroken;
+
 function remountSkyboard(boardObj){
   stripCharacterMount();
   if(!CHAR.loaded || !CHAR.root || !boardObj) return false;
@@ -13514,6 +13602,7 @@ async function ensureAutumnOnBoard(reason){
         if(attempt<8) await _sleep(300);
         continue;
       }
+      try{ rebuildFlightBoardIfBroken(reason||'ensure'); }catch(e){}
       if(!CHAR.root || !CHAR.loaded){
         try{ console.log('[CHAR] ensureAutumnOnBoard', reason, 'attempt', attempt, 'no root/loaded', _charStatus()); }catch(e){}
         if(attempt<8) await _sleep(400);
@@ -13824,37 +13913,49 @@ async function enterSurface(body,site){
   // happens every frame in updateSurface(); this just makes sure she's
   // present in the scene and not left parented to a previous scene/board.
   (async()=>{
-    if(!CHAR.loaded){
-      try{ await loadCharacterAssets(); }catch(e){ console.error('Character load failed:',e); try{toast('⚠ Character failed to load: '+(e.message||e),4000);}catch(_){} }
-    }
-    if(CHAR.loaded && CHAR.root && surfScene){
-      if(CHAR.root.parent) CHAR.root.parent.remove(CHAR.root);
-      const s=CHAR.scaleForTerrain||CHAR.scaleForBoard||1;
-      CHAR.root.scale.set(s,s,s);
-      CHAR.mounted = false;
-      CHAR.scene = surfScene;
-      surfScene.add(CHAR.root);
-      const feetY=(surfPlayer.pos.y-3.0);
-      CHAR.root.position.set(surfPlayer.pos.x, feetY, surfPlayer.pos.z);
-      CHAR.root.rotation.set(0, ((surfPlayer.yaw||0) - Math.PI/2) + CHAR_MOUNT_YAW_OFFSET, 0);
-      CHAR.root.visible = true;
-      try{ if(CHAR.mixer) CHAR.mixer.stopAllAction(); }catch(e){}
-      setCharState('idle',{force:true,fade:0});
-      if(surfBoard){
-        const _yaw=surfPlayer.yaw||0;
-        const _rx=Math.cos(_yaw),_rz=-Math.sin(_yaw);
-        const _side=CHAR_TERRAIN_BOARD_SIDE;
-        surfBoard.position.set(surfPlayer.pos.x+_rx*_side, feetY+0.08, surfPlayer.pos.z+_rz*_side);
-        surfBoard.rotation.order='YXZ';
-        surfBoard.rotation.y=_yaw-Math.PI/2;
-      }
+    // Cold-cache: mesh+anims can take up to ~90s each — retry until present
+    // or ~150s so terrain land is not an empty plain after site-data erase.
+    const _deadline=performance.now()+150000;
+    while(performance.now()<_deadline && !(CHAR.loaded&&CHAR.root)){
       try{
-        if(CHAR._autoCharDebug){
-          CHAR._autoCharDebug=false; GFX.showCharDebug=false;
-          const el=document.getElementById('char-debug-hud'); if(el) el.style.display='none';
-        }
-      }catch(e){}
+        if(CHAR._loadPromise) await CHAR._loadPromise;
+        else if(!CHAR.loaded) await loadCharacterAssets();
+      }catch(e){ console.error('Character load failed (surface):',e); }
+      if(CHAR.loaded&&CHAR.root) break;
+      await new Promise(r=>setTimeout(r,400));
     }
+    if(!(CHAR.loaded&&CHAR.root)){
+      try{toast('⚠ Autumn failed to load on surface — hard-refresh',5000);}catch(_){}
+      return;
+    }
+    if(!surfScene) return;
+    if(CHAR.root.parent) CHAR.root.parent.remove(CHAR.root);
+    const s=CHAR.scaleForTerrain||CHAR.scaleForBoard||1;
+    CHAR.root.scale.set(s,s,s);
+    CHAR.mounted = false;
+    CHAR.scene = surfScene;
+    surfScene.add(CHAR.root);
+    const feetY=(surfPlayer.pos.y-3.0);
+    CHAR.root.position.set(surfPlayer.pos.x, feetY, surfPlayer.pos.z);
+    CHAR.root.rotation.set(0, ((surfPlayer.yaw||0) - Math.PI/2) + CHAR_MOUNT_YAW_OFFSET, 0);
+    try{ _forceCharVisible(); }catch(e){ CHAR.root.visible = true; }
+    try{ if(CHAR.mixer) CHAR.mixer.stopAllAction(); }catch(e){}
+    setCharState('idle',{force:true,fade:0});
+    if(surfBoard){
+      try{ surfBoard.visible=true; }catch(e){}
+      const _yaw=surfPlayer.yaw||0;
+      const _rx=Math.cos(_yaw),_rz=-Math.sin(_yaw);
+      const _side=CHAR_TERRAIN_BOARD_SIDE;
+      surfBoard.position.set(surfPlayer.pos.x+_rx*_side, feetY+0.08, surfPlayer.pos.z+_rz*_side);
+      surfBoard.rotation.order='YXZ';
+      surfBoard.rotation.y=_yaw-Math.PI/2;
+    }
+    try{
+      if(CHAR._autoCharDebug){
+        CHAR._autoCharDebug=false; GFX.showCharDebug=false;
+        const el=document.getElementById('char-debug-hud'); if(el) el.style.display='none';
+      }
+    }catch(e){}
   })();
   // If the Bird Shard is currently out and following, bring it along —
   // per request, it shouldn't just vanish when visiting a planet. Since
@@ -15803,8 +15904,12 @@ function exitSurface(){
   // Re-mount her onto the real flight board now that we're back in open
   // space — mirrors atmoExitToSpace()'s identical re-mount call. Without
   // this she'd stay detached/invisible until some other transition
-  // happened to mount her again.
-  if(CHAR.loaded && CHAR.root && boardFlight) mountSkyboard(boardFlight);
+  // happened to mount her again. Also heal boardFlight if land dispose
+  // killed shared GLB buffers (pre deep-clone fix / stuck sessions).
+  try{ rebuildFlightBoardIfBroken('exitSurface'); }catch(e){}
+  if(CHAR.loaded && CHAR.root && boardFlight){
+    try{ mountSkyboard(boardFlight); _forceCharVisible(); boardFlight.visible=true; }catch(e){}
+  }
   // resume flight loop
   if(!flightAnimId){
     let last=performance.now();
