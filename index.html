@@ -1778,11 +1778,11 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     <div class="setting-row"><div><div class="setting-label">Global Illumination</div><div class="setting-sub">Hemisphere bounce lighting</div></div><label class="toggle-switch"><input type="checkbox" id="set-gi" checked><span class="toggle-track"></span></label></div>
     <div class="setting-row"><div><div class="setting-label">Star Field Density</div><div class="setting-sub">Volumetric parallax stars</div></div><label class="toggle-switch"><input type="checkbox" id="set-stars" checked><span class="toggle-track"></span></label></div>
     <div class="setting-row"><div><div class="setting-label">Galaxy Dust Clouds</div><div class="setting-sub">Nebula particle systems</div></div><label class="toggle-switch"><input type="checkbox" id="set-dust" checked><span class="toggle-track"></span></label></div>
-    <div class="setting-row"><div><div class="setting-label">Bloom / Glow</div><div class="setting-sub">Emissive object halo</div></div><label class="toggle-switch"><input type="checkbox" id="set-bloom"><span class="toggle-track"></span></label></div>
+    <div class="setting-row" style="opacity:0.55"><div><div class="setting-label">Bloom / Glow</div><div class="setting-sub">Locked off — fullscreen bloom washed Sol white (Justin NAY)</div></div><label class="toggle-switch"><input type="checkbox" id="set-bloom" disabled aria-disabled="true"><span class="toggle-track"></span></label></div>
     <div class="setting-row"><div><div class="setting-label">Marching Cubes Terrain (experimental)</div><div class="setting-sub">Real 3D density-field terrain — enables true overhangs/caves, but is heavier than the default terrain. Requires re-landing on a surface to take effect.</div></div><label class="toggle-switch"><input type="checkbox" id="set-mctest"><span class="toggle-track"></span></label></div>
-    <div class="setting-row">
-      <div><div class="setting-label">Bloom Intensity</div><div class="setting-sub">How strong the glow is when on</div></div>
-      <input type="range" id="set-bloom-intensity" min="0" max="1" step="0.05" value="0" style="width:110px;accent-color:var(--cyan);">
+    <div class="setting-row" style="opacity:0.55">
+      <div><div class="setting-label">Bloom Intensity</div><div class="setting-sub">Locked at 0 — composite bloomStr hard-off</div></div>
+      <input type="range" id="set-bloom-intensity" min="0" max="1" step="0.05" value="0" disabled aria-disabled="true" style="width:110px;accent-color:var(--cyan);">
     </div>
     <div class="setting-row"><div><div class="setting-label">Motion Blur</div><div class="setting-sub">Velocity-based frame blending</div></div><label class="toggle-switch"><input type="checkbox" id="set-motion" checked><span class="toggle-track"></span></label></div>
     <div class="setting-row"><div><div class="setting-label">Procedural Textures</div><div class="setting-sub">High-detail planet surfaces</div></div><label class="toggle-switch"><input type="checkbox" id="set-textures" checked><span class="toggle-track"></span></label></div>
@@ -3497,10 +3497,11 @@ const PRESETS = {
 // the newer GFX-side settings. DART Speed is deliberately excluded: it's
 // a gameplay/travel-speed multiplier, not a rendering-fidelity setting.
 const PRESET_SETTINGS_EXTRA = {
-  low:    {stars:true, dust:false, bloom:false, motion:false, textures:false, galaxyband:true,  particles:'low',  fov:50000 },
-  medium: {stars:true, dust:true,  bloom:true,  motion:false, textures:true,  galaxyband:true,  particles:'med',  fov:50000 },
-  high:   {stars:true, dust:true,  bloom:true,  motion:true,  textures:true,  galaxyband:true,  particles:'high', fov:300000},
-  ultra:  {stars:true, dust:true,  bloom:true,  motion:true,  textures:true,  galaxyband:true,  particles:'ultra',fov:300000},
+  // bloom hard-off all tiers — Sol white-wash NAY (composite bloomStr=0)
+  low:    {stars:true, dust:false, bloom:false, bloomIntensity:0, motion:false, textures:false, galaxyband:true,  particles:'low',  fov:50000 },
+  medium: {stars:true, dust:true,  bloom:false, bloomIntensity:0, motion:false, textures:true,  galaxyband:true,  particles:'med',  fov:50000 },
+  high:   {stars:true, dust:true,  bloom:false, bloomIntensity:0, motion:true,  textures:true,  galaxyband:true,  particles:'high', fov:300000},
+  ultra:  {stars:true, dust:true,  bloom:false, bloomIntensity:0, motion:true,  textures:true,  galaxyband:true,  particles:'ultra',fov:300000},
 };
 
 // Shared render budgets — Cosmos/Worlds MUST read these via getGfxBudgets().
@@ -3633,9 +3634,11 @@ function syncSettingsUIFromState(){
     const s=STATE.settings;
     if($('set-stars'))$('set-stars').checked=s.stars;
     if($('set-dust'))$('set-dust').checked=s.dust;
-    if($('set-bloom'))$('set-bloom').checked=s.bloom;
+    // Bloom knobs locked — never show ON even if stale state/localStorage says so
+    if(s){ s.bloom=false; s.bloomIntensity=0; }
+    if($('set-bloom')){ $('set-bloom').checked=false; $('set-bloom').disabled=true; }
     if($('set-mctest'))$('set-mctest').checked=!!s.marchingCubesTerrain;
-    if($('set-bloom-intensity'))$('set-bloom-intensity').value=String(s.bloomIntensity!==undefined?s.bloomIntensity:0);
+    if($('set-bloom-intensity')){ $('set-bloom-intensity').value='0'; $('set-bloom-intensity').disabled=true; }
     if($('set-motion'))$('set-motion').checked=s.motion;
     if($('set-textures'))$('set-textures').checked=s.textures;
     if($('set-galaxyband'))$('set-galaxyband').checked=s.galaxyband;
@@ -3654,7 +3657,8 @@ function syncSettingsUIFromState(){
 function clampToHardware(){
   GFX.shadowSize=Math.min(GFX.shadowSize, GFX.maxTexSize, GFX.isMobile?2048:4096);
   GFX.aniso=Math.min(GFX.aniso, GFX.maxAniso||1);
-  if(!GFX.floatTex&&!GFX.halfFloatTex){ if(STATE&&STATE.settings){STATE.settings.bloom=false;STATE.settings.motion=false;} }
+  if(STATE&&STATE.settings){ STATE.settings.bloom=false; STATE.settings.bloomIntensity=0; }
+  if(!GFX.floatTex&&!GFX.halfFloatTex){ if(STATE&&STATE.settings){STATE.settings.motion=false;} }
   if(GFX.isMobile&&GFX.shadowSize>2048)GFX.shadowSize=2048;
 }
 
@@ -3677,7 +3681,7 @@ function saveGfxChoice(){
     if(GFX.budgets)payload.budgets=Object.assign({},GFX.budgets);
     if(typeof STATE!=='undefined'&&STATE&&STATE.settings){
       payload.settingsExtra={
-        stars:!!STATE.settings.stars, dust:!!STATE.settings.dust, bloom:!!STATE.settings.bloom,
+        stars:!!STATE.settings.stars, dust:!!STATE.settings.dust, bloom:false,
         motion:!!STATE.settings.motion, textures:!!STATE.settings.textures, galaxyband:!!STATE.settings.galaxyband,
         particles:STATE.settings.particles, fov:STATE.settings.fov
       };
@@ -3703,6 +3707,7 @@ function loadGfxChoice(){
       if(tier!=='custom'){ const b=GFX_BUDGETS[tier]||GFX_BUDGETS.medium; GFX.budgets=Object.assign({},b); }
       if(d.settingsExtra&&typeof STATE!=='undefined'&&STATE&&STATE.settings){
         Object.assign(STATE.settings,d.settingsExtra);
+        STATE.settings.bloom=false; STATE.settings.bloomIntensity=0;
       }
     }
     return true;
@@ -4385,17 +4390,31 @@ async function initFlightScene(){
   window.addEventListener('keyup',onKeyUp);
 
   _flightLoopCv=cv;
-  // Block first travel frames until Autumn is on the board (mesh-first).
-  try{ await ensureAutumnOnBoard('initFlightScene'); }catch(e){ console.warn('boot mount:',e); }
+  // Gate first travel frames: await mount until true OR ~20s timeout.
+  // Do NOT start the flight loop until Autumn is parented+visible, or timeout.
+  const _mountDeadline = performance.now() + 20000;
+  let _bootMounted = false;
+  try{
+    while(performance.now() < _mountDeadline){
+      _bootMounted = await ensureAutumnOnBoard('initFlightScene');
+      if(_bootMounted) break;
+      await new Promise(r=>setTimeout(r,200));
+    }
+  }catch(e){ console.warn('boot mount:',e); }
+  if(!_bootMounted){
+    console.warn('[CHAR] initFlightScene mount timeout (~20s) — starting loop with aggressive remount safety net', _charStatus());
+    try{toast('⚠ Autumn mount slow — remounting in flight…',3500);}catch(_){}
+  }
   _startFlightLoop();
-  // Keep polling briefly if mesh still catching up after solar build.
-  if(!CHAR.mounted){
+  // Keep aggressive remount if still not mounted after timeout.
+  if(!CHAR.mounted || !(CHAR.root&&CHAR.root.parent===boardFlight&&CHAR.root.visible)){
     let _bootTries=0;
     const _bootPoll=setInterval(async()=>{
       _bootTries++;
       try{ await ensureAutumnOnBoard('boot-poll'); }catch(e){}
-      if(CHAR.mounted || _bootTries>40) clearInterval(_bootPoll);
-    },250);
+      const ok = !!(CHAR.mounted && CHAR.root && CHAR.root.parent===boardFlight && CHAR.root.visible);
+      if(ok || _bootTries>100) clearInterval(_bootPoll); // ~20s more at 200ms
+    },200);
   }
 }
 let _flightLoopCv=null,_flightLoopLast=0;
@@ -4503,6 +4522,15 @@ function _startFlightLoop(){
     // tens of seconds, that reads exactly like the game freezing and
     // going black shortly after start. Declared properly below.
     _flightFrameCounter = (_flightFrameCounter + 1) % 1000000;
+    // Safety net (~every 30 frames): mesh-first can mark loaded before boardFlight
+    // exists; remount then no-ops and she stays unparented/invisible.
+    try{
+      if(boardFlight && CHAR.loaded && CHAR.root && (!CHAR.mounted || CHAR.root.parent!==boardFlight || !CHAR.root.visible)){
+        if(_flightFrameCounter % 30 === 0){
+          try{ remountSkyboard(boardFlight); _forceCharVisible(); }catch(er){}
+        }
+      }
+    }catch(e){_animLoopWarn('charRemountSafety',e);}
     if(!CHAR.loading || _flightFrameCounter % 4 === 0){
       try{ renderWithPostFX(); }catch(e){ _animLoopWarn('render',e); }    }
   })();
@@ -9731,9 +9759,11 @@ function openSettings(){
 }
 function closeSettings(){$('settings-modal').classList.remove('open');}
 function applySettings(){
-  STATE.settings.stars=$('set-stars').checked;STATE.settings.dust=$('set-dust').checked;STATE.settings.bloom=$('set-bloom').checked;
+  STATE.settings.stars=$('set-stars').checked;STATE.settings.dust=$('set-dust').checked;
+  STATE.settings.bloom=false; STATE.settings.bloomIntensity=0; // locked — Sol white-wash NAY
+  if($('set-bloom')){ $('set-bloom').checked=false; $('set-bloom').disabled=true; }
+  if($('set-bloom-intensity')){ $('set-bloom-intensity').value='0'; $('set-bloom-intensity').disabled=true; }
   if($('set-mctest'))STATE.settings.marchingCubesTerrain=$('set-mctest').checked;
-  if($('set-bloom-intensity'))STATE.settings.bloomIntensity=parseFloat($('set-bloom-intensity').value);
   STATE.settings.motion=$('set-motion')?$('set-motion').checked:true;
   STATE.settings.textures=$('set-textures')?$('set-textures').checked:true;
   STATE.settings.galaxyband=$('set-galaxyband')?$('set-galaxyband').checked:true;
@@ -12006,13 +12036,31 @@ function _charStatus(){
 }
 window.__jotsCharStatus=_charStatus;
 
+/* Force Autumn visible after mesh-first / remount — never leave sticky
+   CHAR.root.visible=false from the pre-anims path (pink board empty). */
+function _forceCharVisible(){
+  if(!CHAR.root) return;
+  CHAR.root.visible = true;
+  try{
+    CHAR.root.traverse(function(o){
+      if(o.isMesh || o.isSkinnedMesh){
+        o.visible = true;
+        o.frustumCulled = false;
+      }
+    });
+  }catch(e){}
+}
+window._forceCharVisible = _forceCharVisible;
+
 function _finalizeCharMeshReady(reason){
   if(!CHAR.root) return;
   CHAR.loaded = true;
   CHAR.loading = false;
+  try{ _forceCharVisible(); }catch(e){}
   try{
     if(typeof boardFlight!=='undefined' && boardFlight){
       remountSkyboard(boardFlight);
+      try{ _forceCharVisible(); }catch(e){}
     }
   }catch(e){ console.warn('mesh-ready remount failed:',e); }
   try{
@@ -12025,8 +12073,10 @@ function _finalizeCharMeshReady(reason){
 }
 
 async function loadCharacterAssets(){
-  if(CHAR.loaded) return CHAR.root;
+  // Prefer in-flight promise even after mesh-first flipped CHAR.loaded —
+  // callers (ensureAutumnOnBoard) must await anims + final remount.
   if(CHAR._loadPromise) return CHAR._loadPromise;
+  if(CHAR.loaded) return CHAR.root;
   CHAR.loading = true;
   const gltfLoader = _getGLBLoader();
   if(!gltfLoader){
@@ -12118,7 +12168,9 @@ async function loadCharacterAssets(){
     CHAR.scaleForTerrain = _clamp(3.26 / CHAR.rawHeight, 0.02, 5);
     CHAR.feetOffset = -_rawBox.min.y;
     CHAR.mixer = CHAR.mixer || new THREE.AnimationMixer(CHAR.root);
-    CHAR.root.visible = false;
+    // NEVER leave mesh invisible here — remount may fail if boardFlight
+    // is not ready yet (early prefetch); sticky visible=false = pink empty board.
+    try{ _forceCharVisible(); }catch(e){ CHAR.root.visible = true; }
     _finalizeCharMeshReady('pre-anims');
   }catch(e){ console.warn('mesh-first finalize error',e); }
 
@@ -12842,25 +12894,69 @@ function stripCharacterMount(){
 function remountSkyboard(boardObj){
   stripCharacterMount();
   if(!CHAR.loaded || !CHAR.root || !boardObj) return false;
+  // If scale missing (mesh-first race before calibration), compute quick box scale.
+  if(!(CHAR.scaleForBoard>0)){
+    try{
+      if(!(CHAR.rawHeight>0.001) && CHAR.root){
+        const _b=new THREE.Box3().setFromObject(CHAR.root);
+        const _h=_b.max.y-_b.min.y;
+        if(_h>0.001){ CHAR.rawHeight=_h; CHAR.feetOffset=-_b.min.y; }
+      }
+      if(CHAR.rawHeight>0.001){
+        CHAR.scaleForBoard=_clamp(CHAR_BOARD_TARGET_UNITS/CHAR.rawHeight,0.02,5);
+      }else{
+        CHAR.scaleForBoard=_deriveBoardScale(boardObj);
+      }
+    }catch(e){ CHAR.scaleForBoard = CHAR.scaleForBoard || 0.5; }
+  }
   mountSkyboard(boardObj);
-  return !!CHAR.mounted;
+  try{ _forceCharVisible(); }catch(e){ if(CHAR.root) CHAR.root.visible=true; }
+  const ok = !!(CHAR.mounted && CHAR.root && CHAR.root.parent===boardObj && CHAR.root.visible);
+  if(!ok) console.warn('[CHAR] remountSkyboard assert failed', _charStatus());
+  return ok;
 }
 window.remountSkyboard = remountSkyboard;
 window.stripCharacterMount = stripCharacterMount;
 async function ensureAutumnOnBoard(reason){
-  // Justin hard: Autumn MUST be visibly on the skyboard at interstellar travel start.
-  if(!CHAR.loaded){
-    try{ await loadCharacterAssets(); }catch(e){ console.error('[CHAR] boot load failed ('+reason+'):',e); }
-  }
-  try{
-    if(CHAR.loaded && CHAR.root && typeof boardFlight!=='undefined' && boardFlight){
+  // Justin hard: Autumn MUST be visibly parented to boardFlight at travel start.
+  // Await in-flight mesh-first promise even when CHAR.loaded was flipped early.
+  const _sleep = ms => new Promise(r=>setTimeout(r,ms));
+  const _ok = () => !!(CHAR.root && typeof boardFlight!=='undefined' && boardFlight
+    && CHAR.root.parent===boardFlight && CHAR.mounted && CHAR.root.visible);
+
+  for(let attempt=1; attempt<=5; attempt++){
+    try{
+      if(CHAR._loadPromise){
+        try{ await CHAR._loadPromise; }catch(e){ console.warn('[CHAR] ensure await _loadPromise failed ('+reason+'):',e); }
+      }else if(!CHAR.loaded){
+        try{ await loadCharacterAssets(); }catch(e){ console.error('[CHAR] boot load failed ('+reason+'):',e); }
+      }
+      if(typeof boardFlight==='undefined' || !boardFlight){
+        try{ console.log('[CHAR] ensureAutumnOnBoard', reason, 'attempt', attempt, 'NO boardFlight', _charStatus()); }catch(e){}
+        return false;
+      }
+      if(!CHAR.root || !CHAR.loaded){
+        try{ console.log('[CHAR] ensureAutumnOnBoard', reason, 'attempt', attempt, 'no root/loaded', _charStatus()); }catch(e){}
+        if(attempt<5) await _sleep(200);
+        continue;
+      }
       remountSkyboard(boardFlight);
-      CHAR.root.visible = true;
-      try{ if(CHAR.root.parent!==boardFlight){ boardFlight.add(CHAR.root); CHAR.mounted=true; } }catch(e){}
+      try{ _forceCharVisible(); }catch(e){ CHAR.root.visible=true; }
+      // Hard verify parent — remount may have failed silently
+      if(CHAR.root.parent!==boardFlight){
+        try{ boardFlight.add(CHAR.root); CHAR.mounted=true; }catch(e){}
+        try{ _forceCharVisible(); }catch(e){}
+      }
+      try{ console.log('[CHAR] ensureAutumnOnBoard', reason, 'attempt', attempt, _charStatus()); }catch(e){}
+      if(_ok()) return true;
+    }catch(e){
+      console.warn('[CHAR] ensureAutumnOnBoard error ('+reason+') attempt', attempt, e);
+      try{ console.log('[CHAR] ensureAutumnOnBoard', reason, 'attempt', attempt, _charStatus()); }catch(_){}
     }
-  }catch(e){ console.warn('[CHAR] boot remount failed ('+reason+'):',e); }
-  try{ console.log('[CHAR] ensureAutumnOnBoard', reason, typeof _charStatus==='function'?_charStatus():{mounted:CHAR.mounted,loaded:CHAR.loaded}); }catch(e){}
-  return !!(CHAR.mounted && CHAR.root && CHAR.root.visible && CHAR.root.parent);
+    if(attempt<5) await _sleep(200);
+  }
+  try{ console.warn('[CHAR] ensureAutumnOnBoard FAILED after retries', reason, _charStatus()); }catch(e){}
+  return _ok();
 }
 window.ensureAutumnOnBoard = ensureAutumnOnBoard;
 function mountSkyboard(boardObj){
@@ -12870,6 +12966,19 @@ function mountSkyboard(boardObj){
   CHAR.mounted = false;
   setCharState('idle',{fade:0.2}); // brief settle before the procedural pose takes over
   const worldPos = new THREE.Vector3(); CHAR.root.getWorldPosition(worldPos);
+  // Ensure scale before add — missing scaleForBoard leaves her tiny/invisible-ish
+  if(!(CHAR.scaleForBoard>0)){
+    try{
+      if(!(CHAR.rawHeight>0.001)){
+        const _b=new THREE.Box3().setFromObject(CHAR.root);
+        const _h=_b.max.y-_b.min.y;
+        if(_h>0.001){ CHAR.rawHeight=_h; CHAR.feetOffset=-_b.min.y; }
+      }
+      CHAR.scaleForBoard = (CHAR.rawHeight>0.001)
+        ? _clamp(CHAR_BOARD_TARGET_UNITS/CHAR.rawHeight,0.02,5)
+        : _deriveBoardScale(boardObj);
+    }catch(e){ CHAR.scaleForBoard = CHAR.scaleForBoard || 0.5; }
+  }
   _syncBoardScale(boardObj); // must happen BEFORE the add() below, or she'd be inside the box being measured
   boardObj.add(CHAR.root);
   CHAR.mounted = true;
@@ -12903,7 +13012,7 @@ function mountSkyboard(boardObj){
   // see its declaration comment for the full history. Change that
   // constant, not this line, if another correction is ever needed.
   CHAR.root.rotation.set(0, CHAR_MOUNT_YAW_OFFSET, 0);
-  CHAR.root.visible = true;
+  try{ _forceCharVisible(); }catch(e){ CHAR.root.visible = true; }
   _loadStep('mounted', 1);
   if(!CHAR._confirmedMountToast){
     CHAR._confirmedMountToast = true;
