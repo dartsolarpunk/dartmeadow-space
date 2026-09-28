@@ -11973,22 +11973,20 @@ function _hideMiniLoader(){
   const el=document.getElementById('mini-loader');
   if(el) el.style.display='none';
 }
-// She was mounting facing sideways across the board instead of down its
-// length toward the nose — see mountSkyboard(). Every board template
-// (A, B, procedural) normalizes its nose to local +X, so this single
-// offset is applied to her own rotation at mount time and covers all of
-// History: she was previously at -PI/2 (confirmed correct nose/tail
-// orientation at the time), then got turned a full 180° from there to
-// reach +PI/2 (this file's previous value) when what was actually asked
-// for was a 90° correction, not 180° — that 180° turn overshot by 90°,
-// landing her facing perpendicular/chest-to-board instead of down the
-// board's length. Per direct, explicit correction: rotate 90° back left
-// (counterclockwise) from that +PI/2 state, landing at 0 — which also
-// checks out as exactly splitting the difference between the original
-// -PI/2 and the accidental +PI/2 overshoot, consistent with "should
-// have been a 90° turn, not 180°." Do not change without an actual live
-// screenshot or another direct, explicit correction like this one.
-const CHAR_MOUNT_YAW_OFFSET = 0;
+// Mount yaw: every board template normalizes nose to local +X; this
+// offset is applied to CHAR.root.rotation.y at mount time (and matched
+// on terrain via board.yaw + offset).
+//
+// Justin HARD 2026-09-28 Android LEO (tip b5a445b): Autumn faced the
+// camera while the board pointed screen-RIGHT (nose forward). Rotate
+// her 90° toward her LEFT so she faces board-forward (screen RIGHT) —
+// same facing for default load / interstellar / atmo / terrain.
+// From prior 0: left turn = +PI/2 (Three.js Y-up CCW). Do not change
+// without a new live shot or another explicit Justin correction.
+const CHAR_MOUNT_YAW_OFFSET = Math.PI / 2;
+// Terrain walk/land only: lateral gap so board rides beside her (her on board-left).
+// ~0.5 units ≈ 6 ft at board real-scale (37 ft ≈ 3 game units). Atmo/interstellar: no offset.
+const CHAR_TERRAIN_BOARD_SIDE = 0.5;
 const CHAR_FILES = {
   // Switched to Autumn's own hand-sculpted GLB, personally rigged by
   // Justin (not AI-generated from a reference image like the earlier
@@ -13081,9 +13079,8 @@ function mountSkyboard(boardObj){
   // Use the board's real measured anchor instead.
   const anchor = boardObj.userData.deckAnchor || {x:0,y:0,z:0.1};
   CHAR.root.position.set(anchor.x, anchor.y + (CHAR.feetOffset||0)*CHAR.scaleForBoard, anchor.z);
-  // CHAR_MOUNT_YAW_OFFSET is now 0 per the latest explicit correction —
-  // see its declaration comment for the full history. Change that
-  // constant, not this line, if another correction is ever needed.
+  // Facing = CHAR_MOUNT_YAW_OFFSET (Justin HARD: +PI/2 = face board nose).
+  // Change that constant, not this line, if another correction is needed.
   CHAR.root.rotation.set(0, CHAR_MOUNT_YAW_OFFSET, 0);
   try{ _forceCharVisible(); }catch(e){ CHAR.root.visible = true; }
   _loadStep('mounted', 1);
@@ -13293,7 +13290,7 @@ async function enterSurface(body,site){
   const skyGeo=new THREE.SphereGeometry(1000,16,16);
   const skyMat=makeSkyDomeMaterial(pal.sky[1],pal.sky[0]);
   if(pal.atmos)surfScene.add(new THREE.Mesh(skyGeo,skyMat));
-  // Skyboard under spawn feet (Justin LAND: not beside).
+  // Skyboard spawn — updateSurface keeps it beside her (board-left / her right).
   const board=buildBoardMesh();
   board.scale.setScalar(1.0);
   if(GFX.shadows)board.traverse(o=>{if(o.isMesh){o.castShadow=true;o.receiveShadow=true;}});
@@ -13329,14 +13326,17 @@ async function enterSurface(body,site){
       surfScene.add(CHAR.root);
       const feetY=(surfPlayer.pos.y-3.0);
       CHAR.root.position.set(surfPlayer.pos.x, feetY, surfPlayer.pos.z);
-      CHAR.root.rotation.set(0, surfPlayer.yaw||0, 0);
+      CHAR.root.rotation.set(0, ((surfPlayer.yaw||0) - Math.PI/2) + CHAR_MOUNT_YAW_OFFSET, 0);
       CHAR.root.visible = true;
       try{ if(CHAR.mixer) CHAR.mixer.stopAllAction(); }catch(e){}
       setCharState('idle',{force:true,fade:0});
       if(surfBoard){
-        surfBoard.position.set(surfPlayer.pos.x, feetY+0.08, surfPlayer.pos.z);
+        const _yaw=surfPlayer.yaw||0;
+        const _rx=Math.cos(_yaw),_rz=-Math.sin(_yaw);
+        const _side=CHAR_TERRAIN_BOARD_SIDE;
+        surfBoard.position.set(surfPlayer.pos.x+_rx*_side, feetY+0.08, surfPlayer.pos.z+_rz*_side);
         surfBoard.rotation.order='YXZ';
-        surfBoard.rotation.y=(surfPlayer.yaw||0)-Math.PI/2;
+        surfBoard.rotation.y=_yaw-Math.PI/2;
       }
       try{
         if(CHAR._autoCharDebug){
@@ -15070,9 +15070,14 @@ function updateSurface(dt){
   //    hover height tracks the terrain beneath IT) and when the player jumps or
   //    climbs, the board lifts to stay with them. ─────────────────────────────
   if(surfBoard){
-    // Justin Android LAND: board must stay UNDER her (not trail beside).
+    // Justin HARD 2026-09-28: same facing as flight, but offset a few feet
+    // to the board's LEFT (sun-side) so the board travels beside her —
+    // not under her feet. Board sits on her RIGHT → she is on board LEFT.
+    // (+X nose, +Y up → +Z is board-left; world right of look = board right.)
     const fx=-Math.sin(p.yaw),fz=-Math.cos(p.yaw);
-    const tx=p.pos.x, tz=p.pos.z;
+    const rx=Math.cos(p.yaw),rz=-Math.sin(p.yaw);
+    const side=CHAR_TERRAIN_BOARD_SIDE; // world units (~few feet)
+    const tx=p.pos.x+rx*side, tz=p.pos.z+rz*side;
     const boardGroundH=_surfHeight?_surfHeight(tx,tz):0;
     const playerFeet=(p.pos.y-3.0);
     const hover=boardGroundH + (p.onGround?0.08:Math.max(0.08, playerFeet-boardGroundH+0.05)) + Math.sin(surfTime*1.6)*0.02;
@@ -15117,8 +15122,9 @@ function updateSurface(dt){
   //    than re-deriving it separately. ────────────────────────────
   if(CHAR.loaded && CHAR.root && !CHAR._transitioning){
     CHAR.root.position.set(p.pos.x, eye-3.0, p.pos.z);
-    // Board nose is +X (yaw-PI/2). Character faces look dir without extra 90°.
-    CHAR.root.rotation.y = p.yaw;
+    // Same facing as mounted flight: board.yaw (=look-PI/2) + CHAR_MOUNT_YAW_OFFSET.
+    // With +PI/2 that equals look yaw — faces board-forward (Justin HARD 2026-09-28).
+    CHAR.root.rotation.y = (p.yaw - Math.PI/2) + CHAR_MOUNT_YAW_OFFSET;
     const moving = Math.abs(mf)>0.05 || Math.abs(ms)>0.05;
     const running = moving && (surfRunToggle || surfKeys['ShiftLeft']||surfKeys['ShiftRight']);
     const dirSign = mf<-0.05 ? -1 : 1; // backing up (S / stick pulled back) plays the reversed cycle
