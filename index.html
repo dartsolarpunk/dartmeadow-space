@@ -2065,6 +2065,7 @@ function launchFlight(){
         if(CHAR.loaded && CHAR.root && CHAR.root.parent===boardFlight) CHAR.root.parent.remove(CHAR.root);
         if(boardFlight&&flightScene)flightScene.remove(boardFlight);
         boardFlight=buildBoardMesh();
+        if(typeof FLIGHT_BOARD_WORLD_SCALE==='number') boardFlight.scale.setScalar(FLIGHT_BOARD_WORLD_SCALE);
         _builtBoardTemplate=colorSig;
         if(flightScene)flightScene.add(boardFlight);
         if(_wasMounted && CHAR.loaded && CHAR.root) remountSkyboard(boardFlight);
@@ -3884,25 +3885,36 @@ let _builtBoardTemplate=null; // last template key that was built into boardFlig
 let _landTargetBody=null,_approachBestDist=Infinity,_approachBestBody=null;
 let flightAnimId,flightTime=0,celestialBodies=[],sunMesh,earthMesh;
 // ═══════════════════════════════════════════════════════════════
-// SOL SCALE HARD — whole Sol scales up; board/rider stay ~0.5u / 0.49u
-// (1u ≈ 12.33 ft from 37ft board / 3u). Cosmos owns bloom erase + galaxy
-// arm spacing — ping if AU_UNITS footprint needs arm sync.
+// SOL SCALE HARD — proportional Sol (#39 / Justin HARD GATE)
+// Ref: https://sizeitup.games/space — real Sun Ø ≈ 109× Earth.
+// Playable compression OK, but SUN must clearly dominate every planet
+// including Jupiter/Saturn (prior: Jupiter visR ~692 vs Sun 140 — WRONG).
 // ─────────────────────────────────────────────────────────────
-// Tablet landscape ~16:10, flightCamera vFOV=60° (Three.js vertical):
-//   hFOV = 2·atan(tan(30°)·1.6) ≈ 85.5°
-// Camera at Neptune far-edge (D = R_nep = AU_UNITS·30.069), look at Sun:
-//   orbit L/R extremities subtend 90° → ring touches/slightly overflows
-//   tablet L/R (90/85.5 ≈ 1.05). Angular fill is AU-invariant.
-// Earth r = PLANET_VIS_SCALE ≫ rider (0.49u): at LEO (~0.05·R above limb,
-//   ≈200 mi eq.) rider subtends ~6° (speck, unresolved); near-atmo at
-//   d≈1.5–2.5 R still fills FOV (ang Ø ≈ 67°–44°).
-// Soft #23 was AU=28 / PLANET_VIS_SCALE=6 (Earth≈12× rider) — not hard enough.
+// Target math (documented; tune knobs below together):
+//   SOL_SUN_RADIUS=160, PLANET_VIS_SCALE=6 (Earth), AU_UNITS=500 kept
+//   Sun/Earth ≈ 26.7× (real 109×; playable ~20–40× OK)
+//   Giant soft-compress: Jupiter≈16.1, Saturn≈15.8 → Sun ≥ ~10× giants
+//   Mercury oR = AU·0.387 = 193.5 > Sun+Merc (clears by ~31u)
+//   Orbit order (Keplerian oR): Merc→Ven→Ear→Mar | belt@2.7AU | Jup→Sat→Ura→Nep
+// Tablet: Neptune far-edge angular fill remains AU-invariant (hFOV math).
+// Craft: FLIGHT_BOARD_WORLD_SCALE shrinks boardFlight with Earth so LEO
+// rider stays an unresolved speck; CHAR mount math stays Stabilizer-owned
+// (CHAR_BOARD_TARGET_UNITS / remountSkyboard) — they inherit parent scale.
+// Surface LAND: mcRadius = visR (same R); local walk scene keeps human bake.
+// Keep intact: MW sky (#37), near fog (#38), buildVibrantSolSun (radius only),
+// NO whitewash bloom / corona spr re-add (#30).
 // ═══════════════════════════════════════════════════════════════
-const AU_UNITS = 500;          // 1 AU in scene units (was 28)
-const PLANET_VIS_SCALE = 90;   // Earth visual radius (was 6)
-const SOL_SUN_RADIUS = 140;    // compressed vs real 109×Earth; clears Mercury
+const AU_UNITS = 500;          // 1 AU in scene units (tablet Neptune fill)
+const PLANET_VIS_SCALE = 6;    // Earth visual radius (was 90 — giants rivaled Sol)
+const SOL_SUN_RADIUS = 160;    // > Jupiter vis; clears Mercury at AU·0.387
 const LEO_ALT_FRAC = 0.05;     // ~200 mi / Earth R → LEO height above limb
 const NEP_ORBIT_AU = 30.069;   // Neptune semi-major (Keplerian)
+// Worlds-owned flight craft scale (shared contract with Stabilizer CHAR mount).
+// GLB bake stays BOARD_FALLBACK_GAME_LEN=3.0; we scale the flight parent so
+// world craft shrinks with PLANET_VIS_SCALE without editing remountSkyboard /
+// CHAR_FILES. Prior Earth=90 → scale 1; Earth=6 → scale 6/90.
+const FLIGHT_BOARD_REF_EARTH = 90; // Earth radius under prior SOL SCALE HARD
+const FLIGHT_BOARD_WORLD_SCALE = PLANET_VIS_SCALE / FLIGHT_BOARD_REF_EARTH;
 let flightFlybys=[]; // comets / belt / other named flybys for proximity labels
 let oortCloudGroup=null;
 
@@ -5621,15 +5633,16 @@ async function buildSolarSystem(){
     {name:'Uranus', rRatio:4.01, col:0x88ddee,oR:AU*19.191, period:84.011, type:'Ice Giant',temp:'76 K'},
     {name:'Neptune',rRatio:3.88, col:0x3355cc,oR:AU*30.069, period:164.79, type:'Ice Giant',temp:'72 K'}
   ];
-  // Visual radius: real ratios × PLANET_VIS_SCALE. Terrestrial exact;
-  // giants soft-compressed above 2×Earth but still proportionally huge
-  // (Jupiter ~8×Earth visual). Board/rider stay ~0.5u/0.49u — Earth r =
-  // PLANET_VIS_SCALE makes rider a LEO speck; near-atmo still fills FOV.
+  // Visual radius: terrestrial exact × PLANET_VIS_SCALE; giants strongly
+  // soft-compressed so Jupiter/Saturn never approach SOL_SUN_RADIUS.
+  // Prior soft (exp 0.72 · 1.15) → Jupiter ~8×Earth ≈ 692u vs Sun 140.
+  // Now (exp 0.30 · 0.35) → Jupiter ≈ 16u vs Sun 160 (Sun ~10× Jupiter).
+  // mcRadius/collisionRadius = pl.r so LAND/terrain LOD follows the same R.
   // Hoisted via file-scope PLANET_VIS_SCALE for rebuildFlightForSystem / belt.
   const visR = ratio => {
     if(ratio<=2) return Math.max(0.28, ratio) * PLANET_VIS_SCALE;
     const t = ratio - 2;
-    return (2 + Math.pow(t, 0.72) * 1.15) * PLANET_VIS_SCALE;
+    return (2 + Math.pow(t, 0.30) * 0.35) * PLANET_VIS_SCALE;
   };
   // Time compression: real periods would be imperceptible. One real year
   // maps to TIME_SCALE sim-seconds so motion is visible but ratios stay true.
@@ -5712,7 +5725,7 @@ async function buildSolarSystem(){
     // Moon — parented to planet mesh so it orbits with Earth
     if(p.hasMoon){
       // Real Moon rRatio≈0.273; distance compressed (~3.5 R vs real 60 R) for playability
-      const moonR=Math.max(0.4, 0.273*PLANET_VIS_SCALE);
+      const moonR=Math.max(0.15, 0.273*PLANET_VIS_SCALE);
       const mm=new THREE.Mesh(new THREE.SphereGeometry(moonR,12,12),new THREE.MeshStandardMaterial({color:0xaaaaaa,roughness:.9}));
       mm.position.set(p.r*3.5,0,0);
       mm.isPlanetExtra=true; // preserved across an LOD mesh swap (see upgradePlanetLOD)
@@ -7450,6 +7463,10 @@ function buildFlightBoard(){
   boardFlight=buildBoardMesh();
   const c=STATE.boardConfig;
   _builtBoardTemplate=boardStyleSig();
+  // Worlds proportional craft (#39): shrink flight parent with PLANET_VIS_SCALE.
+  // CHAR parented here inherits scale — remountSkyboard / CHAR_FILES untouched.
+  // Surface/atmo local scenes keep bake scale (human walk / atmo terrain).
+  if(typeof FLIGHT_BOARD_WORLD_SCALE==='number') boardFlight.scale.setScalar(FLIGHT_BOARD_WORLD_SCALE);
   // ── FOLLOW-CAM MODEL: the board is a WORLD entity that flies through space;
   // the camera trails behind and above it (drone/follow style) so you actually
   // SEE the board out in front of you — the whole point of the game. The board
@@ -13371,6 +13388,9 @@ function finishClimb(onComplete){
 const BOARD_REAL_LEN_FT = 37;
 const CHAR_REAL_HEIGHT_FT = 6;
 const BOARD_FALLBACK_GAME_LEN = 3.0; // used only if the real board can't be measured
+// Worlds #39: flight parent uses FLIGHT_BOARD_WORLD_SCALE (PLANET_VIS_SCALE/90).
+// Keep BOARD_FALLBACK_GAME_LEN at bake length — remountSkyboard measures the
+// unscaled mesh; world speck size comes from the flight parent scale above.
 const CHAR_BOARD_TARGET_UNITS = CHAR_REAL_HEIGHT_FT / (BOARD_REAL_LEN_FT / BOARD_FALLBACK_GAME_LEN);
 
 // Derive her mounted scale from the board she's ACTUALLY riding, rather
