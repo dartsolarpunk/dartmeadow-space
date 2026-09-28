@@ -3486,10 +3486,11 @@ const PRESET_SETTINGS_EXTRA = {
 const GFX_BUDGETS = {
   // mcPlanet* / mcSurf*: WebGPU-first MC grid N (sandbox LOD cite 5135843 high:40).
   // Low = cheaper N, SAME GPU MC architecture (not a parallel forever-GL stack).
-  low:    {galaxyArm:14000, galaxyCore:6000, dustSprites:400,  nebulaClouds:2, starCount:2000,  planetSeg:24, mcPrefer:true,  mcPlanetHigh:16, mcPlanetMed:12, mcPlanetLow:8,  mcSurfHigh:20, mcSurfMed:16, mcSurfLow:12},
-  medium: {galaxyArm:32000, galaxyCore:10000,dustSprites:1200, nebulaClouds:4, starCount:5000,  planetSeg:48, mcPrefer:true,  mcPlanetHigh:28, mcPlanetMed:18, mcPlanetLow:10, mcSurfHigh:26, mcSurfMed:20, mcSurfLow:16},
-  high:   {galaxyArm:52000, galaxyCore:15000,dustSprites:2500, nebulaClouds:6, starCount:12000, planetSeg:72, mcPrefer:true,  mcPlanetHigh:40, mcPlanetMed:20, mcPlanetLow:10, mcSurfHigh:28, mcSurfMed:24, mcSurfLow:18},
-  ultra:  {galaxyArm:65000, galaxyCore:18000,dustSprites:5000, nebulaClouds:8, starCount:20000, planetSeg:96, mcPrefer:true,  mcPlanetHigh:40, mcPlanetMed:24, mcPlanetLow:12, mcSurfHigh:28, mcSurfMed:24, mcSurfLow:18},
+  // atmoView/SunSamples: Rayleigh march counts (sandbox peak 10/5) — Med/High raise thin 4/3 port.
+  low:    {galaxyArm:14000, galaxyCore:6000, dustSprites:400,  nebulaClouds:2, starCount:2000,  planetSeg:24, mcPrefer:true,  mcPlanetHigh:16, mcPlanetMed:12, mcPlanetLow:8,  mcSurfHigh:20, mcSurfMed:16, mcSurfLow:12, atmoViewSamples:4,  atmoSunSamples:3},
+  medium: {galaxyArm:32000, galaxyCore:10000,dustSprites:1200, nebulaClouds:4, starCount:5000,  planetSeg:48, mcPrefer:true,  mcPlanetHigh:28, mcPlanetMed:18, mcPlanetLow:10, mcSurfHigh:26, mcSurfMed:20, mcSurfLow:16, atmoViewSamples:6,  atmoSunSamples:4},
+  high:   {galaxyArm:52000, galaxyCore:15000,dustSprites:2500, nebulaClouds:6, starCount:12000, planetSeg:72, mcPrefer:true,  mcPlanetHigh:40, mcPlanetMed:20, mcPlanetLow:10, mcSurfHigh:28, mcSurfMed:24, mcSurfLow:18, atmoViewSamples:8,  atmoSunSamples:5},
+  ultra:  {galaxyArm:65000, galaxyCore:18000,dustSprites:5000, nebulaClouds:8, starCount:20000, planetSeg:96, mcPrefer:true,  mcPlanetHigh:40, mcPlanetMed:24, mcPlanetLow:12, mcSurfHigh:28, mcSurfMed:24, mcSurfLow:18, atmoViewSamples:10, atmoSunSamples:5},
 };
 
 
@@ -4721,6 +4722,294 @@ function _webglPlanetSegForPreset(){
   if(p==='high'||p==='ultra') return 64;
   return 48; // medium / auto / custom
 }
+// ── JOTS Worlds near-fog / dusty falloff (no scene Hemisphere wash) ──
+// Soft per-body fill + Rayleigh/dust shells so close faces aren't pure black.
+// Vacuum stays black at system scale; Sol corona spr1/spr2 stay erased (#30).
+const _jotsFogAtmoRegistry=[];
+const _jotsFogNearFills=[];
+const _jotsFog_tmpV=/* filled after THREE ready */null;
+window.__whenThreeReady(function(){
+  try{ window._jotsFog_tmpV1=new THREE.Vector3(); window._jotsFog_tmpV2=new THREE.Vector3(); }catch(e){}
+});
+function _jotsAtmoSampleBudgets(){
+  let view=4, sun=3;
+  try{
+    if(typeof getGfxBudgets==='function'){
+      const b=getGfxBudgets()||{};
+      if(typeof b.atmoViewSamples==='number') view=b.atmoViewSamples|0;
+      else {
+        const r=b.resolved||b.preset||'medium';
+        if(r==='ultra'){view=10;sun=5;}
+        else if(r==='high'){view=8;sun=5;}
+        else if(r==='medium'){view=6;sun=4;}
+        else {view=4;sun=3;}
+      }
+      if(typeof b.atmoSunSamples==='number') sun=b.atmoSunSamples|0;
+    }
+  }catch(e){}
+  try{
+    if(typeof GFX!=='undefined'&&GFX&&GFX.isMobile){ view=Math.min(view,5); sun=Math.min(sun,3); }
+  }catch(e){}
+  return {view:Math.max(3,view|0), sun:Math.max(2,sun|0)};
+}
+function _registerJotsAtmoFog(entry){
+  if(!entry||!entry.mesh)return;
+  _jotsFogAtmoRegistry.push(entry);
+}
+function _registerJotsNearFill(entry){
+  if(!entry||!entry.light)return;
+  _jotsFogNearFills.push(entry);
+}
+function _pruneJotsFogRegistry(){
+  for(let i=_jotsFogAtmoRegistry.length-1;i>=0;i--){
+    const e=_jotsFogAtmoRegistry[i];
+    if(!e||!e.mesh||!e.mesh.parent) _jotsFogAtmoRegistry.splice(i,1);
+  }
+  for(let i=_jotsFogNearFills.length-1;i>=0;i--){
+    const e=_jotsFogNearFills[i];
+    if(!e||!e.light||!e.light.parent) _jotsFogNearFills.splice(i,1);
+  }
+}
+function _updateJotsWorldsFog(){
+  if(typeof THREE==='undefined')return;
+  _pruneJotsFogRegistry();
+  const cam=(typeof flightCamera!=='undefined'&&flightCamera)?flightCamera.position:null;
+  const sunPos=window._jotsFog_tmpV1||new THREE.Vector3();
+  const center=window._jotsFog_tmpV2||new THREE.Vector3();
+  sunPos.set(0,0,0);
+  try{
+    if(typeof sunMesh!=='undefined'&&sunMesh){
+      if(sunMesh.parent&&sunMesh.parent.isGroup) sunMesh.parent.getWorldPosition(sunPos);
+      else sunMesh.getWorldPosition(sunPos);
+    }
+  }catch(e){ sunPos.set(0,0,0); }
+  for(let i=0;i<_jotsFogAtmoRegistry.length;i++){
+    const e=_jotsFogAtmoRegistry[i];
+    try{
+      e.mesh.getWorldPosition(center);
+      if(e.planetCenterU&&e.planetCenterU.value) e.planetCenterU.value.copy(center);
+      if(e.sunDirU&&e.sunDirU.value){
+        e.sunDirU.value.copy(sunPos).sub(center);
+        if(e.sunDirU.value.lengthSq()<1e-8) e.sunDirU.value.set(1,0.2,0);
+        e.sunDirU.value.normalize();
+      }
+    }catch(err){}
+  }
+  if(cam){
+    for(let i=0;i<_jotsFogNearFills.length;i++){
+      const e=_jotsFogNearFills[i];
+      try{
+        e.light.getWorldPosition(center);
+        const dist=cam.distanceTo(center);
+        const R=e.radius||1;
+        // 0 far (system vacuum black) → 1 when inside ~2.2 R (near-side readable)
+        const t=Math.max(0, Math.min(1, (R*7 - dist)/(R*5.5)));
+        e.light.intensity=(e.baseIntensity||0.14)+t*(e.nearBoost||0.38);
+        e.light.distance=R*(2.4+t*1.2);
+      }catch(err){}
+    }
+  }
+}
+/** Tiny local fill parented to body — NOT scene Ambient/Hemisphere wash. */
+function _attachJotsNearFill(group, radius, tintHex){
+  if(!group||typeof THREE==='undefined')return null;
+  const col=new THREE.Color(tintHex!=null?tintHex:0x6a7a9a);
+  const R=Math.max(0.2, radius||1);
+  const pl=new THREE.PointLight(col.getHex(), 0.14, R*2.6, 2.0);
+  pl.name='JOTS_NearFill';
+  pl.userData.jotsNearFill=true;
+  group.add(pl);
+  _registerJotsNearFill({light:pl, radius:R, baseIntensity:0.12, nearBoost:0.40});
+  // Soft residual emissive so MeshStandard anti-Sol faces aren't pure black up close
+  try{
+    group.traverse(o=>{
+      if(!o.isMesh||!o.material)return;
+      if(o.name==='JOTS_WebGLAtmo'||o.name==='JOTS_DustyAtmo'||o.name==='JOTS_PlanetWaterShell')return;
+      const mats=Array.isArray(o.material)?o.material:[o.material];
+      mats.forEach(m=>{
+        if(!m)return;
+        if(m.isMeshStandardMaterial){
+          if(!m.userData) m.userData={};
+          if(m.userData.jotsNearEmissive)return;
+          m.userData.jotsNearEmissive=true;
+          const ec=col.clone().multiplyScalar(0.22);
+          if(m.map){ m.emissive=new THREE.Color(0xffffff); m.emissiveMap=m.map; m.emissiveIntensity=Math.max(m.emissiveIntensity||0, 0.055); }
+          else { m.emissive=ec; m.emissiveIntensity=Math.max(m.emissiveIntensity||0, 0.06); }
+          m.needsUpdate=true;
+        } else if(m.isMeshStandardNodeMaterial){
+          if(!m.userData) m.userData={};
+          if(m.userData.jotsNearEmissive)return;
+          m.userData.jotsNearEmissive=true;
+          try{
+            m.emissiveNode=vec3(col.r*0.12, col.g*0.12, col.b*0.14);
+          }catch(e){
+            try{ m.emissive=col.clone().multiplyScalar(0.2); m.emissiveIntensity=0.05; }catch(_e){}
+          }
+        }
+      });
+    });
+  }catch(e){}
+  return pl;
+}
+/** Dusty / thin Rayleigh shell — giants + rocky atmo + close Sol. No bloom sprites. */
+function _buildJotsDustyAtmoShell(radius, opts){
+  opts=opts||{};
+  const group=new THREE.Group();
+  group.name='JOTS_DustyAtmoGroup';
+  const R=Math.max(0.2, radius||1);
+  const atmoMul=opts.atmoMul!=null?opts.atmoMul:1.10;
+  const ATMO_R=R*atmoMul;
+  const scatterMul=opts.scatterMul!=null?opts.scatterMul:1.6;
+  const tint=new THREE.Color(opts.tint!=null?opts.tint:0x6688cc);
+  const samples=_jotsAtmoSampleBudgets();
+  const VIEW_SAMPLES=samples.view;
+  const SUN_SAMPLES=samples.sun;
+  const useNode=typeof _isRealWebGPU==='function'&&typeof flightRenderer!=='undefined'&&_isRealWebGPU(flightRenderer)
+    &&!!(THREE&&THREE.MeshBasicNodeMaterial)&&typeof Fn==='function';
+  if(useNode){
+    try{
+      const atmoMat=new THREE.MeshBasicNodeMaterial({transparent:true,side:THREE.BackSide,depthWrite:false,depthTest:false,blending:THREE.AdditiveBlending});
+      const scatterCoeffs=uniform(new THREE.Vector3(Math.pow(400/700,4),Math.pow(400/530,4),Math.pow(400/440,4)).multiplyScalar(scatterMul));
+      const sunDirU=uniform(new THREE.Vector3(1,0.3,0.2).normalize());
+      const planetCenterU=uniform(new THREE.Vector3(0,0,0));
+      const densityFalloff=opts.densityFalloff!=null?opts.densityFalloff:5.5;
+      const raySphere=Fn(([center,rad,ro,rd])=>{
+        const offset=ro.sub(center);
+        const b=offset.dot(rd).mul(2.0);
+        const c=offset.dot(offset).sub(rad.mul(rad));
+        const disc=b.mul(b).sub(c.mul(4.0));
+        const result=vec3(0,0,0).toVar();
+        If(disc.greaterThanEqual(0.0), ()=>{
+          const s=disc.sqrt();
+          const near=b.negate().sub(s).div(2.0);
+          const far=b.negate().add(s).div(2.0);
+          If(far.greaterThanEqual(0.0), ()=>{
+            const dToSphere=near.max(0.0);
+            result.assign(vec3(dToSphere,far.sub(dToSphere),1.0));
+          });
+        });
+        return result;
+      });
+      const densityAtPoint=Fn(([sp])=>{
+        const h=sp.sub(planetCenterU).length().sub(R);
+        const h01=h.div(ATMO_R-R).clamp(0.0,1.0);
+        return exp(h01.negate().mul(densityFalloff)).mul(float(1.0).sub(h01));
+      });
+      const opticalDepth=Fn(([ro,rd,rl])=>{
+        const stepSize=rl.div(SUN_SAMPLES);
+        const p=ro.toVar();
+        const total=float(0).toVar();
+        Loop(SUN_SAMPLES, ()=>{ total.addAssign(densityAtPoint(p).mul(stepSize)); p.addAssign(rd.mul(stepSize)); });
+        return total;
+      });
+      const atmoFn=Fn(()=>{
+        const ro=cameraPosition;
+        const rd=positionWorld.sub(cameraPosition).normalize();
+        const center=planetCenterU;
+        const hit=raySphere(center,float(ATMO_R),ro,rd);
+        // Depth-style surface clamp without a full RT pre-pass: stop at solid limb
+        const surf=raySphere(center,float(R),ro,rd);
+        const marchStart=hit.x;
+        const toSurf=surf.x.sub(marchStart);
+        const clampedLen=select(surf.z.greaterThan(0.5), hit.y.min(toSurf.max(0.0)), hit.y);
+        const marchLen=clampedLen;
+        const inScatter=vec3(0,0,0).toVar();
+        If(hit.z.greaterThan(0.5), ()=>{
+          const stepSize=marchLen.div(VIEW_SAMPLES);
+          const p=ro.add(rd.mul(marchStart)).toVar();
+          const viewOD=float(0).toVar();
+          Loop(VIEW_SAMPLES, ()=>{
+            const localDensity=densityAtPoint(p);
+            viewOD.addAssign(localDensity.mul(stepSize));
+            const sunHit=raySphere(center,float(ATMO_R),p,sunDirU);
+            const sunOD=opticalDepth(p,sunDirU,sunHit.y);
+            const transmittance=exp(scatterCoeffs.negate().mul(sunOD.add(viewOD)));
+            inScatter.addAssign(localDensity.mul(transmittance).mul(scatterCoeffs).mul(stepSize));
+            p.addAssign(rd.mul(stepSize));
+          });
+        });
+        // Tint dusty shells (giants) slightly toward palette
+        const tintV=vec3(tint.r,tint.g,tint.b);
+        return inScatter.mul(float(0.65).add(tintV.mul(0.35)));
+      });
+      const inS=atmoFn();
+      atmoMat.colorNode=inS;
+      atmoMat.opacityNode=clamp(inS.r.add(inS.g).add(inS.b).mul(opts.opacityScale!=null?opts.opacityScale:0.55),0.0,1.0);
+      const atmoMesh=new THREE.Mesh(new THREE.SphereGeometry(ATMO_R,32,24),atmoMat);
+      atmoMesh.name='JOTS_DustyAtmo';
+      atmoMesh.renderOrder=2;
+      atmoMesh.userData.jotsAtmo=true;
+      group.add(atmoMesh);
+      _registerJotsAtmoFog({mesh:atmoMesh, sunDirU, planetCenterU});
+      return group;
+    }catch(e){ console.warn('dusty atmo TSL fallback:',e); }
+  }
+  // WebGL / fallback: soft BackSide shell (light-independent Basic so near-side reads)
+  const atmoMat=new THREE.MeshBasicMaterial({
+    color:tint, transparent:true, opacity:opts.fallbackOpacity!=null?opts.fallbackOpacity:0.14,
+    side:THREE.BackSide, depthWrite:false, blending:THREE.AdditiveBlending
+  });
+  const atmo=new THREE.Mesh(new THREE.SphereGeometry(ATMO_R, Math.max(16,24), Math.max(12,18)), atmoMat);
+  atmo.name='JOTS_DustyAtmo';
+  atmo.renderOrder=2;
+  group.add(atmo);
+  return group;
+}
+/** Multi-band dusty rings — DoubleSide + light-independent dust (near-side readable). */
+function _buildJotsDustyRingGroup(planetR, opts){
+  opts=opts||{};
+  const ringGroup=new THREE.Group();
+  ringGroup.name='JOTS_DustyRings';
+  const bands=opts.bands!=null?opts.bands:(4+Math.floor(Math.random()*2));
+  let rIn=planetR*(opts.innerMul!=null?opts.innerMul:1.4);
+  const baseCol=new THREE.Color(opts.color!=null?opts.color:0xddcc88);
+  const useNode=typeof _isRealWebGPU==='function'&&typeof flightRenderer!=='undefined'&&_isRealWebGPU(flightRenderer)
+    &&!!(THREE&&THREE.MeshBasicNodeMaterial)&&typeof Fn==='function';
+  for(let b=0;b<bands;b++){
+    const bw=planetR*(0.14+Math.random()*0.22);
+    const gap=planetR*(0.025+Math.random()*0.045);
+    const rOut=rIn+bw;
+    const shade=0.55+Math.random()*0.45;
+    const col=baseCol.clone().multiplyScalar(shade);
+    const opac=0.38+Math.random()*0.38;
+    const ringGeo=new THREE.RingGeometry(rIn,rOut,96,1);
+    let ringMat=null;
+    if(useNode){
+      try{
+        ringMat=new THREE.MeshBasicNodeMaterial({transparent:true,side:THREE.DoubleSide,depthWrite:false});
+        const baseU=uniform(col);
+        const opacU=uniform(opac);
+        const nearR=uniform(rOut*5.5);
+        const farR=uniform(rOut*1.15);
+        ringMat.colorNode=Fn(()=>{
+          const viewDir=cameraPosition.sub(positionWorld).normalize();
+          const n=normalWorld.normalize();
+          const fres=float(1.0).sub(n.dot(viewDir).abs()).pow(1.8);
+          // Light-independent dust: base albedo + scattering lift (no Sol dependence)
+          return baseU.mul(float(0.72).add(fres.mul(0.5)));
+        })();
+        ringMat.opacityNode=Fn(()=>{
+          const dist=cameraPosition.sub(positionWorld).length();
+          const nearBoost=float(1.0).add(float(0.55).mul(smoothstep(nearR, farR, dist)));
+          return opacU.mul(nearBoost).clamp(0.12, 0.92);
+        })();
+      }catch(e){ ringMat=null; }
+    }
+    if(!ringMat){
+      // MeshBasic = light-independent (Standard went black on anti-Sol face)
+      ringMat=new THREE.MeshBasicMaterial({
+        color:col, transparent:true, opacity:opac,
+        side:THREE.DoubleSide, depthWrite:false
+      });
+    }
+    ringGroup.add(new THREE.Mesh(ringGeo, ringMat));
+    rIn=rOut+gap;
+  }
+  ringGroup.rotation.x=opts.tilt!=null?opts.tilt:Math.PI*0.42;
+  ringGroup.isPlanetExtra=true;
+  return ringGroup;
+}
+
 function buildWebGLRichPlanetGroup(radius, seedVal, colorHex, hasAtmosphere, kind, bodyName){
   // Historian FIX INTENT (f1b8547 WebGL look):
   // Earth → GLSL day/night + rim (useShader), albedo from continent mask (3adec86)
@@ -4796,15 +5085,26 @@ function buildWebGLRichPlanetGroup(radius, seedVal, colorHex, hasAtmosphere, kin
   }
   group.add(mesh);
   if(hasAtmosphere){
-    const atmoR=radius*1.09; // f1b8547 used ~1.09
-    const atmoMat=new THREE.MeshStandardMaterial({
-      color: isMars ? 0xc07040 : 0x2244ff,
-      transparent:true, opacity:0.13, side:THREE.BackSide, depthWrite:false, roughness:1, metalness:0
-    });
-    const atmo=new THREE.Mesh(new THREE.SphereGeometry(atmoR, Math.max(16,seg/2), Math.max(12,seg/2)), atmoMat);
-    atmo.name='JOTS_WebGLAtmo';
-    group.add(atmo);
+    const tint = isMars ? 0xc07040 : (isEarth ? 0x2244ff : 0x6688cc);
+    const atmoMul = isMars ? 1.06 : (isEarth ? 1.12 : 1.09);
+    try{
+      const dusty=_buildJotsDustyAtmoShell(radius, {
+        atmoMul, scatterMul: isEarth?2.8:isMars?1.4:1.8, tint,
+        fallbackOpacity: isMars?0.10:0.14, opacityScale:0.55
+      });
+      group.add(dusty);
+    }catch(e){
+      const atmoR=radius*atmoMul;
+      const atmoMat=new THREE.MeshBasicMaterial({
+        color: tint, transparent:true, opacity:0.13, side:THREE.BackSide, depthWrite:false,
+        blending:THREE.AdditiveBlending
+      });
+      const atmo=new THREE.Mesh(new THREE.SphereGeometry(atmoR, Math.max(16,seg/2), Math.max(12,seg/2)), atmoMat);
+      atmo.name='JOTS_WebGLAtmo';
+      group.add(atmo);
+    }
   }
+  try{ _attachJotsNearFill(group, radius, colorHex||0x6688aa); }catch(e){}
   return group;
 }
 function buildWebGLRichGasGiant(radius, palette, hasStorm){
@@ -4842,6 +5142,15 @@ function buildWebGLRichGasGiant(radius, palette, hasStorm){
     new THREE.MeshStandardMaterial({map:tex, roughness:0.78, metalness:0.0, color:0xffffff})
   );
   group.add(mesh);
+  // Thin dusty haze shell (giants) + near-side fill — no scene wash
+  try{
+    const tint=(palette&&palette[1])||0xc9a36a;
+    group.add(_buildJotsDustyAtmoShell(radius, {
+      atmoMul:1.08, scatterMul:1.35, tint, densityFalloff:4.8,
+      fallbackOpacity:0.11, opacityScale:0.45
+    }));
+  }catch(e){}
+  try{ _attachJotsNearFill(group, radius, (palette&&palette[1])||0xc9a36a); }catch(e){}
   return group;
 }
 
@@ -5069,7 +5378,8 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
   group.add(planetMcMesh);
 
   if(hasAtmosphere){
-    // Water — ported from the sandbox's depth-aware shell (same technique:
+    // Water — Earth only (Venus/Mars/rocky get dusty Rayleigh shells without oceans).
+    // Ported from the sandbox's depth-aware shell (same technique:
     // the opaque terrain above renders first in the frame, so by the time
     // this transparent water fragment shades, viewportLinearDepth already
     // holds "whatever's behind me" - comparing that to this fragment's own
@@ -5078,6 +5388,7 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
     // radius*1.08 to match the sandbox's own PLANET_RADIUS(40)+3.2 ratio,
     // sitting inside the terrain's own height variance (±radius*0.12-0.18
     // per the density function above) so it only submerges low ground.
+    if(kind==='earth'){
     const WATER_R=radius*1.008; // matches the new ~1.2%-of-radius relief (was 1.08, tuned to the old 12% relief)
     const waterMat=new THREE.MeshStandardNodeMaterial({transparent:true,side:THREE.DoubleSide,depthWrite:false,metalness:0.05});
     const sceneDepthW=viewportLinearDepth;
@@ -5128,14 +5439,19 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
     waterVolMarker.userData.waterRadius=WATER_R;
     waterVolMarker.userData.planetRadius=radius;
     group.add(waterVolMarker);
+    } // end Earth-only water
 
+    // Rayleigh — Sol-wired sunDir + world planetCenter; budgeted VIEW/SUN samples;
+    // surface-radius clamp (sandbox depth cue without full RT pre-pass).
     const atmoMat=new THREE.MeshBasicNodeMaterial({transparent:true,side:THREE.BackSide,depthWrite:false,depthTest:false,blending:THREE.AdditiveBlending});
-    // Planet-specific atmosphere thickness: Earth thicker than Mars/small rocky
-    const atmoMul = (kind==='earth') ? 1.20 : (kind==='mars') ? 1.04 : 1.08;
-    const scatterMul = (kind==='earth') ? 3.2 : (kind==='mars') ? 1.5 : 2.4;
+    const atmoMul = (kind==='earth') ? 1.20 : (kind==='mars') ? 1.06 : (kind==='venus') ? 1.16 : 1.10;
+    const scatterMul = (kind==='earth') ? 3.2 : (kind==='mars') ? 1.55 : (kind==='venus') ? 2.6 : 2.2;
     const scatterCoeffs=uniform(new THREE.Vector3(Math.pow(400/700,4),Math.pow(400/530,4),Math.pow(400/440,4)).multiplyScalar(scatterMul));
     const sunDirU=uniform(new THREE.Vector3(1,0.3,0.2).normalize());
+    const planetCenterU=uniform(new THREE.Vector3(0,0,0));
     const ATMO_R=HALF*atmoMul;
+    const _atmoSamp=(typeof _jotsAtmoSampleBudgets==='function')?_jotsAtmoSampleBudgets():{view:4,sun:3};
+    const VIEW_SAMPLES=_atmoSamp.view, SUN_SAMPLES=_atmoSamp.sun;
     const raySphere=Fn(([center,rad,ro,rd])=>{
       const offset=ro.sub(center);
       const b=offset.dot(rd).mul(2.0);
@@ -5154,29 +5470,33 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
       return result;
     });
     const densityAtPoint=Fn(([sp])=>{
-      const h=sp.length().sub(radius);
+      const h=sp.sub(planetCenterU).length().sub(radius);
       const h01=h.div(ATMO_R-radius).clamp(0.0,1.0);
       return exp(h01.negate().mul(5.5)).mul(float(1.0).sub(h01));
     });
     const opticalDepth=Fn(([ro,rd,rl])=>{
-      const stepSize=rl.div(3);
+      const stepSize=rl.div(SUN_SAMPLES);
       const p=ro.toVar();
       const total=float(0).toVar();
-      Loop(3, ()=>{ total.addAssign(densityAtPoint(p).mul(stepSize)); p.addAssign(rd.mul(stepSize)); });
+      Loop(SUN_SAMPLES, ()=>{ total.addAssign(densityAtPoint(p).mul(stepSize)); p.addAssign(rd.mul(stepSize)); });
       return total;
     });
     const atmoFn=Fn(()=>{
       const ro=cameraPosition;
       const rd=positionWorld.sub(cameraPosition).normalize();
-      const center=vec3(0,0,0);
+      const center=planetCenterU;
       const hit=raySphere(center,float(ATMO_R),ro,rd);
-      const marchStart=hit.x, marchLen=hit.y;
+      // Surface clamp (sandbox depth pre-pass analog — ray vs terrain sphere)
+      const surf=raySphere(center,float(radius),ro,rd);
+      const marchStart=hit.x;
+      const toSurf=surf.x.sub(marchStart);
+      const marchLen=select(surf.z.greaterThan(0.5), hit.y.min(toSurf.max(0.0)), hit.y);
       const inScatter=vec3(0,0,0).toVar();
       If(hit.z.greaterThan(0.5), ()=>{
-        const stepSize=marchLen.div(4);
+        const stepSize=marchLen.div(VIEW_SAMPLES);
         const p=ro.add(rd.mul(marchStart)).toVar();
         const viewOD=float(0).toVar();
-        Loop(4, ()=>{
+        Loop(VIEW_SAMPLES, ()=>{
           const localDensity=densityAtPoint(p);
           viewOD.addAssign(localDensity.mul(stepSize));
           const sunHit=raySphere(center,float(ATMO_R),p,sunDirU);
@@ -5192,15 +5512,14 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
     atmoMat.colorNode=inS;
     atmoMat.opacityNode=clamp(inS.r.add(inS.g).add(inS.b).mul(0.6),0.0,1.0);
     const atmoMesh=new THREE.Mesh(new THREE.SphereGeometry(ATMO_R,32,24),atmoMat);
+    atmoMesh.name='JOTS_PlanetAtmo';
     atmoMesh.renderOrder=2;
-    // TEMPORARY diagnostic: skip adding the atmosphere mesh to isolate
-    // whether its ray-march is the actual freeze culprit, given confirmed
-    // severe unresponsiveness that reducing its sample count alone didn't
-    // fix. Still built (compute cost the same), just not added to the
-    // scene/rendered - if this resolves the freeze, the atmosphere
-    // shader itself needs more substantial rework, not just fewer samples.
+    atmoMesh.userData.jotsAtmo=true;
+    _registerJotsAtmoFog({mesh:atmoMesh, sunDirU, planetCenterU});
     if(!window.__DISABLE_ATMO_MESH__) group.add(atmoMesh);
   }
+  // Near-side visibility: local fill + tiny emissive (no scene Hemisphere wash)
+  try{ _attachJotsNearFill(group, radius, colorHex||0x6688aa); }catch(e){}
   return group;
 }
 
@@ -5250,6 +5569,15 @@ function buildGasGiantMesh(radius, palette, hasStorm){
   })();
   const mesh = new THREE.Mesh(new THREE.SphereGeometry(radius,48,32), mat);
   group.add(mesh);
+  // Dusty atmospheric falloff shell (Rayleigh-lite) — giants lacked shells before
+  try{
+    const tint=(palette&&palette[1])||0xc9a36a;
+    group.add(_buildJotsDustyAtmoShell(radius, {
+      atmoMul:1.09, scatterMul:1.45, tint, densityFalloff:4.8,
+      fallbackOpacity:0.11, opacityScale:0.48
+    }));
+  }catch(e){}
+  try{ _attachJotsNearFill(group, radius, (palette&&palette[1])||0xc9a36a); }catch(e){}
   return group;
 }
 async function buildSolarSystem(){
@@ -5285,9 +5613,9 @@ async function buildSolarSystem(){
   const FUTURE_YEARS = 650000;
   const planets=[
     {name:'Mercury',rRatio:0.383,col:0x9c8a7a,oR:AU*0.387,  period:0.2408, type:'Rocky',    temp:'440 K'},
-    {name:'Venus',  rRatio:0.949,col:0xddaa44,oR:AU*0.723,  period:0.6152, type:'Rocky',    temp:'737 K'},
+    {name:'Venus',  rRatio:0.949,col:0xddaa44,oR:AU*0.723,  period:0.6152, type:'Rocky',    temp:'737 K',hasAtm:true},
     {name:'Earth',  rRatio:1.000,col:0x2244cc,oR:AU*1.0,    period:1.0000, type:'Habitable',temp:'288 K',hasMoon:true,hasAtm:true,useShader:true},
-    {name:'Mars',   rRatio:0.532,col:0xcc4411,oR:AU*1.524,  period:1.8808, type:'Rocky',    temp:'210 K'},
+    {name:'Mars',   rRatio:0.532,col:0xcc4411,oR:AU*1.524,  period:1.8808, type:'Rocky',    temp:'210 K',hasAtm:true},
     {name:'Jupiter',rRatio:11.21,col:0xcc9944,oR:AU*5.203,  period:11.862, type:'Gas Giant',temp:'165 K'},
     {name:'Saturn', rRatio:9.45, col:0xddcc88,oR:AU*9.537,  period:29.457, type:'Gas Giant',temp:'134 K',hasRings:true},
     {name:'Uranus', rRatio:4.01, col:0x88ddee,oR:AU*19.191, period:84.011, type:'Ice Giant',temp:'76 K'},
@@ -5373,21 +5701,10 @@ async function buildSolarSystem(){
     // shade/opacity per band, parented together so they still orbit with
     // the planet as one unit.
     if(p.hasRings){
-      const ringGroup=new THREE.Group();
-      const bands=4+Math.floor(Math.random()*2); // 4-5 bands per ringed planet
-      let rIn=p.r*1.4;
-      for(let b=0;b<bands;b++){
-        const bw=p.r*(0.14+Math.random()*0.22);   // band width — thin relative to planet radius
-        const gap=p.r*(0.025+Math.random()*0.045); // visible gap before the next band
-        const rOut=rIn+bw;
-        const shade=0.55+Math.random()*0.45;
-        const col=new THREE.Color(0xddcc88).multiplyScalar(shade);
-        const ringGeo=new THREE.RingGeometry(rIn,rOut,72,1);
-        const ringMat=new THREE.MeshStandardMaterial({color:col,transparent:true,opacity:0.35+Math.random()*0.4,side:THREE.DoubleSide,roughness:0.9,metalness:0.0});
-        ringGroup.add(new THREE.Mesh(ringGeo,ringMat));
-        rIn=rOut+gap;
-      }
-      ringGroup.rotation.x=Math.PI*.42; // same stylistic tilt as before
+      // Multi-band dusty rings — light-independent dust so near-side stays readable up close
+      const ringGroup=(typeof _buildJotsDustyRingGroup==='function')
+        ? _buildJotsDustyRingGroup(p.r, {color:0xddcc88, bands:4+Math.floor(Math.random()*2), tilt:Math.PI*.42})
+        : (()=>{ const g=new THREE.Group(); g.isPlanetExtra=true; return g; })();
       ringGroup.isPlanetExtra=true; // preserved across an LOD mesh swap (see upgradePlanetLOD)
       mesh.add(ringGroup); // parented to planet, orbits together
     }
@@ -8207,6 +8524,8 @@ function updateBodies(dt){
       }
     }catch(e){}
   }
+  // Wire atmo sunDir → real Sol + camera-near local fill intensities
+  try{ if(typeof _updateJotsWorldsFog==='function') _updateJotsWorldsFog(); }catch(e){}
 }
 
 
@@ -9732,11 +10051,12 @@ async function rebuildFlightForSystem(system){
       }
     }
     if(bd.hasRings){
-      const ringGroup=new THREE.Group();
-      const ringGeo=new THREE.RingGeometry(r*1.4,r*2.2,48);
-      const ringMat=new THREE.MeshBasicMaterial({color:0xccbb99,side:THREE.DoubleSide,transparent:true,opacity:0.5});
-      ringGroup.add(new THREE.Mesh(ringGeo,ringMat));
-      ringGroup.rotation.x=-Math.PI/2.3;
+      const ringGroup=(typeof _buildJotsDustyRingGroup==='function')
+        ? _buildJotsDustyRingGroup(r, {color:0xccbb99, bands:4, tilt:-Math.PI/2.3})
+        : (()=>{ const g=new THREE.Group();
+            const ringGeo=new THREE.RingGeometry(r*1.4,r*2.2,48);
+            g.add(new THREE.Mesh(ringGeo,new THREE.MeshBasicMaterial({color:0xccbb99,side:THREE.DoubleSide,transparent:true,opacity:0.5})));
+            g.rotation.x=-Math.PI/2.3; return g; })();
       ringGroup.isPlanetExtra=true;
       group.add(ringGroup);
     }
@@ -10927,7 +11247,7 @@ function buildVibrantSolSun(radius){
   }
   group.add(mesh);
 
-  // LOCAL glow only — shells scale with sun radius (not world 900/1600 discs).
+  // LOCAL glow + soft dusty falloff shells — NOT corona bloom spr1/spr2 / whitewash discs (#30 erase stays).
   try{
     const mkShell=(mul,hex,op)=>{
       const m=new THREE.MeshBasicMaterial({
@@ -10936,13 +11256,51 @@ function buildVibrantSolSun(radius){
       });
       const s=new THREE.Mesh(new THREE.SphereGeometry(radius*mul,20,14),m);
       s.renderOrder=1;
+      s.userData.jotsSolDustShell=true;
       group.add(s);
       return s;
     };
     mkShell(1.08,0xff7a18,0.42);
     mkShell(1.18,0xffc14a,0.18);
     mkShell(1.32,0xffe9a0,0.07); // still body-local (~1.3× R), not system wash
+    // Soft density falloff shells for close Sol approach (dusty, not bloom corona)
+    mkShell(1.48,0xffa040,0.045);
+    mkShell(1.72,0xff8030,0.028);
   }catch(e){console.warn('sol local glow:',e);}
+
+  // Local Points dust cloud on Sol group ONLY — readable near limb, no scene wash
+  try{
+    const nDust=low?160:380;
+    const pos=new Float32Array(nDust*3);
+    const cols=new Float32Array(nDust*3);
+    for(let i=0;i<nDust;i++){
+      // Random direction on soft shells between 1.05R and 1.85R
+      const u=Math.random(), v=Math.random();
+      const theta=2*Math.PI*u;
+      const phi=Math.acos(2*v-1);
+      const rr=radius*(1.05+Math.pow(Math.random(),0.65)*0.80);
+      const x=rr*Math.sin(phi)*Math.cos(theta);
+      const y=rr*Math.sin(phi)*Math.sin(theta);
+      const z=rr*Math.cos(phi);
+      pos[i*3]=x; pos[i*3+1]=y; pos[i*3+2]=z;
+      const t=(rr/radius-1.05)/0.80;
+      cols[i*3]=1.0; cols[i*3+1]=0.55+0.35*(1-t); cols[i*3+2]=0.18+0.15*(1-t);
+    }
+    const dg=new THREE.BufferGeometry();
+    dg.setAttribute('position',new THREE.BufferAttribute(pos,3));
+    dg.setAttribute('color',new THREE.BufferAttribute(cols,3));
+    let dtex=null; try{ dtex=typeof makeCircleTex==='function'?makeCircleTex(16,'rgb(255,200,120)',1):null; }catch(e){}
+    const dm=new THREE.PointsMaterial({
+      size:radius*(low?0.018:0.014), sizeAttenuation:true, vertexColors:true,
+      map:dtex, transparent:true, opacity:0.42, depthWrite:false,
+      blending:THREE.AdditiveBlending, alphaTest:0.02
+    });
+    const dustPts=new THREE.Points(dg,dm);
+    dustPts.name='JOTS_SolDustPoints';
+    dustPts.frustumCulled=false;
+    dustPts.renderOrder=2;
+    group.add(dustPts);
+  }catch(e){console.warn('sol dusty points:',e);}
 
   return {group,mesh};
 }
