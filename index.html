@@ -13486,35 +13486,28 @@ function updateCharacterLocomotion(dt, moving, running, dirSign, jumping, climbi
   } else if(moving){
     setCharState(running?'run':'walk',{fade:0.2, reverse:dirSign<0});
   } else {
-    setCharState('idle',{fade:0.3});
+    // Stabilizer: short fade + hard-clear residual foot-IK so stop→idle
+    // does not fight leftover knee/ankle bends (haywire on stop).
+    setCharState('idle',{fade:0.15});
+    CHAR._footIKWeight = 0;
+    CHAR._ikErrLeft = 0; CHAR._ikErrRight = 0;
+    CHAR._ikAnkleLeft = 0; CHAR._ikAnkleRight = 0;
   }
   CHAR.mixer && CHAR.mixer.update(dt);
 
-  // Slope crouch-lean: added ON TOP of whatever pose the mixer just set,
-  // proportional to CHAR._slopeLeanT (0-1, set where slope is measured) -
-  // not a replacement animation, just a forward hip/spine bend that grows
-  // as the incline gets steeper, same direct-bone-rotation technique the
-  // skyboard stance already uses elsewhere in this file. Skipped while
-  // climbing/jumping/rope/cliff/swim/prone (those states have their own
-  // full-body poses this shouldn't fight with).
-  const skipLean = jumping || climbing || wantRope || wantCliff || wantSwim || wantProne;
-  if(!skipLean && CHAR._slopeLeanT>0.001){
-    const b=CHAR.bones;
-    if(b && b.Spine){
-      const lean=CHAR._slopeLeanT*0.5; // ~28° max forward lean at full steepness
-      b.Spine.rotation.x += lean;
-      b.Spine01 && (b.Spine01.rotation.x += lean*0.5);
-      b.Hips && (b.Hips.rotation.x += CHAR._slopeLeanT*0.25);
-    }
-  }
+  // Stabilizer (Justin HARD NAY surface character): true contour = rigid
+  // root follow height only. Do NOT warp Spine/Hips bones to slope —
+  // that mixed walk with prone/skeleton-mapped terrain. Optional gentle
+  // whole-body pitch lives on CHAR.root.rotation.x in updateSurface.
+  // Bone slope-lean intentionally disabled.
+  CHAR._slopeLeanT = 0;
 
-  // Per-foot ground IK — fades in/out smoothly rather than a hard
-  // on/off, so it never pops when jumping/climbing start or stop.
-  // See applyFootIK's own comment for exactly what this does and
-  // doesn't do.
-  const ikTarget = (!jumping && !climbing && !wantRope && !wantCliff && !wantSwim && !wantProne) ? 1 : 0;
+  // Stabilizer: disable surface foot-IK warping (no per-foot knee/ankle
+  // bend to _surfHeight). applyFootIK kept for reference / future but
+  // never driven on surface walk — ikTarget always 0; skip while idle.
+  const ikTarget = 0;
   CHAR._footIKWeight = THREE.MathUtils.damp(CHAR._footIKWeight||0, ikTarget, 6, dt);
-  if(CHAR._footIKWeight>0.01) applyFootIK(dt, CHAR._footIKWeight);
+  if(CHAR._footIKWeight>0.01 && moving) applyFootIK(dt, CHAR._footIKWeight);
 }
 function finishClimb(onComplete){
   // climbLoop is now a complete climb-to-top arc that already ends
@@ -14178,9 +14171,14 @@ async function enterSurface(body,site){
     CHAR.scene = surfScene;
     surfScene.add(CHAR.root);
     try{ _forceCharVisible(); }catch(e){ CHAR.root.visible = true; }
-    // Soft-coord: if feet still float/sink after this, Worlds MC height is the
-    // owner — Stabilizer owns yaw/offset/transitions only (p.pos.y-3 / eye-3).
-    const feetY=(surfPlayer.pos.y-3.0);
+    // Soft-coord Worlds: if _surfHeight itself is wrong that's Worlds —
+    // Stabilizer fix is feetOffset-aware root so feet sit ON surface
+    // (physics eye = groundH+3; root was at groundH → feet buried by
+    // feetOffset*s). Mount already uses anchor.y + feetOffset*scale.
+    const _gnd=(typeof _surfHeight==='function')?_surfHeight(surfPlayer.pos.x,surfPlayer.pos.z):(surfPlayer.pos.y-3.0);
+    const _footLift=(CHAR.feetOffset||0)*s;
+    const rootY=_gnd+_footLift; // root so feet sit on surface
+    const boardHoverY=_gnd;     // board hover relative to surface/feet, not elevated root
     const _yaw=surfPlayer.yaw||0;
     const _rx=Math.cos(_yaw),_rz=-Math.sin(_yaw);
     const _side=surfBoard?_terrainBoardSideWorld(surfBoard):CHAR_TERRAIN_BOARD_SIDE;
@@ -14189,25 +14187,30 @@ async function enterSurface(body,site){
     if(surfBoard){
       try{ surfBoard.visible=true; }catch(e){}
       // Board starts slightly high, settles beside (her RIGHT / board-left of nose).
-      surfBoard.position.set(standX+_rx*_side, feetY+0.85, standZ+_rz*_side);
+      surfBoard.position.set(standX+_rx*_side, boardHoverY+0.85, standZ+_rz*_side);
       surfBoard.rotation.order='YXZ';
       surfBoard.rotation.y=_yaw-Math.PI/2;
     }
     // Brief land settle: she steps off near-board → standing beside; board lowers.
-    // Avoids instant teleport/fall-off glitch. Reuses jump clip like boardDismount.
+    // Shortened so _transitioning does not block walk-away after land.
     try{ if(CHAR.mixer) CHAR.mixer.stopAllAction(); }catch(e){}
     CHAR._transitioning = true;
+    CHAR.mounted = false;
+    CHAR.stanceMode = 'stand';
+    CHAR._footIKWeight = 0;
+    CHAR._ikErrLeft = 0; CHAR._ikErrRight = 0;
+    CHAR._ikAnkleLeft = 0; CHAR._ikAnkleRight = 0;
     const startPos = new THREE.Vector3(
       surfBoard ? (standX+_rx*_side*0.35) : standX,
-      feetY+0.55,
+      rootY+0.55,
       surfBoard ? (standZ+_rz*_side*0.35) : standZ
     );
-    const endPos = new THREE.Vector3(standX, feetY, standZ);
+    const endPos = new THREE.Vector3(standX, rootY, standZ);
     CHAR.root.position.copy(startPos);
     CHAR.root.rotation.set(0, terrainYaw, 0);
     setCharState('jump',{fade:0.1, speed:0.85, force:true});
     const _t0=performance.now();
-    const _dur=680;
+    const _dur=320; // was 680 — free to walk sooner after land
     (function _landSettle(){
       if(!surfScene || !CHAR.root){ CHAR._transitioning=false; return; }
       const t=Math.min(1,(performance.now()-_t0)/_dur);
@@ -14215,7 +14218,7 @@ async function enterSurface(body,site){
       CHAR.root.position.lerpVectors(startPos, endPos, e);
       CHAR.root.rotation.y = terrainYaw;
       if(surfBoard){
-        const by0=feetY+0.85, by1=feetY+0.08;
+        const by0=boardHoverY+0.85, by1=boardHoverY+0.08;
         surfBoard.position.y = by0 + (by1-by0)*e;
         surfBoard.position.x = standX+_rx*_side;
         surfBoard.position.z = standZ+_rz*_side;
@@ -14223,8 +14226,13 @@ async function enterSurface(body,site){
       if(t<1){ requestAnimationFrame(_landSettle); }
       else {
         CHAR.root.position.copy(endPos);
+        CHAR.mounted = false;
+        CHAR.stanceMode = 'stand';
+        CHAR._footIKWeight = 0;
+        CHAR._ikErrLeft = 0; CHAR._ikErrRight = 0;
+        CHAR._ikAnkleLeft = 0; CHAR._ikAnkleRight = 0;
         CHAR._transitioning = false;
-        setCharState('idle',{force:true,fade:0.2}); // standing idle (walk-derived pose)
+        setCharState('idle',{force:true,fade:0.15}); // standing idle — free to walk immediately
       }
     })();
     try{
@@ -16070,7 +16078,12 @@ function updateSurface(dt){
   //    computed (mf/ms for movement, onGround for jump state) rather
   //    than re-deriving it separately. ────────────────────────────
   if(CHAR.loaded && CHAR.root && !CHAR._transitioning){
-    CHAR.root.position.set(p.pos.x, eye-3.0, p.pos.z);
+    // Stabilizer: feetOffset-aware root so feet sit ON surface.
+    // Physics eye = groundH+3; old eye-3.0 put root at groundH → feet
+    // buried by feetOffset*s. Soft-coord: if _surfHeight wrong → Worlds.
+    const _sSurf=CHAR.scaleForTerrain||CHAR.scaleForBoard||1;
+    const rootY=groundH+(CHAR.feetOffset||0)*_sSurf;
+    CHAR.root.position.set(p.pos.x, rootY, p.pos.z);
     // SURFACE facing: mount formula + CHAR_TERRAIN_YAW_EXTRA (+PI) so she faces
     // travel / board nose (unmounted lacks mount Z-mirror). Mount/atmo unchanged.
     CHAR.root.rotation.y = (p.yaw - Math.PI/2) + CHAR_MOUNT_YAW_OFFSET + CHAR_TERRAIN_YAW_EXTRA;
@@ -16079,15 +16092,9 @@ function updateSurface(dt){
     const dirSign = mf<-0.05 ? -1 : 1; // backing up (S / stick pulled back) plays the reversed cycle
     const jumping = p.jumpActive;
 
-    // Slope-aware locomotion: sample the surface normal under her feet and
-    // convert to a steepness angle. Below ~35° reads as normal ground (no
-    // change); between ~35-50° blends in a forward crouch-lean (added on
-    // top of whatever the walk/run animation already set, not overriding
-    // it, so the leg cycle keeps playing normally); above ~50° she's on
-    // a real incline/cliff face and switches to the existing climb
-    // animation automatically, same as if CLIMB had been pressed by hand -
-    // manual toggle and auto-trigger are OR'd together, so pressing CLIMB
-    // still works everywhere it already did.
+    // Slope-aware locomotion: sample normal for climb auto-trigger + optional
+    // subtle rigid root pitch. Bone lean / foot-IK / autoCrouch-from-slope
+    // removed — those warped skeleton into prone/crawl look on mid slopes.
     // Stabilizer climb seam: _surfClimbNormal → climbing_up_wall / Grab_Bar
     let groundNormal = (typeof window._surfNormal==='function') ? window._surfNormal(p.pos.x,p.pos.z) : new THREE.Vector3(0,1,0);
     const climbN = (typeof window._surfClimbNormal==='function') ? window._surfClimbNormal(p.pos.x, p.pos.y, p.pos.z) : null;
@@ -16095,21 +16102,29 @@ function updateSurface(dt){
     const slopeDeg = THREE.MathUtils.radToDeg(groundNormal.angleTo(new THREE.Vector3(0,1,0)));
     // Stabilizer swim seam: Worlds installs window._surfWaterAt(x,y,z).
     // Console override CHAR._wantSwim still works for testing without water volumes.
-    const feetY = eye-3.0;
+    const feetY = groundH; // feet on surface (root is rootY)
     const inWater = !!CHAR._wantSwim || ((typeof window._surfWaterAt==='function') ? !!window._surfWaterAt(p.pos.x, feetY, p.pos.z) : false);
     const autoClimbFromSlope = (!!climbN || slopeDeg > 50) && moving;
     // Swim wins over climb while immersed so Swim_Forward actually plays in water volumes.
     const climbing = !inWater && (surfClimbHeld || autoClimbFromSlope);
-    CHAR._slopeLeanT = THREE.MathUtils.clamp((slopeDeg-35)/15, 0, 1); // 0 at 35°, 1 at 50°+ - read by updateCharacterLocomotion below for the crouch-lean blend
-    // Mid-slope auto-crouch uses Autumn crouch clip (stanceMode stand only; HUD locked).
-    const autoCrouch = CHAR.stanceMode==='stand' && !inWater && !climbing && CHAR._slopeLeanT>0.45 && moving && !running;
+    // No bone slope-lean / autoCrouch-from-slope. Prone ONLY via setCharStance.
+    CHAR._slopeLeanT = 0;
+    // Optional subtle whole-body pitch from slope normal (rigid root, not skinning).
+    // Clamped ~±10°. Skip while jumping/climbing/swim so those poses stay upright.
+    if(!jumping && !climbing && !inWater){
+      const lookFwdX=-Math.sin(p.yaw), lookFwdZ=-Math.cos(p.yaw);
+      const pitchAmt=Math.atan2(-(groundNormal.x*lookFwdX+groundNormal.z*lookFwdZ), Math.max(0.2, groundNormal.y));
+      CHAR.root.rotation.x = THREE.MathUtils.clamp(pitchAmt, -0.17, 0.17);
+    } else {
+      CHAR.root.rotation.x = 0;
+    }
 
     updateCharacterLocomotion(dt, moving, running, dirSign, jumping, climbing, {
       swim: inWater,
       rope: !!CHAR._wantRope, // STUB until rope interactable exists
       cliff: !!CHAR._wantCliff, // STUB until ledge/userData.cliff trigger exists
-      prone: CHAR.stanceMode==='prone',
-      crouch: CHAR.stanceMode==='crouch' || autoCrouch,
+      prone: CHAR.stanceMode==='prone', // never auto-set from slope
+      crouch: CHAR.stanceMode==='crouch', // no autoCrouch-from-slope
     });
   }
 }
