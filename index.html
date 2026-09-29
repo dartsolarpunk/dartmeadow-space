@@ -10558,7 +10558,7 @@ function applyProceduralTextures(){
 }
 
 // ── 2. IN-FLIGHT MILKY WAY BAND (point cloud, scaled, colorful) ──
-let flightGalaxyBand=null,flightGalaxyCore=null,flightNebulae=[];
+let flightGalaxyBand=null,flightGalaxyCore=null,flightNebulae=[],flightGalaxyNeighbourhood=null;
 function _disposeObject3D(obj){
   if(!obj)return;
   obj.traverse(o=>{
@@ -10579,6 +10579,7 @@ function buildFlightGalaxyBand(){
   if(flightGalaxyBand){_disposeObject3D(flightGalaxyBand);flightScene.remove(flightGalaxyBand);flightGalaxyBand=null;}
   if(flightGalaxyCore){_disposeObject3D(flightGalaxyCore);flightScene.remove(flightGalaxyCore);flightGalaxyCore=null;}
   if(window._flightLocalArm){_disposeObject3D(window._flightLocalArm);flightScene.remove(window._flightLocalArm);window._flightLocalArm=null;}
+  if(flightGalaxyNeighbourhood){_disposeObject3D(flightGalaxyNeighbourhood);flightScene.remove(flightGalaxyNeighbourhood);flightGalaxyNeighbourhood=null;}
   flightNebulae.forEach(n=>{_disposeObject3D(n);flightScene.remove(n);});flightNebulae=[];
   if(!STATE.settings.galaxyband)return;
   // HARD-OFF until Safari+Chrome device proof: GPU builder now draws InstancedMesh
@@ -10587,9 +10588,11 @@ function buildFlightGalaxyBand(){
   const ENABLE_FLIGHT_GALAXY_BAND_GPU=false;
   const useGpu=ENABLE_FLIGHT_GALAXY_BAND_GPU && _isRealWebGPU(flightRenderer) && GFX.preset!=='low';
   if(useGpu){
-    Promise.resolve(buildFlightGalaxyBandGPU()).catch(e=>{console.warn('mwband gpu:',e);buildFlightGalaxyBandCPU();});
+    Promise.resolve(buildFlightGalaxyBandGPU()).catch(e=>{console.warn('mwband gpu:',e);buildFlightGalaxyBandCPU();})
+      .then(()=>{try{buildFlightGalaxyNeighbourhood();}catch(e){console.warn('gal neigh:',e);}});
   }else{
     buildFlightGalaxyBandCPU();
+    try{buildFlightGalaxyNeighbourhood();}catch(e){console.warn('gal neigh:',e);}
   }
 }
 
@@ -10792,25 +10795,25 @@ function buildFlightGalaxyBandCPU(){
   let placed=(_sp.length/3)|0;
   try{spiralGeo.dispose();}catch(e){}
 
-  // Near-Sol crest samples — MW readable as dual-arm sky from LEO (same morph)
+  // Near-Sol crest samples — MW LIVE as dual-arm sky from Sol (Justin particles-live)
   try{
-    const nearSolBudget=(particles==='low'||gfxLow)?3500:(mobile?5500:7500);
-    const nearSolR=3800;
+    const nearSolBudget=(particles==='low'||gfxLow)?6500:(mobile?10000:14000);
+    const nearSolR=5200;
     let nearPlaced=0;
-    for(let i=0;i<nearSolBudget*5&&nearPlaced<nearSolBudget;i++){
+    for(let i=0;i<nearSolBudget*6&&nearPlaced<nearSolBudget;i++){
       const ox=solLocal.x+(Math.random()-0.5)*nearSolR*2;
       const oz=solLocal.z+(Math.random()-0.5)*nearSolR*2;
-      const oy=solLocal.y+(Math.random()-0.5)*Math.random()*320;
+      const oy=solLocal.y+(Math.random()-0.5)*Math.random()*420;
       const rr=Math.hypot(ox,oz);
       if(rr<200||rr>RG*0.95)continue;
       const sp=spiralAngleAt(rr,RG,TURNS,SPIRAL_PHASE_LOCK,0,N_ARMS);
       const ag=Math.atan2(oz,ox);
       const ph=ag-sp;
-      const aw=Math.pow(Math.abs(Math.cos(ph*N_ARMS*0.5)),1.35);
-      if(aw<0.50)continue;
+      const aw=Math.pow(Math.abs(Math.cos(ph*N_ARMS*0.5)),1.25);
+      if(aw<0.42)continue;
       pts.push(ox,oy,oz);
-      const bb=(0.78+Math.random()*0.28)*(0.55+aw*0.45);
-      cols.push(0.50*bb,0.86*bb,1.0*bb);
+      const bb=(0.92+Math.random()*0.28)*(0.62+aw*0.50);
+      cols.push(0.55*bb,0.90*bb,1.0*bb);
       nearPlaced++;placed++;
     }
   }catch(e){}
@@ -10844,7 +10847,7 @@ function buildFlightGalaxyBandCPU(){
 
   const tex=makeCircleTex(16,'rgb(255,255,255)',1);
   const galGroup=new THREE.Group();
-  const armPx=mobile?(gfxLow?5.0:6.5):(gfxLow?6.5:8.5);
+  const armPx=mobile?(gfxLow?6.5:8.5):(gfxLow?8.0:11.0);
   const useInstances=!(mobile||gfxLow||particles==='low');
   if(useInstances){
     const instN=Math.min(placed, particles==='ultra'?28000:particles==='high'?22000:16000);
@@ -10973,10 +10976,10 @@ function buildFlightGalaxyBandCPU(){
     const local=new THREE.Group();
     local.rotation.copy(galGroup.rotation);
     const locN=(particles==='low'||gfxLow)
-      ?(mobile?10000:13000)
+      ?(mobile?14000:18000)
       :(particles==='high'||particles==='ultra')
-        ?(mobile?18000:24000)
-        :(mobile?14000:19000);
+        ?(mobile?24000:32000)
+        :(mobile?18000:26000);
     const lp=new Float32Array(locN*3),lc=new Float32Array(locN*3);
     for(let i=0;i<locN;i++){
       const along=(Math.random()-0.5)*6400;
@@ -10994,10 +10997,10 @@ function buildFlightGalaxyBandCPU(){
     const lg=new THREE.BufferGeometry();
     lg.setAttribute('position',new THREE.BufferAttribute(lp,3));
     lg.setAttribute('color',new THREE.BufferAttribute(lc,3));
-    const locSize=mobile?(gfxLow?72:88):(gfxLow?66:82);
+    const locSize=mobile?(gfxLow?95:115):(gfxLow?88:110);
     local.add(new THREE.Points(lg,new THREE.PointsMaterial({
       size:locSize,sizeAttenuation:true,vertexColors:true,map:tex,
-      transparent:true,opacity:0.92,depthWrite:false,blending:THREE.AdditiveBlending,alphaTest:0.02
+      transparent:true,opacity:0.98,depthWrite:false,blending:THREE.AdditiveBlending,alphaTest:0.02
     })));
     try{
       const midN=Math.min(locN, mobile||gfxLow?6000:9000);
@@ -11017,6 +11020,92 @@ function buildFlightGalaxyBandCPU(){
     flightScene.add(local);
     window._flightLocalArm=local;
   }catch(e){console.warn('local arm:',e);}
+}
+
+// ── Flight neighbourhood galaxies (Justin HARD particles-live) ─────────
+// Home MW is buildFlightGalaxyBandCPU. These particle galaxies light the
+// vacuum beyond Sol so the solar system is not alone in empty space.
+// Same Kavang cylinder→pinch→twist morph as named map galaxies. Shell
+// placement mirrors QT (≥95k) so they never collide with the MW disc.
+// No character / Worlds MC / Stabilizer splash touch. GPU flag stays false.
+function buildFlightGalaxyNeighbourhood(){
+  if(flightGalaxyNeighbourhood){
+    try{_disposeObject3D(flightGalaxyNeighbourhood);flightScene.remove(flightGalaxyNeighbourhood);}catch(e){}
+    flightGalaxyNeighbourhood=null;
+  }
+  if(!flightScene||typeof VISITABLE_GALAXIES==='undefined'||!VISITABLE_GALAXIES.length)return;
+  if(STATE.settings&&STATE.settings.galaxyband===false)return;
+  const particles=(STATE.settings&&STATE.settings.particles)||'med';
+  const mobile=!!(GFX&&GFX.isMobile);
+  const gfxLow=!!(GFX&&GFX.preset==='low');
+  const grp=new THREE.Group();
+  grp.name='JOTS_FlightGalaxyNeighbourhood';
+  // Prefer Local Group + bright neighbours first (readable from Sol)
+  const priority=['Andromeda (M31)','Triangulum (M33)','LMC','SMC','M32 (NGC 221)','M110 (NGC 205)',
+    "Bode's Galaxy (M81)",'Whirlpool (M51)','Pinwheel (M101)','Centaurus A','Sombrero (M104)',
+    'Sculptor (NGC 253)','Fornax Dwarf','Wolf-Lundmark-Melotte','IC 10'];
+  const byName={};
+  VISITABLE_GALAXIES.forEach(g=>{byName[g.n]=g;});
+  const ordered=[];
+  priority.forEach(n=>{if(byName[n])ordered.push(byName[n]);});
+  VISITABLE_GALAXIES.forEach(g=>{if(!ordered.includes(g))ordered.push(g);});
+  const maxG=(particles==='low'||gfxLow)?(mobile?8:10):(mobile?14:18);
+  const list=ordered.slice(0,maxG);
+  const densMul=(particles==='low'||gfxLow)?0.55:(particles==='ultra'?1.15:particles==='high'?1.0:0.8);
+  list.forEach((g,gi)=>{
+    try{
+      const raw=new THREE.Vector3(g.x,g.y,g.z);
+      const len=Math.max(raw.length(),1e-6);
+      const shellR=98000+(gi%8)*3200; // outside MW disc — matches QT shell idea
+      const pos=raw.clone().multiplyScalar(shellR/len);
+      const local=new THREE.Group();
+      local.position.copy(pos);
+      local.rotation.x=g.tilt||0.3;
+      const isSpiral=(g.type!=='elliptical'&&g.type!=='sombrero'&&g.type!=='irregular');
+      const budget=Math.round((isSpiral?2800:1600)*densMul*(mobile?0.7:1));
+      if(isSpiral&&typeof createSpiralGalaxyPoints==='function'){
+        const geo=createSpiralGalaxyPoints(budget,{
+          RG:Math.max(220,g.r*0.85), lowCount:budget, nArms:g.arms||2, turns:2.25,
+          coreRgb:[1.0,0.96,0.90], armRgb:[0.62,0.84,1.0], rimRgb:[0.10,0.14,0.40]
+        });
+        const draw=_buildGalaxyDustDraw(
+          geo.attributes.position.array,
+          geo.attributes.color.array,
+          {forcePoints:true, pointSize:mobile?(gfxLow?140:180):(gfxLow?160:220),
+           sizeAttenuation:true, opacity:0.94}
+        );
+        try{geo.dispose();}catch(e){}
+        if(draw)local.add(draw);
+      }else if(typeof buildNamedGalaxyInto==='function'){
+        buildNamedGalaxyInto(local,g,densMul,1.0);
+      }
+      // Soft far cue (Points, not flat Sprite wash) — tiny bright core speck
+      try{
+        const cn=Math.round((mobile||gfxLow)?80:140);
+        const cp=new Float32Array(cn*3),cc=new Float32Array(cn*3);
+        const cr=Math.max(40,g.r*0.08);
+        for(let i=0;i<cn;i++){
+          const u=Math.random(),v=Math.random(),w=Math.random();
+          const rr=cr*Math.pow(u,0.55);
+          const th=v*Math.PI*2,ph=Math.acos(2*w-1);
+          cp[i*3]=rr*Math.sin(ph)*Math.cos(th);
+          cp[i*3+1]=rr*Math.cos(ph)*0.5;
+          cp[i*3+2]=rr*Math.sin(ph)*Math.sin(th);
+          const b=0.85+Math.random()*0.35;
+          const col=new THREE.Color(g.c||0xb0c4ff);
+          cc[i*3]=col.r*b;cc[i*3+1]=col.g*b;cc[i*3+2]=col.b*b;
+        }
+        const core=_buildGalaxyDustDraw(cp,cc,{
+          forcePoints:true, pointSize:mobile?(gfxLow?180:240):(gfxLow?220:300),
+          sizeAttenuation:true, opacity:0.97
+        });
+        if(core)local.add(core);
+      }catch(e){}
+      grp.add(local);
+    }catch(e){console.warn('neigh gal:',g&&g.n,e);}
+  });
+  flightGalaxyNeighbourhood=grp;
+  flightScene.add(grp);
 }
 
 // ── Shared spiral morph (Blender GN + Kavang cylinder→pinch→twist) ─────
@@ -11542,28 +11631,36 @@ function _pickStarClass(rand){
   for(const c of STAR_CLASSES){ if(r<c.weight) return c; r-=c.weight; }
   return STAR_CLASSES[STAR_CLASSES.length-1];
 }
-/* Seeded visitables — sparse ON dual-arm crests (cylinder→pinch→twist morph).
-   Justin HARD rebuild (2026-09-28): same crest math as dust arms / map MW.
-   Call site generateSeededStarField(140, 918273) kept; positions re-nest onto
-   shared sampleSpiralArmCrest (phase-locked). Deterministic seedRand. */
+/* Seeded visitables — sparse ON dual-arm crests IN the live MW dust frame.
+   Justin HARD (2026-09-28 particles-live): sample crest near Sol galactocentric
+   radius, then apply the same galGroup rot+pos as buildFlightGalaxyBandCPU so
+   systems sit WITH home galaxy particles — not orphaned in empty vacuum.
+   Call site generateSeededStarField(140, 918273) kept. Deterministic seedRand. */
 function generateSeededStarField(count, seed){
   const rand = seedRand(seed);
   const RG=42000;
-  const lock=computeSpiralPhaseLock(RG, 2.25, 2, -RG*0.5, -RG*0.16);
+  const GAL_POS_X=-RG*0.5, GAL_POS_Z=-RG*0.16;
+  const lock=computeSpiralPhaseLock(RG, 2.25, 2, GAL_POS_X, GAL_POS_Z);
+  const galQ=new THREE.Quaternion().setFromEuler(new THREE.Euler(0.5,0.3,0.1));
+  const solR=Math.max(800, Math.hypot(lock.solLocal.x, lock.solLocal.z));
+  const bubble=4800; // local flight bubble along both arms around Sol
   const stars=[];
   for(let i=0;i<count;i++){
     const s=sampleSpiralArmCrest(rand, {
       RG:RG, turns:2.25, nArms:2, phaseLock:lock.phaseLock,
-      maxR:9000, minR:500, radialAlpha:1.35
+      minR:Math.max(500, solR-bubble), maxR:solR+bubble, radialAlpha:1.15
     });
+    // gal-local → world (identical transform to flightGalaxyCore / galGroup)
+    const w=new THREE.Vector3(s.x,s.y,s.z).applyQuaternion(galQ);
+    w.x+=GAL_POS_X; w.z+=GAL_POS_Z;
     const cls = _pickStarClass(rand);
     const hasPlanets = rand()<0.55;
     stars.push({
-      pos:[s.x,s.y,s.z], cls, radius: (0.9+rand()*0.6)*cls.rMul,
+      pos:[w.x,w.y,w.z], cls, radius: (0.9+rand()*0.6)*cls.rMul,
       hasPlanets, planetCount: hasPlanets ? 1+Math.floor(rand()*4) : 0,
       seed: Math.floor(rand()*100000),
-      name: hasPlanets ? ('System '+hashStr(s.x+'_'+s.z).toString(36).slice(0,5).toUpperCase())
-                        : ('Rogue Star '+hashStr(s.x+'_'+s.z+'r').toString(36).slice(0,4).toUpperCase()),
+      name: hasPlanets ? ('System '+hashStr(w.x+'_'+w.z).toString(36).slice(0,5).toUpperCase())
+                        : ('Rogue Star '+hashStr(w.x+'_'+w.z+'r').toString(36).slice(0,4).toUpperCase()),
     });
   }
   return stars;
