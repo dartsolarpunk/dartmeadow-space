@@ -4687,17 +4687,18 @@ function makeFlightPlanetTexture(kind, colorHex, seedVal, bodyName){
       let r,g,b;
       if(isEarth){
         const landV=earthLandMask(lat,lon,seed);
-        const pole=Math.abs(lat)>72;
+        const elev=(typeof earthElevation==='function')?earthElevation(lat,lon,seed):Math.max(0,landV);
+        const pole=Math.abs(lat)>70;
         if(pole){ r=225; g=235; b=248; }
         else if(landV>0){
-          const e=Math.min(landV,1);
+          const e=Math.min(1.4, Math.max(0,elev));
           const ridge=(_fbm(lon*0.12+seed,lat*0.12+seed,seed+19,3));
-          const c=land.clone().lerp(land2, Math.min(1,ridge));
-          r=c.r*255*(0.7+e*0.45); g=c.g*255*(0.7+e*0.45); b=c.b*255*(0.7+e*0.45);
-          if(ridge>0.72 && Math.abs(lat)>35){ r=snow.r*255; g=snow.g*255; b=snow.b*255; }
+          const c=land.clone().lerp(land2, Math.min(1,ridge*0.6+(e>0.9?0.5:0)));
+          r=c.r*255*(0.62+e*0.5); g=c.g*255*(0.65+e*0.42); b=c.b*255*(0.48+e*0.3);
+          if(e>1.1 && Math.abs(lat)>28){ r=snow.r*255; g=snow.g*255; b=snow.b*255; }
         } else {
           const e=Math.min(-landV,1)*0.5;
-          r=water.r*255*(0.55+e*0.3); g=water.g*255*(0.6+e*0.3); b=water.b*255*(0.75+e*0.3);
+          r=water.r*255*(0.4+e*0.3); g=water.g*255*(0.5+e*0.3); b=water.b*255*(0.85+e*0.25);
         }
       } else if(isMars){
         const h=marsFeatureHeight(lat,lon,seed);
@@ -5111,12 +5112,12 @@ function buildWebGLRichPlanetGroup(radius, seedVal, colorHex, hasAtmosphere, kin
   }
   group.add(mesh);
   if(hasAtmosphere){
-    const tint = isMars ? 0xc07040 : (isEarth ? 0x2244ff : 0x6688cc);
-    const atmoMul = isMars ? 1.06 : (isEarth ? 1.12 : 1.09);
+    const tint = isMars ? 0xc07040 : (isEarth ? 0x3366ff : 0x6688cc);
+    const atmoMul = isMars ? 1.06 : (isEarth ? 1.16 : 1.09);
     try{
       const dusty=_buildJotsDustyAtmoShell(radius, {
-        atmoMul, scatterMul: isEarth?2.8:isMars?1.4:1.8, tint,
-        fallbackOpacity: isMars?0.10:0.14, opacityScale:0.55
+        atmoMul, scatterMul: isEarth?3.4:isMars?1.4:1.8, tint,
+        fallbackOpacity: isMars?0.10:(isEarth?0.18:0.14), opacityScale: isEarth?0.72:0.55
       });
       group.add(dusty);
     }catch(e){
@@ -5227,7 +5228,8 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
       const u=dlon.mul(cr).sub(dlat.mul(sr)).div(crlon), v=dlon.mul(sr).add(dlat.mul(cr)).div(crlat);
       inside=inside.max(float(1).sub(u.mul(u).add(v.mul(v))));
     });
-    const coastNoise=mx_fractal_noise_float(dir.mul(18.0).add(vec3(11.3,4.7,8.1)),4,2.0,0.5).mul(0.45);
+    // Mild coast noise (match CPU earthLandMask) so low-LOD MC keeps silhouettes
+    const coastNoise=mx_fractal_noise_float(dir.mul(14.0).add(vec3(11.3,4.7,8.1)),3,2.0,0.5).mul(0.19);
     return inside.add(coastNoise);
   };
   const _marsFeatureTSL=(dir)=>{
@@ -5270,23 +5272,29 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
     const genericRelief=terrain.mul(0.9).sub(bowl.mul(0.6)).add(craterRim.mul(0.6)).add(plateau).add(peaks); // roughly -1..1
     let relief;
     if(kind==='earth'){
+      // Strong land/ocean step so continents read at low MC N (8–12 cells).
+      // Interior (land field) + ridged belts give Himalayas-ish altitude;
+      // same mask drives orbit tex + surface site bias (CPU earthElevation).
       const land=_earthLandMaskTSL(dir);
+      const land01=land.clamp(0.0,1.0);
       const ridgeE=float(1.0).sub(mx_fractal_noise_float(dir.mul(9.0).add(seedU),4,2.0,0.5).abs());
       const ridgeE2=float(1.0).sub(mx_fractal_noise_float(dir.mul(18.0).add(seedU).add(vec3(2,7,1)),3,2.0,0.5).abs());
-      // WATER_R sits at radius*1.008 (relief 0.667 on this 0.012 scale) —
-      // land baseline above water; mountains/peaks/plateaus for cliffs.
       const terraceE=mx_fractal_noise_float(dir.mul(3.2).add(seedU),3,2.0,0.5).mul(0.5).add(0.5);
-      const plateauE=terraceE.mul(4.0).floor().div(4.0).mul(0.35);
-      const landHeight=float(0.8).add(ridgeE.mul(ridgeE).mul(1.15)).add(ridgeE2.pow(3.0).mul(0.55)).add(plateauE);
-      const oceanHeight=float(-0.3).sub(land.negate().clamp(0.0,1.0).mul(0.4));
+      const plateauE=terraceE.mul(4.0).floor().div(4.0).mul(0.4);
+      // Named-ish orographic punch: high-freq ridge × interior strength
+      const orogen=ridgeE.mul(ridgeE).mul(1.35).add(ridgeE2.pow(3.0).mul(0.7)).mul(land01.add(0.15));
+      const landHeight=float(1.05).add(land01.mul(0.85)).add(orogen).add(plateauE.mul(land01));
+      const oceanHeight=float(-0.55).sub(land.negate().clamp(0.0,1.0).mul(0.55));
       relief=select(land.greaterThan(0.0),landHeight,oceanHeight);
     } else if(kind==='mars'){
       relief=_marsFeatureTSL(dir).add(plateau.mul(0.35)).add(peaks.mul(0.5));
     } else {
       relief=genericRelief;
     }
-    // ~1.2% of radius relief (readable cliffs/peaks at flight distance without piercing atmo)
-    return float(radius).add(relief.mul(radius*0.012));
+    // Earth gets slightly taller continent relief so low-LOD silhouettes read
+    // from orbit; other bodies keep the ~1.2% cliff/peak budget.
+    const reliefScale=(kind==='earth')?(radius*0.018):(radius*0.012);
+    return float(radius).add(relief.mul(reliefScale));
   });
 
   const densityFn=Fn(()=>{
@@ -5470,14 +5478,17 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
     // Rayleigh — Sol-wired sunDir + world planetCenter; budgeted VIEW/SUN samples;
     // surface-radius clamp (sandbox depth cue without full RT pre-pass).
     const atmoMat=new THREE.MeshBasicNodeMaterial({transparent:true,side:THREE.BackSide,depthWrite:false,depthTest:false,blending:THREE.AdditiveBlending});
-    const atmoMul = (kind==='earth') ? 1.20 : (kind==='mars') ? 1.06 : (kind==='venus') ? 1.16 : 1.10;
-    const scatterMul = (kind==='earth') ? 3.2 : (kind==='mars') ? 1.55 : (kind==='venus') ? 2.6 : 2.2;
+    // Earth: deepen Rayleigh toward sandbox (soft blue limb glow). No Sol corona.
+    const atmoMul = (kind==='earth') ? 1.18 : (kind==='mars') ? 1.06 : (kind==='venus') ? 1.16 : 1.10;
+    const scatterMul = (kind==='earth') ? 3.8 : (kind==='mars') ? 1.55 : (kind==='venus') ? 2.6 : 2.2;
     const scatterCoeffs=uniform(new THREE.Vector3(Math.pow(400/700,4),Math.pow(400/530,4),Math.pow(400/440,4)).multiplyScalar(scatterMul));
     const sunDirU=uniform(new THREE.Vector3(1,0.3,0.2).normalize());
     const planetCenterU=uniform(new THREE.Vector3(0,0,0));
     const ATMO_R=HALF*atmoMul;
     const _atmoSamp=(typeof _jotsAtmoSampleBudgets==='function')?_jotsAtmoSampleBudgets():{view:4,sun:3};
-    const VIEW_SAMPLES=_atmoSamp.view, SUN_SAMPLES=_atmoSamp.sun;
+    // Earth nudges toward sandbox 10/5 without exceeding preset budget+2
+    let VIEW_SAMPLES=_atmoSamp.view, SUN_SAMPLES=_atmoSamp.sun;
+    if(kind==='earth'){ VIEW_SAMPLES=Math.min(10, Math.max(VIEW_SAMPLES, VIEW_SAMPLES+2)); SUN_SAMPLES=Math.min(5, Math.max(SUN_SAMPLES, SUN_SAMPLES+1)); }
     const raySphere=Fn(([center,rad,ro,rd])=>{
       const offset=ro.sub(center);
       const b=offset.dot(rd).mul(2.0);
@@ -5536,7 +5547,8 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
     });
     const inS=atmoFn();
     atmoMat.colorNode=inS;
-    atmoMat.opacityNode=clamp(inS.r.add(inS.g).add(inS.b).mul(0.6),0.0,1.0);
+    const atmoOpScale=(kind==='earth')?0.85:0.6;
+    atmoMat.opacityNode=clamp(inS.r.add(inS.g).add(inS.b).mul(atmoOpScale),0.0,1.0);
     const atmoMesh=new THREE.Mesh(new THREE.SphereGeometry(ATMO_R,32,24),atmoMat);
     atmoMesh.name='JOTS_PlanetAtmo';
     atmoMesh.renderOrder=2;
@@ -10518,16 +10530,18 @@ function makePlanetTexture(type,baseHex,seed){
       let n=_fbm(u,v,seed,5);
       let r,g,b;
       if(type==='Habitable'){
-        // f1b8547 canvas continents; prefer earthLandMask (3adec86) when present
+        // Shared earthLandMask + earthElevation (orbital MC / land-pick / walk)
         const lon=(x/(S*2))*360-180, lat=90-(y/S)*180;
-        let landN=n>0.52;
+        let landN=n>0.52, elev=0;
         if(typeof earthLandMask==='function'){
-          landN=earthLandMask(lat,lon,seed)>0;
+          const lv=earthLandMask(lat,lon,seed);
+          landN=lv>0;
+          elev=(typeof earthElevation==='function')?earthElevation(lat,lon,seed):Math.max(0,lv);
         }
         const pole=Math.abs(y/S-0.5)>0.42;
         if(pole){r=235;g=240;b=250;}
-        else if(landN){const e=Math.max(0,(typeof earthLandMask==='function'?earthLandMask(lat,lon,seed):n-0.52))*3;r=60+e*90;g=110+e*70;b=50+e*30;}
-        else {r=20;g=50+n*60;b=110+n*90;}
+        else if(landN){const e=Math.min(1.4,Math.max(0,elev));r=55+e*95;g=105+e*75;b=45+e*35; if(e>1.1){r=220;g=228;b=240;}}
+        else {r=12;g=40+n*50;b=100+n*80;}
       } else if(type==='Gas Giant'||type==='Ice Giant'){
         // horizontal banding
         const band=Math.sin(v*9+ _fbm(u*0.5,v*4,seed,3)*4);
@@ -11897,7 +11911,9 @@ function makeOrbitGlobeTexture(body){
   const seed=(body.name?body.name.length*7:5)+3;
   const key=type+'|'+(body.name||'')+'|'+seed;
   if(_orbitTexCache[key])return _orbitTexCache[key];
-  const S=512;const cv=document.createElement('canvas');cv.width=S*2;cv.height=S;
+  const isEarth=body.name==='Earth', isMars=body.name==='Mars';
+  // Earth land-pick gets 768h for sharper continent edges; others stay 512.
+  const S=isEarth?768:512;const cv=document.createElement('canvas');cv.width=S*2;cv.height=S;
   const cx=cv.getContext('2d');
   const water=new THREE.Color(pal.water?0x0a3a6a:(pal.atmos?0x10303a:0x101418));
   const land =new THREE.Color(pal.ground||0x3a6a3a);
@@ -11908,7 +11924,6 @@ function makeOrbitGlobeTexture(body){
   // so the landing-selection map matches what you fly past instead of
   // showing an unrelated random fbm blob field. Everything else keeps
   // the generic procedural look, same as before.
-  const isEarth=body.name==='Earth', isMars=body.name==='Mars';
   const marsRock=new THREE.Color(0xb5623a), marsDark=new THREE.Color(0x7a3a24), marsIce=new THREE.Color(0xe8d8c8);
   // base shaded surface — landmasses vs water via fbm, polar caps
   for(let y=0;y<S;y++){
@@ -11916,11 +11931,22 @@ function makeOrbitGlobeTexture(body){
       const lon=(x/(S*2))*360-180, lat=90-(y/S)*180;
       let r,g,b;
       if(isEarth){
+        // Same earthLandMask + earthElevation as MC / surface — high contrast
+        // so Africa/Eurasia/Americas/Australia/Antarctica read on the land-pick map.
         const landV=earthLandMask(lat,lon,seed);
-        const pole=Math.abs(lat)>72;
-        if(pole){r=225;g=235;b=248;}
-        else if(landV>0){const e=Math.min(landV,1);r=land.r*255*(0.65+e*0.5);g=land.g*255*(0.65+e*0.5);b=land.b*255*(0.65+e*0.5);}
-        else{const e=Math.min(-landV,1)*0.5;r=water.r*255*(0.55+e*0.3);g=water.g*255*(0.6+e*0.3);b=water.b*255*(0.75+e*0.3);}
+        const elev=(typeof earthElevation==='function')?earthElevation(lat,lon,seed):Math.max(0,landV);
+        const pole=Math.abs(lat)>70;
+        if(pole){r=230;g=238;b=250;}
+        else if(landV>0){
+          const e=Math.min(1.4, Math.max(0,elev));
+          const mountain=e>0.85;
+          r=land.r*255*(0.55+e*0.55); g=land.g*255*(0.58+e*0.48); b=land.b*255*(0.42+e*0.35);
+          if(mountain){ r=Math.min(255,90+e*70); g=Math.min(255,85+e*55); b=Math.min(255,70+e*40); }
+          if(e>1.15 && Math.abs(lat)>28){ r=235; g=240; b=248; } // snowy high ridges
+        } else {
+          const e=Math.min(-landV,1);
+          r=water.r*255*(0.35+e*0.25); g=water.g*255*(0.45+e*0.3); b=water.b*255*(0.85+e*0.2);
+        }
       } else if(isMars){
         const h=marsFeatureHeight(lat,lon,seed);
         const t=(h+1200)/3400; // roughly normalize to 0..1 across the real range this function produces
@@ -11960,7 +11986,7 @@ function makeOrbitGlobeTexture(body){
         rn=_fbm((x+1)/(S*2)*6,v,seed,5)>0.5;
         dn=_fbm(u,(y+1)/S*3,seed,5)>0.5;
       }
-      if(c!==rn||c!==dn){cx.fillStyle='rgba(120,240,255,0.5)';cx.fillRect(x,y,1,1);}
+      if(c!==rn||c!==dn){cx.fillStyle=isEarth?'rgba(140,250,255,0.85)':'rgba(120,240,255,0.5)';cx.fillRect(x,y,isEarth?1.5:1,isEarth?1.5:1);}
     }
   }
   cx.shadowBlur=0;
@@ -12326,23 +12352,14 @@ function atmoBuildTerrain(pal,ox,oz){
   const g=(_atmoBody&&_atmoBody.gravity!==undefined)?_atmoBody.gravity:0.6;
   const curveR=THREE.MathUtils.lerp(1400,9000,Math.min(1,Math.max(0,g))/1.2);
   const siteLandBias=(()=>{
-    // Real Earth geography at the actual landing site, not just generic
-    // noise — earthLandMask/marsFeatureHeight are the same data driving
-    // the orbital-approach view and the landing-selection globe (see
-    // buildProceduralPlanetMesh/makeOrbitGlobeTexture). Without this, a
-    // site picked over open ocean on the approach globe could still
-    // generate dry mountains down here, since this local patch's own
-    // noise has no idea it's supposed to be water. Only applies when we
-    // actually know the site's lat/lon; otherwise generation is
-    // unchanged from before.
+    // Same earthLandMask/earthElevation as orbital MC + walk surface.
     if(!_atmoSite || typeof _atmoSite.lat!=='number' || typeof _atmoSite.lon!=='number') return 0;
-    if(_atmoBody && _atmoBody.name==='Earth'){
-      const land=earthLandMask(_atmoSite.lat,_atmoSite.lon,seed);
-      // land>0 → comfortably above the existing waterline (~5); land<0 → pulled well below it.
-      return land>0 ? THREE.MathUtils.clamp(land,0,1)*20 : THREE.MathUtils.clamp(land,-1,0)*60;
+    if(_atmoBody && _atmoBody.name==='Earth' && typeof earthSiteHeightBias==='function'){
+      return earthSiteHeightBias(_atmoSite.lat,_atmoSite.lon,seed,0,0);
     }
     return 0;
   })();
+  const _atmoEarthGeo=(_atmoBody && _atmoBody.name==='Earth' && _atmoSite && typeof _atmoSite.lat==='number');
   function H(x,z){
     let h=_fbm(x*0.012+100,z*0.012+100,seed,5)*22;
     h+=_fbm(x*0.04,z*0.04,seed+3,3)*5;
@@ -12367,6 +12384,10 @@ function atmoBuildTerrain(pal,ox,oz){
     if(riverRidge>0.97)h-=Math.pow((riverRidge-0.97)/0.03,1.2)*22;
     const d2=x*x+z*z;
     h-=d2/(2*curveR);
+    if(_atmoEarthGeo && typeof earthSiteHeightBias==='function'){
+      const geo=earthSiteHeightBias(_atmoSite.lat,_atmoSite.lon,seed,x,z,0.008);
+      return h*0.55 + geo;
+    }
     return h+siteLandBias;
   }
   _atmoHeight=H;
@@ -15191,42 +15212,103 @@ function marchingCubesMesh(densityFn,origin,size,resolution,isoLevel){
 // overlapping ones get meaningfully closer to a recognizable silhouette
 // without needing real coastline vector data). Rough, not authoritative —
 // good enough to be identifiable at a glance, which is the stated goal.
+// Overlapping procedural ellipses — look-ref only from Sketchfab Earth by
+// Akshat (continent silhouettes / elevation / atmo feel). NOT GeoJSON; NOT
+// the shipped mesh. Tuned so Africa, Eurasia, Americas, Australia, Antarctica
+// read at low-LOD MC + land-pick orbit texture.
 const EARTH_CONTINENTS=[
-  // Africa — one broad ellipse for the bulk, one narrower one tapering south
-  {lat:8,lon:20,rlat:24,rlon:22,rot:0},
-  {lat:-15,lon:24,rlat:16,rlon:12,rot:0.15},
-  // Eurasia — Europe+Asia as one connected landmass, several overlapping blobs
-  {lat:50,lon:35,rlat:20,rlon:25,rot:-0.1},   // Europe/western Russia
-  {lat:55,lon:95,rlat:18,rlon:38,rot:0},      // Siberia
-  {lat:28,lon:80,rlat:16,rlon:28,rot:0},      // India/SE Asia/China
-  {lat:30,lon:46,rlat:18,rlon:17,rot:0},      // Middle East bridge to Africa's shape
-  // North America
-  {lat:48,lon:-100,rlat:20,rlon:24,rot:0.05},
-  {lat:16,lon:-92,rlat:8,rlon:8,rot:0},        // Mexico/Central America taper
-  // South America — narrows south, needs 2 blobs of different size
-  {lat:-8,lon:-58,rlat:18,rlon:14,rot:-0.05},
-  {lat:-38,lon:-68,rlat:16,rlon:8,rot:0.1},
-  // Australia
-  {lat:-25,lon:134,rlat:13,rlon:18,rot:0},
-  // Antarctica — polar cap, simple wide band
-  {lat:-80,lon:0,rlat:14,rlon:180,rot:0},
+  // Africa — Sahara bulk, west bulge, Horn, southern taper, Madagascar
+  {lat:12,lon:18,rlat:22,rlon:20,rot:0},
+  {lat:8,lon:0,rlat:12,rlon:14,rot:0.05},
+  {lat:6,lon:42,rlat:10,rlon:12,rot:-0.2},
+  {lat:-12,lon:24,rlat:18,rlon:14,rot:0.12},
+  {lat:-28,lon:24,rlat:12,rlon:10,rot:0.05},
+  {lat:-19,lon:47,rlat:7,rlon:4,rot:0.3},
+  // Europe — Iberia, UK, Scandinavia, main Europe
+  {lat:48,lon:15,rlat:14,rlon:18,rot:-0.08},
+  {lat:41,lon:-4,rlat:7,rlon:8,rot:0.15},
+  {lat:54,lon:-2,rlat:6,rlon:5,rot:0},
+  {lat:64,lon:18,rlat:10,rlon:12,rot:0.1},
+  // Asia — Middle East bridge, India, China/SE, Siberia, Japan, Arabia
+  {lat:30,lon:48,rlat:14,rlon:16,rot:0},
+  {lat:22,lon:78,rlat:14,rlon:12,rot:0.1},
+  {lat:32,lon:105,rlat:16,rlon:22,rot:-0.05},
+  {lat:55,lon:90,rlat:16,rlon:42,rot:0},
+  {lat:62,lon:140,rlat:10,rlon:22,rot:0.05},
+  {lat:36,lon:138,rlat:6,rlon:8,rot:0.35},
+  {lat:5,lon:115,rlat:8,rlon:16,rot:0},
+  // North America — Canada/US, Alaska, Greenland, Mexico/Central
+  {lat:48,lon:-100,rlat:18,rlon:28,rot:0.04},
+  {lat:62,lon:-140,rlat:10,rlon:18,rot:0.2},
+  {lat:72,lon:-40,rlat:12,rlon:18,rot:-0.15},
+  {lat:24,lon:-102,rlat:10,rlon:12,rot:0},
+  {lat:12,lon:-86,rlat:8,rlon:6,rot:0.1},
+  // South America — Amazon bulk + southern cone / Andes strip
+  {lat:-5,lon:-58,rlat:16,rlon:16,rot:-0.05},
+  {lat:-22,lon:-60,rlat:14,rlon:10,rot:0.05},
+  {lat:-40,lon:-68,rlat:14,rlon:7,rot:0.12},
+  {lat:-52,lon:-70,rlat:8,rlon:5,rot:0.05},
+  // Australia + NZ hint
+  {lat:-25,lon:134,rlat:12,rlon:16,rot:0.05},
+  {lat:-42,lon:172,rlat:6,rlon:5,rot:0.4},
+  // Antarctica — wide polar band
+  {lat:-82,lon:0,rlat:12,rlon:180,rot:0},
 ];
 function _latLonOf(x,y,z,R){
   return {lat:Math.asin(THREE.MathUtils.clamp(y/R,-1,1))*180/Math.PI, lon:Math.atan2(z,x)*180/Math.PI};
 }
+/** Signed land field: >0 land (higher = more interior), <0 ocean. Shared by
+ *  orbital MC density (TSL port), land-pick/orbit texture, flight canvas, and
+ *  surface/atmo site height so continents match across LODs. */
 function earthLandMask(lat,lon,seed){
   let inside=-1e9;
   for(const c of EARTH_CONTINENTS){
-    const dlon=((lon-c.lon+540)%360)-180; // shortest signed angular distance, handles the ±180 wrap
+    const dlon=((lon-c.lon+540)%360)-180;
     const dlat=lat-c.lat;
     const cr=Math.cos(c.rot),sr=Math.sin(c.rot);
     const u=(dlon*cr-dlat*sr)/c.rlon, v=(dlon*sr+dlat*cr)/c.rlat;
-    inside=Math.max(inside,1-(u*u+v*v)); // >0 inside the ellipse, distance-like falloff
+    inside=Math.max(inside,1-(u*u+v*v));
   }
-  // coastline irregularity — without this every continent reads as a
-  // smooth clipart blob instead of a natural, jagged coastline
-  const coastNoise=(_fbm(lon*0.08+seed,lat*0.08+seed,seed+11,4)-0.5)*0.9;
+  // Mild coastline irregularity — keep amplitude low so low-LOD MC still
+  // reads continent silhouettes (was ±0.45 and washed thin peninsulas).
+  const coastNoise=(_fbm(lon*0.07+seed,lat*0.07+seed,seed+11,3)-0.5)*0.38;
   return inside+coastNoise;
+}
+/** Elevation  roughly -0.3..1.6 from the SAME land mask + named ridge belts
+ *  (Himalayas / Andes / Rockies / Alps-ish). Used by orbit shading + surface
+ *  walk contour near the landing site. */
+function earthElevation(lat,lon,seed){
+  const land=earthLandMask(lat,lon,seed);
+  if(land<=0) return THREE.MathUtils.clamp(land,-1,0)*0.35;
+  let elev=Math.min(1.15, Math.max(0,land))*0.65;
+  // Distance-to-coast proxy: stronger interior → plateau/hill base
+  elev+=Math.min(0.55, Math.max(0,land-0.15))*0.5;
+  const ridge=(clat,clon,wlat,wlon,amp)=>{
+    const dlon=((lon-clon+540)%360)-180;
+    const dlat=lat-clat;
+    const t=1-(dlat*dlat)/(wlat*wlat)-(dlon*dlon)/(wlon*wlon);
+    if(t<=0) return 0;
+    return Math.pow(t,1.4)*amp;
+  };
+  elev+=ridge(28,86,7,22,0.95);   // Himalayas / Tibetan plateau
+  elev+=ridge(-25,-70,28,5,0.75); // Andes
+  elev+=ridge(42,-112,10,14,0.55); // Rockies
+  elev+=ridge(46,10,5,10,0.35);   // Alps
+  elev+=ridge(-3,36,8,6,0.4);     // East African rift highlands
+  // Fine ridged noise only on land so coasts stay readable
+  const rn=1-Math.abs(_fbm(lon*0.09+seed,lat*0.09+seed,seed+41,3)*2-1);
+  elev+=Math.pow(rn,2)*0.28*Math.min(1,land+0.2);
+  return elev;
+}
+/** Local surface height bias near a lat/lon site — same mask drives walk. */
+function earthSiteHeightBias(lat,lon,seed,x,z,metersPerDeg){
+  const mpd=(typeof metersPerDeg==='number'&&metersPerDeg>0)?metersPerDeg:0.012;
+  const lat2=lat-(z||0)*mpd;
+  const lon2=lon+(x||0)*mpd;
+  const land=earthLandMask(lat2,lon2,seed);
+  const elev=earthElevation(lat2,lon2,seed);
+  if(land>0) return THREE.MathUtils.clamp(land,0,1)*28 + Math.max(0,elev)*42;
+  return THREE.MathUtils.clamp(land,-1,0)*75 + elev*20;
 }
 // Mars — real, specifically named, highly recognizable features rather
 // than a generic mask: Olympus Mons (the largest known volcano, ~18.5°N
@@ -15282,16 +15364,15 @@ function buildMarchingCubesAsteroid(radius,seed,resolution){
 async function buildSurfaceTerrain(pal){
   const seed=(_surfBody?_surfBody.name.length:5)*13+1;
   const siteLandBias=(()=>{
-    // Same real-geography site bias as atmoBuildTerrain, using the same
-    // earthLandMask data — keeps flying over a spot and walking on that
-    // same spot consistent with each other (and with the orbital view).
+    // Same earthLandMask/earthElevation as orbital MC + land-pick — walking
+    // at a landed site matches the continent you picked from orbit.
     if(!_surfSite || typeof _surfSite.lat!=='number' || typeof _surfSite.lon!=='number') return 0;
-    if(_surfBody && _surfBody.name==='Earth'){
-      const land=earthLandMask(_surfSite.lat,_surfSite.lon,seed);
-      return land>0 ? THREE.MathUtils.clamp(land,0,1)*20 : THREE.MathUtils.clamp(land,-1,0)*60;
+    if(_surfBody && _surfBody.name==='Earth' && typeof earthSiteHeightBias==='function'){
+      return earthSiteHeightBias(_surfSite.lat,_surfSite.lon,seed,0,0);
     }
     return 0;
   })();
+  const _surfEarthGeo=(_surfBody && _surfBody.name==='Earth' && _surfSite && typeof _surfSite.lat==='number');
   // height function (kept from the original, drives collision + tiles).
   // Curvature falloff lives HERE (not duplicated in buildTerrainTile) so
   // collision and the visual mesh can never disagree about ground height —
@@ -15355,14 +15436,14 @@ async function buildSurfaceTerrain(pal){
       const riverDepth=(riverRidge-0.97)/0.03; // tightened for the same reason as the canyon threshold above (~9% coverage at this value instead of ~58%)
       h-=Math.pow(riverDepth,1.2)*22;
     }
-    // No large-scale curvature falloff — the last working build (before
-    // yesterday's enhancement pass) was a flat patch with local noise
-    // deformation only, not a stylized spherical curve. The curveR falloff
-    // that used to live here was part of what changed when continuous
-    // generation was added; removed to match what was actually asked for
-    // and actually didn't freeze. Local hills/dips from the noise above
-    // stay — 'flat' means no planet-scale curve, not literally billiard-
-    // ball smooth.
+    // No large-scale curvature falloff — local hills only. Earth samples
+    // the SAME land/elevation field around the landing lat/lon so walk
+    // contour (altitude+slope) matches orbital continents near the site.
+    if(_surfEarthGeo && typeof earthSiteHeightBias==='function'){
+      const geo=earthSiteHeightBias(_surfSite.lat,_surfSite.lon,seed,x,z,0.01);
+      // Blend: keep local noise character, let mask drive macro altitude
+      return h*0.55 + geo;
+    }
     return h+siteLandBias;
   }
   // Restored: ec5ae55 accidentally dropped this assignment. Without it,
