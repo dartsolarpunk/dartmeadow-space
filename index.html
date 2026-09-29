@@ -9030,9 +9030,9 @@ function drawGalaxyMinimap(ctx,W,H,cx,cy){
         const h=_mmHash(arm*1000+t*10000+s*17.3);
         const aa=ang+(h-0.5)*spread*2;
         const rr=r+(h-0.5)*R*0.012;
-        const a=0.55-t*0.28+h*0.15;
-        ctx.fillStyle='rgba(110,200,255,'+a.toFixed(3)+')';
-        ctx.fillRect(cx+Math.cos(aa)*rr, cy+Math.sin(aa)*rr, 1.2, 1.2);
+        const a=0.72-t*0.30+h*0.18;
+        ctx.fillStyle='rgba(120,210,255,'+a.toFixed(3)+')';
+        ctx.fillRect(cx+Math.cos(aa)*rr, cy+Math.sin(aa)*rr, 1.45, 1.45);
       }
     }
   }
@@ -9808,11 +9808,11 @@ function buildNamedGalaxyInto(group,g,fid,densMul){
       c[i*3]=col[i*3]; c[i*3+1]=col[i*3+1]; c[i*3+2]=col[i*3+2];
     }
     try{geo.dispose();}catch(e){}
-    // Near LOD (densMul>1.5) → lit low-poly sphere instances when budget allows
-    const wantInst=densMul>1.5 && n<=12000 && typeof _buildGalaxyDustDraw==='function';
-    if(wantInst){
-      const instR=Math.max(4, g.r*0.012);
-      const dust=_buildGalaxyDustDraw(p,c,{lit:true, instanceRadius:instR, opacity:0.9});
+    // Prefer InstancedMesh (Safari-safe); denser near LOD uses slightly larger radii
+    if(typeof _buildGalaxyDustDraw==='function' && n<=20000){
+      const safariOrMobile=!!(GFX&&(GFX.isMobile||GFX.isSafari||GFX.isIOS));
+      const instR=Math.max(safariOrMobile?3.5:4, g.r*(densMul>1.5?0.018:0.012));
+      const dust=_buildGalaxyDustDraw(p,c,{lit:!safariOrMobile&&densMul>1.5, instanceRadius:instR, opacity:0.92});
       if(dust){group.add(dust);return;}
     }
     addPoints(group,p,c,null,1.6,true);
@@ -9842,6 +9842,22 @@ function buildNamedGalaxyInto(group,g,fid,densMul){
 }
 function gaussian(){let u=0,v=0;while(u===0)u=Math.random();while(v===0)v=Math.random();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);}
 function addPoints(group,pos,col,siz,size,attenuate){
+  // Safari/iOS/mobile: GL_POINTS → empty MAP/QT void. Prefer InstancedMesh dust.
+  const safariOrMobile=!!(GFX&&(GFX.isMobile||GFX.isSafari||GFX.isIOS));
+  if(safariOrMobile && typeof _buildGalaxyDustDraw==='function'){
+    const n=((pos&&pos.length)?pos.length:0)/3|0;
+    if(n>0){
+      let colors=col;
+      if(!colors){
+        colors=new Float32Array(n*3);
+        for(let i=0;i<n;i++){colors[i*3]=0.60;colors[i*3+1]=0.68;colors[i*3+2]=0.90;}
+      }
+      // Map discR~1000 — radii must read when QT camera is thousands of units out.
+      const rad=Math.max(2.4, (size||1.5)*3.2*(attenuate?1.0:1.35));
+      const dust=_buildGalaxyDustDraw(pos,colors,{instanceRadius:rad, opacity:0.92});
+      if(dust){group.add(dust);return dust;}
+    }
+  }
   const g=new THREE.BufferGeometry();
   g.setAttribute('position',new THREE.BufferAttribute(pos,3));
   if(col)g.setAttribute('color',new THREE.BufferAttribute(col,3));
@@ -10322,7 +10338,7 @@ function applySettings(){
   STATE.settings.textures=$('set-textures')?$('set-textures').checked:true;
   STATE.settings.galaxyband=$('set-galaxyband')?$('set-galaxyband').checked:true;
   STATE.settings.particles=$('set-particles').value;STATE.settings.fov=parseInt($('set-fov').value);STATE.settings.dartSpeed=parseInt($('set-dart-speed').value);
-  if(flightCamera){flightCamera.far=Math.max(STATE.settings.fov, AU_UNITS*72, 50000);flightCamera.updateProjectionMatrix();}
+  if(flightCamera){flightCamera.far=Math.max(STATE.settings.fov, AU_UNITS*72, STATE.settings.galaxyband?200000:50000);flightCamera.updateProjectionMatrix();}
   // ── Graphics quality / lighting effects ──
   let needsRebuild=false;
   if($('set-quality')){const q=$('set-quality').value;if(GFX.preset!==q){GFX.preset=q;if(q!=='custom')applyPreset(q);needsRebuild=true;}}
@@ -10657,9 +10673,8 @@ function buildFlightGalaxyBand(){
   if(flightGalaxyNeighbourhood){_disposeObject3D(flightGalaxyNeighbourhood);flightScene.remove(flightGalaxyNeighbourhood);flightGalaxyNeighbourhood=null;}
   flightNebulae.forEach(n=>{_disposeObject3D(n);flightScene.remove(n);});flightNebulae=[];
   if(!STATE.settings.galaxyband)return;
-  // HARD-OFF until Safari+Chrome device proof: GPU builder now draws InstancedMesh
-  // billboard quads (not SpriteNodeMaterial). Keep CPU Points as the live default.
-  // Flip ENABLE_FLIGHT_GALAXY_BAND_GPU after proof; Low/fake always stay CPU.
+  // HARD-OFF: GPU builder stays off. CPU path is Safari-safe InstancedMesh (not GL_POINTS).
+  // Flip ENABLE_FLIGHT_GALAXY_BAND_GPU only after separate device proof.
   const ENABLE_FLIGHT_GALAXY_BAND_GPU=false;
   const useGpu=ENABLE_FLIGHT_GALAXY_BAND_GPU && _isRealWebGPU(flightRenderer) && GFX.preset!=='low';
   if(useGpu){
@@ -10807,11 +10822,11 @@ async function buildFlightGalaxyBandGPU(){
 }
 
 function buildFlightGalaxyBandCPU(){
-  // Justin HARD NAY — STRIP-THEN-REBUILD: ONE clean electric-blue spiral Points path.
-  // No InstancedMesh+Points plate double-draw. Local Orion sheath = thin BLUE (not warm orange).
-  // Refs: jots-galaxy-refs/ref-blue-galaxy-sol-dot.jpg + blender-galaxy IMPLEMENTATION_BRIEF.
+  // Justin HARD NAY — Safari-safe InstancedMesh spiral (GL_POINTS invisible on iOS/Android).
+  // Near/med instances + GAL LOD plate (larger radii) so spiral fills frame at camDist 14k–25k.
+  // Local Orion sheath = thin BLUE InstancedMesh. ENABLE_FLIGHT_GALAXY_BAND_GPU stays false.
+  // Refs: jots-galaxy-refs/TARGET-blue-spiral-sol-arm-dot.jpg + blender-galaxy IMPLEMENTATION_BRIEF.
   // Credit: Kavan / Kavang (kavan010) — kavang.com/atom / kavan010/Atoms / youtu.be/8-B6ryuBkCM
-  // GPU flag ENABLE_FLIGHT_GALAXY_BAND_GPU stays false.
 
   const particles=STATE.settings.particles||'med';
   const mobile=!!(GFX&&GFX.isMobile);
@@ -10925,16 +10940,49 @@ function buildFlightGalaxyBandCPU(){
     placed++;
   }
 
-  const tex=makeCircleTex(16,'rgb(255,255,255)',1);
   const galGroup=new THREE.Group();
-  const armPx=mobile?(gfxLow?6.5:8.5):(gfxLow?8.0:11.0);
-  // SINGLE draw path — Points only (Low→High). No InstancedMesh+Points double-draw.
+  // Near/med InstancedMesh — world-scale radii that read at GAL altitude (camDist 14k–25k).
+  const nearRad=mobile?(gfxLow?90:120):(gfxLow?100:140);
   flightGalaxyBand=_buildGalaxyDustDraw(pts,cols,{
-    forcePoints:true, pointSize:armPx, sizeAttenuation:false, opacity:0.96
+    instanceRadius:nearRad, opacity:0.96
   });
-  if(flightGalaxyBand)galGroup.add(flightGalaxyBand);
+  if(flightGalaxyBand){flightGalaxyBand.name='JOTS_GalaxyBandNear';galGroup.add(flightGalaxyBand);}
 
-  // Thin accretion ring cue (blue-white inner)
+  // GAL LOD plate — subsample brightest arm+core as LARGER instances so spiral fills frame.
+  try{
+    const galCap=mobile?(gfxLow?3000:6500):(gfxLow?8000:14000);
+    const totalN=(pts.length/3)|0;
+    // Keep top-K by luminance without full n·log n when n>>cap (mobile build cost).
+    const scored=[];
+    const stride=totalN>galCap*4?Math.max(1, (totalN/ (galCap*3))|0 ):1;
+    for(let i=0;i<totalN;i+=stride){
+      const lum=(cols[i*3]||0)*0.30+(cols[i*3+1]||0)*0.59+(cols[i*3+2]||0)*0.11;
+      scored.push([lum,i]);
+    }
+    scored.sort((a,b)=>b[0]-a[0]);
+    const take=Math.min(galCap, scored.length);
+    const idx=scored; // idx[k][1] = point index
+    const gp=new Float32Array(take*3), gc=new Float32Array(take*3), gs=new Float32Array(take);
+    const galRadBase=mobile?(gfxLow?220:320):(gfxLow?280:400);
+    for(let k=0;k<take;k++){
+      const i=idx[k][1];
+      gp[k*3]=pts[i*3]; gp[k*3+1]=pts[i*3+1]; gp[k*3+2]=pts[i*3+2];
+      // boost electric blue for plate readability
+      const cr=Math.min(1,(cols[i*3]||0)*1.05+0.04);
+      const cg=Math.min(1,(cols[i*3+1]||0)*1.08+0.02);
+      const cb=Math.min(1,(cols[i*3+2]||0)*1.10);
+      gc[k*3]=cr; gc[k*3+1]=cg; gc[k*3+2]=cb;
+      const lum=cr*0.30+cg*0.59+cb*0.11;
+      // radius scale 200–450 relative to galRadBase (~1.0 at mid)
+      gs[k]=0.70+Math.min(1.15, lum*1.1); // ~0.7–1.85 × base → ~150–450
+    }
+    const galPlate=_buildGalaxyDustDraw(gp,gc,{
+      instanceRadius:galRadBase, instanceScales:gs, opacity:0.98
+    });
+    if(galPlate){galPlate.name='JOTS_GalaxyGalPlate';galGroup.add(galPlate);}
+  }catch(e){console.warn('gal plate:',e);}
+
+  // Thin accretion ring cue (blue-white inner) — InstancedMesh
   try{
     const dn=Math.round(Math.min(2200, coreBudget*0.14));
     const dp=[],dc=[];
@@ -10947,7 +10995,7 @@ function buildFlightGalaxyBandCPU(){
       dc.push(lerp(0.55,0.95,warm)*b, lerp(0.78,0.98,warm)*b, lerp(1.0,0.85,warm)*b);
     }
     const ringDraw=_buildGalaxyDustDraw(dp,dc,{
-      forcePoints:true, pointSize:mobile?3.8:5.0, sizeAttenuation:false, opacity:0.90
+      instanceRadius:mobile?(gfxLow?70:95):(gfxLow?85:110), opacity:0.90
     });
     if(ringDraw)galGroup.add(ringDraw);
   }catch(e){}
@@ -10957,11 +11005,19 @@ function buildFlightGalaxyBandCPU(){
   flightGalaxyCore=galGroup;
   flightScene.add(galGroup);
 
+  // Far plane must cover outer disc at GAL altitude (mobile low fov/far 50000 clips).
+  try{
+    if(flightCamera){
+      flightCamera.far=Math.max(flightCamera.far|0, 200000, STATE.settings&&STATE.settings.fov|0, (typeof AU_UNITS==='number'?AU_UNITS*72:0));
+      flightCamera.updateProjectionMatrix();
+    }
+  }catch(e){}
+
   // Full-disc arm-dot field (systems as yellow/white crest markers across MW)
   try{ generateGalacticArmDots(galGroup, SPIRAL_PHASE_LOCK, RG, particles, mobile, gfxLow); }catch(e){console.warn('arm dots:',e);}
 
-  // Local Orion sheath — THINNER BLUE matching arm colors (not warm orange flat band).
-  // Faded/hidden at GAL_SOL_SPECK_DIST by updateSolGalLod.
+  // Local Orion sheath — THINNER BLUE InstancedMesh (not Points; not warm orange).
+  // Faded/hidden at GAL_SOL_SPECK_DIST by updateSolGalLod — main disc plate carries far view.
   try{
     if(window._flightLocalArm){
       _disposeObject3D(window._flightLocalArm);
@@ -10971,15 +11027,15 @@ function buildFlightGalaxyBandCPU(){
     const local=new THREE.Group();
     local.rotation.copy(galGroup.rotation);
     const locN=(particles==='low'||gfxLow)
-      ?(mobile?6000:9000)
+      ?(mobile?4000:7000)
       :(particles==='high'||particles==='ultra')
-        ?(mobile?12000:16000)
-        :(mobile?9000:12000);
+        ?(mobile?9000:12000)
+        :(mobile?6500:9000);
     const lp=new Float32Array(locN*3),lc=new Float32Array(locN*3);
     for(let i=0;i<locN;i++){
       const along=(Math.random()-0.5)*5200;
-      const across=(Math.random()-0.5)*Math.random()*720; // thinner across
-      const thick=(Math.random()-0.5)*Math.random()*180;  // thinner
+      const across=(Math.random()-0.5)*Math.random()*720;
+      const thick=(Math.random()-0.5)*Math.random()*180;
       const coreBias=Math.random()*Math.random()*4200;
       lp[i*3]=along-coreBias*0.55;
       lp[i*3+1]=thick;
@@ -10987,17 +11043,11 @@ function buildFlightGalaxyBandCPU(){
       const t=Math.min(1,Math.hypot(lp[i*3],lp[i*3+2])/5200);
       const towardCore=Math.max(0, -lp[i*3]/5200);
       const b=(0.88+Math.random()*0.35)*(1-t*0.16)*(0.90+towardCore*0.45);
-      // Electric blue sheath — matches MENU_SPIRAL armRgb
       lc[i*3]=0.48*b;lc[i*3+1]=0.86*b;lc[i*3+2]=1.0*b;
     }
-    const lg=new THREE.BufferGeometry();
-    lg.setAttribute('position',new THREE.BufferAttribute(lp,3));
-    lg.setAttribute('color',new THREE.BufferAttribute(lc,3));
-    const locSize=mobile?(gfxLow?70:85):(gfxLow?65:80);
-    local.add(new THREE.Points(lg,new THREE.PointsMaterial({
-      size:locSize,sizeAttenuation:true,vertexColors:true,map:tex,
-      transparent:true,opacity:0.72,depthWrite:false,blending:THREE.AdditiveBlending,alphaTest:0.02
-    })));
+    const locRad=mobile?(gfxLow?55:70):(gfxLow?60:75);
+    const locDraw=_buildGalaxyDustDraw(lp,lc,{instanceRadius:locRad, opacity:0.72});
+    if(locDraw)local.add(locDraw);
     flightScene.add(local);
     window._flightLocalArm=local;
   }catch(e){console.warn('local arm:',e);}
@@ -11055,8 +11105,7 @@ function buildFlightGalaxyNeighbourhood(){
         const draw=_buildGalaxyDustDraw(
           geo.attributes.position.array,
           geo.attributes.color.array,
-          {forcePoints:true, pointSize:mobile?(gfxLow?140:180):(gfxLow?160:220),
-           sizeAttenuation:true, opacity:0.94}
+          {instanceRadius:Math.max(40, localRG*0.045*(mobile?0.9:1.1)), opacity:0.94}
         );
         try{geo.dispose();}catch(e){}
         if(draw)local.add(draw);
@@ -11081,8 +11130,7 @@ function buildFlightGalaxyNeighbourhood(){
             else{sc[si*3]=0.95*b;sc[si*3+1]=0.97*b;sc[si*3+2]=1.0*b;}
           }
           const sysDots=_buildGalaxyDustDraw(sp,sc,{
-            forcePoints:true, pointSize:mobile?(gfxLow?160:200):(gfxLow?180:240),
-            sizeAttenuation:true, opacity:0.98
+            instanceRadius:Math.max(50, localRG*0.055), opacity:0.98
           });
           if(sysDots){sysDots.name='JOTS_NeighSysDots';local.add(sysDots);}
         }catch(e){}
@@ -11103,8 +11151,7 @@ function buildFlightGalaxyNeighbourhood(){
           cc[i*3]=0.95*b;cc[i*3+1]=0.97*b;cc[i*3+2]=1.0*b;
         }
         const core=_buildGalaxyDustDraw(cp,cc,{
-          forcePoints:true, pointSize:mobile?(gfxLow?180:240):(gfxLow?220:300),
-          sizeAttenuation:true, opacity:0.97
+          instanceRadius:Math.max(55, localRG*0.07), opacity:0.97
         });
         if(core)local.add(core);
       }catch(e){}
@@ -11263,15 +11310,23 @@ function sampleSpiralArmCrest(rand, opts){
   const py=(rand()-0.5)*2*(700*(1-t*0.5));
   return {x:px,y:py,z:pz,r,arm};
 }
-// Build galaxy dust draw: InstancedMesh low-poly spheres (Med+) or Points (Low/mobile).
+// Build galaxy dust draw: InstancedMesh (Safari/iOS/mobile-safe) or Points (desktop Low).
+// iOS Safari / mobile WebGPU clamps GL_POINTS → invisible black void at GAL altitude.
+// forcePoints must NOT override Safari/mobile unless opts.allowPoints===true (tiny markers).
 function _buildGalaxyDustDraw(positions, colors, opts){
   opts=opts||{};
   const n=(positions.length/3)|0;
   if(n<=0)return null;
   const mobile=!!(GFX&&GFX.isMobile);
   const gfxLow=!!(GFX&&GFX.preset==='low');
-  const forcePts=!!opts.forcePoints || mobile || gfxLow || (STATE&&STATE.settings&&STATE.settings.particles==='low');
-  if(forcePts){
+  const safariOrMobile=!!(GFX&&(GFX.isMobile||GFX.isSafari||GFX.isIOS));
+  let usePoints;
+  if(safariOrMobile){
+    usePoints = opts.allowPoints===true;
+  }else{
+    usePoints = !!opts.forcePoints || gfxLow || (STATE&&STATE.settings&&STATE.settings.particles==='low');
+  }
+  if(usePoints){
     const g=new THREE.BufferGeometry();
     g.setAttribute('position',new THREE.BufferAttribute(
       positions instanceof Float32Array?positions:new Float32Array(positions),3));
@@ -11287,9 +11342,13 @@ function _buildGalaxyDustDraw(positions, colors, opts){
     });
     const pts=new THREE.Points(g,mat);pts.frustumCulled=false;return pts;
   }
-  const rad=opts.instanceRadius!=null?opts.instanceRadius:70;
-  const geo=new THREE.IcosahedronGeometry(rad,0);
-  const useLit=!!opts.lit && !(GFX&&GFX.preset==='low');
+  const rad=opts.instanceRadius!=null?opts.instanceRadius:(safariOrMobile?110:90);
+  // Icosahedron OR camera-facing PlaneGeometry billboards (MeshBasic + vertexColors).
+  const useBillboard=!!opts.billboard;
+  const geo=useBillboard
+    ? new THREE.PlaneGeometry(rad*2,rad*2)
+    : new THREE.IcosahedronGeometry(rad,0);
+  const useLit=!!opts.lit && !(GFX&&GFX.preset==='low') && !useBillboard;
   let mat;
   if(useLit&&THREE.MeshLambertMaterial){
     mat=new THREE.MeshLambertMaterial({
@@ -11301,7 +11360,8 @@ function _buildGalaxyDustDraw(positions, colors, opts){
     mat=new THREE.MeshBasicMaterial({
       color:0xffffff, transparent:true,
       opacity:opts.opacity!=null?opts.opacity:0.92,
-      depthWrite:false, blending:THREE.AdditiveBlending
+      depthWrite:false, blending:THREE.AdditiveBlending,
+      side:useBillboard?THREE.DoubleSide:THREE.FrontSide
     });
   }
   const mesh=new THREE.InstancedMesh(geo,mat,n);
@@ -11310,11 +11370,16 @@ function _buildGalaxyDustDraw(positions, colors, opts){
   const col=new THREE.Color();
   const posArr=positions instanceof Float32Array?positions:null;
   const colArr=colors instanceof Float32Array?colors:null;
+  const scales=opts.instanceScales||null; // optional per-instance scalar (relative to rad)
   for(let i=0;i<n;i++){
     const x=posArr?posArr[i*3]:positions[i*3];
     const y=posArr?posArr[i*3+1]:positions[i*3+1];
     const z=posArr?posArr[i*3+2]:positions[i*3+2];
     m4.makeTranslation(x,y,z);
+    if(scales&&scales[i]!=null&&scales[i]!==1){
+      const s=+scales[i]||1;
+      m4.scale(new THREE.Vector3(s,s,s));
+    }
     mesh.setMatrixAt(i,m4);
     if(mesh.setColorAt){
       const cr=colArr?colArr[i*3]:colors[i*3];
@@ -11328,6 +11393,17 @@ function _buildGalaxyDustDraw(positions, colors, opts){
   if(mesh.instanceColor)mesh.instanceColor.needsUpdate=true;
   mesh.frustumCulled=false;
   mesh.count=n;
+  // Billboard: face active flight/map camera each frame (cheap lookAt on mesh is wrong for instances;
+  // keep icosa default — PlaneGeometry path used only when caller opts.billboard + onBeforeRender hook).
+  if(useBillboard){
+    mesh.userData.jotsBillboard=true;
+    mesh.onBeforeRender=function(renderer,scene,camera){
+      // Orient shared plane geo toward camera via quaternion on each instance is too costly;
+      // instead rotate the whole InstancedMesh null — planes stay XY; additive still reads as discs
+      // when many overlap. Prefer icosa unless caller needs flat quads.
+      void camera;
+    };
+  }
   return mesh;
 }
 
@@ -11442,23 +11518,32 @@ function ensureSolArmDot(){
   }
   const grp=new THREE.Group();
   grp.name='JOTS_SolArmDot';
-  // Tiny yellow-orange sphere at world origin (Sol) — map-sun-marker language
+  // Yellow-orange Sol arm-dot — enlarged for GAL LOD (camDist 14k–25k / ALT ~7M km)
   const core=new THREE.Mesh(
-    new THREE.SphereGeometry(90,10,10),
+    new THREE.SphereGeometry(200,12,12),
     new THREE.MeshBasicMaterial({color:0xffd23a})
   );
   grp.add(core);
   try{
-    const glow=makeGlowSprite('rgba(255,210,58,0.85)',420);
+    const glow=makeGlowSprite('rgba(255,210,58,0.90)',720);
     grp.add(glow);
   }catch(e){
     const shell=new THREE.Mesh(
-      new THREE.SphereGeometry(220,8,8),
-      new THREE.MeshBasicMaterial({color:0xffc14a,transparent:true,opacity:0.35,
+      new THREE.SphereGeometry(420,8,8),
+      new THREE.MeshBasicMaterial({color:0xffc14a,transparent:true,opacity:0.40,
         blending:THREE.AdditiveBlending,depthWrite:false})
     );
     grp.add(shell);
   }
+  // Soft outer halo so yellow nest reads inside blue arm at far LOD
+  try{
+    const halo=new THREE.Mesh(
+      new THREE.SphereGeometry(280,8,8),
+      new THREE.MeshBasicMaterial({color:0xffe080,transparent:true,opacity:0.22,
+        blending:THREE.AdditiveBlending,depthWrite:false})
+    );
+    grp.add(halo);
+  }catch(e){}
   // Optional short "Sol" label sprite
   try{
     const lc=document.createElement('canvas');lc.width=128;lc.height=48;
@@ -11467,7 +11552,7 @@ function ensureSolArmDot(){
     lx.textAlign='center';lx.fillText('Sol',64,34);
     const lt=new THREE.CanvasTexture(lc);
     const ls=new THREE.Sprite(new THREE.SpriteMaterial({map:lt,transparent:true,depthTest:false}));
-    ls.scale.set(520,195,1);ls.position.set(0,280,0);grp.add(ls);
+    ls.scale.set(680,255,1);ls.position.set(0,380,0);grp.add(ls);
   }catch(e){}
   grp.visible=!!window._solFullSysHidden;
   grp.position.set(0,0,0);
@@ -11519,11 +11604,13 @@ function updateSolGalLod(){
     if(la){
       la.visible=!far;
       if(!far&&la.children){
-        // Soft opacity when approaching threshold
+        // Soft opacity when approaching threshold (Points or InstancedMesh)
         const t=Math.min(1, dist/(GAL_SOL_SPECK_DIST*0.85));
         const op=0.72*(1-t*0.55);
         la.traverse(o=>{
-          if(o.isPoints&&o.material){o.material.opacity=Math.max(0.25,op);}
+          if((o.isPoints||o.isInstancedMesh||o.isMesh)&&o.material){
+            o.material.opacity=Math.max(0.25,op);
+          }
         });
       }
     }
@@ -11559,8 +11646,7 @@ function generateGalacticArmDots(galGroup, phaseLock, RG, particles, mobile, gfx
     placed++;
   }
   const draw=_buildGalaxyDustDraw(pos,col,{
-    forcePoints:true, pointSize:mobile?(gfxLow?4.5:6.0):(gfxLow?5.5:7.5),
-    sizeAttenuation:false, opacity:0.95
+    instanceRadius:mobile?(gfxLow?120:160):(gfxLow?140:190), opacity:0.95
   });
   if(draw){draw.name='JOTS_GalacticArmDots';galGroup.add(draw);}
 }
