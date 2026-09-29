@@ -5348,11 +5348,25 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
           // dead). ~75% up the new relief range, same proportion as before.
           const snowT=height.sub(radius*0.009).div(radius*0.003).clamp(0,1);
           if(kind==='earth'){
+            // Soft sandbox smart-material feel: sand→grass→dirt→rock + mottled
+            // polar/highland snow. Keep ocean particles/atmo untouched; continents
+            // stay land-mask driven (#48 YAY hold).
             const land=_earthLandMaskTSL(up);
             const oceanC=mix(vec3(oceanShallowC.r,oceanShallowC.g,oceanShallowC.b),vec3(oceanDeepC.r,oceanDeepC.g,oceanDeepC.b),land.negate().clamp(0,1));
-            let c=mix(vec3(landC.r,landC.g,landC.b),vec3(mountainC.r,mountainC.g,mountainC.b),slope.smoothstep(0.3,0.7));
+            const sandC=vec3(0.72,0.66,0.42), dirtC=vec3(0.42,0.33,0.24), iceC=vec3(0.78,0.85,0.92);
+            const mott=mx_fractal_noise_float(up.mul(18.0).add(seedU),3,2.0,0.5).mul(0.5).add(0.5);
+            const elevBand=height.div(radius*0.012+1e-5).clamp(0.0,1.0);
+            let c=mix(sandC, vec3(landC.r,landC.g,landC.b), land.clamp(0.0,1.0).mul(0.85).add(mott.mul(0.15)));
+            c=mix(c, dirtC, elevBand.smoothstep(0.25,0.55).mul(0.55));
+            c=mix(c, vec3(mountainC.r,mountainC.g,mountainC.b), slope.smoothstep(0.3,0.7).max(elevBand.smoothstep(0.55,0.9)));
+            const latAbs=up.y.abs();
+            const polarSnow=latAbs.smoothstep(0.78,0.92); // ~high-lat caps
+            const snowMix=snowT.max(polarSnow.mul(elevBand.add(0.35).clamp(0.0,1.0)));
+            const snowCol=mix(vec3(snowC.r,snowC.g,snowC.b), iceC, mott.mul(0.5));
+            c=mix(c, snowCol, snowMix.mul(select(land.greaterThan(0.0),float(1),float(0.25))));
+            // Rock speck in snow so caps are not featureless
+            c=mix(c, vec3(mountainC.r,mountainC.g,mountainC.b), snowMix.mul(mott.sub(0.65).max(0.0).mul(1.8)).clamp(0.0,0.35).mul(select(land.greaterThan(0.0),float(1),float(0))));
             c=select(land.greaterThan(0.0),c,oceanC);
-            c=mix(c,vec3(snowC.r,snowC.g,snowC.b),snowT.mul(select(land.greaterThan(0.0),float(1),float(0.3))));
             return c;
           }
           let c=vec3(baseC.r,baseC.g,baseC.b);
@@ -12048,9 +12062,21 @@ function makeOrbitGlobeTexture(body){
         else if(landV>0){
           const e=Math.min(1.4, Math.max(0,elev));
           const mountain=e>0.85;
+          const mott=_fbm(lon*0.18+seed,lat*0.18+seed,seed+77,2);
           r=land.r*255*(0.55+e*0.55); g=land.g*255*(0.58+e*0.48); b=land.b*255*(0.42+e*0.35);
+          // Dirt/brown transition on mid-elev ridges (sandbox smart-material feel)
+          if(e>0.55 && e<=0.85){ r=Math.min(255,r*0.75+70); g=Math.min(255,g*0.7+55); b=Math.min(255,b*0.65+40); }
           if(mountain){ r=Math.min(255,90+e*70); g=Math.min(255,85+e*55); b=Math.min(255,70+e*40); }
-          if(e>1.15 && Math.abs(lat)>28){ r=235; g=240; b=248; } // snowy high ridges
+          // Mottled snow/ice — not a flat white plate on high ridges / polar verge
+          const snowW=Math.max(0, Math.min(1, (e-1.0)/0.35)) * (Math.abs(lat)>28?1:0)
+            + (Math.abs(lat)>62?Math.max(0,(Math.abs(lat)-62)/12)*0.55:0);
+          if(snowW>0.05){
+            const iceT=0.35+mott*0.4;
+            r=r*(1-snowW)+(230*(1-iceT)+200*iceT)*snowW;
+            g=g*(1-snowW)+(238*(1-iceT)+215*iceT)*snowW;
+            b=b*(1-snowW)+(250*(1-iceT)+235*iceT)*snowW;
+            if(mott>0.72){ r=r*0.82+55; g=g*0.82+50; b=b*0.85+45; } // rock speck
+          }
         } else {
           const e=Math.min(-landV,1);
           r=water.r*255*(0.35+e*0.25); g=water.g*255*(0.45+e*0.3); b=water.b*255*(0.85+e*0.2);
@@ -12213,7 +12239,35 @@ function setupOrbitInput(cv){
       const q=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0),local);
       orbitPin.quaternion.copy(q);
       orbitPin.visible=true;
-      const lat=(Math.asin(local.y)*180/Math.PI), lon=(Math.atan2(local.z,local.x)*180/Math.PI);
+      let lat=(Math.asin(local.y)*180/Math.PI), lon=(Math.atan2(local.z,local.x)*180/Math.PI);
+      // Prefer continental interior over thin snow-coast strips (height field
+      // still primary; this only nudges the land-pick when clearly coastal snow).
+      try{
+        if(_orbitBody&&_orbitBody.name==='Earth'&&typeof earthLandMask==='function'){
+          const seed=(_orbitBody.name.length*7)+3;
+          let lv=earthLandMask(lat,lon,seed);
+          if(lv>0 && lv<0.14 && Math.abs(lat)>48){
+            let bestLat=lat, bestLon=lon, best=lv;
+            for(let k=0;k<8;k++){
+              const ang=k*Math.PI/4;
+              for(const step of [1.2,2.5,4,6.5]){
+                const la=THREE.MathUtils.clamp(lat+Math.cos(ang)*step,-89.5,89.5);
+                let lo=lon+Math.sin(ang)*step; lo=((lo+540)%360)-180;
+                const v=earthLandMask(la,lo,seed);
+                if(v>best){ best=v; bestLat=la; bestLon=lo; }
+              }
+            }
+            if(best>lv+0.06){
+              lat=bestLat; lon=bestLon;
+              const phi=lat*Math.PI/180, th=lon*Math.PI/180;
+              local.set(Math.cos(phi)*Math.cos(th), Math.sin(phi), Math.cos(phi)*Math.sin(th)).normalize();
+              orbitPin.position.copy(local.clone().multiplyScalar(1.0));
+              const q2=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0),local);
+              orbitPin.quaternion.copy(q2);
+            }
+          }
+        }
+      }catch(e){}
       _orbitSite={lat,lon,local:local.clone()};
       $('orbit-site').textContent='📍 SITE: '+lat.toFixed(1)+'°, '+lon.toFixed(1)+'°';
       $('orbit-descend').style.display='inline-block';
@@ -12511,30 +12565,15 @@ function atmoBuildTerrain(pal,ox,oz){
   const SZ=5000,SEG=120;
   const geo=new THREE.PlaneGeometry(SZ,SZ,SEG,SEG);geo.rotateX(-Math.PI/2);
   const pos=geo.attributes.position;const col=[];
-  const c1=new THREE.Color(pal.ground),c2=new THREE.Color(pal.ground2),cr=new THREE.Color(pal.rock);
-  const sand=new THREE.Color(0xcbb87a),snow=new THREE.Color(0xf4f6fa);
-  const smooth=(e0,e1,v)=>{const u=Math.min(1,Math.max(0,(v-e0)/(e1-e0)));return u*u*(3-2*u);};
   const eps=Math.max(1,SZ/SEG*0.6);
+  const _atmoSiteBias=siteLandBias;
+  const _atmoSiteLat=(_atmoSite&&typeof _atmoSite.lat==='number')?_atmoSite.lat:0;
   for(let i=0;i<pos.count;i++){
     const x=pos.getX(i),z=pos.getZ(i);const h=H(x+ox,z+oz);pos.setY(i,h);
-    // Same smooth weighted-blend fix as the walking terrain — was the
-    // identical hard if/else banding bug here too, just never patched
-    // when the walking version was fixed. Kept consistent between the
-    // two so a world doesn't look different flown-over vs walked-on.
+    // Same surfaceBiomeColor as walk — flown-over vs walked-on stay consistent.
     const hx=H(x+ox+eps,z+oz),hz=H(x+ox,z+oz+eps);
     const slope=Math.min(1,(Math.abs(hx-h)+Math.abs(hz-h))/(eps*1.4));
-    const n=(_fbm((x+ox)*0.08+seed,(z+oz)*0.08+seed,seed+81,3)-0.5);
-    const snowLine=55+n*8, rockLine=34+n*10, waterLine=5+n*3;
-    const wSnow=smooth(snowLine-6,snowLine+6,h)*(1-slope*0.5);
-    const wRock=Math.max(smooth(rockLine-8,rockLine+8,h),smooth(0.35,0.7,slope))*(1-wSnow);
-    const wSand=pal.water?smooth(waterLine+4,waterLine-4,h)*(1-wRock)*(1-wSnow):0;
-    const wGrass=Math.max(0,1-wSnow-wRock-wSand);
-    const grassCol=c1.clone().lerp(c2,0.15+n*0.15);
-    const rockCol=cr.clone().lerp(new THREE.Color(0x8a7d6a),Math.max(0,n)*0.4);
-    const c=new THREE.Color(
-      grassCol.r*wGrass+rockCol.r*wRock+sand.r*wSand+snow.r*wSnow,
-      grassCol.g*wGrass+rockCol.g*wRock+sand.g*wSand+snow.g*wSnow,
-      grassCol.b*wGrass+rockCol.b*wRock+sand.b*wSand+snow.b*wSnow);
+    const c=surfaceBiomeColor(x+ox,z+oz,h,slope,pal,seed,{siteBias:_atmoSiteBias,siteLat:_atmoSiteLat});
     col.push(c.r,c.g,c.b);
   }
   geo.setAttribute('color',new THREE.Float32BufferAttribute(col,3));geo.computeVertexNormals();
@@ -14276,8 +14315,20 @@ async function enterSurface(body,site){
       board.traverse(o=>{if(o.isMesh&&o.material&&'envMap' in o.material){o.material.envMap=cubeRT.texture;o.material.envMapIntensity=1.0;o.material.needsUpdate=true;}});
     }catch(e){console.warn('surf env:',e);}
   }
-  // player proxy (first person — invisible; camera is the eyes)
-  surfPlayer={pos:new THREE.Vector3(0,3.2,8),vel:new THREE.Vector3(),yaw:0,pitch:0,grav:pal.grav,onGround:true,jumpActive:false};
+  // player proxy — eye height MUST match walk collision (groundH+3), not a
+  // hardcoded 3.2. Snow-border / earthSiteHeightBias sites lift ground well
+  // above Y=0; spawning at 3.2 buried feet under the MC contour.
+  const spawnX=0, spawnZ=8;
+  let spawnGround=0;
+  try{
+    if(typeof _surfHeight==='function'){
+      const gh=_surfHeight(spawnX,spawnZ);
+      if(typeof gh==='number' && isFinite(gh) && gh>-5000) spawnGround=gh;
+    }
+  }catch(e){}
+  const spawnEye=spawnGround+3.0;
+  try{ surfCamera.position.set(spawnX, spawnEye, spawnZ); }catch(e){}
+  surfPlayer={pos:new THREE.Vector3(spawnX,spawnEye,spawnZ),vel:new THREE.Vector3(),yaw:0,pitch:0,grav:pal.grav,onGround:true,jumpActive:false};
 
   // Character — load once (cached in CHAR after first load), attach to
   // whichever surface scene is currently active. Position sync/animation
@@ -14308,11 +14359,19 @@ async function enterSurface(body,site){
     CHAR.scene = surfScene;
     surfScene.add(CHAR.root);
     try{ _forceCharVisible(); }catch(e){ CHAR.root.visible = true; }
-    // Soft-coord Worlds: if _surfHeight itself is wrong that's Worlds —
-    // Stabilizer fix is feetOffset-aware root so feet sit ON surface
-    // (physics eye = groundH+3; root was at groundH → feet buried by
+    // Soft-coord Worlds + Stabilizer #50: sample _surfHeight for contour,
+    // then feetOffset-aware root so feet sit ON surface (not buried by
     // feetOffset*s). Mount already uses anchor.y + feetOffset*scale.
-    const _gnd=(typeof _surfHeight==='function')?_surfHeight(surfPlayer.pos.x,surfPlayer.pos.z):(surfPlayer.pos.y-3.0);
+    // Do not replace feetOffset with bare eye−3 — that undoes #50.
+    let _gnd=(surfPlayer.pos.y-3.0);
+    try{
+      if(typeof _surfHeight==='function'){
+        const gh=_surfHeight(surfPlayer.pos.x, surfPlayer.pos.z);
+        if(typeof gh==='number' && isFinite(gh) && gh>-5000) _gnd=gh;
+      }
+    }catch(e){}
+    // Keep eye proxy consistent with settled feet (eye = ground+3 handoff).
+    try{ if(surfPlayer) surfPlayer.pos.y=_gnd+3.0; }catch(e){}
     const _footLift=(CHAR.feetOffset||0)*s;
     const rootY=_gnd+_footLift; // root so feet sit on surface
     const boardHoverY=_gnd;     // board hover relative to surface/feet, not elevated root
@@ -15000,6 +15059,8 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
   const yMin = opts.yMin!=null ? opts.yMin : -45;
   const yMax = opts.yMax!=null ? opts.yMax : 130;
   const siteBias = opts.siteLandBias||0;
+  const siteLat = (typeof opts.siteLat==='number')?opts.siteLat:((_surfSite&&typeof _surfSite.lat==='number')?_surfSite.lat:0);
+  const earthGeo = !!opts.earthGeo || !!( _surfBody && _surfBody.name==='Earth' && _surfSite && typeof _surfSite.lat==='number');
   const originX = -half, originZ = -half, originY = yMin;
   const sizeX = half*2, sizeY = yMax-yMin, sizeZ = half*2;
   const GRID = N+1;
@@ -15016,6 +15077,8 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
   const maxVerts = numCells*MAX_TRIS*3;
   const seedU = uniform(seed);
   const biasU = uniform(siteBias);
+  const siteLatU = uniform(siteLat);
+  const localScaleU = uniform(earthGeo?0.55:1.0); // match H(): h*0.55+geo on Earth
 
   const densityBuf=new THREE.StorageInstancedBufferAttribute(numPoints,1);
   const densityNode=storage(densityBuf,'float',numPoints);
@@ -15058,7 +15121,10 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
     const canyonCut = canyonRidge.sub(0.99).max(0.0).div(0.01).pow(1.5).mul(90.0);
     const riverRidge = float(1.0).sub(mx_fractal_noise_float(xz.mul(0.006).add(seedU.mul(7.1)),4,2.0,0.5).abs());
     const riverCut = riverRidge.sub(0.97).max(0.0).div(0.03).pow(1.2).mul(22.0);
-    return hills.add(detail).add(mtBump).add(mtWeight.mul(mountain.mul(0.65).add(plateau.mul(0.55)))).add(peak).sub(canyonCut).sub(riverCut).add(biasU);
+    const localH=hills.add(detail).add(mtBump).add(mtWeight.mul(mountain.mul(0.65).add(plateau.mul(0.55)))).add(peak).sub(canyonCut).sub(riverCut);
+    // Earth: same h*0.55+siteBias contract as CPU H()/earthSiteHeightBias so
+    // spawn _surfHeight matches the mesh contour (not buried under geo lift).
+    return localH.mul(localScaleU).add(biasU);
   });
 
   const densityFn=Fn(()=>{
@@ -15102,6 +15168,7 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
   const g2Col=new THREE.Color(pal.ground2||0x2a5d24);
   const rCol=new THREE.Color(pal.rock||0x6b5d4f);
   const sandC=new THREE.Color(0xcbb87a), snowC=new THREE.Color(0xf4f6fa);
+  const dirtC=new THREE.Color(0x6b5340), iceC=new THREE.Color(0xc8d8ea);
 
   const mcFn=Fn(()=>{
     const cellIdx=instanceIndex;
@@ -15148,15 +15215,32 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
         const v0=interp(e0), v1=interp(e1), v2=interp(e2);
         const nrm=v1.sub(v0).cross(v2.sub(v0)).normalize();
         const colorFor=(v)=>{
-          const height=v.y;
+          // Sandbox-style density→biome→material: relative height, lat snow
+          // line, dirt/ice bands, mottled snow (not flat featureless white).
+          const height=v.y.sub(biasU);
           const slope=float(1.0).sub(nrm.y.clamp(0.0,1.0));
-          const grass=mix(vec3(gCol.r,gCol.g,gCol.b),vec3(g2Col.r,g2Col.g,g2Col.b),0.35);
-          const rock=vec3(rCol.r,rCol.g,rCol.b);
+          const mott=mx_fractal_noise_float(vec3(v.x,float(0),v.z).mul(0.09).add(seedU),3,2.0,0.5).mul(0.5).add(0.5);
+          const mottFine=mx_fractal_noise_float(vec3(v.x,float(0),v.z).mul(0.28).add(seedU).add(vec3(5,0,9)),2,2.0,0.5).mul(0.5).add(0.5);
+          const latAbs=siteLatU.abs();
+          const snowDrop=select(latAbs.greaterThan(55.0),latAbs.sub(55.0).mul(1.7).min(50.0),
+            select(latAbs.greaterThan(32.0),latAbs.sub(32.0).mul(0.65),float(0.0)));
+          const snowLine=float(52.0).sub(snowDrop);
+          const iceLine=snowLine.add(10.0);
+          const grass=mix(vec3(gCol.r,gCol.g,gCol.b),vec3(g2Col.r,g2Col.g,g2Col.b),mott.mul(0.45));
+          const rock=mix(vec3(rCol.r,rCol.g,rCol.b),vec3(dirtC.r,dirtC.g,dirtC.b),mottFine.mul(0.35));
           const sand=vec3(sandC.r,sandC.g,sandC.b);
-          const snow=vec3(snowC.r,snowC.g,snowC.b);
-          let c=mix(sand, grass, height.add(2.0).div(8.0).clamp(0.0,1.0));
-          c=mix(c, rock, slope.smoothstep(0.35,0.75).max(height.sub(34.0).div(20.0).clamp(0.0,1.0)));
-          c=mix(c, snow, height.sub(55.0).div(12.0).clamp(0.0,1.0));
+          const dirt=vec3(dirtC.r,dirtC.g,dirtC.b);
+          const snow=mix(vec3(snowC.r,snowC.g,snowC.b),vec3(iceC.r,iceC.g,iceC.b),mottFine.mul(0.55));
+          const ice=mix(vec3(iceC.r,iceC.g,iceC.b),vec3(snowC.r,snowC.g,snowC.b),mott.mul(0.35));
+          let c=mix(sand, grass, height.add(2.0).div(10.0).clamp(0.0,1.0));
+          c=mix(c, dirt, height.sub(12.0).div(14.0).clamp(0.0,1.0).mul(0.55));
+          c=mix(c, rock, slope.smoothstep(0.32,0.75).max(height.sub(28.0).div(22.0).clamp(0.0,1.0)));
+          const snowT=height.sub(snowLine).div(12.0).clamp(0.0,1.0).mul(float(1.0).sub(slope.mul(0.55)));
+          const iceT=height.sub(iceLine).div(14.0).clamp(0.0,1.0).mul(float(1.0).sub(slope.mul(0.7)));
+          c=mix(c, snow, snowT);
+          c=mix(c, ice, iceT);
+          // Rock speckles in snow — breaks featureless white plates
+          c=mix(c, rock, snowT.mul(mottFine.sub(0.62).max(0.0).mul(2.2)).clamp(0.0,0.45));
           return c;
         };
         const col=colorFor(v0).add(colorFor(v1)).add(colorFor(v2)).div(3.0);
@@ -15205,7 +15289,12 @@ async function upgradeSurfaceMcLOD(surfRenderer, pal, seed, siteLandBias){
   if(rank[cur]>=2){ TERRAIN.mcUpgradeLocked=true; return; }
   const next = cur==='low' ? 'med' : 'high';
   try{
-    const built = await buildGpuSurfacePatch(surfRenderer,{seed,pal,siteLandBias,tier:next,halfExtent:90});
+    const built = await buildGpuSurfacePatch(surfRenderer,{
+      seed,pal,siteLandBias,
+      siteLat:(_surfSite&&typeof _surfSite.lat==='number')?_surfSite.lat:0,
+      earthGeo:!!(_surfBody&&_surfBody.name==='Earth'&&_surfSite&&typeof _surfSite.lat==='number'),
+      tier:next,halfExtent:90
+    });
     if(!built || !surfaceActive || !TERRAIN.group) return;
     if(TERRAIN.mcGroup){
       TERRAIN.group.remove(TERRAIN.mcGroup);
@@ -15586,6 +15675,8 @@ async function buildSurfaceTerrain(pal){
   const g=(_surfBody&&_surfBody.gravity!==undefined)?_surfBody.gravity:(pal.grav||0.6);
   TERRAIN.curveR=THREE.MathUtils.lerp(1400,9000,Math.min(1,Math.max(0,g))/1.2);
   TERRAIN.pal=pal;TERRAIN.H=H;TERRAIN.seed=seed;
+  TERRAIN.siteBias=siteLandBias;
+  TERRAIN.siteLat=(_surfSite&&typeof _surfSite.lat==='number')?_surfSite.lat:0;
   TERRAIN.tiles.clear();TERRAIN.lastRebuildX=1e9;TERRAIN.lastRebuildZ=1e9;
   TERRAIN.originX=0;TERRAIN.originZ=0;
   TERRAIN.group=new THREE.Group();surfScene.add(TERRAIN.group);
@@ -15636,7 +15727,10 @@ async function buildSurfaceTerrain(pal){
       // read as daytime sky-holes; GPU patch draws on top with biome colors.
       if(patch){ patch.visible = true; patch.position.y = -0.35; patch.renderOrder = 0; }
       const built = await buildGpuSurfacePatch(surfRenderer,{
-        seed, pal, siteLandBias, tier:'low', halfExtent:90, yMin:-45, yMax:130
+        seed, pal, siteLandBias,
+        siteLat:(_surfSite&&typeof _surfSite.lat==='number')?_surfSite.lat:0,
+        earthGeo:_surfEarthGeo,
+        tier:'low', halfExtent:90, yMin:-45, yMax:130
       });
       if(built){
         const mcGroup=new THREE.Group(); mcGroup.name='JOTS_GpuMcGroup';
@@ -15972,55 +16066,80 @@ async function buildSurfaceTerrain(pal){
 }
 
 // Build one terrain tile (a heightfield patch) at depth d covering [cx,cz]±size/2.
+
+/** Worlds surface/atmo biome vertex color — sandbox smart-material density.
+ *  Relative height (h − siteBias) keeps sand/grass/rock/snow bands when
+ *  earthSiteHeightBias lifts an entire snow-border patch. Mottled snow/ice
+ *  + dirt + rock peek so polar/highland floors are not featureless white. */
+function surfaceBiomeColor(x,z,h,slope,pal,seed,opts){
+  opts=opts||{};
+  const siteBias=(typeof opts.siteBias==='number')?opts.siteBias:0;
+  const siteLat=(typeof opts.siteLat==='number')?opts.siteLat:0;
+  const c1=new THREE.Color(pal.ground||0x3a7d34);
+  const c2=new THREE.Color(pal.ground2||0x2a5d24);
+  const cr=new THREE.Color(pal.rock||0x6b5d4f);
+  const sand=new THREE.Color(0xcbb87a);
+  const dirt=new THREE.Color(0x6b5340);
+  const snow=new THREE.Color(0xf4f6fa);
+  const ice=new THREE.Color(0xc8d8ea);
+  const hRel=h-siteBias;
+  const n=(_fbm(x*0.08+seed,z*0.08+seed,seed+81,3)-0.5);
+  const n2=(_fbm(x*0.21+seed,z*0.21+seed,seed+91,2)-0.5);
+  const nFine=_fbm(x*0.55+seed,z*0.55+seed,seed+101,2);
+  const smooth=(e0,e1,v)=>{const u=Math.min(1,Math.max(0,(v-e0)/(e1-e0)));return u*u*(3-2*u);};
+  const latAbs=Math.abs(siteLat);
+  // High latitude drops the snow line so polar coasts get real snow/ice
+  // without waiting for absolute Y>55 (which siteBias alone can fake-flatten).
+  const snowDrop=latAbs>55?Math.min(50,(latAbs-55)*1.7):(latAbs>32?(latAbs-32)*0.65:0);
+  const snowLine=52+n*8-snowDrop;
+  const iceLine=snowLine+10+n2*4;
+  const rockLine=30+n*10-snowDrop*0.3;
+  const dirtLine=14+n*6;
+  const waterLine=5+n*3;
+  let wSnow=smooth(snowLine-7,snowLine+7,hRel)*(1-slope*0.55);
+  const wIce=smooth(iceLine-6,iceLine+10,hRel)*(1-slope*0.7)*0.85;
+  wSnow=Math.max(0,wSnow-wIce*0.65);
+  // Speckle rock through snow (sandbox density→material feel)
+  const rockSpeck=smooth(0.55,0.85,nFine)*wSnow*0.45;
+  let wRock=Math.max(smooth(rockLine-8,rockLine+8,hRel),smooth(0.32,0.72,slope))*(1-wSnow*0.85)*(1-wIce*0.7);
+  wRock=Math.min(1,wRock+rockSpeck);
+  const wDirt=smooth(dirtLine-6,dirtLine+8,hRel)*(1-wRock)*(1-wSnow)*(1-wIce)*0.7;
+  const wSand=pal.water?smooth(waterLine+5,waterLine-4,hRel)*(1-wRock)*(1-wSnow)*(1-wIce)*(1-wDirt):0;
+  const wGrass=Math.max(0,1-wSnow-wIce-wRock-wSand-wDirt);
+  const grassCol=c1.clone().lerp(c2,0.15+n*0.2);
+  // Organic grass mottling
+  grassCol.lerp(c2,Math.max(0,n2)*0.35);
+  const rockCol=cr.clone().lerp(new THREE.Color(0x8a7d6a),Math.max(0,n)*0.4);
+  rockCol.lerp(dirt,Math.max(0,-n2)*0.25);
+  // Soft snow vs packed ice mottling
+  const snowCol=snow.clone().lerp(ice,0.15+nFine*0.35);
+  snowCol.lerp(rockCol,rockSpeck*0.5);
+  const iceCol=ice.clone().lerp(snow,0.2+n2*0.2);
+  const dirtCol=dirt.clone().lerp(sand,0.2+Math.max(0,n)*0.25);
+  const c=new THREE.Color(0,0,0);
+  c.r=grassCol.r*wGrass+rockCol.r*wRock+sand.r*wSand+dirtCol.r*wDirt+snowCol.r*wSnow+iceCol.r*wIce;
+  c.g=grassCol.g*wGrass+rockCol.g*wRock+sand.g*wSand+dirtCol.g*wDirt+snowCol.g*wSnow+iceCol.g*wIce;
+  c.b=grassCol.b*wGrass+rockCol.b*wRock+sand.b*wSand+dirtCol.b*wDirt+snowCol.b*wSnow+iceCol.b*wIce;
+  return c;
+}
+
 function buildTerrainTile(cx,cz,size,depth){
   const seg=TERRAIN.tileSeg;
   const geo=new THREE.PlaneGeometry(size,size,seg,seg);
   geo.rotateX(-Math.PI/2);
   const pos=geo.attributes.position;
   const H=TERRAIN.H,pal=TERRAIN.pal;
-  const c1=new THREE.Color(pal.ground),c2=new THREE.Color(pal.ground2),cr=new THREE.Color(pal.rock);
-  const sand=new THREE.Color(0xcbb87a),snow=new THREE.Color(0xf4f6fa);
   const eps=Math.max(1,size/seg*0.6); // sample spacing for slope estimate, scaled to this tile's own vertex density
   const col=[];
+  const _siteBias=(typeof TERRAIN.siteBias==='number')?TERRAIN.siteBias:0;
+  const _siteLat=(TERRAIN.siteLat!=null)?TERRAIN.siteLat:((_surfSite&&typeof _surfSite.lat==='number')?_surfSite.lat:0);
   for(let i=0;i<pos.count;i++){
     const x=pos.getX(i)+cx, z=pos.getZ(i)+cz;
     const h=H(x,z);pos.setY(i,h);
-    // Height/slope-based biome color ramp — the general technique here
-    // (blend ground materials by elevation AND slope, rather than a flat
-    // per-object color) follows the approach demonstrated in Sebastian
-    // Lague's terrain-generation Coding Adventure series
-    // (youtube.com/@SebastianLague) and the accompanying reference
-    // repository already credited elsewhere in this file for the marching
-    // cubes work. This is an independent JS implementation of that
-    // general idea, not copied code (his project is Unity/C#), but the
-    // credit belongs with him regardless since the technique itself is
-    // what's being followed here.
-    //
-    // Real bug found and fixed: the previous version picked ONE branch
-    // per vertex via if/else on hard thresholds (h>55, h>20, slope>0.55)
-    // — every vertex was 100% one biome or 100% another, with a sudden
-    // jump exactly at the threshold. Adjacent vertices straddling that
-    // line got assigned completely different colors with nothing in
-    // between, which is what read as a separate, wrong-colored patch
-    // rather than a natural gradient (confirmed on Venus, but this
-    // applied to every planet's terrain equally). Lague's actual approach
-    // computes a continuous WEIGHT per biome layer and blends all of them
-    // together, never a discrete pick — replicated properly below.
+    // Weighted biome blend via surfaceBiomeColor (sandbox smart-material path).
     const hx=H(x+eps,z),hz=H(x,z+eps);
     const slope=Math.min(1,(Math.abs(hx-h)+Math.abs(hz-h))/(eps*1.4));
-    const n=(_fbm(x*0.08+TERRAIN.seed,z*0.08+TERRAIN.seed,TERRAIN.seed+81,3)-0.5); // organic per-region variation, not a flat band edge
-    const smooth=(e0,e1,v)=>{const u=Math.min(1,Math.max(0,(v-e0)/(e1-e0)));return u*u*(3-2*u);};
-    const snowLine=55+n*8, rockLine=34+n*10, waterLine=5+n*3;
-    const wSnow=smooth(snowLine-6,snowLine+6,h)*(1-slope*0.5); // steep faces hold less snow
-    const wRock=Math.max(smooth(rockLine-8,rockLine+8,h), smooth(0.35,0.7,slope))*(1-wSnow);
-    const wSand=pal.water?smooth(waterLine+4,waterLine-4,h)*(1-wRock)*(1-wSnow):0; // descending smoothstep — sand fades OUT as height rises above the waterline
-    const wGrass=Math.max(0,1-wSnow-wRock-wSand);
-    const grassCol=c1.clone().lerp(c2,0.15+n*0.15);
-    const rockCol=cr.clone().lerp(new THREE.Color(0x8a7d6a),Math.max(0,n)*0.4);
-    let c=new THREE.Color(0,0,0);
-    c.r=grassCol.r*wGrass+rockCol.r*wRock+sand.r*wSand+snow.r*wSnow;
-    c.g=grassCol.g*wGrass+rockCol.g*wRock+sand.g*wSand+snow.g*wSnow;
-    c.b=grassCol.b*wGrass+rockCol.b*wRock+sand.b*wSand+snow.b*wSnow;
+    const c=surfaceBiomeColor(x,z,h,slope,pal,TERRAIN.seed,{siteBias:_siteBias,siteLat:_siteLat});
     col.push(c.r,c.g,c.b);
   }
   geo.setAttribute('color',new THREE.Float32BufferAttribute(col,3));
