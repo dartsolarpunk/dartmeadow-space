@@ -2534,13 +2534,17 @@ function _initMenuBg2D(cv){
   sizeMenuBgCanvas(cv);
   const ctx=cv.getContext('2d');
   const W=()=>cv.width,H=()=>cv.height;
-  /* Blue-only particulate spiral (no rainbow) — center bottom-right so face stays clear */
+  /* Chaotic twisted two-tube (Justin HARD) — unequal arms, not 5-fold symmetry */
   const stars=Array.from({length:620},()=>({x:rnd(0,cv.width),y:rnd(0,cv.height),r:rnd(0.35,2.0),b:rnd(0.25,1),sp:rnd(0.04,0.16),ph:rnd(0,Math.PI*2)}));
-  const armCols=['#00f5ff','#5B7FFF','#3a6fd8','#1a3a8a','#88ccff'];
-  const arms=Array.from({length:5},(_,a)=>Array.from({length:200},(_,j)=>{
-    const u=j/200, ang=u*Math.PI*3.2+a*(Math.PI*2/5), d=u*Math.min(cv.width,cv.height)*0.48;
-    return {ang0:ang,d0:d,al:rnd(0.08,0.45),r:rnd(0.4,2.0),
-      col:armCols[a%5]};
+  const armCols=['#00f5ff','#5B7FFF','#88ccff','#1a3a8a'];
+  const armSpecs=[{wind:3.55,base:0.15,thick:1.35,n:280},{wind:2.85,base:Math.PI+0.4,thick:0.78,n:170}];
+  const arms=armSpecs.map((spec,a)=>Array.from({length:spec.n},(_,j)=>{
+    const u=j/spec.n;
+    const jitter=(Math.sin(j*1.7+a*9.1)*0.5+0.5);
+    const ang=u*Math.PI*spec.wind+spec.base+(jitter-0.5)*0.55*u;
+    const d=u*Math.min(cv.width,cv.height)*(0.42+0.12*spec.thick)*(0.88+jitter*0.22);
+    return {ang0:ang,d0:d,al:rnd(0.10,0.50)*spec.thick,r:rnd(0.35,2.2)*spec.thick,
+      col:armCols[(a+j)%armCols.length]};
   }));
   const gases=[
     {x:0.74,y:0.66,rx:0.24,col:'#5B7FFF',a:0.09},
@@ -2606,11 +2610,13 @@ function _initMenuSpiralPlate(cv){
   const cam=new THREE.PerspectiveCamera(50,W/H,0.1,100);
   cam.position.set(0,0,2.4);
   const low=!!(GFX&&(GFX.preset==='low'||(GFX.isMobile&&GFX.preset==='auto')));
-  /* Grainy blue particulate spiral — BR-weighted so core clears the girl's face */
+  /* Chaotic twisted two-tube spiral (Justin HARD) — less symmetrical; BR-weighted for face */
   const plate=buildMenuGalaxySpiralPlate(scene,{
-    budget:low?2800:5600, lowCount:low?2800:6000,
-    pointSize:low?0.026:0.016, spin:0.07, scale:1.18,
-    rotation:{x:0.62,y:0.14,z:0.04}
+    budget:low?3200:6400, lowCount:low?3200:6800,
+    pointSize:low?0.028:0.017, spin:0.055, scale:1.22,
+    rotation:{x:0.68,y:-0.22,z:0.11},
+    chaotic:true, nArms:2, turns:2.45, noiseScale:9.5,
+    sep0:0.125, cylR0:0.028, cylR1:0.082, radialAlpha:1.55, pinchPow:0.75
   });
   try{ plate.group.position.set(0.85, -0.55, 0); }catch(e){}
   try{
@@ -11167,6 +11173,9 @@ function sampleCylinderSpiralPoint(rand, opts){
   const RADIAL_ALPHA=+o.radialAlpha||1.75;
   const SEP0=+o.sep0||0.105, CYL_R0=+o.cylR0||0.030, CYL_R1=+o.cylR1||0.068;
   const PINCH_POW=+o.pinchPow||0.82;
+  // Justin HARD menu: chaotic=true → twisted two-tube less uniform (asymmetric
+  // sep/radii/wind/noise). Flight/map leave chaotic unset → prior morph.
+  const CHAOTIC=!!o.chaotic;
   function _gh(x,y,z){const s=Math.sin(x*127.1+y*311.7+z*74.7)*43758.5453;return s-Math.floor(s);}
   function _gnoise(x,y,z){
     const xi=Math.floor(x),yi=Math.floor(y),zi=Math.floor(z);
@@ -11179,35 +11188,52 @@ function sampleCylinderSpiralPoint(rand, opts){
   }
   function _gfbm(x,y,z,oct){let a=0.5,f=1,s=0,n=0;for(let i=0;i<oct;i++){s+=a*_gnoise(x*f,y*f,z*f);n+=a;a*=0.55;f*=2;}return s/n;}
   const u=Math.pow(rand(), RADIAL_ALPHA); // 0 core → 1 rim
-  const arm=Math.floor(rand()*N_ARMS)%N_ARMS;
+  // Bias arm pick when chaotic so one tube dominates (~62/38) — breaks mirror read
+  let arm;
+  if(CHAOTIC&&N_ARMS===2){ arm=(rand()<0.62)?0:1; }
+  else{ arm=Math.floor(rand()*N_ARMS)%N_ARMS; }
   const side=(arm%2===0)?-1:1;
   const r=u*RG;
-  const pinch=Math.pow(u, PINCH_POW);
-  const sep=SEP0*RG*pinch;
-  const cylR=(CYL_R0+(CYL_R1-CYL_R0)*u)*RG;
+  const pinch=Math.pow(u, PINCH_POW*(CHAOTIC?(arm===0?0.92:1.12):1));
+  // Asymmetric tube separation + radius (two unequal cylinders, not ±mirror)
+  const sepMul=CHAOTIC?(arm===0?1.18:0.72):1;
+  const sep=SEP0*RG*pinch*sepMul;
+  const cylBias=CHAOTIC?(arm===0?1.35:0.78):1;
+  const cylR=(CYL_R0+(CYL_R1-CYL_R0)*u)*RG*cylBias;
   const th=rand()*Math.PI*2;
-  const rho=Math.pow(rand(),0.50+u*0.30)*cylR;
+  const rho=Math.pow(rand(),0.50+u*(CHAOTIC?0.45:0.30))*cylR;
   let px=r;
-  let py=Math.sin(th)*rho*0.36;
+  let py=Math.sin(th)*rho*(CHAOTIC?0.48:0.36);
   let pz=side*sep+Math.cos(th)*rho;
-  const ns=NOISE_SCALE;
-  const nOff=_gfbm((px/RG)*ns*0.8, (py/RG)*ns*2+17.3, (pz/RG)*ns*0.8, 3);
-  const nOff2=_gfbm((px/RG)*ns*0.9+40.1, (py/RG)*ns*2.2, (pz/RG)*ns*0.9+9.7, 2);
-  const scatter=(0.005+u*0.022)*(0.55+nOff)*RG;
-  px+=(nOff-0.5)*2.0*scatter; pz+=(nOff2-0.5)*2.0*scatter; py+=(nOff-0.5)*0.012*RG;
-  const spiralAngle=spiralAngleAt(r,RG,TURNS,PHASE,arm,N_ARMS);
+  // Chaotic: extra tube squish + radial warp so arms don't read as clean ribbons
+  if(CHAOTIC){
+    const warp=_gfbm((r/RG)*8.2+arm*19.1, u*11.4, side*3.7, 3);
+    px+= (warp-0.5)*0.085*RG*(0.35+u);
+    py+= (warp-0.5)*0.055*RG*(1-u*0.4);
+    pz+= side*(warp-0.42)*0.04*RG*pinch;
+  }
+  const ns=NOISE_SCALE*(CHAOTIC?1.55:1);
+  const nOff=_gfbm((px/RG)*ns*0.8, (py/RG)*ns*2+17.3, (pz/RG)*ns*0.8, CHAOTIC?4:3);
+  const nOff2=_gfbm((px/RG)*ns*0.9+40.1, (py/RG)*ns*2.2, (pz/RG)*ns*0.9+9.7, CHAOTIC?3:2);
+  const scatter=(0.005+u*(CHAOTIC?0.040:0.022))*(0.55+nOff)*RG*(CHAOTIC?1.45:1);
+  px+=(nOff-0.5)*2.0*scatter; pz+=(nOff2-0.5)*2.0*scatter; py+=(nOff-0.5)*(CHAOTIC?0.028:0.012)*RG;
+  // Per-arm wind: chaotic arms twist at different rates (broken rotational symmetry)
+  const turnsArm=CHAOTIC?(TURNS+(arm===0?0.38:-0.22)):TURNS;
+  const phaseArm=PHASE+(CHAOTIC?(arm===0?-0.18:0.31):0);
+  const spiralAngle=spiralAngleAt(r,RG,turnsArm,phaseArm,arm,N_ARMS);
   const c=Math.cos(spiralAngle), s=Math.sin(spiralAngle);
   const rx=px*c-pz*s, rz=px*s+pz*c; px=rx; pz=rz;
   const rr=Math.hypot(px,pz), t=Math.min(1,rr/RG);
   const ang=Math.atan2(pz,px), phase=ang-spiralAngle;
-  const armWave=Math.pow(Math.abs(Math.cos(phase*N_ARMS*0.5)),1.55+u*0.70);
-  const nGate=_gfbm((px/RG)*4.5+3.1, (py/RG)*20+1.7, (pz/RG)*4.5+8.4, 4);
+  const armPow=CHAOTIC?(1.15+u*0.55+arm*0.25):(1.55+u*0.70);
+  const armWave=Math.pow(Math.abs(Math.cos(phase*N_ARMS*0.5)),armPow);
+  const nGate=_gfbm((px/RG)*4.5+3.1, (py/RG)*20+1.7, (pz/RG)*4.5+8.4, CHAOTIC?5:4);
   const radialFall=Math.exp(-(rr*rr)/(2*(RG*0.28)*(RG*0.28)))*(0.22+0.78*Math.pow(1-t,1.55));
-  const dens=armWave*(0.32+0.68*nGate)*radialFall*(0.80+0.20*(1-pinch));
-  const densFloor=0.16+u*0.36;
+  const dens=armWave*(0.32+0.68*nGate)*radialFall*(0.80+0.20*(1-pinch))*(CHAOTIC?(0.85+arm*0.18):1);
+  const densFloor=CHAOTIC?(0.10+u*0.28):(0.16+u*0.36);
   if(dens<densFloor)return null;
-  if(armWave<0.32+u*0.22)return null; // dark lanes
-  if(rand()>dens*(1.15-u*0.45))return null;
+  if(armWave<(CHAOTIC?(0.22+u*0.18):(0.32+u*0.22)))return null; // dark lanes (looser when chaotic)
+  if(rand()>dens*(1.15-u*0.45)*(CHAOTIC?1.12:1))return null;
   return {x:px,y:py,z:pz,armWave,t,dens,rr,nGate,coreW:Math.exp(-(rr*rr)/(2*(RG*0.07)*(RG*0.07))),fringeW:Math.exp(-(rr*rr)/(2*(RG*0.14)*(RG*0.14)))};
 }
 /** Crest-only sample for visitables (systems sit IN arms, sparse). Always accepts. */
@@ -11334,11 +11360,14 @@ function createSpiralGalaxyPoints(budget, opts){
     placed++;
   }
   // Central bulge — EXTREMELY dense blown white/warm (particles merge on screen)
+  // Chaotic menu: nudge nucleus off-center so the core isn't a perfect bullseye
   const bulgeN=Math.min(Math.round(N*0.38), Math.max(280, Math.round(N*0.32)));
+  const coreOffX=(o.chaotic?(_rand()-0.35)*RG*0.045:0);
+  const coreOffZ=(o.chaotic?(_rand()-0.55)*RG*0.038:0);
   for(let i=0;i<bulgeN;i++){
     const br=Math.pow(_rand(),3.2)*RG*0.13;
     const phi=_rand()*Math.PI*2, th=Math.acos(2*_rand()-1);
-    pts.push(br*Math.sin(th)*Math.cos(phi)*1.12, br*Math.cos(th)*0.36, br*Math.sin(th)*Math.sin(phi));
+    pts.push(coreOffX+br*Math.sin(th)*Math.cos(phi)*1.12, br*Math.cos(th)*0.36, coreOffZ+br*Math.sin(th)*Math.sin(phi));
     const tw=Math.min(1, br/(RG*0.13));
     const bb=0.90+_rand()*0.28;
     cols.push((1.0-tw*0.04)*bb, (0.97-tw*0.22)*bb, (0.94-tw*0.42)*bb);
@@ -11349,16 +11378,18 @@ function createSpiralGalaxyPoints(budget, opts){
   g.setAttribute('color',new THREE.BufferAttribute(new Float32Array(cols),3));
   return g;
 }
-/** Mount a Low-budget cyan spiral plate behind menu SVG. */
+/** Mount menu spiral plate — chaotic twisted two-tube when opts.chaotic. */
 function buildMenuGalaxySpiralPlate(parent, opts){
   const o=Object.assign({}, MENU_SPIRAL_DEFAULTS, opts||{});
+  // Menu Justin HARD: force dual-arm chaotic morph unless caller opts out
+  if(opts&&opts.chaotic!==false&&opts.chaotic!==0){ o.chaotic=true; o.nArms=2; }
   const budget=Math.min(o.lowCount||2800, (opts&&opts.budget)||o.lowCount||2800);
   const geo=createSpiralGalaxyPoints(budget, o);
   let map=null;
   try{map=typeof makeCircleTex==='function'?makeCircleTex(16,'rgb(255,255,255)',1):null;}catch(e){}
   const mat=new THREE.PointsMaterial({
     size:o.pointSize||0.028, sizeAttenuation:true, vertexColors:true,
-    map:map, transparent:true, opacity:0.92, depthWrite:false,
+    map:map, transparent:true, opacity:0.94, depthWrite:false,
     blending:THREE.AdditiveBlending, alphaTest:0.02
   });
   const points=new THREE.Points(geo, mat);
@@ -11371,9 +11402,18 @@ function buildMenuGalaxySpiralPlate(parent, opts){
   else group.rotation.set(0.55,0.2,0.05);
   if(parent&&parent.add)parent.add(group);
   const spin=(opts&&opts.spin!=null)?opts.spin:0.08;
+  let _t=0;
   return {
     group, points, settings:o,
-    update(dt){ group.rotation.y += spin*(dt||0.016); },
+    update(dt){
+      const d=dt||0.016; _t+=d;
+      group.rotation.y += spin*d;
+      // Soft asymmetric wobble — stops the plate reading as a perfect spinning disc
+      if(o.chaotic){
+        group.rotation.x += Math.sin(_t*0.31)*0.012*d;
+        group.rotation.z += Math.cos(_t*0.23)*0.018*d;
+      }
+    },
     dispose(){
       try{if(group.parent)group.parent.remove(group);}catch(e){}
       try{geo.dispose();mat.dispose();if(map&&map.dispose)map.dispose();}catch(e){}
