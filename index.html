@@ -8692,6 +8692,8 @@ function updateBodies(dt){
       }
     }catch(e){}
   }
+  // Sol GAL LOD — yellow arm-dot when far; restore full SYS when near
+  try{ if(typeof updateSolGalLod==='function') updateSolGalLod(); }catch(e){}
   // Wire atmo sunDir → real Sol + camera-near local fill intensities
   try{ if(typeof _updateJotsWorldsFog==='function') _updateJotsWorldsFog(); }catch(e){}
 }
@@ -9002,32 +9004,48 @@ function drawMinimap(){
 
 // Realistic galactic position: Sun out on the Orion Arm, NOT at center.
 function drawGalaxyMinimap(ctx,W,H,cx,cy){
+  // Justin HARD NAY — blue dual-arm spiral via spiralAngleAt + phaseLock (same as flight).
+  // Sol = pulsing yellow arm-dot; deterministic (no Math.random per frame).
   const R=W/2-6;
-  // central bulge glow (bar-shaped core)
+  const RG=42000, TURNS=2.25, N_ARMS=2;
+  const lock=(typeof computeSpiralPhaseLock==='function')
+    ?computeSpiralPhaseLock(RG,TURNS,N_ARMS,-RG*0.5,-RG*0.16)
+    :{phaseLock:0,solLocal:{x:-RG*0.5,z:-RG*0.16}};
+  const phase=lock.phaseLock||0;
+  // Dense white-blue core glow
   const g=ctx.createRadialGradient(cx,cy,0,cx,cy,R);
-  g.addColorStop(0,'rgba(255,240,210,0.55)');g.addColorStop(0.1,'rgba(255,225,170,0.28)');
-  g.addColorStop(0.35,'rgba(120,140,210,0.08)');g.addColorStop(1,'rgba(0,0,0,0)');
+  g.addColorStop(0,'rgba(230,245,255,0.62)');
+  g.addColorStop(0.08,'rgba(160,210,255,0.32)');
+  g.addColorStop(0.32,'rgba(70,130,220,0.10)');
+  g.addColorStop(1,'rgba(0,0,0,0)');
   ctx.fillStyle=g;ctx.beginPath();ctx.arc(cx,cy,R,0,Math.PI*2);ctx.fill();
-  // 2 MAJOR arms (Perseus, Scutum-Centaurus) + 2 minor — matches the real galaxy
-  const armDefs=[{base:0,wind:2.4,c:'rgba(140,180,255,0.5)'},{base:Math.PI,wind:2.4,c:'rgba(140,180,255,0.5)'},
-    {base:Math.PI*0.5,wind:2.3,c:'rgba(150,165,215,0.3)'},{base:Math.PI*1.5,wind:2.3,c:'rgba(150,165,215,0.3)'}];
-  armDefs.forEach(arm=>{
-    ctx.fillStyle=arm.c;
-    for(let t=0.07;t<1;t+=0.012){
-      const r=t*R;const ang=Math.log(t*R/3+1)*arm.wind+arm.base;
-      const spread=0.04+t*0.1;
-      for(let s=0;s<2;s++){const aa=ang+(Math.random()-0.5)*spread;ctx.fillRect(cx+Math.cos(aa)*r,cy+Math.sin(aa)*r,1,1);}
+  // Dual electric-blue arms — seeded hash, not Math.random scatter
+  function _mmHash(n){const s=Math.sin(n*127.1)*43758.5453;return s-Math.floor(s);}
+  for(let arm=0;arm<N_ARMS;arm++){
+    for(let t=0.06;t<1;t+=0.010){
+      const r=t*R;
+      const ang=spiralAngleAt(t*RG,RG,TURNS,phase,arm,N_ARMS);
+      const spread=0.03+t*0.09;
+      for(let s=0;s<3;s++){
+        const h=_mmHash(arm*1000+t*10000+s*17.3);
+        const aa=ang+(h-0.5)*spread*2;
+        const rr=r+(h-0.5)*R*0.012;
+        const a=0.55-t*0.28+h*0.15;
+        ctx.fillStyle='rgba(110,200,255,'+a.toFixed(3)+')';
+        ctx.fillRect(cx+Math.cos(aa)*rr, cy+Math.sin(aa)*rr, 1.2, 1.2);
+      }
     }
-  });
-  // Sun on the Orion Spur (between Sagittarius and Perseus, ~56% out)
-  const sunT=0.56, sunBase=Math.PI*0.28;
-  const sunR=sunT*R, sunAng=Math.log(sunT*R/3+1)*2.35+sunBase;
-  const sx=cx+Math.cos(sunAng)*sunR, sy=cy+Math.sin(sunAng)*sunR;
-  const pulse=1+Math.sin(performance.now()*0.004)*0.3;
-  ctx.beginPath();ctx.arc(sx,sy,2.5*pulse,0,Math.PI*2);ctx.fillStyle='#ffd23a';ctx.fill();
-  ctx.beginPath();ctx.arc(sx,sy,5.5*pulse,0,Math.PI*2);ctx.strokeStyle='rgba(255,210,58,0.6)';ctx.lineWidth=1;ctx.stroke();
-  ctx.font='6px "Share Tech Mono",monospace';ctx.fillStyle='rgba(255,210,58,0.95)';ctx.fillText('YOU ARE HERE',sx+7,sy+2);
-  ctx.fillStyle='rgba(91,127,255,0.45)';ctx.fillText('MILKY WAY · Orion Spur · 26,000 ly',5,11);
+  }
+  // Sol on crest — same phase-lock as flight (solLocal → map polar)
+  const solR=Math.hypot(lock.solLocal.x, lock.solLocal.z);
+  const solT=Math.min(0.92, Math.max(0.18, solR/RG));
+  const solAng=spiralAngleAt(solR,RG,TURNS,phase,0,N_ARMS);
+  const sx=cx+Math.cos(solAng)*solT*R, sy=cy+Math.sin(solAng)*solT*R;
+  const pulse=1+Math.sin(performance.now()*0.004)*0.28;
+  ctx.beginPath();ctx.arc(sx,sy,2.2*pulse,0,Math.PI*2);ctx.fillStyle='#ffd23a';ctx.fill();
+  ctx.beginPath();ctx.arc(sx,sy,5.0*pulse,0,Math.PI*2);ctx.strokeStyle='rgba(255,210,58,0.65)';ctx.lineWidth=1;ctx.stroke();
+  ctx.font='6px "Share Tech Mono",monospace';ctx.fillStyle='rgba(255,210,58,0.95)';ctx.fillText('SOL',sx+7,sy+2);
+  ctx.fillStyle='rgba(110,190,255,0.50)';ctx.fillText('MILKY WAY · dual spiral · arm crest',5,11);
 }
 function plotCourse(idx){
   const d=DESTINATIONS[idx];
@@ -9370,7 +9388,7 @@ function buildGalaxyBackdrop(fid){
   const SCALE=18;
   const geo=createSpiralGalaxyPoints(budget,{
     RG:R, turns:2.25, nArms:2, phaseLock:lock.phaseLock, lowCount:budget,
-    coreRgb:[0.95,0.96,1.0], armRgb:[0.45,0.70,0.95], rimRgb:[0.06,0.08,0.28],
+    coreRgb:[1.0,0.98,1.0], armRgb:[0.50,0.86,1.0], rimRgb:[0.06,0.10,0.42],
     radialAlpha:1.75
   });
   const src=geo.attributes.position.array;
@@ -9410,7 +9428,7 @@ function buildMilkyWay(group,fid){
   const geo=createSpiralGalaxyPoints(budget,{
     RG:R, turns:2.25, noiseScale:6.0, nArms:2,
     phaseLock:lock.phaseLock, lowCount:budget,
-    coreRgb:[1.0,0.97,0.92], armRgb:[0.55,0.82,1.0], rimRgb:[0.08,0.12,0.38],
+    coreRgb:[1.0,0.98,1.0], armRgb:[0.50,0.86,1.0], rimRgb:[0.06,0.10,0.42],
     radialAlpha:1.75, sep0:0.105, cylR0:0.030, cylR1:0.068
   });
   const pos=geo.attributes.position.array;
@@ -9437,7 +9455,7 @@ function buildMilkyWay(group,fid){
     bp[i*3+2]=rr*Math.sin(ph)*Math.sin(th);
     const tw=Math.min(1, rr/GAL.bulgeR);
     const b=0.75+Math.random()*0.35;
-    bc[i*3]=(1.0-tw*0.05)*b; bc[i*3+1]=(0.96-tw*0.20)*b; bc[i*3+2]=(0.92-tw*0.35)*b;
+    bc[i*3]=(1.0-tw*0.02)*b; bc[i*3+1]=(0.98-tw*0.10)*b; bc[i*3+2]=(1.0-tw*0.16)*b;
   }
   addPoints(group,bp,bc,null,2.0,true);
 
@@ -9501,31 +9519,67 @@ function buildGalacticCore(group){
 }
 
 function buildSunMarker(){
+  // Justin HARD NAY — smaller true yellow arm-dot + SYS preview card (yellow border + leader line).
+  // Matches ref-blue-galaxy-sol-dot.jpg. Same phase-lock as flight MW.
   const grp=new THREE.Group();
-  // Sol on dual-arm crest — same phase-lock as flight MW (cylinder→pinch→twist).
   const R=GAL.discR;
   const lock=computeSpiralPhaseLock(42000, 2.25, 2, -42000*0.5, -42000*0.16);
-  // Map sunR ≈ Orion distance; place ON crest of arm 0
   const r=GAL.sunR;
-  const ang=spiralAngleAt(r*(42000/R), 42000, 2.25, lock.phaseLock, 0, 2);
-  // Remap angle into map disc (same crest phase)
   const mapAng=spiralAngleAt(r, R, 2.25, lock.phaseLock, 0, 2);
   const x=Math.cos(mapAng)*r, z=Math.sin(mapAng)*r;
   GAL.sunPos=new THREE.Vector3(x,0,z);
-  GAL.orionSpur={base:mapAng - Math.log(r/28+1)*2.35, wind:2.35}; // keep spur consumers honest
-  const ring=new THREE.Mesh(new THREE.RingGeometry(14,19,32),new THREE.MeshBasicMaterial({color:0xffd23a,side:THREE.DoubleSide,transparent:true,opacity:0.9}));
-  ring.rotation.x=-Math.PI/2;ring.position.set(x,0,z);grp.add(ring);
-  const dot=new THREE.Mesh(new THREE.SphereGeometry(5,12,12),new THREE.MeshBasicMaterial({color:0xffe680}));
+  GAL.orionSpur={base:mapAng - Math.log(r/28+1)*2.35, wind:2.35};
+  // Compact arm-dot (not oversized ring)
+  const dot=new THREE.Mesh(new THREE.SphereGeometry(3.2,10,10),new THREE.MeshBasicMaterial({color:0xffd23a}));
   dot.position.set(x,0,z);grp.add(dot);
-  const glow=makeGlowSprite('rgba(255,220,120,0.7)',60);glow.position.set(x,0,z);grp.add(glow);
-  const lc=document.createElement('canvas');lc.width=360;lc.height=80;const lx=lc.getContext('2d');
-  lx.fillStyle='rgba(255,210,58,0.98)';lx.font='bold 20px Orbitron,monospace';lx.fillText('☉ YOU ARE HERE', 8,26);
-  lx.fillStyle='rgba(255,225,140,0.85)';lx.font='13px "Share Tech Mono",monospace';lx.fillText('Sol · Orion arm crest · dual spiral', 8,50);
-  lx.fillStyle='rgba(120,200,255,0.7)';lx.font='11px "Share Tech Mono",monospace';lx.fillText('tap to zoom into the solar system', 8,70);
-  const lt=new THREE.CanvasTexture(lc);const ls=new THREE.Sprite(new THREE.SpriteMaterial({map:lt,transparent:true,depthTest:false}));
-  ls.scale.set(300,66,1);ls.position.set(x+46,46,z);grp.add(ls);
+  const ring=new THREE.Mesh(new THREE.RingGeometry(5.5,7.2,24),new THREE.MeshBasicMaterial({color:0xffd23a,side:THREE.DoubleSide,transparent:true,opacity:0.75}));
+  ring.rotation.x=-Math.PI/2;ring.position.set(x,0,z);grp.add(ring);
+  const glow=makeGlowSprite('rgba(255,210,58,0.7)',36);glow.position.set(x,0,z);grp.add(glow);
+
+  // SYS preview card — yellow border, mini "SYS" label, leader line toward Sol
+  try{
+    const cw=280, ch=200;
+    const cv=document.createElement('canvas');cv.width=cw;cv.height=ch;
+    const cx=cv.getContext('2d');
+    // dark panel
+    cx.fillStyle='rgba(8,12,22,0.92)';cx.fillRect(4,4,cw-8,ch-8);
+    // yellow border
+    cx.strokeStyle='rgba(255,210,58,0.95)';cx.lineWidth=3;cx.strokeRect(4,4,cw-8,ch-8);
+    // mini SYS preview (sun + plane cue)
+    const g=cx.createRadialGradient(cw*0.42,ch*0.48,2,cw*0.42,ch*0.48,48);
+    g.addColorStop(0,'rgba(255,240,180,1)');g.addColorStop(0.35,'rgba(255,160,40,0.9)');
+    g.addColorStop(0.7,'rgba(255,100,20,0.35)');g.addColorStop(1,'rgba(0,0,0,0)');
+    cx.fillStyle=g;cx.beginPath();cx.arc(cw*0.42,ch*0.48,48,0,Math.PI*2);cx.fill();
+    cx.strokeStyle='rgba(255,180,60,0.45)';cx.lineWidth=1.5;
+    cx.beginPath();cx.ellipse(cw*0.42,ch*0.52,70,10,0,0,Math.PI*2);cx.stroke();
+    cx.beginPath();cx.ellipse(cw*0.42,ch*0.52,50,7,0,0,Math.PI*2);cx.stroke();
+    // SYS label
+    cx.fillStyle='rgba(255,210,58,0.98)';cx.font='bold 22px Orbitron,monospace';
+    cx.fillText('SYS',16,34);
+    cx.fillStyle='rgba(200,220,255,0.75)';cx.font='12px "Share Tech Mono",monospace';
+    cx.fillText('Sol · local system',16,ch-16);
+    const tex=new THREE.CanvasTexture(cv);
+    const spr=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,transparent:true,depthTest:false}));
+    // Offset to the right of Sol (leader goes back toward Sol)
+    const cardOffX=95, cardOffY=55;
+    spr.scale.set(160,114,1);spr.position.set(x+cardOffX,cardOffY,z);grp.add(spr);
+    // Leader line (thin yellow tube/line from card toward Sol)
+    const lineGeo=new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(x+cardOffX-55, cardOffY-20, z),
+      new THREE.Vector3(x+10, 4, z)
+    ]);
+    const line=new THREE.Line(lineGeo,new THREE.LineBasicMaterial({color:0xffd23a,transparent:true,opacity:0.85}));
+    grp.add(line);
+  }catch(e){console.warn('sys card:',e);}
+
+  // Compact label
+  try{
+    const lc=document.createElement('canvas');lc.width=220;lc.height=40;const lx=lc.getContext('2d');
+    lx.fillStyle='rgba(255,210,58,0.95)';lx.font='bold 16px Orbitron,monospace';lx.fillText('☉ SOL', 6,24);
+    const lt=new THREE.CanvasTexture(lc);const ls=new THREE.Sprite(new THREE.SpriteMaterial({map:lt,transparent:true,depthTest:false}));
+    ls.scale.set(90,16,1);ls.position.set(x+18,14,z);grp.add(ls);
+  }catch(e){}
   grp.userData.ring=ring;grp.userData.sunPos=GAL.sunPos;grp.userData.isSun=true;
-  void ang;
   return grp;
 }
 
@@ -9741,7 +9795,7 @@ function buildNamedGalaxyInto(group,g,fid,densMul){
     const budget=Math.round(3600*dens);
     const geo=createSpiralGalaxyPoints(budget,{
       RG:g.r, lowCount:budget, nArms:g.arms||2, turns:2.25,
-      coreRgb:[1.0,0.96,0.88], armRgb:[0.72,0.86,1.0], rimRgb:[0.10,0.14,0.42]
+      coreRgb:[1.0,0.98,1.0], armRgb:[0.50,0.86,1.0], rimRgb:[0.06,0.10,0.42]
     });
     const pos=geo.attributes.position.array;
     const col=geo.attributes.color.array;
@@ -10599,6 +10653,7 @@ function buildFlightGalaxyBand(){
   if(flightGalaxyBand){_disposeObject3D(flightGalaxyBand);flightScene.remove(flightGalaxyBand);flightGalaxyBand=null;}
   if(flightGalaxyCore){_disposeObject3D(flightGalaxyCore);flightScene.remove(flightGalaxyCore);flightGalaxyCore=null;}
   if(window._flightLocalArm){_disposeObject3D(window._flightLocalArm);flightScene.remove(window._flightLocalArm);window._flightLocalArm=null;}
+  if(window._solArmDot){try{_disposeObject3D(window._solArmDot);flightScene.remove(window._solArmDot);}catch(e){}window._solArmDot=null;}
   if(flightGalaxyNeighbourhood){_disposeObject3D(flightGalaxyNeighbourhood);flightScene.remove(flightGalaxyNeighbourhood);flightGalaxyNeighbourhood=null;}
   flightNebulae.forEach(n=>{_disposeObject3D(n);flightScene.remove(n);});flightNebulae=[];
   if(!STATE.settings.galaxyband)return;
@@ -10752,29 +10807,24 @@ async function buildFlightGalaxyBandGPU(){
 }
 
 function buildFlightGalaxyBandCPU(){
-  // Justin HARD rebuild: home MW from refs — dual cylinder→pinch→twist + Local
-  // Group nest elsewhere. Sparse arms (systems sit in crests); EXTREMELY dense
-  // blown core toward SMBH. Dual spiral. Not a density-knob pass.
-  // Refs: jots-cosmos-refs/{blender-galaxy,menu-galaxy,blown-galaxy-core.png}
-  // Credit: Kavan / Kavang (kavan010) —
-  //   https://www.kavang.com/atom
-  //   https://github.com/kavan010/Atoms
-  //   https://youtu.be/8-B6ryuBkCM
-  //   https://github.com/kavan010/black_hole / https://github.com/kavan010/gravity_sim
-  // STRIP: warm cream field wash; no glow-sprite Sol wash. GPU flag stays false.
+  // Justin HARD NAY — STRIP-THEN-REBUILD: ONE clean electric-blue spiral Points path.
+  // No InstancedMesh+Points plate double-draw. Local Orion sheath = thin BLUE (not warm orange).
+  // Refs: jots-galaxy-refs/ref-blue-galaxy-sol-dot.jpg + blender-galaxy IMPLEMENTATION_BRIEF.
+  // Credit: Kavan / Kavang (kavan010) — kavang.com/atom / kavan010/Atoms / youtu.be/8-B6ryuBkCM
+  // GPU flag ENABLE_FLIGHT_GALAXY_BAND_GPU stays false.
 
   const particles=STATE.settings.particles||'med';
   const mobile=!!(GFX&&GFX.isMobile);
   const gfxLow=!!(GFX&&GFX.preset==='low');
   const LOD={
-    low:  {arm:mobile||gfxLow?8000:11000,  core:mobile||gfxLow?7000:9000},
-    med:  {arm:mobile?16000:24000, core:mobile?12000:18000},
-    high: {arm:mobile?26000:38000, core:mobile?20000:28000},
-    ultra:{arm:mobile?30000:46000, core:mobile?24000:34000}
+    low:  {arm:mobile||gfxLow?7000:10000,  core:mobile||gfxLow?5000:7000},
+    med:  {arm:mobile?14000:22000, core:mobile?10000:16000},
+    high: {arm:mobile?22000:34000, core:mobile?16000:24000},
+    ultra:{arm:mobile?26000:40000, core:mobile?20000:30000}
   };
   let bud=LOD[particles]||LOD.med;
   if(gfxLow&&particles!=='low'){
-    bud={arm:Math.min(bud.arm, mobile?9500:12000), core:Math.min(bud.core, mobile?8000:11000)};
+    bud={arm:Math.min(bud.arm, mobile?8500:11000), core:Math.min(bud.core, mobile?7000:10000)};
   }
   try{
     if(typeof getGfxBudgets==='function'){
@@ -10783,12 +10833,11 @@ function buildFlightGalaxyBandCPU(){
       if(typeof gb.galaxyCore==='number'&&gb.galaxyCore>0) bud.core=gb.galaxyCore|0;
     }
   }catch(e){}
-  // Core ≈40% of total — blown SMBH cue without starving dual arms (ref look)
   {
     const total=(bud.arm|0)+(bud.core|0);
-    const coreFrac=0.40;
-    bud.core=Math.max(4000, Math.round(total*coreFrac));
-    bud.arm=Math.max(5000, total-bud.core);
+    const coreFrac=0.38;
+    bud.core=Math.max(3500, Math.round(total*coreFrac));
+    bud.arm=Math.max(4500, total-bud.core);
   }
   const armBudget=bud.arm, coreBudget=bud.core;
   const RG=42000;
@@ -10800,11 +10849,11 @@ function buildFlightGalaxyBandCPU(){
   const SPIRAL_PHASE_LOCK=lock.phaseLock;
   const solLocal=lock.solLocal;
 
-  // Main disc — shared morph (cylinder→pinch→twist). Phase-lock Sol on crest.
+  // Main disc — shared morph; phase-lock Sol on crest. Electric-blue palette.
   const spiralGeo=createSpiralGalaxyPoints(armBudget,{
     RG:RG, turns:TURNS, noiseScale:NOISE_SCALE, nArms:N_ARMS,
     phaseLock:SPIRAL_PHASE_LOCK, lowCount:armBudget,
-    coreRgb:[1.0,0.97,0.92], armRgb:[0.55,0.82,1.0], rimRgb:[0.08,0.12,0.38],
+    coreRgb:[1.0,0.98,1.0], armRgb:[0.50,0.86,1.0], rimRgb:[0.06,0.10,0.42],
     radialAlpha:1.75, sep0:0.105, cylR0:0.030, cylR1:0.068
   });
   const _sp=spiralGeo.attributes.position.array;
@@ -10815,15 +10864,15 @@ function buildFlightGalaxyBandCPU(){
   let placed=(_sp.length/3)|0;
   try{spiralGeo.dispose();}catch(e){}
 
-  // Near-Sol crest samples — MW LIVE as dual-arm sky from Sol (Justin particles-live)
+  // Near-Sol crest samples — blue arm sky from Sol (no warm orange band)
   try{
-    const nearSolBudget=(particles==='low'||gfxLow)?6500:(mobile?10000:14000);
-    const nearSolR=5200;
+    const nearSolBudget=(particles==='low'||gfxLow)?5000:(mobile?8000:12000);
+    const nearSolR=4800;
     let nearPlaced=0;
     for(let i=0;i<nearSolBudget*6&&nearPlaced<nearSolBudget;i++){
       const ox=solLocal.x+(Math.random()-0.5)*nearSolR*2;
       const oz=solLocal.z+(Math.random()-0.5)*nearSolR*2;
-      const oy=solLocal.y+(Math.random()-0.5)*Math.random()*420;
+      const oy=solLocal.y+(Math.random()-0.5)*Math.random()*360;
       const rr=Math.hypot(ox,oz);
       if(rr<200||rr>RG*0.95)continue;
       const sp=spiralAngleAt(rr,RG,TURNS,SPIRAL_PHASE_LOCK,0,N_ARMS);
@@ -10833,15 +10882,15 @@ function buildFlightGalaxyBandCPU(){
       if(aw<0.42)continue;
       pts.push(ox,oy,oz);
       const bb=(0.92+Math.random()*0.28)*(0.62+aw*0.50);
-      cols.push(0.55*bb,0.90*bb,1.0*bb);
+      cols.push(0.48*bb,0.86*bb,1.0*bb);
       nearPlaced++;placed++;
     }
   }catch(e){}
 
-  // Sparse arm-crest clumps (systems nest here — keep dust thin mid-arm)
+  // Sparse arm-crest clumps (systems nest here)
   try{
-    const nClumps=(particles==='low'||gfxLow)?18:(mobile?28:42);
-    const perClump=(particles==='low'||gfxLow)?28:(mobile?48:72);
+    const nClumps=(particles==='low'||gfxLow)?16:(mobile?24:36);
+    const perClump=(particles==='low'||gfxLow)?24:(mobile?40:60);
     for(let c=0;c<nClumps;c++){
       const cr=700+Math.pow(Math.random(),1.55)*RG*0.88;
       const armPick=Math.floor(Math.random()*N_ARMS);
@@ -10859,126 +10908,48 @@ function buildFlightGalaxyBandCPU(){
         const th=v*Math.PI*2, ph=Math.acos(2*w-1);
         pts.push(cx+rr*Math.sin(ph)*Math.cos(th), cy+rr*Math.cos(ph)*0.35, cz+rr*Math.sin(ph)*Math.sin(th));
         const bb=(0.7+Math.random()*0.35)*(0.55+coreProx*0.55);
-        cols.push(0.48*bb,0.80*bb,1.0*bb);
+        cols.push(0.50*bb,0.86*bb,1.0*bb);
         placed++;
       }
     }
   }catch(e){}
 
-  const tex=makeCircleTex(16,'rgb(255,255,255)',1);
-  const galGroup=new THREE.Group();
-  const armPx=mobile?(gfxLow?6.5:8.5):(gfxLow?8.0:11.0);
-  const useInstances=!(mobile||gfxLow||particles==='low');
-  if(useInstances){
-    const instN=Math.min(placed, particles==='ultra'?28000:particles==='high'?22000:16000);
-    const ip=new Float32Array(instN*3), ic=new Float32Array(instN*3);
-    const step=Math.max(1, Math.floor(placed/instN));
-    let w=0;
-    for(let i=0;i<placed&&w<instN;i+=step){
-      ip[w*3]=pts[i*3]; ip[w*3+1]=pts[i*3+1]; ip[w*3+2]=pts[i*3+2];
-      ic[w*3]=cols[i*3]; ic[w*3+1]=cols[i*3+1]; ic[w*3+2]=cols[i*3+2];
-      w++;
-    }
-    const instRad=particles==='ultra'?95:particles==='high'?80:68;
-    flightGalaxyBand=_buildGalaxyDustDraw(ip,ic,{
-      lit:true, instanceRadius:instRad, opacity:0.88
-    });
-    if(flightGalaxyBand)galGroup.add(flightGalaxyBand);
-    const plateN=Math.min(placed, particles==='ultra'?28000:particles==='high'?24000:20000);
-    const pp=new Float32Array(plateN*3), pc=new Float32Array(plateN*3);
-    const pstep=Math.max(1, Math.floor(placed/plateN));
-    let pw=0;
-    for(let i=0;i<placed&&pw<plateN;i+=pstep){
-      pp[pw*3]=pts[i*3]; pp[pw*3+1]=pts[i*3+1]; pp[pw*3+2]=pts[i*3+2];
-      const cr=cols[i*3], cg=cols[i*3+1], cb=cols[i*3+2];
-      pc[pw*3]=Math.min(1, cr*1.15+0.08);
-      pc[pw*3+1]=Math.min(1, cg*1.28+0.10);
-      pc[pw*3+2]=Math.min(1, cb*1.12+0.06);
-      pw++;
-    }
-    const plate=_buildGalaxyDustDraw(pp,pc,{
-      forcePoints:true, pointSize:armPx, sizeAttenuation:false, opacity:0.96
-    });
-    if(plate)galGroup.add(plate);
-  }else{
-    flightGalaxyBand=_buildGalaxyDustDraw(pts,cols,{
-      forcePoints:true, pointSize:armPx, sizeAttenuation:false, opacity:0.96
-    });
-    if(flightGalaxyBand)galGroup.add(flightGalaxyBand);
-  }
-  try{
-    const nearN=Math.min(placed, mobile||gfxLow?1600:2800);
-    const np=new Float32Array(nearN*3), nc=new Float32Array(nearN*3);
-    for(let i=0;i<nearN;i++){
-      const j=(i*3)%(placed*3);
-      np[i*3]=pts[j]; np[i*3+1]=pts[j+1]; np[i*3+2]=pts[j+2];
-      nc[i*3]=cols[j]*0.85; nc[i*3+1]=cols[j+1]*0.85; nc[i*3+2]=cols[j+2]*0.85;
-    }
-    const nearSz=mobile?(gfxLow?90:110):(gfxLow?70:95);
-    const nearDraw=_buildGalaxyDustDraw(np,nc, useInstances
-      ?{lit:true, instanceRadius:Math.max(28, nearSz*0.35), opacity:0.55}
-      :{forcePoints:true, pointSize:nearSz, sizeAttenuation:true, opacity:0.55});
-    if(nearDraw)galGroup.add(nearDraw);
-  }catch(e){}
-
-  // Core bulge — blown white/cyan particulate (ref blown-galaxy-core.png)
-  const cp=[],cc=[];
+  // Core bulge — dense white-blue particulate
   for(let i=0;i<coreBudget;i++){
     const r=Math.pow(Math.random(),3.3)*RG*0.14;
     const phi=Math.random()*Math.PI*2,th=Math.acos(2*Math.random()-1);
-    cp.push(r*Math.sin(th)*Math.cos(phi)*1.15, r*Math.cos(th)*0.38, r*Math.sin(th)*Math.sin(phi));
+    pts.push(r*Math.sin(th)*Math.cos(phi)*1.15, r*Math.cos(th)*0.38, r*Math.sin(th)*Math.sin(phi));
     const tw=Math.min(1, r/(RG*0.14));
     const b=0.92+Math.random()*0.28;
-    cc.push((1.0-tw*0.03)*b, (0.97-tw*0.22)*b, (0.94-tw*0.40)*b);
+    cols.push((1.0-tw*0.02)*b, (0.98-tw*0.10)*b, (1.0-tw*0.16)*b);
+    placed++;
   }
-  const corePx=mobile?(gfxLow?6.5:8.0):(gfxLow?7.5:9.5);
-  const coreDraw=_buildGalaxyDustDraw(cp,cc,{
-    forcePoints:true, pointSize:corePx, sizeAttenuation:false, opacity:0.99
-  });
-  if(coreDraw)galGroup.add(coreDraw);
 
-  // Thin accretion ring cue
-  const dn=Math.round(Math.min(2800, coreBudget*0.16));
-  const dp=[],dc=[];
-  for(let i=0;i<dn;i++){
-    const rr=RG*0.012+Math.pow(Math.random(),0.75)*RG*0.060;
-    const a=Math.random()*Math.PI*2;
-    const warm=1-(rr/(RG*0.075));
-    dp.push(Math.cos(a)*rr, gaussian()*RG*0.0030, Math.sin(a)*rr);
-    const b=0.70+Math.random()*0.35;
-    dc.push(lerp(0.55,1.0,warm)*b, lerp(0.70,0.94,warm)*b, lerp(1.0,0.60,warm)*b);
-  }
-  const ringDraw=_buildGalaxyDustDraw(dp,dc,{
-    forcePoints:true, pointSize:mobile?3.8:5.0, sizeAttenuation:false, opacity:0.94
+  const tex=makeCircleTex(16,'rgb(255,255,255)',1);
+  const galGroup=new THREE.Group();
+  const armPx=mobile?(gfxLow?6.5:8.5):(gfxLow?8.0:11.0);
+  // SINGLE draw path — Points only (Low→High). No InstancedMesh+Points double-draw.
+  flightGalaxyBand=_buildGalaxyDustDraw(pts,cols,{
+    forcePoints:true, pointSize:armPx, sizeAttenuation:false, opacity:0.96
   });
-  if(ringDraw)galGroup.add(ringDraw);
+  if(flightGalaxyBand)galGroup.add(flightGalaxyBand);
 
-  // Soft navy/magenta nebula pockets near core (sparse — not Sol wash)
+  // Thin accretion ring cue (blue-white inner)
   try{
-    const nebPockets=(particles==='low'||gfxLow)?3:(mobile?4:6);
-    const nebPer=(particles==='low'||gfxLow)?160:(mobile?240:360);
-    const np=[],nc=[];
-    for(let p=0;p<nebPockets;p++){
-      const nr=(0.06+Math.random()*0.12)*RG;
-      const na=Math.random()*Math.PI*2;
-      const nx=Math.cos(na)*nr, nz=Math.sin(na)*nr;
-      const ny=(Math.random()-0.5)*RG*0.018;
-      const nR=RG*(0.016+Math.random()*0.030);
-      const magentaBias=Math.random()<0.42;
-      for(let k=0;k<nebPer;k++){
-        const u=Math.random(), v=Math.random(), w=Math.random();
-        const rr=nR*Math.pow(u,0.7);
-        const th=v*Math.PI*2, ph=Math.acos(2*w-1);
-        np.push(nx+rr*Math.sin(ph)*Math.cos(th), ny+rr*Math.cos(ph)*0.45, nz+rr*Math.sin(ph)*Math.sin(th));
-        const bb=0.32+Math.random()*0.32;
-        if(magentaBias){nc.push(0.52*bb,0.26*bb,0.70*bb);}
-        else{nc.push(0.16*bb,0.20*bb,0.52*bb);}
-      }
+    const dn=Math.round(Math.min(2200, coreBudget*0.14));
+    const dp=[],dc=[];
+    for(let i=0;i<dn;i++){
+      const rr=RG*0.012+Math.pow(Math.random(),0.75)*RG*0.060;
+      const a=Math.random()*Math.PI*2;
+      const warm=1-(rr/(RG*0.075));
+      dp.push(Math.cos(a)*rr, gaussian()*RG*0.0030, Math.sin(a)*rr);
+      const b=0.70+Math.random()*0.35;
+      dc.push(lerp(0.55,0.95,warm)*b, lerp(0.78,0.98,warm)*b, lerp(1.0,0.85,warm)*b);
     }
-    const nebDraw=_buildGalaxyDustDraw(np,nc,{
-      forcePoints:true, pointSize:mobile?3.0:4.0, sizeAttenuation:false, opacity:0.52
+    const ringDraw=_buildGalaxyDustDraw(dp,dc,{
+      forcePoints:true, pointSize:mobile?3.8:5.0, sizeAttenuation:false, opacity:0.90
     });
-    if(nebDraw)galGroup.add(nebDraw);
+    if(ringDraw)galGroup.add(ringDraw);
   }catch(e){}
 
   galGroup.rotation.set(0.5,0.3,0.1);
@@ -10986,7 +10957,11 @@ function buildFlightGalaxyBandCPU(){
   flightGalaxyCore=galGroup;
   flightScene.add(galGroup);
 
-  // Local Orion sheath — thinner than #37 so dual arms read; particulate only
+  // Full-disc arm-dot field (systems as yellow/white crest markers across MW)
+  try{ generateGalacticArmDots(galGroup, SPIRAL_PHASE_LOCK, RG, particles, mobile, gfxLow); }catch(e){console.warn('arm dots:',e);}
+
+  // Local Orion sheath — THINNER BLUE matching arm colors (not warm orange flat band).
+  // Faded/hidden at GAL_SOL_SPECK_DIST by updateSolGalLod.
   try{
     if(window._flightLocalArm){
       _disposeObject3D(window._flightLocalArm);
@@ -10996,50 +10971,38 @@ function buildFlightGalaxyBandCPU(){
     const local=new THREE.Group();
     local.rotation.copy(galGroup.rotation);
     const locN=(particles==='low'||gfxLow)
-      ?(mobile?14000:18000)
+      ?(mobile?6000:9000)
       :(particles==='high'||particles==='ultra')
-        ?(mobile?24000:32000)
-        :(mobile?18000:26000);
+        ?(mobile?12000:16000)
+        :(mobile?9000:12000);
     const lp=new Float32Array(locN*3),lc=new Float32Array(locN*3);
     for(let i=0;i<locN;i++){
-      const along=(Math.random()-0.5)*6400;
-      const across=(Math.random()-0.5)*Math.random()*1100;
-      const thick=(Math.random()-0.5)*Math.random()*300;
-      const coreBias=Math.random()*Math.random()*5200;
+      const along=(Math.random()-0.5)*5200;
+      const across=(Math.random()-0.5)*Math.random()*720; // thinner across
+      const thick=(Math.random()-0.5)*Math.random()*180;  // thinner
+      const coreBias=Math.random()*Math.random()*4200;
       lp[i*3]=along-coreBias*0.55;
       lp[i*3+1]=thick;
       lp[i*3+2]=across;
       const t=Math.min(1,Math.hypot(lp[i*3],lp[i*3+2])/5200);
       const towardCore=Math.max(0, -lp[i*3]/5200);
-      const b=(0.90+Math.random()*0.40)*(1-t*0.14)*(0.90+towardCore*0.55);
-      lc[i*3]=0.55*b;lc[i*3+1]=0.80*b;lc[i*3+2]=1.0*b;
+      const b=(0.88+Math.random()*0.35)*(1-t*0.16)*(0.90+towardCore*0.45);
+      // Electric blue sheath — matches MENU_SPIRAL armRgb
+      lc[i*3]=0.48*b;lc[i*3+1]=0.86*b;lc[i*3+2]=1.0*b;
     }
     const lg=new THREE.BufferGeometry();
     lg.setAttribute('position',new THREE.BufferAttribute(lp,3));
     lg.setAttribute('color',new THREE.BufferAttribute(lc,3));
-    const locSize=mobile?(gfxLow?95:115):(gfxLow?88:110);
+    const locSize=mobile?(gfxLow?70:85):(gfxLow?65:80);
     local.add(new THREE.Points(lg,new THREE.PointsMaterial({
       size:locSize,sizeAttenuation:true,vertexColors:true,map:tex,
-      transparent:true,opacity:0.98,depthWrite:false,blending:THREE.AdditiveBlending,alphaTest:0.02
+      transparent:true,opacity:0.72,depthWrite:false,blending:THREE.AdditiveBlending,alphaTest:0.02
     })));
-    try{
-      const midN=Math.min(locN, mobile||gfxLow?6000:9000);
-      const mp=new Float32Array(midN*3), mc=new Float32Array(midN*3);
-      for(let i=0;i<midN;i++){
-        mp[i*3]=lp[i*3]; mp[i*3+1]=lp[i*3+1]; mp[i*3+2]=lp[i*3+2];
-        mc[i*3]=lc[i*3]; mc[i*3+1]=lc[i*3+1]; mc[i*3+2]=lc[i*3+2];
-      }
-      const mg=new THREE.BufferGeometry();
-      mg.setAttribute('position',new THREE.BufferAttribute(mp,3));
-      mg.setAttribute('color',new THREE.BufferAttribute(mc,3));
-      local.add(new THREE.Points(mg,new THREE.PointsMaterial({
-        size:mobile?4.5:6.0,sizeAttenuation:false,vertexColors:true,map:tex,
-        transparent:true,opacity:0.88,depthWrite:false,blending:THREE.AdditiveBlending,alphaTest:0.02
-      })));
-    }catch(e){}
     flightScene.add(local);
     window._flightLocalArm=local;
   }catch(e){console.warn('local arm:',e);}
+
+  try{ ensureSolArmDot(); }catch(e){console.warn('sol arm-dot:',e);}
 }
 
 // ── Flight neighbourhood galaxies (Justin HARD particles-live) ─────────
@@ -11083,10 +11046,11 @@ function buildFlightGalaxyNeighbourhood(){
       local.rotation.x=g.tilt||0.3;
       const isSpiral=(g.type!=='elliptical'&&g.type!=='sombrero'&&g.type!=='irregular');
       const budget=Math.round((isSpiral?2800:1600)*densMul*(mobile?0.7:1));
+      const localRG=Math.max(220,g.r*0.85);
       if(isSpiral&&typeof createSpiralGalaxyPoints==='function'){
         const geo=createSpiralGalaxyPoints(budget,{
-          RG:Math.max(220,g.r*0.85), lowCount:budget, nArms:g.arms||2, turns:2.25,
-          coreRgb:[1.0,0.96,0.90], armRgb:[0.62,0.84,1.0], rimRgb:[0.10,0.14,0.40]
+          RG:localRG, lowCount:budget, nArms:g.arms||2, turns:2.25,
+          coreRgb:[1.0,0.98,1.0], armRgb:[0.50,0.86,1.0], rimRgb:[0.06,0.10,0.42]
         });
         const draw=_buildGalaxyDustDraw(
           geo.attributes.position.array,
@@ -11099,7 +11063,31 @@ function buildFlightGalaxyNeighbourhood(){
       }else if(typeof buildNamedGalaxyInto==='function'){
         buildNamedGalaxyInto(local,g,densMul,1.0);
       }
-      // Soft far cue (Points, not flat Sprite wash) — tiny bright core speck
+      // Nested systems — cheap crest arm-dots in EVERY spiral neighbour (Sol language)
+      if(isSpiral){
+        try{
+          const nSys=(particles==='low'||gfxLow)?(mobile?8:12):(particles==='high'||particles==='ultra')?(mobile?16:20):(mobile?12:16);
+          const seed=typeof hashStr==='function'?hashStr('neighsys:'+g.n):((gi+1)*7919);
+          const rand=typeof seedRand==='function'?seedRand(seed):Math.random;
+          const sp=new Float32Array(nSys*3),sc=new Float32Array(nSys*3);
+          for(let si=0;si<nSys;si++){
+            const s=sampleSpiralArmCrest(rand,{
+              RG:localRG, turns:2.25, nArms:g.arms||2, phaseLock:0,
+              minR:localRG*0.12, maxR:localRG*0.88, radialAlpha:1.1
+            });
+            sp[si*3]=s.x;sp[si*3+1]=s.y;sp[si*3+2]=s.z;
+            const warm=rand()<0.6; const b=0.9+rand()*0.3;
+            if(warm){sc[si*3]=1.0*b;sc[si*3+1]=0.82*b;sc[si*3+2]=0.32*b;}
+            else{sc[si*3]=0.95*b;sc[si*3+1]=0.97*b;sc[si*3+2]=1.0*b;}
+          }
+          const sysDots=_buildGalaxyDustDraw(sp,sc,{
+            forcePoints:true, pointSize:mobile?(gfxLow?160:200):(gfxLow?180:240),
+            sizeAttenuation:true, opacity:0.98
+          });
+          if(sysDots){sysDots.name='JOTS_NeighSysDots';local.add(sysDots);}
+        }catch(e){}
+      }
+      // Soft far cue — tiny bright core speck
       try{
         const cn=Math.round((mobile||gfxLow)?80:140);
         const cp=new Float32Array(cn*3),cc=new Float32Array(cn*3);
@@ -11112,8 +11100,7 @@ function buildFlightGalaxyNeighbourhood(){
           cp[i*3+1]=rr*Math.cos(ph)*0.5;
           cp[i*3+2]=rr*Math.sin(ph)*Math.sin(th);
           const b=0.85+Math.random()*0.35;
-          const col=new THREE.Color(g.c||0xb0c4ff);
-          cc[i*3]=col.r*b;cc[i*3+1]=col.g*b;cc[i*3+2]=col.b*b;
+          cc[i*3]=0.95*b;cc[i*3+1]=0.97*b;cc[i*3+2]=1.0*b;
         }
         const core=_buildGalaxyDustDraw(cp,cc,{
           forcePoints:true, pointSize:mobile?(gfxLow?180:240):(gfxLow?220:300),
@@ -11129,15 +11116,18 @@ function buildFlightGalaxyNeighbourhood(){
 }
 
 // ── Shared spiral morph (Blender GN + Kavang cylinder→pinch→twist) ─────
-// Refs: /workspace/jots-cosmos-refs/{blender-galaxy,menu-galaxy,blown-galaxy-core.png}
+// Refs: /workspace/jots-galaxy-refs/ref-blue-galaxy-sol-dot.jpg (+ far-sol-speck, sol-closeup)
+//   /workspace/jots-cosmos-refs/{blender-galaxy,menu-galaxy,blown-galaxy-core.png}
 // Method: dual side-by-side cylinders → pinch middles at core → log-twist spiral
-// + noise clumps + blown SMBH core. Dual arms; denser toward center; dark lanes.
+// + noise clumps + blown SMBH core. Dual electric-blue arms; denser toward center; dark lanes.
 // Credit: Kavan / Kavang (kavan010) —
 //   https://www.kavang.com/atom
 //   https://github.com/kavan010/Atoms
 //   https://youtu.be/8-B6ryuBkCM
 //   https://github.com/kavan010/black_hole / https://github.com/kavan010/gravity_sim
 // Adapt morphology only — no proprietary blobs. ENABLE_FLIGHT_GALAXY_BAND_GPU stays false.
+// Justin HARD NAY refs: /workspace/jots-galaxy-refs/{ref-blue-galaxy-sol-dot.jpg,ref-far-sol-speck.jpg,ref-sol-closeup-dart-meadow.jpg}
+//   + /workspace/jots-cosmos-refs/blender-galaxy/IMPLEMENTATION_BRIEF.md
 const MENU_SPIRAL_DEFAULTS={
   RG:1.0,
   turns:2.25,
@@ -11146,10 +11136,10 @@ const MENU_SPIRAL_DEFAULTS={
   lowCount:7000,
   pointSize:0.018,
   phaseLock:0,
-  // Menu / flight palette: warm-white core, cyan-blue arms, navy rim (refs)
-  coreRgb:[1.0,0.97,0.92],
-  armRgb:[0.55,0.82,1.0],
-  rimRgb:[0.08,0.12,0.38],
+  // Electric cyan-blue spiral (ref-blue-galaxy-sol-dot): arms ~0.45–0.65,0.75–0.95,1.0; dense white-blue core
+  coreRgb:[1.0,0.98,1.0],
+  armRgb:[0.50,0.86,1.0],
+  rimRgb:[0.06,0.10,0.42],
   // Cylinder morph (fraction of RG)
   sep0:0.105,
   cylR0:0.030,
@@ -11357,18 +11347,19 @@ function createSpiralGalaxyPoints(budget, opts){
     if(!s)continue;
     pts.push(s.x,s.y,s.z);
     let cr,cg,cb;
-    if(s.coreW>0.45){cr=1.0;cg=0.97;cb=0.94;} // blown white-cyan core
+    // Multi-color lit arms: white-blue core → electric cyan arm → navy rim (NOT grey/dust-only)
+    if(s.coreW>0.45){cr=o.coreRgb[0];cg=o.coreRgb[1];cb=o.coreRgb[2];}
     else if(s.fringeW>0.35){
       const fw=(s.fringeW-0.35)/0.65;
-      cr=0.92+0.08*fw; cg=0.78+0.16*fw; cb=0.55+0.35*fw; // warm fringe only
+      cr=o.armRgb[0]*(0.85+0.15*fw)+0.20*fw; cg=o.armRgb[1]*(0.90+0.10*fw); cb=Math.min(1,o.armRgb[2]+0.05*fw);
     }
     else if(s.t<0.55){
       const u2=s.t/0.55;
       cr=o.armRgb[0]+(o.rimRgb[0]-o.armRgb[0])*u2*0.35;
-      cg=o.armRgb[1]*(1-u2*0.18);
+      cg=o.armRgb[1]*(1-u2*0.12);
       cb=o.armRgb[2];
     }else{cr=o.rimRgb[0];cg=o.rimRgb[1];cb=o.rimRgb[2];}
-    if(s.nGate>0.72&&s.armWave>0.75&&_rand()<0.03){cr=0.95;cg=0.98;cb=1.0;}
+    if(s.nGate>0.72&&s.armWave>0.75&&_rand()<0.04){cr=0.85;cg=0.96;cb=1.0;} // hot cyan HII pocket
     const b=(0.48+s.dens*0.52)*(0.70+_rand()*0.30)*(0.80+s.coreW*0.65);
     cols.push(cr*b,cg*b,cb*b);
     placed++;
@@ -11384,7 +11375,7 @@ function createSpiralGalaxyPoints(budget, opts){
     pts.push(coreOffX+br*Math.sin(th)*Math.cos(phi)*1.12, br*Math.cos(th)*0.36, coreOffZ+br*Math.sin(th)*Math.sin(phi));
     const tw=Math.min(1, br/(RG*0.13));
     const bb=0.90+_rand()*0.28;
-    cols.push((1.0-tw*0.04)*bb, (0.97-tw*0.22)*bb, (0.94-tw*0.42)*bb);
+    cols.push((1.0-tw*0.02)*bb, (0.98-tw*0.10)*bb, (1.0-tw*0.18)*bb); // white-blue SMBH core
     placed++;
   }
   const g=new THREE.BufferGeometry();
@@ -11434,6 +11425,146 @@ function buildMenuGalaxySpiralPlate(parent, opts){
     }
   };
 }
+
+// ── Sol GAL LOD: yellow arm-dot at galaxy scale (Justin HARD NAY) ───────
+// When cam is far from Sol origin, hide full SYS visuals and show a tiny
+// yellow/orange speck IN the spiral arm. Near → restore vibrant Sol + planets.
+// Threshold tuned so full MW disc reads (~10000–18000 scene units).
+const GAL_SOL_SPECK_DIST=14000;
+window.GAL_SOL_SPECK_DIST=GAL_SOL_SPECK_DIST;
+
+function ensureSolArmDot(){
+  if(!flightScene)return;
+  if(window._solArmDot){
+    try{ if(window._solArmDot.parent)window._solArmDot.parent.remove(window._solArmDot); }catch(e){}
+    try{ if(typeof _disposeObject3D==='function')_disposeObject3D(window._solArmDot); }catch(e){}
+    window._solArmDot=null;
+  }
+  const grp=new THREE.Group();
+  grp.name='JOTS_SolArmDot';
+  // Tiny yellow-orange sphere at world origin (Sol) — map-sun-marker language
+  const core=new THREE.Mesh(
+    new THREE.SphereGeometry(90,10,10),
+    new THREE.MeshBasicMaterial({color:0xffd23a})
+  );
+  grp.add(core);
+  try{
+    const glow=makeGlowSprite('rgba(255,210,58,0.85)',420);
+    grp.add(glow);
+  }catch(e){
+    const shell=new THREE.Mesh(
+      new THREE.SphereGeometry(220,8,8),
+      new THREE.MeshBasicMaterial({color:0xffc14a,transparent:true,opacity:0.35,
+        blending:THREE.AdditiveBlending,depthWrite:false})
+    );
+    grp.add(shell);
+  }
+  // Optional short "Sol" label sprite
+  try{
+    const lc=document.createElement('canvas');lc.width=128;lc.height=48;
+    const lx=lc.getContext('2d');
+    lx.fillStyle='rgba(255,210,58,0.95)';lx.font='bold 28px Orbitron,monospace';
+    lx.textAlign='center';lx.fillText('Sol',64,34);
+    const lt=new THREE.CanvasTexture(lc);
+    const ls=new THREE.Sprite(new THREE.SpriteMaterial({map:lt,transparent:true,depthTest:false}));
+    ls.scale.set(520,195,1);ls.position.set(0,280,0);grp.add(ls);
+  }catch(e){}
+  grp.visible=!!window._solFullSysHidden;
+  grp.position.set(0,0,0);
+  flightScene.add(grp);
+  window._solArmDot=grp;
+  try{ updateSolGalLod(); }catch(e){}
+}
+
+function _setSolFullSysVisible(vis){
+  // Hide/show full Sol system visuals without deleting rebuild path
+  try{
+    if(typeof celestialBodies!=='undefined'&&celestialBodies){
+      for(let i=0;i<celestialBodies.length;i++){
+        const b=celestialBodies[i];
+        if(b&&b.mesh)b.mesh.visible=vis;
+      }
+    }
+  }catch(e){}
+  try{
+    if(typeof _flightSystemExtras!=='undefined'&&_flightSystemExtras){
+      for(let i=0;i<_flightSystemExtras.length;i++){
+        const o=_flightSystemExtras[i];if(o)o.visible=vis;
+      }
+    }
+  }catch(e){}
+  try{ if(typeof oortCloudGroup!=='undefined'&&oortCloudGroup)oortCloudGroup.visible=vis; }catch(e){}
+  try{
+    if(typeof distantSystems!=='undefined'&&distantSystems){
+      // Keep distant arm markers; only Sol-bubble full meshes toggle above
+    }
+  }catch(e){}
+}
+
+function updateSolGalLod(){
+  if(!flightCamera)return;
+  const cam=flightCamera.position;
+  const dist=Math.hypot(cam.x,cam.y,cam.z); // Sol at world origin
+  const far=dist>GAL_SOL_SPECK_DIST;
+  if(far!==!!window._solFullSysHidden){
+    window._solFullSysHidden=far;
+    _setSolFullSysVisible(!far);
+    if(window._solArmDot)window._solArmDot.visible=far;
+  }else if(window._solArmDot&&window._solArmDot.visible!==far){
+    window._solArmDot.visible=far;
+  }
+  // Fade/hide local Orion sheath at same GAL distance (fixes flat orange band + empty far)
+  try{
+    const la=window._flightLocalArm;
+    if(la){
+      la.visible=!far;
+      if(!far&&la.children){
+        // Soft opacity when approaching threshold
+        const t=Math.min(1, dist/(GAL_SOL_SPECK_DIST*0.85));
+        const op=0.72*(1-t*0.55);
+        la.traverse(o=>{
+          if(o.isPoints&&o.material){o.material.opacity=Math.max(0.25,op);}
+        });
+      }
+    }
+  }catch(e){}
+  // Soft pulse on arm-dot glow
+  try{
+    if(far&&window._solArmDot){
+      const pulse=1+Math.sin((typeof flightTime==='number'?flightTime:performance.now()*0.001)*2.2)*0.12;
+      window._solArmDot.scale.setScalar(pulse);
+    }
+  }catch(e){}
+}
+
+/** Full-disc MW arm-dot field — cheap yellow/white crest markers (systems language).
+ *  Does NOT touch generateSeededStarField(140, 918273) near-bubble contract. */
+function generateGalacticArmDots(galGroup, phaseLock, RG, particles, mobile, gfxLow){
+  if(!galGroup)return;
+  const nDots=(particles==='low'||gfxLow)?(mobile?80:120):(particles==='high'||particles==='ultra')?(mobile?220:360):(mobile?140:220);
+  const seed=0xA11D07; // fixed — decorative only, not visitables
+  const rand=typeof seedRand==='function'?seedRand(seed):Math.random;
+  const pos=new Float32Array(nDots*3), col=new Float32Array(nDots*3);
+  let placed=0;
+  for(let i=0;i<nDots*8&&placed<nDots;i++){
+    const s=sampleSpiralArmCrest(rand,{
+      RG:RG, turns:2.25, nArms:2, phaseLock:phaseLock||0,
+      minR:RG*0.08, maxR:RG*0.92, radialAlpha:1.05
+    });
+    pos[placed*3]=s.x; pos[placed*3+1]=s.y; pos[placed*3+2]=s.z;
+    const warm=rand()<0.55;
+    const b=0.85+rand()*0.35;
+    if(warm){col[placed*3]=1.0*b;col[placed*3+1]=0.82*b;col[placed*3+2]=0.35*b;}
+    else{col[placed*3]=0.95*b;col[placed*3+1]=0.96*b;col[placed*3+2]=1.0*b;}
+    placed++;
+  }
+  const draw=_buildGalaxyDustDraw(pos,col,{
+    forcePoints:true, pointSize:mobile?(gfxLow?4.5:6.0):(gfxLow?5.5:7.5),
+    sizeAttenuation:false, opacity:0.95
+  });
+  if(draw){draw.name='JOTS_GalacticArmDots';galGroup.add(draw);}
+}
+
 window.MENU_SPIRAL_DEFAULTS=MENU_SPIRAL_DEFAULTS;
 window.spiralAngleAt=spiralAngleAt;
 window.computeSpiralPhaseLock=computeSpiralPhaseLock;
@@ -11441,6 +11572,9 @@ window.sampleCylinderSpiralPoint=sampleCylinderSpiralPoint;
 window.sampleSpiralArmCrest=sampleSpiralArmCrest;
 window.createSpiralGalaxyPoints=createSpiralGalaxyPoints;
 window.buildMenuGalaxySpiralPlate=buildMenuGalaxySpiralPlate;
+window.ensureSolArmDot=ensureSolArmDot;
+window.updateSolGalLod=updateSolGalLod;
+window.generateGalacticArmDots=generateGalacticArmDots;
 
 // ── 3. MULTI-STAR DISTANT SYSTEMS (visible as systems you can fly to) ─
 let distantSystems=[];
