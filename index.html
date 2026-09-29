@@ -421,8 +421,8 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;background:var(--c0);co
 #ls-plate-video,.ls-plate-video{position:absolute;inset:0;z-index:-2;width:100%;height:100%;object-fit:cover;object-position:center 40%;pointer-events:none;background:#000308;}
 #loading-screen{position:fixed;inset:0;background:#000308;z-index:10000;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:opacity 0.8s ease;}
 #loading-screen.out{opacity:0;pointer-events:none;}
-/* UI cluster: ~40% prior size, true center, hidden until ~4s */
-#ls-ui-cluster{position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;opacity:0;pointer-events:none;transition:opacity 1s ease;will-change:opacity;}
+/* UI cluster: ~40% prior size, true center — visible instantly (no timed fade gate) */
+#ls-ui-cluster{position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;opacity:1;pointer-events:auto;}
 #ls-ui-cluster.ls-ui-in{opacity:1;pointer-events:auto;}
 #ls-logo{width:auto;height:auto;max-width:min(256px,29vw);max-height:9.6vh;position:relative;z-index:2;margin-bottom:0.48rem;filter:drop-shadow(0 0 16px rgba(91,127,255,0.35)) drop-shadow(0 0 32px rgba(255,79,163,0.15));animation:tpulse 3.5s ease-in-out infinite;}
 @keyframes tpulse{0%,100%{text-shadow:0 0 30px var(--cyan),0 0 80px rgba(91,127,255,0.3);}50%{text-shadow:0 0 60px var(--cyan),0 0 140px rgba(91,127,255,0.6);}}
@@ -922,11 +922,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   if(window.__EARLY_SPLASH__) return;
   window.__EARLY_SPLASH__ = true;
   function el(id){ return document.getElementById(id); }
-  var FADE_START = 4; /* Justin: fade logo+SEQUENCE DART from ~4s */
   var loadReady = false;
-  var fadeStarted = false;
-  var playWall0 = null;
-  var syncRaf = 0;
 
   function showEnterBtn(){
     try{
@@ -938,45 +934,20 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     }catch(e){}
   }
   function syncEnter(){
-    /* SEQUENCE DART only after fade window AND assets/progress ready */
-    if(loadReady && fadeStarted) showEnterBtn();
+    /* SEQUENCE DART when assets/progress ready — never gated on video time */
+    if(loadReady) showEnterBtn();
   }
   function markLoadReady(){
     loadReady = true;
     syncEnter();
   }
   function startUiFade(){
-    if(fadeStarted) return;
-    fadeStarted = true;
+    /* Instant: logo + cluster already visible via CSS; keep class for compat */
     try{
       var cluster = el('ls-ui-cluster');
       if(cluster) cluster.classList.add('ls-ui-in');
     }catch(e){}
     syncEnter();
-  }
-  function splashElapsed(){
-    var v = el('ls-plate-video');
-    var wall = (playWall0 != null) ? ((performance.now() - playWall0) / 1000) : null;
-    if(v && !v.paused && isFinite(v.currentTime)){
-      var ct = v.currentTime;
-      /* After loop, currentTime resets — wall clock keeps fade sticky */
-      if(wall != null && wall >= FADE_START && ct < FADE_START) return wall;
-      if(ct > 0) return ct;
-    }
-    return wall;
-  }
-  function tickFade(){
-    try{
-      var t = splashElapsed();
-      if(t != null && t >= FADE_START){ startUiFade(); return; }
-      if(!fadeStarted) syncRaf = requestAnimationFrame(tickFade);
-    }catch(e){
-      if(!fadeStarted) syncRaf = requestAnimationFrame(tickFade);
-    }
-  }
-  function notePlayStart(){
-    if(playWall0 == null) playWall0 = performance.now();
-    if(!fadeStarted && !syncRaf) tickFade();
   }
 
   try{
@@ -985,16 +956,16 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     if(v&&screen){
       var mark=function(){ screen.classList.add('has-plate-video'); try{v.play();}catch(e){} };
       v.addEventListener('loadeddata', mark, {once:true});
-      v.addEventListener('playing', function(){ mark(); notePlayStart(); });
-      v.addEventListener('play', notePlayStart);
+      v.addEventListener('playing', function(){ mark(); });
       if(v.readyState>=2) mark();
-      setTimeout(function(){ try{v.play().then(function(){ mark(); notePlayStart(); }).catch(function(){ notePlayStart(); });}catch(e){ notePlayStart(); } }, 200);
-    } else {
-      notePlayStart();
+      setTimeout(function(){ try{v.play().then(function(){ mark(); }).catch(function(){});}catch(e){} }, 200);
     }
-  }catch(e){ try{ notePlayStart(); }catch(_){ } }
+  }catch(e){}
 
-  /* Public reveal = mark load ready (gated by ~4s fade) */
+  /* Reveal logo/cluster immediately on boot (no FADE_START / video-time gate) */
+  startUiFade();
+
+  /* Public reveal = mark load ready (Enter gated only by loadReady) */
   window.__revealSplashEnter = markLoadReady;
 
   // Stub until the big script redefines enterApp with gfx/fullscreen path.
@@ -1046,10 +1017,10 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     }
     setTimeout(adv, 180);
   }catch(e){ markLoadReady(); }
-  /* Failsafe: mark ready early so enter appears with/after fade — do not force early opacity */
-  setTimeout(markLoadReady, 5500);
-  /* Hard failsafe if video never plays: force fade + enter by ~12s wall */
-  setTimeout(function(){ try{ notePlayStart(); startUiFade(); markLoadReady(); }catch(e){} }, 12000);
+  /* Failsafe: mark ready so Enter appears after progress stall — not waiting on video fade */
+  setTimeout(markLoadReady, 3500);
+  /* Hard failsafe if progress never finishes */
+  setTimeout(function(){ try{ startUiFade(); markLoadReady(); }catch(e){} }, 8000);
 })();
 </script>
 
