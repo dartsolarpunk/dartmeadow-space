@@ -208,11 +208,11 @@
     },
     async finish(d) {
       token = d.access_token;
-      ls.set(LS.token, token);
       identity.kind = 'github';
       identity.name = d.username;
       identity.avatar = d.avatar_url || '';
       saveIdentity();
+      ls.set(LS.token, token);   // after the identity, so other game tabs can adopt both
       emit('auth', { signedIn: true, name: identity.name });
       try { await vault.ensure(); } catch (e) { console.warn('[JOTS] vault:', e); }
       return identity;
@@ -228,6 +228,16 @@
         vault.ensure().catch(() => {});
         return true;
       } catch (e) { this.signOut(true); return false; }
+    },
+    // Another tab of the game finished signing in: pick up its token here too.
+    adoptFromStorage() {
+      const t = ls.get(LS.token), id = ls.get(LS.identity);
+      if (!t || !id || id.kind !== 'github' || (t === token && identity.kind === 'github')) return false;
+      token = t;
+      identity.kind = 'github'; identity.name = id.name; identity.avatar = id.avatar || '';
+      emit('auth', { signedIn: true, name: identity.name });
+      vault.ensure().catch(() => {});
+      return true;
     },
     guest() {
       identity.kind = 'guest';

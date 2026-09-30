@@ -25,6 +25,7 @@
   try { localStorage.setItem('jots_oauth_result', JSON.stringify(res)); } catch (e) {}
   try { var bc = new BroadcastChannel('jots-auth'); bc.postMessage(res); bc.close(); } catch (e) {}
   try { history.replaceState(null, '', location.pathname); } catch (e) {}
+  try { sessionStorage.setItem('jots_auth_landing', '1'); } catch (e) {}   // tells the game this tab came from GitHub
   setTimeout(function () {
     try { window.close(); } catch (e) {}
     setTimeout(function () { location.replace('./'); }, 500);   // still here: this is the only game tab
