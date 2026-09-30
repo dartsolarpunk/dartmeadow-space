@@ -18837,6 +18837,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
       <div class="jots-code" id="jots-code">— — — —</div>
       <button class="jots-btn primary" id="jots-open-gh">OPEN GITHUB.COM/LOGIN/DEVICE ↗</button>
       <div class="jots-note" id="jots-device-status">Waiting for you to approve…</div>
+      <button class="jots-btn primary" id="jots-device-done">✓ I'VE APPROVED IT — CONTINUE</button>
       <button class="jots-btn" id="jots-device-cancel">CANCEL · PLAY AS GUEST</button>
     </div>
   </div>
@@ -18881,7 +18882,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
       const dev=await J().auth.deviceCode();
       $j('jots-code').textContent=dev.user_code;
       const url=dev.verification_uri||'https://github.com/login/device';
-      $j('jots-open-gh').onclick=()=>window.open(url,'_blank','noopener');
+      $j('jots-open-gh').onclick=()=>{ try{navigator.clipboard&&navigator.clipboard.writeText(dev.user_code);}catch(e){} window.open(url,'_blank','noopener'); };
       $j('jots-device-status').textContent='Waiting for you to approve on GitHub…';
       const tok=await J().auth.waitForToken(dev,()=>{ if(_deviceAbort) throw new Error('cancelled'); });
       if(_deviceAbort) return;
@@ -18896,6 +18897,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
   }
   window.jotsGithubSignIn=githubSignIn;
   $j('jots-gh-btn').onclick=githubSignIn;
+  $j('jots-device-done').onclick=()=>{ $j('jots-device-status').textContent='Checking with GitHub…'; J().auth.pollNow(); };
   $j('jots-device-cancel').onclick=()=>{ _deviceAbort=true; J().consent.agree(); J().auth.guest(); hideWelcome(); };
 
   // Account chip + modal: GitHub replaces the old Google/Apple buttons.

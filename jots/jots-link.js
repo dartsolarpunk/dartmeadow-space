@@ -97,19 +97,33 @@
       if (d.error) throw new Error(d.error);
       return d;
     },
-    // Polls until GitHub hands back a token (or the code expires).
+    // Polls until GitHub hands back a token (or the code expires). Mobile
+    // browsers freeze a background tab's timers and requests while you
+    // approve in GitHub, so every check has its own timeout, and coming
+    // back to the game (or tapping "I've approved it") checks right away.
+    _wake: null,
+    pollNow() { if (this._wake) this._wake(); },
     async waitForToken(dev, onTick) {
       const until = Date.now() + (dev.expires_in || 900) * 1000;
-      let wait = Math.max(5, dev.interval || 5) * 1000;
+      let wait = Math.max(5, dev.interval || 5) * 1000, last = 0;
       while (Date.now() < until) {
-        await new Promise((r) => setTimeout(r, wait));
+        await new Promise((r) => { const t = setTimeout(r, Math.max(0, wait - (Date.now() - last))); this._wake = () => { clearTimeout(t); r(); }; });
+        this._wake = null;
         if (onTick) onTick();
+        if (Date.now() - last < 2500) continue;            // GitHub asks for ≥5 s; don't hammer on repeat taps
+        last = Date.now();
         let d;
-        try { d = await (await fetch(CFG.gas + '?action=devicepoll&device_code=' + encodeURIComponent(dev.device_code))).json(); }
-        catch (e) { continue; }
-        if (d.access_token) return d;
-        if (d.error === 'slow_down') wait += 5000;
-        else if (d.error && d.error !== 'authorization_pending') throw new Error(d.error);
+        try {
+          const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 15000);
+          const r = await fetch(CFG.gas + '?action=devicepoll&device_code=' + encodeURIComponent(dev.device_code) + '&t=' + Date.now(), { signal: ctl.signal, cache: 'no-store' });
+          clearTimeout(to);
+          d = await r.json();
+        } catch (e) { continue; }
+        if (d && d.access_token) return d;
+        if (d && d.error === 'slow_down') wait += 5000;
+        else if (d && d.error === 'expired_token') throw new Error('The sign-in code expired — try again.');
+        else if (d && d.error === 'access_denied') throw new Error('Sign-in was cancelled on GitHub.');
+        else if (d && d.error && d.error !== 'authorization_pending') throw new Error(d.error);
       }
       throw new Error('The sign-in code expired — try again.');
     },
@@ -411,7 +425,47 @@
     },
   };
 
-  window.JOTS = { CFG, sessionId, identity, auth, vault, analytics, consent, mp, mode: 'story' };
+  // ── Presence: "a player is in the game" ──────────────────────────────
+  // Every player who has agreed to the privacy policy sends a small
+  // heartbeat every 15 s, in Story and Multiplayer alike, so dartmeadow.com's
+  // Session Cube can show how many are playing. It carries the random
+  // session id and the mode; the pilot name only in multiplayer (where it's
+  // already shown to other players). Always over MQTT, which the site reads.
+  const presence = {
+    client: null, root: CFG.topic + '/' + CFG.room, _t: null,
+    async start() {
+      if (this.client || !consent.get()) return;
+      try { await loadScript(CFG.mqttLib); } catch (e) { return; }
+      const c = window.mqtt.connect(CFG.mqtt, {
+        clientId: 'jotsp_' + sessionId, clean: true, keepalive: 30, reconnectPeriod: 5000, connectTimeout: 10000,
+        will: { topic: this.root + '/presence-leave', payload: JSON.stringify({ id: sessionId }), qos: 0, retain: false },
+      });
+      c.on('connect', () => this.beat());
+      this.client = c;
+      this._t = setInterval(() => this.beat(), 15000);
+    },
+    beat() {
+      if (!this.client || !this.client.connected || !consent.get()) return;
+      const mode = (window.JOTS && window.JOTS.mode) || 'story';
+      const m = { t: 'presence', id: sessionId, m: mode, ts: Date.now() };
+      if (mode === 'multiplayer') m.n = identity.name;
+      this.client.publish(this.root + '/presence', JSON.stringify(m));
+    },
+    stop() {
+      clearInterval(this._t);
+      if (this.client) { try { this.client.publish(this.root + '/presence-leave', JSON.stringify({ id: sessionId })); this.client.end(true); } catch (e) {} }
+      this.client = null;
+    },
+  };
+  window.addEventListener('jots:consent', (e) => { if (e.detail && e.detail.agreed) presence.start(); else presence.stop(); });
+  window.addEventListener('jots:mpstatus', () => presence.beat());
+  window.addEventListener('pagehide', () => presence.stop());
+  // Back from approving on GitHub → check the sign-in straight away.
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) auth.pollNow(); });
+  window.addEventListener('focus', () => auth.pollNow());
+
+  window.JOTS = { CFG, sessionId, identity, auth, vault, analytics, consent, mp, presence, mode: 'story' };
+  if (consent.get()) setTimeout(() => presence.start(), 2500);
   // Re-validate a stored sign-in once the page settles.
   setTimeout(() => { auth.restore(); }, 1500);
 })();

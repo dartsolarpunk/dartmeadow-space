@@ -62,6 +62,7 @@ a{color:var(--cyan)}
 <li>These live updates travel over the LEATR relay or, where that isn't available, a public MQTT message broker (EMQX's public broker). Messages sent through a public broker can be seen by anyone subscribed to it, so never share personal details in chat.</li>
 <li>DART Meadow does not store multiplayer positions or chat. If you're signed in, your own session's chat is saved to your private <code>jots-</code> repository and nowhere else.</li>
 <li>Story mode sends nothing about you to other players.</li>
+<li>While you play (Story or Multiplayer), the game sends a small "a pilot is online" heartbeat every 15 seconds. It carries only a random session number and your mode, so dartmeadow.com's Session Cube can show how many gamers are online. In Multiplayer the heartbeat also carries your pilot name, and it may be listed there.</li>
 </ul>
 </section>
 
