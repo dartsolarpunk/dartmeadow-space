@@ -5,7 +5,7 @@
 // bookmark shortcut). It also gives basic offline-shell caching for the app
 // icon/shell so a re-launch after install doesn't need network first.
 
-const CACHE_NAME = 'dartmeadow-shell-v1';
+const CACHE_NAME = 'dartmeadow-shell-v2';
 const SHELL_ASSETS = [
   '/',
   '/index.html'
@@ -40,7 +40,11 @@ self.addEventListener('fetch', (event) => {
         return response;
       })
       .catch(() =>
-        caches.match(event.request).then((cached) => cached || caches.match('/index.html'))
+        // Only a page navigation falls back to the cached shell — a failed
+        // script or data request must fail, not come back as index.html
+        // (that surfaces as "Unexpected token '<'" and breaks the caller).
+        caches.match(event.request).then((cached) => cached ||
+          (event.request.mode === 'navigate' ? caches.match('/index.html') : Response.error()))
       )
   );
 });
