@@ -11919,41 +11919,16 @@ function buildFlightGalaxyBandCPU(){
   // Full-disc arm-dot field (systems as yellow/white crest markers across MW)
   try{ generateGalacticArmDots(galGroup, SPIRAL_PHASE_LOCK, RG, particles, mobile, gfxLow); }catch(e){console.warn('arm dots:',e);}
 
-  // Local Orion sheath — THINNER BLUE InstancedMesh (not Points; not warm orange).
-  // Faded/hidden at GAL_SOL_SPECK_DIST by updateSolGalLod — main disc plate carries far view.
+  // (The old "local Orion sheath" — a straight 5200×720×180 slab of blue
+  // stars laid around Sol — is gone: it read as a cylinder parked over the
+  // Sun. The disc's own arm stars already fill Sol's neighbourhood.)
   try{
     if(window._flightLocalArm){
       _disposeObject3D(window._flightLocalArm);
       flightScene.remove(window._flightLocalArm);
       window._flightLocalArm=null;
     }
-    const local=new THREE.Group();
-    local.rotation.copy(galGroup.rotation);
-    const locN=(particles==='low'||gfxLow)
-      ?(mobile?4000:7000)
-      :(particles==='high'||particles==='ultra')
-        ?(mobile?9000:12000)
-        :(mobile?6500:9000);
-    const lp=new Float32Array(locN*3),lc=new Float32Array(locN*3);
-    for(let i=0;i<locN;i++){
-      const along=(Math.random()-0.5)*5200;
-      const across=(Math.random()-0.5)*Math.random()*720;
-      const thick=(Math.random()-0.5)*Math.random()*180;
-      const coreBias=Math.random()*Math.random()*4200;
-      lp[i*3]=along-coreBias*0.55;
-      lp[i*3+1]=thick;
-      lp[i*3+2]=across;
-      const t=Math.min(1,Math.hypot(lp[i*3],lp[i*3+2])/5200);
-      const towardCore=Math.max(0, -lp[i*3]/5200);
-      const b=(0.88+Math.random()*0.35)*(1-t*0.16)*(0.90+towardCore*0.45);
-      lc[i*3]=0.48*b;lc[i*3+1]=0.86*b;lc[i*3+2]=1.0*b;
-    }
-    const locRad=mobile?(gfxLow?55:70):(gfxLow?60:75);
-    const locDraw=_buildGalaxyDustDraw(lp,lc,{instanceRadius:locRad, opacity:0.72});
-    if(locDraw)local.add(locDraw);
-    flightScene.add(local);
-    window._flightLocalArm=local;
-  }catch(e){console.warn('local arm:',e);}
+  }catch(e){}
 
   try{ ensureSolArmDot(); }catch(e){console.warn('sol arm-dot:',e);}
 }
@@ -12422,31 +12397,17 @@ function ensureSolArmDot(){
   }
   const grp=new THREE.Group();
   grp.name='JOTS_SolArmDot';
-  // Yellow-orange Sol arm-dot — enlarged for GAL LOD (camDist 14k–25k / ALT ~7M km)
+  // Sol seen from out in the galaxy: one warm star the size of the other
+  // arm stars (radius ~190) with a faint glow — it sits in the arm like its
+  // neighbours instead of a big glowing blob with a halo.
   const core=new THREE.Mesh(
-    new THREE.SphereGeometry(200,12,12),
+    new THREE.SphereGeometry(170,12,12),
     new THREE.MeshBasicMaterial({color:0xffd23a})
   );
   grp.add(core);
   try{
-    const glow=makeGlowSprite('rgba(255,210,58,0.90)',720);
+    const glow=makeGlowSprite('rgba(255,210,58,0.55)',380);
     grp.add(glow);
-  }catch(e){
-    const shell=new THREE.Mesh(
-      new THREE.SphereGeometry(420,8,8),
-      new THREE.MeshBasicMaterial({color:0xffc14a,transparent:true,opacity:0.40,
-        blending:THREE.AdditiveBlending,depthWrite:false})
-    );
-    grp.add(shell);
-  }
-  // Soft outer halo so yellow nest reads inside blue arm at far LOD
-  try{
-    const halo=new THREE.Mesh(
-      new THREE.SphereGeometry(280,8,8),
-      new THREE.MeshBasicMaterial({color:0xffe080,transparent:true,opacity:0.22,
-        blending:THREE.AdditiveBlending,depthWrite:false})
-    );
-    grp.add(halo);
   }catch(e){}
   // Optional short "Sol" label sprite
   try{
@@ -12456,7 +12417,7 @@ function ensureSolArmDot(){
     lx.textAlign='center';lx.fillText('Sol',64,34);
     const lt=new THREE.CanvasTexture(lc);
     const ls=new THREE.Sprite(new THREE.SpriteMaterial({map:lt,transparent:true,depthTest:false}));
-    ls.scale.set(680,255,1);ls.position.set(0,380,0);grp.add(ls);
+    ls.scale.set(420,158,1);ls.position.set(0,300,0);grp.add(ls);   // small label so home can still be found
   }catch(e){}
   grp.visible=!!window._solFullSysHidden;
   grp.position.set(0,0,0);
@@ -12522,7 +12483,7 @@ function updateSolGalLod(){
   // Soft pulse on arm-dot glow
   try{
     if(far&&window._solArmDot){
-      const pulse=1+Math.sin((typeof flightTime==='number'?flightTime:performance.now()*0.001)*2.2)*0.12;
+      const pulse=1+Math.sin((typeof flightTime==='number'?flightTime:performance.now()*0.001)*2.2)*0.04;
       window._solArmDot.scale.setScalar(pulse);
     }
   }catch(e){}
@@ -13221,7 +13182,8 @@ function buildGalSky(){
   const solCore=new THREE.Mesh(new THREE.OctahedronGeometry(1,1),_gsMat());
   solCore.material.color.setRGB(1.0,0.82,0.23);solCore.renderOrder=-999;sol.add(solCore);
   const solHalo=new THREE.Mesh(new THREE.PlaneGeometry(2,2),_gsMat(_gsSoftTex()));
-  solHalo.material.color.setRGB(1.0,0.72,0.20);solHalo.scale.setScalar(3.2);solHalo.renderOrder=-999;sol.add(solHalo);
+  solHalo.material.color.setRGB(1.0,0.72,0.20);solHalo.scale.setScalar(3.2);solHalo.renderOrder=-999;
+  solHalo.visible=false;sol.add(solHalo);   // no halo: from out in the galaxy the Sun is just one of the arm's stars
   sol.position.copy(sunLocal).multiplyScalar(S);sol.visible=false;
   mwSub.add(sol);
 
@@ -13717,7 +13679,9 @@ function updateGalSky(force){
   }
   const sol=galSky.solMarker;
   if(sol&&sol.visible){
-    sol.scale.setScalar(Math.max(0.6,dS*0.008)*GALSKY.S*(1+Math.sin(now*0.0022)*0.1));
+    // Star-sized (about the brightest arm stars), steady — it used to be ~8x
+    // that with a pulsing halo, which read as a big shape parked on the arm.
+    sol.scale.setScalar(Math.max(0.6,dS*0.0018)*GALSKY.S);
     if(galSky.solHalo)galSky.solHalo.quaternion.copy(flightCamera.quaternion).premultiply(galSky.qInv);
   }
   try{_gsUpdateBlackHoles();}catch(e){if(!galSky._bhErr){galSky._bhErr=1;console.warn('black holes:',e);}}
