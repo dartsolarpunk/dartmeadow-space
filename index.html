@@ -4286,6 +4286,16 @@ function _qtBuildLocalTab(){
     _qtAddMarker(p,col,e.home?120:80,{qtKind:e.home?'sol':'localSystem',entry:e},
       (e.home||isHere||i<22)?e.name:null,e.home?'rgba(255,230,140,0.95)':'rgba(200,220,255,0.88)',e.home?1.8:1.3);
   });
+  // Black holes within the map's reach.
+  try{
+    const q2=_qtQ(), here2=(galSky.camLocal&&galSky.camLocal.lengthSq()>0)?galSky.camLocal:galSky.sunLocal;
+    galSkyBlackHolesNear(6500).forEach(e=>{
+      if(e.b.kind==='core'&&e.d>6500)return;
+      const p=e.local.clone().sub(here2).applyQuaternion(q2).multiplyScalar(QT_LS);
+      const L=_bhLabel(e);
+      _qtAddMarker(p,0xff9a50,e.b.real?90:60,{qtKind:'blackhole',bh:e},e.b.real?L.name:null,'rgba(255,190,130,0.9)',1.2);
+    });
+  }catch(err){}
   // Current system's own destinations as a small inset around its star.
   (DESTINATIONS||[]).forEach((d,i)=>{
     if(!d||!d.pos)return;
@@ -4318,6 +4328,7 @@ function rebuildQtMarkers(){
   qtControls.update();
 }
 function _qtJumpToGalaxy(gid,gName,dist){
+  window._gsViewAt=null;
   if(gid==='milkyway'){
     openFastTravel('FAST TRAVEL — MILKY WAY','Return to Sol, home?',()=>{GALAXY_DB.current='milkyway';fastTravelToSystem(null,'milkyway');});
   }else{
@@ -4326,6 +4337,7 @@ function _qtJumpToGalaxy(gid,gName,dist){
   closeQuickTravel();
 }
 function _qtJumpToSystem(e){
+  window._gsViewAt=null;
   if(e.home||!e.sys){
     openFastTravel('SOL SYSTEM — HOME','Fast-travel to your home position in the solar system?',()=>fastTravelToSystem(null,_qtCurGalaxy()));
   }else{
@@ -4376,6 +4388,15 @@ function refreshQtJumpCards(){
       const d=_qtSysOffset(e.sys).distanceTo(here);
       addCard(e.home?'☀️':e.rogue?'✧':'⭐',e.name,isHere?'You are here':(d<10?d.toFixed(1):Math.round(d))+' ly',e.home?'Home system':e.rogue?'Rogue star':(e.star||'Star system'),()=>_qtJumpToSystem(e),isHere);
     });
+    // Black holes: this galaxy's core ring plus the nearest drifting ones.
+    let bhs=[];try{bhs=galSkyBlackHolesNear(9000);}catch(e){}
+    bhs.filter(e=>e.b.kind==='core'||e.b.real).concat(bhs.filter(e=>e.b.kind!=='core'&&!e.b.real).slice(0,4)).slice(0,12).forEach(e=>{
+      const L=_bhLabel(e), fmt=e.d<10?e.d.toFixed(1):Math.round(e.d).toLocaleString();
+      addCard('\u25C9',L.name,fmt+' ly',L.type,()=>{
+        openFastTravel('FAST TRAVEL — '+L.name.toUpperCase(),L.type+'. Hold station beside it and watch it bend the sky?',()=>travelToBlackHole(e));
+        closeQuickTravel();
+      });
+    });
   }
 }
 function onQtMapClick(e){
@@ -4394,6 +4415,11 @@ function onQtMapClick(e){
     closeQuickTravel();return;
   }
   if(u.qtKind==='sol'){_qtJumpToSystem({home:true});return;}
+  if(u.qtKind==='blackhole'&&u.bh){
+    const L=_bhLabel(u.bh);
+    openFastTravel('FAST TRAVEL — '+L.name.toUpperCase(),L.type+'. Hold station beside it?',()=>travelToBlackHole(u.bh));
+    closeQuickTravel();return;
+  }
   if(u.qtKind==='localSystem'&&u.entry){_qtJumpToSystem(u.entry);return;}
   if(u.qtKind==='galaxyHome'){_qtJumpToGalaxy('milkyway');return;}
   if(u.qtKind==='galaxy'&&u.galaxyId){_qtJumpToGalaxy(u.galaxyId,u.galaxyName,u.dist);return;}
@@ -4533,6 +4559,7 @@ function updateDiscoveries(dt){
 }
 // Fly back to a logged discovery: jump to its system if needed, then drop in beside it.
 function travelToDiscovery(d){
+  window._gsViewAt=null;
   const off=new THREE.Vector3(d.pos[0],d.pos[1],d.pos[2]);
   const approach=off.clone().add(off.clone().normalize().multiplyScalar(-(d.type==='Rogue Planet'?60:24)));
   const sameGal=d.gal===_qtCurGalaxy(), curSys=(window._curSystem&&window._curSystem.name)||'Sol';
@@ -4555,6 +4582,33 @@ function travelToDiscovery(d){
   fastTravelToSystem(sys,d.gal);
 }
 window.updateDiscoveries=updateDiscoveries;window.loadDiscoveries=loadDiscoveries;window.travelToDiscovery=travelToDiscovery;
+// Park beside a black hole: you arrive in a system at a safe stand-off
+// (a core ring from above its plane, so the whole ring and its void show).
+function _bhLabel(e){
+  const b=e.b;
+  if(b.kind==='core')return {name:e.set.coreName+(e.set.key==='milkyway'?'':' — galactic core'),
+    type:'Core ring · '+e.set.nRing+' black holes · void centre'};
+  return {name:b.name,type:(b.real?'Black hole · '+b.mass+' M\u2609':'Stellar black hole')};
+}
+function travelToBlackHole(e){
+  const cur=_qtCurGalaxy();
+  const here=(galSky.camLocal&&galSky.camLocal.lengthSq()>0)?galSky.camLocal.clone():galSky.sunLocal.clone();
+  const dir=here.clone().sub(e.local);
+  if(dir.lengthSq()<1e-6)dir.set(1,0,0);
+  dir.normalize();
+  let stand;
+  if(e.b.kind==='core'){
+    const up=new THREE.Vector3(0,1,0).applyQuaternion(e.b.ring.tilt).applyQuaternion(e.set.obj.quaternion);
+    dir.projectOnPlane(up).normalize().multiplyScalar(Math.cos(0.55)).addScaledVector(up,Math.sin(0.55)).normalize();
+    stand=e.set.ringR*5.2;
+  }else stand=Math.max(9,e.b.shadow*40);
+  const at=e.local.clone().addScaledVector(dir,stand);
+  const sys=(_qtLocalSystems().find(x=>x.sys&&!x.home&&!x.rogue)||{}).sys;
+  if(!sys){toast('No system to park in near that black hole',2400);return;}
+  window._gsViewAt={sysName:sys.name,gal:cur,at,name:_bhLabel(e).name};
+  fastTravelToSystem(sys,cur);
+}
+window.travelToBlackHole=travelToBlackHole;
 
 async function initFlightScene(){
   if(flightInited)return;flightInited=true;
@@ -6305,30 +6359,25 @@ async function buildSolarSystem(){
         pos[i*3]=Math.cos(a)*r; pos[i*3+1]=h; pos[i*3+2]=Math.sin(a)*r;
         seed[i]=Math.random()*100;
       }
-      const sparkGeo=new THREE.BufferGeometry();
-      sparkGeo.setAttribute('position',new THREE.BufferAttribute(pos,3));
-      sparkGeo.setAttribute('aSeed',new THREE.BufferAttribute(seed,1));
-      const sparkMat=new THREE.ShaderMaterial({
-        uniforms:{uTime:{value:0},uColor:{value:new THREE.Color(0xfff2cc)}},
-        transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,
-        vertexShader:`attribute float aSeed;uniform float uTime;varying float vFade;
-          void main(){
-            vec3 p=position; p.y+=sin(uTime*0.6+aSeed)*0.15;
-            vFade=0.4+0.6*sin(uTime*1.3+aSeed*3.0)*0.5+0.3;
-            vec4 mv=modelViewMatrix*vec4(p,1.0);
-            gl_Position=projectionMatrix*mv;
-            gl_PointSize=5.0*(60.0/-mv.z);
-          }`,
-        fragmentShader:`uniform vec3 uColor;varying float vFade;
-          void main(){
-            float d=length(gl_PointCoord-0.5);
-            if(d>0.5)discard;
-            float glow=exp(-d*4.5);
-            gl_FragColor=vec4(uColor,glow*vFade*0.8);
-          }`
-      });
-      const sparkles=new THREE.Points(sparkGeo,sparkMat);
-      altarNode.add(sparkles);
+      // (Was a GLSL ShaderMaterial on Points — not drawable by the
+      // WebGPU renderer, the source of the 'ShaderMaterial is not
+      // compatible' error. Now soft instanced glows on the node material
+      // the galaxy uses, twinkling on the GPU.)
+      let sparkMat=null;
+      try{
+        const T=THREE.TSL;
+        sparkMat=_gsStarMat({transparent:true,depthTest:true,wisp:false,core:40,coreGain:1.8,glowGain:0.6});
+        if(sparkMat&&T.hash&&T.instanceIndex){
+          const ph=T.hash(T.float(T.instanceIndex)).mul(6.2831);
+          sparkMat.colorNode=sparkMat.colorNode.mul(T.sin(T.time.mul(1.3).add(ph)).mul(0.45).add(0.55));
+        }
+        if(sparkMat){
+          const sp=new THREE.InstancedMesh(_gsStarGeo(),sparkMat,N), m4=new THREE.Matrix4(), c=new THREE.Color(0xfff2cc);
+          for(let i=0;i<N;i++){const r=0.35+seed[i]%1*0.25;m4.makeScale(r,r,r);m4.setPosition(pos[i*3],pos[i*3+1],pos[i*3+2]);sp.setMatrixAt(i,m4);sp.setColorAt(i,c);}
+          sp.instanceMatrix.needsUpdate=true;if(sp.instanceColor)sp.instanceColor.needsUpdate=true;sp.frustumCulled=false;sp.name='BT_Sparkles';
+          altarNode.add(sp);
+        }
+      }catch(e){console.warn('[Bird Temple] sparkles:',e);}
       BIRD_TEMPLE.altarSparkles=sparkMat;
       // Occasional bright color-flash pulses on the ring materials, per
       // 'will give light... but can randomly create bright flashes of
@@ -6384,6 +6433,7 @@ async function buildSolarSystem(){
     // model now, not a curated subset, so nothing on the ship can end up
     // that dark anywhere.
     brightenVertexColors(t,0.5);
+    _btSelfLight(t);
     const hullNode=shipNode(t,'Hull')||t;
     // Light distance/decay are NOT affected by the wrapper's scale
     // transform (only position is) — they're effectively world-space
@@ -6438,6 +6488,47 @@ async function buildSolarSystem(){
     BIRD_TEMPLE._loading=false; // allow a later rebuild to retry
   });
   }
+}
+// The temple gives off its own light: every surface glows softly in its
+// painted (vertex) colours — the deck most gently, windows warm as if lit
+// from inside, the altar rings, obelisks and staff brighter, and the Bird
+// Shard brightest of all, with a light of its own on the deck around it.
+// Rebuilds each material as its node twin so the glow can follow the
+// vertex paint; the existing emissive (used by the ring flashes) still adds.
+function _btSelfLight(root){
+  const T=THREE.TSL;
+  const glowFor=name=>{
+    const n=(name||'').toLowerCase();
+    if(/bird shard/.test(n))return [2.4,[0.75,0.95,1.0]];
+    if(/window/.test(n))return [0.9,[1.0,0.82,0.55]];
+    if(/gods|angels|halo|realm/.test(n))return [1.1,[1,1,1]];
+    if(/staff amulet|amulet/.test(n))return [1.3,[1.0,0.9,0.7]];
+    if(/obulisque|obelisk/.test(n))return [0.55,[0.85,0.9,1.0]];
+    if(/altar|maze/.test(n))return [0.32,[1,0.97,0.9]];
+    if(/temple/.test(n))return [0.22,[1,0.97,0.92]];
+    return [0.13,[0.92,0.95,1.0]];                     // deck / hull
+  };
+  const canNode=!!(THREE.MeshStandardNodeMaterial&&T&&T.vertexColor&&T.materialEmissive);
+  root.traverse(o=>{
+    if(!o.isMesh||!o.material||Array.isArray(o.material))return;
+    let nm=o.name;for(let p=o.parent;p&&!/bird shard/i.test(nm);p=p.parent){if(/bird shard/i.test(p.name||''))nm=p.name;}
+    const [k,tint]=glowFor(nm);
+    const m=o.material;
+    if(!canNode){if(m.emissive){m.emissive.setRGB(tint[0]*k*0.25,tint[1]*k*0.25,tint[2]*k*0.25);}return;}
+    const n=new THREE.MeshStandardNodeMaterial();
+    ['color','map','roughness','metalness','roughnessMap','metalnessMap','normalMap','side','transparent','opacity','alphaTest','envMap','envMapIntensity'].forEach(key=>{
+      if(m[key]!==undefined&&n[key]!==undefined){ if(n[key]&&n[key].copy&&m[key]&&m[key].isColor)n[key].copy(m[key]);else n[key]=m[key]; }
+    });
+    n.vertexColors=!!o.geometry.attributes.color;
+    n.emissive=new THREE.Color(0,0,0);
+    const vc=n.vertexColors?T.vertexColor():T.materialColor;
+    n.emissiveNode=vc.mul(T.vec3(tint[0],tint[1],tint[2])).mul(k).add(T.materialEmissive);
+    n.name=m.name;o.material=n;
+    try{m.dispose();}catch(e){}
+  });
+  // A light of its own at the Bird Shard (world-space falloff, like the altar's).
+  const shard=shipNode(root,'Bird Shard');
+  if(shard){const L=new THREE.PointLight(0xbfeaff,30,7,2);L.position.set(0,0,0);shard.add(L);}
 }
 // Idle motion + proximity trigger — called once per frame from updateBodies
 // alongside the planets, but kept as its own object (not pushed into
@@ -6545,7 +6636,7 @@ function updateBirdTemple(dt){
       bt.group.rotation.y+=((yaw-bt.group.rotation.y+Math.PI*3)%(Math.PI*2)-Math.PI)*Math.min(1,dt*0.8);
     }
   }
-  if(bt.altarSparkles)bt.altarSparkles.uniforms.uTime.value=bt.t;
+  if(bt.altarSparkles&&bt.altarSparkles.uniforms&&bt.altarSparkles.uniforms.uTime)bt.altarSparkles.uniforms.uTime.value=bt.t;
   // Occasional bright flash on a random ring, per the notes ('can randomly
   // create bright flashes of their respective colors'). Cheap: nudges
   // emissive on an existing material, fades back over ~0.7s, no new
@@ -6691,20 +6782,59 @@ window.__whenThreeReady(function(){
   SHIP_WALK.localPos=new THREE.Vector3();
   _shipWalkRay=new THREE.Raycaster();
 });
-function _shipGroundHeight(worldX,worldZ,fallbackY){
+// Solid parts you can stand on / bump into. The Bird Shard, its halo and
+// the staff's amulet float overhead and the sparkles are only light, so
+// they're left out — before, a downward ray from far above hit the shard
+// or the Temple roof first, which read as a wall and pinned you in place.
+function _shipWalkMeshes(){
   const bt=BIRD_TEMPLE;
-  _shipWalkRay.set(new THREE.Vector3(worldX,fallbackY+50,worldZ),new THREE.Vector3(0,-1,0));
-  _shipWalkRay.far=200;
-  const hits=_shipWalkRay.intersectObject(bt.group,true);
+  if(bt._walkMeshes&&bt._walkMeshesFor===bt.group)return bt._walkMeshes;
+  const list=[];
+  bt.group.traverse(o=>{
+    if(!o.isMesh||o.isInstancedMesh)return;
+    let skip=false;for(let p=o;p;p=p.parent){if(/bird shard|amulet|BT_Sparkles/i.test(p.name||'')){skip=true;break;}}
+    if(!skip)list.push(o);
+  });
+  bt._walkMeshes=list;bt._walkMeshesFor=bt.group;
+  return list;
+}
+// Ground under (x,z), searching down from fromY (the knees when walking,
+// so a floor overhead is never mistaken for the one underfoot). With
+// fromAbove, searches from high up (landing onto the deck from flight).
+function _shipGroundHeight(worldX,worldZ,fromY,fromAbove){
+  _shipWalkRay.set(new THREE.Vector3(worldX,fromAbove?fromY+50:fromY,worldZ),new THREE.Vector3(0,-1,0));
+  _shipWalkRay.far=fromAbove?200:40;
+  const hits=_shipWalkRay.intersectObjects(_shipWalkMeshes(),false);
   if(hits.length)return hits[0].point.y;
   return null; // no ground under this point (walked off the edge)
+}
+// Walls: a horizontal probe at knee and chest height along the move. On a
+// hit, keep only the part of the move running along the wall (slide).
+let _swN=null, _swNM=null;   // created on first use (THREE loads after this script runs)
+function _shipWallSlide(from,move,feetY,step){
+  if(!_swN){_swN=new THREE.Vector3();_swNM=new THREE.Matrix3();}
+  const len=Math.hypot(move.x,move.z);if(len<1e-6)return move;
+  const dir=new THREE.Vector3(move.x/len,0,move.z/len), R=0.12;
+  for(const h of [step+0.03,0.3]){
+    _shipWalkRay.set(new THREE.Vector3(from.x,feetY+h,from.z),dir);_shipWalkRay.far=len+R;
+    const hit=_shipWalkRay.intersectObjects(_shipWalkMeshes(),false)[0];
+    if(!hit||!hit.face)continue;
+    _swNM.getNormalMatrix(hit.object.matrixWorld);_swN.copy(hit.face.normal).applyMatrix3(_swNM).normalize();
+    if(Math.abs(_swN.y)>0.6)continue;                 // a slope or step edge, not a wall
+    _swN.y=0;_swN.normalize();
+    const into=move.x*_swN.x+move.z*_swN.z;
+    if(into<0){move.x-=_swN.x*into;move.z-=_swN.z*into;}
+    // back off to just short of the wall if still too close
+    if(hit.distance<R){move.x+=_swN.x*(R-hit.distance);move.z+=_swN.z*(R-hit.distance);}
+  }
+  return move;
 }
 function enterShipWalk(){
   const bt=BIRD_TEMPLE,sp=STATE.flight;
   if(!bt.group||!sp)return;
   $('ship-land-prompt').style.display='none';
   // Find the ground directly beneath the player's current world position.
-  const y=_shipGroundHeight(sp.pos.x,sp.pos.z,sp.pos.y);
+  const y=_shipGroundHeight(sp.pos.x,sp.pos.z,sp.pos.y,true);
   const landWorld=new THREE.Vector3(sp.pos.x,(y!==null?y:sp.pos.y)+0.4,sp.pos.z);
   SHIP_WALK.localPos.copy(bt.group.worldToLocal(landWorld.clone()));
   SHIP_WALK.yaw=STATE.flight.camYaw||0;
@@ -6755,7 +6885,7 @@ function updateShipWalk(dt){
   // rather than the opposite of what players are already used to.
   SHIP_WALK.yaw-=JOY.Lx*dt*1.6;
   SHIP_WALK.pitch=THREE.MathUtils.clamp(SHIP_WALK.pitch-JOY.Ly*dt*1.2,-1.1,1.1);
-  const WALK_SPEED=1.1, STEP_MAX=0.45, JUMP_VEL=2.4, GRAVITY=6.0;
+  const WALK_SPEED=1.1, STEP_MAX=0.3, JUMP_VEL=2.4, GRAVITY=6.0;
   const fx=Math.sin(SHIP_WALK.yaw),fz=Math.cos(SHIP_WALK.yaw);
   const rx=Math.cos(SHIP_WALK.yaw),rz=-Math.sin(SHIP_WALK.yaw);
   const moveX=(fx*-JOY.Ry+rx*JOY.Rx)*WALK_SPEED*dt;
@@ -6770,56 +6900,49 @@ function updateShipWalk(dt){
   }
   SHIP_WALK._jumpQueued=false;
 
+  // Eye height 0.4 (a ~6 ft person at the temple's scale, where the 37 ft
+  // skyboard ornament is 2.8 units). Steps up to STEP_MAX (the altar's
+  // tiers and the maze rims) are climbed like stairs; walls slide you along.
+  const EYE=0.4;
   const curWorld=bt.group.localToWorld(SHIP_WALK.localPos.clone());
+  const feetY=curWorld.y-EYE;
+  const wantW=bt.group.localToWorld(new THREE.Vector3(SHIP_WALK.localPos.x+moveX,SHIP_WALK.localPos.y,SHIP_WALK.localPos.z+moveZ));
+  const mv=_shipWallSlide(curWorld,{x:wantW.x-curWorld.x,z:wantW.z-curWorld.z},feetY,STEP_MAX);
   if(SHIP_WALK.grounded){
-    // Horizontal move with auto step-up for small height differences, per
-    // 'if an object's height is lower than the knees, automatically climb
-    // it like steps' — anything within STEP_MAX steps up smoothly/
-    // instantly (this is what should let the rings on the altar be walked
-    // over casually); anything taller simply blocks the move this frame
-    // (would need an actual jump, or is genuinely too tall to walk up).
-    const desiredWorldXZ=bt.group.localToWorld(new THREE.Vector3(SHIP_WALK.localPos.x+moveX,SHIP_WALK.localPos.y,SHIP_WALK.localPos.z+moveZ));
-    const groundY=_shipGroundHeight(desiredWorldXZ.x,desiredWorldXZ.z,curWorld.y+2);
-    // Diagnostic — reported lateral movement doesn't work even on flat
-    // ground, but jump/look both do. Traced the math and raycasting by
-    // hand and found nothing wrong, so logging the actual runtime values
-    // here (throttled, since this runs every frame) instead of guessing a
-    // fifth explanation. Only fires when the stick is actually pushed.
-    if((Math.abs(moveX)>0.0001||Math.abs(moveZ)>0.0001)&&bt.t>(bt._lastWalkLog||0)+0.5){
-      bt._lastWalkLog=bt.t;
-      console.log('[ShipWalk] moveX:',moveX.toFixed(4),'moveZ:',moveZ.toFixed(4),
-        '| desiredXZ:',desiredWorldXZ.x.toFixed(2),desiredWorldXZ.z.toFixed(2),
-        '| groundY:',groundY, '| curWorld.y:',curWorld.y.toFixed(2),
-        '| diff:',groundY!==null?(groundY-(curWorld.y-0.4)).toFixed(3):'N/A',
-        '| STEP_MAX:',STEP_MAX);
-    }
+    const tx=curWorld.x+mv.x, tz=curWorld.z+mv.z;
+    const groundY=_shipGroundHeight(tx,tz,feetY+STEP_MAX+0.02);
     if(groundY!==null){
-      const diff=groundY-(curWorld.y-0.4);
-      if(diff<=STEP_MAX){
-        const snapped=new THREE.Vector3(desiredWorldXZ.x,groundY+0.4,desiredWorldXZ.z);
-        SHIP_WALK.localPos.copy(bt.group.worldToLocal(snapped));
+      if(groundY-feetY<=STEP_MAX){
+        // stairs up, or down a step: feet go straight onto the surface
+        SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(tx,groundY+EYE,tz)));
       }
-      // else: too tall to step onto casually — blocked, matching a wall
+    }else{
+      // nothing below within reach: step off and fall
+      SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(tx,curWorld.y,tz)));
+      SHIP_WALK.grounded=false;
     }
   } else {
-    // Airborne — free horizontal steering, vertical handled by gravity below
-    SHIP_WALK.localPos.x+=moveX;SHIP_WALK.localPos.z+=moveZ;
+    SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(curWorld.x+mv.x,curWorld.y,curWorld.z+mv.z)));
   }
 
-  // Gravity / landing
+  // Gravity / landing — feet land on the nearest surface below the knees.
   SHIP_WALK.velY-=GRAVITY*dt;
-  const preGravWorld=bt.group.localToWorld(SHIP_WALK.localPos.clone());
-  const newY=preGravWorld.y+SHIP_WALK.velY*dt;
-  const groundHere=_shipGroundHeight(preGravWorld.x,preGravWorld.z,Math.max(newY,preGravWorld.y)+2);
-  if(groundHere!==null&&newY<=groundHere+0.4){
-    const landed=new THREE.Vector3(preGravWorld.x,groundHere+0.4,preGravWorld.z);
-    SHIP_WALK.localPos.copy(bt.group.worldToLocal(landed));
+  const pre=bt.group.localToWorld(SHIP_WALK.localPos.clone());
+  const preFeet=pre.y-EYE, newFeet=preFeet+SHIP_WALK.velY*dt;
+  const groundHere=_shipGroundHeight(pre.x,pre.z,Math.max(newFeet,preFeet)+STEP_MAX*0.5);
+  if(groundHere!==null&&newFeet<=groundHere+0.002){
+    SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(pre.x,groundHere+EYE,pre.z)));
     SHIP_WALK.velY=0;SHIP_WALK.grounded=true;
   } else {
-    const airPos=new THREE.Vector3(preGravWorld.x,newY,preGravWorld.z);
-    SHIP_WALK.localPos.copy(bt.group.worldToLocal(airPos));
+    SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(pre.x,newFeet+EYE,pre.z)));
     SHIP_WALK.grounded=false;
+    // fell far below the hull: put them back on the deck
+    if(groundHere===null&&newFeet<(bt._lastDeckY??newFeet)-8){
+      const back=bt.group.localToWorld(new THREE.Vector3(0,0,0));const gy=_shipGroundHeight(back.x,back.z,back.y,true);
+      if(gy!==null){SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(back.x,gy+EYE,back.z)));SHIP_WALK.velY=0;}
+    }
   }
+  if(SHIP_WALK.grounded)bt._lastDeckY=bt.group.localToWorld(SHIP_WALK.localPos.clone()).y-EYE;
 
   const camWorld=bt.group.localToWorld(SHIP_WALK.localPos.clone());
   flightCamera.position.copy(camWorld);
@@ -6838,11 +6961,15 @@ function updateShipWalk(dt){
   if(boardFlight){
     const bRx=Math.cos(SHIP_WALK.yaw),bRz=-Math.sin(SHIP_WALK.yaw);
     const bFx=-Math.sin(SHIP_WALK.yaw),bFz=-Math.cos(SHIP_WALK.yaw);
-    const offR=0.9,offB=0.5;
+    // Beside her at waist height, about 5 ft to her right — she stands at
+    // the board's left side facing its nose (at this scale 1 unit ≈ 13 ft,
+    // so 5 ft ≈ 0.38 and a 6 ft rider's waist ≈ 0.23). It used to hover
+    // 0.6 up — above her head — and read as geometry pressing down on you.
+    const offR=0.38,offB=0.0;
     const btx=camWorld.x+bRx*offR-bFx*offB;
     const btz=camWorld.z+bRz*offR-bFz*offB;
-    const boardGroundY=_shipGroundHeight(btx,btz,camWorld.y);
-    const hoverY=(boardGroundY!==null?boardGroundY:camWorld.y)+0.6+Math.sin(bt.t*1.6)*0.03;
+    const boardGroundY=_shipGroundHeight(btx,btz,camWorld.y);   // from eye height down
+    const hoverY=(boardGroundY!==null?boardGroundY:camWorld.y-0.4)+0.23+Math.sin(bt.t*1.6)*0.01;
     if(bt.t>(bt._lastBoardLog||0)+1.0){
       bt._lastBoardLog=bt.t;
       console.log('[ShipWalk board] visible:',boardFlight.visible,'| target xz:',btx.toFixed(2),btz.toFixed(2),
@@ -10833,6 +10960,7 @@ function promptExit(){$('exit-modal').classList.add('open');}
 //  list current whenever something from outside the project is used.
 //  use: 'code' = code or tables included (licence terms apply);
 //       'technique' = studied and re-implemented from scratch here;
+//       'original' = the project's own work;
 //       'data' / 'library' / 'service' / 'font' / 'tool' as named.
 // ══════════════════════════════════════════════════════════════
 const CREDITS=[
@@ -10856,7 +10984,7 @@ const CREDITS=[
   w:'Idea of drawing structure as probability-sampled particle clouds, applied to galaxy star clouds. Studied only; no code copied.'},
  {t:'Simulating Black Holes in C++ · black_hole · gravity_sim',a:'Kavan (kavan010)',l:'No licence published — all rights reserved',use:'technique',
   u:['https://youtu.be/8-B6ryuBkCM','https://github.com/kavan010/black_hole','https://github.com/kavan010/gravity_sim'],
-  w:'Reference for Sgr A* at the galactic centre and planned gravitational lensing. Studied only; no code copied.'},
+  w:'Reference for the galactic-core black holes and their gravitational lensing. Studied only; no code copied — the lens is the textbook thin-lens equation, written from scratch.'},
  {t:'Chunked LOD',a:'Thatcher Ulrich',l:'Published article',use:'technique',
   u:['http://tulrich.com/geekstuff/chunklod.html'],w:'Terrain level-of-detail approach.'},
  {t:'Geometry Clipmaps',a:'F. Losasso & H. Hoppe, Microsoft Research (2004)',l:'Published paper',use:'technique',
@@ -10868,11 +10996,11 @@ const CREDITS=[
   u:['https://github.com/ARafayKhalid/web3d-asset-compiler'],w:'Keyframe-reduction idea for character animation clips; re-implemented, no code copied.'},
  {t:'UE5: Sprite-Sheets (Niagara Particles!)',a:'Royal Skies',l:'Tutorial video',use:'technique',
   u:['https://youtu.be/iXBZwiiwwfI'],w:'Reference for volumetric sprite particles in the galaxy.'},
- {t:'Fields Galaxy (Blender geometry nodes)',a:'Supplied to the project — original author to be confirmed',l:'To be confirmed',use:'technique',
-  u:['https://github.com/dartsolarpunk/dartmeadow-space/tree/main/reference-assets/fields-galaxy'],w:'Node graph ported to JavaScript for flocculent galaxies.'},
+ {t:'Fields Galaxy (Blender geometry nodes)',a:'DART Meadow — built by following a YouTube Blender galaxy tutorial (tutorial link to be added)',l:'DART Meadow project',use:'technique',
+  u:['https://github.com/dartsolarpunk/dartmeadow-space/tree/main/reference-assets/fields-galaxy'],w:'The project’s own Blender galaxy; its node graph is ported to JavaScript for flocculent galaxies.'},
  {t:'dm-jots-sandbox',a:'DART Meadow (dartsolarpunk)',l:'DART Meadow project',use:'code',
   u:['https://github.com/dartsolarpunk/dm-jots-sandbox','https://dartsolarpunk.github.io/dm-jots-sandbox/'],
-  w:'The project’s own prototype sandbox: compute marching-cubes planets, depth-aware water, Rayleigh atmosphere, planet walker.'},
+  w:'The project’s own prototype sandbox: compute marching-cubes planets, depth-aware water, Rayleigh atmosphere, planet walker. Its marching-cubes methods draw on several YouTube creators’ tutorials and, with the atmosphere, on Sebastian Lague’s projects (listed above).'},
  {sec:'Data'},
  {t:'Natural Earth (110m coastlines)',a:'Tom Patterson, Nathaniel Vaughn Kelso & contributors',l:'Public domain',use:'data',
   u:['https://www.naturalearthdata.com/','https://github.com/nvkelso/natural-earth-vector'],w:'Earth coastlines on the maps.'},
@@ -10880,6 +11008,9 @@ const CREDITS=[
   u:['https://ned.ipac.caltech.edu/','https://simbad.cds.unistra.fr/'],w:'Galactic l/b and distances of nearby stars, nebulae and the visitable galaxies (rounded).'},
  {t:'Sun’s distance from the Galactic Centre (8.178 kpc)',a:'GRAVITY Collaboration, A&A 625, L10 (2019)',l:'Published paper',use:'data',
   u:['https://doi.org/10.1051/0004-6361/201935656'],w:'Places Sol 26,670 ly from Sgr A*.'},
+ {t:'Known black holes (Gaia BH1–3, Cygnus X-1, V404 Cygni, A0620-00)',a:'El-Badry et al. 2023 (Gaia BH1, BH2); Gaia Collaboration 2024 (Gaia BH3); Miller-Jones et al. 2021 (Cyg X-1); SIMBAD',l:'Public scientific data',use:'data',
+  u:['https://simbad.cds.unistra.fr/','https://doi.org/10.1093/mnras/stac3140','https://doi.org/10.1051/0004-6361/202449763','https://doi.org/10.1126/science.abb3363'],
+  w:'Positions, distances and masses of the real black holes near the Sun (rounded).'},
  {t:'Planetary orbital elements',a:'NASA JPL Solar System Dynamics',l:'Public scientific data',use:'data',
   u:['https://ssd.jpl.nasa.gov/planets/approx_pos.html'],w:'Semi-major axes, eccentricities and periods of the planets.'},
  {t:'Size It Up — Space',a:'sizeitup.games',l:'Reference only',use:'data',u:['https://sizeitup.games/space'],w:'Scale reference for the Sun and planets.'},
@@ -10890,8 +11021,15 @@ const CREDITS=[
  {t:'Orbitron',a:'Matt McInerney',l:'SIL Open Font License 1.1',use:'font',u:['https://fonts.google.com/specimen/Orbitron']},
  {t:'Rajdhani',a:'Indian Type Foundry',l:'SIL Open Font License 1.1',use:'font',u:['https://fonts.google.com/specimen/Rajdhani']},
  {t:'Share Tech Mono',a:'Carrois Apostrophe',l:'SIL Open Font License 1.1',use:'font',u:['https://fonts.google.com/specimen/Share+Tech+Mono']},
+ {sec:'Project assets'},
+ {t:'3D models, characters, skyboards, Bird Temple & artwork',a:'DART Meadow (dartsolarpunk)',l:'DART Meadow original work',use:'original',
+  u:['https://dartmeadow.com/'],w:'All 3D assets are the project’s own, many based on its original artwork.'},
+ {t:'Music',a:'DART Meadow — generated with Google Gemini under the project’s account',l:'DART Meadow original work',use:'original',
+  u:['https://gemini.google.com/'],w:'The in-game soundtrack.'},
+ {t:'Splash / menu video',a:'DART Meadow — generated with Grok (xAI) under the project’s account',l:'DART Meadow original work',use:'original',
+  u:['https://grok.com/'],w:'The splash-screen background video.'},
  {sec:'Tools & services'},
- {t:'Meshy AI',a:'Meshy',l:'Meshy terms of use',use:'tool',u:['https://www.meshy.ai/'],w:'Generated the Autumn and Sentinel character models and animations.'},
+ {t:'Meshy AI',a:'Meshy',l:'Meshy terms of use',use:'tool',u:['https://www.meshy.ai/'],w:'Used in the character pipeline (the earlier Sentinel placeholder and animation clips; the files keep its name prefix).'},
  {t:'Blender',a:'Blender Foundation',l:'GPL (tool; output unrestricted)',use:'tool',u:['https://www.blender.org/'],w:'Modelling and the Fields Galaxy template.'},
  {t:'Firebase Authentication',a:'Google',l:'Service terms',use:'service',u:['https://firebase.google.com/'],w:'Sign-in.'},
  {t:'Stripe',a:'Stripe, Inc.',l:'Service terms',use:'service',u:['https://stripe.com/'],w:'Support payments.'},
@@ -12436,6 +12574,15 @@ function _gsEnsureHost(key){
       r.host=_gsLodMesh(p.pos,p.col,K,P,_gsStarGeo(),'JOTS_Host_'+r.key);
       r.obj.add(r.host);
     }
+    if(want&&!r.bh){
+      try{r.bh=_gsMakeBlackHoles(r.key,r.R,r.type,r.obj,false);r.bh.center=r.center;(galSky.bhSets||(galSky.bhSets=[])).push(r.bh);}catch(e){console.warn('black holes:',e);}
+    }
+    if(r.bh){
+      r.bh.mesh.visible=want;
+      const bi=r.meshes.indexOf(r.bh.mesh);
+      if(want&&bi<0)r.meshes.push(r.bh.mesh);
+      if(!want&&bi>=0)r.meshes.splice(bi,1);
+    }
     if(r.host){r.host.visible=want;}
     const idx=r.meshes.indexOf(r.host);
     if(want&&r.host&&idx<0)r.meshes.push(r.host);
@@ -12500,6 +12647,11 @@ function _gsStarMat(opts){
   // octahedron can show, so no cloud ever reveals its facets.
   const q=T.float(1).sub(f.mul(f)).mul(2.04);
   const win=T.float(1).sub(T.smoothstep(0.55,1.0,q));
+  if(o.ring){   // accretion glow around a dark middle (distant black holes)
+    const rr=q.sqrt();
+    m.colorNode=T.materialColor.mul(T.exp(rr.sub(0.55).div(0.13).pow(2).negate()).mul(1.5).mul(win));
+    return m;
+  }
   const core=T.exp(q.mul(-(o.core||60))).mul(o.coreGain===undefined?2.2:o.coreGain);   // the star itself
   const glow=T.exp(q.mul(-6)).mul(o.glowGain||0.5);                          // inner glow
   const tau=T.float(1).sub(q).max(0).sqrt().mul(2).mul(T.exp(q.mul(-2.5)));  // path through the haze
@@ -12550,7 +12702,7 @@ function _gsLodMesh(pos,col,K,phys,geo,name,look){
   return mesh;
 }
 function _gsResize(mesh,cx,cy,cz){
-  const g=mesh.userData.gs, a=mesh.instanceMatrix.array, S=GALSKY.S, p=g.pos, K=g.K, P=g.phys;
+  const g=mesh.userData.gs, a=mesh.instanceMatrix.array, S=GALSKY.S, p=g.pos, K=g.K, P=g.phys, km=g.kmax||GALSKY.KMAX;
   for(let i=0;i<g.n;i++){
     const dx=p[i*3]-cx,dy=p[i*3+1]-cy,dz=p[i*3+2]-cz;
     // max(on-screen size, physical size) — but never more than ~8 px, so a
@@ -12558,7 +12710,7 @@ function _gsResize(mesh,cx,cy,cz){
     // Physical size phases in only for clouds 2.5k–12k+ ly away.
     const d=Math.sqrt(dx*dx+dy*dy+dz*dz);
     let t=(d-2500)/9500;t=t<0?0:t>1?1:t;
-    const r=Math.min(Math.max(d*K[i],P[i]*t*t*(3-2*t)),d*GALSKY.KMAX)*S*GALSKY.GLOW;
+    const r=Math.min(Math.max(d*K[i],P[i]*t*t*(3-2*t)),d*km)*S*GALSKY.GLOW;
     const o=i*16;a[o]=r;a[o+5]=r;a[o+10]=r;
   }
   mesh.instanceMatrix.needsUpdate=true;
@@ -12585,7 +12737,7 @@ function disposeGalSky(){
     try{galSkyRoot.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material){if(o.material.map)o.material.map.dispose();o.material.dispose();}});}catch(e){}
   }
   galSkyRoot=null;galSky.ready=false;galSky.frame=null;galSky.lod=[];galSky.local=null;galSky.haze=null;galSky.solMarker=null;
-  galSky._lastSize=null;galSky._sizeT=0;galSky._fadeKey='';
+  galSky._lastSize=null;galSky._sizeT=0;galSky._fadeKey='';galSky.bhPool=null;galSky.bhSets=[];galSky.bhNearest=null;
 }
 function buildGalSky(){
   disposeGalSky();
@@ -12708,7 +12860,20 @@ function buildGalSky(){
   sol.position.copy(sunLocal).multiplyScalar(S);sol.visible=false;
   mwSub.add(sol);
 
-  galSky.subs.unshift({obj:mwSub,center:new THREE.Vector3(0,0,0),meshes:[mwMesh,loc,nebMesh],R:55000,key:'milkyway'});
+  // ── Arm gas & dust, and the Milky Way's black holes
+  const mwMeshes=[mwMesh,loc,nebMesh];
+  try{
+    const ac=_gsArmClouds(B);
+    mwSub.add(ac.fog);mwMeshes.push(ac.fog);
+    if(ac.dust){mwSub.add(ac.dust);mwMeshes.push(ac.dust);}
+  }catch(e){console.warn('arm clouds:',e);}
+  galSky.bhSets=[];
+  try{
+    const bh=_gsMakeBlackHoles('milkyway',55000,'spiral',mwSub,true);
+    bh.center=new THREE.Vector3(0,0,0);galSky.bhSets.push(bh);mwMeshes.push(bh.mesh);
+  }catch(e){console.warn('black holes:',e);}
+  galSky.subs.unshift({obj:mwSub,center:new THREE.Vector3(0,0,0),meshes:mwMeshes,R:55000,key:'milkyway'});
+  galSky.mwMesh=mwMesh;
   galSky.frame=frame;galSky.lod=lod;galSky.local=loc;galSky.haze=haze;galSky.solMarker=sol;galSky.solHalo=solHalo;
   galSkyRoot=root;
   flightScene.add(root);
@@ -12734,6 +12899,16 @@ function setGalSkySystem(system){
   const cur=(typeof GALAXY_DB!=='undefined'&&GALAXY_DB&&GALAXY_DB.current)||'milkyway';
   const q=galSky.q||new THREE.Quaternion().setFromEuler(GALAXY_PLANE_EULER||new THREE.Euler(0.5,0.3,0.1));
   try{_gsEnsureHost(cur);}catch(e){}
+  // Travel to a black hole: this system is the one parked beside it, so
+  // the sky is seen from a stand-off point near the hole (frame-local ly).
+  const vp=window._gsViewAt;
+  if(vp&&vp.sysName===system.name&&vp.gal===cur){
+    const sunL=galSky.sunLocal||new THREE.Vector3(-GALSKY.R0,GALSKY.ZSUN,0);
+    galSky.base.copy(vp.at).sub(sunL).applyQuaternion(q);
+    if(!vp.told){vp.told=true;try{toast('\u25CF Holding station near '+vp.name,3200);}catch(e){}}
+    return;
+  }
+  window._gsViewAt=null;
   if(cur!=='milkyway'){
     // Another galaxy: a default random spot inside its disc at its real
     // position; the Milky Way and the rest hang in the sky from there.
@@ -12765,6 +12940,346 @@ function galSkySystemOffset(system){
   return v.set(Math.cos(a)*d,_gsGauss(r)*Math.min(90,d*0.3),Math.sin(a)*d).applyQuaternion(q);
 }
 window.galSkySystemOffset=galSkySystemOffset;
+// ════════════════════════════════════════════════════════════════════
+//  ARM GAS & DUST — glowing gas clouds (pink HII regions, blue reflection
+//  nebulae) strung along the arms, and dark dust lanes on the arms' inner
+//  edges that dim the stars behind them. Both are 3-D clouds of the same
+//  wispy haze as the stars, only much larger and softer.
+// ════════════════════════════════════════════════════════════════════
+function _gsDustMat(){
+  const T=THREE.TSL;
+  if(!T||!THREE.MeshBasicNodeMaterial||!T.normalView)return null;
+  // out = dst · (1 − src): each dust cloud absorbs some of what's behind it.
+  // (SubtractiveBlending + premultipliedAlpha = ZERO, ONE_MINUS_SRC_COLOR,
+  //  and it leaves the frame's alpha alone.)
+  const m=new THREE.MeshBasicNodeMaterial({color:0xffffff,transparent:false,depthTest:false,depthWrite:false,
+    blending:THREE.SubtractiveBlending,premultipliedAlpha:true});
+  const f=T.normalize(T.normalView).dot(T.positionViewDirection).clamp(0,1);
+  const q=T.float(1).sub(f.mul(f)).mul(2.04);
+  const win=T.float(1).sub(T.smoothstep(0.55,1.0,q));
+  let wisp=T.float(1);
+  try{
+    if(GALSKY.WISP&&T.texture3D&&T.hash&&T.instanceIndex){
+      const i=T.float(T.instanceIndex);
+      const off=T.vec3(T.hash(i.add(5.0)),T.hash(i.add(23.0)),T.hash(i.add(61.0))).mul(8.0);
+      const d=T.texture3D(_gsNoiseTex3D(),T.positionGeometry.mul(0.6).add(off)).r;
+      wisp=T.float(0.2).add(d.mul(1.6));
+    }
+  }catch(e){}
+  // Dust reddens what it dims: absorbs blue a little more than red.
+  m.colorNode=T.materialColor.mul(T.vec3(0.78,0.86,1.0)).mul(T.exp(q.mul(-2.2)).mul(wisp).mul(win)).clamp(0,0.92);
+  return m;
+}
+function _gsArmClouds(B){
+  const G=GALSKY, rand=seedRand(0xD057A1);
+  const mob=B.mobile, low=B.low;
+  const nFog=low?160:(mob?320:760), nDust=low?260:(mob?520:1300);
+  const fp=new Float32Array(nFog*3), fc=new Float32Array(nFog*3), fK=new Float32Array(nFog), fP=new Float32Array(nFog);
+  for(let i=0;i<nFog;i++){
+    const k=(rand()*4)|0, r=_gsDiskR(rand,6000,G.RMAX*0.92);
+    const th=galArmTheta(k,r)+_gsGauss(rand)*(900/r);
+    fp[i*3]=Math.cos(th)*r+_gsGauss(rand)*350;fp[i*3+1]=_gsGauss(rand)*160;fp[i*3+2]=Math.sin(th)*r+_gsGauss(rand)*350;
+    const hii=rand()<0.55, b=0.032+rand()*0.04;
+    if(hii){fc[i*3]=b*1.0;fc[i*3+1]=b*0.38;fc[i*3+2]=b*0.62;}      // hydrogen-alpha pink
+    else{fc[i*3]=b*0.35;fc[i*3+1]=b*0.55;fc[i*3+2]=b*1.0;}         // blue reflection haze
+    fK[i]=0.0045;fP[i]=380+rand()*820;
+  }
+  const dp=new Float32Array(nDust*3), dc=new Float32Array(nDust*3), dK=new Float32Array(nDust), dP=new Float32Array(nDust);
+  for(let i=0;i<nDust;i++){
+    let x,y,z;
+    if(rand()<0.82){                                   // lanes on the inner edge of each arm
+      const k=(rand()*4)|0, r=_gsDiskR(rand,5000,G.RMAX*0.85)-650;
+      const th=galArmTheta(k,r+650)+_gsGauss(rand)*(420/Math.max(r,1000));
+      x=Math.cos(th)*r;z=Math.sin(th)*r;y=_gsGauss(rand)*95;
+    }else{                                             // the bar's leading-edge lanes
+      const a=_gsGauss(rand)*G.BAR_HALF*0.5, side=rand()<0.5?-1:1, b=side*G.BAR_HALF*0.12+_gsGauss(rand)*300;
+      x=a*Math.cos(G.BAR_ANG)-b*Math.sin(G.BAR_ANG);z=a*Math.sin(G.BAR_ANG)+b*Math.cos(G.BAR_ANG);y=_gsGauss(rand)*80;
+    }
+    dp[i*3]=x;dp[i*3+1]=y;dp[i*3+2]=z;
+    const a=0.12+rand()*0.16;dc[i*3]=a;dc[i*3+1]=a;dc[i*3+2]=a;
+    dK[i]=0.0040;dP[i]=(i%5===0?700:380)+rand()*520;
+  }
+  const fog=_gsLodMesh(fp,fc,fK,fP,_gsStarGeo(),'JOTS_ArmGas',{core:1,coreGain:0,glowGain:0.55,atmoGain:0.3,scatter:0.9,wispScale:0.6,wispGain:2.6});
+  fog.userData.gs.kmax=0.016;fog.renderOrder=-1000.5;
+  let dust=null;
+  const dm=_gsDustMat();
+  if(dm){
+    dust=_gsLodMesh(dp,dc,dK,dP,_gsStarGeo(),'JOTS_ArmDust');
+    dust.material.dispose();dust.material=dm;
+    dust.userData.gs.kmax=0.03;dust.renderOrder=-999.9;
+  }
+  return {fog,dust};
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  BLACK HOLES
+//  • Galactic cores: every galaxy's centre is a ring of black holes in
+//    orbit around an empty void (DART Meadow's take on Sgr A* and its
+//    kin); ring size and count vary from galaxy to galaxy.
+//  • Stellar black holes drift through the arms and between them. In the
+//    Milky Way the known nearby ones sit at their catalogued positions.
+//  • Up close each one bends the sky behind it: a point-lens (Einstein)
+//    mapping of the frame drawn so far, a dark shadow, a photon ring and
+//    a Doppler-brightened accretion disc that is itself lensed.
+//  Technique reference: Kavan, "Simulating Black Holes in C++"
+//  (youtu.be/8-B6ryuBkCM, github.com/kavan010/black_hole). No licence is
+//  published there, so nothing is copied: the lens here is the textbook
+//  thin-lens equation β = θ − θE²/θ, written from scratch. See CREDITS.
+//  Sizes are gameplay scale (light-years), not physical: a real
+//  Sgr A* shadow is ~0.1 AU and would never be seen.
+// ════════════════════════════════════════════════════════════════════
+// [name, l°, b°, distance ly, mass M☉] — positions from SIMBAD / discovery papers.
+const GS_REAL_BLACK_HOLES=[
+  ['Gaia BH1',22.63,18.05,1560,9.6],
+  ['Gaia BH3',51.67,-3.49,1926,33],
+  ['A0620-00',209.96,-6.54,3500,6.6],
+  ['Gaia BH2',310.40,2.78,3800,8.9],
+  ['Cygnus X-1',71.33,3.07,7240,21],
+  ['V404 Cygni',73.12,-2.09,7800,9]
+];
+const GS_BH={SH_CORE:1.3, SH_STELLAR:0.32, SHADOW_TO_QUAD:0.12, THETA_E:0.30,
+  POOL:(typeof GFX!=='undefined'&&GFX&&GFX.isMobile)?4:7};   // holes lensed at once (a whole core ring on desktop)
+// A galaxy's black holes, in its own frame (ly). `obj` is the group they live in.
+function _gsMakeBlackHoles(key,R,type,obj,isMW){
+  const rand=seedRand(hashStr('bh:'+key));
+  const list=[];
+  // Core ring: count and size vary by galaxy; big ellipticals gather more.
+  const big=type==='elliptical'?1.6:type==='spiral'||type==='flocculent'?1:0.6;
+  const nRing=isMW?7:Math.max(3,Math.round((3+rand()*6)*big));
+  const ringR=isMW?6.5:Math.max(2.5,Math.min(14,R*0.00009*(0.6+rand()*0.8)));
+  const tilt=new THREE.Quaternion().setFromEuler(new THREE.Euler((rand()-0.5)*0.5,rand()*Math.PI*2,(rand()-0.5)*0.5));
+  const period=(isMW?260:180+rand()*240);   // seconds per orbit (gameplay time)
+  const coreName=isMW?'Sagittarius A*':'Core ring';
+  for(let i=0;i<nRing;i++){
+    list.push({name:(isMW?'Sgr A* ':'Core ')+String.fromCharCode(945+i), group:coreName, kind:'core',
+      p:new THREE.Vector3(), ring:{R:ringR*(0.92+rand()*0.16), phi:i/nRing*Math.PI*2+(rand()-0.5)*0.3, w:Math.PI*2/period, tilt},
+      shadow:GS_BH.SH_CORE*(0.8+rand()*0.5), seed:(rand()*1e9)|0});
+  }
+  // Known nearby black holes (Milky Way only), then drifting ones.
+  if(isMW){
+    const v=new THREE.Vector3();
+    GS_REAL_BLACK_HOLES.forEach(b=>{
+      galLocalFromLBD(b[1],b[2],b[3],v);
+      list.push({name:b[0],kind:'stellar',real:true,mass:b[4],p:v.clone(),shadow:GS_BH.SH_STELLAR*Math.cbrt(b[4]/10)*1.4,seed:hashStr(b[0])});
+    });
+  }
+  const nDrift=isMW?60:Math.round(10+rand()*18*big);
+  for(let i=0;i<nDrift;i++){
+    let x,y,z;
+    const flat=type==='elliptical'||type==='dsph'?0.5:0.02;
+    if((type==='spiral'||isMW)&&rand()<0.7){
+      const k=(rand()*4)|0, r=(isMW?_gsDiskR(rand,4000,GALSKY.RMAX*0.9):R*(0.12+rand()*0.8));
+      const th=(isMW?galArmTheta(k,r):rand()*Math.PI*2)+_gsGauss(rand)*0.08;
+      x=Math.cos(th)*r;z=Math.sin(th)*r;y=_gsGauss(rand)*R*flat;
+    }else{
+      const r=R*(0.05+Math.pow(rand(),0.8)*0.9), a=rand()*Math.PI*2;
+      x=Math.cos(a)*r;z=Math.sin(a)*r;y=_gsGauss(rand)*R*Math.max(flat,0.03);
+    }
+    const id=((rand()*0xFFFFF)|0).toString(36).toUpperCase().padStart(4,'0');
+    list.push({name:'BH-'+id,kind:'stellar',p:new THREE.Vector3(x,y,z),shadow:GS_BH.SH_STELLAR*(0.7+rand()*0.8),seed:(rand()*1e9)|0});
+  }
+  // Far view: a small warm ring for each (an accretion glow around a dark
+  // middle), so they can be picked out across the galaxy.
+  const n=list.length, pos=new Float32Array(n*3), col=new Float32Array(n*3), K=new Float32Array(n), P=new Float32Array(n);
+  list.forEach((b,i)=>{
+    if(b.ring)_gsRingPos(b,0);
+    pos[i*3]=b.p.x;pos[i*3+1]=b.p.y;pos[i*3+2]=b.p.z;
+    const c=b.kind==='core'?[0.9,0.62,0.34]:[0.8,0.5,0.3];
+    col[i*3]=c[0];col[i*3+1]=c[1];col[i*3+2]=c[2];
+    K[i]=b.kind==='core'?0.0016:0.0011;P[i]=b.shadow*6;
+  });
+  const mesh=_gsLodMesh(pos,col,K,P,_gsStarGeo(),'JOTS_BlackHoles_'+key,{ring:true});
+  mesh.renderOrder=-999.95;
+  obj.add(mesh);
+  return {key,list,mesh,obj,nRing,coreName,ringR};
+}
+function _gsRingPos(b,t){
+  const r=b.ring, a=r.phi+r.w*t;
+  return b.p.set(Math.cos(a)*r.R,0,Math.sin(a)*r.R).applyQuaternion(r.tilt);
+}
+// Accretion disc particles in the disc plane (outer radius 1).
+function _gsDiscGeo(){
+  if(_gsDiscGeo._c)return _gsDiscGeo._c;
+  const n=(typeof GFX!=='undefined'&&GFX&&GFX.isMobile)?700:1500, rand=seedRand(0xACC2E7);
+  const pos=new Float32Array(n*3), col=new Float32Array(n*3);
+  for(let i=0;i<n;i++){
+    const t=Math.pow(rand(),0.7), r=0.28+t*0.72, a=rand()*Math.PI*2;
+    pos[i*3]=Math.cos(a)*r;pos[i*3+1]=_gsGauss(rand)*0.012*(0.4+t);pos[i*3+2]=Math.sin(a)*r;
+    const hot=1-t, b=(0.35+rand()*0.25)*(0.35+hot*1.1);
+    col[i*3]=b;col[i*3+1]=b*(0.55+hot*0.35);col[i*3+2]=b*(0.25+hot*0.55);
+  }
+  return (_gsDiscGeo._c={pos,col,n});
+}
+function _gsDiscMesh(front){
+  const T=THREE.TSL, d=_gsDiscGeo();
+  const star=_gsStarMat({core:1,coreGain:0,glowGain:0.9,atmoGain:0.2,scatter:0.6,wisp:false});
+  if(!star)return null;
+  const uC=T.uniform(new THREE.Vector3()), uAxis=T.uniform(new THREE.Vector3(0,1,0));
+  // Doppler beaming: the side of the disc turning toward you is brighter
+  // and bluer. Front/back halves are drawn either side of the lens so the
+  // far half is bent over and under the shadow, the near half crosses it.
+  const rel=T.positionWorld.sub(uC);
+  const vel=T.normalize(T.cross(uAxis,rel));
+  const toCam=T.normalize(T.cameraPosition.sub(T.positionWorld));
+  const beam=T.float(1).add(vel.dot(toCam).mul(0.75)).max(0.15);
+  const side=rel.dot(T.cameraPosition.sub(uC));
+  const keep=front?T.step(0.0,side):T.step(side,0.0);
+  const base=star.colorNode;
+  star.colorNode=base.mul(beam).mul(T.vec3(T.float(1),T.float(0.9).add(beam.mul(0.1)),T.float(0.75).add(beam.mul(0.25)))).mul(keep);
+  const mesh=new THREE.InstancedMesh(_gsStarGeo(),star,d.n);
+  const m4=new THREE.Matrix4(), c=new THREE.Color();
+  for(let i=0;i<d.n;i++){
+    const s=0.035;m4.makeScale(s,s,s);m4.setPosition(d.pos[i*3],d.pos[i*3+1],d.pos[i*3+2]);mesh.setMatrixAt(i,m4);
+    c.setRGB(d.col[i*3],d.col[i*3+1],d.col[i*3+2]);mesh.setColorAt(i,c);
+  }
+  mesh.instanceMatrix.needsUpdate=true;if(mesh.instanceColor)mesh.instanceColor.needsUpdate=true;
+  mesh.frustumCulled=false;mesh.renderOrder=front?-999.4:-999.6;
+  mesh.userData.u={uC,uAxis};
+  return mesh;
+}
+// One full-screen pass bends the sky for up to GS_BH.POOL black holes at
+// once — the multi-lens form of the thin-lens equation, summing each
+// hole's deflection (weak-field approximation) — so neighbouring holes in
+// a core ring lens each other correctly from a single copy of the frame.
+function _gsLensMat(){
+  const T=THREE.TSL;
+  if(!T||!T.viewportSharedTexture||!T.dFdx||!T.screenUV||!T.positionGeometry)return null;
+  const m=new THREE.MeshBasicNodeMaterial({transparent:false,depthTest:false,depthWrite:false});
+  const U=[];
+  for(let i=0;i<GS_BH.POOL;i++)U.push({c:T.uniform(new THREE.Vector2()),e:T.uniform(0),s:T.uniform(1e-6)});
+  const uAspect=T.uniform(1);
+  // Full-screen triangle pair straight in clip space.
+  m.vertexNode=T.vec4(T.positionGeometry.xy,0.0,1.0);
+  const ndc=T.varying(T.positionGeometry.xy);
+  const p=ndc.mul(T.vec2(uAspect,1.0));                  // aspect-corrected, units of half-height
+  let delta=T.vec2(0,0), mask=T.float(1), photon=T.float(0);
+  for(const u of U){
+    const v=p.sub(u.c), b=v.length().max(1e-5);
+    const fade=T.float(1).sub(T.smoothstep(u.e.mul(4.0),u.e.mul(7.0),b));
+    delta=delta.sub(v.mul(u.e.mul(u.e).div(b.mul(b))).mul(fade));
+    mask=mask.mul(T.smoothstep(u.s.mul(0.94),u.s.mul(1.05),b));
+    photon=photon.add(T.exp(b.sub(u.s.mul(1.07)).div(u.s.mul(0.045)).pow(2).negate()));
+  }
+  // ndc → screen-uv scale per axis from the pixel derivatives, so the
+  // sample lands right whichever way the backend orients the screen.
+  const jx=T.dFdx(T.screenUV).x.div(T.dFdx(ndc).x), jy=T.dFdy(T.screenUV).y.div(T.dFdy(ndc).y);
+  const dn=delta.div(T.vec2(uAspect,1.0));
+  const suv=T.screenUV.add(T.vec2(dn.x.mul(jx),dn.y.mul(jy)));
+  const bg=T.viewportSharedTexture(suv).rgb;
+  m.colorNode=bg.mul(mask).add(T.vec3(1.0,0.78,0.52).mul(photon.min(1.0).mul(0.6)));
+  m.toneMapped=false;
+  m.userData.u={U,uAspect};
+  return m;
+}
+function _gsBHPool(){
+  if(galSky.bhPool)return galSky.bhPool;
+  const mat=_gsLensMat();
+  const pool={lens:null,discs:[]};
+  if(mat){
+    const lens=new THREE.Mesh(new THREE.PlaneGeometry(2,2),mat);
+    lens.frustumCulled=false;lens.renderOrder=-999.5;lens.visible=false;lens.name='JOTS_BHLens';
+    galSkyRoot.add(lens);pool.lens=lens;
+  }
+  for(let i=0;i<GS_BH.POOL;i++){
+    const back=_gsDiscMesh(false), front=_gsDiscMesh(true);
+    const disc=new THREE.Group();disc.visible=false;
+    if(back)disc.add(back);if(front)disc.add(front);
+    galSkyRoot.add(disc);
+    pool.discs.push({disc,back,front,bh:null,spin:0});
+  }
+  galSky.bhPool=pool;
+  return pool;
+}
+// Per frame: orbit the core rings, then give the nearest black holes the
+// lens, shadow, photon ring and accretion disc.
+function _gsUpdateBlackHoles(){
+  const sets=galSky.bhSets;if(!sets||!sets.length||!flightCamera)return;
+  const t=performance.now()*0.001, S=GALSKY.S, cam=flightCamera.position;
+  const cands=[], ws=galSky._bhS||(galSky._bhS=new THREE.Vector3());
+  const tanH=Math.tan(THREE.MathUtils.degToRad(flightCamera.fov*0.5));
+  for(let s=0;s<sets.length;s++){
+    const set=sets[s];
+    if(!set.mesh.visible||!set.obj.visible)continue;
+    set.obj.updateMatrixWorld();
+    const a=set.mesh.instanceMatrix.array, g=set.mesh.userData.gs;
+    const scale=set.obj.getWorldScale(ws).x;
+    for(let i=0;i<set.list.length;i++){
+      const b=set.list[i];
+      if(b.ring){
+        _gsRingPos(b,t);
+        g.pos[i*3]=b.p.x;g.pos[i*3+1]=b.p.y;g.pos[i*3+2]=b.p.z;
+        a[i*16+12]=b.p.x*S;a[i*16+13]=b.p.y*S;a[i*16+14]=b.p.z*S;
+      }
+      const w=new THREE.Vector3().copy(b.p).multiplyScalar(S);set.mesh.localToWorld(w);
+      const sh=b.shadow*S*scale, d=w.distanceTo(cam);
+      // Worth a lens once the shadow spans more than a pixel or two.
+      if(d>sh*6&&sh/d/tanH>0.002)cands.push({b,set,d,sh,w});
+    }
+    if(set.nRing)set.mesh.instanceMatrix.needsUpdate=true;
+  }
+  cands.sort((x,y)=>x.d-y.d);
+  const pool=_gsBHPool();
+  const rootInv=galSky._rootInv||(galSky._rootInv=new THREE.Matrix4());
+  galSkyRoot.updateMatrixWorld();rootInv.copy(galSkyRoot.matrixWorld).invert();
+  flightCamera.updateMatrixWorld();
+  const aspect=flightCamera.aspect||1, pr=new THREE.Vector3(), fwd=new THREE.Vector3();
+  flightCamera.getWorldDirection(fwd);
+  let anyLens=false;
+  const U=pool.lens&&pool.lens.material.userData.u;
+  if(U)U.uAspect.value=aspect;
+  for(let i=0;i<GS_BH.POOL;i++){
+    const c=cands[i], slot=pool.discs[i];
+    if(U){
+      const u=U.U[i];
+      if(c&&pr.copy(c.w).sub(cam).dot(fwd)>0){
+        pr.copy(c.w).project(flightCamera);
+        u.c.value.set(pr.x*aspect,pr.y);
+        const k=1/(c.d*tanH);
+        u.s.value=c.sh*k;u.e.value=c.sh*(GS_BH.THETA_E/GS_BH.SHADOW_TO_QUAD)*k;
+        anyLens=true;
+      }else{u.e.value=0;u.s.value=1e-6;u.c.value.set(9,9);}
+    }
+    if(!c){slot.disc.visible=false;slot.bh=null;continue;}
+    const local=c.w.clone().applyMatrix4(rootInv);
+    slot.disc.visible=true;slot.disc.position.copy(local);
+    if(slot.bh!==c.b){
+      slot.bh=c.b;
+      const r=seedRand(c.b.seed>>>0);
+      slot.disc.quaternion.setFromEuler(new THREE.Euler((r()-0.5)*1.2+0.35,r()*Math.PI*2,(r()-0.5)*0.9));
+      slot.spin=(0.25+r()*0.35)*(r()<0.5?-1:1);
+    }
+    slot.disc.scale.setScalar(c.sh*(c.b.kind==='core'?3.4:5.2));
+    [slot.back,slot.front].forEach(m=>{
+      if(!m)return;
+      m.rotation.y=t*slot.spin;
+      m.userData.u.uC.value.copy(c.w);
+      m.userData.u.uAxis.value.set(0,1,0).applyQuaternion(slot.disc.quaternion).normalize();
+    });
+  }
+  if(pool.lens)pool.lens.visible=anyLens;
+  galSky.bhNearest=cands[0]||null;
+}
+// All black holes near the current viewpoint (for the Quick Travel lists),
+// as {b, set, d(ly), local(frame-local ly)}.
+function galSkyBlackHolesNear(maxLy){
+  const out=[], sets=galSky.bhSets||[];
+  if(!galSky.ready)return out;
+  const here=(galSky.camLocal&&galSky.camLocal.lengthSq()>0)?galSky.camLocal.clone():(galSky.sunLocal||new THREE.Vector3()).clone();
+  const cur=(typeof GALAXY_DB!=='undefined'&&GALAXY_DB&&GALAXY_DB.current)||'milkyway';
+  sets.forEach(set=>{
+    if(set.key!==cur)return;                          // only the galaxy you're in
+    const cen=set.center||new THREE.Vector3(), q=set.obj.quaternion;
+    set.list.forEach((b,i)=>{
+      if(b.kind==='core'&&i>0)return;                 // the ring is listed once, at its centre
+      const fl=(b.kind==='core'?new THREE.Vector3():b.p.clone().applyQuaternion(q)).add(cen);
+      const d=fl.distanceTo(here);
+      if(d<=maxLy||b.kind==='core')out.push({b,set,d,local:fl});
+    });
+  });
+  return out.sort((a,b)=>a.d-b.d);
+}
+window.galSkyBlackHolesNear=galSkyBlackHolesNear;
+
 // Flight distance from the system's star (scene units) → galactic zoom (ly).
 function galSkyZoomLy(d){
   const G=GALSKY;
@@ -12821,14 +13336,18 @@ function updateGalSky(force){
     galSky._lastSize=(last||new THREE.Vector3()).copy(cam);
     const L=galSky.camLocal.copy(cam).applyQuaternion(galSky.qInv).add(galSky.sunLocal);
     _gsPlaceSubs(L,true);
+    // Deep in the nucleus every bulge cloud surrounds you; dim the star
+    // field there so the sky reads as a glowing core, not a white-out.
+    if(galSky.mwMesh)_gsFade(galSky.mwMesh,0.22+0.78*_gsSmooth(900,9000,L.length()));
+    // The soft disc glow is only for seeing the galaxy from outside: fade
+    // it by how far you are above the disc or beyond its bright inner part.
+    const outside=Math.max(Math.abs(L.y),Math.hypot(L.x,L.z)-GALSKY.RMAX*0.5);
+    _gsFade(galSky.haze,0.8*_gsSmooth(3000,40000,outside));
   }
   const key=Math.round(Math.log10(1+dS)*40);
   if(force||key!==galSky._fadeKey){
     galSky._fadeKey=key;
     _gsFade(galSky.local,1-_gsSmooth(150,3000,dS));
-    // Height above/below the disc decides how much disc glow you see.
-    const h=Math.abs(galSky.camLocal.y||0);
-    _gsFade(galSky.haze,_gsSmooth(9000,60000,dS)*_gsSmooth(1500,20000,Math.max(h,dS*0.35)));
     if(galSky.solMarker)galSky.solMarker.visible=dS>25&&dS<400000;
   }
   const sol=galSky.solMarker;
@@ -12836,6 +13355,7 @@ function updateGalSky(force){
     sol.scale.setScalar(Math.max(0.6,dS*0.008)*GALSKY.S*(1+Math.sin(now*0.0022)*0.1));
     if(galSky.solHalo)galSky.solHalo.quaternion.copy(flightCamera.quaternion).premultiply(galSky.qInv);
   }
+  try{_gsUpdateBlackHoles();}catch(e){if(!galSky._bhErr){galSky._bhErr=1;console.warn('black holes:',e);}}
 }
 window.buildGalSky=buildGalSky;window.updateGalSky=updateGalSky;window.setGalSkySystem=setGalSkySystem;
 window.disposeGalSky=disposeGalSky;window.galSkyZoomLy=galSkyZoomLy;window.galLocalFromLBD=galLocalFromLBD;
@@ -14265,6 +14785,14 @@ const CHAR_TERRAIN_YAW_EXTRA = Math.PI;
 // gap scales with board.scale. Atmo/interstellar mount: no side offset
 // (rider centered on deckAnchor).
 const CHAR_TERRAIN_BOARD_SIDE = 1.0;
+// Surface walk: her height in scene units (scaleForTerrain targets this)
+// and where the companion board waits — about 5 ft to her right at waist
+// height, so she stands at the board's left side facing its nose. It used
+// to sit 1 unit out (≈1.8 ft of a 6 ft rider) just above the ground,
+// i.e. jammed against her hip.
+const CHAR_TERRAIN_HEIGHT = 3.26;
+const SURF_BOARD_SIDE = CHAR_TERRAIN_HEIGHT*(5/6);      // ≈ 5 ft
+const SURF_BOARD_WAIST = CHAR_TERRAIN_HEIGHT*0.55;      // ≈ waist of a 6 ft rider
 function _terrainBoardSideWorld(board){
   const sc=(board&&board.scale&&isFinite(board.scale.x))?Math.abs(board.scale.x):1;
   return CHAR_TERRAIN_BOARD_SIDE*Math.max(sc,0.01);
@@ -14524,7 +15052,7 @@ async function loadCharacterAssets(){
     CHAR.rawHeight = _rawHeight>0.001 ? _rawHeight : 1;
     const _clamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
     CHAR.scaleForBoard = _clamp(CHAR_BOARD_TARGET_UNITS / CHAR.rawHeight, 0.02, 5);
-    CHAR.scaleForTerrain = _clamp(3.26 / CHAR.rawHeight, 0.02, 5);
+    CHAR.scaleForTerrain = _clamp(CHAR_TERRAIN_HEIGHT / CHAR.rawHeight, 0.02, 5);
     CHAR.feetOffset = -_rawBox.min.y;
     CHAR.mixer = CHAR.mixer || new THREE.AnimationMixer(CHAR.root);
     // NEVER leave mesh invisible here — remount may fail if boardFlight
@@ -14641,7 +15169,7 @@ async function loadCharacterAssets(){
       CHAR.rawHeight = _rawHeight;
       const _clamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
       CHAR.scaleForBoard = _clamp(CHAR_BOARD_TARGET_UNITS / CHAR.rawHeight, 0.02, 5);
-      CHAR.scaleForTerrain = _clamp(3.26 / CHAR.rawHeight, 0.02, 5);
+      CHAR.scaleForTerrain = _clamp(CHAR_TERRAIN_HEIGHT / CHAR.rawHeight, 0.02, 5);
       CHAR.feetOffset = -_rawBox.min.y;
     }
     console.log('Character scale calibration — raw T-pose height:',(CHAR.rawHeight||0).toFixed(4),
@@ -15776,13 +16304,13 @@ async function enterSurface(body,site){
     const boardHoverY=_gnd;     // board hover relative to surface/feet, not elevated root
     const _yaw=surfPlayer.yaw||0;
     const _rx=Math.cos(_yaw),_rz=-Math.sin(_yaw);
-    const _side=surfBoard?_terrainBoardSideWorld(surfBoard):CHAR_TERRAIN_BOARD_SIDE;
+    const _side=SURF_BOARD_SIDE;
     const standX=surfPlayer.pos.x, standZ=surfPlayer.pos.z;
     const terrainYaw=(_yaw - Math.PI/2) + CHAR_MOUNT_YAW_OFFSET + CHAR_TERRAIN_YAW_EXTRA;
     if(surfBoard){
       try{ surfBoard.visible=true; }catch(e){}
       // Board starts slightly high, settles beside (her RIGHT / board-left of nose).
-      surfBoard.position.set(standX+_rx*_side, boardHoverY+0.85, standZ+_rz*_side);
+      surfBoard.position.set(standX+_rx*_side, boardHoverY+SURF_BOARD_WAIST+0.6, standZ+_rz*_side);
       surfBoard.rotation.order='YXZ';
       surfBoard.rotation.y=_yaw-Math.PI/2;
     }
@@ -15813,7 +16341,7 @@ async function enterSurface(body,site){
       CHAR.root.position.lerpVectors(startPos, endPos, e);
       CHAR.root.rotation.y = terrainYaw;
       if(surfBoard){
-        const by0=boardHoverY+0.85, by1=boardHoverY+0.08;
+        const by0=boardHoverY+SURF_BOARD_WAIST+0.6, by1=boardHoverY+SURF_BOARD_WAIST;
         surfBoard.position.y = by0 + (by1-by0)*e;
         surfBoard.position.x = standX+_rx*_side;
         surfBoard.position.z = standZ+_rz*_side;
@@ -17688,11 +18216,13 @@ function updateSurface(dt){
     const fx=-Math.sin(p.yaw),fz=-Math.cos(p.yaw);
     const rx=Math.cos(p.yaw),rz=-Math.sin(p.yaw);
     // Scale side with board so ~6ft beside holds at terrain board.scale≈2.4
-    const side=_terrainBoardSideWorld(surfBoard);
+    const side=SURF_BOARD_SIDE;
     const tx=p.pos.x+rx*side, tz=p.pos.z+rz*side;
     const boardGroundH=_surfHeight?_surfHeight(tx,tz):0;
     const playerFeet=(p.pos.y-3.0);
-    const hover=boardGroundH + (p.onGround?0.08:Math.max(0.08, playerFeet-boardGroundH+0.05)) + Math.sin(surfTime*1.6)*0.02;
+    // Waist-high beside her, following her feet up hills and jumps, but
+    // never dipping into the ground under the board itself.
+    const hover=Math.max(boardGroundH+0.08, playerFeet+SURF_BOARD_WAIST) + Math.sin(surfTime*1.6)*0.02;
     const lerp=Math.min(1,dt*10);
     surfBoard.position.x += (tx-surfBoard.position.x)*lerp;
     surfBoard.position.z += (tz-surfBoard.position.z)*lerp;
