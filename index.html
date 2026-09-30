@@ -1427,16 +1427,10 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   <button id="shard-game-btn" class="hud-toggle-btn" onclick="openAltarGame()" title="Play the altar game" style="top:205px;display:none;background:rgba(255,204,0,0.1);color:#ffcc00;border-color:rgba(255,204,0,0.35);"><span class="htb-ico">🎮</span>GAME</button>
   <button id="shard-return-btn" class="hud-toggle-btn" onclick="returnBirdShard()" title="Send the Bird Shard home" style="top:243px;display:none;background:rgba(255,204,0,0.1);color:#ffcc00;border-color:rgba(255,204,0,0.35);"><span class="htb-ico">🕊</span>RETURN</button>
   <div id="ar-top">
-    <div class="art-logo">DART MEADOW</div>
-    <div class="art-stats">
-      <div>SPD <span id="hud-speed">0.000</span>c³</div>
-      <div>ALT <span id="hud-alt">400km</span></div>
-      <div>→ <span id="hud-dest">LOW ORBIT</span></div>
-      <div>ETA <span id="hud-eta">—</span></div>
-    </div>
-    <div class="art-btns">
+    <!-- Left frame: soundtrack controls -->
+    <div class="hud-l dm-frame">
       <!-- ♫ In-game audio player -->
-      <div id="audio-player" style="display:flex;align-items:center;gap:3px;margin-right:8px;padding:2px 6px;background:rgba(var(--acc-rgb),0.04);border:1px solid rgba(var(--acc-rgb),0.18);border-radius:14px;">
+      <div id="audio-player" >
         <button class="aud-btn" onclick="audioPrev()" title="Previous track">⏮</button>
         <button class="aud-btn" id="aud-playpause" onclick="audioToggle()" title="Play / Pause">⏸</button>
         <button class="aud-btn" onclick="audioStop()" title="Stop">■</button>
@@ -1445,6 +1439,19 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
         <button class="aud-btn" onclick="openMusicBrowser()" title="Browse the soundtrack">📜</button>
         <button class="aud-btn" onclick="audioLoadDefault()" title="Reload game soundtrack">♫</button>
       </div>
+    </div>
+    <!-- Centre: title + SPD / ALT gauges + destination -->
+    <div class="hud-c">
+      <div class="art-logo">DART MEADOW</div>
+      <div class="art-stats">
+        <div class="hud-g" title="Speed"><span class="g-lbl">SPD</span><svg class="g-ring" viewBox="0 0 40 40" aria-hidden="true"><circle class="g-track" cx="20" cy="20" r="16"/><circle class="g-arc" id="g-spd" cx="20" cy="20" r="16"/></svg><span class="g-val"><span id="hud-speed">0.000</span>c³</span></div>
+        <div class="hud-g" title="Distance / altitude"><span class="g-lbl">ALT</span><svg class="g-ring" viewBox="0 0 40 40" aria-hidden="true"><circle class="g-track" cx="20" cy="20" r="16"/><circle class="g-arc" id="g-alt" cx="20" cy="20" r="16"/></svg><span class="g-val"><span id="hud-alt">400km</span></span></div>
+        <div class="hud-dest"><div>→ <span id="hud-dest">LOW ORBIT</span></div><div class="hud-eta">ETA <span id="hud-eta">—</span></div></div>
+      </div>
+    </div>
+    <!-- Right frame: game buttons, then Initialize Progress beneath -->
+    <div class="hud-r">
+      <div class="art-btns dm-frame">
       <button class="art-btn active" id="cam-btn" onclick="cycleCamMode()">CAM 1</button>
       <button class="art-btn" id="lockon-btn" onclick="returnHome()" title="Return to home base (Earth) and track it">⌂ HOME</button>
       <button class="art-btn" onclick="openGalaxyMap()">MAP</button>
@@ -1452,6 +1459,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
       <button class="art-btn" onclick="returnToMenu()" title="Return to main menu (your game stays loaded)">☰ MENU</button>
       <button class="art-btn" onclick="promptExit()">EXIT</button>
       <button class="art-btn profile-btn" id="profile-btn" onclick="openProfileMenu()" title="Your profile and display options"><span class="pf-av-mini" id="profile-btn-av">◉</span><span>PROFILE</span></button>
+      </div>
       <button class="art-btn progress-btn" id="init-progress-btn" onclick="quickSave()" title="Initialize Progress: save right here. Signed in, it also goes to your private jots- repository. The game also initializes progress by itself at milestones and every 15 minutes.">⟐ INITIALIZE PROGRESS</button>
     </div>
   </div>
@@ -1504,17 +1512,24 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   </div>
   <div id="ar-crosshair">
     <svg width="36" height="36" viewBox="0 0 36 36" opacity="0.6">
-      <circle cx="18" cy="18" r="10" fill="none" stroke="#5B7FFF" stroke-width="0.8"/>
-      <line x1="18" y1="2" x2="18" y2="9" stroke="#5B7FFF" stroke-width="0.8"/>
-      <line x1="18" y1="27" x2="18" y2="34" stroke="#5B7FFF" stroke-width="0.8"/>
-      <line x1="2" y1="18" x2="9" y2="18" stroke="#5B7FFF" stroke-width="0.8"/>
-      <line x1="27" y1="18" x2="34" y2="18" stroke="#5B7FFF" stroke-width="0.8"/>
-      <circle cx="18" cy="18" r="1.5" fill="#5B7FFF"/>
+      <circle cx="18" cy="18" r="10" fill="none" stroke="currentColor" stroke-width="0.8"/>
+      <line x1="18" y1="2" x2="18" y2="9" stroke="currentColor" stroke-width="0.8"/>
+      <line x1="18" y1="27" x2="18" y2="34" stroke="currentColor" stroke-width="0.8"/>
+      <line x1="2" y1="18" x2="9" y2="18" stroke="currentColor" stroke-width="0.8"/>
+      <line x1="27" y1="18" x2="34" y2="18" stroke="currentColor" stroke-width="0.8"/>
+      <circle cx="18" cy="18" r="1.5" fill="currentColor"/>
     </svg>
   </div>
   <div id="minimap"><canvas id="minimap-canvas" width="100" height="100"></canvas>
     <button id="mm-toggle" onclick="toggleMinimapMode(event)" title="Toggle solar / galaxy view">◐</button>
   </div>
+  <!-- Corner housings behind the stick clusters (decorative, no input) -->
+  <svg class="hud-plate hud-plate-l" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+    <polyline points="0,34 12,22 40,22 58,48 58,100"/><polyline class="hp-2" points="4,100 4,40 14,30"/><polyline class="hp-3" points="44,30 54,44"/>
+  </svg>
+  <svg class="hud-plate hud-plate-r" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+    <polyline points="100,34 88,22 60,22 42,48 42,100"/><polyline class="hp-2" points="96,100 96,40 86,30"/><polyline class="hp-3" points="56,30 46,44"/>
+  </svg>
   <!-- Dual joysticks -->
   <div id="joysticks">
     <div class="joystick-zone" id="jL">
@@ -9781,6 +9796,16 @@ function updateHUD(){
   _hudT=_now;
   const pos=STATE.flight.pos;const sp=STATE.flight;
   $('hud-speed').textContent=sp.speed.toFixed(3);
+  // Ring gauges (log scale): SPD up to DART∞ top speed; ALT from low orbit
+  // out through light-years.
+  try{
+    const C=100.5, sF=Math.min(1,Math.log(1+sp.speed*40)/Math.log(1+11.25*40));
+    const ly=(galSky&&galSky.ready)?galSky.offsetLy:0;
+    const aF=ly>=0.05?Math.min(1,0.5+0.5*Math.log10(1+ly)/6.5):Math.min(0.5,0.5*Math.log10(1+pos.length()*400)/8);
+    const gs=$('g-spd'), ga=$('g-alt');
+    if(gs) gs.style.strokeDasharray=(sF*C).toFixed(1)+' '+C;
+    if(ga) ga.style.strokeDasharray=(aF*C).toFixed(1)+' '+C;
+  }catch(e){}
   const _altTxt=(galSky&&galSky.ready&&galSky.offsetLy>=0.05)
     ?(galSky.offsetLy<10?galSky.offsetLy.toFixed(2)+' ly':galSky.offsetLy<1e6?Math.round(galSky.offsetLy).toLocaleString()+' ly':(galSky.offsetLy/1e6).toFixed(2)+'M ly')
     :Math.round(pos.length()*400)+'km';
@@ -19991,5 +20016,6 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 })();
 </script>
 
+<link rel="stylesheet" href="ui/dm-hud.css">
 </body>
 </html>
