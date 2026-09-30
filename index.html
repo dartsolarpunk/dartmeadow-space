@@ -18730,6 +18730,21 @@ function updateCaustics(dt){
 }
 function _surfKeyDown(e){surfKeys[e.code]=true; if(e.code==='Space') surfJumpPressed=true;}
 function _surfKeyUp(e){surfKeys[e.code]=false;}
+// Walk-mode board size in world units (cached per board): half length
+// along the nose, half width, half thickness.
+function _surfBoardDims(board){
+  const u=board.userData;
+  if(u._dims && u._dimsScale===board.scale.x) return u._dims;
+  let d={half:1.5,halfW:0.4,halfT:0.1,minX:-1.5,maxX:1.5,minZ:-0.4,maxZ:0.4,minY:-0.1,cx:0,cz:0};
+  try{
+    const b=_boardLocalBox(board), sc=Math.abs(board.scale.x)||1;
+    d={half:(b.max.x-b.min.x)*0.5*sc, halfW:(b.max.z-b.min.z)*0.5*sc, halfT:(b.max.y-b.min.y)*0.5*sc,
+       minX:b.min.x*sc, maxX:b.max.x*sc, minZ:b.min.z*sc, maxZ:b.max.z*sc, minY:b.min.y*sc,
+       cx:(b.min.x+b.max.x)*0.5*sc, cz:(b.min.z+b.max.z)*0.5*sc};
+  }catch(e){}
+  u._dims=d; u._dimsScale=board.scale.x;
+  return d;
+}
 function updateSurface(dt){
   const p=surfPlayer;if(!p)return;
   // Subtle Earth wind drift (Points) — cheap CPU update of positions only
@@ -18805,14 +18820,44 @@ function updateSurface(dt){
     const playerFeet=(p.pos.y-3.0);
     // Waist-high beside her, following her feet up hills and jumps, but
     // never dipping into the ground under the board itself.
-    const hover=Math.max(boardGroundH+0.08, playerFeet+SURF_BOARD_WAIST) + Math.sin(surfTime*1.6)*0.02;
+    // Follow the ground's contour: tilt nose/tail and side-to-side to the
+    // slope under the board, and lift it so no part of its length dips
+    // into the hill (it used to stay level and clip through rises).
+    const dims=_surfBoardDims(surfBoard);
+    const byaw=p.yaw-Math.PI/2;
+    const nX=Math.cos(byaw), nZ=-Math.sin(byaw);   // board nose (+X) in world
+    const lX=Math.sin(byaw), lZ=Math.cos(byaw);    // board-left (+Z) in world
+    const H=(x,z)=>{ const h=_surfHeight?_surfHeight(x,z):0; return isFinite(h)?h:boardGroundH; };
     const lerp=Math.min(1,dt*10);
-    surfBoard.position.x += (tx-surfBoard.position.x)*lerp;
-    surfBoard.position.z += (tz-surfBoard.position.z)*lerp;
-    surfBoard.position.y += (hover-surfBoard.position.y)*lerp;
+    // Centre the board's length beside her (its pivot is off-centre, so it
+    // used to jut far back toward the camera and off the bottom of frame).
+    const ctx=tx-nX*dims.cx, ctz=tz-nZ*dims.cx;
+    surfBoard.position.x += (ctx-surfBoard.position.x)*lerp;
+    surfBoard.position.z += (ctz-surfBoard.position.z)*lerp;
+    const bx=surfBoard.position.x, bz=surfBoard.position.z;
+    const at=(lx,lz)=>H(bx+nX*lx+lX*lz, bz+nZ*lx+lZ*lz);   // ground under a board-local x/z
+    const cx=dims.cx, cz=dims.cz;
+    const pitch=_clamp(Math.atan2(at(dims.maxX,cz)-at(dims.minX,cz),dims.maxX-dims.minX),-0.6,0.6);
+    const roll=_clamp(Math.atan2(at(cx,dims.maxZ)-at(cx,dims.minZ),dims.maxZ-dims.minZ),-0.5,0.5);
     surfBoard.rotation.order='YXZ';
-    surfBoard.rotation.y += ((p.yaw-Math.PI/2)-surfBoard.rotation.y)*Math.min(1,dt*8);
-    surfBoard.rotation.z *= 0.9;
+    surfBoard.rotation.y += (byaw-surfBoard.rotation.y)*Math.min(1,dt*8);
+    const rl=Math.min(1,dt*8);
+    surfBoard.rotation.z += (pitch-surfBoard.rotation.z)*rl;
+    surfBoard.rotation.x += (-roll-surfBoard.rotation.x)*rl;
+    // Lowest safe height: every underside point along the length and both
+    // edges, at the board's current tilt, sits clear of the ground.
+    const sp_=Math.sin(surfBoard.rotation.z), sr_=Math.sin(-surfBoard.rotation.x);
+    let need=-Infinity;
+    for(let k=0;k<=6;k++){
+      const lx=dims.minX+(dims.maxX-dims.minX)*k/6;
+      for(let j=0;j<3;j++){
+        const lz=j===0?dims.minZ:j===1?cz:dims.maxZ;
+        need=Math.max(need, at(lx,lz)+0.18-(dims.minY+lx*sp_+lz*sr_));
+      }
+    }
+    const hover=Math.max(need, playerFeet+SURF_BOARD_WAIST) + Math.sin(surfTime*1.6)*0.02;
+    surfBoard.position.y += (hover-surfBoard.position.y)*lerp;
+    if(surfBoard.position.y<need) surfBoard.position.y=need;   // never inside the hill, even mid-lerp
   }
   // ── Third-person follow camera ──────────────────────────────────
   //    Real bug found: the camera was being placed at the exact same
@@ -18826,8 +18871,14 @@ function updateSurface(dt){
   //    sudden turns, and height/ground-clamped so it doesn't dip below
   //    terrain when following her downhill.
   // Pull back for Interstellar-style framing: whole staff + standing-on-board.
-  const followDist=GFX&&GFX.isMobile?16.5:14.5, followHeight=GFX&&GFX.isMobile?5.2:4.6;
-  const camTX=p.pos.x - fx*followDist, camTZ=p.pos.z - fz*followDist;
+  // Frame her AND the whole board: aim between them (the board rides at
+  // her right) and back off far enough for the board's full length.
+  const _bd=surfBoard?_surfBoardDims(surfBoard):null;
+  // The board lies along the view line, so only its near end needs room.
+  const _near=_bd?_bd.half:0;
+  const followDist=Math.max(GFX&&GFX.isMobile?16.5:14.5, _near+(GFX&&GFX.isMobile?11:10)), followHeight=GFX&&GFX.isMobile?7.2:6.6;
+  const _mid=surfBoard?SURF_BOARD_SIDE*0.5:0;
+  const camTX=p.pos.x - fx*followDist + rx*_mid, camTZ=p.pos.z - fz*followDist + rz*_mid;
   const camGroundH=_surfHeight?_surfHeight(camTX,camTZ):groundH;
   const camTY=Math.max(eye+followHeight*0.55, camGroundH+followHeight+1.2);
   if(!p.camPos)p.camPos=new THREE.Vector3(camTX,camTY,camTZ);
@@ -18838,7 +18889,7 @@ function updateSurface(dt){
   surfCamera.position.copy(p.camPos);
   surfCamera.rotation.order='YXZ';
   surfCamera.rotation.y=p.yaw;
-  surfCamera.rotation.x=p.pitch*0.55-0.18; // look down enough to keep board+staff in frame
+  surfCamera.rotation.x=p.pitch*0.55-0.24; // look down enough to keep her + the whole board in frame
 
   // ── Character sync — feet at ground level (not the +3 eye-height
   //    camera position), facing the same way the player's looking.
