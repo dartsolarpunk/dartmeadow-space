@@ -2,7 +2,7 @@
 
 Outside work that DART Meadow: Journey of the Skyboard builds on — code, techniques, data, libraries, fonts, tools and services — with author, links and licence. The same list is in the game under **MENU → ABOUT**; its source of truth is `CREDITS` in `index.html`.
 
-Use: **code** = code or tables included (licence terms apply) · **technique** = studied and re-implemented from scratch · **data**, **library**, **font**, **tool**, **service** as named.
+Use: **code** = code or tables included (licence terms apply) · **technique** = studied and re-implemented from scratch · **original** = the project’s own work · **data**, **library**, **font**, **tool**, **service** as named.
 
 ## Techniques & code references
 
@@ -18,7 +18,7 @@ Use: **code** = code or tables included (licence terms apply) · **technique** =
   <https://doi.org/10.1145/37402.37422>
 - **Simulating Atoms in C++ · Atoms · kavang.com/atom** — Kavan (kavan010). *No licence published — all rights reserved* (technique). Idea of drawing structure as probability-sampled particle clouds, applied to galaxy star clouds. Studied only; no code copied.
   <https://youtu.be/OSAOh4L41Wg> · <https://github.com/kavan010/Atoms> · <https://www.kavang.com/atom>
-- **Simulating Black Holes in C++ · black_hole · gravity_sim** — Kavan (kavan010). *No licence published — all rights reserved* (technique). Reference for Sgr A* at the galactic centre and planned gravitational lensing. Studied only; no code copied.
+- **Simulating Black Holes in C++ · black_hole · gravity_sim** — Kavan (kavan010). *No licence published — all rights reserved* (technique). Reference for the galactic-core black holes and their gravitational lensing. Studied only; no code copied — the lens is the textbook thin-lens equation, written from scratch.
   <https://youtu.be/8-B6ryuBkCM> · <https://github.com/kavan010/black_hole> · <https://github.com/kavan010/gravity_sim>
 - **Chunked LOD** — Thatcher Ulrich. *Published article* (technique). Terrain level-of-detail approach.
   <http://tulrich.com/geekstuff/chunklod.html>
@@ -32,9 +32,9 @@ Use: **code** = code or tables included (licence terms apply) · **technique** =
   <https://github.com/ARafayKhalid/web3d-asset-compiler>
 - **UE5: Sprite-Sheets (Niagara Particles!)** — Royal Skies. *Tutorial video* (technique). Reference for volumetric sprite particles in the galaxy.
   <https://youtu.be/iXBZwiiwwfI>
-- **Fields Galaxy (Blender geometry nodes)** — Supplied to the project — original author to be confirmed. *To be confirmed* (technique). Node graph ported to JavaScript for flocculent galaxies.
+- **Fields Galaxy (Blender geometry nodes)** — DART Meadow — built by following a YouTube Blender galaxy tutorial (tutorial link to be added). *DART Meadow project* (technique). The project’s own Blender galaxy; its node graph is ported to JavaScript for flocculent galaxies.
   <https://github.com/dartsolarpunk/dartmeadow-space/tree/main/reference-assets/fields-galaxy>
-- **dm-jots-sandbox** — DART Meadow (dartsolarpunk). *DART Meadow project* (code). The project’s own prototype sandbox: compute marching-cubes planets, depth-aware water, Rayleigh atmosphere, planet walker.
+- **dm-jots-sandbox** — DART Meadow (dartsolarpunk). *DART Meadow project* (code). The project’s own prototype sandbox: compute marching-cubes planets, depth-aware water, Rayleigh atmosphere, planet walker. Its marching-cubes methods draw on several YouTube creators’ tutorials and, with the atmosphere, on Sebastian Lague’s projects (listed above).
   <https://github.com/dartsolarpunk/dm-jots-sandbox> · <https://dartsolarpunk.github.io/dm-jots-sandbox/>
 ## Data
 
@@ -44,6 +44,8 @@ Use: **code** = code or tables included (licence terms apply) · **technique** =
   <https://ned.ipac.caltech.edu/> · <https://simbad.cds.unistra.fr/>
 - **Sun’s distance from the Galactic Centre (8.178 kpc)** — GRAVITY Collaboration, A&A 625, L10 (2019). *Published paper* (data). Places Sol 26,670 ly from Sgr A*.
   <https://doi.org/10.1051/0004-6361/201935656>
+- **Known black holes (Gaia BH1–3, Cygnus X-1, V404 Cygni, A0620-00)** — El-Badry et al. 2023 (Gaia BH1, BH2); Gaia Collaboration 2024 (Gaia BH3); Miller-Jones et al. 2021 (Cyg X-1); SIMBAD. *Public scientific data* (data). Positions, distances and masses of the real black holes near the Sun (rounded).
+  <https://simbad.cds.unistra.fr/> · <https://doi.org/10.1093/mnras/stac3140> · <https://doi.org/10.1051/0004-6361/202449763> · <https://doi.org/10.1126/science.abb3363>
 - **Planetary orbital elements** — NASA JPL Solar System Dynamics. *Public scientific data* (data). Semi-major axes, eccentricities and periods of the planets.
   <https://ssd.jpl.nasa.gov/planets/approx_pos.html>
 - **Size It Up — Space** — sizeitup.games. *Reference only* (data). Scale reference for the Sun and planets.
@@ -62,9 +64,17 @@ Use: **code** = code or tables included (licence terms apply) · **technique** =
   <https://fonts.google.com/specimen/Rajdhani>
 - **Share Tech Mono** — Carrois Apostrophe. *SIL Open Font License 1.1* (font).
   <https://fonts.google.com/specimen/Share+Tech+Mono>
+## Project assets
+
+- **3D models, characters, skyboards, Bird Temple & artwork** — DART Meadow (dartsolarpunk). *DART Meadow original work* (original). All 3D assets are the project’s own, many based on its original artwork.
+  <https://dartmeadow.com/>
+- **Music** — DART Meadow — generated with Google Gemini under the project’s account. *DART Meadow original work* (original). The in-game soundtrack.
+  <https://gemini.google.com/>
+- **Splash / menu video** — DART Meadow — generated with Grok (xAI) under the project’s account. *DART Meadow original work* (original). The splash-screen background video.
+  <https://grok.com/>
 ## Tools & services
 
-- **Meshy AI** — Meshy. *Meshy terms of use* (tool). Generated the Autumn and Sentinel character models and animations.
+- **Meshy AI** — Meshy. *Meshy terms of use* (tool). Used in the character pipeline (the earlier Sentinel placeholder and animation clips; the files keep its name prefix).
   <https://www.meshy.ai/>
 - **Blender** — Blender Foundation. *GPL (tool; output unrestricted)* (tool). Modelling and the Fields Galaxy template.
   <https://www.blender.org/>
