@@ -126,7 +126,7 @@
     // Check right now: cuts short a check that's still hanging from before
     // the tab went to the background, and skips the wait.
     pollNow() { this._now = true; try { if (this._ctl) this._ctl.abort(); } catch (e) {} if (this._wake) this._wake(); },
-    async waitForToken(dev, onTick) {
+    async waitForToken(dev, onTick, onBusy) {
       const until = Date.now() + (dev.expires_in || 900) * 1000;
       let wait = Math.max(5, dev.interval || 5) * 1000, last = 0;
       while (Date.now() < until) {
@@ -149,7 +149,12 @@
         if (d && d.error === 'slow_down') wait += 5000;
         else if (d && d.error === 'expired_token') throw new Error('The sign-in code expired — try again.');
         else if (d && d.error === 'access_denied') throw new Error('Sign-in was cancelled on GitHub.');
-        else if (d && d.error && d.error !== 'authorization_pending') throw new Error(d.error);
+        else if (d && /incorrect_device_code|incorrect_client|unsupported_grant|device_flow_disabled/.test(d.error || '')) throw new Error(d.error);
+        // Anything else (the bridge busy or at its daily GitHub limit, a
+        // Google error page, a lookup that failed) is not the end of the
+        // sign-in: the approval is still valid on GitHub, so keep asking
+        // with the same code until it expires.
+        else if (d && d.error && d.error !== 'authorization_pending' && onBusy) onBusy(String(d.error));
       }
       throw new Error('The sign-in code expired — try again.');
     },
