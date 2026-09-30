@@ -1,0 +1,177 @@
+/* DART Meadow — in-game HUD, v2 layout
+ * Framed, angled panels in the spirit of the new concept art. Every control
+ * keeps its id/handler; this file only re-lays-out and restyles them.
+ * Colours come from the theme variables (ui/dm-theme.js).
+ */
+
+/* ── shared frame: chamfered panel with a thin accent edge ───────────── */
+#screen-flight .dm-frame{
+  --cut:12px;position:relative;isolation:isolate;
+  background:linear-gradient(135deg,rgba(var(--acc-rgb),.55),rgba(var(--acc-rgb),.18) 40%,rgba(var(--hi-rgb),.35));
+  clip-path:polygon(var(--cut) 0,calc(100% - var(--cut)) 0,100% var(--cut),100% calc(100% - var(--cut)),calc(100% - var(--cut)) 100%,var(--cut) 100%,0 calc(100% - var(--cut)),0 var(--cut));
+}
+#screen-flight .dm-frame::before{
+  content:'';position:absolute;inset:1px;z-index:-1;
+  background:linear-gradient(180deg,rgba(var(--panel-rgb),.62),rgba(var(--panel-rgb),.4));
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  clip-path:inherit;
+}
+
+/* ── top bar ─────────────────────────────────────────────────────────── */
+#screen-flight #ar-top{
+  display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:start;gap:10px;
+  padding:8px 10px 0;background:none;border:none;backdrop-filter:none;-webkit-backdrop-filter:none;pointer-events:none;
+}
+#screen-flight #ar-top>*{pointer-events:auto;}
+#screen-flight .hud-l{justify-self:start;padding:6px 12px;}
+#screen-flight #audio-player{display:flex;align-items:center;gap:4px;}
+#screen-flight .aud-btn{width:26px;height:26px;font-size:.72rem;border-radius:4px;color:rgba(var(--acc-rgb),.8);}
+#screen-flight .aud-btn:hover{background:rgba(var(--acc-rgb),.16);color:var(--cyan);}
+
+/* centre: hangs from the top edge like the concept's title plate */
+#screen-flight .hud-c{
+  position:relative;isolation:isolate;margin-top:-8px;padding:8px 34px 10px;text-align:center;
+  background:linear-gradient(180deg,rgba(var(--acc-rgb),.5),rgba(var(--hi-rgb),.35));
+  clip-path:polygon(0 0,100% 0,calc(100% - 28px) 100%,28px 100%);
+}
+#screen-flight .hud-c::before{
+  content:'';position:absolute;inset:0 1px 1px;z-index:-1;
+  background:linear-gradient(180deg,rgba(var(--panel-rgb),.66),rgba(var(--panel-rgb),.42));
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  clip-path:polygon(0 0,100% 0,calc(100% - 28px) 100%,28px 100%);
+}
+#screen-flight .hud-c::after{   /* glowing underline, like the concept */
+  content:'';position:absolute;left:30%;right:30%;bottom:1px;height:2px;
+  background:linear-gradient(90deg,transparent,var(--cyan),transparent);opacity:.8;
+}
+#screen-flight .art-logo{font-size:.95rem;letter-spacing:.3em;color:var(--text);text-shadow:0 0 12px rgba(var(--acc-rgb),.7);margin-bottom:5px;}
+#screen-flight .art-stats{display:flex;align-items:center;justify-content:center;gap:16px;font-family:var(--font-hud);font-size:.5rem;color:var(--text-dim);}
+#screen-flight .hud-g{display:flex;align-items:center;gap:6px;}
+#screen-flight .g-lbl{font-size:.55rem;letter-spacing:.14em;color:var(--cyan);}
+#screen-flight .g-ring{width:30px;height:30px;transform:rotate(-90deg);}
+#screen-flight .g-track{fill:none;stroke:rgba(var(--acc-rgb),.16);stroke-width:3.5;}
+#screen-flight .g-arc{fill:none;stroke:var(--cyan);stroke-width:3.5;stroke-linecap:round;stroke-dasharray:0 100.5;
+  filter:drop-shadow(0 0 3px rgba(var(--acc-rgb),.9));transition:stroke-dasharray .35s ease;}
+#screen-flight .g-val{font-family:var(--font-mono);font-size:.58rem;color:var(--text);min-width:58px;text-align:left;}
+#screen-flight .g-val span{color:var(--text);}
+#screen-flight .hud-dest{text-align:left;font-family:var(--font-hud);font-size:.52rem;letter-spacing:.1em;color:var(--cyan);line-height:1.5;}
+#screen-flight .hud-dest span{color:var(--cyan);}
+#screen-flight .hud-eta{color:var(--text-dim);font-size:.46rem;}
+
+/* right: buttons in a frame, Initialize Progress beneath */
+#screen-flight .hud-r{justify-self:end;display:flex;flex-direction:column;align-items:flex-end;gap:7px;min-width:0;max-width:100%;}
+#screen-flight .hud-r .art-btns{flex:none;max-width:100%;padding:6px 12px;gap:6px;justify-content:flex-end;}
+#screen-flight .art-btn{height:28px;padding:0 12px;display:inline-flex;align-items:center;justify-content:center;font-size:.54rem;letter-spacing:.14em;
+  color:rgba(var(--acc-rgb),.92);background:rgba(var(--acc-rgb),.07);border:1px solid rgba(var(--acc-rgb),.3);border-radius:3px;}
+#screen-flight .art-btn:hover{background:rgba(var(--acc-rgb),.18);color:var(--text);border-color:rgba(var(--acc-rgb),.6);}
+#screen-flight .art-btn.active{background:rgba(var(--acc-rgb),.24);color:var(--text);border-color:var(--cyan);box-shadow:inset 0 0 10px rgba(var(--acc-rgb),.35);}
+#screen-flight .art-btn.progress-btn{color:#8ff0b8;border-color:rgba(120,230,170,.6);background:rgba(90,220,150,.14);
+  box-shadow:0 0 10px rgba(110,230,160,.3),inset 0 0 8px rgba(110,230,160,.14);text-shadow:0 0 6px rgba(120,235,170,.5);}
+#screen-flight .art-btn.progress-btn:hover{background:rgba(90,220,150,.24);color:#c8ffe0;}
+#screen-flight .art-btn.progress-btn{height:32px;padding:0 18px;font-size:.58rem;letter-spacing:.16em;
+  clip-path:polygon(10px 0,100% 0,100% calc(100% - 10px),calc(100% - 10px) 100%,0 100%,0 10px);}
+
+/* things that sit under the top bar move down to clear it */
+#screen-flight #orbit-skyboard-btn{top:92px !important;}
+#jots-mp-hud{top:calc(96px + env(safe-area-inset-top,0px)) !important;}
+#jots-chat{top:calc(136px + env(safe-area-inset-top,0px)) !important;}
+body:has(#screen-flight.active) #fs-exit,body:has(#screen-flight.active) #fs-enter{top:84px !important;}
+#screen-flight #logs-toggle-btn{top:126px;}
+#screen-flight #qt-toggle-btn{top:164px;}
+#screen-flight #temple-toggle-btn{top:202px !important;}
+#screen-flight #shard-game-btn{top:240px !important;}
+#screen-flight #shard-return-btn{top:278px !important;}
+#screen-flight #hud-logs-panel{top:246px;}
+#screen-flight #qt-panel{top:202px;}
+
+/* left tabs: angled like the concept's TEMPLE tab */
+#screen-flight .hud-toggle-btn{border-radius:2px;height:30px;padding:0 16px 0 12px;opacity:.92;
+  background:linear-gradient(90deg,rgba(var(--panel-rgb),.78),rgba(var(--panel-rgb),.55));
+  border:1px solid rgba(var(--acc-rgb),.38);color:var(--text);font-size:.5rem;letter-spacing:.14em;
+  clip-path:polygon(0 0,calc(100% - 10px) 0,100% 10px,100% 100%,0 100%);}
+#screen-flight .hud-toggle-btn .htb-ico{color:var(--cyan);}
+#screen-flight #orbit-skyboard-btn{clip-path:polygon(10px 0,100% 0,100% 100%,0 100%,0 10px);border-radius:2px;}
+
+/* crosshair follows the theme */
+#screen-flight #ar-crosshair{color:var(--cyan);}
+#screen-flight #ar-crosshair svg{opacity:.75;filter:drop-shadow(0 0 3px rgba(var(--acc-rgb),.7));}
+
+/* ── bottom corner housings: thin line art only — nothing filled, so the
+   game view behind stays completely clear ─────────────────────────────── */
+#screen-flight .hud-plate{position:absolute;bottom:0;width:min(420px,44vw);height:min(250px,46vh);pointer-events:none;z-index:20;overflow:visible;}
+#screen-flight .hud-plate-l{left:0;}
+#screen-flight .hud-plate-r{right:0;}
+#screen-flight .hud-plate polyline{fill:none;stroke:rgba(var(--acc-rgb),.55);stroke-width:1.2;vector-effect:non-scaling-stroke;
+  filter:drop-shadow(0 0 3px rgba(var(--acc-rgb),.6));}
+#screen-flight .hud-plate .hp-2{stroke:rgba(var(--acc-rgb),.22);}
+#screen-flight .hud-plate .hp-3{stroke:var(--cyan);stroke-width:2;opacity:.8;}
+
+/* joysticks: ringed housings with a glowing knob ring */
+#screen-flight .joystick-zone{width:112px;height:112px;}
+#screen-flight .joystick-base{
+  background:radial-gradient(circle,rgba(var(--panel-rgb),.18) 0 44%,rgba(var(--acc-rgb),.06) 45% 62%,rgba(var(--panel-rgb),.32) 63%);
+  border:1px solid rgba(var(--acc-rgb),.45);
+  box-shadow:0 0 0 5px rgba(var(--panel-rgb),.15),0 0 0 6px rgba(var(--acc-rgb),.3),0 0 18px rgba(var(--acc-rgb),.18),inset 0 0 14px rgba(var(--acc-rgb),.18);
+}
+#screen-flight .joystick-base::after{content:'';position:absolute;inset:-12px;border-radius:50%;
+  background:repeating-conic-gradient(rgba(var(--acc-rgb),.45) 0 2deg,transparent 2deg 12deg);
+  -webkit-mask:radial-gradient(circle,transparent 0 69%,#000 70% 72%,transparent 73%);mask:radial-gradient(circle,transparent 0 69%,#000 70% 72%,transparent 73%);opacity:.7;}
+#screen-flight .joystick-knob{width:46px;height:46px;background:radial-gradient(circle,rgba(var(--panel-rgb),.9) 0 45%,rgba(var(--acc-rgb),.15) 46%);
+  border:3px solid var(--cyan);box-shadow:0 0 12px rgba(var(--acc-rgb),.85),inset 0 0 8px rgba(var(--acc-rgb),.5);}
+#screen-flight .joystick-label{top:-22px;color:rgba(var(--acc-rgb),.7);font-size:.46rem;letter-spacing:.16em;}
+
+/* round pads: ringed and lit */
+#screen-flight .side-pad,#screen-flight .dart-pad{
+  border:2px solid rgba(var(--acc-rgb),.5);
+  background:radial-gradient(circle,rgba(var(--panel-rgb),.45) 0 58%,rgba(var(--acc-rgb),.12));
+  box-shadow:0 0 10px rgba(var(--acc-rgb),.22),inset 0 0 8px rgba(var(--acc-rgb),.18);color:var(--text);}
+#screen-flight .side-pad .sp-ico{color:var(--cyan);}
+#screen-flight .assist-btn{border-radius:2px;background:linear-gradient(180deg,rgba(var(--panel-rgb),.8),rgba(var(--panel-rgb),.6));
+  border-color:rgba(var(--acc-rgb),.42);color:var(--text);letter-spacing:.12em;
+  clip-path:polygon(7px 0,100% 0,100% calc(100% - 7px),calc(100% - 7px) 100%,0 100%,0 7px);}
+#screen-flight #minimap{border-color:rgba(var(--acc-rgb),.45);box-shadow:0 0 0 3px rgba(var(--panel-rgb),.5),0 0 0 4px rgba(var(--acc-rgb),.25),0 0 14px rgba(var(--acc-rgb),.2);}
+
+/* AR corner brackets a little bolder */
+#screen-flight .ar-corner{width:26px;height:26px;}
+
+/* ── mid-width (tablets in portrait, small laptops, big phones) ────── */
+@media (max-width:1240px){
+  #screen-flight .hud-dest{display:none;}
+  #screen-flight .hud-c{padding:6px 26px 8px;}
+  #screen-flight .art-logo{font-size:.8rem;letter-spacing:.24em;}
+  #screen-flight .art-btn{padding:0 8px;letter-spacing:.1em;font-size:.5rem;}
+  #screen-flight .hud-r .art-btns{padding:5px 9px;gap:4px;}
+  #screen-flight .g-val{min-width:46px;}
+}
+@media (max-width:1060px){
+  #screen-flight #audio-player .aud-btn:nth-child(n+5){display:none;}
+  #screen-flight .aud-btn{width:22px;height:22px;}
+  #screen-flight .hud-l{padding:5px 8px;}
+  #screen-flight .art-stats{gap:9px;}
+  #screen-flight .g-ring{width:24px;height:24px;}
+}
+/* short screens (phones in landscape): smaller housings + sticks */
+@media (max-height:560px){
+  #screen-flight .joystick-zone{width:96px;height:96px;}
+  #screen-flight .joystick-knob{width:40px;height:40px;}
+  #screen-flight .art-logo{font-size:.62rem;margin-bottom:2px;}
+  #screen-flight .art-btn{height:26px;}
+  #screen-flight .art-btn.progress-btn{height:28px;}
+}
+/* ── narrow screens: compact centre, buttons scroll ──────────────────── */
+@media (max-width:900px){
+  #screen-flight #ar-top{grid-template-columns:auto auto minmax(0,1fr);gap:6px;padding:6px 6px 0;}
+  #screen-flight .hud-l{padding:4px 6px;}
+  #screen-flight .aud-btn{width:22px;height:22px;}
+  #screen-flight .hud-c{padding:5px 22px 7px;}
+  #screen-flight .art-logo{font-size:.6rem;letter-spacing:.2em;margin-bottom:3px;}
+  #screen-flight .art-stats{gap:8px;}
+  #screen-flight .g-ring{width:22px;height:22px;}
+  #screen-flight .g-val{min-width:44px;font-size:.5rem;}
+  #screen-flight .hud-dest{display:none;}
+  #screen-flight .hud-r .art-btns{overflow-x:auto;}
+}
+@media (max-width:620px){
+  #screen-flight #audio-player .aud-btn:nth-child(n+5){display:none;}
+  #screen-flight .hud-c .art-logo{display:none;}
+}
