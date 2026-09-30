@@ -14249,7 +14249,6 @@ function _makeWake(board, scene){
   board.userData.wake=w;
   return w;
 }
-// fwdWorld: direction of travel; streams peel off whichever end trails it.
 function updateBoardWake(board, scene, dt, intensity, fwdWorld){
   if(!board||!scene) return;
   let w=board.userData.wake;
@@ -14266,12 +14265,10 @@ function updateBoardWake(board, scene, dt, intensity, fwdWorld){
   w.mesh.matrixWorldNeedsUpdate=true;
   const k=Math.max(0,Math.min(1.4,intensity||0));
   const box=w.box, L=w.len;
-  if(fwdWorld){
-    const ax=w._pos.set(1,0,0).applyQuaternion(board.getWorldQuaternion(w._q)).dot(fwdWorld);
-    if(Math.abs(ax)>0.05) w.dir=ax>0?1:-1;   // +1: travelling toward +X
-    w._q.identity();
-  }
-  const dir=w.dir||1;
+  // Always off the TAIL: the board's local +X end, where the staff sticks
+  // out past the deck (the nose is -X in flight). Not picked from the
+  // direction of travel — at low speed that could flip them to the front.
+  const dir=-1;
   const hy=(box.max.y-box.min.y)*0.5, cy=(box.max.y+box.min.y)*0.5;
   const hz=(box.max.z-box.min.z)*0.5, cz=(box.max.z+box.min.z)*0.5;
   // emit from the tail edge in four lanes (deck corners), rate ∝ speed
@@ -16885,7 +16882,7 @@ async function enterSurface(body,site,opts){
     const boardHoverY=_gnd;     // board hover relative to surface/feet, not elevated root
     const _yaw=surfPlayer.yaw||0;
     const _rx=Math.cos(_yaw),_rz=-Math.sin(_yaw);
-    const _side=SURF_BOARD_SIDE;
+    const _side=_surfBoardSide(surfBoard);
     const standX=surfPlayer.pos.x, standZ=surfPlayer.pos.z;
     const terrainYaw=(_yaw - Math.PI/2) + CHAR_MOUNT_YAW_OFFSET + CHAR_TERRAIN_YAW_EXTRA;
     if(surfBoard){
@@ -18745,6 +18742,13 @@ function _surfBoardDims(board){
   u._dims=d; u._dimsScale=board.scale.x;
   return d;
 }
+// How far the walk-mode board rides from her: its near edge (and the
+// staff along it) sits a few feet away instead of right against her.
+function _surfBoardSide(board){
+  if(!board) return SURF_BOARD_SIDE;
+  const d=_surfBoardDims(board);
+  return Math.max(SURF_BOARD_SIDE, d.maxZ + CHAR_TERRAIN_HEIGHT*0.8);   // ≈ 5 ft clear of her
+}
 function updateSurface(dt){
   const p=surfPlayer;if(!p)return;
   // Subtle Earth wind drift (Points) — cheap CPU update of positions only
@@ -18814,7 +18818,7 @@ function updateSurface(dt){
     const fx=-Math.sin(p.yaw),fz=-Math.cos(p.yaw);
     const rx=Math.cos(p.yaw),rz=-Math.sin(p.yaw);
     // Scale side with board so ~6ft beside holds at terrain board.scale≈2.4
-    const side=SURF_BOARD_SIDE;
+    const side=_surfBoardSide(surfBoard);
     const tx=p.pos.x+rx*side, tz=p.pos.z+rz*side;
     const boardGroundH=_surfHeight?_surfHeight(tx,tz):0;
     const playerFeet=(p.pos.y-3.0);
@@ -18877,7 +18881,7 @@ function updateSurface(dt){
   // The board lies along the view line, so only its near end needs room.
   const _near=_bd?_bd.half:0;
   const followDist=Math.max(GFX&&GFX.isMobile?16.5:14.5, _near+(GFX&&GFX.isMobile?11:10)), followHeight=GFX&&GFX.isMobile?7.2:6.6;
-  const _mid=surfBoard?SURF_BOARD_SIDE*0.5:0;
+  const _mid=surfBoard?_surfBoardSide(surfBoard)*0.5:0;
   const camTX=p.pos.x - fx*followDist + rx*_mid, camTZ=p.pos.z - fz*followDist + rz*_mid;
   const camGroundH=_surfHeight?_surfHeight(camTX,camTZ):groundH;
   const camTY=Math.max(eye+followHeight*0.55, camGroundH+followHeight+1.2);
