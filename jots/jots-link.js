@@ -101,10 +101,22 @@
         const d = await r.json();
         if (d.device_code) return d;
       } catch (e) {}
-      const r = await fetch(CFG.gas + '?action=devicecode');
-      const d = await r.json();
-      if (d.error) throw new Error(d.error);
-      return d;
+      // The bridge can be slow or answer with a Google error page while it's
+      // busy; retry a few times rather than failing on the first hiccup.
+      let lastErr = null;
+      for (let i = 0; i < 3; i++) {
+        try {
+          const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 20000);
+          const r = await fetch(CFG.gas + '?action=devicecode&t=' + Date.now(), { signal: ctl.signal, cache: 'no-store' });
+          clearTimeout(to);
+          const text = await r.text();
+          let d = null; try { d = JSON.parse(text); } catch (e) {}
+          if (d && d.device_code) return d;
+          lastErr = new Error(d && d.error ? d.error : 'the sign-in service is busy');
+        } catch (e) { lastErr = new Error(e && e.name === 'AbortError' ? 'the sign-in service took too long' : 'couldn’t reach the sign-in service'); }
+        if (i < 2) await new Promise((res) => setTimeout(res, 1500 * (i + 1)));
+      }
+      throw lastErr;
     },
     // Polls until GitHub hands back a token (or the code expires). Mobile
     // browsers freeze a background tab's timers and requests while you
@@ -126,8 +138,8 @@
           const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 15000);
           const r = await fetch(CFG.gas + '?action=devicepoll&device_code=' + encodeURIComponent(dev.device_code) + '&t=' + Date.now(), { signal: ctl.signal, cache: 'no-store' });
           clearTimeout(to);
-          d = await r.json();
-        } catch (e) { continue; }
+          d = JSON.parse(await r.text());
+        } catch (e) { continue; }                          // busy / error page: just ask again
         if (d && d.access_token) return d;
         if (d && d.error === 'slow_down') wait += 5000;
         else if (d && d.error === 'expired_token') throw new Error('The sign-in code expired — try again.');

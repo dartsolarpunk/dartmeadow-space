@@ -18820,7 +18820,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 .jots-btn:disabled{opacity:.4;cursor:not-allowed}
 .jots-chk{display:flex;gap:.6rem;align-items:flex-start;font-size:.68rem;line-height:1.5;margin:.8rem 0;cursor:pointer}
 .jots-chk input{margin-top:.15rem;accent-color:#5b7fff;width:16px;height:16px;flex-shrink:0}
-.jots-code{font-family:var(--font-mono);font-size:1.5rem;letter-spacing:.3em;text-align:center;color:#fff;background:rgba(91,127,255,.12);border:1px dashed rgba(91,127,255,.5);border-radius:4px;padding:.6rem;margin:.6rem 0;user-select:all}
+.jots-code{font-family:var(--font-mono);font-size:1.5rem;letter-spacing:.3em;text-align:center;color:#fff;background:rgba(91,127,255,.12);border:1px dashed rgba(91,127,255,.5);border-radius:4px;padding:.6rem;margin:.6rem 0;user-select:all;cursor:pointer}
 .jots-note{font-size:.6rem;color:var(--text-dim,#8a97b8);text-align:center;margin-top:.6rem;line-height:1.5}
 .jots-mode{display:grid;grid-template-columns:1fr 1fr;gap:.7rem;margin-top:.6rem}
 .jots-mode button{padding:1rem .7rem;border-radius:4px;border:1px solid rgba(91,127,255,.35);background:rgba(91,127,255,.07);color:#eaf0ff;cursor:pointer;text-align:left}
@@ -18887,34 +18887,70 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
   window.jotsShowWelcome=showWelcome;
   $j('jots-agree').addEventListener('change',e=>{ $j('jots-gh-btn').disabled=$j('jots-guest-btn').disabled=!e.target.checked; });
   $j('jots-guest-btn').onclick=()=>{ J().consent.agree(); J().auth.guest(); hideWelcome(); toast('▶ Playing as '+J().identity.name,2400); };
-  let _deviceAbort=false;
+  let _deviceAbort=false, _ghWin=null, _ghCode='', _ghUrl='https://github.com/login/device';
+  // Copy the code. Browsers only allow this during a tap, so it's tried
+  // right away and again on every tap of the code or OPEN GITHUB.
+  function copyCode(code){
+    if(!code) return Promise.resolve(false);
+    try{ if(navigator.clipboard&&navigator.clipboard.writeText) return navigator.clipboard.writeText(code).then(()=>true,()=>legacyCopy(code)); }catch(e){}
+    return Promise.resolve(legacyCopy(code));
+  }
+  function legacyCopy(code){
+    try{ const t=document.createElement('textarea');t.value=code;t.setAttribute('readonly','');t.style.cssText='position:fixed;left:-999px;opacity:0';document.body.appendChild(t);t.select();const ok=document.execCommand('copy');t.remove();return !!ok; }catch(e){ return false; }
+  }
+  // Open GitHub in a tab the game owns, so it can close it again (and bring
+  // you back here) the moment GitHub says you approved. Opened inside the tap
+  // with a holding page; pointed at GitHub once the code has arrived.
+  function openGitHubTab(url){
+    try{
+      if(_ghWin&&!_ghWin.closed){ if(url){ try{ _ghWin.opener=null; }catch(e){} _ghWin.location.href=url; } _ghWin.focus(); return _ghWin; }
+      const w=window.open(url||'', 'jots_github');
+      if(w&&!url){
+        try{ w.document.write('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>GitHub sign-in</title><body style="margin:0;background:#02060f;color:#dfe8ff;font:16px system-ui;display:grid;place-items:center;height:100vh;text-align:center"><div>Getting your sign-in code…<br><small style="opacity:.6">GitHub opens here in a moment.</small></div>'); w.document.close(); }catch(e){}
+      }
+      _ghWin=w;
+      return w;
+    }catch(e){ return null; }
+  }
+  function closeGitHubTab(){ try{ if(_ghWin&&!_ghWin.closed) _ghWin.close(); }catch(e){} _ghWin=null; try{ window.focus(); }catch(e){} }
   async function githubSignIn(){
     J().consent.agree();
+    openGitHubTab('');                                   // inside the tap, so it isn't blocked
     $j('jots-welcome').classList.add('show');
     $j('jots-welcome-main').style.display='none'; $j('jots-welcome-device').style.display='';
     $j('jots-code').textContent='— — — —'; $j('jots-device-status').textContent='Asking GitHub for a code…';
-    _deviceAbort=false;
+    _deviceAbort=false; _ghCode='';
     try{
       const dev=await J().auth.deviceCode();
-      $j('jots-code').textContent=dev.user_code;
-      const url=dev.verification_uri||'https://github.com/login/device';
-      $j('jots-open-gh').onclick=()=>{ try{navigator.clipboard&&navigator.clipboard.writeText(dev.user_code);}catch(e){} window.open(url,'_blank','noopener'); };
-      $j('jots-device-status').textContent='Waiting for you to approve on GitHub…';
+      _ghCode=dev.user_code; _ghUrl=dev.verification_uri||'https://github.com/login/device';
+      $j('jots-code').textContent=_ghCode;
+      const copied=await copyCode(_ghCode);
+      const tab=(_ghWin&&!_ghWin.closed)?openGitHubTab(_ghUrl):null;
+      $j('jots-device-status').textContent=(copied?'Code copied. ':'Tap the code to copy it. ')+
+        (tab?'On the GitHub tab, paste it, press Continue, then Authorize. You’ll come straight back here.':'Tap OPEN GITHUB, paste the code, press Continue, then Authorize.');
       const tok=await J().auth.waitForToken(dev,()=>{ if(_deviceAbort) throw new Error('cancelled'); });
       if(_deviceAbort) return;
+      closeGitHubTab();
       $j('jots-device-status').textContent='Signed in — setting up your private repository…';
       await J().auth.finish(tok);
       hideWelcome();
       toast('✓ Signed in as '+J().identity.name+' · saves sync to '+J().vault.repo,3200);
     }catch(e){
       if(_deviceAbort) return;
-      $j('jots-device-status').textContent='Sign-in didn’t finish ('+(e.message||e)+'). You can try again or play as a guest.';
+      if(!_ghCode) closeGitHubTab();                     // no code came back: don't leave the holding tab open
+      $j('jots-device-status').textContent='Sign-in didn’t finish ('+(e.message||e)+'). Tap SIGN IN again, or play as a guest.';
+      $j('jots-device-done').textContent='↻ TRY AGAIN';
+      $j('jots-device-done').onclick=()=>{ $j('jots-device-done').textContent='✓ I’VE APPROVED IT — CONTINUE'; $j('jots-device-done').onclick=approvedTap; githubSignIn(); };
     }
   }
+  function approvedTap(){ $j('jots-device-status').textContent='Checking with GitHub…'; J().auth.pollNow(); }
+  $j('jots-open-gh').onclick=()=>{ copyCode(_ghCode); openGitHubTab(_ghUrl); };
+  $j('jots-code').onclick=()=>{ copyCode(_ghCode).then(ok=>{ if(ok) $j('jots-device-status').textContent='Code copied. Paste it on GitHub.'; }); };
+  $j('jots-code').title='Tap to copy';
   window.jotsGithubSignIn=githubSignIn;
   $j('jots-gh-btn').onclick=githubSignIn;
-  $j('jots-device-done').onclick=()=>{ $j('jots-device-status').textContent='Checking with GitHub…'; J().auth.pollNow(); };
-  $j('jots-device-cancel').onclick=()=>{ _deviceAbort=true; J().consent.agree(); J().auth.guest(); hideWelcome(); };
+  $j('jots-device-done').onclick=approvedTap;
+  $j('jots-device-cancel').onclick=()=>{ _deviceAbort=true; closeGitHubTab(); J().consent.agree(); J().auth.guest(); hideWelcome(); };
 
   // Account chip + modal: GitHub replaces the old Google/Apple buttons.
   function refreshChip(){
