@@ -122,24 +122,29 @@
     // browsers freeze a background tab's timers and requests while you
     // approve in GitHub, so every check has its own timeout, and coming
     // back to the game (or tapping "I've approved it") checks right away.
-    _wake: null,
-    pollNow() { if (this._wake) this._wake(); },
+    _wake: null, _ctl: null, _now: false,
+    // Check right now: cuts short a check that's still hanging from before
+    // the tab went to the background, and skips the wait.
+    pollNow() { this._now = true; try { if (this._ctl) this._ctl.abort(); } catch (e) {} if (this._wake) this._wake(); },
     async waitForToken(dev, onTick) {
       const until = Date.now() + (dev.expires_in || 900) * 1000;
       let wait = Math.max(5, dev.interval || 5) * 1000, last = 0;
       while (Date.now() < until) {
-        await new Promise((r) => { const t = setTimeout(r, Math.max(0, wait - (Date.now() - last))); this._wake = () => { clearTimeout(t); r(); }; });
+        if (!this._now) await new Promise((r) => { const t = setTimeout(r, Math.max(0, wait - (Date.now() - last))); this._wake = () => { clearTimeout(t); r(); }; });
         this._wake = null;
+        const urgent = this._now; this._now = false;
         if (onTick) onTick();
-        if (Date.now() - last < 2500) continue;            // GitHub asks for ≥5 s; don't hammer on repeat taps
+        if (!urgent && Date.now() - last < 2500) continue;  // GitHub asks for ≥5 s between checks
         last = Date.now();
         let d;
         try {
           const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 15000);
+          this._ctl = ctl;
           const r = await fetch(CFG.gas + '?action=devicepoll&device_code=' + encodeURIComponent(dev.device_code) + '&t=' + Date.now(), { signal: ctl.signal, cache: 'no-store' });
           clearTimeout(to);
           d = JSON.parse(await r.text());
-        } catch (e) { continue; }                          // busy / error page: just ask again
+        } catch (e) { continue; }                          // busy / error page / cut short: ask again
+        finally { this._ctl = null; }
         if (d && d.access_token) return d;
         if (d && d.error === 'slow_down') wait += 5000;
         else if (d && d.error === 'expired_token') throw new Error('The sign-in code expired — try again.');

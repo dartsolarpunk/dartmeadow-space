@@ -1408,7 +1408,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
       <button class="art-btn active" id="cam-btn" onclick="cycleCamMode()">CAM 1</button>
       <button class="art-btn" id="lockon-btn" onclick="returnHome()" title="Return to home base (Earth) and track it">⌂ HOME</button>
       <button class="art-btn" onclick="openGalaxyMap()">MAP</button>
-      <button class="art-btn" onclick="openSaveModal('save')">SAVE</button>
+      <button class="art-btn" onclick="quickSave()" title="Save right here (signed in: also to your private jots- repository). Save slots are in the main menu.">💾 SAVE</button>
       <button class="art-btn" onclick="openSettings()">CFG</button>
       <button class="art-btn" onclick="returnToMenu()" title="Return to main menu (your game stays loaded)">☰ MENU</button>
       <button class="art-btn" onclick="promptExit()">EXIT</button>
@@ -1866,8 +1866,33 @@ function buildSaveData(slot){
     },
     settings:JSON.parse(JSON.stringify(STATE.settings)),
     // Charted galaxies/systems — merge-only on load so existing places stay put.
-    galaxyDb:{current:GALAXY_DB.current,galaxies:GALAXY_DB.galaxies,worldSeed:WORLD_SEED}
+    galaxyDb:{current:GALAXY_DB.current,galaxies:GALAXY_DB.galaxies,worldSeed:WORLD_SEED},
+    // Exactly where you are, so a resume puts you back there (see resumeJourney).
+    where:_saveWhere(),
+    discoveries:(typeof loadDiscoveries==='function'?loadDiscoveries():[])
   };
+}
+// Where the player is: galaxy, system, position, facing, and the nearest
+// body with the offset from it. The world keeps moving while you're away
+// (planets follow the real date), so a resume puts you back beside the same
+// planet wherever it has got to, not at an empty point in space.
+function _saveWhere(){
+  try{
+    const sp=STATE.flight, sys=window._curSystem||null;
+    const w={gal:(GALAXY_DB&&GALAXY_DB.current)||'milkyway',
+      sys:sys?{name:sys.name,seed:sys.seed,starType:sys.starType}:null,
+      pos:[sp.pos.x,sp.pos.y,sp.pos.z]};
+    try{ const q=spQuat(sp); w.quat=[q.x,q.y,q.z,q.w]; }catch(e){}
+    let best=null,bd=Infinity;
+    for(const b of (celestialBodies||[])){
+      if(!b||!b.mesh||!b.name) continue;
+      const d=b.mesh.position.distanceTo(sp.pos);
+      const r=(typeof _bodyVisRadius==='function'?_bodyVisRadius(b):1)||1;
+      if(d<Math.max(r*60,150)&&d<bd){bd=d;best=b;}
+    }
+    if(best){ const o=sp.pos.clone().sub(best.mesh.position); w.near={name:best.name,off:[o.x,o.y,o.z]}; }
+    return w;
+  }catch(e){ return null; }
 }
 function loadSaveData(data){
   if(!data||data.v!==SAVE_VERSION){toast('Invalid profile file','warn');return false;}
@@ -1895,6 +1920,13 @@ function loadSaveData(data){
     if(data.settings.caustics!==undefined)GFX.caustics=data.settings.caustics;
     if(data.settings.gi!==undefined)GFX.fakeGI=data.settings.gi;
   }
+  if(Array.isArray(data.discoveries)&&data.discoveries.length){
+    try{
+      const have=loadDiscoveries(), ids=new Set(have.map(d=>d.id));
+      data.discoveries.forEach(d=>{ if(d&&d.id&&!ids.has(d.id)){have.push(d);ids.add(d.id);} });
+      localStorage.setItem(DISC_STORE_KEY,JSON.stringify(have.slice(-200)));
+    }catch(e){}
+  }
   if(data.galaxyDb&&data.galaxyDb.galaxies){
     if(data.galaxyDb.current)GALAXY_DB.current=data.galaxyDb.current;
     Object.keys(data.galaxyDb.galaxies).forEach(id=>{
@@ -1915,6 +1947,68 @@ function saveToSlot(idx,name){
   slots[idx]=d;writeSaveSlots(slots);
   toast('✅ Saved to slot '+(idx+1)+': '+d.slotName);
 }
+// One tap SAVE from the flight bar: saves right here (and, when signed in
+// with GitHub, to your private jots- repository, via the JOTS layer).
+function quickSave(){
+  try{
+    const d=buildSaveData('auto');d.slotName='Quick save';
+    localStorage.setItem('dm_autosave',JSON.stringify(d));
+    const signed=!!(window.JOTS&&window.JOTS.vault&&window.JOTS.vault.ready);
+    toast(signed?'💾 Saved here · syncing to your '+window.JOTS.vault.repo+'…':'💾 Saved here on this device',2400);
+    try{ window.dispatchEvent(new CustomEvent('dm:quicksave',{detail:d})); }catch(e){}
+    return d;
+  }catch(e){ toast('⚠ Save failed','','warn'); return null; }
+}
+// Rebuild a system to travel to from what a save remembers (same lookup
+// as travelToDiscovery).
+function _systemFromRef(gal,ref){
+  if(!ref||!ref.name||ref.name==='Sol') return null;
+  let sys=null;
+  try{
+    if(gal==='milkyway'){
+      const ds=(distantSystems||[]).find(x=>x&&x.name===ref.name);
+      sys=ds?(ds.systemChart||systemChartFromArmCell(ds)):null;
+    }else{
+      const vg=(VISITABLE_GALAXIES||[]).find(x=>galaxyKey(x.n)===gal);
+      sys=(getGalaxySystems(gal,vg?vg.n.replace(/\s*\(.+\)/,''):gal).systems||[]).find(x=>x.name===ref.name)||null;
+    }
+  }catch(e){}
+  return sys||{name:ref.name,seed:ref.seed,starType:ref.starType,bodies:[]};
+}
+// Resume a saved journey: load it, fly, then put you back where you were,
+// in today's world (planets have moved on with the real date; you arrive
+// beside the same one, at the same offset, facing the same way).
+function resumeJourney(data){
+  if(!data||!loadSaveData(data)) return;
+  try{ syncSlidersToBoardConfig(); }catch(e){}
+  launchFlight();
+  const w=data.where; if(!w) return;
+  const gal=w.gal||'milkyway', want=(w.sys&&w.sys.name)||'Sol';
+  let travelled=false, t0=Date.now();
+  (function wait(){
+    if(Date.now()-t0>45000) return;
+    const ready=typeof flightInited!=='undefined'&&flightInited&&boardFlight&&celestialBodies&&celestialBodies.length;
+    if(!ready){ setTimeout(wait,300); return; }
+    const cur=(window._curSystem&&window._curSystem.name)||'Sol';
+    if(!travelled&&(cur!==want||((GALAXY_DB.current||'milkyway')!==gal))){
+      travelled=true; GALAXY_DB.current=gal; fastTravelToSystem(_systemFromRef(gal,w.sys),gal);
+      setTimeout(wait,1800); return;
+    }
+    if(cur!==want){ setTimeout(wait,400); return; }
+    const sp=STATE.flight;
+    const b=w.near&&celestialBodies.find(x=>x&&x.name===w.near.name&&x.mesh);
+    if(b) sp.pos.set(b.mesh.position.x+w.near.off[0],b.mesh.position.y+w.near.off[1],b.mesh.position.z+w.near.off[2]);
+    else if(w.pos) sp.pos.set(w.pos[0],w.pos[1],w.pos[2]);
+    if(sp.vel) sp.vel.set(0,0,0);
+    if(w.quat) sp.quat=new THREE.Quaternion(w.quat[0],w.quat[1],w.quat[2],w.quat[3]);
+    if(boardFlight) boardFlight.position.copy(sp.pos);
+    _followInit=false;
+    // Stay beside it while it carries on round its orbit (⚓ to let go).
+    if(b&&typeof ANCHOR_STATE!=='undefined'){ ANCHOR_STATE.active=true;ANCHOR_STATE.target=b;ANCHOR_STATE._lastPos=null;try{updateAnchorButton();}catch(e){} }
+    toast('▶ Back where you left off'+(b?' — beside '+b.name+' · anchored (⚓ to release)':'')+(want!=='Sol'?' · '+want:''),3600);
+  })();
+}
+window.quickSave=quickSave;window.resumeJourney=resumeJourney;
 function loadFromSlot(idx){
   const slots=getSaveSlots();
   if(!slots[idx]){toast('Empty slot','','warn');return;}
@@ -2167,7 +2261,7 @@ function _checkAutosaveResume(){
         rb.textContent='▶ RESUME GAME'+(when?' — saved '+when:'');
         rb.style.display='block';
         // onclick loads the autosave then launches flight
-        rb.onclick=()=>{try{loadSaveData(data);}catch(e){}launchFlight();};
+        rb.onclick=()=>{ const go=()=>resumeJourney(data); if(typeof window.jotsChooseMode==='function') window.jotsChooseMode(go); else go(); };
       }
     }
   }catch(e){}
@@ -18851,9 +18945,9 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
     <div id="jots-welcome-device" style="display:none">
       <p class="jots-p" style="text-align:center">On GitHub, enter this code:</p>
       <div class="jots-code" id="jots-code">— — — —</div>
-      <button class="jots-btn primary" id="jots-open-gh">OPEN GITHUB.COM/LOGIN/DEVICE ↗</button>
+      <button class="jots-btn primary" id="jots-open-gh">⧉ COPY CODE &amp; OPEN GITHUB ↗</button>
       <div class="jots-note" id="jots-device-status">Waiting for you to approve…</div>
-      <button class="jots-btn primary" id="jots-device-done">✓ I'VE APPROVED IT — CONTINUE</button>
+      <button class="jots-btn" id="jots-device-done">✓ I'VE APPROVED IT — CONTINUE</button>
       <button class="jots-btn" id="jots-device-cancel">CANCEL · PLAY AS GUEST</button>
     </div>
   </div>
@@ -18904,10 +18998,8 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
   function openGitHubTab(url){
     try{
       if(_ghWin&&!_ghWin.closed){ if(url){ try{ _ghWin.opener=null; }catch(e){} _ghWin.location.href=url; } _ghWin.focus(); return _ghWin; }
-      const w=window.open(url||'', 'jots_github');
-      if(w&&!url){
-        try{ w.document.write('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>GitHub sign-in</title><body style="margin:0;background:#02060f;color:#dfe8ff;font:16px system-ui;display:grid;place-items:center;height:100vh;text-align:center"><div>Getting your sign-in code…<br><small style="opacity:.6">GitHub opens here in a moment.</small></div>'); w.document.close(); }catch(e){}
-      }
+      const w=window.open(url, 'jots_github');   // not noopener: the game needs it to close this tab again
+      try{ if(w) w.opener=null; }catch(e){}
       _ghWin=w;
       return w;
     }catch(e){ return null; }
@@ -18915,7 +19007,6 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
   function closeGitHubTab(){ try{ if(_ghWin&&!_ghWin.closed) _ghWin.close(); }catch(e){} _ghWin=null; try{ window.focus(); }catch(e){} }
   async function githubSignIn(){
     J().consent.agree();
-    openGitHubTab('');                                   // inside the tap, so it isn't blocked
     $j('jots-welcome').classList.add('show');
     $j('jots-welcome-main').style.display='none'; $j('jots-welcome-device').style.display='';
     $j('jots-code').textContent='— — — —'; $j('jots-device-status').textContent='Asking GitHub for a code…';
@@ -18924,10 +19015,8 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
       const dev=await J().auth.deviceCode();
       _ghCode=dev.user_code; _ghUrl=dev.verification_uri||'https://github.com/login/device';
       $j('jots-code').textContent=_ghCode;
-      const copied=await copyCode(_ghCode);
-      const tab=(_ghWin&&!_ghWin.closed)?openGitHubTab(_ghUrl):null;
-      $j('jots-device-status').textContent=(copied?'Code copied. ':'Tap the code to copy it. ')+
-        (tab?'On the GitHub tab, paste it, press Continue, then Authorize. You’ll come straight back here.':'Tap OPEN GITHUB, paste the code, press Continue, then Authorize.');
+      await copyCode(_ghCode);
+      $j('jots-device-status').textContent='Tap COPY CODE & OPEN GITHUB, paste the code there, press Continue, then Authorize. This screen finishes on its own when you come back.';
       const tok=await J().auth.waitForToken(dev,()=>{ if(_deviceAbort) throw new Error('cancelled'); });
       if(_deviceAbort) return;
       closeGitHubTab();
@@ -18944,7 +19033,12 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
     }
   }
   function approvedTap(){ $j('jots-device-status').textContent='Checking with GitHub…'; J().auth.pollNow(); }
-  $j('jots-open-gh').onclick=()=>{ copyCode(_ghCode); openGitHubTab(_ghUrl); };
+  $j('jots-open-gh').onclick=()=>{
+    if(!_ghCode) return;
+    copyCode(_ghCode);                                   // inside the tap, so the copy is allowed
+    openGitHubTab(_ghUrl);
+    $j('jots-device-status').textContent='Code copied. Paste it on GitHub, press Continue, then Authorize — then come back here.';
+  };
   $j('jots-code').onclick=()=>{ copyCode(_ghCode).then(ok=>{ if(ok) $j('jots-device-status').textContent='Code copied. Paste it on GitHub.'; }); };
   $j('jots-code').title='Tap to copy';
   window.jotsGithubSignIn=githubSignIn;
@@ -19027,17 +19121,28 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 
   // ── Vault: load the newest save on sign-in; autosave while playing ─
   function localAutosave(){ try{ const t=localStorage.getItem('dm_autosave'); return t?JSON.parse(t):null; }catch(e){ return null; } }
+  // Signed in: your newest save (from any device) becomes the menu's
+  // RESUME GAME, which puts you back where you were in today's live world.
   window.addEventListener('jots:vault',async ()=>{
     try{
       const remote=await J().vault.load('autosave');
       const local=localAutosave();
-      if(remote&&(!local||remote.ts>(local.ts||0))&&typeof loadSaveData==='function'&&loadSaveData(remote)){
+      if(remote&&remote.v==='DM2'&&(!local||remote.ts>(local.ts||0))){
         try{ localStorage.setItem('dm_autosave',JSON.stringify(remote)); }catch(e){}
-        try{ if(typeof syncSlidersToBoardConfig==='function')syncSlidersToBoardConfig(); }catch(e){}
-        toast('☁ Loaded your latest save from '+J().vault.repo,3000);
+        try{ if(typeof _checkAutosaveResume==='function') _checkAutosaveResume(); }catch(e){}
+        const inFlight=typeof STATE!=='undefined'&&STATE.screen==='flight';
+        toast(inFlight?'☁ Your saved journey is in '+J().vault.repo+' · RESUME GAME in the menu takes you back there':'☁ Your saved journey is ready — tap ▶ RESUME GAME',3600);
       }
     }catch(e){ console.warn('[JOTS] vault load:',e); }
   });
+  // 💾 SAVE on the flight bar: straight to the private repository too.
+  window.addEventListener('dm:quicksave',async e=>{
+    if(!window.JOTS||!J().vault.ready) return;
+    try{ await J().vault.save(e.detail,'autosave'); toast('☁ Saved to '+J().vault.repo,2200); }
+    catch(err){ toast('⚠ Saved on this device; GitHub sync failed — it will retry on the next save',3200); }
+  });
+  // RESUME GAME goes through the same Story / Multiplayer choice.
+  window.jotsChooseMode=function(then){ if(!J().consent.get()){ showWelcome(); return; } chooseMode(then); };
   let _vaultBusy=false;
   async function vaultAutosave(){
     if(!window.JOTS||!J().vault.ready||_vaultBusy||typeof buildSaveData!=='function') return;
@@ -19045,8 +19150,16 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
     try{ await J().vault.save(buildSaveData('auto'),'autosave'); }catch(e){ console.warn('[JOTS] vault save:',e); }
     _vaultBusy=false;
   }
-  setInterval(()=>{ if(window.JOTS&&J().vault.ready&&typeof STATE!=='undefined'&&STATE.screen==='flight'&&!document.hidden) vaultAutosave(); },120000);
-  document.addEventListener('visibilitychange',()=>{ if(document.hidden) vaultAutosave(); });
+  // Every 2 minutes in flight, and whenever the game goes to the background:
+  // keep this device's RESUME point current (everyone) and the private
+  // repository too (signed in).
+  function autosaveHere(){
+    if(typeof STATE==='undefined'||STATE.screen!=='flight'||typeof buildSaveData!=='function') return;
+    try{ localStorage.setItem('dm_autosave',JSON.stringify(buildSaveData('auto'))); }catch(e){}
+    vaultAutosave();
+  }
+  setInterval(()=>{ if(!document.hidden) autosaveHere(); },120000);
+  document.addEventListener('visibilitychange',()=>{ if(document.hidden) autosaveHere(); });
 
   // ── Multiplayer: what we send, and everyone else's ships ──────────
   function boardColor(){
