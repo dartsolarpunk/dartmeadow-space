@@ -19039,24 +19039,44 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
   async function webComplete(res){
     if(_webBusy||!res) return; _webBusy=true;
     webPanel();
-    $j('jots-web-status').textContent='Approved — signing you in…';
+    webStatus('Approved — signing you in…');
     closeGitHubTab();
     try{
-      await J().auth.webFinish(res,(why)=>{ $j('jots-web-status').textContent=/too many times|urlfetch|quota/i.test(why)
+      await J().auth.webFinish(res,(why)=>{ webStatus(/too many times|urlfetch|quota/i.test(why)
         ?'Approved. The LEATR bridge is at its daily GitHub limit — still trying for a few minutes. Keep this open, or play as a guest.'
-        :'Approved. The LEATR bridge is busy — still trying…'; });
-      hideWelcome();
-      toast('✓ Signed in as '+J().identity.name+' · saves sync to '+J().vault.repo,3200);
-      try{ if(typeof STATE!=='undefined'&&STATE.screen!=='flight'&&typeof goScreen==='function') goScreen('menu'); }catch(e){}
+        :'Approved. The LEATR bridge is busy — still trying…'); });
+      signedInHere();
     }catch(e){
-      $j('jots-web-status').textContent='Sign-in didn’t finish ('+(e.message||e)+'). Tap OPEN GITHUB AGAIN, use a code instead, or play as a guest.';
+      webStatus('Sign-in didn’t finish ('+(e.message||e)+'). Tap OPEN GITHUB AGAIN, use a code instead, or play as a guest.');
     }
     _webBusy=false;
   }
+  // Every open game tab shows the same sign-in progress, so whichever tab
+  // you're looking at after GitHub (the one that started it, or a new one
+  // GitHub opened) tells you what's happening.
+  function webStatus(text,echo){
+    $j('jots-web-status').textContent=text;
+    if(!echo){ try{ _webBC&&_webBC.postMessage({jots:'status',text}); }catch(e){} }
+  }
+  function signedInHere(){
+    _landingWait=false;
+    hideWelcome();
+    toast('✓ Signed in as '+J().identity.name+' · saves sync to '+J().vault.repo,3200);
+    try{ if(typeof STATE!=='undefined'&&STATE.screen!=='flight'&&typeof goScreen==='function') goScreen('menu'); }catch(e){}
+  }
+  let _landingWait=false;
   function listenForWebResult(){
     const take=()=>{ const r=J().auth.takeWebResult(); if(r) webComplete(r); };
-    try{ if(!_webBC){ _webBC=new BroadcastChannel('jots-auth'); _webBC.onmessage=()=>setTimeout(take,50); } }catch(e){}
-    window.addEventListener('storage',e=>{ if(e.key==='jots_oauth_result'&&e.newValue) take(); });
+    try{ if(!_webBC){ _webBC=new BroadcastChannel('jots-auth'); _webBC.onmessage=(m)=>{
+      const d=m&&m.data;
+      if(d&&d.jots==='status'){ if(!_webBusy&&!J().auth.signedIn){ webPanel(); webStatus(d.text+' (in your other DART Meadow tab)',true); } return; }
+      setTimeout(take,50);
+    }; } }catch(e){}
+    window.addEventListener('storage',e=>{
+      if(e.key==='jots_oauth_result'&&e.newValue) take();
+      // signed in from another tab → signed in here too
+      if((e.key==='jots_gh_token_v1'||e.key==='jots_identity_v1')&&e.newValue&&!_webBusy&&J().auth.adoptFromStorage()) signedInHere();
+    });
     document.addEventListener('visibilitychange',()=>{ if(!document.hidden) take(); });
     window.addEventListener('focus',take);
   }
@@ -19074,7 +19094,14 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
   whenJots(()=>{
     listenForWebResult();
     const r=J().auth.takeWebResult();                    // came back from GitHub in this tab
+    let landed=false; try{ landed=sessionStorage.getItem('jots_auth_landing')==='1'; sessionStorage.removeItem('jots_auth_landing'); }catch(e){}
     if(r) webComplete(r);
+    else if(landed&&!J().auth.signedIn){
+      // GitHub came back in a new tab and the game tab that started the
+      // sign-in is finishing it: wait here for it instead of looking like a guest.
+      _landingWait=true; webPanel(); webStatus('Approved on GitHub — finishing sign-in…',true);
+      setTimeout(()=>{ if(_landingWait&&!J().auth.signedIn) webStatus('Still finishing in your other DART Meadow tab. Switch to it, tap OPEN GITHUB AGAIN, or play as a guest.',true); },45000);
+    }
   });
   // Fallback: GitHub's device code (type a code on github.com/login/device).
   async function deviceSignIn(){
