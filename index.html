@@ -12178,7 +12178,8 @@ const GAL_SKY_ENABLED=true;
 const GALSKY={
   S:0.1,                 // scene units per light-year inside galSkyRoot
   KMAX:0.008,            // largest on-screen radius a cloud may take (rad)
-  GLOW:2.4,              // halo reach vs the old solid cloud (the visible core is far smaller)
+  GLOW:2.4,
+  WISP:true,             // 3D-noise wisps inside each cloud's haze (one texture read per pixel)              // halo reach vs the old solid cloud (the visible core is far smaller)
   R0:26670, ZSUN:68,     // Sun: distance from centre, height above plane (ly)
   PITCH:12*Math.PI/180,  // arm pitch angle
   PERSEUS_R:33200,       // Perseus arm radius at the Sun's azimuth (ly)
@@ -12457,6 +12458,37 @@ function _gsStarGeo(detail){
   g.setAttribute('normal',g.getAttribute('position').clone());
   return g;
 }
+// A small tiling 3D noise volume (32³, fbm of value noise). Each cloud
+// samples it through its own sphere at a random offset, so the haze reads
+// as an irregular wisp of gas rather than an identical soft ball — a
+// volume-texture take on the flipbook "volumetric sprite" particles in
+// Royal Skies' "UE5: Sprite-Sheets (Niagara Particles!)" (see CREDITS).
+let _gsNoiseVol=null;
+function _gsNoiseTex3D(){
+  if(_gsNoiseVol)return _gsNoiseVol;
+  const N=32, lat=new Float32Array(N*N*N), r=seedRand(0x6A57);
+  for(let i=0;i<lat.length;i++)lat[i]=r();
+  const at=(x,y,z)=>lat[((z&31)*N+(y&31))*N+(x&31)];
+  const sm=t=>t*t*(3-2*t);
+  const vnoise=(x,y,z)=>{   // periodic in 32 at every octave (freq is a power of two)
+    const X=Math.floor(x),Y=Math.floor(y),Z=Math.floor(z), fx=sm(x-X),fy=sm(y-Y),fz=sm(z-Z);
+    const l=(a,b,t)=>a+(b-a)*t;
+    return l(l(l(at(X,Y,Z),at(X+1,Y,Z),fx),l(at(X,Y+1,Z),at(X+1,Y+1,Z),fx),fy),
+             l(l(at(X,Y,Z+1),at(X+1,Y,Z+1),fx),l(at(X,Y+1,Z+1),at(X+1,Y+1,Z+1),fx),fy),fz);
+  };
+  const data=new Uint8Array(N*N*N);
+  for(let z=0;z<N;z++)for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+    let v=0,a=0.5,f=0.125,t=0;
+    for(let o=0;o<4;o++){v+=a*vnoise(x*f*4,y*f*4,z*f*4);t+=a;a*=0.5;f*=2;}
+    v/=t;v=Math.min(1,Math.max(0,(v-0.28)/0.46));   // widen the contrast
+    data[(z*N+y)*N+x]=Math.round(v*255);
+  }
+  const tex=new THREE.Data3DTexture(data,N,N,N);
+  tex.format=THREE.RedFormat;tex.type=THREE.UnsignedByteType;
+  tex.minFilter=tex.magFilter=THREE.LinearFilter;
+  tex.wrapS=tex.wrapT=tex.wrapR=THREE.RepeatWrapping;tex.unpackAlignment=1;tex.needsUpdate=true;
+  _gsNoiseVol=tex;return tex;
+}
 function _gsStarMat(opts){
   const T=THREE.TSL;
   if(!T||!THREE.MeshBasicNodeMaterial||!T.normalView||!T.positionViewDirection||!T.materialColor)return null;
@@ -12473,9 +12505,23 @@ function _gsStarMat(opts){
   const tau=T.float(1).sub(q).max(0).sqrt().mul(2).mul(T.exp(q.mul(-2.5)));  // path through the haze
   const beta=T.vec3(0.24,0.48,1.0).mul(o.scatter||1.6);                      // (400/λ)⁴, R G B
   const atmo=T.vec3(1).sub(T.exp(beta.mul(tau).negate())).mul(o.atmoGain||0.38);
+  // Wisp: sample the noise volume through this cloud (its own random
+  // offset, drifting slowly) and shape the haze with it; the star core
+  // stays clean. Skipped where 3D textures aren't available.
+  let wisp=T.float(1);
+  let low=false;try{low=_gsBudget().low;}catch(e){}
+  if(o.wisp!==false&&GALSKY.WISP&&!low&&T.texture3D&&T.hash&&T.instanceIndex){
+    try{
+      const i=T.float(T.instanceIndex);
+      const off=T.vec3(T.hash(i),T.hash(i.add(17.0)),T.hash(i.add(41.0))).mul(8.0);
+      const uvw=T.positionGeometry.mul(o.wispScale||0.45).add(off).add(T.time.mul(0.004));
+      const d=T.texture3D(_gsNoiseTex3D(),uvw).r;
+      wisp=T.float(0.25).add(d.mul(d).mul(o.wispGain||2.1));
+    }catch(e){wisp=T.float(1);}
+  }
   // × material colour (the fades) here, × instance colour by the material
   // itself. The core overdrives so tone mapping carries it toward white.
-  m.colorNode=T.materialColor.mul(atmo.add(glow).add(core).mul(win));
+  m.colorNode=T.materialColor.mul(atmo.add(glow).mul(wisp).add(core).mul(win));
   return m;
 }
 function _gsMat(map){
