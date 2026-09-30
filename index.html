@@ -902,6 +902,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   // Picks up the result if signInWithRedirect was used (popup-blocked fallback)
   getRedirectResult(fbAuth).catch(err => console.warn('redirect result:', err));
 </script>
+<script src="jots/jots-link.js" defer></script>
 </head>
 <body>
 <!-- LOADING -->
@@ -6343,42 +6344,10 @@ async function buildSolarSystem(){
       const altarLight=new THREE.PointLight(0xfff2cc,60,5,2);
       altarLight.position.set(0,1.2,0); // local to Altar Group's own origin
       altarNode.add(altarLight);
-      // Sparkle particles — per the 'Bird Temple effects' notes, repurposing
-      // dartpotentials.html's soft-glow point-sprite shader (circular
-      // falloff, discard outside radius) WITHOUT its GPGPU simulation
-      // machinery, which is built for a full galaxy of interacting
-      // particles and would be real overkill and risk for a small ambient
-      // effect. This is a static buffer of ~150 points drifting gently
-      // around the altar, faded in/out per-particle over a random cycle —
-      // cheap (one draw call, no per-frame CPU work beyond a single time
-      // uniform update).
-      const N=150;
-      const pos=new Float32Array(N*3), seed=new Float32Array(N);
-      for(let i=0;i<N;i++){
-        const r=0.5+Math.random()*3.2, a=Math.random()*Math.PI*2, h=Math.random()*2.2;
-        pos[i*3]=Math.cos(a)*r; pos[i*3+1]=h; pos[i*3+2]=Math.sin(a)*r;
-        seed[i]=Math.random()*100;
-      }
-      // (Was a GLSL ShaderMaterial on Points — not drawable by the
-      // WebGPU renderer, the source of the 'ShaderMaterial is not
-      // compatible' error. Now soft instanced glows on the node material
-      // the galaxy uses, twinkling on the GPU.)
-      let sparkMat=null;
-      try{
-        const T=THREE.TSL;
-        sparkMat=_gsStarMat({transparent:true,depthTest:true,wisp:false,core:40,coreGain:1.8,glowGain:0.6});
-        if(sparkMat&&T.hash&&T.instanceIndex){
-          const ph=T.hash(T.float(T.instanceIndex)).mul(6.2831);
-          sparkMat.colorNode=sparkMat.colorNode.mul(T.sin(T.time.mul(1.3).add(ph)).mul(0.45).add(0.55));
-        }
-        if(sparkMat){
-          const sp=new THREE.InstancedMesh(_gsStarGeo(),sparkMat,N), m4=new THREE.Matrix4(), c=new THREE.Color(0xfff2cc);
-          for(let i=0;i<N;i++){const r=0.35+seed[i]%1*0.25;m4.makeScale(r,r,r);m4.setPosition(pos[i*3],pos[i*3+1],pos[i*3+2]);sp.setMatrixAt(i,m4);sp.setColorAt(i,c);}
-          sp.instanceMatrix.needsUpdate=true;if(sp.instanceColor)sp.instanceColor.needsUpdate=true;sp.frustumCulled=false;sp.name='BT_Sparkles';
-          altarNode.add(sp);
-        }
-      }catch(e){console.warn('[Bird Temple] sparkles:',e);}
-      BIRD_TEMPLE.altarSparkles=sparkMat;
+      // (The altar sparkles lived here. Rebuilt as instanced glows they were
+      // sized in the Altar Group's own scaled frame and came out as big
+      // grey blocks crowding the deck — replaced by the live Session
+      // Cubes floating above the temple, see btCubesInit.)
       // Occasional bright color-flash pulses on the ring materials, per
       // 'will give light... but can randomly create bright flashes of
       // their respective colors' — cheap: just nudges emissive on existing
@@ -6474,6 +6443,7 @@ async function buildSolarSystem(){
     wrapper.visible=false; // hidden until it has a real, randomized, safe spawn point
     flightScene.add(wrapper);
     BIRD_TEMPLE.group=wrapper;
+    try{btCubesInit(wrapper,SHIP_SCALE);}catch(e){console.warn('[Bird Temple] session cubes:',e);}
     // Rigid-body collision against the ship removed per explicit, repeated
     // feedback: even after two rounds of tuning (tighter broad-phase,
     // capped raycast reach), it kept blocking normal thruster approach —
@@ -6489,6 +6459,239 @@ async function buildSolarSystem(){
   });
   }
 }
+// ════════════════════════════════════════════════════════════════════
+//  LIVE SESSION CUBES OVER THE BIRD TEMPLE
+//  The same live feed dartmeadow.com's Session Cube shows (LEATR
+//  analytics: the active maze's latest export, polled through the Apps
+//  Script proxy), drawn the same way — frosted wall panes, the walked
+//  path, event nodes, and a traveler walking the path on a loop, logging
+//  each event as it passes — but as a drift of cubes scattered above the
+//  temple in its pearl, gold and cyan, well clear of the Temple roof.
+//  Port of static/live-cube.js (radicaldeepscale/dartmeadow, same author).
+//  Until live data arrives it shows a small generated maze, like the site.
+// ════════════════════════════════════════════════════════════════════
+const BT_CUBE_POLL_MS=5000, BT_CUBE_WALK=28;
+// Deep transparent blue walls, a neon green walked path.
+const BT_CUBE_COL={corridor:'#2f5dff',shell:'#1a3cc0',quiet:'#10277a',path:'#39ff9c',event:'#c9ffe6',head:'#ffffff'};
+const BT_CUBES={root:null,parts:[],copies:[],walk:{pts:[],events:[],step:0,index:-1,flare:0},
+  lastKey:'',live:false,hasLive:false,status:'SESSION CUBE',log:[],pollAt:0,busy:false,built:false};
+const _BTC_FACE={left:[-1,0,0],right:[1,0,0],bottom:[0,-1,0],top:[0,1,0],back:[0,0,-1],front:[0,0,1]};
+const _BTC_FACES=['right','front','top','left','back','bottom'];
+function _btcKey(x,y,z){return x+','+y+','+z;}
+function _btcRead(path){
+  const url=FEEDBACK_GAS_URL+'?action=ashread&path='+encodeURIComponent(path)+'&t='+Date.now();
+  return fetch(url,{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('proxy');return r.json();}).then(b=>{
+    if(b==null)return null;if(b.ok===false)throw new Error(b.error||'unread');
+    if(b.ok===true&&'content' in b)return b.content;return b;});
+}
+function _btcFetch(){
+  return _btcRead('ashtree/analytics-live/config.json').then(cfg=>{
+    if(!cfg||!cfg.enabled||!cfg.mazeId)return null;
+    return _btcRead('ashtree/analytics-live/'+cfg.mazeId+'/latest-export.json').then(raw=>raw&&typeof raw==='object'&&raw.cube&&raw.cube.cells?raw:null);
+  });
+}
+// Walked path from layer 0 in order; each shared wall drawn once, classed
+// by whether it lines the path (corridor), sits on the shell, or neither.
+function _btcModel(raw){
+  const cube=raw.cube, layer=(raw.pathIndex&&raw.pathIndex[0]&&raw.pathIndex[0].path)||[];
+  const path=layer.slice().sort((a,b)=>a.order-b.order), onPath={};
+  path.forEach(n=>{onPath[_btcKey(n.x,n.y,n.z)]=1;});
+  const walls={corridor:[],shell:[],quiet:[]}, w=cube.width,h=cube.height,d=cube.depth;
+  cube.cells.forEach(cell=>{
+    if(!cell.walls)return;
+    _BTC_FACES.forEach(face=>{
+      if(!cell.walls[face])return;
+      if(face==='left'&&cell.x!==0)return;if(face==='back'&&cell.z!==0)return;if(face==='bottom'&&cell.y!==0)return;
+      const st=_BTC_FACE[face];
+      const touches=onPath[_btcKey(cell.x,cell.y,cell.z)]||onPath[_btcKey(cell.x+st[0],cell.y+st[1],cell.z+st[2])];
+      const shell=(face==='left'&&cell.x===0)||(face==='right'&&cell.x===w-1)||(face==='bottom'&&cell.y===0)||(face==='top'&&cell.y===h-1)||(face==='back'&&cell.z===0)||(face==='front'&&cell.z===d-1);
+      walls[touches?'corridor':shell?'shell':'quiet'].push([cell.x,cell.y,cell.z,st]);
+    });
+  });
+  return {width:w,height:h,depth:d,path,walls};
+}
+function _btcDemo(n){
+  const cells={},all=[],opp={left:'right',right:'left',top:'bottom',bottom:'top',front:'back',back:'front'},seen={},r=seedRand(0xC0BE);
+  for(let x=0;x<n;x++)for(let y=0;y<n;y++)for(let z=0;z<n;z++){const c={x,y,z,walls:{left:1,right:1,top:1,bottom:1,front:1,back:1}};cells[_btcKey(x,y,z)]=c;all.push(c);}
+  const stack=[cells[_btcKey(0,0,0)]],path=[];seen[_btcKey(0,0,0)]=1;
+  while(stack.length){
+    const cur=stack[stack.length-1];
+    path.push({order:path.length,x:cur.x,y:cur.y,z:cur.z,events:path.length%9===4?[{label:'demo_event',ts:''}]:[]});
+    const opts=[];for(const f in _BTC_FACE){const st=_BTC_FACE[f],k=_btcKey(cur.x+st[0],cur.y+st[1],cur.z+st[2]);if(cells[k]&&!seen[k])opts.push([f,cells[k]]);}
+    if(!opts.length){stack.pop();continue;}
+    const pk=opts[(r()*opts.length)|0];cur.walls[pk[0]]=0;pk[1].walls[opp[pk[0]]]=0;seen[_btcKey(pk[1].x,pk[1].y,pk[1].z)]=1;stack.push(pk[1]);
+  }
+  return {cube:{width:n,height:n,depth:n,cells:all},totalEvents:0,exportedAt:'demo',pathIndex:[{layer:0,path:path.slice(0,Math.floor(path.length*0.5))}]};
+}
+function _btcDither(){
+  const bayer=[0,8,2,10,12,4,14,6,3,11,1,9,15,7,13,5],px=32,cv=document.createElement('canvas');cv.width=cv.height=px;
+  const g=cv.getContext('2d'),img=g.createImageData(px,px);
+  for(let y=0;y<px;y++)for(let x=0;x<px;x++){const t=bayer[(y%4)*4+(x%4)]/16,edge=x<2||y<2||x>px-3||y>px-3,i=(y*px+x)*4;
+    img.data[i]=img.data[i+1]=img.data[i+2]=255;img.data[i+3]=edge?255:t<0.45?200:40;}
+  g.putImageData(img,0,0);const tex=new THREE.CanvasTexture(cv);tex.magFilter=tex.minFilter=THREE.NearestFilter;return tex;
+}
+// The drift: where each cube hangs over the temple (world units relative to
+// the ship; the Temple roof tops out ~4.1 above the deck, the Bird Shard
+// ~3.4 — every cube's lowest corner stays above 5.2).
+function _btcLayout(){
+  // A loose stack of small cubes — all turned the same way and on the same
+  // grid, but in uneven columns: some taller, some set higher, each nudged
+  // a little off the grid, like crates stacked by hand.
+  const mob=(typeof GFX!=='undefined'&&GFX&&GFX.isMobile), want=mob?12:24, r=seedRand(0xB1CD), out=[];
+  const size=0.72, pitch=size*1.22;
+  const cells=[];
+  for(let gx=-6;gx<=6;gx++)for(let gz=-12;gz<=8;gz++)cells.push([gx,gz]);
+  for(let i=cells.length-1;i>0;i--){const j=(r()*(i+1))|0;[cells[i],cells[j]]=[cells[j],cells[i]];}
+  const rot=new THREE.Euler(0,0.35,0);
+  for(let c=0;c<cells.length&&out.length<want;c++){
+    const [gx,gz]=cells[c], h=1+((r()*r()*4)|0), base=6.1+((r()*4)|0)*size*0.5;
+    for(let k=0;k<h&&out.length<want;k++){
+      out.push({pos:new THREE.Vector3(gx*pitch+(r()-0.5)*0.18,base+k*pitch+(r()-0.5)*0.12,gz*pitch+(r()-0.5)*0.18),rot,size});
+    }
+  }
+  return out;
+}
+function btCubesInit(wrapper,shipScale){
+  if(BT_CUBES.root)return;
+  const root=new THREE.Group();root.name='BT_Cubes';
+  root.scale.setScalar(1/shipScale);                 // children work in world units
+  wrapper.add(root);
+  BT_CUBES.root=root;
+  BT_CUBES.layout=_btcLayout();
+  const dither=_btcDither();
+  const pane=(c,o)=>new THREE.MeshBasicMaterial({color:c,map:dither,transparent:true,opacity:o,side:THREE.DoubleSide,depthWrite:false});
+  BT_CUBES.mats={
+    corridor:pane(BT_CUBE_COL.corridor,0.42),shell:pane(BT_CUBE_COL.shell,0.22),quiet:pane(BT_CUBE_COL.quiet,0.12),
+    path:new THREE.MeshBasicMaterial({color:BT_CUBE_COL.path}),
+    event:new THREE.MeshBasicMaterial({color:BT_CUBE_COL.event}),
+    head:new THREE.MeshBasicMaterial({color:BT_CUBE_COL.head}),
+    link:new THREE.LineBasicMaterial({color:BT_CUBE_COL.path,transparent:true,opacity:0.35}),
+    trail:new THREE.LineBasicMaterial({color:BT_CUBE_COL.event,transparent:true,opacity:0.95}),
+    traveler:new THREE.MeshBasicMaterial({color:BT_CUBE_COL.head}),
+    halo:new THREE.MeshBasicMaterial({color:BT_CUBE_COL.path,transparent:true,opacity:0.3,blending:THREE.AdditiveBlending,depthWrite:false})
+  };
+  BT_CUBES.geo={wall:new THREE.PlaneGeometry(0.92,0.92),node:new THREE.BoxGeometry(0.26,0.26,0.26),event:new THREE.BoxGeometry(0.44,0.44,0.44),
+    head:new THREE.BoxGeometry(0.56,0.56,0.56),traveler:new THREE.SphereGeometry(0.3,12,8),halo:new THREE.SphereGeometry(0.62,12,8)};
+  _btcBuild(_btcDemo(5));
+  _btcHud();
+}
+function _btcClear(){
+  const root=BT_CUBES.root;
+  BT_CUBES.parts.forEach(o=>{root.remove(o);if(o.geometry&&!Object.values(BT_CUBES.geo).includes(o.geometry))o.geometry.dispose();if(o.dispose)o.dispose();});
+  BT_CUBES.parts=[];BT_CUBES.copies=[];
+}
+// One instanced draw per part for all the cubes together: each cube's
+// transform is baked into its instances.
+function _btcBuild(raw){
+  const model=_btcModel(raw), L=BT_CUBES.layout, G=BT_CUBES.geo, M=BT_CUBES.mats, root=BT_CUBES.root;
+  _btcClear();
+  const cx=(model.width-1)/2,cy=(model.height-1)/2,cz=(model.depth-1)/2, span=Math.max(model.width,model.height,model.depth);
+  const cubeM=L.map(c=>new THREE.Matrix4().compose(c.pos,new THREE.Quaternion().setFromEuler(c.rot),new THREE.Vector3().setScalar(c.size/span)));
+  const o=new THREE.Object3D(), tmp=new THREE.Matrix4();
+  const add=(geo,mat,items,place)=>{
+    if(!items.length)return;
+    const mesh=new THREE.InstancedMesh(geo,mat,items.length*L.length);let k=0;
+    for(let ci=0;ci<L.length;ci++)items.forEach(it=>{place(it);o.updateMatrix();tmp.multiplyMatrices(cubeM[ci],o.matrix);mesh.setMatrixAt(k++,tmp);});
+    mesh.instanceMatrix.needsUpdate=true;mesh.frustumCulled=false;root.add(mesh);BT_CUBES.parts.push(mesh);
+  };
+  ['quiet','shell','corridor'].forEach(kind=>add(G.wall,M[kind],model.walls[kind],f=>{
+    const st=f[3];o.position.set(f[0]-cx+st[0]*0.5,f[1]-cy+st[1]*0.5,f[2]-cz+st[2]*0.5);o.rotation.set(0,0,0);o.scale.set(1,1,1);
+    if(st[0])o.rotation.y=Math.PI/2;else if(st[1])o.rotation.x=Math.PI/2;}));
+  const path=model.path, plain=[], marked=[];
+  path.forEach(n=>((n.events&&n.events.length)?marked:plain).push(n));
+  const atNode=n=>{o.position.set(n.x-cx,n.y-cy,n.z-cz);o.rotation.set(0,0,0);o.scale.set(1,1,1);};
+  add(G.node,M.path,plain,atNode);add(G.event,M.event,marked,atNode);
+  if(path.length)add(G.head,M.head,[path[path.length-1]],atNode);
+  // path links, all cubes in one line set
+  const pts=[];
+  for(let ci=0;ci<L.length;ci++)for(let i=1;i<path.length;i++){
+    const a=path[i-1],b=path[i];if(Math.abs(a.x-b.x)+Math.abs(a.y-b.y)+Math.abs(a.z-b.z)!==1)continue;
+    pts.push(new THREE.Vector3(a.x-cx,a.y-cy,a.z-cz).applyMatrix4(cubeM[ci]),new THREE.Vector3(b.x-cx,b.y-cy,b.z-cz).applyMatrix4(cubeM[ci]));
+  }
+  if(pts.length){const ls=new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts),M.link);ls.frustumCulled=false;root.add(ls);BT_CUBES.parts.push(ls);}
+  // the walk: one traveler + trail per cube, each starting at its own point
+  const W=BT_CUBES.walk;
+  W.pts=path.map(n=>new THREE.Vector3(n.x-cx,n.y-cy,n.z-cz));W.events=path.map(n=>n.events||[]);
+  if(W.step>=W.pts.length-1)W.step=0;W.index=Math.floor(W.step)-1;
+  const trav=new THREE.InstancedMesh(G.traveler,M.traveler,L.length), halo=new THREE.InstancedMesh(G.halo,M.halo,L.length);
+  trav.frustumCulled=halo.frustumCulled=false;root.add(trav);root.add(halo);BT_CUBES.parts.push(trav,halo);
+  BT_CUBES.trav=trav;BT_CUBES.halo=halo;BT_CUBES.cubeM=cubeM;
+  L.forEach((c,ci)=>{
+    if(W.pts.length<2)return;
+    const tr=new THREE.Line(new THREE.BufferGeometry().setFromPoints(W.pts),M.trail);
+    tr.matrixAutoUpdate=false;tr.matrix.copy(cubeM[ci]);tr.geometry.setDrawRange(0,0);tr.frustumCulled=false;
+    root.add(tr);BT_CUBES.parts.push(tr);BT_CUBES.copies.push({trail:tr,off:ci/L.length});
+  });
+  BT_CUBES.span=span;BT_CUBES.built=true;
+}
+function _btcHud(){
+  if(document.getElementById('bt-cube-hud'))return;
+  const d=document.createElement('div');d.id='bt-cube-hud';
+  d.style.cssText='position:absolute;left:16px;bottom:calc(360px + var(--safe-bot,0px));z-index:30;display:none;pointer-events:none;'+
+    'font:600 10px/1.45 ui-monospace,Menlo,monospace;letter-spacing:.06em;color:#e9f6ff;text-shadow:0 1px 3px #000;max-width:60vw';
+  d.innerHTML='<div id="bt-cube-log" style="font-weight:500;opacity:.85"></div>'+
+    '<div style="display:flex;gap:6px;align-items:center"><span id="bt-cube-dot" style="width:7px;height:7px;border-radius:50%;background:#8ea39a;display:inline-block"></span><span id="bt-cube-label">SESSION CUBE</span></div>'+
+    '<a href="https://cube.leatr.xyz" target="_blank" rel="noopener" style="display:table;margin-top:4px;padding:3px 9px;border:1px solid rgba(95,232,255,.7);border-radius:4px;background:rgba(7,16,20,.55);color:#e6f6ff;text-decoration:none;font-weight:700;letter-spacing:.12em;pointer-events:auto">SESSION CUBE ↗</a>';
+  const host=document.getElementById('flight-hud')||document.body;host.appendChild(d);
+}
+function _btcStatus(live,text){
+  BT_CUBES.status=text;
+  const dot=document.getElementById('bt-cube-dot'),lab=document.getElementById('bt-cube-label');
+  if(dot){dot.style.background=live?BT_CUBE_COL.path:'#8ea39a';dot.style.boxShadow=live?'0 0 8px '+BT_CUBE_COL.path:'none';}
+  if(lab)lab.textContent=text;
+}
+function _btcLogEvent(e){
+  const log=document.getElementById('bt-cube-log');if(!log)return;
+  const label=String(e.label||'').replace(/_/g,' '), det=e.detail!=null&&e.detail!==''?' '+e.detail:'', m=/T(\d{2}:\d{2}:\d{2})/.exec(e.ts||'');
+  const line=document.createElement('div');line.textContent=(m?m[1]+'  ':'')+label+det;log.appendChild(line);
+  while(log.childNodes.length>3)log.removeChild(log.firstChild);
+}
+function _btcPoll(){
+  if(BT_CUBES.busy)return;BT_CUBES.busy=true;
+  _btcFetch().then(raw=>{
+    if(!raw){_btcStatus(false,BT_CUBES.hasLive?'SESSION CUBE · PAUSED':'SESSION CUBE');return;}
+    BT_CUBES.hasLive=true;const c=raw.cube;
+    _btcStatus(true,'LIVE · '+c.width+'×'+c.height+'×'+c.depth+' · '+(raw.totalEvents||0)+' EVENTS');
+    const path=(raw.pathIndex&&raw.pathIndex[0]&&raw.pathIndex[0].path)||[];
+    const k=raw.exportedAt+'|'+raw.totalEvents+'|'+path.length;
+    if(k===BT_CUBES.lastKey)return;BT_CUBES.lastKey=k;_btcBuild(raw);
+  }).catch(()=>_btcStatus(false,BT_CUBES.hasLive?'SESSION CUBE · RECONNECTING':'SESSION CUBE')).finally(()=>{BT_CUBES.busy=false;});
+}
+// Per frame from updateBirdTemple: walk the path, drift the cubes, poll
+// the feed while you're near enough to see them.
+function btCubesUpdate(dt){
+  const B=BT_CUBES, bt=BIRD_TEMPLE;
+  if(!B.root||!B.built||!bt.group)return;
+  const now=performance.now(), cam=flightCamera&&flightCamera.position;
+  const d=cam?cam.distanceTo(bt.group.position):1e9, near=bt.group.visible&&d<220;
+  B.root.visible=bt.group.visible&&d<900;
+  const hud=document.getElementById('bt-cube-hud');
+  if(hud)hud.style.display=(SHIP_WALK.active||(near&&d<45))?'block':'none';
+  if(!B.root.visible)return;
+  if(near&&now>=B.pollAt&&!document.hidden){B.pollAt=now+BT_CUBE_POLL_MS;_btcPoll();}
+  // slow drift of the whole constellation
+  B.root.rotation.y+=dt*0.008;
+  B.root.position.y=Math.sin(now*0.00035)*0.15/Math.max(1e-6,bt.group.scale.x);
+  const W=B.walk, pts=W.pts;if(pts.length<2)return;
+  const limit=pts.length-1;
+  W.step+=dt*BT_CUBE_WALK;
+  if(W.step>=limit){W.step=0;W.index=-1;const log=document.getElementById('bt-cube-log');if(log)log.innerHTML='';}
+  const i=Math.floor(W.step);
+  for(let k=W.index+1;k<=i;k++){if(W.events[k]&&W.events[k].length){W.events[k].forEach(_btcLogEvent);W.flare=1;}}
+  W.index=i;W.flare=Math.max(0,W.flare-dt*2.5);
+  const m4=new THREE.Matrix4(), v=new THREE.Vector3(), sc=1+W.flare*0.9+Math.sin(now/310)*0.1;
+  B.copies.forEach((c,ci)=>{
+    const st=(W.step+c.off*limit)%limit, j=Math.floor(st), f=st-j;
+    v.lerpVectors(pts[j],pts[Math.min(j+1,limit)],f);
+    m4.makeTranslation(v.x,v.y,v.z);B.trav.setMatrixAt(ci,m4.clone().premultiply(B.cubeM[ci]));
+    m4.makeScale(sc,sc,sc).setPosition(v);B.halo.setMatrixAt(ci,m4.premultiply(B.cubeM[ci]));
+    c.trail.geometry.setDrawRange(0,j+2);
+  });
+  B.trav.instanceMatrix.needsUpdate=true;B.halo.instanceMatrix.needsUpdate=true;
+  B.mats.traveler.color.set(W.flare>0.05?BT_CUBE_COL.head:BT_CUBE_COL.event);
+  B.mats.halo.color.set(W.flare>0.05?BT_CUBE_COL.head:BT_CUBE_COL.path);
+}
+
 // The temple gives off its own light: every surface glows softly in its
 // painted (vertex) colours — the deck most gently, windows warm as if lit
 // from inside, the altar rings, obelisks and staff brighter, and the Bird
@@ -6569,6 +6772,7 @@ function _btPickWanderTarget(){
 }
 function updateBirdTemple(dt){
   const bt=BIRD_TEMPLE;
+  try{btCubesUpdate(dt);}catch(e){if(!bt._cubeErr){bt._cubeErr=1;console.warn('[Bird Temple] session cubes:',e);}}
   if(!bt.group)return;
 
   // ── One-time initial spawn — never fixed, never near the player ──
@@ -6655,6 +6859,7 @@ function updateBirdTemple(dt){
       bt._flashMat.emissive.setRGB(0,0,0);bt._flashMat=null;
     }
   }
+  try{if(window.jotsTempleSync)jotsTempleSync(bt,dt);}catch(e){}   // multiplayer: everyone's temple in one place
   bt._frameDelta.subVectors(bt.group.position,_btPrevPos); // core movement only — wander/travel, NOT the cosmetic bob below
   // Real bug fix: this used to be `position.y += sin(...)*0.02` every
   // frame with no corresponding subtraction — not a bob at all, an
@@ -6792,7 +6997,7 @@ function _shipWalkMeshes(){
   const list=[];
   bt.group.traverse(o=>{
     if(!o.isMesh||o.isInstancedMesh)return;
-    let skip=false;for(let p=o;p;p=p.parent){if(/bird shard|amulet|BT_Sparkles/i.test(p.name||'')){skip=true;break;}}
+    let skip=false;for(let p=o;p;p=p.parent){if(/bird shard|amulet|BT_Sparkles|BT_Cubes/i.test(p.name||'')){skip=true;break;}}
     if(!skip)list.push(o);
   });
   bt._walkMeshes=list;bt._walkMeshesFor=bt.group;
@@ -6829,21 +7034,38 @@ function _shipWallSlide(from,move,feetY,step){
   }
   return move;
 }
+// Landing on the temple: she steps off the board onto the deck and walks
+// it herself (walk / idle / jump / climb clips), seen from a follow camera,
+// with the board waiting beside her at waist height. SHIP_WALK.localPos is
+// her FEET, in the temple's own frame (it moves and turns with the ship).
+const SHIP_EYE=0.4;                 // eye height at the temple's scale (≈6 ft)
+const SHIP_CHAR_H=0.454;            // her height there (37 ft board = 2.8 units)
+function _shipCharOn(feetWorld){
+  if(!CHAR||!CHAR.loaded||!CHAR.root)return false;
+  try{
+    dismountSkyboard(flightScene,feetWorld);
+    const s=SHIP_CHAR_H/Math.max(0.001,CHAR.rawHeight||1);
+    CHAR.root.scale.set(s,s,s);
+    CHAR._shipScale=s;
+    CHAR.stanceMode='stand';
+    return true;
+  }catch(e){console.warn('[ShipWalk] dismount:',e);return false;}
+}
 function enterShipWalk(){
   const bt=BIRD_TEMPLE,sp=STATE.flight;
   if(!bt.group||!sp)return;
   $('ship-land-prompt').style.display='none';
-  // Find the ground directly beneath the player's current world position.
+  // Find the deck directly beneath the player's current world position.
   const y=_shipGroundHeight(sp.pos.x,sp.pos.z,sp.pos.y,true);
-  const landWorld=new THREE.Vector3(sp.pos.x,(y!==null?y:sp.pos.y)+0.4,sp.pos.z);
-  SHIP_WALK.localPos.copy(bt.group.worldToLocal(landWorld.clone()));
-  SHIP_WALK.yaw=STATE.flight.camYaw||0;
-  SHIP_WALK.pitch=0;
+  const feet=new THREE.Vector3(sp.pos.x,(y!==null?y:sp.pos.y),sp.pos.z);
+  SHIP_WALK.localPos.copy(bt.group.worldToLocal(feet.clone()));
+  // yaw is kept relative to the ship (it turns as it wanders).
+  const camYaw=(STATE.flight.camYaw||0);
+  SHIP_WALK.yaw=camYaw-bt.group.rotation.y;
+  SHIP_WALK.pitch=0.25;SHIP_WALK.velY=0;SHIP_WALK.grounded=true;SHIP_WALK.climb=null;
   SHIP_WALK.active=true;
-  // Skyboard becomes a hovering companion instead of disappearing — same
-  // idea as the planet-terrain walk's trailing board, adapted to raycast
-  // against the ship's own mesh for ground height instead of the
-  // procedural terrain height function.
+  SHIP_WALK.charOn=_shipCharOn(feet);
+  SHIP_WALK.faceYaw=camYaw+Math.PI;                  // her facing, world (model faces +Z)
   if(boardFlight)boardFlight.visible=true;
   $('ship-liftoff-btn').style.display='block';
   $('ship-jump-btn').style.display='block';
@@ -6871,8 +7093,11 @@ function exitShipWalk(){
   const world=bt.group.localToWorld(SHIP_WALK.localPos.clone());
   sp.pos.copy(world);sp.pos.y+=1.5; // lift off a bit above the deck
   sp.vel.set(0,0,0);
-  SHIP_WALK.active=false;
-  if(boardFlight)boardFlight.visible=true;
+  SHIP_WALK.active=false;SHIP_WALK.climb=null;
+  if(boardFlight){boardFlight.visible=true;try{boardFlight.position.copy(sp.pos);}catch(e){}}
+  // Back on the board for flight.
+  if(SHIP_WALK.charOn&&boardFlight){try{remountSkyboard(boardFlight);}catch(e){console.warn('[ShipWalk] remount:',e);}}
+  SHIP_WALK.charOn=false;
   $('ship-liftoff-btn').style.display='none';
   $('ship-jump-btn').style.display='none';
   toast('🚀 Lifting off the Bird Temple',2000);
@@ -6880,107 +7105,121 @@ function exitShipWalk(){
 function updateShipWalk(dt){
   const bt=BIRD_TEMPLE;
   if(!bt.group){exitShipWalk();return;}
-  // Look (LEFT stick — same as flight's LOOK/AIM) and move (RIGHT stick —
-  // same as flight's THRUST), matching this game's established mapping
-  // rather than the opposite of what players are already used to.
-  SHIP_WALK.yaw-=JOY.Lx*dt*1.6;
-  SHIP_WALK.pitch=THREE.MathUtils.clamp(SHIP_WALK.pitch-JOY.Ly*dt*1.2,-1.1,1.1);
-  const WALK_SPEED=1.1, STEP_MAX=0.3, JUMP_VEL=2.4, GRAVITY=6.0;
-  const fx=Math.sin(SHIP_WALK.yaw),fz=Math.cos(SHIP_WALK.yaw);
-  const rx=Math.cos(SHIP_WALK.yaw),rz=-Math.sin(SHIP_WALK.yaw);
-  const moveX=(fx*-JOY.Ry+rx*JOY.Rx)*WALK_SPEED*dt;
-  const moveZ=(fz*-JOY.Ry+rz*JOY.Rx)*WALK_SPEED*dt;
+  dt=Math.min(dt,0.1);
+  // LEFT stick looks (turns the follow camera), RIGHT stick / WASD walks
+  // relative to where the camera faces — push up = forward, the same
+  // mapping as flight and the planet-surface walk.
+  SHIP_WALK.yaw-=JOY.Lx*dt*1.8;
+  SHIP_WALK.pitch=THREE.MathUtils.clamp(SHIP_WALK.pitch-JOY.Ly*dt*1.2,-0.6,0.9);
+  const WALK_SPEED=0.55, STEP_MAX=0.3, CLIMB_MAX=0.8, JUMP_VEL=1.9, GRAVITY=6.0;
+  let mf=-JOY.Ry, ms=JOY.Rx;
+  if(typeof KEYS!=='undefined'&&KEYS){if(KEYS.KeyW)mf+=1;if(KEYS.KeyS)mf-=1;if(KEYS.KeyD)ms+=1;if(KEYS.KeyA)ms-=1;}
+  const mag=Math.min(1,Math.hypot(mf,ms));
+  // World-space wish direction from the camera's world heading.
+  const shipYaw=bt.group.rotation.y, camYawW=SHIP_WALK.yaw+shipYaw;
+  const fx=-Math.sin(camYawW),fz=-Math.cos(camYawW);
+  const rx=Math.cos(camYawW),rz=-Math.sin(camYawW);
+  const wx=(fx*mf+rx*ms), wz=(fz*mf+rz*ms), wl=Math.hypot(wx,wz)||1;
+  const worldDir={x:wx/wl, z:wz/wl};
+  const running=mag>0.85;
+  const speed=WALK_SPEED*(running?1.8:1)*mag;
+  const moving=mag>0.12&&!SHIP_WALK.climb;
 
-  // Jump — works alongside movement in the same frame, per request ('if
-  // they're moving and press that button simultaneously, they'll walk or
-  // run and jump at the same time').
-  if(SHIP_WALK._jumpQueued&&SHIP_WALK.grounded){
-    SHIP_WALK.velY=JUMP_VEL;
-    SHIP_WALK.grounded=false;
-  }
+  if(SHIP_WALK._jumpQueued&&SHIP_WALK.grounded&&!SHIP_WALK.climb){SHIP_WALK.velY=JUMP_VEL;SHIP_WALK.grounded=false;}
   SHIP_WALK._jumpQueued=false;
 
-  // Eye height 0.4 (a ~6 ft person at the temple's scale, where the 37 ft
-  // skyboard ornament is 2.8 units). Steps up to STEP_MAX (the altar's
-  // tiers and the maze rims) are climbed like stairs; walls slide you along.
-  const EYE=0.4;
-  const curWorld=bt.group.localToWorld(SHIP_WALK.localPos.clone());
-  const feetY=curWorld.y-EYE;
-  const wantW=bt.group.localToWorld(new THREE.Vector3(SHIP_WALK.localPos.x+moveX,SHIP_WALK.localPos.y,SHIP_WALK.localPos.z+moveZ));
-  const mv=_shipWallSlide(curWorld,{x:wantW.x-curWorld.x,z:wantW.z-curWorld.z},feetY,STEP_MAX);
-  if(SHIP_WALK.grounded){
-    const tx=curWorld.x+mv.x, tz=curWorld.z+mv.z;
-    const groundY=_shipGroundHeight(tx,tz,feetY+STEP_MAX+0.02);
-    if(groundY!==null){
-      if(groundY-feetY<=STEP_MAX){
-        // stairs up, or down a step: feet go straight onto the surface
-        SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(tx,groundY+EYE,tz)));
+  const feet=bt.group.localToWorld(SHIP_WALK.localPos.clone());
+  // ── Climb in progress: up the ledge, then onto it (her climb clip).
+  if(SHIP_WALK.climb){
+    const c=SHIP_WALK.climb;c.t+=dt;
+    const k=Math.min(1,c.t/c.dur), up=Math.min(1,k/0.7), fw=Math.max(0,(k-0.55)/0.45);
+    const p=new THREE.Vector3(c.from.x+(c.to.x-c.from.x)*fw, c.from.y+(c.to.y-c.from.y)*up, c.from.z+(c.to.z-c.from.z)*fw);
+    SHIP_WALK.localPos.copy(bt.group.worldToLocal(p));
+    if(k>=1){SHIP_WALK.climb=null;SHIP_WALK.grounded=true;SHIP_WALK.velY=0;}
+  } else {
+    let mv={x:worldDir.x*speed*dt, z:worldDir.z*speed*dt};
+    if(moving){
+      // A ledge too tall to step but low enough to pull up onto → climb it.
+      if(SHIP_WALK.grounded){
+        const ax=feet.x+worldDir.x*0.16, az=feet.z+worldDir.z*0.16;
+        const gy=_shipGroundHeight(ax,az,feet.y+CLIMB_MAX+0.02);
+        if(gy!==null&&gy-feet.y>STEP_MAX&&gy-feet.y<=CLIMB_MAX){
+          const head=_shipGroundHeight(ax,az,gy+SHIP_CHAR_H+0.05);   // room to stand up there?
+          if(head!==null&&Math.abs(head-gy)<0.02){
+            SHIP_WALK.climb={t:0,dur:1.1,from:feet.clone(),to:new THREE.Vector3(ax,gy,az)};
+            try{setCharState('climbLoop',{fade:0.15,force:true});}catch(e){}
+          }
+        }
       }
-    }else{
-      // nothing below within reach: step off and fall
-      SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(tx,curWorld.y,tz)));
-      SHIP_WALK.grounded=false;
+      if(!SHIP_WALK.climb)mv=_shipWallSlide(feet.clone().setY(feet.y+SHIP_EYE),mv,feet.y,STEP_MAX);
+      SHIP_WALK.faceYaw=Math.atan2(worldDir.x,worldDir.z);
+    } else mv={x:0,z:0};
+    if(!SHIP_WALK.climb){
+      if(SHIP_WALK.grounded){
+        const tx=feet.x+mv.x, tz=feet.z+mv.z;
+        const gy=_shipGroundHeight(tx,tz,feet.y+STEP_MAX+0.02);
+        if(gy!==null){ if(gy-feet.y<=STEP_MAX)SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(tx,gy,tz))); }
+        else{SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(tx,feet.y,tz)));SHIP_WALK.grounded=false;}
+      }else{
+        SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(feet.x+mv.x,feet.y,feet.z+mv.z)));
+      }
+      // Gravity / landing on the nearest surface under her knees.
+      SHIP_WALK.velY-=GRAVITY*dt;
+      const pre=bt.group.localToWorld(SHIP_WALK.localPos.clone());
+      const newFeet=pre.y+SHIP_WALK.velY*dt;
+      const gh=_shipGroundHeight(pre.x,pre.z,Math.max(newFeet,pre.y)+STEP_MAX*0.5);
+      if(gh!==null&&newFeet<=gh+0.002){
+        SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(pre.x,gh,pre.z)));
+        SHIP_WALK.velY=0;SHIP_WALK.grounded=true;bt._lastDeckY=gh;
+      }else{
+        SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(pre.x,newFeet,pre.z)));
+        SHIP_WALK.grounded=false;
+        if(gh===null&&newFeet<(bt._lastDeckY??newFeet)-8){   // fell off the hull: back to the deck
+          const back=bt.group.localToWorld(new THREE.Vector3(0,0,0));const gy=_shipGroundHeight(back.x,back.z,back.y,true);
+          if(gy!==null){SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(back.x,gy,back.z)));SHIP_WALK.velY=0;}
+        }
+      }
     }
-  } else {
-    SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(curWorld.x+mv.x,curWorld.y,curWorld.z+mv.z)));
   }
 
-  // Gravity / landing — feet land on the nearest surface below the knees.
-  SHIP_WALK.velY-=GRAVITY*dt;
-  const pre=bt.group.localToWorld(SHIP_WALK.localPos.clone());
-  const preFeet=pre.y-EYE, newFeet=preFeet+SHIP_WALK.velY*dt;
-  const groundHere=_shipGroundHeight(pre.x,pre.z,Math.max(newFeet,preFeet)+STEP_MAX*0.5);
-  if(groundHere!==null&&newFeet<=groundHere+0.002){
-    SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(pre.x,groundHere+EYE,pre.z)));
-    SHIP_WALK.velY=0;SHIP_WALK.grounded=true;
-  } else {
-    SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(pre.x,newFeet+EYE,pre.z)));
-    SHIP_WALK.grounded=false;
-    // fell far below the hull: put them back on the deck
-    if(groundHere===null&&newFeet<(bt._lastDeckY??newFeet)-8){
-      const back=bt.group.localToWorld(new THREE.Vector3(0,0,0));const gy=_shipGroundHeight(back.x,back.z,back.y,true);
-      if(gy!==null){SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(back.x,gy+EYE,back.z)));SHIP_WALK.velY=0;}
-    }
+  const F=bt.group.localToWorld(SHIP_WALK.localPos.clone());
+  // ── Her: on her feet, facing where she walks, animated.
+  if(SHIP_WALK.charOn&&CHAR.root){
+    CHAR.root.position.set(F.x,F.y+(CHAR.feetOffset||0)*(CHAR._shipScale||1),F.z);
+    let d=SHIP_WALK.faceYaw-CHAR.root.rotation.y;d=Math.atan2(Math.sin(d),Math.cos(d));
+    CHAR.root.rotation.set(0,CHAR.root.rotation.y+d*Math.min(1,dt*10),0);
+    try{updateCharacterLocomotion(dt,moving&&SHIP_WALK.grounded,running,1,!SHIP_WALK.grounded&&!SHIP_WALK.climb,!!SHIP_WALK.climb,{});}catch(e){}
   }
-  if(SHIP_WALK.grounded)bt._lastDeckY=bt.group.localToWorld(SHIP_WALK.localPos.clone()).y-EYE;
-
-  const camWorld=bt.group.localToWorld(SHIP_WALK.localPos.clone());
-  flightCamera.position.copy(camWorld);
-  flightCamera.rotation.set(SHIP_WALK.pitch,SHIP_WALK.yaw,0,'YXZ');
-  // Hovering companion skyboard — trails beside & slightly behind the
-  // player, same offset/hover-height pattern as the planet-terrain walk's
-  // board, just raycasting the ship's mesh for ground height instead of
-  // the procedural height function.
-  // Real bug found on review: this offset (offR/offB) was sized before
-  // the ship's scale got recalibrated down to ~0.11 a few passes back (a
-  // ~3.7x reduction) — the ship's actual deck width is only ~7 world
-  // units now, so a 2.6-unit sideways offset could easily push the
-  // companion board clean off the edge of a narrow deck, landing it
-  // somewhere with no ground underneath (hence not visibly hovering
-  // nearby). Shrunk to match the ship's real current size.
+  // ── Follow camera: behind her along the look direction, pulled in if
+  // the temple is in the way.
+  const head=new THREE.Vector3(F.x,F.y+SHIP_CHAR_H*0.85,F.z);
+  const dist=SHIP_WALK.charOn?1.45:0.001, lift=SHIP_WALK.charOn?0.35:0;
+  const back=new THREE.Vector3(Math.sin(camYawW)*Math.cos(SHIP_WALK.pitch),Math.sin(SHIP_WALK.pitch)+lift,Math.cos(camYawW)*Math.cos(SHIP_WALK.pitch)).normalize();
+  let camD=dist;
+  if(SHIP_WALK.charOn){
+    _shipWalkRay.set(head,back);_shipWalkRay.far=dist;
+    const hit=_shipWalkRay.intersectObjects(_shipWalkMeshes(),false)[0];
+    if(hit)camD=Math.max(0.25,hit.distance-0.08);
+  }
+  const camPos=SHIP_WALK.charOn?head.clone().addScaledVector(back,camD):new THREE.Vector3(F.x,F.y+SHIP_EYE,F.z);
+  flightCamera.position.copy(camPos);
+  if(SHIP_WALK.charOn)flightCamera.lookAt(head);
+  else flightCamera.rotation.set(SHIP_WALK.pitch,camYawW,0,'YXZ');
+  // ── The board waits beside her: ~5 ft to her right at waist height,
+  // pointing the way she faces (she stands at its left side).
   if(boardFlight){
-    const bRx=Math.cos(SHIP_WALK.yaw),bRz=-Math.sin(SHIP_WALK.yaw);
-    const bFx=-Math.sin(SHIP_WALK.yaw),bFz=-Math.cos(SHIP_WALK.yaw);
-    // Beside her at waist height, about 5 ft to her right — she stands at
-    // the board's left side facing its nose (at this scale 1 unit ≈ 13 ft,
-    // so 5 ft ≈ 0.38 and a 6 ft rider's waist ≈ 0.23). It used to hover
-    // 0.6 up — above her head — and read as geometry pressing down on you.
-    const offR=0.38,offB=0.0;
-    const btx=camWorld.x+bRx*offR-bFx*offB;
-    const btz=camWorld.z+bRz*offR-bFz*offB;
-    const boardGroundY=_shipGroundHeight(btx,btz,camWorld.y);   // from eye height down
-    const hoverY=(boardGroundY!==null?boardGroundY:camWorld.y-0.4)+0.23+Math.sin(bt.t*1.6)*0.01;
-    if(bt.t>(bt._lastBoardLog||0)+1.0){
-      bt._lastBoardLog=bt.t;
-      console.log('[ShipWalk board] visible:',boardFlight.visible,'| target xz:',btx.toFixed(2),btz.toFixed(2),
-        '| groundY:',boardGroundY,'| hoverY:',hoverY.toFixed(2),'| current pos:',
-        boardFlight.position.x.toFixed(2),boardFlight.position.y.toFixed(2),boardFlight.position.z.toFixed(2));
-    }
-    boardFlight.position.x+=(btx-boardFlight.position.x)*Math.min(1,dt*4);
-    boardFlight.position.z+=(btz-boardFlight.position.z)*Math.min(1,dt*4);
+    const fy=SHIP_WALK.faceYaw;                       // her facing (world)
+    const bRx=-Math.cos(fy),bRz=Math.sin(fy);         // her right
+    const btx=F.x+bRx*0.38, btz=F.z+bRz*0.38;
+    const boardGroundY=_shipGroundHeight(btx,btz,F.y+SHIP_EYE);
+    const hoverY=Math.max(boardGroundY!==null?boardGroundY:F.y,F.y)+0.23+Math.sin(bt.t*1.6)*0.01;
+    const k=Math.min(1,dt*4);
+    boardFlight.position.x+=(btx-boardFlight.position.x)*k;
+    boardFlight.position.z+=(btz-boardFlight.position.z)*k;
     boardFlight.position.y+=(hoverY-boardFlight.position.y)*Math.min(1,dt*5);
     boardFlight.rotation.order='YXZ';
-    boardFlight.rotation.y+=((SHIP_WALK.yaw-Math.PI/2)-boardFlight.rotation.y)*Math.min(1,dt*4);
+    let dy=(fy-Math.PI/2+Math.PI)-boardFlight.rotation.y;dy=Math.atan2(Math.sin(dy),Math.cos(dy));
+    boardFlight.rotation.y+=dy*Math.min(1,dt*4);
     boardFlight.rotation.x=0;
     boardFlight.rotation.z=Math.sin(bt.t*1.2)*0.04;
   }
@@ -8715,6 +8954,7 @@ function updateAssistButtons(){
 }
 
 function updateFlight(dt){
+  try{if(window.jotsUpdateGhosts)jotsUpdateGhosts(dt);}catch(e){}
   // Bounding-sphere collision against celestial bodies, checked once per
   // frame before any movement this frame is applied. This is a real gap
   // found on review — flying through a planet had zero physical
@@ -11016,6 +11256,7 @@ const CREDITS=[
  {t:'Size It Up — Space',a:'sizeitup.games',l:'Reference only',use:'data',u:['https://sizeitup.games/space'],w:'Scale reference for the Sun and planets.'},
  {sec:'Libraries'},
  {t:'three.js (r185, WebGPU + TSL)',a:'three.js authors (mrdoob & contributors)',l:'MIT',use:'library',u:['https://threejs.org/','https://github.com/mrdoob/three.js'],w:'Rendering engine.'},
+ {t:'MQTT.js',a:'MQTT.js contributors',l:'MIT',use:'library',u:['https://github.com/mqttjs/MQTT.js'],w:'Multiplayer transport over MQTT (loaded only in multiplayer).'},
  {t:'eruda',a:'liriliri',l:'MIT',use:'library',u:['https://github.com/liriliri/eruda'],w:'On-device debug console (only with ?debug).'},
  {sec:'Fonts'},
  {t:'Orbitron',a:'Matt McInerney',l:'SIL Open Font License 1.1',use:'font',u:['https://fonts.google.com/specimen/Orbitron']},
@@ -11024,6 +11265,8 @@ const CREDITS=[
  {sec:'Project assets'},
  {t:'3D models, characters, skyboards, Bird Temple & artwork',a:'DART Meadow (dartsolarpunk)',l:'DART Meadow original work',use:'original',
   u:['https://dartmeadow.com/'],w:'All 3D assets are the project’s own, many based on its original artwork.'},
+ {t:'LEATR Session Cube (live feed)',a:'DART Meadow — same author as dartmeadow.com and cube.leatr.xyz',l:'DART Meadow original work',use:'original',
+  u:['https://cube.leatr.xyz','https://dartmeadow.com/'],w:'The live Session Cubes drifting above the Bird Temple, ported from dartmeadow.com’s live cube.'},
  {t:'Music',a:'DART Meadow — generated with Google Gemini under the project’s account',l:'DART Meadow original work',use:'original',
   u:['https://gemini.google.com/'],w:'The in-game soundtrack.'},
  {t:'Splash / menu video',a:'DART Meadow — generated with Grok (xAI) under the project’s account',l:'DART Meadow original work',use:'original',
@@ -11033,6 +11276,8 @@ const CREDITS=[
  {t:'Blender',a:'Blender Foundation',l:'GPL (tool; output unrestricted)',use:'tool',u:['https://www.blender.org/'],w:'Modelling and the Fields Galaxy template.'},
  {t:'Firebase Authentication',a:'Google',l:'Service terms',use:'service',u:['https://firebase.google.com/'],w:'Sign-in.'},
  {t:'Stripe',a:'Stripe, Inc.',l:'Service terms',use:'service',u:['https://stripe.com/'],w:'Support payments.'},
+ {t:'EMQX public MQTT broker',a:'EMQ Technologies',l:'Service terms (public test broker)',use:'service',u:['https://www.emqx.com/en/mqtt/public-mqtt5-broker'],w:'Multiplayer messages until the LEATR jots-relay is hosted.'},
+ {t:'GitHub',a:'GitHub, Inc.',l:'Service terms',use:'service',u:['https://github.com/'],w:'Sign-in (device flow) and each player’s private jots- save repository.'},
  {t:'jsDelivr · Google Fonts · AllOrigins',a:'jsDelivr, Google, AllOrigins',l:'Service terms',use:'service',
   u:['https://www.jsdelivr.com/','https://fonts.google.com/','https://allorigins.win/'],w:'Serving libraries, fonts and the coastline data.'},
 ];
@@ -18541,5 +18786,318 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
     <button onclick="closeAbout()" style="margin-top:0.8rem;padding:0.55rem 2rem;background:transparent;border:1px solid rgba(91,127,255,0.2);border-radius:2px;color:var(--text-dim);font-family:var(--font-hud);font-size:0.58rem;letter-spacing:0.15em;cursor:pointer;">CLOSE</button>
   </div>
 </div>
+<!-- ══════════════════════════════════════════════════════════════════
+     JOTS LINK — welcome & privacy, sign-in (GitHub or guest), game mode
+     (story or multiplayer), multiplayer HUD. Transport/auth/vault logic
+     lives in jots/jots-link.js; this block is the game's side of it.
+     ══════════════════════════════════════════════════════════════════ -->
+<style>
+.jots-ov{position:fixed;inset:0;z-index:9900;display:none;align-items:center;justify-content:center;background:rgba(2,6,16,.78);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
+.jots-ov.show{display:flex}
+.jots-box{width:min(460px,92vw);max-height:88vh;overflow-y:auto;background:rgba(6,12,28,.92);border:1px solid rgba(91,127,255,.28);border-radius:6px;padding:1.5rem 1.4rem;box-shadow:0 0 40px -10px rgba(91,127,255,.35);color:var(--text,#dfe8ff)}
+.jots-title{font-family:var(--font-hud);font-size:.9rem;font-weight:900;letter-spacing:.2em;color:var(--cyan,#5b7fff);text-align:center;margin-bottom:.2rem}
+.jots-sub{font-family:var(--font-mono);font-size:.55rem;letter-spacing:.2em;color:var(--text-dim,#8a97b8);text-align:center;margin-bottom:1rem}
+.jots-p{font-size:.72rem;line-height:1.65;margin:.5rem 0}
+.jots-p a{color:var(--cyan,#5b7fff)}
+.jots-btn{display:block;width:100%;margin:.5rem 0;padding:.7rem 1rem;border-radius:3px;border:1px solid rgba(91,127,255,.4);background:rgba(91,127,255,.08);color:#eaf0ff;font-family:var(--font-hud);font-size:.62rem;letter-spacing:.16em;cursor:pointer}
+.jots-btn.primary{background:rgba(91,127,255,.22);border-color:rgba(120,150,255,.8)}
+.jots-btn:disabled{opacity:.4;cursor:not-allowed}
+.jots-chk{display:flex;gap:.6rem;align-items:flex-start;font-size:.68rem;line-height:1.5;margin:.8rem 0;cursor:pointer}
+.jots-chk input{margin-top:.15rem;accent-color:#5b7fff;width:16px;height:16px;flex-shrink:0}
+.jots-code{font-family:var(--font-mono);font-size:1.5rem;letter-spacing:.3em;text-align:center;color:#fff;background:rgba(91,127,255,.12);border:1px dashed rgba(91,127,255,.5);border-radius:4px;padding:.6rem;margin:.6rem 0;user-select:all}
+.jots-note{font-size:.6rem;color:var(--text-dim,#8a97b8);text-align:center;margin-top:.6rem;line-height:1.5}
+.jots-mode{display:grid;grid-template-columns:1fr 1fr;gap:.7rem;margin-top:.6rem}
+.jots-mode button{padding:1rem .7rem;border-radius:4px;border:1px solid rgba(91,127,255,.35);background:rgba(91,127,255,.07);color:#eaf0ff;cursor:pointer;text-align:left}
+.jots-mode b{display:block;font-family:var(--font-hud);font-size:.66rem;letter-spacing:.16em;margin-bottom:.35rem;color:var(--cyan,#5b7fff)}
+.jots-mode span{font-size:.62rem;line-height:1.5;color:var(--text-dim,#8a97b8)}
+#jots-mp-hud{position:absolute;top:calc(56px + env(safe-area-inset-top,0px));left:50%;transform:translateX(-50%);z-index:32;display:none;gap:.4rem;align-items:center;pointer-events:auto}
+#jots-mp-chip{font-family:var(--font-hud);font-size:.55rem;letter-spacing:.14em;padding:.35rem .7rem;border-radius:12px;border:1px solid rgba(57,255,156,.5);background:rgba(4,20,14,.6);color:#bfffe0;cursor:pointer;white-space:nowrap}
+#jots-chat{position:absolute;right:12px;top:calc(96px + env(safe-area-inset-top,0px));width:min(300px,70vw);z-index:32;display:none;flex-direction:column;gap:.3rem;pointer-events:auto}
+#jots-chat-log{max-height:34vh;overflow-y:auto;font-size:.62rem;line-height:1.45;background:rgba(4,10,22,.55);border:1px solid rgba(91,127,255,.22);border-radius:4px;padding:.4rem .5rem}
+#jots-chat-log div b{color:var(--cyan,#5b7fff);font-weight:600}
+#jots-chat-log div.me b{color:#39ff9c}
+#jots-chat input{width:100%;box-sizing:border-box;padding:.45rem .5rem;border-radius:3px;border:1px solid rgba(91,127,255,.35);background:rgba(4,10,22,.8);color:#fff;font-size:.66rem}
+</style>
+
+<div id="jots-welcome" class="jots-ov" role="dialog" aria-modal="true" aria-labelledby="jots-welcome-title">
+  <div class="jots-box">
+    <div class="jots-title" id="jots-welcome-title">WELCOME TO DART MEADOW</div>
+    <div class="jots-sub">JOURNEY OF THE SKYBOARD</div>
+    <div id="jots-welcome-main">
+      <p class="jots-p">Play as a <b>guest</b>, or <b>sign in with GitHub</b> to get your own private <code>jots-&lt;you&gt;</code> repository that keeps your saves and loads them for you on any device.</p>
+      <p class="jots-p">Either way you can play <b>Story</b> on your own or join <b>Multiplayer</b>, one shared world with everyone online. In multiplayer, other players see your pilot name, your board and where you fly, and read what you type in chat.</p>
+      <p class="jots-p">To keep the LEATR network and its Session Cubes alive, the game sends <b>anonymous gameplay events</b> (landings, travel, discoveries), never your name, account, chat or location. Details: <a href="privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</p>
+      <label class="jots-chk"><input type="checkbox" id="jots-agree"> <span>I have read and agree to the <a href="privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</span></label>
+      <button class="jots-btn primary" id="jots-gh-btn" disabled>⌥ SIGN IN WITH GITHUB</button>
+      <button class="jots-btn" id="jots-guest-btn" disabled>▶ CONTINUE AS GUEST</button>
+      <div class="jots-note">Guests keep saves on this device (plus Save / Export / Import). You can sign in later from the menu.</div>
+    </div>
+    <div id="jots-welcome-device" style="display:none">
+      <p class="jots-p" style="text-align:center">On GitHub, enter this code:</p>
+      <div class="jots-code" id="jots-code">— — — —</div>
+      <button class="jots-btn primary" id="jots-open-gh">OPEN GITHUB.COM/LOGIN/DEVICE ↗</button>
+      <div class="jots-note" id="jots-device-status">Waiting for you to approve…</div>
+      <button class="jots-btn" id="jots-device-cancel">CANCEL · PLAY AS GUEST</button>
+    </div>
+  </div>
+</div>
+
+<div id="jots-mode" class="jots-ov" role="dialog" aria-modal="true">
+  <div class="jots-box">
+    <div class="jots-title">CHOOSE YOUR JOURNEY</div>
+    <div class="jots-sub" id="jots-mode-who">GUEST</div>
+    <div class="jots-mode">
+      <button id="jots-mode-story"><b>STORY</b><span>Just you. Progress along the story; saves as you go.</span></button>
+      <button id="jots-mode-mp"><b>MULTIPLAYER</b><span>Free flight in one shared world with everyone online.</span></button>
+    </div>
+    <button class="jots-btn" onclick="document.getElementById('jots-mode').classList.remove('show')" style="margin-top:.8rem">BACK</button>
+  </div>
+</div>
+
+<div id="jots-mp-hud"><div id="jots-mp-chip" title="Players & chat">🌐 CONNECTING…</div></div>
+<div id="jots-chat"><div id="jots-chat-log"></div><input id="jots-chat-in" maxlength="200" placeholder="Say something to everyone online…" autocomplete="off"></div>
+
+<script>
+(function(){
+  'use strict';
+  const $j=id=>document.getElementById(id);
+  const J=()=>window.JOTS;
+  function whenJots(fn){ if(window.JOTS) fn(); else setTimeout(()=>whenJots(fn),150); }
+
+  // ── Welcome & privacy (first visit, or until agreed) ──────────────
+  function showWelcome(){ $j('jots-welcome').classList.add('show'); $j('jots-welcome-main').style.display=''; $j('jots-welcome-device').style.display='none'; }
+  function hideWelcome(){ $j('jots-welcome').classList.remove('show'); }
+  window.jotsShowWelcome=showWelcome;
+  $j('jots-agree').addEventListener('change',e=>{ $j('jots-gh-btn').disabled=$j('jots-guest-btn').disabled=!e.target.checked; });
+  $j('jots-guest-btn').onclick=()=>{ J().consent.agree(); J().auth.guest(); hideWelcome(); toast('▶ Playing as '+J().identity.name,2400); };
+  let _deviceAbort=false;
+  async function githubSignIn(){
+    J().consent.agree();
+    $j('jots-welcome').classList.add('show');
+    $j('jots-welcome-main').style.display='none'; $j('jots-welcome-device').style.display='';
+    $j('jots-code').textContent='— — — —'; $j('jots-device-status').textContent='Asking GitHub for a code…';
+    _deviceAbort=false;
+    try{
+      const dev=await J().auth.deviceCode();
+      $j('jots-code').textContent=dev.user_code;
+      const url=dev.verification_uri||'https://github.com/login/device';
+      $j('jots-open-gh').onclick=()=>window.open(url,'_blank','noopener');
+      $j('jots-device-status').textContent='Waiting for you to approve on GitHub…';
+      const tok=await J().auth.waitForToken(dev,()=>{ if(_deviceAbort) throw new Error('cancelled'); });
+      if(_deviceAbort) return;
+      $j('jots-device-status').textContent='Signed in — setting up your private repository…';
+      await J().auth.finish(tok);
+      hideWelcome();
+      toast('✓ Signed in as '+J().identity.name+' · saves sync to '+J().vault.repo,3200);
+    }catch(e){
+      if(_deviceAbort) return;
+      $j('jots-device-status').textContent='Sign-in didn’t finish ('+(e.message||e)+'). You can try again or play as a guest.';
+    }
+  }
+  window.jotsGithubSignIn=githubSignIn;
+  $j('jots-gh-btn').onclick=githubSignIn;
+  $j('jots-device-cancel').onclick=()=>{ _deviceAbort=true; J().consent.agree(); J().auth.guest(); hideWelcome(); };
+
+  // Account chip + modal: GitHub replaces the old Google/Apple buttons.
+  function refreshChip(){
+    const chip=$j('account-chip'); if(!chip||!window.JOTS) return;
+    const id=J().identity;
+    chip.innerHTML='';
+    if(J().auth.signedIn){
+      if(id.avatar){const im=document.createElement('img');im.src=id.avatar;im.alt='';chip.appendChild(im);}
+      const s=document.createElement('span');s.textContent=id.name;chip.appendChild(s);
+    }else chip.textContent='🔑 SIGN IN · '+id.name;
+    const so=$j('acct-signed-out'),si=$j('acct-signed-in');
+    if(so&&si){so.style.display=J().auth.signedIn?'none':'block';si.style.display=J().auth.signedIn?'block':'none';}
+    if($j('acct-name'))$j('acct-name').textContent=id.name;
+    if($j('acct-email'))$j('acct-email').textContent=J().auth.signedIn?('Saves: github.com/'+id.name+'/'+J().vault.repo+' (private)'):'';
+    const av=$j('acct-avatar'); if(av){ if(J().auth.signedIn&&id.avatar){av.src=id.avatar;av.style.display='inline-block';} else av.style.display='none'; }
+  }
+  window.addEventListener('jots:auth',refreshChip);
+  window.addEventListener('jots:vault',refreshChip);
+  function patchAccountModal(){
+    const g=$j('acct-google-btn'),a=$j('acct-apple-btn');
+    if(g)g.style.display='none'; if(a)a.style.display='none';
+    const so=$j('acct-signed-out');
+    if(so&&!$j('acct-gh-btn')){
+      const b=document.createElement('button');b.className='acct-provider-btn';b.id='acct-gh-btn';b.textContent='⌥ Sign in with GitHub';
+      b.onclick=()=>{ if(typeof closeAccountModal==='function')closeAccountModal(); githubSignIn(); };
+      so.insertBefore(b,$j('acct-status'));
+      const note=so.querySelector('.acct-guest-note');
+      if(note)note.textContent='You can always play as a guest. Signing in with GitHub gives you a private jots-<you> repository that keeps your saves and loads them anywhere.';
+    }
+  }
+  window.signOutOfAccount=function(){ try{J().auth.signOut();}catch(e){} refreshChip(); if(typeof closeAccountModal==='function')closeAccountModal(); toast('Signed out · playing as '+J().identity.name,2400); };
+
+  // ── Mode choice: STORY or MULTIPLAYER ─────────────────────────────
+  function chooseMode(then){
+    $j('jots-mode-who').textContent=(J().auth.signedIn?'SIGNED IN · ':'GUEST · ')+J().identity.name;
+    $j('jots-mode').classList.add('show');
+    $j('jots-mode-story').onclick=()=>{ $j('jots-mode').classList.remove('show'); J().mode='story'; J().mp.stop(); J().analytics.track('mode','story'); then(); };
+    $j('jots-mode-mp').onclick=()=>{ $j('jots-mode').classList.remove('show'); J().mode='multiplayer'; then(); J().mp.start(); };
+  }
+
+  // ── Wrap the game's entry points (after the main script defined them)
+  function wrap(name,before,after){
+    const o=window[name]; if(typeof o!=='function'||o.__jots) return;
+    const w=function(){ try{ if(before&&before.apply(this,arguments)===false) return; }catch(e){} const r=o.apply(this,arguments); try{ after&&after.apply(this,arguments); }catch(e){} return r; };
+    w.__jots=true; window[name]=w;
+  }
+  whenJots(()=>{
+    patchAccountModal(); refreshChip();
+    // First visit: welcome + privacy as soon as the menu appears.
+    const maybeWelcome=()=>{ if(!J().consent.get()&&typeof STATE!=='undefined'&&STATE.screen==='menu'&&document.getElementById('screen-menu').classList.contains('active')) showWelcome(); };
+    wrap('goScreen',null,(name)=>{ if(name!=='flight'&&name!=='builder') setTimeout(maybeWelcome,200); });
+    setTimeout(maybeWelcome,500);
+    const _start=window.startGame;
+    if(typeof _start==='function'){
+      window.startGame=function(){
+        if(!J().consent.get()){ showWelcome(); return; }
+        chooseMode(()=>_start.apply(this,arguments));
+      };
+    }
+    const T=(l,d)=>{try{J().analytics.track(l,d);}catch(e){}};
+    wrap('launchFlight',()=>T('launch',J().mode));
+    wrap('fastTravelToSystem',(sys,g)=>T('travel_system',g||''));
+    wrap('fastTravelToGalaxy',(g)=>T('travel_galaxy',g||''));
+    wrap('enterSurface',(body)=>T('land',body&&body.name||''));
+    wrap('exitSurface',()=>T('liftoff','surface'));
+    wrap('travelToBlackHole',(e)=>T('blackhole_visit',e&&e.b&&e.b.kind||''));
+    wrap('_saveDiscovery',(d)=>T('discovery',d&&d.type||''));
+    wrap('enterShipWalk',()=>T('temple_walk'));
+    wrap('exitShipWalk',()=>T('liftoff','temple'));
+    // Signed-in players: every save also goes to their private repository.
+    wrap('saveToSlot',null,(idx,name)=>{ if(J().vault.ready){ const d=buildSaveData(idx); d.slotName=name||d.slotName; J().vault.save(d,'slot-'+(idx+1)).catch(()=>{}); } });
+    wrap('returnToMenu',null,()=>vaultAutosave());
+  });
+
+  // ── Vault: load the newest save on sign-in; autosave while playing ─
+  function localAutosave(){ try{ const t=localStorage.getItem('dm_autosave'); return t?JSON.parse(t):null; }catch(e){ return null; } }
+  window.addEventListener('jots:vault',async ()=>{
+    try{
+      const remote=await J().vault.load('autosave');
+      const local=localAutosave();
+      if(remote&&(!local||remote.ts>(local.ts||0))&&typeof loadSaveData==='function'&&loadSaveData(remote)){
+        try{ localStorage.setItem('dm_autosave',JSON.stringify(remote)); }catch(e){}
+        try{ if(typeof syncSlidersToBoardConfig==='function')syncSlidersToBoardConfig(); }catch(e){}
+        toast('☁ Loaded your latest save from '+J().vault.repo,3000);
+      }
+    }catch(e){ console.warn('[JOTS] vault load:',e); }
+  });
+  let _vaultBusy=false;
+  async function vaultAutosave(){
+    if(!window.JOTS||!J().vault.ready||_vaultBusy||typeof buildSaveData!=='function') return;
+    _vaultBusy=true;
+    try{ await J().vault.save(buildSaveData('auto'),'autosave'); }catch(e){ console.warn('[JOTS] vault save:',e); }
+    _vaultBusy=false;
+  }
+  setInterval(()=>{ if(window.JOTS&&J().vault.ready&&typeof STATE!=='undefined'&&STATE.screen==='flight'&&!document.hidden) vaultAutosave(); },120000);
+  document.addEventListener('visibilitychange',()=>{ if(document.hidden) vaultAutosave(); });
+
+  // ── Multiplayer: what we send, and everyone else's ships ──────────
+  function boardColor(){
+    try{ const c=STATE.boardConfig; return (c.colors&&(c.colors.primary||c.colors.deck))||c.color||c.accent||'#39ff9c'; }catch(e){ return '#39ff9c'; }
+  }
+  whenJots(()=>{
+    J().mp.getState=function(){
+      if(typeof STATE==='undefined'||STATE.screen!=='flight'||typeof boardFlight==='undefined'||!boardFlight) return null;
+      const walking=typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active;
+      const p=boardFlight.position, q=boardFlight.quaternion;
+      const st={gal:(typeof GALAXY_DB!=='undefined'&&GALAXY_DB.current)||'milkyway',sys:(window._curSystem&&window._curSystem.name)||'Sol',
+        p:[+p.x.toFixed(2),+p.y.toFixed(2),+p.z.toFixed(2)],q:[+q.x.toFixed(4),+q.y.toFixed(4),+q.z.toFixed(4),+q.w.toFixed(4)],c:boardColor(),walk:walking};
+      // One agreed player tells everyone where the Bird Temple is.
+      try{
+        const bt=BIRD_TEMPLE, inSol=st.sys==='Sol'&&st.gal==='milkyway';
+        if(bt&&bt.group&&J().mp.templeAuthority(inSol)==='me'){ const g=bt.group.position; st.bt=[+g.x.toFixed(1),+g.y.toFixed(1),+g.z.toFixed(1),+bt.group.rotation.y.toFixed(3)]; }
+      }catch(e){}
+      return st;
+    };
+  });
+  // Follow the agreed player's Bird Temple (called from updateBirdTemple).
+  window.jotsTempleSync=function(bt,dt){
+    if(!window.JOTS||!J().mp.active||!bt||!bt.group) return;
+    const inSol=((window._curSystem&&window._curSystem.name)||'Sol')==='Sol'&&((typeof GALAXY_DB!=='undefined'&&GALAXY_DB.current)||'milkyway')==='milkyway';
+    const a=J().mp.templeAuthority(inSol);
+    if(!a||a==='me'||!a.bt) return;
+    const k=Math.min(1,dt*1.5), g=bt.group.position;
+    g.x+=(a.bt[0]-g.x)*k; g.y+=(a.bt[1]-g.y)*k; g.z+=(a.bt[2]-g.z)*k;
+    let dy=a.bt[3]-bt.group.rotation.y; dy=Math.atan2(Math.sin(dy),Math.cos(dy)); bt.group.rotation.y+=dy*k;
+  };
+
+  // Ghost ships: a glowing board in the pilot's colour with their name.
+  const ghosts=new Map();
+  function nameSprite(text,color){
+    const cv=document.createElement('canvas');cv.width=256;cv.height=48;const x=cv.getContext('2d');
+    x.font='bold 22px Orbitron,monospace';x.textAlign='center';x.fillStyle='rgba(0,0,0,.45)';x.fillRect(0,6,256,36);
+    x.fillStyle=color;x.fillText(String(text).slice(0,18),128,32);
+    const t=new THREE.CanvasTexture(cv);t.colorSpace=THREE.SRGBColorSpace;
+    const s=new THREE.Sprite(new THREE.SpriteMaterial({map:t,transparent:true,depthTest:false,depthWrite:false}));
+    s.renderOrder=20;return s;
+  }
+  function makeGhost(peer){
+    const g=new THREE.Group();g.name='JOTS_Ghost_'+peer.id;
+    let L=3,W=0.5;
+    try{ const bb=new THREE.Box3().setFromObject(boardFlight),sz=bb.getSize(new THREE.Vector3()); L=Math.max(sz.x,sz.z)||3; W=Math.min(sz.x,sz.z)||L*0.12; }catch(e){}
+    const col=new THREE.Color(peer.c||'#39ff9c');
+    const deck=new THREE.Mesh(new THREE.BoxGeometry(W,L*0.02,L),new THREE.MeshStandardMaterial({color:0x0a1030,emissive:col,emissiveIntensity:0.9,metalness:0.6,roughness:0.3}));
+    const glow=new THREE.Mesh(new THREE.SphereGeometry(L*0.35,12,8),new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:0.12,blending:THREE.AdditiveBlending,depthWrite:false}));
+    const label=nameSprite(peer.n||'Pilot',peer.k==='h'?'#bfffe0':'#cfd9ff');
+    label.position.set(0,L*0.45,0);label.scale.set(L*1.2,L*0.225,1);
+    g.add(deck);g.add(glow);g.add(label);
+    g.userData={deck,glow,label,L};
+    flightScene.add(g);
+    return g;
+  }
+  window.jotsUpdateGhosts=function(dt){
+    if(!window.JOTS||typeof flightScene==='undefined'||!flightScene) return;
+    const mp=J().mp;
+    const gal=(typeof GALAXY_DB!=='undefined'&&GALAXY_DB.current)||'milkyway', sys=(window._curSystem&&window._curSystem.name)||'Sol';
+    const live=new Set();
+    if(mp.active&&typeof STATE!=='undefined'&&STATE.screen==='flight'){
+      for(const p of mp.peers.values()){
+        if(p.gal!==gal||p.sys!==sys||!p.p) continue;
+        live.add(p.id);
+        let g=ghosts.get(p.id);
+        if(!g){ g=makeGhost(p); g.position.set(p.p[0],p.p[1],p.p[2]); ghosts.set(p.id,g); }
+        const k=Math.min(1,dt*6);
+        g.position.x+=(p.p[0]-g.position.x)*k; g.position.y+=(p.p[1]-g.position.y)*k; g.position.z+=(p.p[2]-g.position.z)*k;
+        if(p.q) g.quaternion.slerp(new THREE.Quaternion(p.q[0],p.q[1],p.q[2],p.q[3]),k);
+        g.userData.label.quaternion.copy(g.quaternion).invert();
+      }
+    }
+    for(const [id,g] of ghosts) if(!live.has(id)){ flightScene.remove(g); g.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material){if(o.material.map)o.material.map.dispose();o.material.dispose();}}); ghosts.delete(id); }
+  };
+
+  // HUD: players online + chat.
+  function hudRefresh(){
+    if(!window.JOTS) return;
+    const mp=J().mp, on=mp.active&&typeof STATE!=='undefined'&&STATE.screen==='flight';
+    $j('jots-mp-hud').style.display=on?'flex':'none';
+    if(!on){ $j('jots-chat').style.display='none'; return; }
+    const n=mp.peers.size+1;
+    $j('jots-mp-chip').textContent=mp.status==='online'?('🌐 '+n+' ONLINE · CHAT'):mp.status==='connecting'?'🌐 CONNECTING…':'🌐 '+mp.status.toUpperCase();
+  }
+  setInterval(hudRefresh,1000);
+  window.addEventListener('jots:mpstatus',hudRefresh);
+  window.addEventListener('jots:peers',hudRefresh);
+  $j('jots-mp-chip').onclick=()=>{ const c=$j('jots-chat'); c.style.display=c.style.display==='flex'?'none':'flex'; if(c.style.display==='flex')$j('jots-chat-in').focus(); };
+  window.addEventListener('jots:chat',e=>{
+    const l=e.detail, d=document.createElement('div'); if(l.me)d.className='me';
+    const b=document.createElement('b');b.textContent=l.n+': ';d.appendChild(b);d.appendChild(document.createTextNode(l.text));
+    const log=$j('jots-chat-log');log.appendChild(d);while(log.childNodes.length>60)log.removeChild(log.firstChild);log.scrollTop=log.scrollHeight;
+    if($j('jots-chat').style.display!=='flex'&&!l.me) toast('💬 '+l.n+': '+l.text.slice(0,60),2600);
+  });
+  $j('jots-chat-in').addEventListener('keydown',e=>{
+    e.stopPropagation();                       // typing mustn't fly the board
+    if(e.key==='Enter'){ J().mp.sendChat(e.target.value); e.target.value=''; }
+    if(e.key==='Escape'){ $j('jots-chat').style.display='none'; e.target.blur(); }
+  });
+  $j('jots-chat-in').addEventListener('keyup',e=>e.stopPropagation());
+
+  // Game events also light up the Bird Temple's Session Cubes right away.
+  window.addEventListener('jots:analytics',e=>{ try{ if(typeof _btcLogEvent==='function'){ _btcLogEvent(e.detail); BT_CUBES.walk.flare=1; } }catch(err){} });
+})();
+</script>
+
 </body>
 </html>
