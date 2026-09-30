@@ -699,6 +699,9 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 #qt-panel{position:absolute;left:10px;top:167px;width:min(420px,calc(100vw - 20px));max-height:calc(100% - 180px);overflow-y:auto;background:rgba(0,3,8,0.88);border:1px solid rgba(91,127,255,0.22);border-radius:4px;padding:8px 9px;backdrop-filter:blur(10px);box-shadow:0 0 24px rgba(91,127,255,0.08);display:flex;flex-direction:column;gap:6px;}
 #ar-dest-title{font-family:var(--font-hud);font-size:0.5rem;color:rgba(91,127,255,0.45);letter-spacing:0.2em;text-transform:uppercase;margin-bottom:0.15rem;}
 #qt-canvas{width:100%;height:210px;border-radius:3px;border:1px solid rgba(91,127,255,0.18);background:#000208;touch-action:none;display:block;}
+#qt-tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin:4px 0 6px;}
+#qt-tabs button{font-family:var(--font-hud);font-size:0.46rem;letter-spacing:0.12em;padding:6px 4px;border-radius:3px;border:1px solid rgba(91,127,255,0.2);background:rgba(91,127,255,0.05);color:rgba(150,180,255,0.7);cursor:pointer;}
+#qt-tabs button.active{border-color:var(--cyan);color:#dfe8ff;background:rgba(91,127,255,0.16);box-shadow:0 0 10px rgba(91,127,255,0.25);}
 #qt-hint{font-family:var(--font-mono);font-size:0.44rem;color:rgba(91,127,255,0.4);letter-spacing:0.06em;text-align:center;}
 #dest-scroll{display:grid;grid-template-columns:repeat(2,1fr);gap:0.35rem;max-height:140px;overflow-y:auto;}
 .dest-card{width:auto;padding:0.4rem 0.5rem;background:rgba(91,127,255,0.05);border:1px solid rgba(91,127,255,0.14);border-radius:3px;cursor:pointer;transition:var(--trans);font-family:var(--font-mono);}
@@ -1514,6 +1517,11 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   <div id="ar-bottom" onclick="closeQuickTravel()">
     <div id="qt-panel" onclick="event.stopPropagation()">
       <div id="ar-dest-title">⟶ QUICK TRAVEL · 3D WORLD MAP</div>
+      <div id="qt-tabs">
+        <button data-tab="galaxies" onclick="setQtTab('galaxies')">🌌 GALAXIES</button>
+        <button data-tab="local" class="active" onclick="setQtTab('local')">⭐ LOCAL</button>
+        <button data-tab="discoveries" onclick="setQtTab('discoveries')">✦ DISCOVERIES</button>
+      </div>
       <canvas id="qt-canvas" width="400" height="210"></canvas>
       <div id="qt-hint">DRAG TO ORBIT · TAP MARKER / CARD TO JUMP</div>
       <div id="dest-scroll"></div>
@@ -4055,6 +4063,7 @@ function toggleQuickTravel(e){
   $('qt-toggle-btn').classList.toggle('active',open);
   if(open){
     $('hud-logs-panel').classList.remove('open');$('logs-toggle-btn').classList.remove('active');
+    try{document.querySelectorAll('#qt-tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===qtTab));}catch(err){}
     try{ensureQtMiniMap();}catch(err){console.warn('qt map:',err);}
     try{refreshQtJumpCards();}catch(err){}
   }else{
@@ -4077,12 +4086,30 @@ function buildDestinationUI(){
   }
 }
 
-// ── QT miniature 3D world map ──────────────────────────────────────
+// ── Quick Travel — three tabs, one mini-map that matches the game ─────
+// GALAXIES : the Milky Way drawn with the same generator/colours as flight,
+//            every visitable galaxy at its real direction (distance log-
+//            compressed so the chart fits), "you are here". Tap to jump:
+//            you arrive at a default spot inside that galaxy.
+// LOCAL    : the galaxy you're in around your current system — your
+//            system's destinations plus the star systems you can jump to,
+//            at the same light-year offsets the sky uses.
+// DISCOVERIES: asteroids, comets and rogue planets you've found in flight.
 let qtInited=false,qtRenderer=null,qtScene=null,qtCamera=null,qtControls=null;
-let qtAnimId=0,qtRaycaster=null,qtMarkers=[],qtRunning=false;
+let qtAnimId=0,qtRaycaster=null,qtMarkers=[],qtRunning=false,qtTab='local',qtContent=null,qtYouAre=null;
 function pauseQtMiniMap(){
   qtRunning=false;
   if(qtAnimId){cancelAnimationFrame(qtAnimId);qtAnimId=0;}
+}
+function setQtTab(tab){
+  qtTab=tab;
+  document.querySelectorAll('#qt-tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
+  const hint=$('qt-hint');
+  if(hint)hint.textContent=tab==='galaxies'?'DRAG TO ORBIT · TAP A GALAXY TO TRAVEL THERE'
+    :tab==='local'?'DRAG TO ORBIT · TAP A SYSTEM OR DESTINATION TO JUMP'
+    :'DISCOVERIES YOU\'VE FOUND · TAP TO RETURN';
+  try{rebuildQtMarkers();}catch(e){console.warn('qt tab:',e);}
+  try{refreshQtJumpCards();}catch(e){}
 }
 async function ensureQtMiniMap(){
   if(qtInited){qtRunning=true;if(!qtAnimId)qtAnimId=requestAnimationFrame(qtLoop);try{rebuildQtMarkers();}catch(e){}return;}
@@ -4095,27 +4122,13 @@ async function ensureQtMiniMap(){
   qtRenderer.setPixelRatio(Math.min(devicePixelRatio||1,1.5));
   qtRenderer.setSize(W,H,false);
   qtRenderer.setClearColor(0x000208,1);
+  qtRenderer.toneMapping=THREE.ACESFilmicToneMapping;qtRenderer.outputColorSpace=THREE.SRGBColorSpace;
   qtScene=new THREE.Scene();
-  qtCamera=new THREE.PerspectiveCamera(50,W/H,1,500000);
-  qtCamera.position.set(9000,14000,22000);
+  qtCamera=new THREE.PerspectiveCamera(50,W/H,1,2000000);
   qtControls=new THREE.OrbitControls(qtCamera,cv);
   qtControls.enableDamping=true;qtControls.dampingFactor=0.1;
   qtControls.rotateSpeed=0.55;qtControls.zoomSpeed=0.85;
-  qtControls.minDistance=200;qtControls.maxDistance=160000; // room for intergalactic shell markers
-  qtControls.target.set(0,0,0);
   qtControls.touches={ONE:THREE.TOUCH.ROTATE,TWO:THREE.TOUCH.DOLLY_PAN};
-  // Shared blue spiral disc (createSpiralGalaxyPoints) — no soft glow wash.
-  // VISITABLE galaxies stay on shell ≥95k (see rebuildQtMarkers).
-  const RG=42000;
-  const geo=createSpiralGalaxyPoints(3500,{RG:RG,lowCount:3500,nArms:2});
-  let qtMap=null;try{qtMap=makeCircleTex(16,'rgb(255,255,255)',1);}catch(e){}
-  const disc=new THREE.Points(geo,new THREE.PointsMaterial({
-    size:90,sizeAttenuation:true,vertexColors:true,map:qtMap,transparent:true,opacity:0.88,
-    depthWrite:false,blending:THREE.AdditiveBlending,alphaTest:0.02
-  }));
-  disc.rotation.set(0.5,0.3,0.1);
-  disc.position.set(-RG*0.5,0,-RG*0.16);
-  qtScene.add(disc);
   qtRaycaster=new THREE.Raycaster();
   cv.addEventListener('click',onQtMapClick);
   cv.addEventListener('touchend',(ev)=>{
@@ -4126,71 +4139,200 @@ async function ensureQtMiniMap(){
   rebuildQtMarkers();
   qtAnimId=requestAnimationFrame(qtLoop);
 }
-function _qtMakeLabel(text,color){
+function _qtMakeLabel(text,color,scale){
   const lc=document.createElement('canvas');lc.width=256;lc.height=40;
   const x=lc.getContext('2d');
   x.fillStyle=color||'rgba(180,210,255,0.92)';
   x.font='bold 16px Orbitron,monospace';x.fillText(text,4,26);
   const spr=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(lc),transparent:true,depthTest:false}));
-  spr.scale.set(1400,220,1);
+  const k=scale||1;spr.scale.set(1400*k,220*k,1);
   return spr;
 }
-function rebuildQtMarkers(){
-  if(!qtScene)return;
-  // Clear prior markers
-  qtMarkers.forEach(m=>{if(m.parent)m.parent.remove(m);});
-  qtMarkers=[];
-  const addMarker=(pos,col,scale,userData,label,labelCol)=>{
-    const m=new THREE.Mesh(
-      new THREE.SphereGeometry(scale,8,8),
-      new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:0.95})
-    );
-    m.position.copy(pos);
-    m.userData=userData;
-    qtScene.add(m);qtMarkers.push(m);
-    if(label){
-      const ls=_qtMakeLabel(label,labelCol);
-      ls.position.set(pos.x,pos.y+scale*2.2,pos.z);
-      ls.userData=userData;
-      qtScene.add(ls);qtMarkers.push(ls);
+// Additive octahedron cloud — the same mesh path flight uses (GL points are
+// 1 px on iOS WebGPU, which is why the old chart read as faint dust).
+function _qtCloud(pos,col,radius,count){
+  const n=count||((pos.length/3)|0);
+  const mesh=new THREE.InstancedMesh(new THREE.OctahedronGeometry(1,0),
+    new THREE.MeshBasicMaterial({color:0xffffff,blending:THREE.AdditiveBlending,transparent:true,depthWrite:false}),n);
+  const m=new THREE.Matrix4(),c=new THREE.Color();
+  for(let i=0;i<n;i++){
+    const r=typeof radius==='function'?radius(i):radius;
+    m.makeScale(r,r,r);m.setPosition(pos[i*3],pos[i*3+1],pos[i*3+2]);mesh.setMatrixAt(i,m);
+    c.setRGB(Math.min(1,col[i*3]),Math.min(1,col[i*3+1]),Math.min(1,col[i*3+2]));mesh.setColorAt(i,c);
+  }
+  mesh.instanceMatrix.needsUpdate=true;if(mesh.instanceColor)mesh.instanceColor.needsUpdate=true;
+  mesh.frustumCulled=false;
+  return mesh;
+}
+function _qtCurGalaxy(){return (typeof GALAXY_DB!=='undefined'&&GALAXY_DB&&GALAXY_DB.current)||'milkyway';}
+function _qtQ(){return (galSky&&galSky.q)||new THREE.Quaternion().setFromEuler(GALAXY_PLANE_EULER||new THREE.Euler(0.5,0.3,0.1));}
+// Galaxy chart: Milky Way at true scale × QT_GS; other galaxies at their
+// real direction, distance log-compressed beyond the disc.
+const QT_GS=0.12;
+function _qtGalaxyMapPos(key){
+  const g=GS_VISIT_CATALOG[key];if(!g)return null;
+  const v=galLocalFromLBD(g[0],g[1],g[2],new THREE.Vector3());   // centre-origin local ly
+  const D=v.length();
+  const R=D<=60000?D*QT_GS:7200+7500*Math.log10(D/60000);
+  return v.multiplyScalar(R/Math.max(D,1)).applyQuaternion(_qtQ());
+}
+function _qtClearContent(){
+  if(qtContent){
+    qtContent.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material){if(o.material.map)o.material.map.dispose();o.material.dispose();}});
+    qtScene.remove(qtContent);
+  }
+  qtContent=new THREE.Group();qtScene.add(qtContent);
+  qtMarkers=[];qtYouAre=null;
+}
+function _qtAddMarker(pos,col,scale,userData,label,labelCol,labelScale){
+  const m=new THREE.Mesh(new THREE.SphereGeometry(scale,10,10),new THREE.MeshBasicMaterial({color:col}));
+  m.position.copy(pos);m.userData=userData;qtContent.add(m);qtMarkers.push(m);
+  if(label){
+    const ls=_qtMakeLabel(label,labelCol,labelScale);
+    ls.position.set(pos.x,pos.y+scale*2.4+120*(labelScale||1),pos.z);ls.userData=userData;
+    qtContent.add(ls);
+  }
+  const hit=new THREE.Mesh(new THREE.SphereGeometry(Math.max(scale*3,260*(labelScale||1)),8,8),new THREE.MeshBasicMaterial({visible:false}));
+  hit.position.copy(pos);hit.userData=userData;qtContent.add(hit);qtMarkers.push(hit);
+  return m;
+}
+function _qtYouAreHere(pos,size){
+  const ring=new THREE.Mesh(new THREE.RingGeometry(size*1.6,size*2.1,40),
+    new THREE.MeshBasicMaterial({color:0xffd23a,side:THREE.DoubleSide,transparent:true,depthTest:false}));
+  ring.position.copy(pos);qtContent.add(ring);qtYouAre=ring;
+  const lbl=_qtMakeLabel('YOU ARE HERE','rgba(255,214,90,0.95)',size/260);
+  lbl.position.set(pos.x,pos.y-size*3.2,pos.z);qtContent.add(lbl);
+}
+function _qtBuildGalaxiesTab(){
+  const q=_qtQ(), cur=_qtCurGalaxy();
+  // Milky Way — the game's own sampler and colours, at chart scale.
+  const mob=!!(GFX&&GFX.isMobile);
+  const mw=sampleMilkyWay(mob?4500:8000,0x4D57A1);
+  for(let i=0;i<mw.n*3;i++)mw.pos[i]*=QT_GS;
+  const mwMesh=_qtCloud(mw.pos,mw.col.map((c,i)=>c*1.5),i=>(mw.kind[i]>=3?44:30)*(0.7+mw.lum[i]*0.6));
+  const mwG=new THREE.Group();mwG.quaternion.copy(q);mwG.add(mwMesh);qtContent.add(mwG);
+  _qtAddMarker(new THREE.Vector3(0,0,0),0x9fd4ff,200,{qtKind:'galaxyHome'},'Milky Way','rgba(160,210,255,0.95)',2.4);
+  const sunMap=new THREE.Vector3(-GALSKY.R0*QT_GS,0,0).applyQuaternion(q);
+  const sol=new THREE.Mesh(new THREE.SphereGeometry(110,10,10),new THREE.MeshBasicMaterial({color:0xffd23a}));
+  sol.position.copy(sunMap);qtContent.add(sol);
+  // Every visitable galaxy, drawn from the same particle generator as the sky.
+  (typeof VISITABLE_GALAXIES!=='undefined'?VISITABLE_GALAXIES:[]).forEach(g=>{
+    const key=galaxyKey(g.n), c=GS_VISIT_CATALOG[key];if(!c)return;
+    const pos=_qtGalaxyMapPos(key);if(!pos)return;
+    const Rm=Math.max(320,Math.min(3200,c[3]*0.04));
+    const gr=seedRand(hashStr('gal:'+key));
+    const p=_gsGalaxyParticles(c[4],c[3],c[4]==='dsph'?60:220,1,gr);
+    for(let i=0;i<p.n*3;i++)p.pos[i]*=Rm/c[3];
+    const blob=_qtCloud(p.pos,Array.from(p.col,v=>v*2.6),Rm*0.08);
+    const gg=new THREE.Group();gg.position.copy(pos);
+    gg.rotation.set((gr()-0.5)*2.6,gr()*Math.PI*2,(gr()-0.5)*1.2);gg.add(blob);qtContent.add(gg);
+    const major=c[4]!=='dsph'&&c[3]>=15000;
+    _qtAddMarker(pos,major?0xb8c8ff:0x8090b0,major?120:70,{qtKind:'galaxy',galaxyId:key,galaxyName:g.n.replace(/\s*\(.+\)/,''),dist:g.dist},
+      (major||key===cur)?g.n.replace(/\s*\(.+\)/,''):null,key===cur?'rgba(255,214,90,0.95)':'rgba(190,170,255,0.9)',major?2.2:1.4);
+  });
+  const here=cur==='milkyway'?sunMap:(_qtGalaxyMapPos(cur)||sunMap);
+  _qtYouAreHere(here,cur==='milkyway'?220:420);
+  qtControls.target.set(0,0,0);
+  qtCamera.position.set(6000,16000,21000);
+  qtControls.minDistance=1200;qtControls.maxDistance=160000;
+}
+// Local chart: 12 map units per light-year around the current system.
+const QT_LS=12;
+function _qtSysOffset(sys){return galSkySystemOffset(sys);}   // ly, world axes
+function _qtLocalSystems(){
+  const cur=_qtCurGalaxy(), list=[];
+  if(cur==='milkyway'){
+    list.push({name:'Sol',sys:null,star:'G yellow',home:true});
+    (distantSystems||[]).forEach(s=>{
+      if(!s)return;
+      const chart=s.rogue?null:(s.systemChart||(typeof systemChartFromArmCell==='function'?systemChartFromArmCell(s):null));
+      list.push({name:s.name,sys:chart||{name:s.name,seed:s.seed,starType:s.starClass,bodies:[]},star:s.starClass,rogue:!!s.rogue,ds:s});
+    });
+  }else{
+    let g=null;try{const vg=(VISITABLE_GALAXIES||[]).find(x=>galaxyKey(x.n)===cur);g=getGalaxySystems(cur,vg?vg.n.replace(/\s*\(.+\)/,''):cur);}catch(e){}
+    ((g&&g.systems)||[]).forEach(sys=>list.push({name:sys.name,sys,star:sys.starType}));
+  }
+  return list;
+}
+function _qtBuildLocalTab(){
+  const q=_qtQ(), here=_qtSysOffset(window._curSystem||null);
+  // Background: the local field of the galaxy you're in, from the sky's own sampler.
+  if(_qtCurGalaxy()==='milkyway'&&typeof sampleMilkyWay==='function'){
+    const mw=sampleMilkyWay((GFX&&GFX.isMobile)?9000:16000,0x4D57A1);
+    const sun=new THREE.Vector3(-GALSKY.R0,GALSKY.ZSUN,0), hereLocal=here.clone().applyQuaternion(q.clone().invert()).add(sun);
+    const pp=[],cc=[];
+    for(let i=0;i<mw.n;i++){
+      const dx=mw.pos[i*3]-hereLocal.x,dy=mw.pos[i*3+1]-hereLocal.y,dz=mw.pos[i*3+2]-hereLocal.z;
+      if(dx*dx+dy*dy+dz*dz>3200*3200)continue;
+      pp.push(dx*QT_LS,dy*QT_LS,dz*QT_LS);cc.push(mw.col[i*3]*1.8,mw.col[i*3+1]*1.8,mw.col[i*3+2]*1.8);
     }
-    // Invisible larger hit target
-    const hit=new THREE.Mesh(
-      new THREE.SphereGeometry(Math.max(scale*4,400),8,8),
-      new THREE.MeshBasicMaterial({visible:false})
-    );
-    hit.position.copy(pos);hit.userData=userData;
-    qtScene.add(hit);qtMarkers.push(hit);
-  };
-  // Sol home
-  addMarker(new THREE.Vector3(0,0,0),0xffe066,180,{qtKind:'sol'},'Sol','rgba(255,230,140,0.95)');
-  // Sol destinations (scaled display positions for outer ones)
+    if(pp.length){const f=_qtCloud(new Float32Array(pp),new Float32Array(cc),260);const g=new THREE.Group();g.quaternion.copy(q);g.add(f);qtContent.add(g);}
+  }
+  const fr=seedRand(0x10CA7), fp=[],fc=[];
+  for(let i=0;i<700;i++){
+    const d=40+Math.pow(fr(),0.7)*2400, a=fr()*Math.PI*2;
+    fp.push(Math.cos(a)*d*QT_LS,_gsGauss(fr)*260*QT_LS*0.3,Math.sin(a)*d*QT_LS);
+    const w=fr();fc.push(0.35+w*0.4,0.45+w*0.35,0.75);
+  }
+  {const f=_qtCloud(new Float32Array(fp),new Float32Array(fc),70);const g=new THREE.Group();g.quaternion.copy(q);g.add(f);qtContent.add(g);}
+  // Systems at their light-year offsets.
+  const list=_qtLocalSystems();
+  list.forEach((e,i)=>{
+    const p=_qtSysOffset(e.sys).sub(here).multiplyScalar(QT_LS);
+    const isHere=(e.sys?(window._curSystem&&window._curSystem.name===e.name):!window._curSystem);
+    const col=e.home?0xffd23a:e.rogue?0xff8860:0xa8c4ff;
+    _qtAddMarker(p,col,e.home?120:80,{qtKind:e.home?'sol':'localSystem',entry:e},
+      (e.home||isHere||i<22)?e.name:null,e.home?'rgba(255,230,140,0.95)':'rgba(200,220,255,0.88)',e.home?1.8:1.3);
+  });
+  // Current system's own destinations as a small inset around its star.
   (DESTINATIONS||[]).forEach((d,i)=>{
     if(!d||!d.pos)return;
-    // Keep solar-system dests near Sol; far ones use their flight pos
-    const far=d.pos.length()>500;
-    const p=far?d.pos.clone():d.pos.clone().multiplyScalar(40);
-    addMarker(p,0x5bd6ff,far?220:70,{qtKind:'dest',destIdx:i},d.name,'rgba(91,214,255,0.9)');
+    const p=d.pos.clone().multiplyScalar(0.06);
+    if(p.length()>900)p.setLength(900);
+    _qtAddMarker(p,0x5bd6ff,26,{qtKind:'dest',destIdx:i},null);
   });
-  // Distant systems (cap labels for Safari)
-  const systems=(typeof distantSystems!=='undefined'&&distantSystems)?distantSystems:[];
-  systems.forEach((s,i)=>{
-    if(!s||!s.pos)return;
-    const showLbl=i<18;
-    addMarker(s.pos.clone(),s.rogue?0xff8860:0xa8c4ff,110,
-      {qtKind:'system',systemRef:s},showLbl?s.name:null,'rgba(200,220,255,0.88)');
+  _qtYouAreHere(new THREE.Vector3(0,0,0),120);
+  qtControls.target.set(0,0,0);
+  qtCamera.position.set(2600,5200,7200);
+  qtControls.minDistance=200;qtControls.maxDistance=90000;
+}
+function _qtBuildDiscoveriesTab(){
+  _qtBuildLocalTab();
+  const cur=_qtCurGalaxy(), here=_qtSysOffset(window._curSystem||null), curSys=(window._curSystem&&window._curSystem.name)||'Sol';
+  loadDiscoveries().filter(d=>d.gal===cur).forEach(d=>{
+    const base=d.sysName==='Sol'?new THREE.Vector3():_qtSysOffset({name:d.sysName,seed:d.sysSeed});
+    const p=base.sub(here).multiplyScalar(QT_LS);
+    if(d.sysName===curSys)p.add(new THREE.Vector3(d.pos[0],d.pos[1],d.pos[2]).multiplyScalar(0.06).clampLength(0,900));
+    const col=d.type==='Rogue Planet'?0xc070ff:d.type==='Comet'?0x7fffe0:0xd8b08a;
+    _qtAddMarker(p,col,50,{qtKind:'discovery',disc:d},d.name,'rgba(230,200,255,0.9)',0.8);
   });
-  // Charted visitables on intergalactic shell (Sol-centric QT; MW disc backdrop only)
-  (typeof VISITABLE_GALAXIES!=='undefined'?VISITABLE_GALAXIES:[]).forEach((g,gi)=>{
-    const gid=(g.n||'').replace(/[^a-z0-9]/gi,'').toLowerCase();
-    const gName=(g.n||'').replace(/\s*\(.+\)/,'');
-    const raw=new THREE.Vector3(g.x,g.y,g.z);
-    const len=Math.max(raw.length(),1e-6);
-    const shellR=95000+(gi%8)*3500; // 95k-120k — never inside MW disc
-    const gpos=raw.clone().multiplyScalar(shellR/len);
-    addMarker(gpos,g.c||0xb0c4ff,Math.max(g.r*0.35,400),
-      {qtKind:'galaxy',galaxyId:gid,galaxyName:gName,dist:g.dist},g.n,'rgba(190,160,255,0.92)');
-  });
+}
+function rebuildQtMarkers(){
+  if(!qtScene||!qtControls)return;
+  _qtClearContent();
+  if(qtTab==='galaxies')_qtBuildGalaxiesTab();
+  else if(qtTab==='discoveries')_qtBuildDiscoveriesTab();
+  else _qtBuildLocalTab();
+  qtControls.update();
+}
+function _qtJumpToGalaxy(gid,gName,dist){
+  if(gid==='milkyway'){
+    openFastTravel('FAST TRAVEL — MILKY WAY','Return to Sol, home?',()=>{GALAXY_DB.current='milkyway';fastTravelToSystem(null,'milkyway');});
+  }else{
+    openFastTravel('FAST TRAVEL — '+gName.toUpperCase(),'Travel '+(dist||'millions of ly')+' to '+gName+'? You\'ll arrive inside its disc.',()=>fastTravelToGalaxy(gid,gName));
+  }
+  closeQuickTravel();
+}
+function _qtJumpToSystem(e){
+  if(e.home||!e.sys){
+    openFastTravel('SOL SYSTEM — HOME','Fast-travel to your home position in the solar system?',()=>fastTravelToSystem(null,_qtCurGalaxy()));
+  }else{
+    const sys=e.sys, bodies=(sys.bodies||[]);
+    const bits=bodies.length?bodies.slice(0,6).map(b=>b.name+(b.landable?'*':'')).join(', ')+(bodies.length>6?'…':''):'';
+    openFastTravel('FAST TRAVEL — '+e.name.toUpperCase(),(sys.starType||e.star||'System')+(bits?' · '+bits:'')+'. Jump to '+e.name+'?',
+      ()=>fastTravelToSystem(sys,_qtCurGalaxy()));
+  }
+  closeQuickTravel();
 }
 function refreshQtJumpCards(){
   const sc=$('dest-scroll');if(!sc)return;sc.innerHTML='';
@@ -4200,27 +4342,39 @@ function refreshQtJumpCards(){
     card.innerHTML=`<div class="dest-icon">${icon}</div><div class="dest-name">${name}</div><div class="dest-dist">${dist||''}</div><div class="dest-type">${type||''}</div>`;
     card.onclick=onClick;sc.appendChild(card);
   };
-  DESTINATIONS.forEach((d,i)=>{
-    addCard(d.icon,d.name,d.dist,d.type,()=>{
-      STATE.flight.destIdx=i;$('hud-dest').textContent=d.name;plotCourse(i);closeQuickTravel();
-    },i===STATE.flight.destIdx);
-  });
-  (distantSystems||[]).slice(0,24).forEach(s=>{
-    addCard(s.rogue?'✧':'⭐',s.name,s.starClass||'System',s.rogue?'Rogue':'Star System',()=>{
-      const chart=s.systemChart||(typeof systemChartFromArmCell==='function'?systemChartFromArmCell(s):null);
-      const sys=chart||{name:s.name,starClass:s.starClass,seed:s.seed,planetCount:s.planetCount||0,pos:s.pos};
-      openFastTravel('FAST TRAVEL — '+s.name.toUpperCase(),'Jump to '+s.name+'?',()=>fastTravelToSystem(sys,GALAXY_DB.current));
-      closeQuickTravel();
+  const cur=_qtCurGalaxy();
+  if(qtTab==='galaxies'){
+    addCard('🌌','Milky Way',cur==='milkyway'?'You are here':'Home','Home galaxy',()=>_qtJumpToGalaxy('milkyway'),cur==='milkyway');
+    (typeof VISITABLE_GALAXIES!=='undefined'?VISITABLE_GALAXIES:[]).forEach(g=>{
+      const key=galaxyKey(g.n), c=GS_VISIT_CATALOG[key];
+      const type=c?({spiral:'Spiral',flocculent:'Flocculent spiral',elliptical:'Elliptical',irregular:'Irregular',dsph:'Dwarf spheroidal'})[c[4]]:(g.type||'Galaxy');
+      addCard('🌌',g.n.replace(/\s*\(.+\)/,''),g.dist||'',type,()=>_qtJumpToGalaxy(key,g.n.replace(/\s*\(.+\)/,''),g.dist),key===cur);
     });
-  });
-  (typeof VISITABLE_GALAXIES!=='undefined'?VISITABLE_GALAXIES:[]).forEach(g=>{
-    const gid=g.n.replace(/[^a-z0-9]/gi,'').toLowerCase();
-    const gName=g.n.replace(/\s*\(.+\)/,'');
-    addCard('🌌',gName,g.dist||'','Galaxy',()=>{
-      openFastTravel('FAST TRAVEL — '+gName.toUpperCase(),'Travel '+(g.dist||'millions of ly')+' to '+gName+'?',()=>fastTravelToGalaxy(gid,gName));
-      closeQuickTravel();
+  }else if(qtTab==='discoveries'){
+    const list=loadDiscoveries();
+    if(!list.length){sc.innerHTML='<div class="dest-card" style="grid-column:1/-1;cursor:default"><div class="dest-name">Nothing found yet</div><div class="dest-type">Fly out between the planets and beyond — asteroids, comets and rogue planets turn up in the dark.</div></div>';return;}
+    list.slice().reverse().forEach(d=>{
+      const icon=d.type==='Rogue Planet'?'🌑':d.type==='Comet'?'☄️':'🪨';
+      const where=(d.gal==='milkyway'?'':(d.gal+' · '))+d.sysName;
+      addCard(icon,d.name,where,d.type+' · landable',()=>{
+        openFastTravel('RETURN — '+d.name.toUpperCase(),'Fly back to '+d.name+' ('+d.type+') near '+d.sysName+'?',()=>travelToDiscovery(d));
+        closeQuickTravel();
+      });
     });
-  });
+  }else{
+    DESTINATIONS.forEach((d,i)=>{
+      addCard(d.icon,d.name,d.dist,d.type,()=>{
+        STATE.flight.destIdx=i;$('hud-dest').textContent=d.name;plotCourse(i);closeQuickTravel();
+      },i===STATE.flight.destIdx);
+    });
+    const here=_qtSysOffset(window._curSystem||null);
+    _qtLocalSystems().forEach(e=>{
+      const isHere=e.sys?(window._curSystem&&window._curSystem.name===e.name):!window._curSystem;
+      if(isHere&&!e.home)return;
+      const d=_qtSysOffset(e.sys).distanceTo(here);
+      addCard(e.home?'☀️':e.rogue?'✧':'⭐',e.name,isHere?'You are here':(d<10?d.toFixed(1):Math.round(d))+' ly',e.home?'Home system':e.rogue?'Rogue star':(e.star||'Star system'),()=>_qtJumpToSystem(e),isHere);
+    });
+  }
 }
 function onQtMapClick(e){
   if(!qtRenderer||!qtCamera||!qtScene)return;
@@ -4228,8 +4382,7 @@ function onQtMapClick(e){
   const mx=((e.clientX-rect.left)/rect.width)*2-1;
   const my=-((e.clientY-rect.top)/rect.height)*2+1;
   qtRaycaster.setFromCamera(new THREE.Vector2(mx,my),qtCamera);
-  const meshes=qtMarkers.filter(o=>o.isMesh);
-  const hits=qtRaycaster.intersectObjects(meshes,false);
+  const hits=qtRaycaster.intersectObjects(qtMarkers,false);
   if(!hits.length)return;
   const u=hits[0].object.userData||{};
   if(u.qtKind==='dest'&&u.destIdx!=null){
@@ -4238,25 +4391,13 @@ function onQtMapClick(e){
     if(d){$('hud-dest').textContent=d.name;plotCourse(u.destIdx);}
     closeQuickTravel();return;
   }
-  if(u.qtKind==='sol'){
-    openFastTravel('SOL SYSTEM — HOME','Fast-travel to your home position in the solar system?',()=>fastTravelToSystem(null));
-    closeQuickTravel();return;
-  }
-  if(u.qtKind==='system'&&u.systemRef){
-    const s=u.systemRef;
-    const chart=s.systemChart||(typeof systemChartFromArmCell==='function'?systemChartFromArmCell(s):null);
-    const sys=chart||{name:s.name,starClass:s.starClass,seed:s.seed,planetCount:s.planetCount||0,pos:s.pos};
-    const bodies=(sys.bodies&&sys.bodies.length)?sys.bodies:[];
-    const planetBits=bodies.length
-      ?bodies.slice(0,6).map(b=>b.name+(b.landable?'*':'')).join(', ')+(bodies.length>6?'…':'')
-      :((sys.planetCount||0)+' planets');
-    openFastTravel('FAST TRAVEL — '+s.name.toUpperCase(),
-      (sys.starType||sys.starClass||s.starClass||'System')+' · '+planetBits+'. Jump to '+s.name+'?',
-      ()=>fastTravelToSystem(sys,GALAXY_DB.current));
-    closeQuickTravel();return;
-  }
-  if(u.qtKind==='galaxy'&&u.galaxyId){
-    openFastTravel('FAST TRAVEL — '+u.galaxyName.toUpperCase(),'Travel '+(u.dist||'millions of ly')+' to '+u.galaxyName+'?',()=>fastTravelToGalaxy(u.galaxyId,u.galaxyName));
+  if(u.qtKind==='sol'){_qtJumpToSystem({home:true});return;}
+  if(u.qtKind==='localSystem'&&u.entry){_qtJumpToSystem(u.entry);return;}
+  if(u.qtKind==='galaxyHome'){_qtJumpToGalaxy('milkyway');return;}
+  if(u.qtKind==='galaxy'&&u.galaxyId){_qtJumpToGalaxy(u.galaxyId,u.galaxyName,u.dist);return;}
+  if(u.qtKind==='discovery'&&u.disc){
+    const d=u.disc;
+    openFastTravel('RETURN — '+d.name.toUpperCase(),'Fly back to '+d.name+' ('+d.type+')?',()=>travelToDiscovery(d));
     closeQuickTravel();
   }
 }
@@ -4264,8 +4405,154 @@ function qtLoop(){
   if(!qtRunning||!$('ar-bottom')||!$('ar-bottom').classList.contains('open')){qtAnimId=0;return;}
   qtAnimId=requestAnimationFrame(qtLoop);
   if(qtControls)qtControls.update();
+  if(qtYouAre){const s=1+Math.sin(performance.now()*0.004)*0.15;qtYouAre.scale.setScalar(s);qtYouAre.quaternion.copy(qtCamera.quaternion);}
   if(qtRenderer&&qtScene&&qtCamera)qtRenderer.render(qtScene,qtCamera);
 }
+
+// ══════════════════════════════════════════════════════════════
+//  ✦ DISCOVERIES — asteroids, comets and rogue planets in the dark
+// ══════════════════════════════════════════════════════════════
+// Space is carved into cells (DISC_CELL scene units); each cell of the
+// current system is seeded, and roughly one in six holds something. Only
+// the cells around you exist at any moment — flying on spawns what's ahead
+// and drops what's behind. Getting close logs it as a discovery (saved,
+// listed in Quick Travel ▸ Discoveries) and, closer still, the normal LAND
+// prompt appears: every discovery is a landable body with terrain.
+const DISC_CELL=5200, DISC_STORE_KEY='dm_discoveries_v1';
+const DISC_TYPES=[
+  {t:'Asteroid',w:0.55,r:[1.6,4.2],detect:900,col:[0x8a7a6a,0x9a8f84,0x6f655c,0xa08466]},
+  {t:'Comet',w:0.20,r:[1.2,2.4],detect:1300,col:[0xbfd8e8,0xa8c8d8]},
+  {t:'Rogue Planet',w:0.25,r:[9,15],detect:2200,col:[0x3a3f58,0x4a3a52,0x2f4450]}
+];
+let _discLive=new Map(), _discT=0, _discChipFor=null;
+function loadDiscoveries(){try{return JSON.parse(localStorage.getItem(DISC_STORE_KEY)||'[]')||[];}catch(e){return [];}}
+function _saveDiscovery(d){
+  try{const list=loadDiscoveries();if(list.some(x=>x.id===d.id))return false;list.push(d);localStorage.setItem(DISC_STORE_KEY,JSON.stringify(list.slice(-200)));return true;}catch(e){return false;}
+}
+function _discSysKey(){return _qtCurGalaxy()+':'+((window._curSystem&&window._curSystem.name)||'Sol');}
+function _discBuildMesh(type,r,seed,col){
+  const rand=seedRand(seed);
+  const g=new THREE.Group();
+  if(type.t==='Rogue Planet'&&typeof buildWebGLRichPlanetGroup==='function'){
+    try{g.add(buildWebGLRichPlanetGroup(r,seed,col,false,'Rocky','rogue'));}catch(e){g.add(new THREE.Mesh(new THREE.SphereGeometry(r,32,24),new THREE.MeshStandardMaterial({color:col,roughness:0.95})));}
+    const rim=new THREE.Mesh(new THREE.SphereGeometry(r*1.04,32,24),new THREE.MeshBasicMaterial({color:0x5a6cff,transparent:true,opacity:0.10,blending:THREE.AdditiveBlending,depthWrite:false}));
+    g.add(rim);
+    return g;
+  }
+  const geo=new THREE.IcosahedronGeometry(r,2), p=geo.attributes.position, v=new THREE.Vector3();
+  for(let i=0;i<p.count;i++){
+    v.fromBufferAttribute(p,i);
+    const n=Math.sin(v.x*1.7/r+seed%7)*Math.cos(v.y*2.3/r+seed%5)*0.18+Math.sin(v.z*3.1/r)*0.08;
+    v.multiplyScalar(1+n+(rand()-0.5)*0.12);p.setXYZ(i,v.x,v.y*(type.t==='Asteroid'?0.8:1),v.z);
+  }
+  geo.computeVertexNormals();
+  g.add(new THREE.Mesh(geo,new THREE.MeshStandardMaterial({color:col,roughness:0.95,flatShading:true})));
+  if(type.t==='Comet'){
+    const tail=new THREE.Mesh(new THREE.ConeGeometry(r*2.2,r*38,16,1,true),
+      new THREE.MeshBasicMaterial({color:0x9fe8ff,transparent:true,opacity:0.16,blending:THREE.AdditiveBlending,depthWrite:false,side:THREE.DoubleSide}));
+    tail.name='cometTail';g.add(tail);
+    const coma=new THREE.Mesh(new THREE.SphereGeometry(r*3,16,12),new THREE.MeshBasicMaterial({color:0xbff4ff,transparent:true,opacity:0.12,blending:THREE.AdditiveBlending,depthWrite:false}));
+    g.add(coma);
+  }
+  return g;
+}
+function _discName(type,seed){
+  const tag=(seed>>>0).toString(36).toUpperCase().slice(-4);
+  return type.t==='Asteroid'?('AST-'+tag):type.t==='Comet'?('C/'+tag):('ROGUE-'+tag);
+}
+function _discSpawn(key,cell,sysKey){
+  const seed=hashStr('disc:'+sysKey+':'+key), rand=seedRand(seed);
+  if(rand()>0.17)return null;
+  const cx=(cell[0]+rand())*DISC_CELL, cy=(cell[1]+rand()*0.35-0.175)*DISC_CELL, cz=(cell[2]+rand())*DISC_CELL;
+  if(Math.hypot(cx,cy,cz)<1800)return null;             // keep the inner system clear
+  let a=rand(),ti=0;for(;ti<DISC_TYPES.length-1&&a>DISC_TYPES[ti].w;ti++)a-=DISC_TYPES[ti].w;
+  const type=DISC_TYPES[ti], r=type.r[0]+rand()*(type.r[1]-type.r[0]), col=type.col[(rand()*type.col.length)|0];
+  const name=_discName(type,seed);
+  const mesh=_discBuildMesh(type,r,seed,col);
+  mesh.position.set(cx,cy,cz);
+  const tail=mesh.getObjectByName&&mesh.getObjectByName('cometTail');
+  if(tail){const away=mesh.position.clone().normalize();tail.position.copy(away.clone().multiplyScalar(r*19));tail.quaternion.setFromUnitVectors(new THREE.Vector3(0,-1,0),away.negate());}
+  flightScene.add(mesh);
+  const body={mesh,name,type:type.t==='Rogue Planet'?'Rocky':type.t,temp:Math.round(20+rand()*40)+' K',orbitR:0,orbitSpd:0,angle:0,
+    landable:true,gravity:type.t==='Rogue Planet'?0.7:0.04,collisionRadius:r,hasTerrain:true,isProcedural:true,
+    mcRadius:r,mcSeed:seed,mcColor:col,mcHasAtm:false,mcKind:'rocky',
+    mcRes:(typeof _mcTierResTable==='function'?_mcTierResTable().low:10),mcTier:'low',
+    isAsteroid:type.t==='Asteroid',isComet:type.t==='Comet',isDiscovery:true,discoveryType:type.t};
+  celestialBodies.push(body);
+  return {key,name,type,r,seed,body,mesh,pos:mesh.position.clone(),found:false};
+}
+function _discDespawn(rec){
+  try{if(rec.mesh&&rec.mesh.parent)rec.mesh.parent.remove(rec.mesh);if(typeof _disposeObject3D==='function')_disposeObject3D(rec.mesh);}catch(e){}
+  try{const i=celestialBodies.indexOf(rec.body);if(i>=0)celestialBodies.splice(i,1);}catch(e){}
+}
+function resetDiscoveries(){_discLive.forEach(_discDespawn);_discLive.clear();_discSetChip(null);}
+function _discSetChip(rec,dist){
+  let chip=$('disc-chip');
+  if(!chip){
+    const host=$('screen-flight');if(!host)return;
+    chip=document.createElement('div');chip.id='disc-chip';
+    chip.style.cssText='position:absolute;top:74px;left:50%;transform:translateX(-50%);z-index:30;display:none;padding:6px 14px;border-radius:14px;background:rgba(40,10,60,0.55);border:1px solid rgba(210,150,255,0.6);color:#ecd6ff;font-family:var(--font-hud);font-size:0.55rem;letter-spacing:0.14em;pointer-events:none;backdrop-filter:blur(8px);box-shadow:0 0 18px rgba(190,120,255,0.35)';
+    host.appendChild(chip);
+  }
+  if(!rec){chip.style.display='none';_discChipFor=null;return;}
+  chip.style.display='block';_discChipFor=rec;
+  chip.textContent='✦ '+rec.type.t.toUpperCase()+' '+rec.name+' · '+Math.round(dist*400).toLocaleString()+' km'+(dist<Math.max(rec.r*3.5,18)?' · LAND READY':'');
+}
+function updateDiscoveries(dt){
+  if(typeof STATE==='undefined'||STATE.screen!=='flight'||!flightScene||!STATE.flight||!STATE.flight.pos)return;
+  _discT+=dt||0.016;if(_discT<0.35)return;_discT=0;
+  const p=STATE.flight.pos, sysKey=_discSysKey();
+  if(updateDiscoveries._sys!==sysKey){resetDiscoveries();updateDiscoveries._sys=sysKey;}
+  const cx=Math.floor(p.x/DISC_CELL),cy=Math.floor(p.y/DISC_CELL),cz=Math.floor(p.z/DISC_CELL);
+  const want=new Set();
+  for(let i=-1;i<=1;i++)for(let j=-1;j<=1;j++)for(let k=-1;k<=1;k++){
+    const cell=[cx+i,cy+j,cz+k], key=cell.join(',');want.add(key);
+    if(!_discLive.has(key)){const rec=_discSpawn(key,cell,sysKey);_discLive.set(key,rec);}
+  }
+  _discLive.forEach((rec,key)=>{
+    const c=key.split(',').map(Number);
+    if(Math.abs(c[0]-cx)>2||Math.abs(c[1]-cy)>2||Math.abs(c[2]-cz)>2){if(rec)_discDespawn(rec);_discLive.delete(key);}
+    else if(rec&&celestialBodies.indexOf(rec.body)<0){_discLive.delete(key);}   // system scene was cleared under us
+  });
+  let best=null,bestD=Infinity;
+  _discLive.forEach(rec=>{
+    if(!rec)return;
+    const d=rec.pos.distanceTo(p);
+    if(d<rec.type.detect*1.6&&d<bestD){best=rec;bestD=d;}
+    if(!rec.found&&d<rec.type.detect){
+      rec.found=true;
+      const cur=window._curSystem;
+      const isNew=_saveDiscovery({id:sysKey+':'+rec.key,name:rec.name,type:rec.type.t,gal:_qtCurGalaxy(),
+        sysName:(cur&&cur.name)||'Sol',sysSeed:cur&&cur.seed,sysStar:cur&&cur.starType,pos:[rec.pos.x,rec.pos.y,rec.pos.z],t:Date.now()});
+      if(isNew)try{toast('✦ DISCOVERY — '+rec.type.t+' '+rec.name+' · added to Quick Travel',3200);}catch(e){}
+    }
+  });
+  _discSetChip(best,bestD);
+}
+// Fly back to a logged discovery: jump to its system if needed, then drop in beside it.
+function travelToDiscovery(d){
+  const off=new THREE.Vector3(d.pos[0],d.pos[1],d.pos[2]);
+  const approach=off.clone().add(off.clone().normalize().multiplyScalar(-(d.type==='Rogue Planet'?60:24)));
+  const sameGal=d.gal===_qtCurGalaxy(), curSys=(window._curSystem&&window._curSystem.name)||'Sol';
+  if(sameGal&&d.sysName===curSys){
+    STATE.flight.pos.copy(approach);if(boardFlight)boardFlight.position.copy(approach);
+    toast('✦ Arrived at '+d.name,2400);return;
+  }
+  window._ftArrivePos=approach;
+  GALAXY_DB.current=d.gal;
+  let sys=null;
+  if(d.sysName!=='Sol'){
+    if(d.gal==='milkyway'){
+      const ds=(distantSystems||[]).find(s=>s&&s.name===d.sysName);
+      sys=ds?(ds.systemChart||systemChartFromArmCell(ds)):{name:d.sysName,seed:d.sysSeed,starType:d.sysStar,bodies:[]};
+    }else{
+      try{const vg=(VISITABLE_GALAXIES||[]).find(x=>galaxyKey(x.n)===d.gal);sys=(getGalaxySystems(d.gal,vg?vg.n.replace(/\s*\(.+\)/,''):d.gal).systems||[]).find(s=>s.name===d.sysName)||null;}catch(e){}
+      if(!sys)sys={name:d.sysName,seed:d.sysSeed,starType:d.sysStar,bodies:[]};
+    }
+  }
+  fastTravelToSystem(sys,d.gal);
+}
+window.updateDiscoveries=updateDiscoveries;window.loadDiscoveries=loadDiscoveries;window.travelToDiscovery=travelToDiscovery;
 
 async function initFlightScene(){
   if(flightInited)return;flightInited=true;
@@ -8699,6 +8986,7 @@ function updateBodies(dt){
   }
   // Sol GAL LOD — yellow arm-dot when far; restore full SYS when near
   try{ if(typeof updateSolGalLod==='function') updateSolGalLod(); }catch(e){}
+  try{ if(typeof updateDiscoveries==='function') updateDiscoveries(1/60); }catch(e){}
   // Wire atmo sunDir → real Sol + camera-near local fill intensities
   try{ if(typeof _updateJotsWorldsFog==='function') _updateJotsWorldsFog(); }catch(e){}
 }
@@ -8903,7 +9191,7 @@ function updateHUD(){
   const pos=STATE.flight.pos;const sp=STATE.flight;
   $('hud-speed').textContent=sp.speed.toFixed(3);
   const _altTxt=(galSky&&galSky.ready&&galSky.offsetLy>=0.05)
-    ?(galSky.offsetLy<10?galSky.offsetLy.toFixed(2):Math.round(galSky.offsetLy).toLocaleString())+' ly'
+    ?(galSky.offsetLy<10?galSky.offsetLy.toFixed(2)+' ly':galSky.offsetLy<1e6?Math.round(galSky.offsetLy).toLocaleString()+' ly':(galSky.offsetLy/1e6).toFixed(2)+'M ly')
     :Math.round(pos.length()*400)+'km';
   $('hud-alt').textContent=_altTxt;
   $('hud-lat').textContent=(Math.atan2(pos.y,Math.sqrt(pos.x*pos.x+pos.z*pos.z))*180/Math.PI).toFixed(2)+'°';
@@ -10204,6 +10492,7 @@ async function rebuildFlightForSystem(system){
     buildDestinations();buildDestinationUI();
     const leo=placeSolLeoOffset();
     STATE.flight.pos.copy(leo);if(boardFlight)boardFlight.position.copy(STATE.flight.pos);
+    if(window._ftArrivePos){STATE.flight.pos.copy(window._ftArrivePos);if(boardFlight)boardFlight.position.copy(STATE.flight.pos);window._ftArrivePos=null;}
     return;
   }
   _clearFlightSystemScene();
@@ -10309,6 +10598,7 @@ async function rebuildFlightForSystem(system){
   });
   buildDestinationUI();
   STATE.flight.pos.set(AU*1.2,3,4);if(boardFlight)boardFlight.position.copy(STATE.flight.pos);
+  if(window._ftArrivePos){STATE.flight.pos.copy(window._ftArrivePos);if(boardFlight)boardFlight.position.copy(STATE.flight.pos);window._ftArrivePos=null;}
   try{ _clearLandPrompt(); }catch(e){}
   try{ if(CHAR.loaded && CHAR.root && boardFlight) remountSkyboard(boardFlight); }catch(e){}
   toast('🪐 '+system.name+' — '+bodies.length+' bodies. '+bodies.filter(b=>b.landable).length+' landable.',3500);
@@ -11941,14 +12231,116 @@ const GS_NEBULAE=[
   ['Eagle Nebula (M16)',16.95,0.79,5700,35,[0.55,0.95,0.85],[1.0,0.40,0.55],220],
   ['Carina Nebula',287.60,-0.63,8500,150,[1.0,0.70,0.55],[1.0,0.35,0.45],320]
 ];
-// Local Group: [name, l, b, d(ly), radius(ly), type, inclination(rad), particles]
-const GS_LOCAL_GROUP=[
-  ['Large Magellanic Cloud',280.47,-32.89,163000,7000,'irregular',0.6,1600],
-  ['Small Magellanic Cloud',302.80,-44.30,203000,3500,'irregular',1.0,800],
-  ['Andromeda (M31)',121.17,-21.57,2537000,110000,'spiral',1.35,3200],
-  ['Triangulum (M33)',133.61,-31.33,2730000,30000,'flocculent',0.95,1600]
-];
+// Real positions for every visitable galaxy, keyed like GALAXY_DB ids
+// (VISITABLE_GALAXIES name stripped to lowercase alphanumerics):
+//   [l°, b°, distance ly, radius ly, type]. Distant entries approximate.
+// Types: spiral · flocculent (Fields template) · elliptical · irregular · dsph.
+const GS_VISIT_CATALOG={
+  andromedam31:[121.17,-21.57,2537000,110000,'spiral'],
+  triangulumm33:[133.61,-31.33,2730000,30000,'flocculent'],
+  sombreroom104:[298.46,51.15,29300000,25000,'elliptical'],
+  whirlpoolm51:[104.85,68.56,31000000,38000,'spiral'],
+  pinwheelm101:[102.04,59.77,20900000,85000,'spiral'],
+  centaurusa:[309.52,19.42,12400000,50000,'elliptical'],
+  lmc:[280.47,-32.89,163000,7000,'irregular'],
+  smc:[302.80,-44.30,203000,3500,'irregular'],
+  bodesgalaxym81:[142.09,40.90,11800000,45000,'spiral'],
+  cigargalaxym82:[141.41,40.57,11500000,20000,'irregular'],
+  blackeyem64:[315.68,84.42,17300000,27000,'spiral'],
+  southernpinwheelm83:[314.58,31.97,14700000,28000,'spiral'],
+  sculptorngc253:[97.37,-87.96,11400000,45000,'spiral'],
+  fireworksngc6946:[95.72,11.67,25200000,20000,'spiral'],
+  cartwheel:[314.00,-83.00,500000000,75000,'spiral'],
+  hoagsobject:[32.00,54.00,600000000,50000,'elliptical'],
+  circinus:[311.33,-3.81,13600000,15000,'spiral'],
+  ngc1300:[211.00,-54.00,61000000,55000,'spiral'],
+  leotripletm66:[241.97,64.42,35000000,48000,'spiral'],
+  antennaengc4038:[287.90,42.50,45000000,50000,'irregular'],
+  m32ngc221:[121.15,-21.98,2490000,3300,'elliptical'],
+  m110ngc205:[120.72,-21.14,2690000,8000,'elliptical'],
+  ngc147:[119.82,-14.25,2530000,5000,'elliptical'],
+  ngc185:[120.79,-14.48,2020000,4000,'elliptical'],
+  ic10:[118.97,-3.33,2200000,3000,'irregular'],
+  wolflundmarkmelotte:[75.86,-73.62,3040000,5000,'irregular'],
+  fornaxdwarf:[237.10,-65.65,460000,2500,'dsph'],
+  sculptordwarf:[287.53,-83.16,290000,1500,'dsph'],
+  dracodwarf:[86.37,34.72,260000,1000,'dsph'],
+  ursaminordwarf:[104.97,44.80,200000,1000,'dsph'],
+  leoi:[225.99,49.11,820000,1000,'dsph'],
+  phoenixdwarf:[272.19,-68.95,1440000,1200,'irregular']
+};
+function galaxyKey(n){return String(n||'').replace(/[^a-z0-9]/gi,'').toLowerCase();}
+window.GS_VISIT_CATALOG=GS_VISIT_CATALOG;window.galaxyKey=galaxyKey;
 
+// Particle cloud for one galaxy, centred on the origin (ly).
+function _gsGalaxyParticles(type,R,count,scale,rand){
+  const def={spiral:1100,flocculent:1000,elliptical:450,irregular:320,dsph:70};
+  const N=Math.max(type==='dsph'?20:40,Math.round((count||def[type]||300)*(scale||1)));
+  const pos=new Float32Array(N*3),col=new Float32Array(N*3);
+  let n=0;
+  if(type==='flocculent'&&typeof sampleFieldsGalaxy==='function'){
+    const fg=sampleFieldsGalaxy(N,{seed:(rand()*1e9)|0});
+    for(;n<N;n++){pos[n*3]=fg.pos[n*3]*R;pos[n*3+1]=fg.pos[n*3+1]*R;pos[n*3+2]=fg.pos[n*3+2]*R;
+      col[n*3]=fg.col[n*3]*0.22;col[n*3+1]=fg.col[n*3+1]*0.22;col[n*3+2]=fg.col[n*3+2]*0.22;}
+  }else if(type==='spiral'&&typeof sampleCylinderSpiralPoint==='function'){
+    for(let t=0;t<N*6&&n<N;t++){
+      let s;
+      if(n<N*0.28){const br=Math.pow(rand(),3)*R*0.14,ph=rand()*Math.PI*2,th=Math.acos(2*rand()-1);s={x:br*Math.sin(th)*Math.cos(ph),y:br*Math.cos(th)*0.4,z:br*Math.sin(th)*Math.sin(ph),core:true};}
+      else s=sampleCylinderSpiralPoint(rand,{RG:R,turns:2.25,nArms:2});
+      if(!s)continue;
+      pos[n*3]=s.x;pos[n*3+1]=s.y;pos[n*3+2]=s.z;
+      if(s.core){col[n*3]=0.22;col[n*3+1]=0.20;col[n*3+2]=0.16;}else{col[n*3]=0.10;col[n*3+1]=0.17;col[n*3+2]=0.32;}
+      n++;
+    }
+  }else if(type==='elliptical'){
+    for(;n<N;n++){const sR=R*0.33*Math.pow(rand(),0.6);
+      pos[n*3]=_gsGauss(rand)*sR;pos[n*3+1]=_gsGauss(rand)*sR*0.7;pos[n*3+2]=_gsGauss(rand)*sR;
+      const b=0.7+rand()*0.3;col[n*3]=0.21*b;col[n*3+1]=0.18*b;col[n*3+2]=0.13*b;}
+  }else if(type==='dsph'){
+    for(;n<N;n++){pos[n*3]=_gsGauss(rand)*R*0.4;pos[n*3+1]=_gsGauss(rand)*R*0.32;pos[n*3+2]=_gsGauss(rand)*R*0.4;
+      col[n*3]=0.12;col[n*3+1]=0.11;col[n*3+2]=0.10;}
+  }else{ // irregular
+    for(;n<N;n++){const bar=rand()<0.45;
+      pos[n*3]=_gsGauss(rand)*R*(bar?0.45:0.55);pos[n*3+1]=_gsGauss(rand)*R*0.12;pos[n*3+2]=_gsGauss(rand)*R*(bar?0.14:0.5);
+      const pink=rand()<0.06;col[n*3]=pink?0.34:0.12;col[n*3+1]=pink?0.15:0.17;col[n*3+2]=pink?0.22:0.31;}
+  }
+  return {pos:n<N?pos.subarray(0,n*3):pos,col:n<N?col.subarray(0,n*3):col,n};
+}
+// The galaxy you're visiting gets a full-detail cloud (same LOD rules as the
+// Milky Way at home) instead of its distant-view sprite.
+function _gsEnsureHost(key){
+  const subs=galSky.subs||[];
+  for(let i=0;i<subs.length;i++){
+    const r=subs[i];if(!r.key||r.key==='milkyway'||!r.type)continue;
+    const want=(r.key===key);
+    if(want&&!r.host){
+      const B=_gsBudget(), gr=seedRand(hashStr('host:'+r.key));
+      const p0=_gsGalaxyParticles(r.type,r.R,Math.round(B.galaxy*0.55),1,gr);
+      // + a faint exponential field disc so the band wraps the whole sky
+      // from inside (the arm/bulge generators leave the outer disc bare).
+      const nf=Math.round(B.galaxy*0.3), fpos=new Float32Array(nf*3), fcol=new Float32Array(nf*3);
+      const flat=r.type==='elliptical'||r.type==='dsph'?0.6:0.035;
+      for(let j=0;j<nf;j++){
+        const rr=Math.min(r.R,-r.R*0.3*Math.log(1-gr()*0.97)), a=gr()*Math.PI*2;
+        fpos[j*3]=Math.cos(a)*rr;fpos[j*3+1]=_gsGauss(gr)*r.R*flat*(0.6+rr/r.R);fpos[j*3+2]=Math.sin(a)*rr;
+        const w=gr();fcol[j*3]=0.05+w*0.05;fcol[j*3+1]=0.07+w*0.05;fcol[j*3+2]=0.14+w*0.06;
+      }
+      const p={n:p0.n+nf,pos:new Float32Array((p0.n+nf)*3),col:new Float32Array((p0.n+nf)*3)};
+      p.pos.set(p0.pos);p.pos.set(fpos,p0.n*3);p.col.set(p0.col);p.col.set(fcol,p0.n*3);
+      const K=new Float32Array(p.n), P=new Float32Array(p.n);
+      for(let j=0;j<p.n;j++){K[j]=0.0030;P[j]=r.R*0.0035;}
+      // Brighter than the far sprite: from inside, far fewer overlap per pixel.
+      for(let j=0;j<p.col.length;j++)p.col[j]=Math.min(1,p.col[j]*2.4);
+      r.host=_gsLodMesh(p.pos,p.col,K,P,new THREE.OctahedronGeometry(1,0),'JOTS_Host_'+r.key);
+      r.obj.add(r.host);
+    }
+    if(r.host){r.host.visible=want;}
+    const idx=r.meshes.indexOf(r.host);
+    if(want&&r.host&&idx<0)r.meshes.push(r.host);
+    if(!want&&r.host&&idx>=0)r.meshes.splice(idx,1);
+    if(r.meshes[0])r.meshes[0].visible=!want;
+  }
+}
 function _gsMat(map){
   return new THREE.MeshBasicMaterial({color:0xffffff,map:map||null,transparent:false,blending:THREE.AdditiveBlending,
     depthTest:false,depthWrite:false,side:map?THREE.DoubleSide:THREE.FrontSide});
@@ -12027,13 +12419,17 @@ function buildGalSky(){
   root.add(frame);
   const octa=new THREE.OctahedronGeometry(1,0);
   const lod=[];
+  galSky.subs=[];
+  // The Milky Way (centre at the local origin) is a movable sub like every
+  // other galaxy, so it shrinks into the distance when you visit another.
+  const mwSub=new THREE.Group();mwSub.name='JOTS_MilkyWaySub';frame.add(mwSub);
 
   // ── Milky Way star clouds
   const mw=sampleMilkyWay(B.galaxy,0x4D57A1);
   const mK=new Float32Array(mw.n), mP=new Float32Array(mw.n);
   for(let i=0;i<mw.n;i++){const k=mw.kind[i], j=0.75+mw.lum[i]*0.5;mK[i]=GS_KIND_K[k]*j;mP[i]=GS_KIND_PHYS[k]*j;}
   const mwMesh=_gsLodMesh(mw.pos,mw.col,mK,mP,octa,'JOTS_MilkyWay');
-  frame.add(mwMesh);lod.push(mwMesh);
+  mwSub.add(mwMesh);lod.push(mwMesh);
 
   // ── Local stars: real nearest + landmark stars, then a random local field
   const rand=seedRand(0x50C41);
@@ -12057,7 +12453,7 @@ function buildGalSky(){
     lc[i*3]=CLS[c][1][0]*br;lc[i*3+1]=CLS[c][1][1]*br;lc[i*3+2]=CLS[c][1][2]*br;lK[i]=CLS[c][2];lP[i]=0.002;
   }
   const loc=_gsLodMesh(lp,lc,lK,lP,octa,'JOTS_LocalStars');
-  frame.add(loc);lod.push(loc);
+  mwSub.add(loc);lod.push(loc);
 
   // ── Nebulae (real positions; gas-cloud particles with a bright core)
   const neb=[];let nebN=0;
@@ -12078,56 +12474,29 @@ function buildGalSky(){
     neb.push({name:n[0],pos:cen,r:R,d:n[3]});
   });
   const nebMesh=_gsLodMesh(np,nc,nK,nP,new THREE.IcosahedronGeometry(1,1),'JOTS_Nebulae');
-  frame.add(nebMesh);lod.push(nebMesh);
+  mwSub.add(nebMesh);lod.push(nebMesh);
   galSky.nebulae=neb;
 
-  // ── Local Group galaxies at their real distances (static sizes: always far)
-  const lgGroup=new THREE.Group();lgGroup.name='JOTS_LocalGroup';
-  GS_LOCAL_GROUP.forEach((g,gi)=>{
-    const cnt=Math.round(g[7]*B.lg), R=g[4];
-    const cen=galLocalFromLBD(g[1],g[2],g[3],new THREE.Vector3());
-    const gr=seedRand(0x10CA1+gi*131);
-    const gp=new Float32Array(cnt*3),gc=new Float32Array(cnt*3);
-    let placed=0;
-    if(g[5]==='flocculent'){
-      // Flocculent spiral from the Fields_Galaxy template (M33 is one).
-      const fg=sampleFieldsGalaxy(cnt,{seed:0xF1E1D5+gi,time:0});
-      for(;placed<cnt;placed++){
-        gp[placed*3]=fg.pos[placed*3]*R;gp[placed*3+1]=fg.pos[placed*3+1]*R;gp[placed*3+2]=fg.pos[placed*3+2]*R;
-        gc[placed*3]=fg.col[placed*3]*0.22;gc[placed*3+1]=fg.col[placed*3+1]*0.22;gc[placed*3+2]=fg.col[placed*3+2]*0.22;
-      }
-    }else if(g[5]==='spiral'&&typeof sampleCylinderSpiralPoint==='function'){
-      for(let t=0;t<cnt*6&&placed<cnt;t++){
-        let s;
-        if(placed<cnt*0.28){const br=Math.pow(gr(),3)*R*0.14,ph=gr()*Math.PI*2,th=Math.acos(2*gr()-1);s={x:br*Math.sin(th)*Math.cos(ph),y:br*Math.cos(th)*0.4,z:br*Math.sin(th)*Math.sin(ph),core:true};}
-        else s=sampleCylinderSpiralPoint(gr,{RG:R,turns:2.25,nArms:2});
-        if(!s)continue;
-        gp[placed*3]=s.x;gp[placed*3+1]=s.y;gp[placed*3+2]=s.z;
-        if(s.core){gc[placed*3]=0.22;gc[placed*3+1]=0.20;gc[placed*3+2]=0.16;}
-        else{gc[placed*3]=0.10;gc[placed*3+1]=0.17;gc[placed*3+2]=0.32;}
-        placed++;
-      }
-    }else{
-      for(;placed<cnt;placed++){
-        const bar=gr()<0.45;
-        gp[placed*3]=_gsGauss(gr)*R*(bar?0.45:0.55);gp[placed*3+1]=_gsGauss(gr)*R*0.12;gp[placed*3+2]=_gsGauss(gr)*R*(bar?0.14:0.5);
-        const pink=gr()<0.06;
-        gc[placed*3]=pink?0.8:0.30;gc[placed*3+1]=pink?0.36:0.42;gc[placed*3+2]=pink?0.55:0.78;
-      }
-    }
-    const sub=new THREE.Group();
-    sub.position.copy(cen).multiplyScalar(S);
-    sub.rotation.set(g[6],gi*1.3,0.2*gi);
-    const pr=Math.max(g[3]*0.0007,R*0.012);
-    const lk=new Float32Array(placed).fill(0.0022), lph=new Float32Array(placed).fill(pr);
-    const m=_gsLodMesh(gp.subarray(0,placed*3),gc,lk,lph,octa,'JOTS_LG_'+gi);
-    // Their own frame is rotated/offset, so size once from the Sun's
-    // distance (they're always ≥160k ly away; parallax never matters).
-    {const aa=m.instanceMatrix.array, rr=Math.min(pr,g[3]*GALSKY.KMAX)*S;
-     for(let ii=0;ii<placed;ii++){aa[ii*16]=rr;aa[ii*16+5]=rr;aa[ii*16+10]=rr;} m.instanceMatrix.needsUpdate=true;}
-    sub.add(m);lgGroup.add(sub);
+  // ── Every visitable galaxy at its real position. Each galaxy (and the
+  // Milky Way) is a "sub" with a true centre in ly; _gsPlaceSubs places it
+  // relative to the camera, so arriving anywhere needs no rebuild.
+  const galGroup=new THREE.Group();galGroup.name='JOTS_Galaxies';
+  frame.add(galGroup);
+  const byKey={};
+  Object.keys(GS_VISIT_CATALOG).forEach(key=>{
+    const g=GS_VISIT_CATALOG[key];
+    const cen=galLocalFromLBD(g[0],g[1],g[2],new THREE.Vector3());
+    const gr=seedRand(hashStr('gal:'+key));
+    const p=_gsGalaxyParticles(g[4],g[3],0,B.lg,gr);
+    if(!p.n)return;
+    const sub=new THREE.Group();sub.name='JOTS_Gal_'+key;
+    sub.rotation.set((gr()-0.5)*2.6,gr()*Math.PI*2,(gr()-0.5)*1.2);
+    const m=_gsLodMesh(p.pos,p.col,new Float32Array(p.n).fill(0.0007),new Float32Array(p.n).fill(Math.max(40,g[3]*0.012)),octa,'JOTS_GalMesh_'+key);
+    sub.add(m);galGroup.add(sub);
+    const rec={obj:sub,center:cen,meshes:[m],R:g[3],key,type:g[4],host:null};
+    galSky.subs.push(rec);byKey[key]=rec;
   });
-  frame.add(lgGroup);
+  galSky.byKey=byKey;
 
   // ── Soft disc glow (only seen from outside the disc; lies in the galactic plane)
   const hz=sampleMilkyWay(B.haze,0x7A2E11);
@@ -12144,7 +12513,7 @@ function buildGalSky(){
     haze.instanceMatrix.needsUpdate=true;if(haze.instanceColor)haze.instanceColor.needsUpdate=true;
     haze.frustumCulled=false;haze.renderOrder=-1001;haze.name='JOTS_GalaxyGlow';
   }
-  frame.add(haze);
+  mwSub.add(haze);
 
   // ── Sol marker (shown once you've zoomed out beyond the local stars)
   const sol=new THREE.Group();sol.name='JOTS_GalSkySol';
@@ -12153,12 +12522,18 @@ function buildGalSky(){
   const solHalo=new THREE.Mesh(new THREE.PlaneGeometry(2,2),_gsMat(_gsSoftTex()));
   solHalo.material.color.setRGB(1.0,0.72,0.20);solHalo.scale.setScalar(3.2);solHalo.renderOrder=-999;sol.add(solHalo);
   sol.position.copy(sunLocal).multiplyScalar(S);sol.visible=false;
-  frame.add(sol);
+  mwSub.add(sol);
 
+  galSky.subs.unshift({obj:mwSub,center:new THREE.Vector3(0,0,0),meshes:[mwMesh,loc,nebMesh],R:55000,key:'milkyway'});
   galSky.frame=frame;galSky.lod=lod;galSky.local=loc;galSky.haze=haze;galSky.solMarker=sol;galSky.solHalo=solHalo;
   galSkyRoot=root;
   flightScene.add(root);
   galSky.ready=true;
+  // Fast travel can land before flight exists — honour where we arrived.
+  try{
+    const cur=(typeof GALAXY_DB!=='undefined'&&GALAXY_DB&&GALAXY_DB.current)||'milkyway';
+    if(window._ftSystem||cur!=='milkyway')setGalSkySystem(window._ftSystem||{name:'arrival'});
+  }catch(e){}
   // Far plane must reach Andromeda through the scaled layer.
   try{ if(flightCamera&&flightCamera.far<300000){flightCamera.far=300000;flightCamera.updateProjectionMatrix();} }catch(e){}
   updateGalSky(true);
@@ -12169,25 +12544,69 @@ function buildGalSky(){
 // arrive — and nearest neighbours are light-years apart, never AU.
 function setGalSkySystem(system){
   if(!galSky.base)galSky.base=new THREE.Vector3();
+  galSky._lastSize=null;galSky._sizeT=0;galSky._fadeKey='';   // jump → refresh placement + LOD next frame
+  window._curSystem=system||null;
   if(!system){galSky.base.set(0,0,0);return;}
   const cur=(typeof GALAXY_DB!=='undefined'&&GALAXY_DB&&GALAXY_DB.current)||'milkyway';
   const q=galSky.q||new THREE.Quaternion().setFromEuler(GALAXY_PLANE_EULER||new THREE.Euler(0.5,0.3,0.1));
+  try{_gsEnsureHost(cur);}catch(e){}
   if(cur!=='milkyway'){
-    // Another galaxy: the Milky Way hangs in the sky as a distant spiral.
+    // Another galaxy: a default random spot inside its disc at its real
+    // position; the Milky Way and the rest hang in the sky from there.
     const r=seedRand(hashStr('galpos:'+cur));
-    galSky.base.set(0,650000*(0.6+r()*0.4),0).applyAxisAngle(new THREE.Vector3(1,0,0),0.35+r()*0.5).applyQuaternion(q);
+    const rec=galSky.byKey&&galSky.byKey[cur];
+    const sunL=galSky.sunLocal||new THREE.Vector3(-GALSKY.R0,GALSKY.ZSUN,0);
+    let local;
+    if(rec){
+      const a=r()*Math.PI*2, off=new THREE.Vector3(Math.cos(a),0,Math.sin(a)).multiplyScalar(rec.R*(0.15+r()*0.15));   // inside the populated disc
+      off.y=(r()-0.5)*rec.R*0.03;off.applyQuaternion(rec.obj.quaternion);
+      local=rec.center.clone().add(off);
+    }else{
+      local=sunL.clone().add(new THREE.Vector3(0,650000,0));
+    }
+    galSky.base.copy(local).sub(sunL).applyQuaternion(q).add(galSkySystemOffset(system));
     return;
   }
+  galSky.base.copy(galSkySystemOffset(system));
+}
+// A system's offset (ly, world axes) from its galaxy's arrival point: a few
+// to a few hundred light-years, stable per system. Shared by the sky and
+// the Quick Travel maps so both agree.
+function galSkySystemOffset(system){
+  const v=new THREE.Vector3();
+  if(!system||system.name==='arrival')return v;
+  const q=galSky.q||new THREE.Quaternion().setFromEuler(GALAXY_PLANE_EULER||new THREE.Euler(0.5,0.3,0.1));
   const r=seedRand((system.seed>>>0)||hashStr('sys:'+(system.name||'')));
   const d=4.2+Math.pow(r(),1.6)*460, a=r()*Math.PI*2;
-  galSky.base.set(Math.cos(a)*d,_gsGauss(r)*Math.min(90,d*0.3),Math.sin(a)*d).applyQuaternion(q);
+  return v.set(Math.cos(a)*d,_gsGauss(r)*Math.min(90,d*0.3),Math.sin(a)*d).applyQuaternion(q);
 }
+window.galSkySystemOffset=galSkySystemOffset;
 // Flight distance from the system's star (scene units) → galactic zoom (ly).
 function galSkyZoomLy(d){
   const G=GALSKY;
   if(d<=G.D0)return d/(AU_UNITS*G.LY_AU);
   const t=Math.min(1.25,(d-G.D0)/(G.D1-G.D0));
   return Math.pow(10, G.LOG_MIN+(G.LOG_MAX-G.LOG_MIN)*Math.pow(t,0.9));
+}
+// Place every galaxy relative to the camera. Anything beyond GS_RMAX_LY is
+// pulled in along its line of sight and shrunk by the same factor —
+// identical on screen, inside the far plane, exact again as you approach.
+// Cloud sizes are then re-derived in each galaxy's own frame.
+const GS_RMAX_LY=2200000;
+function _gsPlaceSubs(L,resize){
+  const S=GALSKY.S, subs=galSky.subs||[], inv=galSky._inv||(galSky._inv=new THREE.Matrix4()), c=galSky._c||(galSky._c=new THREE.Vector3());
+  for(let i=0;i<subs.length;i++){
+    const r=subs[i], o=r.obj;
+    const vx=r.center.x-L.x, vy=r.center.y-L.y, vz=r.center.z-L.z, D=Math.sqrt(vx*vx+vy*vy+vz*vz);
+    const k=D>GS_RMAX_LY?GS_RMAX_LY/D:1;
+    o.position.set((L.x+vx*k)*S,(L.y+vy*k)*S,(L.z+vz*k)*S);
+    o.scale.setScalar(k);o.updateMatrix();
+    if(resize){
+      inv.copy(o.matrix).invert();
+      c.copy(L).multiplyScalar(S).applyMatrix4(inv).divideScalar(S);
+      for(let j=0;j<r.meshes.length;j++)_gsResize(r.meshes[j],c.x,c.y,c.z);
+    }
+  }
 }
 function _gsSmooth(a,b,x){const t=Math.min(1,Math.max(0,(x-a)/(b-a)));return t*t*(3-2*t);}
 function _gsFade(m,a){if(!m)return;m.visible=a>0.01;if(m.material&&m.material.color)m.material.color.setScalar(a);}
@@ -12201,16 +12620,23 @@ function updateGalSky(force){
   if(d>1e-6)cam.addScaledVector(c,off/d);
   galSkyRoot.position.copy(c).addScaledVector(cam,-GALSKY.S);
   const dS=cam.length();
+  // Refresh as finely near the galaxy you're in as the Milky Way at home.
+  let near=dS;
+  if(galSky.subs){
+    const L0=galSky._tmpL||(galSky._tmpL=new THREE.Vector3());
+    L0.copy(cam).applyQuaternion(galSky.qInv).add(galSky.sunLocal);
+    for(let i=0;i<galSky.subs.length;i++){const r=galSky.subs[i];near=Math.min(near,Math.max(20,L0.distanceTo(r.center)-r.R));}
+  }
   // Re-derive cloud sizes when the camera has moved a meaningful fraction
   // of its distance through the galaxy (throttled; idle at home = never).
   const now=performance.now();
   const last=galSky._lastSize;
   const moved=last?cam.distanceTo(last):Infinity;
-  if(force||(moved>Math.max(1.5,0.07*Math.max(dS,20))&&now-(galSky._sizeT||0)>120)){
+  if(force||(moved>Math.max(1.5,0.07*Math.max(near,20))&&now-(galSky._sizeT||0)>120)){
     galSky._sizeT=now;
     galSky._lastSize=(last||new THREE.Vector3()).copy(cam);
     const L=galSky.camLocal.copy(cam).applyQuaternion(galSky.qInv).add(galSky.sunLocal);
-    for(let i=0;i<galSky.lod.length;i++)_gsResize(galSky.lod[i],L.x,L.y,L.z);
+    _gsPlaceSubs(L,true);
   }
   const key=Math.round(Math.log10(1+dS)*40);
   if(force||key!==galSky._fadeKey){
@@ -12219,7 +12645,7 @@ function updateGalSky(force){
     // Height above/below the disc decides how much disc glow you see.
     const h=Math.abs(galSky.camLocal.y||0);
     _gsFade(galSky.haze,_gsSmooth(9000,60000,dS)*_gsSmooth(1500,20000,Math.max(h,dS*0.35)));
-    if(galSky.solMarker)galSky.solMarker.visible=dS>25;
+    if(galSky.solMarker)galSky.solMarker.visible=dS>25&&dS<400000;
   }
   const sol=galSky.solMarker;
   if(sol&&sol.visible){
