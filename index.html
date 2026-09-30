@@ -656,6 +656,30 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;background:var(--c0);co
 .art-btn.progress-btn{color:#8ff0b8;border-color:rgba(120,230,170,0.55);background:rgba(90,220,150,0.12);box-shadow:0 0 8px rgba(110,230,160,0.28),inset 0 0 6px rgba(110,230,160,0.10);text-shadow:0 0 6px rgba(120,235,170,0.45);font-weight:600;}
 .art-btn.progress-btn:hover{background:rgba(90,220,150,0.22);color:#b8ffd6;box-shadow:0 0 12px rgba(110,230,160,0.45);}
 .art-btn.progress-btn.flash{animation:progressFlash .9s ease-out;}
+/* Profile button + menu (guest or GitHub) */
+.art-btn.profile-btn{display:inline-flex;align-items:center;gap:5px;}
+.pf-av-mini{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;overflow:hidden;font-size:.6rem;line-height:1;}
+.pf-av-mini img{width:100%;height:100%;object-fit:cover;display:block;}
+#profile-modal{position:fixed;inset:0;z-index:6400;background:rgba(0,0,0,.62);backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;padding:16px;}
+#profile-modal.open{display:flex;}
+.pf-card{width:min(360px,100%);max-height:88vh;overflow-y:auto;background:rgba(4,10,22,.97);border:1px solid rgba(91,127,255,.28);border-radius:6px;padding:18px 18px 14px;color:var(--text);box-shadow:0 0 28px rgba(91,127,255,.12);}
+.pf-head{display:flex;align-items:center;gap:12px;margin-bottom:12px;}
+.pf-av{width:56px;height:56px;border-radius:50%;flex-shrink:0;overflow:hidden;border:1px solid rgba(91,127,255,.45);background:rgba(91,127,255,.12);display:flex;align-items:center;justify-content:center;font-family:var(--font-hud);font-size:1.3rem;color:var(--cyan);}
+.pf-av img{width:100%;height:100%;object-fit:cover;display:block;}
+.pf-name{font-family:var(--font-hud);font-size:.8rem;letter-spacing:.1em;color:var(--cyan);word-break:break-all;}
+.pf-kind{font-family:var(--font-mono);font-size:.56rem;color:var(--text-dim);margin-top:3px;line-height:1.45;}
+.pf-sec{font-family:var(--font-hud);font-size:.52rem;letter-spacing:.18em;color:rgba(91,127,255,.8);margin:14px 0 6px;border-bottom:1px solid rgba(91,127,255,.16);padding-bottom:4px;}
+.pf-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;}
+.pf-row-t{font-size:.7rem;color:var(--text);}
+.pf-row-d{font-size:.58rem;color:var(--text-dim);margin-top:2px;line-height:1.4;}
+.pf-sw{flex-shrink:0;width:44px;height:24px;border-radius:12px;border:1px solid rgba(91,127,255,.4);background:rgba(91,127,255,.08);position:relative;cursor:pointer;padding:0;}
+.pf-sw::after{content:'';position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:rgba(160,175,210,.7);transition:left .18s,background .18s;}
+.pf-sw[aria-checked="true"]{background:rgba(120,230,170,.18);border-color:rgba(120,230,170,.6);}
+.pf-sw[aria-checked="true"]::after{left:23px;background:#8ff0b8;}
+.pf-btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;}
+.pf-btn{flex:1 1 auto;padding:8px 12px;border-radius:3px;border:1px solid rgba(91,127,255,.4);background:rgba(91,127,255,.08);color:var(--cyan);font-family:var(--font-hud);font-size:.52rem;letter-spacing:.12em;cursor:pointer;}
+.pf-btn.gh{border-color:rgba(120,230,170,.55);color:#8ff0b8;background:rgba(90,220,150,.1);}
+.pf-soon{font-size:.58rem;color:var(--text-dim);line-height:1.5;margin-top:4px;}
 @keyframes progressFlash{0%{box-shadow:0 0 22px rgba(140,255,190,0.9);}100%{box-shadow:0 0 8px rgba(110,230,160,0.28);}}
 .aud-btn{width:20px;height:20px;display:flex;align-items:center;justify-content:center;background:none;border:none;color:rgba(91,127,255,0.65);font-size:0.6rem;cursor:pointer;border-radius:50%;transition:var(--trans);padding:0;pointer-events:auto;}
 .aud-btn:hover{background:rgba(91,127,255,0.15);color:var(--cyan);}
@@ -1416,6 +1440,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
       <button class="art-btn" onclick="openSettings()">CFG</button>
       <button class="art-btn" onclick="returnToMenu()" title="Return to main menu (your game stays loaded)">☰ MENU</button>
       <button class="art-btn" onclick="promptExit()">EXIT</button>
+      <button class="art-btn profile-btn" id="profile-btn" onclick="openProfileMenu()" title="Your profile and display options"><span class="pf-av-mini" id="profile-btn-av">◉</span><span>PROFILE</span></button>
       <button class="art-btn progress-btn" id="init-progress-btn" onclick="quickSave()" title="Initialize Progress: save right here. Signed in, it also goes to your private jots- repository. The game also initializes progress by itself at milestones and every 15 minutes.">⟐ INITIALIZE PROGRESS</button>
     </div>
   </div>
@@ -8792,35 +8817,54 @@ function bodyUnderCrosshair(){
 // Pops when crosshair first lands on a body (or distant system / flyby)
 // within range; stays ~4s; does not re-spam while held. Minimap + QT/galaxy
 // map navigation labels are unaffected.
-let _lastHoveredBody=null, _labelHideTimer=null, _labelPinnedUntil=0;
+let _lastHoveredBody=null, _labelHideTimer=null, _labelPinnedUntil=0, _labelAwayTimer=null;
 const LABEL_PROXIMITY_RANGE = 60; // local Sol bodies
-function showCrosshairLabel(name, holdMs){
-  if(!name)return;
+const LABEL_LINGER_MS = 3000;     // stays this long after the crosshair moves off, then fades
+function _objLabelsOn(){ return !(window.DM_PREFS && window.DM_PREFS.objectLabels===false); }
+function _labelShowNow(name){
   const el=$('crosshair-label');if(!el)return;
+  if(_labelAwayTimer){clearTimeout(_labelAwayTimer);_labelAwayTimer=null;}
+  if(_labelHideTimer){clearTimeout(_labelHideTimer);_labelHideTimer=null;}
   el.textContent=name;
+  el.style.transition='opacity .6s ease';
   el.style.display='block';
-  if(_labelHideTimer)clearTimeout(_labelHideTimer);
-  const ms=holdMs||4000;
-  _labelPinnedUntil=performance.now()+ms;
-  _labelHideTimer=setTimeout(()=>{el.style.display='none';},ms);
+  el.style.opacity='1';
 }
+function _labelFadeOut(){
+  _labelAwayTimer=null;
+  const el=$('crosshair-label');if(!el)return;
+  el.style.opacity='0';
+  _labelHideTimer=setTimeout(()=>{el.style.display='none';},650);
+}
+function hideCrosshairLabelNow(){
+  if(_labelAwayTimer){clearTimeout(_labelAwayTimer);_labelAwayTimer=null;}
+  if(_labelHideTimer){clearTimeout(_labelHideTimer);_labelHideTimer=null;}
+  const el=$('crosshair-label');if(el){el.style.display='none';el.style.opacity='0';}
+}
+function showCrosshairLabel(name, holdMs){
+  if(!name||!_objLabelsOn())return;
+  _labelShowNow(name);
+  _labelPinnedUntil=performance.now()+(holdMs||LABEL_LINGER_MS);
+  _labelAwayTimer=setTimeout(_labelFadeOut,holdMs||LABEL_LINGER_MS);
+}
+// Info pops up while the crosshair is on something close enough, stays
+// while you keep it there, and fades out ~3 s after you look away.
 function updateCrosshairLabel(){
   if(!boardFlight || !flightCamera){ _lastHoveredBody=null; return; }
-  const body = bodyUnderCrosshair();
   let currentName=null;
-  if(body&&body.mesh){
-    const dist=flightCamera.position.distanceTo(body.mesh.position);
-    const range=body.labelRange||LABEL_PROXIMITY_RANGE;
-    // Distant systems: crosshair aim alone within generous range is enough
-    // (they're sparse). Local bodies still need proximity.
-    if(body.isSystem){
+  if(_objLabelsOn()){
+    const body = bodyUnderCrosshair();
+    if(body&&body.mesh){
+      const dist=flightCamera.position.distanceTo(body.mesh.position);
+      const range=body.labelRange||LABEL_PROXIMITY_RANGE;
       if(dist<range)currentName=body.name;
-    }else if(dist<range){
-      currentName=body.name;
     }
   }
-  if(currentName && currentName !== _lastHoveredBody){
-    showCrosshairLabel(currentName,4000);
+  const el=$('crosshair-label');
+  if(currentName){
+    if(currentName!==_lastHoveredBody || _labelAwayTimer || (el&&el.style.display==='none')) _labelShowNow(currentName);
+  }else if(_lastHoveredBody && !_labelAwayTimer){
+    _labelAwayTimer=setTimeout(_labelFadeOut,LABEL_LINGER_MS);
   }
   _lastHoveredBody = currentName;
 }
@@ -11223,6 +11267,75 @@ let _fbCat='BUG REPORT';
 // ══════════════════════════════════════════════════════════════
 //  ✦ ACCOUNT — Firebase Auth (Google / Apple)
 // ══════════════════════════════════════════════════════════════
+// ── PROFILE MENU ─────────────────────────────────────────────────────
+// Works for guests and GitHub sign-ins alike. Signed in, it shows the
+// GitHub avatar and name; either way it holds display options (saved in
+// this browser). More profile features will live here later.
+const DM_PREFS=(function(){
+  const p={playerLabels:true, objectLabels:true};
+  try{ Object.assign(p, JSON.parse(localStorage.getItem('dm_prefs_v1')||'{}')); }catch(e){}
+  return p;
+})();
+window.DM_PREFS=DM_PREFS;
+function _saveDmPrefs(){ try{ localStorage.setItem('dm_prefs_v1', JSON.stringify(DM_PREFS)); }catch(e){} }
+function _pfWho(){
+  const J=window.JOTS, id=(J&&J.identity)||{}, signedIn=!!(J&&J.auth&&J.auth.signedIn);
+  return {name:id.name||'Guest', avatar:signedIn?(id.avatar||''):'', signedIn, repo:(J&&J.vault&&J.vault.repo)||''};
+}
+function _pfAvatar(box, who){
+  box.textContent='';
+  if(who.avatar){ const im=document.createElement('img'); im.alt=''; im.referrerPolicy='no-referrer'; im.src=who.avatar; box.appendChild(im); }
+  else box.textContent=(who.name||'?').replace(/^Guest-/,'').charAt(0).toUpperCase()||'◉';
+}
+function _pfEnsure(){
+  if($('profile-modal')) return;
+  const m=document.createElement('div'); m.id='profile-modal';
+  m.innerHTML='<div class="pf-card" role="dialog" aria-modal="true" aria-labelledby="pf-name">'+
+    '<div class="pf-head"><div class="pf-av" id="pf-av"></div><div><div class="pf-name" id="pf-name"></div><div class="pf-kind" id="pf-kind"></div></div></div>'+
+    '<div class="pf-btns" id="pf-acct"></div>'+
+    '<div class="pf-sec">DISPLAY</div>'+
+    '<div class="pf-row"><div><div class="pf-row-t">Player name tags</div><div class="pf-row-d">Other players\u2019 usernames above them.</div></div><button class="pf-sw" id="pf-sw-players" role="switch"></button></div>'+
+    '<div class="pf-row"><div><div class="pf-row-t">Object info</div><div class="pf-row-d">Names of planets, stars and other things when your crosshair is on them.</div></div><button class="pf-sw" id="pf-sw-objects" role="switch"></button></div>'+
+    '<div class="pf-sec">COMING LATER</div>'+
+    '<div class="pf-soon">Your full pilot profile, achievements, and the tech to analyse unknown discoveries.</div>'+
+    '<div class="pf-btns"><button class="pf-btn" id="pf-close">CLOSE</button></div>'+
+  '</div>';
+  document.body.appendChild(m);
+  m.addEventListener('click',e=>{ if(e.target===m) closeProfileMenu(); });
+  $('pf-close').onclick=closeProfileMenu;
+  const bindSw=(id,key,after)=>{
+    const b=$(id);
+    b.onclick=()=>{ DM_PREFS[key]=!DM_PREFS[key]; _saveDmPrefs(); _pfRender(); if(after) after(DM_PREFS[key]); };
+  };
+  bindSw('pf-sw-players','playerLabels');
+  bindSw('pf-sw-objects','objectLabels',on=>{ if(!on) try{ hideCrosshairLabelNow(); }catch(e){} });
+}
+function _pfRender(){
+  if(!$('profile-modal')) return;
+  const who=_pfWho();
+  _pfAvatar($('pf-av'), who);
+  $('pf-name').textContent=who.name;
+  $('pf-kind').textContent=who.signedIn
+    ? 'Signed in with GitHub'+(who.repo?' \u00b7 progress saves to your private '+who.repo+' repository':'')
+    : 'Playing as a guest \u00b7 progress saves on this device. Sign in with GitHub to keep it in your own private repository and bring your GitHub avatar.';
+  const acct=$('pf-acct'); acct.textContent='';
+  const mk=(txt,cls,fn)=>{ const b=document.createElement('button'); b.className='pf-btn'+(cls?' '+cls:''); b.textContent=txt; b.onclick=fn; acct.appendChild(b); };
+  if(who.signedIn) mk('SIGN OUT','',()=>{ closeProfileMenu(); try{ window.signOutOfAccount(); }catch(e){} });
+  else if(typeof window.jotsGithubSignIn==='function') mk('\u2325 SIGN IN WITH GITHUB','gh',()=>{ closeProfileMenu(); window.jotsGithubSignIn(); });
+  $('pf-sw-players').setAttribute('aria-checked', DM_PREFS.playerLabels?'true':'false');
+  $('pf-sw-objects').setAttribute('aria-checked', DM_PREFS.objectLabels?'true':'false');
+}
+function openProfileMenu(){ _pfEnsure(); _pfRender(); $('profile-modal').classList.add('open'); }
+function closeProfileMenu(){ const m=$('profile-modal'); if(m) m.classList.remove('open'); }
+function refreshProfileBtn(){
+  const box=$('profile-btn-av'); if(!box) return;
+  const who=_pfWho();
+  if(who.avatar) _pfAvatar(box, who); else box.textContent='\u25C9';
+}
+window.openProfileMenu=openProfileMenu; window.closeProfileMenu=closeProfileMenu;
+window.addEventListener('jots:auth',()=>{ refreshProfileBtn(); _pfRender(); });
+setTimeout(refreshProfileBtn,2500);
+
 function openAccountModal(){
   const st=$('acct-status');if(st)st.textContent='';
   $('account-modal').style.display='flex';
@@ -11919,41 +12032,16 @@ function buildFlightGalaxyBandCPU(){
   // Full-disc arm-dot field (systems as yellow/white crest markers across MW)
   try{ generateGalacticArmDots(galGroup, SPIRAL_PHASE_LOCK, RG, particles, mobile, gfxLow); }catch(e){console.warn('arm dots:',e);}
 
-  // Local Orion sheath — THINNER BLUE InstancedMesh (not Points; not warm orange).
-  // Faded/hidden at GAL_SOL_SPECK_DIST by updateSolGalLod — main disc plate carries far view.
+  // (The old "local Orion sheath" — a straight 5200×720×180 slab of blue
+  // stars laid around Sol — is gone: it read as a cylinder parked over the
+  // Sun. The disc's own arm stars already fill Sol's neighbourhood.)
   try{
     if(window._flightLocalArm){
       _disposeObject3D(window._flightLocalArm);
       flightScene.remove(window._flightLocalArm);
       window._flightLocalArm=null;
     }
-    const local=new THREE.Group();
-    local.rotation.copy(galGroup.rotation);
-    const locN=(particles==='low'||gfxLow)
-      ?(mobile?4000:7000)
-      :(particles==='high'||particles==='ultra')
-        ?(mobile?9000:12000)
-        :(mobile?6500:9000);
-    const lp=new Float32Array(locN*3),lc=new Float32Array(locN*3);
-    for(let i=0;i<locN;i++){
-      const along=(Math.random()-0.5)*5200;
-      const across=(Math.random()-0.5)*Math.random()*720;
-      const thick=(Math.random()-0.5)*Math.random()*180;
-      const coreBias=Math.random()*Math.random()*4200;
-      lp[i*3]=along-coreBias*0.55;
-      lp[i*3+1]=thick;
-      lp[i*3+2]=across;
-      const t=Math.min(1,Math.hypot(lp[i*3],lp[i*3+2])/5200);
-      const towardCore=Math.max(0, -lp[i*3]/5200);
-      const b=(0.88+Math.random()*0.35)*(1-t*0.16)*(0.90+towardCore*0.45);
-      lc[i*3]=0.48*b;lc[i*3+1]=0.86*b;lc[i*3+2]=1.0*b;
-    }
-    const locRad=mobile?(gfxLow?55:70):(gfxLow?60:75);
-    const locDraw=_buildGalaxyDustDraw(lp,lc,{instanceRadius:locRad, opacity:0.72});
-    if(locDraw)local.add(locDraw);
-    flightScene.add(local);
-    window._flightLocalArm=local;
-  }catch(e){console.warn('local arm:',e);}
+  }catch(e){}
 
   try{ ensureSolArmDot(); }catch(e){console.warn('sol arm-dot:',e);}
 }
@@ -12422,31 +12510,17 @@ function ensureSolArmDot(){
   }
   const grp=new THREE.Group();
   grp.name='JOTS_SolArmDot';
-  // Yellow-orange Sol arm-dot — enlarged for GAL LOD (camDist 14k–25k / ALT ~7M km)
+  // Sol seen from out in the galaxy: one warm star the size of the other
+  // arm stars (radius ~190) with a faint glow — it sits in the arm like its
+  // neighbours instead of a big glowing blob with a halo.
   const core=new THREE.Mesh(
-    new THREE.SphereGeometry(200,12,12),
+    new THREE.SphereGeometry(170,12,12),
     new THREE.MeshBasicMaterial({color:0xffd23a})
   );
   grp.add(core);
   try{
-    const glow=makeGlowSprite('rgba(255,210,58,0.90)',720);
+    const glow=makeGlowSprite('rgba(255,210,58,0.55)',380);
     grp.add(glow);
-  }catch(e){
-    const shell=new THREE.Mesh(
-      new THREE.SphereGeometry(420,8,8),
-      new THREE.MeshBasicMaterial({color:0xffc14a,transparent:true,opacity:0.40,
-        blending:THREE.AdditiveBlending,depthWrite:false})
-    );
-    grp.add(shell);
-  }
-  // Soft outer halo so yellow nest reads inside blue arm at far LOD
-  try{
-    const halo=new THREE.Mesh(
-      new THREE.SphereGeometry(280,8,8),
-      new THREE.MeshBasicMaterial({color:0xffe080,transparent:true,opacity:0.22,
-        blending:THREE.AdditiveBlending,depthWrite:false})
-    );
-    grp.add(halo);
   }catch(e){}
   // Optional short "Sol" label sprite
   try{
@@ -12456,7 +12530,7 @@ function ensureSolArmDot(){
     lx.textAlign='center';lx.fillText('Sol',64,34);
     const lt=new THREE.CanvasTexture(lc);
     const ls=new THREE.Sprite(new THREE.SpriteMaterial({map:lt,transparent:true,depthTest:false}));
-    ls.scale.set(680,255,1);ls.position.set(0,380,0);grp.add(ls);
+    ls.scale.set(420,158,1);ls.position.set(0,300,0);grp.add(ls);   // small label so home can still be found
   }catch(e){}
   grp.visible=!!window._solFullSysHidden;
   grp.position.set(0,0,0);
@@ -12522,7 +12596,7 @@ function updateSolGalLod(){
   // Soft pulse on arm-dot glow
   try{
     if(far&&window._solArmDot){
-      const pulse=1+Math.sin((typeof flightTime==='number'?flightTime:performance.now()*0.001)*2.2)*0.12;
+      const pulse=1+Math.sin((typeof flightTime==='number'?flightTime:performance.now()*0.001)*2.2)*0.04;
       window._solArmDot.scale.setScalar(pulse);
     }
   }catch(e){}
@@ -13221,7 +13295,8 @@ function buildGalSky(){
   const solCore=new THREE.Mesh(new THREE.OctahedronGeometry(1,1),_gsMat());
   solCore.material.color.setRGB(1.0,0.82,0.23);solCore.renderOrder=-999;sol.add(solCore);
   const solHalo=new THREE.Mesh(new THREE.PlaneGeometry(2,2),_gsMat(_gsSoftTex()));
-  solHalo.material.color.setRGB(1.0,0.72,0.20);solHalo.scale.setScalar(3.2);solHalo.renderOrder=-999;sol.add(solHalo);
+  solHalo.material.color.setRGB(1.0,0.72,0.20);solHalo.scale.setScalar(3.2);solHalo.renderOrder=-999;
+  solHalo.visible=false;sol.add(solHalo);   // no halo: from out in the galaxy the Sun is just one of the arm's stars
   sol.position.copy(sunLocal).multiplyScalar(S);sol.visible=false;
   mwSub.add(sol);
 
@@ -13717,7 +13792,9 @@ function updateGalSky(force){
   }
   const sol=galSky.solMarker;
   if(sol&&sol.visible){
-    sol.scale.setScalar(Math.max(0.6,dS*0.008)*GALSKY.S*(1+Math.sin(now*0.0022)*0.1));
+    // Star-sized (about the brightest arm stars), steady — it used to be ~8x
+    // that with a pulsing halo, which read as a big shape parked on the arm.
+    sol.scale.setScalar(Math.max(0.6,dS*0.0018)*GALSKY.S);
     if(galSky.solHalo)galSky.solHalo.quaternion.copy(flightCamera.quaternion).premultiply(galSky.qInv);
   }
   try{_gsUpdateBlackHoles();}catch(e){if(!galSky._bhErr){galSky._bhErr=1;console.warn('black holes:',e);}}
@@ -19777,6 +19854,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
         // name tag above whoever's visible: her when on foot, else the board
         const tagAt=(u.rider&&!u.mounted)?u.rider.position:b.position;
         const lift=(u.rider&&!u.mounted)?(p.cs?0.6:u.L*0.45):u.L*0.45;
+        u.label.visible=!(window.DM_PREFS&&window.DM_PREFS.playerLabels===false);
         u.label.position.set(tagAt.x,tagAt.y+lift,tagAt.z);
         const s=(u.rider&&!u.mounted)?0.35:1;
         u.label.scale.set(u.L*1.2*s,u.L*0.225*s,1);
