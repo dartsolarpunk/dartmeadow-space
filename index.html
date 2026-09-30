@@ -8466,10 +8466,11 @@ function activateDart(){
 // the board the camera aims. This is the ArcLake-style drone/follow method —
 // the board flies out in front of you and you steer it.
 const CAM_OFFSETS=[
-  // CAM 1 — FOLLOW (default): behind, high, looking over the board
-  {back:7.0,  up:2.8,  look:3.0,  fov:62},
+  // CAM 1 — FOLLOW (default): behind and above, close enough that she
+  // fills the lower frame (was back 7 / up 2.8 — she read as a speck)
+  {back:2.9,  up:1.15, look:1.3,  fov:62},
   // CAM 2 — CHASE: closer & lower, more speed feel
-  {back:4.5,  up:1.4,  look:2.5,  fov:70},
+  {back:2.0,  up:0.6,  look:1.1,  fov:70},
   // CAM 3 — FAR DRONE: pulled way back & up, cinematic
   {back:12.0, up:5.0,  look:2.0,  fov:55},
 ];
@@ -8869,9 +8870,10 @@ let _BOARD_ALIGN;
 window.__whenThreeReady(function(){
   _BOARD_ALIGN=new THREE.Quaternion().setFromEuler(new THREE.Euler(0,-Math.PI/2,0,'YXZ'));
 });
-let _camUp;
+let _camUp,_camRel;
 window.__whenThreeReady(function(){
   _camUp=new THREE.Vector3(0,1,0);
+  _camRel=new THREE.Vector3();
 });
 
 function spQuat(sp){
@@ -9250,11 +9252,15 @@ function updateFollowCam(dt){
   const q=spQuat(sp);
   const fwd=_sV1.set(0,0,-1).applyQuaternion(q);
   const up =_sV2.set(0,1,0).applyQuaternion(q);
-  const desired=_sV3.copy(sp.pos)
+  // Smooth the camera's OFFSET from the board, not its world position:
+  // a world-space lerp trails by ~speed/(6·dt), so at DART speeds the
+  // camera fell far behind and she shrank to a dot under the crosshair.
+  const desiredRel=_sV3.set(0,0,0)
     .addScaledVector(fwd,-o.back)   // behind the board
     .addScaledVector(up,  o.up);    // above it (frame-relative)
-  if(!_followInit){flightCamera.position.copy(desired);_camUp.copy(up);_followInit=true;}
-  else flightCamera.position.lerp(desired,Math.min(1,dt*6));
+  if(!_followInit){_camRel.copy(desiredRel);_camUp.copy(up);_followInit=true;}
+  else _camRel.lerp(desiredRel,Math.min(1,dt*6));
+  flightCamera.position.copy(sp.pos).add(_camRel);
   _camUp.lerp(up,Math.min(1,dt*6)).normalize();
   // aim a bit ahead of the board so it sits in the lower-center of frame
   const lookAt=_sV4.copy(sp.pos).addScaledVector(fwd,o.look).addScaledVector(_camUp,0.4);
@@ -14193,6 +14199,120 @@ function applyRenderSettings(){
   if(STATE.settings.textures)applyProceduralTextures();
 }
 
+// ── BOARD WAKE: faint glowing dust streams peeling off the skyboard ──
+// Instanced streaks in the board's own frame (nose = +X), so they stream
+// off the tail at any speed without depending on world-space velocity.
+// Kept as a sibling of the board (matrix copied each frame), never a
+// child, so board measurements (_deriveBoardScale) don't see it.
+const WAKE_N=110;
+function _boardLocalBox(board){
+  const box=new THREE.Box3(), tmp=new THREE.Box3(), m=new THREE.Matrix4();
+  board.updateMatrixWorld(true);
+  const inv=new THREE.Matrix4().copy(board.matrixWorld).invert();
+  board.traverse(o=>{
+    if(!o.isMesh||!o.geometry) return;
+    for(let p=o;p&&p!==board;p=p.parent){ if(p===CHAR.root) return; }
+    if(!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+    tmp.copy(o.geometry.boundingBox).applyMatrix4(m.multiplyMatrices(inv,o.matrixWorld));
+    box.union(tmp);
+  });
+  if(box.isEmpty()) box.set(new THREE.Vector3(-1.5,-0.1,-0.4),new THREE.Vector3(1.5,0.1,0.4));
+  return box;
+}
+function _makeWake(board, scene){
+  // two crossed quads spanning x∈[-1,0], bright at the head (x=0), fading
+  // to nothing at the tail — reads as a streak from any angle
+  const P=[], C=[];
+  const quad=(ax)=>{
+    const a=ax==='y'?[[-1,-.5,0],[0,-.5,0],[0,.5,0],[-1,-.5,0],[0,.5,0],[-1,.5,0]]
+                    :[[-1,0,-.5],[0,0,-.5],[0,0,.5],[-1,0,-.5],[0,0,.5],[-1,0,.5]];
+    a.forEach(v=>{ P.push(v[0],v[1],v[2]); const b=v[0]<-0.5?0:1; C.push(b,b,b); });
+  };
+  quad('y'); quad('z');
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.Float32BufferAttribute(P,3));
+  g.setAttribute('color',new THREE.Float32BufferAttribute(C,3));
+  const mat=new THREE.MeshBasicMaterial({vertexColors:true,transparent:true,depthWrite:false,
+    blending:THREE.AdditiveBlending,side:THREE.DoubleSide,toneMapped:false});
+  const mesh=new THREE.InstancedMesh(g,mat,WAKE_N);
+  mesh.matrixAutoUpdate=false; mesh.frustumCulled=false; mesh.renderOrder=2;
+  mesh.name='board-wake';
+  const box=_boardLocalBox(board);
+  const len=Math.max(0.2,box.max.x-box.min.x);
+  const w={mesh, board, box, len, t:0, emit:0,
+    life:new Float32Array(WAKE_N), age:new Float32Array(WAKE_N),
+    p:new Float32Array(WAKE_N*3), v:new Float32Array(WAKE_N), sl:new Float32Array(WAKE_N),
+    tint:[], _m:new THREE.Matrix4(), _q:new THREE.Quaternion(), _pos:new THREE.Vector3(), _sc:new THREE.Vector3(), _c:new THREE.Color()};
+  const tints=[0x7fb8ff,0xc88cff,0x8ff0ff,0xff9bd0];
+  for(let i=0;i<WAKE_N;i++){ w.life[i]=0; w.age[i]=1; w.tint.push(new THREE.Color(tints[i%tints.length])); mesh.setColorAt(i,new THREE.Color(0,0,0)); }
+  scene.add(mesh);
+  board.userData.wake=w;
+  return w;
+}
+// fwdWorld: direction of travel; streams peel off whichever end trails it.
+function updateBoardWake(board, scene, dt, intensity, fwdWorld){
+  if(!board||!scene) return;
+  let w=board.userData.wake;
+  if(w && w.mesh.parent!==scene){ try{ if(w.mesh.parent) w.mesh.parent.remove(w.mesh); w.mesh.geometry.dispose(); w.mesh.material.dispose(); }catch(e){} w=null; }
+  if(!w){
+    if(!(intensity>0.02)) return;
+    // a rebuilt board (rebuildFlightBoardIfBroken) leaves the old wake behind
+    const old=scene.userData._boardWake;
+    if(old && old.board!==board){ try{ scene.remove(old.mesh); old.mesh.geometry.dispose(); old.mesh.material.dispose(); }catch(e){} }
+    w=_makeWake(board, scene); scene.userData._boardWake=w;
+  }
+  board.updateMatrixWorld();
+  w.mesh.matrix.copy(board.matrixWorld);
+  w.mesh.matrixWorldNeedsUpdate=true;
+  const k=Math.max(0,Math.min(1.4,intensity||0));
+  const box=w.box, L=w.len;
+  if(fwdWorld){
+    const ax=w._pos.set(1,0,0).applyQuaternion(board.getWorldQuaternion(w._q)).dot(fwdWorld);
+    if(Math.abs(ax)>0.05) w.dir=ax>0?1:-1;   // +1: travelling toward +X
+    w._q.identity();
+  }
+  const dir=w.dir||1;
+  const hy=(box.max.y-box.min.y)*0.5, cy=(box.max.y+box.min.y)*0.5;
+  const hz=(box.max.z-box.min.z)*0.5, cz=(box.max.z+box.min.z)*0.5;
+  // emit from the tail edge in four lanes (deck corners), rate ∝ speed
+  if(k>0.02){
+    w.emit+=dt*WAKE_N*1.6*Math.min(1,k);
+    for(let i=0;i<WAKE_N && w.emit>=1;i++){
+      if(w.age[i]<w.life[i]) continue;
+      w.emit-=1;
+      const lane=i&3;
+      w.p[i*3]  =dir>0?box.min.x+L*0.05:box.max.x-L*0.05;
+      w.p[i*3+1]=cy+(lane<2?0.6:-0.3)*hy+(Math.random()-0.5)*hy*0.5;
+      w.p[i*3+2]=cz+((lane&1)?0.75:-0.75)*hz+(Math.random()-0.5)*hz*0.35;
+      w.v[i]=L*(1.1+Math.random()*1.4)*(0.7+0.5*Math.min(1,k));
+      w.sl[i]=L*(0.15+Math.random()*0.35)*(0.5+0.6*Math.min(1,k));
+      w.life[i]=0.35+Math.random()*0.45;
+      w.age[i]=0;
+    }
+    w.emit=Math.min(w.emit,4);
+  }
+  const th=L*0.009;
+  let any=false;
+  for(let i=0;i<WAKE_N;i++){
+    let a=0;
+    if(w.age[i]<w.life[i]){
+      w.age[i]+=dt;
+      w.p[i*3]-=w.v[i]*dt*dir;
+      const t=w.age[i]/w.life[i];
+      a=t<1?Math.sin(Math.PI*Math.min(1,t))*0.32*Math.min(1,k+0.25):0;
+      any=true;
+    }
+    w._pos.set(w.p[i*3],w.p[i*3+1],w.p[i*3+2]);
+    w._sc.set(a>0?w.sl[i]*dir:1e-4,th,th);  // streak trails away from the board
+    w._m.compose(w._pos,w._q,w._sc);
+    w.mesh.setMatrixAt(i,w._m);
+    w.mesh.setColorAt(i,w._c.copy(w.tint[i]).multiplyScalar(a));
+  }
+  w.mesh.visible=any;
+  w.mesh.instanceMatrix.needsUpdate=true;
+  if(w.mesh.instanceColor) w.mesh.instanceColor.needsUpdate=true;
+}
+
 // ── VOLUMETRIC SPACE DUST / DRIFTING NEBULA VOLUME ──────────────
 // Soft additive point sprites that drift near the camera, giving the
 // universe a sense of depth and atmosphere. Density scales by tier.
@@ -14232,6 +14352,14 @@ function buildVolumetricDust(){
   flightScene.add(flightDust);
 }
 function updateVolumetricDust(dt){
+  try{
+    if(typeof boardFlight!=='undefined' && boardFlight && flightScene && STATE.flight){
+      const sp=STATE.flight;
+      // cruise (0.25/frame at full stick) → full streams; DART modes brighter
+      const k=_clamp((sp.speed-0.02)/0.2,0,1)*(1+dartSpeedMode*0.12);
+      updateBoardWake(boardFlight, flightScene, dt, k, sp.vel.lengthSq()>1e-10?_sV1.copy(sp.vel).normalize():null);
+    }
+  }catch(e){_animLoopWarn('boardWake',e);}
   if(!flightDust||!flightCamera)return;
   _dustT+=dt;_dustFrame++;
   // Parent-follow camera (no full buffer rewrite for recenter)
@@ -14683,6 +14811,21 @@ const MACH_PRESETS=[
 ];
 const MACH_UNITS=70; // scene units/sec per Mach 1 (tuned for feel)
 const ATMO_CEILING=2600; // climb past this → exit atmosphere to space
+const ATMO_TAKEOFF_S=1.6;   // automatic climb after boarding on the surface
+const ATMO_LAND_AGL=40;     // LAND appears below this height above the ground (~130 ft)
+let _atmoCamRel=null;
+window.__whenThreeReady(function(){ _atmoCamRel=new THREE.Vector3(); });
+// A new renderer gets a brand-new canvas each visit: re-initialising on a
+// canvas whose previous renderer was disposed can hang (seen landing back
+// from atmospheric flight into walk mode on the WebGL fallback).
+function _freshCanvas(id){
+  const old=$(id); if(!old) return old;
+  const c=old.cloneNode(false); old.replaceWith(c); return c;
+}
+function _atmoSetLandBtn(show){
+  const b=$('atmo-land-btn'); if(!b||b._shown===show) return;
+  b._shown=show; b.style.display=show?'':'none';
+}
 let atmoActive=false,atmoRenderer,atmoScene,atmoCamera,atmoAnimId=null;
 let atmoBoard=null,_atmoBody=null,_atmoSite=null,_atmoHeight=null,_atmoCamInit=false;
 let _atmoTerrainMesh=null,_atmoWaterMesh=null,_atmoTerrainOx=0,_atmoTerrainOz=0,_atmoPal=null;
@@ -14690,7 +14833,10 @@ let atmoPreset=0,atmoThrottle=0,atmoMach=0;
 let atmoSteer={x:0,y:0},atmoClimb={x:0,y:0};
 let atmoState=null;
 
-async function enterAtmosphericFlight(body,site){
+// start (optional, from boarding on the surface): {x, z, yaw, camRel,
+// onFirstFrame} — lift off from that spot/heading with the camera where
+// the walk camera was, instead of dropping in 150 ft up at the site.
+async function enterAtmosphericFlight(body,site,start){
   if(atmoActive)return;
   _atmoBody=body;_atmoSite=site||null;atmoActive=true;
   atmoPreset=0;atmoThrottle=0;atmoMach=0;
@@ -14709,8 +14855,9 @@ async function enterAtmosphericFlight(body,site){
   if(flightAnimId){cancelAnimationFrame(flightAnimId);flightAnimId=null;}
   const pal=getSurfacePalette(body);
   const ov=$('atmo-overlay');ov.style.display='block';
+  if(start) ov.style.background='transparent'; // surface frame shows through until our first frame
   $('atmo-title').textContent='ATMOSPHERIC FLIGHT — '+body.name.toUpperCase();
-  const cv=$('atmo-canvas');const W=window.innerWidth,H=window.innerHeight;cv.width=W;cv.height=H;
+  const cv=_freshCanvas('atmo-canvas');const W=window.innerWidth,H=window.innerHeight;cv.width=W;cv.height=H;
   atmoRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:!GFX.isMobile});
   await atmoRenderer.init();
   atmoRenderer.setPixelRatio(effectivePixelRatio());atmoRenderer.setSize(W,H);
@@ -14738,17 +14885,33 @@ async function enterAtmosphericFlight(body,site){
     atmoScene.add(new THREE.Points(sg,new THREE.PointsMaterial({size:2,sizeAttenuation:false,color:0xffffff})));
   }
   // terrain below — reuse the LOD terrain system in this scene
-  atmoBuildTerrain(pal);
+  atmoBuildTerrain(pal, start?start.x:0, start?start.z:0);
   // the skyboard the player rides — the SAME board model as space flight,
   // scaled up so it reads well against the larger atmospheric terrain
   const board=buildBoardMesh();
   board.scale.setScalar(2.4);
   atmoScene.add(board);atmoBoard=board;
   _atmoCamInit=false;
-  // flight state — start at 150 ft (~46m) above terrain at the site
-  const startH=(_atmoHeight?_atmoHeight(0,0):0);
-  atmoState={pos:new THREE.Vector3(0,startH+46,0),vel:new THREE.Vector3(),yaw:0,pitch:0,roll:0};
+  // flight state — boarding on the surface lifts off right there (a short
+  // automatic climb); otherwise start at 150 ft (~46m) above the site
+  if(start){
+    const sx=start.x, sz=start.z;
+    const gh=(_atmoHeight?_atmoHeight(sx,sz):0);
+    atmoState={pos:new THREE.Vector3(sx,gh+4.5,sz),vel:new THREE.Vector3(),yaw:start.yaw||0,pitch:0,roll:0,takeoff:ATMO_TAKEOFF_S};
+  } else {
+    const startH=(_atmoHeight?_atmoHeight(0,0):0);
+    atmoState={pos:new THREE.Vector3(0,startH+46,0),vel:new THREE.Vector3(),yaw:0,pitch:0,roll:0};
+  }
   board.position.copy(atmoState.pos);
+  board.rotation.order='YXZ'; board.rotation.y=atmoState.yaw-Math.PI/2;
+  if(start && start.camRel){
+    atmoCamera.position.copy(atmoState.pos).add(start.camRel);
+    atmoCamera.lookAt(atmoState.pos);
+    _atmoCamRel.copy(start.camRel);
+    _atmoCamInit=true;
+  }
+  _atmoSetLandBtn(false);
+  { const lb=$('atmo-land-btn'); if(lb) lb.disabled=false; }
   // Character rejoins here, mounted onto the real flight board — she was
   // left parent-less by surfRemountSkyboard() specifically so she'd
   // survive the surface scene's disposal; this is where she reappears.
@@ -14769,18 +14932,23 @@ async function enterAtmosphericFlight(body,site){
   thr.oninput=()=>{atmoThrottle=parseInt(thr.value)/100;};
   // joysticks
   setupAtmoJoysticks();
-  toast('🛹 Skyboard airborne over '+body.name+' — throttle up!',2600);
-  let last=performance.now();
+  toast(start?'🛹 Lifting off — steer up to climb into the sky':'🛹 Skyboard airborne over '+body.name+' — throttle up!',2600);
+  let last=performance.now(), _firstFrame=!!start;
   (function aloop(){
     atmoAnimId=requestAnimationFrame(aloop);
     const now=performance.now();const dt=Math.min((now-last)/1000,0.05);last=now;
     updateAtmoFlight(dt);
+    try{ if(atmoBoard&&atmoState){ const s=atmoState; updateBoardWake(atmoBoard, atmoScene, dt, Math.min(1.2, atmoMach/0.6), new THREE.Vector3(-Math.sin(s.yaw)*Math.cos(s.pitch),Math.sin(s.pitch),-Math.cos(s.yaw)*Math.cos(s.pitch))); } }catch(e){_animLoopWarn('boardWake',e);}
     try{ if(CHAR.mounted) applySkyboardStance(now/1000); }catch(e){}
     try{ updateCharOrbitCamera(); }catch(e){_animLoopWarn('charOrbit',e);}
     try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){_animLoopWarn('charMixer',e);}
     try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){_animLoopWarn('headOverride',e);}
     try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);}
     atmoRenderer.render(atmoScene,atmoCamera);
+    if(_firstFrame){
+      _firstFrame=false;
+      requestAnimationFrame(()=>{ ov.style.background='#000'; try{ start.onFirstFrame&&start.onFirstFrame(); }catch(e){} });
+    }
   })();
 }
 
@@ -14883,15 +15051,24 @@ function buildMachPresets(){
 
 function updateAtmoFlight(dt){
   const s=atmoState;if(!s)return;
-  // steering: left joy = yaw + pitch
-  s.yaw-=atmoSteer.x*1.4*dt;
-  s.pitch=Math.max(-0.8,Math.min(0.8,s.pitch-atmoSteer.y*0.9*dt));
+  const landing=!!s.landing;
+  // steering: left joy = yaw + pitch (hands-off while the board sets down)
+  if(!landing){
+    s.yaw-=atmoSteer.x*1.4*dt;
+    s.pitch=Math.max(-0.8,Math.min(0.8,s.pitch-atmoSteer.y*0.9*dt));
+  } else s.pitch=THREE.MathUtils.lerp(s.pitch,0,Math.min(1,dt*3));
   // climb/dive from right joy (y) + bank roll from its x
-  const climb=-atmoClimb.y; const bank=atmoClimb.x;
+  const climb=landing?0:-atmoClimb.y; const bank=landing?0:atmoClimb.x;
   s.roll=THREE.MathUtils.lerp(s.roll,-bank*0.5,0.1);
-  // speed from throttle, capped by the selected Mach preset
+  // speed from throttle, capped by the selected Mach preset; LAND brakes it
   const cap=MACH_PRESETS[atmoPreset].max;
-  atmoMach=THREE.MathUtils.lerp(atmoMach,atmoThrottle*cap,0.04);
+  atmoMach=THREE.MathUtils.lerp(atmoMach,landing?0:atmoThrottle*cap,landing?Math.min(1,dt*2.2):0.04);
+  // Lift-off after boarding on the surface: rise clear of the ground first.
+  if(s.takeoff>0){
+    const k=s.takeoff/ATMO_TAKEOFF_S;
+    s.pos.y+=18*k*dt;
+    s.takeoff-=dt;
+  }
   const speed=atmoMach*MACH_UNITS;
   // forward vector from yaw/pitch
   const fx=-Math.sin(s.yaw)*Math.cos(s.pitch);
@@ -14902,7 +15079,17 @@ function updateAtmoFlight(dt){
   s.pos.z+=fz*speed*dt;
   // terrain floor
   const groundH=_atmoHeight?_atmoHeight(s.pos.x,s.pos.z):0;
+  if(landing){
+    // Settle toward hover height over the ground while braking.
+    s.pos.y+=((groundH+4)-s.pos.y)*Math.min(1,dt*1.6);
+  }
   if(s.pos.y<groundH+4){s.pos.y=groundH+4;}
+  const agl=s.pos.y-groundH;
+  _atmoSetLandBtn(landing || (!(s.takeoff>0) && agl<ATMO_LAND_AGL));
+  if(landing && !s.touchdown && atmoMach<0.03 && agl<6){
+    s.touchdown=true;
+    setTimeout(_atmoTouchdown,0);
+  }
   // Recentre the terrain window once the board nears its edge — this is what
   // lets atmospheric flight cover unlimited ground instead of running off a
   // fixed-size mesh into empty space.
@@ -14910,12 +15097,14 @@ function updateAtmoFlight(dt){
     atmoBuildTerrain(_atmoPal,s.pos.x,s.pos.z);
   }
   // exit to space if climbing past the atmosphere ceiling
-  if(s.pos.y>ATMO_CEILING){ atmoExitToSpace(); return; }
+  if(!landing && s.pos.y>ATMO_CEILING){ atmoExitToSpace(); return; }
   // ── Orient & place the board the SAME way as space flight ───────────────
   // The board model's nose points +X, so yaw maps with a -90° base offset
   // (identical to updateBoardTransform). This fixes the sideways look.
-  atmoBoard.position.copy(s.pos);
-  atmoBoard.position.y+=Math.sin(flightTime*.9)*.05; // hover bob
+  if(!s.touchdown){ // after touchdown the step-off animation owns the board
+    atmoBoard.position.copy(s.pos);
+    atmoBoard.position.y+=Math.sin(flightTime*.9)*.05; // hover bob
+  }
   atmoBoard.rotation.order='YXZ';
   atmoBoard.rotation.y=s.yaw-Math.PI/2;
   atmoBoard.rotation.x=THREE.MathUtils.lerp(atmoBoard.rotation.x||0, -s.pitch, 0.12);
@@ -14929,9 +15118,13 @@ function updateAtmoFlight(dt){
   const boardScale=(atmoBoard.scale.x||2.4)*2.5; // extra pull-back so whole board fits in frame
   const back=o.back*boardScale, up=o.up*boardScale, look=o.look*boardScale;
   const fwd=new THREE.Vector3(0,0,-1).applyEuler(new THREE.Euler(s.pitch*0.5,s.yaw,0,'YXZ'));
-  const desired=s.pos.clone().addScaledVector(fwd,-back).add(new THREE.Vector3(0,up,0));
-  if(!_atmoCamInit){atmoCamera.position.copy(desired);_atmoCamInit=true;}
-  else atmoCamera.position.lerp(desired,Math.min(1,dt*4));
+  // Smooth the camera's offset FROM the board, not its world position, so
+  // it never falls behind at speed (a world-space lerp lags ∝ speed).
+  const desiredRel=fwd.clone().multiplyScalar(-back).add(new THREE.Vector3(0,up,0));
+  if(!_atmoCamInit){_atmoCamRel.copy(desiredRel);_atmoCamInit=true;}
+  else _atmoCamRel.lerp(desiredRel,Math.min(1,dt*(s.takeoff>0?1.5:4)));
+  atmoCamera.position.copy(s.pos).add(_atmoCamRel);
+  { const cgh=_atmoHeight?_atmoHeight(atmoCamera.position.x,atmoCamera.position.z):-1e9; if(atmoCamera.position.y<cgh+2) atmoCamera.position.y=cgh+2; }
   atmoCamera.lookAt(s.pos.clone().addScaledVector(fwd,look).add(new THREE.Vector3(0,0.6,0)));
   // HUD
   const altFt=Math.round((s.pos.y-groundH)*3.28);
@@ -14962,10 +15155,21 @@ function setupAtmoJoysticks(){
 // real before anything gets torn down — the old version just teleported
 // her unmounted state instantly with no motion at all.
 function atmoLandHere(){
-  if(CHAR._transitioning) return;
-  const body=_atmoBody;
-  if(!CHAR.loaded || !CHAR.root || !atmoBoard || !atmoScene){ _atmoCleanup(); enterSurface(body,_atmoSite); return; }
+  // LAND: the board brakes and settles to hover height; once it's slow and
+  // low, she steps off (_atmoTouchdown) into walk mode facing the same way.
+  if(CHAR._transitioning || !atmoState || atmoState.landing) return;
+  atmoState.landing=true; atmoState.takeoff=0;
+  atmoThrottle=0; try{ $('atmo-throttle').value=0; }catch(e){}
   const btn=$('atmo-land-btn'); if(btn) btn.disabled=true;
+  toast('🛬 Landing…',1600);
+}
+function _atmoTouchdown(){
+  if(!atmoActive) return;
+  if(CHAR._transitioning){ setTimeout(_atmoTouchdown,200); return; }
+  const body=_atmoBody;
+  const _landYaw=(atmoState && isFinite(atmoState.yaw)) ? atmoState.yaw : 0;
+  const btn=$('atmo-land-btn');
+  if(!CHAR.loaded || !CHAR.root || !atmoBoard || !atmoScene){ if(btn) btn.disabled=false; _atmoCleanup(); enterSurface(body,_atmoSite,{yaw:_landYaw}); return; }
   const groundY = (_atmoHeight ? _atmoHeight(atmoBoard.position.x, atmoBoard.position.z) : atmoBoard.position.y-3);
   // Brief board descent → step off beside (board-left) → surface walk.
   // Clamp side so atmo board.scale≈2.4 does not make a 30ft hop.
@@ -14986,7 +15190,7 @@ function atmoLandHere(){
       boardDismountSequence(atmoScene, groundY, ()=>{
         if(btn) btn.disabled=false;
         _atmoCleanup();
-        enterSurface(body,_atmoSite);
+        enterSurface(body,_atmoSite,{yaw:yaw});
       }, {board:atmoBoard, sideOffset:side, yaw:yaw, endYaw:endYaw});
     }
   })();
@@ -15153,6 +15357,8 @@ const CHAR_TERRAIN_BOARD_SIDE = 1.0;
 const CHAR_TERRAIN_HEIGHT = 3.26;
 const SURF_BOARD_SIDE = CHAR_TERRAIN_HEIGHT*(5/6);      // ≈ 5 ft
 const SURF_BOARD_WAIST = CHAR_TERRAIN_HEIGHT*0.55;      // ≈ waist of a 6 ft rider
+// Walk mode ground speed (scene units/s). RUN (button or Shift) is ~2x.
+const SURF_WALK_SPEED = 14, SURF_RUN_SPEED = 30;
 function _terrainBoardSideWorld(board){
   const sc=(board&&board.scale&&isFinite(board.scale.x))?Math.abs(board.scale.x):1;
   return CHAR_TERRAIN_BOARD_SIDE*Math.max(sc,0.01);
@@ -16069,7 +16275,12 @@ function boardMountSequence(targetBoard, hostScene, onComplete){
   const anchor = targetBoard.userData.deckAnchor || {x:0,y:0,z:0.1};
   const endPos = boardWP.clone().add(new THREE.Vector3(
     anchor.x*boardScale, (anchor.y*boardScale)+(CHAR.feetOffset||0)*CHAR.scaleForBoard, anchor.z*boardScale));
-  const endYaw = targetBoard.rotation.y + CHAR_MOUNT_YAW_OFFSET;
+  // Mounted she is Z-mirrored (mountSkyboard), which reads as this yaw
+  // + PI unmirrored. Aim the hop at that visual facing so she steps on
+  // still facing the way she walks — no 180° turn toward the model's raw
+  // orientation mid-hop and snap back when the mirror goes on.
+  const _bq = targetBoard.getWorldQuaternion(new THREE.Quaternion());
+  const endYaw = new THREE.Euler().setFromQuaternion(_bq,'YXZ').y + CHAR_MOUNT_YAW_OFFSET + CHAR_TERRAIN_YAW_EXTRA;
   // She needs to be a direct child of the host scene (not the board, not
   // her old parent) to move freely through world space during the hop.
   if(CHAR.root.parent) CHAR.root.parent.remove(CHAR.root);
@@ -16101,7 +16312,16 @@ function boardDismountSequence(hostScene, groundY, onComplete, opts){
   if(!CHAR.loaded || !CHAR.root || !hostScene){ onComplete&&onComplete(); return; }
   CHAR._transitioning = true;
   const startPos = new THREE.Vector3(); CHAR.root.getWorldPosition(startPos);
-  const startYaw = CHAR.root.rotation.y;
+  // Mounted, her rotation is board-local and Z-mirrored; in world terms she
+  // faces board yaw + mount offset + PI. Start the step-off from that so
+  // taking the mirror off doesn't spin her.
+  let startYaw = CHAR.root.rotation.y;
+  if(CHAR.mounted && CHAR.root.parent && CHAR.root.parent!==hostScene){
+    try{
+      const _pq = CHAR.root.parent.getWorldQuaternion(new THREE.Quaternion());
+      startYaw = new THREE.Euler().setFromQuaternion(_pq,'YXZ').y + CHAR_MOUNT_YAW_OFFSET + CHAR_TERRAIN_YAW_EXTRA;
+    }catch(e){}
+  }
   let endX = startPos.x, endZ = startPos.z;
   const side = (opts.sideOffset!=null && isFinite(opts.sideOffset)) ? opts.sideOffset : 0;
   if(Math.abs(side)>0.01){
@@ -16515,7 +16735,7 @@ function dismountSkyboard(targetScene, worldPos){
   setCharState('idle',{fade:0.25});
 }
 
-async function enterSurface(body,site){
+async function enterSurface(body,site,opts){
   if(surfaceActive)return;
   try{ _clearLandPrompt(); }catch(e){}
   _surfBody=body;_surfSite=site||null;surfaceActive=true;
@@ -16526,7 +16746,7 @@ async function enterSurface(body,site){
   const ov=$('surface-overlay');ov.style.display='block';
   $('surface-title').textContent='SURFACE — '+body.name.toUpperCase();
   $('surface-grav').textContent='GRAV '+pal.grav.toFixed(2)+'g';
-  const cv=$('surface-canvas');
+  const cv=_freshCanvas('surface-canvas');
   const W=window.innerWidth,H=window.innerHeight;cv.width=W;cv.height=H;
   if(!GFX.scanned)try{detectCapabilities();loadGfxChoice();applyPreset(GFX.preset);}catch(e){}
   surfRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:!GFX.isMobile,powerPreference:'high-performance'});
@@ -16615,7 +16835,8 @@ async function enterSurface(body,site){
   }catch(e){}
   const spawnEye=spawnGround+3.0;
   try{ surfCamera.position.set(spawnX, spawnEye, spawnZ); }catch(e){}
-  surfPlayer={pos:new THREE.Vector3(spawnX,spawnEye,spawnZ),vel:new THREE.Vector3(),yaw:0,pitch:0,grav:pal.grav,onGround:true,jumpActive:false};
+  const spawnYaw=(opts&&isFinite(opts.yaw))?opts.yaw:0; // landing from flight keeps her heading
+  surfPlayer={pos:new THREE.Vector3(spawnX,spawnEye,spawnZ),vel:new THREE.Vector3(),yaw:spawnYaw,pitch:0,grav:pal.grav,onGround:true,jumpActive:false};
 
   // Character — load once (cached in CHAR after first load), attach to
   // whichever surface scene is currently active. Position sync/animation
@@ -18538,7 +18759,9 @@ function updateSurface(dt){
   if(surfKeys['KeyW'])mf+=1;if(surfKeys['KeyS'])mf-=1;
   if(surfKeys['KeyA'])ms-=1;if(surfKeys['KeyD'])ms+=1;
   mf-=surfJoyMove.y;ms+=surfJoyMove.x;
-  const spd=14;
+  // RUN used to only swap the animation — she never went any faster.
+  const _runOn=surfRunToggle||surfKeys['ShiftLeft']||surfKeys['ShiftRight'];
+  const spd=_runOn?SURF_RUN_SPEED:SURF_WALK_SPEED;
   const fx=-Math.sin(p.yaw),fz=-Math.cos(p.yaw);
   const rx=Math.cos(p.yaw),rz=-Math.sin(p.yaw);
   p.pos.x+=(fx*mf+rx*ms)*spd*dt;
@@ -18754,11 +18977,28 @@ function surfRemountSkyboard(){
 function _surfRemountSkyboardFinish(){
   if(!surfaceActive)return;
   const body=_surfBody,site=_surfSite;
+  // Take off from the exact spot and heading she boarded at, with the
+  // camera where it already is — no cut to a default sky view.
+  let start=null;
+  try{
+    if(surfBoard&&surfPlayer){
+      start={x:surfBoard.position.x, z:surfBoard.position.z, yaw:surfPlayer.yaw||0,
+             camRel:surfCamera?surfCamera.position.clone().sub(surfBoard.position):null};
+    }
+  }catch(e){ start=null; }
   surfaceActive=false;
   if(surfAnimId){cancelAnimationFrame(surfAnimId);surfAnimId=null;}
   window.removeEventListener('keydown',_surfKeyDown);
   window.removeEventListener('keyup',_surfKeyUp);
-  $('surface-overlay').style.display='none';
+  // Keep the last surface frame on screen until the flight scene draws its
+  // first frame, so boarding flows straight into flight without a black cut.
+  const _oldSurfR=surfRenderer;
+  const _hideSurf=()=>{
+    if(!surfaceActive) $('surface-overlay').style.display='none';
+    try{ if(_oldSurfR) _oldSurfR.dispose(); }catch(e){}
+  };
+  if(start){ start.onFirstFrame=_hideSurf; setTimeout(_hideSurf,6000); }
+  else _hideSurf();
   _reclaimShardToFlight();
   // Detach the character from whatever she's currently parented to (the
   // surface scene, about to be disposed) so she survives the transition
@@ -18767,12 +19007,11 @@ function _surfRemountSkyboardFinish(){
   // enterAtmosphericFlight() once that board object actually exists.
   if(CHAR.loaded && CHAR.root && CHAR.root.parent) CHAR.root.parent.remove(CHAR.root);
   if(surfScene)disposeObject3D(surfScene); // free terrain/water/skyboard GPU memory (see disposeObject3D)
-  if(surfRenderer)surfRenderer.dispose();
   surfScene=null;surfPlayer=null;surfBoard=null;surfTerrainMesh=null;TERRAIN.mcGroup=null;TERRAIN._mcBuildGen=(TERRAIN._mcBuildGen||0)+1;
   TERRAIN.tiles.clear();TERRAIN.group=null;TERRAIN.mcDensityArray=null;TERRAIN.mcGridInfo=null;
   window._surfWaterAt=function(){ return false; };
   window._surfClimbNormal=function(){ return null; };
-  enterAtmosphericFlight(body,site);
+  enterAtmosphericFlight(body,site,start);
 }
 
 
