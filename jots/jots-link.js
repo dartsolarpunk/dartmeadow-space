@@ -32,6 +32,9 @@
     clientId: 'Ov23li2K0njEqO1WTSdD',
     scopes: 'repo,read:user',
     repoPrefix: 'jots-',
+    // GitHub web sign-in: the OAuth app's callback is leatr.xyz, whose
+    // jots-auth.html forwards to this game's auth.html.
+    authRedirect: 'https://leatr.xyz/jots-auth.html',
     relay: window.JOTS_RELAY_URL || '',
     mqtt: window.JOTS_MQTT_URL || '',             // opt-in only; default is the LEATR node bus
     nodePrefix: 'jots_',                          // our sids on the shared LEATR node bus
@@ -117,6 +120,51 @@
         if (i < 2) await new Promise((res) => setTimeout(res, 1500 * (i + 1)));
       }
       throw lastErr;
+    },
+    // ── Web sign-in (the usual "Authorize" screen, no code to type) ─────
+    // webStart() returns the GitHub URL to open; auth.html (reached via
+    // leatr.xyz) hands GitHub's one-time code back; webFinish() trades it
+    // for a token through the bridge's existing `exchange` action.
+    webStart() {
+      const state = 'jots' + rid(8);
+      ls.set('jots_oauth_state', { state, ts: Date.now() });
+      return 'https://github.com/login/oauth/authorize?client_id=' + CFG.clientId +
+        '&scope=' + encodeURIComponent(CFG.scopes) +
+        '&redirect_uri=' + encodeURIComponent(CFG.authRedirect) +
+        '&state=' + state;
+    },
+    // A result auth.html left for us (sign-in done in another tab, or this
+    // tab came back from GitHub). Taken once.
+    takeWebResult() {
+      const r = ls.get('jots_oauth_result');
+      if (!r) return null;
+      ls.del('jots_oauth_result');
+      return Date.now() - (r.t || 0) < 10 * 60 * 1000 ? r : null;
+    },
+    async webFinish(res, onBusy) {
+      if (!res || !res.code) throw new Error(res && res.error === 'access_denied' ? 'Sign-in was cancelled on GitHub.' : 'GitHub didn’t send a sign-in code — try again.');
+      const st = ls.get('jots_oauth_state');
+      if (!st || st.state !== res.state) throw new Error('That sign-in didn’t start here — try again.');
+      ls.del('jots_oauth_state');
+      // GitHub's code lasts 10 minutes; ride out a busy bridge within that.
+      const until = Date.now() + 9 * 60 * 1000;
+      let wait = 2000;
+      while (Date.now() < until) {
+        let d = null;
+        try {
+          const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 20000);
+          const r = await fetch(CFG.gas + '?action=exchange&code=' + encodeURIComponent(res.code) + '&t=' + Date.now(), { signal: ctl.signal, cache: 'no-store' });
+          clearTimeout(to);
+          d = JSON.parse(await r.text());
+        } catch (e) { d = null; }
+        if (d && d.access_token) return this.finish(d);
+        const why = String((d && d.error) || 'busy');
+        if (/bad_verification_code|incorrect|expired|redirect_uri_mismatch|No code/i.test(why)) throw new Error(why);
+        if (onBusy) onBusy(why);
+        await new Promise((r) => setTimeout(r, wait));
+        wait = Math.min(wait * 1.6, 15000);
+      }
+      throw new Error('The sign-in took too long — try again.');
     },
     // Polls until GitHub hands back a token (or the code expires). Mobile
     // browsers freeze a background tab's timers and requests while you

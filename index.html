@@ -18948,6 +18948,13 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
       <button class="jots-btn" id="jots-guest-btn" disabled>▶ CONTINUE AS GUEST</button>
       <div class="jots-note">Guests keep saves on this device (plus Save / Export / Import). You can sign in later from the menu.</div>
     </div>
+    <div id="jots-welcome-web" style="display:none">
+      <p class="jots-p" style="text-align:center">Approve <b>DART Meadow</b> on GitHub.<br>This finishes by itself and brings you back.</p>
+      <div class="jots-note" id="jots-web-status">Opening GitHub…</div>
+      <button class="jots-btn primary" id="jots-web-open">↗ OPEN GITHUB AGAIN</button>
+      <button class="jots-btn" id="jots-web-code">USE A CODE INSTEAD</button>
+      <button class="jots-btn" id="jots-web-cancel">CANCEL · PLAY AS GUEST</button>
+    </div>
     <div id="jots-welcome-device" style="display:none">
       <p class="jots-p" style="text-align:center">On GitHub, enter this code:</p>
       <div class="jots-code" id="jots-code">— — — —</div>
@@ -18982,7 +18989,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
   function whenJots(fn){ if(window.JOTS) fn(); else setTimeout(()=>whenJots(fn),150); }
 
   // ── Welcome & privacy (first visit, or until agreed) ──────────────
-  function showWelcome(){ $j('jots-welcome').classList.add('show'); $j('jots-welcome-main').style.display=''; $j('jots-welcome-device').style.display='none'; }
+  function showWelcome(){ $j('jots-welcome').classList.add('show'); $j('jots-welcome-main').style.display=''; $j('jots-welcome-device').style.display='none'; $j('jots-welcome-web').style.display='none'; }
   function hideWelcome(){ $j('jots-welcome').classList.remove('show'); }
   window.jotsShowWelcome=showWelcome;
   let _codeP=null,_codeAt=0;                  // a sign-in code fetched ahead of time (the bridge can take a while)
@@ -18994,7 +19001,6 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
   }
   $j('jots-agree').addEventListener('change',e=>{
     $j('jots-gh-btn').disabled=$j('jots-guest-btn').disabled=!e.target.checked;
-    if(e.target.checked&&window.JOTS&&!J().auth.signedIn) prefetchCode().catch(()=>{});
   });
   $j('jots-guest-btn').onclick=()=>{ J().consent.agree(); J().auth.guest(); hideWelcome(); toast('▶ Playing as '+J().identity.name,2400); };
   let _deviceAbort=false, _ghWin=null, _ghCode='', _ghUrl='https://github.com/login/device';
@@ -19021,9 +19027,60 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
     }catch(e){ return null; }
   }
   function closeGitHubTab(){ try{ if(_ghWin&&!_ghWin.closed) _ghWin.close(); }catch(e){} _ghWin=null; try{ window.focus(); }catch(e){} }
-  async function githubSignIn(){
+  // ── GitHub sign-in, the usual way: GitHub's Authorize screen opens,
+  // you approve, the GitHub window closes and you're signed in. GitHub
+  // sends the approval back through leatr.xyz/jots-auth.html →
+  // dartmeadow.space/auth.html, which hands it to this tab.
+  let _webUrl='', _webBusy=false, _webBC=null;
+  function webPanel(){
+    $j('jots-welcome').classList.add('show');
+    $j('jots-welcome-main').style.display='none'; $j('jots-welcome-device').style.display='none'; $j('jots-welcome-web').style.display='';
+  }
+  async function webComplete(res){
+    if(_webBusy||!res) return; _webBusy=true;
+    webPanel();
+    $j('jots-web-status').textContent='Approved — signing you in…';
+    closeGitHubTab();
+    try{
+      await J().auth.webFinish(res,(why)=>{ $j('jots-web-status').textContent=/too many times|urlfetch|quota/i.test(why)
+        ?'Approved. The LEATR bridge is at its daily GitHub limit — still trying for a few minutes. Keep this open, or play as a guest.'
+        :'Approved. The LEATR bridge is busy — still trying…'; });
+      hideWelcome();
+      toast('✓ Signed in as '+J().identity.name+' · saves sync to '+J().vault.repo,3200);
+      try{ if(typeof STATE!=='undefined'&&STATE.screen!=='flight'&&typeof goScreen==='function') goScreen('menu'); }catch(e){}
+    }catch(e){
+      $j('jots-web-status').textContent='Sign-in didn’t finish ('+(e.message||e)+'). Tap OPEN GITHUB AGAIN, use a code instead, or play as a guest.';
+    }
+    _webBusy=false;
+  }
+  function listenForWebResult(){
+    const take=()=>{ const r=J().auth.takeWebResult(); if(r) webComplete(r); };
+    try{ if(!_webBC){ _webBC=new BroadcastChannel('jots-auth'); _webBC.onmessage=()=>setTimeout(take,50); } }catch(e){}
+    window.addEventListener('storage',e=>{ if(e.key==='jots_oauth_result'&&e.newValue) take(); });
+    document.addEventListener('visibilitychange',()=>{ if(!document.hidden) take(); });
+    window.addEventListener('focus',take);
+  }
+  function githubSignIn(){
+    J().consent.agree();
+    _webUrl=J().auth.webStart();
+    const w=openGitHubTab(_webUrl);                      // inside the tap, so it isn't blocked
+    if(!w){ location.href=_webUrl; return; }              // no popups (installed app): same tab, back here after
+    webPanel();
+    $j('jots-web-status').textContent='Waiting for you to approve on GitHub…';
+  }
+  $j('jots-web-open').onclick=()=>{ _webUrl=J().auth.webStart(); if(!openGitHubTab(_webUrl)) location.href=_webUrl; $j('jots-web-status').textContent='Waiting for you to approve on GitHub…'; };
+  $j('jots-web-code').onclick=()=>{ closeGitHubTab(); deviceSignIn(); };
+  $j('jots-web-cancel').onclick=()=>{ closeGitHubTab(); J().consent.agree(); J().auth.guest(); hideWelcome(); };
+  whenJots(()=>{
+    listenForWebResult();
+    const r=J().auth.takeWebResult();                    // came back from GitHub in this tab
+    if(r) webComplete(r);
+  });
+  // Fallback: GitHub's device code (type a code on github.com/login/device).
+  async function deviceSignIn(){
     J().consent.agree();
     $j('jots-welcome').classList.add('show');
+    $j('jots-welcome-web').style.display='none';
     $j('jots-welcome-main').style.display='none'; $j('jots-welcome-device').style.display='';
     $j('jots-code').textContent='— — — —'; $j('jots-device-status').textContent='Getting your sign-in code…';
     const ob=$j('jots-open-gh'); ob.disabled=true; ob.textContent='⏳ GETTING YOUR CODE…';
@@ -19055,7 +19112,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
         ?'GitHub sign-in is resting: the LEATR bridge has used today’s GitHub allowance. Play as a guest for now — sign in later and your progress comes with you.'
         :'Sign-in didn’t finish ('+msg+'). Tap TRY AGAIN, or play as a guest.';
       $j('jots-device-done').textContent='↻ TRY AGAIN';
-      $j('jots-device-done').onclick=()=>{ $j('jots-device-done').textContent='✓ I’VE APPROVED IT — CONTINUE'; $j('jots-device-done').onclick=approvedTap; githubSignIn(); };
+      $j('jots-device-done').onclick=()=>{ $j('jots-device-done').textContent='✓ I’VE APPROVED IT — CONTINUE'; $j('jots-device-done').onclick=approvedTap; deviceSignIn(); };
     }
   }
   function approvedTap(){ $j('jots-device-status').textContent='Checking with GitHub…'; J().auth.pollNow(); }

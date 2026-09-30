@@ -48,7 +48,7 @@ a{color:var(--cyan)}
 <section>
 <h2>Signing in with GitHub</h2>
 <ul>
-<li>Sign-in uses GitHub's device flow through our Google Apps Script bridge. GitHub asks you to approve access to your public profile and your repositories (scopes <code>read:user</code> and <code>repo</code>), which the game needs to create and use your private save repository.</li>
+<li>Sign-in uses GitHub's own sign-in page. After you approve, GitHub sends a one-time code back through leatr.xyz (the LEATR site, which only forwards it to this game), and our Google Apps Script bridge trades it for your access token. A type-in code on github.com/login/device is offered as a fallback. GitHub asks you to approve access to your public profile and your repositories (scopes <code>read:user</code> and <code>repo</code>), which the game needs to create and use your private save repository.</li>
 <li>The access token GitHub issues is kept only in your browser's local storage. The game uses it from your browser to talk to GitHub on your behalf. DART Meadow does not keep a copy.</li>
 <li>The game creates a <b>private</b> repository in your own GitHub account named <code>jots-&lt;your GitHub username&gt;</code>. It holds your saves (<code>saves/</code>), a small pilot profile (<code>profile.json</code>) and, if you play Multiplayer, your chat log (<code>chat/</code>). It belongs to you. You can read, download or delete it at any time on GitHub.</li>
 <li>Signing out removes the token from this browser. You can also revoke the app's access from your GitHub settings under <i>Applications</i>.</li>
