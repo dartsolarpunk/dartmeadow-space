@@ -4843,6 +4843,7 @@ function _startFlightLoop(){
     try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){_animLoopWarn('charMixer',e);}
     try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){_animLoopWarn('headOverride',e);}
     try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);}
+    try{_anchorPostUpdate();}catch(e){_animLoopWarn('anchor',e);}
     try{updateDistantSystems(dt);}catch(e){_animLoopWarn('distantSystems',e);}
     try{updateVolumetricDust(dt);}catch(e){_animLoopWarn('volumetricDust',e);}
     try{updateHUD();}catch(e){_animLoopWarn('updateHUD',e);}
@@ -8550,7 +8551,7 @@ function toggleAnchor(){
   const target=bodyUnderCrosshair();
   if(!target){toast('⚠ No object under crosshair to anchor to');return;}
   ANCHOR_STATE.active=true;ANCHOR_STATE.target=target;ANCHOR_STATE._lastPos=null;
-  toast('⚓ ANCHORED to '+target.name.toUpperCase()+' — look freely, you\'ll move with it');
+  toast('⚓ ANCHORED to '+target.name.toUpperCase()+' at this distance — thrust and look freely, you move with it. Tap ANCHOR to release.');
   updateAnchorButton();
 }
 function updateAnchorButton(){
@@ -8567,31 +8568,52 @@ function _anchorTargetPos(){
   if(t.isSystem)return null; // distant systems don't move frame-to-frame currently
   return (t.mesh&&t.mesh.position)?t.mesh.position:null;
 }
-// Apply the target's real mesh motion since last sample. updateFlight runs
-// BEFORE updateBodies, so body._frameDelta is always one frame stale and
-// mismatches variable-dt Android — measuring mesh delta vs our own _lastPos
-// stays exact across that ordering.
-function _applyAnchorDelta(){
-  if(!ANCHOR_STATE.active)return;
-  const t=ANCHOR_STATE.target;
-  if(!t)return;
-  // Bird Temple: curated _frameDelta excludes cosmetic bob. Sampling mesh
-  // lastPos would reintroduce bob-as-anchor-shake (already fixed once).
+// ANCHOR follows the target's real motion, applied AFTER the target has
+// moved this frame. It used to run inside updateFlight, which runs BEFORE
+// updateBodies / updateBirdTemple, so the player always trailed the body by
+// one frame. With a variable frame time that one-frame lag changes size
+// every frame, which showed up as shake while anchored to a planet or the
+// Bird Temple. Now the loops call _anchorPostUpdate() once everything has
+// moved, and it carries the board and the camera together by the exact
+// same delta, so the view stays rigid relative to the target.
+//
+// Your own thrusters and look sticks keep working normally while anchored.
+// They change your offset from the target (fly in close, back off, circle
+// it) and the anchor keeps that new offset. Only the ANCHOR button releases
+// it. (FOCUS is the quick one: any stick input breaks it.)
+const _anchorDelta={x:0,y:0,z:0};
+function _anchorLivePos(out){
+  const t=ANCHOR_STATE.target;if(!t)return null;
   if(t.isBirdTemple){
-    const ad=BIRD_TEMPLE._frameDelta;if(ad)STATE.flight.pos.add(ad);
-    return;
+    const g=BIRD_TEMPLE.group;if(!g||!BIRD_TEMPLE.spawned)return null;
+    // position without the cosmetic bob, so the bob never reads as shake
+    out.x=g.position.x;out.y=g.position.y-(BIRD_TEMPLE._bobOffset||0);out.z=g.position.z;return out;
   }
-  const pos=_anchorTargetPos();
-  if(!pos)return;
-  if(!ANCHOR_STATE._lastPos){
-    ANCHOR_STATE._lastPos=pos.clone();
-    return;
-  }
-  const dx=pos.x-ANCHOR_STATE._lastPos.x;
-  const dy=pos.y-ANCHOR_STATE._lastPos.y;
-  const dz=pos.z-ANCHOR_STATE._lastPos.z;
-  ANCHOR_STATE._lastPos.copy(pos);
-  if(dx||dy||dz){STATE.flight.pos.x+=dx;STATE.flight.pos.y+=dy;STATE.flight.pos.z+=dz;}
+  if(t.isSystem)return null;
+  const m=t.mesh;if(!m||!m.position)return null;
+  // the body was removed (system change): let go instead of drifting
+  if(!t.isFlyby&&m.isObject3D&&!m.parent){ANCHOR_STATE.active=false;ANCHOR_STATE.target=null;updateAnchorButton();return null;}
+  out.x=m.position.x;out.y=m.position.y;out.z=m.position.z;return out;
+}
+function _anchorPostUpdate(){
+  if(!ANCHOR_STATE.active)return;
+  const cur=_anchorLivePos(_anchorDelta);
+  if(!cur){ANCHOR_STATE._lastPos=null;return;}
+  const lp=ANCHOR_STATE._lastPos;
+  if(!lp){ANCHOR_STATE._lastPos=new THREE.Vector3(cur.x,cur.y,cur.z);return;}
+  const dx=cur.x-lp.x,dy=cur.y-lp.y,dz=cur.z-lp.z;
+  lp.set(cur.x,cur.y,cur.z);
+  // Nothing to carry while walking the deck (that's already ship-local) or
+  // while FOCUS/ORBIT/HOME place the player on the body themselves.
+  if(SHIP_WALK.active)return;
+  if(ASSIST.mode==='focus'||ASSIST.mode==='orbit'||ASSIST.mode==='home')return;
+  // A jump this big is a teleport or a rebuilt scene, not motion to follow.
+  if(dx*dx+dy*dy+dz*dz>25e6)return;
+  if(!dx&&!dy&&!dz)return;
+  const sp=STATE.flight;if(!sp||!sp.pos)return;
+  sp.pos.x+=dx;sp.pos.y+=dy;sp.pos.z+=dz;
+  if(boardFlight){boardFlight.position.x+=dx;boardFlight.position.y+=dy;boardFlight.position.z+=dz;boardFlight.updateMatrixWorld(true);}
+  if(flightCamera){flightCamera.position.x+=dx;flightCamera.position.y+=dy;flightCamera.position.z+=dz;flightCamera.updateMatrixWorld(true);}
 }
 
 // IDLE button — full stop, hover in place.
@@ -9007,13 +9029,7 @@ function updateFlight(dt){
     // FOCUS fully owns the frame — stacking ANCHOR on a body-track assist
     // triple-applied the same delta when targets matched. Manual+ANCHOR still
     // applies on the non-assist path below.
-    if(!bodyTrack)_applyAnchorDelta();
-    else if(ANCHOR_STATE.active){
-      // Keep lastPos fresh while FOCUS owns the frame so releasing FOCUS
-      // does not dump a backlog mesh delta in one hitch.
-      const pos=_anchorTargetPos();
-      if(pos){if(!ANCHOR_STATE._lastPos)ANCHOR_STATE._lastPos=pos.clone();else ANCHOR_STATE._lastPos.copy(pos);}
-    }
+    // ANCHOR is carried after the bodies move (see _anchorPostUpdate).
     sp.speed=sp.vel.length();
     updateBoardTransform(0,0);
     updateFollowCam(dt);
@@ -9078,7 +9094,6 @@ function updateFlight(dt){
   if(!throttling&&sp.vel.length()<0.002)sp.vel.set(0,0,0);
   // The BOARD is what moves through the world now.
   sp.pos.addScaledVector(sp.vel,1);
-  _applyAnchorDelta();
 
   // Animate DART rings faster in higher modes
   const ringSpd=1+dartSpeedMode*1.5;
@@ -11255,8 +11270,8 @@ const CREDITS=[
   u:['https://ssd.jpl.nasa.gov/planets/approx_pos.html'],w:'Semi-major axes, eccentricities and periods of the planets.'},
  {t:'Size It Up — Space',a:'sizeitup.games',l:'Reference only',use:'data',u:['https://sizeitup.games/space'],w:'Scale reference for the Sun and planets.'},
  {sec:'Libraries'},
- {t:'three.js (r185, WebGPU + TSL)',a:'three.js authors (mrdoob & contributors)',l:'MIT',use:'library',u:['https://threejs.org/','https://github.com/mrdoob/three.js'],w:'Rendering engine.'},
- {t:'MQTT.js',a:'MQTT.js contributors',l:'MIT',use:'library',u:['https://github.com/mqttjs/MQTT.js'],w:'Multiplayer transport over MQTT (loaded only in multiplayer).'},
+ {t:'three.js (r185, WebGPU + TSL)',a:'three.js authors (mrdoob & contributors)',l:'MIT',use:'library',u:['https://threejs.org/','https://github.com/mrdoob/three.js'],w:'Rendering engine, with its GLTFLoader and SkeletonUtils add-ons (other players\' characters are SkeletonUtils clones).'},
+ {t:'MQTT.js',a:'MQTT.js contributors',l:'MIT',use:'library',u:['https://github.com/mqttjs/MQTT.js'],w:'Optional multiplayer transport, loaded only when an MQTT broker is configured.'},
  {t:'eruda',a:'liriliri',l:'MIT',use:'library',u:['https://github.com/liriliri/eruda'],w:'On-device debug console (only with ?debug).'},
  {sec:'Fonts'},
  {t:'Orbitron',a:'Matt McInerney',l:'SIL Open Font License 1.1',use:'font',u:['https://fonts.google.com/specimen/Orbitron']},
@@ -11276,7 +11291,6 @@ const CREDITS=[
  {t:'Blender',a:'Blender Foundation',l:'GPL (tool; output unrestricted)',use:'tool',u:['https://www.blender.org/'],w:'Modelling and the Fields Galaxy template.'},
  {t:'Firebase Authentication',a:'Google',l:'Service terms',use:'service',u:['https://firebase.google.com/'],w:'Sign-in.'},
  {t:'Stripe',a:'Stripe, Inc.',l:'Service terms',use:'service',u:['https://stripe.com/'],w:'Support payments.'},
- {t:'EMQX public MQTT broker',a:'EMQ Technologies',l:'Service terms (public test broker)',use:'service',u:['https://www.emqx.com/en/mqtt/public-mqtt5-broker'],w:'Multiplayer messages until the LEATR jots-relay is hosted.'},
  {t:'GitHub',a:'GitHub, Inc.',l:'Service terms',use:'service',u:['https://github.com/'],w:'Sign-in (device flow) and each player’s private jots- save repository.'},
  {t:'jsDelivr · Google Fonts · AllOrigins',a:'jsDelivr, Google, AllOrigins',l:'Service terms',use:'service',
   u:['https://www.jsdelivr.com/','https://fonts.google.com/','https://allorigins.win/'],w:'Serving libraries, fonts and the coastline data.'},
@@ -14543,6 +14557,7 @@ function resumeFlightLoop(){
     try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){_animLoopWarn('charMixer',e);}
     try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){_animLoopWarn('headOverride',e);}
     try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);}
+    try{_anchorPostUpdate();}catch(e){_animLoopWarn('anchor',e);}
     try{updateDistantSystems(dt);}catch(e){_animLoopWarn('distantSystems',e);}
     try{updateVolumetricDust(dt);}catch(e){_animLoopWarn('volumetricDust',e);}
     try{updateHUD();}catch(e){_animLoopWarn('updateHUD',e);}
@@ -18731,6 +18746,7 @@ function _exitSurfaceFinish(){
     try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){_animLoopWarn('charMixer',e);}
     try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){_animLoopWarn('headOverride',e);}
       try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);}
+      try{_anchorPostUpdate();}catch(e){_animLoopWarn('anchor',e);}
       try{updateDistantSystems(dt);}catch(e){_animLoopWarn('distantSystems',e);}
       try{updateVolumetricDust(dt);}catch(e){_animLoopWarn('volumetricDust',e);}
       try{updateHUD();}catch(e){_animLoopWarn('updateHUD',e);}
@@ -18837,6 +18853,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
       <div class="jots-code" id="jots-code">— — — —</div>
       <button class="jots-btn primary" id="jots-open-gh">OPEN GITHUB.COM/LOGIN/DEVICE ↗</button>
       <div class="jots-note" id="jots-device-status">Waiting for you to approve…</div>
+      <button class="jots-btn primary" id="jots-device-done">✓ I'VE APPROVED IT — CONTINUE</button>
       <button class="jots-btn" id="jots-device-cancel">CANCEL · PLAY AS GUEST</button>
     </div>
   </div>
@@ -18881,7 +18898,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
       const dev=await J().auth.deviceCode();
       $j('jots-code').textContent=dev.user_code;
       const url=dev.verification_uri||'https://github.com/login/device';
-      $j('jots-open-gh').onclick=()=>window.open(url,'_blank','noopener');
+      $j('jots-open-gh').onclick=()=>{ try{navigator.clipboard&&navigator.clipboard.writeText(dev.user_code);}catch(e){} window.open(url,'_blank','noopener'); };
       $j('jots-device-status').textContent='Waiting for you to approve on GitHub…';
       const tok=await J().auth.waitForToken(dev,()=>{ if(_deviceAbort) throw new Error('cancelled'); });
       if(_deviceAbort) return;
@@ -18896,6 +18913,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
   }
   window.jotsGithubSignIn=githubSignIn;
   $j('jots-gh-btn').onclick=githubSignIn;
+  $j('jots-device-done').onclick=()=>{ $j('jots-device-status').textContent='Checking with GitHub…'; J().auth.pollNow(); };
   $j('jots-device-cancel').onclick=()=>{ _deviceAbort=true; J().consent.agree(); J().auth.guest(); hideWelcome(); };
 
   // Account chip + modal: GitHub replaces the old Google/Apple buttons.
@@ -19005,6 +19023,16 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
       const p=boardFlight.position, q=boardFlight.quaternion;
       const st={gal:(typeof GALAXY_DB!=='undefined'&&GALAXY_DB.current)||'milkyway',sys:(window._curSystem&&window._curSystem.name)||'Sol',
         p:[+p.x.toFixed(2),+p.y.toFixed(2),+p.z.toFixed(2)],q:[+q.x.toFixed(4),+q.y.toFixed(4),+q.z.toFixed(4),+q.w.toFixed(4)],c:boardColor(),walk:walking};
+      // On foot (Bird Temple deck): where she is, which way she faces, how
+      // big (ship-walk scale), and what she's doing, so others see her walk.
+      try{
+        if(walking&&CHAR&&CHAR.root&&!CHAR.mounted){
+          const wp=CHAR.root.getWorldPosition(new THREE.Vector3()), wq=CHAR.root.getWorldQuaternion(new THREE.Quaternion()), ws=CHAR.root.getWorldScale(new THREE.Vector3());
+          const e=new THREE.Euler().setFromQuaternion(wq,'YXZ');
+          st.cp=[+wp.x.toFixed(3),+wp.y.toFixed(3),+wp.z.toFixed(3)];st.cy=+e.y.toFixed(3);st.cs=+ws.x.toFixed(5);
+          st.a=CHAR.state==='walk'||CHAR.state==='run'?'walk':CHAR.state==='climbLoop'?'climb':'idle';
+        }
+      }catch(e){}
       // One agreed player tells everyone where the Bird Temple is.
       try{
         const bt=BIRD_TEMPLE, inSol=st.sys==='Sol'&&st.gal==='milkyway';
@@ -19024,8 +19052,27 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
     let dy=a.bt[3]-bt.group.rotation.y; dy=Math.atan2(Math.sin(dy),Math.cos(dy)); bt.group.rotation.y+=dy*k;
   };
 
-  // Ghost ships: a glowing board in the pilot's colour with their name.
+  // Other players: her model on their board, in their colour, with their
+  // name. Built from the same skyboard and character this client loaded:
+  // the board is a plain clone (lights stripped), she is a SkeletonUtils
+  // clone with her own AnimationMixer riding the skyboard stance, or
+  // walking / idling / climbing when they're on the Bird Temple deck.
+  // Until her model has loaded (or if cloning fails) a peer shows as a
+  // glowing board, and is upgraded in place once she's ready.
   const ghosts=new Map();
+  let _skelUtils=null,_skelTried=false,_mountLocal=null;
+  function wantSkelUtils(){
+    if(_skelUtils||_skelTried) return;
+    _skelTried=true;
+    import('three/addons/utils/SkeletonUtils.js').then(m=>{_skelUtils=m;}).catch(e=>console.warn('[JOTS] SkeletonUtils:',e));
+  }
+  // Her transform on the board while mounted, captured from our own rider.
+  function captureMountLocal(){
+    try{
+      if(CHAR&&CHAR.root&&CHAR.mounted&&CHAR.root.parent===boardFlight)
+        _mountLocal={p:CHAR.root.position.clone(),q:CHAR.root.quaternion.clone(),s:CHAR.root.scale.clone()};
+    }catch(e){}
+  }
   function nameSprite(text,color){
     const cv=document.createElement('canvas');cv.width=256;cv.height=48;const x=cv.getContext('2d');
     x.font='bold 22px Orbitron,monospace';x.textAlign='center';x.fillStyle='rgba(0,0,0,.45)';x.fillRect(0,6,256,36);
@@ -19034,39 +19081,134 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
     const s=new THREE.Sprite(new THREE.SpriteMaterial({map:t,transparent:true,depthTest:false,depthWrite:false}));
     s.renderOrder=20;return s;
   }
+  function charReady(){ return !!(_skelUtils&&CHAR&&CHAR.root&&CHAR.clips&&_mountLocal&&boardFlight); }
+  // Board without her (she's detached for the instant of the clone).
+  function cloneBoard(){
+    const had=CHAR&&CHAR.root&&CHAR.root.parent===boardFlight;
+    if(had) boardFlight.remove(CHAR.root);
+    let b;
+    try{ b=boardFlight.clone(true); }finally{ if(had) boardFlight.add(CHAR.root); }
+    const drop=[];b.traverse(o=>{ if(o.isLight||o.isCamera) drop.push(o); });
+    drop.forEach(o=>o.parent&&o.parent.remove(o));
+    b.position.set(0,0,0);b.quaternion.identity();
+    return b;
+  }
   function makeGhost(peer){
     const g=new THREE.Group();g.name='JOTS_Ghost_'+peer.id;
-    let L=3,W=0.5;
-    try{ const bb=new THREE.Box3().setFromObject(boardFlight),sz=bb.getSize(new THREE.Vector3()); L=Math.max(sz.x,sz.z)||3; W=Math.min(sz.x,sz.z)||L*0.12; }catch(e){}
+    let L=3;
+    try{ const bb=new THREE.Box3().setFromObject(boardFlight),sz=bb.getSize(new THREE.Vector3()); L=Math.max(sz.x,sz.z)||3; }catch(e){}
     const col=new THREE.Color(peer.c||'#39ff9c');
-    const deck=new THREE.Mesh(new THREE.BoxGeometry(W,L*0.02,L),new THREE.MeshStandardMaterial({color:0x0a1030,emissive:col,emissiveIntensity:0.9,metalness:0.6,roughness:0.3}));
-    const glow=new THREE.Mesh(new THREE.SphereGeometry(L*0.35,12,8),new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:0.12,blending:THREE.AdditiveBlending,depthWrite:false}));
+    const board=new THREE.Group();g.add(board);
+    let rider=null,mixer=null,actions={},full=false,seat=board;
+    if(charReady()){
+      try{
+        // she rides in the cloned board's own (possibly scaled) frame, the
+        // same frame her captured mount transform is in
+        seat=cloneBoard();board.add(seat);
+        rider=_skelUtils.clone(CHAR.root);
+        rider.traverse(o=>{ if(o.isMesh){ o.frustumCulled=false; } });
+        mixer=new THREE.AnimationMixer(rider);
+        for(const k of ['skyboard','walk','idle','climbLoop']){
+          const clip=CHAR.clips[k];if(!clip) continue;
+          const act=mixer.clipAction(clip);
+          if(k==='skyboard'){ act.setLoop(THREE.LoopPingPong,Infinity); act.timeScale=(typeof SKYBOARD_ANIM_SPEED!=='undefined'?SKYBOARD_ANIM_SPEED:1); }
+          else act.setLoop(THREE.LoopRepeat,Infinity);
+          actions[k]=act;
+        }
+        full=true;
+      }catch(e){
+        console.warn('[JOTS] player model:',e);
+        board.clear();rider=null;mixer=null;actions={};seat=board;
+      }
+    }
+    if(!full){
+      board.add(new THREE.Mesh(new THREE.BoxGeometry(L*0.17,L*0.02,L),new THREE.MeshStandardMaterial({color:0x0a1030,emissive:col,emissiveIntensity:0.9,metalness:0.6,roughness:0.3})));
+    }
+    // the placeholder gets a soft glow in their colour; her model needs none
+    let glow=null;
+    if(!full){ glow=new THREE.Mesh(new THREE.SphereGeometry(L*0.35,12,8),new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:0.12,blending:THREE.AdditiveBlending,depthWrite:false})); board.add(glow); }
     const label=nameSprite(peer.n||'Pilot',peer.k==='h'?'#bfffe0':'#cfd9ff');
-    label.position.set(0,L*0.45,0);label.scale.set(L*1.2,L*0.225,1);
-    g.add(deck);g.add(glow);g.add(label);
-    g.userData={deck,glow,label,L};
+    label.scale.set(L*1.2,L*0.225,1);
+    g.add(label);
+    g.userData={board,seat,rider,mixer,actions,cur:null,full,label,L,glow,mounted:null};
     flightScene.add(g);
     return g;
   }
+  function disposeGhost(g){
+    flightScene.remove(g);
+    try{ if(g.userData.mixer) g.userData.mixer.stopAllAction(); }catch(e){}
+    // Only dispose what the ghost made itself; the cloned board and rider
+    // share geometry and materials with our own ship.
+    const own=[g.userData.glow,g.userData.label];
+    const fb=g.userData.board.children.find(c=>c.isMesh&&c.geometry&&c.geometry.type==='BoxGeometry');
+    if(fb) own.push(fb);
+    own.forEach(o=>{ if(!o) return; if(o.geometry)o.geometry.dispose(); if(o.material){ if(o.material.map)o.material.map.dispose(); o.material.dispose(); } });
+  }
+  function playGhost(u,name){
+    if(u.cur===name||!u.actions[name]) return;
+    const next=u.actions[name];next.reset().fadeIn(0.3).play();
+    if(u.cur&&u.actions[u.cur]) u.actions[u.cur].fadeOut(0.3);
+    u.cur=name;
+  }
+  let _gq=null,_gv=null;   // made on first use: THREE isn't loaded when this block runs
   window.jotsUpdateGhosts=function(dt){
     if(!window.JOTS||typeof flightScene==='undefined'||!flightScene) return;
+    if(!_gq){ _gq=new THREE.Quaternion(); _gv=new THREE.Vector3(); }
     const mp=J().mp;
+    wantSkelUtils();
+    if(!_mountLocal) captureMountLocal();
     const gal=(typeof GALAXY_DB!=='undefined'&&GALAXY_DB.current)||'milkyway', sys=(window._curSystem&&window._curSystem.name)||'Sol';
-    const live=new Set();
+    const live=new Set(), now=Date.now();
     if(mp.active&&typeof STATE!=='undefined'&&STATE.screen==='flight'){
+      let animated=0;
       for(const p of mp.peers.values()){
         if(p.gal!==gal||p.sys!==sys||!p.p) continue;
         live.add(p.id);
         let g=ghosts.get(p.id);
-        if(!g){ g=makeGhost(p); g.position.set(p.p[0],p.p[1],p.p[2]); ghosts.set(p.id,g); }
-        const k=Math.min(1,dt*6);
-        g.position.x+=(p.p[0]-g.position.x)*k; g.position.y+=(p.p[1]-g.position.y)*k; g.position.z+=(p.p[2]-g.position.z)*k;
-        if(p.q) g.quaternion.slerp(new THREE.Quaternion(p.q[0],p.q[1],p.q[2],p.q[3]),k);
-        g.userData.label.quaternion.copy(g.quaternion).invert();
+        // upgrade a placeholder once her model can be cloned
+        if(g&&!g.userData.full&&charReady()){ disposeGhost(g); ghosts.delete(p.id); g=null; }
+        if(!g){ g=makeGhost(p); g.userData.board.position.set(p.p[0],p.p[1],p.p[2]); ghosts.set(p.id,g); }
+        const u=g.userData, b=u.board;
+        // Glide: last reported position plus its velocity for the time since
+        // (capped), then ease toward that, so ~2 s node-bus updates read as
+        // continuous flight.
+        const age=Math.min(3,(now-(p.seen||now))/1000);
+        _gv.set(p.p[0],p.p[1],p.p[2]);
+        if(p.v&&!p.walk) _gv.x+=p.v[0]*age,_gv.y+=p.v[1]*age,_gv.z+=p.v[2]*age;
+        const k=Math.min(1,dt*5);
+        if(b.position.distanceToSquared(_gv)>400*400) b.position.copy(_gv); else b.position.lerp(_gv,k);
+        if(p.q) b.quaternion.slerp(_gq.set(p.q[0],p.q[1],p.q[2],p.q[3]),k);
+        // rider: on the board, or on foot beside it
+        if(u.rider){
+          const onFoot=!!(p.walk&&p.cp);
+          if(u.mounted!==!onFoot){
+            u.mounted=!onFoot;
+            if(u.rider.parent) u.rider.parent.remove(u.rider);
+            if(u.mounted){ u.seat.add(u.rider); u.rider.position.copy(_mountLocal.p); u.rider.quaternion.copy(_mountLocal.q); u.rider.scale.copy(_mountLocal.s); }
+            else { g.add(u.rider); u.rider.position.set(p.cp[0],p.cp[1],p.cp[2]); }
+          }
+          if(u.mounted) playGhost(u,'skyboard');
+          else{
+            u.rider.position.lerp(_gv.set(p.cp[0],p.cp[1],p.cp[2]),Math.min(1,dt*8));
+            u.rider.rotation.set(0,p.cy||0,0);
+            if(p.cs) u.rider.scale.setScalar(p.cs);
+            playGhost(u,p.a==='walk'?'walk':p.a==='climb'&&u.actions.climbLoop?'climbLoop':'idle');
+          }
+          // animate the near ones only (and never more than 12 at once)
+          const d2=camDist2(u.mounted?b.position:u.rider.position);
+          if(u.mixer&&d2<250*250&&animated<12){ u.mixer.update(dt); animated++; }
+        }
+        // name tag above whoever's visible: her when on foot, else the board
+        const tagAt=(u.rider&&!u.mounted)?u.rider.position:b.position;
+        const lift=(u.rider&&!u.mounted)?(p.cs?0.6:u.L*0.45):u.L*0.45;
+        u.label.position.set(tagAt.x,tagAt.y+lift,tagAt.z);
+        const s=(u.rider&&!u.mounted)?0.35:1;
+        u.label.scale.set(u.L*1.2*s,u.L*0.225*s,1);
       }
     }
-    for(const [id,g] of ghosts) if(!live.has(id)){ flightScene.remove(g); g.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material){if(o.material.map)o.material.map.dispose();o.material.dispose();}}); ghosts.delete(id); }
+    for(const [id,g] of ghosts) if(!live.has(id)){ disposeGhost(g); ghosts.delete(id); }
   };
+  function camDist2(v){ try{ return flightCamera.position.distanceToSquared(v); }catch(e){ return 0; } }
 
   // HUD: players online + chat.
   function hudRefresh(){

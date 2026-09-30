@@ -58,10 +58,11 @@ a{color:var(--cyan)}
 <section>
 <h2>Multiplayer</h2>
 <ul>
-<li>In Multiplayer everyone online shares one world. Other players see your <b>pilot name</b> (your GitHub username if you're signed in, otherwise your guest name), your <b>board colour</b>, where you are in the game world, and anything you type in <b>chat</b>.</li>
-<li>These live updates travel over the LEATR relay or, where that isn't available, a public MQTT message broker (EMQX's public broker). Messages sent through a public broker can be seen by anyone subscribed to it, so never share personal details in chat.</li>
-<li>DART Meadow does not store multiplayer positions or chat. If you're signed in, your own session's chat is saved to your private <code>jots-</code> repository and nowhere else.</li>
+<li>In Multiplayer everyone online shares one world. Other players see your <b>pilot name</b> (your GitHub username if you're signed in, otherwise your guest name), your <b>board colour</b>, your character, where you are in the game world, and anything you type in <b>chat</b>.</li>
+<li>These live updates travel through the LEATR node bus, DART Meadow's own Google Apps Script bridge (the same one the Autumn apps use for their live scene). Each update is held there for about 30 seconds so other players can pick it up, then it expires. Anyone playing Multiplayer can see what you send, so never share personal details in chat.</li>
+<li>DART Meadow does not keep a record of multiplayer positions or chat. The bridge may occasionally keep a single copy of your latest update (random session number, pilot name, board colour and position) in the private LEATR repository as a backup for when its short-term cache is cold. If you're signed in, your own session's chat is saved to your private <code>jots-</code> repository.</li>
 <li>Story mode sends nothing about you to other players.</li>
+<li>While you play (Story or Multiplayer), the game sends a small "a pilot is online" heartbeat through the LEATR node bus every 15 seconds. It carries only a random session number and your mode, so dartmeadow.com's Session Cube can show how many gamers are online. In Multiplayer your multiplayer update is the heartbeat, so it also carries your pilot name.</li>
 </ul>
 </section>
 
@@ -75,8 +76,7 @@ a{color:var(--cyan)}
 <h2>Services We Use</h2>
 <ul>
 <li><b>GitHub</b>: sign-in and your private save repository.</li>
-<li><b>Google Apps Script</b>: the LEATR bridge for sign-in and anonymous analytics.</li>
-<li><b>EMQX public MQTT broker</b>: multiplayer transport when the LEATR relay isn't available.</li>
+<li><b>Google Apps Script</b>: the LEATR bridge for sign-in, multiplayer, the online heartbeat and anonymous analytics.</li>
 <li><b>jsDelivr</b> and <b>Google Fonts</b>: code libraries and fonts.</li>
 <li><b>Stripe</b>: only if you choose to support development. Payments are processed by Stripe, and DART Meadow never sees your card details.</li>
 </ul>

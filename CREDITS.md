@@ -52,9 +52,9 @@ Use: **code** = code or tables included (licence terms apply) · **technique** =
   <https://sizeitup.games/space>
 ## Libraries
 
-- **three.js (r185, WebGPU + TSL)** — three.js authors (mrdoob & contributors). *MIT* (library). Rendering engine.
+- **three.js (r185, WebGPU + TSL)** — three.js authors (mrdoob & contributors). *MIT* (library). Rendering engine, with its GLTFLoader and SkeletonUtils add-ons (other players' characters are SkeletonUtils clones).
   <https://threejs.org/> · <https://github.com/mrdoob/three.js>
-- **MQTT.js** — MQTT.js contributors. *MIT* (library). Multiplayer transport over MQTT (loaded only in multiplayer).
+- **MQTT.js** — MQTT.js contributors. *MIT* (library). Optional multiplayer transport, loaded only when an MQTT broker is configured.
   <https://github.com/mqttjs/MQTT.js>
 - **eruda** — liriliri. *MIT* (library). On-device debug console (only with ?debug).
   <https://github.com/liriliri/eruda>
@@ -86,8 +86,6 @@ Use: **code** = code or tables included (licence terms apply) · **technique** =
   <https://firebase.google.com/>
 - **Stripe** — Stripe, Inc.. *Service terms* (service). Support payments.
   <https://stripe.com/>
-- **EMQX public MQTT broker** — EMQ Technologies. *Service terms (public test broker)* (service). Multiplayer messages until the LEATR jots-relay is hosted.
-  <https://www.emqx.com/en/mqtt/public-mqtt5-broker>
 - **GitHub** — GitHub, Inc.. *Service terms* (service). Sign-in (device flow) and each player’s private jots- save repository.
   <https://github.com/>
 - **jsDelivr · Google Fonts · AllOrigins** — jsDelivr, Google, AllOrigins. *Service terms* (service). Serving libraries, fonts and the coastline data.
