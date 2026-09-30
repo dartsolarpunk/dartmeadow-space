@@ -5698,6 +5698,7 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
 
   if(hasAtmosphere){
     // Water — Earth only (Venus/Mars/rocky get dusty Rayleigh shells without oceans).
+    // Sandbox = dm-jots-sandbox (github.com/dartsolarpunk/dm-jots-sandbox).
     // Ported from the sandbox's depth-aware shell (same technique:
     // the opaque terrain above renders first in the frame, so by the time
     // this transparent water fragment shades, viewportLinearDepth already
@@ -5760,6 +5761,10 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
     group.add(waterVolMarker);
     } // end Earth-only water
 
+    // Source: Sebastian Lague, "Coding Adventure: Atmosphere"
+    //   (youtube.com/watch?v=DxfEbulyFcY; github.com/SebLague/Solar-System,
+    //   MIT) — ray-marched Rayleigh scattering, (400/λ)⁴ coefficients —
+    //   by way of the project's dm-jots-sandbox (dartsolarpunk). See CREDITS.
     // Rayleigh — Sol-wired sunDir + world planetCenter; budgeted VIEW/SUN samples;
     // surface-radius clamp (sandbox depth cue without full RT pre-pass).
     const atmoMat=new THREE.MeshBasicNodeMaterial({transparent:true,side:THREE.BackSide,depthWrite:false,depthTest:false,blending:THREE.AdditiveBlending});
@@ -5932,6 +5937,7 @@ async function buildSolarSystem(){
   // Radii use real ratios vs Earth (Earth=1.0 visual), distances use true AU.
   // period = sidereal orbital period in Earth years (real values).
   // ecc = orbital eccentricity (real). oR = semi-major axis in scene units.
+  // Element values: NASA JPL Solar System Dynamics (ssd.jpl.nasa.gov).
   // lon0Deg ≈ heliocentric ecliptic mean longitude at epoch 2026-09-28
   // (approx, not SPICE — deterministic present-day-ish starting angles).
   // Clock: see file-scope SOL_GAME_DAYS_PER_EARTH_YEAR / SOL_EARTH_YEAR_WALL_SEC.
@@ -7294,6 +7300,8 @@ async function loadEarthCoastlines(){
   if(!earthMesh)return;
   // ALL child geometry uses LOCAL coordinates (0,0,0 origin)
   // because coastlines are parented to earthMesh — they inherit its world transform
+  // Natural Earth 1:110m coastlines — public domain (naturalearthdata.com;
+  // Tom Patterson, Nathaniel Vaughn Kelso & contributors). See CREDITS.
   const SOURCES=[
     'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_coastline.geojson',
     'https://api.allorigins.win/raw?url='+encodeURIComponent('https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_coastline.geojson')
@@ -10818,7 +10826,92 @@ function submitFeedback(){
 //  EXIT SYSTEM
 // ══════════════════════════════════════════════════════════════
 function promptExit(){$('exit-modal').classList.add('open');}
-function openAbout(){document.getElementById('about-modal').style.display='flex';}
+// ══════════════════════════════════════════════════════════════
+//  CREDITS — every outside source this game draws on: code, techniques,
+//  data, libraries, fonts, tools and services, with author, link and
+//  licence. Shown in MENU → ABOUT; mirrored in CREDITS.md. Keep this
+//  list current whenever something from outside the project is used.
+//  use: 'code' = code or tables included (licence terms apply);
+//       'technique' = studied and re-implemented from scratch here;
+//       'data' / 'library' / 'service' / 'font' / 'tool' as named.
+// ══════════════════════════════════════════════════════════════
+const CREDITS=[
+ {sec:'Techniques & code references'},
+ {t:'Coding Adventure: Atmosphere · Solar-System',a:'Sebastian Lague',l:'MIT',use:'technique',
+  u:['https://www.youtube.com/watch?v=DxfEbulyFcY','https://github.com/SebLague/Solar-System'],
+  w:'Ray-marched Rayleigh scattering (1/λ⁴ per channel, scaled by 400 nm) for planet atmospheres, reached through the DART Meadow sandbox; the galaxy star haze uses the same scattering model.'},
+ {t:'Coding Adventure: Marching Cubes',a:'Sebastian Lague',l:'MIT',use:'technique',
+  u:['https://www.youtube.com/watch?v=M3iI2l0ltbE','https://github.com/SebLague/Marching-Cubes'],
+  w:'Approach for density-field planet terrain; rewritten for the browser, no code copied.'},
+ {t:'Procedural Planets (cube-sphere)',a:'Sebastian Lague',l:'MIT',use:'technique',
+  u:['https://github.com/SebLague/Procedural-Planets'],
+  w:'Cube-to-sphere planet patches used by the sandbox’s quadtree LOD planet.'},
+ {t:'Polygonising a scalar field (marching cubes tables)',a:'Paul Bourke; tables by Cory Gene Bloyd',l:'Free to use with attribution',use:'code',
+  u:['https://paulbourke.net/geometry/polygonise/','https://gist.github.com/dwilliamson/c041e3454a713e58baf6e4f8e5fffecd'],
+  w:'MC_EDGE_TABLE / MC_TRI_TABLE lookup tables.'},
+ {t:'Marching Cubes: A High Resolution 3D Surface Construction Algorithm',a:'W. E. Lorensen & H. E. Cline, SIGGRAPH 1987',l:'Published paper',use:'technique',
+  u:['https://doi.org/10.1145/37402.37422'],w:'The original marching cubes algorithm.'},
+ {t:'Simulating Atoms in C++ · Atoms · kavang.com/atom',a:'Kavan (kavan010)',l:'No licence published — all rights reserved',use:'technique',
+  u:['https://youtu.be/OSAOh4L41Wg','https://github.com/kavan010/Atoms','https://www.kavang.com/atom'],
+  w:'Idea of drawing structure as probability-sampled particle clouds, applied to galaxy star clouds. Studied only; no code copied.'},
+ {t:'Simulating Black Holes in C++ · black_hole · gravity_sim',a:'Kavan (kavan010)',l:'No licence published — all rights reserved',use:'technique',
+  u:['https://youtu.be/8-B6ryuBkCM','https://github.com/kavan010/black_hole','https://github.com/kavan010/gravity_sim'],
+  w:'Reference for Sgr A* at the galactic centre and planned gravitational lensing. Studied only; no code copied.'},
+ {t:'Chunked LOD',a:'Thatcher Ulrich',l:'Published article',use:'technique',
+  u:['http://tulrich.com/geekstuff/chunklod.html'],w:'Terrain level-of-detail approach.'},
+ {t:'Geometry Clipmaps',a:'F. Losasso & H. Hoppe, Microsoft Research (2004)',l:'Published paper',use:'technique',
+  u:['https://hhoppe.com/proj/geomclipmap/'],w:'Terrain level-of-detail approach.'},
+ {t:'Nanite (continuous LOD concept)',a:'Epic Games — Unreal Engine 5',l:'Concept only',use:'technique',
+  u:['https://dev.epicgames.com/documentation/en-us/unreal-engine/nanite-virtualized-geometry-in-unreal-engine'],w:'Inspiration for the walking-terrain LOD.'},
+ {t:'three-nanite',a:'AIFanatic',l:'MIT',use:'technique',u:['https://github.com/AIFanatic/three-nanite'],w:'Meshlet LOD reference.'},
+ {t:'Web3D Asset Compiler',a:'Abdul Rafay Khalid (ARafayKhalid)',l:'GPL-3.0-or-later',use:'technique',
+  u:['https://github.com/ARafayKhalid/web3d-asset-compiler'],w:'Keyframe-reduction idea for character animation clips; re-implemented, no code copied.'},
+ {t:'UE5: Sprite-Sheets (Niagara Particles!)',a:'Royal Skies',l:'Tutorial video',use:'technique',
+  u:['https://youtu.be/iXBZwiiwwfI'],w:'Reference for volumetric sprite particles in the galaxy.'},
+ {t:'Fields Galaxy (Blender geometry nodes)',a:'Supplied to the project — original author to be confirmed',l:'To be confirmed',use:'technique',
+  u:['https://github.com/dartsolarpunk/dartmeadow-space/tree/main/reference-assets/fields-galaxy'],w:'Node graph ported to JavaScript for flocculent galaxies.'},
+ {t:'dm-jots-sandbox',a:'DART Meadow (dartsolarpunk)',l:'DART Meadow project',use:'code',
+  u:['https://github.com/dartsolarpunk/dm-jots-sandbox','https://dartsolarpunk.github.io/dm-jots-sandbox/'],
+  w:'The project’s own prototype sandbox: compute marching-cubes planets, depth-aware water, Rayleigh atmosphere, planet walker.'},
+ {sec:'Data'},
+ {t:'Natural Earth (110m coastlines)',a:'Tom Patterson, Nathaniel Vaughn Kelso & contributors',l:'Public domain',use:'data',
+  u:['https://www.naturalearthdata.com/','https://github.com/nvkelso/natural-earth-vector'],w:'Earth coastlines on the maps.'},
+ {t:'Galactic positions & distances',a:'NASA/IPAC Extragalactic Database (NED), SIMBAD (CDS Strasbourg)',l:'Public scientific data',use:'data',
+  u:['https://ned.ipac.caltech.edu/','https://simbad.cds.unistra.fr/'],w:'Galactic l/b and distances of nearby stars, nebulae and the visitable galaxies (rounded).'},
+ {t:'Sun’s distance from the Galactic Centre (8.178 kpc)',a:'GRAVITY Collaboration, A&A 625, L10 (2019)',l:'Published paper',use:'data',
+  u:['https://doi.org/10.1051/0004-6361/201935656'],w:'Places Sol 26,670 ly from Sgr A*.'},
+ {t:'Planetary orbital elements',a:'NASA JPL Solar System Dynamics',l:'Public scientific data',use:'data',
+  u:['https://ssd.jpl.nasa.gov/planets/approx_pos.html'],w:'Semi-major axes, eccentricities and periods of the planets.'},
+ {t:'Size It Up — Space',a:'sizeitup.games',l:'Reference only',use:'data',u:['https://sizeitup.games/space'],w:'Scale reference for the Sun and planets.'},
+ {sec:'Libraries'},
+ {t:'three.js (r185, WebGPU + TSL)',a:'three.js authors (mrdoob & contributors)',l:'MIT',use:'library',u:['https://threejs.org/','https://github.com/mrdoob/three.js'],w:'Rendering engine.'},
+ {t:'eruda',a:'liriliri',l:'MIT',use:'library',u:['https://github.com/liriliri/eruda'],w:'On-device debug console (only with ?debug).'},
+ {sec:'Fonts'},
+ {t:'Orbitron',a:'Matt McInerney',l:'SIL Open Font License 1.1',use:'font',u:['https://fonts.google.com/specimen/Orbitron']},
+ {t:'Rajdhani',a:'Indian Type Foundry',l:'SIL Open Font License 1.1',use:'font',u:['https://fonts.google.com/specimen/Rajdhani']},
+ {t:'Share Tech Mono',a:'Carrois Apostrophe',l:'SIL Open Font License 1.1',use:'font',u:['https://fonts.google.com/specimen/Share+Tech+Mono']},
+ {sec:'Tools & services'},
+ {t:'Meshy AI',a:'Meshy',l:'Meshy terms of use',use:'tool',u:['https://www.meshy.ai/'],w:'Generated the Autumn and Sentinel character models and animations.'},
+ {t:'Blender',a:'Blender Foundation',l:'GPL (tool; output unrestricted)',use:'tool',u:['https://www.blender.org/'],w:'Modelling and the Fields Galaxy template.'},
+ {t:'Firebase Authentication',a:'Google',l:'Service terms',use:'service',u:['https://firebase.google.com/'],w:'Sign-in.'},
+ {t:'Stripe',a:'Stripe, Inc.',l:'Service terms',use:'service',u:['https://stripe.com/'],w:'Support payments.'},
+ {t:'jsDelivr · Google Fonts · AllOrigins',a:'jsDelivr, Google, AllOrigins',l:'Service terms',use:'service',
+  u:['https://www.jsdelivr.com/','https://fonts.google.com/','https://allorigins.win/'],w:'Serving libraries, fonts and the coastline data.'},
+];
+window.CREDITS=CREDITS;
+function renderCredits(){
+  const box=document.getElementById('about-credits');if(!box||box.dataset.done)return;
+  const esc=t=>String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  let h='';
+  CREDITS.forEach(c=>{
+    if(c.sec){h+='<div class="cr-sec">'+esc(c.sec)+'</div>';return;}
+    h+='<div class="cr-item"><div class="cr-t">'+esc(c.t)+'</div><div class="cr-a">'+esc(c.a)+' · <span class="cr-l">'+esc(c.l)+'</span></div>'
+      +(c.w?'<div class="cr-w">'+esc(c.w)+'</div>':'')
+      +'<div class="cr-u">'+(c.u||[]).map(u=>'<a href="'+esc(u)+'" target="_blank" rel="noopener">'+esc(u.replace(/^https?:\/\/(www\.)?/,''))+'</a>').join('')+'</div></div>';
+  });
+  box.innerHTML=h;box.dataset.done='1';
+}
+function openAbout(){renderCredits();document.getElementById('about-modal').style.display='flex';}
 function closeAbout(){document.getElementById('about-modal').style.display='none';}
 function closeExitModal(){$('exit-modal').classList.remove('open');}
 function exitWithSave(){
@@ -11474,10 +11567,11 @@ function buildFlightGalaxyNeighbourhood(){
 //   /workspace/jots-cosmos-refs/{blender-galaxy,menu-galaxy,blown-galaxy-core.png}
 // Method: dual side-by-side cylinders → pinch middles at core → log-twist spiral
 // + noise clumps + blown SMBH core. Dual electric-blue arms; denser toward center; dark lanes.
-// Credit: Kavan / Kavang (kavan010) —
+// Credit: Kavan / Kavang (kavan010) — no licence published (all rights
+// reserved): ideas studied only, no code copied. See CREDITS.
 //   https://www.kavang.com/atom
-//   https://github.com/kavan010/Atoms
-//   https://youtu.be/8-B6ryuBkCM
+//   https://github.com/kavan010/Atoms — video: https://youtu.be/OSAOh4L41Wg
+//   black holes video: https://youtu.be/8-B6ryuBkCM
 //   https://github.com/kavan010/black_hole / https://github.com/kavan010/gravity_sim
 // Adapt morphology only — no proprietary blobs. ENABLE_FLIGHT_GALAXY_BAND_GPU stays false.
 // Justin HARD NAY refs: /workspace/jots-galaxy-refs/{ref-blue-galaxy-sol-dot.jpg,ref-far-sol-speck.jpg,ref-sol-closeup-dart-meadow.jpg}
@@ -11970,6 +12064,8 @@ window.updateSolGalLod=updateSolGalLod;
 window.generateGalacticArmDots=generateGalacticArmDots;
 
 // ── Fields Galaxy template (port of Fields_Galaxy.blend geometry nodes) ──
+// Source file: reference-assets/fields-galaxy (supplied to the project;
+// original author to be confirmed — see CREDITS).
 // Justin's Blender template for procedural galaxies. Same math as the node
 // graph, evaluated per point instead of in Geometry Nodes:
 //   1. points spread uniformly over a unit disc (Curve Circle → Fill →
@@ -12197,6 +12293,8 @@ function sampleMilkyWay(N,seed){
   return {pos,col,kind,lum,n:N};
 }
 
+// Positions/distances below are rounded published values (NED, SIMBAD);
+// Sun–centre distance R0 = 8.178 kpc, GRAVITY Collaboration 2019. See CREDITS.
 // Real nearby and landmark stars: [name, l, b, d(ly), r,g,b, size]
 const GS_NAMED_STARS=[
   ['Proxima Centauri',313.94,-1.93,4.24,1.0,0.55,0.40,0.7],
@@ -12344,6 +12442,8 @@ function _gsEnsureHost(key){
     if(r.meshes[0])r.meshes[0].visible=!want;
   }
 }
+// Scattering model after Sebastian Lague's "Coding Adventure: Atmosphere"
+// (github.com/SebLague/Solar-System, MIT), as used for the planets.
 // Each cloud is a small star wrapped in a thin glowing atmosphere: the same
 // wavelength-dependent (Rayleigh, 1/λ⁴) scattering the planet atmospheres
 // use, solved analytically for a uniform sphere — optical depth along a
@@ -17840,8 +17940,18 @@ function warpToDestination(di){
 toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 </script>
 
+<style>
+#about-credits{text-align:left;margin-top:0.4rem}
+#about-credits .cr-sec{font-family:var(--font-hud);font-size:0.56rem;letter-spacing:0.18em;color:rgba(91,127,255,0.85);margin:1rem 0 0.35rem;border-bottom:1px solid rgba(91,127,255,0.18);padding-bottom:0.25rem}
+#about-credits .cr-item{padding:0.45rem 0;border-bottom:1px solid rgba(91,127,255,0.07)}
+#about-credits .cr-t{font-size:0.72rem;color:var(--text);font-weight:600}
+#about-credits .cr-a{font-size:0.62rem;color:var(--text-dim)}
+#about-credits .cr-l{color:rgba(255,210,120,0.8)}
+#about-credits .cr-w{font-size:0.62rem;color:var(--text-dim);line-height:1.45;margin-top:0.15rem}
+#about-credits .cr-u a{display:inline-block;margin:0.2rem 0.7rem 0 0;font-family:var(--font-mono);font-size:0.56rem;color:rgba(91,127,255,0.8);text-decoration:none;word-break:break-all}
+</style>
 <div id="about-modal" style="position:fixed;inset:0;z-index:6500;background:rgba(0,0,0,0.82);backdrop-filter:blur(14px);display:none;align-items:center;justify-content:center;">
-  <div style="background:rgba(4,10,22,0.98);border:1px solid rgba(91,127,255,0.2);border-radius:4px;padding:2rem 2.4rem;width:min(440px,92vw);text-align:center;">
+  <div style="background:rgba(4,10,22,0.98);border:1px solid rgba(91,127,255,0.2);border-radius:4px;padding:2rem 2.4rem;width:min(560px,92vw);max-height:88vh;overflow-y:auto;text-align:center;">
     <div style="font-family:var(--font-hud);font-size:1.1rem;font-weight:900;color:var(--cyan);letter-spacing:0.22em;text-shadow:var(--glow-md);margin-bottom:0.3rem;">DART MEADOW</div>
     <div style="font-family:var(--font-mono);font-size:0.58rem;color:var(--text-dim);letter-spacing:0.2em;margin-bottom:1.4rem;">JOURNEY OF THE SKYBOARD</div>
     <div style="font-size:0.72rem;color:var(--text);line-height:1.75;margin-bottom:1.4rem;">Zero-gravity interstellar flight simulator.<br>Build your skyboard. Chart the galaxy. Ride at c³.</div>
@@ -17849,6 +17959,9 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
        style="display:inline-block;margin-bottom:1.2rem;padding:0.6rem 1.6rem;border:1px solid rgba(91,127,255,0.35);border-radius:2px;color:rgba(91,127,255,0.75);font-family:var(--font-hud);font-size:0.6rem;letter-spacing:0.15em;text-decoration:none;background:rgba(91,127,255,0.06);">
       🌐 DARTMEADOW.COM
     </a><br>
+    <div style="font-family:var(--font-hud);font-size:0.62rem;color:var(--cyan);letter-spacing:0.2em;margin:0.6rem 0 0.2rem;">CREDITS &amp; SOURCES</div>
+    <div style="font-size:0.6rem;color:var(--text-dim);line-height:1.5;margin-bottom:0.4rem;">Outside work this game builds on — authors, links and licences.</div>
+    <div id="about-credits"></div>
     <button onclick="closeAbout()" style="margin-top:0.8rem;padding:0.55rem 2rem;background:transparent;border:1px solid rgba(91,127,255,0.2);border-radius:2px;color:var(--text-dim);font-family:var(--font-hud);font-size:0.58rem;letter-spacing:0.15em;cursor:pointer;">CLOSE</button>
   </div>
 </div>
