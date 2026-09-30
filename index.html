@@ -6571,7 +6571,7 @@ async function buildSolarSystem(){
 //  Port of static/live-cube.js (radicaldeepscale/dartmeadow, same author).
 //  Until live data arrives it shows a small generated maze, like the site.
 // ════════════════════════════════════════════════════════════════════
-const BT_CUBE_POLL_MS=5000, BT_CUBE_WALK=28;
+const BT_CUBE_POLL_MS=30000, BT_CUBE_WALK=28;   // each poll is two GitHub reads through the shared Apps Script bridge
 // Deep transparent blue walls, a neon green walked path.
 const BT_CUBE_COL={corridor:'#2f5dff',shell:'#1a3cc0',quiet:'#10277a',path:'#39ff9c',event:'#c9ffe6',head:'#ffffff'};
 const BT_CUBES={root:null,parts:[],copies:[],walk:{pts:[],events:[],step:0,index:-1,flare:0},
@@ -19033,7 +19033,10 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
     }catch(e){
       if(_deviceAbort) return;
       if(!_ghCode) closeGitHubTab();                     // no code came back: don't leave the holding tab open
-      $j('jots-device-status').textContent='Sign-in didn’t finish ('+(e.message||e)+'). Tap SIGN IN again, or play as a guest.';
+      const msg=String(e&&e.message||e);
+      $j('jots-device-status').textContent=/too many times|urlfetch|quota/i.test(msg)
+        ?'GitHub sign-in is resting: the LEATR bridge has used today’s GitHub allowance. Play as a guest for now — sign in later and your progress comes with you.'
+        :'Sign-in didn’t finish ('+msg+'). Tap TRY AGAIN, or play as a guest.';
       $j('jots-device-done').textContent='↻ TRY AGAIN';
       $j('jots-device-done').onclick=()=>{ $j('jots-device-done').textContent='✓ I’VE APPROVED IT — CONTINUE'; $j('jots-device-done').onclick=approvedTap; githubSignIn(); };
     }
