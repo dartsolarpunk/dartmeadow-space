@@ -652,6 +652,11 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;background:var(--c0);co
 .art-btn{padding:4px 10px;background:rgba(91,127,255,0.08);border:1px solid rgba(91,127,255,0.25);color:rgba(91,127,255,0.8);font-family:var(--font-hud);font-size:0.5rem;letter-spacing:0.1em;cursor:pointer;transition:var(--trans);border-radius:2px;pointer-events:auto;}
 .art-btn:hover{background:var(--dim-cyan);color:var(--cyan);}
 .art-btn.active{background:rgba(91,127,255,0.2);color:var(--cyan);}
+/* Initialize Progress (manual save): the one button meant to stand out, a soft neon green */
+.art-btn.progress-btn{color:#8ff0b8;border-color:rgba(120,230,170,0.55);background:rgba(90,220,150,0.12);box-shadow:0 0 8px rgba(110,230,160,0.28),inset 0 0 6px rgba(110,230,160,0.10);text-shadow:0 0 6px rgba(120,235,170,0.45);font-weight:600;}
+.art-btn.progress-btn:hover{background:rgba(90,220,150,0.22);color:#b8ffd6;box-shadow:0 0 12px rgba(110,230,160,0.45);}
+.art-btn.progress-btn.flash{animation:progressFlash .9s ease-out;}
+@keyframes progressFlash{0%{box-shadow:0 0 22px rgba(140,255,190,0.9);}100%{box-shadow:0 0 8px rgba(110,230,160,0.28);}}
 .aud-btn{width:20px;height:20px;display:flex;align-items:center;justify-content:center;background:none;border:none;color:rgba(91,127,255,0.65);font-size:0.6rem;cursor:pointer;border-radius:50%;transition:var(--trans);padding:0;pointer-events:auto;}
 .aud-btn:hover{background:rgba(91,127,255,0.15);color:var(--cyan);}
 .aud-btn.playing{color:#00ff88;}
@@ -1408,10 +1413,10 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
       <button class="art-btn active" id="cam-btn" onclick="cycleCamMode()">CAM 1</button>
       <button class="art-btn" id="lockon-btn" onclick="returnHome()" title="Return to home base (Earth) and track it">⌂ HOME</button>
       <button class="art-btn" onclick="openGalaxyMap()">MAP</button>
-      <button class="art-btn" onclick="quickSave()" title="Save right here (signed in: also to your private jots- repository). Save slots are in the main menu.">💾 SAVE</button>
       <button class="art-btn" onclick="openSettings()">CFG</button>
       <button class="art-btn" onclick="returnToMenu()" title="Return to main menu (your game stays loaded)">☰ MENU</button>
       <button class="art-btn" onclick="promptExit()">EXIT</button>
+      <button class="art-btn progress-btn" id="init-progress-btn" onclick="quickSave()" title="Initialize Progress: save right here. Signed in, it also goes to your private jots- repository. The game also initializes progress by itself at milestones and every 15 minutes.">⟐ INITIALIZE PROGRESS</button>
     </div>
   </div>
   <!-- Free 360° orbit around the mounted skyboard/character — drag or
@@ -1947,14 +1952,15 @@ function saveToSlot(idx,name){
   slots[idx]=d;writeSaveSlots(slots);
   toast('✅ Saved to slot '+(idx+1)+': '+d.slotName);
 }
-// One tap SAVE from the flight bar: saves right here (and, when signed in
+// INITIALIZE PROGRESS (the game's word for saving) from the flight bar: saves right here (and, when signed in
 // with GitHub, to your private jots- repository, via the JOTS layer).
 function quickSave(){
   try{
     const d=buildSaveData('auto');d.slotName='Quick save';
     localStorage.setItem('dm_autosave',JSON.stringify(d));
     const signed=!!(window.JOTS&&window.JOTS.vault&&window.JOTS.vault.ready);
-    toast(signed?'💾 Saved here · syncing to your '+window.JOTS.vault.repo+'…':'💾 Saved here on this device',2400);
+    toast(signed?'⟐ Progress initialized · syncing to your '+window.JOTS.vault.repo+'…':'⟐ Progress initialized on this device',2400);
+    try{ const b=$('init-progress-btn'); if(b){ b.classList.remove('flash'); void b.offsetWidth; b.classList.add('flash'); } }catch(e){}
     try{ window.dispatchEvent(new CustomEvent('dm:quicksave',{detail:d})); }catch(e){}
     return d;
   }catch(e){ toast('⚠ Save failed','','warn'); return null; }
@@ -2004,7 +2010,7 @@ function resumeJourney(data){
     if(boardFlight) boardFlight.position.copy(sp.pos);
     _followInit=false;
     // Stay beside it while it carries on round its orbit (⚓ to let go).
-    if(b&&typeof ANCHOR_STATE!=='undefined'){ ANCHOR_STATE.active=true;ANCHOR_STATE.target=b;ANCHOR_STATE._lastPos=null;try{updateAnchorButton();}catch(e){} }
+    if(b&&typeof ANCHOR_STATE!=='undefined'){ ANCHOR_STATE.active=true;ANCHOR_STATE.target=b;ANCHOR_STATE._lastPos=b.mesh.position.clone();try{updateAnchorButton();}catch(e){} }
     toast('▶ Back where you left off'+(b?' — beside '+b.name+' · anchored (⚓ to release)':'')+(want!=='Sol'?' · '+want:''),3600);
   })();
 }
@@ -19106,13 +19112,17 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
     }
     const T=(l,d)=>{try{J().analytics.track(l,d);}catch(e){}};
     wrap('launchFlight',()=>T('launch',J().mode));
-    wrap('fastTravelToSystem',(sys,g)=>T('travel_system',g||''));
-    wrap('fastTravelToGalaxy',(g)=>T('travel_galaxy',g||''));
-    wrap('enterSurface',(body)=>T('land',body&&body.name||''));
+    const M=l=>{try{milestone(l);}catch(e){}};
+    wrap('fastTravelToSystem',(sys,g)=>{T('travel_system',g||'');M('arrived at '+((sys&&sys.name)||'Sol'));});
+    wrap('fastTravelToGalaxy',(g,name)=>{T('travel_galaxy',g||'');M('entered '+(name||g||'a new galaxy'));});
+    wrap('enterSurface',(body)=>{T('land',body&&body.name||'');M('landed on '+((body&&body.name)||'a new world'));});
     wrap('exitSurface',()=>T('liftoff','surface'));
-    wrap('travelToBlackHole',(e)=>T('blackhole_visit',e&&e.b&&e.b.kind||''));
-    wrap('_saveDiscovery',(d)=>T('discovery',d&&d.type||''));
-    wrap('enterShipWalk',()=>T('temple_walk'));
+    wrap('travelToBlackHole',(e)=>{T('blackhole_visit',e&&e.b&&e.b.kind||'');M('reached a black hole');});
+    wrap('_saveDiscovery',(d)=>{
+      T('discovery',d&&d.type||'');
+      try{ if(d&&d.id&&!loadDiscoveries().some(x=>x.id===d.id)) M('discovered '+(d.name||'something new')); }catch(e){}   // new finds only
+    });
+    wrap('enterShipWalk',()=>{T('temple_walk');M('boarded the Bird Temple');});
     wrap('exitShipWalk',()=>T('liftoff','temple'));
     // Signed-in players: every save also goes to their private repository.
     wrap('saveToSlot',null,(idx,name)=>{ if(J().vault.ready){ const d=buildSaveData(idx); d.slotName=name||d.slotName; J().vault.save(d,'slot-'+(idx+1)).catch(()=>{}); } });
@@ -19135,11 +19145,11 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
       }
     }catch(e){ console.warn('[JOTS] vault load:',e); }
   });
-  // 💾 SAVE on the flight bar: straight to the private repository too.
+  // INITIALIZE PROGRESS on the flight bar: straight to the private repository too.
   window.addEventListener('dm:quicksave',async e=>{
     if(!window.JOTS||!J().vault.ready) return;
-    try{ await J().vault.save(e.detail,'autosave'); toast('☁ Saved to '+J().vault.repo,2200); }
-    catch(err){ toast('⚠ Saved on this device; GitHub sync failed — it will retry on the next save',3200); }
+    try{ await J().vault.save(e.detail,'autosave'); toast('☁ Progress initialized to '+J().vault.repo,2200); }
+    catch(err){ toast('⚠ Progress initialized on this device; GitHub sync failed — it retries next time',3200); }
   });
   // RESUME GAME goes through the same Story / Multiplayer choice.
   window.jotsChooseMode=function(then){ if(!J().consent.get()){ showWelcome(); return; } chooseMode(then); };
@@ -19150,16 +19160,35 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
     try{ await J().vault.save(buildSaveData('auto'),'autosave'); }catch(e){ console.warn('[JOTS] vault save:',e); }
     _vaultBusy=false;
   }
-  // Every 2 minutes in flight, and whenever the game goes to the background:
-  // keep this device's RESUME point current (everyone) and the private
-  // repository too (signed in).
-  function autosaveHere(){
-    if(typeof STATE==='undefined'||STATE.screen!=='flight'||typeof buildSaveData!=='function') return;
-    try{ localStorage.setItem('dm_autosave',JSON.stringify(buildSaveData('auto'))); }catch(e){}
-    vaultAutosave();
+  // Progress initializes by itself:
+  //  · at milestones: landing on a world, a new discovery, reaching a new
+  //    system or galaxy, visiting a black hole, walking the Bird Temple
+  //  · as a backup every 15 minutes of play
+  //  · on this device only, whenever the game goes to the background (so
+  //    closing the tab never loses the spot)
+  // Each one updates RESUME GAME; signed in, it also goes to the private
+  // repository (milestones at most once a minute).
+  const AUTO_BACKUP_MS=15*60*1000;
+  function saveLocal(){
+    if(typeof STATE==='undefined'||typeof buildSaveData!=='function') return null;
+    if(STATE.screen!=='flight'&&STATE.screen!=='surface'&&STATE.screen!=='atmo') return null;
+    try{ const d=buildSaveData('auto'); localStorage.setItem('dm_autosave',JSON.stringify(d)); return d; }catch(e){ return null; }
   }
-  setInterval(()=>{ if(!document.hidden) autosaveHere(); },120000);
-  document.addEventListener('visibilitychange',()=>{ if(document.hidden) autosaveHere(); });
+  function autosaveHere(){ if(saveLocal()) vaultAutosave(); }
+  let _lastMilestone=0;
+  function milestone(label){
+    setTimeout(()=>{                                  // after the arrival settles
+      const d=saveLocal(); if(!d) return;
+      const now=Date.now();
+      if(now-_lastMilestone<60000) return;
+      _lastMilestone=now;
+      vaultAutosave();
+      toast('⟐ Progress initialized — '+label,2200);
+    },6000);
+  }
+  window.jotsMilestone=milestone;
+  setInterval(()=>{ if(!document.hidden) autosaveHere(); },AUTO_BACKUP_MS);
+  document.addEventListener('visibilitychange',()=>{ if(document.hidden) saveLocal(); });
 
   // ── Multiplayer: what we send, and everyone else's ships ──────────
   function boardColor(){
