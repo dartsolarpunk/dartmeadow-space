@@ -14,8 +14,11 @@
  *     batched into the LEATR live analytics maze, so the Session Cubes on
  *     dartmeadow.com, the Autumn apps and the Bird Temple show game activity.
  *   • Multiplayer: every player in multiplayer mode shares one world. State
- *     travels over the leatr-ash jots-relay when one is configured
- *     (window.JOTS_RELAY_URL), otherwise over a public MQTT broker.
+ *     travels over the LEATR node bus, the same Apps Script writenode /
+ *     readnodes presence bus that Autumn's real-time scene uses. Nothing
+ *     goes through a public broker. A leatr-ash jots-relay
+ *     (window.JOTS_RELAY_URL) or an MQTT broker (window.JOTS_MQTT_URL) can
+ *     be switched in for lower latency, but only when one is configured.
  *
  * Nothing here holds a secret: the OAuth client id is public, the client
  * secret stays in the Apps Script project, and each player's GitHub token
@@ -30,12 +33,18 @@
     scopes: 'repo,read:user',
     repoPrefix: 'jots-',
     relay: window.JOTS_RELAY_URL || '',
-    mqtt: window.JOTS_MQTT_URL || 'wss://broker.emqx.io:8084/mqtt',
+    mqtt: window.JOTS_MQTT_URL || '',             // opt-in only; default is the LEATR node bus
+    nodePrefix: 'jots_',                          // our sids on the shared LEATR node bus
+    nodeWriteMs: 2000,                            // multiplayer state write cadence
+    nodeReadMs: 1800,                             // multiplayer read cadence
+    presenceMs: 15000,                            // story-mode "online" heartbeat
+    chatHoldMs: 20000,                            // how long a chat line rides along on our node
     mqttLib: 'https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js',
     topic: 'dartmeadow/jots/v1',
     room: 'world',
     stateHz: 4,
-    peerTimeoutMs: 12000,
+    peerTimeoutMs: 12000,                         // relay / MQTT; the node bus uses nodeTimeoutMs
+    nodeTimeoutMs: 22000,
     // Each analytics write is a GitHub commit made by the Apps Script bridge's
     // token (5,000 API calls/hour shared by every app), so batch generously.
     analyticsFlushMs: 120000,
@@ -335,6 +344,104 @@
     };
   }
 
+  // LEATR node bus: the Apps Script writenode / readnodes actions (a 30 s
+  // CacheService entry per session id, shared with Autumn). Each game
+  // session writes one node, sid "jots_<session id>", whose bezier field
+  // carries our packed state; everyone reads the jots_ nodes back. The
+  // game's nodes sit at x=y=z=0 with shell "JOTS" so they never land in
+  // Autumn's own scene as people.
+  const nodeBus = {
+    sid: CFG.nodePrefix + sessionId,
+    write(payload, label, color) {
+      const node = { x: 0, y: 0, z: 0, shell: 'JOTS', label: label || null, color: color || '#39ff9c', bezier: JSON.stringify(payload) };
+      return fetch(CFG.gas, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, keepalive: true,
+        body: JSON.stringify({ action: 'writenode', sid: this.sid, uid: this.sid, node }) });
+    },
+    // Best-effort goodbye that survives the page closing.
+    bye(label) {
+      const body = JSON.stringify({ action: 'writenode', sid: this.sid, uid: this.sid,
+        node: { x: 0, y: 0, z: 0, shell: 'JOTS', label: label || null, bezier: JSON.stringify({ t: 'bye', ts: Date.now() }) } });
+      try { if (navigator.sendBeacon && navigator.sendBeacon(CFG.gas, new Blob([body], { type: 'text/plain;charset=utf-8' }))) return; } catch (e) {}
+      try { fetch(CFG.gas, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body, keepalive: true }); } catch (e) {}
+    },
+    // → [{sid, id, label, payload, ts}] for every live game node but ours.
+    async read() {
+      const ac = new AbortController(); const to = setTimeout(() => ac.abort(), 12000);
+      try {
+        const r = await fetch(CFG.gas + '?action=readnodes&scope=jots&t=' + Date.now(), { cache: 'no-store', signal: ac.signal });
+        const b = await r.json();
+        const out = [];
+        for (const n of (b && b.nodes) || []) {
+          if (!n || typeof n.sid !== 'string' || n.sid.indexOf(CFG.nodePrefix) !== 0) continue;
+          let payload = null; try { payload = typeof n.bezier === 'string' ? JSON.parse(n.bezier) : n.bezier; } catch (e) {}
+          if (!payload || typeof payload !== 'object') continue;
+          out.push({ sid: n.sid, id: n.sid.slice(CFG.nodePrefix.length), label: n.label, payload, ts: n.ts });
+        }
+        return out;
+      } finally { clearTimeout(to); }
+    },
+  };
+  // Multiplayer over the node bus. send() only records what to say; a
+  // single writer sends it every nodeWriteMs (sooner right after a chat
+  // line) and a single reader polls, each waiting for its last request, so
+  // a slow Apps Script response never piles requests up.
+  function gasTransport(room, onMsg, onStatus) {
+    let closed = false, state = null, chatK = 0, fails = 0, first = true;
+    const chatOut = [];                          // [{k,text,ts,at}]
+    const lastTs = new Map();                    // peer id → last state ts delivered
+    const chatSeen = new Set();                  // peer id + ':' + k
+    let wTimer = null, rTimer = null;
+    const writeLoop = async () => {
+      if (closed) return;
+      const now = Date.now();
+      while (chatOut.length && now - chatOut[0].at > CFG.chatHoldMs) chatOut.shift();
+      if (state && !document.hidden) {
+        const payload = Object.assign({}, state, { room, ts: now });
+        if (chatOut.length) payload.ch = chatOut.map((c) => ({ k: c.k, text: c.text, ts: c.ts }));
+        try { const r = await nodeBus.write(payload, state.n, state.c); if (!r.ok) throw 0; fails = 0; onStatus('online'); }
+        catch (e) { if (++fails >= 3) onStatus('reconnecting'); }
+      }
+      if (!closed) wTimer = setTimeout(writeLoop, CFG.nodeWriteMs);
+    };
+    const readLoop = async () => {
+      if (closed) return;
+      if (!document.hidden) {
+        try {
+          const nodes = await nodeBus.read();
+          for (const nd of nodes) {
+            if (nd.id === sessionId) continue;
+            const m = nd.payload;
+            if (m.t === 'bye') { onMsg({ t: 'leave', id: nd.id }); lastTs.delete(nd.id); continue; }
+            if (m.t !== 'state' || (m.room && m.room !== room)) continue;
+            m.id = nd.id;                          // the node's own id, never what the payload claims
+            if (lastTs.get(nd.id) !== m.ts) { lastTs.set(nd.id, m.ts); onMsg(m); }
+            for (const c of m.ch || []) {
+              const key = nd.id + ':' + c.k;
+              if (chatSeen.has(key)) continue;
+              chatSeen.add(key);
+              if (!first) onMsg({ t: 'chat', id: nd.id, n: m.n, text: c.text, ts: c.ts });
+            }
+          }
+          if (chatSeen.size > 2000) chatSeen.clear();
+          first = false;
+        } catch (e) {}
+      }
+      if (!closed) rTimer = setTimeout(readLoop, CFG.nodeReadMs);
+    };
+    writeLoop(); readLoop();
+    return {
+      nodeBus: true,
+      send(msg) {
+        if (msg.t === 'state') { state = msg; return; }
+        if (msg.t === 'chat') {
+          chatOut.push({ k: ++chatK, text: msg.text, ts: msg.ts, at: Date.now() });
+          clearTimeout(wTimer); wTimer = setTimeout(writeLoop, 150);
+        }
+      },
+      close() { closed = true; clearTimeout(wTimer); clearTimeout(rTimer); nodeBus.bye(); },
+    };
+  }
+
   // ── Multiplayer session ─────────────────────────────────────────────
   // Shared world state stays deterministic on every client (seeded
   // galaxies and systems, planets from the real date); what travels is
@@ -357,7 +464,8 @@
       const onStatus = (s) => this.setStatus(s);
       try {
         this.transport = CFG.relay ? relayTransport(CFG.relay, CFG.room, onMsg, onStatus)
-                                   : await mqttTransport(CFG.mqtt, CFG.room, onMsg, onStatus);
+                       : CFG.mqtt ? await mqttTransport(CFG.mqtt, CFG.room, onMsg, onStatus)
+                       : gasTransport(CFG.room, onMsg, onStatus);
       } catch (e) { this.setStatus('offline'); console.warn('[JOTS] multiplayer:', e); return; }
       this._tick = setInterval(() => this.sendState(), 1000 / CFG.stateHz);
       this._sweep = setInterval(() => this.sweep(), 2000);
@@ -392,8 +500,15 @@
     onMsg(m, self) {
       if (!m || !m.t) return;
       if (m.t === 'state' && m.id !== sessionId) {
-        const had = this.peers.has(m.id);
-        this.peers.set(m.id, { ...m, seen: Date.now() });
+        const had = this.peers.has(m.id), prev = this.peers.get(m.id), now = Date.now();
+        // Velocity from the last two samples (sender clock), so ghosts can
+        // glide between the node bus's ~2 s updates instead of hopping.
+        let v = null;
+        if (prev && prev.p && m.p && m.ts > prev.ts) {
+          const dt = (m.ts - prev.ts) / 1000;
+          if (dt < 6) v = [(m.p[0] - prev.p[0]) / dt, (m.p[1] - prev.p[1]) / dt, (m.p[2] - prev.p[2]) / dt];
+        }
+        this.peers.set(m.id, { ...m, v, seen: now });
         if (!had) { emit('peers', { peers: [...this.peers.values()] }); analytics.track('players_online', this.peers.size + 1); }
       } else if (m.t === 'leave' && m.id !== sessionId) {
         if (this.peers.delete(m.id)) emit('peers', { peers: [...this.peers.values()] });
@@ -407,7 +522,8 @@
     },
     sweep() {
       const now = Date.now(); let gone = false;
-      for (const [id, p] of this.peers) if (now - p.seen > CFG.peerTimeoutMs) { this.peers.delete(id); gone = true; }
+      const limit = this.transport && this.transport.nodeBus ? CFG.nodeTimeoutMs : CFG.peerTimeoutMs;
+      for (const [id, p] of this.peers) if (now - p.seen > limit) { this.peers.delete(id); gone = true; }
       if (gone) emit('peers', { peers: [...this.peers.values()] });
     },
     async saveChat() {
@@ -430,41 +546,56 @@
   // heartbeat every 15 s, in Story and Multiplayer alike, so dartmeadow.com's
   // Session Cube can show how many are playing. It carries the random
   // session id and the mode; the pilot name only in multiplayer (where it's
-  // already shown to other players). Always over MQTT, which the site reads.
+  // already shown to other players). It rides the LEATR node bus: in
+  // multiplayer the multiplayer node itself is the heartbeat, in story a
+  // tiny node with no name. (MQTT only if an MQTT broker is configured.)
   const presence = {
-    client: null, root: CFG.topic + '/' + CFG.room, _t: null,
+    client: null, root: CFG.topic + '/' + CFG.room, _t: null, on: false,
     async start() {
-      if (this.client || !consent.get()) return;
-      try { await loadScript(CFG.mqttLib); } catch (e) { return; }
-      const c = window.mqtt.connect(CFG.mqtt, {
-        clientId: 'jotsp_' + sessionId, clean: true, keepalive: 30, reconnectPeriod: 5000, connectTimeout: 10000,
-        will: { topic: this.root + '/presence-leave', payload: JSON.stringify({ id: sessionId }), qos: 0, retain: false },
-      });
-      c.on('connect', () => this.beat());
-      this.client = c;
-      this._t = setInterval(() => this.beat(), 15000);
+      if (this.on || !consent.get()) return;
+      this.on = true;
+      if (CFG.mqtt) {
+        try { await loadScript(CFG.mqttLib); } catch (e) { return; }
+        const c = window.mqtt.connect(CFG.mqtt, {
+          clientId: 'jotsp_' + sessionId, clean: true, keepalive: 30, reconnectPeriod: 5000, connectTimeout: 10000,
+          will: { topic: this.root + '/presence-leave', payload: JSON.stringify({ id: sessionId }), qos: 0, retain: false },
+        });
+        c.on('connect', () => this.beat());
+        this.client = c;
+      }
+      this._t = setInterval(() => this.beat(), CFG.presenceMs);
+      this.beat();
     },
     beat() {
-      if (!this.client || !this.client.connected || !consent.get()) return;
+      if (!this.on || !consent.get()) return;
       const mode = (window.JOTS && window.JOTS.mode) || 'story';
-      const m = { t: 'presence', id: sessionId, m: mode, ts: Date.now() };
-      if (mode === 'multiplayer') m.n = identity.name;
-      this.client.publish(this.root + '/presence', JSON.stringify(m));
+      if (this.client) {
+        if (!this.client.connected) return;
+        const m = { t: 'presence', id: sessionId, m: mode, ts: Date.now() };
+        if (mode === 'multiplayer') m.n = identity.name;
+        this.client.publish(this.root + '/presence', JSON.stringify(m));
+        return;
+      }
+      if (document.hidden) return;
+      if (mp.active && mp.transport && mp.transport.nodeBus) return;   // the multiplayer node already says we're here
+      nodeBus.write({ t: 'presence', m: mode === 'multiplayer' ? 'multiplayer' : 'story', ts: Date.now() }).catch(() => {});
     },
     stop() {
+      if (!this.on) return;
+      this.on = false;
       clearInterval(this._t);
-      if (this.client) { try { this.client.publish(this.root + '/presence-leave', JSON.stringify({ id: sessionId })); this.client.end(true); } catch (e) {} }
-      this.client = null;
+      if (this.client) { try { this.client.publish(this.root + '/presence-leave', JSON.stringify({ id: sessionId })); this.client.end(true); } catch (e) {} this.client = null; }
+      else if (!(mp.active && mp.transport && mp.transport.nodeBus)) nodeBus.bye();
     },
   };
   window.addEventListener('jots:consent', (e) => { if (e.detail && e.detail.agreed) presence.start(); else presence.stop(); });
   window.addEventListener('jots:mpstatus', () => presence.beat());
-  window.addEventListener('pagehide', () => presence.stop());
+  window.addEventListener('pagehide', () => { presence.stop(); try { if (mp.active) mp.stop(); } catch (e) {} });
   // Back from approving on GitHub → check the sign-in straight away.
   document.addEventListener('visibilitychange', () => { if (!document.hidden) auth.pollNow(); });
   window.addEventListener('focus', () => auth.pollNow());
 
-  window.JOTS = { CFG, sessionId, identity, auth, vault, analytics, consent, mp, presence, mode: 'story' };
+  window.JOTS = { CFG, sessionId, identity, auth, vault, analytics, consent, mp, presence, nodeBus, mode: 'story' };
   if (consent.get()) setTimeout(() => presence.start(), 2500);
   // Re-validate a stored sign-in once the page settles.
   setTimeout(() => { auth.restore(); }, 1500);
