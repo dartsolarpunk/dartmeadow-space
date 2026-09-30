@@ -4152,11 +4152,13 @@ function _qtMakeLabel(text,color,scale){
 // 1 px on iOS WebGPU, which is why the old chart read as faint dust).
 function _qtCloud(pos,col,radius,count){
   const n=count||((pos.length/3)|0);
-  const mesh=new THREE.InstancedMesh(new THREE.OctahedronGeometry(1,0),
-    new THREE.MeshBasicMaterial({color:0xffffff,blending:THREE.AdditiveBlending,transparent:true,depthWrite:false}),n);
-  const m=new THREE.Matrix4(),c=new THREE.Color();
+  // Same soft star-in-a-haze look as the in-game galaxy.
+  const star=(typeof _gsStarMat==='function')&&_gsStarMat({transparent:true,depthTest:true});
+  const mesh=new THREE.InstancedMesh(star?_gsStarGeo():new THREE.OctahedronGeometry(1,0),
+    star||new THREE.MeshBasicMaterial({color:0xffffff,blending:THREE.AdditiveBlending,transparent:true,depthWrite:false}),n);
+  const m=new THREE.Matrix4(),c=new THREE.Color(), grow=star?GALSKY.GLOW:1;
   for(let i=0;i<n;i++){
-    const r=typeof radius==='function'?radius(i):radius;
+    const r=(typeof radius==='function'?radius(i):radius)*grow;
     m.makeScale(r,r,r);m.setPosition(pos[i*3],pos[i*3+1],pos[i*3+2]);mesh.setMatrixAt(i,m);
     c.setRGB(Math.min(1,col[i*3]),Math.min(1,col[i*3+1]),Math.min(1,col[i*3+2]));mesh.setColorAt(i,c);
   }
@@ -5696,6 +5698,7 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
 
   if(hasAtmosphere){
     // Water — Earth only (Venus/Mars/rocky get dusty Rayleigh shells without oceans).
+    // Sandbox = dm-jots-sandbox (github.com/dartsolarpunk/dm-jots-sandbox).
     // Ported from the sandbox's depth-aware shell (same technique:
     // the opaque terrain above renders first in the frame, so by the time
     // this transparent water fragment shades, viewportLinearDepth already
@@ -5758,6 +5761,10 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
     group.add(waterVolMarker);
     } // end Earth-only water
 
+    // Source: Sebastian Lague, "Coding Adventure: Atmosphere"
+    //   (youtube.com/watch?v=DxfEbulyFcY; github.com/SebLague/Solar-System,
+    //   MIT) — ray-marched Rayleigh scattering, (400/λ)⁴ coefficients —
+    //   by way of the project's dm-jots-sandbox (dartsolarpunk). See CREDITS.
     // Rayleigh — Sol-wired sunDir + world planetCenter; budgeted VIEW/SUN samples;
     // surface-radius clamp (sandbox depth cue without full RT pre-pass).
     const atmoMat=new THREE.MeshBasicNodeMaterial({transparent:true,side:THREE.BackSide,depthWrite:false,depthTest:false,blending:THREE.AdditiveBlending});
@@ -5930,6 +5937,7 @@ async function buildSolarSystem(){
   // Radii use real ratios vs Earth (Earth=1.0 visual), distances use true AU.
   // period = sidereal orbital period in Earth years (real values).
   // ecc = orbital eccentricity (real). oR = semi-major axis in scene units.
+  // Element values: NASA JPL Solar System Dynamics (ssd.jpl.nasa.gov).
   // lon0Deg ≈ heliocentric ecliptic mean longitude at epoch 2026-09-28
   // (approx, not SPICE — deterministic present-day-ish starting angles).
   // Clock: see file-scope SOL_GAME_DAYS_PER_EARTH_YEAR / SOL_EARTH_YEAR_WALL_SEC.
@@ -7292,6 +7300,8 @@ async function loadEarthCoastlines(){
   if(!earthMesh)return;
   // ALL child geometry uses LOCAL coordinates (0,0,0 origin)
   // because coastlines are parented to earthMesh — they inherit its world transform
+  // Natural Earth 1:110m coastlines — public domain (naturalearthdata.com;
+  // Tom Patterson, Nathaniel Vaughn Kelso & contributors). See CREDITS.
   const SOURCES=[
     'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_coastline.geojson',
     'https://api.allorigins.win/raw?url='+encodeURIComponent('https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_coastline.geojson')
@@ -10816,7 +10826,92 @@ function submitFeedback(){
 //  EXIT SYSTEM
 // ══════════════════════════════════════════════════════════════
 function promptExit(){$('exit-modal').classList.add('open');}
-function openAbout(){document.getElementById('about-modal').style.display='flex';}
+// ══════════════════════════════════════════════════════════════
+//  CREDITS — every outside source this game draws on: code, techniques,
+//  data, libraries, fonts, tools and services, with author, link and
+//  licence. Shown in MENU → ABOUT; mirrored in CREDITS.md. Keep this
+//  list current whenever something from outside the project is used.
+//  use: 'code' = code or tables included (licence terms apply);
+//       'technique' = studied and re-implemented from scratch here;
+//       'data' / 'library' / 'service' / 'font' / 'tool' as named.
+// ══════════════════════════════════════════════════════════════
+const CREDITS=[
+ {sec:'Techniques & code references'},
+ {t:'Coding Adventure: Atmosphere · Solar-System',a:'Sebastian Lague',l:'MIT',use:'technique',
+  u:['https://www.youtube.com/watch?v=DxfEbulyFcY','https://github.com/SebLague/Solar-System'],
+  w:'Ray-marched Rayleigh scattering (1/λ⁴ per channel, scaled by 400 nm) for planet atmospheres, reached through the DART Meadow sandbox; the galaxy star haze uses the same scattering model.'},
+ {t:'Coding Adventure: Marching Cubes',a:'Sebastian Lague',l:'MIT',use:'technique',
+  u:['https://www.youtube.com/watch?v=M3iI2l0ltbE','https://github.com/SebLague/Marching-Cubes'],
+  w:'Approach for density-field planet terrain; rewritten for the browser, no code copied.'},
+ {t:'Procedural Planets (cube-sphere)',a:'Sebastian Lague',l:'MIT',use:'technique',
+  u:['https://github.com/SebLague/Procedural-Planets'],
+  w:'Cube-to-sphere planet patches used by the sandbox’s quadtree LOD planet.'},
+ {t:'Polygonising a scalar field (marching cubes tables)',a:'Paul Bourke; tables by Cory Gene Bloyd',l:'Free to use with attribution',use:'code',
+  u:['https://paulbourke.net/geometry/polygonise/','https://gist.github.com/dwilliamson/c041e3454a713e58baf6e4f8e5fffecd'],
+  w:'MC_EDGE_TABLE / MC_TRI_TABLE lookup tables.'},
+ {t:'Marching Cubes: A High Resolution 3D Surface Construction Algorithm',a:'W. E. Lorensen & H. E. Cline, SIGGRAPH 1987',l:'Published paper',use:'technique',
+  u:['https://doi.org/10.1145/37402.37422'],w:'The original marching cubes algorithm.'},
+ {t:'Simulating Atoms in C++ · Atoms · kavang.com/atom',a:'Kavan (kavan010)',l:'No licence published — all rights reserved',use:'technique',
+  u:['https://youtu.be/OSAOh4L41Wg','https://github.com/kavan010/Atoms','https://www.kavang.com/atom'],
+  w:'Idea of drawing structure as probability-sampled particle clouds, applied to galaxy star clouds. Studied only; no code copied.'},
+ {t:'Simulating Black Holes in C++ · black_hole · gravity_sim',a:'Kavan (kavan010)',l:'No licence published — all rights reserved',use:'technique',
+  u:['https://youtu.be/8-B6ryuBkCM','https://github.com/kavan010/black_hole','https://github.com/kavan010/gravity_sim'],
+  w:'Reference for Sgr A* at the galactic centre and planned gravitational lensing. Studied only; no code copied.'},
+ {t:'Chunked LOD',a:'Thatcher Ulrich',l:'Published article',use:'technique',
+  u:['http://tulrich.com/geekstuff/chunklod.html'],w:'Terrain level-of-detail approach.'},
+ {t:'Geometry Clipmaps',a:'F. Losasso & H. Hoppe, Microsoft Research (2004)',l:'Published paper',use:'technique',
+  u:['https://hhoppe.com/proj/geomclipmap/'],w:'Terrain level-of-detail approach.'},
+ {t:'Nanite (continuous LOD concept)',a:'Epic Games — Unreal Engine 5',l:'Concept only',use:'technique',
+  u:['https://dev.epicgames.com/documentation/en-us/unreal-engine/nanite-virtualized-geometry-in-unreal-engine'],w:'Inspiration for the walking-terrain LOD.'},
+ {t:'three-nanite',a:'AIFanatic',l:'MIT',use:'technique',u:['https://github.com/AIFanatic/three-nanite'],w:'Meshlet LOD reference.'},
+ {t:'Web3D Asset Compiler',a:'Abdul Rafay Khalid (ARafayKhalid)',l:'GPL-3.0-or-later',use:'technique',
+  u:['https://github.com/ARafayKhalid/web3d-asset-compiler'],w:'Keyframe-reduction idea for character animation clips; re-implemented, no code copied.'},
+ {t:'UE5: Sprite-Sheets (Niagara Particles!)',a:'Royal Skies',l:'Tutorial video',use:'technique',
+  u:['https://youtu.be/iXBZwiiwwfI'],w:'Reference for volumetric sprite particles in the galaxy.'},
+ {t:'Fields Galaxy (Blender geometry nodes)',a:'Supplied to the project — original author to be confirmed',l:'To be confirmed',use:'technique',
+  u:['https://github.com/dartsolarpunk/dartmeadow-space/tree/main/reference-assets/fields-galaxy'],w:'Node graph ported to JavaScript for flocculent galaxies.'},
+ {t:'dm-jots-sandbox',a:'DART Meadow (dartsolarpunk)',l:'DART Meadow project',use:'code',
+  u:['https://github.com/dartsolarpunk/dm-jots-sandbox','https://dartsolarpunk.github.io/dm-jots-sandbox/'],
+  w:'The project’s own prototype sandbox: compute marching-cubes planets, depth-aware water, Rayleigh atmosphere, planet walker.'},
+ {sec:'Data'},
+ {t:'Natural Earth (110m coastlines)',a:'Tom Patterson, Nathaniel Vaughn Kelso & contributors',l:'Public domain',use:'data',
+  u:['https://www.naturalearthdata.com/','https://github.com/nvkelso/natural-earth-vector'],w:'Earth coastlines on the maps.'},
+ {t:'Galactic positions & distances',a:'NASA/IPAC Extragalactic Database (NED), SIMBAD (CDS Strasbourg)',l:'Public scientific data',use:'data',
+  u:['https://ned.ipac.caltech.edu/','https://simbad.cds.unistra.fr/'],w:'Galactic l/b and distances of nearby stars, nebulae and the visitable galaxies (rounded).'},
+ {t:'Sun’s distance from the Galactic Centre (8.178 kpc)',a:'GRAVITY Collaboration, A&A 625, L10 (2019)',l:'Published paper',use:'data',
+  u:['https://doi.org/10.1051/0004-6361/201935656'],w:'Places Sol 26,670 ly from Sgr A*.'},
+ {t:'Planetary orbital elements',a:'NASA JPL Solar System Dynamics',l:'Public scientific data',use:'data',
+  u:['https://ssd.jpl.nasa.gov/planets/approx_pos.html'],w:'Semi-major axes, eccentricities and periods of the planets.'},
+ {t:'Size It Up — Space',a:'sizeitup.games',l:'Reference only',use:'data',u:['https://sizeitup.games/space'],w:'Scale reference for the Sun and planets.'},
+ {sec:'Libraries'},
+ {t:'three.js (r185, WebGPU + TSL)',a:'three.js authors (mrdoob & contributors)',l:'MIT',use:'library',u:['https://threejs.org/','https://github.com/mrdoob/three.js'],w:'Rendering engine.'},
+ {t:'eruda',a:'liriliri',l:'MIT',use:'library',u:['https://github.com/liriliri/eruda'],w:'On-device debug console (only with ?debug).'},
+ {sec:'Fonts'},
+ {t:'Orbitron',a:'Matt McInerney',l:'SIL Open Font License 1.1',use:'font',u:['https://fonts.google.com/specimen/Orbitron']},
+ {t:'Rajdhani',a:'Indian Type Foundry',l:'SIL Open Font License 1.1',use:'font',u:['https://fonts.google.com/specimen/Rajdhani']},
+ {t:'Share Tech Mono',a:'Carrois Apostrophe',l:'SIL Open Font License 1.1',use:'font',u:['https://fonts.google.com/specimen/Share+Tech+Mono']},
+ {sec:'Tools & services'},
+ {t:'Meshy AI',a:'Meshy',l:'Meshy terms of use',use:'tool',u:['https://www.meshy.ai/'],w:'Generated the Autumn and Sentinel character models and animations.'},
+ {t:'Blender',a:'Blender Foundation',l:'GPL (tool; output unrestricted)',use:'tool',u:['https://www.blender.org/'],w:'Modelling and the Fields Galaxy template.'},
+ {t:'Firebase Authentication',a:'Google',l:'Service terms',use:'service',u:['https://firebase.google.com/'],w:'Sign-in.'},
+ {t:'Stripe',a:'Stripe, Inc.',l:'Service terms',use:'service',u:['https://stripe.com/'],w:'Support payments.'},
+ {t:'jsDelivr · Google Fonts · AllOrigins',a:'jsDelivr, Google, AllOrigins',l:'Service terms',use:'service',
+  u:['https://www.jsdelivr.com/','https://fonts.google.com/','https://allorigins.win/'],w:'Serving libraries, fonts and the coastline data.'},
+];
+window.CREDITS=CREDITS;
+function renderCredits(){
+  const box=document.getElementById('about-credits');if(!box||box.dataset.done)return;
+  const esc=t=>String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  let h='';
+  CREDITS.forEach(c=>{
+    if(c.sec){h+='<div class="cr-sec">'+esc(c.sec)+'</div>';return;}
+    h+='<div class="cr-item"><div class="cr-t">'+esc(c.t)+'</div><div class="cr-a">'+esc(c.a)+' · <span class="cr-l">'+esc(c.l)+'</span></div>'
+      +(c.w?'<div class="cr-w">'+esc(c.w)+'</div>':'')
+      +'<div class="cr-u">'+(c.u||[]).map(u=>'<a href="'+esc(u)+'" target="_blank" rel="noopener">'+esc(u.replace(/^https?:\/\/(www\.)?/,''))+'</a>').join('')+'</div></div>';
+  });
+  box.innerHTML=h;box.dataset.done='1';
+}
+function openAbout(){renderCredits();document.getElementById('about-modal').style.display='flex';}
 function closeAbout(){document.getElementById('about-modal').style.display='none';}
 function closeExitModal(){$('exit-modal').classList.remove('open');}
 function exitWithSave(){
@@ -11472,10 +11567,11 @@ function buildFlightGalaxyNeighbourhood(){
 //   /workspace/jots-cosmos-refs/{blender-galaxy,menu-galaxy,blown-galaxy-core.png}
 // Method: dual side-by-side cylinders → pinch middles at core → log-twist spiral
 // + noise clumps + blown SMBH core. Dual electric-blue arms; denser toward center; dark lanes.
-// Credit: Kavan / Kavang (kavan010) —
+// Credit: Kavan / Kavang (kavan010) — no licence published (all rights
+// reserved): ideas studied only, no code copied. See CREDITS.
 //   https://www.kavang.com/atom
-//   https://github.com/kavan010/Atoms
-//   https://youtu.be/8-B6ryuBkCM
+//   https://github.com/kavan010/Atoms — video: https://youtu.be/OSAOh4L41Wg
+//   black holes video: https://youtu.be/8-B6ryuBkCM
 //   https://github.com/kavan010/black_hole / https://github.com/kavan010/gravity_sim
 // Adapt morphology only — no proprietary blobs. ENABLE_FLIGHT_GALAXY_BAND_GPU stays false.
 // Justin HARD NAY refs: /workspace/jots-galaxy-refs/{ref-blue-galaxy-sol-dot.jpg,ref-far-sol-speck.jpg,ref-sol-closeup-dart-meadow.jpg}
@@ -11968,6 +12064,8 @@ window.updateSolGalLod=updateSolGalLod;
 window.generateGalacticArmDots=generateGalacticArmDots;
 
 // ── Fields Galaxy template (port of Fields_Galaxy.blend geometry nodes) ──
+// Source file: reference-assets/fields-galaxy (supplied to the project;
+// original author to be confirmed — see CREDITS).
 // Justin's Blender template for procedural galaxies. Same math as the node
 // graph, evaluated per point instead of in Geometry Nodes:
 //   1. points spread uniformly over a unit disc (Curve Circle → Fill →
@@ -12080,6 +12178,8 @@ const GAL_SKY_ENABLED=true;
 const GALSKY={
   S:0.1,                 // scene units per light-year inside galSkyRoot
   KMAX:0.008,            // largest on-screen radius a cloud may take (rad)
+  GLOW:2.4,
+  WISP:true,             // 3D-noise wisps inside each cloud's haze (one texture read per pixel)              // halo reach vs the old solid cloud (the visible core is far smaller)
   R0:26670, ZSUN:68,     // Sun: distance from centre, height above plane (ly)
   PITCH:12*Math.PI/180,  // arm pitch angle
   PERSEUS_R:33200,       // Perseus arm radius at the Sun's azimuth (ly)
@@ -12194,6 +12294,8 @@ function sampleMilkyWay(N,seed){
   return {pos,col,kind,lum,n:N};
 }
 
+// Positions/distances below are rounded published values (NED, SIMBAD);
+// Sun–centre distance R0 = 8.178 kpc, GRAVITY Collaboration 2019. See CREDITS.
 // Real nearby and landmark stars: [name, l, b, d(ly), r,g,b, size]
 const GS_NAMED_STARS=[
   ['Proxima Centauri',313.94,-1.93,4.24,1.0,0.55,0.40,0.7],
@@ -12331,7 +12433,7 @@ function _gsEnsureHost(key){
       for(let j=0;j<p.n;j++){K[j]=0.0030;P[j]=r.R*0.0035;}
       // Brighter than the far sprite: from inside, far fewer overlap per pixel.
       for(let j=0;j<p.col.length;j++)p.col[j]=Math.min(1,p.col[j]*2.4);
-      r.host=_gsLodMesh(p.pos,p.col,K,P,new THREE.OctahedronGeometry(1,0),'JOTS_Host_'+r.key);
+      r.host=_gsLodMesh(p.pos,p.col,K,P,_gsStarGeo(),'JOTS_Host_'+r.key);
       r.obj.add(r.host);
     }
     if(r.host){r.host.visible=want;}
@@ -12341,15 +12443,97 @@ function _gsEnsureHost(key){
     if(r.meshes[0])r.meshes[0].visible=!want;
   }
 }
+// Scattering model after Sebastian Lague's "Coding Adventure: Atmosphere"
+// (github.com/SebLague/Solar-System, MIT), as used for the planets.
+// Each cloud is a small star wrapped in a thin glowing atmosphere: the same
+// wavelength-dependent (Rayleigh, 1/λ⁴) scattering the planet atmospheres
+// use, solved analytically for a uniform sphere — optical depth along a
+// sightline at projected radius r is 2·√(1−r²). So a cloud reads as a hot
+// white point in a soft haze whose thin outer shell tints blue, and
+// neighbouring hazes blend into one another instead of stacking as flat
+// facets. The octahedron's vertex normals are its (unit-sphere) positions,
+// so the interpolated normal gives that sphere per pixel.
+function _gsStarGeo(detail){
+  const g=detail?new THREE.IcosahedronGeometry(1,detail):new THREE.OctahedronGeometry(1,0);
+  g.setAttribute('normal',g.getAttribute('position').clone());
+  return g;
+}
+// A small tiling 3D noise volume (32³, fbm of value noise). Each cloud
+// samples it through its own sphere at a random offset, so the haze reads
+// as an irregular wisp of gas rather than an identical soft ball — a
+// volume-texture take on the flipbook "volumetric sprite" particles in
+// Royal Skies' "UE5: Sprite-Sheets (Niagara Particles!)" (see CREDITS).
+let _gsNoiseVol=null;
+function _gsNoiseTex3D(){
+  if(_gsNoiseVol)return _gsNoiseVol;
+  const N=32, lat=new Float32Array(N*N*N), r=seedRand(0x6A57);
+  for(let i=0;i<lat.length;i++)lat[i]=r();
+  const at=(x,y,z)=>lat[((z&31)*N+(y&31))*N+(x&31)];
+  const sm=t=>t*t*(3-2*t);
+  const vnoise=(x,y,z)=>{   // periodic in 32 at every octave (freq is a power of two)
+    const X=Math.floor(x),Y=Math.floor(y),Z=Math.floor(z), fx=sm(x-X),fy=sm(y-Y),fz=sm(z-Z);
+    const l=(a,b,t)=>a+(b-a)*t;
+    return l(l(l(at(X,Y,Z),at(X+1,Y,Z),fx),l(at(X,Y+1,Z),at(X+1,Y+1,Z),fx),fy),
+             l(l(at(X,Y,Z+1),at(X+1,Y,Z+1),fx),l(at(X,Y+1,Z+1),at(X+1,Y+1,Z+1),fx),fy),fz);
+  };
+  const data=new Uint8Array(N*N*N);
+  for(let z=0;z<N;z++)for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+    let v=0,a=0.5,f=0.125,t=0;
+    for(let o=0;o<4;o++){v+=a*vnoise(x*f*4,y*f*4,z*f*4);t+=a;a*=0.5;f*=2;}
+    v/=t;v=Math.min(1,Math.max(0,(v-0.28)/0.46));   // widen the contrast
+    data[(z*N+y)*N+x]=Math.round(v*255);
+  }
+  const tex=new THREE.Data3DTexture(data,N,N,N);
+  tex.format=THREE.RedFormat;tex.type=THREE.UnsignedByteType;
+  tex.minFilter=tex.magFilter=THREE.LinearFilter;
+  tex.wrapS=tex.wrapT=tex.wrapR=THREE.RepeatWrapping;tex.unpackAlignment=1;tex.needsUpdate=true;
+  _gsNoiseVol=tex;return tex;
+}
+function _gsStarMat(opts){
+  const T=THREE.TSL;
+  if(!T||!THREE.MeshBasicNodeMaterial||!T.normalView||!T.positionViewDirection||!T.materialColor)return null;
+  const o=opts||{};
+  const m=new THREE.MeshBasicNodeMaterial({color:0xffffff,transparent:!!o.transparent,blending:THREE.AdditiveBlending,
+    depthTest:!!o.depthTest,depthWrite:false});
+  const f=T.normalize(T.normalView).dot(T.positionViewDirection).clamp(0,1);   // √(1−r²)
+  // q = (r / 0.7)²: the glow ends at r = 0.7, inside every silhouette an
+  // octahedron can show, so no cloud ever reveals its facets.
+  const q=T.float(1).sub(f.mul(f)).mul(2.04);
+  const win=T.float(1).sub(T.smoothstep(0.55,1.0,q));
+  const core=T.exp(q.mul(-(o.core||60))).mul(o.coreGain===undefined?2.2:o.coreGain);   // the star itself
+  const glow=T.exp(q.mul(-6)).mul(o.glowGain||0.5);                          // inner glow
+  const tau=T.float(1).sub(q).max(0).sqrt().mul(2).mul(T.exp(q.mul(-2.5)));  // path through the haze
+  const beta=T.vec3(0.24,0.48,1.0).mul(o.scatter||1.6);                      // (400/λ)⁴, R G B
+  const atmo=T.vec3(1).sub(T.exp(beta.mul(tau).negate())).mul(o.atmoGain||0.38);
+  // Wisp: sample the noise volume through this cloud (its own random
+  // offset, drifting slowly) and shape the haze with it; the star core
+  // stays clean. Skipped where 3D textures aren't available.
+  let wisp=T.float(1);
+  let low=false;try{low=_gsBudget().low;}catch(e){}
+  if(o.wisp!==false&&GALSKY.WISP&&!low&&T.texture3D&&T.hash&&T.instanceIndex){
+    try{
+      const i=T.float(T.instanceIndex);
+      const off=T.vec3(T.hash(i),T.hash(i.add(17.0)),T.hash(i.add(41.0))).mul(8.0);
+      const uvw=T.positionGeometry.mul(o.wispScale||0.45).add(off).add(T.time.mul(0.004));
+      const d=T.texture3D(_gsNoiseTex3D(),uvw).r;
+      wisp=T.float(0.25).add(d.mul(d).mul(o.wispGain||2.1));
+    }catch(e){wisp=T.float(1);}
+  }
+  // × material colour (the fades) here, × instance colour by the material
+  // itself. The core overdrives so tone mapping carries it toward white.
+  m.colorNode=T.materialColor.mul(atmo.add(glow).mul(wisp).add(core).mul(win));
+  return m;
+}
 function _gsMat(map){
+  if(!map){const sm=_gsStarMat();if(sm)return sm;}
   return new THREE.MeshBasicMaterial({color:0xffffff,map:map||null,transparent:false,blending:THREE.AdditiveBlending,
     depthTest:false,depthWrite:false,side:map?THREE.DoubleSide:THREE.FrontSide});
 }
 // LOD instanced set: positions are static; each instance's radius is
 // max(distance-from-camera × K, physical radius), re-derived on demand.
-function _gsLodMesh(pos,col,K,phys,geo,name){
+function _gsLodMesh(pos,col,K,phys,geo,name,look){
   const n=(pos.length/3)|0, S=GALSKY.S;
-  const mesh=new THREE.InstancedMesh(geo,_gsMat(),n);
+  const mesh=new THREE.InstancedMesh(geo,(look&&_gsStarMat(look))||_gsMat(),n);
   mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   const a=mesh.instanceMatrix.array, c=new THREE.Color();
   for(let i=0;i<n;i++){
@@ -12374,7 +12558,7 @@ function _gsResize(mesh,cx,cy,cz){
     // Physical size phases in only for clouds 2.5k–12k+ ly away.
     const d=Math.sqrt(dx*dx+dy*dy+dz*dz);
     let t=(d-2500)/9500;t=t<0?0:t>1?1:t;
-    const r=Math.min(Math.max(d*K[i],P[i]*t*t*(3-2*t)),d*GALSKY.KMAX)*S;
+    const r=Math.min(Math.max(d*K[i],P[i]*t*t*(3-2*t)),d*GALSKY.KMAX)*S*GALSKY.GLOW;
     const o=i*16;a[o]=r;a[o+5]=r;a[o+10]=r;
   }
   mesh.instanceMatrix.needsUpdate=true;
@@ -12417,7 +12601,7 @@ function buildGalSky(){
   frame.quaternion.copy(q);
   frame.position.copy(sunLocal).applyQuaternion(q).multiplyScalar(-S);   // Sun at root origin
   root.add(frame);
-  const octa=new THREE.OctahedronGeometry(1,0);
+  const octa=_gsStarGeo();
   const lod=[];
   galSky.subs=[];
   // The Milky Way (centre at the local origin) is a movable sub like every
@@ -12473,7 +12657,7 @@ function buildGalSky(){
     }
     neb.push({name:n[0],pos:cen,r:R,d:n[3]});
   });
-  const nebMesh=_gsLodMesh(np,nc,nK,nP,new THREE.IcosahedronGeometry(1,1),'JOTS_Nebulae');
+  const nebMesh=_gsLodMesh(np,nc,nK,nP,_gsStarGeo(1),'JOTS_Nebulae',{core:1,coreGain:0,glowGain:0.5,atmoGain:0.35,scatter:1.1});
   mwSub.add(nebMesh);lod.push(nebMesh);
   galSky.nebulae=neb;
 
@@ -17802,8 +17986,18 @@ function warpToDestination(di){
 toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 </script>
 
+<style>
+#about-credits{text-align:left;margin-top:0.4rem}
+#about-credits .cr-sec{font-family:var(--font-hud);font-size:0.56rem;letter-spacing:0.18em;color:rgba(91,127,255,0.85);margin:1rem 0 0.35rem;border-bottom:1px solid rgba(91,127,255,0.18);padding-bottom:0.25rem}
+#about-credits .cr-item{padding:0.45rem 0;border-bottom:1px solid rgba(91,127,255,0.07)}
+#about-credits .cr-t{font-size:0.72rem;color:var(--text);font-weight:600}
+#about-credits .cr-a{font-size:0.62rem;color:var(--text-dim)}
+#about-credits .cr-l{color:rgba(255,210,120,0.8)}
+#about-credits .cr-w{font-size:0.62rem;color:var(--text-dim);line-height:1.45;margin-top:0.15rem}
+#about-credits .cr-u a{display:inline-block;margin:0.2rem 0.7rem 0 0;font-family:var(--font-mono);font-size:0.56rem;color:rgba(91,127,255,0.8);text-decoration:none;word-break:break-all}
+</style>
 <div id="about-modal" style="position:fixed;inset:0;z-index:6500;background:rgba(0,0,0,0.82);backdrop-filter:blur(14px);display:none;align-items:center;justify-content:center;">
-  <div style="background:rgba(4,10,22,0.98);border:1px solid rgba(91,127,255,0.2);border-radius:4px;padding:2rem 2.4rem;width:min(440px,92vw);text-align:center;">
+  <div style="background:rgba(4,10,22,0.98);border:1px solid rgba(91,127,255,0.2);border-radius:4px;padding:2rem 2.4rem;width:min(560px,92vw);max-height:88vh;overflow-y:auto;text-align:center;">
     <div style="font-family:var(--font-hud);font-size:1.1rem;font-weight:900;color:var(--cyan);letter-spacing:0.22em;text-shadow:var(--glow-md);margin-bottom:0.3rem;">DART MEADOW</div>
     <div style="font-family:var(--font-mono);font-size:0.58rem;color:var(--text-dim);letter-spacing:0.2em;margin-bottom:1.4rem;">JOURNEY OF THE SKYBOARD</div>
     <div style="font-size:0.72rem;color:var(--text);line-height:1.75;margin-bottom:1.4rem;">Zero-gravity interstellar flight simulator.<br>Build your skyboard. Chart the galaxy. Ride at c³.</div>
@@ -17811,6 +18005,9 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
        style="display:inline-block;margin-bottom:1.2rem;padding:0.6rem 1.6rem;border:1px solid rgba(91,127,255,0.35);border-radius:2px;color:rgba(91,127,255,0.75);font-family:var(--font-hud);font-size:0.6rem;letter-spacing:0.15em;text-decoration:none;background:rgba(91,127,255,0.06);">
       🌐 DARTMEADOW.COM
     </a><br>
+    <div style="font-family:var(--font-hud);font-size:0.62rem;color:var(--cyan);letter-spacing:0.2em;margin:0.6rem 0 0.2rem;">CREDITS &amp; SOURCES</div>
+    <div style="font-size:0.6rem;color:var(--text-dim);line-height:1.5;margin-bottom:0.4rem;">Outside work this game builds on — authors, links and licences.</div>
+    <div id="about-credits"></div>
     <button onclick="closeAbout()" style="margin-top:0.8rem;padding:0.55rem 2rem;background:transparent;border:1px solid rgba(91,127,255,0.2);border-radius:2px;color:var(--text-dim);font-family:var(--font-hud);font-size:0.58rem;letter-spacing:0.15em;cursor:pointer;">CLOSE</button>
   </div>
 </div>

@@ -1,0 +1,76 @@
+# Credits & sources
+
+Outside work that DART Meadow: Journey of the Skyboard builds on — code, techniques, data, libraries, fonts, tools and services — with author, links and licence. The same list is in the game under **MENU → ABOUT**; its source of truth is `CREDITS` in `index.html`.
+
+Use: **code** = code or tables included (licence terms apply) · **technique** = studied and re-implemented from scratch · **data**, **library**, **font**, **tool**, **service** as named.
+
+## Techniques & code references
+
+- **Coding Adventure: Atmosphere · Solar-System** — Sebastian Lague. *MIT* (technique). Ray-marched Rayleigh scattering (1/λ⁴ per channel, scaled by 400 nm) for planet atmospheres, reached through the DART Meadow sandbox; the galaxy star haze uses the same scattering model.
+  <https://www.youtube.com/watch?v=DxfEbulyFcY> · <https://github.com/SebLague/Solar-System>
+- **Coding Adventure: Marching Cubes** — Sebastian Lague. *MIT* (technique). Approach for density-field planet terrain; rewritten for the browser, no code copied.
+  <https://www.youtube.com/watch?v=M3iI2l0ltbE> · <https://github.com/SebLague/Marching-Cubes>
+- **Procedural Planets (cube-sphere)** — Sebastian Lague. *MIT* (technique). Cube-to-sphere planet patches used by the sandbox’s quadtree LOD planet.
+  <https://github.com/SebLague/Procedural-Planets>
+- **Polygonising a scalar field (marching cubes tables)** — Paul Bourke; tables by Cory Gene Bloyd. *Free to use with attribution* (code). MC_EDGE_TABLE / MC_TRI_TABLE lookup tables.
+  <https://paulbourke.net/geometry/polygonise/> · <https://gist.github.com/dwilliamson/c041e3454a713e58baf6e4f8e5fffecd>
+- **Marching Cubes: A High Resolution 3D Surface Construction Algorithm** — W. E. Lorensen & H. E. Cline, SIGGRAPH 1987. *Published paper* (technique). The original marching cubes algorithm.
+  <https://doi.org/10.1145/37402.37422>
+- **Simulating Atoms in C++ · Atoms · kavang.com/atom** — Kavan (kavan010). *No licence published — all rights reserved* (technique). Idea of drawing structure as probability-sampled particle clouds, applied to galaxy star clouds. Studied only; no code copied.
+  <https://youtu.be/OSAOh4L41Wg> · <https://github.com/kavan010/Atoms> · <https://www.kavang.com/atom>
+- **Simulating Black Holes in C++ · black_hole · gravity_sim** — Kavan (kavan010). *No licence published — all rights reserved* (technique). Reference for Sgr A* at the galactic centre and planned gravitational lensing. Studied only; no code copied.
+  <https://youtu.be/8-B6ryuBkCM> · <https://github.com/kavan010/black_hole> · <https://github.com/kavan010/gravity_sim>
+- **Chunked LOD** — Thatcher Ulrich. *Published article* (technique). Terrain level-of-detail approach.
+  <http://tulrich.com/geekstuff/chunklod.html>
+- **Geometry Clipmaps** — F. Losasso & H. Hoppe, Microsoft Research (2004). *Published paper* (technique). Terrain level-of-detail approach.
+  <https://hhoppe.com/proj/geomclipmap/>
+- **Nanite (continuous LOD concept)** — Epic Games — Unreal Engine 5. *Concept only* (technique). Inspiration for the walking-terrain LOD.
+  <https://dev.epicgames.com/documentation/en-us/unreal-engine/nanite-virtualized-geometry-in-unreal-engine>
+- **three-nanite** — AIFanatic. *MIT* (technique). Meshlet LOD reference.
+  <https://github.com/AIFanatic/three-nanite>
+- **Web3D Asset Compiler** — Abdul Rafay Khalid (ARafayKhalid). *GPL-3.0-or-later* (technique). Keyframe-reduction idea for character animation clips; re-implemented, no code copied.
+  <https://github.com/ARafayKhalid/web3d-asset-compiler>
+- **UE5: Sprite-Sheets (Niagara Particles!)** — Royal Skies. *Tutorial video* (technique). Reference for volumetric sprite particles in the galaxy.
+  <https://youtu.be/iXBZwiiwwfI>
+- **Fields Galaxy (Blender geometry nodes)** — Supplied to the project — original author to be confirmed. *To be confirmed* (technique). Node graph ported to JavaScript for flocculent galaxies.
+  <https://github.com/dartsolarpunk/dartmeadow-space/tree/main/reference-assets/fields-galaxy>
+- **dm-jots-sandbox** — DART Meadow (dartsolarpunk). *DART Meadow project* (code). The project’s own prototype sandbox: compute marching-cubes planets, depth-aware water, Rayleigh atmosphere, planet walker.
+  <https://github.com/dartsolarpunk/dm-jots-sandbox> · <https://dartsolarpunk.github.io/dm-jots-sandbox/>
+## Data
+
+- **Natural Earth (110m coastlines)** — Tom Patterson, Nathaniel Vaughn Kelso & contributors. *Public domain* (data). Earth coastlines on the maps.
+  <https://www.naturalearthdata.com/> · <https://github.com/nvkelso/natural-earth-vector>
+- **Galactic positions & distances** — NASA/IPAC Extragalactic Database (NED), SIMBAD (CDS Strasbourg). *Public scientific data* (data). Galactic l/b and distances of nearby stars, nebulae and the visitable galaxies (rounded).
+  <https://ned.ipac.caltech.edu/> · <https://simbad.cds.unistra.fr/>
+- **Sun’s distance from the Galactic Centre (8.178 kpc)** — GRAVITY Collaboration, A&A 625, L10 (2019). *Published paper* (data). Places Sol 26,670 ly from Sgr A*.
+  <https://doi.org/10.1051/0004-6361/201935656>
+- **Planetary orbital elements** — NASA JPL Solar System Dynamics. *Public scientific data* (data). Semi-major axes, eccentricities and periods of the planets.
+  <https://ssd.jpl.nasa.gov/planets/approx_pos.html>
+- **Size It Up — Space** — sizeitup.games. *Reference only* (data). Scale reference for the Sun and planets.
+  <https://sizeitup.games/space>
+## Libraries
+
+- **three.js (r185, WebGPU + TSL)** — three.js authors (mrdoob & contributors). *MIT* (library). Rendering engine.
+  <https://threejs.org/> · <https://github.com/mrdoob/three.js>
+- **eruda** — liriliri. *MIT* (library). On-device debug console (only with ?debug).
+  <https://github.com/liriliri/eruda>
+## Fonts
+
+- **Orbitron** — Matt McInerney. *SIL Open Font License 1.1* (font).
+  <https://fonts.google.com/specimen/Orbitron>
+- **Rajdhani** — Indian Type Foundry. *SIL Open Font License 1.1* (font).
+  <https://fonts.google.com/specimen/Rajdhani>
+- **Share Tech Mono** — Carrois Apostrophe. *SIL Open Font License 1.1* (font).
+  <https://fonts.google.com/specimen/Share+Tech+Mono>
+## Tools & services
+
+- **Meshy AI** — Meshy. *Meshy terms of use* (tool). Generated the Autumn and Sentinel character models and animations.
+  <https://www.meshy.ai/>
+- **Blender** — Blender Foundation. *GPL (tool; output unrestricted)* (tool). Modelling and the Fields Galaxy template.
+  <https://www.blender.org/>
+- **Firebase Authentication** — Google. *Service terms* (service). Sign-in.
+  <https://firebase.google.com/>
+- **Stripe** — Stripe, Inc.. *Service terms* (service). Support payments.
+  <https://stripe.com/>
+- **jsDelivr · Google Fonts · AllOrigins** — jsDelivr, Google, AllOrigins. *Service terms* (service). Serving libraries, fonts and the coastline data.
+  <https://www.jsdelivr.com/> · <https://fonts.google.com/> · <https://allorigins.win/>
