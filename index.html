@@ -4556,6 +4556,9 @@ function makeCircleTex(size,col,alpha){
 }
 
 function buildFlightStars(){
+  // The to-scale galaxy layer carries the real star field (nearest stars at
+  // 4.2+ ly). This shell sat 3–100 AU from Sol — inside the solar system.
+  if(GAL_SKY_ENABLED&&STATE.settings&&STATE.settings.galaxyband!==false)return;
   // Correct star rendering: sizeAttenuation:false (screen-space pixels), alphaTest for circles
   // Deep space is nearly empty — only distant stars as tiny points
   const starTex=makeCircleTex(16,'rgb(255,255,255)',1);
@@ -4590,6 +4593,8 @@ function buildFlightNebulae(){
   // Soft circle-mapped Points keep depth without hard-edged quads. Low preset
   // uses a cheaper particle count.
   if(STATE.settings && STATE.settings.dust===false)return;
+  // Real nebulae (Orion at 1,344 ly, …) live in the to-scale galaxy layer.
+  if(GAL_SKY_ENABLED&&STATE.settings&&STATE.settings.galaxyband!==false)return;
   // Richer cloud field (Justin iPhone: galaxy felt empty). Extra pockets near
   // Sol + mid-arms; Low stays cheaper but still visible.
   const clouds=[
@@ -8897,10 +8902,13 @@ function updateHUD(){
   _hudT=_now;
   const pos=STATE.flight.pos;const sp=STATE.flight;
   $('hud-speed').textContent=sp.speed.toFixed(3);
-  $('hud-alt').textContent=Math.round(pos.length()*400)+'km';
+  const _altTxt=(galSky&&galSky.ready&&galSky.offsetLy>=0.05)
+    ?(galSky.offsetLy<10?galSky.offsetLy.toFixed(2):Math.round(galSky.offsetLy).toLocaleString())+' ly'
+    :Math.round(pos.length()*400)+'km';
+  $('hud-alt').textContent=_altTxt;
   $('hud-lat').textContent=(Math.atan2(pos.y,Math.sqrt(pos.x*pos.x+pos.z*pos.z))*180/Math.PI).toFixed(2)+'°';
   $('hud-lon').textContent=(Math.atan2(pos.z,pos.x)*180/Math.PI).toFixed(2)+'°';
-  $('hud-alt2').textContent=Math.round(pos.length()*400)+' km';
+  $('hud-alt2').textContent=_altTxt.replace('km',' km');
   $('bar-energy').style.width=sp.energy+'%';$('hud-energy').textContent=Math.round(sp.energy)+'%';
   $('bar-hull').style.width=sp.hull+'%';$('hud-hull').textContent=Math.round(sp.hull)+'%';
   $('bar-shield').style.width=sp.shield+'%';$('hud-shield').textContent=Math.round(sp.shield)+'%';
@@ -10186,6 +10194,7 @@ function fastTravelToGalaxy(galaxyId,galaxyName){
 // Worlds: MC / WebGL-rich planets (no flat SphereGeometry stubs). Uses Cosmos
 // seed (system.seed) so the same arm-cell chart regenerates identically.
 async function rebuildFlightForSystem(system){
+  try{ setGalSkySystem(system); }catch(e){}
   if(!system){ // back to Sol — rebuild the real solar system
     _clearFlightSystemScene();
     if(typeof buildSolarSystem==='function'){
@@ -10672,7 +10681,13 @@ function buildFlightGalaxyBand(){
   if(window._solArmDot){try{_disposeObject3D(window._solArmDot);flightScene.remove(window._solArmDot);}catch(e){}window._solArmDot=null;}
   if(flightGalaxyNeighbourhood){_disposeObject3D(flightGalaxyNeighbourhood);flightScene.remove(flightGalaxyNeighbourhood);flightGalaxyNeighbourhood=null;}
   flightNebulae.forEach(n=>{_disposeObject3D(n);flightScene.remove(n);});flightNebulae=[];
+  try{ if(typeof disposeGalSky==='function')disposeGalSky(); }catch(e){}
   if(!STATE.settings.galaxyband)return;
+  // To-scale Milky Way (light-year layer) replaces the in-scene disc, local
+  // arm, neighbourhood galaxies and nebulae. Legacy path stays as fallback.
+  if(GAL_SKY_ENABLED){
+    try{ buildGalSky(); return; }catch(e){ console.warn('galsky:',e); try{disposeGalSky();}catch(_){} }
+  }
   // HARD-OFF: GPU builder stays off. CPU path is Safari-safe InstancedMesh (not GL_POINTS).
   // Flip ENABLE_FLIGHT_GALAXY_BAND_GPU only after separate device proof.
   const ENABLE_FLIGHT_GALAXY_BAND_GPU=false;
@@ -11662,6 +11677,559 @@ window.ensureSolArmDot=ensureSolArmDot;
 window.updateSolGalLod=updateSolGalLod;
 window.generateGalacticArmDots=generateGalacticArmDots;
 
+// ── Fields Galaxy template (port of Fields_Galaxy.blend geometry nodes) ──
+// Justin's Blender template for procedural galaxies. Same math as the node
+// graph, evaluated per point instead of in Geometry Nodes:
+//   1. points spread uniformly over a unit disc (Curve Circle → Fill →
+//      Distribute Points on Faces)
+//   2. twist: rotate each point about the axis by (1 − r)·(4 + 0.3·t) — the
+//      core turns more than the rim, which winds everything into a spiral
+//   3. displace by a 3-channel FBM noise field (scale 7, detail 8, rough
+//      0.7), Linear-Light blended at 0.10 (core) → 0.25 (rim): the noise's
+//      filaments become the flocculent arms, and its Z gives the disc depth
+//   4. colour: random blue ramp #1C48FF → #0F99FF, hue nudged with radius;
+//      emission (1 − radius) plus hot knots (up to 30×) where the noise
+//      peaks inside 0.6 of the radius — the blown core and bright clumps.
+// Returns positions in units of the disc radius (disc in XZ, +Y normal) so
+// callers scale by their galaxy radius. `time` animates the twist and noise.
+// 3D Perlin gradient noise (Blender's Noise Texture is gradient noise; its
+// ridges are what the twist winds into filaments). Returns ~[-1,1].
+function _fgHash(ix,iy,iz,s){let h=Math.imul(ix,0x8da6b343)^Math.imul(iy,0xd8163841)^Math.imul(iz,0xcb1ab31f)^Math.imul(s,0x165667b1);h=Math.imul(h^(h>>>13),0x5bd1e995);return (h^(h>>>15))>>>0;}
+const _FG_G=[[1,1,0],[-1,1,0],[1,-1,0],[-1,-1,0],[1,0,1],[-1,0,1],[1,0,-1],[-1,0,-1],[0,1,1],[0,-1,1],[0,1,-1],[0,-1,-1]];
+function _fgGrad(ix,iy,iz,s,x,y,z){const g=_FG_G[_fgHash(ix,iy,iz,s)%12];return g[0]*x+g[1]*y+g[2]*z;}
+function _fgNoise(x,y,z,s){
+  const xi=Math.floor(x),yi=Math.floor(y),zi=Math.floor(z),xf=x-xi,yf=y-yi,zf=z-zi;
+  const u=xf*xf*xf*(xf*(xf*6-15)+10),v=yf*yf*yf*(yf*(yf*6-15)+10),w=zf*zf*zf*(zf*(zf*6-15)+10);
+  const a=_fgGrad(xi,yi,zi,s,xf,yf,zf),b=_fgGrad(xi+1,yi,zi,s,xf-1,yf,zf),c=_fgGrad(xi,yi+1,zi,s,xf,yf-1,zf),d=_fgGrad(xi+1,yi+1,zi,s,xf-1,yf-1,zf);
+  const e=_fgGrad(xi,yi,zi+1,s,xf,yf,zf-1),f=_fgGrad(xi+1,yi,zi+1,s,xf-1,yf,zf-1),g=_fgGrad(xi,yi+1,zi+1,s,xf,yf-1,zf-1),h=_fgGrad(xi+1,yi+1,zi+1,s,xf-1,yf-1,zf-1);
+  const x0=a+(b-a)*u,x1=c+(d-c)*u,x2=e+(f-e)*u,x3=g+(h-g)*u;
+  const y0=x0+(x1-x0)*v,y1=x2+(x3-x2)*v;return y0+(y1-y0)*w;
+}
+function _fgFbm(x,y,z,s,detail,rough){
+  let amp=1,freq=1,sum=0,norm=0;
+  const oct=Math.floor(detail);
+  for(let i=0;i<=oct;i++){sum+=amp*_fgNoise(x*freq,y*freq,z*freq,s+i*31);norm+=amp;amp*=rough;freq*=2;}
+  return 0.5+0.5*sum/norm;
+}
+function sampleFieldsGalaxy(N,opts){
+  const o=Object.assign({seed:1,time:0,twist:4,twistRate:0.3,noiseScale:7,detail:8,rough:0.7,disp0:0.10,disp1:0.25,
+    colA:[0.109,0.283,1.0],colB:[0.058,0.60,1.0],contrast:1.6},opts||{});
+  const rand=seedRand((o.seed>>>0)||1);
+  const pos=new Float32Array(N*3),col=new Float32Array(N*3),len=new Float32Array(N),size=new Float32Array(N);
+  const ang0=o.twist+o.twistRate*o.time, tz=0.001*o.time;
+  for(let i=0;i<N;i++){
+    const r=Math.sqrt(rand()), th=rand()*Math.PI*2;
+    const x=Math.cos(th)*r, y=Math.sin(th)*r;              // Blender XY disc (Z up)
+    const a=(1-r)*ang0, ca=Math.cos(a), sa=Math.sin(a);
+    const rx=x*ca-y*sa, ry=x*sa+y*ca;
+    const S=o.noiseScale, px=x*S, py=y*S, pz=tz*S;
+    // Blender "Color" output = three decorrelated FBM channels; normalised FBM
+    // sits near 0.5, so stretch around 0.5 to match its dynamic range.
+    const n0=0.5+(_fgFbm(px,py,pz,o.seed,o.detail,o.rough)-0.5)*o.contrast;
+    const n1=0.5+(_fgFbm(px+19.1,py+7.3,pz+3.7,o.seed,o.detail,o.rough)-0.5)*o.contrast;
+    const n2=0.5+(_fgFbm(px+5.9,py+31.7,pz+11.3,o.seed,o.detail,o.rough)-0.5)*o.contrast;
+    const f=o.disp0+(o.disp1-o.disp0)*Math.min(1,r);
+    const X=rx+f*(2*n0-1), Y=ry+f*(2*n1-1), Z=f*(2*n2-1);
+    const L=Math.sqrt(X*X+Y*Y+Z*Z);
+    pos[i*3]=X;pos[i*3+1]=Z;pos[i*3+2]=Y;                  // → disc in XZ, +Y normal
+    len[i]=L;
+    // Shader: random blue ramp (0.127→0.814), hue nudge with radius.
+    const t=Math.min(1,Math.max(0,(rand()-0.127)/(0.814-0.127)));
+    let cr=o.colA[0]+(o.colB[0]-o.colA[0])*t, cg=o.colA[1]+(o.colB[1]-o.colA[1])*t, cb=o.colA[2]+(o.colB[2]-o.colA[2])*t;
+    const hue=Math.min(1,L)*0.086;                          // toward violet at the rim
+    cr=Math.min(1,cr+hue*3.4);cg=Math.max(0,cg*(1-hue*5));
+    // Emission: (1 − length) + hot knots where the noise peaks near the core.
+    const nl=(n0+n1+n2)/3, knot=Math.max(0,(nl-0.382)/(1-0.382))*30*(1-Math.min(1,L/0.605));
+    const E=Math.max(0,1-L)+knot;
+    const b=Math.min(1.4,0.22+E*0.5), wh=Math.min(0.7,E/14); // compress for additive draw; hot → pale cyan
+    col[i*3]=(cr+(1-cr)*wh)*b;col[i*3+1]=(cg+(1-cg)*wh)*b;col[i*3+2]=(cb+(1-cb)*wh)*b;
+    size[i]=rand()*(1-Math.min(1,L));                        // Set Point Radius: random × (1 − length)
+  }
+  return {pos,col,len,size,n:N};
+}
+window.sampleFieldsGalaxy=sampleFieldsGalaxy;
+
+// ══════════════════════════════════════════════════════════════
+//  ✦ GALACTIC SKY — the Milky Way built to scale (light-year layer)
+// ══════════════════════════════════════════════════════════════
+// The solar system is measured in AU (AU_UNITS scene units per AU); the
+// galaxy is measured in light-years. 1 ly = 63,241 AU, so the two can't
+// share one coordinate space without the galaxy either crushing the
+// solar system (the old 42,000-unit disc was ~84 AU across) or blowing
+// past float precision. Instead the galaxy lives in its own ly frame and
+// is drawn as a camera-following backdrop inside flightScene:
+//   • galSkyRoot follows flightCamera, scaled GALSKY.S scene units per ly
+//     so everything out to Andromeda fits inside the camera's far plane.
+//   • It draws first (renderOrder −1000, opaque list, no depth write/test)
+//     so planets, the board and every in-system object always draw over it.
+//   • Where the camera "is" in the galaxy (galSky.camLy) = the current
+//     system's galactic position + a zoom-out offset once you fly past the
+//     edge of the system (log-mapped: light-years → whole galaxy).
+// Layout (real Milky Way, galactic coordinates l/b):
+//   Sun 26,670 ly from the centre (GRAVITY 2019), 68 ly above the plane,
+//   inside the Orion Spur between the Sagittarius (inner) and Perseus
+//   (outer) arms. Four log-spiral arms (pitch 12°): Perseus + Scutum–
+//   Centaurus major, Sagittarius–Carina + Norma–Outer minor. Central bar
+//   ~26,000 ly long at 27° to the Sun–centre line, boxy bulge, nucleus.
+//   Real nearest stars (Proxima 4.24 ly…), bright landmark stars, the
+//   Orion Nebula at 1,344 ly and other nebulae at their real l/b/d, plus
+//   the LMC, SMC, Andromeda and Triangulum.
+// Level of detail is inverted relative to terrain: near the Sun space is
+// sparse (individual nearby stars, several ly apart); the galaxy's mass
+// piles up toward the distant centre and along the arms. Each far
+// particle is a star cloud, not a single star. Each cloud is drawn at
+// max(its size on screen from the camera, its real physical size): from
+// inside that keeps clouds crisp and makes the distant bulge a bright
+// dense cluster; zoomed out, physical sizes take over and the disc reads
+// as thick fuzzy arms in the social-share palette (electric-blue arms,
+// warm golden core). Sizes are re-derived only while the camera moves
+// through the galaxy (three floats per instance, throttled).
+// Physical layout credit/refs: kavan010/Atoms (probability sampling of
+// particle positions), kavan010/black_hole (Sgr A* at the centre).
+const GAL_SKY_ENABLED=true;
+const GALSKY={
+  S:0.1,                 // scene units per light-year inside galSkyRoot
+  KMAX:0.008,            // largest on-screen radius a cloud may take (rad)
+  R0:26670, ZSUN:68,     // Sun: distance from centre, height above plane (ly)
+  PITCH:12*Math.PI/180,  // arm pitch angle
+  PERSEUS_R:33200,       // Perseus arm radius at the Sun's azimuth (ly)
+  DISK_L:8480,           // exponential disc scale length (ly)
+  RMAX:56000,            // disc cut-off radius (ly)
+  BAR_HALF:13000, BAR_ANG:27*Math.PI/180,
+  D0:14000, D1:48000,    // flight distance from the system → galactic zoom
+  LOG_MIN:-3.35, LOG_MAX:5.3,
+  LY_AU:63241.077
+};
+window.GALSKY=GALSKY;
+let galSkyRoot=null;
+const galSky={ready:false,frame:null,lod:[],local:null,haze:null,solMarker:null,
+  base:null,camLy:null,camLocal:null,offsetLy:0,sunLocal:null,q:null,qInv:null,_fadeKey:''};
+window.galSky=galSky;
+
+function _gsGauss(rand){let u=0,v=0;while(u===0)u=rand();while(v===0)v=rand();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);}
+// Galactic (l,b in degrees, d in ly) → galaxy-local frame: centre at the
+// origin, disc in XZ, +Y the north galactic pole, Sun at (−R0, ZSUN, 0).
+// Galactic x (Sun→centre) = +X, galactic z (NGP) = +Y, so galactic y = −Z.
+function galLocalFromLBD(l,b,d,out){
+  const L=l*Math.PI/180,B=b*Math.PI/180,cb=Math.cos(B);
+  out=out||new THREE.Vector3();
+  return out.set(-GALSKY.R0+d*cb*Math.cos(L), GALSKY.ZSUN+d*Math.sin(B), -d*cb*Math.sin(L));
+}
+// Trailing log-spiral arm k at radius r. k=0 Perseus passes the Sun's
+// azimuth (θ=π) at PERSEUS_R; each next arm sits 1/4 turn further in.
+function galArmTheta(k,r){
+  return Math.PI - k*Math.PI*0.5 - Math.log(r/GALSKY.PERSEUS_R)/Math.tan(GALSKY.PITCH);
+}
+function _gsDiskR(rand,rmin,rmax){
+  const L=GALSKY.DISK_L, span=1-Math.exp(-(rmax-rmin)/L);
+  return rmin-L*Math.log(1-rand()*span);
+}
+// Kinds: 0 arm · 1 Orion Spur · 2 inter-arm field · 3 bar · 4 bulge · 5 nucleus · 6 HII
+const GS_KIND_K=[0.0030,0.0028,0.0022,0.0046,0.0052,0.0058,0.0038];   // on-screen angular radius
+const GS_KIND_PHYS=[190,170,150,260,300,170,230];                      // physical cloud radius (ly)
+/** Sample the Milky Way as N star-cloud particles (galaxy-local ly). */
+function sampleMilkyWay(N,seed){
+  const rand=seedRand(seed>>>0);
+  const G=GALSKY;
+  const pos=new Float32Array(N*3), col=new Float32Array(N*3), kind=new Uint8Array(N), lum=new Float32Array(N);
+  const sun=new THREE.Vector3(-G.R0,G.ZSUN,0);
+  // Star-forming complexes: clumps along each arm give the arms texture.
+  const clumps=[[],[],[],[]];
+  for(let k=0;k<4;k++){
+    for(let i=0;i<150;i++){
+      const r=_gsDiskR(rand,9000,G.RMAX*0.95);
+      const th=galArmTheta(k,r)+_gsGauss(rand)*0.5*(900/r);
+      clumps[k].push([Math.cos(th)*r,Math.sin(th)*r,r]);
+    }
+  }
+  const armW=[0.38,0.12,0.38,0.12];               // Perseus, Sagittarius, Scutum, Norma–Outer
+  const bar=[Math.cos(G.BAR_ANG),Math.sin(G.BAR_ANG)];
+  // Orion Spur centreline through the Sun, pitched like the arms.
+  const radial=[-1,0], phiHat=[0,-1];             // at θ=π: outward = −X, +θ = −Z
+  const spurDir=[phiHat[0]*Math.cos(G.PITCH)-radial[0]*Math.sin(G.PITCH), phiHat[1]*Math.cos(G.PITCH)-radial[1]*Math.sin(G.PITCH)];
+  for(let i=0;i<N;i++){
+    const u=rand();
+    let x,y,z,kd,r;
+    if(u<0.52){                                   // spiral arms
+      let k=0,a=rand();for(;k<3&&a>armW[k];k++)a-=armW[k];
+      if(rand()<0.34){
+        const c=clumps[k][(rand()*clumps[k].length)|0];
+        const s=320+c[2]*0.012;
+        x=c[0]+_gsGauss(rand)*s; z=c[1]+_gsGauss(rand)*s; r=c[2];
+        kd=(rand()<0.07)?6:0;
+      }else{
+        r=_gsDiskR(rand,9000,G.RMAX);
+        const w=1300+r*0.034;
+        const th=galArmTheta(k,r)+_gsGauss(rand)*(w/r);
+        x=Math.cos(th)*r; z=Math.sin(th)*r; kd=0;
+      }
+      y=_gsGauss(rand)*(220+r*0.006);
+    }else if(u<0.575){                            // Orion Spur (the Sun's local arm)
+      const s=-5200+rand()*14200;
+      const off=_gsGauss(rand)*700;
+      x=sun.x+spurDir[0]*s+(-spurDir[1])*off; z=sun.z+spurDir[1]*s+spurDir[0]*off;
+      y=_gsGauss(rand)*230;
+      if(Math.hypot(x-sun.x,z-sun.z)<150){i--;continue;} // local bubble: nearby stars come from the local set
+      kd=1;r=Math.hypot(x,z);
+    }else if(u<0.75){                             // inter-arm field disc
+      r=_gsDiskR(rand,1500,G.RMAX);
+      const th=rand()*Math.PI*2;
+      x=Math.cos(th)*r; z=Math.sin(th)*r; y=_gsGauss(rand)*(700+r*0.008); kd=2;
+    }else if(u<0.86){                             // central bar
+      const a=_gsGauss(rand)*G.BAR_HALF*0.45, b=_gsGauss(rand)*G.BAR_HALF*0.16;
+      x=a*bar[0]-b*bar[1]; z=a*bar[1]+b*bar[0]; y=_gsGauss(rand)*G.BAR_HALF*0.11; kd=3;r=Math.hypot(x,z);
+    }else if(u<0.955){                            // boxy bulge
+      x=_gsGauss(rand)*3200; z=_gsGauss(rand)*3200; y=_gsGauss(rand)*2000; kd=4;r=Math.hypot(x,z);
+    }else{                                        // nucleus around Sgr A*
+      x=_gsGauss(rand)*520; z=_gsGauss(rand)*520; y=_gsGauss(rand)*300; kd=5;r=Math.hypot(x,z);
+    }
+    // Outer-disc warp (the real MW disc bends up on one side, down on the other).
+    if(r>36000&&kd<=2)y+=(r-36000)*0.11*Math.sin(Math.atan2(z,x)-0.4);
+    pos[i*3]=x;pos[i*3+1]=y;pos[i*3+2]=z;kind[i]=kd;
+    // Social-share palette: electric-blue arms, warm golden core.
+    const t=Math.min(1,r/G.RMAX), b=0.55+rand()*0.45;
+    let cr,cg,cb;
+    if(kd===0||kd===1){
+      const young=rand()<0.25;
+      if(young){cr=0.72;cg=0.86;cb=1.0;}else{cr=0.26+0.10*(1-t);cg=0.48+0.18*(1-t);cb=1.0;}
+      if(t>0.7){cr*=0.7;cg*=0.75;}
+    }else if(kd===6){cr=1.0;cg=0.42;cb=0.72;}
+    else if(kd===2){cr=0.46;cg=0.52;cb=0.80;}
+    else if(kd===5){cr=1.0;cg=0.95;cb=0.84;}
+    else{const w=Math.min(1,r/9000);cr=1.0;cg=0.90-0.14*w;cb=0.70-0.22*w;}
+    const dim=(kd===2)?0.26:(kd>=3&&kd<=5)?0.34:0.55;
+    col[i*3]=cr*b*dim;col[i*3+1]=cg*b*dim;col[i*3+2]=cb*b*dim;
+    lum[i]=b;
+  }
+  return {pos,col,kind,lum,n:N};
+}
+
+// Real nearby and landmark stars: [name, l, b, d(ly), r,g,b, size]
+const GS_NAMED_STARS=[
+  ['Proxima Centauri',313.94,-1.93,4.24,1.0,0.55,0.40,0.7],
+  ['Alpha Centauri',315.73,-0.68,4.37,1.0,0.93,0.72,1.5],
+  ["Barnard's Star",31.01,14.06,5.96,1.0,0.55,0.40,0.6],
+  ['Wolf 359',244.05,56.12,7.86,1.0,0.50,0.38,0.5],
+  ['Lalande 21185',185.13,64.99,8.31,1.0,0.60,0.42,0.6],
+  ['Sirius',227.23,-8.89,8.60,0.78,0.86,1.0,2.4],
+  ['Epsilon Eridani',195.84,-48.05,10.5,1.0,0.78,0.55,0.9],
+  ['Procyon',213.70,13.02,11.46,0.96,0.96,1.0,1.8],
+  ['61 Cygni',82.32,-5.82,11.4,1.0,0.72,0.50,0.8],
+  ['Tau Ceti',173.10,-73.44,11.9,1.0,0.90,0.66,1.0],
+  ['Altair',47.74,-8.91,16.7,0.92,0.94,1.0,1.8],
+  ['Vega',67.45,19.24,25.0,0.80,0.87,1.0,2.2],
+  ['Fomalhaut',20.49,-64.91,25.1,0.86,0.92,1.0,1.8],
+  ['Pollux',192.23,23.40,33.8,1.0,0.80,0.55,1.7],
+  ['Arcturus',15.13,69.11,36.7,1.0,0.72,0.45,2.2],
+  ['Capella',162.59,4.57,42.9,1.0,0.92,0.70,2.1],
+  ['Aldebaran',180.97,-20.24,65.3,1.0,0.62,0.40,2.0],
+  ['Regulus',226.43,48.93,79.3,0.82,0.88,1.0,1.8],
+  ['Spica',316.11,50.84,250,0.74,0.82,1.0,2.2],
+  ['Canopus',261.21,-25.29,310,0.96,0.96,1.0,2.6],
+  ['Polaris',123.28,26.46,433,1.0,0.95,0.80,1.9],
+  ['Antares',351.95,15.06,550,1.0,0.45,0.30,2.6],
+  ['Betelgeuse',199.79,-8.96,548,1.0,0.48,0.30,2.8],
+  ['Rigel',209.24,-25.25,860,0.72,0.82,1.0,2.8],
+  ['Deneb',84.28,1.99,2615,0.90,0.93,1.0,2.6]
+];
+// Nebulae at their real positions: [name, l, b, d, radius(ly), core rgb, rim rgb, particles]
+const GS_NEBULAE=[
+  ['Orion Nebula (M42)',209.01,-19.38,1344,12,[0.45,1.0,0.85],[1.0,0.35,0.55],640],
+  ['Rosette Nebula',206.31,-2.07,5200,65,[1.0,0.55,0.60],[1.0,0.28,0.40],260],
+  ['North America Nebula',85.64,-0.73,2200,50,[1.0,0.45,0.45],[0.95,0.25,0.35],240],
+  ['Lagoon Nebula (M8)',6.05,-1.19,4100,55,[1.0,0.62,0.78],[0.80,0.30,0.60],260],
+  ['Eagle Nebula (M16)',16.95,0.79,5700,35,[0.55,0.95,0.85],[1.0,0.40,0.55],220],
+  ['Carina Nebula',287.60,-0.63,8500,150,[1.0,0.70,0.55],[1.0,0.35,0.45],320]
+];
+// Local Group: [name, l, b, d(ly), radius(ly), type, inclination(rad), particles]
+const GS_LOCAL_GROUP=[
+  ['Large Magellanic Cloud',280.47,-32.89,163000,7000,'irregular',0.6,1600],
+  ['Small Magellanic Cloud',302.80,-44.30,203000,3500,'irregular',1.0,800],
+  ['Andromeda (M31)',121.17,-21.57,2537000,110000,'spiral',1.35,3200],
+  ['Triangulum (M33)',133.61,-31.33,2730000,30000,'flocculent',0.95,1600]
+];
+
+function _gsMat(map){
+  return new THREE.MeshBasicMaterial({color:0xffffff,map:map||null,transparent:false,blending:THREE.AdditiveBlending,
+    depthTest:false,depthWrite:false,side:map?THREE.DoubleSide:THREE.FrontSide});
+}
+// LOD instanced set: positions are static; each instance's radius is
+// max(distance-from-camera × K, physical radius), re-derived on demand.
+function _gsLodMesh(pos,col,K,phys,geo,name){
+  const n=(pos.length/3)|0, S=GALSKY.S;
+  const mesh=new THREE.InstancedMesh(geo,_gsMat(),n);
+  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  const a=mesh.instanceMatrix.array, c=new THREE.Color();
+  for(let i=0;i<n;i++){
+    const o=i*16;
+    for(let j=0;j<16;j++)a[o+j]=0;
+    a[o]=1;a[o+5]=1;a[o+10]=1;a[o+15]=1;
+    a[o+12]=pos[i*3]*S;a[o+13]=pos[i*3+1]*S;a[o+14]=pos[i*3+2]*S;
+    c.setRGB(Math.min(1,col[i*3]),Math.min(1,col[i*3+1]),Math.min(1,col[i*3+2]));
+    mesh.setColorAt(i,c);
+  }
+  if(mesh.instanceColor)mesh.instanceColor.needsUpdate=true;
+  mesh.frustumCulled=false;mesh.renderOrder=-1000;mesh.name=name;
+  mesh.userData.gs={pos,K,phys,n};
+  return mesh;
+}
+function _gsResize(mesh,cx,cy,cz){
+  const g=mesh.userData.gs, a=mesh.instanceMatrix.array, S=GALSKY.S, p=g.pos, K=g.K, P=g.phys;
+  for(let i=0;i<g.n;i++){
+    const dx=p[i*3]-cx,dy=p[i*3+1]-cy,dz=p[i*3+2]-cz;
+    // max(on-screen size, physical size) — but never more than ~8 px, so a
+    // cloud near the camera stays a point instead of filling the view.
+    // Physical size phases in only for clouds 2.5k–12k+ ly away.
+    const d=Math.sqrt(dx*dx+dy*dy+dz*dz);
+    let t=(d-2500)/9500;t=t<0?0:t>1?1:t;
+    const r=Math.min(Math.max(d*K[i],P[i]*t*t*(3-2*t)),d*GALSKY.KMAX)*S;
+    const o=i*16;a[o]=r;a[o+5]=r;a[o+10]=r;
+  }
+  mesh.instanceMatrix.needsUpdate=true;
+}
+function _gsSoftTex(){
+  const cv=document.createElement('canvas');cv.width=cv.height=64;
+  const g=cv.getContext('2d'), gr=g.createRadialGradient(32,32,0,32,32,32);
+  gr.addColorStop(0,'rgba(255,255,255,1)');gr.addColorStop(0.3,'rgba(255,255,255,0.5)');gr.addColorStop(1,'rgba(255,255,255,0)');
+  g.fillStyle=gr;g.fillRect(0,0,64,64);
+  const t=new THREE.CanvasTexture(cv);t.colorSpace=THREE.SRGBColorSpace;return t;
+}
+function _gsBudget(){
+  const particles=(STATE&&STATE.settings&&STATE.settings.particles)||'med';
+  const mobile=!!(typeof GFX!=='undefined'&&GFX&&GFX.isMobile);
+  const low=!!(typeof GFX!=='undefined'&&GFX&&GFX.preset==='low')||particles==='low';
+  const table={low:[9000,6000],med:[34000,15000],high:[56000,24000],ultra:[80000,32000]};
+  const row=low?table.low:(table[particles]||table.med);
+  return {galaxy:mobile?row[1]:row[0], mobile, low,
+    local:low?500:(mobile?800:1600), haze:low?260:(mobile?420:700), lg:low?0.4:(mobile?0.6:1)};
+}
+function disposeGalSky(){
+  if(galSkyRoot){
+    try{if(galSkyRoot.parent)galSkyRoot.parent.remove(galSkyRoot);}catch(e){}
+    try{galSkyRoot.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material){if(o.material.map)o.material.map.dispose();o.material.dispose();}});}catch(e){}
+  }
+  galSkyRoot=null;galSky.ready=false;galSky.frame=null;galSky.lod=[];galSky.local=null;galSky.haze=null;galSky.solMarker=null;
+  galSky._lastSize=null;galSky._sizeT=0;galSky._fadeKey='';
+}
+function buildGalSky(){
+  disposeGalSky();
+  if(!flightScene)return;
+  const B=_gsBudget(), S=GALSKY.S;
+  const q=new THREE.Quaternion().setFromEuler(GALAXY_PLANE_EULER||new THREE.Euler(0.5,0.3,0.1));
+  const sunLocal=new THREE.Vector3(-GALSKY.R0,GALSKY.ZSUN,0);
+  galSky.q=q;galSky.qInv=q.clone().invert();galSky.sunLocal=sunLocal;
+  if(!galSky.base)galSky.base=new THREE.Vector3();
+  galSky.camLy=new THREE.Vector3();galSky.camLocal=new THREE.Vector3();
+  const root=new THREE.Group();root.name='JOTS_GalSky';
+  const frame=new THREE.Group();frame.name='JOTS_GalSkyFrame';
+  frame.quaternion.copy(q);
+  frame.position.copy(sunLocal).applyQuaternion(q).multiplyScalar(-S);   // Sun at root origin
+  root.add(frame);
+  const octa=new THREE.OctahedronGeometry(1,0);
+  const lod=[];
+
+  // ── Milky Way star clouds
+  const mw=sampleMilkyWay(B.galaxy,0x4D57A1);
+  const mK=new Float32Array(mw.n), mP=new Float32Array(mw.n);
+  for(let i=0;i<mw.n;i++){const k=mw.kind[i], j=0.75+mw.lum[i]*0.5;mK[i]=GS_KIND_K[k]*j;mP[i]=GS_KIND_PHYS[k]*j;}
+  const mwMesh=_gsLodMesh(mw.pos,mw.col,mK,mP,octa,'JOTS_MilkyWay');
+  frame.add(mwMesh);lod.push(mwMesh);
+
+  // ── Local stars: real nearest + landmark stars, then a random local field
+  const rand=seedRand(0x50C41);
+  const nNamed=GS_NAMED_STARS.length, nLoc=nNamed+B.local;
+  const lp=new Float32Array(nLoc*3),lc=new Float32Array(nLoc*3),lK=new Float32Array(nLoc),lP=new Float32Array(nLoc);
+  const v=new THREE.Vector3();
+  GS_NAMED_STARS.forEach((s,i)=>{
+    galLocalFromLBD(s[1],s[2],s[3],v);lp[i*3]=v.x;lp[i*3+1]=v.y;lp[i*3+2]=v.z;
+    lc[i*3]=s[4];lc[i*3+1]=s[5];lc[i*3+2]=s[6];lK[i]=0.0011*s[7];lP[i]=0.002;
+  });
+  const CLS=[[0.72,[1.0,0.55,0.40],0.0008],[0.14,[1.0,0.75,0.52],0.0010],[0.08,[1.0,0.93,0.74],0.0012],[0.04,[0.97,0.97,1.0],0.0014],[0.02,[0.78,0.86,1.0],0.0017]];
+  for(let i=nNamed;i<nLoc;i++){
+    // Uniform-in-volume out to 60 ly, then a thinner shell to 900 ly (only luminous stars show that far).
+    const far=rand()<0.35;
+    const d=far?(60+Math.pow(rand(),0.6)*840):Math.max(4.6,60*Math.cbrt(rand()));
+    const L=rand()*360, bDeg=far?(_gsGauss(rand)*Math.atan2(300,d)*180/Math.PI):(Math.asin(2*rand()-1)*180/Math.PI);
+    galLocalFromLBD(L,bDeg,d,v);lp[i*3]=v.x;lp[i*3+1]=v.y;lp[i*3+2]=v.z;
+    let a=rand(),c=0;for(;c<CLS.length-1&&a>CLS[c][0];c++)a-=CLS[c][0];
+    if(far)c=Math.max(3,c);
+    const br=far?(0.45+rand()*0.4):(0.35+rand()*0.55);
+    lc[i*3]=CLS[c][1][0]*br;lc[i*3+1]=CLS[c][1][1]*br;lc[i*3+2]=CLS[c][1][2]*br;lK[i]=CLS[c][2];lP[i]=0.002;
+  }
+  const loc=_gsLodMesh(lp,lc,lK,lP,octa,'JOTS_LocalStars');
+  frame.add(loc);lod.push(loc);
+
+  // ── Nebulae (real positions; gas-cloud particles with a bright core)
+  const neb=[];let nebN=0;
+  GS_NEBULAE.forEach(n=>{nebN+=Math.round(n[7]*(B.mobile?0.6:1));});
+  const np=new Float32Array(nebN*3),nc=new Float32Array(nebN*3),nK=new Float32Array(nebN),nP=new Float32Array(nebN);
+  let ni=0;
+  GS_NEBULAE.forEach((n,idx)=>{
+    const cnt=Math.round(n[7]*(B.mobile?0.6:1)), R=n[4];
+    const cen=galLocalFromLBD(n[1],n[2],n[3],new THREE.Vector3());
+    const nr0=seedRand(0xBEB0+idx*977);
+    for(let k=0;k<cnt;k++,ni++){
+      const rr=R*Math.pow(nr0(),0.7), th=nr0()*Math.PI*2, ph=Math.acos(2*nr0()-1);
+      np[ni*3]=cen.x+rr*Math.sin(ph)*Math.cos(th);np[ni*3+1]=cen.y+rr*Math.cos(ph)*0.7;np[ni*3+2]=cen.z+rr*Math.sin(ph)*Math.sin(th);
+      const t=rr/R, cc=t<0.35?n[5]:n[6], br=(0.30+nr0()*0.25)*(1.15-t*0.6);
+      nc[ni*3]=cc[0]*br;nc[ni*3+1]=cc[1]*br;nc[ni*3+2]=cc[2]*br;
+      nP[ni]=R*0.16*(0.6+nr0()*0.8);nK[ni]=0.0026;
+    }
+    neb.push({name:n[0],pos:cen,r:R,d:n[3]});
+  });
+  const nebMesh=_gsLodMesh(np,nc,nK,nP,new THREE.IcosahedronGeometry(1,1),'JOTS_Nebulae');
+  frame.add(nebMesh);lod.push(nebMesh);
+  galSky.nebulae=neb;
+
+  // ── Local Group galaxies at their real distances (static sizes: always far)
+  const lgGroup=new THREE.Group();lgGroup.name='JOTS_LocalGroup';
+  GS_LOCAL_GROUP.forEach((g,gi)=>{
+    const cnt=Math.round(g[7]*B.lg), R=g[4];
+    const cen=galLocalFromLBD(g[1],g[2],g[3],new THREE.Vector3());
+    const gr=seedRand(0x10CA1+gi*131);
+    const gp=new Float32Array(cnt*3),gc=new Float32Array(cnt*3);
+    let placed=0;
+    if(g[5]==='flocculent'){
+      // Flocculent spiral from the Fields_Galaxy template (M33 is one).
+      const fg=sampleFieldsGalaxy(cnt,{seed:0xF1E1D5+gi,time:0});
+      for(;placed<cnt;placed++){
+        gp[placed*3]=fg.pos[placed*3]*R;gp[placed*3+1]=fg.pos[placed*3+1]*R;gp[placed*3+2]=fg.pos[placed*3+2]*R;
+        gc[placed*3]=fg.col[placed*3]*0.22;gc[placed*3+1]=fg.col[placed*3+1]*0.22;gc[placed*3+2]=fg.col[placed*3+2]*0.22;
+      }
+    }else if(g[5]==='spiral'&&typeof sampleCylinderSpiralPoint==='function'){
+      for(let t=0;t<cnt*6&&placed<cnt;t++){
+        let s;
+        if(placed<cnt*0.28){const br=Math.pow(gr(),3)*R*0.14,ph=gr()*Math.PI*2,th=Math.acos(2*gr()-1);s={x:br*Math.sin(th)*Math.cos(ph),y:br*Math.cos(th)*0.4,z:br*Math.sin(th)*Math.sin(ph),core:true};}
+        else s=sampleCylinderSpiralPoint(gr,{RG:R,turns:2.25,nArms:2});
+        if(!s)continue;
+        gp[placed*3]=s.x;gp[placed*3+1]=s.y;gp[placed*3+2]=s.z;
+        if(s.core){gc[placed*3]=0.22;gc[placed*3+1]=0.20;gc[placed*3+2]=0.16;}
+        else{gc[placed*3]=0.10;gc[placed*3+1]=0.17;gc[placed*3+2]=0.32;}
+        placed++;
+      }
+    }else{
+      for(;placed<cnt;placed++){
+        const bar=gr()<0.45;
+        gp[placed*3]=_gsGauss(gr)*R*(bar?0.45:0.55);gp[placed*3+1]=_gsGauss(gr)*R*0.12;gp[placed*3+2]=_gsGauss(gr)*R*(bar?0.14:0.5);
+        const pink=gr()<0.06;
+        gc[placed*3]=pink?0.8:0.30;gc[placed*3+1]=pink?0.36:0.42;gc[placed*3+2]=pink?0.55:0.78;
+      }
+    }
+    const sub=new THREE.Group();
+    sub.position.copy(cen).multiplyScalar(S);
+    sub.rotation.set(g[6],gi*1.3,0.2*gi);
+    const pr=Math.max(g[3]*0.0007,R*0.012);
+    const lk=new Float32Array(placed).fill(0.0022), lph=new Float32Array(placed).fill(pr);
+    const m=_gsLodMesh(gp.subarray(0,placed*3),gc,lk,lph,octa,'JOTS_LG_'+gi);
+    // Their own frame is rotated/offset, so size once from the Sun's
+    // distance (they're always ≥160k ly away; parallax never matters).
+    {const aa=m.instanceMatrix.array, rr=Math.min(pr,g[3]*GALSKY.KMAX)*S;
+     for(let ii=0;ii<placed;ii++){aa[ii*16]=rr;aa[ii*16+5]=rr;aa[ii*16+10]=rr;} m.instanceMatrix.needsUpdate=true;}
+    sub.add(m);lgGroup.add(sub);
+  });
+  frame.add(lgGroup);
+
+  // ── Soft disc glow (only seen from outside the disc; lies in the galactic plane)
+  const hz=sampleMilkyWay(B.haze,0x7A2E11);
+  const tex=_gsSoftTex();
+  const haze=new THREE.InstancedMesh(new THREE.PlaneGeometry(2,2).rotateX(-Math.PI/2),_gsMat(tex),hz.n);
+  {
+    const m4=new THREE.Matrix4(),c=new THREE.Color();
+    for(let i=0;i<hz.n;i++){
+      const k=hz.kind[i], r=(k>=3?5200:k===2?3600:3000)*(0.7+hz.lum[i]*0.6)*S;
+      m4.makeScale(r,r,r);m4.setPosition(hz.pos[i*3]*S,hz.pos[i*3+1]*S,hz.pos[i*3+2]*S);haze.setMatrixAt(i,m4);
+      const f=k>=3?0.22:0.14;
+      c.setRGB(Math.min(1,hz.col[i*3]*f*1.6),Math.min(1,hz.col[i*3+1]*f*1.6),Math.min(1,hz.col[i*3+2]*f*1.6));haze.setColorAt(i,c);
+    }
+    haze.instanceMatrix.needsUpdate=true;if(haze.instanceColor)haze.instanceColor.needsUpdate=true;
+    haze.frustumCulled=false;haze.renderOrder=-1001;haze.name='JOTS_GalaxyGlow';
+  }
+  frame.add(haze);
+
+  // ── Sol marker (shown once you've zoomed out beyond the local stars)
+  const sol=new THREE.Group();sol.name='JOTS_GalSkySol';
+  const solCore=new THREE.Mesh(new THREE.OctahedronGeometry(1,1),_gsMat());
+  solCore.material.color.setRGB(1.0,0.82,0.23);solCore.renderOrder=-999;sol.add(solCore);
+  const solHalo=new THREE.Mesh(new THREE.PlaneGeometry(2,2),_gsMat(_gsSoftTex()));
+  solHalo.material.color.setRGB(1.0,0.72,0.20);solHalo.scale.setScalar(3.2);solHalo.renderOrder=-999;sol.add(solHalo);
+  sol.position.copy(sunLocal).multiplyScalar(S);sol.visible=false;
+  frame.add(sol);
+
+  galSky.frame=frame;galSky.lod=lod;galSky.local=loc;galSky.haze=haze;galSky.solMarker=sol;galSky.solHalo=solHalo;
+  galSkyRoot=root;
+  flightScene.add(root);
+  galSky.ready=true;
+  // Far plane must reach Andromeda through the scaled layer.
+  try{ if(flightCamera&&flightCamera.far<300000){flightCamera.far=300000;flightCamera.updateProjectionMatrix();} }catch(e){}
+  updateGalSky(true);
+}
+// Where the current system sits in the galaxy (ly, world axes, Sun = origin).
+// Sol → origin. Other systems get a stable position a few to a few hundred
+// light-years away in the local disc, so the sky shifts correctly when you
+// arrive — and nearest neighbours are light-years apart, never AU.
+function setGalSkySystem(system){
+  if(!galSky.base)galSky.base=new THREE.Vector3();
+  if(!system){galSky.base.set(0,0,0);return;}
+  const cur=(typeof GALAXY_DB!=='undefined'&&GALAXY_DB&&GALAXY_DB.current)||'milkyway';
+  const q=galSky.q||new THREE.Quaternion().setFromEuler(GALAXY_PLANE_EULER||new THREE.Euler(0.5,0.3,0.1));
+  if(cur!=='milkyway'){
+    // Another galaxy: the Milky Way hangs in the sky as a distant spiral.
+    const r=seedRand(hashStr('galpos:'+cur));
+    galSky.base.set(0,650000*(0.6+r()*0.4),0).applyAxisAngle(new THREE.Vector3(1,0,0),0.35+r()*0.5).applyQuaternion(q);
+    return;
+  }
+  const r=seedRand((system.seed>>>0)||hashStr('sys:'+(system.name||'')));
+  const d=4.2+Math.pow(r(),1.6)*460, a=r()*Math.PI*2;
+  galSky.base.set(Math.cos(a)*d,_gsGauss(r)*Math.min(90,d*0.3),Math.sin(a)*d).applyQuaternion(q);
+}
+// Flight distance from the system's star (scene units) → galactic zoom (ly).
+function galSkyZoomLy(d){
+  const G=GALSKY;
+  if(d<=G.D0)return d/(AU_UNITS*G.LY_AU);
+  const t=Math.min(1.25,(d-G.D0)/(G.D1-G.D0));
+  return Math.pow(10, G.LOG_MIN+(G.LOG_MAX-G.LOG_MIN)*Math.pow(t,0.9));
+}
+function _gsSmooth(a,b,x){const t=Math.min(1,Math.max(0,(x-a)/(b-a)));return t*t*(3-2*t);}
+function _gsFade(m,a){if(!m)return;m.visible=a>0.01;if(m.material&&m.material.color)m.material.color.setScalar(a);}
+// Per frame, just before rendering: re-anchor the layer on the camera.
+function updateGalSky(force){
+  if(!galSky.ready||!galSkyRoot||!flightCamera)return;
+  const c=flightCamera.position, d=c.length();
+  const off=galSkyZoomLy(d);
+  galSky.offsetLy=off;
+  const cam=galSky.camLy.copy(galSky.base||new THREE.Vector3());
+  if(d>1e-6)cam.addScaledVector(c,off/d);
+  galSkyRoot.position.copy(c).addScaledVector(cam,-GALSKY.S);
+  const dS=cam.length();
+  // Re-derive cloud sizes when the camera has moved a meaningful fraction
+  // of its distance through the galaxy (throttled; idle at home = never).
+  const now=performance.now();
+  const last=galSky._lastSize;
+  const moved=last?cam.distanceTo(last):Infinity;
+  if(force||(moved>Math.max(1.5,0.07*Math.max(dS,20))&&now-(galSky._sizeT||0)>120)){
+    galSky._sizeT=now;
+    galSky._lastSize=(last||new THREE.Vector3()).copy(cam);
+    const L=galSky.camLocal.copy(cam).applyQuaternion(galSky.qInv).add(galSky.sunLocal);
+    for(let i=0;i<galSky.lod.length;i++)_gsResize(galSky.lod[i],L.x,L.y,L.z);
+  }
+  const key=Math.round(Math.log10(1+dS)*40);
+  if(force||key!==galSky._fadeKey){
+    galSky._fadeKey=key;
+    _gsFade(galSky.local,1-_gsSmooth(150,3000,dS));
+    // Height above/below the disc decides how much disc glow you see.
+    const h=Math.abs(galSky.camLocal.y||0);
+    _gsFade(galSky.haze,_gsSmooth(9000,60000,dS)*_gsSmooth(1500,20000,Math.max(h,dS*0.35)));
+    if(galSky.solMarker)galSky.solMarker.visible=dS>25;
+  }
+  const sol=galSky.solMarker;
+  if(sol&&sol.visible){
+    sol.scale.setScalar(Math.max(0.6,dS*0.008)*GALSKY.S*(1+Math.sin(now*0.0022)*0.1));
+    if(galSky.solHalo)galSky.solHalo.quaternion.copy(flightCamera.quaternion).premultiply(galSky.qInv);
+  }
+}
+window.buildGalSky=buildGalSky;window.updateGalSky=updateGalSky;window.setGalSkySystem=setGalSkySystem;
+window.disposeGalSky=disposeGalSky;window.galSkyZoomLy=galSkyZoomLy;window.galLocalFromLBD=galLocalFromLBD;
+
 // ── 3. MULTI-STAR DISTANT SYSTEMS (visible as systems you can fly to) ─
 let distantSystems=[];
 /* Real star surface — same general TSL approach as the gas giant bands
@@ -12084,6 +12652,7 @@ function renderWithPostFX(){
   if(!useBloom&&!useMotion || true){
     const _rt0 = performance.now();
     flightRenderer.setRenderTarget(null);
+    try{ if(galSky.ready) updateGalSky(); }catch(e){}
     flightRenderer.render(flightScene,flightCamera);
     const _rtMs = performance.now()-_rt0;
     if(!window._renderTimingSamples) window._renderTimingSamples=[];
