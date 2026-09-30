@@ -6343,42 +6343,10 @@ async function buildSolarSystem(){
       const altarLight=new THREE.PointLight(0xfff2cc,60,5,2);
       altarLight.position.set(0,1.2,0); // local to Altar Group's own origin
       altarNode.add(altarLight);
-      // Sparkle particles — per the 'Bird Temple effects' notes, repurposing
-      // dartpotentials.html's soft-glow point-sprite shader (circular
-      // falloff, discard outside radius) WITHOUT its GPGPU simulation
-      // machinery, which is built for a full galaxy of interacting
-      // particles and would be real overkill and risk for a small ambient
-      // effect. This is a static buffer of ~150 points drifting gently
-      // around the altar, faded in/out per-particle over a random cycle —
-      // cheap (one draw call, no per-frame CPU work beyond a single time
-      // uniform update).
-      const N=150;
-      const pos=new Float32Array(N*3), seed=new Float32Array(N);
-      for(let i=0;i<N;i++){
-        const r=0.5+Math.random()*3.2, a=Math.random()*Math.PI*2, h=Math.random()*2.2;
-        pos[i*3]=Math.cos(a)*r; pos[i*3+1]=h; pos[i*3+2]=Math.sin(a)*r;
-        seed[i]=Math.random()*100;
-      }
-      // (Was a GLSL ShaderMaterial on Points — not drawable by the
-      // WebGPU renderer, the source of the 'ShaderMaterial is not
-      // compatible' error. Now soft instanced glows on the node material
-      // the galaxy uses, twinkling on the GPU.)
-      let sparkMat=null;
-      try{
-        const T=THREE.TSL;
-        sparkMat=_gsStarMat({transparent:true,depthTest:true,wisp:false,core:40,coreGain:1.8,glowGain:0.6});
-        if(sparkMat&&T.hash&&T.instanceIndex){
-          const ph=T.hash(T.float(T.instanceIndex)).mul(6.2831);
-          sparkMat.colorNode=sparkMat.colorNode.mul(T.sin(T.time.mul(1.3).add(ph)).mul(0.45).add(0.55));
-        }
-        if(sparkMat){
-          const sp=new THREE.InstancedMesh(_gsStarGeo(),sparkMat,N), m4=new THREE.Matrix4(), c=new THREE.Color(0xfff2cc);
-          for(let i=0;i<N;i++){const r=0.35+seed[i]%1*0.25;m4.makeScale(r,r,r);m4.setPosition(pos[i*3],pos[i*3+1],pos[i*3+2]);sp.setMatrixAt(i,m4);sp.setColorAt(i,c);}
-          sp.instanceMatrix.needsUpdate=true;if(sp.instanceColor)sp.instanceColor.needsUpdate=true;sp.frustumCulled=false;sp.name='BT_Sparkles';
-          altarNode.add(sp);
-        }
-      }catch(e){console.warn('[Bird Temple] sparkles:',e);}
-      BIRD_TEMPLE.altarSparkles=sparkMat;
+      // (The altar sparkles lived here. Rebuilt as instanced glows they were
+      // sized in the Altar Group's own scaled frame and came out as big
+      // grey blocks crowding the deck — replaced by the live Session
+      // Cubes floating above the temple, see btCubesInit.)
       // Occasional bright color-flash pulses on the ring materials, per
       // 'will give light... but can randomly create bright flashes of
       // their respective colors' — cheap: just nudges emissive on existing
@@ -6474,6 +6442,7 @@ async function buildSolarSystem(){
     wrapper.visible=false; // hidden until it has a real, randomized, safe spawn point
     flightScene.add(wrapper);
     BIRD_TEMPLE.group=wrapper;
+    try{btCubesInit(wrapper,SHIP_SCALE);}catch(e){console.warn('[Bird Temple] session cubes:',e);}
     // Rigid-body collision against the ship removed per explicit, repeated
     // feedback: even after two rounds of tuning (tighter broad-phase,
     // capped raycast reach), it kept blocking normal thruster approach —
@@ -6489,6 +6458,230 @@ async function buildSolarSystem(){
   });
   }
 }
+// ════════════════════════════════════════════════════════════════════
+//  LIVE SESSION CUBES OVER THE BIRD TEMPLE
+//  The same live feed dartmeadow.com's Session Cube shows (LEATR
+//  analytics: the active maze's latest export, polled through the Apps
+//  Script proxy), drawn the same way — frosted wall panes, the walked
+//  path, event nodes, and a traveler walking the path on a loop, logging
+//  each event as it passes — but as a drift of cubes scattered above the
+//  temple in its pearl, gold and cyan, well clear of the Temple roof.
+//  Port of static/live-cube.js (radicaldeepscale/dartmeadow, same author).
+//  Until live data arrives it shows a small generated maze, like the site.
+// ════════════════════════════════════════════════════════════════════
+const BT_CUBE_POLL_MS=5000, BT_CUBE_WALK=28;
+const BT_CUBE_COL={corridor:'#ffe0a6',shell:'#e3ecf7',quiet:'#9fb4cc',path:'#5fe8ff',event:'#d9fbff',head:'#ffffff'};
+const BT_CUBES={root:null,parts:[],copies:[],walk:{pts:[],events:[],step:0,index:-1,flare:0},
+  lastKey:'',live:false,hasLive:false,status:'SESSION CUBE',log:[],pollAt:0,busy:false,built:false};
+const _BTC_FACE={left:[-1,0,0],right:[1,0,0],bottom:[0,-1,0],top:[0,1,0],back:[0,0,-1],front:[0,0,1]};
+const _BTC_FACES=['right','front','top','left','back','bottom'];
+function _btcKey(x,y,z){return x+','+y+','+z;}
+function _btcRead(path){
+  const url=FEEDBACK_GAS_URL+'?action=ashread&path='+encodeURIComponent(path)+'&t='+Date.now();
+  return fetch(url,{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('proxy');return r.json();}).then(b=>{
+    if(b==null)return null;if(b.ok===false)throw new Error(b.error||'unread');
+    if(b.ok===true&&'content' in b)return b.content;return b;});
+}
+function _btcFetch(){
+  return _btcRead('ashtree/analytics-live/config.json').then(cfg=>{
+    if(!cfg||!cfg.enabled||!cfg.mazeId)return null;
+    return _btcRead('ashtree/analytics-live/'+cfg.mazeId+'/latest-export.json').then(raw=>raw&&typeof raw==='object'&&raw.cube&&raw.cube.cells?raw:null);
+  });
+}
+// Walked path from layer 0 in order; each shared wall drawn once, classed
+// by whether it lines the path (corridor), sits on the shell, or neither.
+function _btcModel(raw){
+  const cube=raw.cube, layer=(raw.pathIndex&&raw.pathIndex[0]&&raw.pathIndex[0].path)||[];
+  const path=layer.slice().sort((a,b)=>a.order-b.order), onPath={};
+  path.forEach(n=>{onPath[_btcKey(n.x,n.y,n.z)]=1;});
+  const walls={corridor:[],shell:[],quiet:[]}, w=cube.width,h=cube.height,d=cube.depth;
+  cube.cells.forEach(cell=>{
+    if(!cell.walls)return;
+    _BTC_FACES.forEach(face=>{
+      if(!cell.walls[face])return;
+      if(face==='left'&&cell.x!==0)return;if(face==='back'&&cell.z!==0)return;if(face==='bottom'&&cell.y!==0)return;
+      const st=_BTC_FACE[face];
+      const touches=onPath[_btcKey(cell.x,cell.y,cell.z)]||onPath[_btcKey(cell.x+st[0],cell.y+st[1],cell.z+st[2])];
+      const shell=(face==='left'&&cell.x===0)||(face==='right'&&cell.x===w-1)||(face==='bottom'&&cell.y===0)||(face==='top'&&cell.y===h-1)||(face==='back'&&cell.z===0)||(face==='front'&&cell.z===d-1);
+      walls[touches?'corridor':shell?'shell':'quiet'].push([cell.x,cell.y,cell.z,st]);
+    });
+  });
+  return {width:w,height:h,depth:d,path,walls};
+}
+function _btcDemo(n){
+  const cells={},all=[],opp={left:'right',right:'left',top:'bottom',bottom:'top',front:'back',back:'front'},seen={},r=seedRand(0xC0BE);
+  for(let x=0;x<n;x++)for(let y=0;y<n;y++)for(let z=0;z<n;z++){const c={x,y,z,walls:{left:1,right:1,top:1,bottom:1,front:1,back:1}};cells[_btcKey(x,y,z)]=c;all.push(c);}
+  const stack=[cells[_btcKey(0,0,0)]],path=[];seen[_btcKey(0,0,0)]=1;
+  while(stack.length){
+    const cur=stack[stack.length-1];
+    path.push({order:path.length,x:cur.x,y:cur.y,z:cur.z,events:path.length%9===4?[{label:'demo_event',ts:''}]:[]});
+    const opts=[];for(const f in _BTC_FACE){const st=_BTC_FACE[f],k=_btcKey(cur.x+st[0],cur.y+st[1],cur.z+st[2]);if(cells[k]&&!seen[k])opts.push([f,cells[k]]);}
+    if(!opts.length){stack.pop();continue;}
+    const pk=opts[(r()*opts.length)|0];cur.walls[pk[0]]=0;pk[1].walls[opp[pk[0]]]=0;seen[_btcKey(pk[1].x,pk[1].y,pk[1].z)]=1;stack.push(pk[1]);
+  }
+  return {cube:{width:n,height:n,depth:n,cells:all},totalEvents:0,exportedAt:'demo',pathIndex:[{layer:0,path:path.slice(0,Math.floor(path.length*0.5))}]};
+}
+function _btcDither(){
+  const bayer=[0,8,2,10,12,4,14,6,3,11,1,9,15,7,13,5],px=32,cv=document.createElement('canvas');cv.width=cv.height=px;
+  const g=cv.getContext('2d'),img=g.createImageData(px,px);
+  for(let y=0;y<px;y++)for(let x=0;x<px;x++){const t=bayer[(y%4)*4+(x%4)]/16,edge=x<2||y<2||x>px-3||y>px-3,i=(y*px+x)*4;
+    img.data[i]=img.data[i+1]=img.data[i+2]=255;img.data[i+3]=edge?255:t<0.45?200:40;}
+  g.putImageData(img,0,0);const tex=new THREE.CanvasTexture(cv);tex.magFilter=tex.minFilter=THREE.NearestFilter;return tex;
+}
+// The drift: where each cube hangs over the temple (world units relative to
+// the ship; the Temple roof tops out ~4.1 above the deck, the Bird Shard
+// ~3.4 — every cube's lowest corner stays above 5.2).
+function _btcLayout(){
+  const mob=(typeof GFX!=='undefined'&&GFX&&GFX.isMobile), n=mob?6:10, r=seedRand(0xB1CD), out=[];
+  for(let i=0;i<n;i++){
+    const size=0.8+r()*1.1;
+    // spread over and a little beyond the hull; lowest corner ≥ ~5.8 up
+    out.push({pos:new THREE.Vector3((r()-0.5)*22,5.8+size*0.9+r()*5.5,-19+r()*31),
+      rot:new THREE.Euler((r()-0.5)*0.9,r()*Math.PI*2,(r()-0.5)*0.9),size,bob:r()*6.28,spin:(0.05+r()*0.08)*(r()<0.5?-1:1)});
+  }
+  return out;
+}
+function btCubesInit(wrapper,shipScale){
+  if(BT_CUBES.root)return;
+  const root=new THREE.Group();root.name='BT_Cubes';
+  root.scale.setScalar(1/shipScale);                 // children work in world units
+  wrapper.add(root);
+  BT_CUBES.root=root;
+  BT_CUBES.layout=_btcLayout();
+  const dither=_btcDither();
+  const pane=(c,o)=>new THREE.MeshBasicMaterial({color:c,map:dither,transparent:true,opacity:o,side:THREE.DoubleSide,depthWrite:false});
+  BT_CUBES.mats={
+    corridor:pane(BT_CUBE_COL.corridor,0.32),shell:pane(BT_CUBE_COL.shell,0.12),quiet:pane(BT_CUBE_COL.quiet,0.06),
+    path:new THREE.MeshBasicMaterial({color:BT_CUBE_COL.path}),
+    event:new THREE.MeshBasicMaterial({color:BT_CUBE_COL.event}),
+    head:new THREE.MeshBasicMaterial({color:BT_CUBE_COL.head}),
+    link:new THREE.LineBasicMaterial({color:BT_CUBE_COL.path,transparent:true,opacity:0.35}),
+    trail:new THREE.LineBasicMaterial({color:BT_CUBE_COL.event,transparent:true,opacity:0.95}),
+    traveler:new THREE.MeshBasicMaterial({color:BT_CUBE_COL.head}),
+    halo:new THREE.MeshBasicMaterial({color:BT_CUBE_COL.path,transparent:true,opacity:0.3,blending:THREE.AdditiveBlending,depthWrite:false})
+  };
+  BT_CUBES.geo={wall:new THREE.PlaneGeometry(0.92,0.92),node:new THREE.BoxGeometry(0.26,0.26,0.26),event:new THREE.BoxGeometry(0.44,0.44,0.44),
+    head:new THREE.BoxGeometry(0.56,0.56,0.56),traveler:new THREE.SphereGeometry(0.3,12,8),halo:new THREE.SphereGeometry(0.62,12,8)};
+  _btcBuild(_btcDemo(5));
+  _btcHud();
+}
+function _btcClear(){
+  const root=BT_CUBES.root;
+  BT_CUBES.parts.forEach(o=>{root.remove(o);if(o.geometry&&!Object.values(BT_CUBES.geo).includes(o.geometry))o.geometry.dispose();if(o.dispose)o.dispose();});
+  BT_CUBES.parts=[];BT_CUBES.copies=[];
+}
+// One instanced draw per part for all the cubes together: each cube's
+// transform is baked into its instances.
+function _btcBuild(raw){
+  const model=_btcModel(raw), L=BT_CUBES.layout, G=BT_CUBES.geo, M=BT_CUBES.mats, root=BT_CUBES.root;
+  _btcClear();
+  const cx=(model.width-1)/2,cy=(model.height-1)/2,cz=(model.depth-1)/2, span=Math.max(model.width,model.height,model.depth);
+  const cubeM=L.map(c=>new THREE.Matrix4().compose(c.pos,new THREE.Quaternion().setFromEuler(c.rot),new THREE.Vector3().setScalar(c.size/span)));
+  const o=new THREE.Object3D(), tmp=new THREE.Matrix4();
+  const add=(geo,mat,items,place)=>{
+    if(!items.length)return;
+    const mesh=new THREE.InstancedMesh(geo,mat,items.length*L.length);let k=0;
+    for(let ci=0;ci<L.length;ci++)items.forEach(it=>{place(it);o.updateMatrix();tmp.multiplyMatrices(cubeM[ci],o.matrix);mesh.setMatrixAt(k++,tmp);});
+    mesh.instanceMatrix.needsUpdate=true;mesh.frustumCulled=false;root.add(mesh);BT_CUBES.parts.push(mesh);
+  };
+  ['quiet','shell','corridor'].forEach(kind=>add(G.wall,M[kind],model.walls[kind],f=>{
+    const st=f[3];o.position.set(f[0]-cx+st[0]*0.5,f[1]-cy+st[1]*0.5,f[2]-cz+st[2]*0.5);o.rotation.set(0,0,0);o.scale.set(1,1,1);
+    if(st[0])o.rotation.y=Math.PI/2;else if(st[1])o.rotation.x=Math.PI/2;}));
+  const path=model.path, plain=[], marked=[];
+  path.forEach(n=>((n.events&&n.events.length)?marked:plain).push(n));
+  const atNode=n=>{o.position.set(n.x-cx,n.y-cy,n.z-cz);o.rotation.set(0,0,0);o.scale.set(1,1,1);};
+  add(G.node,M.path,plain,atNode);add(G.event,M.event,marked,atNode);
+  if(path.length)add(G.head,M.head,[path[path.length-1]],atNode);
+  // path links, all cubes in one line set
+  const pts=[];
+  for(let ci=0;ci<L.length;ci++)for(let i=1;i<path.length;i++){
+    const a=path[i-1],b=path[i];if(Math.abs(a.x-b.x)+Math.abs(a.y-b.y)+Math.abs(a.z-b.z)!==1)continue;
+    pts.push(new THREE.Vector3(a.x-cx,a.y-cy,a.z-cz).applyMatrix4(cubeM[ci]),new THREE.Vector3(b.x-cx,b.y-cy,b.z-cz).applyMatrix4(cubeM[ci]));
+  }
+  if(pts.length){const ls=new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts),M.link);ls.frustumCulled=false;root.add(ls);BT_CUBES.parts.push(ls);}
+  // the walk: one traveler + trail per cube, each starting at its own point
+  const W=BT_CUBES.walk;
+  W.pts=path.map(n=>new THREE.Vector3(n.x-cx,n.y-cy,n.z-cz));W.events=path.map(n=>n.events||[]);
+  if(W.step>=W.pts.length-1)W.step=0;W.index=Math.floor(W.step)-1;
+  const trav=new THREE.InstancedMesh(G.traveler,M.traveler,L.length), halo=new THREE.InstancedMesh(G.halo,M.halo,L.length);
+  trav.frustumCulled=halo.frustumCulled=false;root.add(trav);root.add(halo);BT_CUBES.parts.push(trav,halo);
+  BT_CUBES.trav=trav;BT_CUBES.halo=halo;BT_CUBES.cubeM=cubeM;
+  L.forEach((c,ci)=>{
+    if(W.pts.length<2)return;
+    const tr=new THREE.Line(new THREE.BufferGeometry().setFromPoints(W.pts),M.trail);
+    tr.matrixAutoUpdate=false;tr.matrix.copy(cubeM[ci]);tr.geometry.setDrawRange(0,0);tr.frustumCulled=false;
+    root.add(tr);BT_CUBES.parts.push(tr);BT_CUBES.copies.push({trail:tr,off:ci/L.length});
+  });
+  BT_CUBES.span=span;BT_CUBES.built=true;
+}
+function _btcHud(){
+  if(document.getElementById('bt-cube-hud'))return;
+  const d=document.createElement('div');d.id='bt-cube-hud';
+  d.style.cssText='position:absolute;left:16px;bottom:calc(360px + var(--safe-bot,0px));z-index:30;display:none;pointer-events:none;'+
+    'font:600 10px/1.45 ui-monospace,Menlo,monospace;letter-spacing:.06em;color:#e9f6ff;text-shadow:0 1px 3px #000;max-width:60vw';
+  d.innerHTML='<div id="bt-cube-log" style="font-weight:500;opacity:.85"></div>'+
+    '<div style="display:flex;gap:6px;align-items:center"><span id="bt-cube-dot" style="width:7px;height:7px;border-radius:50%;background:#8ea39a;display:inline-block"></span><span id="bt-cube-label">SESSION CUBE</span></div>'+
+    '<a href="https://cube.leatr.xyz" target="_blank" rel="noopener" style="display:table;margin-top:4px;padding:3px 9px;border:1px solid rgba(95,232,255,.7);border-radius:4px;background:rgba(7,16,20,.55);color:#e6f6ff;text-decoration:none;font-weight:700;letter-spacing:.12em;pointer-events:auto">SESSION CUBE ↗</a>';
+  const host=document.getElementById('flight-hud')||document.body;host.appendChild(d);
+}
+function _btcStatus(live,text){
+  BT_CUBES.status=text;
+  const dot=document.getElementById('bt-cube-dot'),lab=document.getElementById('bt-cube-label');
+  if(dot){dot.style.background=live?BT_CUBE_COL.path:'#8ea39a';dot.style.boxShadow=live?'0 0 8px '+BT_CUBE_COL.path:'none';}
+  if(lab)lab.textContent=text;
+}
+function _btcLogEvent(e){
+  const log=document.getElementById('bt-cube-log');if(!log)return;
+  const label=String(e.label||'').replace(/_/g,' '), det=e.detail!=null&&e.detail!==''?' '+e.detail:'', m=/T(\d{2}:\d{2}:\d{2})/.exec(e.ts||'');
+  const line=document.createElement('div');line.textContent=(m?m[1]+'  ':'')+label+det;log.appendChild(line);
+  while(log.childNodes.length>3)log.removeChild(log.firstChild);
+}
+function _btcPoll(){
+  if(BT_CUBES.busy)return;BT_CUBES.busy=true;
+  _btcFetch().then(raw=>{
+    if(!raw){_btcStatus(false,BT_CUBES.hasLive?'SESSION CUBE · PAUSED':'SESSION CUBE');return;}
+    BT_CUBES.hasLive=true;const c=raw.cube;
+    _btcStatus(true,'LIVE · '+c.width+'×'+c.height+'×'+c.depth+' · '+(raw.totalEvents||0)+' EVENTS');
+    const path=(raw.pathIndex&&raw.pathIndex[0]&&raw.pathIndex[0].path)||[];
+    const k=raw.exportedAt+'|'+raw.totalEvents+'|'+path.length;
+    if(k===BT_CUBES.lastKey)return;BT_CUBES.lastKey=k;_btcBuild(raw);
+  }).catch(()=>_btcStatus(false,BT_CUBES.hasLive?'SESSION CUBE · RECONNECTING':'SESSION CUBE')).finally(()=>{BT_CUBES.busy=false;});
+}
+// Per frame from updateBirdTemple: walk the path, drift the cubes, poll
+// the feed while you're near enough to see them.
+function btCubesUpdate(dt){
+  const B=BT_CUBES, bt=BIRD_TEMPLE;
+  if(!B.root||!B.built||!bt.group)return;
+  const now=performance.now(), cam=flightCamera&&flightCamera.position;
+  const d=cam?cam.distanceTo(bt.group.position):1e9, near=bt.group.visible&&d<220;
+  B.root.visible=bt.group.visible&&d<900;
+  const hud=document.getElementById('bt-cube-hud');
+  if(hud)hud.style.display=(SHIP_WALK.active||(near&&d<45))?'block':'none';
+  if(!B.root.visible)return;
+  if(near&&now>=B.pollAt&&!document.hidden){B.pollAt=now+BT_CUBE_POLL_MS;_btcPoll();}
+  // slow drift of the whole constellation
+  B.root.rotation.y+=dt*0.02;
+  B.root.position.y=Math.sin(now*0.00035)*0.15/Math.max(1e-6,bt.group.scale.x);
+  const W=B.walk, pts=W.pts;if(pts.length<2)return;
+  const limit=pts.length-1;
+  W.step+=dt*BT_CUBE_WALK;
+  if(W.step>=limit){W.step=0;W.index=-1;const log=document.getElementById('bt-cube-log');if(log)log.innerHTML='';}
+  const i=Math.floor(W.step);
+  for(let k=W.index+1;k<=i;k++){if(W.events[k]&&W.events[k].length){W.events[k].forEach(_btcLogEvent);W.flare=1;}}
+  W.index=i;W.flare=Math.max(0,W.flare-dt*2.5);
+  const m4=new THREE.Matrix4(), v=new THREE.Vector3(), sc=1+W.flare*0.9+Math.sin(now/310)*0.1;
+  B.copies.forEach((c,ci)=>{
+    const st=(W.step+c.off*limit)%limit, j=Math.floor(st), f=st-j;
+    v.lerpVectors(pts[j],pts[Math.min(j+1,limit)],f);
+    m4.makeTranslation(v.x,v.y,v.z);B.trav.setMatrixAt(ci,m4.clone().premultiply(B.cubeM[ci]));
+    m4.makeScale(sc,sc,sc).setPosition(v);B.halo.setMatrixAt(ci,m4.premultiply(B.cubeM[ci]));
+    c.trail.geometry.setDrawRange(0,j+2);
+  });
+  B.trav.instanceMatrix.needsUpdate=true;B.halo.instanceMatrix.needsUpdate=true;
+  B.mats.traveler.color.set(W.flare>0.05?BT_CUBE_COL.head:BT_CUBE_COL.event);
+  B.mats.halo.color.set(W.flare>0.05?BT_CUBE_COL.head:BT_CUBE_COL.path);
+}
+
 // The temple gives off its own light: every surface glows softly in its
 // painted (vertex) colours — the deck most gently, windows warm as if lit
 // from inside, the altar rings, obelisks and staff brighter, and the Bird
@@ -6569,6 +6762,7 @@ function _btPickWanderTarget(){
 }
 function updateBirdTemple(dt){
   const bt=BIRD_TEMPLE;
+  try{btCubesUpdate(dt);}catch(e){if(!bt._cubeErr){bt._cubeErr=1;console.warn('[Bird Temple] session cubes:',e);}}
   if(!bt.group)return;
 
   // ── One-time initial spawn — never fixed, never near the player ──
@@ -6792,7 +6986,7 @@ function _shipWalkMeshes(){
   const list=[];
   bt.group.traverse(o=>{
     if(!o.isMesh||o.isInstancedMesh)return;
-    let skip=false;for(let p=o;p;p=p.parent){if(/bird shard|amulet|BT_Sparkles/i.test(p.name||'')){skip=true;break;}}
+    let skip=false;for(let p=o;p;p=p.parent){if(/bird shard|amulet|BT_Sparkles|BT_Cubes/i.test(p.name||'')){skip=true;break;}}
     if(!skip)list.push(o);
   });
   bt._walkMeshes=list;bt._walkMeshesFor=bt.group;
@@ -6829,21 +7023,38 @@ function _shipWallSlide(from,move,feetY,step){
   }
   return move;
 }
+// Landing on the temple: she steps off the board onto the deck and walks
+// it herself (walk / idle / jump / climb clips), seen from a follow camera,
+// with the board waiting beside her at waist height. SHIP_WALK.localPos is
+// her FEET, in the temple's own frame (it moves and turns with the ship).
+const SHIP_EYE=0.4;                 // eye height at the temple's scale (≈6 ft)
+const SHIP_CHAR_H=0.454;            // her height there (37 ft board = 2.8 units)
+function _shipCharOn(feetWorld){
+  if(!CHAR||!CHAR.loaded||!CHAR.root)return false;
+  try{
+    dismountSkyboard(flightScene,feetWorld);
+    const s=SHIP_CHAR_H/Math.max(0.001,CHAR.rawHeight||1);
+    CHAR.root.scale.set(s,s,s);
+    CHAR._shipScale=s;
+    CHAR.stanceMode='stand';
+    return true;
+  }catch(e){console.warn('[ShipWalk] dismount:',e);return false;}
+}
 function enterShipWalk(){
   const bt=BIRD_TEMPLE,sp=STATE.flight;
   if(!bt.group||!sp)return;
   $('ship-land-prompt').style.display='none';
-  // Find the ground directly beneath the player's current world position.
+  // Find the deck directly beneath the player's current world position.
   const y=_shipGroundHeight(sp.pos.x,sp.pos.z,sp.pos.y,true);
-  const landWorld=new THREE.Vector3(sp.pos.x,(y!==null?y:sp.pos.y)+0.4,sp.pos.z);
-  SHIP_WALK.localPos.copy(bt.group.worldToLocal(landWorld.clone()));
-  SHIP_WALK.yaw=STATE.flight.camYaw||0;
-  SHIP_WALK.pitch=0;
+  const feet=new THREE.Vector3(sp.pos.x,(y!==null?y:sp.pos.y),sp.pos.z);
+  SHIP_WALK.localPos.copy(bt.group.worldToLocal(feet.clone()));
+  // yaw is kept relative to the ship (it turns as it wanders).
+  const camYaw=(STATE.flight.camYaw||0);
+  SHIP_WALK.yaw=camYaw-bt.group.rotation.y;
+  SHIP_WALK.pitch=0.25;SHIP_WALK.velY=0;SHIP_WALK.grounded=true;SHIP_WALK.climb=null;
   SHIP_WALK.active=true;
-  // Skyboard becomes a hovering companion instead of disappearing — same
-  // idea as the planet-terrain walk's trailing board, adapted to raycast
-  // against the ship's own mesh for ground height instead of the
-  // procedural terrain height function.
+  SHIP_WALK.charOn=_shipCharOn(feet);
+  SHIP_WALK.faceYaw=camYaw+Math.PI;                  // her facing, world (model faces +Z)
   if(boardFlight)boardFlight.visible=true;
   $('ship-liftoff-btn').style.display='block';
   $('ship-jump-btn').style.display='block';
@@ -6871,8 +7082,11 @@ function exitShipWalk(){
   const world=bt.group.localToWorld(SHIP_WALK.localPos.clone());
   sp.pos.copy(world);sp.pos.y+=1.5; // lift off a bit above the deck
   sp.vel.set(0,0,0);
-  SHIP_WALK.active=false;
-  if(boardFlight)boardFlight.visible=true;
+  SHIP_WALK.active=false;SHIP_WALK.climb=null;
+  if(boardFlight){boardFlight.visible=true;try{boardFlight.position.copy(sp.pos);}catch(e){}}
+  // Back on the board for flight.
+  if(SHIP_WALK.charOn&&boardFlight){try{remountSkyboard(boardFlight);}catch(e){console.warn('[ShipWalk] remount:',e);}}
+  SHIP_WALK.charOn=false;
   $('ship-liftoff-btn').style.display='none';
   $('ship-jump-btn').style.display='none';
   toast('🚀 Lifting off the Bird Temple',2000);
@@ -6880,107 +7094,121 @@ function exitShipWalk(){
 function updateShipWalk(dt){
   const bt=BIRD_TEMPLE;
   if(!bt.group){exitShipWalk();return;}
-  // Look (LEFT stick — same as flight's LOOK/AIM) and move (RIGHT stick —
-  // same as flight's THRUST), matching this game's established mapping
-  // rather than the opposite of what players are already used to.
-  SHIP_WALK.yaw-=JOY.Lx*dt*1.6;
-  SHIP_WALK.pitch=THREE.MathUtils.clamp(SHIP_WALK.pitch-JOY.Ly*dt*1.2,-1.1,1.1);
-  const WALK_SPEED=1.1, STEP_MAX=0.3, JUMP_VEL=2.4, GRAVITY=6.0;
-  const fx=Math.sin(SHIP_WALK.yaw),fz=Math.cos(SHIP_WALK.yaw);
-  const rx=Math.cos(SHIP_WALK.yaw),rz=-Math.sin(SHIP_WALK.yaw);
-  const moveX=(fx*-JOY.Ry+rx*JOY.Rx)*WALK_SPEED*dt;
-  const moveZ=(fz*-JOY.Ry+rz*JOY.Rx)*WALK_SPEED*dt;
+  dt=Math.min(dt,0.1);
+  // LEFT stick looks (turns the follow camera), RIGHT stick / WASD walks
+  // relative to where the camera faces — push up = forward, the same
+  // mapping as flight and the planet-surface walk.
+  SHIP_WALK.yaw-=JOY.Lx*dt*1.8;
+  SHIP_WALK.pitch=THREE.MathUtils.clamp(SHIP_WALK.pitch-JOY.Ly*dt*1.2,-0.6,0.9);
+  const WALK_SPEED=0.55, STEP_MAX=0.3, CLIMB_MAX=0.8, JUMP_VEL=1.9, GRAVITY=6.0;
+  let mf=-JOY.Ry, ms=JOY.Rx;
+  if(typeof KEYS!=='undefined'&&KEYS){if(KEYS.KeyW)mf+=1;if(KEYS.KeyS)mf-=1;if(KEYS.KeyD)ms+=1;if(KEYS.KeyA)ms-=1;}
+  const mag=Math.min(1,Math.hypot(mf,ms));
+  // World-space wish direction from the camera's world heading.
+  const shipYaw=bt.group.rotation.y, camYawW=SHIP_WALK.yaw+shipYaw;
+  const fx=-Math.sin(camYawW),fz=-Math.cos(camYawW);
+  const rx=Math.cos(camYawW),rz=-Math.sin(camYawW);
+  const wx=(fx*mf+rx*ms), wz=(fz*mf+rz*ms), wl=Math.hypot(wx,wz)||1;
+  const worldDir={x:wx/wl, z:wz/wl};
+  const running=mag>0.85;
+  const speed=WALK_SPEED*(running?1.8:1)*mag;
+  const moving=mag>0.12&&!SHIP_WALK.climb;
 
-  // Jump — works alongside movement in the same frame, per request ('if
-  // they're moving and press that button simultaneously, they'll walk or
-  // run and jump at the same time').
-  if(SHIP_WALK._jumpQueued&&SHIP_WALK.grounded){
-    SHIP_WALK.velY=JUMP_VEL;
-    SHIP_WALK.grounded=false;
-  }
+  if(SHIP_WALK._jumpQueued&&SHIP_WALK.grounded&&!SHIP_WALK.climb){SHIP_WALK.velY=JUMP_VEL;SHIP_WALK.grounded=false;}
   SHIP_WALK._jumpQueued=false;
 
-  // Eye height 0.4 (a ~6 ft person at the temple's scale, where the 37 ft
-  // skyboard ornament is 2.8 units). Steps up to STEP_MAX (the altar's
-  // tiers and the maze rims) are climbed like stairs; walls slide you along.
-  const EYE=0.4;
-  const curWorld=bt.group.localToWorld(SHIP_WALK.localPos.clone());
-  const feetY=curWorld.y-EYE;
-  const wantW=bt.group.localToWorld(new THREE.Vector3(SHIP_WALK.localPos.x+moveX,SHIP_WALK.localPos.y,SHIP_WALK.localPos.z+moveZ));
-  const mv=_shipWallSlide(curWorld,{x:wantW.x-curWorld.x,z:wantW.z-curWorld.z},feetY,STEP_MAX);
-  if(SHIP_WALK.grounded){
-    const tx=curWorld.x+mv.x, tz=curWorld.z+mv.z;
-    const groundY=_shipGroundHeight(tx,tz,feetY+STEP_MAX+0.02);
-    if(groundY!==null){
-      if(groundY-feetY<=STEP_MAX){
-        // stairs up, or down a step: feet go straight onto the surface
-        SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(tx,groundY+EYE,tz)));
+  const feet=bt.group.localToWorld(SHIP_WALK.localPos.clone());
+  // ── Climb in progress: up the ledge, then onto it (her climb clip).
+  if(SHIP_WALK.climb){
+    const c=SHIP_WALK.climb;c.t+=dt;
+    const k=Math.min(1,c.t/c.dur), up=Math.min(1,k/0.7), fw=Math.max(0,(k-0.55)/0.45);
+    const p=new THREE.Vector3(c.from.x+(c.to.x-c.from.x)*fw, c.from.y+(c.to.y-c.from.y)*up, c.from.z+(c.to.z-c.from.z)*fw);
+    SHIP_WALK.localPos.copy(bt.group.worldToLocal(p));
+    if(k>=1){SHIP_WALK.climb=null;SHIP_WALK.grounded=true;SHIP_WALK.velY=0;}
+  } else {
+    let mv={x:worldDir.x*speed*dt, z:worldDir.z*speed*dt};
+    if(moving){
+      // A ledge too tall to step but low enough to pull up onto → climb it.
+      if(SHIP_WALK.grounded){
+        const ax=feet.x+worldDir.x*0.16, az=feet.z+worldDir.z*0.16;
+        const gy=_shipGroundHeight(ax,az,feet.y+CLIMB_MAX+0.02);
+        if(gy!==null&&gy-feet.y>STEP_MAX&&gy-feet.y<=CLIMB_MAX){
+          const head=_shipGroundHeight(ax,az,gy+SHIP_CHAR_H+0.05);   // room to stand up there?
+          if(head!==null&&Math.abs(head-gy)<0.02){
+            SHIP_WALK.climb={t:0,dur:1.1,from:feet.clone(),to:new THREE.Vector3(ax,gy,az)};
+            try{setCharState('climbLoop',{fade:0.15,force:true});}catch(e){}
+          }
+        }
       }
-    }else{
-      // nothing below within reach: step off and fall
-      SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(tx,curWorld.y,tz)));
-      SHIP_WALK.grounded=false;
+      if(!SHIP_WALK.climb)mv=_shipWallSlide(feet.clone().setY(feet.y+SHIP_EYE),mv,feet.y,STEP_MAX);
+      SHIP_WALK.faceYaw=Math.atan2(worldDir.x,worldDir.z);
+    } else mv={x:0,z:0};
+    if(!SHIP_WALK.climb){
+      if(SHIP_WALK.grounded){
+        const tx=feet.x+mv.x, tz=feet.z+mv.z;
+        const gy=_shipGroundHeight(tx,tz,feet.y+STEP_MAX+0.02);
+        if(gy!==null){ if(gy-feet.y<=STEP_MAX)SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(tx,gy,tz))); }
+        else{SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(tx,feet.y,tz)));SHIP_WALK.grounded=false;}
+      }else{
+        SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(feet.x+mv.x,feet.y,feet.z+mv.z)));
+      }
+      // Gravity / landing on the nearest surface under her knees.
+      SHIP_WALK.velY-=GRAVITY*dt;
+      const pre=bt.group.localToWorld(SHIP_WALK.localPos.clone());
+      const newFeet=pre.y+SHIP_WALK.velY*dt;
+      const gh=_shipGroundHeight(pre.x,pre.z,Math.max(newFeet,pre.y)+STEP_MAX*0.5);
+      if(gh!==null&&newFeet<=gh+0.002){
+        SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(pre.x,gh,pre.z)));
+        SHIP_WALK.velY=0;SHIP_WALK.grounded=true;bt._lastDeckY=gh;
+      }else{
+        SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(pre.x,newFeet,pre.z)));
+        SHIP_WALK.grounded=false;
+        if(gh===null&&newFeet<(bt._lastDeckY??newFeet)-8){   // fell off the hull: back to the deck
+          const back=bt.group.localToWorld(new THREE.Vector3(0,0,0));const gy=_shipGroundHeight(back.x,back.z,back.y,true);
+          if(gy!==null){SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(back.x,gy,back.z)));SHIP_WALK.velY=0;}
+        }
+      }
     }
-  } else {
-    SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(curWorld.x+mv.x,curWorld.y,curWorld.z+mv.z)));
   }
 
-  // Gravity / landing — feet land on the nearest surface below the knees.
-  SHIP_WALK.velY-=GRAVITY*dt;
-  const pre=bt.group.localToWorld(SHIP_WALK.localPos.clone());
-  const preFeet=pre.y-EYE, newFeet=preFeet+SHIP_WALK.velY*dt;
-  const groundHere=_shipGroundHeight(pre.x,pre.z,Math.max(newFeet,preFeet)+STEP_MAX*0.5);
-  if(groundHere!==null&&newFeet<=groundHere+0.002){
-    SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(pre.x,groundHere+EYE,pre.z)));
-    SHIP_WALK.velY=0;SHIP_WALK.grounded=true;
-  } else {
-    SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(pre.x,newFeet+EYE,pre.z)));
-    SHIP_WALK.grounded=false;
-    // fell far below the hull: put them back on the deck
-    if(groundHere===null&&newFeet<(bt._lastDeckY??newFeet)-8){
-      const back=bt.group.localToWorld(new THREE.Vector3(0,0,0));const gy=_shipGroundHeight(back.x,back.z,back.y,true);
-      if(gy!==null){SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(back.x,gy+EYE,back.z)));SHIP_WALK.velY=0;}
-    }
+  const F=bt.group.localToWorld(SHIP_WALK.localPos.clone());
+  // ── Her: on her feet, facing where she walks, animated.
+  if(SHIP_WALK.charOn&&CHAR.root){
+    CHAR.root.position.set(F.x,F.y+(CHAR.feetOffset||0)*(CHAR._shipScale||1),F.z);
+    let d=SHIP_WALK.faceYaw-CHAR.root.rotation.y;d=Math.atan2(Math.sin(d),Math.cos(d));
+    CHAR.root.rotation.set(0,CHAR.root.rotation.y+d*Math.min(1,dt*10),0);
+    try{updateCharacterLocomotion(dt,moving&&SHIP_WALK.grounded,running,1,!SHIP_WALK.grounded&&!SHIP_WALK.climb,!!SHIP_WALK.climb,{});}catch(e){}
   }
-  if(SHIP_WALK.grounded)bt._lastDeckY=bt.group.localToWorld(SHIP_WALK.localPos.clone()).y-EYE;
-
-  const camWorld=bt.group.localToWorld(SHIP_WALK.localPos.clone());
-  flightCamera.position.copy(camWorld);
-  flightCamera.rotation.set(SHIP_WALK.pitch,SHIP_WALK.yaw,0,'YXZ');
-  // Hovering companion skyboard — trails beside & slightly behind the
-  // player, same offset/hover-height pattern as the planet-terrain walk's
-  // board, just raycasting the ship's mesh for ground height instead of
-  // the procedural height function.
-  // Real bug found on review: this offset (offR/offB) was sized before
-  // the ship's scale got recalibrated down to ~0.11 a few passes back (a
-  // ~3.7x reduction) — the ship's actual deck width is only ~7 world
-  // units now, so a 2.6-unit sideways offset could easily push the
-  // companion board clean off the edge of a narrow deck, landing it
-  // somewhere with no ground underneath (hence not visibly hovering
-  // nearby). Shrunk to match the ship's real current size.
+  // ── Follow camera: behind her along the look direction, pulled in if
+  // the temple is in the way.
+  const head=new THREE.Vector3(F.x,F.y+SHIP_CHAR_H*0.85,F.z);
+  const dist=SHIP_WALK.charOn?1.45:0.001, lift=SHIP_WALK.charOn?0.35:0;
+  const back=new THREE.Vector3(Math.sin(camYawW)*Math.cos(SHIP_WALK.pitch),Math.sin(SHIP_WALK.pitch)+lift,Math.cos(camYawW)*Math.cos(SHIP_WALK.pitch)).normalize();
+  let camD=dist;
+  if(SHIP_WALK.charOn){
+    _shipWalkRay.set(head,back);_shipWalkRay.far=dist;
+    const hit=_shipWalkRay.intersectObjects(_shipWalkMeshes(),false)[0];
+    if(hit)camD=Math.max(0.25,hit.distance-0.08);
+  }
+  const camPos=SHIP_WALK.charOn?head.clone().addScaledVector(back,camD):new THREE.Vector3(F.x,F.y+SHIP_EYE,F.z);
+  flightCamera.position.copy(camPos);
+  if(SHIP_WALK.charOn)flightCamera.lookAt(head);
+  else flightCamera.rotation.set(SHIP_WALK.pitch,camYawW,0,'YXZ');
+  // ── The board waits beside her: ~5 ft to her right at waist height,
+  // pointing the way she faces (she stands at its left side).
   if(boardFlight){
-    const bRx=Math.cos(SHIP_WALK.yaw),bRz=-Math.sin(SHIP_WALK.yaw);
-    const bFx=-Math.sin(SHIP_WALK.yaw),bFz=-Math.cos(SHIP_WALK.yaw);
-    // Beside her at waist height, about 5 ft to her right — she stands at
-    // the board's left side facing its nose (at this scale 1 unit ≈ 13 ft,
-    // so 5 ft ≈ 0.38 and a 6 ft rider's waist ≈ 0.23). It used to hover
-    // 0.6 up — above her head — and read as geometry pressing down on you.
-    const offR=0.38,offB=0.0;
-    const btx=camWorld.x+bRx*offR-bFx*offB;
-    const btz=camWorld.z+bRz*offR-bFz*offB;
-    const boardGroundY=_shipGroundHeight(btx,btz,camWorld.y);   // from eye height down
-    const hoverY=(boardGroundY!==null?boardGroundY:camWorld.y-0.4)+0.23+Math.sin(bt.t*1.6)*0.01;
-    if(bt.t>(bt._lastBoardLog||0)+1.0){
-      bt._lastBoardLog=bt.t;
-      console.log('[ShipWalk board] visible:',boardFlight.visible,'| target xz:',btx.toFixed(2),btz.toFixed(2),
-        '| groundY:',boardGroundY,'| hoverY:',hoverY.toFixed(2),'| current pos:',
-        boardFlight.position.x.toFixed(2),boardFlight.position.y.toFixed(2),boardFlight.position.z.toFixed(2));
-    }
-    boardFlight.position.x+=(btx-boardFlight.position.x)*Math.min(1,dt*4);
-    boardFlight.position.z+=(btz-boardFlight.position.z)*Math.min(1,dt*4);
+    const fy=SHIP_WALK.faceYaw;                       // her facing (world)
+    const bRx=-Math.cos(fy),bRz=Math.sin(fy);         // her right
+    const btx=F.x+bRx*0.38, btz=F.z+bRz*0.38;
+    const boardGroundY=_shipGroundHeight(btx,btz,F.y+SHIP_EYE);
+    const hoverY=Math.max(boardGroundY!==null?boardGroundY:F.y,F.y)+0.23+Math.sin(bt.t*1.6)*0.01;
+    const k=Math.min(1,dt*4);
+    boardFlight.position.x+=(btx-boardFlight.position.x)*k;
+    boardFlight.position.z+=(btz-boardFlight.position.z)*k;
     boardFlight.position.y+=(hoverY-boardFlight.position.y)*Math.min(1,dt*5);
     boardFlight.rotation.order='YXZ';
-    boardFlight.rotation.y+=((SHIP_WALK.yaw-Math.PI/2)-boardFlight.rotation.y)*Math.min(1,dt*4);
+    let dy=(fy-Math.PI/2+Math.PI)-boardFlight.rotation.y;dy=Math.atan2(Math.sin(dy),Math.cos(dy));
+    boardFlight.rotation.y+=dy*Math.min(1,dt*4);
     boardFlight.rotation.x=0;
     boardFlight.rotation.z=Math.sin(bt.t*1.2)*0.04;
   }
@@ -11024,6 +11252,8 @@ const CREDITS=[
  {sec:'Project assets'},
  {t:'3D models, characters, skyboards, Bird Temple & artwork',a:'DART Meadow (dartsolarpunk)',l:'DART Meadow original work',use:'original',
   u:['https://dartmeadow.com/'],w:'All 3D assets are the project’s own, many based on its original artwork.'},
+ {t:'LEATR Session Cube (live feed)',a:'DART Meadow — same author as dartmeadow.com and cube.leatr.xyz',l:'DART Meadow original work',use:'original',
+  u:['https://cube.leatr.xyz','https://dartmeadow.com/'],w:'The live Session Cubes drifting above the Bird Temple, ported from dartmeadow.com’s live cube.'},
  {t:'Music',a:'DART Meadow — generated with Google Gemini under the project’s account',l:'DART Meadow original work',use:'original',
   u:['https://gemini.google.com/'],w:'The in-game soundtrack.'},
  {t:'Splash / menu video',a:'DART Meadow — generated with Grok (xAI) under the project’s account',l:'DART Meadow original work',use:'original',
