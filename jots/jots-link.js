@@ -47,7 +47,7 @@
     nodeTimeoutMs: 22000,
     // Each analytics write is a GitHub commit made by the Apps Script bridge's
     // token (5,000 API calls/hour shared by every app), so batch generously.
-    analyticsFlushMs: 120000,
+    analyticsFlushMs: 300000,                     // every flush is ~3 GitHub writes through the shared bridge
     exportMinGapMs: 300000,
     vaultAutosaveMs: 120000,
   };
