@@ -4480,6 +4480,31 @@ const WORLD_EPOCH_MS = Date.UTC(2026, 8, 28);
 function worldSeconds(){ return window.DMTime ? DMTime.realSeconds() : (Date.now() - WORLD_EPOCH_MS) / 1000; }   // server-corrected
 function _solMeanAnomNow(lon0, meanMotion){ const a = lon0 + meanMotion * 60 * worldSeconds(); return a % (2 * Math.PI); }
 window.worldSeconds = worldSeconds;
+// ── Update check: a copy left open in the background (an installed app on a
+// phone can stay in memory for days) keeps running an old build. Fingerprint
+// the published page when we start, check again every few minutes and on
+// return to the app, and offer a one-tap reload when it has changed.
+(function(){
+  if(location.protocol==='file:'||!window.fetch) return;
+  const url=location.pathname||'/';
+  const fp=t=>{ let h=2166136261; for(let i=0;i<t.length;i+=7){ h^=t.charCodeAt(i); h=Math.imul(h,16777619); } return (h>>>0)+':'+t.length; };
+  let base=null, shown=false, last=0;
+  const check=()=>{ const now=Date.now(); if(shown||now-last<60000) return; last=now;
+    fetch(url,{cache:'no-store'}).then(r=>r.ok?r.text():null).then(t=>{ if(!t) return; const f=fp(t);
+      if(base===null){ base=f; return; }
+      if(f!==base) offer(); }).catch(()=>{}); };
+  function offer(){
+    if(shown) return; shown=true;
+    const b=document.createElement('button'); b.id='dm-update-bar'; b.type='button';
+    b.textContent='⟳ A NEW VERSION OF DART MEADOW IS READY — TAP TO UPDATE';
+    b.style.cssText='position:fixed;left:50%;top:calc(8px + env(safe-area-inset-top,0px));transform:translateX(-50%);z-index:99999;padding:9px 16px;border:1px solid rgba(var(--acc-rgb),.7);background:rgba(4,10,22,.88);color:#fff;font-family:var(--font-hud);font-size:.55rem;letter-spacing:.14em;border-radius:3px;cursor:pointer;backdrop-filter:blur(8px);box-shadow:0 0 16px rgba(var(--acc-rgb),.45);max-width:92vw;';
+    b.onclick=()=>{ try{ if(typeof quickSave==='function'&&typeof STATE!=='undefined'&&STATE.screen==='flight') quickSave(); }catch(e){} setTimeout(()=>location.reload(),300); };
+    document.body.appendChild(b);
+  }
+  setTimeout(check,4000);
+  setInterval(check,5*60*1000);
+  document.addEventListener('visibilitychange',()=>{ if(!document.hidden) check(); });
+})();
 // "GRAV 1.00g · 09:06" — the local hour on the world clock at that longitude
 let _lcBody=null;
 function _localClock(id,head,lon){
