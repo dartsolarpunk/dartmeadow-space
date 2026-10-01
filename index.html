@@ -130,11 +130,13 @@ if(location.search.indexOf('debug')!==-1){
   });
 })();</script>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<script src="ui/dm-time.js?v=95"></script>
 <script src="ui/dm-theme.js?v=80"></script>
 <script src="ui/dm-fluid.js?v=80"></script>
 <script src="ui/dm-journal.js?v=81"></script>
 <script src="ui/dm-worldstyle.js?v=92"></script>
-<script src="ui/dm-sky.js?v=93"></script>
+<script src="ui/dm-sky.js?v=95"></script>
+<script src="ui/dm-dust.js?v=95"></script>
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js",
@@ -4439,7 +4441,9 @@ const FLIGHT_BOARD_WORLD_SCALE = PLANET_VIS_SCALE / FLIGHT_BOARD_REF_EARTH;
 // orbitSpd / meanMotion convention matches updateBodies:
 //   angle += spd * dt * 60  →  wall rad/s = spd * 60
 const SOL_GAME_DAYS_PER_EARTH_YEAR = 365.256363; // sidereal
-const SOL_EARTH_YEAR_WALL_SEC = 20 * 60;         // playable wall seconds / Earth year
+// The world runs on DMTime: real UTC sped up 30× (a 48-minute day), so a
+// year lasts 365.256 of those days — about 12.2 real days.
+const SOL_EARTH_YEAR_WALL_SEC = 365.256363 * 86400 / 30;
 const SOL_EARTH_MEAN_MOTION = (2 * Math.PI / SOL_EARTH_YEAR_WALL_SEC) / 60;
 // ── Shared world clock ──────────────────────────────────────────
 // One clock for every player: real UTC time since the world's epoch (the
@@ -4449,9 +4453,19 @@ const SOL_EARTH_MEAN_MOTION = (2 * Math.PI / SOL_EARTH_YEAR_WALL_SEC) / 60;
 // on by exactly that long — progress is theirs, the world's age is shared.
 // Graphics settings never touch it.
 const WORLD_EPOCH_MS = Date.UTC(2026, 8, 28);
-function worldSeconds(){ return (Date.now() - WORLD_EPOCH_MS) / 1000; }
+function worldSeconds(){ return window.DMTime ? DMTime.realSeconds() : (Date.now() - WORLD_EPOCH_MS) / 1000; }   // server-corrected
 function _solMeanAnomNow(lon0, meanMotion){ const a = lon0 + meanMotion * 60 * worldSeconds(); return a % (2 * Math.PI); }
 window.worldSeconds = worldSeconds;
+// "GRAV 1.00g · 09:06" — the local hour on the world clock at that longitude
+let _lcBody=null;
+function _localClock(id,head,lon){
+  const el=document.getElementById(id); if(!el) return;
+  let t='';
+  try{ const b=(id==='surface-grav'?_surfBody:_atmoBody)||_lcBody;
+    if(window.DMTime&&b){ const c=DMTime.localTime(b,lon); t=' · '+String(c.h).padStart(2,'0')+':'+String(c.m).padStart(2,'0'); } }catch(e){}
+  if(head==null) head=el.textContent.split(' · ')[0];
+  const txt=head+t; if(el.textContent!==txt) el.textContent=txt;
+}
 
 let flightFlybys=[]; // comets / belt / other named flybys for proximity labels
 let oortCloudGroup=null;
@@ -9865,14 +9879,21 @@ function updateBodies(dt){
       // (asteroids, comets, procedural systems).
       if(b.ecc!=null && b.semiMajor!=null){
         // placed from the shared world clock (same sky for everyone, keeps moving while you're away)
-        if(b.lon0!=null) b.meanAnom=_solMeanAnomNow(b.lon0,b.meanMotion); else b.meanAnom += b.meanMotion*dt*60;
+        // real elements on the world clock: mean anomaly from J2000, measured from perihelion
+        let peri=0;
+        if(window.DMTime && DMTime.SOL[b.name] && DMTime.SOL[b.name].L0!=null){ const o=DMTime.orbit(b.name); b.meanAnom=o.meanAnom; peri=o.peri; }
+        else if(b.lon0!=null) b.meanAnom=_solMeanAnomNow(b.lon0,b.meanMotion); else b.meanAnom += b.meanMotion*dt*60;
         b.angle = b.meanAnom;
         const ke=solKeplerAnomaly(b.meanAnom, b.ecc);
         const rr=b.semiMajor*ke.rFactor;
-        b.mesh.position.x=rr*Math.cos(ke.nu);
-        b.mesh.position.z=rr*Math.sin(ke.nu);
+        b.mesh.position.x=rr*Math.cos(ke.nu+peri);
+        b.mesh.position.z=rr*Math.sin(ke.nu+peri);
       } else {
-        b.angle+=b.orbitSpd*dt*60;
+        // generated and minor bodies: Kepler's third law on the same clock,
+        // from their seeded starting angle — the same place for everyone
+        if(b._ang0==null) b._ang0=b.angle;
+        const nWall=SOL_EARTH_MEAN_MOTION*60/Math.pow(Math.max(1e-3,b.orbitR/AU_UNITS),1.5);
+        b.angle=b._ang0+nWall*worldSeconds();
         b.mesh.position.x=Math.cos(b.angle)*b.orbitR;
         b.mesh.position.z=Math.sin(b.angle)*b.orbitR;
       }
@@ -9880,8 +9901,13 @@ function updateBodies(dt){
     } else {
       b._frameDelta.set(0,0,0);
     }
-    // Gentle self-rotation
-    b.mesh.rotation.y+=.001;
+    // Spin on the world clock: turned so the longitude where it is noon
+    // faces the star — the side lit from orbit is the side where it is day
+    // on the ground (lon = atan2(z,x) in the body's frame, see _latLonOf).
+    if(b.orbitR>0 && window.DMTime && !b.isAsteroid){
+      const alpha=Math.atan2(b.mesh.position.z,b.mesh.position.x);
+      b.mesh.rotation.y=DMTime.subsolarLon(b)*Math.PI/180-alpha-Math.PI;
+    } else b.mesh.rotation.y+=.001*dt*60;
 
     // Get the actual renderable mesh for distance/LOD checks
     const checkMesh = b.renderMesh || b.mesh;
@@ -15894,7 +15920,7 @@ function updateAtmoFlight(dt){
   else if(atmoScene.userData.skyDome) atmoScene.userData.skyDome.position.copy(atmoCamera.position);
   // HUD
   const altFt=Math.round((s.pos.y-groundH)*3.28);
-  $('atmo-speed').textContent='MACH '+atmoMach.toFixed(2);
+  { const ll=_atmoLatLon(s.pos.x,s.pos.z); _localClock('atmo-speed','MACH '+atmoMach.toFixed(2),ll.lon); }
   $('atmo-alt').textContent=altFt;
   $('atmo-thr').textContent=Math.round(atmoThrottle*100);
 }
@@ -17885,6 +17911,11 @@ async function enterSurface(body,site,opts){
   await buildSurfaceTerrain(pal);
   // sky gradient dome
   TERRAIN.sky=_makeSky(surfScene,pal,body,1000,sun);
+  // wind-blown dust off the crests, and dust devils in the distance (ui/dm-dust.js)
+  try{ if(TERRAIN.dust){ TERRAIN.dust.dispose(); TERRAIN.dust=null; }
+    const _ds=window.DMDust&&window.DMWorldStyle?DMDust.forStyle(DMWorldStyle.styleFor(body,pal,_surfSite),pal):null;
+    if(_ds) TERRAIN.dust=DMDust.create(surfScene,{height:(x,z)=>{ const h=typeof _surfHeight==='function'?_surfHeight(x,z):0; return isFinite(h)?h:0; },color:_ds.color,amount:_ds.amount,quality:(GFX&&GFX.preset)||'medium',seed:(typeof _worldSeed==='function'?_worldSeed(body):7)});
+  }catch(e){ console.warn('[dust]',e); }
   // Skyboard spawn — updateSurface keeps it beside her (board-left / her right).
   const board=buildBoardMesh();
   board.scale.setScalar(1.0);
@@ -20112,7 +20143,8 @@ function _surfStreamTick(dt){
   }
   // the living sky: time of day here, stars, comets, meteors (ui/dm-sky.js)
   const sky=TERRAIN.sky;
-  if(sky&&surfCamera){ const ll=_skyLatLon(_surfSite,px,pz); sky.update(surfCamera,dt,ll.lat,ll.lon); }
+  if(sky&&surfCamera){ const ll=_skyLatLon(_surfSite,px,pz); sky.update(surfCamera,dt,ll.lat,ll.lon); _localClock('surface-grav',null,ll.lon); }
+  if(TERRAIN.dust&&surfCamera) TERRAIN.dust.update(dt,surfCamera,px,pz,sky?sky.day:1);
   else if(surfScene&&surfScene.userData.skyDome&&surfCamera) surfScene.userData.skyDome.position.copy(surfCamera.position);
   if(TERRAIN.starDome&&surfCamera) TERRAIN.starDome.position.copy(surfCamera.position);
   // Low tier: the shadow map refreshes every third frame (her shadow still moves smoothly enough, a third of the cost)
@@ -20914,7 +20946,7 @@ function _surfRemountSkyboardFinish(){
   if(CHAR.loaded && CHAR.root && CHAR.root.parent) CHAR.root.parent.remove(CHAR.root);
   if(surfScene)disposeObject3D(surfScene); // free terrain/water/skyboard GPU memory (see disposeObject3D)
   _surfFluidStop();surfScene=null;surfPlayer=null;surfBoard=null;surfTerrainMesh=null;TERRAIN.mcGroup=null;TERRAIN._mcBuildGen=(TERRAIN._mcBuildGen||0)+1;
-  TERRAIN.tiles.clear();TERRAIN.group=null;TERRAIN.mcDensityArray=null;TERRAIN.mcGridInfo=null;TERRAIN.hm=null;TERRAIN.cpuMc=null;TERRAIN.mcGpu=false;TERRAIN.waterFollow=null;TERRAIN.sun=null;TERRAIN.starDome=null;TERRAIN.sky=null;TERRAIN.tessAreas=[];TERRAIN._tessJobs=[];TESS_HOLE.slots.forEach(h=>{h.r.value=0;});TERRAIN.hmMat=null;TERRAIN.rockGeo=null;
+  TERRAIN.tiles.clear();TERRAIN.group=null;TERRAIN.mcDensityArray=null;TERRAIN.mcGridInfo=null;TERRAIN.hm=null;TERRAIN.cpuMc=null;TERRAIN.mcGpu=false;TERRAIN.waterFollow=null;TERRAIN.sun=null;TERRAIN.starDome=null;TERRAIN.sky=null;if(TERRAIN.dust){try{TERRAIN.dust.dispose();}catch(e){}TERRAIN.dust=null;}TERRAIN.tessAreas=[];TERRAIN._tessJobs=[];TESS_HOLE.slots.forEach(h=>{h.r.value=0;});TERRAIN.hmMat=null;TERRAIN.rockGeo=null;
   window._surfWaterAt=function(){ return false; };
   window._surfClimbNormal=function(){ return null; };
   enterAtmosphericFlight(body,site,start);
@@ -20955,7 +20987,7 @@ function _exitSurfaceFinish(){
   if(surfScene)disposeObject3D(surfScene); // free terrain/water/skyboard GPU memory (see disposeObject3D)
   if(surfRenderer){surfRenderer.dispose();}
   _surfFluidStop();surfScene=null;surfPlayer=null;surfBoard=null;surfTerrainMesh=null;TERRAIN.mcGroup=null;TERRAIN._mcBuildGen=(TERRAIN._mcBuildGen||0)+1;
-  TERRAIN.tiles.clear();TERRAIN.group=null;TERRAIN.mcDensityArray=null;TERRAIN.mcGridInfo=null;TERRAIN.hm=null;TERRAIN.cpuMc=null;TERRAIN.mcGpu=false;TERRAIN.waterFollow=null;TERRAIN.sun=null;TERRAIN.starDome=null;TERRAIN.sky=null;TERRAIN.tessAreas=[];TERRAIN._tessJobs=[];TESS_HOLE.slots.forEach(h=>{h.r.value=0;});TERRAIN.hmMat=null;TERRAIN.rockGeo=null;
+  TERRAIN.tiles.clear();TERRAIN.group=null;TERRAIN.mcDensityArray=null;TERRAIN.mcGridInfo=null;TERRAIN.hm=null;TERRAIN.cpuMc=null;TERRAIN.mcGpu=false;TERRAIN.waterFollow=null;TERRAIN.sun=null;TERRAIN.starDome=null;TERRAIN.sky=null;if(TERRAIN.dust){try{TERRAIN.dust.dispose();}catch(e){}TERRAIN.dust=null;}TERRAIN.tessAreas=[];TERRAIN._tessJobs=[];TESS_HOLE.slots.forEach(h=>{h.r.value=0;});TERRAIN.hmMat=null;TERRAIN.rockGeo=null;
   window._surfWaterAt=function(){ return false; };
   window._surfClimbNormal=function(){ return null; };
   // Re-mount her onto the real flight board now that we're back in open
