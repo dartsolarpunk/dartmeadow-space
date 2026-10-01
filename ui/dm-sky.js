@@ -116,7 +116,12 @@
       x.fillStyle = g; x.fillRect(0, 4, 256, 8); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
     })();
     const live = [];
-    function spawn(kind) {
+    // events come from the shared world clock: every player under this sky
+    // sees the same comet (and the same meteors) at the same moment
+    function spawn(kind, id, age) {
+      const r = rnd((id * 2654435761 % 2147483647 + (kind === 'comet' ? 7 : 3)) % 2147483646 + 1);
+      r(); r();
+      const Math = { random: r, PI: window.Math.PI, cos: window.Math.cos, sin: window.Math.sin };
       const len = kind === 'comet' ? R * (0.22 + Math.random() * 0.12) : R * (0.05 + Math.random() * 0.06);
       const m = new THREE.Mesh(new THREE.PlaneGeometry(len, kind === 'comet' ? len * 0.06 : len * 0.02),
         new THREE.MeshBasicMaterial({ map: streakTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false, color: kind === 'comet' ? 0xd8f0ff : 0xfff2d0, side: THREE.DoubleSide }));
@@ -128,9 +133,10 @@
       const head = kind === 'comet' ? new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xe8f6ff, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false })) : null;
       if (head) { const k = 26 * R / 1000; head.scale.set(k, k, 1); fx.add(head); }
       fx.add(m);
-      live.push({ m, head, kind, t: 0, life: kind === 'comet' ? 40 + Math.random() * 30 : 0.7 + Math.random() * 0.8, start, dir, speed: kind === 'comet' ? R * 0.004 : R * 0.45, len });
+      live.push({ m, head, kind, t: age || 0, life: kind === 'comet' ? 40 + Math.random() * 30 : 0.7 + Math.random() * 0.8, start, dir, speed: kind === 'comet' ? R * 0.004 : R * 0.45, len });
     }
-    let nextMeteor = 4, nextComet = 30 + Math.random() * 60;
+    const COMET_SLOT = 240, METEOR_SLOT = 6;   // a comet window every 4 minutes, a meteor chance every 6 s
+    let lastComet = null, lastMeteor = null;
     const v1 = new THREE.Vector3(), v2 = new THREE.Vector3(), v3 = new THREE.Vector3(), v4 = new THREE.Vector3(), M4 = new THREE.Matrix4(), SUNSET = new THREE.Color(0xff9a5a);
 
     const ctl = {
@@ -157,9 +163,20 @@
         field.material.color.setScalar(vis); galaxy.material.color.setScalar(vis);
         bright.forEach((s) => { s.material.opacity = s.userData.base * Math.max(atmos ? 0.22 : 1, vis); });
         // meteors at night, comets now and then
-        nextMeteor -= dt; nextComet -= dt;
-        if (nextMeteor <= 0) { if (vis > 0.35) spawn('meteor'); nextMeteor = 2.5 + Math.random() * 6; }
-        if (nextComet <= 0) { spawn('comet'); nextComet = 120 + Math.random() * 180; }
+        const cs = Math.floor(t / COMET_SLOT), ms = Math.floor(t / METEOR_SLOT);
+        if (cs !== lastComet) {
+          if (lastComet !== null || (t - cs * COMET_SLOT) < 70) {
+            // about one window in two has a comet; it starts a seeded moment into the window
+            const h = ((cs * 2654435761) >>> 0) / 4294967296, start = cs * COMET_SLOT + h * 60;
+            if (h < 0.55 && t >= start && t - start < 70) spawn('comet', cs, t - start);
+          }
+          lastComet = cs;
+        }
+        if (ms !== lastMeteor) {
+          lastMeteor = ms;
+          const h = ((ms * 2246822519) >>> 0) / 4294967296;
+          if (h < 0.45 && vis > 0.35) spawn('meteor', ms, 0);
+        }
         for (let i = live.length - 1; i >= 0; i--) {
           const L = live[i]; L.t += dt;
           const a = L.t / L.life;
