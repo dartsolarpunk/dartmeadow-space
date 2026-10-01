@@ -19,15 +19,17 @@
 <meta property="og:url" content="https://dartmeadow.space/">
 <meta property="og:title" content="DART Meadow — Journey of the Skyboard">
 <meta property="og:description" content="Journey of the Skyboard. Build your skyboard, chart the galaxy, ride at c³.">
-<meta property="og:image" content="https://dartmeadow.space/static/og-share-v2.jpg">
+<meta property="og:image" content="https://dartmeadow.space/static/og-share-v3.jpg">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:type" content="image/jpeg">
+<meta property="og:image:alt" content="DART Meadow — Journey of the Skyboard: the pilot rides her skyboard over a red desert world beneath a spiral galaxy, with the game menu panels glowing beside her.">
 <meta property="og:site_name" content="DART Meadow">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="DART Meadow — Journey of the Skyboard">
 <meta name="twitter:description" content="Zero-G interstellar flight. Build your skyboard, chart the galaxy, ride at c³.">
-<meta name="twitter:image" content="https://dartmeadow.space/static/og-share-v2.jpg">
+<meta name="twitter:image" content="https://dartmeadow.space/static/og-share-v3.jpg">
+<meta name="twitter:image:alt" content="DART Meadow — the pilot on her skyboard over a red desert world beneath a spiral galaxy.">
 
 <title>DART Meadow - Journey of the Skyboard</title>
 <!-- On-device debug console — visit the site with ?debug added to the URL
@@ -15902,9 +15904,9 @@ function _lmBuild(){
         '<div class="lm-zoom"><button id="lm-zin" title="Zoom in">＋</button><button id="lm-zout" title="Zoom out">－</button><button id="lm-me" title="Centre on me">⌖</button></div>'+
         '<div class="lm-hint" id="lm-hint">Drag to pan · pinch or scroll to zoom · tap to plot where to fly</div></div>'+
       '<div class="lm-foot">'+
-        '<button class="lm-btn lm-tool" id="lm-pick" title="Marker tool: tap the ground near you to land there">'+LAND_ICON+'<span>MARK &amp; LAND</span></button>'+
-        '<button class="lm-btn lm-fly" id="lm-fly" disabled>⇢ FLY THERE</button>'+
-        '<button class="lm-btn lm-down" id="lm-down" title="Set down right below the board">⬇ LAND BELOW</button>'+
+        '<button class="lm-btn lm-tool" id="lm-pick" title="Marker tool: tap the ground near you to land there">'+LAND_ICON+'<span>MARK</span></button>'+
+        '<button class="lm-btn lm-fly" id="lm-fly" disabled>⇢ FLY</button>'+
+        '<button class="lm-btn lm-down" id="lm-down" title="Set down right below the board">⬇ BELOW</button>'+
       '</div>'+
     '</div>';
   document.body.appendChild(r);
@@ -16015,11 +16017,12 @@ function _lmDist(a,b){ // as the board flies, in km on the sky map's scale
   const d=Math.hypot(dx,dz); return d>=1000?(d/1000).toFixed(1)+' km':Math.round(d)+' m';
 }
 function openLandMap(){
+  if(landMapOpen()){ closeLandMap(); return; }   // LAND again folds it away
   if(!atmoActive||!atmoState||atmoState.landing) return;
   _lmBuild(); stopLandPick(true);
   try{ if(document.pointerLockElement) document.exitPointerLock(); }catch(e){}
   try{ LM.tex=makeOrbitGlobeTexture(_atmoBody); }catch(e){ LM.tex=null; }
-  LM.el.querySelector('#lm-world').textContent=(_atmoBody?_atmoBody.name.toUpperCase():'')+' · PLOT YOUR LANDING';
+  LM.el.querySelector('#lm-world').textContent=(_atmoBody?_atmoBody.name.toUpperCase():'');
   const me=_lmMe(); if(me&&!LM._opened){ LM.cu=me.u; LM.cv0=me.v; LM.zoom=2.2; }
   LM._opened=true;
   if(!LM.target) LM.el.querySelector('#lm-fly').disabled=true;
@@ -21073,6 +21076,6 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 <link rel="stylesheet" href="ui/dm-hud.css?v=82">
 <link rel="stylesheet" href="ui/dm-menu.css?v=80">
 <link rel="stylesheet" href="ui/dm-journal.css?v=81">
-<link rel="stylesheet" href="ui/dm-landmap.css?v=85">
+<link rel="stylesheet" href="ui/dm-landmap.css?v=86">
 </body>
 </html>
