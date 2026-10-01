@@ -12308,13 +12308,56 @@ function _pfAvatar(box, who){
   if(who.avatar){ const im=document.createElement('img'); im.alt=''; im.referrerPolicy='no-referrer'; im.src=who.avatar; box.appendChild(im); }
   else box.textContent=(who.name||'?').replace(/^Guest-/,'').charAt(0).toUpperCase()||'◉';
 }
+// ── Administration notes: notices for every player, guests included ──
+// Posted in static/admin/notes.json (always fetched fresh, never from the
+// device cache), with the current notes built in as a fallback for offline.
+// A dot on the ADMIN tab marks notes the player hasn't opened yet.
+const ADMIN_NOTES_FALLBACK=[{id:'2026-10-01-updates',date:'2026-10-01',title:'Having trouble after an update?',body:'Whenever a new update is released and the game misbehaves (a black screen, missing parts, buttons that do nothing), the best fix is:\n\n1. Close the browser completely (not just the tab).\n2. Clear the browser’s cache (cached images and files) for this site.\n3. Open the game again and reload the page.\n\nThe CLEAR GAME CACHE & RELOAD button below does steps 2 and 3 for the game’s own stored files. If problems remain, also clear the browser cache from your browser’s settings. Your saved journeys are not affected: they are kept separately, and in your GitHub account when signed in.'}];
+let _adminNotes=null;
+function _adminLoad(){
+  if(_adminNotes) return Promise.resolve(_adminNotes);
+  return fetch('static/admin/notes.json?t='+Date.now(),{cache:'no-store'}).then(r=>r.ok?r.json():null).catch(()=>null)
+    .then(j=>(_adminNotes=(j&&Array.isArray(j.notes)&&j.notes.length)?j.notes:ADMIN_NOTES_FALLBACK));
+}
+function _adminSeen(){ try{ return JSON.parse(localStorage.getItem('dm_admin_seen')||'[]'); }catch(e){ return []; } }
+function _pfRenderAdmin(markRead){
+  _adminLoad().then(notes=>{
+    const box=$('pf-admin-list'), dot=$('pf-admin-dot'); if(!box) return;
+    const seen=new Set(_adminSeen());
+    box.textContent='';
+    notes.slice().sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))).forEach(n=>{
+      const el=document.createElement('div'); el.className='pf-admin-note'+(seen.has(n.id)?'':' new');
+      el.innerHTML='<div class="pf-admin-h"><span class="pf-admin-t"></span><span class="pf-admin-d"></span></div><div class="pf-admin-b"></div>';
+      el.querySelector('.pf-admin-t').textContent=n.title||'Notice';
+      el.querySelector('.pf-admin-d').textContent=n.date||'';
+      el.querySelector('.pf-admin-b').textContent=n.body||'';
+      box.appendChild(el);
+    });
+    const unread=notes.some(n=>!seen.has(n.id));
+    if(markRead){ try{ localStorage.setItem('dm_admin_seen',JSON.stringify(notes.map(n=>n.id))); }catch(e){} }
+    if(dot) dot.style.display=(unread&&!markRead)?'inline-block':'none';
+    _adminFlag(unread&&!markRead);
+  });
+}
+function _adminFlag(on){ document.querySelectorAll('#profile-btn,[onclick*="openProfileMenu"]').forEach(b=>b.classList.toggle('has-admin',!!on)); }
+// new notices: flag the PROFILE button once the game is up
+setTimeout(()=>{ _adminLoad().then(notes=>{ const seen=new Set(_adminSeen()); _adminFlag(notes.some(n=>!seen.has(n.id))); }); },4000);
+// Clear what the game keeps on this device (service worker + its file
+// caches) and reload fresh. Saves live in localStorage / the account and stay.
+async function adminClearCacheReload(){
+  try{ toast('↻ Clearing the game cache…',1600); }catch(e){}
+  try{ if(typeof quickSave==='function'&&typeof STATE!=='undefined'&&(STATE.screen==='flight')) quickSave(); }catch(e){}
+  try{ if(navigator.serviceWorker){ const regs=await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map(r=>r.unregister())); } }catch(e){}
+  try{ if(window.caches){ const ks=await caches.keys(); await Promise.all(ks.map(k=>caches.delete(k))); } }catch(e){}
+  setTimeout(()=>{ try{ const u=new URL(location.href); u.searchParams.set('fresh',Date.now().toString(36)); location.replace(u.toString()); }catch(e){ location.reload(); } },600);
+}
 function _pfEnsure(){
   if($('profile-modal')) return;
   const m=document.createElement('div'); m.id='profile-modal';
   m.innerHTML='<div class="pf-card" role="dialog" aria-modal="true" aria-labelledby="pf-name">'+
     '<div class="pf-head"><div class="pf-av" id="pf-av"></div><div><div class="pf-name" id="pf-name"></div><div class="pf-kind" id="pf-kind"></div></div></div>'+
     '<div class="pf-btns" id="pf-acct"></div>'+
-    '<div class="pf-tabs" role="tablist"><button class="pf-tab on" id="pf-tab-btn-profile" role="tab" aria-selected="true">PROFILE</button><button class="pf-tab" id="pf-tab-btn-journeys" role="tab" aria-selected="false">JOURNEYS</button></div>'+
+    '<div class="pf-tabs" role="tablist"><button class="pf-tab on" id="pf-tab-btn-profile" role="tab" aria-selected="true">PROFILE</button><button class="pf-tab" id="pf-tab-btn-journeys" role="tab" aria-selected="false">JOURNEYS</button><button class="pf-tab" id="pf-tab-btn-admin" role="tab" aria-selected="false">ADMIN<i class="pf-dot" id="pf-admin-dot"></i></button></div>'+
     '<div id="pf-tab-profile">'+
     '<div class="pf-sec">DISPLAY</div>'+
     '<div class="pf-row"><div><div class="pf-row-t">Player name tags</div><div class="pf-row-d">Other players\u2019 usernames above them.</div></div><button class="pf-sw" id="pf-sw-players" role="switch"></button></div>'+
@@ -12338,13 +12381,21 @@ function _pfEnsure(){
     '<input type="file" id="pf-jn-file" accept=".dartprofile,.json,application/json" style="display:none">'+
     '<div id="pf-jn-list" class="pf-jn-list"></div>'+
     '</div>'+
+    '<div id="pf-tab-admin" style="display:none">'+
+    '<div class="pf-sec">ADMINISTRATION NOTES</div>'+
+    '<div class="pf-row-d" style="margin:2px 0 8px;">Notices and update news from the DART Meadow team.</div>'+
+    '<div id="pf-admin-list" class="pf-admin-list"></div>'+
+    '<div class="pf-btns"><button class="pf-btn" id="pf-admin-clear">↻ CLEAR GAME CACHE &amp; RELOAD</button></div>'+
+    '</div>'+
     '<div class="pf-btns"><button class="pf-btn" id="pf-close">CLOSE</button></div>'+
   '</div>';
   document.body.appendChild(m);
   m.addEventListener('click',e=>{ if(e.target===m) closeProfileMenu(); });
   $('pf-close').onclick=closeProfileMenu;
-  const tab=(k)=>{ ['profile','journeys'].forEach(n=>{ $('pf-tab-'+n).style.display=n===k?'':'none'; const b=$('pf-tab-btn-'+n); b.classList.toggle('on',n===k); b.setAttribute('aria-selected',String(n===k)); }); if(k==='journeys') _pfRenderJourneys(); };
-  $('pf-tab-btn-profile').onclick=()=>tab('profile'); $('pf-tab-btn-journeys').onclick=()=>tab('journeys');
+  const tab=(k)=>{ ['profile','journeys','admin'].forEach(n=>{ $('pf-tab-'+n).style.display=n===k?'':'none'; const b=$('pf-tab-btn-'+n); b.classList.toggle('on',n===k); b.setAttribute('aria-selected',String(n===k)); }); if(k==='journeys') _pfRenderJourneys(); if(k==='admin') _pfRenderAdmin(true); };
+  $('pf-tab-btn-profile').onclick=()=>tab('profile'); $('pf-tab-btn-journeys').onclick=()=>tab('journeys'); $('pf-tab-btn-admin').onclick=()=>tab('admin');
+  $('pf-admin-clear').onclick=adminClearCacheReload;
+  _pfRenderAdmin(false);
   $('pf-jn-new').onclick=()=>{ const d=buildSaveData('slot'); journeySaveNew(d,true); _pfRenderJourneys(); };
   $('pf-jn-import').onclick=()=>$('pf-jn-file').click();
   $('pf-jn-file').onchange=e=>{ const f=e.target.files[0]; if(!f) return; const r=new FileReader();
@@ -22770,7 +22821,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 </script>
 
 <!-- ?v= stamps: bump on every UI change so browsers never mix a new page with cached old styles -->
-<link rel="stylesheet" href="ui/dm-ui.css?v=106">
+<link rel="stylesheet" href="ui/dm-ui.css?v=107">
 <link rel="stylesheet" href="ui/dm-hud.css?v=104">
 <link rel="stylesheet" href="ui/dm-menu.css?v=80">
 <link rel="stylesheet" href="ui/dm-journal.css?v=97">
