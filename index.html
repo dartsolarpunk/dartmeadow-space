@@ -16406,6 +16406,8 @@ async function enterAtmosphericFlight(body,site,start){
   // was active, not an actual pose bug. Force it off on every fresh
   // entry into this scene.
   charOrbitActive = false;
+  // arriving in the sky always starts on the trailing view (her and the whole board in frame)
+  if(camMode!==0){ camMode=0; try{ _applyCamOffset(); const cb=$('cam-btn'); if(cb) cb.textContent='CAM 1'; }catch(e){} }
   CHAR._transitioning = false; // same leftover-state guard as launchFlight()
   if(CHAR.mounted) _loadStep('mounted', 1); else LOAD_TRACK.steps.mounted = 0; // same stuck-at-95% fix as launchFlight()
   _showMiniLoader();
@@ -16433,12 +16435,12 @@ async function enterAtmosphericFlight(body,site,start){
   }
   // sky dome
   if(pal.atmos){
-    _atmoSky=_makeSky(atmoScene,pal,body,4000,sun);
+    { const _pre=new Set(atmoScene.children); _atmoSky=_makeSky(atmoScene,pal,body,4000,sun); atmoScene.children.forEach(o=>{ if(!_pre.has(o)) o.userData.noBend=true; }); }
   } else {
     const sn=2500,sp=new Float32Array(sn*3);
     for(let i=0;i<sn;i++){const ph=Math.acos(2*Math.random()-1),th=Math.random()*6.28,r=3000;sp[i*3]=r*Math.sin(ph)*Math.cos(th);sp[i*3+1]=Math.abs(r*Math.cos(ph));sp[i*3+2]=r*Math.sin(ph)*Math.sin(th);}
     const sg=new THREE.BufferGeometry();sg.setAttribute('position',new THREE.BufferAttribute(sp,3));
-    atmoScene.add(new THREE.Points(sg,new THREE.PointsMaterial({size:2,sizeAttenuation:false,color:0xffffff})));
+    { const st=new THREE.Points(sg,new THREE.PointsMaterial({size:2,sizeAttenuation:false,color:0xffffff})); st.userData.noBend=true; st.frustumCulled=false; atmoScene.add(st); }
   }
   // terrain below — reuse the LOD terrain system in this scene
   atmoBuildTerrain(pal, start?start.x:0, start?start.z:0);
@@ -16503,7 +16505,11 @@ async function enterAtmosphericFlight(body,site,start){
     try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){_animLoopWarn('charMixer',e);}
     try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){_animLoopWarn('headOverride',e);}
     try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);}
+    try{ _skyGroundRefresh(false); }catch(e){ _animLoopWarn('skyGround',e); }
+    { const _bn=performance.now(); if(_bn-(atmoScene.userData._bendT||0)>500){ atmoScene.userData._bendT=_bn; try{ for(const o of atmoScene.children) _bendTag(o); }catch(e){} } }
+    _bendSet(atmoCamera,window.DM_FLAT_WORLD?0:_planetR());
     atmoRenderer.render(atmoScene,atmoCamera); _shotGrab(atmoRenderer);
+    _bendOff();
     if(_firstFrame){
       _firstFrame=false;
       requestAnimationFrame(()=>{ ov.style.background='#000'; try{ start.onFirstFrame&&start.onFirstFrame(); }catch(e){} });
@@ -16511,96 +16517,71 @@ async function enterAtmosphericFlight(body,site,start){
   })();
 }
 
-// Build terrain for the atmospheric scene (reuses the CLOD terrain system).
+// Ground for the atmospheric scene: the walking ground itself (_groundField),
+// drawn by the sky level-of-detail system (SkyGround). Called again after a
+// long jump (autopilot cruise): the tiles round the new spot are built at once.
+let _atmoArm=1, _skyGround=null, _skySea=null, _skySeaSpan=0, _skyProps=new Map(), _atmoField=null;
 function atmoBuildTerrain(pal,ox,oz){
   ox=ox||0;oz=oz||0;
   _atmoPal=pal;_atmoTerrainOx=ox;_atmoTerrainOz=oz;
-  const seed=_worldSeed(_atmoBody);
-  // Same stylized curvature heuristic as walk mode (see buildSurfaceTerrain).
-  const g=(_atmoBody&&_atmoBody.gravity!==undefined)?_atmoBody.gravity:0.6;
-  const curveR=THREE.MathUtils.lerp(1400,9000,Math.min(1,Math.max(0,g))/1.2);
-  const siteLandBias=(()=>{
-    // Same earthLandMask/earthElevation as orbital MC + walk surface.
-    if(!_atmoSite || typeof _atmoSite.lat!=='number' || typeof _atmoSite.lon!=='number') return 0;
-    if(_atmoBody && _atmoBody.name==='Earth' && typeof earthSiteHeightBias==='function'){
-      return earthSiteHeightBias(_atmoSite.lat,_atmoSite.lon,seed,0,0);
-    }
-    return 0;
-  })();
-  const _atmoEarthGeo=(_atmoBody && _atmoBody.name==='Earth' && _atmoSite && typeof _atmoSite.lat==='number');
-  const _aws=(window.DMWorldStyle&&_atmoBody)?DMWorldStyle.styleFor(_atmoBody,pal,_atmoSite):'lush';
-  _atmoStyle=_aws;
-  const _aw=_siteWorldXZ(_atmoSite); _atmoWX0=_aw.x; _atmoWZ0=_aw.z;
-  function H(lx,lz){
-    const x=lx+_atmoWX0, z=lz+_atmoWZ0;   // the planet's own coordinates
-    let h=_fbm(x*0.012+100,z*0.012+100,seed,5)*22;
-    h+=_fbm(x*0.04,z*0.04,seed+3,3)*5;
-    const m=_fbm(x*0.005,z*0.005,seed+7,4);
-    if(m>0.6)h+=(m-0.6)*120;
-    // Same mountain/plateau/cliff + canyon/river treatment as the walking
-    // terrain (buildSurfaceTerrain) — kept identical so a world looks
-    // consistent whether you're flying over it or standing on it.
-    const region=_fbm(x*0.0015+seed*3.1,z*0.0015+seed*3.1,seed+13,3);
-    if(region>0.35){
-      const mtWeight=Math.min(1,(region-0.35)/0.4);
-      const ridge1=1-Math.abs(_fbm(x*0.006,z*0.006,seed+21,4)*2-1);
-      const ridge2=1-Math.abs(_fbm(x*0.018,z*0.018,seed+27,3)*2-1);
-      const mountain=Math.pow(ridge1,2)*180+Math.pow(ridge2,2)*40;
-      const terraceNoise=_fbm(x*0.003,z*0.003,seed+33,3);
-      const plateau=Math.floor(terraceNoise*6)*28;
-      h+=mtWeight*(mountain*0.65+plateau*0.55);
-    }
-    const canyonRidge=1-Math.abs(_fbm(x*0.01+seed*5.3,z*0.01+seed*5.3,seed+61,4)*2-1);
-    if(canyonRidge>0.99)h-=Math.pow((canyonRidge-0.99)/0.01,1.5)*90;
-    const riverRidge=1-Math.abs(_fbm(x*0.006+seed*7.1,z*0.006+seed*7.1,seed+71,4)*2-1);
-    if(riverRidge>0.97)h-=Math.pow((riverRidge-0.97)/0.03,1.2)*22;
-    if(_aws!=='lush') h=DMWorldStyle.shape(_aws,x,z,h,seed,_fbm);
-    if(_atmoEarthGeo && typeof earthSiteHeightBias==='function'){
-      const geo=earthSiteHeightBias(_atmoSite.lat,_atmoSite.lon,seed,lx,lz,0.008);
-      return _earthBlend(h,geo);
-    }
-    return h+siteLandBias;
+  if(_skyGround&&_skyGround.group.parent===atmoScene){ _skyGroundRefresh(true); return; }
+  const F=_groundField(_atmoBody,_atmoSite,pal);
+  _atmoField=F; _atmoStyle=F.ws; _atmoWX0=F.sw.x; _atmoWZ0=F.sw.z;
+  _atmoHeight=F.H;                                     // what the board flies over and lands on
+  _skyGround=new SkyGround(atmoScene,F,pal);
+  _skyProps=new Map(); _skySea=null; _skySeaSpan=0;
+  _atmoTerrainMesh=_skyGround.group;
+  // first look: the coarse cover all round, then finer near the start point
+  const cam={position:new THREE.Vector3(ox,(F.H(ox,oz)||0)+60,oz)};
+  _skyGround.viewR=6000; _skyGround.update(cam,900);
+}
+// the sea: one finely-gridded sheet at sea level that follows you (it bends with the planet)
+function _skySeaFollow(c,span){
+  if(!_atmoPal||!_atmoPal.water) return;
+  const want=Math.pow(2,Math.ceil(Math.log2(Math.max(4096,span*2))));
+  if(!_skySea||_skySeaSpan!==want){
+    if(_skySea){ atmoScene.remove(_skySea); _skySea.geometry.dispose(); }
+    const pal=_atmoPal, liq=pal.liquidColor!==undefined?pal.liquidColor:0x1a4a7a;
+    let m=null; try{ m=_shoreWaterMaterial(liq,pal.liquidOpacity!==undefined?pal.liquidOpacity:0.8,pal.liquidRoughness!==undefined?pal.liquidRoughness:0.2); }catch(e){}
+    if(!m) m=new THREE.MeshStandardMaterial({color:liq,transparent:true,opacity:0.8,roughness:0.2,metalness:0.4});
+    const g=new THREE.PlaneGeometry(want,want,160,160); g.rotateX(-Math.PI/2);
+    _skySea=new THREE.Mesh(g,m); _skySea.name='JOTS_SkySea'; _skySea.userData.isWaterSurface=true; _skySea.renderOrder=1;
+    atmoScene.add(_skySea); _skySeaSpan=want; _atmoWaterMesh=_skySea;
   }
-  _atmoHeight=H;
-  // Drop any previous terrain window before building the new one, so
-  // recentring doesn't leak geometry/materials.
-  if(_atmoTerrainMesh){atmoScene.remove(_atmoTerrainMesh);_atmoTerrainMesh.geometry.dispose();_atmoTerrainMesh.material.dispose();_atmoTerrainMesh=null;}
-  if(_atmoWaterMesh){atmoScene.remove(_atmoWaterMesh);_atmoWaterMesh.geometry.dispose();_atmoWaterMesh.material.dispose();_atmoWaterMesh=null;}
-  // a wide static heightmesh window, recentred on the board as it flies
-  // (atmospheric flight covers ground fast, so a big coarse mesh that
-  // follows the board reads better than tiny streaming tiles at speed) —
-  // vertices sample H at absolute world coords (local+origin) so the window
-  // always shows the correct ground no matter where it's currently centred.
-  const SZ=5000,SEG=120;
-  const geo=new THREE.PlaneGeometry(SZ,SZ,SEG,SEG);geo.rotateX(-Math.PI/2);
-  const pos=geo.attributes.position;const col=[];
-  const eps=Math.max(1,SZ/SEG*0.6);
-  const _atmoSiteBias=siteLandBias;
-  const _atmoSiteLat=(_atmoSite&&typeof _atmoSite.lat==='number')?_atmoSite.lat:0;
-  for(let i=0;i<pos.count;i++){
-    // the horizon curves away from the board (drawn only — the ground you touch is H itself)
-    const x=pos.getX(i),z=pos.getZ(i);const h=H(x+ox,z+oz);pos.setY(i,h-(x*x+z*z)/(2*curveR));
-    // Same surfaceBiomeColor as walk — flown-over vs walked-on stay consistent.
-    const hx=H(x+ox+eps,z+oz),hz=H(x+ox,z+oz+eps);
-    const slope=Math.min(1,(Math.abs(hx-h)+Math.abs(hz-h))/(eps*1.4));
-    const c=surfaceBiomeColor(x+ox+_atmoWX0,z+oz+_atmoWZ0,h,slope,pal,seed,{siteBias:_atmoSiteBias,siteLat:_atmoSiteLat,style:_atmoStyle});
-    col.push(c.r,c.g,c.b);
+  const cell=_skySeaSpan/160;
+  _skySea.position.set(Math.round(c.x/cell)*cell,0,Math.round(c.z/cell)*cell);
+}
+// rocks and trees round you when you fly low — the walking ground's own scatter
+function _skyPropsTick(pos,agl){
+  const C=SURF_CHUNK, low=agl<140;
+  const pi=Math.floor((pos.x+C/2)/C), pj=Math.floor((pos.z+C/2)/C), want=new Set();
+  if(low){
+    TERRAIN.H=_atmoField.H; TERRAIN.pal=_atmoPal; TERRAIN.seed=_atmoField.seed;
+    let built=0;
+    for(let dj=-1;dj<=1;dj++) for(let di=-1;di<=1;di++){
+      const k=(pi+di)+'_'+(pj+dj); want.add(k);
+      if(!_skyProps.has(k)&&built<1){ try{ const g=_hmChunkScatter(pi+di,pj+dj); atmoScene.add(g); _skyProps.set(k,g); built++; }catch(e){ _skyProps.set(k,null); } }
+    }
   }
-  geo.setAttribute('color',new THREE.Float32BufferAttribute(col,3));geo.computeVertexNormals();
-  const mesh=new THREE.Mesh(geo,new THREE.MeshStandardMaterial({vertexColors:true,roughness:0.95}));
-  mesh.position.set(ox,0,oz);
-  atmoScene.add(mesh);_atmoTerrainMesh=mesh;
-  if(pal.water){
-    const liqColor=pal.liquidColor!==undefined?pal.liquidColor:0x1a4a7a;
-    const _aw=new THREE.MeshStandardMaterial({
-      color:liqColor,transparent:true,
-      opacity:pal.liquidOpacity!==undefined?pal.liquidOpacity:0.8,
-      roughness:pal.liquidRoughness!==undefined?pal.liquidRoughness:0.2,
-      metalness:0.4});
-    let _awN=null; try{ _awN=_shoreWaterMaterial(liqColor,_aw.opacity,_aw.roughness); }catch(e){}   // same shoreline water as the ground
-    const wm=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ),_awN||_aw);
-    wm.rotation.x=-Math.PI/2;wm.position.set(ox,0,oz);atmoScene.add(wm);_atmoWaterMesh=wm; // y=0, matching the walking terrain's water level (fills real low points, not an arbitrary sea level)
+  for(const [k,g] of _skyProps) if(!want.has(k)){ if(g){ atmoScene.remove(g); disposeObject3D(g); } _skyProps.delete(k); }
+}
+// per frame: what you can see grows with height (to the horizon of a world
+// this size, and past the haze), the tiles follow, the sea follows
+function _skyGroundRefresh(force){
+  if(!_skyGround||!atmoCamera||!atmoState) return;
+  const c=atmoCamera.position, gh=_atmoHeight?_atmoHeight(c.x,c.z):0, alt=Math.max(5,c.y-Math.max(0,gh));
+  const R=_planetR(), horizon=Math.sqrt(2*R*alt+alt*alt)+Math.sqrt(2*R*280);
+  const viewR=Math.max(3500,Math.min(26000,horizon));
+  _skyGround.viewR=viewR;
+  _skyGround.update(atmoCamera,force?600:undefined);
+  if(atmoScene.fog){
+    const far=Math.min(viewR,Math.max(2400,2400+alt*5));
+    atmoScene.fog.far=far; atmoScene.fog.near=Math.min(far*0.2,300+alt*0.6);
   }
+  const farClip=viewR*1.15, near=Math.max(0.5,Math.min(6,alt*0.01));
+  if(Math.abs(atmoCamera.far-farClip)>farClip*0.05||Math.abs(atmoCamera.near-near)>0.2){ atmoCamera.far=farClip; atmoCamera.near=near; atmoCamera.updateProjectionMatrix(); }
+  _skySeaFollow(c,viewR);
+  try{ const s=atmoState, sgh=_atmoHeight(s.pos.x,s.pos.z); _skyPropsTick(s.pos,s.pos.y-sgh); }catch(e){}
 }
 
 function buildMachPresets(){
@@ -16668,9 +16649,7 @@ function updateAtmoFlight(dt){
   // Recentre the terrain window once the board nears its edge — this is what
   // lets atmospheric flight cover unlimited ground instead of running off a
   // fixed-size mesh into empty space.
-  if(Math.hypot(s.pos.x-_atmoTerrainOx,s.pos.z-_atmoTerrainOz)>1600&&_atmoPal){
-    atmoBuildTerrain(_atmoPal,s.pos.x,s.pos.z);
-  }
+  // (the sky ground streams round you every frame — _skyGroundRefresh)
   // exit to space if climbing past the atmosphere ceiling
   if(!landing && s.pos.y>ATMO_CEILING){ atmoExitToSpace(); return; }
   // ── Orient & place the board the SAME way as space flight ───────────────
@@ -16695,9 +16674,11 @@ function updateAtmoFlight(dt){
   const o=camMode===0?ATMO_CAM_FOLLOW:(CAM_OFFSETS[camMode]||ATMO_CAM_FOLLOW);
   const boardScale=(atmoBoard.scale.x||2.4)*2.5; // extra pull-back so whole board fits in frame
   let back=o.back*boardScale, up=o.up*boardScale, look=o.look*boardScale;
-  if(camMode===0){
-    // Frame the whole board and her: measure them (once a second) and back
-    // off until their bounding sphere fits the view, along CAM 1's angle.
+  {
+    // Every camera keeps the whole board and her in view: measure them (once
+    // a second) and back off until their bounding sphere fits, along the
+    // mode's own angle (Chase sits a little tighter and lower, Drone wider).
+    const fitK=camMode===1?0.92:(camMode===2?1.55:1.0);
     const now=performance.now();
     if(!atmoBoard.userData._frameT||now-atmoBoard.userData._frameT>1000){
       atmoBoard.userData._frameT=now;
@@ -16706,7 +16687,7 @@ function updateAtmoFlight(dt){
     const R=atmoBoard.userData._frameR||0;
     if(R>0){
       const vf=THREE.MathUtils.degToRad(atmoCamera.fov||62)/2, hf=Math.atan(Math.tan(vf)*(atmoCamera.aspect||1.6));
-      const d=R/Math.sin(Math.min(vf,hf))*1.08, el=Math.atan2(o.up,o.back);
+      const d=R/Math.sin(Math.min(vf,hf))*1.08*fitK, el=Math.atan2(o.up,o.back);
       back=Math.max(back,d*Math.cos(el)); up=Math.max(up,d*Math.sin(el)); look=Math.min(look,R*0.25);
     }
   }
@@ -16717,6 +16698,16 @@ function updateAtmoFlight(dt){
   if(!_atmoCamInit){_atmoCamRel.copy(desiredRel);_atmoCamInit=true;}
   else _atmoCamRel.lerp(desiredRel,Math.min(1,dt*(s.takeoff>0?1.5:4)));
   atmoCamera.position.copy(s.pos).add(_atmoCamRel);
+  // spring arm: when a ridge or cliff stands between her and the camera, the camera comes in in front of it
+  if(_atmoHeight){
+    const N=12; let tHit=1;
+    for(let k=1;k<=N;k++){
+      const t=k/N, x=s.pos.x+_atmoCamRel.x*t, y=s.pos.y+1.5+(_atmoCamRel.y-1.5)*t, z=s.pos.z+_atmoCamRel.z*t;
+      if(_atmoHeight(x,z)+1.5>y){ tHit=Math.max(0.12,(k-1)/N); break; }
+    }
+    _atmoArm=(typeof _atmoArm==='number'?_atmoArm:1); _atmoArm+= (tHit-_atmoArm)*Math.min(1,dt*(tHit<_atmoArm?12:2.5));
+    if(_atmoArm<0.999) atmoCamera.position.copy(s.pos).addScaledVector(_atmoCamRel,_atmoArm).add(new THREE.Vector3(0,1.5*(1-_atmoArm),0));
+  }
   { const cgh=_atmoHeight?_atmoHeight(atmoCamera.position.x,atmoCamera.position.z):-1e9; if(atmoCamera.position.y<cgh+2) atmoCamera.position.y=cgh+2; }
   atmoCamera.lookAt(s.pos.clone().addScaledVector(fwd,look).add(new THREE.Vector3(0,0.6,0)));
   if(_atmoSky){ const ll=_atmoLatLon(s.pos.x,s.pos.z); _atmoSky.update(atmoCamera,dt,ll.lat,ll.lon); if(_atmoSky.sunLight&&_atmoSky.sunDir.y>0.02) _atmoSky.sunLight.position.copy(_atmoSky.sunDir).multiplyScalar(300); }   // the living sky stays round you however far you fly
@@ -17123,6 +17114,7 @@ function _atmoCleanup(){
   if(atmoRenderer)atmoRenderer.dispose();
   atmoScene=null;atmoBoard=null;atmoState=null;_atmoSky=null;
   _atmoTerrainMesh=null;_atmoWaterMesh=null;_atmoTerrainOx=0;_atmoTerrainOz=0;_atmoPal=null;_atmoHeight=null;
+  _skyGround=null;_skySea=null;_skySeaSpan=0;_skyProps=new Map();_atmoField=null;
 }
 
 // Recursively dispose every mesh's geometry + material(s) + any textures
@@ -18713,7 +18705,8 @@ async function enterSurface(body,site,opts){
   // procedural terrain — heightmapped plane (+ GPU MC patch on real WebGPU)
   await buildSurfaceTerrain(pal);
   // sky gradient dome
-  TERRAIN.sky=_makeSky(surfScene,pal,body,1000,sun);
+  { const _pre=new Set(surfScene.children); TERRAIN.sky=_makeSky(surfScene,pal,body,1000,sun); surfScene.children.forEach(o=>{ if(!_pre.has(o)) o.userData.noBend=true; }); }
+  if(TERRAIN.starDome) TERRAIN.starDome.userData.noBend=true;
   // wind-blown dust off the crests, and dust devils in the distance (ui/dm-dust.js)
   try{ if(TERRAIN.dust){ TERRAIN.dust.dispose(); TERRAIN.dust=null; }
     const _ds=window.DMDust&&window.DMWorldStyle?DMDust.forStyle(DMWorldStyle.styleFor(body,pal,_surfSite),pal):null;
@@ -18896,7 +18889,9 @@ async function enterSurface(body,site,opts){
     try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);} // ship keeps wandering + shard keeps following, even off-screen
     try{ _surfStreamTick(dt); }catch(e){ _animLoopWarn('stream',e); }
     try{ _surfFpBody(); }catch(e){}
+    _bendSet(surfCamera,window.DM_FLAT_WORLD?0:_planetR());
     try{ surfRenderer.render(surfScene,surfCamera); _shotGrab(surfRenderer); }catch(e){ _animLoopWarn('surf-render',e); }
+    _bendOff();
   })();
 }
 let surfBoard=null,surfTerrainMesh=null,_surfHeight=null,_surfBoardV=null;
@@ -18995,6 +18990,51 @@ function _surfFluidTick(dt){
 //   • Geometry Clipmaps — Losasso & Hoppe, Microsoft Research (2004)
 //   • three-nanite (AIFanatic, github.com/AIFanatic/three-nanite) — meshlet LOD reference
 // ════════════════════════════════════════════════════════════════════
+// ── Planet curvature (DART Engine) ───────────────────────────────────
+// The ground is the planet's own surface, so it curves away at the planet's
+// true radius — the same sphere the orbit globe and the world map use
+// (360° of ground coordinates = one trip round the world). Walking, contact
+// and raycasts stay on the exact height field; only the picture bends, by
+// d²/2R below the camera's horizontal plane at a distance d — the sphere's
+// own drop (within 0.2% out to 800 units). Everything on the ground (tiles,
+// rocks, water, the sea, beacons, her, the board) bends together, so what
+// touches stays touching; the sky does not bend. The bend is a small offset
+// added in each material's vertex stage; where it is off (k = 0) positions
+// pass through untouched.
+function _planetR(){ return 360/ATMO_DEG_PER_UNIT/(2*Math.PI); }
+const BEND={c:null,k:null,cache:new Map()};
+function _bendReady(){
+  if(BEND.c) return true;
+  const W=window; if(typeof W.uniform!=='function'||!W.modelWorldMatrixInverse||!W.positionLocal) return false;
+  BEND.c=W.uniform(new THREE.Vector3()); BEND.k=W.uniform(0); return true;
+}
+function _bendNodeFor(base){
+  const key=base||'local'; if(BEND.cache.has(key)) return BEND.cache.get(key);
+  const W=window, p=base||W.positionLocal;
+  const wp=W.modelWorldMatrix.mul(W.vec4(p,1.0));
+  const d=wp.xz.sub(BEND.c.xz), drop=W.dot(d,d).mul(BEND.k);
+  const n=p.add(W.modelWorldMatrixInverse.mul(W.vec4(0.0,drop.negate(),0.0,0.0)).xyz);
+  BEND.cache.set(key,n); return n;
+}
+// give every material under `root` the bend (skips the sky and anything marked noBend)
+function _bendTag(root){
+  if(!root||!_bendReady()||root.userData.noBend||root.isLight||root.isCamera) return;
+  if(root.material&&!root.isSprite&&!root.isLine){
+    const mats=Array.isArray(root.material)?root.material:[root.material];
+    for(const m of mats){
+      if(!m||m.userData._bent||m.isShaderMaterial||m.isRawShaderMaterial) continue;
+      m.userData._bent=true; m.positionNode=_bendNodeFor(m.positionNode||null); m.needsUpdate=true;
+    }
+  }
+  for(const c of root.children) _bendTag(c);
+}
+// centre the bend on the camera for this frame (k = 1/2R); _bendOff after drawing
+function _bendSet(cam,R){ if(!_bendReady()) return; BEND.c.value.copy(cam.position); BEND.k.value=R>0?1/(2*R):0; }
+function _bendOff(){ if(BEND.k) BEND.k.value=0; }
+// how far below the flat world a point is drawn (for anything placed by hand on screen)
+function _bendDrop(x,z){ if(!BEND.k||!BEND.k.value) return 0; const dx=x-BEND.c.value.x, dz=z-BEND.c.value.z; return (dx*dx+dz*dz)*BEND.k.value; }
+window._bendDrop=_bendDrop;
+
 const TERRAIN={
   rootSize:2400,      // full terrain span (world units) — far horizon
   // maxDepth was 6 (smallest tile = 37.5 units) — a lot of tiles near the
@@ -20279,6 +20319,123 @@ function _shoreWaterMaterial(liqColor,opacity,rough){
   if(GFX&&GFX.envReflections&&typeof _envMap!=='undefined'&&_envMap) m.envMap=_envMap;
   return m;
 }
+// ── One ground for every view (DART Engine) ─────────────────────────────
+// The height of the world at a site's local (x,z): the same recipe whether
+// you walk it or fly over it — the world's style, Earth's real relief.
+function _groundField(body,site,pal){
+  const seed=_worldSeed(body);
+  const geo=!!(body&&body.name==='Earth'&&site&&typeof site.lat==='number');
+  const siteBias=(geo&&typeof site.lon==='number'&&typeof earthSiteHeightBias==='function')?earthSiteHeightBias(site.lat,site.lon,seed,0,0):0;
+  const ws=(window.DMWorldStyle&&body)?DMWorldStyle.styleFor(body,pal,site):'lush';
+  const sw=_siteWorldXZ(site);
+  function H(lx,lz){
+    const h=_terrainCore(lx+sw.x,lz+sw.z,seed,ws);
+    if(geo&&typeof earthSiteHeightBias==='function') return _earthBlend(h,earthSiteHeightBias(site.lat,site.lon,seed,lx,lz,0.008));
+    return h+siteBias;
+  }
+  return {H,seed,ws,sw,siteBias,siteLat:(site&&typeof site.lat==='number')?site.lat:0};
+}
+
+// ── Sky ground: the walking ground seen from the air, level of detail ──
+// A quadtree of height tiles over the same field you walk on. Far tiles are
+// coarse (every mountain, mesa, crater and canyon still there in outline);
+// they split as you come closer, down to 2-unit cells within a few hundred
+// feet, where the walking detail (cracks, pebbles, sand ripples) fades in
+// — the way a flight game sharpens the ground as you dive. Coarse tiles
+// stay up until their finer children are built, so there are never holes;
+// skirts hide the seams between levels. Built nearest-first under a small
+// per-frame time budget.
+function SkyGround(scene,F,pal,o){
+  o=o||{};
+  this.F=F; this.pal=pal; this.TOP=8192; this.SEG=32; this.MIN=64; this.K=o.k||1.8;
+  this.budget=o.budget||(GFX.isMobile?4:7);
+  this.group=new THREE.Group(); this.group.name='JOTS_SkyGround'; scene.add(this.group);
+  this.roots=new Map(); this.queue=[]; this.viewR=4000;
+  const prevStyle=TERRAIN.style; TERRAIN.style=F.ws; this.mat=_terrainDetailMat(); TERRAIN.style=prevStyle;
+  this.copt={siteBias:F.siteBias,siteLat:F.siteLat,style:F.ws};
+}
+SkyGround.prototype._node=function(x0,z0,size,parent){ return {x0,z0,size,parent,kids:null,mesh:null,minH:parent?parent.minH:-60,maxH:parent?parent.maxH:260}; };
+SkyGround.prototype._dist=function(n,c){
+  const cx=n.x0+n.size/2, cz=n.z0+n.size/2;
+  const dx=Math.max(0,Math.abs(c.x-cx)-n.size/2), dz=Math.max(0,Math.abs(c.z-cz)-n.size/2);
+  const dy=c.y>n.maxH?c.y-n.maxH:(c.y<n.minH?n.minH-c.y:0);
+  return Math.sqrt(dx*dx+dy*dy+dz*dz);
+};
+SkyGround.prototype.update=function(cam,budgetMs){
+  const T=this.TOP, R=this.viewR, c=cam.position;
+  // top-level tiles round the camera (fixed grid: tiles never shift under you)
+  const i0=Math.floor((c.x-R)/T), i1=Math.floor((c.x+R)/T), j0=Math.floor((c.z-R)/T), j1=Math.floor((c.z+R)/T);
+  const keep=new Set();
+  for(let j=j0;j<=j1;j++) for(let i=i0;i<=i1;i++){
+    const k=i+'_'+j; keep.add(k);
+    if(!this.roots.has(k)) this.roots.set(k,this._node(i*T,j*T,T,null));
+  }
+  for(const [k,n] of this.roots) if(!keep.has(k)){ this._drop([n]); this.roots.delete(k); }
+  this.queue.length=0;
+  for(const n of this.roots.values()) this._visit(n,c);
+  // coarse to fine (a level is finished before the next one starts, so detail sharpens in steps), nearest first within a level
+  this.queue.sort((a,b)=>(b.size-a.size)||(a._d-b._d));
+  const t0=performance.now(), B=budgetMs!=null?budgetMs:this.budget;
+  for(let q=0;q<this.queue.length;q++){ const tb=performance.now(); this._build(this.queue[q]); this.buildMs=(this.buildMs||0)*0.9+(performance.now()-tb)*0.1; if(performance.now()-t0>B) break; }
+  for(const n of this.roots.values()) this._show(n);
+  return this.queue.length;
+};
+SkyGround.prototype._visit=function(n,c){
+  const d=this._dist(n,c); n._d=d;
+  const far=d>this.viewR&&n.parent;   // beyond what can be seen: let it go
+  n._hidden=!!far;
+  const split=!far&&n.size>this.MIN&&d<n.size*this.K;
+  if(split){
+    if(!n.kids){ const h=n.size/2; n.kids=[this._node(n.x0,n.z0,h,n),this._node(n.x0+h,n.z0,h,n),this._node(n.x0,n.z0+h,h,n),this._node(n.x0+h,n.z0+h,h,n)]; }
+    if(!n.mesh&&!this._fallback(n)) this.queue.push(n);
+    for(const k of n.kids) this._visit(k,c);
+  } else {
+    if(n.kids){ this._drop(n.kids); n.kids=null; }
+    if(!n.mesh&&!n._hidden) this.queue.push(n);
+  }
+};
+SkyGround.prototype._fallback=function(n){ for(let p=n.parent;p;p=p.parent) if(p.mesh) return true; return false; };
+SkyGround.prototype._ready=function(n){ return n._hidden||(n.kids?n.kids.every(k=>this._ready(k)):!!n.mesh); };
+SkyGround.prototype._show=function(n){
+  const useKids=n.kids&&n.kids.every(k=>this._ready(k));
+  if(n.mesh) n.mesh.visible=!useKids&&!n._hidden;
+  if(n.kids) for(const k of n.kids){ if(useKids) this._show(k); else this._hide(k); }
+};
+SkyGround.prototype._hide=function(n){ if(n.mesh) n.mesh.visible=false; if(n.kids) for(const k of n.kids) this._hide(k); };
+SkyGround.prototype._drop=function(list){
+  for(const n of list){ if(n.kids) this._drop(n.kids); if(n.mesh){ this.group.remove(n.mesh); n.mesh.geometry.dispose(); n.mesh=null; } n.kids=null; }
+};
+SkyGround.prototype._build=function(n){
+  const F=this.F, H=F.H, seg=this.SEG, step=n.size/seg, S1=seg+1, G=seg+3, pal=this.pal;
+  const hb=new Float32Array(G*G); let mn=1e9, mx=-1e9;
+  for(let r=0;r<G;r++) for(let q=0;q<G;q++){ const h=H(n.x0+(q-1)*step,n.z0+(r-1)*step); hb[r*G+q]=isFinite(h)?h:0; }
+  const ring=[]; for(let q=0;q<seg;q++) ring.push(q); for(let r=0;r<seg;r++) ring.push(r*S1+seg); for(let q=seg;q>0;q--) ring.push(seg*S1+q); for(let r=seg;r>0;r--) ring.push(r*S1);
+  const vc=S1*S1+ring.length, pos=new Float32Array(vc*3), nor=new Float32Array(vc*3), col=new Float32Array(vc*3);
+  for(let r=0;r<S1;r++) for(let q=0;q<S1;q++){
+    const k=r*S1+q, b=(r+1)*G+q+1, h=hb[b];
+    if(h<mn) mn=h; if(h>mx) mx=h;
+    let nx=hb[b-1]-hb[b+1], ny=2*step, nz=hb[b-G]-hb[b+G]; const L=Math.hypot(nx,ny,nz)||1; nx/=L; ny/=L; nz/=L;
+    pos[k*3]=q*step; pos[k*3+1]=h; pos[k*3+2]=r*step;
+    nor[k*3]=nx; nor[k*3+1]=ny; nor[k*3+2]=nz;
+    const cc=surfaceBiomeColor(n.x0+q*step+F.sw.x,n.z0+r*step+F.sw.z,h,Math.min(1,Math.max(0,1-ny)*1.6),pal,F.seed,this.copt);
+    col[k*3]=cc.r; col[k*3+1]=cc.g; col[k*3+2]=cc.b;
+  }
+  const drop=Math.max(4,step*2);
+  ring.forEach((k,m)=>{ const d=S1*S1+m; for(let a=0;a<3;a++){ pos[d*3+a]=pos[k*3+a]; nor[d*3+a]=nor[k*3+a]; col[d*3+a]=col[k*3+a]; } pos[d*3+1]-=drop; });
+  const idx=[];
+  for(let r=0;r<seg;r++) for(let q=0;q<seg;q++){ const a=r*S1+q, b=a+1, c2=a+S1, d=c2+1; idx.push(a,c2,b, b,c2,d); }
+  for(let m=0;m<ring.length;m++){ const a=ring[m], b=ring[(m+1)%ring.length], sa=S1*S1+m, sb=S1*S1+(m+1)%ring.length; idx.push(a,b,sa, b,sb,sa, a,sa,b, b,sa,sb); }
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  geo.setAttribute('normal',new THREE.BufferAttribute(nor,3));
+  geo.setAttribute('color',new THREE.BufferAttribute(col,3));
+  geo.setIndex(new THREE.Uint16BufferAttribute(idx,1));
+  geo.computeBoundingSphere();
+  const m=new THREE.Mesh(geo,this.mat); m.position.set(n.x0,0,n.z0); m.visible=false; m.userData.skyTile=n.size;
+  this.group.add(m); n.mesh=m; n.minH=mn; n.maxH=mx;
+};
+SkyGround.prototype.dispose=function(){ this._drop([...this.roots.values()]); this.roots.clear(); if(this.group.parent) this.group.parent.remove(this.group); };
+
 async function buildSurfaceTerrain(pal){
   const seed=_worldSeed(_surfBody);
   const siteLandBias=(()=>{
@@ -20561,7 +20718,9 @@ async function buildSurfaceTerrain(pal){
     // Visible surface (shell) — kept for look
     const WATER_SURFACE_Y=0;
     const WATER_FLOOR_Y=-36; // volume depth Stabilizer swim can detect
-    const wm=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ,1,1),_waterMatUsed);
+    // a vertex every ~25 units: the sea follows the planet's curve (see _bendTag), not one flat sheet
+    const _wseg=Math.max(48,Math.min(128,Math.round(SZ/25)));
+    const wm=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ,_wseg,_wseg),_waterMatUsed);
     wm.rotation.x=-Math.PI/2;wm.position.y=WATER_SURFACE_Y;
     wm.name='JOTS_WaterSurface';
     wm.userData.isWaterSurface=true;
@@ -20575,7 +20734,7 @@ async function buildSurfaceTerrain(pal){
     const volMat=new THREE.MeshBasicMaterial({
       color:liqColor,transparent:true,opacity:0.08,depthWrite:false,side:THREE.DoubleSide
     });
-    const vol=new THREE.Mesh(new THREE.BoxGeometry(SZ, waterDepth, SZ), volMat);
+    const vol=new THREE.Mesh(new THREE.BoxGeometry(SZ, waterDepth, SZ, Math.round(SZ/35), 1, Math.round(SZ/35)), volMat);
     vol.position.set(0, WATER_SURFACE_Y - waterDepth*0.5, 0);
     vol.name='JOTS_WaterVolume';
     vol.userData.isWaterVolume=true;
@@ -20614,7 +20773,7 @@ async function buildSurfaceTerrain(pal){
       surfCausticCanvas=cc;surfCausticCtx=cc.getContext('2d');
       const ctex=new THREE.CanvasTexture(cc);ctex.wrapS=ctex.wrapT=THREE.RepeatWrapping;ctex.repeat.set(8,8);surfCausticTex=ctex;
       const causticMat=new THREE.MeshBasicMaterial({map:ctex,transparent:true,opacity:0.22,blending:THREE.AdditiveBlending,depthWrite:false});
-      const cm=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ),causticMat);
+      const cm=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ,Math.round(SZ/35),Math.round(SZ/35)),causticMat);
       cm.rotation.x=-Math.PI/2;cm.position.y=2.05;surfScene.add(cm);
       if(TERRAIN.waterFollow) TERRAIN.waterFollow.push(cm);
     }
@@ -20984,6 +21143,9 @@ function _surfStreamTick(dt){
   const px=p.pos.x, pz=p.pos.z;
   _surfStreamUpdate(px,pz,false);
   _surfStreamWork(GFX.isMobile?3:5);
+  // new ground pieces (chunks, rocks, water, beacons…) take the planet's curve
+  const _bnow=performance.now();
+  if(surfScene&&_bnow-(TERRAIN._bendT||0)>500){ TERRAIN._bendT=_bnow; try{ for(const o of surfScene.children) _bendTag(o); }catch(e){ console.warn('[bend]',e); } }
   try{ _tessTick(); }catch(e){ TERRAIN.tessCfg=null; console.warn('[tess]',e); }
   // GPU marching cubes: rebuild round her once she's past the middle of the patch
   const info=TERRAIN.mcGridInfo;
@@ -22880,7 +23042,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 
 <!-- ?v= stamps: bump on every UI change so browsers never mix a new page with cached old styles -->
 <link rel="stylesheet" href="ui/dm-ui.css?v=107">
-<link rel="stylesheet" href="ui/dm-hud.css?v=106">
+<link rel="stylesheet" href="ui/dm-hud.css?v=107">
 <link rel="stylesheet" href="ui/dm-menu.css?v=80">
 <link rel="stylesheet" href="ui/dm-journal.css?v=97">
 <link rel="stylesheet" href="ui/dm-landmap.css?v=86">
