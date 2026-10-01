@@ -2096,7 +2096,8 @@ const JOURNEY_MAX=60;
 function _jnWho(){ try{ return (window.JOTS&&JOTS.identity&&JOTS.identity.name)||(STATE.boardConfig&&STATE.boardConfig.name)||'Pilot'; }catch(e){ return 'Pilot'; } }
 function _jnSlots(){ return getSaveSlots().map((d,i)=>d?Object.assign({_i:i},d):null).filter(Boolean); }
 function journeyAutoName(){
-  const list=_jnSlots().sort((a,b)=>(b.ts||0)-(a.ts||0)), who=_jnWho();
+  let remote=[]; try{ remote=JSON.parse(localStorage.getItem('dm_saves_remote')||'[]'); }catch(e){}
+  const list=_jnSlots().concat(remote).sort((a,b)=>(b.ts||0)-(a.ts||0)), who=_jnWho();
   const last=list[0], m=last&&/^(.*?)\s*(\d+)$/.exec(last.slotName||'');
   if(m&&m[1].trim()) return m[1].trim()+' '+(parseInt(m[2],10)+1);
   const n=list.filter(x=>String(x.slotName||'').startsWith(who)).length;
@@ -2114,9 +2115,41 @@ function journeySaveNew(d,announce,name){
   if(announce) toast('💾 Saved journey: '+d.slotName,2200);
   return d;
 }
+// The live slot: the journey being played right now. It backs itself up —
+// every few minutes, at milestones, when the game goes to the background —
+// into one slot per session (numbered like the rest), and when signed in it
+// goes to the private repository too. The newest six automatic backups are
+// kept; slots saved with INITIALIZE PROGRESS are never pruned.
+const JOURNEY_AUTO_KEEP=6;
+function _jnLiveId(){
+  let id=null; try{ id=sessionStorage.getItem('dm_jn_live'); }catch(e){}
+  if(!id||!/^s_[a-z0-9]+$/.test(id)){ id='s_'+Date.now().toString(36)+Math.random().toString(36).slice(2,6); try{ sessionStorage.setItem('dm_jn_live',id); }catch(e){} }
+  return id;
+}
+let _jnLiveUp=0;
+function journeyBackupLive(d,upload){
+  try{
+    d=JSON.parse(JSON.stringify(d||buildSaveData('auto')));
+    const id=_jnLiveId(), slots=getSaveSlots().filter(Boolean), i=slots.findIndex(x=>x.id===id);
+    d.id=id; d.ts=Date.now(); d.auto=true; d.slotName=i>=0?slots[i].slotName:journeyAutoName();
+    if(i>=0) slots[i]=d; else slots.push(d);
+    const drop=new Set(slots.filter(x=>x.auto&&x.id!==id).sort((a,b)=>(b.ts||0)-(a.ts||0)).slice(JOURNEY_AUTO_KEEP-1).map(x=>x.id));
+    const keep=slots.filter(x=>!drop.has(x.id));
+    while(keep.length>JOURNEY_MAX) keep.shift();
+    writeSaveSlots(keep);
+    if(upload||Date.now()-_jnLiveUp>4*60*1000){ _jnLiveUp=Date.now(); _journeyUpload(d); }
+    try{ if($('pf-tab-journeys')&&$('pf-tab-journeys').style.display!=='none') _pfRenderJourneys(); }catch(e){}
+    return d;
+  }catch(e){ console.warn('[journeys] live backup',e); return null; }
+}
+// newest journey anywhere: this device's slots, the account's index, the autosave
+function _journeyNewest(){
+  let remote=[]; try{ remote=JSON.parse(localStorage.getItem('dm_saves_remote')||'[]').map(x=>Object.assign({remote:true},x)); }catch(e){}
+  return _jnSlots().concat(remote).filter(x=>x&&x.ts).sort((a,b)=>b.ts-a.ts)[0]||null;
+}
 function _journeyPlace(d){ try{ const w=d.where||{}; const near=w.near&&w.near.name, sys=(w.sys&&w.sys.name)||'Sol'; return (near?'near '+near+' · ':'')+sys; }catch(e){ return ''; } }
 let _jnIdxT=null;
-function _journeyIndex(){ return _jnSlots().map(x=>({id:x.id,slotName:x.slotName,ts:x.ts,place:_journeyPlace(x)})).filter(x=>x.id); }
+function _journeyIndex(){ return _jnSlots().map(x=>({id:x.id,slotName:x.slotName,ts:x.ts,auto:!!x.auto,place:_journeyPlace(x)})).filter(x=>x.id); }
 function _journeyUpload(d){
   const J=window.JOTS; if(!J||!J.vault||!J.vault.ready||!d||!d.id) return;
   J.vault.putJSON('saves/slots/'+d.id+'.json',d,'jots: journey '+d.slotName).catch(e=>console.warn('[journeys] upload',e));
@@ -2141,8 +2174,41 @@ window.addEventListener('jots:vault',async ()=>{
     _jnSlots().forEach(x=>{ if(!x.id){ const sl=getSaveSlots(); const d=sl[x._i]; if(d){ d.id='s_'+(d.ts||Date.now()).toString(36)+Math.random().toString(36).slice(2,6); writeSaveSlots(sl); _journeyUpload(d); } } else _journeyUpload(getSaveSlots()[x._i]); });
     _journeyPushIndex();
     try{ if($('pf-tab-journeys')&&$('pf-tab-journeys').style.display!=='none') _pfRenderJourneys(); }catch(e){}
+    // coming back signed in: the newest journey (from any device) is the one to resume
+    const nw=_journeyNewest(); let auto=null; try{ auto=JSON.parse(localStorage.getItem('dm_autosave')||'null'); }catch(e){}
+    if(nw&&(!auto||(nw.ts||0)>(auto.ts||0)+1000)){
+      let d=null;
+      if(nw.remote){ try{ const t=await J.vault.get('saves/slots/'+nw.id+'.json'); d=t?JSON.parse(t):null; }catch(e){} }
+      else d=getSaveSlots()[nw._i];
+      if(d&&d.v==='DM2'){ try{ localStorage.setItem('dm_autosave',JSON.stringify(d)); }catch(e){} }
+    }
+    _journeyOfferResume();
   }catch(e){ console.warn('[journeys] sync',e); }
 });
+// Welcome back: on the main menu, signed in, with a journey saved — it loads
+// by itself after a short count (PLAY NOW / STAY IN MENU to choose).
+let _jnOffered=false;
+function _journeyOfferResume(){
+  if(_jnOffered) return;
+  if(!(window.JOTS&&JOTS.vault&&JOTS.vault.ready)) return;
+  const app=$('app'); if(typeof STATE==='undefined'||STATE.screen!=='menu'||!app||!app.classList.contains('vis')||_gameInProgress) return;
+  let d=null; try{ d=JSON.parse(localStorage.getItem('dm_autosave')||'null'); }catch(e){}
+  if(!d||d.v!=='DM2') return;
+  _jnOffered=true;
+  try{ _checkAutosaveResume(); refreshMenuStatus(); }catch(e){}
+  const bar=document.createElement('div'); bar.id='jn-welcome';
+  bar.innerHTML='<div class="jw-t">☁ WELCOME BACK</div><div class="jw-n"></div><div class="jw-m"></div><div class="jw-a"><button class="jw-go">▶ PLAY NOW</button><button class="jw-no">STAY IN MENU</button></div><div class="jw-bar"><i></i></div>';
+  bar.querySelector('.jw-n').textContent=d.slotName||'Your journey';
+  bar.querySelector('.jw-m').textContent=[_journeyPlace(d),d.ts?new Date(d.ts).toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):''].filter(Boolean).join(' · ');
+  document.body.appendChild(bar);
+  const N=6; let t0=performance.now(), raf=0, done=false;
+  const close=()=>{ done=true; cancelAnimationFrame(raf); bar.classList.add('out'); setTimeout(()=>bar.remove(),350); };
+  const go=()=>{ if(done) return; close(); const run=()=>resumeJourney(d); if(typeof window.jotsChooseMode==='function') window.jotsChooseMode(run); else run(); };
+  bar.querySelector('.jw-go').onclick=go;
+  bar.querySelector('.jw-no').onclick=close;
+  const tick=()=>{ if(done) return; if(STATE.screen!=='menu'){ close(); return; } const k=(performance.now()-t0)/1000/N; bar.querySelector('.jw-bar i').style.width=Math.min(100,k*100)+'%'; if(k>=1){ go(); return; } raf=requestAnimationFrame(tick); };
+  raf=requestAnimationFrame(tick);
+}
 async function journeyLoad(entry){
   let d=null;
   if(entry.remote){
@@ -2172,13 +2238,16 @@ function _pfRenderJourneys(){
   let remote=[]; try{ remote=JSON.parse(localStorage.getItem('dm_saves_remote')||'[]').map(x=>Object.assign({remote:true},x)); }catch(e){}
   const all=_jnSlots().concat(remote).sort((a,b)=>(b.ts||0)-(a.ts||0));
   const signed=!!(window.JOTS&&JOTS.vault&&JOTS.vault.ready);
-  $('pf-jn-note').textContent=(all.length?all.length+' saved journey'+(all.length===1?'':'s'):'No saved journeys yet')+(signed?' · kept in your account ('+JOTS.vault.repo+'/saves) and on this device · INITIALIZE PROGRESS adds a new numbered slot':' · on this device — sign in with GitHub to keep them in your account');
+  $('pf-jn-note').textContent=(all.length?all.length+' saved journey'+(all.length===1?'':'s'):'No saved journeys yet')+(signed?' · kept in your account ('+JOTS.vault.repo+'/saves) and on this device · your current journey backs itself up; INITIALIZE PROGRESS adds a new numbered slot':' · on this device — sign in with GitHub to keep them in your account');
   box.textContent='';
   all.forEach(e=>{
     const row=document.createElement('div'); row.className='pf-jn-row';
     row.innerHTML='<div class="pf-jn-main"><div class="pf-jn-name"></div><div class="pf-jn-meta"></div></div><div class="pf-jn-acts"><button class="pf-btn pf-jn-load">LOAD</button><button class="pf-jn-mini" title="Export this save file">⇩</button><button class="pf-jn-mini" title="Delete">✕</button></div>';
     row.querySelector('.pf-jn-name').textContent=e.slotName||'Journey';
+
     row.querySelector('.pf-jn-meta').textContent=(e.ts?new Date(e.ts).toLocaleString():'')+((e.place||_journeyPlace(e))?' · '+(e.place||_journeyPlace(e)):'')+(e.remote?' · ☁ in your account':'');
+    if(e.id&&e.id===_jnLiveId()){ const b=document.createElement('span'); b.className='pf-jn-live'; b.textContent='● IN PROGRESS'; row.querySelector('.pf-jn-meta').prepend(b); }
+    else if(e.auto){ const b=document.createElement('span'); b.className='pf-jn-auto'; b.textContent='AUTO'; row.querySelector('.pf-jn-meta').prepend(b); }
     const [ld,ex,dl]=row.querySelectorAll('button');
     ld.onclick=()=>journeyLoad(e); ex.onclick=()=>journeyExport(e);
     dl.onclick=()=>{ if(dl.dataset.armed){ journeyDelete(e); _pfRenderJourneys(); return; } dl.dataset.armed='1'; dl.textContent='DEL?'; setTimeout(()=>{ if(dl.isConnected){ delete dl.dataset.armed; dl.textContent='✕'; } },2500); };
@@ -2712,6 +2781,7 @@ function enterApp(){
       const app=$('app'); if(app) app.classList.add('vis');
       try{ goScreen('menu'); }catch(e){console.warn('goScreen:',e);}
       try{ _checkAutosaveResume(); }catch(e){}
+      try{ _journeyOfferResume(); }catch(e){}
     }
     try{ updateFullscreenButtons(); }catch(e){}
     if(window.__THREE_LOAD_FAILED__){ try{toast('⚠ 3D engine unavailable — try refresh / check network',4500,'warn');}catch(e){} }
@@ -2722,6 +2792,7 @@ function enterApp(){
 function _revealMenuAfterGfx(){
   $('app').classList.add('vis');goScreen('menu');
   _checkAutosaveResume();
+  try{ _journeyOfferResume(); }catch(e){}
 }
 // Check if there's a valid autosave in localStorage and show resume button.
 // Main menu status panel: pilot, where the last save was, when.
@@ -22300,7 +22371,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
     wrap('exitShipWalk',()=>T('liftoff','temple'));
     // Signed-in players: every save also goes to their private repository.
     wrap('saveToSlot',null,(idx,name)=>{ if(J().vault.ready){ const d=buildSaveData(idx); d.slotName=name||d.slotName; J().vault.save(d,'slot-'+(idx+1)).catch(()=>{}); } });
-    wrap('returnToMenu',null,()=>vaultAutosave());
+    wrap('returnToMenu',null,()=>{ try{ journeyBackupLive(JSON.parse(localStorage.getItem('dm_autosave')||'null'),true); }catch(e){} vaultAutosave(); });
   });
 
   // ── Vault: load the newest save on sign-in; autosave while playing ─
@@ -22411,18 +22482,22 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
   //    closing the tab never loses the spot)
   // Each one updates RESUME GAME; signed in, it also goes to the private
   // repository (milestones at most once a minute).
-  const AUTO_BACKUP_MS=15*60*1000;
-  function saveLocal(){
+  const AUTO_BACKUP_MS=5*60*1000;
+  function saveLocal(upload){
     if(typeof STATE==='undefined'||typeof buildSaveData!=='function') return null;
     if(STATE.screen!=='flight'&&STATE.screen!=='surface'&&STATE.screen!=='atmo') return null;
-    try{ const d=buildSaveData('auto'); localStorage.setItem('dm_autosave',JSON.stringify(d)); return d; }catch(e){ return null; }
+    try{
+      const d=buildSaveData('auto'); localStorage.setItem('dm_autosave',JSON.stringify(d));
+      try{ if(typeof journeyBackupLive==='function') journeyBackupLive(d,!!upload); }catch(e){}
+      return d;
+    }catch(e){ return null; }
   }
-  function autosaveHere(){ if(saveLocal()) vaultAutosave(); }
+  function autosaveHere(){ if(saveLocal(true)) vaultAutosave(); }
   let _lastMilestone=0;
   function milestone(label){
     setTimeout(()=>{                                  // after the arrival settles
-      const d=saveLocal(); if(!d) return;
       const now=Date.now();
+      const d=saveLocal(now-_lastMilestone>=60000); if(!d) return;
       if(now-_lastMilestone<60000) return;
       _lastMilestone=now;
       vaultAutosave();
@@ -22431,7 +22506,10 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
   }
   window.jotsMilestone=milestone;
   setInterval(()=>{ if(!document.hidden) autosaveHere(); },AUTO_BACKUP_MS);
-  document.addEventListener('visibilitychange',()=>{ if(document.hidden) saveLocal(); });
+  let _hideUp=0;
+  const _toBackground=()=>{ const up=Date.now()-_hideUp>60000; if(up) _hideUp=Date.now(); saveLocal(up); };
+  document.addEventListener('visibilitychange',()=>{ if(document.hidden) _toBackground(); });
+  window.addEventListener('pagehide',_toBackground);
 
   // ── Multiplayer: what we send, and everyone else's ships ──────────
   function boardColor(){
@@ -22692,7 +22770,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 </script>
 
 <!-- ?v= stamps: bump on every UI change so browsers never mix a new page with cached old styles -->
-<link rel="stylesheet" href="ui/dm-ui.css?v=105">
+<link rel="stylesheet" href="ui/dm-ui.css?v=106">
 <link rel="stylesheet" href="ui/dm-hud.css?v=104">
 <link rel="stylesheet" href="ui/dm-menu.css?v=80">
 <link rel="stylesheet" href="ui/dm-journal.css?v=97">
