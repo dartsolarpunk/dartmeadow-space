@@ -113,3 +113,7 @@
   @keyframes jnClose{to{transform:rotateY(-100deg);opacity:0}}
   .jn-open-btn{padding:5px 8px;}
 }
+/* marker eye: open = shown in the world, slashed shut = hidden */
+.jn-eye{display:inline-flex;align-items:center;justify-content:center;color:rgba(var(--acc-rgb),.95);}
+.jn-eye.off{color:rgba(255,255,255,.38);}
+.jn-row.jn-hidden .jn-main,.jn-row.jn-hidden .jn-dot{opacity:.45;}
