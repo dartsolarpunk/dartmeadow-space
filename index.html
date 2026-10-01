@@ -127,6 +127,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-fluid.js?v=80"></script>
 <script src="ui/dm-journal.js?v=81"></script>
 <script src="ui/dm-worldstyle.js?v=86"></script>
+<script src="ui/dm-sky.js?v=89"></script>
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js",
@@ -4310,6 +4311,28 @@ function makeSkyDomeMaterial(topColor,botColor,opts){
   return mat;
 }
 // The lit sky + matching fog for a world (surface or sky flight).
+// The living sky (ui/dm-sky.js): day/night on the world clock, stars at
+// night, comets and meteors, the local sun. Falls back to the static dome.
+function _makeSky(scene,pal,body,radius,sunLight){
+  const style=(window.DMWorldStyle&&body)?DMWorldStyle.styleFor(body,pal):'lush';
+  const sk=window.DMWorldStyle?DMWorldStyle.skyFor(style,pal):{haze:pal.fog};
+  if(scene.fog&&pal.atmos&&sk.haze!=null) scene.fog.color.set(sk.haze);
+  if(pal.atmos) scene.background=new THREE.Color(sk.haze!=null?sk.haze:pal.sky[1]);
+  if(window.DMSky){
+    try{
+      const fill=scene.children.filter(o=>o.isHemisphereLight||o.isAmbientLight);
+      const sys=window._curSystem;
+      return DMSky.create(scene,{pal,body,style,radius,atmos:!!pal.atmos,starType:sys?sys.starType:'G',sunLight,sunBase:sunLight?sunLight.intensity:2,fill});
+    }catch(e){ console.warn('[sky] living sky failed, static dome:',e); }
+  }
+  if(pal.atmos) _styledSky(scene,pal,body,radius,sunLight?sunLight.position:undefined);
+  return null;
+}
+// lat/lon of a point in a scene laid out round `site`
+function _skyLatLon(site,x,z){
+  const s=(site&&typeof site.lat==='number')?site:{lat:0,lon:0}, D=0.008;
+  return {lat:Math.max(-89.5,Math.min(89.5,s.lat-z*D)), lon:((s.lon+x*D+540)%360+360)%360-180};
+}
 function _styledSky(scene,pal,body,radius,sunPos,fogNear,fogFar){
   const style=(window.DMWorldStyle&&body)?DMWorldStyle.styleFor(body,pal):'lush';
   const sk=window.DMWorldStyle?DMWorldStyle.skyFor(style,pal):{top:pal.sky[1],bottom:pal.sky[0],haze:pal.fog};
@@ -15496,7 +15519,7 @@ function _atmoSetLandBtn(show){
 }
 let atmoActive=false,atmoRenderer,atmoScene,atmoCamera,atmoAnimId=null;
 let atmoBoard=null,_atmoBody=null,_atmoSite=null,_atmoHeight=null,_atmoCamInit=false;
-let _atmoStyle='lush', _atmoWX0=0, _atmoWZ0=0;
+let _atmoStyle='lush', _atmoWX0=0, _atmoWZ0=0, _atmoSky=null;
 let _atmoTerrainMesh=null,_atmoWaterMesh=null,_atmoTerrainOx=0,_atmoTerrainOz=0,_atmoPal=null;
 let atmoPreset=0,atmoThrottle=0,atmoMach=0;
 let atmoSteer={x:0,y:0},atmoClimb={x:0,y:0};
@@ -15545,7 +15568,7 @@ async function enterAtmosphericFlight(body,site,start){
   }
   // sky dome
   if(pal.atmos){
-    _styledSky(atmoScene,pal,body,4000,sun.position);
+    _atmoSky=_makeSky(atmoScene,pal,body,4000,sun);
   } else {
     const sn=2500,sp=new Float32Array(sn*3);
     for(let i=0;i<sn;i++){const ph=Math.acos(2*Math.random()-1),th=Math.random()*6.28,r=3000;sp[i*3]=r*Math.sin(ph)*Math.cos(th);sp[i*3+1]=Math.abs(r*Math.cos(ph));sp[i*3+2]=r*Math.sin(ph)*Math.sin(th);}
@@ -15828,7 +15851,8 @@ function updateAtmoFlight(dt){
   atmoCamera.position.copy(s.pos).add(_atmoCamRel);
   { const cgh=_atmoHeight?_atmoHeight(atmoCamera.position.x,atmoCamera.position.z):-1e9; if(atmoCamera.position.y<cgh+2) atmoCamera.position.y=cgh+2; }
   atmoCamera.lookAt(s.pos.clone().addScaledVector(fwd,look).add(new THREE.Vector3(0,0.6,0)));
-  if(atmoScene.userData.skyDome) atmoScene.userData.skyDome.position.copy(atmoCamera.position);   // the sky stays round you however far you fly
+  if(_atmoSky){ const ll=_atmoLatLon(s.pos.x,s.pos.z); _atmoSky.update(atmoCamera,dt,ll.lat,ll.lon); if(_atmoSky.sunLight&&_atmoSky.sunDir.y>0.02) _atmoSky.sunLight.position.copy(_atmoSky.sunDir).multiplyScalar(300); }   // the living sky stays round you however far you fly
+  else if(atmoScene.userData.skyDome) atmoScene.userData.skyDome.position.copy(atmoCamera.position);
   // HUD
   const altFt=Math.round((s.pos.y-groundH)*3.28);
   $('atmo-speed').textContent='MACH '+atmoMach.toFixed(2);
@@ -16229,7 +16253,7 @@ function _atmoCleanup(){
   if(CHAR.loaded && CHAR.root && CHAR.root.parent) CHAR.root.parent.remove(CHAR.root);
   if(atmoScene)disposeObject3D(atmoScene); // free terrain/water/skyboard GPU memory (see disposeObject3D)
   if(atmoRenderer)atmoRenderer.dispose();
-  atmoScene=null;atmoBoard=null;atmoState=null;
+  atmoScene=null;atmoBoard=null;atmoState=null;_atmoSky=null;
   _atmoTerrainMesh=null;_atmoWaterMesh=null;_atmoTerrainOx=0;_atmoTerrainOz=0;_atmoPal=null;_atmoHeight=null;
 }
 
@@ -17813,7 +17837,7 @@ async function enterSurface(body,site,opts){
     surfScene.add(hemi);
   }
   surfScene.add(new THREE.AmbientLight(pal.atmos?0x6688aa:0x222233,pal.atmos?0.5:0.25));
-  if(!pal.atmos){ // star dome for airless worlds
+  if(!pal.atmos&&!window.DMSky){ // star dome for airless worlds (the living sky brings its own)
     const sn=2000,sp=new Float32Array(sn*3);
     for(let i=0;i<sn;i++){const ph=Math.acos(2*Math.random()-1),th=Math.random()*6.28,r=800;sp[i*3]=r*Math.sin(ph)*Math.cos(th);sp[i*3+1]=Math.abs(r*Math.cos(ph));sp[i*3+2]=r*Math.sin(ph)*Math.sin(th);}
     const sg=new THREE.BufferGeometry();sg.setAttribute('position',new THREE.BufferAttribute(sp,3));
@@ -17823,7 +17847,7 @@ async function enterSurface(body,site,opts){
   // procedural terrain — heightmapped plane (+ GPU MC patch on real WebGPU)
   await buildSurfaceTerrain(pal);
   // sky gradient dome
-  if(pal.atmos) _styledSky(surfScene,pal,body,1000,sun.position);
+  TERRAIN.sky=_makeSky(surfScene,pal,body,1000,sun);
   // Skyboard spawn — updateSurface keeps it beside her (board-left / her right).
   const board=buildBoardMesh();
   board.scale.setScalar(1.0);
@@ -20020,12 +20044,18 @@ function _surfStreamTick(dt){
       if(v&&v.userData.bounds){ const b=v.userData.bounds, hw=(b.maxX-b.minX)/2, hd=(b.maxZ-b.minZ)/2; b.minX=gx-hw; b.maxX=gx+hw; b.minZ=gz-hd; b.maxZ=gz+hd; }
     }
   }
-  // the sun's shadow box stays centred on her
-  const sun=TERRAIN.sun;
-  if(sun){ sun.position.set(px+80,(p.pos.y||0)+120,pz+40); sun.target.position.set(px,p.pos.y||0,pz); sun.target.updateMatrixWorld(); }
-  // sky dome and stars stay round the camera
-  if(surfScene&&surfScene.userData.skyDome&&surfCamera) surfScene.userData.skyDome.position.copy(surfCamera.position);
+  // the living sky: time of day here, stars, comets, meteors (ui/dm-sky.js)
+  const sky=TERRAIN.sky;
+  if(sky&&surfCamera){ const ll=_skyLatLon(_surfSite,px,pz); sky.update(surfCamera,dt,ll.lat,ll.lon); }
+  else if(surfScene&&surfScene.userData.skyDome&&surfCamera) surfScene.userData.skyDome.position.copy(surfCamera.position);
   if(TERRAIN.starDome&&surfCamera) TERRAIN.starDome.position.copy(surfCamera.position);
+  // the sun's shadow box stays centred on her, lit from where the sun is now
+  const sun=TERRAIN.sun;
+  if(sun){
+    const d=sky?sky.sunDir:null, up=d&&d.y>0.05?d:null;
+    if(up) sun.position.set(px+up.x*160,(p.pos.y||0)+up.y*160,pz+up.z*160); else sun.position.set(px+80,(p.pos.y||0)+120,pz+40);
+    sun.target.position.set(px,p.pos.y||0,pz); sun.target.updateMatrixWorld();
+  }
 }
 async function _surfMcRebuildAt(px,pz){
   if(!surfRenderer||!surfaceActive) return;
@@ -20503,7 +20533,7 @@ function _surfRemountSkyboardFinish(){
   if(CHAR.loaded && CHAR.root && CHAR.root.parent) CHAR.root.parent.remove(CHAR.root);
   if(surfScene)disposeObject3D(surfScene); // free terrain/water/skyboard GPU memory (see disposeObject3D)
   _surfFluidStop();surfScene=null;surfPlayer=null;surfBoard=null;surfTerrainMesh=null;TERRAIN.mcGroup=null;TERRAIN._mcBuildGen=(TERRAIN._mcBuildGen||0)+1;
-  TERRAIN.tiles.clear();TERRAIN.group=null;TERRAIN.mcDensityArray=null;TERRAIN.mcGridInfo=null;TERRAIN.hm=null;TERRAIN.cpuMc=null;TERRAIN.mcGpu=false;TERRAIN.waterFollow=null;TERRAIN.sun=null;TERRAIN.starDome=null;TERRAIN.hmMat=null;TERRAIN.rockGeo=null;
+  TERRAIN.tiles.clear();TERRAIN.group=null;TERRAIN.mcDensityArray=null;TERRAIN.mcGridInfo=null;TERRAIN.hm=null;TERRAIN.cpuMc=null;TERRAIN.mcGpu=false;TERRAIN.waterFollow=null;TERRAIN.sun=null;TERRAIN.starDome=null;TERRAIN.sky=null;TERRAIN.hmMat=null;TERRAIN.rockGeo=null;
   window._surfWaterAt=function(){ return false; };
   window._surfClimbNormal=function(){ return null; };
   enterAtmosphericFlight(body,site,start);
@@ -20544,7 +20574,7 @@ function _exitSurfaceFinish(){
   if(surfScene)disposeObject3D(surfScene); // free terrain/water/skyboard GPU memory (see disposeObject3D)
   if(surfRenderer){surfRenderer.dispose();}
   _surfFluidStop();surfScene=null;surfPlayer=null;surfBoard=null;surfTerrainMesh=null;TERRAIN.mcGroup=null;TERRAIN._mcBuildGen=(TERRAIN._mcBuildGen||0)+1;
-  TERRAIN.tiles.clear();TERRAIN.group=null;TERRAIN.mcDensityArray=null;TERRAIN.mcGridInfo=null;TERRAIN.hm=null;TERRAIN.cpuMc=null;TERRAIN.mcGpu=false;TERRAIN.waterFollow=null;TERRAIN.sun=null;TERRAIN.starDome=null;TERRAIN.hmMat=null;TERRAIN.rockGeo=null;
+  TERRAIN.tiles.clear();TERRAIN.group=null;TERRAIN.mcDensityArray=null;TERRAIN.mcGridInfo=null;TERRAIN.hm=null;TERRAIN.cpuMc=null;TERRAIN.mcGpu=false;TERRAIN.waterFollow=null;TERRAIN.sun=null;TERRAIN.starDome=null;TERRAIN.sky=null;TERRAIN.hmMat=null;TERRAIN.rockGeo=null;
   window._surfWaterAt=function(){ return false; };
   window._surfClimbNormal=function(){ return null; };
   // Re-mount her onto the real flight board now that we're back in open
