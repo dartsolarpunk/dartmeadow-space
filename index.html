@@ -5391,6 +5391,18 @@ async function initFlightScene(){
     try{toast('⚠ Flight renderer failed to init: '+(e&&e.message?e.message:e),5000);}catch(_){}
     return;
   }
+  // The GPU can drop the page (a phone reclaiming memory in the background, a
+  // driver reset). Three.js can't bring a lost device back, so save where she
+  // is and reload into it rather than sit on a black screen.
+  const _gpuLost=(why)=>{
+    if(window._dmGpuLost) return; window._dmGpuLost=true;
+    console.warn('[gpu] lost:',why);
+    try{ if(typeof quickSave==='function'&&STATE.screen==='flight') quickSave(); }catch(e){}
+    try{ toast('⚠ Graphics reset by the device — restoring…',2400); }catch(e){}
+    setTimeout(()=>{ try{ location.reload(); }catch(e){} },1200);
+  };
+  try{ flightRenderer.onDeviceLost=(info)=>_gpuLost(info&&info.message||'device lost'); }catch(e){}
+  try{ cv.addEventListener('webglcontextlost',ev=>{ ev.preventDefault(); _gpuLost('webgl context lost'); },false); }catch(e){}
   flightRenderer.setPixelRatio(effectivePixelRatio());
   flightRenderer.setClearColor(0x000000,1); // pure black vacuum
   flightRenderer.setSize(W,H);
@@ -9821,6 +9833,11 @@ function spQuat(sp){
     }
     sp.quat=q;
   }
+  // one bad number (a touch/gyro glitch, a damaged save) would stick forever and
+  // blank the whole view — heal it back to level flight instead
+  if(!(isFinite(q.x)&&isFinite(q.y)&&isFinite(q.z)&&isFinite(q.w))||(q.x*q.x+q.y*q.y+q.z*q.z+q.w*q.w)<1e-12){
+    q.set(0,0,0,1); try{ _followInit=false; }catch(e){}
+  }
   return q.normalize();
 }
 function spForward(sp){return _sV1.set(0,0,-1).applyQuaternion(spQuat(sp));}
@@ -9829,7 +9846,7 @@ function spRight(sp){return _sV3.set(1,0,0).applyQuaternion(spQuat(sp));}
 // Rotate about the pilot's own LOCAL axis — this is what makes pitch keep
 // going straight through vertical and around, as many loops as you like.
 function spRotateLocal(sp,ax,ay,az,angle){
-  if(!angle)return;
+  if(!angle||!isFinite(angle))return;
   spQuat(sp).multiply(_sQ2.setFromAxisAngle(_sV0.set(ax,ay,az),angle)).normalize();
 }
 // Orientation that looks from sp.pos toward a world point (local -Z at it).
@@ -10177,6 +10194,7 @@ function updateBoardTransform(tf,ts){
   // One quaternion slerp replaces the old per-Euler-component lerps — same
   // smoothing feel, but stays valid at every attitude including mid-loop.
   boardFlight.quaternion.slerp(_sQ1,0.12);
+  const bq=boardFlight.quaternion; if(!(isFinite(bq.x)&&isFinite(bq.y)&&isFinite(bq.z)&&isFinite(bq.w))) bq.copy(_sQ1);
 }
 
 // Follow camera: sit behind & above the board along its full 3-D heading,
@@ -10194,6 +10212,9 @@ function updateFollowCam(dt){
   const desiredRel=_sV3.set(0,0,0)
     .addScaledVector(fwd,-o.back)   // behind the board
     .addScaledVector(up,  o.up);    // above it (frame-relative)
+  if(!(dt>=0&&dt<1)) dt=1/60;
+  const _bad=v=>!(isFinite(v.x)&&isFinite(v.y)&&isFinite(v.z));
+  if(_bad(_camRel)||_bad(_camUp)||_camUp.lengthSq()<1e-8) _followInit=false;
   if(!_followInit){_camRel.copy(desiredRel);_camUp.copy(up);_followInit=true;}
   else _camRel.lerp(desiredRel,Math.min(1,dt*6));
   flightCamera.position.copy(sp.pos).add(_camRel);
@@ -10373,6 +10394,11 @@ function updateBodies(dt){
       const approachRange=Math.max(rad*3.5, rad*2.2+8, 18);
       if(dist<approachRange && dist<_approachBestDist){
         _approachBestDist=dist;_approachBestBody=b;
+      }
+      // getting close: dress the planet in the map of the ground you'd land on
+      if(!b._wmReq && dist<rad*14 && b.name!=='Earth' && !b.isAsteroid && b.type!=='Comet'){
+        b._wmReq=true;
+        try{ worldMapFor(b,m=>_applyWorldMapToFlightBody(b,m)); }catch(e){ console.warn('[worldmap] flight',e); }
       }
     }
   }
@@ -15753,6 +15779,33 @@ function makeOrbitGlobeTexture(body){
   _orbitTexCache[key]=tex;return tex;
 }
 
+// The planet you fly past wears the same whole-planet map as its orbit
+// globe — baked from the very ground you walk on — so the mesas, dune seas,
+// craters and basins seen from space are the ones you land on. Each point of
+// the surface picks its colour by its own latitude/longitude (node shader:
+// WebGPU and the WebGL2 fallback alike); the planet's own relief still shapes
+// the light.
+function _applyWorldMapToFlightBody(b,m){
+  const W=window;
+  if(!m||!m.tex||!b||!b.mesh||typeof W.texture!=='function') return;
+  let best=null,br=0;
+  b.mesh.traverse(o=>{
+    if(!o.isMesh||!o.material||o.material.transparent||o.isSprite) return;
+    if(/ring|cloud|atmo|haze|glow|corona|halo/i.test(o.name||'')) return;
+    const g=o.geometry; if(!g) return; if(!g.boundingSphere) g.computeBoundingSphere();
+    const r=g.boundingSphere?g.boundingSphere.radius:0; if(r>br){ br=r; best=o; }
+  });
+  if(!best) return;
+  try{
+    const {texture,vec2,positionLocal,normalize,atan,asin}=W;
+    const d=normalize(positionLocal), lon=atan(d.z,d.x), lat=asin(d.y.clamp(-1.0,1.0));
+    const uvN=vec2(lon.div(Math.PI*2).add(0.5),lat.div(Math.PI).add(0.5));
+    let mat=best.userData._wmMat;
+    if(!mat){ mat=new THREE.MeshStandardNodeMaterial({roughness:0.92,metalness:0.02}); best.userData._wmMat=mat; best.userData._wmPrev=best.material; }
+    mat.colorNode=texture(m.tex,uvN); mat.needsUpdate=true;
+    best.material=mat;
+  }catch(e){ console.warn('[worldmap] could not dress',b.name,e); }
+}
 // ── Whole-planet map (DART Engine) ───────────────────────────────────
 // One pre-generated map per world, built from the very function you walk
 // on (_terrainCore, plus Earth's real geography), so the globe you see
