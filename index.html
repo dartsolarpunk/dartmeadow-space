@@ -146,6 +146,7 @@ if(location.search.indexOf('debug')!==-1){
 })();</script>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <script src="ui/dm-time.js?v=95"></script>
+<script src="ui/dm-earth.js?v=1"></script>
 <script src="ui/dm-theme.js?v=80"></script>
 <script src="ui/dm-fluid.js?v=80"></script>
 <script src="ui/dm-journal.js?v=97"></script>
@@ -6186,8 +6187,14 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
   // named Mars features (Olympus Mons, Valles Marineris, hemispheric
   // dichotomy), rewritten as branchless TSL so they run in the compute
   // shader instead of a per-pixel CPU loop.
+  // the real Earth: sample the ETOPO5 land value (DMEarth) when it's loaded
+  const _earthTex=(window.DMEarth&&DMEarth.ready)?DMEarth.texture():null;
   const _earthLandMaskTSL=(dir)=>{
     const lat=dir.y.clamp(-1,1).asin(), lon=atan2(dir.z,dir.x);
+    if(_earthTex){
+      const uvE=vec2(lon.div(Math.PI*2).add(0.5),lat.div(Math.PI).add(0.5));
+      return window.texture(_earthTex,uvE).level(0).r.mul(2.6).sub(1.0);
+    }
     let inside=float(-2.0);
     EARTH_CONTINENTS.forEach(c=>{
       const clat=c.lat*Math.PI/180, clon=c.lon*Math.PI/180, crlat=c.rlat*Math.PI/180, crlon=c.rlon*Math.PI/180;
@@ -6607,6 +6614,8 @@ function buildGasGiantMesh(radius, palette, hasStorm){
   return group;
 }
 async function buildSolarSystem(){
+  // the real Earth's relief map is small and loads at start; give it a moment so the planet is built from it
+  try{ if(window.DMEarth&&!DMEarth.ready) await DMEarth.whenReady(6000); }catch(e){}
   // Worlds: wipe prior procedural/Sol extras so return visits don't dual-stack
   // orbit rings / belts / comets on top of the new build.
   if(typeof _clearFlightSystemScene==='function')_clearFlightSystemScene();
@@ -15480,6 +15489,11 @@ function makeOrbitGlobeTexture(body){
 // between frames (never a freeze), kept for the session; a coarse pass
 // arrives first, then the full one.
 const _worldMapCache={};
+// the real Earth's relief arriving after a map or chart was drawn: redraw them from it
+window.addEventListener('dm:earth-ready',()=>{
+  try{ Object.keys(_worldMapCache).forEach(k=>{ if(k.startsWith('Earth|')) delete _worldMapCache[k]; }); }catch(e){}
+  try{ if(typeof _orbitTexCache!=='undefined') Object.keys(_orbitTexCache).forEach(k=>{ if(/\|Earth\|/.test(k)){ try{_orbitTexCache[k].dispose();}catch(e){} delete _orbitTexCache[k]; } }); }catch(e){}
+});
 function worldMapFor(body,onPass){
   const pal=getSurfacePalette(body), seed=_worldSeed(body), key=(body.name||'?')+'|'+seed+'|wm1';
   if(_worldMapCache[key]){ const m=_worldMapCache[key]; if(m.done){ if(onPass) onPass(m); return Promise.resolve(m); } m.listeners.push(onPass); return m.promise; }
@@ -19555,6 +19569,7 @@ function _latLonOf(x,y,z,R){
  *  orbital MC density (TSL port), land-pick/orbit texture, flight canvas, and
  *  surface/atmo site height so continents match across LODs. */
 function earthLandMask(lat,lon,seed){
+  if(window.DMEarth&&DMEarth.ready) return DMEarth.land(lat,lon);   // the real Earth (ETOPO5 relief)
   let inside=-1e9;
   for(const c of EARTH_CONTINENTS){
     const dlon=((lon-c.lon+540)%360)-180;
@@ -19572,6 +19587,7 @@ function earthLandMask(lat,lon,seed){
  *  (Himalayas / Andes / Rockies / Alps-ish). Used by orbit shading + surface
  *  walk contour near the landing site. */
 function earthElevation(lat,lon,seed){
+  if(window.DMEarth&&DMEarth.ready){ const e=DMEarth.metres(lat,lon); return e>0?Math.pow(e/5500,0.8)*1.4:Math.max(-0.35,e/12000); }
   const land=earthLandMask(lat,lon,seed);
   if(land<=0) return THREE.MathUtils.clamp(land,-1,0)*0.35;
   let elev=Math.min(1.15, Math.max(0,land))*0.65;
@@ -19599,6 +19615,14 @@ function earthSiteHeightBias(lat,lon,seed,x,z,metersPerDeg){
   const mpd=(typeof metersPerDeg==='number'&&metersPerDeg>0)?metersPerDeg:0.012;
   const lat2=lat-(z||0)*mpd;
   const lon2=lon+(x||0)*mpd;
+  if(window.DMEarth&&DMEarth.ready){
+    // real metres → walkable game height: the coast sits right at the water
+    // line (0), uplands climb steadily (Everest region ≈ 110), the sea floor
+    // falls away under the generated ocean
+    const e=DMEarth.metres(lat2,lon2);
+    // (snow arrives near 3000 m as on real mountains: the ground's snow line sits ≈ 52)
+    return e>0 ? -4+28*Math.pow(e/1000,0.8) : -10-40*Math.pow(-e/1000,0.6);
+  }
   const land=earthLandMask(lat2,lon2,seed);
   const elev=earthElevation(lat2,lon2,seed);
   if(land>0) return THREE.MathUtils.clamp(land,0,1)*28 + Math.max(0,elev)*42;
