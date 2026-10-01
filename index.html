@@ -52,7 +52,20 @@ if(location.search.indexOf('debug')!==-1){
   // Safari (esp. A2HS / visualViewport) can undersize window.inner* vs the
   // real layout box. Prefer the max of documentElement, inner, and
   // visualViewport so full-bleed canvases match #screen-* clients.
+  // Measured from an invisible full-screen box: right after a rotation iOS
+  // still reports some of inner*/clientWidth/visualViewport at the OLD
+  // orientation, and taking the largest of them kept the game at landscape
+  // size on a portrait phone (a strip in the middle, right side cut off).
+  // The fixed box is laid out by the browser for the current screen, so it
+  // is always right; the max-of-readings path is only a fallback.
+  var _vpBox=null;
   window.__jotsLayoutSize=function(){
+    try{
+      if(!_vpBox&&document.body){ _vpBox=document.createElement('div'); _vpBox.setAttribute('aria-hidden','true'); _vpBox.style.cssText='position:fixed;left:0;top:0;width:100vw;height:100vh;height:100dvh;visibility:hidden;pointer-events:none;z-index:-1;'; document.body.appendChild(_vpBox); }
+      if(_vpBox){ var r=_vpBox.getBoundingClientRect(); if(r.width>10&&r.height>10){ var bw=Math.round(r.width), bh=Math.round(r.height);
+        if(window.visualViewport&&window.visualViewport.width>10){ var vw=Math.round(window.visualViewport.width), vh=Math.round(window.visualViewport.height); if((vw>vh)===(bw>bh)){ bw=Math.max(bw,vw); bh=Math.max(bh,vh); } }
+        return {w:bw,h:bh}; } }
+    }catch(e){}
     var de=document.documentElement;
     var w=Math.max(de&&de.clientWidth||0, window.innerWidth||0);
     var h=Math.max(de&&de.clientHeight||0, window.innerHeight||0);
@@ -60,6 +73,8 @@ if(location.search.indexOf('debug')!==-1){
       w=Math.max(w, Math.round(window.visualViewport.width)||0);
       h=Math.max(h, Math.round(window.visualViewport.height)||0);
     }
+    // never wider-than-tall on a portrait screen (or the reverse)
+    try{ var por=window.matchMedia&&matchMedia('(orientation: portrait)').matches; if(por&&w>h||(!por&&h>w)){ var t=w; w=h; h=t; } }catch(e){}
     return {w:w,h:h};
   };
   function setSafeBot(){
@@ -5391,7 +5406,7 @@ function _resizeAllViews(){
 }
 function _queueViewsResize(){ clearTimeout(_viewsResizeT); _viewsResizeT=setTimeout(_resizeAllViews,140); }
 window.addEventListener('resize',_queueViewsResize);
-window.addEventListener('orientationchange',_queueViewsResize);
+window.addEventListener('orientationchange',()=>{ _queueViewsResize(); _queueFlightResize(); [450,1000].forEach(t=>setTimeout(()=>{ _resizeAllViews(); _queueFlightResize(); },t)); });   // iOS settles its viewport late after a turn
 if(window.visualViewport) window.visualViewport.addEventListener('resize',_queueViewsResize);
 function _startFlightLoop(){
   if(flightAnimId)return; // already running
@@ -20917,7 +20932,17 @@ function updateSurface(dt){
     // subtle rigid root pitch. Bone lean / foot-IK / autoCrouch-from-slope
     // removed — those warped skeleton into prone/crawl look on mid slopes.
     // Stabilizer climb seam: _surfClimbNormal → climbing_up_wall / Grab_Bar
-    let groundNormal = (typeof window._surfNormal==='function') ? window._surfNormal(p.pos.x,p.pos.z) : new THREE.Vector3(0,1,0);
+    // Slope for the climb decision comes from the height field across about
+    // a stride (±1.2 units ≈ 2 ft): sand ripples and a mesh normal seen from
+    // underneath (which read as a 175° "slope") no longer start a climb on
+    // flat dunes; a real cliff still does.
+    let groundNormal;
+    if(typeof _surfHeight==='function'){
+      const e=1.2, X=p.pos.x, Z=p.pos.z, Hs=_surfHeight;
+      groundNormal=new THREE.Vector3(-(Hs(X+e,Z)-Hs(X-e,Z)),2*e,-(Hs(X,Z+e)-Hs(X,Z-e)));
+      if(!isFinite(groundNormal.x+groundNormal.z)) groundNormal.set(0,1,0);
+      groundNormal.normalize();
+    } else groundNormal=new THREE.Vector3(0,1,0);
     const climbN = (typeof window._surfClimbNormal==='function') ? window._surfClimbNormal(p.pos.x, p.pos.y, p.pos.z) : null;
     if(climbN) groundNormal = climbN;
     const slopeDeg = THREE.MathUtils.radToDeg(groundNormal.angleTo(new THREE.Vector3(0,1,0)));
@@ -20930,15 +20955,15 @@ function updateSurface(dt){
     const climbing = !inWater && (surfClimbHeld || autoClimbFromSlope);
     // No bone slope-lean / autoCrouch-from-slope. Prone ONLY via setCharStance.
     CHAR._slopeLeanT = 0;
-    // Optional subtle whole-body pitch from slope normal (rigid root, not skinning).
-    // Clamped ~±10°. Skip while jumping/climbing/swim so those poses stay upright.
-    if(!jumping && !climbing && !inWater){
-      const lookFwdX=-Math.sin(p.yaw), lookFwdZ=-Math.cos(p.yaw);
-      const pitchAmt=Math.atan2(-(groundNormal.x*lookFwdX+groundNormal.z*lookFwdZ), Math.max(0.2, groundNormal.y));
-      CHAR.root.rotation.x = THREE.MathUtils.clamp(pitchAmt, -0.17, 0.17);
-    } else {
-      CHAR.root.rotation.x = 0;
-    }
+    // She stands plumb (perpendicular to level ground) like a real person on
+    // a slope — no whole-body pitch from the ground normal. (That pitch was
+    // applied in the default XYZ order, so after she turned it tipped her
+    // sideways, and ripple-scale normals on dunes rocked her a few degrees
+    // even on flat ground.) Feet meet the ground via _surfFootContact.
+    // Balance trim (below) keeps her stride's average body line exactly vertical.
+    CHAR.root.rotation.order='YXZ';
+    if(jumping||climbing||inWater){ CHAR._trimF=0; CHAR._trimS=0; CHAR._leanAvgF=0; CHAR._leanAvgS=0; }
+    CHAR.root.rotation.x = CHAR._trimF||0; CHAR.root.rotation.z = CHAR._trimS||0;
 
     updateCharacterLocomotion(dt, moving, running, dirSign, jumping, climbing, {
       swim: inWater,
@@ -20948,6 +20973,7 @@ function updateSurface(dt){
       crouch: CHAR.stanceMode==='crouch', // no autoCrouch-from-slope
     });
     _surfFootContact(dt, jumping||climbing||inWater, _sSurf);
+    if(!(jumping||climbing||inWater)) _balanceTrim(dt, p.yaw);
   }
 }
 // Planted-foot contact. After the walk/run/idle pose is applied, measure
@@ -20957,6 +20983,28 @@ function updateSurface(dt){
 // moves (no bone warping). Calibrated once from her own rig: the ankle's
 // height above the sole in the rest pose.
 let _fcV=null;
+// Balance: measure her body line (hips → head) against true vertical,
+// average it over about a stride, and trim the root so that average sits
+// at exactly 0° forward and 0° sideways. A walk clip carries a slight
+// built-in lean; this takes it out without touching the skinning, so she
+// stands perpendicular to level ground whatever clip is playing.
+let _btH=null,_btT=null;
+function _balanceTrim(dt,yaw){
+  const b=CHAR.bones; if(!b||!b.Hips) return;
+  const head=b.Head||b.Neck||b.Spine02; if(!head) return;
+  if(!_btH){ _btH=new THREE.Vector3(); _btT=new THREE.Vector3(); }
+  CHAR.root.updateMatrixWorld(true);
+  b.Hips.getWorldPosition(_btH); head.getWorldPosition(_btT);
+  const v=_btT.sub(_btH); const L=v.length(); if(L<1e-6) return; v.multiplyScalar(1/L);
+  const fx=-Math.sin(yaw), fz=-Math.cos(yaw), rx=Math.cos(yaw), rz=-Math.sin(yaw);
+  const lf=Math.asin(THREE.MathUtils.clamp(v.x*fx+v.z*fz,-1,1)), ls=Math.asin(THREE.MathUtils.clamp(v.x*rx+v.z*rz,-1,1));
+  const a=Math.min(1,dt/1.2);                                  // ~1.2 s running average (a stride or two)
+  CHAR._leanAvgF=(CHAR._leanAvgF||0)+(lf-(CHAR._leanAvgF||0))*a;
+  CHAR._leanAvgS=(CHAR._leanAvgS||0)+(ls-(CHAR._leanAvgS||0))*a;
+  const k=Math.min(1,dt*1.5), lim=0.1;                         // integral trim, at most ~6°
+  CHAR._trimF=THREE.MathUtils.clamp((CHAR._trimF||0)-CHAR._leanAvgF*k,-lim,lim);
+  CHAR._trimS=THREE.MathUtils.clamp((CHAR._trimS||0)-CHAR._leanAvgS*k,-lim,lim);
+}
 function _surfFootContact(dt, airborne, sc){
   if(typeof _surfHeight!=='function') return;
   _footContact(dt, airborne, sc, _surfHeight, CHAR_TERRAIN_HEIGHT/6);
@@ -21954,6 +22002,6 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 <link rel="stylesheet" href="ui/dm-journal.css?v=97">
 <link rel="stylesheet" href="ui/dm-landmap.css?v=86">
 <link rel="stylesheet" href="ui/dm-type.css?v=89">
-<link rel="stylesheet" href="ui/dm-compact.css?v=96">
+<link rel="stylesheet" href="ui/dm-compact.css?v=98">
 </body>
 </html>
