@@ -15329,6 +15329,108 @@ function makeOrbitGlobeTexture(body){
   _orbitTexCache[key]=tex;return tex;
 }
 
+// ── Whole-planet map (DART Engine) ───────────────────────────────────
+// One pre-generated map per world, built from the very function you walk
+// on (_terrainCore, plus Earth's real geography), so the globe you see
+// from orbit shows the ground you land on — the same mountains, canyons,
+// dune seas and coasts, the same for every player. Built in small slices
+// between frames (never a freeze), kept for the session; a coarse pass
+// arrives first, then the full one.
+const _worldMapCache={};
+function worldMapFor(body,onPass){
+  const pal=getSurfacePalette(body), seed=_worldSeed(body), key=(body.name||'?')+'|'+seed+'|wm1';
+  if(_worldMapCache[key]){ const m=_worldMapCache[key]; if(m.done){ if(onPass) onPass(m); return Promise.resolve(m); } m.listeners.push(onPass); return m.promise; }
+  const isEarth=body.name==='Earth';
+  const D=ATMO_DEG_PER_UNIT;
+  const heightAt=(lat,lon)=>{
+    const ws=(window.DMWorldStyle)?DMWorldStyle.styleFor(body,pal,{lat,lon}):'lush';
+    let h=_terrainCore(lon/D,-lat/D,seed,ws);
+    if(isEarth&&typeof earthSiteHeightBias==='function') h=h*0.55+earthSiteHeightBias(lat,lon,seed,0,0,D);
+    return h;
+  };
+  const m={key,body,heightAt,listeners:[onPass],done:false};
+  _worldMapCache[key]=m;
+  const pass=async(W,Hh)=>{
+    const hs=new Float32Array(W*Hh);
+    let t0=performance.now();
+    for(let y=0;y<Hh;y++){
+      const lat=90-(y+0.5)/Hh*180;
+      for(let x=0;x<W;x++){ hs[y*W+x]=heightAt(lat,(x+0.5)/W*360-180); }
+      if(performance.now()-t0>7){ await new Promise(r=>setTimeout(r,0)); t0=performance.now(); }
+    }
+    m.W=W; m.H=Hh; m.heights=hs; m.tex=_worldMapTexture(m,pal);
+    m.listeners.forEach(f=>{ try{ f&&f(m); }catch(e){} });
+  };
+  m.promise=(async()=>{ await pass(256,128); await pass(768,384); m.done=true; m.listeners=[]; return m; })();
+  return m.promise;
+}
+// colour the map like the ground shader colours the terrain: water below
+// sea level, sand at the shore, grass/soil, rock up high and on steep
+// slopes, snow (lower toward the poles), and a sun-from-the-north-west
+// hillshade so relief reads from orbit
+function _worldMapTexture(m,pal){
+  const W=m.W, Hh=m.H, hs=m.heights;
+  const cv=document.createElement('canvas'); cv.width=W; cv.height=Hh;
+  const cx=cv.getContext('2d'), img=cx.createImageData(W,Hh), d=img.data;
+  const g1=new THREE.Color(pal.ground||0x6a7a4a), g2=new THREE.Color(pal.ground2||pal.ground||0x4a5a3a);
+  const rock=new THREE.Color(0x7d7468).lerp(g2,0.35), sand=new THREE.Color(0xd8c48e).lerp(g1,0.25), snow=new THREE.Color(0xeef3fa);
+  const wDeep=new THREE.Color(pal.liquidColor!==undefined?pal.liquidColor:0x0a2f5a).multiplyScalar(0.6), wShal=new THREE.Color(pal.liquidColor!==undefined?pal.liquidColor:0x1a5a8a).lerp(new THREE.Color(0x3f8fb0),0.4);
+  const D=ATMO_DEG_PER_UNIT, cell=(180/Hh)/D;   // map cell size in world units
+  const sm=(a,b,v)=>{ const t=Math.min(1,Math.max(0,(v-a)/(b-a))); return t*t*(3-2*t); };
+  const c=new THREE.Color();
+  const styleAt=(lat,lon)=>window.DMWorldStyle&&m.body?DMWorldStyle.styleFor(m.body,pal,{lat,lon}):'lush';
+  for(let y=0;y<Hh;y++){
+    const lat=90-(y+0.5)/Hh*180, la=Math.abs(lat), cw=Math.max(0.15,Math.cos(lat*Math.PI/180));
+    const snowDrop=la>55?Math.min(50,(la-55)*1.7):(la>32?(la-32)*0.65:0);
+    for(let x=0;x<W;x++){
+      const i=y*W+x, h=hs[i];
+      const hx=hs[y*W+((x+1)%W)]-hs[y*W+((x-1+W)%W)], hz=hs[Math.min(Hh-1,y+1)*W+x]-hs[Math.max(0,y-1)*W+x];
+      const slope=Math.min(1,Math.hypot(hx/(2*cell*cw),hz/(2*cell))*1.5);
+      const ws=styleAt(lat,(x+0.5)/W*360-180);
+      if(pal.water&&h<0){ c.copy(wShal).lerp(wDeep,sm(0,-40,h)); }
+      else if(ws==='lush'||ws==='ice'){
+        c.copy(g1).lerp(g2,sm(10,40,h)*0.6);
+        if(pal.water) c.lerp(sand,sm(6,1,h));
+        c.lerp(rock,Math.max(sm(30-snowDrop*0.3,46,h),sm(0.35,0.75,slope)));
+        c.lerp(snow,ws==='ice'?0.75:sm(52-snowDrop-6,52-snowDrop+8,h)*(1-slope*0.5));
+        if(la>78) c.lerp(snow,sm(78,84,la)*0.85);
+      } else {
+        // dry worlds colour by strata and slope like their ground shader:
+        // banded layers up the mesas, dark scree on steep faces, pale sand
+        // in the dune seas, polar frost only near the poles
+        const band=0.5+0.5*Math.sin(h*0.22);
+        c.copy(g1).lerp(g2,0.25+band*0.35);
+        if(ws==='dunes') c.lerp(sand,0.55);
+        if(ws==='volcanic') c.multiplyScalar(0.55);
+        c.lerp(rock.clone().multiplyScalar(0.8),sm(0.4,0.85,slope)*0.7);
+        if(la>72) c.lerp(snow,sm(72,82,la)*0.8);
+        const shade=Math.max(0.55,Math.min(1.25,1+(-hx/cw+hz)/(2*cell)*0.9));
+        c.multiplyScalar(shade);
+      }
+      d[i*4]=Math.min(255,c.r*255); d[i*4+1]=Math.min(255,c.g*255); d[i*4+2]=Math.min(255,c.b*255); d[i*4+3]=255;
+    }
+  }
+  cx.putImageData(img,0,0);
+  const tex=new THREE.CanvasTexture(cv); tex.colorSpace=THREE.SRGBColorSpace; tex.wrapS=THREE.RepeatWrapping;
+  return tex;
+}
+// lift a unit-sphere globe by the map's heights — the planet's true relief
+// at true scale (planet radius = 360° of the ground's own coordinates)
+function _worldMapRelief(geo,m){
+  const pos=geo.attributes.position, R=360/ATMO_DEG_PER_UNIT/(2*Math.PI), k=1/R, v=new THREE.Vector3();
+  if(!geo.userData.base) geo.userData.base=Float32Array.from(pos.array);
+  const b=geo.userData.base;
+  for(let i=0;i<pos.count;i++){
+    v.set(b[i*3],b[i*3+1],b[i*3+2]).normalize();
+    const lat=Math.asin(Math.max(-1,Math.min(1,v.y)))*180/Math.PI, lon=Math.atan2(v.z,v.x)*180/Math.PI;
+    const fx=((lon+180)/360*m.W-0.5+m.W)%m.W, fy=Math.max(0,Math.min(m.H-1,(90-lat)/180*m.H-0.5));
+    const x0=Math.floor(fx), y0=Math.floor(fy), x1=(x0+1)%m.W, y1=Math.min(m.H-1,y0+1), ux=fx-x0, uy=fy-y0;
+    const H=m.heights, h=(H[y0*m.W+x0]*(1-ux)+H[y0*m.W+x1]*ux)*(1-uy)+(H[y1*m.W+x0]*(1-ux)+H[y1*m.W+x1]*ux)*uy;
+    const r=1+Math.max(m.body&&getSurfacePalette(m.body).water?0:-1e9,h)*k;
+    pos.setXYZ(i,v.x*r,v.y*r,v.z*r);
+  }
+  pos.needsUpdate=true; geo.computeVertexNormals();
+}
 async function openOrbitApproach(body){
   if(orbitActive)return;
   _orbitBody=body;orbitActive=true;_orbitSite=null;
@@ -15340,7 +15442,7 @@ async function openOrbitApproach(body){
   $('orbit-sub').textContent=(body.type||'World')+(landable?' · landable':' · gas/hostile — flyover only');
   $('orbit-site').textContent='';
   $('orbit-descend').style.display='none';
-  const cv=$('orbit-canvas');const W=window.innerWidth,H=window.innerHeight;cv.width=W;cv.height=H;
+  const cv=_freshCanvas('orbit-canvas');const W=window.innerWidth,H=window.innerHeight;cv.width=W;cv.height=H;   // fresh each visit: a reused canvas keeps its old context
   orbitRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:!GFX.isMobile});
   await orbitRenderer.init();
   orbitRenderer.setPixelRatio(effectivePixelRatio());orbitRenderer.setSize(W,H);
@@ -15364,8 +15466,14 @@ async function openOrbitApproach(body){
   try{ tex=makeOrbitGlobeTexture(body); }catch(e){}
   const mat=tex?new THREE.MeshStandardMaterial({map:tex,roughness:0.85,metalness:0.1,emissive:0x06141c,emissiveMap:tex,emissiveIntensity:0.35})
                :new THREE.MeshStandardMaterial({color:body.color||pal.ground,roughness:0.9});
-  orbitGlobe=new THREE.Mesh(new THREE.SphereGeometry(1,96,64),mat);
+  orbitGlobe=new THREE.Mesh(new THREE.SphereGeometry(1,192,128),mat);
   orbitScene.add(orbitGlobe);
+  // the whole-planet map: the true ground, coarse first then full detail
+  try{ const g=orbitGlobe, isEarth=body.name==='Earth';
+    worldMapFor(body,(m)=>{ if(orbitGlobe!==g) return;
+      if(!isEarth){ mat.map=m.tex; mat.emissiveMap=m.tex; mat.color&&mat.color.set(0xffffff); mat.needsUpdate=true; }   // Earth keeps its continent chart, gains the relief
+      _worldMapRelief(g.geometry,m); });
+  }catch(e){ console.warn('[worldmap]',e); }
   // atmosphere glow for atmospheric worlds
   if(pal.atmos){
     const atm=new THREE.Mesh(new THREE.SphereGeometry(1.06,48,32),new THREE.MeshBasicMaterial({color:pal.sky?pal.sky[0]:0x88bbff,transparent:true,opacity:0.16,side:THREE.BackSide,blending:THREE.AdditiveBlending}));
@@ -19404,36 +19512,10 @@ function buildMarchingCubesAsteroid(radius,seed,resolution){
 //   window._surfWaterAt(x,y,z) → true when inside a water volume
 //   window._surfClimbNormal(x,y,z) → wall normal Vector3 near climbable face, else null
 // Also: window._surfHeight / window._surfNormal for ground + foot IK.
-async function buildSurfaceTerrain(pal){
-  const seed=_worldSeed(_surfBody);
-  const siteLandBias=(()=>{
-    // Same earthLandMask/earthElevation as orbital MC + land-pick — walking
-    // at a landed site matches the continent you picked from orbit.
-    if(!_surfSite || typeof _surfSite.lat!=='number' || typeof _surfSite.lon!=='number') return 0;
-    if(_surfBody && _surfBody.name==='Earth' && typeof earthSiteHeightBias==='function'){
-      return earthSiteHeightBias(_surfSite.lat,_surfSite.lon,seed,0,0);
-    }
-    return 0;
-  })();
-  const _surfEarthGeo=(_surfBody && _surfBody.name==='Earth' && _surfSite && typeof _surfSite.lat==='number');
-  // the world's style (mesa / ice / crater / volcanic / lush) — ui/dm-worldstyle.js
-  const _ws=(window.DMWorldStyle&&_surfBody)?DMWorldStyle.styleFor(_surfBody,pal,_surfSite):'lush';
-  TERRAIN.style=_ws;
-  const _sw=_siteWorldXZ(_surfSite); TERRAIN.wx0=_sw.x; TERRAIN.wz0=_sw.z;
-  // height function (kept from the original, drives collision + tiles).
-  // Curvature falloff lives HERE (not duplicated in buildTerrainTile) so
-  // collision and the visual mesh can never disagree about ground height —
-  // both call this same function. TERRAIN.curveR is set just below, before
-  // this is ever invoked.
-  function H(x,z){
-    // Reverted to a single fixed-size patch (see below) — past the edge of
-    // the generated square there is deliberately no ground, so flying/
-    // walking off it actually falls rather than standing on invisible-but-
-    // still-solid terrain. Matches the pre-continuous-generation behavior:
-    // pick a landing spot, get one bounded square, fly to its edge and
-    // drop off.
-    // no edge any more — the ground streams round her wherever she goes
-    const lx=x, lz=z; x+=_sw.x; z+=_sw.z;   // the planet's own coordinates (same field the sky flies over)
+// ── The planet's terrain, in its own coordinates (x = lon/ATMO_DEG_PER_UNIT,
+// z = -lat/ATMO_DEG_PER_UNIT): one function for walking, sky flight and the
+// whole-planet map (DMWorldMap), so every view shows the same ground.
+function _terrainCore(x,z,seed,_ws){
     let h=_fbm(x*0.012+100,z*0.012+100,seed,5)*22;
     h+=_fbm(x*0.04,z*0.04,seed+3,3)*5;
     const m=_fbm(x*0.005,z*0.005,seed+7,4);
@@ -19484,6 +19566,39 @@ async function buildSurfaceTerrain(pal){
       h-=Math.pow(riverDepth,1.2)*22;
     }
     if(_ws!=='lush') h=DMWorldStyle.shape(_ws,x,z,h,seed,_fbm);
+  return h;
+}
+async function buildSurfaceTerrain(pal){
+  const seed=_worldSeed(_surfBody);
+  const siteLandBias=(()=>{
+    // Same earthLandMask/earthElevation as orbital MC + land-pick — walking
+    // at a landed site matches the continent you picked from orbit.
+    if(!_surfSite || typeof _surfSite.lat!=='number' || typeof _surfSite.lon!=='number') return 0;
+    if(_surfBody && _surfBody.name==='Earth' && typeof earthSiteHeightBias==='function'){
+      return earthSiteHeightBias(_surfSite.lat,_surfSite.lon,seed,0,0);
+    }
+    return 0;
+  })();
+  const _surfEarthGeo=(_surfBody && _surfBody.name==='Earth' && _surfSite && typeof _surfSite.lat==='number');
+  // the world's style (mesa / ice / crater / volcanic / lush) — ui/dm-worldstyle.js
+  const _ws=(window.DMWorldStyle&&_surfBody)?DMWorldStyle.styleFor(_surfBody,pal,_surfSite):'lush';
+  TERRAIN.style=_ws;
+  const _sw=_siteWorldXZ(_surfSite); TERRAIN.wx0=_sw.x; TERRAIN.wz0=_sw.z;
+  // height function (kept from the original, drives collision + tiles).
+  // Curvature falloff lives HERE (not duplicated in buildTerrainTile) so
+  // collision and the visual mesh can never disagree about ground height —
+  // both call this same function. TERRAIN.curveR is set just below, before
+  // this is ever invoked.
+  function H(x,z){
+    // Reverted to a single fixed-size patch (see below) — past the edge of
+    // the generated square there is deliberately no ground, so flying/
+    // walking off it actually falls rather than standing on invisible-but-
+    // still-solid terrain. Matches the pre-continuous-generation behavior:
+    // pick a landing spot, get one bounded square, fly to its edge and
+    // drop off.
+    // no edge any more — the ground streams round her wherever she goes
+    const lx=x, lz=z; x+=_sw.x; z+=_sw.z;   // the planet's own coordinates (same field the sky flies over)
+    let h=_terrainCore(x,z,seed,_ws);
     // No large-scale curvature falloff — local hills only. Earth samples
     // the SAME land/elevation field around the landing lat/lon so walk
     // contour (altitude+slope) matches orbital continents near the site.
