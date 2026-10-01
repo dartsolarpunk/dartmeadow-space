@@ -26,17 +26,19 @@
 
   // ── simulation core (no THREE; runs in Node for tests) ───────────────
   function Core(o) {
-    const n = o.count | 0;
-    this.n = n;
     this.s = o.spacing || 1.0;                 // rest spacing (world units)
     this.h = this.s * 2.0;                     // smoothing radius
     this.depth = o.depth || 3.0;               // simulated slab depth
+    // whole layers only: a part-filled top layer would read as bumps on calm water
+    const layers = Math.max(1, Math.round(this.depth / this.s)), per = Math.max(3, Math.round(Math.sqrt((o.count | 0) / layers)));
+    const n = per * per * layers;
+    this.n = n;
     this.restY = o.restY || 0;                 // where the slab's top settles
     this.g = o.gravity != null ? o.gravity : 16;
     this.floor = o.floor || (() => -1e9);
     this.substeps = o.substeps || 2;
     // patch footprint: square, sized so `count` particles fill the slab
-    this.L = Math.sqrt(n * this.s * this.s * this.s / this.depth);
+    this.L = per * this.s;
     this.cx = o.cx || 0; this.cz = o.cz || 0;
     // kernels (Lague, 3-D)
     const h = this.h;
@@ -45,11 +47,12 @@
     this.kP2g = 15 / (PI * Math.pow(h, 5));
     this.kP3g = 45 / (PI * Math.pow(h, 6));
     this.kPoly6 = 315 / (64 * PI * Math.pow(h, 9));
+    this._buildBoundary();
     // stiffness ~ c², c ≈ 4·sqrt(g·depth): weakly compressible, stable at dt/substeps
     const c = 4 * Math.sqrt(this.g * this.depth);
     this.k = o.pressure || c * c;
     this.kNear = o.nearPressure || this.k * 0.013 * h;
-    this.visc = o.viscosity != null ? o.viscosity : 0.05;
+    this.visc = o.viscosity != null ? o.viscosity : 0.3;
     this.damp = 0.6;
     this.pos = new Float32Array(n * 3);
     this.pred = new Float32Array(n * 3);
@@ -85,6 +88,34 @@
       this.bottom += dy; this.time = 0;
     }
   }
+  // The slab is the top of deep water (or sits on the seabed in shallows), so
+  // below its floor we count virtual water: a semi-infinite lattice whose
+  // density, near-density and upward pressure push are tabulated by height
+  // above the floor. Without it the bottom layer sees half a kernel and the
+  // layer above sinks into it.
+  Core.prototype._buildBoundary = function () {
+    const s = this.s, h = this.h, B = 48, D = this.bD = new Float32Array(B + 1), DN = this.bDN = new Float32Array(B + 1);
+    const FY = this.bFY = new Float32Array(B + 1), FNY = this.bFNY = new Float32Array(B + 1);
+    const R = Math.ceil(h / s) + 1;
+    for (let b = 0; b <= B; b++) {
+      const d = (b / B) * h;
+      let dd = 0, dn = 0, fy = 0, fny = 0, cnt = 0;
+      // average over a few horizontal offsets of the particle against the lattice
+      for (const [ox, oz] of [[0, 0], [0.5, 0], [0, 0.5], [0.5, 0.5]]) {
+        cnt++;
+        for (let ly = 0; ly < R; ly++) for (let lx = -R; lx <= R; lx++) for (let lz = -R; lz <= R; lz++) {
+          const vx = (lx + ox) * s, vz = (lz + oz) * s, vy = -(ly + 0.5) * s - d;
+          const r = Math.sqrt(vx * vx + vy * vy + vz * vz); if (r >= h || r < 1e-6) continue;
+          const v = h - r, uy = vy / r;
+          dd += v * v * this.kP2; dn += v * v * v * this.kP3;
+          fy += uy * (-v * this.kP2g); fny += uy * (-v * v * this.kP3g);
+        }
+      }
+      D[b] = dd / cnt; DN[b] = dn / cnt; FY[b] = fy / cnt; FNY[b] = fny / cnt;
+    }
+    this.bBins = B;
+  };
+  Core.prototype._bIdx = function (d) { const b = Math.round((d / this.h) * this.bBins); return b < 0 ? 0 : b > this.bBins ? -1 : b; };
   Core.prototype._spawn = function () {
     const n = this.n, s = this.s, L = this.L, per = Math.max(1, Math.round(L / s));
     let i = 0;
@@ -212,6 +243,10 @@
     for (let i = 0; i < this.nAct; i++) {
       let d = 0, dn = 0;
       for (let k = NS[i], e = NS[i + 1]; k < e; k++) { const v = h - NR[k]; d += v * v * kP2; dn += v * v * v * kP3; }
+      if (this.bD) {
+        const y = this.pred[i * 3 + 1], fl = Math.max(this._floorAt(this.pred[i * 3], this.pred[i * 3 + 2]), this.bottom);
+        const b = this._bIdx(y - fl); if (b >= 0) { d += this.bD[b]; dn += this.bDN[b]; }
+      }
       this.dens[i] = d; this.near[i] = dn;
     }
   };
@@ -263,6 +298,11 @@
         // Ihmsen trapped-air: relative speed of converging neighbours
         const rx = vx - V[j * 3], ry = vy - V[j * 3 + 1], rz = vz - V[j * 3 + 2], rl = Math.sqrt(rx * rx + ry * ry + rz * rz);
         if (rl > 1e-6) trap += rl * (1 - (rx * -ux + ry * -uy + rz * -uz) / rl) * (1 - r / h);
+      }
+      if (this.bD) {                             // virtual water below pushes back up
+        const y = Q[i * 3 + 1], fl = Math.max(this._floorAt(Q[i * 3], Q[i * 3 + 2]), this.bottom);
+        const b = this._bIdx(y - fl);
+        if (b >= 0) fy += this.bFY[b] * pi / rho0 + this.bFNY[b] * pni / (DN[i] > 1e-6 ? DN[i] : 1e-6);
       }
       const inv = 1 / (di > 1e-6 ? di : 1e-6);
       let nvx = vx + fx * inv * dt, nvy = vy + fy * inv * dt, nvz = vz + fz * inv * dt;
@@ -351,10 +391,117 @@
     this.n = w;
   };
 
+  // ── volumetric surface: marching cubes over the particle field ────────
+  // Each particle adds a smooth kernel to a 3-D grid over the patch (periodic
+  // in x/z like the sim); the iso-surface of that field is the water's skin,
+  // so splashes are real blobs and sheets and she passes through the volume.
+  const CELL_BY_TIER = { low: 0.9, medium: 0.7, high: 0.55, ultra: 0.45 };
+  function Volume(core, tier, tables) {
+    this.C = core; this.T = tables;
+    const s = core.s, c = this.c = s * (CELL_BY_TIER[tier] || 0.7);
+    this.nx = Math.max(6, Math.round(core.L / c)); this.cx_ = core.L / this.nx;   // exact fit (periodic)
+    this.y0 = core.restY - 2.2 * s; this.ny = Math.max(4, Math.ceil((5.4 * s) / c)); this.cy = (5.4 * s) / this.ny;
+    this.R = 1.5 * s; this.iso = 0.5;
+    const n = this.nx, ny = this.ny;
+    this.f = new Float32Array(n * (ny + 1) * n);     // x/z periodic: n points per axis; y: ny+1
+    this.wrap = new Int32Array(n + 2); for (let i = -1; i <= n; i++) this.wrap[i + 1] = ((i % n) + n) % n;
+    // normalise so the inside of a calm lattice reads ~1
+    let w0 = 0; const RR = this.R * this.R, k = Math.ceil(this.R / s) + 1;
+    for (let x = -k; x <= k; x++) for (let y = -k; y <= k; y++) for (let z = -k; z <= k; z++) { const r2 = (x * x + y * y + z * z) * s * s; if (r2 < RR) { const q = 1 - r2 / RR; w0 += q * q * q; } }
+    this.w0 = w0;
+    this.maxV = 60000;
+    this.pos = new Float32Array(this.maxV * 3); this.nrm = new Float32Array(this.maxV * 3); this.col = new Float32Array(this.maxV * 4);
+    this.nv = 0; this.offY = 0;
+    // only the band around the surface is ever visible: mesh/splat just that
+    this.yMin = core.restY - 1.0 * s;
+    this.iyMin = Math.max(0, Math.floor((this.yMin - this.y0) / this.cy) - 1);
+    // calibrate: where the calm skin sits, so it lands just under the water plane on every tier
+    this.splat(); this.mesh(null, null, core.restY, 0.15, true);
+    // (the calm skin has small lattice bumps: put their tops, not their middle, under the plane)
+    const ys = [];
+    for (let i = 0; i < this.nv; i++) if (this.nrm[i * 3 + 1] > 0.6) ys.push(this.pos[i * 3 + 1]);
+    ys.sort((a, b) => a - b);
+    this.offY = ys.length ? (core.restY - 0.04) - ys[Math.floor(ys.length * 0.97)] : 0;
+    this.bump = ys.length ? ys[Math.floor(ys.length * 0.97)] - ys[Math.floor(ys.length * 0.5)] : 0;
+  }
+  Volume.prototype.splat = function () {
+    const C = this.C, f = this.f, n = this.nx, ny = this.ny, c = this.cx_, cy = this.cy, R = this.R, RR = R * R, inv = 1 / this.w0;
+    f.fill(0);
+    const lo = C.cx - C.L / 2, lz = C.cz - C.L / 2, P = C.pos, rc = Math.ceil(R / c), ry = Math.ceil(R / cy), W = this.wrap, iyMin = this.iyMin;
+    const pyMin = this.y0 + iyMin * cy - R;
+    for (let i = 0; i < C.nAct; i++) {
+      const py = P[i * 3 + 1]; if (py < pyMin) continue;      // too deep to reach the visible band
+      const px = P[i * 3], pz = P[i * 3 + 2];
+      const gx = (px - lo) / c, gy = (py - this.y0) / cy, gz = (pz - lz) / c;
+      const ix0 = Math.floor(gx), iy0 = Math.floor(gy), iz0 = Math.floor(gz);
+      for (let dy = -ry + 1; dy <= ry; dy++) {
+        const iy = iy0 + dy; if (iy < iyMin || iy > ny) continue;
+        const ey = (iy - gy) * cy, ey2 = ey * ey; if (ey2 >= RR) continue;
+        for (let dz = -rc + 1; dz <= rc; dz++) {
+          const ez = (iz0 + dz - gz) * c, ez2 = ez * ez; if (ey2 + ez2 >= RR) continue;
+          let iz = iz0 + dz; iz = iz >= 0 && iz < n ? iz : ((iz % n) + n) % n;
+          const rowBase = (iz * (ny + 1) + iy) * n;
+          for (let dx = -rc + 1; dx <= rc; dx++) {
+            const ex = (ix0 + dx - gx) * c, r2 = ex * ex + ey2 + ez2; if (r2 >= RR) continue;
+            let ix = ix0 + dx; ix = ix >= 0 && ix < n ? ix : ((ix % n) + n) % n;
+            const q = 1 - r2 / RR;
+            f[rowBase + ix] += q * q * q * inv;
+          }
+        }
+      }
+    }
+  };
+  Volume.prototype.mesh = function (liquid, white, restY, fadeFrac, calib) {
+    const T = this.T, EDGE = T.edge, TRI = T.tri, CO = T.corners, EC = T.edges;
+    const f = this.f, n = this.nx, ny = this.ny, ny1 = ny + 1, c = this.cx_, cy = this.cy, iso = this.iso, C = this.C, W = this.wrap;
+    const lo = -C.L / 2, P = this.pos, N = this.nrm, K = this.col, off = this.offY, L = C.L, s = C.s;
+    const idx = (x, y, z) => (W[z + 1] * ny1 + y) * n + W[x + 1];
+    let v = 0;
+    const cv = new Float32Array(8), cp = new Float32Array(24), cg = new Float32Array(24);
+    for (let z = 0; z < n; z++) for (let y = this.iyMin; y < ny; y++) for (let x = 0; x < n; x++) {
+      let ci = 0;
+      for (let k = 0; k < 8; k++) {
+        const o = CO[k], X = x + o[0], Y = y + o[1], Z = z + o[2];
+        const val = f[idx(X, Y, Z)]; cv[k] = val;
+        if (val > iso) ci |= 1 << k;                      // inside = more water than the iso level
+      }
+      if (ci === 0 || ci === 255 || EDGE[ci] === 0) continue;
+      for (let k = 0; k < 8; k++) {
+        const o = CO[k], X = x + o[0], Y = y + o[1], Z = z + o[2];
+        cp[k * 3] = lo + X * c; cp[k * 3 + 1] = this.y0 + Y * cy + off; cp[k * 3 + 2] = lo + Z * c;
+        // field gradient → outward normal (points away from the water)
+        cg[k * 3] = f[idx(X - 1, Y, Z)] - f[idx(X + 1, Y, Z)];
+        cg[k * 3 + 1] = f[idx(X, Y > 0 ? Y - 1 : Y, Z)] - f[idx(X, Y < ny ? Y + 1 : Y, Z)];
+        cg[k * 3 + 2] = f[idx(X, Y, Z - 1)] - f[idx(X, Y, Z + 1)];
+      }
+      const tri = TRI[ci];
+      for (let t = 0; t < 15 && tri[t] !== -1; t++) {
+        if (v >= this.maxV) break;
+        const e = EC[tri[t]], a = e[0], b = e[1], va = cv[a], vb = cv[b];
+        const mu = Math.abs(vb - va) < 1e-6 ? 0.5 : (iso - va) / (vb - va);
+        const X = cp[a * 3] + mu * (cp[b * 3] - cp[a * 3]), Y = cp[a * 3 + 1] + mu * (cp[b * 3 + 1] - cp[a * 3 + 1]), Z = cp[a * 3 + 2] + mu * (cp[b * 3 + 2] - cp[a * 3 + 2]);
+        const gx = cg[a * 3] + mu * (cg[b * 3] - cg[a * 3]), gy = cg[a * 3 + 1] + mu * (cg[b * 3 + 1] - cg[a * 3 + 1]), gz = cg[a * 3 + 2] + mu * (cg[b * 3 + 2] - cg[a * 3 + 2]);
+        const gl = Math.sqrt(gx * gx + gy * gy + gz * gz) || 1;
+        P[v * 3] = X; P[v * 3 + 1] = Y; P[v * 3 + 2] = Z; N[v * 3] = gx / gl; N[v * 3 + 1] = gy / gl; N[v * 3 + 2] = gz / gl;
+        if (!calib) {
+          // shown only above the water plane (calm water is the plane), fading at the patch edges
+          const ex = 0.5 - Math.abs(X / L), ez = 0.5 - Math.abs(Z / L), edge = Math.min(1, Math.min(ex, ez) / fadeFrac);
+          const up = Math.min(1, Math.max(0, (Y - (restY + 0.02)) / (0.3 * s)));
+          const wv = Math.min(0.55, Math.max(0, Y - restY) * 0.25);
+          K[v * 4] = liquid.r + (white.r - liquid.r) * wv; K[v * 4 + 1] = liquid.g + (white.g - liquid.g) * wv; K[v * 4 + 2] = liquid.b + (white.b - liquid.b) * wv;
+          K[v * 4 + 3] = up * (edge > 0 ? edge : 0);
+        }
+        v++;
+      }
+    }
+    this.nv = v;
+    return v;
+  };
+
   // ── in-game wrapper (THREE rendering + world hooks) ──────────────────
-  // The water is drawn as a wave surface shaped by the particles under it
-  // (same look as the world's water plane, fading into it at the patch
-  // edges), plus droplets for water thrown into the air and foam flecks.
+  // The water is drawn as a marching-cubes surface of the particle field
+  // (o.mc carries the game's MC tables); without them, as a wave grid.
+  // Plus droplets for lone water thrown into the air, and foam flecks.
   function Water(THREE, scene, o) {
     this.THREE = THREE; this.scene = scene;
     const tier = o.tier in TIER_COUNT ? o.tier : 'medium';
@@ -367,17 +514,28 @@
     this.tideAmp = o.tide || 0; this.tidePeriod = 90;
     this.liquid = new THREE.Color(o.color != null ? o.color : 0x1a4a7a);
     this.restTop = C.restY - 0.55 * s + 0.5 * s;      // settled top of the particle slab
-    // wave surface
-    const g = this.g = Math.max(8, Math.round(C.L / (s * 0.5)));
-    const geo = new THREE.PlaneGeometry(C.L, C.L, g, g); geo.rotateX(-Math.PI / 2);
-    const cols = new Float32Array((g + 1) * (g + 1) * 4); geo.setAttribute('color', new THREE.BufferAttribute(cols, 4));   // rgba: calm water is clear, crests show
     const base = o.material;
     const mat = base && base.clone ? base.clone() : new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, roughness: 0.15, metalness: 0.4 });
     mat.color = new THREE.Color(0xffffff); mat.vertexColors = true; mat.vertexAlphas = true; mat.transparent = true; mat.depthWrite = false;
+    mat.side = THREE.DoubleSide;
     if (o.opacity != null) mat.opacity = o.opacity;
-    this.surf = new THREE.Mesh(geo, mat); this.surf.name = 'JOTS_FluidSurface'; this.surf.frustumCulled = false;
-    this.surf.userData.isWaterSurface = true;
-    this.hgt = new Float32Array((g + 1) * (g + 1)); this.spd = new Float32Array((g + 1) * (g + 1));
+    if (o.mc && o.mc.tri && o.mc.edge) {
+      this.vol = new Volume(C, tier, o.mc);
+      const geo = new THREE.BufferGeometry();
+      const V = this.vol;
+      this._pa = new THREE.BufferAttribute(V.pos, 3); this._na = new THREE.BufferAttribute(V.nrm, 3); this._ca = new THREE.BufferAttribute(V.col, 4);
+      [this._pa, this._na, this._ca].forEach((a) => a.setUsage(THREE.DynamicDrawUsage));
+      geo.setAttribute('position', this._pa); geo.setAttribute('normal', this._na); geo.setAttribute('color', this._ca);
+      geo.setDrawRange(0, 0);
+      this.surf = new THREE.Mesh(geo, mat); this.surf.name = 'JOTS_FluidVolume';
+    } else {
+      const g = this.g = Math.max(8, Math.round(C.L / (s * 0.5)));
+      const geo = new THREE.PlaneGeometry(C.L, C.L, g, g); geo.rotateX(-Math.PI / 2);
+      geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array((g + 1) * (g + 1) * 4), 4));
+      this.surf = new THREE.Mesh(geo, mat); this.surf.name = 'JOTS_FluidSurface';
+      this.hgt = new Float32Array((g + 1) * (g + 1)); this.spd = new Float32Array((g + 1) * (g + 1));
+    }
+    this.surf.frustumCulled = false; this.surf.userData.isWaterSurface = true;
     // droplets (airborne water) and foam flecks
     const dg = new THREE.IcosahedronGeometry(s * 0.28, 1);
     const dm = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.1, metalness: 0.2, transparent: true, opacity: 0.9 });
@@ -415,6 +573,7 @@
     this._draw();
   };
   Water.prototype._draw = function () {
+    if (this.vol) return this._drawVolume();
     const C = this.core, P = C.pos, V = C.vel, s = C.s, g = this.g, L = C.L, cs = L / g, lo = C.cx - L / 2, lz = C.cz - L / 2;
     const H = this.hgt, SP = this.spd, NEG = -1e9;
     H.fill(NEG); SP.fill(0);
@@ -477,12 +636,37 @@
     }
     this.foamMesh.count = F.n; this.foamMesh.instanceMatrix.needsUpdate = true;
   };
+  Water.prototype._drawVolume = function () {
+    const C = this.core, P = C.pos, V = this.vol;
+    // lone water thrown clear of the rest: droplets (too thin for the iso-surface)
+    let nd = 0;
+    for (let i = 0; i < C.nAct; i++) {
+      if (P[i * 3 + 1] > this.restTop + 0.9 * C.s && C.nbCount[i] < 4) { this._m.makeTranslation(P[i * 3], P[i * 3 + 1], P[i * 3 + 2]); this.drops.setMatrixAt(nd++, this._m); }
+    }
+    this.drops.count = nd; this.drops.instanceMatrix.needsUpdate = true;
+    V.splat();
+    const nv = V.mesh(this.liquid, this._white, C.restY, 0.15);
+    this.surf.position.set(C.cx, 0, C.cz);
+    this.surf.geometry.setDrawRange(0, nv);
+    [this._pa, this._na, this._ca].forEach((a) => { a.needsUpdate = true; if (a.clearUpdateRanges) { a.clearUpdateRanges(); a.addUpdateRange(0, nv * a.itemSize); } });
+    this._drawFoam();
+  };
+  Water.prototype._drawFoam = function () {
+    const F = this.foam, m = this._m;
+    for (let i = 0; i < F.n; i++) {
+      const k = Math.max(0.15, F.life[i] / F.l0[i]);
+      this._sc.setScalar(k);
+      m.compose(this._v.set(F.p[i * 3], F.p[i * 3 + 1], F.p[i * 3 + 2]), this._q, this._sc);
+      this.foamMesh.setMatrixAt(i, m);
+    }
+    this.foamMesh.count = F.n; this.foamMesh.instanceMatrix.needsUpdate = true;
+  };
   Water.prototype.follow = function (x, z) { this.core.follow(x, z); };
   Water.prototype.dispose = function () {
     [this.surf, this.drops, this.foamMesh].forEach((o) => { try { this.scene.remove(o); o.geometry.dispose(); o.material.dispose(); } catch (e) {} });
   };
 
-  const api = { Core, Foam, Water, TIER_COUNT };
+  const api = { Core, Foam, Volume, Water, TIER_COUNT };
   if (typeof window !== 'undefined') window.DMFluid = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })();
