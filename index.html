@@ -4316,7 +4316,7 @@ function _styledSky(scene,pal,body,radius,sunPos,fogNear,fogFar){
   const mat=makeSkyDomeMaterial(sk.top,sk.bottom,{haze:sk.haze,sun:sk.sun,glow:sk.glow,sunDir:sunPos,hazeAmt:style==='lush'?0.55:0.85});
   const dome=new THREE.Mesh(new THREE.SphereGeometry(radius,32,24),mat);
   dome.renderOrder=-10; dome.frustumCulled=false;
-  scene.add(dome);
+  scene.add(dome); scene.userData.skyDome=dome;   // kept round the camera by the scene's loop
   if(scene.fog&&sk.haze!=null){ scene.fog.color.set(sk.haze); if(fogNear!=null){ scene.fog.near=fogNear; scene.fog.far=fogFar; } }
   scene.background=new THREE.Color(sk.haze!=null?sk.haze:pal.sky[1]);
   return dome;
@@ -15828,6 +15828,7 @@ function updateAtmoFlight(dt){
   atmoCamera.position.copy(s.pos).add(_atmoCamRel);
   { const cgh=_atmoHeight?_atmoHeight(atmoCamera.position.x,atmoCamera.position.z):-1e9; if(atmoCamera.position.y<cgh+2) atmoCamera.position.y=cgh+2; }
   atmoCamera.lookAt(s.pos.clone().addScaledVector(fwd,look).add(new THREE.Vector3(0,0.6,0)));
+  if(atmoScene.userData.skyDome) atmoScene.userData.skyDome.position.copy(atmoCamera.position);   // the sky stays round you however far you fly
   // HUD
   const altFt=Math.round((s.pos.y-groundH)*3.28);
   $('atmo-speed').textContent='MACH '+atmoMach.toFixed(2);
@@ -17754,6 +17755,8 @@ function dismountSkyboard(targetScene, worldPos){
 
 async function enterSurface(body,site,opts){
   if(surfaceActive)return;
+  // where she'll stand — the ground is built round that spot
+  { const sp=opts&&opts.spawn, ok=sp&&isFinite(sp.x)&&isFinite(sp.z); TERRAIN.focusX=ok?sp.x:0; TERRAIN.focusZ=ok?sp.z:8; }
   try{ _clearLandPrompt(); }catch(e){}
   _surfBody=body;_surfSite=site||null;surfaceActive=true;
   charOrbitActive = false; // same leftover-orbit-state guard as the flight scenes
@@ -17794,7 +17797,7 @@ async function enterSurface(body,site,opts){
     sun.shadow.camera.top=200;sun.shadow.camera.bottom=-200;
     sun.shadow.bias=-0.0004;
   }
-  surfScene.add(sun);
+  surfScene.add(sun); surfScene.add(sun.target); TERRAIN.sun=sun;   // the shadow box follows her (_surfStreamTick)
   // Hemisphere light approximates global illumination: sky color bounces
   // from above, ground color bounces from below — soft, free, universal.
   // Real issue found: this used the FULL-SATURATION ground color directly
@@ -17814,8 +17817,9 @@ async function enterSurface(body,site,opts){
     const sn=2000,sp=new Float32Array(sn*3);
     for(let i=0;i<sn;i++){const ph=Math.acos(2*Math.random()-1),th=Math.random()*6.28,r=800;sp[i*3]=r*Math.sin(ph)*Math.cos(th);sp[i*3+1]=Math.abs(r*Math.cos(ph));sp[i*3+2]=r*Math.sin(ph)*Math.sin(th);}
     const sg=new THREE.BufferGeometry();sg.setAttribute('position',new THREE.BufferAttribute(sp,3));
-    surfScene.add(new THREE.Points(sg,new THREE.PointsMaterial({size:1.5,sizeAttenuation:false,color:0xffffff})));
-  }
+    const stars=new THREE.Points(sg,new THREE.PointsMaterial({size:1.5,sizeAttenuation:false,color:0xffffff}));
+    stars.frustumCulled=false; surfScene.add(stars); TERRAIN.starDome=stars;
+  } else TERRAIN.starDome=null;
   // procedural terrain — heightmapped plane (+ GPU MC patch on real WebGPU)
   await buildSurfaceTerrain(pal);
   // sky gradient dome
@@ -17841,7 +17845,7 @@ async function enterSurface(body,site,opts){
   // above Y=0; spawning at 3.2 buried feet under the MC contour.
   // a Journal waypoint lands her on the exact spot it was marked
   const _sp=opts&&opts.spawn, _spOk=_sp&&isFinite(_sp.x)&&isFinite(_sp.z);
-  const spawnX=_spOk?Math.max(-400,Math.min(400,_sp.x)):0, spawnZ=_spOk?Math.max(-400,Math.min(400,_sp.z)):8;
+  const spawnX=_spOk?_sp.x:0, spawnZ=_spOk?_sp.z:8;
   let spawnGround=0;
   try{
     if(typeof _surfHeight==='function'){
@@ -17993,6 +17997,7 @@ async function enterSurface(body,site,opts){
     try{updateCaustics(dt);}catch(e){_animLoopWarn('caustics',e);}
     try{ _surfFluidTick(dt); }catch(e){_animLoopWarn('fluid',e);}
     try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);} // ship keeps wandering + shard keeps following, even off-screen
+    try{ _surfStreamTick(dt); }catch(e){ _animLoopWarn('stream',e); }
     try{ _surfFpBody(); }catch(e){}
     try{ surfRenderer.render(surfScene,surfCamera); }catch(e){ _animLoopWarn('surf-render',e); }
   })();
@@ -18673,7 +18678,9 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
   const CELL = Math.max(CELLx, CELLy, CELLz);
   // Recompute extents from isotropic CELL so MC cubes stay cubic (required for stable normals).
   const halfIso = (CELL*N)/2;
-  const oX = -halfIso, oY = yMin, oZ = -halfIso;
+  // centred on (cx, cz) — the patch follows her as she walks
+  const cx0 = opts.cx||0, cz0 = opts.cz||0;
+  const oX = cx0-halfIso, oY = yMin, oZ = cz0-halfIso;
   const numPoints = GRID*GRID*GRID;
   const numCells = N*N*N;
   const MAX_TRIS = 5;
@@ -18763,24 +18770,26 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
   await surfRenderer.computeAsync(densityFn().compute(numPoints));
 
   // Density readback — collision stays pixel-consistent with the mesh.
-  TERRAIN.mcGridInfo = {GRID, CELL, originX:oX, originY:oY, originZ:oZ, half:halfIso, N};
+  // kept local until the patch is swapped in, so collision never reads a half-built grid
+  const gridInfo = {GRID, CELL, originX:oX, originY:oY, originZ:oZ, half:halfIso, N, cx:cx0, cz:cz0};
+  let densArr = null;
   try{
     const densityArrBuf = await surfRenderer.getArrayBufferAsync(densityBuf);
-    TERRAIN.mcDensityArray = new Float32Array(densityArrBuf);
+    densArr = new Float32Array(densityArrBuf);
     // Clean the field before meshing: floating cave/overhang pieces either
     // join the main ground (if they nearly touch) or are removed, so the
     // mesh is one solid and collision (which reads this same grid) matches.
     try{
-      const st=mcCleanFragments(TERRAIN.mcDensityArray, GRID, 2, 6);
+      const st=mcCleanFragments(densArr, GRID, 2, 6);
       TERRAIN.mcFragments=st;
       if(st.joined||st.removed){
-        if(densityBuf.array&&densityBuf.array.length===TERRAIN.mcDensityArray.length){ densityBuf.array.set(TERRAIN.mcDensityArray); densityBuf.needsUpdate=true; }
+        if(densityBuf.array&&densityBuf.array.length===densArr.length){ densityBuf.array.set(densArr); densityBuf.needsUpdate=true; }
         console.log('[GPU-MC] fragments: joined',st.joined,'· removed',st.removed,'('+st.removedCells+' cells) · bridged',st.bridgedCells,'cells');
       }
     }catch(e){ console.warn('[GPU-MC] fragment clean:',e); }
   }catch(e){
     console.warn('[GPU-MC] density readback failed, falling back to H():', e);
-    TERRAIN.mcDensityArray = null;
+    densArr = null;
   }
 
   const gCol=new THREE.Color(pal.ground||0x3a7d34);
@@ -18884,7 +18893,7 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
   geo.setAttribute('position',vertexBuf);
   geo.setAttribute('normal',normalBuf);
   geo.setAttribute('color',colorBuf);
-  geo.boundingSphere=new THREE.Sphere(new THREE.Vector3(0,(yMin+yMax)*0.5,0), halfIso*1.6);
+  geo.boundingSphere=new THREE.Sphere(new THREE.Vector3(cx0,(yMin+yMax)*0.5,cz0), halfIso*1.6);
   const mat=new THREE.MeshStandardMaterial({vertexColors:true,roughness:0.92,metalness:0.02,side:THREE.DoubleSide});
   const mesh=new THREE.Mesh(geo,mat);
   mesh.name='JOTS_GpuSurfacePatch';
@@ -18897,8 +18906,8 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
   if(GFX.shadows){mesh.receiveShadow=true;mesh.castShadow=false;}
   TERRAIN.mcTier=tier;
   TERRAIN.mcRes=N;
-  console.log('[GPU-MC] surface patch OK —',N+'³ grid, half='+halfIso.toFixed(1)+', tier='+tier+', densityReadback='+!!TERRAIN.mcDensityArray);
-  return {mesh, half:halfIso, N, tier};
+  console.log('[GPU-MC] surface patch OK —',N+'³ grid, half='+halfIso.toFixed(1)+', tier='+tier+', densityReadback='+!!densArr);
+  return {mesh, half:halfIso, N, tier, gridInfo, density:densArr, cx:cx0, cz:cz0};
 }
 
 /** One-way LOD upgrade for the walk patch (mirrors upgradePlanetLOD lock). */
@@ -18909,20 +18918,19 @@ async function upgradeSurfaceMcLOD(surfRenderer, pal, seed, siteLandBias){
   const cur=TERRAIN.mcTier||'low';
   if(rank[cur]>=2){ TERRAIN.mcUpgradeLocked=true; return; }
   const next = cur==='low' ? 'med' : 'high';
+  if(TERRAIN._mcBusy){ setTimeout(()=>upgradeSurfaceMcLOD(surfRenderer,pal,seed,siteLandBias).catch(()=>{}),2000); return; }
   try{
-    const built = await buildGpuSurfacePatch(surfRenderer,{
-      seed,pal,siteLandBias,
-      siteLat:(_surfSite&&typeof _surfSite.lat==='number')?_surfSite.lat:0,
-      earthGeo:!!(_surfBody&&_surfBody.name==='Earth'&&_surfSite&&typeof _surfSite.lat==='number'),
-      tier:next,halfExtent:90
-    });
+    // rebuilt round her, wherever she is now
+    const px=surfPlayer?surfPlayer.pos.x:0, pz=surfPlayer?surfPlayer.pos.z:0, gh=TERRAIN.H?TERRAIN.H(px,pz):0;
+    TERRAIN._mcBusy=true;
+    let built=null;
+    try{
+      built = await buildGpuSurfacePatch(surfRenderer,Object.assign({},TERRAIN.mcOpts||{seed,pal,siteLandBias},{
+        tier:next,halfExtent:90,cx:Math.round(px),cz:Math.round(pz),yMin:gh-60,yMax:gh+130
+      }));
+    }finally{ TERRAIN._mcBusy=false; }
     if(!built || !surfaceActive || !TERRAIN.group) return;
-    if(TERRAIN.mcGroup){
-      TERRAIN.group.remove(TERRAIN.mcGroup);
-      TERRAIN.mcGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material)o.material.dispose(); });
-    }
-    const g=new THREE.Group(); g.name='JOTS_GpuMcGroup'; g.add(built.mesh);
-    TERRAIN.group.add(g); TERRAIN.mcGroup=g;
+    _applyMcBuild(built);
     TERRAIN.mcTier=next;
     if(next==='high') TERRAIN.mcUpgradeLocked=true;
   }catch(e){ console.warn('[GPU-MC] upgrade failed:', e); }
@@ -19287,8 +19295,7 @@ async function buildSurfaceTerrain(pal){
     // still-solid terrain. Matches the pre-continuous-generation behavior:
     // pick a landing spot, get one bounded square, fly to its edge and
     // drop off.
-    const half=TERRAIN.rootSize/2;
-    if(Math.abs(x)>half||Math.abs(z)>half)return -99999;
+    // no edge any more — the ground streams round her wherever she goes
     const lx=x, lz=z; x+=_sw.x; z+=_sw.z;   // the planet's own coordinates (same field the sky flies over)
     let h=_fbm(x*0.012+100,z*0.012+100,seed,5)*22;
     h+=_fbm(x*0.04,z*0.04,seed+3,3)*5;
@@ -19392,12 +19399,13 @@ async function buildSurfaceTerrain(pal){
   // did. rebuildTerrainLOD/_terrainQuad are unused now but left in place
   // (dead code, zero runtime cost) rather than deleted, in case continuous
   // streaming comes back later in a lighter-weight form.
-  const _savedSeg=TERRAIN.tileSeg;
-  TERRAIN.tileSeg=160;
-  const patch=buildTerrainTile(0,0,TERRAIN.rootSize,0);
-  TERRAIN.tileSeg=_savedSeg;
-  TERRAIN.group.add(patch);
-  TERRAIN.tiles.set('0.0_0.0_0',{mesh:patch,cx:0,cz:0,size:TERRAIN.rootSize,depth:0});
+  // Streaming chunks round her (see SURFACE STREAMING) instead of one fixed square.
+  TERRAIN.hmMat=null; TERRAIN.rockGeo=null; TERRAIN.cpuMc=null; TERRAIN.mcGpu=false; TERRAIN.waterFollow=null;
+  TERRAIN._streamPi=null; TERRAIN._streamPj=null; TERRAIN._streamQ=null; TERRAIN._streamJob=null; TERRAIN._wgx=null; TERRAIN._mcBusy=false;
+  const patch=new THREE.Group(); patch.name='JOTS_TerrainChunks';
+  TERRAIN.group.add(patch); TERRAIN.hm=patch;
+  const _fx=TERRAIN.focusX||0, _fz=TERRAIN.focusZ||0;
+  _surfStreamUpdate(_fx,_fz,true);
 
   // Baseline collision = heightmap H. GPU MC (or CPU MC) may override inside its span.
   _surfHeight = function(x,z){ return H(x,z); };
@@ -19425,20 +19433,15 @@ async function buildSurfaceTerrain(pal){
       // Keep heightmap as underlay (slightly sunk) so any MC micro-gaps never
       // read as daytime sky-holes; GPU patch draws on top with biome colors.
       if(patch){ patch.visible = true; patch.position.y = -0.35; patch.renderOrder = 0; }
-      const built = await buildGpuSurfacePatch(surfRenderer,{
-        seed, pal, siteLandBias,
-        siteLat:(_surfSite&&typeof _surfSite.lat==='number')?_surfSite.lat:0,
-        earthGeo:_surfEarthGeo,
-        tier:'low', halfExtent:90, yMin:-45, yMax:130
-      });
+      TERRAIN.mcOpts={ seed, pal, siteLandBias, siteLat:(_surfSite&&typeof _surfSite.lat==='number')?_surfSite.lat:0, earthGeo:_surfEarthGeo };
+      const _g0=H(_fx,_fz);
+      const built = await buildGpuSurfacePatch(surfRenderer,Object.assign({},TERRAIN.mcOpts,{
+        tier:'low', halfExtent:90, cx:Math.round(_fx), cz:Math.round(_fz), yMin:_g0-60, yMax:_g0+130
+      }));
       if(built){
-        const mcGroup=new THREE.Group(); mcGroup.name='JOTS_GpuMcGroup';
-        built.mesh.userData.climbable=true; // Stabilizer climbing_up_wall / Grab_Bar (probe for steepness)
-        mcGroup.userData.climbable=true;
-        mcGroup.add(built.mesh);
-        TERRAIN.group.add(mcGroup);
-        TERRAIN.mcGroup=mcGroup;
-        const SPAN=built.half;
+        _applyMcBuild(built); TERRAIN.mcGpu=true;
+        // inside the patch round her (it moves with her)
+        const _inMc=(x,z)=>{ const i=TERRAIN.mcGridInfo; return !!(i&&Math.abs(x-i.cx)<i.half&&Math.abs(z-i.cz)<i.half); };
         const _origH=_surfHeight;
         // Two meshes overlap here: the smooth marching-cubes surface and the
         // faceted heightmap underlay (sunk 0.35). Where the heightmap pokes up
@@ -19452,7 +19455,8 @@ async function buildSurfaceTerrain(pal){
           if(TERRAIN.mcGroup){
             // Mesh raycast fallback if readback missing
             if(!TERRAIN._mcRay){ TERRAIN._mcRay=new THREE.Raycaster(); TERRAIN._mcRay.far=400; }
-            TERRAIN._mcRay.set(new THREE.Vector3(x,200,z),new THREE.Vector3(0,-1,0));
+            TERRAIN._mcRay.far=1000;
+            TERRAIN._mcRay.set(new THREE.Vector3(x,_origH(x,z)+300,z),new THREE.Vector3(0,-1,0));
             const hits=TERRAIN._mcRay.intersectObject(TERRAIN.mcGroup,true);
             if(hits.length) return hits[0].point.y;
           }
@@ -19461,7 +19465,7 @@ async function buildSurfaceTerrain(pal){
         const _hmNormal=(x,z)=>{ const eps=0.75, hx=_origH(x+eps,z)-_origH(x-eps,z), hz=_origH(x,z+eps)-_origH(x,z-eps);
           return new THREE.Vector3(-hx,2*eps,-hz).normalize(); };
         _surfHeight=(x,z)=>{
-          if(Math.abs(x)<SPAN && Math.abs(z)<SPAN){
+          if(_inMc(x,z)){
             const mc=_mcY(x,z);
             if(mc!==null) return Math.max(mc,_origH(x,z)+_underlayY());
           }
@@ -19469,12 +19473,12 @@ async function buildSurfaceTerrain(pal){
         };
         window._surfHeight=_surfHeight;
         window._surfNormal=(x,z)=>{
-          if(Math.abs(x)<SPAN && Math.abs(z)<SPAN){
+          if(_inMc(x,z)){
             const mc=_mcY(x,z);
             if(mc!==null && _origH(x,z)+_underlayY()>mc+0.01) return _hmNormal(x,z);   // standing on the underlay
             if(TERRAIN.mcDensityArray) return sampleSurfGroundNormal(x,z);
             if(TERRAIN.mcGroup){
-              TERRAIN._mcRay.set(new THREE.Vector3(x,200,z),new THREE.Vector3(0,-1,0));
+              TERRAIN._mcRay.set(new THREE.Vector3(x,_origH(x,z)+300,z),new THREE.Vector3(0,-1,0));
               const hits=TERRAIN._mcRay.intersectObject(TERRAIN.mcGroup,true);
               if(hits.length&&hits[0].face) return hits[0].face.normal.clone().transformDirection(hits[0].object.matrixWorld);
             }
@@ -19523,45 +19527,47 @@ async function buildSurfaceTerrain(pal){
       }
       geo.setAttribute('color',new THREE.BufferAttribute(col,3));
     };
-    const order=[];
-    for(let gx=-MC_GRID;gx<=MC_GRID;gx++)for(let gz=-MC_GRID;gz<=MC_GRID;gz++)order.push([gx,gz]);
-    order.sort((a,b)=>(Math.abs(a[0])+Math.abs(a[1]))-(Math.abs(b[0])+Math.abs(b[1])));
-    let built=0;
-    const buildGen=TERRAIN._mcBuildGen=(TERRAIN._mcBuildGen||0)+1;
-    (function buildNext(){
-      if(TERRAIN._mcBuildGen!==buildGen||!TERRAIN.mcGroup)return;
-      if(!order.length){
-        console.log('[MarchingCubes] all',built,'chunks built (5x5 grid,',MC_CHUNK*(MC_GRID*2+1),'units span, overlap',MC_OVERLAP.toFixed(2),')');
-        return;
-      }
-      const [gx,gz]=order.shift();
-      const ox=gx*MC_CHUNK-MC_CHUNK/2-MC_OVERLAP, oz=gz*MC_CHUNK-MC_CHUNK/2-MC_OVERLAP;
-      const span=MC_CHUNK+MC_OVERLAP*2;
-      const geo=marchingCubesMesh(density3D,[ox,MC_VMIN,oz],span,MC_RES,0);
-      if(geo.attributes.position&&geo.attributes.position.count>0){
-        try{ _mcPaint(geo); }catch(e){}
-        mcGroup.add(new THREE.Mesh(geo,mcMat));
-      }
-      built++;
-      setTimeout(buildNext,30);
-    })();
-    const SPAN=MC_CHUNK*(MC_GRID*2+1)/2;
+    // chunks stream round her (see _cpuMcTick): absolute chunk grid, built one at a time
+    const M={CHUNK:MC_CHUNK,GRID:MC_GRID,chunks:new Map(),queue:[],ci:null,cj:null,lastT:0,
+      build(gx,gz){
+        if(!TERRAIN.mcGroup) return;
+        const key=gx+'_'+gz; if(M.chunks.has(key)) return;
+        const base=H(gx*MC_CHUNK,gz*MC_CHUNK);
+        const ox=gx*MC_CHUNK-MC_CHUNK/2-MC_OVERLAP, oz=gz*MC_CHUNK-MC_CHUNK/2-MC_OVERLAP;
+        const span=MC_CHUNK+MC_OVERLAP*2;
+        const vmin=base-55;   // the cube of cells sits on the ground here, wherever that is
+        const geo=marchingCubesMesh(density3D,[ox,vmin,oz],span,MC_RES,0);
+        let mesh=null;
+        if(geo.attributes.position&&geo.attributes.position.count>0){
+          try{ _mcPaint(geo); }catch(e){}
+          mesh=new THREE.Mesh(geo,mcMat); mcGroup.add(mesh);
+        }
+        M.chunks.set(key,mesh);
+      }};
+    TERRAIN.cpuMc=M;
+    // the chunk she lands in is built straight away, the rest follow
+    { const ci=Math.floor((_fx+MC_CHUNK/2)/MC_CHUNK), cj=Math.floor((_fz+MC_CHUNK/2)/MC_CHUNK); M.build(ci,cj); }
+    _cpuMcTick(_fx,_fz);
     const _mcRay=new THREE.Raycaster();
-    _mcRay.far=400;
+    _mcRay.far=1000;
     const _origSurfHeight=_surfHeight;
+    // inside a built chunk → the marching-cubes surface there
+    const _mcHere=(x,z)=>{ const k=Math.floor((x+MC_CHUNK/2)/MC_CHUNK)+'_'+Math.floor((z+MC_CHUNK/2)/MC_CHUNK); return M.chunks.get(k)||null; };
     _surfHeight=(x,z)=>{
-      if(Math.abs(x)<SPAN&&Math.abs(z)<SPAN&&TERRAIN.mcGroup){
-        _mcRay.set(new THREE.Vector3(x,MC_VMIN+MC_VHEIGHT+20,z),new THREE.Vector3(0,-1,0));
-        const hits=_mcRay.intersectObject(TERRAIN.mcGroup,true);
+      const m=_mcHere(x,z);
+      if(m){
+        _mcRay.set(new THREE.Vector3(x,_origSurfHeight(x,z)+300,z),new THREE.Vector3(0,-1,0));
+        const hits=_mcRay.intersectObject(m,false);
         if(hits.length)return Math.max(hits[0].point.y,(patch&&patch.visible)?_origSurfHeight(x,z)+patch.position.y:-1e9);   // topmost visible surface
       }
       return _origSurfHeight(x,z);
     };
     window._surfHeight=_surfHeight;
     window._surfNormal=(x,z)=>{
-      if(Math.abs(x)<SPAN&&Math.abs(z)<SPAN&&TERRAIN.mcGroup){
-        _mcRay.set(new THREE.Vector3(x,MC_VMIN+MC_VHEIGHT+20,z),new THREE.Vector3(0,-1,0));
-        const hits=_mcRay.intersectObject(TERRAIN.mcGroup,true);
+      const m=_mcHere(x,z);
+      if(m){
+        _mcRay.set(new THREE.Vector3(x,_origSurfHeight(x,z)+300,z),new THREE.Vector3(0,-1,0));
+        const hits=_mcRay.intersectObject(m,false);
         if(hits.length&&hits[0].face)return hits[0].face.normal.clone().transformDirection(hits[0].object.matrixWorld);
       }
       return new THREE.Vector3(0,1,0);
@@ -19613,6 +19619,7 @@ async function buildSurfaceTerrain(pal){
     vol.userData.bounds={minX:-SZ/2,maxX:SZ/2,minY:WATER_FLOOR_Y,maxY:WATER_SURFACE_Y,minZ:-SZ/2,maxZ:SZ/2};
     surfScene.add(vol);
     TERRAIN.waterVolume=vol;
+    TERRAIN.waterFollow=[wm,vol];
     // Stabilizer Swim_Forward probe — (x,y,z) world coords → true inside water volume.
     window._surfWaterAt=function(x,y,z){
       const b=vol.userData.bounds;
@@ -19642,6 +19649,7 @@ async function buildSurfaceTerrain(pal){
       const causticMat=new THREE.MeshBasicMaterial({map:ctex,transparent:true,opacity:0.22,blending:THREE.AdditiveBlending,depthWrite:false});
       const cm=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ),causticMat);
       cm.rotation.x=-Math.PI/2;cm.position.y=2.05;surfScene.add(cm);
+      if(TERRAIN.waterFollow) TERRAIN.waterFollow.push(cm);
     }
   } else {
     TERRAIN.waterVolume=null;
@@ -19703,65 +19711,8 @@ async function buildSurfaceTerrain(pal){
     return null;
   };
 
-  // scatter rocks / vegetation near spawn — per-instance color variation
-  // now, not one shared flat material for every rock. Matches the same
-  // per-tree canopy variation already in place, following the general
-  // technique (vary color per-instance rather than one flat object
-  // color) demonstrated in Sebastian Lague's terrain series.
-  const rockGeo=new THREE.DodecahedronGeometry(1,0);
-  const rockBaseHSL={h:0,s:0,l:0};new THREE.Color(pal.rock).getHSL(rockBaseHSL);
-  const inst=Math.min(300,({low:60,med:140,high:240,ultra:300})[STATE.settings.particles]||140);
-  for(let i=0;i<inst;i++){
-    const x=rnd(-280,280),z=rnd(-280,280);const h=H(x,z);
-    if(h<3&&pal.water)continue;
-    const rockCol=new THREE.Color().setHSL(
-      rockBaseHSL.h+(Math.random()-0.5)*0.03,
-      Math.max(0,Math.min(1,rockBaseHSL.s+(Math.random()-0.5)*0.15)),
-      Math.max(0,Math.min(1,rockBaseHSL.l+(Math.random()-0.5)*0.18))
-    );
-    const rk=new THREE.Mesh(rockGeo,new THREE.MeshStandardMaterial({color:rockCol,roughness:rnd(0.85,1)}));
-    const s=rnd(0.4,2.4);rk.scale.set(s,s*rnd(0.6,1.2),s);
-    rk.position.set(x,h+s*0.3,z);rk.rotation.set(rnd(0,6),rnd(0,6),rnd(0,6));
-    if(s>1.35){ rk.userData.climbable=true; rk.userData.cliff=true; } // Stabilizer Grab_Bar / climbing_up_wall
-    if(GFX.shadows){rk.castShadow=true;rk.receiveShadow=true;}
-    surfScene.add(rk);
-    if(pal.ground===0x3a7d34&&Math.random()>0.6&&h>3&&h<40){
-      // Real bug found: this used to be ONE solid cone, radius up to 2.5,
-      // height up to 9, centered at h+3 — meaning its base could sit
-      // BELOW ground and its body span right through the player's actual
-      // eye height (camera starts at y=3.2). Standing near one meant being
-      // literally inside solid green geometry, which is what read as 'the
-      // sky is green' — not a canopy effect, a camera-inside-mesh bug.
-      // Real trunk+canopy now: a thin trunk raises the canopy well above
-      // head height before any green geometry begins, and the canopy
-      // itself is sized so its own base doesn't reach back down that far.
-      const trunkH=rnd(2.5,4),trunkR=rnd(0.12,0.22);
-      const trunkCol=new THREE.Color(0x4a3220).offsetHSL(0,(Math.random()-0.5)*0.05,(Math.random()-0.5)*0.1);
-      const trunk=new THREE.Mesh(new THREE.CylinderGeometry(trunkR*0.7,trunkR,trunkH,6),new THREE.MeshStandardMaterial({color:trunkCol,roughness:1}));
-      trunk.position.set(x,h+trunkH/2,z);
-      if(GFX.shadows)trunk.castShadow=true;
-      surfScene.add(trunk);
-      const canopyH=rnd(2.5,4.5),canopyR=rnd(0.9,1.6);
-      const canopyCol=new THREE.Color(0x1f5520).offsetHSL(0,0,(Math.random()-0.5)*0.12); // slight per-tree variation, not one flat color
-      const canopy=new THREE.Mesh(new THREE.ConeGeometry(canopyR,canopyH,7),new THREE.MeshStandardMaterial({color:canopyCol,roughness:1}));
-      canopy.position.set(x,h+trunkH+canopyH*0.35,z); // base of canopy sits ABOVE the trunk, not overlapping eye height
-      if(GFX.shadows)canopy.castShadow=true;
-      surfScene.add(canopy);
-      // Higher-res canopy detail (extra shell) — gated; skip on Low / low particles to protect tablets
-      const allowHiTree = (STATE.settings.particles!=='low') && (GFX.preset!=='low') && !GFX.isMobile;
-      if(allowHiTree && Math.random()>0.55){
-        const dH=canopyH*0.55, dR=canopyR*0.72;
-        const detail=new THREE.Mesh(
-          new THREE.ConeGeometry(dR,dH,11),
-          new THREE.MeshStandardMaterial({color:canopyCol.clone().offsetHSL(0,0,0.04),roughness:1})
-        );
-        detail.position.set(x,h+trunkH+canopyH*0.55+dH*0.25,z);
-        detail.userData.jotsHiResTree=true;
-        if(GFX.shadows)detail.castShadow=true;
-        surfScene.add(detail);
-      }
-    }
-  }
+  // Rocks and trees now come with each near chunk (_hmChunkScatter), so they
+  // are there wherever she walks, always the same ones in the same place.
 
   // Earth wind particles — subtle, GPU-friendly Points; disable/cheap on Low
   TERRAIN.windPoints=null;
@@ -19771,7 +19722,7 @@ async function buildSurfaceTerrain(pal){
     const WN = GFX.isMobile ? 120 : 280;
     const pos=new Float32Array(WN*3), vel=new Float32Array(WN*3);
     for(let i=0;i<WN;i++){
-      const x=rnd(-220,220), z=rnd(-220,220);
+      const x=_fx+rnd(-220,220), z=_fz+rnd(-220,220);
       const y=H(x,z)+rnd(1.5,14);
       pos[i*3]=x; pos[i*3+1]=y; pos[i*3+2]=z;
       vel[i*3]=rnd(1.2,3.5); vel[i*3+1]=rnd(-0.15,0.25); vel[i*3+2]=rnd(-0.8,0.8);
@@ -19878,6 +19829,234 @@ function buildTerrainTile(cx,cz,size,depth){
   return m;
 }
 
+
+/* ══════════════════════════════════════════════════════════════
+   SURFACE STREAMING — the ground is built around her as she walks.
+   The heightmap is a ring of square chunks centred on her chunk: fine
+   close by, coarser further out (seams hidden by skirts). Chunks are
+   built a few rows per frame inside a small time budget, and an old
+   chunk stays until its replacement is ready, so there is never a hole.
+   Rocks and trees are scattered per chunk from the chunk's own seed (the
+   same spot always grows the same rocks). The marching-cubes patch near
+   her (GPU, or CPU chunks) re-centres on her too; see _surfStreamTick.
+   ══════════════════════════════════════════════════════════════ */
+const SURF_CHUNK=300;
+const _surfLodSeg=d=>d<=1?40:(d===2?20:10);
+function _rng32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+const _chunkSeed=(i,j,s)=>((i*73856093)^(j*19349663)^(s*83492791))|0;
+// Build one chunk's geometry, a few rows at a time (generator yields between rows).
+function* _hmChunkJob(i,j,seg){
+  const H=TERRAIN.H, pal=TERRAIN.pal, seed=TERRAIN.seed, C=SURF_CHUNK;
+  const x0=i*C-C/2, z0=j*C-C/2, step=C/seg, n=seg+1, nb=n+2;
+  const wx=TERRAIN.wx0||0, wz=TERRAIN.wz0||0;
+  const o={siteBias:(typeof TERRAIN.siteBias==='number')?TERRAIN.siteBias:0,siteLat:TERRAIN.siteLat||0,style:TERRAIN.style};
+  // heights with a one-vertex border, so normals match across chunk edges
+  const hb=new Float32Array(nb*nb);
+  for(let r=0;r<nb;r++){
+    for(let c=0;c<nb;c++) hb[r*nb+c]=H(x0+(c-1)*step,z0+(r-1)*step);
+    yield;
+  }
+  const skirtN=4*seg, vc=n*n+skirtN;
+  const pos=new Float32Array(vc*3), nor=new Float32Array(vc*3), col=new Float32Array(vc*3);
+  for(let r=0;r<n;r++){
+    for(let c=0;c<n;c++){
+      const k=r*n+c, h=hb[(r+1)*nb+c+1];
+      const hl=hb[(r+1)*nb+c], hr=hb[(r+1)*nb+c+2], hu=hb[r*nb+c+1], hd=hb[(r+2)*nb+c+1];
+      let nx=(hl-hr), ny=2*step, nz=(hu-hd); const L=Math.hypot(nx,ny,nz)||1; nx/=L; ny/=L; nz/=L;
+      const x=x0+c*step, z=z0+r*step;
+      pos[k*3]=x; pos[k*3+1]=h; pos[k*3+2]=z;
+      nor[k*3]=nx; nor[k*3+1]=ny; nor[k*3+2]=nz;
+      const slope=Math.min(1,Math.max(0,1-ny));
+      const cc=surfaceBiomeColor(x+wx,z+wz,h,Math.min(1,slope*1.6),pal,seed,o);
+      col[k*3]=cc.r; col[k*3+1]=cc.g; col[k*3+2]=cc.b;
+    }
+    yield;
+  }
+  // skirt: the edge ring copied straight down, so coarser neighbours never show a crack
+  const ring=[];
+  for(let c=0;c<seg;c++) ring.push(c);
+  for(let r=0;r<seg;r++) ring.push(r*n+seg);
+  for(let c=seg;c>0;c--) ring.push(seg*n+c);
+  for(let r=seg;r>0;r--) ring.push(r*n);
+  const drop=Math.max(6,step*1.5);
+  ring.forEach((k,m)=>{ const d=n*n+m; for(let a=0;a<3;a++){ pos[d*3+a]=pos[k*3+a]; nor[d*3+a]=nor[k*3+a]; col[d*3+a]=col[k*3+a]; } pos[d*3+1]-=drop; });
+  const idx=[];
+  for(let r=0;r<seg;r++) for(let c=0;c<seg;c++){ const a=r*n+c, b=a+1, cI=a+n, d=cI+1; idx.push(a,cI,b, b,cI,d); }
+  for(let m=0;m<ring.length;m++){ const a=ring[m], b=ring[(m+1)%ring.length], sa=n*n+m, sb=n*n+(m+1)%ring.length; idx.push(a,b,sa, b,sb,sa, a,sa,b, b,sa,sb); }
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  geo.setAttribute('normal',new THREE.BufferAttribute(nor,3));
+  geo.setAttribute('color',new THREE.BufferAttribute(col,3));
+  geo.setIndex(vc>65535?new THREE.Uint32BufferAttribute(idx,1):new THREE.Uint16BufferAttribute(idx,1));
+  geo.computeBoundingSphere();
+  if(!TERRAIN.hmMat) TERRAIN.hmMat=new THREE.MeshStandardMaterial({vertexColors:true,roughness:0.95,metalness:0.0});
+  const m=new THREE.Mesh(geo,TERRAIN.hmMat);
+  if(GFX.shadows) m.receiveShadow=true;
+  m.userData.chunk={i,j,seg};
+  return m;
+}
+// Rocks (and trees on living worlds) for one near chunk — instanced, seeded by the chunk.
+function _hmChunkScatter(i,j){
+  const H=TERRAIN.H, pal=TERRAIN.pal, C=SURF_CHUNK, rnd=_rng32(_chunkSeed(i,j,TERRAIN.seed||1));
+  const R=(a,b)=>a+(b-a)*rnd();
+  const g=new THREE.Group(); g.name='JOTS_ChunkProps';
+  const per=Math.round((Math.min(300,({low:60,med:140,high:240,ultra:300})[STATE.settings.particles]||140))*(C*C)/(560*560));
+  const base={h:0,s:0,l:0}; new THREE.Color(pal.rock||0x777777).getHSL(base);
+  const rocks=[];
+  for(let n=0;n<per;n++){
+    const x=i*C+R(-C/2,C/2), z=j*C+R(-C/2,C/2), h=H(x,z);
+    if(h<3&&pal.water){ rnd(); rnd(); continue; }
+    rocks.push({x,z,h,s:R(0.4,2.4),sy:R(0.6,1.2),r:[R(0,6),R(0,6),R(0,6)],c:new THREE.Color().setHSL(base.h+(rnd()-0.5)*0.03,Math.max(0,Math.min(1,base.s+(rnd()-0.5)*0.15)),Math.max(0,Math.min(1,base.l+(rnd()-0.5)*0.18)))});
+  }
+  const geo=TERRAIN.rockGeo||(TERRAIN.rockGeo=new THREE.DodecahedronGeometry(1,0));
+  const mkRocks=(list,climb)=>{
+    if(!list.length) return;
+    const im=new THREE.InstancedMesh(geo,new THREE.MeshStandardMaterial({color:0xffffff,roughness:0.92}),list.length);
+    const M=new THREE.Matrix4(), q=new THREE.Quaternion(), e=new THREE.Euler();
+    list.forEach((r,k)=>{ e.set(r.r[0],r.r[1],r.r[2]); q.setFromEuler(e); M.compose(new THREE.Vector3(r.x,r.h+r.s*0.3,r.z),q,new THREE.Vector3(r.s,r.s*r.sy,r.s)); im.setMatrixAt(k,M); im.setColorAt(k,r.c); });
+    im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true;
+    if(climb){ im.userData.climbable=true; im.userData.cliff=true; }
+    if(GFX.shadows){ im.castShadow=true; im.receiveShadow=true; }
+    im.computeBoundingSphere(); g.add(im);
+  };
+  mkRocks(rocks.filter(r=>r.s<=1.35),false); mkRocks(rocks.filter(r=>r.s>1.35),true);
+  // trees on the green worlds
+  if(pal.ground===0x3a7d34){
+    const trees=rocks.filter(r=>r.h>3&&r.h<40&&((r.x*12.9898+r.z*78.233)%1+1)%1>0.6);
+    if(trees.length){
+      const tGeo=new THREE.CylinderGeometry(0.7,1,1,6), cGeo=new THREE.ConeGeometry(1,1,7);
+      const trunks=new THREE.InstancedMesh(tGeo,new THREE.MeshStandardMaterial({color:0x4a3220,roughness:1}),trees.length);
+      const crowns=new THREE.InstancedMesh(cGeo,new THREE.MeshStandardMaterial({color:0xffffff,roughness:1}),trees.length);
+      const M=new THREE.Matrix4(), q=new THREE.Quaternion();
+      trees.forEach((t,k)=>{
+        const th=R(2.5,4), tr=R(0.12,0.22), ch=R(2.5,4.5), cr=R(0.9,1.6), tx=t.x+3, tz=t.z+2, hh=H(tx,tz);
+        M.compose(new THREE.Vector3(tx,hh+th/2,tz),q,new THREE.Vector3(tr,th,tr)); trunks.setMatrixAt(k,M);
+        M.compose(new THREE.Vector3(tx,hh+th+ch*0.35,tz),q,new THREE.Vector3(cr,ch,cr)); crowns.setMatrixAt(k,M);
+        crowns.setColorAt(k,new THREE.Color(0x1f5520).offsetHSL(0,0,(rnd()-0.5)*0.12));
+      });
+      [trunks,crowns].forEach(o=>{ o.instanceMatrix.needsUpdate=true; if(o.instanceColor) o.instanceColor.needsUpdate=true; if(GFX.shadows) o.castShadow=true; o.computeBoundingSphere(); g.add(o); });
+    }
+  }
+  return g;
+}
+// Chunk set around (px,pz). sync=true builds everything now (landing).
+function _surfStreamUpdate(px,pz,sync){
+  if(!TERRAIN.hm) return;
+  const C=SURF_CHUNK, pi=Math.floor((px+C/2)/C), pj=Math.floor((pz+C/2)/C);
+  const R=Math.max(2,Math.ceil((TERRAIN.rootSize||2400)/2/C));
+  if(!sync&&TERRAIN._streamPi===pi&&TERRAIN._streamPj===pj) return;
+  TERRAIN._streamPi=pi; TERRAIN._streamPj=pj;
+  const want=new Map();
+  for(let dj=-R;dj<=R;dj++) for(let di=-R;di<=R;di++){
+    const d=Math.max(Math.abs(di),Math.abs(dj));
+    want.set((pi+di)+'_'+(pj+dj),{i:pi+di,j:pj+dj,seg:_surfLodSeg(d),props:d<=1,d});
+  }
+  TERRAIN._streamWant=want;
+  // queue nearest first
+  const q=[];
+  want.forEach((w,key)=>{
+    const have=TERRAIN.tiles.get(key);
+    if(!have||have.seg!==w.seg||(w.props&&!have.props)) q.push(Object.assign({key},w));
+  });
+  q.sort((a,b)=>a.d-b.d);
+  TERRAIN._streamQ=q; TERRAIN._streamJob=null;
+  if(sync){ while(_surfStreamWork(1e9)){} }
+}
+// Do up to `budgetMs` of chunk building; returns true while work remains.
+function _surfStreamWork(budgetMs){
+  const t0=performance.now();
+  while(performance.now()-t0<budgetMs){
+    if(!TERRAIN._streamJob){
+      const w=TERRAIN._streamQ&&TERRAIN._streamQ.shift();
+      if(!w){ _surfStreamPrune(); return false; }
+      const have=TERRAIN.tiles.get(w.key);
+      TERRAIN._streamJob={w, gen:(have&&have.seg===w.seg)?null:_hmChunkJob(w.i,w.j,w.seg)};
+    }
+    const J=TERRAIN._streamJob;
+    let mesh=null;
+    if(J.gen){ const r=J.gen.next(); if(!r.done) continue; mesh=r.value; }
+    const w=J.w, old=TERRAIN.tiles.get(w.key);
+    const ent=old||{key:w.key,i:w.i,j:w.j};
+    if(mesh){ if(old&&old.mesh){ TERRAIN.hm.remove(old.mesh); old.mesh.geometry.dispose(); } TERRAIN.hm.add(mesh); ent.mesh=mesh; ent.seg=w.seg; }
+    if(w.props&&!ent.props){ try{ ent.props=_hmChunkScatter(w.i,w.j); TERRAIN.hm.add(ent.props); }catch(e){ ent.props=null; } }
+    TERRAIN.tiles.set(w.key,ent);
+    TERRAIN._streamJob=null;
+  }
+  return true;
+}
+// drop chunks (and props) that are no longer wanted
+function _surfStreamPrune(){
+  const want=TERRAIN._streamWant; if(!want) return;
+  for(const [key,t] of TERRAIN.tiles){
+    const w=want.get(key);
+    if(!w){ if(t.mesh){ TERRAIN.hm.remove(t.mesh); t.mesh.geometry.dispose(); } if(t.props){ TERRAIN.hm.remove(t.props); _disposeProps(t.props); } TERRAIN.tiles.delete(key); continue; }
+    if(!w.props&&t.props){ TERRAIN.hm.remove(t.props); _disposeProps(t.props); t.props=null; }
+  }
+}
+function _disposeProps(g){
+  g.traverse(o=>{ if(o.isMesh){ if(o.material) o.material.dispose(); if(o.geometry&&o.geometry!==TERRAIN.rockGeo) o.geometry.dispose(); if(o.dispose&&o.isInstancedMesh) o.dispose(); } });
+}
+// Everything else that has to stay with her: the marching-cubes patch,
+// water, the sun's shadow box and the sky. Called from the surface loop.
+function _surfStreamTick(dt){
+  const p=surfPlayer; if(!p||!TERRAIN.group) return;
+  const px=p.pos.x, pz=p.pos.z;
+  _surfStreamUpdate(px,pz,false);
+  _surfStreamWork(GFX.isMobile?3:5);
+  // GPU marching cubes: rebuild round her once she's past the middle of the patch
+  const info=TERRAIN.mcGridInfo;
+  if(TERRAIN.mcGpu&&!TERRAIN._mcBusy&&info&&Math.hypot(px-info.cx,pz-info.cz)>info.half*0.42){
+    TERRAIN._mcBusy=true;
+    _surfMcRebuildAt(px,pz).finally(()=>{ TERRAIN._mcBusy=false; });
+  }
+  if(TERRAIN.cpuMc) _cpuMcTick(px,pz);
+  // water, its volume and caustics ride along on a coarse grid (no visible swim)
+  if(TERRAIN.waterFollow){
+    const gx=Math.round(px/100)*100, gz=Math.round(pz/100)*100;
+    if(gx!==TERRAIN._wgx||gz!==TERRAIN._wgz){
+      TERRAIN._wgx=gx; TERRAIN._wgz=gz;
+      TERRAIN.waterFollow.forEach(o=>{ o.position.x=gx; o.position.z=gz; });
+      const v=TERRAIN.waterVolume;
+      if(v&&v.userData.bounds){ const b=v.userData.bounds, hw=(b.maxX-b.minX)/2, hd=(b.maxZ-b.minZ)/2; b.minX=gx-hw; b.maxX=gx+hw; b.minZ=gz-hd; b.maxZ=gz+hd; }
+    }
+  }
+  // the sun's shadow box stays centred on her
+  const sun=TERRAIN.sun;
+  if(sun){ sun.position.set(px+80,(p.pos.y||0)+120,pz+40); sun.target.position.set(px,p.pos.y||0,pz); sun.target.updateMatrixWorld(); }
+  // sky dome and stars stay round the camera
+  if(surfScene&&surfScene.userData.skyDome&&surfCamera) surfScene.userData.skyDome.position.copy(surfCamera.position);
+  if(TERRAIN.starDome&&surfCamera) TERRAIN.starDome.position.copy(surfCamera.position);
+}
+async function _surfMcRebuildAt(px,pz){
+  if(!surfRenderer||!surfaceActive) return;
+  const gh=TERRAIN.H?TERRAIN.H(px,pz):0;
+  const built=await buildGpuSurfacePatch(surfRenderer,Object.assign({},TERRAIN.mcOpts,{tier:TERRAIN.mcTier||'low',halfExtent:90,cx:Math.round(px),cz:Math.round(pz),yMin:gh-60,yMax:gh+130}));
+  if(built&&surfaceActive) _applyMcBuild(built);
+}
+// swap a freshly built GPU patch in (mesh, collision grid and centre together)
+function _applyMcBuild(built){
+  if(!TERRAIN.group) return;
+  if(TERRAIN.mcGroup){ TERRAIN.group.remove(TERRAIN.mcGroup); TERRAIN.mcGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material)o.material.dispose(); }); }
+  const g=new THREE.Group(); g.name='JOTS_GpuMcGroup'; g.userData.climbable=true;
+  built.mesh.userData.climbable=true; g.add(built.mesh);
+  TERRAIN.group.add(g); TERRAIN.mcGroup=g;
+  TERRAIN.mcGridInfo=built.gridInfo; TERRAIN.mcDensityArray=built.density||null;
+}
+// CPU marching cubes (non-WebGPU devices): 5×5 chunks round her chunk,
+// one chunk built per call, far ones dropped.
+function _cpuMcTick(px,pz){
+  const M=TERRAIN.cpuMc; if(!M||!TERRAIN.mcGroup) return;
+  const C=M.CHUNK, ci=Math.floor((px+C/2)/C), cj=Math.floor((pz+C/2)/C);
+  if(ci!==M.ci||cj!==M.cj){
+    M.ci=ci; M.cj=cj; M.queue=[];
+    for(let dj=-M.GRID;dj<=M.GRID;dj++) for(let di=-M.GRID;di<=M.GRID;di++){ const k=(ci+di)+'_'+(cj+dj); if(!M.chunks.has(k)) M.queue.push([ci+di,cj+dj]); }
+    M.queue.sort((a,b)=>(Math.abs(a[0]-ci)+Math.abs(a[1]-cj))-(Math.abs(b[0]-ci)+Math.abs(b[1]-cj)));
+    for(const [k,m] of M.chunks){ const [a,b]=k.split('_').map(Number); if(Math.abs(a-ci)>M.GRID+1||Math.abs(b-cj)>M.GRID+1){ if(m){ TERRAIN.mcGroup.remove(m); m.geometry.dispose(); } M.chunks.delete(k); } }
+  }
+  const now=performance.now();
+  if(M.queue.length&&now-(M.lastT||0)>(GFX.isMobile?90:40)){ M.lastT=now; const [gx,gz]=M.queue.shift(); M.build(gx,gz); }
+}
+
 // Recursively decide tile subdivision around a focus point (the player).
 function _terrainQuad(cx,cz,size,depth,focusX,focusZ,wanted){
   const dist=Math.hypot(cx-focusX,cz-focusZ);
@@ -19982,9 +20161,10 @@ function updateSurface(dt){
       pos[i*3]+=vel[i*3]*dt;
       pos[i*3+1]+=vel[i*3+1]*dt;
       pos[i*3+2]+=vel[i*3+2]*dt;
-      if(pos[i*3]>240){ pos[i*3]=-240; pos[i*3+2]=rnd(-220,220); }
+      // the breeze wraps round her, wherever she walks
+      if(pos[i*3]>p.pos.x+240||pos[i*3]<p.pos.x-260||Math.abs(pos[i*3+2]-p.pos.z)>240){ pos[i*3]=p.pos.x-240; pos[i*3+2]=p.pos.z+rnd(-220,220); }
       // Soft vertical wrap near ground
-      const gh=(_surfHeight?_surfHeight(pos[i*3],pos[i*3+2]):0)+1.2;
+      const gh=(TERRAIN.H?TERRAIN.H(pos[i*3],pos[i*3+2]):0)+1.2;
       if(pos[i*3+1]<gh) pos[i*3+1]=gh+rnd(0.5,8);
       if(pos[i*3+1]>gh+18) pos[i*3+1]=gh+rnd(2,10);
     }
@@ -20323,7 +20503,7 @@ function _surfRemountSkyboardFinish(){
   if(CHAR.loaded && CHAR.root && CHAR.root.parent) CHAR.root.parent.remove(CHAR.root);
   if(surfScene)disposeObject3D(surfScene); // free terrain/water/skyboard GPU memory (see disposeObject3D)
   _surfFluidStop();surfScene=null;surfPlayer=null;surfBoard=null;surfTerrainMesh=null;TERRAIN.mcGroup=null;TERRAIN._mcBuildGen=(TERRAIN._mcBuildGen||0)+1;
-  TERRAIN.tiles.clear();TERRAIN.group=null;TERRAIN.mcDensityArray=null;TERRAIN.mcGridInfo=null;
+  TERRAIN.tiles.clear();TERRAIN.group=null;TERRAIN.mcDensityArray=null;TERRAIN.mcGridInfo=null;TERRAIN.hm=null;TERRAIN.cpuMc=null;TERRAIN.mcGpu=false;TERRAIN.waterFollow=null;TERRAIN.sun=null;TERRAIN.starDome=null;TERRAIN.hmMat=null;TERRAIN.rockGeo=null;
   window._surfWaterAt=function(){ return false; };
   window._surfClimbNormal=function(){ return null; };
   enterAtmosphericFlight(body,site,start);
@@ -20364,7 +20544,7 @@ function _exitSurfaceFinish(){
   if(surfScene)disposeObject3D(surfScene); // free terrain/water/skyboard GPU memory (see disposeObject3D)
   if(surfRenderer){surfRenderer.dispose();}
   _surfFluidStop();surfScene=null;surfPlayer=null;surfBoard=null;surfTerrainMesh=null;TERRAIN.mcGroup=null;TERRAIN._mcBuildGen=(TERRAIN._mcBuildGen||0)+1;
-  TERRAIN.tiles.clear();TERRAIN.group=null;TERRAIN.mcDensityArray=null;TERRAIN.mcGridInfo=null;
+  TERRAIN.tiles.clear();TERRAIN.group=null;TERRAIN.mcDensityArray=null;TERRAIN.mcGridInfo=null;TERRAIN.hm=null;TERRAIN.cpuMc=null;TERRAIN.mcGpu=false;TERRAIN.waterFollow=null;TERRAIN.sun=null;TERRAIN.starDome=null;TERRAIN.hmMat=null;TERRAIN.rockGeo=null;
   window._surfWaterAt=function(){ return false; };
   window._surfClimbNormal=function(){ return null; };
   // Re-mount her onto the real flight board now that we're back in open
