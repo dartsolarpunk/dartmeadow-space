@@ -10,6 +10,12 @@ Use: **code** = code or tables included (licence terms apply) · **technique** =
   <https://www.youtube.com/watch?v=DxfEbulyFcY> · <https://github.com/SebLague/Solar-System>
 - **Coding Adventure: Marching Cubes** — Sebastian Lague. *MIT* (technique). Approach for density-field planet terrain; rewritten for the browser, no code copied.
   <https://www.youtube.com/watch?v=M3iI2l0ltbE> · <https://github.com/SebLague/Marching-Cubes>
+- **Coding Adventure: Simulating Fluids · Fluid-Sim** — Sebastian Lague. *MIT* (code). SPH kernels and steps (spiky density / near-density, shared-pressure force, Poly6 viscosity, predicted positions, trapped-air foam rule) ported to JavaScript for the live water around the pilot (`ui/dm-fluid.js`), as in ArcLake.
+  <https://youtu.be/rSKMYc1CQHE> · <https://github.com/SebLague/Fluid-Sim>
+- **Unified Spray, Foam and Bubbles for Particle-Based Fluids** — M. Ihmsen, N. Akinci, G. Akinci, M. Teschner (2012). *Published paper* (technique). Foam, spray and bubble particles thrown up by churned water.
+  <https://cg.informatik.uni-freiburg.de/publications/2012_CGI_sprayFoamBubbles.pdf>
+- **ArcLake · SPH Ocean** — DART-Skyboard · Radical Deepscale. *DART Meadow project* (technique). The project’s own browser SPH ocean; the reference for bringing Fluid-Sim into the game.
+  <https://radicaldeepscale.com/ArcLakeFluidSim.html>
 - **Procedural Planets (cube-sphere)** — Sebastian Lague. *MIT* (technique). Cube-to-sphere planet patches used by the sandbox’s quadtree LOD planet.
   <https://github.com/SebLague/Procedural-Planets>
 - **Polygonising a scalar field (marching cubes tables)** — Paul Bourke; tables by Cory Gene Bloyd. *Free to use with attribution* (code). MC_EDGE_TABLE / MC_TRI_TABLE lookup tables.

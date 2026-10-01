@@ -121,7 +121,8 @@ if(location.search.indexOf('debug')!==-1){
   });
 })();</script>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-<script src="ui/dm-theme.js?v=77"></script>
+<script src="ui/dm-theme.js?v=78"></script>
+<script src="ui/dm-fluid.js?v=78"></script>
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js",
@@ -951,7 +952,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   // Picks up the result if signInWithRedirect was used (popup-blocked fallback)
   getRedirectResult(fbAuth).catch(err => console.warn('redirect result:', err));
 </script>
-<script src="jots/jots-link.js?v=77" defer></script>
+<script src="jots/jots-link.js?v=78" defer></script>
 </head>
 <body>
 <!-- LOADING -->
@@ -11685,6 +11686,15 @@ const CREDITS=[
  {t:'Coding Adventure: Marching Cubes',a:'Sebastian Lague',l:'MIT',use:'technique',
   u:['https://www.youtube.com/watch?v=M3iI2l0ltbE','https://github.com/SebLague/Marching-Cubes'],
   w:'Approach for density-field planet terrain; rewritten for the browser, no code copied.'},
+ {t:'Coding Adventure: Simulating Fluids · Fluid-Sim',a:'Sebastian Lague',l:'MIT',use:'code',
+  u:['https://youtu.be/rSKMYc1CQHE','https://github.com/SebLague/Fluid-Sim'],
+  w:'SPH kernels and steps (spiky density / near-density, shared-pressure force, Poly6 viscosity, predicted positions, trapped-air foam rule) ported to JavaScript for the live water around the pilot (ui/dm-fluid.js), as in ArcLake.'},
+ {t:'Unified Spray, Foam and Bubbles for Particle-Based Fluids',a:'M. Ihmsen, N. Akinci, G. Akinci, M. Teschner (2012)',l:'Published paper',use:'technique',
+  u:['https://cg.informatik.uni-freiburg.de/publications/2012_CGI_sprayFoamBubbles.pdf'],
+  w:'Foam, spray and bubble particles thrown up by churned water.'},
+ {t:'ArcLake · SPH Ocean',a:'DART-Skyboard · Radical Deepscale',l:'DART Meadow project',use:'technique',
+  u:['https://radicaldeepscale.com/ArcLakeFluidSim.html'],
+  w:'The project’s own browser SPH ocean; the reference for bringing Fluid-Sim into the game.'},
  {t:'Procedural Planets (cube-sphere)',a:'Sebastian Lague',l:'MIT',use:'technique',
   u:['https://github.com/SebLague/Procedural-Planets'],
   w:'Cube-to-sphere planet patches used by the sandbox’s quadtree LOD planet.'},
@@ -17322,11 +17332,61 @@ async function enterSurface(body,site,opts){
     try{ updateCharOrbitCamera(); }catch(e){_animLoopWarn('charOrbit',e);}
     try{ _updateCharDebugHUD(); }catch(e){_animLoopWarn('charDbg',e);}
     try{updateCaustics(dt);}catch(e){_animLoopWarn('caustics',e);}
+    try{ _surfFluidTick(dt); }catch(e){_animLoopWarn('fluid',e);}
     try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);} // ship keeps wandering + shard keeps following, even off-screen
     try{ surfRenderer.render(surfScene,surfCamera); }catch(e){ _animLoopWarn('surf-render',e); }
   })();
 }
 let surfBoard=null,surfTerrainMesh=null,_surfHeight=null;
+
+// ── Live water (ui/dm-fluid.js): an SPH particle patch that follows her
+// whenever there's water nearby. She (and the board) are moving rigid
+// bodies in it; the world's wind ripples it; moons pull a slow tide.
+// Particle count follows the graphics tier.
+let _surfFluid=null,_surfFluidChk=0,_surfFluidAway=0,_surfFluidPrev=null,_surfFluidBoardPrev=null;
+function _surfFluidStop(){ if(_surfFluid){ try{_surfFluid.dispose();}catch(e){} } _surfFluid=null;_surfFluidPrev=null;_surfFluidBoardPrev=null;_surfFluidChk=0; }
+function _surfFluidTick(dt){
+  const W=window.JOTS_WATER, p=surfPlayer;
+  if(!window.DMFluid||!W||!p||!surfScene||!_surfHeight){ _surfFluidStop(); return; }
+  const H=_surfHeight;
+  _surfFluidChk-=dt;
+  if(_surfFluidChk<=0){
+    _surfFluidChk=1;
+    // water under her or within ~14 units?
+    let wet=false;
+    for(let k=0;k<9&&!wet;k++){ const a=k/8*Math.PI*2, r=k?14:0; if(H(p.pos.x+Math.cos(a)*r,p.pos.z+Math.sin(a)*r)<W.surfaceY-0.3) wet=true; }
+    if(wet){
+      _surfFluidAway=0;
+      if(!_surfFluid){
+        const body=_surfBody||{}, earth=/earth/i.test(body.name||'');
+        const tier=(typeof resolvePreset==='function')?resolvePreset():'medium';
+        _surfFluid=new DMFluid.Water(THREE,surfScene,{
+          tier, restY:W.surfaceY, cx:p.pos.x, cz:p.pos.z, floor:(x,z)=>H(x,z),
+          gravity:16*Math.max(0.1,p.grav||1),
+          color:(W.surfaceMesh&&W.surfaceMesh.material&&W.surfaceMesh.material.color)?W.surfaceMesh.material.color.getHex():0x1a4a7a,
+          material:W.surfaceMesh&&W.surfaceMesh.material,
+          wind:[earth?2.6:1.2, earth?0.6:0.3], gust:earth?0.35:0.2,
+          // the Moon's pull on Earth; other worlds scale with how many moons they have
+          tide:earth?0.25:Math.min(0.2,0.07*((body.moons|0)))
+        });
+      }
+    } else if(_surfFluid && ++_surfFluidAway>5) _surfFluidStop();
+  }
+  if(!_surfFluid) return;
+  // her body as two spheres (hips, chest), and the board when it's in the water
+  const feet=p.pos.y-3.0, idt=dt>0?1/dt:0;
+  const prev=_surfFluidPrev||{x:p.pos.x,y:feet,z:p.pos.z};
+  const vx=(p.pos.x-prev.x)*idt, vy=(feet-prev.y)*idt, vz=(p.pos.z-prev.z)*idt;
+  _surfFluidPrev={x:p.pos.x,y:feet,z:p.pos.z};
+  const bodies=[{x:p.pos.x,y:feet+1.0,z:p.pos.z,vx,vy,vz,r:1.0},{x:p.pos.x,y:feet+2.1,z:p.pos.z,vx,vy,vz,r:0.8}];
+  if(surfBoard&&surfBoard.visible!==false){
+    const b=surfBoard.position, bp=_surfFluidBoardPrev||{x:b.x,y:b.y,z:b.z};
+    if(b.y<W.surfaceY+1.5) bodies.push({x:b.x,y:b.y,z:b.z,vx:(b.x-bp.x)*idt,vy:(b.y-bp.y)*idt,vz:(b.z-bp.z)*idt,r:1.6});
+    _surfFluidBoardPrev={x:b.x,y:b.y,z:b.z};
+  }
+  _surfFluid.follow(p.pos.x,p.pos.z);
+  _surfFluid.update(dt,bodies);
+}
 
 // ════════════════════════════════════════════════════════════════════
 //  ✦ VIRTUAL LOD TERRAIN  (continuous level-of-detail, Nanite-inspired)
@@ -19146,7 +19206,7 @@ function updateSurface(dt){
   mf-=surfJoyMove.y;ms+=surfJoyMove.x;
   // RUN used to only swap the animation — she never went any faster.
   const _runOn=surfRunToggle||surfKeys['ShiftLeft']||surfKeys['ShiftRight'];
-  const spd=_runOn?SURF_RUN_SPEED:SURF_WALK_SPEED;
+  const spd=(_runOn?SURF_RUN_SPEED:SURF_WALK_SPEED)*(p._floating?0.45:1);   // swimming is slower than walking
   const fx=-Math.sin(p.yaw),fz=-Math.cos(p.yaw);
   const rx=Math.cos(p.yaw),rz=-Math.sin(p.yaw);
   p.pos.x+=(fx*mf+rx*ms)*spd*dt;
@@ -19155,7 +19215,12 @@ function updateSurface(dt){
   p.vel.y-=9.8*p.grav*dt;
   p.pos.y+=p.vel.y*dt;
   const groundH=_surfHeight?_surfHeight(p.pos.x,p.pos.z):0;
-  const eye=groundH+3.0;
+  // Deep water: she floats at the surface (body under, head above) and swims
+  // through the live water instead of walking the seabed.
+  const _wtr=window.JOTS_WATER, floatFeet=(_wtr&&groundH<_wtr.surfaceY-2.6)?_wtr.surfaceY-2.4:-1e9;
+  const supportH=Math.max(groundH,floatFeet);
+  p._floating=floatFeet>groundH;
+  const eye=supportH+3.0;
   if(p.pos.y<=eye){p.pos.y=eye;p.vel.y=0;p.onGround=true;p.jumpActive=false;}else p.onGround=false;
   // Real bug found: this used to be `const jumping = !p.onGround`, checked
   // every single frame in the character-sync block below — meaning ANY
@@ -19271,7 +19336,7 @@ function updateSurface(dt){
     // Physics eye = groundH+3; old eye-3.0 put root at groundH → feet
     // buried by feetOffset*s. Soft-coord: if _surfHeight wrong → Worlds.
     const _sSurf=CHAR.scaleForTerrain||CHAR.scaleForBoard||1;
-    const rootY=groundH+(CHAR.feetOffset||0)*_sSurf;
+    const rootY=supportH+(CHAR.feetOffset||0)*_sSurf;
     CHAR.root.position.set(p.pos.x, rootY, p.pos.z);
     // SURFACE facing: mount formula + CHAR_TERRAIN_YAW_EXTRA (+PI) so she faces
     // travel / board nose (unmounted lacks mount Z-mirror). Mount/atmo unchanged.
@@ -19291,7 +19356,7 @@ function updateSurface(dt){
     const slopeDeg = THREE.MathUtils.radToDeg(groundNormal.angleTo(new THREE.Vector3(0,1,0)));
     // Stabilizer swim seam: Worlds installs window._surfWaterAt(x,y,z).
     // Console override CHAR._wantSwim still works for testing without water volumes.
-    const feetY = groundH; // feet on surface (root is rootY)
+    const feetY = supportH; // feet on whatever holds her up (seabed, ground, or floating at the surface)
     const inWater = !!CHAR._wantSwim || ((typeof window._surfWaterAt==='function') ? !!window._surfWaterAt(p.pos.x, feetY, p.pos.z) : false);
     const autoClimbFromSlope = (!!climbN || slopeDeg > 50) && moving;
     // Swim wins over climb while immersed so Swim_Forward actually plays in water volumes.
@@ -19428,7 +19493,7 @@ function _surfRemountSkyboardFinish(){
   // enterAtmosphericFlight() once that board object actually exists.
   if(CHAR.loaded && CHAR.root && CHAR.root.parent) CHAR.root.parent.remove(CHAR.root);
   if(surfScene)disposeObject3D(surfScene); // free terrain/water/skyboard GPU memory (see disposeObject3D)
-  surfScene=null;surfPlayer=null;surfBoard=null;surfTerrainMesh=null;TERRAIN.mcGroup=null;TERRAIN._mcBuildGen=(TERRAIN._mcBuildGen||0)+1;
+  _surfFluidStop();surfScene=null;surfPlayer=null;surfBoard=null;surfTerrainMesh=null;TERRAIN.mcGroup=null;TERRAIN._mcBuildGen=(TERRAIN._mcBuildGen||0)+1;
   TERRAIN.tiles.clear();TERRAIN.group=null;TERRAIN.mcDensityArray=null;TERRAIN.mcGridInfo=null;
   window._surfWaterAt=function(){ return false; };
   window._surfClimbNormal=function(){ return null; };
@@ -19469,7 +19534,7 @@ function _exitSurfaceFinish(){
   // dispose surface scene
   if(surfScene)disposeObject3D(surfScene); // free terrain/water/skyboard GPU memory (see disposeObject3D)
   if(surfRenderer){surfRenderer.dispose();}
-  surfScene=null;surfPlayer=null;surfBoard=null;surfTerrainMesh=null;TERRAIN.mcGroup=null;TERRAIN._mcBuildGen=(TERRAIN._mcBuildGen||0)+1;
+  _surfFluidStop();surfScene=null;surfPlayer=null;surfBoard=null;surfTerrainMesh=null;TERRAIN.mcGroup=null;TERRAIN._mcBuildGen=(TERRAIN._mcBuildGen||0)+1;
   TERRAIN.tiles.clear();TERRAIN.group=null;TERRAIN.mcDensityArray=null;TERRAIN.mcGridInfo=null;
   window._surfWaterAt=function(){ return false; };
   window._surfClimbNormal=function(){ return null; };
@@ -20208,8 +20273,8 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 </script>
 
 <!-- ?v= stamps: bump on every UI change so browsers never mix a new page with cached old styles -->
-<link rel="stylesheet" href="ui/dm-ui.css?v=77">
-<link rel="stylesheet" href="ui/dm-hud.css?v=77">
-<link rel="stylesheet" href="ui/dm-menu.css?v=77">
+<link rel="stylesheet" href="ui/dm-ui.css?v=78">
+<link rel="stylesheet" href="ui/dm-hud.css?v=78">
+<link rel="stylesheet" href="ui/dm-menu.css?v=78">
 </body>
 </html>
