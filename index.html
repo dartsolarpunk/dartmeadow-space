@@ -121,7 +121,7 @@ if(location.search.indexOf('debug')!==-1){
   });
 })();</script>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-<script src="ui/dm-theme.js"></script>
+<script src="ui/dm-theme.js?v=76"></script>
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js",
@@ -689,6 +689,15 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;background:var(--c0);co
 .pf-th-sw{display:inline-flex;flex-shrink:0;width:22px;height:14px;border-radius:3px;overflow:hidden;border:1px solid rgba(255,255,255,.2);}
 .pf-th-sw i{flex:1;}
 .pf-custom{display:flex;gap:6px;margin-top:6px;}
+.pf-save{display:flex;gap:6px;margin-top:8px;}
+.pf-save input{flex:1;min-width:0;padding:7px 9px;border-radius:3px;border:1px solid rgba(var(--acc-rgb),.35);background:rgba(0,0,0,.35);color:var(--text);font-family:var(--font-body);font-size:.66rem;}
+.pf-save .pf-btn{flex:0 0 auto;}
+.pf-mine{position:relative;padding-right:52px;}
+.pf-mine .pf-th-n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+.pf-mine-x{position:absolute;right:4px;top:50%;transform:translateY(-50%);display:flex;gap:2px;}
+.pf-mine-x button{min-width:22px;height:22px;padding:0 4px;border:none;border-radius:2px;background:rgba(var(--acc-rgb),.1);color:var(--text-dim);font-size:.6rem;cursor:pointer;}
+.pf-mine-x button:hover{background:rgba(var(--acc-rgb),.28);color:var(--text);}
+.pf-mine-x button[data-armed]{background:rgba(255,80,104,.3);color:#ffd0d8;font-family:var(--font-hud);font-size:.42rem;letter-spacing:.08em;}
 .pf-cc{flex:1;display:flex;align-items:center;gap:6px;padding:6px 7px;border-radius:3px;border:1px solid rgba(var(--acc-rgb),.3);background:rgba(var(--acc-rgb),.06);color:var(--text);cursor:pointer;font-size:.62rem;}
 .pf-cc-sw{width:16px;height:16px;border-radius:50%;border:1px solid rgba(255,255,255,.3);flex-shrink:0;}
 @keyframes progressFlash{0%{box-shadow:0 0 22px rgba(140,255,190,0.9);}100%{box-shadow:0 0 8px rgba(110,230,160,0.28);}}
@@ -942,7 +951,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   // Picks up the result if signInWithRedirect was used (popup-blocked fallback)
   getRedirectResult(fbAuth).catch(err => console.warn('redirect result:', err));
 </script>
-<script src="jots/jots-link.js" defer></script>
+<script src="jots/jots-link.js?v=76" defer></script>
 </head>
 <body>
 <!-- LOADING -->
@@ -1461,7 +1470,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     </div>
     <!-- Centre: title + SPD / ALT gauges + destination -->
     <div class="hud-c">
-      <svg class="kite-edge" viewBox="0 0 360 160" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="kite-grad" x1="0" y1="0" x2="0.35" y2="1"><stop offset="0" class="ks-a"/><stop offset=".55" class="ks-b"/><stop offset="1" class="ks-c"/></linearGradient></defs><polygon class="kite-line" points="1.5,77 75.6,1.5 358.5,75.2 75.6,158.5"/><polyline class="kite-ridge" points="2,77 358,75.2"/></svg>
+      <svg class="kite-edge" viewBox="0 0 360 160" preserveAspectRatio="none" width="0" height="0" aria-hidden="true"><defs><linearGradient id="kite-grad" x1="0" y1="0" x2="0.35" y2="1"><stop offset="0" class="ks-a"/><stop offset=".55" class="ks-b"/><stop offset="1" class="ks-c"/></linearGradient></defs><polygon class="kite-line" fill="none" stroke="none" points="1.5,77 75.6,1.5 358.5,75.2 75.6,158.5"/><polyline class="kite-ridge" fill="none" stroke="none" points="2,77 358,75.2"/></svg>
       <div class="art-logo">DART MEADOW</div>
       <div class="art-stats">
         <div class="hud-g" title="Speed"><span class="g-lbl">SPD</span><svg class="g-ring" viewBox="0 0 40 40" aria-hidden="true"><circle class="g-track" cx="20" cy="20" r="16"/><circle class="g-arc" id="g-spd" cx="20" cy="20" r="16"/></svg><span class="g-val"><span id="hud-speed">0.000</span>c³</span></div>
@@ -1940,7 +1949,9 @@ function buildSaveData(slot){
     galaxyDb:{current:GALAXY_DB.current,galaxies:GALAXY_DB.galaxies,worldSeed:WORLD_SEED},
     // Exactly where you are, so a resume puts you back there (see resumeJourney).
     where:_saveWhere(),
-    discoveries:(typeof loadDiscoveries==='function'?loadDiscoveries():[])
+    discoveries:(typeof loadDiscoveries==='function'?loadDiscoveries():[]),
+    // Your own saved UI themes travel with every save and export.
+    themes:(window.DMTheme?window.DMTheme.exportData():null)
   };
 }
 // Where the player is: galaxy, system, position, facing, and the nearest
@@ -1991,6 +2002,7 @@ function loadSaveData(data){
     if(data.settings.caustics!==undefined)GFX.caustics=data.settings.caustics;
     if(data.settings.gi!==undefined)GFX.fakeGI=data.settings.gi;
   }
+  if(data.themes&&window.DMTheme){ try{ window.DMTheme.importData(data.themes,'save'); }catch(e){} }
   if(Array.isArray(data.discoveries)&&data.discoveries.length){
     try{
       const have=loadDiscoveries(), ids=new Set(have.map(d=>d.id));
@@ -11413,6 +11425,12 @@ function _pfEnsure(){
     '<div class="pf-themes" id="pf-themes"></div>'+
     '<div class="pf-row-d" style="margin-top:8px;">Custom colours \u2014 tap one to open the colour picker:</div>'+
     '<div class="pf-custom" id="pf-custom"></div>'+
+    '<div class="pf-save"><input id="pf-th-name" maxlength="32" placeholder="Name these colours\u2026" autocomplete="off" spellcheck="false"><button class="pf-btn" id="pf-th-save">\uFF0B SAVE THEME</button></div>'+
+    '<div class="pf-sec">MY THEMES</div>'+
+    '<div class="pf-themes" id="pf-mine"></div>'+
+    '<div class="pf-row-d" id="pf-mine-note" style="margin-top:6px;"></div>'+
+    '<div class="pf-btns"><button class="pf-btn" id="pf-th-export">\u21E9 EXPORT THEMES</button><button class="pf-btn" id="pf-th-import">\u21E7 IMPORT THEMES</button></div>'+
+    '<input type="file" id="pf-th-file" accept=".json,application/json" style="display:none">'+
     '<div class="pf-sec">COMING LATER</div>'+
     '<div class="pf-soon">Your full pilot profile, achievements, and the tech to analyse unknown discoveries.</div>'+
     '<div class="pf-btns"><button class="pf-btn" id="pf-close">CLOSE</button></div>'+
@@ -11426,6 +11444,7 @@ function _pfEnsure(){
   };
   bindSw('pf-sw-players','playerLabels');
   bindSw('pf-sw-objects','objectLabels',on=>{ if(!on) try{ hideCrosshairLabelNow(); }catch(e){} });
+  _pfBindThemeTools();
 }
 function _pfRender(){
   if(!$('profile-modal')) return;
@@ -11474,7 +11493,70 @@ function _pfRenderThemes(){
     };
     cus.appendChild(b);
   });
+  _pfRenderMine();
 }
+// MY THEMES: the player's own saved themes. Tap to use, \u270E to rename, \u2715 to delete.
+let _pfRenaming=null;
+function _pfRenderMine(){
+  const T=window.DMTheme, box=$('pf-mine'); if(!T||!box) return;
+  box.textContent='';
+  const list=T.saved;
+  if(!list.length){ const e=document.createElement('div'); e.className='pf-row-d'; e.style.gridColumn='1/-1';
+    e.textContent='None yet. Pick custom colours above, name them and tap SAVE THEME.'; box.appendChild(e); }
+  list.forEach(t=>{
+    const b=document.createElement('div'); b.className='pf-theme pf-mine'+(T.id===t.id?' on':''); b.tabIndex=0; b.setAttribute('role','button');
+    b.innerHTML='<span class="pf-th-sw"><i></i><i></i></span><span class="pf-th-n"></span><span class="pf-mine-x"><button title="Rename">\u270E</button><button title="Delete">\u2715</button></span>';
+    const sw=b.querySelectorAll('i'); sw[0].style.background=t.acc; sw[1].style.background=t.hi;
+    b.querySelector('.pf-th-n').textContent=t.name;
+    b.onclick=()=>{ T.use(t.id); _pfRenaming=null; _pfRenderThemes(); };
+    b.onkeydown=e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); b.click(); } };
+    const [ren,del]=b.querySelectorAll('.pf-mine-x button');
+    ren.onclick=e=>{ e.stopPropagation(); _pfRenaming=t.id; const n=$('pf-th-name'); n.value=t.name; n.focus(); n.select(); _pfSaveLabel(); };
+    del.onclick=e=>{ e.stopPropagation();
+      if(del.dataset.armed){ T.remove(t.id); if(_pfRenaming===t.id) _pfRenaming=null; _pfRenderThemes(); toast('Theme deleted: '+t.name,1800); return; }
+      del.dataset.armed='1'; del.textContent='DEL?'; setTimeout(()=>{ if(del.isConnected){ delete del.dataset.armed; del.textContent='\u2715'; } },2500); };
+    box.appendChild(b);
+  });
+  const who=_pfWho();
+  $('pf-mine-note').textContent=who.signedIn&&who.repo
+    ? list.length+' saved \u00b7 kept in your account ('+who.repo+'/themes.json) and in your saves'
+    : list.length+' saved on this device and in your saves \u00b7 sign in with GitHub to keep them in your account, or export them';
+  _pfSaveLabel();
+}
+function _pfSaveLabel(){ const b=$('pf-th-save'); if(b) b.textContent=_pfRenaming?'\u270E RENAME':'\uFF0B SAVE THEME'; }
+function _pfBindThemeTools(){
+  const T=window.DMTheme; if(!T) return;
+  const name=$('pf-th-name');
+  const doSave=()=>{
+    const n=name.value.trim();
+    if(_pfRenaming){ T.rename(_pfRenaming,n||'My theme'); _pfRenaming=null; name.value=''; _pfRenderThemes(); toast('Theme renamed',1600); return; }
+    if(T.saved.length>=T.maxSaved){ toast('You have '+T.maxSaved+' themes \u2014 delete one to save another','','warn'); return; }
+    const t=T.saveCurrent(n||('My theme '+(T.saved.length+1)));
+    name.value=''; _pfRenderThemes(); if(t) toast('\u2726 Saved theme: '+t.name,1800);
+  };
+  $('pf-th-save').onclick=doSave;
+  name.onkeyup=e=>e.stopPropagation();
+  name.onkeydown=e=>{ e.stopPropagation(); if(e.key==='Enter') doSave(); if(e.key==='Escape'){ _pfRenaming=null; name.value=''; _pfSaveLabel(); } };
+  $('pf-th-export').onclick=()=>{
+    try{
+      const blob=new Blob([JSON.stringify(T.exportData(),null,1)],{type:'application/json'});
+      const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='dartmeadow-themes.json';
+      document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },1500);
+      toast('\u21E9 Exported '+T.saved.length+' theme'+(T.saved.length===1?'':'s'),1800);
+    }catch(e){ toast('\u26A0 Export failed','','warn'); }
+  };
+  const file=$('pf-th-file');
+  $('pf-th-import').onclick=()=>{ file.value=''; file.click(); };
+  file.onchange=()=>{
+    const f=file.files&&file.files[0]; if(!f) return;
+    if(f.size>512*1024){ toast('\u26A0 That file is too big to be a themes file','','warn'); return; }
+    const r=new FileReader();
+    r.onload=()=>{ try{ const n=T.importData(JSON.parse(r.result),'file'); _pfRenderThemes(); toast(n?'\u21E7 Imported '+n+' theme'+(n===1?'':'s'):'No new themes in that file',2000); }
+      catch(e){ toast('\u26A0 Not a themes file','','warn'); } };
+    r.readAsText(f);
+  };
+}
+window.addEventListener('dm:themes',e=>{ if(e.detail&&e.detail.source==='account'){ const m=$('profile-modal'); if(m&&m.classList.contains('open')) _pfRenderThemes(); } });
 function openProfileMenu(){ try{releaseMouseLook();}catch(e){} _pfEnsure(); _pfRender(); $('profile-modal').classList.add('open'); }
 function closeProfileMenu(){ const m=$('profile-modal'); if(m) m.classList.remove('open'); }
 function refreshProfileBtn(){
@@ -19786,6 +19868,28 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
     try{ await J().vault.save(e.detail,'autosave'); toast('☁ Progress initialized to '+J().vault.repo,2200); }
     catch(err){ toast('⚠ Progress initialized on this device; GitHub sync failed — it retries next time',3200); }
   });
+  // Saved UI themes: themes.json in the private repository. Merged in on
+  // sign-in (newer edits win, deletions stick), written back a moment after
+  // any change, so every device signed in to the account shares one list.
+  let _themesT=null, _themesLast='';
+  function pushThemes(){
+    if(!window.JOTS||!J().vault.ready||!window.DMTheme) return;
+    const d=window.DMTheme.exportData(), txt=JSON.stringify(d);
+    if(txt===_themesLast) return;
+    J().vault.putJSON('themes.json',d,'jots: themes').then(()=>{ _themesLast=txt; }).catch(e=>console.warn('[JOTS] themes save:',e));
+  }
+  window.addEventListener('jots:vault',async ()=>{
+    if(!window.DMTheme) return;
+    try{
+      const t=await J().vault.get('themes.json');
+      if(t){ const remote=JSON.parse(t); _themesLast=JSON.stringify(remote); window.DMTheme.importData(remote,'account'); }
+    }catch(e){ console.warn('[JOTS] themes load:',e); }
+    pushThemes();                                      // anything only this device had goes up too
+  });
+  window.addEventListener('dm:themes',e=>{
+    if(e.detail&&e.detail.source==='account') return;
+    clearTimeout(_themesT); _themesT=setTimeout(pushThemes,2500);
+  });
   // RESUME GAME goes through the same Story / Multiplayer choice.
   window.jotsChooseMode=function(then){ if(!J().consent.get()){ showWelcome(); return; } chooseMode(then); };
   let _vaultBusy=false;
@@ -20056,8 +20160,9 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 })();
 </script>
 
-<link rel="stylesheet" href="ui/dm-ui.css">
-<link rel="stylesheet" href="ui/dm-hud.css">
-<link rel="stylesheet" href="ui/dm-menu.css">
+<!-- ?v= stamps: bump on every UI change so browsers never mix a new page with cached old styles -->
+<link rel="stylesheet" href="ui/dm-ui.css?v=76">
+<link rel="stylesheet" href="ui/dm-hud.css?v=76">
+<link rel="stylesheet" href="ui/dm-menu.css?v=76">
 </body>
 </html>

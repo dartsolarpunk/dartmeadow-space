@@ -1,8 +1,9 @@
 /* DART Meadow — UI themes + colour picker
  *
- * DMTheme: preset themes and a custom theme, applied through the CSS
- * variables the whole UI already uses (--cyan, --gold, --acc-rgb …).
- * Saved per browser; works the same for guests and GitHub sign-ins.
+ * DMTheme: preset themes, a custom theme and the player's own saved themes,
+ * applied through the CSS variables the whole UI already uses (--cyan,
+ * --gold, --acc-rgb …). Saved per browser; signed-in players' saved themes
+ * also live in their account (see the JOTS block in index.html).
  *
  * DMColorPicker: a painter-style picker (hue ring + saturation/brightness
  * square, H/S/B sliders, hex, swatches, recent colours, eyedropper where the
@@ -61,11 +62,35 @@
     { id: 'mono',     name: 'Monochrome',     acc: '#C8D2E6', hi: '#FFFFFF', panel: '#040508' },
   ];
   const KEY = 'dm_theme_v1';
-  const state = Object.assign({ id: 'nebula', custom: { acc: '#5B7FFF', hi: '#FF4FA3', panel: '#000308' } }, ls.get(KEY) || {});
+  const state = Object.assign({ id: 'nebula', ts: 0, custom: { acc: '#5B7FFF', hi: '#FF4FA3', panel: '#000308' } }, ls.get(KEY) || {});
+
+  // The player's own themes: a named list they build from the custom colours.
+  // Kept per browser, merged into their account (themes.json in their private
+  // jots- repository) when signed in, carried in save files, and exportable
+  // as a file. Deletions are remembered (with when) so a sync never brings a
+  // deleted theme back.
+  const LIB_KEY = 'dm_themes_saved_v1';
+  const MAX_SAVED = 40;
+  const lib = Object.assign({ saved: [], deleted: {} }, ls.get(LIB_KEY) || {});
+  const cleanHex = (h) => { const rgb = hexToRgb(h); return rgb ? rgbToHex(...rgb).toUpperCase() : null; };
+  function cleanTheme(t) {
+    if (!t || typeof t !== 'object') return null;
+    const acc = cleanHex(t.acc), hi = cleanHex(t.hi), panel = cleanHex(t.panel);
+    if (!acc || !hi || !panel) return null;
+    const id = /^u_[a-z0-9]{4,24}$/.test(String(t.id || '')) ? t.id : newId();
+    const name = String(t.name || 'My theme').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 32) || 'My theme';
+    return { id, name, acc, hi, panel, ts: +t.ts || Date.now() };
+  }
+  function newId() { return 'u_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+  const findSaved = (id) => lib.saved.find((t) => t.id === id);
+  function persist(source) {
+    ls.set(KEY, state); ls.set(LIB_KEY, lib);
+    try { window.dispatchEvent(new CustomEvent('dm:themes', { detail: { source: source || 'local' } })); } catch (e) {}
+  }
 
   function themeColors() {
     if (state.id === 'custom') return state.custom;
-    return PRESETS.find((p) => p.id === state.id) || PRESETS[0];
+    return findSaved(state.id) || PRESETS.find((p) => p.id === state.id) || PRESETS[0];
   }
   function apply() {
     const t = themeColors();
@@ -93,15 +118,75 @@
     r.setProperty('--glow-md', '0 0 18px rgba(' + c(pur) + ',0.5)');
     try { window.dispatchEvent(new CustomEvent('dm:theme', { detail: { id: state.id, colors: t } })); } catch (e) {}
   }
+  const known = (id) => id === 'custom' || PRESETS.some((p) => p.id === id) || !!findSaved(id);
   const DMTheme = {
     presets: PRESETS,
     get id() { return state.id; },
     get custom() { return Object.assign({}, state.custom); },
+    get saved() { return lib.saved.map((t) => Object.assign({}, t)); },
+    maxSaved: MAX_SAVED,
     colors: themeColors,
-    use(id) { state.id = id === 'custom' || PRESETS.some((p) => p.id === id) ? id : 'nebula'; ls.set(KEY, state); apply(); },
+    use(id) { state.id = known(id) ? id : 'nebula'; state.ts = Date.now(); persist(); apply(); },
     setCustom(part) {
       Object.assign(state.custom, part);
-      state.id = 'custom'; ls.set(KEY, state); apply();
+      state.id = 'custom'; state.ts = Date.now(); persist(); apply();
+    },
+    // Save the colours on screen now as a new named theme and switch to it.
+    saveCurrent(name) {
+      if (lib.saved.length >= MAX_SAVED) return null;
+      const c = themeColors();
+      const t = cleanTheme({ name, acc: c.acc, hi: c.hi, panel: c.panel, ts: Date.now() });
+      lib.saved.push(t);
+      state.id = t.id; state.ts = Date.now(); persist(); apply();
+      return Object.assign({}, t);
+    },
+    rename(id, name) {
+      const t = findSaved(id); if (!t) return false;
+      const c = cleanTheme(Object.assign({}, t, { name }));
+      t.name = c.name; t.ts = Date.now(); persist(); return true;
+    },
+    remove(id) {
+      const t = findSaved(id); if (!t) return false;
+      lib.saved = lib.saved.filter((x) => x.id !== id);
+      lib.deleted[id] = Date.now();
+      if (state.id === id) { state.custom = { acc: t.acc, hi: t.hi, panel: t.panel }; state.id = 'custom'; state.ts = Date.now(); }
+      persist(); apply(); return true;
+    },
+    // Everything about the player's themes, for their account, save files and export.
+    exportData() {
+      return { kind: 'dartmeadow-themes', v: 1, active: state.id, activeTs: state.ts || 0,
+        custom: Object.assign({}, state.custom), saved: this.saved, deleted: Object.assign({}, lib.deleted) };
+    },
+    // Merge themes from the account, a save or an imported file. Newer edits
+    // win; deletions stick. The active theme follows whichever side chose
+    // more recently. Returns how many themes were added or updated.
+    importData(data, source) {
+      if (!data || typeof data !== 'object') return 0;
+      if (data.themes && !data.saved) data = data.themes;          // a whole save file
+      let n = 0;
+      const del = data.deleted && typeof data.deleted === 'object' ? data.deleted : {};
+      Object.keys(del).forEach((id) => {
+        if (!/^u_[a-z0-9]{4,24}$/.test(id)) return;
+        const when = +del[id] || 0;
+        if (when > (lib.deleted[id] || 0)) lib.deleted[id] = when;
+        const t = findSaved(id);
+        if (t && t.ts <= when) { lib.saved = lib.saved.filter((x) => x.id !== id); n++; if (state.id === id) { state.custom = { acc: t.acc, hi: t.hi, panel: t.panel }; state.id = 'custom'; } }
+      });
+      (Array.isArray(data.saved) ? data.saved : []).forEach((raw) => {
+        const t = cleanTheme(raw); if (!t) return;
+        if ((lib.deleted[t.id] || 0) >= t.ts) return;
+        const have = findSaved(t.id);
+        if (have) { if (t.ts > have.ts) { Object.assign(have, t); n++; } }
+        else if (lib.saved.length < MAX_SAVED) { lib.saved.push(t); n++; }
+      });
+      if (source !== 'file' && (+data.activeTs || 0) > (state.ts || 0)) {
+        const cu = data.custom && cleanTheme(Object.assign({ name: 'c' }, data.custom));
+        if (cu) state.custom = { acc: cu.acc, hi: cu.hi, panel: cu.panel };
+        if (known(data.active)) { state.id = data.active; state.ts = +data.activeTs; }
+      }
+      if (!known(state.id)) state.id = 'custom';
+      persist(source || 'import'); apply();
+      return n;
     },
     apply,
     hexToRgb, rgbToHex,

@@ -269,7 +269,7 @@
           description: 'DART Meadow · Journey of the Skyboard — your saves and game data (private) · LEATR',
         });
         await this.put('README.md', '# Journey of the Skyboard — game data\n\nKept automatically by DART Meadow for ' + identity.name +
-          '.\n\n- `saves/` — your game saves (autosave + slots)\n- `profile.json` — your pilot profile\n- `chat/` — your multiplayer chat log\n\nPrivate to you. Do not edit by hand while the game is open.\n');
+          '.\n\n- `saves/` — your game saves (autosave + slots)\n- `profile.json` — your pilot profile\n- `themes.json` — your saved UI colour themes\n- `chat/` — your multiplayer chat log\n\nPrivate to you. Do not edit by hand while the game is open.\n');
         await this.putJSON('profile.json', { pilot: identity.name, created: new Date().toISOString(), game: 'jots' });
       }
       this.ready = true;
