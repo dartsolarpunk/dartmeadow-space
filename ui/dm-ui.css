@@ -86,3 +86,9 @@
 /* builder: alloy finish presets */
 .alloy-pre{flex:1;padding:6px 2px;background:rgba(var(--acc-rgb),.08);border:1px solid var(--border);color:var(--cyan);font-family:var(--font-hud);font-size:.46rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;}
 .alloy-pre:hover{background:rgba(var(--acc-rgb),.22);color:#fff;}
+/* builder: per-part finish */
+.pf{margin-top:6px;padding-top:6px;border-top:1px dashed rgba(var(--acc-rgb),.18);}
+.pf-row{display:flex;align-items:center;gap:6px;margin:3px 0;}
+.pf-row>span{width:64px;font-family:var(--font-hud);font-size:.46rem;letter-spacing:.12em;color:var(--text-dim);}
+.pf-row>input[type=range]{flex:1;}
+.pf-row>select{flex:1;background:#06131f;color:var(--cyan);border:1px solid var(--border);font-family:var(--font-mono);font-size:.56rem;padding:3px;border-radius:2px;}

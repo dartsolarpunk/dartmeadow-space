@@ -8512,6 +8512,9 @@ function preloadSkyboardTemplates(){
       const scale=target/Math.max(size2.x,size2.y,size2.z,0.001);
       root.scale.setScalar(scale);
 
+      // Break merged meshes back into their original pieces (energy rings,
+      // arrowhead shards, the tail shard) so each can be styled on its own
+      try{ _splitSkyboardParts(root); }catch(e){ console.warn('[skyboard] part split skipped:',e); }
       // Store the root directly (no wrapper group with pending rotations)
       _glbCache[url]=root;
       if(isActiveTemplate) _loadStep('boardTemplate', 1);
@@ -8539,6 +8542,80 @@ function preloadSkyboardTemplates(){
 //  serialize into save slots / profile automatically.
 // ══════════════════════════════════════════════════════════════
 const SKYBOARD_PARTS={};   // tmplKey -> [partName,…] discovered at preload
+// ── Skyboard parts ────────────────────────────────────────────────────
+// The sculpt was exported with its pieces merged into four meshes (dart,
+// deck, ornament, staff). Each merged mesh is split back into its connected
+// pieces — the front and back pairs of hollow energy rings, the three
+// arrowhead shards at the staff's head — and the deck's pointed tail is cut
+// out as the tail shard. Every piece becomes its own named part (so it can
+// be painted and finished on its own); all stay children of the one board
+// group, so in play the board and its staff move as a single unit.
+const _PART_LABEL={dart:'energy ring',ornament:'arrowhead shard'};
+function _splitSkyboardParts(root){
+  const jobs=[]; root.traverse(o=>{ if(o.isMesh&&o.geometry) jobs.push(o); });
+  let staffX=null;
+  jobs.forEach(o=>{ if(_partNameOf(o)==='staff'){ o.geometry.computeBoundingBox(); const b=o.geometry.boundingBox; staffX={min:b.min.x,max:b.max.x}; } });
+  jobs.forEach(mesh=>{
+    const base=_partNameOf(mesh);
+    let g=mesh.geometry; if(!g.index) g=g.toNonIndexed? g : g;
+    const pos=g.attributes.position, idx=g.index?g.index.array:null, triN=(idx?idx.length:pos.count)/3;
+    const vi=(t,k)=>idx?idx[t*3+k]:t*3+k;
+    let groups=null;
+    if(base==='deck'){
+      // the tail: the last 9% of the deck at its aft end — the end the staff
+      // reaches past (found from the staff itself, not assumed from an axis)
+      let mn=Infinity,mx=-Infinity; for(let i=0;i<pos.count;i++){ const x=pos.getX(i); if(x<mn)mn=x; if(x>mx)mx=x; }
+      let aftMax=true;
+      if(staffX){ aftMax=(staffX.max-mx)>(mn-staffX.min); }
+      const cut=aftMax?mx-(mx-mn)*0.09:mn+(mx-mn)*0.09, tail=[], body=[];
+      for(let t=0;t<triN;t++){ const cx=(pos.getX(vi(t,0))+pos.getX(vi(t,1))+pos.getX(vi(t,2)))/3; ((aftMax?cx>cut:cx<cut)?tail:body).push(t); }
+      if(tail.length&&body.length) groups=[['deck',body],['tail shard',tail]];
+    } else if(_PART_LABEL[base]){
+      // connected pieces (welded by position)
+      const key=new Map(), weld=new Int32Array(pos.count);
+      for(let i=0;i<pos.count;i++){ const k=Math.round(pos.getX(i)*1e4)+','+Math.round(pos.getY(i)*1e4)+','+Math.round(pos.getZ(i)*1e4); let w=key.get(k); if(w===undefined){ w=key.size; key.set(k,w); } weld[i]=w; }
+      const par=new Int32Array(key.size); for(let i=0;i<par.length;i++) par[i]=i;
+      const find=x=>{ while(par[x]!==x){ par[x]=par[par[x]]; x=par[x]; } return x; };
+      for(let t=0;t<triN;t++){ const a=find(weld[vi(t,0)]); par[find(weld[vi(t,1)])]=a; par[find(weld[vi(t,2)])]=a; }
+      const byRoot=new Map();
+      for(let t=0;t<triN;t++){ const r=find(weld[vi(t,0)]); if(!byRoot.has(r)) byRoot.set(r,[]); byRoot.get(r).push(t); }
+      if(byRoot.size>1){
+        // nose to tail order
+        const comps=[...byRoot.values()].map(ts=>{ let sx=0; ts.forEach(t=>{ sx+=pos.getX(vi(t,0)); }); return {ts,cx:sx/ts.length}; }).sort((a,b)=>b.cx-a.cx);
+        groups=comps.map((c,i)=>[_PART_LABEL[base]+' '+(i+1),c.ts]);
+      }
+    }
+    if(!groups) return;
+    const parent=mesh.parent;
+    groups.forEach(([name,ts])=>{
+      const remap=new Map(), out=[];
+      ts.forEach(t=>{ for(let k=0;k<3;k++){ const v=vi(t,k); let n=remap.get(v); if(n===undefined){ n=remap.size; remap.set(v,n); } out.push(n); } });
+      const ng=new THREE.BufferGeometry(), order=[...remap.keys()];
+      Object.keys(g.attributes).forEach(an=>{ const A=g.attributes[an], isz=A.itemSize, arr=new A.array.constructor(order.length*isz);
+        order.forEach((v,i)=>{ for(let c=0;c<isz;c++) arr[i*isz+c]=A.array[v*isz+c]; }); ng.setAttribute(an,new THREE.BufferAttribute(arr,isz,A.normalized)); });
+      ng.setIndex(out); ng.computeBoundingBox(); ng.computeBoundingSphere();
+      const m=new THREE.Mesh(ng,mesh.material); m.name=name; m.userData.basePart=base;
+      m.position.copy(mesh.position); m.quaternion.copy(mesh.quaternion); m.scale.copy(mesh.scale);
+      parent.add(m);
+    });
+    parent.remove(mesh);
+  });
+}
+// what a part is, for its default finish
+function _partRole(name){
+  const z=(name||'').toLowerCase();
+  if(z.includes('ring')||z.includes('dart')) return 'energy';
+  if(z.includes('shard')||z.includes('orn')||z.includes('crystal')) return 'crystal';
+  if(z.includes('staff')) return 'staff';
+  return 'deck';
+}
+const FINISH_DEFAULTS={
+  deck:{type:'alloy',shine:0.55,brush:0.6,glow:0,clarity:0},
+  staff:{type:'alloy',shine:0.62,brush:0.8,glow:0,clarity:0},
+  crystal:{type:'crystal',shine:0.85,brush:0,glow:0.55,clarity:0.7},
+  energy:{type:'energy',shine:0.7,brush:0.2,glow:0.7,clarity:0.45},
+};
+function _partFinish(name,st){ return Object.assign({},FINISH_DEFAULTS[_partRole(name)],(st&&st.finish)||{}); }
 
 // Resolve which authored "part" a mesh belongs to: walk up past auto-generated
 // mesh/group names to the nearest human-authored node name.
@@ -8558,8 +8635,9 @@ function _partNameOf(o){
 function _legacyStyleForPart(part,c){
   const z=part.toLowerCase();
   let col;
-  if(z.includes('dart'))col=c.zoneDart||c.emit||'#00f5ff';
-  else if(z.includes('orn')||z.includes('staff'))col=c.zoneOrn||'#d9b060';
+  if(z.includes('dart')||z.includes('ring'))col=c.zoneDart||c.emit||'#00f5ff';
+  else if(z.includes('shard')||z.includes('orn'))col=z.includes('tail')?'#9fd8ff':'#ffcf6a';
+  else if(z.includes('staff'))col=c.zoneOrn||'#d9b060';
   else col=c.zoneDeck||'#6a5a38';
   return {visible:(z.includes('staff')?(c.showStaff!==false):true),mode:'solid',axis:'x',stops:[col]};
 }
@@ -8648,6 +8726,26 @@ function _alloyMaterial(metal,A){
     return m;
   }catch(e){ console.warn('[alloy] node material unavailable, standard metal used:',e&&e.message); return null; }
 }
+// Translucent pieces: the crystal shards (tail, arrowhead) and the energy
+// rings. Light passes through them (physical transmission with a refractive
+// index, a thin-film shimmer on crystal), they glow from within in their own
+// colour, and the rings keep a metallic, clear-coated skin. Lower tiers skip
+// the transmission pass and use plain translucency.
+function _crystalMaterial(F,glowCol){
+  const low=!GFX||GFX.preset==='low'||GFX.isMobile&&GFX.preset!=='high';
+  const energy=F.type==='energy', clarity=Math.max(0,Math.min(1,F.clarity!=null?F.clarity:0.6));
+  const m=new THREE.MeshPhysicalMaterial({
+    color:0xffffff, vertexColors:true,
+    metalness:energy?0.82:0.04, roughness:Math.max(0.03,0.4-(F.shine||0.7)*0.36),
+    clearcoat:1, clearcoatRoughness:0.08,
+    transmission:low?0:clarity*(energy?0.55:0.92), thickness:energy?0.12:0.45, ior:energy?1.45:1.62,
+    iridescence:energy?0:0.35, iridescenceIOR:1.3,
+    transparent:true, opacity:low?(energy?0.62:0.55)+0.25*(1-clarity):0.96,
+    emissive:glowCol.clone(), emissiveIntensity:(F.glow||0)*(energy?4.2:2.2)+(energy?0.6:0.15),
+    side:THREE.DoubleSide, depthWrite:false,
+  });
+  return m;
+}
 function applyPartStyle(mesh, style, zd){
   mesh.geometry=mesh.geometry.clone();
   const g=mesh.geometry;
@@ -8684,8 +8782,11 @@ function applyPartStyle(mesh, style, zd){
   g.setAttribute('color',new THREE.BufferAttribute(arr,3));
   // emissive zones (dart rings, ornaments) glow with their gradient's middle color
   const mid=stops[Math.floor((stops.length-1)/2)];
+  const F=zd.finish||{type:zd.emissiveInt>0?'paint':'alloy'};
+  if(F.type==='crystal'||F.type==='energy'){ mesh.material=_crystalMaterial(F,mid); mesh.renderOrder=3; return; }
   // the board's metal parts: real brushed alloy (WebGPU node shader)
-  if(!(zd.emissiveInt>0)){ const am=_alloyMaterial(zd.metal,(STATE.boardConfig&&STATE.boardConfig.alloy)||{}); if(am){ mesh.material=am; return; } }
+  if(F.type==='alloy'){ const A=Object.assign({},(STATE.boardConfig&&STATE.boardConfig.alloy)||{}); if(F.shine!=null)A.shine=F.shine; if(F.brush!=null)A.brush=F.brush;
+    const am=_alloyMaterial(zd.metal,A); if(am){ if(F.glow>0){ am.emissive=mid.clone(); am.emissiveIntensity=F.glow*2; } mesh.material=am; return; } }
   mesh.material=new THREE.MeshStandardMaterial({
     color:0xffffff, vertexColors:true,
     metalness:zd.metal, roughness:zd.rough,
@@ -8722,11 +8823,13 @@ function buildBoardFromGLB(tmplKey){
     const part=_partNameOf(o), z=part.toLowerCase();
     // zone material character (metal/rough/glow behavior) stays authored per zone
     let zd;
-    if(z.includes('dart'))       zd={metal:0.9,rough:0.15,emissiveInt:(c.glow!=null?c.glow:0.3)*6+1.2};
-    else if(z.includes('orn'))   zd={metal:0.7,rough:0.25,emissiveInt:0.25};
-    else if(z.includes('staff')) zd={metal:0.6,rough:0.3,emissiveInt:0};
+    if(z.includes('dart')||z.includes('ring')) zd={metal:0.9,rough:0.15,emissiveInt:(c.glow!=null?c.glow:0.3)*6+1.2};
+    else if(z.includes('orn')||z.includes('shard')) zd={metal:0.7,rough:0.25,emissiveInt:0.25};
+    else if(z.includes('staff')) zd={metal:Math.max(0.75,c.metal!=null?c.metal:0.6),rough:0.3,emissiveInt:0};
     else                         zd={metal:(c.metal!=null?c.metal:0.6),rough:0.45,emissiveInt:0};
-    const st=styles[part]||_legacyStyleForPart(part,c);
+    // a split piece inherits its old merged part's saved style until restyled
+    const st=styles[part]||(o.userData.basePart&&styles[o.userData.basePart])||_legacyStyleForPart(part,c);
+    zd.finish=_partFinish(part,styles[part]);
     if(st.visible===false){o.visible=false;return;}
     o.visible=true;
     applyPartStyle(o,st,zd);
@@ -8787,12 +8890,16 @@ function renderPartPanels(){
         <button type="button" onclick="onPartAddStop('${p}')" ${stops.length>=3?'disabled':''} style="width:26px;height:26px;background:rgba(var(--acc-rgb),0.08);border:1px solid var(--border);color:var(--cyan);cursor:pointer;border-radius:2px;${stops.length>=3?'opacity:0.3;':''}">+</button>
         <button type="button" onclick="onPartDelStop('${p}')" ${stops.length<=1?'disabled':''} style="width:26px;height:26px;background:rgba(255,60,60,0.08);border:1px solid var(--border);color:#ff6a6a;cursor:pointer;border-radius:2px;${stops.length<=1?'opacity:0.3;':''}">−</button>
       </div>
+      ${(()=>{ const F=_partFinish(p,st), sl=(k,lab)=>`<div class="pf-row"><span>${lab}</span><input type="range" min="0" max="1" step="0.05" value="${F[k]}" oninput="onPartFinish('${p}','${k}',parseFloat(this.value))"></div>`;
+        return `<div class="pf"><div class="pf-row"><span>FINISH</span><select onchange="onPartFinish('${p}','type',this.value)">${['alloy','crystal','energy','paint'].map(t=>`<option value="${t}" ${F.type===t?'selected':''}>${{alloy:'ALLOY METAL',crystal:'CRYSTAL',energy:'ENERGY ALLOY',paint:'PAINT'}[t]}</option>`).join('')}</select></div>
+          ${sl('shine','SHINE')}${F.type==='alloy'?sl('brush','HAIRLINES'):''}${F.type!=='paint'?sl('glow','GLOW'):''}${(F.type==='crystal'||F.type==='energy')?sl('clarity','CLARITY'):''}</div>`; })()}
     </div>`;
   }).join('');
 }
 function _partStyle(p){return _stylesFor(STATE.boardConfig.template)[p];}
 function onPartVisible(p,v){const st=_partStyle(p);if(!st)return;st.visible=v;if(p.toLowerCase().includes('staff'))STATE.boardConfig.showStaff=v;rb();}
 function onPartMode(p,m){const st=_partStyle(p);if(!st)return;st.mode=m;if(m!=='solid'&&(!st.stops||st.stops.length<2)){st.stops=st.stops||['#888888'];st.stops.push('#'+new THREE.Color(st.stops[0]).offsetHSL(0.12,0,0.1).getHexString());}renderPartPanels();rb();}
+function onPartFinish(p,k,v){const st=_partStyle(p);if(!st)return;st.finish=Object.assign(_partFinish(p,st),st.finish||{});st.finish[k]=v;if(k==='type')renderPartPanels();rb();}
 function onPartAxis(p,a){const st=_partStyle(p);if(!st)return;st.axis=a;rb();}
 function onPartStop(p,i,v){const st=_partStyle(p);if(!st||!st.stops)return;st.stops[i]=v;rb();}
 function onPartAddStop(p){const st=_partStyle(p);if(!st)return;st.stops=st.stops||['#888888'];if(st.stops.length>=3)return;st.stops.push('#'+new THREE.Color(st.stops[st.stops.length-1]).offsetHSL(0.15,0,0).getHexString());if(st.mode==='solid')st.mode='linear';renderPartPanels();rb();}
@@ -8816,7 +8923,10 @@ function autoColorBoard(){
       stops.push('#'+new THREE.Color().setHSL(hh,0.55+Math.random()*0.4,0.32+Math.random()*0.36).getHexString());
     }
     const prevVis=styles[p]?styles[p].visible!==false:true;
-    styles[p]={visible:prevVis,mode:n===1?'solid':(Math.random()<0.35?'radial':'linear'),axis:['x','y','z'][Math.floor(Math.random()*3)],stops};
+    // and a fresh finish in the part's own character (metal stays metal, crystal stays crystal)
+    const D=FINISH_DEFAULTS[_partRole(p)], j=v=>Math.max(0,Math.min(1,v+(Math.random()-0.5)*0.4));
+    const finish={type:D.type,shine:j(D.shine),brush:j(D.brush),glow:D.type==='alloy'?0:j(D.glow),clarity:j(D.clarity)};
+    styles[p]={visible:prevVis,mode:n===1?'solid':(Math.random()<0.35?'radial':'linear'),axis:['x','y','z'][Math.floor(Math.random()*3)],stops,finish};
   });
   renderPartPanels();rb();
   toast('🎨 New color scheme applied — press again for another');
@@ -22309,7 +22419,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 </script>
 
 <!-- ?v= stamps: bump on every UI change so browsers never mix a new page with cached old styles -->
-<link rel="stylesheet" href="ui/dm-ui.css?v=102">
+<link rel="stylesheet" href="ui/dm-ui.css?v=103">
 <link rel="stylesheet" href="ui/dm-hud.css?v=101">
 <link rel="stylesheet" href="ui/dm-menu.css?v=80">
 <link rel="stylesheet" href="ui/dm-journal.css?v=97">
