@@ -1297,6 +1297,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
         <div style="display:flex;gap:6px;margin:4px 0 8px;">
           <button type="button" id="tmpl-B" class="tmpl-btn" onclick="setBoardTemplate('B')">SKYBOARD B</button>
           <button type="button" id="tmpl-A" class="tmpl-btn" onclick="setBoardTemplate('A')">SKYBOARD A</button>
+          <button type="button" id="tmpl-C" class="tmpl-btn" onclick="setBoardTemplate('C')" title="The original sculpt with all 21 pieces editable">SKYBOARD C · 21 PARTS</button>
         </div>
         <div id="zone-colors" style="display:none;">
           <span class="sec-label">Part Customization</span>
@@ -3450,7 +3451,7 @@ function syncSlidersToBoardConfig(){
   if($('s-mount'))$('s-mount').value=c.staffMount||'upright';
   // template selector + zone inputs
   const tk=c.template||'procedural';
-  ['proc','A','B'].forEach(k=>{const b=$('tmpl-'+k);if(b)b.classList.toggle('active',(k==='proc'?'procedural':k)===tk);});
+  ['proc','A','B','C'].forEach(k=>{const b=$('tmpl-'+k);if(b)b.classList.toggle('active',(k==='proc'?'procedural':k)===tk);});
   if($('zone-colors'))$('zone-colors').style.display=(tk==='procedural')?'none':'block';
   if($('z-deck'))$('z-deck').value=c.zoneDeck||'#6a5a38';
   if($('z-dart'))$('z-dart').value=c.zoneDart||c.emit||'#00f5ff';
@@ -3496,7 +3497,7 @@ function onNameChange(){STATE.boardConfig.name=($('board-name-input').value||'')
 function setBoardTemplate(key){
   if(key==='procedural') key='B'; // procedural removed as a selectable template — see comments near the builder UI markup
   STATE.boardConfig.template=key;
-  ['A','B'].forEach(k=>{const b=$('tmpl-'+k);if(b)b.classList.toggle('active',k===key);});
+  ['A','B','C'].forEach(k=>{const b=$('tmpl-'+k);if(b)b.classList.toggle('active',k===key);});
   const zc=$('zone-colors');if(zc)zc.style.display='block'; // always a GLB template now
   try{preloadSkyboardTemplates();}catch(e){}
   try{renderPartPanels();}catch(e){}
@@ -8401,7 +8402,7 @@ function addProceduralPlanetDetails(){
 // Two templates ('A' = Skyboard_A parts pack, 'B' = full extraction), each
 // built with named zones (deck / dart / ornament / staff) so the editor can
 // recolor each zone and toggle the staff — procedural build wraps AROUND them.
-const SKYBOARD_TEMPLATES={A:'skyboard_A.glb', B:'skyboard_B.glb'};
+const SKYBOARD_TEMPLATES={A:'skyboard_A.glb', B:'skyboard_B.glb', C:'skyboard_C.glb'};   // C = the 21-part original sculpt, every piece editable
 const _glbCache={};           // url -> loaded THREE.Group (template scene)
 let _glbLoader=null;
 function _getGLBLoader(){ if(!_glbLoader&&THREE.GLTFLoader)_glbLoader=new THREE.GLTFLoader(); return _glbLoader; }
@@ -8467,10 +8468,20 @@ function preloadSkyboardTemplates(){
       // parent groups. The flight code sets boardFlight.rotation.y = camYaw - PI/2
       // on the whole board; any un-baked child rotation compounds incorrectly.
       const root=gltf.scene;
+      // the sculpt's own camera and lights aren't part of the board
+      { const drop=[]; root.traverse(o=>{ if(o.isLight||o.isCamera) drop.push(o); }); drop.forEach(o=>o.parent&&o.parent.remove(o)); }
+      // 21-part original: give each piece its name (a part's sub-meshes share it)
+      if(k==='C') root.traverse(o=>{ if(!o.isMesh) return; const m=/^part[ _](\d+)/i.exec(o.name||'')||/^part[ _](\d+)/i.exec((o.parent&&o.parent.name)||''); if(m&&SKYBOARD_C_NAMES[+m[1]]) o.name=SKYBOARD_C_NAMES[+m[1]]; });
 
       // Step 1: apply all existing transforms so we're measuring pure geometry
       root.updateMatrixWorld(true);
       root.traverse(o=>{if(o.isMesh&&o.geometry){o.geometry=o.geometry.clone();o.geometry.applyMatrix4(o.matrixWorld);}});
+      // every node's transform is now inside the geometry: clear them all (a
+      // sub-group's own transform would otherwise apply a second time)
+      root.traverse(o=>{ o.position.set(0,0,0); o.rotation.set(0,0,0); o.scale.set(1,1,1); });
+      // one mesh per named part (a sculpted part can arrive as dozens of
+      // sub-meshes — merged here so the board stays a handful of draw calls)
+      try{ _mergeMeshesByName(root); }catch(e){ console.warn('[skyboard] merge skipped',e); }
       root.position.set(0,0,0);root.rotation.set(0,0,0);root.scale.set(1,1,1);
       root.updateMatrixWorld(true);
 
@@ -8508,7 +8519,8 @@ function preloadSkyboardTemplates(){
       root.updateMatrixWorld(true);
       const box2=new THREE.Box3().setFromObject(root);
       const size2=new THREE.Vector3();box2.getSize(size2);
-      const target=3.0;
+      // C keeps its longer original staff: scale it so the deck matches B's size under her feet
+      const target=k==='C'?3.69:3.0;
       const scale=target/Math.max(size2.x,size2.y,size2.z,0.001);
       root.scale.setScalar(scale);
 
@@ -8551,6 +8563,25 @@ const SKYBOARD_PARTS={};   // tmplKey -> [partName,…] discovered at preload
 // be painted and finished on its own); all stay children of the one board
 // group, so in play the board and its staff move as a single unit.
 const _PART_LABEL={dart:'energy ring',ornament:'arrowhead shard'};
+// the 21 pieces of the original sculpt (template C), named for what they are
+const SKYBOARD_C_NAMES={1:'hull',2:'front ring outer',3:'front ring inner',4:'trim 1',5:'center glass',6:'core plate left',7:'mid panel',8:'mid panel 2',
+  9:'trim 2',10:'trim 3',11:'core plate right',12:'aft ring',13:'trim 4',14:'nose glass',15:'tail fin',16:'staff',17:'staff head 1',18:'staff head 2',
+  19:'tail shard 1',20:'tail shard 2',21:'tail shard 3'};
+function _mergeMeshesByName(root){
+  const by=new Map(); root.traverse(o=>{ if(o.isMesh&&o.geometry&&o.name){ if(!by.has(o.name)) by.set(o.name,[]); by.get(o.name).push(o); } });
+  by.forEach((list,name)=>{
+    if(list.length<2) return;
+    const keys=['position','normal','uv'].filter(k=>list.every(m=>m.geometry.attributes[k]));
+    const parts=list.map(m=>m.geometry.index?m.geometry:m.geometry.setIndex([...Array(m.geometry.attributes.position.count).keys()]));
+    let vTot=0,iTot=0; parts.forEach(g=>{ vTot+=g.attributes.position.count; iTot+=g.index.count; });
+    const ng=new THREE.BufferGeometry(), idx=new Uint32Array(iTot);
+    keys.forEach(k=>{ const isz=parts[0].attributes[k].itemSize, arr=new Float32Array(vTot*isz); let o=0; parts.forEach(g=>{ const A=g.attributes[k]; for(let i=0;i<A.count;i++) for(let c=0;c<isz;c++) arr[(o+i)*isz+c]=A.array[i*A.itemSize+c]; o+=A.count; }); ng.setAttribute(k,new THREE.BufferAttribute(arr,isz)); });
+    let vo=0,io=0; parts.forEach(g=>{ const I=g.index.array; for(let i=0;i<I.length;i++) idx[io+i]=I[i]+vo; io+=I.length; vo+=g.attributes.position.count; });
+    ng.setIndex(new THREE.BufferAttribute(idx,1)); ng.computeBoundingBox(); ng.computeBoundingSphere();
+    const keep=list[0]; keep.geometry=ng;
+    for(let i=1;i<list.length;i++){ const m=list[i]; m.parent&&m.parent.remove(m); }
+  });
+}
 function _splitSkyboardParts(root){
   const jobs=[]; root.traverse(o=>{ if(o.isMesh&&o.geometry) jobs.push(o); });
   let staffX=null;
@@ -8604,8 +8635,8 @@ function _splitSkyboardParts(root){
 // what a part is, for its default finish
 function _partRole(name){
   const z=(name||'').toLowerCase();
-  if(z.includes('ring')||z.includes('dart')) return 'energy';
-  if(z.includes('shard')||z.includes('orn')||z.includes('crystal')) return 'crystal';
+  if(z.includes('shard')||z.includes('orn')||z.includes('crystal')||z.includes('head')) return 'crystal';
+  if(z.includes('ring')||z.includes('dart')||z.includes('glass')||z.includes('panel')||z.includes('plate')||z.includes('fin')) return 'energy';
   if(z.includes('staff')) return 'staff';
   return 'deck';
 }
@@ -8635,8 +8666,8 @@ function _partNameOf(o){
 function _legacyStyleForPart(part,c){
   const z=part.toLowerCase();
   let col;
-  if(z.includes('dart')||z.includes('ring'))col=c.zoneDart||c.emit||'#00f5ff';
-  else if(z.includes('shard')||z.includes('orn'))col=z.includes('tail')?'#9fd8ff':'#ffcf6a';
+  if(z.includes('dart')||z.includes('ring')||z.includes('glass')||z.includes('panel')||z.includes('plate')||z.includes('fin'))col=c.zoneDart||c.emit||'#00f5ff';
+  else if(z.includes('shard')||z.includes('orn')||z.includes('head'))col=z.includes('tail')?'#9fd8ff':'#ffcf6a';
   else if(z.includes('staff'))col=c.zoneOrn||'#d9b060';
   else col=c.zoneDeck||'#6a5a38';
   return {visible:(z.includes('staff')?(c.showStaff!==false):true),mode:'solid',axis:'x',stops:[col]};
@@ -14920,8 +14951,22 @@ function buildVibrantSolSun(radius){
 function buildProceduralStarMesh(radius, seedVal, starColor){
   const group = new THREE.Group();
   if(!(_isRealWebGPU(flightRenderer))){
-    const fallback=new THREE.Mesh(new THREE.SphereGeometry(radius,20,20),new THREE.MeshBasicMaterial({color:starColor}));
+    // WebGL2: a bright limb-darkened disc with a soft corona and glare, drawn
+    // with plain materials (no compute / node shaders needed)
+    const col=new THREE.Color(starColor);
+    const fallback=new THREE.Mesh(new THREE.SphereGeometry(radius,32,24),new THREE.MeshBasicMaterial({color:col.clone().lerp(new THREE.Color(0xffffff),0.35)}));
     group.add(fallback);
+    try{
+      const cv=document.createElement('canvas'); cv.width=cv.height=128; const cx=cv.getContext('2d');
+      const g=cx.createRadialGradient(64,64,0,64,64,64);
+      g.addColorStop(0,'rgba(255,255,255,1)'); g.addColorStop(0.22,'rgba(255,255,255,.85)'); g.addColorStop(0.45,'rgba(255,255,255,.28)'); g.addColorStop(1,'rgba(255,255,255,0)');
+      cx.fillStyle=g; cx.fillRect(0,0,128,128);
+      const tex=new THREE.CanvasTexture(cv);
+      const corona=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,color:col,transparent:true,blending:THREE.AdditiveBlending,depthWrite:false}));
+      corona.scale.setScalar(radius*4.2); group.add(corona);
+      const glare=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,color:col.clone().lerp(new THREE.Color(0xffffff),0.5),transparent:true,opacity:0.35,blending:THREE.AdditiveBlending,depthWrite:false}));
+      glare.scale.setScalar(radius*9); group.add(glare);
+    }catch(e){}
     return group;
   }
   const mat = new THREE.MeshBasicNodeMaterial();
@@ -22387,10 +22432,13 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
     if(!homeRow||!hud||!prog) return;
     const chatHome=chat?chat.parentNode:null;
     const rails={};
-    const railIn=(ov)=>{ let r=rails[ov.id]; if(!r){ r=document.createElement('div'); r.className='world-rail'; ov.appendChild(r); rails[ov.id]=r; } return r; };
+    const railIn=(ov)=>{ let r=rails[ov.id]; if(!r){ r=document.createElement('div'); r.className='world-rail'; ov.appendChild(r); rails[ov.id]=r;
+        // EXIT GAME, always on the world's own row (same prompt as in space)
+        const ex=document.createElement('button'); ex.type='button'; ex.className='art-btn world-exit'; ex.title='Exit the game'; ex.innerHTML='<i class="ic">⏻</i>EXIT';
+        ex.onclick=()=>{ try{ promptExit(); }catch(e){} }; r.appendChild(ex); } return r; };
     const place=()=>{
       const ov=['surface-overlay','atmo-overlay'].map(id=>document.getElementById(id)).find(o=>o&&o.style.display&&o.style.display!=='none');
-      if(ov){ const r=railIn(ov); if(hud.parentNode!==r){ r.appendChild(hud); r.appendChild(prog); if(chat) ov.appendChild(chat); } }
+      if(ov){ const r=railIn(ov); if(hud.parentNode!==r){ const ex=r.querySelector('.world-exit'); r.insertBefore(hud,ex); r.insertBefore(prog,ex); if(chat) ov.appendChild(chat); } }
       else if(hud.parentNode!==homeRow){ homeRow.insertBefore(hud,homeRow.firstChild); homeRow.appendChild(prog); if(chat&&chatHome) chatHome.appendChild(chat); }
     };
     const mo=new MutationObserver(place);
@@ -22420,7 +22468,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 
 <!-- ?v= stamps: bump on every UI change so browsers never mix a new page with cached old styles -->
 <link rel="stylesheet" href="ui/dm-ui.css?v=103">
-<link rel="stylesheet" href="ui/dm-hud.css?v=101">
+<link rel="stylesheet" href="ui/dm-hud.css?v=104">
 <link rel="stylesheet" href="ui/dm-menu.css?v=80">
 <link rel="stylesheet" href="ui/dm-journal.css?v=97">
 <link rel="stylesheet" href="ui/dm-landmap.css?v=86">
