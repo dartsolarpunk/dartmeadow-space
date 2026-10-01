@@ -123,6 +123,7 @@ if(location.search.indexOf('debug')!==-1){
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <script src="ui/dm-theme.js?v=80"></script>
 <script src="ui/dm-fluid.js?v=80"></script>
+<script src="ui/dm-journal.js?v=81"></script>
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js",
@@ -1453,6 +1454,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   <!-- Only visible while the Bird Shard is out (toggled in updateBirdShard) —
        lets you play the altar game or send it home without going through
        the Temple hub each time. -->
+  <button id="journal-toggle-btn" class="hud-toggle-btn" onclick="window.DMJournal&&DMJournal.toggle()" title="Journal — mark this spot, travel to your waypoints (J)"><span class="htb-ico">✦</span>JOURNAL</button>
   <button id="shard-game-btn" class="hud-toggle-btn" onclick="openAltarGame()" title="Play the altar game" style="top:205px;display:none;background:rgba(255,204,0,0.1);color:#ffcc00;border-color:rgba(255,204,0,0.35);"><span class="htb-ico">🎮</span>GAME</button>
   <button id="shard-return-btn" class="hud-toggle-btn" onclick="returnBirdShard()" title="Send the Bird Shard home" style="top:243px;display:none;background:rgba(255,204,0,0.1);color:#ffcc00;border-color:rgba(255,204,0,0.35);"><span class="htb-ico">🕊</span>RETURN</button>
   <div id="ar-top">
@@ -1617,12 +1619,14 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   <div style="position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:10px 16px calc(10px);background:rgba(var(--panel-rgb),.55);backdrop-filter:blur(10px);border-bottom:1px solid rgba(var(--acc-rgb),.15);pointer-events:none;">
     <div class="mini-kite"><svg class="mk-edge" viewBox="0 0 360 160" preserveAspectRatio="none" width="0" height="0" aria-hidden="true"><defs><linearGradient id="mk-grad-s" x1="0" y1="0" x2="0.35" y2="1"><stop offset="0" class="ks-a"/><stop offset=".55" class="ks-b"/><stop offset="1" class="ks-c"/></linearGradient></defs><polygon class="kite-line" style="stroke:url(#mk-grad-s)" fill="none" stroke="none" points="1.5,77 75.6,1.5 358.5,75.2 75.6,158.5"/><polyline class="kite-ridge" fill="none" stroke="none" points="2,77 358,75.2"/></svg><span id="surface-title" class="mk-name">—</span><span class="mk-mode">SURFACE</span><span id="surface-grav" class="mk-read">GRAV 1.00g</span></div>
     <div style="display:flex;gap:8px;">
-      <button onclick="openTempleHub()" style="pointer-events:auto;padding:5px 12px;background:rgba(255,255,255,.1);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🕊 TEMPLE</button>
+<button class="jn-open-btn" onclick="window.DMJournal&&DMJournal.toggle()" title="Journal — mark this spot, travel to your waypoints (J)"><span class="jn-ico">✦</span>JOURNAL</button>
+            <button onclick="openTempleHub()" style="pointer-events:auto;padding:5px 12px;background:rgba(255,255,255,.1);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🕊 TEMPLE</button>
       <button id="surf-fly-btn" onclick="surfRemountSkyboard()" style="pointer-events:auto;padding:5px 12px;background:rgba(var(--acc-rgb),.1);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🛹 FLY</button>
       <button id="liftoff-btn" onclick="exitSurface()" style="pointer-events:auto;padding:5px 14px;background:rgba(var(--hi-rgb),.12);border:1px solid var(--gold);color:var(--gold);font-family:var(--font-hud);font-size:.52rem;letter-spacing:.12em;cursor:pointer;border-radius:2px;">🚀 LIFTOFF</button>
     </div>
   </div>
   <button class="orbit-skyboard-btn hud-toggle-btn" onclick="toggleCharOrbit()" title="Orbit freely around the character — drag/scroll or pinch to look around" style="left:auto;right:10px;top:56px;background:rgba(var(--hi-rgb),0.10);color:#ff4fa3;border-color:rgba(var(--hi-rgb),0.35);z-index:36;">🔄 ORBIT</button>
+  <button id="surf-view-btn" class="surf-view-btn" onclick="toggleSurfFirstPerson()" title="Switch between first-person (her eyes) and third-person views (V)">👁 1ST PERSON</button>
   <!-- surface dual joysticks -->
   <div style="position:absolute;bottom:calc(30px + var(--safe-bot));left:24px;width:100px;height:100px;pointer-events:auto;" id="surf-move-zone">
     <div style="position:absolute;top:-16px;left:50%;transform:translateX(-50%);font-family:var(--font-hud);font-size:.44rem;color:rgba(var(--acc-rgb),.4);letter-spacing:.08em;">LOOK</div>
@@ -1675,7 +1679,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   <div style="position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:10px 16px;background:rgba(var(--panel-rgb),.5);backdrop-filter:blur(10px);border-bottom:1px solid rgba(var(--acc-rgb),.15);pointer-events:none;">
     <div class="mini-kite"><svg class="mk-edge" viewBox="0 0 360 160" preserveAspectRatio="none" width="0" height="0" aria-hidden="true"><defs><linearGradient id="mk-grad-a" x1="0" y1="0" x2="0.35" y2="1"><stop offset="0" class="ks-a"/><stop offset=".55" class="ks-b"/><stop offset="1" class="ks-c"/></linearGradient></defs><polygon class="kite-line" style="stroke:url(#mk-grad-a)" fill="none" stroke="none" points="1.5,77 75.6,1.5 358.5,75.2 75.6,158.5"/><polyline class="kite-ridge" fill="none" stroke="none" points="2,77 358,75.2"/></svg><span id="atmo-title" class="mk-name">—</span><span class="mk-mode">ATMOSPHERIC FLIGHT</span><span id="atmo-speed" class="mk-read">MACH 0.00</span></div>
     <div style="display:flex;gap:8px;">
-      <button onclick="openTempleHub()" style="pointer-events:auto;padding:5px 12px;background:rgba(255,255,255,.1);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🕊 TEMPLE</button>
+<button class="jn-open-btn" onclick="window.DMJournal&&DMJournal.toggle()" title="Journal — mark this spot, travel to your waypoints (J)"><span class="jn-ico">✦</span>JOURNAL</button>
+            <button onclick="openTempleHub()" style="pointer-events:auto;padding:5px 12px;background:rgba(255,255,255,.1);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🕊 TEMPLE</button>
       <button id="atmo-land-btn" onclick="atmoLandHere()" style="pointer-events:auto;padding:5px 12px;background:rgba(var(--hi-rgb),.12);border:1px solid var(--gold);color:var(--gold);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🚶 LAND</button>
       <button onclick="atmoExitToSpace()" style="pointer-events:auto;padding:5px 12px;background:rgba(var(--acc-rgb),.08);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🚀 TO SPACE</button>
     </div>
@@ -1950,7 +1955,9 @@ function buildSaveData(slot){
     where:_saveWhere(),
     discoveries:(typeof loadDiscoveries==='function'?loadDiscoveries():[]),
     // Your own saved UI themes travel with every save and export.
-    themes:(window.DMTheme?window.DMTheme.exportData():null)
+    themes:(window.DMTheme?window.DMTheme.exportData():null),
+    // ...and so do your Journal waypoints.
+    journal:(window.DMJournal?window.DMJournal.store.exportData():null)
   };
 }
 // Where the player is: galaxy, system, position, facing, and the nearest
@@ -2002,6 +2009,7 @@ function loadSaveData(data){
     Object.keys(data.settings).forEach(k=>{ if(!GFX_SETTING_KEYS.includes(k)) STATE.settings[k]=data.settings[k]; });
   }
   if(data.themes&&window.DMTheme){ try{ window.DMTheme.importData(data.themes,'save'); }catch(e){} }
+  if(data.journal&&window.DMJournal){ try{ window.DMJournal.store.importData(data.journal,'save'); }catch(e){} }
   if(Array.isArray(data.discoveries)&&data.discoveries.length){
     try{
       const have=loadDiscoveries(), ids=new Set(have.map(d=>d.id));
@@ -2101,6 +2109,218 @@ function resumeJourney(data){
   })();
 }
 window.quickSave=quickSave;window.resumeJourney=resumeJourney;
+
+/* ══════════════════════════════════════════════════════════════
+   JOURNAL — waypoints you set anywhere (ui/dm-journal.js holds the
+   list and the fold-out panel; this is the game side): where you are
+   right now, quick travel back to any waypoint, and the beacons that
+   mark them in space, in the sky and on the ground.
+   ══════════════════════════════════════════════════════════════ */
+function _jnSysRef(){
+  const sys=window._curSystem||null;
+  return {gal:(GALAXY_DB&&GALAXY_DB.current)||'milkyway', sys:sys?{name:sys.name,seed:sys.seed,starType:sys.starType}:null};
+}
+const _jnLL=(v,p,n)=>Math.abs(v).toFixed(1)+'°'+(v>=0?p:n);
+function _jnSiteText(site){ return site&&typeof site.lat==='number'?_jnLL(site.lat,'N','S')+' '+_jnLL(site.lon,'E','W'):''; }
+function _jnHere(){
+  try{
+    if(surfaceActive&&surfPlayer&&_surfBody){
+      const r=_jnSysRef(), site=_surfSite&&typeof _surfSite.lat==='number'?{lat:_surfSite.lat,lon:_surfSite.lon}:null;
+      return {kind:'surface',title:_surfBody.name+(site?' · '+_jnSiteText(site):''),
+        place:Object.assign(r,{body:_surfBody.name,site,x:+surfPlayer.pos.x.toFixed(2),z:+surfPlayer.pos.z.toFixed(2),yaw:+surfPlayer.yaw.toFixed(3)})};
+    }
+    if(atmoActive&&atmoState&&_atmoBody){
+      const r=_jnSysRef(), site=_atmoSite&&typeof _atmoSite.lat==='number'?{lat:_atmoSite.lat,lon:_atmoSite.lon}:null;
+      const gh=_atmoHeight?_atmoHeight(atmoState.pos.x,atmoState.pos.z):0;
+      return {kind:'atmo',title:_atmoBody.name+' sky · '+Math.round((atmoState.pos.y-gh)*3.28084)+' ft'+(site?' · '+_jnSiteText(site):''),
+        place:Object.assign(r,{body:_atmoBody.name,site,x:+atmoState.pos.x.toFixed(2),y:+atmoState.pos.y.toFixed(2),z:+atmoState.pos.z.toFixed(2),yaw:+atmoState.yaw.toFixed(3)})};
+    }
+    if(STATE.screen==='flight'&&flightInited&&STATE.flight&&!orbitActive&&!SHIP_WALK.active){
+      const w=_saveWhere(); if(!w) return null;
+      const sysName=(w.sys&&w.sys.name)||'Sol';
+      return {kind:'space',title:w.near?'Near '+w.near.name:'Deep space · '+sysName,place:w};
+    }
+  }catch(e){ console.warn('[journal] here',e); }
+  return null;
+}
+function _jnDescribe(e){
+  const p=e.place||{}, sysName=(p.sys&&p.sys.name)||'Sol', gal=p.gal&&p.gal!=='milkyway'?' · '+p.gal:'';
+  if(e.kind==='space') return 'SPACE · '+(p.near?'near '+p.near.name+' · ':'')+sysName+gal;
+  const where=(p.body||'?')+(p.site?' '+_jnSiteText(p.site):'');
+  if(e.kind==='atmo') return 'SKY · '+where+' · '+sysName+gal;
+  return 'GROUND · '+where+' · '+sysName+gal;
+}
+function _jnSyncNote(){
+  const v=window.JOTS&&window.JOTS.vault;
+  return v&&v.ready
+    ? '☁ Synced to your account ('+v.repo+'/journal.json) · also kept in your saves and profile export'
+    : 'Kept on this device and in your saves · sign in with GitHub to sync it, or export it from Profile → Themes';
+}
+// Leave whatever we're in (ground, sky, orbit view, ship) for open space.
+function _jnLeaveScenes(){
+  try{ if(typeof _clearLandPrompt==='function') _clearLandPrompt(); }catch(e){}
+  try{ const dc=$('descent-choice'); if(dc) dc.style.display='none'; }catch(e){}
+  if(surfaceActive){ try{ _exitSurfaceFinish(); }catch(e){ console.warn('[journal] leave ground',e); } }
+  if(atmoActive){ try{ _atmoCleanup(); rebuildFlightBoardIfBroken('journal');
+    if(CHAR.loaded&&CHAR.root&&boardFlight){ mountSkyboard(boardFlight); _forceCharVisible(); boardFlight.visible=true; } }catch(e){ console.warn('[journal] leave sky',e); } }
+  if(orbitActive){ try{ closeOrbitApproach(); }catch(e){} }
+  if(SHIP_WALK.active){ try{ exitShipWalk(); }catch(e){} }
+  if(STATE.screen!=='flight'||!flightAnimId) launchFlight();
+}
+let _jnTravelGen=0;
+function journalTravel(entry){
+  if(!entry||!entry.place) return;
+  const gen=++_jnTravelGen, p=entry.place;
+  const gal=p.gal||'milkyway', want=(p.sys&&p.sys.name)||'Sol';
+  toast('✦ Journal — travelling to '+entry.label+'…',2200);
+  try{ if(window.DMJournal&&window.DMJournal.isOpen()) window.DMJournal.close(); }catch(e){}
+  _jnLeaveScenes();
+  let travelled=false; const t0=Date.now();
+  (function wait(){
+    if(gen!==_jnTravelGen) return;                       // a newer trip replaced this one
+    if(Date.now()-t0>45000){ toast('⚠ Could not reach '+entry.label,'','warn'); return; }
+    const ready=flightInited&&boardFlight&&celestialBodies&&celestialBodies.length&&STATE.flight;
+    if(!ready){ setTimeout(wait,300); return; }
+    const cur=(window._curSystem&&window._curSystem.name)||'Sol', curGal=GALAXY_DB.current||'milkyway';
+    if(cur!==want||curGal!==gal){
+      if(!travelled){ travelled=true; GALAXY_DB.current=gal; fastTravelToSystem(_systemFromRef(gal,p.sys),gal); }
+      setTimeout(wait,400); return;
+    }
+    const sp=STATE.flight;
+    if(sp.vel) sp.vel.set(0,0,0);
+    _followInit=false;
+    if(entry.kind==='space'){
+      const b=p.near&&celestialBodies.find(x=>x&&x.name===p.near.name&&x.mesh);
+      if(b) sp.pos.set(b.mesh.position.x+p.near.off[0],b.mesh.position.y+p.near.off[1],b.mesh.position.z+p.near.off[2]);
+      else if(p.pos) sp.pos.set(p.pos[0],p.pos[1],p.pos[2]);
+      if(p.quat) sp.quat=new THREE.Quaternion(p.quat[0],p.quat[1],p.quat[2],p.quat[3]);
+      if(boardFlight) boardFlight.position.copy(sp.pos);
+      if(b){ ANCHOR_STATE.active=true;ANCHOR_STATE.target=b;ANCHOR_STATE._lastPos=b.mesh.position.clone();try{updateAnchorButton();}catch(e){} }
+      toast('✦ Arrived: '+entry.label+(b?' — beside '+b.name+' · anchored (⚓ to release)':''),3200);
+      return;
+    }
+    const body=celestialBodies.find(x=>x&&x.name===p.body&&x.mesh);
+    if(!body){ toast('⚠ '+(p.body||'That world')+' is not in '+want+' any more','','warn'); return; }
+    // park the board beside the world, so leaving it puts you back in its orbit
+    try{
+      const r=(_bodyVisRadius(body)||6), d=sp.pos.clone().sub(body.mesh.position);
+      if(d.lengthSq()<1e-6) d.set(0,0,1);
+      sp.pos.copy(body.mesh.position).addScaledVector(d.normalize(),r*3.2);
+      if(boardFlight) boardFlight.position.copy(sp.pos);
+    }catch(e){}
+    const site=p.site?{lat:p.site.lat,lon:p.site.lon}:null;
+    if(entry.kind==='surface') enterSurface(body,site,{spawn:{x:p.x,z:p.z},yaw:p.yaw});
+    else enterAtmosphericFlight(body,site,{x:p.x,z:p.z,yaw:p.yaw,alt:p.y,journal:true});
+    setTimeout(()=>{ if(gen===_jnTravelGen) toast('✦ Arrived: '+entry.label,2600); },1800);
+  })();
+}
+window.journalTravel=journalTravel;
+
+// ── Beacons: a tall light and a label over every waypoint in the scene you're in ──
+const _jnColor={space:0xb48cff,atmo:0x9fd8ff,surface:0xffcc33};
+function _jnLabelSprite(text,kind){
+  const c=document.createElement('canvas'); c.width=512; c.height=96;
+  const x=c.getContext('2d'), col='#'+_jnColor[kind].toString(16).padStart(6,'0');
+  x.fillStyle='rgba(6,12,24,0.66)';
+  x.beginPath(); x.moveTo(18,8); x.lineTo(504,8); x.lineTo(504,70); x.lineTo(486,88); x.lineTo(8,88); x.lineTo(8,26); x.closePath(); x.fill();
+  x.strokeStyle=col; x.lineWidth=3; x.stroke();
+  x.fillStyle=col; x.font='bold 30px Orbitron,monospace'; x.textBaseline='middle';
+  x.fillText('✦',24,49);
+  x.fillStyle='#fff'; x.font='bold 28px Orbitron,monospace';
+  let t=String(text||''); while(t.length>2&&x.measureText(t).width>430) t=t.slice(0,-2);
+  if(t!==String(text||'')) t+='…';
+  x.fillText(t,64,50);
+  const tex=new THREE.CanvasTexture(c); tex.colorSpace=THREE.SRGBColorSpace;
+  const s=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,transparent:true,depthTest:false,depthWrite:false,fog:false}));
+  s.center.set(0.5,0); s.renderOrder=999; s.userData.aspect=512/96;
+  return s;
+}
+function _jnBeacon(entry,pillarH){
+  const g=new THREE.Group(); g.name='jn-beacon'; g.userData.entry=entry;
+  const col=_jnColor[entry.kind];
+  if(pillarH>0){
+    const m=new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:0.42,blending:THREE.AdditiveBlending,depthWrite:false,fog:false});
+    const beam=new THREE.Mesh(new THREE.CylinderGeometry(0.22,0.22,pillarH,8,1,true),m);
+    beam.position.y=pillarH/2; g.add(beam);
+    const ring=new THREE.Mesh(new THREE.TorusGeometry(1.4,0.08,6,32),new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:0.8,depthWrite:false}));
+    ring.rotation.x=Math.PI/2; ring.position.y=0.15; g.add(ring); g.userData.ring=ring;
+  } else {
+    const core=new THREE.Mesh(new THREE.OctahedronGeometry(1,0),new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:0.9,blending:THREE.AdditiveBlending,depthWrite:false}));
+    g.add(core); g.userData.core=core;
+  }
+  const lab=_jnLabelSprite(entry.label,entry.kind); lab.position.y=pillarH>0?Math.min(9,pillarH*0.5):0; g.add(lab); g.userData.label=lab;
+  g.userData.pillarH=pillarH;
+  g.traverse(o=>{ o.raycast=()=>{}; });   // markers only — never ground, never something to land on
+  return g;
+}
+const _jnBeaconState={scene:null,sig:'',group:null};
+function _jnSameSite(a,b){ return a&&b&&Math.abs(a.lat-b.lat)<1e-3&&Math.abs(a.lon-b.lon)<1e-3; }
+function _jnBeaconsTick(){
+  if(!window.DMJournal) return;
+  let scene=null, cam=null, mode='';
+  if(surfaceActive&&surfScene){ scene=surfScene; cam=surfCamera; mode='surface'; }
+  else if(atmoActive&&atmoScene){ scene=atmoScene; cam=atmoCamera; mode='atmo'; }
+  else if(STATE.screen==='flight'&&flightScene&&flightInited){ scene=flightScene; cam=flightCamera; mode='space'; }
+  const st=_jnBeaconState;
+  if(!scene){ st.scene=null; st.group=null; return; }
+  const ref=_jnSysRef(), sysName=(ref.sys&&ref.sys.name)||'Sol';
+  const body=mode==='surface'?_surfBody:(mode==='atmo'?_atmoBody:null);
+  const site=mode==='surface'?_surfSite:(mode==='atmo'?_atmoSite:null);
+  const list=window.DMJournal.store.entries.filter(e=>{
+    const p=e.place||{};
+    if(((p.sys&&p.sys.name)||'Sol')!==sysName||(p.gal||'milkyway')!==ref.gal) return false;
+    if(mode==='space') return e.kind==='space';
+    return e.kind!=='space'&&body&&p.body===body.name&&_jnSameSite(p.site,site);
+  });
+  const sig=mode+'|'+list.map(e=>e.id+':'+e.updated).join(',');
+  if(st.scene!==scene||st.sig!==sig||!st.group||!st.group.parent){
+    if(st.group&&st.group.parent){ st.group.parent.remove(st.group); try{ disposeObject3D(st.group); }catch(e){} }
+    const g=new THREE.Group(); g.name='jn-beacons';
+    list.forEach(e=>{
+      const p=e.place;
+      const b=_jnBeacon(e,mode==='space'?0:(mode==='atmo'?180:60));
+      if(mode!=='space'){
+        const gh=mode==='surface'?(_surfHeight?_surfHeight(p.x,p.z):0):(_atmoHeight?_atmoHeight(p.x,p.z):0);
+        b.position.set(p.x,gh,p.z);
+        if(e.kind==='atmo'&&isFinite(p.y)) b.userData.markY=p.y;
+      }
+      g.add(b);
+    });
+    scene.add(g); st.scene=scene; st.sig=sig; st.group=g;
+  }
+  if(!cam) return;
+  const t=performance.now()/1000;
+  st.group.children.forEach(b=>{
+    const e=b.userData.entry, p=e.place;
+    if(mode==='space'){
+      const bd=p.near&&celestialBodies.find(x=>x&&x.name===p.near.name&&x.mesh);
+      if(bd) b.position.set(bd.mesh.position.x+p.near.off[0],bd.mesh.position.y+p.near.off[1],bd.mesh.position.z+p.near.off[2]);
+      else if(p.pos) b.position.set(p.pos[0],p.pos[1],p.pos[2]);
+    }
+    const d=Math.max(0.5,cam.position.distanceTo(b.position));
+    const k=Math.tan(((cam.fov||60)*Math.PI/180)/2)*d;      // world size of half the screen height at that depth
+    const lab=b.userData.label, lh=k*0.1;
+    lab.scale.set(lh*lab.userData.aspect,lh,1);
+    if(b.userData.core){ b.userData.core.scale.setScalar(k*0.018); b.userData.core.rotation.y=t*1.2; lab.position.y=k*0.03; }
+    if(b.userData.ring){ const s=1+0.25*Math.sin(t*2.4); b.userData.ring.scale.set(s,s,s); }
+    if(b.userData.markY!=null) lab.position.y=Math.max(4,b.userData.markY-b.position.y);
+    // a waypoint you're standing on doesn't need its label in your face
+    lab.visible=d>(mode==='space'?2:(mode==='atmo'?30:6));
+  });
+}
+setInterval(()=>{ try{ _jnBeaconsTick(); }catch(e){} },100);
+// keep "You are here" current while the Journal is open
+setInterval(()=>{ try{ if(window.DMJournal&&window.DMJournal.isOpen()) window.DMJournal.refreshHere(); }catch(e){} },1000);
+
+// J opens the Journal anywhere in the game; V swaps first/third person on the ground.
+window.addEventListener('keydown',e=>{
+  const t=e.target, typing=t&&(t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable);
+  if(typing||e.ctrlKey||e.metaKey||e.altKey) return;
+  if(e.code==='KeyJ'&&window.DMJournal&&(STATE.screen==='flight'||surfaceActive||atmoActive||window.DMJournal.isOpen())){ e.preventDefault(); window.DMJournal.toggle(); }
+  else if(e.code==='Escape'&&window.DMJournal&&window.DMJournal.isOpen()){ window.DMJournal.close(); }
+  else if(e.code==='KeyV'&&surfaceActive&&!(window.DMJournal&&window.DMJournal.isOpen())){ toggleSurfFirstPerson(); }
+});
+if(window.DMJournal) window.DMJournal.init({here:_jnHere,go:journalTravel,describe:_jnDescribe,syncNote:_jnSyncNote});
 function loadFromSlot(idx){
   const slots=getSaveSlots();
   if(!slots[idx]){toast('Empty slot','','warn');return;}
@@ -11572,11 +11792,12 @@ function _pfBindThemeTools(){
     try{
       // one file with your themes and your graphics choice (guests carry it between devices)
       let gfx=null; try{ gfx=JSON.parse(localStorage.getItem('dm_gfx_v2')||'null'); }catch(e){}
-      const data={kind:'dartmeadow-profile',v:1,exported:new Date().toISOString(),themes:T.exportData(),graphics:gfx};
+      const jn=window.DMJournal?window.DMJournal.store.exportData():null;
+      const data={kind:'dartmeadow-profile',v:1,exported:new Date().toISOString(),themes:T.exportData(),graphics:gfx,journal:jn};
       const blob=new Blob([JSON.stringify(data,null,1)],{type:'application/json'});
       const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='dartmeadow-profile.json';
       document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },1500);
-      toast('\u21E9 Exported '+T.saved.length+' theme'+(T.saved.length===1?'':'s')+(gfx?' + graphics settings':''),1800);
+      toast('\u21E9 Exported '+T.saved.length+' theme'+(T.saved.length===1?'':'s')+(gfx?' + graphics settings':'')+(jn&&jn.entries.length?' + '+jn.entries.length+' waypoint'+(jn.entries.length===1?'':'s'):''),1800);
     }catch(e){ toast('\u26A0 Export failed','','warn'); }
   };
   const file=$('pf-th-file');
@@ -11588,6 +11809,9 @@ function _pfBindThemeTools(){
     r.onload=()=>{ try{
         const d=JSON.parse(r.result);
         const n=T.importData(d,'file'); _pfRenderThemes();
+        // ...and Journal waypoints (a profile file, or a journal-only file)
+        let wp=0;
+        if(d&&window.DMJournal&&(d.journal||d.kind==='dartmeadow-journal')){ try{ wp=window.DMJournal.store.importData(d.journal||d,'file'); }catch(e){} }
         // a profile file also carries graphics settings: apply them live
         let g=false;
         if(d&&d.graphics&&d.graphics.chosen&&typeof d.graphics==='object'){
@@ -11595,7 +11819,7 @@ function _pfBindThemeTools(){
           localStorage.setItem('dm_gfx_v2',JSON.stringify(gd));
           if(typeof loadGfxChoice==='function'&&loadGfxChoice()){ try{ applyGraphicsLive(); }catch(e){} g=true; }
         }
-        toast((n?'\u21E7 Imported '+n+' theme'+(n===1?'':'s'):'No new themes')+(g?' · graphics settings applied':''),2200);
+        toast((n?'\u21E7 Imported '+n+' theme'+(n===1?'':'s'):'No new themes')+(g?' · graphics settings applied':'')+(wp?' · '+wp+' waypoint'+(wp===1?'':'s'):''),2200);
       }catch(e){ toast('\u26A0 Not a profile or themes file','','warn'); } };
     r.readAsText(f);
   };
@@ -15252,7 +15476,7 @@ async function enterAtmosphericFlight(body,site,start){
   if(flightAnimId){cancelAnimationFrame(flightAnimId);flightAnimId=null;}
   const pal=getSurfacePalette(body);
   const ov=$('atmo-overlay');ov.style.display='block';
-  if(start) ov.style.background='transparent'; // surface frame shows through until our first frame
+  if(start&&!start.journal) ov.style.background='transparent'; // surface frame shows through until our first frame
   _miniKiteName($('atmo-title'),body.name);
   const cv=_freshCanvas('atmo-canvas');const W=window.innerWidth,H=window.innerHeight;cv.width=W;cv.height=H;
   atmoRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:!GFX.isMobile});
@@ -15295,6 +15519,8 @@ async function enterAtmosphericFlight(body,site,start){
     const sx=start.x, sz=start.z;
     const gh=(_atmoHeight?_atmoHeight(sx,sz):0);
     atmoState={pos:new THREE.Vector3(sx,gh+4.5,sz),vel:new THREE.Vector3(),yaw:start.yaw||0,pitch:0,roll:0,takeoff:ATMO_TAKEOFF_S};
+    // a Journal waypoint: straight back to the height it was marked at
+    if(isFinite(start.alt)){ atmoState.pos.y=Math.max(gh+6,start.alt); atmoState.takeoff=0; }
   } else {
     const startH=(_atmoHeight?_atmoHeight(0,0):0);
     atmoState={pos:new THREE.Vector3(0,startH+46,0),vel:new THREE.Vector3(),yaw:0,pitch:0,roll:0};
@@ -17093,6 +17319,9 @@ function updateCharOrbitCamera(){
   cam.lookAt(target);
 }
 
+// How far the orbit view may pull back: on a world (ground or sky) far enough
+// to take in the landscape around her; in open space, close round the board.
+function _charOrbitMax(){ return surfaceActive?220:(atmoActive?320:30); }
 function _bindCharOrbitListenersOnce(){
   if(_charOrbitListenersBound) return; _charOrbitListenersBound=true;
   const move=(x,y)=>{
@@ -17116,7 +17345,7 @@ function _bindCharOrbitListenersOnce(){
     else if(e.touches.length===2 && _charOrbitPinch){
       e.preventDefault();
       const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
-      charOrbitDist=Math.max(1.2,Math.min(30,charOrbitDist*(_charOrbitPinch/d)));
+      charOrbitDist=Math.max(1.2,Math.min(_charOrbitMax(),charOrbitDist*(_charOrbitPinch/d)));
       _charOrbitPinch=d;
     }
   },{passive:false});
@@ -17124,7 +17353,7 @@ function _bindCharOrbitListenersOnce(){
   window.addEventListener('wheel', e=>{
     if(!charOrbitActive||e.target!==_charOrbitCanvas())return;
     e.preventDefault();
-    charOrbitDist=Math.max(1.2,Math.min(30,charOrbitDist*(1+Math.sign(e.deltaY)*0.08)));
+    charOrbitDist=Math.max(1.2,Math.min(_charOrbitMax(),charOrbitDist*(1+Math.sign(e.deltaY)*0.08)));
   },{passive:false});
 }
 
@@ -17248,7 +17477,9 @@ async function enterSurface(body,site,opts){
   // player proxy — eye height MUST match walk collision (groundH+3), not a
   // hardcoded 3.2. Snow-border / earthSiteHeightBias sites lift ground well
   // above Y=0; spawning at 3.2 buried feet under the MC contour.
-  const spawnX=0, spawnZ=8;
+  // a Journal waypoint lands her on the exact spot it was marked
+  const _sp=opts&&opts.spawn, _spOk=_sp&&isFinite(_sp.x)&&isFinite(_sp.z);
+  const spawnX=_spOk?Math.max(-400,Math.min(400,_sp.x)):0, spawnZ=_spOk?Math.max(-400,Math.min(400,_sp.z)):8;
   let spawnGround=0;
   try{
     if(typeof _surfHeight==='function'){
@@ -17260,6 +17491,7 @@ async function enterSurface(body,site,opts){
   try{ surfCamera.position.set(spawnX, spawnEye, spawnZ); }catch(e){}
   const spawnYaw=(opts&&isFinite(opts.yaw))?opts.yaw:0; // landing from flight keeps her heading
   surfPlayer={pos:new THREE.Vector3(spawnX,spawnEye,spawnZ),vel:new THREE.Vector3(),yaw:spawnYaw,pitch:0,grav:pal.grav,onGround:true,jumpActive:false};
+  surfFirstPerson=false; _surfFpHidden=false; _surfViewBtn();   // every landing starts in third person
 
   // Character — load once (cached in CHAR after first load), attach to
   // whichever surface scene is currently active. Position sync/animation
@@ -17399,10 +17631,34 @@ async function enterSurface(body,site,opts){
     try{updateCaustics(dt);}catch(e){_animLoopWarn('caustics',e);}
     try{ _surfFluidTick(dt); }catch(e){_animLoopWarn('fluid',e);}
     try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);} // ship keeps wandering + shard keeps following, even off-screen
+    try{ _surfFpBody(); }catch(e){}
     try{ surfRenderer.render(surfScene,surfCamera); }catch(e){ _animLoopWarn('surf-render',e); }
   })();
 }
 let surfBoard=null,surfTerrainMesh=null,_surfHeight=null;
+// First / third person on the ground. Third person (the trailing camera) is
+// the default every landing; first person sits the camera at her eyes and
+// hides her body so it never blocks the view. ORBIT still works from either.
+let surfFirstPerson=false, _surfFpHidden=false;
+function _surfFpBody(){
+  const hide=surfFirstPerson&&!charOrbitActive&&surfaceActive;
+  if(hide===_surfFpHidden||!(CHAR.loaded&&CHAR.root)) return;
+  _surfFpHidden=hide; CHAR.root.visible=!hide;
+  if(surfBoard) surfBoard.visible=!hide;   // the board rides at her shoulder — out of the way of her own eyes
+}
+function _surfViewBtn(){
+  const b=$('surf-view-btn'); if(!b) return;
+  b.textContent=surfFirstPerson?'👁 3RD PERSON':'👁 1ST PERSON';
+  b.classList.toggle('fp',surfFirstPerson);
+}
+function toggleSurfFirstPerson(force){
+  if(!surfaceActive) return;
+  surfFirstPerson=(typeof force==='boolean')?force:!surfFirstPerson;
+  if(surfPlayer){ surfPlayer.camPos=null; if(!surfFirstPerson) surfPlayer.pitch=Math.max(-0.6,Math.min(0.6,surfPlayer.pitch)); }
+  _surfViewBtn();
+  try{ toast(surfFirstPerson?'👁 First person — look around with the right stick or mouse':'👁 Third person',1600); }catch(e){}
+}
+window.toggleSurfFirstPerson=toggleSurfFirstPerson;
 
 // ── Live water (ui/dm-fluid.js): an SPH particle patch that follows her
 // whenever there's water nearby. She (and the board) are moving rigid
@@ -19475,6 +19731,13 @@ function updateSurface(dt){
   surfCamera.rotation.order='YXZ';
   surfCamera.rotation.y=p.yaw;
   surfCamera.rotation.x=p.pitch*0.55-0.24; // look down enough to keep her + the whole board in frame
+  // ── First person (👁 1ST PERSON / V): her own eyes, full look range ──
+  if(surfFirstPerson){
+    const eyeY=supportH+CHAR_TERRAIN_HEIGHT*0.93;
+    p.camPos.set(p.pos.x+fx*0.3, eyeY, p.pos.z+fz*0.3);   // a hand ahead of her face, so the head never fills the lens
+    surfCamera.position.copy(p.camPos);
+    surfCamera.rotation.x=p.pitch;
+  }
 
   // ── Character sync — feet at ground level (not the +3 eye-height
   //    camera position), facing the same way the player's looking.
@@ -20152,6 +20415,28 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
     if(e.detail&&e.detail.source==='account') return;
     clearTimeout(_themesT); _themesT=setTimeout(pushThemes,2500);
   });
+  // Journal waypoints: journal.json in the private repository — merged on
+  // sign-in (newer edits win, deletions stick) and written back shortly
+  // after any change, so every device signed in shares one Journal.
+  let _jnT=null, _jnLast='';
+  function pushJournal(){
+    if(!window.JOTS||!J().vault.ready||!window.DMJournal) return;
+    const d=window.DMJournal.store.exportData(), txt=JSON.stringify(d);
+    if(txt===_jnLast) return;
+    J().vault.putJSON('journal.json',d,'jots: journal').then(()=>{ _jnLast=txt; }).catch(e=>console.warn('[JOTS] journal save:',e));
+  }
+  window.addEventListener('jots:vault',async ()=>{
+    if(!window.DMJournal) return;
+    try{
+      const t=await J().vault.get('journal.json');
+      if(t){ const remote=JSON.parse(t); _jnLast=JSON.stringify(remote); window.DMJournal.store.importData(remote,'account'); }
+    }catch(e){ console.warn('[JOTS] journal load:',e); }
+    pushJournal();
+  });
+  window.addEventListener('dm:journal',e=>{
+    if(e.detail&&e.detail.source==='account') return;
+    clearTimeout(_jnT); _jnT=setTimeout(pushJournal,2500);
+  });
   // Graphics choice: graphics.json in the private repository, so it follows
   // the player to every device. Newest choice wins; applying it only changes
   // how the world is drawn (see applyGraphicsLive), never the world itself.
@@ -20449,7 +20734,8 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 
 <!-- ?v= stamps: bump on every UI change so browsers never mix a new page with cached old styles -->
 <link rel="stylesheet" href="ui/dm-ui.css?v=80">
-<link rel="stylesheet" href="ui/dm-hud.css?v=80">
+<link rel="stylesheet" href="ui/dm-hud.css?v=81">
 <link rel="stylesheet" href="ui/dm-menu.css?v=80">
+<link rel="stylesheet" href="ui/dm-journal.css?v=81">
 </body>
 </html>
