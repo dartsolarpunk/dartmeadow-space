@@ -21078,10 +21078,11 @@ function summonSkyboard(){
   let from=b.position.clone();
   const d0=Math.hypot(from.x-her.x,from.z-her.z);
   if(d0<25*ft){
-    // already at hand: send it out and bring it home in style — from behind
-    // her and off to one side, high, so she turns to see it come in
-    const f=c.faceYaw(), a=Math.atan2(-f.z,-f.x)+0.85;
-    from.set(her.x+Math.cos(a)*170*ft, her.y+55*ft, her.z+Math.sin(a)*170*ft);
+    // already at hand: send it out and bring it home in style — from far
+    // off ahead and to one side, so she turns to watch it come and the
+    // camera behind her sees the whole approach
+    const f=c.faceYaw(), a=Math.atan2(f.z,f.x)+(Math.random()<0.5?-0.75:0.75);
+    from.set(her.x+Math.cos(a)*190*ft, her.y+38*ft, her.z+Math.sin(a)*190*ft);
   }
   const dist=from.distanceTo(her);
   BOARD_CALL.parked=false;
@@ -21095,17 +21096,20 @@ function _bcTrail(c,reset){
   const T=BOARD_CALL;
   if(reset&&T.trail){ try{ T.trail.parent&&T.trail.parent.remove(T.trail); T.trail.children.forEach(o=>{o.geometry.dispose();o.material.dispose();}); }catch(e){} T.trail=null; }
   if(T.trail||!c) return;
-  const N=56, g=new THREE.Group(); g.userData.N=N; g.userData.fade=1;
+  const N=48, g=new THREE.Group(); g.userData.N=N; g.userData.fade=1;
+  // two ribbons that always turn their face to the camera, fading along
+  // their length (vertex alpha), so they read against bright sky and dark ground alike
   for(let k=0;k<2;k++){
     const geo=new THREE.BufferGeometry();
-    geo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(N*3),3));
-    geo.setAttribute('color',new THREE.BufferAttribute(new Float32Array(N*3),3));
-    const ln=new THREE.Line(geo,new THREE.LineBasicMaterial({vertexColors:true,transparent:true,blending:THREE.AdditiveBlending,depthWrite:false,fog:false}));
-    ln.frustumCulled=false; ln.userData.filled=0; g.add(ln);
+    geo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(N*2*3),3));
+    geo.setAttribute('color',new THREE.BufferAttribute(new Float32Array(N*2*4),4));
+    const idx=[]; for(let i=0;i<N-1;i++){ const a=i*2; idx.push(a,a+1,a+2, a+1,a+3,a+2); } geo.setIndex(idx);
+    const m=new THREE.Mesh(geo,new THREE.MeshBasicMaterial({vertexColors:true,transparent:true,depthWrite:false,side:THREE.DoubleSide,fog:false}));
+    m.frustumCulled=false; m.userData.pts=new Float32Array(N*3); m.userData.filled=0; m.userData.ribbon=true; g.add(m);
   }
   // a few glittering motes shed along the path
   const pg=new THREE.BufferGeometry(); pg.setAttribute('position',new THREE.BufferAttribute(new Float32Array(N*3),3));
-  const pts=new THREE.Points(pg,new THREE.PointsMaterial({color:0xbfe9ff,size:2,sizeAttenuation:false,transparent:true,opacity:.8,blending:THREE.AdditiveBlending,depthWrite:false,fog:false}));
+  const pts=new THREE.Points(pg,new THREE.PointsMaterial({color:0xe6f6ff,size:3,sizeAttenuation:false,transparent:true,opacity:.9,depthWrite:false,fog:false}));
   pts.frustumCulled=false; g.add(pts);
   c.scene.add(g); T.trail=g;
 }
@@ -21115,12 +21119,25 @@ function _bcTrailPush(c,dt,live){
   if(!live){ g.userData.fade-=dt*0.9; if(g.userData.fade<=0){ _bcTrail(null,true); return; } }
   c.b.updateMatrixWorld(true);
   const tail=c.nose>0?dims.minX:dims.maxX, cool=new THREE.Color(0x7fd8ff), warm=new THREE.Color(0xff7fd0);
+  const cam=(c.scene===surfScene?surfCamera:flightCamera), cp=cam?cam.position:null, w0=0.55*c.unit;
   g.children.forEach((o,k)=>{
     const pos=o.geometry.attributes.position.array;
-    if(o.isLine){
-      if(live){ pos.copyWithin(3,0,(N-1)*3); _bcV3.set(tail,dims.minY*0.5,k===0?dims.minZ:dims.maxZ).applyMatrix4(c.b.matrixWorld); pos[0]=_bcV3.x; pos[1]=_bcV3.y; pos[2]=_bcV3.z; o.userData.filled=Math.min(N,o.userData.filled+1); if(o.userData.filled===1) for(let i=1;i<N;i++){ pos[i*3]=pos[0]; pos[i*3+1]=pos[1]; pos[i*3+2]=pos[2]; } }
+    if(o.userData.ribbon){
+      const P=o.userData.pts;
+      if(live){ P.copyWithin(3,0,(N-1)*3); _bcV3.set(tail,dims.minY*0.5,k===0?dims.minZ:dims.maxZ).applyMatrix4(c.b.matrixWorld); P[0]=_bcV3.x; P[1]=_bcV3.y; P[2]=_bcV3.z; o.userData.filled=Math.min(N,o.userData.filled+1); if(o.userData.filled===1) for(let i=1;i<N;i++){ P[i*3]=P[0]; P[i*3+1]=P[1]; P[i*3+2]=P[2]; } }
       const col=o.geometry.attributes.color.array, base=k===0?cool:warm, f=g.userData.fade;
-      for(let i=0;i<N;i++){ const a=Math.pow(1-i/N,1.6)*f; col[i*3]=base.r*a; col[i*3+1]=base.g*a; col[i*3+2]=base.b*a; }
+      for(let i=0;i<N;i++){
+        const i0=Math.max(0,i-1), i1=Math.min(N-1,i+1);
+        let tx=P[i1*3]-P[i0*3], ty=P[i1*3+1]-P[i0*3+1], tz=P[i1*3+2]-P[i0*3+2];
+        let vx=cp?cp.x-P[i*3]:0, vy=cp?cp.y-P[i*3+1]:1, vz=cp?cp.z-P[i*3+2]:0;
+        let sx=ty*vz-tz*vy, sy=tz*vx-tx*vz, sz=tx*vy-ty*vx; const sl=Math.hypot(sx,sy,sz)||1;
+        const a=Math.pow(1-i/N,1.4), w=w0*(0.25+0.75*a);
+        sx*=w/sl; sy*=w/sl; sz*=w/sl;
+        pos[i*6]=P[i*3]+sx; pos[i*6+1]=P[i*3+1]+sy; pos[i*6+2]=P[i*3+2]+sz;
+        pos[i*6+3]=P[i*3]-sx; pos[i*6+4]=P[i*3+1]-sy; pos[i*6+5]=P[i*3+2]-sz;
+        const al=a*0.85*f;
+        for(const j of [i*8,i*8+4]){ col[j]=base.r; col[j+1]=base.g; col[j+2]=base.b; col[j+3]=al; }
+      }
       o.geometry.attributes.position.needsUpdate=true; o.geometry.attributes.color.needsUpdate=true;
     } else {
       if(live&&Math.random()<0.7){ pos.copyWithin(3,0,(N-1)*3); const j=0.6*c.unit; pos[0]=c.b.position.x+(Math.random()-0.5)*j*4; pos[1]=c.b.position.y+(Math.random()-0.5)*j*2; pos[2]=c.b.position.z+(Math.random()-0.5)*j*4; o.geometry.attributes.position.needsUpdate=true; }
@@ -22171,11 +22188,11 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 
 <!-- ?v= stamps: bump on every UI change so browsers never mix a new page with cached old styles -->
 <link rel="stylesheet" href="ui/dm-ui.css?v=94">
-<link rel="stylesheet" href="ui/dm-hud.css?v=99">
+<link rel="stylesheet" href="ui/dm-hud.css?v=101">
 <link rel="stylesheet" href="ui/dm-menu.css?v=80">
 <link rel="stylesheet" href="ui/dm-journal.css?v=97">
 <link rel="stylesheet" href="ui/dm-landmap.css?v=86">
 <link rel="stylesheet" href="ui/dm-type.css?v=89">
-<link rel="stylesheet" href="ui/dm-compact.css?v=98">
+<link rel="stylesheet" href="ui/dm-compact.css?v=99">
 </body>
 </html>

@@ -291,3 +291,18 @@ body.ship-walk #screen-flight .hud-c .kite-board{display:flex;}
 .mini-kite .mk-mode.mk-unexplored{color:#ffd27a;text-shadow:0 0 4px rgba(0,0,0,.6),0 0 8px rgba(255,190,90,.6);}
 /* the drawn galaxy fills its disc */
 #screen-flight .side-pad .sp-gal svg{width:1.25em;height:1.25em;display:block;}
+/* the kite discs must not pick up the world bars' slanted button style */
+.mini-kite .kite-board .kb-btn,#screen-flight .hud-c .kite-board .kb-btn{clip-path:none !important;transform:none !important;border-radius:50% !important;
+  min-width:0 !important;min-height:0 !important;padding:0 !important;margin:0 !important;font-size:0 !important;letter-spacing:0 !important;
+  border:1px solid rgba(var(--acc-rgb),.5) !important;
+  background:radial-gradient(circle at 50% 38%,rgba(var(--acc-rgb),.22),rgba(var(--panel-rgb),.3) 72%) !important;}
+.mini-kite .kite-board .kb-btn::before,.mini-kite .kite-board .kb-btn::after{display:none !important;}
+.mini-kite .kite-board .kb-park.on,#screen-flight .hud-c .kite-board .kb-park.on{border-color:var(--gold) !important;
+  background:radial-gradient(circle at 50% 38%,rgba(var(--hi-rgb),.55),rgba(var(--hi-rgb),.14) 72%) !important;}
+#surface-overlay .mini-kite .kite-board .kb-btn,#screen-flight .hud-c .kite-board .kb-btn{width:22px !important;height:22px !important;box-shadow:0 0 8px rgba(var(--acc-rgb),.25) !important;
+  clip-path:none !important;border-radius:50% !important;padding:0 !important;border:1px solid rgba(var(--acc-rgb),.55) !important;color:#dff4ff !important;
+  background:radial-gradient(circle at 50% 38%,rgba(var(--acc-rgb),.24),rgba(var(--panel-rgb),.32) 72%) !important;}
+#screen-flight .hud-c .kite-board .kb-btn{width:30px !important;height:30px !important;}
+#surface-overlay .mini-kite .kite-board .kb-btn svg{width:17px !important;height:17px !important;display:block;}
+#surface-overlay .mini-kite .kite-board .kb-park.on,#screen-flight .hud-c .kite-board .kb-park.on{border-color:var(--gold) !important;color:#fff !important;
+  background:radial-gradient(circle at 50% 38%,rgba(var(--hi-rgb),.55),rgba(var(--hi-rgb),.14) 72%) !important;box-shadow:0 0 10px rgba(var(--hi-rgb),.8) !important;}

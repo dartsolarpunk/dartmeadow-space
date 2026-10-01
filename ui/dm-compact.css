@@ -98,4 +98,6 @@ body:has(#profile-modal.open) #float-music{opacity:0 !important;pointer-events:n
   #screen-flight #level-stack{gap:6px !important;}
   #screen-flight .dart-pad{width:34px !important;height:34px !important;font-size:.38rem !important;opacity:.8;}
   #screen-flight #dart-pads{grid-template-columns:34px 34px !important;gap:5px !important;}
+  /* the minimap sits above the roll row, clear of the stick and the GAL/SYS pads */
+  #screen-flight #minimap{width:64px !important;height:64px !important;left:8px !important;bottom:calc(280px + var(--safe-bot)) !important;}
 }
