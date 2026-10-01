@@ -1,0 +1,76 @@
+/* DART Meadow — shared UI design system
+ * .dm-card / .mm-frame: a chamfered glass card with a crisp hairline ring.
+ * The ring is drawn as background layers (four edges + four diagonal corner
+ * strokes) and the corners are cut with clip-path, so it stays put on
+ * scrolling cards and follows the theme colours.
+ */
+.dm-card,.mm-frame,#screen-builder #builder-sidebar,#screen-builder #builder-footer,.modal-box,.exit-box,#temple-hub-panel,.pf-card,#dmcp .cp,#about-modal>div,#support-modal>div,#music-browser-modal>div{
+  --cut:14px;--lc:rgba(var(--acc-rgb),.85);--lw:1px;
+  position:relative;isolation:isolate;border:none !important;border-radius:0 !important;
+  clip-path:polygon(var(--cut) 0,calc(100% - var(--cut)) 0,100% var(--cut),100% calc(100% - var(--cut)),calc(100% - var(--cut)) 100%,var(--cut) 100%,0 calc(100% - var(--cut)),0 var(--cut));
+  background:
+    linear-gradient(var(--lc),var(--lc)) var(--cut) 0/calc(100% - 2*var(--cut)) var(--lw) no-repeat,
+    linear-gradient(var(--lc),var(--lc)) var(--cut) 100%/calc(100% - 2*var(--cut)) var(--lw) no-repeat,
+    linear-gradient(var(--lc),var(--lc)) 0 var(--cut)/var(--lw) calc(100% - 2*var(--cut)) no-repeat,
+    linear-gradient(var(--lc),var(--lc)) 100% var(--cut)/var(--lw) calc(100% - 2*var(--cut)) no-repeat,
+    linear-gradient(to bottom right,transparent calc(50% - .9px),var(--lc) calc(50% - .45px) calc(50% + .45px),transparent calc(50% + .9px)) 0 0/var(--cut) var(--cut) no-repeat,
+    linear-gradient(to bottom left,transparent calc(50% - .9px),var(--lc) calc(50% - .45px) calc(50% + .45px),transparent calc(50% + .9px)) 100% 0/var(--cut) var(--cut) no-repeat,
+    linear-gradient(to bottom right,transparent calc(50% - .9px),var(--lc) calc(50% - .45px) calc(50% + .45px),transparent calc(50% + .9px)) 100% 100%/var(--cut) var(--cut) no-repeat,
+    linear-gradient(to bottom left,transparent calc(50% - .9px),var(--lc) calc(50% - .45px) calc(50% + .45px),transparent calc(50% + .9px)) 0 100%/var(--cut) var(--cut) no-repeat,
+    linear-gradient(var(--cyan),var(--cyan)) calc(var(--cut) + 12px) 6px/16px 2px no-repeat,
+    linear-gradient(var(--cyan),var(--cyan)) calc(100% - 6px) calc(100% - var(--cut) - 12px)/2px 16px no-repeat,
+    linear-gradient(160deg,rgba(var(--acc-rgb),.1),rgba(var(--panel-rgb),.5) 45%,rgba(var(--panel-rgb),.66)) !important;
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  box-shadow:none !important;
+}
+.dm-card.dm-solid{background-color:rgba(var(--panel-rgb),.9) !important;}
+
+/* pop-up cards: a touch more solid so text stays easy to read */
+.modal-box,.exit-box,#temple-hub-panel,.pf-card,#dmcp .cp,#about-modal>div,#support-modal>div,#music-browser-modal>div{--cut:18px;}
+.modal-box::-webkit-scrollbar,.pf-card::-webkit-scrollbar{width:6px;}
+.modal-box::-webkit-scrollbar-thumb,.pf-card::-webkit-scrollbar-thumb{background:rgba(var(--acc-rgb),.35);border-radius:3px;}
+/* modal titles get a short glowing underline */
+.modal-title{position:relative;padding-bottom:8px;}
+.modal-title::after{content:'';position:absolute;left:0;bottom:0;width:48px;height:2px;background:var(--cyan);box-shadow:0 0 8px rgba(var(--acc-rgb),.8);}
+/* shared buttons: slanted glass chips */
+.btn,.pf-btn{border-radius:0 !important;border:none !important;clip-path:polygon(7px 0,100% 0,calc(100% - 7px) 100%,0 100%);
+  background:linear-gradient(180deg,rgba(var(--acc-rgb),.18),rgba(var(--panel-rgb),.4)) !important;box-shadow:inset 0 -2px 0 rgba(var(--acc-rgb),.55) !important;color:var(--text) !important;padding-left:16px !important;padding-right:16px !important;}
+.btn:hover,.pf-btn:hover{background:linear-gradient(180deg,rgba(var(--acc-rgb),.34),rgba(var(--acc-rgb),.1)) !important;box-shadow:inset 0 -2px 0 var(--cyan),0 0 12px rgba(var(--acc-rgb),.4) !important;}
+.btn.primary,.pf-btn.gh{box-shadow:inset 0 -2px 0 rgba(120,235,170,.8) !important;color:#b5ffd8 !important;background:linear-gradient(180deg,rgba(90,220,150,.24),rgba(90,220,150,.06)) !important;}
+
+/* ── walk mode + atmospheric flight overlays: same language as the HUD ── */
+#surface-overlay>div:nth-of-type(1),#atmo-overlay>div:nth-of-type(1){
+  background:linear-gradient(180deg,rgba(var(--panel-rgb),.55),rgba(var(--panel-rgb),0)) !important;border:none !important;backdrop-filter:none !important;-webkit-backdrop-filter:none !important;padding:10px 12px 18px !important;}
+#surface-title,#atmo-title{font-size:.6rem !important;letter-spacing:.3em !important;color:var(--text) !important;text-shadow:0 0 10px rgba(var(--acc-rgb),.7);}
+#surface-overlay>div:nth-of-type(1) button,#atmo-overlay>div:nth-of-type(1) button,
+#surf-jump-btn,#surf-run-btn,#surf-climb-btn,#atmo-presets button{
+  height:30px !important;padding:0 14px !important;border:none !important;border-radius:0 !important;
+  font-family:var(--font-hud) !important;font-size:.5rem !important;letter-spacing:.14em !important;color:var(--text) !important;
+  background:linear-gradient(180deg,rgba(var(--acc-rgb),.18),rgba(var(--panel-rgb),.4)) !important;
+  box-shadow:inset 0 -2px 0 rgba(var(--acc-rgb),.6) !important;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  clip-path:polygon(8px 0,100% 0,calc(100% - 8px) 100%,0 100%);display:inline-flex !important;align-items:center;justify-content:center;}
+#surface-overlay>div:nth-of-type(1) button:hover,#atmo-overlay>div:nth-of-type(1) button:hover,#atmo-presets button:hover{background:linear-gradient(180deg,rgba(var(--acc-rgb),.34),rgba(var(--acc-rgb),.1)) !important;}
+#liftoff-btn,#atmo-land-btn{box-shadow:inset 0 -2px 0 var(--gold) !important;}
+#surf-run-btn{box-shadow:inset 0 -2px 0 rgba(120,235,170,.8) !important;}
+#surf-climb-btn{box-shadow:inset 0 -2px 0 rgba(255,200,80,.8) !important;}
+#atmo-presets button{min-width:84px !important;height:26px !important;font-size:.44rem !important;}
+/* thumbsticks: slim rings, glowing knob */
+#surf-move-zone>div:nth-child(2),#surf-look-zone>div:nth-child(2),#atmo-steer-zone>div:nth-child(2),#atmo-climb-zone>div:nth-child(2){
+  background:radial-gradient(circle,rgba(var(--panel-rgb),.16) 0 60%,rgba(var(--acc-rgb),.07) 61% 100%) !important;
+  border:1.5px solid rgba(var(--acc-rgb),.5) !important;box-shadow:0 0 16px rgba(var(--acc-rgb),.16),inset 0 0 18px rgba(var(--acc-rgb),.1);}
+#surf-move-knob,#surf-look-knob,#atmo-steer-knob,#atmo-climb-knob{
+  background:radial-gradient(circle,rgba(255,255,255,.9) 0 10%,rgba(var(--acc-rgb),.55) 12% 38%,rgba(var(--acc-rgb),.12) 40%) !important;
+  border:1.5px solid var(--cyan) !important;box-shadow:0 0 14px rgba(var(--acc-rgb),.8) !important;}
+#surf-move-zone>div:first-child,#surf-look-zone>div:first-child,#atmo-steer-zone>div:first-child,#atmo-climb-zone>div:first-child{color:rgba(var(--acc-rgb),.65) !important;letter-spacing:.18em !important;}
+/* throttle */
+#atmo-throttle{-webkit-appearance:none;appearance:none;height:6px;border-radius:3px;background:linear-gradient(90deg,var(--cyan),rgba(var(--acc-rgb),.15));outline:none;}
+#atmo-throttle::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;border-radius:50%;background:radial-gradient(circle,#fff 0 18%,var(--cyan) 22%);box-shadow:0 0 12px rgba(var(--acc-rgb),.9);border:none;}
+#atmo-throttle::-moz-range-thumb{width:20px;height:20px;border-radius:50%;background:var(--cyan);border:none;}
+/* ORBIT in the overlays: right-edge tab */
+#surface-overlay .orbit-skyboard-btn,#atmo-overlay .orbit-skyboard-btn{right:0 !important;border:none !important;border-radius:0 !important;padding:0 14px 0 22px !important;
+  background:linear-gradient(270deg,rgba(var(--hi-rgb),.22),rgba(var(--panel-rgb),.4)) !important;box-shadow:inset -3px 0 0 var(--gold) !important;color:var(--text) !important;
+  clip-path:polygon(14px 0,100% 0,100% 100%,14px 100%,0 50%);}
+
+/* atmosphere ALT / THR readout: clear of the fullscreen button, themed */
+#atmo-overlay>div:nth-of-type(2){left:56px !important;font-family:var(--font-hud) !important;letter-spacing:.14em;color:var(--text) !important;}
+#atmo-overlay>div:nth-of-type(2) span{color:var(--cyan);}

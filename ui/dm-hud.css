@@ -1,177 +1,178 @@
-/* DART Meadow — in-game HUD, v2 layout
- * Framed, angled panels in the spirit of the new concept art. Every control
- * keeps its id/handler; this file only re-lays-out and restyles them.
- * Colours come from the theme variables (ui/dm-theme.js).
+/* DART Meadow — in-game HUD, v3 ("glass shard")
+ * Sleek, abstract and out of the way: slanted glass chips, a half-hexagon
+ * crown hanging from the top edge, half-hexagon tabs docked flush to the
+ * screen edges, and slim ringed thumbsticks with nothing framed around them.
+ * Every control keeps its id/handler; colours come from the theme
+ * variables (ui/dm-theme.js).
  */
-
-/* ── shared frame: chamfered panel with a thin accent edge ───────────── */
-#screen-flight .dm-frame{
-  --cut:12px;position:relative;isolation:isolate;
-  background:linear-gradient(135deg,rgba(var(--acc-rgb),.55),rgba(var(--acc-rgb),.18) 40%,rgba(var(--hi-rgb),.35));
-  clip-path:polygon(var(--cut) 0,calc(100% - var(--cut)) 0,100% var(--cut),100% calc(100% - var(--cut)),calc(100% - var(--cut)) 100%,var(--cut) 100%,0 calc(100% - var(--cut)),0 var(--cut));
+#screen-flight{
+  --g-line:rgba(var(--acc-rgb),.38);
+  --g-line-hi:rgba(var(--acc-rgb),.75);
+  --g-fill:rgba(var(--panel-rgb),.34);
+  --g-fill-hi:rgba(var(--acc-rgb),.16);
+  --g-text:var(--text);
 }
-#screen-flight .dm-frame::before{
-  content:'';position:absolute;inset:1px;z-index:-1;
-  background:linear-gradient(180deg,rgba(var(--panel-rgb),.62),rgba(var(--panel-rgb),.4));
-  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
-  clip-path:inherit;
-}
+#screen-flight .dm-frame{background:none;clip-path:none;}
+#screen-flight .dm-frame::before{display:none;}
 
 /* ── top bar ─────────────────────────────────────────────────────────── */
 #screen-flight #ar-top{
-  display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:start;gap:10px;
-  padding:8px 10px 0;background:none;border:none;backdrop-filter:none;-webkit-backdrop-filter:none;pointer-events:none;
+  display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:start;gap:12px;
+  padding:10px 12px 0;background:none;border:none;backdrop-filter:none;-webkit-backdrop-filter:none;pointer-events:none;
 }
 #screen-flight #ar-top>*{pointer-events:auto;}
-#screen-flight .hud-l{justify-self:start;padding:6px 12px;}
-#screen-flight #audio-player{display:flex;align-items:center;gap:4px;}
-#screen-flight .aud-btn{width:26px;height:26px;font-size:.72rem;border-radius:4px;color:rgba(var(--acc-rgb),.8);}
-#screen-flight .aud-btn:hover{background:rgba(var(--acc-rgb),.16);color:var(--cyan);}
 
-/* centre: hangs from the top edge like the concept's title plate */
-#screen-flight .hud-c{
-  position:relative;isolation:isolate;margin-top:-8px;padding:8px 34px 10px;text-align:center;
-  background:linear-gradient(180deg,rgba(var(--acc-rgb),.5),rgba(var(--hi-rgb),.35));
-  clip-path:polygon(0 0,100% 0,calc(100% - 28px) 100%,28px 100%);
-}
-#screen-flight .hud-c::before{
-  content:'';position:absolute;inset:0 1px 1px;z-index:-1;
-  background:linear-gradient(180deg,rgba(var(--panel-rgb),.66),rgba(var(--panel-rgb),.42));
+/* slanted glass chip — shared by the soundtrack and game buttons */
+#screen-flight .aud-btn,#screen-flight .art-btn{
+  position:relative;height:30px;min-width:34px;padding:0 12px;margin:0;border:none;border-radius:0;
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  font-family:var(--font-hud);font-size:.5rem;letter-spacing:.16em;color:var(--g-text);
+  background:linear-gradient(180deg,var(--g-fill-hi),var(--g-fill));
   backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
-  clip-path:polygon(0 0,100% 0,calc(100% - 28px) 100%,28px 100%);
+  clip-path:polygon(8px 0,100% 0,calc(100% - 8px) 100%,0 100%);
+  box-shadow:inset 0 -2px 0 rgba(var(--acc-rgb),.45);
+  transition:background .15s,box-shadow .15s,color .15s;cursor:pointer;
 }
-#screen-flight .hud-c::after{   /* glowing underline, like the concept */
-  content:'';position:absolute;left:30%;right:30%;bottom:1px;height:2px;
-  background:linear-gradient(90deg,transparent,var(--cyan),transparent);opacity:.8;
+#screen-flight .aud-btn{width:34px;padding:0;font-size:.7rem;color:rgba(var(--acc-rgb),.95);}
+#screen-flight .aud-btn:hover,#screen-flight .art-btn:hover{background:linear-gradient(180deg,rgba(var(--acc-rgb),.32),rgba(var(--acc-rgb),.1));box-shadow:inset 0 -2px 0 var(--cyan),0 0 14px rgba(var(--acc-rgb),.35);}
+#screen-flight .art-btn.active{background:linear-gradient(180deg,rgba(var(--acc-rgb),.38),rgba(var(--acc-rgb),.12));box-shadow:inset 0 -2px 0 var(--cyan);}
+#screen-flight .aud-btn.playing{color:#7dffc0;}
+#screen-flight .art-btn .ic{font-style:normal;color:var(--cyan);font-size:.72rem;line-height:1;}
+#screen-flight .hud-l{justify-self:start;padding:0;}
+#screen-flight #audio-player{display:flex;align-items:center;gap:2px;}
+#screen-flight .hud-r{justify-self:end;display:flex;flex-direction:column;align-items:flex-end;gap:8px;min-width:0;max-width:100%;}
+#screen-flight .hud-r .art-btns{flex:none;max-width:100%;padding:0;gap:2px;justify-content:flex-end;}
+/* a thin hairline under each chip group ties the chips together */
+#screen-flight .hud-l,#screen-flight .hud-r .art-btns{position:relative;}
+#screen-flight .hud-l::after,#screen-flight .hud-r .art-btns::before{content:'';position:absolute;left:6px;right:6px;bottom:-5px;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(var(--acc-rgb),.55),transparent);}
+
+/* INITIALIZE PROGRESS: a soft green slanted bar */
+#screen-flight .art-btn.progress-btn{height:30px;padding:0 18px;font-size:.54rem;color:#9ff5c6;
+  background:linear-gradient(180deg,rgba(90,220,150,.24),rgba(90,220,150,.08));
+  box-shadow:inset 0 -2px 0 rgba(120,235,170,.75),0 0 12px rgba(110,230,160,.18);text-shadow:0 0 6px rgba(120,235,170,.45);
+  clip-path:polygon(10px 0,100% 0,100% 100%,0 100%);}
+#screen-flight .art-btn.progress-btn:hover{background:linear-gradient(180deg,rgba(90,220,150,.36),rgba(90,220,150,.12));color:#d4ffe6;}
+
+/* centre crown: a half-hexagon hanging from the top edge */
+#screen-flight .hud-c{
+  position:relative;isolation:isolate;margin-top:-10px;padding:7px 30px 9px;text-align:center;
+  background:linear-gradient(180deg,rgba(var(--acc-rgb),.5),rgba(var(--hi-rgb),.28));
+  clip-path:polygon(0 0,100% 0,calc(100% - 26px) 100%,26px 100%);
 }
-#screen-flight .art-logo{font-size:.95rem;letter-spacing:.3em;color:var(--text);text-shadow:0 0 12px rgba(var(--acc-rgb),.7);margin-bottom:5px;}
-#screen-flight .art-stats{display:flex;align-items:center;justify-content:center;gap:16px;font-family:var(--font-hud);font-size:.5rem;color:var(--text-dim);}
-#screen-flight .hud-g{display:flex;align-items:center;gap:6px;}
-#screen-flight .g-lbl{font-size:.55rem;letter-spacing:.14em;color:var(--cyan);}
-#screen-flight .g-ring{width:30px;height:30px;transform:rotate(-90deg);}
-#screen-flight .g-track{fill:none;stroke:rgba(var(--acc-rgb),.16);stroke-width:3.5;}
-#screen-flight .g-arc{fill:none;stroke:var(--cyan);stroke-width:3.5;stroke-linecap:round;stroke-dasharray:0 100.5;
+#screen-flight .hud-c::before{content:'';position:absolute;inset:0 1px 1px;z-index:-1;
+  background:linear-gradient(180deg,rgba(var(--panel-rgb),.62),rgba(var(--panel-rgb),.32));
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);clip-path:polygon(0 0,100% 0,calc(100% - 26px) 100%,26px 100%);}
+#screen-flight .hud-c::after{content:'';position:absolute;left:32%;right:32%;bottom:1px;height:2px;background:linear-gradient(90deg,transparent,var(--cyan),transparent);}
+#screen-flight .art-logo{font-size:.72rem;letter-spacing:.38em;color:var(--text);text-shadow:0 0 10px rgba(var(--acc-rgb),.7);margin-bottom:4px;}
+#screen-flight .art-stats{display:flex;align-items:center;justify-content:center;gap:14px;font-family:var(--font-hud);font-size:.48rem;color:var(--text-dim);}
+#screen-flight .hud-g{display:flex;align-items:center;gap:5px;}
+#screen-flight .g-lbl{font-size:.48rem;letter-spacing:.16em;color:var(--cyan);}
+#screen-flight .g-ring{width:24px;height:24px;transform:rotate(-90deg);}
+#screen-flight .g-track{fill:none;stroke:rgba(var(--acc-rgb),.16);stroke-width:4;}
+#screen-flight .g-arc{fill:none;stroke:var(--cyan);stroke-width:4;stroke-linecap:round;stroke-dasharray:0 100.5;
   filter:drop-shadow(0 0 3px rgba(var(--acc-rgb),.9));transition:stroke-dasharray .35s ease;}
-#screen-flight .g-val{font-family:var(--font-mono);font-size:.58rem;color:var(--text);min-width:58px;text-align:left;}
+#screen-flight .g-val{font-family:var(--font-mono);font-size:.54rem;color:var(--text);min-width:52px;text-align:left;}
 #screen-flight .g-val span{color:var(--text);}
-#screen-flight .hud-dest{text-align:left;font-family:var(--font-hud);font-size:.52rem;letter-spacing:.1em;color:var(--cyan);line-height:1.5;}
+#screen-flight .hud-dest{text-align:left;font-family:var(--font-hud);font-size:.46rem;letter-spacing:.1em;color:var(--cyan);line-height:1.5;}
 #screen-flight .hud-dest span{color:var(--cyan);}
-#screen-flight .hud-eta{color:var(--text-dim);font-size:.46rem;}
+#screen-flight .hud-eta{color:var(--text-dim);font-size:.42rem;}
 
-/* right: buttons in a frame, Initialize Progress beneath */
-#screen-flight .hud-r{justify-self:end;display:flex;flex-direction:column;align-items:flex-end;gap:7px;min-width:0;max-width:100%;}
-#screen-flight .hud-r .art-btns{flex:none;max-width:100%;padding:6px 12px;gap:6px;justify-content:flex-end;}
-#screen-flight .art-btn{height:28px;padding:0 12px;display:inline-flex;align-items:center;justify-content:center;font-size:.54rem;letter-spacing:.14em;
-  color:rgba(var(--acc-rgb),.92);background:rgba(var(--acc-rgb),.07);border:1px solid rgba(var(--acc-rgb),.3);border-radius:3px;}
-#screen-flight .art-btn:hover{background:rgba(var(--acc-rgb),.18);color:var(--text);border-color:rgba(var(--acc-rgb),.6);}
-#screen-flight .art-btn.active{background:rgba(var(--acc-rgb),.24);color:var(--text);border-color:var(--cyan);box-shadow:inset 0 0 10px rgba(var(--acc-rgb),.35);}
-#screen-flight .art-btn.progress-btn{color:#8ff0b8;border-color:rgba(120,230,170,.6);background:rgba(90,220,150,.14);
-  box-shadow:0 0 10px rgba(110,230,160,.3),inset 0 0 8px rgba(110,230,160,.14);text-shadow:0 0 6px rgba(120,235,170,.5);}
-#screen-flight .art-btn.progress-btn:hover{background:rgba(90,220,150,.24);color:#c8ffe0;}
-#screen-flight .art-btn.progress-btn{height:32px;padding:0 18px;font-size:.58rem;letter-spacing:.16em;
-  clip-path:polygon(10px 0,100% 0,100% calc(100% - 10px),calc(100% - 10px) 100%,0 100%,0 10px);}
+/* things under the top bar sit just below it */
+#screen-flight #orbit-skyboard-btn{top:96px !important;}
+#jots-mp-hud{top:calc(84px + env(safe-area-inset-top,0px)) !important;}
+#jots-chat{top:calc(124px + env(safe-area-inset-top,0px)) !important;}
+body:has(#screen-flight.active) #fs-exit,body:has(#screen-flight.active) #fs-enter{top:56px !important;left:0 !important;border-radius:0 6px 6px 0 !important;}
 
-/* things that sit under the top bar move down to clear it */
-#screen-flight #orbit-skyboard-btn{top:92px !important;}
-#jots-mp-hud{top:calc(96px + env(safe-area-inset-top,0px)) !important;}
-#jots-chat{top:calc(136px + env(safe-area-inset-top,0px)) !important;}
-body:has(#screen-flight.active) #fs-exit,body:has(#screen-flight.active) #fs-enter{top:84px !important;}
-#screen-flight #logs-toggle-btn{top:126px;}
-#screen-flight #qt-toggle-btn{top:164px;}
-#screen-flight #temple-toggle-btn{top:202px !important;}
-#screen-flight #shard-game-btn{top:240px !important;}
-#screen-flight #shard-return-btn{top:278px !important;}
-#screen-flight #hud-logs-panel{top:246px;}
-#screen-flight #qt-panel{top:202px;}
-
-/* left tabs: angled like the concept's TEMPLE tab */
-#screen-flight .hud-toggle-btn{border-radius:2px;height:30px;padding:0 16px 0 12px;opacity:.92;
-  background:linear-gradient(90deg,rgba(var(--panel-rgb),.78),rgba(var(--panel-rgb),.55));
-  border:1px solid rgba(var(--acc-rgb),.38);color:var(--text);font-size:.5rem;letter-spacing:.14em;
-  clip-path:polygon(0 0,calc(100% - 10px) 0,100% 10px,100% 100%,0 100%);}
+/* ── edge tabs: half-hexagons docked flush to the screen edges ───────── */
+#screen-flight .hud-toggle-btn{left:0;height:32px;padding:0 22px 0 14px;border:none;border-radius:0;opacity:1;
+  background:linear-gradient(90deg,rgba(var(--acc-rgb),.2),var(--g-fill));
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  box-shadow:inset 3px 0 0 var(--cyan);
+  color:var(--g-text);font-size:.5rem;letter-spacing:.16em;
+  clip-path:polygon(0 0,calc(100% - 14px) 0,100% 50%,calc(100% - 14px) 100%,0 100%);}
+#screen-flight .hud-toggle-btn:hover{background:linear-gradient(90deg,rgba(var(--acc-rgb),.36),rgba(var(--acc-rgb),.12));}
 #screen-flight .hud-toggle-btn .htb-ico{color:var(--cyan);}
-#screen-flight #orbit-skyboard-btn{clip-path:polygon(10px 0,100% 0,100% 100%,0 100%,0 10px);border-radius:2px;}
+#screen-flight #logs-toggle-btn{top:100px;}
+#screen-flight #qt-toggle-btn{top:138px;}
+#screen-flight #temple-toggle-btn{top:176px !important;box-shadow:inset 3px 0 0 #fff;}
+#screen-flight #shard-game-btn{top:214px !important;box-shadow:inset 3px 0 0 #ffcc00;}
+#screen-flight #shard-return-btn{top:252px !important;box-shadow:inset 3px 0 0 #ffcc00;}
+#screen-flight #hud-logs-panel{top:222px;}
+#screen-flight #qt-panel{top:176px;}
+#screen-flight #orbit-skyboard-btn{left:auto;right:0;padding:0 14px 0 22px;box-shadow:inset -3px 0 0 var(--gold);
+  background:linear-gradient(270deg,rgba(var(--hi-rgb),.22),var(--g-fill));
+  clip-path:polygon(14px 0,100% 0,100% 100%,14px 100%,0 50%);}
 
 /* crosshair follows the theme */
 #screen-flight #ar-crosshair{color:var(--cyan);}
 #screen-flight #ar-crosshair svg{opacity:.75;filter:drop-shadow(0 0 3px rgba(var(--acc-rgb),.7));}
 
-/* ── bottom corner housings: thin line art only — nothing filled, so the
-   game view behind stays completely clear ─────────────────────────────── */
-#screen-flight .hud-plate{position:absolute;bottom:0;width:min(420px,44vw);height:min(250px,46vh);pointer-events:none;z-index:20;overflow:visible;}
-#screen-flight .hud-plate-l{left:0;}
-#screen-flight .hud-plate-r{right:0;}
-#screen-flight .hud-plate polyline{fill:none;stroke:rgba(var(--acc-rgb),.55);stroke-width:1.2;vector-effect:non-scaling-stroke;
-  filter:drop-shadow(0 0 3px rgba(var(--acc-rgb),.6));}
-#screen-flight .hud-plate .hp-2{stroke:rgba(var(--acc-rgb),.22);}
-#screen-flight .hud-plate .hp-3{stroke:var(--cyan);stroke-width:2;opacity:.8;}
-
-/* joysticks: ringed housings with a glowing knob ring */
-#screen-flight .joystick-zone{width:112px;height:112px;}
+/* ── bottom: thumbsticks + pads only, nothing framed around them ─────── */
+#screen-flight .joystick-zone{width:110px;height:110px;}
 #screen-flight .joystick-base{
-  background:radial-gradient(circle,rgba(var(--panel-rgb),.18) 0 44%,rgba(var(--acc-rgb),.06) 45% 62%,rgba(var(--panel-rgb),.32) 63%);
-  border:1px solid rgba(var(--acc-rgb),.45);
-  box-shadow:0 0 0 5px rgba(var(--panel-rgb),.15),0 0 0 6px rgba(var(--acc-rgb),.3),0 0 18px rgba(var(--acc-rgb),.18),inset 0 0 14px rgba(var(--acc-rgb),.18);
+  background:radial-gradient(circle,rgba(var(--panel-rgb),.16) 0 60%,rgba(var(--acc-rgb),.07) 61% 100%);
+  border:1.5px solid rgba(var(--acc-rgb),.5);
+  box-shadow:0 0 16px rgba(var(--acc-rgb),.16),inset 0 0 18px rgba(var(--acc-rgb),.1);
+  backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);
 }
-#screen-flight .joystick-base::after{content:'';position:absolute;inset:-12px;border-radius:50%;
-  background:repeating-conic-gradient(rgba(var(--acc-rgb),.45) 0 2deg,transparent 2deg 12deg);
-  -webkit-mask:radial-gradient(circle,transparent 0 69%,#000 70% 72%,transparent 73%);mask:radial-gradient(circle,transparent 0 69%,#000 70% 72%,transparent 73%);opacity:.7;}
-#screen-flight .joystick-knob{width:46px;height:46px;background:radial-gradient(circle,rgba(var(--panel-rgb),.9) 0 45%,rgba(var(--acc-rgb),.15) 46%);
-  border:3px solid var(--cyan);box-shadow:0 0 12px rgba(var(--acc-rgb),.85),inset 0 0 8px rgba(var(--acc-rgb),.5);}
-#screen-flight .joystick-label{top:-22px;color:rgba(var(--acc-rgb),.7);font-size:.46rem;letter-spacing:.16em;}
+/* four short arc ticks at N/E/S/W hint the stick's axes */
+#screen-flight .joystick-base::after{content:'';position:absolute;inset:-7px;border-radius:50%;
+  background:conic-gradient(from -8deg,var(--cyan) 0 16deg,transparent 16deg 90deg,var(--cyan) 90deg 106deg,transparent 106deg 180deg,var(--cyan) 180deg 196deg,transparent 196deg 270deg,var(--cyan) 270deg 286deg,transparent 286deg);
+  -webkit-mask:radial-gradient(circle,transparent 0 calc(100% - 3px),#000 calc(100% - 2px));mask:radial-gradient(circle,transparent 0 calc(100% - 3px),#000 calc(100% - 2px));opacity:.55;}
+#screen-flight .joystick-knob{width:40px;height:40px;
+  background:radial-gradient(circle,rgba(255,255,255,.9) 0 10%,rgba(var(--acc-rgb),.55) 12% 38%,rgba(var(--acc-rgb),.12) 40%);
+  border:1.5px solid var(--cyan);box-shadow:0 0 14px rgba(var(--acc-rgb),.8);}
+#screen-flight .joystick-label{top:-20px;color:rgba(var(--acc-rgb),.65);font-size:.42rem;letter-spacing:.18em;}
 
-/* round pads: ringed and lit */
+/* round pads: slim glass discs */
 #screen-flight .side-pad,#screen-flight .dart-pad{
-  border:2px solid rgba(var(--acc-rgb),.5);
-  background:radial-gradient(circle,rgba(var(--panel-rgb),.45) 0 58%,rgba(var(--acc-rgb),.12));
-  box-shadow:0 0 10px rgba(var(--acc-rgb),.22),inset 0 0 8px rgba(var(--acc-rgb),.18);color:var(--text);}
+  border:1.5px solid rgba(var(--acc-rgb),.45);
+  background:radial-gradient(circle at 50% 35%,rgba(var(--acc-rgb),.18),rgba(var(--panel-rgb),.42) 70%);
+  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  box-shadow:0 0 10px rgba(var(--acc-rgb),.14);color:var(--text);}
 #screen-flight .side-pad .sp-ico{color:var(--cyan);}
-#screen-flight .assist-btn{border-radius:2px;background:linear-gradient(180deg,rgba(var(--panel-rgb),.8),rgba(var(--panel-rgb),.6));
-  border-color:rgba(var(--acc-rgb),.42);color:var(--text);letter-spacing:.12em;
-  clip-path:polygon(7px 0,100% 0,100% calc(100% - 7px),calc(100% - 7px) 100%,0 100%,0 7px);}
-#screen-flight #minimap{border-color:rgba(var(--acc-rgb),.45);box-shadow:0 0 0 3px rgba(var(--panel-rgb),.5),0 0 0 4px rgba(var(--acc-rgb),.25),0 0 14px rgba(var(--acc-rgb),.2);}
+#screen-flight .side-pad:active{box-shadow:0 0 16px rgba(var(--acc-rgb),.55);}
+/* FOCUS / IDLE: slanted chips like the top bar */
+#screen-flight .assist-btn{border:none;border-radius:0;height:28px;padding:0 14px;
+  background:linear-gradient(180deg,var(--g-fill-hi),var(--g-fill));box-shadow:inset 0 -2px 0 rgba(var(--acc-rgb),.45);
+  color:var(--g-text);letter-spacing:.14em;clip-path:polygon(7px 0,100% 0,calc(100% - 7px) 100%,0 100%);}
+#screen-flight .assist-btn.active{background:linear-gradient(180deg,rgba(var(--acc-rgb),.4),rgba(var(--acc-rgb),.14));box-shadow:inset 0 -2px 0 var(--cyan),0 0 12px rgba(var(--acc-rgb),.4);}
+#screen-flight #minimap{border:1.5px solid rgba(var(--acc-rgb),.45);box-shadow:0 0 12px rgba(var(--acc-rgb),.16);background:rgba(var(--panel-rgb),.5);}
 
-/* AR corner brackets a little bolder */
-#screen-flight .ar-corner{width:26px;height:26px;}
+/* AR corner brackets: thin and quiet */
+#screen-flight .ar-corner{opacity:.6;}
 
-/* ── mid-width (tablets in portrait, small laptops, big phones) ────── */
+/* ── fit the top bar on tablets and phones ───────────────────────────── */
 @media (max-width:1240px){
   #screen-flight .hud-dest{display:none;}
-  #screen-flight .hud-c{padding:6px 26px 8px;}
-  #screen-flight .art-logo{font-size:.8rem;letter-spacing:.24em;}
-  #screen-flight .art-btn{padding:0 8px;letter-spacing:.1em;font-size:.5rem;}
-  #screen-flight .hud-r .art-btns{padding:5px 9px;gap:4px;}
-  #screen-flight .g-val{min-width:46px;}
+  #screen-flight .art-btn{padding:0 9px;letter-spacing:.12em;}
+  #screen-flight .g-val{min-width:44px;}
 }
-@media (max-width:1060px){
+@media (max-width:1080px){
   #screen-flight #audio-player .aud-btn:nth-child(n+5){display:none;}
-  #screen-flight .aud-btn{width:22px;height:22px;}
-  #screen-flight .hud-l{padding:5px 8px;}
-  #screen-flight .art-stats{gap:9px;}
-  #screen-flight .g-ring{width:24px;height:24px;}
+  #screen-flight .aud-btn{width:30px;}
+  #screen-flight .art-btn{padding:0 7px;font-size:.46rem;gap:4px;}
+  #screen-flight .art-btn.progress-btn{font-size:.48rem;}
 }
-/* short screens (phones in landscape): smaller housings + sticks */
-@media (max-height:560px){
-  #screen-flight .joystick-zone{width:96px;height:96px;}
-  #screen-flight .joystick-knob{width:40px;height:40px;}
-  #screen-flight .art-logo{font-size:.62rem;margin-bottom:2px;}
-  #screen-flight .art-btn{height:26px;}
-  #screen-flight .art-btn.progress-btn{height:28px;}
-}
-/* ── narrow screens: compact centre, buttons scroll ──────────────────── */
 @media (max-width:900px){
-  #screen-flight #ar-top{grid-template-columns:auto auto minmax(0,1fr);gap:6px;padding:6px 6px 0;}
-  #screen-flight .hud-l{padding:4px 6px;}
-  #screen-flight .aud-btn{width:22px;height:22px;}
-  #screen-flight .hud-c{padding:5px 22px 7px;}
-  #screen-flight .art-logo{font-size:.6rem;letter-spacing:.2em;margin-bottom:3px;}
+  #screen-flight #ar-top{grid-template-columns:auto auto minmax(0,1fr);gap:6px;padding:8px 6px 0;}
+  #screen-flight .hud-c{padding:5px 20px 7px;}
+  #screen-flight .art-logo{font-size:.56rem;letter-spacing:.24em;margin-bottom:2px;}
   #screen-flight .art-stats{gap:8px;}
-  #screen-flight .g-ring{width:22px;height:22px;}
-  #screen-flight .g-val{min-width:44px;font-size:.5rem;}
-  #screen-flight .hud-dest{display:none;}
+  #screen-flight .g-ring{width:20px;height:20px;}
+  #screen-flight .g-val{min-width:40px;font-size:.48rem;}
+  /* icon-only chips so the whole row fits */
+  #screen-flight .hud-r .art-btn:not(#cam-btn):not(.progress-btn){font-size:0;padding:0 9px;gap:0;}
+  #screen-flight .hud-r .art-btn:not(#cam-btn):not(.progress-btn) .ic{font-size:.8rem;}
   #screen-flight .hud-r .art-btns{overflow-x:auto;}
 }
 @media (max-width:620px){
-  #screen-flight #audio-player .aud-btn:nth-child(n+5){display:none;}
+  #screen-flight #audio-player .aud-btn:nth-child(n+3){display:none;}
   #screen-flight .hud-c .art-logo{display:none;}
+}
+@media (max-height:560px){
+  #screen-flight .joystick-zone{width:96px;height:96px;}
+  #screen-flight .joystick-knob{width:36px;height:36px;}
+  #screen-flight .art-btn,#screen-flight .aud-btn{height:28px;}
 }
