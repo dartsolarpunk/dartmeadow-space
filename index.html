@@ -1622,7 +1622,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
        Top = level to the galactic plane. Bottom = level to the nearest
        visitable system's orbital plane. -->
   <div id="level-stack">
-    <button id="level-galaxy-btn" class="side-pad" onclick="autoLevel('galaxy')" title="Auto-level to the galactic plane"><span class="sp-ico">🌌</span>GAL</button>
+    <button id="level-galaxy-btn" class="side-pad" onclick="autoLevel('galaxy')" title="Auto-level to the galactic plane"><span class="sp-ico sp-gal"><svg viewBox="0 0 24 24" width="1em" height="1em" aria-hidden="true"><defs><radialGradient id="galCore" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#fff6d8"/><stop offset=".45" stop-color="#ffc8f0" stop-opacity=".85"/><stop offset="1" stop-color="#b48cff" stop-opacity="0"/></radialGradient></defs><g transform="rotate(-24 12 12)"><ellipse cx="12" cy="12" rx="10.5" ry="4.6" fill="none" stroke="#7fb8ff" stroke-opacity=".28" stroke-width=".8"/><path d="M12 12c2.6-.9 5.2-.5 6.9 1.2 1.2 1.2.4 2.5-1.6 2.9-3.4.7-8.6-.6-11.3-2.6" fill="none" stroke="#9fd0ff" stroke-width="1.3" stroke-linecap="round" stroke-opacity=".9"/><path d="M12 12c-2.6.9-5.2.5-6.9-1.2-1.2-1.2-.4-2.5 1.6-2.9 3.4-.7 8.6.6 11.3 2.6" fill="none" stroke="#d7a6ff" stroke-width="1.3" stroke-linecap="round" stroke-opacity=".9"/><circle cx="12" cy="12" r="3.4" fill="url(#galCore)"/></g><g fill="#fff"><circle cx="4.2" cy="8.6" r=".55"/><circle cx="19.6" cy="15.4" r=".55"/><circle cx="16.4" cy="7.2" r=".45"/><circle cx="7.6" cy="16.9" r=".45"/><circle cx="20.4" cy="9.8" r=".35"/><circle cx="3.6" cy="14.2" r=".35"/><circle cx="14.6" cy="18.6" r=".35"/><circle cx="9.4" cy="5.4" r=".35"/></g><g fill="#ffe7a8"><circle cx="17.6" cy="12.2" r=".5"/><circle cx="6.4" cy="11.6" r=".5"/></g></svg></span>GAL</button>
     <button id="level-system-btn" class="side-pad" onclick="autoLevel('system')" title="Auto-level to the nearest system's orbital plane"><span class="sp-ico">🪐</span>SYS</button>
   </div>
   <div id="land-prompt" onclick="onLandPromptTap();" style="display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(var(--acc-rgb),.12);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.6rem;letter-spacing:.15em;padding:.5rem 1.2rem;border-radius:3px;pointer-events:none;z-index:30;text-align:center;"></div>
@@ -7686,6 +7686,7 @@ function enterShipWalk(){
   SHIP_WALK.yaw=camYaw-bt.group.rotation.y;
   SHIP_WALK.pitch=0.25;SHIP_WALK.velY=0;SHIP_WALK.grounded=true;SHIP_WALK.climb=null;
   SHIP_WALK.active=true;
+  _boardCallReset(); document.body.classList.add('ship-walk');
   SHIP_WALK.charOn=_shipCharOn(feet);
   SHIP_WALK.faceYaw=camYaw+Math.PI;                  // her facing, world (model faces +Z)
   if(boardFlight)boardFlight.visible=true;
@@ -7716,6 +7717,7 @@ function exitShipWalk(){
   sp.pos.copy(world);sp.pos.y+=1.5; // lift off a bit above the deck
   sp.vel.set(0,0,0);
   SHIP_WALK.active=false;SHIP_WALK.climb=null;
+  _boardCallReset(); document.body.classList.remove('ship-walk');
   if(boardFlight){boardFlight.visible=true;try{boardFlight.position.copy(sp.pos);}catch(e){}}
   // Back on the board for flight.
   if(SHIP_WALK.charOn&&boardFlight){try{remountSkyboard(boardFlight);}catch(e){console.warn('[ShipWalk] remount:',e);}}
@@ -7808,6 +7810,7 @@ function updateShipWalk(dt){
   // ── Her: on her feet, facing where she walks, animated.
   if(SHIP_WALK.charOn&&CHAR.root){
     CHAR.root.position.set(F.x,F.y+(CHAR.feetOffset||0)*(CHAR._shipScale||1)+(CHAR._plantOff||0),F.z);   // + planted-foot contact
+    if(BOARD_CALL.look&&BOARD_CALL.lookW>0&&!moving){ const L=BOARD_CALL.look, w=Math.atan2(L.x,L.z); let dd=w-SHIP_WALK.faceYaw; dd=Math.atan2(Math.sin(dd),Math.cos(dd)); SHIP_WALK.faceYaw+=dd*BOARD_CALL.lookW*Math.min(1,dt*6); }   // she turns to watch the summoned board
     let d=SHIP_WALK.faceYaw-CHAR.root.rotation.y;d=Math.atan2(Math.sin(d),Math.cos(d));
     CHAR.root.rotation.set(0,CHAR.root.rotation.y+d*Math.min(1,dt*10),0);
     try{updateCharacterLocomotion(dt,moving&&SHIP_WALK.grounded,running,1,!SHIP_WALK.grounded&&!SHIP_WALK.climb,!!SHIP_WALK.climb,{});}catch(e){}
@@ -7848,6 +7851,7 @@ function updateShipWalk(dt){
     boardFlight.rotation.x=0;
     boardFlight.rotation.z=Math.sin(bt.t*1.2)*0.04;
   }
+  _boardCallTick(dt);   // parked here, or flying in when summoned
 }
 function _btPlayChime(){
   const bt=BIRD_TEMPLE;
@@ -15792,7 +15796,7 @@ async function enterAtmosphericFlight(body,site,start){
   const pal=getSurfacePalette(body);
   const ov=$('atmo-overlay');ov.style.display='block';
   if(start&&!start.journal) ov.style.background='transparent'; // surface frame shows through until our first frame
-  _miniKiteName($('atmo-title'),body.name);
+  _miniKiteName($('atmo-title'),body.name); _kiteExplored($('atmo-title'),'ATMOSPHERIC FLIGHT',body);
   const cv=_freshCanvas('atmo-canvas');const W=window.innerWidth,H=window.innerHeight;cv.width=W;cv.height=H;
   atmoRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:!GFX.isMobile});
   await atmoRenderer.init();
@@ -18033,7 +18037,7 @@ async function enterSurface(body,site,opts){
   if(flightAnimId){cancelAnimationFrame(flightAnimId);flightAnimId=null;}
   const pal=getSurfacePalette(body);
   const ov=$('surface-overlay');ov.style.display='block';
-  _miniKiteName($('surface-title'),body.name);
+  _miniKiteName($('surface-title'),body.name); _kiteExplored($('surface-title'),'SURFACE',body); _boardCallReset();
   $('surface-grav').textContent='GRAV '+pal.grav.toFixed(2)+'g';
   const cv=_freshCanvas('surface-canvas');
   const W=window.innerWidth,H=window.innerHeight;cv.width=W;cv.height=H;
@@ -20847,6 +20851,7 @@ function updateSurface(dt){
     surfBoard.position.y += (hover-surfBoard.position.y)*lerp;
     if(surfBoard.position.y<need) surfBoard.position.y=need;   // never inside the hill, even mid-lerp
   }
+  _boardCallTick(dt);   // parked here, or flying in when summoned
   // ── Third-person follow camera ──────────────────────────────────
   //    Real bug found: the camera was being placed at the exact same
   //    x/z as her own character mesh (only y differed), so the camera
@@ -20948,6 +20953,9 @@ function updateSurface(dt){
     // SURFACE facing: mount formula + CHAR_TERRAIN_YAW_EXTRA (+PI) so she faces
     // travel / board nose (unmounted lacks mount Z-mirror). Mount/atmo unchanged.
     CHAR.root.rotation.y = (p.yaw - Math.PI/2) + CHAR_MOUNT_YAW_OFFSET + CHAR_TERRAIN_YAW_EXTRA;
+    // summoned board on its way: she turns to watch it come
+    if(BOARD_CALL.look&&BOARD_CALL.lookW>0){ const L=BOARD_CALL.look, want=(Math.atan2(-L.x,-L.z)-Math.PI/2)+CHAR_MOUNT_YAW_OFFSET+CHAR_TERRAIN_YAW_EXTRA;
+      let df=want-CHAR.root.rotation.y; df=Math.atan2(Math.sin(df),Math.cos(df)); CHAR.root.rotation.y+=df*BOARD_CALL.lookW; }
     const moving = Math.abs(mf)>0.05 || Math.abs(ms)>0.05;
     const running = moving && (surfRunToggle || surfKeys['ShiftLeft']||surfKeys['ShiftRight']);
     const dirSign = mf<-0.05 ? -1 : 1; // backing up (S / stick pulled back) plays the reversed cycle
@@ -21038,6 +21046,147 @@ function _surfFootContact(dt, airborne, sc){
 // under a foot, unit is one foot (her height / 6) at the current scale.
 // Used on planets (terrain height field) and on the Bird Temple deck
 // (ray cast against the temple's own meshes).
+// ── Skyboard: park it, or summon it ───────────────────────────────────
+// On any walkable ground (a planet, an asteroid, the Bird Temple deck) the
+// two little buttons in the kite either PARK the board where it is (it
+// stays put while she walks off) or SUMMON it: it lifts off from wherever
+// it is — or, if it's already beside her, swoops in from far off — and
+// flies a curved path to her side, slowing as it arrives, with two
+// whispering trails off its tail. She turns to watch it come.
+const BOARD_CALL={parked:false,parkPos:null,parkQuat:null,summon:null,trail:null,look:null,lookW:0};
+let _bcV1=null,_bcV2=null,_bcV3=null;
+function _bcCtx(){
+  if(typeof surfaceActive!=='undefined'&&surfaceActive&&surfBoard&&surfPlayer)
+    return {b:surfBoard, scene:surfScene, her:(CHAR&&CHAR.root&&CHAR.root.parent===surfScene)?CHAR.root.position:surfPlayer.pos, unit:CHAR_TERRAIN_HEIGHT/6, nose:1,
+      faceYaw:()=>{ const y=surfPlayer.yaw; return {x:-Math.sin(y),z:-Math.cos(y)}; }};
+  if(typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active&&boardFlight&&BIRD_TEMPLE.group)
+    return {b:boardFlight, scene:boardFlight.parent||flightScene, her:BIRD_TEMPLE.group.localToWorld(SHIP_WALK.localPos.clone()), unit:SHIP_CHAR_H/6, nose:-1,
+      faceYaw:()=>{ const y=SHIP_WALK.faceYaw; return {x:Math.sin(y),z:Math.cos(y)}; }};
+  return null;
+}
+function _bcButtons(){ document.querySelectorAll('.kb-park').forEach(b=>{ b.classList.toggle('on',BOARD_CALL.parked); b.title=BOARD_CALL.parked?'Skyboard parked — tap to have it follow you again':'Park the skyboard here'; b.setAttribute('aria-pressed',String(BOARD_CALL.parked)); }); }
+function parkSkyboard(){
+  const c=_bcCtx(); if(!c) return;
+  if(BOARD_CALL.parked){ BOARD_CALL.parked=false; toast('🛹 Skyboard follows you again',1600); }
+  else{ BOARD_CALL.parked=true; BOARD_CALL.summon=null; BOARD_CALL.parkPos=c.b.position.clone(); BOARD_CALL.parkQuat=c.b.quaternion.clone(); toast('🅿 Skyboard parked',1600); }
+  _bcButtons();
+}
+function summonSkyboard(){
+  const c=_bcCtx(); if(!c) return;
+  if(!_bcV1){ _bcV1=new THREE.Vector3(); _bcV2=new THREE.Vector3(); _bcV3=new THREE.Vector3(); }
+  const b=c.b, her=c.her, ft=c.unit;
+  let from=b.position.clone();
+  const d0=Math.hypot(from.x-her.x,from.z-her.z);
+  if(d0<25*ft){
+    // already at hand: send it out and bring it home in style — from behind
+    // her and off to one side, high, so she turns to see it come in
+    const f=c.faceYaw(), a=Math.atan2(-f.z,-f.x)+0.85;
+    from.set(her.x+Math.cos(a)*170*ft, her.y+55*ft, her.z+Math.sin(a)*170*ft);
+  }
+  const dist=from.distanceTo(her);
+  BOARD_CALL.parked=false;
+  BOARD_CALL.summon={t:0,dur:THREE.MathUtils.clamp(dist/(95*ft),1.8,4.2),from,ft,nose:c.nose};
+  b.visible=true; b.position.copy(from);
+  _bcTrail(c,true);
+  _bcButtons();
+  toast('🛹 Skyboard summoned',1400);
+}
+function _bcTrail(c,reset){
+  const T=BOARD_CALL;
+  if(reset&&T.trail){ try{ T.trail.parent&&T.trail.parent.remove(T.trail); T.trail.children.forEach(o=>{o.geometry.dispose();o.material.dispose();}); }catch(e){} T.trail=null; }
+  if(T.trail||!c) return;
+  const N=56, g=new THREE.Group(); g.userData.N=N; g.userData.fade=1;
+  for(let k=0;k<2;k++){
+    const geo=new THREE.BufferGeometry();
+    geo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(N*3),3));
+    geo.setAttribute('color',new THREE.BufferAttribute(new Float32Array(N*3),3));
+    const ln=new THREE.Line(geo,new THREE.LineBasicMaterial({vertexColors:true,transparent:true,blending:THREE.AdditiveBlending,depthWrite:false,fog:false}));
+    ln.frustumCulled=false; ln.userData.filled=0; g.add(ln);
+  }
+  // a few glittering motes shed along the path
+  const pg=new THREE.BufferGeometry(); pg.setAttribute('position',new THREE.BufferAttribute(new Float32Array(N*3),3));
+  const pts=new THREE.Points(pg,new THREE.PointsMaterial({color:0xbfe9ff,size:2,sizeAttenuation:false,transparent:true,opacity:.8,blending:THREE.AdditiveBlending,depthWrite:false,fog:false}));
+  pts.frustumCulled=false; g.add(pts);
+  c.scene.add(g); T.trail=g;
+}
+function _bcTrailPush(c,dt,live){
+  const g=BOARD_CALL.trail; if(!g) return;
+  const N=g.userData.N, dims=_surfBoardDims(c.b);
+  if(!live){ g.userData.fade-=dt*0.9; if(g.userData.fade<=0){ _bcTrail(null,true); return; } }
+  c.b.updateMatrixWorld(true);
+  const tail=c.nose>0?dims.minX:dims.maxX, cool=new THREE.Color(0x7fd8ff), warm=new THREE.Color(0xff7fd0);
+  g.children.forEach((o,k)=>{
+    const pos=o.geometry.attributes.position.array;
+    if(o.isLine){
+      if(live){ pos.copyWithin(3,0,(N-1)*3); _bcV3.set(tail,dims.minY*0.5,k===0?dims.minZ:dims.maxZ).applyMatrix4(c.b.matrixWorld); pos[0]=_bcV3.x; pos[1]=_bcV3.y; pos[2]=_bcV3.z; o.userData.filled=Math.min(N,o.userData.filled+1); if(o.userData.filled===1) for(let i=1;i<N;i++){ pos[i*3]=pos[0]; pos[i*3+1]=pos[1]; pos[i*3+2]=pos[2]; } }
+      const col=o.geometry.attributes.color.array, base=k===0?cool:warm, f=g.userData.fade;
+      for(let i=0;i<N;i++){ const a=Math.pow(1-i/N,1.6)*f; col[i*3]=base.r*a; col[i*3+1]=base.g*a; col[i*3+2]=base.b*a; }
+      o.geometry.attributes.position.needsUpdate=true; o.geometry.attributes.color.needsUpdate=true;
+    } else {
+      if(live&&Math.random()<0.7){ pos.copyWithin(3,0,(N-1)*3); const j=0.6*c.unit; pos[0]=c.b.position.x+(Math.random()-0.5)*j*4; pos[1]=c.b.position.y+(Math.random()-0.5)*j*2; pos[2]=c.b.position.z+(Math.random()-0.5)*j*4; o.geometry.attributes.position.needsUpdate=true; }
+      o.material.opacity=0.8*g.userData.fade;
+    }
+  });
+}
+// After the walk code has placed the board for this frame (its normal spot
+// beside her): hold it where it was parked, or fly it in.
+function _boardCallTick(dt){
+  const c=_bcCtx(); const T=BOARD_CALL;
+  if(!c){ T.look=null; T.lookW=0; return; }
+  if(!_bcV1){ _bcV1=new THREE.Vector3(); _bcV2=new THREE.Vector3(); _bcV3=new THREE.Vector3(); }
+  const b=c.b;
+  if(T.parked&&T.parkPos){ b.position.copy(T.parkPos); b.quaternion.copy(T.parkQuat); }
+  const S=T.summon;
+  if(S){
+    S.t+=dt; const k=Math.min(1,S.t/S.dur);
+    const target=_bcV1.copy(b.position);                     // where the walk code wants it: beside her
+    const ctrl=_bcV2.copy(S.from).lerp(target,0.5); ctrl.y=Math.max(S.from.y,target.y)+S.from.distanceTo(target)*0.18;
+    const e=1-Math.pow(1-k,3);                              // fast away, slowing as it comes alongside
+    const u=1-e, p=_bcV3.set(0,0,0).addScaledVector(S.from,u*u).addScaledVector(ctrl,2*u*e).addScaledVector(target,e*e);
+    // heading along the path, banking into it; settles into its waiting pose at the end
+    const tx=2*u*(ctrl.x-S.from.x)+2*e*(target.x-ctrl.x), tz=2*u*(ctrl.z-S.from.z)+2*e*(target.z-ctrl.z);
+    const settle=Math.max(0,(k-0.75)/0.25);
+    if(Math.hypot(tx,tz)>1e-6&&settle<1){
+      const want=S.nose>0?Math.atan2(-tz,tx):Math.atan2(tz,-tx);
+      b.rotation.order='YXZ';
+      let dy=want-b.rotation.y; dy=Math.atan2(Math.sin(dy),Math.cos(dy));
+      b.rotation.y+=dy*(1-settle);
+      b.rotation.z=(b.rotation.z||0)*(settle)+Math.sin(k*Math.PI)*0.35*(1-settle)*S.nose;
+    }
+    b.position.copy(p);
+    T.look={x:p.x-c.her.x,z:p.z-c.her.z};
+    T.lookW=Math.min(1,T.lookW+dt*3)*(k>0.92?Math.max(0,(1-k)/0.08):1);
+    _bcTrailPush(c,dt,true);
+    if(k>=1){ T.summon=null; }
+  } else {
+    T.lookW=Math.max(0,T.lookW-dt*2.5); if(T.lookW<=0) T.look=null;
+    if(T.trail) _bcTrailPush(c,dt,false);
+  }
+}
+function _boardCallReset(){ BOARD_CALL.parked=false; BOARD_CALL.summon=null; BOARD_CALL.look=null; BOARD_CALL.lookW=0; _bcTrail(null,true); _bcButtons(); }
+// the two little round buttons, part of the kite: a parking mark, and a
+// skyboard traced from the board itself (pointed nose, two deck discs, tail fins)
+const _KB_PARK='<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="4.5" width="15" height="15" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 16.5v-9h3a2.6 2.6 0 0 1 0 5.2h-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></svg>';
+const _KB_BOARD='<svg viewBox="0 0 24 24" aria-hidden="true"><g transform="rotate(-30 12 12)"><path d="M1.6 12l2.6-2.3h12.6L22.6 12l-5.8 2.3H4.2z" fill="currentColor" fill-opacity=".22" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M1.6 12L.4 9.8M1.6 12L.4 14.2" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/><circle cx="8.2" cy="12" r="1.25" fill="currentColor"/><circle cx="13.6" cy="12" r="1.25" fill="currentColor"/></g></svg>';
+function _installKiteBoardButtons(){
+  const mk=(host)=>{ if(!host||host.querySelector('.kite-board')) return;
+    const w=document.createElement('div'); w.className='kite-board';
+    w.innerHTML='<button type="button" class="kb-btn kb-park" aria-label="Park the skyboard" title="Park the skyboard here">'+_KB_PARK+'</button><button type="button" class="kb-btn kb-call" aria-label="Summon the skyboard" title="Summon the skyboard">'+_KB_BOARD+'</button>';
+    w.querySelector('.kb-park').onclick=e=>{ e.stopPropagation(); parkSkyboard(); };
+    w.querySelector('.kb-call').onclick=e=>{ e.stopPropagation(); summonSkyboard(); };
+    host.appendChild(w); };
+  mk(document.querySelector('#surface-overlay .mini-kite'));
+  mk(document.querySelector('#screen-flight .hud-c'));
+  _bcButtons();
+}
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',_installKiteBoardButtons); else _installKiteBoardButtons();
+// worlds people have actually studied; anything else reads UNEXPLORED in its kite
+const STUDIED_WORLDS=new Set(['Sun','Mercury','Venus','Earth','Moon','Mars','Jupiter','Saturn','Uranus','Neptune','Ceres','Vesta','Pallas','Eros']);
+function _kiteExplored(spanTitle,mode,body){
+  try{ const kite=spanTitle&&spanTitle.closest('.mini-kite'); const m=kite&&kite.querySelector('.mk-mode'); if(!m) return;
+    const known=body&&STUDIED_WORLDS.has(body.name);
+    m.textContent=known?mode:mode+' · UNEXPLORED'; m.classList.toggle('mk-unexplored',!known); }catch(e){}
+}
 function _footContact(dt, airborne, sc, ground, unit){
   if(!_fcV) _fcV=new THREE.Vector3();
   const b=CHAR.bones; if(!b||!b.LeftFoot||!b.RightFoot) return;
@@ -22022,7 +22171,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 
 <!-- ?v= stamps: bump on every UI change so browsers never mix a new page with cached old styles -->
 <link rel="stylesheet" href="ui/dm-ui.css?v=94">
-<link rel="stylesheet" href="ui/dm-hud.css?v=97">
+<link rel="stylesheet" href="ui/dm-hud.css?v=99">
 <link rel="stylesheet" href="ui/dm-menu.css?v=80">
 <link rel="stylesheet" href="ui/dm-journal.css?v=97">
 <link rel="stylesheet" href="ui/dm-landmap.css?v=86">

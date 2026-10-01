@@ -272,3 +272,22 @@ body:has(#screen-flight.active) #fs-exit,body:has(#screen-flight.active) #fs-ent
 @media (orientation:portrait) and (max-width:600px){
   .world-rail{top:auto;bottom:calc(200px + env(safe-area-inset-bottom,0px));right:8px;flex-direction:column;align-items:flex-end;}
 }
+
+/* ── skyboard PARK / SUMMON: two small glass discs inside the kite, under the title on its left wing ── */
+.kite-board{position:absolute;left:18.5%;top:47%;transform:translate(-50%,-50%);display:flex;gap:6px;z-index:2;pointer-events:auto;}
+#screen-flight .hud-c .kite-board{display:none;}
+body.ship-walk #screen-flight .hud-c .kite-board{display:flex;}
+.kite-board .kb-btn{width:22px;height:22px;padding:0;border-radius:50%;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;
+  color:rgba(var(--acc-rgb),.95);border:1px solid rgba(var(--acc-rgb),.42);
+  background:radial-gradient(circle at 50% 38%,rgba(var(--acc-rgb),.2),rgba(var(--panel-rgb),.28) 72%);
+  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);box-shadow:0 0 8px rgba(var(--acc-rgb),.2);transition:box-shadow .2s,color .2s,border-color .2s;}
+.kite-board .kb-btn svg{width:17px;height:17px;display:block;}
+.kite-board .kb-btn:hover,.kite-board .kb-btn:active{box-shadow:0 0 14px rgba(var(--acc-rgb),.6);color:#fff;}
+.kite-board .kb-park.on{color:#fff;border-color:var(--gold);box-shadow:0 0 10px rgba(var(--hi-rgb),.8),inset 0 0 8px rgba(var(--hi-rgb),.45);
+  background:radial-gradient(circle at 50% 38%,rgba(var(--hi-rgb),.5),rgba(var(--hi-rgb),.12) 72%);}
+#screen-flight .hud-c .kite-board .kb-btn{width:30px;height:30px;}
+#screen-flight .hud-c .kite-board .kb-btn svg{width:22px;height:22px;}
+/* a world nobody has studied */
+.mini-kite .mk-mode.mk-unexplored{color:#ffd27a;text-shadow:0 0 4px rgba(0,0,0,.6),0 0 8px rgba(255,190,90,.6);}
+/* the drawn galaxy fills its disc */
+#screen-flight .side-pad .sp-gal svg{width:1.25em;height:1.25em;display:block;}
