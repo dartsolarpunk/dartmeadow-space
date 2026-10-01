@@ -121,7 +121,7 @@ if(location.search.indexOf('debug')!==-1){
   });
 })();</script>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-<script src="ui/dm-theme.js?v=76"></script>
+<script src="ui/dm-theme.js?v=77"></script>
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js",
@@ -951,7 +951,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   // Picks up the result if signInWithRedirect was used (popup-blocked fallback)
   getRedirectResult(fbAuth).catch(err => console.warn('redirect result:', err));
 </script>
-<script src="jots/jots-link.js?v=76" defer></script>
+<script src="jots/jots-link.js?v=77" defer></script>
 </head>
 <body>
 <!-- LOADING -->
@@ -1614,8 +1614,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <div id="surface-overlay" style="display:none;position:fixed;inset:0;z-index:3500;background:#000;">
   <canvas id="surface-canvas" style="position:absolute;inset:0;display:block;touch-action:none;"></canvas>
   <div style="position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:10px 16px calc(10px);background:rgba(var(--panel-rgb),.55);backdrop-filter:blur(10px);border-bottom:1px solid rgba(var(--acc-rgb),.15);pointer-events:none;">
-    <span id="surface-title" style="font-family:var(--font-hud);font-size:.62rem;letter-spacing:.15em;color:var(--cyan);">SURFACE</span>
-    <span id="surface-grav" style="font-family:var(--font-mono);font-size:.55rem;color:rgba(var(--acc-rgb),.7);">GRAV 1.00g</span>
+    <div class="mini-kite"><svg class="mk-edge" viewBox="0 0 360 160" preserveAspectRatio="none" width="0" height="0" aria-hidden="true"><defs><linearGradient id="mk-grad-s" x1="0" y1="0" x2="0.35" y2="1"><stop offset="0" class="ks-a"/><stop offset=".55" class="ks-b"/><stop offset="1" class="ks-c"/></linearGradient></defs><polygon class="kite-line" style="stroke:url(#mk-grad-s)" fill="none" stroke="none" points="1.5,77 75.6,1.5 358.5,75.2 75.6,158.5"/><polyline class="kite-ridge" fill="none" stroke="none" points="2,77 358,75.2"/></svg><span id="surface-title" class="mk-name">—</span><span class="mk-mode">SURFACE</span><span id="surface-grav" class="mk-read">GRAV 1.00g</span></div>
     <div style="display:flex;gap:8px;">
       <button onclick="openTempleHub()" style="pointer-events:auto;padding:5px 12px;background:rgba(255,255,255,.1);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🕊 TEMPLE</button>
       <button id="surf-fly-btn" onclick="surfRemountSkyboard()" style="pointer-events:auto;padding:5px 12px;background:rgba(var(--acc-rgb),.1);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🛹 FLY</button>
@@ -1673,8 +1672,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <div id="atmo-overlay" style="display:none;position:fixed;inset:0;z-index:3450;background:#000;">
   <canvas id="atmo-canvas" style="position:absolute;inset:0;display:block;touch-action:none;"></canvas>
   <div style="position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:10px 16px;background:rgba(var(--panel-rgb),.5);backdrop-filter:blur(10px);border-bottom:1px solid rgba(var(--acc-rgb),.15);pointer-events:none;">
-    <span id="atmo-title" style="font-family:var(--font-hud);font-size:.6rem;letter-spacing:.14em;color:var(--cyan);">ATMOSPHERIC FLIGHT</span>
-    <span id="atmo-speed" style="font-family:var(--font-mono);font-size:.6rem;color:var(--gold);">MACH 0.00</span>
+    <div class="mini-kite"><svg class="mk-edge" viewBox="0 0 360 160" preserveAspectRatio="none" width="0" height="0" aria-hidden="true"><defs><linearGradient id="mk-grad-a" x1="0" y1="0" x2="0.35" y2="1"><stop offset="0" class="ks-a"/><stop offset=".55" class="ks-b"/><stop offset="1" class="ks-c"/></linearGradient></defs><polygon class="kite-line" style="stroke:url(#mk-grad-a)" fill="none" stroke="none" points="1.5,77 75.6,1.5 358.5,75.2 75.6,158.5"/><polyline class="kite-ridge" fill="none" stroke="none" points="2,77 358,75.2"/></svg><span id="atmo-title" class="mk-name">—</span><span class="mk-mode">ATMOSPHERIC FLIGHT</span><span id="atmo-speed" class="mk-read">MACH 0.00</span></div>
     <div style="display:flex;gap:8px;">
       <button onclick="openTempleHub()" style="pointer-events:auto;padding:5px 12px;background:rgba(255,255,255,.1);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🕊 TEMPLE</button>
       <button id="atmo-land-btn" onclick="atmoLandHere()" style="pointer-events:auto;padding:5px 12px;background:rgba(var(--hi-rgb),.12);border:1px solid var(--gold);color:var(--gold);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🚶 LAND</button>
@@ -8601,6 +8599,7 @@ function activateDart(){
 // the board along its heading, `up` = height above it, `look` = how far ahead of
 // the board the camera aims. This is the ArcLake-style drone/follow method —
 // the board flies out in front of you and you steer it.
+const ATMO_CAM_FOLLOW={back:7.0, up:2.8, look:3.0, fov:62};   // atmospheric flight CAM 1
 const CAM_OFFSETS=[
   // CAM 1 — FOLLOW (default): behind and above, close enough that she
   // fills the lower frame (was back 7 / up 2.8 — she read as a speck)
@@ -11284,6 +11283,15 @@ function openSupport(){
     s.async=true;
     document.head.appendChild(s);
   }
+}
+// The world's name in the small kite on the surface / atmosphere HUD; long
+// names shrink so they stay inside the kite's upper band.
+function _miniKiteName(el,name){
+  if(!el) return;
+  const t=String(name||'').toUpperCase(), n=Math.max(1,t.length);
+  el.textContent=t;
+  el.style.fontSize=Math.max(0.42,Math.min(0.74,6.4/n)).toFixed(3)+'rem';
+  el.style.letterSpacing=n>9?'.16em':'.34em';
 }
 function closeSupport(){const m=$('support-modal');if(m)m.style.display='none';}
 
@@ -15169,7 +15177,7 @@ async function enterAtmosphericFlight(body,site,start){
   const pal=getSurfacePalette(body);
   const ov=$('atmo-overlay');ov.style.display='block';
   if(start) ov.style.background='transparent'; // surface frame shows through until our first frame
-  $('atmo-title').textContent='ATMOSPHERIC FLIGHT — '+body.name.toUpperCase();
+  _miniKiteName($('atmo-title'),body.name);
   const cv=_freshCanvas('atmo-canvas');const W=window.innerWidth,H=window.innerHeight;cv.width=W;cv.height=H;
   atmoRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:!GFX.isMobile});
   await atmoRenderer.init();
@@ -15436,9 +15444,27 @@ function updateAtmoFlight(dt){
   //    scale (2.4×) so the camera sits the same RELATIVE distance behind the
   //    board as it does in interstellar space. Previously the 1.4× fudge was
   //    too small for the enlarged board, making the camera feel glued on top.
-  const o=CAM_OFFSETS[camMode]||CAM_OFFSETS[0];
+  // CAM 1 in the atmosphere keeps the original follow distance (back 7 /
+  // up 2.8): the whole board and her stay in frame. Space's CAM 1 moved in
+  // closer, and borrowing it here put the camera on her back.
+  const o=camMode===0?ATMO_CAM_FOLLOW:(CAM_OFFSETS[camMode]||ATMO_CAM_FOLLOW);
   const boardScale=(atmoBoard.scale.x||2.4)*2.5; // extra pull-back so whole board fits in frame
-  const back=o.back*boardScale, up=o.up*boardScale, look=o.look*boardScale;
+  let back=o.back*boardScale, up=o.up*boardScale, look=o.look*boardScale;
+  if(camMode===0){
+    // Frame the whole board and her: measure them (once a second) and back
+    // off until their bounding sphere fits the view, along CAM 1's angle.
+    const now=performance.now();
+    if(!atmoBoard.userData._frameT||now-atmoBoard.userData._frameT>1000){
+      atmoBoard.userData._frameT=now;
+      try{ const sz=new THREE.Box3().setFromObject(atmoBoard).getSize(new THREE.Vector3()); atmoBoard.userData._frameR=sz.length()*0.5; }catch(e){}
+    }
+    const R=atmoBoard.userData._frameR||0;
+    if(R>0){
+      const vf=THREE.MathUtils.degToRad(atmoCamera.fov||62)/2, hf=Math.atan(Math.tan(vf)*(atmoCamera.aspect||1.6));
+      const d=R/Math.sin(Math.min(vf,hf))*1.08, el=Math.atan2(o.up,o.back);
+      back=Math.max(back,d*Math.cos(el)); up=Math.max(up,d*Math.sin(el)); look=Math.min(look,R*0.25);
+    }
+  }
   const fwd=new THREE.Vector3(0,0,-1).applyEuler(new THREE.Euler(s.pitch*0.5,s.yaw,0,'YXZ'));
   // Smooth the camera's offset FROM the board, not its world position, so
   // it never falls behind at speed (a world-space lerp lags ∝ speed).
@@ -17066,7 +17092,7 @@ async function enterSurface(body,site,opts){
   if(flightAnimId){cancelAnimationFrame(flightAnimId);flightAnimId=null;}
   const pal=getSurfacePalette(body);
   const ov=$('surface-overlay');ov.style.display='block';
-  $('surface-title').textContent='SURFACE — '+body.name.toUpperCase();
+  _miniKiteName($('surface-title'),body.name);
   $('surface-grav').textContent='GRAV '+pal.grav.toFixed(2)+'g';
   const cv=_freshCanvas('surface-canvas');
   const W=window.innerWidth,H=window.innerHeight;cv.width=W;cv.height=H;
@@ -18571,32 +18597,46 @@ async function buildSurfaceTerrain(pal){
         TERRAIN.mcGroup=mcGroup;
         const SPAN=built.half;
         const _origH=_surfHeight;
-        _surfHeight=(x,z)=>{
-          if(Math.abs(x)<SPAN && Math.abs(z)<SPAN && TERRAIN.mcDensityArray){
-            return sampleSurfGroundHeight(x,z);
-          }
-          if(Math.abs(x)<SPAN && Math.abs(z)<SPAN && TERRAIN.mcGroup){
+        // Two meshes overlap here: the smooth marching-cubes surface and the
+        // faceted heightmap underlay (sunk 0.35). Where the heightmap pokes up
+        // through the MC surface you see it, so you must stand on it: the
+        // ground is whichever surface is on top at this spot. Walking onto a
+        // higher one hands the anchor to it; walking off its edge (or where it
+        // dips back below) hands it back.
+        const _underlayY=()=>(patch&&patch.visible)?patch.position.y:-1e9;
+        const _mcY=(x,z)=>{
+          if(TERRAIN.mcDensityArray) return sampleSurfGroundHeight(x,z);
+          if(TERRAIN.mcGroup){
             // Mesh raycast fallback if readback missing
             if(!TERRAIN._mcRay){ TERRAIN._mcRay=new THREE.Raycaster(); TERRAIN._mcRay.far=400; }
             TERRAIN._mcRay.set(new THREE.Vector3(x,200,z),new THREE.Vector3(0,-1,0));
             const hits=TERRAIN._mcRay.intersectObject(TERRAIN.mcGroup,true);
             if(hits.length) return hits[0].point.y;
           }
+          return null;
+        };
+        const _hmNormal=(x,z)=>{ const eps=0.75, hx=_origH(x+eps,z)-_origH(x-eps,z), hz=_origH(x,z+eps)-_origH(x,z-eps);
+          return new THREE.Vector3(-hx,2*eps,-hz).normalize(); };
+        _surfHeight=(x,z)=>{
+          if(Math.abs(x)<SPAN && Math.abs(z)<SPAN){
+            const mc=_mcY(x,z);
+            if(mc!==null) return Math.max(mc,_origH(x,z)+_underlayY());
+          }
           return _origH(x,z);
         };
         window._surfHeight=_surfHeight;
         window._surfNormal=(x,z)=>{
-          if(Math.abs(x)<SPAN && Math.abs(z)<SPAN && TERRAIN.mcDensityArray){
-            return sampleSurfGroundNormal(x,z);
+          if(Math.abs(x)<SPAN && Math.abs(z)<SPAN){
+            const mc=_mcY(x,z);
+            if(mc!==null && _origH(x,z)+_underlayY()>mc+0.01) return _hmNormal(x,z);   // standing on the underlay
+            if(TERRAIN.mcDensityArray) return sampleSurfGroundNormal(x,z);
+            if(TERRAIN.mcGroup){
+              TERRAIN._mcRay.set(new THREE.Vector3(x,200,z),new THREE.Vector3(0,-1,0));
+              const hits=TERRAIN._mcRay.intersectObject(TERRAIN.mcGroup,true);
+              if(hits.length&&hits[0].face) return hits[0].face.normal.clone().transformDirection(hits[0].object.matrixWorld);
+            }
           }
-          if(Math.abs(x)<SPAN && Math.abs(z)<SPAN && TERRAIN.mcGroup){
-            if(!TERRAIN._mcRay){ TERRAIN._mcRay=new THREE.Raycaster(); TERRAIN._mcRay.far=400; }
-            TERRAIN._mcRay.set(new THREE.Vector3(x,200,z),new THREE.Vector3(0,-1,0));
-            const hits=TERRAIN._mcRay.intersectObject(TERRAIN.mcGroup,true);
-            if(hits.length&&hits[0].face) return hits[0].face.normal.clone().transformDirection(hits[0].object.matrixWorld);
-          }
-          const eps=1.2; const h=_origH(x,z), hx=_origH(x+eps,z), hz=_origH(x,z+eps);
-          return new THREE.Vector3(-(hx-h)/eps,1,-(hz-h)/eps).normalize();
+          return _hmNormal(x,z);
         };
         // Staged LOD upgrade — one-way lock like upgradePlanetLOD (do not overlap CHAR load)
         setTimeout(()=>{
@@ -18657,7 +18697,7 @@ async function buildSurfaceTerrain(pal){
       if(Math.abs(x)<SPAN&&Math.abs(z)<SPAN&&TERRAIN.mcGroup){
         _mcRay.set(new THREE.Vector3(x,MC_VMIN+MC_VHEIGHT+20,z),new THREE.Vector3(0,-1,0));
         const hits=_mcRay.intersectObject(TERRAIN.mcGroup,true);
-        if(hits.length)return hits[0].point.y;
+        if(hits.length)return Math.max(hits[0].point.y,(patch&&patch.visible)?_origSurfHeight(x,z)+patch.position.y:-1e9);   // topmost visible surface
       }
       return _origSurfHeight(x,z);
     };
@@ -20168,8 +20208,8 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 </script>
 
 <!-- ?v= stamps: bump on every UI change so browsers never mix a new page with cached old styles -->
-<link rel="stylesheet" href="ui/dm-ui.css?v=76">
-<link rel="stylesheet" href="ui/dm-hud.css?v=76">
-<link rel="stylesheet" href="ui/dm-menu.css?v=76">
+<link rel="stylesheet" href="ui/dm-ui.css?v=77">
+<link rel="stylesheet" href="ui/dm-hud.css?v=77">
+<link rel="stylesheet" href="ui/dm-menu.css?v=77">
 </body>
 </html>

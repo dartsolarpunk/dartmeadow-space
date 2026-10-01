@@ -215,3 +215,21 @@ body:has(#screen-flight.active) #fs-exit,body:has(#screen-flight.active) #fs-ent
   #screen-flight .joystick-knob{width:36px;height:36px;}
   #screen-flight .art-btn,#screen-flight .aud-btn{height:28px;}
 }
+
+/* ── small kite: the world you're visiting, on the surface and in atmospheric flight ── */
+.mini-kite{position:absolute;top:6px;left:50%;width:230px;height:102px;transform:translateX(-50%);pointer-events:none;isolation:isolate;z-index:1;
+  background:linear-gradient(158deg,rgba(var(--hi-rgb),.2),rgba(var(--panel-rgb),.3) 42%,rgba(var(--panel-rgb),.26) 60%,rgba(var(--acc-rgb),.24));
+  backdrop-filter:blur(12px) saturate(140%);-webkit-backdrop-filter:blur(12px) saturate(140%);
+  clip-path:polygon(0 48%,21% 0,100% 47%,21% 100%);}
+.mini-kite::before{content:'';position:absolute;inset:0;z-index:-1;background:linear-gradient(170deg,rgba(255,255,255,.1),rgba(255,255,255,.02) 70%);clip-path:polygon(0 48%,21% 0,100% 47%);}
+.mini-kite .mk-edge{position:absolute;inset:0;width:100%;height:100%;z-index:-1;overflow:visible;}
+.mini-kite .kite-line{fill:none;stroke-width:1.4;stroke-linejoin:round;vector-effect:non-scaling-stroke;filter:drop-shadow(0 0 3px rgba(var(--pur-rgb),.9));}
+.mini-kite .ks-a{stop-color:var(--gold);}
+.mini-kite .ks-b{stop-color:var(--purple);}
+.mini-kite .ks-c{stop-color:var(--cyan);}
+.mini-kite .kite-ridge{fill:none;stroke:rgba(255,255,255,.1);stroke-width:1;vector-effect:non-scaling-stroke;}
+.mini-kite>span{position:absolute;transform:translate(-50%,-50%);white-space:nowrap;}
+.mini-kite .mk-name{left:40%;top:28%;max-width:58%;overflow:hidden;text-overflow:ellipsis;font-family:var(--font-hud);font-size:.74rem;letter-spacing:.34em;color:var(--text);text-shadow:0 0 10px rgba(var(--acc-rgb),.7);}
+.mini-kite .mk-mode{left:58%;top:41%;font-family:var(--font-hud);font-size:.42rem;letter-spacing:.22em;color:rgba(var(--hi-rgb),.95);text-shadow:0 0 4px rgba(0,0,0,.6),0 0 8px rgba(var(--hi-rgb),.6);}
+.mini-kite .mk-read{left:36%;top:66%;font-family:var(--font-mono);font-size:.58rem;color:var(--text);text-shadow:0 0 6px rgba(var(--hi-rgb),.8);}
+@media (max-width:760px){ .mini-kite{transform:translateX(-50%) scale(.8);transform-origin:50% 0;} }

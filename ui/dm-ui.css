@@ -41,7 +41,8 @@
 /* ── walk mode + atmospheric flight overlays: same language as the HUD ── */
 #surface-overlay>div:nth-of-type(1),#atmo-overlay>div:nth-of-type(1){
   background:linear-gradient(180deg,rgba(var(--panel-rgb),.55),rgba(var(--panel-rgb),0)) !important;border:none !important;backdrop-filter:none !important;-webkit-backdrop-filter:none !important;padding:10px 12px 18px !important;}
-#surface-title,#atmo-title{font-size:.6rem !important;letter-spacing:.3em !important;color:var(--text) !important;text-shadow:0 0 10px rgba(var(--acc-rgb),.7);}
+/* surface / atmosphere titles live in the small kite (see .mini-kite in dm-hud.css) */
+#surface-overlay>div:nth-of-type(1)>div:last-child,#atmo-overlay>div:nth-of-type(1)>div:last-child{margin-left:auto;}
 #surface-overlay>div:nth-of-type(1) button,#atmo-overlay>div:nth-of-type(1) button,
 #surf-jump-btn,#surf-run-btn,#surf-climb-btn,#atmo-presets button{
   height:30px !important;padding:0 14px !important;border:none !important;border-radius:0 !important;
