@@ -94,7 +94,14 @@ if(location.search.indexOf('debug')!==-1){
   var _setHDebounce=null;
   function _queueSetH(){clearTimeout(_setHDebounce);_setHDebounce=setTimeout(setH,100);}
   window.addEventListener('resize',_queueSetH);
-  window.addEventListener('orientationchange',function(){setH();setTimeout(setH,200);setTimeout(setH,600);});
+  // iPhone Safari can leave the page scrolled a few pixels after rotating
+  // (toolbar show/hide); fixed controls are then drawn in one place but
+  // touched in another — the "tap the stick, hit the button above" offset.
+  // The page never needs to scroll, so pin it back to the top every time.
+  function unscroll(){ try{ if(window.scrollX||window.scrollY) window.scrollTo(0,0); var se=document.scrollingElement; if(se&&(se.scrollTop||se.scrollLeft)){ se.scrollTop=0; se.scrollLeft=0; } }catch(e){} }
+  window.addEventListener('scroll',unscroll,{passive:true});
+  if(window.visualViewport){ window.visualViewport.addEventListener('resize',function(){ setTimeout(unscroll,50); }); window.visualViewport.addEventListener('scroll',function(){ setTimeout(unscroll,50); }); }
+  window.addEventListener('orientationchange',function(){setH();unscroll();setTimeout(function(){setH();unscroll();},200);setTimeout(function(){setH();unscroll();},600);});
   window.addEventListener('load',function(){setH();setTimeout(setH,200);setTimeout(setH,600);});
   document.addEventListener('visibilitychange',function(){if(!document.hidden)setTimeout(setH,150);});
   if(window.visualViewport){
@@ -427,7 +434,7 @@ THREE.OrbitControls=function(camera,domElement){
    clipping bug on phones. Supported on all current mobile browsers. */
 @supports (height:100dvh){:root{--app-h:100dvh;}}
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
-html,body{width:100%;height:var(--app-h);overflow:hidden;background:var(--c0);color:var(--text);font-family:var(--font-body);font-size:14px;}
+html,body{width:100%;height:var(--app-h);overflow:hidden;overscroll-behavior:none;background:var(--c0);color:var(--text);font-family:var(--font-body);font-size:14px;}
 
 /* LOADING — video BG only (no legacy hero still / clouds / stars / horizon) */
 #ls-plate-video,.ls-plate-video{position:absolute;inset:0;z-index:-2;width:100%;height:100%;object-fit:cover;object-position:center 40%;pointer-events:none;background:#000308;}
@@ -18058,12 +18065,13 @@ async function enterSurface(body,site,opts){
     try{ surfRenderer.render(surfScene,surfCamera); }catch(e){ _animLoopWarn('surf-render',e); }
   })();
 }
-let surfBoard=null,surfTerrainMesh=null,_surfHeight=null;
+let surfBoard=null,surfTerrainMesh=null,_surfHeight=null,_surfBoardV=null;
 // First / third person on the ground. Third person (the trailing camera) is
 // the default every landing; first person sits the camera at her eyes and
 // hides her body so it never blocks the view. ORBIT still works from either.
 let surfFirstPerson=false, _surfFpHidden=false;
-const SURF_CAM_CLEAR=1.524;      // 5 ft — the closest the trailing camera may come to the ground
+const SURF_CAM_CLEAR=CHAR_TERRAIN_HEIGHT*5/6;   // 5 ft (she is 6 ft = CHAR_TERRAIN_HEIGHT units) — the closest the trailing camera may come to the ground
+let _camPull=1;
 const SURF_CAM_MAX_RISE=60;      // how far above her head it may climb to see over a ridge
 function _surfFpBody(){
   const hide=surfFirstPerson&&!charOrbitActive&&surfaceActive;
@@ -20595,19 +20603,25 @@ function updateSurface(dt){
     const pitch=_clamp(Math.atan2(at(dims.maxX,cz)-at(dims.minX,cz),dims.maxX-dims.minX),-0.6,0.6);
     const roll=_clamp(Math.atan2(at(cx,dims.maxZ)-at(cx,dims.minZ),dims.maxZ-dims.minZ),-0.5,0.5);
     surfBoard.rotation.order='YXZ';
-    surfBoard.rotation.y += (byaw-surfBoard.rotation.y)*Math.min(1,dt*8);
+    let dyaw=byaw-surfBoard.rotation.y; dyaw-=Math.round(dyaw/(Math.PI*2))*Math.PI*2;   // the short way round
+    surfBoard.rotation.y += dyaw*Math.min(1,dt*8);
     const rl=Math.min(1,dt*8);
     surfBoard.rotation.z += (pitch-surfBoard.rotation.z)*rl;
     surfBoard.rotation.x += (-roll-surfBoard.rotation.x)*rl;
     // Lowest safe height: every underside point along the length and both
-    // edges, at the board's current tilt, sits clear of the ground.
-    const sp_=Math.sin(surfBoard.rotation.z), sr_=Math.sin(-surfBoard.rotation.x);
+    // edges, put through the board's ACTUAL transform (heading and tilt
+    // ease toward their targets, and a pitched board's far end sits closer
+    // in than its length — so the ground is sampled exactly under each
+    // point), sits clear of the ground.
+    surfBoard.updateMatrix();
+    const _bv=_surfBoardV||(_surfBoardV=new THREE.Vector3()), py0=surfBoard.position.y;
     let need=-Infinity;
-    for(let k=0;k<=6;k++){
-      const lx=dims.minX+(dims.maxX-dims.minX)*k/6;
+    for(let k=0;k<=12;k++){
+      const lx=dims.minX+(dims.maxX-dims.minX)*k/12;
       for(let j=0;j<3;j++){
         const lz=j===0?dims.minZ:j===1?cz:dims.maxZ;
-        need=Math.max(need, at(lx,lz)+0.18-(dims.minY+lx*sp_+lz*sr_));
+        _bv.set(lx,dims.minY,lz).applyMatrix4(surfBoard.matrix);
+        need=Math.max(need, H(_bv.x,_bv.z)+0.18-(_bv.y-py0));
       }
     }
     const hover=Math.max(need, playerFeet+SURF_BOARD_WAIST) + Math.sin(surfTime*1.6)*0.02;
@@ -20633,7 +20647,7 @@ function updateSurface(dt){
   const _near=_bd?_bd.half:0;
   const followDist=Math.max(GFX&&GFX.isMobile?16.5:14.5, _near+(GFX&&GFX.isMobile?11:10)), followHeight=GFX&&GFX.isMobile?7.2:6.6;
   const _mid=surfBoard?_surfBoardSide(surfBoard)*0.5:0;
-  const camTX=p.pos.x - fx*followDist + rx*_mid, camTZ=p.pos.z - fz*followDist + rz*_mid;
+  let camTX=p.pos.x - fx*followDist + rx*_mid, camTZ=p.pos.z - fz*followDist + rz*_mid;
   const camGroundH=_surfHeight?_surfHeight(camTX,camTZ):groundH;
   let camTY=Math.max(eye+followHeight*0.55, camGroundH+followHeight+1.2);
   // ── The camera is a solid body: it never goes into the ground ──
@@ -20654,6 +20668,14 @@ function updateSurface(dt){
       const need=gAt(x,z)+SURF_CAM_CLEAR;
       if(headY+(camTY-headY)*t<need) camTY=Math.min(headY+SURF_CAM_MAX_RISE, headY+(need-headY)/t);
     }
+    // still blocked after rising as far as it may: pull in along its line to her (spring arm)
+    let pull=1;
+    for(let i=1;i<=14;i++){
+      const t=i/15, x=p.pos.x+(camTX-p.pos.x)*t, z=p.pos.z+(camTZ-p.pos.z)*t;
+      if(headY+(camTY-headY)*t<gAt(x,z)+SURF_CAM_CLEAR*0.5){ pull=Math.max(0.12,(i-1)/15); break; }
+    }
+    if(pull<1){ _camPull=pull; } else _camPull=Math.min(1,(_camPull||1)+dt*0.8);
+    if(_camPull<1){ camTX=p.pos.x+(camTX-p.pos.x)*_camPull; camTZ=p.pos.z+(camTZ-p.pos.z)*_camPull; camTY=headY+(camTY-headY)*_camPull; camTY=Math.max(camTY,gAt(camTX,camTZ)+SURF_CAM_CLEAR*0.5); }
   }
   if(!p.camPos)p.camPos=new THREE.Vector3(camTX,camTY,camTZ);
   const camLerp=Math.min(1,dt*6);
@@ -20665,6 +20687,20 @@ function updateSurface(dt){
   if(typeof _surfHeight==='function'){
     const g=_surfHeight(p.camPos.x,p.camPos.z);
     if(typeof g==='number'&&isFinite(g)&&p.camPos.y<g+SURF_CAM_CLEAR) p.camPos.y=g+SURF_CAM_CLEAR;
+    // and the smoothed camera never sees her THROUGH a hill either: the
+    // easing can swing it round behind a ridge between targets, so the
+    // line from her head to where it actually is gets the same spring arm.
+    const hY=supportH+CHAR_TERRAIN_HEIGHT*0.9, c=p.camPos;
+    for(let i=1;i<=20;i++){
+      const t=i/20, x=p.pos.x+(c.x-p.pos.x)*t, z=p.pos.z+(c.z-p.pos.z)*t, gh=_surfHeight(x,z);
+      if(typeof gh==='number'&&isFinite(gh)&&hY+(c.y-hY)*t<gh+SURF_CAM_CLEAR*0.3){
+        const k=Math.max(0.1,(i-1)/20);
+        c.x=p.pos.x+(c.x-p.pos.x)*k; c.z=p.pos.z+(c.z-p.pos.z)*k; c.y=hY+(c.y-hY)*k;
+        const g2=_surfHeight(c.x,c.z); if(typeof g2==='number'&&isFinite(g2)) c.y=Math.max(c.y,g2+SURF_CAM_CLEAR*0.5);
+        _camPull=Math.min(_camPull,k);
+        break;
+      }
+    }
   }
   surfCamera.position.copy(p.camPos);
   surfCamera.rotation.order='YXZ';
@@ -20689,7 +20725,7 @@ function updateSurface(dt){
     // buried by feetOffset*s. Soft-coord: if _surfHeight wrong → Worlds.
     const _sSurf=CHAR.scaleForTerrain||CHAR.scaleForBoard||1;
     const rootY=supportH+(CHAR.feetOffset||0)*_sSurf;
-    CHAR.root.position.set(p.pos.x, rootY, p.pos.z);
+    CHAR.root.position.set(p.pos.x, rootY+(CHAR._plantOff||0), p.pos.z);   // + planted-foot contact (below)
     // SURFACE facing: mount formula + CHAR_TERRAIN_YAW_EXTRA (+PI) so she faces
     // travel / board nose (unmounted lacks mount Z-mirror). Mount/atmo unchanged.
     CHAR.root.rotation.y = (p.yaw - Math.PI/2) + CHAR_MOUNT_YAW_OFFSET + CHAR_TERRAIN_YAW_EXTRA;
@@ -20732,7 +20768,37 @@ function updateSurface(dt){
       prone: CHAR.stanceMode==='prone', // never auto-set from slope
       crouch: CHAR.stanceMode==='crouch', // no autoCrouch-from-slope
     });
+    _surfFootContact(dt, jumping||climbing||inWater, _sSurf);
   }
+}
+// Planted-foot contact. After the walk/run/idle pose is applied, measure
+// where her lower foot's sole actually is against the ground right under
+// it, and ease her whole body up or down so that foot rests on the surface
+// — on slopes, dune ripples, pebbles and rills alike. Only the rigid root
+// moves (no bone warping). Calibrated once from her own rig: the ankle's
+// height above the sole in the rest pose.
+let _fcV=null;
+function _surfFootContact(dt, airborne, sc){
+  if(!_fcV) _fcV=new THREE.Vector3();
+  const b=CHAR.bones; if(!b||!b.LeftFoot||!b.RightFoot||typeof _surfHeight!=='function') return;
+  const unit=CHAR_TERRAIN_HEIGHT/6;                       // one foot, in scene units
+  CHAR.root.updateMatrixWorld(true);
+  const soleLine=CHAR.root.position.y-(CHAR.feetOffset||0)*sc;   // where the model's lowest point sits
+  if(CHAR._ankleRest==null||CHAR._ankleRestSc!==sc){
+    if(CHAR.state!=='idle') return;                      // calibrate in the rest pose
+    const l=b.LeftFoot.getWorldPosition(_fcV).y-soleLine, r=b.RightFoot.getWorldPosition(_fcV).y-soleLine;
+    CHAR._ankleRest=Math.min(l,r); CHAR._ankleRestSc=sc; CHAR._plantOff=0; return;
+  }
+  if(airborne||CHAR._transitioning){ CHAR._plantOff=(CHAR._plantOff||0)*Math.max(0,1-dt*8); return; }
+  let low=1e9;
+  for(const f of [b.LeftFoot,b.RightFoot]){
+    f.getWorldPosition(_fcV);
+    const gap=(_fcV.y-CHAR._ankleRest)-_surfHeight(_fcV.x,_fcV.z);   // >0 floating, <0 sunk
+    if(gap<low) low=gap;
+  }
+  if(!isFinite(low)) return;
+  const want=THREE.MathUtils.clamp((CHAR._plantOff||0)-low, -0.9*unit, 0.5*unit);
+  CHAR._plantOff=(CHAR._plantOff||0)+(want-(CHAR._plantOff||0))*Math.min(1,dt*14);
 }
 
 function setupSurfaceJoysticks(){
@@ -20761,6 +20827,7 @@ function setupSurfaceJoysticks(){
       e.preventDefault();
       surfRunToggle=!surfRunToggle;
       runBtn.style.background = surfRunToggle ? 'rgba(0,255,150,.4)' : 'rgba(0,255,150,.08)';
+      runBtn.classList.toggle('on',surfRunToggle);   // glows while run mode is on
     };
     runBtn.addEventListener('touchstart',toggle,{passive:false});
     runBtn.addEventListener('mousedown',toggle);
@@ -20775,6 +20842,7 @@ function setupSurfaceJoysticks(){
       e.preventDefault();
       surfClimbHeld=!surfClimbHeld;
       climbBtn.style.background = surfClimbHeld ? 'rgba(255,196,0,.35)' : 'rgba(255,196,0,.1)';
+      climbBtn.classList.toggle('on',surfClimbHeld);
     };
     climbBtn.addEventListener('touchstart',toggle,{passive:false});
     climbBtn.addEventListener('mousedown',toggle);
@@ -21673,11 +21741,12 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 </script>
 
 <!-- ?v= stamps: bump on every UI change so browsers never mix a new page with cached old styles -->
-<link rel="stylesheet" href="ui/dm-ui.css?v=80">
+<link rel="stylesheet" href="ui/dm-ui.css?v=94">
 <link rel="stylesheet" href="ui/dm-hud.css?v=82">
 <link rel="stylesheet" href="ui/dm-menu.css?v=80">
 <link rel="stylesheet" href="ui/dm-journal.css?v=81">
 <link rel="stylesheet" href="ui/dm-landmap.css?v=86">
 <link rel="stylesheet" href="ui/dm-type.css?v=89">
+<link rel="stylesheet" href="ui/dm-compact.css?v=94">
 </body>
 </html>
