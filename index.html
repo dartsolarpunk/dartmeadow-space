@@ -133,7 +133,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-time.js?v=95"></script>
 <script src="ui/dm-theme.js?v=80"></script>
 <script src="ui/dm-fluid.js?v=80"></script>
-<script src="ui/dm-journal.js?v=81"></script>
+<script src="ui/dm-journal.js?v=97"></script>
 <script src="ui/dm-worldstyle.js?v=92"></script>
 <script src="ui/dm-sky.js?v=95"></script>
 <script src="ui/dm-dust.js?v=95"></script>
@@ -2283,6 +2283,7 @@ function _jnBeaconsTick(){
   const body=mode==='surface'?_surfBody:(mode==='atmo'?_atmoBody:null);
   const site=mode==='surface'?_surfSite:(mode==='atmo'?_atmoSite:null);
   const list=window.DMJournal.store.entries.filter(e=>{
+    if(e.hidden) return false;   // hidden from the Journal's eye toggle
     const p=e.place||{};
     if(((p.sys&&p.sys.name)||'Sol')!==sysName||(p.gal||'milkyway')!==ref.gal) return false;
     if(mode==='space') return e.kind==='space';
@@ -7691,7 +7692,7 @@ function updateShipWalk(dt){
   // relative to where the camera faces — push up = forward, the same
   // mapping as flight and the planet-surface walk.
   SHIP_WALK.yaw-=JOY.Lx*dt*1.8;
-  SHIP_WALK.pitch=THREE.MathUtils.clamp(SHIP_WALK.pitch-JOY.Ly*dt*1.2,-0.6,0.9);
+  SHIP_WALK.pitch=THREE.MathUtils.clamp(SHIP_WALK.pitch+JOY.Ly*dt*1.2,-0.6,0.9);   // push up = look up
   const WALK_SPEED=0.55, STEP_MAX=0.3, CLIMB_MAX=0.8, JUMP_VEL=1.9, GRAVITY=6.0;
   let mf=-JOY.Ry, ms=JOY.Rx;
   if(typeof KEYS!=='undefined'&&KEYS){if(KEYS.KeyW)mf+=1;if(KEYS.KeyS)mf-=1;if(KEYS.KeyD)ms+=1;if(KEYS.KeyA)ms-=1;}
@@ -16260,7 +16261,7 @@ function _lmDraw(){
   try{
     if(window.DMJournal&&_atmoBody){
       window.DMJournal.store.entries.forEach(e=>{
-        const p=e.place||{}; if(e.kind==='space'||p.body!==_atmoBody.name||!p.site) return;
+        const p=e.place||{}; if(e.hidden||e.kind==='space'||p.body!==_atmoBody.name||!p.site) return;
         let lat=p.site.lat, lon=p.site.lon;
         if(e.kind==='atmo'&&isFinite(p.x)){ lat=p.site.lat-p.z*ATMO_DEG_PER_UNIT; lon=_wrapLon(p.site.lon+p.x*ATMO_DEG_PER_UNIT); }
         const [x,y]=toS(lat,lon);
@@ -21905,6 +21906,26 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
     $j('jots-mp-chip').textContent=mp.status==='online'?('🌐 '+n+' ONLINE · CHAT'):mp.status==='connecting'?'🌐 CONNECTING…':'🌐 '+mp.status.toUpperCase();
   }
   setInterval(hudRefresh,1000);
+  // On a world (ground or sky flight) the same chat chip, chat panel and
+  // INITIALIZE PROGRESS ride along in a row at the top right, laid out as in
+  // space; back in space they return to the flight HUD. Follows whichever
+  // world view is showing, so every entry path is covered.
+  (function(){
+    const homeRow=document.querySelector('#screen-flight .hud-r-row');
+    const hud=$j('jots-mp-hud'), chat=$j('jots-chat'), prog=document.getElementById('init-progress-btn');
+    if(!homeRow||!hud||!prog) return;
+    const chatHome=chat?chat.parentNode:null;
+    const rails={};
+    const railIn=(ov)=>{ let r=rails[ov.id]; if(!r){ r=document.createElement('div'); r.className='world-rail'; ov.appendChild(r); rails[ov.id]=r; } return r; };
+    const place=()=>{
+      const ov=['surface-overlay','atmo-overlay'].map(id=>document.getElementById(id)).find(o=>o&&o.style.display&&o.style.display!=='none');
+      if(ov){ const r=railIn(ov); if(hud.parentNode!==r){ r.appendChild(hud); r.appendChild(prog); if(chat) ov.appendChild(chat); } }
+      else if(hud.parentNode!==homeRow){ homeRow.insertBefore(hud,homeRow.firstChild); homeRow.appendChild(prog); if(chat&&chatHome) chatHome.appendChild(chat); }
+    };
+    const mo=new MutationObserver(place);
+    ['surface-overlay','atmo-overlay'].forEach(id=>{ const o=document.getElementById(id); if(o) mo.observe(o,{attributes:true,attributeFilter:['style']}); });
+    place();
+  })();
   window.addEventListener('jots:mpstatus',hudRefresh);
   window.addEventListener('jots:peers',hudRefresh);
   $j('jots-mp-chip').onclick=()=>{ const c=$j('jots-chat'); c.style.display=c.style.display==='flex'?'none':'flex'; if(c.style.display==='flex')$j('jots-chat-in').focus(); };
@@ -21928,9 +21949,9 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 
 <!-- ?v= stamps: bump on every UI change so browsers never mix a new page with cached old styles -->
 <link rel="stylesheet" href="ui/dm-ui.css?v=94">
-<link rel="stylesheet" href="ui/dm-hud.css?v=82">
+<link rel="stylesheet" href="ui/dm-hud.css?v=97">
 <link rel="stylesheet" href="ui/dm-menu.css?v=80">
-<link rel="stylesheet" href="ui/dm-journal.css?v=81">
+<link rel="stylesheet" href="ui/dm-journal.css?v=97">
 <link rel="stylesheet" href="ui/dm-landmap.css?v=86">
 <link rel="stylesheet" href="ui/dm-type.css?v=89">
 <link rel="stylesheet" href="ui/dm-compact.css?v=96">

@@ -248,3 +248,27 @@ body:has(#screen-flight.active) #fs-exit,body:has(#screen-flight.active) #fs-ent
 /* nothing under the crosshair to anchor to: a short shake instead of a message */
 #screen-flight .side-pad.nope{animation:padNope .4s ease;}
 @keyframes padNope{20%{transform:translateX(-4px)}40%{transform:translateX(4px)}60%{transform:translateX(-3px)}80%{transform:translateX(2px)}}
+
+/* ── On a world: chat + INITIALIZE PROGRESS in a row at the top right, as in space ── */
+.world-rail{position:absolute;top:calc(52px + env(safe-area-inset-top,0px));right:10px;z-index:37;display:flex;gap:8px;align-items:center;pointer-events:auto;}
+.world-rail #jots-mp-hud{position:static;transform:none;}
+.world-rail .art-btn.progress-btn{height:30px;padding:0 18px;font-family:var(--font-hud);font-size:.54rem;letter-spacing:.14em;color:#9ff5c6;border:none;border-radius:0;
+  background:linear-gradient(180deg,rgba(90,220,150,.24),rgba(90,220,150,.08));
+  box-shadow:inset 0 -2px 0 rgba(120,235,170,.75),0 0 12px rgba(110,230,160,.18);text-shadow:0 0 6px rgba(120,235,170,.45);
+  clip-path:polygon(10px 0,100% 0,100% 100%,0 100%);backdrop-filter:blur(6px);}
+.world-rail .art-btn.progress-btn:hover{background:linear-gradient(180deg,rgba(90,220,150,.36),rgba(90,220,150,.12));color:#d4ffe6;}
+#surface-overlay #jots-chat,#atmo-overlay #jots-chat{z-index:38;}
+/* the controls that sat there step down one row */
+#surface-overlay .orbit-skyboard-btn{top:96px !important;}
+#surface-overlay .surf-view-btn{top:136px !important;}
+#atmo-overlay #atmo-presets{top:104px !important;}
+@media (orientation:landscape) and (max-height:520px){
+  .world-rail{top:34px;gap:6px;}
+  .world-rail .art-btn.progress-btn{height:22px;font-size:.42rem;padding:0 12px;}
+  #surface-overlay .orbit-skyboard-btn{top:62px !important;}
+  #surface-overlay .surf-view-btn{top:90px !important;}
+  #atmo-overlay #atmo-presets{top:62px !important;}
+}
+@media (orientation:portrait) and (max-width:600px){
+  .world-rail{top:auto;bottom:calc(200px + env(safe-area-inset-bottom,0px));right:8px;flex-direction:column;align-items:flex-end;}
+}

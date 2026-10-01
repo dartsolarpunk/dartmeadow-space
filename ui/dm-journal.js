@@ -29,7 +29,7 @@
     let place;
     try { place = JSON.parse(JSON.stringify(e.place)); } catch (x) { return null; }
     if (JSON.stringify(place).length > 4000) return null;
-    return { id, label: cleanLabel(e.label) || 'Waypoint', kind: e.kind, place, ts: +e.ts || Date.now(), updated: +e.updated || +e.ts || Date.now() };
+    return { id, label: cleanLabel(e.label) || 'Waypoint', kind: e.kind, place, ts: +e.ts || Date.now(), updated: +e.updated || +e.ts || Date.now(), hidden: !!e.hidden };
   }
   function persist(source) {
     ls.set(lib);
@@ -47,6 +47,8 @@
       lib.entries.push(e); persist(); return e;
     },
     rename(id, label) { const e = find(id); if (!e) return false; e.label = cleanLabel(label) || e.label; e.updated = Date.now(); persist(); return true; },
+    // hide or show a waypoint's marker in the world (it stays in the Journal)
+    setHidden(id, h) { const e = find(id); if (!e) return false; e.hidden = !!h; e.updated = Date.now(); persist(); return true; },
     remove(id) { if (!find(id)) return false; lib.entries = lib.entries.filter((e) => e.id !== id); lib.deleted[id] = Date.now(); persist(); return true; },
     exportData() { return { kind: 'dartmeadow-journal', v: 1, entries: lib.entries.slice(), deleted: Object.assign({}, lib.deleted) }; },
     // merge from the account, a save or a file: newer edits win, deletions stick
@@ -76,6 +78,9 @@
   // ── panel ──────────────────────────────────────────────────────────────
   const ui = { root: null, hooks: {}, filter: '', renaming: null };
   const ICON = { space: '✦', atmo: '☁', surface: '⛰' };
+  // open eye = marker shown; shut eye with a slash = hidden
+  const EYE = '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="3.2" fill="currentColor"/></svg>';
+  const EYE_OFF = '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M2 12s3.6 5 10 5 10-5 10-5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M5 15.5l-1.6 2M9 16.8l-.8 2.3M15 16.8l.8 2.3M19 15.5l1.6 2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M4 4l16 16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
   const KIND_NAME = { space: 'SPACE', atmo: 'SKY', surface: 'GROUND' };
   // the Journal's mark: a kite-shaped cover with a compass star over open pages
   const LOGO = '<svg class="jn-logo" viewBox="0 0 64 64" aria-hidden="true"><defs>' +
@@ -157,10 +162,12 @@
       const row = document.createElement('div'); row.className = 'jn-row jn-k-' + e.kind;
       row.innerHTML = '<span class="jn-dot jn-' + e.kind + '" title="' + KIND_NAME[e.kind] + '">' + ICON[e.kind] + '</span>' +
         '<div class="jn-main"><div class="jn-lab"></div><div class="jn-meta"></div></div>' +
-        '<div class="jn-acts"><button class="jn-btn jn-go" title="Quick travel here">GO ▸</button><button class="jn-mini" title="Rename">✎</button><button class="jn-mini" title="Delete">✕</button></div>';
+        '<div class="jn-acts"><button class="jn-mini jn-eye' + (e.hidden ? ' off' : '') + '" title="' + (e.hidden ? 'Show this marker' : 'Hide this marker') + '" aria-pressed="' + (!e.hidden) + '">' + (e.hidden ? EYE_OFF : EYE) + '</button><button class="jn-btn jn-go" title="Quick travel here">GO ▸</button><button class="jn-mini" title="Rename">✎</button><button class="jn-mini" title="Delete">✕</button></div>';
       row.querySelector('.jn-lab').textContent = e.label;
       row.querySelector('.jn-meta').textContent = (ui.hooks.describe ? ui.hooks.describe(e) : KIND_NAME[e.kind]) + ' · ' + fmtDate(e.ts);
-      const [go, ren, del] = row.querySelectorAll('button');
+      const [eye, go, ren, del] = row.querySelectorAll('button');
+      if (e.hidden) row.classList.add('jn-hidden');
+      eye.onclick = () => { store.setHidden(e.id, !e.hidden); toast((e.hidden ? 'Marker shown: ' : 'Marker hidden: ') + e.label); };
       go.onclick = () => { close(); try { ui.hooks.go && ui.hooks.go(e); } catch (x) { console.warn('[journal] go', x); } };
       ren.onclick = () => { ui.renaming = e.id; const lab = $('jn-label'); lab.value = e.label; lab.focus(); lab.select(); $('jn-add').textContent = '✎ RENAME'; $('jn-add').disabled = false; };
       del.onclick = () => {
