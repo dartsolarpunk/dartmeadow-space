@@ -121,8 +121,8 @@ if(location.search.indexOf('debug')!==-1){
   });
 })();</script>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-<script src="ui/dm-theme.js?v=79"></script>
-<script src="ui/dm-fluid.js?v=79"></script>
+<script src="ui/dm-theme.js?v=80"></script>
+<script src="ui/dm-fluid.js?v=80"></script>
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js",
@@ -952,7 +952,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   // Picks up the result if signInWithRedirect was used (popup-blocked fallback)
   getRedirectResult(fbAuth).catch(err => console.warn('redirect result:', err));
 </script>
-<script src="jots/jots-link.js?v=79" defer></script>
+<script src="jots/jots-link.js?v=80" defer></script>
 </head>
 <body>
 <!-- LOADING -->
@@ -17430,6 +17430,8 @@ function _surfFluidTick(dt){
           gravity:16*Math.max(0.1,p.grav||1),
           color:(W.surfaceMesh&&W.surfaceMesh.material&&W.surfaceMesh.material.color)?W.surfaceMesh.material.color.getHex():0x1a4a7a,
           material:W.surfaceMesh&&W.surfaceMesh.material,
+          // volumetric skin: marching cubes over the particle field (same tables as the terrain)
+          mc:{edge:MC_EDGE_TABLE,tri:MC_TRI_TABLE,corners:MC_CORNER_OFFSETS,edges:MC_EDGE_CORNERS},
           wind:[earth?2.6:1.2, earth?0.6:0.3], gust:earth?0.35:0.2,
           // the Moon's pull on Earth; other worlds scale with how many moons they have
           tide:earth?0.25:Math.min(0.2,0.07*((body.moons|0)))
@@ -18140,6 +18142,17 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
   try{
     const densityArrBuf = await surfRenderer.getArrayBufferAsync(densityBuf);
     TERRAIN.mcDensityArray = new Float32Array(densityArrBuf);
+    // Clean the field before meshing: floating cave/overhang pieces either
+    // join the main ground (if they nearly touch) or are removed, so the
+    // mesh is one solid and collision (which reads this same grid) matches.
+    try{
+      const st=mcCleanFragments(TERRAIN.mcDensityArray, GRID, 2, 6);
+      TERRAIN.mcFragments=st;
+      if(st.joined||st.removed){
+        if(densityBuf.array&&densityBuf.array.length===TERRAIN.mcDensityArray.length){ densityBuf.array.set(TERRAIN.mcDensityArray); densityBuf.needsUpdate=true; }
+        console.log('[GPU-MC] fragments: joined',st.joined,'· removed',st.removed,'('+st.removedCells+' cells) · bridged',st.bridgedCells,'cells');
+      }
+    }catch(e){ console.warn('[GPU-MC] fragment clean:',e); }
   }catch(e){
     console.warn('[GPU-MC] density readback failed, falling back to H():', e);
     TERRAIN.mcDensityArray = null;
@@ -18309,6 +18322,78 @@ const MC_EDGE_CORNERS=[
 // [origin, origin+size] in each axis, sampled on a resolution^3 grid.
 // isoLevel defaults to 0 (the natural choice when density already
 // encodes signed distance from the surface).
+// Marching-cubes terrain: find solid pieces cut off from the main body.
+// d: density grid (solid where d < 0), G points per axis, index (z*G+y)*G+x.
+// The main body is everything solid that connects (6-neighbour) to the
+// bedrock floor (y = 0) or to the patch sides (which may continue outside).
+// A separate piece with at most `gap` empty cells between it and the main
+// body is joined to it by filling the run in between; any other floating
+// piece (and any speck under `minCells`) is turned to air.
+function mcCleanFragments(d, G, gap, minCells){
+  gap = gap || 2; minCells = minCells || 6;
+  const R = gap + 1;
+  const N = G * G * G, lab = new Uint8Array(N), stack = new Int32Array(N);
+  const GG = G * G;
+  let sp = 0;
+  const push = i => { if (!lab[i] && d[i] < 0) { lab[i] = 1; stack[sp++] = i; } };
+  for (let z = 0; z < G; z++) for (let x = 0; x < G; x++) push((z * G) * G + x);          // floor y=0
+  for (let y = 0; y < G; y++) for (let t = 0; t < G; t++) {                                  // sides
+    push((0 * G + y) * G + t); push(((G - 1) * G + y) * G + t); push((t * G + y) * G + 0); push((t * G + y) * G + G - 1);
+  }
+  const flood = (mark) => {
+    while (sp) {
+      const i = stack[--sp], x = i % G, y = ((i / G) | 0) % G, z = (i / GG) | 0;
+      const nb = [x > 0 ? i - 1 : -1, x < G - 1 ? i + 1 : -1, y > 0 ? i - G : -1, y < G - 1 ? i + G : -1, z > 0 ? i - GG : -1, z < G - 1 ? i + GG : -1];
+      for (const j of nb) if (j >= 0 && !lab[j] && d[j] < 0) { lab[j] = mark; stack[sp++] = j; }
+    }
+  };
+  flood(1);
+  let joined = 0, removed = 0, removedCells = 0, bridgedCells = 0;
+  const cells = [];
+  for (let s = 0; s < N; s++) {
+    if (lab[s] || d[s] >= 0) continue;
+    // collect this floating piece
+    cells.length = 0; lab[s] = 2; stack[sp++] = s;
+    while (sp) {
+      const i = stack[--sp]; cells.push(i);
+      const x = i % G, y = ((i / G) | 0) % G, z = (i / GG) | 0;
+      const nb = [x > 0 ? i - 1 : -1, x < G - 1 ? i + 1 : -1, y > 0 ? i - G : -1, y < G - 1 ? i + G : -1, z > 0 ? i - GG : -1, z < G - 1 ? i + GG : -1];
+      for (const j of nb) if (j >= 0 && !lab[j] && d[j] < 0) { lab[j] = 2; stack[sp++] = j; }
+    }
+    // close to the main body? find the nearest main cell within `gap` and fill the straight run between
+    let best = null, bd = 1e9;
+    if (cells.length >= minCells) for (const i of cells) {
+      const x = i % G, y = ((i / G) | 0) % G, z = (i / GG) | 0;
+      for (let dz = -R; dz <= R; dz++) for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+        const X = x + dx, Y = y + dy, Z = z + dz;
+        if (X < 0 || Y < 0 || Z < 0 || X >= G || Y >= G || Z >= G) continue;
+        const j = (Z * G + Y) * G + X;
+        if (lab[j] === 1) { const dd = dx * dx + dy * dy + dz * dz; if (dd < bd) { bd = dd; best = [x, y, z, X, Y, Z]; } }
+      }
+    }
+    if (best) {
+      const [x0, y0, z0, x1, y1, z1] = best, steps = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0), Math.abs(z1 - z0));
+      for (let k = 0; k <= steps; k++) {
+        const X = Math.round(x0 + (x1 - x0) * k / steps), Y = Math.round(y0 + (y1 - y0) * k / steps), Z = Math.round(z0 + (z1 - z0) * k / steps);
+        const j = (Z * G + Y) * G + X;
+        if (d[j] >= 0) { d[j] = -0.5; bridgedCells++; }
+        // thicken the bridge one cell across so the mesh closes around it
+        for (const [ox, oz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const qx = X + ox, qz = Z + oz; if (qx < 0 || qz < 0 || qx >= G || qz >= G) continue;
+          const q = (qz * G + Y) * G + qx; if (d[q] >= 0) { d[q] = -0.25; bridgedCells++; }
+        }
+      }
+      for (const i of cells) lab[i] = 1;
+      joined++;
+    } else {
+      for (const i of cells) { d[i] = Math.max(0.5, -d[i]); lab[i] = 3; }
+      removed++; removedCells += cells.length;
+    }
+  }
+  return { joined, removed, removedCells, bridgedCells };
+}
+window.mcCleanFragments=mcCleanFragments;
+
 function marchingCubesMesh(densityFn,origin,size,resolution,isoLevel){
   isoLevel=isoLevel||0;
   const step=size/resolution;
@@ -20363,8 +20448,8 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 </script>
 
 <!-- ?v= stamps: bump on every UI change so browsers never mix a new page with cached old styles -->
-<link rel="stylesheet" href="ui/dm-ui.css?v=79">
-<link rel="stylesheet" href="ui/dm-hud.css?v=79">
-<link rel="stylesheet" href="ui/dm-menu.css?v=79">
+<link rel="stylesheet" href="ui/dm-ui.css?v=80">
+<link rel="stylesheet" href="ui/dm-hud.css?v=80">
+<link rel="stylesheet" href="ui/dm-menu.css?v=80">
 </body>
 </html>
