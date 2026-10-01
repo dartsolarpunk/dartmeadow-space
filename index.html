@@ -16242,11 +16242,13 @@ function atmoBuildTerrain(pal,ox,oz){
   atmoScene.add(mesh);_atmoTerrainMesh=mesh;
   if(pal.water){
     const liqColor=pal.liquidColor!==undefined?pal.liquidColor:0x1a4a7a;
-    const wm=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ),new THREE.MeshStandardMaterial({
+    const _aw=new THREE.MeshStandardMaterial({
       color:liqColor,transparent:true,
       opacity:pal.liquidOpacity!==undefined?pal.liquidOpacity:0.8,
       roughness:pal.liquidRoughness!==undefined?pal.liquidRoughness:0.2,
-      metalness:0.4}));
+      metalness:0.4});
+    let _awN=null; try{ _awN=_shoreWaterMaterial(liqColor,_aw.opacity,_aw.roughness); }catch(e){}   // same shoreline water as the ground
+    const wm=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ),_awN||_aw);
     wm.rotation.x=-Math.PI/2;wm.position.set(ox,0,oz);atmoScene.add(wm);_atmoWaterMesh=wm; // y=0, matching the walking terrain's water level (fills real low points, not an arbitrary sea level)
   }
 }
@@ -19890,6 +19892,34 @@ function _terrainCore(x,z,seed,_ws){
     if(_ws!=='lush') h=DMWorldStyle.shape(_ws,x,z,h,seed,_fbm);
   return h;
 }
+// ── Shoreline water ────────────────────────────────────────────────────
+// The ocean surface reads the depth of everything already drawn behind it
+// (the solid ground), so it knows how much water lies under each pixel:
+// see-through and tinted in the shallows, deep and opaque offshore, and a
+// broken band of foam where it meets the land, moving with the swell. The
+// solid scene's depth acts as the mask between land, water and the hazy air
+// (the fog still layers over all of it), so they blend instead of fighting.
+// Node shader: WebGPU, and the WebGL2 fallback through the same renderer.
+function _shoreWaterMaterial(liqColor,opacity,rough){
+  const W=window;
+  if(!THREE.MeshStandardNodeMaterial||typeof W.viewportDepthTexture!=='function'||typeof W.perspectiveDepthToViewZ!=='function') return null;
+  const {float,vec3,color,mix,smoothstep,clamp,positionView,positionWorld,cameraNear,cameraFar,viewportDepthTexture,perspectiveDepthToViewZ,mx_noise_float,time}=W;
+  const m=new THREE.MeshStandardNodeMaterial({transparent:true,depthWrite:false});
+  const deep=color(new THREE.Color(liqColor).multiplyScalar(0.55)), shallow=color(new THREE.Color(liqColor).lerp(new THREE.Color(0x5fd0c8),0.55));
+  const sceneZ=perspectiveDepthToViewZ(viewportDepthTexture().r,cameraNear,cameraFar);
+  const thick=clamp(positionView.z.sub(sceneZ),0.0,500.0);          // water between the surface and the ground behind it
+  const swell=mx_noise_float(vec3(positionWorld.x.mul(0.35),positionWorld.z.mul(0.35),time.mul(0.35))).mul(0.5).add(0.5);
+  const lace=mx_noise_float(vec3(positionWorld.x.mul(1.6),positionWorld.z.mul(1.6),time.mul(0.9))).mul(0.5).add(0.5);
+  const edge=float(1.0).sub(smoothstep(0.0,2.4,thick.sub(swell.mul(0.9))));  // foam line breathing in and out
+  const foam=edge.mul(smoothstep(0.35,0.75,lace).mul(0.6).add(0.4)).add(float(1.0).sub(smoothstep(0.0,0.6,thick)).mul(0.6));
+  const body=mix(shallow,deep,smoothstep(0.0,22.0,thick));
+  m.colorNode=mix(body,vec3(0.95,0.98,1.0),clamp(foam,0.0,1.0));
+  m.opacityNode=clamp(mix(float(0.28),float(Math.max(0.85,opacity||0.82)),smoothstep(0.0,9.0,thick)).add(foam.mul(0.6)),0.0,1.0);
+  m.roughnessNode=mix(float(rough!=null?rough:0.15),float(0.85),clamp(foam,0.0,1.0));
+  m.metalnessNode=float(0.25);
+  if(GFX&&GFX.envReflections&&typeof _envMap!=='undefined'&&_envMap) m.envMap=_envMap;
+  return m;
+}
 async function buildSurfaceTerrain(pal){
   const seed=_worldSeed(_surfBody);
   const siteLandBias=(()=>{
@@ -20165,10 +20195,14 @@ async function buildSurfaceTerrain(pal){
       roughness:pal.liquidRoughness!==undefined?pal.liquidRoughness:0.15,
       metalness:0.4});
     if(GFX.envReflections&&_envMap)waterMat.envMap=_envMap;
+    // depth-aware water: thickness from the scene depth behind each pixel
+    // gives clear shallows, deep open water and foam at the shoreline
+    let _wNode=null; try{ _wNode=_shoreWaterMaterial(liqColor,waterMat.opacity,waterMat.roughness); }catch(e){ console.warn('[water] depth shader unavailable',e); }
+    const _waterMatUsed=_wNode||waterMat;
     // Visible surface (shell) — kept for look
     const WATER_SURFACE_Y=0;
     const WATER_FLOOR_Y=-36; // volume depth Stabilizer swim can detect
-    const wm=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ,1,1),waterMat);
+    const wm=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ,1,1),_waterMatUsed);
     wm.rotation.x=-Math.PI/2;wm.position.y=WATER_SURFACE_Y;
     wm.name='JOTS_WaterSurface';
     wm.userData.isWaterSurface=true;
@@ -21116,8 +21150,9 @@ function updateSurface(dt){
     surfBoard.updateMatrix();
     const _bv=_surfBoardV||(_surfBoardV=new THREE.Vector3()), py0=surfBoard.position.y;
     let need=-Infinity;
-    for(let k=0;k<=12;k++){
-      const lx=dims.minX+(dims.maxX-dims.minX)*k/12;
+    // every ~1.25 units along it (sharp cliff edges fell between sparser samples)
+    for(let k=0;k<=24;k++){
+      const lx=dims.minX+(dims.maxX-dims.minX)*k/24;
       for(let j=0;j<3;j++){
         const lz=j===0?dims.minZ:j===1?cz:dims.maxZ;
         _bv.set(lx,dims.minY,lz).applyMatrix4(surfBoard.matrix);
