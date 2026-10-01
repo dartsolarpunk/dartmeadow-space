@@ -131,7 +131,7 @@
       live.push({ m, head, kind, t: 0, life: kind === 'comet' ? 40 + Math.random() * 30 : 0.7 + Math.random() * 0.8, start, dir, speed: kind === 'comet' ? R * 0.004 : R * 0.45, len });
     }
     let nextMeteor = 4, nextComet = 30 + Math.random() * 60;
-    const v1 = new THREE.Vector3(), v2 = new THREE.Vector3();
+    const v1 = new THREE.Vector3(), v2 = new THREE.Vector3(), v3 = new THREE.Vector3(), v4 = new THREE.Vector3(), M4 = new THREE.Matrix4(), SUNSET = new THREE.Color(0xff9a5a);
 
     const ctl = {
       dome, stars, sunDir, day: 1, sunLight: o.sunLight || null,
@@ -154,8 +154,7 @@
         const vis = atmos ? Math.pow(1 - day, 1.5) : 1;
         field.visible = galaxy.visible = vis > 0.03;
         field.material.opacity = vis; galaxy.material.opacity = vis;
-        const fc = new THREE.Color(1, 1, 1).multiplyScalar(vis);
-        field.material.color.copy(fc); galaxy.material.color.copy(fc);
+        field.material.color.setScalar(vis); galaxy.material.color.setScalar(vis);
         bright.forEach((s) => { s.material.opacity = s.userData.base * Math.max(atmos ? 0.22 : 1, vis); });
         // meteors at night, comets now and then
         nextMeteor -= dt; nextComet -= dt;
@@ -168,11 +167,10 @@
           const p = v1.copy(L.start).addScaledVector(L.dir, L.speed * L.t);
           L.m.position.copy(p).addScaledVector(L.dir, -L.len * 0.5);
           // lie along its path, facing the viewer
-          L.m.quaternion.setFromUnitVectors(v2.set(1, 0, 0), L.dir);
           const toCam = v2.copy(p).negate().normalize();
-          const side = new THREE.Vector3().crossVectors(L.dir, toCam).normalize();
-          const up = new THREE.Vector3().crossVectors(side, L.dir);
-          const M = new THREE.Matrix4().makeBasis(L.dir, side, up); L.m.quaternion.setFromRotationMatrix(M);
+          const side = v3.crossVectors(L.dir, toCam).normalize();
+          const up = v4.crossVectors(side, L.dir);
+          M4.makeBasis(L.dir, side, up); L.m.quaternion.setFromRotationMatrix(M4);
           const fade = Math.sin(Math.PI * a);
           const bright0 = L.kind === 'comet' ? (0.35 + 0.65 * vis) : vis;
           L.m.material.opacity = fade * bright0;
@@ -181,7 +179,7 @@
         // the lights follow the sun: bright by day, cool starlight at night
         if (o.sunLight) {
           o.sunLight.intensity = (o.sunBase || 2) * (atmos ? (0.08 + 0.92 * day) : (sunDir.y > -0.05 ? 1 : 0.06));
-          o.sunLight.color.copy(sunCol).lerp(new THREE.Color(0xff9a5a), atmos ? (1 - day) * Math.max(0, 1 - Math.abs(sunDir.y) * 6) * 0.7 : 0);
+          o.sunLight.color.copy(sunCol).lerp(SUNSET, atmos ? (1 - day) * Math.max(0, 1 - Math.abs(sunDir.y) * 6) * 0.7 : 0);
         }
         (o.fill || []).forEach((l) => { if (l.userData._base == null) l.userData._base = l.intensity; l.intensity = l.userData._base * (0.35 + 0.65 * day); });
         if (scene.fog && atmos) { if (!ctl._fogDay) ctl._fogDay = scene.fog.color.clone(); scene.fog.color.copy(ctl._fogDay).multiplyScalar(0.12 + 0.88 * day); }

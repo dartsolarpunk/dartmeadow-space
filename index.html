@@ -126,8 +126,8 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-theme.js?v=80"></script>
 <script src="ui/dm-fluid.js?v=80"></script>
 <script src="ui/dm-journal.js?v=81"></script>
-<script src="ui/dm-worldstyle.js?v=86"></script>
-<script src="ui/dm-sky.js?v=89"></script>
+<script src="ui/dm-worldstyle.js?v=92"></script>
+<script src="ui/dm-sky.js?v=92"></script>
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js",
@@ -4333,7 +4333,7 @@ function makeSkyDomeMaterial(topColor,botColor,opts){
 // The living sky (ui/dm-sky.js): day/night on the world clock, stars at
 // night, comets and meteors, the local sun. Falls back to the static dome.
 function _makeSky(scene,pal,body,radius,sunLight){
-  const style=(window.DMWorldStyle&&body)?DMWorldStyle.styleFor(body,pal):'lush';
+  const style=(window.DMWorldStyle&&body)?DMWorldStyle.styleFor(body,pal,(scene===surfScene?_surfSite:_atmoSite)):'lush';
   const sk=window.DMWorldStyle?DMWorldStyle.skyFor(style,pal):{haze:pal.fog};
   if(scene.fog&&pal.atmos&&sk.haze!=null) scene.fog.color.set(sk.haze);
   if(pal.atmos) scene.background=new THREE.Color(sk.haze!=null?sk.haze:pal.sky[1]);
@@ -4353,7 +4353,7 @@ function _skyLatLon(site,x,z){
   return {lat:Math.max(-89.5,Math.min(89.5,s.lat-z*D)), lon:((s.lon+x*D+540)%360+360)%360-180};
 }
 function _styledSky(scene,pal,body,radius,sunPos,fogNear,fogFar){
-  const style=(window.DMWorldStyle&&body)?DMWorldStyle.styleFor(body,pal):'lush';
+  const style=(window.DMWorldStyle&&body)?DMWorldStyle.styleFor(body,pal,(scene===surfScene?_surfSite:_atmoSite)):'lush';
   const sk=window.DMWorldStyle?DMWorldStyle.skyFor(style,pal):{top:pal.sky[1],bottom:pal.sky[0],haze:pal.fog};
   const mat=makeSkyDomeMaterial(sk.top,sk.bottom,{haze:sk.haze,sun:sk.sun,glow:sk.glow,sunDir:sunPos,hazeAmt:style==='lush'?0.55:0.85});
   const dome=new THREE.Mesh(new THREE.SphereGeometry(radius,32,24),mat);
@@ -15694,7 +15694,7 @@ function atmoBuildTerrain(pal,ox,oz){
     return 0;
   })();
   const _atmoEarthGeo=(_atmoBody && _atmoBody.name==='Earth' && _atmoSite && typeof _atmoSite.lat==='number');
-  const _aws=(window.DMWorldStyle&&_atmoBody)?DMWorldStyle.styleFor(_atmoBody,pal):'lush';
+  const _aws=(window.DMWorldStyle&&_atmoBody)?DMWorldStyle.styleFor(_atmoBody,pal,_atmoSite):'lush';
   _atmoStyle=_aws;
   const _aw=_siteWorldXZ(_atmoSite); _atmoWX0=_aw.x; _atmoWZ0=_aw.z;
   function H(lx,lz){
@@ -17941,6 +17941,7 @@ async function enterSurface(body,site,opts){
     CHAR.stanceMode = 'stand'; // standing locomotion only on surface (not seated/skyboard)
     CHAR.scene = surfScene;
     surfScene.add(CHAR.root);
+    try{ DMEngine.addFocus(CHAR.root,{primary:true}); }catch(e){}   // the terrain refines round her (DART ENGINE · TERRAIN REFINEMENT)
     try{ _forceCharVisible(); }catch(e){ CHAR.root.visible = true; }
     // Soft-coord Worlds + Stabilizer #50: sample _surfHeight for contour,
     // then feetOffset-aware root so feet sit ON surface (not buried by
@@ -19335,7 +19336,7 @@ async function buildSurfaceTerrain(pal){
   })();
   const _surfEarthGeo=(_surfBody && _surfBody.name==='Earth' && _surfSite && typeof _surfSite.lat==='number');
   // the world's style (mesa / ice / crater / volcanic / lush) — ui/dm-worldstyle.js
-  const _ws=(window.DMWorldStyle&&_surfBody)?DMWorldStyle.styleFor(_surfBody,pal):'lush';
+  const _ws=(window.DMWorldStyle&&_surfBody)?DMWorldStyle.styleFor(_surfBody,pal,_surfSite):'lush';
   TERRAIN.style=_ws;
   const _sw=_siteWorldXZ(_surfSite); TERRAIN.wx0=_sw.x; TERRAIN.wz0=_sw.z;
   // height function (kept from the original, drives collision + tiles).
@@ -19770,7 +19771,7 @@ async function buildSurfaceTerrain(pal){
   // are there wherever she walks, always the same ones in the same place.
 
   // the dense, deformed ground round her (NEAR-GROUND TESSELLATION)
-  try{ if(TESS_HOLE.r) TESS_HOLE.r.value=0; TERRAIN.tessMesh=null; _tessInit(); }catch(e){ console.warn('[tess] off:',e); TERRAIN.tessCfg=null; }
+  try{ _tessInit(); }catch(e){ console.warn('[tess] off:',e); TERRAIN.tessCfg=null; }
 
   // Earth wind particles — subtle, GPU-friendly Points; disable/cheap on Low
   TERRAIN.windPoints=null;
@@ -20061,7 +20062,7 @@ function _surfStreamTick(dt){
   const px=p.pos.x, pz=p.pos.z;
   _surfStreamUpdate(px,pz,false);
   _surfStreamWork(GFX.isMobile?3:5);
-  try{ _tessTick(px,pz); }catch(e){ TERRAIN.tessCfg=null; console.warn('[tess]',e); }
+  try{ _tessTick(); }catch(e){ TERRAIN.tessCfg=null; console.warn('[tess]',e); }
   // GPU marching cubes: rebuild round her once she's past the middle of the patch
   const info=TERRAIN.mcGridInfo;
   if(TERRAIN.mcGpu&&!TERRAIN._mcBusy&&info&&Math.hypot(px-info.cx,pz-info.cz)>info.half*0.42){
@@ -20153,7 +20154,15 @@ function _terrainDetailMat(opts){
     const flat=W.smoothstep(W.float(0.6),W.float(0.88),W.normalWorld.y);
     const fade=W.float(1).sub(W.smoothstep(W.float(reach*0.45),W.float(reach),dist)).mul(flat);
     // the detail height at a ground point (x,z); returns {h, crack, peb}
+    const sandy=TERRAIN.style==='dunes';
     const field=(xz)=>{
+      if(sandy){
+        // fine, soft sand: wind ripples and a dusty grain, no cracks or pebbles
+        const w=W.mx_fractal_noise_float(xz.mul(0.09),2,2.0,0.5).mul(3.0);
+        const rip=W.sin(xz.x.mul(0.82).add(xz.z.mul(0.57)).mul(3.1).add(w));
+        const grain=W.mx_fractal_noise_float(xz.mul(9.0),2,2.0,0.5);
+        return {h:rip.mul(0.09).add(grain.mul(0.03)), crack:W.float(0), peb:rip.mul(0.5).add(0.5).mul(0.25)};
+      }
       const crk=W.float(1).sub(W.abs(W.mx_fractal_noise_float(xz.mul(0.55).add(W.vec3(17,0,3)),3,2.0,0.5)));
       const crack=W.smoothstep(W.float(0.95),W.float(0.995),crk);
       let h=crack.mul(-0.6), peb=W.float(0);
@@ -20182,12 +20191,14 @@ function _terrainDetailMat(opts){
     }
     // cracks shade darker, pebbles a touch lighter and glossier (Low: the colour only)
     m.colorNode=W.vertexColor().mul(W.float(1).sub(F0.crack.mul(0.32).mul(fade)).add(F0.peb.mul(0.06).mul(fade)));
-    m.roughnessNode=W.float(0.95).sub(F0.peb.mul(0.28).mul(fade));
+    m.roughnessNode=sandy?W.float(0.98):W.float(0.95).sub(F0.peb.mul(0.28).mul(fade));
     m.userData.dmDetail=lvl;
     // the coarse ground is cut away where the tessellated patch round her takes over
-    if(!opts.noHole&&TESS_HOLE.c){
+    if(!opts.noHole&&TESS_HOLE.slots.length){
       m.alphaTest=0.5;
-      m.opacityNode=W.step(TESS_HOLE.r,W.distance(W.vec2(p.x,p.z),TESS_HOLE.c));
+      let keep=W.float(1);
+      TESS_HOLE.slots.forEach(h=>{ keep=keep.mul(W.step(h.r,W.distance(W.vec2(p.x,p.z),h.c))); });
+      m.opacityNode=keep;
     }
   }catch(e){
     console.warn('[ground detail] plain material:',e);
@@ -20198,29 +20209,47 @@ function _terrainDetailMat(opts){
 
 
 /* ══════════════════════════════════════════════════════════════
-   NEAR-GROUND TESSELLATION — real geometry, not just lighting.
-   A dense patch (≈0.4–0.6 units between vertices, by tier) follows her.
-   Its vertices sit on the ground and are pushed by a procedural
-   deformation field — erosion rills, lumps and half-buried rocks — at
-   full strength round her, blending to nothing at the patch edge where
-   it meets the coarser terrain. The coarse ground under it is cut away
-   (a shared hole uniform), the patch casts and receives shadows, and she
-   walks on exactly this surface. It is rebuilt a few rows per frame as
-   she moves, and swapped in only when complete.
+   DART ENGINE · TERRAIN REFINEMENT AROUND LIVE ASSETS
+   The terrain (chunked heightmap + marching cubes) is always generated
+   and streams with its level of detail. On top of it the engine keeps a
+   list of live, animated assets — DMEngine.focus — and round each one it
+   refines the actual surface: a dense grid of real vertices (by tier)
+   that sits on the terrain and carries a procedural deformation — lumps,
+   erosion rills and half-buried rocks, or wind ripples on sand — at full
+   strength round the asset, blending to nothing at the edge. The coarse
+   surface there is cut away (per-slot hole uniforms), collision reads the
+   refined surface, and each area is rebuilt a slice per frame as its
+   asset moves. She registers herself when she lands; anything else that
+   moves (creatures, vehicles, other players) can register too.
    ══════════════════════════════════════════════════════════════ */
 const TESS_TIER={low:{half:20,seg:64,amp:0.7},medium:{half:28,seg:112,amp:0.85},high:{half:36,seg:160,amp:1},ultra:{half:40,seg:200,amp:1},custom:{half:28,seg:112,amp:0.85}};
-// shared by every coarse terrain material: the round hole the patch fills
-const TESS_HOLE={c:null,r:null};
-window.__whenThreeReady(function(){ TESS_HOLE.c=uniform(new THREE.Vector2(0,0)); TESS_HOLE.r=uniform(0); });
-// the deformation itself (units), at a world point — CPU, used for the mesh and for walking
+const TESS_SLOTS=3;
+const TESS_HOLE={slots:[]};
+window.__whenThreeReady(function(){ for(let i=0;i<TESS_SLOTS;i++) TESS_HOLE.slots.push({c:uniform(new THREE.Vector2(0,0)),r:uniform(0)}); });
+const DMEngine=window.DMEngine=window.DMEngine||{};
+DMEngine.focus=DMEngine.focus||[];
+// register a live asset: obj is an Object3D (or {position}); opts.scale shrinks/grows its area
+DMEngine.addFocus=function(obj,opts){ if(!obj||DMEngine.focus.some(f=>f.obj===obj)) return; DMEngine.focus.push(Object.assign({obj,scale:1,primary:false},opts||{})); };
+DMEngine.removeFocus=function(obj){ DMEngine.focus=DMEngine.focus.filter(f=>f.obj!==obj); };
+const _tv={v:null};
+function _focusPos(f){
+  const o=f.obj; if(!o) return null;
+  if(o.isObject3D){ if(!_tv.v) _tv.v=new THREE.Vector3(); try{ o.getWorldPosition(_tv.v); return {x:_tv.v.x,z:_tv.v.z}; }catch(e){ return null; } }
+  if(o.position) return {x:o.position.x,z:o.position.z};
+  return null;
+}
+// the deformation (units) at a world point — mesh and walking both use it
 function _tessDeform(x,z){
   const s=(TERRAIN.seed||1)+307, amp=TERRAIN.tessCfg?TERRAIN.tessCfg.amp:1;
-  // broad lumps
+  if(TERRAIN.sandy){
+    // soft sand: wind ripples across the dune, a little drift
+    const w=_fbm(x*0.08+s,z*0.08-s,s+5,2)*3;
+    const rip=Math.sin((x*0.82+z*0.57)*3.1+w);
+    return (rip*0.06+(_fbm(x*0.25+s,z*0.25,s+9,2)-0.5)*0.25)*amp;
+  }
   let d=(_fbm(x*0.32+s,z*0.32-s,s,3)-0.5)*0.7;
-  // erosion rills: narrow channels running downhill-ish (ridged noise, carved)
   const r=1-Math.abs(_fbm(x*0.11+s*1.7,z*0.07-s,s+11,3)*2-1);
   d-=Math.pow(Math.max(0,(r-0.86)/0.14),1.6)*0.55;
-  // half-buried rocks in patches
   const patch=_fbm(x*0.05-s,z*0.05+s,s+23,2);
   if(patch>0.5){
     const cx=Math.floor(x*0.7), cz=Math.floor(z*0.7);
@@ -20235,21 +20264,28 @@ function _tessDeform(x,z){
   }
   return d*amp;
 }
-// weight of the deformation: full in the middle, nothing at the edge
 function _tessW(x,z,T){
   const dx=Math.abs(x-T.cx)/T.half, dz=Math.abs(z-T.cz)/T.half, e=Math.max(dx,dz);
   const u=Math.min(1,Math.max(0,(e-0.62)/0.33)); return 1-u*u*(3-2*u);
 }
-function* _tessJob(cx,cz){
-  const cfg=TERRAIN.tessCfg, half=cfg.half, seg=cfg.seg, n=seg+1, step=half*2/seg, nb=n+2;
-  const T={cx,cz,half}, base=TERRAIN.tessBase, pal=TERRAIN.pal, seed=TERRAIN.seed;
+// one refined area, built a few rows at a time
+function* _tessJob(cx,cz,half,slot){
+  const cfg=TERRAIN.tessCfg, seg=Math.max(16,Math.round(cfg.seg*half/cfg.half)), n=seg+1, step=half*2/seg, nb=n+2;
+  const T={cx,cz,half,slot}, base=TERRAIN.tessBase, pal=TERRAIN.pal, seed=TERRAIN.seed;
   const wx=TERRAIN.wx0||0, wz=TERRAIN.wz0||0;
   const o={siteBias:(typeof TERRAIN.siteBias==='number')?TERRAIN.siteBias:0,siteLat:TERRAIN.siteLat||0,style:TERRAIN.style};
-  const hb=new Float32Array(nb*nb), x0=cx-half, z0=cz-half;
+  const x0=cx-half, z0=cz-half;
+  // the terrain under it is sampled on a coarse grid (it has no finer detail than that) and interpolated
+  const S=4, cn=Math.ceil(nb/S)+2, cb=new Float32Array(cn*cn);
+  for(let r=0;r<cn;r++){ for(let c=0;c<cn;c++) cb[r*cn+c]=base(x0+(c*S-1)*step,z0+(r*S-1)*step); if(r%4===3) yield; }
+  const baseAt=(c,r)=>{ const fc=c/S, fr=r/S, ci=Math.min(cn-2,Math.floor(fc)), ri=Math.min(cn-2,Math.floor(fr)), u=fc-ci, v=fr-ri;
+    const a=cb[ri*cn+ci], b=cb[ri*cn+ci+1], c2=cb[(ri+1)*cn+ci], d=cb[(ri+1)*cn+ci+1]; return a+(b-a)*u+(c2-a)*v+(a-b-c2+d)*u*v; };
+  const hb=new Float32Array(nb*nb);
   for(let r=0;r<nb;r++){
-    for(let c=0;c<nb;c++){ const x=x0+(c-1)*step, z=z0+(r-1)*step; hb[r*nb+c]=base(x,z)+_tessDeform(x,z)*_tessW(x,z,T); }
-    if(r%6===5) yield;
+    for(let c=0;c<nb;c++){ const x=x0+(c-1)*step, z=z0+(r-1)*step; hb[r*nb+c]=baseAt(c,r)+_tessDeform(x,z)*_tessW(x,z,T); }
+    if(r%8===7) yield;
   }
+  T.base=cb; T.cn=cn; T.S=S; T.step=step; T.x0=x0; T.z0=z0;
   const pos=new Float32Array(n*n*3), nor=new Float32Array(n*n*3), col=new Float32Array(n*n*3);
   for(let r=0;r<n;r++){
     for(let c=0;c<n;c++){
@@ -20277,59 +20313,69 @@ function* _tessJob(cx,cz){
   if(GFX.shadows){ m.receiveShadow=true; m.castShadow=(GFX.shadowSize||0)>=1024; }
   return {mesh:m,T};
 }
-// set up for this landing (after the ground's own collision is in place)
+// height of the refined surface inside area T (same maths as the mesh)
+function _tessHeightIn(T,x,z){
+  const fc=(x-T.x0)/T.step+1, fr=(z-T.z0)/T.step+1, S=T.S, cn=T.cn, cb=T.base;
+  const gc=fc/S, gr=fr/S, ci=Math.max(0,Math.min(cn-2,Math.floor(gc))), ri=Math.max(0,Math.min(cn-2,Math.floor(gr))), u=gc-ci, v=gr-ri;
+  const a=cb[ri*cn+ci], b=cb[ri*cn+ci+1], c2=cb[(ri+1)*cn+ci], d=cb[(ri+1)*cn+ci+1];
+  return a+(b-a)*u+(c2-a)*v+(a-b-c2+d)*u*v + _tessDeform(x,z)*_tessW(x,z,T);
+}
 function _tessInit(){
   const tier=(typeof resolvePreset==='function')?resolvePreset():'medium';
+  TERRAIN.tessAreas=[]; TERRAIN._tessJobs=[]; TERRAIN.tessMat=null;
+  TESS_HOLE.slots.forEach(h=>{ h.r.value=0; });
   if(GFX.tessellation===false){ TERRAIN.tessCfg=null; return; }
   TERRAIN.tessCfg=Object.assign({},TESS_TIER[tier]||TESS_TIER.medium);
-  TERRAIN.tess=null; TERRAIN._tessJob=null; TERRAIN.tessMat=null;
-  // the ground the patch sits on: the same surface she already walks on
+  TERRAIN.sandy=!!(window.DMWorldStyle&&(TERRAIN.style==='dunes'));
   const H=TERRAIN.H, seed=TERRAIN.seed;
   if(TERRAIN.cpuMc){
-    // CPU marching cubes: the top of its density field (H plus the cave term) — cheap, no raycasts
     TERRAIN.tessBase=(x,z)=>{ const g=H(x,z); const cn=_fbm(x*0.05+seed*7.7,z*0.05+seed*7.7,seed+41,3)*_fbm(g*0.08,x*0.02-z*0.02,seed+53,3); return g+Math.max(-5,Math.min(10,cn*12)); };
-  } else {
-    const prev=_surfHeight; TERRAIN.tessBase=(x,z)=>prev(x,z);
-  }
-  // she walks on the patch where it replaces the ground
+  } else { const prev=_surfHeight; TERRAIN.tessBase=(x,z)=>prev(x,z); }
   const under=_surfHeight;
-  _surfHeight=(x,z)=>{
-    const T=TERRAIN.tess;
-    if(T&&Math.hypot(x-T.cx,z-T.cz)<T.half*0.8) return TERRAIN.tessBase(x,z)+_tessDeform(x,z)*_tessW(x,z,T);
-    return under(x,z);
-  };
+  const inArea=(x,z)=>{ const A=TERRAIN.tessAreas; for(let i=0;i<A.length;i++){ const T=A[i]; if(T&&Math.hypot(x-T.cx,z-T.cz)<T.half*0.8) return T; } return null; };
+  _surfHeight=(x,z)=>{ const T=inArea(x,z); return T?_tessHeightIn(T,x,z):under(x,z); };
   window._surfHeight=_surfHeight;
   const underN=window._surfNormal;
   window._surfNormal=(x,z)=>{
-    const T=TERRAIN.tess;
-    if(T&&Math.hypot(x-T.cx,z-T.cz)<T.half*0.8){ const e=0.3, h=_surfHeight(x,z), hx=_surfHeight(x+e,z), hz=_surfHeight(x,z+e); return new THREE.Vector3(-(hx-h),e,-(hz-h)).normalize(); }
+    if(inArea(x,z)){ const e=0.3, h=_surfHeight(x,z), hx=_surfHeight(x+e,z), hz=_surfHeight(x,z+e); return new THREE.Vector3(-(hx-h),e,-(hz-h)).normalize(); }
     return underN?underN(x,z):new THREE.Vector3(0,1,0);
   };
 }
-function _tessTick(px,pz){
+function _tessTick(){
   const cfg=TERRAIN.tessCfg; if(!cfg||!TERRAIN.group) return;
-  const T=TERRAIN.tess;
-  if(!TERRAIN._tessJob&&(!T||Math.hypot(px-T.cx,pz-T.cz)>cfg.half*0.22)){
-    const step=cfg.half*2/cfg.seg, cx=Math.round(px/step)*step, cz=Math.round(pz/step)*step;
-    TERRAIN._tessJob=_tessJob(cx,cz);
-  }
-  const J=TERRAIN._tessJob; if(!J) return;
-  // the first patch is built at once (part of landing); later ones a slice per frame
-  // nearing the edge of the old patch (very fast movement): finish it now rather than show the seam
-  const urgent=!T||Math.hypot(px-T.cx,pz-T.cz)>cfg.half*0.6;
-  const t0=performance.now(), budget=urgent?1e9:(GFX.isMobile?3:5);
-  while(performance.now()-t0<budget){
-    const r=J.next();
-    if(r.done){
-      TERRAIN._tessJob=null;
-      if(!r.value||!TERRAIN.group) return;
-      if(TERRAIN.tessMesh){ TERRAIN.group.remove(TERRAIN.tessMesh); TERRAIN.tessMesh.geometry.dispose(); }
-      TERRAIN.group.add(r.value.mesh); TERRAIN.tessMesh=r.value.mesh; TERRAIN.tess=r.value.T;
-      // cut the coarse ground away under it
-      if(TESS_HOLE.c){ TESS_HOLE.c.value.set(r.value.T.cx,r.value.T.cz); TESS_HOLE.r.value=r.value.T.half*0.8; }
-      return;
+  // her (and anything else registered) — fall back to the player while she loads
+  let foci=DMEngine.focus.filter(f=>{ const o=f.obj; return o&&(!o.isObject3D||(o.parent&&surfScene&&(()=>{ let p=o; while(p.parent) p=p.parent; return p===surfScene; })())); });
+  if(!foci.length&&surfPlayer) foci=[{obj:{position:surfPlayer.pos},scale:1,primary:true}];
+  foci=foci.slice(0,TESS_SLOTS);
+  for(let slot=0;slot<TESS_SLOTS;slot++){
+    const f=foci[slot], T=TERRAIN.tessAreas[slot];
+    if(!f){ if(T){ _tessDrop(slot); } continue; }
+    const p=_focusPos(f); if(!p) continue;
+    const half=cfg.half*(slot===0?1:0.6)*(f.scale||1);
+    if(!TERRAIN._tessJobs[slot]&&(!T||Math.hypot(p.x-T.cx,p.z-T.cz)>half*0.22)){
+      const step=half*2/cfg.seg, cx=Math.round(p.x/step)*step, cz=Math.round(p.z/step)*step;
+      TERRAIN._tessJobs[slot]=_tessJob(cx,cz,half,slot);
+    }
+    const J=TERRAIN._tessJobs[slot]; if(!J) continue;
+    const urgent=!T||Math.hypot(p.x-T.cx,p.z-T.cz)>half*0.6;
+    const t0=performance.now(), budget=urgent?1e9:(GFX.isMobile?2.5:4);
+    while(performance.now()-t0<budget){
+      const r=J.next();
+      if(r.done){
+        TERRAIN._tessJobs[slot]=null;
+        if(!r.value||!TERRAIN.group) break;
+        if(T&&T.mesh){ TERRAIN.group.remove(T.mesh); T.mesh.geometry.dispose(); }
+        r.value.T.mesh=r.value.mesh; TERRAIN.group.add(r.value.mesh); TERRAIN.tessAreas[slot]=r.value.T;
+        const h=TESS_HOLE.slots[slot]; if(h){ h.c.value.set(r.value.T.cx,r.value.T.cz); h.r.value=r.value.T.half*0.8; }
+        break;
+      }
     }
   }
+}
+function _tessDrop(slot){
+  const T=TERRAIN.tessAreas[slot]; if(T&&T.mesh&&TERRAIN.group){ TERRAIN.group.remove(T.mesh); T.mesh.geometry.dispose(); }
+  TERRAIN.tessAreas[slot]=null; TERRAIN._tessJobs[slot]=null;
+  const h=TESS_HOLE.slots[slot]; if(h) h.r.value=0;
 }
 
 // Recursively decide tile subdivision around a focus point (the player).
@@ -20778,7 +20824,7 @@ function _surfRemountSkyboardFinish(){
   if(CHAR.loaded && CHAR.root && CHAR.root.parent) CHAR.root.parent.remove(CHAR.root);
   if(surfScene)disposeObject3D(surfScene); // free terrain/water/skyboard GPU memory (see disposeObject3D)
   _surfFluidStop();surfScene=null;surfPlayer=null;surfBoard=null;surfTerrainMesh=null;TERRAIN.mcGroup=null;TERRAIN._mcBuildGen=(TERRAIN._mcBuildGen||0)+1;
-  TERRAIN.tiles.clear();TERRAIN.group=null;TERRAIN.mcDensityArray=null;TERRAIN.mcGridInfo=null;TERRAIN.hm=null;TERRAIN.cpuMc=null;TERRAIN.mcGpu=false;TERRAIN.waterFollow=null;TERRAIN.sun=null;TERRAIN.starDome=null;TERRAIN.sky=null;TERRAIN.tess=null;TERRAIN.tessMesh=null;TERRAIN._tessJob=null;if(TESS_HOLE.r)TESS_HOLE.r.value=0;TERRAIN.hmMat=null;TERRAIN.rockGeo=null;
+  TERRAIN.tiles.clear();TERRAIN.group=null;TERRAIN.mcDensityArray=null;TERRAIN.mcGridInfo=null;TERRAIN.hm=null;TERRAIN.cpuMc=null;TERRAIN.mcGpu=false;TERRAIN.waterFollow=null;TERRAIN.sun=null;TERRAIN.starDome=null;TERRAIN.sky=null;TERRAIN.tessAreas=[];TERRAIN._tessJobs=[];TESS_HOLE.slots.forEach(h=>{h.r.value=0;});TERRAIN.hmMat=null;TERRAIN.rockGeo=null;
   window._surfWaterAt=function(){ return false; };
   window._surfClimbNormal=function(){ return null; };
   enterAtmosphericFlight(body,site,start);
@@ -20819,7 +20865,7 @@ function _exitSurfaceFinish(){
   if(surfScene)disposeObject3D(surfScene); // free terrain/water/skyboard GPU memory (see disposeObject3D)
   if(surfRenderer){surfRenderer.dispose();}
   _surfFluidStop();surfScene=null;surfPlayer=null;surfBoard=null;surfTerrainMesh=null;TERRAIN.mcGroup=null;TERRAIN._mcBuildGen=(TERRAIN._mcBuildGen||0)+1;
-  TERRAIN.tiles.clear();TERRAIN.group=null;TERRAIN.mcDensityArray=null;TERRAIN.mcGridInfo=null;TERRAIN.hm=null;TERRAIN.cpuMc=null;TERRAIN.mcGpu=false;TERRAIN.waterFollow=null;TERRAIN.sun=null;TERRAIN.starDome=null;TERRAIN.sky=null;TERRAIN.tess=null;TERRAIN.tessMesh=null;TERRAIN._tessJob=null;if(TESS_HOLE.r)TESS_HOLE.r.value=0;TERRAIN.hmMat=null;TERRAIN.rockGeo=null;
+  TERRAIN.tiles.clear();TERRAIN.group=null;TERRAIN.mcDensityArray=null;TERRAIN.mcGridInfo=null;TERRAIN.hm=null;TERRAIN.cpuMc=null;TERRAIN.mcGpu=false;TERRAIN.waterFollow=null;TERRAIN.sun=null;TERRAIN.starDome=null;TERRAIN.sky=null;TERRAIN.tessAreas=[];TERRAIN._tessJobs=[];TESS_HOLE.slots.forEach(h=>{h.r.value=0;});TERRAIN.hmMat=null;TERRAIN.rockGeo=null;
   window._surfWaterAt=function(){ return false; };
   window._surfClimbNormal=function(){ return null; };
   // Re-mount her onto the real flight board now that we're back in open

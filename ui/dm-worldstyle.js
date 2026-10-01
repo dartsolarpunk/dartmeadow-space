@@ -27,11 +27,23 @@
     ice: { smooth: 0.7, sastF: 0.35, sastA: 1.6, prF: 0.01, prT: 0.9, prH: 14 },
     crater: { cell: 56, p: 0.55, r0: 8, r1: 22, depth: 0.38, rim: 0.14 },
     volcanic: { rF: 0.008, rA: 30, chF: 0.012, chT: 0.965, chD: 10 },
+    // rolling dunes: long transverse ridges (gentle windward side, steep
+    // slip face), warped and broken up so no two look alike
+    dunes: { ang: 0.62, lam: 52, amp: 9, warpF: 0.0035, warpA: 70, crest: 0.8, keep: 0.22, fieldF: 0.0022, fieldT: 0.58 },
   };
+  // Earth's sand seas (lat/lon boxes): Sahara + Arabia, Thar, Taklamakan +
+  // Gobi, the Australian deserts, Kalahari/Namib, Atacama, the US southwest
+  const EARTH_DESERTS = [[14, 33, -17, 58], [24, 30, 69, 75], [36, 46, 76, 112], [-32, -19, 116, 146], [-29, -17, 12, 25], [-27, -18, -71, -68], [31, 37, -117, -108]];
+  function earthDesert(site) {
+    if (!site || typeof site.lat !== 'number') return false;
+    return EARTH_DESERTS.some(([a, b, c, d]) => site.lat >= a && site.lat <= b && site.lon >= c && site.lon <= d);
+  }
 
-  function styleFor(body, pal) {
+  function styleFor(body, pal, site) {
     const n = body && body.name, t = body && body.type;
-    if (n === 'Mars' || n === 'Venus' || t === 'Desert') return 'mesa';
+    if (n === 'Earth' && earthDesert(site)) return 'dunes';
+    if (t === 'Desert') return 'dunes';
+    if (n === 'Mars' || n === 'Venus') return 'mesa';
     if (t === 'Ice') return 'ice';
     if (t === 'Volcanic') return 'volcanic';
     if (n === 'Moon' || n === 'Mercury' || t === 'Rocky' || t === 'Barren Moon' || (pal && pal.atmos === false)) return 'crater';
@@ -39,8 +51,26 @@
   }
 
   // ── CPU shapes ─────────────────────────────────────────────────────────
+  function duneH(x, z, seed, f) {
+    const k = K.dunes, ca = Math.cos(k.ang), sa = Math.sin(k.ang);
+    const w = (f(x * k.warpF + seed, z * k.warpF - seed, seed + 221, 3) - 0.5) * 2 * k.warpA;
+    const u = (x * ca + z * sa + w) / k.lam, v = (-x * sa + z * ca) / k.lam;
+    const t = u - Math.floor(u);
+    const prof = t < k.crest ? Math.pow(t / k.crest, 1.6) : 1 - sm(0, 1, (t - k.crest) / (1 - k.crest));
+    // crests rise and fall along their length, and some dunes are taller
+    const along = 0.55 + 0.45 * Math.sin(v * 1.7 + w * 0.02);
+    const big = 0.45 + f(x * 0.006 + 7, z * 0.006 - 7, seed + 231, 2) * 0.9;
+    return prof * k.amp * along * big;
+  }
+  function duneT(x, z, seed, f) {   // 0 trough … 1 crest, and whether we're on the slip face
+    const k = K.dunes, ca = Math.cos(k.ang), sa = Math.sin(k.ang);
+    const w = (f(x * k.warpF + seed, z * k.warpF - seed, seed + 221, 3) - 0.5) * 2 * k.warpA;
+    const u = (x * ca + z * sa + w) / k.lam, t = u - Math.floor(u);
+    return { t, slip: t > k.crest };
+  }
   // f(x,z,seed,octaves) is the game's own _fbm (0..1).
   function shape(style, x, z, h, seed, f) {
+    if (style === 'dunes') return h * K.dunes.keep + duneH(x, z, seed, f);
     if (style === 'mesa') {
       const k = K.mesa, t = h / k.tier, fl = Math.floor(t), fr = t - fl;
       let o = (fl + sm(k.rise0, k.rise1, fr)) * k.tier * (1 - k.keep) + h * k.keep;
@@ -48,6 +78,9 @@
       o += sm(k.butteT, k.butteT + k.butteW, b) * k.butteH;
       const s = f(x * k.hoodF + seed * 2.3, z * k.hoodF + seed * 2.3, seed + 151, 2);
       o += sm(k.hoodT, k.hoodT + k.hoodW, s) * (k.hoodH + k.hoodH2 * f(x * 0.02, z * 0.02, seed + 161, 2));
+      // dune seas between the mesas
+      const df = sm(K.dunes.fieldT, K.dunes.fieldT + 0.12, f(x * K.dunes.fieldF + 31, z * K.dunes.fieldF - 31, seed + 241, 3));
+      if (df > 0) o = o * (1 - df) + (h * K.dunes.keep + duneH(x, z, seed, f)) * df;
       return o;
     }
     if (style === 'ice') {
@@ -103,10 +136,21 @@
 
   // ── CPU texturing (vertex colours) ─────────────────────────────────────
   const C = (hex) => new (window.THREE.Color)(hex);
+  function sandColor(x, z, h, slope, pal, seed, f, n, earth) {
+    const d = duneT(x, z, seed, f);
+    const base = earth ? C(0xecd2a2) : C(pal.ground || 0xcaa050);
+    const c = base.lerp(C(earth ? 0xf8e6c2 : 0xe6c48c), 0.25 + n * 0.35);
+    c.multiplyScalar(0.9 + sm(0.5, 0.95, d.t) * 0.14);          // crests catch the light
+    if (d.slip) c.multiplyScalar(0.9);                          // slip faces a shade darker
+    const rip = 0.5 + 0.5 * Math.sin((x * 1.9 + z * 0.8) + n * 5);
+    c.multiplyScalar(0.97 + rip * 0.05);
+    return c;
+  }
   function color(style, x, z, h, slope, pal, seed, f, base) {
     const THREE = window.THREE;
     const n = f(x * 0.08 + seed, z * 0.08 + seed, seed + 81, 3) - 0.5;
     const fine = f(x * 0.6 + seed, z * 0.6 + seed, seed + 101, 2);
+    if (style === 'dunes') return sandColor(x, z, h, slope, pal, seed, f, n, !pal.ground2 || (pal.water === true));
     if (style === 'mesa') {
       const sand = C(pal.ground || 0xcaa050).lerp(C(0xe6c48c), 0.25 + n * 0.3);
       // wind ripples on the flats
@@ -119,7 +163,9 @@
       // desert varnish: darker streaks down the cliff faces
       rock.multiplyScalar(0.82 + 0.18 * f(x * 0.05, h * 0.3, seed + 211, 2));
       const w = sm(0.22, 0.55, slope);
-      return sand.lerp(rock, w);
+      const df = sm(K.dunes.fieldT, K.dunes.fieldT + 0.12, f(x * K.dunes.fieldF + 31, z * K.dunes.fieldF - 31, seed + 241, 3));
+      const ground = df > 0 ? sand.lerp(sandColor(x, z, h, slope, pal, seed, f, n, false), df) : sand;
+      return ground.lerp(rock, w);
     }
     if (style === 'ice') {
       const snow = C(0xf2f6fb).lerp(C(0xdde9f4), 0.3 + n * 0.4);
@@ -157,6 +203,7 @@
     const sky = pal.sky || [0x88bbff, 0x3a6ea5];
     const S = {
       mesa: { haze: 0xf0c890, sun: 0xfff0d0, glow: 0xffb070 },
+      dunes: pal.water ? { haze: 0xe8dcc4, sun: 0xfff6e4, glow: 0xffd8a0 } : { haze: 0xf2d29c, sun: 0xfff4dc, glow: 0xffc080 },
       ice: { haze: 0xe4f0fa, sun: 0xffffff, glow: 0xbfe0ff },
       volcanic: { haze: 0xa8503a, sun: 0xffd0a0, glow: 0xff7040 },
       crater: { haze: 0x000000, sun: 0xffffff, glow: 0x777777 },
@@ -190,8 +237,22 @@
     }
     return o;
   }
+  function duneTSL(T, p, seedU, wantT) {
+    const k = K.dunes, ca = Math.cos(k.ang), sa = Math.sin(k.ang);
+    const w = tslFbm01(T, T.vec2(p.x, p.z).mul(k.warpF), seedU, 221, 3).sub(0.5).mul(2 * k.warpA);
+    const u = p.x.mul(ca).add(p.z.mul(sa)).add(w).div(k.lam), v = p.x.mul(-sa).add(p.z.mul(ca)).div(k.lam);
+    const t = T.fract(u);
+    if (wantT) return t;
+    const up = T.pow(t.div(k.crest), T.float(1.6));
+    const down = T.float(1).sub(T.smoothstep(T.float(0), T.float(1), t.sub(k.crest).div(1 - k.crest)));
+    const prof = T.select(t.lessThan(k.crest), up, down);
+    const along = T.sin(v.mul(1.7).add(w.mul(0.02))).mul(0.45).add(0.55);
+    const big = tslFbm01(T, T.vec2(p.x, p.z).mul(0.006), seedU, 231, 2).mul(0.9).add(0.45);
+    return prof.mul(k.amp).mul(along).mul(big);
+  }
   function shapeTSL(style, T, p, h, seedU) {
     const xz = T.vec2(p.x, p.z);
+    if (style === 'dunes') return h.mul(K.dunes.keep).add(duneTSL(T, p, seedU));
     if (style === 'mesa') {
       const k = K.mesa, t = h.div(k.tier), fl = T.floor(t), fr = t.sub(fl);
       let o = fl.add(tslSm(T, k.rise0, k.rise1, fr)).mul(k.tier * (1 - k.keep)).add(h.mul(k.keep));
@@ -200,7 +261,8 @@
       const s = tslFbm01(T, xz.mul(k.hoodF), seedU.mul(2.3), 151, 2);
       const hv = tslFbm01(T, xz.mul(0.02), seedU, 161, 2);
       o = o.add(tslSm(T, k.hoodT, k.hoodT + k.hoodW, s).mul(hv.mul(k.hoodH2).add(k.hoodH)));
-      return o;
+      const df = tslSm(T, K.dunes.fieldT, K.dunes.fieldT + 0.12, tslFbm01(T, xz.mul(K.dunes.fieldF), seedU, 241, 3));
+      return T.mix(o, h.mul(K.dunes.keep).add(duneTSL(T, p, seedU)), df);
     }
     if (style === 'ice') {
       const k = K.ice;
@@ -227,6 +289,14 @@
     const xz = T.vec2(v.x, v.z);
     const n = tslFbm01(T, xz.mul(0.08), seedU, 81, 3).sub(0.5);
     const fine = tslFbm01(T, xz.mul(0.6), seedU, 101, 2);
+    const sandTSL = (earth) => {
+      const t = duneTSL(T, v, seedU, true);
+      let c = T.mix(earth ? col(0xecd2a2) : col(pal.ground || 0xcaa050), earth ? col(0xf8e6c2) : col(0xe6c48c), n.mul(0.35).add(0.25));
+      c = c.mul(tslSm(T, 0.5, 0.95, t).mul(0.14).add(0.9)).mul(T.select(t.greaterThan(K.dunes.crest), T.float(0.9), T.float(1)));
+      const rip = T.sin(v.x.mul(1.9).add(v.z.mul(0.8)).add(n.mul(5))).mul(0.5).add(0.5);
+      return c.mul(rip.mul(0.05).add(0.97));
+    };
+    if (style === 'dunes') return sandTSL(!!pal.water);
     if (style === 'mesa') {
       const rip = T.sin(v.x.mul(0.9).add(v.z.mul(0.4)).add(n.mul(6))).mul(0.5).add(0.5);
       const sand = T.mix(col(pal.ground || 0xcaa050), col(0xe6c48c), n.mul(0.3).add(0.25)).mul(rip.mul(0.08).add(0.94));
@@ -236,7 +306,8 @@
       const dark = T.mix(r1, col(pal.ground2 || 0x8a4a2a).mul(0.8), band.negate().max(0).mul(0.75));
       const varn = tslFbm01(T, T.vec2(v.x.mul(0.05), v.y.mul(0.3)), seedU, 211, 2).mul(0.18).add(0.82);
       const rock = T.select(band.greaterThan(0), light, dark).mul(varn);
-      return T.mix(sand, rock, tslSm(T, 0.22, 0.55, slope));
+      const df = tslSm(T, K.dunes.fieldT, K.dunes.fieldT + 0.12, tslFbm01(T, xz.mul(K.dunes.fieldF), seedU, 241, 3));
+      return T.mix(T.mix(sand, sandTSL(false), df), rock, tslSm(T, 0.22, 0.55, slope));
     }
     if (style === 'ice') {
       const snow = T.mix(col(0xf2f6fb), col(0xdde9f4), n.mul(0.4).add(0.3));
@@ -265,5 +336,5 @@
     return fallback;
   }
 
-  window.DMWorldStyle = { K, styleFor, shape, color, skyFor, shapeTSL, colorTSL, craters };
+  window.DMWorldStyle = { K, styleFor, shape, color, skyFor, shapeTSL, colorTSL, craters, duneH, earthDesert, isSand: (st) => st === 'dunes' || st === 'mesa' };
 })();
