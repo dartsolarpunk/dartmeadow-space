@@ -14,7 +14,7 @@
 //   • audio/video streams (range requests) pass straight through.
 // It also keeps the app installable and playable offline once visited.
 
-const CACHE_NAME = 'dartmeadow-engine-v7';
+const CACHE_NAME = 'dartmeadow-engine-v8';
 const SHELL_ASSETS = ['/', '/index.html'];
 
 self.addEventListener('install', (event) => {
@@ -29,7 +29,7 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-const LIVE = /api\.github\.com|githubusercontent\.com\/.*\/(contents|git)|firebase|googleapis\.com\/(identitytoolkit|securetoken)|script\.google\.com|stripe\.com|allorigins/;
+const LIVE = /\/static\/admin\/|api\.github\.com|githubusercontent\.com\/.*\/(contents|git)|firebase|googleapis\.com\/(identitytoolkit|securetoken)|script\.google\.com|stripe\.com|allorigins/;
 const IMMUTABLE = /[?&]v=\d|@\d+\.\d+\.\d+|fonts\.gstatic\.com|\/static\/fonts\//;
 const ASSET = /\.(glb|gltf|png|jpe?g|webp|svg|ico|js|css|json|woff2?|ttf|wasm|bin|ktx2)(\?|$)/i;
 
