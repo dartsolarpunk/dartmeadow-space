@@ -959,7 +959,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <!-- LOADING -->
 <div id="loading-screen">
   <video id="ls-plate-video" class="ls-plate-video" autoplay muted loop playsinline preload="auto">
-    <source src="static/splash-menu-plate.mp4" type="video/mp4">
+    <source src="static/splash-menu-plate.mp4?v=2" type="video/mp4">
   </video>
   <!-- Boot BG = plate video only; old rifle still / clouds / stars / horizon removed -->
   <div id="ls-ui-cluster">
@@ -2105,7 +2105,7 @@ function resumeJourney(data){
         away=' · away '+(d?d+'d ':'')+h+'h — the planets have moved on '+(yrs>=10?Math.round(yrs):yrs.toFixed(1))+' Earth-years';
       }
     }catch(e){}
-    toast('▶ Back where you left off'+(b?' — beside '+b.name+' · anchored (⚓ to release)':'')+(want!=='Sol'?' · '+want:'')+away,away?6000:3600);
+    toast('▶ Back where you left off'+(b?' — beside '+b.name:'')+(want!=='Sol'?' · '+want:'')+away,away?6000:3600);
   })();
 }
 window.quickSave=quickSave;window.resumeJourney=resumeJourney;
@@ -2196,7 +2196,7 @@ function journalTravel(entry){
       if(p.quat) sp.quat=new THREE.Quaternion(p.quat[0],p.quat[1],p.quat[2],p.quat[3]);
       if(boardFlight) boardFlight.position.copy(sp.pos);
       if(b){ ANCHOR_STATE.active=true;ANCHOR_STATE.target=b;ANCHOR_STATE._lastPos=b.mesh.position.clone();try{updateAnchorButton();}catch(e){} }
-      toast('✦ Arrived: '+entry.label+(b?' — beside '+b.name+' · anchored (⚓ to release)':''),3200);
+      toast('✦ Arrived: '+entry.label+(b?' — beside '+b.name:''),3200);
       return;
     }
     const body=celestialBodies.find(x=>x&&x.name===p.body&&x.mesh);
@@ -2712,6 +2712,10 @@ const AUDIO = {
     {name:'LIGHT YEARS IN GLASS',src:'music/light_years_in_glass.mp3'},
     {name:'THIRTY-FOUR K',src:'music/thirty-four_k.mp3'},
     {name:'WHERE THE WHITE SHIP SLEEPS',src:'music/where_the_white_ship_sleeps.mp3'},
+    {name:'SKYBOARD JOURNEY',src:'music/skyboard_journey.mp3'},
+    {name:'TEMPLE OF LIGHT',src:'music/temple_of_light.mp3'},
+    {name:'WHERE STARS REMAIN',src:'music/where_stars_remain.mp3'},
+    {name:'LOCKED BEHIND GLASS',src:'music/locked_behind_glass.mp3'},
   ],
   bundled:[],           // active list — starts as the fallback, gets replaced by the live folder scan once it resolves
   playlist:[],          // [{name, src, isObjectUrl}]
@@ -9024,13 +9028,12 @@ const ANCHOR_STATE={active:false,target:null,_lastPos:null};
 function toggleAnchor(){
   if(ANCHOR_STATE.active){
     ANCHOR_STATE.active=false;ANCHOR_STATE.target=null;ANCHOR_STATE._lastPos=null;
-    toast('⚓ Anchor released');updateAnchorButton();return;
+    updateAnchorButton();return;   // the button's glow going out says it
   }
   const target=bodyUnderCrosshair();
-  if(!target){toast('⚠ No object under crosshair to anchor to');return;}
+  if(!target){ const b=$('anchor-btn'); if(b){ b.classList.remove('nope'); void b.offsetWidth; b.classList.add('nope'); } return; }
   ANCHOR_STATE.active=true;ANCHOR_STATE.target=target;ANCHOR_STATE._lastPos=null;
-  toast('⚓ ANCHORED to '+target.name.toUpperCase()+' at this distance — thrust and look freely, you move with it. Tap ANCHOR to release.');
-  updateAnchorButton();
+  updateAnchorButton();            // glows while anchored
 }
 function updateAnchorButton(){
   const b=$('anchor-btn');if(!b)return;
@@ -17316,6 +17319,11 @@ function updateCharOrbitCamera(){
   else return;
   const cy=Math.cos(charOrbitYaw), sy=Math.sin(charOrbitYaw), cp=Math.cos(charOrbitPitch), sp=Math.sin(charOrbitPitch);
   cam.position.set(target.x+sy*cp*charOrbitDist, target.y+sp*charOrbitDist, target.z+cy*cp*charOrbitDist);
+  // on the ground the orbit camera can't dip into the terrain either
+  if(surfaceActive&&typeof _surfHeight==='function'){
+    const g=_surfHeight(cam.position.x,cam.position.z);
+    if(typeof g==='number'&&isFinite(g)&&cam.position.y<g+SURF_CAM_CLEAR) cam.position.y=g+SURF_CAM_CLEAR;
+  }
   cam.lookAt(target);
 }
 
@@ -17640,6 +17648,8 @@ let surfBoard=null,surfTerrainMesh=null,_surfHeight=null;
 // the default every landing; first person sits the camera at her eyes and
 // hides her body so it never blocks the view. ORBIT still works from either.
 let surfFirstPerson=false, _surfFpHidden=false;
+const SURF_CAM_CLEAR=1.524;      // 5 ft — the closest the trailing camera may come to the ground
+const SURF_CAM_MAX_RISE=60;      // how far above her head it may climb to see over a ridge
 function _surfFpBody(){
   const hide=surfFirstPerson&&!charOrbitActive&&surfaceActive;
   if(hide===_surfFpHidden||!(CHAR.loaded&&CHAR.root)) return;
@@ -19721,12 +19731,37 @@ function updateSurface(dt){
   const _mid=surfBoard?_surfBoardSide(surfBoard)*0.5:0;
   const camTX=p.pos.x - fx*followDist + rx*_mid, camTZ=p.pos.z - fz*followDist + rz*_mid;
   const camGroundH=_surfHeight?_surfHeight(camTX,camTZ):groundH;
-  const camTY=Math.max(eye+followHeight*0.55, camGroundH+followHeight+1.2);
+  let camTY=Math.max(eye+followHeight*0.55, camGroundH+followHeight+1.2);
+  // ── The camera is a solid body: it never goes into the ground ──
+  // It keeps its default distance and height, but stays at least 5 ft
+  // (SURF_CAM_CLEAR) from any terrain around it, and when a hill or ridge
+  // comes between it and her it rises over it (along its own line to her)
+  // instead of cutting through.
+  if(typeof _surfHeight==='function'){
+    const gAt=(x,z)=>{ const h=_surfHeight(x,z); return (typeof h==='number'&&isFinite(h))?h:groundH; };
+    // clearance around the camera itself
+    let near=camGroundH;
+    for(let k=0;k<8;k++){ const a=k*Math.PI/4; near=Math.max(near,gAt(camTX+Math.cos(a)*SURF_CAM_CLEAR,camTZ+Math.sin(a)*SURF_CAM_CLEAR)); }
+    camTY=Math.max(camTY,near+SURF_CAM_CLEAR);
+    // line of sight from her head back to the camera
+    const headY=supportH+CHAR_TERRAIN_HEIGHT*0.9;
+    for(let i=1;i<=14;i++){
+      const t=i/15, x=p.pos.x+(camTX-p.pos.x)*t, z=p.pos.z+(camTZ-p.pos.z)*t;
+      const need=gAt(x,z)+SURF_CAM_CLEAR;
+      if(headY+(camTY-headY)*t<need) camTY=Math.min(headY+SURF_CAM_MAX_RISE, headY+(need-headY)/t);
+    }
+  }
   if(!p.camPos)p.camPos=new THREE.Vector3(camTX,camTY,camTZ);
   const camLerp=Math.min(1,dt*6);
   p.camPos.x+=(camTX-p.camPos.x)*camLerp;
-  p.camPos.y+=(camTY-p.camPos.y)*camLerp;
+  // rising out of the way is quicker than settling back down
+  p.camPos.y+=(camTY-p.camPos.y)*(camTY>p.camPos.y?Math.min(1,dt*12):camLerp);
   p.camPos.z+=(camTZ-p.camPos.z)*camLerp;
+  // hard floor wherever the smoothing has it this frame — never inside a hill
+  if(typeof _surfHeight==='function'){
+    const g=_surfHeight(p.camPos.x,p.camPos.z);
+    if(typeof g==='number'&&isFinite(g)&&p.camPos.y<g+SURF_CAM_CLEAR) p.camPos.y=g+SURF_CAM_CLEAR;
+  }
   surfCamera.position.copy(p.camPos);
   surfCamera.rotation.order='YXZ';
   surfCamera.rotation.y=p.yaw;
@@ -20734,7 +20769,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 
 <!-- ?v= stamps: bump on every UI change so browsers never mix a new page with cached old styles -->
 <link rel="stylesheet" href="ui/dm-ui.css?v=80">
-<link rel="stylesheet" href="ui/dm-hud.css?v=81">
+<link rel="stylesheet" href="ui/dm-hud.css?v=82">
 <link rel="stylesheet" href="ui/dm-menu.css?v=80">
 <link rel="stylesheet" href="ui/dm-journal.css?v=81">
 </body>
