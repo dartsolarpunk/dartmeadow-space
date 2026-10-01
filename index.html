@@ -1488,6 +1488,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   <!-- Only visible while the Bird Shard is out (toggled in updateBirdShard) —
        lets you play the altar game or send it home without going through
        the Temple hub each time. -->
+  <button id="shot-btn-flight" class="shot-btn" onclick="takeScreenshot()" title="Screenshot — save a full-screen photo (P)" aria-label="Take a screenshot"><svg viewBox="0 0 28 24" width="22" height="19" aria-hidden="true"><path d="M9.4 5.6 11 3.2h6l1.6 2.4" fill="currentColor" fill-opacity=".28" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><rect x="2" y="5.6" width="24" height="15.4" rx="3.2" fill="currentColor" fill-opacity=".2" stroke="currentColor" stroke-width="1.4"/><circle cx="14" cy="13.3" r="5.1" fill="currentColor" fill-opacity=".3" stroke="currentColor" stroke-width="1.4"/><circle cx="14" cy="13.3" r="2.5" fill="currentColor" fill-opacity=".55"/><circle cx="12.3" cy="11.6" r="1.05" fill="#fff" fill-opacity=".85"/><rect x="20.4" y="8.2" width="3.2" height="1.9" rx=".7" fill="currentColor" fill-opacity=".8"/><rect x="4.2" y="8.4" width="3.4" height="1.2" rx=".5" fill="currentColor" fill-opacity=".5"/></svg></button>
   <button id="journal-toggle-btn" class="hud-toggle-btn" onclick="window.DMJournal&&DMJournal.toggle()" title="Journal — mark this spot, travel to your waypoints (J)"><span class="htb-ico">✦</span>JOURNAL</button>
   <button id="shard-game-btn" class="hud-toggle-btn" onclick="openAltarGame()" title="Play the altar game" style="top:205px;display:none;background:rgba(255,204,0,0.1);color:#ffcc00;border-color:rgba(255,204,0,0.35);"><span class="htb-ico">🎮</span>GAME</button>
   <button id="shard-return-btn" class="hud-toggle-btn" onclick="returnBirdShard()" title="Send the Bird Shard home" style="top:243px;display:none;background:rgba(255,204,0,0.1);color:#ffcc00;border-color:rgba(255,204,0,0.35);"><span class="htb-ico">🕊</span>RETURN</button>
@@ -1653,7 +1654,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   <div style="position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:10px 16px calc(10px);background:rgba(var(--panel-rgb),.55);backdrop-filter:blur(10px);border-bottom:1px solid rgba(var(--acc-rgb),.15);pointer-events:none;">
     <div class="mini-kite"><svg class="mk-edge" viewBox="0 0 360 160" preserveAspectRatio="none" width="0" height="0" aria-hidden="true"><defs><linearGradient id="mk-grad-s" x1="0" y1="0" x2="0.35" y2="1"><stop offset="0" class="ks-a"/><stop offset=".55" class="ks-b"/><stop offset="1" class="ks-c"/></linearGradient></defs><polygon class="kite-line" style="stroke:url(#mk-grad-s)" fill="none" stroke="none" points="1.5,77 75.6,1.5 358.5,75.2 75.6,158.5"/><polyline class="kite-ridge" fill="none" stroke="none" points="2,77 358,75.2"/></svg><span id="surface-title" class="mk-name">—</span><span class="mk-mode">SURFACE</span><span id="surface-grav" class="mk-read">GRAV 1.00g</span></div>
     <div style="display:flex;gap:8px;">
-<button class="jn-open-btn" onclick="window.DMJournal&&DMJournal.toggle()" title="Journal — mark this spot, travel to your waypoints (J)"><span class="jn-ico">✦</span>JOURNAL</button>
+<button class="shot-btn" onclick="takeScreenshot()" title="Screenshot — save a full-screen photo (P)" aria-label="Take a screenshot"><svg viewBox="0 0 28 24" width="22" height="19" aria-hidden="true"><path d="M9.4 5.6 11 3.2h6l1.6 2.4" fill="currentColor" fill-opacity=".28" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><rect x="2" y="5.6" width="24" height="15.4" rx="3.2" fill="currentColor" fill-opacity=".2" stroke="currentColor" stroke-width="1.4"/><circle cx="14" cy="13.3" r="5.1" fill="currentColor" fill-opacity=".3" stroke="currentColor" stroke-width="1.4"/><circle cx="14" cy="13.3" r="2.5" fill="currentColor" fill-opacity=".55"/><circle cx="12.3" cy="11.6" r="1.05" fill="#fff" fill-opacity=".85"/><rect x="20.4" y="8.2" width="3.2" height="1.9" rx=".7" fill="currentColor" fill-opacity=".8"/><rect x="4.2" y="8.4" width="3.4" height="1.2" rx=".5" fill="currentColor" fill-opacity=".5"/></svg></button><button class="jn-open-btn" onclick="window.DMJournal&&DMJournal.toggle()" title="Journal — mark this spot, travel to your waypoints (J)"><span class="jn-ico">✦</span>JOURNAL</button>
             <button onclick="openTempleHub()" style="pointer-events:auto;padding:5px 12px;background:rgba(255,255,255,.1);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🕊 TEMPLE</button>
       <button id="surf-fly-btn" onclick="surfRemountSkyboard()" style="pointer-events:auto;padding:5px 12px;background:rgba(var(--acc-rgb),.1);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🛹 FLY</button>
       <button id="liftoff-btn" onclick="exitSurface()" style="pointer-events:auto;padding:5px 14px;background:rgba(var(--hi-rgb),.12);border:1px solid var(--gold);color:var(--gold);font-family:var(--font-hud);font-size:.52rem;letter-spacing:.12em;cursor:pointer;border-radius:2px;">🚀 LIFTOFF</button>
@@ -1713,7 +1714,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   <div style="position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:10px 16px;background:rgba(var(--panel-rgb),.5);backdrop-filter:blur(10px);border-bottom:1px solid rgba(var(--acc-rgb),.15);pointer-events:none;">
     <div class="mini-kite"><svg class="mk-edge" viewBox="0 0 360 160" preserveAspectRatio="none" width="0" height="0" aria-hidden="true"><defs><linearGradient id="mk-grad-a" x1="0" y1="0" x2="0.35" y2="1"><stop offset="0" class="ks-a"/><stop offset=".55" class="ks-b"/><stop offset="1" class="ks-c"/></linearGradient></defs><polygon class="kite-line" style="stroke:url(#mk-grad-a)" fill="none" stroke="none" points="1.5,77 75.6,1.5 358.5,75.2 75.6,158.5"/><polyline class="kite-ridge" fill="none" stroke="none" points="2,77 358,75.2"/></svg><span id="atmo-title" class="mk-name">—</span><span class="mk-mode">ATMOSPHERIC FLIGHT</span><span id="atmo-speed" class="mk-read">MACH 0.00</span></div>
     <div style="display:flex;gap:8px;">
-<button class="jn-open-btn" onclick="window.DMJournal&&DMJournal.toggle()" title="Journal — mark this spot, travel to your waypoints (J)"><span class="jn-ico">✦</span>JOURNAL</button>
+<button class="shot-btn" onclick="takeScreenshot()" title="Screenshot — save a full-screen photo (P)" aria-label="Take a screenshot"><svg viewBox="0 0 28 24" width="22" height="19" aria-hidden="true"><path d="M9.4 5.6 11 3.2h6l1.6 2.4" fill="currentColor" fill-opacity=".28" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><rect x="2" y="5.6" width="24" height="15.4" rx="3.2" fill="currentColor" fill-opacity=".2" stroke="currentColor" stroke-width="1.4"/><circle cx="14" cy="13.3" r="5.1" fill="currentColor" fill-opacity=".3" stroke="currentColor" stroke-width="1.4"/><circle cx="14" cy="13.3" r="2.5" fill="currentColor" fill-opacity=".55"/><circle cx="12.3" cy="11.6" r="1.05" fill="#fff" fill-opacity=".85"/><rect x="20.4" y="8.2" width="3.2" height="1.9" rx=".7" fill="currentColor" fill-opacity=".8"/><rect x="4.2" y="8.4" width="3.4" height="1.2" rx=".5" fill="currentColor" fill-opacity=".5"/></svg></button><button class="jn-open-btn" onclick="window.DMJournal&&DMJournal.toggle()" title="Journal — mark this spot, travel to your waypoints (J)"><span class="jn-ico">✦</span>JOURNAL</button>
             <button onclick="openTempleHub()" style="pointer-events:auto;padding:5px 12px;background:rgba(255,255,255,.1);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🕊 TEMPLE</button>
       <button id="atmo-land-btn" onclick="openLandMap()" title="Land — pick a spot on the map, or mark the ground near you" style="pointer-events:auto;padding:5px 12px;background:rgba(var(--hi-rgb),.12);border:1px solid var(--gold);color:var(--gold);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🚶 LAND</button>
       <button onclick="atmoExitToSpace()" style="pointer-events:auto;padding:5px 12px;background:rgba(var(--acc-rgb),.08);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🚀 TO SPACE</button>
@@ -2245,6 +2246,72 @@ function _pfRenderJourneys(){
     box.appendChild(row);
   });
 }
+// ── Screenshot: the camera button beside the Journal (or P) ──────────
+// Draws one fresh frame of whatever view is live (space, sky, ground,
+// temple) at full resolution and saves it as a PNG — the picture alone,
+// without the HUD. On iPhone/iPad it opens the share sheet (Save Image).
+function _shotTarget(){
+  const vis=c=>c&&c.offsetParent!==null&&c.width>0&&getComputedStyle(c).visibility!=='hidden';
+  const T=(r,sc,cam)=>({r,scene:sc,cam,canvas:r&&r.domElement});
+  try{ if(typeof surfaceActive!=='undefined'&&surfaceActive&&typeof surfRenderer!=='undefined'&&surfRenderer) return T(surfRenderer,surfScene,surfCamera); }catch(e){}
+  try{ if(typeof atmoActive!=='undefined'&&atmoActive&&typeof atmoRenderer!=='undefined'&&atmoRenderer) return T(atmoRenderer,atmoScene,atmoCamera); }catch(e){}
+  try{ if(typeof STATE!=='undefined'&&STATE.screen==='flight'&&typeof flightRenderer!=='undefined'&&flightRenderer) return T(flightRenderer,flightScene,flightCamera); }catch(e){}
+  // anything else showing a 3-D view: the biggest visible canvas
+  const cs=[...document.querySelectorAll('canvas')].filter(vis).sort((a,b)=>b.width*b.height-a.width*a.height);
+  return cs[0]?{canvas:cs[0]}:null;
+}
+let _shotBusy=false, _shotWant=null;
+function _shotGrab(r){
+  if(!_shotWant||!r||!r.domElement) return;
+  const w=_shotWant; _shotWant=null;
+  try{ const src=r.domElement, c=document.createElement('canvas'); c.width=src.width; c.height=src.height; c.getContext('2d').drawImage(src,0,0); w.resolve(c); }
+  catch(e){ console.warn('[shot] grab',e); w.resolve(null); }
+}
+async function takeScreenshot(){
+  if(_shotBusy) return; _shotBusy=true;
+  try{
+    // the next frame the game draws is copied the instant it's drawn (still readable then)
+    // for that one frame, draw at the screen's full pixel density (phones often play at a lower one)
+    const tg=_shotTarget(), R=tg&&tg.r, prevPR=R&&R.getPixelRatio?R.getPixelRatio():0;
+    if(R&&prevPR){ const full=Math.min(window.devicePixelRatio||1,4096/Math.max(1,window.innerWidth),3); if(full>prevPR+0.05) try{ R.setPixelRatio(full); }catch(e){} }
+    let c;
+    try{ c=await new Promise(res=>{ _shotWant={resolve:res}; setTimeout(()=>{ if(_shotWant){ _shotWant=null; res(null); } },4000); }); }
+    finally{ if(R&&prevPR&&Math.abs(R.getPixelRatio()-prevPR)>0.01) try{ R.setPixelRatio(prevPR); }catch(e){} }
+    if(!c){                                   // no live 3-D loop (a paused or 2-D screen): copy what's showing
+      const t=_shotTarget(); if(!t||!t.canvas){ toast('⚠ Nothing to capture here','','warn'); return; }
+      const src=t.canvas; c=document.createElement('canvas'); c.width=src.width; c.height=src.height;
+      try{ if(t.r&&t.scene&&t.cam){ if(t.r.setRenderTarget) t.r.setRenderTarget(null); t.r.render(t.scene,t.cam); } }catch(e){}
+      c.getContext('2d').drawImage(src,0,0);
+    }
+    const fl=document.createElement('div'); fl.className='shot-flash'; document.body.appendChild(fl); setTimeout(()=>fl.remove(),500);
+    try{ if(typeof sfx==='function') sfx('shutter'); }catch(e){}
+    const blob=await new Promise(res=>c.toBlob(res,'image/png'));
+    if(!blob){ toast('⚠ Screenshot failed','','warn'); return; }
+    const d=new Date(), pad=n=>String(n).padStart(2,'0');
+    const name='DART-Meadow_'+d.getFullYear()+pad(d.getMonth()+1)+pad(d.getDate())+'_'+pad(d.getHours())+pad(d.getMinutes())+pad(d.getSeconds())+'.png';
+    const file=(typeof File==='function')?new File([blob],name,{type:'image/png'}):null;
+    const ios=/iPhone|iPad|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+    if(ios&&file&&navigator.canShare&&navigator.canShare({files:[file]})){
+      try{ await navigator.share({files:[file],title:'DART Meadow'}); toast('📷 Screenshot ready',1600); return; }catch(e){ if(e&&e.name==='AbortError') return; }
+    }
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; a.click();   // detached: no page handler can cancel it
+    setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+    toast('📷 Screenshot saved · '+c.width+'×'+c.height,1800);
+  }catch(e){ console.warn('[shot]',e); toast('⚠ Screenshot failed','','warn'); }
+  finally{ _shotBusy=false; }
+}
+window.takeScreenshot=takeScreenshot;
+// in space the Journal tab is docked to the left edge: the camera rides just to its right, in its row
+function _placeFlightShot(){
+  const b=document.getElementById('shot-btn-flight'), j=document.getElementById('journal-toggle-btn'); if(!b||!j) return;
+  const jr=j.getBoundingClientRect(), pr=(b.offsetParent||document.body).getBoundingClientRect();
+  if(!jr.width) return;
+  b.style.top=(jr.top-pr.top+(jr.height-32)/2)+'px'; b.style.left=(jr.right-pr.left+6)+'px';
+}
+window.addEventListener('resize',()=>setTimeout(_placeFlightShot,120));
+window.addEventListener('orientationchange',()=>setTimeout(_placeFlightShot,350));
+setInterval(()=>{ if(typeof STATE!=='undefined'&&STATE.screen==='flight') _placeFlightShot(); },1500);
+document.addEventListener('keydown',e=>{ if((e.key==='p'||e.key==='P')&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!/INPUT|TEXTAREA|SELECT/.test((e.target&&e.target.tagName)||'')&&!(e.target&&e.target.isContentEditable)) takeScreenshot(); });
 // INITIALIZE PROGRESS (the game's word for saving) from the flight bar: saves right here (and, when signed in
 // with GitHub, to your private jots- repository, via the JOTS layer).
 function quickSave(){
@@ -3768,7 +3835,7 @@ async function initBuilderScene(){
       });
     }
     resizeBuilderRenderer();
-    builderRenderer.render(builderScene,builderCamera);
+    builderRenderer.render(builderScene,builderCamera); _shotGrab(builderRenderer);
     const now=Date.now();$('bh-fps').textContent=Math.round(1000/(now-lastFrame))+' fps';lastFrame=now;$('bh-poly').textContent=(builderRenderer.info.render.triangles/1000).toFixed(1)+'k tri';
   })();
 }
@@ -11826,7 +11893,7 @@ function gmLoop(){
   if(gmGalacticCore)gmGalacticCore.rotation.y+=0.004;
   // progressive galaxy detail streaming (intergalactic tier)
   updateGalaxyLOD();
-  gmRenderer.render(gmScene,gmCamera);
+  gmRenderer.render(gmScene,gmCamera); _shotGrab(gmRenderer);
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -15459,7 +15526,7 @@ function renderWithPostFX(){
     const _rt0 = performance.now();
     flightRenderer.setRenderTarget(null);
     try{ if(galSky.ready) updateGalSky(); }catch(e){}
-    flightRenderer.render(flightScene,flightCamera);
+    flightRenderer.render(flightScene,flightCamera); _shotGrab(flightRenderer);
     const _rtMs = performance.now()-_rt0;
     if(!window._renderTimingSamples) window._renderTimingSamples=[];
     window._renderTimingSamples.push(_rtMs);
@@ -16090,7 +16157,7 @@ async function openOrbitApproach(body){
     const cy=Math.cos(orbitYaw),sy=Math.sin(orbitYaw),cp=Math.cos(orbitPitch),spp=Math.sin(orbitPitch);
     orbitCamera.position.set(sy*cp*orbitCamDist,spp*orbitCamDist,cy*cp*orbitCamDist);
     orbitCamera.lookAt(0,0,0);
-    orbitRenderer.render(orbitScene,orbitCamera);
+    orbitRenderer.render(orbitScene,orbitCamera); _shotGrab(orbitRenderer);
   })();
 }
 
@@ -16436,7 +16503,7 @@ async function enterAtmosphericFlight(body,site,start){
     try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){_animLoopWarn('charMixer',e);}
     try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){_animLoopWarn('headOverride',e);}
     try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);}
-    atmoRenderer.render(atmoScene,atmoCamera);
+    atmoRenderer.render(atmoScene,atmoCamera); _shotGrab(atmoRenderer);
     if(_firstFrame){
       _firstFrame=false;
       requestAnimationFrame(()=>{ ov.style.background='#000'; try{ start.onFirstFrame&&start.onFirstFrame(); }catch(e){} });
@@ -18829,7 +18896,7 @@ async function enterSurface(body,site,opts){
     try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);} // ship keeps wandering + shard keeps following, even off-screen
     try{ _surfStreamTick(dt); }catch(e){ _animLoopWarn('stream',e); }
     try{ _surfFpBody(); }catch(e){}
-    try{ surfRenderer.render(surfScene,surfCamera); }catch(e){ _animLoopWarn('surf-render',e); }
+    try{ surfRenderer.render(surfScene,surfCamera); _shotGrab(surfRenderer); }catch(e){ _animLoopWarn('surf-render',e); }
   })();
 }
 let surfBoard=null,surfTerrainMesh=null,_surfHeight=null,_surfBoardV=null;
@@ -22813,7 +22880,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 
 <!-- ?v= stamps: bump on every UI change so browsers never mix a new page with cached old styles -->
 <link rel="stylesheet" href="ui/dm-ui.css?v=107">
-<link rel="stylesheet" href="ui/dm-hud.css?v=104">
+<link rel="stylesheet" href="ui/dm-hud.css?v=106">
 <link rel="stylesheet" href="ui/dm-menu.css?v=80">
 <link rel="stylesheet" href="ui/dm-journal.css?v=97">
 <link rel="stylesheet" href="ui/dm-landmap.css?v=86">

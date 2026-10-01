@@ -313,3 +313,18 @@ body.ship-walk #screen-flight .hud-c .kite-board{display:flex;}
 .world-rail .world-exit .ic{font-style:normal;}
 @media (orientation:landscape) and (max-height:520px){ .world-rail .world-exit{height:22px;font-size:.42rem;padding:0 9px;} }
 #exit-modal{z-index:9900 !important;}
+
+/* ── Screenshot camera: just the icon, see-through, beside the Journal ── */
+.shot-btn{pointer-events:auto;display:inline-flex;align-items:center;justify-content:center;width:30px;height:26px;padding:0;margin:0;border:none;cursor:pointer;
+  background:transparent;color:rgba(var(--acc-rgb),.85);opacity:.78;transition:opacity .15s,transform .12s,color .15s;filter:drop-shadow(0 0 4px rgba(var(--acc-rgb),.45));}
+.shot-btn:hover{opacity:1;color:var(--text);}
+.shot-btn:active{transform:scale(.88);}
+.shot-btn svg{width:22px;height:19px;display:block;flex:0 0 auto;}
+#screen-flight #shot-btn-flight{position:absolute;z-index:60;width:32px;height:32px;top:214px;left:132px;}
+.shot-flash{position:fixed;inset:0;z-index:99999;background:#fff;pointer-events:none;animation:shotFlash .45s ease-out forwards;}
+@keyframes shotFlash{from{opacity:.75}to{opacity:0}}
+/* the surface / sky bars style every button as a slanted tab: not this one */
+#surface-overlay>div:nth-of-type(1) button.shot-btn,#atmo-overlay>div:nth-of-type(1) button.shot-btn{
+  width:34px !important;height:30px !important;padding:0 !important;background:transparent !important;box-shadow:none !important;
+  clip-path:none !important;backdrop-filter:none !important;-webkit-backdrop-filter:none !important;color:rgba(var(--acc-rgb),.95) !important;}
+#surface-overlay>div:nth-of-type(1) button.shot-btn:hover,#atmo-overlay>div:nth-of-type(1) button.shot-btn:hover{background:transparent !important;color:var(--text) !important;}
