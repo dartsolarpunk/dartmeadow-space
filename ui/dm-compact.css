@@ -58,3 +58,19 @@
   /* Land map and Journal: fit the short screen */
   #land-map .lm-panel,#dm-journal .jn-panel{max-height:calc(100vh - 16px) !important;}
 }
+
+/* ── Any orientation: panels and the music pill never sit on each other ── */
+body:has(#settings-modal.open) #float-music,
+body:has(#profile-modal.open) #float-music{opacity:0 !important;pointer-events:none !important;}
+@media (orientation:landscape) and (max-height:520px){
+  /* main menu: the fullscreen toggle tucks into the corner, clear of the menu panel */
+  body:has(#screen-menu.active) #fs-exit,
+  body:has(#screen-menu.active) #fs-enter{top:6px !important;left:6px !important;width:28px !important;height:28px !important;}
+}
+@media (orientation:portrait) and (max-width:600px){
+  /* the world label drops below the top-bar buttons instead of covering them */
+  #screen-surface .mini-kite,#screen-atmo .mini-kite,.mini-kite{top:46px !important;}
+  /* builder: fullscreen toggle sits right of the drawer button, not on it */
+  body:has(#screen-builder.active) #fs-exit,
+  body:has(#screen-builder.active) #fs-enter{left:56px !important;}
+}

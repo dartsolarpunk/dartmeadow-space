@@ -3488,6 +3488,14 @@ function toggleBuilderDrawer(){
   if(el) el.classList.toggle('sidebar-open');
 }
 
+// The board is long and lies across the view: on a tall portrait screen keep
+// the same side-to-side field of view as landscape so the whole board
+// still fits, instead of cropping both ends.
+function _builderFov(){
+  if(!builderCamera) return;
+  const a=builderCamera.aspect||1.6, hHalf=Math.atan(Math.tan(25*Math.PI/180)*1.6);
+  builderCamera.fov=a>=1.6?50:Math.min(100,2*Math.atan(Math.tan(hHalf)/a)*180/Math.PI);
+}
 async function initBuilderScene(){
   if(builderInited){
     // Re-entering builder — force resize and rebuild
@@ -3499,7 +3507,7 @@ async function initBuilderScene(){
       const vpEl = document.getElementById('builder-viewport');
       const W=cv.offsetWidth||(vpEl&&vpEl.offsetWidth)||window.innerWidth;
       const H=cv.offsetHeight||(vpEl&&vpEl.offsetHeight)||window.innerHeight;
-      if(W>10&&H>10){builderRenderer.setSize(W,H);builderCamera.aspect=W/H;builderCamera.updateProjectionMatrix();}
+      if(W>10&&H>10){builderRenderer.setSize(W,H);builderCamera.aspect=W/H;_builderFov();builderCamera.updateProjectionMatrix();}
       _rebuildBoard();
     },50);
     return;
@@ -3535,7 +3543,7 @@ async function initBuilderScene(){
     const W=cv.offsetWidth||(vpEl&&vpEl.offsetWidth)||window.innerWidth;
     const H=cv.offsetHeight||(vpEl&&vpEl.offsetHeight)||window.innerHeight;
     if(W>10&&H>10&&(builderRenderer.domElement.width!==W||builderRenderer.domElement.height!==H)){
-      builderRenderer.setSize(W,H);builderCamera.aspect=W/H;builderCamera.updateProjectionMatrix();
+      builderRenderer.setSize(W,H);builderCamera.aspect=W/H;_builderFov();builderCamera.updateProjectionMatrix();
     }
   }
   resizeBuilderRenderer();
@@ -5364,6 +5372,26 @@ function _applyFlightResizeIfPending(){
   flightCamera.updateProjectionMatrix();
   resizePostFX();
 }
+// Every other 3D view follows the device too: ground, sky flight, the
+// orbit view, the galaxy map and the quick-travel preview each resize on
+// rotation (debounced, event-driven like the flight view — no per-frame
+// layout reads). Full-screen views take the window; the map and preview
+// take the box they sit in.
+let _viewsResizeT=null;
+function _resizeAllViews(){
+  const s=(typeof window.__jotsLayoutSize==='function')?window.__jotsLayoutSize():{w:innerWidth,h:innerHeight};
+  const W=s.w,H=s.h; if(W<10||H<10) return;
+  const fit=(r,cam,w,h,style)=>{ if(!r||!cam) return; try{ r.setPixelRatio(effectivePixelRatio()); r.setSize(w,h,style!==false); r._dr=null; cam.aspect=w/h; cam.updateProjectionMatrix(); }catch(e){} };
+  try{ if(typeof surfRenderer!=='undefined') fit(surfRenderer,surfCamera,W,H); }catch(e){}
+  try{ if(typeof atmoRenderer!=='undefined') fit(atmoRenderer,atmoCamera,W,H); }catch(e){}
+  try{ if(typeof orbitRenderer!=='undefined') fit(orbitRenderer,orbitCamera,W,H); }catch(e){}
+  try{ if(typeof gmRenderer!=='undefined'&&gmRenderer) fit(gmRenderer,gmCamera,Math.min(W*.92,1100),Math.min(H*.74,640)); }catch(e){}
+  try{ if(typeof qtRenderer!=='undefined'&&qtRenderer){ const cv=qtRenderer.domElement; if(cv&&cv.clientWidth>10) fit(qtRenderer,qtCamera,cv.clientWidth,cv.clientHeight,false); } }catch(e){}
+}
+function _queueViewsResize(){ clearTimeout(_viewsResizeT); _viewsResizeT=setTimeout(_resizeAllViews,140); }
+window.addEventListener('resize',_queueViewsResize);
+window.addEventListener('orientationchange',_queueViewsResize);
+if(window.visualViewport) window.visualViewport.addEventListener('resize',_queueViewsResize);
 function _startFlightLoop(){
   if(flightAnimId)return; // already running
   const cv=_flightLoopCv;
@@ -7738,10 +7766,13 @@ function updateShipWalk(dt){
   const F=bt.group.localToWorld(SHIP_WALK.localPos.clone());
   // ── Her: on her feet, facing where she walks, animated.
   if(SHIP_WALK.charOn&&CHAR.root){
-    CHAR.root.position.set(F.x,F.y+(CHAR.feetOffset||0)*(CHAR._shipScale||1),F.z);
+    CHAR.root.position.set(F.x,F.y+(CHAR.feetOffset||0)*(CHAR._shipScale||1)+(CHAR._plantOff||0),F.z);   // + planted-foot contact
     let d=SHIP_WALK.faceYaw-CHAR.root.rotation.y;d=Math.atan2(Math.sin(d),Math.cos(d));
     CHAR.root.rotation.set(0,CHAR.root.rotation.y+d*Math.min(1,dt*10),0);
     try{updateCharacterLocomotion(dt,moving&&SHIP_WALK.grounded,running,1,!SHIP_WALK.grounded&&!SHIP_WALK.climb,!!SHIP_WALK.climb,{});}catch(e){}
+    // her lowest foot meets the deck: rays down onto the temple's own meshes
+    try{ _footContact(dt,!SHIP_WALK.grounded||!!SHIP_WALK.climb,CHAR._shipScale||1,
+      (x,z,fy)=>_shipGroundHeight(x,z,fy+SHIP_CHAR_H*0.15),SHIP_CHAR_H/6); }catch(e){}
   }
   // ── Follow camera: behind her along the look direction, pulled in if
   // the temple is in the way.
@@ -20811,9 +20842,16 @@ function updateSurface(dt){
 // height above the sole in the rest pose.
 let _fcV=null;
 function _surfFootContact(dt, airborne, sc){
+  if(typeof _surfHeight!=='function') return;
+  _footContact(dt, airborne, sc, _surfHeight, CHAR_TERRAIN_HEIGHT/6);
+}
+// Planted-foot contact for any ground: ground(x,z,footY) gives the height
+// under a foot, unit is one foot (her height / 6) at the current scale.
+// Used on planets (terrain height field) and on the Bird Temple deck
+// (ray cast against the temple's own meshes).
+function _footContact(dt, airborne, sc, ground, unit){
   if(!_fcV) _fcV=new THREE.Vector3();
-  const b=CHAR.bones; if(!b||!b.LeftFoot||!b.RightFoot||typeof _surfHeight!=='function') return;
-  const unit=CHAR_TERRAIN_HEIGHT/6;                       // one foot, in scene units
+  const b=CHAR.bones; if(!b||!b.LeftFoot||!b.RightFoot) return;
   CHAR.root.updateMatrixWorld(true);
   const soleLine=CHAR.root.position.y-(CHAR.feetOffset||0)*sc;   // where the model's lowest point sits
   if(CHAR._ankleRest==null||CHAR._ankleRestSc!==sc){
@@ -20825,7 +20863,8 @@ function _surfFootContact(dt, airborne, sc){
   let low=1e9;
   for(const f of [b.LeftFoot,b.RightFoot]){
     f.getWorldPosition(_fcV);
-    const gap=(_fcV.y-CHAR._ankleRest)-_surfHeight(_fcV.x,_fcV.z);   // >0 floating, <0 sunk
+    const gy=ground(_fcV.x,_fcV.z,_fcV.y); if(gy==null||!isFinite(gy)) continue;
+    const gap=(_fcV.y-CHAR._ankleRest)-gy;   // >0 floating, <0 sunk
     if(gap<low) low=gap;
   }
   if(!isFinite(low)) return;
@@ -21779,6 +21818,6 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 <link rel="stylesheet" href="ui/dm-journal.css?v=81">
 <link rel="stylesheet" href="ui/dm-landmap.css?v=86">
 <link rel="stylesheet" href="ui/dm-type.css?v=89">
-<link rel="stylesheet" href="ui/dm-compact.css?v=94">
+<link rel="stylesheet" href="ui/dm-compact.css?v=96">
 </body>
 </html>
