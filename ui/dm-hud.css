@@ -121,9 +121,11 @@ body:has(#screen-flight.active) #fs-exit,body:has(#screen-flight.active) #fs-ent
 #screen-flight #logs-toggle-btn{top:100px;}
 #screen-flight #qt-toggle-btn{top:138px;}
 #screen-flight #temple-toggle-btn{top:176px !important;box-shadow:inset 3px 0 0 #fff;}
-#screen-flight #shard-game-btn{top:214px !important;box-shadow:inset 3px 0 0 #ffcc00;}
-#screen-flight #shard-return-btn{top:252px !important;box-shadow:inset 3px 0 0 #ffcc00;}
-#screen-flight #hud-logs-panel{top:222px;}
+#screen-flight #journal-toggle-btn{top:214px;box-shadow:inset 3px 0 0 var(--gold);}
+#screen-flight #journal-toggle-btn .htb-ico{color:var(--gold);}
+#screen-flight #shard-game-btn{top:252px !important;box-shadow:inset 3px 0 0 #ffcc00;}
+#screen-flight #shard-return-btn{top:290px !important;box-shadow:inset 3px 0 0 #ffcc00;}
+#screen-flight #hud-logs-panel{top:252px;}
 #screen-flight #qt-panel{top:176px;}
 #screen-flight #orbit-skyboard-btn{left:auto;right:0;padding:0 14px 0 22px;box-shadow:inset -3px 0 0 var(--gold);
   background:linear-gradient(270deg,rgba(var(--hi-rgb),.22),var(--g-fill));
@@ -199,9 +201,10 @@ body:has(#screen-flight.active) #fs-exit,body:has(#screen-flight.active) #fs-ent
   #screen-flight #logs-toggle-btn{top:216px;}
   #screen-flight #qt-toggle-btn{top:254px;}
   #screen-flight #temple-toggle-btn{top:292px !important;}
-  #screen-flight #shard-game-btn{top:330px !important;}
-  #screen-flight #shard-return-btn{top:368px !important;}
-  #screen-flight #hud-logs-panel{top:338px;}
+  #screen-flight #journal-toggle-btn{top:330px;}
+  #screen-flight #shard-game-btn{top:368px !important;}
+  #screen-flight #shard-return-btn{top:406px !important;}
+  #screen-flight #hud-logs-panel{top:368px;}
   #screen-flight #qt-panel{top:292px;}
   #screen-flight #orbit-skyboard-btn{top:216px !important;}
   #jots-chat{top:calc(254px + env(safe-area-inset-top,0px)) !important;}
