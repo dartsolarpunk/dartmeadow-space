@@ -72,6 +72,9 @@ Use: **code** = code or tables included (licence terms apply) · **technique** =
   <https://fonts.google.com/specimen/Rajdhani>
 - **Share Tech Mono** — Carrois Apostrophe. *SIL Open Font License 1.1* (font).
   <https://fonts.google.com/specimen/Share+Tech+Mono>
+- **Audiowide** — Brian J. Bonislawsky (Astigmatic). *SIL Open Font License 1.1* (font). Titles and labels, set italic to match the DART Meadow logo; self-hosted in static/fonts with its licence (Audiowide-OFL.txt).
+  <https://fonts.google.com/specimen/Audiowide>
+
 ## Project assets
 
 - **3D models, characters, skyboards, Bird Temple & artwork** — DART Meadow (dartsolarpunk). *DART Meadow original work* (original). All 3D assets are the project’s own, many based on its original artwork.
