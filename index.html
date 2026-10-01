@@ -126,6 +126,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-theme.js?v=80"></script>
 <script src="ui/dm-fluid.js?v=80"></script>
 <script src="ui/dm-journal.js?v=81"></script>
+<script src="ui/dm-worldstyle.js?v=86"></script>
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js",
@@ -165,6 +166,9 @@ window.THREE = THREE;
 THREE.GLTFLoader = GLTFLoader;
 THREE.TSL = TSL;
 Object.assign(window, TSL);
+// three r185 dropped TSL's atan2 (atan(y, x) takes two arguments now) —
+// the GPU planets still call atan2, so keep the name working.
+if(typeof window.atan2!=='function'&&typeof TSL.atan==='function') window.atan2=(y,x)=>TSL.atan(y,x);
 
 window.__THREE_READY__ = true;
 window.__DISABLE_ATMO_MESH__ = false; // re-enabled: confirmed NOT the cause - the game's own confirmed-working sandbox showed the same severe slowness in the same test environment, pointing at a test-environment (software rendering) limitation rather than an atmosphere-specific bug
@@ -4270,15 +4274,52 @@ let _envMap=null;
 // properly port rather than bypass, since it's the dominant background
 // fill for atmospheric worlds - losing it entirely would be a visible
 // regression, not just a missing nice-to-have.
-function makeSkyDomeMaterial(topColor,botColor){
+function makeSkyDomeMaterial(topColor,botColor,opts){
   const mat=new THREE.MeshBasicNodeMaterial({side:THREE.BackSide});
   const topU=uniform(new THREE.Color(topColor));
   const botU=uniform(new THREE.Color(botColor));
+  if(!opts){
+    mat.colorNode=Fn(()=>{
+      const h=normalize(positionLocal).y.mul(0.5).add(0.5);
+      return mix(botU,topU,h);
+    })();
+    return mat;
+  }
+  // A lit sky (world styles): the gradient, a band of haze along the
+  // horizon, a soft halo round the sun and its disc. The horizon haze is
+  // also the fog colour, so distant ground melts into the sky.
+  mat.fog=false; mat.depthWrite=false;
+  const hazeU=uniform(new THREE.Color(opts.haze!=null?opts.haze:botColor));
+  const sunU=uniform(new THREE.Color(opts.sun!=null?opts.sun:0xffffff));
+  const glowU=uniform(new THREE.Color(opts.glow!=null?opts.glow:0xffe0b0));
+  const sunDirU=uniform((opts.sunDir||new THREE.Vector3(0.5,0.75,0.25)).clone().normalize());
+  const hazeAmt=float(opts.hazeAmt!=null?opts.hazeAmt:0.8);
   mat.colorNode=Fn(()=>{
-    const h=normalize(positionLocal).y.mul(0.5).add(0.5);
-    return mix(botU,topU,h);
+    const dir=normalize(positionLocal);
+    const h=dir.y;
+    const base=mix(botU,topU,smoothstep(float(-0.05),float(0.65),h));
+    const hz=exp(h.max(0.0).mul(-7.0)).mul(hazeAmt);
+    let c=mix(base,hazeU,hz);
+    const d=dot(dir,sunDirU).max(0.0);
+    const halo=pow(d,float(48.0)).mul(0.55).add(pow(d,float(6.0)).mul(0.22));
+    const disc=smoothstep(float(0.99935),float(0.9997),d);
+    c=c.add(glowU.mul(halo)).add(sunU.mul(disc.mul(2.5)));
+    // below the horizon: settle into the haze
+    return mix(c,hazeU.mul(0.85),smoothstep(float(0.0),float(-0.25),h));
   })();
   return mat;
+}
+// The lit sky + matching fog for a world (surface or sky flight).
+function _styledSky(scene,pal,body,radius,sunPos,fogNear,fogFar){
+  const style=(window.DMWorldStyle&&body)?DMWorldStyle.styleFor(body,pal):'lush';
+  const sk=window.DMWorldStyle?DMWorldStyle.skyFor(style,pal):{top:pal.sky[1],bottom:pal.sky[0],haze:pal.fog};
+  const mat=makeSkyDomeMaterial(sk.top,sk.bottom,{haze:sk.haze,sun:sk.sun,glow:sk.glow,sunDir:sunPos,hazeAmt:style==='lush'?0.55:0.85});
+  const dome=new THREE.Mesh(new THREE.SphereGeometry(radius,32,24),mat);
+  dome.renderOrder=-10; dome.frustumCulled=false;
+  scene.add(dome);
+  if(scene.fog&&sk.haze!=null){ scene.fog.color.set(sk.haze); if(fogNear!=null){ scene.fog.near=fogNear; scene.fog.far=fogFar; } }
+  scene.background=new THREE.Color(sk.haze!=null?sk.haze:pal.sky[1]);
+  return dome;
 }
 function buildEnvMap(renderer,scene){
   // THREE.WebGLCubeRenderTarget doesn't exist on the WebGPU build this file
@@ -15455,6 +15496,7 @@ function _atmoSetLandBtn(show){
 }
 let atmoActive=false,atmoRenderer,atmoScene,atmoCamera,atmoAnimId=null;
 let atmoBoard=null,_atmoBody=null,_atmoSite=null,_atmoHeight=null,_atmoCamInit=false;
+let _atmoStyle='lush', _atmoWX0=0, _atmoWZ0=0;
 let _atmoTerrainMesh=null,_atmoWaterMesh=null,_atmoTerrainOx=0,_atmoTerrainOz=0,_atmoPal=null;
 let atmoPreset=0,atmoThrottle=0,atmoMach=0;
 let atmoSteer={x:0,y:0},atmoClimb={x:0,y:0};
@@ -15503,8 +15545,7 @@ async function enterAtmosphericFlight(body,site,start){
   }
   // sky dome
   if(pal.atmos){
-    const skyMat=makeSkyDomeMaterial(pal.sky[1],pal.sky[0]);
-    atmoScene.add(new THREE.Mesh(new THREE.SphereGeometry(4000,24,24),skyMat));
+    _styledSky(atmoScene,pal,body,4000,sun.position);
   } else {
     const sn=2500,sp=new Float32Array(sn*3);
     for(let i=0;i<sn;i++){const ph=Math.acos(2*Math.random()-1),th=Math.random()*6.28,r=3000;sp[i*3]=r*Math.sin(ph)*Math.cos(th);sp[i*3+1]=Math.abs(r*Math.cos(ph));sp[i*3+2]=r*Math.sin(ph)*Math.sin(th);}
@@ -15598,7 +15639,11 @@ function atmoBuildTerrain(pal,ox,oz){
     return 0;
   })();
   const _atmoEarthGeo=(_atmoBody && _atmoBody.name==='Earth' && _atmoSite && typeof _atmoSite.lat==='number');
-  function H(x,z){
+  const _aws=(window.DMWorldStyle&&_atmoBody)?DMWorldStyle.styleFor(_atmoBody,pal):'lush';
+  _atmoStyle=_aws;
+  const _aw=_siteWorldXZ(_atmoSite); _atmoWX0=_aw.x; _atmoWZ0=_aw.z;
+  function H(lx,lz){
+    const x=lx+_atmoWX0, z=lz+_atmoWZ0;   // the planet's own coordinates
     let h=_fbm(x*0.012+100,z*0.012+100,seed,5)*22;
     h+=_fbm(x*0.04,z*0.04,seed+3,3)*5;
     const m=_fbm(x*0.005,z*0.005,seed+7,4);
@@ -15620,10 +15665,9 @@ function atmoBuildTerrain(pal,ox,oz){
     if(canyonRidge>0.99)h-=Math.pow((canyonRidge-0.99)/0.01,1.5)*90;
     const riverRidge=1-Math.abs(_fbm(x*0.006+seed*7.1,z*0.006+seed*7.1,seed+71,4)*2-1);
     if(riverRidge>0.97)h-=Math.pow((riverRidge-0.97)/0.03,1.2)*22;
-    const d2=x*x+z*z;
-    h-=d2/(2*curveR);
+    if(_aws!=='lush') h=DMWorldStyle.shape(_aws,x,z,h,seed,_fbm);
     if(_atmoEarthGeo && typeof earthSiteHeightBias==='function'){
-      const geo=earthSiteHeightBias(_atmoSite.lat,_atmoSite.lon,seed,x,z,0.008);
+      const geo=earthSiteHeightBias(_atmoSite.lat,_atmoSite.lon,seed,lx,lz,0.008);
       return h*0.55 + geo;
     }
     return h+siteLandBias;
@@ -15645,11 +15689,12 @@ function atmoBuildTerrain(pal,ox,oz){
   const _atmoSiteBias=siteLandBias;
   const _atmoSiteLat=(_atmoSite&&typeof _atmoSite.lat==='number')?_atmoSite.lat:0;
   for(let i=0;i<pos.count;i++){
-    const x=pos.getX(i),z=pos.getZ(i);const h=H(x+ox,z+oz);pos.setY(i,h);
+    // the horizon curves away from the board (drawn only — the ground you touch is H itself)
+    const x=pos.getX(i),z=pos.getZ(i);const h=H(x+ox,z+oz);pos.setY(i,h-(x*x+z*z)/(2*curveR));
     // Same surfaceBiomeColor as walk — flown-over vs walked-on stay consistent.
     const hx=H(x+ox+eps,z+oz),hz=H(x+ox,z+oz+eps);
     const slope=Math.min(1,(Math.abs(hx-h)+Math.abs(hz-h))/(eps*1.4));
-    const c=surfaceBiomeColor(x+ox,z+oz,h,slope,pal,seed,{siteBias:_atmoSiteBias,siteLat:_atmoSiteLat});
+    const c=surfaceBiomeColor(x+ox+_atmoWX0,z+oz+_atmoWZ0,h,slope,pal,seed,{siteBias:_atmoSiteBias,siteLat:_atmoSiteLat,style:_atmoStyle});
     col.push(c.r,c.g,c.b);
   }
   geo.setAttribute('color',new THREE.Float32BufferAttribute(col,3));geo.computeVertexNormals();
@@ -15878,6 +15923,13 @@ function atmoExitToSpace(){
    spot under the board are the same place.
    ══════════════════════════════════════════════════════════════ */
 const ATMO_DEG_PER_UNIT=0.008;
+// One map per planet: every site's ground is the same world field seen
+// from that site's lat/lon, so the sky above a spot and the ground you
+// land on there are the same terrain.
+function _siteWorldXZ(site){
+  if(!site||typeof site.lat!=='number'||typeof site.lon!=='number') return {x:0,z:0};
+  return {x:site.lon/ATMO_DEG_PER_UNIT, z:-site.lat/ATMO_DEG_PER_UNIT};
+}
 const LAND_PICK_RANGE=900;          // how far from the board the marker tool reaches
 const _wrapLon=l=>((l+540)%360+360)%360-180;
 function _atmoSiteRef(){ return (_atmoSite&&typeof _atmoSite.lat==='number')?_atmoSite:{lat:0,lon:0}; }
@@ -17767,9 +17819,7 @@ async function enterSurface(body,site,opts){
   // procedural terrain — heightmapped plane (+ GPU MC patch on real WebGPU)
   await buildSurfaceTerrain(pal);
   // sky gradient dome
-  const skyGeo=new THREE.SphereGeometry(1000,16,16);
-  const skyMat=makeSkyDomeMaterial(pal.sky[1],pal.sky[0]);
-  if(pal.atmos)surfScene.add(new THREE.Mesh(skyGeo,skyMat));
+  if(pal.atmos) _styledSky(surfScene,pal,body,1000,sun.position);
   // Skyboard spawn — updateSurface keeps it beside her (board-left / her right).
   const board=buildBoardMesh();
   board.scale.setScalar(1.0);
@@ -18632,6 +18682,9 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
   const biasU = uniform(siteBias);
   const siteLatU = uniform(siteLat);
   const localScaleU = uniform(earthGeo?0.55:1.0); // match H(): h*0.55+geo on Earth
+  const wStyle = window.DMWorldStyle?(opts.style||TERRAIN.style||'lush'):'lush';
+  // the site's place on the planet's own map (same field the sky flies over)
+  const wx0U = uniform(TERRAIN.wx0||0), wz0U = uniform(TERRAIN.wz0||0);
 
   const densityBuf=new THREE.StorageInstancedBufferAttribute(numPoints,1);
   const densityNode=storage(densityBuf,'float',numPoints);
@@ -18648,7 +18701,8 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
 
   // Shared noise language with sandbox terrainRadiusAt / orbital builder:
   // ridged mountains, billow detail, terraced plateaus, canyon/river cuts.
-  const terrainHeightAt=Fn(([p])=>{
+  const terrainHeightAt=Fn(([pl])=>{
+    const p = vec3(pl.x.add(wx0U), pl.y, pl.z.add(wz0U));
     const xz = vec3(p.x, float(0), p.z);
     const nHills = mx_fractal_noise_float(xz.mul(0.012).add(vec3(100,seedU,100)),5,2.0,0.5);
     // mx_fractal ~ -1..1; CPU _fbm is ~0..1 — remap to ~0..1 then scale like H().
@@ -18674,7 +18728,8 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
     const canyonCut = canyonRidge.sub(0.99).max(0.0).div(0.01).pow(1.5).mul(90.0);
     const riverRidge = float(1.0).sub(mx_fractal_noise_float(xz.mul(0.006).add(seedU.mul(7.1)),4,2.0,0.5).abs());
     const riverCut = riverRidge.sub(0.97).max(0.0).div(0.03).pow(1.2).mul(22.0);
-    const localH=hills.add(detail).add(mtBump).add(mtWeight.mul(mountain.mul(0.65).add(plateau.mul(0.55)))).add(peak).sub(canyonCut).sub(riverCut);
+    let localH=hills.add(detail).add(mtBump).add(mtWeight.mul(mountain.mul(0.65).add(plateau.mul(0.55)))).add(peak).sub(canyonCut).sub(riverCut);
+    if(wStyle!=='lush') localH=DMWorldStyle.shapeTSL(wStyle,window,p,localH,seedU);
     // Earth: same h*0.55+siteBias contract as CPU H()/earthSiteHeightBias so
     // spawn _surfHeight matches the mesh contour (not buried under geo lift).
     return localH.mul(localScaleU).add(biasU);
@@ -18778,7 +18833,8 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
         };
         const v0=interp(e0), v1=interp(e1), v2=interp(e2);
         const nrm=v1.sub(v0).cross(v2.sub(v0)).normalize();
-        const colorFor=(v)=>{
+        const colorFor=(vl)=>{
+          const v=vec3(vl.x.add(wx0U),vl.y,vl.z.add(wz0U));
           // Sandbox-style density→biome→material: relative height, lat snow
           // line, dirt/ice bands, mottled snow (not flat featureless white).
           const height=v.y.sub(biasU);
@@ -18805,6 +18861,7 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
           c=mix(c, ice, iceT);
           // Rock speckles in snow — breaks featureless white plates
           c=mix(c, rock, snowT.mul(mottFine.sub(0.62).max(0.0).mul(2.2)).clamp(0.0,0.45));
+          if(wStyle!=='lush') return DMWorldStyle.colorTSL(wStyle,window,v,nrm,height,seedU,pal,c);
           return c;
         };
         const col=colorFor(v0).add(colorFor(v1)).add(colorFor(v2)).div(3.0);
@@ -19214,6 +19271,10 @@ async function buildSurfaceTerrain(pal){
     return 0;
   })();
   const _surfEarthGeo=(_surfBody && _surfBody.name==='Earth' && _surfSite && typeof _surfSite.lat==='number');
+  // the world's style (mesa / ice / crater / volcanic / lush) — ui/dm-worldstyle.js
+  const _ws=(window.DMWorldStyle&&_surfBody)?DMWorldStyle.styleFor(_surfBody,pal):'lush';
+  TERRAIN.style=_ws;
+  const _sw=_siteWorldXZ(_surfSite); TERRAIN.wx0=_sw.x; TERRAIN.wz0=_sw.z;
   // height function (kept from the original, drives collision + tiles).
   // Curvature falloff lives HERE (not duplicated in buildTerrainTile) so
   // collision and the visual mesh can never disagree about ground height —
@@ -19228,6 +19289,7 @@ async function buildSurfaceTerrain(pal){
     // drop off.
     const half=TERRAIN.rootSize/2;
     if(Math.abs(x)>half||Math.abs(z)>half)return -99999;
+    const lx=x, lz=z; x+=_sw.x; z+=_sw.z;   // the planet's own coordinates (same field the sky flies over)
     let h=_fbm(x*0.012+100,z*0.012+100,seed,5)*22;
     h+=_fbm(x*0.04,z*0.04,seed+3,3)*5;
     const m=_fbm(x*0.005,z*0.005,seed+7,4);
@@ -19277,11 +19339,12 @@ async function buildSurfaceTerrain(pal){
       const riverDepth=(riverRidge-0.97)/0.03; // tightened for the same reason as the canyon threshold above (~9% coverage at this value instead of ~58%)
       h-=Math.pow(riverDepth,1.2)*22;
     }
+    if(_ws!=='lush') h=DMWorldStyle.shape(_ws,x,z,h,seed,_fbm);
     // No large-scale curvature falloff — local hills only. Earth samples
     // the SAME land/elevation field around the landing lat/lon so walk
     // contour (altitude+slope) matches orbital continents near the site.
     if(_surfEarthGeo && typeof earthSiteHeightBias==='function'){
-      const geo=earthSiteHeightBias(_surfSite.lat,_surfSite.lon,seed,x,z,0.01);
+      const geo=earthSiteHeightBias(_surfSite.lat,_surfSite.lon,seed,lx,lz,0.008);
       // Blend: keep local noise character, let mask drive macro altitude
       return h*0.55 + geo;
     }
@@ -19447,7 +19510,19 @@ async function buildSurfaceTerrain(pal){
     mcGroup.userData.climbable=true;
     TERRAIN.group.add(mcGroup);
     TERRAIN.mcGroup=mcGroup;
-    const mcMat=new THREE.MeshStandardMaterial({color:pal.ground||0x7a6a52,roughness:0.95,metalness:0.02,flatShading:false,side:THREE.DoubleSide});
+    // painted per vertex with the same biome / world-style texturing as the tiles
+    const mcMat=new THREE.MeshStandardMaterial({color:0xffffff,vertexColors:true,roughness:0.95,metalness:0.02,flatShading:false,side:THREE.DoubleSide});
+    const _mcPaint=(geo)=>{
+      if(!geo.attributes.normal) geo.computeVertexNormals();
+      const P=geo.attributes.position, Nn=geo.attributes.normal, col=new Float32Array(P.count*3);
+      const o={siteBias:siteLandBias,siteLat:TERRAIN.siteLat,style:TERRAIN.style};
+      for(let i=0;i<P.count;i++){
+        const slope=Math.min(1,Math.max(0,1-Math.abs(Nn.getY(i))));
+        const c=surfaceBiomeColor(P.getX(i)+(TERRAIN.wx0||0),P.getZ(i)+(TERRAIN.wz0||0),P.getY(i),slope,pal,seed,o);
+        col[i*3]=c.r; col[i*3+1]=c.g; col[i*3+2]=c.b;
+      }
+      geo.setAttribute('color',new THREE.BufferAttribute(col,3));
+    };
     const order=[];
     for(let gx=-MC_GRID;gx<=MC_GRID;gx++)for(let gz=-MC_GRID;gz<=MC_GRID;gz++)order.push([gx,gz]);
     order.sort((a,b)=>(Math.abs(a[0])+Math.abs(a[1]))-(Math.abs(b[0])+Math.abs(b[1])));
@@ -19464,6 +19539,7 @@ async function buildSurfaceTerrain(pal){
       const span=MC_CHUNK+MC_OVERLAP*2;
       const geo=marchingCubesMesh(density3D,[ox,MC_VMIN,oz],span,MC_RES,0);
       if(geo.attributes.position&&geo.attributes.position.count>0){
+        try{ _mcPaint(geo); }catch(e){}
         mcGroup.add(new THREE.Mesh(geo,mcMat));
       }
       built++;
@@ -19770,6 +19846,7 @@ function surfaceBiomeColor(x,z,h,slope,pal,seed,opts){
   c.r=grassCol.r*wGrass+rockCol.r*wRock+sand.r*wSand+dirtCol.r*wDirt+snowCol.r*wSnow+iceCol.r*wIce;
   c.g=grassCol.g*wGrass+rockCol.g*wRock+sand.g*wSand+dirtCol.g*wDirt+snowCol.g*wSnow+iceCol.g*wIce;
   c.b=grassCol.b*wGrass+rockCol.b*wRock+sand.b*wSand+dirtCol.b*wDirt+snowCol.b*wSnow+iceCol.b*wIce;
+  if(opts.style&&opts.style!=='lush'&&window.DMWorldStyle) return DMWorldStyle.color(opts.style,x,z,hRel,slope,pal,seed,_fbm,c);
   return c;
 }
 
@@ -19789,7 +19866,7 @@ function buildTerrainTile(cx,cz,size,depth){
     // Weighted biome blend via surfaceBiomeColor (sandbox smart-material path).
     const hx=H(x+eps,z),hz=H(x,z+eps);
     const slope=Math.min(1,(Math.abs(hx-h)+Math.abs(hz-h))/(eps*1.4));
-    const c=surfaceBiomeColor(x,z,h,slope,pal,TERRAIN.seed,{siteBias:_siteBias,siteLat:_siteLat});
+    const c=surfaceBiomeColor(x+(TERRAIN.wx0||0),z+(TERRAIN.wz0||0),h,slope,pal,TERRAIN.seed,{siteBias:_siteBias,siteLat:_siteLat,style:TERRAIN.style});
     col.push(c.r,c.g,c.b);
   }
   geo.setAttribute('color',new THREE.Float32BufferAttribute(col,3));
