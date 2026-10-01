@@ -127,7 +127,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-fluid.js?v=80"></script>
 <script src="ui/dm-journal.js?v=81"></script>
 <script src="ui/dm-worldstyle.js?v=92"></script>
-<script src="ui/dm-sky.js?v=92"></script>
+<script src="ui/dm-sky.js?v=93"></script>
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js",
@@ -15681,7 +15681,7 @@ async function enterAtmosphericFlight(body,site,start){
 function atmoBuildTerrain(pal,ox,oz){
   ox=ox||0;oz=oz||0;
   _atmoPal=pal;_atmoTerrainOx=ox;_atmoTerrainOz=oz;
-  const seed=(_atmoBody?_atmoBody.name.length:5)*13+1;
+  const seed=_worldSeed(_atmoBody);
   // Same stylized curvature heuristic as walk mode (see buildSurfaceTerrain).
   const g=(_atmoBody&&_atmoBody.gravity!==undefined)?_atmoBody.gravity:0.6;
   const curveR=THREE.MathUtils.lerp(1400,9000,Math.min(1,Math.max(0,g))/1.2);
@@ -18751,6 +18751,17 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
 
   const densityBuf=new THREE.StorageInstancedBufferAttribute(numPoints,1);
   const densityNode=storage(densityBuf,'float',numPoints);
+  // The ground height per column comes from the world's own height field
+  // (the same TERRAIN.H the sky, the far terrain and collision use), so the
+  // marching-cubes ground is exactly the ground seen from above; the GPU
+  // adds the 3D cave/overhang term on top.
+  const hFn=opts.heightFn||TERRAIN.H||null;
+  let heightNode=null;
+  if(hFn){
+    const hcol=new Float32Array(GRID*GRID);
+    for(let gz=0;gz<GRID;gz++) for(let gx=0;gx<GRID;gx++) hcol[gx+gz*GRID]=hFn(gx*CELL+oX, gz*CELL+oZ);
+    heightNode=storage(new THREE.StorageBufferAttribute(hcol,1),'float',GRID*GRID);
+  }
   const triTableFlat=new Int32Array(256*16);
   GPU_TriangleTable.forEach((row,i)=>{ for(let j=0;j<16;j++) triTableFlat[i*16+j]=row[j]; });
   const triTableAttr=new THREE.StorageBufferAttribute(triTableFlat,1);
@@ -18809,14 +18820,14 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
       gy.toFloat().mul(CELL).add(oY),
       gz.toFloat().mul(CELL).add(oZ)
     );
-    const groundY=terrainHeightAt(p);
+    const groundY=heightNode?heightNode.element(gx.add(gz.mul(uint(GRID)))):terrainHeightAt(p);
     // Cave/overhang carve — genuine 3D term (not heightmap).
     // Justin Android daytime clips: uncapped *18 carve punched sky-holes
     // through the mesh (heightmap underlay was hidden). Clamp amp + keep a
     // solid crust so density→mesh stays continuous in daylight.
     const caveRaw = mx_fractal_noise_float(p.mul(vec3(0.05,0.08,0.05)).add(seedU.mul(7.7)),3,2.0,0.5)
       .mul(mx_fractal_noise_float(p.mul(0.03).add(seedU).add(vec3(53,0,0)),3,2.0,0.5)).mul(9.0);
-    const cave = caveRaw.clamp(-5.0, 10.0);
+    const cave = caveRaw.clamp(-2.5, 2.5);   // surface texture only — the shape itself is the world's height field, the same seen from the sky
     const dSurf = p.y.sub(groundY).sub(cave);
     // Crust floor: always solid below (groundY - CRUST) → no through-holes
     const CRUST = float(14.0);
@@ -19324,7 +19335,7 @@ function buildMarchingCubesAsteroid(radius,seed,resolution){
 //   window._surfClimbNormal(x,y,z) → wall normal Vector3 near climbable face, else null
 // Also: window._surfHeight / window._surfNormal for ground + foot IK.
 async function buildSurfaceTerrain(pal){
-  const seed=(_surfBody?_surfBody.name.length:5)*13+1;
+  const seed=_worldSeed(_surfBody);
   const siteLandBias=(()=>{
     // Same earthLandMask/earthElevation as orbital MC + land-pick — walking
     // at a landed site matches the continent you picked from orbit.
@@ -19556,7 +19567,7 @@ async function buildSurfaceTerrain(pal){
     function density3D(x,y,z){
       const groundY=H(x,z);
       const caveNoise=_fbm(x*0.05+seed*7.7,z*0.05+seed*7.7,seed+41,3)*_fbm(y*0.08,x*0.02-z*0.02,seed+53,3);
-      const cave=Math.max(-5, Math.min(10, caveNoise*12));
+      const cave=Math.max(-2.5, Math.min(2.5, caveNoise*12));   // surface texture only — the shape is the world's height field
       const dSurf=y-groundY-cave;
       const CRUST=14;
       const dFloor=y-(groundY-CRUST);
@@ -19807,6 +19818,17 @@ async function buildSurfaceTerrain(pal){
  *  Relative height (h − siteBias) keeps sand/grass/rock/snow bands when
  *  earthSiteHeightBias lifts an entire snow-border patch. Mottled snow/ice
  *  + dirt + rock peek so polar/highland floors are not featureless white. */
+// Every world's own fixed seed: a stable hash of its name and its system,
+// so a world is the same for every player, every visit, from the sky or on
+// foot — and no two worlds share terrain (the old name-length seed gave
+// Mars and the Moon, Earth and Venus, the same ground).
+function _worldSeed(body){
+  const sys=(window._curSystem&&window._curSystem.name)||'Sol';
+  const key=String(body&&body.name||'world')+'@'+(sys==='Sol'?'':sys);
+  let h=2166136261;
+  for(let i=0;i<key.length;i++){ h^=key.charCodeAt(i); h=Math.imul(h,16777619); }
+  return 3+((h>>>0)%997);
+}
 function surfaceBiomeColor(x,z,h,slope,pal,seed,opts){
   opts=opts||{};
   const siteBias=(typeof opts.siteBias==='number')?opts.siteBias:0;
@@ -20328,9 +20350,9 @@ function _tessInit(){
   TERRAIN.tessCfg=Object.assign({},TESS_TIER[tier]||TESS_TIER.medium);
   TERRAIN.sandy=!!(window.DMWorldStyle&&(TERRAIN.style==='dunes'));
   const H=TERRAIN.H, seed=TERRAIN.seed;
-  if(TERRAIN.cpuMc){
-    TERRAIN.tessBase=(x,z)=>{ const g=H(x,z); const cn=_fbm(x*0.05+seed*7.7,z*0.05+seed*7.7,seed+41,3)*_fbm(g*0.08,x*0.02-z*0.02,seed+53,3); return g+Math.max(-5,Math.min(10,cn*12)); };
-  } else { const prev=_surfHeight; TERRAIN.tessBase=(x,z)=>prev(x,z); }
+  // the refined ground sits on the world's own height field — exactly the
+  // ground seen from the sky and the far terrain, for every player
+  TERRAIN.tessBase=(x,z)=>H(x,z);
   const under=_surfHeight;
   const inArea=(x,z)=>{ const A=TERRAIN.tessAreas; for(let i=0;i<A.length;i++){ const T=A[i]; if(T&&Math.hypot(x-T.cx,z-T.cz)<T.half*0.8) return T; } return null; };
   _surfHeight=(x,z)=>{ const T=inArea(x,z); return T?_tessHeightIn(T,x,z):under(x,z); };
