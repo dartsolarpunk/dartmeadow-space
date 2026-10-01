@@ -358,6 +358,7 @@
   function Water(THREE, scene, o) {
     this.THREE = THREE; this.scene = scene;
     const tier = o.tier in TIER_COUNT ? o.tier : 'medium';
+    this.tier = o.tier;                         // as requested (so a tier change can be spotted)
     this.core = new Core({ count: TIER_COUNT[tier], spacing: o.spacing || 1.0, depth: o.depth || 3.0, restY: o.restY || 0,
       gravity: o.gravity, floor: o.floor, cx: o.cx, cz: o.cz, substeps: (tier === 'low' || tier === 'medium') ? 1 : 2 });
     const C = this.core, s = C.s;
