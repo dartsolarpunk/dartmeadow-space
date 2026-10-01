@@ -3889,7 +3889,7 @@ const GFX = {
 
 // Capability ceilings — what a tier is ALLOWED to use is clamped by hardware.
 const PRESETS = {
-  low:    {resScale:0.7, shadows:false, shadowSize:512,  envReflections:false, caustics:false, fakeGI:true, refraction:false, ssao:false, volumetricDust:false, dustDensity:0.45, aniso:1,  antialias:false},
+  low:    {resScale:0.7, shadows:true,  shadowSize:512,  envReflections:false, caustics:false, fakeGI:true, refraction:false, ssao:false, volumetricDust:false, dustDensity:0.45, aniso:1,  antialias:false},
   medium: {resScale:0.85,shadows:true,  shadowSize:1024, envReflections:true,  caustics:true,  fakeGI:true, refraction:true,  ssao:false, volumetricDust:true,  dustDensity:1.2,  aniso:2,  antialias:true },
   high:   {resScale:1.0, shadows:true,  shadowSize:2048, envReflections:true,  caustics:true,  fakeGI:true, refraction:true,  ssao:true,  volumetricDust:true,  dustDensity:1.3,  aniso:8,  antialias:true },
   ultra:  {resScale:1.0, shadows:true,  shadowSize:4096, envReflections:true,  caustics:true,  fakeGI:true, refraction:true,  ssao:true,  volumetricDust:true,  dustDensity:2.2,  aniso:16, antialias:true },
@@ -4074,6 +4074,25 @@ function resolveTier(){return resolvePreset();}
 function applyQualityTier(){applyPreset(GFX.preset);}
 
 // Effective pixel ratio = device DPR (capped) × manual resolution scale
+// ── Dynamic resolution (DART Engine) ──
+// Each renderer watches its own frame time. When frames run long the
+// render resolution eases down a step (never below 60% of the chosen
+// one); when there is headroom it eases back up. The chosen quality stays
+// the ceiling, so a fast device always gets exactly what it picked.
+function _dynRes(r){
+  if(!r||GFX.dynamicRes===false) return;
+  const now=performance.now(), d=r._dr||(r._dr={t:now,ema:16.7,k:1,hold:0,cool:0});
+  const ms=Math.min(250,now-d.t); d.t=now; if(ms<=0) return;
+  d.ema+=(ms-d.ema)*0.06;
+  const target=GFX.isMobile?33.4:20.0;            // aim for ~30 fps on phones and tablets, ~50 on desktops
+  d.cool=Math.max(0,d.cool-ms);
+  if(d.cool>0) return;
+  let k=d.k;
+  if(d.ema>target*1.18&&k>0.6){ k=Math.max(0.6,k-0.08); }
+  else if(d.ema<target*0.72&&k<1){ d.hold+=ms; if(d.hold>2500){ k=Math.min(1,k+0.05); d.hold=0; } }
+  else d.hold=0;
+  if(k!==d.k){ d.k=k; d.cool=1200; try{ r.setPixelRatio(effectivePixelRatio()*k); r.setSize(window.innerWidth,window.innerHeight); }catch(e){} }
+}
 function effectivePixelRatio(){
   return Math.min(GFX.dpr,GFX.maxPixelRatio)*GFX.resScale;
 }
@@ -5350,6 +5369,7 @@ function _startFlightLoop(){
     try{upgradePlanetLOD(dt);}catch(e){_animLoopWarn('upgradePlanetLOD',e);}
     try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){_animLoopWarn('skyboardStance',e);}
     try{ updateCharOrbitCamera(); }catch(e){_animLoopWarn('charOrbit',e);}
+    try{ _dynRes(flightRenderer); }catch(e){}
     try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){_animLoopWarn('charMixer',e);}
     try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){_animLoopWarn('headOverride',e);}
     try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);}
@@ -11645,8 +11665,8 @@ function applySettings(){
       // 'rotate to portrait and it comes back' workaround — now applied
       // automatically instead of needing an incidental rotation.
       const _rw=window.innerWidth,_rh=window.innerHeight;
-      if(flightRenderer){flightRenderer.setPixelRatio(effectivePixelRatio());flightRenderer.setSize(_rw,_rh);}
-      if(surfRenderer){surfRenderer.setPixelRatio(effectivePixelRatio());surfRenderer.setSize(_rw,_rh);}
+      if(flightRenderer){flightRenderer._dr=null;flightRenderer.setPixelRatio(effectivePixelRatio());flightRenderer.setSize(_rw,_rh);}
+      if(surfRenderer){surfRenderer._dr=null;surfRenderer.setPixelRatio(effectivePixelRatio());surfRenderer.setSize(_rw,_rh);}
       resizePostFX();
     }
   }
@@ -14870,12 +14890,21 @@ function applyGraphicsLive(){
   try{ if(typeof _surfFluid!=='undefined'&&_surfFluid&&_surfFluid.tier!==resolvePreset()) _surfFluidStop(); }catch(e){}
   try{ window.dispatchEvent(new CustomEvent('dm:gfx')); }catch(e){}
 }
+// Shadow box sized to the shadow map: every tier gets crisp shadows round
+// her (the box follows her), bigger maps cover more ground.
+function _sunShadowFit(l){
+  if(!l||!l.shadow) return;
+  const size=GFX.shadowSize||1024, half=({512:45,1024:70,2048:110,4096:150})[size]||90;
+  const c=l.shadow.camera; c.near=1; c.far=520; c.left=-half; c.right=half; c.top=half; c.bottom=-half; c.updateProjectionMatrix();
+  l.shadow.normalBias=size<=1024?0.04:0.02;
+}
 function _gfxApplyShadows(sc){
   const on=!!GFX.shadows, size=GFX.shadowSize;
   sc.traverse(o=>{
     if(o.isLight&&o.userData.shadowKey){
       o.castShadow=on; if(o.userData.shadowOnlyLight) o.visible=on;
       if(o.shadow&&o.shadow.mapSize.x!==size){ o.shadow.mapSize.set(size,size); if(o.shadow.map){ try{o.shadow.map.dispose();}catch(e){} o.shadow.map=null; } }
+      if(o.isDirectionalLight) _sunShadowFit(o);
     } else if(on&&o.isMesh&&!o.userData._gfxShadow){
       const m=o.material;
       if(m&&!Array.isArray(m)&&!m.transparent&&(m.isMeshStandardMaterial||m.isMeshPhysicalMaterial||m.isMeshLambertMaterial)&&!(o.isInstancedMesh&&o.count>3000)){
@@ -15474,6 +15503,7 @@ function resumeFlightLoop(){
     try{upgradePlanetLOD(dt);}catch(e){_animLoopWarn('upgradePlanetLOD',e);}
     try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){_animLoopWarn('skyboardStance',e);}
     try{ updateCharOrbitCamera(); }catch(e){_animLoopWarn('charOrbit',e);}
+    try{ _dynRes(flightRenderer); }catch(e){}
     try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){_animLoopWarn('charMixer',e);}
     try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){_animLoopWarn('headOverride',e);}
     try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);}
@@ -15635,6 +15665,7 @@ async function enterAtmosphericFlight(body,site,start){
     try{ if(atmoBoard&&atmoState){ const s=atmoState; updateBoardWake(atmoBoard, atmoScene, dt, Math.min(1.2, atmoMach/0.6), new THREE.Vector3(-Math.sin(s.yaw)*Math.cos(s.pitch),Math.sin(s.pitch),-Math.cos(s.yaw)*Math.cos(s.pitch))); } }catch(e){_animLoopWarn('boardWake',e);}
     try{ if(CHAR.mounted) applySkyboardStance(now/1000); }catch(e){}
     try{ updateCharOrbitCamera(); }catch(e){_animLoopWarn('charOrbit',e);}
+    try{ _dynRes(atmoRenderer); }catch(e){}
     try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){_animLoopWarn('charMixer',e);}
     try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){_animLoopWarn('headOverride',e);}
     try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);}
@@ -17817,10 +17848,8 @@ async function enterSurface(body,site,opts){
   {   // configured always; castShadow follows the Shadows setting live
     sun.castShadow=!!GFX.shadows;
     sun.shadow.mapSize.set(GFX.shadowSize,GFX.shadowSize);
-    sun.shadow.camera.near=1;sun.shadow.camera.far=600;
-    sun.shadow.camera.left=-200;sun.shadow.camera.right=200;
-    sun.shadow.camera.top=200;sun.shadow.camera.bottom=-200;
     sun.shadow.bias=-0.0004;
+    _sunShadowFit(sun);   // box sized to the tier, centred on her (_surfStreamTick)
   }
   surfScene.add(sun); surfScene.add(sun.target); TERRAIN.sun=sun;   // the shadow box follows her (_surfStreamTick)
   // Hemisphere light approximates global illumination: sky color bounces
@@ -18018,6 +18047,7 @@ async function enterSurface(body,site,opts){
     const now=performance.now();const dt=Math.min((now-last)/1000,0.05);last=now;surfTime+=dt;
     try{ updateSurface(dt); }catch(e){ _animLoopWarn('updateSurface',e); }
     try{ updateCharOrbitCamera(); }catch(e){_animLoopWarn('charOrbit',e);}
+    try{ _dynRes(surfRenderer); }catch(e){}
     try{ _updateCharDebugHUD(); }catch(e){_animLoopWarn('charDbg',e);}
     try{updateCaustics(dt);}catch(e){_animLoopWarn('caustics',e);}
     try{ _surfFluidTick(dt); }catch(e){_animLoopWarn('fluid',e);}
@@ -18919,7 +18949,7 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
   geo.setAttribute('normal',normalBuf);
   geo.setAttribute('color',colorBuf);
   geo.boundingSphere=new THREE.Sphere(new THREE.Vector3(cx0,(yMin+yMax)*0.5,cz0), halfIso*1.6);
-  const mat=new THREE.MeshStandardMaterial({vertexColors:true,roughness:0.92,metalness:0.02,side:THREE.DoubleSide});
+  const mat=_terrainDetailMat({side:THREE.DoubleSide});
   const mesh=new THREE.Mesh(geo,mat);
   mesh.name='JOTS_GpuSurfacePatch';
   mesh.userData.jotsGpuMc=true;
@@ -19540,7 +19570,7 @@ async function buildSurfaceTerrain(pal){
     TERRAIN.group.add(mcGroup);
     TERRAIN.mcGroup=mcGroup;
     // painted per vertex with the same biome / world-style texturing as the tiles
-    const mcMat=new THREE.MeshStandardMaterial({color:0xffffff,vertexColors:true,roughness:0.95,metalness:0.02,flatShading:false,side:THREE.DoubleSide});
+    const mcMat=_terrainDetailMat({side:THREE.DoubleSide});
     const _mcPaint=(geo)=>{
       if(!geo.attributes.normal) geo.computeVertexNormals();
       const P=geo.attributes.position, Nn=geo.attributes.normal, col=new Float32Array(P.count*3);
@@ -19739,6 +19769,9 @@ async function buildSurfaceTerrain(pal){
   // Rocks and trees now come with each near chunk (_hmChunkScatter), so they
   // are there wherever she walks, always the same ones in the same place.
 
+  // the dense, deformed ground round her (NEAR-GROUND TESSELLATION)
+  try{ if(TESS_HOLE.r) TESS_HOLE.r.value=0; TERRAIN.tessMesh=null; _tessInit(); }catch(e){ console.warn('[tess] off:',e); TERRAIN.tessCfg=null; }
+
   // Earth wind particles — subtle, GPU-friendly Points; disable/cheap on Low
   TERRAIN.windPoints=null;
   const isEarth = !!( _surfBody && (_surfBody.name==='Earth' || (pal.liquidName==='water' && pal.atmos && pal.ground===0x3a7d34)) );
@@ -19914,7 +19947,7 @@ function* _hmChunkJob(i,j,seg){
   geo.setAttribute('color',new THREE.BufferAttribute(col,3));
   geo.setIndex(vc>65535?new THREE.Uint32BufferAttribute(idx,1):new THREE.Uint16BufferAttribute(idx,1));
   geo.computeBoundingSphere();
-  if(!TERRAIN.hmMat) TERRAIN.hmMat=new THREE.MeshStandardMaterial({vertexColors:true,roughness:0.95,metalness:0.0});
+  if(!TERRAIN.hmMat) TERRAIN.hmMat=_terrainDetailMat();
   const m=new THREE.Mesh(geo,TERRAIN.hmMat);
   if(GFX.shadows) m.receiveShadow=true;
   m.userData.chunk={i,j,seg};
@@ -19941,7 +19974,7 @@ function _hmChunkScatter(i,j){
     list.forEach((r,k)=>{ e.set(r.r[0],r.r[1],r.r[2]); q.setFromEuler(e); M.compose(new THREE.Vector3(r.x,r.h+r.s*0.3,r.z),q,new THREE.Vector3(r.s,r.s*r.sy,r.s)); im.setMatrixAt(k,M); im.setColorAt(k,r.c); });
     im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true;
     if(climb){ im.userData.climbable=true; im.userData.cliff=true; }
-    if(GFX.shadows){ im.castShadow=true; im.receiveShadow=true; }
+    if(GFX.shadows){ im.receiveShadow=true; im.castShadow=(GFX.shadowSize||0)>=1024; }
     im.computeBoundingSphere(); g.add(im);
   };
   mkRocks(rocks.filter(r=>r.s<=1.35),false); mkRocks(rocks.filter(r=>r.s>1.35),true);
@@ -20028,6 +20061,7 @@ function _surfStreamTick(dt){
   const px=p.pos.x, pz=p.pos.z;
   _surfStreamUpdate(px,pz,false);
   _surfStreamWork(GFX.isMobile?3:5);
+  try{ _tessTick(px,pz); }catch(e){ TERRAIN.tessCfg=null; console.warn('[tess]',e); }
   // GPU marching cubes: rebuild round her once she's past the middle of the patch
   const info=TERRAIN.mcGridInfo;
   if(TERRAIN.mcGpu&&!TERRAIN._mcBusy&&info&&Math.hypot(px-info.cx,pz-info.cz)>info.half*0.42){
@@ -20050,6 +20084,12 @@ function _surfStreamTick(dt){
   if(sky&&surfCamera){ const ll=_skyLatLon(_surfSite,px,pz); sky.update(surfCamera,dt,ll.lat,ll.lon); }
   else if(surfScene&&surfScene.userData.skyDome&&surfCamera) surfScene.userData.skyDome.position.copy(surfCamera.position);
   if(TERRAIN.starDome&&surfCamera) TERRAIN.starDome.position.copy(surfCamera.position);
+  // Low tier: the shadow map refreshes every third frame (her shadow still moves smoothly enough, a third of the cost)
+  if(surfRenderer&&surfRenderer.shadowMap){
+    const lowSh=GFX.shadows&&(GFX.shadowSize||0)<=512;
+    surfRenderer.shadowMap.autoUpdate=!lowSh;
+    if(lowSh){ TERRAIN._shF=((TERRAIN._shF||0)+1)%3; if(TERRAIN._shF===0) surfRenderer.shadowMap.needsUpdate=true; }
+  }
   // the sun's shadow box stays centred on her, lit from where the sun is now
   const sun=TERRAIN.sun;
   if(sun){
@@ -20086,6 +20126,210 @@ function _cpuMcTick(px,pz){
   }
   const now=performance.now();
   if(M.queue.length&&now-(M.lastT||0)>(GFX.isMobile?90:40)){ M.lastT=now; const [gx,gz]=M.queue.shift(); M.build(gx,gz); }
+}
+
+
+/* ══════════════════════════════════════════════════════════════
+   GROUND DETAIL — pebbles, cracks and grit drawn into the lighting
+   right where she walks, without extra geometry. One procedural height
+   per pixel; its screen-space slope bends the surface normal (the
+   derivative bump technique), so the detail catches real light, shadow
+   and specular. It fades out with distance, and the tier decides how
+   much is layered: Low = grit + cracks, Medium + pebbles, High/Ultra +
+   finer pebbles and a wider reach.
+   ══════════════════════════════════════════════════════════════ */
+function _terrainDetailMat(opts){
+  opts=opts||{};
+  const tier=(typeof resolvePreset==='function')?resolvePreset():'medium';
+  const lvl=({low:1,medium:2,high:3,ultra:3,custom:2})[tier]||2;
+  const reach=({1:22,2:30,3:40})[lvl];
+  let m;
+  try{
+    m=new THREE.MeshStandardNodeMaterial({vertexColors:true,roughness:0.94,metalness:0.0,side:opts.side||THREE.FrontSide});
+    const W=window;
+    const p=W.positionWorld;
+    const dist=W.length(W.positionView);
+    // fades with distance, and stays on walkable ground (cliff faces keep their strata)
+    const flat=W.smoothstep(W.float(0.6),W.float(0.88),W.normalWorld.y);
+    const fade=W.float(1).sub(W.smoothstep(W.float(reach*0.45),W.float(reach),dist)).mul(flat);
+    // the detail height at a ground point (x,z); returns {h, crack, peb}
+    const field=(xz)=>{
+      const crk=W.float(1).sub(W.abs(W.mx_fractal_noise_float(xz.mul(0.55).add(W.vec3(17,0,3)),3,2.0,0.5)));
+      const crack=W.smoothstep(W.float(0.95),W.float(0.995),crk);
+      let h=crack.mul(-0.6), peb=W.float(0);
+      if(lvl>=2){
+        const patch=W.smoothstep(W.float(0.42),W.float(0.68),W.mx_fractal_noise_float(xz.mul(0.18).add(W.vec3(41,0,7)),2,2.0,0.5).mul(0.5).add(0.5));
+        const f1=W.mx_worley_noise_float(xz.mul(2.6),1.0,0);
+        peb=W.float(1).sub(W.smoothstep(W.float(0.04),W.float(0.3),f1)).mul(patch.mul(0.8).add(0.2));
+        if(lvl>=3){
+          const f2=W.mx_worley_noise_float(xz.mul(6.1).add(W.vec3(5,0,9)),1.0,0);
+          peb=W.max(peb,W.float(1).sub(W.smoothstep(W.float(0.04),W.float(0.3),f2)).mul(0.5));
+          h=h.add(W.mx_fractal_noise_float(xz.mul(3.2),2,2.0,0.5).mul(0.1));   // grit
+        }
+        h=h.add(peb.mul(0.45));
+      }
+      return {h,crack,peb};
+    };
+    const xz=W.vec3(p.x,W.float(0),p.z);
+    const F0=field(xz);
+    if(lvl>=2){
+      // slope of the detail in world space (finite differences) — the same on every GPU backend
+      const e=0.05, k=W.float(opts.strength||0.55).mul(fade);
+      const gx=field(xz.add(W.vec3(e,0,0))).h.sub(F0.h).div(e);
+      const gz=field(xz.add(W.vec3(0,0,e))).h.sub(F0.h).div(e);
+      const nW=W.normalize(W.normalWorld.add(W.vec3(gx.negate(),W.float(0),gz.negate()).mul(k)));
+      m.normalNode=W.normalize(W.cameraViewMatrix.mul(W.vec4(nW,0)).xyz);
+    }
+    // cracks shade darker, pebbles a touch lighter and glossier (Low: the colour only)
+    m.colorNode=W.vertexColor().mul(W.float(1).sub(F0.crack.mul(0.32).mul(fade)).add(F0.peb.mul(0.06).mul(fade)));
+    m.roughnessNode=W.float(0.95).sub(F0.peb.mul(0.28).mul(fade));
+    m.userData.dmDetail=lvl;
+    // the coarse ground is cut away where the tessellated patch round her takes over
+    if(!opts.noHole&&TESS_HOLE.c){
+      m.alphaTest=0.5;
+      m.opacityNode=W.step(TESS_HOLE.r,W.distance(W.vec2(p.x,p.z),TESS_HOLE.c));
+    }
+  }catch(e){
+    console.warn('[ground detail] plain material:',e);
+    m=new THREE.MeshStandardMaterial({vertexColors:true,roughness:0.95,metalness:0.0,side:opts.side||THREE.FrontSide});
+  }
+  return m;
+}
+
+
+/* ══════════════════════════════════════════════════════════════
+   NEAR-GROUND TESSELLATION — real geometry, not just lighting.
+   A dense patch (≈0.4–0.6 units between vertices, by tier) follows her.
+   Its vertices sit on the ground and are pushed by a procedural
+   deformation field — erosion rills, lumps and half-buried rocks — at
+   full strength round her, blending to nothing at the patch edge where
+   it meets the coarser terrain. The coarse ground under it is cut away
+   (a shared hole uniform), the patch casts and receives shadows, and she
+   walks on exactly this surface. It is rebuilt a few rows per frame as
+   she moves, and swapped in only when complete.
+   ══════════════════════════════════════════════════════════════ */
+const TESS_TIER={low:{half:20,seg:64,amp:0.7},medium:{half:28,seg:112,amp:0.85},high:{half:36,seg:160,amp:1},ultra:{half:40,seg:200,amp:1},custom:{half:28,seg:112,amp:0.85}};
+// shared by every coarse terrain material: the round hole the patch fills
+const TESS_HOLE={c:null,r:null};
+window.__whenThreeReady(function(){ TESS_HOLE.c=uniform(new THREE.Vector2(0,0)); TESS_HOLE.r=uniform(0); });
+// the deformation itself (units), at a world point — CPU, used for the mesh and for walking
+function _tessDeform(x,z){
+  const s=(TERRAIN.seed||1)+307, amp=TERRAIN.tessCfg?TERRAIN.tessCfg.amp:1;
+  // broad lumps
+  let d=(_fbm(x*0.32+s,z*0.32-s,s,3)-0.5)*0.7;
+  // erosion rills: narrow channels running downhill-ish (ridged noise, carved)
+  const r=1-Math.abs(_fbm(x*0.11+s*1.7,z*0.07-s,s+11,3)*2-1);
+  d-=Math.pow(Math.max(0,(r-0.86)/0.14),1.6)*0.55;
+  // half-buried rocks in patches
+  const patch=_fbm(x*0.05-s,z*0.05+s,s+23,2);
+  if(patch>0.5){
+    const cx=Math.floor(x*0.7), cz=Math.floor(z*0.7);
+    for(let i=0;i<2;i++){
+      const gx=cx+i, gz=cz;
+      const hsh=Math.sin(gx*127.1+gz*311.7+s)*43758.5453, hf=hsh-Math.floor(hsh);
+      if(hf>0.62) continue;
+      const ox=(gx+0.5)/0.7, oz=(gz+0.5)/0.7, rr=0.35+hf*0.6;
+      const dd=Math.hypot(x-ox,z-oz)/rr;
+      if(dd<1) d+=Math.sqrt(1-dd*dd)*rr*0.75*Math.min(1,(patch-0.5)*4);
+    }
+  }
+  return d*amp;
+}
+// weight of the deformation: full in the middle, nothing at the edge
+function _tessW(x,z,T){
+  const dx=Math.abs(x-T.cx)/T.half, dz=Math.abs(z-T.cz)/T.half, e=Math.max(dx,dz);
+  const u=Math.min(1,Math.max(0,(e-0.62)/0.33)); return 1-u*u*(3-2*u);
+}
+function* _tessJob(cx,cz){
+  const cfg=TERRAIN.tessCfg, half=cfg.half, seg=cfg.seg, n=seg+1, step=half*2/seg, nb=n+2;
+  const T={cx,cz,half}, base=TERRAIN.tessBase, pal=TERRAIN.pal, seed=TERRAIN.seed;
+  const wx=TERRAIN.wx0||0, wz=TERRAIN.wz0||0;
+  const o={siteBias:(typeof TERRAIN.siteBias==='number')?TERRAIN.siteBias:0,siteLat:TERRAIN.siteLat||0,style:TERRAIN.style};
+  const hb=new Float32Array(nb*nb), x0=cx-half, z0=cz-half;
+  for(let r=0;r<nb;r++){
+    for(let c=0;c<nb;c++){ const x=x0+(c-1)*step, z=z0+(r-1)*step; hb[r*nb+c]=base(x,z)+_tessDeform(x,z)*_tessW(x,z,T); }
+    if(r%6===5) yield;
+  }
+  const pos=new Float32Array(n*n*3), nor=new Float32Array(n*n*3), col=new Float32Array(n*n*3);
+  for(let r=0;r<n;r++){
+    for(let c=0;c<n;c++){
+      const k=r*n+c, h=hb[(r+1)*nb+c+1];
+      let nx=hb[(r+1)*nb+c]-hb[(r+1)*nb+c+2], ny=2*step, nz=hb[r*nb+c+1]-hb[(r+2)*nb+c+1];
+      const L=Math.hypot(nx,ny,nz)||1; nx/=L; ny/=L; nz/=L;
+      const x=x0+c*step, z=z0+r*step;
+      pos[k*3]=x; pos[k*3+1]=h; pos[k*3+2]=z; nor[k*3]=nx; nor[k*3+1]=ny; nor[k*3+2]=nz;
+      const cc=surfaceBiomeColor(x+wx,z+wz,h,Math.min(1,(1-ny)*1.6),pal,seed,o);
+      col[k*3]=cc.r; col[k*3+1]=cc.g; col[k*3+2]=cc.b;
+    }
+    if(r%8===7) yield;
+  }
+  const idx=new Uint32Array(seg*seg*6); let q=0;
+  for(let r=0;r<seg;r++) for(let c=0;c<seg;c++){ const a=r*n+c, b=a+1, cI=a+n, d=cI+1; idx[q++]=a; idx[q++]=cI; idx[q++]=b; idx[q++]=b; idx[q++]=cI; idx[q++]=d; }
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  geo.setAttribute('normal',new THREE.BufferAttribute(nor,3));
+  geo.setAttribute('color',new THREE.BufferAttribute(col,3));
+  geo.setIndex(new THREE.BufferAttribute(idx,1));
+  geo.computeBoundingSphere();
+  if(!TERRAIN.tessMat){ TERRAIN.tessMat=_terrainDetailMat({noHole:true}); TERRAIN.tessMat.polygonOffset=true; TERRAIN.tessMat.polygonOffsetFactor=-2; TERRAIN.tessMat.polygonOffsetUnits=-4; }
+  const m=new THREE.Mesh(geo,TERRAIN.tessMat);
+  m.name='JOTS_TessPatch'; m.userData.climbable=true;
+  if(GFX.shadows){ m.receiveShadow=true; m.castShadow=(GFX.shadowSize||0)>=1024; }
+  return {mesh:m,T};
+}
+// set up for this landing (after the ground's own collision is in place)
+function _tessInit(){
+  const tier=(typeof resolvePreset==='function')?resolvePreset():'medium';
+  if(GFX.tessellation===false){ TERRAIN.tessCfg=null; return; }
+  TERRAIN.tessCfg=Object.assign({},TESS_TIER[tier]||TESS_TIER.medium);
+  TERRAIN.tess=null; TERRAIN._tessJob=null; TERRAIN.tessMat=null;
+  // the ground the patch sits on: the same surface she already walks on
+  const H=TERRAIN.H, seed=TERRAIN.seed;
+  if(TERRAIN.cpuMc){
+    // CPU marching cubes: the top of its density field (H plus the cave term) — cheap, no raycasts
+    TERRAIN.tessBase=(x,z)=>{ const g=H(x,z); const cn=_fbm(x*0.05+seed*7.7,z*0.05+seed*7.7,seed+41,3)*_fbm(g*0.08,x*0.02-z*0.02,seed+53,3); return g+Math.max(-5,Math.min(10,cn*12)); };
+  } else {
+    const prev=_surfHeight; TERRAIN.tessBase=(x,z)=>prev(x,z);
+  }
+  // she walks on the patch where it replaces the ground
+  const under=_surfHeight;
+  _surfHeight=(x,z)=>{
+    const T=TERRAIN.tess;
+    if(T&&Math.hypot(x-T.cx,z-T.cz)<T.half*0.8) return TERRAIN.tessBase(x,z)+_tessDeform(x,z)*_tessW(x,z,T);
+    return under(x,z);
+  };
+  window._surfHeight=_surfHeight;
+  const underN=window._surfNormal;
+  window._surfNormal=(x,z)=>{
+    const T=TERRAIN.tess;
+    if(T&&Math.hypot(x-T.cx,z-T.cz)<T.half*0.8){ const e=0.3, h=_surfHeight(x,z), hx=_surfHeight(x+e,z), hz=_surfHeight(x,z+e); return new THREE.Vector3(-(hx-h),e,-(hz-h)).normalize(); }
+    return underN?underN(x,z):new THREE.Vector3(0,1,0);
+  };
+}
+function _tessTick(px,pz){
+  const cfg=TERRAIN.tessCfg; if(!cfg||!TERRAIN.group) return;
+  const T=TERRAIN.tess;
+  if(!TERRAIN._tessJob&&(!T||Math.hypot(px-T.cx,pz-T.cz)>cfg.half*0.22)){
+    const step=cfg.half*2/cfg.seg, cx=Math.round(px/step)*step, cz=Math.round(pz/step)*step;
+    TERRAIN._tessJob=_tessJob(cx,cz);
+  }
+  const J=TERRAIN._tessJob; if(!J) return;
+  // the first patch is built at once (part of landing); later ones a slice per frame
+  // nearing the edge of the old patch (very fast movement): finish it now rather than show the seam
+  const urgent=!T||Math.hypot(px-T.cx,pz-T.cz)>cfg.half*0.6;
+  const t0=performance.now(), budget=urgent?1e9:(GFX.isMobile?3:5);
+  while(performance.now()-t0<budget){
+    const r=J.next();
+    if(r.done){
+      TERRAIN._tessJob=null;
+      if(!r.value||!TERRAIN.group) return;
+      if(TERRAIN.tessMesh){ TERRAIN.group.remove(TERRAIN.tessMesh); TERRAIN.tessMesh.geometry.dispose(); }
+      TERRAIN.group.add(r.value.mesh); TERRAIN.tessMesh=r.value.mesh; TERRAIN.tess=r.value.T;
+      // cut the coarse ground away under it
+      if(TESS_HOLE.c){ TESS_HOLE.c.value.set(r.value.T.cx,r.value.T.cz); TESS_HOLE.r.value=r.value.T.half*0.8; }
+      return;
+    }
+  }
 }
 
 // Recursively decide tile subdivision around a focus point (the player).
@@ -20534,7 +20778,7 @@ function _surfRemountSkyboardFinish(){
   if(CHAR.loaded && CHAR.root && CHAR.root.parent) CHAR.root.parent.remove(CHAR.root);
   if(surfScene)disposeObject3D(surfScene); // free terrain/water/skyboard GPU memory (see disposeObject3D)
   _surfFluidStop();surfScene=null;surfPlayer=null;surfBoard=null;surfTerrainMesh=null;TERRAIN.mcGroup=null;TERRAIN._mcBuildGen=(TERRAIN._mcBuildGen||0)+1;
-  TERRAIN.tiles.clear();TERRAIN.group=null;TERRAIN.mcDensityArray=null;TERRAIN.mcGridInfo=null;TERRAIN.hm=null;TERRAIN.cpuMc=null;TERRAIN.mcGpu=false;TERRAIN.waterFollow=null;TERRAIN.sun=null;TERRAIN.starDome=null;TERRAIN.sky=null;TERRAIN.hmMat=null;TERRAIN.rockGeo=null;
+  TERRAIN.tiles.clear();TERRAIN.group=null;TERRAIN.mcDensityArray=null;TERRAIN.mcGridInfo=null;TERRAIN.hm=null;TERRAIN.cpuMc=null;TERRAIN.mcGpu=false;TERRAIN.waterFollow=null;TERRAIN.sun=null;TERRAIN.starDome=null;TERRAIN.sky=null;TERRAIN.tess=null;TERRAIN.tessMesh=null;TERRAIN._tessJob=null;if(TESS_HOLE.r)TESS_HOLE.r.value=0;TERRAIN.hmMat=null;TERRAIN.rockGeo=null;
   window._surfWaterAt=function(){ return false; };
   window._surfClimbNormal=function(){ return null; };
   enterAtmosphericFlight(body,site,start);
@@ -20575,7 +20819,7 @@ function _exitSurfaceFinish(){
   if(surfScene)disposeObject3D(surfScene); // free terrain/water/skyboard GPU memory (see disposeObject3D)
   if(surfRenderer){surfRenderer.dispose();}
   _surfFluidStop();surfScene=null;surfPlayer=null;surfBoard=null;surfTerrainMesh=null;TERRAIN.mcGroup=null;TERRAIN._mcBuildGen=(TERRAIN._mcBuildGen||0)+1;
-  TERRAIN.tiles.clear();TERRAIN.group=null;TERRAIN.mcDensityArray=null;TERRAIN.mcGridInfo=null;TERRAIN.hm=null;TERRAIN.cpuMc=null;TERRAIN.mcGpu=false;TERRAIN.waterFollow=null;TERRAIN.sun=null;TERRAIN.starDome=null;TERRAIN.sky=null;TERRAIN.hmMat=null;TERRAIN.rockGeo=null;
+  TERRAIN.tiles.clear();TERRAIN.group=null;TERRAIN.mcDensityArray=null;TERRAIN.mcGridInfo=null;TERRAIN.hm=null;TERRAIN.cpuMc=null;TERRAIN.mcGpu=false;TERRAIN.waterFollow=null;TERRAIN.sun=null;TERRAIN.starDome=null;TERRAIN.sky=null;TERRAIN.tess=null;TERRAIN.tessMesh=null;TERRAIN._tessJob=null;if(TESS_HOLE.r)TESS_HOLE.r.value=0;TERRAIN.hmMat=null;TERRAIN.rockGeo=null;
   window._surfWaterAt=function(){ return false; };
   window._surfClimbNormal=function(){ return null; };
   // Re-mount her onto the real flight board now that we're back in open
@@ -20608,6 +20852,7 @@ function _exitSurfaceFinish(){
     try{upgradePlanetLOD(dt);}catch(e){_animLoopWarn('upgradePlanetLOD',e);}
       try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){_animLoopWarn('skyboardStance',e);}
     try{ updateCharOrbitCamera(); }catch(e){_animLoopWarn('charOrbit',e);}
+    try{ _dynRes(flightRenderer); }catch(e){}
     try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){_animLoopWarn('charMixer',e);}
     try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){_animLoopWarn('headOverride',e);}
       try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);}
