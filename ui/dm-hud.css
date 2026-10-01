@@ -54,34 +54,59 @@
   clip-path:polygon(10px 0,100% 0,100% 100%,0 100%);}
 #screen-flight .art-btn.progress-btn:hover{background:linear-gradient(180deg,rgba(90,220,150,.36),rgba(90,220,150,.12));color:#d4ffe6;}
 
-/* centre crown: a half-hexagon hanging from the top edge */
+/* centre crown: a frosted kite traced from the Nomad Sculpt drawing.
+   Tips (as % of the box): left 0/48, top 21/0, right 100/47, bottom 21/100.
+   The title, destination and gauges are staggered down the kite's body. */
 #screen-flight .hud-c{
-  position:relative;isolation:isolate;margin-top:-10px;padding:7px 30px 9px;text-align:center;
-  background:linear-gradient(180deg,rgba(var(--acc-rgb),.5),rgba(var(--hi-rgb),.28));
-  clip-path:polygon(0 0,100% 0,calc(100% - 26px) 100%,26px 100%);
+  --kite:polygon(0 48%,21% 0,100% 47%,21% 100%);
+  position:relative;isolation:isolate;width:360px;height:160px;padding:0;text-align:left;
+  /* --ks shrinks the kite; the negative margins hand the freed space back to the grid */
+  transform:scale(var(--ks,1));transform-origin:50% 0;
+  margin:0 calc(-180px * (1 - var(--ks,1))) calc(-160px * (1 - var(--ks,1)));
+  background:linear-gradient(158deg,rgba(var(--hi-rgb),.2),rgba(var(--panel-rgb),.3) 42%,rgba(var(--panel-rgb),.26) 60%,rgba(var(--acc-rgb),.24));
+  backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);
+  clip-path:var(--kite);
 }
-#screen-flight .hud-c::before{content:'';position:absolute;inset:0 1px 1px;z-index:-1;
-  background:linear-gradient(180deg,rgba(var(--panel-rgb),.62),rgba(var(--panel-rgb),.32));
-  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);clip-path:polygon(0 0,100% 0,calc(100% - 26px) 100%,26px 100%);}
-#screen-flight .hud-c::after{content:'';position:absolute;left:32%;right:32%;bottom:1px;height:2px;background:linear-gradient(90deg,transparent,var(--cyan),transparent);}
-#screen-flight .art-logo{font-size:.72rem;letter-spacing:.38em;color:var(--text);text-shadow:0 0 10px rgba(var(--acc-rgb),.7);margin-bottom:4px;}
-#screen-flight .art-stats{display:flex;align-items:center;justify-content:center;gap:14px;font-family:var(--font-hud);font-size:.48rem;color:var(--text-dim);}
+/* upper facet catches a little more light, so the kite reads as folded */
+#screen-flight .hud-c::before{content:'';position:absolute;inset:0;z-index:-1;pointer-events:none;
+  background:linear-gradient(170deg,rgba(255,255,255,.1),rgba(255,255,255,.02) 70%);
+  clip-path:polygon(0 48%,21% 0,100% 47%);}
+#screen-flight .hud-c::after{display:none;}
+#screen-flight .kite-edge{position:absolute;inset:0;width:100%;height:100%;z-index:-1;pointer-events:none;overflow:visible;}
+#screen-flight .kite-edge .ks-a{stop-color:var(--gold);}
+#screen-flight .kite-edge .ks-b{stop-color:var(--purple);}
+#screen-flight .kite-edge .ks-c{stop-color:var(--cyan);}
+#screen-flight .kite-line{fill:none;stroke:url(#kite-grad);stroke-width:1.6;stroke-linejoin:round;vector-effect:non-scaling-stroke;
+  filter:drop-shadow(0 0 3px rgba(var(--pur-rgb),.9));}
+#screen-flight .kite-ridge{fill:none;stroke:rgba(255,255,255,.1);stroke-width:1;vector-effect:non-scaling-stroke;}
+
+#screen-flight .hud-c .art-logo,#screen-flight .hud-c .hud-g,#screen-flight .hud-c .hud-dest{position:absolute;transform:translate(-50%,-50%);white-space:nowrap;}
+#screen-flight .art-logo{left:40%;top:26%;margin:0;font-size:.72rem;letter-spacing:.38em;color:var(--text);text-shadow:0 0 10px rgba(var(--acc-rgb),.7);}
+#screen-flight .art-stats{position:absolute;inset:0;font-family:var(--font-hud);font-size:.48rem;color:var(--text-dim);}
 #screen-flight .hud-g{display:flex;align-items:center;gap:5px;}
+#screen-flight .hud-c .hud-g:nth-child(1){left:24.5%;top:64%;}
+#screen-flight .hud-c .hud-g:nth-child(2){left:52%;top:64%;}
 #screen-flight .g-lbl{font-size:.48rem;letter-spacing:.16em;color:var(--cyan);}
 #screen-flight .g-ring{width:24px;height:24px;transform:rotate(-90deg);}
 #screen-flight .g-track{fill:none;stroke:rgba(var(--acc-rgb),.16);stroke-width:4;}
 #screen-flight .g-arc{fill:none;stroke:var(--cyan);stroke-width:4;stroke-linecap:round;stroke-dasharray:0 100.5;
   filter:drop-shadow(0 0 3px rgba(var(--acc-rgb),.9));transition:stroke-dasharray .35s ease;}
-#screen-flight .g-val{font-family:var(--font-mono);font-size:.54rem;color:var(--text);min-width:52px;text-align:left;}
+#screen-flight .g-val{font-family:var(--font-mono);font-size:.54rem;color:var(--text);min-width:44px;text-align:left;}
 #screen-flight .g-val span{color:var(--text);}
-#screen-flight .hud-dest{text-align:left;font-family:var(--font-hud);font-size:.46rem;letter-spacing:.1em;color:var(--cyan);line-height:1.5;}
+#screen-flight .hud-dest{left:60%;top:45%;display:flex;align-items:baseline;gap:10px;max-width:46%;
+  font-family:var(--font-hud);font-size:.46rem;letter-spacing:.1em;color:var(--cyan);line-height:1.5;}
+#screen-flight .hud-dest>div:first-child{overflow:hidden;text-overflow:ellipsis;min-width:0;}
 #screen-flight .hud-dest span{color:var(--cyan);}
-#screen-flight .hud-eta{color:var(--text-dim);font-size:.42rem;}
+#screen-flight .hud-eta{flex:none;color:var(--text-dim);font-size:.42rem;}
 
 /* things under the top bar sit just below it */
 #screen-flight #orbit-skyboard-btn{top:96px !important;}
-#jots-mp-hud{top:calc(84px + env(safe-area-inset-top,0px)) !important;}
-#jots-chat{top:calc(124px + env(safe-area-inset-top,0px)) !important;}
+/* online/chat chip rides beside INITIALIZE PROGRESS; the chat log opens under the ORBIT tab */
+#screen-flight .hud-r-row{display:flex;align-items:center;justify-content:flex-end;gap:10px;}
+#screen-flight .hud-r-row #jots-mp-hud{position:static;transform:none;}
+#jots-chat{top:calc(138px + env(safe-area-inset-top,0px)) !important;}
+/* pop-ups (discoveries, targets) float just under the kite */
+#screen-flight #disc-chip{top:182px !important;}
 body:has(#screen-flight.active) #fs-exit,body:has(#screen-flight.active) #fs-enter{top:56px !important;left:0 !important;border-radius:0 6px 6px 0 !important;}
 
 /* ── edge tabs: half-hexagons docked flush to the screen edges ───────── */
@@ -145,33 +170,47 @@ body:has(#screen-flight.active) #fs-exit,body:has(#screen-flight.active) #fs-ent
 
 /* ── fit the top bar on tablets and phones ───────────────────────────── */
 @media (max-width:1240px){
-  #screen-flight .hud-dest{display:none;}
+  #screen-flight .hud-c{--ks:.86;}
+  #screen-flight #disc-chip{top:160px !important;}
   #screen-flight .art-btn{padding:0 9px;letter-spacing:.12em;}
-  #screen-flight .g-val{min-width:44px;}
 }
 @media (max-width:1080px){
   #screen-flight #audio-player .aud-btn:nth-child(n+5){display:none;}
   #screen-flight .aud-btn{width:30px;}
   #screen-flight .art-btn{padding:0 7px;font-size:.46rem;gap:4px;}
   #screen-flight .art-btn.progress-btn{font-size:.48rem;}
-}
-@media (max-width:900px){
-  #screen-flight #ar-top{grid-template-columns:auto auto minmax(0,1fr);gap:6px;padding:8px 6px 0;}
-  #screen-flight .hud-c{padding:5px 20px 7px;}
-  #screen-flight .art-logo{font-size:.56rem;letter-spacing:.24em;margin-bottom:2px;}
-  #screen-flight .art-stats{gap:8px;}
-  #screen-flight .g-ring{width:20px;height:20px;}
-  #screen-flight .g-val{min-width:40px;font-size:.48rem;}
+  #screen-flight .hud-c{--ks:.74;}
   /* icon-only chips so the whole row fits */
   #screen-flight .hud-r .art-btn:not(#cam-btn):not(.progress-btn){font-size:0;padding:0 9px;gap:0;}
   #screen-flight .hud-r .art-btn:not(#cam-btn):not(.progress-btn) .ic{font-size:.8rem;}
+  #screen-flight #disc-chip{top:140px !important;}
+}
+@media (max-width:900px){
+  #screen-flight #ar-top{grid-template-columns:auto auto minmax(0,1fr);gap:6px;padding:8px 6px 0;}
   #screen-flight .hud-r .art-btns{overflow-x:auto;}
 }
 @media (max-width:620px){
   #screen-flight #audio-player .aud-btn:nth-child(n+3){display:none;}
-  #screen-flight .hud-c .art-logo{display:none;}
+  /* portrait phones: chips on the first row, the kite centred on its own row beneath */
+  #screen-flight #ar-top{grid-template-columns:auto minmax(0,1fr);row-gap:4px;}
+  #screen-flight .hud-c{--ks:.6;grid-row:2;grid-column:1/-1;justify-self:center;}
+  #screen-flight #disc-chip{top:214px !important;}
+  /* edge tabs step down below the kite */
+  #screen-flight #logs-toggle-btn{top:216px;}
+  #screen-flight #qt-toggle-btn{top:254px;}
+  #screen-flight #temple-toggle-btn{top:292px !important;}
+  #screen-flight #shard-game-btn{top:330px !important;}
+  #screen-flight #shard-return-btn{top:368px !important;}
+  #screen-flight #hud-logs-panel{top:338px;}
+  #screen-flight #qt-panel{top:292px;}
+  #screen-flight #orbit-skyboard-btn{top:216px !important;}
+  #jots-chat{top:calc(254px + env(safe-area-inset-top,0px)) !important;}
+  #screen-flight .hud-r-row{flex-direction:column;align-items:flex-end;gap:6px;}
+  #screen-flight .hud-r-row #jots-mp-hud{order:2;}
 }
 @media (max-height:560px){
+  #screen-flight .hud-c{--ks:.72;}
+  #screen-flight #disc-chip{top:134px !important;}
   #screen-flight .joystick-zone{width:96px;height:96px;}
   #screen-flight .joystick-knob{width:36px;height:36px;}
   #screen-flight .art-btn,#screen-flight .aud-btn{height:28px;}

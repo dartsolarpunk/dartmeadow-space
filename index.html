@@ -1461,6 +1461,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     </div>
     <!-- Centre: title + SPD / ALT gauges + destination -->
     <div class="hud-c">
+      <svg class="kite-edge" viewBox="0 0 360 160" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="kite-grad" x1="0" y1="0" x2="0.35" y2="1"><stop offset="0" class="ks-a"/><stop offset=".55" class="ks-b"/><stop offset="1" class="ks-c"/></linearGradient></defs><polygon class="kite-line" points="1.5,77 75.6,1.5 358.5,75.2 75.6,158.5"/><polyline class="kite-ridge" points="2,77 358,75.2"/></svg>
       <div class="art-logo">DART MEADOW</div>
       <div class="art-stats">
         <div class="hud-g" title="Speed"><span class="g-lbl">SPD</span><svg class="g-ring" viewBox="0 0 40 40" aria-hidden="true"><circle class="g-track" cx="20" cy="20" r="16"/><circle class="g-arc" id="g-spd" cx="20" cy="20" r="16"/></svg><span class="g-val"><span id="hud-speed">0.000</span>c³</span></div>
@@ -1479,7 +1480,9 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
       <button class="art-btn" onclick="promptExit()" title="Exit"><i class="ic">⏻</i>EXIT</button>
       <button class="art-btn profile-btn" id="profile-btn" onclick="openProfileMenu()" title="Your profile and display options"><span class="pf-av-mini" id="profile-btn-av">◉</span><span>PROFILE</span></button>
       </div>
-      <button class="art-btn progress-btn" id="init-progress-btn" onclick="quickSave()" title="Initialize Progress: save right here. Signed in, it also goes to your private jots- repository. The game also initializes progress by itself at milestones and every 15 minutes.">⟐ INITIALIZE PROGRESS</button>
+      <div class="hud-r-row">
+        <button class="art-btn progress-btn" id="init-progress-btn" onclick="quickSave()" title="Initialize Progress: save right here. Signed in, it also goes to your private jots- repository. The game also initializes progress by itself at milestones and every 15 minutes.">⟐ INITIALIZE PROGRESS</button>
+      </div>
     </div>
   </div>
   <!-- Free 360° orbit around the mounted skyboard/character — drag or
@@ -20021,7 +20024,8 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
   };
   function camDist2(v){ try{ return flightCamera.position.distanceToSquared(v); }catch(e){ return 0; } }
 
-  // HUD: players online + chat.
+  // HUD: players online + chat. The chip sits beside INITIALIZE PROGRESS so it never covers the pop-ups under the title.
+  (function(){ const row=document.querySelector('#screen-flight .hud-r-row'), hud=$j('jots-mp-hud'); if(row&&hud) row.insertBefore(hud,row.firstChild); })();
   function hudRefresh(){
     if(!window.JOTS) return;
     const mp=J().mp, on=mp.active&&typeof STATE!=='undefined'&&STATE.screen==='flight';
