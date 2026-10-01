@@ -121,8 +121,8 @@ if(location.search.indexOf('debug')!==-1){
   });
 })();</script>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-<script src="ui/dm-theme.js?v=78"></script>
-<script src="ui/dm-fluid.js?v=78"></script>
+<script src="ui/dm-theme.js?v=79"></script>
+<script src="ui/dm-fluid.js?v=79"></script>
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js",
@@ -952,7 +952,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   // Picks up the result if signInWithRedirect was used (popup-blocked fallback)
   getRedirectResult(fbAuth).catch(err => console.warn('redirect result:', err));
 </script>
-<script src="jots/jots-link.js?v=78" defer></script>
+<script src="jots/jots-link.js?v=79" defer></script>
 </head>
 <body>
 <!-- LOADING -->
@@ -2088,7 +2088,16 @@ function resumeJourney(data){
     _followInit=false;
     // Stay beside it while it carries on round its orbit (⚓ to let go).
     if(b&&typeof ANCHOR_STATE!=='undefined'){ ANCHOR_STATE.active=true;ANCHOR_STATE.target=b;ANCHOR_STATE._lastPos=b.mesh.position.clone();try{updateAnchorButton();}catch(e){} }
-    toast('▶ Back where you left off'+(b?' — beside '+b.name+' · anchored (⚓ to release)':'')+(want!=='Sol'?' · '+want:''),3600);
+    // how long they were away on the shared world clock (the world kept going)
+    let away='';
+    try{
+      const ms=Date.now()-(data.ts||Date.now());
+      if(ms>3600e3){
+        const d=Math.floor(ms/86400e3), h=Math.floor(ms/3600e3)%24, yrs=ms/1000/SOL_EARTH_YEAR_WALL_SEC;
+        away=' · away '+(d?d+'d ':'')+h+'h — the planets have moved on '+(yrs>=10?Math.round(yrs):yrs.toFixed(1))+' Earth-years';
+      }
+    }catch(e){}
+    toast('▶ Back where you left off'+(b?' — beside '+b.name+' · anchored (⚓ to release)':'')+(want!=='Sol'?' · '+want:'')+away,away?6000:3600);
   })();
 }
 window.quickSave=quickSave;window.resumeJourney=resumeJourney;
@@ -3843,7 +3852,7 @@ const GFX_STORE_KEY='dm_gfx_v2';
 const GFX_KNOB_KEYS=['preset','resScale','shadows','shadowSize','envReflections','caustics','fakeGI','refraction','ssao','volumetricDust','dustDensity','aniso','antialias','pathTraceAccents','showCharDebug'];
 function saveGfxChoice(){
   try{
-    const payload={chosen:true, resolved:resolvePreset()};
+    const payload={chosen:true, resolved:resolvePreset(), ts:Date.now()};
     GFX_KNOB_KEYS.forEach(k=>{payload[k]=GFX[k];});
     if(GFX.budgets)payload.budgets=Object.assign({},GFX.budgets);
     if(typeof STATE!=='undefined'&&STATE&&STATE.settings){
@@ -4020,7 +4029,8 @@ function applyGfxScreen(){
   // First-launch path: menu hasn't been revealed yet
   if(!$('app').classList.contains('vis')){ _revealMenuAfterGfx(); }
   // If flight already running, a rebuild is needed for shadow/quality changes
-  if(typeof flightInited!=='undefined'&&flightInited){ toast('✅ Graphics applied — re-enter flight for full effect'); if(typeof applyRenderSettings==='function')applyRenderSettings(); }
+  try{ applyGraphicsLive(); }catch(e){}
+  toast('✅ Graphics: '+(GFX.preset==='auto'?'AUTO ('+resolvePreset().toUpperCase()+')':String(GFX.preset).toUpperCase())+' — applied');
 }
 
 // Build a small cubemap env so PBR materials get reflections everywhere.
@@ -4115,6 +4125,17 @@ const FLIGHT_BOARD_WORLD_SCALE = PLANET_VIS_SCALE / FLIGHT_BOARD_REF_EARTH;
 const SOL_GAME_DAYS_PER_EARTH_YEAR = 365.256363; // sidereal
 const SOL_EARTH_YEAR_WALL_SEC = 20 * 60;         // playable wall seconds / Earth year
 const SOL_EARTH_MEAN_MOTION = (2 * Math.PI / SOL_EARTH_YEAR_WALL_SEC) / 60;
+// ── Shared world clock ──────────────────────────────────────────
+// One clock for every player: real UTC time since the world's epoch (the
+// date the planets' lon0 positions describe). The Solar System is placed
+// from it every frame, so everyone online sees the same sky at the same
+// moment, and a player who comes back days later finds the world has moved
+// on by exactly that long — progress is theirs, the world's age is shared.
+// Graphics settings never touch it.
+const WORLD_EPOCH_MS = Date.UTC(2026, 8, 28);
+function worldSeconds(){ return (Date.now() - WORLD_EPOCH_MS) / 1000; }
+function _solMeanAnomNow(lon0, meanMotion){ const a = lon0 + meanMotion * 60 * worldSeconds(); return a % (2 * Math.PI); }
+window.worldSeconds = worldSeconds;
 
 let flightFlybys=[]; // comets / belt / other named flybys for proximity labels
 let oortCloudGroup=null;
@@ -4873,10 +4894,8 @@ async function initFlightScene(){
   flightRenderer.toneMappingExposure=1.0;
   flightRenderer.outputColorSpace=THREE.SRGBColorSpace;
   // Real-time shadow maps (soft PCF) — disabled on low tier for framerate
-  if(GFX.shadows){
-    flightRenderer.shadowMap.enabled=true;
-    flightRenderer.shadowMap.type=THREE.PCFSoftShadowMap;
-  }
+  flightRenderer.shadowMap.enabled=!!GFX.shadows;      // switched live by applyGraphicsLive
+  flightRenderer.shadowMap.type=THREE.PCFSoftShadowMap;
 
   flightScene=new THREE.Scene();
 
@@ -6225,8 +6244,9 @@ async function buildSolarSystem(){
     pl.semiMajor = pl.oR;
     pl.meanMotion = SOL_EARTH_MEAN_MOTION / pl.period; // orbitSpd convention
     pl.spd = pl.meanMotion;
-    // Present-day epoch mean anomaly ≈ mean longitude (radians); no Math.random
-    pl.meanAnom = pl.lon0Deg * Math.PI / 180;
+    // Epoch mean anomaly ≈ mean longitude (radians), advanced to now on the shared world clock
+    pl.lon0 = pl.lon0Deg * Math.PI / 180;
+    pl.meanAnom = _solMeanAnomNow(pl.lon0, pl.meanMotion);
     pl.angle = pl.meanAnom;
   });
 
@@ -6327,7 +6347,7 @@ async function buildSolarSystem(){
     celestialBodies.push({mesh,name:p.name,type:p.type,temp:p.temp,
       orbitR:p.oR, // keep semi-major for LAND/maps that read orbitR
       orbitSpd:p.spd, angle:p.angle, collisionRadius:p.r,
-      semiMajor:p.semiMajor, ecc:p.ecc, meanAnom:p.meanAnom, meanMotion:p.meanMotion,
+      semiMajor:p.semiMajor, ecc:p.ecc, meanAnom:p.meanAnom, meanMotion:p.meanMotion, lon0:p.lon0,
       landable:_solLandable, hasTerrain:_solLandable,
       // Rebuild metadata for proximity-based marching-cubes LOD (see
       // upgradePlanetLOD, called from updateBodies). isProcedural is false
@@ -8388,9 +8408,10 @@ function buildFlightBoard(){
   // travels, while the shadow quality/cost stays local and cheap. This
   // is what actually makes her shadow visible on the board/terrain;
   // GFX.shadows gates it same as every other shadow source in this file.
-  if(GFX.shadows){
+  {   // always built; applyGraphicsLive switches it with the Shadows setting
     _charShadowLight=new THREE.DirectionalLight(0xfff4e0,1.4);
-    _charShadowLight.castShadow=true;
+    _charShadowLight.userData.shadowKey=true; _charShadowLight.userData.shadowOnlyLight=true;
+    _charShadowLight.castShadow=!!GFX.shadows; _charShadowLight.visible=!!GFX.shadows;
     _charShadowLight.shadow.mapSize.set(GFX.shadowSize,GFX.shadowSize);
     _charShadowLight.shadow.camera.near=0.5;
     _charShadowLight.shadow.camera.far=20;
@@ -9526,7 +9547,8 @@ function updateBodies(dt){
       // Elliptical Sol planets (ecc/semiMajor set); else circular path
       // (asteroids, comets, procedural systems).
       if(b.ecc!=null && b.semiMajor!=null){
-        b.meanAnom += b.meanMotion*dt*60;
+        // placed from the shared world clock (same sky for everyone, keeps moving while you're away)
+        if(b.lon0!=null) b.meanAnom=_solMeanAnomNow(b.lon0,b.meanMotion); else b.meanAnom += b.meanMotion*dt*60;
         b.angle = b.meanAnom;
         const ke=solKeplerAnomaly(b.meanAnom, b.ecc);
         const rr=b.semiMajor*ke.rFactor;
@@ -11353,7 +11375,7 @@ function applySettings(){
   STATE.settings.shadows=GFX.shadows;STATE.settings.reflections=GFX.envReflections;
   STATE.settings.caustics=GFX.caustics;STATE.settings.gi=GFX.fakeGI;
   saveGfxChoice(); // remember last setting until changed again
-  try{ if(typeof applyRenderSettings==='function')applyRenderSettings(); }catch(e){ console.warn('render apply deferred:',e); }
+  try{ applyGraphicsLive(); }catch(e){ console.warn('graphics apply:',e); }
   // Safety net: force a real setSize() + resizePostFX regardless of which
   // setting changed, so closing this modal can never leave the canvas in
   // the mismatched state above — even for settings that still need a full
@@ -11366,7 +11388,7 @@ function applySettings(){
     resizePostFX();
   }catch(e){}
   closeSettings();
-  toast(needsRebuild?'✅ Settings applied — re-enter flight for shadows/quality':'✅ Settings applied');
+  toast('✅ Settings applied');
 }
 
 let _menuBgResizeT=null;
@@ -11438,7 +11460,7 @@ function _pfEnsure(){
     '<div class="pf-sec">MY THEMES</div>'+
     '<div class="pf-themes" id="pf-mine"></div>'+
     '<div class="pf-row-d" id="pf-mine-note" style="margin-top:6px;"></div>'+
-    '<div class="pf-btns"><button class="pf-btn" id="pf-th-export">\u21E9 EXPORT THEMES</button><button class="pf-btn" id="pf-th-import">\u21E7 IMPORT THEMES</button></div>'+
+    '<div class="pf-btns"><button class="pf-btn" id="pf-th-export">\u21E9 EXPORT PROFILE</button><button class="pf-btn" id="pf-th-import">\u21E7 IMPORT PROFILE</button></div>'+
     '<input type="file" id="pf-th-file" accept=".json,application/json" style="display:none">'+
     '<div class="pf-sec">COMING LATER</div>'+
     '<div class="pf-soon">Your full pilot profile, achievements, and the tech to analyse unknown discoveries.</div>'+
@@ -11548,20 +11570,33 @@ function _pfBindThemeTools(){
   name.onkeydown=e=>{ e.stopPropagation(); if(e.key==='Enter') doSave(); if(e.key==='Escape'){ _pfRenaming=null; name.value=''; _pfSaveLabel(); } };
   $('pf-th-export').onclick=()=>{
     try{
-      const blob=new Blob([JSON.stringify(T.exportData(),null,1)],{type:'application/json'});
-      const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='dartmeadow-themes.json';
+      // one file with your themes and your graphics choice (guests carry it between devices)
+      let gfx=null; try{ gfx=JSON.parse(localStorage.getItem('dm_gfx_v2')||'null'); }catch(e){}
+      const data={kind:'dartmeadow-profile',v:1,exported:new Date().toISOString(),themes:T.exportData(),graphics:gfx};
+      const blob=new Blob([JSON.stringify(data,null,1)],{type:'application/json'});
+      const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='dartmeadow-profile.json';
       document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },1500);
-      toast('\u21E9 Exported '+T.saved.length+' theme'+(T.saved.length===1?'':'s'),1800);
+      toast('\u21E9 Exported '+T.saved.length+' theme'+(T.saved.length===1?'':'s')+(gfx?' + graphics settings':''),1800);
     }catch(e){ toast('\u26A0 Export failed','','warn'); }
   };
   const file=$('pf-th-file');
   $('pf-th-import').onclick=()=>{ file.value=''; file.click(); };
   file.onchange=()=>{
     const f=file.files&&file.files[0]; if(!f) return;
-    if(f.size>512*1024){ toast('\u26A0 That file is too big to be a themes file','','warn'); return; }
+    if(f.size>512*1024){ toast('\u26A0 That file is too big to be a profile file','','warn'); return; }
     const r=new FileReader();
-    r.onload=()=>{ try{ const n=T.importData(JSON.parse(r.result),'file'); _pfRenderThemes(); toast(n?'\u21E7 Imported '+n+' theme'+(n===1?'':'s'):'No new themes in that file',2000); }
-      catch(e){ toast('\u26A0 Not a themes file','','warn'); } };
+    r.onload=()=>{ try{
+        const d=JSON.parse(r.result);
+        const n=T.importData(d,'file'); _pfRenderThemes();
+        // a profile file also carries graphics settings: apply them live
+        let g=false;
+        if(d&&d.graphics&&d.graphics.chosen&&typeof d.graphics==='object'){
+          const gd=Object.assign({},d.graphics,{ts:Date.now()});
+          localStorage.setItem('dm_gfx_v2',JSON.stringify(gd));
+          if(typeof loadGfxChoice==='function'&&loadGfxChoice()){ try{ applyGraphicsLive(); }catch(e){} g=true; }
+        }
+        toast((n?'\u21E7 Imported '+n+' theme'+(n===1?'':'s'):'No new themes')+(g?' · graphics settings applied':''),2200);
+      }catch(e){ toast('\u26A0 Not a profile or themes file','','warn'); } };
     r.readAsText(f);
   };
 }
@@ -14524,6 +14559,37 @@ function renderWithPostFX(){
     r.setRenderTarget(_rtPrev);r.render(_fsScene,_fsCam);
   }
 }
+// Graphics change at any time (menu presets, Settings, a synced profile):
+// every running view updates in place. Only how things are drawn changes;
+// the world, the clock, saves and multiplayer state are never touched.
+function applyGraphicsLive(){
+  const w=window.innerWidth,h=window.innerHeight,pr=effectivePixelRatio();
+  [typeof flightRenderer!=='undefined'?flightRenderer:null,typeof surfRenderer!=='undefined'?surfRenderer:null,typeof atmoRenderer!=='undefined'?atmoRenderer:null].forEach(r=>{
+    if(!r) return;
+    try{ r.setPixelRatio(pr); r.setSize(w,h); r.shadowMap.enabled=!!GFX.shadows; r.shadowMap.type=THREE.PCFSoftShadowMap; }catch(e){}
+  });
+  try{ resizePostFX(); }catch(e){}
+  [typeof flightScene!=='undefined'?flightScene:null,typeof surfScene!=='undefined'?surfScene:null,typeof atmoScene!=='undefined'?atmoScene:null].forEach(sc=>{ if(sc) _gfxApplyShadows(sc); });
+  try{ applyRenderSettings(); }catch(e){ console.warn('render apply:',e); }
+  // live water picks its particle count from the tier: rebuild it at the new one
+  try{ if(typeof _surfFluid!=='undefined'&&_surfFluid&&_surfFluid.tier!==resolvePreset()) _surfFluidStop(); }catch(e){}
+  try{ window.dispatchEvent(new CustomEvent('dm:gfx')); }catch(e){}
+}
+function _gfxApplyShadows(sc){
+  const on=!!GFX.shadows, size=GFX.shadowSize;
+  sc.traverse(o=>{
+    if(o.isLight&&o.userData.shadowKey){
+      o.castShadow=on; if(o.userData.shadowOnlyLight) o.visible=on;
+      if(o.shadow&&o.shadow.mapSize.x!==size){ o.shadow.mapSize.set(size,size); if(o.shadow.map){ try{o.shadow.map.dispose();}catch(e){} o.shadow.map=null; } }
+    } else if(on&&o.isMesh&&!o.userData._gfxShadow){
+      const m=o.material;
+      if(m&&!Array.isArray(m)&&!m.transparent&&(m.isMeshStandardMaterial||m.isMeshPhysicalMaterial||m.isMeshLambertMaterial)&&!(o.isInstancedMesh&&o.count>3000)){
+        o.castShadow=true; o.receiveShadow=true; o.userData._gfxShadow=true; m.needsUpdate=true;
+      }
+    }
+  });
+}
+window.applyGraphicsLive=applyGraphicsLive;
 function applyRenderSettings(){
   // These rebuild flight-scene objects; skip entirely if flight isn't built yet
   // (e.g. applying graphics from the main menu before entering the game).
@@ -17115,10 +17181,8 @@ async function enterSurface(body,site,opts){
   try{ toast('⏳ Landing…',1200); }catch(e){}
   surfRenderer.toneMapping=THREE.ACESFilmicToneMapping;surfRenderer.toneMappingExposure=1.05;
   surfRenderer.outputColorSpace=THREE.SRGBColorSpace;
-  if(GFX.shadows){
-    surfRenderer.shadowMap.enabled=true;
-    surfRenderer.shadowMap.type=THREE.PCFSoftShadowMap;
-  }
+  surfRenderer.shadowMap.enabled=!!GFX.shadows;        // switched live by applyGraphicsLive
+  surfRenderer.shadowMap.type=THREE.PCFSoftShadowMap;
   surfScene=new THREE.Scene();
   surfScene.background=new THREE.Color(pal.sky[1]);
   if(pal.atmos)surfScene.fog=new THREE.Fog(pal.fog,40,drawDistanceTier().fogFar);
@@ -17128,8 +17192,9 @@ async function enterSurface(body,site,opts){
   // ── Lighting: shadow-casting sun + hemisphere fake-GI ──────────
   const sun=new THREE.DirectionalLight(0xfff2e0,pal.atmos?2.0:2.6);
   sun.position.set(80,120,40);
-  if(GFX.shadows){
-    sun.castShadow=true;
+  sun.userData.shadowKey=true;
+  {   // configured always; castShadow follows the Shadows setting live
+    sun.castShadow=!!GFX.shadows;
     sun.shadow.mapSize.set(GFX.shadowSize,GFX.shadowSize);
     sun.shadow.camera.near=1;sun.shadow.camera.far=600;
     sun.shadow.camera.left=-200;sun.shadow.camera.right=200;
@@ -20002,6 +20067,31 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
     if(e.detail&&e.detail.source==='account') return;
     clearTimeout(_themesT); _themesT=setTimeout(pushThemes,2500);
   });
+  // Graphics choice: graphics.json in the private repository, so it follows
+  // the player to every device. Newest choice wins; applying it only changes
+  // how the world is drawn (see applyGraphicsLive), never the world itself.
+  let _gfxSyncT=null;
+  function _gfxLocal(){ try{ return JSON.parse(localStorage.getItem('dm_gfx_v2')||'null'); }catch(e){ return null; } }
+  function pushGfx(){
+    if(!window.JOTS||!J().vault.ready) return;
+    const d=_gfxLocal(); if(!d||!d.chosen) return;
+    J().vault.putJSON('graphics.json',d,'jots: graphics').catch(e=>console.warn('[JOTS] graphics save:',e));
+  }
+  window.addEventListener('jots:vault',async ()=>{
+    try{
+      const t=await J().vault.get('graphics.json'), loc=_gfxLocal();
+      if(t){
+        const remote=JSON.parse(t);
+        if(remote&&remote.chosen&&(remote.ts||0)>((loc&&loc.ts)||0)){
+          localStorage.setItem('dm_gfx_v2',JSON.stringify(remote));
+          if(typeof loadGfxChoice==='function'&&loadGfxChoice()){ try{ applyGraphicsLive(); }catch(e){} }
+          return;
+        }
+      }
+      pushGfx();
+    }catch(e){ console.warn('[JOTS] graphics load:',e); }
+  });
+  window.addEventListener('dm:gfx',()=>{ clearTimeout(_gfxSyncT); _gfxSyncT=setTimeout(pushGfx,2500); });
   // RESUME GAME goes through the same Story / Multiplayer choice.
   window.jotsChooseMode=function(then){ if(!J().consent.get()){ showWelcome(); return; } chooseMode(then); };
   let _vaultBusy=false;
@@ -20273,8 +20363,8 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 </script>
 
 <!-- ?v= stamps: bump on every UI change so browsers never mix a new page with cached old styles -->
-<link rel="stylesheet" href="ui/dm-ui.css?v=78">
-<link rel="stylesheet" href="ui/dm-hud.css?v=78">
-<link rel="stylesheet" href="ui/dm-menu.css?v=78">
+<link rel="stylesheet" href="ui/dm-ui.css?v=79">
+<link rel="stylesheet" href="ui/dm-hud.css?v=79">
+<link rel="stylesheet" href="ui/dm-menu.css?v=79">
 </body>
 </html>
