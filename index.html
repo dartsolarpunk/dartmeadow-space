@@ -1993,14 +1993,14 @@ function loadSaveData(data){
     STATE.flight.hull=data.flight.hull||100;
     STATE.flight.shield=data.flight.shield||100;
   }
-  if(data.settings){Object.assign(STATE.settings,data.settings);
-    // restore graphics knobs into the live GFX object
-    if(data.settings.gfxQuality!==undefined)GFX.preset=data.settings.gfxQuality;
-    if(data.settings.resScale!==undefined)GFX.resScale=data.settings.resScale;
-    if(data.settings.shadows!==undefined)GFX.shadows=data.settings.shadows;
-    if(data.settings.reflections!==undefined)GFX.envReflections=data.settings.reflections;
-    if(data.settings.caustics!==undefined)GFX.caustics=data.settings.caustics;
-    if(data.settings.gi!==undefined)GFX.fakeGI=data.settings.gi;
+  if(data.settings){
+    // Graphics belong to this device (dm_gfx_v2), not to the save: a save
+    // made at another quality, or on another device, used to quietly put
+    // its own preset, particle count and toggles back on RESUME. Only the
+    // gameplay settings come back now.
+    const GFX_SETTING_KEYS=['stars','dust','bloom','bloomIntensity','motion','textures','galaxyband','particles','fov',
+      'gfxQuality','resScale','shadows','reflections','caustics','gi','marchingCubesTerrain'];
+    Object.keys(data.settings).forEach(k=>{ if(!GFX_SETTING_KEYS.includes(k)) STATE.settings[k]=data.settings[k]; });
   }
   if(data.themes&&window.DMTheme){ try{ window.DMTheme.importData(data.themes,'save'); }catch(e){} }
   if(Array.isArray(data.discoveries)&&data.discoveries.length){
@@ -3665,7 +3665,7 @@ const PRESETS = {
 // a gameplay/travel-speed multiplier, not a rendering-fidelity setting.
 const PRESET_SETTINGS_EXTRA = {
   // bloom hard-off all tiers — Sol white-wash NAY (composite bloomStr=0)
-  low:    {stars:true, dust:false, bloom:false, bloomIntensity:0, motion:false, textures:false, galaxyband:true,  particles:'low',  fov:50000 },
+  low:    {stars:true, dust:true,  bloom:false, bloomIntensity:0, motion:false, textures:false, galaxyband:true,  particles:'low',  fov:50000 },
   medium: {stars:true, dust:true,  bloom:false, bloomIntensity:0, motion:false, textures:true,  galaxyband:true,  particles:'med',  fov:50000 },
   high:   {stars:true, dust:true,  bloom:false, bloomIntensity:0, motion:true,  textures:true,  galaxyband:true,  particles:'high', fov:300000},
   ultra:  {stars:true, dust:true,  bloom:false, bloomIntensity:0, motion:true,  textures:true,  galaxyband:true,  particles:'ultra',fov:300000},
@@ -13534,7 +13534,12 @@ function buildGalSky(){
 
   // ── Arm gas & dust, and the Milky Way's black holes
   const mwMeshes=[mwMesh,loc,nebMesh];
-  try{
+  // Settings → Star Field shows/hides the nearby stars; Galaxy Dust the
+  // nebulae, arm gas and the dark dust lanes.
+  const dustOn=!(STATE.settings&&STATE.settings.dust===false);
+  galSky.starsOff=!!(STATE.settings&&STATE.settings.stars===false);
+  if(!dustOn) nebMesh.visible=false;
+  if(dustOn) try{
     const ac=_gsArmClouds(B);
     mwSub.add(ac.fog);mwMeshes.push(ac.fog);
     if(ac.dust){mwSub.add(ac.dust);mwMeshes.push(ac.dust);}
@@ -13645,7 +13650,9 @@ function _gsDustMat(){
 function _gsArmClouds(B){
   const G=GALSKY, rand=seedRand(0xD057A1);
   const mob=B.mobile, low=B.low;
-  const nFog=low?160:(mob?320:760), nDust=low?260:(mob?520:1300);
+  // Dust lanes need a minimum count to read as lanes rather than stray
+  // blots, so even Low keeps most of them (each is one cheap absorbing sprite).
+  const nFog=low?240:(mob?320:760), nDust=low?900:(mob?1000:1300);
   const fp=new Float32Array(nFog*3), fc=new Float32Array(nFog*3), fK=new Float32Array(nFog), fP=new Float32Array(nFog);
   for(let i=0;i<nFog;i++){
     const k=(rand()*4)|0, r=_gsDiskR(rand,6000,G.RMAX*0.92);
@@ -14019,7 +14026,7 @@ function updateGalSky(force){
   const key=Math.round(Math.log10(1+dS)*40);
   if(force||key!==galSky._fadeKey){
     galSky._fadeKey=key;
-    _gsFade(galSky.local,1-_gsSmooth(150,3000,dS));
+    _gsFade(galSky.local,galSky.starsOff?0:1-_gsSmooth(150,3000,dS));
     if(galSky.solMarker)galSky.solMarker.visible=dS>25&&dS<400000;
   }
   const sol=galSky.solMarker;
