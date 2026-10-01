@@ -1302,7 +1302,17 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
           <button type="button" onclick="autoColorBoard()" style="display:block;width:100%;margin:4px 0 8px;padding:9px;background:rgba(var(--hi-rgb),.1);border:1px solid var(--gold,#f5c400);color:var(--gold,#f5c400);font-family:var(--font-hud);font-size:.6rem;letter-spacing:.14em;cursor:pointer;border-radius:3px;">🎲 AUTO COLOR — NEW SCHEME</button>
           <div id="part-styles"><div style="font-size:0.58rem;color:var(--text-dim);padding:6px 0;">Loading skyboard parts…</div></div>
           <div class="ctrl-row"><label>Glow Intensity</label><input type="range" id="z-glow" min="0" max="1" step="0.05" value="0.3" oninput="onZoneColor()"><span class="val" id="v-zglow">0.30</span></div>
-          <div class="ctrl-row"><label>Metalness</label><input type="range" id="z-metal" min="0" max="1" step="0.05" value="0.6" oninput="onZoneColor()"><span class="val" id="v-zmetal">0.60</span></div>
+          <div class="ctrl-row"><label>Metalness</label><input type="range" id="z-metal" min="0" max="1" step="0.05" value="0.85" oninput="onZoneColor()"><span class="val" id="v-zmetal">0.85</span></div>
+          <span class="sec-label" style="margin-top:10px;display:block;">Alloy Finish</span>
+          <div class="alloy-presets" style="display:flex;gap:4px;margin:4px 0 6px;">
+            <button type="button" class="alloy-pre" onclick="setAlloyPreset('satin')">SATIN</button><button type="button" class="alloy-pre" onclick="setAlloyPreset('brushed')">BRUSHED</button><button type="button" class="alloy-pre" onclick="setAlloyPreset('polished')">POLISHED</button><button type="button" class="alloy-pre" onclick="setAlloyPreset('matte')">MATTE</button>
+          </div>
+          <div class="ctrl-row"><label>Shine</label><input type="range" id="z-shine" min="0" max="1" step="0.05" value="0.55" oninput="onZoneColor()"><span class="val" id="v-zshine">0.55</span></div>
+          <div class="ctrl-row"><label>Hairlines</label><input type="range" id="z-brush" min="0" max="1" step="0.05" value="0.6" oninput="onZoneColor()"><span class="val" id="v-zbrush">0.60</span></div>
+          <div class="ctrl-row"><label>Fineness</label><input type="range" id="z-scale" min="0" max="1" step="0.05" value="0.5" oninput="onZoneColor()"><span class="val" id="v-zscale">0.50</span></div>
+          <div class="ctrl-row"><label>Pattern</label><select id="z-pattern" onchange="onZoneColor()" style="flex:1;background:#06131f;color:var(--cyan);border:1px solid var(--border);font-family:var(--font-mono);font-size:0.58rem;padding:3px;border-radius:2px;"><option value="linear">BRUSHED (LENGTHWISE)</option><option value="circular">SPUN (CIRCULAR)</option><option value="cross">CROSS-HATCH</option></select></div>
+          <div class="ctrl-row"><label>Bump</label><input type="range" id="z-bump" min="0" max="1" step="0.05" value="0.4" oninput="onZoneColor()"><span class="val" id="v-zbump">0.40</span></div>
+          <div class="ctrl-row"><label>Relief</label><input type="range" id="z-height" min="0" max="1" step="0.05" value="0.12" oninput="onZoneColor()"><span class="val" id="v-zheight">0.12</span></div>
           <div style="font-size:0.58rem;color:var(--text-dim);line-height:1.5;padding:4px 0;">Every named part of the sculpted Nomad model is individually paintable — solid, linear, or radial gradients with up to 3 color stops.</div>
         </div>
         <!-- Procedural template removed per request — these controls only
@@ -1956,7 +1966,13 @@ const STATE={
     // then by the part name authored in the GLB (dart/deck/ornament/staff — and
     // any future names like fwd_ornament/aft_ornament auto-discover). Each part:
     // {visible, mode:'solid'|'linear'|'radial', axis:'x'|'y'|'z', stops:[hex,…max 3]}
-    partStyles:{}
+    partStyles:{},
+    // Alloy finish of the board's metal parts (deck, staff, ornaments):
+    // satin brushed metal by default. shine 0 = matte … 1 = mirror;
+    // brush = hairline scratch strength; scale = scratch fineness;
+    // pattern 'linear' | 'circular' | 'cross'; bump = relief depth;
+    // height = hammered/forged surface relief
+    alloy:{shine:0.55,brush:0.6,scale:0.5,pattern:'linear',bump:0.4,height:0.12}
   },
   flight:{speed:0,dart:false,energy:100,hull:100,shield:100,destIdx:0,time:0,
     camPitch:0,camYaw:0,thrust:0,strafe:0,lift:0,
@@ -3441,6 +3457,9 @@ function syncSlidersToBoardConfig(){
   if($('z-staff'))$('z-staff').checked=(c.showStaff!==false);
   if($('z-glow')){$('z-glow').value=c.glow;const v=$('v-zglow');if(v)v.textContent=(c.glow||0).toFixed(2);}
   if($('z-metal')){$('z-metal').value=c.metal;const v=$('v-zmetal');if(v)v.textContent=(c.metal||0).toFixed(2);}
+  { const A=Object.assign({shine:0.55,brush:0.6,scale:0.5,pattern:'linear',bump:0.4,height:0.12},c.alloy||{}); c.alloy=A;
+    [['shine','z-shine','v-zshine'],['brush','z-brush','v-zbrush'],['scale','z-scale','v-zscale'],['bump','z-bump','v-zbump'],['height','z-height','v-zheight']].forEach(([k,id,vid])=>{ const el=$(id); if(el){ el.value=A[k]; const v=$(vid); if(v) v.textContent=(+A[k]).toFixed(2); } });
+    if($('z-pattern')) $('z-pattern').value=A.pattern||'linear'; }
   buildGfxGrids();buildStaffGrid();
 }
 function readBoardConfig(){
@@ -3492,6 +3511,9 @@ function onZoneColor(){
   if($('z-staff'))c.showStaff=$('z-staff').checked;
   if($('z-glow')){c.glow=parseFloat($('z-glow').value);const v=$('v-zglow');if(v)v.textContent=c.glow.toFixed(2);}
   if($('z-metal')){c.metal=parseFloat($('z-metal').value);const v=$('v-zmetal');if(v)v.textContent=c.metal.toFixed(2);}
+  const A=c.alloy||(c.alloy={});
+  [['shine','z-shine','v-zshine'],['brush','z-brush','v-zbrush'],['scale','z-scale','v-zscale'],['bump','z-bump','v-zbump'],['height','z-height','v-zheight']].forEach(([k,id,vid])=>{ const el=$(id); if(el){ A[k]=parseFloat(el.value); const v=$(vid); if(v) v.textContent=A[k].toFixed(2); } });
+  if($('z-pattern')) A.pattern=$('z-pattern').value;
   rb();
 }
 
@@ -8543,6 +8565,80 @@ function _stylesFor(tmplKey){
 // (linear along a chosen axis of the part's own bounding box, or radial from
 // its center), on a fresh MeshStandardMaterial. Geometry is cloned first so
 // the shared template cache is never mutated.
+// ── Skyboard alloy: physically based brushed metal ────────────────────
+// Built as a node material so it runs natively on WebGPU (and compiles to
+// the WebGL2 fallback). Metalness and roughness follow the Cook-Torrance /
+// GGX model three.js uses (the same family as Filament's standard model).
+// Over the part's own gradient colours it lays:
+//   • hairline scratches — noise stretched along the board (brushed),
+//     around its centre (spun) or both ways (cross-hatched); they vary the
+//     roughness the way real brushing does and cut faint grooves,
+//   • a few deeper, longer scratches,
+//   • a hammered / forged relief,
+// and lights the grooves with a bump normal computed from the height's
+// screen-space derivatives (surface-gradient method — no textures needed).
+// Reflections come from the scene's environment map when there is one,
+// plus a soft studio sky so the metal still reads as metal in deep space.
+const ALLOY_PRESETS={
+  satin:{shine:0.55,brush:0.6,scale:0.5,pattern:'linear',bump:0.4,height:0.12},
+  brushed:{shine:0.62,brush:0.95,scale:0.7,pattern:'linear',bump:0.6,height:0.05},
+  polished:{shine:0.95,brush:0.08,scale:0.6,pattern:'linear',bump:0.1,height:0.0},
+  matte:{shine:0.15,brush:0.3,scale:0.4,pattern:'cross',bump:0.3,height:0.25},
+};
+function setAlloyPreset(k){
+  const P=ALLOY_PRESETS[k]; if(!P) return;
+  const c=STATE.boardConfig; c.alloy=Object.assign({},P);
+  [['shine','z-shine','v-zshine'],['brush','z-brush','v-zbrush'],['scale','z-scale','v-zscale'],['bump','z-bump','v-zbump'],['height','z-height','v-zheight']].forEach(([key,id,vid])=>{ const el=$(id); if(el){ el.value=P[key]; const v=$(vid); if(v) v.textContent=P[key].toFixed(2); } });
+  if($('z-pattern')) $('z-pattern').value=P.pattern;
+  rb();
+}
+function _alloyMaterial(metal,A){
+  const W=window;
+  if(!THREE.MeshStandardNodeMaterial||typeof W.Fn!=='function'||typeof W.mx_noise_float!=='function') return null;
+  try{
+    A=Object.assign({shine:0.55,brush:0.6,scale:0.5,pattern:'linear',bump:0.4,height:0.12},A||{});
+    const {float,vec3,uniform,positionLocal,positionView,normalView,mx_noise_float,mix,clamp,abs,sign,dot,cross,normalize,smoothstep,length,atan,reflectVector,attribute,max}=W;
+    const m=new THREE.MeshStandardNodeMaterial({color:0xffffff,vertexColors:true});
+    const U={ metal:uniform(Math.max(0,Math.min(1,metal))), rough:uniform(0.88-A.shine*0.8), brush:uniform(A.brush), bump:uniform(A.bump), relief:uniform(A.height),
+      freq:uniform(60+A.scale*220), wLin:uniform(A.pattern==='linear'?1:A.pattern==='cross'?0.5:0), wCir:uniform(A.pattern==='circular'?1:0), wX:uniform(A.pattern==='cross'?0.5:0) };
+    const p=positionLocal, f=U.freq;
+    // hairlines: fine across the grain, long along it
+    const lin=mx_noise_float(vec3(p.x.mul(f.mul(0.02)),p.z.mul(f),p.y.mul(f))).mul(0.5).add(0.5);
+    const xh=mx_noise_float(vec3(p.z.mul(f.mul(0.02)).add(17.0),p.x.mul(f),p.y.mul(f).add(3.0))).mul(0.5).add(0.5);
+    const r=length(p.xz), ang=atan(p.z,p.x);
+    const cir=mx_noise_float(vec3(r.mul(f),ang.mul(2.0),p.y.mul(f))).mul(0.5).add(0.5);
+    // a hairline narrower than a pixel can't be drawn: fade its contrast to
+    // the average as it shrinks below one (no sparkle, no moiré)
+    const fw=max(p.z.mul(f).fwidth(),p.x.mul(f).fwidth());
+    const aa=clamp(float(1.4).sub(fw.mul(0.9)),0.0,1.0);
+    const hair=lin.mul(U.wLin).add(cir.mul(U.wCir)).add(xh.mul(U.wX)).sub(0.5).mul(aa).add(0.5);
+    // a few deeper, longer scratches
+    const deepN=mx_noise_float(vec3(p.x.mul(1.6).add(5.0),p.z.mul(f.mul(0.12)),p.y.mul(9.0)));
+    const deep=smoothstep(0.78,0.98,deepN);
+    // hammered / forged relief
+    const forge=mx_noise_float(p.mul(14.0)).mul(0.5).add(0.5);
+    const H=hair.mul(U.brush).mul(0.6).add(deep.mul(U.brush)).add(forge.mul(U.relief).mul(2.0));
+    // bump: perturb the view-space normal by the height's screen gradient
+    const sX=positionView.dFdx(), sY=positionView.dFdy(), N=normalView;
+    const R1=cross(sY,N), R2=cross(N,sX), det=dot(sX,R1);
+    const k=U.bump.mul(0.0035);
+    const dHx=H.dFdx().mul(k), dHy=H.dFdy().mul(k);
+    const grad=sign(det).mul(R1.mul(dHx).add(R2.mul(dHy)));
+    m.normalNode=normalize(abs(det).mul(N).sub(grad));
+    m.metalnessNode=U.metal;
+    const rough=clamp(U.rough.add(hair.sub(0.5).mul(U.brush).mul(0.28)).add(deep.mul(0.18)).add(forge.sub(0.5).mul(U.relief).mul(0.2)),0.04,1.0);
+    m.roughnessNode=rough;
+    // soft studio sky in the reflection, so it reads as metal even with no environment
+    const ry=reflectVector.y;
+    const sky=mix(vec3(0.05,0.055,0.07),vec3(0.75,0.82,0.95),smoothstep(-0.15,0.85,ry)).add(vec3(0.35,0.3,0.25).mul(smoothstep(0.08,0.0,abs(ry))));
+    const base=attribute('color','vec3');
+    const gloss=float(1.0).sub(rough); 
+    m.emissiveNode=sky.mul(base.add(0.25)).mul(U.metal).mul(gloss.mul(gloss)).mul(0.28);
+    if(typeof _envMap!=='undefined'&&_envMap&&GFX&&GFX.envReflections) m.envMap=_envMap;
+    m.userData.alloy=U;
+    return m;
+  }catch(e){ console.warn('[alloy] node material unavailable, standard metal used:',e&&e.message); return null; }
+}
 function applyPartStyle(mesh, style, zd){
   mesh.geometry=mesh.geometry.clone();
   const g=mesh.geometry;
@@ -8579,6 +8675,8 @@ function applyPartStyle(mesh, style, zd){
   g.setAttribute('color',new THREE.BufferAttribute(arr,3));
   // emissive zones (dart rings, ornaments) glow with their gradient's middle color
   const mid=stops[Math.floor((stops.length-1)/2)];
+  // the board's metal parts: real brushed alloy (WebGPU node shader)
+  if(!(zd.emissiveInt>0)){ const am=_alloyMaterial(zd.metal,(STATE.boardConfig&&STATE.boardConfig.alloy)||{}); if(am){ mesh.material=am; return; } }
   mesh.material=new THREE.MeshStandardMaterial({
     color:0xffffff, vertexColors:true,
     metalness:zd.metal, roughness:zd.rough,
@@ -8641,7 +8739,7 @@ function buildBoardFromGLB(tmplKey){
 // decide when the flight board must be rebuilt after editor changes.
 function boardStyleSig(){
   const c=STATE.boardConfig;
-  return (c.template||'procedural')+'|'+(c.zoneDeck||'')+'|'+(c.zoneDart||'')+'|'+(c.zoneOrn||'')+'|'+(c.col1||'')+'|'+(c.emit||'')+'|'+(c.glow!=null?c.glow:'')+'|'+(c.metal!=null?c.metal:'')+'|'+JSON.stringify(c.partStyles||{});
+  return (c.template||'procedural')+'|'+(c.zoneDeck||'')+'|'+(c.zoneDart||'')+'|'+(c.zoneOrn||'')+'|'+(c.col1||'')+'|'+(c.emit||'')+'|'+(c.glow!=null?c.glow:'')+'|'+(c.metal!=null?c.metal:'')+'|'+JSON.stringify(c.partStyles||{})+'|'+JSON.stringify(c.alloy||{});
 }
 
 // ── Builder UI: one collapsible panel per discovered part ──────
@@ -22187,7 +22285,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 </script>
 
 <!-- ?v= stamps: bump on every UI change so browsers never mix a new page with cached old styles -->
-<link rel="stylesheet" href="ui/dm-ui.css?v=94">
+<link rel="stylesheet" href="ui/dm-ui.css?v=102">
 <link rel="stylesheet" href="ui/dm-hud.css?v=101">
 <link rel="stylesheet" href="ui/dm-menu.css?v=80">
 <link rel="stylesheet" href="ui/dm-journal.css?v=97">
