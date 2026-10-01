@@ -2086,6 +2086,105 @@ function saveToSlot(idx,name){
   slots[idx]=d;writeSaveSlots(slots);
   toast('✅ Saved to slot '+(idx+1)+': '+d.slotName);
 }
+// ── Journeys: your saved slots, on this device and in your private repo ──
+// Every slot is a full save. Signed in, INITIALIZE PROGRESS files a new one
+// named after you and numbered on from the last ("dartsolarpunk 4"), uploads
+// it to saves/slots/<id>.json in your private jots- repository and updates
+// saves/slots-index.json, so any device you sign in on lists them all.
+// The JOURNEYS tab in your profile loads, exports, imports and deletes them.
+const JOURNEY_MAX=60;
+function _jnWho(){ try{ return (window.JOTS&&JOTS.identity&&JOTS.identity.name)||(STATE.boardConfig&&STATE.boardConfig.name)||'Pilot'; }catch(e){ return 'Pilot'; } }
+function _jnSlots(){ return getSaveSlots().map((d,i)=>d?Object.assign({_i:i},d):null).filter(Boolean); }
+function journeyAutoName(){
+  const list=_jnSlots().sort((a,b)=>(b.ts||0)-(a.ts||0)), who=_jnWho();
+  const last=list[0], m=last&&/^(.*?)\s*(\d+)$/.exec(last.slotName||'');
+  if(m&&m[1].trim()) return m[1].trim()+' '+(parseInt(m[2],10)+1);
+  const n=list.filter(x=>String(x.slotName||'').startsWith(who)).length;
+  return who+' '+(n+1);
+}
+function journeySaveNew(d,announce,name){
+  d=d||buildSaveData('slot');
+  d.id=d.id&&/^s_[a-z0-9]+$/.test(d.id)?d.id:'s_'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+  d.ts=d.ts||Date.now(); d.slotName=name||journeyAutoName();
+  const slots=getSaveSlots().filter(Boolean);
+  slots.push(d);
+  while(slots.length>JOURNEY_MAX) slots.shift();
+  writeSaveSlots(slots);
+  _journeyUpload(d);
+  if(announce) toast('💾 Saved journey: '+d.slotName,2200);
+  return d;
+}
+function _journeyPlace(d){ try{ const w=d.where||{}; const near=w.near&&w.near.name, sys=(w.sys&&w.sys.name)||'Sol'; return (near?'near '+near+' · ':'')+sys; }catch(e){ return ''; } }
+let _jnIdxT=null;
+function _journeyIndex(){ return _jnSlots().map(x=>({id:x.id,slotName:x.slotName,ts:x.ts,place:_journeyPlace(x)})).filter(x=>x.id); }
+function _journeyUpload(d){
+  const J=window.JOTS; if(!J||!J.vault||!J.vault.ready||!d||!d.id) return;
+  J.vault.putJSON('saves/slots/'+d.id+'.json',d,'jots: journey '+d.slotName).catch(e=>console.warn('[journeys] upload',e));
+  clearTimeout(_jnIdxT); _jnIdxT=setTimeout(_journeyPushIndex,1500);
+}
+function _journeyPushIndex(){
+  const J=window.JOTS; if(!J||!J.vault||!J.vault.ready) return;
+  let remote=[]; try{ remote=JSON.parse(localStorage.getItem('dm_saves_remote')||'[]'); }catch(e){}
+  const local=_journeyIndex(), ids=new Set(local.map(x=>x.id));
+  const all=local.concat(remote.filter(r=>!ids.has(r.id)&&!(_journeyDeleted()[r.id])));
+  J.vault.putJSON('saves/slots-index.json',{v:1,slots:all},'jots: journeys index').catch(e=>console.warn('[journeys] index',e));
+}
+function _journeyDeleted(){ try{ return JSON.parse(localStorage.getItem('dm_saves_deleted')||'{}'); }catch(e){ return {}; } }
+// signed in: bring down the list of slots kept in the repository (files load on demand)
+window.addEventListener('jots:vault',async ()=>{
+  try{
+    const J=window.JOTS; const t=await J.vault.get('saves/slots-index.json');
+    const idx=t?JSON.parse(t):{slots:[]}, del=_journeyDeleted(), have=new Set(_jnSlots().map(x=>x.id));
+    const remote=(idx.slots||[]).filter(x=>x&&x.id&&!have.has(x.id)&&!del[x.id]);
+    localStorage.setItem('dm_saves_remote',JSON.stringify(remote));
+    // anything only this device had goes up too
+    _jnSlots().forEach(x=>{ if(!x.id){ const sl=getSaveSlots(); const d=sl[x._i]; if(d){ d.id='s_'+(d.ts||Date.now()).toString(36)+Math.random().toString(36).slice(2,6); writeSaveSlots(sl); _journeyUpload(d); } } else _journeyUpload(getSaveSlots()[x._i]); });
+    _journeyPushIndex();
+    try{ if($('pf-tab-journeys')&&$('pf-tab-journeys').style.display!=='none') _pfRenderJourneys(); }catch(e){}
+  }catch(e){ console.warn('[journeys] sync',e); }
+});
+async function journeyLoad(entry){
+  let d=null;
+  if(entry.remote){
+    try{ const t=await window.JOTS.vault.get('saves/slots/'+entry.id+'.json'); d=t?JSON.parse(t):null; }catch(e){}
+    if(!d){ toast('⚠ Couldn’t fetch that save from your repository','','warn'); return; }
+  } else d=getSaveSlots()[entry._i];
+  if(!d) return;
+  closeProfileMenu();
+  try{ if(typeof surfaceActive!=='undefined'&&surfaceActive&&typeof _exitSurfaceFinish==='function') _exitSurfaceFinish(); }catch(e){}
+  try{ if(typeof atmoActive!=='undefined'&&atmoActive&&typeof atmoExitToSpace==='function') atmoExitToSpace(); }catch(e){}
+  try{ if(typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active) exitShipWalk(); }catch(e){}
+  toast('📂 Loading journey: '+(d.slotName||'save'),2200);
+  setTimeout(()=>resumeJourney(d),250);
+}
+function journeyExport(entry){
+  const go=d=>{ const blob=new Blob([JSON.stringify(d,null,1)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=String(d.slotName||'journey').replace(/[^\w-]+/g,'_')+'.dartprofile'; a.click(); };
+  if(entry.remote){ window.JOTS.vault.get('saves/slots/'+entry.id+'.json').then(t=>t&&go(JSON.parse(t))).catch(()=>{}); } else go(getSaveSlots()[entry._i]);
+}
+function journeyDelete(entry){
+  if(entry.id){ const del=_journeyDeleted(); del[entry.id]=Date.now(); try{ localStorage.setItem('dm_saves_deleted',JSON.stringify(del)); }catch(e){} }
+  if(!entry.remote){ const sl=getSaveSlots(); sl.splice(entry._i,1); writeSaveSlots(sl.filter(Boolean)); }
+  else{ try{ const r=JSON.parse(localStorage.getItem('dm_saves_remote')||'[]').filter(x=>x.id!==entry.id); localStorage.setItem('dm_saves_remote',JSON.stringify(r)); }catch(e){} }
+  clearTimeout(_jnIdxT); _jnIdxT=setTimeout(_journeyPushIndex,600);
+}
+function _pfRenderJourneys(){
+  const box=$('pf-jn-list'); if(!box) return;
+  let remote=[]; try{ remote=JSON.parse(localStorage.getItem('dm_saves_remote')||'[]').map(x=>Object.assign({remote:true},x)); }catch(e){}
+  const all=_jnSlots().concat(remote).sort((a,b)=>(b.ts||0)-(a.ts||0));
+  const signed=!!(window.JOTS&&JOTS.vault&&JOTS.vault.ready);
+  $('pf-jn-note').textContent=(all.length?all.length+' saved journey'+(all.length===1?'':'s'):'No saved journeys yet')+(signed?' · kept in your account ('+JOTS.vault.repo+'/saves) and on this device · INITIALIZE PROGRESS adds a new numbered slot':' · on this device — sign in with GitHub to keep them in your account');
+  box.textContent='';
+  all.forEach(e=>{
+    const row=document.createElement('div'); row.className='pf-jn-row';
+    row.innerHTML='<div class="pf-jn-main"><div class="pf-jn-name"></div><div class="pf-jn-meta"></div></div><div class="pf-jn-acts"><button class="pf-btn pf-jn-load">LOAD</button><button class="pf-jn-mini" title="Export this save file">⇩</button><button class="pf-jn-mini" title="Delete">✕</button></div>';
+    row.querySelector('.pf-jn-name').textContent=e.slotName||'Journey';
+    row.querySelector('.pf-jn-meta').textContent=(e.ts?new Date(e.ts).toLocaleString():'')+((e.place||_journeyPlace(e))?' · '+(e.place||_journeyPlace(e)):'')+(e.remote?' · ☁ in your account':'');
+    const [ld,ex,dl]=row.querySelectorAll('button');
+    ld.onclick=()=>journeyLoad(e); ex.onclick=()=>journeyExport(e);
+    dl.onclick=()=>{ if(dl.dataset.armed){ journeyDelete(e); _pfRenderJourneys(); return; } dl.dataset.armed='1'; dl.textContent='DEL?'; setTimeout(()=>{ if(dl.isConnected){ delete dl.dataset.armed; dl.textContent='✕'; } },2500); };
+    box.appendChild(row);
+  });
+}
 // INITIALIZE PROGRESS (the game's word for saving) from the flight bar: saves right here (and, when signed in
 // with GitHub, to your private jots- repository, via the JOTS layer).
 function quickSave(){
@@ -2096,6 +2195,8 @@ function quickSave(){
     toast(signed?'⟐ Progress initialized · syncing to your '+window.JOTS.vault.repo+'…':'⟐ Progress initialized on this device',2400);
     try{ const b=$('init-progress-btn'); if(b){ b.classList.remove('flash'); void b.offsetWidth; b.classList.add('flash'); } }catch(e){}
     try{ window.dispatchEvent(new CustomEvent('dm:quicksave',{detail:d})); }catch(e){}
+    // signed in: every INITIALIZE PROGRESS also files a new numbered journey slot
+    if(signed){ try{ journeySaveNew(JSON.parse(JSON.stringify(d)),false); }catch(e){} }
     return d;
   }catch(e){ toast('⚠ Save failed','','warn'); return null; }
 }
@@ -2409,7 +2510,7 @@ function openSaveModal(mode){
   $('save-modal-title').textContent=mode==='save'?'💾 SAVE GAME':'📂 LOAD GAME';
   const slots=getSaveSlots();
   const list=$('save-slots-list');list.innerHTML='';
-  for(let i=0;i<5;i++){
+  for(let i=0;i<Math.max(5,slots.length);i++){
     const s=slots[i];
     const div=document.createElement('div');div.className='save-slot';
     const ts=s?new Date(s.ts).toLocaleString():'—';
@@ -12116,6 +12217,8 @@ function _pfEnsure(){
   m.innerHTML='<div class="pf-card" role="dialog" aria-modal="true" aria-labelledby="pf-name">'+
     '<div class="pf-head"><div class="pf-av" id="pf-av"></div><div><div class="pf-name" id="pf-name"></div><div class="pf-kind" id="pf-kind"></div></div></div>'+
     '<div class="pf-btns" id="pf-acct"></div>'+
+    '<div class="pf-tabs" role="tablist"><button class="pf-tab on" id="pf-tab-btn-profile" role="tab" aria-selected="true">PROFILE</button><button class="pf-tab" id="pf-tab-btn-journeys" role="tab" aria-selected="false">JOURNEYS</button></div>'+
+    '<div id="pf-tab-profile">'+
     '<div class="pf-sec">DISPLAY</div>'+
     '<div class="pf-row"><div><div class="pf-row-t">Player name tags</div><div class="pf-row-d">Other players\u2019 usernames above them.</div></div><button class="pf-sw" id="pf-sw-players" role="switch"></button></div>'+
     '<div class="pf-row"><div><div class="pf-row-t">Object info</div><div class="pf-row-d">Names of planets, stars and other things when your crosshair is on them.</div></div><button class="pf-sw" id="pf-sw-objects" role="switch"></button></div>'+
@@ -12131,11 +12234,25 @@ function _pfEnsure(){
     '<input type="file" id="pf-th-file" accept=".json,application/json" style="display:none">'+
     '<div class="pf-sec">COMING LATER</div>'+
     '<div class="pf-soon">Your full pilot profile, achievements, and the tech to analyse unknown discoveries.</div>'+
+    '</div>'+
+    '<div id="pf-tab-journeys" style="display:none">'+
+    '<div class="pf-row-d" id="pf-jn-note" style="margin:4px 0 8px;"></div>'+
+    '<div class="pf-btns"><button class="pf-btn" id="pf-jn-new">＋ SAVE A NEW SLOT HERE</button><button class="pf-btn" id="pf-jn-import">⇧ IMPORT A SAVE FILE</button></div>'+
+    '<input type="file" id="pf-jn-file" accept=".dartprofile,.json,application/json" style="display:none">'+
+    '<div id="pf-jn-list" class="pf-jn-list"></div>'+
+    '</div>'+
     '<div class="pf-btns"><button class="pf-btn" id="pf-close">CLOSE</button></div>'+
   '</div>';
   document.body.appendChild(m);
   m.addEventListener('click',e=>{ if(e.target===m) closeProfileMenu(); });
   $('pf-close').onclick=closeProfileMenu;
+  const tab=(k)=>{ ['profile','journeys'].forEach(n=>{ $('pf-tab-'+n).style.display=n===k?'':'none'; const b=$('pf-tab-btn-'+n); b.classList.toggle('on',n===k); b.setAttribute('aria-selected',String(n===k)); }); if(k==='journeys') _pfRenderJourneys(); };
+  $('pf-tab-btn-profile').onclick=()=>tab('profile'); $('pf-tab-btn-journeys').onclick=()=>tab('journeys');
+  $('pf-jn-new').onclick=()=>{ const d=buildSaveData('slot'); journeySaveNew(d,true); _pfRenderJourneys(); };
+  $('pf-jn-import').onclick=()=>$('pf-jn-file').click();
+  $('pf-jn-file').onchange=e=>{ const f=e.target.files[0]; if(!f) return; const r=new FileReader();
+    r.onload=ev=>{ try{ const d=JSON.parse(ev.target.result); if(!d||d.v!=='DM2'&&!d.board) throw 0; d.slotName=d.slotName||f.name.replace(/\.[^.]+$/,''); journeySaveNew(d,false,d.slotName); _pfRenderJourneys(); toast('⇧ Imported: '+d.slotName); }catch(x){ toast('⚠ That file isn’t a DART Meadow save','','warn'); } };
+    r.readAsText(f); e.target.value=''; };
   const bindSw=(id,key,after)=>{
     const b=$(id);
     b.onclick=()=>{ DM_PREFS[key]=!DM_PREFS[key]; _saveDmPrefs(); _pfRender(); if(after) after(DM_PREFS[key]); };
@@ -21965,6 +22082,13 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
     window.addEventListener('focus',take);
   }
   function githubSignIn(){
+    // Sign-in uses GitHub's device code: it talks to GitHub directly and
+    // works in every browser and installed app. (The browser-redirect route
+    // depended on an outside bridge page and stalled at "Signing you in…";
+    // its listener above only finishes a sign-in that was already under way.)
+    return deviceSignIn();
+  }
+  function githubWebSignIn(){
     J().consent.agree();
     _webUrl=J().auth.webStart();
     const w=openGitHubTab(_webUrl);                      // inside the tap, so it isn't blocked
@@ -22450,9 +22574,11 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
   (function(){ const row=document.querySelector('#screen-flight .hud-r-row'), hud=$j('jots-mp-hud'); if(row&&hud) row.insertBefore(hud,row.firstChild); })();
   function hudRefresh(){
     if(!window.JOTS) return;
-    const mp=J().mp, on=mp.active&&typeof STATE!=='undefined'&&STATE.screen==='flight';
+    // always on hand in game: online it shows who's here; in Story mode one tap goes online
+    const mp=J().mp, on=typeof STATE!=='undefined'&&STATE.screen==='flight';
     $j('jots-mp-hud').style.display=on?'flex':'none';
     if(!on){ $j('jots-chat').style.display='none'; return; }
+    if(!mp.active){ $j('jots-mp-chip').textContent='🌐 GO ONLINE · CHAT'; $j('jots-chat').style.display='none'; return; }
     const n=mp.peers.size+1;
     $j('jots-mp-chip').textContent=mp.status==='online'?('🌐 '+n+' ONLINE · CHAT'):mp.status==='connecting'?'🌐 CONNECTING…':'🌐 '+mp.status.toUpperCase();
   }
@@ -22482,7 +22608,9 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
   })();
   window.addEventListener('jots:mpstatus',hudRefresh);
   window.addEventListener('jots:peers',hudRefresh);
-  $j('jots-mp-chip').onclick=()=>{ const c=$j('jots-chat'); c.style.display=c.style.display==='flex'?'none':'flex'; if(c.style.display==='flex')$j('jots-chat-in').focus(); };
+  $j('jots-mp-chip').onclick=()=>{
+    if(!J().mp.active){ J().mode='multiplayer'; try{ J().mp.start(); }catch(e){} toast('🌐 Going online — chat opens in a moment',2200); setTimeout(()=>{ const c=$j('jots-chat'); c.style.display='flex'; },900); hudRefresh(); return; }
+    const c=$j('jots-chat'); c.style.display=c.style.display==='flex'?'none':'flex'; if(c.style.display==='flex')$j('jots-chat-in').focus(); };
   window.addEventListener('jots:chat',e=>{
     const l=e.detail, d=document.createElement('div'); if(l.me)d.className='me';
     const b=document.createElement('b');b.textContent=l.n+': ';d.appendChild(b);d.appendChild(document.createTextNode(l.text));
@@ -22502,7 +22630,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 </script>
 
 <!-- ?v= stamps: bump on every UI change so browsers never mix a new page with cached old styles -->
-<link rel="stylesheet" href="ui/dm-ui.css?v=103">
+<link rel="stylesheet" href="ui/dm-ui.css?v=105">
 <link rel="stylesheet" href="ui/dm-hud.css?v=104">
 <link rel="stylesheet" href="ui/dm-menu.css?v=80">
 <link rel="stylesheet" href="ui/dm-journal.css?v=97">
