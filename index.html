@@ -15774,7 +15774,7 @@ function worldMapFor(body,onPass){
   const heightAt=(lat,lon)=>{
     const ws=(window.DMWorldStyle)?DMWorldStyle.styleFor(body,pal,{lat,lon}):'lush';
     let h=_terrainCore(lon/D,-lat/D,seed,ws);
-    if(isEarth&&typeof earthSiteHeightBias==='function') h=h*0.55+earthSiteHeightBias(lat,lon,seed,0,0,D);
+    if(isEarth&&typeof earthSiteHeightBias==='function') h=_earthBlend(h,earthSiteHeightBias(lat,lon,seed,0,0,D));
     return h;
   };
   const m={key,body,heightAt,listeners:[onPass],done:false};
@@ -16324,7 +16324,7 @@ function atmoBuildTerrain(pal,ox,oz){
     if(_aws!=='lush') h=DMWorldStyle.shape(_aws,x,z,h,seed,_fbm);
     if(_atmoEarthGeo && typeof earthSiteHeightBias==='function'){
       const geo=earthSiteHeightBias(_atmoSite.lat,_atmoSite.lon,seed,lx,lz,0.008);
-      return h*0.55 + geo;
+      return _earthBlend(h,geo);
     }
     return h+siteLandBias;
   }
@@ -19885,6 +19885,15 @@ function earthElevation(lat,lon,seed){
   return elev;
 }
 /** Local surface height bias near a lat/lon site — same mask drives walk. */
+// Earth's ground = its real relief (geo) + the game's own hills and peaks
+// for walkable detail. With the real map loaded those peaks grow with the
+// real elevation, so mountain ranges rise where Earth has highlands and
+// coasts and plains stay gentle (they used to pile snowy peaks onto lowlands).
+function _earthBlend(h,geo){
+  if(!(window.DMEarth&&DMEarth.ready)) return h*0.55+geo;
+  const k=0.12+0.88*Math.max(0,Math.min(1,(geo+1)/55));
+  return (h-12)*0.55*k+geo;
+}
 function earthSiteHeightBias(lat,lon,seed,x,z,metersPerDeg){
   const mpd=(typeof metersPerDeg==='number'&&metersPerDeg>0)?metersPerDeg:0.012;
   const lat2=lat-(z||0)*mpd;
@@ -19895,7 +19904,7 @@ function earthSiteHeightBias(lat,lon,seed,x,z,metersPerDeg){
     // falls away under the generated ocean
     const e=DMEarth.metres(lat2,lon2);
     // (snow arrives near 3000 m as on real mountains: the ground's snow line sits ≈ 52)
-    return e>0 ? -4+28*Math.pow(e/1000,0.8) : -10-40*Math.pow(-e/1000,0.6);
+    return e>0 ? -1+28*Math.pow(e/1000,0.8) : -10-40*Math.pow(-e/1000,0.6);
   }
   const land=earthLandMask(lat2,lon2,seed);
   const elev=earthElevation(lat2,lon2,seed);
@@ -20074,7 +20083,7 @@ async function buildSurfaceTerrain(pal){
     if(_surfEarthGeo && typeof earthSiteHeightBias==='function'){
       const geo=earthSiteHeightBias(_surfSite.lat,_surfSite.lon,seed,lx,lz,0.008);
       // Blend: keep local noise character, let mask drive macro altitude
-      return h*0.55 + geo;
+      return _earthBlend(h,geo);
     }
     return h+siteLandBias;
   }
