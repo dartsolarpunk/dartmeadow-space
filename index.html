@@ -52,7 +52,20 @@ if(location.search.indexOf('debug')!==-1){
   // Safari (esp. A2HS / visualViewport) can undersize window.inner* vs the
   // real layout box. Prefer the max of documentElement, inner, and
   // visualViewport so full-bleed canvases match #screen-* clients.
+  // Measured from an invisible full-screen box: right after a rotation iOS
+  // still reports some of inner*/clientWidth/visualViewport at the OLD
+  // orientation, and taking the largest of them kept the game at landscape
+  // size on a portrait phone (a strip in the middle, right side cut off).
+  // The fixed box is laid out by the browser for the current screen, so it
+  // is always right; the max-of-readings path is only a fallback.
+  var _vpBox=null;
   window.__jotsLayoutSize=function(){
+    try{
+      if(!_vpBox&&document.body){ _vpBox=document.createElement('div'); _vpBox.setAttribute('aria-hidden','true'); _vpBox.style.cssText='position:fixed;left:0;top:0;width:100vw;height:100vh;height:100dvh;visibility:hidden;pointer-events:none;z-index:-1;'; document.body.appendChild(_vpBox); }
+      if(_vpBox){ var r=_vpBox.getBoundingClientRect(); if(r.width>10&&r.height>10){ var bw=Math.round(r.width), bh=Math.round(r.height);
+        if(window.visualViewport&&window.visualViewport.width>10){ var vw=Math.round(window.visualViewport.width), vh=Math.round(window.visualViewport.height); if((vw>vh)===(bw>bh)){ bw=Math.max(bw,vw); bh=Math.max(bh,vh); } }
+        return {w:bw,h:bh}; } }
+    }catch(e){}
     var de=document.documentElement;
     var w=Math.max(de&&de.clientWidth||0, window.innerWidth||0);
     var h=Math.max(de&&de.clientHeight||0, window.innerHeight||0);
@@ -60,6 +73,8 @@ if(location.search.indexOf('debug')!==-1){
       w=Math.max(w, Math.round(window.visualViewport.width)||0);
       h=Math.max(h, Math.round(window.visualViewport.height)||0);
     }
+    // never wider-than-tall on a portrait screen (or the reverse)
+    try{ var por=window.matchMedia&&matchMedia('(orientation: portrait)').matches; if(por&&w>h||(!por&&h>w)){ var t=w; w=h; h=t; } }catch(e){}
     return {w:w,h:h};
   };
   function setSafeBot(){
@@ -131,6 +146,7 @@ if(location.search.indexOf('debug')!==-1){
 })();</script>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <script src="ui/dm-time.js?v=95"></script>
+<script src="ui/dm-earth.js?v=1"></script>
 <script src="ui/dm-theme.js?v=80"></script>
 <script src="ui/dm-fluid.js?v=80"></script>
 <script src="ui/dm-journal.js?v=97"></script>
@@ -1281,13 +1297,24 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
         <div style="display:flex;gap:6px;margin:4px 0 8px;">
           <button type="button" id="tmpl-B" class="tmpl-btn" onclick="setBoardTemplate('B')">SKYBOARD B</button>
           <button type="button" id="tmpl-A" class="tmpl-btn" onclick="setBoardTemplate('A')">SKYBOARD A</button>
+          <button type="button" id="tmpl-C" class="tmpl-btn" onclick="setBoardTemplate('C')" title="The original sculpt with all 21 pieces editable">SKYBOARD C · 21 PARTS</button>
         </div>
         <div id="zone-colors" style="display:none;">
           <span class="sec-label">Part Customization</span>
           <button type="button" onclick="autoColorBoard()" style="display:block;width:100%;margin:4px 0 8px;padding:9px;background:rgba(var(--hi-rgb),.1);border:1px solid var(--gold,#f5c400);color:var(--gold,#f5c400);font-family:var(--font-hud);font-size:.6rem;letter-spacing:.14em;cursor:pointer;border-radius:3px;">🎲 AUTO COLOR — NEW SCHEME</button>
           <div id="part-styles"><div style="font-size:0.58rem;color:var(--text-dim);padding:6px 0;">Loading skyboard parts…</div></div>
           <div class="ctrl-row"><label>Glow Intensity</label><input type="range" id="z-glow" min="0" max="1" step="0.05" value="0.3" oninput="onZoneColor()"><span class="val" id="v-zglow">0.30</span></div>
-          <div class="ctrl-row"><label>Metalness</label><input type="range" id="z-metal" min="0" max="1" step="0.05" value="0.6" oninput="onZoneColor()"><span class="val" id="v-zmetal">0.60</span></div>
+          <div class="ctrl-row"><label>Metalness</label><input type="range" id="z-metal" min="0" max="1" step="0.05" value="0.85" oninput="onZoneColor()"><span class="val" id="v-zmetal">0.85</span></div>
+          <span class="sec-label" style="margin-top:10px;display:block;">Alloy Finish</span>
+          <div class="alloy-presets" style="display:flex;gap:4px;margin:4px 0 6px;">
+            <button type="button" class="alloy-pre" onclick="setAlloyPreset('satin')">SATIN</button><button type="button" class="alloy-pre" onclick="setAlloyPreset('brushed')">BRUSHED</button><button type="button" class="alloy-pre" onclick="setAlloyPreset('polished')">POLISHED</button><button type="button" class="alloy-pre" onclick="setAlloyPreset('matte')">MATTE</button>
+          </div>
+          <div class="ctrl-row"><label>Shine</label><input type="range" id="z-shine" min="0" max="1" step="0.05" value="0.55" oninput="onZoneColor()"><span class="val" id="v-zshine">0.55</span></div>
+          <div class="ctrl-row"><label>Hairlines</label><input type="range" id="z-brush" min="0" max="1" step="0.05" value="0.6" oninput="onZoneColor()"><span class="val" id="v-zbrush">0.60</span></div>
+          <div class="ctrl-row"><label>Fineness</label><input type="range" id="z-scale" min="0" max="1" step="0.05" value="0.5" oninput="onZoneColor()"><span class="val" id="v-zscale">0.50</span></div>
+          <div class="ctrl-row"><label>Pattern</label><select id="z-pattern" onchange="onZoneColor()" style="flex:1;background:#06131f;color:var(--cyan);border:1px solid var(--border);font-family:var(--font-mono);font-size:0.58rem;padding:3px;border-radius:2px;"><option value="linear">BRUSHED (LENGTHWISE)</option><option value="circular">SPUN (CIRCULAR)</option><option value="cross">CROSS-HATCH</option></select></div>
+          <div class="ctrl-row"><label>Bump</label><input type="range" id="z-bump" min="0" max="1" step="0.05" value="0.4" oninput="onZoneColor()"><span class="val" id="v-zbump">0.40</span></div>
+          <div class="ctrl-row"><label>Relief</label><input type="range" id="z-height" min="0" max="1" step="0.05" value="0.12" oninput="onZoneColor()"><span class="val" id="v-zheight">0.12</span></div>
           <div style="font-size:0.58rem;color:var(--text-dim);line-height:1.5;padding:4px 0;">Every named part of the sculpted Nomad model is individually paintable — solid, linear, or radial gradients with up to 3 color stops.</div>
         </div>
         <!-- Procedural template removed per request — these controls only
@@ -1607,7 +1634,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
        Top = level to the galactic plane. Bottom = level to the nearest
        visitable system's orbital plane. -->
   <div id="level-stack">
-    <button id="level-galaxy-btn" class="side-pad" onclick="autoLevel('galaxy')" title="Auto-level to the galactic plane"><span class="sp-ico">🌌</span>GAL</button>
+    <button id="level-galaxy-btn" class="side-pad" onclick="autoLevel('galaxy')" title="Auto-level to the galactic plane"><span class="sp-ico sp-gal"><svg viewBox="0 0 24 24" width="1em" height="1em" aria-hidden="true"><defs><radialGradient id="galCore" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#fff6d8"/><stop offset=".45" stop-color="#ffc8f0" stop-opacity=".85"/><stop offset="1" stop-color="#b48cff" stop-opacity="0"/></radialGradient></defs><g transform="rotate(-24 12 12)"><ellipse cx="12" cy="12" rx="10.5" ry="4.6" fill="none" stroke="#7fb8ff" stroke-opacity=".28" stroke-width=".8"/><path d="M12 12c2.6-.9 5.2-.5 6.9 1.2 1.2 1.2.4 2.5-1.6 2.9-3.4.7-8.6-.6-11.3-2.6" fill="none" stroke="#9fd0ff" stroke-width="1.3" stroke-linecap="round" stroke-opacity=".9"/><path d="M12 12c-2.6.9-5.2.5-6.9-1.2-1.2-1.2-.4-2.5 1.6-2.9 3.4-.7 8.6.6 11.3 2.6" fill="none" stroke="#d7a6ff" stroke-width="1.3" stroke-linecap="round" stroke-opacity=".9"/><circle cx="12" cy="12" r="3.4" fill="url(#galCore)"/></g><g fill="#fff"><circle cx="4.2" cy="8.6" r=".55"/><circle cx="19.6" cy="15.4" r=".55"/><circle cx="16.4" cy="7.2" r=".45"/><circle cx="7.6" cy="16.9" r=".45"/><circle cx="20.4" cy="9.8" r=".35"/><circle cx="3.6" cy="14.2" r=".35"/><circle cx="14.6" cy="18.6" r=".35"/><circle cx="9.4" cy="5.4" r=".35"/></g><g fill="#ffe7a8"><circle cx="17.6" cy="12.2" r=".5"/><circle cx="6.4" cy="11.6" r=".5"/></g></svg></span>GAL</button>
     <button id="level-system-btn" class="side-pad" onclick="autoLevel('system')" title="Auto-level to the nearest system's orbital plane"><span class="sp-ico">🪐</span>SYS</button>
   </div>
   <div id="land-prompt" onclick="onLandPromptTap();" style="display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(var(--acc-rgb),.12);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.6rem;letter-spacing:.15em;padding:.5rem 1.2rem;border-radius:3px;pointer-events:none;z-index:30;text-align:center;"></div>
@@ -1941,7 +1968,13 @@ const STATE={
     // then by the part name authored in the GLB (dart/deck/ornament/staff — and
     // any future names like fwd_ornament/aft_ornament auto-discover). Each part:
     // {visible, mode:'solid'|'linear'|'radial', axis:'x'|'y'|'z', stops:[hex,…max 3]}
-    partStyles:{}
+    partStyles:{},
+    // Alloy finish of the board's metal parts (deck, staff, ornaments):
+    // satin brushed metal by default. shine 0 = matte … 1 = mirror;
+    // brush = hairline scratch strength; scale = scratch fineness;
+    // pattern 'linear' | 'circular' | 'cross'; bump = relief depth;
+    // height = hammered/forged surface relief
+    alloy:{shine:0.55,brush:0.6,scale:0.5,pattern:'linear',bump:0.4,height:0.12}
   },
   flight:{speed:0,dart:false,energy:100,hull:100,shield:100,destIdx:0,time:0,
     camPitch:0,camYaw:0,thrust:0,strafe:0,lift:0,
@@ -3418,7 +3451,7 @@ function syncSlidersToBoardConfig(){
   if($('s-mount'))$('s-mount').value=c.staffMount||'upright';
   // template selector + zone inputs
   const tk=c.template||'procedural';
-  ['proc','A','B'].forEach(k=>{const b=$('tmpl-'+k);if(b)b.classList.toggle('active',(k==='proc'?'procedural':k)===tk);});
+  ['proc','A','B','C'].forEach(k=>{const b=$('tmpl-'+k);if(b)b.classList.toggle('active',(k==='proc'?'procedural':k)===tk);});
   if($('zone-colors'))$('zone-colors').style.display=(tk==='procedural')?'none':'block';
   if($('z-deck'))$('z-deck').value=c.zoneDeck||'#6a5a38';
   if($('z-dart'))$('z-dart').value=c.zoneDart||c.emit||'#00f5ff';
@@ -3426,6 +3459,9 @@ function syncSlidersToBoardConfig(){
   if($('z-staff'))$('z-staff').checked=(c.showStaff!==false);
   if($('z-glow')){$('z-glow').value=c.glow;const v=$('v-zglow');if(v)v.textContent=(c.glow||0).toFixed(2);}
   if($('z-metal')){$('z-metal').value=c.metal;const v=$('v-zmetal');if(v)v.textContent=(c.metal||0).toFixed(2);}
+  { const A=Object.assign({shine:0.55,brush:0.6,scale:0.5,pattern:'linear',bump:0.4,height:0.12},c.alloy||{}); c.alloy=A;
+    [['shine','z-shine','v-zshine'],['brush','z-brush','v-zbrush'],['scale','z-scale','v-zscale'],['bump','z-bump','v-zbump'],['height','z-height','v-zheight']].forEach(([k,id,vid])=>{ const el=$(id); if(el){ el.value=A[k]; const v=$(vid); if(v) v.textContent=(+A[k]).toFixed(2); } });
+    if($('z-pattern')) $('z-pattern').value=A.pattern||'linear'; }
   buildGfxGrids();buildStaffGrid();
 }
 function readBoardConfig(){
@@ -3461,7 +3497,7 @@ function onNameChange(){STATE.boardConfig.name=($('board-name-input').value||'')
 function setBoardTemplate(key){
   if(key==='procedural') key='B'; // procedural removed as a selectable template — see comments near the builder UI markup
   STATE.boardConfig.template=key;
-  ['A','B'].forEach(k=>{const b=$('tmpl-'+k);if(b)b.classList.toggle('active',k===key);});
+  ['A','B','C'].forEach(k=>{const b=$('tmpl-'+k);if(b)b.classList.toggle('active',k===key);});
   const zc=$('zone-colors');if(zc)zc.style.display='block'; // always a GLB template now
   try{preloadSkyboardTemplates();}catch(e){}
   try{renderPartPanels();}catch(e){}
@@ -3477,6 +3513,9 @@ function onZoneColor(){
   if($('z-staff'))c.showStaff=$('z-staff').checked;
   if($('z-glow')){c.glow=parseFloat($('z-glow').value);const v=$('v-zglow');if(v)v.textContent=c.glow.toFixed(2);}
   if($('z-metal')){c.metal=parseFloat($('z-metal').value);const v=$('v-zmetal');if(v)v.textContent=c.metal.toFixed(2);}
+  const A=c.alloy||(c.alloy={});
+  [['shine','z-shine','v-zshine'],['brush','z-brush','v-zbrush'],['scale','z-scale','v-zscale'],['bump','z-bump','v-zbump'],['height','z-height','v-zheight']].forEach(([k,id,vid])=>{ const el=$(id); if(el){ A[k]=parseFloat(el.value); const v=$(vid); if(v) v.textContent=A[k].toFixed(2); } });
+  if($('z-pattern')) A.pattern=$('z-pattern').value;
   rb();
 }
 
@@ -4465,6 +4504,31 @@ const WORLD_EPOCH_MS = Date.UTC(2026, 8, 28);
 function worldSeconds(){ return window.DMTime ? DMTime.realSeconds() : (Date.now() - WORLD_EPOCH_MS) / 1000; }   // server-corrected
 function _solMeanAnomNow(lon0, meanMotion){ const a = lon0 + meanMotion * 60 * worldSeconds(); return a % (2 * Math.PI); }
 window.worldSeconds = worldSeconds;
+// ── Update check: a copy left open in the background (an installed app on a
+// phone can stay in memory for days) keeps running an old build. Fingerprint
+// the published page when we start, check again every few minutes and on
+// return to the app, and offer a one-tap reload when it has changed.
+(function(){
+  if(location.protocol==='file:'||!window.fetch) return;
+  const url=location.pathname||'/';
+  const fp=t=>{ let h=2166136261; for(let i=0;i<t.length;i+=7){ h^=t.charCodeAt(i); h=Math.imul(h,16777619); } return (h>>>0)+':'+t.length; };
+  let base=null, shown=false, last=0;
+  const check=()=>{ const now=Date.now(); if(shown||now-last<60000) return; last=now;
+    fetch(url,{cache:'no-store'}).then(r=>r.ok?r.text():null).then(t=>{ if(!t) return; const f=fp(t);
+      if(base===null){ base=f; return; }
+      if(f!==base) offer(); }).catch(()=>{}); };
+  function offer(){
+    if(shown) return; shown=true;
+    const b=document.createElement('button'); b.id='dm-update-bar'; b.type='button';
+    b.textContent='⟳ A NEW VERSION OF DART MEADOW IS READY — TAP TO UPDATE';
+    b.style.cssText='position:fixed;left:50%;top:calc(8px + env(safe-area-inset-top,0px));transform:translateX(-50%);z-index:99999;padding:9px 16px;border:1px solid rgba(var(--acc-rgb),.7);background:rgba(4,10,22,.88);color:#fff;font-family:var(--font-hud);font-size:.55rem;letter-spacing:.14em;border-radius:3px;cursor:pointer;backdrop-filter:blur(8px);box-shadow:0 0 16px rgba(var(--acc-rgb),.45);max-width:92vw;';
+    b.onclick=()=>{ try{ if(typeof quickSave==='function'&&typeof STATE!=='undefined'&&STATE.screen==='flight') quickSave(); }catch(e){} setTimeout(()=>location.reload(),300); };
+    document.body.appendChild(b);
+  }
+  setTimeout(check,4000);
+  setInterval(check,5*60*1000);
+  document.addEventListener('visibilitychange',()=>{ if(!document.hidden) check(); });
+})();
 // "GRAV 1.00g · 09:06" — the local hour on the world clock at that longitude
 let _lcBody=null;
 function _localClock(id,head,lon){
@@ -5391,7 +5455,7 @@ function _resizeAllViews(){
 }
 function _queueViewsResize(){ clearTimeout(_viewsResizeT); _viewsResizeT=setTimeout(_resizeAllViews,140); }
 window.addEventListener('resize',_queueViewsResize);
-window.addEventListener('orientationchange',_queueViewsResize);
+window.addEventListener('orientationchange',()=>{ _queueViewsResize(); _queueFlightResize(); [450,1000].forEach(t=>setTimeout(()=>{ _resizeAllViews(); _queueFlightResize(); },t)); });   // iOS settles its viewport late after a turn
 if(window.visualViewport) window.visualViewport.addEventListener('resize',_queueViewsResize);
 function _startFlightLoop(){
   if(flightAnimId)return; // already running
@@ -6124,8 +6188,14 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
   // named Mars features (Olympus Mons, Valles Marineris, hemispheric
   // dichotomy), rewritten as branchless TSL so they run in the compute
   // shader instead of a per-pixel CPU loop.
+  // the real Earth: sample the ETOPO5 land value (DMEarth) when it's loaded
+  const _earthTex=(window.DMEarth&&DMEarth.ready)?DMEarth.texture():null;
   const _earthLandMaskTSL=(dir)=>{
     const lat=dir.y.clamp(-1,1).asin(), lon=atan2(dir.z,dir.x);
+    if(_earthTex){
+      const uvE=vec2(lon.div(Math.PI*2).add(0.5),lat.div(Math.PI).add(0.5));
+      return window.texture(_earthTex,uvE).level(0).r.mul(2.6).sub(1.0);
+    }
     let inside=float(-2.0);
     EARTH_CONTINENTS.forEach(c=>{
       const clat=c.lat*Math.PI/180, clon=c.lon*Math.PI/180, crlat=c.rlat*Math.PI/180, crlon=c.rlon*Math.PI/180;
@@ -6545,6 +6615,8 @@ function buildGasGiantMesh(radius, palette, hasStorm){
   return group;
 }
 async function buildSolarSystem(){
+  // the real Earth's relief map is small and loads at start; give it a moment so the planet is built from it
+  try{ if(window.DMEarth&&!DMEarth.ready) await DMEarth.whenReady(6000); }catch(e){}
   // Worlds: wipe prior procedural/Sol extras so return visits don't dual-stack
   // orbit rings / belts / comets on top of the new build.
   if(typeof _clearFlightSystemScene==='function')_clearFlightSystemScene();
@@ -7646,6 +7718,7 @@ function enterShipWalk(){
   SHIP_WALK.yaw=camYaw-bt.group.rotation.y;
   SHIP_WALK.pitch=0.25;SHIP_WALK.velY=0;SHIP_WALK.grounded=true;SHIP_WALK.climb=null;
   SHIP_WALK.active=true;
+  _boardCallReset(); document.body.classList.add('ship-walk');
   SHIP_WALK.charOn=_shipCharOn(feet);
   SHIP_WALK.faceYaw=camYaw+Math.PI;                  // her facing, world (model faces +Z)
   if(boardFlight)boardFlight.visible=true;
@@ -7676,6 +7749,7 @@ function exitShipWalk(){
   sp.pos.copy(world);sp.pos.y+=1.5; // lift off a bit above the deck
   sp.vel.set(0,0,0);
   SHIP_WALK.active=false;SHIP_WALK.climb=null;
+  _boardCallReset(); document.body.classList.remove('ship-walk');
   if(boardFlight){boardFlight.visible=true;try{boardFlight.position.copy(sp.pos);}catch(e){}}
   // Back on the board for flight.
   if(SHIP_WALK.charOn&&boardFlight){try{remountSkyboard(boardFlight);}catch(e){console.warn('[ShipWalk] remount:',e);}}
@@ -7768,6 +7842,7 @@ function updateShipWalk(dt){
   // ── Her: on her feet, facing where she walks, animated.
   if(SHIP_WALK.charOn&&CHAR.root){
     CHAR.root.position.set(F.x,F.y+(CHAR.feetOffset||0)*(CHAR._shipScale||1)+(CHAR._plantOff||0),F.z);   // + planted-foot contact
+    if(BOARD_CALL.look&&BOARD_CALL.lookW>0&&!moving){ const L=BOARD_CALL.look, w=Math.atan2(L.x,L.z); let dd=w-SHIP_WALK.faceYaw; dd=Math.atan2(Math.sin(dd),Math.cos(dd)); SHIP_WALK.faceYaw+=dd*BOARD_CALL.lookW*Math.min(1,dt*6); }   // she turns to watch the summoned board
     let d=SHIP_WALK.faceYaw-CHAR.root.rotation.y;d=Math.atan2(Math.sin(d),Math.cos(d));
     CHAR.root.rotation.set(0,CHAR.root.rotation.y+d*Math.min(1,dt*10),0);
     try{updateCharacterLocomotion(dt,moving&&SHIP_WALK.grounded,running,1,!SHIP_WALK.grounded&&!SHIP_WALK.climb,!!SHIP_WALK.climb,{});}catch(e){}
@@ -7808,6 +7883,7 @@ function updateShipWalk(dt){
     boardFlight.rotation.x=0;
     boardFlight.rotation.z=Math.sin(bt.t*1.2)*0.04;
   }
+  _boardCallTick(dt);   // parked here, or flying in when summoned
 }
 function _btPlayChime(){
   const bt=BIRD_TEMPLE;
@@ -8326,7 +8402,7 @@ function addProceduralPlanetDetails(){
 // Two templates ('A' = Skyboard_A parts pack, 'B' = full extraction), each
 // built with named zones (deck / dart / ornament / staff) so the editor can
 // recolor each zone and toggle the staff — procedural build wraps AROUND them.
-const SKYBOARD_TEMPLATES={A:'skyboard_A.glb', B:'skyboard_B.glb'};
+const SKYBOARD_TEMPLATES={A:'skyboard_A.glb', B:'skyboard_B.glb', C:'skyboard_C.glb'};   // C = the 21-part original sculpt, every piece editable
 const _glbCache={};           // url -> loaded THREE.Group (template scene)
 let _glbLoader=null;
 function _getGLBLoader(){ if(!_glbLoader&&THREE.GLTFLoader)_glbLoader=new THREE.GLTFLoader(); return _glbLoader; }
@@ -8392,10 +8468,20 @@ function preloadSkyboardTemplates(){
       // parent groups. The flight code sets boardFlight.rotation.y = camYaw - PI/2
       // on the whole board; any un-baked child rotation compounds incorrectly.
       const root=gltf.scene;
+      // the sculpt's own camera and lights aren't part of the board
+      { const drop=[]; root.traverse(o=>{ if(o.isLight||o.isCamera) drop.push(o); }); drop.forEach(o=>o.parent&&o.parent.remove(o)); }
+      // 21-part original: give each piece its name (a part's sub-meshes share it)
+      if(k==='C') root.traverse(o=>{ if(!o.isMesh) return; const m=/^part[ _](\d+)/i.exec(o.name||'')||/^part[ _](\d+)/i.exec((o.parent&&o.parent.name)||''); if(m&&SKYBOARD_C_NAMES[+m[1]]) o.name=SKYBOARD_C_NAMES[+m[1]]; });
 
       // Step 1: apply all existing transforms so we're measuring pure geometry
       root.updateMatrixWorld(true);
       root.traverse(o=>{if(o.isMesh&&o.geometry){o.geometry=o.geometry.clone();o.geometry.applyMatrix4(o.matrixWorld);}});
+      // every node's transform is now inside the geometry: clear them all (a
+      // sub-group's own transform would otherwise apply a second time)
+      root.traverse(o=>{ o.position.set(0,0,0); o.rotation.set(0,0,0); o.scale.set(1,1,1); });
+      // one mesh per named part (a sculpted part can arrive as dozens of
+      // sub-meshes — merged here so the board stays a handful of draw calls)
+      try{ _mergeMeshesByName(root); }catch(e){ console.warn('[skyboard] merge skipped',e); }
       root.position.set(0,0,0);root.rotation.set(0,0,0);root.scale.set(1,1,1);
       root.updateMatrixWorld(true);
 
@@ -8433,10 +8519,14 @@ function preloadSkyboardTemplates(){
       root.updateMatrixWorld(true);
       const box2=new THREE.Box3().setFromObject(root);
       const size2=new THREE.Vector3();box2.getSize(size2);
-      const target=3.0;
+      // C keeps its longer original staff: scale it so the deck matches B's size under her feet
+      const target=k==='C'?3.69:3.0;
       const scale=target/Math.max(size2.x,size2.y,size2.z,0.001);
       root.scale.setScalar(scale);
 
+      // Break merged meshes back into their original pieces (energy rings,
+      // arrowhead shards, the tail shard) so each can be styled on its own
+      try{ _splitSkyboardParts(root); }catch(e){ console.warn('[skyboard] part split skipped:',e); }
       // Store the root directly (no wrapper group with pending rotations)
       _glbCache[url]=root;
       if(isActiveTemplate) _loadStep('boardTemplate', 1);
@@ -8464,6 +8554,99 @@ function preloadSkyboardTemplates(){
 //  serialize into save slots / profile automatically.
 // ══════════════════════════════════════════════════════════════
 const SKYBOARD_PARTS={};   // tmplKey -> [partName,…] discovered at preload
+// ── Skyboard parts ────────────────────────────────────────────────────
+// The sculpt was exported with its pieces merged into four meshes (dart,
+// deck, ornament, staff). Each merged mesh is split back into its connected
+// pieces — the front and back pairs of hollow energy rings, the three
+// arrowhead shards at the staff's head — and the deck's pointed tail is cut
+// out as the tail shard. Every piece becomes its own named part (so it can
+// be painted and finished on its own); all stay children of the one board
+// group, so in play the board and its staff move as a single unit.
+const _PART_LABEL={dart:'energy ring',ornament:'arrowhead shard'};
+// the 21 pieces of the original sculpt (template C), named for what they are
+const SKYBOARD_C_NAMES={1:'hull',2:'front ring outer',3:'front ring inner',4:'trim 1',5:'center glass',6:'core plate left',7:'mid panel',8:'mid panel 2',
+  9:'trim 2',10:'trim 3',11:'core plate right',12:'aft ring',13:'trim 4',14:'nose glass',15:'tail fin',16:'staff',17:'staff head 1',18:'staff head 2',
+  19:'tail shard 1',20:'tail shard 2',21:'tail shard 3'};
+function _mergeMeshesByName(root){
+  const by=new Map(); root.traverse(o=>{ if(o.isMesh&&o.geometry&&o.name){ if(!by.has(o.name)) by.set(o.name,[]); by.get(o.name).push(o); } });
+  by.forEach((list,name)=>{
+    if(list.length<2) return;
+    const keys=['position','normal','uv'].filter(k=>list.every(m=>m.geometry.attributes[k]));
+    const parts=list.map(m=>m.geometry.index?m.geometry:m.geometry.setIndex([...Array(m.geometry.attributes.position.count).keys()]));
+    let vTot=0,iTot=0; parts.forEach(g=>{ vTot+=g.attributes.position.count; iTot+=g.index.count; });
+    const ng=new THREE.BufferGeometry(), idx=new Uint32Array(iTot);
+    keys.forEach(k=>{ const isz=parts[0].attributes[k].itemSize, arr=new Float32Array(vTot*isz); let o=0; parts.forEach(g=>{ const A=g.attributes[k]; for(let i=0;i<A.count;i++) for(let c=0;c<isz;c++) arr[(o+i)*isz+c]=A.array[i*A.itemSize+c]; o+=A.count; }); ng.setAttribute(k,new THREE.BufferAttribute(arr,isz)); });
+    let vo=0,io=0; parts.forEach(g=>{ const I=g.index.array; for(let i=0;i<I.length;i++) idx[io+i]=I[i]+vo; io+=I.length; vo+=g.attributes.position.count; });
+    ng.setIndex(new THREE.BufferAttribute(idx,1)); ng.computeBoundingBox(); ng.computeBoundingSphere();
+    const keep=list[0]; keep.geometry=ng;
+    for(let i=1;i<list.length;i++){ const m=list[i]; m.parent&&m.parent.remove(m); }
+  });
+}
+function _splitSkyboardParts(root){
+  const jobs=[]; root.traverse(o=>{ if(o.isMesh&&o.geometry) jobs.push(o); });
+  let staffX=null;
+  jobs.forEach(o=>{ if(_partNameOf(o)==='staff'){ o.geometry.computeBoundingBox(); const b=o.geometry.boundingBox; staffX={min:b.min.x,max:b.max.x}; } });
+  jobs.forEach(mesh=>{
+    const base=_partNameOf(mesh);
+    let g=mesh.geometry; if(!g.index) g=g.toNonIndexed? g : g;
+    const pos=g.attributes.position, idx=g.index?g.index.array:null, triN=(idx?idx.length:pos.count)/3;
+    const vi=(t,k)=>idx?idx[t*3+k]:t*3+k;
+    let groups=null;
+    if(base==='deck'){
+      // the tail: the last 9% of the deck at its aft end — the end the staff
+      // reaches past (found from the staff itself, not assumed from an axis)
+      let mn=Infinity,mx=-Infinity; for(let i=0;i<pos.count;i++){ const x=pos.getX(i); if(x<mn)mn=x; if(x>mx)mx=x; }
+      let aftMax=true;
+      if(staffX){ aftMax=(staffX.max-mx)>(mn-staffX.min); }
+      const cut=aftMax?mx-(mx-mn)*0.09:mn+(mx-mn)*0.09, tail=[], body=[];
+      for(let t=0;t<triN;t++){ const cx=(pos.getX(vi(t,0))+pos.getX(vi(t,1))+pos.getX(vi(t,2)))/3; ((aftMax?cx>cut:cx<cut)?tail:body).push(t); }
+      if(tail.length&&body.length) groups=[['deck',body],['tail shard',tail]];
+    } else if(_PART_LABEL[base]){
+      // connected pieces (welded by position)
+      const key=new Map(), weld=new Int32Array(pos.count);
+      for(let i=0;i<pos.count;i++){ const k=Math.round(pos.getX(i)*1e4)+','+Math.round(pos.getY(i)*1e4)+','+Math.round(pos.getZ(i)*1e4); let w=key.get(k); if(w===undefined){ w=key.size; key.set(k,w); } weld[i]=w; }
+      const par=new Int32Array(key.size); for(let i=0;i<par.length;i++) par[i]=i;
+      const find=x=>{ while(par[x]!==x){ par[x]=par[par[x]]; x=par[x]; } return x; };
+      for(let t=0;t<triN;t++){ const a=find(weld[vi(t,0)]); par[find(weld[vi(t,1)])]=a; par[find(weld[vi(t,2)])]=a; }
+      const byRoot=new Map();
+      for(let t=0;t<triN;t++){ const r=find(weld[vi(t,0)]); if(!byRoot.has(r)) byRoot.set(r,[]); byRoot.get(r).push(t); }
+      if(byRoot.size>1){
+        // nose to tail order
+        const comps=[...byRoot.values()].map(ts=>{ let sx=0; ts.forEach(t=>{ sx+=pos.getX(vi(t,0)); }); return {ts,cx:sx/ts.length}; }).sort((a,b)=>b.cx-a.cx);
+        groups=comps.map((c,i)=>[_PART_LABEL[base]+' '+(i+1),c.ts]);
+      }
+    }
+    if(!groups) return;
+    const parent=mesh.parent;
+    groups.forEach(([name,ts])=>{
+      const remap=new Map(), out=[];
+      ts.forEach(t=>{ for(let k=0;k<3;k++){ const v=vi(t,k); let n=remap.get(v); if(n===undefined){ n=remap.size; remap.set(v,n); } out.push(n); } });
+      const ng=new THREE.BufferGeometry(), order=[...remap.keys()];
+      Object.keys(g.attributes).forEach(an=>{ const A=g.attributes[an], isz=A.itemSize, arr=new A.array.constructor(order.length*isz);
+        order.forEach((v,i)=>{ for(let c=0;c<isz;c++) arr[i*isz+c]=A.array[v*isz+c]; }); ng.setAttribute(an,new THREE.BufferAttribute(arr,isz,A.normalized)); });
+      ng.setIndex(out); ng.computeBoundingBox(); ng.computeBoundingSphere();
+      const m=new THREE.Mesh(ng,mesh.material); m.name=name; m.userData.basePart=base;
+      m.position.copy(mesh.position); m.quaternion.copy(mesh.quaternion); m.scale.copy(mesh.scale);
+      parent.add(m);
+    });
+    parent.remove(mesh);
+  });
+}
+// what a part is, for its default finish
+function _partRole(name){
+  const z=(name||'').toLowerCase();
+  if(z.includes('shard')||z.includes('orn')||z.includes('crystal')||z.includes('head')) return 'crystal';
+  if(z.includes('ring')||z.includes('dart')||z.includes('glass')||z.includes('panel')||z.includes('plate')||z.includes('fin')) return 'energy';
+  if(z.includes('staff')) return 'staff';
+  return 'deck';
+}
+const FINISH_DEFAULTS={
+  deck:{type:'alloy',shine:0.55,brush:0.6,glow:0,clarity:0},
+  staff:{type:'alloy',shine:0.62,brush:0.8,glow:0,clarity:0},
+  crystal:{type:'crystal',shine:0.85,brush:0,glow:0.55,clarity:0.7},
+  energy:{type:'energy',shine:0.7,brush:0.2,glow:0.7,clarity:0.45},
+};
+function _partFinish(name,st){ return Object.assign({},FINISH_DEFAULTS[_partRole(name)],(st&&st.finish)||{}); }
 
 // Resolve which authored "part" a mesh belongs to: walk up past auto-generated
 // mesh/group names to the nearest human-authored node name.
@@ -8483,8 +8666,9 @@ function _partNameOf(o){
 function _legacyStyleForPart(part,c){
   const z=part.toLowerCase();
   let col;
-  if(z.includes('dart'))col=c.zoneDart||c.emit||'#00f5ff';
-  else if(z.includes('orn')||z.includes('staff'))col=c.zoneOrn||'#d9b060';
+  if(z.includes('dart')||z.includes('ring')||z.includes('glass')||z.includes('panel')||z.includes('plate')||z.includes('fin'))col=c.zoneDart||c.emit||'#00f5ff';
+  else if(z.includes('shard')||z.includes('orn')||z.includes('head'))col=z.includes('tail')?'#9fd8ff':'#ffcf6a';
+  else if(z.includes('staff'))col=c.zoneOrn||'#d9b060';
   else col=c.zoneDeck||'#6a5a38';
   return {visible:(z.includes('staff')?(c.showStaff!==false):true),mode:'solid',axis:'x',stops:[col]};
 }
@@ -8499,6 +8683,100 @@ function _stylesFor(tmplKey){
 // (linear along a chosen axis of the part's own bounding box, or radial from
 // its center), on a fresh MeshStandardMaterial. Geometry is cloned first so
 // the shared template cache is never mutated.
+// ── Skyboard alloy: physically based brushed metal ────────────────────
+// Built as a node material so it runs natively on WebGPU (and compiles to
+// the WebGL2 fallback). Metalness and roughness follow the Cook-Torrance /
+// GGX model three.js uses (the same family as Filament's standard model).
+// Over the part's own gradient colours it lays:
+//   • hairline scratches — noise stretched along the board (brushed),
+//     around its centre (spun) or both ways (cross-hatched); they vary the
+//     roughness the way real brushing does and cut faint grooves,
+//   • a few deeper, longer scratches,
+//   • a hammered / forged relief,
+// and lights the grooves with a bump normal computed from the height's
+// screen-space derivatives (surface-gradient method — no textures needed).
+// Reflections come from the scene's environment map when there is one,
+// plus a soft studio sky so the metal still reads as metal in deep space.
+const ALLOY_PRESETS={
+  satin:{shine:0.55,brush:0.6,scale:0.5,pattern:'linear',bump:0.4,height:0.12},
+  brushed:{shine:0.62,brush:0.95,scale:0.7,pattern:'linear',bump:0.6,height:0.05},
+  polished:{shine:0.95,brush:0.08,scale:0.6,pattern:'linear',bump:0.1,height:0.0},
+  matte:{shine:0.15,brush:0.3,scale:0.4,pattern:'cross',bump:0.3,height:0.25},
+};
+function setAlloyPreset(k){
+  const P=ALLOY_PRESETS[k]; if(!P) return;
+  const c=STATE.boardConfig; c.alloy=Object.assign({},P);
+  [['shine','z-shine','v-zshine'],['brush','z-brush','v-zbrush'],['scale','z-scale','v-zscale'],['bump','z-bump','v-zbump'],['height','z-height','v-zheight']].forEach(([key,id,vid])=>{ const el=$(id); if(el){ el.value=P[key]; const v=$(vid); if(v) v.textContent=P[key].toFixed(2); } });
+  if($('z-pattern')) $('z-pattern').value=P.pattern;
+  rb();
+}
+function _alloyMaterial(metal,A){
+  const W=window;
+  if(!THREE.MeshStandardNodeMaterial||typeof W.Fn!=='function'||typeof W.mx_noise_float!=='function') return null;
+  try{
+    A=Object.assign({shine:0.55,brush:0.6,scale:0.5,pattern:'linear',bump:0.4,height:0.12},A||{});
+    const {float,vec3,uniform,positionLocal,positionView,normalView,mx_noise_float,mix,clamp,abs,sign,dot,cross,normalize,smoothstep,length,atan,reflectVector,attribute,max}=W;
+    const m=new THREE.MeshStandardNodeMaterial({color:0xffffff,vertexColors:true});
+    const U={ metal:uniform(Math.max(0,Math.min(1,metal))), rough:uniform(0.88-A.shine*0.8), brush:uniform(A.brush), bump:uniform(A.bump), relief:uniform(A.height),
+      freq:uniform(60+A.scale*220), wLin:uniform(A.pattern==='linear'?1:A.pattern==='cross'?0.5:0), wCir:uniform(A.pattern==='circular'?1:0), wX:uniform(A.pattern==='cross'?0.5:0) };
+    const p=positionLocal, f=U.freq;
+    // hairlines: fine across the grain, long along it
+    const lin=mx_noise_float(vec3(p.x.mul(f.mul(0.02)),p.z.mul(f),p.y.mul(f))).mul(0.5).add(0.5);
+    const xh=mx_noise_float(vec3(p.z.mul(f.mul(0.02)).add(17.0),p.x.mul(f),p.y.mul(f).add(3.0))).mul(0.5).add(0.5);
+    const r=length(p.xz), ang=atan(p.z,p.x);
+    const cir=mx_noise_float(vec3(r.mul(f),ang.mul(2.0),p.y.mul(f))).mul(0.5).add(0.5);
+    // a hairline narrower than a pixel can't be drawn: fade its contrast to
+    // the average as it shrinks below one (no sparkle, no moiré)
+    const fw=max(p.z.mul(f).fwidth(),p.x.mul(f).fwidth());
+    const aa=clamp(float(1.4).sub(fw.mul(0.9)),0.0,1.0);
+    const hair=lin.mul(U.wLin).add(cir.mul(U.wCir)).add(xh.mul(U.wX)).sub(0.5).mul(aa).add(0.5);
+    // a few deeper, longer scratches
+    const deepN=mx_noise_float(vec3(p.x.mul(1.6).add(5.0),p.z.mul(f.mul(0.12)),p.y.mul(9.0)));
+    const deep=smoothstep(0.78,0.98,deepN);
+    // hammered / forged relief
+    const forge=mx_noise_float(p.mul(14.0)).mul(0.5).add(0.5);
+    const H=hair.mul(U.brush).mul(0.6).add(deep.mul(U.brush)).add(forge.mul(U.relief).mul(2.0));
+    // bump: perturb the view-space normal by the height's screen gradient
+    const sX=positionView.dFdx(), sY=positionView.dFdy(), N=normalView;
+    const R1=cross(sY,N), R2=cross(N,sX), det=dot(sX,R1);
+    const k=U.bump.mul(0.0035);
+    const dHx=H.dFdx().mul(k), dHy=H.dFdy().mul(k);
+    const grad=sign(det).mul(R1.mul(dHx).add(R2.mul(dHy)));
+    m.normalNode=normalize(abs(det).mul(N).sub(grad));
+    m.metalnessNode=U.metal;
+    const rough=clamp(U.rough.add(hair.sub(0.5).mul(U.brush).mul(0.28)).add(deep.mul(0.18)).add(forge.sub(0.5).mul(U.relief).mul(0.2)),0.04,1.0);
+    m.roughnessNode=rough;
+    // soft studio sky in the reflection, so it reads as metal even with no environment
+    const ry=reflectVector.y;
+    const sky=mix(vec3(0.05,0.055,0.07),vec3(0.75,0.82,0.95),smoothstep(-0.15,0.85,ry)).add(vec3(0.35,0.3,0.25).mul(smoothstep(0.08,0.0,abs(ry))));
+    const base=attribute('color','vec3');
+    const gloss=float(1.0).sub(rough); 
+    m.emissiveNode=sky.mul(base.add(0.25)).mul(U.metal).mul(gloss.mul(gloss)).mul(0.28);
+    if(typeof _envMap!=='undefined'&&_envMap&&GFX&&GFX.envReflections) m.envMap=_envMap;
+    m.userData.alloy=U;
+    return m;
+  }catch(e){ console.warn('[alloy] node material unavailable, standard metal used:',e&&e.message); return null; }
+}
+// Translucent pieces: the crystal shards (tail, arrowhead) and the energy
+// rings. Light passes through them (physical transmission with a refractive
+// index, a thin-film shimmer on crystal), they glow from within in their own
+// colour, and the rings keep a metallic, clear-coated skin. Lower tiers skip
+// the transmission pass and use plain translucency.
+function _crystalMaterial(F,glowCol){
+  const low=!GFX||GFX.preset==='low'||GFX.isMobile&&GFX.preset!=='high';
+  const energy=F.type==='energy', clarity=Math.max(0,Math.min(1,F.clarity!=null?F.clarity:0.6));
+  const m=new THREE.MeshPhysicalMaterial({
+    color:0xffffff, vertexColors:true,
+    metalness:energy?0.82:0.04, roughness:Math.max(0.03,0.4-(F.shine||0.7)*0.36),
+    clearcoat:1, clearcoatRoughness:0.08,
+    transmission:low?0:clarity*(energy?0.55:0.92), thickness:energy?0.12:0.45, ior:energy?1.45:1.62,
+    iridescence:energy?0:0.35, iridescenceIOR:1.3,
+    transparent:true, opacity:low?(energy?0.62:0.55)+0.25*(1-clarity):0.96,
+    emissive:glowCol.clone(), emissiveIntensity:(F.glow||0)*(energy?4.2:2.2)+(energy?0.6:0.15),
+    side:THREE.DoubleSide, depthWrite:false,
+  });
+  return m;
+}
 function applyPartStyle(mesh, style, zd){
   mesh.geometry=mesh.geometry.clone();
   const g=mesh.geometry;
@@ -8535,6 +8813,11 @@ function applyPartStyle(mesh, style, zd){
   g.setAttribute('color',new THREE.BufferAttribute(arr,3));
   // emissive zones (dart rings, ornaments) glow with their gradient's middle color
   const mid=stops[Math.floor((stops.length-1)/2)];
+  const F=zd.finish||{type:zd.emissiveInt>0?'paint':'alloy'};
+  if(F.type==='crystal'||F.type==='energy'){ mesh.material=_crystalMaterial(F,mid); mesh.renderOrder=3; return; }
+  // the board's metal parts: real brushed alloy (WebGPU node shader)
+  if(F.type==='alloy'){ const A=Object.assign({},(STATE.boardConfig&&STATE.boardConfig.alloy)||{}); if(F.shine!=null)A.shine=F.shine; if(F.brush!=null)A.brush=F.brush;
+    const am=_alloyMaterial(zd.metal,A); if(am){ if(F.glow>0){ am.emissive=mid.clone(); am.emissiveIntensity=F.glow*2; } mesh.material=am; return; } }
   mesh.material=new THREE.MeshStandardMaterial({
     color:0xffffff, vertexColors:true,
     metalness:zd.metal, roughness:zd.rough,
@@ -8571,11 +8854,13 @@ function buildBoardFromGLB(tmplKey){
     const part=_partNameOf(o), z=part.toLowerCase();
     // zone material character (metal/rough/glow behavior) stays authored per zone
     let zd;
-    if(z.includes('dart'))       zd={metal:0.9,rough:0.15,emissiveInt:(c.glow!=null?c.glow:0.3)*6+1.2};
-    else if(z.includes('orn'))   zd={metal:0.7,rough:0.25,emissiveInt:0.25};
-    else if(z.includes('staff')) zd={metal:0.6,rough:0.3,emissiveInt:0};
+    if(z.includes('dart')||z.includes('ring')) zd={metal:0.9,rough:0.15,emissiveInt:(c.glow!=null?c.glow:0.3)*6+1.2};
+    else if(z.includes('orn')||z.includes('shard')) zd={metal:0.7,rough:0.25,emissiveInt:0.25};
+    else if(z.includes('staff')) zd={metal:Math.max(0.75,c.metal!=null?c.metal:0.6),rough:0.3,emissiveInt:0};
     else                         zd={metal:(c.metal!=null?c.metal:0.6),rough:0.45,emissiveInt:0};
-    const st=styles[part]||_legacyStyleForPart(part,c);
+    // a split piece inherits its old merged part's saved style until restyled
+    const st=styles[part]||(o.userData.basePart&&styles[o.userData.basePart])||_legacyStyleForPart(part,c);
+    zd.finish=_partFinish(part,styles[part]);
     if(st.visible===false){o.visible=false;return;}
     o.visible=true;
     applyPartStyle(o,st,zd);
@@ -8597,7 +8882,7 @@ function buildBoardFromGLB(tmplKey){
 // decide when the flight board must be rebuilt after editor changes.
 function boardStyleSig(){
   const c=STATE.boardConfig;
-  return (c.template||'procedural')+'|'+(c.zoneDeck||'')+'|'+(c.zoneDart||'')+'|'+(c.zoneOrn||'')+'|'+(c.col1||'')+'|'+(c.emit||'')+'|'+(c.glow!=null?c.glow:'')+'|'+(c.metal!=null?c.metal:'')+'|'+JSON.stringify(c.partStyles||{});
+  return (c.template||'procedural')+'|'+(c.zoneDeck||'')+'|'+(c.zoneDart||'')+'|'+(c.zoneOrn||'')+'|'+(c.col1||'')+'|'+(c.emit||'')+'|'+(c.glow!=null?c.glow:'')+'|'+(c.metal!=null?c.metal:'')+'|'+JSON.stringify(c.partStyles||{})+'|'+JSON.stringify(c.alloy||{});
 }
 
 // ── Builder UI: one collapsible panel per discovered part ──────
@@ -8636,12 +8921,16 @@ function renderPartPanels(){
         <button type="button" onclick="onPartAddStop('${p}')" ${stops.length>=3?'disabled':''} style="width:26px;height:26px;background:rgba(var(--acc-rgb),0.08);border:1px solid var(--border);color:var(--cyan);cursor:pointer;border-radius:2px;${stops.length>=3?'opacity:0.3;':''}">+</button>
         <button type="button" onclick="onPartDelStop('${p}')" ${stops.length<=1?'disabled':''} style="width:26px;height:26px;background:rgba(255,60,60,0.08);border:1px solid var(--border);color:#ff6a6a;cursor:pointer;border-radius:2px;${stops.length<=1?'opacity:0.3;':''}">−</button>
       </div>
+      ${(()=>{ const F=_partFinish(p,st), sl=(k,lab)=>`<div class="pf-row"><span>${lab}</span><input type="range" min="0" max="1" step="0.05" value="${F[k]}" oninput="onPartFinish('${p}','${k}',parseFloat(this.value))"></div>`;
+        return `<div class="pf"><div class="pf-row"><span>FINISH</span><select onchange="onPartFinish('${p}','type',this.value)">${['alloy','crystal','energy','paint'].map(t=>`<option value="${t}" ${F.type===t?'selected':''}>${{alloy:'ALLOY METAL',crystal:'CRYSTAL',energy:'ENERGY ALLOY',paint:'PAINT'}[t]}</option>`).join('')}</select></div>
+          ${sl('shine','SHINE')}${F.type==='alloy'?sl('brush','HAIRLINES'):''}${F.type!=='paint'?sl('glow','GLOW'):''}${(F.type==='crystal'||F.type==='energy')?sl('clarity','CLARITY'):''}</div>`; })()}
     </div>`;
   }).join('');
 }
 function _partStyle(p){return _stylesFor(STATE.boardConfig.template)[p];}
 function onPartVisible(p,v){const st=_partStyle(p);if(!st)return;st.visible=v;if(p.toLowerCase().includes('staff'))STATE.boardConfig.showStaff=v;rb();}
 function onPartMode(p,m){const st=_partStyle(p);if(!st)return;st.mode=m;if(m!=='solid'&&(!st.stops||st.stops.length<2)){st.stops=st.stops||['#888888'];st.stops.push('#'+new THREE.Color(st.stops[0]).offsetHSL(0.12,0,0.1).getHexString());}renderPartPanels();rb();}
+function onPartFinish(p,k,v){const st=_partStyle(p);if(!st)return;st.finish=Object.assign(_partFinish(p,st),st.finish||{});st.finish[k]=v;if(k==='type')renderPartPanels();rb();}
 function onPartAxis(p,a){const st=_partStyle(p);if(!st)return;st.axis=a;rb();}
 function onPartStop(p,i,v){const st=_partStyle(p);if(!st||!st.stops)return;st.stops[i]=v;rb();}
 function onPartAddStop(p){const st=_partStyle(p);if(!st)return;st.stops=st.stops||['#888888'];if(st.stops.length>=3)return;st.stops.push('#'+new THREE.Color(st.stops[st.stops.length-1]).offsetHSL(0.15,0,0).getHexString());if(st.mode==='solid')st.mode='linear';renderPartPanels();rb();}
@@ -8665,7 +8954,10 @@ function autoColorBoard(){
       stops.push('#'+new THREE.Color().setHSL(hh,0.55+Math.random()*0.4,0.32+Math.random()*0.36).getHexString());
     }
     const prevVis=styles[p]?styles[p].visible!==false:true;
-    styles[p]={visible:prevVis,mode:n===1?'solid':(Math.random()<0.35?'radial':'linear'),axis:['x','y','z'][Math.floor(Math.random()*3)],stops};
+    // and a fresh finish in the part's own character (metal stays metal, crystal stays crystal)
+    const D=FINISH_DEFAULTS[_partRole(p)], j=v=>Math.max(0,Math.min(1,v+(Math.random()-0.5)*0.4));
+    const finish={type:D.type,shine:j(D.shine),brush:j(D.brush),glow:D.type==='alloy'?0:j(D.glow),clarity:j(D.clarity)};
+    styles[p]={visible:prevVis,mode:n===1?'solid':(Math.random()<0.35?'radial':'linear'),axis:['x','y','z'][Math.floor(Math.random()*3)],stops,finish};
   });
   renderPartPanels();rb();
   toast('🎨 New color scheme applied — press again for another');
@@ -14659,8 +14951,22 @@ function buildVibrantSolSun(radius){
 function buildProceduralStarMesh(radius, seedVal, starColor){
   const group = new THREE.Group();
   if(!(_isRealWebGPU(flightRenderer))){
-    const fallback=new THREE.Mesh(new THREE.SphereGeometry(radius,20,20),new THREE.MeshBasicMaterial({color:starColor}));
+    // WebGL2: a bright limb-darkened disc with a soft corona and glare, drawn
+    // with plain materials (no compute / node shaders needed)
+    const col=new THREE.Color(starColor);
+    const fallback=new THREE.Mesh(new THREE.SphereGeometry(radius,32,24),new THREE.MeshBasicMaterial({color:col.clone().lerp(new THREE.Color(0xffffff),0.35)}));
     group.add(fallback);
+    try{
+      const cv=document.createElement('canvas'); cv.width=cv.height=128; const cx=cv.getContext('2d');
+      const g=cx.createRadialGradient(64,64,0,64,64,64);
+      g.addColorStop(0,'rgba(255,255,255,1)'); g.addColorStop(0.22,'rgba(255,255,255,.85)'); g.addColorStop(0.45,'rgba(255,255,255,.28)'); g.addColorStop(1,'rgba(255,255,255,0)');
+      cx.fillStyle=g; cx.fillRect(0,0,128,128);
+      const tex=new THREE.CanvasTexture(cv);
+      const corona=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,color:col,transparent:true,blending:THREE.AdditiveBlending,depthWrite:false}));
+      corona.scale.setScalar(radius*4.2); group.add(corona);
+      const glare=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,color:col.clone().lerp(new THREE.Color(0xffffff),0.5),transparent:true,opacity:0.35,blending:THREE.AdditiveBlending,depthWrite:false}));
+      glare.scale.setScalar(radius*9); group.add(glare);
+    }catch(e){}
     return group;
   }
   const mat = new THREE.MeshBasicNodeMaterial();
@@ -15338,6 +15644,11 @@ function makeOrbitGlobeTexture(body){
 // between frames (never a freeze), kept for the session; a coarse pass
 // arrives first, then the full one.
 const _worldMapCache={};
+// the real Earth's relief arriving after a map or chart was drawn: redraw them from it
+window.addEventListener('dm:earth-ready',()=>{
+  try{ Object.keys(_worldMapCache).forEach(k=>{ if(k.startsWith('Earth|')) delete _worldMapCache[k]; }); }catch(e){}
+  try{ if(typeof _orbitTexCache!=='undefined') Object.keys(_orbitTexCache).forEach(k=>{ if(/\|Earth\|/.test(k)){ try{_orbitTexCache[k].dispose();}catch(e){} delete _orbitTexCache[k]; } }); }catch(e){}
+});
 function worldMapFor(body,onPass){
   const pal=getSurfacePalette(body), seed=_worldSeed(body), key=(body.name||'?')+'|'+seed+'|wm1';
   if(_worldMapCache[key]){ const m=_worldMapCache[key]; if(m.done){ if(onPass) onPass(m); return Promise.resolve(m); } m.listeners.push(onPass); return m.promise; }
@@ -15752,7 +16063,7 @@ async function enterAtmosphericFlight(body,site,start){
   const pal=getSurfacePalette(body);
   const ov=$('atmo-overlay');ov.style.display='block';
   if(start&&!start.journal) ov.style.background='transparent'; // surface frame shows through until our first frame
-  _miniKiteName($('atmo-title'),body.name);
+  _miniKiteName($('atmo-title'),body.name); _kiteExplored($('atmo-title'),'ATMOSPHERIC FLIGHT',body);
   const cv=_freshCanvas('atmo-canvas');const W=window.innerWidth,H=window.innerHeight;cv.width=W;cv.height=H;
   atmoRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:!GFX.isMobile});
   await atmoRenderer.init();
@@ -15931,11 +16242,13 @@ function atmoBuildTerrain(pal,ox,oz){
   atmoScene.add(mesh);_atmoTerrainMesh=mesh;
   if(pal.water){
     const liqColor=pal.liquidColor!==undefined?pal.liquidColor:0x1a4a7a;
-    const wm=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ),new THREE.MeshStandardMaterial({
+    const _aw=new THREE.MeshStandardMaterial({
       color:liqColor,transparent:true,
       opacity:pal.liquidOpacity!==undefined?pal.liquidOpacity:0.8,
       roughness:pal.liquidRoughness!==undefined?pal.liquidRoughness:0.2,
-      metalness:0.4}));
+      metalness:0.4});
+    let _awN=null; try{ _awN=_shoreWaterMaterial(liqColor,_aw.opacity,_aw.roughness); }catch(e){}   // same shoreline water as the ground
+    const wm=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ),_awN||_aw);
     wm.rotation.x=-Math.PI/2;wm.position.set(ox,0,oz);atmoScene.add(wm);_atmoWaterMesh=wm; // y=0, matching the walking terrain's water level (fills real low points, not an arbitrary sea level)
   }
 }
@@ -17993,7 +18306,7 @@ async function enterSurface(body,site,opts){
   if(flightAnimId){cancelAnimationFrame(flightAnimId);flightAnimId=null;}
   const pal=getSurfacePalette(body);
   const ov=$('surface-overlay');ov.style.display='block';
-  _miniKiteName($('surface-title'),body.name);
+  _miniKiteName($('surface-title'),body.name); _kiteExplored($('surface-title'),'SURFACE',body); _boardCallReset();
   $('surface-grav').textContent='GRAV '+pal.grav.toFixed(2)+'g';
   const cv=_freshCanvas('surface-canvas');
   const W=window.innerWidth,H=window.innerHeight;cv.width=W;cv.height=H;
@@ -19413,6 +19726,7 @@ function _latLonOf(x,y,z,R){
  *  orbital MC density (TSL port), land-pick/orbit texture, flight canvas, and
  *  surface/atmo site height so continents match across LODs. */
 function earthLandMask(lat,lon,seed){
+  if(window.DMEarth&&DMEarth.ready) return DMEarth.land(lat,lon);   // the real Earth (ETOPO5 relief)
   let inside=-1e9;
   for(const c of EARTH_CONTINENTS){
     const dlon=((lon-c.lon+540)%360)-180;
@@ -19430,6 +19744,7 @@ function earthLandMask(lat,lon,seed){
  *  (Himalayas / Andes / Rockies / Alps-ish). Used by orbit shading + surface
  *  walk contour near the landing site. */
 function earthElevation(lat,lon,seed){
+  if(window.DMEarth&&DMEarth.ready){ const e=DMEarth.metres(lat,lon); return e>0?Math.pow(e/5500,0.8)*1.4:Math.max(-0.35,e/12000); }
   const land=earthLandMask(lat,lon,seed);
   if(land<=0) return THREE.MathUtils.clamp(land,-1,0)*0.35;
   let elev=Math.min(1.15, Math.max(0,land))*0.65;
@@ -19457,6 +19772,14 @@ function earthSiteHeightBias(lat,lon,seed,x,z,metersPerDeg){
   const mpd=(typeof metersPerDeg==='number'&&metersPerDeg>0)?metersPerDeg:0.012;
   const lat2=lat-(z||0)*mpd;
   const lon2=lon+(x||0)*mpd;
+  if(window.DMEarth&&DMEarth.ready){
+    // real metres → walkable game height: the coast sits right at the water
+    // line (0), uplands climb steadily (Everest region ≈ 110), the sea floor
+    // falls away under the generated ocean
+    const e=DMEarth.metres(lat2,lon2);
+    // (snow arrives near 3000 m as on real mountains: the ground's snow line sits ≈ 52)
+    return e>0 ? -4+28*Math.pow(e/1000,0.8) : -10-40*Math.pow(-e/1000,0.6);
+  }
   const land=earthLandMask(lat2,lon2,seed);
   const elev=earthElevation(lat2,lon2,seed);
   if(land>0) return THREE.MathUtils.clamp(land,0,1)*28 + Math.max(0,elev)*42;
@@ -19568,6 +19891,34 @@ function _terrainCore(x,z,seed,_ws){
     }
     if(_ws!=='lush') h=DMWorldStyle.shape(_ws,x,z,h,seed,_fbm);
   return h;
+}
+// ── Shoreline water ────────────────────────────────────────────────────
+// The ocean surface reads the depth of everything already drawn behind it
+// (the solid ground), so it knows how much water lies under each pixel:
+// see-through and tinted in the shallows, deep and opaque offshore, and a
+// broken band of foam where it meets the land, moving with the swell. The
+// solid scene's depth acts as the mask between land, water and the hazy air
+// (the fog still layers over all of it), so they blend instead of fighting.
+// Node shader: WebGPU, and the WebGL2 fallback through the same renderer.
+function _shoreWaterMaterial(liqColor,opacity,rough){
+  const W=window;
+  if(!THREE.MeshStandardNodeMaterial||typeof W.viewportDepthTexture!=='function'||typeof W.perspectiveDepthToViewZ!=='function') return null;
+  const {float,vec3,color,mix,smoothstep,clamp,positionView,positionWorld,cameraNear,cameraFar,viewportDepthTexture,perspectiveDepthToViewZ,mx_noise_float,time}=W;
+  const m=new THREE.MeshStandardNodeMaterial({transparent:true,depthWrite:false});
+  const deep=color(new THREE.Color(liqColor).multiplyScalar(0.55)), shallow=color(new THREE.Color(liqColor).lerp(new THREE.Color(0x5fd0c8),0.55));
+  const sceneZ=perspectiveDepthToViewZ(viewportDepthTexture().r,cameraNear,cameraFar);
+  const thick=clamp(positionView.z.sub(sceneZ),0.0,500.0);          // water between the surface and the ground behind it
+  const swell=mx_noise_float(vec3(positionWorld.x.mul(0.35),positionWorld.z.mul(0.35),time.mul(0.35))).mul(0.5).add(0.5);
+  const lace=mx_noise_float(vec3(positionWorld.x.mul(1.6),positionWorld.z.mul(1.6),time.mul(0.9))).mul(0.5).add(0.5);
+  const edge=float(1.0).sub(smoothstep(0.0,2.4,thick.sub(swell.mul(0.9))));  // foam line breathing in and out
+  const foam=edge.mul(smoothstep(0.35,0.75,lace).mul(0.6).add(0.4)).add(float(1.0).sub(smoothstep(0.0,0.6,thick)).mul(0.6));
+  const body=mix(shallow,deep,smoothstep(0.0,22.0,thick));
+  m.colorNode=mix(body,vec3(0.95,0.98,1.0),clamp(foam,0.0,1.0));
+  m.opacityNode=clamp(mix(float(0.28),float(Math.max(0.85,opacity||0.82)),smoothstep(0.0,9.0,thick)).add(foam.mul(0.6)),0.0,1.0);
+  m.roughnessNode=mix(float(rough!=null?rough:0.15),float(0.85),clamp(foam,0.0,1.0));
+  m.metalnessNode=float(0.25);
+  if(GFX&&GFX.envReflections&&typeof _envMap!=='undefined'&&_envMap) m.envMap=_envMap;
+  return m;
 }
 async function buildSurfaceTerrain(pal){
   const seed=_worldSeed(_surfBody);
@@ -19844,10 +20195,14 @@ async function buildSurfaceTerrain(pal){
       roughness:pal.liquidRoughness!==undefined?pal.liquidRoughness:0.15,
       metalness:0.4});
     if(GFX.envReflections&&_envMap)waterMat.envMap=_envMap;
+    // depth-aware water: thickness from the scene depth behind each pixel
+    // gives clear shallows, deep open water and foam at the shoreline
+    let _wNode=null; try{ _wNode=_shoreWaterMaterial(liqColor,waterMat.opacity,waterMat.roughness); }catch(e){ console.warn('[water] depth shader unavailable',e); }
+    const _waterMatUsed=_wNode||waterMat;
     // Visible surface (shell) — kept for look
     const WATER_SURFACE_Y=0;
     const WATER_FLOOR_Y=-36; // volume depth Stabilizer swim can detect
-    const wm=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ,1,1),waterMat);
+    const wm=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ,1,1),_waterMatUsed);
     wm.rotation.x=-Math.PI/2;wm.position.y=WATER_SURFACE_Y;
     wm.name='JOTS_WaterSurface';
     wm.userData.isWaterSurface=true;
@@ -20795,8 +21150,9 @@ function updateSurface(dt){
     surfBoard.updateMatrix();
     const _bv=_surfBoardV||(_surfBoardV=new THREE.Vector3()), py0=surfBoard.position.y;
     let need=-Infinity;
-    for(let k=0;k<=12;k++){
-      const lx=dims.minX+(dims.maxX-dims.minX)*k/12;
+    // every ~1.25 units along it (sharp cliff edges fell between sparser samples)
+    for(let k=0;k<=24;k++){
+      const lx=dims.minX+(dims.maxX-dims.minX)*k/24;
       for(let j=0;j<3;j++){
         const lz=j===0?dims.minZ:j===1?cz:dims.maxZ;
         _bv.set(lx,dims.minY,lz).applyMatrix4(surfBoard.matrix);
@@ -20807,6 +21163,7 @@ function updateSurface(dt){
     surfBoard.position.y += (hover-surfBoard.position.y)*lerp;
     if(surfBoard.position.y<need) surfBoard.position.y=need;   // never inside the hill, even mid-lerp
   }
+  _boardCallTick(dt);   // parked here, or flying in when summoned
   // ── Third-person follow camera ──────────────────────────────────
   //    Real bug found: the camera was being placed at the exact same
   //    x/z as her own character mesh (only y differed), so the camera
@@ -20908,6 +21265,9 @@ function updateSurface(dt){
     // SURFACE facing: mount formula + CHAR_TERRAIN_YAW_EXTRA (+PI) so she faces
     // travel / board nose (unmounted lacks mount Z-mirror). Mount/atmo unchanged.
     CHAR.root.rotation.y = (p.yaw - Math.PI/2) + CHAR_MOUNT_YAW_OFFSET + CHAR_TERRAIN_YAW_EXTRA;
+    // summoned board on its way: she turns to watch it come
+    if(BOARD_CALL.look&&BOARD_CALL.lookW>0){ const L=BOARD_CALL.look, want=(Math.atan2(-L.x,-L.z)-Math.PI/2)+CHAR_MOUNT_YAW_OFFSET+CHAR_TERRAIN_YAW_EXTRA;
+      let df=want-CHAR.root.rotation.y; df=Math.atan2(Math.sin(df),Math.cos(df)); CHAR.root.rotation.y+=df*BOARD_CALL.lookW; }
     const moving = Math.abs(mf)>0.05 || Math.abs(ms)>0.05;
     const running = moving && (surfRunToggle || surfKeys['ShiftLeft']||surfKeys['ShiftRight']);
     const dirSign = mf<-0.05 ? -1 : 1; // backing up (S / stick pulled back) plays the reversed cycle
@@ -20917,7 +21277,17 @@ function updateSurface(dt){
     // subtle rigid root pitch. Bone lean / foot-IK / autoCrouch-from-slope
     // removed — those warped skeleton into prone/crawl look on mid slopes.
     // Stabilizer climb seam: _surfClimbNormal → climbing_up_wall / Grab_Bar
-    let groundNormal = (typeof window._surfNormal==='function') ? window._surfNormal(p.pos.x,p.pos.z) : new THREE.Vector3(0,1,0);
+    // Slope for the climb decision comes from the height field across about
+    // a stride (±1.2 units ≈ 2 ft): sand ripples and a mesh normal seen from
+    // underneath (which read as a 175° "slope") no longer start a climb on
+    // flat dunes; a real cliff still does.
+    let groundNormal;
+    if(typeof _surfHeight==='function'){
+      const e=1.2, X=p.pos.x, Z=p.pos.z, Hs=_surfHeight;
+      groundNormal=new THREE.Vector3(-(Hs(X+e,Z)-Hs(X-e,Z)),2*e,-(Hs(X,Z+e)-Hs(X,Z-e)));
+      if(!isFinite(groundNormal.x+groundNormal.z)) groundNormal.set(0,1,0);
+      groundNormal.normalize();
+    } else groundNormal=new THREE.Vector3(0,1,0);
     const climbN = (typeof window._surfClimbNormal==='function') ? window._surfClimbNormal(p.pos.x, p.pos.y, p.pos.z) : null;
     if(climbN) groundNormal = climbN;
     const slopeDeg = THREE.MathUtils.radToDeg(groundNormal.angleTo(new THREE.Vector3(0,1,0)));
@@ -20930,15 +21300,15 @@ function updateSurface(dt){
     const climbing = !inWater && (surfClimbHeld || autoClimbFromSlope);
     // No bone slope-lean / autoCrouch-from-slope. Prone ONLY via setCharStance.
     CHAR._slopeLeanT = 0;
-    // Optional subtle whole-body pitch from slope normal (rigid root, not skinning).
-    // Clamped ~±10°. Skip while jumping/climbing/swim so those poses stay upright.
-    if(!jumping && !climbing && !inWater){
-      const lookFwdX=-Math.sin(p.yaw), lookFwdZ=-Math.cos(p.yaw);
-      const pitchAmt=Math.atan2(-(groundNormal.x*lookFwdX+groundNormal.z*lookFwdZ), Math.max(0.2, groundNormal.y));
-      CHAR.root.rotation.x = THREE.MathUtils.clamp(pitchAmt, -0.17, 0.17);
-    } else {
-      CHAR.root.rotation.x = 0;
-    }
+    // She stands plumb (perpendicular to level ground) like a real person on
+    // a slope — no whole-body pitch from the ground normal. (That pitch was
+    // applied in the default XYZ order, so after she turned it tipped her
+    // sideways, and ripple-scale normals on dunes rocked her a few degrees
+    // even on flat ground.) Feet meet the ground via _surfFootContact.
+    // Balance trim (below) keeps her stride's average body line exactly vertical.
+    CHAR.root.rotation.order='YXZ';
+    if(jumping||climbing||inWater){ CHAR._trimF=0; CHAR._trimS=0; CHAR._leanAvgF=0; CHAR._leanAvgS=0; }
+    CHAR.root.rotation.x = CHAR._trimF||0; CHAR.root.rotation.z = CHAR._trimS||0;
 
     updateCharacterLocomotion(dt, moving, running, dirSign, jumping, climbing, {
       swim: inWater,
@@ -20948,6 +21318,7 @@ function updateSurface(dt){
       crouch: CHAR.stanceMode==='crouch', // no autoCrouch-from-slope
     });
     _surfFootContact(dt, jumping||climbing||inWater, _sSurf);
+    if(!(jumping||climbing||inWater)) _balanceTrim(dt, p.yaw);
   }
 }
 // Planted-foot contact. After the walk/run/idle pose is applied, measure
@@ -20957,6 +21328,28 @@ function updateSurface(dt){
 // moves (no bone warping). Calibrated once from her own rig: the ankle's
 // height above the sole in the rest pose.
 let _fcV=null;
+// Balance: measure her body line (hips → head) against true vertical,
+// average it over about a stride, and trim the root so that average sits
+// at exactly 0° forward and 0° sideways. A walk clip carries a slight
+// built-in lean; this takes it out without touching the skinning, so she
+// stands perpendicular to level ground whatever clip is playing.
+let _btH=null,_btT=null;
+function _balanceTrim(dt,yaw){
+  const b=CHAR.bones; if(!b||!b.Hips) return;
+  const head=b.Head||b.Neck||b.Spine02; if(!head) return;
+  if(!_btH){ _btH=new THREE.Vector3(); _btT=new THREE.Vector3(); }
+  CHAR.root.updateMatrixWorld(true);
+  b.Hips.getWorldPosition(_btH); head.getWorldPosition(_btT);
+  const v=_btT.sub(_btH); const L=v.length(); if(L<1e-6) return; v.multiplyScalar(1/L);
+  const fx=-Math.sin(yaw), fz=-Math.cos(yaw), rx=Math.cos(yaw), rz=-Math.sin(yaw);
+  const lf=Math.asin(THREE.MathUtils.clamp(v.x*fx+v.z*fz,-1,1)), ls=Math.asin(THREE.MathUtils.clamp(v.x*rx+v.z*rz,-1,1));
+  const a=Math.min(1,dt/1.2);                                  // ~1.2 s running average (a stride or two)
+  CHAR._leanAvgF=(CHAR._leanAvgF||0)+(lf-(CHAR._leanAvgF||0))*a;
+  CHAR._leanAvgS=(CHAR._leanAvgS||0)+(ls-(CHAR._leanAvgS||0))*a;
+  const k=Math.min(1,dt*1.5), lim=0.1;                         // integral trim, at most ~6°
+  CHAR._trimF=THREE.MathUtils.clamp((CHAR._trimF||0)-CHAR._leanAvgF*k,-lim,lim);
+  CHAR._trimS=THREE.MathUtils.clamp((CHAR._trimS||0)-CHAR._leanAvgS*k,-lim,lim);
+}
 function _surfFootContact(dt, airborne, sc){
   if(typeof _surfHeight!=='function') return;
   _footContact(dt, airborne, sc, _surfHeight, CHAR_TERRAIN_HEIGHT/6);
@@ -20965,6 +21358,164 @@ function _surfFootContact(dt, airborne, sc){
 // under a foot, unit is one foot (her height / 6) at the current scale.
 // Used on planets (terrain height field) and on the Bird Temple deck
 // (ray cast against the temple's own meshes).
+// ── Skyboard: park it, or summon it ───────────────────────────────────
+// On any walkable ground (a planet, an asteroid, the Bird Temple deck) the
+// two little buttons in the kite either PARK the board where it is (it
+// stays put while she walks off) or SUMMON it: it lifts off from wherever
+// it is — or, if it's already beside her, swoops in from far off — and
+// flies a curved path to her side, slowing as it arrives, with two
+// whispering trails off its tail. She turns to watch it come.
+const BOARD_CALL={parked:false,parkPos:null,parkQuat:null,summon:null,trail:null,look:null,lookW:0};
+let _bcV1=null,_bcV2=null,_bcV3=null;
+function _bcCtx(){
+  if(typeof surfaceActive!=='undefined'&&surfaceActive&&surfBoard&&surfPlayer)
+    return {b:surfBoard, scene:surfScene, her:(CHAR&&CHAR.root&&CHAR.root.parent===surfScene)?CHAR.root.position:surfPlayer.pos, unit:CHAR_TERRAIN_HEIGHT/6, nose:1,
+      faceYaw:()=>{ const y=surfPlayer.yaw; return {x:-Math.sin(y),z:-Math.cos(y)}; }};
+  if(typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active&&boardFlight&&BIRD_TEMPLE.group)
+    return {b:boardFlight, scene:boardFlight.parent||flightScene, her:BIRD_TEMPLE.group.localToWorld(SHIP_WALK.localPos.clone()), unit:SHIP_CHAR_H/6, nose:-1,
+      faceYaw:()=>{ const y=SHIP_WALK.faceYaw; return {x:Math.sin(y),z:Math.cos(y)}; }};
+  return null;
+}
+function _bcButtons(){ document.querySelectorAll('.kb-park').forEach(b=>{ b.classList.toggle('on',BOARD_CALL.parked); b.title=BOARD_CALL.parked?'Skyboard parked — tap to have it follow you again':'Park the skyboard here'; b.setAttribute('aria-pressed',String(BOARD_CALL.parked)); }); }
+function parkSkyboard(){
+  const c=_bcCtx(); if(!c) return;
+  if(BOARD_CALL.parked){ BOARD_CALL.parked=false; toast('🛹 Skyboard follows you again',1600); }
+  else{ BOARD_CALL.parked=true; BOARD_CALL.summon=null; BOARD_CALL.parkPos=c.b.position.clone(); BOARD_CALL.parkQuat=c.b.quaternion.clone(); toast('🅿 Skyboard parked',1600); }
+  _bcButtons();
+}
+function summonSkyboard(){
+  const c=_bcCtx(); if(!c) return;
+  if(!_bcV1){ _bcV1=new THREE.Vector3(); _bcV2=new THREE.Vector3(); _bcV3=new THREE.Vector3(); }
+  const b=c.b, her=c.her, ft=c.unit;
+  let from=b.position.clone();
+  const d0=Math.hypot(from.x-her.x,from.z-her.z);
+  if(d0<25*ft){
+    // already at hand: send it out and bring it home in style — from far
+    // off ahead and to one side, so she turns to watch it come and the
+    // camera behind her sees the whole approach
+    const f=c.faceYaw(), a=Math.atan2(f.z,f.x)+(Math.random()<0.5?-0.75:0.75);
+    from.set(her.x+Math.cos(a)*190*ft, her.y+38*ft, her.z+Math.sin(a)*190*ft);
+  }
+  const dist=from.distanceTo(her);
+  BOARD_CALL.parked=false;
+  BOARD_CALL.summon={t:0,dur:THREE.MathUtils.clamp(dist/(95*ft),1.8,4.2),from,ft,nose:c.nose};
+  b.visible=true; b.position.copy(from);
+  _bcTrail(c,true);
+  _bcButtons();
+  toast('🛹 Skyboard summoned',1400);
+}
+function _bcTrail(c,reset){
+  const T=BOARD_CALL;
+  if(reset&&T.trail){ try{ T.trail.parent&&T.trail.parent.remove(T.trail); T.trail.children.forEach(o=>{o.geometry.dispose();o.material.dispose();}); }catch(e){} T.trail=null; }
+  if(T.trail||!c) return;
+  const N=48, g=new THREE.Group(); g.userData.N=N; g.userData.fade=1;
+  // two ribbons that always turn their face to the camera, fading along
+  // their length (vertex alpha), so they read against bright sky and dark ground alike
+  for(let k=0;k<2;k++){
+    const geo=new THREE.BufferGeometry();
+    geo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(N*2*3),3));
+    geo.setAttribute('color',new THREE.BufferAttribute(new Float32Array(N*2*4),4));
+    const idx=[]; for(let i=0;i<N-1;i++){ const a=i*2; idx.push(a,a+1,a+2, a+1,a+3,a+2); } geo.setIndex(idx);
+    const m=new THREE.Mesh(geo,new THREE.MeshBasicMaterial({vertexColors:true,transparent:true,depthWrite:false,side:THREE.DoubleSide,fog:false}));
+    m.frustumCulled=false; m.userData.pts=new Float32Array(N*3); m.userData.filled=0; m.userData.ribbon=true; g.add(m);
+  }
+  // a few glittering motes shed along the path
+  const pg=new THREE.BufferGeometry(); pg.setAttribute('position',new THREE.BufferAttribute(new Float32Array(N*3),3));
+  const pts=new THREE.Points(pg,new THREE.PointsMaterial({color:0xe6f6ff,size:3,sizeAttenuation:false,transparent:true,opacity:.9,depthWrite:false,fog:false}));
+  pts.frustumCulled=false; g.add(pts);
+  c.scene.add(g); T.trail=g;
+}
+function _bcTrailPush(c,dt,live){
+  const g=BOARD_CALL.trail; if(!g) return;
+  const N=g.userData.N, dims=_surfBoardDims(c.b);
+  if(!live){ g.userData.fade-=dt*0.9; if(g.userData.fade<=0){ _bcTrail(null,true); return; } }
+  c.b.updateMatrixWorld(true);
+  const tail=c.nose>0?dims.minX:dims.maxX, cool=new THREE.Color(0x7fd8ff), warm=new THREE.Color(0xff7fd0);
+  const cam=(c.scene===surfScene?surfCamera:flightCamera), cp=cam?cam.position:null, w0=0.55*c.unit;
+  g.children.forEach((o,k)=>{
+    const pos=o.geometry.attributes.position.array;
+    if(o.userData.ribbon){
+      const P=o.userData.pts;
+      if(live){ P.copyWithin(3,0,(N-1)*3); _bcV3.set(tail,dims.minY*0.5,k===0?dims.minZ:dims.maxZ).applyMatrix4(c.b.matrixWorld); P[0]=_bcV3.x; P[1]=_bcV3.y; P[2]=_bcV3.z; o.userData.filled=Math.min(N,o.userData.filled+1); if(o.userData.filled===1) for(let i=1;i<N;i++){ P[i*3]=P[0]; P[i*3+1]=P[1]; P[i*3+2]=P[2]; } }
+      const col=o.geometry.attributes.color.array, base=k===0?cool:warm, f=g.userData.fade;
+      for(let i=0;i<N;i++){
+        const i0=Math.max(0,i-1), i1=Math.min(N-1,i+1);
+        let tx=P[i1*3]-P[i0*3], ty=P[i1*3+1]-P[i0*3+1], tz=P[i1*3+2]-P[i0*3+2];
+        let vx=cp?cp.x-P[i*3]:0, vy=cp?cp.y-P[i*3+1]:1, vz=cp?cp.z-P[i*3+2]:0;
+        let sx=ty*vz-tz*vy, sy=tz*vx-tx*vz, sz=tx*vy-ty*vx; const sl=Math.hypot(sx,sy,sz)||1;
+        const a=Math.pow(1-i/N,1.4), w=w0*(0.25+0.75*a);
+        sx*=w/sl; sy*=w/sl; sz*=w/sl;
+        pos[i*6]=P[i*3]+sx; pos[i*6+1]=P[i*3+1]+sy; pos[i*6+2]=P[i*3+2]+sz;
+        pos[i*6+3]=P[i*3]-sx; pos[i*6+4]=P[i*3+1]-sy; pos[i*6+5]=P[i*3+2]-sz;
+        const al=a*0.85*f;
+        for(const j of [i*8,i*8+4]){ col[j]=base.r; col[j+1]=base.g; col[j+2]=base.b; col[j+3]=al; }
+      }
+      o.geometry.attributes.position.needsUpdate=true; o.geometry.attributes.color.needsUpdate=true;
+    } else {
+      if(live&&Math.random()<0.7){ pos.copyWithin(3,0,(N-1)*3); const j=0.6*c.unit; pos[0]=c.b.position.x+(Math.random()-0.5)*j*4; pos[1]=c.b.position.y+(Math.random()-0.5)*j*2; pos[2]=c.b.position.z+(Math.random()-0.5)*j*4; o.geometry.attributes.position.needsUpdate=true; }
+      o.material.opacity=0.8*g.userData.fade;
+    }
+  });
+}
+// After the walk code has placed the board for this frame (its normal spot
+// beside her): hold it where it was parked, or fly it in.
+function _boardCallTick(dt){
+  const c=_bcCtx(); const T=BOARD_CALL;
+  if(!c){ T.look=null; T.lookW=0; return; }
+  if(!_bcV1){ _bcV1=new THREE.Vector3(); _bcV2=new THREE.Vector3(); _bcV3=new THREE.Vector3(); }
+  const b=c.b;
+  if(T.parked&&T.parkPos){ b.position.copy(T.parkPos); b.quaternion.copy(T.parkQuat); }
+  const S=T.summon;
+  if(S){
+    S.t+=dt; const k=Math.min(1,S.t/S.dur);
+    const target=_bcV1.copy(b.position);                     // where the walk code wants it: beside her
+    const ctrl=_bcV2.copy(S.from).lerp(target,0.5); ctrl.y=Math.max(S.from.y,target.y)+S.from.distanceTo(target)*0.18;
+    const e=1-Math.pow(1-k,3);                              // fast away, slowing as it comes alongside
+    const u=1-e, p=_bcV3.set(0,0,0).addScaledVector(S.from,u*u).addScaledVector(ctrl,2*u*e).addScaledVector(target,e*e);
+    // heading along the path, banking into it; settles into its waiting pose at the end
+    const tx=2*u*(ctrl.x-S.from.x)+2*e*(target.x-ctrl.x), tz=2*u*(ctrl.z-S.from.z)+2*e*(target.z-ctrl.z);
+    const settle=Math.max(0,(k-0.75)/0.25);
+    if(Math.hypot(tx,tz)>1e-6&&settle<1){
+      const want=S.nose>0?Math.atan2(-tz,tx):Math.atan2(tz,-tx);
+      b.rotation.order='YXZ';
+      let dy=want-b.rotation.y; dy=Math.atan2(Math.sin(dy),Math.cos(dy));
+      b.rotation.y+=dy*(1-settle);
+      b.rotation.z=(b.rotation.z||0)*(settle)+Math.sin(k*Math.PI)*0.35*(1-settle)*S.nose;
+    }
+    b.position.copy(p);
+    T.look={x:p.x-c.her.x,z:p.z-c.her.z};
+    T.lookW=Math.min(1,T.lookW+dt*3)*(k>0.92?Math.max(0,(1-k)/0.08):1);
+    _bcTrailPush(c,dt,true);
+    if(k>=1){ T.summon=null; }
+  } else {
+    T.lookW=Math.max(0,T.lookW-dt*2.5); if(T.lookW<=0) T.look=null;
+    if(T.trail) _bcTrailPush(c,dt,false);
+  }
+}
+function _boardCallReset(){ BOARD_CALL.parked=false; BOARD_CALL.summon=null; BOARD_CALL.look=null; BOARD_CALL.lookW=0; _bcTrail(null,true); _bcButtons(); }
+// the two little round buttons, part of the kite: a parking mark, and a
+// skyboard traced from the board itself (pointed nose, two deck discs, tail fins)
+const _KB_PARK='<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="4.5" width="15" height="15" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 16.5v-9h3a2.6 2.6 0 0 1 0 5.2h-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></svg>';
+const _KB_BOARD='<svg viewBox="0 0 24 24" aria-hidden="true"><g transform="rotate(-30 12 12)"><path d="M1.6 12l2.6-2.3h12.6L22.6 12l-5.8 2.3H4.2z" fill="currentColor" fill-opacity=".22" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M1.6 12L.4 9.8M1.6 12L.4 14.2" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/><circle cx="8.2" cy="12" r="1.25" fill="currentColor"/><circle cx="13.6" cy="12" r="1.25" fill="currentColor"/></g></svg>';
+function _installKiteBoardButtons(){
+  const mk=(host)=>{ if(!host||host.querySelector('.kite-board')) return;
+    const w=document.createElement('div'); w.className='kite-board';
+    w.innerHTML='<button type="button" class="kb-btn kb-park" aria-label="Park the skyboard" title="Park the skyboard here">'+_KB_PARK+'</button><button type="button" class="kb-btn kb-call" aria-label="Summon the skyboard" title="Summon the skyboard">'+_KB_BOARD+'</button>';
+    w.querySelector('.kb-park').onclick=e=>{ e.stopPropagation(); parkSkyboard(); };
+    w.querySelector('.kb-call').onclick=e=>{ e.stopPropagation(); summonSkyboard(); };
+    host.appendChild(w); };
+  mk(document.querySelector('#surface-overlay .mini-kite'));
+  mk(document.querySelector('#screen-flight .hud-c'));
+  _bcButtons();
+}
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',_installKiteBoardButtons); else _installKiteBoardButtons();
+// worlds people have actually studied; anything else reads UNEXPLORED in its kite
+const STUDIED_WORLDS=new Set(['Sun','Mercury','Venus','Earth','Moon','Mars','Jupiter','Saturn','Uranus','Neptune','Ceres','Vesta','Pallas','Eros']);
+function _kiteExplored(spanTitle,mode,body){
+  try{ const kite=spanTitle&&spanTitle.closest('.mini-kite'); const m=kite&&kite.querySelector('.mk-mode'); if(!m) return;
+    const known=body&&STUDIED_WORLDS.has(body.name);
+    m.textContent=known?mode:mode+' · UNEXPLORED'; m.classList.toggle('mk-unexplored',!known); }catch(e){}
+}
 function _footContact(dt, airborne, sc, ground, unit){
   if(!_fcV) _fcV=new THREE.Vector3();
   const b=CHAR.bones; if(!b||!b.LeftFoot||!b.RightFoot) return;
@@ -21916,10 +22467,13 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
     if(!homeRow||!hud||!prog) return;
     const chatHome=chat?chat.parentNode:null;
     const rails={};
-    const railIn=(ov)=>{ let r=rails[ov.id]; if(!r){ r=document.createElement('div'); r.className='world-rail'; ov.appendChild(r); rails[ov.id]=r; } return r; };
+    const railIn=(ov)=>{ let r=rails[ov.id]; if(!r){ r=document.createElement('div'); r.className='world-rail'; ov.appendChild(r); rails[ov.id]=r;
+        // EXIT GAME, always on the world's own row (same prompt as in space)
+        const ex=document.createElement('button'); ex.type='button'; ex.className='art-btn world-exit'; ex.title='Exit the game'; ex.innerHTML='<i class="ic">⏻</i>EXIT';
+        ex.onclick=()=>{ try{ promptExit(); }catch(e){} }; r.appendChild(ex); } return r; };
     const place=()=>{
       const ov=['surface-overlay','atmo-overlay'].map(id=>document.getElementById(id)).find(o=>o&&o.style.display&&o.style.display!=='none');
-      if(ov){ const r=railIn(ov); if(hud.parentNode!==r){ r.appendChild(hud); r.appendChild(prog); if(chat) ov.appendChild(chat); } }
+      if(ov){ const r=railIn(ov); if(hud.parentNode!==r){ const ex=r.querySelector('.world-exit'); r.insertBefore(hud,ex); r.insertBefore(prog,ex); if(chat) ov.appendChild(chat); } }
       else if(hud.parentNode!==homeRow){ homeRow.insertBefore(hud,homeRow.firstChild); homeRow.appendChild(prog); if(chat&&chatHome) chatHome.appendChild(chat); }
     };
     const mo=new MutationObserver(place);
@@ -21948,12 +22502,12 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 </script>
 
 <!-- ?v= stamps: bump on every UI change so browsers never mix a new page with cached old styles -->
-<link rel="stylesheet" href="ui/dm-ui.css?v=94">
-<link rel="stylesheet" href="ui/dm-hud.css?v=97">
+<link rel="stylesheet" href="ui/dm-ui.css?v=103">
+<link rel="stylesheet" href="ui/dm-hud.css?v=104">
 <link rel="stylesheet" href="ui/dm-menu.css?v=80">
 <link rel="stylesheet" href="ui/dm-journal.css?v=97">
 <link rel="stylesheet" href="ui/dm-landmap.css?v=86">
 <link rel="stylesheet" href="ui/dm-type.css?v=89">
-<link rel="stylesheet" href="ui/dm-compact.css?v=96">
+<link rel="stylesheet" href="ui/dm-compact.css?v=99">
 </body>
 </html>

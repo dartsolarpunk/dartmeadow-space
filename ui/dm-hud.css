@@ -272,3 +272,44 @@ body:has(#screen-flight.active) #fs-exit,body:has(#screen-flight.active) #fs-ent
 @media (orientation:portrait) and (max-width:600px){
   .world-rail{top:auto;bottom:calc(200px + env(safe-area-inset-bottom,0px));right:8px;flex-direction:column;align-items:flex-end;}
 }
+
+/* ── skyboard PARK / SUMMON: two small glass discs inside the kite, under the title on its left wing ── */
+.kite-board{position:absolute;left:18.5%;top:47%;transform:translate(-50%,-50%);display:flex;gap:6px;z-index:2;pointer-events:auto;}
+#screen-flight .hud-c .kite-board{display:none;}
+body.ship-walk #screen-flight .hud-c .kite-board{display:flex;}
+.kite-board .kb-btn{width:22px;height:22px;padding:0;border-radius:50%;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;
+  color:rgba(var(--acc-rgb),.95);border:1px solid rgba(var(--acc-rgb),.42);
+  background:radial-gradient(circle at 50% 38%,rgba(var(--acc-rgb),.2),rgba(var(--panel-rgb),.28) 72%);
+  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);box-shadow:0 0 8px rgba(var(--acc-rgb),.2);transition:box-shadow .2s,color .2s,border-color .2s;}
+.kite-board .kb-btn svg{width:17px;height:17px;display:block;}
+.kite-board .kb-btn:hover,.kite-board .kb-btn:active{box-shadow:0 0 14px rgba(var(--acc-rgb),.6);color:#fff;}
+.kite-board .kb-park.on{color:#fff;border-color:var(--gold);box-shadow:0 0 10px rgba(var(--hi-rgb),.8),inset 0 0 8px rgba(var(--hi-rgb),.45);
+  background:radial-gradient(circle at 50% 38%,rgba(var(--hi-rgb),.5),rgba(var(--hi-rgb),.12) 72%);}
+#screen-flight .hud-c .kite-board .kb-btn{width:30px;height:30px;}
+#screen-flight .hud-c .kite-board .kb-btn svg{width:22px;height:22px;}
+/* a world nobody has studied */
+.mini-kite .mk-mode.mk-unexplored{color:#ffd27a;text-shadow:0 0 4px rgba(0,0,0,.6),0 0 8px rgba(255,190,90,.6);}
+/* the drawn galaxy fills its disc */
+#screen-flight .side-pad .sp-gal svg{width:1.25em;height:1.25em;display:block;}
+/* the kite discs must not pick up the world bars' slanted button style */
+.mini-kite .kite-board .kb-btn,#screen-flight .hud-c .kite-board .kb-btn{clip-path:none !important;transform:none !important;border-radius:50% !important;
+  min-width:0 !important;min-height:0 !important;padding:0 !important;margin:0 !important;font-size:0 !important;letter-spacing:0 !important;
+  border:1px solid rgba(var(--acc-rgb),.5) !important;
+  background:radial-gradient(circle at 50% 38%,rgba(var(--acc-rgb),.22),rgba(var(--panel-rgb),.3) 72%) !important;}
+.mini-kite .kite-board .kb-btn::before,.mini-kite .kite-board .kb-btn::after{display:none !important;}
+.mini-kite .kite-board .kb-park.on,#screen-flight .hud-c .kite-board .kb-park.on{border-color:var(--gold) !important;
+  background:radial-gradient(circle at 50% 38%,rgba(var(--hi-rgb),.55),rgba(var(--hi-rgb),.14) 72%) !important;}
+#surface-overlay .mini-kite .kite-board .kb-btn,#screen-flight .hud-c .kite-board .kb-btn{width:22px !important;height:22px !important;box-shadow:0 0 8px rgba(var(--acc-rgb),.25) !important;
+  clip-path:none !important;border-radius:50% !important;padding:0 !important;border:1px solid rgba(var(--acc-rgb),.55) !important;color:#dff4ff !important;
+  background:radial-gradient(circle at 50% 38%,rgba(var(--acc-rgb),.24),rgba(var(--panel-rgb),.32) 72%) !important;}
+#screen-flight .hud-c .kite-board .kb-btn{width:30px !important;height:30px !important;}
+#surface-overlay .mini-kite .kite-board .kb-btn svg{width:17px !important;height:17px !important;display:block;}
+#surface-overlay .mini-kite .kite-board .kb-park.on,#screen-flight .hud-c .kite-board .kb-park.on{border-color:var(--gold) !important;color:#fff !important;
+  background:radial-gradient(circle at 50% 38%,rgba(var(--hi-rgb),.55),rgba(var(--hi-rgb),.14) 72%) !important;box-shadow:0 0 10px rgba(var(--hi-rgb),.8) !important;}
+/* EXIT on the world row, and the exit dialog above every world view */
+.world-rail .world-exit{height:30px;padding:0 12px;font-family:var(--font-hud);font-size:.5rem;letter-spacing:.14em;color:var(--text);border:none;border-radius:0;
+  background:linear-gradient(180deg,rgba(255,90,110,.2),rgba(var(--panel-rgb),.4));box-shadow:inset 0 -2px 0 rgba(255,90,110,.6);clip-path:polygon(8px 0,100% 0,calc(100% - 8px) 100%,0 100%);
+  display:inline-flex;align-items:center;gap:5px;cursor:pointer;backdrop-filter:blur(8px);}
+.world-rail .world-exit .ic{font-style:normal;}
+@media (orientation:landscape) and (max-height:520px){ .world-rail .world-exit{height:22px;font-size:.42rem;padding:0 9px;} }
+#exit-modal{z-index:9900 !important;}

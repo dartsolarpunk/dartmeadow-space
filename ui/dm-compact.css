@@ -74,3 +74,30 @@ body:has(#profile-modal.open) #float-music{opacity:0 !important;pointer-events:n
   body:has(#screen-builder.active) #fs-exit,
   body:has(#screen-builder.active) #fs-enter{left:56px !important;}
 }
+
+/* ── Phone bubbles (both orientations): the round pads hug their icons —
+   icon-only, see-through, just big enough to wrap the glyph — in their
+   original places ── */
+@media (orientation:landscape) and (max-height:520px){
+  #screen-flight .side-pad{width:28px !important;height:28px !important;opacity:.72;border-width:1px !important;
+    background:radial-gradient(circle at 50% 40%,rgba(var(--acc-rgb),.16),rgba(var(--panel-rgb),.22) 72%) !important;}
+  #screen-flight .side-pad .sp-ico{font-size:1.3rem !important;line-height:1;}
+  #screen-flight .side-pad .sp-ico img,#screen-flight .side-pad img{width:22px !important;height:22px !important;}
+  #screen-flight #roll-row{gap:5px !important;}
+  #screen-flight #level-stack{gap:5px !important;}
+  #screen-flight .dart-pad{width:32px !important;height:32px !important;}
+  #screen-flight #dart-pads{grid-template-columns:32px 32px !important;gap:4px !important;}
+}
+@media (orientation:portrait) and (max-width:600px){
+  #screen-flight .side-pad{width:30px !important;height:30px !important;font-size:0 !important;gap:0 !important;opacity:.74;border-width:1px !important;
+    background:radial-gradient(circle at 50% 40%,rgba(var(--acc-rgb),.16),rgba(var(--panel-rgb),.22) 72%) !important;}
+  #screen-flight .side-pad .sp-ico{font-size:1.35rem !important;line-height:1;}
+  #screen-flight .side-pad .sp-ico img,#screen-flight .side-pad img{width:24px !important;height:24px !important;}
+  #screen-flight .side-pad.active{opacity:1;}
+  #screen-flight #roll-row{gap:6px !important;}
+  #screen-flight #level-stack{gap:6px !important;}
+  #screen-flight .dart-pad{width:34px !important;height:34px !important;font-size:.38rem !important;opacity:.8;}
+  #screen-flight #dart-pads{grid-template-columns:34px 34px !important;gap:5px !important;}
+  /* the minimap sits above the roll row, clear of the stick and the GAL/SYS pads */
+  #screen-flight #minimap{width:64px !important;height:64px !important;left:8px !important;bottom:calc(280px + var(--safe-bot)) !important;}
+}
