@@ -1134,39 +1134,58 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   <canvas id="menu-bg-canvas"></canvas>
   <div id="menu-glow"></div>
   <div id="menu-glow-wash"></div>
-  <img id="menu-pilot" src="static/skyboard-pilot.svg" alt="" aria-hidden="true">
-  <div class="menu-glass">
-    <div id="account-chip" onclick="openAccountModal()">🔑 SIGN IN</div>
+  <!-- Main menu v2: hinged panels fold out when the menu opens and fold
+       away like shutters when you head into the game. Every button keeps
+       its id/handler from the previous layout. -->
+  <div id="mm-title" class="mm-panel mm-hinge-top">
     <div class="menu-logo">DART MEADOW</div>
     <div class="menu-tagline">Journey of the Skyboard</div>
-    <button class="menu-btn gold" id="resume-btn" onclick="launchFlight()" style="display:none;">▶ RESUME GAME</button>
-    <button id="start-game-btn" onclick="startGame()" title="Start Game">
-      <div class="sg-loading" id="sg-loading">LOADING…</div>
-      <span class="sg-hint">DART</span>
-    </button>
-    <div class="menu-row">
-      <button class="menu-btn" onclick="goScreen('builder')">⚡ BUILD SKYBOARD</button>
-      <button class="menu-btn" onclick="openSaveModal('load')">📂 LOAD GAME</button>
-    </div>
-    <hr class="menu-sep">
-    <div class="menu-row">
-      <button class="menu-btn" onclick="openSettings()">⚙ SETTINGS</button>
-      <button class="menu-btn" onclick="showGfxScreen(true)">🖥 GRAPHICS SETUP</button>
-    </div>
-    <div class="menu-row">
-      <button class="menu-btn" onclick="openGalaxyMap()">🌌 GALAXY MAP</button>
-      <button class="menu-btn" onclick="openSaveModal('save')">💾 SAVE / EXPORT</button>
-    </div>
-    <hr class="menu-sep">
-    <div class="menu-row">
-      <button class="menu-btn" onclick="openAbout()" style="border-color:rgba(var(--acc-rgb),0.25);color:rgba(var(--acc-rgb),0.6);">ℹ ABOUT</button>
-      <button class="menu-btn" onclick="openFeedback()" style="border-color:rgba(var(--acc-rgb),0.25);color:rgba(var(--acc-rgb),0.6);">✉ FEEDBACK</button>
-    </div>
-    <button class="menu-btn" onclick="promptExit()" style="font-size:0.62rem;color:rgba(255,80,105,0.9);background:rgba(255,255,255,0.03);border-color:rgba(255,255,255,0.16);box-shadow:0 0 6px -3px currentColor;">✕ EXIT GAME</button>
-    <hr class="menu-sep">
-    <button class="menu-btn gold" onclick="openSupport()" style="font-size:0.64rem;">❤ SUPPORT DART MEADOW DEVELOPMENT</button>
-    <div class="menu-version">DART MEADOW v3 · DART ENERGY RING SYSTEMS</div>
   </div>
+  <div id="mm-left" class="mm-panel mm-hinge-left">
+    <div class="mm-portrait mm-frame">
+      <img id="menu-pilot" src="static/skyboard-pilot.svg" alt="" aria-hidden="true">
+      <div class="mm-ticks" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+      <div id="account-chip" onclick="openAccountModal()">🔑 SIGN IN</div>
+    </div>
+    <div class="mm-stack mm-frame">
+      <button class="menu-btn gold" id="resume-btn" onclick="launchFlight()" style="display:none;">▶ RESUME GAME</button>
+      <button class="menu-btn" onclick="goScreen('builder')"><span class="mb-ico">⚡</span>BUILD SKYBOARD</button>
+      <button class="menu-btn" onclick="openSettings()"><span class="mb-ico">⚙</span>SETTINGS</button>
+      <button class="menu-btn" onclick="openGalaxyMap()"><span class="mb-ico">⬡</span>GALAXY MAP</button>
+      <button class="menu-btn mm-exit" onclick="promptExit()"><span class="mb-ico">⏻</span>EXIT GAME</button>
+    </div>
+  </div>
+  <div id="mm-right" class="mm-panel mm-hinge-right">
+    <div class="mm-inst mm-frame">
+      <div class="mm-dial">
+        <svg class="mm-rings" viewBox="0 0 200 200" aria-hidden="true">
+          <circle class="r0" cx="100" cy="100" r="96"/><circle class="r1" cx="100" cy="100" r="88"/><circle class="r2" cx="100" cy="100" r="80"/><circle class="r3" cx="100" cy="100" r="72"/>
+        </svg>
+        <button id="start-game-btn" onclick="startGame()" title="Start Game">
+          <div class="sg-loading" id="sg-loading">LOADING…</div>
+          <span class="sg-hint">DART</span>
+        </button>
+        <div class="mm-start-lbl">START</div>
+      </div>
+      <div class="mm-sub">
+        <button class="mm-mini" onclick="openSaveModal('load')" title="Load a saved game"><span>📂</span>LOAD</button>
+        <button class="mm-mini" onclick="openSaveModal('save')" title="Save, import or export"><span>💾</span>SAVE / FILES</button>
+        <button class="mm-mini" onclick="showGfxScreen(true)" title="Graphics setup"><span>🖥</span>GRAPHICS</button>
+      </div>
+      <div class="mm-status">
+        <div class="mm-st-row"><span>PILOT</span><b id="mm-st-pilot">—</b></div>
+        <div class="mm-st-row"><span>LOCATION</span><b id="mm-st-loc">Sol · Milky Way</b></div>
+        <div class="mm-st-row"><span>LAST SAVE</span><b id="mm-st-save">—</b></div>
+      </div>
+    </div>
+  </div>
+  <div id="mm-bottom" class="mm-panel mm-hinge-bottom">
+    <button class="mm-round" onclick="openAccountModal()" title="Account &amp; sign in"><span>👤</span></button>
+    <button class="mm-round" onclick="openAbout()" title="About &amp; credits"><span>ℹ</span></button>
+    <button class="mm-round" onclick="openFeedback()" title="Send feedback"><span>✉</span></button>
+    <button class="mm-round mm-support" onclick="openSupport()" title="Support DART Meadow development"><span>❤</span></button>
+  </div>
+  <div class="menu-version">DART MEADOW v3 · DART ENERGY RING SYSTEMS</div>
 </div>
 
 <!-- SUPPORT MODAL -->
@@ -1453,11 +1472,11 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     <div class="hud-r">
       <div class="art-btns dm-frame">
       <button class="art-btn active" id="cam-btn" onclick="cycleCamMode()">CAM 1</button>
-      <button class="art-btn" id="lockon-btn" onclick="returnHome()" title="Return to home base (Earth) and track it">⌂ HOME</button>
-      <button class="art-btn" onclick="openGalaxyMap()">MAP</button>
-      <button class="art-btn" onclick="openSettings()">CFG</button>
-      <button class="art-btn" onclick="returnToMenu()" title="Return to main menu (your game stays loaded)">☰ MENU</button>
-      <button class="art-btn" onclick="promptExit()">EXIT</button>
+      <button class="art-btn" id="lockon-btn" onclick="returnHome()" title="Return to home base (Earth) and track it"><i class="ic">⌂</i>HOME</button>
+      <button class="art-btn" onclick="openGalaxyMap()" title="Galaxy map (M)"><i class="ic">⬡</i>MAP</button>
+      <button class="art-btn" onclick="openSettings()" title="Settings"><i class="ic">⚙</i>CFG</button>
+      <button class="art-btn" onclick="returnToMenu()" title="Return to main menu (your game stays loaded)"><i class="ic">☰</i>MENU</button>
+      <button class="art-btn" onclick="promptExit()" title="Exit"><i class="ic">⏻</i>EXIT</button>
       <button class="art-btn profile-btn" id="profile-btn" onclick="openProfileMenu()" title="Your profile and display options"><span class="pf-av-mini" id="profile-btn-av">◉</span><span>PROFILE</span></button>
       </div>
       <button class="art-btn progress-btn" id="init-progress-btn" onclick="quickSave()" title="Initialize Progress: save right here. Signed in, it also goes to your private jots- repository. The game also initializes progress by itself at milestones and every 15 minutes.">⟐ INITIALIZE PROGRESS</button>
@@ -1523,13 +1542,6 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   <div id="minimap"><canvas id="minimap-canvas" width="100" height="100"></canvas>
     <button id="mm-toggle" onclick="toggleMinimapMode(event)" title="Toggle solar / galaxy view">◐</button>
   </div>
-  <!-- Corner housings behind the stick clusters (decorative, no input) -->
-  <svg class="hud-plate hud-plate-l" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-    <polyline points="0,34 12,22 40,22 58,48 58,100"/><polyline class="hp-2" points="4,100 4,40 14,30"/><polyline class="hp-3" points="44,30 54,44"/>
-  </svg>
-  <svg class="hud-plate hud-plate-r" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-    <polyline points="100,34 88,22 60,22 42,48 42,100"/><polyline class="hp-2" points="96,100 96,40 86,30"/><polyline class="hp-3" points="56,30 46,44"/>
-  </svg>
   <!-- Dual joysticks -->
   <div id="joysticks">
     <div class="joystick-zone" id="jL">
@@ -2138,11 +2150,23 @@ function closeSaveModal(){$('save-modal').classList.remove('open');}
 
 // ── Screen Management ─────────────────────────────────────────
 function goScreen(name){
+  // Menu shutters: leaving the menu, keep it on top a moment while its
+  // panels fold away over whatever is loading underneath.
+  try{
+    const mm=$('screen-menu');
+    if(mm&&mm.classList.contains('active')&&name!=='menu'&&!matchMedia('(prefers-reduced-motion: reduce)').matches){
+      mm.classList.add('mm-leaving');
+      clearTimeout(goScreen._leaveT);
+      goScreen._leaveT=setTimeout(()=>mm.classList.remove('mm-leaving'),700);
+    }
+  }catch(e){}
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   STATE.screen=name;
   if(name==='builder'){$('screen-builder').classList.add('active');requestAnimationFrame(()=>requestAnimationFrame(initBuilderScene));showFloatingMusic();}
   else if(name==='flight'){$('screen-flight').classList.add('active');hideFloatingMusicInGame();}
-  else{$('screen-menu').classList.add('active');initMenuBg();initStartBtnTurntable();startMenuMusic();
+  else{try{$('screen-menu').classList.remove('mm-leaving');}catch(e){}
+    $('screen-menu').classList.add('active');initMenuBg();initStartBtnTurntable();startMenuMusic();
+    try{ refreshMenuStatus(); }catch(e){}
     const rb=$('resume-btn');
     if(rb){
       if(_gameInProgress&&flightInited){
@@ -2306,6 +2330,18 @@ function _revealMenuAfterGfx(){
   _checkAutosaveResume();
 }
 // Check if there's a valid autosave in localStorage and show resume button.
+// Main menu status panel: pilot, where the last save was, when.
+function refreshMenuStatus(){
+  const J=window.JOTS, id=J&&J.identity;
+  if($('mm-st-pilot')) $('mm-st-pilot').textContent=(id&&id.name)||'Guest';
+  let data=null; try{ data=JSON.parse(localStorage.getItem('dm_autosave')||'null'); }catch(e){}
+  const w=data&&data.where;
+  const sys=(w&&w.sys&&w.sys.name)||'Sol';
+  const gal=(w&&w.gal)?String(w.gal).replace(/^milkyway$/i,'Milky Way'):'Milky Way';
+  if($('mm-st-loc')) $('mm-st-loc').textContent=sys+' \u00b7 '+gal;
+  if($('mm-st-save')) $('mm-st-save').textContent=data&&data.ts?new Date(data.ts).toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'Not yet';
+}
+window.addEventListener('jots:auth',()=>{ try{refreshMenuStatus();}catch(e){} });
 function _checkAutosaveResume(){
   try{
     const raw=localStorage.getItem('dm_autosave');
@@ -20016,6 +20052,8 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 })();
 </script>
 
+<link rel="stylesheet" href="ui/dm-ui.css">
 <link rel="stylesheet" href="ui/dm-hud.css">
+<link rel="stylesheet" href="ui/dm-menu.css">
 </body>
 </html>
