@@ -1,6 +1,7 @@
 /* DART Meadow — the sky seen from the ground and from sky flight.
  *
- * A day/night cycle on the shared world clock: the local sun (coloured by
+ * A day/night cycle on the shared world clock (DMTime — real UTC, 30× faster,
+ * real tilts and seasons): the local sun (coloured by
  * its star type) rises and sets with the site's latitude/longitude. By day
  * the atmosphere scatters it (blue on Earth, butterscotch on Mars, …) with
  * a hazy horizon and warm sunsets; at night the atmosphere thins almost to
@@ -146,11 +147,19 @@
         dt = Math.min(0.1, dt || 0.016);
         // local time of day on the shared world clock (same for everyone)
         const t = (typeof window.worldSeconds === 'function') ? window.worldSeconds() : Date.now() / 1000;
-        const len = DAY_WALL_SEC * (BODY_DAY[o.body && o.body.name] || 1);
-        const frac = (((t / len) + (lon || 0) / 360) % 1 + 1) % 1;
-        const H = (frac - 0.5) * Math.PI * 2, phi = (lat || 0) * Math.PI / 180;
-        // sun on a simple equatorial path, seen from this latitude (east = +x, north = -z)
-        sunDir.set(-Math.sin(H), Math.cos(H) * Math.cos(phi), Math.cos(H) * Math.sin(phi)).normalize();
+        let H, phi = (lat || 0) * Math.PI / 180;
+        if (window.DMTime && o.body) {
+          // the real sky: hour angle from the body's own solar day on the world
+          // clock (UTC on Earth), declination from its tilt and place in its year
+          DMTime.sunDir(o.body, lat, lon, sunDir); sunDir.normalize();
+          H = (((DMTime.dayFraction(o.body) + (lon || 0) / 360) % 1 + 1) % 1 - 0.5) * Math.PI * 2;
+        } else {
+          const len = DAY_WALL_SEC * (BODY_DAY[o.body && o.body.name] || 1);
+          const frac = (((t / len) + (lon || 0) / 360) % 1 + 1) % 1;
+          H = (frac - 0.5) * Math.PI * 2;
+          // sun on a simple equatorial path, seen from this latitude (east = +x, north = -z)
+          sunDir.set(-Math.sin(H), Math.cos(H) * Math.cos(phi), Math.cos(H) * Math.sin(phi)).normalize();
+        }
         if (sunDir.y < -0.999) sunDir.y = -0.999;
         const day = Math.max(0, Math.min(1, (sunDir.y + 0.1) / 0.25));
         ctl.day = day; U.day.value = day; U.dir.value.copy(sunDir);
