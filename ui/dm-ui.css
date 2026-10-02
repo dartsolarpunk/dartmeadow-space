@@ -4,7 +4,7 @@
  * strokes) and the corners are cut with clip-path, so it stays put on
  * scrolling cards and follows the theme colours.
  */
-.dm-card,.mm-frame,#screen-builder #builder-sidebar,#screen-builder #builder-footer,.modal-box,.exit-box,#temple-hub-panel,.pf-card,#dmcp .cp,#about-modal>div,#support-modal>div,#music-browser-modal>div{
+.dm-card,.mm-frame,#qt-panel,#screen-builder #builder-sidebar,#screen-builder #builder-footer,.modal-box,.exit-box,#temple-hub-panel,.pf-card,#dmcp .cp,#about-modal>div,#support-modal>div,#music-browser-modal>div{
   --cut:14px;--lc:rgba(var(--acc-rgb),.85);--lw:1px;
   position:relative;isolation:isolate;border:none !important;border-radius:0 !important;
   clip-path:polygon(var(--cut) 0,calc(100% - var(--cut)) 0,100% var(--cut),100% calc(100% - var(--cut)),calc(100% - var(--cut)) 100%,var(--cut) 100%,0 calc(100% - var(--cut)),0 var(--cut));
