@@ -1298,6 +1298,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
           <span class="sec-label">Part Customization</span>
           <button type="button" onclick="autoColorBoard()" style="display:block;width:100%;margin:4px 0 8px;padding:9px;background:rgba(var(--hi-rgb),.1);border:1px solid var(--gold,#f5c400);color:var(--gold,#f5c400);font-family:var(--font-hud);font-size:.6rem;letter-spacing:.14em;cursor:pointer;border-radius:3px;">🎲 AUTO COLOR — NEW SCHEME</button>
           <div id="part-styles"><div style="font-size:0.58rem;color:var(--text-dim);padding:6px 0;">Loading skyboard parts…</div></div>
+          <span class="sec-label" style="margin-top:10px;display:block;">Trail Wisps</span>
+          <div id="trail-ui"></div>
           <div class="ctrl-row"><label>Glow Intensity</label><input type="range" id="z-glow" min="0" max="1" step="0.05" value="0.3" oninput="onZoneColor()"><span class="val" id="v-zglow">0.30</span></div>
           <div class="ctrl-row"><label>Metalness</label><input type="range" id="z-metal" min="0" max="1" step="0.05" value="0.85" oninput="onZoneColor()"><span class="val" id="v-zmetal">0.85</span></div>
           <span class="sec-label" style="margin-top:10px;display:block;">Alloy Finish</span>
@@ -3709,6 +3711,7 @@ function syncSlidersToBoardConfig(){
     [['shine','z-shine','v-zshine'],['brush','z-brush','v-zbrush'],['scale','z-scale','v-zscale'],['bump','z-bump','v-zbump'],['height','z-height','v-zheight']].forEach(([k,id,vid])=>{ const el=$(id); if(el){ el.value=A[k]; const v=$(vid); if(v) v.textContent=(+A[k]).toFixed(2); } });
     if($('z-pattern')) $('z-pattern').value=A.pattern||'linear'; }
   buildGfxGrids();buildStaffGrid();
+  try{renderTrailUI();}catch(e){}
 }
 function readBoardConfig(){
   const c=STATE.boardConfig;
@@ -3734,7 +3737,7 @@ function readBoardConfig(){
   $('v-slen').textContent=c.staffLen+'m';$('v-sthick').textContent=c.staffThick.toFixed(3);
   $('builder-name-display').textContent=c.name;
 }
-function rb(){if(!builderInited||!boardGroup)return;readBoardConfig();try{_rebuildBoard();}catch(e){console.error('Board build error:',e);}}
+function rb(){try{const T=STATE.boardConfig.trail;if(!T||T.mode!=='custom')_trailPreview();}catch(e){}if(!builderInited||!boardGroup)return;readBoardConfig();try{_rebuildBoard();}catch(e){console.error('Board build error:',e);}}
 function onNameChange(){STATE.boardConfig.name=($('board-name-input').value||'').toUpperCase()||'UNNAMED BOARD';$('builder-name-display').textContent=STATE.boardConfig.name;}
 
 // Switch the board base between the procedural primitives and the two sculpted
@@ -9145,6 +9148,7 @@ function boardStyleSig(){
 
 // ── Builder UI: one collapsible panel per discovered part ──────
 function renderPartPanels(){
+  try{renderTrailUI();}catch(e){}
   const host=$('part-styles');if(!host)return;
   const tmpl=STATE.boardConfig.template;
   if(!tmpl||tmpl==='procedural'){host.innerHTML='';return;}
@@ -15701,6 +15705,64 @@ function applyRenderSettings(){
 // off the tail at any speed without depending on world-space velocity.
 // Kept as a sibling of the board (matrix copied each frame), never a
 // child, so board measurements (_deriveBoardScale) don't see it.
+// ── Trail wisp colours ─────────────────────────────────────────
+// Four wisps, one per tail corner: 0 upper-left, 1 upper-right, 2 lower-left,
+// 3 lower-right. AUTO pulls them from the board's own paint (energy rings and
+// crystals first, then the deck), lifted to a glowing tone so they read as
+// light; CUSTOM uses the four colours picked in the forge. Lives in
+// STATE.boardConfig.trail, so it saves with the board.
+const TRAIL_LANES=['UPPER LEFT','UPPER RIGHT','LOWER LEFT','LOWER RIGHT'];
+function _trailGlow(hex){
+  const col=new THREE.Color(hex), h={}; col.getHSL(h);
+  if(h.s<0.08) return '#'+col.setHSL(h.h,h.s,Math.min(0.85,Math.max(0.62,h.l))).getHexString(); // greys stay neutral, just brighter
+  return '#'+col.setHSL(h.h,Math.max(0.6,h.s),Math.min(0.78,Math.max(0.6,h.l))).getHexString();
+}
+function _trailAuto(){
+  const c=STATE.boardConfig, tm=c.template||'B';
+  if(tm==='R'){ const L=(c.ariel&&c.ariel.light)||'#ff7a1a'; return [L,'#ffc14d',L,'#ffc14d'].map(_trailGlow); }
+  const styles=(c.partStyles&&c.partStyles[tm])||{};
+  const parts=(SKYBOARD_PARTS[tm]&&SKYBOARD_PARTS[tm].length)?SKYBOARD_PARTS[tm]:Object.keys(styles);
+  const by={energy:[],crystal:[],deck:[],staff:[]};
+  parts.forEach(p=>{ const st=styles[p]||_legacyStyleForPart(p,c); if(st.visible===false) return; (st.stops||[]).forEach(x=>{ const r=by[_partRole(p)]; if(r&&!r.includes(x)) r.push(x); }); });
+  let src=by.energy.concat(by.crystal);
+  if(src.length<2) src=src.concat(by.deck);
+  if(!src.length) src=[c.zoneDart||c.emit||'#00f5ff', c.zoneOrn||'#ff290d'];
+  const n=src.length;
+  // spread across what the board wears; upper pair and lower pair cross over
+  return [0,1,2,3].map(i=>_trailGlow(src[Math.round([0,3,1,2][i]*(n-1)/3)]));
+}
+function trailPalette(){
+  const T=STATE.boardConfig.trail;
+  if(T&&T.mode==='custom'&&Array.isArray(T.colors)&&T.colors.length) return [0,1,2,3].map(i=>T.colors[i%T.colors.length]);
+  return _trailAuto();
+}
+function _trailSig(){
+  const c=STATE.boardConfig, tm=c.template||'B', T=c.trail||{};
+  if(T.mode==='custom') return 'c|'+(T.colors||[]).join(',');
+  return 'a|'+tm+'|'+JSON.stringify((c.partStyles&&c.partStyles[tm])||{})+'|'+(c.ariel?c.ariel.light:'')+'|'+(c.zoneDart||'')+'|'+(c.zoneOrn||'')+'|'+(c.zoneDeck||'')+'|'+((SKYBOARD_PARTS[tm]||[]).length);
+}
+function setTrailMode(m){
+  const c=STATE.boardConfig, T=c.trail||(c.trail={mode:'auto'});
+  if(m==='custom'&&!(Array.isArray(T.colors)&&T.colors.length===4)) T.colors=_trailAuto();
+  T.mode=m; renderTrailUI();
+}
+function onTrailColor(i,v){ const T=STATE.boardConfig.trail; if(!T) return; T.colors=T.colors||_trailAuto(); T.colors[i]=v; _trailPreview(); }
+function _trailPreview(){
+  const pal=trailPalette();
+  pal.forEach((col,i)=>{ const b=$('trail-bar-'+i); if(b) b.style.background='linear-gradient(90deg,'+col+' 0%,'+col+'99 35%,transparent 100%)'; const sw=$('trail-sw-'+i); if(sw&&sw.tagName!=='INPUT') sw.style.background=col; });
+}
+function renderTrailUI(){
+  const host=$('trail-ui'); if(!host) return;
+  const T=STATE.boardConfig.trail||{}, custom=T.mode==='custom', pal=trailPalette();
+  const tab=(m,label)=>`<button type="button" class="tmpl-btn${(m==='custom')===custom?' active':''}" onclick="setTrailMode('${m}')" style="flex:1">${label}</button>`;
+  host.innerHTML=`<div style="display:flex;gap:6px;margin:4px 0 8px;">${tab('auto','AUTO · MATCH BOARD')}${tab('custom','CUSTOM')}</div>`+
+    pal.map((col,i)=>`<div style="display:flex;align-items:center;gap:8px;margin:0 0 6px;">
+      ${custom?`<input type="color" id="trail-sw-${i}" value="${col}" oninput="onTrailColor(${i},this.value)" style="width:30px;height:26px;padding:0;border:1px solid var(--border);background:none;cursor:pointer;">`
+              :`<span id="trail-sw-${i}" style="width:30px;height:26px;border:1px solid var(--border);border-radius:2px;background:${col};box-shadow:0 0 8px ${col}66;flex:none"></span>`}
+      <span style="font-family:var(--font-hud);font-size:.52rem;letter-spacing:.12em;color:var(--text-dim);width:86px;flex:none">${TRAIL_LANES[i]}</span>
+      <span id="trail-bar-${i}" style="flex:1;height:4px;border-radius:2px;background:linear-gradient(90deg,${col} 0%,${col}99 35%,transparent 100%);"></span></div>`).join('')+
+    `<div style="font-size:.56rem;color:var(--text-dim);line-height:1.5;padding:2px 0 4px;">${custom?'Pick a colour for each of the four wisps off the tail.':'The wisps take their colours from the board — repaint it or press AUTO COLOR and they follow.'}</div>`;
+}
 const WAKE_N=110;
 function _boardLocalBox(board){
   const box=new THREE.Box3(), tmp=new THREE.Box3(), m=new THREE.Matrix4();
@@ -15740,8 +15802,8 @@ function _makeWake(board, scene){
     life:new Float32Array(WAKE_N), age:new Float32Array(WAKE_N),
     p:new Float32Array(WAKE_N*3), v:new Float32Array(WAKE_N), sl:new Float32Array(WAKE_N),
     tint:[], _m:new THREE.Matrix4(), _q:new THREE.Quaternion(), _pos:new THREE.Vector3(), _sc:new THREE.Vector3(), _c:new THREE.Color()};
-  const tints=[0x7fb8ff,0xc88cff,0x8ff0ff,0xff9bd0];
-  for(let i=0;i<WAKE_N;i++){ w.life[i]=0; w.age[i]=1; w.tint.push(new THREE.Color(tints[i%tints.length])); mesh.setColorAt(i,new THREE.Color(0,0,0)); }
+  const tints=trailPalette(); w.sig=_trailSig(); w.sigT=0;
+  for(let i=0;i<WAKE_N;i++){ w.life[i]=0; w.age[i]=1; w.tint.push(new THREE.Color(tints[i&3])); mesh.setColorAt(i,new THREE.Color(0,0,0)); }
   scene.add(mesh);
   board.userData.wake=w;
   return w;
@@ -15757,6 +15819,9 @@ function updateBoardWake(board, scene, dt, intensity, fwdWorld){
     if(old && old.board!==board){ try{ scene.remove(old.mesh); old.mesh.geometry.dispose(); old.mesh.material.dispose(); }catch(e){} }
     w=_makeWake(board, scene); scene.userData._boardWake=w;
   }
+  // follow the builder: a repaint or a custom pick reaches the wisps within half a second
+  w.sigT-=dt;
+  if(w.sigT<=0){ w.sigT=0.5; const sg=_trailSig(); if(sg!==w.sig){ w.sig=sg; const pal=trailPalette(); for(let i=0;i<WAKE_N;i++) w.tint[i].set(pal[i&3]); } }
   board.updateMatrixWorld();
   w.mesh.matrix.copy(board.matrixWorld);
   w.mesh.matrixWorldNeedsUpdate=true;
@@ -22193,7 +22258,7 @@ function _bcTrailPush(c,dt,live){
   const N=g.userData.N, dims=_surfBoardDims(c.b);
   if(!live){ g.userData.fade-=dt*0.9; if(g.userData.fade<=0){ _bcTrail(null,true); return; } }
   c.b.updateMatrixWorld(true);
-  const tail=c.nose>0?dims.minX:dims.maxX, cool=new THREE.Color(0x7fd8ff), warm=new THREE.Color(0xff7fd0);
+  const tail=c.nose>0?dims.minX:dims.maxX, _tp=trailPalette(), cool=new THREE.Color(_tp[0]), warm=new THREE.Color(_tp[1]);
   const cam=(c.scene===surfScene?surfCamera:flightCamera), cp=cam?cam.position:null, w0=0.55*c.unit;
   g.children.forEach((o,k)=>{
     const pos=o.geometry.attributes.position.array;
