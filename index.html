@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <link rel="manifest" href="/manifest.webmanifest">
-<meta name="theme-color" content="#000308">
-<style>html,body{background:#000308;}</style>
+<meta name="theme-color" content="#10081a">
+<style>html,body{background:#10081a radial-gradient(120% 90% at 50% 38%,#24123e 0%,#140a26 45%,#07040d 100%) fixed;}</style>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
 
 <meta name="description" content="Journey of the Skyboard · Build your board, fly the stars.">
@@ -976,7 +976,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   // Picks up the result if signInWithRedirect was used (popup-blocked fallback)
   getRedirectResult(fbAuth).catch(err => console.warn('redirect result:', err));
 </script>
-<script src="jots/jots-link.js?v=80" defer></script>
+<script src="jots/jots-link.js?v=81" defer></script>
 </head>
 <body>
 <!-- LOADING -->
@@ -1289,6 +1289,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
           <button type="button" id="tmpl-B" class="tmpl-btn" onclick="setBoardTemplate('B')">SKYBOARD B</button>
           <button type="button" id="tmpl-A" class="tmpl-btn" onclick="setBoardTemplate('A')">SKYBOARD A</button>
           <button type="button" id="tmpl-C" class="tmpl-btn" onclick="setBoardTemplate('C')" title="The original sculpt with all 21 pieces editable">SKYBOARD C · 21 PARTS</button>
+          <button type="button" id="tmpl-R" class="tmpl-btn" onclick="setBoardTemplate('R')" title="Ariel's own board — carbon hull, orange light lines, amber crystal nose">ARIEL · HER BOARD</button>
         </div>
         <div id="zone-colors" style="display:none;">
           <span class="sec-label">Part Customization</span>
@@ -2295,25 +2296,34 @@ async function takeScreenshot(){
     const file=(typeof File==='function')?new File([blob],name,{type:'image/png'}):null;
     const ios=/iPhone|iPad|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
     if(ios&&file&&navigator.canShare&&navigator.canShare({files:[file]})){
+      _shotBackup(c,name);
       try{ await navigator.share({files:[file],title:'DART Meadow'}); toast('📷 Screenshot ready',1600); return; }catch(e){ if(e&&e.name==='AbortError') return; }
     }
     const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; a.click();   // detached: no page handler can cancel it
     setTimeout(()=>URL.revokeObjectURL(a.href),4000);
     toast('📷 Screenshot saved · '+c.width+'×'+c.height,1800);
+    _shotBackup(c,name);
   }catch(e){ console.warn('[shot]',e); toast('⚠ Screenshot failed','','warn'); }
   finally{ _shotBusy=false; }
 }
 window.takeScreenshot=takeScreenshot;
-// in space the Journal tab is docked to the left edge: the camera rides just to its right, in its row
-function _placeFlightShot(){
-  const b=document.getElementById('shot-btn-flight'), j=document.getElementById('journal-toggle-btn'); if(!b||!j) return;
-  const jr=j.getBoundingClientRect(), pr=(b.offsetParent||document.body).getBoundingClientRect();
-  if(!jr.width) return;
-  b.style.top=(jr.top-pr.top+(jr.height-32)/2)+'px'; b.style.left=(jr.right-pr.left+6)+'px';
+// Signed in with GitHub: every screenshot is also kept in the private game repository
+// (screenshots/<date>.jpg — a compact JPEG of the same picture)
+async function _shotBackup(c,name){
+  const V=window.JOTS&&JOTS.vault; if(!V||!V.ready||typeof V.putBase64!=='function') return;
+  try{
+    const jb=await new Promise(r=>c.toBlob(r,'image/jpeg',0.9)); if(!jb) return;
+    const b64=await new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(String(fr.result).split(',')[1]); fr.onerror=rej; fr.readAsDataURL(jb); });
+    await V.putBase64('screenshots/'+name.replace(/\.png$/,'.jpg'),b64,'jots: screenshot '+name);
+    toast('☁ Screenshot backed up to '+V.repo,1600);
+  }catch(e){ console.warn('[shot] backup',e); toast('⚠ Screenshot saved here; GitHub backup failed',2200); }
 }
-window.addEventListener('resize',()=>setTimeout(_placeFlightShot,120));
-window.addEventListener('orientationchange',()=>setTimeout(_placeFlightShot,350));
-setInterval(()=>{ if(typeof STATE!=='undefined'&&STATE.screen==='flight') _placeFlightShot(); },1500);
+// in space the camera sits in the second row, just left of the ONLINE · CHAT chip (it travels with the chip)
+function _placeFlightShot(){
+  const b=document.getElementById('shot-btn-flight'), hud=document.getElementById('jots-mp-hud'); if(!b||!hud) return;
+  if(b.parentNode!==hud) hud.insertBefore(b,hud.firstChild);
+}
+setInterval(_placeFlightShot,1500);
 document.addEventListener('keydown',e=>{ if((e.key==='p'||e.key==='P')&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!/INPUT|TEXTAREA|SELECT/.test((e.target&&e.target.tagName)||'')&&!(e.target&&e.target.isContentEditable)) takeScreenshot(); });
 // INITIALIZE PROGRESS (the game's word for saving) from the flight bar: saves right here (and, when signed in
 // with GitHub, to your private jots- repository, via the JOTS layer).
@@ -3730,7 +3740,7 @@ function onNameChange(){STATE.boardConfig.name=($('board-name-input').value||'')
 function setBoardTemplate(key){
   if(key==='procedural') key='B'; // procedural removed as a selectable template — see comments near the builder UI markup
   STATE.boardConfig.template=key;
-  ['A','B','C'].forEach(k=>{const b=$('tmpl-'+k);if(b)b.classList.toggle('active',k===key);});
+  ['A','B','C','R'].forEach(k=>{const b=$('tmpl-'+k);if(b)b.classList.toggle('active',k===key);});
   const zc=$('zone-colors');if(zc)zc.style.display='block'; // always a GLB template now
   try{preloadSkyboardTemplates();}catch(e){}
   try{renderPartPanels();}catch(e){}
@@ -8699,7 +8709,7 @@ function shipNode(root,name,requireChildren){
 // Kick off background preload so templates are ready when the editor opens.
 function preloadSkyboardTemplates(){
   const L=_getGLBLoader();if(!L)return;
-  if(!STATE.boardConfig || STATE.boardConfig.template==='procedural') _loadStep('boardTemplate', 1);
+  if(!STATE.boardConfig || STATE.boardConfig.template==='procedural' || STATE.boardConfig.template==='R') _loadStep('boardTemplate', 1);   // (Ariel's board is built here, nothing to fetch)
   Object.entries(SKYBOARD_TEMPLATES).forEach(([k,url])=>{
     const isActiveTemplate = (STATE.boardConfig && STATE.boardConfig.template===k);
     if(_glbCache[url]){ if(isActiveTemplate) _loadStep('boardTemplate', 1); return; }
@@ -9135,6 +9145,13 @@ function renderPartPanels(){
   const host=$('part-styles');if(!host)return;
   const tmpl=STATE.boardConfig.template;
   if(!tmpl||tmpl==='procedural'){host.innerHTML='';return;}
+  if(tmpl==='R'){
+    const A=STATE.boardConfig.ariel||(STATE.boardConfig.ariel={hull:'#0b0b11',light:'#ff7a1a'});
+    host.innerHTML='<div style="font-size:.58rem;color:var(--text-dim);padding:6px 0 8px;line-height:1.5">ARIEL — her own board: carbon hull, a light line round the outline and down her length, twin flush rings, an amber crystal nose and a gunmetal staff rail.</div>'+
+      '<label style="display:flex;align-items:center;gap:8px;font-size:.58rem;margin:4px 0">HULL <input type="color" value="'+A.hull+'" oninput="STATE.boardConfig.ariel.hull=this.value;rb()" style="width:34px;height:26px;padding:0;border:1px solid var(--border);background:none"></label>'+
+      '<label style="display:flex;align-items:center;gap:8px;font-size:.58rem;margin:4px 0">LIGHTS <input type="color" value="'+A.light+'" oninput="STATE.boardConfig.ariel.light=this.value;rb()" style="width:34px;height:26px;padding:0;border:1px solid var(--border);background:none"></label>';
+    return;
+  }
   const parts=SKYBOARD_PARTS[tmpl];
   if(!parts||!parts.length){host.innerHTML='<div style="font-size:0.58rem;color:var(--text-dim);padding:6px 0;">Loading skyboard parts…</div>';try{preloadSkyboardTemplates();}catch(e){}return;}
   const styles=_stylesFor(tmpl);
@@ -9210,10 +9227,63 @@ function autoColorBoard(){
 
 // Builds the skyboard mesh (the same craft used everywhere — space flight AND
 // atmospheric flight). Nose points +X. Returns a THREE.Group.
+// ── ARIEL — her own skyboard ──────────────────────────────────────────
+// Drawn for her: a long, tapered carbon-black hull with a soft bevel, a
+// light line running round its outline and a flowing stroke down its length
+// (the orange of her suit), twin energy rings set flush into the deck, an
+// amber crystal arrowhead at the nose, and a dark gunmetal staff riding
+// along her side like a rail. Nose is +X, top of the deck at y≈0, nothing
+// rises above the deck (she stands right on it).
+function _buildArielBoard(){
+  const c=STATE.boardConfig, A=c.ariel||(c.ariel={hull:'#0b0b11',light:'#ff7a1a'});
+  const hull=new THREE.Color(A.hull), light=new THREE.Color(A.light);
+  const grp=new THREE.Group(); grp.name='Skyboard';
+  // hull outline (x along the length, y across it), mirrored about the centreline
+  const half=[[1.86,0],[1.55,0.055],[1.15,0.105],[0.55,0.148],[0.05,0.162],[-0.6,0.155],[-1.2,0.138],[-1.62,0.118],[-1.78,0.098],[-1.84,0.05],[-1.74,0.0]];
+  const shape=new THREE.Shape(); shape.moveTo(half[0][0],half[0][1]);
+  for(let i=1;i<half.length;i++) shape.lineTo(half[i][0],half[i][1]);
+  for(let i=half.length-2;i>=0;i--) shape.lineTo(half[i][0],-half[i][1]);
+  const hg=new THREE.ExtrudeGeometry(shape,{depth:0.042,bevelEnabled:true,bevelThickness:0.012,bevelSize:0.011,bevelSegments:3,curveSegments:4});
+  hg.rotateX(Math.PI/2); hg.translate(0,-0.002,0); hg.computeVertexNormals();
+  const hullMat=new THREE.MeshPhysicalMaterial({color:hull,metalness:0.55,roughness:0.32,clearcoat:0.7,clearcoatRoughness:0.25});
+  const deck=new THREE.Mesh(hg,hullMat); deck.name='deck'; grp.add(deck);
+  const glowMat=new THREE.MeshBasicMaterial({color:light,toneMapped:false});
+  // light line round the outline, just inside the edge, on the deck
+  const ring=[]; const ins=0.016;
+  half.forEach(([x,y])=>ring.push(new THREE.Vector3(x-Math.sign(x)*ins*0.6,0.011,Math.max(0,y-ins))));
+  for(let i=half.length-2;i>0;i--) ring.push(new THREE.Vector3(half[i][0]-Math.sign(half[i][0])*ins*0.6,0.011,-(half[i][1]-ins)));
+  const edge=new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(ring,true,'centripetal'),160,0.0055,6,true),glowMat); edge.name='light line'; grp.add(edge);
+  // the flowing stroke down her length (like the swoosh on her suit)
+  const sw=new THREE.CatmullRomCurve3([new THREE.Vector3(1.45,0.011,0.03),new THREE.Vector3(0.9,0.011,0.085),new THREE.Vector3(0.2,0.011,-0.06),new THREE.Vector3(-0.55,0.011,0.07),new THREE.Vector3(-1.25,0.011,-0.04),new THREE.Vector3(-1.6,0.011,0.02)]);
+  const swoosh=new THREE.Mesh(new THREE.TubeGeometry(sw,120,0.0045,6,false),glowMat); swoosh.name='swoosh'; grp.add(swoosh);
+  // twin energy rings, flush with the deck
+  const ringMat=new THREE.MeshStandardMaterial({color:light,emissive:light,emissiveIntensity:2.2,metalness:0.8,roughness:0.15,transparent:true,opacity:0.92});
+  const coreMat=new THREE.MeshBasicMaterial({color:light,transparent:true,opacity:0.32,depthWrite:false,toneMapped:false});
+  [0.72,-0.82].forEach((x,i)=>{
+    const g=new THREE.Group(); g.position.set(x,0.006,0); g.name='energy ring '+(i+1);
+    const t=new THREE.Mesh(new THREE.TorusGeometry(0.104,0.0085,8,40),ringMat); t.rotation.x=Math.PI/2; g.add(t);
+    const t2=new THREE.Mesh(new THREE.TorusGeometry(0.062,0.0045,6,32),ringMat); t2.rotation.x=Math.PI/2; g.add(t2);
+    const d=new THREE.Mesh(new THREE.CircleGeometry(0.1,32),coreMat); d.rotation.x=-Math.PI/2; d.position.y=0.001; g.add(d);
+    grp.add(g);
+  });
+  // amber crystal arrowhead at the nose
+  const cry=new THREE.Mesh(new THREE.OctahedronGeometry(1,0),new THREE.MeshPhysicalMaterial({color:0xffb347,emissive:0xff7a1a,emissiveIntensity:0.9,metalness:0,roughness:0.08,transparent:true,opacity:0.86,clearcoat:1}));
+  cry.scale.set(0.15,0.022,0.055); cry.position.set(1.9,-0.012,0); cry.name='arrowhead shard'; grp.add(cry);
+  // dark gunmetal staff, a rail along her side, with lit tips
+  const staffMat=new THREE.MeshStandardMaterial({color:0x2a2c33,metalness:0.92,roughness:0.28});
+  const staff=new THREE.Mesh(new THREE.CylinderGeometry(0.011,0.011,3.25,10),staffMat); staff.rotation.z=Math.PI/2; staff.position.set(-0.1,-0.012,0.178); staff.name='staff'; grp.add(staff);
+  [1.525,-1.725].forEach(x=>{ const tip=new THREE.Mesh(new THREE.SphereGeometry(0.016,10,8),glowMat); tip.position.set(x,-0.012,0.178); grp.add(tip); });
+  // a soft glow underneath
+  const pl=new THREE.PointLight(light,(c.glow||0.6)*2.2,2.6); pl.position.set(0,-0.12,0); grp.add(pl);
+  grp.userData.arielBoard=true;
+  return grp;
+}
+
 function buildBoardMesh(){
   // GLB template selected? use the sculpted model (falls back to procedural if
   // the template hasn't finished loading yet).
   const tmpl=STATE.boardConfig.template;
+  if(tmpl==='R'){ const g=_buildArielBoard(); _computeDeckAnchor(g); return g; }
   if(tmpl&&tmpl!=='procedural'){
     const g=buildBoardFromGLB(tmpl);
     if(g){ _computeDeckAnchor(g); return g; }
@@ -18242,103 +18312,138 @@ function _syncBoardScale(boardObj){
   CHAR.scaleForBoard = _deriveBoardScale(boardObj);
 }
 
+// ── Her real pose in the world, whatever she's parented to and whether or
+// not she wears the riding mirror (mountSkyboard's Z-flip): where she is,
+// which way her chest actually faces, and how big she is.
+const _UP={x:0,y:1,z:0};   // (plain: THREE is not loaded yet when this runs)
+function _charWorldPose(){
+  CHAR.root.updateMatrixWorld(true);
+  const m=CHAR.root.matrixWorld, pos=new THREE.Vector3().setFromMatrixPosition(m);
+  const f=new THREE.Vector3(0,0,1).transformDirection(m); f.y=0; if(f.lengthSq()<1e-8) f.set(0,0,1); f.normalize();
+  const sx=new THREE.Vector3().setFromMatrixColumn(m,0).length(), sy=new THREE.Vector3().setFromMatrixColumn(m,1).length();
+  return {pos, facing:f, size:(sx+sy)/2};
+}
+// She rides mirrored (scale z<0): with the mirror on, facing f means a turn of atan2(-f.x,-f.z)
+const _mirroredYawFor=(f)=>Math.atan2(-f.x,-f.z);
+const _plainYawFor=(f)=>Math.atan2(f.x,f.z);
+function _charMaterialsTwoSided(){
+  if(CHAR.skinnedMesh&&CHAR.skinnedMesh.material){ (Array.isArray(CHAR.skinnedMesh.material)?CHAR.skinnedMesh.material:[CHAR.skinnedMesh.material]).forEach(m=>{ if(m) m.side=THREE.DoubleSide; }); }
+}
+const _ease=(t)=>t*t*(3-2*t);
+
+// Stepping onto the board: she walks to the edge of the deck facing where
+// she's going, then steps up onto it, turning to face the nose as she
+// rises — ending exactly in the riding pose, so mountSkyboard() takes over
+// without a snap. She keeps her size throughout. The board holds still
+// while she does it (updateSurface waits on CHAR._transitioning).
 function boardMountSequence(targetBoard, hostScene, onComplete){
   if(!CHAR.loaded || !CHAR.root || !targetBoard || !hostScene){ onComplete&&onComplete(); return; }
-  _syncBoardScale(targetBoard); // measure THIS board before she's parented to it
+  // a board parked far off is called over first
+  if(typeof BOARD_CALL!=='undefined'&&BOARD_CALL.parked&&typeof surfBoard!=='undefined'&&targetBoard===surfBoard&&typeof summonSkyboard==='function'){
+    try{ summonSkyboard(); }catch(e){}
+    const tw=performance.now();
+    (function wait(){ if((BOARD_CALL.parked||BOARD_CALL.summon)&&performance.now()-tw<6000){ requestAnimationFrame(wait); return; } boardMountSequence(targetBoard,hostScene,onComplete); })();
+    return;
+  }
+  _syncBoardScale(targetBoard);                       // (for flight; measured before she's on it)
   CHAR._transitioning = true;
-  const startPos = new THREE.Vector3(); CHAR.root.getWorldPosition(startPos);
-  const startYaw = CHAR.root.rotation.y;
-  const boardWP = new THREE.Vector3(); targetBoard.getWorldPosition(boardWP);
-  const boardScale = targetBoard.scale.x||1;
+  const P=_charWorldPose(), size=P.size;
+  // where she'll stand on the deck, and which way she'll face (the riding pose, in the world)
+  targetBoard.updateMatrixWorld(true);
+  const bws=new THREE.Vector3(); targetBoard.getWorldScale(bws); const bScale=Math.abs(bws.x)||1;
   const anchor = targetBoard.userData.deckAnchor || {x:0,y:0,z:0.1};
-  const endPos = boardWP.clone().add(new THREE.Vector3(
-    anchor.x*boardScale, (anchor.y*boardScale)+(CHAR.feetOffset||0)*CHAR.scaleForBoard, anchor.z*boardScale));
-  // Mounted she is Z-mirrored (mountSkyboard), which reads as this yaw
-  // + PI unmirrored. Aim the hop at that visual facing so she steps on
-  // still facing the way she walks — no 180° turn toward the model's raw
-  // orientation mid-hop and snap back when the mirror goes on.
-  const _bq = targetBoard.getWorldQuaternion(new THREE.Quaternion());
-  const endYaw = new THREE.Euler().setFromQuaternion(_bq,'YXZ').y + CHAR_MOUNT_YAW_OFFSET + CHAR_TERRAIN_YAW_EXTRA;
-  // She needs to be a direct child of the host scene (not the board, not
-  // her old parent) to move freely through world space during the hop.
+  const local = size/bScale;
+  const P1 = targetBoard.localToWorld(new THREE.Vector3(anchor.x, anchor.y+(CHAR.feetOffset||0)*local, anchor.z));
+  const bq = targetBoard.getWorldQuaternion(new THREE.Quaternion());
+  const Q1 = bq.clone().multiply(new THREE.Quaternion().setFromAxisAngle(_UP,CHAR_MOUNT_YAW_OFFSET));
+  // the edge of the deck on her side, on the ground
+  const toDeck=new THREE.Vector3(P1.x-P.pos.x,0,P1.z-P.pos.z), flat=toDeck.length();
+  const reach=Math.min(flat, size*0.32);
+  const E=new THREE.Vector3(P1.x,0,P1.z).addScaledVector(toDeck.clone().normalize(),-reach);
+  let gy=P.pos.y; try{ if(surfaceActive&&typeof _surfHeight==='function'){ const h=_surfHeight(E.x,E.z); if(isFinite(h)) gy=h+(CHAR.feetOffset||0)*size; } }catch(e){}
+  E.y=gy;
+  // put her in the scene, already wearing the riding mirror (same facing — nothing visibly changes)
   if(CHAR.root.parent) CHAR.root.parent.remove(CHAR.root);
-  CHAR.root.position.copy(startPos);
   hostScene.add(CHAR.root);
-  CHAR.root.scale.setScalar(CHAR.scaleForBoard); // normal (unmirrored) during the hop — the mirror is a mounted-only correction, applied by mountSkyboard() at the end
-  setCharState('jump',{fade:0.15, speed:0.7, force:true});
-  const action = CHAR.actions.jump;
-  const dur = action ? action.getClip().duration/0.7 : 0.9;
-  const t0 = performance.now();
+  CHAR.root.position.copy(P.pos);
+  CHAR.root.scale.set(size,size,-size); _charMaterialsTwoSided();
+  CHAR.mounted=false;
+  const Q0=new THREE.Quaternion().setFromAxisAngle(_UP,_mirroredYawFor(P.facing));
+  const walkDir=new THREE.Vector3(E.x-P.pos.x,0,E.z-P.pos.z), walkLen=walkDir.length();
+  const Qw=walkLen>0.05?new THREE.Quaternion().setFromAxisAngle(_UP,_mirroredYawFor(walkDir.normalize())):Q0.clone();
+  const walkT=walkLen>0.05?_clamp(walkLen/(size*0.75),0.25,1.6):0;   // a comfortable walking pace for her height
+  const stepT=0.62;
+  if(walkT>0) setCharState('walk',{fade:0.15,force:true});
+  const t0=performance.now(); let stepping=false;
+  const W=new THREE.Vector3();
   (function step(){
-    const t = Math.min(1,(performance.now()-t0)/(dur*1000));
-    const e = t*t*(3-2*t);
-    CHAR.root.position.lerpVectors(startPos, endPos, e);
-    let dy = endYaw - startYaw; while(dy>Math.PI)dy-=2*Math.PI; while(dy<-Math.PI)dy+=2*Math.PI;
-    CHAR.root.rotation.y = startYaw + dy*e;
-    if(t<1){ requestAnimationFrame(step); }
-    else {
-      CHAR._transitioning = false;
-      mountSkyboard(targetBoard); // finalizes position/rotation/scale/mirror precisely and parents her for real
-      onComplete&&onComplete();
+    const t=(performance.now()-t0)/1000;
+    if(t<walkT){
+      const k=t/walkT;
+      W.lerpVectors(P.pos,E,k); CHAR.root.position.copy(W);
+      CHAR.root.quaternion.slerpQuaternions(Q0,Qw,Math.min(1,t/0.28));
+      requestAnimationFrame(step); return;
     }
+    if(!stepping){
+      stepping=true;
+      const a=CHAR.actions.jump; const sp=a?_clamp(a.getClip().duration/(stepT*1.15),0.6,2.4):1;
+      setCharState('jump',{fade:0.12,speed:sp,force:true});
+    }
+    const k=Math.min(1,(t-walkT)/stepT), e=_ease(k);
+    const from=walkT>0?E:P.pos;
+    W.lerpVectors(from,P1,e); W.y+=Math.sin(Math.PI*k)*size*0.12;   // a little lift as she steps up
+    CHAR.root.position.copy(W);
+    CHAR.root.quaternion.slerpQuaternions(walkT>0?Qw:Q0,Q1,e);
+    if(k<1){ requestAnimationFrame(step); return; }
+    CHAR._transitioning=false;
+    mountSkyboard(targetBoard,{worldSize:size});        // the same pose, now riding the board for real
+    onComplete&&onComplete();
   })();
 }
+// Stepping off: from her riding pose she steps down beside the board,
+// turning to face the way she'll walk; the mirror comes off at the very
+// end, at the same facing, so nothing snaps. She keeps her size.
 function boardDismountSequence(hostScene, groundY, onComplete, opts){
-  // opts: {board, sideOffset, yaw, endYaw} — step off to board-left (beside),
-  // not straight down under the deck (Justin SURFACE: board on her RIGHT).
   opts = opts||{};
   if(!CHAR.loaded || !CHAR.root || !hostScene){ onComplete&&onComplete(); return; }
   CHAR._transitioning = true;
-  const startPos = new THREE.Vector3(); CHAR.root.getWorldPosition(startPos);
-  // Mounted, her rotation is board-local and Z-mirrored; in world terms she
-  // faces board yaw + mount offset + PI. Start the step-off from that so
-  // taking the mirror off doesn't spin her.
-  let startYaw = CHAR.root.rotation.y;
-  if(CHAR.mounted && CHAR.root.parent && CHAR.root.parent!==hostScene){
-    try{
-      const _pq = CHAR.root.parent.getWorldQuaternion(new THREE.Quaternion());
-      startYaw = new THREE.Euler().setFromQuaternion(_pq,'YXZ').y + CHAR_MOUNT_YAW_OFFSET + CHAR_TERRAIN_YAW_EXTRA;
-    }catch(e){}
-  }
-  let endX = startPos.x, endZ = startPos.z;
-  const side = (opts.sideOffset!=null && isFinite(opts.sideOffset)) ? opts.sideOffset : 0;
+  const P=_charWorldPose(), size=P.size;
+  let endX=P.pos.x, endZ=P.pos.z;
+  const side=(opts.sideOffset!=null&&isFinite(opts.sideOffset))?opts.sideOffset:0;
   if(Math.abs(side)>0.01){
-    // Board-left = local +Z (nose=+X). Prefer live board quaternion; else look-yaw right→negate.
     if(opts.board){
-      try{
-        const q = opts.board.getWorldQuaternion(new THREE.Quaternion());
-        const left = new THREE.Vector3(0,0,1).applyQuaternion(q); left.y=0;
-        if(left.lengthSq()>1e-8){ left.normalize(); endX = startPos.x + left.x*side; endZ = startPos.z + left.z*side; }
-      }catch(e){}
-    } else if(opts.yaw!=null && isFinite(opts.yaw)){
-      const rx=Math.cos(opts.yaw), rz=-Math.sin(opts.yaw); // world-right of look = board-right
-      endX = startPos.x - rx*side; endZ = startPos.z - rz*side; // step to board-left
+      try{ const q=opts.board.getWorldQuaternion(new THREE.Quaternion()); const left=new THREE.Vector3(0,0,1).applyQuaternion(q); left.y=0;
+        if(left.lengthSq()>1e-8){ left.normalize(); endX=P.pos.x+left.x*side; endZ=P.pos.z+left.z*side; } }catch(e){}
+    } else if(opts.yaw!=null&&isFinite(opts.yaw)){
+      const rx=Math.cos(opts.yaw), rz=-Math.sin(opts.yaw); endX=P.pos.x-rx*side; endZ=P.pos.z-rz*side;
     }
   }
-  const endPos = new THREE.Vector3(endX, groundY, endZ);
-  let endYaw = (opts.endYaw!=null && isFinite(opts.endYaw)) ? opts.endYaw : startYaw;
+  const endPos=new THREE.Vector3(endX,groundY,endZ);
+  // facing at the end: the requested walking heading, else the way she faces now
+  let endFacing=P.facing.clone();
+  if(opts.endYaw!=null&&isFinite(opts.endYaw)){ endFacing.set(Math.sin(opts.endYaw),0,Math.cos(opts.endYaw)); }
   if(CHAR.root.parent) CHAR.root.parent.remove(CHAR.root);
-  CHAR.root.position.copy(startPos);
-  CHAR.root.rotation.set(0, startYaw, 0);
-  CHAR.root.scale.setScalar(CHAR.scaleForBoard); // drop the mounted-only mirror — she's walking normally again after this
   hostScene.add(CHAR.root);
-  CHAR.mounted = false;
-  setCharState('jump',{fade:0.15, speed:0.7, force:true}); // forward half of the pair = fall/land, used here as "step down"
-  const action = CHAR.actions.jump;
-  const dur = action ? action.getClip().duration/0.7 : 0.9;
-  const t0 = performance.now();
+  CHAR.root.position.copy(P.pos);
+  CHAR.root.scale.set(size,size,-size); _charMaterialsTwoSided();   // still in the riding mirror while she steps down
+  CHAR.mounted=false;
+  const Q0=new THREE.Quaternion().setFromAxisAngle(_UP,_mirroredYawFor(P.facing));
+  const Q1=new THREE.Quaternion().setFromAxisAngle(_UP,_mirroredYawFor(endFacing));
+  const dur=0.7, a=CHAR.actions.jump;
+  setCharState('jump',{fade:0.12,speed:a?_clamp(a.getClip().duration/(dur*1.15),0.6,2.4):1,force:true});
+  const t0=performance.now(), W=new THREE.Vector3();
   (function step(){
-    const t = Math.min(1,(performance.now()-t0)/(dur*1000));
-    const e = t*t*(3-2*t);
-    CHAR.root.position.lerpVectors(startPos, endPos, e);
-    let dy = endYaw - startYaw; while(dy>Math.PI)dy-=2*Math.PI; while(dy<-Math.PI)dy+=2*Math.PI;
-    CHAR.root.rotation.y = startYaw + dy*e;
-    if(t<1){ requestAnimationFrame(step); }
-    else {
-      CHAR._transitioning = false;
-      setCharState('idle',{fade:0.25, force:true}); // standing idle (walk-derived), not skyboard/seated
-      onComplete&&onComplete();
-    }
+    const k=Math.min(1,(performance.now()-t0)/(dur*1000)), e=_ease(k);
+    W.lerpVectors(P.pos,endPos,e); W.y+=Math.sin(Math.PI*k)*size*0.08;
+    CHAR.root.position.copy(W);
+    CHAR.root.quaternion.slerpQuaternions(Q0,Q1,e);
+    if(k<1){ requestAnimationFrame(step); return; }
+    // walking form: mirror off at the same facing
+    CHAR.root.scale.set(size,size,size);
+    CHAR.root.rotation.set(0,_plainYawFor(endFacing),0);
+    CHAR._transitioning=false;
+    setCharState('idle',{fade:0.25,force:true});
+    onComplete&&onComplete();
   })();
 }
 
@@ -18520,7 +18625,7 @@ async function ensureAutumnOnBoard(reason){
   return _ok();
 }
 window.ensureAutumnOnBoard = ensureAutumnOnBoard;
-function mountSkyboard(boardObj){
+function mountSkyboard(boardObj,opts){
   if(!CHAR.root || !boardObj) return;
   // Always strip first — never add onto a stale parent chain.
   if(CHAR.root.parent){ try{ CHAR.root.parent.remove(CHAR.root); }catch(e){} }
@@ -18555,7 +18660,10 @@ function mountSkyboard(boardObj){
   // DoubleSide on her material below compensates for the mirror
   // flipping triangle winding, which would otherwise cull the wrong
   // faces and show her as partially invisible/inside-out.
-  CHAR.root.scale.set(CHAR.scaleForBoard, CHAR.scaleForBoard, -CHAR.scaleForBoard);
+  // (stepping on from the ground keeps her exact size; flight scenes size her to the board)
+  let _ms=CHAR.scaleForBoard;
+  if(opts&&opts.worldSize>0){ const ws=new THREE.Vector3(); boardObj.getWorldScale(ws); _ms=opts.worldSize/(Math.abs(ws.x)||1); }
+  CHAR.root.scale.set(_ms, _ms, -_ms);
   if(CHAR.skinnedMesh && CHAR.skinnedMesh.material){
     const mats = Array.isArray(CHAR.skinnedMesh.material) ? CHAR.skinnedMesh.material : [CHAR.skinnedMesh.material];
     mats.forEach(m=>{ if(m) m.side = THREE.DoubleSide; });
@@ -18571,7 +18679,7 @@ function mountSkyboard(boardObj){
   // CENTERED on deck for atmo + interstellar (Justin HARD). Terrain walk
   // keeps her unmounted with the board offset via _terrainBoardSideWorld —
   // never apply CHAR_TERRAIN_BOARD_SIDE here.
-  CHAR.root.position.set(anchor.x, anchor.y + (CHAR.feetOffset||0)*CHAR.scaleForBoard, anchor.z);
+  CHAR.root.position.set(anchor.x, anchor.y + (CHAR.feetOffset||0)*_ms, anchor.z);
   // Facing = CHAR_MOUNT_YAW_OFFSET (Justin HARD: +PI/2 = face board nose /
   // screen-right when board points screen-right). Change that constant,
   // not this line, if another correction is needed.
@@ -21755,7 +21863,7 @@ function updateSurface(dt){
   //    hovering a few feet off the ground. It rises over obstacles/walls (its
   //    hover height tracks the terrain beneath IT) and when the player jumps or
   //    climbs, the board lifts to stay with them. ─────────────────────────────
-  if(surfBoard){
+  if(surfBoard&&!CHAR._transitioning){
     // Justin HARD 2026-09-28: same facing as flight, but offset a few feet
     // to the board's LEFT (sun-side) so the board travels beside her —
     // not under her feet. Board sits on her RIGHT → she is on board LEFT.
@@ -22147,6 +22255,7 @@ function _boardCallTick(dt){
 function _boardCallReset(){ BOARD_CALL.parked=false; BOARD_CALL.summon=null; BOARD_CALL.look=null; BOARD_CALL.lookW=0; _bcTrail(null,true); _bcButtons(); }
 // the two little round buttons, part of the kite: a parking mark, and a
 // skyboard traced from the board itself (pointed nose, two deck discs, tail fins)
+const _KB_STEP='<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="13.6" cy="4.2" r="2" fill="currentColor"/><path d="M12.8 7.2l-2.6 4.4 2.8 2.2-.6 5.2M10.2 11.6l-3.4 1.6M13 9.6l3.6 2.4M13 13.8l3.4 1.4.4 3.8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 20.6h7.4l2-2.4h8.6" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-opacity=".75"/></svg>';
 const _KB_PARK='<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="4.5" width="15" height="15" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 16.5v-9h3a2.6 2.6 0 0 1 0 5.2h-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></svg>';
 const _KB_BOARD='<svg viewBox="0 0 24 24" aria-hidden="true"><g transform="rotate(-30 12 12)"><path d="M1.6 12l2.6-2.3h12.6L22.6 12l-5.8 2.3H4.2z" fill="currentColor" fill-opacity=".22" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M1.6 12L.4 9.8M1.6 12L.4 14.2" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/><circle cx="8.2" cy="12" r="1.25" fill="currentColor"/><circle cx="13.6" cy="12" r="1.25" fill="currentColor"/></g></svg>';
 function _installKiteBoardButtons(){
@@ -22158,7 +22267,28 @@ function _installKiteBoardButtons(){
     host.appendChild(w); };
   mk(document.querySelector('#surface-overlay .mini-kite'));
   mk(document.querySelector('#screen-flight .hud-c'));
+  // in the sky: step off (when flying low) — she hops down and walks on, the board trailing her
+  const ak=document.querySelector('#atmo-overlay .mini-kite');
+  if(ak&&!ak.querySelector('.kite-board')){
+    const w=document.createElement('div'); w.className='kite-board';
+    w.innerHTML='<button type="button" class="kb-btn kb-step" aria-label="Step off and walk" title="Step off and walk (fly low first)">'+_KB_STEP+'</button>';
+    w.querySelector('.kb-step').onclick=e=>{ e.stopPropagation(); atmoStepOff(); };
+    ak.appendChild(w);
+  }
   _bcButtons();
+}
+// Flying low, she can simply step off: the board brakes and settles, she
+// hops down beside it and walks on, and the board follows at her side.
+const STEP_OFF_AGL=25;   // game units (~80 ft)
+function atmoStepOff(){
+  const s=atmoState; if(!atmoActive||!s||s.touchdown||CHAR._transitioning) return;
+  const gh=_atmoHeight?_atmoHeight(s.pos.x,s.pos.z):s.pos.y-4, agl=s.pos.y-gh;
+  if(agl>STEP_OFF_AGL){ toast('Fly lower to step off — under '+Math.round(STEP_OFF_AGL*3.28)+' ft (you\'re at '+Math.round(agl*3.28)+' ft)',2200); return; }
+  try{ ATMO_AP.on=false; const b=$('ap-btn-atmo'); if(b) b.classList.remove('active'); }catch(e){}
+  atmoThrottle=0; atmoMach=0; try{ $('atmo-throttle').value=0; }catch(e){}
+  s.landing=true; s.touchdown=true; s.auto=null;
+  toast('🚶 Stepping off — the board will follow you',1600);
+  setTimeout(_atmoTouchdown,0);
 }
 if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',_installKiteBoardButtons); else _installKiteBoardButtons();
 // worlds people have actually studied; anything else reads UNEXPLORED in its kite
@@ -23173,7 +23303,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 
 <!-- ?v= stamps: bump on every UI change so browsers never mix a new page with cached old styles -->
 <link rel="stylesheet" href="ui/dm-ui.css?v=108">
-<link rel="stylesheet" href="ui/dm-hud.css?v=109">
+<link rel="stylesheet" href="ui/dm-hud.css?v=111">
 <link rel="stylesheet" href="ui/dm-menu.css?v=80">
 <link rel="stylesheet" href="ui/dm-journal.css?v=97">
 <link rel="stylesheet" href="ui/dm-landmap.css?v=86">

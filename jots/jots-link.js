@@ -291,6 +291,14 @@
       return r;
     },
     putJSON(path, obj, message) { return this.put(path, JSON.stringify(obj, null, 1), message); },
+    // a binary file (already base64) at a new path — screenshots and the like
+    async putBase64(path, content, message) {
+      const body = { message: message || 'jots: ' + path, content: content };
+      if (this.shas[path]) body.sha = this.shas[path];
+      const r = await gh('PUT', '/repos/' + identity.name + '/' + this.repo + '/contents/' + path, body);
+      if (r && r.content) this.shas[path] = r.content.sha;
+      return r;
+    },
     async save(data, name) {
       if (!this.ready) return false;
       await this.putJSON('saves/' + (name || 'autosave') + '.json', data, 'jots: save ' + (name || 'autosave'));
