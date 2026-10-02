@@ -1621,6 +1621,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     <button id="roll-left-btn" class="side-pad" title="Hold to roll left (also KeyQ)"><span class="sp-ico">⟲</span>ROLL</button>
     <button id="roll-right-btn" class="side-pad" title="Hold to roll right (also KeyE)"><span class="sp-ico">⟳</span>ROLL</button>
     <button id="anchor-btn" class="side-pad" onclick="toggleAnchor()" title="Anchor your position to whatever's under the crosshair — look freely, move with it. Tap again to release."><span class="sp-ico">⚓</span>ANCHOR</button>
+    <button id="ap-btn-space" class="side-pad ap-pad" onclick="toggleSpaceAutopilot()" title="Autopilot — keeps your heading and speed, steers round planets, moons and rocks in the way"><span class="sp-ico"><svg class="ap-ico" viewBox="0 0 24 24" width="1.5em" height="1.5em" aria-hidden="true"><defs><linearGradient id="apGS" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#d9d2ff" stop-opacity=".95"/><stop offset=".5" stop-color="#7b93ff" stop-opacity=".75"/><stop offset="1" stop-color="#ff4fa3" stop-opacity=".8"/></linearGradient></defs><path d="M9.2 3.3C12.7 2.1 17.7 3.6 18.5 8.2c.5 3.3.2 7.8.8 12.8h-5.9c-1-1.4-2-2.6-2.5-4.2l-.3-1.5c-1 .3-2.1-.1-2.7-1-.3-.7-.2-1.2-.5-1.5-.3-.3-.4-.6-.1-.9-.4-.3-.7-.5-.5-.8-.6-.2-.8-.6-.4-1.1l1-1.4c.1-2 .5-4 1.8-5.2z" fill="url(#apGS)" stroke="#fff" stroke-opacity=".7" stroke-width=".55" stroke-linejoin="round"/><path d="M14.2 4.6c2.4 1.2 3.4 3.6 3.6 6.6.2 3.4 0 6.6.6 9.8" fill="none" stroke="#fff" stroke-opacity=".35" stroke-width=".6" stroke-linecap="round"/><path d="M10.9 16.8c-2.6 1.1-4.6 2.4-5.6 4.2h8.6c-1.2-1.3-2.2-2.6-3-4.2z" fill="url(#apGS)" fill-opacity=".7" stroke="#fff" stroke-opacity=".55" stroke-width=".5" stroke-linejoin="round"/><path d="M6.9 8.9h4.6" stroke="#fff" stroke-width=".9" stroke-linecap="round"/><circle cx="8.6" cy="8.95" r=".6" fill="#ff3b6b"/><circle cx="12.3" cy="10.7" r=".7" fill="none" stroke="#fff" stroke-opacity=".6" stroke-width=".45"/></svg></span>AUTO</button>
   </div>
   <!-- Auto-level pads: vertical stack right of the LEFT thumbstick.
        Top = level to the galactic plane. Bottom = level to the nearest
@@ -1733,6 +1734,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     <div style="font-family:var(--font-hud);font-size:.46rem;letter-spacing:.1em;color:rgba(var(--acc-rgb),.5);margin-bottom:4px;">THROTTLE</div>
     <input id="atmo-throttle" type="range" min="0" max="100" value="0" style="width:100%;accent-color:#00f5ff;">
   </div>
+  <!-- autopilot: holds the height you're at, climbs over (or banks round) whatever is ahead -->
+  <button id="ap-btn-atmo" class="side-pad ap-pad" onclick="toggleAtmoAutopilot()" title="Autopilot — holds this altitude, avoids terrain ahead"><span class="sp-ico"><svg class="ap-ico" viewBox="0 0 24 24" width="1.5em" height="1.5em" aria-hidden="true"><defs><linearGradient id="apGA" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#d9d2ff" stop-opacity=".95"/><stop offset=".5" stop-color="#7b93ff" stop-opacity=".75"/><stop offset="1" stop-color="#ff4fa3" stop-opacity=".8"/></linearGradient></defs><path d="M9.2 3.3C12.7 2.1 17.7 3.6 18.5 8.2c.5 3.3.2 7.8.8 12.8h-5.9c-1-1.4-2-2.6-2.5-4.2l-.3-1.5c-1 .3-2.1-.1-2.7-1-.3-.7-.2-1.2-.5-1.5-.3-.3-.4-.6-.1-.9-.4-.3-.7-.5-.5-.8-.6-.2-.8-.6-.4-1.1l1-1.4c.1-2 .5-4 1.8-5.2z" fill="url(#apGA)" stroke="#fff" stroke-opacity=".7" stroke-width=".55" stroke-linejoin="round"/><path d="M14.2 4.6c2.4 1.2 3.4 3.6 3.6 6.6.2 3.4 0 6.6.6 9.8" fill="none" stroke="#fff" stroke-opacity=".35" stroke-width=".6" stroke-linecap="round"/><path d="M10.9 16.8c-2.6 1.1-4.6 2.4-5.6 4.2h8.6c-1.2-1.3-2.2-2.6-3-4.2z" fill="url(#apGA)" fill-opacity=".7" stroke="#fff" stroke-opacity=".55" stroke-width=".5" stroke-linejoin="round"/><path d="M6.9 8.9h4.6" stroke="#fff" stroke-width=".9" stroke-linecap="round"/><circle cx="8.6" cy="8.95" r=".6" fill="#ff3b6b"/><circle cx="12.3" cy="10.7" r=".7" fill="none" stroke="#fff" stroke-opacity=".6" stroke-width=".45"/></svg></span>AUTO</button>
   <!-- left joystick: steer (pitch/yaw) -->
   <div style="position:absolute;bottom:calc(96px + var(--safe-bot));left:24px;width:100px;height:100px;pointer-events:auto;" id="atmo-steer-zone">
     <div style="position:absolute;top:-16px;left:50%;transform:translateX(-50%);font-family:var(--font-hud);font-size:.44rem;color:rgba(var(--acc-rgb),.4);letter-spacing:.08em;">STEER</div>
@@ -10227,7 +10230,9 @@ function updateFlight(dt){
   const ls=0.8*dt; // comfortable look speed
   if(JOY.Lx)spRotateLocal(sp,0,1,0,-JOY.Lx*ls);
   if(JOY.Ly)spRotateLocal(sp,1,0,0,-JOY.Ly*ls);
+  let _apLook=!!(JOY.Lx||JOY.Ly||KEYS["ArrowLeft"]||KEYS["ArrowRight"]||KEYS["ArrowUp"]||KEYS["ArrowDown"]);
   { const ml=takeMouseLook(), k=MOUSE_LOOK.sens;   // mouse steering (pointer lock)
+    if(ml.x||ml.y) _apLook=true;
     if(ml.x) spRotateLocal(sp,0,1,0,-ml.x*k);
     if(ml.y) spRotateLocal(sp,1,0,0,-ml.y*k); }
   if(KEYS["ArrowLeft"]) spRotateLocal(sp,0,1,0, 0.9*dt);
@@ -10273,6 +10278,7 @@ function updateFlight(dt){
   let drag;
   if(throttling) drag=dartSpeedMode>0?0.985:0.90;
   else           drag=dartSpeedMode>0?0.90:0.82; // release → noticeable slow-down
+  if(SPACE_AP.on&&_spaceApTick(sp,_apLook,throttling)) drag=1;   // autopilot holds the speed itself
   sp.vel.multiplyScalar(drag);
   // clamp tiny residual so it fully settles to idle rather than micro-drifting
   if(!throttling&&sp.vel.length()<0.002)sp.vel.set(0,0,0);
@@ -16406,6 +16412,7 @@ async function enterAtmosphericFlight(body,site,start){
   // was active, not an actual pose bug. Force it off on every fresh
   // entry into this scene.
   charOrbitActive = false;
+  ATMO_AP.on=false; try{ $('ap-btn-atmo').classList.remove('active'); }catch(e){}
   // arriving in the sky always starts on the trailing view (her and the whole board in frame)
   if(camMode!==0){ camMode=0; try{ _applyCamOffset(); const cb=$('cam-btn'); if(cb) cb.textContent='CAM 1'; }catch(e){} }
   CHAR._transitioning = false; // same leftover-state guard as launchFlight()
@@ -16615,6 +16622,7 @@ function updateAtmoFlight(dt){
   const keyClimb=(KEYS['Space']?1:0)-((KEYS['ShiftLeft']||KEYS['ShiftRight'])?1:0);
   const climb=landing?0:_clamp(-atmoClimb.y+keyClimb,-1,1); const bank=landing?0:atmoClimb.x;
   s.roll=THREE.MathUtils.lerp(s.roll,-bank*0.5,0.1);
+  _atmoApTick(s,dt,Math.abs(atmoSteer.y)>0.15||Math.abs(ml.y)>1e-4||climb!==0||!!KEYS['ArrowUp']||!!KEYS['ArrowDown']);
   // speed from throttle, capped by the selected Mach preset; LAND brakes it
   const cap=MACH_PRESETS[atmoPreset].max;
   // the Land map's autopilot flies the board itself until you steer
@@ -16717,6 +16725,82 @@ function updateAtmoFlight(dt){
   { const ll=_atmoLatLon(s.pos.x,s.pos.z); _localClock('atmo-speed','MACH '+atmoMach.toFixed(2),ll.lon); }
   $('atmo-alt').textContent=altFt;
   $('atmo-thr').textContent=Math.round(atmoThrottle*100);
+}
+
+// ── Autopilot (the pilot-profile bubble) ────────────────────────────────
+// Sky: holds the height you were at when you switched it on; looks ahead
+// along your path (further the faster you go) and climbs to clear any ridge,
+// mesa or peak, settling back afterwards; if a wall is far higher than the
+// ground a little to either side, it banks round instead. Touch pitch or
+// climb and you fly it; let go and it holds your new height.
+const ATMO_AP={on:false,holdY:0};
+function toggleAtmoAutopilot(){
+  if(!atmoState) return;
+  ATMO_AP.on=!ATMO_AP.on; ATMO_AP.holdY=atmoState.pos.y;
+  const b=$('ap-btn-atmo'); if(b) b.classList.toggle('active',ATMO_AP.on);
+  const gh=_atmoHeight?_atmoHeight(atmoState.pos.x,atmoState.pos.z):0;
+  toast(ATMO_AP.on?'🛰 Autopilot on — holding '+Math.max(0,Math.round((atmoState.pos.y-gh)*3.28))+' ft, avoiding terrain':'Autopilot off — you have the board',1800);
+}
+function _atmoApTick(s,dt,manualPitch){
+  if(!ATMO_AP.on||s.landing||!_atmoHeight) return;
+  if(manualPitch){ ATMO_AP.holdY=s.pos.y; return; }
+  const H=_atmoHeight, v=Math.max(30,atmoMach*MACH_UNITS);
+  const need=(yaw)=>{
+    const fx=-Math.sin(yaw), fz=-Math.cos(yaw); let m=-1e9;
+    for(const t of [0.35,0.7,1.2,1.9,2.8,4,5.5]){ const d=v*t+15, h=H(s.pos.x+fx*d,s.pos.z+fz*d)+16+d*0.035; if(h>m) m=h; }
+    return m;
+  };
+  const ahead=need(s.yaw);
+  if(ahead>ATMO_AP.holdY+50){
+    let best=0, bn=ahead;
+    for(const o of [0.35,-0.35,0.7,-0.7]){ const n=need(s.yaw+o); if(n<bn-40){ bn=n; best=o; } }
+    if(best){ s.yaw+=Math.sign(best)*Math.min(Math.abs(best),0.9*dt); s.roll=THREE.MathUtils.lerp(s.roll,-Math.sign(best)*0.35,0.08); }
+  }
+  const target=Math.max(ATMO_AP.holdY,ahead,H(s.pos.x,s.pos.z)+12), err=target-s.pos.y;
+  const vy=_clamp(err*0.9,-v*0.45-15,v*0.8+40), want=Math.asin(_clamp(vy/v,-0.55,0.7));
+  s.pitch+=(want-s.pitch)*Math.min(1,dt*2.5);
+  if(atmoMach*MACH_UNITS<20) s.pos.y+=_clamp(err*1.2,-25,60)*dt;   // hovering or slow: rise or sink straight
+}
+// Space: keeps the heading and speed you had, and bends the course round any
+// planet, moon, star or rock that would pass too close ahead, then comes back
+// to the heading. Steer and it takes your new heading; throttle and it takes
+// your new speed.
+const SPACE_AP={on:false,dir:null,spd:0,_q:null};
+function toggleSpaceAutopilot(){
+  const sp=STATE.flight; if(!sp) return;
+  SPACE_AP.on=!SPACE_AP.on;
+  if(SPACE_AP.on){
+    try{ if(typeof ASSIST!=='undefined'&&ASSIST.mode&&typeof cancelAssist==='function') cancelAssist(); }catch(e){}
+    SPACE_AP.dir=spForward(sp).clone(); SPACE_AP.spd=Math.max(sp.vel?sp.vel.length():0,0.12*DART_MODES[dartSpeedMode].multiplier);
+  }
+  const b=$('ap-btn-space'); if(b) b.classList.toggle('active',SPACE_AP.on);
+  toast(SPACE_AP.on?'🛰 Autopilot on — holding course, steering round anything in the way':'Autopilot off',1800);
+}
+function _spaceApTick(sp,manualLook,throttling){
+  if(!SPACE_AP.dir) return false;
+  if(manualLook) SPACE_AP.dir.copy(spForward(sp));
+  if(throttling){ SPACE_AP.spd=Math.max(0.02,sp.vel.length()); return false; }
+  const P=sp.pos, D=SPACE_AP.dir, spd=SPACE_AP.spd, look=Math.max(spd*360,60);
+  const want=D.clone(); let worst=Infinity;
+  const c=new THREE.Vector3(), q=new THREE.Vector3();
+  for(const b of (celestialBodies||[])){
+    if(!b||!b.mesh) continue;
+    const r=b.collisionRadius||b.mcRadius||b.radius||(b.mesh.geometry&&b.mesh.geometry.boundingSphere?b.mesh.geometry.boundingSphere.radius:4);
+    c.copy(b.mesh.position).sub(P);
+    const t=c.dot(D); if(t<-r||t>look+r) continue;
+    q.copy(D).multiplyScalar(Math.max(0,t)).sub(c);      // centre → closest point on our path
+    const miss=q.length(), clear=r*1.7+3;
+    if(miss<clear&&t<worst){
+      worst=t;
+      if(miss<1e-3) q.copy(spUp(sp));                    // dead centre: go over the top
+      want.copy(D).addScaledVector(q.normalize(),1.6*(clear-miss)/clear).normalize();
+    }
+  }
+  // turn toward it and carry the speed along it
+  SPACE_AP._q=SPACE_AP._q||new THREE.Quaternion();
+  if(spAimQuat(sp,P.clone().add(want),SPACE_AP._q)) spQuat(sp).slerp(SPACE_AP._q,0.06).normalize();
+  sp.vel.lerp(want.multiplyScalar(spd),0.08);
+  return true;
 }
 
 function setupAtmoJoysticks(){
@@ -20351,7 +20435,7 @@ function SkyGround(scene,F,pal,o){
   this.budget=o.budget||(GFX.isMobile?4:7);
   this.group=new THREE.Group(); this.group.name='JOTS_SkyGround'; scene.add(this.group);
   this.roots=new Map(); this.queue=[]; this.viewR=4000;
-  const prevStyle=TERRAIN.style; TERRAIN.style=F.ws; this.mat=_terrainDetailMat(); TERRAIN.style=prevStyle;
+  const prevStyle=TERRAIN.style; TERRAIN.style=F.ws; this.mat=_terrainDetailMat({dry:!pal.water}); TERRAIN.style=prevStyle;
   this.copt={siteBias:F.siteBias,siteLat:F.siteLat,style:F.ws};
 }
 SkyGround.prototype._node=function(x0,z0,size,parent){ return {x0,z0,size,parent,kids:null,mesh:null,minH:parent?parent.minH:-60,maxH:parent?parent.maxH:260}; };
@@ -21048,6 +21132,18 @@ function _hmChunkScatter(i,j){
     if(h<3&&pal.water){ rnd(); rnd(); continue; }
     rocks.push({x,z,h,s:R(0.4,2.4),sy:R(0.6,1.2),r:[R(0,6),R(0,6),R(0,6)],c:new THREE.Color().setHSL(base.h+(rnd()-0.5)*0.03,Math.max(0,Math.min(1,base.s+(rnd()-0.5)*0.15)),Math.max(0,Math.min(1,base.l+(rnd()-0.5)*0.18)))});
   }
+  // boulders lodged on ledges and fallen at the foot of cliffs: wherever the ground
+  // is level enough to hold one but rises sharply just beside it
+  for(let n=0;n<Math.round(per*0.35);n++){
+    const x=i*C+R(-C/2,C/2), z=j*C+R(-C/2,C/2), h=H(x,z);
+    if(h<3&&pal.water){ rnd(); continue; }
+    const hl=H(x-1.5,z), hr=H(x+1.5,z), hu=H(x,z-1.5), hd=H(x,z+1.5);
+    const level=Math.max(Math.abs(hl-h),Math.abs(hr-h),Math.abs(hu-h),Math.abs(hd-h))<1.4;
+    const rise=Math.max(H(x-7,z),H(x+7,z),H(x,z-7),H(x,z+7))-h;
+    if(!level||rise<5){ rnd(); continue; }
+    const sz=R(1.6,Math.min(4.6,1.6+rise*0.12));
+    rocks.push({x,z,h,s:sz,sy:R(0.55,0.95),r:[R(0,6),R(0,6),R(0,6)],c:new THREE.Color().setHSL(base.h+(rnd()-0.5)*0.03,Math.max(0,Math.min(1,base.s+(rnd()-0.5)*0.12)),Math.max(0,Math.min(1,base.l*0.9+(rnd()-0.5)*0.14)))});
+  }
   const geo=TERRAIN.rockGeo||(TERRAIN.rockGeo=new THREE.DodecahedronGeometry(1,0));
   const mkRocks=(list,climb)=>{
     if(!list.length) return;
@@ -21228,7 +21324,7 @@ function _terrainDetailMat(opts){
   opts=opts||{};
   const tier=(typeof resolvePreset==='function')?resolvePreset():'medium';
   const lvl=({low:1,medium:2,high:3,ultra:3,custom:2})[tier]||2;
-  const reach=({1:22,2:30,3:40})[lvl];
+  const reach=opts.reach||({1:22,2:30,3:40})[lvl];   // (an exporter can ask for the detail everywhere)
   let m;
   try{
     m=new THREE.MeshStandardNodeMaterial({vertexColors:true,roughness:0.94,metalness:0.0,side:opts.side||THREE.FrontSide});
@@ -21266,16 +21362,51 @@ function _terrainDetailMat(opts){
     };
     const xz=W.vec3(p.x,W.float(0),p.z);
     const F0=field(xz);
+    // ── steep faces: sediment strata, slate fracture, grit (cliffs, mesa walls, crater rims)
+    // Bedding runs along the height of the face, gently warped so it isn't ruler-straight;
+    // every layer is a step (a ledge at its foot), takes its own tint of the planet's rock,
+    // and the rock splits along it. Seen from far off (bands) to close up (bump).
+    const N=W.normalWorld, steep=W.float(1).sub(W.smoothstep(W.float(0.42),W.float(0.82),N.y));
+    const fadeC=W.float(1).sub(W.smoothstep(W.float(reach*2.5),W.float(reach*9),dist));
+    const fadeBand=W.float(1).sub(W.smoothstep(W.float(reach*8),W.float(reach*40),dist));
+    const warpOf=(q)=>W.mx_fractal_noise_float(W.vec3(q.x.mul(0.035),W.float(0),q.z.mul(0.035)),2,2.0,0.5).mul(3.0);
+    const cliff=(q)=>{
+      const bed=q.y.mul(0.42).add(warpOf(q)), layer=W.fract(bed);
+      const ledge=W.smoothstep(W.float(0.0),W.float(0.12),layer).mul(W.float(1).sub(W.smoothstep(W.float(0.8),W.float(1.0),layer)));
+      const fr=W.mx_worley_noise_float(W.vec3(q.x.mul(0.55),q.y.mul(1.4),q.z.mul(0.55)),1.0,0);
+      const split=W.float(1).sub(W.smoothstep(W.float(0.03),W.float(0.12),fr));
+      const grit=lvl>=3?W.mx_fractal_noise_float(q.mul(2.2),2,2.0,0.5):W.float(0);
+      return {h:ledge.mul(0.35).sub(split.mul(0.25)).add(grit.mul(0.06)), id:W.floor(bed), ledge, split};
+    };
+    const C0=cliff(p);
+    const layerTone=W.fract(W.sin(C0.id.mul(12.9898)).mul(43758.5453));
+    // ── dried basins (dry worlds, low ground): big mud-crack plates with a paler crust
+    const dry=opts.dry!=null?!!opts.dry:!(TERRAIN.pal&&TERRAIN.pal.water);
+    let basinTint=W.float(1);
+    if(dry&&!sandy&&typeof W.mx_worley_noise_vec2==='function'){
+      const low=W.smoothstep(W.float(-3.0),W.float(-12.0),p.y).mul(flat);
+      const cell=W.mx_worley_noise_vec2(W.vec3(p.x.mul(0.22),W.float(0),p.z.mul(0.22)),1.0,0);
+      const seam=W.float(1).sub(W.smoothstep(W.float(0.02),W.float(0.09),cell.y.sub(cell.x)));
+      basinTint=W.float(1).add(low.mul(W.float(0.14).sub(seam.mul(0.45))));
+    }
     if(lvl>=2){
       // slope of the detail in world space (finite differences) — the same on every GPU backend
       const e=0.05, k=W.float(opts.strength||0.55).mul(fade);
       const gx=field(xz.add(W.vec3(e,0,0))).h.sub(F0.h).div(e);
       const gz=field(xz.add(W.vec3(0,0,e))).h.sub(F0.h).div(e);
-      const nW=W.normalize(W.normalWorld.add(W.vec3(gx.negate(),W.float(0),gz.negate()).mul(k)));
-      m.normalNode=W.normalize(W.cameraViewMatrix.mul(W.vec4(nW,0)).xyz);
+      let nW=W.normalWorld.add(W.vec3(gx.negate(),W.float(0),gz.negate()).mul(k));
+      // the cliff relief, in 3-D, pressed into the face (only the part across the face)
+      const ec=0.06, kc=W.float(0.9).mul(steep).mul(fadeC);
+      // High/Ultra: the full 3-D relief; Medium: up the face only (the strata ridges), one extra sample
+      const dy=cliff(p.add(W.vec3(0,ec,0))).h.sub(C0.h);
+      const cg=lvl>=3?W.vec3(cliff(p.add(W.vec3(ec,0,0))).h.sub(C0.h),dy,cliff(p.add(W.vec3(0,0,ec))).h.sub(C0.h)).div(ec):W.vec3(W.float(0),dy,W.float(0)).div(ec);
+      nW=nW.sub(cg.sub(N.mul(W.dot(cg,N))).mul(kc));
+      m.normalNode=W.normalize(W.cameraViewMatrix.mul(W.vec4(W.normalize(nW),0)).xyz);
     }
-    // cracks shade darker, pebbles a touch lighter and glossier (Low: the colour only)
-    m.colorNode=W.vertexColor().mul(W.float(1).sub(F0.crack.mul(0.32).mul(fade)).add(F0.peb.mul(0.06).mul(fade)));
+    // cracks shade darker, pebbles a touch lighter and glossier (Low: the colour only);
+    // cliff layers each take their own tint, split lines darker, ledges catch a little light
+    const cliffTint=W.mix(W.float(1),W.float(0.84).add(layerTone.mul(0.3)).mul(W.float(1).sub(C0.split.mul(0.35))).mul(W.float(0.93).add(C0.ledge.mul(0.07))),steep.mul(fadeBand));
+    m.colorNode=W.vertexColor().mul(W.float(1).sub(F0.crack.mul(0.32).mul(fade)).add(F0.peb.mul(0.06).mul(fade))).mul(cliffTint).mul(basinTint);
     m.roughnessNode=sandy?W.float(0.98):W.float(0.95).sub(F0.peb.mul(0.28).mul(fade));
     m.userData.dmDetail=lvl;
     // the coarse ground is cut away where the tessellated patch round her takes over
@@ -23041,8 +23172,8 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 </script>
 
 <!-- ?v= stamps: bump on every UI change so browsers never mix a new page with cached old styles -->
-<link rel="stylesheet" href="ui/dm-ui.css?v=107">
-<link rel="stylesheet" href="ui/dm-hud.css?v=107">
+<link rel="stylesheet" href="ui/dm-ui.css?v=108">
+<link rel="stylesheet" href="ui/dm-hud.css?v=109">
 <link rel="stylesheet" href="ui/dm-menu.css?v=80">
 <link rel="stylesheet" href="ui/dm-journal.css?v=97">
 <link rel="stylesheet" href="ui/dm-landmap.css?v=86">
