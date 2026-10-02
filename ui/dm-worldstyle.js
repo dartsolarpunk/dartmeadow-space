@@ -68,10 +68,91 @@
     const u = (x * ca + z * sa + w) / k.lam, t = u - Math.floor(u);
     return { t, slip: t > k.crest };
   }
+  // ── Mars (and the other red desert worlds) ─────────────────────────────
+  // Read from the rover panoramas and orbital views: wide, nearly level
+  // plains of red regolith that roll gently over kilometres; flat-topped
+  // tablelands standing above them on worn escarpments (a talus apron at
+  // the foot, a crisp lip at the top); impact craters at every size — big
+  // shallow basins with low rims and the odd central peak, sharp bowls,
+  // small pits; dark dune seas lying in the low ground; and only here and
+  // there a broad, rounded massif. No terracing, no spires: the ground you
+  // land on is ground you can walk.
+  const MARS = {
+    swellF: 0.0011, swellA: 34, undF: 0.006, undA: 4.5,
+    regF: 0.00055,
+    platF: 0.0011, plat1: 0.56, plat2: 0.675, platH1: 30, platH2: 18, edge: 0.03,
+    craters: [
+      { cell: 950, p: 0.42, r0: 90, r1: 230, depth: 0.11, rim: 0.035, peak: 0.05 },
+      { cell: 280, p: 0.45, r0: 16, r1: 58, depth: 0.2, rim: 0.06, peak: 0 },
+      { cell: 74, p: 0.32, r0: 3.5, r1: 10, depth: 0.24, rim: 0.08, peak: 0 },
+    ],
+    mtT0: 0.7, mtT1: 0.86, mtF: 0.0024, mtA: 85,
+    duneAmp: 0.7, chF: 0.0007, chT: 0.982, chD: 8,
+  };
+  function marsCrater(x, z, seed, k, salt) {
+    const ci = Math.floor(x / k.cell), cj = Math.floor(z / k.cell);
+    let o = 0;
+    for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) {
+      const i = ci + di, j = cj + dj;
+      if (hash2(i, j, seed + salt) > k.p) continue;
+      const cx = (i + 0.25 + hash2(i + 7, j, seed + salt) * 0.5) * k.cell, cz = (j + 0.25 + hash2(i, j + 7, seed + salt) * 0.5) * k.cell;
+      const R = k.r0 + Math.pow(hash2(i + 3, j + 5, seed + salt), 1.6) * k.r1;   // many small, few large
+      const d = Math.hypot(x - cx, z - cz) / R;
+      if (d > 2.4) continue;
+      // the age of a crater softens it: old ones are shallow with worn rims
+      const age = 0.45 + 0.55 * hash2(i + 11, j + 13, seed + salt);
+      const D = R * k.depth * age, Rh = R * k.rim * age;
+      let v;
+      if (d < 1) {
+        const w = sm(0.3, 1.0, d);
+        v = -D + (D + Rh) * w * w;                                   // flat floor, curved wall, rim at the edge
+        if (k.peak && R > 150) v += Math.exp(-Math.pow(d / 0.13, 2)) * R * k.peak * age;   // central peak
+      } else {
+        v = Rh * Math.pow(1 / d, 3) * (1 - sm(1.6, 2.4, d));        // ejecta blanket falling away
+      }
+      o += v;
+    }
+    return o;
+  }
+  function marsMask(x, z, seed, f) {   // where the dune seas lie (shared with the colouring)
+    return sm(K.dunes.fieldT, K.dunes.fieldT + 0.12, f(x * K.dunes.fieldF + 31, z * K.dunes.fieldF - 31, seed + 241, 3));
+  }
+  function marsH(x, z, seed, f) {
+    const k = MARS;
+    let h = (f(x * k.swellF + 11, z * k.swellF - 5, seed + 301, 4) - 0.5) * 2 * k.swellA;   // the long swell of the plains
+    h += (f(x * k.undF + 3, z * k.undF + 9, seed + 303, 3) - 0.5) * 2 * k.undA;           // a gentle undulation on top
+    const reg = f(x * k.regF + seed * 0.37, z * k.regF - seed * 0.21, seed + 311, 3);      // regional character
+    // tablelands: one or two flat-topped tiers, ragged edges, worn escarpment
+    const pm = f(x * k.platF + 5, z * k.platF + 5, seed + 321, 4) + (f(x * 0.02, z * 0.02, seed + 323, 2) - 0.5) * k.edge * 2;
+    const inPlat = sm(0.3, 0.5, reg);
+    const t1 = sm(k.plat1, k.plat1 + 0.022, pm), t2 = sm(k.plat2, k.plat2 + 0.018, pm);
+    const plat = (t1 * k.platH1 + t2 * k.platH2) * inPlat;
+    h += plat;
+    // a tableland's top stays level: the plains' undulation is damped up there
+    // dune seas in the low ground off the tablelands
+    const df = marsMask(x, z, seed, f) * (1 - t1 * inPlat);
+    if (df > 0) h += duneH(x, z, seed, f) * k.duneAmp * df;
+    // impact craters at three scales
+    for (let c = 0; c < k.craters.length; c++) h += marsCrater(x, z, seed, k.craters[c], 401 + c * 17);
+    // rare broad massifs, rounded by time
+    const mt = sm(k.mtT0, k.mtT1, reg);
+    if (mt > 0) {
+      const r = 1 - Math.abs(f(x * k.mtF + 2, z * k.mtF - 2, seed + 331, 4) * 2 - 1);
+      h += mt * (r * r * k.mtA + f(x * k.mtF * 2.3, z * k.mtF * 2.3, seed + 333, 3) * k.mtA * 0.35);
+    }
+    // the odd dry channel winding across the plain
+    const chOn = 1 - sm(0.25, 0.42, reg);   // only out on the open plains
+    if (chOn > 0) {
+      const ch = 1 - Math.abs(f(x * k.chF + seed * 1.9, z * k.chF - seed * 1.3, seed + 341, 3) * 2 - 1);
+      h -= sm(k.chT, 1, ch) * k.chD * chOn;
+    }
+    return h;
+  }
   // f(x,z,seed,octaves) is the game's own _fbm (0..1).
   function shape(style, x, z, h, seed, f) {
     if (style === 'dunes') return h * K.dunes.keep + duneH(x, z, seed, f);
-    if (style === 'mesa') {
+    if (style === 'mesa') return marsH(x, z, seed, f);
+    if (style === 'mesa-legacy') {
       const k = K.mesa, t = h / k.tier, fl = Math.floor(t), fr = t - fl;
       let o = (fl + sm(k.rise0, k.rise1, fr)) * k.tier * (1 - k.keep) + h * k.keep;
       const b = f(x * k.butteF + seed * 1.7, z * k.butteF + seed * 1.7, seed + 141, 3);
@@ -336,5 +417,5 @@
     return fallback;
   }
 
-  window.DMWorldStyle = { K, styleFor, shape, color, skyFor, shapeTSL, colorTSL, craters, duneH, earthDesert, isSand: (st) => st === 'dunes' || st === 'mesa' };
+  window.DMWorldStyle = { K, MARS, marsH, styleFor, shape, color, skyFor, shapeTSL, colorTSL, craters, duneH, earthDesert, isSand: (st) => st === 'dunes' || st === 'mesa' };
 })();
