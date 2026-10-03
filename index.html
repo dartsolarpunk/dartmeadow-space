@@ -984,7 +984,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-spectator.js?v=1" defer></script>
 <script src="ui/dm-stack.js?v=1" defer></script>
 <script src="ui/dm-globe.js?v=3" defer></script>
-<script src="ui/dm-starbubble.js?v=1" defer></script>
+<script src="ui/dm-star.js?v=1" defer></script>
+<script src="ui/dm-starbubble.js?v=2" defer></script>
 </head>
 <body>
 <!-- LOADING -->
@@ -4742,7 +4743,7 @@ let flightAnimId,flightTime=0,celestialBodies=[],sunMesh,earthMesh;
 // rider stays an unresolved speck; CHAR mount math stays Stabilizer-owned
 // (CHAR_BOARD_TARGET_UNITS / remountSkyboard) — they inherit parent scale.
 // Surface LAND: mcRadius = visR (same R); local walk scene keeps human bake.
-// Keep intact: MW sky (#37), near fog (#38), buildVibrantSolSun (radius only),
+// Keep intact: MW sky (#37), near fog (#38), the Sun (ui/dm-star.js; radius only),
 // NO whitewash bloom / corona spr re-add (#30).
 // ═══════════════════════════════════════════════════════════════
 const AU_UNITS = 500;          // 1 AU in scene units (tablet Neptune fill)
@@ -6895,10 +6896,10 @@ async function buildSolarSystem(){
   // ═══════════════════════════════════════════════════════════════
   const AU = AU_UNITS;
 
-  // Sun — vibrant LOCAL body (lava/flare surface + tight additive shells).
-  // Radius SOL_SUN_RADIUS. White Oort/system discs stay DELETED (#30).
-  // Asteroid belt + Oort particulate unchanged. No scene bloom wash.
-  const _solVis=buildVibrantSolSun(SOL_SUN_RADIUS);
+  // Sun — built from its data by the world engine (ui/dm-star.js): boiling
+  // plasma surface, ray-marched corona, prominences. Radius SOL_SUN_RADIUS.
+  // White Oort/system discs stay DELETED (#30). No scene bloom wash.
+  const _solVis=DMStar.build({radius:SOL_SUN_RADIUS,temp:5778,seed:1});
   const sunGroup=_solVis.group;
   const sm=_solVis.mesh;
   flightScene.add(sunGroup);
@@ -10600,7 +10601,8 @@ function updateBodies(dt){
 
     // LOD — increase geometry detail when close, reduce when far
     const dist=b.mesh.position.distanceTo(STATE.flight.pos);
-    if(checkMesh.geometry && checkMesh.geometry.parameters && checkMesh.geometry.parameters.radius){
+    // (not stars: their distances run far past these bands, which cut the Sun to 8 segments; ui/dm-star.js does its own LOD)
+    if(b.type!=='Star' && checkMesh.geometry && checkMesh.geometry.parameters && checkMesh.geometry.parameters.radius){
       // LOD re-tessellation with a per-body cooldown. Without it, hovering
       // near a band boundary (dist≈5/20/80) rebuilt+disposed the sphere
       // geometry over and over — each rebuild is a main-thread spike, and
@@ -10682,21 +10684,8 @@ function updateBodies(dt){
       try{ ld.style.display='none'; ld.innerHTML=''; _landTargetBody=null; }catch(e){}
     }
   }
-  // Sun rotation + procedural surface time
-  if(sunMesh){
-    sunMesh.rotation.y+=.00035;
-    try{
-      if(sunMesh.userData&&sunMesh.userData.paintSol){
-        // ~12 fps canvas repaint — lava motion without per-frame full cost
-        const t=typeof flightTime==='number'?flightTime:0;
-        const gap=(typeof GFX!=='undefined'&&GFX&&(GFX.preset==='low'||GFX.isMobile))?0.16:0.09;
-        if(t- (sunMesh.userData._solPaintT||-99) > gap){
-          sunMesh.userData._solPaintT=t;
-          sunMesh.userData.paintSol(t);
-        }
-      }
-    }catch(e){}
-  }
+  // Sun rotation (its plasma animates on the shader clock)
+  if(sunMesh) sunMesh.rotation.y+=.00035;
   // Sol GAL LOD — yellow arm-dot when far; restore full SYS when near
   try{ if(typeof updateSolGalLod==='function') updateSolGalLod(); }catch(e){}
   try{ if(typeof updateDiscoveries==='function') updateDiscoveries(1/60); }catch(e){}
@@ -12201,22 +12190,14 @@ async function rebuildFlightForSystem(system){
   _clearFlightSystemScene();
   const AU=AU_UNITS;
   const sysRand=seedRand(system.seed||hashStr('sys:'+system.name));
-  const starCol={'G yellow':0xffee88,'K orange':0xffaa55,'M red dwarf':0xff6644,'F white':0xffffee,'B blue giant':0x99bbff,
-    'O/B Blue Giant':0x9db8ff,'A White':0xf0f4ff,'F/G Yellow-White':0xfff2d0,'K Orange':0xffc880,'M Red Dwarf':0xff8860,'Red Giant':0xff6a4a
-  }[system.starType]||0xffee88;
 
-  // Central star — cheap mesh (same stability choice as Sol's Sun)
-  const starGroup=new THREE.Group();
-  const starMesh=new THREE.Mesh(new THREE.SphereGeometry(SOL_SUN_RADIUS,24,24),new THREE.MeshBasicMaterial({color:starCol}));
-  starGroup.add(starMesh);
-  try{
-    const gt=makeCircleTex(64,'#'+new THREE.Color(starCol).getHexString(),1);
-    const spr1=new THREE.Sprite(new THREE.SpriteMaterial({map:gt,color:starCol,transparent:true,opacity:0.28,blending:THREE.AdditiveBlending,depthWrite:false}));
-    spr1.scale.set(SOL_SUN_RADIUS*1.35,SOL_SUN_RADIUS*1.35,1);starGroup.add(spr1);
-  }catch(e){}
+  // Central star — from its class, by the world engine (ui/dm-star.js)
+  const starK=DMStar.tempFor(system.starType);
+  const _star=DMStar.build({radius:SOL_SUN_RADIUS,temp:starK,seed:(system.seed||hashStr('sys:'+system.name))%997+1});
+  const starGroup=_star.group, starMesh=_star.mesh;
   starGroup.position.set(0,0,0);flightScene.add(starGroup);
   sunMesh=starMesh;
-  celestialBodies.push({mesh:starGroup,name:system.name,type:'Star',temp:'5000 K',orbitR:0,orbitSpd:0,angle:0,renderMesh:starMesh});
+  celestialBodies.push({mesh:starGroup,name:system.name,type:'Star',temp:Math.round(starK/100)*100+' K',orbitR:0,orbitSpd:0,angle:0,renderMesh:starMesh});
 
   const GIANT_FALLBACK=[0x8a5a3a,0xd9b280,0xf0e0c0,0xc47a52];
   const bodyAngs=[];
@@ -15188,14 +15169,9 @@ window.disposeGalSky=disposeGalSky;window.galSkyZoomLy=galSkyZoomLy;window.galLo
 
 // ── 3. MULTI-STAR DISTANT SYSTEMS (visible as systems you can fly to) ─
 let distantSystems=[];
-/* Real star surface — same general TSL approach as the gas giant bands
-   (turbulent, animated noise) but tuned for a star: much brighter,
-   emissive, granulation-scale turbulence rather than banding, and a
-   layered corona/flare instead of an atmosphere shell. Reused for every
-   star in the seeded field below, not just the Sun. */
 // Cheap distant-star marker (Sol-home lag fix). One small sphere + single
 // soft corona sprite — no TSL noise, no PointLight. Used by the seeded
-// field; buildProceduralStarMesh remains for rare close-up uses.
+// field; stars you fly to are built by ui/dm-star.js.
 function buildCheapStarMarker(radius, starColor){
   const group=new THREE.Group();
   const mesh=new THREE.Mesh(
@@ -15216,214 +15192,7 @@ function buildCheapStarMarker(radius, starColor){
   return group;
 }
 
-// Sol sun visual — vibrant LOCAL body only (Justin HARD after #30 flat yellow disc).
-// KEEP white Oort/system glow discs DELETED. No 900/1600 wash sprites.
-// Canvas lava texture (mobile-safe) + tight additive shells sized to SOL_SUN_RADIUS.
-// Optional light TSL granulation on real-WebGPU desktop Med/High only (1 noise layer).
-function buildVibrantSolSun(radius){
-  const group=new THREE.Group();
-  let mesh=null;
-  const low=!!(typeof GFX!=='undefined'&&GFX&&(GFX.preset==='low'||GFX.isMobile));
-  const useNode=(!low)&&typeof _isRealWebGPU==='function'&&typeof flightRenderer!=='undefined'&&_isRealWebGPU(flightRenderer)
-    &&!!(THREE&&THREE.MeshBasicNodeMaterial)&&typeof mx_fractal_noise_float!=='undefined';
-  if(useNode){
-    try{
-      const mat=new THREE.MeshBasicNodeMaterial();
-      // Single fractal layer (2 octaves) — NOT dual coarse+fine that hung mobile when Sol is large.
-      mat.colorNode=Fn(()=>{
-        const p=positionLocal.mul(2.4);
-        const n=mx_fractal_noise_float(p.add(vec3(time.mul(0.11),time.mul(0.04),time.mul(0.07))),2,2.0,0.5);
-        const t=n.mul(0.5).add(0.5);
-        const deep=vec3(0.55,0.08,0.01);
-        const lava=vec3(1.0,0.42,0.05);
-        const flare=vec3(1.0,0.88,0.45);
-        const core=vec3(1.0,0.98,0.92);
-        let c=mix(deep,lava,smoothstep(float(0.12),float(0.45),t));
-        c=mix(c,flare,smoothstep(float(0.45),float(0.78),t));
-        c=mix(c,core,smoothstep(float(0.78),float(0.97),t));
-        // Soft limb darkening (body read, not corona wash)
-        const viewN=normalize(cameraPosition.sub(positionWorld));
-        const ndv=normalWorld.dot(viewN).clamp(0.0,1.0);
-        return c.mul(float(0.72).add(ndv.mul(0.55)));
-      })();
-      mesh=new THREE.Mesh(new THREE.SphereGeometry(radius,low?24:36,low?18:28),mat);
-      mesh.userData.solShade='tsl';
-    }catch(e){console.warn('sol TSL fallback:',e);mesh=null;}
-  }
-  if(!mesh){
-    const S=low?128:320;
-    const cv=document.createElement('canvas');cv.width=S*2;cv.height=S;
-    const cx=cv.getContext('2d',{willReadFrequently:true});
-    const img=cx.createImageData(S*2,S);
-    const d=img.data;
-    // Cheap value-noise hash (CPU) — lava cells + flare ribbons
-    function h3(x,y,z){let n=Math.sin(x*127.1+y*311.7+z*74.7)*43758.5453;return n-Math.floor(n);}
-    function vnoise(x,y,z){
-      const xi=Math.floor(x),yi=Math.floor(y),zi=Math.floor(z);
-      const xf=x-xi,yf=y-yi,zf=z-zi;
-      const u=xf*xf*(3-2*xf),v=yf*yf*(3-2*yf),w=zf*zf*(3-2*zf);
-      const n000=h3(xi,yi,zi),n100=h3(xi+1,yi,zi),n010=h3(xi,yi+1,zi),n110=h3(xi+1,yi+1,zi);
-      const n001=h3(xi,yi,zi+1),n101=h3(xi+1,yi,zi+1),n011=h3(xi,yi+1,zi+1),n111=h3(xi+1,yi+1,zi+1);
-      const x00=n000+(n100-n000)*u,x10=n010+(n110-n010)*u,x01=n001+(n101-n001)*u,x11=n011+(n111-n011)*u;
-      const y0=x00+(x10-x00)*v,y1=x01+(x11-x01)*v;
-      return y0+(y1-y0)*w;
-    }
-    function paint(t){
-      const W=S*2,H=S;
-      for(let y=0;y<H;y++){
-        const v=y/(H-1);
-        for(let x=0;x<W;x++){
-          const u=x/(W-1);
-          // equirect → direction-ish coords for stable wrap
-          const lon=u*Math.PI*2, lat=(v-0.5)*Math.PI;
-          const cx0=Math.cos(lat)*Math.cos(lon), cy0=Math.sin(lat), cz0=Math.cos(lat)*Math.sin(lon);
-          const n1=vnoise(cx0*3.1+t*0.15,cy0*3.1,cz0*3.1+t*0.09);
-          const n2=vnoise(cx0*7.0-t*0.22,cy0*7.0+t*0.11,cz0*7.0);
-          const n3=vnoise(cx0*14.0+t*0.4,cy0*14.0,cz0*14.0-t*0.3);
-          let g=n1*0.55+n2*0.3+n3*0.15;
-          g=Math.max(0,Math.min(1,g));
-          // flare ribbons
-          const ribbon=Math.pow(Math.max(0,Math.sin((lat*4.0+lon*2.0+t*0.7)*1.7)*0.5+0.5),3.0)*(0.35+n2*0.65);
-          g=Math.max(g,ribbon*0.85);
-          // palette: deep red → lava orange → yellow flare → near-white core
-          let r,gg,b;
-          if(g<0.35){const k=g/0.35;r=0.45+k*0.55;gg=0.05+k*0.25;b=0.01+k*0.03;}
-          else if(g<0.65){const k=(g-0.35)/0.3;r=1.0;gg=0.3+k*0.45;b=0.04+k*0.12;}
-          else if(g<0.88){const k=(g-0.65)/0.23;r=1.0;gg=0.75+k*0.2;b=0.16+k*0.4;}
-          else{const k=(g-0.88)/0.12;r=1.0;gg=0.95+k*0.05;b=0.56+k*0.4;}
-          const i=(y*W+x)*4;
-          d[i]=(r*255)|0;d[i+1]=(gg*255)|0;d[i+2]=(b*255)|0;d[i+3]=255;
-        }
-      }
-      cx.putImageData(img,0,0);
-      tex.needsUpdate=true;
-    }
-    const tex=new THREE.CanvasTexture(cv);
-    try{tex.colorSpace=THREE.SRGBColorSpace;}catch(e){}
-    tex.needsUpdate=true;
-    paint(0);
-    const mat=new THREE.MeshBasicMaterial({map:tex,color:0xffffff});
-    mesh=new THREE.Mesh(new THREE.SphereGeometry(radius,low?24:36,low?18:28),mat);
-    mesh.userData.solShade='canvas';
-    mesh.userData.paintSol=paint;
-    mesh.userData._solPaintT=-1;
-  }
-  group.add(mesh);
 
-  // LOCAL glow + soft dusty falloff shells — NOT corona bloom spr1/spr2 / whitewash discs (#30 erase stays).
-  try{
-    const mkShell=(mul,hex,op)=>{
-      const m=new THREE.MeshBasicMaterial({
-        color:hex,transparent:true,opacity:op,
-        blending:THREE.AdditiveBlending,depthWrite:false,side:THREE.BackSide
-      });
-      const s=new THREE.Mesh(new THREE.SphereGeometry(radius*mul,20,14),m);
-      s.renderOrder=1;
-      s.userData.jotsSolDustShell=true;
-      group.add(s);
-      return s;
-    };
-    mkShell(1.08,0xff7a18,0.42);
-    mkShell(1.18,0xffc14a,0.18);
-    mkShell(1.32,0xffe9a0,0.07); // still body-local (~1.3× R), not system wash
-    // Soft density falloff shells for close Sol approach (dusty, not bloom corona)
-    mkShell(1.48,0xffa040,0.045);
-    mkShell(1.72,0xff8030,0.028);
-  }catch(e){console.warn('sol local glow:',e);}
-
-  // Local Points dust cloud on Sol group ONLY — readable near limb, no scene wash
-  try{
-    const nDust=low?160:380;
-    const pos=new Float32Array(nDust*3);
-    const cols=new Float32Array(nDust*3);
-    for(let i=0;i<nDust;i++){
-      // Random direction on soft shells between 1.05R and 1.85R
-      const u=Math.random(), v=Math.random();
-      const theta=2*Math.PI*u;
-      const phi=Math.acos(2*v-1);
-      const rr=radius*(1.05+Math.pow(Math.random(),0.65)*0.80);
-      const x=rr*Math.sin(phi)*Math.cos(theta);
-      const y=rr*Math.sin(phi)*Math.sin(theta);
-      const z=rr*Math.cos(phi);
-      pos[i*3]=x; pos[i*3+1]=y; pos[i*3+2]=z;
-      const t=(rr/radius-1.05)/0.80;
-      cols[i*3]=1.0; cols[i*3+1]=0.55+0.35*(1-t); cols[i*3+2]=0.18+0.15*(1-t);
-    }
-    const dg=new THREE.BufferGeometry();
-    dg.setAttribute('position',new THREE.BufferAttribute(pos,3));
-    dg.setAttribute('color',new THREE.BufferAttribute(cols,3));
-    let dtex=null; try{ dtex=typeof makeCircleTex==='function'?makeCircleTex(16,'rgb(255,200,120)',1):null; }catch(e){}
-    const dm=new THREE.PointsMaterial({
-      size:radius*(low?0.018:0.014), sizeAttenuation:true, vertexColors:true,
-      map:dtex, transparent:true, opacity:0.42, depthWrite:false,
-      blending:THREE.AdditiveBlending, alphaTest:0.02
-    });
-    const dustPts=new THREE.Points(dg,dm);
-    dustPts.name='JOTS_SolDustPoints';
-    dustPts.frustumCulled=false;
-    dustPts.renderOrder=2;
-    group.add(dustPts);
-  }catch(e){console.warn('sol dusty points:',e);}
-
-  return {group,mesh};
-}
-
-function buildProceduralStarMesh(radius, seedVal, starColor){
-  const group = new THREE.Group();
-  if(!(_isRealWebGPU(flightRenderer))){
-    // WebGL2: a bright limb-darkened disc with a soft corona and glare, drawn
-    // with plain materials (no compute / node shaders needed)
-    const col=new THREE.Color(starColor);
-    const fallback=new THREE.Mesh(new THREE.SphereGeometry(radius,32,24),new THREE.MeshBasicMaterial({color:col.clone().lerp(new THREE.Color(0xffffff),0.35)}));
-    group.add(fallback);
-    try{
-      const cv=document.createElement('canvas'); cv.width=cv.height=128; const cx=cv.getContext('2d');
-      const g=cx.createRadialGradient(64,64,0,64,64,64);
-      g.addColorStop(0,'rgba(255,255,255,1)'); g.addColorStop(0.22,'rgba(255,255,255,.85)'); g.addColorStop(0.45,'rgba(255,255,255,.28)'); g.addColorStop(1,'rgba(255,255,255,0)');
-      cx.fillStyle=g; cx.fillRect(0,0,128,128);
-      const tex=new THREE.CanvasTexture(cv);
-      const corona=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,color:col,transparent:true,blending:THREE.AdditiveBlending,depthWrite:false}));
-      corona.scale.setScalar(radius*4.2); group.add(corona);
-      const glare=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,color:col.clone().lerp(new THREE.Color(0xffffff),0.5),transparent:true,opacity:0.35,blending:THREE.AdditiveBlending,depthWrite:false}));
-      glare.scale.setScalar(radius*9); group.add(glare);
-    }catch(e){}
-    return group;
-  }
-  const mat = new THREE.MeshBasicNodeMaterial();
-  const baseCol = uniform(new THREE.Color(starColor));
-  const seedU = uniform(seedVal);
-  mat.colorNode = Fn(()=>{
-    const p = positionWorld.mul(3.0).add(vec3(seedU, seedU.mul(1.7), seedU.mul(0.6)));
-    // Two turbulence layers at different scales/speeds — coarse slow
-    // convection cells plus fine fast granulation, added together, same
-    // layering idea as the water waves elsewhere in this file.
-    const coarse = mx_fractal_noise_float(p.add(vec3(time.mul(0.04),0,0)), 3, 2.0, 0.5);
-    const fine = mx_fractal_noise_float(p.mul(4.0).add(vec3(0,time.mul(0.15),0)), 3, 2.0, 0.5);
-    const turb = coarse.mul(0.6).add(fine.mul(0.4)).mul(0.5).add(0.5);
-    const bright = baseCol.mul(float(0.75).add(turb.mul(0.6)));
-    // Limb brightening fudge — edges (grazing view angle) read slightly
-    // hotter/whiter, a cheap stand-in for real limb darkening's opposite
-    // (works fine visually for a small, distant sprite-scale star).
-    const viewDir = positionWorld.sub(cameraPosition).normalize();
-    const rim = float(1.0).sub(normalWorld.dot(viewDir.negate()).abs()).pow(3.0);
-    return mix(bright, vec3(1,1,1), rim.mul(0.3));
-  })();
-  const mesh = new THREE.Mesh(new THREE.SphereGeometry(radius,24,20), mat);
-  group.add(mesh);
-  // Layered glow sprites for the corona — same makeGlowSprite/makeCircleTex
-  // technique already used everywhere else in this file for cheap additive
-  // glow, not a new dependency.
-  try{
-    // Soft bloom wash: tone corona hard so distant/close stars don't wash white.
-    const hex = '#'+new THREE.Color(starColor).getHexString();
-    const gt = makeCircleTex(64, hex, 1);
-    const spr1 = new THREE.Sprite(new THREE.SpriteMaterial({map:gt,color:starColor,transparent:true,opacity:0.08,blending:THREE.AdditiveBlending,depthWrite:false}));
-    spr1.scale.set(radius*2.6, radius*2.6, 1); group.add(spr1);
-    const spr2 = new THREE.Sprite(new THREE.SpriteMaterial({map:gt,color:starColor,transparent:true,opacity:0.03,blending:THREE.AdditiveBlending,depthWrite:false}));
-    spr2.scale.set(radius*4.0, radius*4.0, 1); group.add(spr2);
-  }catch(e){}
-  return group;
-}
 /* Real stellar classification, simplified to what's visually/gameplay
    relevant: color + relative size/brightness by class, weighted so blue
    giants are rare and red/orange dwarfs are common, matching the real
@@ -15625,7 +15394,7 @@ function renderWithPostFX(){
     flightRenderer.setRenderTarget(null);
     const _spec=window.DMSpec&&DMSpec.on; if(_spec) try{ DMSpec.pre(flightCamera); }catch(e){}
     try{ if(galSky.ready) updateGalSky(); }catch(e){}
-    try{ if(window.DMStarBubble) { const n=performance.now(), d=_sbT?(n-_sbT)/1000:1/60; _sbT=n; DMStarBubble.frame(flightCamera,flightScene,d); } }catch(e){ console.warn('[starbubble] '+(e&&e.stack||e)); }
+    try{ if(window.DMStarBubble) { const n=performance.now(), d=_sbT?(n-_sbT)/1000:1/60; _sbT=n; if(window.DMStar) DMStar.frame(flightCamera,d); DMStarBubble.frame(flightCamera,flightScene,d); } }catch(e){ console.warn('[starbubble] '+(e&&e.stack||e)); }
     try{ flightRenderer.render(flightScene,flightCamera); _shotGrab(flightRenderer); }
     finally{ if(_spec) try{ DMSpec.post(flightCamera); }catch(e){} }
     const _rtMs = performance.now()-_rt0;

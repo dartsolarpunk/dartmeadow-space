@@ -17,7 +17,7 @@
              hole lens's ndc→uv step (_lensWarpUV).
      bubble  thin-film iridescent shell (fresnel → rainbow bands).
      plasma  the star's interior, seen only while the camera is inside
-             it — swirling hot plasma instead of a blank/washed screen.
+             it — the star's own boiling plasma (ui/dm-star.js) from within.
    Other players: every rider near a star gets a bubble (worked out
    from the positions multiplayer already sends — nothing extra on the
    bus); riders close together share one bubble.
@@ -114,24 +114,6 @@
     m.userData.u=u;
     return m;
   }
-  function plasmaMat(T){
-    const m=new THREE.MeshBasicNodeMaterial({side:THREE.BackSide,depthWrite:true});
-    const {float,vec3,sin,mix,smoothstep,normalize,time,positionLocal}=T;
-    const d=normalize(positionLocal);
-    // two layers of domain-warped sines: cheap turbulence, no noise lookups
-    const q=d.mul(3.0).add(sin(d.yzx.mul(5.0).add(time.mul(0.35))).mul(0.6));
-    const n1=sin(q.x.mul(3.0).add(time.mul(0.7))).mul(sin(q.y.mul(3.3).sub(time.mul(0.5)))).mul(sin(q.z.mul(2.7).add(time.mul(0.6))));
-    const q2=q.mul(2.3).add(sin(q.zxy.mul(3.0).sub(time.mul(0.5))).mul(0.5));
-    const n2=sin(q2.x.add(q2.y).mul(2.0).add(time)).mul(sin(q2.z.mul(2.5).sub(time.mul(0.8))));
-    const g=n1.mul(0.6).add(n2.mul(0.4)).mul(0.5).add(0.5).clamp(0.0,1.0);
-    let c=mix(vec3(0.36,0.03,0.005),vec3(0.9,0.26,0.03),smoothstep(0.15,0.55,g));
-    c=mix(c,vec3(1.0,0.62,0.18),smoothstep(0.55,0.85,g));
-    c=mix(c,vec3(1.0,0.93,0.7),smoothstep(0.88,1.0,g));
-    m.colorNode=c.mul(0.75);
-    m.toneMapped=false;
-    return m;
-  }
-
   function build(){
     const T=THREE.TSL;
     if(!T||!T.viewportTexture||!T.dFdx||!window._lensWarpUV||!THREE.MeshBasicNodeMaterial){ SB.failed=true; return; }
@@ -143,7 +125,8 @@
       SB._bGeo=new THREE.SphereGeometry(1,low?32:48,low?20:32);
       SB.bubble=new THREE.Mesh(SB._bGeo,SB._bMat);
       SB.bubble.renderOrder=51; SB.bubble.frustumCulled=false; SB.bubble.visible=false; SB.bubble.name='JOTS_StarBubble';
-      SB.plasma=new THREE.Mesh(new THREE.SphereGeometry(1,low?32:48,low?16:24),plasmaMat(T));
+      // inside the star: its own plasma (ui/dm-star.js), seen from within
+      SB.plasma=new THREE.Mesh(new THREE.SphereGeometry(1,low?32:48,low?16:24));
       SB.plasma.visible=false; SB.plasma.name='JOTS_StarInterior';
       SB.T=T; SB.built=true;
     }catch(e){ console.warn('[starbubble] build failed:',e); SB.failed=true; }
@@ -233,8 +216,11 @@
     shells(st,dim,camH<0); SB._shellDim=dim<1||camH<0;
     // always drawn near a star (tiny, hidden in its core when we're outside)
     // so its shader is compiled before the moment we dive in
-    SB.plasma.visible=true; SB.plasma.position.copy(st.c); SB.plasma.scale.setScalar(camH<0?st.R*0.985:st.R*0.05);
+    const inMat=window.DMStar&&DMStar.interiorMaterial(st.b.mesh.userData.dmStar);
+    if(inMat&&SB.plasma.material!==inMat) SB.plasma.material=inMat;
+    SB.plasma.visible=!!inMat; SB.plasma.position.copy(st.c); SB.plasma.scale.setScalar(camH<0||SB.a>0.002?st.R*0.985:st.R*0.05);   // full size too while the bubble parts the surface
     const on=SB.a>0.002&&Re>0.01;
+    if(window.DMStar) DMStar.setBubble(pos,on?Re:0);
     const camIn=camD<Re*1.05;
     SB.bubble.visible=on;
     if(on){
@@ -274,6 +260,7 @@
   };
   function smooth(e0,e1,x){ const t=Math.max(0,Math.min(1,(x-e0)/(e1-e0))); return t*t*(3-2*t); }
   function hideAll(){
+    if(window.DMStar) DMStar.setBubble(null,0);
     SB.a=0; SB.pk=0; SB.flame=0; SB.pkT=0; SB.lastH=null; SB.inStar=0;
     for(const o of [SB.lens,SB.bubble,SB.plasma]) if(o) o.visible=false;
     if(SB._hid){ for(const o of SB._hid) o.visible=true; SB._hid=null; }
