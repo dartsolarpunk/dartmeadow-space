@@ -984,6 +984,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-spectator.js?v=1" defer></script>
 <script src="ui/dm-stack.js?v=1" defer></script>
 <script src="ui/dm-globe.js?v=2" defer></script>
+<script src="ui/dm-starbubble.js?v=1" defer></script>
 </head>
 <body>
 <!-- LOADING -->
@@ -14958,6 +14959,17 @@ function _gsDiscMesh(front){
 // once — the multi-lens form of the thin-lens equation, summing each
 // hole's deflection (weak-field approximation) — so neighbouring holes in
 // a core ring lens each other correctly from a single copy of the frame.
+// Screen uv for a lens sample: this pixel's screen uv moved by `delta`
+// (aspect-corrected ndc, units of half-height). The ndc → screen-uv scale
+// per axis comes from the pixel derivatives, so the sample lands right
+// whichever way the backend orients the screen. Shared by the black hole
+// lens and the star bubble's reverse lens (ui/dm-starbubble.js).
+function _lensWarpUV(T,ndc,delta,uAspect){
+  const jx=T.dFdx(T.screenUV).x.div(T.dFdx(ndc).x), jy=T.dFdy(T.screenUV).y.div(T.dFdy(ndc).y);
+  const dn=delta.div(T.vec2(uAspect,1.0));
+  return T.screenUV.add(T.vec2(dn.x.mul(jx),dn.y.mul(jy)));
+}
+window._lensWarpUV=_lensWarpUV;
 function _gsLensMat(){
   const T=THREE.TSL;
   if(!T||!T.viewportSharedTexture||!T.dFdx||!T.screenUV||!T.positionGeometry)return null;
@@ -14977,12 +14989,7 @@ function _gsLensMat(){
     mask=mask.mul(T.smoothstep(u.s.mul(0.94),u.s.mul(1.05),b));
     photon=photon.add(T.exp(b.sub(u.s.mul(1.07)).div(u.s.mul(0.045)).pow(2).negate()));
   }
-  // ndc → screen-uv scale per axis from the pixel derivatives, so the
-  // sample lands right whichever way the backend orients the screen.
-  const jx=T.dFdx(T.screenUV).x.div(T.dFdx(ndc).x), jy=T.dFdy(T.screenUV).y.div(T.dFdy(ndc).y);
-  const dn=delta.div(T.vec2(uAspect,1.0));
-  const suv=T.screenUV.add(T.vec2(dn.x.mul(jx),dn.y.mul(jy)));
-  const bg=T.viewportSharedTexture(suv).rgb;
+  const bg=T.viewportSharedTexture(_lensWarpUV(T,ndc,delta,uAspect)).rgb;
   m.colorNode=bg.mul(mask).add(T.vec3(1.0,0.78,0.52).mul(photon.min(1.0).mul(0.6)));
   m.toneMapped=false;
   m.userData.u={U,uAspect};
@@ -15590,6 +15597,7 @@ function resizePostFX(){
   _rtA.setSize(W>>1,H>>1);_rtB.setSize(W>>1,H>>1);
   _blurMat.uniforms.res.value.set(W>>1,H>>1);
 }
+let _sbT=0;
 function renderWithPostFX(){
   const useBloom=STATE.settings.bloom, useMotion=STATE.settings.motion;
   // This whole pipeline (bright-pass/blur/composite) is built on raw
@@ -15617,6 +15625,7 @@ function renderWithPostFX(){
     flightRenderer.setRenderTarget(null);
     const _spec=window.DMSpec&&DMSpec.on; if(_spec) try{ DMSpec.pre(flightCamera); }catch(e){}
     try{ if(galSky.ready) updateGalSky(); }catch(e){}
+    try{ if(window.DMStarBubble) { const n=performance.now(), d=_sbT?(n-_sbT)/1000:1/60; _sbT=n; DMStarBubble.frame(flightCamera,flightScene,d); } }catch(e){ console.warn('[starbubble] '+(e&&e.stack||e)); }
     try{ flightRenderer.render(flightScene,flightCamera); _shotGrab(flightRenderer); }
     finally{ if(_spec) try{ DMSpec.post(flightCamera); }catch(e){} }
     const _rtMs = performance.now()-_rt0;
@@ -15817,7 +15826,9 @@ function _makeWake(board, scene){
   board.userData.wake=w;
   return w;
 }
+let _WAKE_FLAME=null;
 function updateBoardWake(board, scene, dt, intensity, fwdWorld){
+  if(!_WAKE_FLAME) _WAKE_FLAME=['#ff7a1a','#ffb347','#ff4d00','#ffd27a'].map(h=>new THREE.Color(h));
   if(!board||!scene) return;
   let w=board.userData.wake;
   if(w && w.mesh.parent!==scene){ try{ if(w.mesh.parent) w.mesh.parent.remove(w.mesh); w.mesh.geometry.dispose(); w.mesh.material.dispose(); }catch(e){} w=null; }
@@ -15860,6 +15871,7 @@ function updateBoardWake(board, scene, dt, intensity, fwdWorld){
     w.emit=Math.min(w.emit,4);
   }
   const th=L*0.009;
+  const fl=(scene===flightScene&&window.DMStarBubble&&DMStarBubble.flame)||0;
   let any=false;
   for(let i=0;i<WAKE_N;i++){
     let a=0;
@@ -15874,7 +15886,9 @@ function updateBoardWake(board, scene, dt, intensity, fwdWorld){
     w._sc.set(a>0?w.sl[i]*dir:1e-4,th,th);  // streak trails away from the board
     w._m.compose(w._pos,w._q,w._sc);
     w.mesh.setMatrixAt(i,w._m);
-    w.mesh.setColorAt(i,w._c.copy(w.tint[i]).multiplyScalar(a));
+    w._c.copy(w.tint[i]);
+    if(fl>0) w._c.lerp(_WAKE_FLAME[i&3],fl);   // orange flame while the star bubble's flares peak
+    w.mesh.setColorAt(i,w._c.multiplyScalar(a));
   }
   w.mesh.visible=any;
   w.mesh.instanceMatrix.needsUpdate=true;
@@ -22918,6 +22932,8 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
   // Until her model has loaded (or if cloning fails) a peer shows as a
   // glowing board, and is upgraded in place once she's ready.
   const ghosts=new Map();
+  // their boards, for the star bubble (ui/dm-starbubble.js)
+  window.jotsGhostBoards=()=>{ const a=[]; for(const g of ghosts.values()) if(g.userData.board) a.push(g.userData.board); return a; };
   let _skelUtils=null,_skelTried=false,_mountLocal=null;
   function wantSkelUtils(){
     if(_skelUtils||_skelTried) return;
