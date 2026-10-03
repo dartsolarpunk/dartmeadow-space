@@ -913,74 +913,9 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 
 </style>
 
-<!-- ══════════════════════════════════════════════════════════════
-     FIREBASE AUTH — project: dart-meadow-gamedev
-     This is the public, client-safe web app config (not a secret — Firebase
-     access control comes from Security Rules, not from hiding this object).
-     Google sign-in works immediately. Apple sign-in needs the Apple-side
-     Services ID/Team ID/Key ID/private key configured in the Firebase
-     console (Authentication → Sign-in method → Apple) before it'll succeed;
-     the button is wired up and ready for whenever that's done.
-     ══════════════════════════════════════════════════════════════ -->
-<script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js";
-  import {
-    getAuth, GoogleAuthProvider, OAuthProvider,
-    signInWithPopup, signInWithRedirect, getRedirectResult,
-    onAuthStateChanged, signOut
-  } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js";
-
-  const firebaseConfig = {
-    apiKey: "void",
-    authDomain: "dart-meadow-gamedev.firebaseapp.com",
-    projectId: "dart-meadow-gamedev",
-    storageBucket: "dart-meadow-gamedev.firebasestorage.app",
-    messagingSenderId: "279342113339",
-    appId: "1:279342113339:web:b4a5dfc675d3562748321e",
-    measurementId: "G-MZCJ628YRY"
-  };
-
-  const fbApp = initializeApp(firebaseConfig);
-  const fbAuth = getAuth(fbApp);
-  window._fbAuth = fbAuth;
-  window._fbUser = null;
-
-  onAuthStateChanged(fbAuth, (user) => {
-    window._fbUser = user;
-    if (typeof window._onAcctStateChanged === 'function') window._onAcctStateChanged(user);
-  });
-
-  function _handleSignInError(err, provider){
-    const st = document.getElementById('acct-status');
-    // Popups get blocked/dismissed easily, especially on mobile — fall back
-    // to a full-page redirect flow rather than just showing an error.
-    if (err && err.code === 'auth/popup-blocked') { signInWithRedirect(fbAuth, provider); return; }
-    if (err && (err.code === 'auth/cancelled-popup-request' || err.code === 'auth/popup-closed-by-user')) return; // user just closed it
-    if (st) st.textContent = '⚠ Sign-in failed — please try again';
-    console.warn('sign-in error:', err);
-  }
-
-  window.signInWithGoogle = function(){
-    const provider = new GoogleAuthProvider();
-    const btn = document.getElementById('acct-google-btn'); if(btn) btn.disabled = true;
-    signInWithPopup(fbAuth, provider)
-      .catch(err => _handleSignInError(err, provider))
-      .finally(() => { if(btn) btn.disabled = false; });
-  };
-  window.signInWithApple = function(){
-    const provider = new OAuthProvider('apple.com');
-    const btn = document.getElementById('acct-apple-btn'); if(btn) btn.disabled = true;
-    signInWithPopup(fbAuth, provider)
-      .catch(err => _handleSignInError(err, provider))
-      .finally(() => { if(btn) btn.disabled = false; });
-  };
-  window.signOutOfAccount = function(){ signOut(fbAuth); };
-
-  // Picks up the result if signInWithRedirect was used (popup-blocked fallback)
-  getRedirectResult(fbAuth).catch(err => console.warn('redirect result:', err));
-</script>
-<script src="jots/jots-link.js?v=82" defer></script>
-<script src="ui/dm-friends.js?v=1" defer></script>
+<script src="ui/dm-safety.js?v=1" defer></script>
+<script src="jots/jots-link.js?v=83" defer></script>
+<script src="ui/dm-friends.js?v=2" defer></script>
 <script src="ui/dm-spectator.js?v=1" defer></script>
 <script src="ui/dm-stack.js?v=1" defer></script>
 <script src="ui/dm-globe.js?v=3" defer></script>
@@ -1779,8 +1714,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     <div id="acct-signed-out">
       <div class="modal-title" style="text-align:center;">🔑 SIGN IN</div>
       <div class="acct-guest-note" style="margin-bottom:1rem;">You can always play as a guest — signing in just lets you keep a permanent gamer tag and carries your profile across devices.</div>
-      <button class="acct-provider-btn" id="acct-google-btn" onclick="signInWithGoogle()">🇬 Sign in with Google</button>
-      <button class="acct-provider-btn" id="acct-apple-btn" onclick="signInWithApple()"> Sign in with Apple</button>
+      <button class="acct-provider-btn" id="acct-apple-btn" style="display:none;"> Sign in with Apple</button>
       <div class="acct-guest-note" id="acct-status"></div>
     </div>
     <div id="acct-signed-in" style="display:none;">
@@ -1790,7 +1724,9 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
       <div id="acct-email" style="font-size:0.6rem;color:var(--text-dim);margin-bottom:1rem;"></div>
       <button class="btn" onclick="signOutOfAccount()" style="width:100%;">SIGN OUT</button>
     </div>
-    <div class="modal-footer" style="margin-top:1rem;">
+    <div class="acct-guest-note" style="margin-top:.8rem;">Safety, blocked players and account deletion: <a href="#" onclick="closeAccountModal();DMSafety.openSafety();return false;" style="color:var(--cyan);">PROFILE › SAFETY</a> · <a href="mailto:dartmeadow@gmail.com" style="color:var(--cyan);">dartmeadow@gmail.com</a></div>
+    <div class="modal-footer" style="margin-top:1rem;display:flex;flex-direction:column;gap:.5rem;">
+      <button class="btn" onclick="closeAccountModal();DMSafety.deleteAccount();" style="width:100%;color:#ff8a94;border-color:rgba(255,90,110,.5);">DELETE ACCOUNT</button>
       <button class="btn" onclick="closeAccountModal()" style="width:100%;">CLOSE</button>
     </div>
   </div>
@@ -12415,9 +12351,6 @@ const FEEDBACK_GAS_URL='https://script.google.com/macros/s/AKfycbyzkQxLR5miUXP6o
 const FEEDBACK_MAILTO='radicaldeepscale@gmail.com';
 let _fbCat='BUG REPORT';
 
-// ══════════════════════════════════════════════════════════════
-//  ✦ ACCOUNT — Firebase Auth (Google / Apple)
-// ══════════════════════════════════════════════════════════════
 // ── PROFILE MENU ─────────────────────────────────────────────────────
 // Works for guests and GitHub sign-ins alike. Signed in, it shows the
 // GitHub avatar and name; either way it holds display options (saved in
@@ -12492,6 +12425,7 @@ function _pfEnsure(){
     '<div class="pf-sec">DISPLAY</div>'+
     '<div class="pf-row"><div><div class="pf-row-t">Player name tags</div><div class="pf-row-d">Other players\u2019 usernames above them.</div></div><button class="pf-sw" id="pf-sw-players" role="switch"></button></div>'+
     '<div class="pf-row"><div><div class="pf-row-t">Object info</div><div class="pf-row-d">Names of planets, stars and other things when your crosshair is on them.</div></div><button class="pf-sw" id="pf-sw-objects" role="switch"></button></div>'+
+    '<div id="pf-safety"></div>'+
     '<div class="pf-sec">THEME</div>'+
     '<div class="pf-themes" id="pf-themes"></div>'+
     '<div class="pf-row-d" style="margin-top:8px;">Custom colours \u2014 tap one to open the colour picker:</div>'+
@@ -12552,6 +12486,7 @@ function _pfRender(){
   if(who.signedIn) mk('SIGN OUT','',()=>{ closeProfileMenu(); try{ window.signOutOfAccount(); }catch(e){} });
   else if(typeof window.jotsGithubSignIn==='function') mk('\u2325 SIGN IN WITH GITHUB','gh',()=>{ closeProfileMenu(); window.jotsGithubSignIn(); });
   _pfRenderThemes();
+  try{ window.DMSafety&&DMSafety.section($('pf-safety')); }catch(e){}
   $('pf-sw-players').setAttribute('aria-checked', DM_PREFS.playerLabels?'true':'false');
   $('pf-sw-objects').setAttribute('aria-checked', DM_PREFS.objectLabels?'true':'false');
 }
@@ -12684,26 +12619,6 @@ function openAccountModal(){
 }
 function closeAccountModal(){$('account-modal').style.display='none';}
 
-// Called from the Firebase module script (see <head>) whenever sign-in
-// state changes — updates the menu chip and the modal's two views.
-window._onAcctStateChanged=function(user){
-  const chip=$('account-chip');
-  const so=$('acct-signed-out'),si=$('acct-signed-in');
-  if(!chip)return;
-  if(user){
-    chip.innerHTML=(user.photoURL?`<img src="${user.photoURL}" alt="">`:'')+'<span>'+(user.displayName||user.email||'Signed in')+'</span>';
-    if(so)so.style.display='none';
-    if(si)si.style.display='block';
-    if($('acct-name'))$('acct-name').textContent=user.displayName||'Pilot';
-    if($('acct-email'))$('acct-email').textContent=user.email||'';
-    const av=$('acct-avatar');
-    if(av){ if(user.photoURL){av.src=user.photoURL;av.style.display='inline-block';} else av.style.display='none'; }
-  } else {
-    chip.textContent='🔑 SIGN IN';
-    if(so)so.style.display='block';
-    if(si)si.style.display='none';
-  }
-};
 
 function openFeedback(){
   $('fb-ta').value='';
@@ -12860,7 +12775,6 @@ const CREDITS=[
  {sec:'Tools & services'},
  {t:'Meshy AI',a:'Meshy',l:'Meshy terms of use',use:'tool',u:['https://www.meshy.ai/'],w:'Used in the character pipeline (the earlier Sentinel placeholder and animation clips; the files keep its name prefix).'},
  {t:'Blender',a:'Blender Foundation',l:'GPL (tool; output unrestricted)',use:'tool',u:['https://www.blender.org/'],w:'Modelling and the Fields Galaxy template.'},
- {t:'Firebase Authentication',a:'Google',l:'Service terms',use:'service',u:['https://firebase.google.com/'],w:'Sign-in.'},
  {t:'Stripe',a:'Stripe, Inc.',l:'Service terms',use:'service',u:['https://stripe.com/'],w:'Support payments.'},
  {t:'GitHub',a:'GitHub, Inc.',l:'Service terms',use:'service',u:['https://github.com/'],w:'Sign-in (device flow) and each player’s private jots- save repository.'},
  {t:'jsDelivr · Google Fonts · AllOrigins',a:'jsDelivr, Google, AllOrigins',l:'Service terms',use:'service',
@@ -22457,8 +22371,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
   window.addEventListener('jots:auth',refreshChip);
   window.addEventListener('jots:vault',refreshChip);
   function patchAccountModal(){
-    const g=$j('acct-google-btn'),a=$j('acct-apple-btn');
-    if(g)g.style.display='none'; if(a)a.style.display='none';
+    const a=$j('acct-apple-btn'); if(a)a.style.display='none';   // the iOS app's dm-ios-bridge.js shows it there
     const so=$j('acct-signed-out');
     if(so&&!$j('acct-gh-btn')){
       const b=document.createElement('button');b.className='acct-provider-btn';b.id='acct-gh-btn';b.textContent='⌥ Sign in with GitHub';
@@ -22770,7 +22683,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
     // the placeholder gets a soft glow in their colour; her model needs none
     let glow=null;
     if(!full){ glow=new THREE.Mesh(new THREE.SphereGeometry(L*0.35,12,8),new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:0.12,blending:THREE.AdditiveBlending,depthWrite:false})); board.add(glow); }
-    const label=nameSprite(peer.n||'Pilot',peer.k==='h'?'#bfffe0':'#cfd9ff');
+    const label=nameSprite(window.DMSafety?DMSafety.clean(peer.n||'Pilot'):(peer.n||'Pilot'),peer.k==='h'?'#bfffe0':'#cfd9ff');
     label.scale.set(L*1.2,L*0.225,1);
     g.add(label);
     g.userData={board,seat,rider,mixer,actions,cur:null,full,label,L,glow,mounted:null};
@@ -22806,6 +22719,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
       let animated=0;
       for(const p of mp.peers.values()){
         if(p.gal!==gal||p.sys!==sys||!p.p) continue;
+        if(window.DMSafety&&DMSafety.isBlocked(p.n)) continue;          // blocked: no board, no tag
         live.add(p.id);
         let g=ghosts.get(p.id);
         // upgrade a placeholder once her model can be cloned
@@ -22922,9 +22836,11 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
     const c=$j('jots-chat'); c.style.display=c.style.display==='flex'?'none':'flex'; if(c.style.display==='flex')$j('jots-chat-in').focus(); };
   window.addEventListener('jots:chat',e=>{
     const l=e.detail, d=document.createElement('div'); if(l.me)d.className='me';
-    const b=document.createElement('b');b.textContent=l.n+': ';d.appendChild(b);d.appendChild(document.createTextNode(l.text));
+    d.dataset.n=l.n; d.dataset.raw=l.raw||l.text;          // tap → report / block (ui/dm-safety.js)
+    const nm=window.DMSafety?DMSafety.clean(l.n):l.n;
+    const b=document.createElement('b');b.textContent=nm+': ';d.appendChild(b);d.appendChild(document.createTextNode(l.text));
     const log=$j('jots-chat-log');log.appendChild(d);while(log.childNodes.length>60)log.removeChild(log.firstChild);log.scrollTop=log.scrollHeight;
-    if($j('jots-chat').style.display!=='flex'&&!l.me) toast('💬 '+l.n+': '+l.text.slice(0,60),2600);
+    if($j('jots-chat').style.display!=='flex'&&!l.me) toast('💬 '+nm+': '+l.text.slice(0,60),2600);
   });
   $j('jots-chat-in').addEventListener('keydown',e=>{
     e.stopPropagation();                       // typing mustn't fly the board
@@ -22942,6 +22858,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 <link rel="stylesheet" href="ui/dm-ui.css?v=110">
 <link rel="stylesheet" href="ui/dm-hud.css?v=114">
 <link rel="stylesheet" href="ui/dm-friends.css?v=1">
+<link rel="stylesheet" href="ui/dm-safety.css?v=1">
 <link rel="stylesheet" href="ui/dm-spectator.css?v=1">
 <link rel="stylesheet" href="ui/dm-globe.css?v=2">
 <link rel="stylesheet" href="ui/dm-menu.css?v=80">
