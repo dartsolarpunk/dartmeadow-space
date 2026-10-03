@@ -143,7 +143,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-earth.js?v=1"></script>
 <script src="ui/dm-theme.js?v=80"></script>
 <script src="ui/dm-fluid.js?v=80"></script>
-<script src="ui/dm-journal.js?v=97"></script>
+<script src="ui/dm-journal.js?v=98"></script>
 <script src="ui/dm-worldstyle.js?v=93"></script>
 <script src="ui/dm-sky.js?v=95"></script>
 <script src="ui/dm-dust.js?v=95"></script>
@@ -979,7 +979,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   // Picks up the result if signInWithRedirect was used (popup-blocked fallback)
   getRedirectResult(fbAuth).catch(err => console.warn('redirect result:', err));
 </script>
-<script src="jots/jots-link.js?v=81" defer></script>
+<script src="jots/jots-link.js?v=82" defer></script>
+<script src="ui/dm-friends.js?v=1" defer></script>
 </head>
 <body>
 <!-- LOADING -->
@@ -23535,6 +23536,31 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
     for(const [id,g] of ghosts) if(!live.has(id)){ disposeGhost(g); ghosts.delete(id); }
   };
   function camDist2(v){ try{ return flightCamera.position.distanceToSquared(v); }catch(e){ return 0; } }
+  // Tapping a pilot's name tag (ui/dm-friends.js): the visible tag nearest
+  // the tap on screen, within its own drawn size (at least a thumb's width).
+  let _pv=null;
+  window.jotsPickGhost=function(cx,cy){
+    if(!window.JOTS||!J().mp.active||typeof flightCamera==='undefined'||!flightCamera||!ghosts.size) return null;
+    if(typeof STATE==='undefined'||STATE.screen!=='flight') return null;
+    if(window.DM_PREFS&&window.DM_PREFS.playerLabels===false) return null;   // tags off: nothing to tap
+    if(!_pv) _pv=new THREE.Vector3();
+    const W=window.innerWidth, H=window.innerHeight;
+    let best=null, bd=Infinity;
+    for(const [id,g] of ghosts){
+      const lab=g.userData.label; if(!lab||!lab.visible) continue;
+      _pv.copy(lab.position).project(flightCamera);
+      if(_pv.z>1||_pv.z<-1) continue;                                   // behind the camera
+      const sx=(_pv.x+1)/2*W, sy=(1-_pv.y)/2*H;
+      // how big the tag is drawn: its world height at that distance
+      const d=Math.max(0.01,flightCamera.position.distanceTo(lab.position));
+      const halfH=Math.tan((flightCamera.fov||60)*Math.PI/360)*d;
+      const hPx=lab.scale.y/halfH*(H/2), wPx=lab.scale.x/halfH*(H/2);
+      const rx=Math.max(28,wPx/2+8), ry=Math.max(22,hPx/2+8);
+      const dx=(cx-sx)/rx, dy=(cy-sy)/ry, q=dx*dx+dy*dy;
+      if(q<=1&&q<bd){ bd=q; best=id; }
+    }
+    return best?J().mp.peers.get(best)||null:null;
+  };
 
   // HUD: players online + chat. The chip sits beside INITIALIZE PROGRESS so it never covers the pop-ups under the title.
   (function(){ const row=document.querySelector('#screen-flight .hud-r-row'), hud=$j('jots-mp-hud'); if(row&&hud) row.insertBefore(hud,row.firstChild); })();
@@ -23598,6 +23624,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 <!-- ?v= stamps: bump on every UI change so browsers never mix a new page with cached old styles -->
 <link rel="stylesheet" href="ui/dm-ui.css?v=109">
 <link rel="stylesheet" href="ui/dm-hud.css?v=112">
+<link rel="stylesheet" href="ui/dm-friends.css?v=1">
 <link rel="stylesheet" href="ui/dm-menu.css?v=80">
 <link rel="stylesheet" href="ui/dm-journal.css?v=97">
 <link rel="stylesheet" href="ui/dm-landmap.css?v=87">
