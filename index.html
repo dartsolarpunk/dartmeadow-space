@@ -5684,8 +5684,7 @@ function _resizeAllViews(){
   const s=(typeof window.__jotsLayoutSize==='function')?window.__jotsLayoutSize():{w:innerWidth,h:innerHeight};
   const W=s.w,H=s.h; if(W<10||H<10) return;
   const fit=(r,cam,w,h,style)=>{ if(!r||!cam) return; try{ r.setPixelRatio(effectivePixelRatio()); r.setSize(w,h,style!==false); r._dr=null; cam.aspect=w/h; cam.updateProjectionMatrix(); }catch(e){} };
-  try{ if(typeof surfRenderer!=='undefined') fit(surfRenderer,surfCamera,W,H); }catch(e){}
-  try{ if(typeof atmoRenderer!=='undefined') fit(atmoRenderer,atmoCamera,W,H); }catch(e){}
+  try{ if(typeof PW!=='undefined'&&PW.active&&PW.camera) fit(flightRenderer,PW.camera,W,H); }catch(e){}   // a world's sky / ground (drawn by the flight renderer)
   try{ if(typeof gmRenderer!=='undefined'&&gmRenderer) fit(gmRenderer,gmCamera,Math.min(W*.92,1100),Math.min(H*.74,640)); }catch(e){}
   try{ if(typeof qtRenderer!=='undefined'&&qtRenderer){ const cv=qtRenderer.domElement; if(cv&&cv.clientWidth>10) fit(qtRenderer,qtCamera,cv.clientWidth,cv.clientHeight,false); } }catch(e){}
 }
@@ -12311,7 +12310,6 @@ function applySettings(){
       // automatically instead of needing an incidental rotation.
       const _rw=window.innerWidth,_rh=window.innerHeight;
       if(flightRenderer){flightRenderer._dr=null;flightRenderer.setPixelRatio(effectivePixelRatio());flightRenderer.setSize(_rw,_rh);}
-      if(surfRenderer){surfRenderer._dr=null;surfRenderer.setPixelRatio(effectivePixelRatio());surfRenderer.setSize(_rw,_rh);}
       resizePostFX();
     }
   }
@@ -12339,7 +12337,6 @@ function applySettings(){
   try{
     const _rw2=window.innerWidth,_rh2=window.innerHeight;
     if(flightRenderer){flightRenderer.setSize(_rw2,_rh2);}
-    if(surfRenderer){surfRenderer.setSize(_rw2,_rh2);}
     resizePostFX();
   }catch(e){}
   closeSettings();
@@ -15381,12 +15378,12 @@ function renderWithPostFX(){
 // the world, the clock, saves and multiplayer state are never touched.
 function applyGraphicsLive(){
   const w=window.innerWidth,h=window.innerHeight,pr=effectivePixelRatio();
-  [typeof flightRenderer!=='undefined'?flightRenderer:null,typeof surfRenderer!=='undefined'?surfRenderer:null,typeof atmoRenderer!=='undefined'?atmoRenderer:null].forEach(r=>{
+  [typeof flightRenderer!=='undefined'?flightRenderer:null].forEach(r=>{   // (the sky and the ground draw with it too)
     if(!r) return;
     try{ r.setPixelRatio(pr); r.setSize(w,h); r.shadowMap.enabled=!!GFX.shadows; r.shadowMap.type=THREE.PCFSoftShadowMap; }catch(e){}
   });
   try{ resizePostFX(); }catch(e){}
-  [typeof flightScene!=='undefined'?flightScene:null,typeof surfScene!=='undefined'?surfScene:null,typeof atmoScene!=='undefined'?atmoScene:null].forEach(sc=>{ if(sc) _gfxApplyShadows(sc); });
+  [typeof flightScene!=='undefined'?flightScene:null,typeof PW!=='undefined'?PW.scene:null].forEach(sc=>{ if(sc) _gfxApplyShadows(sc); });
   try{ applyRenderSettings(); }catch(e){ console.warn('render apply:',e); }
   // live water picks its particle count from the tier: rebuild it at the new one
   try{ if(typeof _surfFluid!=='undefined'&&_surfFluid&&_surfFluid.tier!==resolvePreset()) _surfFluidStop(); }catch(e){}
@@ -16133,6 +16130,7 @@ function _pwFrame(dt){
   const mode=PW.mode, now=performance.now();
   if(mode==='space'){
     _pwSpaceStep(dt);
+    if(PW.mode&&PW.mode!=='space'){ _pwFrame(0); return; }   // handed over to the sky this frame: its camera draws it
   } else {
     try{ updateBodies(dt); }catch(e){ _animLoopWarn('updateBodies',e); }   // the planets keep turning on the world clock (the sky above is the real one)
     if(mode==='fly'){
@@ -16195,13 +16193,26 @@ function _pwRender(){
     r.autoClearColor=true; r.toneMappingExposure=1.0;
     if(spec) try{ DMSpec.post(cam); }catch(e){}
     // the controllers keep their camera in the flat world
-    const ld=PW._lastDrawn||(PW._lastDrawn={p:new THREE.Vector3(),q:new THREE.Quaternion()}); ld.p.copy(cam.position); ld.q.copy(cam.quaternion);
+    const ld=PW._lastDrawn||(PW._lastDrawn={p:new THREE.Vector3(),q:new THREE.Quaternion(),f:new THREE.Vector3()}); ld.p.copy(cam.position); ld.q.copy(cam.quaternion);
+    { const f=_pwBlendFocus(); if(f) ld.f.copy(f); }   // (the focus is drawn where it is: the frame is centred on it)
     const cf=PW._camFlat; if(cf){ cam.position.copy(cf.p); cam.quaternion.copy(cf.q); PW._camFlat=null; }
   }
 }
 // After a controller hand-over the camera eases from where it was (no cut).
+// It eases from where it was *relative to the board (or her)* — the board can
+// be doing Mach 8 at the top of the air, and a camera easing from a fixed
+// point in the world would fall hundreds of metres behind it.
+function _pwBlendFocus(){
+  const m=PW.mode;
+  if(m==='space') return PW.board?PW.board.position:null;
+  if(m==='fly') return atmoState?atmoState.pos:null;
+  if(m==='walk') return surfPlayer?surfPlayer.pos:null;
+  return null;
+}
 function _pwCamBlend(dt){
   const b=PW.blend, cam=PW.camera; if(!b||!cam) return;
+  const f=_pwBlendFocus();
+  if(f){ if(!b.f) b.f=f.clone(); b.p.add(_pwVec(4).copy(f).sub(b.f)); b.f.copy(f); }   // carried along with the focus
   b.t=Math.min(1,b.t+dt/0.8); const e=b.t*b.t*(3-2*b.t);
   cam.position.lerpVectors(b.p,cam.position,e);
   cam.quaternion.slerpQuaternions(b.q,cam.quaternion.clone(),e);
@@ -16223,11 +16234,11 @@ function _pwWorldTick(dt){
   // ── the planet frame at the focus; the camera into it
   if(space){
     _pwfSet(px,pz,PW.sp.camAlt||f.y,PW.site); _pwsSync(PW.body,PW.site);
+    // the board (and her on it) where the space board is
+    _pwsToDrawn(boardFlight.position,PW.board.position); _pwsQToDrawn(boardFlight.quaternion,PW.board.quaternion);
     _pwsToDrawn(flightCamera.position,cam.position); _pwsQToDrawn(flightCamera.quaternion,cam.quaternion);
     _pwCamBlend(dt);
     if(Math.abs(cam.fov-flightCamera.fov)>1e-3){ cam.fov=flightCamera.fov; cam.updateProjectionMatrix(); }
-    // the board (and her on it) where the space board is
-    _pwsToDrawn(boardFlight.position,PW.board.position); _pwsQToDrawn(boardFlight.quaternion,PW.board.quaternion);
   } else {
     const calt0=Math.max(1,cam.position.y-Math.max(0,H(cam.position.x,cam.position.z)));
     _pwfSet(px,pz,cam.position.y,PW.site); _pwsSync(PW.body,PW.site);
@@ -16380,7 +16391,10 @@ function _pwCloseToSpace(){ if(!PW.active&&!PW.opening) return; _pwClose({instan
 // (a Journal waypoint, another world) the world is built round the spot
 // while the current view keeps running, and takes over when it's ready.
 async function enterAtmosphericFlight(body,site,start){
-  if(atmoActive||PW.opening) return;
+  if(PW.opening) return;
+  const here=PW.active&&PW.body===body&&site&&typeof site.lat==='number'&&!start;
+  if(atmoActive){ if(here) atmoFlyTo(site.lat,site.lon,{cruise:true}); return; }   // already in this sky: fly there
+  if(here&&surfaceActive){ _lmWalkFly(site.lat,site.lon); return; }                // on this world's ground: board, lift off and fly there
   if(PW.active&&PW.mode==='space'&&PW.body===body&&site&&typeof site.lat==='number'&&!(start&&start.journal)){ _pwSpaceDescend(site,false); return; }
   if(PW.active&&surfaceActive&&PW.body===body&&start&&!start.journal){ _pwBeginFly(start); return; }   // lifting off where she stands
   if(PW.active) _pwCloseToSpace();
@@ -16917,7 +16931,7 @@ function _pwSpaceToFly(){
   const camRel=camD.sub(boardD); camRel.x/=jx; camRel.z/=jz;
   const auto=S.auto;
   // the sky's camera starts where the space camera was (in the flat world: the board + the same offset)
-  PW.blend={p:new THREE.Vector3(S.flat.x,S.alt,S.flat.z).add(camRel),q:PW.camera.quaternion.clone(),t:0};
+  PW.blend={p:new THREE.Vector3(S.flat.x,S.alt,S.flat.z).add(camRel),q:PW.camera.quaternion.clone(),f:new THREE.Vector3(S.flat.x,S.alt,S.flat.z),t:0};
   _pwBeginFly({x:S.flat.x,z:S.flat.z,y:S.alt,yaw,pitch,camRel,fromSpace:true,mach});
   if(auto){ setAtmoPreset(Math.max(MACH_AUTO_DEFAULT,atmoPreset),true); atmoFlyTo(auto.lat,auto.lon,{land:auto.land,cruise:true}); }
 }
@@ -16946,7 +16960,7 @@ function _pwFlyToSpace(){
   flightCamera.fov=cam.fov; flightCamera.updateProjectionMatrix();
   const out=!!s.toSpace;
   const ld=PW._lastDrawn; PW.sp=null; _pwBeginSpace(); PW.sp.out=out;
-  if(ld) PW.blend={p:ld.p.clone(),q:ld.q.clone(),t:0};   // the camera eases from where the sky left it
+  if(ld) PW.blend={p:ld.p.clone(),q:ld.q.clone(),f:ld.f.clone(),t:0};   // the camera eases from where the sky left it (relative to the board)
   if(out) toast('🚀 Climbing out of the '+(b.name||'')+' sky…',2000);
 }
 // far enough out: the world closes, open space carries on with the same board
@@ -17039,9 +17053,9 @@ function atmoFlyTo(lat,lon,opts){
 // Walk mode: pick a place on the map → she boards, lifts off, and the
 // autopilot flies the whole way there at M5 (throttle full), then lands.
 let _pendingAutoFly=null;
-function _lmWalkFly(lat,lon){
+function _lmWalkFly(lat,lon,o){
   if(!surfaceActive||CHAR._transitioning) return;
-  _pendingAutoFly={lat,lon,t:Date.now()};
+  _pendingAutoFly={lat,lon,t:Date.now(),land:!!(o&&o.land)};
   toast('🛹 Boarding — auto-flight to '+_lmFmt(lat,lon),2200);
   surfRemountSkyboard();
 }
@@ -17051,7 +17065,7 @@ function _takePendingAutoFly(){
   if(!p||Date.now()-p.t>60000||!atmoState) return;
   setAtmoPreset(MACH_AUTO_DEFAULT,true);
   ATMO_AP.on=false; try{ $('ap-btn-atmo').classList.remove('active'); }catch(e){}
-  atmoFlyTo(p.lat,p.lon,{cruise:true});
+  atmoFlyTo(p.lat,p.lon,{cruise:true,land:!!p.land});
 }
 window._lmWalkFly=_lmWalkFly;
 // Runs inside updateAtmoFlight; returns true while it's flying the board.
@@ -18751,6 +18765,7 @@ async function enterSurface(body,site,opts){
   if(opts.inPlace&&PW.active&&atmoActive&&PW.body===body){ _pwBeginWalk(opts); return; }
   if(PW.active&&PW.mode==='space'&&PW.body===body&&site&&typeof site.lat==='number'&&!opts.spawn){ _pwSpaceDescend(site,true); return; }
   if(PW.active&&atmoActive&&PW.body===body&&site&&typeof site.lat==='number'&&!opts.spawn){ atmoFlyTo(site.lat,site.lon,{land:true,cruise:true}); return; }
+  if(PW.active&&surfaceActive&&PW.body===body&&site&&typeof site.lat==='number'&&!opts.spawn){ _lmWalkFly(site.lat,site.lon,{land:true}); return; }   // elsewhere on this world: fly over and set down there
   if(PW.active) _pwCloseToSpace();
   const sp=opts.spawn, ok=sp&&isFinite(sp.x)&&isFinite(sp.z);
   const focus={x:ok?sp.x:0,z:ok?sp.z:8};
