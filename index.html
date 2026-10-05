@@ -20965,7 +20965,9 @@ function _terrainDetailMat(opts){
     const W=window;
     const mapped=_pwfReady();
     const p=mapped?W.varying(W.modelWorldMatrix.mul(W.vec4(W.positionGeometry,1.0)).xyz):W.positionWorld;   // the flat world point
-    const nFlat=mapped?W.normalize(W.modelNormalMatrix.mul(W.normalLocal)):W.normalWorld;
+    // (two-sided ground — the marching-cubes patch — faces its normal toward the camera, as three does for its own normals)
+    const nGeo=W.normalize(W.modelNormalMatrix.mul(W.normalLocal));
+    const nFlat=mapped?((opts.side===THREE.DoubleSide&&W.faceDirection)?nGeo.mul(W.faceDirection):nGeo):W.normalWorld;
     const toView=(n)=>W.normalize(W.cameraViewMatrix.mul(W.vec4(mapped?_pwfRotN(p,W.normalize(n)):W.normalize(n),0)).xyz);
     if(mapped){ m.positionNode=_pwfNodeFor(null); m.userData._pwf=true; m.maskNode=_pwfMask(); m.normalNode=toView(nFlat); }
     const dist=W.length(W.positionView);
