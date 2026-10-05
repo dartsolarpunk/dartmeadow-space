@@ -16579,7 +16579,10 @@ function updateAtmoFlight(dt){
     const now=performance.now();
     if(!atmoBoard.userData._frameT||now-atmoBoard.userData._frameT>1000){
       atmoBoard.userData._frameT=now;
-      try{ const sz=new THREE.Box3().setFromObject(atmoBoard).getSize(new THREE.Vector3()); atmoBoard.userData._frameR=sz.length()*0.5; }catch(e){}
+      // the board and her only (solid, visible meshes — not glows, trails or lights), and never more than a few board lengths
+      try{ const bx=new THREE.Box3(), tb=new THREE.Box3(); atmoBoard.updateMatrixWorld(true);
+        atmoBoard.traverseVisible(o=>{ if(o.isMesh&&!o.isSprite&&!o.isPoints&&o.geometry&&!o.userData.noFit){ if(!o.geometry.boundingBox) o.geometry.computeBoundingBox(); tb.copy(o.geometry.boundingBox).applyMatrix4(o.matrixWorld); bx.union(tb); } });
+        const sz=bx.isEmpty()?null:bx.getSize(new THREE.Vector3()); atmoBoard.userData._frameR=sz?Math.min(sz.length()*0.5,(atmoBoard.scale.x||2.4)*4):0; }catch(e){}
     }
     const R=atmoBoard.userData._frameR||0;
     if(R>0){
@@ -16877,7 +16880,7 @@ function _pwSpaceAutoTick(sp,b,sc,dt,la){
   // board meets the top of the air at an angle the sky controller flies (no flip at hand-over)
   let tang=ut.clone().addScaledVector(ub,-ub.dot(ut));
   if(tang.lengthSq()<1e-8){ tang=_pwVec(3).set(0,0,-1).applyQuaternion(spQuat(sp)).applyQuaternion(Q.clone().invert()); tang.addScaledVector(ub,-ub.dot(tang)); }
-  if(tang.lengthSq()<1e-8) tang.set(ub.y,-ub.x,0).addScaledVector(ub,0);
+  if(tang.lengthSq()<1e-8){ tang.set(0,1,0).addScaledVector(ub,-ub.y); if(tang.lengthSq()<1e-8) tang.set(1,0,0); }
   tang.normalize();
   const ax=new THREE.Vector3().crossVectors(ub,tang).normalize();
   let aimDir, aimAlt;
@@ -16903,7 +16906,8 @@ function _pwSpaceToFly(){
   const camD=_pwsToDrawn(flightCamera.position), boardD=_pwsToDrawn(boardFlight.position);
   const camRel=camD.sub(boardD); camRel.x/=jx; camRel.z/=jz;
   const auto=S.auto;
-  PW.blend={p:PW.camera.position.clone(),q:PW.camera.quaternion.clone(),t:0.35};
+  // the sky's camera starts where the space camera was (in the flat world: the board + the same offset)
+  PW.blend={p:new THREE.Vector3(S.flat.x,S.alt,S.flat.z).add(camRel),q:PW.camera.quaternion.clone(),t:0};
   _pwBeginFly({x:S.flat.x,z:S.flat.z,y:S.alt,yaw,pitch,camRel,fromSpace:true,mach});
   if(auto){ setAtmoPreset(Math.max(MACH_AUTO_DEFAULT,atmoPreset),true); atmoFlyTo(auto.lat,auto.lon,{land:auto.land,cruise:true}); }
 }
