@@ -12850,7 +12850,7 @@ function _dmSwipeHint(){
     document.head.appendChild(st); document.body.appendChild(h);
   }
   clearTimeout(h.__t);
-  requestAnimationFrame(()=>{ h.style.opacity='1'; h.style.transform='translate(-50%,0)'; });
+  void h.offsetWidth; h.style.opacity='1'; h.style.transform='translate(-50%,0)';   // (no rAF: on the menu frames can be paused, so a second EXIT never showed it)
   h.__t=setTimeout(()=>{ h.style.opacity='0'; h.style.transform='translate(-50%,12px)'; },4500);
 }
 function _dmNativeExit(){
@@ -20513,8 +20513,8 @@ SkyGround.prototype._visit=function(n,c,depth){
 };
 // a tile can stand in for its area once it (or every one of its children) can draw
 SkyGround.prototype._ready=function(n){ return n._hidden||!!n.mesh||(!!n.kids&&n.kids.every(k=>this._ready(k))); };
-// the whole globe can draw (no holes): every root tile is ready
-SkyGround.prototype.covered=function(){ if(!this.roots.size) return false; for(const n of this.roots.values()) if(!this._ready(n)) return false; return true; };
+// the globe can draw with no holes: every root tile that's on screen is ready
+SkyGround.prototype.covered=function(){ if(!this.roots.size) return false; for(const n of this.roots.values()) if(n._vis!==false&&n._inView!==false&&!this._ready(n)) return false; return true; };
 SkyGround.prototype._show=function(n){
   const useKids=n.kids&&n.kids.every(k=>this._ready(k));
   if(n.mesh){ n.mesh.visible=!useKids&&!n._hidden&&n._vis!==false&&n._inView!==false; if(n.mesh.visible&&n.morph&&n.morph.t<0){ n.morph.t=0; (this.morphing||(this.morphing=new Set())).add(n); } }
