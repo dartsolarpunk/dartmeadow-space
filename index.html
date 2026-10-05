@@ -16857,7 +16857,7 @@ function _pwSpaceOutTick(sp,b,sc,dt){
   const spd=0.25*Math.max(0.05,sc.f);
   sp.vel.lerp(_pwVec(3).copy(dir).multiplyScalar(0.25),0.08);
   sp.pos.addScaledVector(dir,spd*Math.max(1,(dt||1/60)*60)*0.6);
-  const aim=new THREE.Quaternion(); if(spAimQuat(sp,sp.pos.clone().add(dir),aim)) spQuat(sp).slerp(aim,0.04).normalize();
+  _pwAimLevel(sp,b,dir,dt,2.4);
 }
 // The landing globe picked a spot while you're still in space: fly down to it
 // (over the curve of the world, never through it), then the sky autopilot
@@ -16892,7 +16892,17 @@ function _pwSpaceAutoTick(sp,b,sc,dt,la){
   const dir=to.normalize();
   sp.pos.addScaledVector(dir,Math.min(v,dist));
   sp.vel.set(0,0,0);
-  const aim=new THREE.Quaternion(); if(spAimQuat(sp,sp.pos.clone().add(dir),aim)) spQuat(sp).slerp(aim,0.06).normalize();
+  _pwAimLevel(sp,b,dir,dt,3.6);
+}
+// face along `dir` with the world's up overhead (no roll: the horizon stays level into the sky's hand-over)
+const _pwAimM=[null];
+function _pwAimLevel(sp,b,dir,dt,rate){
+  const M=_pwAimM[0]||(_pwAimM[0]=new THREE.Matrix4());
+  const up=_pwVec(4).copy(sp.pos).sub(b.mesh.position).normalize();
+  if(Math.abs(up.dot(dir))>0.999) return;
+  M.lookAt(sp.pos,_pwVec(1).copy(sp.pos).add(dir),up);
+  const aim=new THREE.Quaternion().setFromRotationMatrix(M);
+  spQuat(sp).slerp(aim,1-Math.exp(-(dt||1/60)*rate)).normalize(); try{ spSyncLegacy(sp); }catch(e){}
 }
 // below the top of the air: the sky controller takes the board (same place, heading, speed and camera)
 function _pwSpaceToFly(){
