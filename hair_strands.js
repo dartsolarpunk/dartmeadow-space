@@ -78,11 +78,33 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
                        wa: new THREE.Vector3(), wb: new THREE.Vector3() });
   }
 
+  /* ---------------- auto body colliders (capsules along the skeleton) ----------------
+     Strands stop at the arms, forearms, hands, chest/torso and shoulders instead of
+     sliding through them. [bone, childBone|null, radius] - capsule runs bone -> child. */
+  const BODY = [
+    ['Spine01', 'Spine', 0.125], ['Spine', 'neck', 0.125], ['Spine02', 'Spine01', 0.125],
+    ['LeftShoulder', 'LeftArm', 0.06], ['RightShoulder', 'RightArm', 0.06],
+    ['LeftArm', 'LeftForeArm', 0.052], ['RightArm', 'RightForeArm', 0.052],
+    ['LeftForeArm', 'LeftHand', 0.042], ['RightForeArm', 'RightHand', 0.042],
+    ['LeftHand', null, 0.05], ['RightHand', null, 0.05],
+    ['Hips', 'Spine02', 0.14],
+  ];
+  const autoCols = [];
+  if (opts.params ? opts.params.bodyColliders !== false : true) {
+    for (const [bn, cn, r] of BODY) {
+      const b = findBone(bn); if (!b) continue;
+      const a = new THREE.Vector3(0, 0, 0), e = new THREE.Vector3(0, 0, 0);
+      if (cn) { const c = findBone(cn); if (!c) continue; e.copy(c.position); if (c.parent !== b) continue; }
+      autoCols.push({ bone: b, a, b: e, r, wa: new THREE.Vector3(), wb: new THREE.Vector3() });
+    }
+    cols.push(...autoCols);
+  }
+
   /* ---------------- params ---------------- */
   const P = {
     enabled: true, gravity: 6.0, damping: 0.965, shapeStiffness: 0.9, tipStiffness: 0.03,
     wind: new THREE.Vector3(0, 0, 0), windGust: 0.35, iterations: 3, hairRadius: 0.006,
-    maxRootStep: 0.35, drag: 1.6, interleave: 1, autoQuality: true,
+    maxRootStep: 0.06, drag: 1.6, motionWind: 0.05, maxMotionWind: 14, teleportSpeed: 400, bodyColliders: true, minGravityScale: 0.0, interleave: 1, autoQuality: true,
     widthRoot: 0.0046, widthTip: 0.0022,
     ...(opts.params || {})
   };
@@ -162,7 +184,8 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   const M = new THREE.Matrix4(), rootInv = new THREE.Matrix4(), tmpM = new THREE.Matrix4();
   const v3 = new THREE.Vector3(), v3b = new THREE.Vector3(), camL = new THREE.Vector3();
   const lastRootW = new THREE.Vector3(); let haveLast = false;
-  const gravL = new THREE.Vector3(), windL = new THREE.Vector3();
+  const gravL = new THREE.Vector3(), windL = new THREE.Vector3(), windW = new THREE.Vector3(), velS = new THREE.Vector3();
+  let gScale = 1;
   const extra = [];   // user colliders
   let time = 0, frame = 0, ema = 2, cool = 0;
   const stats = { ms: 0, strands: N, guides: G };
@@ -268,30 +291,45 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     }
     if (needInit) { sp.set(restM); sq.set(restM); needInit = false; }
 
-    // root world motion -> clamped inertial shift (hair is left behind when the character moves)
+    // root world motion -> small clamped inertial shift + steady apparent wind.
+    // A flying character drags the hair back through a smooth airflow rather than
+    // whipping it by teleporting particles every frame.
     v3.setFromMatrixPosition(root.matrixWorld);
+    const rs = Math.cbrt(Math.abs(root.matrixWorld.determinant())) || 1;
+    let motionWind = 0;
     if (haveLast && dt < 0.25) {
       v3b.copy(v3).sub(lastRootW);
-      const rs = Math.cbrt(Math.abs(root.matrixWorld.determinant())) || 1;
-      const maxStep = P.maxRootStep * rs;
       const l = v3b.length();
-      if (l > maxStep) v3b.multiplyScalar(maxStep / l);
-      // world delta -> root-local delta (direction transform with rootInv)
-      v3b.transformDirection(rootInv).multiplyScalar(Math.min(l, maxStep) / rs * 1.0);
-      // transformDirection normalised it; length restored above
-      const sx = -v3b.x, sy = -v3b.y, sz = -v3b.z;
-      for (let i = 0; i < G * K; i++) {
-        const o = i * 3;
-        sp[o] += sx; sp[o + 1] += sy; sp[o + 2] += sz;
-        sq[o] += sx; sq[o + 1] += sy; sq[o + 2] += sz;
+      if (l / rs / dt > P.teleportSpeed) { velS.set(0, 0, 0); }   // origin re-centre / teleport: ignore
+      else {
+        velS.lerp(v3b.clone().multiplyScalar(1 / dt), 1 - Math.exp(-dt * 5));
+        const maxStep = P.maxRootStep * rs;
+        let lc = l;
+        if (lc > maxStep) { v3b.multiplyScalar(maxStep / lc); lc = maxStep; }
+        if (lc > 1e-9) {
+          v3b.transformDirection(rootInv).multiplyScalar(lc / rs);
+          const sx = -v3b.x, sy = -v3b.y, sz = -v3b.z;
+          for (let i = 0; i < G * K; i++) {
+            const o = i * 3;
+            sp[o] += sx; sp[o + 1] += sy; sp[o + 2] += sz;
+            sq[o] += sx; sq[o + 1] += sy; sq[o + 2] += sz;
+          }
+        }
       }
-    } else if (dt >= 0.25) { sp.set(restM); sq.set(restM); }
+    } else if (dt >= 0.25) { sp.set(restM); sq.set(restM); velS.set(0, 0, 0); }
     lastRootW.copy(v3); haveLast = true;
+    const spd = velS.length() / rs;                       // body-lengths-ish per second
+    motionWind = Math.min(P.maxMotionWind, spd * P.motionWind);
+    windW.copy(P.wind);
+    if (spd > 1e-3) windW.addScaledVector(velS, -motionWind / (velS.length() || 1));
 
     // gravity / wind into root-local directions
     const up = opts.getDown ? opts.getDown() : null;   // optional: world-space "down" vector
     gravL.set(up ? up.x : 0, up ? up.y : -1, up ? up.z : 0).transformDirection(rootInv);
-    windL.copy(P.wind).transformDirection(rootInv).multiplyScalar(P.wind.length());
+    const gsT = opts.getGravityScale ? opts.getGravityScale() : 1;
+    gScale += (gsT - gScale) * (1 - Math.exp(-dt * 3));
+    gravL.multiplyScalar(Math.max(P.minGravityScale, gScale));
+    windL.copy(windW).transformDirection(rootInv).multiplyScalar(windW.length());
 
     time += dt;
     const n = Math.min(2, Math.max(1, Math.ceil(dt / (1 / 60))));
