@@ -20700,10 +20700,9 @@ function _pwBuildGround(pal,fx,fz,mode){
   };
   // the dense, deformed ground round her (NEAR-GROUND TESSELLATION)
   try{ _tessInit(); }catch(e){ console.warn('[tess] off:',e); TERRAIN.tessCfg=null; }
-  // Earth wind particles — subtle, GPU-friendly points; off on Low
+  // wind particles on worlds with air over open water — subtle, GPU-friendly points; off on Low
   TERRAIN.windPoints=null;
-  const isEarth=!!(body&&(body.name==='Earth'||(pal.liquidName==='water'&&pal.atmos&&pal.ground===0x3a7d34)));
-  if(isEarth&&pal.atmos&&STATE.settings.particles!=='low'&&GFX.preset!=='low'){
+  if(pal.atmos&&pal.water&&STATE.settings.particles!=='low'&&GFX.preset!=='low'){
     const WN=GFX.isMobile?120:280, pos=new Float32Array(WN*3), vel=new Float32Array(WN*3);
     for(let i=0;i<WN;i++){
       const x=fx+rnd(-220,220), z=fz+rnd(-220,220);
@@ -20712,7 +20711,7 @@ function _pwBuildGround(pal,fx,fz,mode){
     }
     const wgeo=new THREE.BufferGeometry(); wgeo.setAttribute('position',new THREE.BufferAttribute(pos,3));
     const wp=new THREE.Points(wgeo,new THREE.PointsMaterial({color:0xddeeff,size:0.55,sizeAttenuation:true,transparent:true,opacity:0.35,depthWrite:false}));
-    wp.name='JOTS_EarthWind'; wp.userData.windVel=vel; wp.frustumCulled=false;
+    wp.name='JOTS_Wind'; wp.userData.windVel=vel; wp.frustumCulled=false;
     PW.scene.add(wp); TERRAIN.windPoints=wp;
   }
 }
