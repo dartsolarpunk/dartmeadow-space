@@ -18050,8 +18050,8 @@ function applySkyboardStance(t){
      yawBias  extra radians to look left(+)/right(-) of the nose
      maxYaw   largest correction applied (rad)
      neckShare share of the turn taken by the neck (head takes the rest)  */
-const DART_HEAD = window.DART_HEAD = window.DART_HEAD || { on:true, yawBias:0, maxYaw:1.35, neckShare:0.4, pitchBias:0, level:true, pitch:-0.05, maxPitch:0.6 };
-let _hfFwd = null, _hfMesh = null;
+const DART_HEAD = window.DART_HEAD = window.DART_HEAD || { on:true, yawBias:0, maxYaw:1.35, neckShare:0.4, pitchBias:0, level:true, pitch:-0.05, maxPitch:0.6, maxRoll:0.7, rollAmount:1.0 };
+let _hfFwd = null, _hfUp = null, _hfMesh = null;
 let _hfQ, _hfQ2, _hfV, _hfM;
 window.__whenThreeReady(function(){ _hfQ = new THREE.Quaternion(); _hfQ2 = new THREE.Quaternion(); _hfV = new THREE.Vector3(); _hfM = new THREE.Matrix4(); });
 function _hfRootQ(bone, out){            // bone rotation expressed under CHAR.root (rotations only, mirror-safe)
@@ -18066,7 +18066,9 @@ function _hfInit(){
   _hfM.copy(sm.skeleton.boneInverses[idx]).invert();
   const q=new THREE.Quaternion(), p=new THREE.Vector3(), sc=new THREE.Vector3();
   _hfM.decompose(p,q,sc);
-  _hfFwd=new THREE.Vector3(0,0,1).applyQuaternion(q.invert());   // rest-pose face direction is +Z in mesh space
+  const qi=q.clone().invert();
+  _hfFwd=new THREE.Vector3(0,0,1).applyQuaternion(qi);   // rest-pose face direction is +Z in mesh space
+  _hfUp=new THREE.Vector3(0,1,0).applyQuaternion(qi);    // rest-pose crown direction is +Y
   _hfMesh=sm; return true;
 }
 function _hfYawBone(bone, angle, ax, ay, az){
@@ -18104,6 +18106,17 @@ function applySkyboardHeadOverride(){
     const hl=Math.hypot(f.x,f.z)||1, ax=f.z/hl, az=-f.x/hl;       // horizontal axis perpendicular to facing
     if(b.neck) _hfYawBone(b.neck, -pe*DART_HEAD.neckShare, ax, 0, az);
     _hfYawBone(b.Head, -pe*(b.neck?1-DART_HEAD.neckShare:1), ax, 0, az);
+    // un-roll: bring the crown back toward world-up so the face isn't cocked sideways
+    _hfRootQ(b.Head,_hfQ); const f2=_hfFwd.clone().applyQuaternion(_hfQ).normalize(), u=_hfUp.clone().applyQuaternion(_hfQ);
+    const wu=new THREE.Vector3(0,1,0);
+    u.addScaledVector(f2,-u.dot(f2)); wu.addScaledVector(f2,-wu.dot(f2));
+    if(u.lengthSq()>1e-6 && wu.lengthSq()>1e-6){
+      u.normalize(); wu.normalize();
+      let re=Math.atan2(f2.dot(new THREE.Vector3().crossVectors(u,wu)), u.dot(wu));
+      re=Math.max(-DART_HEAD.maxRoll,Math.min(DART_HEAD.maxRoll,re))*DART_HEAD.rollAmount;
+      if(b.neck) _hfYawBone(b.neck, re*DART_HEAD.neckShare, f2.x, f2.y, f2.z);
+      _hfYawBone(b.Head, re*(b.neck?1-DART_HEAD.neckShare:1), f2.x, f2.y, f2.z);
+    }
   }
 }
 
