@@ -18040,15 +18040,62 @@ function applySkyboardStance(t){
    on rotation.z, which is the TILT/roll axis — that reads as cocking
    her head over toward her shoulder, not turning it. The actual
    turn-to-look-sideways axis is rotation.y (yaw). */
+/* Head look-forward (rest-pose agnostic). The Ariel rig has non-identity rest
+   rotations and a stance clip that turns the whole body, so the old absolute
+   Euler yaw (0.78 rad) pointed her head wherever the clip left it. Now we
+   measure where the head is ACTUALLY facing (head-local forward axis taken
+   from the bind pose, rotated through the live bone chain), compare it with
+   the board's nose direction, and add the missing yaw about the vertical
+   axis, split between neck and head. Tunable live: window.DART_HEAD.
+     yawBias  extra radians to look left(+)/right(-) of the nose
+     maxYaw   largest correction applied (rad)
+     neckShare share of the turn taken by the neck (head takes the rest)  */
+const DART_HEAD = window.DART_HEAD = window.DART_HEAD || { on:true, yawBias:0, maxYaw:1.35, neckShare:0.4, pitchBias:0 };
+let _hfFwd = null, _hfMesh = null;
+const _hfQ = new THREE.Quaternion(), _hfQ2 = new THREE.Quaternion(), _hfV = new THREE.Vector3(), _hfM = new THREE.Matrix4();
+function _hfRootQ(bone, out){            // bone rotation expressed under CHAR.root (rotations only, mirror-safe)
+  out.identity(); const chain=[]; let o=bone;
+  while(o && o!==CHAR.root){ chain.push(o); o=o.parent; }
+  for(let i=chain.length-1;i>=0;i--) out.multiply(chain[i].quaternion);
+  return out;
+}
+function _hfInit(){
+  const sm=CHAR.skinnedMesh, hb=CHAR.bones.Head; if(!sm||!sm.skeleton||!hb) return false;
+  const idx=sm.skeleton.bones.indexOf(hb); if(idx<0) return false;
+  _hfM.copy(sm.skeleton.boneInverses[idx]).invert();
+  const q=new THREE.Quaternion(), p=new THREE.Vector3(), sc=new THREE.Vector3();
+  _hfM.decompose(p,q,sc);
+  _hfFwd=new THREE.Vector3(0,0,1).applyQuaternion(q.invert());   // rest-pose face direction is +Z in mesh space
+  _hfMesh=sm; return true;
+}
+function _hfYawBone(bone, angle){
+  if(!bone || Math.abs(angle)<1e-5) return;
+  _hfRootQ(bone.parent||CHAR.root,_hfQ);                 // parent rotation in root space
+  _hfQ2.setFromAxisAngle(_hfV.set(0,1,0),angle);         // yaw about root-up
+  // local' = parent^-1 * yaw * parent * local
+  bone.quaternion.premultiply(_hfQ).premultiply(_hfQ2).premultiply(_hfQ.clone().invert());
+}
+function _hfYawNow(){
+  _hfRootQ(CHAR.bones.Head,_hfQ);
+  _hfV.copy(_hfFwd).applyQuaternion(_hfQ);
+  return Math.atan2(_hfV.x,_hfV.z);
+}
 function applySkyboardHeadOverride(){
   const b = CHAR.bones;
-  if(!b.neck && !b.Head) return;
-  const hipsZ = b.Hips ? b.Hips.rotation.z : 0;
-  const hipsX = b.Hips ? b.Hips.rotation.x : 0;
-  const lookYaw = 0.78; // ~45 degrees — best-guess sign/direction, flip if it turns out to look the other way
-  const swayYaw = hipsZ*0.3; // gentle turn-sway tied to the clip's own hip motion, same axis as the look
-  if(b.neck) b.neck.rotation.set(-hipsX*0.4 - 0.03, lookYaw*0.55 + swayYaw, 0);
-  if(b.Head) b.Head.rotation.set(0.01, lookYaw*0.45 + swayYaw*0.6, 0);
+  if(!DART_HEAD.on || !b.Head) return;
+  if(!_hfFwd || _hfMesh!==CHAR.skinnedMesh){ if(!_hfInit()) return; }
+  // direction the board's nose points, expressed in the character's pre-mirror root space
+  CHAR.root.updateMatrix();
+  _hfM.copy(CHAR.root.matrix).invert();
+  const nose=new THREE.Vector3(1,0,0).transformDirection(_hfM);
+  const target=Math.atan2(nose.x,nose.z)+DART_HEAD.yawBias;
+  const wrap=a=>{ while(a>Math.PI)a-=2*Math.PI; while(a<-Math.PI)a+=2*Math.PI; return a; };
+  const lim=DART_HEAD.maxYaw;
+  let err=wrap(target-_hfYawNow());
+  err=Math.max(-lim,Math.min(lim,err));
+  if(b.neck){ _hfYawBone(b.neck, err*DART_HEAD.neckShare); err=wrap(target-_hfYawNow()); err=Math.max(-lim,Math.min(lim,err)); }
+  _hfYawBone(b.Head, err);
+  if(DART_HEAD.pitchBias && b.Head){ b.Head.rotation.x += DART_HEAD.pitchBias; }
 }
 
 /* ── STATE MACHINE ──────────────────────────────────────────────
