@@ -17776,6 +17776,9 @@ async function loadCharacterAssets(){
   }catch(e){}
 
   CHAR.loaded = true; CHAR.loading = false;
+  // Real-time strand hair (hair_strands.js + characterassests/ariel_hair_strands.bin). Fails soft: if the
+  // module/data is missing or the loaded character is a different file, the skinned hair cards just stay visible.
+  try{ import('./hair_strands.js').then(m=>m.attachHairStrands(CHAR,THREE,{url:CHAR_ASSET_BASE+'ariel_hair_strands.bin'})).catch(e=>console.info('[hair] strands not attached:',e&&e.message)); }catch(e){}
   try{ if(typeof boardFlight!=='undefined' && boardFlight) remountSkyboard(boardFlight); }catch(e){}
   CHAR._loadPromise=null;
   return CHAR.root;
