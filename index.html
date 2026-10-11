@@ -18050,7 +18050,7 @@ function applySkyboardStance(t){
      yawBias  extra radians to look left(+)/right(-) of the nose
      maxYaw   largest correction applied (rad)
      neckShare share of the turn taken by the neck (head takes the rest)  */
-const DART_HEAD = window.DART_HEAD = window.DART_HEAD || { on:true, yawBias:0, maxYaw:1.35, neckShare:0.4, pitchBias:0, level:true, pitch:-0.05, maxPitch:0.6, maxRoll:0.7, rollAmount:1.0 };
+const DART_HEAD = window.DART_HEAD = window.DART_HEAD || { on:true, yawBias:0, maxYaw:1.5, neckShare:0.4, pitchBias:0, level:true, pitch:-0.05, maxPitch:0.6, maxRoll:0.7, rollAmount:1.0 };
 let _hfFwd = null, _hfUp = null, _hfMesh = null;
 let _hfQ, _hfQ2, _hfV, _hfM;
 window.__whenThreeReady(function(){ _hfQ = new THREE.Quaternion(); _hfQ2 = new THREE.Quaternion(); _hfV = new THREE.Vector3(); _hfM = new THREE.Matrix4(); });
@@ -18083,6 +18083,26 @@ function _hfYawNow(){
   _hfV.copy(_hfFwd).applyQuaternion(_hfQ);
   return Math.atan2(_hfV.x,_hfV.z);
 }
+// which end of the board is the FRONT? The staff trails past the BACK tip, so the front is
+// the end opposite the staff (measured from the board's own parts, not assumed).
+let _hfFrontBoard=null,_hfFrontSign=-1;
+function _hfFront(){
+  const board=CHAR.root&&CHAR.root.parent; if(!board) return _hfFrontSign;
+  if(_hfFrontBoard===board) return _hfFrontSign;
+  try{
+    let st=null,dk=null; const c=new THREE.Vector3();
+    board.traverse(o=>{
+      if(!o.isMesh||!o.geometry||o===CHAR.skinnedMesh) return;
+      let q=o,mine=false; while(q){ if(q===CHAR.root){mine=true;break;} q=q.parent; } if(mine) return;
+      const n=(o.name||'').toLowerCase();
+      if(!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+      o.geometry.boundingBox.getCenter(c);
+      if(/staff/.test(n)&&!st) st=c.x; else if(/deck|hull/.test(n)&&dk===null) dk=c.x;
+    });
+    if(st!==null&&dk!==null&&Math.abs(st-dk)>0.05){ _hfFrontSign = (st>dk)?-1:1; _hfFrontBoard=board; }
+  }catch(e){}
+  return _hfFrontSign;
+}
 function applySkyboardHeadOverride(){
   const b = CHAR.bones;
   if(!DART_HEAD.on || !b.Head) return;
@@ -18090,7 +18110,7 @@ function applySkyboardHeadOverride(){
   // direction the board's nose points, expressed in the character's pre-mirror root space
   CHAR.root.updateMatrix();
   _hfM.copy(CHAR.root.matrix).invert();
-  const nose=new THREE.Vector3(1,0,0).transformDirection(_hfM);
+  const nose=new THREE.Vector3(_hfFront(),0,0).transformDirection(_hfM);   // board front, in her pre-mirror space
   const target=Math.atan2(nose.x,nose.z)+DART_HEAD.yawBias;
   const wrap=a=>{ while(a>Math.PI)a-=2*Math.PI; while(a<-Math.PI)a+=2*Math.PI; return a; };
   const lim=DART_HEAD.maxYaw;
