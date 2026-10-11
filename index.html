@@ -18171,11 +18171,21 @@ function _charHandsPost(sm,bones,grip){
    standing pose): the clips leave the palms ~50° forward of her thighs. Each
    frame we measure where the palm faces (palm normal from the bind pose,
    carried by the live hand) against the direction to her midline, about the
-   forearm's own axis, and take DART_PALM.k of that error out — 60% by the
-   forearm (pronation), 40% at the wrist. Ground only; the ride stance is left alone. */
-const DART_PALM = window.DART_PALM = window.DART_PALM || { on:true, k:0.6, max:1.1, foreShare:0.6, states:['idle','walk'] };
+   forearm's own axis, and take DART_PALM.k of that error out — 70% by the
+   forearm (pronation), 30% at the wrist. Ground only; the ride stance is left alone. */
+const DART_PALM = window.DART_PALM = window.DART_PALM || { on:true, k:0.7, max:1.1, foreShare:0.7, states:['idle','walk'] };
+// A held pose (idle) isn't rewritten by the mixer every frame, so a correction
+// would pile up frame on frame. Each corrected bone remembers its pose before
+// and after our touch; if nothing rewrote it since, start again from "before".
+function _poseBase(bone){
+  const u=bone.userData;
+  if(u._dmPost&&bone.quaternion.equals(u._dmPost)) bone.quaternion.copy(u._dmPre);
+  (u._dmPre||(u._dmPre=new THREE.Quaternion())).copy(bone.quaternion);
+}
+function _poseDone(bone){ const u=bone.userData; (u._dmPost||(u._dmPost=new THREE.Quaternion())).copy(bone.quaternion); }
 function _palmTwist(bones,w){
-  if(!DART_PALM.on||w<=0.001) return;
+  for(const side of ['Left','Right']) for(const n of ['ForeArm','Hand']){ const b=bones[side+n]; if(b){ _poseBase(b); b.updateMatrixWorld(true); } }
+  if(!DART_PALM.on||w<=0.001){ for(const side of ['Left','Right']) for(const n of ['ForeArm','Hand']){ const b=bones[side+n]; if(b) _poseDone(b); } return; }
   const v=new THREE.Vector3(), q=new THREE.Quaternion(), rq=new THREE.Quaternion();
   CHAR.root.getWorldQuaternion(rq); const rqi=rq.clone().invert();
   for(const side of ['Left','Right']){
@@ -18195,12 +18205,18 @@ function _palmTwist(bones,w){
     const turn=(bone,an)=>{ if(Math.abs(an)<1e-4) return; const pq=new THREE.Quaternion(); bone.parent.getWorldQuaternion(pq); const ax=fa.clone().applyQuaternion(rq).applyQuaternion(pq.invert()).normalize(); bone.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(ax,an)); bone.updateMatrixWorld(true); };
     turn(FA,ang*DART_PALM.foreShare); turn(H,ang*(1-DART_PALM.foreShare));
   }
+  for(const side of ['Left','Right']) for(const n of ['ForeArm','Hand']){ const b=bones[side+n]; if(b) _poseDone(b); }
 }
 /* Ground gaze: level her head on the ground too (the ride stance has
    applySkyboardHeadOverride). Only the pitch: if the face is tipped down
    (or up) from DART_HEAD.standPitch, take it out, neck/head shared. */
 function _standHeadLevel(){
-  const b=CHAR.bones; if(!DART_HEAD.on||!DART_HEAD.level||!b.Head) return;
+  const b=CHAR.bones; if(!b.Head) return;
+  const hb=[b.neck,b.Head].filter(Boolean); hb.forEach(_poseBase);
+  try{ _standHeadLevel1(b); } finally { hb.forEach(_poseDone); }
+}
+function _standHeadLevel1(b){
+  if(!DART_HEAD.on||!DART_HEAD.level) return;
   if(!_hfFwd || _hfMesh!==CHAR.skinnedMesh){ if(!_hfInit()) return; }
   _hfRootQ(b.Head,_hfQ); const f=_hfFwd.clone().applyQuaternion(_hfQ);
   const pitchCur=Math.asin(Math.max(-1,Math.min(1,f.y)));
