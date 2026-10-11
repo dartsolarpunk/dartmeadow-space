@@ -18050,7 +18050,7 @@ function applySkyboardStance(t){
      yawBias  extra radians to look left(+)/right(-) of the nose
      maxYaw   largest correction applied (rad)
      neckShare share of the turn taken by the neck (head takes the rest)  */
-const DART_HEAD = window.DART_HEAD = window.DART_HEAD || { on:true, yawBias:0, maxYaw:1.35, neckShare:0.4, pitchBias:0 };
+const DART_HEAD = window.DART_HEAD = window.DART_HEAD || { on:true, yawBias:0, maxYaw:1.35, neckShare:0.4, pitchBias:0, level:true, pitch:-0.05, maxPitch:0.6 };
 let _hfFwd = null, _hfMesh = null;
 let _hfQ, _hfQ2, _hfV, _hfM;
 window.__whenThreeReady(function(){ _hfQ = new THREE.Quaternion(); _hfQ2 = new THREE.Quaternion(); _hfV = new THREE.Vector3(); _hfM = new THREE.Matrix4(); });
@@ -18069,10 +18069,10 @@ function _hfInit(){
   _hfFwd=new THREE.Vector3(0,0,1).applyQuaternion(q.invert());   // rest-pose face direction is +Z in mesh space
   _hfMesh=sm; return true;
 }
-function _hfYawBone(bone, angle){
+function _hfYawBone(bone, angle, ax, ay, az){
   if(!bone || Math.abs(angle)<1e-5) return;
   _hfRootQ(bone.parent||CHAR.root,_hfQ);                 // parent rotation in root space
-  _hfQ2.setFromAxisAngle(_hfV.set(0,1,0),angle);         // yaw about root-up
+  _hfQ2.setFromAxisAngle(_hfV.set(ax||0, ay===undefined?1:ay, az||0),angle);   // yaw about root-up (or a given axis)
   // local' = parent^-1 * yaw * parent * local
   bone.quaternion.premultiply(_hfQ).premultiply(_hfQ2).premultiply(_hfQ.clone().invert());
 }
@@ -18096,7 +18096,15 @@ function applySkyboardHeadOverride(){
   err=Math.max(-lim,Math.min(lim,err));
   if(b.neck){ _hfYawBone(b.neck, err*DART_HEAD.neckShare); err=wrap(target-_hfYawNow()); err=Math.max(-lim,Math.min(lim,err)); }
   _hfYawBone(b.Head, err);
-  if(DART_HEAD.pitchBias && b.Head){ b.Head.rotation.x += DART_HEAD.pitchBias; }
+  // level the gaze: if she is looking down/up more than the target pitch, take it out (neck 40% / head 60%)
+  if(DART_HEAD.level){
+    _hfRootQ(b.Head,_hfQ); const f=_hfFwd.clone().applyQuaternion(_hfQ);
+    const pitchCur=Math.asin(Math.max(-1,Math.min(1,f.y)));
+    let pe=Math.max(-DART_HEAD.maxPitch,Math.min(DART_HEAD.maxPitch,(DART_HEAD.pitch+DART_HEAD.pitchBias)-pitchCur));
+    const hl=Math.hypot(f.x,f.z)||1, ax=f.z/hl, az=-f.x/hl;       // horizontal axis perpendicular to facing
+    if(b.neck) _hfYawBone(b.neck, -pe*DART_HEAD.neckShare, ax, 0, az);
+    _hfYawBone(b.Head, -pe*(b.neck?1-DART_HEAD.neckShare:1), ax, 0, az);
+  }
 }
 
 /* ── STATE MACHINE ──────────────────────────────────────────────
