@@ -18052,7 +18052,8 @@ function applySkyboardStance(t){
      neckShare share of the turn taken by the neck (head takes the rest)  */
 const DART_HEAD = window.DART_HEAD = window.DART_HEAD || { on:true, yawBias:0, maxYaw:1.35, neckShare:0.4, pitchBias:0 };
 let _hfFwd = null, _hfMesh = null;
-const _hfQ = new THREE.Quaternion(), _hfQ2 = new THREE.Quaternion(), _hfV = new THREE.Vector3(), _hfM = new THREE.Matrix4();
+let _hfQ, _hfQ2, _hfV, _hfM;
+window.__whenThreeReady(function(){ _hfQ = new THREE.Quaternion(); _hfQ2 = new THREE.Quaternion(); _hfV = new THREE.Vector3(); _hfM = new THREE.Matrix4(); });
 function _hfRootQ(bone, out){            // bone rotation expressed under CHAR.root (rotations only, mirror-safe)
   out.identity(); const chain=[]; let o=bone;
   while(o && o!==CHAR.root){ chain.push(o); o=o.parent; }
@@ -18741,7 +18742,7 @@ function mountSkyboard(boardObj,opts){
    render loop rather than opening a separate overlay/renderer. */
 let charOrbitActive=false, charOrbitYaw=0, charOrbitPitch=0.25, charOrbitDist=9.0; // was 4.5 — too close on entry per feedback, now starts several yards back so the whole asset group is visible
 let _charOrbitDrag=null, _charOrbitPinch=null, _charOrbitPinchC=null, _charOrbitListenersBound=false, _charOrbitPanning=false;
-const _charOrbitPan=new THREE.Vector3();   // world-space truck/pedestal offset of the orbit focus (two-finger / right-drag)
+let _charOrbitPan=null; window.__whenThreeReady(function(){ _charOrbitPan=new THREE.Vector3(); });   // world-space truck/pedestal offset of the orbit focus (two-finger / right-drag)
 
 function _charOrbitCanvas(){
   if(surfaceActive) return $('surface-canvas');
