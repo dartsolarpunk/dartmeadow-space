@@ -18693,7 +18693,8 @@ function mountSkyboard(boardObj,opts){
    her instead of a globe, and layered on top of the live flight/atmo
    render loop rather than opening a separate overlay/renderer. */
 let charOrbitActive=false, charOrbitYaw=0, charOrbitPitch=0.25, charOrbitDist=9.0; // was 4.5 — too close on entry per feedback, now starts several yards back so the whole asset group is visible
-let _charOrbitDrag=null, _charOrbitPinch=null, _charOrbitListenersBound=false;
+let _charOrbitDrag=null, _charOrbitPinch=null, _charOrbitPinchC=null, _charOrbitListenersBound=false, _charOrbitPanning=false;
+const _charOrbitPan=new THREE.Vector3();   // world-space truck/pedestal offset of the orbit focus (two-finger / right-drag)
 
 function _charOrbitCanvas(){
   if(surfaceActive) return $('surface-canvas');
@@ -18739,13 +18740,14 @@ function updateCharOrbitCamera(){
   else if(atmoActive && atmoBoard){ atmoBoard.getWorldPosition(target); }
   else if(boardFlight){ boardFlight.getWorldPosition(target); }
   else return;
+  target.add(_charOrbitPan);   // truck / pedestal offset
   // Zooming in glides the focus up to her face so you can get right up on it.
   if(charOrbitDist<6 && CHAR.bones && CHAR.bones.Head){
     const hp=new THREE.Vector3(); CHAR.bones.Head.getWorldPosition(hp);
-    const t=Math.max(0,Math.min(1,(6-charOrbitDist)/4.5)), k=t*t*(3-2*t);
+    const t=Math.max(0,Math.min(1,(6-charOrbitDist)/4.5)), k=(t*t*(3-2*t))*(_charOrbitPan.lengthSq()>1e-6?0:1);
     target.lerp(hp,k);
   }
-  const _nearWant=Math.min(0.1,Math.max(0.01,charOrbitDist*0.08));
+  const _nearWant=Math.min(0.1,Math.max(0.03,charOrbitDist*0.08));
   if(cam.near!==_nearWant){cam.near=_nearWant;cam.updateProjectionMatrix();}
   const cy=Math.cos(charOrbitYaw), sy=Math.sin(charOrbitYaw), cp=Math.cos(charOrbitPitch), sp=Math.sin(charOrbitPitch);
   cam.position.set(target.x+sy*cp*charOrbitDist, target.y+sp*charOrbitDist, target.z+cy*cp*charOrbitDist);
@@ -18762,20 +18764,30 @@ function updateCharOrbitCamera(){
 function _charOrbitMax(){ return surfaceActive?220:(atmoActive?320:30); }
 function _bindCharOrbitListenersOnce(){
   if(_charOrbitListenersBound) return; _charOrbitListenersBound=true;
+  const panBy=(dx,dy)=>{
+    const cam = surfaceActive ? surfCamera : (atmoActive ? atmoCamera : flightCamera); if(!cam) return;
+    const k=charOrbitDist*0.0019;
+    const r=new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld,0), u=new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld,1);
+    _charOrbitPan.addScaledVector(r,-dx*k).addScaledVector(u,dy*k);
+    const m=Math.max(2,charOrbitDist*1.5); if(_charOrbitPan.length()>m) _charOrbitPan.setLength(m);
+  };
   const move=(x,y)=>{
     if(!_charOrbitDrag) return;
     const dx=x-_charOrbitDrag.x, dy=y-_charOrbitDrag.y;
+    if(_charOrbitPanning){ panBy(dx,dy); _charOrbitDrag={x,y}; return; }
     charOrbitYaw -= dx*0.006;
     charOrbitPitch = Math.max(-1.45, Math.min(1.45, charOrbitPitch+dy*0.006));
     _charOrbitDrag={x,y};
   };
-  window.addEventListener('mousedown', e=>{ if(!charOrbitActive||e.target!==_charOrbitCanvas())return; _charOrbitDrag={x:e.clientX,y:e.clientY}; });
+  window.addEventListener('mousedown', e=>{ if(!charOrbitActive||e.target!==_charOrbitCanvas())return; _charOrbitPanning=(e.button===2||e.button===1||e.shiftKey); _charOrbitDrag={x:e.clientX,y:e.clientY}; });
+  window.addEventListener('contextmenu', e=>{ if(charOrbitActive&&e.target===_charOrbitCanvas()) e.preventDefault(); });
+  window.addEventListener('dblclick', e=>{ if(charOrbitActive&&e.target===_charOrbitCanvas()) _charOrbitPan.set(0,0,0); });
   window.addEventListener('mousemove', e=>{ if(charOrbitActive) move(e.clientX,e.clientY); });
-  window.addEventListener('mouseup', ()=>{ _charOrbitDrag=null; });
+  window.addEventListener('mouseup', ()=>{ _charOrbitDrag=null; _charOrbitPanning=false; });
   window.addEventListener('touchstart', e=>{
     if(!charOrbitActive||e.target!==_charOrbitCanvas())return;
     if(e.touches.length===1) _charOrbitDrag={x:e.touches[0].clientX,y:e.touches[0].clientY};
-    else if(e.touches.length===2) _charOrbitPinch=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+    else if(e.touches.length===2){ _charOrbitPinch=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY); _charOrbitPinchC={x:(e.touches[0].clientX+e.touches[1].clientX)/2,y:(e.touches[0].clientY+e.touches[1].clientY)/2}; _charOrbitDrag=null; }
   },{passive:true});
   window.addEventListener('touchmove', e=>{
     if(!charOrbitActive) return;
@@ -18785,9 +18797,12 @@ function _bindCharOrbitListenersOnce(){
       const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
       charOrbitDist=Math.max(0.4,Math.min(_charOrbitMax(),charOrbitDist*(_charOrbitPinch/d)));
       _charOrbitPinch=d;
+      const cx=(e.touches[0].clientX+e.touches[1].clientX)/2, cy=(e.touches[0].clientY+e.touches[1].clientY)/2;
+      if(_charOrbitPinchC) panBy(cx-_charOrbitPinchC.x, cy-_charOrbitPinchC.y);
+      _charOrbitPinchC={x:cx,y:cy};
     }
   },{passive:false});
-  window.addEventListener('touchend', e=>{ if(e.touches.length===0){ _charOrbitDrag=null; _charOrbitPinch=null; } });
+  window.addEventListener('touchend', e=>{ if(e.touches.length===0){ _charOrbitDrag=null; _charOrbitPinch=null; _charOrbitPinchC=null; _charOrbitPanning=false; } });
   window.addEventListener('wheel', e=>{
     if(!charOrbitActive||e.target!==_charOrbitCanvas())return;
     e.preventDefault();
@@ -18808,14 +18823,14 @@ function toggleCharOrbit(){
   });
   if(charOrbitActive){
     _bindCharOrbitListenersOnce();
-    charOrbitYaw=0; charOrbitPitch=0.25;
+    charOrbitYaw=0; charOrbitPitch=0.25; _charOrbitPan.set(0,0,0);
     // start pulled back so the whole rider + board is in view: at least where the
     // flight camera already sits, and never closer than a comfortable default
     let _d0=14; try{ const _t=new THREE.Vector3();
       if(CHAR.loaded&&CHAR.root) CHAR.root.getWorldPosition(_t); else if(boardFlight) boardFlight.getWorldPosition(_t);
       _d0=Math.max(14,cam.position.distanceTo(_t)*1.25); }catch(e){}
     charOrbitDist=Math.min(_charOrbitMax()*0.9,_d0);
-    try{toast('🔄 Orbit view — drag/scroll or pinch to look around, tap ORBIT again to exit',3200);}catch(e){}
+    try{toast('🔄 Orbit view — drag to orbit · pinch to dolly · two-finger drag to pan (double-tap/click recentres) · tap ORBIT to exit',3200);}catch(e){}
   } else {
     _charOrbitDrag=null; _charOrbitPinch=null;
     try{ if(cam.near!==0.1){cam.near=0.1;cam.updateProjectionMatrix();} }catch(e){}
