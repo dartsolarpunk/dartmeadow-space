@@ -722,6 +722,7 @@ body.pw-hud #screen-flight > :not(#flight-canvas){display:none !important;}
 .pf-th-sw{display:inline-flex;flex-shrink:0;width:22px;height:14px;border-radius:3px;overflow:hidden;border:1px solid rgba(255,255,255,.2);}
 .pf-th-sw i{flex:1;}
 .pf-custom{display:flex;gap:6px;margin-top:6px;}
+.pf-xh-box{margin:10px 0 4px;padding:10px;border:1px solid rgba(var(--acc-rgb),.22);border-radius:5px;background:rgba(var(--acc-rgb),.05);}
 .pf-xh{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}
 .pf-xh-sw{width:26px;height:26px;border-radius:50%;border:1px solid rgba(255,255,255,.25);cursor:pointer;padding:0;color:#000;font-family:var(--font-hud);font-size:.55rem;font-weight:700;}
 .pf-xh-sw.on{outline:2px solid var(--gold);outline-offset:2px;}
@@ -12470,11 +12471,14 @@ function _pfEnsure(){
     '<div id="pf-safety"></div>'+
     '<div class="pf-sec">THEME</div>'+
     '<div class="pf-themes" id="pf-themes"></div>'+
+    '<div class="pf-xh-box" id="pf-xh-box">'+
+      '<div class="pf-row-t">Crosshair color</div><div class="pf-row-d">The aiming mark in the middle of the screen. T follows the theme; the last swatch picks any colour.</div>'+
+      '<div class="pf-xh" id="pf-xh"></div>'+
+      '<div class="pf-row-t" style="margin-top:10px;">Crosshair glow</div>'+
+      '<div class="pf-xh-g"><input type="range" id="pf-xh-glow" min="0" max="100" step="1" aria-label="Crosshair glow"><span class="pf-row-d" id="pf-xh-gn"></span><span class="pf-xh-prev" id="pf-xh-prev"></span></div>'+
+    '</div>'+
     '<div class="pf-row-d" style="margin-top:8px;">Custom colours \u2014 tap one to open the colour picker:</div>'+
     '<div class="pf-custom" id="pf-custom"></div>'+
-    '<div class="pf-row-d" style="margin-top:10px;">Crosshair \u2014 colour and neon glow (kept with your theme):</div>'+
-    '<div class="pf-xh" id="pf-xh"></div>'+
-    '<div class="pf-xh-g"><span class="pf-row-d">Glow</span><input type="range" id="pf-xh-glow" min="0" max="100" step="1" aria-label="Crosshair glow"><span class="pf-row-d" id="pf-xh-gn"></span><span class="pf-xh-prev" id="pf-xh-prev"></span></div>'+
     '<div class="pf-save"><input id="pf-th-name" maxlength="32" placeholder="Name these colours\u2026" autocomplete="off" spellcheck="false"><button class="pf-btn" id="pf-th-save">\uFF0B SAVE THEME</button></div>'+
     '<div class="pf-sec">MY THEMES</div>'+
     '<div class="pf-themes" id="pf-mine"></div>'+
