@@ -5736,10 +5736,12 @@ function updateDiscoveries(dt){
   const p=STATE.flight.pos, sysKey=_discSysKey();
   if(updateDiscoveries._sys!==sysKey){resetDiscoveries();updateDiscoveries._sys=sysKey;}
   const cx=Math.floor(p.x/DISC_CELL),cy=Math.floor(p.y/DISC_CELL),cz=Math.floor(p.z/DISC_CELL);
-  const want=new Set();
-  for(let i=-1;i<=1;i++)for(let j=-1;j<=1;j++)for(let k=-1;k<=1;k++){
-    const cell=[cx+i,cy+j,cz+k], key=cell.join(',');want.add(key);
-    if(!_discLive.has(key)){const rec=_discSpawn(key,cell,sysKey);_discLive.set(key,rec);}
+  // Crossing a cell boundary brings 9 new cells at once: build at most two
+  // a tick (the rest follow 0.35 s later) so no single frame builds them all.
+  let budget=2;
+  for(let i=-1;i<=1&&budget>0;i++)for(let j=-1;j<=1&&budget>0;j++)for(let k=-1;k<=1&&budget>0;k++){
+    const cell=[cx+i,cy+j,cz+k], key=cell.join(',');
+    if(!_discLive.has(key)){const rec=_discSpawn(key,cell,sysKey);_discLive.set(key,rec);budget--;}
   }
   _discLive.forEach((rec,key)=>{
     const c=key.split(',').map(Number);
@@ -5921,7 +5923,6 @@ async function initFlightScene(){
   try{buildFlightBoard();}catch(e){console.warn('board:',e);try{toast('⚠ Skyboard failed to build: '+(e.message||e),5000);}catch(_){}}
   try{addSunLight();}catch(e){console.warn('sun:',e);}
   try{initJoysticks();}catch(e){console.warn('joy:',e);}
-  try{initPostFX();}catch(e){console.warn('postfx:',e);}
   // Build env-map reflections (browser-real stand-in for ray-traced reflections)
   if(GFX.envReflections){
     try{
@@ -6043,7 +6044,6 @@ function _applyFlightResizeIfPending(){
   flightRenderer.setSize(nW,nH);
   flightCamera.aspect=nW/nH;
   flightCamera.updateProjectionMatrix();
-  resizePostFX();
 }
 // Every other 3D view follows the device too: ground, sky flight, the
 // orbit view, the galaxy map and the quick-travel preview each resize on
@@ -12878,7 +12878,6 @@ function applySettings(){
       // automatically instead of needing an incidental rotation.
       const _rw=window.innerWidth,_rh=window.innerHeight;
       if(flightRenderer){flightRenderer._dr=null;flightRenderer.setPixelRatio(effectivePixelRatio());flightRenderer.setSize(_rw,_rh);}
-      resizePostFX();
     }
   }
   // shadow/reflection/caustic/GI toggles take effect on next scene build
@@ -12905,7 +12904,6 @@ function applySettings(){
   try{
     const _rw2=window.innerWidth,_rh2=window.innerHeight;
     if(flightRenderer){flightRenderer.setSize(_rw2,_rh2);}
-    resizePostFX();
   }catch(e){}
   closeSettings();
   toast('✅ Settings applied');
@@ -15286,6 +15284,21 @@ function buildGalSky(){
   // Far plane must reach Andromeda through the scaled layer.
   try{ if(flightCamera&&flightCamera.far<300000){flightCamera.far=300000;flightCamera.updateProjectionMatrix();} }catch(e){}
   updateGalSky(true);
+  _gsPrecompile();
+}
+// Compile every galaxy-layer pipeline up front, off the frame. Parts of the
+// layer (the disc glow, distant galaxies' hosts, the Sol marker) are hidden
+// until you're far out, so their shaders used to compile synchronously on
+// the frame they first appeared — right as the galaxy came into view.
+// compileAsync projects the scene synchronously before its first await, so
+// the hidden parts are shown only for that instant, never for a frame.
+function _gsPrecompile(){
+  if(!galSkyRoot||typeof flightRenderer==='undefined'||!flightRenderer||!flightRenderer.compileAsync)return;
+  const hidden=[];
+  galSkyRoot.traverse(o=>{if(!o.visible){hidden.push(o);o.visible=true;}});
+  try{const pr=flightRenderer.compileAsync(flightScene,flightCamera);if(pr&&pr.catch)pr.catch(e=>console.warn('[galsky] precompile',e));}
+  catch(e){console.warn('[galsky] precompile',e);}
+  finally{for(const o of hidden)o.visible=false;}
 }
 // Where the current system sits in the galaxy (ly, world axes, Sun = origin).
 // Sol → origin. Other systems get a stable position a few to a few hundred
@@ -15734,8 +15747,8 @@ function updateGalSky(force){
     L0.copy(cam).applyQuaternion(galSky.qInv).add(galSky.sunLocal);
     for(let i=0;i<galSky.subs.length;i++){const r=galSky.subs[i];near=Math.min(near,Math.max(20,L0.distanceTo(r.center)-r.R));}
   }
-  // Re-derive cloud sizes when the camera has moved a meaningful fraction
-  // of its distance through the galaxy (throttled; idle at home = never).
+  // Re-fade the layer when the camera has moved a meaningful fraction of
+  // its distance through the galaxy (throttled; idle at home = never).
   const now=performance.now();
   const last=galSky._lastSize;
   const moved=last?cam.distanceTo(last):Infinity;
@@ -15919,127 +15932,25 @@ function updateDistantSystems(dt){
   });
 }
 
-// ── 4. POST-PROCESSING: bloom + motion blur (r128, no addons) ────
-// Implemented with manual render targets + fullscreen quad passes.
-let _postInited=false,_rtScene,_rtA,_rtB,_rtPrev,_fsScene,_fsCam,_fsQuad;
-let _brightMat,_blurMat,_compMat,_blendMat;
-function initPostFX(){
-  if(_postInited||!flightRenderer)return;
-  const sz=new THREE.Vector2();flightRenderer.getDrawingBufferSize(sz);
-  const W=Math.max(2,Math.floor(sz.x)),H=Math.max(2,Math.floor(sz.y));
-  // half-float targets preserve HDR for bloom where supported; fall back to byte
-  const ftype=(GFX.halfFloatTex&&THREE.HalfFloatType)?THREE.HalfFloatType:THREE.UnsignedByteType;
-  const opts={minFilter:THREE.LinearFilter,magFilter:THREE.LinearFilter,format:THREE.RGBAFormat,type:ftype};
-  _rtScene=new THREE.WebGLRenderTarget(W,H,opts);
-  _rtA=new THREE.WebGLRenderTarget(W>>1,H>>1,opts);
-  _rtB=new THREE.WebGLRenderTarget(W>>1,H>>1,opts);
-  _rtPrev=new THREE.WebGLRenderTarget(W,H,opts);
-  _fsScene=new THREE.Scene();
-  _fsCam=new THREE.OrthographicCamera(-1,1,1,-1,0,1);
-  // bright-pass: extract highlights
-  _brightMat=new THREE.ShaderMaterial({
-    // threshold raised 0.62→0.78: at 0.62, a lot of moderately-lit scenery
-    // (not just actual light sources) crossed into bloom, which read as a
-    // general soft/blurry look across the whole scene rather than glow
-    // specifically around bright things like the Sun or emissive highlights.
-    uniforms:{tDiffuse:{value:null},threshold:{value:0.78}},
-    vertexShader:'varying vec2 vUv;void main(){vUv=uv;gl_Position=vec4(position.xy,0.,1.);}',
-    fragmentShader:'uniform sampler2D tDiffuse;uniform float threshold;varying vec2 vUv;void main(){vec4 c=texture2D(tDiffuse,vUv);float l=dot(c.rgb,vec3(0.299,0.587,0.114));float f=smoothstep(threshold,threshold+0.25,l);gl_FragColor=vec4(c.rgb*f,1.0);}'
-  });
-  // separable blur
-  _blurMat=new THREE.ShaderMaterial({
-    uniforms:{tDiffuse:{value:null},dir:{value:new THREE.Vector2(1,0)},res:{value:new THREE.Vector2(W>>1,H>>1)}},
-    vertexShader:'varying vec2 vUv;void main(){vUv=uv;gl_Position=vec4(position.xy,0.,1.);}',
-    fragmentShader:'uniform sampler2D tDiffuse;uniform vec2 dir;uniform vec2 res;varying vec2 vUv;void main(){vec2 px=dir/res;vec4 s=vec4(0.0);s+=texture2D(tDiffuse,vUv-px*4.0)*0.05;s+=texture2D(tDiffuse,vUv-px*3.0)*0.09;s+=texture2D(tDiffuse,vUv-px*2.0)*0.12;s+=texture2D(tDiffuse,vUv-px*1.0)*0.15;s+=texture2D(tDiffuse,vUv)*0.18;s+=texture2D(tDiffuse,vUv+px*1.0)*0.15;s+=texture2D(tDiffuse,vUv+px*2.0)*0.12;s+=texture2D(tDiffuse,vUv+px*3.0)*0.09;s+=texture2D(tDiffuse,vUv+px*4.0)*0.05;gl_FragColor=s;}'
-  });
-  // composite scene + bloom, then motion-blur blend with previous frame
-  _compMat=new THREE.ShaderMaterial({
-    uniforms:{tScene:{value:null},tBloom:{value:null},tPrev:{value:null},bloomStr:{value:0.16},motionAmt:{value:0.0}},
-    vertexShader:'varying vec2 vUv;void main(){vUv=uv;gl_Position=vec4(position.xy,0.,1.);}',
-    fragmentShader:'uniform sampler2D tScene;uniform sampler2D tBloom;uniform sampler2D tPrev;uniform float bloomStr;uniform float motionAmt;varying vec2 vUv;void main(){vec4 sc=texture2D(tScene,vUv);vec4 bl=texture2D(tBloom,vUv);vec3 col=sc.rgb+bl.rgb*bloomStr;vec4 pv=texture2D(tPrev,vUv);col=mix(col,pv.rgb,motionAmt);gl_FragColor=vec4(col,1.0);}'
-  });
-  _fsQuad=new THREE.Mesh(new THREE.PlaneGeometry(2,2),_brightMat);
-  _fsScene.add(_fsQuad);
-  _postInited=true;
-}
-function resizePostFX(){
-  if(!_postInited)return;
-  const sz=new THREE.Vector2();flightRenderer.getDrawingBufferSize(sz);
-  const W=Math.max(2,sz.x),H=Math.max(2,sz.y);
-  _rtScene.setSize(W,H);_rtPrev.setSize(W,H);
-  _rtA.setSize(W>>1,H>>1);_rtB.setSize(W>>1,H>>1);
-  _blurMat.uniforms.res.value.set(W>>1,H>>1);
-}
 let _sbT=0;
 function renderWithPostFX(){
-  const useBloom=STATE.settings.bloom, useMotion=STATE.settings.motion;
-  // This whole pipeline (bright-pass/blur/composite) is built on raw
-  // THREE.ShaderMaterial + THREE.WebGLRenderTarget, both incompatible
-  // with WebGPURenderer's node-material pipeline (confirmed via live
-  // testing: repeated "NodeBuilder: Material ShaderMaterial is not
-  // compatible" warnings every frame). Properly porting a multi-pass
-  // bloom+motion-blur system to TSL is real, substantial work not done
-  // yet - bypassing to a plain render under WebGPU rather than let it
-  // silently degrade every frame is the honest choice here; bloom/
-  // motion-blur are visually absent under WebGPU until that follow-up
-  // work happens, not quietly broken.
-  // NOTE: this is intentionally NOT gated on _isRealWebGPU like the other
-  // fallback checks in this file. The incompatibility here is with
-  // WebGPURenderer's node-material architecture itself (NodeBuilder),
-  // which is active whether the renderer's active backend is WebGPU or
-  // its WebGL2 fallback -- unlike PMREMGenerator or the compute-shader
-  // planet builders, where the two backends genuinely differ. Detecting
-  // "real WebGPU" here would incorrectly re-enable this ShaderMaterial
-  // pipeline for WebGL2-fallback Safari too, risking the exact same
-  // "NodeBuilder: Material ShaderMaterial is not compatible" breakage
-  // on the devices this needs to be safest for.
-  if(!useBloom&&!useMotion || true){
-    const _rt0 = performance.now();
-    flightRenderer.setRenderTarget(null);
-    const _spec=window.DMSpec&&DMSpec.on; if(_spec) try{ DMSpec.pre(flightCamera); }catch(e){}
-    try{ if(galSky.ready) updateGalSky(); }catch(e){}
-    try{ if(window.DMStarBubble) { const n=performance.now(), d=_sbT?(n-_sbT)/1000:1/60; _sbT=n; if(window.DMStar) DMStar.frame(flightCamera,d); DMStarBubble.frame(flightCamera,flightScene,d); } }catch(e){ console.warn('[starbubble] '+(e&&e.stack||e)); }
-    try{ flightRenderer.render(flightScene,flightCamera); _shotGrab(flightRenderer); }
-    finally{ if(_spec) try{ DMSpec.post(flightCamera); }catch(e){} }
-    const _rtMs = performance.now()-_rt0;
-    if(!window._renderTimingSamples) window._renderTimingSamples=[];
-    window._renderTimingSamples.push(_rtMs);
-    if(window._renderTimingSamples.length>=30 && !window._renderTimingLogged){
-      window._renderTimingLogged=true;
-      const s=window._renderTimingSamples;
-      console.log('[RENDER TIMING] avg:',(s.reduce((a,b)=>a+b,0)/s.length).toFixed(1),'ms max:',Math.max(...s).toFixed(1),'ms min:',Math.min(...s).toFixed(1),'ms over',s.length,'samples');
-    }
-    return;
-  }
-  if(!_postInited)initPostFX();
-  const r=flightRenderer;
-  // 1. render scene to RT
-  r.setRenderTarget(_rtScene);r.render(flightScene,flightCamera);
-  if(useBloom){
-    // 2. bright pass → _rtA
-    _fsQuad.material=_brightMat;_brightMat.uniforms.tDiffuse.value=_rtScene.texture;
-    r.setRenderTarget(_rtA);r.render(_fsScene,_fsCam);
-    // 3. blur H → _rtB, blur V → _rtA
-    _fsQuad.material=_blurMat;_blurMat.uniforms.tDiffuse.value=_rtA.texture;_blurMat.uniforms.dir.value.set(1,0);
-    r.setRenderTarget(_rtB);r.render(_fsScene,_fsCam);
-    _blurMat.uniforms.tDiffuse.value=_rtB.texture;_blurMat.uniforms.dir.value.set(0,1);
-    r.setRenderTarget(_rtA);r.render(_fsScene,_fsCam);
-  }
-  // 4. composite → screen
-  _fsQuad.material=_compMat;
-  _compMat.uniforms.tScene.value=_rtScene.texture;
-  _compMat.uniforms.tBloom.value=useBloom?_rtA.texture:_rtScene.texture;
-  _compMat.uniforms.bloomStr.value=0.0; // HARD: no fullscreen bloom wash — space stays black vacuum
-  _compMat.uniforms.tPrev.value=_rtPrev.texture;
-  // motion blur amount scales with ship speed for a sense of velocity
-  let mb=0;
-  if(useMotion){const spd=STATE.flight?STATE.flight.speed:0;mb=Math.min(0.55,0.25+spd*0.04);}
-  _compMat.uniforms.motionAmt.value=mb;
-  r.setRenderTarget(null);r.render(_fsScene,_fsCam);
-  // 5. copy current composite into _rtPrev for next frame's motion blur
-  if(useMotion){
-    _fsQuad.material=_compMat; // re-render same into prev
-    r.setRenderTarget(_rtPrev);r.render(_fsScene,_fsCam);
+  // One plain render: the old bloom/motion-blur chain (raw ShaderMaterial +
+  // WebGLRenderTarget) cannot run under WebGPURenderer's node pipeline and
+  // was unreachable behind `|| true`; it has been removed.
+  const _rt0 = performance.now();
+  flightRenderer.setRenderTarget(null);
+  const _spec=window.DMSpec&&DMSpec.on; if(_spec) try{ DMSpec.pre(flightCamera); }catch(e){}
+  try{ if(galSky.ready) updateGalSky(); }catch(e){}
+  try{ if(window.DMStarBubble) { const n=performance.now(), d=_sbT?(n-_sbT)/1000:1/60; _sbT=n; if(window.DMStar) DMStar.frame(flightCamera,d); DMStarBubble.frame(flightCamera,flightScene,d); } }catch(e){ console.warn('[starbubble] '+(e&&e.stack||e)); }
+  try{ flightRenderer.render(flightScene,flightCamera); _shotGrab(flightRenderer); }
+  finally{ if(_spec) try{ DMSpec.post(flightCamera); }catch(e){} }
+  const _rtMs = performance.now()-_rt0;
+  if(!window._renderTimingSamples) window._renderTimingSamples=[];
+  window._renderTimingSamples.push(_rtMs);
+  if(window._renderTimingSamples.length>=30 && !window._renderTimingLogged){
+    window._renderTimingLogged=true;
+    const s=window._renderTimingSamples;
+    console.log('[RENDER TIMING] avg:',(s.reduce((a,b)=>a+b,0)/s.length).toFixed(1),'ms max:',Math.max(...s).toFixed(1),'ms min:',Math.min(...s).toFixed(1),'ms over',s.length,'samples');
   }
 }
 // Graphics change at any time (menu presets, Settings, a synced profile):
@@ -16051,7 +15962,6 @@ function applyGraphicsLive(){
     if(!r) return;
     try{ r.setPixelRatio(pr); r.setSize(w,h); r.shadowMap.enabled=!!GFX.shadows; r.shadowMap.type=THREE.PCFSoftShadowMap; }catch(e){}
   });
-  try{ resizePostFX(); }catch(e){}
   [typeof flightScene!=='undefined'?flightScene:null,typeof PW!=='undefined'?PW.scene:null].forEach(sc=>{ if(sc) _gfxApplyShadows(sc); });
   try{ applyRenderSettings(); }catch(e){ console.warn('render apply:',e); }
   // live water picks its particle count from the tier: rebuild it at the new one
