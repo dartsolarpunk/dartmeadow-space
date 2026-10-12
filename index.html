@@ -18550,7 +18550,9 @@ function _charPosePost(dt){
   // clips not loaded yet and not riding: arms relaxed down instead of the bind pose's raised hands
   if(!CHAR.actions.idle&&!CHAR.mounted) try{ _charPreAnimStand(); }catch(e){}
   // ride stance + balance sway first (before thumbs, palms, gaze and the hair step)
-  { const a=CHAR.actions&&CHAR.actions.skyboard; const w=(a&&a.isRunning())?a.getEffectiveWeight():0; if(w>0.001) try{ _boardStanceFrame(dt,Math.min(1,w)); }catch(e){ if(!CHAR._bsWarn){ CHAR._bsWarn=1; console.warn('[stance]',e); } } }
+  // (layer weight = blend weight squared: the clip already carries the still pose at w, so the sway layer
+  //  fades in/out with it and leaves no step when the stance action stops at the end of a crossfade)
+  { const a=CHAR.actions&&CHAR.actions.skyboard; const w=(a&&a.isRunning())?a.getEffectiveWeight():0; if(w>0.001) try{ _boardStanceFrame(dt,Math.min(1,w*w)); }catch(e){ if(!CHAR._bsWarn){ CHAR._bsWarn=1; console.warn('[stance]',e); } } }
   _charHandsPost(CHAR.skinnedMesh,bones,CHAR.handGrip);
   const want=(!CHAR.mounted&&DART_PALM.states.includes(CHAR.state))?1:0;
   CHAR._palmW=(CHAR._palmW||0)+(want-(CHAR._palmW||0))*Math.min(1,(dt||0.016)*6);
@@ -18915,7 +18917,7 @@ const _ease=(t)=>t*t*(3-2*t);
 // back. opts.style picks the transition: only 'step' exists today; 'run' (run
 // and jump onto the board) and 'jumpOff' are reserved hooks for later gameplay
 // and fall back to 'step' until they are filled in here.
-const CHAR_BOARD_TRANSITIONS={ step:{clip:'jump', dur:0.62}, run:null, jumpOn:null, jumpOff:null };
+const CHAR_BOARD_TRANSITIONS={ step:{clip:'jump', dur:0.62, fade:0.25}, run:null, jumpOn:null, jumpOff:null };
 function _boardTransition(opts){ return (opts&&opts.style&&CHAR_BOARD_TRANSITIONS[opts.style])||CHAR_BOARD_TRANSITIONS.step; }
 // opts.endSize: her world size once riding (eased during the step-up) — default: keep her size.
 function boardMountSequence(targetBoard, hostScene, onComplete, opts){
@@ -18969,7 +18971,7 @@ function boardMountSequence(targetBoard, hostScene, onComplete, opts){
     if(!stepping){
       stepping=true;
       const a=CHAR.actions[TR.clip]; const sp=a?_clamp(a.getClip().duration/(stepT*1.15),0.6,2.4):1;
-      setCharState(TR.clip,{fade:0.15,speed:sp,force:true});
+      setCharState(TR.clip,{fade:TR.fade,speed:sp,force:true});
     }
     const k=Math.min(1,(t-walkT)/stepT), e=_ease(k);
     const from=walkT>0?E:P.pos;
@@ -19013,7 +19015,7 @@ function boardDismountSequence(hostScene, groundY, onComplete, opts){
   const Q0=new THREE.Quaternion().setFromAxisAngle(_UP,_mirroredYawFor(P.facing));
   const Q1=new THREE.Quaternion().setFromAxisAngle(_UP,_mirroredYawFor(endFacing));
   const dur=0.7, a=CHAR.actions.jump;
-  setCharState('jump',{fade:0.12,speed:a?_clamp(a.getClip().duration/(dur*1.15),0.6,2.4):1,force:true});
+  setCharState('jump',{fade:0.25,speed:a?_clamp(a.getClip().duration/(dur*1.15),0.6,2.4):1,force:true});   // (0.25 s: the stance eases into the step, no snap)
   const t0=performance.now(), W=new THREE.Vector3();
   (function step(){
     const k=Math.min(1,(performance.now()-t0)/(dur*1000)), e=_ease(k);
@@ -19573,7 +19575,7 @@ function _pwCharArrive(){
     CHAR._transitioning=true; CHAR._footIKWeight=0; CHAR._ikErrLeft=0; CHAR._ikErrRight=0; CHAR._ikAnkleLeft=0; CHAR._ikAnkleRight=0;
     const startPos=new THREE.Vector3(surfBoard?sx+rx*side*0.35:sx,rootY+0.55,surfBoard?sz+rz*side*0.35:sz), endPos=new THREE.Vector3(sx,rootY,sz);
     CHAR.root.position.copy(startPos); CHAR.root.rotation.set(0,terrainYaw,0);
-    setCharState('jump',{fade:0.1,speed:0.85,force:true});
+    setCharState('jump',{fade:0.25,speed:0.85,force:true});
     const t0=performance.now(), dur=320;
     (function settle(){
       if(PW.gen!==myGen||!CHAR.root){ CHAR._transitioning=false; return; }
