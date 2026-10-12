@@ -5755,7 +5755,7 @@ function _startFlightLoop(){
     // exists; remount then no-ops and she stays unparented/invisible.
     try{
       // (not while she's walking the Bird Temple deck: she's meant to be off the board there)
-      if(boardFlight && CHAR.loaded && CHAR.root && !_charOnTempleDeck() && (!CHAR.mounted || CHAR.root.parent!==boardFlight || !CHAR.root.visible)){
+      if(boardFlight && CHAR.loaded && CHAR.root && !_charOnTempleDeck() && !CHAR._transitioning && (!CHAR.mounted || CHAR.root.parent!==boardFlight || !CHAR.root.visible)){
         if(_flightFrameCounter % 30 === 0){
           try{ remountSkyboard(boardFlight); _forceCharVisible(); }catch(er){}
         }
@@ -7904,6 +7904,29 @@ function _shipCharOn(feetWorld){
     return true;
   }catch(e){console.warn('[ShipWalk] dismount:',e);return false;}
 }
+// Landing on the deck: she steps off the board like on a planet — ride stance
+// → step-off → standing, easing from her riding size to her deck size — never
+// a snap. (Not loaded / not riding: placed directly, as before.)
+function _shipCharStepOff(feet){
+  SHIP_WALK.charOn=false;
+  if(!(CHAR&&CHAR.loaded&&CHAR.root&&CHAR.mounted&&CHAR.actions&&CHAR.actions.idle&&typeof boardDismountSequence==='function')){ SHIP_WALK.charOn=_shipCharOn(feet); return; }
+  const s=SHIP_CHAR_H/Math.max(0.001,CHAR.rawHeight||1);
+  SHIP_WALK.charPending=true;
+  boardDismountSequence(flightScene, feet.y+(CHAR.feetOffset||0)*s, ()=>{
+    SHIP_WALK.charPending=false;
+    if(!SHIP_WALK.active) return;   // lifted off again mid-step
+    CHAR._shipScale=s; CHAR.scene=flightScene; CHAR.stanceMode='stand'; CHAR._footIKWeight=0;
+    SHIP_WALK.faceYaw=CHAR.root.rotation.y;
+    SHIP_WALK.charOn=true;
+    try{ _forceCharVisible(); }catch(e){ CHAR.root.visible=true; }
+  },{endSize:s, endYaw:SHIP_WALK.faceYaw});
+}
+// Lifting off: the board settles at her feet, she steps up onto it (easing to
+// her riding size), then it climbs away from the deck.
+function _shipLiftOff(sp,h){
+  let done=0; const t0=performance.now();
+  (function up(){ const k=Math.min(1,(performance.now()-t0)/800), d=h*k*k*(3-2*k)-done; sp.pos.y+=d; done+=d; if(k<1) requestAnimationFrame(up); })();
+}
 function enterShipWalk(){
   const bt=BIRD_TEMPLE,sp=STATE.flight;
   if(!bt.group||!sp)return;
@@ -7921,8 +7944,8 @@ function enterShipWalk(){
   SHIP_WALK.pitch=0.25;SHIP_WALK.velY=0;SHIP_WALK.grounded=true;SHIP_WALK.climb=null;
   SHIP_WALK.active=true;
   _boardCallReset(); document.body.classList.add('ship-walk');
-  SHIP_WALK.charOn=_shipCharOn(feet);
   SHIP_WALK.faceYaw=camYaw+Math.PI;                  // her facing, world (model faces +Z)
+  _shipCharStepOff(feet);
   if(boardFlight)boardFlight.visible=true;
   $('ship-liftoff-btn').style.display='block';
   $('ship-jump-btn').style.display='block';
@@ -7948,13 +7971,19 @@ document.addEventListener('DOMContentLoaded',_wireShipJumpButton);
 function exitShipWalk(){
   const bt=BIRD_TEMPLE,sp=STATE.flight;
   const world=bt.group.localToWorld(SHIP_WALK.localPos.clone());
-  sp.pos.copy(world);sp.pos.y+=1.5; // lift off a bit above the deck
+  const stepOn=!!(SHIP_WALK.charOn&&boardFlight&&CHAR.loaded&&CHAR.root&&!CHAR.mounted&&!CHAR._transitioning&&CHAR.actions&&CHAR.actions.skyboard);
+  sp.pos.copy(world);sp.pos.y+=stepOn?0.04:1.5; // (stepping on: the board settles at her feet first, then climbs)
   sp.vel.set(0,0,0);
-  SHIP_WALK.active=false;SHIP_WALK.climb=null;
+  SHIP_WALK.active=false;SHIP_WALK.climb=null;SHIP_WALK.charPending=false;
   _boardCallReset(); document.body.classList.remove('ship-walk');
   if(boardFlight){boardFlight.visible=true;try{boardFlight.position.copy(sp.pos);}catch(e){}}
   // Back on the board for flight.
-  if(SHIP_WALK.charOn&&boardFlight){try{remountSkyboard(boardFlight);}catch(e){console.warn('[ShipWalk] remount:',e);}}
+  if(stepOn){
+    try{
+      const ride=CHAR.scaleForBoard*Math.abs(boardFlight.getWorldScale(new THREE.Vector3()).x);
+      boardMountSequence(boardFlight, flightScene, ()=>_shipLiftOff(sp,1.5), {endSize:ride});
+    }catch(e){ console.warn('[ShipWalk] step-on:',e); try{remountSkyboard(boardFlight);}catch(_){} }
+  } else if(SHIP_WALK.charOn&&boardFlight){try{remountSkyboard(boardFlight);}catch(e){console.warn('[ShipWalk] remount:',e);}}
   SHIP_WALK.charOn=false;
   $('ship-liftoff-btn').style.display='none';
   $('ship-jump-btn').style.display='none';
@@ -8046,7 +8075,7 @@ function updateShipWalk(dt){
   const F=bt.group.localToWorld(SHIP_WALK.localPos.clone());
   SHIP_WALK._F=F.clone();   // where the deck had her this step (see _shipWalkCarry)
   // She loaded after landing, or something else took her: stand her on the deck.
-  if(CHAR.loaded&&CHAR.root&&(!SHIP_WALK.charOn||CHAR.mounted||CHAR.root.parent!==flightScene)){
+  if(CHAR.loaded&&CHAR.root&&!SHIP_WALK.charPending&&!CHAR._transitioning&&(!SHIP_WALK.charOn||CHAR.mounted||CHAR.root.parent!==flightScene)){
     SHIP_WALK.charOn=_shipCharOn(F);
   }
   // ── Her: on her feet, facing where she walks, animated.
@@ -17514,13 +17543,15 @@ async function loadCharacterAssets(){
   // Mesh-first: mark loaded + remount BEFORE anim GLB (~8MB).
   // Android smoke: pink board only when anim hang left CHAR.loaded false / visible=false.
   try{
-    const _rawBox = new THREE.Box3().setFromObject(CHAR.root);
+    const _rawBox = _charMeasureRaw();
     const _rawHeight = _rawBox.max.y - _rawBox.min.y;
     CHAR.rawHeight = _rawHeight>0.001 ? _rawHeight : 1;
     const _clamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
     CHAR.scaleForBoard = _clamp(CHAR_BOARD_TARGET_UNITS / CHAR.rawHeight, 0.02, 5);
     CHAR.scaleForTerrain = _clamp(CHAR_TERRAIN_HEIGHT / CHAR.rawHeight, 0.02, 5);
     CHAR.feetOffset = -_rawBox.min.y;
+    // bind pose at game scale: if she is ever shown before a mount/landing sizes her, it is her riding size
+    if(!CHAR.root.parent) CHAR.root.scale.setScalar(CHAR.scaleForBoard);
     CHAR.mixer = CHAR.mixer || new THREE.AnimationMixer(CHAR.root); _charWrapMixer();
     // NEVER leave mesh invisible here — remount may fail if boardFlight
     // is not ready yet (early prefetch); sticky visible=false = pink empty board.
@@ -17581,8 +17612,8 @@ async function loadCharacterAssets(){
     action.enabled = true;
     CHAR.actions[name] = action;
   });
-  // Loop policy: LoopRepeat for locomotion cycles; LoopOnce for one-shots;
-  // skyboard uses LoopPingPong on the cropped window.
+  // Loop policy: LoopRepeat for locomotion cycles; LoopOnce for one-shots
+  // (clamped on their last frame, see _charXfInit); skyboard is a held one-key pose.
   ['idle','walk','run','crouch','prone','swim'].forEach(k=>{
     if(CHAR.actions[k]) CHAR.actions[k].setLoop(THREE.LoopRepeat, Infinity);
   });
@@ -17591,6 +17622,10 @@ async function loadCharacterAssets(){
   });
   if(CHAR.actions.skyboard) CHAR.actions.skyboard.setLoop(THREE.LoopRepeat, Infinity);
   else console.warn('Skyboard stance clip missing — applySkyboardStance() holds the pose procedurally.');
+  // pin the mixer's fallback pose to a natural stance before anything plays (POSE CONTINUITY)
+  try{ _charXfInit(); }catch(e){ console.warn('[xf] init',e); }
+  // whatever she is doing right now (e.g. riding since the mesh-first mount) continues from the clips
+  try{ const st=CHAR.mounted?'skyboard':(CHAR.state||'idle'); CHAR.state=null; setCharState(CHAR.actions[st]?st:'idle',{fade:0.3,force:true}); }catch(e){}
 
   const _loadedKeys = Object.keys(CHAR.actions).filter(k=>!!CHAR.actions[k]);
   console.log('Character actions loaded:', _loadedKeys.join(', ')||'(none)');
@@ -17618,7 +17653,7 @@ async function loadCharacterAssets(){
   //    height is conventionally ~92% of standing height, so a 6ft person
   //    standing there should measure roughly 3.0/0.92 ≈ 3.26 units tall.
   try{
-    const _rawBox = new THREE.Box3().setFromObject(CHAR.root);
+    const _rawBox = _charMeasureRaw();   // own units — she may already be riding (mesh-first mount)
     const _rawHeight = _rawBox.max.y - _rawBox.min.y;
     if(_rawHeight>0.001){
       CHAR.rawHeight = _rawHeight;
@@ -18241,9 +18276,17 @@ function _standHeadLevel1(b){
   _hfYawBone(b.Head, -pe*(b.neck?1-DART_HEAD.neckShare:1), ax, 0, az);
 }
 // After every clip update: thumbs (always), and on the ground the palms and the gaze.
+function _charPreAnimStand(){
+  if(!_bsReady()) return;
+  const S=_bs, du=S.v[5], dl=S.v[6];
+  _bsLimb(S.limb.armL,du.set(0.12,-0.99,0.02).normalize(),dl.set(0.08,-0.97,0.2).normalize(),1);
+  _bsLimb(S.limb.armR,du.set(-0.12,-0.99,0.02).normalize(),dl.set(-0.08,-0.97,0.2).normalize(),1);
+}
 function _charPosePost(dt){
   if(!CHAR.loaded||!CHAR.root||!CHAR.skinnedMesh) return;
   const bones=CHAR.bones;
+  // clips not loaded yet and not riding: arms relaxed down instead of the bind pose's raised hands
+  if(!CHAR.actions.idle&&!CHAR.mounted) try{ _charPreAnimStand(); }catch(e){}
   // ride stance + balance sway first (before thumbs, palms, gaze and the hair step)
   { const a=CHAR.actions&&CHAR.actions.skyboard; const w=(a&&a.isRunning())?a.getEffectiveWeight():0; if(w>0.001) try{ _boardStanceFrame(dt,Math.min(1,w)); }catch(e){ if(!CHAR._bsWarn){ CHAR._bsWarn=1; console.warn('[stance]',e); } } }
   _charHandsPost(CHAR.skinnedMesh,bones,CHAR.handGrip);
@@ -18252,10 +18295,76 @@ function _charPosePost(dt){
   try{ CHAR.root.updateMatrixWorld(true); _palmTwist(bones,CHAR._palmW); }catch(e){}
   if(!CHAR.mounted&&DART_PALM.states.includes(CHAR.state)) try{ _standHeadLevel(); }catch(e){}   // standing / walking only (not prone, swim, climb, rope, crouch)
 }
+/* ── POSE CONTINUITY — never through the bind pose ─────────────────
+   three's mixer blends each bone toward its saved "original" value whenever
+   the active weights sum to < 1, and writes that original back when the last
+   action using it stops. The original was her bind pose, so every
+   reset().fadeIn() from nothing, stopAllAction(), forced same-state restart or
+   one-shot that ended unclamped flashed the rest pose. Now:
+   • a permanent zero-weight anchor action pins every binding, captured while
+     she holds the idle pose, so the mixer's fallback IS a natural standing
+     pose and is never written back to the bones;
+   • setCharState is a sequenced crossfade: whatever is showing fades out from
+     its current weight and the incoming action takes exactly the remainder, so
+     the weights always sum to 1 (interrupting a fade just starts a new one
+     from the current mix);
+   • a live looping action is never reset (it just keeps running); restarting
+     a one-shot that is still on screen crossfades into its twin action;
+   • one-shots clamp on their last frame instead of switching off;
+   • a state with no clip holds the current pose instead of fading to nothing. */
+const CHAR_XF={cur:null,w0:0,out:new Map(),p:1,dur:0.25};
+function _charXfAll(){ const s=new Set(); Object.values(CHAR.actions||{}).forEach(a=>{ if(a) s.add(a); }); Object.values(CHAR._xfTwin||{}).forEach(a=>{ if(a) s.add(a); }); return s; }
+function _charXfLive(a){ return !!(a&&a.isScheduled()&&a.weight>1e-4); }
+function _charXfTwin(name){
+  CHAR._xfTwin=CHAR._xfTwin||{};
+  if(!CHAR._xfTwin[name]){ const a=CHAR.actions[name]; if(!a) return null;
+    const c=a.getClip().clone(); c.name=a.getClip().name+'#twin';
+    const t=CHAR.mixer.clipAction(c); t.setLoop(a.loop,a.repetitions); t.clampWhenFinished=a.clampWhenFinished; t.weight=0; CHAR._xfTwin[name]=t; }
+  return CHAR._xfTwin[name];
+}
+// Called once when the clips are ready: clamp one-shots, then pin every binding
+// with the anchor while the bones hold her current pose (ride stance if mounted, else idle).
+function _charXfInit(){
+  const A=CHAR.actions, m=CHAR.mixer; if(!m||!A||!A.idle||CHAR._xfAnchor) return;
+  ['jump','climbLoop','rope','cliff'].forEach(k=>{ if(A[k]) A[k].clampWhenFinished=true; });
+  const clip=((CHAR.mounted&&A.skyboard)?A.skyboard:A.idle).getClip();   // the pose she is in right now
+  clip.tracks.forEach(tr=>{ const dot=tr.name.lastIndexOf('.'), bone=CHAR.bones[tr.name.slice(0,dot)], prop=tr.name.slice(dot+1); if(!bone) return;
+    const v=tr.createInterpolant().evaluate(0);
+    if(prop==='quaternion') bone.quaternion.fromArray(v); else if(prop==='position') bone.position.fromArray(v); else if(prop==='scale') bone.scale.fromArray(v); });
+  const c=clip.clone(); c.name='pose_anchor';
+  const anc=m.clipAction(c); anc.setLoop(THREE.LoopRepeat,Infinity); anc.weight=0; anc.play();   // saves every binding's original = this pose
+  CHAR._xfAnchor=anc;
+}
+// Runs before every mixer update (see _charWrapMixer).
+function _charXfStep(dt){
+  const X=CHAR_XF; if(!X.cur) return;
+  if(X.p<1) X.p=Math.min(1,X.p+Math.max(0,dt||0)/Math.max(1e-3,X.dur));
+  const p=X.p;
+  X.out.forEach((w0,a)=>{ a.weight=w0*(1-p); });
+  X.cur.weight=X.w0+(1-X.w0)*p;
+  if(p>=1&&X.out.size){ X.out.forEach((w0,a)=>{ a.weight=0; if(a!==CHAR._xfAnchor) a.stop(); }); X.out.clear(); }
+}
+// Her bind-pose bounding box in her OWN units: root transform and parents
+// factored out, so the calibration is identical whether or not she is already
+// riding a scaled board (the post-anims re-measure used to run after the
+// mesh-first mount and read her world size — 0.33 instead of 1.72 — which
+// inflated scaleForBoard/scaleForTerrain to the 5x clamp: a 1.74x size pop on
+// the board, 2.6x on the ground).
+function _charMeasureRaw(){ return _localBox(CHAR.root); }
+// Bounding box of an object in its own frame (its transform and parents factored out).
+function _localBox(r){
+  const par=r.parent, p=r.position.clone(), q=r.quaternion.clone(), sc=r.scale.clone();
+  if(par) par.remove(r);
+  r.position.set(0,0,0); r.quaternion.identity(); r.scale.set(1,1,1); r.updateMatrixWorld(true);
+  let box;
+  try{ box=new THREE.Box3().setFromObject(r); }
+  finally{ r.position.copy(p); r.quaternion.copy(q); r.scale.copy(sc); if(par) par.add(r); r.updateMatrixWorld(true); }
+  return box;
+}
 function _charWrapMixer(){
   const m=CHAR.mixer; if(!m||m._dmPost) return;
   const up=m.update.bind(m);
-  m.update=function(dt){ const r=up(dt); try{ _charPosePost(dt); }catch(e){} return r; };
+  m.update=function(dt){ try{ _charXfStep(dt); }catch(e){} const r=up(dt); try{ _charPosePost(dt); }catch(e){} return r; };
   m._dmPost=true;
 }
 
@@ -18270,13 +18379,21 @@ function _charWrapMixer(){
 function setCharState(next, opts){
   opts = opts||{};
   if(CHAR.state===next && !opts.force) return;
-  const prevAction = CHAR.actions[CHAR.state];
-  const nextAction = CHAR.actions[next];
-  if(prevAction) prevAction.fadeOut(opts.fade!==undefined?opts.fade:0.25);
-  if(nextAction){
-    nextAction.reset().fadeIn(opts.fade!==undefined?opts.fade:0.25).play();
-    nextAction.timeScale = (opts.reverse ? -1 : 1) * (opts.speed||1);
+  const fade=opts.fade!==undefined?opts.fade:0.25;
+  let a=CHAR.actions[next];
+  if(!a||!CHAR.mixer){ CHAR.state=next; return; }   // no clip for it: hold the current pose (never fade to nothing)
+  if(!CHAR._xfAnchor) try{ _charXfInit(); }catch(e){}
+  if(a.loop===THREE.LoopOnce&&_charXfLive(a)){   // replaying a one-shot that's still showing: its twin starts fresh
+    const t=_charXfTwin(next); if(t&&!_charXfLive(t)) a=t; else if(t&&t.weight<a.weight) a=t;
   }
+  if(!_charXfLive(a)){ a.reset(); a.weight=0; a.play(); }
+  else if(a.loop===THREE.LoopOnce){ a.paused=false; }
+  a.stopFading(); a.stopWarping(); a.enabled=true;
+  a.timeScale = (opts.reverse ? -1 : 1) * (opts.speed||1);
+  const X=CHAR_XF; X.out=new Map();
+  _charXfAll().forEach(x=>{ if(x!==a&&x!==CHAR._xfAnchor&&_charXfLive(x)){ x.stopFading(); x.stopWarping(); X.out.set(x,x.weight); } });
+  X.cur=a; X.w0=a.weight; X.p=fade>0?0:1; X.dur=fade;
+  _charXfStep(0);
   CHAR.state = next;
 }
 // Console/test helpers only — NOT wired to HUD. Stance feeds the optional
@@ -18481,18 +18598,16 @@ function _deriveBoardScale(boardObj){
   let lenUnits = BOARD_FALLBACK_GAME_LEN;
   try{
     if(boardObj){
-      const size = new THREE.Box3().setFromObject(boardObj).getSize(new THREE.Vector3());
+      // measured in the board's own frame: a world AABB grows/shrinks as the
+      // board banks and turns, which resized her on every remount/heal
+      const size = _localBox(boardObj).getSize(new THREE.Vector3());
       let longest = Math.max(size.x, size.y, size.z);
       // Worlds FLIGHT_BOARD_WORLD_SCALE shrinks the flight parent in WORLD
       // space. setFromObject sees that shrink — if we bake it into
       // CHAR.scaleForBoard AND parent her under the scaled board, she
       // double-shrinks (invisible speck / wrong stance). Measure bake
       // length in local units so parent scale alone owns the Sol speck.
-      try{
-        const ws=boardObj.getWorldScale(new THREE.Vector3());
-        const sMax=Math.max(Math.abs(ws.x),Math.abs(ws.y),Math.abs(ws.z));
-        if(isFinite(sMax)&&sMax>1e-8) longest/=sMax;
-      }catch(e){}
+      // (already in local units — no world-scale division needed)
       if(isFinite(longest) && longest > 0.0001) lenUnits = longest;
     }
   }catch(e){ /* fall back to the measured default above */ }
@@ -18532,18 +18647,26 @@ const _ease=(t)=>t*t*(3-2*t);
 // rises — ending exactly in the riding pose, so mountSkyboard() takes over
 // without a snap. She keeps her size throughout. The board holds still
 // while she does it (updateSurface waits on CHAR._transitioning).
-function boardMountSequence(targetBoard, hostScene, onComplete){
+// Board transitions (POSE CONTINUITY): every mount/dismount is a sequenced
+// crossfade — terrain stance → step-up ('jump' clip, ~0.6 s) → ride stance, and
+// back. opts.style picks the transition: only 'step' exists today; 'run' (run
+// and jump onto the board) and 'jumpOff' are reserved hooks for later gameplay
+// and fall back to 'step' until they are filled in here.
+const CHAR_BOARD_TRANSITIONS={ step:{clip:'jump', dur:0.62}, run:null, jumpOn:null, jumpOff:null };
+function _boardTransition(opts){ return (opts&&opts.style&&CHAR_BOARD_TRANSITIONS[opts.style])||CHAR_BOARD_TRANSITIONS.step; }
+// opts.endSize: her world size once riding (eased during the step-up) — default: keep her size.
+function boardMountSequence(targetBoard, hostScene, onComplete, opts){
   if(!CHAR.loaded || !CHAR.root || !targetBoard || !hostScene){ onComplete&&onComplete(); return; }
   // a board parked far off is called over first
   if(typeof BOARD_CALL!=='undefined'&&BOARD_CALL.parked&&typeof surfBoard!=='undefined'&&targetBoard===surfBoard&&typeof summonSkyboard==='function'){
     try{ summonSkyboard(); }catch(e){}
     const tw=performance.now();
-    (function wait(){ if((BOARD_CALL.parked||BOARD_CALL.summon)&&performance.now()-tw<6000){ requestAnimationFrame(wait); return; } boardMountSequence(targetBoard,hostScene,onComplete); })();
+    (function wait(){ if((BOARD_CALL.parked||BOARD_CALL.summon)&&performance.now()-tw<6000){ requestAnimationFrame(wait); return; } boardMountSequence(targetBoard,hostScene,onComplete,opts); })();
     return;
   }
   _syncBoardScale(targetBoard);                       // (for flight; measured before she's on it)
   CHAR._transitioning = true;
-  const P=_charWorldPose(), size=P.size;
+  const P=_charWorldPose(), size=P.size, endSize=(opts&&opts.endSize>0)?opts.endSize:size, TR=_boardTransition(opts);
   // where she'll stand on the deck, and which way she'll face (the riding pose, in the world)
   targetBoard.updateMatrixWorld(true);
   const bws=new THREE.Vector3(); targetBoard.getWorldScale(bws); const bScale=Math.abs(bws.x)||1;
@@ -18568,7 +18691,7 @@ function boardMountSequence(targetBoard, hostScene, onComplete){
   const walkDir=new THREE.Vector3(E.x-P.pos.x,0,E.z-P.pos.z), walkLen=walkDir.length();
   const Qw=walkLen>0.05?new THREE.Quaternion().setFromAxisAngle(_UP,_mirroredYawFor(walkDir.normalize())):Q0.clone();
   const walkT=walkLen>0.05?_clamp(walkLen/(size*0.75),0.25,1.6):0;   // a comfortable walking pace for her height
-  const stepT=0.62;
+  const stepT=TR.dur;
   if(walkT>0) setCharState('walk',{fade:0.15,force:true});
   const t0=performance.now(); let stepping=false;
   const W=new THREE.Vector3();
@@ -18582,17 +18705,18 @@ function boardMountSequence(targetBoard, hostScene, onComplete){
     }
     if(!stepping){
       stepping=true;
-      const a=CHAR.actions.jump; const sp=a?_clamp(a.getClip().duration/(stepT*1.15),0.6,2.4):1;
-      setCharState('jump',{fade:0.12,speed:sp,force:true});
+      const a=CHAR.actions[TR.clip]; const sp=a?_clamp(a.getClip().duration/(stepT*1.15),0.6,2.4):1;
+      setCharState(TR.clip,{fade:0.15,speed:sp,force:true});
     }
     const k=Math.min(1,(t-walkT)/stepT), e=_ease(k);
     const from=walkT>0?E:P.pos;
     W.lerpVectors(from,P1,e); W.y+=Math.sin(Math.PI*k)*size*0.12;   // a little lift as she steps up
     CHAR.root.position.copy(W);
+    if(endSize!==size){ const sz=size+(endSize-size)*e; CHAR.root.scale.set(sz,sz,-sz); }
     CHAR.root.quaternion.slerpQuaternions(walkT>0?Qw:Q0,Q1,e);
     if(k<1){ requestAnimationFrame(step); return; }
     CHAR._transitioning=false;
-    mountSkyboard(targetBoard,{worldSize:size});        // the same pose, now riding the board for real
+    mountSkyboard(targetBoard,{worldSize:endSize});     // the same pose, now riding the board for real
     onComplete&&onComplete();
   })();
 }
@@ -18757,7 +18881,7 @@ function remountSkyboard(boardObj){
   if(!(CHAR.scaleForBoard>0)){
     try{
       if(!(CHAR.rawHeight>0.001) && CHAR.root){
-        const _b=new THREE.Box3().setFromObject(CHAR.root);
+        const _b=_charMeasureRaw();
         const _h=_b.max.y-_b.min.y;
         if(_h>0.001){ CHAR.rawHeight=_h; CHAR.feetOffset=-_b.min.y; }
       }
@@ -18786,6 +18910,7 @@ async function ensureAutumnOnBoard(reason){
 
   for(let attempt=1; attempt<=8; attempt++){
     if(_charOnTempleDeck()) return true;   // she's standing on the Bird Temple deck, not riding
+    if(CHAR._transitioning&&CHAR.loaded&&CHAR.root){ if(attempt<8) await _sleep(300); continue; }   // mid step-on/step-off: let it finish
     try{
       if(CHAR._loadPromise){
         try{ await CHAR._loadPromise; }catch(e){ console.warn('[CHAR] ensure await _loadPromise failed ('+reason+'):',e); }
@@ -18829,13 +18954,15 @@ function mountSkyboard(boardObj,opts){
   // Always strip first — never add onto a stale parent chain.
   if(CHAR.root.parent){ try{ CHAR.root.parent.remove(CHAR.root); }catch(e){} }
   CHAR.mounted = false;
-  setCharState('idle',{fade:0.2}); // brief settle before the procedural pose takes over
+  // straight into the ride stance — a crossfade from whatever she is doing (the
+  // step-up when boarding); a remount/heal while already riding changes nothing
+  if(CHAR.actions&&CHAR.actions.skyboard) setCharState('skyboard',{fade:BOARD_STANCE.fade});
   const worldPos = new THREE.Vector3(); CHAR.root.getWorldPosition(worldPos);
   // Ensure scale before add — missing scaleForBoard leaves her tiny/invisible-ish
   if(!(CHAR.scaleForBoard>0)){
     try{
       if(!(CHAR.rawHeight>0.001)){
-        const _b=new THREE.Box3().setFromObject(CHAR.root);
+        const _b=_charMeasureRaw();
         const _h=_b.max.y-_b.min.y;
         if(_h>0.001){ CHAR.rawHeight=_h; CHAR.feetOffset=-_b.min.y; }
       }
@@ -19169,7 +19296,7 @@ function _pwCharArrive(){
     const terrainYaw=(yaw-Math.PI/2)+CHAR_MOUNT_YAW_OFFSET+CHAR_TERRAIN_YAW_EXTRA;
     // the board starts a little high beside her (her right) and settles
     if(surfBoard){ surfBoard.visible=true; surfBoard.position.set(sx+rx*side,gnd+SURF_BOARD_WAIST+0.6,sz+rz*side); surfBoard.rotation.order='YXZ'; surfBoard.rotation.y=yaw-Math.PI/2; }
-    try{ if(CHAR.mixer) CHAR.mixer.stopAllAction(); }catch(e){}
+    // (no stopAllAction: that wrote her bind pose back — the jump below crossfades from whatever she was doing)
     CHAR._transitioning=true; CHAR._footIKWeight=0; CHAR._ikErrLeft=0; CHAR._ikErrRight=0; CHAR._ikAnkleLeft=0; CHAR._ikAnkleRight=0;
     const startPos=new THREE.Vector3(surfBoard?sx+rx*side*0.35:sx,rootY+0.55,surfBoard?sz+rz*side*0.35:sz), endPos=new THREE.Vector3(sx,rootY,sz);
     CHAR.root.position.copy(startPos); CHAR.root.rotation.set(0,terrainYaw,0);
