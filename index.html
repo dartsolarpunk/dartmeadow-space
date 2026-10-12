@@ -18981,8 +18981,18 @@ function dismountSkyboard(targetScene, worldPos){
 // stepped off the board — the world stays, her feet take over.
 // Otherwise (from space, the landing globe, a Journal waypoint) the world is
 // built round opts.spawn and fades in.
+let _enterSurfaceWaiting=false;
 async function enterSurface(body,site,opts){
-  if(surfaceActive||PW.opening) return;
+  if(surfaceActive) return;
+  if(PW.opening){
+    // LAND tapped while the world round her is still opening (the globe is up
+    // already): wait for it rather than drop the tap
+    if(_enterSurfaceWaiting) return;
+    _enterSurfaceWaiting=true;
+    try{ for(let i=0;i<300&&PW.opening;i++) await new Promise(r=>setTimeout(r,100)); }
+    finally{ _enterSurfaceWaiting=false; }
+    if(PW.opening||surfaceActive) return;
+  }
   opts=opts||{};
   try{ _clearLandPrompt(); }catch(e){}
   if(opts.inPlace&&PW.active&&atmoActive&&PW.body===body){ _pwBeginWalk(opts); return; }
