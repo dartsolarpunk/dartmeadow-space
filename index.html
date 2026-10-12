@@ -20714,8 +20714,18 @@ if(_ws!=='lush') h=DMWorldStyle.shape(_ws,x,z,h,seed,_fbm);
 // solid scene's depth acts as the mask between land, water and the hazy air
 // (the fog still layers over all of it), so they blend instead of fighting.
 // Node shader: WebGPU, and the WebGL2 fallback through the same renderer.
+// Reading the scene's depth in a shader (viewportDepthTexture) binds the
+// framebuffer's depth. With MSAA on real WebGPU (antialias: desktop, iPad in
+// desktop mode) that depth is multisampled and three r185 binds it as a plain
+// depth texture: WebGPU rejects the bind group and drops the WHOLE pass — the
+// planet world's ground, the board and her vanish near any world with air
+// (its atmosphere shell reads depth) as soon as the world opens in space.
+function _viewportDepthOK(){
+  try{ return !(flightRenderer&&typeof _isRealWebGPU==='function'&&_isRealWebGPU(flightRenderer)&&(flightRenderer.samples|0)>1); }catch(e){ return true; }
+}
 function _shoreWaterMaterial(liqColor,opacity,rough){
   const W=window;
+  if(!_viewportDepthOK()) return null;   // multisampled WebGPU: the plain water (see _viewportDepthOK)
   if(!THREE.MeshStandardNodeMaterial||typeof W.viewportDepthTexture!=='function'||typeof W.logarithmicDepthToViewZ!=='function') return null;
   const {float,vec3,color,mix,smoothstep,clamp,positionView,cameraNear,cameraFar,viewportDepthTexture,mx_noise_float,time}=W;
   const m=new THREE.MeshStandardNodeMaterial({transparent:true,depthWrite:false});
@@ -20970,9 +20980,10 @@ function _pwAtmoShell(pal,sky){
     const t0=max(S.b.negate().sub(sh),0.0), t1=S.b.negate().add(sh);
     // the ground (the sea-level sphere) and whatever the scene drew in front
     const G=sphere(ro,rd,C,R), tg=W.select(G.h.greaterThan(0.0).and(G.b.lessThan(0.0)),G.b.negate().sub(sqrt(max(G.h,0.0))),float(1e9));
-    const vz=W.logarithmicDepthToViewZ(viewportDepthTexture(screenUV).r,cameraNear,cameraFar);
-    const vd=cameraViewMatrix.mul(vec4(rd,0.0)).xyz;
-    const ts=W.select(vz.negate().lessThan(cameraFar.mul(0.98)),vz.div(min(vd.z,-1e-4)),float(1e9));
+    // (no scene-depth read on multisampled WebGPU: see _viewportDepthOK — the shell then stops at the ground sphere only)
+    const ts=_viewportDepthOK()?(()=>{ const vz=W.logarithmicDepthToViewZ(viewportDepthTexture(screenUV).r,cameraNear,cameraFar);
+      const vd=cameraViewMatrix.mul(vec4(rd,0.0)).xyz;
+      return W.select(vz.negate().lessThan(cameraFar.mul(0.98)),vz.div(min(vd.z,-1e-4)),float(1e9)); })():float(1e9);
     const t2=min(min(t1,tg),ts), len=max(t2.sub(t0),0.0), dt=len.div(N);
     const tau=float(0).toVar(), acc=vec3(0).toVar();
     Loop(N,({i})=>{
