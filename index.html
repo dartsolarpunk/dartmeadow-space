@@ -2389,6 +2389,10 @@ function resumeJourney(data){
   let travelled=false, t0=Date.now();
   (function wait(){
     if(Date.now()-t0>150000){ _resumeHold(false); return; }
+    try{ _resumeWait(); }catch(e){ console.warn('[resume]',e); _resumeHold(false); }
+  })();
+  function _resumeWait(){
+    if(PW._resumeHold) _resumeHold(true);   // still on the way (slow cross-system travel): keep the ~10 s safety timer fresh
     const ready=typeof flightInited!=='undefined'&&flightInited&&boardFlight&&celestialBodies&&celestialBodies.length&&!PW.opening
       // ground / sky / deck: only once launch has finished putting her on the space board, or that late mount steals her back off the ground
       &&(!w.mode||w.mode==='space'||(CHAR.loaded&&CHAR.mounted&&!CHAR._transitioning));
@@ -2428,7 +2432,7 @@ function resumeJourney(data){
       }
     }catch(e){}
     toast('▶ Back where you left off'+(b?' — beside '+b.name:'')+(want!=='Sol'?' · '+want:'')+away,away?6000:3600);
-  })();
+  }
 }
 // Space position from a save: beside a visitable asset (its frame), else the
 // same spot in the nearest world's own frame, else the raw world position.
@@ -2449,7 +2453,7 @@ function _restoreSpacePos(w){
   return b;
 }
 let _resumeHoldT=null;
-function _resumeHold(on){ clearTimeout(_resumeHoldT); PW._resumeHold=!!on; if(on) _resumeHoldT=setTimeout(()=>{ PW._resumeHold=false; },90000); }
+function _resumeHold(on){ clearTimeout(_resumeHoldT); PW._resumeHold=!!on; if(on) _resumeHoldT=setTimeout(()=>{ PW._resumeHold=false; },10000); }   // safety: never holds the world watcher longer than ~10 s
 function _restoreAnchor(w){
   if(typeof ANCHOR_STATE==='undefined') return;
   const an=w.anchor; let t=null;
@@ -2467,13 +2471,13 @@ function _restoreWhereMode(w,data,t0){
     const d=w.deck||{};
     (function waitTemple(){
       const a=_assetById(d.id||'bird-temple');
-      if(!a||!CHAR.loaded){ if(Date.now()-t0<60000) setTimeout(waitTemple,300); else toast('⚠ The Bird Temple is not here yet','','warn'); return; }
+      if(!a||!CHAR.loaded){ if(Date.now()-t0<60000) setTimeout(waitTemple,300); else { _resumeHold(false); toast('⚠ The Bird Temple is not here yet','','warn'); } return; }
       const r=_assetWorld(a,{local:d.local});
       sp.pos.copy(r.p); sp.pos.y+=0.04; if(sp.vel) sp.vel.set(0,0,0);
       if(boardFlight) boardFlight.position.copy(sp.pos);
       _followInit=false;
       _restoreAnchor(w);
-      try{ enterShipWalk(); }catch(e){ console.warn('[resume] deck',e); return; }
+      try{ enterShipWalk(); }catch(e){ console.warn('[resume] deck',e); _resumeHold(false); return; }
       // exactly where she stood, facing the same way on the (moving) deck
       SHIP_WALK.localPos.set(d.local[0],d.local[1],d.local[2]);
       if(isFinite(d.yaw)) SHIP_WALK.yaw=d.yaw;
@@ -2498,9 +2502,11 @@ function _restoreWhereMode(w,data,t0){
   if(ANCHOR_STATE.active){ ANCHOR_STATE.active=false; ANCHOR_STATE.target=null; try{ updateAnchorButton(); }catch(e){} }
   const site=g.site?{lat:g.site.lat,lon:g.site.lon}:null;
   const done=()=>_resumeHold(false);
+  try{
   if(w.mode==='surface') Promise.resolve(enterSurface(body,site,{spawn:{x:g.x,z:g.z},yaw:g.yaw})).finally(done);
   else Promise.resolve(enterAtmosphericFlight(body,site,{x:g.x,z:g.z,yaw:g.yaw,pitch:g.pitch,alt:g.y,exact:true,journal:true,
     quat:g.quat?new THREE.Quaternion(g.quat[0],g.quat[1],g.quat[2],g.quat[3]):null})).finally(done);
+  }catch(e){ console.warn('[resume] enter',e); done(); return false; }
   toast('▶ Back where you left off — '+(w.mode==='surface'?'on ':'in the sky of ')+body.name,3600);
   return true;
 }
