@@ -19584,6 +19584,10 @@ window.rebuildFlightBoardIfBroken = rebuildFlightBoardIfBroken;
 
 function remountSkyboard(boardObj){
   if(_charOnTempleDeck()) return false;   // walking the Bird Temple: exitShipWalk puts her back on
+  // on foot on a world (a resumed save lands her before her late full load
+  // finishes): the space board isn't hers right now — LIFTOFF / leaving the
+  // world puts her back on it (_pwRestoreSpace runs after surfaceActive clears)
+  if(typeof surfaceActive!=='undefined'&&surfaceActive&&typeof boardFlight!=='undefined'&&boardObj===boardFlight) return false;
   stripCharacterMount();
   if(!CHAR.loaded || !CHAR.root || !boardObj) return false;
   // If scale missing (mesh-first race before calibration), compute quick box scale.
