@@ -13574,7 +13574,7 @@ function makePlanetTexture(type,baseHex,seed){
     _texJobs.set(id,d=>{data.set(d);tex.needsUpdate=true;});
     w.postMessage({id,type,r:base.r,g:base.g,b:base.b,seed,S});
   }else{
-    _planetTexels(type,base.r,base.g,base.b,seed,S,data);tex.needsUpdate=true;
+    const d=new Uint8ClampedArray(data.length);_planetTexels(type,base.r,base.g,base.b,seed,S,d);data.set(d);tex.needsUpdate=true;
   }
   _texCache[key]=tex;return tex;
 }
