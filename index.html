@@ -5860,6 +5860,7 @@ async function initFlightScene(){
 
   // Renderer — compatibility-first across Safari/Chrome/Edge/Firefox on all OSes
   flightRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:!GFX.isMobile,alpha:false,powerPreference:'high-performance',logarithmicDepthBuffer:true});
+  _guardRenderDepth(flightRenderer);
   try{
     await flightRenderer.init();
   }catch(e){
@@ -5988,6 +5989,23 @@ let _flightFrameCounter=0;
 // Rate-limited animate-loop error reporter — empty catch{} used to silent-fail
 // (black canvas / frozen character with no console signal).
 let _animLoopErrAt=0;
+// WebGPURenderer keys its render contexts by nesting depth (_callDepth),
+// which _renderScene increments on entry and decrements on exit — with no
+// try/finally. One exception inside a render (a failed buffer allocation, a
+// node error) leaves the depth one higher for good, so every later frame
+// lands on a brand-new render context: every object, shadow caster included,
+// gets a new render object, node build and pipeline, every frame, until GPU
+// memory runs out. Measured headless at the temple: depth climbing ~1/frame,
+// ~5 pipelines and ~40 GPU buffers created per frame. Restore it here.
+function _guardRenderDepth(r){
+  if(!r||r._depthGuard)return;r._depthGuard=true;
+  const render=r.render.bind(r);
+  r.render=function(scene,camera){
+    const d=r._callDepth;
+    try{return render(scene,camera);}
+    finally{if(r._callDepth!==d)r._callDepth=d;}
+  };
+}
 function _animLoopWarn(tag,e){
   const t=performance.now();
   if(t-_animLoopErrAt<2500) return;
@@ -11700,6 +11718,7 @@ async function initGalaxyMapScene(){
   const W=Math.min(innerWidth*.92,1100),H=Math.min(innerHeight*.74,640);
   cv.width=W;cv.height=H;
   gmRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:true,alpha:false,logarithmicDepthBuffer:true});
+  _guardRenderDepth(gmRenderer);
   await gmRenderer.init();
   gmRenderer.setPixelRatio(Math.min(devicePixelRatio,2));gmRenderer.setSize(W,H);
   gmRenderer.setClearColor(0x000206,1);
@@ -13487,15 +13506,15 @@ function _fbm(x,y,seed,oct){
   }
   return v;
 }
-const _texCache={};
-function makePlanetTexture(type,baseHex,seed){
-  const key=type+baseHex+seed;
-  if(_texCache[key])return _texCache[key];
-  const S=(GFX&&GFX.preset==='low')?256:512;const cv=document.createElement('canvas');cv.width=S*2;cv.height=S;
-  const cx=cv.getContext('2d');
-  const base=new THREE.Color(baseHex);
-  const img=cx.createImageData(S*2,S);const d=img.data;
+// Texel generation is pure arithmetic over 512×1024 pixels × several fBm
+// octaves (~0.8 s on a desktop core, several seconds on a phone). It used to
+// run synchronously on the main thread, and a rogue planet is built the
+// moment its cell comes into range in interstellar space — the freeze Justin
+// hit near the Bird Temple. Now: the texture object is returned at once and
+// its texels are filled by a worker, then uploaded once.
+function _planetTexels(type,br,bg,bb,seed,S,d){
   for(let y=0;y<S;y++){
+    const row=(S-1-y)*S*2;   // bottom-up rows: matches the old CanvasTexture's flipY
     for(let x=0;x<S*2;x++){
       const u=x/(S*2)*6,v=y/S*3;
       let n=_fbm(u,v,seed,5);
@@ -13507,29 +13526,58 @@ function makePlanetTexture(type,baseHex,seed){
         else if(landN){const e=Math.min(1.4,Math.max(0,elev));r=55+e*95;g=105+e*75;b=45+e*35; if(e>1.1){r=220;g=228;b=240;}}
         else {r=12;g=40+n*50;b=100+n*80;}
       } else if(type==='Gas Giant'||type==='Ice Giant'){
-        // horizontal banding
         const band=Math.sin(v*9+ _fbm(u*0.5,v*4,seed,3)*4);
         const t=0.5+0.5*band;
-        r=base.r*255*(0.7+t*0.5);g=base.g*255*(0.7+t*0.5);b=base.b*255*(0.7+t*0.5);
+        r=br*255*(0.7+t*0.5);g=bg*255*(0.7+t*0.5);b=bb*255*(0.7+t*0.5);
         const storm=_fbm(u*2,v*2,seed+5,4);
         if(storm>0.78){r=Math.min(255,r+60);g*=0.8;b*=0.7;}
       } else {
         // rocky — craters + albedo variation
         let c2=_fbm(u*2,v*2,seed,5);
         const shade=0.55+c2*0.6;
-        r=base.r*255*shade;g=base.g*255*shade;b=base.b*255*shade;
-        // craters
+        r=br*255*shade;g=bg*255*shade;b=bb*255*shade;
         const cr=_vnoise(Math.floor(u*8),Math.floor(v*8),seed+9);
         if(cr>0.93){r*=0.6;g*=0.6;b*=0.6;}
       }
-      const i=(y*S*2+x)*4;
+      const i=(row+x)*4;
       d[i]=Math.min(255,r);d[i+1]=Math.min(255,g);d[i+2]=Math.min(255,b);d[i+3]=255;
     }
   }
-  cx.putImageData(img,0,0);
-  const tex=new THREE.CanvasTexture(cv);
+}
+let _texWorker=null,_texJobs=new Map(),_texJobId=0;
+function _getTexWorker(){
+  if(_texWorker!==null)return _texWorker||null;
+  try{
+    const src=_vnoise.toString()+'\n'+_fbm.toString()+'\n'+_planetTexels.toString()+
+      '\nonmessage=e=>{const j=e.data,d=new Uint8ClampedArray(j.S*2*j.S*4);_planetTexels(j.type,j.r,j.g,j.b,j.seed,j.S,d);postMessage({id:j.id,d},[d.buffer]);};';
+    _texWorker=new Worker(URL.createObjectURL(new Blob([src],{type:'text/javascript'})));
+    _texWorker.onmessage=e=>{const job=_texJobs.get(e.data.id);_texJobs.delete(e.data.id);if(job)job(e.data.d);};
+    _texWorker.onerror=()=>{_texWorker=false;};
+  }catch(e){_texWorker=false;}
+  return _texWorker||null;
+}
+const _texCache={};
+function makePlanetTexture(type,baseHex,seed){
+  const key=type+baseHex+seed;
+  if(_texCache[key])return _texCache[key];
+  const S=(GFX&&GFX.preset==='low')?256:512;
+  const base=new THREE.Color(baseHex);
+  const data=new Uint8Array(S*2*S*4);
+  const tex=new THREE.DataTexture(data,S*2,S,THREE.RGBAFormat,THREE.UnsignedByteType);
   tex.wrapS=THREE.RepeatWrapping;
+  tex.magFilter=THREE.LinearFilter;tex.minFilter=THREE.LinearMipmapLinearFilter;tex.generateMipmaps=true;
   if(GFX.aniso>1&&flightRenderer){try{tex.anisotropy=Math.min(GFX.aniso,flightRenderer.capabilities.getMaxAnisotropy());}catch(e){}}
+  // until the worker's texels land, the planet wears its flat base colour
+  for(let i=0,R=Math.round(base.r*255*0.8),G=Math.round(base.g*255*0.8),B=Math.round(base.b*255*0.8);i<data.length;i+=4){data[i]=R;data[i+1]=G;data[i+2]=B;data[i+3]=255;}
+  tex.needsUpdate=true;
+  const w=_getTexWorker();
+  if(w){
+    const id=++_texJobId;
+    _texJobs.set(id,d=>{data.set(d);tex.needsUpdate=true;});
+    w.postMessage({id,type,r:base.r,g:base.g,b:base.b,seed,S});
+  }else{
+    _planetTexels(type,base.r,base.g,base.b,seed,S,data);tex.needsUpdate=true;
+  }
   _texCache[key]=tex;return tex;
 }
 
@@ -15013,12 +15061,15 @@ function _gsMat(map){
   return new THREE.MeshBasicMaterial({color:0xffffff,map:map||null,transparent:false,blending:THREE.AdditiveBlending,
     depthTest:false,depthWrite:false,side:map?THREE.DoubleSide:THREE.FrontSide});
 }
-// LOD instanced set: positions are static; each instance's radius is
-// max(distance-from-camera × K, physical radius), re-derived on demand.
+// LOD instanced set. Positions are static and uploaded once; each instance's
+// radius — max(distance-from-camera × K, physical radius), capped at d × kmax —
+// is derived in the vertex shader from a per-mesh camera uniform, so moving
+// through the galaxy costs one uniform write per mesh instead of a CPU pass
+// over every cloud plus a full instance-matrix re-upload (the old
+// _gsResize, ~13 MB/upload on Ultra, several times a second in flight).
 function _gsLodMesh(pos,col,K,phys,geo,name,look){
   const n=(pos.length/3)|0, S=GALSKY.S;
   const mesh=new THREE.InstancedMesh(geo,(look&&_gsStarMat(look))||_gsMat(),n);
-  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   const a=mesh.instanceMatrix.array, c=new THREE.Color();
   for(let i=0;i<n;i++){
     const o=i*16;
@@ -15030,22 +15081,33 @@ function _gsLodMesh(pos,col,K,phys,geo,name,look){
   }
   if(mesh.instanceColor)mesh.instanceColor.needsUpdate=true;
   mesh.frustumCulled=false;mesh.renderOrder=-1000;mesh.name=name;
-  mesh.userData.gs={pos,K,phys,n};
+  const T=THREE.TSL;
+  mesh.userData.gs={pos,K,phys,n,kmax:0,
+    u:{cam:T.uniform(new THREE.Vector3()),km:T.uniform(GALSKY.KMAX)},
+    aK:T.instancedBufferAttribute(new THREE.InstancedBufferAttribute(K,1)),
+    aP:T.instancedBufferAttribute(new THREE.InstancedBufferAttribute(phys,1))};
+  _gsApplyLod(mesh);
   return mesh;
 }
-function _gsResize(mesh,cx,cy,cz){
-  const g=mesh.userData.gs, a=mesh.instanceMatrix.array, S=GALSKY.S, p=g.pos, K=g.K, P=g.phys, km=g.kmax||GALSKY.KMAX;
-  for(let i=0;i<g.n;i++){
-    const dx=p[i*3]-cx,dy=p[i*3+1]-cy,dz=p[i*3+2]-cz;
-    // max(on-screen size, physical size) — but never more than ~8 px, so a
-    // cloud near the camera stays a point instead of filling the view.
-    // Physical size phases in only for clouds 2.5k–12k+ ly away.
-    const d=Math.sqrt(dx*dx+dy*dy+dz*dz);
-    let t=(d-2500)/9500;t=t<0?0:t>1?1:t;
-    const r=Math.min(Math.max(d*K[i],P[i]*t*t*(3-2*t)),d*km)*S*GALSKY.GLOW;
-    const o=i*16;a[o]=r;a[o+5]=r;a[o+10]=r;
-  }
-  mesh.instanceMatrix.needsUpdate=true;
+// Attach the GPU sizing to the mesh's (current) material. Call again after
+// swapping the material (the arm dust does).
+function _gsApplyLod(mesh){
+  const g=mesh.userData.gs, m=mesh.material, T=THREE.TSL;
+  if(!g||!m||!('positionNode' in m))return;
+  const S=GALSKY.S;
+  // positionLocal here is already instanced: centre + unit vertex
+  const centre=T.positionLocal.sub(T.positionGeometry);
+  const d=centre.div(S).sub(g.u.cam).length();
+  const t=d.sub(2500).div(9500).clamp(0,1), sm=t.mul(t).mul(T.float(3).sub(t.mul(2)));
+  // max(on-screen size, physical size), never more than d × kmax (~8 px)
+  const r=T.min(T.max(d.mul(g.aK),g.aP.mul(sm)),d.mul(g.u.km)).mul(S*GALSKY.GLOW);
+  m.positionNode=centre.add(T.positionGeometry.mul(r));
+  m.needsUpdate=true;
+}
+// Per-mesh camera position (ly, in the mesh's own frame) for the shader.
+function _gsLodCam(mesh,cx,cy,cz){
+  const g=mesh.userData.gs;if(!g||!g.u)return;
+  g.u.cam.value.set(cx,cy,cz);g.u.km.value=g.kmax||GALSKY.KMAX;
 }
 function _gsSoftTex(){
   const cv=document.createElement('canvas');cv.width=cv.height=64;
@@ -15345,7 +15407,7 @@ function _gsArmClouds(B){
   const dm=_gsDustMat();
   if(dm){
     dust=_gsLodMesh(dp,dc,dK,dP,_gsStarGeo(),'JOTS_ArmDust');
-    dust.material.dispose();dust.material=dm;
+    dust.material.dispose();dust.material=dm;_gsApplyLod(dust);
     dust.userData.gs.kmax=0.03;dust.renderOrder=-999.9;
   }
   return {fog,dust};
@@ -15649,7 +15711,7 @@ function _gsPlaceSubs(L,resize){
     if(resize){
       inv.copy(o.matrix).invert();
       c.copy(L).multiplyScalar(S).applyMatrix4(inv).divideScalar(S);
-      for(let j=0;j<r.meshes.length;j++)_gsResize(r.meshes[j],c.x,c.y,c.z);
+      for(let j=0;j<r.meshes.length;j++)_gsLodCam(r.meshes[j],c.x,c.y,c.z);
     }
   }
 }
@@ -15677,11 +15739,12 @@ function updateGalSky(force){
   const now=performance.now();
   const last=galSky._lastSize;
   const moved=last?cam.distanceTo(last):Infinity;
+  // Placement + the shader's per-mesh camera: a few uniforms, every frame.
+  const L=galSky.camLocal.copy(cam).applyQuaternion(galSky.qInv).add(galSky.sunLocal);
+  _gsPlaceSubs(L,true);
   if(force||(moved>Math.max(1.5,0.07*Math.max(near,20))&&now-(galSky._sizeT||0)>120)){
     galSky._sizeT=now;
     galSky._lastSize=(last||new THREE.Vector3()).copy(cam);
-    const L=galSky.camLocal.copy(cam).applyQuaternion(galSky.qInv).add(galSky.sunLocal);
-    _gsPlaceSubs(L,true);
     // Deep in the nucleus every bulge cloud surrounds you; dim the star
     // field there so the sky reads as a glowing core, not a white-out.
     if(galSky.mwMesh)_gsFade(galSky.mwMesh,0.22+0.78*_gsSmooth(900,9000,L.length()));
