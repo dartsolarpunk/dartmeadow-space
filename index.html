@@ -18339,11 +18339,11 @@ const BOARD_STANCE = window.BOARD_STANCE = window.BOARD_STANCE || {
   yawHead:-45, pitchHead:-4,                     // look ahead along the board (DART_HEAD finishes it)
   footYawL:95, footYawR:45, kneeOut:0.25,        // back foot across the board, front foot angled forward
   // arm directions in her body frame (x = bone-left, y = up, z = facing); elbows soft
-  // back (trailing) arm, visual right: hangs down and out behind her. The forearm bends FORWARD of the
-  // upper arm, so the rest-hinge alignment rolls the upper arm with the elbow pointing back (it bent
-  // backward before, which rolled the upper arm ~180 deg: elbow forward, palm up and back).
-  upL:[0.657,-0.572,-0.491], foreL:[0.723,-0.661,-0.199],
-  proL:100,                                      // back forearm pronation (deg): palm DOWN toward the board (the rest hand is fully supinated)
+  // back (trailing) arm, visual right: out and a little back for balance, forearm swept out near level,
+  // elbow soft and pointing back/down. (Before, the forearm bent backward of the upper arm, so the rest-hinge
+  // alignment rolled the upper arm ~180 deg: elbow forward, forearm supinated, palm up like a tray.)
+  upL:[0.55,-0.76,-0.35], foreL:[0.8,-0.55,-0.2],
+  proL:160,                                      // back forearm pronation (deg): palm DOWN toward the board (the rest hand is fully supinated)
   upR:[-0.5,-0.82,0.3], foreR:[-0.45,-0.7,0.45],      // visual left arm: reaching down and out to the nose (position unchanged)
   proR:155,                                      // front forearm pronation (deg): palm down, pinky edge to the staff side
   wristShare:0.35,                               // part of each pronation taken at the wrist (baked hand), the rest by the forearm bone (less skin twist at the elbow)
