@@ -6796,6 +6796,38 @@ function _solMoonDistances(byName){
   });
   return out;
 }
+// the far-away look: a plain sphere (a lumpy one for rocks), one draw, no terrain
+function _solCheapGroup(e,r,seed,rock){
+  const mesh=rock?_solLumpyRock(r,seed,e.col)
+    :new THREE.Mesh(new THREE.SphereGeometry(r,28,18),new THREE.MeshStandardMaterial({color:e.col,roughness:0.95,metalness:0.02}));
+  mesh.name='JOTS_SolBody';
+  if(e.shape) mesh.scale.set(e.shape[0],e.shape[1],e.shape[2]);
+  const group=new THREE.Group(); group.add(mesh);
+  return group;
+}
+// Low-end budget: the planet LOD only ever steps up, which is fine for eight
+// planets but not for a dozen landable moons visited in one session. A catalog
+// world left far behind (> SOL_LOD_DROP radii, not the world you're in) goes
+// back to its cheap sphere, still wearing its map — one body per call.
+const SOL_LOD_DROP=40;
+let _solLodI=0;
+function _solCatalogLODDown(){
+  const n=celestialBodies.length; if(!n||!STATE.flight||!STATE.flight.pos) return;
+  for(let k=0;k<n;k++){
+    const b=celestialBodies[(_solLodI++)%n];
+    if(!b||!b.catalog||!b.isProcedural||!b.mesh) continue;
+    if(b.mcTier==='low'&&!b._webglSeg) continue;
+    if(typeof PW!=='undefined'&&PW.body===b) continue;
+    if(b.mesh.position.distanceTo(STATE.flight.pos)<b.mcRadius*SOL_LOD_DROP) continue;
+    const old=b.mesh, g=_solCheapGroup(b.catalog,b.mcRadius,b.mcSeed,false);
+    g.position.copy(old.position); g.quaternion.copy(old.quaternion);
+    old.children.filter(c=>c.isPlanetExtra).forEach(c=>g.add(c));
+    flightScene.add(g); flightScene.remove(old); try{ _disposeObject3D(old); }catch(e){}
+    b.mesh=g; b.mcTier='low'; b.mcRes=_mcTierResTable().low; b._webglSeg=0; b._mcLodT=performance.now();
+    if(b._wm) try{ _applyWorldMapToFlightBody(b,b._wm); }catch(e){}
+    return;
+  }
+}
 function _buildSolCatalogBodies(){
   const byName={}; celestialBodies.forEach(b=>{ byName[b.name]=b; });
   let dist=null;
@@ -6806,11 +6838,7 @@ function _buildSolCatalogBodies(){
     const r=_solSmallR(e.r), seed=hashStr('sol:'+e.name);
     // a landable body is a world (sphere → terrain by LOD), the rest of the small fry are rocks
     const rock=!e.land&&(e.kind==='asteroid'||e.kind==='comet'||e.lumpy);
-    const mesh=rock?_solLumpyRock(r,seed,e.col)
-      :new THREE.Mesh(new THREE.SphereGeometry(r,28,18),new THREE.MeshStandardMaterial({color:e.col,roughness:0.95,metalness:0.02}));
-    mesh.name='JOTS_SolBody';
-    if(e.shape) mesh.scale.set(e.shape[0],e.shape[1],e.shape[2]);
-    const group=new THREE.Group(); group.add(mesh);
+    const group=_solCheapGroup(e,r,seed,rock);
     const world=!!e.land;                     // a walkable world (same pipeline as every planet)
     const b={mesh:group,name:e.name,type:e.type,temp:e.temp,collisionRadius:r,gravity:e.g,
       landable:!!e.land,hasTerrain:!!e.land,catalog:e,
@@ -10771,6 +10799,7 @@ async function upgradeWebGLPlanetLOD(){
 async function upgradePlanetLOD(dt){
   if(_lodPlanetBusy)return; // one rebuild in flight at a time — avoid GPU contention
   if(!STATE.flight||!STATE.flight.pos)return;
+  _solCatalogLODDown();     // far catalog worlds back to plain spheres (low-end budget)
   // WebGPU-first: High/Med/Low share GPU MC + distance LOD (budgeted N).
   // WebGL/Safari ONLY when !_isRealWebGPU — rich canvas spheres, not a dual forever-GL default.
   if(!_isRealWebGPU(flightRenderer)){
