@@ -5751,7 +5751,8 @@ function _startFlightLoop(){
     // Safety net (~every 30 frames): mesh-first can mark loaded before boardFlight
     // exists; remount then no-ops and she stays unparented/invisible.
     try{
-      if(boardFlight && CHAR.loaded && CHAR.root && (!CHAR.mounted || CHAR.root.parent!==boardFlight || !CHAR.root.visible)){
+      // (not while she's walking the Bird Temple deck: she's meant to be off the board there)
+      if(boardFlight && CHAR.loaded && CHAR.root && !_charOnTempleDeck() && (!CHAR.mounted || CHAR.root.parent!==boardFlight || !CHAR.root.visible)){
         if(_flightFrameCounter % 30 === 0){
           try{ remountSkyboard(boardFlight); _forceCharVisible(); }catch(er){}
         }
@@ -7682,6 +7683,12 @@ function updateBirdTemple(dt){
 // discussed.
 // ══════════════════════════════════════════════════════════════
 const SHIP_WALK={active:false,localPos:null,yaw:0,pitch:0,velY:0,grounded:true};
+// True while she's standing on the temple deck (off the board). Every
+// "put her back on the board" path checks this: the 30-frame mount safety
+// net used to re-parent her to the board half a second after landing, and
+// the walk then wrote her world position into the board's local frame —
+// throwing her ~100 units off into space (the "board shows, Ariel doesn't").
+function _charOnTempleDeck(){ return SHIP_WALK.active&&!!SHIP_WALK.charOn; }
 let _shipWalkRay;
 window.__whenThreeReady(function(){
   SHIP_WALK.localPos=new THREE.Vector3();
@@ -7740,14 +7747,19 @@ function _shipWallSlide(from,move,feetY,step){
 // her FEET, in the temple's own frame (it moves and turns with the ship).
 const SHIP_EYE=0.4;                 // eye height at the temple's scale (≈6 ft)
 const SHIP_CHAR_H=0.454;            // her height there (37 ft board = 2.8 units)
+// She stands on the deck the same way a planet landing puts her down
+// (_pwCharArrive): off the board, in the scene, unmirrored standing scale,
+// foot IK reset, every part forced visible.
 function _shipCharOn(feetWorld){
   if(!CHAR||!CHAR.loaded||!CHAR.root)return false;
   try{
+    if(CHAR.root.parent&&CHAR.root.parent!==flightScene)CHAR.root.parent.remove(CHAR.root);
     dismountSkyboard(flightScene,feetWorld);
     const s=SHIP_CHAR_H/Math.max(0.001,CHAR.rawHeight||1);
     CHAR.root.scale.set(s,s,s);
     CHAR._shipScale=s;
-    CHAR.stanceMode='stand';
+    CHAR.stanceMode='stand';CHAR._transitioning=false;CHAR._footIKWeight=0;
+    _forceCharVisible();
     return true;
   }catch(e){console.warn('[ShipWalk] dismount:',e);return false;}
 }
@@ -7885,6 +7897,10 @@ function updateShipWalk(dt){
   }
 
   const F=bt.group.localToWorld(SHIP_WALK.localPos.clone());
+  // She loaded after landing, or something else took her: stand her on the deck.
+  if(CHAR.loaded&&CHAR.root&&(!SHIP_WALK.charOn||CHAR.mounted||CHAR.root.parent!==flightScene)){
+    SHIP_WALK.charOn=_shipCharOn(F);
+  }
   // ── Her: on her feet, facing where she walks, animated.
   if(SHIP_WALK.charOn&&CHAR.root){
     CHAR.root.position.set(F.x,F.y+(CHAR.feetOffset||0)*(CHAR._shipScale||1)+(CHAR._plantOff||0),F.z);   // + planted-foot contact
@@ -18487,6 +18503,7 @@ window.jotsResyncRiderToBoard = jotsResyncRiderToBoard;
 window.rebuildFlightBoardIfBroken = rebuildFlightBoardIfBroken;
 
 function remountSkyboard(boardObj){
+  if(_charOnTempleDeck()) return false;   // walking the Bird Temple: exitShipWalk puts her back on
   stripCharacterMount();
   if(!CHAR.loaded || !CHAR.root || !boardObj) return false;
   // If scale missing (mesh-first race before calibration), compute quick box scale.
