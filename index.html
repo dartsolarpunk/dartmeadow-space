@@ -5813,7 +5813,7 @@ function _startFlightLoop(){
     try{ updateCharOrbitCamera(); }catch(e){_animLoopWarn('charOrbit',e);}
     try{ _dynRes(flightRenderer); }catch(e){}
     try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){_animLoopWarn('charMixer',e);}
-    try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){_animLoopWarn('headOverride',e);}
+    try{ applySkyboardHeadOverride(); }catch(e){_animLoopWarn('headOverride',e);}   // (fades with the stance)
     try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);}
     try{ if(SHIP_WALK.active) _shipWalkCarry(); }catch(e){_animLoopWarn('shipCarry',e);}
     try{_anchorPostUpdate();}catch(e){_animLoopWarn('anchor',e);}
@@ -16382,7 +16382,7 @@ function _pwFrame(dt){
   try{ if(CHAR.mounted) applySkyboardStance(now/1000); }catch(e){}
   if(PW.mode!=='walk'){
     try{ CHAR.mixer&&CHAR.mixer.update(dt); }catch(e){ _animLoopWarn('charMixer',e); }
-    try{ if(CHAR.mounted) applySkyboardHeadOverride(); }catch(e){ _animLoopWarn('headOverride',e); }
+    try{ applySkyboardHeadOverride(); }catch(e){ _animLoopWarn('headOverride',e); }   // (fades with the stance)
   } else {
     try{ updateCaustics(dt); }catch(e){ _animLoopWarn('caustics',e); }
     try{ _surfFluidTick(dt); }catch(e){ _animLoopWarn('fluid',e); }
@@ -18317,7 +18317,33 @@ function _hfFront(){
   }catch(e){}
   return _hfFrontSign;
 }
+// The gaze override fades with the ride stance (POSE CONTINUITY): riding, it is
+// solved every frame and its offset from the clip is remembered; stepping on or
+// off, that offset is blended by the stance's crossfade weight instead of the
+// head snapping ~20° in one frame when CHAR.mounted flips.
+let _hoHold=null;
 function applySkyboardHeadOverride(){
+  const b=CHAR.bones; if(!b||!b.Head) return;
+  const a=CHAR.actions&&CHAR.actions.skyboard, live=!!(a&&a.isScheduled());
+  const w=live?Math.min(1,a.getEffectiveWeight()):(CHAR.mounted?1:0);
+  if(w<=0.001) return;
+  const H=_hoHold||(_hoHold={n:new THREE.Quaternion(),h:new THREE.Quaternion(),cn:new THREE.Quaternion(),ch:new THREE.Quaternion(),t:new THREE.Quaternion(),ok:false});
+  if(b.neck) H.cn.copy(b.neck.quaternion); H.ch.copy(b.Head.quaternion);
+  if(CHAR.mounted){
+    _applySkyboardHeadOverride1();
+    if(b.neck) H.n.copy(H.cn).invert().multiply(b.neck.quaternion);
+    H.h.copy(H.ch).invert().multiply(b.Head.quaternion); H.ok=true;
+  } else if(H.ok){
+    if(b.neck) b.neck.quaternion.copy(H.cn).multiply(H.n);
+    b.Head.quaternion.copy(H.ch).multiply(H.h);
+  } else return;
+  if(w<1){
+    if(b.neck){ H.t.copy(b.neck.quaternion); b.neck.quaternion.slerpQuaternions(H.cn,H.t,w); }
+    H.t.copy(b.Head.quaternion); b.Head.quaternion.slerpQuaternions(H.ch,H.t,w);
+  }
+  if(b.neck) b.neck.updateMatrixWorld(true); else b.Head.updateMatrixWorld(true);
+}
+function _applySkyboardHeadOverride1(){
   const b = CHAR.bones;
   if(!DART_HEAD.on || !b.Head) return;
   if(!_hfFwd || _hfMesh!==CHAR.skinnedMesh){ if(!_hfInit()) return; }
@@ -18612,15 +18638,16 @@ function _charWrapMixer(){
 function setCharState(next, opts){
   opts = opts||{};
   if(CHAR.state===next && !opts.force) return;
-  const fade=opts.fade!==undefined?opts.fade:0.25;
   let a=CHAR.actions[next];
   if(!a||!CHAR.mixer){ CHAR.state=next; return; }   // no clip for it: hold the current pose (never fade to nothing)
   if(!CHAR._xfAnchor) try{ _charXfInit(); }catch(e){}
   if(a.loop===THREE.LoopOnce&&_charXfLive(a)){   // replaying a one-shot that's still showing: its twin starts fresh
     const t=_charXfTwin(next); if(t&&!_charXfLive(t)) a=t; else if(t&&t.weight<a.weight) a=t;
+    opts=Object.assign({},opts,{fade:Math.max(0.25,opts.fade!==undefined?opts.fade:0.25)});   // mid-air → start of the clip: never faster than 0.25 s
   }
   if(!_charXfLive(a)){ a.reset(); a.weight=0; a.play(); }
   else if(a.loop===THREE.LoopOnce){ a.paused=false; }
+  const fade=opts.fade!==undefined?opts.fade:0.25;
   a.stopFading(); a.stopWarping(); a.enabled=true;
   a.timeScale = (opts.reverse ? -1 : 1) * (opts.speed||1);
   const X=CHAR_XF; X.out=new Map();
@@ -18726,7 +18753,7 @@ function updateCharacterLocomotion(dt, moving, running, dirSign, jumping, climbi
   // crouch(+move); run/walk; idle.
   flags = flags || {};
   if(!CHAR.loaded) return;
-  if(CHAR.mounted){ applySkyboardStance(surfTime||0); CHAR.mixer && CHAR.mixer.update(dt); return; }
+  if(CHAR.mounted){ applySkyboardStance(surfTime||0); CHAR.mixer && CHAR.mixer.update(dt); try{ applySkyboardHeadOverride(); }catch(e){} return; }
   const wantRope = !!(flags.rope);
   const wantCliff = !!(flags.cliff);
   const wantSwim = !!(flags.swim);
