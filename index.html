@@ -19634,6 +19634,7 @@ async function ensureAutumnOnBoard(reason){
 
   for(let attempt=1; attempt<=8; attempt++){
     if(_charOnTempleDeck()) return true;   // she's standing on the Bird Temple deck, not riding
+    if(typeof surfaceActive!=='undefined'&&surfaceActive) return true;   // on foot on a world (e.g. a resumed save): not riding the space board
     if(CHAR._transitioning&&CHAR.loaded&&CHAR.root){ if(attempt<8) await _sleep(300); continue; }   // mid step-on/step-off: let it finish
     try{
       if(CHAR._loadPromise){
