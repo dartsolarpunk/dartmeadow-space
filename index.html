@@ -18078,6 +18078,9 @@ const BOARD_STANCE = window.BOARD_STANCE = window.BOARD_STANCE || {
   sway:{ shift:0.020, side:0.010, bob:0.010, roll:2.6, yaw:2.0, chest:0.75, arm:5.0, periods:[4.3,5.9,3.7,6.6] },
   fade:0.4, on:true
 };
+// Legacy name still read by the Ariel Rig Viewer's kernel (radicaldeepscale.com/ariel-rig-viewer.html
+// returns it from the blocks it runs); the stance plays no clip, so it is a plain 1.
+const SKYBOARD_ANIM_SPEED = 1;
 const _BS_SOLVE=['Hips','Spine02','Spine01','Spine','neck','Head','LeftArm','LeftForeArm','RightArm','RightForeArm','LeftUpLeg','LeftLeg','LeftFoot','RightUpLeg','RightLeg','RightFoot'];
 let _bs=null;
 function _bsInit(){
@@ -18632,7 +18635,7 @@ function _charWrapMixer(){
    prone, rope, cliff (slide intentionally unwired). Forward/backward
    handled via timeScale sign on in-place cycles. jump/climbLoop/rope/
    cliff are LoopOnce arcs; walk/run/crouch/prone/swim LoopRepeat;
-   skyboard LoopPingPong on cropped window. Optional locomotion flags
+   skyboard is the held ride-stance pose (+ sway layer). Optional locomotion flags
    (swim/rope/cliff/prone/crouch) via updateCharacterLocomotion's last
    arg — existing call sites stay compatible. */
 function setCharState(next, opts){
