@@ -79,18 +79,15 @@
     Oberon:    { tilt: 97.77, day: 13.463239, follows: 'Uranus' },
     Triton:    { tilt: 28.32, day: -5.876854, follows: 'Neptune' },
     Charon:    { tilt: 122.53, day: 6.3872, follows: 'Pluto' },
+    // (Ceres, Vesta, Pallas, Eros keep the seeded day they always had — not listed here)
     // Dwarf planets, asteroids, comets: JPL SBDB elements (J2000 mean longitude
     // L0 and longitude of perihelion w, deg; P years, negative = retrograde)
     // and their measured spins.
-    Ceres:     { e: 0.0797, L0: 163.226, w: 153.5, P: 4.6102, tilt: 4, day: 0.378090 },
     Pluto:     { e: 0.2488, L0: 238.797, w: 224.0, P: 247.94, tilt: 122.53, day: -6.3872 },
     Haumea:    { e: 0.194, L0: 192.367, w: 3.0, P: 282.95, tilt: 0, day: 0.163142 },
     Makemake:  { e: 0.159, L0: 155.394, w: 16.3, P: 307.93, tilt: 0, day: 0.951108 },
     Eris:      { e: 0.438, L0: 21.991, w: 187.0, P: 559.51, tilt: 0, day: 1.079167 },
-    Vesta:     { e: 0.0902, L0: 231.262, w: 255.0, P: 3.6255, tilt: 29, day: 0.222589 },
-    Pallas:    { e: 0.231, L0: 113.726, w: 124.0, P: 4.6102, tilt: 84, day: 0.325551 },
     Hygiea:    { e: 0.107, L0: 224.758, w: 235.0, P: 5.5907, tilt: 9, day: 0.576167 },
-    Eros:      { e: 0.223, L0: 190.918, w: 123.0, P: 1.7641, tilt: 89, day: 0.219583 },
     Halley:    { e: 0.968, L0: 236.975, w: 171.1, P: -75.732, tilt: 0, day: 2.2 },
     'Hale-Bopp': { e: 0.995, L0: 53.409, w: 53.0, P: 2354.83, tilt: 0, day: 0.47 },
     '67P':     { e: 0.641, L0: 269.578, w: 62.9, P: 6.436, tilt: 52, day: 0.531720 },

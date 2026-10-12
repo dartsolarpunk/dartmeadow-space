@@ -142,7 +142,7 @@ if(location.search.indexOf('debug')!==-1){
   // PWA manifest: /manifest.webmanifest (linked in <head>; dark launch screen on Android)
 })();</script>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-<script src="ui/dm-time.js?v=96"></script>
+<script src="ui/dm-time.js?v=97"></script>
 <script src="ui/dm-earth.js?v=1"></script>
 <script src="ui/dm-theme.js?v=81"></script>
 <script src="ui/dm-fluid.js?v=80"></script>
@@ -4877,6 +4877,7 @@ const JOY={Lx:0,Ly:0,Rx:0,Ry:0};
 //   r   radius in Earth radii          a  moon's orbit (km), P its period (days, − = retrograde)
 //   g   surface gravity (Earth g)      inc orbit tilt off the ecliptic (deg, look only)
 //   land: walkable world               atm: atmosphere name (_ATMO_LOOK), none = airless
+//   adopt: an existing seeded body (sol:landables) the catalog lists but never rebuilds
 //   hidden:true keeps an entry out of Quick Travel until unlocked (dm_qt_unlocked_v1)
 //   — the hook for secret spots.
 const SOL_RADIUS_KM={Earth:6371,Mars:3389.5,Jupiter:69911,Saturn:58232,Uranus:25362,Neptune:24622,Pluto:1188.3};
@@ -4891,12 +4892,12 @@ const SOL_CATALOG=[
   {name:'Phobos',kind:'moon',parent:'Mars',icon:'🌑',r:0.00176,a:9376,P:0.31891,inc:1.1,col:0x5e554c,type:'Barren Moon',g:0.0006,temp:'233 K',lumpy:true},
   {name:'Deimos',kind:'moon',parent:'Mars',icon:'🌑',r:0.00098,a:23463,P:1.26244,inc:1.8,col:0x7a6e60,type:'Barren Moon',g:0.0003,temp:'233 K',lumpy:true},
   {name:'Asteroid Belt',kind:'belt',icon:'🪨',type:'Belt',dist:'2.2–3.3 AU'},
-  {name:'Ceres',kind:'dwarf',icon:'⚪',r:0.0737,col:0x77716a,type:'Barren Moon',g:0.029,temp:'168 K',land:true,
+  {name:'Ceres',kind:'dwarf',dist:'2.77 AU',adopt:true,icon:'⚪',r:0.0737,col:0x77716a,type:'Barren Moon',g:0.029,temp:'168 K',land:true,
     surface:{ground:0x6e6860,ground2:0x4c4842,rock:0x8e887e}},
-  {name:'Vesta',kind:'asteroid',icon:'🪨',r:0.041,col:0x8e8578,type:'Asteroid',g:0.025,temp:'~180 K',land:true},
-  {name:'Pallas',kind:'asteroid',icon:'🪨',r:0.0402,col:0x7d7a76,type:'Asteroid',g:0.022,temp:'~165 K',land:true},
+  {name:'Vesta',kind:'asteroid',dist:'2.36 AU',adopt:true,icon:'🪨',r:0.041,col:0x8e8578,type:'Asteroid',g:0.025,temp:'~180 K',land:true},
+  {name:'Pallas',kind:'asteroid',dist:'2.77 AU',adopt:true,icon:'🪨',r:0.0402,col:0x7d7a76,type:'Asteroid',g:0.022,temp:'~165 K',land:true},
   {name:'Hygiea',kind:'asteroid',icon:'🪨',r:0.032,col:0x5e5a56,type:'Asteroid',g:0.009,temp:'~160 K',land:true},
-  {name:'Eros',kind:'asteroid',icon:'🪨',r:0.00132,col:0x8a7a68,type:'Asteroid',g:0.0006,temp:'~230 K'},
+  {name:'Eros',kind:'asteroid',dist:'1.46 AU',adopt:true,icon:'🪨',r:0.00132,col:0x8a7a68,type:'Asteroid',g:0.0006,temp:'~230 K',land:true},
   {name:'Jupiter',kind:'planet',icon:'🟠',type:'Gas Giant'},
   {name:'Io',kind:'moon',parent:'Jupiter',icon:'🟡',r:0.2859,a:421700,P:1.769138,inc:0.05,col:0xd6bf52,type:'Volcanic',g:0.183,temp:'110 K',land:true,
     surface:Object.assign({ground:0xd8c050,ground2:0xa08a28,rock:0xb06a30,glow:0xff6a20},_AIRLESS)},
@@ -4975,7 +4976,8 @@ function buildDestinations(){
     const fb=fixed[e.name]||new THREE.Vector3();
     if(fixed[e.name]) d.pos=fb;
     else Object.defineProperty(d,'pos',{enumerable:true,get(){
-      const b=(typeof celestialBodies!=='undefined'&&celestialBodies||[]).find(x=>x.name===e.name);
+      const b=(typeof celestialBodies!=='undefined'&&celestialBodies||[]).find(x=>x.name===e.name)
+        ||(typeof flightFlybys!=='undefined'&&flightFlybys||[]).find(x=>x.name==='Comet '+e.name);
       return (b&&b.mesh&&b.mesh.position)||fb;
     }});
     DESTINATIONS.push(d);
@@ -6838,6 +6840,10 @@ function _buildSolCatalogBodies(){
   const lowRes=(typeof _mcTierResTable==='function'?_mcTierResTable().low:10);
   SOL_CATALOG.forEach(e=>{
     if(!e.r) return;                          // places, the belt, planets: no body of their own here
+    // already in the world (the seeded landables): adopt it as it is — its seed, look and orbit stay
+    if(byName[e.name]){ byName[e.name].catalog=e; return; }
+    // an existing seeded comet (flyby 'Comet <name>'): Quick Travel goes to it; no second one
+    if(e.kind==='comet'&&(flightFlybys||[]).some(f=>f.name==='Comet '+e.name)) return;
     if(e.kind==='moon'){ if(!byName[e.parent]) return; dist=_solMoonDistances(byName); }
     const r=_solSmallR(e.r), seed=hashStr('sol:'+e.name);
     // a landable body is a world (sphere → terrain by LOD), the rest of the small fry are rocks
@@ -6861,7 +6867,7 @@ function _buildSolCatalogBodies(){
     }
     if(e.kind==='comet'){
       // the tail: dust streaming away from the Sun, longer the closer it comes (updateBodies)
-      const N=160, tp=new Float32Array(N*3), cr=seedRand(seed);
+      const N=56, tp=new Float32Array(N*3), cr=seedRand(seed);
       for(let j=0;j<N;j++){ const t=j/N; tp[j*3]=t; tp[j*3+1]=(cr()-0.5)*0.06*(0.2+t); tp[j*3+2]=(cr()-0.5)*0.06*(0.2+t); }
       const tg=new THREE.BufferGeometry(); tg.setAttribute('position',new THREE.BufferAttribute(tp,3));
       const tail=new THREE.Points(tg,new THREE.PointsMaterial({size:0.12,color:0xa8c8ff,transparent:true,opacity:0.55,depthWrite:false}));
@@ -7054,9 +7060,66 @@ async function buildSolarSystem(){
   const beltPts=new THREE.Points(ag,new THREE.PointsMaterial({size:.5,color:0x886644,sizeAttenuation:true}));
   flightScene.add(beltPts);if(typeof _trackSystemExtra==='function')_trackSystemExtra(beltPts);
 
-  // Moons, dwarf planets, the named asteroids and comets — real orbits and sizes (SOL_CATALOG)
+  // Places already visited never reshuffle: the seeded landables and comets
+  // below are exactly as they were (same seeds, same generation, same orbits);
+  // the Sol catalog adopts them by name instead of building its own.
+  // Seeded landable asteroids WITH terrain — random SUBSET only (not every
+  // belt particle). Particles above stay visual debris with no LAND prompt;
+  // these few enter celestialBodies with landable+hasTerrain so proximity
+  // LAND works the same as for Earth. Deterministic via 'sol:landables'.
+  if(typeof buildMarchingCubesAsteroid==='function'){
+    const landRand=seedRand(hashStr('sol:landables'));
+    const landNames=['Ceres','Vesta','Pallas','Eros'];
+    for(let li=0;li<landNames.length;li++){
+      const a=landRand()*Math.PI*2, r=beltR+(landRand()-0.5)*AU*0.55;
+      // Match planet near-field scale (was marble-sized 0.35–0.8)
+      const rad=(0.35+landRand()*0.45)*PLANET_VIS_SCALE;
+      const seedVal=hashStr('sol:landable:'+landNames[li]);
+      let amesh;
+      try{
+        amesh=buildMarchingCubesAsteroid(rad, seedVal, 22);
+      }catch(e){
+        console.warn('[landable asteroid] MC build failed for',landNames[li],e&&e.message);
+        amesh=new THREE.Mesh(new THREE.SphereGeometry(rad,16,16),new THREE.MeshStandardMaterial({color:0x8a7a68,roughness:0.97}));
+      }
+      const agroup=new THREE.Group();
+      agroup.add(amesh);
+      agroup.position.set(Math.cos(a)*r,(landRand()-0.5)*4,Math.sin(a)*r);
+      flightScene.add(agroup);
+      if(typeof _trackSystemExtra==='function')_trackSystemExtra(agroup);
+      // Kepler at belt r: P_years = (r/AU)^1.5 on the same Sol clock
+      const aPeriodYrs=Math.pow(r/AU, 1.5);
+      const aSpd=SOL_EARTH_MEAN_MOTION/aPeriodYrs;
+      celestialBodies.push({
+        mesh:agroup, name:landNames[li], type:'Asteroid', temp:'~180 K',
+        orbitR:r, orbitSpd:aSpd, angle:a,
+        collisionRadius:rad, landable:true, hasTerrain:true,
+        isAsteroid:true, isProcedural:false,
+        mcRadius:rad, mcSeed:seedVal, mcColor:0x8a7a68, mcHasAtm:false,
+        mcKind:'asteroid', mcRes:22, mcTier:'low', gravity:0.03
+      });
+    }
+  }
+
+  // Comets — seeded positions/tails ('sol:comets') for stable returns
+  const cometRand=seedRand(hashStr('sol:comets'));
+  const COMET_NAMES=['Halley','Encke','Swift-Tuttle','Tempel-Tuttle','Hyakutake','McNaught'];
   if(typeof flightFlybys==='undefined')window.flightFlybys=[];
   else flightFlybys.length=0;
+  for(let i=0;i<6;i++){
+    const cg=new THREE.Group();
+    cg.add(new THREE.Mesh(new THREE.SphereGeometry(.22,8,8),new THREE.MeshStandardMaterial({color:0xeeeeff,emissive:0x8888ff,emissiveIntensity:1.5})));
+    // tail: every 3rd of the original 180 points (60) — the seeded stream is
+    // still drawn for all 180 so each comet keeps its old place
+    const tp=new Float32Array(60*3);
+    for(let j=0;j<180;j++){const x=j*-.08+(cometRand()-0.5)*0.08, y=(cometRand()-0.5)*0.04, z=(cometRand()-0.5)*0.08; if(j%3===0){const k=j/3; tp[k*3]=x;tp[k*3+1]=y;tp[k*3+2]=z;}}
+    const tg=new THREE.BufferGeometry();tg.setAttribute('position',new THREE.BufferAttribute(tp,3));
+    cg.add(new THREE.Points(tg,new THREE.PointsMaterial({size:.1,color:0x8888ff,transparent:true,opacity:.55})));
+    cg.position.set((cometRand()-0.5)*AU*20,(cometRand()-0.5)*40,(cometRand()-0.5)*AU*20);
+    flightScene.add(cg);if(typeof _trackSystemExtra==='function')_trackSystemExtra(cg);
+    flightFlybys.push({name:'Comet '+COMET_NAMES[i],mesh:cg,labelRange:AU*0.25});
+  }
+  // Moons, dwarf planets and the genuinely new asteroids/comets (SOL_CATALOG)
   _buildSolCatalogBodies();
   // Asteroid belt as a single flyby label target (belt centroid)
   flightFlybys.push({name:'Asteroid Belt',mesh:{position:new THREE.Vector3(AU*2.7,0,AU*0.3)},labelRange:AU*0.4});
@@ -9798,6 +9861,7 @@ function bodyForDestination(d){
   // "Low Earth Orbit" → Earth; the belt → its flyby marker; stars → nearest match
   if(/earth|leo|low earth/i.test(d.name))b=celestialBodies.find(x=>x.name==='Earth');
   else if(/belt/i.test(d.name))b=(typeof flightFlybys!=='undefined'&&flightFlybys||[]).find(x=>x.name===d.name);
+  else if(d.catalog&&d.catalog.kind==='comet')b=(typeof flightFlybys!=='undefined'&&flightFlybys||[]).find(x=>x.name==='Comet '+d.name);   // an old seeded comet
   else if(/proxima|centauri/i.test(d.name))b=distantSystems&&distantSystems.find(s=>/centauri|proxima/i.test(s.name));
   return b||null;
 }
