@@ -4894,7 +4894,7 @@ const SOL_CATALOG=[
   {name:'Vesta',kind:'asteroid',icon:'🪨',r:0.041,col:0x8e8578,type:'Asteroid',g:0.025,temp:'~180 K',land:true},
   {name:'Pallas',kind:'asteroid',icon:'🪨',r:0.0402,col:0x7d7a76,type:'Asteroid',g:0.022,temp:'~165 K',land:true},
   {name:'Hygiea',kind:'asteroid',icon:'🪨',r:0.032,col:0x5e5a56,type:'Asteroid',g:0.009,temp:'~160 K',land:true},
-  {name:'Eros',kind:'asteroid',icon:'🪨',r:0.00132,col:0x8a7a68,type:'Asteroid',g:0.0006,temp:'~230 K',land:true},
+  {name:'Eros',kind:'asteroid',icon:'🪨',r:0.00132,col:0x8a7a68,type:'Asteroid',g:0.0006,temp:'~230 K'},
   {name:'Jupiter',kind:'planet',icon:'🟠',type:'Gas Giant'},
   {name:'Io',kind:'moon',parent:'Jupiter',icon:'🟡',r:0.2859,a:421700,P:1.769138,inc:0.05,col:0xd6bf52,type:'Volcanic',g:0.183,temp:'110 K',land:true,
     surface:Object.assign({ground:0xd8c050,ground2:0xa08a28,rock:0xb06a30,glow:0xff6a20},_AIRLESS)},
@@ -6804,16 +6804,18 @@ function _buildSolCatalogBodies(){
     if(!e.r) return;                          // places, the belt, planets: no body of their own here
     if(e.kind==='moon'){ if(!byName[e.parent]) return; dist=_solMoonDistances(byName); }
     const r=_solSmallR(e.r), seed=hashStr('sol:'+e.name);
-    const rock=e.kind==='asteroid'||e.kind==='comet'||e.lumpy;
+    // a landable body is a world (sphere → terrain by LOD), the rest of the small fry are rocks
+    const rock=!e.land&&(e.kind==='asteroid'||e.kind==='comet'||e.lumpy);
     const mesh=rock?_solLumpyRock(r,seed,e.col)
       :new THREE.Mesh(new THREE.SphereGeometry(r,28,18),new THREE.MeshStandardMaterial({color:e.col,roughness:0.95,metalness:0.02}));
     mesh.name='JOTS_SolBody';
     if(e.shape) mesh.scale.set(e.shape[0],e.shape[1],e.shape[2]);
     const group=new THREE.Group(); group.add(mesh);
-    const world=!!e.land&&!rock;              // a walkable world, not a rock you set down on
+    const world=!!e.land;                     // a walkable world (same pipeline as every planet)
     const b={mesh:group,name:e.name,type:e.type,temp:e.temp,collisionRadius:r,gravity:e.g,
       landable:!!e.land,hasTerrain:!!e.land,catalog:e,
-      surface:e.surface,style:e.style,regions:e.regions,
+      // airless unless the catalog names an atmosphere (its type's palette may assume air)
+      surface:Object.assign({},e.atm?null:_AIRLESS,e.surface||null),style:e.style,regions:e.regions,
       isProcedural:world,mcRadius:r,mcSeed:seed,mcColor:e.col,mcHasAtm:!!e.atm,mcKind:e.atm||e.name,mcRes:lowRes,mcTier:'low'};
     if(rock&&e.kind!=='moon'){ b.isAsteroid=e.kind==='asteroid'; b.isComet=e.kind==='comet'; }
     if(e.kind==='moon'){
@@ -11209,7 +11211,7 @@ function buildGalaxySolarTier(){
     const ang=Math.random()*Math.PI*2;
     const m=new THREE.Mesh(new THREE.SphereGeometry(p.s,16,16),new THREE.MeshBasicMaterial({color:p.c}));
     m.position.set(Math.cos(ang)*p.r,0,Math.sin(ang)*p.r);
-    m.userData={destIdx:p.idx};grp.add(m);
+    m.userData={destIdx:p.idx,destName:p.name};grp.add(m);   // resolved by name on tap: the Quick Travel list is the whole Sol catalog
     if(p.ring){const rg=new THREE.Mesh(new THREE.RingGeometry(p.s*1.5,p.s*2.4,32),new THREE.MeshBasicMaterial({color:0xccbb99,side:THREE.DoubleSide,transparent:true,opacity:0.6}));rg.rotation.x=-Math.PI/2.2;m.add(rg);}
     const lbl=addGmLabel(grp,p.name,m.position.clone().add(new THREE.Vector3(0,p.s+5,0)),'rgba(91,127,255,0.9)');
     gmSolarPlanets.push({mesh:m,r:p.r,ang,spd:0.0016/(p.idx*0.4+1),name:p.name,destIdx:p.idx,labelSprite:lbl,size:p.s,lblBaseW:lbl.userData.baseW,lblBaseH:lbl.userData.baseH});
@@ -11845,11 +11847,11 @@ function onGalaxyMapClick(e){
   // Solar tier: tap a destination → plot course
   const meshes=[];gmDestGroup&&gmDestGroup.traverse(o=>{if(o.isMesh&&o.userData.destIdx!==undefined)meshes.push(o);});
   const hits=gmRaycaster.intersectObjects(meshes);
-  if(hits.length){const di=hits[0].object.userData.destIdx;STATE.flight.destIdx=di;
+  if(hits.length){const hit=hits[0].object, dn=hit.userData.destName, dj=dn?DESTINATIONS.findIndex(d=>d.name===dn):-1, di=dj>=0?dj:hit.userData.destIdx;STATE.flight.destIdx=di;
     $('gm-selected').textContent='→ '+(DESTINATIONS[di]?DESTINATIONS[di].name.toUpperCase():'TARGET')+' SELECTED';
     document.querySelectorAll('.dest-card').forEach((c,ci)=>c.classList.toggle('active',ci===di));
     if(flightInited&&DESTINATIONS[di])plotCourse(di);
-    meshes.forEach(m=>m.material&&m.userData.destIdx!==undefined&&m.material.color.set(m.userData.destIdx===di?0xf5c400:0x00f5ff));}
+    meshes.forEach(m=>m.material&&m.userData.destIdx!==undefined&&m.material.color.set(m===hit?0xf5c400:0x00f5ff));}
 }
 
 // Smoothly fly the map camera from the galaxy view down into the solar system.
@@ -20825,7 +20827,7 @@ function _pwBuildGround(pal,fx,fz,mode){
         if(!TERRAIN._climbRay){ TERRAIN._climbRay=new THREE.Raycaster(); TERRAIN._climbRay.far=3.2; }
         const origin=new THREE.Vector3(x,y,z);
         for(let i=0;i<8;i++){
-          const a=i*Math.PI/4; TERRAIN._climbRay.set(origin,new THREE.Vector3(Math.cos(a),0,Math.sin(a)));
+          const a=i*Math.PI/4; TERRAIN._climbRay.set(origin,new THREE.Vector3(Math.cos(a),0,Math.sin(a))); TERRAIN._climbRay.camera=PW.camera;   // sprites in the scene need it
           const hits=TERRAIN._climbRay.intersectObjects(PW.scene.children,true);
           for(const h of hits){
             let climb=false; for(let cur=h.object;cur;cur=cur.parent){ const u=cur.userData; if(u&&(u.climbable||u.cliff||u.rope)){ climb=true; break; } }
