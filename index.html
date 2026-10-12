@@ -2387,10 +2387,12 @@ function resumeJourney(data){
   if(!w) return;
   const gal=w.gal||'milkyway', want=(w.sys&&w.sys.name)||'Sol';
   let travelled=false, t0=Date.now();
-  (function wait(){
+  // one self-rescheduling waiter (every retry below calls wait()); gives up after 150 s
+  function wait(){
     if(Date.now()-t0>150000){ _resumeHold(false); return; }
     try{ _resumeWait(); }catch(e){ console.warn('[resume]',e); _resumeHold(false); }
-  })();
+  }
+  wait();
   function _resumeWait(){
     if(PW._resumeHold) _resumeHold(true);   // still on the way (slow cross-system travel): keep the ~10 s safety timer fresh
     const ready=typeof flightInited!=='undefined'&&flightInited&&boardFlight&&celestialBodies&&celestialBodies.length&&!PW.opening
