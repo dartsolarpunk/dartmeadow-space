@@ -2405,7 +2405,10 @@ function resumeJourney(data){
       if(!_restoreWhereMode(w,data,t0)) _resumeHold(false);
       return;
     }
-    setTimeout(()=>_resumeHold(false),1500);
+    // the worlds settle onto the live clock over the first frames after launch:
+    // put her back on the same body/asset-relative spot again once they have
+    const _again=()=>{ try{ _restoreSpacePos(w); if(sp.vel) sp.vel.set(0,0,0); if(boardFlight) boardFlight.position.copy(sp.pos); _followInit=false; if(ANCHOR_STATE.active) ANCHOR_STATE._lastPos=null; }catch(e){} };
+    setTimeout(_again,500); setTimeout(()=>{ _again(); _resumeHold(false); },1600);
     const sp=STATE.flight;
     const b=_restoreSpacePos(w);
     if(sp.vel) sp.vel.set(0,0,0);
