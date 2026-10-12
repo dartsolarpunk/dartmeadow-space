@@ -817,6 +817,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 #qt-tree .tt-meta{flex:1 1 auto;min-width:0;text-align:right;font-size:0.52rem;color:rgba(150,180,255,0.6);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 #qt-tree .tt-go{flex:0 0 auto;font-size:0.7rem;color:rgba(var(--acc-rgb),0.7);}
 @media (max-width:560px){#qt-panel{top:120px;max-height:calc(100% - 130px);}#qt-tree .tt-row{min-height:42px;}}
+@media (max-height:520px){#qt-panel{top:calc(8px + env(safe-area-inset-top,0px));left:calc(10px + env(safe-area-inset-left,0px));max-height:calc(100% - 16px - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px));}#qt-tree .tt-row{min-height:40px;}}
+@media (pointer:coarse){#qt-tree .tt-row{min-height:44px;}#qt-tree .tt-tog{flex-basis:38px;height:38px;}}
 #dest-scroll{display:grid;grid-template-columns:repeat(2,1fr);gap:0.35rem;max-height:140px;overflow-y:auto;}
 .dest-card{width:auto;padding:0.4rem 0.5rem;background:rgba(var(--acc-rgb),0.05);border:1px solid rgba(var(--acc-rgb),0.14);border-radius:3px;cursor:pointer;transition:var(--trans);font-family:var(--font-mono);}
 .dest-card:hover{border-color:rgba(var(--acc-rgb),0.4);background:rgba(var(--acc-rgb),0.1);}
@@ -5599,7 +5601,7 @@ function toggleQtMap(force){
   try{ localStorage.setItem('dm_qt_map_v1',on?'1':'0'); }catch(e){}
   if(on){ try{ ensureQtMiniMap(); }catch(e){} } else { try{ pauseQtMiniMap(); }catch(e){} }
 }
-function _qtMapWanted(){ try{ const v=localStorage.getItem('dm_qt_map_v1'); if(v!=null) return v==='1'; }catch(e){} return !(GFX&&GFX.isMobile)&&innerWidth>=900; }
+function _qtMapWanted(){ try{ const v=localStorage.getItem('dm_qt_map_v1'); if(v!=null) return v==='1'; }catch(e){} return false; }   // the list first; 🗺 MAP opens the 3D chart (remembered)
 function openTravelFromMap(){ closeGalaxyMap(); if(!$('ar-bottom').classList.contains('open')) toggleQuickTravel(); }
 function onQtMapClick(e){
   if(!qtRenderer||!qtCamera||!qtScene)return;
@@ -17303,6 +17305,10 @@ function _pwSpaceStep(dt,first){
   if(S.out) _pwSpaceOutTick(sp,b,sc,dt);
   S.speed=(sp.pos.distanceTo(p0))*sc.Sx/Math.max(1e-3,dt||1/60);
   try{ updateBoardTransform(0,0); }catch(e){}
+  // the hover bob is a fixed 0.03 in open-space units; near the top of the air the
+  // camera sits only ~0.015 behind her (offsets × sc.fc), so the unscaled bob threw
+  // the board and Ariel clean out of frame with the world open. Scale it with the camera.
+  if(boardFlight&&sc.fc<1) boardFlight.position.y=sp.pos.y+(boardFlight.position.y-sp.pos.y)*sc.fc;
   // the follow camera: the same offsets, scaled
   const o=CAM_OFFSETS[camMode]||CAM_OFFSETS[0], q=spQuat(sp), fwd=_pwVec(0).set(0,0,-1).applyQuaternion(q);
   if(!_followInit){ try{ updateFollowCam(1/60); }catch(e){} }
