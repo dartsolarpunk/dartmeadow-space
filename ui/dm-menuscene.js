@@ -526,9 +526,10 @@
         if (FOC.w > 0.001) {
           bones.Head.getWorldPosition(headW); tgtW.copy(headW); tgtW.y += 0.02;
           // swoop: lift up and sweep in from her right (screen-left), looking down across her eyes; the stars stay behind her
+          const dk = Math.max(1, Math.min(2.4, 1.0 / Math.max(0.3, camera.aspect)));   // tall phone screens: stand further back so her whole head fits
           tmpA.copy(camBase).sub(headW).setY(0).normalize();            // out toward the viewer
           tmpC.set(-tmpA.z, 0, tmpA.x);                                  // screen-left of that
-          closeP.copy(headW).addScaledVector(tmpA, 1.35).addScaledVector(tmpC, 1.0); closeP.y = headW.y + 0.17;
+          closeP.copy(headW).addScaledVector(tmpA, 1.35 * dk).addScaledVector(tmpC, 1.0 * dk); closeP.y = headW.y + 0.17 * dk;
           const e = FOC.w, arc = Math.sin(Math.PI * e);
           camera.position.lerp(closeP, e); camera.position.y += arc * 0.28; camera.position.addScaledVector(tmpC, arc * 0.18);
           tgtW.copy(headW); tgtW.y -= 0.03; tgtW.addScaledVector(tmpC, -0.12);
