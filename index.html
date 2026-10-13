@@ -872,6 +872,9 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 /* PERF: always-on HUD pieces must not blur the live 3D canvas behind them (a per-frame full-screen read + blur on mobile GPUs).
    Backgrounds are slightly more opaque instead so they read the same. Modals that open on demand keep their blur. */
 .joystick-base,.ar-panel,#ar-top,.hud-toggle-btn,.assist-btn,.side-pad,.dart-pad,.joystick-zone>div,[style*="backdrop-filter:blur(8px)"][style*="border-radius:50%"]{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;}
+/* live FPS number: lower-left corner of the kite, medium gray so it reads on any theme without shouting */
+.dm-fps{position:absolute;left:58px;top:123px;font:600 11px/1 var(--font-mono,monospace);letter-spacing:.04em;color:rgba(150,156,168,.95);text-shadow:0 0 3px rgba(0,0,0,.7),0 0 1px rgba(0,0,0,.9);pointer-events:none;font-variant-numeric:tabular-nums;z-index:3}
+.mini-kite .dm-fps{left:40px;top:80px;font-size:9px}
 #minimap{display:none!important;position:absolute;bottom:calc(100px + var(--safe-bot));left:8px;width:88px;height:88px;background:rgba(var(--panel-rgb),0.28);border:1px solid rgba(var(--acc-rgb),0.18);border-radius:50%;overflow:hidden;pointer-events:auto;z-index:22;touch-action:none;}
 #minimap-canvas{touch-action:none;}
 #mm-toggle{position:absolute;top:2px;right:2px;width:16px;height:16px;border-radius:50%;background:rgba(var(--panel-rgb),0.8);border:1px solid rgba(var(--acc-rgb),0.3);color:rgba(var(--acc-rgb),0.7);font-size:0.5rem;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;z-index:23;pointer-events:auto;}
@@ -907,7 +910,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 .ag-check{display:inline-block;margin-right:0.8rem;font-size:0.65rem;color:var(--text);}
 #altar-game-body input[type=range]{width:70%;vertical-align:middle;accent-color:var(--cyan);}
 #altar-game-body select{background:rgba(var(--acc-rgb),0.06);border:1px solid var(--border);color:var(--text);padding:2px 6px;border-radius:2px;}
-.modal-box{background:rgba(4,10,22,0.98);border:1px solid var(--border);border-radius:4px;padding:1.8rem;width:min(500px,92vw);max-height:85vh;overflow-y:auto;}
+.modal-box{touch-action:pan-y;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;background:rgba(4,10,22,0.98);border:1px solid var(--border);border-radius:4px;padding:1.8rem;width:min(500px,92vw);max-height:85vh;overflow-y:auto;}
 .modal-title{font-family:var(--font-hud);font-size:0.8rem;font-weight:900;color:var(--cyan);letter-spacing:0.2em;margin-bottom:1.2rem;}
 .setting-row{display:flex;align-items:center;justify-content:space-between;padding:0.5rem 0;border-bottom:1px solid var(--border2);}
 .setting-label{font-size:0.75rem;color:var(--text);}
@@ -1504,6 +1507,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
         <div class="hud-g" title="Distance / altitude"><span class="g-lbl">ALT</span><svg class="g-ring" viewBox="0 0 40 40" aria-hidden="true"><circle class="g-track" cx="20" cy="20" r="16"/><circle class="g-arc" id="g-alt" cx="20" cy="20" r="16"/></svg><span class="g-val"><span id="hud-alt">400km</span></span></div>
         <div class="hud-dest"><div>→ <span id="hud-dest">LOW ORBIT</span></div><div class="hud-eta">ETA <span id="hud-eta">—</span></div></div>
       </div>
+      <span class="dm-fps" aria-hidden="true">--</span>
     </div>
     <!-- Right frame: game buttons, then Initialize Progress beneath -->
     <div class="hud-r">
@@ -1812,9 +1816,14 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     <div class="setting-row">
       <div><div class="setting-label">Quality Preset</div><div class="setting-sub">Auto-detects your device</div></div>
       <select id="set-quality" style="background:rgba(var(--acc-rgb),0.06);border:1px solid var(--border);color:var(--text);padding:3px 7px;font-family:var(--font-body);font-size:0.7rem;border-radius:2px;outline:none;">
-        <option value="auto" selected>Auto-detect</option><option value="low">Low (max compat)</option><option value="balanced">Balanced</option><option value="ultra">Ultra</option>
+        <option value="auto" selected>Auto (detect + auto-balance)</option><option value="low">Low (max compat)</option><option value="medium">Medium</option><option value="high">High</option><option value="ultra">Ultra</option><option value="custom">Custom</option>
       </select>
     </div>
+    <div class="setting-row">
+      <div><div class="setting-label">Auto-detect</div><div class="setting-sub" id="set-detect-sub">Pick the best fixed settings for this device</div></div>
+      <button type="button" class="btn" onclick="settingsAutoDetect()" style="padding:5px 12px;font-size:0.62rem;">DETECT NOW</button>
+    </div>
+    <div class="setting-row"><div><div class="setting-label">Auto balance</div><div class="setting-sub">Lowers resolution / detail only when frames get slow, restores it when there is room (always on in Auto)</div></div><label class="toggle-switch"><input type="checkbox" id="set-autobal"><span class="toggle-track"></span></label></div>
     <div class="setting-row">
       <div><div class="setting-label">Resolution Scale</div><div class="setting-sub">Lower = faster framerate</div></div>
       <select id="set-resscale" style="background:rgba(var(--acc-rgb),0.06);border:1px solid var(--border);color:var(--text);padding:3px 7px;font-family:var(--font-body);font-size:0.7rem;border-radius:2px;outline:none;">
@@ -4512,7 +4521,7 @@ function syncSettingsUIFromState(){
     if($('set-galaxyband'))$('set-galaxyband').checked=s.galaxyband;
     if($('set-particles'))$('set-particles').value=s.particles;
     if($('set-fov'))$('set-fov').value=String(s.fov);
-    if($('set-resscale'))$('set-resscale').value=String(GFX.resScale);
+    if($('set-resscale')){ const rsEl=$('set-resscale'), v=String(GFX.resScale); if(![...rsEl.options].some(o=>o.value===v)){ const o=document.createElement('option'); o.value=v; o.textContent=Math.round(GFX.resScale*100)+'%'; rsEl.appendChild(o); } rsEl.value=v; }
     if($('set-shadows'))$('set-shadows').checked=GFX.shadows;
     if($('set-reflections'))$('set-reflections').checked=GFX.envReflections;
     if($('set-caustics'))$('set-caustics').checked=GFX.caustics;
@@ -4571,7 +4580,7 @@ function effectivePixelRatio(){
 
 // ── Persistence ─────────────────────────────────────────────────
 const GFX_STORE_KEY='dm_gfx_v2';
-const GFX_KNOB_KEYS=['preset','resScale','shadows','shadowSize','envReflections','caustics','fakeGI','refraction','ssao','volumetricDust','dustDensity','aniso','antialias','pathTraceAccents','showCharDebug'];
+const GFX_KNOB_KEYS=['preset','resScale','shadows','shadowSize','envReflections','caustics','fakeGI','refraction','ssao','volumetricDust','dustDensity','aniso','antialias','pathTraceAccents','showCharDebug','dynamicRes'];
 function saveGfxChoice(){
   try{
     const payload={chosen:true, resolved:resolvePreset(), ts:Date.now()};
@@ -4624,6 +4633,7 @@ window.loadGfxChoice=loadGfxChoice;
 
 // ── Preset selection screen ─────────────────────────────────────
 const PRESET_META={
+  auto:  {label:'AUTO',  icon:'◎',  blurb:'Detects your device and keeps itself smooth, live'},
   low:   {label:'LOW',   icon:'○',  blurb:'Max compatibility · lightest load'},
   medium:{label:'MEDIUM',icon:'◐',  blurb:'Balanced shadows + reflections'},
   high:  {label:'HIGH',  icon:'◕',  blurb:'Soft shadows, SSAO, dense dust'},
@@ -4640,7 +4650,7 @@ function showGfxScreen(force){
   _gfxScreenPick = hadChoice ? GFX.preset : 'auto';
   $('gfx-scan-line').textContent =
     `GPU: ${GFX.renderer||'unknown'} · ${GFX.webgl2?'WebGL2':'WebGL1'}${GFX.webgpu?' · WebGPU':''} · ${GFX.cores} cores · score ${GFX.score}/100`;
-  $('gfx-reco-line').textContent = `★ Recommended for your device: ${PRESET_META[reco].label} (targets 30fps+ at best quality)`;
+  $('gfx-reco-line').textContent = `★ Recommended: AUTO — picks ${PRESET_META[reco].label} for this device and adjusts detail live (targets 30fps+)`;
   renderPresetCards(reco);
   buildCustomPanel();
   $('gfx-screen').style.display='block';
@@ -4649,10 +4659,10 @@ function showGfxScreen(force){
 
 function renderPresetCards(reco){
   const wrap=$('gfx-presets');wrap.innerHTML='';
-  ['low','medium','high','ultra'].forEach(name=>{
+  ['auto','low','medium','high','ultra'].forEach(name=>{
     const m=PRESET_META[name];
-    const isReco=name===reco;
-    const active=(_gfxScreenPick==='auto'?reco:_gfxScreenPick)===name && _gfxScreenPick!=='custom';
+    const isReco=name==='auto';
+    const active=_gfxScreenPick===name;
     const card=document.createElement('div');
     card.style.cssText=`position:relative;padding:0.9rem 0.8rem;border:1px solid ${active?'var(--cyan)':'var(--border)'};background:${active?'rgba(var(--acc-rgb),0.12)':'rgba(var(--acc-rgb),0.03)'};border-radius:4px;cursor:pointer;transition:var(--trans);text-align:center;`;
     card.innerHTML=`
@@ -8658,7 +8668,7 @@ function updateShipWalk(dt){
   // LEFT stick looks (turns the follow camera), RIGHT stick / WASD walks
   // relative to where the camera faces — push up = forward, the same
   // mapping as flight and the planet-surface walk.
-  SHIP_WALK.yaw-=JOY.Lx*dt*1.8;
+  SHIP_WALK.yaw-=JOY.Lx*dt*3.6;
   SHIP_WALK.pitch=THREE.MathUtils.clamp(SHIP_WALK.pitch+JOY.Ly*dt*1.2,-0.6,0.9);   // push up = look up
   // Steps: she strides up anything to knee height (STEP_MAX ≈ 1.2 ft at her
   // 0.454-unit / 6 ft scale); the altar's high steps (≈0.2 and ≈0.12 units)
@@ -8745,7 +8755,7 @@ function updateShipWalk(dt){
     CHAR.root.position.set(F.x,F.y+(CHAR.feetOffset||0)*(CHAR._shipScale||1)+(CHAR._plantOff||0),F.z);   // + planted-foot contact
     if(BOARD_CALL.look&&BOARD_CALL.lookW>0&&!moving){ const L=BOARD_CALL.look, w=Math.atan2(L.x,L.z); let dd=w-SHIP_WALK.faceYaw; dd=Math.atan2(Math.sin(dd),Math.cos(dd)); SHIP_WALK.faceYaw+=dd*BOARD_CALL.lookW*Math.min(1,dt*6); }   // she turns to watch the summoned board
     let d=SHIP_WALK.faceYaw-CHAR.root.rotation.y;d=Math.atan2(Math.sin(d),Math.cos(d));
-    CHAR.root.rotation.set(0,CHAR.root.rotation.y+d*Math.min(1,dt*10),0);
+    CHAR.root.rotation.set(0,SHIP_WALK.faceYaw,0);   // turns instantly with the stick (no damping)
     try{updateCharacterLocomotion(dt,moving&&SHIP_WALK.grounded,running,1,!SHIP_WALK.grounded&&!SHIP_WALK.climb,!!SHIP_WALK.climb,{});}catch(e){}
     // her lowest foot meets the deck: rays down onto the temple's own meshes
     try{ _footContact(dt,!SHIP_WALK.grounded||!!SHIP_WALK.climb,CHAR._shipScale||1,
@@ -13012,10 +13022,18 @@ function closeSupport(){const m=$('support-modal');if(m)m.style.display='none';}
 
 function openSettings(){try{releaseMouseLook();}catch(e){}
   // sync controls to live GFX + STATE.settings
-  try{ if($('set-quality'))$('set-quality').value=(GFX.preset==='custom'?'auto':GFX.preset); }catch(e){}
+  try{ if($('set-quality'))$('set-quality').value=GFX.preset||'auto'; if($('set-autobal')){ $('set-autobal').checked=(GFX.preset==='auto')||GFX.dynamicRes===true; $('set-autobal').disabled=(GFX.preset==='auto'); } }catch(e){}
   syncSettingsUIFromState();
   $('settings-modal').classList.add('open');
 }
+function settingsAutoDetect(){
+  try{ detectCapabilities(); }catch(e){}
+  const t=autoPreset();
+  try{ $('set-quality').value=t; }catch(e){}
+  try{ $('set-detect-sub').textContent='Best for this device: '+t.toUpperCase()+' — press APPLY to use it (turn on Auto balance to keep it smooth)'; }catch(e){}
+  try{ toast('◎ Detected: '+t.toUpperCase()+' — press APPLY',2600); }catch(e){}
+}
+window.settingsAutoDetect=settingsAutoDetect;
 function closeSettings(){$('settings-modal').classList.remove('open');}
 function applySettings(){
   STATE.settings.stars=$('set-stars').checked;STATE.settings.dust=$('set-dust').checked;
@@ -13031,6 +13049,7 @@ function applySettings(){
   // ── Graphics quality / lighting effects ──
   let needsRebuild=false;
   if($('set-quality')){const q=$('set-quality').value;if(GFX.preset!==q){GFX.preset=q;if(q!=='custom')applyPreset(q);needsRebuild=true;}}
+  if($('set-autobal')&&GFX.preset!=='auto'){ GFX.dynamicRes=$('set-autobal').checked?true:false; try{ if(flightRenderer) flightRenderer._dr=null; }catch(e){} }
   if($('set-resscale')){
     const rs=parseFloat($('set-resscale').value);
     if(GFX.resScale!==rs){
@@ -13638,6 +13657,13 @@ function _dmCheckApkUpdate(){
   }).catch(()=>{});
 }
 if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',()=>setTimeout(_dmCheckApkUpdate,4000)); else setTimeout(_dmCheckApkUpdate,4000);
+// Live FPS readout (every .dm-fps: the kite, and the mini kites on the walking / flight screens)
+(function(){
+  let n=0,t0=performance.now();
+  function ensure(){ document.querySelectorAll('.mini-kite').forEach(k=>{ if(!k.querySelector('.dm-fps')){ const e=document.createElement('span'); e.className='dm-fps'; e.setAttribute('aria-hidden','true'); e.textContent='--'; k.appendChild(e); } }); }
+  function tick(t){ n++; if(t-t0>=500){ const f=Math.round(n*1000/(t-t0)); n=0; t0=t; ensure(); document.querySelectorAll('.dm-fps').forEach(e=>{ e.textContent=f; }); } requestAnimationFrame(tick); }
+  requestAnimationFrame(tick);
+})();
 // ── Performance log (all platforms; tagged by platform so Android app / iOS app / web can be compared) ──
 // Samples frame times with requestAnimationFrame (negligible cost), summarises every 10 s, keeps the last 60 windows
 // in localStorage ('dm_perf_log'). Open the report: add ?perf to the URL, or tap the top-left corner 5 times quickly.
@@ -20001,6 +20027,7 @@ function _bindCharOrbitListenersOnce(){
   },{passive:true});
   window.addEventListener('touchmove', e=>{
     if(!charOrbitActive) return;
+    if(!_charOrbitOnView(e)) return;   // a touch that started on a menu / modal must scroll it, not orbit the camera
     if(e.touches.length===1){ e.preventDefault(); move(e.touches[0].clientX,e.touches[0].clientY); }
     else if(e.touches.length===2 && _charOrbitPinch){
       e.preventDefault();
@@ -22534,7 +22561,7 @@ function updateSurface(dt){
   }
 
   // LOOK from LEFT joystick + drag
-  p.yaw-=surfLookJoy.x*2.4*dt;
+  p.yaw-=surfLookJoy.x*4.4*dt;
   p.pitch-=surfLookJoy.y*2.0*dt;
   { const ml=takeMouseLook(); p.yaw-=ml.x*MOUSE_LOOK.sens; p.pitch-=ml.y*MOUSE_LOOK.sens; }   // mouse look (pointer lock)
   p.pitch=Math.max(-1.3,Math.min(1.3,p.pitch));
