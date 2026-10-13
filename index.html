@@ -7070,7 +7070,8 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
           // scale fix earlier this session that height was never reached
           // by anything, so the whole snow-cap blend had gone silently
           // dead). ~75% up the new relief range, same proportion as before.
-          const snowT=height.sub(radius*0.009).div(radius*0.003).clamp(0,1);
+          const lat01=up.y.abs();
+          const snowT=height.sub(radius*0.011).div(radius*0.003).clamp(0,1).mul(float(0.55).add(lat01.mul(0.45)));
           let c=vec3(baseC.r,baseC.g,baseC.b);
           c=mix(c,vec3(rockC.r,rockC.g,rockC.b),slope.smoothstep(0.35,0.75));
           c=mix(c,vec3(snowC.r,snowC.g,snowC.b),snowT);
@@ -11366,7 +11367,7 @@ function updateBodies(dt){
         _approachBestDist=dist;_approachBestBody=b;
       }
       // getting close: dress the planet in the map of the ground you'd land on
-      if(!b._wmReq && dist<rad*14 && !b.isAsteroid && b.type!=='Comet'){
+      if(!b._wmReq && dist<rad*(b.name==='Earth'?90:30) && !b.isAsteroid && b.type!=='Comet'){
         b._wmReq=true;
         try{ worldMapFor(b,m=>{ b._wm=m; _applyWorldMapToFlightBody(b,m); }); }catch(e){ console.warn('[worldmap] flight',e); }
       }
