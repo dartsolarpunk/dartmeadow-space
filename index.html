@@ -13585,6 +13585,28 @@ function _dmIsNative(){ try{ return !!(window.webkit&&window.webkit.messageHandl
 function _dmIsAndroid(){ try{ return !!window.DMAndroid||/DartMeadowAndroid/.test(navigator.userAgent); }catch(e){ return false; } }
 function _dmPlatform(){ return _dmIsNative()?'ios':_dmIsAndroid()?'android':'web'; }
 try{ document.documentElement.setAttribute('data-platform',_dmPlatform()); window.DM_PLATFORM=_dmPlatform(); }catch(e){}
+// Android app only: on launch, compare the installed wrapper version (DMAndroid.version()) with /android/version.json
+// and show a tappable banner when a newer APK exists. The game itself always updates through the site; this is only
+// for new APK builds (wrapper changes). Bump android/version.json whenever a new APK is released.
+function _dmCheckApkUpdate(){
+  if(_dmPlatform()!=='android') return;
+  let cur='1.0'; try{ cur=(window.DMAndroid&&DMAndroid.version&&DMAndroid.version())||(navigator.userAgent.match(/DartMeadowAndroid\/([\d.]+)/)||[])[1]||'1.0'; }catch(e){}
+  fetch('/android/version.json?t='+Date.now(),{cache:'no-store'}).then(r=>r.ok?r.json():null).then(j=>{
+    if(!j||!j.version) return;
+    const a=String(j.version).split('.').map(Number), b=String(cur).split('.').map(Number);
+    let newer=false; for(let i=0;i<Math.max(a.length,b.length);i++){ const x=a[i]||0,y=b[i]||0; if(x!==y){ newer=x>y; break; } }
+    if(!newer) return;
+    try{ if(localStorage.getItem('dm_apk_skip')===j.version) return; }catch(e){}
+    const d=document.createElement('div');
+    d.style.cssText='position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:100000;background:rgba(0,8,20,.97);border:1px solid #0ef;color:#0ef;font:600 12px/1.4 sans-serif;letter-spacing:.08em;padding:10px 14px;border-radius:4px;display:flex;gap:12px;align-items:center;max-width:92vw';
+    d.innerHTML='<span>DART MEADOW APP UPDATE '+j.version+' AVAILABLE</span>';
+    const g=document.createElement('a'); g.textContent='GET'; g.href=j.apk; g.style.cssText='color:#10081a;background:#0ef;padding:4px 10px;border-radius:3px;text-decoration:none';
+    const x=document.createElement('span'); x.textContent='\u2715'; x.style.cssText='cursor:pointer;opacity:.7';
+    x.onclick=()=>{ try{ localStorage.setItem('dm_apk_skip',j.version); }catch(e){} d.remove(); };
+    d.append(g,x); document.body.appendChild(d);
+  }).catch(()=>{});
+}
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',()=>setTimeout(_dmCheckApkUpdate,4000)); else setTimeout(_dmCheckApkUpdate,4000);
 function _dmAndroidExitCopy(){
   const m=$('exit-modal'); if(!m||m.__dmAndroid) return; m.__dmAndroid=true;
   const sub=m.querySelector('.exit-sub'); if(sub) sub.innerHTML='Your journey is saved on this device. The app will close.';
