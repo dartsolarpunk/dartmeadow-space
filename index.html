@@ -2978,7 +2978,15 @@ let _gameInProgress=false;
     try{ initMenuBg(); }catch(e){ console.warn('menu bg early:',e); }
     if(window.DM_MENUSCENE) window.DM_MENUSCENE.start();
   }catch(e){ console.warn('menuscene boot:',e); } }
-  if(document.readyState==='complete') setTimeout(boot,0); else window.addEventListener('load',()=>setTimeout(boot,0));
+  // start the star scene as early as the 3D engine is up (don't wait for 'load'); the heavy Ariel scene follows ~1.2s later
+  function go(){ try{
+    const app=$('app'), mm=$('screen-menu'); if(!app||!mm) return;
+    app.classList.add('vis'); mm.classList.add('ms-pre','active');
+    try{ initMenuBg(); }catch(e){ console.warn('menu bg early:',e); }
+    setTimeout(()=>{ if(window.DM_MENUSCENE) window.DM_MENUSCENE.start(); },1200);
+  }catch(e){ console.warn('menuscene boot:',e); } }
+  const kick=()=>{ try{ window.__whenThreeReady(()=>setTimeout(go,0)); }catch(e){ setTimeout(go,0); } };
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',kick); else kick();
 })();
 function enterApp(){
   // This runs inside the LAUNCH button click — the legal moment to go fullscreen.

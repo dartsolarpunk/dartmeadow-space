@@ -312,7 +312,7 @@
         for (const f of ['Index', 'Middle', 'Ring', 'Pinky']) for (let k = 1; k <= 3; k++) {
           const bn = n(f + k), cn = n(f + (k + 1)); if (!b[bn] || !R[bn]) continue;
           const d = b[cn] ? rp(cn).sub(rp(bn)).normalize() : hAx.clone();
-          r.setFromAxisAngle(ax.crossVectors(d, np).normalize(), Math.max(0, Math.min(45, curl[k - 1] || 0)) * Math.PI / 180);
+          r.setFromAxisAngle(ax.crossVectors(d, np).normalize(), (side === 'Left' ? 1 : -1) * Math.max(0, Math.min(45, curl[k - 1] || 0)) * Math.PI / 180);   // the two hands' palm normals come out mirrored on this rig: Left bone +, Right bone −
           if (k === 1 && spread) r.multiply(q.setFromAxisAngle(ax.crossVectors(d, lat).normalize(), cl(spread[f], 15)));
           RQ(b[bn], q); const loc = q.clone().invert().multiply(r).multiply(q);
           b[bn].quaternion.copy(R[bn].q).multiply(loc);
@@ -368,11 +368,14 @@
       }
 
       /* materials + terrain */
+      await sleep(60);
       const noiseTex = makeNoiseTexture(THREE);
+      await sleep(60);
       const groundMat = surfaceMaterial(THREE, noiseTex, { dark: [0.13, 0.05, 0.03], mid: [0.27, 0.105, 0.058], light: [0.40, 0.18, 0.10], dust: 0.8, dustBias: 0.12, basalt: 0.5, bump: 1.7, fadeRadius: [46, 66] });
       const rockMat = surfaceMaterial(THREE, noiseTex, { dark: [0.17, 0.07, 0.05], mid: [0.36, 0.15, 0.085], light: [0.52, 0.25, 0.14], dust: 0.8, dustBias: -0.05, basalt: 0.9, bump: 2.2 });
       const boulderMat = surfaceMaterial(THREE, noiseTex, { dark: [0.17, 0.068, 0.045], mid: [0.37, 0.15, 0.085], light: [0.55, 0.26, 0.145], dust: 0.72, dustBias: -0.12, basalt: 0.85, bump: 1.5 });
       const ground = new THREE.Mesh(buildGroundMesh(THREE), groundMat); ground.receiveShadow = true; ground.frustumCulled = false; scene.add(ground);
+      await sleep(60);
       const boulder = new THREE.Mesh(buildBoulderGeo(THREE), boulderMat); boulder.castShadow = true; boulder.receiveShadow = true; scene.add(boulder);
       const rocks = buildRocks(THREE, rockMat, scene);
       scene.updateMatrixWorld(true);
@@ -415,7 +418,7 @@
       const C = { root, bones, rest, mixer: new THREE.AnimationMixer(root) };
       const P = makePoser(THREE, C);
       if (!P.ready()) throw new Error('rig bones missing');
-      P.fingers([12, 20, 12], { Index: 5, Middle: 0, Ring: -3, Pinky: -8 });
+      P.fingers([14, 24, 16], { Index: 5, Middle: 0, Ring: -3, Pinky: -8 });
 
       /* seat: hips settle on the boulder; yaw her so she faces screen-left */
       const YAW = -Math.PI * 0.22;                      // character +Z (forward) → world −X
@@ -464,7 +467,7 @@
         P.rot('Spine02', 8 + twist * 0.25, 1 + lean * 0.3 + 0.6 * br, 0);
         P.rot('Spine01', 8 + twist * 0.5, 2 + lean * 0.55 + 0.8 * br, 0);
         P.rot('Spine', 8 + twist * 0.8, 3 + lean * 0.85 + 0.9 * br, 0);
-        const sweep = Math.sin(t * 0.21) + 0.45 * Math.sin(t * 0.53 + 0.8), lookYaw0 = 12 + 17 * sweep + 4 * Math.sin(t * 1.1) - rw * 14, lookYaw = lookYaw0 + (6 + 3 * Math.sin(t * 0.8) - lookYaw0) * FOC.w, lookPitch0 = -9 + 9 * Math.sin(t * 0.17 + 2.0) + 2.5 * Math.sin(t * 0.43) + 1.2 * br, lookPitch = lookPitch0 + (-26 - lookPitch0) * FOC.w;   // slow sweeps: away toward the menu / up at the stars / round to the camera
+        const sweep = Math.sin(t * 0.21) + 0.45 * Math.sin(t * 0.53 + 0.8), lookYaw0 = 12 + 17 * sweep + 4 * Math.sin(t * 1.1) - rw * 14, lookYaw = lookYaw0, lookPitch0 = -9 + 9 * Math.sin(t * 0.17 + 2.0) + 2.5 * Math.sin(t * 0.43) + 1.2 * br, lookPitch = lookPitch0;   // slow sweeps: away toward the menu / up at the stars / round to the camera
         P.rot('neck', 8 + lookYaw * 0.35, lookPitch * 0.4, 0.8 * Math.sin(t * 0.19));
         P.rot('Head', 8 + lookYaw * 0.9, lookPitch, 1.2 * Math.sin(t * 0.19 + 0.5));
         // legs: IK to planted feet, knee up on the near side
@@ -525,6 +528,7 @@
           closeP.copy(headW).add(tmpA.copy(camBase).sub(headW).setY(0).normalize().multiplyScalar(0.95)); closeP.y = headW.y + 0.06; closeP.x += 0.12;
           camera.position.lerp(closeP, FOC.w); camera.lookAt(tmpB.lerpVectors(TARGET, tgtW, FOC.w));
         } else camera.lookAt(TARGET);
+        if (MS._dbg) { camera.position.copy(MS._dbg.pos); camera.lookAt(MS._dbg.target); }
         renderer.render(scene, camera);
         if (++framesSeen === 3 && !MS.ready) { MS.ready = true; cv.classList.add('ms-in'); document.dispatchEvent(new CustomEvent('menuscene-ready')); info('ready (' + (renderer.backend && renderer.backend.isWebGPUBackend ? 'WebGPU' : 'WebGL2') + ', pr ' + pr.toFixed(2) + ')'); }
       };
