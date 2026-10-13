@@ -11036,7 +11036,7 @@ function _boardControls(sp,dt,apHook){
   // loop after loop, any direction, no turntable clamp. Yaw likewise spins
   // freely about the pilot's local up. Signs were locked numerically against
   // three r128 to match the old feel exactly at level flight.
-  const ls=0.8*dt; // comfortable look speed
+  const ls=2.4*dt; // look speed: full stick = ~137°/s, applied the instant the stick moves (no damping)
   if(JOY.Lx)spRotateLocal(sp,0,1,0,-JOY.Lx*ls);
   if(JOY.Ly)spRotateLocal(sp,1,0,0,-JOY.Ly*ls);
   let _apLook=!!(JOY.Lx||JOY.Ly||KEYS["ArrowLeft"]||KEYS["ArrowRight"]||KEYS["ArrowUp"]||KEYS["ArrowDown"]);
@@ -11044,15 +11044,15 @@ function _boardControls(sp,dt,apHook){
     if(ml.x||ml.y) _apLook=true;
     if(ml.x) spRotateLocal(sp,0,1,0,-ml.x*k);
     if(ml.y) spRotateLocal(sp,1,0,0,-ml.y*k); }
-  if(KEYS["ArrowLeft"]) spRotateLocal(sp,0,1,0, 0.9*dt);
-  if(KEYS["ArrowRight"])spRotateLocal(sp,0,1,0,-0.9*dt);
-  if(KEYS["ArrowUp"])   spRotateLocal(sp,1,0,0, 0.9*dt);
-  if(KEYS["ArrowDown"]) spRotateLocal(sp,1,0,0,-0.9*dt);
+  if(KEYS["ArrowLeft"]) spRotateLocal(sp,0,1,0, 2.0*dt);
+  if(KEYS["ArrowRight"])spRotateLocal(sp,0,1,0,-2.0*dt);
+  if(KEYS["ArrowUp"])   spRotateLocal(sp,1,0,0, 2.0*dt);
+  if(KEYS["ArrowDown"]) spRotateLocal(sp,1,0,0,-2.0*dt);
   // ── Roll: hold pads (mobile) + Q/E (desktop) about the pilot's LOCAL Z ──
   let rollIn=ROLL_HOLD;
   if(KEYS["KeyQ"])rollIn= 1;
   if(KEYS["KeyE"])rollIn=-1;
-  if(rollIn){spRotateLocal(sp,0,0,1,rollIn*1.4*dt);cancelAutoLevel();}
+  if(rollIn){spRotateLocal(sp,0,0,1,rollIn*2.4*dt);cancelAutoLevel();}
   if(sp===STATE.flight) spSyncLegacy(sp); // keep HUD/save-compat yaw+pitch derived from the quat
 
   // ── Thrust: right joystick gradual acceleration + DART speed mode ──
@@ -11109,7 +11109,7 @@ function updateBoardTransform(tf,ts){
   _sQ1.multiply(_sQ3.setFromAxisAngle(_AXIS_Z,-ts*0.35));
   // One quaternion slerp replaces the old per-Euler-component lerps — same
   // smoothing feel, but stays valid at every attitude including mid-loop.
-  boardFlight.quaternion.slerp(_sQ1,0.12);
+  boardFlight.quaternion.copy(_sQ1);   // board follows the view instantly (was a 12%/frame lag)
   const bq=boardFlight.quaternion; if(!(isFinite(bq.x)&&isFinite(bq.y)&&isFinite(bq.z)&&isFinite(bq.w))) bq.copy(_sQ1);
 }
 
@@ -17368,7 +17368,7 @@ function updateAtmoFlight(dt){
   _sQ1.copy(s.quat).multiply(_BOARD_ALIGN);
   _sQ1.multiply(_sQ2.setFromAxisAngle(_AXIS_X,-tf*0.04));
   _sQ1.multiply(_sQ3.setFromAxisAngle(_AXIS_Z,-ts*0.35));
-  atmoBoard.quaternion.slerp(_sQ1,0.12);
+  atmoBoard.quaternion.copy(_sQ1);
   // ── Follow camera: open space's (CAM_OFFSETS, up-vector following the board),
   //    at the distance the space camera has at the top of the air, scaled with the board.
   const o=CAM_OFFSETS[camMode]||CAM_OFFSETS[0];
