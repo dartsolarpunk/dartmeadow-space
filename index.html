@@ -468,6 +468,14 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;overscroll-behavior:non
 #ls-enter.vis{display:block !important;visibility:visible !important;animation:fadein 0.5s ease forwards;}
 @keyframes fadein{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
 
+/* LIVE MENU SCENE */
+#menu-scene-canvas{position:absolute;inset:0;width:100%;height:100%;z-index:1;pointer-events:none;opacity:0;transition:opacity 1.8s ease;}
+#menu-scene-canvas.ms-in{opacity:1;}
+#screen-menu.ms-pre .mm-panel,#screen-menu.ms-pre .menu-version,#screen-menu.ms-pre #menu-glow-wash{visibility:hidden;}
+#loading-screen{background:transparent !important;}
+#ls-ui-cluster{position:absolute !important;inset:0;justify-content:space-between;padding:clamp(18px,6vh,60px) 0 clamp(60px,15vh,130px);}
+#ls-top{display:flex;flex-direction:column;align-items:center;}
+#ls-enter{margin-top:0 !important;}
 /* APP */
 #app{position:fixed;inset:0;height:var(--app-h);display:none;}
 #app.vis{display:block;}
@@ -965,19 +973,19 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-stack.js?v=1" defer></script>
 <script src="ui/dm-globe.js?v=7" defer></script>
 <script src="ui/dm-star.js?v=3" defer></script>
+<script src="ui/dm-menuscene.js?v=1" defer></script>
 <script src="ui/dm-starbubble.js?v=3" defer></script>
 </head>
 <body>
 <!-- LOADING -->
 <div id="loading-screen">
-  <video id="ls-plate-video" class="ls-plate-video" autoplay muted loop playsinline preload="auto">
-    <source src="static/splash-menu-plate.mp4?v=3" type="video/mp4">
-  </video>
-  <!-- Boot BG = plate video only; old rifle still / clouds / stars / horizon removed -->
+  <!-- Boot BG = the live 3D menu scene behind this layer (ui/dm-menuscene.js); logo on top, button below -->
   <div id="ls-ui-cluster">
-    <img id="ls-logo" src="static/dartmeadow-logo.svg" alt="DART Meadow — Journey of the Skyboard">
-    <div id="ls-bar-wrap"><div id="ls-bar"></div></div>
-    <div id="ls-status">Initializing stellar cartography...</div>
+    <div id="ls-top">
+      <img id="ls-logo" src="static/dartmeadow-logo.svg" alt="DART Meadow — Journey of the Skyboard">
+      <div id="ls-bar-wrap"><div id="ls-bar"></div></div>
+      <div id="ls-status">Initializing stellar cartography...</div>
+    </div>
     <button id="ls-enter" onclick="enterApp()">SEQUENCE DART ⟶</button>
   </div>
 </div>
@@ -2819,6 +2827,7 @@ function goScreen(name){
   }catch(e){}
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   STATE.screen=name;
+  try{ const M=window.DM_MENUSCENE; if(M){ if(name==='menu'){ const mm=$('screen-menu'); if(mm&&mm.classList.contains('ms-pre')){ mm.classList.remove('ms-pre'); void mm.offsetWidth; } clearTimeout(M._dispT); M.resume(); M.start(); setTimeout(()=>M.menuOpen(),350); } else { M.pause(); clearTimeout(M._dispT); if(name==='flight') M._dispT=setTimeout(()=>{ if(STATE.screen!=='menu'&&M.dispose&&M._ctx) M.dispose(); },15000); } } }catch(e){}
   if(name==='builder'){$('screen-builder').classList.add('active');requestAnimationFrame(()=>requestAnimationFrame(initBuilderScene));showFloatingMusic();}
   else if(name==='flight'){$('screen-flight').classList.add('active');hideFloatingMusicInGame();}
   else{try{$('screen-menu').classList.remove('mm-leaving');}catch(e){}
@@ -2960,6 +2969,16 @@ let _gameInProgress=false;
   }catch(e){console.warn('splash:',e);reveal();}
   setTimeout(reveal,9000);
   setTimeout(()=>{try{initAudio();}catch(e){console.warn('audio:',e);}try{initFullscreenSupport();}catch(e){console.warn('fs init:',e);}},0);
+})();
+// Live menu scene behind the loader: app + menu screen go live (panels hidden until the button is pressed)
+(function(){
+  function boot(){ try{
+    const app=$('app'), mm=$('screen-menu'); if(!app||!mm) return;
+    app.classList.add('vis'); mm.classList.add('ms-pre','active');
+    try{ initMenuBg(); }catch(e){ console.warn('menu bg early:',e); }
+    if(window.DM_MENUSCENE) window.DM_MENUSCENE.start();
+  }catch(e){ console.warn('menuscene boot:',e); } }
+  if(document.readyState==='complete') setTimeout(boot,0); else window.addEventListener('load',()=>setTimeout(boot,0));
 })();
 function enterApp(){
   // This runs inside the LAUNCH button click — the legal moment to go fullscreen.

@@ -120,10 +120,10 @@
     // dust settles on up-facing surface and in noise-driven drifts
     const up = nw.y;
     const dust1 = smoothstep(0.18, 0.82, up.mul(0.85).add(m1.g.sub(0.5).mul(0.9)).add(o.dustBias)).mul(o.dust);
-    const dustCol = mix(vec3(0.50, 0.255, 0.145), vec3(0.66, 0.37, 0.215), m3.r);
+    const dustCol = mix(vec3(0.34, 0.16, 0.09), vec3(0.46, 0.235, 0.14), m3.r);
     // dust ON dust: finer, paler wind-sorted layer riding the first one, plus bright mica-like grains
     const dust2 = smoothstep(0.50, 0.86, m3.g.mul(0.55).add(m4.r.mul(0.45))).mul(dust1).mul(lf);
-    const dust2Col = vec3(0.80, 0.50, 0.32);
+    const dust2Col = vec3(0.56, 0.32, 0.20);
     const grains = smoothstep(0.86, 1.0, m5.a).mul(hf).mul(dust1);
     let alb = mix(rock, dustCol, dust1);
     alb = mix(alb, dust2Col, dust2.mul(0.55));
@@ -156,7 +156,7 @@
     }
     for (let i = 0; i < NR; i++) for (let j = 0; j < NS; j++) {
       const a = i * NS + j, b = i * NS + (j + 1) % NS, c = (i + 1) * NS + j, d = (i + 1) * NS + (j + 1) % NS;
-      idx.push(a, c, b, b, c, d);
+      idx.push(a, b, c, b, d, c);
     }
     const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals();
     return g;
@@ -180,13 +180,13 @@
   function buildRocks(THREE, mat, group) {
     const geos = [];
     for (let k = 0; k < 3; k++) {
-      const g = new THREE.IcosahedronGeometry(1, 2), p = g.attributes.position, v = new THREE.Vector3();
+      const g = new THREE.IcosahedronGeometry(1, 3), p = g.attributes.position, v = new THREE.Vector3(), nrm = [];
       for (let i = 0; i < p.count; i++) {
         v.fromBufferAttribute(p, i).normalize();
         const r = 0.72 + fbm(v.x * 2.2 + k * 5, v.y * 2.2, v.z * 2.2, 3, 41 + k) * 0.55 + (ridged(v.x * 3 + k, v.y * 3, v.z * 3, 2, 51) - 0.3) * 0.25;
-        p.setXYZ(i, v.x * r * (1 + 0.25 * k), Math.max(v.y, -0.25) * r * 0.72, v.z * r * (1.1 - 0.12 * k));
+        p.setXYZ(i, v.x * r * (1 + 0.25 * k), Math.max(v.y, -0.25) * r * 0.72, v.z * r * (1.1 - 0.12 * k)); nrm.push(v.x, v.y * 1.2, v.z);
       }
-      g.computeVertexNormals(); geos.push(g);
+      g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3)); geos.push(g);
     }
     const counts = [190, 170, 150], dummy = new THREE.Object3D(), out = [];
     _seed = 9001;
@@ -195,12 +195,12 @@
       for (let i = 0; i < n; i++) {
         let x, z, r;
         for (let tries = 0; tries < 30; tries++) {
-          r = 1.2 + Math.pow(rnd(), 1.7) * 52; const a = rnd() * Math.PI * 2; x = r * Math.cos(a); z = r * Math.sin(a);
+          r = 1.6 + Math.pow(rnd(), 1.5) * 52; const a = rnd() * Math.PI * 2; x = r * Math.cos(a); z = r * Math.sin(a);
           const bx = (x - BOULDER.cx) / (BOULDER.rx * 1.35), bz = (z - BOULDER.cz) / (BOULDER.rz * 1.35);
           if (bx * bx + bz * bz > 1) break;                         // keep clear of the boulder + her feet
         }
-        let s = 0.035 + Math.pow(rnd(), 3.2) * (0.3 + r * 0.012);
-        if (r > 9 && rnd() < 0.09) s = 0.8 + rnd() * 2.4;           // far mounds / tors
+        let s = 0.03 + Math.pow(rnd(), 3.6) * (0.16 + r * 0.008);
+        if (r > 12 && rnd() < 0.07) s = 0.9 + rnd() * 2.2;           // far mounds / tors
         dummy.position.set(x, groundH(x, z) + s * 0.1, z);
         dummy.rotation.set((rnd() - 0.5) * 0.5, rnd() * 6.28, (rnd() - 0.5) * 0.5);
         dummy.scale.set(s * (1 + rnd() * 0.8), s * (0.7 + rnd() * 0.5), s * (1 + rnd() * 0.8));
@@ -321,7 +321,7 @@
       await renderer.init();
       renderer.setClearColor(0x000000, 0);
       renderer.outputColorSpace = THREE.SRGBColorSpace;
-      renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.15;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 0.95;
       renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
       let pr = sc.pr;
       const fit = () => {
@@ -337,16 +337,16 @@
       let camBase = new THREE.Vector3();
       function frame() {                             // keep boulder + her in frame whatever the aspect
         const asp = camera.aspect, tanH = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
-        const needH = 3.15, needW = 4.5;
+        const needH = 2.45, needW = 3.5;
         const dist = Math.max(needH / (2 * tanH), needW / (2 * tanH * asp));
         camBase.set(0.55, 1.15, dist); camera.position.copy(camBase); camera.lookAt(TARGET);
       }
 
       /* materials + terrain */
       const noiseTex = makeNoiseTexture(THREE);
-      const groundMat = surfaceMaterial(THREE, noiseTex, { dark: [0.19, 0.075, 0.045], mid: [0.40, 0.165, 0.09], light: [0.58, 0.27, 0.15], dust: 0.95, dustBias: 0.12, basalt: 0.5, bump: 1.25, fadeRadius: [46, 66] });
+      const groundMat = surfaceMaterial(THREE, noiseTex, { dark: [0.13, 0.05, 0.03], mid: [0.27, 0.105, 0.058], light: [0.40, 0.18, 0.10], dust: 0.8, dustBias: 0.12, basalt: 0.5, bump: 1.25, fadeRadius: [46, 66] });
       const rockMat = surfaceMaterial(THREE, noiseTex, { dark: [0.17, 0.07, 0.05], mid: [0.36, 0.15, 0.085], light: [0.52, 0.25, 0.14], dust: 0.8, dustBias: -0.05, basalt: 0.9, bump: 1.7 });
-      const boulderMat = surfaceMaterial(THREE, noiseTex, { dark: [0.17, 0.068, 0.045], mid: [0.37, 0.15, 0.085], light: [0.55, 0.26, 0.145], dust: 0.72, dustBias: -0.12, basalt: 0.85, bump: 2.0 });
+      const boulderMat = surfaceMaterial(THREE, noiseTex, { dark: [0.17, 0.068, 0.045], mid: [0.37, 0.15, 0.085], light: [0.55, 0.26, 0.145], dust: 0.72, dustBias: -0.12, basalt: 0.85, bump: 1.1 });
       const ground = new THREE.Mesh(buildGroundMesh(THREE), groundMat); ground.receiveShadow = true; ground.frustumCulled = false; scene.add(ground);
       const boulder = new THREE.Mesh(buildBoulderGeo(THREE), boulderMat); boulder.castShadow = true; boulder.receiveShadow = true; scene.add(boulder);
       const rocks = buildRocks(THREE, rockMat, scene);
@@ -362,11 +362,12 @@
       }
 
       /* lights: warm low key (shadowed) + cool rim from the galaxy side + red bounce + panel glow */
-      const hemi = new THREE.HemisphereLight(0x3a2c58, 0x6a2410, 0.55); scene.add(hemi);
-      const key = new THREE.SpotLight(0xffb27c, 9.0, 0, 0.62, 0.85, 0); key.position.set(-4.6, 5.4, 5.0); key.target.position.set(0, 0.55, 0);
+      const hemi = new THREE.HemisphereLight(0x2a2048, 0x4a1608, 0.4); scene.add(hemi);
+      const key = new THREE.SpotLight(0xff9a62, 5.2, 0, 0.62, 0.85, 0); key.position.set(-4.6, 5.4, 5.0); key.target.position.set(0, 0.55, 0);
       key.castShadow = true; key.shadow.mapSize.set(sc.shadow, sc.shadow); key.shadow.bias = -0.0004; key.shadow.normalBias = 0.025; key.shadow.camera.near = 2; key.shadow.camera.far = 20;
       scene.add(key, key.target);
       const rim = new THREE.DirectionalLight(0x7a9cff, 2.2); rim.position.set(5.5, 3.2, -6.0); scene.add(rim);
+      const fill = new THREE.DirectionalLight(0xffc7a0, 0.9); fill.position.set(2.0, 1.6, 7.0); scene.add(fill);
       const bounce = new THREE.DirectionalLight(0xff6a38, 0.75); bounce.position.set(0.5, -1.0, 3.5); scene.add(bounce);
       const glowL = new THREE.PointLight(0xff5a2a, 0, 11, 1.4), glowR = new THREE.PointLight(0xff5a2a, 0, 11, 1.4);
       glowL.position.set(-3.4, 1.7, 1.2); glowR.position.set(3.4, 1.7, 1.2); scene.add(glowL, glowR);
@@ -396,7 +397,7 @@
       holder.rotation.y = YAW;
       const ray = new THREE.Raycaster(), down = new THREE.Vector3(0, -1, 0);
       const surfY = (x, z, extra) => { ray.set(new THREE.Vector3(x, 6, z), down); const hits = ray.intersectObjects(extra || [boulder, ground], false); return hits.length ? hits[0].point.y : 0; };
-      const SEAT_X = 0.22;
+      const SEAT_X = 0.2;
       const hipsRoot = new THREE.Vector3(0, 0.80, -0.04);
       const place = () => { holder.updateMatrixWorld(true); const wp = holder.localToWorld(hipsRoot.clone()); holder.position.x += SEAT_X - wp.x; holder.position.z += 0 - wp.z;
         holder.position.y += (surfY(SEAT_X, 0, [boulder]) + 0.115) - wp.y; holder.updateMatrixWorld(true); };
@@ -404,8 +405,8 @@
       const toRoot = (wx, wz, lift) => { const y = Math.max(surfY(wx, wz, [boulder]), surfY(wx, wz, [ground]) ) + lift; return holder.worldToLocal(new THREE.Vector3(wx, y, wz)); };
       // foot targets (root space): near (her left) foot up on the boulder's front slope, far foot lower & further out
       const fwd = (f, s) => { const w = holder.localToWorld(new THREE.Vector3(s, 0, f)); return [w.x, w.z]; };
-      const ankleL = (() => { const [x, z] = fwd(0.50, 0.14); return toRoot(x, z, 0.105); })();
-      const ankleR = (() => { const [x, z] = fwd(0.80, -0.16); return toRoot(x, z, 0.105); })();
+      const ankleL = (() => { const [x, z] = fwd(0.34, 0.14); return toRoot(x, z, 0.105); })();
+      const ankleR = (() => { const [x, z] = fwd(0.72, -0.16); return toRoot(x, z, 0.105); })();
 
       /* hair: build via buildHair directly so nothing leaks into window.DART_HAIR */
       let hair = null;
@@ -431,12 +432,12 @@
         // weight shift + hips (seat is fixed, tiny sway)
         Hp.copy(hipsRoot); Hp.x += 0.004 * Math.sin(t * 0.31); Hp.y += 0.003 * br;
         tmpW.copy(Hp).applyMatrix4(holder.matrixWorld); const par = bones.Hips.parent; par.updateWorldMatrix(true, false); par.worldToLocal(tmpW); bones.Hips.position.copy(tmpW);
-        P.rot('Hips', 8 + 1.5 * br2, -10 + 0.5 * br, 1.0 * br2);
+        P.rot('Hips', 8 + 1.5 * br2, 3 + 0.5 * br, 1.0 * br2);
         const lean = 7 + 2.2 * Math.sin(t * 0.21) - rw * 4, twist = 10 + 3 * Math.sin(t * 0.17) + rw * 16;   // toward the camera / menu
-        P.rot('Spine02', 8 + twist * 0.25, -6 + lean * 0.3 + 0.6 * br, 0);
-        P.rot('Spine01', 8 + twist * 0.5, -4 + lean * 0.55 + 0.8 * br, 0);
-        P.rot('Spine', 8 + twist * 0.8, -2 + lean * 0.85 + 0.9 * br, 0);
-        const lookYaw = 10 + twist * 0.6 + 7 * Math.sin(t * 0.23) + 3.5 * Math.sin(t * 0.61 + 0.7) - rw * 6, lookPitch = -2 + 2.5 * Math.sin(t * 0.29 + 1) + 1.2 * br;
+        P.rot('Spine02', 8 + twist * 0.25, 1 + lean * 0.3 + 0.6 * br, 0);
+        P.rot('Spine01', 8 + twist * 0.5, 2 + lean * 0.55 + 0.8 * br, 0);
+        P.rot('Spine', 8 + twist * 0.8, 3 + lean * 0.85 + 0.9 * br, 0);
+        const lookYaw = 10 + twist * 0.6 + 7 * Math.sin(t * 0.23) + 3.5 * Math.sin(t * 0.61 + 0.7) - rw * 6, lookPitch = 5 + 2.5 * Math.sin(t * 0.29 + 1) + 1.2 * br;
         P.rot('neck', 8 + lookYaw * 0.35, lookPitch * 0.4, 0.8 * Math.sin(t * 0.19));
         P.rot('Head', 8 + lookYaw * 0.9, lookPitch, 1.2 * Math.sin(t * 0.19 + 0.5));
         // legs: IK to planted feet, knee up on the near side
@@ -476,7 +477,7 @@
         for (let i = 0; i < NM; i++) { const o = i * 3; mp[o] += mv[o] * dt; mp[o + 1] += mv[o + 1] * dt + Math.sin(t * 0.7 + i) * 0.0008; mp[o + 2] += mv[o + 2] * dt; if (mp[o] > 6) mp[o] = -6; if (mp[o + 1] > 3.6) mp[o + 1] = 0; if (mp[o + 1] < 0) mp[o + 1] = 3.6; }
         mg.attributes.position.needsUpdate = true;
         // light life + menu glow ramp
-        key.intensity = 9.0 * (1 + 0.012 * Math.sin(t * 1.3));
+        key.intensity = 5.2 * (1 + 0.012 * Math.sin(t * 1.3));
         if (menuT >= 0) { const k = Math.min(1, (t - menuT) / 1.6); const e = k * k * (3 - 2 * k); glowL.intensity = glowR.intensity = 14 * e; }
         // camera: slow breathing orbit + pointer parallax
         par.x += (par.tx - par.x) * 0.04; par.y += (par.ty - par.y) * 0.04;
