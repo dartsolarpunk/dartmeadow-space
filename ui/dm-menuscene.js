@@ -447,7 +447,7 @@
 
       /* pose + idle loop */
       const v3 = (x, y, z) => new THREE.Vector3(x, y, z).normalize();
-      const tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3(), tmpP = new THREE.Vector3(), tmpW = new THREE.Vector3();
+      const tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3(), tmpP = new THREE.Vector3(), tmpW = new THREE.Vector3(), tmpC = new THREE.Vector3();
       const poleL = v3(0, 1, 0.55), poleR = v3(0, 0.35, 1);
       const Rest = { upL: v3(0.22, -0.92, 0.30), foreL: v3(0.02, -0.38, 0.93), upR: v3(-0.20, -0.94, 0.26), foreR: v3(-0.06, -0.40, 0.92) };
       const Reach = { upL: v3(0.30, -0.20, 0.93), foreL: v3(0.16, -0.06, 0.985) };
@@ -525,8 +525,14 @@
         else if (FOC.phase === 3) { const k = Math.min(1, (t - FOC.t0) / 1.5); FOC.w = 1 - (k * k * (3 - 2 * k)); if (k >= 1) { FOC.phase = 0; FOC.w = 0; } }
         if (FOC.w > 0.001) {
           bones.Head.getWorldPosition(headW); tgtW.copy(headW); tgtW.y += 0.02;
-          closeP.copy(headW).add(tmpA.copy(camBase).sub(headW).setY(0).normalize().multiplyScalar(0.95)); closeP.y = headW.y + 0.06; closeP.x += 0.12;
-          camera.position.lerp(closeP, FOC.w); camera.lookAt(tmpB.lerpVectors(TARGET, tgtW, FOC.w));
+          // swoop: lift up and sweep in from her right (screen-left), looking down across her eyes; the stars stay behind her
+          tmpA.copy(camBase).sub(headW).setY(0).normalize();            // out toward the viewer
+          tmpC.set(-tmpA.z, 0, tmpA.x);                                  // screen-left of that
+          closeP.copy(headW).addScaledVector(tmpA, 1.35).addScaledVector(tmpC, 1.0); closeP.y = headW.y + 0.17;
+          const e = FOC.w, arc = Math.sin(Math.PI * e);
+          camera.position.lerp(closeP, e); camera.position.y += arc * 0.28; camera.position.addScaledVector(tmpC, arc * 0.18);
+          tgtW.copy(headW); tgtW.y -= 0.03; tgtW.addScaledVector(tmpC, -0.12);
+          camera.lookAt(tmpB.lerpVectors(TARGET, tgtW, e));
         } else camera.lookAt(TARGET);
         if (MS._dbg) { camera.position.copy(MS._dbg.pos); camera.lookAt(MS._dbg.target); }
         renderer.render(scene, camera);
