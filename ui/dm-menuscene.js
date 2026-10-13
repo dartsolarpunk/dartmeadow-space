@@ -308,10 +308,9 @@
       for (const side of ['Left', 'Right']) {
         const H = side + 'Hand', n = f => H + f; if (!b[H] || !b[n('Middle1')] || !b[n('Index1')] || !b[n('Pinky1')]) continue;
         const hAx = rp(n('Middle1')).sub(rp(H)).normalize(), lat = rp(n('Index1')).sub(rp(n('Pinky1'))).normalize();
-        // palm side found from the hand itself: the thumb sits on the palm side of the finger plane, so curl toward it (no per-hand sign guessing)
-        let np = new THREE.Vector3().crossVectors(hAx, lat).normalize();
-        const tb = b[n('Thumb2')] || b[n('Thumb1')], tv = tb ? rp(tb.name).sub(rp(H)) : null;
-        if (tv && tv.dot(np) < 0) np.negate();
+        // palm normal from the rest hand: Left = axis × (index→pinky reversed), Right = mirrored. (Checked on this rig's reach-pose rest: it points into the palm — thumb-up, palm toward the body.)
+        const np = side === 'Left' ? new THREE.Vector3().crossVectors(hAx, lat).normalize() : new THREE.Vector3().crossVectors(lat, hAx).normalize();
+        np.negate();   // measured on screen: this cross product points at the BACK of the hand — the palm is the opposite side
         for (const f of ['Index', 'Middle', 'Ring', 'Pinky']) for (let k = 1; k <= 3; k++) {
           const bn = n(f + k), cn = n(f + (k + 1)); if (!b[bn] || !R[bn]) continue;
           const d = b[cn] ? rp(cn).sub(rp(bn)).normalize() : hAx.clone();
@@ -483,6 +482,18 @@
       };
       const FOC = { phase: 0, t0: 0, from: 0, w: 0 };   // close-up reaction: 0 idle · 1 in · 2 hold · 3 out
       const headW = new THREE.Vector3(), closeP = new THREE.Vector3(), tgtW = new THREE.Vector3();
+      // hands: roll each wrist so the palm lies DOWN on the leg with the thumb on the inside (the curl itself was set at rest)
+      const _ha = new THREE.Vector3(), _hl = new THREE.Vector3(), _hn = new THREE.Vector3(), _ht = new THREE.Vector3(), _hp = new THREE.Vector3(), _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _DN = new THREE.Vector3(0, -1, 0);
+      const handDown = (side, k) => {
+        const H = bones[side + 'Hand'], M = bones[side + 'HandMiddle1'], I = bones[side + 'HandIndex1'], K = bones[side + 'HandPinky1']; if (!H || !M || !I || !K) return;
+        H.updateWorldMatrix(true, true);
+        H.getWorldPosition(_hp); M.getWorldPosition(_ha).sub(_hp).normalize(); I.getWorldPosition(_hl); K.getWorldPosition(_ht); _hl.sub(_ht).normalize();
+        if (side === 'Left') _hn.crossVectors(_ha, _hl); else _hn.crossVectors(_hl, _ha); _hn.normalize().negate();   // (cross = back of hand; palm is opposite)
+        _ht.copy(_DN).addScaledVector(_ha, -_ha.dot(_DN)).normalize();                 // down, flattened across the hand's own axis
+        const phi = Math.atan2(_ha.dot(_ht.clone().crossVectors(_hn, _ht)), _hn.dot(_ht)) * k;
+        _q1.setFromAxisAngle(_ha, Math.max(-2.2, Math.min(2.2, phi)));
+        H.parent.getWorldQuaternion(_q2); H.quaternion.premultiply(_q2.clone().invert().multiply(_q1).multiply(_q2));
+      };
       function pose(t) {
         const br = Math.sin(t * 1.35), br2 = Math.sin(t * 0.67 + 1.1);
         const rw = reachAt(t);
@@ -508,6 +519,7 @@
         upL.y += sw; foL.y += sw * 0.5;
         P.limb(P.S.limb.armL, dir(upL.normalize(), P.S.v[17]), dir(foL.normalize(), P.S.v[18]), 1, 0);
         P.limb(P.S.limb.armR, dir(Rest.upR, P.S.v[17]), dir(Rest.foreR, P.S.v[18]), 1, 0);
+        handDown('Left', 1); handDown('Right', 1);
         return rw;
       }
       pose(0); root.updateMatrixWorld(true);
