@@ -526,8 +526,10 @@
       // a first look at the hip pose so shoulders sit sensibly even before the first frame
       /* camera + render loop */
       const clock = new THREE.Clock(); let t = 0, last = performance.now(), ema = 16, adj = 0, menuT = -1, framesSeen = 0;
-      const onResize = () => fit();
-      window.addEventListener('resize', onResize); if (window.visualViewport) window.visualViewport.addEventListener('resize', onResize);
+      // iOS reports the new size late after a rotation: refit now and again as it settles; the loop also refits whenever the canvas box differs from what was last applied
+      let lw = 0, lh = 0, settle = [];
+      const onResize = () => { fit(); lw = cv.clientWidth; lh = cv.clientHeight; settle.forEach(clearTimeout); settle = [120, 350, 800, 1600].map(ms => setTimeout(() => { if (!MS.disposed) { fit(); lw = cv.clientWidth; lh = cv.clientHeight; } }, ms)); adj = -120; ema = 16; };
+      window.addEventListener('resize', onResize); window.addEventListener('orientationchange', onResize); if (window.visualViewport) window.visualViewport.addEventListener('resize', onResize);
       fit();
       const par = { x: 0, y: 0, tx: 0, ty: 0 };
       const onPtr = (e) => { const p = e.touches ? e.touches[0] : e; if (!p) return; par.tx = (p.clientX / window.innerWidth - 0.5); par.ty = (p.clientY / window.innerHeight - 0.5); };
@@ -575,13 +577,14 @@
           camera.lookAt(tmpB.lerpVectors(TARGET, tgtW, e));
         } else camera.lookAt(TARGET);
         if (MS._dbg) { camera.position.copy(MS._dbg.pos); camera.lookAt(MS._dbg.target); }
+        if (cv.clientWidth !== lw || cv.clientHeight !== lh) { lw = cv.clientWidth; lh = cv.clientHeight; if (lw > 1) { fit(); adj = -120; ema = 16; } }
         renderer.render(scene, camera);
-        if (++framesSeen === 3 && !MS.ready) { MS.ready = true; cv.classList.add('ms-in'); document.dispatchEvent(new CustomEvent('menuscene-ready')); try { const mv = document.querySelector('.menu-version'); if (mv && !/scene b/.test(mv.textContent)) mv.textContent += ' · scene b6'; } catch (e) {} info('ready (' + (renderer.backend && renderer.backend.isWebGPUBackend ? 'WebGPU' : 'WebGL2') + ', pr ' + pr.toFixed(2) + ')'); }
+        if (++framesSeen === 3 && !MS.ready) { MS.ready = true; cv.classList.add('ms-in'); document.dispatchEvent(new CustomEvent('menuscene-ready')); try { const mv = document.querySelector('.menu-version'); if (mv && !/scene b/.test(mv.textContent)) mv.textContent += ' · scene b7'; } catch (e) {} info('ready (' + (renderer.backend && renderer.backend.isWebGPUBackend ? 'WebGPU' : 'WebGL2') + ', pr ' + pr.toFixed(2) + ')'); }
       };
       raf = requestAnimationFrame(loop);
       MS._ctx = { focus: startFocus, FOC, renderer, scene, camera, hair: () => hair, pose, setMenuOpen: () => { menuT = t; }, cv, holder, root, boulder, ground, P, bones };
       MS.dispose = function () {
-        MS.disposed = true; MS.ready = false; cancelAnimationFrame(raf); window.removeEventListener('resize', onResize); window.removeEventListener('pointermove', onPtr); window.removeEventListener('pointerdown', onDown); window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp);
+        MS.disposed = true; MS.ready = false; cancelAnimationFrame(raf); window.removeEventListener('resize', onResize); window.removeEventListener('orientationchange', onResize); window.removeEventListener('pointermove', onPtr); window.removeEventListener('pointerdown', onDown); window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp);
         try { if (window.visualViewport) window.visualViewport.removeEventListener('resize', onResize); } catch (e) {}
         try { hair && hair.dispose && hair.dispose(); } catch (e) {}
         try { scene.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.dispose && m.dispose()); }); noiseTex.dispose(); renderer.dispose(); } catch (e) {}
