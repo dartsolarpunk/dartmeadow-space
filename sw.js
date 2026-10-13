@@ -14,7 +14,7 @@
 //   • audio/video streams (range requests) pass straight through.
 // It also keeps the app installable and playable offline once visited.
 
-const CACHE_NAME = 'dartmeadow-engine-v68';
+const CACHE_NAME = 'dartmeadow-engine-v69';
 const SHELL_ASSETS = ['/', '/index.html'];
 
 self.addEventListener('install', (event) => {
@@ -50,7 +50,7 @@ self.addEventListener('fetch', (event) => {
 
   // the page: network first, the cached shell offline
   if (req.mode === 'navigate') {
-    event.respondWith(fetch(req).then((r) => put(req, r)).catch(() => caches.match(req).then((c) => c || caches.match('/index.html'))));
+    event.respondWith(fetch(req, { cache: 'no-cache' }).then((r) => put(req, r)).catch(() => caches.match(req).then((c) => c || caches.match('/index.html'))));
     return;
   }
   // immutable: device first
@@ -61,7 +61,7 @@ self.addEventListener('fetch', (event) => {
   // our own assets: device now, refreshed in the background
   if (ASSET.test(url)) {
     event.respondWith(caches.match(req).then((c) => {
-      const net = fetch(req).then((r) => put(req, r)).catch(() => c || Response.error());
+      const net = fetch(req, { cache: 'no-cache' }).then((r) => put(req, r)).catch(() => c || Response.error());
       if (c) { event.waitUntil(net.catch(() => {})); return c; }
       return net;
     }));
