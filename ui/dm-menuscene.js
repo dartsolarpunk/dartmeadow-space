@@ -576,7 +576,7 @@
         } else camera.lookAt(TARGET);
         if (MS._dbg) { camera.position.copy(MS._dbg.pos); camera.lookAt(MS._dbg.target); }
         renderer.render(scene, camera);
-        if (++framesSeen === 3 && !MS.ready) { MS.ready = true; cv.classList.add('ms-in'); document.dispatchEvent(new CustomEvent('menuscene-ready')); info('ready (' + (renderer.backend && renderer.backend.isWebGPUBackend ? 'WebGPU' : 'WebGL2') + ', pr ' + pr.toFixed(2) + ')'); }
+        if (++framesSeen === 3 && !MS.ready) { MS.ready = true; cv.classList.add('ms-in'); document.dispatchEvent(new CustomEvent('menuscene-ready')); try { const mv = document.querySelector('.menu-version'); if (mv && !/scene b/.test(mv.textContent)) mv.textContent += ' · scene b6'; } catch (e) {} info('ready (' + (renderer.backend && renderer.backend.isWebGPUBackend ? 'WebGPU' : 'WebGL2') + ', pr ' + pr.toFixed(2) + ')'); }
       };
       raf = requestAnimationFrame(loop);
       MS._ctx = { focus: startFocus, FOC, renderer, scene, camera, hair: () => hair, pose, setMenuOpen: () => { menuT = t; }, cv, holder, root, boulder, ground, P, bones };
