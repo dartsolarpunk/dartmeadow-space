@@ -37,6 +37,11 @@ public class Main extends Activity {
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW); s.setCacheMode(WebSettings.LOAD_DEFAULT);
         s.setLoadWithOverviewMode(true); s.setUseWideViewPort(true); s.setSupportMultipleWindows(false);
         s.setUserAgentString(s.getUserAgentString() + " DartMeadowAndroid/1.0");
+        web.addJavascriptInterface(new Object() {
+            @android.webkit.JavascriptInterface public void exit() { runOnUiThread(new Runnable() { public void run() { if (android.os.Build.VERSION.SDK_INT >= 21) finishAndRemoveTask(); else finish(); } }); }
+            @android.webkit.JavascriptInterface public String platform() { return "android"; }
+            @android.webkit.JavascriptInterface public String version() { return "1.0"; }
+        }, "DMAndroid");
         CookieManager.getInstance().setAcceptCookie(true); CookieManager.getInstance().setAcceptThirdPartyCookies(web, true);
         web.setWebViewClient(new WebViewClient() {
             @Override public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
