@@ -13607,6 +13607,53 @@ function _dmCheckApkUpdate(){
   }).catch(()=>{});
 }
 if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',()=>setTimeout(_dmCheckApkUpdate,4000)); else setTimeout(_dmCheckApkUpdate,4000);
+// ── Performance log (all platforms; tagged by platform so Android app / iOS app / web can be compared) ──
+// Samples frame times with requestAnimationFrame (negligible cost), summarises every 10 s, keeps the last 60 windows
+// in localStorage ('dm_perf_log'). Open the report: add ?perf to the URL, or tap the top-left corner 5 times quickly.
+// The report has COPY (paste it to Claude) and CLEAR.
+(function(){
+  const KEY='dm_perf_log'; let win={t0:performance.now(),f:[],last:0}, log=[];
+  try{ log=JSON.parse(localStorage.getItem(KEY)||'[]'); }catch(e){}
+  function env(){
+    const g=(typeof GFX!=='undefined')?GFX:{}; let real=null;
+    try{ real=!!(typeof flightRenderer!=='undefined'&&flightRenderer&&_isRealWebGPU(flightRenderer)); }catch(e){}
+    const m=(navigator.userAgent.match(/(Chrome|Version)\/([\d.]+)/)||[]);
+    return {platform:_dmPlatform(),app:(window.DMAndroid&&DMAndroid.version)?DMAndroid.version():null,webview:m[2]||null,
+      backend:real===null?'not-started':real?'WebGPU':'WebGL2-fallback',navGpu:!!navigator.gpu,gpu:g.renderer||'',vendor:g.vendor||'',
+      gpuClass:g.gpuClass,score:g.score,preset:g.preset,resScale:g.resScale,cores:navigator.hardwareConcurrency||0,mem:navigator.deviceMemory||0,
+      dpr:window.devicePixelRatio,screen:screen.width+'x'+screen.height,inner:innerWidth+'x'+innerHeight,ua:navigator.userAgent};
+  }
+  function flush(){
+    const f=win.f; win.f=[]; const t0=win.t0; win.t0=performance.now();
+    if(f.length<20) return;
+    const a=f.slice().sort((x,y)=>x-y), avg=f.reduce((x,y)=>x+y,0)/f.length;
+    const q=p=>a[Math.min(a.length-1,Math.floor(a.length*p))];
+    const scr=(typeof STATE!=='undefined'&&STATE.screen)||'?';
+    const e={at:new Date().toISOString().slice(11,19),screen:scr,fps:+(1000/avg).toFixed(1),avgMs:+avg.toFixed(1),p95Ms:+q(.95).toFixed(1),worstMs:+a[a.length-1].toFixed(0),
+      jank:f.filter(x=>x>50).length,frames:f.length,heapMB:performance.memory?Math.round(performance.memory.usedJSHeapSize/1048576):null,hidden:document.hidden};
+    if(document.hidden) return;
+    log.push(e); if(log.length>60) log.shift(); try{ localStorage.setItem(KEY,JSON.stringify(log)); }catch(x){}
+    if(box) render();
+  }
+  function tick(t){ if(win.last&&!document.hidden){ const d=t-win.last; if(d<1000) win.f.push(d); } win.last=t; if(t-win.t0>10000) flush(); requestAnimationFrame(tick); }
+  requestAnimationFrame(tick);
+  let box=null;
+  function text(){ return 'DART MEADOW PERF REPORT\n'+JSON.stringify(env(),null,1)+'\n'+log.map(e=>[e.at,e.screen,e.fps+'fps','avg'+e.avgMs,'p95 '+e.p95Ms,'worst '+e.worstMs,'jank'+e.jank,e.heapMB!=null?e.heapMB+'MB':''].join(' | ')).join('\n'); }
+  function render(){ const pre=box.querySelector('pre'); pre.textContent=text(); pre.scrollTop=pre.scrollHeight; }
+  function open(){
+    if(box){ box.remove(); box=null; return; }
+    box=document.createElement('div'); box.style.cssText='position:fixed;inset:8px;z-index:100001;background:rgba(0,8,20,.96);border:1px solid #0ef;border-radius:6px;display:flex;flex-direction:column;padding:8px;gap:8px;font:11px monospace;color:#0ef';
+    box.innerHTML='<div style="display:flex;gap:8px"><button id=pc>COPY</button><button id=px>CLEAR</button><button id=pq>CLOSE</button></div><pre style="flex:1;overflow:auto;margin:0;white-space:pre-wrap;word-break:break-all"></pre>';
+    box.querySelectorAll('button').forEach(b=>b.style.cssText='background:#0ef;color:#10081a;border:0;padding:8px 14px;border-radius:3px;font-weight:700');
+    document.body.appendChild(box); render();
+    box.querySelector('#pq').onclick=open;
+    box.querySelector('#px').onclick=()=>{ log=[]; try{ localStorage.removeItem(KEY); }catch(e){} render(); };
+    box.querySelector('#pc').onclick=()=>{ const t=text(); (navigator.clipboard&&navigator.clipboard.writeText?navigator.clipboard.writeText(t):Promise.reject()).catch(()=>{ const r=document.createRange(); r.selectNodeContents(box.querySelector('pre')); const se=getSelection(); se.removeAllRanges(); se.addRange(r); try{ document.execCommand('copy'); }catch(e){} }); };
+  }
+  window.dmPerfReport=open;
+  let taps=[]; addEventListener('pointerdown',ev=>{ if(ev.clientX<60&&ev.clientY<60){ const n=performance.now(); taps=taps.filter(x=>n-x<2500); taps.push(n); if(taps.length>=5){ taps=[]; open(); } } },true);
+  if(/[?&]perf\b/.test(location.search)) setTimeout(open,3000);
+})();
 function _dmAndroidExitCopy(){
   const m=$('exit-modal'); if(!m||m.__dmAndroid) return; m.__dmAndroid=true;
   const sub=m.querySelector('.exit-sub'); if(sub) sub.innerHTML='Your journey is saved on this device. The app will close.';
