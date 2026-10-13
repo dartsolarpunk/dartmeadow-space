@@ -1,0 +1,43 @@
+name: Release DART Meadow Android APK
+on:
+  push:
+    branches: [main]
+    paths: ["android/**", "android-dist/DartMeadow.apk"]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {lfs: false}
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: "17"}
+      - name: Build from source if a signing key secret exists, else use the signed APK in the repo
+        env:
+          KEYSTORE_B64: ${{ secrets.DM_KEYSTORE_B64 }}
+          KSPASS: ${{ secrets.DM_KEYSTORE_PASS }}
+        run: |
+          set -e
+          if [ -n "$KEYSTORE_B64" ] && [ -n "$KSPASS" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/ks.jks"
+            export ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;35.0.0" >/dev/null || true
+            KEYSTORE="$RUNNER_TEMP/ks.jks" bash android/build.sh
+            echo "SOURCE=built from source in this run" >> "$GITHUB_ENV"
+          else
+            echo "SOURCE=signed APK committed to the repo" >> "$GITHUB_ENV"
+          fi
+          cp android-dist/DartMeadow.apk DartMeadow.apk
+          sha256sum DartMeadow.apk | tee sha.txt
+      - name: Publish the release (tag "android-latest")
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete android-latest --cleanup-tag -y 2>/dev/null || true
+          gh release create android-latest DartMeadow.apk \
+            --title "DART Meadow for Android (latest)" --latest=false \
+            --notes "Install the APK (allow 'Install unknown apps' for your browser). It opens https://dartmeadow.space full screen, so the game itself always stays current.
+          Source: ${SOURCE}
+          SHA-256: $(cut -d' ' -f1 sha.txt)"
