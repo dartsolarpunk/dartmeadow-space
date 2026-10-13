@@ -13643,12 +13643,16 @@ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded'
   function open(){
     if(box){ box.remove(); box=null; return; }
     box=document.createElement('div'); box.style.cssText='position:fixed;inset:8px;z-index:100001;background:rgba(0,8,20,.96);border:1px solid #0ef;border-radius:6px;display:flex;flex-direction:column;padding:8px;gap:8px;font:11px monospace;color:#0ef';
-    box.innerHTML='<div style="display:flex;gap:8px"><button id=pc>COPY</button><button id=px>CLEAR</button><button id=pq>CLOSE</button></div><pre style="flex:1;overflow:auto;margin:0;white-space:pre-wrap;word-break:break-all"></pre>';
+    box.innerHTML='<div style="display:flex;gap:8px"><button id=pc>COPY</button><button id=px>CLEAR</button><button id=pq>CLOSE</button></div><pre style="flex:1;overflow:auto;margin:0;white-space:pre-wrap;word-break:break-all;user-select:text;-webkit-user-select:text"></pre>';
     box.querySelectorAll('button').forEach(b=>b.style.cssText='background:#0ef;color:#10081a;border:0;padding:8px 14px;border-radius:3px;font-weight:700');
     document.body.appendChild(box); render();
     box.querySelector('#pq').onclick=open;
     box.querySelector('#px').onclick=()=>{ log=[]; try{ localStorage.removeItem(KEY); }catch(e){} render(); };
-    box.querySelector('#pc').onclick=()=>{ const t=text(); (navigator.clipboard&&navigator.clipboard.writeText?navigator.clipboard.writeText(t):Promise.reject()).catch(()=>{ const r=document.createRange(); r.selectNodeContents(box.querySelector('pre')); const se=getSelection(); se.removeAllRanges(); se.addRange(r); try{ document.execCommand('copy'); }catch(e){} }); };
+    box.querySelector('#pc').onclick=()=>{ const t=text(), b=box.querySelector('#pc'); const done=ok=>{ b.textContent=ok?'COPIED \u2713':'COPY FAILED - long-press the text below, Select all, Copy'; };
+      const ta=document.createElement('textarea'); ta.value=t; ta.style.cssText='position:fixed;left:0;top:0;width:1px;height:1px;opacity:0'; box.appendChild(ta); ta.focus(); ta.select(); ta.setSelectionRange(0,t.length);
+      let ok=false; try{ ok=document.execCommand('copy'); }catch(e){} ta.remove();
+      if(ok){ done(true); return; }
+      (navigator.clipboard&&navigator.clipboard.writeText?navigator.clipboard.writeText(t):Promise.reject()).then(()=>done(true),()=>{ done(false); const pre=box.querySelector('pre'); pre.style.userSelect='text'; pre.style.webkitUserSelect='text'; const r=document.createRange(); r.selectNodeContents(pre); const se=getSelection(); se.removeAllRanges(); se.addRange(r); }); };
   }
   window.dmPerfReport=open;
   let taps=[]; addEventListener('pointerdown',ev=>{ if(ev.clientX<60&&ev.clientY<60){ const n=performance.now(); taps=taps.filter(x=>n-x<2500); taps.push(n); if(taps.length>=5){ taps=[]; open(); } } },true);
