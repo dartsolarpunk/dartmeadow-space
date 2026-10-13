@@ -308,11 +308,14 @@
       for (const side of ['Left', 'Right']) {
         const H = side + 'Hand', n = f => H + f; if (!b[H] || !b[n('Middle1')] || !b[n('Index1')] || !b[n('Pinky1')]) continue;
         const hAx = rp(n('Middle1')).sub(rp(H)).normalize(), lat = rp(n('Index1')).sub(rp(n('Pinky1'))).normalize();
-        const np = side === 'Left' ? new THREE.Vector3().crossVectors(hAx, lat).normalize() : new THREE.Vector3().crossVectors(lat, hAx).normalize();
+        // palm side found from the hand itself: the thumb sits on the palm side of the finger plane, so curl toward it (no per-hand sign guessing)
+        let np = new THREE.Vector3().crossVectors(hAx, lat).normalize();
+        const tb = b[n('Thumb2')] || b[n('Thumb1')], tv = tb ? rp(tb.name).sub(rp(H)) : null;
+        if (tv && tv.dot(np) < 0) np.negate();
         for (const f of ['Index', 'Middle', 'Ring', 'Pinky']) for (let k = 1; k <= 3; k++) {
           const bn = n(f + k), cn = n(f + (k + 1)); if (!b[bn] || !R[bn]) continue;
           const d = b[cn] ? rp(cn).sub(rp(bn)).normalize() : hAx.clone();
-          r.setFromAxisAngle(ax.crossVectors(d, np).normalize(), (side === 'Left' ? 1 : -1) * Math.max(0, Math.min(45, curl[k - 1] || 0)) * Math.PI / 180);   // the two hands' palm normals come out mirrored on this rig: Left bone +, Right bone −
+          r.setFromAxisAngle(ax.crossVectors(d, np).normalize(), Math.max(0, Math.min(55, (curl[k - 1] || 0) * ({ Index: 1, Middle: 1.12, Ring: 1.26, Pinky: 1.4 }[f]))) * Math.PI / 180);   // the two hands' palm normals come out mirrored on this rig: Left bone +, Right bone −
           if (k === 1 && spread) r.multiply(q.setFromAxisAngle(ax.crossVectors(d, lat).normalize(), cl(spread[f], 15)));
           RQ(b[bn], q); const loc = q.clone().invert().multiply(r).multiply(q);
           b[bn].quaternion.copy(R[bn].q).multiply(loc);
@@ -418,7 +421,7 @@
       const C = { root, bones, rest, mixer: new THREE.AnimationMixer(root) };
       const P = makePoser(THREE, C);
       if (!P.ready()) throw new Error('rig bones missing');
-      P.fingers([14, 24, 16], { Index: 5, Middle: 0, Ring: -3, Pinky: -8 });
+      P.fingers([22, 32, 17], { Index: 5, Middle: 0, Ring: -3, Pinky: -8 });
 
       /* seat: hips settle on the boulder; yaw her so she faces screen-left */
       const YAW = -Math.PI * 0.22;                      // character +Z (forward) → world −X
@@ -454,6 +457,30 @@
       const smooth = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
       const reachAt = (t) => { const ph = (t % 26) / 26; return smooth(0.50, 0.58, ph) * (1 - smooth(0.72, 0.82, ph)); };   // one slow reach per 26 s
       const Hp = new THREE.Vector3();
+      /* face: her rig has mouth-corner, lip, cheek and brow bones (no eyelid bones), so a smile is real and a wink is a cheek-lift squint with the brow dropping */
+      const FACE = {}; { const D = (n, x, y, z) => [n, x, y, z];
+        const defs = [D('LeftMouthCorner', 0.010, 0.012, -0.004), D('RightMouthCorner', -0.010, 0.012, -0.004), D('LeftCheek', 0.004, 0.008, 0.003), D('RightCheek', -0.004, 0.008, 0.003),
+          D('LeftUpperLip', 0.002, 0.003, 0), D('RightUpperLip', -0.002, 0.003, 0), D('LeftLowerLip', 0.004, 0.004, 0), D('RightLowerLip', -0.004, 0.004, 0)];
+        root.updateMatrixWorld(true);
+        const loc = (n, d) => { const bn = bones[n]; if (!bn || !bn.parent) return null; const inv = bn.parent.matrixWorld.clone().invert(), o = new THREE.Vector3().setFromMatrixPosition(bn.parent.matrixWorld);
+          return d.clone().add(o).applyMatrix4(inv).sub(o.clone().applyMatrix4(inv)); };
+        defs.forEach(([n, x, y, z]) => { const l = loc(n, new THREE.Vector3(x, y, z)); if (l) FACE[n] = { smile: l, wink: null }; });
+        // wink (her right eye): cheek rises into a squint, brow drops, corner lifts a touch more
+        [['RightCheek', 0, 0.011, 0.002], ['RightBrowMid', 0, -0.008, 0], ['RightBrowInner', 0.002, -0.007, 0], ['RightBrowOuter', 0, -0.006, 0], ['RightMouthCorner', 0, 0.005, 0]].forEach(([n, x, y, z]) => { const l = loc(n, new THREE.Vector3(x, y, z)); if (l) { (FACE[n] = FACE[n] || { smile: null, wink: null }).wink = l; } });
+      }
+      const fs = { smile: 0, wink: 0, t0: -99, auto: 6 };   // t0 = when the last expression started; auto = next idle one
+      const ease = k => { k = Math.max(0, Math.min(1, k)); return k * k * (3 - 2 * k); };
+      const face = (t) => {
+        // idle: a soft smile every ~12 s; with a wink in the middle about every third time
+        if (t > fs.auto && fs.t0 < t - 5) { fs.t0 = t; fs.auto = t + 11 + Math.random() * 4; fs.wk = Math.random() < 0.45; }
+        const u = t - fs.t0;
+        let sm = ease(u / 0.9) * (1 - ease((u - 3.4) / 1.4)), wk = 0;
+        if (fs.wk || fs.force) { const w = u - 1.3; wk = ease(w / 0.16) * (1 - ease((w - 0.55) / 0.22)); }
+        if (MS._face) { sm = MS._face.smile; wk = MS._face.wink; }
+        fs.smile = sm; fs.wink = wk;
+        for (const n in FACE) { const bn = bones[n], r = rest[n], f = FACE[n]; if (!bn || !r) continue; bn.position.copy(r.p);
+          if (f.smile) bn.position.addScaledVector(f.smile, sm * 1.5); if (f.wink) bn.position.addScaledVector(f.wink, wk * 2.2); }
+      };
       const FOC = { phase: 0, t0: 0, from: 0, w: 0 };   // close-up reaction: 0 idle · 1 in · 2 hold · 3 out
       const headW = new THREE.Vector3(), closeP = new THREE.Vector3(), tgtW = new THREE.Vector3();
       function pose(t) {
@@ -507,7 +534,7 @@
         const dt = Math.min(0.05, (now - last) / 1000); last = now; t += dt;
         ema += (dt * 1000 - ema) * 0.04;
         if (++adj > 90) { adj = 0; if (ema > 36 && pr > sc.pr * 0.5) { pr = Math.max(0.5, pr - 0.15); fit(); } else if (ema < 20 && pr < sc.pr) { pr = Math.min(sc.pr, pr + 0.1); fit(); } }
-        pose(t); root.updateMatrixWorld(true);
+        pose(t); face(t); root.updateMatrixWorld(true);
         if (hair) { wind.set(0.35 + 0.25 * Math.sin(t * 0.37), 0.02, 0.15 + 0.2 * Math.sin(t * 0.53 + 1)); hair.params.wind.copy(wind); }
         C.mixer.update(dt);
         // dust motes drift on the wind
@@ -520,7 +547,7 @@
         par.x += (par.tx - par.x) * 0.04; par.y += (par.ty - par.y) * 0.04;
         camera.position.set(camBase.x + par.x * 0.35 + Math.sin(t * 0.13) * 0.12, camBase.y - par.y * 0.18 + Math.sin(t * 0.17) * 0.04, camBase.z + Math.sin(t * 0.09) * 0.08);
         // close-up reaction: ease in on her face, hold ~3 s while she looks up at the stars, ease back out
-        if (FOC.phase === 1) { const k = Math.min(1, (t - FOC.t0) / 1.15); FOC.w = FOC.from + (1 - FOC.from) * (k * k * (3 - 2 * k)); if (k >= 1) { FOC.phase = 2; FOC.t0 = t; } }
+        if (FOC.phase === 1) { const k = Math.min(1, (t - FOC.t0) / 1.15); FOC.w = FOC.from + (1 - FOC.from) * (k * k * (3 - 2 * k)); if (k >= 1) { FOC.phase = 2; FOC.t0 = t; fs.t0 = t - 0.2; fs.wk = true; fs.auto = t + 12; } }
         else if (FOC.phase === 2) { FOC.w = 1; if (t - FOC.t0 > 3.0) { FOC.phase = 3; FOC.t0 = t; } }
         else if (FOC.phase === 3) { const k = Math.min(1, (t - FOC.t0) / 1.5); FOC.w = 1 - (k * k * (3 - 2 * k)); if (k >= 1) { FOC.phase = 0; FOC.w = 0; } }
         if (FOC.w > 0.001) {
