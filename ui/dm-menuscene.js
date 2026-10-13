@@ -109,14 +109,20 @@
     const dist = length(cameraPosition.sub(pw));
     const lf = float(1).sub(smoothstep(9.0, 30.0, dist));          // mid detail fades with distance
     const hf = float(1).sub(smoothstep(3.5, 12.0, dist));          // fine grain / dust grain fades sooner
-    const m1 = tri(0.17), m2 = tri(0.83), m3 = tri(3.9), m4 = tri(17.0), m5 = tri(63.0);
+    const m1 = tri(0.17), m2 = tri(0.83), m3 = tri(3.9), m4 = tri(17.0), m5 = tri(63.0), m6 = tri(150.0), m7 = tri(470.0);
+    const vhf = float(1).sub(smoothstep(1.4, 6.0, dist));          // micro grain only right around her
     // height (metres-ish): big form + strata + rubble + grain
-    const h = m1.r.sub(0.5).mul(1.0).add(m2.b.sub(0.5).mul(0.6)).add(m3.g.sub(0.5).mul(0.34).mul(lf)).add(m4.a.sub(0.5).mul(0.26).mul(hf)).add(m5.a.sub(0.5).mul(0.2).mul(hf));
+    const h0 = m1.r.sub(0.5).mul(1.0).add(m2.b.sub(0.5).mul(0.6)).add(m3.g.sub(0.5).mul(0.34).mul(lf)).add(m4.a.sub(0.5).mul(0.26).mul(hf)).add(m5.a.sub(0.5).mul(0.2).mul(hf)).add(m6.a.sub(0.5).mul(0.2).mul(vhf)).add(m7.a.sub(0.5).mul(0.12).mul(vhf));
+    // cracks (thin dark seams from the ridged channel at two scales), flakes (plate edges), micro grain
+    const cracks = smoothstep(0.80, 0.93, m2.b).mul(0.75).add(smoothstep(0.84, 0.95, m3.b).mul(0.6).mul(lf)).min(1.0);
+    const crackFine = smoothstep(0.86, 0.96, m4.b).mul(hf).mul(0.8).add(smoothstep(0.88, 0.97, m6.b).mul(vhf).mul(0.7));
+    const flakeEdge = smoothstep(0.58, 0.64, m4.g).mul(float(1).sub(smoothstep(0.64, 0.70, m4.g))).mul(hf).add(smoothstep(0.58, 0.64, m6.g).mul(float(1).sub(smoothstep(0.64, 0.70, m6.g))).mul(vhf));
     // albedo: rust / iron-oxide base, darker basalt streaks, lighter weathered patches
     const cDark = vec3(o.dark[0], o.dark[1], o.dark[2]), cMid = vec3(o.mid[0], o.mid[1], o.mid[2]), cLight = vec3(o.light[0], o.light[1], o.light[2]), cBasalt = vec3(0.13, 0.085, 0.08);
     let rock = mix(cDark, cMid, smoothstep(0.30, 0.72, m1.r.mul(0.7).add(m2.g.mul(0.5))));
     rock = mix(rock, cLight, smoothstep(0.55, 0.9, m2.g.mul(0.6).add(m3.r.mul(0.4))).mul(0.55));
     rock = mix(rock, cBasalt, smoothstep(0.62, 0.95, m2.b).mul(0.6).mul(o.basalt));
+    rock = rock.mul(float(1).sub(cracks.mul(0.6)).sub(crackFine.mul(0.45))).mul(float(1).add(flakeEdge.mul(0.32)));
     // dust settles on up-facing surface and in noise-driven drifts
     const up = nw.y;
     const dust1 = smoothstep(0.18, 0.82, up.mul(0.85).add(m1.g.sub(0.5).mul(0.9)).add(o.dustBias)).mul(o.dust);
@@ -127,17 +133,21 @@
     const grains = smoothstep(0.86, 1.0, m5.a).mul(hf).mul(dust1);
     let alb = mix(rock, dustCol, dust1);
     alb = mix(alb, dust2Col, dust2.mul(0.55));
+    alb = mix(alb, alb.mul(0.45), cracks.mul(0.5).add(crackFine.mul(0.4)).mul(dust1.mul(0.5).add(0.5)));   // seams show through the dust too
     alb = alb.add(vec3(0.9, 0.62, 0.42).mul(grains).mul(0.18));
     alb = alb.mul(float(0.82).add(m4.r.mul(0.36).mul(hf)).add(m3.a.sub(0.5).mul(0.18)));
     // bump: dust fills the cavities (smoother), the second layer ripples a little
-    const hh = mix(h, h.mul(0.45), dust1.mul(0.55)).add(dust2.mul(m4.g.sub(0.5)).mul(0.12)).mul(o.bump);
+    const hF = h0.sub(cracks.mul(0.55)).sub(crackFine.mul(0.28)).add(flakeEdge.mul(0.22));
+    const hh = mix(hF, hF.mul(0.45), dust1.mul(0.55)).add(dust2.mul(m4.g.sub(0.5)).mul(0.12)).mul(o.bump);
     const sX = normalize(dFdx(positionView)), sY = normalize(dFdy(positionView)), N = normalView;
     const R1 = cross(sY, N), R2 = cross(N, sX), det = dot(sX, R1);
     const grad = sign(det).mul(dFdx(hh).mul(R1).add(dFdy(hh).mul(R2)));
     const nBump = normalize(abs(det).mul(N).sub(grad));
     const mat = new THREE.MeshStandardNodeMaterial({ roughness: 0.95, metalness: 0.0 });
     mat.colorNode = alb;
-    mat.roughnessNode = float(0.97).sub(dust2.mul(0.1)).sub(grains.mul(0.35));
+    const glint = smoothstep(0.90, 1.0, m6.a).mul(vhf).mul(float(1).sub(dust1.mul(0.6))).add(grains);
+    mat.roughnessNode = float(0.97).sub(dust2.mul(0.1)).sub(glint.mul(0.5)).sub(flakeEdge.mul(0.18).mul(float(1).sub(dust1)));
+    mat.metalnessNode = glint.mul(0.45).add(flakeEdge.mul(0.12));
     mat.normalNode = nBump;
     if (o.fadeRadius) { mat.transparent = true; mat.opacityNode = float(1).sub(smoothstep(o.fadeRadius[0], o.fadeRadius[1], length(pw.xz))); mat.depthWrite = true; }
     return mat;
@@ -208,6 +218,21 @@
       }
       im.instanceMatrix.needsUpdate = true; im.frustumCulled = false; group.add(im); out.push(im);
     });
+    // fine gravel + flakes scattered close in (the camera sees these as the 'grit' of the soil)
+    {
+      const pg = new THREE.IcosahedronGeometry(1, 1), pp = pg.attributes.position, pv = new THREE.Vector3(), pn = [];
+      for (let i = 0; i < pp.count; i++) { pv.fromBufferAttribute(pp, i).normalize(); const r = 0.75 + fbm(pv.x * 3, pv.y * 3, pv.z * 3, 2, 77) * 0.5; pp.setXYZ(i, pv.x * r, Math.max(pv.y, -0.2) * r * 0.55, pv.z * r); pn.push(pv.x, pv.y * 1.3, pv.z); }
+      pg.setAttribute('normal', new THREE.Float32BufferAttribute(pn, 3));
+      const NP = 1400, im = new THREE.InstancedMesh(pg, mat, NP); im.receiveShadow = true; _seed = 4242;
+      for (let i = 0; i < NP; i++) {
+        let x, z; for (let tries = 0; tries < 20; tries++) { const r = 0.8 + Math.pow(rnd(), 1.4) * 7.5, a = rnd() * 6.283; x = r * Math.cos(a); z = r * Math.sin(a);
+          const bx = (x - BOULDER.cx) / (BOULDER.rx * 1.2), bz = (z - BOULDER.cz) / (BOULDER.rz * 1.2); if (bx * bx + bz * bz > 1) break; }
+        const s = 0.008 + Math.pow(rnd(), 2.5) * 0.05;
+        dummy.position.set(x, groundH(x, z) + s * 0.1, z); dummy.rotation.set(rnd() * 6.28, rnd() * 6.28, rnd() * 6.28);
+        dummy.scale.set(s * (1 + rnd()), s * (0.5 + rnd() * 0.6), s * (1 + rnd())); dummy.updateMatrix(); im.setMatrixAt(i, dummy.matrix);
+      }
+      im.instanceMatrix.needsUpdate = true; im.frustumCulled = false; group.add(im); out.push(im);
+    }
     return { geos, meshes: out };
   }
 
@@ -344,9 +369,9 @@
 
       /* materials + terrain */
       const noiseTex = makeNoiseTexture(THREE);
-      const groundMat = surfaceMaterial(THREE, noiseTex, { dark: [0.13, 0.05, 0.03], mid: [0.27, 0.105, 0.058], light: [0.40, 0.18, 0.10], dust: 0.8, dustBias: 0.12, basalt: 0.5, bump: 1.25, fadeRadius: [46, 66] });
-      const rockMat = surfaceMaterial(THREE, noiseTex, { dark: [0.17, 0.07, 0.05], mid: [0.36, 0.15, 0.085], light: [0.52, 0.25, 0.14], dust: 0.8, dustBias: -0.05, basalt: 0.9, bump: 1.7 });
-      const boulderMat = surfaceMaterial(THREE, noiseTex, { dark: [0.17, 0.068, 0.045], mid: [0.37, 0.15, 0.085], light: [0.55, 0.26, 0.145], dust: 0.72, dustBias: -0.12, basalt: 0.85, bump: 1.1 });
+      const groundMat = surfaceMaterial(THREE, noiseTex, { dark: [0.13, 0.05, 0.03], mid: [0.27, 0.105, 0.058], light: [0.40, 0.18, 0.10], dust: 0.8, dustBias: 0.12, basalt: 0.5, bump: 1.7, fadeRadius: [46, 66] });
+      const rockMat = surfaceMaterial(THREE, noiseTex, { dark: [0.17, 0.07, 0.05], mid: [0.36, 0.15, 0.085], light: [0.52, 0.25, 0.14], dust: 0.8, dustBias: -0.05, basalt: 0.9, bump: 2.2 });
+      const boulderMat = surfaceMaterial(THREE, noiseTex, { dark: [0.17, 0.068, 0.045], mid: [0.37, 0.15, 0.085], light: [0.55, 0.26, 0.145], dust: 0.72, dustBias: -0.12, basalt: 0.85, bump: 1.5 });
       const ground = new THREE.Mesh(buildGroundMesh(THREE), groundMat); ground.receiveShadow = true; ground.frustumCulled = false; scene.add(ground);
       const boulder = new THREE.Mesh(buildBoulderGeo(THREE), boulderMat); boulder.castShadow = true; boulder.receiveShadow = true; scene.add(boulder);
       const rocks = buildRocks(THREE, rockMat, scene);
@@ -393,7 +418,7 @@
       P.fingers([12, 20, 12], { Index: 5, Middle: 0, Ring: -3, Pinky: -8 });
 
       /* seat: hips settle on the boulder; yaw her so she faces screen-left */
-      const YAW = -Math.PI / 2;                      // character +Z (forward) → world −X
+      const YAW = -Math.PI * 0.22;                      // character +Z (forward) → world −X
       holder.rotation.y = YAW;
       const ray = new THREE.Raycaster(), down = new THREE.Vector3(0, -1, 0);
       const surfY = (x, z, extra) => { ray.set(new THREE.Vector3(x, 6, z), down); const hits = ray.intersectObjects(extra || [boulder, ground], false); return hits.length ? hits[0].point.y : 0; };
@@ -433,16 +458,16 @@
         Hp.copy(hipsRoot); Hp.x += 0.004 * Math.sin(t * 0.31); Hp.y += 0.003 * br;
         tmpW.copy(Hp).applyMatrix4(holder.matrixWorld); const par = bones.Hips.parent; par.updateWorldMatrix(true, false); par.worldToLocal(tmpW); bones.Hips.position.copy(tmpW);
         P.rot('Hips', 8 + 1.5 * br2, 3 + 0.5 * br, 1.0 * br2);
-        const lean = 7 + 2.2 * Math.sin(t * 0.21) - rw * 4, twist = 10 + 3 * Math.sin(t * 0.17) + rw * 16;   // toward the camera / menu
+        const lean = 6 + 2.2 * Math.sin(t * 0.21) - rw * 4, twist = 4 + 5 * Math.sin(t * 0.13) + rw * 8;   // toward the camera / menu
         P.rot('Spine02', 8 + twist * 0.25, 1 + lean * 0.3 + 0.6 * br, 0);
         P.rot('Spine01', 8 + twist * 0.5, 2 + lean * 0.55 + 0.8 * br, 0);
         P.rot('Spine', 8 + twist * 0.8, 3 + lean * 0.85 + 0.9 * br, 0);
-        const lookYaw = 10 + twist * 0.6 + 7 * Math.sin(t * 0.23) + 3.5 * Math.sin(t * 0.61 + 0.7) - rw * 6, lookPitch = 5 + 2.5 * Math.sin(t * 0.29 + 1) + 1.2 * br;
+        const sweep = Math.sin(t * 0.21) + 0.45 * Math.sin(t * 0.53 + 0.8), lookYaw = 12 + 17 * sweep + 4 * Math.sin(t * 1.1) - rw * 14, lookPitch = -9 + 9 * Math.sin(t * 0.17 + 2.0) + 2.5 * Math.sin(t * 0.43) + 1.2 * br;   // slow sweeps: away toward the menu / up at the stars / round to the camera
         P.rot('neck', 8 + lookYaw * 0.35, lookPitch * 0.4, 0.8 * Math.sin(t * 0.19));
         P.rot('Head', 8 + lookYaw * 0.9, lookPitch, 1.2 * Math.sin(t * 0.19 + 0.5));
         // legs: IK to planted feet, knee up on the near side
-        P.leg(P.S.limb.legL, ankleL, poleL, 1); P.rot('LeftFoot', 0, -4, 0);
-        P.leg(P.S.limb.legR, ankleR, poleR, 1); P.rot('RightFoot', 0, 6, 0);
+        P.leg(P.S.limb.legL, ankleL, poleL, 1); P.rot('LeftFoot', 0, -10, 0);
+        P.leg(P.S.limb.legR, ankleR, poleR, 1); P.rot('RightFoot', 0, -38, 0);
         // arms: far arm rests on the thigh, near arm on the knee → reaches toward the menu now and then
         const yaw = THREE.MathUtils.degToRad(8 + twist * 0.8);
         const dir = (a, out) => out.copy(a).applyAxisAngle(P.Y, yaw);
