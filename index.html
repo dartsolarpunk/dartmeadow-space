@@ -1740,6 +1740,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
       </div>
       <textarea id="fb-ta" maxlength="1000" placeholder="Share your thoughts, report a bug, or suggest a feature…"></textarea>
       <div id="fb-counter">0 / 1000</div>
+      <label id="fb-perf-row" style="display:flex;gap:8px;align-items:center;font:600 .6rem var(--font-hud,sans-serif);letter-spacing:.08em;cursor:pointer"><input type="checkbox" id="fb-perf" checked> ATTACH PERFORMANCE LOG (device, graphics backend, frame rates)</label>
       <div id="fb-status"></div>
     </div>
     <div class="modal-footer">
@@ -13244,6 +13245,7 @@ function _pfRender(){
   if(who.signedIn) mk('SIGN OUT','',()=>{ closeProfileMenu(); try{ window.signOutOfAccount(); }catch(e){} });
   else if(typeof window.jotsGithubSignIn==='function') mk('\u2325 SIGN IN WITH GITHUB','gh',()=>{ closeProfileMenu(); window.jotsGithubSignIn(); });
   // Performance log (guest and signed in): scanned automatically while you play; open it here, COPY, paste to Claude.
+  if(!$('pf-fb-btn')){ const f=document.createElement('button'); f.id='pf-fb-btn'; f.className='pf-btn'; f.textContent='\u2709 SEND FEEDBACK'; f.onclick=()=>{ try{ openFeedback(); }catch(e){} }; acct.appendChild(f); }
   { let w=$('pf-perf'); if(!w){ w=document.createElement('div'); w.id='pf-perf'; w.style.cssText='display:flex;flex-direction:column;gap:6px;width:100%;margin-top:8px';
       const ta=document.createElement('textarea'); ta.id='pf-perf-ta'; ta.readOnly=true; ta.style.cssText='display:none;width:100%;height:34vh;background:#00101c;color:#0ef;border:1px solid #0ef;font:11px monospace;padding:6px;box-sizing:border-box;user-select:text;-webkit-user-select:text';
       const row=document.createElement('div'); row.style.cssText='display:flex;gap:6px;flex-wrap:wrap'; row.hidden=true; row.id='pf-perf-row';
@@ -13416,6 +13418,7 @@ function openFeedback(){
   _fbCat='BUG REPORT';
   document.querySelectorAll('#fb-cats .fb-cat').forEach(b=>b.classList.toggle('sel',b.dataset.cat===_fbCat));
   $('fb-submit-btn').disabled=false;
+  try{ $('fb-perf').checked=true; }catch(e){}
   $('feedback-modal').style.display='flex';
 }
 function closeFeedback(){$('feedback-modal').style.display='none';}
@@ -13433,7 +13436,7 @@ document.addEventListener('DOMContentLoaded',()=>{
 
 function _fbMailtoFallback(entry){
   const subject=encodeURIComponent('DART Meadow feedback — '+entry.cat);
-  const body=encodeURIComponent(entry.msg+'\n\n—\ncategory: '+entry.cat+'\nfrom: '+entry.user+'\nts: '+entry.ts);
+  const body=encodeURIComponent(entry.msg+'\n\n—\ncategory: '+entry.cat+'\nfrom: '+entry.user+'\nts: '+entry.ts+(entry.perf?'\n\n'+entry.perf.split('\n').slice(0,40).join('\n').slice(0,1800):''));
   window.location.href='mailto:'+FEEDBACK_MAILTO+'?subject='+subject+'&body='+body;
   $('fb-status').textContent='✉ Opening your email app…';
   $('fb-submit-btn').disabled=false;
@@ -13447,6 +13450,7 @@ function submitFeedback(){
     id:Date.now().toString(16)+'-'+Math.random().toString(16).slice(2,6),
     ts:new Date().toISOString(), cat:_fbCat, msg, user, source:'dartmeadow'
   };
+  try{ if($('fb-perf')&&$('fb-perf').checked&&window.dmPerfText){ entry.perf=window.dmPerfText().slice(0,6000); entry.platform=window.DM_PLATFORM; } }catch(e){}
   if(!FEEDBACK_GAS_URL){ _fbMailtoFallback(entry); return; }
   $('fb-status').textContent='SUBMITTING…';
   $('fb-submit-btn').disabled=true;
