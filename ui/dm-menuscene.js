@@ -451,6 +451,8 @@
       const smooth = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
       const reachAt = (t) => { const ph = (t % 26) / 26; return smooth(0.50, 0.58, ph) * (1 - smooth(0.72, 0.82, ph)); };   // one slow reach per 26 s
       const Hp = new THREE.Vector3();
+      const FOC = { phase: 0, t0: 0, from: 0, w: 0 };   // close-up reaction: 0 idle · 1 in · 2 hold · 3 out
+      const headW = new THREE.Vector3(), closeP = new THREE.Vector3(), tgtW = new THREE.Vector3();
       function pose(t) {
         const br = Math.sin(t * 1.35), br2 = Math.sin(t * 0.67 + 1.1);
         const rw = reachAt(t);
@@ -462,7 +464,7 @@
         P.rot('Spine02', 8 + twist * 0.25, 1 + lean * 0.3 + 0.6 * br, 0);
         P.rot('Spine01', 8 + twist * 0.5, 2 + lean * 0.55 + 0.8 * br, 0);
         P.rot('Spine', 8 + twist * 0.8, 3 + lean * 0.85 + 0.9 * br, 0);
-        const sweep = Math.sin(t * 0.21) + 0.45 * Math.sin(t * 0.53 + 0.8), lookYaw = 12 + 17 * sweep + 4 * Math.sin(t * 1.1) - rw * 14, lookPitch = -9 + 9 * Math.sin(t * 0.17 + 2.0) + 2.5 * Math.sin(t * 0.43) + 1.2 * br;   // slow sweeps: away toward the menu / up at the stars / round to the camera
+        const sweep = Math.sin(t * 0.21) + 0.45 * Math.sin(t * 0.53 + 0.8), lookYaw0 = 12 + 17 * sweep + 4 * Math.sin(t * 1.1) - rw * 14, lookYaw = lookYaw0 + (6 + 3 * Math.sin(t * 0.8) - lookYaw0) * FOC.w, lookPitch0 = -9 + 9 * Math.sin(t * 0.17 + 2.0) + 2.5 * Math.sin(t * 0.43) + 1.2 * br, lookPitch = lookPitch0 + (-26 - lookPitch0) * FOC.w;   // slow sweeps: away toward the menu / up at the stars / round to the camera
         P.rot('neck', 8 + lookYaw * 0.35, lookPitch * 0.4, 0.8 * Math.sin(t * 0.19));
         P.rot('Head', 8 + lookYaw * 0.9, lookPitch, 1.2 * Math.sin(t * 0.19 + 0.5));
         // legs: IK to planted feet, knee up on the near side
@@ -488,6 +490,13 @@
       const par = { x: 0, y: 0, tx: 0, ty: 0 };
       const onPtr = (e) => { const p = e.touches ? e.touches[0] : e; if (!p) return; par.tx = (p.clientX / window.innerWidth - 0.5); par.ty = (p.clientY / window.innerHeight - 0.5); };
       window.addEventListener('pointermove', onPtr, { passive: true });
+      const startFocus = () => { if (FOC.phase === 1 || FOC.phase === 2) { if (FOC.phase === 2) FOC.t0 = t; return; } FOC.from = FOC.w; FOC.phase = 1; FOC.t0 = t; };
+      const okTarget = (el) => !(el && el.closest && el.closest('.mm-panel,button,a,input,select,textarea,.modal,.modal-box,#account-chip,#float-music,[onclick]'));
+      let gx = 0, gy = 0, gOk = false, gDone = false;
+      const onDown = (e) => { const p = e.touches ? e.touches[0] : e; gx = p.clientX; gy = p.clientY; gOk = okTarget(e.target); gDone = false; };
+      const onMove = (e) => { if (!gOk || gDone) return; const p = e.touches ? e.touches[0] : e; if (!p) return; if (Math.hypot(p.clientX - gx, p.clientY - gy) > 22 && (e.buttons || e.touches)) { gDone = true; startFocus(); } };
+      const onUp = (e) => { if (gOk && !gDone && okTarget(e.target)) { gDone = true; startFocus(); } };
+      window.addEventListener('pointerdown', onDown, { passive: true }); window.addEventListener('pointermove', onMove, { passive: true }); window.addEventListener('pointerup', onUp, { passive: true });
       let raf = 0; const wind = new THREE.Vector3();
       const loop = (now) => {
         raf = requestAnimationFrame(loop); MS._raf = raf;
@@ -507,14 +516,22 @@
         // camera: slow breathing orbit + pointer parallax
         par.x += (par.tx - par.x) * 0.04; par.y += (par.ty - par.y) * 0.04;
         camera.position.set(camBase.x + par.x * 0.35 + Math.sin(t * 0.13) * 0.12, camBase.y - par.y * 0.18 + Math.sin(t * 0.17) * 0.04, camBase.z + Math.sin(t * 0.09) * 0.08);
-        camera.lookAt(TARGET);
+        // close-up reaction: ease in on her face, hold ~3 s while she looks up at the stars, ease back out
+        if (FOC.phase === 1) { const k = Math.min(1, (t - FOC.t0) / 1.15); FOC.w = FOC.from + (1 - FOC.from) * (k * k * (3 - 2 * k)); if (k >= 1) { FOC.phase = 2; FOC.t0 = t; } }
+        else if (FOC.phase === 2) { FOC.w = 1; if (t - FOC.t0 > 3.0) { FOC.phase = 3; FOC.t0 = t; } }
+        else if (FOC.phase === 3) { const k = Math.min(1, (t - FOC.t0) / 1.5); FOC.w = 1 - (k * k * (3 - 2 * k)); if (k >= 1) { FOC.phase = 0; FOC.w = 0; } }
+        if (FOC.w > 0.001) {
+          bones.Head.getWorldPosition(headW); tgtW.copy(headW); tgtW.y += 0.02;
+          closeP.copy(headW).add(tmpA.copy(camBase).sub(headW).setY(0).normalize().multiplyScalar(0.95)); closeP.y = headW.y + 0.06; closeP.x += 0.12;
+          camera.position.lerp(closeP, FOC.w); camera.lookAt(tmpB.lerpVectors(TARGET, tgtW, FOC.w));
+        } else camera.lookAt(TARGET);
         renderer.render(scene, camera);
         if (++framesSeen === 3 && !MS.ready) { MS.ready = true; cv.classList.add('ms-in'); document.dispatchEvent(new CustomEvent('menuscene-ready')); info('ready (' + (renderer.backend && renderer.backend.isWebGPUBackend ? 'WebGPU' : 'WebGL2') + ', pr ' + pr.toFixed(2) + ')'); }
       };
       raf = requestAnimationFrame(loop);
-      MS._ctx = { renderer, scene, camera, hair: () => hair, pose, setMenuOpen: () => { menuT = t; }, cv, holder, root, boulder, ground, P, bones };
+      MS._ctx = { focus: startFocus, FOC, renderer, scene, camera, hair: () => hair, pose, setMenuOpen: () => { menuT = t; }, cv, holder, root, boulder, ground, P, bones };
       MS.dispose = function () {
-        MS.disposed = true; MS.ready = false; cancelAnimationFrame(raf); window.removeEventListener('resize', onResize); window.removeEventListener('pointermove', onPtr);
+        MS.disposed = true; MS.ready = false; cancelAnimationFrame(raf); window.removeEventListener('resize', onResize); window.removeEventListener('pointermove', onPtr); window.removeEventListener('pointerdown', onDown); window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp);
         try { if (window.visualViewport) window.visualViewport.removeEventListener('resize', onResize); } catch (e) {}
         try { hair && hair.dispose && hair.dispose(); } catch (e) {}
         try { scene.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.dispose && m.dispose()); }); noiseTex.dispose(); renderer.dispose(); } catch (e) {}
