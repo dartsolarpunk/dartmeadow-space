@@ -13642,7 +13642,7 @@ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded'
   function render(){ const pre=box.querySelector('pre'); pre.textContent=text(); pre.scrollTop=pre.scrollHeight; }
   function open(){
     if(box){ box.remove(); box=null; return; }
-    box=document.createElement('div'); box.style.cssText='position:fixed;inset:8px;z-index:100001;background:rgba(0,8,20,.96);border:1px solid #0ef;border-radius:6px;display:flex;flex-direction:column;padding:8px;gap:8px;font:11px monospace;color:#0ef';
+    box=document.createElement('div'); box.style.cssText='position:fixed;inset:8px;z-index:2147483647;background:rgba(0,8,20,.96);border:1px solid #0ef;border-radius:6px;display:flex;flex-direction:column;padding:8px;gap:8px;font:11px monospace;color:#0ef';
     box.innerHTML='<div style="display:flex;gap:8px"><button id=pc>COPY</button><button id=px>CLEAR</button><button id=pq>CLOSE</button></div><pre style="flex:1;overflow:auto;margin:0;white-space:pre-wrap;word-break:break-all;user-select:text;-webkit-user-select:text"></pre>';
     box.querySelectorAll('button').forEach(b=>b.style.cssText='background:#0ef;color:#10081a;border:0;padding:8px 14px;border-radius:3px;font-weight:700');
     document.body.appendChild(box); render();
@@ -13655,7 +13655,10 @@ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded'
       (navigator.clipboard&&navigator.clipboard.writeText?navigator.clipboard.writeText(t):Promise.reject()).then(()=>done(true),()=>{ done(false); const pre=box.querySelector('pre'); pre.style.userSelect='text'; pre.style.webkitUserSelect='text'; const r=document.createRange(); r.selectNodeContents(pre); const se=getSelection(); se.removeAllRanges(); se.addRange(r); }); };
   }
   window.dmPerfReport=open;
-  let taps=[]; addEventListener('pointerdown',ev=>{ if(ev.clientX<60&&ev.clientY<60){ const n=performance.now(); taps=taps.filter(x=>n-x<2500); taps.push(n); if(taps.length>=5){ taps=[]; open(); } } },true);
+  let taps=[], lastT=0;
+  const hit=(x,y)=>{ const n=performance.now(); if(n-lastT<80) return; lastT=n; if(x<130&&y<130){ taps=taps.filter(v=>n-v<4000); taps.push(n); if(taps.length>=4){ taps=[]; open(); } } };
+  addEventListener('pointerdown',ev=>hit(ev.clientX,ev.clientY),true);
+  addEventListener('touchstart',ev=>{ if(ev.touches.length>=3){ open(); return; } const t=ev.touches[0]; if(t) hit(t.clientX,t.clientY); },{capture:true,passive:true});
   if(/[?&]perf\b/.test(location.search)) setTimeout(open,3000);
 })();
 function _dmAndroidExitCopy(){
