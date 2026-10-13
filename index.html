@@ -873,8 +873,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
    Backgrounds are slightly more opaque instead so they read the same. Modals that open on demand keep their blur. */
 .joystick-base,.ar-panel,#ar-top,.hud-toggle-btn,.assist-btn,.side-pad,.dart-pad,.joystick-zone>div,[style*="backdrop-filter:blur(8px)"][style*="border-radius:50%"]{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;}
 /* live FPS number: lower-left corner of the kite, medium gray so it reads on any theme without shouting */
-.dm-fps{position:absolute;left:58px;top:123px;font:600 11px/1 var(--font-mono,monospace);letter-spacing:.04em;color:rgba(150,156,168,.95);text-shadow:0 0 3px rgba(0,0,0,.7),0 0 1px rgba(0,0,0,.9);pointer-events:none;font-variant-numeric:tabular-nums;z-index:3}
-.mini-kite .dm-fps{left:40px;top:80px;font-size:9px}
+.dm-fps{position:absolute;left:68px;top:121px;width:44px;text-align:center;font:600 17px/1 var(--font-mono,monospace);letter-spacing:.02em;color:rgba(150,156,168,.95);text-shadow:0 0 3px rgba(0,0,0,.7),0 0 1px rgba(0,0,0,.9);pointer-events:none;font-variant-numeric:tabular-nums;z-index:3}
+.mini-kite .dm-fps{left:43px;top:77px;width:28px;font-size:11px}
 #minimap{display:none!important;position:absolute;bottom:calc(100px + var(--safe-bot));left:8px;width:88px;height:88px;background:rgba(var(--panel-rgb),0.28);border:1px solid rgba(var(--acc-rgb),0.18);border-radius:50%;overflow:hidden;pointer-events:auto;z-index:22;touch-action:none;}
 #minimap-canvas{touch-action:none;}
 #mm-toggle{position:absolute;top:2px;right:2px;width:16px;height:16px;border-radius:50%;background:rgba(var(--panel-rgb),0.8);border:1px solid rgba(var(--acc-rgb),0.3);color:rgba(var(--acc-rgb),0.7);font-size:0.5rem;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;z-index:23;pointer-events:auto;}
