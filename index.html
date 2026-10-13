@@ -13243,6 +13243,17 @@ function _pfRender(){
   const mk=(txt,cls,fn)=>{ const b=document.createElement('button'); b.className='pf-btn'+(cls?' '+cls:''); b.textContent=txt; b.onclick=fn; acct.appendChild(b); };
   if(who.signedIn) mk('SIGN OUT','',()=>{ closeProfileMenu(); try{ window.signOutOfAccount(); }catch(e){} });
   else if(typeof window.jotsGithubSignIn==='function') mk('\u2325 SIGN IN WITH GITHUB','gh',()=>{ closeProfileMenu(); window.jotsGithubSignIn(); });
+  // Performance log (guest and signed in): scanned automatically while you play; open it here, COPY, paste to Claude.
+  { let w=$('pf-perf'); if(!w){ w=document.createElement('div'); w.id='pf-perf'; w.style.cssText='display:flex;flex-direction:column;gap:6px;width:100%;margin-top:8px';
+      const ta=document.createElement('textarea'); ta.id='pf-perf-ta'; ta.readOnly=true; ta.style.cssText='display:none;width:100%;height:34vh;background:#00101c;color:#0ef;border:1px solid #0ef;font:11px monospace;padding:6px;box-sizing:border-box;user-select:text;-webkit-user-select:text';
+      const row=document.createElement('div'); row.style.cssText='display:flex;gap:6px;flex-wrap:wrap'; row.hidden=true; row.id='pf-perf-row';
+      const mkb=(t,fn)=>{ const b=document.createElement('button'); b.className='pf-btn'; b.textContent=t; b.onclick=fn; return b; };
+      const cp=mkb('COPY LOG',()=>{ ta.value=window.dmPerfText(); ta.focus(); ta.select(); ta.setSelectionRange(0,ta.value.length); let ok=false; try{ ok=document.execCommand('copy'); }catch(e){} if(!ok&&navigator.clipboard) navigator.clipboard.writeText(ta.value).then(()=>{cp.textContent='COPIED \u2713';},()=>{}); cp.textContent=ok?'COPIED \u2713':'COPY LOG (if nothing, long-press the text, Select all, Copy)'; });
+      const rf=mkb('REFRESH',()=>{ ta.value=window.dmPerfText(); });
+      const cl=mkb('CLEAR',()=>{ window.dmPerfClear(); ta.value=window.dmPerfText(); });
+      row.append(cp,rf,cl);
+      const open=mkb('PERFORMANCE LOG',()=>{ const show=ta.style.display==='none'; ta.style.display=show?'block':'none'; row.hidden=!show; if(show) ta.value=window.dmPerfText(); });
+      w.append(open,row,ta); acct.parentNode.insertBefore(w,acct.nextSibling); } }
   _pfRenderThemes();
   try{ window.DMSafety&&DMSafety.section($('pf-safety')); }catch(e){}
   $('pf-sw-players').setAttribute('aria-checked', DM_PREFS.playerLabels?'true':'false');
@@ -13633,33 +13644,19 @@ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded'
       jank:f.filter(x=>x>50).length,frames:f.length,heapMB:performance.memory?Math.round(performance.memory.usedJSHeapSize/1048576):null,hidden:document.hidden};
     if(document.hidden) return;
     log.push(e); if(log.length>60) log.shift(); try{ localStorage.setItem(KEY,JSON.stringify(log)); }catch(x){}
-    if(box) render();
   }
   function tick(t){ if(win.last&&!document.hidden){ const d=t-win.last; if(d<1000) win.f.push(d); } win.last=t; if(t-win.t0>10000) flush(); requestAnimationFrame(tick); }
   requestAnimationFrame(tick);
-  let box=null;
-  function text(){ return 'DART MEADOW PERF REPORT\n'+JSON.stringify(env(),null,1)+'\n'+log.map(e=>[e.at,e.screen,e.fps+'fps','avg'+e.avgMs,'p95 '+e.p95Ms,'worst '+e.worstMs,'jank'+e.jank,e.heapMB!=null?e.heapMB+'MB':''].join(' | ')).join('\n'); }
-  function render(){ const pre=box.querySelector('pre'); pre.textContent=text(); pre.scrollTop=pre.scrollHeight; }
-  function open(){
-    if(box){ box.remove(); box=null; return; }
-    box=document.createElement('div'); box.style.cssText='position:fixed;inset:8px;z-index:2147483647;background:rgba(0,8,20,.96);border:1px solid #0ef;border-radius:6px;display:flex;flex-direction:column;padding:8px;gap:8px;font:11px monospace;color:#0ef';
-    box.innerHTML='<div style="display:flex;gap:8px"><button id=pc>COPY</button><button id=px>CLEAR</button><button id=pq>CLOSE</button></div><pre style="flex:1;overflow:auto;margin:0;white-space:pre-wrap;word-break:break-all;user-select:text;-webkit-user-select:text"></pre>';
-    box.querySelectorAll('button').forEach(b=>b.style.cssText='background:#0ef;color:#10081a;border:0;padding:8px 14px;border-radius:3px;font-weight:700');
-    document.body.appendChild(box); render();
-    box.querySelector('#pq').onclick=open;
-    box.querySelector('#px').onclick=()=>{ log=[]; try{ localStorage.removeItem(KEY); }catch(e){} render(); };
-    box.querySelector('#pc').onclick=()=>{ const t=text(), b=box.querySelector('#pc'); const done=ok=>{ b.textContent=ok?'COPIED \u2713':'COPY FAILED - long-press the text below, Select all, Copy'; };
-      const ta=document.createElement('textarea'); ta.value=t; ta.style.cssText='position:fixed;left:0;top:0;width:1px;height:1px;opacity:0'; box.appendChild(ta); ta.focus(); ta.select(); ta.setSelectionRange(0,t.length);
-      let ok=false; try{ ok=document.execCommand('copy'); }catch(e){} ta.remove();
-      if(ok){ done(true); return; }
-      (navigator.clipboard&&navigator.clipboard.writeText?navigator.clipboard.writeText(t):Promise.reject()).then(()=>done(true),()=>{ done(false); const pre=box.querySelector('pre'); pre.style.userSelect='text'; pre.style.webkitUserSelect='text'; const r=document.createRange(); r.selectNodeContents(pre); const se=getSelection(); se.removeAllRanges(); se.addRange(r); }); };
-  }
-  window.dmPerfReport=open;
+  function text(){ let e; try{ e=JSON.stringify(env(),null,1); }catch(x){ e='env error: '+x; } return 'DART MEADOW PERF REPORT\n'+e+'\n'+log.map(e=>[e.at,e.screen,e.fps+'fps','avg'+e.avgMs,'p95 '+e.p95Ms,'worst '+e.worstMs,'jank'+e.jank,e.heapMB!=null?e.heapMB+'MB':''].join(' | ')).join('\n'); }
+  window.dmPerfText=text;
+  window.dmPerfClear=()=>{ log=[]; try{ localStorage.removeItem(KEY); }catch(e){} };
+  window.dmPerfReport=()=>{ try{ openProfileMenu(); setTimeout(()=>{ const t=document.getElementById('pf-perf-ta'); if(t){ t.parentNode.hidden=false; t.value=text(); } },50); }catch(e){} };
+  // shortcut gestures just open the PROFILE menu (where the Performance Log lives)
   let taps=[], lastT=0;
-  const hit=(x,y)=>{ const n=performance.now(); if(n-lastT<80) return; lastT=n; if(x<130&&y<130){ taps=taps.filter(v=>n-v<4000); taps.push(n); if(taps.length>=4){ taps=[]; open(); } } };
+  const hit=(x,y)=>{ const n=performance.now(); if(n-lastT<80) return; lastT=n; if(x<130&&y<130){ taps=taps.filter(v=>n-v<4000); taps.push(n); if(taps.length>=4){ taps=[]; window.dmPerfReport(); } } };
   addEventListener('pointerdown',ev=>hit(ev.clientX,ev.clientY),true);
-  addEventListener('touchstart',ev=>{ if(ev.touches.length>=3){ open(); return; } const t=ev.touches[0]; if(t) hit(t.clientX,t.clientY); },{capture:true,passive:true});
-  if(/[?&]perf\b/.test(location.search)) setTimeout(open,3000);
+  addEventListener('touchstart',ev=>{ if(ev.touches.length>=3){ window.dmPerfReport(); return; } const t=ev.touches[0]; if(t) hit(t.clientX,t.clientY); },{capture:true,passive:true});
+  if(/[?&]perf\b/.test(location.search)) setTimeout(window.dmPerfReport,3000);
 })();
 function _dmAndroidExitCopy(){
   const m=$('exit-modal'); if(!m||m.__dmAndroid) return; m.__dmAndroid=true;
