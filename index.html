@@ -13419,7 +13419,8 @@ function openFeedback(){
   document.querySelectorAll('#fb-cats .fb-cat').forEach(b=>b.classList.toggle('sel',b.dataset.cat===_fbCat));
   $('fb-submit-btn').disabled=false;
   try{ $('fb-perf').checked=true; }catch(e){}
-  $('feedback-modal').style.display='flex';
+  const fm=$('feedback-modal'); try{ if(fm.parentNode!==document.body) document.body.appendChild(fm); }catch(e){}
+  fm.style.setProperty('z-index','2147483000','important'); fm.style.display='flex';
 }
 function closeFeedback(){$('feedback-modal').style.display='none';}
 
@@ -13436,7 +13437,7 @@ document.addEventListener('DOMContentLoaded',()=>{
 
 function _fbMailtoFallback(entry){
   const subject=encodeURIComponent('DART Meadow feedback — '+entry.cat);
-  const body=encodeURIComponent(entry.msg+'\n\n—\ncategory: '+entry.cat+'\nfrom: '+entry.user+'\nts: '+entry.ts+(entry.perf?'\n\n'+entry.perf.split('\n').slice(0,40).join('\n').slice(0,1800):''));
+  const body=encodeURIComponent((entry.raw||entry.msg)+'\n\n—\ncategory: '+entry.cat+'\nfrom: '+entry.user+'\nts: '+entry.ts+(entry.perf?'\n\n'+entry.perf.split('\n').slice(0,40).join('\n').slice(0,1800):''));
   window.location.href='mailto:'+FEEDBACK_MAILTO+'?subject='+subject+'&body='+body;
   $('fb-status').textContent='✉ Opening your email app…';
   $('fb-submit-btn').disabled=false;
@@ -13445,32 +13446,42 @@ function _fbMailtoFallback(entry){
 function submitFeedback(){
   const msg=($('fb-ta').value||'').trim();
   if(!msg){$('fb-status').textContent='⚠ Please enter a message';return;}
-  const user=(window._ghAuth&&window._ghAuth.username)?window._ghAuth.username:'guest';
+  const user=(window._ghAuth&&window._ghAuth.username)?window._ghAuth.username:((window.JOTS&&JOTS.auth&&JOTS.auth.signedIn&&JOTS.identity&&JOTS.identity.name)||'guest');
   const entry={
     id:Date.now().toString(16)+'-'+Math.random().toString(16).slice(2,6),
-    ts:new Date().toISOString(), cat:_fbCat, msg, user, source:'dartmeadow'
+    ts:new Date().toISOString(), cat:_fbCat, msg, user, source:'dartmeadow', platform:window.DM_PLATFORM||'web'
   };
-  try{ if($('fb-perf')&&$('fb-perf').checked&&window.dmPerfText){ entry.perf=window.dmPerfText().slice(0,6000); entry.platform=window.DM_PLATFORM; } }catch(e){}
-  if(!FEEDBACK_GAS_URL){ _fbMailtoFallback(entry); return; }
-  $('fb-status').textContent='SUBMITTING…';
-  $('fb-submit-btn').disabled=true;
-  fetch(FEEDBACK_GAS_URL+'?action=feedback',{
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify(entry),
-    signal:AbortSignal.timeout(10000)
-  }).then(r=>r.json()).then(d=>{
-    if(d&&!d.error){
-      $('fb-status').textContent='✓ FEEDBACK SUBMITTED — THANK YOU';
-      setTimeout(closeFeedback,1600);
-    } else {
-      // Endpoint reachable but didn't confirm success (e.g. no feedback
-      // action implemented there yet) — don't dead-end, fall back to email.
-      _fbMailtoFallback(entry);
-    }
-  }).catch(()=>{
-    _fbMailtoFallback(entry);
-  });
+  entry.raw=msg;
+  // optional performance log: appended to the message so it shows in the admin console's feedback view too
+  try{ if($('fb-perf')&&$('fb-perf').checked&&window.dmPerfText){ const t=window.dmPerfText(); entry.perf=t.slice(0,5000); entry.msg=msg+'\n\n--- PERFORMANCE LOG ('+entry.platform+') ---\n'+entry.perf; } }catch(e){}
+  $('fb-status').textContent='';
+  _fbChoose(entry);
+}
+// After SUBMIT: choose where it goes — the DART Network (the same admin console Autumn / ArcLake feed) or an email to Radical Deepscale.
+function _fbChoose(entry){
+  const old=document.getElementById('fb-choose'); if(old) old.remove();
+  const w=document.createElement('div'); w.id='fb-choose';
+  w.style.cssText='position:fixed;inset:0;z-index:2147483600;background:rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center;padding:16px';
+  const box=document.createElement('div'); box.style.cssText='background:rgba(4,10,20,.98);border:1px solid rgba(0,229,255,.4);border-radius:10px;padding:18px;width:min(420px,94vw);display:flex;flex-direction:column;gap:10px;color:#cfeaff;font:600 12px/1.5 sans-serif;letter-spacing:.06em;text-align:center';
+  const t=document.createElement('div'); t.style.cssText='color:#0ef;font-size:13px;letter-spacing:.14em'; t.textContent='WHERE SHOULD THIS GO?';
+  const st=document.createElement('div'); st.style.cssText='min-height:18px;color:#0ef';
+  const mk=(txt,fn,main)=>{ const b=document.createElement('button'); b.textContent=txt; b.style.cssText='padding:12px;border-radius:6px;cursor:pointer;font:700 12px sans-serif;letter-spacing:.1em;border:1px solid #0ef;'+(main?'background:#0ef;color:#10081a':'background:transparent;color:#0ef'); b.onclick=fn; return b; };
+  const net=mk('SEND TO DART NETWORK',()=>{ [net,em,bk].forEach(x=>x.disabled=true); st.textContent='SENDING…'; _fbSendNetwork(entry).then(()=>{ st.textContent='✓ SENT TO DART NETWORK — THANK YOU'; $('fb-status').textContent='✓ FEEDBACK SUBMITTED — THANK YOU'; setTimeout(()=>{ w.remove(); closeFeedback(); },1500); }).catch(e=>{ st.style.color='#ff9a80'; st.textContent='⚠ Could not reach the network ('+((e&&e.message)||'error')+'). Try again or use email.'; [net,em,bk].forEach(x=>x.disabled=false); }); },true);
+  const em=mk('EMAIL RADICAL DEEPSCALE',()=>{ w.remove(); _fbMailtoFallback(entry); });
+  const bk=mk('BACK',()=>w.remove());
+  const sub=document.createElement('div'); sub.style.cssText='opacity:.6;font-size:10px'; sub.textContent='The DART Network goes straight to the Radical Deepscale admin console, same as Autumn and ArcLake.';
+  box.append(t,sub,net,em,bk,st); w.appendChild(box); document.body.appendChild(w);
+}
+// Same path Autumn uses: the shared Apps Script proxy's 'ashwrite' action appends to DART-Skyboard/leatr-ash feedback/inbox.json
+// (no secret in this client). Content-Type text/plain avoids a CORS preflight.
+function _fbSendNetwork(entry){
+  if(!FEEDBACK_GAS_URL) return Promise.reject(new Error('not configured'));
+  const ctrl=(typeof AbortController!=='undefined')?new AbortController():null; const tm=setTimeout(()=>{ try{ ctrl&&ctrl.abort(); }catch(e){} },15000);
+  const uid=(window._ghAuth&&window._ghAuth.username)||(window.JOTS&&JOTS.identity&&JOTS.identity.name)||'guest';
+  const clean={id:entry.id,ts:entry.ts,cat:entry.cat,msg:entry.msg,user:entry.user,source:entry.source,platform:entry.platform};
+  return fetch(FEEDBACK_GAS_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'ashwrite',path:'feedback/inbox.json',uid:uid,append:true,payload:[clean]}),signal:ctrl?ctrl.signal:undefined})
+    .then(r=>r.text().then(txt=>{ clearTimeout(tm); let d=null; try{ d=JSON.parse(txt); }catch(e){} if(d&&d.ok) return d; throw new Error((d&&(d.error||d.message))||('server '+r.status)); }))
+    .catch(e=>{ clearTimeout(tm); throw e; });
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -13636,7 +13647,7 @@ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded'
     return {platform:_dmPlatform(),app:(window.DMAndroid&&DMAndroid.version)?DMAndroid.version():null,webview:m[2]||null,
       backend:real===null?'not-started':real?'WebGPU':'WebGL2-fallback',navGpu:!!navigator.gpu,gpu:g.renderer||'',vendor:g.vendor||'',
       gpuClass:g.gpuClass,score:g.score,preset:g.preset,resScale:g.resScale,cores:navigator.hardwareConcurrency||0,mem:navigator.deviceMemory||0,
-      dpr:window.devicePixelRatio,screen:screen.width+'x'+screen.height,inner:innerWidth+'x'+innerHeight,ua:navigator.userAgent};
+      dpr:window.devicePixelRatio,screen:window.screen.width+'x'+window.screen.height,inner:innerWidth+'x'+innerHeight,ua:navigator.userAgent};
   }
   function flush(){
     const f=win.f; win.f=[]; const t0=win.t0; win.t0=performance.now();
