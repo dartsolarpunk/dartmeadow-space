@@ -189,7 +189,7 @@
   }
 
   /* prominences: particles on magnetic arcs, now and then a flare */
-  function prominences(R,col,low,seed){
+  function prominences(R,col,low,seed,T,U){
     const A=low?5:10, N=low?22:44, tot=A*N;
     // camera-facing quads (WebGPU draws GL points one pixel wide, so no Points)
     let tex=null; try{ tex=makeCircleTex(32,'rgb(255,230,190)',1); }catch(e){}
@@ -212,6 +212,32 @@
     for(let i=0;i<A;i++){ const a=arc({}); a.age=rnd()*a.life; arcs.push(a); }
     const off=new Float32Array(tot); for(let i=0;i<tot;i++) off[i]=rnd();
     const jit=new Float32Array(tot*3); for(let i=0;i<tot*3;i++) jit[i]=(rnd()-0.5);
+    /* ribbons: each magnetic loop is a glowing, camera-facing ribbon (a bright core fading to soft
+       edges, with plasma streaming along it and hot feet) — the particles above ride inside as embers.
+       Geometry is a few hundred vertices rebuilt per frame; all shading is on the GPU. */
+    const SEG=low?14:24, NV=A*(SEG+1)*2;
+    const rPos=new Float32Array(NV*3), rUV=new Float32Array(NV*2), rA=new Float32Array(NV), rIdx=[];
+    for(let ai=0;ai<A;ai++) for(let j=0;j<=SEG;j++){ const v0=(ai*(SEG+1)+j)*2; rUV[v0*2]=j/SEG; rUV[v0*2+1]=-1; rUV[v0*2+2]=j/SEG; rUV[v0*2+3]=1;
+      if(j<SEG){ rIdx.push(v0,v0+1,v0+2, v0+1,v0+3,v0+2); } }
+    const rg=new THREE.BufferGeometry();
+    rg.setAttribute('position',new THREE.BufferAttribute(rPos,3).setUsage(THREE.DynamicDrawUsage));
+    rg.setAttribute('uv',new THREE.BufferAttribute(rUV,2));
+    rg.setAttribute('ra',new THREE.BufferAttribute(rA,1).setUsage(THREE.DynamicDrawUsage));
+    rg.setIndex(rIdx);
+    let ribbon=null;
+    if(T&&U&&T.attribute){
+      const rm=new THREE.MeshBasicNodeMaterial({transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,side:THREE.DoubleSide});
+      const uvn=T.uv(), u=uvn.x, v=uvn.y, ra=T.attribute('ra','float');
+      const f=T.sin(u.mul(Math.PI)), feet=T.float(1).sub(f).pow(3.0);
+      const core=T.exp(v.mul(v).mul(-2.6));
+      const streak=T.sin(u.mul(34.0).sub(T.time.mul(2.4)).add(T.sin(u.mul(9.0).add(T.time.mul(0.7))).mul(1.5))).mul(0.22).add(0.78);
+      const I=core.mul(streak).mul(feet.mul(1.4).add(0.85)).mul(ra);
+      rm.colorNode=T.mix(U.hot,U.core,core.mul(0.55).add(feet).clamp(0,1)).mul(I.mul(1.35));
+      rm.toneMapped=false;
+      ribbon=new THREE.Mesh(rg,rm); ribbon.frustumCulled=false; ribbon.renderOrder=2; ribbon.name='JOTS_StarFlareRibbons';
+      pts.add(ribbon);
+    }
+    const camL=new V(), pA=new V(), pB=new V(), tg=new V(), sd=new V(), vw=new V();
     const tmp=new V(), c=col.mid.clone(), cHot=col.hot.clone();   // reddish loops, hotter at the feet
     pts.userData.tick=function(dt,cam){
       let bestK=0; const fo=pts.userData.flare||(pts.userData.flare={d:new V(0,1,0),k:0});
@@ -230,8 +256,32 @@
           pos[i*3]=tmp.x*r+jit[i*3]*jj; pos[i*3+1]=tmp.y*r+jit[i*3+1]*jj; pos[i*3+2]=tmp.z*r+jit[i*3+2]*jj;
           const k=env*(0.55+0.45*Math.sin(Math.PI*s))*(1-er*0.7);
           const cc=s<0.15||s>0.85?cHot:c;
-          cols[i*3]=cc.r*k*1.5; cols[i*3+1]=cc.g*k*1.5; cols[i*3+2]=cc.b*k*1.5;
+          cols[i*3]=cc.r*k*0.9; cols[i*3+1]=cc.g*k*0.9; cols[i*3+2]=cc.b*k*0.9;
         }
+      }
+      if(ribbon){
+        if(cam) camL.copy(cam.position), pts.parent.worldToLocal(camL); else camL.set(0,0,R*6);
+        for(let ai=0;ai<A;ai++){
+          const a=arcs[ai], env=Math.sin(Math.PI*Math.min(1,a.age/a.life)), er=a.flare?Math.max(0,(a.age/a.life-0.55)/0.45):0;
+          const kk=env*(1-er*0.7);
+          for(let j=0;j<=SEG;j++){
+            const s=j/SEG;
+            tmp.copy(a.d0).lerp(a.d1,s).normalize();
+            let h=a.h*env*Math.sin(Math.PI*s)*(1+er*3); if(er>0) h+=R*er*er*0.9*Math.sin(Math.PI*s);
+            const rr=R*1.004+h; pA.copy(tmp).multiplyScalar(rr);
+            // tangent by neighbours
+            const s0=Math.max(0,(j-1)/SEG), s1=Math.min(1,(j+1)/SEG);
+            tmp.copy(a.d0).lerp(a.d1,s0).normalize(); let h0=a.h*env*Math.sin(Math.PI*s0)*(1+er*3); if(er>0) h0+=R*er*er*0.9*Math.sin(Math.PI*s0); pB.copy(tmp).multiplyScalar(R*1.004+h0);
+            tmp.copy(a.d0).lerp(a.d1,s1).normalize(); let h1=a.h*env*Math.sin(Math.PI*s1)*(1+er*3); if(er>0) h1+=R*er*er*0.9*Math.sin(Math.PI*s1); tg.copy(tmp).multiplyScalar(R*1.004+h1).sub(pB);
+            vw.copy(camL).sub(pA); sd.crossVectors(tg,vw); const sl=sd.length(); if(sl>1e-9) sd.multiplyScalar(1/sl);
+            const w=R*(low?0.03:0.024)*(0.45+0.95*Math.sin(Math.PI*s))*(0.35+env)*(1+er*1.6);
+            const v0=(ai*(SEG+1)+j)*2;
+            rPos[v0*3]=pA.x-sd.x*w; rPos[v0*3+1]=pA.y-sd.y*w; rPos[v0*3+2]=pA.z-sd.z*w;
+            rPos[v0*3+3]=pA.x+sd.x*w; rPos[v0*3+4]=pA.y+sd.y*w; rPos[v0*3+5]=pA.z+sd.z*w;
+            rA[v0]=rA[v0+1]=Math.max(0,kk);
+          }
+        }
+        rg.attributes.position.needsUpdate=true; rg.attributes.ra.needsUpdate=true;
       }
       fo.k=bestK;
       // face the camera (in the star's frame)
@@ -272,7 +322,7 @@
       h.fume.renderOrder=1; h.fume.frustumCulled=false; h.fume.name='JOTS_StarFume'; group.add(h.fume);
     }catch(e){ console.warn('[star] fume:',e); }
     try{
-      h.prom=prominences(R,palette(K),low,seed); h.prom.visible=false; group.add(h.prom);
+      h.prom=prominences(R,palette(K),low,seed,T,U); h.prom.visible=false; group.add(h.prom);
     }catch(e){ console.warn('[star] prominences:',e); }
     group.userData.dmStar=h;
     for(const o of live) if(!o.group.parent) live.delete(o);   // stars of systems we've left

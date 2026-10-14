@@ -972,7 +972,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-spectator.js?v=1" defer></script>
 <script src="ui/dm-stack.js?v=1" defer></script>
 <script src="ui/dm-globe.js?v=7" defer></script>
-<script src="ui/dm-star.js?v=5" defer></script>
+<script src="ui/dm-star.js?v=6" defer></script>
 <script src="ui/dm-mist.js?v=1" defer></script>
 <script src="ui/dm-menuscene.js?v=7" defer></script>
 <script src="ui/dm-starbubble.js?v=3" defer></script>
@@ -18359,6 +18359,19 @@ async function loadCharacterAssets(){
     });
     console.log('Character material fixed — was defaulting to metalness:1/roughness:1 (near-black with no env map), now metalness:0.08/roughness:0.55.');
   }
+  // SKIN FLOOR — her skin is vertex-coloured and in space it is lit only by the star's point light (ambient is ~0.1).
+  // On the night side of the board it went almost black with only a blue starlight rim, which read as "the skin is gone".
+  // A small warm self-light keeps the tan visible in shadow; the sunlit side is unchanged (it simply adds a few percent).
+  try{
+    const _seen=new Set();
+    CHAR.root.traverse(o=>{
+      if(!(o.isMesh||o.isSkinnedMesh)||!o.geometry||!o.geometry.attributes||!o.geometry.attributes.color) return;
+      (Array.isArray(o.material)?o.material:[o.material]).forEach(m=>{
+        if(!m||_seen.has(m)||!m.emissive) return; _seen.add(m);
+        m.emissive.setRGB(0.16,0.095,0.075); m.emissiveIntensity=1.0; m.needsUpdate=true;
+      });
+    });
+  }catch(e){ console.warn('[CHAR] skin floor',e); }
   CHAR.mixer = new THREE.AnimationMixer(CHAR.root);
   _charWrapMixer();   // thumbs, palms and gaze after every clip update
   // Yield so concurrent MC / WebGL work can breathe under Safari + Graphics Low.
