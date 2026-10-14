@@ -81,6 +81,19 @@
       const c3=c2.zxy.mul(2.3).add(g2.mul(1.2));
       const g3=sin(c3.x.add(t.mul(2.2))).add(sin(c3.y.mul(1.09).sub(t.mul(1.9)))).add(sin(c3.z.mul(0.95).add(t.mul(2.0)))).div(3.0);
       g=g.add(smoothstep(-0.3,0.8,g3).sub(0.5).mul(U.fine.mul(0.3)));
+      // micro swirls: roughly a tenth the size again — the little curls and eddies of molten plasma that only
+      // show when you skim a few feet above the surface (none at all from any distance)
+      const c4=c3.yzx.mul(2.9).add(g3.mul(1.4));
+      const g4=sin(c4.x.add(t.mul(2.8))).add(sin(c4.y.mul(1.21).sub(t.mul(2.4)))).add(sin(c4.z.mul(0.93).add(t.mul(2.6)))).div(3.0);
+      const c5=c4.zxy.mul(2.7).add(g4.mul(1.1));
+      const g5=sin(c5.x.sub(t.mul(3.3))).add(sin(c5.y.mul(1.17).add(t.mul(2.9)))).add(sin(c5.z.mul(0.89).sub(t.mul(3.1)))).div(3.0);
+      g=g.add(g4.mul(0.5).add(g5.mul(0.5)).mul(U.micro.mul(0.5)));
+      // and finer again for the last few feet above the surface
+      const c6=c5.yzx.mul(6.5).add(g5.mul(1.3));
+      const g6=sin(c6.x.add(t.mul(3.6))).add(sin(c6.y.mul(1.19).sub(t.mul(3.2)))).add(sin(c6.z.mul(0.91).add(t.mul(3.4)))).div(3.0);
+      const c7=c6.zxy.mul(5.5).add(g6.mul(1.2));
+      const g7=sin(c7.x.sub(t.mul(4.2))).add(sin(c7.y.mul(1.15).add(t.mul(3.8)))).add(sin(c7.z.mul(0.88).sub(t.mul(4.0)))).div(3.0);
+      g=g.add(g6.mul(0.5).add(g7.mul(0.5)).mul(U.micro2.mul(0.6)));
       } else g=g.sub(U.fine.mul(0.096));   // the fine octave's average, so a phone's plasma keeps the same tone
     }
     g=g.clamp(0.0,1.0);
@@ -92,7 +105,8 @@
   function uniforms(T,K,seed){
     const P=palette(K);
     return {deep:T.uniform(P.deep),mid:T.uniform(P.mid),hot:T.uniform(P.hot),core:T.uniform(P.core),
-      seed:T.uniform(new THREE.Vector3(seed*1.7%9,seed*2.3%9,seed*3.1%9)),speed:T.uniform(1),fine:T.uniform(0),scale:T.uniform(12.0)};
+      seed:T.uniform(new THREE.Vector3(seed*1.7%9,seed*2.3%9,seed*3.1%9)),speed:T.uniform(1),fine:T.uniform(0),micro:T.uniform(0),micro2:T.uniform(0),scale:T.uniform(34.0),
+      flareD:T.uniform(new THREE.Vector3(0,1,0)),flareK:T.uniform(0),fume:T.uniform(0.3)};
   }
   // the zero-g bubble (ui/dm-starbubble.js) parts the plasma round it
   let BU=null;
@@ -135,13 +149,37 @@
       const n=p.div(r);
       // streamers: brighter fans along slowly turning great circles
       const s=sin(n.x.mul(5.0).add(time.mul(0.05))).mul(sin(n.y.mul(4.0).sub(time.mul(0.04)))).mul(sin(n.z.mul(6.0))).mul(0.5).add(0.5);
-      acc=acc.add(exp(r.sub(R).div(H).negate()).mul(s.mul(0.7).add(0.3)).mul(r.greaterThan(R*0.99).select(1.0,0.0)));
+      // gas swirling through the streamers, whipped up near a flare
+      const flc=exp(float(1).sub(dot(n,U.flareD)).mul(-10.0)).mul(U.flareK);
+      const sw=sin(n.x.mul(11.0).add(sin(n.y.mul(8.0).add(time.mul(0.35))).mul(float(1.6).add(flc.mul(2.0)))).add(time.mul(0.08))).mul(0.5).add(0.5);
+      acc=acc.add(exp(r.sub(R).div(H).negate()).mul(s.mul(0.5).add(sw.mul(0.3)).add(0.3).mul(flc.mul(2.5).add(1.0))).mul(r.greaterThan(R*0.99).select(1.0,0.0)));
     }
     // soft-saturating so a long path through it glows, never whites out
     const k=float(1).sub(exp(acc.mul(dt).div(R*1.4).negate()));
     m.colorNode=T.mix(U.mid,U.hot,k).mul(k.mul(0.6));
     m.toneMapped=false;
     m.userData.C=C;
+    return m;
+  }
+
+  /* fumes: breezy gas lying just over the surface (the chromosphere), swirled by the loops and flares */
+  function fumeMat(T,U,low){
+    const m=new THREE.MeshBasicNodeMaterial({transparent:true,depthWrite:false,blending:THREE.AdditiveBlending});
+    const {sin,mix,smoothstep,time,vec3,float,dot,normalize}=T;
+    const d=normalize(T.positionLocal), V=normalize(T.cameraPosition.sub(T.positionWorld));
+    const ndv=T.normalWorld.dot(V).clamp(0.0,1.0);
+    const fl=T.exp(float(1).sub(dot(d,U.flareD)).mul(-14.0)).mul(U.flareK);          // a flare stirs the gas round its foot
+    const t=time.mul(0.07);
+    const p=d.mul(7.0).add(U.seed);
+    const amp=float(0.55).add(fl.mul(1.6));
+    const q=p.add(vec3(sin(p.y.mul(2.1).add(t.mul(3.0))),sin(p.z.mul(1.9).sub(t.mul(2.4))),sin(p.x.mul(2.3).add(t.mul(2.7)))).mul(amp));
+    const nz=T.mx_fractal_noise_float?T.mx_fractal_noise_float(q.mul(1.6).add(vec3(0,t,0)),low?2:4,2.0,0.5).mul(0.5).add(0.5)
+      :sin(q.x.mul(3.1)).mul(sin(q.y.mul(2.7).add(t))).mul(sin(q.z.mul(3.3))).mul(0.5).add(0.5);
+    const wisps=smoothstep(0.38,0.82,nz);
+    const edge=float(1).sub(ndv).pow(1.5).mul(0.8).add(0.2);
+    m.colorNode=mix(U.mid,U.hot,wisps.add(fl.mul(0.5)).clamp(0,1)).mul(1.25);
+    m.opacityNode=wisps.mul(edge).mul(U.fume).mul(0.55).add(fl.mul(0.35)).clamp(0.0,0.85);
+    m.toneMapped=false;
     return m;
   }
 
@@ -171,10 +209,12 @@
     const jit=new Float32Array(tot*3); for(let i=0;i<tot*3;i++) jit[i]=(rnd()-0.5);
     const tmp=new V(), c=col.mid.clone(), cHot=col.hot.clone();   // reddish loops, hotter at the feet
     pts.userData.tick=function(dt,cam){
+      let bestK=0; const fo=pts.userData.flare||(pts.userData.flare={d:new V(0,1,0),k:0});
       for(let ai=0;ai<A;ai++){
         const a=arcs[ai]; a.age+=dt; if(a.age>a.life) arc(a);
         const env=Math.sin(Math.PI*Math.min(1,a.age/a.life));        // rises, holds, sinks back
         const er=a.flare?Math.max(0,(a.age/a.life-0.55)/0.45):0;      // flares tear loose late in life
+        if(er>bestK){ bestK=er; fo.d.copy(a.d0).lerp(a.d1,0.5).normalize(); }
         for(let j=0;j<N;j++){
           const i=ai*N+j;
           let s=(off[i]+a.age*a.sp)%1;
@@ -188,6 +228,7 @@
           cols[i*3]=cc.r*k*1.5; cols[i*3+1]=cc.g*k*1.5; cols[i*3+2]=cc.b*k*1.5;
         }
       }
+      fo.k=bestK;
       // face the camera (in the star's frame)
       if(cam){ pts.parent.getWorldQuaternion(Q).invert().multiply(cam.quaternion); }
       for(let i=0;i<tot;i++){
@@ -222,6 +263,10 @@
       group.add(h.corona);
     }catch(e){ console.warn('[star] corona:',e); }
     try{
+      h.fume=new THREE.Mesh(new THREE.SphereGeometry(R*1.035,low?48:96,low?32:64),fumeMat(T,U,low));
+      h.fume.renderOrder=1; h.fume.frustumCulled=false; h.fume.name='JOTS_StarFume'; group.add(h.fume);
+    }catch(e){ console.warn('[star] fume:',e); }
+    try{
       h.prom=prominences(R,palette(K),low,seed); h.prom.visible=false; group.add(h.prom);
     }catch(e){ console.warn('[star] prominences:',e); }
     group.userData.dmStar=h;
@@ -253,6 +298,8 @@
       const ang=h.R/d;                                     // ~angular radius
       const near=ang>0.04;
       if(h.U) h.U.fine.value=Math.max(0,Math.min(1,(ang-0.3)/0.5));
+      if(h.U){ h.U.micro.value=Math.max(0,Math.min(1,(ang-1.0)/6.0)); h.U.micro2.value=Math.max(0,Math.min(1,(ang-40)/400)); h.U.fume.value=0.35+0.65*Math.max(0,Math.min(1,(ang-0.1)/0.6));
+        const fl=h.prom&&h.prom.visible&&h.prom.userData.flare; if(fl&&fl.k>0.01){ h.U.flareD.value.copy(fl.d); h.U.flareK.value=Math.min(1,fl.k); } else h.U.flareK.value*=0.92; }
       const m=near?h.matNear:h.matFar; if(h.mesh.material!==m) h.mesh.material=m;
       if(h.corona){ const cm=ang>0.6?h.corMatNear:h.corMat; if(h.corona.material!==cm) h.corona.material=cm;
         if(cm.userData.C) cm.userData.C.value.copy(V1); }
