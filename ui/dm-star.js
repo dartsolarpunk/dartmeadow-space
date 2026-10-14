@@ -43,69 +43,71 @@
     if(/^M|red/i.test(s)) return 3200;
     return 5600;
   }
-  // deep → mid → hot → core, from the blackbody at falling temperatures
-  // (the cooler, redder plasma sinking between the bright cells)
+  // deep → mid → hot → core. The reference photosphere's golden ramp, tinted by
+  // how far the star's blackbody sits from the Sun's: a red dwarf glows deep
+  // orange-red, a hot star white-blue, with the same cell/vein texture.
   function palette(K){
-    const deep=kelvin(K*0.34).multiplyScalar(0.4), mid=kelvin(K*0.5), hot=kelvin(K*0.68), core=kelvin(K*0.95).lerp(new THREE.Color(1,1,1),0.2);
-    return {deep,mid,hot,core};
+    const ref=kelvin(5778), me=kelvin(K), tint=new THREE.Color(1,1,1);
+    for(const ch of ['r','g','b']) tint[ch]=Math.max(0.12,Math.min(1.9,(me[ch]+1e-3)/(ref[ch]+1e-3)));
+    const gold=(r,g,b)=>new THREE.Color().setRGB(r/255,g/255,b/255,THREE.SRGBColorSpace);
+    const mk=(c,w)=>{ const o=c.clone(); o.r*=1+(tint.r-1)*w; o.g*=1+(tint.g-1)*w; o.b*=1+(tint.b-1)*w; return o; };
+    const lum=Math.max(0.35,Math.min(1.6,Math.pow(K/5778,0.35)));
+    const P={deep:mk(gold(128,66,10),1).multiplyScalar(lum),mid:mk(gold(226,148,34),1).multiplyScalar(lum),hot:mk(gold(252,196,84),1).multiplyScalar(lum),core:mk(gold(255,246,206),0.6).multiplyScalar(lum)};
+    // hotter than the Sun: the same texture in the star's own blackbody blue-white
+    const w=Math.max(0,Math.min(1,(K-6200)/5500));
+    if(w>0){ const f={deep:0.12,mid:0.42,hot:0.7,core:1.0}; for(const k in P) P[k].lerp(me.clone().multiplyScalar(f[k]*lum),w); }
+    return P;
   }
 
-  /* the plasma: one function for the surface and the inside view */
+  /* the plasma: one function for the surface and the inside view.
+     Reference look (SDO-style photosphere): golden cells laced with thin bright
+     veins, dark orange pores between them, small white-hot plage patches.
+     Veins are ridged gradient noise (1-|n|)^k over a flow-warped domain; finer
+     octaves fade in as the star grows on screen. */
   function plasma(T,U,d,detail){
-    const {sin,mix,smoothstep,time}=T;
+    const {sin,mix,smoothstep,time,vec3,float}=T;
     const t=time.mul(U.speed);
-    // The same plasma look, just a much finer pattern spread over the whole
-    // surface: sample the field SCALE times denser, then bend the sampling
-    // point with a few big, slow, non-commensurate warps so the cells stretch
-    // and vary from place to place instead of repeating like a tiling.
+    const nz=x=>T.mx_noise_float?T.mx_noise_float(x)
+      :sin(x.x.mul(3.1).add(x.y.mul(1.7))).mul(sin(x.y.mul(2.7).sub(x.z.mul(1.3)))).mul(sin(x.z.mul(3.3).add(x.x.mul(0.9))));
+    const ridge=(x,k)=>float(1).sub(nz(x).abs()).pow(k);
     const p0=d.mul(U.scale).add(U.seed);
-    const p=p0.add(sin(p0.yzx.mul(0.23).add(1.3)).mul(2.4)).add(sin(p0.zxy.mul(0.41).add(0.7)).mul(1.3)).add(sin(p0.xyz.mul(0.57).add(t.mul(0.02)).add(2.1)).mul(0.8));
-    // flow: the field advected through two rotated sine warps — reads as
-    // slow fluid convection rather than a scrolling texture
-    const q=p.add(sin(p.yzx.mul(1.7).add(t.mul(0.25))).mul(0.55));
-    const q2=q.add(sin(q.zxy.mul(3.1).sub(t.mul(0.4))).mul(0.3));
-    const big=sin(q2.x.mul(2.1).add(t.mul(0.3))).mul(sin(q2.y.mul(2.3).sub(t.mul(0.2)))).mul(sin(q2.z.mul(1.9).add(t.mul(0.25))));
-    let g=big.mul(0.4).add(0.5);
+    // big slow warps so the network stretches and bunches from place to place
+    const wp=p0.add(sin(p0.yzx.mul(0.17).add(1.3)).mul(1.3)).add(sin(p0.zxy.mul(0.29).add(0.7)).mul(0.8));
+    // convective drift + slow boil
+    const fl=wp.add(sin(wp.yzx.mul(0.9).add(t.mul(0.12))).mul(0.6));
+    const boil=vec3(t.mul(0.05),0,t.mul(0.07));
+    const mott=nz(fl.mul(0.55).add(3.1).add(boil)).mul(0.5).add(0.5);
+    const mott2=nz(fl.mul(1.3).add(9.7).sub(boil)).mul(0.5).add(0.5);
+    const v1=ridge(fl.add(boil),4.0);
+    let g=float(0.08).add(mott.mul(0.2)).add(mott2.mul(0.12)).add(v1.mul(0.36));
     if(detail){
-      // granulation: bright convection cells with darker lanes between,
-      // two scales, the small one boiling faster and riding the big one
-      const c=q2.mul(2.2);
-      const g1=sin(c.x.add(t.mul(0.9))).add(sin(c.y.mul(1.1).sub(t.mul(0.8)))).add(sin(c.z.mul(0.9).add(t.mul(0.7)))).div(3.0);
-      const c2=c.yzx.mul(2.05).add(g1.mul(1.5));
-      const g2=sin(c2.x.sub(t.mul(1.6))).add(sin(c2.y.mul(1.13).add(t.mul(1.3)))).add(sin(c2.z.mul(0.87).sub(t.mul(1.4)))).div(3.0);
-      const gr=smoothstep(-0.35,0.75,g1.mul(0.6).add(g2.mul(0.4)));
-      g=g.mul(0.6).add(gr.mul(0.55)).sub(0.05);
-      // fine boiling, faded in only when skimming the surface (desktop only:
-      // on a phone it's a third full-screen octave right when the star fills the view)
+      const v2=ridge(fl.mul(2.1).add(7.3).add(boil.mul(1.6)),5.0);
+      g=g.add(v2.mul(float(0.14).add(U.fine.mul(0.16))));
       if(detail!=='low'){
-      const c3=c2.zxy.mul(2.3).add(g2.mul(1.2));
-      const g3=sin(c3.x.add(t.mul(2.2))).add(sin(c3.y.mul(1.09).sub(t.mul(1.9)))).add(sin(c3.z.mul(0.95).add(t.mul(2.0)))).div(3.0);
-      g=g.add(smoothstep(-0.3,0.8,g3).sub(0.5).mul(U.fine.mul(0.3)));
-      // micro swirls: roughly a tenth the size again — the little curls and eddies of molten plasma that only
-      // show when you skim a few feet above the surface (none at all from any distance)
-      const c4=c3.yzx.mul(2.9).add(g3.mul(1.4));
-      const g4=sin(c4.x.add(t.mul(2.8))).add(sin(c4.y.mul(1.21).sub(t.mul(2.4)))).add(sin(c4.z.mul(0.93).add(t.mul(2.6)))).div(3.0);
-      const c5=c4.zxy.mul(2.7).add(g4.mul(1.1));
-      const g5=sin(c5.x.sub(t.mul(3.3))).add(sin(c5.y.mul(1.17).add(t.mul(2.9)))).add(sin(c5.z.mul(0.89).sub(t.mul(3.1)))).div(3.0);
-      g=g.add(g4.mul(0.5).add(g5.mul(0.5)).mul(U.micro.mul(0.5)));
-      // and finer again for the last few feet above the surface
-      const c6=c5.yzx.mul(6.5).add(g5.mul(1.3));
-      const g6=sin(c6.x.add(t.mul(3.6))).add(sin(c6.y.mul(1.19).sub(t.mul(3.2)))).add(sin(c6.z.mul(0.91).add(t.mul(3.4)))).div(3.0);
-      const c7=c6.zxy.mul(5.5).add(g6.mul(1.2));
-      const g7=sin(c7.x.sub(t.mul(4.2))).add(sin(c7.y.mul(1.15).add(t.mul(3.8)))).add(sin(c7.z.mul(0.88).sub(t.mul(4.0)))).div(3.0);
-      g=g.add(g6.mul(0.5).add(g7.mul(0.5)).mul(U.micro2.mul(0.6)));
-      } else g=g.sub(U.fine.mul(0.096));   // the fine octave's average, so a phone's plasma keeps the same tone
+        const v3=ridge(fl.mul(4.4).add(13.1).sub(boil.mul(2.0)),6.0);
+        g=g.add(v3.mul(U.fine.mul(0.2)));
+        // close up: the finest threads and the molten micro-eddies
+        const v4=ridge(fl.mul(9.5).add(2.9).add(boil.mul(2.6)),6.0);
+        const v5=ridge(fl.mul(20.0).add(5.3).sub(boil.mul(3.0)),7.0);
+        g=g.add(v4.mul(U.micro.mul(0.25))).add(v5.mul(U.micro2.mul(0.3)));
+      }
     }
+    // plage: a few white-hot active patches, veins flaring inside them
+    const pn=nz(d.mul(3.6).add(U.seed.mul(0.7)).add(vec3(0,t.mul(0.004),0))).mul(0.5).add(0.5);
+    const pl=smoothstep(0.62,0.82,pn);
+    const pn2=nz(d.mul(11.0).add(U.seed).add(4.4)).mul(0.5).add(0.5);
+    const pl2=smoothstep(0.72,0.9,pn2).mul(0.6);
+    g=g.add(pl.add(pl2).mul(float(0.1).add(v1.mul(0.5))));
     g=g.clamp(0.0,1.0);
-    let col=mix(U.deep,U.mid,smoothstep(0.12,0.5,g));
-    col=mix(col,U.hot,smoothstep(0.5,0.78,g));
-    col=mix(col,U.core,smoothstep(0.82,1.0,g));
+    let col=mix(U.deep,U.mid,smoothstep(0.18,0.5,g));
+    col=mix(col,U.hot,smoothstep(0.5,0.76,g));
+    col=mix(col,U.core,smoothstep(0.8,1.0,g));
     return col;
   }
   function uniforms(T,K,seed){
     const P=palette(K);
     return {deep:T.uniform(P.deep),mid:T.uniform(P.mid),hot:T.uniform(P.hot),core:T.uniform(P.core),
-      seed:T.uniform(new THREE.Vector3(seed*1.7%9,seed*2.3%9,seed*3.1%9)),speed:T.uniform(1),fine:T.uniform(0),micro:T.uniform(0),micro2:T.uniform(0),scale:T.uniform(34.0),
+      seed:T.uniform(new THREE.Vector3(seed*1.7%9,seed*2.3%9,seed*3.1%9)),speed:T.uniform(1),fine:T.uniform(0),micro:T.uniform(0),micro2:T.uniform(0),scale:T.uniform(60.0),
       flareD:T.uniform(new THREE.Vector3(0,1,0)),flareK:T.uniform(0),fume:T.uniform(0.3)};
   }
   // the zero-g bubble (ui/dm-starbubble.js) parts the plasma round it
@@ -126,9 +128,10 @@
     const V=T.normalize(T.cameraPosition.sub(T.positionWorld));
     const ndv=T.normalWorld.dot(V).clamp(0.0,1.0);
     // limb darkening, redder toward the edge
-    const limb=ndv.pow(0.45).mul(0.6).add(0.4);
-    const base=near?plasma(T,U,d,low?'low':true):T.mix(U.mid,U.core,ndv.pow(1.5).mul(0.6));
-    m.colorNode=T.mix(U.deep.mul(1.4),base,limb).mul(limb.mul(0.5).add(0.75));
+    const limb=ndv.pow(0.3).mul(0.25).add(0.75);
+    const base=near?plasma(T,U,d,low?'low':true):T.mix(U.mid,U.hot,ndv.pow(1.5).mul(0.5));
+    const rim=T.float(1).sub(ndv).pow(3.0);   // the limb glows pale gold, as in the reference
+    m.colorNode=base.mul(limb).add(U.core.mul(rim.mul(0.3)));
     m.toneMapped=false;
     return m;
   }
@@ -152,11 +155,13 @@
       // gas swirling through the streamers, whipped up near a flare
       const flc=exp(float(1).sub(dot(n,U.flareD)).mul(-10.0)).mul(U.flareK);
       const sw=sin(n.x.mul(11.0).add(sin(n.y.mul(8.0).add(time.mul(0.35))).mul(float(1.6).add(flc.mul(2.0)))).add(time.mul(0.08))).mul(0.5).add(0.5);
-      acc=acc.add(exp(r.sub(R).div(H).negate()).mul(s.mul(0.5).add(sw.mul(0.3)).add(0.3).mul(flc.mul(2.5).add(1.0))).mul(r.greaterThan(R*0.99).select(1.0,0.0)));
+      // fine radial hairs (spicules): high-frequency in direction only, so they stream straight out
+      const hair=T.mx_noise_float?T.pow(T.mx_noise_float(n.mul(240.0).add(U.seed)).abs().oneMinus(),6.0).mul(exp(r.sub(R).div(R*0.09).negate())):float(0);
+      acc=acc.add(exp(r.sub(R).div(H).negate()).mul(s.mul(0.5).add(sw.mul(0.3)).add(0.3).mul(flc.mul(2.5).add(1.0))).mul(r.greaterThan(R*0.99).select(1.0,0.0)).add(hair.mul(0.5)));
     }
     // soft-saturating so a long path through it glows, never whites out
     const k=float(1).sub(exp(acc.mul(dt).div(R*1.4).negate()));
-    m.colorNode=T.mix(U.mid,U.hot,k).mul(k.mul(0.6));
+    m.colorNode=T.mix(U.hot,U.core,k.mul(k)).mul(k.mul(0.38));
     m.toneMapped=false;
     m.userData.C=C;
     return m;
@@ -178,7 +183,7 @@
     const wisps=smoothstep(0.38,0.82,nz);
     const edge=float(1).sub(ndv).pow(1.5).mul(0.8).add(0.2);
     m.colorNode=mix(U.mid,U.hot,wisps.add(fl.mul(0.5)).clamp(0,1)).mul(1.25);
-    m.opacityNode=wisps.mul(edge).mul(U.fume).mul(0.55).add(fl.mul(0.35)).clamp(0.0,0.85);
+    m.opacityNode=wisps.mul(edge).mul(U.fume).mul(0.3).add(fl.mul(0.35)).clamp(0.0,0.85);
     m.toneMapped=false;
     return m;
   }
@@ -263,7 +268,7 @@
       group.add(h.corona);
     }catch(e){ console.warn('[star] corona:',e); }
     try{
-      h.fume=new THREE.Mesh(new THREE.SphereGeometry(R*1.035,low?48:96,low?32:64),fumeMat(T,U,low));
+      h.fume=new THREE.Mesh(new THREE.SphereGeometry(R*1.015,low?48:96,low?32:64),fumeMat(T,U,low));
       h.fume.renderOrder=1; h.fume.frustumCulled=false; h.fume.name='JOTS_StarFume'; group.add(h.fume);
     }catch(e){ console.warn('[star] fume:',e); }
     try{
