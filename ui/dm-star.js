@@ -246,6 +246,89 @@
     return pts;
   }
 
+
+  /* ── baked look ─────────────────────────────────────────────────────
+     The procedural plasma is ~9 noise taps per pixel: fine for a one-off
+     bake, far too heavy for a sun filling a phone screen every frame. So the
+     GPU renders it ONCE into a cube map (and the corona into a 2D map), and
+     every frame is then a texture fetch + a cheap drift. Only the last few
+     metres above the surface go back to the live shader. */
+  let _R=null; const rend=()=>{ if(_R) return _R; try{ return (typeof flightRenderer!=='undefined'&&flightRenderer)||null; }catch(e){ return null; } };
+  function bakeSurface(h,renderer){
+    const T=h.T, size=h.low?768:1024;
+    const rt=new THREE.CubeRenderTarget(size,{type:THREE.HalfFloatType,generateMipmaps:true,minFilter:THREE.LinearMipmapLinearFilter,magFilter:THREE.LinearFilter});
+    const sc=new THREE.Scene();
+    const m=new THREE.MeshBasicNodeMaterial({side:THREE.BackSide});
+    const bU={fine:T.uniform(1),micro:T.uniform(0),micro2:T.uniform(0)};
+    const U2=Object.assign({},h.U,bU);
+    m.colorNode=plasma(T,U2,T.normalize(T.positionLocal),h.low?'low':true);
+    m.toneMapped=false;
+    sc.add(new THREE.Mesh(new THREE.SphereGeometry(1,48,32),m));
+    const cc=new THREE.CubeCamera(0.1,10,rt);
+    const prev=renderer.getRenderTarget();
+    cc.update(renderer,sc);
+    renderer.setRenderTarget(prev);
+    h.cube=rt;
+  }
+  function bakedMat(h){
+    const T=h.T, U=h.U, {sin,cos,float,vec3,mix}=T;
+    const m=new THREE.MeshBasicNodeMaterial();
+    const B=bubbleU(T);
+    const toP=T.positionWorld.sub(T.cameraPosition), D=T.normalize(toP), L=B.c.sub(T.cameraPosition);
+    const tca=T.dot(L,D), d2=T.dot(L,L).sub(tca.mul(tca));
+    m.opacityNode=d2.lessThan(B.r.mul(B.r)).and(toP.length().lessThan(tca.add(B.r))).select(0.0,1.0);
+    m.alphaTest=0.5;
+    const d=T.normalize(T.positionLocal);
+    const V=T.normalize(T.cameraPosition.sub(T.positionWorld));
+    const ndv=T.normalWorld.dot(V).clamp(0.0,1.0);
+    // differential rotation (equator turns faster than the poles) = slow convective drift
+    const lat2=d.y.mul(d.y), t=T.time;
+    const rot=a=>{ const c=cos(a), s=sin(a); return vec3(d.x.mul(c).add(d.z.mul(s)),d.y,d.z.mul(c).sub(d.x.mul(s))); };
+    const a1=t.mul(0.006).mul(float(1).sub(lat2.mul(0.3))), a2=t.mul(-0.0045).mul(float(1).sub(lat2.mul(0.2))).add(0.7);
+    const tex=h.cube.texture;
+    const s1=T.cubeTexture(tex,rot(a1)).rgb, s2=T.cubeTexture(tex,rot(a2)).rgb;
+    const w=sin(t.mul(0.35)).mul(0.5).add(0.5);
+    const base=mix(s1,s2,w.mul(0.45));
+    const limb=ndv.pow(0.3).mul(0.25).add(0.75);
+    const rim=float(1).sub(ndv).pow(3.0);
+    m.colorNode=base.mul(limb).add(U.core.mul(rim.mul(0.3)));
+    m.toneMapped=false;
+    return m;
+  }
+  function bakeCorona(h,renderer){
+    const T=h.T, U=h.U, {vec3,vec4,float,exp,smoothstep,mix,pow}=T, RM=5.0, size=1024;
+    const rt=new THREE.RenderTarget(size,size,{type:THREE.HalfFloatType,generateMipmaps:false,minFilter:THREE.LinearFilter,magFilter:THREE.LinearFilter});
+    const p=T.uv().sub(0.5).mul(2.0), len=p.length().max(1e-4), dir=p.div(len), r=len.mul(RM), fall=r.sub(1.0).max(0.0);
+    const sd=U.seed.x;
+    const nz=x=>T.mx_noise_float(x);
+    const hair=float(1).sub(nz(vec3(dir.mul(70.0),r.mul(0.9).add(sd))).abs()).pow(7.0);
+    const hair2=float(1).sub(nz(vec3(dir.mul(22.0),r.mul(0.5).add(sd.add(3.1)))).abs()).pow(5.0);
+    const st=nz(vec3(dir.mul(3.2),sd.add(r.mul(0.12)))).mul(0.5).add(0.5);
+    const I=exp(fall.div(0.03).negate()).mul(1.1)
+      .add(exp(fall.div(0.22).negate()).mul(float(0.55).add(st.mul(0.4))))
+      .add(exp(fall.div(1.0).negate()).mul(float(0.2).add(st.mul(0.25))))
+      .add(float(0.05).div(float(1).add(fall.mul(fall))))
+      .add(hair.mul(exp(fall.div(0.5).negate())).mul(0.75))
+      .add(hair2.mul(exp(fall.div(1.3).negate())).mul(0.3));
+    const edge=smoothstep(float(RM),float(RM*0.72),r);
+    const k=I.clamp(0.0,4.0);
+    const col=mix(U.hot,U.core,smoothstep(0.35,1.4,k)).mul(k).mul(edge);
+    const m=new THREE.MeshBasicNodeMaterial(); m.colorNode=vec4(col,1.0); m.toneMapped=false;
+    const sc=new THREE.Scene(), cam=new THREE.OrthographicCamera(-1,1,1,-1,0,1);
+    sc.add(new THREE.Mesh(new THREE.PlaneGeometry(2,2),m));
+    const prev=renderer.getRenderTarget();
+    renderer.setRenderTarget(rt); renderer.render(sc,cam); renderer.setRenderTarget(prev);
+    h.coronaTex=rt;
+    const cm=new THREE.MeshBasicNodeMaterial({transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,side:THREE.DoubleSide});
+    const uv=T.uv().sub(0.5), time=T.time;
+    const rotUV=a=>{ const c=T.cos(a), s=T.sin(a); return T.vec2(uv.x.mul(c).sub(uv.y.mul(s)),uv.x.mul(s).add(uv.y.mul(c))).add(0.5); };
+    const t1=T.texture(rt.texture,rotUV(time.mul(0.004))).rgb, t2=T.texture(rt.texture,rotUV(time.mul(-0.0035).add(0.9))).rgb;
+    cm.colorNode=T.max(t1,t2.mul(0.85)).mul(h.low?1.0:1.0);
+    cm.toneMapped=false;
+    h.corona.material=cm; h.corona.geometry.dispose(); h.corona.geometry=new THREE.PlaneGeometry(2*RM*h.R,2*RM*h.R);
+    h.coronaBaked=true;
+  }
+
   function build(o){
     const T=THREE.TSL, R=o.radius, K=o.temp||5600, seed=o.seed||1, low=lowTier();
     const group=new THREE.Group(); group.name='JOTS_Star';
@@ -261,10 +344,8 @@
     h.mesh.name='JOTS_StarSurface';
     group.add(h.mesh);
     try{
-      // phones march 3 steps (was 4; 2 washed the surface out pale) — desktop 6
-      h.corMat=coronaMat(T,U,R,low?3:6); h.corMatNear=h.corMat;
-      h.corona=new THREE.Mesh(new THREE.SphereGeometry(R*2.4,32,20),h.corMat);
-      h.corona.renderOrder=1; h.corona.frustumCulled=false; h.corona.name='JOTS_StarCorona';
+      h.corona=new THREE.Mesh(new THREE.PlaneGeometry(2,2),new THREE.MeshBasicMaterial({visible:false}));
+      h.corona.renderOrder=1; h.corona.frustumCulled=false; h.corona.name='JOTS_StarCorona'; h.corona.visible=false;
       group.add(h.corona);
     }catch(e){ console.warn('[star] corona:',e); }
     try{
@@ -289,7 +370,7 @@
     return (h.matIn=m);
   }
 
-  const _v=()=>new THREE.Vector3();
+  const _v=()=>new THREE.Vector3(); const _Q=new THREE.Quaternion(), _Q2=new THREE.Quaternion();
   let V1=null;
   // per frame: level of detail by how big the star is on screen; corona centre;
   // prominences only up close
@@ -305,12 +386,17 @@
       if(h.U) h.U.fine.value=Math.max(0,Math.min(1,(ang-0.3)/0.5));
       if(h.U){ h.U.micro.value=Math.max(0,Math.min(1,(ang-1.0)/6.0)); h.U.micro2.value=Math.max(0,Math.min(1,(ang-40)/400)); h.U.fume.value=0.35+0.65*Math.max(0,Math.min(1,(ang-0.1)/0.6));
         const fl=h.prom&&h.prom.visible&&h.prom.userData.flare; if(fl&&fl.k>0.01){ h.U.flareD.value.copy(fl.d); h.U.flareK.value=Math.min(1,fl.k); } else h.U.flareK.value*=0.92; }
-      const m=near?h.matNear:h.matFar; if(h.mesh.material!==m) h.mesh.material=m;
-      if(h.corona){ const cm=ang>0.6?h.corMatNear:h.corMat; if(h.corona.material!==cm) h.corona.material=cm;
-        if(cm.userData.C) cm.userData.C.value.copy(V1); }
+      // baked look (GPU, once) for everything but the last few metres above the surface
+      const R_=rend();
+      if(R_&&h.T&&!h.bakeTried&&ang>0.03){ h.bakeTried=true;
+        try{ bakeSurface(h,R_); h.matBaked=bakedMat(h); bakeCorona(h,R_); }catch(e){ console.warn('[star] bake failed, live shader:',e&&e.message||e); h.matBaked=null; } }
+      if(h.matBaked){ if(ang>1.6) h.close=true; else if(ang<1.3) h.close=false; }
+      const m=near?((h.matBaked&&!h.close)?h.matBaked:h.matNear):h.matFar; if(h.mesh.material!==m) h.mesh.material=m;
+      if(h.corona&&h.coronaBaked){ h.corona.visible=true; _Q.copy(cam.quaternion); h.group.getWorldQuaternion(_Q2).invert(); h.corona.quaternion.copy(_Q2.multiply(_Q)); }
+      if(h.fume) h.fume.visible=ang>0.6;
       if(h.prom){ h.prom.visible=ang>0.12; if(h.prom.visible) h.prom.userData.tick(Math.min(0.1,dt||1/60),cam); }
     }
   }
   function setBubble(c,r){ if(!BU) return; if(c) BU.c.value.copy(c); BU.r.value=r>0?r:0; }
-  window.DMStar={build,frame,interiorMaterial,setBubble,tempFor,kelvin,palette};
+  window.DMStar={setRenderer(r){ _R=r; },build,frame,interiorMaterial,setBubble,tempFor,kelvin,palette};
 })();
