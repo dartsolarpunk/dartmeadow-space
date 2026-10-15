@@ -19,7 +19,7 @@
   const W = window;
   const TSL = () => (W.THREE && W.THREE.TSL) || null;
   const live = new Set();       // cloud layers
-  const dusts = new Set();      // belt dust systems
+  const dusts = new Set();      // belt dust systems (retired: too dense near the Sun — see asteroidFumes)
 
   /* each world's air: shell = [bottom, top] as multiples of the radius, cover 0..1, scale = how many
      cloud cells round the globe, wind = scroll speed, shear = how much the wind varies with latitude,
@@ -172,6 +172,81 @@
     return d;
   }
 
+
+  /* ───────────── asteroid fumes ─────────────
+     A few asteroids smoke: coloured gas venting from the rock itself — sulphur yellow, copper green, rust,
+     ice blue, ash — like a chemical eating into sulphur. Each plume is a few dozen ragged, noisy puffs born
+     on the asteroid's surface, curling out and thinning as they go, so the rock stays in plain view. */
+  let smokeTex = null;
+  function smokeTexture() {
+    if (smokeTex) return smokeTex;
+    const N = 128, cv = document.createElement('canvas'); cv.width = cv.height = N;
+    const x = cv.getContext('2d'), img = x.createImageData(N, N);
+    const hash = (i, j) => { let h = (i * 374761393 + j * 668265263) | 0; h = (h ^ (h >>> 13)) * 1274126177 | 0; return ((h ^ (h >>> 16)) >>> 0) / 4294967295; };
+    const vn = (px, py) => { const i = Math.floor(px), j = Math.floor(py), fx = px - i, fy = py - j, u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy);
+      return (hash(i, j) * (1 - u) + hash(i + 1, j) * u) * (1 - v) + (hash(i, j + 1) * (1 - u) + hash(i + 1, j + 1) * u) * v; };
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+      const dx = (i - N / 2) / (N / 2), dy = (j - N / 2) / (N / 2), r = Math.sqrt(dx * dx + dy * dy);
+      let n = 0, a = 0.55, f = 3.0; for (let o = 0; o < 5; o++) { n += a * vn(i / N * f + 7.3, j / N * f + 2.1); a *= 0.5; f *= 2.05; }   // ragged, noisy edge
+      const edge = Math.max(0, 1 - r), al = Math.max(0, Math.min(1, (0.25 + (n - 0.22) * 1.9) * Math.pow(edge, 0.85) * 1.25 - 0.08 * (1 - edge)));   // filled body, ragged edge
+      const k = (j * N + i) * 4; img.data[k] = img.data[k + 1] = img.data[k + 2] = 255; img.data[k + 3] = Math.round(al * 255);
+    }
+    x.putImageData(img, 0, 0); smokeTex = new THREE.CanvasTexture(cv); return smokeTex;
+  }
+  const FUME_COLS = [   // r,g,b, additive?
+    [0.95, 0.85, 0.22, 1], [0.30, 0.85, 0.52, 1], [0.86, 0.38, 0.20, 1], [0.48, 0.72, 1.00, 1], [0.62, 0.42, 1.00, 1], [0.34, 0.31, 0.29, 0],
+  ];
+  const fumes = new Set();
+  /* asteroidFumes(group, rad, opts): vents on `group` (the asteroid, radius rad). opts.col = index into FUME_COLS,
+     opts.rand = seeded random, opts.low = fewer puffs */
+  function asteroidFumes(group, rad, o) {
+    if (!W.THREE || !group) return null;
+    o = o || {}; const rnd = o.rand || Math.random, col = FUME_COLS[(o.col != null ? o.col : Math.floor(rnd() * FUME_COLS.length)) % FUME_COLS.length];
+    const vents = o.low ? 2 : 3, per = o.low ? 20 : 34, N = vents * per;
+    const m = new THREE.MeshBasicMaterial({ map: smokeTexture(), transparent: true, depthWrite: false, toneMapped: false,
+      blending: col[3] ? THREE.AdditiveBlending : THREE.NormalBlending });
+    const mesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), m, N);
+    mesh.frustumCulled = false; mesh.renderOrder = 2; mesh.name = 'JOTS_AsteroidFume';
+    const V = [];
+    for (let v = 0; v < vents; v++) {
+      const th = rnd() * Math.PI * 2, ph = Math.acos(2 * rnd() - 1), dir = new THREE.Vector3(Math.sin(ph) * Math.cos(th), Math.cos(ph), Math.sin(ph) * Math.sin(th));
+      const side = new THREE.Vector3().crossVectors(dir, Math.abs(dir.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0)).normalize();
+      const up = new THREE.Vector3().crossVectors(dir, side);
+      V.push({ dir, side, up, len: rad * (3.0 + rnd() * 2.5), rate: 0.05 + rnd() * 0.04, ph: rnd() * 10, sw: 0.5 + rnd() });
+    }
+    const rot = new Float32Array(N), seed = new Float32Array(N * 2);
+    for (let i = 0; i < N; i++) { rot[i] = rnd() * 6.283; seed[i * 2] = rnd() * 6.283; seed[i * 2 + 1] = rnd() * 6.283; }
+    const M4 = new THREE.Matrix4(), PV = new THREE.Vector3(), SC = new THREE.Vector3(), Q = new THREE.Quaternion(), QZ = new THREE.Quaternion(), CL = new THREE.Color();
+    const ZA = new THREE.Vector3(0, 0, 1), PQ = new THREE.Quaternion();
+    const d = { mesh, group, rad, t: rnd() * 100 };
+    d.tick = function (cam, dt) {
+      d.t += dt;
+      group.getWorldQuaternion(PQ); PQ.invert();
+      if (cam) Q.copy(cam.quaternion).premultiply(PQ);      // face the camera, in the asteroid's own frame
+      for (let v = 0; v < vents; v++) {
+        const vt = V[v];
+        for (let j = 0; j < per; j++) {
+          const i = v * per + j, u = (((d.t * vt.rate + j / per + vt.ph) % 1) + 1) % 1;       // 0 at the rock → 1 thin and far
+          const s1 = seed[i * 2], s2 = seed[i * 2 + 1];
+          const curl = rad * (0.12 + 1.0 * u * u);
+          const cx = Math.sin(d.t * 0.9 * vt.sw + s1 + u * 7.0) * curl + Math.sin(d.t * 2.3 + s2 + u * 15.0) * curl * 0.35;   // slow sweep + fine turbulence
+          const cy = Math.cos(d.t * 0.8 * vt.sw + s2 + u * 6.0) * curl + Math.cos(d.t * 2.7 + s1 + u * 13.0) * curl * 0.35;
+          PV.copy(vt.dir).multiplyScalar(rad * 0.92 + vt.len * u * (0.6 + 0.4 * u)).addScaledVector(vt.side, cx).addScaledVector(vt.up, cy);
+          const sz = rad * (0.30 + 0.85 * u);
+          QZ.setFromAxisAngle(ZA, rot[i] + d.t * 0.12 * (i % 2 ? 1 : -1));
+          M4.compose(PV, Q.clone().multiply(QZ), SC.setScalar(sz));
+          mesh.setMatrixAt(i, M4);
+          const g = Math.min(1, u * 9) * Math.pow(1 - u, 1.2) * (col[3] ? 0.62 : 0.8);
+          mesh.setColorAt(i, CL.setRGB(col[0] * g, col[1] * g, col[2] * g));
+        }
+      }
+      mesh.instanceMatrix.needsUpdate = true; if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    };
+    d.tick(null, 0);
+    group.add(mesh); fumes.add(d);
+    return d;
+  }
+
   /* ───────────── per frame ───────────── */
   const _v = new THREE.Vector3();
   // compile both cloud shells (seen-from-space and inside-the-layer) once, off the frame they first appear
@@ -198,6 +273,13 @@
       h.inn.visible = inside;
       h.U.fade.value = 1;
     }
+    for (const f of fumes) {   // asteroid fumes: only animate while you are within sight of the rock
+      if (!f.group.parent) { fumes.delete(f); continue; }
+      f.group.getWorldPosition(_v);
+      const fd = cam.position.distanceTo(_v), near = fd < f.rad * 260;
+      f.mesh.visible = near;
+      if (near) f.tick(cam, Math.min(0.1, dt || 1 / 60));
+    }
     for (const d of dusts) {
       if (!d.mesh.parent) { dusts.delete(d); continue; }
       d.mesh.parent.getWorldPosition(_v);
@@ -211,5 +293,5 @@
     const ps = []; for (const h of live) { if (!h.group.parent) continue; h.pre = true; const p = precompile(h, cam); if (p && p.then) ps.push(p); }
     return Promise.all(ps);
   }
-  W.DMMist = { planetClouds, beltDust, frame, warm, LOOKS };
+  W.DMMist = { planetClouds, beltDust, asteroidFumes, frame, warm, LOOKS };
 })();

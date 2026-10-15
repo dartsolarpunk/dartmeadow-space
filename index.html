@@ -973,7 +973,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-stack.js?v=1" defer></script>
 <script src="ui/dm-globe.js?v=7" defer></script>
 <script src="ui/dm-star.js?v=8" defer></script>
-<script src="ui/dm-mist.js?v=3" defer></script>
+<script src="ui/dm-mist.js?v=4" defer></script>
 <script src="ui/dm-menuscene.js?v=7" defer></script>
 <script src="ui/dm-starbubble.js?v=3" defer></script>
 </head>
@@ -7597,14 +7597,7 @@ async function buildSolarSystem(){
   const ag=new THREE.BufferGeometry();ag.setAttribute('position',new THREE.BufferAttribute(ap,3));
   const beltPts=new THREE.Points(ag,new THREE.PointsMaterial({size:.5,color:0x886644,sizeAttenuation:true}));
   flightScene.add(beltPts);if(typeof _trackSystemExtra==='function')_trackSystemExtra(beltPts);
-  // Dust streams shed by asteroids along the belt, in different colours, some glowing (ui/dm-mist.js)
-  try{
-    if(window.DMMist){
-      const _lowDust=(typeof _jotsAtmoSampleBudgets==='function')?(_jotsAtmoSampleBudgets().view<4):false;
-      const _bd=DMMist.beltDust(flightScene,{R:beltR,width:AU*0.9,low:_lowDust,rand:seedRand(hashStr('sol:beltdust'))});
-      if(_bd&&typeof _trackSystemExtra==='function')_trackSystemExtra(_bd.mesh);
-    }
-  }catch(e){ console.warn('[mist] belt dust',e); }
+  // (the old belt-wide dust streams are retired: they read as small clouds near the Sun. A few asteroids smoke instead — below.)
 
   // Places already visited never reshuffle: the seeded landables and comets
   // below are exactly as they were (same seeds, same generation, same orbits);
@@ -7636,6 +7629,13 @@ async function buildSolarSystem(){
       // Kepler at belt r: P_years = (r/AU)^1.5 on the same Sol clock
       const aPeriodYrs=Math.pow(r/AU, 1.5);
       const aSpd=SOL_EARTH_MEAN_MOTION/aPeriodYrs;
+      // a few of them smoke: coloured gas venting off the rock itself (ui/dm-mist.js); Vesta stays clean
+      try{
+        if(window.DMMist&&DMMist.asteroidFumes&&li!==1){
+          const _lowF=(typeof _jotsAtmoSampleBudgets==='function')?(_jotsAtmoSampleBudgets().view<4):false;
+          DMMist.asteroidFumes(agroup,rad,{col:[0,1,3,2][li],low:_lowF,rand:seedRand(hashStr('sol:fume:'+landNames[li]))});
+        }
+      }catch(e){ console.warn('[mist] asteroid fumes',e); }
       celestialBodies.push({
         mesh:agroup, name:landNames[li], type:'Asteroid', temp:'~180 K',
         orbitR:r, orbitSpd:aSpd, angle:a,
@@ -13801,7 +13801,7 @@ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded'
     return {platform:_dmPlatform(),app:(window.DMAndroid&&DMAndroid.version)?DMAndroid.version():null,webview:m[2]||null,
       backend:real===null?'not-started':real?'WebGPU':'WebGL2-fallback',navGpu:!!navigator.gpu,gpu:g.renderer||'',vendor:g.vendor||'',
       gpuClass:g.gpuClass,score:g.score,preset:g.preset,resScale:g.resScale,cores:navigator.hardwareConcurrency||0,mem:navigator.deviceMemory||0,
-      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:'sw-v80',ua:navigator.userAgent};
+      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:'sw-v81',ua:navigator.userAgent};
   }
   function flush(){
     const f=win.f; win.f=[]; const t0=win.t0; win.t0=performance.now();
