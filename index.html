@@ -4374,7 +4374,7 @@ const GFX = {
   volumetricDust:true,   // animated drifting space dust / nebula volume
   dustDensity:1.0,       // multiplier for volumetric + point-cloud density
   aniso:1,               // texture anisotropic filtering level
-  antialias:true,
+  antialias:false,       // MSAA off by default (Settings → Custom → Anti-aliasing turns it on; applies on next launch)
   pathTraceAccents:false,// experimental WebGPU only
   maxPixelRatio:2,
   // Dev/debug overlay (mounted/state/bones/parent/visible/localPos) added
@@ -4388,9 +4388,9 @@ const GFX = {
 // Capability ceilings — what a tier is ALLOWED to use is clamped by hardware.
 const PRESETS = {
   low:    {resScale:0.7, shadows:true,  shadowSize:512,  envReflections:false, caustics:false, fakeGI:true, refraction:false, ssao:false, volumetricDust:false, dustDensity:0.45, aniso:1,  antialias:false},
-  medium: {resScale:0.85,shadows:true,  shadowSize:1024, envReflections:true,  caustics:true,  fakeGI:true, refraction:true,  ssao:false, volumetricDust:true,  dustDensity:1.2,  aniso:2,  antialias:true },
-  high:   {resScale:1.0, shadows:true,  shadowSize:2048, envReflections:true,  caustics:true,  fakeGI:true, refraction:true,  ssao:true,  volumetricDust:true,  dustDensity:1.3,  aniso:8,  antialias:true },
-  ultra:  {resScale:1.0, shadows:true,  shadowSize:4096, envReflections:true,  caustics:true,  fakeGI:true, refraction:true,  ssao:true,  volumetricDust:true,  dustDensity:2.2,  aniso:16, antialias:true },
+  medium: {resScale:0.85,shadows:true,  shadowSize:1024, envReflections:true,  caustics:true,  fakeGI:true, refraction:true,  ssao:false, volumetricDust:true,  dustDensity:1.2,  aniso:2,  antialias:false },
+  high:   {resScale:1.0, shadows:true,  shadowSize:2048, envReflections:true,  caustics:true,  fakeGI:true, refraction:true,  ssao:true,  volumetricDust:true,  dustDensity:1.3,  aniso:8,  antialias:false },
+  ultra:  {resScale:1.0, shadows:true,  shadowSize:4096, envReflections:true,  caustics:true,  fakeGI:true, refraction:true,  ssao:true,  volumetricDust:true,  dustDensity:2.2,  aniso:16, antialias:false },
 };
 
 // These live on the older STATE.settings model (Star Field, Galaxy Dust,
@@ -4613,7 +4613,7 @@ const GFX_STORE_KEY='dm_gfx_v2';
 const GFX_KNOB_KEYS=['preset','resScale','shadows','shadowSize','envReflections','caustics','fakeGI','refraction','ssao','volumetricDust','dustDensity','aniso','antialias','pathTraceAccents','showCharDebug','dynamicRes'];
 function saveGfxChoice(){
   try{
-    const payload={chosen:true, resolved:resolvePreset(), ts:Date.now()};
+    const payload={chosen:true, aaV:2, resolved:resolvePreset(), ts:Date.now()};
     GFX_KNOB_KEYS.forEach(k=>{payload[k]=GFX[k];});
     if(GFX.budgets)payload.budgets=Object.assign({},GFX.budgets);
     if(typeof STATE!=='undefined'&&STATE&&STATE.settings){
@@ -4636,6 +4636,7 @@ function loadGfxChoice(){
     const d=JSON.parse(raw);
     if(!d||!d.chosen)return false;
     GFX_KNOB_KEYS.forEach(k=>{ if(d[k]!==undefined)GFX[k]=d[k]; });
+    if(d.aaV!==2){ GFX.antialias=false; }          // one-time: anti-aliasing is now off by default for everyone
     if(GFX.preset && GFX.preset!=='custom'){
       applyPreset(GFX.preset);
     } else {
@@ -4761,7 +4762,7 @@ function buildCustomPanel(){
     + row('cf-refraction','Refraction','Glass / water bending',GFX.refraction,cap.refraction,reason.refraction)
     + row('cf-caustics','Water Caustics','Animated underwater light',GFX.caustics,cap.caustics)
     + row('cf-reflections','Env Reflections','Cubemap reflections on metal/water',GFX.envReflections,cap.envReflections)
-    + row('cf-aa','Anti-aliasing','Smooth edges (MSAA)',GFX.antialias,cap.antialias)
+    + row('cf-aa','Anti-aliasing','Smooth edges (MSAA) · off by default · applies on next launch',GFX.antialias,cap.antialias)
     + row('cf-ptx','⚡ Path-traced Accents','Experimental WebGPU GI/reflections',GFX.pathTraceAccents,cap.pathTraceAccents,reason.pathTraceAccents);
 }
 
@@ -6070,7 +6071,7 @@ async function initFlightScene(){
   try{ detectCapabilities(); loadGfxChoice(); applyQualityTier(); }catch(e){console.warn('cap init:',e);}
 
   // Renderer — compatibility-first across Safari/Chrome/Edge/Firefox on all OSes
-  flightRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:!GFX.isMobile,alpha:false,powerPreference:'high-performance',logarithmicDepthBuffer:true});
+  flightRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:!!GFX.antialias,alpha:false,powerPreference:'high-performance',logarithmicDepthBuffer:true});
   _guardRenderDepth(flightRenderer);
   try{
     await flightRenderer.init();
@@ -13852,7 +13853,7 @@ window.dmSceneText=function(){
     return {platform:_dmPlatform(),app:(window.DMAndroid&&DMAndroid.version)?DMAndroid.version():null,webview:m[2]||null,
       backend:real===null?'not-started':real?'WebGPU':'WebGL2-fallback',navGpu:!!navigator.gpu,gpu:g.renderer||'',vendor:g.vendor||'',
       gpuClass:g.gpuClass,score:g.score,preset:g.preset,resScale:g.resScale,cores:navigator.hardwareConcurrency||0,mem:navigator.deviceMemory||0,
-      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:'sw-v86',ua:navigator.userAgent};
+      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:'sw-v87',ua:navigator.userAgent};
   }
   function flush(){
     const f=win.f; win.f=[]; const t0=win.t0; win.t0=performance.now();
