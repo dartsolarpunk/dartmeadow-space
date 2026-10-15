@@ -7353,24 +7353,32 @@ function _solCheapGroup(e,r,seed,rock){
 // planets but not for a dozen landable moons visited in one session. A catalog
 // world left far behind (> SOL_LOD_DROP radii, not the world you're in) goes
 // back to its cheap sphere, still wearing its map — one body per call.
-const SOL_LOD_DROP=40;
+const SOL_LOD_DROP=120;
 let _solLodI=0;
 function _solCatalogLODDown(){
+  // Keep-warm cache: a world that has been built to full detail STAYS built (in RAM / GPU memory) so flying away and
+  // back is instant. Only when more than SOL_KEEP detailed worlds are held does the one left alone the longest (and
+  // well out of range) drop back to a plain sphere, and that is the only time anything is rebuilt.
   const n=celestialBodies.length; if(!n||!STATE.flight||!STATE.flight.pos) return;
+  const now=performance.now(), fp=STATE.flight.pos, KEEP=GFX.isMobile?10:20;
+  let held=0, victim=null, oldest=Infinity;
   for(let k=0;k<n;k++){
-    const b=celestialBodies[(_solLodI++)%n];
+    const b=celestialBodies[k];
     if(!b||!b.catalog||!b.isProcedural||!b.mesh) continue;
     if(b.mcTier==='low'&&!b._webglSeg) continue;
-    if(typeof PW!=='undefined'&&PW.body===b) continue;
-    if(b.mesh.position.distanceTo(STATE.flight.pos)<b.mcRadius*SOL_LOD_DROP) continue;
-    const old=b.mesh, g=_solCheapGroup(b.catalog,b.mcRadius,b.mcSeed,false);
-    g.position.copy(old.position); g.quaternion.copy(old.quaternion);
-    old.children.filter(c=>c.isPlanetExtra).forEach(c=>g.add(c));
-    flightScene.add(g); flightScene.remove(old); try{ _disposeObject3D(old); }catch(e){}
-    b.mesh=g; b.mcTier='low'; b.mcRes=_mcTierResTable().low; b._webglSeg=0; b._mcLodT=performance.now();
-    if(b._wm) try{ _applyWorldMapToFlightBody(b,b._wm); }catch(e){}
-    return;
+    held++;
+    const d=b.mesh.position.distanceTo(fp);
+    if(d<b.mcRadius*SOL_LOD_DROP||(typeof PW!=='undefined'&&PW.body===b)){ b._nearT=now; continue; }
+    if(b._nearT==null) b._nearT=now;
+    if(b._nearT<oldest){ oldest=b._nearT; victim=b; }
   }
+  if(held<=KEEP||!victim||now-oldest<20000) return;      // under budget, or it was near within the last 20 s: keep it
+  const b=victim, old=b.mesh, g=_solCheapGroup(b.catalog,b.mcRadius,b.mcSeed,false);
+  g.position.copy(old.position); g.quaternion.copy(old.quaternion);
+  old.children.filter(c=>c.isPlanetExtra).forEach(c=>g.add(c));
+  flightScene.add(g); flightScene.remove(old); try{ _disposeObject3D(old); }catch(e){}
+  b.mesh=g; b.mcTier='low'; b.mcRes=_mcTierResTable().low; b._webglSeg=0; b._mcLodT=performance.now();
+  if(b._wm) try{ _applyWorldMapToFlightBody(b,b._wm); }catch(e){}
 }
 function _buildSolCatalogBodies(){
   const byName={}; celestialBodies.forEach(b=>{ byName[b.name]=b; });
@@ -13802,7 +13810,7 @@ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded'
     return {platform:_dmPlatform(),app:(window.DMAndroid&&DMAndroid.version)?DMAndroid.version():null,webview:m[2]||null,
       backend:real===null?'not-started':real?'WebGPU':'WebGL2-fallback',navGpu:!!navigator.gpu,gpu:g.renderer||'',vendor:g.vendor||'',
       gpuClass:g.gpuClass,score:g.score,preset:g.preset,resScale:g.resScale,cores:navigator.hardwareConcurrency||0,mem:navigator.deviceMemory||0,
-      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:'sw-v83',ua:navigator.userAgent};
+      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:'sw-v84',ua:navigator.userAgent};
   }
   function flush(){
     const f=win.f; win.f=[]; const t0=win.t0; win.t0=performance.now();
