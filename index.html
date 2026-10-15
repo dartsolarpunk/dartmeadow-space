@@ -973,7 +973,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-stack.js?v=1" defer></script>
 <script src="ui/dm-globe.js?v=7" defer></script>
 <script src="ui/dm-star.js?v=8" defer></script>
-<script src="ui/dm-mist.js?v=4" defer></script>
+<script src="ui/dm-mist.js?v=5" defer></script>
 <script src="ui/dm-menuscene.js?v=7" defer></script>
 <script src="ui/dm-starbubble.js?v=3" defer></script>
 </head>
@@ -4599,10 +4599,10 @@ function _dynRes(r){
   // resolution may drop further and faster; back out, it snaps back to 60%
   const starHot=!!(window.DMStarBubble&&(DMStarBubble.a>0.05||DMStarBubble.inStar)), floor=GFX.preset==='auto'?(starHot?0.42:0.6):(starHot?0.6:0.72);
   if(k<floor){ k=floor; }
-  else if(d.ema>target*1.18&&k>floor){ k=Math.max(floor,k-(starHot?0.12:0.08)); }
-  else if(d.ema<target*0.72&&k<1){ d.hold+=ms; if(d.hold>2500){ k=Math.min(1,k+0.05); d.hold=0; } }
+  else if(d.ema>target*1.25&&k>floor){ k=Math.max(floor,Math.round((k-(starHot?0.14:0.14))*100)/100); }
+  else if(d.ema<target*0.62&&k<1){ d.hold+=ms; if(d.hold>9000){ k=Math.min(1,Math.round((k+0.14)*100)/100); d.hold=0; } }
   else d.hold=0;
-  if(k!==d.k){ d.k=k; d.cool=1200; try{ r.setPixelRatio(effectivePixelRatio()*k); r.setSize(window.innerWidth,window.innerHeight); }catch(e){} }
+  if(k!==d.k){ d.k=k; d.cool=5000; window._dmResChanges=(window._dmResChanges||0)+1; try{ r.setPixelRatio(effectivePixelRatio()*k); r.setSize(window.innerWidth,window.innerHeight); }catch(e){} }
 }
 function effectivePixelRatio(){
   return Math.min(GFX.dpr,GFX.maxPixelRatio)*GFX.resScale;
@@ -7633,7 +7633,7 @@ async function buildSolarSystem(){
       try{
         if(window.DMMist&&DMMist.asteroidFumes&&li!==1){
           const _lowF=(typeof _jotsAtmoSampleBudgets==='function')?(_jotsAtmoSampleBudgets().view<4):false;
-          DMMist.asteroidFumes(agroup,rad,{col:[0,1,3,2][li],low:_lowF,rand:seedRand(hashStr('sol:fume:'+landNames[li]))});
+          DMMist.asteroidFumes(agroup,rad,{col:[0,1,3,2][li],low:_lowF,renderer:flightRenderer,cpu:/[?&]cpusmoke/.test(location.search),rand:seedRand(hashStr('sol:fume:'+landNames[li]))});
         }
       }catch(e){ console.warn('[mist] asteroid fumes',e); }
       celestialBodies.push({
@@ -7663,6 +7663,20 @@ async function buildSolarSystem(){
     cg.add(new THREE.Points(tg,new THREE.PointsMaterial({size:.1,color:0x8888ff,transparent:true,opacity:.55})));
     cg.position.set((cometRand()-0.5)*AU*20,(cometRand()-0.5)*40,(cometRand()-0.5)*AU*20);
     flightScene.add(cg);if(typeof _trackSystemExtra==='function')_trackSystemExtra(cg);
+    // far beyond the planets: a few huge volumetric nebulae (ray-marched gas, dark lanes, filaments) for the sky behind the system
+    try{
+      if(window.DMMist&&DMMist.nebula){
+        const _lowN=(typeof _jotsAtmoSampleBudgets==='function')?(_jotsAtmoSampleBudgets().view<4):!!GFX.isMobile;
+        const nr=seedRand(hashStr('sol:nebulae'));
+        const defs=[[0,0.35],[1,2.1],[2,3.9],[3,5.2]];
+        for(let ni=0;ni<(_lowN?3:4);ni++){
+          const ang=defs[ni][1]+nr()*0.5, dist=70000+nr()*70000, rr=26000+nr()*30000, el=(nr()-0.5)*0.9;
+          const nm=DMMist.nebula(flightScene,{center:[Math.cos(ang)*dist*Math.cos(el),Math.sin(el)*dist,Math.sin(ang)*dist*Math.cos(el)],radius:rr,
+            stretch:[1+nr()*0.6,0.55+nr()*0.4,1+nr()*0.5],pal:defs[ni][0],seed:1+ni*3.7+nr()*5,low:_lowN});
+          if(nm&&typeof _trackSystemExtra==='function')_trackSystemExtra(nm);
+        }
+      }
+    }catch(e){ console.warn('[mist] nebula',e); }
     flightFlybys.push({name:'Comet '+COMET_NAMES[i],mesh:cg,labelRange:AU*0.25});
   }
   // Moons, dwarf planets and the genuinely new asteroids/comets (SOL_CATALOG)
@@ -13801,7 +13815,7 @@ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded'
     return {platform:_dmPlatform(),app:(window.DMAndroid&&DMAndroid.version)?DMAndroid.version():null,webview:m[2]||null,
       backend:real===null?'not-started':real?'WebGPU':'WebGL2-fallback',navGpu:!!navigator.gpu,gpu:g.renderer||'',vendor:g.vendor||'',
       gpuClass:g.gpuClass,score:g.score,preset:g.preset,resScale:g.resScale,cores:navigator.hardwareConcurrency||0,mem:navigator.deviceMemory||0,
-      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:'sw-v81',ua:navigator.userAgent};
+      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:'sw-v82',ua:navigator.userAgent};
   }
   function flush(){
     const f=win.f; win.f=[]; const t0=win.t0; win.t0=performance.now();
@@ -13810,7 +13824,7 @@ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded'
     const q=p=>a[Math.min(a.length-1,Math.floor(a.length*p))];
     const scr=(typeof STATE!=='undefined'&&STATE.screen)||'?';
     const e={at:new Date().toISOString().slice(11,19),screen:scr,fps:+(1000/avg).toFixed(1),avgMs:+avg.toFixed(1),p95Ms:+q(.95).toFixed(1),worstMs:+a[a.length-1].toFixed(0),
-      jank:f.filter(x=>x>50).length,frames:f.length,pr:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),heapMB:performance.memory?Math.round(performance.memory.usedJSHeapSize/1048576):null,hidden:document.hidden};
+      jank:f.filter(x=>x>50).length,frames:f.length,pr:(function(){ try{ const k=(typeof flightRenderer!=='undefined'&&flightRenderer&&flightRenderer._dr&&flightRenderer._dr.k)||1; return +(effectivePixelRatio()*k).toFixed(2)+(window._dmResChanges?'/rc'+window._dmResChanges:''); }catch(e){ return null; } })(),heapMB:performance.memory?Math.round(performance.memory.usedJSHeapSize/1048576):null,hidden:document.hidden};
     if(document.hidden) return;
     log.push(e); if(log.length>60) log.shift(); try{ localStorage.setItem(KEY,JSON.stringify(log)); }catch(x){}
   }

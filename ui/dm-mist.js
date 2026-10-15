@@ -196,12 +196,90 @@
   const FUME_COLS = [   // r,g,b, additive?
     [0.95, 0.85, 0.22, 1], [0.30, 0.85, 0.52, 1], [0.86, 0.38, 0.20, 1], [0.48, 0.72, 1.00, 1], [0.62, 0.42, 1.00, 1], [0.34, 0.31, 0.29, 0],
   ];
+
+  /* GPU smoke: the same plumes as a real simulation on the GPU (WebGPU compute). Each particle is advected by a
+     swirling, divergence-free (curl-noise) flow on top of its launch velocity from the vent, with drag, so the smoke
+     jets out, slows, billows and curls instead of sitting in blobs; it grows as it spreads and fades from the
+     vent colour to tan to grey ash, like the exhaust in the reference. State lives in GPU storage buffers and
+     never comes back to the CPU. Returns null where compute isn't available (the caller falls back to the CPU puffs). */
+  function gpuSmoke(group, rad, o, col, rnd) {
+    const T = TSL();
+    try {
+      const r = o.renderer || (typeof flightRenderer !== 'undefined' && flightRenderer) || null;
+      if (!T || !r || !r.backend || r.backend.isWebGPUBackend !== true || typeof r.compute !== 'function' || !T.instancedArray || !T.Fn || !W.THREE.SpriteNodeMaterial) return null;
+      const { float, vec2, vec3, vec4, Fn, If, hash, instanceIndex, mix, smoothstep, exp, select } = T;
+      const N = o.low ? 640 : 1400;
+      const posB = T.instancedArray(N, 'vec3'), velB = T.instancedArray(N, 'vec3'), ageB = T.instancedArray(N, 'vec2');   // age, life
+      const uDt = T.uniform(0.016), uT = T.uniform(rnd() * 50), uRad = T.uniform(rad);
+      const vd = [], vents = 3;
+      for (let v = 0; v < vents; v++) { const th = rnd() * 6.2832, ph = Math.acos(2 * rnd() - 1); vd.push(T.uniform(new THREE.Vector3(Math.sin(ph) * Math.cos(th), Math.cos(ph), Math.sin(ph) * Math.sin(th)))); }
+      const seed = float(rnd() * 100);
+      const nv = (p) => T.mx_noise_vec3(p);
+      const curl = (p) => {                                                        // ∇ × noise: swirling and incompressible
+        const e = 0.12, dx = vec3(e, 0, 0), dy = vec3(0, e, 0), dz = vec3(0, 0, e);
+        const px = nv(p.add(dx)).sub(nv(p.sub(dx))), py = nv(p.add(dy)).sub(nv(p.sub(dy))), pz = nv(p.add(dz)).sub(nv(p.sub(dz)));
+        return vec3(py.z.sub(pz.y), pz.x.sub(px.z), px.y.sub(py.x)).div(2 * e);
+      };
+      const ventDir = (h) => select(h.lessThan(0.333), vd[0], select(h.lessThan(0.666), vd[1], vd[2]));
+      const spawn = (i, tag) => {
+        const h1 = hash(i.add(tag)), h2 = hash(i.add(tag).add(1013)), h3 = hash(i.add(tag).add(2027)), h4 = hash(i.add(tag).add(3041)), h5 = hash(i.add(tag).add(4057));
+        const dir = ventDir(h1);
+        const jit = vec3(h2, h3, h4).sub(0.5).mul(0.7);
+        const d = dir.add(jit).normalize();
+        return { pos: dir.mul(uRad.mul(0.96)).add(jit.mul(uRad.mul(0.22))), vel: d.mul(uRad.mul(float(0.55).add(h5.mul(0.55)))), life: float(6.0).add(h2.mul(7.0)) };
+      };
+      const init = Fn(() => {
+        const i = instanceIndex, sp = spawn(i, float(7.0));
+        const stag = hash(i.add(99.0));
+        posB.element(i).assign(sp.pos.add(sp.vel.mul(sp.life.mul(stag).mul(0.5))));   // staggered so the plume is already full
+        velB.element(i).assign(sp.vel.mul(float(1).sub(stag.mul(0.7))));
+        ageB.element(i).assign(vec2(sp.life.mul(stag), sp.life));
+      })().compute(N);
+      const update = Fn(() => {
+        const i = instanceIndex, pos = posB.element(i), vel = velB.element(i), ag = ageB.element(i);
+        const u = ag.x.div(ag.y);
+        const p = pos.div(uRad).mul(0.9).add(vec3(0, 0, uT.mul(0.08))).add(seed);
+        const c = curl(p).mul(uRad).mul(float(0.10).add(u.mul(0.55)));                // turbulence grows as the smoke spreads
+        vel.addAssign(c.mul(uDt));
+        vel.mulAssign(exp(uDt.mul(-0.35)));
+        pos.addAssign(vel.mul(uDt));
+        ag.x.addAssign(uDt);
+        If(ag.x.greaterThan(ag.y), () => {
+          const sp = spawn(i, T.floor(uT.mul(37.0)).add(11.0));
+          pos.assign(sp.pos); vel.assign(sp.vel); ag.assign(vec2(0.0, sp.life));
+        });
+      })().compute(N);
+      const m = new THREE.SpriteNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.NormalBlending });
+      const age = ageB.toAttribute(), u = age.x.div(age.y), hI = hash(instanceIndex);
+      m.positionNode = posB.toAttribute();
+      m.scaleNode = uRad.mul(float(0.35).add(u.pow(0.55).mul(2.1))).mul(float(0.8).add(hI.mul(0.5)));
+      const ang = hI.mul(6.2832).add(age.x.mul(float(0.10).add(hI.mul(0.12))));
+      const tex = T.texture(smokeTexture(), T.rotateUV(T.uv(), ang, vec2(0.5, 0.5)));
+      const young = vec3(col[0], col[1], col[2]), tan = vec3(0.62, 0.48, 0.34), ash = vec3(0.24, 0.23, 0.23);
+      const c1 = mix(young, tan, smoothstep(0.0, 0.35, u)), c2 = mix(c1, ash, smoothstep(0.3, 1.0, u));
+      const bright = float(1.15).sub(u.mul(0.7));                                  // young smoke glows, old smoke is dim
+      const fade = smoothstep(0.0, 0.07, u).mul(float(1).sub(smoothstep(0.5, 1.0, u))).mul(0.62);
+      m.colorNode = vec4(c2.mul(bright), tex.a.mul(fade));
+      const sprite = new THREE.Sprite(m); sprite.count = N; sprite.frustumCulled = false; sprite.renderOrder = 2; sprite.name = 'JOTS_AsteroidSmoke';
+      let ready = false;
+      return { mesh: sprite, kind: 'gpu', tick(cam, dt) {
+        try {
+          uDt.value = Math.min(0.05, dt || 0.016); uT.value += uDt.value;
+          if (!ready) { ready = true; r.compute(init); }
+          r.compute(update);
+        } catch (e) { console.warn('[mist] smoke compute', e); }
+      } };
+    } catch (e) { console.warn('[mist] gpu smoke unavailable', e); return null; }
+  }
+
   const fumes = new Set();
   /* asteroidFumes(group, rad, opts): vents on `group` (the asteroid, radius rad). opts.col = index into FUME_COLS,
      opts.rand = seeded random, opts.low = fewer puffs */
   function asteroidFumes(group, rad, o) {
     if (!W.THREE || !group) return null;
     o = o || {}; const rnd = o.rand || Math.random, col = FUME_COLS[(o.col != null ? o.col : Math.floor(rnd() * FUME_COLS.length)) % FUME_COLS.length];
+    { const g = o.cpu ? null : gpuSmoke(group, rad, o, col, rnd);
+      if (g) { group.add(g.mesh); const d = { mesh: g.mesh, group, rad, tick: g.tick, gpu: true }; fumes.add(d); return d; } }
     const vents = o.low ? 2 : 3, per = o.low ? 20 : 34, N = vents * per;
     const m = new THREE.MeshBasicMaterial({ map: smokeTexture(), transparent: true, depthWrite: false, toneMapped: false,
       blending: col[3] ? THREE.AdditiveBlending : THREE.NormalBlending });
@@ -245,6 +323,93 @@
     d.tick(null, 0);
     group.add(mesh); fumes.add(d);
     return d;
+  }
+
+
+  /* ───────────── nebulae ─────────────
+     Far-off star-forming dust and gas, ray-marched on the GPU. Each one is a domain-warped, filamentary
+     density field (the warp is a slow flow, so the gas keeps churning), emission coloured by a hue field
+     (orange / teal / violet), and dark dust lanes that absorb what is behind them — the look of the
+     reference: glowing pockets split by black filaments, not flat soft blobs. */
+  let noiseTex = null;
+  function noiseVol() {
+    if (noiseTex) return noiseTex;
+    const N = 32, lat = new Float32Array(N * N * N); let sd = 0x6A57; const rr = () => { sd = (sd * 16807) % 2147483647; return sd / 2147483647; };
+    for (let i = 0; i < lat.length; i++) lat[i] = rr();
+    const at = (x, y, z) => lat[((z & 31) * N + (y & 31)) * N + (x & 31)], sm = t => t * t * (3 - 2 * t), l = (a, b, t) => a + (b - a) * t;
+    const vn = (x, y, z) => { const X = Math.floor(x), Y = Math.floor(y), Z = Math.floor(z), fx = sm(x - X), fy = sm(y - Y), fz = sm(z - Z);
+      return l(l(l(at(X, Y, Z), at(X + 1, Y, Z), fx), l(at(X, Y + 1, Z), at(X + 1, Y + 1, Z), fx), fy), l(l(at(X, Y, Z + 1), at(X + 1, Y, Z + 1), fx), l(at(X, Y + 1, Z + 1), at(X + 1, Y + 1, Z + 1), fx), fy), fz); };
+    const data = new Uint16Array(N * N * N), hf = THREE.DataUtils.toHalfFloat;   // half-float: no 8-bit banding in the thresholds
+    for (let z = 0; z < N; z++) for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      let v = 0, a = 0.55, f = 0.125, t = 0; for (let o = 0; o < 3; o++) { v += a * vn(x * f, y * f, z * f); t += a; a *= 0.5; f *= 2; }   // coarse cells (8, 4, 2 texels): smooth, periodic in 32
+      v /= t; data[(z * N + y) * N + x] = hf(Math.min(1, Math.max(0, (v - 0.22) / 0.56)));
+    }
+    const tx = new THREE.Data3DTexture(data, N, N, N); tx.format = THREE.RedFormat; tx.type = THREE.HalfFloatType;
+    tx.minFilter = tx.magFilter = THREE.LinearFilter; tx.wrapS = tx.wrapT = tx.wrapR = THREE.RepeatWrapping; tx.unpackAlignment = 1; tx.needsUpdate = true;
+    noiseTex = tx; return tx;
+  }
+  const NEBULA_PALETTES = [   // three hues each: [hot pockets, body, cool fringe]
+    [[1.00, 0.46, 0.16], [0.95, 0.30, 0.20], [0.55, 0.35, 0.80]],     // orange / red / violet
+    [[0.35, 0.95, 0.78], [0.20, 0.62, 0.70], [0.45, 0.50, 0.95]],     // teal / cyan / blue
+    [[0.80, 0.45, 1.00], [0.50, 0.28, 0.85], [0.95, 0.40, 0.55]],     // violet / purple / rose
+    [[0.95, 0.80, 0.45], [0.85, 0.50, 0.25], [0.40, 0.55, 0.80]],     // gold / amber / steel
+  ];
+  function nebulaMaterial(T, U, low) {
+    const m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, side: THREE.FrontSide });
+    const { float, vec3, exp, mix, smoothstep, dot, normalize, time } = T;
+    const vol = noiseVol(), nz = (p) => T.texture3D(vol, p.mul(0.5).fract().mul(2.0).sub(1.0).abs().mul(0.96).add(0.02)).r;   // folded into the volume (a triangle wave): no wrap seams anywhere
+    const ro = T.cameraPosition.sub(U.center).div(U.radius), rd = normalize(T.positionWorld.sub(T.cameraPosition));
+    const b = dot(ro, rd), c = dot(ro, ro).sub(1.0), disc = b.mul(b).sub(c).max(0.0).sqrt();
+    const t0 = b.negate().sub(disc).max(0.0), t1 = b.negate().add(disc);
+    const steps = low ? 9 : 16, dt = t1.sub(t0).max(0.0).div(steps);
+    const flow = time.mul(0.004);
+    const c0 = U.c0, c1 = U.c1, c2 = U.c2;
+    let Tr = float(1), acc = vec3(0, 0, 0);
+    for (let i = 0; i < steps; i++) {
+      const p0 = ro.add(rd.mul(t0.add(dt.mul(i + 0.5))));
+      const r2 = dot(p0, p0), env = float(1).sub(r2.mul(1.15)).max(0.0);                                        // soft spherical envelope
+      const p = p0.mul(U.stretch);
+      // slow flow warps the field: a vector of three low-frequency samples, drifting in different directions
+      const w = vec3(nz(p.mul(0.55).add(U.seed).add(vec3(flow, 0, 0))), nz(p.mul(0.55).add(U.seed.mul(1.7)).add(vec3(0, flow, 0))), nz(p.mul(0.55).add(U.seed.mul(2.3)).sub(vec3(0, 0, flow)))).sub(0.5);
+      const q = p.mul(0.7).add(w.mul(1.7)).add(U.seed.mul(0.6));
+      const n1 = nz(q), n2 = nz(q.mul(1.9).add(0.37)), n3 = nz(q.mul(3.4).add(1.9));
+      const f = n1.mul(0.60).add(n2.mul(0.30)).add(n3.mul(0.10));
+      const fil = float(1).sub(f.mul(2.0).sub(1.0).abs());                                            // ridged: thin bright filaments
+      const mask = smoothstep(0.34, 0.66, nz(q.mul(0.42).add(U.seed.mul(0.5))));                          // big voids and irregular edges
+      const body = smoothstep(0.38, 0.90, mix(f, fil, 0.16)).mul(mask).add(mask.mul(0.14));   // billows + a thin haze between them
+      const dens = body.mul(env.mul(env)).mul(smoothstep(0.0, 0.3, env));
+      // hue field: where it is orange, teal or violet
+      const h = nz(q.mul(0.45).add(U.seed.mul(0.3)));
+      const hue = mix(mix(c1, c0, smoothstep(0.34, 0.52, h)), c2, smoothstep(0.58, 0.8, h));
+      const knot = float(0.12).add(n2.mul(n2).mul(n1).mul(5.5));                                                // brighter knots inside the gas
+      const lane = smoothstep(0.52, 0.80, n3).mul(dens);                                                // dark dust filaments
+      const sig = dens.mul(U.opac).add(lane.mul(U.opac).mul(2.2));
+      const stepT = exp(sig.mul(dt).negate());
+      acc = acc.add(hue.mul(dens.mul(knot).mul(U.glow)).mul(Tr).mul(dt));
+      Tr = Tr.mul(stepT);
+    }
+    const alpha = float(1).sub(Tr);
+    m.colorNode = acc.div(alpha.max(1e-3));
+    m.opacityNode = alpha;
+    m.toneMapped = false;
+    return m;
+  }
+  /* nebula(parent, o): o = { center:[x,y,z], radius, stretch:[sx,sy,sz], pal: index, seed, low } */
+  const nebulae = new Set();
+  function nebula(parent, o) {
+    const T = TSL(); if (!T || !W.THREE.MeshBasicNodeMaterial || !T.texture3D) return null;
+    o = o || {};
+    const pal = NEBULA_PALETTES[(o.pal || 0) % NEBULA_PALETTES.length], C = (a) => new THREE.Vector3(a[0], a[1], a[2]);
+    const sd = o.seed || 1, st = o.stretch || [1, 1, 1];
+    const U = { center: T.uniform(new THREE.Vector3(o.center[0], o.center[1], o.center[2])), radius: T.uniform(o.radius || 1000),
+      stretch: T.uniform(new THREE.Vector3(1 / st[0], 1 / st[1], 1 / st[2])), seed: T.uniform(new THREE.Vector3((sd * 1.37) % 9, (sd * 2.11) % 9, (sd * 3.07) % 9)),
+      c0: T.uniform(C(pal[0])), c1: T.uniform(C(pal[1])), c2: T.uniform(C(pal[2])), glow: T.uniform(o.glow || 4.6), opac: T.uniform(o.opac || 4.2) };
+    const R = o.radius || 1000, mx = Math.max(st[0], st[1], st[2]);
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(R * 1.02, o.low ? 24 : 40, o.low ? 16 : 28), nebulaMaterial(T, U, !!o.low));
+    mesh.position.set(o.center[0], o.center[1], o.center[2]); mesh.scale.setScalar(1);
+    mesh.renderOrder = -500; mesh.frustumCulled = true; mesh.name = 'JOTS_Nebula';
+    if (parent) parent.add(mesh);
+    const h = { mesh, U }; nebulae.add(h); return mesh;
   }
 
   /* ───────────── per frame ───────────── */
@@ -293,5 +458,5 @@
     const ps = []; for (const h of live) { if (!h.group.parent) continue; h.pre = true; const p = precompile(h, cam); if (p && p.then) ps.push(p); }
     return Promise.all(ps);
   }
-  W.DMMist = { planetClouds, beltDust, asteroidFumes, frame, warm, LOOKS };
+  W.DMMist = { planetClouds, beltDust, asteroidFumes, nebula, frame, warm, LOOKS };
 })();
