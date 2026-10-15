@@ -50,7 +50,7 @@
     const cb = dot(ro, ro).sub(Rb * Rb), db = b.mul(b).sub(cb);
     const hitB = b.negate().sub(db.max(0.0).sqrt());
     t1 = select(db.greaterThan(0.0).and(hitB.greaterThan(t0)), hitB, t1);
-    const steps = low ? 5 : 9, lsteps = low ? 1 : 2;
+    const steps = low ? 5 : 6, lsteps = low ? 1 : 2;
     const dt = t1.sub(t0).max(0.0).div(steps);
     const Ls = U.sunDir;
     const wind = time.mul(L.wind);
