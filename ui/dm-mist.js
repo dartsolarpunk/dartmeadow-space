@@ -180,8 +180,10 @@
       const r = (typeof flightRenderer !== 'undefined' && flightRenderer); if (!r || !r.compileAsync) return;
       const sc = (typeof flightScene !== 'undefined' && flightScene); if (!sc) return;
       const hid = []; h.group.traverse(o => { if (!o.visible) { hid.push(o); o.visible = true; } });
-      try { const p = r.compileAsync(sc, cam); if (p && p.catch) p.catch(() => {}); }
+      let p = null;
+      try { p = r.compileAsync(sc, cam); if (p && p.catch) p.catch(() => {}); }
       finally { for (const o of hid) o.visible = false; }
+      return p;
     } catch (e) {}
   }
   function frame(cam, dt) {
@@ -204,5 +206,10 @@
       d.tick(cam, Math.min(0.1, dt || 1 / 60));
     }
   }
-  W.DMMist = { planetClouds, beltDust, frame, LOOKS };
+  // load-time warm-up: compile the cloud shells now (resolves when the GPU has them)
+  function warm(cam) {
+    const ps = []; for (const h of live) { if (!h.group.parent) continue; h.pre = true; const p = precompile(h, cam); if (p && p.then) ps.push(p); }
+    return Promise.all(ps);
+  }
+  W.DMMist = { planetClouds, beltDust, frame, warm, LOOKS };
 })();

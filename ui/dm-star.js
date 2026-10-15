@@ -349,9 +349,10 @@
       const m0=h.mesh.material, hid=[];
       h.group.traverse(o=>{ if(!o.visible){ hid.push(o); o.visible=true; } });
       if(h.matNear) h.mesh.material=h.matNear;
-      try{ const p=r.compileAsync(sc,cam); if(p&&p.catch) p.catch(()=>{}); }
+      let p=null;
+      try{ p=r.compileAsync(sc,cam); if(p&&p.catch) p.catch(()=>{}); }
       finally{ h.mesh.material=m0; for(const o of hid) o.visible=false; }
-      return true;
+      return p||true;
     }catch(e){ return false; }
   }
   const _v=()=>new THREE.Vector3();
@@ -377,6 +378,11 @@
       if(h.prom){ h.prom.visible=ang>0.12; if(h.prom.visible) h.prom.userData.tick(Math.min(0.1,dt||1/60),cam); }
     }
   }
+  // load-time warm-up: compile every star's pipelines now (resolves when the GPU has them)
+  function warm(cam){
+    const ps=[]; for(const h of live){ if(!h.group.parent||!h.T) continue; h.pre=true; const p=precompile(h,cam); if(p&&p.then) ps.push(p); }
+    return Promise.all(ps);
+  }
   function setBubble(c,r){ if(!BU) return; if(c) BU.c.value.copy(c); BU.r.value=r>0?r:0; }
-  window.DMStar={build,frame,interiorMaterial,setBubble,tempFor,kelvin,palette};
+  window.DMStar={build,frame,warm,interiorMaterial,setBubble,tempFor,kelvin,palette};
 })();

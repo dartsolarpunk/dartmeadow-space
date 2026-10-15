@@ -972,8 +972,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-spectator.js?v=1" defer></script>
 <script src="ui/dm-stack.js?v=1" defer></script>
 <script src="ui/dm-globe.js?v=7" defer></script>
-<script src="ui/dm-star.js?v=7" defer></script>
-<script src="ui/dm-mist.js?v=2" defer></script>
+<script src="ui/dm-star.js?v=8" defer></script>
+<script src="ui/dm-mist.js?v=3" defer></script>
 <script src="ui/dm-menuscene.js?v=7" defer></script>
 <script src="ui/dm-starbubble.js?v=3" defer></script>
 </head>
@@ -6166,6 +6166,7 @@ async function initFlightScene(){
     console.warn('[CHAR] initFlightScene mount timeout (~120s) — starting loop with long remount watch', _charStatus());
     try{toast('⚠ Autumn still loading — will mount when ready…',3500);}catch(_){}
   }
+  try{ await _flightWarmup(); }catch(e){ console.warn('warmup:',e); }
   _startFlightLoop();
   // Persist until mounted (or ~3 min). Cold cache + GPU contention can finish
   // after the gate; flight-loop 30-frame safety alone is not enough if load
@@ -6189,6 +6190,36 @@ async function initFlightScene(){
       }
     },300);
   })();
+}
+// ── Shader warm-up ────────────────────────────────────────────────────────
+// Every material is compiled into a GPU pipeline the first time something draws it — on a phone that is a
+// 0.3–1.2 s freeze the moment the Sun, a cloud shell or the galaxy first comes into view. So we do it here,
+// once, behind a small status line before the flight loop starts: the scene as it stands, then each of the
+// things that are normally hidden until you fly close (Sun surface/flares, planet mist, galaxy layers).
+// Each step has a time limit so a slow device never gets stuck; a repeat visit is fast (the browser caches).
+async function _flightWarmup(){
+  if(typeof flightRenderer==='undefined'||!flightRenderer||!flightRenderer.compileAsync) return;
+  const t0=performance.now(); let pill=null;
+  try{
+    pill=document.createElement('div');
+    pill.style.cssText='position:fixed;left:50%;bottom:calc(12% + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:9500;padding:8px 16px;border-radius:999px;background:rgba(4,10,18,.78);border:1px solid rgba(120,200,255,.35);color:#9fd8ff;font:600 11px/1.2 system-ui,sans-serif;letter-spacing:.14em;text-transform:uppercase;pointer-events:none';
+    document.body.appendChild(pill);
+  }catch(e){}
+  const steps=[
+    ['world',()=>flightRenderer.compileAsync(flightScene,flightCamera)],
+    ['sun and flares',()=>window.DMStar&&DMStar.warm&&DMStar.warm(flightCamera)],
+    ['planet mist',()=>window.DMMist&&DMMist.warm&&DMMist.warm(flightCamera)],
+    ['galaxy',()=>galSky&&galSky.ready&&_gsPrecompile()]
+  ];
+  for(let i=0;i<steps.length;i++){
+    if(pill) pill.textContent='Preparing '+steps[i][0]+'  '+(i+1)+'/'+steps.length;
+    const t=performance.now();
+    try{ await Promise.race([Promise.resolve(steps[i][1]()),new Promise(r=>setTimeout(r,7000))]); }catch(e){ console.warn('[warmup]',steps[i][0],e); }
+    console.log('[warmup]',steps[i][0],(performance.now()-t).toFixed(0)+'ms');
+    await new Promise(r=>setTimeout(r,16));   // let the page breathe between steps
+  }
+  try{ if(pill) pill.remove(); }catch(e){}
+  try{ window._warmupMs=Math.round(performance.now()-t0); }catch(e){}
 }
 let _flightLoopCv=null,_flightLoopLast=0;
 // Frame counter used by the flight loop's render-throttle during character
@@ -13736,7 +13767,7 @@ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded'
     return {platform:_dmPlatform(),app:(window.DMAndroid&&DMAndroid.version)?DMAndroid.version():null,webview:m[2]||null,
       backend:real===null?'not-started':real?'WebGPU':'WebGL2-fallback',navGpu:!!navigator.gpu,gpu:g.renderer||'',vendor:g.vendor||'',
       gpuClass:g.gpuClass,score:g.score,preset:g.preset,resScale:g.resScale,cores:navigator.hardwareConcurrency||0,mem:navigator.deviceMemory||0,
-      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:'sw-v76',ua:navigator.userAgent};
+      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:'sw-v77',ua:navigator.userAgent};
   }
   function flush(){
     const f=win.f; win.f=[]; const t0=win.t0; win.t0=performance.now();
@@ -13784,7 +13815,7 @@ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded'
           if(hl.length>40) hl.shift(); try{ localStorage.setItem(KEY,JSON.stringify(hl)); }catch(e){} } }
       last=t; cur=[]; requestAnimationFrame(tick); }
     requestAnimationFrame(tick);
-    const t0=window.dmPerfText; if(typeof t0==='function') window.dmPerfText=function(){ return t0()+'\n\nHITCHES (frames >70 ms, newest last)\n'+(hl.length?hl.map(e=>e.at+' '+e.screen+' '+e.ms+'ms  '+e.top).join('\n'):'none recorded'); };
+    const t0=window.dmPerfText; if(typeof t0==='function') window.dmPerfText=function(){ return t0()+'\n\nSHADER WARM-UP '+(window._warmupMs!=null?window._warmupMs+' ms':'not run')+'\n\nHITCHES (frames >70 ms, newest last)\n'+(hl.length?hl.map(e=>e.at+' '+e.screen+' '+e.ms+'ms  '+e.top).join('\n'):'none recorded'); };
     const c0=window.dmPerfClear; window.dmPerfClear=function(){ hl=[]; try{ localStorage.removeItem(KEY); }catch(e){} if(typeof c0==='function') c0(); };
   })();
 })();
@@ -15682,9 +15713,11 @@ function _gsPrecompile(){
   if(!galSkyRoot||typeof flightRenderer==='undefined'||!flightRenderer||!flightRenderer.compileAsync)return;
   const hidden=[];
   galSkyRoot.traverse(o=>{if(!o.visible){hidden.push(o);o.visible=true;}});
-  try{const pr=flightRenderer.compileAsync(flightScene,flightCamera);if(pr&&pr.catch)pr.catch(e=>console.warn('[galsky] precompile',e));}
+  let pr=null;
+  try{pr=flightRenderer.compileAsync(flightScene,flightCamera);if(pr&&pr.catch)pr.catch(e=>console.warn('[galsky] precompile',e));}
   catch(e){console.warn('[galsky] precompile',e);}
   finally{for(const o of hidden)o.visible=false;}
+  return pr;
 }
 // Where the current system sits in the galaxy (ly, world axes, Sun = origin).
 // Sol → origin. Other systems get a stable position a few to a few hundred
