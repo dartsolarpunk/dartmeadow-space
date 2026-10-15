@@ -5912,7 +5912,8 @@ function _discSpawn(key,cell,sysKey){
   mesh.position.set(cx,cy,cz);
   const tail=mesh.getObjectByName&&mesh.getObjectByName('cometTail');
   if(tail){const away=mesh.position.clone().normalize();tail.position.copy(away.clone().multiplyScalar(r*19));tail.quaternion.setFromUnitVectors(new THREE.Vector3(0,-1,0),away.negate());}
-  flightScene.add(mesh);
+  mesh.visible=false; flightScene.add(mesh);
+  _dmCompileObject(mesh).then(()=>{ mesh.visible=true; });   // shown once its shaders exist (no stall when it drifts into view)
   const body={mesh,name,type:type.t==='Rogue Planet'?'Rocky':type.t,temp:Math.round(20+rand()*40)+' K',orbitR:0,orbitSpd:0,angle:0,
     landable:true,gravity:type.t==='Rogue Planet'?0.7:0.04,collisionRadius:r,hasTerrain:true,isProcedural:true,
     mcRadius:r,mcSeed:seed,mcColor:col,mcHasAtm:false,mcKind:'rocky',
@@ -11612,6 +11613,28 @@ async function upgradeWebGLPlanetLOD(){
   }
 }
 
+// ── Compile-before-show ───────────────────────────────────────────────────
+// A mesh with a material the GPU has never drawn makes the phone stall 0.5–2 s the first frame it appears (the
+// pipeline is built right then). So anything created while you fly (a planet's next detail level, a rogue planet or
+// comet drifting into range) is added HIDDEN, its pipelines are compiled off to the side, and only then does it
+// show — the old version keeps drawing until the new one is ready. Resolves when shown, or after 5 s regardless.
+function _dmCompileObject(obj){
+  return new Promise(res=>{
+    let done=false; const fin=()=>{ if(done) return; done=true; res(); };
+    try{
+      const r=(typeof flightRenderer!=='undefined')&&flightRenderer;
+      if(!r||!r.compileAsync||!obj||typeof flightScene==='undefined'||!flightScene){ fin(); return; }
+      setTimeout(fin,5000);
+      const un=[], hid=[], wasVis=obj.visible;
+      obj.traverse(o=>{ if(o.frustumCulled){ o.frustumCulled=false; un.push(o); } if(o!==obj&&!o.visible){ o.visible=true; hid.push(o); } });
+      obj.visible=true;
+      let p=null;
+      try{ p=r.compileAsync(obj,flightCamera,flightScene); }catch(e){ p=null; }   // projects synchronously; the rest is async
+      finally{ for(const o of un) o.frustumCulled=true; for(const o of hid) o.visible=false; obj.visible=wasVis; }
+      if(p&&p.then) p.then(fin,fin); else fin();
+    }catch(e){ fin(); }
+  });
+}
 async function upgradePlanetLOD(dt){
   if(_lodPlanetBusy)return; // one rebuild in flight at a time — avoid GPU contention
   if(!STATE.flight||!STATE.flight.pos)return;
@@ -11646,13 +11669,17 @@ async function upgradePlanetLOD(dt){
   b._mcLodT=performance.now();
   try{
     const newGroup=await buildProceduralPlanetMesh(b.mcRadius,b.mcSeed,b.mcColor,b.mcHasAtm,newRes,b.mcKind);
+    // compile the new detail level hidden, beside the old one, so the swap never stalls the frame
+    newGroup.visible=false; newGroup.position.copy(b.mesh.position); newGroup.rotation.copy(b.mesh.rotation);
+    flightScene.add(newGroup);
+    await _dmCompileObject(newGroup);
     const oldGroup=b.mesh;
     // Preserve position/rotation and any tagged extras (rings, moon)
     newGroup.position.copy(oldGroup.position);
     newGroup.rotation.copy(oldGroup.rotation);
     const extras=oldGroup.children.filter(c=>c.isPlanetExtra);
     extras.forEach(c=>newGroup.add(c));
-    flightScene.add(newGroup);
+    newGroup.visible=true;
     flightScene.remove(oldGroup);
     _disposeObject3D(oldGroup);
     b.mesh=newGroup;
@@ -13774,7 +13801,7 @@ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded'
     return {platform:_dmPlatform(),app:(window.DMAndroid&&DMAndroid.version)?DMAndroid.version():null,webview:m[2]||null,
       backend:real===null?'not-started':real?'WebGPU':'WebGL2-fallback',navGpu:!!navigator.gpu,gpu:g.renderer||'',vendor:g.vendor||'',
       gpuClass:g.gpuClass,score:g.score,preset:g.preset,resScale:g.resScale,cores:navigator.hardwareConcurrency||0,mem:navigator.deviceMemory||0,
-      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:'sw-v79',ua:navigator.userAgent};
+      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:'sw-v80',ua:navigator.userAgent};
   }
   function flush(){
     const f=win.f; win.f=[]; const t0=win.t0; win.t0=performance.now();
