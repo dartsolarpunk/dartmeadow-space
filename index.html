@@ -967,7 +967,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 </style>
 
 <script src="ui/dm-safety.js?v=1" defer></script>
-<script src="jots/jots-link.js?v=83" defer></script>
+<script src="jots/jots-link.js?v=84" defer></script>
 <script src="ui/dm-friends.js?v=2" defer></script>
 <script src="ui/dm-spectator.js?v=1" defer></script>
 <script src="ui/dm-stack.js?v=1" defer></script>
@@ -4415,9 +4415,9 @@ const GFX_BUDGETS = {
   // Low = cheaper N, SAME GPU MC architecture (not a parallel forever-GL stack).
   // atmoView/SunSamples: Rayleigh march counts (sandbox peak 10/5) — Med/High raise thin 4/3 port.
   low:    {galaxyArm:14000, galaxyCore:6000, dustSprites:400,  nebulaClouds:2, starCount:2000,  planetSeg:24, mcPrefer:true,  mcPlanetHigh:16, mcPlanetMed:12, mcPlanetLow:8,  mcSurfHigh:20, mcSurfMed:16, mcSurfLow:12, atmoViewSamples:4,  atmoSunSamples:3},
-  medium: {galaxyArm:32000, galaxyCore:10000,dustSprites:1200, nebulaClouds:4, starCount:5000,  planetSeg:48, mcPrefer:true,  mcPlanetHigh:28, mcPlanetMed:18, mcPlanetLow:10, mcSurfHigh:26, mcSurfMed:20, mcSurfLow:16, atmoViewSamples:6,  atmoSunSamples:4},
-  high:   {galaxyArm:52000, galaxyCore:15000,dustSprites:2500, nebulaClouds:6, starCount:12000, planetSeg:72, mcPrefer:true,  mcPlanetHigh:40, mcPlanetMed:20, mcPlanetLow:10, mcSurfHigh:28, mcSurfMed:24, mcSurfLow:18, atmoViewSamples:8,  atmoSunSamples:5},
-  ultra:  {galaxyArm:65000, galaxyCore:18000,dustSprites:5000, nebulaClouds:8, starCount:20000, planetSeg:96, mcPrefer:true,  mcPlanetHigh:40, mcPlanetMed:24, mcPlanetLow:12, mcSurfHigh:28, mcSurfMed:24, mcSurfLow:18, atmoViewSamples:10, atmoSunSamples:5},
+  medium: {galaxyArm:24000, galaxyCore:7500,dustSprites:1200, nebulaClouds:4, starCount:5000,  planetSeg:48, mcPrefer:true,  mcPlanetHigh:28, mcPlanetMed:18, mcPlanetLow:10, mcSurfHigh:26, mcSurfMed:20, mcSurfLow:16, atmoViewSamples:6,  atmoSunSamples:4},
+  high:   {galaxyArm:39000, galaxyCore:11500,dustSprites:2500, nebulaClouds:6, starCount:12000, planetSeg:72, mcPrefer:true,  mcPlanetHigh:32, mcPlanetMed:20, mcPlanetLow:10, mcSurfHigh:24, mcSurfMed:24, mcSurfLow:18, atmoViewSamples:8,  atmoSunSamples:5},
+  ultra:  {galaxyArm:49000, galaxyCore:14000,dustSprites:5000, nebulaClouds:8, starCount:20000, planetSeg:96, mcPrefer:true,  mcPlanetHigh:32, mcPlanetMed:20, mcPlanetLow:10, mcSurfHigh:24, mcSurfMed:24, mcSurfLow:18, atmoViewSamples:10, atmoSunSamples:5},
 };
 
 
@@ -13805,7 +13805,7 @@ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded'
    and how many samples the GPU takes per pixel. */
 window.dmSceneText=function(){
   const L=[]; let r=null; try{ r=(typeof flightRenderer!=='undefined')?flightRenderer:null; }catch(e){}
-  let all=0, vis=0, pts=0, spr=0, meshes=0, inst=0; const byTier={};
+  let all=0, vis=0, pts=0, spr=0, meshes=0, inst=0; const byTier={}, heavy=[];
   const tri=(o)=>{ const g=o.geometry; if(!g) return 0; const n=g.index?g.index.count:(g.attributes.position?g.attributes.position.count:0); return Math.floor(n/3)*(o.isInstancedMesh?(o.count||1):1); };
   try{
     const sc=(typeof flightScene!=='undefined')?flightScene:null;
@@ -13813,7 +13813,7 @@ window.dmSceneText=function(){
       if(o.isPoints){ pts+=o.geometry&&o.geometry.attributes.position?o.geometry.attributes.position.count:0; return; }
       if(o.isSprite){ spr+=(o.count||1); return; }
       if(!o.isMesh) return;
-      const t=tri(o); all+=t; meshes++; if(o.isInstancedMesh) inst++;
+      const t=tri(o); all+=t; meshes++; if(o.isInstancedMesh) inst++; if(t>20000){ let n=o.name||''; for(let q=o,k=0;!n&&q&&k<4;q=q.parent,k++) n=q.name||''; heavy.push([t,(n||o.type)+(o.isInstancedMesh?' x'+o.count:'')+(o.visible?'':' (hidden)')]); }
       let v=o.visible, p=o.parent; while(v&&p){ v=p.visible; p=p.parent; } if(v) vis+=t;
     });
   }catch(e){}
@@ -13826,6 +13826,7 @@ window.dmSceneText=function(){
   L.push(' triangles in objects switched on (visible)        : '+fmt(vis));
   try{ const i=r&&r.info; if(i&&i.render) L.push(' triangles drawn last frame (renderer, after culling) : '+fmt(i.render.triangles)+'   draw calls '+fmt(i.render.calls||0)); }catch(e){}
   L.push(' meshes '+fmt(meshes)+' (instanced '+inst+')   points '+fmt(pts)+'   sprites '+fmt(spr));
+  heavy.sort((a,b)=>b[0]-a[0]); L.push(' heaviest objects:'); heavy.slice(0,10).forEach(h=>L.push('   '+fmt(h[0])+'  '+h[1]));
   L.push(' bodies by detail tier: '+Object.keys(byTier).map(k=>k+' '+byTier[k]).join(', '));
   try{ const i=r&&r.info&&r.info.memory; if(i) L.push(' GPU objects: geometries '+i.geometries+', textures '+i.textures); }catch(e){}
   L.push('');
@@ -13853,7 +13854,7 @@ window.dmSceneText=function(){
     return {platform:_dmPlatform(),app:(window.DMAndroid&&DMAndroid.version)?DMAndroid.version():null,webview:m[2]||null,
       backend:real===null?'not-started':real?'WebGPU':'WebGL2-fallback',navGpu:!!navigator.gpu,gpu:g.renderer||'',vendor:g.vendor||'',
       gpuClass:g.gpuClass,score:g.score,preset:g.preset,resScale:g.resScale,cores:navigator.hardwareConcurrency||0,mem:navigator.deviceMemory||0,
-      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:'sw-v87',ua:navigator.userAgent};
+      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:'sw-v88',ua:navigator.userAgent};
   }
   function flush(){
     const f=win.f; win.f=[]; const t0=win.t0; win.t0=performance.now();
@@ -15636,7 +15637,7 @@ function _gsBudget(){
   const particles=(STATE&&STATE.settings&&STATE.settings.particles)||'med';
   const mobile=!!(typeof GFX!=='undefined'&&GFX&&GFX.isMobile);
   const low=!!(typeof GFX!=='undefined'&&GFX&&GFX.preset==='low')||particles==='low';
-  const table={low:[9000,6000],med:[34000,15000],high:[56000,24000],ultra:[80000,32000]};
+  const table={low:[7000,4500],med:[26000,11000],high:[42000,18000],ultra:[60000,24000]};   // 25% fewer galaxy particles
   const row=low?table.low:(table[particles]||table.med);
   return {galaxy:mobile?row[1]:row[0], mobile, low,
     local:low?500:(mobile?800:1600), haze:low?260:(mobile?420:700), lg:low?0.4:(mobile?0.6:1)};

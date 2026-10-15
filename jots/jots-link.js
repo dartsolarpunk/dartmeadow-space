@@ -180,8 +180,18 @@
     // the tab went to the background, and skips the wait.
     pollNow() { this._now = true; try { if (this._ctl) this._ctl.abort(); } catch (e) {} if (this._wake) this._wake(); },
     async waitForToken(dev, onTick, onBusy) {
+      // Split screen / two windows: the game window may never get a focus or visibility event when you approve in the
+      // other one, so any sign of life here (a tap, a resize, the window coming back, the network returning) checks at once.
+      let _lastKick = 0;
+      const kick = () => { const n = Date.now(); if (n - _lastKick < 5500) return; if (this._ctl && n - (this._ctlT || 0) < 9000) return; _lastKick = n; this.pollNow(); };
+      const evs = ['pointerdown', 'pointermove', 'touchstart', 'resize', 'pageshow', 'online', 'mouseover'];
+      evs.forEach((e) => window.addEventListener(e, kick, { passive: true }));
+      try { return await this._waitForToken(dev, onTick, onBusy); }
+      finally { evs.forEach((e) => window.removeEventListener(e, kick)); }
+    },
+    async _waitForToken(dev, onTick, onBusy) {
       const until = Date.now() + (dev.expires_in || 900) * 1000;
-      let wait = Math.max(5, dev.interval || 5) * 1000, last = 0;
+      let wait = Math.max(5, dev.interval || 5) * 1000, last = 0;   // GitHub's minimum is 5 s between checks
       while (Date.now() < until) {
         if (!this._now) await new Promise((r) => { const t = setTimeout(r, Math.max(0, wait - (Date.now() - last))); this._wake = () => { clearTimeout(t); r(); }; });
         this._wake = null;
@@ -192,7 +202,7 @@
         let d;
         try {
           const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 15000);
-          this._ctl = ctl;
+          this._ctl = ctl; this._ctlT = Date.now();
           const r = await fetch(CFG.gas + '?action=devicepoll&device_code=' + encodeURIComponent(dev.device_code) + '&t=' + Date.now(), { signal: ctl.signal, cache: 'no-store' });
           clearTimeout(to);
           d = JSON.parse(await r.text());
