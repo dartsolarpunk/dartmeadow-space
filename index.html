@@ -4583,19 +4583,21 @@ function _dynRes(r){
   // Only on AUTO graphics (or an explicit dynamicRes opt-in). A player who
   // picked Low/Medium/High/Ultra/Custom gets exactly that resolution —
   // Ultra stays Ultra; if we'd eased it down earlier, put it back.
-  if(GFX.preset!=='auto'&&GFX.dynamicRes!==true){
+  // (changed: the balance now runs on every preset unless the player switched it off — the preset is still the
+  //  ceiling and the floor on a chosen preset is 72%, so Ultra stays sharp but no longer stair-steps near a Sun)
+  if(GFX.dynamicRes===false){
     if(d.k!==1){ d.k=1; try{ r.setPixelRatio(effectivePixelRatio()); r.setSize(window.innerWidth,window.innerHeight); }catch(e){} }
     d.t=now; return;
   }
   const ms=Math.min(250,now-d.t); d.t=now; if(ms<=0) return;
   d.ema+=(ms-d.ema)*0.06;
-  const target=GFX.isMobile?33.4:20.0;            // aim for ~30 fps on phones and tablets, ~50 on desktops
+  const target=GFX.isMobile?(GFX.preset==='auto'?33.4:21.0):18.0;            // aim for ~30 fps on phones and tablets, ~50 on desktops
   d.cool=Math.max(0,d.cool-ms);
   if(d.cool>0) return;
   let k=d.k;
   // diving into a star (volumetric plasma + the bubble's lens fill the screen)
   // resolution may drop further and faster; back out, it snaps back to 60%
-  const starHot=!!(window.DMStarBubble&&(DMStarBubble.a>0.05||DMStarBubble.inStar)), floor=starHot?0.42:0.6;
+  const starHot=!!(window.DMStarBubble&&(DMStarBubble.a>0.05||DMStarBubble.inStar)), floor=GFX.preset==='auto'?(starHot?0.42:0.6):(starHot?0.6:0.72);
   if(k<floor){ k=floor; }
   else if(d.ema>target*1.18&&k>floor){ k=Math.max(floor,k-(starHot?0.12:0.08)); }
   else if(d.ema<target*0.72&&k<1){ d.hold+=ms; if(d.hold>2500){ k=Math.min(1,k+0.05); d.hold=0; } }
@@ -13068,7 +13070,7 @@ function closeSupport(){const m=$('support-modal');if(m)m.style.display='none';}
 
 function openSettings(){try{releaseMouseLook();}catch(e){}
   // sync controls to live GFX + STATE.settings
-  try{ if($('set-quality'))$('set-quality').value=GFX.preset||'auto'; if($('set-autobal')){ $('set-autobal').checked=(GFX.preset==='auto')||GFX.dynamicRes===true; $('set-autobal').disabled=(GFX.preset==='auto'); } }catch(e){}
+  try{ if($('set-quality'))$('set-quality').value=GFX.preset||'auto'; if($('set-autobal')){ $('set-autobal').checked=(GFX.preset==='auto')||GFX.dynamicRes!==false; $('set-autobal').disabled=(GFX.preset==='auto'); } }catch(e){}
   syncSettingsUIFromState();
   $('settings-modal').classList.add('open');
 }
@@ -13320,7 +13322,17 @@ function _pfRender(){
       const ta=document.createElement('textarea'); ta.id='pf-perf-ta'; ta.readOnly=true; ta.style.cssText='display:none;width:100%;height:34vh;background:#00101c;color:#0ef;border:1px solid #0ef;font:11px monospace;padding:6px;box-sizing:border-box;user-select:text;-webkit-user-select:text';
       const row=document.createElement('div'); row.style.cssText='display:flex;gap:6px;flex-wrap:wrap'; row.hidden=true; row.id='pf-perf-row';
       const mkb=(t,fn)=>{ const b=document.createElement('button'); b.className='pf-btn'; b.textContent=t; b.onclick=fn; return b; };
-      const cp=mkb('COPY LOG',()=>{ ta.value=window.dmPerfText(); ta.focus(); ta.select(); ta.setSelectionRange(0,ta.value.length); let ok=false; try{ ok=document.execCommand('copy'); }catch(e){} if(!ok&&navigator.clipboard) navigator.clipboard.writeText(ta.value).then(()=>{cp.textContent='COPIED \u2713';},()=>{}); cp.textContent=ok?'COPIED \u2713':'COPY LOG (if nothing, long-press the text, Select all, Copy)'; });
+      const cp=mkb('COPY LOG',()=>{
+        const txt=window.dmPerfText(); ta.value=txt;
+        const sel=()=>{ try{ ta.focus(); ta.select(); ta.setSelectionRange(0,txt.length); }catch(e){} };
+        const legacy=()=>{ sel(); let ok=false; try{ ok=document.execCommand('copy'); }catch(e){} return ok; };
+        const done=ok=>{ cp.textContent=ok?'COPIED \u2713 (paste to check)':'SELECTED \u2014 tap Copy in the popup, or long-press the text'; if(!ok) sel(); };
+        // iPhone Safari drops a copy made after any delay: run the legacy copy synchronously inside the tap first,
+        // and also write through the async clipboard (kept alive by the same tap) so one of the two sticks
+        const ok1=legacy(); let p=null;
+        try{ if(navigator.clipboard&&navigator.clipboard.writeText) p=navigator.clipboard.writeText(txt); }catch(e){}
+        if(p&&p.then) p.then(()=>done(true),()=>done(ok1)); else done(ok1);
+      });
       const rf=mkb('REFRESH',()=>{ ta.value=window.dmPerfText(); });
       const cl=mkb('CLEAR',()=>{ window.dmPerfClear(); ta.value=window.dmPerfText(); });
       row.append(cp,rf,cl);
@@ -13724,7 +13736,7 @@ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded'
     return {platform:_dmPlatform(),app:(window.DMAndroid&&DMAndroid.version)?DMAndroid.version():null,webview:m[2]||null,
       backend:real===null?'not-started':real?'WebGPU':'WebGL2-fallback',navGpu:!!navigator.gpu,gpu:g.renderer||'',vendor:g.vendor||'',
       gpuClass:g.gpuClass,score:g.score,preset:g.preset,resScale:g.resScale,cores:navigator.hardwareConcurrency||0,mem:navigator.deviceMemory||0,
-      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:'sw-v53',ua:navigator.userAgent};
+      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:'sw-v76',ua:navigator.userAgent};
   }
   function flush(){
     const f=win.f; win.f=[]; const t0=win.t0; win.t0=performance.now();
