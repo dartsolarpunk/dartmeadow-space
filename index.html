@@ -6205,11 +6205,17 @@ async function _flightWarmup(){
     pill.style.cssText='position:fixed;left:50%;bottom:calc(12% + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:9500;padding:8px 16px;border-radius:999px;background:rgba(4,10,18,.78);border:1px solid rgba(120,200,255,.35);color:#9fd8ff;font:600 11px/1.2 system-ui,sans-serif;letter-spacing:.14em;text-transform:uppercase;pointer-events:none';
     document.body.appendChild(pill);
   }catch(e){}
+  // compileAsync skips anything outside the camera's view (it culls like a real frame) — so the Sun, planets and
+  // clouds behind you were never compiled, and the first time you turned toward them the phone stalled. Switch culling
+  // off for the duration of the warm-up so everything is compiled and uploaded, wherever it is, then put it back.
+  const _unculled=[];
+  try{ flightScene.traverse(o=>{ if(o.frustumCulled){ o.frustumCulled=false; _unculled.push(o); } }); }catch(e){}
   const steps=[
     ['world',()=>flightRenderer.compileAsync(flightScene,flightCamera)],
     ['sun and flares',()=>window.DMStar&&DMStar.warm&&DMStar.warm(flightCamera)],
     ['planet mist',()=>window.DMMist&&DMMist.warm&&DMMist.warm(flightCamera)],
-    ['galaxy',()=>galSky&&galSky.ready&&_gsPrecompile()]
+    ['galaxy',()=>galSky&&galSky.ready&&_gsPrecompile()],
+    ['uploading',async()=>{ try{ flightRenderer.render(flightScene,flightCamera); }catch(e){} }]   // one real pass: buffers, textures, bind groups
   ];
   for(let i=0;i<steps.length;i++){
     if(pill) pill.textContent='Preparing '+steps[i][0]+'  '+(i+1)+'/'+steps.length;
@@ -6218,6 +6224,7 @@ async function _flightWarmup(){
     console.log('[warmup]',steps[i][0],(performance.now()-t).toFixed(0)+'ms');
     await new Promise(r=>setTimeout(r,16));   // let the page breathe between steps
   }
+  try{ for(const o of _unculled) o.frustumCulled=true; }catch(e){}
   try{ if(pill) pill.remove(); }catch(e){}
   try{ window._warmupMs=Math.round(performance.now()-t0); }catch(e){}
 }
@@ -13767,7 +13774,7 @@ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded'
     return {platform:_dmPlatform(),app:(window.DMAndroid&&DMAndroid.version)?DMAndroid.version():null,webview:m[2]||null,
       backend:real===null?'not-started':real?'WebGPU':'WebGL2-fallback',navGpu:!!navigator.gpu,gpu:g.renderer||'',vendor:g.vendor||'',
       gpuClass:g.gpuClass,score:g.score,preset:g.preset,resScale:g.resScale,cores:navigator.hardwareConcurrency||0,mem:navigator.deviceMemory||0,
-      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:'sw-v77',ua:navigator.userAgent};
+      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:'sw-v78',ua:navigator.userAgent};
   }
   function flush(){
     const f=win.f; win.f=[]; const t0=win.t0; win.t0=performance.now();
@@ -13799,12 +13806,14 @@ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded'
   (function(){
     const KEY='dm_hitch_log'; let hl=[]; try{ hl=JSON.parse(localStorage.getItem(KEY)||'[]'); }catch(e){}
     let cur=[], last=0;
+    // time every animation-frame callback: if a slow frame shows 'raf' with small ms, the delay is the GPU / compositor, not our code
+    try{ const raf0=window.requestAnimationFrame.bind(window); window.requestAnimationFrame=function(cb){ return raf0(function(t){ const s=performance.now(); try{ return cb(t); } finally{ const d=performance.now()-s; if(d>8&&cur.length<24) cur.push(['raf:'+(cb.name||'cb'),+d.toFixed(1)]); } }); }; }catch(e){}
     const rec=(n,ms)=>{ if(ms>8&&cur.length<24) cur.push([n,+ms.toFixed(1)]); };
     function wrapFn(name){ try{ const f=window[name]; if(typeof f!=='function'||f.__dmT) return; const w=function(){ const t=performance.now(); try{ return f.apply(this,arguments); } finally{ rec(name,performance.now()-t); } }; w.__dmT=1; Object.keys(f).forEach(k=>{ try{ w[k]=f[k]; }catch(e){} }); window[name]=w; }catch(e){} }
     function wrapObj(o,label,names){ try{ if(!o) return; names.forEach(n=>{ const f=o[n]; if(typeof f!=='function'||f.__dmT) return; const w=function(){ const t=performance.now(); try{ return f.apply(this,arguments); } finally{ rec(label+'.'+n,performance.now()-t); } }; w.__dmT=1; o[n]=w; }); }catch(e){} }
     setTimeout(()=>{
       ['updateGalSky','buildGalSky','setGalSkySystem','upgradePlanetLOD','buildProceduralPlanetMesh','rebuildFlightForSystem','buildSolarSystem',
-       'generateSeededStarField','loadCharacterAssets','_gsUpdateBlackHoles','renderWithPostFX','_attachJotsNearFill','_updateJotsWorldsFog','mountSkyboard','remountSkyboard']
+       'generateSeededStarField','loadCharacterAssets','updateFlight','updateBodies','_pwSpaceWatch','updateCharOrbitCamera','updateBirdTemple','updateDistantSystems','updateVolumetricDust','updateHUD','updateCrosshairLabel','drawMinimap','applySkyboardStance','_updateCharDebugHUD','_gsUpdateBlackHoles','renderWithPostFX','_attachJotsNearFill','_updateJotsWorldsFog','mountSkyboard','remountSkyboard']
         .forEach(wrapFn);
       wrapObj(window.DMStar,'DMStar',['frame','build']); wrapObj(window.DMMist,'DMMist',['frame','planetClouds','beltDust']);
     },4000);
