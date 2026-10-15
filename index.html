@@ -972,8 +972,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-spectator.js?v=1" defer></script>
 <script src="ui/dm-stack.js?v=1" defer></script>
 <script src="ui/dm-globe.js?v=7" defer></script>
-<script src="ui/dm-star.js?v=6" defer></script>
-<script src="ui/dm-mist.js?v=1" defer></script>
+<script src="ui/dm-star.js?v=7" defer></script>
+<script src="ui/dm-mist.js?v=2" defer></script>
 <script src="ui/dm-menuscene.js?v=7" defer></script>
 <script src="ui/dm-starbubble.js?v=3" defer></script>
 </head>
@@ -13749,6 +13749,32 @@ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded'
   addEventListener('pointerdown',ev=>hit(ev.clientX,ev.clientY),true);
   addEventListener('touchstart',ev=>{ if(ev.touches.length>=3){ window.dmPerfReport(); return; } const t=ev.touches[0]; if(t) hit(t.clientX,t.clientY); },{capture:true,passive:true});
   if(/[?&]perf\b/.test(location.search)) setTimeout(window.dmPerfReport,3000);
+  /* ── hitch tracer ────────────────────────────────────────────────────────────
+     When a frame takes >70 ms, the log says WHICH subsystem ate it: the big engine entry points are timed
+     (their synchronous part) and every slow call within the frame is recorded. Shows up at the bottom of the
+     PERFORMANCE LOG report ("HITCHES"), so a stutter on a phone can be pasted back instead of guessed at. */
+  (function(){
+    const KEY='dm_hitch_log'; let hl=[]; try{ hl=JSON.parse(localStorage.getItem(KEY)||'[]'); }catch(e){}
+    let cur=[], last=0;
+    const rec=(n,ms)=>{ if(ms>8&&cur.length<24) cur.push([n,+ms.toFixed(1)]); };
+    function wrapFn(name){ try{ const f=window[name]; if(typeof f!=='function'||f.__dmT) return; const w=function(){ const t=performance.now(); try{ return f.apply(this,arguments); } finally{ rec(name,performance.now()-t); } }; w.__dmT=1; Object.keys(f).forEach(k=>{ try{ w[k]=f[k]; }catch(e){} }); window[name]=w; }catch(e){} }
+    function wrapObj(o,label,names){ try{ if(!o) return; names.forEach(n=>{ const f=o[n]; if(typeof f!=='function'||f.__dmT) return; const w=function(){ const t=performance.now(); try{ return f.apply(this,arguments); } finally{ rec(label+'.'+n,performance.now()-t); } }; w.__dmT=1; o[n]=w; }); }catch(e){} }
+    setTimeout(()=>{
+      ['updateGalSky','buildGalSky','setGalSkySystem','upgradePlanetLOD','buildProceduralPlanetMesh','rebuildFlightForSystem','buildSolarSystem',
+       'generateSeededStarField','loadCharacterAssets','_gsUpdateBlackHoles','renderWithPostFX','_attachJotsNearFill','_updateJotsWorldsFog','mountSkyboard','remountSkyboard']
+        .forEach(wrapFn);
+      wrapObj(window.DMStar,'DMStar',['frame','build']); wrapObj(window.DMMist,'DMMist',['frame','planetClouds','beltDust']);
+    },4000);
+    function tick(t){
+      if(last&&!document.hidden){ const d=t-last;
+        if(d>70&&d<4000){ const top=cur.slice().sort((a,b)=>b[1]-a[1]).slice(0,4).map(x=>x[0]+' '+x[1]+'ms').join(', ');
+          hl.push({at:new Date().toISOString().slice(11,19),screen:(typeof STATE!=='undefined'&&STATE.screen)||'?',ms:Math.round(d),top:top||'(no timed call — GPU/driver: shader compile or buffer upload)'});
+          if(hl.length>40) hl.shift(); try{ localStorage.setItem(KEY,JSON.stringify(hl)); }catch(e){} } }
+      last=t; cur=[]; requestAnimationFrame(tick); }
+    requestAnimationFrame(tick);
+    const t0=window.dmPerfText; if(typeof t0==='function') window.dmPerfText=function(){ return t0()+'\n\nHITCHES (frames >70 ms, newest last)\n'+(hl.length?hl.map(e=>e.at+' '+e.screen+' '+e.ms+'ms  '+e.top).join('\n'):'none recorded'); };
+    const c0=window.dmPerfClear; window.dmPerfClear=function(){ hl=[]; try{ localStorage.removeItem(KEY); }catch(e){} if(typeof c0==='function') c0(); };
+  })();
 })();
 function _dmAndroidExitCopy(){
   const m=$('exit-modal'); if(!m||m.__dmAndroid) return; m.__dmAndroid=true;
@@ -15056,7 +15082,7 @@ const GALSKY={
   WISP:true,             // 3D-noise wisps inside each cloud's haze (one texture read per pixel)              // halo reach vs the old solid cloud (the visible core is far smaller)
   R0:26670, ZSUN:68,     // Sun: distance from centre, height above plane (ly)
   PITCH:12*Math.PI/180,  // arm pitch angle
-  PERSEUS_R:33200,       // Perseus arm radius at the Sun's azimuth (ly)
+  PERSEUS_R:26670,       // the arm through the Sun's azimuth (ly) = R0: Sol sits ON a spiral arm, not in a gap beside it
   DISK_L:8480,           // exponential disc scale length (ly)
   RMAX:56000,            // disc cut-off radius (ly)
   BAR_HALF:13000, BAR_ANG:27*Math.PI/180,
@@ -15108,13 +15134,10 @@ function sampleMilkyWay(N,seed){
   }
   const armW=[0.38,0.12,0.38,0.12];               // Perseus, Sagittarius, Scutum, Norma–Outer
   const bar=[Math.cos(G.BAR_ANG),Math.sin(G.BAR_ANG)];
-  // Orion Spur centreline through the Sun, pitched like the arms.
-  const radial=[-1,0], phiHat=[0,-1];             // at θ=π: outward = −X, +θ = −Z
-  const spurDir=[phiHat[0]*Math.cos(G.PITCH)-radial[0]*Math.sin(G.PITCH), phiHat[1]*Math.cos(G.PITCH)-radial[1]*Math.sin(G.PITCH)];
   for(let i=0;i<N;i++){
     const u=rand();
     let x,y,z,kd,r;
-    if(u<0.52){                                   // spiral arms
+    if(u<0.575){                                  // spiral arms (the Sun sits on one — see PERSEUS_R)
       let k=0,a=rand();for(;k<3&&a>armW[k];k++)a-=armW[k];
       if(rand()<0.34){
         const c=clumps[k][(rand()*clumps[k].length)|0];
@@ -15128,13 +15151,6 @@ function sampleMilkyWay(N,seed){
         x=Math.cos(th)*r; z=Math.sin(th)*r; kd=0;
       }
       y=_gsGauss(rand)*(220+r*0.006);
-    }else if(u<0.575){                            // Orion Spur (the Sun's local arm)
-      const s=-5200+rand()*14200;
-      const off=_gsGauss(rand)*700;
-      x=sun.x+spurDir[0]*s+(-spurDir[1])*off; z=sun.z+spurDir[1]*s+spurDir[0]*off;
-      y=_gsGauss(rand)*230;
-      if(Math.hypot(x-sun.x,z-sun.z)<150){i--;continue;} // local bubble: nearby stars come from the local set
-      kd=1;r=Math.hypot(x,z);
     }else if(u<0.75){                             // inter-arm field disc
       r=_gsDiskR(rand,1500,G.RMAX);
       const th=rand()*Math.PI*2;

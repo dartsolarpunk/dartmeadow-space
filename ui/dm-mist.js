@@ -174,10 +174,21 @@
 
   /* ───────────── per frame ───────────── */
   const _v = new THREE.Vector3();
+  // compile both cloud shells (seen-from-space and inside-the-layer) once, off the frame they first appear
+  function precompile(h, cam) {
+    try {
+      const r = (typeof flightRenderer !== 'undefined' && flightRenderer); if (!r || !r.compileAsync) return;
+      const sc = (typeof flightScene !== 'undefined' && flightScene); if (!sc) return;
+      const hid = []; h.group.traverse(o => { if (!o.visible) { hid.push(o); o.visible = true; } });
+      try { const p = r.compileAsync(sc, cam); if (p && p.catch) p.catch(() => {}); }
+      finally { for (const o of hid) o.visible = false; }
+    } catch (e) {}
+  }
   function frame(cam, dt) {
     if (!cam) return;
     for (const h of live) {
       if (!h.group.parent) { live.delete(h); continue; }
+      if (!h.pre) { h.pre = true; precompile(h, cam); }
       h.group.getWorldPosition(_v);
       const dist = cam.position.distanceTo(_v);
       const inside = dist < h.R * h.L.shell[1] && dist > h.R * h.L.shell[0] * 0.98;

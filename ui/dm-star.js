@@ -339,6 +339,21 @@
     return (h.matIn=m);
   }
 
+  /* Compile every pipeline this star can ever use (near surface, gas shell, prominences + ribbons)
+     once, off the frame it first matters. Without this the phone stalls for a moment the first time each
+     appears while you fly in, because the shader compiles synchronously right then. Same trick as the galaxy layer. */
+  function precompile(h,cam){
+    try{
+      const r=(typeof flightRenderer!=='undefined'&&flightRenderer)||null; if(!r||!r.compileAsync||!h||!h.mesh) return false;
+      const sc=(typeof flightScene!=='undefined'&&flightScene)||h.group.parent; if(!sc) return false;
+      const m0=h.mesh.material, hid=[];
+      h.group.traverse(o=>{ if(!o.visible){ hid.push(o); o.visible=true; } });
+      if(h.matNear) h.mesh.material=h.matNear;
+      try{ const p=r.compileAsync(sc,cam); if(p&&p.catch) p.catch(()=>{}); }
+      finally{ h.mesh.material=m0; for(const o of hid) o.visible=false; }
+      return true;
+    }catch(e){ return false; }
+  }
   const _v=()=>new THREE.Vector3();
   let V1=null;
   // per frame: level of detail by how big the star is on screen; corona centre;
@@ -349,6 +364,7 @@
     for(const h of live){
       if(!h.group.parent||!h.group.visible) continue;
       h.group.getWorldPosition(V1);
+      if(!h.pre&&h.T){ h.pre=true; precompile(h,cam); }
       const d=Math.max(1e-3,cam.position.distanceTo(V1));
       const ang=h.R/d;                                     // ~angular radius
       const near=ang>0.04;
