@@ -973,7 +973,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-stack.js?v=1" defer></script>
 <script src="ui/dm-globe.js?v=7" defer></script>
 <script src="ui/dm-star.js?v=8" defer></script>
-<script src="ui/dm-mist.js?v=5" defer></script>
+<script src="ui/dm-mist.js?v=6" defer></script>
 <script src="ui/dm-menuscene.js?v=7" defer></script>
 <script src="ui/dm-starbubble.js?v=3" defer></script>
 </head>
@@ -7663,20 +7663,7 @@ async function buildSolarSystem(){
     cg.add(new THREE.Points(tg,new THREE.PointsMaterial({size:.1,color:0x8888ff,transparent:true,opacity:.55})));
     cg.position.set((cometRand()-0.5)*AU*20,(cometRand()-0.5)*40,(cometRand()-0.5)*AU*20);
     flightScene.add(cg);if(typeof _trackSystemExtra==='function')_trackSystemExtra(cg);
-    // far beyond the planets: a few huge volumetric nebulae (ray-marched gas, dark lanes, filaments) for the sky behind the system
-    try{
-      if(window.DMMist&&DMMist.nebula){
-        const _lowN=(typeof _jotsAtmoSampleBudgets==='function')?(_jotsAtmoSampleBudgets().view<4):!!GFX.isMobile;
-        const nr=seedRand(hashStr('sol:nebulae'));
-        const defs=[[0,0.35],[1,2.1],[2,3.9],[3,5.2]];
-        for(let ni=0;ni<(_lowN?3:4);ni++){
-          const ang=defs[ni][1]+nr()*0.5, dist=70000+nr()*70000, rr=26000+nr()*30000, el=(nr()-0.5)*0.9;
-          const nm=DMMist.nebula(flightScene,{center:[Math.cos(ang)*dist*Math.cos(el),Math.sin(el)*dist,Math.sin(ang)*dist*Math.cos(el)],radius:rr,
-            stretch:[1+nr()*0.6,0.55+nr()*0.4,1+nr()*0.5],pal:defs[ni][0],seed:1+ni*3.7+nr()*5,low:_lowN});
-          if(nm&&typeof _trackSystemExtra==='function')_trackSystemExtra(nm);
-        }
-      }
-    }catch(e){ console.warn('[mist] nebula',e); }
+    // (background nebulae retired for now: too intense. DMMist.nebula stays available in ui/dm-mist.js)
     flightFlybys.push({name:'Comet '+COMET_NAMES[i],mesh:cg,labelRange:AU*0.25});
   }
   // Moons, dwarf planets and the genuinely new asteroids/comets (SOL_CATALOG)
@@ -13815,7 +13802,7 @@ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded'
     return {platform:_dmPlatform(),app:(window.DMAndroid&&DMAndroid.version)?DMAndroid.version():null,webview:m[2]||null,
       backend:real===null?'not-started':real?'WebGPU':'WebGL2-fallback',navGpu:!!navigator.gpu,gpu:g.renderer||'',vendor:g.vendor||'',
       gpuClass:g.gpuClass,score:g.score,preset:g.preset,resScale:g.resScale,cores:navigator.hardwareConcurrency||0,mem:navigator.deviceMemory||0,
-      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:'sw-v82',ua:navigator.userAgent};
+      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:'sw-v83',ua:navigator.userAgent};
   }
   function flush(){
     const f=win.f; win.f=[]; const t0=win.t0; win.t0=performance.now();

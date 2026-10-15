@@ -208,7 +208,7 @@
       const r = o.renderer || (typeof flightRenderer !== 'undefined' && flightRenderer) || null;
       if (!T || !r || !r.backend || r.backend.isWebGPUBackend !== true || typeof r.compute !== 'function' || !T.instancedArray || !T.Fn || !W.THREE.SpriteNodeMaterial) return null;
       const { float, vec2, vec3, vec4, Fn, If, hash, instanceIndex, mix, smoothstep, exp, select } = T;
-      const N = o.low ? 640 : 1400;
+      const N = o.low ? 900 : 2000;
       const posB = T.instancedArray(N, 'vec3'), velB = T.instancedArray(N, 'vec3'), ageB = T.instancedArray(N, 'vec2');   // age, life
       const uDt = T.uniform(0.016), uT = T.uniform(rnd() * 50), uRad = T.uniform(rad);
       const vd = [], vents = 3;
@@ -252,13 +252,13 @@
       const m = new THREE.SpriteNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.NormalBlending });
       const age = ageB.toAttribute(), u = age.x.div(age.y), hI = hash(instanceIndex);
       m.positionNode = posB.toAttribute();
-      m.scaleNode = uRad.mul(float(0.35).add(u.pow(0.55).mul(2.1))).mul(float(0.8).add(hI.mul(0.5)));
+      m.scaleNode = uRad.mul(float(0.16).add(u.pow(0.7).mul(1.15))).mul(float(0.8).add(hI.mul(0.5)));
       const ang = hI.mul(6.2832).add(age.x.mul(float(0.10).add(hI.mul(0.12))));
       const tex = T.texture(smokeTexture(), T.rotateUV(T.uv(), ang, vec2(0.5, 0.5)));
       const young = vec3(col[0], col[1], col[2]), tan = vec3(0.62, 0.48, 0.34), ash = vec3(0.24, 0.23, 0.23);
       const c1 = mix(young, tan, smoothstep(0.0, 0.35, u)), c2 = mix(c1, ash, smoothstep(0.3, 1.0, u));
       const bright = float(1.15).sub(u.mul(0.7));                                  // young smoke glows, old smoke is dim
-      const fade = smoothstep(0.0, 0.07, u).mul(float(1).sub(smoothstep(0.5, 1.0, u))).mul(0.62);
+      const fade = smoothstep(0.0, 0.07, u).mul(float(1).sub(smoothstep(0.5, 1.0, u))).mul(0.40);
       m.colorNode = vec4(c2.mul(bright), tex.a.mul(fade));
       const sprite = new THREE.Sprite(m); sprite.count = N; sprite.frustumCulled = false; sprite.renderOrder = 2; sprite.name = 'JOTS_AsteroidSmoke';
       let ready = false;
@@ -441,9 +441,12 @@
     for (const f of fumes) {   // asteroid fumes: only animate while you are within sight of the rock
       if (!f.group.parent) { fumes.delete(f); continue; }
       f.group.getWorldPosition(_v);
-      const fd = cam.position.distanceTo(_v), near = fd < f.rad * 260;
-      f.mesh.visible = near;
-      if (near) f.tick(cam, Math.min(0.1, dt || 1 / 60));
+      const fd = cam.position.distanceTo(_v), lim = f.rad * (f.on ? 150 : 110);      // hysteresis: no flicker at the edge
+      const near = fd < lim; f.on = near; f.mesh.visible = near;
+      if (near) {   // far plumes update every other frame; close ones every frame
+        f.acc = (f.acc || 0) + Math.min(0.1, dt || 1 / 60);
+        if (fd < f.rad * 45 || (f.skip = !f.skip)) { f.tick(cam, f.acc); f.acc = 0; }
+      }
     }
     for (const d of dusts) {
       if (!d.mesh.parent) { dusts.delete(d); continue; }
