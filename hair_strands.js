@@ -223,6 +223,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     }
   }
   buildStiffness();
+  let stiffDirty = false;
   const kMaxG = new Uint8Array(G);
   for (let g = 0; g < G; g++) kMaxG[g] = kMaxC[guideStrand[g]];
   const sp = new Float32Array(GK * 3);      // sim position (root-local)
@@ -280,6 +281,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   mesh.onBeforeRender = function (renderer, scene, camera) {
     camera.getWorldPosition(camPos); haveCam = true; renderSeen = true;
     if (gpu === null) gpu = initGPU(renderer);
+    if (gc === null && gpu) gc = initCompute(renderer);
     if (pendingDt > 0) { const d = pendingDt; pendingDt = 0; try { update(d); } catch (e) { if (!H._warned) { H._warned = 1; console.warn('[hair] update', e); } } }
   };
   root.add(mesh);
@@ -391,6 +393,29 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       return false;
     }
   }
+
+  /* ---------------- GPU guide solve (WebGPU backend only) ----------------
+     The ribbon shader's deflection texture is filled straight from the compute result (GPU->GPU
+     copy). Waits until three has created that texture, then hands the current CPU state over, so the
+     switch is seamless. Any failure falls back to the CPU solver below. */
+  let gc = null;   // null = undecided / waiting, false = CPU solve, object = GPU solve
+  let gcTex = null, gcResync = false;
+  function initCompute(renderer) {
+    const be = renderer && renderer.backend;
+    if (P.gpuCompute === false || !be || !be.isWebGPUBackend || !be.device || typeof GPUBufferUsage === 'undefined') return false;
+    if (nCols > HAIR_GPU_MAX_COLS) return false;
+    const td = be.get && be.get(gpu.tDisp);
+    if (!td || !td.texture) return null;   // not uploaded yet: retry next frame (CPU solve meanwhile)
+    try {
+      const c = createGuideSolverGPU(be.device, { G, K, gRest, segLen, bendLen, gStiff, gBend, clrG, slkG, kMaxG, SDF });
+      gcTex = td.texture; gcResync = true;
+      be.device.lost && be.device.lost.then(() => { gc = false; needInit = true; });
+      stats.mode = 'gpu-compute';
+      return c;
+    } catch (e) { console.warn('[hair] GPU guide solve unavailable, CPU path', e); return false; }
+  }
+  const gF = { M: new Float32Array(16), Mi: new Float32Array(16), grav: new Float32Array(4), wind: new Float32Array(4), shift: new Float32Array(4),
+               trig: new Float32Array(4), hc: new Float32Array(4), p0: new Float32Array(4), ip: new Uint32Array(4), cols: colBuf, sph: colSph, nCols, ext: [] };
 
   let NR = N;   // strands drawn
   function setStrandFraction(f) {
@@ -634,15 +659,19 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       C.lb = (C.lb || new THREE.Vector3()).copy(C.end || C.center).applyMatrix4(rootInv);
       C.lr = C.radius * Math.cbrt(Math.abs(rootInv.determinant()));
     }
+    const onGPU = !!(gc && !P.verifyRibbons && extra.length <= HAIR_GPU_MAX_EXTRA);
+    if (gc && gcResync && onGPU) { gc.setState(sp, sq); gcResync = false; }
+    if (!onGPU && gc) gcResync = true;   // CPU took over for a frame: re-sync the GPU state when it resumes
+    let reset = needInit || popped, shx = 0, shy = 0, shz = 0;
     // guide rest pose in root-local
-    for (let i = 0; i < GK; i++) {
+    for (let i = 0; i < GK && !onGPU; i++) {
       const o = i * 3, x = gRest[o], y = gRest[o + 1], z = gRest[o + 2];
       restM[o] = me[0] * x + me[4] * y + me[8] * z + me[12];
       restM[o + 1] = me[1] * x + me[5] * y + me[9] * z + me[13];
       restM[o + 2] = me[2] * x + me[6] * y + me[10] * z + me[14];
     }
-    if (needInit) { sp.set(restM); sq.set(restM); needInit = false; }
-    if (popped) { sp.set(restM); sq.set(restM); velS.set(0, 0, 0); haveLast = false; }
+    if (needInit) { if (!onGPU) { sp.set(restM); sq.set(restM); } needInit = false; }
+    if (popped) { if (!onGPU) { sp.set(restM); sq.set(restM); } velS.set(0, 0, 0); haveLast = false; }
 
     // root world motion -> small clamped inertial shift + steady apparent wind (tracks the HEAD bone)
     v3.setFromMatrixPosition(head.matrixWorld);
@@ -661,14 +690,15 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
         if (lc > 1e-9) {
           v3b.transformDirection(rootInv).multiplyScalar(lc / rs);
           const sx = -v3b.x, sy = -v3b.y, sz = -v3b.z;
-          for (let i = 0; i < GK; i++) {
+          shx = sx; shy = sy; shz = sz;
+          for (let i = 0; i < GK && !onGPU; i++) {
             const o = i * 3;
             sp[o] += sx; sp[o + 1] += sy; sp[o + 2] += sz;
             sq[o] += sx; sq[o + 1] += sy; sq[o + 2] += sz;
           }
         }
       }
-    } else if (dt >= 0.25) { sp.set(restM); sq.set(restM); velS.set(0, 0, 0); }
+    } else if (dt >= 0.25) { if (!onGPU) { sp.set(restM); sq.set(restM); } reset = true; velS.set(0, 0, 0); }
     lastRootW.copy(v3); haveLast = true;
     const vl = velS.length(), spd = vl / rs;
     motionWind = Math.min(P.maxMotionWind, spd * P.motionWind);
@@ -687,7 +717,25 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     time += dt;
     const n = Math.min(2, Math.max(1, Math.ceil(dt / (1 / 60))));
     const h = Math.min(dt, 1 / 30) / n;
-    for (let s = 0; s < n; s++) step(h, time);
+    if (onGPU) {
+      const F = gF, hh = h * h, gs = P.gravity * hh, wd = P.drag * hh;
+      F.M.set(me); F.Mi.set(mi);
+      F.grav[0] = gravL.x * gs; F.grav[1] = gravL.y * gs; F.grav[2] = gravL.z * gs; F.grav[3] = Math.pow(P.damping, h * 60);
+      F.wind[0] = windL.x * wd; F.wind[1] = windL.y * wd; F.wind[2] = windL.z * wd; F.wind[3] = P.windGust;
+      F.shift[0] = shx; F.shift[1] = shy; F.shift[2] = shz; F.shift[3] = reset ? 1 : 0;
+      F.trig[0] = Math.sin(time * 2.1); F.trig[1] = Math.cos(time * 2.1); F.trig[2] = Math.sin(time * 0.7); F.trig[3] = Math.cos(time * 0.7);
+      F.hc[0] = hcx; F.hc[1] = hcy; F.hc[2] = hcz; F.hc[3] = hcR2;
+      F.p0[0] = hsc2; F.p0[1] = P.friction; F.p0[2] = P.stretchBias; F.p0[3] = P.hairRadius;
+      F.ip[0] = Math.max(1, P.iterations | 0); F.ip[1] = Math.max(1, P.sdfEvery | 0); F.ip[2] = (P.capsuleEveryIteration ? 1 : 0) | (P.broadPhase ? 2 : 0) | (SDF ? 4 : 0); F.ip[3] = n;
+      F.ext.length = 0;
+      for (const C of extra) F.ext.push([C.la.x, C.la.y, C.la.z, C.lb.x, C.lb.y, C.lb.z, C.lr]);
+      if (stiffDirty) { gc.setStiffness(); stiffDirty = false; }
+      try { gc.setFrame(F); gc.run(gcTex, !!P.countContacts); stats.uploadBytes = gc.bytesLastFrame; }
+      catch (e) { console.warn('[hair] GPU guide solve failed, CPU path', e); gc = false; needInit = true; }
+    } else {
+      for (let s = 0; s < n; s++) step(h, time);
+      stats.uploadBytes = gpu ? GK * 16 : VERTS * 24;
+    }
     const tSim = (typeof performance !== 'undefined' ? performance.now() : Date.now());
     stats.simMs = tSim - t0;
 
@@ -697,11 +745,22 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     frame++;
     // host-driven child count (game: Auto graphics preset); re-read every ~2 s, cheap
     if (opts.getStrandFraction && frame % 120 === 1) { try { const f = +opts.getStrandFraction(); if (f > 0 && Math.abs(f - P.strandFraction) > 1e-3) setStrandFraction(f); } catch (e) {} }
+    if (onGPU && !gpu) { stats.ms = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0; stats.mode = 'gpu-compute'; return; }   // headless (tests)
+    if (gpu && onGPU) {
+      const U = gpu.U;
+      U.M.value.copy(M); U.Mi.value.copy(Mi); U.cam.value.copy(camL);
+      U.hc.value.set(hcx, hcy, hcz); U.hcR2.value = hcR2; U.hsc2.value = hsc2;
+      U.wR.value = wR; U.wT.value = wT; U.cc.value = cc ? 1 : 0;
+      stats.ms = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0;
+      stats.drawn = NR; stats.interleave = 1; stats.mode = 'gpu-compute';
+      return;
+    }
     if (gpu) {
+      if (gc) stats.mode = 'gpu';
       // deflection of every guide point from its groom (exactly what the CPU loop adds per child)
       const d = gpu.disp;
       for (let i = 0; i < GK; i++) { const o = i * 3, q = i * 4; d[q] = sp[o] - restM[o]; d[q + 1] = sp[o + 1] - restM[o + 1]; d[q + 2] = sp[o + 2] - restM[o + 2]; }
-      gpu.tDisp.needsUpdate = true;
+      gpu.tDisp.needsUpdate = true;   // (GPU solve: never set, the compute pass writes this texture)
       const U = gpu.U;
       U.M.value.copy(M); U.Mi.value.copy(Mi); U.cam.value.copy(camL);
       U.hc.value.set(hcx, hcy, hcz); U.hcR2.value = hcR2; U.hsc2.value = hsc2;
@@ -777,13 +836,304 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     params: P, stats, mesh, update, meta, get gpu() { return gpu; }, ribbonArrays: { pos, nrm },
     setEnabled(v) { P.enabled = !!v; mesh.visible = !!v; setCards(!v); setScalp(!!v); if (v) needInit = true; },
     setStrandFraction,
-    rebuildStiffness: buildStiffness,
+    rebuildStiffness() { buildStiffness(); stiffDirty = true; },
+    get compute() { return gc || null; },
+    // debug / parity: GPU guide state read back (null on the CPU path)
+    async readGuides() { return gc ? gc.read() : null; },
     addCollider(c) { extra.push(c); return c; },
     removeCollider(c) { const i = extra.indexOf(c); if (i >= 0) extra.splice(i, 1); },
     reset() { needInit = true; haveLast = false; havePM = false; },
     dispose() { root.remove(mesh); geo.dispose(); mesh.material.dispose(); if (gpu) gpu.textures.forEach((t) => t.dispose()); setCards(true); setScalp(false); if (scalpMat) scalpMat.dispose(); if (CHAR.mixer && origUpdate) { CHAR.mixer.update = origUpdate; CHAR.mixer.__hairHooked = false; } }
   };
+  // headless / test: solve on a caller-supplied GPUDevice without a renderer (no texture copy)
+  if (opts.computeDevice) { gc = createGuideSolverGPU(opts.computeDevice, { G, K, gRest, segLen, bendLen, gStiff, gBend, clrG, slkG, kMaxG, SDF }); gcTex = null; gcResync = true; }
   if (!opts.manual) hook();
   H.hook = hook;
   return H;
+}
+
+/* ============================================================================
+   Guide-strand PBD on WebGPU compute (engine-v90).
+   One invocation per guide runs the exact CPU step() (integrate, bending, length,
+   head SDF, body capsules with broad phase, friction) on persistent storage
+   buffers; the CPU only writes one small uniform block per frame (matrices,
+   gravity / wind / gust phase, inertial shift, colliders). The result, guide
+   deflection from the groom, is copied GPU->GPU into the ribbon shader's
+   deflection texture, so nothing per point crosses the bus.
+   D = { G, K, gRest, segLen, bendLen, gStiff, gBend, clrG, slkG, kMaxG, SDF }
+   ========================================================================== */
+export const HAIR_GPU_MAX_COLS = 16, HAIR_GPU_MAX_EXTRA = 8;
+const UF = 32 + 4 * 13 + 8 * HAIR_GPU_MAX_COLS + 4 * HAIR_GPU_MAX_COLS + 8 * HAIR_GPU_MAX_EXTRA;   // floats in the uniform block
+export function hairGuideWGSL(K) {
+  return /* wgsl */`
+const K : u32 = ${K}u;
+struct Cap { a : vec4f, b : vec4f };
+struct U {
+  M : mat4x4f, Mi : mat4x4f,
+  grav : vec4f,   // gravity*hh (xyz), damp
+  wind : vec4f,   // wind*drag*hh (xyz), windGust
+  shift : vec4f,  // inertial shift (xyz), reset flag
+  trig : vec4f,   // sin/cos(t*2.1), sin/cos(t*0.7)
+  hc : vec4f,     // SDF bounding sphere centre (root-local), R^2
+  p0 : vec4f,     // hsc2, friction, stretchBias, hairRadius
+  ip : vec4u,     // iterations, sdfEvery, flags(1 capsAll, 2 broadPhase, 4 sdf), substeps
+  cnt : vec4u,    // nCols, nExtra, G, 0
+  sdfO : vec4f,   // origin xyz, inv cell
+  sdfN : vec4u,   // nx ny nz
+  sdfU : vec4f,   // unit
+  pad0 : vec4f, pad1 : vec4f,
+  col : array<Cap, ${HAIR_GPU_MAX_COLS}>,
+  sph : array<vec4f, ${HAIR_GPU_MAX_COLS}>,
+  ext : array<Cap, ${HAIR_GPU_MAX_EXTRA}>,
+};
+@group(0) @binding(0) var<uniform> u : U;
+@group(0) @binding(1) var<storage, read> A : array<vec4f>;      // rest xyz, segLen to previous
+@group(0) @binding(2) var<storage, read> B : array<vec4f>;      // stiff, bend, clearance, slack^2
+@group(0) @binding(3) var<storage, read> C : array<vec4f>;      // bendLen, kMax (float), 0, 0
+@group(0) @binding(4) var<storage, read> S : array<f32>;        // head SDF
+@group(0) @binding(5) var<storage, read_write> st : array<vec4f>;  // sp [0,GK), sq [GK,2GK)
+@group(0) @binding(6) var<storage, read_write> outD : array<vec4f>; // deflection, 16 texels per guide row
+@group(0) @binding(7) var<storage, read_write> contacts : atomic<u32>;
+
+var<private> p : array<vec3f, ${K}>;
+var<private> q : array<vec3f, ${K}>;
+var<private> r : array<vec3f, ${K}>;
+var<private> hit_sdf : bool;
+
+fn nz1(x : f32) -> f32 { return select(x, 1e-9, x == 0.0); }
+
+fn sdfAt(b : u32) -> f32 { return S[b]; }
+// push root-local point x out of the head SDF to clearance c (port of headCollide)
+fn headCollide(x : vec3f, c : f32) -> vec3f {
+  hit_sdf = false;
+  let e = x - u.hc.xyz;
+  if (dot(e, e) > u.hc.w) { return x; }
+  let h = (u.Mi * vec4f(x, 1.0)).xyz;
+  let f = (h - u.sdfO.xyz) * u.sdfO.w;
+  let n = u.sdfN;
+  if (f.x < 0.0 || f.y < 0.0 || f.z < 0.0 || f.x >= f32(n.x - 1u) || f.y >= f32(n.y - 1u) || f.z >= f32(n.z - 1u)) { return x; }
+  let fi = floor(f); let t = f - fi; let w = vec3f(1.0) - t;
+  let nzz = n.z; let nyz = n.y * n.z;
+  let b = (u32(fi.x) * n.y + u32(fi.y)) * nzz + u32(fi.z);
+  let c000 = sdfAt(b); let c001 = sdfAt(b + 1u); let c010 = sdfAt(b + nzz); let c011 = sdfAt(b + nzz + 1u);
+  let c100 = sdfAt(b + nyz); let c101 = sdfAt(b + nyz + 1u); let c110 = sdfAt(b + nyz + nzz); let c111 = sdfAt(b + nyz + nzz + 1u);
+  let c00 = c000 * w.z + c001 * t.z; let c01 = c010 * w.z + c011 * t.z; let c10 = c100 * w.z + c101 * t.z; let c11 = c110 * w.z + c111 * t.z;
+  let c0 = c00 * w.y + c01 * t.y; let c1 = c10 * w.y + c11 * t.y;
+  let g = vec3f(c1 - c0, (c01 - c00) * w.x + (c11 - c10) * t.x,
+                ((c001 - c000) * w.y + (c011 - c010) * t.y) * w.x + ((c101 - c100) * w.y + (c111 - c110) * t.y) * t.x);
+  let gl = length(g);
+  var gn = vec3f(0.0, 1.0, 0.0);
+  if (gl > 1e-6) { gn = g / gl; }
+  let d = (c0 * w.x + c1 * t.x) * u.sdfU.x;
+  if (d >= c) { return x; }
+  hit_sdf = true;
+  return (u.M * vec4f(h + gn * (c - d), 1.0)).xyz;
+}
+fn near(k : u32, i : u32) -> bool { let d = p[k] - r[k]; return dot(d, d) > B[i].w * u.p0.x; }
+
+fn step(g : u32) -> u32 {
+  let base = g * K;
+  let damp = u.grav.w;
+  let fr = 1.0 - u.p0.y;
+  var nc = 0u;
+  for (var k = 0u; k < 2u; k++) { p[k] = r[k]; q[k] = r[k]; }
+  let ph = f32(g) * 0.37;
+  let s1 = u.trig.x * cos(ph) + u.trig.y * sin(ph);
+  let s2 = u.trig.z * cos(ph * 1.7) + u.trig.w * sin(ph * 1.7);
+  let gust = 1.0 + u.wind.w * s1 * s2;
+  let wv = u.wind.xyz * gust;
+  for (var k = 2u; k < K; k++) {
+    let v = (p[k] - q[k]) * damp;
+    q[k] = p[k];
+    var x = p[k] + v + u.grav.xyz + wv;
+    x += (r[k] - x) * B[base + k].x;
+    p[k] = x;
+  }
+  let its = max(1u, u.ip.x); let sdfEvery = max(1u, u.ip.y); let fl = u.ip.z;
+  let wp = u.p0.z; let hr = u.p0.w;
+  let km = u32(C[base].y);
+  for (var it = 0u; it < its; it++) {
+    let last = it == its - 1u;
+    let doSdf = (fl & 4u) != 0u && (last || (it % sdfEvery) == sdfEvery - 1u);
+    for (var k = 2u; k < K; k++) {
+      let i = base + k;
+      { // bending
+        let e = p[k] - p[k - 2u];
+        let el = nz1(length(e));
+        let ed = (el - C[i].x) / el * B[i].y;
+        if (k <= 3u) { p[k] -= e * ed; }
+        else { let h1 = ed * 0.5; p[k - 2u] += e * h1; p[k] -= e * h1; }
+      }
+      let dd = p[k] - p[k - 1u];
+      let len = nz1(length(dd));
+      let diff = (len - A[i].w) / len;
+      if (k == 2u) { p[k] -= dd * diff; }
+      else { p[k - 1u] += dd * (wp * diff); p[k] -= dd * ((1.0 - wp) * diff); }
+      if (doSdf && k <= km && near(k, i)) {
+        let x0 = p[k];
+        let nx = headCollide(p[k], B[i].z);
+        if (hit_sdf) {
+          p[k] = nx; nc++;
+          q[k] += p[k] - x0;
+          q[k] = p[k] + (q[k] - p[k]) * fr;
+        }
+      }
+    }
+    if ((fl & 1u) != 0u || last) {
+      let nCols = u.cnt.x; let nExt = u.cnt.y;
+      for (var k0 = 2u; k0 < K; k0 += 4u) {
+        let k1 = min(K, k0 + 4u);
+        var lo = vec3f(1e9); var hi = vec3f(-1e9);
+        for (var k = k0; k < k1; k++) { lo = min(lo, p[k]); hi = max(hi, p[k]); }
+        var hm = 0u;   // bitmask of capsules passing the broad phase
+        for (var c = 0u; c < nCols; c++) {
+          let s = u.sph[c];
+          let dl = max(max(lo - s.xyz, s.xyz - hi), vec3f(0.0));
+          if ((fl & 2u) == 0u || dot(dl, dl) <= s.w * s.w) { hm |= (1u << c); }
+        }
+        if (hm == 0u && nExt == 0u) { continue; }
+        for (var k = k0; k < k1; k++) {
+          var hit = false;
+          for (var c = 0u; c < nCols; c++) {
+            if ((hm & (1u << c)) == 0u) { continue; }
+            let a = u.col[c].a.xyz; let ab = u.col[c].b.xyz - a;
+            let ab2 = dot(ab, ab);
+            var t = 0.0;
+            if (ab2 > 1e-12) { t = dot(p[k] - a, ab) / ab2; }
+            t = clamp(t, 0.0, 1.0);
+            let cc = a + ab * t; let dv = p[k] - cc; let d2 = dot(dv, dv); let rr = u.col[c].a.w + hr;
+            if (d2 < rr * rr) {
+              let d = select(sqrt(d2), 1e-6, d2 == 0.0);
+              let n = cc + dv * (rr / d);
+              q[k] += n - p[k]; p[k] = n; hit = true;
+            }
+          }
+          for (var c = 0u; c < nExt; c++) {
+            let a = u.ext[c].a.xyz; let ab = u.ext[c].b.xyz - a;
+            let ab2 = dot(ab, ab);
+            var t = 0.0;
+            if (ab2 > 1e-12) { t = dot(p[k] - a, ab) / ab2; }
+            t = clamp(t, 0.0, 1.0);
+            let cc = a + ab * t; let dv = p[k] - cc; let d2 = dot(dv, dv); let rr = u.ext[c].a.w + hr;
+            if (d2 < rr * rr) {
+              let d = select(sqrt(d2), 1e-6, d2 == 0.0);
+              let n = cc + dv * (rr / d);
+              q[k] += n - p[k]; p[k] = n;
+              q[k] = n + (q[k] - n) * fr;
+            }
+          }
+          if (hit) {
+            q[k] = p[k] + (q[k] - p[k]) * fr;
+            if ((fl & 4u) != 0u && k <= km && near(k, base + k)) { let nx = headCollide(p[k], B[base + k].z); if (hit_sdf) { p[k] = nx; } }
+          }
+        }
+      }
+    }
+  }
+  return nc;
+}
+
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) id : vec3u) {
+  let g = id.x;
+  if (g >= u.cnt.z) { return; }
+  let base = g * K; let GK = u.cnt.z * K;
+  for (var k = 0u; k < K; k++) {
+    r[k] = (u.M * vec4f(A[base + k].xyz, 1.0)).xyz;
+    p[k] = st[base + k].xyz; q[k] = st[GK + base + k].xyz;
+  }
+  if (u.shift.w > 0.5) { for (var k = 0u; k < K; k++) { p[k] = r[k]; q[k] = r[k]; } }
+  for (var k = 0u; k < K; k++) { p[k] += u.shift.xyz; q[k] += u.shift.xyz; }
+  var nc = 0u;
+  for (var s = 0u; s < u.ip.w; s++) { nc += step(g); }
+  for (var k = 0u; k < K; k++) {
+    st[base + k] = vec4f(p[k], 0.0); st[GK + base + k] = vec4f(q[k], 0.0);
+    outD[g * 16u + k] = vec4f(p[k] - r[k], 0.0);
+  }
+  if (nc > 0u) { atomicAdd(&contacts, nc); }
+}`;
+}
+
+export function createGuideSolverGPU(device, D) {
+  const { G, K } = D, GK = G * K;
+  if (K > 16) throw new Error('[hair] compute path supports <= 16 points per strand');
+  const BU = GPUBufferUsage;
+  const mk = (data, usage) => { const b = device.createBuffer({ size: Math.max(16, data.byteLength), usage: usage | BU.COPY_DST }); device.queue.writeBuffer(b, 0, data); return b; };
+  const A = new Float32Array(GK * 4), Bv = new Float32Array(GK * 4), Cv = new Float32Array(GK * 4);
+  for (let g = 0; g < G; g++) for (let k = 0; k < K; k++) {
+    const i = g * K + k;
+    A[i * 4] = D.gRest[i * 3]; A[i * 4 + 1] = D.gRest[i * 3 + 1]; A[i * 4 + 2] = D.gRest[i * 3 + 2]; A[i * 4 + 3] = k ? D.segLen[g * (K - 1) + k - 1] : 0;
+    Cv[i * 4] = D.bendLen[i]; Cv[i * 4 + 1] = D.kMaxG[g];
+  }
+  const fillB = () => { for (let i = 0; i < GK; i++) { Bv[i * 4] = D.gStiff[i]; Bv[i * 4 + 1] = D.gBend[i]; Bv[i * 4 + 2] = D.clrG[i]; Bv[i * 4 + 3] = D.slkG[i]; } };
+  fillB();
+  const S = D.SDF;
+  const sdfF = S ? Float32Array.from(S.v) : new Float32Array(4);
+  const bufA = mk(A, BU.STORAGE), bufB = mk(Bv, BU.STORAGE), bufC = mk(Cv, BU.STORAGE), bufS = mk(sdfF, BU.STORAGE);
+  const bufSt = device.createBuffer({ size: GK * 2 * 16, usage: BU.STORAGE | BU.COPY_DST | BU.COPY_SRC });
+  const bufOut = device.createBuffer({ size: G * 16 * 16, usage: BU.STORAGE | BU.COPY_SRC });
+  const bufCnt = device.createBuffer({ size: 16, usage: BU.STORAGE | BU.COPY_DST | BU.COPY_SRC });
+  const bufU = device.createBuffer({ size: UF * 4, usage: BU.UNIFORM | BU.COPY_DST });
+  const ub = new ArrayBuffer(UF * 4), uf = new Float32Array(ub), uu = new Uint32Array(ub);
+  const module = device.createShaderModule({ code: hairGuideWGSL(K) });
+  const pipeline = device.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'main' } });
+  const bind = device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [bufU, bufA, bufB, bufC, bufS, bufSt, bufOut, bufCnt].map((buffer, binding) => ({ binding, resource: { buffer } })) });
+  const zero4 = new Uint32Array(4);
+  let bytes = 0;
+  const api = {
+    G, K, uf, uu, pipeline,
+    get bytesLastFrame() { return bytes; },
+    // copy CPU state (sp, sq: Float32Array GK*3) into the persistent buffers (handoff / reseed)
+    setState(sp, sq) {
+      const t = new Float32Array(GK * 8);
+      for (let i = 0; i < GK; i++) { t.set(sp.subarray(i * 3, i * 3 + 3), i * 4); t.set(sq.subarray(i * 3, i * 3 + 3), (GK + i) * 4); }
+      device.queue.writeBuffer(bufSt, 0, t);
+    },
+    setStiffness() { fillB(); device.queue.writeBuffer(bufB, 0, Bv); },
+    // fill the uniform block; F = { M, Mi (Float32/64 16), grav[4], wind[4], shift[4], trig[4], hc[4], p0[4], ip[4], cols, sph, nCols, ext[], sdf }
+    setFrame(F) {
+      uf.fill(0);
+      uf.set(F.M, 0); uf.set(F.Mi, 16);
+      uf.set(F.grav, 32); uf.set(F.wind, 36); uf.set(F.shift, 40); uf.set(F.trig, 44); uf.set(F.hc, 48); uf.set(F.p0, 52);
+      uu.set(F.ip, 56); uu[60] = F.nCols; uu[61] = F.ext.length; uu[62] = G;
+      if (S) { uf[64] = S.ox; uf[65] = S.oy; uf[66] = S.oz; uf[67] = S.inv; uu[68] = S.nx; uu[69] = S.ny; uu[70] = S.nz; uf[72] = S.unit; }
+      const co = 84, so = co + 8 * HAIR_GPU_MAX_COLS, eo = so + 4 * HAIR_GPU_MAX_COLS;
+      for (let c = 0; c < F.nCols; c++) {
+        const q = c * 7, o = co + c * 8;
+        uf[o] = F.cols[q]; uf[o + 1] = F.cols[q + 1]; uf[o + 2] = F.cols[q + 2]; uf[o + 3] = F.cols[q + 6];
+        uf[o + 4] = F.cols[q + 3]; uf[o + 5] = F.cols[q + 4]; uf[o + 6] = F.cols[q + 5];
+        uf[so + c * 4] = F.sph[c * 8]; uf[so + c * 4 + 1] = F.sph[c * 8 + 1]; uf[so + c * 4 + 2] = F.sph[c * 8 + 2]; uf[so + c * 4 + 3] = F.sph[c * 8 + 3];
+      }
+      for (let c = 0; c < F.ext.length; c++) { const e = F.ext[c], o = eo + c * 8; uf[o] = e[0]; uf[o + 1] = e[1]; uf[o + 2] = e[2]; uf[o + 3] = e[6]; uf[o + 4] = e[3]; uf[o + 5] = e[4]; uf[o + 6] = e[5]; }
+      const used = (F.ext.length ? eo + 8 * F.ext.length : so + 4 * F.nCols) * 4;
+      device.queue.writeBuffer(bufU, 0, ub, 0, used);
+      bytes = used;
+    },
+    // dispatch the solve; optionally copy the deflection into a G-row x K-column rgba32float texture
+    run(texture, countContacts) {
+      const enc = device.createCommandEncoder();
+      if (countContacts) { device.queue.writeBuffer(bufCnt, 0, zero4); bytes += 16; }
+      const pass = enc.beginComputePass();
+      pass.setPipeline(pipeline); pass.setBindGroup(0, bind); pass.dispatchWorkgroups(Math.ceil(G / 64)); pass.end();
+      if (texture) enc.copyBufferToTexture({ buffer: bufOut, bytesPerRow: 256, rowsPerImage: G }, { texture }, { width: K, height: G, depthOrArrayLayers: 1 });
+      device.queue.submit([enc.finish()]);
+    },
+    // async readback (debug / parity): { sp, sq, disp (GK*3), contacts }
+    async read() {
+      const rb = device.createBuffer({ size: GK * 32 + G * 256 + 16, usage: BU.COPY_DST | BU.MAP_READ });
+      const enc = device.createCommandEncoder();
+      enc.copyBufferToBuffer(bufSt, 0, rb, 0, GK * 32); enc.copyBufferToBuffer(bufOut, 0, rb, GK * 32, G * 256); enc.copyBufferToBuffer(bufCnt, 0, rb, GK * 32 + G * 256, 16);
+      device.queue.submit([enc.finish()]);
+      await rb.mapAsync(GPUMapMode.READ);
+      const f = new Float32Array(rb.getMappedRange().slice(0)); rb.unmap(); rb.destroy();
+      const sp = new Float32Array(GK * 3), sq = new Float32Array(GK * 3), disp = new Float32Array(GK * 3);
+      for (let i = 0; i < GK; i++) for (let c = 0; c < 3; c++) {
+        sp[i * 3 + c] = f[i * 4 + c]; sq[i * 3 + c] = f[(GK + i) * 4 + c];
+        const g = (i / K) | 0, k = i % K; disp[i * 3 + c] = f[GK * 8 + (g * 16 + k) * 4 + c];
+      }
+      return { sp, sq, disp, contacts: new Uint32Array(f.buffer, (GK * 8 + G * 64) * 4, 1)[0] };
+    },
+    destroy() { [bufA, bufB, bufC, bufS, bufSt, bufOut, bufCnt, bufU].forEach((b) => b.destroy()); }
+  };
+  return api;
 }
