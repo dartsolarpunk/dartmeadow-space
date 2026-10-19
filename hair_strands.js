@@ -840,6 +840,17 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     get compute() { return gc || null; },
     // debug / parity: GPU guide state read back (null on the CPU path)
     async readGuides() { return gc ? gc.read() : null; },
+    _dbg() { return { sp, sq, restM }; },
+    // test: points of a guide state inside the head (d < 0) / closer than 50 % of their clearance
+    _penetration(a) {
+      let inside = 0, under = 0; if (!SDF) return { inside, under };
+      for (let g = 0; g < G; g++) for (let k = 2; k <= kMaxG[g]; k++) {
+        const o = (g * K + k) * 3, x = a[o], y = a[o + 1], z = a[o + 2];
+        const hx = mi[0] * x + mi[4] * y + mi[8] * z + mi[12], hy = mi[1] * x + mi[5] * y + mi[9] * z + mi[13], hz = mi[2] * x + mi[6] * y + mi[10] * z + mi[14];
+        const d = sdf(hx, hy, hz); if (d < 0) inside++; else if (d < clrG[g * K + k] * 0.5) under++;
+      }
+      return { inside, under };
+    },
     addCollider(c) { extra.push(c); return c; },
     removeCollider(c) { const i = extra.indexOf(c); if (i >= 0) extra.splice(i, 1); },
     reset() { needInit = true; haveLast = false; havePM = false; },
@@ -1079,7 +1090,7 @@ export function createGuideSolverGPU(device, D) {
   const pipeline = device.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'main' } });
   const bind = device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [bufU, bufA, bufB, bufC, bufS, bufSt, bufOut, bufCnt].map((buffer, binding) => ({ binding, resource: { buffer } })) });
   const zero4 = new Uint32Array(4);
-  let bytes = 0;
+  let bytes = 0, rbBuf = null;
   const api = {
     G, K, uf, uu, pipeline,
     get bytesLastFrame() { return bytes; },
@@ -1120,12 +1131,12 @@ export function createGuideSolverGPU(device, D) {
     },
     // async readback (debug / parity): { sp, sq, disp (GK*3), contacts }
     async read() {
-      const rb = device.createBuffer({ size: GK * 32 + G * 256 + 16, usage: BU.COPY_DST | BU.MAP_READ });
+      const rb = rbBuf || (rbBuf = device.createBuffer({ size: GK * 32 + G * 256 + 16, usage: BU.COPY_DST | BU.MAP_READ }));
       const enc = device.createCommandEncoder();
       enc.copyBufferToBuffer(bufSt, 0, rb, 0, GK * 32); enc.copyBufferToBuffer(bufOut, 0, rb, GK * 32, G * 256); enc.copyBufferToBuffer(bufCnt, 0, rb, GK * 32 + G * 256, 16);
       device.queue.submit([enc.finish()]);
       await rb.mapAsync(GPUMapMode.READ);
-      const f = new Float32Array(rb.getMappedRange().slice(0)); rb.unmap(); rb.destroy();
+      const f = new Float32Array((GK * 32 + G * 256 + 16) / 4); f.set(new Float32Array(rb.getMappedRange())); rb.unmap();
       const sp = new Float32Array(GK * 3), sq = new Float32Array(GK * 3), disp = new Float32Array(GK * 3);
       for (let i = 0; i < GK; i++) for (let c = 0; c < 3; c++) {
         sp[i * 3 + c] = f[i * 4 + c]; sq[i * 3 + c] = f[(GK + i) * 4 + c];
@@ -1133,7 +1144,7 @@ export function createGuideSolverGPU(device, D) {
       }
       return { sp, sq, disp, contacts: new Uint32Array(f.buffer, (GK * 8 + G * 64) * 4, 1)[0] };
     },
-    destroy() { [bufA, bufB, bufC, bufS, bufSt, bufOut, bufCnt, bufU].forEach((b) => b.destroy()); }
+    destroy() { if (rbBuf) rbBuf.destroy(); [bufA, bufB, bufC, bufS, bufSt, bufOut, bufCnt, bufU].forEach((b) => b.destroy()); }
   };
   return api;
 }
