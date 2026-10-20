@@ -969,6 +969,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-safety.js?v=1" defer></script>
 <script src="jots/jots-link.js?v=84" defer></script>
 <script src="ui/dm-friends.js?v=2" defer></script>
+<script src="ui/dm-perflog.js?v=1" defer></script>
 <script src="ui/dm-spectator.js?v=1" defer></script>
 <script src="ui/dm-stack.js?v=1" defer></script>
 <script src="ui/dm-globe.js?v=7" defer></script>
@@ -14039,6 +14040,7 @@ window.dmSceneText=function(){
   requestAnimationFrame(tick);
   function text(){ let e; try{ e=JSON.stringify(env(),null,1); }catch(x){ e='env error: '+x; } return 'DART MEADOW PERF REPORT\n'+e+'\n'+log.map(e=>[e.at,e.screen,e.fps+'fps','avg'+e.avgMs,'p95 '+e.p95Ms,'worst '+e.worstMs,'jank'+e.jank,(e.pr!=null?'pr'+e.pr:''),e.heapMB!=null?e.heapMB+'MB':''].join(' | ')).join('\n'); }
   window.dmPerfText=text;
+  window.dmPerfEnv=env;   // ui/dm-perflog.js reads this for the per-session log
   window.dmPerfClear=()=>{ log=[]; try{ localStorage.removeItem(KEY); }catch(e){} };
   window.dmPerfReport=()=>{ try{ openProfileMenu(); setTimeout(()=>{ const t=document.getElementById('pf-perf-ta'); if(t){ t.parentNode.hidden=false; t.value=text(); } },50); }catch(e){} };
   // shortcut gestures just open the PROFILE menu (where the Performance Log lives)
