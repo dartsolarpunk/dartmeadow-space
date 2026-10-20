@@ -7924,6 +7924,27 @@ async function buildSolarSystem(){
     // the first frame it showed up (multi-second hitch on Safari WebGPU). Compile it off to the side once the
     // interior script has set up its materials; nothing about the model / interactions changes.
     try{ setTimeout(()=>{ try{ _dmCompileObject(wrapper); }catch(e){} },2500); }catch(e){}
+    // v91: render-cost LOD. In orbit the temple drew ~296 primitives (+ the same again in the shadow pass) every
+    // frame it was on screen, ~146 of them the enclosed interior decks (BTI_ materials) that cannot be seen from
+    // outside. Far from the ship: interior hidden, hull shadow casting off. Near / aboard: exactly as authored.
+    // Only .visible and .castShadow are toggled (neither rebuilds a pipeline); materials, model, collision and
+    // dm-birdtemple interactions are untouched.
+    try{
+      const inner=[], casters=[];
+      wrapper.traverse(o=>{ if(!o.isMesh) return; const m=Array.isArray(o.material)?o.material[0]:o.material;
+        const bti=!!(m&&/^BTI_/.test(m.name||'')); if(bti) inner.push({o,v:o.visible}); else if(o.castShadow) casters.push(o); });
+      const bs=new THREE.Box3().setFromObject(wrapper).getBoundingSphere(new THREE.Sphere());
+      const R0=Math.max(1e-3,bs.radius); let far=null; const _p=new THREE.Vector3();
+      BIRD_TEMPLE._lod=setInterval(()=>{ try{
+        if(typeof flightCamera==='undefined'||!flightCamera) return;
+        const aboard=(typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active)||(window.BTI&&(BTI.cur||BTI._depth>0));
+        const R=R0*(wrapper.scale.x/SHIP_SCALE||1), d=flightCamera.getWorldPosition(_p).distanceTo(wrapper.getWorldPosition(new THREE.Vector3()));
+        const f=!aboard&&d>R*4;
+        if(f===far) return; far=f;
+        for(const it of inner){ if(f){ it.v=it.o.visible; it.o.visible=false; } else it.o.visible=it.v; }
+        for(const o of casters) o.castShadow=f?false:GFX.shadows;
+      }catch(e){} },250);
+    }catch(e){ console.warn('[Bird Temple] lod',e); }
     // Rigid-body collision against the ship removed per explicit, repeated
     // feedback: even after two rounds of tuning (tighter broad-phase,
     // capped raycast reach), it kept blocking normal thruster approach —
@@ -13855,6 +13876,7 @@ window.dmSceneText=function(){
 (function(){
   const KEY='dm_perf_log'; let win={t0:performance.now(),f:[],last:0}, log=[];
   try{ log=JSON.parse(localStorage.getItem(KEY)||'[]'); }catch(e){}
+  try{ if(window.caches&&caches.keys) caches.keys().then(k=>{ window._dmSwCache=k.filter(n=>/engine-v/.test(n)).join(',')||'none'; }); }catch(e){}
   function env(){
     const g=(typeof GFX!=='undefined')?GFX:{}; let real=null;
     try{ real=!!(typeof flightRenderer!=='undefined'&&flightRenderer&&_isRealWebGPU(flightRenderer)); }catch(e){}
@@ -13862,7 +13884,7 @@ window.dmSceneText=function(){
     return {platform:_dmPlatform(),app:(window.DMAndroid&&DMAndroid.version)?DMAndroid.version():null,webview:m[2]||null,
       backend:real===null?'not-started':real?'WebGPU':'WebGL2-fallback',navGpu:!!navigator.gpu,gpu:g.renderer||'',vendor:g.vendor||'',
       gpuClass:g.gpuClass,score:g.score,preset:g.preset,resScale:g.resScale,cores:navigator.hardwareConcurrency||0,mem:navigator.deviceMemory||0,
-      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:'sw-v91',ua:navigator.userAgent};
+      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:'sw-v91',swCache:window._dmSwCache||null,hair:(function(){ try{ const H=window.DART_HAIR; return H?{mode:H.stats.mode||'cpu',gcReason:H.stats.gpuFail||null,check:H.stats.gpuCheck||null,ms:+(H.stats.ms||0).toFixed(2),drawn:H.stats.drawn}:null; }catch(e){ return null; } })(),ua:navigator.userAgent};
   }
   function flush(){
     const f=win.f; win.f=[]; const t0=win.t0; win.t0=performance.now();

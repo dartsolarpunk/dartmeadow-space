@@ -400,63 +400,48 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
      switch is seamless. Any failure falls back to the CPU solver below. */
   let gc = null;   // null = undecided / waiting, false = CPU solve, object = GPU solve
   let gcTex = null, gcResync = false, gcWasOn = false;
+  // v91: OPT-IN until verified on Apple GPUs (v90 lost the hair on iPhone Safari). Enable with
+  // params.gpuCompute = true or ?hairgpu=1. Even then it starts in PROBATION: the CPU solver keeps
+  // driving the ribbons while the GPU solves the same frames in lockstep; only after a read-back
+  // matches (finite, within 5 mm of the CPU) does the GPU take over. Any validation error, device
+  // loss, non-finite result, mismatch or read-back timeout -> permanent CPU path. Hair always renders.
+  let gcVerified = false, gcProbe = 0, gcCheck = null;
+  const gpuOptIn = () => P.gpuCompute === true || (typeof location !== 'undefined' && /[?&]hairgpu=1\b/.test(location.search || ''));
+  function gcFail(why, e) {
+    if (gc === false) return;
+    console.warn('[hair] GPU guide solve disabled (' + why + '), CPU path', e || '');
+    stats.gpuFail = why; stats.mode = gpu ? 'gpu' : 'cpu';
+    try { if (gc && gc.destroy) gc.destroy(); } catch (x) {}
+    gc = false; gcVerified = false;
+    if (gcWasOn) needInit = true;   // the CPU state is stale: reseed instead of snapping
+    if (gpu && gpu.tDisp) gpu.tDisp.needsUpdate = true;
+  }
   function initCompute(renderer) {
     const be = renderer && renderer.backend;
-    // v91: OPT-IN until verified on Apple WebGPU (hair vanished on iPhone 16e / Safari with v90).
-    // Enable with opts.gpuCompute === true, or ?hairgpu=1 / localStorage 'jots.hairgpu' = '1'.
-    let optIn = P.gpuCompute === true;
-    try { if (!optIn && typeof location !== 'undefined' && /[?&]hairgpu=1\b/.test(location.search)) optIn = true; } catch (e) {}
-    try { if (!optIn && typeof localStorage !== 'undefined' && localStorage.getItem('jots.hairgpu') === '1') optIn = true; } catch (e) {}
-    if (!optIn) { stats.gcReason = 'opt-in off'; return false; }
-    if (!be || !be.isWebGPUBackend || !be.device || typeof GPUBufferUsage === 'undefined') return false;
+    if (!gpuOptIn() || !be || !be.isWebGPUBackend || !be.device || typeof GPUBufferUsage === 'undefined') return false;
     if (nCols > HAIR_GPU_MAX_COLS) return false;
     const dev = be.device, L = dev.limits || {};
-    // up-front capability check: 7 storage buffers, 64-wide workgroup, rgba32float copy target
-    if ((L.maxStorageBuffersPerShaderStage || 0) < 7 || (L.maxComputeWorkgroupSizeX || 0) < 64 || (L.maxComputeInvocationsPerWorkgroup || 0) < 64) {
-      stats.gcReason = 'limits'; console.warn('[hair] GPU guide solve: device limits too low, CPU path', L.maxStorageBuffersPerShaderStage); return false;
-    }
+    // the solver needs 7 storage buffers, a 64-wide workgroup and a ~1.4 KB uniform block
+    if ((L.maxStorageBuffersPerShaderStage || 0) < 7 || (L.maxComputeWorkgroupSizeX || 0) < 64 || (L.maxComputeInvocationsPerWorkgroup || 0) < 64 ||
+        (L.maxUniformBufferBindingSize || 0) < 2048 || (L.maxStorageBufferBindingSize || 0) < GK * 32) { stats.gpuFail = 'limits'; return false; }
     const td = be.get && be.get(gpu.tDisp);
     if (!td || !td.texture) return null;   // not uploaded yet: retry next frame (CPU solve meanwhile)
-    const tex = td.texture;
-    if ((tex.format && tex.format !== 'rgba32float') || (typeof GPUTextureUsage !== 'undefined' && tex.usage != null && !(tex.usage & GPUTextureUsage.COPY_DST))) {
-      stats.gcReason = 'texture ' + tex.format; console.warn('[hair] GPU guide solve: deflection texture not a rgba32float copy target, CPU path', tex.format); return false;
+    const T = td.texture;
+    // the ribbon texture must be exactly what the copy writes: rgba32float, K x G, single layer, COPY_DST
+    if (T.format !== 'rgba32float' || T.width !== K || T.height !== G || (T.depthOrArrayLayers || 1) !== 1 || (typeof GPUTextureUsage !== 'undefined' && T.usage != null && !(T.usage & GPUTextureUsage.COPY_DST))) {
+      stats.gpuFail = 'texture ' + T.format + ' ' + T.width + 'x' + T.height; return false;
     }
     try {
-      // WebGPU validation errors do not throw: catch them with an error scope
-      dev.pushErrorScope && dev.pushErrorScope('validation');
+      dev.pushErrorScope('validation'); dev.pushErrorScope('out-of-memory');
       const c = createGuideSolverGPU(dev, { G, K, gRest, segLen, bendLen, gStiff, gBend, clrG, slkG, kMaxG, SDF });
-      if (dev.popErrorScope) dev.popErrorScope().then((err) => { if (err) gcFail('validation: ' + err.message); }).catch(() => {});
-      gcTex = tex; gcResync = true; gcChecks = 0; gcVerified = false;
-      dev.lost && dev.lost.then(() => { gc = false; needInit = true; });
-      stats.mode = 'gpu-compute';
+      dev.popErrorScope().then((e) => { if (e) gcFail('oom', e.message); });
+      dev.popErrorScope().then((e) => { if (e) gcFail('validation', e.message); });
+      gcTex = T; gcResync = true; gcVerified = false; gcProbe = 0; gcCheck = null;
+      dev.lost && dev.lost.then((i) => gcFail('device lost', i && i.message));
+      c.dev = dev;
+      stats.mode = 'gpu-probation';
       return c;
-    } catch (e) { console.warn('[hair] GPU guide solve unavailable, CPU path', e); return false; }
-  }
-  // GPU -> CPU fallback that keeps the CPU ribbon pipeline intact (hair must always render)
-  let gcChecks = 0, gcVerified = false, gcBusy = false;
-  function gcFail(why) {
-    console.warn('[hair] GPU guide solve rejected (' + why + '), CPU path');
-    stats.gcReason = why;
-    if (gc && gc.destroy) { try { gc.destroy(); } catch (e) {} }
-    gc = false; needInit = true; gcResync = true; gcWasOn = false;
-    if (gpu && gpu.tDisp) gpu.tDisp.needsUpdate = true;   // re-upload CPU deflection over any garbage
-  }
-  // async readback sanity check on early frames: non-finite or all-zero/exploded result -> CPU
-  function gcVerify() {
-    if (!gc || gcVerified || gcBusy || !gc.read) return;
-    gcBusy = true;
-    const c = gc;
-    c.read().then((r) => {
-      gcBusy = false;
-      if (gc !== c) return;
-      let ok = true, nz = 0, big = 0;
-      for (let i = 0; i < r.sp.length; i++) { const v = r.sp[i]; if (!Number.isFinite(v)) { ok = false; break; } if (v !== 0) nz++; if (Math.abs(v) > 1e3) big++; }
-      if (ok) for (let i = 0; i < r.disp.length; i++) if (!Number.isFinite(r.disp[i])) { ok = false; break; }
-      if (!ok) return gcFail('non-finite readback');
-      if (nz === 0) return gcFail('empty readback');
-      if (big > 0) return gcFail('exploded readback');
-      if (++gcChecks >= 3) { gcVerified = true; stats.gcReason = 'verified'; }
-    }).catch((e) => { gcBusy = false; if (gc === c) gcFail('readback ' + (e && e.message)); });
+    } catch (e) { stats.gpuFail = 'init'; console.warn('[hair] GPU guide solve unavailable, CPU path', e); return false; }
   }
   const gF = { M: new Float32Array(16), Mi: new Float32Array(16), grav: new Float32Array(4), wind: new Float32Array(4), shift: new Float32Array(4),
                trig: new Float32Array(4), hc: new Float32Array(4), p0: new Float32Array(4), ip: new Uint32Array(4), cols: colBuf, sph: colSph, nCols, ext: [] };
@@ -662,6 +647,29 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     stats.contacts = contacts;
   }
 
+  // probation: after ~20 lockstep frames read the GPU state back and compare with the CPU solver
+  function probeCheck() {
+    gcProbe++;
+    if (gcCheck) { if (performance.now() - gcCheck.t > 4000) gcFail('readback timeout'); return; }
+    if (gcProbe < 20) return;
+    const ref = Float32Array.from(sp), c = gc;
+    gcCheck = { t: performance.now() };
+    c.read().then((r) => {
+      if (gc !== c) return;
+      gcCheck = null;
+      let bad = 0, sum = 0, mx = 0, mag = 0;
+      for (let i = 0; i < ref.length; i++) {
+        const v = r.sp[i]; if (!Number.isFinite(v)) { bad++; continue; }
+        const d = Math.abs(v - ref[i]); sum += d; if (d > mx) mx = d; mag += Math.abs(v);
+      }
+      const mean = sum / ref.length;
+      stats.gpuCheck = { bad, mean, max: mx };
+      if (bad || !(mag > 0) || mean > 1e-3 || mx > 0.05) { gcFail('readback mismatch bad=' + bad + ' mean=' + mean.toExponential(1) + ' max=' + mx.toExponential(1)); return; }
+      if (gcProbe < 40) return;   // two passing checks before handing over
+      gcVerified = true; gcResync = true; stats.mode = 'gpu-compute';
+    }).catch((e) => { if (gc === c) gcFail('readback', e); });
+  }
+
   function update(dt) {
     if (!P.enabled || !(dt > 0) || !root.visible) return;
     const t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
@@ -703,9 +711,11 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       C.lb = (C.lb || new THREE.Vector3()).copy(C.end || C.center).applyMatrix4(rootInv);
       C.lr = C.radius * Math.cbrt(Math.abs(rootInv.determinant()));
     }
-    const onGPU = !!(gc && !P.verifyRibbons && extra.length <= HAIR_GPU_MAX_EXTRA);
-    if (gc && gcResync && onGPU) { gc.setState(sp, sq); gcResync = false; }
-    if (!onGPU && gc) {
+    const gcOk = !!(gc && !P.verifyRibbons && extra.length <= HAIR_GPU_MAX_EXTRA);
+    const onGPU = gcOk && (gcVerified || (!gpu && !opts.probation));   // headless tests (no ribbons) skip probation unless asked
+    const probe = gcOk && !onGPU;                 // CPU drives the ribbons, GPU solves alongside
+    if (gc && gcResync && (onGPU || probe)) { gc.setState(sp, sq); gcResync = false; }
+    if (!onGPU && !probe && gc) {
       gcResync = true;   // CPU took over: re-sync the GPU state when it resumes
       // the CPU's sp/sq are stale while the GPU solved: reseed from the groom instead of snapping
       if (gcWasOn) needInit = true;
@@ -766,7 +776,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     time += dt;
     const n = Math.min(2, Math.max(1, Math.ceil(dt / (1 / 60))));
     const h = Math.min(dt, 1 / 30) / n;
-    if (onGPU) {
+    const fillF = () => {
       const F = gF, hh = h * h, gs = P.gravity * hh, wd = P.drag * hh;
       F.M.set(me); F.Mi.set(mi);
       F.grav[0] = gravL.x * gs; F.grav[1] = gravL.y * gs; F.grav[2] = gravL.z * gs; F.grav[3] = Math.pow(P.damping, h * 60);
@@ -779,11 +789,18 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       F.ext.length = 0;
       for (const C of extra) F.ext.push([C.la.x, C.la.y, C.la.z, C.lb.x, C.lb.y, C.lb.z, C.lr]);
       if (stiffDirty) { gc.setStiffness(); stiffDirty = false; }
-      try { gc.setFrame(F); gc.run(gcTex, !!P.countContacts); stats.uploadBytes = gc.bytesLastFrame; if (!gcVerified && (frame === 2 || frame % 15 === 0)) gcVerify(); }
-      catch (e) { console.warn('[hair] GPU guide solve failed, CPU path', e); gc = false; needInit = true; }
+      return F;
+    };
+    if (onGPU) {
+      try { gc.setFrame(fillF()); gc.run(gcTex, !!P.countContacts); stats.uploadBytes = gc.bytesLastFrame; }
+      catch (e) { gcFail('run', e); }
     } else {
+      let ran = false;
+      if (probe) { try { gc.setFrame(fillF()); ran = gc.run(null, false); } catch (e) { gcFail('run', e); } }
+      if (probe && gc && !ran) gcResync = true;   // pipeline not ready yet: hand the CPU state over again once it is
       for (let s = 0; s < n; s++) step(h, time);
       stats.uploadBytes = gpu ? GK * 16 : VERTS * 24;
+      if (probe && gc && ran) probeCheck();
     }
     const tSim = (typeof performance !== 'undefined' ? performance.now() : Date.now());
     stats.simMs = tSim - t0;
@@ -1136,12 +1153,17 @@ export function createGuideSolverGPU(device, D) {
   const bufU = device.createBuffer({ size: UF * 4, usage: BU.UNIFORM | BU.COPY_DST });
   const ub = new ArrayBuffer(UF * 4), uf = new Float32Array(ub), uu = new Uint32Array(ub);
   const module = device.createShaderModule({ code: hairGuideWGSL(K) });
-  const pipeline = device.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'main' } });
-  const bind = device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [bufU, bufA, bufB, bufC, bufS, bufSt, bufOut, bufCnt].map((buffer, binding) => ({ binding, resource: { buffer } })) });
+  // async pipeline build: a sync createComputePipeline stalls the frame it's created in (seconds on some mobile drivers)
+  let pipeline = null, bind = null, failed = null;
+  const mkBind = (p) => device.createBindGroup({ layout: p.getBindGroupLayout(0), entries: [bufU, bufA, bufB, bufC, bufS, bufSt, bufOut, bufCnt].map((buffer, binding) => ({ binding, resource: { buffer } })) });
+  const desc = { layout: 'auto', compute: { module, entryPoint: 'main' } };
+  const ready = (device.createComputePipelineAsync ? device.createComputePipelineAsync(desc) : Promise.resolve(device.createComputePipeline(desc)))
+    .then((p) => { pipeline = p; bind = mkBind(p); return true; }, (e) => { failed = e || new Error('pipeline'); return false; });
   const zero4 = new Uint32Array(4);
   let bytes = 0, rbBuf = null;
   const api = {
-    G, K, uf, uu, pipeline,
+    G, K, uf, uu, ready,
+    get pipeline() { return pipeline; }, get isReady() { return !!pipeline; }, get failed() { return failed; },
     get bytesLastFrame() { return bytes; },
     // copy CPU state (sp, sq: Float32Array GK*3) into the persistent buffers (handoff / reseed)
     setState(sp, sq) {
@@ -1171,12 +1193,15 @@ export function createGuideSolverGPU(device, D) {
     },
     // dispatch the solve; optionally copy the deflection into a G-row x K-column rgba32float texture
     run(texture, countContacts) {
+      if (failed) throw failed;
+      if (!pipeline) return false;   // still compiling: caller keeps the CPU result
       const enc = device.createCommandEncoder();
       if (countContacts) { device.queue.writeBuffer(bufCnt, 0, zero4); bytes += 16; }
       const pass = enc.beginComputePass();
       pass.setPipeline(pipeline); pass.setBindGroup(0, bind); pass.dispatchWorkgroups(Math.ceil(G / 64)); pass.end();
       if (texture) enc.copyBufferToTexture({ buffer: bufOut, bytesPerRow: 256, rowsPerImage: G }, { texture }, { width: K, height: G, depthOrArrayLayers: 1 });
       device.queue.submit([enc.finish()]);
+      return true;
     },
     // async readback (debug / parity): { sp, sq, disp (GK*3), contacts }
     async read() {
