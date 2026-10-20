@@ -6700,6 +6700,25 @@ function _attachJotsNearFill(group, radius, tintHex){
   }catch(e){}
   return pl;
 }
+/* v98: atmospheres are depth-tested parts of the planet group, never an overlay.
+   The march is face-independent (ray from cameraPosition vs the ATMO_R sphere), so
+   which faces raster only decides coverage: FrontSide from outside (near faces sit in
+   front of the planet body, so the limb still crosses the disc), BackSide from inside.
+   With depthTest on, anything nearer (hull, interior, Ariel, hair, board) occludes it. */
+let _jaTmp=null, _jaCam=null;
+function _jotsAtmoDepthSide(mesh,atmoR){
+  if(!mesh||!mesh.material)return;
+  mesh.onBeforeRender=function(renderer,scene,camera){
+    try{
+      if(!_jaTmp)_jaTmp=new THREE.Vector3();
+      const c=_jaTmp.setFromMatrixPosition(this.matrixWorld);
+      const s=this.matrixWorld.getMaxScaleOnAxis();
+      const camIn=camera.getWorldPosition?c.distanceTo(camera.getWorldPosition(_jaCam||(_jaCam=new THREE.Vector3())))<atmoR*s*1.02+(camera.near||0)*2:false;
+      const want=camIn?THREE.BackSide:THREE.FrontSide;
+      const m=this.material; if(m.side!==want){ m.side=want; m.needsUpdate=true; }
+    }catch(e){}
+  };
+}
 /** Dusty / thin Rayleigh shell — giants + rocky atmo + close Sol. No bloom sprites. */
 function _buildJotsDustyAtmoShell(radius, opts){
   opts=opts||{};
@@ -6717,7 +6736,7 @@ function _buildJotsDustyAtmoShell(radius, opts){
     &&!!(THREE&&THREE.MeshBasicNodeMaterial)&&typeof Fn==='function';
   if(useNode){
     try{
-      const atmoMat=new THREE.MeshBasicNodeMaterial({transparent:true,side:THREE.BackSide,depthWrite:false,depthTest:false,blending:THREE.AdditiveBlending});
+      const atmoMat=new THREE.MeshBasicNodeMaterial({transparent:true,side:THREE.BackSide,depthWrite:false,depthTest:true,blending:THREE.AdditiveBlending});   // v98: depth-tested — hull, Ariel, hair, board occlude it
       const scatterCoeffs=uniform(new THREE.Vector3(Math.pow(400/700,4),Math.pow(400/530,4),Math.pow(400/440,4)).multiplyScalar(scatterMul));
       const sunDirU=uniform(new THREE.Vector3(1,0.3,0.2).normalize());
       const planetCenterU=uniform(new THREE.Vector3(0,0,0));
@@ -6788,6 +6807,7 @@ function _buildJotsDustyAtmoShell(radius, opts){
       atmoMesh.name='JOTS_DustyAtmo';
       atmoMesh.renderOrder=2;
       atmoMesh.userData.jotsAtmo=true;
+      _jotsAtmoDepthSide(atmoMesh,ATMO_R);
       group.add(atmoMesh);
       _registerJotsAtmoFog({mesh:atmoMesh, sunDirU, planetCenterU});
       return group;
@@ -6801,6 +6821,7 @@ function _buildJotsDustyAtmoShell(radius, opts){
   const atmo=new THREE.Mesh(new THREE.SphereGeometry(ATMO_R, Math.max(16,24), Math.max(12,18)), atmoMat);
   atmo.name='JOTS_DustyAtmo';
   atmo.renderOrder=2;
+  _jotsAtmoDepthSide(atmo,ATMO_R);
   group.add(atmo);
   return group;
 }
@@ -7167,7 +7188,7 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
     //   by way of the project's dm-jots-sandbox (dartsolarpunk). See CREDITS.
     // Rayleigh — Sol-wired sunDir + world planetCenter; budgeted VIEW/SUN samples;
     // surface-radius clamp (sandbox depth cue without full RT pre-pass).
-    const atmoMat=new THREE.MeshBasicNodeMaterial({transparent:true,side:THREE.BackSide,depthWrite:false,depthTest:false,blending:THREE.AdditiveBlending});
+    const atmoMat=new THREE.MeshBasicNodeMaterial({transparent:true,side:THREE.BackSide,depthWrite:false,depthTest:true,blending:THREE.AdditiveBlending});   // v98: depth-tested — hull, Ariel, hair, board occlude it
     // Earth: deepen Rayleigh toward sandbox (soft blue limb glow). No Sol corona.
     const look=_ATMO_LOOK[kind]||_ATMO_LOOK.other;
     const atmoMul=look.mul, scatterMul=look.scatter;
@@ -7242,6 +7263,7 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
     atmoMesh.name='JOTS_PlanetAtmo';
     atmoMesh.renderOrder=2;
     atmoMesh.userData.jotsAtmo=true;
+    _jotsAtmoDepthSide(atmoMesh,ATMO_R);
     _registerJotsAtmoFog({mesh:atmoMesh, sunDirU, planetCenterU});
     if(!window.__DISABLE_ATMO_MESH__) group.add(atmoMesh);
   }
