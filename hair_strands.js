@@ -399,7 +399,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
      copy). Waits until three has created that texture, then hands the current CPU state over, so the
      switch is seamless. Any failure falls back to the CPU solver below. */
   let gc = null;   // null = undecided / waiting, false = CPU solve, object = GPU solve
-  let gcTex = null, gcResync = false;
+  let gcTex = null, gcResync = false, gcWasOn = false;
   function initCompute(renderer) {
     const be = renderer && renderer.backend;
     if (P.gpuCompute === false || !be || !be.isWebGPUBackend || !be.device || typeof GPUBufferUsage === 'undefined') return false;
@@ -661,7 +661,12 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     }
     const onGPU = !!(gc && !P.verifyRibbons && extra.length <= HAIR_GPU_MAX_EXTRA);
     if (gc && gcResync && onGPU) { gc.setState(sp, sq); gcResync = false; }
-    if (!onGPU && gc) gcResync = true;   // CPU took over for a frame: re-sync the GPU state when it resumes
+    if (!onGPU && gc) {
+      gcResync = true;   // CPU took over: re-sync the GPU state when it resumes
+      // the CPU's sp/sq are stale while the GPU solved: reseed from the groom instead of snapping
+      if (gcWasOn) needInit = true;
+    }
+    gcWasOn = onGPU;
     let reset = needInit || popped, shx = 0, shy = 0, shz = 0;
     // guide rest pose in root-local
     for (let i = 0; i < GK && !onGPU; i++) {
