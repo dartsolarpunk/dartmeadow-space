@@ -479,6 +479,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   const v3 = new THREE.Vector3(), v3b = new THREE.Vector3(), camL = new THREE.Vector3(), tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3();
   const lastRootW = new THREE.Vector3(); let haveLast = false;
   let lhx = 0, lhy = 0, lhz = 0, haveHL = false;
+  const fvel = new THREE.Vector3();
   const gravL = new THREE.Vector3(), windL = new THREE.Vector3(), windW = new THREE.Vector3(), velS = new THREE.Vector3();
   let gScale = 1;
   const extra = [];   // user colliders
@@ -738,6 +739,8 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     let motionWind = 0;
     if (haveLast && dt < 0.25) {
       v3b.copy(v3).sub(lastRootW);
+      // v94: motion relative to the frame she stands on (the moving Bird Temple deck), not raw world motion
+      if (opts.getFrameVel) { opts.getFrameVel(fvel); v3b.addScaledVector(fvel, -dt); }
       const l = v3b.length();
       if (l / rs / dt > P.teleportSpeed) { velS.set(0, 0, 0); }   // origin re-centre / teleport: ignore
       else {
@@ -761,7 +764,9 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     lastRootW.copy(v3); haveLast = true;
     const vl = velS.length(), spd = vl / rs;
     motionWind = Math.min(P.maxMotionWind, spd * P.motionWind);
-    windW.copy(P.wind);
+    // v94: calm air indoors (host getCalm): no weather wind / gusts, only her own motion
+    const calm = !!(opts.getCalm && opts.getCalm());
+    if (calm) windW.set(0, 0, 0); else windW.copy(P.wind);
     if (spd > 1e-3) windW.addScaledVector(velS, -motionWind / (vl || 1));
 
     // gravity / wind into root-local directions

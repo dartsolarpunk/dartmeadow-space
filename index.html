@@ -8883,6 +8883,36 @@ function exitShipWalk(){
   $('ship-jump-btn').style.display='none';
   toast('🚀 Lifting off the Bird Temple',2000);
 }
+// v94: the Bird Temple's own frame (deck normal = its local +Y), for level walk / orbit cameras.
+let _sfQ=null,_sfU=null,_sfE=null;
+function _shipFrameQuat(){ if(!_sfQ){_sfQ=new THREE.Quaternion();_sfU=new THREE.Vector3();_sfE=new THREE.Quaternion();} const g=BIRD_TEMPLE.group; if(g){ g.updateMatrixWorld(true); g.getWorldQuaternion(_sfQ); _sfE.setFromAxisAngle(_sfU.set(0,1,0),-g.rotation.y); _sfQ.multiply(_sfE); } else _sfQ.identity(); return _sfQ; }   // ship tilt only (its yaw is already in camYawW / SHIP_WALK.yaw+shipYaw)
+function _shipFrameUp(){ const q=_shipFrameQuat(); return _sfU.set(0,1,0).applyQuaternion(q); }
+function _shipCamEuler(cam,lookUp,yawRel,q){ const g=BIRD_TEMPLE.group; cam.quaternion.setFromEuler(new THREE.Euler(lookUp,yawRel+(g?g.rotation.y:0),0,'YXZ')).premultiply(q); }
+// v94: HAIR INDOORS. Stepping into the enclosed interior (BTI_ zones, isIndoors) she does a quick
+// hair-fix (procedural right arm up behind her head, _charPosePost) while the strands are settled
+// back to their rest drape on her back; indoors the air is calm (no weather wind / gusts, and the
+// ship's own flight through space no longer reads as wind): gravity and her own movement only.
+// Out on the open deck or flying, normal wind comes back.
+function _shipIndoorHair(indoor,dt){
+  const was=!!SHIP_WALK._hairIn; SHIP_WALK._hairIn=!!indoor;
+  if(indoor&&!was&&SHIP_WALK.charOn&&!SHIP_WALK.fp){ CHAR._hairFix={t:0,dur:1.6}; }
+  if(indoor&&!was){ try{ const H=window.DART_HAIR; if(H&&H.reset) H.reset(); }catch(e){} }
+}
+function _hairCalm(){ return !!(typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active&&SHIP_WALK._hairIn); }
+function _hairFrameVel(out){   // world velocity of the deck she stands on (so the ship's motion is not wind)
+  const g=BIRD_TEMPLE.group; if(!(typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active)||!g){ out.set(0,0,0); return out; }
+  const now=performance.now(), L=_hairFrameVel._l||(_hairFrameVel._l={p:g.position.clone(),t:now,v:new THREE.Vector3()});
+  const dt=(now-L.t)/1000; if(dt>0.004){ if(dt<0.5) L.v.copy(g.position).sub(L.p).divideScalar(dt); else L.v.set(0,0,0); L.p.copy(g.position); L.t=now; }
+  return out.copy(L.v);
+}
+function _hairFixPose(dt){
+  const F=CHAR._hairFix; if(!F||CHAR.mounted) { CHAR._hairFix=null; return; }
+  F.t+=dt||0.016; const k=F.t/F.dur; if(k>=1){ CHAR._hairFix=null; return; }
+  if(!_bsReady()||!_bs.limb||!_bs.limb.armR) return;
+  const w=Math.pow(Math.sin(Math.PI*k),2)*0.9, sw=Math.sin(k*Math.PI*3)*0.12;   // up, a little sweep behind the head, down
+  const S=_bs, du=S.v[5], dl=S.v[6];
+  _bsLimb(S.limb.armR,du.set(-0.6,0.55,-0.15+sw).normalize(),dl.set(0.55,0.6,-0.45-sw).normalize(),w);
+}
 function updateShipWalk(dt){
   const bt=BIRD_TEMPLE;
   if(!bt.group){exitShipWalk();return;}
@@ -8891,7 +8921,11 @@ function updateShipWalk(dt){
   // relative to where the camera faces — push up = forward, the same
   // mapping as flight and the planet-surface walk.
   SHIP_WALK.yaw-=JOY.Lx*dt*3.6;
-  SHIP_WALK.pitch=THREE.MathUtils.clamp(SHIP_WALK.pitch+JOY.Ly*dt*1.2,-0.6,0.9);   // push up = look up
+  // v94: pitch is the 3rd-person camera's elevation (+ = camera above her, looking down). Pushing the
+  // look stick UP (JOY.Ly < 0) now lowers the camera / raises the view, as on planet terrain; it used to be
+  // reversed on the temple only. Mouse look (pointer lock) works the same way as on terrain.
+  SHIP_WALK.pitch=THREE.MathUtils.clamp(SHIP_WALK.pitch-JOY.Ly*dt*1.2,-0.6,0.9);
+  { const ml=takeMouseLook(); if(ml.x||ml.y){ SHIP_WALK.yaw-=ml.x*MOUSE_LOOK.sens; SHIP_WALK.pitch=THREE.MathUtils.clamp(SHIP_WALK.pitch+ml.y*MOUSE_LOOK.sens,-0.6,0.9); } }
   // Steps: she strides up anything to knee height (STEP_MAX ≈ 1.2 ft at her
   // 0.454-unit / 6 ft scale); the altar's high steps (≈0.2 and ≈0.12 units)
   // and anything else up to CLIMB_MAX she pulls herself up with the climb clip.
@@ -9013,11 +9047,17 @@ function updateShipWalk(dt){
   const dist=SHIP_WALK.charOn?(indoor?0.62:1.45):0.001, lift=SHIP_WALK.charOn?(indoor?0.12:0.35):0;
   const back=new THREE.Vector3(Math.sin(camYawW)*Math.cos(SHIP_WALK.pitch),Math.sin(SHIP_WALK.pitch)+lift,Math.cos(camYawW)*Math.cos(SHIP_WALK.pitch)).normalize();
   const _nearWant=(indoor||fp)?0.008:0.1;
+  // v94: every walk camera is level with the deck: up = the ship's local up (never the space-flight
+  // frame's rolled up, which tilted the view on the deck and hard right indoors).
+  const _shipQ=_shipFrameQuat(), _shipUp=_shipFrameUp();
+  flightCamera.up.copy(_shipUp); back.applyQuaternion(_shipQ);
+  _shipIndoorHair(indoor,dt);
   if(Math.abs(flightCamera.near-_nearWant)>1e-6){ flightCamera.near=_nearWant; flightCamera.updateProjectionMatrix(); SHIP_WALK._nearSet=true; }
   if(fp){
     const eye=new THREE.Vector3(F.x+Math.sin(SHIP_WALK.faceYaw)*0.03,F.y+SHIP_CHAR_H*0.93,F.z+Math.cos(SHIP_WALK.faceYaw)*0.03);
     flightCamera.position.copy(eye);
-    flightCamera.rotation.set(SHIP_WALK.pitch,camYawW,0,'YXZ');
+    // her eyes: same look sense as the 3rd-person camera (stick up = look up), in the ship's frame
+    _shipCamEuler(flightCamera,-SHIP_WALK.pitch,SHIP_WALK.yaw,_shipQ);
     SHIP_WALK.camLocal=null;
   } else if(SHIP_WALK.charOn){
     const want=head.clone().addScaledVector(back,dist);
@@ -9037,7 +9077,7 @@ function updateShipWalk(dt){
     flightCamera.lookAt(head);
   } else {
     flightCamera.position.set(F.x,F.y+SHIP_EYE,F.z);
-    flightCamera.rotation.set(SHIP_WALK.pitch,camYawW,0,'YXZ');
+    _shipCamEuler(flightCamera,-SHIP_WALK.pitch,SHIP_WALK.yaw,_shipQ);
   }
   if(SHIP_WALK.charOn&&CHAR.root){ const hide=fp; if(CHAR.root.visible===hide) CHAR.root.visible=!hide; SHIP_WALK._fpHidden=hide; }
   // ── The board waits beside her: ~5 ft to her right at waist height,
@@ -10728,10 +10768,22 @@ function toggleAnchor(){
     ANCHOR_STATE.active=false;ANCHOR_STATE.target=null;ANCHOR_STATE._lastPos=null;
     updateAnchorButton();return;   // the button's glow going out says it
   }
-  const target=bodyUnderCrosshair();
+  let target=bodyUnderCrosshair();
+  // v94: on (or close to) the Bird Temple, ANCHOR always takes the temple, whatever the crosshair sees
+  // (walking / landing the crosshair is on the deck or her, never "a body"). Still manual, never automatic.
+  if((!target||!target.isBirdTemple)&&_nearBirdTemple()) target={isBirdTemple:true,name:'Bird Temple'};
   if(!target){ const b=$('anchor-btn'); if(b){ b.classList.remove('nope'); void b.offsetWidth; b.classList.add('nope'); } return; }
   ANCHOR_STATE.active=true;ANCHOR_STATE.target=target;ANCHOR_STATE._lastPos=null;
   updateAnchorButton();            // glows while anchored
+  // v94: a board already parked (unanchored, in the world) is re-parented to the ship in place
+  if(target.isBirdTemple) try{ _bcReparkOnShip(); }catch(e){}
+  if(target.isBirdTemple) try{ toast('⚓ Anchored to the Bird Temple',1400); }catch(e){}
+}
+function _nearBirdTemple(){
+  const bt=BIRD_TEMPLE; if(!bt||!bt.group||!bt.spawned) return false;
+  if(SHIP_WALK.active||SHIP_LAND) return true;
+  const sp=STATE.flight; if(!sp||!sp.pos) return false;
+  try{ const d=sp.pos.distanceTo(bt.group.position), r=(bt._radius||bt.radius||0); return d<Math.max(400,r*3); }catch(e){ return false; }
 }
 function updateAnchorButton(){
   const b=$('anchor-btn');if(!b)return;
@@ -14023,7 +14075,7 @@ window.dmSceneText=function(){
     return {platform:_dmPlatform(),app:(window.DMAndroid&&DMAndroid.version)?DMAndroid.version():null,webview:m[2]||null,
       backend:real===null?'not-started':real?'WebGPU':'WebGL2-fallback',navGpu:!!navigator.gpu,gpu:g.renderer||'',vendor:g.vendor||'',
       gpuClass:g.gpuClass,score:g.score,preset:g.preset,resScale:g.resScale,cores:navigator.hardwareConcurrency||0,mem:navigator.deviceMemory||0,
-      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:'sw-v93',swCache:window._dmSwCache||null,hair:(function(){ try{ const H=window.DART_HAIR; return H?{mode:H.stats.mode||'cpu',gcReason:H.stats.gpuFail||null,check:H.stats.gpuCheck||null,ms:+(H.stats.ms||0).toFixed(2),drawn:H.stats.drawn}:null; }catch(e){ return null; } })(),ua:navigator.userAgent};
+      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:'sw-v94',swCache:window._dmSwCache||null,hair:(function(){ try{ const H=window.DART_HAIR; return H?{mode:H.stats.mode||'cpu',gcReason:H.stats.gpuFail||null,check:H.stats.gpuCheck||null,ms:+(H.stats.ms||0).toFixed(2),drawn:H.stats.drawn}:null; }catch(e){ return null; } })(),ua:navigator.userAgent};
   }
   function flush(){
     const f=win.f; win.f=[]; const t0=win.t0; win.t0=performance.now();
@@ -18850,7 +18902,7 @@ async function loadCharacterAssets(){
   function _hairStrandFraction(){ try{ const G=window.GFX; if(!G||G.preset!=='auto') return 1; const r=(typeof resolvePreset==='function')?resolvePreset():'medium'; return r==='low'?0.5:(r==='medium'||r==='balanced')?0.75:1; }catch(e){ return 1; } }
   // Real-time strand hair (hair_strands.js + characterassests/ariel_hair_strands.bin). Fails soft: if the
   // module/data is missing or the loaded character is a different file, she simply has no strand hair.
-  try{ import('./hair_strands.js').then(m=>m.attachHairStrands(CHAR,THREE,{url:CHAR_ASSET_BASE+'ariel_hair_strands.bin',getStrandFraction:_hairStrandFraction,getGravityScale:()=>{try{if(surfaceActive)return 1;if(CHAR.mounted)return atmoActive?0.3:0.08;}catch(e){}return 1;}})).catch(e=>console.info('[hair] strands not attached:',e&&e.message)); }catch(e){}
+  try{ import('./hair_strands.js').then(m=>m.attachHairStrands(CHAR,THREE,{url:CHAR_ASSET_BASE+'ariel_hair_strands.bin',getStrandFraction:_hairStrandFraction,getCalm:()=>{ try{ return _hairCalm(); }catch(e){ return false; } },getFrameVel:o=>{ try{ return _hairFrameVel(o); }catch(e){ return o.set(0,0,0); } },getGravityScale:()=>{try{if(surfaceActive)return 1;if(CHAR.mounted)return atmoActive?0.3:0.08;}catch(e){}return 1;}})).catch(e=>console.info('[hair] strands not attached:',e&&e.message)); }catch(e){}
   try{ if(typeof boardFlight!=='undefined' && boardFlight) remountSkyboard(boardFlight); }catch(e){}
   CHAR._loadPromise=null;
   return CHAR.root;
@@ -19551,6 +19603,7 @@ function _charPosePost(dt){
   CHAR._palmW=(CHAR._palmW||0)+(want-(CHAR._palmW||0))*Math.min(1,(dt||0.016)*6);
   try{ CHAR.root.updateMatrixWorld(true); _palmTwist(bones,CHAR._palmW); }catch(e){}
   if(!CHAR.mounted&&DART_PALM.states.includes(CHAR.state)) try{ _standHeadLevel(); }catch(e){}   // standing / walking only (not prone, swim, climb, rope, crouch)
+  if(CHAR._hairFix) try{ _hairFixPose(dt); CHAR.root.updateMatrixWorld(true); }catch(e){ CHAR._hairFix=null; }
 }
 /* ── POSE CONTINUITY — never through the bind pose ─────────────────
    three's mixer blends each bone toward its saved "original" value whenever
@@ -20378,7 +20431,13 @@ function _charOrbitPlace(cam,target,k,head){
   const _nearWant=Math.min(0.1,Math.max(0.03,charOrbitDist*0.08))*(k<1?k:1);
   if(cam.near!==_nearWant){cam.near=_nearWant;cam.updateProjectionMatrix();}
   const cy=Math.cos(charOrbitYaw), sy=Math.sin(charOrbitYaw), cp=Math.cos(charOrbitPitch), sp=Math.sin(charOrbitPitch), d=charOrbitDist*k;
+  const _deck=_charOnTempleDeck(), _free=!_deck&&!surfaceActive&&!atmoActive&&cam===flightCamera;
   cam.position.set(target.x+sy*cp*d, target.y+sp*d, target.z+cy*cp*d);
+  if(_deck){ // v94: on the temple the orbit is level with the deck: spherical in the ship's frame, up = its local up
+    const q=_shipFrameQuat(), off=cam.position.clone().sub(target).applyQuaternion(q); cam.position.copy(target).add(off); cam.up.copy(_shipFrameUp());
+  } else if(_free){ // v94: off the ship in open space: full free 360° spherical look (over the poles, no clamp)
+    cam.up.set(-sy*sp,cp,-cy*sp);
+  } else if(cam.up.y<0.999) cam.up.set(0,1,0);
   // on the ground the orbit camera can't dip into the terrain either
   if(surfaceActive&&typeof _surfHeight==='function'){
     const g=_surfHeight(cam.position.x,cam.position.z);
@@ -20407,7 +20466,9 @@ function _bindCharOrbitListenersOnce(){
     const dx=x-_charOrbitDrag.x, dy=y-_charOrbitDrag.y;
     if(_charOrbitPanning){ panBy(dx,dy); _charOrbitDrag={x,y}; return; }
     charOrbitYaw -= dx*0.006;
-    charOrbitPitch = Math.max(-1.45, Math.min(1.45, charOrbitPitch+dy*0.006));
+    // v94: free spherical (no pole clamp) in open space off the temple; level-clamped on the deck / worlds
+    if(!_charOnTempleDeck()&&!surfaceActive&&!atmoActive){ charOrbitPitch+=dy*0.006; charOrbitPitch=Math.atan2(Math.sin(charOrbitPitch),Math.cos(charOrbitPitch)); }
+    else charOrbitPitch = Math.max(-1.45, Math.min(1.45, charOrbitPitch+dy*0.006));
     _charOrbitDrag={x,y};
   };
   window.addEventListener('mousedown', e=>{ if(!charOrbitActive||!_charOrbitOnView(e))return; _charOrbitPanning=(e.button===2||e.button===1||e.shiftKey); _charOrbitDrag={x:e.clientX,y:e.clientY}; });
@@ -23275,7 +23336,14 @@ function _bcCtx(){
   return null;
 }
 function _bcButtons(){ document.querySelectorAll('.kb-park').forEach(b=>{ b.classList.toggle('on',BOARD_CALL.parked); b.title=BOARD_CALL.parked?'Skyboard parked — tap to have it follow you again':'Park the skyboard here'; b.setAttribute('aria-pressed',String(BOARD_CALL.parked)); }); }
-function _bcShipAnchored(){ return !!(typeof ANCHOR_STATE!=='undefined'&&ANCHOR_STATE.active&&ANCHOR_STATE.target&&ANCHOR_STATE.target.isBirdTemple&&BIRD_TEMPLE.group&&BIRD_TEMPLE.spawned&&typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active); }
+function _bcShipAnchored(){ return !!(typeof ANCHOR_STATE!=='undefined'&&ANCHOR_STATE.active&&ANCHOR_STATE.target&&ANCHOR_STATE.target.isBirdTemple&&BIRD_TEMPLE.group&&BIRD_TEMPLE.spawned); }
+function _bcReparkOnShip(){
+  const T=BOARD_CALL, g=BIRD_TEMPLE.group; if(!g||!T.parked||T.parkLocal||!boardFlight) return;
+  g.updateMatrixWorld(true);
+  const b=boardFlight, p=(T.parkPos||b.position).clone(), q=(T.parkQuat||b.quaternion).clone();
+  T.parkLocal={p:g.worldToLocal(p), q:g.quaternion.clone().invert().multiply(q)};
+  toast('🅿 Parked skyboard now rides on the Bird Temple',1600);
+}
 function _bcParkedWorld(){ return BOARD_CALL.parked&&BOARD_CALL.parkPos&&!BOARD_CALL.parkLocal; }
 function parkSkyboard(){
   const c=_bcCtx(); if(!c) return;
