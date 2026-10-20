@@ -975,6 +975,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-globe.js?v=7" defer></script>
 <script src="ui/dm-star.js?v=8" defer></script>
 <script src="ui/dm-mist.js?v=7" defer></script>
+<script src="ui/dm-atmo.js?v=1" defer></script>
 <script src="ui/dm-menuscene.js?v=7" defer></script>
 <script src="ui/dm-starbubble.js?v=3" defer></script>
 <script src="ui/dm-birdtemple.js?v=1" defer></script>
@@ -1849,6 +1850,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     <div class="setting-row"><div><div class="setting-label">Star Field Density</div><div class="setting-sub">Volumetric parallax stars</div></div><label class="toggle-switch"><input type="checkbox" id="set-stars" checked><span class="toggle-track"></span></label></div>
     <div class="setting-row"><div><div class="setting-label">Galaxy Dust Clouds</div><div class="setting-sub">Nebula particle systems</div></div><label class="toggle-switch"><input type="checkbox" id="set-dust" checked><span class="toggle-track"></span></label></div>
     <div class="setting-row" style="opacity:0.55"><div><div class="setting-label">Bloom / Glow</div><div class="setting-sub">Locked off — fullscreen bloom washed Sol white (Justin NAY)</div></div><label class="toggle-switch"><input type="checkbox" id="set-bloom" disabled aria-disabled="true"><span class="toggle-track"></span></label></div>
+    <div class="setting-row"><div><div class="setting-label">True Volumetric Atmosphere (experimental)</div><div class="setting-sub">Terrain-bound, depth-correct ray-marched gas (v98). Nearer geometry always occludes it.</div></div><label class="toggle-switch"><input type="checkbox" id="set-trueatmo"><span class="toggle-track"></span></label></div>
     <div class="setting-row"><div><div class="setting-label">Marching Cubes Terrain (experimental)</div><div class="setting-sub">Real 3D density-field terrain — enables true overhangs/caves, but is heavier than the default terrain. Requires re-landing on a surface to take effect.</div></div><label class="toggle-switch"><input type="checkbox" id="set-mctest"><span class="toggle-track"></span></label></div>
     <div class="setting-row" style="opacity:0.55">
       <div><div class="setting-label">Bloom Intensity</div><div class="setting-sub">Locked at 0 — composite bloomStr hard-off</div></div>
@@ -4547,6 +4549,7 @@ function syncSettingsUIFromState(){
     if(s){ s.bloom=false; s.bloomIntensity=0; }
     if($('set-bloom')){ $('set-bloom').checked=false; $('set-bloom').disabled=true; }
     if($('set-mctest'))$('set-mctest').checked=!!s.marchingCubesTerrain;
+    if($('set-trueatmo'))$('set-trueatmo').checked=!!s.trueAtmo;
     if($('set-bloom-intensity')){ $('set-bloom-intensity').value='0'; $('set-bloom-intensity').disabled=true; }
     if($('set-motion'))$('set-motion').checked=s.motion;
     if($('set-textures'))$('set-textures').checked=s.textures;
@@ -6788,6 +6791,7 @@ function _buildJotsDustyAtmoShell(radius, opts){
       atmoMesh.name='JOTS_DustyAtmo';
       atmoMesh.renderOrder=2;
       atmoMesh.userData.jotsAtmo=true;
+      atmoMesh.userData.planetR=R; atmoMesh.userData.atmoTop=ATMO_R-R; atmoMesh.userData.atmoScatter=scatterMul; atmoMesh.userData.atmoTint=tint.getHex();
       group.add(atmoMesh);
       _registerJotsAtmoFog({mesh:atmoMesh, sunDirU, planetCenterU});
       return group;
@@ -7242,6 +7246,7 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
     atmoMesh.name='JOTS_PlanetAtmo';
     atmoMesh.renderOrder=2;
     atmoMesh.userData.jotsAtmo=true;
+    atmoMesh.userData.planetR=radius; atmoMesh.userData.atmoTop=ATMO_R-radius; atmoMesh.userData.atmoScatter=(look&&look.scatter)||2.2; atmoMesh.userData.atmoEarth=(kind==='earth');
     _registerJotsAtmoFog({mesh:atmoMesh, sunDirU, planetCenterU});
     if(!window.__DISABLE_ATMO_MESH__) group.add(atmoMesh);
   }
@@ -13520,6 +13525,7 @@ function applySettings(){
   if($('set-bloom')){ $('set-bloom').checked=false; $('set-bloom').disabled=true; }
   if($('set-bloom-intensity')){ $('set-bloom-intensity').value='0'; $('set-bloom-intensity').disabled=true; }
   if($('set-mctest'))STATE.settings.marchingCubesTerrain=$('set-mctest').checked;
+  if($('set-trueatmo'))STATE.settings.trueAtmo=$('set-trueatmo').checked;
   STATE.settings.motion=$('set-motion')?$('set-motion').checked:true;
   STATE.settings.textures=$('set-textures')?$('set-textures').checked:true;
   STATE.settings.galaxyband=$('set-galaxyband')?$('set-galaxyband').checked:true;
@@ -17514,6 +17520,50 @@ function _pwFrame(dt){
     try{drawMinimap();}catch(e){_animLoopWarn('minimap',e);}
   }
 }
+// ── v98 true volumetric atmosphere (ui/dm-atmo.js) ─────────────────────────
+// Opt-in (Settings → "True volumetric atmosphere", or ?trueatmo=1) while it is
+// proven in-game. When on, the nearest planet's gas is ray-marched as a
+// depth-aware node pass over the real scene depth (so Ariel, her hair, the
+// board and the Bird Temple occlude it) and the old additive shells
+// (JOTS_PlanetAtmo / JOTS_DustyAtmo, depthTest:false) are hidden for that draw.
+// Steps follow the chosen quality tier only; no automatic quality drops here.
+const _TA={pipe:null,key:'',mesh:null,t:0};
+function _trueAtmoOn(){
+  try{ return !!(window.DMAtmo&&THREE.TSL&&((STATE&&STATE.settings&&STATE.settings.trueAtmo)||/[?&]trueatmo=1\b/.test(location.search))); }catch(e){ return false; }
+}
+function _trueAtmoRender(r,scene,cam){
+  if(_TA.failed||!_trueAtmoOn()) return false;
+  try{
+    let best=null,bd=Infinity; const c=new THREE.Vector3();
+    for(let i=0;i<_jotsFogAtmoRegistry.length;i++){
+      const e=_jotsFogAtmoRegistry[i]; if(!e||!e.mesh||!e.mesh.parent||!e.mesh.userData.planetR) continue;
+      e.mesh.getWorldPosition(c); const d=c.distanceTo(cam.position)/e.mesh.userData.planetR;
+      if(d<bd){ bd=d; best=e; }
+    }
+    if(!best||bd>60) return false;
+    const ud=best.mesh.userData, R=ud.planetR, q=(typeof GFX!=='undefined'&&GFX.preset)||'medium';
+    const key=best.mesh.uuid+'|'+q;
+    if(_TA.key!==key){
+      if(_TA.pipe) try{ _TA.pipe.dispose(); }catch(e){}
+      const P=DMAtmo.presetEarth(R);
+      const top=Math.max(R*0.02, ud.atmoTop||R*0.1);
+      const sc=(ud.atmoScatter||2.2)/3.8*1.25;
+      Object.assign(P,{top, scaleHeight:top/3.2, heightScale:0, heightFn:null,
+        rayleigh:[Math.pow(400/700,4)*sc,Math.pow(400/530,4)*sc,Math.pow(400/440,4)*sc]});
+      if(!ud.atmoEarth){ P.cloud=null; P.layers=[]; P.seaLevel=null; P.water=null; }
+      else { P.seaLevel=null; P.water=null; } // planned: sea-level body from DMPlanet's PlanetField once its sea tiles hand over
+      _TA.pipe=DMAtmo.create(THREE,THREE.TSL,{renderer:r,scene,camera:cam,planet:P,quality:q,logarithmicDepth:!!r.logarithmicDepthBuffer});
+      _TA.key=key; _TA.mesh=best.mesh;
+    }
+    best.mesh.getWorldPosition(c); _TA.pipe.setCenter(c);
+    if(best.sunDirU&&best.sunDirU.value) _TA.pipe.setSun(best.sunDirU.value);
+    const hidden=[];
+    for(let i=0;i<_jotsFogAtmoRegistry.length;i++){ const m=_jotsFogAtmoRegistry[i].mesh; if(m&&m.visible){ m.visible=false; hidden.push(m); } }
+    const now=performance.now(), dt=_TA.t?Math.min(0.1,(now-_TA.t)/1000):0; _TA.t=now;
+    try{ _TA.pipe.render(dt,cam); } finally { for(const m of hidden) m.visible=true; }
+    return true;
+  }catch(e){ _animLoopWarn('true-atmo',e); _TA.failed=true; return false; }
+}
 // Draw: open space behind (when the sky lets it through), the world over it.
 let _pwSbT=0;
 function _pwRender(){
@@ -17530,7 +17580,7 @@ function _pwRender(){
       try{ if(galSky.ready) updateGalSky(); }catch(e){}
       try{ if(window.DMStarBubble){ const n=performance.now(), d=_pwSbT?(n-_pwSbT)/1000:1/60; _pwSbT=n; if(window.DMStar) DMStar.frame(flightCamera,d); if(window.DMMist) DMMist.frame(flightCamera,d); DMStarBubble.frame(flightCamera,flightScene,d); } }catch(e){}
       r.toneMappingExposure=1.0;
-      r.render(flightScene,flightCamera);
+      if(!_trueAtmoRender(r,flightScene,flightCamera)) r.render(flightScene,flightCamera);
       scene.background=null; r.autoClearColor=false;   // the world draws over it (depth cleared)
     } else scene.background=PW.bg;
     if(spec) try{ DMSpec.pre(cam); }catch(e){}
