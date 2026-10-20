@@ -37,13 +37,24 @@
     return {
       radius: R, seaLevel: 0, heightScale: R * 0.012, top, scaleHeight: top / 3.2,
       gravity: 9.81, surfacePressure: 1.0,
-      rayleigh: lagueRayleigh(1.25), mie: 0.03, mieG: 0.8, hazeAmount: 0.12, hazeHeight: R * 0.0015,
-      cloud: { amount: 0.5, height: R * 0.022, width: R * 0.004, ext: 25, freq: 3.2 },
+      rayleigh: lagueRayleigh(1.25), mie: 0.02, mieG: 0.8, hazeAmount: 0.05, hazeHeight: R * 0.0012,
+      cloud: { amount: 0.3, height: R * 0.022, width: R * 0.004, ext: 25, freq: 3.2 },
+      // mostly clear, with the odd regional / hemisphere storm system drifting through
+      weather: { coverage: 0.3, scale: 0.9, speed: 0.004, ext: 40, albedo: [0.82, 0.84, 0.88], alt: R * 0.02, width: R * 0.007 },
       layers: [{ ext: [0.010, 0.030, 0.0015], albedo: 0.0, alt: top * 0.15, width: top * 0.08, amount: 1.0 }], // ozone (Chappuis band)
       storm: { swirl: 0.25, bands: 3.0, speed: 0.02 },
       water: { absorb: [0.45, 0.09, 0.05], deep: [0.0, 0.05, 0.09], waveAmp: 0.18, waveFreq: 400 },
       sunIntensity: 7
     };
+  }
+  // desert world (Mars-like): thin CO2 air, butterscotch dust haze, occasional regional dust storms
+  function presetDesert(R) {
+    const P = presetEarth(R); const top = R * 0.06;
+    Object.assign(P, { top, scaleHeight: top / 3.2, rayleigh: [0.55, 0.42, 0.32], mie: 0.25, mieG: 0.65, hazeAmount: 0.08,
+      cloud: null, layers: [{ ext: 0.35, albedo: [0.78, 0.52, 0.32], alt: top * 0.12, width: top * 0.15, amount: 1.0 }],
+      weather: { coverage: 0.15, scale: 1.1, speed: 0.006, ext: 30, albedo: [0.80, 0.55, 0.33], alt: top * 0.08, width: top * 0.12 },
+      water: null, seaLevel: null, sunIntensity: 6 });
+    return P;
   }
   function presetGasGiant(R) {
     return {
@@ -119,7 +130,10 @@
       top: uniform(P.top), H: uniform(P.scaleHeight),
       betaR: uniform(new THREE.Vector3(...P.rayleigh)), mie: uniform(P.mie), mieG: uniform(P.mieG),
       haze: uniform(P.hazeAmount), hazeH: uniform(P.hazeHeight), sunI: uniform(P.sunIntensity),
-      exposureScale: uniform(1 / P.top) // coefficients are per "top" length so they are scale-free
+      exposureScale: uniform(1 / P.top), // coefficients are per "top" length so they are scale-free
+      rot: uniform(new THREE.Matrix4()),       // world -> planet-local rotation (terrain map + storms turn with the planet)
+      locC: uniform(new THREE.Vector3(0, 0, 1)), locOn: uniform(0), // local LOD height map: centre x,z (world) + span
+      histK: uniform(0), skyW: uniform(1), aerialW: uniform(1)  // weights: rays that reach empty sky / that hit geometry
     };
     const hasSea = P.seaLevel != null && !!P.water;
     const steps = STEPS[opt.quality] || STEPS.medium;
@@ -148,10 +162,19 @@
     }
     if (!volTex) volTex = bakeVolumeCPU(THREE, opt.seed || 1337);
 
+    // fine local height map round the camera/focus (the near LOD of the real ground), world x/z
+    const LOC_N = opt.localRes || 128;
+    const locData = new Uint16Array(LOC_N * LOC_N);
+    const locTex = new THREE.DataTexture(locData, LOC_N, LOC_N, THREE.RedFormat, THREE.HalfFloatType);
+    locTex.minFilter = locTex.magFilter = THREE.LinearFilter; locTex.wrapS = locTex.wrapT = THREE.ClampToEdgeWrapping; locTex.needsUpdate = true;
+
     const pp = new (THREE.RenderPipeline || THREE.PostProcessing)(renderer);
     const scenePass = pass(scene, camera);
     const sceneColor = scenePass.getTextureNode('output');
     const sceneDepth = scenePass.getTextureNode('depth');
+    // optional background layer (open space / sky drawn by another scene+camera): world composited over it by alpha
+    const skyPass = opt.skyScene ? pass(opt.skyScene, opt.skyCamera || camera) : null;
+    const skyColor = skyPass ? skyPass.getTextureNode('output') : null;
 
     const raySphere = (ro, rd, r) => { // returns vec2(tNear, tFar); no hit => (1e20, -1e20)
       const b = dot(ro, rd), c = dot(ro, ro).sub(r.mul(r)), h = b.mul(b).sub(c);
@@ -159,7 +182,18 @@
       return h.lessThan(0.0).select(vec2(1e20, -1e20), vec2(b.negate().sub(s), b.negate().add(s)));
     };
     const dirUV = (d) => vec2(atan(d.z, d.x).div(6.2831853).add(0.5), asin(clamp(d.y, -1.0, 1.0)).div(3.14159265).add(0.5));
-    const terrainH = (d) => texture(heightTex, dirUV(d)).r.mul(U.hScale);
+    const toLocal = (d) => U.rot.mul(vec4(d, 0.0)).xyz;
+    const globalH = (d) => texture(heightTex, dirUV(toLocal(d))).r.mul(U.hScale);
+    // ground height above the reference radius at relative point p (dir up): local LOD map where it covers, global map elsewhere
+    const groundAt = (p, up) => {
+      const wxz = vec2(p.x.add(U.center.x), p.z.add(U.center.z));
+      const luv = wxz.sub(U.locC.xy).div(U.locC.z).add(0.5);
+      const edge = min(min(luv.x, luv.y), min(float(1.0).sub(luv.x), float(1.0).sub(luv.y)));
+      const w = smoothstep(0.0, 0.08, edge).mul(U.locOn);
+      const hl = texture(locTex, clamp(luv, 0.0, 1.0)).r;
+      return mix(globalH(up), hl, w);
+    };
+    const terrainH = globalH;
 
     // planet-rotated sample of the density volume with storm swirl (differential rotation => bands, vortex warp)
     const S = P.storm || { swirl: 0, bands: 1, speed: 0 };
@@ -180,7 +214,7 @@
       return d;
     };
     const gasNoise = (dir, alt, freq) => {
-      const d = warpDir(dir);
+      const d = warpDir(toLocal(dir));
       const p = d.mul(freq).add(vec3(0.0, alt.mul(U.exposureScale).mul(2.0), 0.0));
       const n1 = texture3D(volTex, p, 0).r, n2 = texture3D(volTex, p.mul(2.7).add(0.37), 0).r;
       return n1.mul(0.65).add(n2.mul(0.35));
@@ -196,7 +230,8 @@
       const dRaw = sceneDepth.sample(uv).r;
       const vz = logDepth ? logarithmicDepthToViewZ(dRaw, U.near, U.far) : perspectiveDepthToViewZ(dRaw, U.near, U.far);
       const sceneDist = dRaw.greaterThanEqual(0.99999).select(float(1e20), vz.div(vdir.z)).toVar();
-      const base = vec3(sceneColor.sample(uv).rgb).toVar();
+      const wc = sceneColor.sample(uv);
+      const base = (skyColor ? mix(skyColor.sample(uv).rgb, wc.rgb, clamp(wc.a, 0.0, 1.0)) : wc.rgb).toVar();
 
       const Rsea = U.R0.add(U.sea), Rtop = U.R0.add(U.top);
       const sun = normalize(U.sun);
@@ -211,7 +246,7 @@
         if (opt.debug === 4) dbgV.assign(vec3(ts.x.div(200.0), sceneDist.div(200.0), terrainH(normalize(ro.add(rd.mul(ts.x)))).div(U.hScale).negate()));
         If(ts.x.greaterThan(0.0).and(ts.x.lessThan(sceneDist)), () => {
           const pw = ro.add(rd.mul(ts.x)), nUp = normalize(pw);
-          const ground = terrainH(nUp);
+          const ground = groundAt(pw, nUp);
           If(ground.lessThan(U.sea), () => {
             const depthAlong = min(sceneDist.sub(ts.x), U.top.mul(4.0));
             const vert = U.sea.sub(ground); // column depth (for colour), path length for absorption
@@ -262,7 +297,7 @@
         Loop(steps, ({ i }) => {
           const t = t0.add(ds.mul(float(i).add(jit)));
           const p = ro.add(rd.mul(t)), r = length(p), up = p.div(r);
-          const solid = U.R0.add(max(terrainH(up), U.sea));   // gas boundary = max(terrain, water)
+          const solid = U.R0.add(max(groundAt(p, up), U.sea));   // gas boundary = max(terrain, water)
           const alt = r.sub(solid);
           If(alt.greaterThan(0.0), () => {
             const hSea = r.sub(Rsea);
@@ -281,11 +316,23 @@
               ext = ext.add(vec3(C.ext).mul(cd));
               scat = scat.add(vec3(C.ext * 0.9).mul(cd).mul(phM.mul(0.5).add(0.06)));
             }
+            const Wx = P.weather;
+            if (Wx) {
+              // storm systems: a slowly drifting low-frequency mask over the planet (regional/hemisphere scale)
+              const ld = toLocal(up);
+              const q = ld.mul(Wx.scale).add(vec3(U.time.mul(Wx.speed), 0.0, U.time.mul(Wx.speed * 0.6)));
+              const mask = smoothstep(float(1.0 - Wx.coverage), float(1.0 - Wx.coverage + 0.12), texture3D(volTex, q, 0).r.mul(0.6).add(texture3D(volTex, q.mul(0.37).add(0.21), 0).r.mul(0.4)));
+              const band = exp(hSea.sub(Wx.alt).div(Wx.width).pow(2.0).negate());
+              const wd2 = mask.mul(band).mul(gasNoise(up, hSea, 4.0).mul(1.5).add(0.25)).mul(fadeTop);
+              const e3 = vec3(Wx.ext).mul(wd2);
+              ext = ext.add(e3);
+              scat = scat.add(e3.mul(vec3(...Wx.albedo)).mul(phM.mul(0.4).add(0.05)));
+            }
             for (const Ly of (P.layers || [])) {
               const band = exp(hSea.sub(Ly.alt).div(Ly.width).pow(2.0).negate()).mul(Ly.amount);
               let m = band;
               if (Ly.banded) {
-                const wd = warpDir(up);
+                const wd = warpDir(toLocal(up));
                 const lat = asin(clamp(wd.y, -1.0, 1.0));
                 const zb = sin(lat.mul(S.bands * 2.0).add(gasNoise(up, hSea, 0.9).sub(0.5).mul(5.0))).mul(0.5).add(0.5);
                 m = band.mul(Ly.belt ? smoothstep(0.35, 0.65, zb) : smoothstep(0.65, 0.35, zb)).mul(gasNoise(up, hSea, 5.0).mul(1.4).add(0.3));
@@ -301,7 +348,7 @@
             const muH = sqrt(max(float(1.0).sub(Rsea.mul(Rsea).div(r.mul(r))), 0.0)).negate();
             const vis = smoothstep(muH.sub(0.015), muH.add(0.02), muS);
             const am = float(1.0).div(max(muS.sub(muH), 0.0).add(sqrt(U.H.div(r)).mul(0.45)));
-            const sunT = exp(ext.mul(inv).mul(U.H).mul(am).negate()).mul(vis);
+            const sunT = exp(ext.mul(inv).mul(U.H).mul(am).mul(1.6).negate()).mul(vis);
             const e = ext.mul(inv), sd = e.mul(ds);
             const a = exp(sd.negate());
             Ltot.addAssign(Tr.mul(scat.mul(inv)).mul(sunT).mul(vec3(1.0).sub(a)).div(max(e, vec3(1e-6))));
@@ -314,7 +361,8 @@
       if (opt.debug === 1) return vec4(base, 1.0);
       if (opt.debug === 2) return vec4(Tr, 1.0);
       if (opt.debug === 3) return vec4(sceneDist.div(5000.0), t0.div(5000.0), t1.div(5000.0), 1.0);
-      return vec4(base.mul(Tr).add(Ltot.mul(U.sunI)), 1.0);
+      const wgt = sceneDist.greaterThanEqual(1e19).select(U.skyW, U.aerialW);
+      return vec4(mix(base, base.mul(Tr).add(Ltot.mul(U.sunI)), wgt), 1.0);
     })();
 
     pp.outputNode = atmo;
@@ -331,20 +379,35 @@
       uniforms: U, params: P, isWebGPU, usesCompute: !!computeNode, steps,
       setSun(v) { U.sun.value.copy(v).normalize(); },
       setCenter(v) { U.center.value.copy(v); },
+      setWeights(sky, aerial) { U.skyW.value = sky; U.aerialW.value = aerial == null ? 1 : aerial; },
+      // planet orientation (quaternion of the planet group in world space)
+      setRotation(q) { U.rot.value.makeRotationFromQuaternion(q).invert(); },
+      // bake the near LOD height map: fn(x,z) -> height above sea (units), centred at world (cx,cz), span units
+      setLocalHeight(cx, cz, span, fn) {
+        if (!fn) { U.locOn.value = 0; return; }
+        const N = LOC_N, toH = THREE.DataUtils.toHalfFloat;
+        for (let j = 0; j < N; j++) { const z = cz + ((j + 0.5) / N - 0.5) * span;
+          for (let i = 0; i < N; i++) { let h = fn(cx + ((i + 0.5) / N - 0.5) * span, z); if (!isFinite(h)) h = 0; locData[j * N + i] = toH(h); } }
+        locTex.needsUpdate = true; U.locC.value.set(cx, cz, span); U.locOn.value = 1;
+      },
       render(dt, cam) {
         U.time.value += dt || 0; U.frame.value = (frame++) % 64;
         syncCamera(cam);
         if (computeNode && (frame % 2 === 1)) renderer.compute(computeNode);
-        pp.render();
+        if (skyPass) {
+          if (opt.skyCamera) skyPass.camera = opt.skyCamera;
+          const ca = renderer.getClearAlpha(); renderer.setClearAlpha(0);
+          try { pp.render(); } finally { renderer.setClearAlpha(ca); }
+        } else pp.render();
       },
       async renderAsync(dt, cam) {
         U.time.value += dt || 0; U.frame.value = (frame++) % 64; syncCamera(cam);
         if (computeNode) await renderer.computeAsync(computeNode);
         pp.render();
       },
-      dispose() { try { pp.dispose(); heightTex.dispose(); volTex.dispose(); } catch (e) {} }
+      dispose() { try { pp.dispose(); heightTex.dispose(); volTex.dispose(); locTex.dispose(); } catch (e) {} }
     };
   }
 
-  root.DMAtmo = { create, presetEarth, presetGasGiant, STEPS, version: 'v98' };
+  root.DMAtmo = { create, presetEarth, presetDesert, presetGasGiant, STEPS, version: 'v98' };
 })(typeof window !== 'undefined' ? window : globalThis);
