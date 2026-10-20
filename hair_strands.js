@@ -385,6 +385,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       geo.setAttribute('hsGk', new THREE.BufferAttribute(gk, 2));
       geo.setAttribute('position', new THREE.BufferAttribute(ids, 3));
       geo.deleteAttribute('normal');
+      gmat.colorWrite = mat.colorWrite; gmat.depthWrite = mat.depthWrite;
       mesh.material = gmat; mat.dispose();
       stats.gpu = true; stats.mode = 'gpu';
       return { U, disp, tDisp, ribbon, mat: gmat, textures: [tRest, tRad, tDisp, tSdf] };
@@ -472,7 +473,15 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       scalpMesh.material = scalpMat;
     } else if (scalpOrigMat) { scalpMesh.material = scalpOrigMat; }
   }
-  setCards(false); setScalp(true);
+  // Warm-up gate: the ribbon vertex shader reads head matrix / camera / deflection uniforms that only
+  // hold real values after the first update(). Drawn earlier they sit at identity (a giant black
+  // polygon flashes over the menu as the hair loads), so strands write no pixels, and the legacy
+  // cards stay up, until a few real frames have run; then the swap happens in one frame.
+  let primed = false, warm = 0;
+  const gate = (on) => { const m = mesh.material; m.colorWrite = !on; m.depthWrite = !on; m.needsUpdate = true; };
+  const prime = () => { primed = true; gate(false); setCards(false); setScalp(true); };
+  const unprime = () => { primed = false; warm = 0; gate(true); setCards(true); };
+  gate(true);
 
   /* ---------------- scratch ---------------- */
   const M = new THREE.Matrix4(), Mi = new THREE.Matrix4(), rootInv = new THREE.Matrix4(), tmpM = new THREE.Matrix4();
@@ -672,6 +681,10 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   }
 
   function update(dt) {
+    _update(dt);
+    if (!primed && P.enabled && root.visible && dt > 0 && renderSeen && gpu !== null && ++warm >= 4) prime();
+  }
+  function _update(dt) {
     if (!P.enabled || !(dt > 0) || !root.visible) return;
     const t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
     root.updateWorldMatrix(true, false);
@@ -905,7 +918,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
 
   const H = {
     params: P, stats, mesh, update, meta, get gpu() { return gpu; }, ribbonArrays: { pos, nrm },
-    setEnabled(v) { P.enabled = !!v; mesh.visible = !!v; setCards(!v); setScalp(!!v); if (v) needInit = true; },
+    setEnabled(v) { P.enabled = !!v; mesh.visible = !!v; if (v) { unprime(); needInit = true; } else { setCards(true); setScalp(false); primed = false; } },
     setStrandFraction,
     rebuildStiffness() { buildStiffness(); stiffDirty = true; },
     get compute() { return gc || null; },
