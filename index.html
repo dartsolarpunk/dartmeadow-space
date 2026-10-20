@@ -4586,8 +4586,10 @@ function _dynRes(r){
   // Ultra stays Ultra; if we'd eased it down earlier, put it back.
   // (changed: the balance now runs on every preset unless the player switched it off — the preset is still the
   //  ceiling and the floor on a chosen preset is 72%, so Ultra stays sharp but no longer stair-steps near a Sun)
-  if(GFX.dynamicRes===false){
-    if(d.k!==1){ d.k=1; try{ r.setPixelRatio(effectivePixelRatio()); r.setSize(window.innerWidth,window.innerHeight); }catch(e){} }
+  // v91: automatic resolution drops only on AUTO (or when the player ticks auto-balance, dynamicRes===true).
+  //  Ultra/High/etc. keep their chosen resolution (iPhone log: Ultra pr2 was being eased to pr1.44).
+  if(GFX.dynamicRes===false||(GFX.preset!=='auto'&&GFX.dynamicRes!==true)){
+    if(d.k!==1){ d.k=1; try{ r.setPixelRatio(effectivePixelRatio()); }catch(e){} }
     d.t=now; return;
   }
   const ms=Math.min(250,now-d.t); d.t=now; if(ms<=0) return;
@@ -4603,7 +4605,7 @@ function _dynRes(r){
   else if(d.ema>target*1.25&&k>floor){ k=Math.max(floor,Math.round((k-(starHot?0.14:0.14))*100)/100); }
   else if(d.ema<target*0.62&&k<1){ d.hold+=ms; if(d.hold>9000){ k=Math.min(1,Math.round((k+0.14)*100)/100); d.hold=0; } }
   else d.hold=0;
-  if(k!==d.k){ d.k=k; d.cool=5000; window._dmResChanges=(window._dmResChanges||0)+1; try{ r.setPixelRatio(effectivePixelRatio()*k); r.setSize(window.innerWidth,window.innerHeight); }catch(e){} }
+  if(k!==d.k){ d.k=k; d.cool=5000; window._dmResChanges=(window._dmResChanges||0)+1; try{ r.setPixelRatio(effectivePixelRatio()*k); }catch(e){} }   // setPixelRatio already resizes the drawing buffer; a second setSize reallocated it twice
 }
 function effectivePixelRatio(){
   return Math.min(GFX.dpr,GFX.maxPixelRatio)*GFX.resScale;
@@ -7918,6 +7920,10 @@ async function buildSolarSystem(){
     flightScene.add(wrapper);
     BIRD_TEMPLE.group=wrapper;
     try{btCubesInit(wrapper,SHIP_SCALE);}catch(e){console.warn('[Bird Temple] session cubes:',e);}
+    // v91: the temple is added hidden and was never precompiled, so its (new interior) pipelines compiled lazily
+    // the first frame it showed up (multi-second hitch on Safari WebGPU). Compile it off to the side once the
+    // interior script has set up its materials; nothing about the model / interactions changes.
+    try{ setTimeout(()=>{ try{ _dmCompileObject(wrapper); }catch(e){} },2500); }catch(e){}
     // Rigid-body collision against the ship removed per explicit, repeated
     // feedback: even after two rounds of tuning (tighter broad-phase,
     // capped raycast reach), it kept blocking normal thruster approach —
@@ -13147,7 +13153,7 @@ function closeSupport(){const m=$('support-modal');if(m)m.style.display='none';}
 
 function openSettings(){try{releaseMouseLook();}catch(e){}
   // sync controls to live GFX + STATE.settings
-  try{ if($('set-quality'))$('set-quality').value=GFX.preset||'auto'; if($('set-autobal')){ $('set-autobal').checked=(GFX.preset==='auto')||GFX.dynamicRes!==false; $('set-autobal').disabled=(GFX.preset==='auto'); } }catch(e){}
+  try{ if($('set-quality'))$('set-quality').value=GFX.preset||'auto'; if($('set-autobal')){ $('set-autobal').checked=(GFX.preset==='auto')||GFX.dynamicRes===true; $('set-autobal').disabled=(GFX.preset==='auto'); } }catch(e){}
   syncSettingsUIFromState();
   $('settings-modal').classList.add('open');
 }
