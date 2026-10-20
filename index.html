@@ -23524,7 +23524,7 @@ function parkSkyboard(){
   const c=_bcCtx(); if(!c) return;
   if(BOARD_CALL.parked){ BOARD_CALL.parked=false; toast('🛹 Skyboard follows you again',1600); }
   else{
-    BOARD_CALL.parked=true; BOARD_CALL.summon=null; BOARD_CALL.parkPos=c.b.position.clone(); BOARD_CALL.parkQuat=c.b.quaternion.clone(); BOARD_CALL.parkLocal=null;
+    BOARD_CALL.parked=true; BC_COL.y=null; BC_COL.hv=false; BOARD_CALL.summon=null; BOARD_CALL.parkPos=c.b.position.clone(); BOARD_CALL.parkQuat=c.b.quaternion.clone(); BOARD_CALL.parkLocal=null;
     // v92: anchored (manually, via ANCHOR) to the Bird Temple → park it exactly where it is, in the
     // ship's own frame, so it rides along. Not anchored → it stays put in the world and the ship flies on.
     if(_bcShipAnchored()){
@@ -23618,6 +23618,7 @@ function _boardCallTick(dt){
   const b=c.b;
   if(T.parked&&T.parkLocal&&BIRD_TEMPLE.group){ const g=BIRD_TEMPLE.group; g.updateMatrixWorld(true); b.position.copy(g.localToWorld(_bcV1.copy(T.parkLocal.p))); b.quaternion.copy(g.quaternion).multiply(T.parkLocal.q); T.parkPos=b.position.clone(); }
   else if(T.parked&&T.parkPos){ b.position.copy(T.parkPos); b.quaternion.copy(T.parkQuat); }
+  try{ _bcCollide(dt,c); }catch(e){ BC_COL.y=null; }   // v97: parked board is solid; yields when bumped
   const S=T.summon;
   if(S){
     S.t+=dt; const k=Math.min(1,S.t/S.dur);
@@ -23645,7 +23646,153 @@ function _boardCallTick(dt){
     if(T.trail) _bcTrailPush(c,dt,false);
   }
 }
-function _boardCallReset(){ BOARD_CALL.parkLocal=null; BOARD_CALL.parked=false; BOARD_CALL.summon=null; BOARD_CALL.look=null; BOARD_CALL.lookW=0; _bcTrail(null,true); _bcButtons(); }
+// ── v97: the PARKED skyboard is solid while she walks ─────────────────
+// Her body is a circle (radius R) in the ground plane of the frame the board
+// is parked in (the Bird Temple's own frame when it rides on the ship, the
+// world otherwise); the board is an oriented box (long axis = its local x).
+// She is pushed out of its footprint. When she bumps it, it yields: hit
+// roughly side-on → it swings ~90° to lie along her path (sliding clear of
+// it); hit end-on, or the swing is blocked (wall, pillar, steep ground, or
+// still in her way) → it backs off sideways a little. Once she is clear it
+// eases back to where it was parked, unless that spot is blocked. All moves
+// are a ~0.45 s ease. Off while following, summoned, mounting/dismounting,
+// catching, or drifting. Scalars only — no per-frame allocations.
+const BC_COL={y:null,hx:0,hz:0,hv:false,q:null,ax:null};
+function _bcColFrame(c){
+  // → {ship, local, s, hx, hz, footY, px, pz, py, th}  (th: angle of the long axis in the frame)
+  const T=BOARD_CALL, F=BC_COL.f||(BC_COL.f={});
+  if(!BC_COL.q){ BC_COL.q=new THREE.Quaternion(); BC_COL.ax=new THREE.Vector3(); BC_COL.v=new THREE.Vector3(); BC_COL.up=new THREE.Vector3(0,1,0); BC_COL.qy=new THREE.Quaternion(); }
+  const ship=!(typeof surfaceActive!=='undefined'&&surfaceActive);
+  F.ship=ship; F.local=!!(ship&&T.parkLocal); F.s=F.local?_shipScaleK():1;
+  let q;
+  if(F.local){ F.px=T.parkLocal.p.x; F.pz=T.parkLocal.p.z; F.py=T.parkLocal.p.y; q=T.parkLocal.q; F.hx=SHIP_WALK.localPos.x; F.hz=SHIP_WALK.localPos.z; F.footY=SHIP_WALK.localPos.y; }
+  else{
+    if(!T.parkPos||!T.parkQuat) return null;
+    F.px=T.parkPos.x; F.pz=T.parkPos.z; F.py=T.parkPos.y; q=T.parkQuat;
+    if(ship){ const w=BIRD_TEMPLE.group.localToWorld(BC_COL.v.copy(SHIP_WALK.localPos)); F.hx=w.x; F.hz=w.z; F.footY=w.y; }
+    else { F.hx=surfPlayer.pos.x; F.hz=surfPlayer.pos.z; F.footY=surfPlayer.pos.y-3.0; }
+  }
+  const a=BC_COL.ax.set(1,0,0).applyQuaternion(q); F.th=Math.atan2(a.z,a.x);
+  return F;
+}
+// distance from (hx,hz) to the box (cx,cz, axis angle th, half L, half W); also the outward push
+function _bcBoxDist(F,cx,cz,th,L,W,out){
+  const ux=Math.cos(th), uz=Math.sin(th), dx=F.hx-cx, dz=F.hz-cz;
+  const a=dx*ux+dz*uz, b=-dx*uz+dz*ux;
+  const ca=Math.max(-L,Math.min(L,a)), cb=Math.max(-W,Math.min(W,b));
+  let ea=a-ca, eb=b-cb, d=Math.hypot(ea,eb);
+  if(d<1e-9){ // inside: out along the shallower side
+    const pa=L-Math.abs(a), pb=W-Math.abs(b);
+    if(pb<=pa){ ea=0; eb=(b>=0?1:-1); d=-pb; } else { ea=(a>=0?1:-1); eb=0; d=-pa; }
+  } else { ea/=d; eb/=d; }
+  if(out){ out.nx=ea*ux-eb*uz; out.nz=ea*uz+eb*ux; out.d=d; }
+  return d;
+}
+// is the board at (cx,cz,th) blocked by the temple's walls / edges, or by steep ground?
+function _bcSpotBlocked(F,cx,cz,th,L,W){
+  const ux=Math.cos(th), uz=Math.sin(th);
+  try{
+    if(F.ship){
+      const g=BIRD_TEMPLE.group, s=_shipScaleK();
+      for(let i=-1;i<=1;i++){
+        let x=cx+ux*L*i, z=cz+uz*L*i, y=F.footY;
+        if(!F.local){ const p=_tcolToLocal(x,y,z); x=p.x; y=p.y; z=p.z; }
+        const r=F.local?W:W/s, y0=y+0.05/s, y1=y+SHIP_CHAR_H*0.6/s;
+        const q=_tcolPush(x,z,y0,y1,r,0,0);
+        if(Math.abs(q.x-x)+Math.abs(q.z-z)>r*0.05) return true;
+        if(_tcolRampGround(x,z,y1)===null) return true;            // off the deck
+      }
+      return false;
+    }
+    if(typeof _surfHeight!=='function') return false;
+    const h0=_surfHeight(F.px,F.pz), lim=CHAR_TERRAIN_HEIGHT/6*2.5;  // ~2.5 ft of rise under it = blocked
+    for(let i=-1;i<=1;i+=2){ const h=_surfHeight(cx+ux*L*i,cz+uz*L*i); if(!isFinite(h)||h-h0>lim) return true; }
+  }catch(e){ return true; }
+  return false;
+}
+function _bcCollide(dt,c){
+  const T=BOARD_CALL, Y=BC_COL;
+  const off=!T.parked||T.summon||!CHAR||CHAR._transitioning||
+    (c.b===boardFlight&&(SHIP_WALK.drift||!SHIP_WALK.charOn))||
+    (c.b===surfBoard&&surfPlayer&&(surfPlayer._catch||surfPlayer._caught));
+  if(off){ if(!T.parked) Y.y=null; Y.hv=false; if(!T.parked||T.summon) return; }
+  const F=_bcColFrame(c); if(!F) return;
+  const dims=_surfBoardDims(c.b), L=dims.half/F.s, W=dims.halfW/F.s;
+  const R=(c.b===boardFlight?SHIP_R:CHAR_TERRAIN_HEIGHT/6*1.1)/F.s, M=R*0.6;
+  // her motion this frame (frame coords)
+  let mx=0,mz=0; if(Y.hv){ mx=F.hx-Y.hx; mz=F.hz-Y.hz; } Y.hx=F.hx; Y.hz=F.hz; Y.hv=!off;
+  if(!Y.y) Y.y={ox:0,oz:0,od:0,fx:0,fz:0,fd:0,tx:0,tz:0,td:0,t:1,dur:0.45,held:false};
+  const S=Y.y;
+  // current pose = ease(from → to)
+  if(S.t<1) S.t=Math.min(1,S.t+dt/S.dur);
+  const e=S.t*S.t*(3-2*S.t);
+  S.ox=S.fx+(S.tx-S.fx)*e; S.oz=S.fz+(S.tz-S.fz)*e; S.od=S.fd+(S.td-S.fd)*e;
+  const cx=F.px+S.ox, cz=F.pz+S.oz, th=F.th-S.od;
+  if(!off){
+    const o=Y.o||(Y.o={nx:0,nz:0,d:0});
+    const d=_bcBoxDist(F,cx,cz,th,L,W,o);
+    if(d<R){
+      // keep her out of its footprint
+      const push=R-d;
+      _bcPushHer(c,F,o.nx*push,o.nz*push);
+      // bumped: yield, if it isn't already on the move
+      if(S.t>=1){
+        let ml=Math.hypot(mx,mz); if(ml<1e-6){ mx=cx-F.hx; mz=cz-F.hz; ml=Math.hypot(mx,mz)||1; }
+        mx/=ml; mz/=ml;
+        const ux=Math.cos(th), uz=Math.sin(th), cosA=mx*ux+mz*uz;   // her approach vs. its long axis
+        const nx=-mz, nz=mx, side=((cx-F.hx)*nx+(cz-F.hz)*nz)>=0?1:-1, lat=Math.abs((cx-F.hx)*nx+(cz-F.hz)*nz);
+        let done=false;
+        if(Math.abs(cosA)<0.57){                                  // roughly side-on (> ~55° off its axis): swing parallel
+          const want=Math.atan2(mz,mx); let dd=th-want; dd=Math.atan2(Math.sin(dd),Math.cos(dd));
+          if(dd>Math.PI/2) dd-=Math.PI; else if(dd<-Math.PI/2) dd+=Math.PI;   // align either end, the short way
+          const sh=Math.max(0,W+R+M-lat)*side;
+          const ncx=cx+nx*sh, ncz=cz+nz*sh, nth=th-dd;
+          if(!_bcSpotBlocked(F,ncx,ncz,nth,L,W)&&_bcBoxDist(F,ncx,ncz,nth,L,W,null)>=R){ _bcYieldTo(S,ncx-F.px,ncz-F.pz,S.od+dd); done=true; }
+        }
+        if(!done){                                                // back out sideways, a little (either side, then away)
+          const ext=Math.abs(ux*nx+uz*nz)*L+Math.abs(-uz*nx+ux*nz)*W, need=Math.max(0,ext+R+M-lat);
+          for(let i=0;i<2&&!done;i++){
+            const sh=i===0?side*need:-side*(ext+R+M+lat);
+            const ncx=cx+nx*sh, ncz=cz+nz*sh;
+            if(!_bcSpotBlocked(F,ncx,ncz,th,L,W)&&_bcBoxDist(F,ncx,ncz,th,L,W,null)>=R){ _bcYieldTo(S,ncx-F.px,ncz-F.pz,S.od); done=true; }
+          }
+          if(!done){ const ncx=cx+mx*(R+M), ncz=cz+mz*(R+M); if(!_bcSpotBlocked(F,ncx,ncz,th,L,W)) _bcYieldTo(S,ncx-F.px,ncz-F.pz,S.od); }
+        }
+      }
+    } else if(S.held&&S.t>=1){
+      // she's clear of it and well clear of its home spot → ease back (unless home is blocked)
+      const dh=_bcBoxDist(F,F.px,F.pz,F.th,L,W,null);
+      if(dh>R+W*2+M*3&&!_bcSpotBlocked(F,F.px,F.pz,F.th,L,W)){ _bcYieldTo(S,0,0,0); S.held=false; }
+    }
+  }
+  _bcApplyPose(c,F,S);
+}
+function _bcYieldTo(S,x,z,d){ S.fx=S.ox; S.fz=S.oz; S.fd=S.od; S.tx=x; S.tz=z; S.td=d; S.t=0; S.held=true; }
+function _bcPushHer(c,F,dx,dz){
+  if(c.b===surfBoard){ surfPlayer.pos.x+=dx; surfPlayer.pos.z+=dz; if(CHAR.root&&CHAR.root.parent===surfScene){ CHAR.root.position.x+=dx; CHAR.root.position.z+=dz; } return; }
+  // ship: move her feet in the temple frame; her root and the carry reference move with them
+  const g=BIRD_TEMPLE.group, v=BC_COL.v;
+  let wx,wz;
+  if(F.local){ const a=g.localToWorld(v.set(0,0,0)), ax=a.x, az=a.z; const b2=g.localToWorld(v.set(dx,0,dz)); wx=b2.x-ax; wz=b2.z-az; SHIP_WALK.localPos.x+=dx; SHIP_WALK.localPos.z+=dz; }
+  else { wx=dx; wz=dz; const w=g.localToWorld(v.copy(SHIP_WALK.localPos)); w.x+=dx; w.z+=dz; SHIP_WALK.localPos.copy(g.worldToLocal(w)); }
+  if(SHIP_WALK._F){ SHIP_WALK._F.x+=wx; SHIP_WALK._F.z+=wz; }
+  if(SHIP_WALK.charOn&&CHAR.root&&CHAR.root.parent===flightScene){ CHAR.root.position.x+=wx; CHAR.root.position.z+=wz; }
+}
+function _bcApplyPose(c,F,S){
+  if(Math.abs(S.ox)+Math.abs(S.oz)+Math.abs(S.od)<1e-9) return;   // at home: the park pose already set stands
+  const T=BOARD_CALL, b=c.b, Y=BC_COL;
+  Y.qy.setFromAxisAngle(Y.up,S.od);
+  if(F.local){
+    const g=BIRD_TEMPLE.group;
+    b.position.copy(g.localToWorld(Y.v.set(F.px+S.ox,F.py,F.pz+S.oz)));
+    b.quaternion.copy(g.quaternion).multiply(Y.qy).multiply(T.parkLocal.q);
+  } else {
+    b.position.set(F.px+S.ox,F.py,F.pz+S.oz);
+    if(c.b===surfBoard&&typeof _surfHeight==='function'){ try{ const h0=_surfHeight(F.px,F.pz), h=_surfHeight(b.position.x,b.position.z); if(isFinite(h)&&isFinite(h0)&&h>h0) b.position.y+=h-h0; }catch(e){} }
+    b.quaternion.copy(Y.qy).multiply(T.parkQuat);
+  }
+}
+function _boardCallReset(){ BC_COL.y=null; BC_COL.hv=false; BOARD_CALL.parkLocal=null; BOARD_CALL.parked=false; BOARD_CALL.summon=null; BOARD_CALL.look=null; BOARD_CALL.lookW=0; _bcTrail(null,true); _bcButtons(); }
 // the two little round buttons, part of the kite: a parking mark, and a
 // skyboard traced from the board itself (pointed nose, two deck discs, tail fins)
 const _KB_STEP='<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="13.6" cy="4.2" r="2" fill="currentColor"/><path d="M12.8 7.2l-2.6 4.4 2.8 2.2-.6 5.2M10.2 11.6l-3.4 1.6M13 9.6l3.6 2.4M13 13.8l3.4 1.4.4 3.8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 20.6h7.4l2-2.4h8.6" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-opacity=".75"/></svg>';
