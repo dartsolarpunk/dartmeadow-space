@@ -95,4 +95,44 @@ holo_text('engine',['CORE   STABLE','OUTPUT 100%','TEMP   NOMINAL','FLUX   0.82'
 holo_text('crew',['QUARTERS','','BUNK 1-12','LOCKERS  OK','LIGHTS  DIM'],title='CREW DECK')
 keys('keys'); grille(); deckplate()
 sign('A','DECK A','NAVIGATION'); sign('B','DECK B','MESS HALL'); sign('C','DECK C','CREW / ENGINE'); sign('TOP','HATCH','TO LOWER DECKS'); sign('STORE','FOOD STORE','COLD + DRY STORES'); sign('ENG','ENGINEERING','REACTOR')
+
+# ── cargo bay / command room additions ──
+holo_text('bay',['CARGO BAY  PORT','','PAD 01   CLEAR','DOCK    AUTO','AIR     HOLD','','MANIFEST 14 CRATES'],title='HANGAR')
+holo_text('conf',['COMMAND  CONFERENCE','','SECTOR  ARC EDGE','SYSTEMS 128','TRACKING 3 GALAXIES'],title='COMMAND')
+sign('BAY','CARGO BAY','PORT HANGAR'); sign('CMD','COMMAND','CONFERENCE ROOM'); sign('CORR','CARGO BAY','THIS WAY  >>>')
+import numpy as np
+from PIL import ImageFilter
+def galaxy(name,arms,tight,seed,tilt_bar=0.0,tint=((120,255,245),(150,110,255),(255,236,190))):
+    rng=np.random.default_rng(seed); N=256; img=np.zeros((N,N,3),float); A=np.zeros((N,N),float)
+    pts=[]
+    for i in range(26000):
+        r=rng.random()**0.62; arm=rng.integers(0,arms)
+        th=arm*2*np.pi/arms + tight*np.log(r*6+1)*3.2 + rng.normal(0,0.16+0.1*r)
+        rr=r*0.92; x=rr*np.cos(th); y=rr*np.sin(th)
+        if tilt_bar>0 and r<0.35: x*=1+tilt_bar; y*=1-0.5*tilt_bar
+        pts.append((x,y,r))
+    for i in range(9000):                       # core bulge
+        r=abs(rng.normal(0,0.09)); th=rng.random()*6.283; pts.append((r*np.cos(th),r*np.sin(th),r*0.2))
+    for x,y,r in pts:
+        px=int(N/2+x*N/2); py=int(N/2+y*N/2)
+        if 0<=px<N and 0<=py<N:
+            t=min(1,r*1.6)
+            c=np.array(tint[0])*(1-t)+np.array(tint[1])*t if t>.5 else np.array(tint[2])*(1-t*2)+np.array(tint[0])*(t*2)
+            img[py,px]+=c*0.55; A[py,px]+=1.0
+    im=Image.fromarray(np.clip(img,0,255).astype('uint8')); a=Image.fromarray(np.clip(A*120,0,255).astype('uint8'))
+    im=im.filter(ImageFilter.GaussianBlur(1.1)); a=a.filter(ImageFilter.GaussianBlur(1.3))
+    arr=np.array(im).astype(float); aa=np.array(a).astype(float)/255.0
+    boost=np.clip(aa*2.4,0,1)
+    out=np.dstack([np.clip(arr*1.25,0,255), np.clip(boost*255*0.95,0,255)]).astype('uint8')
+    # soft circular fade at the rim
+    yy,xx=np.mgrid[0:N,0:N]; rr=np.hypot(xx-N/2,yy-N/2)/(N/2); fade=np.clip(1.15-rr*1.15,0,1)
+    out[...,3]=(out[...,3]*fade).astype('uint8')
+    Image.fromarray(out,'RGBA').save(OUT+f'galaxy_{name}.png')
+galaxy('a',2,1.0,3); galaxy('b',4,0.8,5,tilt_bar=0.5,tint=((255,190,120),(255,120,170),(255,246,220))); galaxy('c',3,1.4,9,tint=((140,255,200),(90,150,255),(255,255,230)))
+# translucent AR panels for the bow (alpha follows brightness so the galaxy shows through)
+for n in ('sector','radar','conf','nav_a','nav_b','nav_c'):
+    src=Image.open(OUT+f'holo_{n}.png').convert('RGB'); a=np.array(src).astype(float)
+    lum=a.max(axis=2)/255.0; al=np.clip(0.07+lum*1.5,0,0.95)
+    out=np.dstack([np.clip(a*1.3,0,255),al*255]).astype('uint8')
+    Image.fromarray(out,'RGBA').save(OUT+f'holopanel_{n}.png')
 print('ok')

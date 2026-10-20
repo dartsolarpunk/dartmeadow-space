@@ -7,7 +7,7 @@
  * the new interior nodes become children of the 'Bird Temple' node, named BTI_* / IX_* / LIGHT_*
 usage: splice.py original.glb interior_parts.glb out.glb
 """
-import json, struct, sys, copy
+import json, struct, sys, copy, math, os
 import numpy as np
 
 CT = {5120: np.int8, 5121: np.uint8, 5122: np.int16, 5123: np.uint16, 5125: np.uint32, 5126: np.float32}
@@ -188,6 +188,118 @@ def cut_hull(j, binc, hull_node_index, node0_T):
     return removed_total
 
 
+
+# ───────────────────────── side-skin cuts (cargo bay opening, command-room glass) ─────────────────────────
+def cut_side(j, binc, hull_node_index, node0_T, polys, xmin=15.0, axes=(1, 2), zrange=None, zclip=None, mode='port', Mover=None):
+    """Remove the parts of the Hull skin whose (y,z) -- Blender world, looking along X -- lie inside any of the convex CCW
+    polygons `polys` (only triangles with all vertices at world x > xmin: the port side). Triangles are clipped along the
+    polygon edges with all vertex attributes interpolated, exactly like the hatch cut."""
+    hull = j['nodes'][hull_node_index]
+    M = node_matrix(hull) if Mover is None else Mover
+    # Blender world (xb,yb,zb) = (gx, -gz, gy) where g = T0 + M @ local  ->  linear map local -> blender
+    A = np.zeros((3, 3)); A[0] = M[0, :3]; A[1] = -M[2, :3]; A[2] = M[1, :3]
+    off = np.array([M[0, 3] + node0_T[0], -(M[2, 3] + node0_T[2]), M[1, 3] + node0_T[1]])
+    def to_b(P): return P @ A.T + off
+    mesh = j['meshes'][hull['mesh']]
+    total_cut = 0
+    for prim in mesh['primitives']:
+        attrs = {k: read_acc(j, binc, v) for k, v in prim['attributes'].items()}
+        meta = {k: j['accessors'][v] for k, v in prim['attributes'].items()}
+        P = attrs['POSITION'].astype(np.float64)
+        idx = read_acc(j, binc, prim['indices']).reshape(-1) if 'indices' in prim else np.arange(len(P))
+        tris = idx.reshape(-1, 3)
+        PB = to_b(P)
+        tb = PB[tris]                                   # (n,3,3) blender coords
+        if mode == 'port': side = tb[:, :, 0].min(1) > xmin
+        elif mode == 'stbd': side = tb[:, :, 0].max(1) < -xmin
+        elif mode == 'front': side = tb[:, :, 1].max(1) < xmin
+        else: side = np.ones(len(tris), bool)
+        cand = np.zeros(len(tris), bool)
+        for poly in polys:
+            ys = [p[0] for p in poly]; zs = [p[1] for p in poly]
+            a0, a1 = axes
+            c = side & (tb[:, :, a0].max(1) > min(ys)) & (tb[:, :, a0].min(1) < max(ys)) & (tb[:, :, a1].max(1) > min(zs)) & (tb[:, :, a1].min(1) < max(zs))
+            if axes == (1, 2): c &= (tb[:, :, 2].max(1) - tb[:, :, 2].min(1)) > 1e-3        # skip the flat top-deck triangles
+            if zclip: c &= (tb[:, :, 2].max(1) > zclip[0]) & (tb[:, :, 2].min(1) < zclip[1])
+            if zrange: c &= (tb[:, :, 2].min(1) > zrange[0]) & (tb[:, :, 2].max(1) < zrange[1])
+            cand |= c
+        ci = np.where(cand)[0]
+        if len(ci) == 0:
+            continue
+        order = ['POSITION'] + [k for k in attrs.keys() if k != 'POSITION']
+        widths = [attrs[k].shape[1] for k in order]
+        def norm(k):
+            a = attrs[k].astype(np.float64); m = meta[k]
+            if m.get('normalized'): a = a / float(np.iinfo(CT[m['componentType']]).max)
+            return a
+        V = np.concatenate([norm(k) for k in order], axis=1)
+        nv = len(V); extra = []
+        out_tris = [tris[i] for i in range(len(tris)) if not cand[i]]
+        # linear functional per polygon edge: d(vertex) = (n . (y,z)) - c, inside positive, evaluated on attribute vectors
+        def edge_fns(poly):
+            fns = []
+            n = len(poly)
+            for i in range(n):
+                (y0, z0), (y1, z1) = poly[i], poly[(i + 1) % n]
+                dy, dz = y1 - y0, z1 - z0; L = math.hypot(dy, dz)
+                ny, nz = -dz / L, dy / L                  # left normal = inside for CCW
+                f = [0.0, 0.0, 0.0]; f[axes[0]] = ny; f[axes[1]] = nz
+                fns.append((f[0], f[1], f[2], ny * y0 + nz * z0))
+            if zclip:
+                fns.append((0.0, 0.0, 1.0, zclip[0])); fns.append((0.0, 0.0, -1.0, -zclip[1]))
+            return fns
+        def dist(vv, fn):
+            pb = to_b(vv[None, :3])[0]
+            return fn[0] * pb[0] + fn[1] * pb[1] + fn[2] * pb[2] - fn[3]
+        def split(poly, fn):
+            inside, outside = [], []
+            m = len(poly)
+            ds = [dist(v, fn) for v in poly]
+            for i in range(m):
+                a, b = poly[i], poly[(i + 1) % m]; da, db = ds[i], ds[(i + 1) % m]
+                if da >= 0: inside.append(a)
+                if da <= 0: outside.append(a)
+                if (da < 0 < db) or (db < 0 < da):
+                    t = da / (da - db); c = a + (b - a) * t
+                    inside.append(c); outside.append(c)
+            return inside, outside
+        for i in ci:
+            tri = [V[tris[i][0]], V[tris[i][1]], V[tris[i][2]]]
+            pieces = [tri]                                  # parts of this triangle not yet inside any polygon
+            for poly in polys:
+                fns = edge_fns(poly)
+                nxt = []
+                for pc in pieces:
+                    cur = pc
+                    for fn in fns:
+                        if len(cur) < 3: break
+                        ins, outs = split(cur, fn)
+                        if len(outs) >= 3: nxt.append(outs)
+                        cur = ins
+                    # `cur` is inside this polygon -> dropped
+                pieces = nxt
+            tris_out = []
+            for pc in pieces:
+                for t in fan(pc):
+                    if area2(t) > 1e-9: tris_out.append(t)
+            total_cut += 1
+            for t in tris_out:
+                ids = []
+                for v in t:
+                    extra.append(v); ids.append(nv + len(extra) - 1)
+                out_tris.append(np.array(ids))
+        if extra: V = np.concatenate([V, np.array(extra)], axis=0)
+        out_idx = np.array(out_tris, dtype=np.int64).reshape(-1)
+        col = 0
+        for k, w in zip(order, widths):
+            a = V[:, col:col + w]; col += w; m = meta[k]
+            if m.get('normalized'): a = np.round(a * float(np.iinfo(CT[m['componentType']]).max))
+            prim['attributes'][k] = add_acc(j, binc, a, m['componentType'], m['type'], 34962, m.get('normalized', False), minmax=(k == 'POSITION'))
+        ct = 5125 if len(V) > 65535 else 5123
+        prim['indices'] = add_acc(j, binc, out_idx.reshape(-1, 1), ct, 'SCALAR', 34963)
+        print('  side cut prim: %d tris clipped, verts %d -> %d' % (len(ci), nv, len(V)))
+    return total_cut
+
 # ───────────────────────── merge interior ─────────────────────────
 def remap_tex(o, base_tex):
     if isinstance(o, dict):
@@ -302,7 +414,35 @@ def main(orig, interior, out):
     hi = names.index('Hull')
     r = cut_hull(j, binc, hi, T)
     print('hull triangles split by the hatch hole:', r)
+    lay_path = os.path.join(os.path.dirname(os.path.abspath(interior)), 'layout.json')
+    if os.path.exists(lay_path):
+        lay = json.load(open(lay_path))
+        polys = [[tuple(p) for p in lay['open']], [tuple(p) for p in lay['glass']]]
+        print('side-skin cuts: cargo bay opening + command-room glass')
+        cut_side(j, binc, hi, T, polys)
+        print('starboard + front windows')
+        cut_side(j, binc, hi, T, [[tuple(p) for p in lay['glass']]], mode='stbd')
+        cut_side(j, binc, hi, T, [[tuple(p) for p in lay['glass_f']]], axes=(0, 2), mode='front', xmin=-60.0)
+        if lay.get('plan'):
+            print('plan-view cut: slit sheets inside the command room')
+            cut_side(j, binc, hi, T, [[tuple(p) for p in pl] for pl in lay['plan']], xmin=-1e9, axes=(0, 1), zrange=tuple(lay['plan_z']), mode='all')
+        if lay.get('box_clip'):
+            bc_ = lay['box_clip']; par = {c: i for i, n_ in enumerate(j['nodes']) for c in n_.get('children', [])}
+            for ni, n_ in enumerate(j['nodes']):
+                if n_.get('name') == 'Box' and 'mesh' in n_:
+                    Mw = node_matrix(j['nodes'][par[ni]]) @ node_matrix(n_)
+                    print('clipping ornament leg node', ni)
+                    cut_side(j, binc, ni, T, [[tuple(p) for p in bc_['plan']]], xmin=-1e9, axes=(0, 1), zclip=tuple(bc_['z']), mode='all', Mover=Mw)
+    if lay_cor := (lay.get('cor_clip') if os.path.exists(lay_path) else None):
+        print('box cut: hull fin crossing the corridor')
+        cut_side(j, binc, hi, T, [[tuple(p) for p in lay_cor['plan']]], xmin=-1e9, axes=(0, 1), zclip=tuple(lay_cor['z']), mode='all')
     roots = merge(j, binc, j2, bin2, n0, T)
+    for m in j['materials']:
+        nm_ = m.get('name', '')
+        if nm_ == 'BTI_Glass' or nm_.startswith('BTI_Galaxy_'):
+            m['alphaMode'] = 'BLEND'; m['doubleSided'] = True
+            if nm_ == 'BTI_Glass':
+                pbr = m.setdefault('pbrMetallicRoughness', {}); bc = pbr.get('baseColorFactor', [0.55, 0.85, 1.0, 1.0]); bc[3] = 0.2; pbr['baseColorFactor'] = bc
     newbin = compact(j, binc)
     j['asset'] = dict(j.get('asset', {}), generator='nomad 11 + bird-temple-interior splice (Claude)', version='2.0')
     write_glb(out, j, newbin)
