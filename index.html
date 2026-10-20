@@ -8768,6 +8768,9 @@ function _shipCharStepOff(feet){
 }
 // Lifting off: the board settles at her feet, she steps up onto it (easing to
 // her riding size), then it climbs away from the deck.
+// v95: a step-on's completion runs exactly once, and is forced after ~2.5 s if the
+// mount sequence never calls back (so she can't be left frozen mid-air)
+function _bmsOnce(fn,ms){ let done=false; const run=()=>{ if(done) return; done=true; clearTimeout(t); try{ fn(); }catch(e){ console.warn('[mount] hand-off:',e); } }; const t=setTimeout(()=>{ if(!done){ console.warn('[mount] sequence timed out: forcing the hand-off'); try{ CHAR._transitioning=false; }catch(e){} run(); } },ms||2500); return run; }
 function _shipLiftOff(sp,h){
   let done=0; const t0=performance.now();
   (function up(){ const k=Math.min(1,(performance.now()-t0)/800), d=h*k*k*(3-2*k)-done; sp.pos.y+=d; done+=d; if(k<1) requestAnimationFrame(up); })();
@@ -8952,7 +8955,7 @@ function exitShipWalk(){
   if(stepOn){
     try{
       const ride=CHAR.scaleForBoard*Math.abs(boardFlight.getWorldScale(new THREE.Vector3()).x);
-      boardMountSequence(boardFlight, flightScene, ()=>_shipLiftOff(sp,1.5), {endSize:ride});
+      boardMountSequence(boardFlight, flightScene, _bmsOnce(()=>_shipLiftOff(sp,1.5)), {endSize:ride});
     }catch(e){ console.warn('[ShipWalk] step-on:',e); try{remountSkyboard(boardFlight);}catch(_){} }
   } else if(SHIP_WALK.charOn&&boardFlight){try{remountSkyboard(boardFlight);}catch(e){console.warn('[ShipWalk] remount:',e);}}
   SHIP_WALK.charOn=false;
@@ -23162,7 +23165,7 @@ function _surfFallCatch(p,dt,supportH){
       try{ if(atmoState){ atmoState.takeoff=0; atmoState.vel.set(-Math.sin(yaw)*6,14,-Math.cos(yaw)*6); } }catch(e){}   // carried up and away from the drop
     };
     // her feet meet it: the usual step-on (boardMountSequence) blends her into the ride stance, then flight
-    if(CHAR.loaded&&CHAR.root&&!CHAR._transitioning) { try{ boardMountSequence(b, surfScene, go); }catch(e){ setTimeout(go,0); } }
+    if(CHAR.loaded&&CHAR.root&&!CHAR._transitioning) { const once=_bmsOnce(go); try{ boardMountSequence(b, surfScene, once); }catch(e){ setTimeout(once,0); } }
     else setTimeout(go,0);
   }
 }
