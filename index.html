@@ -967,7 +967,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 </style>
 
 <script src="ui/dm-safety.js?v=1" defer></script>
-<script src="jots/jots-link.js?v=84" defer></script>
+<script src="jots/jots-link.js?v=85" defer></script>
 <script src="ui/dm-friends.js?v=2" defer></script>
 <script src="ui/dm-perflog.js?v=1" defer></script>
 <script src="ui/dm-spectator.js?v=1" defer></script>
@@ -24379,7 +24379,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
     }
   });
   // Fallback: GitHub's device code (type a code on github.com/login/device).
-  async function deviceSignIn(){
+  async function deviceSignIn(resumeDev){
     J().consent.agree();
     $j('jots-welcome').classList.add('show');
     $j('jots-welcome-web').style.display='none';
@@ -24388,17 +24388,22 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
     const ob=$j('jots-open-gh'); ob.disabled=true; ob.textContent='⏳ GETTING YOUR CODE…';
     _deviceAbort=false; _ghCode='';
     try{
-      const dev=await prefetchCode();
-      _codeP=null;                                       // a code is used once
+      const dev=resumeDev||await prefetchCode();
+      if(!resumeDev) _codeP=null;                        // a code is used once
       _ghCode=dev.user_code; _ghUrl=dev.verification_uri||'https://github.com/login/device';
       $j('jots-code').textContent=_ghCode;
       ob.disabled=false; ob.textContent='⧉ COPY CODE & OPEN GITHUB ↗';
-      await copyCode(_ghCode);
-      $j('jots-device-status').textContent='Tap COPY CODE & OPEN GITHUB, paste the code there, press Continue, then Authorize. This screen finishes on its own when you come back.';
+      // Never wait on the clipboard: outside a tap iOS can leave this promise hanging, which stalled sign-in before polling began.
+      Promise.race([copyCode(_ghCode),new Promise(r=>setTimeout(r,800))]).catch(()=>{});
+      $j('jots-device-status').textContent=resumeDev
+        ?'Approved? Finishing sign-in…'
+        :'Tap COPY CODE & OPEN GITHUB, paste the code there, press Continue, then Authorize. This screen finishes on its own when you come back.';
+      if(resumeDev) setTimeout(()=>J().auth.pollNow(),0);
       const tok=await J().auth.waitForToken(dev,()=>{ if(_deviceAbort) throw new Error('cancelled'); },
         (why)=>{ $j('jots-device-status').textContent=/too many times|urlfetch|quota/i.test(why)
           ?'Approved on GitHub? The LEATR bridge is at its daily GitHub limit — still checking every few seconds with your code. Keep this screen open, or play as a guest.'
-          :'Approved on GitHub? The LEATR bridge is busy — still checking every few seconds…'; });
+          :'Approved on GitHub? The LEATR bridge is busy — still checking every few seconds…'; },
+        ()=>{ $j('jots-device-status').textContent='Approved? Finishing sign-in…'; });
       if(_deviceAbort) return;
       closeGitHubTab();
       $j('jots-device-status').textContent='Signed in — setting up your private repository…';
@@ -24417,7 +24422,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
       $j('jots-device-done').onclick=()=>{ $j('jots-device-done').textContent='✓ I’VE APPROVED IT — CONTINUE'; $j('jots-device-done').onclick=approvedTap; deviceSignIn(); };
     }
   }
-  function approvedTap(){ $j('jots-device-status').textContent='Checking with GitHub…'; J().auth.pollNow(); }
+  function approvedTap(){ $j('jots-device-status').textContent='Approved? Finishing sign-in…'; J().auth.pollNow(); }
   $j('jots-open-gh').onclick=()=>{
     if(!_ghCode) return;
     copyCode(_ghCode);                                   // inside the tap, so the copy is allowed
@@ -24429,7 +24434,9 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
   window.jotsGithubSignIn=githubSignIn;
   $j('jots-gh-btn').onclick=githubSignIn;
   $j('jots-device-done').onclick=approvedTap;
-  $j('jots-device-cancel').onclick=()=>{ _deviceAbort=true; closeGitHubTab(); J().consent.agree(); J().auth.guest(); hideWelcome(); };
+  // iOS may reload the home-screen app while you approve in Safari: pick the saved code back up.
+  whenJots(()=>{ setTimeout(()=>{ try{ const p=J().auth.pending&&J().auth.pending(); if(p&&!J().auth.signedIn) deviceSignIn(p); }catch(e){} },300); });
+  $j('jots-device-cancel').onclick=()=>{ _deviceAbort=true; try{ J().auth.clearPending(); }catch(e){} closeGitHubTab(); J().consent.agree(); J().auth.guest(); hideWelcome(); };
 
   // Account chip + modal: GitHub replaces the old Google/Apple buttons.
   function refreshChip(){

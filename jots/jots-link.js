@@ -175,49 +175,106 @@
     // browsers freeze a background tab's timers and requests while you
     // approve in GitHub, so every check has its own timeout, and coming
     // back to the game (or tapping "I've approved it") checks right away.
-    _wake: null, _ctl: null, _now: false,
+    _wake: null, _ctl: null, _now: false, _ctlT: 0, _polling: false, _onResume: null,
+    // A pending device sign-in is kept in localStorage so that if iOS
+    // reloads the home-screen app while you approve in Safari, the game
+    // picks the same code back up instead of losing the sign-in.
+    savePending(dev) {
+      try {
+        const exp = dev.expiresAt || (Date.now() + (dev.expires_in || 900) * 1000);
+        localStorage.setItem('jots_device_flow_v1', JSON.stringify({ device_code: dev.device_code, user_code: dev.user_code,
+          verification_uri: dev.verification_uri, interval: dev.interval || 5, expiresAt: exp }));
+      } catch (e) {}
+    },
+    pending() {
+      try {
+        const d = JSON.parse(localStorage.getItem('jots_device_flow_v1') || 'null');
+        if (d && d.device_code && d.expiresAt > Date.now() + 5000) return d;
+        localStorage.removeItem('jots_device_flow_v1');
+      } catch (e) {}
+      return null;
+    },
+    clearPending() { try { localStorage.removeItem('jots_device_flow_v1'); } catch (e) {} },
     // Check right now: cuts short a check that's still hanging from before
-    // the tab went to the background, and skips the wait.
-    pollNow() { this._now = true; try { if (this._ctl) this._ctl.abort(); } catch (e) {} if (this._wake) this._wake(); },
-    async waitForToken(dev, onTick, onBusy) {
+    // the app went to the background (iOS freezes timers and requests), and
+    // skips the wait. `resumed` = the app just came back to the front.
+    pollNow(resumed) {
+      this._now = true;
+      if (!this._polling) return;
+      if (resumed && this._onResume) { try { this._onResume(); } catch (e) {} }
+      try { if (this._ctl) this._ctl.abort(); } catch (e) {}
+      if (this._wake) this._wake();
+    },
+    async waitForToken(dev, onTick, onBusy, onResume) {
       // Split screen / two windows: the game window may never get a focus or visibility event when you approve in the
       // other one, so any sign of life here (a tap, a resize, the window coming back, the network returning) checks at once.
       let _lastKick = 0;
       const kick = () => { const n = Date.now(); if (n - _lastKick < 5500) return; if (this._ctl && n - (this._ctlT || 0) < 9000) return; _lastKick = n; this.pollNow(); };
-      const evs = ['pointerdown', 'pointermove', 'touchstart', 'resize', 'pageshow', 'online', 'mouseover'];
+      const evs = ['pointerdown', 'pointermove', 'touchstart', 'resize', 'mouseover'];
       evs.forEach((e) => window.addEventListener(e, kick, { passive: true }));
-      try { return await this._waitForToken(dev, onTick, onBusy); }
-      finally { evs.forEach((e) => window.removeEventListener(e, kick)); }
+      // Watchdog on wall-clock time: a frozen setTimeout (iOS background)
+      // can't be trusted to fire, but this interval runs again on return
+      // and kills any check that has been stuck for more than 9 s.
+      const dog = setInterval(() => {
+        if (this._ctl && Date.now() - this._ctlT > 9000) { try { this._ctl.abort(); } catch (e) {} }
+        if (this._waitUntil && Date.now() >= this._waitUntil && this._wake) this._wake();
+      }, 1000);
+      this._polling = true; this._onResume = onResume || null;
+      this.savePending(dev);
+      try {
+        const d = await this._waitForToken(dev, onTick, onBusy);
+        this.clearPending();
+        return d;
+      } catch (e) {
+        if (!/cancelled/.test(String(e && e.message))) this.clearPending();
+        throw e;
+      } finally {
+        evs.forEach((e) => window.removeEventListener(e, kick));
+        clearInterval(dog);
+        this._polling = false; this._onResume = null; this._wake = null; this._waitUntil = 0;
+      }
     },
     async _waitForToken(dev, onTick, onBusy) {
-      const until = Date.now() + (dev.expires_in || 900) * 1000;
+      const until = dev.expiresAt || (Date.now() + (dev.expires_in || 900) * 1000);
       let wait = Math.max(5, dev.interval || 5) * 1000, last = 0;   // GitHub's minimum is 5 s between checks
       while (Date.now() < until) {
-        if (!this._now) await new Promise((r) => { const t = setTimeout(r, Math.max(0, wait - (Date.now() - last))); this._wake = () => { clearTimeout(t); r(); }; });
-        this._wake = null;
+        if (!this._now) {
+          const ms = Math.max(0, wait - (Date.now() - last));
+          this._waitUntil = Date.now() + ms;
+          await new Promise((r) => { const t = setTimeout(r, ms); this._wake = () => { clearTimeout(t); r(); }; });
+        }
+        this._wake = null; this._waitUntil = 0;
         const urgent = this._now; this._now = false;
         if (onTick) onTick();
         if (!urgent && Date.now() - last < 2500) continue;  // GitHub asks for ≥5 s between checks
         last = Date.now();
-        let d;
-        try {
-          const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 15000);
+        let d = null;
+        // One check = up to 3 tries, each cut off after 8 s.
+        for (let tryN = 0; tryN < 3 && !d; tryN++) {
+          const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 8000);
           this._ctl = ctl; this._ctlT = Date.now();
-          const r = await fetch(CFG.gas + '?action=devicepoll&device_code=' + encodeURIComponent(dev.device_code) + '&t=' + Date.now(), { signal: ctl.signal, cache: 'no-store' });
-          clearTimeout(to);
-          d = JSON.parse(await r.text());
-        } catch (e) { continue; }                          // busy / error page / cut short: ask again
-        finally { this._ctl = null; }
-        if (d && d.access_token) return d;
-        if (d && d.error === 'slow_down') wait += 5000;
-        else if (d && d.error === 'expired_token') throw new Error('The sign-in code expired — try again.');
-        else if (d && d.error === 'access_denied') throw new Error('Sign-in was cancelled on GitHub.');
-        else if (d && /incorrect_device_code|incorrect_client|unsupported_grant|device_flow_disabled/.test(d.error || '')) throw new Error(d.error);
+          try {
+            const r = await fetch(CFG.gas + '?action=devicepoll&device_code=' + encodeURIComponent(dev.device_code) + '&t=' + Date.now(), { signal: ctl.signal, cache: 'no-store' });
+            const text = await r.text();
+            try { d = JSON.parse(text); } catch (e) { d = null; }
+          } catch (e) { d = null; }
+          finally { clearTimeout(to); this._ctl = null; }
+          if (!d && !this._now && tryN < 2) await new Promise((r) => { const t = setTimeout(r, 1200); this._wake = () => { clearTimeout(t); r(); }; this._waitUntil = Date.now() + 1200; });
+          this._wake = null; this._waitUntil = 0;
+          if (this._now && !d) break;                     // cut short by pollNow: go straight round again
+        }
+        if (onTick) onTick();
+        if (!d) continue;                                  // busy / error page / cut short: ask again
+        if (d.access_token) return d;
+        if (d.error === 'slow_down') wait = Math.max(wait + 5000, (d.interval || 0) * 1000);
+        else if (d.error === 'expired_token') throw new Error('The sign-in code expired — try again.');
+        else if (d.error === 'access_denied') throw new Error('Sign-in was cancelled on GitHub.');
+        else if (/incorrect_device_code|incorrect_client|unsupported_grant|device_flow_disabled/.test(d.error || '')) throw new Error(d.error);
         // Anything else (the bridge busy or at its daily GitHub limit, a
         // Google error page, a lookup that failed) is not the end of the
         // sign-in: the approval is still valid on GitHub, so keep asking
         // with the same code until it expires.
-        else if (d && d.error && d.error !== 'authorization_pending' && onBusy) onBusy(String(d.error));
+        else if (d.error && d.error !== 'authorization_pending' && onBusy) onBusy(String(d.error));
       }
       throw new Error('The sign-in code expired — try again.');
     },
@@ -764,8 +821,10 @@
   window.addEventListener('jots:mpstatus', () => presence.beat());
   window.addEventListener('pagehide', () => { presence.stop(); try { if (mp.active) mp.stop(); } catch (e) {} });
   // Back from approving on GitHub → check the sign-in straight away.
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) auth.pollNow(); });
-  window.addEventListener('focus', () => auth.pollNow());
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) auth.pollNow(true); });
+  window.addEventListener('focus', () => auth.pollNow(true));
+  window.addEventListener('pageshow', () => auth.pollNow(true));
+  window.addEventListener('online', () => auth.pollNow(true));
 
   window.JOTS = { CFG, sessionId, identity, auth, vault, analytics, consent, mp, presence, nodeBus, mode: 'story' };
   if (consent.get()) setTimeout(() => presence.start(), 2500);
