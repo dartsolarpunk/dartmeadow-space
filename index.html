@@ -8428,6 +8428,9 @@ function updateBirdTemple(dt){
     }
   }
 
+  // v95: the whole outer hull is solid in flight (the board stops / slides along it)
+  try{ _btFlightCollide(); }catch(e){ if(!bt._fcErr){ bt._fcErr=1; console.warn('[Bird Temple] flight collision:',e); } }
+
   // ── Bird Shard: fly-to-player / follow / return-to-ship ─────────
   updateBirdShard(dt);
   // Subtle sentinel patrol even while docked — a small continuous drift on
@@ -8452,6 +8455,7 @@ function updateBirdTemple(dt){
     const sp=STATE.flight;if(!sp)return;
     const dist=bt.group.position.distanceTo(sp.pos);
     const landPrompt=$('ship-land-prompt');
+    if((TCOL.for!==bt.group||!TCOL.T)&&dist<_btHullR()*4&&bt._tcolQ!==bt.group){ bt._tcolQ=bt.group; const go=()=>{ try{ _tcolBuild(); }catch(e){ bt._tcolQ=null; console.warn('[Bird Temple] collision bake:',e); } }; (window.requestIdleCallback?requestIdleCallback(go,{timeout:1500}):setTimeout(go,200)); }   // v95: bake the collision soup on approach, not on LAND
     if(dist<12){ // scaled down to match the corrected ~0.41x ship scale (was tuned for the old 3.2x)
       if(!bt.nearPromptShown){
         bt.nearPromptShown=true;
@@ -8461,9 +8465,12 @@ function updateBirdTemple(dt){
     } else {
       bt.nearPromptShown=false;
     }
+    // v95: the prompt shows anywhere over the top deck (not just near the altar): there is temple
+    // surface right under the board, close below it. Landing then goes to that spot (landOnBirdTemple).
     if(landPrompt){
-      if(dist<6&&!SHIP_LAND)landPrompt.style.display='block';
-      else landPrompt.style.display='none';
+      let over=false;
+      if(!SHIP_LAND&&dist<_btHullR()*1.2){ try{ const gy=_shipGroundHeight(sp.pos.x,sp.pos.z,sp.pos.y+0.05); over=gy!==null&&sp.pos.y-gy>=-0.05&&sp.pos.y-gy<SHIP_LAND_ABOVE; }catch(e){} }
+      const want=over?'block':'none'; if(landPrompt.style.display!==want) landPrompt.style.display=want;
     }
   }
 }
@@ -8639,19 +8646,7 @@ function _tcolPush(x,z,y0,y1,r,backX,backZ){
   return {x,z};
 }
 // First hit along a ray (temple frame), or Infinity. For the camera.
-function _tcolRay(ox,oy,oz,dx,dy,dz,far){
-  const C=TCOL,T=C.T;let best=far;
-  const ex=ox+dx*far,ez=oz+dz*far;
-  _tcolEach(Math.min(ox,ex),Math.min(oz,ez),Math.max(ox,ex),Math.max(oz,ez),t=>{
-    const o=t*9,e1x=T[o+3]-T[o],e1y=T[o+4]-T[o+1],e1z=T[o+5]-T[o+2],e2x=T[o+6]-T[o],e2y=T[o+7]-T[o+1],e2z=T[o+8]-T[o+2];
-    const px=dy*e2z-dz*e2y,py=dz*e2x-dx*e2z,pz=dx*e2y-dy*e2x,det=e1x*px+e1y*py+e1z*pz;
-    if(Math.abs(det)<1e-12)return;
-    const inv=1/det,sx=ox-T[o],sy=oy-T[o+1],sz=oz-T[o+2],u=(sx*px+sy*py+sz*pz)*inv;if(u<0||u>1)return;
-    const qx=sy*e1z-sz*e1y,qy=sz*e1x-sx*e1z,qz=sx*e1y-sy*e1x,v=(dx*qx+dy*qy+dz*qz)*inv;if(v<0||u+v>1)return;
-    const d=(e2x*qx+e2y*qy+e2z*qz)*inv;if(d>1e-6&&d<best)best=d;
-  });
-  return best<far?best:Infinity;
-}
+function _tcolRay(ox,oy,oz,dx,dy,dz,far){ const h=_tcolRayHit(ox,oy,oz,dx,dy,dz,far); return h?h.d:Infinity; }   // (v95: one ray routine, _tcolRayHit)
 // World-space wrappers (the temple wanders and turns; scale is uniform,
 // rotation only about Y, so "down" in its frame is down in the world).
 let _tcolA=null;
@@ -8773,6 +8768,9 @@ function _shipCharStepOff(feet){
 }
 // Lifting off: the board settles at her feet, she steps up onto it (easing to
 // her riding size), then it climbs away from the deck.
+// v95: a step-on's completion runs exactly once, and is forced after ~2.5 s if the
+// mount sequence never calls back (so she can't be left frozen mid-air)
+function _bmsOnce(fn,ms){ let done=false; const run=()=>{ if(done) return; done=true; clearTimeout(t); try{ fn(); }catch(e){ console.warn('[mount] hand-off:',e); } }; const t=setTimeout(()=>{ if(!done){ console.warn('[mount] sequence timed out: forcing the hand-off'); try{ CHAR._transitioning=false; }catch(e){} run(); } },ms||2500); return run; }
 function _shipLiftOff(sp,h){
   let done=0; const t0=performance.now();
   (function up(){ const k=Math.min(1,(performance.now()-t0)/800), d=h*k*k*(3-2*k)-done; sp.pos.y+=d; done+=d; if(k<1) requestAnimationFrame(up); })();
@@ -8781,6 +8779,81 @@ function _shipLiftOff(sp,h){
 // flies down onto the deck under it (in the ship's moving frame), then she
 // steps off (enterShipWalk → the dismount step-off) and stands ready to walk.
 let SHIP_LAND=null;
+// ── v95: FLIGHT HULL COLLISION ─────────────────────────────────────────
+// The same baked triangle soup the deck walk uses (TCOL, temple frame) is the
+// board's solid body in flight: a swept test from last frame's spot (held in the
+// ship's frame, so the ship's own motion never reads as "flying into it"), then
+// a sphere push-out of anything still overlapping. The velocity into the hull
+// is removed, so she slides along it. The reach is the board's own size, never
+// the frame's travel (the old v-early collider blocked approach from far off).
+const SHIP_LAND_ABOVE=3.0;          // world units above the deck the LAND prompt shows
+const BT_BOARD_R=0.32;              // the board's collision radius in flight (world units)
+function _btHullR(){
+  const bt=BIRD_TEMPLE; if(!bt.group) return 0;
+  if(!bt._bsR){ try{ const bs=new THREE.Box3().setFromObject(bt.group).getBoundingSphere(new THREE.Sphere()); if(isFinite(bs.radius)&&bs.radius>0) bt._bsR=bs.radius; }catch(e){} }
+  return bt._bsR||20;
+}
+let _bfcPrevW=null,_bfcPrevL=null,_bfcV=null,_bfcN=null;
+function _tcolRayHit(ox,oy,oz,dx,dy,dz,far){   // first hit along a ray (temple frame): {d, t} or null
+  const C=TCOL,T=C.T;let best=far,bt=-1;
+  const ex=ox+dx*far,ez=oz+dz*far;
+  _tcolEach(Math.min(ox,ex),Math.min(oz,ez),Math.max(ox,ex),Math.max(oz,ez),t=>{
+    const o=t*9,e1x=T[o+3]-T[o],e1y=T[o+4]-T[o+1],e1z=T[o+5]-T[o+2],e2x=T[o+6]-T[o],e2y=T[o+7]-T[o+1],e2z=T[o+8]-T[o+2];
+    const px=dy*e2z-dz*e2y,py=dz*e2x-dx*e2z,pz=dx*e2y-dy*e2x,det=e1x*px+e1y*py+e1z*pz;
+    if(Math.abs(det)<1e-12)return;
+    const inv=1/det,sx=ox-T[o],sy=oy-T[o+1],sz=oz-T[o+2],u=(sx*px+sy*py+sz*pz)*inv;if(u<0||u>1)return;
+    const qx=sy*e1z-sz*e1y,qy=sz*e1x-sx*e1z,qz=sx*e1y-sy*e1x,v=(dx*qx+dy*qy+dz*qz)*inv;if(v<0||u+v>1)return;
+    const d=(e2x*qx+e2y*qy+e2z*qz)*inv;if(d>1e-6&&d<best){best=d;bt=t;}
+  });
+  return bt>=0?{d:best,t:bt}:null;
+}
+function _btFlightCollide(){
+  const bt=BIRD_TEMPLE, sp=STATE.flight, g=bt.group;
+  if(!g||!bt.spawned||!sp||!sp.pos||SHIP_WALK.active||SHIP_LAND||!g.visible||performance.now()<(bt._fcGrace||0)){ _bfcPrevL=null; _bfcPrevW=null; return; }   // (grace: lifting off the deck)
+  const R=_btHullR();
+  if(sp.pos.distanceTo(g.position)>R+4){ _bfcPrevL=null; (_bfcPrevW||(_bfcPrevW=new THREE.Vector3())).copy(sp.pos); return; }      // broad phase: the hull's own size
+  if(!_bfcV){ _bfcV=new THREE.Vector3(); _bfcN=new THREE.Vector3(); }
+  _tcolBuild(); g.updateMatrixWorld(true);
+  const s=_shipScaleK(), r=BT_BOARD_R/s, C=TCOL, N=C.N;
+  // first frame inside: sweep from where she was last frame outside (one huge frame can't tunnel in)
+  if(!_bfcPrevL&&_bfcPrevW){ g.updateMatrixWorld(true); _bfcPrevL=g.worldToLocal(_bfcPrevW.clone()); }
+  const cur=g.worldToLocal(_bfcV.copy(sp.pos));
+  let x=cur.x,y=cur.y,z=cur.z, hitN=null;
+  // 1) swept: from last frame's spot (ship frame) to now — no tunnelling at speed
+  if(_bfcPrevL){
+    const dx=x-_bfcPrevL.x,dy=y-_bfcPrevL.y,dz=z-_bfcPrevL.z,L=Math.hypot(dx,dy,dz);
+    // (all in the temple's frame / units; long DART-speed moves are swept in sub-steps, never skipped)
+    if(L>1e-6&&L<(R/s)*400){
+      const ux=dx/L,uy=dy/L,uz=dz/L, step=Math.max(r*4,(R/s)*0.5,L/64); let h=null;
+      for(let a=0;a<L&&!h;a+=step){ const seg=Math.min(step,L-a); const hh=_tcolRayHit(_bfcPrevL.x+ux*a,_bfcPrevL.y+uy*a,_bfcPrevL.z+uz*a,ux,uy,uz,seg+r); if(hh){ hh.d+=a; h=hh; } }
+      if(h){ const k=Math.max(0,h.d-r); x=_bfcPrevL.x+dx/L*k; y=_bfcPrevL.y+dy/L*k; z=_bfcPrevL.z+dz/L*k; hitN=[N[h.t*3],N[h.t*3+1],N[h.t*3+2]]; if(hitN[0]*dx+hitN[1]*dy+hitN[2]*dz>0) hitN=[-hitN[0],-hitN[1],-hitN[2]]; }
+    }
+  }
+  // 2) overlap: push the board's sphere out of every triangle it still touches
+  for(let pass=0;pass<3;pass++){
+    let moved=false;
+    _tcolEach(x-r,z-r,x+r,z+r,t=>{
+      const o=t*9, lo=Math.min(C.T[o+1],C.T[o+4],C.T[o+7]), hi=Math.max(C.T[o+1],C.T[o+4],C.T[o+7]);
+      if(y+r<lo||y-r>hi) return;
+      const c=_tcolClosest(t,x,y,z); let ex=x-c[0],ey=y-c[1],ez=z-c[2]; const d=Math.hypot(ex,ey,ez);
+      if(d>=r) return;
+      if(d<1e-7){ ex=N[t*3]; ey=N[t*3+1]; ez=N[t*3+2]; const k=r; x+=ex*k; y+=ey*k; z+=ez*k; hitN=[ex,ey,ez]; }
+      else { const k=(r-d)/d; x+=ex*k; y+=ey*k; z+=ez*k; hitN=[ex/d,ey/d,ez/d]; }
+      moved=true;
+    });
+    if(!moved) break;
+  }
+  if(hitN||x!==cur.x||y!==cur.y||z!==cur.z){
+    const w=g.localToWorld(_bfcV.set(x,y,z)), dX=w.x-sp.pos.x, dY=w.y-sp.pos.y, dZ=w.z-sp.pos.z;
+    sp.pos.copy(w);
+    if(boardFlight){ boardFlight.position.x+=dX; boardFlight.position.y+=dY; boardFlight.position.z+=dZ; boardFlight.updateMatrixWorld(true); }
+    if(flightCamera){ flightCamera.position.x+=dX; flightCamera.position.y+=dY; flightCamera.position.z+=dZ; }
+    if(hitN&&sp.vel){ _bfcN.set(hitN[0],hitN[1],hitN[2]).transformDirection(g.matrixWorld); const into=sp.vel.dot(_bfcN); if(into<0) sp.vel.addScaledVector(_bfcN,-into); }
+  }
+  // the follow camera never sits inside the hull either (pulled in toward the board)
+  if(flightCamera&&!charOrbitActive){ try{ const dir=flightCamera.position.clone().sub(sp.pos), d=dir.length(); if(d>1e-4){ dir.divideScalar(d); const c=_shipCamClear(sp.pos,dir,d+0.05); if(c<d+0.05){ flightCamera.position.copy(sp.pos).addScaledVector(dir,Math.max(0.08,c-0.06)); flightCamera.updateMatrixWorld(true); } } }catch(e){} }
+  _bfcPrevL=(_bfcPrevL||new THREE.Vector3()).set(x,y,z);
+}
 function landOnBirdTemple(){
   const bt=BIRD_TEMPLE, sp=STATE.flight;
   if(!bt.group||!sp||SHIP_WALK.active||SHIP_LAND)return;
@@ -8803,6 +8876,10 @@ function _shipLandTick(dt){
   bt.group.updateMatrixWorld(true);
   const p=bt.group.localToWorld(L.from.clone().lerp(L.to,e));
   const prev=sp.pos.clone(); sp.pos.copy(p); if(sp.vel)sp.vel.set(0,0,0);
+  // v95: board (and her on it) level out with the deck as it comes down: keep its heading, lose pitch / roll
+  try{ const q=spQuat(sp); if(!L.q0){ const f=new THREE.Vector3(0,0,-1).applyQuaternion(q); L.q0=q.clone(); L.q1=_shipFrameQuat().clone().multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(0,Math.atan2(-f.x,-f.z),0,'YXZ'))); }
+    q.copy(L.q0).slerp(L.q1,Math.min(1,e*1.15)); sp.quat=q; try{ spSyncLegacy(sp); }catch(_){}
+    if(boardFlight) boardFlight.quaternion.copy(q).multiply(_BOARD_ALIGN); }catch(_){}
   if(boardFlight){ boardFlight.position.copy(p); boardFlight.updateMatrixWorld(true); }
   if(flightCamera){ flightCamera.position.add(p.sub(prev)); flightCamera.updateMatrixWorld(true); }
   if(k>=1){ SHIP_LAND=null; enterShipWalk(); }
@@ -8823,6 +8900,9 @@ function enterShipWalk(){
   SHIP_WALK.yaw=camYaw-bt.group.rotation.y;
   SHIP_WALK.pitch=0.25;SHIP_WALK.velY=0;SHIP_WALK.grounded=true;SHIP_WALK.climb=null;
   SHIP_WALK.active=true;SHIP_WALK.fp=false;SHIP_WALK.camLocal=null;_shipViewBtn();
+  SHIP_WALK.drift=null;SHIP_WALK._walkT=0;SHIP_WALK._prevL=null;
+  // v95: the walk camera eases in from where the landing camera is (no cut)
+  try{ flightCamera.updateMatrixWorld(true); SHIP_WALK._blend={t:0,dur:1.1,pL:bt.group.worldToLocal(flightCamera.position.clone()),q:flightCamera.quaternion.clone()}; }catch(e){ SHIP_WALK._blend=null; }
   _boardCallReset(); document.body.classList.add('ship-walk');
   SHIP_WALK.faceYaw=camYaw+Math.PI;                  // her facing, world (model faces +Z)
   _shipCharStepOff(feet);
@@ -8866,7 +8946,7 @@ function exitShipWalk(){
   const stepOn=!!(SHIP_WALK.charOn&&boardFlight&&CHAR.loaded&&CHAR.root&&!CHAR.mounted&&!CHAR._transitioning&&CHAR.actions&&CHAR.actions.skyboard);
   sp.pos.copy(world);sp.pos.y+=stepOn?0.04:1.5; // (stepping on: the board settles at her feet first, then climbs)
   sp.vel.set(0,0,0);
-  SHIP_WALK.active=false;SHIP_WALK.climb=null;SHIP_WALK.charPending=false;
+  SHIP_WALK.active=false;SHIP_WALK.climb=null;SHIP_WALK.charPending=false;SHIP_WALK.drift=null;
   SHIP_WALK.fp=false;SHIP_WALK.camLocal=null;_shipViewBtn();if(CHAR&&CHAR.root)CHAR.root.visible=true;
   if(SHIP_WALK._nearSet&&flightCamera){flightCamera.near=0.1;flightCamera.updateProjectionMatrix();SHIP_WALK._nearSet=false;}
   _boardCallReset(); document.body.classList.remove('ship-walk');
@@ -8875,10 +8955,11 @@ function exitShipWalk(){
   if(stepOn){
     try{
       const ride=CHAR.scaleForBoard*Math.abs(boardFlight.getWorldScale(new THREE.Vector3()).x);
-      boardMountSequence(boardFlight, flightScene, ()=>_shipLiftOff(sp,1.5), {endSize:ride});
+      boardMountSequence(boardFlight, flightScene, _bmsOnce(()=>_shipLiftOff(sp,1.5)), {endSize:ride});
     }catch(e){ console.warn('[ShipWalk] step-on:',e); try{remountSkyboard(boardFlight);}catch(_){} }
   } else if(SHIP_WALK.charOn&&boardFlight){try{remountSkyboard(boardFlight);}catch(e){console.warn('[ShipWalk] remount:',e);}}
   SHIP_WALK.charOn=false;
+  BIRD_TEMPLE._fcGrace=performance.now()+1800;   // v95: the lift-off climb clears the deck before the hull is solid again
   $('ship-liftoff-btn').style.display='none';
   $('ship-jump-btn').style.display='none';
   toast('🚀 Lifting off the Bird Temple',2000);
@@ -8913,6 +8994,34 @@ function _hairFixPose(dt){
   const S=_bs, du=S.v[5], dl=S.v[6];
   _bsLimb(S.limb.armR,du.set(-0.6,0.55,-0.15+sw).normalize(),dl.set(0.55,0.6,-0.45-sw).normalize(),w);
 }
+// v95 zero-g drift off the temple → skyboard auto-catch → flight (exitShipWalk's step-on + lift-off)
+function _shipDriftStart(dt){
+  const v=(SHIP_WALK._vL?SHIP_WALK._vL.clone():new THREE.Vector3());
+  const sK=_shipScaleK(); v.y=Math.max(v.y,SHIP_WALK.velY/sK*0.3);   // keep her momentum (ship frame); the fall so far mostly cancelled
+  const mx=0.9/sK; if(v.length()>mx) v.setLength(mx);
+  if(v.length()<0.08/sK) v.set(0,0.05/sK,0);
+  SHIP_WALK.drift={t:0,v,spin:(Math.random()<0.5?-1:1)*0.35,catch:null};
+  SHIP_WALK.velY=0; SHIP_WALK.grounded=false;
+  try{ toast('🌌 Drifting in zero-g — your skyboard is coming',1800); }catch(e){}
+}
+function _shipDriftTick(dt){
+  const D=SHIP_WALK.drift; D.t+=dt;
+  D.v.multiplyScalar(Math.exp(-dt*0.15));                 // barely any drag: vacuum
+  SHIP_WALK.localPos.addScaledVector(D.v,dt);
+  SHIP_WALK.faceYaw+=D.spin*dt*(D.catch?0.2:1);           // slow float turn
+}
+function _shipDriftBoard(dt,F){
+  const D=SHIP_WALK.drift; if(!D||!boardFlight) return;
+  if(!D.catch&&D.t>0.75){ D.catch={t:0,dur:0.65,from:BIRD_TEMPLE.group.worldToLocal(boardFlight.position.clone())}; BOARD_CALL.parked=false; BOARD_CALL.summon=null; }
+  if(!D.catch) return;
+  const C=D.catch; C.t+=dt; const k=Math.min(1,C.t/C.dur), e=1-Math.pow(1-k,3);
+  const g=BIRD_TEMPLE.group, to=new THREE.Vector3(F.x,F.y-0.03,F.z);
+  const from=g.localToWorld(C.from.clone()), mid=from.clone().lerp(to,0.5); mid.y=Math.min(from.y,to.y)-0.6;   // swoops up from under her
+  const u=1-e; boardFlight.position.set(0,0,0).addScaledVector(from,u*u).addScaledVector(mid,2*u*e).addScaledVector(to,e*e);
+  boardFlight.rotation.order='YXZ'; let dy=(SHIP_WALK.faceYaw-Math.PI/2+Math.PI)-boardFlight.rotation.y; dy=Math.atan2(Math.sin(dy),Math.cos(dy));
+  boardFlight.rotation.y+=dy*Math.min(1,dt*8); boardFlight.rotation.x*=0.8; boardFlight.rotation.z*=0.8;
+  if(k>=1){ SHIP_WALK.drift=null; exitShipWalk(); }   // her feet on it: the usual step-on → flight
+}
 function updateShipWalk(dt){
   const bt=BIRD_TEMPLE;
   if(!bt.group){exitShipWalk();return;}
@@ -8932,6 +9041,7 @@ function updateShipWalk(dt){
   const WALK_SPEED=0.55, STEP_MAX=0.09, CLIMB_MAX=0.6, JUMP_VEL=1.9, GRAVITY=6.0;
   let mf=-JOY.Ry, ms=JOY.Rx;
   if(typeof KEYS!=='undefined'&&KEYS){if(KEYS.KeyW)mf+=1;if(KEYS.KeyS)mf-=1;if(KEYS.KeyD)ms+=1;if(KEYS.KeyA)ms-=1;}
+  if(SHIP_WALK.drift){ mf=0; ms=0; SHIP_WALK._jumpQueued=false; }   // v95: drifting in zero-g: no walking / jumping
   const mag=Math.min(1,Math.hypot(mf,ms));
   // World-space wish direction from the camera's world heading.
   const shipYaw=bt.group.rotation.y, camYawW=SHIP_WALK.yaw+shipYaw;
@@ -8996,6 +9106,10 @@ function updateShipWalk(dt){
       }else{
         SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(feet.x+mv.x,feet.y,feet.z+mv.z)));
       }
+      // v95 VACUUM: off the edge of the temple she does not fall — she floats away in zero-g with
+      // the momentum she left with, and after a moment the skyboard flies up under her feet.
+      if(SHIP_WALK.drift){ _shipDriftTick(dt); }
+      else {
       // Gravity / landing on the nearest surface under her knees.
       SHIP_WALK.velY-=GRAVITY*dt;
       const pre=bt.group.localToWorld(SHIP_WALK.localPos.clone());
@@ -9012,10 +9126,16 @@ function updateShipWalk(dt){
           const back=bt.group.localToWorld(new THREE.Vector3(0,0,0));const gy=_shipGroundHeight(back.x,back.z,back.y,true);
           if(gy!==null){SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(back.x,gy,back.z)));SHIP_WALK.velY=0;}
         }
+        // nothing under her at all (walked / jumped off the hull): start the zero-g drift
+        if(gh===null&&!SHIP_WALK.climb&&(SHIP_WALK._walkT||0)>1.0&&SHIP_WALK.charOn&&!SHIP_WALK.charPending) _shipDriftStart(dt);
+      }
       }
     }
   }
 
+  SHIP_WALK._walkT=(SHIP_WALK._walkT||0)+dt;
+  if(SHIP_WALK._prevL){ const iv=1/Math.max(dt,1e-3); (SHIP_WALK._vL||(SHIP_WALK._vL=new THREE.Vector3())).subVectors(SHIP_WALK.localPos,SHIP_WALK._prevL).multiplyScalar(iv); }
+  (SHIP_WALK._prevL||(SHIP_WALK._prevL=new THREE.Vector3())).copy(SHIP_WALK.localPos);
   const F=bt.group.localToWorld(SHIP_WALK.localPos.clone());
   SHIP_WALK._F=F.clone();   // where the deck had her this step (see _shipWalkCarry)
   // She loaded after landing, or something else took her: stand her on the deck.
@@ -9079,6 +9199,14 @@ function updateShipWalk(dt){
     flightCamera.position.set(F.x,F.y+SHIP_EYE,F.z);
     _shipCamEuler(flightCamera,-SHIP_WALK.pitch,SHIP_WALK.yaw,_shipQ);
   }
+  if(SHIP_WALK._blend){   // v95: landing → walk camera, one continuous move
+    const B=SHIP_WALK._blend; B.t+=dt; const k=Math.min(1,B.t/B.dur), e=k*k*(3-2*k);
+    const p0=bt.group.localToWorld(B.pL.clone());
+    flightCamera.position.lerpVectors(p0,flightCamera.position.clone(),e);
+    flightCamera.quaternion.slerpQuaternions(B.q,flightCamera.quaternion.clone(),e);
+    flightCamera.updateMatrixWorld(true);
+    if(k>=1) SHIP_WALK._blend=null;
+  }
   if(SHIP_WALK.charOn&&CHAR.root){ const hide=fp; if(CHAR.root.visible===hide) CHAR.root.visible=!hide; SHIP_WALK._fpHidden=hide; }
   // ── The board waits beside her: ~5 ft to her right at waist height,
   // pointing the way she faces (she stands at its left side).
@@ -9099,6 +9227,7 @@ function updateShipWalk(dt){
     boardFlight.rotation.z=Math.sin(bt.t*1.2)*0.04;
   }
   _boardCallTick(dt);   // parked here, or flying in when summoned
+  if(SHIP_WALK.drift) try{ _shipDriftBoard(dt,F); }catch(e){ console.warn('[ShipWalk] catch:',e); SHIP_WALK.drift=null; }
 }
 // The temple moves after the walk step each frame (updateBirdTemple runs
 // later in the loop). Carry her, the board and the camera along by exactly
@@ -14082,7 +14211,7 @@ window.dmSceneText=function(){
     return {platform:_dmPlatform(),app:(window.DMAndroid&&DMAndroid.version)?DMAndroid.version():null,webview:m[2]||null,
       backend:real===null?'not-started':real?'WebGPU':'WebGL2-fallback',navGpu:!!navigator.gpu,gpu:g.renderer||'',vendor:g.vendor||'',
       gpuClass:g.gpuClass,score:g.score,preset:g.preset,resScale:g.resScale,cores:navigator.hardwareConcurrency||0,mem:navigator.deviceMemory||0,
-      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:'sw-v94',swCache:window._dmSwCache||null,hair:(function(){ try{ const H=window.DART_HAIR; return H?{mode:H.stats.mode||'cpu',gcReason:H.stats.gpuFail||null,check:H.stats.gpuCheck||null,ms:+(H.stats.ms||0).toFixed(2),drawn:H.stats.drawn}:null; }catch(e){ return null; } })(),ua:navigator.userAgent};
+      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:'sw-v95',swCache:window._dmSwCache||null,hair:(function(){ try{ const H=window.DART_HAIR; return H?{mode:H.stats.mode||'cpu',gcReason:H.stats.gpuFail||null,check:H.stats.gpuCheck||null,ms:+(H.stats.ms||0).toFixed(2),drawn:H.stats.drawn}:null; }catch(e){ return null; } })(),ua:navigator.userAgent};
   }
   function flush(){
     const f=win.f; win.f=[]; const t0=win.t0; win.t0=performance.now();
@@ -23004,6 +23133,42 @@ function _surfBoardSide(board){
   const d=_surfBoardDims(board);
   return Math.max(SURF_BOARD_SIDE, d.maxZ + CHAR_TERRAIN_HEIGHT*0.8);   // ≈ 5 ft clear of her
 }
+// v95 FALL CATCH: a long fall on a world (off a cliff: > ~1 s in the air AND well below where
+// she left the ground, or a drop > ~15 m) — the skyboard swoops in under her, matches her fall,
+// brakes it, and she rides it up and away into the sky (the normal ground → sky path).
+const SURF_CATCH_DROP=15*CHAR_TERRAIN_HEIGHT/1.83, SURF_CATCH_T=1.0;
+function _surfFallCatch(p,dt,supportH){
+  const feet=p.pos.y-3.0;
+  if(p._caught){ p.vel.y=0; if(p._hold!=null) p.pos.y=p._hold; return; }   // held on the board while she steps onto it
+  if(p.onGround){ p._lgY=supportH; p._airT=0; if(p._catch) p._catch=null; return; }
+  if(p._lgY==null) p._lgY=supportH;
+  p._airT=(p._airT||0)+dt;
+  const drop=p._lgY-feet;
+  if(!p._catch){
+    if(!surfBoard||CHAR._transitioning||p._floating||p.vel.y>-3) return;
+    if(!(drop>SURF_CATCH_DROP||(p._airT>SURF_CATCH_T&&drop>SURF_CATCH_DROP*0.5))) return;
+    p._catch={t:0,dur:0.7,from:surfBoard.position.clone()};
+    try{ toast('🛹 Skyboard catch!',1200); }catch(e){}
+  }
+  const C=p._catch; C.t+=dt; const k=Math.min(1,C.t/C.dur), e=k*k*(3-2*k);
+  // the board comes from below at her fall speed, then both brake together (no slam)
+  if(k>0.55) p.vel.y*=Math.exp(-dt*7);
+  const to=new THREE.Vector3(p.pos.x,feet-0.05+p.vel.y*dt,p.pos.z), from=C.from.clone(); from.y=Math.min(from.y,to.y-6);
+  surfBoard.position.lerpVectors(from,to,e);
+  surfBoard.rotation.order='YXZ'; surfBoard.rotation.x*=0.85; surfBoard.rotation.z*=0.85;
+  if(k>=1){
+    p._catch=null; p._airT=0; p._caught=true; p._hold=p.pos.y; p.vel.y=0;
+    const b=surfBoard, yaw=p.yaw||0;
+    const go=()=>{ p._caught=false; p._hold=null; if(!surfaceActive||!PW.active) return;
+      const camRel=PW.camera.position.clone().sub(b.position);
+      _pwBeginFly({x:b.position.x,z:b.position.z,y:b.position.y,yaw,camRel});
+      try{ if(atmoState){ atmoState.takeoff=0; atmoState.vel.set(-Math.sin(yaw)*6,14,-Math.cos(yaw)*6); } }catch(e){}   // carried up and away from the drop
+    };
+    // her feet meet it: the usual step-on (boardMountSequence) blends her into the ride stance, then flight
+    if(CHAR.loaded&&CHAR.root&&!CHAR._transitioning) { const once=_bmsOnce(go); try{ boardMountSequence(b, surfScene, once); }catch(e){ setTimeout(once,0); } }
+    else setTimeout(go,0);
+  }
+}
 function updateSurface(dt){
   const p=surfPlayer;if(!p)return;
   // Subtle Earth wind drift (Points) — cheap CPU update of positions only
@@ -23065,13 +23230,14 @@ function updateSurface(dt){
   // frame, so a single-frame physics flicker mid-jump can't cut it short
   // or a flicker while walking can't start one unrequested.
   if(surfJumpPressed && p.onGround){ p.vel.y=6*Math.sqrt(p.grav); p.jumpActive=true; }
+  try{ _surfFallCatch(p,dt,supportH); }catch(e){ p._catch=null; console.warn('[surf] fall catch:',e); }
   surfJumpPressed=false; // consume the press — it's an edge-triggered action, not a held state
   // stream terrain LOD around the player (subdivide nearby, coarsen far)
   // ── Hovering companion board: trails beside & slightly behind the player,
   //    hovering a few feet off the ground. It rises over obstacles/walls (its
   //    hover height tracks the terrain beneath IT) and when the player jumps or
   //    climbs, the board lifts to stay with them. ─────────────────────────────
-  if(surfBoard&&!CHAR._transitioning){
+  if(surfBoard&&!CHAR._transitioning&&!p._catch){
     // Justin HARD 2026-09-28: same facing as flight, but offset a few feet
     // to the board's LEFT (sun-side) so the board travels beside her —
     // not under her feet. Board sits on her RIGHT → she is on board LEFT.
