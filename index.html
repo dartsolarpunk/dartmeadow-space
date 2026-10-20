@@ -969,6 +969,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-safety.js?v=1" defer></script>
 <script src="jots/jots-link.js?v=84" defer></script>
 <script src="ui/dm-friends.js?v=2" defer></script>
+<script src="ui/dm-perflog.js?v=1" defer></script>
 <script src="ui/dm-spectator.js?v=1" defer></script>
 <script src="ui/dm-stack.js?v=1" defer></script>
 <script src="ui/dm-globe.js?v=7" defer></script>
@@ -14022,7 +14023,7 @@ window.dmSceneText=function(){
     return {platform:_dmPlatform(),app:(window.DMAndroid&&DMAndroid.version)?DMAndroid.version():null,webview:m[2]||null,
       backend:real===null?'not-started':real?'WebGPU':'WebGL2-fallback',navGpu:!!navigator.gpu,gpu:g.renderer||'',vendor:g.vendor||'',
       gpuClass:g.gpuClass,score:g.score,preset:g.preset,resScale:g.resScale,cores:navigator.hardwareConcurrency||0,mem:navigator.deviceMemory||0,
-      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:'sw-v92',swCache:window._dmSwCache||null,hair:(function(){ try{ const H=window.DART_HAIR; return H?{mode:H.stats.mode||'cpu',gcReason:H.stats.gpuFail||null,check:H.stats.gpuCheck||null,ms:+(H.stats.ms||0).toFixed(2),drawn:H.stats.drawn}:null; }catch(e){ return null; } })(),ua:navigator.userAgent};
+      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:'sw-v93',swCache:window._dmSwCache||null,hair:(function(){ try{ const H=window.DART_HAIR; return H?{mode:H.stats.mode||'cpu',gcReason:H.stats.gpuFail||null,check:H.stats.gpuCheck||null,ms:+(H.stats.ms||0).toFixed(2),drawn:H.stats.drawn}:null; }catch(e){ return null; } })(),ua:navigator.userAgent};
   }
   function flush(){
     const f=win.f; win.f=[]; const t0=win.t0; win.t0=performance.now();
@@ -14039,6 +14040,7 @@ window.dmSceneText=function(){
   requestAnimationFrame(tick);
   function text(){ let e; try{ e=JSON.stringify(env(),null,1); }catch(x){ e='env error: '+x; } return 'DART MEADOW PERF REPORT\n'+e+'\n'+log.map(e=>[e.at,e.screen,e.fps+'fps','avg'+e.avgMs,'p95 '+e.p95Ms,'worst '+e.worstMs,'jank'+e.jank,(e.pr!=null?'pr'+e.pr:''),e.heapMB!=null?e.heapMB+'MB':''].join(' | ')).join('\n'); }
   window.dmPerfText=text;
+  window.dmPerfEnv=env;   // ui/dm-perflog.js reads this for the per-session log
   window.dmPerfClear=()=>{ log=[]; try{ localStorage.removeItem(KEY); }catch(e){} };
   window.dmPerfReport=()=>{ try{ openProfileMenu(); setTimeout(()=>{ const t=document.getElementById('pf-perf-ta'); if(t){ t.parentNode.hidden=false; t.value=text(); } },50); }catch(e){} };
   // shortcut gestures just open the PROFILE menu (where the Performance Log lives)
