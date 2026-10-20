@@ -4603,7 +4603,7 @@ function _dynRes(r){
   else if(d.ema>target*1.25&&k>floor){ k=Math.max(floor,Math.round((k-(starHot?0.14:0.14))*100)/100); }
   else if(d.ema<target*0.62&&k<1){ d.hold+=ms; if(d.hold>9000){ k=Math.min(1,Math.round((k+0.14)*100)/100); d.hold=0; } }
   else d.hold=0;
-  if(k!==d.k){ d.k=k; d.cool=5000; window._dmResChanges=(window._dmResChanges||0)+1; try{ r.setPixelRatio(effectivePixelRatio()*k); r.setSize(window.innerWidth,window.innerHeight); }catch(e){} }
+  if(k!==d.k){ d.k=k; d.cool=5000; window._dmResChanges=(window._dmResChanges||0)+1; try{ r.setPixelRatio(effectivePixelRatio()*k); }catch(e){} }   // setPixelRatio already resizes the drawing buffer (setSize again reallocated every target twice)
 }
 function effectivePixelRatio(){
   return Math.min(GFX.dpr,GFX.maxPixelRatio)*GFX.resScale;
@@ -13849,6 +13849,7 @@ window.dmSceneText=function(){
 (function(){
   const KEY='dm_perf_log'; let win={t0:performance.now(),f:[],last:0}, log=[];
   try{ log=JSON.parse(localStorage.getItem(KEY)||'[]'); }catch(e){}
+  try{ if(window.caches&&caches.keys) caches.keys().then(k=>{ window._dmSwCache=k.filter(n=>/engine-v/.test(n)).join(',')||'none'; }); }catch(e){}
   function env(){
     const g=(typeof GFX!=='undefined')?GFX:{}; let real=null;
     try{ real=!!(typeof flightRenderer!=='undefined'&&flightRenderer&&_isRealWebGPU(flightRenderer)); }catch(e){}
@@ -13856,7 +13857,7 @@ window.dmSceneText=function(){
     return {platform:_dmPlatform(),app:(window.DMAndroid&&DMAndroid.version)?DMAndroid.version():null,webview:m[2]||null,
       backend:real===null?'not-started':real?'WebGPU':'WebGL2-fallback',navGpu:!!navigator.gpu,gpu:g.renderer||'',vendor:g.vendor||'',
       gpuClass:g.gpuClass,score:g.score,preset:g.preset,resScale:g.resScale,cores:navigator.hardwareConcurrency||0,mem:navigator.deviceMemory||0,
-      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:'sw-v89',ua:navigator.userAgent};
+      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:'sw-v91',swCache:window._dmSwCache||null,hair:(function(){ try{ const H=window.DART_HAIR; return H?{mode:H.stats.mode||'cpu',fail:H.stats.gpuFail||null,ms:+(H.stats.ms||0).toFixed(2),drawn:H.stats.drawn}:null; }catch(e){ return null; } })(),ua:navigator.userAgent};
   }
   function flush(){
     const f=win.f; win.f=[]; const t0=win.t0; win.t0=performance.now();
