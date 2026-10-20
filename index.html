@@ -4586,8 +4586,10 @@ function _dynRes(r){
   // Ultra stays Ultra; if we'd eased it down earlier, put it back.
   // (changed: the balance now runs on every preset unless the player switched it off — the preset is still the
   //  ceiling and the floor on a chosen preset is 72%, so Ultra stays sharp but no longer stair-steps near a Sun)
-  if(GFX.dynamicRes===false){
-    if(d.k!==1){ d.k=1; try{ r.setPixelRatio(effectivePixelRatio()); r.setSize(window.innerWidth,window.innerHeight); }catch(e){} }
+  // v91: automatic resolution drops only on AUTO (or when the player ticks auto-balance, dynamicRes===true).
+  //  Ultra/High/etc. keep their chosen resolution (iPhone log: Ultra pr2 was being eased to pr1.44).
+  if(GFX.dynamicRes===false||(GFX.preset!=='auto'&&GFX.dynamicRes!==true)){
+    if(d.k!==1){ d.k=1; try{ r.setPixelRatio(effectivePixelRatio()); }catch(e){} }
     d.t=now; return;
   }
   const ms=Math.min(250,now-d.t); d.t=now; if(ms<=0) return;
@@ -4603,7 +4605,7 @@ function _dynRes(r){
   else if(d.ema>target*1.25&&k>floor){ k=Math.max(floor,Math.round((k-(starHot?0.14:0.14))*100)/100); }
   else if(d.ema<target*0.62&&k<1){ d.hold+=ms; if(d.hold>9000){ k=Math.min(1,Math.round((k+0.14)*100)/100); d.hold=0; } }
   else d.hold=0;
-  if(k!==d.k){ d.k=k; d.cool=5000; window._dmResChanges=(window._dmResChanges||0)+1; try{ r.setPixelRatio(effectivePixelRatio()*k); r.setSize(window.innerWidth,window.innerHeight); }catch(e){} }
+  if(k!==d.k){ d.k=k; d.cool=5000; window._dmResChanges=(window._dmResChanges||0)+1; try{ r.setPixelRatio(effectivePixelRatio()*k); }catch(e){} }   // setPixelRatio already resizes the drawing buffer; a second setSize reallocated it twice
 }
 function effectivePixelRatio(){
   return Math.min(GFX.dpr,GFX.maxPixelRatio)*GFX.resScale;
@@ -7918,6 +7920,31 @@ async function buildSolarSystem(){
     flightScene.add(wrapper);
     BIRD_TEMPLE.group=wrapper;
     try{btCubesInit(wrapper,SHIP_SCALE);}catch(e){console.warn('[Bird Temple] session cubes:',e);}
+    // v91: the temple is added hidden and was never precompiled, so its (new interior) pipelines compiled lazily
+    // the first frame it showed up (multi-second hitch on Safari WebGPU). Compile it off to the side once the
+    // interior script has set up its materials; nothing about the model / interactions changes.
+    try{ setTimeout(()=>{ try{ _dmCompileObject(wrapper); }catch(e){} },2500); }catch(e){}
+    // v91: render-cost LOD. In orbit the temple drew ~296 primitives (+ the same again in the shadow pass) every
+    // frame it was on screen, ~146 of them the enclosed interior decks (BTI_ materials) that cannot be seen from
+    // outside. Far from the ship: interior hidden, hull shadow casting off. Near / aboard: exactly as authored.
+    // Only .visible and .castShadow are toggled (neither rebuilds a pipeline); materials, model, collision and
+    // dm-birdtemple interactions are untouched.
+    try{
+      const inner=[], casters=[];
+      wrapper.traverse(o=>{ if(!o.isMesh) return; const m=Array.isArray(o.material)?o.material[0]:o.material;
+        const bti=!!(m&&/^BTI_/.test(m.name||'')); if(bti) inner.push({o,v:o.visible}); else if(o.castShadow) casters.push(o); });
+      const bs=new THREE.Box3().setFromObject(wrapper).getBoundingSphere(new THREE.Sphere());
+      const R0=Math.max(1e-3,bs.radius); let far=null; const _p=new THREE.Vector3();
+      BIRD_TEMPLE._lod=setInterval(()=>{ try{
+        if(typeof flightCamera==='undefined'||!flightCamera) return;
+        const aboard=(typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active)||(window.BTI&&(BTI.cur||BTI._depth>0));
+        const R=R0*(wrapper.scale.x/SHIP_SCALE||1), d=flightCamera.getWorldPosition(_p).distanceTo(wrapper.getWorldPosition(new THREE.Vector3()));
+        const f=!aboard&&d>R*4;
+        if(f===far) return; far=f;
+        for(const it of inner){ if(f){ it.v=it.o.visible; it.o.visible=false; } else it.o.visible=it.v; }
+        for(const o of casters) o.castShadow=f?false:GFX.shadows;
+      }catch(e){} },250);
+    }catch(e){ console.warn('[Bird Temple] lod',e); }
     // Rigid-body collision against the ship removed per explicit, repeated
     // feedback: even after two rounds of tuning (tighter broad-phase,
     // capped raycast reach), it kept blocking normal thruster approach —
@@ -13147,7 +13174,7 @@ function closeSupport(){const m=$('support-modal');if(m)m.style.display='none';}
 
 function openSettings(){try{releaseMouseLook();}catch(e){}
   // sync controls to live GFX + STATE.settings
-  try{ if($('set-quality'))$('set-quality').value=GFX.preset||'auto'; if($('set-autobal')){ $('set-autobal').checked=(GFX.preset==='auto')||GFX.dynamicRes!==false; $('set-autobal').disabled=(GFX.preset==='auto'); } }catch(e){}
+  try{ if($('set-quality'))$('set-quality').value=GFX.preset||'auto'; if($('set-autobal')){ $('set-autobal').checked=(GFX.preset==='auto')||GFX.dynamicRes===true; $('set-autobal').disabled=(GFX.preset==='auto'); } }catch(e){}
   syncSettingsUIFromState();
   $('settings-modal').classList.add('open');
 }
@@ -13849,6 +13876,7 @@ window.dmSceneText=function(){
 (function(){
   const KEY='dm_perf_log'; let win={t0:performance.now(),f:[],last:0}, log=[];
   try{ log=JSON.parse(localStorage.getItem(KEY)||'[]'); }catch(e){}
+  try{ if(window.caches&&caches.keys) caches.keys().then(k=>{ window._dmSwCache=k.filter(n=>/engine-v/.test(n)).join(',')||'none'; }); }catch(e){}
   function env(){
     const g=(typeof GFX!=='undefined')?GFX:{}; let real=null;
     try{ real=!!(typeof flightRenderer!=='undefined'&&flightRenderer&&_isRealWebGPU(flightRenderer)); }catch(e){}
@@ -13856,7 +13884,7 @@ window.dmSceneText=function(){
     return {platform:_dmPlatform(),app:(window.DMAndroid&&DMAndroid.version)?DMAndroid.version():null,webview:m[2]||null,
       backend:real===null?'not-started':real?'WebGPU':'WebGL2-fallback',navGpu:!!navigator.gpu,gpu:g.renderer||'',vendor:g.vendor||'',
       gpuClass:g.gpuClass,score:g.score,preset:g.preset,resScale:g.resScale,cores:navigator.hardwareConcurrency||0,mem:navigator.deviceMemory||0,
-      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:'sw-v89',ua:navigator.userAgent};
+      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:'sw-v91',swCache:window._dmSwCache||null,hair:(function(){ try{ const H=window.DART_HAIR; return H?{mode:H.stats.mode||'cpu',gcReason:H.stats.gpuFail||null,check:H.stats.gpuCheck||null,ms:+(H.stats.ms||0).toFixed(2),drawn:H.stats.drawn}:null; }catch(e){ return null; } })(),ua:navigator.userAgent};
   }
   function flush(){
     const f=win.f; win.f=[]; const t0=win.t0; win.t0=performance.now();
