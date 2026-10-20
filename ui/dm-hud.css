@@ -437,3 +437,6 @@ body.ship-walk #screen-flight .hud-c .kite-board{display:flex;}
 @media (orientation:landscape) and (max-height:500px){
   #ap-btn-atmo,#atmo-idle-btn{bottom:calc(152px + var(--safe-bot)) !important;}
 }
+
+/* v92: 1st/3rd person toggle on the Bird Temple deck + interior */
+body.ship-walk #ship-view-btn{display:block !important;}
