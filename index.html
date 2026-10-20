@@ -976,6 +976,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-mist.js?v=7" defer></script>
 <script src="ui/dm-menuscene.js?v=7" defer></script>
 <script src="ui/dm-starbubble.js?v=3" defer></script>
+<script src="ui/dm-birdtemple.js?v=1" defer></script>
 </head>
 <body>
 <!-- LOADING -->
@@ -7722,7 +7723,7 @@ async function buildSolarSystem(){
   BIRD_TEMPLE._loading=true;
   // Space in filename must be percent-encoded — unencoded 'Bird Temple.glb'
   // fails fetch on Safari/iOS (and many HTTP clients), leaving group null forever.
-  _getGLBLoader().load(encodeURI('Bird Temple.glb'), gltf=>{
+  _getGLBLoader().load(encodeURI('Bird Temple Interior.glb'), gltf=>{   // original model + hatch, three decks (ui/dm-birdtemple.js)
     const t=gltf.scene;
     t.scale.setScalar(1); // raw model scale — see wrapper group below for the real scale
     t.position.set(0,0,0);
@@ -7805,7 +7806,7 @@ async function buildSolarSystem(){
         // explanation for the reported slowdown specifically near this
         // ship and nowhere else, since nothing else in the scene has this
         // set. Default single-sided rendering restored.
-        mats.forEach(m=>{ if('vertexColors' in m){m.vertexColors=true;} });
+        mats.forEach(m=>{ if('vertexColors' in m&&!/^BTI_/.test(m.name||'')){m.vertexColors=true;} });
       }
     });
     // Diagnostic: confirm both key group lookups succeed and how many
@@ -8187,6 +8188,7 @@ function _btSelfLight(root){
   const canNode=!!(THREE.MeshStandardNodeMaterial&&T&&T.vertexColor&&T.materialEmissive);
   root.traverse(o=>{
     if(!o.isMesh||!o.material||Array.isArray(o.material))return;
+    if(/^BTI_/.test(o.material.name||''))return;   // interior keeps its own emissive neon / screens
     let nm=o.name;for(let p=o.parent;p&&!/bird shard/i.test(nm);p=p.parent){if(/bird shard/i.test(p.name||''))nm=p.name;}
     const [k,tint]=glowFor(nm);
     const m=o.material;
