@@ -402,17 +402,61 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   let gcTex = null, gcResync = false, gcWasOn = false;
   function initCompute(renderer) {
     const be = renderer && renderer.backend;
-    if (P.gpuCompute === false || !be || !be.isWebGPUBackend || !be.device || typeof GPUBufferUsage === 'undefined') return false;
+    // v91: OPT-IN until verified on Apple WebGPU (hair vanished on iPhone 16e / Safari with v90).
+    // Enable with opts.gpuCompute === true, or ?hairgpu=1 / localStorage 'jots.hairgpu' = '1'.
+    let optIn = P.gpuCompute === true;
+    try { if (!optIn && typeof location !== 'undefined' && /[?&]hairgpu=1\b/.test(location.search)) optIn = true; } catch (e) {}
+    try { if (!optIn && typeof localStorage !== 'undefined' && localStorage.getItem('jots.hairgpu') === '1') optIn = true; } catch (e) {}
+    if (!optIn) { stats.gcReason = 'opt-in off'; return false; }
+    if (!be || !be.isWebGPUBackend || !be.device || typeof GPUBufferUsage === 'undefined') return false;
     if (nCols > HAIR_GPU_MAX_COLS) return false;
+    const dev = be.device, L = dev.limits || {};
+    // up-front capability check: 7 storage buffers, 64-wide workgroup, rgba32float copy target
+    if ((L.maxStorageBuffersPerShaderStage || 0) < 7 || (L.maxComputeWorkgroupSizeX || 0) < 64 || (L.maxComputeInvocationsPerWorkgroup || 0) < 64) {
+      stats.gcReason = 'limits'; console.warn('[hair] GPU guide solve: device limits too low, CPU path', L.maxStorageBuffersPerShaderStage); return false;
+    }
     const td = be.get && be.get(gpu.tDisp);
     if (!td || !td.texture) return null;   // not uploaded yet: retry next frame (CPU solve meanwhile)
+    const tex = td.texture;
+    if ((tex.format && tex.format !== 'rgba32float') || (typeof GPUTextureUsage !== 'undefined' && tex.usage != null && !(tex.usage & GPUTextureUsage.COPY_DST))) {
+      stats.gcReason = 'texture ' + tex.format; console.warn('[hair] GPU guide solve: deflection texture not a rgba32float copy target, CPU path', tex.format); return false;
+    }
     try {
-      const c = createGuideSolverGPU(be.device, { G, K, gRest, segLen, bendLen, gStiff, gBend, clrG, slkG, kMaxG, SDF });
-      gcTex = td.texture; gcResync = true;
-      be.device.lost && be.device.lost.then(() => { gc = false; needInit = true; });
+      // WebGPU validation errors do not throw: catch them with an error scope
+      dev.pushErrorScope && dev.pushErrorScope('validation');
+      const c = createGuideSolverGPU(dev, { G, K, gRest, segLen, bendLen, gStiff, gBend, clrG, slkG, kMaxG, SDF });
+      if (dev.popErrorScope) dev.popErrorScope().then((err) => { if (err) gcFail('validation: ' + err.message); }).catch(() => {});
+      gcTex = tex; gcResync = true; gcChecks = 0; gcVerified = false;
+      dev.lost && dev.lost.then(() => { gc = false; needInit = true; });
       stats.mode = 'gpu-compute';
       return c;
     } catch (e) { console.warn('[hair] GPU guide solve unavailable, CPU path', e); return false; }
+  }
+  // GPU -> CPU fallback that keeps the CPU ribbon pipeline intact (hair must always render)
+  let gcChecks = 0, gcVerified = false, gcBusy = false;
+  function gcFail(why) {
+    console.warn('[hair] GPU guide solve rejected (' + why + '), CPU path');
+    stats.gcReason = why;
+    if (gc && gc.destroy) { try { gc.destroy(); } catch (e) {} }
+    gc = false; needInit = true; gcResync = true; gcWasOn = false;
+    if (gpu && gpu.tDisp) gpu.tDisp.needsUpdate = true;   // re-upload CPU deflection over any garbage
+  }
+  // async readback sanity check on early frames: non-finite or all-zero/exploded result -> CPU
+  function gcVerify() {
+    if (!gc || gcVerified || gcBusy || !gc.read) return;
+    gcBusy = true;
+    const c = gc;
+    c.read().then((r) => {
+      gcBusy = false;
+      if (gc !== c) return;
+      let ok = true, nz = 0, big = 0;
+      for (let i = 0; i < r.sp.length; i++) { const v = r.sp[i]; if (!Number.isFinite(v)) { ok = false; break; } if (v !== 0) nz++; if (Math.abs(v) > 1e3) big++; }
+      if (ok) for (let i = 0; i < r.disp.length; i++) if (!Number.isFinite(r.disp[i])) { ok = false; break; }
+      if (!ok) return gcFail('non-finite readback');
+      if (nz === 0) return gcFail('empty readback');
+      if (big > 0) return gcFail('exploded readback');
+      if (++gcChecks >= 3) { gcVerified = true; stats.gcReason = 'verified'; }
+    }).catch((e) => { gcBusy = false; if (gc === c) gcFail('readback ' + (e && e.message)); });
   }
   const gF = { M: new Float32Array(16), Mi: new Float32Array(16), grav: new Float32Array(4), wind: new Float32Array(4), shift: new Float32Array(4),
                trig: new Float32Array(4), hc: new Float32Array(4), p0: new Float32Array(4), ip: new Uint32Array(4), cols: colBuf, sph: colSph, nCols, ext: [] };
@@ -735,7 +779,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       F.ext.length = 0;
       for (const C of extra) F.ext.push([C.la.x, C.la.y, C.la.z, C.lb.x, C.lb.y, C.lb.z, C.lr]);
       if (stiffDirty) { gc.setStiffness(); stiffDirty = false; }
-      try { gc.setFrame(F); gc.run(gcTex, !!P.countContacts); stats.uploadBytes = gc.bytesLastFrame; }
+      try { gc.setFrame(F); gc.run(gcTex, !!P.countContacts); stats.uploadBytes = gc.bytesLastFrame; if (!gcVerified && (frame === 2 || frame % 15 === 0)) gcVerify(); }
       catch (e) { console.warn('[hair] GPU guide solve failed, CPU path', e); gc = false; needInit = true; }
     } else {
       for (let s = 0; s < n; s++) step(h, time);
