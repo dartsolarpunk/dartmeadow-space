@@ -17541,7 +17541,39 @@ function _trueAtmoOn(){
     return !s||s.trueAtmo!==false;          // ON by default; Settings can switch it off
   }catch(e){ return false; }
 }
-function _taDt(){ const n=performance.now(), d=_TA.t?Math.min(0.1,(n-_TA.t)/1000):0; _TA.t=n; return d; }
+function _taDt(){
+  const n=performance.now(), d=_TA.t?Math.min(0.25,(n-_TA.t)/1000):0; _TA.t=n;
+  // perf watch (Auto quality only): a frame time that stays bad for ~6 s switches the pass off for the session
+  if(d>0&&d<2){ const dc=Math.min(d,0.25); _TA.ema=_TA.ema==null?dc:_TA.ema*0.96+dc*0.04; if(_taAuto()&&_TA.ema>0.05){ _TA.slowT=(_TA.slowT||0)+d; if(_TA.slowT>6&&!_TA.slow){ _TA.slow=true; try{ console.info('[true-atmo] Auto: frame time stays high — classic shells for this session'); }catch(e){} } } else _TA.slowT=0; }
+  return Math.min(0.1,d);
+}
+function _taAuto(){ try{ return typeof GFX!=='undefined'&&GFX.preset==='auto'; }catch(e){ return false; } }
+// automatic reductions are Auto-only: the low tier under Auto, or a sustained bad frame time, hands back to the classic shells
+function _taPerfOff(){ if(!_taAuto()||/[?&]trueatmo=1\b/.test(location.search)) return false; if(_TA.slow) return true; try{ return typeof resolvePreset==='function'&&resolvePreset()==='low'; }catch(e){ return false; } }
+function _taHalf(){ try{ return _taAuto()&&!!(GFX.isMobile||GFX.isIOS); }catch(e){ return false; } }
+// async WebGPU failure fallback: device loss, and validation/OOM errors raised by the pass itself in its first frames
+function _taGuardBegin(r){
+  const dev=r&&r.backend&&r.backend.isWebGPUBackend?r.backend.device:null; if(!dev) return null;
+  if(!_TA.lostHooked){ _TA.lostHooked=true; try{ dev.lost.then(info=>_taFail(new Error('device lost: '+(info&&info.message)))); }catch(e){} }
+  _TA.frames=(_TA.frames||0)+1;
+  if(_TA.frames>180||typeof dev.pushErrorScope!=='function') return null;
+  try{ dev.pushErrorScope('out-of-memory'); dev.pushErrorScope('validation'); return dev; }catch(e){ return null; }
+}
+// errors that come from the scene's own objects (drawn by the scene pass with or without this pass) are not the pass failing
+function _taSceneErr(m){ m=String(m||''); return /Binding size \(\d+\) of \[Buffer "bindingBuffer/.test(m)||/is invalid due to a previous error/.test(m); }
+function _taGuardEnd(dev){
+  if(!dev) return;
+  try{ dev.popErrorScope().then(e=>{ if(e&&!_taSceneErr(e.message)) _taFail(new Error('validation: '+e.message)); }).catch(()=>{});
+       dev.popErrorScope().then(e=>{ if(e) _taFail(new Error('oom: '+e.message)); }).catch(()=>{}); }catch(e){}
+}
+function _taRun(A,r,cam){ const dev=_taGuardBegin(r); try{ A.render(_taDt(),cam); } finally { _taGuardEnd(dev); } }
+// warm-up: bake Earth's relief map in idle time as soon as the map arrives (no hitch at the first look / landing)
+function _taPrebakeEarth(){
+  try{ if(!window.DMAtmo||!window.DMEarth||!DMEarth.ready) return; const HS=1, hf=_taEarthHeight(1,HS); if(!hf) return;
+    const go=()=>{ try{ DMAtmo.prebakeHeight(THREE,'earth-etopo',hf,HS); }catch(e){} };
+    (window.requestIdleCallback||((f)=>setTimeout(f,400)))(go); }catch(e){}
+}
+try{ window.addEventListener('dm:earth-ready',()=>setTimeout(_taPrebakeEarth,0)); setTimeout(_taPrebakeEarth,3000); }catch(e){}
 function _taQ(){ return (typeof GFX!=='undefined'&&GFX.preset)||'medium'; }
 function _taPrune(prefix,keep){ for(const [k,A] of _TA.pipes){ if(k.startsWith(prefix)&&k!==keep){ try{ A.dispose(); }catch(e){} _TA.pipes.delete(k); } } }
 function _taFail(e){ _TA.failed=true; _animLoopWarn('true-atmo',e); try{ console.warn('[true-atmo] falling back to the classic shells',e); }catch(_){} }
@@ -17563,7 +17595,7 @@ function _taParamsFor(ud){
   P.heightFn=null; P.seaLevel=null; P.water=P.water||null;
   if(k==='earth'){
     const HS=R*0.004, hf=_taEarthHeight(R,HS);
-    if(hf){ P.heightFn=hf; P.heightScale=HS; P.seaLevel=R*2e-4; }      // sea body just above the globe mesh: the water wins the depth test
+    if(hf){ P.heightFn=hf; P.heightScale=HS; P.heightKey='earth-etopo'; P.seaLevel=R*2e-4; }      // sea body just above the globe mesh: the water wins the depth test
     else P.water=null;
   } else P.water=null;
   if(!P.heightFn) P.heightScale=0;
@@ -17571,7 +17603,7 @@ function _taParamsFor(ud){
 }
 // open space / orbit: the nearest world's gas (others keep their light classic shells — cheap multi-planet)
 function _trueAtmoRender(r,scene,cam){
-  if(_TA.failed||!_trueAtmoOn()) return false;
+  if(_TA.failed||!_trueAtmoOn()||_taPerfOff()) return false;
   try{
     let best=null,bd=Infinity; const c=_TA._c||(_TA._c=new THREE.Vector3()), q=_TA._q||(_TA._q=new THREE.Quaternion());
     for(let i=0;i<_jotsFogAtmoRegistry.length;i++){
@@ -17583,19 +17615,19 @@ function _trueAtmoRender(r,scene,cam){
     const ud=best.mesh.userData, E=window.DMEarth;
     const key='sp|'+best.mesh.uuid+'|'+_taQ()+'|'+(E&&E.ready?1:0);
     let A=_TA.pipes.get(key);
-    if(!A){ _taPrune('sp|',key); A=DMAtmo.create(THREE,THREE.TSL,{renderer:r,scene,camera:cam,planet:_taParamsFor(ud),quality:_taQ(),logarithmicDepth:!!r.logarithmicDepthBuffer}); _TA.pipes.set(key,A); }
+    if(!A){ _taPrune('sp|',key); A=DMAtmo.create(THREE,THREE.TSL,{renderer:r,scene,camera:cam,planet:_taParamsFor(ud),quality:_taQ(),logarithmicDepth:!!r.logarithmicDepthBuffer,halfRes:_taHalf()}); _TA.pipes.set(key,A); }
     best.mesh.getWorldPosition(c); A.setCenter(c);
     best.mesh.getWorldQuaternion(q); A.setRotation(q);
     if(best.sunDirU&&best.sunDirU.value) A.setSun(best.sunDirU.value);
     A.setWeights(1,1);
     const m=best.mesh, was=m.visible; m.visible=false;
-    try{ A.render(_taDt(),cam); } finally { m.visible=was; }
+    try{ _taRun(A,r,cam); } finally { m.visible=was; }
     return true;
   }catch(e){ _taFail(e); return false; }
 }
 // on the world (walk / low flight): the world scene, its sky composited behind, the gas over both by depth
 function _trueAtmoSurface(r,scene,cam,layered){
-  if(_TA.failed||!_trueAtmoOn()||!PW.pal||!PW.pal.atmos||!PW.atmo) return false;
+  if(_TA.failed||!_trueAtmoOn()||_taPerfOff()||!PW.pal||!PW.pal.atmos||!PW.atmo) return false;
   try{
     const R=_planetR(), mars=!!(PW.body&&/mars/i.test(PW.body.name||''));
     const key='sf|'+(layered?1:0)+'|'+_taQ()+'|'+PW.gen;
@@ -17609,7 +17641,7 @@ function _trueAtmoSurface(r,scene,cam,layered){
       if(P.weather) Object.assign(P.weather,{alt:mars?250:1100,width:mars?300:260});
       P.layers=(P.layers||[]).map(l=>Object.assign({},l,{alt:mars?250:1700,width:mars?350:250}));
       A=DMAtmo.create(THREE,THREE.TSL,{renderer:r,scene,camera:cam,planet:P,quality:_taQ(),logarithmicDepth:!!r.logarithmicDepthBuffer,
-        skyScene:layered?flightScene:null,skyCamera:layered?flightCamera:null,localRes:128});
+        skyScene:layered?flightScene:null,skyCamera:layered?flightCamera:null,localRes:128,halfRes:_taHalf()});
       _TA.pipes.set(key,A); _TA.loc.gen=-1;
     }
     const c=_TA._c||(_TA._c=new THREE.Vector3());
@@ -17624,7 +17656,7 @@ function _trueAtmoSurface(r,scene,cam,layered){
     // empty-sky pixels: the classic dome owns the sky low down; the gas takes it over with height (same weight as the old shell)
     A.setWeights(layered?1:Math.max(0,Math.min(1,PW._atmoK!=null?PW._atmoK:0)),1);
     const m=PW.atmo.mesh, was=m.visible; m.visible=false;
-    try{ A.render(_taDt(),cam); } finally { m.visible=was; }
+    try{ _taRun(A,r,cam); } finally { m.visible=was; }
     return true;
   }catch(e){ _taFail(e); return false; }
 }

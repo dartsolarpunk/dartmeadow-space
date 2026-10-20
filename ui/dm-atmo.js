@@ -112,6 +112,12 @@
     t.needsUpdate = true; return t;
   }
 
+  // baked global height maps shared between passes (e.g. Earth's relief, prebaked in idle time at load)
+  const HCACHE = new Map();
+  function prebakeHeight(THREE, key, heightFn, heightScale) {
+    if (HCACHE.has(key)) return HCACHE.get(key);
+    const t = bakeHeight(THREE, (x, y, z) => heightFn(x, y, z) / Math.max(heightScale, 1e-6)); HCACHE.set(key, t); return t;
+  }
   function create(THREE, TSL, opt) {
     const { renderer, scene } = opt; let camera = opt.camera;
     const P = Object.assign({}, opt.planet);
@@ -138,7 +144,8 @@
     const hasSea = P.seaLevel != null && !!P.water;
     const steps = STEPS[opt.quality] || STEPS.medium;
 
-    const heightTex = P.heightFn ? bakeHeight(THREE, (x, y, z) => P.heightFn(x, y, z) / Math.max(P.heightScale, 1e-6)) : (() => {
+    const cachedH = P.heightKey && HCACHE.get(P.heightKey);
+    const heightTex = cachedH ? cachedH : P.heightFn ? bakeHeight(THREE, (x, y, z) => P.heightFn(x, y, z) / Math.max(P.heightScale, 1e-6)) : (() => {
       const t = new THREE.DataTexture(new Uint16Array([0]), 1, 1, THREE.RedFormat, THREE.HalfFloatType); t.needsUpdate = true; return t; })();
 
     // density volume: compute-advected on WebGPU, CPU-baked on WebGL
@@ -220,7 +227,7 @@
       return n1.mul(0.65).add(n2.mul(0.35));
     };
 
-    const atmo = Fn(() => {
+    const build = (mode, gasTex) => Fn(() => {
       const uv = screenUV;
       const ndc = vec2(uv.x.mul(2.0).sub(1.0), opt.flipY ? uv.y.mul(2.0).sub(1.0) : uv.y.mul(-2.0).add(1.0));
       const vdh = U.invProj.mul(vec4(ndc, 1.0, 1.0));
@@ -272,7 +279,7 @@
             const horizon = vec3(1.0, 0.55, 0.3).mul(exp(abs(sunEl).mul(-8.0))).mul(0.25);
             const skyC = skyDay.add(horizon).mul(smoothstep(-0.05, 0.4, dot(refl, nUp)).mul(0.6).add(0.4));
             const spec = pow(clamp(dot(refl, sun), 0.0, 1.0), 400.0).mul(U.sunI).mul(smoothstep(-0.02, 0.05, sunEl));
-            base.assign(mix(wcol, skyC, fres).add(spec));
+            if (mode !== 'gas') base.assign(mix(wcol, skyC, fres).add(spec));
             tEnd.assign(ts.x);
           });
         });
@@ -285,7 +292,7 @@
       const tt = raySphere(ro, rd, Rtop);
       const t0 = max(tt.x, 0.0), t1 = min(tt.y, tEnd);
       const Ltot = vec3(0.0).toVar(), Tr = vec3(1.0).toVar();
-      If(t1.greaterThan(t0), () => {
+      if (mode !== 'composite') If(t1.greaterThan(t0), () => {
         const ds = t1.sub(t0).div(steps);
         // interleaved-gradient jitter, rotated per frame (pairs with TAA / temporal blend)
         const px = uv.mul(vec2(1920.0, 1080.0));
@@ -361,9 +368,26 @@
       if (opt.debug === 1) return vec4(base, 1.0);
       if (opt.debug === 2) return vec4(Tr, 1.0);
       if (opt.debug === 3) return vec4(sceneDist.div(5000.0), t0.div(5000.0), t1.div(5000.0), 1.0);
+      // NaN / runaway guard: a broken sample never paints the screen (falls back to the scene as drawn)
+      const Lraw = Ltot.mul(U.sunI);
+      if (mode === 'gas') {
+        const sL = dot(Lraw, vec3(1.0)), ok = sL.equal(sL).and(sL.lessThan(1e6));
+        return ok.select(vec4(Lraw, dot(Tr, vec3(1.0 / 3.0))), vec4(0.0, 0.0, 0.0, 1.0));
+      }
+      let Lf = Lraw, Tf = Tr;
+      if (mode === 'composite') { const g = gasTex.sample(uv); Lf = g.rgb; Tf = vec3(g.a); }
       const wgt = sceneDist.greaterThanEqual(1e19).select(U.skyW, U.aerialW);
-      return vec4(mix(base, base.mul(Tr).add(Ltot.mul(U.sunI)), wgt), 1.0);
+      const outC = mix(base, base.mul(Tf).add(Lf), wgt);
+      const sC = dot(outC, vec3(1.0));
+      return sC.equal(sC).and(sC.lessThan(1e6)).select(vec4(outC, 1.0), vec4(base, 1.0));
     })();
+    // half-resolution gas (mobile under Auto): march at half res, composite + water at full res
+    let gasRT = null;
+    if (opt.halfRes && T.rtt) {
+      gasRT = T.rtt(build('gas'), null, null, { type: THREE.HalfFloatType });
+      if (gasRT.setResolutionScale) gasRT.setResolutionScale(0.5);
+    }
+    const atmo = gasRT ? build('composite', gasRT) : build('full');
 
     pp.outputNode = atmo;
     let frame = 0;
@@ -405,9 +429,9 @@
         if (computeNode) await renderer.computeAsync(computeNode);
         pp.render();
       },
-      dispose() { try { pp.dispose(); heightTex.dispose(); volTex.dispose(); locTex.dispose(); } catch (e) {} }
+      dispose() { try { pp.dispose(); volTex.dispose(); locTex.dispose(); if (!cachedH) heightTex.dispose(); } catch (e) {} }
     };
   }
 
-  root.DMAtmo = { create, presetEarth, presetDesert, presetGasGiant, STEPS, version: 'v98' };
+  root.DMAtmo = { create, prebakeHeight, presetEarth, presetDesert, presetGasGiant, STEPS, version: 'v98' };
 })(typeof window !== 'undefined' ? window : globalThis);
