@@ -975,6 +975,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-globe.js?v=7" defer></script>
 <script src="ui/dm-star.js?v=8" defer></script>
 <script src="ui/dm-mist.js?v=7" defer></script>
+<script src="ui/dm-atmo.js?v=1" defer></script>
 <script src="ui/dm-menuscene.js?v=7" defer></script>
 <script src="ui/dm-starbubble.js?v=3" defer></script>
 <script src="ui/dm-birdtemple.js?v=1" defer></script>
@@ -1849,6 +1850,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     <div class="setting-row"><div><div class="setting-label">Star Field Density</div><div class="setting-sub">Volumetric parallax stars</div></div><label class="toggle-switch"><input type="checkbox" id="set-stars" checked><span class="toggle-track"></span></label></div>
     <div class="setting-row"><div><div class="setting-label">Galaxy Dust Clouds</div><div class="setting-sub">Nebula particle systems</div></div><label class="toggle-switch"><input type="checkbox" id="set-dust" checked><span class="toggle-track"></span></label></div>
     <div class="setting-row" style="opacity:0.55"><div><div class="setting-label">Bloom / Glow</div><div class="setting-sub">Locked off — fullscreen bloom washed Sol white (Justin NAY)</div></div><label class="toggle-switch"><input type="checkbox" id="set-bloom" disabled aria-disabled="true"><span class="toggle-track"></span></label></div>
+    <div class="setting-row"><div><div class="setting-label">True Volumetric Atmosphere (experimental)</div><div class="setting-sub">Terrain-bound, depth-correct ray-marched gas (v98, on by default). Nearer geometry always occludes it; switch off for the classic shells.</div></div><label class="toggle-switch"><input type="checkbox" id="set-trueatmo"><span class="toggle-track"></span></label></div>
     <div class="setting-row"><div><div class="setting-label">Marching Cubes Terrain (experimental)</div><div class="setting-sub">Real 3D density-field terrain — enables true overhangs/caves, but is heavier than the default terrain. Requires re-landing on a surface to take effect.</div></div><label class="toggle-switch"><input type="checkbox" id="set-mctest"><span class="toggle-track"></span></label></div>
     <div class="setting-row" style="opacity:0.55">
       <div><div class="setting-label">Bloom Intensity</div><div class="setting-sub">Locked at 0 — composite bloomStr hard-off</div></div>
@@ -1966,7 +1968,7 @@ const STATE={
   flight:{speed:0,dart:false,energy:100,hull:100,shield:100,destIdx:0,time:0,
     camPitch:0,camYaw:0,thrust:0,strafe:0,lift:0,
     pos:{x:28,y:2,z:3},vel:{x:0,y:0,z:0}}, // upgraded to real THREE.Vector3 instances below once THREE exists
-  settings:{stars:true,dust:true,bloom:false,bloomIntensity:0,motion:true,textures:true,galaxyband:true,particles:'med',fov:50000,dartSpeed:15,gfxQuality:'auto',resScale:1.0,shadows:true,reflections:true,caustics:true,gi:true,marchingCubesTerrain:true}
+  settings:{stars:true,dust:true,bloom:false,bloomIntensity:0,motion:true,textures:true,galaxyband:true,particles:'med',fov:50000,dartSpeed:15,gfxQuality:'auto',resScale:1.0,shadows:true,reflections:true,caustics:true,gi:true,marchingCubesTerrain:true,trueAtmo:true}
 };
 window.__whenThreeReady(function(){
   STATE.flight.pos = new THREE.Vector3(STATE.flight.pos.x, STATE.flight.pos.y, STATE.flight.pos.z);
@@ -4547,6 +4549,7 @@ function syncSettingsUIFromState(){
     if(s){ s.bloom=false; s.bloomIntensity=0; }
     if($('set-bloom')){ $('set-bloom').checked=false; $('set-bloom').disabled=true; }
     if($('set-mctest'))$('set-mctest').checked=!!s.marchingCubesTerrain;
+    if($('set-trueatmo'))$('set-trueatmo').checked=s.trueAtmo!==false;
     if($('set-bloom-intensity')){ $('set-bloom-intensity').value='0'; $('set-bloom-intensity').disabled=true; }
     if($('set-motion'))$('set-motion').checked=s.motion;
     if($('set-textures'))$('set-textures').checked=s.textures;
@@ -6788,6 +6791,7 @@ function _buildJotsDustyAtmoShell(radius, opts){
       atmoMesh.name='JOTS_DustyAtmo';
       atmoMesh.renderOrder=2;
       atmoMesh.userData.jotsAtmo=true;
+      atmoMesh.userData.planetR=R; atmoMesh.userData.atmoTop=ATMO_R-R; atmoMesh.userData.atmoScatter=scatterMul; atmoMesh.userData.atmoTint=tint.getHex(); atmoMesh.userData.atmoKind=opts.kind||'giant';
       group.add(atmoMesh);
       _registerJotsAtmoFog({mesh:atmoMesh, sunDirU, planetCenterU});
       return group;
@@ -6801,6 +6805,9 @@ function _buildJotsDustyAtmoShell(radius, opts){
   const atmo=new THREE.Mesh(new THREE.SphereGeometry(ATMO_R, Math.max(16,24), Math.max(12,18)), atmoMat);
   atmo.name='JOTS_DustyAtmo';
   atmo.renderOrder=2;
+  // v98: the true-atmosphere pass (WebGL2 path too) finds this world through the same registry
+  atmo.userData.jotsAtmo=true; atmo.userData.planetR=R; atmo.userData.atmoTop=ATMO_R-R; atmo.userData.atmoScatter=scatterMul; atmo.userData.atmoKind=opts.kind||'giant';
+  try{ _registerJotsAtmoFog({mesh:atmo, sunDirU:{value:new THREE.Vector3(1,0.3,0.2).normalize()}, planetCenterU:{value:new THREE.Vector3()}}); }catch(e){}
   group.add(atmo);
   return group;
 }
@@ -6907,7 +6914,7 @@ function buildWebGLRichPlanetGroup(radius, seedVal, colorHex, hasAtmosphere, kin
     const tint=gl.tint, atmoMul=gl.mul;
     try{
       const dusty=_buildJotsDustyAtmoShell(radius, {
-        atmoMul, scatterMul:gl.scatter, tint, fallbackOpacity:gl.fb, opacityScale:gl.op
+        atmoMul, scatterMul:gl.scatter, tint, fallbackOpacity:gl.fb, opacityScale:gl.op, kind:isEarth?'earth':isMars?'mars':(k||'other')
       });
       group.add(dusty);
     }catch(e){
@@ -7242,6 +7249,7 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
     atmoMesh.name='JOTS_PlanetAtmo';
     atmoMesh.renderOrder=2;
     atmoMesh.userData.jotsAtmo=true;
+    atmoMesh.userData.planetR=radius; atmoMesh.userData.atmoTop=ATMO_R-radius; atmoMesh.userData.atmoScatter=(look&&look.scatter)||2.2; atmoMesh.userData.atmoEarth=(kind==='earth'); atmoMesh.userData.atmoKind=kind;
     _registerJotsAtmoFog({mesh:atmoMesh, sunDirU, planetCenterU});
     if(!window.__DISABLE_ATMO_MESH__) group.add(atmoMesh);
   }
@@ -13520,6 +13528,7 @@ function applySettings(){
   if($('set-bloom')){ $('set-bloom').checked=false; $('set-bloom').disabled=true; }
   if($('set-bloom-intensity')){ $('set-bloom-intensity').value='0'; $('set-bloom-intensity').disabled=true; }
   if($('set-mctest'))STATE.settings.marchingCubesTerrain=$('set-mctest').checked;
+  if($('set-trueatmo'))STATE.settings.trueAtmo=$('set-trueatmo').checked;
   STATE.settings.motion=$('set-motion')?$('set-motion').checked:true;
   STATE.settings.textures=$('set-textures')?$('set-textures').checked:true;
   STATE.settings.galaxyband=$('set-galaxyband')?$('set-galaxyband').checked:true;
@@ -16821,7 +16830,7 @@ function renderWithPostFX(){
   const _spec=window.DMSpec&&DMSpec.on; if(_spec) try{ DMSpec.pre(flightCamera); }catch(e){}
   try{ if(galSky.ready) updateGalSky(); }catch(e){}
   try{ if(window.DMStarBubble) { const n=performance.now(), d=_sbT?(n-_sbT)/1000:1/60; _sbT=n; if(window.DMStar) DMStar.frame(flightCamera,d); if(window.DMMist) DMMist.frame(flightCamera,d); DMStarBubble.frame(flightCamera,flightScene,d); } }catch(e){ console.warn('[starbubble] '+(e&&e.stack||e)); }
-  try{ flightRenderer.render(flightScene,flightCamera); _shotGrab(flightRenderer); }
+  try{ if(!_trueAtmoRender(flightRenderer,flightScene,flightCamera)) flightRenderer.render(flightScene,flightCamera); _shotGrab(flightRenderer); }
   finally{ if(_spec) try{ DMSpec.post(flightCamera); }catch(e){} }
   const _rtMs = performance.now()-_rt0;
   if(!window._renderTimingSamples) window._renderTimingSamples=[];
@@ -17514,6 +17523,144 @@ function _pwFrame(dt){
     try{drawMinimap();}catch(e){_animLoopWarn('minimap',e);}
   }
 }
+// ── v98 true volumetric atmosphere (ui/dm-atmo.js) ─────────────────────────
+// ON by default (Settings → "True volumetric atmosphere" turns it off; ?trueatmo=0/1 overrides).
+// The gas is ray-marched as a depth-aware node pass over the real scene depth, so
+// Ariel, her hair, the board and the Bird Temple always occlude it, and it is
+// bounded below by max(real ground, sea). Any error drops back to the classic
+// shells for the session. Steps follow the chosen quality tier only (no
+// automatic quality drops here — those stay Auto-only).
+const _TA={pipes:new Map(),t:0,failed:false,loc:{t:0,x:NaN,z:NaN,gen:-1}};
+function _trueAtmoOn(){
+  try{
+    const q=location.search;
+    if(/[?&]trueatmo=0\b/.test(q)) return false;
+    if(!(window.DMAtmo&&THREE.TSL)) return false;
+    if(/[?&]trueatmo=1\b/.test(q)) return true;
+    const s=(typeof STATE!=='undefined'&&STATE)?STATE.settings:null;
+    return !s||s.trueAtmo!==false;          // ON by default; Settings can switch it off
+  }catch(e){ return false; }
+}
+function _taDt(){
+  const n=performance.now(), d=_TA.t?Math.min(0.25,(n-_TA.t)/1000):0; _TA.t=n;
+  // perf watch (Auto quality only): a frame time that stays bad for ~6 s switches the pass off for the session
+  if(d>0&&d<2){ const dc=Math.min(d,0.25); _TA.ema=_TA.ema==null?dc:_TA.ema*0.96+dc*0.04; if(_taAuto()&&_TA.ema>0.05){ _TA.slowT=(_TA.slowT||0)+d; if(_TA.slowT>6&&!_TA.slow){ _TA.slow=true; try{ console.info('[true-atmo] Auto: frame time stays high — classic shells for this session'); }catch(e){} } } else _TA.slowT=0; }
+  return Math.min(0.1,d);
+}
+function _taAuto(){ try{ return typeof GFX!=='undefined'&&GFX.preset==='auto'; }catch(e){ return false; } }
+// automatic reductions are Auto-only: the low tier under Auto, or a sustained bad frame time, hands back to the classic shells
+function _taPerfOff(){ if(!_taAuto()||/[?&]trueatmo=1\b/.test(location.search)) return false; if(_TA.slow) return true; try{ return typeof resolvePreset==='function'&&resolvePreset()==='low'; }catch(e){ return false; } }
+function _taHalf(){ try{ return _taAuto()&&!!(GFX.isMobile||GFX.isIOS); }catch(e){ return false; } }
+// async WebGPU failure fallback: device loss, and validation/OOM errors raised by the pass itself in its first frames
+function _taGuardBegin(r){
+  const dev=r&&r.backend&&r.backend.isWebGPUBackend?r.backend.device:null; if(!dev) return null;
+  if(!_TA.lostHooked){ _TA.lostHooked=true; try{ dev.lost.then(info=>_taFail(new Error('device lost: '+(info&&info.message)))); }catch(e){} }
+  _TA.frames=(_TA.frames||0)+1;
+  if(_TA.frames>180||typeof dev.pushErrorScope!=='function') return null;
+  try{ dev.pushErrorScope('out-of-memory'); dev.pushErrorScope('validation'); return dev; }catch(e){ return null; }
+}
+// errors that come from the scene's own objects (drawn by the scene pass with or without this pass) are not the pass failing
+function _taSceneErr(m){ m=String(m||''); return /Binding size \(\d+\) of \[Buffer "bindingBuffer/.test(m)||/is invalid due to a previous error/.test(m); }
+function _taGuardEnd(dev){
+  if(!dev) return;
+  try{ dev.popErrorScope().then(e=>{ if(e&&!_taSceneErr(e.message)) _taFail(new Error('validation: '+e.message)); }).catch(()=>{});
+       dev.popErrorScope().then(e=>{ if(e) _taFail(new Error('oom: '+e.message)); }).catch(()=>{}); }catch(e){}
+}
+function _taRun(A,r,cam){ const dev=_taGuardBegin(r); try{ A.render(_taDt(),cam); } finally { _taGuardEnd(dev); } }
+// warm-up: bake Earth's relief map in idle time as soon as the map arrives (no hitch at the first look / landing)
+function _taPrebakeEarth(){
+  try{ if(!window.DMAtmo||!window.DMEarth||!DMEarth.ready) return; const HS=1, hf=_taEarthHeight(1,HS); if(!hf) return;
+    const go=()=>{ try{ DMAtmo.prebakeHeight(THREE,'earth-etopo',hf,HS); }catch(e){} };
+    (window.requestIdleCallback||((f)=>setTimeout(f,400)))(go); }catch(e){}
+}
+try{ window.addEventListener('dm:earth-ready',()=>setTimeout(_taPrebakeEarth,0)); setTimeout(_taPrebakeEarth,3000); }catch(e){}
+function _taQ(){ return (typeof GFX!=='undefined'&&GFX.preset)||'medium'; }
+function _taPrune(prefix,keep){ for(const [k,A] of _TA.pipes){ if(k.startsWith(prefix)&&k!==keep){ try{ A.dispose(); }catch(e){} _TA.pipes.delete(k); } } }
+function _taFail(e){ _TA.failed=true; _animLoopWarn('true-atmo',e); try{ console.warn('[true-atmo] falling back to the classic shells',e); }catch(_){} }
+// Earth's real relief (ETOPO5, ui/dm-earth.js) on the planet's own sphere frame (lon = atan2(-z,x), as the map is laid)
+function _taEarthHeight(R,HS){
+  const E=window.DMEarth; if(!E||!E.ready||typeof E.metres!=='function') return null;
+  return (x,y,z)=>{ const lat=Math.asin(Math.max(-1,Math.min(1,y)))*180/Math.PI, lon=Math.atan2(-z,x)*180/Math.PI; const m=E.metres(lat,lon); return isFinite(m)?m/8848*HS:0; };
+}
+// per-planet gas: data-driven (scale height, coefficients, layers, weather); thickness from coefficients, never extra samples
+function _taParamsFor(ud){
+  const R=ud.planetR, k=String(ud.atmoKind||'').toLowerCase(), top=Math.max(R*0.02, Math.min(R*0.25, ud.atmoTop||R*0.1));
+  let P;
+  if(k==='earth'||k==='habitable') P=DMAtmo.presetEarth(R);
+  else if(k==='mars'||k==='desert') P=DMAtmo.presetDesert(R);
+  else if(k==='giant'){ P=DMAtmo.presetGasGiant(R); P.radius=R; P.layers.forEach(l=>{ l.amount*=0.3; }); }   // the giant's own banded map shows through
+  else { P=DMAtmo.presetEarth(R); P.cloud=null; P.weather=null; P.layers=[]; }
+  if(k!=='giant'&&k!=='mars'){ const sc=(ud.atmoScatter||2.2)/3.8*1.25; P.rayleigh=[Math.pow(400/700,4)*sc,Math.pow(400/530,4)*sc,Math.pow(400/440,4)*sc]; }
+  const sh=P.scaleHeight/P.top; P.top=top; P.scaleHeight=top*sh;
+  P.heightFn=null; P.seaLevel=null; P.water=P.water||null;
+  if(k==='earth'){
+    const HS=R*0.004, hf=_taEarthHeight(R,HS);
+    if(hf){ P.heightFn=hf; P.heightScale=HS; P.heightKey='earth-etopo'; P.seaLevel=R*2e-4; }      // sea body just above the globe mesh: the water wins the depth test
+    else P.water=null;
+  } else P.water=null;
+  if(!P.heightFn) P.heightScale=0;
+  return P;
+}
+// open space / orbit: the nearest world's gas (others keep their light classic shells — cheap multi-planet)
+function _trueAtmoRender(r,scene,cam){
+  if(_TA.failed||!_trueAtmoOn()||_taPerfOff()) return false;
+  try{
+    let best=null,bd=Infinity; const c=_TA._c||(_TA._c=new THREE.Vector3()), q=_TA._q||(_TA._q=new THREE.Quaternion());
+    for(let i=0;i<_jotsFogAtmoRegistry.length;i++){
+      const e=_jotsFogAtmoRegistry[i]; if(!e||!e.mesh||!e.mesh.parent||!e.mesh.userData.planetR) continue;
+      e.mesh.getWorldPosition(c); const d=c.distanceTo(cam.position)/e.mesh.userData.planetR;
+      if(d<bd){ bd=d; best=e; }
+    }
+    if(!best||bd>60) return false;
+    const ud=best.mesh.userData, E=window.DMEarth;
+    const key='sp|'+best.mesh.uuid+'|'+_taQ()+'|'+(E&&E.ready?1:0);
+    let A=_TA.pipes.get(key);
+    if(!A){ _taPrune('sp|',key); A=DMAtmo.create(THREE,THREE.TSL,{renderer:r,scene,camera:cam,planet:_taParamsFor(ud),quality:_taQ(),logarithmicDepth:!!r.logarithmicDepthBuffer,halfRes:_taHalf()}); _TA.pipes.set(key,A); }
+    best.mesh.getWorldPosition(c); A.setCenter(c);
+    best.mesh.getWorldQuaternion(q); A.setRotation(q);
+    if(best.sunDirU&&best.sunDirU.value) A.setSun(best.sunDirU.value);
+    A.setWeights(1,1);
+    const m=best.mesh, was=m.visible; m.visible=false;
+    try{ _taRun(A,r,cam); } finally { m.visible=was; }
+    return true;
+  }catch(e){ _taFail(e); return false; }
+}
+// on the world (walk / low flight): the world scene, its sky composited behind, the gas over both by depth
+function _trueAtmoSurface(r,scene,cam,layered){
+  if(_TA.failed||!_trueAtmoOn()||_taPerfOff()||!PW.pal||!PW.pal.atmos||!PW.atmo) return false;
+  try{
+    const R=_planetR(), mars=!!(PW.body&&/mars/i.test(PW.body.name||''));
+    const key='sf|'+(layered?1:0)+'|'+_taQ()+'|'+PW.gen;
+    let A=_TA.pipes.get(key);
+    if(!A){
+      _taPrune('sf|',key);
+      const P=mars?DMAtmo.presetDesert(R):DMAtmo.presetEarth(R);
+      // the same air as the classic shell here (top 2 km, scale height 350), bound to the real ground below
+      Object.assign(P,{top:2000,scaleHeight:350,heightScale:0,heightFn:null,water:null,seaLevel:PW.pal.water?0:null,hazeHeight:60,hazeAmount:mars?0.08:0.04});
+      if(P.cloud) Object.assign(P.cloud,{height:1150,width:180});
+      if(P.weather) Object.assign(P.weather,{alt:mars?250:1100,width:mars?300:260});
+      P.layers=(P.layers||[]).map(l=>Object.assign({},l,{alt:mars?250:1700,width:mars?350:250}));
+      A=DMAtmo.create(THREE,THREE.TSL,{renderer:r,scene,camera:cam,planet:P,quality:_taQ(),logarithmicDepth:!!r.logarithmicDepthBuffer,
+        skyScene:layered?flightScene:null,skyCamera:layered?flightCamera:null,localRes:128,halfRes:_taHalf()});
+      _TA.pipes.set(key,A); _TA.loc.gen=-1;
+    }
+    const c=_TA._c||(_TA._c=new THREE.Vector3());
+    _pwfCentre(c); A.setCenter(c);
+    const sky=TERRAIN.sky; if(sky&&sky.sunDir) A.setSun(sky.sunDir);
+    // near LOD of the real ground (the world's own height field) round the focus; rebaked as it travels
+    const L=_TA.loc, now=performance.now(), span=4096, H=TERRAIN.H;
+    if(typeof H==='function'&&(L.gen!==PW.gen||((Math.abs(PWF.fx-L.x)>span/8||Math.abs(PWF.fz-L.z)>span/8)&&now-L.t>500))){
+      const uy=_pwUnderlayY();
+      A.setLocalHeight(PWF.fx,PWF.fz,span,(x,z)=>H(x,z)+uy); L.x=PWF.fx; L.z=PWF.fz; L.t=now; L.gen=PW.gen;
+    }
+    // empty-sky pixels: the classic dome owns the sky low down; the gas takes it over with height (same weight as the old shell)
+    A.setWeights(layered?1:Math.max(0,Math.min(1,PW._atmoK!=null?PW._atmoK:0)),1);
+    const m=PW.atmo.mesh, was=m.visible; m.visible=false;
+    try{ _taRun(A,r,cam); } finally { m.visible=was; }
+    return true;
+  }catch(e){ _taFail(e); return false; }
+}
+if(/[?&]dmtest=1\b/.test(location.search)) window.__dmTest={get PW(){ return PW; },get TA(){ return _TA; },get STATE(){ return STATE; },pwOpen:(...a)=>_pwOpen(...a),trueAtmoOn:()=>_trueAtmoOn(),launchFlight:()=>launchFlight(),enterSurface:(...a)=>enterSurface(...a),enterAtmosphericFlight:(...a)=>enterAtmosphericFlight(...a),get bodies(){ return celestialBodies; },get renderer(){ return flightRenderer; }};
 // Draw: open space behind (when the sky lets it through), the world over it.
 let _pwSbT=0;
 function _pwRender(){
@@ -17530,12 +17677,20 @@ function _pwRender(){
       try{ if(galSky.ready) updateGalSky(); }catch(e){}
       try{ if(window.DMStarBubble){ const n=performance.now(), d=_pwSbT?(n-_pwSbT)/1000:1/60; _pwSbT=n; if(window.DMStar) DMStar.frame(flightCamera,d); if(window.DMMist) DMMist.frame(flightCamera,d); DMStarBubble.frame(flightCamera,flightScene,d); } }catch(e){}
       r.toneMappingExposure=1.0;
-      r.render(flightScene,flightCamera);
-      scene.background=null; r.autoClearColor=false;   // the world draws over it (depth cleared)
-    } else scene.background=PW.bg;
-    if(spec) try{ DMSpec.pre(cam); }catch(e){}
-    r.toneMappingExposure=1.0+0.05*PW.skyK;
-    r.render(scene,cam);
+      scene.background=null;
+      if(spec) try{ DMSpec.pre(cam); }catch(e){}
+      if(!_trueAtmoSurface(r,scene,cam,true)){
+        r.render(flightScene,flightCamera);
+        r.autoClearColor=false;   // the world draws over it (depth cleared)
+        r.toneMappingExposure=1.0+0.05*PW.skyK;
+        r.render(scene,cam);
+      }
+    } else {
+      scene.background=PW.bg;
+      if(spec) try{ DMSpec.pre(cam); }catch(e){}
+      r.toneMappingExposure=1.0+0.05*PW.skyK;
+      if(!_trueAtmoSurface(r,scene,cam,false)) r.render(scene,cam);
+    }
     _shotGrab(r);
   }catch(e){ _animLoopWarn('world-render',e); }
   finally{
@@ -17655,7 +17810,8 @@ function _pwWorldTick(dt){
   const sky=TERRAIN.sky, ll=_skyLatLon(PW.site,px,pz);
   if(sky){ if(sky.setFade) sky.setFade(dome); sky.update(cam,dt,ll.lat,ll.lon); if(mode==='walk') _localClock('surface-grav',null,ll.lon); }
   else if(scene.userData.skyDome) scene.userData.skyDome.position.copy(c);
-  if(PW.atmo) PW.atmo.update((1-dome)*(PWF.reveal),sky?sky.sunDir:null);
+  PW._atmoK=(1-dome)*(PWF.reveal);
+  if(PW.atmo) PW.atmo.update(PW._atmoK,sky?sky.sunDir:null);
   if(TERRAIN.dust) TERRAIN.dust.update(dt,cam,px,pz,sky?sky.day:1);
   // Low tier: the shadow map refreshes every third frame
   const r=flightRenderer;
