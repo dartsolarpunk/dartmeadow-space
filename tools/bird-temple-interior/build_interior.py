@@ -21,13 +21,14 @@ BULK_Y = 105.5                   # bulkhead between stair hall and the main room
 DOOR_X = (-2.5, 1.5)
 SX0, SX1, SY0, SY1 = -6.0, 2.0, 111.2, 120.0   # stair shaft = hatch hole
 SLAB = 0.5
+EAST_DOOR = (107.0, 111.0)       # doorway in deck A's port wall (stair hall) -> cargo corridor
 
 # ───────────────────────── materials ─────────────────────────
 def img(name):
     return bpy.data.images.load(TEX + name, check_existing=True)
 
 MATS = {}
-def mat(name, base=(0.5, 0.5, 0.5), metal=0.0, rough=0.6, emit=None, estr=0.0, tex=None, etex=None, tile=1.0):
+def mat(name, base=(0.5, 0.5, 0.5), metal=0.0, rough=0.6, emit=None, estr=0.0, tex=None, etex=None, tile=1.0, alpha=None, tex_alpha=False, cull=False):
     if name in MATS: return MATS[name]
     m = bpy.data.materials.new(name); m.use_nodes = True
     nt = m.node_tree; bsdf = nt.nodes['Principled BSDF']
@@ -37,6 +38,10 @@ def mat(name, base=(0.5, 0.5, 0.5), metal=0.0, rough=0.6, emit=None, estr=0.0, t
     if tex:
         t = nt.nodes.new('ShaderNodeTexImage'); t.image = img(tex); t.interpolation = 'Linear'
         nt.links.new(t.outputs['Color'], bsdf.inputs['Base Color'])
+    if alpha is not None:
+        bsdf.inputs['Alpha'].default_value = alpha
+    if tex and tex_alpha:
+        nt.links.new(t.outputs['Alpha'], bsdf.inputs['Alpha'])
     if etex:
         e = nt.nodes.new('ShaderNodeTexImage'); e.image = img(etex)
         nt.links.new(e.outputs['Color'], bsdf.inputs['Emission Color'])
@@ -44,7 +49,7 @@ def mat(name, base=(0.5, 0.5, 0.5), metal=0.0, rough=0.6, emit=None, estr=0.0, t
     elif emit:
         bsdf.inputs['Emission Color'].default_value = (*emit, 1)
         bsdf.inputs['Emission Strength'].default_value = estr
-    m.use_backface_culling = False
+    m.use_backface_culling = cull
     MATS[name] = m
     return m
 
@@ -74,6 +79,15 @@ def build_materials():
     mat('BTI_Table', (0.28, 0.2, 0.42), 0.2, 0.5)
     mat('BTI_Amber', (0.9, 0.6, 0.2), 0.0, 0.5, emit=(1.0, 0.6, 0.15), estr=1.2)
     mat('BTI_Hazard', (0.9, 0.7, 0.1), 0.2, 0.5)
+    mat('BTI_HazardDark', (0.04, 0.04, 0.05), 0.2, 0.5)
+    mat('BTI_VioletIn', (0.11, 0.07, 0.26), 0.25, 0.55, cull=True)   # skin liners: visible from inside only
+    mat('BTI_Glass', (0.55, 0.85, 1.0), 0.0, 0.05, emit=(0.2, 0.5, 0.7), estr=0.15, alpha=0.20)
+    for n in 'abc':
+        mat('BTI_Galaxy_' + n, (0.0, 0.0, 0.0), 0, 0.5, tex='galaxy_%s.png' % n, etex='galaxy_%s.png' % n, estr=2.2, tex_alpha=True)
+    for n in ['bay', 'conf']:
+        mat('BTI_Holo_' + n, (0.02, 0.1, 0.12), 0, 0.3, tex='holo_%s.png' % n, etex='holo_%s.png' % n, estr=1.6)
+    for n in ['BAY', 'CMD', 'CORR']:
+        mat('BTI_Sign_' + n, (0.02, 0.1, 0.12), 0, 0.3, tex='sign_%s.png' % n, etex='sign_%s.png' % n, estr=1.4)
 build_materials()
 
 # ───────────────────────── mesh builder ─────────────────────────
@@ -242,21 +256,35 @@ def hole_rails(zf, with_lane1_gate=True):
     # stern edge is left open on purpose: lane 1 goes down, lane 2 comes up
 
 # ───────────────────────── room shell ─────────────────────────
-def room_shell(tag, zf, zc, ribs_y, ceil_mat_top=None):
+def room_shell(tag, zf, zc, ribs_y, ceil_mat_top=None, east_door=None):
     nm = 'BTI_Shell_' + tag
     # side + end walls (outer faces dark, inner violet)
     mb.box(nm, 'BTI_Violet', X0 - 0.5, X0, Y0 - 0.5, Y1 + 0.5, zf, zc)
-    mb.box(nm, 'BTI_Violet', X1, X1 + 0.5, Y0 - 0.5, Y1 + 0.5, zf, zc)
+    if east_door:
+        da, db = east_door
+        mb.box(nm, 'BTI_Violet', X1, X1 + 0.5, Y0 - 0.5, da, zf, zc)
+        mb.box(nm, 'BTI_Violet', X1, X1 + 0.5, db, Y1 + 0.5, zf, zc)
+        mb.box(nm, 'BTI_Violet', X1, X1 + 0.5, da, db, zf + 5.7, zc)
+        for yy in (da, db):
+            mb.box(nm, 'BTI_VioletLight', X1 - 0.2, X1 + 0.7, yy - .25, yy + .25, zf, zf + 5.8)
+        mb.box(nm, 'BTI_VioletLight', X1 - 0.2, X1 + 0.7, da, db, zf + 5.55, zf + 5.95)
+        for yy in (da + 0.12, db - 0.12):
+            mb.box('BTI_NeonLine_' + tag, 'BTI_NeonCyan', X1 - .26, X1 - .2, yy - .05, yy + .05, zf + .1, zf + 5.55)
+        mb.box('BTI_NeonLine_' + tag, 'BTI_NeonCyan', X1 - .26, X1 - .2, da, db, zf + 5.55, zf + 5.69)
+    else:
+        mb.box(nm, 'BTI_Violet', X1, X1 + 0.5, Y0 - 0.5, Y1 + 0.5, zf, zc)
     mb.box(nm, 'BTI_Violet', X0, X1, Y0 - 0.5, Y0, zf, zc)
     mb.box(nm, 'BTI_Violet', X0, X1, Y1, Y1 + 0.5, zf, zc)
     # skirting + ceiling coves
     mb.box(nm, 'BTI_Dark', X0, X0 + 0.5, Y0, Y1, zf, zf + 0.9)
-    mb.box(nm, 'BTI_Dark', X1 - 0.5, X1, Y0, Y1, zf, zf + 0.9)
+    for (sa, sb) in (([(Y0, east_door[0] - 0.3), (east_door[1] + 0.3, Y1)]) if east_door else [(Y0, Y1)]):       # (the east skirting / floor neon stop short of the doorway)
+        mb.box(nm, 'BTI_Dark', X1 - 0.5, X1, sa, sb, zf, zf + 0.9)
     for y in ribs_y:
         rib(nm, y, X0, X1, zf, zc)
     # floor-edge and ceiling neon (video look)
     neon_x('BTI_NeonLine_' + tag, 'BTI_Neon', X0 + 0.55, Y0 + 0.2, Y1 - 0.2, zf + 0.95)
-    neon_x('BTI_NeonLine_' + tag, 'BTI_Neon', X1 - 0.55, Y0 + 0.2, Y1 - 0.2, zf + 0.95)
+    for (sa, sb) in (([(Y0 + 0.2, east_door[0] - 0.4), (east_door[1] + 0.4, Y1 - 0.2)]) if east_door else [(Y0 + 0.2, Y1 - 0.2)]):
+        neon_x('BTI_NeonLine_' + tag, 'BTI_Neon', X1 - 0.55, sa, sb, zf + 0.95)
     neon_x('BTI_NeonLine_' + tag, 'BTI_Neon', X0 + 1.9, Y0 + 0.5, Y1 - 0.5, zc - 0.5, w=0.3)
     neon_x('BTI_NeonLine_' + tag, 'BTI_Neon', X1 - 1.9, Y0 + 0.5, Y1 - 0.5, zc - 0.5, w=0.3)
     neon_x('BTI_NeonLine_' + tag, 'BTI_Neon', (X0 + X1) / 2, Y0 + 0.5, SY0 - 0.3, zc - 0.12, w=0.35)
@@ -368,7 +396,7 @@ def sign_plate(nm, key, cx, y, z, face=+1, w=5.0, h=1.5):
 def deck_nav():
     zf = ZA; zc = CEIL_A
     floor_slab('A', zf)
-    room_shell('A', zf, zc, ribs_y=[84, 90, 96, 102, 108, 123.2])
+    room_shell('A', zf, zc, ribs_y=[84, 90, 96, 102, 108, 123.2], east_door=EAST_DOOR)
     # stair hall sign + hole rails
     hole_rails(zf)
     sign_plate('BTI_Sign_A_hall', 'A', -2.0, Y1 - 0.02, zf + 3.4, face=-1)
@@ -472,22 +500,24 @@ def deck_crew():
         mb.box('BTI_NeonLine_C', 'BTI_Neon', x - .07, x + .07, ENG_Y + .65, ENG_Y + .71, zf + .1, zf + 5.55)
     mb.box('BTI_NeonLine_C', 'BTI_Neon', DOOR_X[0] - .12, DOOR_X[1] + .12, ENG_Y + .65, ENG_Y + .71, zf + 5.55, zf + 5.69)
     sign_plate('BTI_Sign_C_eng', 'C', (DOOR_X[0] + DOOR_X[1]) / 2, ENG_Y + 0.55 + .05, zf + 6.05, face=+1, w=3.6, h=1.05)
-    # bunks both walls (crew quarters y 92 .. 105)
-    ys = [93.9, 97.7, 101.5]
-    for k, y in enumerate(ys):
+    # bunks both walls: FULL-LENGTH berths (she is ~4.1 tall -> 5.0 mattress), 3 levels, 2 berths per wall = 12 beds
+    BL = 2.6                                   # half-length of a berth
+    for k, y in enumerate((96.9, 102.4)):
         for side in (-1, 1):
             xw = X0 if side < 0 else X1
-            xa, xb = (xw + 0.0, xw + 2.6) if side < 0 else (xw - 2.6, xw)
+            xa, xb = (xw + 0.0, xw + 2.5) if side < 0 else (xw - 2.5, xw)
             frame = 'BTI_Bunk'
-            for lvl, hz in ((0, 1.3), (1, 3.9)):
-                mb.box(frame, 'BTI_Dark', xa, xb, y - 1.7, y + 1.7, zf + hz - 0.3, zf + hz)
-                mb.box(frame + '_Bed', ['BTI_FabricBlue', 'BTI_FabricRose', 'BTI_FabricTeal'][(k + lvl + (1 if side > 0 else 0)) % 3], xa + .05, xb - .05, y - 1.6, y + 1.6, zf + hz, zf + hz + 0.35, uvs=.5)
-                mb.box(frame + '_Bed', 'BTI_Steel', xa + .05, xb - .05, y - 1.6, y - 1.1, zf + hz + .35, zf + hz + .55, uvs=.5)   # pillow
-            for yy in (y - 1.7, y + 1.7):
-                mb.box(frame, 'BTI_Dark', xa, xb, yy - .08, yy + .08, zf, zf + 5.2)
-            # reading light + curtain rail
-            mb.box('BTI_NeonLine_C', 'BTI_NeonAmber', (xa + xb) / 2 - .6, (xa + xb) / 2 + .6, y - .06, y + .06, zf + 3.55, zf + 3.65)
-            mb.box('BTI_NeonLine_C', 'BTI_NeonAmber', (xa + xb) / 2 - .6, (xa + xb) / 2 + .6, y - .06, y + .06, zf + 6.15, zf + 6.25)
+            for lvl, hz in enumerate((1.0, 2.9, 4.8)):
+                mb.box(frame, 'BTI_Dark', xa, xb, y - BL, y + BL, zf + hz - 0.3, zf + hz)
+                mb.box(frame + '_Bed', ['BTI_FabricBlue', 'BTI_FabricRose', 'BTI_FabricTeal'][(k + lvl + (1 if side > 0 else 0)) % 3], xa + .05, xb - .05, y - BL + .1, y + BL - .1, zf + hz, zf + hz + 0.3, uvs=.5)
+                mb.box(frame + '_Bed', 'BTI_Steel', xa + .15, xb - .15, y - BL + .15, y - BL + .85, zf + hz + .3, zf + hz + .52, uvs=.5)   # pillow
+                mb.box('BTI_NeonLine_C', 'BTI_NeonAmber', (xa + xb) / 2 - .5, (xa + xb) / 2 + .5, y - .05, y + .05, zf + hz + 1.15, zf + hz + 1.23)   # reading light
+            for yy in (y - BL, y + BL):
+                mb.box(frame, 'BTI_Dark', xa, xb, yy - .08, yy + .08, zf, zf + 6.1)
+            # outer rail posts + a short ladder rung set on the aisle side
+            ax = xb if side < 0 else xa
+            for hz in (1.0, 2.9, 4.8):
+                mb.box(frame, 'BTI_Dark', ax - .05, ax + .05, y - BL, y + BL, zf + hz + 0.3, zf + hz + 0.5)
     # lockers + a wall display
     for x in (X0 + 1.0, X1 - 1.0):
         mb.box('BTI_Lockers', 'BTI_VioletLight', x - 1.0, x + 1.0, ENG_Y + 0.8, ENG_Y + 2.2, zf, zf + 5.0)
@@ -668,13 +698,289 @@ def interactables():
     mb.box('IX_NavButton', 'BTI_LedRed', p[0] - .45, p[0] + .45, p[1] - .45, p[1] + .45, p[2], p[2] + .22, uvs=.5)
     mb.box('BTI_NavButtonBase', 'BTI_Dark', p[0] - .6, p[0] + .6, p[1] - .6, p[1] + .6, p[2] - .06, p[2], uvs=.5)
 
+# ═════════════════ CARGO BAY (port hull) · CORRIDOR TO DECK A · FORECASTLE COMMAND ROOM ═════════════════
+# All three share the bay level: floor top BF, ceiling underside BC (the underside of the top deck).
+BF, BC = -10.5, -0.3
+BCS = BC + 0.5                                   # ceiling slab top
+def skin_x(z, y=None):                           # port hull skin = min(mid-ship slope P6, bow plane P7)  (measured, max dev 0.15)
+    p6 = 38.65 + 0.5 * z
+    if y is None: return p6
+    return min(p6, 50.81 + 0.4483 * y - 0.1971 * z)
+BAY = dict(x0=-20.0, y0=-36.0, y1=34.0)          # inner faces: starboard wall, bow wall, stern wall
+BAY_OPEN = [(-36.0, BF), (32.0, BF), (32.0, -1.5), (-30.0, -1.5)]   # opening in the skin (y,z), CCW; the front edge leans back
+PAD = (9.0, 0.0)                                 # landing pad centre (x, y)
+CMD = dict(x0=-12.5, y0=-62.0, y1=-36.5)         # forecastle command room (stern wall = the bay's bow wall)
+GLASS = dict(y0=-60.0, y1=-45.0, z0=-9.0, z1=-2.5)
+GLASS_POLY = [(GLASS['y0'], GLASS['z0']), (GLASS['y1'], GLASS['z0']), (GLASS['y1'], GLASS['z1']), (GLASS['y0'], GLASS['z1'])]
+CMD_DOOR = (11.0, 17.0)                          # doorway bay -> command room (in the bay's bow wall)
+COR = dict(x0=9.0, x1=15.0, y0=34.5, y1=112.0, ramp_y1=50.0)       # corridor interior (floor top: BF at y0 rising to ZA at ramp_y1)
+BAY_DOOR = (9.0, 15.0)                           # doorway bay <-> corridor in the stern wall
+
+def sk(y, z, off=0.0): return (skin_x(z, y) + off, y, z)
+def skin_poly(nm, m, poly, off=-0.12, inward=False):
+    pts = [sk(y, z, off) for y, z in poly]
+    mb.face(nm, m, pts[::-1] if inward else pts)
+def skin_rect(nm, m, ya, yb, za, zb, off=-0.12, inward=False, step=1.5):
+    n = max(1, int(math.ceil((yb - ya) / step))); k = max(1, int(math.ceil((zb - za) / 4.0)))
+    for i in range(n):
+        for q in range(k):
+            y0_ = ya + (yb - ya) * i / n; y1_ = ya + (yb - ya) * (i + 1) / n
+            z0_ = za + (zb - za) * q / k; z1_ = za + (zb - za) * (q + 1) / k
+            pts = [sk(y0_, z0_, off), sk(y1_, z0_, off), sk(y1_, z1_, off), sk(y0_, z1_, off)]
+            mb.face(nm, m, pts[::-1] if inward else pts)
+def slab_strips(nm, m, xs, ya, yb, z0, z1, inset=0.2, step=1.0, uvs=.1):
+    n = int(math.ceil((yb - ya) / step))
+    for i in range(n):
+        a = ya + (yb - ya) * i / n; b = ya + (yb - ya) * (i + 1) / n
+        xe = min(skin_x(z, yy) for z in (z0, z1) for yy in (a, b)) - inset
+        mb.box(nm, m, xs, xe, a, b, z0, z1, uvs=uvs)
+def lip_strips(nm, m, ya, yb, step=1.0):
+    n = int(math.ceil((yb - ya) / step))
+    for i in range(n):
+        a = ya + (yb - ya) * i / n; b = ya + (yb - ya) * (i + 1) / n
+        xa = min(skin_x(BF - SLAB, yy) for yy in (a, b)); xb = min(skin_x(BF, yy) for yy in (a, b))
+        mb.prism_xz(nm, m, a, b, [(xa - 1.5, BF - SLAB), (xa, BF - SLAB), (xb, BF), (xb - 1.5, BF)])
+def ceil_grille(nm, xs, ya, yb, step=2.0, inset=0.35):
+    n = int(math.ceil((yb - ya) / step))
+    for i in range(n):
+        a = ya + (yb - ya) * i / n; b = ya + (yb - ya) * (i + 1) / n
+        xe = min(skin_x(BC, a), skin_x(BC, b)) - inset
+        mb.quad(nm, 'BTI_Grille', (xs, b, BC - .02), (xe, b, BC - .02), (xe, a, BC - .02), (xs, a, BC - .02), uv=((xe - xs) / 3, (b - a) / 3))
+def skin_frame(nm, m, poly, w, off):
+    n = len(poly)
+    for i in range(n):
+        (y0, z0), (y1, z1) = poly[i], poly[(i + 1) % n]
+        dy, dz = y1 - y0, z1 - z0; L = math.hypot(dy, dz); ny, nz = dz / L, -dy / L
+        mb.face(nm, m, [sk(y, z, off) for y, z in [(y0, z0), (y1, z1), (y1 + ny * w, z1 + nz * w), (y0 + ny * w, z0 + nz * w)]])
+
+def wall_y_skin(nm, y, th, xs, zf, zc, doors=(), m='BTI_Violet'):
+    """wall across the room at y..y+th running from x=xs out to the port skin, with doorways"""
+    cur = xs
+    for (xa, xb) in sorted(doors):
+        mb.box(nm, m, cur, xa, y, y + th, zf, zc)
+        mb.box(nm, m, xa, xb, y, y + th, zf + 5.7, zc)
+        cur = xb
+    mb.prism_xz(nm, m, y, y + th, [(cur, zf), (skin_x(zf, y) - 0.15, zf), (skin_x(zc, y) - 0.15, zc), (cur, zc)])
+
+def door_frame_y(nm, xa, xb, y, th, zf, neon='BTI_NeonCyan'):
+    for x in (xa, xb):
+        mb.box(nm, 'BTI_VioletLight', x - .25, x + .25, y - .15, y + th + .15, zf, zf + 5.8)
+    mb.box(nm, 'BTI_VioletLight', xa, xb, y - .15, y + th + .15, zf + 5.55, zf + 5.95)
+    for yy in (y - .2, y + th + .2):
+        for x in (xa + .27, xb - .27):
+            mb.box('BTI_NeonLine_Bay', neon, x - .05, x + .05, yy - .03, yy + .03, zf + .1, zf + 5.55)
+        mb.box('BTI_NeonLine_Bay', neon, xa, xb, yy - .03, yy + .03, zf + 5.55, zf + 5.69)
+
+def ring_flat(nm, m, cx, cy, z, r0, r1, seg=40, a0=0.0, a1=2 * math.pi):
+    for i in range(seg):
+        t0 = a0 + (a1 - a0) * i / seg; t1 = a0 + (a1 - a0) * (i + 1) / seg
+        mb.face(nm, m, [(cx + r0 * math.cos(t0), cy + r0 * math.sin(t0), z), (cx + r1 * math.cos(t0), cy + r1 * math.sin(t0), z),
+                        (cx + r1 * math.cos(t1), cy + r1 * math.sin(t1), z), (cx + r0 * math.cos(t1), cy + r0 * math.sin(t1), z)])
+
+def crate(nm, x0, x1, y0, y1, z0, h, col, uv=.4):
+    mb.box(nm, 'BTI_Steel', x0, x1, y0, y1, z0, z0 + h, uvs=.3)
+    mb.box(nm + '_Panel', col, x0 + .12, x1 - .12, y0 + .12, y1 - .12, z0 + .05, z0 + h + .02, uvs=uv)
+    mb.box(nm, 'BTI_Dark', x0 - .03, x1 + .03, y0 - .03, y1 + .03, z0 + h * .45, z0 + h * .55, uvs=.3)
+
+def cargo_bay():
+    nm = 'BTI_Shell_Bay'
+    xs = BAY['x0']; y0, y1 = BAY['y0'] - 0.5, BAY['y1'] + 0.5
+    # floor (deck plate) + hazard lip that ends flush with the hull skin at the opening
+    mb.box('BTI_Floor_Bay', 'BTI_Floor', xs - 0.5, 33.0, y0, y1, BF - SLAB, BF, uvs=.1)
+    mb.prism_xz('BTI_BayLip', 'BTI_HazardDark', BAY['y0'], BAY_OPEN[1][0], [(33.0, BF - SLAB), (skin_x(BF - SLAB), BF - SLAB), (skin_x(BF), BF), (33.0, BF)])
+    # ceiling slab (underside of the top deck) + grille panels
+    slab_strips('BTI_Floor_Bay_ceiling', 'BTI_Violet', xs - 0.5, y0, y1, BC, BCS, inset=0.3, step=2.0)
+    ceil_grille('BTI_Ceiling_Bay', xs, y0 + 0.5, y1 - 0.5)
+    # starboard (far) wall, bow wall (door to the command room), stern wall (door to the corridor)
+    mb.box(nm, 'BTI_Violet', xs - 0.5, xs, y0, y1, BF, BC)
+    wall_y_skin(nm, BAY['y0'] - 0.5, 0.5, xs - 0.5, BF, BC, doors=[CMD_DOOR])
+    wall_y_skin(nm, BAY['y1'], 0.5, xs - 0.5, BF, BC, doors=[BAY_DOOR])
+    door_frame_y(nm, CMD_DOOR[0], CMD_DOOR[1], BAY['y0'] - 0.5, 0.5, BF)
+    door_frame_y(nm, BAY_DOOR[0], BAY_DOOR[1], BAY['y1'], 0.5, BF)
+    # port skin liners (the hull skin is one-sided): everything round the opening
+    for poly in ([(-36.5, -1.5), (34.5, -1.5), (34.5, BC), (-36.5, BC)],
+                 [(32.0, BF), (34.5, BF), (34.5, -1.5), (32.0, -1.5)],
+                 [(-36.5, BF), (-36.0, BF), (-30.0, -1.5), (-36.5, -1.5)]):
+        skin_poly(nm, 'BTI_VioletIn', poly, inward=True)
+    # opening trim: dark surround + amber neon edge on the skin, floor-edge guide lights
+    skin_frame('BTI_BayFrame', 'BTI_HazardDark', BAY_OPEN, 0.9, 0.06)
+    skin_frame('BTI_BayFrame_Neon', 'BTI_NeonAmber', BAY_OPEN, 0.28, 0.1)
+    skin_frame('BTI_BayFrame_In', 'BTI_Neon', BAY_OPEN, -0.22, 0.04)
+    for k in range(-5, 5):
+        yy = k * 6.4 + 1.2
+        mb.box('BTI_BayGuide', 'BTI_LedGreen', skin_x(BF) - 1.3, skin_x(BF) - 0.9, yy - .25, yy + .25, BF, BF + .14, uvs=.5)
+    # hazard stripes just inside the lip, landing pad rings + lead-in lanes
+    n = 28
+    for i in range(n):
+        ya = BAY['y0'] + i * 2.5
+        if ya > 31.0: break
+        mb.box('BTI_BayHazard', 'BTI_Hazard' if i % 2 == 0 else 'BTI_HazardDark', 29.2, 31.4, ya, ya + 2.5, BF, BF + .03, uvs=.5)
+    ring_flat('BTI_PadRing', 'BTI_NeonCyan', PAD[0], PAD[1], BF + .03, 6.2, 6.55)
+    ring_flat('BTI_PadRing', 'BTI_NeonAmber', PAD[0], PAD[1], BF + .03, 3.9, 4.05, seg=36)
+    mb.box('BTI_PadRing', 'BTI_NeonCyan', PAD[0] - 6.55, PAD[0] + 6.55, PAD[1] - .1, PAD[1] + .1, BF, BF + .03)
+    mb.box('BTI_PadRing', 'BTI_NeonCyan', PAD[0] - .1, PAD[0] + .1, PAD[1] - 6.55, PAD[1] + 6.55, BF, BF + .03)
+    for sy in (-3.4, 3.4):
+        mb.box('BTI_PadLane', 'BTI_NeonCyan', PAD[0] + 6.8, 29.0, PAD[1] + sy - .09, PAD[1] + sy + .09, BF, BF + .03)
+    for cx in (12.0, 16.5, 21.0, 25.5):
+        mb.prism_xz('BTI_PadLane', 'BTI_NeonAmber', PAD[1] - 2.2, PAD[1] + 2.2, [(cx, BF + .03), (cx + 1.8, BF + .03), (cx + .9, BF + .03)]) if False else None
+    # ribs across the ceiling (beams) + pilasters on the far wall
+    for yy in range(-30, 34, 10):
+        mb.box(nm + '_Beam', 'BTI_VioletLight', xs, 38.0, yy - .4, yy + .4, BC - .7, BC)
+        mb.box('BTI_NeonLine_Bay', 'BTI_Neon', xs + 1.0, 36.5, yy - .08, yy + .08, BC - .76, BC - .7)
+        mb.box(nm + '_Pil', 'BTI_VioletLight', xs, xs + .8, yy - .5, yy + .5, BF, BC)
+    mb.box('BTI_NeonLine_Bay', 'BTI_Neon', xs + 0.05, xs + 0.15, BAY['y0'] + .3, BAY['y1'] - .3, BF + 0.95, BF + 1.07)
+    mb.box('BTI_NeonLine_Bay', 'BTI_Neon', xs + 0.05, xs + 0.15, BAY['y0'] + .3, BAY['y1'] - .3, BC - 0.8, BC - .68)
+    # cargo: crates + drums along the far wall and in the stern-far corner (pad and both door lanes stay clear)
+    cols = ['BTI_FabricRose', 'BTI_FabricTeal', 'BTI_Amber', 'BTI_FabricBlue']
+    for i, yy in enumerate([-31.0, -25.0, -19.0, -13.0]):
+        crate('BTI_Crates', xs + 0.3, xs + 5.3, yy, yy + 4.4, BF, 3.4, cols[i % 4])
+        if i % 2 == 0: crate('BTI_Crates', xs + 0.5, xs + 4.8, yy + .2, yy + 4.2, BF + 3.4, 2.7, cols[(i + 1) % 4])
+    for i, yy in enumerate([-3.0, 3.0]):
+        crate('BTI_Crates', xs + 0.3, xs + 5.0, yy, yy + 4.2, BF, 2.6, cols[(i + 2) % 4])
+    crate('BTI_Crates', xs + 0.3, xs + 9.5, 26.0, 33.4, BF, 4.4, cols[0])
+    crate('BTI_Crates', xs + 0.6, xs + 9.2, 26.4, 33.0, BF + 4.4, 2.4, cols[2])
+    crate('BTI_Crates', xs + 10.0, xs + 15.0, 29.0, 33.4, BF, 3.4, cols[1])
+    for (bx, by) in [(-1.5, 30.5), (0.3, 31.4), (-1.0, 32.4), (1.2, 30.0)]:
+        mb.cyl('BTI_Barrels', 'BTI_VioletLight', bx, by, BF, BF + 2.5, .65, 12)
+        mb.cyl('BTI_Barrels', 'BTI_NeonAmber', bx, by, BF + 1.4, BF + 1.55, .67, 12)
+    # bay control console + screens by the stern door, signs, switch
+    console('BTI_Console_Bay', -1.0, BAY['y1'] - 0.6, BF, (0, 1), width=5.6, screen='bay')
+    led_cluster('BTI_Console_Bay', -1.0, BAY['y1'] - 0.6, BF, (0, 1), 5.6)
+    chair('BTI_Seat_Bay', -1.0, BAY['y1'] - 3.3, BF, face=+1)
+    wall_screen('BTI_WallScreen_Bay', -4.0, 2.0, BAY['y1'] - 0.0, BF + 4.8, BF + 7.0, 'bay', face=-1)
+    wall_screen('BTI_WallScreen_Bay', -16.0, -7.0, BAY['y1'] - 0.0, BF + 3.2, BF + 8.2, 'sector', face=-1)
+    wall_screen_x('BTI_WallScreen_Bay', xs, -16.0, -4.0, BF + 3.2, BF + 8.0, 'nav_a', face=+1)
+    wall_screen_x('BTI_WallScreen_Bay', xs, 4.0, 16.0, BF + 3.2, BF + 8.0, 'radar', face=+1)
+    sign_plate('BTI_Sign_Bay', 'BAY', 12.0, BAY['y1'] - 0.0, BF + 6.3, face=-1, w=5.6, h=1.45)
+    sign_plate('BTI_Sign_BayCmd', 'CMD', 14.0, BAY['y0'] - 0.0, BF + 6.3, face=+1, w=5.6, h=1.45)
+
+def corridor():
+    nm = 'BTI_Shell_Corr'
+    x0, x1, y0, y1 = COR['x0'], COR['x1'], COR['y0'], COR['y1']
+    ry = COR['ramp_y1']
+    # floor: ramp (BF -> ZA) then flat; slab prism extruded along x
+    mb.prism_yz('BTI_Floor_Corr', 'BTI_Violet', x0 - 0.5, x1 + 0.5, [(y0, BF - SLAB), (ry, ZA - SLAB), (y1 + 0.5, ZA - SLAB), (y1 + 0.5, ZA), (ry, ZA), (y0, BF)])
+    # deck-plate top: ramp and flat quads
+    mb.quad('BTI_Floor_Corr_Top', 'BTI_Floor', (x0, y0, BF + .01), (x1, y0, BF + .01), (x1, ry, ZA + .01), (x0, ry, ZA + .01), uv=(2, 5))
+    mb.quad('BTI_Floor_Corr_Top', 'BTI_Floor', (x0, ry, ZA + .01), (x1, ry, ZA + .01), (x1, y1, ZA + .01), (x0, y1, ZA + .01), uv=(2, 26))
+    # ceiling
+    mb.box('BTI_Floor_Corr_ceiling', 'BTI_Violet', x0 - 0.5, x1 + 0.5, y0, y1 + 0.5, BC, BCS)
+    mb.quad('BTI_Ceiling_Corr', 'BTI_Grille', (x0, y1, BC - .02), (x1, y1, BC - .02), (x1, y0, BC - .02), (x0, y0, BC - .02), uv=(2, 26))
+    # walls: west (doorway to the stair hall at EAST_DOOR), east, south cap
+    da, db = EAST_DOOR
+    zlo = BF
+    def wall_poly(x_a, x_b, ya, yb):     # a wall face-strip following the floor ramp: prism in y-z, extruded in x
+        pts = []
+        def fl(y): return BF + (ZA - BF) * min(1, max(0, (y - y0) / (ry - y0)))
+        yy = [ya]
+        if ya < ry < yb: yy.append(ry)
+        yy.append(yb)
+        bot = [(y, fl(y)) for y in yy]; top = [(y, BC) for y in reversed(yy)]
+        mb.prism_yz(nm, 'BTI_Violet', x_a, x_b, bot + top)
+    wall_poly(x0 - 0.5, x0, y0, da); wall_poly(x0 - 0.5, x0, db, y1)
+    mb.box(nm, 'BTI_Violet', x0 - 0.5, x0, da, db, ZA + 5.7, BC)
+    wall_poly(x1, x1 + 0.5, y0, y1)
+    mb.box(nm, 'BTI_Violet', x0 - 0.5, x1 + 0.5, y1, y1 + 0.5, ZA, BC)
+    for yy_ in (da, db):
+        mb.box(nm, 'BTI_VioletLight', x0 - 0.7, x0 + 0.2, yy_ - .25, yy_ + .25, ZA, ZA + 5.8)
+    mb.box(nm, 'BTI_VioletLight', x0 - 0.7, x0 + 0.2, da, db, ZA + 5.55, ZA + 5.95)
+    # ribs, neon, wall stripe
+    def fl2(y): return BF + (ZA - BF) * min(1, max(0, (y - y0) / (ry - y0)))
+    for yy_ in range(40, 112, 8):
+        z0_ = fl2(yy_)
+        rib(nm + '_Rib', yy_, x0, x1, z0_, BC, ch=1.2, t=0.5, depth=0.7)
+    mb.box('BTI_NeonLine_Corr', 'BTI_Neon', (x0 + x1) / 2 - .17, (x0 + x1) / 2 + .17, y0 + 1, y1 - 1, BC - .06, BC + .02)
+    for xx in (x0 + 0.06, x1 - 0.06):
+        segs = [(y0, y1 - .2)] if xx > x0 + 1 else [(y0, da - 0.4), (db + 0.4, y1 - .2)]      # the west strip stops short of the hall doorway
+        for (sa, sb) in segs:
+            ya_ = [sa] + ([ry] if sa < ry < sb else []) + [sb]
+            lo = [(yy, BF + (ZA - BF) * min(1, max(0, (yy - y0) / (ry - y0))) + .95) for yy in ya_]
+            hi = [(yy, z + .12) for yy, z in reversed(lo)]
+            mb.prism_yz('BTI_NeonLine_Corr', 'BTI_Neon', xx - .04, xx + .04, lo + hi)
+    sign_plate('BTI_Sign_CorrEnd', 'CORR', (x0 + x1) / 2, y1 - 0.0, ZA + 3.6, face=-1, w=5.0, h=1.5)
+    sign_plate('BTI_Sign_CorrBay', 'BAY', (x0 + x1) / 2, y0 + 0.0, BF + 4.2, face=+1, w=4.6, h=1.3) if False else None
+
+def command_room():
+    nm = 'BTI_Shell_Cmd'
+    xs = CMD['x0']; y0, y1 = CMD['y0'], CMD['y1']
+    slab_strips('BTI_Floor_Cmd', 'BTI_Floor', xs - 0.5, y0 - 0.5, y1, BF - SLAB, BF, inset=0.15, step=1.0)
+    lip_strips('BTI_CmdLip', 'BTI_Dark', y0 - 0.5, y1)
+    slab_strips('BTI_Floor_Cmd_ceiling', 'BTI_Violet', xs - 0.5, y0 - 0.5, y1, BC, BCS, inset=0.3, step=2.0)
+    ceil_grille('BTI_Ceiling_Cmd', xs, y0, y1)
+    mb.box(nm, 'BTI_Violet', xs - 0.5, xs, y0 - 0.5, y1, BF, BC)                    # starboard wall
+    wall_y_skin(nm, y0 - 0.5, 0.5, xs - 0.5, BF, BC)                                # bow wall
+    # port skin liners round the big window (follow the true tapered skin)
+    g = GLASS
+    skin_rect(nm, 'BTI_VioletIn', y0 - 0.5, y1, BF, g['z0'], inward=True)           # sill
+    skin_rect(nm, 'BTI_VioletIn', y0 - 0.5, y1, g['z1'], BC, inward=True)           # lintel
+    skin_rect(nm, 'BTI_VioletIn', y0 - 0.5, g['y0'], g['z0'], g['z1'], inward=True)
+    skin_rect(nm, 'BTI_VioletIn', g['y1'], y1, g['z0'], g['z1'], inward=True)
+    # the glass: three panes in the skin plane, dark mullions + frame on the outside
+    n = 3; gap = 0.8; pw = ((g['y1'] - g['y0']) - gap * (n - 1)) / n
+    for i in range(n):
+        ya = g['y0'] + i * (pw + gap)
+        skin_poly('BTI_Glass_Pane', 'BTI_Glass', [(ya, g['z0']), (ya + pw, g['z0']), (ya + pw, g['z1']), (ya, g['z1'])], off=0.0)
+        if i < n - 1:
+            for off_ in (0.08, -0.08):
+                skin_poly('BTI_GlassFrame', 'BTI_Dark', [(ya + pw - .02, g['z0'] - .3), (ya + pw + gap + .02, g['z0'] - .3), (ya + pw + gap + .02, g['z1'] + .3), (ya + pw - .02, g['z1'] + .3)], off=off_)
+    skin_frame('BTI_GlassFrame', 'BTI_Dark', GLASS_POLY, 0.7, 0.08)
+    skin_frame('BTI_GlassFrame_Neon', 'BTI_NeonCyan', GLASS_POLY, 0.14, 0.12)
+    skin_frame('BTI_GlassFrame', 'BTI_Dark', GLASS_POLY, -0.4, -0.08)
+    # ceiling beams, neon, pilasters
+    for yy in (-58.0, -50.0, -42.0):
+        xe = skin_x(BC, yy) - 1.5
+        mb.box(nm + '_Beam', 'BTI_VioletLight', xs, xe, yy - .4, yy + .4, BC - .7, BC)
+        mb.box('BTI_NeonLine_Cmd', 'BTI_NeonCyan', xs + 1.0, xe - 1.0, yy - .08, yy + .08, BC - .76, BC - .7)
+    mb.box('BTI_NeonLine_Cmd', 'BTI_Neon', xs + 0.05, xs + 0.15, y0 + .3, y1 - .3, BF + 0.95, BF + 1.07)
+    mb.box('BTI_NeonLine_Cmd', 'BTI_Neon', xs + 0.05, xs + 0.15, y0 + .3, y1 - .3, BC - 0.8, BC - .68)
+    door_frame_y(nm, CMD_DOOR[0], CMD_DOOR[1], y1, 0.0, BF)
+    # big conference wall on the bow wall: three screens (the room narrows toward the bow)
+    for x, t in zip([-11.5, -0.5, 10.5], ['sector', 'conf', 'radar']):
+        wall_screen('BTI_WallScreen_Cmd', x, x + 9.6, y0 + 0.0, BF + 3.4, BF + 9.2, t, face=+1)
+    wall_screen_x('BTI_WallScreen_Cmd', xs, -58.0, -48.0, BF + 3.2, BF + 8.2, 'nav_a', face=+1)
+    wall_screen_x('BTI_WallScreen_Cmd', xs, -44.0, -38.5, BF + 3.2, BF + 8.2, 'nav_d', face=+1)
+    # console bank under the screens
+    for x, t in ((-6.0, 'sector'), (4.6, 'conf'), (15.0, 'radar')):
+        console('BTI_Console_Cmd', x, y0 + 0.6, BF, (0, -1), width=6.4, screen=t)
+        led_cluster('BTI_Console_Cmd', x, y0 + 0.6, BF, (0, -1), 6.4)
+    # conference table with a holo emitter on the centre line
+    tx0, tx1, ty0, ty1 = -8.0, 22.0, -49.4, -45.6
+    mb.box('BTI_ConfTable', 'BTI_Table', tx0, tx1, ty0, ty1, BF + 1.7, BF + 1.95)
+    for lx in (tx0 + 1.5, (tx0 + tx1) / 2, tx1 - 1.5):
+        mb.box('BTI_ConfTable', 'BTI_Dark', lx - .5, lx + .5, ty0 + .6, ty1 - .6, BF, BF + 1.7)
+    mb.box('BTI_NeonLine_Cmd', 'BTI_NeonCyan', tx0 + .2, tx1 - .2, (ty0 + ty1) / 2 - .06, (ty0 + ty1) / 2 + .06, BF + 1.95, BF + 2.0)
+    for cx in range(-5, 22, 5):
+        chair('BTI_Seat_Cmd', cx, ty1 + 1.9, BF, face=-1)
+        chair('BTI_Seat_Cmd', cx, ty0 - 1.9, BF, face=+1)
+    # three holo emitters with spinning galaxies
+    cy_ = (ty0 + ty1) / 2
+    for (ex, sz, gname) in ((7.0, 9.0, 'a'), (-2.0, 5.0, 'b'), (16.0, 5.0, 'c')):
+        mb.cyl('BTI_Emitter', 'BTI_VioletLight', ex, cy_, BF + 1.95, BF + 2.35, 1.0, 16, r1=0.8)
+        mb.cyl('BTI_Emitter', 'BTI_Reactor', ex, cy_, BF + 2.35, BF + 2.42, 0.62, 16)
+        ring_flat('BTI_Emitter', 'BTI_NeonCyan', ex, cy_, BF + 2.45, 0.9, 1.05, seg=20)
+        zc_ = BF + 2.6 + sz * 0.36 + 1.2
+        pn = 'FX_Galaxy_' + gname
+        mb.part(pn, origin=(ex, cy_, zc_))
+        tilt = math.radians(16)
+        for dz in (-0.45, 0.0, 0.45):
+            pts = []
+            for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+                x = sx * sz / 2; y = sy * sz / 2
+                pts.append((ex + x, cy_ + y * math.cos(tilt), zc_ + y * math.sin(tilt) + dz))
+            mb.face(pn, 'BTI_Galaxy_' + gname, pts, [(0, 0), (1, 0), (1, 1), (0, 1)])
+    sign_plate('BTI_Sign_Cmd', 'CMD', 14.0, y1 - 0.0, BF + 6.3, face=-1, w=5.6, h=1.45)
+
+
 build_materials()
 deck_nav(); deck_mess(); deck_crew(); food_store()
+cargo_bay(); corridor(); command_room()
 wall_switch('nav', 3.6, BULK_Y - 0.0, ZA)
 wall_switch('mess', 3.6, BULK_Y - 0.0, ZB)
 wall_switch('crew', 3.6, BULK_Y - 0.0, ZC)
 wall_switch('store', -5.7, BULK_Y - 0.0, ZB)
 wall_switch('engine', 3.6, ENG_Y - 0.0, ZC)
+wall_switch('bay', 6.4, BAY['y1'], BF)
+wall_switch('cmd', 8.0, CMD['y1'], BF)
 # ceiling slab of deck A (just under the hull top) with the shaft hole, grille already placed by room_shell
 slab_with_hole('BTI_Floor_A_ceiling', 'BTI_Violet', X0 - 0.5, X1 + 0.5, Y0 - 0.5, Y1 + 0.5, CEIL_A, DECK - 0.05, (SX0, SX1, SY0, SY1))
 # stairs: top deck -> A -> B -> C
@@ -709,11 +1015,22 @@ LIGHTS = [  # world positions of interior light markers (the game turns these in
     ('LIGHT_Engine', (-2.0, 84.3, ZC + 3.5), '#66e0ff', 'engine'), ('LIGHT_EngineTop', (-2.0, 86.0, ZC + 5.5), '#66e0ff', 'engine'),
     ('LIGHT_Shaft', (-2.0, 115.6, ZA + 4.0), '#9fb0ff', 'hall'), ('LIGHT_ShaftLow', (-2.0, 115.6, ZB + 4.0), '#9fb0ff', 'hall'),
     ('LIGHT_Hall', (-2.0, 115.0, ZC + 5.0), '#9fb0ff', 'hall'),
+    ('LIGHT_Bay1', (10.0, -17.0, BF + 8.2), '#ffd9a0', 'bay'), ('LIGHT_Bay2', (10.0, 17.0, BF + 8.2), '#ffd9a0', 'bay'), ('LIGHT_Bay3', (-10.0, 0.0, BF + 8.2), '#9fb0ff', 'bay'),
+    ('LIGHT_Corr1', (12.0, 100.0, ZA + 5.2), '#9fb0ff', 'hall'), ('LIGHT_Corr2', (12.0, 70.0, ZA + 5.2), '#9fb0ff', 'hall'), ('LIGHT_Corr3', (12.0, 44.0, BF + 7.0), '#9fb0ff', 'hall'),
+    ('LIGHT_Cmd1', (8.0, -47.5, BF + 8.6), '#66fff0', 'cmd'), ('LIGHT_Cmd2', (-5.0, -55.0, BF + 8.6), '#b69cff', 'cmd'), ('LIGHT_Cmd3', (20.0, -55.0, BF + 8.6), '#b69cff', 'cmd'),
 ]
 for n, loc, col, grpn in LIGHTS:
     e = empty(n, loc, dict(light=col, group=grpn)); e.parent = grp; e.location = Vector(loc)
 for g, pv in SWITCHES:
     o = objs['IX_Switch_' + g]; o['ix'] = 'switch'; o['group'] = g; o['prompt'] = 'Flip the light switch'; o['radius'] = 5.0
+for gname, sp_ in (('a', 0.30), ('b', -0.45), ('c', 0.55)):
+    o = objs['FX_Galaxy_' + gname]; o['spin'] = sp_
+import json as _json
+_pl = lambda y: min(skin_x(-5.4, y), skin_x(-5.4, y)) - 0.5
+LAYOUT = dict(cor_clip=dict(plan=[(COR['x0'] - 0.6, COR['y0'] - 0.6), (COR['x1'] + 0.6, COR['y0'] - 0.6), (COR['x1'] + 0.6, 52.0), (COR['x0'] - 0.6, 52.0)], z=[BF - SLAB - 0.05, BCS + 0.05]), plan=[(CMD['x0'] - 0.5, CMD['y0'] - 0.5), (_pl(CMD['y0'] - 0.5), CMD['y0'] - 0.5), (_pl(CMD['y1']), CMD['y1']), (CMD['x0'] - 0.5, CMD['y1'])], plan_z=[BF - 0.05, BC + 0.05], bf=BF, bc=BC, skin=[38.65, 0.5], bay=BAY, open=BAY_OPEN, pad=PAD, cmd=CMD, glass=GLASS_POLY, cmd_door=CMD_DOOR, bay_door=BAY_DOOR, cor=COR, east_door=EAST_DOOR, za=ZA)
+open(HERE + '/layout.json', 'w').write(_json.dumps(LAYOUT))
+bayroot = empty('BTI_Bay', (PAD[0], PAD[1], BF), dict(layout=_json.dumps(LAYOUT)))
+bayroot.parent = grp; bayroot.location = Vector((PAD[0], PAD[1], BF))
 # parent every structural mesh to the group so the export has one clean subtree
 for name, ob in objs.items():
     if ob.parent is None: ob.parent = grp

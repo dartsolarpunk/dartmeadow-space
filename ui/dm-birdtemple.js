@@ -15,8 +15,8 @@
   'use strict';
   const cfg = {
     // point-light candela per room group: DIM (night mode) and BRIGHT (switch flipped)
-    low:  { nav: 0.42, mess: 0.42, crew: 0.36, store: 0.4, engine: 0.55, hall: 0.34 },
-    high: { nav: 2.6,  mess: 2.8,  crew: 2.4,  store: 2.6, engine: 2.8, hall: 0.9 },
+    low:  { nav: 0.42, mess: 0.42, crew: 0.36, store: 0.4, engine: 0.55, hall: 0.34, bay: 0.5, cmd: 0.42 },
+    high: { nav: 2.6,  mess: 2.8,  crew: 2.4,  store: 2.6, engine: 2.8, hall: 0.9, bay: 2.8, cmd: 2.6 },
     dist: 3.4,              // world units of light reach (the ship is ~20 world units long)
     outsideGlobalK: 1.0,
     insideGlobalK: 0.10,    // multiplier on every non-interior scene light once she's below deck
@@ -91,9 +91,29 @@
       enterShipWalk = function () { orig(); BTI.onEnter(); };
       enterShipWalk.__bti = true;
     }
+    if (typeof _btFlightCollide === 'function' && !_btFlightCollide.__bti) {
+      const orig = _btFlightCollide;
+      _btFlightCollide = function () { try { if (BTI.bay && BTI.bayCapture()) return; } catch (e) { if (!BTI._bcErr) { BTI._bcErr = 1; console.warn('[BTI] bay capture', e); } } orig(); };
+      _btFlightCollide.__bti = true;
+    }
+    if (typeof _shipLandTick === 'function' && !_shipLandTick.__bti) {
+      const orig = _shipLandTick;
+      _shipLandTick = function (dt) { if (typeof SHIP_LAND !== 'undefined' && SHIP_LAND && SHIP_LAND.bay) return BTI.bayLandTick(dt); return orig(dt); };
+      _shipLandTick.__bti = true;
+    }
+    if (typeof _shipLiftOff === 'function' && !_shipLiftOff.__bti) {
+      const orig = _shipLiftOff;
+      _shipLiftOff = function (sp, h) { if (BTI._bayOut && BTI._bayOut.pending) return BTI.runBayOut(); return orig(sp, h); };
+      _shipLiftOff.__bti = true;
+    }
     if (typeof exitShipWalk === 'function' && !exitShipWalk.__bti) {
       const orig = exitShipWalk;
-      exitShipWalk = function () { orig(); BTI.onExit(); };
+      exitShipWalk = function () {
+        let bay = false, stepOn = false;
+        try { bay = !!(BTI.bay && BTI.inBay(SHIP_WALK.localPos)); stepOn = !!(SHIP_WALK.charOn && typeof boardFlight !== 'undefined' && boardFlight && CHAR.loaded && CHAR.root && !CHAR.mounted && !CHAR._transitioning && CHAR.actions && CHAR.actions.skyboard); } catch (e) { }
+        orig(); BTI.onExit();
+        if (bay) { try { BTI.beginBayOut(stepOn); } catch (e) { console.warn('[BTI] bay lift-off', e); } }
+      };
       exitShipWalk.__bti = true;
     }
   }
@@ -124,6 +144,7 @@
       (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => { if (m && /^BTI_/.test(m.name || '')) mats.add(m); });
     });
     g.traverse(o => { if (o.isMesh && o.material && !Array.isArray(o.material) && /^BTI_/.test(o.material.name || '')) { o.castShadow = false; o.receiveShadow = false; } });
+    mats.forEach(m => { if (/^BTI_(Glass|Galaxy_)/.test(m.name || '')) { m.depthWrite = false; m.transparent = true; } });
     mats.forEach(m => { m.vertexColors = false; if ('envMapIntensity' in m) m.envMapIntensity = 0.12; m.needsUpdate = true; });
 
     // interactables + light markers
@@ -184,6 +205,8 @@
 
     buildScreens(mats);
     buildHud();
+    initBay();
+    initGalaxies();
     BTI.ready = true;
     console.log('[BTI] interior ready:', BTI.ix.length, 'interactables,', BTI.lights.length, 'lights,', Object.keys(BTI.screens).length, 'screens');
   }
@@ -305,12 +328,39 @@
     },
     crew(c, w, h, t, I) {    // lights + status roster
       frame(c, w, h, 'CREW · SHIP STATUS', t);
-      const G = BTI.state.groups, rows = [['NAV', 'nav'], ['MESS', 'mess'], ['STORE', 'store'], ['CREW', 'crew'], ['ENGINE', 'engine']];
-      rows.forEach(([n, k], i) => { const on = G[k] && G[k].target > 0.5; txt(c, n.padEnd(7) + 'LIGHTS ' + (on ? 'BRIGHT' : 'DIM'), 20, 62 + i * 28, on ? COL.am : COL.cy, 18); });
+      const G = BTI.state.groups, rows = [['NAV', 'nav'], ['MESS', 'mess'], ['STORE', 'store'], ['CREW', 'crew'], ['ENGINE', 'engine'], ['BAY', 'bay'], ['CMD', 'cmd']];
+      rows.forEach(([n, k], i) => { const on = G[k] && G[k].target > 0.5; txt(c, n.padEnd(7) + 'LIGHTS ' + (on ? 'BRIGHT' : 'DIM'), 20, 58 + i * 24, on ? COL.am : COL.cy, 17); });
       txt(c, 'ALERT  ' + (BTI.state.alert ? 'ON' : 'OFF'), 20, h - 40, BTI.state.alert ? COL.rd : COL.gn, 18);
       txt(c, 'CREW 24 ABOARD', 20, h - 14, COL.vi, 15);
     },
   };
+  DRAW.bay = function (c, w, h, t, I) {   // hangar status
+    frame(c, w, h, 'HANGAR · PORT CARGO BAY', t);
+    const rows = [['PAD 01', 'CLEAR', COL.gn], ['DOCK', 'AUTO', COL.cy], ['AIR', 'HOLD', COL.cy], ['LIFT', BTI.state.alert ? 'LOCK' : 'READY', BTI.state.alert ? COL.rd : COL.am]];
+    rows.forEach(([a, b, col], i) => { txt(c, a.padEnd(8), 24, 70 + i * 30, COL.vi, 20); txt(c, b, 190, 70 + i * 30, col, 20); });
+    for (let i = 0; i < 6; i++) { const x = 24 + i * 78, v = 0.5 + 0.4 * Math.sin(t * 0.9 + i * 1.4); c.fillStyle = 'rgba(111,247,234,.15)'; c.fillRect(x, 200, 60, 70); c.fillStyle = COL.cy; c.fillRect(x, 270 - 70 * v, 60, 70 * v); txt(c, 'C' + (i + 1), x + 30, 292, COL.dim.replace('.28', '.9'), 13, 'center'); }
+    txt(c, 'MANIFEST 14 CRATES', w - 16, h - 14, COL.am, 15, 'right');
+  };
+  DRAW.conf = function (c, w, h, t, I) {  // command conference
+    frame(c, w, h, 'COMMAND · CONFERENCE', t);
+    const cx = w * 0.3, cy = h * 0.6;
+    for (let a = 0; a < 3; a++) { c.strokeStyle = [COL.cy, COL.vi, COL.am][a]; c.lineWidth = 2; c.beginPath(); for (let k = 0; k < 160; k++) { const u = k / 160 * 6.283 * 2.2, r = 8 + k * 0.62, ang = u + t * (0.4 + a * 0.15) + a * 2.1; const x = cx + Math.cos(ang) * r, y = cy + Math.sin(ang) * r * 0.55; k ? c.lineTo(x, y) : c.moveTo(x, y); } c.stroke(); }
+    ['SECTOR  ARC EDGE', 'SYSTEMS 128', 'TRACKING 3 GALAXIES', 'TEMPLE  DOCKED ' + (I.spd > 0.5 ? 'NO' : 'YES')].forEach((s, i) => txt(c, s, w * 0.55, 74 + i * 30, i === 3 ? COL.am : COL.cy, 17));
+  };
+  // spinning holographic galaxies over the conference table (FX_Galaxy_* carry a `spin` extra)
+  function initGalaxies() {
+    const g = BIRD_TEMPLE.group; BTI.galaxies = [];
+    g.traverse(o => { if (/^FX_Galaxy_/.test(o.name || '') && o.userData && o.userData.spin !== undefined) BTI.galaxies.push({ o, spin: +o.userData.spin }); });
+    if (!BTI.galaxies.length) return;
+    let last = performance.now();
+    (function loop() {
+      requestAnimationFrame(loop);
+      const now = performance.now(), dt = Math.min(0.1, (now - last) / 1000); last = now;
+      const gg = BIRD_TEMPLE.group; if (!gg || !gg.visible) return;
+      let far = false; try { if (typeof flightCamera !== 'undefined' && flightCamera) far = flightCamera.position.distanceTo(gg.position) > (BIRD_TEMPLE._bsR || 20) * 4; } catch (e) { }
+      BTI.galaxies.forEach(G => { G.o.visible = !far; if (!far) G.o.rotation.y += G.spin * dt; });
+    })();
+  }
   function buildScreens(mats) {
     const THREE = T();
     mats.forEach(m => {
@@ -327,6 +377,127 @@
       const s = BTI.screens[k]; try { DRAW[k](s.ctx, 512, 320, t, I); s.tex.needsUpdate = true; } catch (e) { }
     }
   }
+
+
+  // ───────────────────────── cargo bay: fly-in landing + cinematic lift-off ─────────────────────────
+  // Layout (Blender-style axes: x port, y aft, z up) comes from the BTI_Bay empty's `layout` extra; local
+  // raw coordinates are (x, z, -y) around that empty. Hull skin = min(mid-ship slope, bow plane), measured.
+  const bay = { L: null, o: null };
+  const skinX = (z, y) => Math.min(38.65 + 0.5 * z, 50.81 + 0.4483 * y - 0.1971 * z);
+  function initBay() {
+    const THREE = T(), g = BIRD_TEMPLE.group, node = g.getObjectByName('BTI_Bay');
+    if (!node || !node.userData || !node.userData.layout) return;
+    try { bay.L = JSON.parse(node.userData.layout); } catch (e) { return; }
+    bay.o = g.worldToLocal(node.getWorldPosition(new THREE.Vector3()));
+    BTI.bay = bay;
+    let last = performance.now();
+    (function loop() { requestAnimationFrame(loop); const now = performance.now(), dt = Math.min(0.1, (now - last) / 1000); last = now; if (BTI._bayOut && !BTI._bayOut.pending) { try { BTI.bayOutTick(dt); } catch (e) { BTI._bayOut = null; console.warn('[BTI] bay out', e); } } })();
+  }
+  BTI.toLocal = (x, y, z) => { const L = bay.L, o = bay.o, V = T().Vector3; return new V(o.x + (x - L.pad[0]), o.y + (z - L.bf), o.z - (y - L.pad[1])); };
+  BTI.toBlender = (l) => { const L = bay.L, o = bay.o; return { x: l.x - o.x + L.pad[0], y: -(l.z - o.z) + L.pad[1], z: l.y - o.y + L.bf }; };
+  BTI.inBay = function (l) {   // is a ship-local point inside the hangar volume (floor to underside of the top deck)?
+    const L = bay.L; if (!L) return false; const b = BTI.toBlender(l);
+    return b.y > L.bay.y0 && b.y < L.bay.y1 && b.z > L.bf - 1 && b.z < L.bc && b.x > L.bay.x0 && b.x < skinX(b.z, b.y) + 0.3;
+  };
+  let _bprev = null;
+  BTI.bayCapture = function () {
+    const L = bay.L, bt = BIRD_TEMPLE, sp = STATE.flight, g = bt.group;
+    if (!L || !sp || !sp.pos || !g || SHIP_WALK.active || SHIP_LAND || !g.visible || performance.now() < (bt._fcGrace || 0)) { _bprev = null; return false; }
+    if (sp.pos.distanceTo(g.position) > (bt._bsR || 20) + 4) { _bprev = null; return false; }
+    g.updateMatrixWorld(true);
+    const l = g.worldToLocal(sp.pos.clone()), b = BTI.toBlender(l), prev = _bprev; _bprev = b;
+    const sx = skinX(b.z, b.y);
+    const win = (y, z) => y > L.bay.y0 + 3 && y < L.bay.y1 - 3 && z > L.bf + 1.0 && z < L.bc - 1.0;
+    let hit = false;
+    if (win(b.y, b.z) && b.x < sx - 0.5 && b.x > L.bay.x0 + 1) hit = true;                                  // already inside
+    else if (win(b.y, b.z) && prev && b.x < sx + 8 && b.x > sx - 0.5 && b.x < prev.x - 1e-4) hit = true;     // closing in on the mouth
+    else if (prev && prev.x > skinX(prev.z, prev.y) && b.x <= sx) {                                           // swept across the mouth plane
+      const dp = prev.x - skinX(prev.z, prev.y), db = b.x - sx, k = dp / Math.max(1e-6, dp - db);
+      if (win(prev.y + (b.y - prev.y) * k, prev.z + (b.z - prev.z) * k)) hit = true;
+    }
+    if (!hit) return false;
+    startBayLanding(l, b, sp, g);
+    return true;
+  };
+  function startBayLanding(l, b, sp, g) {
+    const THREE = T(), L = bay.L;
+    const zc = L.bf + 4.6, yc = clamp(b.y, L.bay.y0 + 14, L.bay.y1 - 14);
+    const ax = Math.min(b.x, skinX(zc, yc) - 7);
+    const pts = [l.clone(), BTI.toLocal(ax, yc, zc), BTI.toLocal(L.pad[0] + 5, L.pad[1] + (yc - L.pad[1]) * 0.25, zc), BTI.toLocal(L.pad[0], L.pad[1], L.bf + 0.03)];
+    const curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal');
+    const len = curve.getLength(), s = g.scale.x || 1, spd = sp.vel ? sp.vel.length() * 60 / s : 0;   // raw units / s (sp.vel is per frame)
+    SHIP_LAND = { bay: true, t: 0, dur: clamp(len * 2.0 / Math.max(spd, 6), 2.3, 5.0), curve, from: l.clone(), to: pts[3].clone(), yaw: null };
+    if (sp.vel) sp.vel.set(0, 0, 0);
+    try { $('ship-land-prompt').style.display = 'none'; } catch (e) { }
+    toast('🛬 Cargo bay — auto-landing', 1800); sfx.servo(false);
+  }
+  BTI.bayLandTick = function (dt) {
+    const THREE = T(), L = SHIP_LAND, bt = BIRD_TEMPLE, sp = STATE.flight; if (!L) return;
+    if (!bt.group || !sp || SHIP_WALK.active) { SHIP_LAND = null; return; }
+    L.t += dt; const k = Math.min(1, L.t / L.dur), e = 1 - Math.pow(1 - k, 2.2);
+    bt.group.updateMatrixWorld(true);
+    const p = bt.group.localToWorld(L.curve.getPoint(e));
+    const prev = sp.pos.clone(); sp.pos.copy(p); if (sp.vel) sp.vel.set(0, 0, 0);
+    try {
+      const q = spQuat(sp), d = p.clone().sub(prev);
+      if (!L.q0) { const f = new THREE.Vector3(0, 0, -1).applyQuaternion(q); L.q0 = q.clone(); L.yaw = Math.atan2(-f.x, -f.z); }
+      if (Math.hypot(d.x, d.z) > 1e-5) { const want = Math.atan2(-d.x, -d.z); let da = want - L.yaw; da = Math.atan2(Math.sin(da), Math.cos(da)); L.yaw += da * Math.min(1, dt * 2.5); }
+      const q1 = _shipFrameQuat().clone().multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(0, L.yaw, 0, 'YXZ')));
+      q.copy(L.q0).slerp(q1, Math.min(1, e * 1.3)); sp.quat = q; try { spSyncLegacy(sp); } catch (_) { }
+      if (boardFlight) boardFlight.quaternion.copy(q).multiply(_BOARD_ALIGN);
+    } catch (_) { }
+    if (boardFlight) { boardFlight.position.copy(p); boardFlight.updateMatrixWorld(true); }
+    if (flightCamera) { flightCamera.position.add(p.sub(prev)); flightCamera.updateMatrixWorld(true); }
+    if (k >= 1) { SHIP_LAND = null; enterShipWalk(); }
+  };
+  // lift-off from inside the bay: rise, slide to the mouth, bank out over the port side and boost away
+  BTI.beginBayOut = function (stepOn) {
+    BTI._bayOut = { pending: true };
+    BIRD_TEMPLE._fcGrace = performance.now() + 9000;
+    if (!stepOn) BTI.runBayOut(); else setTimeout(() => { if (BTI._bayOut && BTI._bayOut.pending) BTI.runBayOut(); }, 3600);
+  };
+  BTI.runBayOut = function () {
+    const THREE = T(), L = bay.L, sp = STATE.flight, g = BIRD_TEMPLE.group, O = BTI._bayOut;
+    if (!O || !O.pending || !L || !sp || !g) { BTI._bayOut = null; return; }
+    g.updateMatrixWorld(true);
+    const l = g.worldToLocal(sp.pos.clone()), b = BTI.toBlender(l), zc = L.bf + 4.6;
+    const yc = clamp(b.y * 0.5, L.bay.y0 + 14, L.bay.y1 - 14), sx = skinX(zc, yc);
+    const pts = [l.clone(), BTI.toLocal(b.x, b.y, zc), BTI.toLocal((b.x + sx) / 2, yc, zc + 0.2), BTI.toLocal(sx + 3, yc, zc + 0.8),
+                 BTI.toLocal(sx + 26, yc - 10, zc + 9), BTI.toLocal(sx + 62, yc - 38, zc + 26), BTI.toLocal(sx + 110, yc - 80, zc + 38)];
+    O.pending = false; O.t = 0; O.dur = 4.6; O.curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal'); O.q0 = null; O.fov0 = flightCamera ? flightCamera.fov : 0;
+    BIRD_TEMPLE._fcGrace = performance.now() + (O.dur + 0.8) * 1000;
+    if (sp.vel) sp.vel.set(0, 0, 0);
+    toast('🚀 Bay doors clear — lifting off!', 2200); sfx.servo(true); setTimeout(() => sfx.hiss(), 1700);
+  };
+  BTI.bayOutTick = function (dt) {
+    const THREE = T(), O = BTI._bayOut, sp = STATE.flight, g = BIRD_TEMPLE.group; if (!O || O.pending || !O.curve) return;
+    if (!sp || !g || SHIP_WALK.active || SHIP_LAND) { BTI._bayOut = null; return; }
+    if (sp.vel) sp.vel.set(0, 0, 0);
+    O.t += dt; const k = Math.min(1, O.t / O.dur), e = Math.pow(k, 1.7);       // accelerates all the way out
+    g.updateMatrixWorld(true);
+    const p = g.localToWorld(O.curve.getPoint(e)), prev = sp.pos.clone(), d = p.clone().sub(prev);
+    sp.pos.copy(p);
+    try {
+      const q = spQuat(sp); if (!O.q0) O.q0 = q.clone();
+      const dir = d.clone(); if (dir.lengthSq() > 1e-12) {
+        dir.normalize();
+        const yaw = Math.atan2(-dir.x, -dir.z), pitch = Math.asin(clamp(dir.y, -1, 1)) * 0.8, roll = -0.75 * Math.sin(Math.PI * Math.min(1, k * 1.15)) * clamp(k * 3, 0, 1);
+        const qt = _shipFrameQuat().clone().multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch, yaw, roll, 'YXZ')));
+        q.copy(O.q0).slerp(qt, Math.min(1, k * 4)); sp.quat = q; try { spSyncLegacy(sp); } catch (_) { }
+        if (boardFlight) boardFlight.quaternion.copy(q).multiply(_BOARD_ALIGN);
+      }
+    } catch (_) { }
+    if (boardFlight) { boardFlight.position.copy(p); boardFlight.updateMatrixWorld(true); }
+    if (flightCamera) {
+      flightCamera.position.add(d); flightCamera.updateMatrixWorld(true);
+      if (O.fov0) { flightCamera.fov = O.fov0 + 22 * Math.sin(Math.PI * k); flightCamera.updateProjectionMatrix(); }
+    }
+    if (k >= 1) {
+      if (O.fov0 && flightCamera) { flightCamera.fov = O.fov0; flightCamera.updateProjectionMatrix(); }
+      if (sp.vel) { const tg = O.curve.getTangent(1).transformDirection(g.matrixWorld); sp.vel.copy(tg).multiplyScalar(1.7 * O.curve.getLength() / O.dur * (g.scale.x || 1) * 0.6 / 60); }   // (sp.vel is world units per frame) carries its speed out of the bay, then flight takes over
+      BTI._bayOut = null;
+    }
+  };
 
   // ───────────────────────── F action bubble (HUD) ─────────────────────────
   function buildHud() {
