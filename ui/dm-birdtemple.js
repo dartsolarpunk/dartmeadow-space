@@ -130,7 +130,7 @@
     const lightMarks = [];
     g.traverse(o => {
       const u = o.userData || {};
-      if (u.ix) BTI.ix.push({ obj: o, type: u.ix, prompt: u.prompt || 'Use', radius: +u.radius || 5, group: u.group, action: u.action, ud: u });
+      if (u.ix) BTI.ix.push({ obj: o, type: u.ix, prompt: u.prompt || 'Use', radius: (+u.radius || 5) * (u.ix === 'hatch' ? 2.25 : 1), group: u.group, action: u.action, ud: u });
       if (u.light && /^LIGHT_/.test(o.name)) lightMarks.push(o);
     });
     BTI.ix.forEach(it => {
