@@ -882,7 +882,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 .joystick-base,.ar-panel,#ar-top,.hud-toggle-btn,.assist-btn,.side-pad,.dart-pad,.joystick-zone>div,[style*="backdrop-filter:blur(8px)"][style*="border-radius:50%"]{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;}
 /* live FPS number: lower-left corner of the kite, medium gray so it reads on any theme without shouting */
 .dm-fps{position:absolute;left:68px;top:121px;width:44px;text-align:center;font:600 17px/1 var(--font-mono,monospace);letter-spacing:.02em;color:rgba(150,156,168,.95);text-shadow:0 0 3px rgba(0,0,0,.7),0 0 1px rgba(0,0,0,.9);pointer-events:none;font-variant-numeric:tabular-nums;z-index:3}
-.mini-kite .dm-fps{left:34px;top:68px;width:44px;font-size:17px;font-weight:700;color:rgba(190,196,208,.98)}   /* same size and look as the flight kite's readout, on the surface and atmosphere kites too */
+.mini-kite .dm-fps{left:57px;top:82px;width:44px;font-size:17px;font-weight:700;color:rgba(190,196,208,.98)}   /* v92: same size, look AND place (lower-left, under SPD/ALT: 25%/81% of the kite) as the flight / temple kite readout */
 #minimap{display:none!important;position:absolute;bottom:calc(100px + var(--safe-bot));left:8px;width:88px;height:88px;background:rgba(var(--panel-rgb),0.28);border:1px solid rgba(var(--acc-rgb),0.18);border-radius:50%;overflow:hidden;pointer-events:auto;z-index:22;touch-action:none;}
 #minimap-canvas{touch-action:none;}
 #mm-toggle{position:absolute;top:2px;right:2px;width:16px;height:16px;border-radius:50%;background:rgba(var(--panel-rgb),0.8);border:1px solid rgba(var(--acc-rgb),0.3);color:rgba(var(--acc-rgb),0.7);font-size:0.5rem;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;z-index:23;pointer-events:auto;}
@@ -1634,7 +1634,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     <button id="level-system-btn" class="side-pad" onclick="autoLevel('system')" title="Auto-level to the nearest system's orbital plane"><span class="sp-ico">🪐</span>SYS</button>
   </div>
   <div id="land-prompt" onclick="onLandPromptTap();" style="display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(var(--acc-rgb),.12);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.6rem;letter-spacing:.15em;padding:.5rem 1.2rem;border-radius:3px;pointer-events:none;z-index:30;text-align:center;"></div>
-  <div id="ship-land-prompt" onclick="enterShipWalk()" style="display:none;position:absolute;top:56%;left:50%;transform:translate(-50%,-50%);background:rgba(255,255,255,.12);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.6rem;letter-spacing:.15em;padding:.5rem 1.2rem;border-radius:3px;pointer-events:auto;cursor:pointer;z-index:30;text-align:center;">🕊 TAP TO LAND ON THE BIRD TEMPLE</div>
+  <div id="ship-land-prompt" onclick="landOnBirdTemple()" style="display:none;position:absolute;top:56%;left:50%;transform:translate(-50%,-50%);background:rgba(255,255,255,.12);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.6rem;letter-spacing:.15em;padding:.5rem 1.2rem;border-radius:3px;pointer-events:auto;cursor:pointer;z-index:30;text-align:center;">🕊 TAP TO LAND ON THE BIRD TEMPLE</div>
   <button id="ship-liftoff-btn" onclick="exitShipWalk()" style="display:none;position:absolute;bottom:calc(20px + var(--safe-bot));left:50%;transform:translateX(-50%);pointer-events:auto;padding:8px 20px;background:rgba(255,255,255,.12);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.6rem;letter-spacing:.15em;cursor:pointer;border-radius:3px;z-index:31;">🚀 LIFTOFF</button>
   <button id="ship-view-btn" class="surf-view-btn" onclick="toggleShipFirstPerson()" title="Switch between first-person (her eyes) and third-person views (V)" style="display:none;top:136px;pointer-events:auto;">👁 1ST PERSON</button>
   <button id="ship-jump-btn" style="display:none;position:absolute;bottom:calc(190px + var(--safe-bot));left:200px;pointer-events:auto;width:56px;height:56px;border-radius:50%;background:rgba(255,255,255,.1);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.6rem;letter-spacing:.08em;cursor:pointer;z-index:31;touch-action:none;">JUMP</button>
@@ -6350,6 +6350,7 @@ function _startFlightLoop(){
     try{ applySkyboardHeadOverride(); }catch(e){_animLoopWarn('headOverride',e);}   // (fades with the stance)
     try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);}
     try{ if(SHIP_WALK.active) _shipWalkCarry(); }catch(e){_animLoopWarn('shipCarry',e);}
+    try{ if(SHIP_LAND) _shipLandTick(dt); }catch(e){ SHIP_LAND=null; _animLoopWarn('shipLand',e); }
     try{_anchorPostUpdate();}catch(e){_animLoopWarn('anchor',e);}
     try{updateDistantSystems(dt);}catch(e){_animLoopWarn('distantSystems',e);}
     try{updateVolumetricDust(dt);}catch(e){_animLoopWarn('volumetricDust',e);}
@@ -8276,6 +8277,8 @@ function _btPickWanderTarget(){
 }
 function updateBirdTemple(dt){
   const bt=BIRD_TEMPLE;
+  // v92: whatever ended the walk (liftoff, travel, load, respawn, a mode switch) the deck's close near plane goes back to 0.1
+  if(SHIP_WALK._nearSet&&!SHIP_WALK.active&&typeof flightCamera!=='undefined'&&flightCamera){ flightCamera.near=0.1; flightCamera.updateProjectionMatrix(); SHIP_WALK._nearSet=false; }
   try{btCubesUpdate(dt);}catch(e){if(!bt._cubeErr){bt._cubeErr=1;console.warn('[Bird Temple] session cubes:',e);}}
   if(!bt.group)return;
 
@@ -8458,7 +8461,7 @@ function updateBirdTemple(dt){
       bt.nearPromptShown=false;
     }
     if(landPrompt){
-      if(dist<6)landPrompt.style.display='block';
+      if(dist<6&&!SHIP_LAND)landPrompt.style.display='block';
       else landPrompt.style.display='none';
     }
   }
@@ -8684,6 +8687,19 @@ function _tcolRampGround(x,z,fromY){
   return cnt?Math.max(g0-0.3,sum/cnt):g0;
 }
 function _shipInStairs(world){ try{ const p=_tcolToLocal(world.x,world.y,world.z); return _tcolInStairs(p.x,p.z,p.y); }catch(e){ return false; } }
+// v92: is (x,z) a narrow crack in the hull? A big drop (or nothing) under it, with deck at
+// about her level on both sides of it along some axis within ~0.35 units (≈5 ft).
+function _shipIsCrack(x,z,refY){
+  const drop=0.25, g=_shipGroundHeight(x,z,refY+0.05);
+  if(g!==null&&refY-g<drop)return false;
+  if(_shipInStairs({x,y:refY,z}))return false;
+  try{ if(window.BTI&&BTI.hatch&&BTI.hatch.p>0.5){ const p=_tcolToLocal(x,refY,z), r=BTI.hatch.rect; if(p.x>r.minX-1&&p.x<r.maxX+1&&p.z>r.minZ-1&&p.z<r.maxZ+1)return false; } }catch(e){}   // the open hatch is a way down, not a crack
+  const d=0.35, near=h=>h!==null&&Math.abs(h-refY)<0.15;
+  for(const [ax,az] of [[1,0],[0,1],[0.7071,0.7071],[0.7071,-0.7071]]){
+    if(near(_shipGroundHeight(x+ax*d,z+az*d,refY+0.1))&&near(_shipGroundHeight(x-ax*d,z-az*d,refY+0.1)))return true;
+  }
+  return false;
+}
 function _shipIndoors(){ return !!(window.BTI&&BTI.vol&&(BTI._depth>0.02)); }
 function _shipGroundHeight(worldX,worldZ,fromY,fromAbove){
   const p=_tcolToLocal(worldX,fromAbove?fromY+50:fromY,worldZ), s=_shipScaleK();
@@ -8745,19 +8761,50 @@ function _shipCharStepOff(feet){
   const s=SHIP_CHAR_H/Math.max(0.001,CHAR.rawHeight||1);
   SHIP_WALK.charPending=true;
   boardDismountSequence(flightScene, feet.y+(CHAR.feetOffset||0)*s, ()=>{
+    try{ setCharState('idle',{fade:0.2,force:true}); }catch(e){}   // ready stance: she can walk at once
     SHIP_WALK.charPending=false;
     if(!SHIP_WALK.active) return;   // lifted off again mid-step
     CHAR._shipScale=s; CHAR.scene=flightScene; CHAR.stanceMode='stand'; CHAR._footIKWeight=0;
     SHIP_WALK.faceYaw=CHAR.root.rotation.y;
     SHIP_WALK.charOn=true;
     try{ _forceCharVisible(); }catch(e){ CHAR.root.visible=true; }
-  },{endSize:s, endYaw:SHIP_WALK.faceYaw});
+  },{endSize:s, endYaw:SHIP_WALK.faceYaw, frame:BIRD_TEMPLE.group});
 }
 // Lifting off: the board settles at her feet, she steps up onto it (easing to
 // her riding size), then it climbs away from the deck.
 function _shipLiftOff(sp,h){
   let done=0; const t0=performance.now();
   (function up(){ const k=Math.min(1,(performance.now()-t0)/800), d=h*k*k*(3-2*k)-done; sp.pos.y+=d; done+=d; if(k<1) requestAnimationFrame(up); })();
+}
+// v92: LAND ON THE BIRD TEMPLE plays the terrain LAND sequence: the board
+// flies down onto the deck under it (in the ship's moving frame), then she
+// steps off (enterShipWalk → the dismount step-off) and stands ready to walk.
+let SHIP_LAND=null;
+function landOnBirdTemple(){
+  const bt=BIRD_TEMPLE, sp=STATE.flight;
+  if(!bt.group||!sp||SHIP_WALK.active||SHIP_LAND)return;
+  let y=_shipGroundHeight(sp.pos.x,sp.pos.z,sp.pos.y+0.05);
+  if(y===null)y=_shipGroundHeight(sp.pos.x,sp.pos.z,sp.pos.y,true);
+  if(y===null){ enterShipWalk(); return; }
+  bt.group.updateMatrixWorld(true);
+  const from=bt.group.worldToLocal(sp.pos.clone()), to=bt.group.worldToLocal(new THREE.Vector3(sp.pos.x,y+0.03,sp.pos.z));
+  const dist=sp.pos.y-y;
+  SHIP_LAND={t:0,dur:THREE.MathUtils.clamp(0.7+Math.abs(dist)*0.6,0.8,2.2),from,to};
+  if(sp.vel)sp.vel.set(0,0,0);
+  try{ $('ship-land-prompt').style.display='none'; }catch(e){}
+  toast('🛬 Landing on the Bird Temple…',1400);
+}
+window.landOnBirdTemple=landOnBirdTemple;
+function _shipLandTick(dt){
+  const L=SHIP_LAND, bt=BIRD_TEMPLE, sp=STATE.flight; if(!L)return;
+  if(!bt.group||!sp||SHIP_WALK.active){ SHIP_LAND=null; return; }
+  L.t+=dt; const k=Math.min(1,L.t/L.dur), e=1-Math.pow(1-k,3);   // brakes as it settles, like the terrain LAND
+  bt.group.updateMatrixWorld(true);
+  const p=bt.group.localToWorld(L.from.clone().lerp(L.to,e));
+  const prev=sp.pos.clone(); sp.pos.copy(p); if(sp.vel)sp.vel.set(0,0,0);
+  if(boardFlight){ boardFlight.position.copy(p); boardFlight.updateMatrixWorld(true); }
+  if(flightCamera){ flightCamera.position.add(p.sub(prev)); flightCamera.updateMatrixWorld(true); }
+  if(k>=1){ SHIP_LAND=null; enterShipWalk(); }
 }
 function enterShipWalk(){
   const bt=BIRD_TEMPLE,sp=STATE.flight;
@@ -8893,10 +8940,23 @@ function updateShipWalk(dt){
       SHIP_WALK.faceYaw=Math.atan2(worldDir.x,worldDir.z);
     } else mv={x:0,z:0};
     if(!SHIP_WALK.climb){
+      // v92: narrow cracks in the hull (the altar / obelisk slit) are walled off — she slides
+      // along their edge instead of dropping in (try the full move, then each axis alone).
+      if(mv.x||mv.z){
+        const refY=SHIP_WALK.grounded?feet.y:(bt._lastDeckY??feet.y);
+        if(_shipIsCrack(feet.x+mv.x,feet.z+mv.z,refY)){
+          if(!_shipIsCrack(feet.x+mv.x,feet.z,refY))mv={x:mv.x,z:0};
+          else if(!_shipIsCrack(feet.x,feet.z+mv.z,refY))mv={x:0,z:mv.z};
+          else mv={x:0,z:0};
+        }
+      }
       if(SHIP_WALK.grounded){
         const tx=feet.x+mv.x, tz=feet.z+mv.z;
         const gy=_shipGroundHeight(tx,tz,feet.y+STEP_MAX+0.02);
-        if(gy!==null){ if(gy-feet.y<=STEP_MAX)SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(tx,gy,tz))); }
+        // v92: a real drop (off a ledge / down the open hatch) is a fall with her jump/fall clip and a
+        // landing, not a rigid snap down; small steps and the stair ramp still follow the floor.
+        if(gy!==null&&feet.y-gy>STEP_MAX*1.6&&!_shipInStairs(feet)){SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(tx,feet.y,tz)));SHIP_WALK.grounded=false;SHIP_WALK.velY=Math.min(SHIP_WALK.velY,0);}
+        else if(gy!==null){ if(gy-feet.y<=STEP_MAX)SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(tx,gy,tz))); }
         else{SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(tx,feet.y,tz)));SHIP_WALK.grounded=false;}
       }else{
         SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(feet.x+mv.x,feet.y,feet.z+mv.z)));
@@ -8908,6 +8968,7 @@ function updateShipWalk(dt){
       const gh=_shipGroundHeight(pre.x,pre.z,Math.max(newFeet,pre.y)+STEP_MAX*0.5);
       if(gh!==null&&newFeet<=gh+0.002){
         SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(pre.x,gh,pre.z)));
+        if(!SHIP_WALK.grounded&&SHIP_WALK.velY<-1.2)SHIP_WALK.landT=0.32;   // v92: a real landing: brief knees-bent settle
         SHIP_WALK.velY=0;SHIP_WALK.grounded=true;bt._lastDeckY=gh;
       }else{
         SHIP_WALK.localPos.copy(bt.group.worldToLocal(new THREE.Vector3(pre.x,newFeet,pre.z)));
@@ -8932,7 +8993,9 @@ function updateShipWalk(dt){
     if(BOARD_CALL.look&&BOARD_CALL.lookW>0&&!moving){ const L=BOARD_CALL.look, w=Math.atan2(L.x,L.z); let dd=w-SHIP_WALK.faceYaw; dd=Math.atan2(Math.sin(dd),Math.cos(dd)); SHIP_WALK.faceYaw+=dd*BOARD_CALL.lookW*Math.min(1,dt*6); }   // she turns to watch the summoned board
     let d=SHIP_WALK.faceYaw-CHAR.root.rotation.y;d=Math.atan2(Math.sin(d),Math.cos(d));
     CHAR.root.rotation.set(0,SHIP_WALK.faceYaw,0);   // turns instantly with the stick (no damping)
-    try{updateCharacterLocomotion(dt,moving&&SHIP_WALK.grounded,running,1,!SHIP_WALK.grounded&&!SHIP_WALK.climb,!!SHIP_WALK.climb,{});}catch(e){}
+    if(SHIP_WALK.landT>0)SHIP_WALK.landT-=dt;
+    const _landing=SHIP_WALK.landT>0&&SHIP_WALK.grounded;
+    try{updateCharacterLocomotion(dt,(moving&&SHIP_WALK.grounded)||_landing,running&&!_landing,1,!SHIP_WALK.grounded&&!SHIP_WALK.climb,!!SHIP_WALK.climb,_landing?{crouch:true}:{});}catch(e){}
     // her lowest foot meets the deck: rays down onto the temple's own meshes
     try{ _footContact(dt,!SHIP_WALK.grounded||!!SHIP_WALK.climb,CHAR._shipScale||1,
       (x,z,fy)=>_shipGroundHeight(x,z,fy+SHIP_CHAR_H*0.15),SHIP_CHAR_H/6); }catch(e){}
@@ -10720,7 +10783,7 @@ function _anchorPostUpdate(){
   lp.set(cur.x,cur.y,cur.z);
   // Nothing to carry while walking the deck (that's already ship-local) or
   // while FOCUS/ORBIT/HOME place the player on the body themselves.
-  if(SHIP_WALK.active)return;
+  if(SHIP_WALK.active||SHIP_LAND)return;
   if(ASSIST.mode==='focus'||ASSIST.mode==='orbit'||ASSIST.mode==='home')return;
   // A jump this big is a teleport or a rebuilt scene, not motion to follow.
   if(dx*dx+dy*dy+dz*dz>25e6)return;
@@ -19932,6 +19995,8 @@ function boardDismountSequence(hostScene, groundY, onComplete, opts){
     }
   }
   const endPos=new THREE.Vector3(endX,groundY,endZ);
+  // v92: opts.frame (the Bird Temple group): the step-off is played in that moving frame
+  const FR=opts.frame&&opts.frame.isObject3D?opts.frame:null, P0L=FR?FR.worldToLocal(P.pos.clone()):null, P1L=FR?FR.worldToLocal(endPos.clone()):null;
   // facing at the end: the requested walking heading, else the way she faces now
   let endFacing=P.facing.clone();
   if(opts.endYaw!=null&&isFinite(opts.endYaw)){ endFacing.set(Math.sin(opts.endYaw),0,Math.cos(opts.endYaw)); }
@@ -19947,7 +20012,8 @@ function boardDismountSequence(hostScene, groundY, onComplete, opts){
   const t0=performance.now(), W=new THREE.Vector3();
   (function step(){
     const k=Math.min(1,(performance.now()-t0)/(dur*1000)), e=_ease(k);
-    W.lerpVectors(P.pos,endPos,e); W.y+=Math.sin(Math.PI*k)*size*0.08;
+    if(FR){ W.lerpVectors(P0L,P1L,e); FR.localToWorld(W); } else W.lerpVectors(P.pos,endPos,e);
+    W.y+=Math.sin(Math.PI*k)*size*0.08;
     CHAR.root.position.copy(W);
     { const sz=size+(endSize-size)*e; CHAR.root.scale.set(sz,sz,-sz); }
     CHAR.root.quaternion.slerpQuaternions(Q0,Q1,e);
