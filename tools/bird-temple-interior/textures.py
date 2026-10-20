@@ -129,4 +129,10 @@ def galaxy(name,arms,tight,seed,tilt_bar=0.0,tint=((120,255,245),(150,110,255),(
     out[...,3]=(out[...,3]*fade).astype('uint8')
     Image.fromarray(out,'RGBA').save(OUT+f'galaxy_{name}.png')
 galaxy('a',2,1.0,3); galaxy('b',4,0.8,5,tilt_bar=0.5,tint=((255,190,120),(255,120,170),(255,246,220))); galaxy('c',3,1.4,9,tint=((140,255,200),(90,150,255),(255,255,230)))
+# translucent AR panels for the bow (alpha follows brightness so the galaxy shows through)
+for n in ('sector','radar','conf','nav_a','nav_b','nav_c'):
+    src=Image.open(OUT+f'holo_{n}.png').convert('RGB'); a=np.array(src).astype(float)
+    lum=a.max(axis=2)/255.0; al=np.clip(0.07+lum*1.5,0,0.95)
+    out=np.dstack([np.clip(a*1.3,0,255),al*255]).astype('uint8')
+    Image.fromarray(out,'RGBA').save(OUT+f'holopanel_{n}.png')
 print('ok')

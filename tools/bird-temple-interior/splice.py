@@ -190,12 +190,12 @@ def cut_hull(j, binc, hull_node_index, node0_T):
 
 
 # ───────────────────────── side-skin cuts (cargo bay opening, command-room glass) ─────────────────────────
-def cut_side(j, binc, hull_node_index, node0_T, polys, xmin=15.0, axes=(1, 2), zrange=None, zclip=None):
+def cut_side(j, binc, hull_node_index, node0_T, polys, xmin=15.0, axes=(1, 2), zrange=None, zclip=None, mode='port', Mover=None):
     """Remove the parts of the Hull skin whose (y,z) -- Blender world, looking along X -- lie inside any of the convex CCW
     polygons `polys` (only triangles with all vertices at world x > xmin: the port side). Triangles are clipped along the
     polygon edges with all vertex attributes interpolated, exactly like the hatch cut."""
     hull = j['nodes'][hull_node_index]
-    M = node_matrix(hull)
+    M = node_matrix(hull) if Mover is None else Mover
     # Blender world (xb,yb,zb) = (gx, -gz, gy) where g = T0 + M @ local  ->  linear map local -> blender
     A = np.zeros((3, 3)); A[0] = M[0, :3]; A[1] = -M[2, :3]; A[2] = M[1, :3]
     off = np.array([M[0, 3] + node0_T[0], -(M[2, 3] + node0_T[2]), M[1, 3] + node0_T[1]])
@@ -210,7 +210,10 @@ def cut_side(j, binc, hull_node_index, node0_T, polys, xmin=15.0, axes=(1, 2), z
         tris = idx.reshape(-1, 3)
         PB = to_b(P)
         tb = PB[tris]                                   # (n,3,3) blender coords
-        side = tb[:, :, 0].min(1) > xmin
+        if mode == 'port': side = tb[:, :, 0].min(1) > xmin
+        elif mode == 'stbd': side = tb[:, :, 0].max(1) < -xmin
+        elif mode == 'front': side = tb[:, :, 1].max(1) < xmin
+        else: side = np.ones(len(tris), bool)
         cand = np.zeros(len(tris), bool)
         for poly in polys:
             ys = [p[0] for p in poly]; zs = [p[1] for p in poly]
@@ -417,12 +420,22 @@ def main(orig, interior, out):
         polys = [[tuple(p) for p in lay['open']], [tuple(p) for p in lay['glass']]]
         print('side-skin cuts: cargo bay opening + command-room glass')
         cut_side(j, binc, hi, T, polys)
+        print('starboard + front windows')
+        cut_side(j, binc, hi, T, [[tuple(p) for p in lay['glass']]], mode='stbd')
+        cut_side(j, binc, hi, T, [[tuple(p) for p in lay['glass_f']]], axes=(0, 2), mode='front', xmin=-60.0)
         if lay.get('plan'):
             print('plan-view cut: slit sheets inside the command room')
-            cut_side(j, binc, hi, T, [[tuple(p) for p in lay['plan']]], xmin=-1e9, axes=(0, 1), zrange=tuple(lay['plan_z']))
+            cut_side(j, binc, hi, T, [[tuple(p) for p in pl] for pl in lay['plan']], xmin=-1e9, axes=(0, 1), zrange=tuple(lay['plan_z']), mode='all')
+        if lay.get('box_clip'):
+            bc_ = lay['box_clip']; par = {c: i for i, n_ in enumerate(j['nodes']) for c in n_.get('children', [])}
+            for ni, n_ in enumerate(j['nodes']):
+                if n_.get('name') == 'Box' and 'mesh' in n_:
+                    Mw = node_matrix(j['nodes'][par[ni]]) @ node_matrix(n_)
+                    print('clipping ornament leg node', ni)
+                    cut_side(j, binc, ni, T, [[tuple(p) for p in bc_['plan']]], xmin=-1e9, axes=(0, 1), zclip=tuple(bc_['z']), mode='all', Mover=Mw)
     if lay_cor := (lay.get('cor_clip') if os.path.exists(lay_path) else None):
         print('box cut: hull fin crossing the corridor')
-        cut_side(j, binc, hi, T, [[tuple(p) for p in lay_cor['plan']]], xmin=-1e9, axes=(0, 1), zclip=tuple(lay_cor['z']))
+        cut_side(j, binc, hi, T, [[tuple(p) for p in lay_cor['plan']]], xmin=-1e9, axes=(0, 1), zclip=tuple(lay_cor['z']), mode='all')
     roots = merge(j, binc, j2, bin2, n0, T)
     for m in j['materials']:
         nm_ = m.get('name', '')
