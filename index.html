@@ -6099,6 +6099,7 @@ async function initFlightScene(){
   const _gpuLost=(why)=>{
     if(window._dmGpuLost) return; window._dmGpuLost=true;
     console.warn('[gpu] lost:',why);
+    try{ localStorage.setItem('dm_lastGpuLost',JSON.stringify({at:new Date().toISOString(),why:String(why).slice(0,200),screen:STATE&&STATE.screen,aboard:!!((typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active)||(window.BTI&&(BTI.cur||BTI._depth>0))),build:window._dmSwCache||null})); }catch(e){}   // (v104) the next session's perf report carries why the last one died
     try{ if(typeof quickSave==='function'&&STATE.screen==='flight') quickSave(); }catch(e){}
     try{ toast('⚠ Graphics reset by the device — restoring…',2400); }catch(e){}
     setTimeout(()=>{ try{ location.reload(); }catch(e){} },1200);
@@ -6290,36 +6291,59 @@ window.DMWarm=window.DMWarm||{steps:[],add(name,fn){ this.steps.push([name,fn]);
 // glow and the Sun visible through the deck and walls). While aboard, those materials depth-test like everything else;
 // both pipeline variants are compiled at warm-up, so the switch on boarding costs no compile. Materials whose vertex
 // stage is custom (full-screen lens passes) and sprites (labels/markers) are left alone. Only .depthTest is toggled.
-const _AOCC={mats:null,on:false};
+const _AOCC={objs:null,on:false,flipT:0};
+// (v104) swap to depth-tested twin materials instead of flipping .depthTest + needsUpdate on the originals: no node
+// rebuild, no pipeline lookup storm on boarding (v103 rebuilt every far-field material in one frame as you climbed in;
+// with the interior's first draw that frame ran for seconds on Mali). Twins are made and compiled at warm-up.
+function _aoccTwin(m){ if(!m._aoccTwin){ const t=m.clone(); t.depthTest=true; t.name=(m.name||'')+'#aocc'; m._aoccTwin=t; } return m._aoccTwin; }
 function _aoccCollect(){
-  const set=new Set();
+  const out=[];
   try{ flightScene.traverse(o=>{
-    if(!(o.isMesh||o.isPoints)||o.isSprite) return;
-    const ms=Array.isArray(o.material)?o.material:[o.material];
-    for(const m of ms){ if(m&&m.depthTest===false&&!m.vertexNode&&!/^BTI_|^BT_/.test(m.name||'')) set.add(m); }
+    if(!(o.isMesh||o.isPoints)||o.isSprite||Array.isArray(o.material)) return;
+    const m=o.material; if(o._aoccOrig) { out.push(o); return; }
+    if(m&&m.depthTest===false&&!m.vertexNode&&!/^BTI_|^BT_/.test(m.name||'')){ o._aoccOrig=m; _aoccTwin(m); out.push(o); }
   }); }catch(e){}
-  return [...set];
+  return out;
 }
 function _aoccSet(on){
-  if(!_AOCC.mats) _AOCC.mats=_aoccCollect();
-  for(const m of _AOCC.mats){ if(on){ if(m.depthTest===false){ m.depthTest=true; m._aocc=1; m.needsUpdate=true; } }
-    else if(m._aocc){ m.depthTest=false; m._aocc=0; m.needsUpdate=true; } }
+  if(!_AOCC.objs) _AOCC.objs=_aoccCollect();
+  for(const o of _AOCC.objs){ const m0=o._aoccOrig; if(!m0) continue; const want=on?m0._aoccTwin:m0; if(o.material!==want) o.material=want; }
   _AOCC.on=on;
 }
 async function _aoccWarm(){
-  _AOCC.mats=_aoccCollect(); if(!_AOCC.mats.length) return;
+  _AOCC.objs=_aoccCollect(); if(!_AOCC.objs.length) return;
   _aoccSet(true);
   try{ await flightRenderer.compileAsync(flightScene,flightCamera); } finally{ _aoccSet(false); }
 }
 function _aoccTick(){
   try{
+    if(typeof flightScene==='undefined'||!flightScene) return;
     const aboard=(typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active)||!!(window.BTI&&(BTI.cur||BTI._depth>0));
     if(aboard===_AOCC.on) return;
-    if(aboard) _AOCC.mats=_aoccCollect().concat((_AOCC.mats||[]).filter(m=>m._aocc));   // worlds built since warm-up
+    const now=performance.now(); if(now-_AOCC.flipT<1500) return;   // hysteresis: no flapping at the hatch
+    _AOCC.flipT=now;
+    if(aboard) _AOCC.objs=_aoccCollect();   // worlds built since warm-up (already-known objects are kept)
     _aoccSet(aboard);
   }catch(e){}
 }
 setInterval(_aoccTick,200);
+// (v104) the Bird Temple's enclosed decks are hidden while you are far from the ship, so no warm-up ever compiled
+// them: the first boarding compiled every BTI_ program in the frames you climbed in (log: PIPELINE BTI_Mess_Trays_2
+// mid-boarding, 0.5–1 s frames, then the GPU process died). Once the ship is in the scene, compile its interior in
+// the background with the decks made visible for that call only (visibility restored at once; nothing else changes).
+let _btiWarmed=false;
+const _btiWarmIv=setInterval(async()=>{
+  try{
+    if(_btiWarmed||window._dmWarming||typeof BIRD_TEMPLE==='undefined'||!BIRD_TEMPLE.group||!flightRenderer||!flightRenderer.compileAsync) return;
+    _btiWarmed=true; clearInterval(_btiWarmIv);
+    const hid=[], unc=[];
+    BIRD_TEMPLE.group.traverse(o=>{ if(!o.isMesh) return; const m=Array.isArray(o.material)?o.material[0]:o.material;
+      if(m&&/^BTI_/.test(m.name||'')&&!o.visible){ hid.push(o); o.visible=true; } if(o.frustumCulled){ unc.push(o); o.frustumCulled=false; } });
+    let p=null; try{ p=flightRenderer.compileAsync(flightScene,flightCamera); } finally{ for(const o of hid) o.visible=false; }
+    try{ await p; }catch(e){} for(const o of unc) o.frustumCulled=true;
+    console.log('[warmup] temple interior',hid.length,'meshes');
+  }catch(e){ console.warn('[warmup] temple interior',e); }
+},1500);
 async function _flightWarmup(){
   if(typeof flightRenderer==='undefined'||!flightRenderer||!flightRenderer.compileAsync) return;
   const t0=performance.now(); let pill=null; window._dmWarming=true;
@@ -6361,7 +6385,7 @@ async function _flightWarmup(){
   try{ window._warmupMs=Math.round(performance.now()-t0); window._dmWarming=false; }catch(e){}
   try{ setTimeout(_wmKickHome,500); }catch(e){}
 }
-let _flightLoopCv=null,_flightLoopLast=0,_csDirV=null;
+let _flightLoopCv=null,_flightLoopLast=0,_csDirV=null,_csTp=null,_csCp=null;
 // Frame counter used by the flight loop's render-throttle during character
 // loading (see the _flightFrameCounter comment in _startFlightLoop). This
 // declaration was missing entirely, which made every read of it throw.
@@ -6459,9 +6483,18 @@ function _startFlightLoop(){
     try{updateFlight(dt);}catch(e){_animLoopWarn('updateFlight',e);}
     try{
       if(_charShadowLight && boardFlight){
-        const bp=boardFlight.position;
+        // (v104) at the Bird Temple (aboard, or riding within a few ship-lengths) the star's shadow map is fitted to the
+        // ship around her instead of the 12-unit box round the board: the hull, deck and decks below are shadowed in real
+        // time. One directional map, re-fitted only when the box changes (texel-snapped, so it does not shimmer).
+        const _bt=(typeof BIRD_TEMPLE!=='undefined')?BIRD_TEMPLE:null, _btR=_bt&&_bt._R0;
+        let _btNear=false;
+        if(_bt&&_bt.group&&_btR){ const tp=_bt.group.getWorldPosition(_csTp||(_csTp=new THREE.Vector3())); _btNear=SHIP_WALK.active||tp.distanceTo(boardFlight.position)<_btR*2.5; }
+        const sc=_charShadowLight.shadow.camera, want=_btNear?Math.min(_btR*0.75,60):6;
+        if(Math.abs(sc.right-want)>1e-3){ sc.left=-want; sc.right=want; sc.top=want; sc.bottom=-want; sc.far=_btNear?want*6:20; sc.updateProjectionMatrix(); _charShadowLight.shadow.bias=_btNear?-0.0004:-0.0015; _charShadowLight.shadow.normalBias=_btNear?want*0.002:0; }
+        const bp=_csCp||(_csCp=new THREE.Vector3()); if(_btNear&&SHIP_WALK.active&&CHAR&&CHAR.root&&CHAR.root.parent) CHAR.root.getWorldPosition(bp); else bp.copy(boardFlight.position);   // scratch copy: the board's own position is never touched
+        if(_btNear){ const tx=want*2/Math.max(256,GFX.shadowSize||1024); bp.set(Math.round(bp.x/tx)*tx,Math.round(bp.y/tx)*tx,Math.round(bp.z/tx)*tx); }
         const dir=_csDirV||(_csDirV=new THREE.Vector3()); if(bp.lengthSq()>0.001) dir.copy(bp).normalize(); else dir.set(1,0.3,0.2).normalize();   // scratch: no per-frame allocation
-        _charShadowLight.position.copy(bp).addScaledVector(dir,-10);
+        _charShadowLight.position.copy(bp).addScaledVector(dir,-(sc.far*0.5));
         _charShadowLight.target.position.copy(bp);
         _charShadowLight.target.updateMatrixWorld();
       }
@@ -7179,6 +7212,7 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
     return h.div(3000); // normalized to roughly -1..1, same convention as the generic terrain node below
   };
 
+  const _earthRelief=(kind==='earth'&&window.DMEarth&&DMEarth.ready&&typeof window.texture==='function')?DMEarth.texture():null;
   const terrainRadiusAt=Fn(([dir])=>{
     const n1=mx_fractal_noise_float(dir.mul(2.3).add(seedU),5,2.0,0.5);
     const ridge=float(1.0).sub(n1.abs());
@@ -7200,7 +7234,15 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
     const craterRim=rim1.add(rim2);
     const genericRelief=terrain.mul(0.9).sub(bowl.mul(0.6)).add(craterRim.mul(0.6)).add(plateau).add(peaks); // roughly -1..1
     let relief;
-    if(kind==='mars'){
+    if(_earthRelief){
+      // (v104) Earth's far mesh carries the real continents (ETOPO5 land value, ui/dm-earth.js), so its coastline is
+      // the one the true-atmosphere sea body and the world map use: no procedural peaks poking through the sea (the
+      // dot grid) and no procedural highlands standing where the map has ocean (the stepped white blobs).
+      const la=dir.y.clamp(-1,1).asin(), lo=atan2(dir.z.negate(),dir.x);
+      const uvE=vec2(lo.div(Math.PI*2).add(0.5),la.div(Math.PI).add(0.5));
+      const land=texture(_earthRelief,uvE).level(0).r.mul(2.6).sub(1.0);   // -1 deep sea … 1.6 high peaks
+      relief=land.mul(0.55).add(terrain.mul(0.08)).add(peaks.mul(0.05).mul(land.max(0.0)));
+    } else if(kind==='mars'){
       relief=_marsFeatureTSL(dir).add(plateau.mul(0.35)).add(peaks.mul(0.5));
     } else {
       relief=genericRelief;
@@ -8080,6 +8122,10 @@ async function buildSolarSystem(){
         const bti=!!(m&&/^BTI_/.test(m.name||'')); if(bti) inner.push({o,v:o.visible}); else if(o.castShadow) casters.push(o); });
       const bs=new THREE.Box3().setFromObject(wrapper).getBoundingSphere(new THREE.Sphere());
       const R0=Math.max(1e-3,bs.radius); let far=null; const _p=new THREE.Vector3();
+      // (v104) lighting/shadow setup only: every temple surface (hull, deck, cargo bay, interior decks) RECEIVES the
+      // star's shadow, so the hull shades the deck and the decks below it the way the skyboard and the ground do.
+      // Casting is unchanged (hull casters as authored, toggled by the LOD below). Geometry/collision untouched.
+      try{ BIRD_TEMPLE._R0=R0; if(GFX.shadows) wrapper.traverse(o=>{ if(o.isMesh) o.receiveShadow=true; }); }catch(e){}
       BIRD_TEMPLE._lod=setInterval(()=>{ try{
         if(typeof flightCamera==='undefined'||!flightCamera) return;
         const aboard=(typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active)||(window.BTI&&(BTI.cur||BTI._depth>0));
@@ -9294,7 +9340,7 @@ function updateShipWalk(dt){
     try{updateCharacterLocomotion(dt,(moving&&SHIP_WALK.grounded)||_landing,running&&!_landing,1,!SHIP_WALK.grounded&&!SHIP_WALK.climb,!!SHIP_WALK.climb,_landing?{crouch:true}:{});}catch(e){}
     // her lowest foot meets the deck: rays down onto the temple's own meshes
     try{ _footContact(dt,!SHIP_WALK.grounded||!!SHIP_WALK.climb,CHAR._shipScale||1,
-      (x,z,fy)=>_shipGroundHeight(x,z,fy+SHIP_CHAR_H*0.15),SHIP_CHAR_H/6); }catch(e){}
+      (x,z,fy)=>_shipGroundHeight(x,z,Math.max(fy,F.y)+SHIP_CHAR_H*0.25),SHIP_CHAR_H/6); }catch(e){}   // (v104) rays start above her walking height: a sunk foot no longer starts its ray under the deck and finds the floor below
   }
   // ── Follow camera: behind her along the look direction, pulled in if
   // the temple is in the way.
@@ -12179,6 +12225,7 @@ async function upgradePlanetLOD(dt){
     // compile the new detail level hidden, beside the old one, so the swap never stalls the frame
     newGroup.visible=false; newGroup.position.copy(b.mesh.position); newGroup.rotation.copy(b.mesh.rotation);
     flightScene.add(newGroup);
+    if(b._wm){ const keep=b.mesh; b.mesh=newGroup; try{ _applyWorldMapToFlightBody(b,b._wm); } finally{ b.mesh=keep; } }   // (v104) wear the map before compiling: never one frame of procedural colours
     await _dmCompileObject(newGroup);
     const oldGroup=b.mesh;
     // Preserve position/rotation and any tagged extras (rings, moon)
@@ -12566,17 +12613,23 @@ function buildGalaxySolarTier(){
   grp.add(makeGlowSprite('rgba(255,220,120,0.9)',60));
   // Sun label
   gmSolarSunLabel=addGmLabel(grp,'☉ SOL',new THREE.Vector3(0,18,0),'rgba(255,210,58,0.95)');
-  // Planets — compact log-spaced radii so all fit within ~190 units
+  // Planets — true order and true semi-major axes (AU), log-compressed so all fit within ~195 units:
+  // r = 38·ln(1 + a/0.25). (v104: the old hand list skipped Mercury/Venus/Pluto and spaced the giants evenly,
+  // so on the map Saturn read as sitting just outside the belt.) Angles: each body's real heliocentric angle now.
+  const _mapR=a=>38*Math.log(1+a/0.25);
   const planets=[
-    {name:'Low Earth Orbit',r:30, c:0x4a90d9, s:3.5, idx:0},
-    {name:'Moon',           r:40, c:0xaaaaaa, s:1.6, idx:1},
-    {name:'Mars',           r:56, c:0xc1440e, s:2.6, idx:2},
-    {name:'Asteroid Belt',  r:74, c:0x8a7a5a, s:0,   idx:3, belt:true},
-    {name:'Jupiter',        r:98, c:0xd9a066, s:7,   idx:4},
-    {name:'Saturn',         r:128,c:0xe3c97a, s:6,   idx:5, ring:true},
-    {name:'Uranus',         r:156,c:0x9fe3e3, s:4.5, idx:6},
-    {name:'Neptune',        r:184,c:0x4060c0, s:4.3, idx:7},
+    {name:'Mercury',        a:0.387, c:0x9c8a7a, s:1.4},
+    {name:'Venus',          a:0.723, c:0xddaa44, s:2.2},
+    {name:'Low Earth Orbit',a:1.0,   c:0x4a90d9, s:3.5, body:'Earth'},
+    {name:'Mars',           a:1.524, c:0xc1440e, s:2.6},
+    {name:'Asteroid Belt',  a:2.7,   c:0x8a7a5a, s:0, belt:true},
+    {name:'Jupiter',        a:5.203, c:0xd9a066, s:7},
+    {name:'Saturn',         a:9.537, c:0xe3c97a, s:6, ring:true},
+    {name:'Uranus',         a:19.191,c:0x9fe3e3, s:4.5},
+    {name:'Neptune',        a:30.069,c:0x4060c0, s:4.3},
+    {name:'Pluto',          a:39.48, c:0xc8b8a0, s:1.2},
   ];
+  planets.forEach((p,k)=>{ p.r=_mapR(p.a); p.idx=Math.max(0,DESTINATIONS.findIndex(d=>d.name===p.name)); p.ord=k; });
   planets.forEach(p=>{
     // faint orbit ring
     const ring=new THREE.Mesh(new THREE.RingGeometry(p.r-0.4,p.r+0.4,96),new THREE.MeshBasicMaterial({color:0x2a4a66,side:THREE.DoubleSide,transparent:true,opacity:0.5}));
@@ -12590,13 +12643,14 @@ function buildGalaxySolarTier(){
       gmSolarPlanets.push({mesh:null,r:p.r,ang:0,spd:0.0009,name:p.name,destIdx:p.idx,belt:true,labelSprite:bl,lblBaseW:bl.userData.baseW,lblBaseH:bl.userData.baseH});
       return;
     }
-    const ang=Math.random()*Math.PI*2;
+    let ang=Math.random()*Math.PI*2;
+    try{ const b=(celestialBodies||[]).find(x=>x&&x.name===(p.body||p.name)&&x.mesh); if(b){ const v=new THREE.Vector3(); b.mesh.getWorldPosition(v); if(v.lengthSq()>0) ang=Math.atan2(v.z,v.x); } }catch(e){}
     const m=new THREE.Mesh(new THREE.SphereGeometry(p.s,16,16),new THREE.MeshBasicMaterial({color:p.c}));
     m.position.set(Math.cos(ang)*p.r,0,Math.sin(ang)*p.r);
     m.userData={destIdx:p.idx,destName:p.name};grp.add(m);   // resolved by name on tap: the Quick Travel list is the whole Sol catalog
     if(p.ring){const rg=new THREE.Mesh(new THREE.RingGeometry(p.s*1.5,p.s*2.4,32),new THREE.MeshBasicMaterial({color:0xccbb99,side:THREE.DoubleSide,transparent:true,opacity:0.6}));rg.rotation.x=-Math.PI/2.2;m.add(rg);}
     const lbl=addGmLabel(grp,p.name,m.position.clone().add(new THREE.Vector3(0,p.s+5,0)),'rgba(91,127,255,0.9)');
-    gmSolarPlanets.push({mesh:m,r:p.r,ang,spd:0.0016/(p.idx*0.4+1),name:p.name,destIdx:p.idx,labelSprite:lbl,size:p.s,lblBaseW:lbl.userData.baseW,lblBaseH:lbl.userData.baseH});
+    gmSolarPlanets.push({mesh:m,r:p.r,ang,spd:0.0016/Math.pow(p.a,1.5),name:p.name,destIdx:p.idx,labelSprite:lbl,size:p.s,lblBaseW:lbl.userData.baseW,lblBaseH:lbl.userData.baseH});
   });
 }
 function addGmLabel(grp,text,pos,color,worldW){
@@ -14353,7 +14407,7 @@ window.dmSceneText=function(){
     return {platform:_dmPlatform(),app:(window.DMAndroid&&DMAndroid.version)?DMAndroid.version():null,webview:m[2]||null,
       backend:real===null?'not-started':real?'WebGPU':'WebGL2-fallback',navGpu:!!navigator.gpu,gpu:g.renderer||'',vendor:g.vendor||'',
       gpuClass:g.gpuClass,score:g.score,preset:g.preset,resScale:g.resScale,cores:navigator.hardwareConcurrency||0,mem:navigator.deviceMemory||0,
-      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:((String(window._dmSwCache||'').match(/engine-(v\d+)/)||[])[1]?'sw-'+String(window._dmSwCache).match(/engine-(v\d+)/)[1]:'sw-v103'),swCache:window._dmSwCache||null,hair:(function(){ try{ const H=window.DART_HAIR; return H?{mode:H.stats.mode||'cpu',gcReason:H.stats.gpuFail||null,check:H.stats.gpuCheck||null,ms:+(H.stats.ms||0).toFixed(2),drawn:H.stats.drawn}:null; }catch(e){ return null; } })(),ua:navigator.userAgent};
+      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:((String(window._dmSwCache||'').match(/engine-(v\d+)/)||[])[1]?'sw-'+String(window._dmSwCache).match(/engine-(v\d+)/)[1]:'sw-v104'),swCache:window._dmSwCache||null,lastGpuLost:(function(){ try{ return JSON.parse(localStorage.getItem('dm_lastGpuLost')||'null'); }catch(e){ return null; } })(),hair:(function(){ try{ const H=window.DART_HAIR; return H?{mode:H.stats.mode||'cpu',gcReason:H.stats.gpuFail||null,check:H.stats.gpuCheck||null,ms:+(H.stats.ms||0).toFixed(2),drawn:H.stats.drawn}:null; }catch(e){ return null; } })(),ua:navigator.userAgent};
   }
   function flush(){
     const f=win.f; win.f=[]; const t0=win.t0; win.t0=performance.now();
@@ -16978,7 +17032,7 @@ function renderWithPostFX(){
   const _spec=window.DMSpec&&DMSpec.on; if(_spec) try{ DMSpec.pre(flightCamera); }catch(e){}
   try{ if(galSky.ready) updateGalSky(); }catch(e){}
   try{ if(window.DMStarBubble) { const n=performance.now(), d=_sbT?(n-_sbT)/1000:1/60; _sbT=n; if(window.DMStar) DMStar.frame(flightCamera,d); if(window.DMMist) DMMist.frame(flightCamera,d); DMStarBubble.frame(flightCamera,flightScene,d); } }catch(e){ console.warn('[starbubble] '+(e&&e.stack||e)); }
-  try{ if(!_trueAtmoRender(flightRenderer,flightScene,flightCamera)) flightRenderer.render(flightScene,flightCamera); _shotGrab(flightRenderer); }
+  try{ const _hs=_taHideShells(); try{ if(!_trueAtmoRender(flightRenderer,flightScene,flightCamera)) flightRenderer.render(flightScene,flightCamera); } finally{ _taShowShells(_hs); } _shotGrab(flightRenderer); }
   finally{ if(_spec) try{ DMSpec.post(flightCamera); }catch(e){} }
   const _rtMs = performance.now()-_rt0;
   if(!window._renderTimingSamples) window._renderTimingSamples=[];
@@ -17788,6 +17842,18 @@ function _taParamsFor(ud){
   if(!P.heightFn) P.heightScale=0;
   return P;
 }
+// (v104) while the true atmosphere is on, it is the only air drawn: every world's classic shell (the Lague-style
+// additive rim — the reddish ring on the Sun side) is hidden for the frame, near or far. When the true atmosphere is
+// off (setting, failure, or an Auto-only reduction) the classic shells come back unchanged. Only .visible is touched.
+const _taShellBuf=[];
+function _taHideShells(){
+  _taShellBuf.length=0;
+  try{ if(_TA.failed||!_trueAtmoOn()||_taPerfOff()) return 0;
+    for(let i=0;i<_jotsFogAtmoRegistry.length;i++){ const e=_jotsFogAtmoRegistry[i], m=e&&e.mesh; if(m&&m.visible&&/^JOTS_(PlanetAtmo|DustyAtmo|WebGLAtmo)$/.test(m.name||'')){ m.visible=false; _taShellBuf.push(m); } }
+  }catch(e){}
+  return _taShellBuf.length;
+}
+function _taShowShells(n){ for(let i=0;i<_taShellBuf.length;i++) _taShellBuf[i].visible=true; _taShellBuf.length=0; }
 // open space / orbit: the nearest world's gas (others keep their light classic shells — cheap multi-planet)
 function _trueAtmoRender(r,scene,cam){
   if(_TA.failed||!_trueAtmoOn()||_taPerfOff()) return false;
@@ -24212,22 +24278,28 @@ function _footContact(dt, airborne, sc, ground, unit){
   if(!_fcV) _fcV=new THREE.Vector3();
   const b=CHAR.bones; if(!b||!b.LeftFoot||!b.RightFoot) return;
   CHAR.root.updateMatrixWorld(true);
-  const soleLine=CHAR.root.position.y-(CHAR.feetOffset||0)*sc;   // where the model's lowest point sits
-  if(CHAR._ankleRest==null||CHAR._ankleRestSc!==sc){
-    if(CHAR.state!=='idle') return;                      // calibrate in the rest pose
+  // (v104) measured at the model's ACTUAL scale (root.scale), stored scale-free: the deck step-off eases her from
+  // riding size to deck size, and a rest-pose ankle height calibrated mid-ease (in world units) left her shin-deep in
+  // the temple deck for the rest of the walk. Recalibrates in any clean idle, not only on a scale change.
+  const asc=Math.abs(CHAR.root.scale.y)||sc;
+  const soleLine=CHAR.root.position.y-(CHAR.feetOffset||0)*sc-(CHAR._plantOff||0);   // where the sole would sit with no plant offset
+  const settled=Math.abs(asc-sc)<sc*0.02;
+  if(CHAR.state==='idle'&&!CHAR._transitioning&&!airborne&&settled&&(CHAR._ankleRestN==null||CHAR._ankleRestSc!==sc)){
     const l=b.LeftFoot.getWorldPosition(_fcV).y-soleLine, r=b.RightFoot.getWorldPosition(_fcV).y-soleLine;
-    CHAR._ankleRest=Math.min(l,r); CHAR._ankleRestSc=sc; CHAR._plantOff=0; return;
+    CHAR._ankleRestN=Math.max(0,Math.min(l,r))/asc; CHAR._ankleRestSc=sc;
   }
-  if(airborne||CHAR._transitioning){ CHAR._plantOff=(CHAR._plantOff||0)*Math.max(0,1-dt*8); return; }
+  if(CHAR._ankleRestN==null) return;
+  const ankleRest=CHAR._ankleRestN*asc;
+  if(airborne||CHAR._transitioning||!settled){ CHAR._plantOff=(CHAR._plantOff||0)*Math.max(0,1-dt*8); return; }
   let low=1e9;
   for(const f of [b.LeftFoot,b.RightFoot]){
     f.getWorldPosition(_fcV);
     const gy=ground(_fcV.x,_fcV.z,_fcV.y); if(gy==null||!isFinite(gy)) continue;
-    const gap=(_fcV.y-CHAR._ankleRest)-gy;   // >0 floating, <0 sunk
+    const gap=(_fcV.y-ankleRest)-gy;   // >0 floating, <0 sunk
     if(gap<low) low=gap;
   }
   if(!isFinite(low)) return;
-  const want=THREE.MathUtils.clamp((CHAR._plantOff||0)-low, -0.9*unit, 0.5*unit);
+  const want=THREE.MathUtils.clamp((CHAR._plantOff||0)-low, -0.9*unit, 1.2*unit);
   CHAR._plantOff=(CHAR._plantOff||0)+(want-(CHAR._plantOff||0))*Math.min(1,dt*14);
 }
 
