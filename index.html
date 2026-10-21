@@ -6211,6 +6211,60 @@ async function initFlightScene(){
 // once, behind a small status line before the flight loop starts: the scene as it stands, then each of the
 // things that are normally hidden until you fly close (Sun surface/flares, planet mist, galaxy layers).
 // Each step has a time limit so a slow device never gets stuck; a repeat visit is fast (the browser caches).
+// The Bird Temple's studio environment (prefiltered once). Built during the flight warm-up so its PMREM passes
+// don't run (and compile) mid-flight when the temple model arrives; the loader still calls this, as a no-op then.
+function _btBuildEnvRT(){
+  if(typeof THREE==='undefined'||typeof flightRenderer==='undefined'||!flightRenderer) return;
+    if(!window._birdTempleEnvRT){
+      const envScene=new THREE.Scene();
+      const box=new THREE.Mesh(new THREE.BoxGeometry(20,20,20),new THREE.MeshBasicMaterial({color:0x1a1a22,side:THREE.BackSide}));
+      envScene.add(box);
+      [[0,9,0,0xfff4dd],[9,0,0,0xffb870],[-9,0,0,0x6fa8ff]].forEach(([x,y,z,c])=>{
+        const panel=new THREE.Mesh(new THREE.PlaneGeometry(6,6),new THREE.MeshBasicMaterial({color:c}));
+        panel.position.set(x,y,z);panel.lookAt(0,0,0);envScene.add(panel);
+      });
+      // PMREMGenerator confirmed broken under this Three.js version's WebGPU
+      // backend (live-tested earlier this session — throws deep inside its
+      // own internal multi-pass cubemap rendering). This call site had NO
+      // guard at all before, meaning it threw uncaught, which is very
+      // likely why Bird Temple's GLB load was failing outright rather than
+      // just missing its env map. window._birdTempleEnvRT stays null under
+      // WebGPU; the envMap-assignment loop below already checks 'envMap'
+      // in m AND that window._birdTempleEnvRT exists, so it just doesn't
+      // get one — graceful, not broken.
+      if(!(_isRealWebGPU(flightRenderer))){
+        window._birdTempleEnvRT=new THREE.PMREMGenerator(flightRenderer).fromScene(envScene,0.08);
+      }
+    }
+}
+// The temple's own lights (altar + 3-point hull rig), drawn by stand-in PointLights that are in the scene from the
+// warm-up on: a hidden temple used to take its lights out of the scene's light list and the spawn put them back, so
+// the light key changed and every material in view recompiled (the remaining autopilot stalls). The stand-ins copy
+// each light (colour, strength, range, decay, shadow flag) and follow its place on the ship; they are dark while the
+// temple is hidden, exactly as the real lights were. Nothing about the model or how it looks changes.
+const _btHold={group:null,free:[],used:[]};
+function _btReserveLights(n){
+  if(typeof flightScene==='undefined'||!flightScene||typeof THREE==='undefined') return;
+  if(!_btHold.group){ const g=new THREE.Group(); g.name='JOTS_BTLightHold'; flightScene.add(g); _btHold.group=g;
+    const prev=flightScene.onBeforeRender; flightScene.onBeforeRender=function(){ try{ _btHoldSync(); }catch(e){} if(typeof prev==='function') return prev.apply(this,arguments); }; }
+  while(_btHold.free.length+_btHold.used.length<n){ const l=new THREE.PointLight(0xffffff,0,1,2); l.castShadow=false; l.matrixAutoUpdate=false; l.matrixWorldAutoUpdate=false; _btHold.group.add(l); _btHold.free.push(l); }
+}
+function _btAdoptLights(root){
+  const ls=[]; root.traverse(o=>{ if(o.isPointLight&&!(o.userData&&o.userData.bti)) ls.push(o); });
+  _btReserveLights(_btHold.used.length+ls.length);
+  ls.forEach(L=>{ const Q=_btHold.free.shift(); if(!Q||!L.parent) return;
+    Q.color.copy(L.color); Q.distance=L.distance; Q.decay=L.decay; Q.castShadow=L.castShadow; Q.name=L.name||'BT_Light';
+    L.updateMatrix(); const e={Q,P:L.parent,local:L.matrix.clone(),base:L.intensity,vis:null};
+    L.parent.remove(L); _btHold.used.push(e); });
+  _btHoldSync();
+}
+function _btHoldSync(){
+  for(let i=0;i<_btHold.used.length;i++){ const e=_btHold.used[i];
+    let v=true, q=e.P; while(q){ if(!q.visible){ v=false; break; } if(!q.parent&&q!==flightScene) v=false; q=q.parent; }
+    if(v!==e.vis){ e.vis=v; e.Q.intensity=v?e.base:0; }
+    if(v){ e.P.updateWorldMatrix(true,false); e.Q.matrixWorld.multiplyMatrices(e.P.matrixWorld,e.local); }
+  }
+}
 async function _flightWarmup(){
   if(typeof flightRenderer==='undefined'||!flightRenderer||!flightRenderer.compileAsync) return;
   const t0=performance.now(); let pill=null; window._dmWarming=true;
@@ -6225,6 +6279,8 @@ async function _flightWarmup(){
   const _unculled=[];
   try{ flightScene.traverse(o=>{ if(o.frustumCulled){ o.frustumCulled=false; _unculled.push(o); } }); }catch(e){}
   try{ _nearFillReserve(2); }catch(e){}
+  try{ _btBuildEnvRT(); }catch(e){}   // the Bird Temple's environment map: prefiltered now, not when the temple arrives
+  try{ _btReserveLights(5); }catch(e){}   // its altar, hull-rig and shard light stand-ins, so the light key is final before compiling
   try{ _distLightT=1; updateDistantSystems(0); }catch(e){}   // the two distant-star lights exist before compiling
   const steps=[
     ['world',()=>flightRenderer.compileAsync(flightScene,flightCamera)],
@@ -7817,27 +7873,7 @@ async function buildSolarSystem(){
     // no light to find and disable this time; the ship is lit entirely by
     // the fresh rig built below (altar light + procedural environment +
     // 3-point hull rig).
-    if(!window._birdTempleEnvRT){
-      const envScene=new THREE.Scene();
-      const box=new THREE.Mesh(new THREE.BoxGeometry(20,20,20),new THREE.MeshBasicMaterial({color:0x1a1a22,side:THREE.BackSide}));
-      envScene.add(box);
-      [[0,9,0,0xfff4dd],[9,0,0,0xffb870],[-9,0,0,0x6fa8ff]].forEach(([x,y,z,c])=>{
-        const panel=new THREE.Mesh(new THREE.PlaneGeometry(6,6),new THREE.MeshBasicMaterial({color:c}));
-        panel.position.set(x,y,z);panel.lookAt(0,0,0);envScene.add(panel);
-      });
-      // PMREMGenerator confirmed broken under this Three.js version's WebGPU
-      // backend (live-tested earlier this session — throws deep inside its
-      // own internal multi-pass cubemap rendering). This call site had NO
-      // guard at all before, meaning it threw uncaught, which is very
-      // likely why Bird Temple's GLB load was failing outright rather than
-      // just missing its env map. window._birdTempleEnvRT stays null under
-      // WebGPU; the envMap-assignment loop below already checks 'envMap'
-      // in m AND that window._birdTempleEnvRT exists, so it just doesn't
-      // get one — graceful, not broken.
-      if(!(_isRealWebGPU(flightRenderer))){
-        window._birdTempleEnvRT=new THREE.PMREMGenerator(flightRenderer).fromScene(envScene,0.08);
-      }
-    }
+    _btBuildEnvRT();   // (normally already built during the flight warm-up)
     t.traverse(o=>{
       if(o.isMesh&&o.material){
         const mats=Array.isArray(o.material)?o.material:[o.material];
@@ -7966,6 +8002,7 @@ async function buildSolarSystem(){
     wrapper.scale.setScalar(SHIP_SCALE);
     wrapper.visible=false; // hidden until it has a real, randomized, safe spawn point
     flightScene.add(wrapper);
+    try{ _btAdoptLights(wrapper); }catch(e){ console.warn('[Bird Temple] light stand-ins:',e); }
     BIRD_TEMPLE.group=wrapper;
     try{btCubesInit(wrapper,SHIP_SCALE);}catch(e){console.warn('[Bird Temple] session cubes:',e);}
     // v91: the temple is added hidden and was never precompiled, so its (new interior) pipelines compiled lazily
@@ -16831,6 +16868,8 @@ function updateDistantSystems(dt){
     }
   }
   // Lazily light only the 2 nearest distant stars (never 140 PointLights).
+  // the two pooled star lights follow their stars every frame (origin shifts / travel move them at once), not every 0.5 s
+  for(let i=0;i<_distLightPool.length;i++){ const P=_distLightPool[i]; if(P.sys&&P.sys.group){ P.sys.group.updateWorldMatrix(true,false); P.light.position.setFromMatrixPosition(P.sys.group.matrixWorld); } }
   _distLightT+=dt;
   if(_distLightT<0.5||!flightCamera)return;
   _distLightT=0;
