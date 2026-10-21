@@ -9,7 +9,7 @@
  * Per-frame cost: nothing unless Ariel is aboard AND within cfg.near of the desk. Then: one AnimationMixer.update
  * (Sit loop, 20 joints) + the hair step (350 guides × 14 points; GPU ribbons on WebGPU). Far away / outside the
  * ship, the doll is a static skinned draw that follows the office's LOD visibility (it is a child of the office).
- * Lazy: fetched on boarding (see hook()), compiled before shown + registered with DMWarm. No lights/shadows. Tuning: window.BTE.madison.cfg.
+ * Lazy: fetched on boarding (see hook()), compiled before shown + registered with DMWarm. Lit by the temple's interior light list (ui/dm-bt-lighting.js, v114), adds no lights. Tuning: window.BTE.madison.cfg.
  */
 (function () {
   'use strict';
@@ -92,6 +92,7 @@
     // compile now (hidden, off to the side) and on the flight warm-up, so boarding never compiles her
     const warm = async () => {
       if (typeof _dmCompileObject !== 'function') return;
+      try { if (window.BTL && BTL.apply) BTL.apply(holder, true); } catch (e) { }   // v114: the temple's interior light list (star through the windows, reading lights, caustics) + star shadow, before compiling
       await _dmCompileObject(holder);
       try {   // the strand ribbons swap to their GPU material on first draw: draw once into a 4×4 target, then compile that too
         const H = MAD.hair, r = (typeof flightRenderer !== 'undefined') && flightRenderer;

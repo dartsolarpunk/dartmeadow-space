@@ -109,6 +109,7 @@
     const gltf = await (await loader()).loadAsync(URL_GLB);
     const sc = gltf.scene; sc.name = 'BTE_Engineering';
     tidyMaterials(sc);
+    try { if (window.BTL && BTL.apply) BTL.apply(sc); } catch (e) { }   // v107: real-time lights/shadows (ui/dm-bt-lighting.js), set before its compile
     BTE.root = sc.getObjectByName('FX_BTE_Office');
     BTE.holo = sc.getObjectByName('FX_BTE_Holo');
     BTE.collider = sc.getObjectByName('BTE_DeskCollider');
@@ -122,6 +123,7 @@
     // compile before first show (same helper the temple uses), and register with the flight warm-up
     try { if (window.DMWarm && DMWarm.add) DMWarm.add('engineering office', () => (typeof _dmCompileObject === 'function') && _dmCompileObject(sc)); } catch (e) { }
     try { if (typeof _dmCompileObject === 'function') await _dmCompileObject(sc); } catch (e) { }
+    try { if (window.BTL && BTL.warmTemple) await BTL.warmTemple(flightRenderer, sc); } catch (e) { }
     // walk collision: only the desk box joins the temple's existing collision soup (no rebake; decor is FX_ = excluded)
     addDeskToCollision();
     // visibility mirrors the temple's interior LOD (index.html toggles .visible on every BTI_-material mesh).
