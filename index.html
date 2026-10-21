@@ -148,7 +148,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-fluid.js?v=80"></script>
 <script src="ui/dm-journal.js?v=98"></script>
 <script src="ui/dm-worldstyle.js?v=94"></script>
-<script src="ui/dm-sky.js?v=96"></script>
+<script src="ui/dm-sky.js?v=111"></script>
 <script src="ui/dm-dust.js?v=95"></script>
 <script type="importmap">
 { "imports": {
@@ -6133,7 +6133,7 @@ async function initFlightScene(){
   // Sol PointLight (addSunLight) + emissive materials only. Prior AmbientLight
   // 0x334466@2.5 + Directional@1.5 stacked into pale blue-grey frame wash.
   // Tiny residual ambient only so unlit meshes aren't pure silhouette.
-  flightScene.add(new THREE.AmbientLight(0x0a1020,0.08));
+  // (v111) the residual ambient is ONE light now (_natAmb, made in addSunLight: 0x0a1018-ish @0.20 = the 0.08 + 0.12 pair it replaces)
 
   try{buildFlightStars();}catch(e){console.warn('stars:',e);}
   try{buildFlightNebulae();}catch(e){console.warn('neb:',e);}
@@ -6824,7 +6824,14 @@ function _updateJotsWorldsFog(){
       }catch(err){}
     }
   }
+  try{ _natLightTick(cam,sunPos); }catch(err){}
 }
+// (v111 light audit) the near-fill is no longer a lamp. Each world's fill is a light-shaped PROXY (same fields the fog
+// registry drives: color, intensity, distance, decay — but not a THREE.Light, so it is in no material's light loop);
+// what it used to deliver at the camera is added to ONE ambient light in the flight scene (_natAmb, below), the same
+// colour and the same inverse-square + range-window falloff, centred on the world. Natural light leads: the Sun is the
+// only lamp in space; fill, moonlight-on-the-night-side and galaxy skylight are ambient/sky terms.
+function _nfProxy(hex){ const o=new THREE.Object3D(); o.isNearFillProxy=true; o.color=new THREE.Color(hex); o.intensity=0; o.distance=1; o.decay=2; return o; }
 /** Tiny local fill parented to body — NOT scene Ambient/Hemisphere wash. */
 const _nearFillPool=[];   // {light, group|null}
 function _nearFillScene(){ try{ return (typeof flightScene!=='undefined'&&flightScene)?flightScene:null; }catch(e){ return null; } }
@@ -6838,12 +6845,12 @@ function _nearFillSync(){
 }
 function _nearFillTake(group, hex, R){
   const sc=_nearFillScene();
-  if(!sc){ const pl=new THREE.PointLight(hex, 0.14, R*2.6, 2.0); group.add(pl); return pl; }   // no flight scene yet: as before
+  if(!sc){ const pl=_nfProxy(hex); pl.intensity=0.14; pl.distance=R*2.6; group.add(pl); return pl; }   // no flight scene yet (a proxy, as below)
   if(!sc.userData._nearFillHook){ sc.userData._nearFillHook=true; const prev=sc.onBeforeRender;
     sc.onBeforeRender=function(){ try{ _nearFillSync(); }catch(e){} if(typeof prev==='function') return prev.apply(this,arguments); }; }
   _nearFillSync();
   let P=null; for(let i=0;i<_nearFillPool.length;i++){ if(!_nearFillPool[i].group){ P=_nearFillPool[i]; break; } }
-  if(!P){ const l=new THREE.PointLight(hex, 0, R*2.6, 2.0); sc.add(l); P={light:l,group:null}; _nearFillPool.push(P); }
+  if(!P){ const l=_nfProxy(hex); l.distance=R*2.6; sc.add(l); P={light:l,group:null}; _nearFillPool.push(P); }
   P.group=group; P.seen=false; P.at=performance.now(); const l=P.light; l.userData._nfP=P; l.color.setHex(hex); l.intensity=0.14; l.distance=R*2.6; l.decay=2.0;
   try{ group.updateWorldMatrix(true,false); l.position.setFromMatrixPosition(group.matrixWorld); }catch(e){}
   return l;
@@ -6851,7 +6858,7 @@ function _nearFillTake(group, hex, R){
 // warm-up: hold a couple of spare pooled lights so the first LOD swaps don't change the light count either
 function _nearFillReserve(n){ const sc=_nearFillScene(); if(!sc||typeof THREE==='undefined') return; _nearFillSync();
   let free=_nearFillPool.filter(P=>!P.group).length;
-  for(;free<n;free++){ const l=new THREE.PointLight(0x6a7a9a, 0, 1, 2.0); l.name='JOTS_NearFill'; l.userData.jotsNearFill=true; sc.add(l); _nearFillPool.push({light:l,group:null}); } }
+  for(;free<n;free++){ const l=_nfProxy(0x6a7a9a); l.name='JOTS_NearFill'; l.userData.jotsNearFill=true; sc.add(l); _nearFillPool.push({light:l,group:null}); } }
 function _attachJotsNearFill(group, radius, tintHex){
   if(!group||typeof THREE==='undefined')return null;
   const col=new THREE.Color(tintHex!=null?tintHex:0x6a7a9a);
@@ -9865,6 +9872,95 @@ function sequenceAltar(){
 // while every world stays readable: ~3.5 at Earth's distance (full albedo at
 // noon), ~1.8 at Jupiter, ~0.9 at Neptune. Procedural systems sit at the same
 // origin and orbit sizes, so the one light serves them too.
+// ── Natural light (v111): the Sun (or the local star) is the only lamp; the rest is sky/ambient/moon terms. ──
+const _NAT={amb:null,moon:null,base:null,gal:null,   // (THREE objects made in _natInit — THREE may not be up at parse time)
+  galK:0.018,          // galaxy/star skylight (ambient share) — under moonlight's
+  moonK:0.16,          // full Earth Moon at 1 AU → directional intensity (the Sun at Earth is ~3.5 with SUN_LIGHT_DECAY)
+  nfCap:0.18, info:{moon:0,moons:0,nf:0,gal:0,body:''}, _c:null, _v:null, _w:null, _d:null};
+function _natInit(){ if(_NAT.base) return; _NAT.base=new THREE.Color(0x0a1019).multiplyScalar(0.20); _NAT.gal=new THREE.Color(0x8c98c8);
+  _NAT._c=new THREE.Color(); _NAT._v=new THREE.Vector3(); _NAT._w=new THREE.Vector3(); _NAT._d=new THREE.Vector3();
+  _NAT._s1=new THREE.Vector3(); _NAT._s2=new THREE.Vector3(); _NAT._mc=new THREE.Color(); _NAT._qI=new THREE.Quaternion(); _NAT._sp=new THREE.Vector3(); _NAT._q=new THREE.Quaternion(); }   // per-frame scratch (no garbage)
+// moonlight at world P from all its moons: Σ albedo·(r/a)²·phase, toward the combined direction (shared by flight & surface)
+function _natMoonlight(P,out){
+  out.set(0,0,0); let sum=0, n=0; const pp=P.mesh.getWorldPosition(_NAT._w), sp=_NAT._sp.set(0,0,0);   // (own scratch: _d is the caller's out)
+  try{ if(typeof sunMesh!=='undefined'&&sunMesh) sunMesh.getWorldPosition(sp); }catch(e){}
+  const auK=(typeof AU_UNITS!=='undefined'&&AU_UNITS>0)?Math.pow(AU_UNITS/Math.max(AU_UNITS*0.2,pp.distanceTo(sp)),2):1;
+  for(const m of celestialBodies){
+    if(!m||m.orbitParent!==P||!m.mesh||!m.catalog) continue;
+    const e=m.catalog; if(!e.r||!e.a) continue;
+    const mp=m.mesh.getWorldPosition(_NAT._v);
+    const toSun=_NAT._s1.subVectors(sp,mp).normalize(), toP=_NAT._s2.subVectors(pp,mp), dP=toP.length()||1; toP.multiplyScalar(1/dP);
+    const phase=(1+toSun.dot(toP))/2;                       // lit fraction seen from the world (1 = full)
+    const c=_NAT._mc.set(e.col||0x999999), alb=Math.min(1.6,(c.r*0.3+c.g*0.59+c.b*0.11)/0.6);   // vs the Moon's grey
+    const w=alb*Math.pow(e.r*6371/e.a/0.004519,2)*phase*phase;   // (r/a)² normalised to the Moon; phase² ≈ the real phase curve
+    if(w<=1e-4) continue;
+    out.addScaledVector(toP,-w); sum+=w; n++;                 // light travels moon → world; out = direction TO the moons
+  }
+  if(sum>0) out.normalize();
+  _NAT.info.moons=n; return sum*auK;
+}
+function _natLightTick(cam,sunPos){
+  if(!_NAT.amb||!cam||!_NAT.amb.parent) return;
+  // nearest world (by surface distance)
+  let P=null, best=Infinity;
+  for(const b of celestialBodies){ if(!b||!b.mesh||b.type==='Star') continue; const R=_bodyR(b), d=b.mesh.getWorldPosition(_NAT._v).distanceTo(cam)-R; if(d/R<best){ best=d/R; P=b; } }
+  // 1) near-world fill: what the old per-world point lamp gave at the camera (three's punctual falloff), as ambient
+  const c=_NAT._c.copy(_NAT.base); let nf=0;
+  for(const e of _jotsFogNearFills){
+    const L=e.light; if(!L||!L.isNearFillProxy||!(L.intensity>0)) continue;
+    if(e.group) e.group.getWorldPosition(_NAT._w); else L.getWorldPosition(_NAT._w);
+    const d=Math.max(_NAT._w.distanceTo(cam),(e.radius||1)*1.02), win=Math.pow(Math.max(0,1-Math.pow(d/L.distance,4)),2);
+    const k=L.intensity*win/Math.max(Math.pow(d,L.decay||2),0.01)*Math.pow(e.radius||1,2)*0.35;   // ~ its strength at the world's limb, ×0.35 (ambient lights all sides)
+    if(k>0){ c.r+=L.color.r*k; c.g+=L.color.g*k; c.b+=L.color.b*k; nf+=k; }
+  }
+  if(nf>_NAT.nfCap){ const s=_NAT.nfCap/nf; c.sub(_NAT.base).multiplyScalar(s).add(_NAT.base); nf=_NAT.nfCap; }
+  // 2) galaxy/star skylight: faint, everywhere in space (night sides included)
+  c.r+=_NAT.gal.r*_NAT.galK; c.g+=_NAT.gal.g*_NAT.galK; c.b+=_NAT.gal.b*_NAT.galK;
+  const I=Math.max(c.r,c.g,c.b)||1; _NAT.amb.color.setRGB(c.r/I,c.g/I,c.b/I); _NAT.amb.intensity=I;
+  // 3) moonlight on the nearest world's night side (and a little on the day side), fading out away from it
+  let mi=0;
+  if(P&&P.moons){
+    const dir=_NAT._d.set(0,0,0), w=_natMoonlight(P,dir);
+    const near=Math.max(0,Math.min(1,(12-best)/8));          // within ~4–12 radii of the world
+    mi=Math.min(0.3,_NAT.moonK*w)*near;
+    if(mi>0){ const pp=P.mesh.getWorldPosition(_NAT._w); _NAT.moon.target.position.copy(pp); _NAT.moon.position.copy(pp).addScaledVector(dir,_bodyR(P)*4); _NAT.moon.target.updateMatrixWorld(); }
+  }
+  _NAT.moon.intensity=mi; _NAT.info.moon=mi; _NAT.info.nf=nf; _NAT.info.gal=_NAT.galK; _NAT.info.body=P?P.name:'';
+}
+// on the ground: moonlight from the moons that are UP (their summed direction in the local sky), the sky fill's night floor
+// = galaxy/star skylight + moonlight's share (fading with daylight — ui/dm-sky.js scales fill by day), and the natural pool
+function _natSurfaceTick(sky,cam){
+  _natInit(); const m=TERRAIN.moon, P=PW.body||PW.sp&&PW.sp.body; let mi=0;
+  if(m&&P&&P.moons&&_PWS.ok){
+    const dir=_NAT._d.set(0,0,0), w=_natMoonlight(P,dir);
+    if(w>0){
+      const q=_pwsQToDrawn(_NAT._qI,_NAT._q); dir.applyQuaternion(q);   // space → local sky
+      const up=Math.max(0,Math.min(1,(dir.y+0.03)/0.18));    // set below the horizon: no moonlight
+      const day=sky.day||0, atm=PW.pal&&PW.pal.atmos?1:0;
+      mi=Math.min(0.35,_NAT.moonK*1.4*w)*up*(atm?(1-0.75*day):1);   // a little on the day side, full at night
+      if(mi>0){ m.position.copy(cam.position).addScaledVector(dir,200); m.target.position.copy(cam.position); m.target.updateMatrixWorld(); }
+    }
+  }
+  if(m) m.intensity=mi;
+  // night floor of the sky fill: galaxy/star skylight (dimmer than moonlight) + a moonlit-sky share
+  sky.nightFill=Math.min(0.35,0.10+mi*0.6);
+  _NAT.info.pwMoon=mi; _NAT.info.pwNightFill=sky.nightFill;
+  if(window.DMNatLights) DMNatLights._tick(cam);
+}
+// Natural point sources (campfires, lava vents, glowing fungi…): ask for a light; only the nearest few (the fixed pool) are lit.
+window.DMNatLights=(function(){
+  const req=new Map(); let id=0;
+  return {
+    request(pos,color,intensity,range){ const k=++id; req.set(k,{pos:pos.clone?pos.clone():new THREE.Vector3(pos.x,pos.y,pos.z),color:new THREE.Color(color),i:intensity||1,r:range||12}); return k; },
+    release(k){ req.delete(k); }, clear(){ req.clear(); }, get count(){ return req.size; },
+    _tick(cam){
+      const pool=TERRAIN.natPool; if(!pool) return;
+      const list=[...req.values()].map(e=>({e,d:e.pos.distanceTo(cam.position)})).filter(o=>o.d<o.e.r*4).sort((a,b)=>a.d-b.d);
+      pool.forEach((l,i)=>{ const o=list[i]; if(o){ l.position.copy(o.e.pos); l.color.copy(o.e.color); l.distance=o.e.r; l.intensity=o.e.i*Math.min(1,(o.e.r*4-o.d)/(o.e.r*2)); } else l.intensity=0; });
+    }
+  };
+})();
+window._NAT=_NAT;
 const SUN_LIGHT_DECAY=0.4, SUN_LIGHT_I=42;
 let _sunLight=null;
 function addSunLight(){
@@ -9873,7 +9969,15 @@ function addSunLight(){
   _sunLight=sl;
   // Hemisphere fakeGI REMOVED — was pale blue-grey vacuum wash (sol-bloom-wash.jpg)
   // Ambient capped ≤0.15 so space stays black; planets lit by Sol PointLight
-  flightScene.add(new THREE.AmbientLight(0x0a1018,0.12));
+  // (v111 light audit) the natural light set — fixed, made here before the warm-up so the light lists/keys never change:
+  //   _natAmb  ONE ambient: the old residual pair (0x0a1020@0.08 + 0x0a1018@0.12, merged) + the near-world fill that used to
+  //            be a point lamp per world (_nfProxy) + faint galaxy/star skylight. The galaxy term is the galaxy's mean
+  //            colour (a constant 'IBL' sample of the band), so no capture pass is needed.
+  //   _natMoon ONE unshadowed directional: moonlight — every moon of the world you're at, summed by phase and size
+  //            (reflected sunlight), from their combined direction. 0 when no moon is lit/near.
+  _natInit(); _NAT.amb=new THREE.AmbientLight(0x0a1019,0.20); _NAT.amb.name='JOTS_NatAmbient'; flightScene.add(_NAT.amb);
+  _NAT.moon=new THREE.DirectionalLight(0xc8d4ff,0); _NAT.moon.name='JOTS_MoonFill'; _NAT.moon.castShadow=false;
+  flightScene.add(_NAT.moon); flightScene.add(_NAT.moon.target);
   // Load Earth coastlines from proven source
   loadEarthCoastlines();
   // Add procedural surface details to other planets
@@ -10442,7 +10546,7 @@ function buildBoardFromGLB(tmplKey){
   // soft accent light so the board reads even in dim space
   const dartSt=styles['dart'];
   const dartC=new THREE.Color((dartSt&&dartSt.stops&&dartSt.stops[0])||c.zoneDart||c.emit||'#00f5ff');
-  const pl=new THREE.PointLight(dartC,(c.glow!=null?c.glow:0.3)*2+0.5,6);pl.position.set(0,0.4,0);grp.add(pl);
+  // (v111) no accent lamp: the dart reads by its emissive trim + the Sun/ambient (glows are emissive, not lamps)
   return grp;
 }
 
@@ -10588,7 +10692,7 @@ function _buildArielBoard(){
   const staff=new THREE.Mesh(new THREE.CylinderGeometry(0.011,0.011,3.25,10),staffMat); staff.rotation.z=Math.PI/2; staff.position.set(-0.1,-0.012,0.178); staff.name='staff'; grp.add(staff);
   [1.525,-1.725].forEach(x=>{ const tip=new THREE.Mesh(new THREE.SphereGeometry(0.016,10,8),glowMat); tip.position.set(x,-0.012,0.178); grp.add(tip); });
   // a soft glow underneath
-  const pl=new THREE.PointLight(light,(c.glow||0.6)*2.2,2.6); pl.position.set(0,-0.12,0); grp.add(pl);
+  // (v111) no under-glow lamp: the board's glow is its emissive material (glows are emissive, not lamps)
   grp.userData.arielBoard=true;
   return grp;
 }
@@ -10625,11 +10729,11 @@ function buildBoardMesh(){
     const r1=new THREE.Mesh(new THREE.TorusGeometry(outerR,.018,5,28),ringMat.clone());r1.rotation.x=Math.PI/2;rg.add(r1);
     const r2=new THREE.Mesh(new THREE.TorusGeometry(outerR*.6,.012,4,22),ringMat.clone());r2.rotation.x=Math.PI/2;rg.add(r2);
     const node=new THREE.Mesh(new THREE.SphereGeometry(T*.18,8,8),new THREE.MeshStandardMaterial({color:0xffffff,emissive:emit,emissiveIntensity:4.5,metalness:1,roughness:.01}));rg.add(node);
-    const pl=new THREE.PointLight(new THREE.Color(emit),c.glow*2.5,outerR*3.5);rg.add(pl);
+    // (v111) ring glow is the ring's emissive — no per-ring lamp
     grp.add(rg);
   });
   // Engine light
-  {const el2=new THREE.PointLight(new THREE.Color(c.emit),c.glow*2,5);el2.position.set(-hL*.7,-T/2-.04,0);grp.add(el2);}
+  // (v111) engine glow is emissive — no engine lamp
   _computeDeckAnchor(grp);
   return grp;
 }
@@ -14416,7 +14520,7 @@ window.dmSceneText=function(){
     return {platform:_dmPlatform(),app:(window.DMAndroid&&DMAndroid.version)?DMAndroid.version():null,webview:m[2]||null,
       backend:real===null?'not-started':real?'WebGPU':'WebGL2-fallback',navGpu:!!navigator.gpu,gpu:g.renderer||'',vendor:g.vendor||'',
       gpuClass:g.gpuClass,score:g.score,preset:g.preset,resScale:g.resScale,cores:navigator.hardwareConcurrency||0,mem:navigator.deviceMemory||0,
-      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:((String(window._dmSwCache||'').match(/engine-(v\d+)/)||[])[1]?'sw-'+String(window._dmSwCache).match(/engine-(v\d+)/)[1]:'sw-v109'),swCache:window._dmSwCache||null,lastGpuLost:(function(){ try{ return JSON.parse(localStorage.getItem('dm_lastGpuLost')||'null'); }catch(e){ return null; } })(),hair:(function(){ try{ const H=window.DART_HAIR; return H?{mode:H.stats.mode||'cpu',gcReason:H.stats.gpuFail||null,check:H.stats.gpuCheck||null,ms:+(H.stats.ms||0).toFixed(2),drawn:H.stats.drawn}:null; }catch(e){ return null; } })(),ua:navigator.userAgent};
+      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:((String(window._dmSwCache||'').match(/engine-(v\d+)/)||[])[1]?'sw-'+String(window._dmSwCache).match(/engine-(v\d+)/)[1]:'sw-v113'),swCache:window._dmSwCache||null,lastGpuLost:(function(){ try{ return JSON.parse(localStorage.getItem('dm_lastGpuLost')||'null'); }catch(e){ return null; } })(),hair:(function(){ try{ const H=window.DART_HAIR; return H?{mode:H.stats.mode||'cpu',gcReason:H.stats.gpuFail||null,check:H.stats.gpuCheck||null,ms:+(H.stats.ms||0).toFixed(2),drawn:H.stats.drawn}:null; }catch(e){ return null; } })(),ua:navigator.userAgent};
   }
   function flush(){
     const f=win.f; win.f=[]; const t0=win.t0; win.t0=performance.now();
@@ -17755,6 +17859,11 @@ function _pwBuild(body,site,mode,focus){
     scene.add(new THREE.HemisphereLight(pal.sky?pal.sky[0]:0x88bbff,new THREE.Color().setHSL(hsl.h,hsl.s*0.35,Math.min(0.3,hsl.l)),pal.atmos?0.4:0.35));
   }
   scene.add(new THREE.AmbientLight(pal.atmos?0x6688aa:0x222233,pal.atmos?0.5:0.25));
+  // (v111) natural night light on the ground, fixed set (made before the first compile, so nothing recompiles):
+  //  moonlight — ONE unshadowed directional from the summed moons (phase-weighted), only while they're up;
+  //  JOTS_NatPool — 2 short-range point lights, intensity 0 until something natural (a campfire…) asks via DMNatLights.
+  { const m=new THREE.DirectionalLight(0xc8d4ff,0); m.name='JOTS_MoonFillPW'; m.castShadow=false; scene.add(m); scene.add(m.target); TERRAIN.moon=m;
+    TERRAIN.natPool=[]; for(let k=0;k<2;k++){ const l=new THREE.PointLight(0xffa860,0,1,2); l.name='JOTS_NatPool'; l.castShadow=false; scene.add(l); TERRAIN.natPool.push(l); } }
   TERRAIN.starDome=null;   // airless worlds see the real sky (open space draws behind the ground)
   // ── the planet frame, centred where we start (so the first tiles are the right ones)
   _pwfSet(focus.x,focus.z,mode==='space'?1e6:0,site);
@@ -18204,7 +18313,7 @@ function _pwWorldTick(dt){
   }
   // the living sky: time of day here, stars, comets, meteors (ui/dm-sky.js) — fading to open space with height
   const sky=TERRAIN.sky, ll=_skyLatLon(PW.site,px,pz);
-  if(sky){ if(sky.setFade) sky.setFade(dome); sky.update(cam,dt,ll.lat,ll.lon); if(mode==='walk') _localClock('surface-grav',null,ll.lon); }
+  if(sky){ try{ _natSurfaceTick(sky,cam); }catch(e){} if(sky.setFade) sky.setFade(dome); sky.update(cam,dt,ll.lat,ll.lon); if(mode==='walk') _localClock('surface-grav',null,ll.lon); }
   else if(scene.userData.skyDome) scene.userData.skyDome.position.copy(c);
   PW._atmoK=(1-dome)*(PWF.reveal);
   if(PW.atmo) PW.atmo.update(PW._atmoK,sky?sky.sunDir:null);
@@ -18275,7 +18384,7 @@ function _pwClose(opts){
   surfTerrainMesh=null; surfWater=null; surfCausticCtx=null; surfCausticTex=null;
   TERRAIN.mcGroup=null; TERRAIN._mcBuildGen=(TERRAIN._mcBuildGen||0)+1; TERRAIN.mcY=null; TERRAIN.mcN=null;
   TERRAIN.group=null; TERRAIN.mcDensityArray=null; TERRAIN.mcGridInfo=null; TERRAIN.cpuMc=null; TERRAIN.mcGpu=false; TERRAIN._mcBusy=false;
-  TERRAIN.waterFollow=null; TERRAIN.waterVolume=null; TERRAIN.sun=null; TERRAIN.starDome=null; TERRAIN.sky=null; TERRAIN.windPoints=null; TERRAIN.H=null;
+  TERRAIN.waterFollow=null; TERRAIN.waterVolume=null; TERRAIN.sun=null; TERRAIN.moon=null; TERRAIN.natPool=null; TERRAIN.starDome=null; TERRAIN.sky=null; TERRAIN.windPoints=null; TERRAIN.H=null;
   if(TERRAIN.dust){ try{ TERRAIN.dust.dispose(); }catch(e){} TERRAIN.dust=null; }
   TERRAIN.tessAreas=[]; TERRAIN._tessJobs=[]; TERRAIN.tessMat=null; TESS_HOLE.slots.forEach(h=>{ h.r.value=0; }); TERRAIN.rockGeo=null;
   window._surfWaterAt=function(){ return false; };
