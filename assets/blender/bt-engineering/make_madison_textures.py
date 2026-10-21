@@ -61,7 +61,14 @@ iris[r > 0.92] = dark
 iris[r < 0.36] = dark * 0.6                                                # pupil
 iris[(xx + 0.32) ** 2 + (yy + 0.34) ** 2 < 0.035] = [255, 250, 240]        # catch-lights
 iris[(xx - 0.28) ** 2 + (yy - 0.30) ** 2 < 0.008] = [255, 245, 230]
-Image.fromarray(np.clip(blur(iris, 0.8), 0, 255).astype(np.uint8)).save(os.path.join(T, 'madison_eye.png'))
+# v3: double-wide eye sheet — left = open iris, right = closed lid (peach felt + a dark lash line); the game blinks by
+# shifting the eye texture's offset.x by 0.5 for ~0.12 s
+lid = np.zeros((S, S, 3), np.float32) + np.array([236, 176, 142.]) * (0.92 + 0.08 * rng.random((S, S, 1)))
+lid *= (1 - 0.18 * np.clip(-yy, 0, 1) ** 2)[..., None]                    # soft shading under the fold
+crease = np.abs(yy - (-0.05 + 0.22 * xx ** 2))                           # lash line, curving down at the corners
+lid[crease < 0.07] = lid[crease < 0.07] * 0.15 + np.array([24, 12, 10.]) * 0.85
+sheet = np.concatenate([blur(iris, 0.8), blur(lid, 0.8)], axis=1)
+Image.fromarray(np.clip(sheet, 0, 255).astype(np.uint8)).save(os.path.join(T, 'madison_eye.png'))
 
 # ---------- tiling felt nap normal ----------
 N = 512
