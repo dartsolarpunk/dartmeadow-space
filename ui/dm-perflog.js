@@ -71,7 +71,7 @@
       build: env && env.build, swCache: (env && env.swCache) || window._dmSwCache || null,
       backend: env && env.backend, gpu: env && env.gpu, preset: env && env.preset, hair: env && env.hair,
       warmupMs: window._warmupMs != null ? window._warmupMs : null,
-      env, modes, summary, hitches: hitches.slice(), windows: windows.slice(-60), trimmed: 0,
+      env, modes, summary, gpuPasses: (function () { try { return window.DMGpuProf ? window.DMGpuProf.table() : null; } catch (e) { return null; } })(), hitches: hitches.slice(), windows: windows.slice(-60), trimmed: 0,
     };
     let s = JSON.stringify(doc);
     while (s.length > CAP && doc.windows.length) { doc.windows.splice(0, Math.ceil(doc.windows.length / 4) || 1); doc.trimmed = windows.length - doc.windows.length; s = JSON.stringify(doc); }
