@@ -27,7 +27,7 @@
 
   function BTI_RE_test(n) { return /^BT[IE]_/.test(n || ''); }
 
-  let key = null, fills = null, altar = null, cubeGlow = null, caus = null, probe = null, probeRT = null, causRT = null, causQuad = null, causT = null;
+  let bounce = null, key = null, fills = null, altar = null, cubeGlow = null, caus = null, probe = null, probeRT = null, causRT = null, causQuad = null, causT = null;
   let causMode = 'light', causEmis = null, causMat = null, floorMats = [];
   let glassMats = [], glassMeshes = [], windows = [], extNode = null, intNode = null, snap = null;
   let face = 0, frame = 0, lastCaus = 0;
@@ -40,6 +40,9 @@
     altar = mk(new THREE.PointLight(0xfff2cc, 0, 5, 2), 'BT_AltarLight');
     cubeGlow = mk(new THREE.PointLight(0x8fd8ff, 0, 3.5, 2), 'BT_CubeGlow');
     key = fills[0];
+    // (v118) bounce: one LightProbe (SH, no shadow, fixed in the light key) standing in for the star light bouncing off the
+    // sun-lit hull/deck/floors into the interior. Its SH is rebuilt on demand (star direction or ship attitude moved).
+    bounce = mk(new THREE.LightProbe(), 'BT_Bounce'); bounce.intensity = 0;
     // caustic cookie, generated on the GPU (TSL quad into a small render target)
     const TS = THREE.TSL;
     causRT = new THREE.RenderTarget(256, 256, { type: THREE.HalfFloatType, generateMipmaps: false });
@@ -59,7 +62,7 @@
       return TS.vec3(c.mul(1.0), c.mul(0.96), c.mul(0.85)).add(0.06).mul(vig);
     })();
     causQuad = new THREE.QuadMesh(cm);
-    caus = new THREE.SpotLight(0xfff0d6, 0, 9, 0.55, 0.4, 1.5); caus.name = 'BT_Caustic'; caus.castShadow = false; mk(caus, 'BT_Caustic');
+    caus = new THREE.SpotLight(0xfff0d6, 0, 16, 0.7, 0.35, 1.2); caus.name = 'BT_Caustic'; caus.castShadow = false; mk(caus, 'BT_Caustic');
     // caustic path, decided once before anything compiles (the light key never changes afterwards):
     //   'light'    — the cookie is BT_Caustic.map (three's projected spot-light map, WebGPU + WebGL2 node backends)
     //   'emissive' — fallback: the same GPU cookie projected in the floor materials' emissive (no light map at all)
@@ -73,7 +76,7 @@
     probeRT = new THREE.CubeRenderTarget(tr[1], { type: THREE.HalfFloatType, generateMipmaps: false });
     probe = new THREE.CubeCamera(0.03, 1e6, probeRT); probe.name = 'BT_GlassProbe';
     [key, caus, probe].forEach(o => { o.matrixAutoUpdate = true; });
-    BTL.stats = { shadowedLights: 1, poolLights: 5, probeRes: tr[1], probeFaceEvery: tr[2], causticHz: tr[3] };
+    BTL.stats = { shadowedLights: 1, poolLights: 6, probeRes: tr[1], probeFaceEvery: tr[2], causticHz: tr[3] };
   }
 
   // ── per-material light lists ──
@@ -85,7 +88,7 @@
     amb.forEach(l => { ext.push(l); int.push(l); });
     if (sol) ext.push(sol); if (star) { ext.push(star); int.push(star); }
     try { if (window._NAT && _NAT.moon) ext.push(_NAT.moon); } catch (e) {}   // #165's moonlight fill (fixed, unshadowed) on the hull too
-    ext.push(altar, cubeGlow); int.push(caus, fills[0], fills[1]);
+    ext.push(altar, cubeGlow); int.push(caus, fills[0], fills[1]); if (bounce) int.push(bounce);
     return { ext, int, sig: [sol, star].concat(amb) };
   }
   function nodes() {
@@ -95,21 +98,38 @@
   }
   function stale() { if (!snap) return true; return snap.sig.some(l => !l || !l.parent); }
 
+  // (v118) glass is TRANSPARENT again (#166 made it an opaque node material whose emissive was the probe: with a half-filled
+  // or outside-blind probe the panes read as flat pale panels). Now: alpha-blended, Fresnel opacity (≈8% head-on, ~85% grazing),
+  // refraction = the opaque pass behind the pane (viewport texture, offset by the normal) on tier ≥ 1 or plain see-through on
+  // tier 0, reflection = the cube probe weighted by Fresnel and only once all 6 faces are filled, plus animated caustic glints.
+  let probeReady = null, glassT = null;
   function glassMaterial(src, warm) {
     const THREE = T(), TS = THREE.TSL;
+    if (!probeReady) { probeReady = TS.uniform(0); glassT = TS.uniform(0); }
     const m = new THREE.MeshStandardNodeMaterial(); m.name = src.name || 'BT_Glass';
-    m.roughness = 0.04; m.metalness = 0.0; m.color = new THREE.Color(0.02, 0.025, 0.03); m.side = src.side;
-    m.userData.btGlass = true;
-    m.emissiveNode = TS.Fn(() => {
-      const V = TS.positionWorld.sub(TS.cameraPosition).normalize(), N = TS.normalWorld;
-      const R = TS.reflect(V, N), Tr = TS.refract(V, N, TS.float(0.667));
-      const cosT = TS.clamp(N.dot(V.negate()), 0.0, 1.0);
-      const F = TS.float(0.04).add(TS.float(0.96).mul(TS.pow(TS.float(1).sub(cosT), 5.0)));
-      const refl = TS.cubeTexture(probeRT.texture, R).rgb;
-      const refr = TS.cubeTexture(probeRT.texture, Tr).rgb.mul(TS.vec3(0.82, 0.92, 0.95));
-      const glow = TS.vec3(warm[0], warm[1], warm[2]);
-      return TS.mix(refr.mul(0.85).add(glow), refl, F);
-    })();
+    m.roughness = 0.04; m.metalness = 0.0; m.color = new THREE.Color(0, 0, 0); m.side = src.side;
+    m.transparent = true; m.depthWrite = false; m.userData.btGlass = true;
+    const useRefr = tier() >= 2 &&   // (v118) not on tier 0/1 (Mali): no per-frame opaque-pass copy there
+       typeof TS.viewportSharedTexture === 'function' && !/[?&]glassrefr=0\b/.test(location.search);
+    const V = TS.positionWorld.sub(TS.cameraPosition).normalize(), N = TS.normalWorld;
+    const cosT = TS.clamp(N.dot(V.negate()).abs(), 0.0, 1.0);
+    const F = TS.float(0.04).add(TS.float(0.96).mul(TS.pow(TS.float(1).sub(cosT), 5.0)));
+    const refl = TS.cubeTexture(probeRT.texture, TS.reflect(V, N)).rgb.mul(probeReady);
+    const pw = TS.positionWorld.mul(3.0);
+    const g1 = TS.sin(pw.x.add(glassT.mul(0.8)).add(TS.sin(pw.y.mul(1.3).add(glassT.mul(0.6))))).mul(TS.sin(pw.z.mul(1.1).sub(glassT.mul(0.7)).add(TS.cos(pw.x.mul(0.9)))));
+    const caus = TS.pow(TS.float(1).sub(TS.abs(g1)), 12.0).mul(0.12);
+    const tint = TS.vec3(warm[0], warm[1], warm[2]).mul(0.3);
+    // both paths alpha-blend over what is already drawn (Fresnel opacity ≈8% head-on): in refraction mode a stale or empty
+    // viewport copy can only tint the pane, never make it solid. The copy only happens while a pane is actually drawn.
+    const alpha = TS.clamp(F.mul(0.85).add(0.08), 0.0, 0.92);
+    m.opacityNode = useRefr ? TS.clamp(alpha.add(0.25), 0.0, 0.92) : alpha;
+    if (useRefr) {
+      const behind = TS.viewportSharedTexture(TS.screenUV.add(TS.normalView.xy.mul(0.02))).rgb.mul(TS.vec3(0.94, 0.98, 1.0));
+      m.emissiveNode = TS.mix(behind, refl, F).add(caus).add(tint);
+      m.userData.btRefr = true;
+    } else {
+      m.emissiveNode = refl.mul(F).div(TS.max(alpha, 0.05)).add(caus).add(tint);
+    }
     return m;
   }
 
@@ -179,10 +199,11 @@
   // ── per frame (called right before the main render) ──
   const V = () => T().Vector3;
   let _a, _b, _c, _d, _q, _m4 = null;
-  const SIG = { star: new Float64Array(9).fill(NaN), sun: new Float64Array(3).fill(NaN) };
+  const SIG = { star: new Float64Array(9).fill(NaN), sun: new Float64Array(3).fill(NaN), bnc: new Float64Array(3).fill(NaN) };
   function sigMoved(S, i, x, y, z, tol) { return !(Math.abs(S[i] - x) <= tol && Math.abs(S[i + 1] - y) <= tol && Math.abs(S[i + 2] - z) <= tol); }
   function sigStore(S, i, x, y, z) { S[i] = x; S[i + 1] = y; S[i + 2] = z; }
-  BTL.cfg.minFill = 0.6;   // reading-light floor: a dark/switched-off room still gets this much from its nearest lamp
+  BTL.cfg.minFill = 1.4;   // (v118) was 0.6: the lamp pools did not read in the bay / below deck
+  BTL.cfg.poolR2 = 225;   // reading-light floor: a dark/switched-off room still gets this much from its nearest lamp
   function setFill(F, e, k) { if (e) { F.position.setFromMatrixPosition(e.mw); F.color.copy(e.src.color); F.intensity = Math.max(e.on || 0, BTL.cfg.minFill) * k; F.distance = Math.max(3, e.src.distance * 1.2); F.updateMatrixWorld(); } else F.intensity = 0; }
   const PROBE_REFRESH_MS = 4000;
   let probeAt = null, dirty = 63, lastFull = 0, lastFaceFrame = -99, casters = null; const holdA = [], holdN = [];
@@ -198,7 +219,7 @@
     const THREE = T(); if (!_a) { _m4 = new THREE.Matrix4(); _a = new THREE.Vector3(); _b = new THREE.Vector3(); _c = new THREE.Vector3(); _d = new THREE.Vector3(); _q = new THREE.Quaternion(); }
     const g = BIRD_TEMPLE.group; frame++;
     if (!BTL.ready) { if (BIRD_TEMPLE.spawned && window.BTI && BTI.ready) { apply(g); BTL.ready = true; } else return; }   // normally done by the interior warm-up first
-    if (!g.visible) { for (const L of [fills[0], fills[1], altar, cubeGlow, caus]) L.intensity = 0; return; }
+    if (!g.visible) { for (const L of [fills[0], fills[1], altar, cubeGlow, caus]) L.intensity = 0; if (bounce) bounce.intensity = 0; return; }
     { const nw = performance.now(); if (nw - lastSig > 1000) { lastSig = nw; try { recheck(); } catch (e) {} } }
     g.updateMatrixWorld(); g.getWorldPosition(_a);
     const R0 = (BIRD_TEMPLE._R0 || 10);
@@ -210,7 +231,7 @@
     if (!near) {   // far from the ship: nothing below runs (no window loop, no signatures); star shadow back to the game's own updates
       fills[0].intensity = fills[1].intensity = caus.intensity = 0;
       try { const L = _charShadowLight; if (L && L.shadow && !L.shadow.autoUpdate) { L.shadow.autoUpdate = true; SIG.star[0] = NaN; } } catch (e) {}
-      altar.intensity = 0; cubeGlow.intensity = 0; return;
+      altar.intensity = 0; cubeGlow.intensity = 0; if (bounce) bounce.intensity = 0; return;
     }
     // star direction at the ship (Sol at the origin)
     _c.copy(_a); if (_c.lengthSq() < 1e-6) _c.set(1, 0.3, 0.2); _c.normalize();   // from Sol toward the ship
@@ -227,12 +248,13 @@
       }
     } catch (e) {}
     // 2) two reading lights: the lit interior lamps nearest Ariel (only below deck), unshadowed; top-2 search, no allocations
-    let e0 = null, e1 = null, d0 = 49, d1 = 49;
+    let e0 = null, e1 = null, d0 = BTL.cfg.poolR2, d1 = BTL.cfg.poolR2;
     if (aboard && hasA) {
       try { for (const e of _btHold.used) { if (!e.src) continue; _d.setFromMatrixPosition(e.mw); const d = _d.distanceToSquared(_b);
         if (d < d0) { e1 = e0; d1 = d0; e0 = e; d0 = d; } else if (d < d1) { e1 = e; d1 = d; } } } catch (e) {}
     }
-    setFill(fills[0], e0, 1.0); setFill(fills[1], e1, 0.7);
+    setFill(fills[0], e0, 1.6); setFill(fills[1], e1, 1.1);
+    if (aboard && hasA && !e0) { fills[0].position.copy(_b).addScaledVector(_up(g), 1.6); fills[0].color.setRGB(1, 0.86, 0.68); fills[0].intensity = BTL.cfg.minFill * 1.6; fills[0].distance = 6; fills[0].updateMatrixWorld(); }   // (v118) no lamp nearby: a warm pool over Ariel
     // outside: the altar light and the session cubes' glow
     try { const an = BIRD_TEMPLE._altarNode || (BIRD_TEMPLE._altarNode = (typeof shipNode === 'function' && shipNode(g, 'Altar Group')) || null);
       if (an) { an.updateWorldMatrix(true, false); altar.position.setFromMatrixPosition(an.matrixWorld); altar.position.addScaledVector(_up(g), 0.45); altar.intensity = 6; altar.updateMatrixWorld(); } else altar.intensity = 0; } catch (e) { altar.intensity = 0; }
@@ -241,19 +263,28 @@
     const ref = hasA && aboard ? _b : camW; let w = null, wd = 1e9, wc = null, cd = 1e9;
     for (const it of windows) { it.o.getWorldPosition(it.c); const d = it.c.distanceToSquared(ref); if (d < wd) { wd = d; w = it; } const dc = it.c.distanceToSquared(camW); if (dc < cd) { cd = dc; wc = it; } }
     const tr = TIERS[tier()];
-    if (aboard && w && wd < 100) {
+    if (aboard && w && wd < 400) {
       caus.position.copy(w.c).addScaledVector(_c, -1.2); caus.target.position.copy(w.c).addScaledVector(_c, 4);
       caus.updateMatrixWorld(); caus.target.updateMatrixWorld();
-      if (causMode === 'light') caus.intensity = 6; else { caus.intensity = 0; causEmis.value = 1; caus.shadow.updateMatrices(caus); causMat.value.copy(caus.shadow.matrix); }
+      if (causMode === 'light') caus.intensity = 14; else { caus.intensity = 0; causEmis.value = 1; caus.shadow.updateMatrices(caus); causMat.value.copy(caus.shadow.matrix); }
       const now = performance.now();
       if (now - lastCaus > 1000 / tr[3]) { lastCaus = now; try { renderCaustic(r, now / 1000); } catch (e) {} }
     } else { caus.intensity = 0; if (causEmis) causEmis.value = 0; }
     // 4) glass probe: ON DEMAND. All 6 faces are marked dirty when the probe changes window or the star direction moves;
     //    a slow refresh re-marks them every few seconds (the world drifts). At most one face per `every` frames.
+    if (glassT) glassT.value = performance.now() / 1000;
+    // (v118) bounce probe: SH from the star direction in the ship frame. L0 = warm diffuse bounce (sun colour × deck albedo),
+    // L1 points AWAY from the star (light comes back up off the lit floors / in through the windows' far walls). Tier-scaled.
+    if (bounce) { const k = [0, 0.35, 0.55, 0.7][tier()] * (aboard ? 1 : 0);
+      if (sigMoved(SIG.bnc, 0, _c.x, _c.y, _c.z, 0.004) || bounce.intensity !== k) { sigStore(SIG.bnc, 0, _c.x, _c.y, _c.z);
+        const sh = bounce.sh.coefficients, col = [1.0, 0.86, 0.7], dx = -_c.x, dy = -_c.y, dz = -_c.z;
+        for (let i = 0; i < 9; i++) sh[i].set(0, 0, 0);
+        for (let ch = 0; ch < 3; ch++) { const c = col[ch]; sh[0].setComponent(ch, c * 0.9); sh[1].setComponent(ch, c * 0.5 * dy); sh[2].setComponent(ch, c * 0.5 * dz); sh[3].setComponent(ch, c * 0.5 * dx); }
+        bounce.intensity = k; BTL.stats.bounceUpdates = (BTL.stats.bounceUpdates || 0) + 1; } }
     const _sealed = !!(window.DMBtInterior && DMBtInterior.sealed);   // (v116) no glass in view: faces stay dirty and are rendered once glass is back in view
     if (camNear && wc && probe && !_sealed) {
-      if (wc !== probeAt || sigMoved(SIG.sun, 0, _c.x, _c.y, _c.z, 0.002)) { probeAt = wc; sigStore(SIG.sun, 0, _c.x, _c.y, _c.z); dirty = 63; }
-      const now = performance.now(); if (!dirty && now - lastFull > PROBE_REFRESH_MS) dirty = 63;
+      if (wc !== probeAt || sigMoved(SIG.sun, 0, _c.x, _c.y, _c.z, 0.002)) { if (wc !== probeAt && probeReady) probeReady.value = 0; probeAt = wc; sigStore(SIG.sun, 0, _c.x, _c.y, _c.z); dirty = 63; }
+      const now = performance.now(); const oa = (window.DMBtInterior && DMBtInterior.openArea) || 0; if (!dirty && now - lastFull > PROBE_REFRESH_MS * (oa > 0.15 ? 1 : 2)) dirty = 63;
       if (dirty && frame - lastFaceFrame >= Math.max(2, tr[2] + 1)) {
         while (!(dirty & (1 << face))) face = (face + 1) % 6;
         if (face === 0 || dirty === 63) probe.position.copy(wc.c), probe.updateMatrixWorld(true);
@@ -264,7 +295,7 @@
         try { r.setRenderTarget(probeRT, face); r.autoClear = true; r.render(scene, probe.children[face]); BTL.stats.probeMs = Math.round(performance.now() - tp); }
         catch (e) {}
         finally { r.setRenderTarget(prev); r.autoClear = pac; for (const m of glassMeshes) m.visible = true; for (let i = 0; i < casters.length; i++) { casters[i].shadow.autoUpdate = holdA[i]; casters[i].shadow.needsUpdate = holdN[i]; } }
-        dirty &= ~(1 << face); if (!dirty) lastFull = now; lastFaceFrame = frame; face = (face + 1) % 6; BTL.stats.probeFaces = (BTL.stats.probeFaces || 0) + 1;
+        dirty &= ~(1 << face); if (!dirty) { lastFull = now; if (probeReady) probeReady.value = 1; } lastFaceFrame = frame; face = (face + 1) % 6; BTL.stats.probeFaces = (BTL.stats.probeFaces || 0) + 1;
       }
     }
   };
@@ -272,4 +303,8 @@
 
   if (window.DMWarm) DMWarm.add('bt-lighting', () => BTL.warm()); else window.addEventListener('load', () => window.DMWarm && DMWarm.add('bt-lighting', () => BTL.warm()));
   BTL.build = build;
+  // (v118) Layer-3 hook only: a future 'Path Traced' GI tier (?gi=pt or BTL.setGiTier('pt')). Not implemented — it records the
+  // request and falls back to the hybrid path (cached star shadow + light pool + bounce probe + glass). Baked lightmaps = PR B.
+  BTL.giTier = (location.search.match(/[?&]gi=(pt|hybrid)\b/) || [])[1] || 'hybrid';
+  BTL.setGiTier = function (t) { BTL.giTier = t === 'pt' ? 'pt' : 'hybrid'; BTL.stats.giTierActive = 'hybrid'; return BTL.stats.giTierActive; };
 })();
