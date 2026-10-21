@@ -257,6 +257,10 @@ pc = Vector(W(0.62, -0.03, 3.05 + PHt / 2 - 0.05))
 ball('Pin_Head', 0.035, pc + Vector((0, -0.04, 0)), (1, 0.8, 1), 'felt', C_OFF, 'pin', seg=12, ring=6)
 cyl('Pin_Neck', 0.012, 0.05, pc + Vector((0, -0.012, 0)), 'felt', C_OFF, 'steel', verts=6, rot=(math.radians(90), 0, 0))
 
+# v2: Madison is her own rigged GLB now (build_madison.py → madison.glb, ui/dm-bt-madison.js). The v1 primitive plush
+# stays scripted above for reference; it is only kept in the office export with BTE_LEGACY_PLUSH=1.
+if not os.environ.get('BTE_LEGACY_PLUSH'):
+    for o in list(C_PL.objects): bpy.data.objects.remove(o)
 bpy.ops.wm.save_as_mainfile(filepath=os.path.join(D, 'bt-engineering.blend'))
 print('[bte] blend saved')
 

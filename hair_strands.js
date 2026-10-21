@@ -94,7 +94,8 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     if (/^Scalp/i.test(o.name)) { scalpMesh = scalpMesh || o; isAriel = true; }
     if (/^Ariel/i.test(o.name)) isAriel = true;
   });
-  if (!isAriel) throw new Error('[hair] character is not Ariel (no Scalp/Ariel mesh, different character file) - strands not attached');
+  // opts.character: explicit opt-in for another groomed character (e.g. the Madison doll, ui/dm-bt-engineering.js)
+  if (!isAriel && !opts.character) throw new Error('[hair] character is not Ariel (no Scalp/Ariel mesh, different character file) - strands not attached');
 
   /* ---------------- bones + colliders ---------------- */
   const root = CHAR.root;
@@ -234,7 +235,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   const SP = new Float32Array(K * 3);
   // static rest-pose radial direction (head-local) per point -> volumetric normals without per-frame sqrt
   const radial = new Float32Array(N * K * 3);
-  { const hc = [0, 0.11, -0.03];
+  { const hc = meta.headCenter || [0, 0.11, -0.03];
     for (let i = 0; i < N * K; i++) { const o = i * 3; let x = rest[o] - hc[0], y = rest[o + 1] - hc[1], z = rest[o + 2] - hc[2]; const l = Math.hypot(x, y, z) || 1; radial[o] = x / l; radial[o + 1] = y / l; radial[o + 2] = z / l; } }
 
   /* ---------------- render mesh ---------------- */
@@ -252,8 +253,18 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   const col = new Float32Array(VERTS * 3);
   const base = meta.color || [0.005, 0.005, 0.006];
   let seed = 12345; const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+  const GR = meta.gradient;   // optional root→tip colour (+ streak strands), e.g. Madison's blue→violet yarn
   for (let s = 0; s < N; s++) {
     const v = 0.75 + rnd() * 0.9;
+    if (GR) {
+      const streak = rnd() < (GR.streakFrac || 0), tip = streak && GR.streak ? GR.streak : GR.tip, t0 = streak ? (GR.streakStart ?? 0.3) : (GR.tipStart ?? 0.45);
+      const vv = 0.85 + (v - 0.75) * 0.35;
+      for (let k = 0; k < K * 2; k++) {
+        const t = Math.max(0, Math.min(1, ((k >> 1) / (K - 1) - t0) / (1 - t0))), w = t * t * (3 - 2 * t), o = (s * K * 2 + k) * 3;
+        for (let c = 0; c < 3; c++) col[o + c] = (GR.root[c] * (1 - w) + tip[c] * w) * vv;
+      }
+      continue;
+    }
     for (let k = 0; k < K * 2; k++) { const o = (s * K * 2 + k) * 3; col[o] = base[0] * v; col[o + 1] = base[1] * v; col[o + 2] = base[2] * v; }
   }
   const geo = new THREE.BufferGeometry();
@@ -263,10 +274,14 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   geo.setAttribute('normal', aNrm);
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
   geo.setIndex(new THREE.BufferAttribute(idx, 1));
-  const mat = new THREE.MeshStandardMaterial({
+  // meta.fuzz (optional, e.g. Madison's yarn): sheen on the strands, and on the GPU path a soft alpha-hashed fringe
+  // across each ribbon's width. Ariel's file has no fuzz block, so her material is unchanged.
+  const FZ = meta.fuzz || null;
+  const mat = new (FZ && THREE.MeshPhysicalMaterial ? THREE.MeshPhysicalMaterial : THREE.MeshStandardMaterial)({
     vertexColors: true, color: 0xffffff, roughness: meta.roughness ?? 0.5, metalness: 0.15,
     side: THREE.DoubleSide
   });
+  if (FZ && 'sheen' in mat) { mat.sheen = FZ.sheen ?? 0.8; mat.sheenRoughness = FZ.sheenRoughness ?? 0.5; if (FZ.sheenColor) mat.sheenColor.setRGB(...FZ.sheenColor); }
   const mesh = new THREE.Mesh(geo, mat);
   mesh.name = 'ArielHairStrands';
   mesh.frustumCulled = false; mesh.castShadow = false; mesh.receiveShadow = false;
@@ -374,7 +389,16 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
         return { pos: pk.add(w.mul(wd).mul(side)), nrm: n };
       };
       const aId = attribute('hsId', 'vec3'), aGk = attribute('hsGk', 'vec2');
-      const gmat = new THREE.MeshStandardNodeMaterial({ vertexColors: true, color: 0xffffff, roughness: mat.roughness, metalness: mat.metalness, side: THREE.DoubleSide });
+      const GM = FZ && THREE.MeshPhysicalNodeMaterial ? THREE.MeshPhysicalNodeMaterial : THREE.MeshStandardNodeMaterial;
+      const gmat = new GM({ vertexColors: true, color: 0xffffff, roughness: mat.roughness, metalness: mat.metalness, side: THREE.DoubleSide });
+      if (FZ) {
+        if ('sheen' in gmat) { gmat.sheen = mat.sheen; gmat.sheenRoughness = mat.sheenRoughness; if (mat.sheenColor) gmat.sheenColor.copy(mat.sheenColor); }
+        if (FZ.fringe && T.smoothstep && T.abs) {   // side is ±1 at the ribbon edges, 0 down the middle: fade the edges
+          const f0 = float(1 - FZ.fringe);
+          gmat.opacityNode = float(1).sub(T.smoothstep(f0, float(1), T.abs(attribute('hsId', 'vec3').z)));
+          gmat.alphaHash = true;
+        }
+      }
       gmat.positionNode = Fn(() => {
         const R = ribbon(aId.x, aId.y, aId.z, aGk.x, aGk.y);
         normalLocal.assign(R.nrm);

@@ -16,7 +16,7 @@
  */
 (function () {
   'use strict';
-  const URL_GLB = 'assets/bt-engineering/bt-engineering.glb?v=1';
+  const URL_GLB = 'assets/bt-engineering/bt-engineering.glb?v=3';
   const cfg = { holoSpin: 0.6, selfLight: 0.16, glow: 1.35, holoOpacity: 0.75 };
   const BTE = { cfg, ready: false, root: null, holo: null, collider: null };
   window.BTE = BTE;
@@ -136,6 +136,7 @@
     const up = BTI.update;
     BTI.update = function (dt) { up(dt); if (BTE.holo && sc.visible) BTE.holo.rotation.y += dt * cfg.holoSpin; };
     BTE.ready = true;
+    try { window.dispatchEvent(new CustomEvent('bte:ready')); } catch (e) { }
     console.log('[BTE] engineering office ready');
   }
   let tries = 0;
