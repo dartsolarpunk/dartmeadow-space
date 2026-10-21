@@ -14,7 +14,7 @@
 //   • audio/video streams (range requests) pass straight through.
 // It also keeps the app installable and playable offline once visited.
 
-const CACHE_NAME = 'dartmeadow-engine-v116';
+const CACHE_NAME = 'dartmeadow-engine-v117';
 const SHELL_ASSETS = ['/', '/index.html'];
 
 self.addEventListener('install', (event) => {
@@ -56,6 +56,14 @@ self.addEventListener('fetch', (event) => {
   // immutable: device first
   if (IMMUTABLE.test(url)) {
     event.respondWith(caches.match(req).then((c) => c || fetch(req).then((r) => put(req, r))));
+    return;
+  }
+  // (v117) the game's own unversioned assets (the temple GLBs, their textures, unversioned scripts): network first with
+  // revalidation (a 304 costs one round trip), the device copy only offline. Stale-while-revalidate served the PREVIOUS
+  // build's models/textures on the first load after an update, mixed with the new build's code (temple drew untextured
+  // grey until a reload). Cross-origin assets keep stale-while-revalidate.
+  if (ASSET.test(url) && new URL(url).origin === self.location.origin) {
+    event.respondWith(fetch(req, { cache: 'no-cache' }).then((r) => put(req, r)).catch(() => caches.match(req).then((c) => c || Response.error())));
     return;
   }
   // our own assets: device now, refreshed in the background

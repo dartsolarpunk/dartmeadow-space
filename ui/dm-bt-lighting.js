@@ -113,6 +113,13 @@
     return m;
   }
 
+  // (v117) every material this module touched, with a signature of its texture slots: a texture that arrives (or is
+  // swapped in by the interior/engineering setup) after the light lists were applied re-flags the material, so its
+  // program is rebuilt with the map instead of staying compiled untextured (first load after an update).
+  const mats = new Set(); const SLOTS = ['map', 'emissiveMap', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'envMap', 'alphaMap'];
+  function texSig(m) { let s = ''; for (const k of SLOTS) { const t = m[k]; s += t ? (t.uuid.slice(0, 4) + (t.image ? 1 : 0)) : '-'; } return s; }
+  let lastSig = 0;
+  function recheck() { let n = 0; for (const m of mats) { const s = texSig(m); if (s !== m.userData.btlSig) { m.userData.btlSig = s; m.needsUpdate = true; n++; } } if (n) BTL.stats.retex = (BTL.stats.retex || 0) + n; }
   function apply(root, inside) {
     try { build(); } catch (e) { console.warn('[BTL] build', e); }
     if (!root || !probeRT) return 0;
@@ -133,7 +140,7 @@
         if (m.isMeshBasicMaterial || m.isMeshBasicNodeMaterial || m.lights === false) continue;
         const want = (inside || BTI_RE_test(m.name) || /^MAD_|Madison|Hair/i.test(m.name || '') || o.name === 'FX_MadisonHair') ? intNode : extNode;
         if (m.lightsNode !== want) { m.lightsNode = want; m.needsUpdate = true; n++; }
-        if (!m.userData.btl) m.userData.btl = true;
+        if (!m.userData.btl) { m.userData.btl = true; mats.add(m); m.userData.btlSig = texSig(m); }
       }
       if (causMode === 'emissive') for (const m of (Array.isArray(o.material) ? o.material : [o.material])) if (m && /^BTI_Floor/.test(m.name || '') && !m.userData.btCaus && 'emissiveNode' in m) {
         const TS = T().TSL; m.userData.btCaus = true; floorMats.push(m);
@@ -192,6 +199,7 @@
     const g = BIRD_TEMPLE.group; frame++;
     if (!BTL.ready) { if (BIRD_TEMPLE.spawned && window.BTI && BTI.ready) { apply(g); BTL.ready = true; } else return; }   // normally done by the interior warm-up first
     if (!g.visible) { for (const L of [fills[0], fills[1], altar, cubeGlow, caus]) L.intensity = 0; return; }
+    { const nw = performance.now(); if (nw - lastSig > 1000) { lastSig = nw; try { recheck(); } catch (e) {} } }
     g.updateMatrixWorld(); g.getWorldPosition(_a);
     const R0 = (BIRD_TEMPLE._R0 || 10);
     const camW = BTL._cw || (BTL._cw = new THREE.Vector3()); camW.setFromMatrixPosition(cam.matrixWorld);
