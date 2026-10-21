@@ -6327,6 +6327,23 @@ function _aoccTick(){
   }catch(e){}
 }
 setInterval(_aoccTick,200);
+// (v104) the Bird Temple's enclosed decks are hidden while you are far from the ship, so no warm-up ever compiled
+// them: the first boarding compiled every BTI_ program in the frames you climbed in (log: PIPELINE BTI_Mess_Trays_2
+// mid-boarding, 0.5–1 s frames, then the GPU process died). Once the ship is in the scene, compile its interior in
+// the background with the decks made visible for that call only (visibility restored at once; nothing else changes).
+let _btiWarmed=false;
+const _btiWarmIv=setInterval(async()=>{
+  try{
+    if(_btiWarmed||window._dmWarming||typeof BIRD_TEMPLE==='undefined'||!BIRD_TEMPLE.group||!flightRenderer||!flightRenderer.compileAsync) return;
+    _btiWarmed=true; clearInterval(_btiWarmIv);
+    const hid=[], unc=[];
+    BIRD_TEMPLE.group.traverse(o=>{ if(!o.isMesh) return; const m=Array.isArray(o.material)?o.material[0]:o.material;
+      if(m&&/^BTI_/.test(m.name||'')&&!o.visible){ hid.push(o); o.visible=true; } if(o.frustumCulled){ unc.push(o); o.frustumCulled=false; } });
+    let p=null; try{ p=flightRenderer.compileAsync(flightScene,flightCamera); } finally{ for(const o of hid) o.visible=false; }
+    try{ await p; }catch(e){} for(const o of unc) o.frustumCulled=true;
+    console.log('[warmup] temple interior',hid.length,'meshes');
+  }catch(e){ console.warn('[warmup] temple interior',e); }
+},1500);
 async function _flightWarmup(){
   if(typeof flightRenderer==='undefined'||!flightRenderer||!flightRenderer.compileAsync) return;
   const t0=performance.now(); let pill=null; window._dmWarming=true;
