@@ -80,11 +80,16 @@
   // ── GitHub API ──────────────────────────────────────────────────────
   let token = ls.get(LS.token);
   async function gh(method, path, body) {
-    const r = await fetch('https://api.github.com' + path, {
-      method,
+    const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 20000);
+    let r;
+    try {
+      r = await fetch('https://api.github.com' + path, {
+      method, signal: ctl.signal,
       headers: { Authorization: 'token ' + token, Accept: 'application/vnd.github+json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
       body: body ? JSON.stringify(body) : undefined,
-    });
+      });
+    } catch (e) { throw new Error(e && e.name === 'AbortError' ? 'GitHub took too long to answer' : 'couldn’t reach GitHub'); }
+    finally { clearTimeout(to); }
     if (r.status === 404) return null;
     if (!r.ok) throw new Error('GitHub ' + r.status);
     return r.status === 204 ? {} : r.json();
@@ -95,6 +100,7 @@
   const safeText = (t) => { try { return window.DMSafety ? window.DMSafety.clean(t) : t; } catch (e) { return t; } };
 
   // ── Sign in: GitHub device flow via the Apps Script bridge ──────────
+  const STUCK_MS = 30000;   // a bridge check that has taken this long is stuck
   const auth = {
     get signedIn() { return identity.kind === 'github' && !!token; },
     identity,
@@ -202,21 +208,26 @@
       this._now = true;
       if (!this._polling) return;
       if (resumed && this._onResume) { try { this._onResume(); } catch (e) {} }
-      try { if (this._ctl) this._ctl.abort(); } catch (e) {}
+      // Only cut short a check that began before the app was backgrounded
+      // (iOS may have frozen it) or that is clearly stuck. A check started
+      // since coming back may be the very one carrying the token: the
+      // bridge takes 10 s+ when it has to swap the code and look you up,
+      // and GitHub hands the token out only once.
+      try { if (this._ctl && (this._ctlT < (this._hiddenAt || 0) || Date.now() - this._ctlT > STUCK_MS)) this._ctl.abort(); } catch (e) {}
       if (this._wake) this._wake();
     },
     async waitForToken(dev, onTick, onBusy, onResume) {
       // Split screen / two windows: the game window may never get a focus or visibility event when you approve in the
       // other one, so any sign of life here (a tap, a resize, the window coming back, the network returning) checks at once.
       let _lastKick = 0;
-      const kick = () => { const n = Date.now(); if (n - _lastKick < 5500) return; if (this._ctl && n - (this._ctlT || 0) < 9000) return; _lastKick = n; this.pollNow(); };
+      const kick = () => { const n = Date.now(); if (n - _lastKick < 5500) return; _lastKick = n; if (!this._ctl && this._wake) { this._now = true; this._wake(); } };
       const evs = ['pointerdown', 'pointermove', 'touchstart', 'resize', 'mouseover'];
       evs.forEach((e) => window.addEventListener(e, kick, { passive: true }));
       // Watchdog on wall-clock time: a frozen setTimeout (iOS background)
       // can't be trusted to fire, but this interval runs again on return
       // and kills any check that has been stuck for more than 9 s.
       const dog = setInterval(() => {
-        if (this._ctl && Date.now() - this._ctlT > 9000) { try { this._ctl.abort(); } catch (e) {} }
+        if (this._ctl && Date.now() - this._ctlT > STUCK_MS) { try { this._ctl.abort(); } catch (e) {} }
         if (this._waitUntil && Date.now() >= this._waitUntil && this._wake) this._wake();
       }, 1000);
       this._polling = true; this._onResume = onResume || null;
@@ -235,6 +246,7 @@
       }
     },
     async _waitForToken(dev, onTick, onBusy) {
+      this.lastAnswer = '';
       const until = dev.expiresAt || (Date.now() + (dev.expires_in || 900) * 1000);
       let wait = Math.max(5, dev.interval || 5) * 1000, last = 0;   // GitHub's minimum is 5 s between checks
       while (Date.now() < until) {
@@ -249,10 +261,10 @@
         if (!urgent && Date.now() - last < 2500) continue;  // GitHub asks for ≥5 s between checks
         last = Date.now();
         let d = null;
-        // One check = up to 3 tries, each cut off after 8 s.
+        // One check = up to 3 tries, each cut off after STUCK_MS (bridge cold starts take ~12 s).
         for (let tryN = 0; tryN < 3 && !d; tryN++) {
-          const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 8000);
-          this._ctl = ctl; this._ctlT = Date.now();
+          const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), STUCK_MS);
+          this._ctl = ctl; this._ctlT = Date.now(); this.lastPollAt = this._ctlT;
           try {
             const r = await fetch(CFG.gas + '?action=devicepoll&device_code=' + encodeURIComponent(dev.device_code) + '&t=' + Date.now(), { signal: ctl.signal, cache: 'no-store' });
             const text = await r.text();
@@ -266,6 +278,7 @@
         if (onTick) onTick();
         if (!d) continue;                                  // busy / error page / cut short: ask again
         if (d.access_token) return d;
+        this.lastAnswer = d.error || 'unknown';
         if (d.error === 'slow_down') wait = Math.max(wait + 5000, (d.interval || 0) * 1000);
         else if (d.error === 'expired_token') throw new Error('The sign-in code expired — try again.');
         else if (d.error === 'access_denied') throw new Error('Sign-in was cancelled on GitHub.');
@@ -280,13 +293,20 @@
     },
     async finish(d) {
       token = d.access_token;
+      if (!d.username) {                      // bridge answered with just the token: look the player up ourselves
+        const u = await gh('GET', '/user');
+        if (!u || !u.login) throw new Error('GitHub didn’t say who you are');
+        d.username = u.login; d.avatar_url = d.avatar_url || u.avatar_url;
+      }
       identity.kind = 'github';
       identity.name = d.username;
       identity.avatar = d.avatar_url || '';
       saveIdentity();
       ls.set(LS.token, token);   // after the identity, so other game tabs can adopt both
       emit('auth', { signedIn: true, name: identity.name });
-      try { await vault.ensure(); } catch (e) { console.warn('[JOTS] vault:', e); }
+      // Never let setting up the save repo hold the sign-in screen open.
+      try { await Promise.race([vault.ensure(), new Promise((_, rej) => setTimeout(() => rej(new Error('repo setup timed out')), 30000))]); }
+      catch (e) { console.warn('[JOTS] vault:', e); this.vaultError = String(e && e.message || e); setTimeout(() => vault.ensure().catch(() => {}), 15000); }
       return identity;
     },
     // Re-validate a stored token on load.
@@ -821,7 +841,9 @@
   window.addEventListener('jots:mpstatus', () => presence.beat());
   window.addEventListener('pagehide', () => { presence.stop(); try { if (mp.active) mp.stop(); } catch (e) {} });
   // Back from approving on GitHub → check the sign-in straight away.
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) auth.pollNow(true); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) auth._hiddenAt = Date.now(); else auth.pollNow(true); });
+  window.addEventListener('pagehide', () => { auth._hiddenAt = Date.now(); });
+  window.addEventListener('blur', () => { auth._hiddenAt = Date.now(); });
   window.addEventListener('focus', () => auth.pollNow(true));
   window.addEventListener('pageshow', () => auth.pollNow(true));
   window.addEventListener('online', () => auth.pollNow(true));
