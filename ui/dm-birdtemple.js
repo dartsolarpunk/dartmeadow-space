@@ -374,7 +374,8 @@
   function drawScreens(t) {
     const I = shipInfo(t);
     for (const k in BTI.screens) {
-      const s = BTI.screens[k]; try { DRAW[k](s.ctx, 512, 320, t, I); s.tex.needsUpdate = true; } catch (e) { }
+      const s = BTI.screens[k]; if (window.DMBtInterior && DMBtInterior.on && !DMBtInterior.screenVisible(s)) continue;   // (v116) off-screen / far: no redraw, no upload
+      try { DRAW[k](s.ctx, 512, 320, t, I); s.tex.needsUpdate = true; } catch (e) { }
     }
   }
 
@@ -597,8 +598,9 @@
     if (h) {
       const sp = dt / 3.2; h.p = h.target > h.p ? Math.min(h.target, h.p + sp) : Math.max(h.target, h.p - sp);
       const wk = ease(clamp(h.p / 0.45, 0, 1)), lk = ease(clamp((h.p - 0.4) / 0.6, 0, 1));
-      if (h.wheel && h.w0) h.wheel.quaternion.copy(h.w0).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), wk * h.turns * 6.2832));
-      if (h.lid && h.q0) h.lid.quaternion.copy(h.q0).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), lk * h.openAngle));
+      if (!h._sq) { h._sq = new THREE.Quaternion(); h._ax = new THREE.Vector3(0, 1, 0); h._ax2 = new THREE.Vector3(1, 0, 0); }   // (v116) scratch: no per-frame garbage
+      if (h.wheel && h.w0) h.wheel.quaternion.copy(h.w0).multiply(h._sq.setFromAxisAngle(h._ax, wk * h.turns * 6.2832));
+      if (h.lid && h.q0) h.lid.quaternion.copy(h.q0).multiply(h._sq.setFromAxisAngle(h._ax2, lk * h.openAngle));
       if (h._prev !== undefined && h._prev < 0.99 && h.p >= 0.99) sfx.hiss();
       h._prev = h.p;
     }
