@@ -8295,7 +8295,7 @@ function btCubesInit(wrapper,shipScale){
 function _btcClear(){
   const root=BT_CUBES.root;
   BT_CUBES.parts.forEach(o=>{root.remove(o);if(o.geometry&&!Object.values(BT_CUBES.geo).includes(o.geometry))o.geometry.dispose();if(o.dispose)o.dispose();});
-  BT_CUBES.parts=[];BT_CUBES.copies=[];
+  BT_CUBES.parts=[];BT_CUBES.copies=[];BT_CUBES.trails=null;
 }
 // One instanced draw per part for all the cubes together: each cube's
 // transform is baked into its instances.
@@ -8333,12 +8333,19 @@ function _btcBuild(raw){
   const trav=new THREE.InstancedMesh(G.traveler,M.traveler,L.length), halo=new THREE.InstancedMesh(G.halo,M.halo,L.length);
   trav.frustumCulled=halo.frustumCulled=false;root.add(trav);root.add(halo);BT_CUBES.parts.push(trav,halo);
   BT_CUBES.trav=trav;BT_CUBES.halo=halo;BT_CUBES.cubeM=cubeM;
-  L.forEach((c,ci)=>{
-    if(W.pts.length<2)return;
-    const tr=new THREE.Line(new THREE.BufferGeometry().setFromPoints(W.pts),M.trail);
-    tr.matrixAutoUpdate=false;tr.matrix.copy(cubeM[ci]);tr.geometry.setDrawRange(0,0);tr.frustumCulled=false;
-    root.add(tr);BT_CUBES.parts.push(tr);BT_CUBES.copies.push({trail:tr,off:ci/L.length});
-  });
+  // (v116) all the cubes' walk trails in ONE line-segment draw (was one THREE.Line per cube: 24 draws per pass). Each cube's
+  // trail is pre-transformed into the root frame; the index lists only the walked segments 0..j of each copy (rebuilt only when
+  // a copy's step changes), so what is drawn is exactly what the per-cube drawRange(0,j+2) showed.
+  if(W.pts.length>=2&&L.length){
+    const nSeg=W.pts.length-1, P=new Float32Array(L.length*(nSeg+1)*3), v=new THREE.Vector3();
+    for(let ci=0;ci<L.length;ci++) for(let i=0;i<=nSeg;i++){ v.copy(W.pts[i]).applyMatrix4(cubeM[ci]); P.set([v.x,v.y,v.z],(ci*(nSeg+1)+i)*3); }
+    const geo=new THREE.BufferGeometry(); geo.setAttribute('position',new THREE.BufferAttribute(P,3));
+    const IA=(L.length*(nSeg+1)>65535)?Uint32Array:Uint16Array, idx=new THREE.BufferAttribute(new IA(L.length*nSeg*2),1); idx.setUsage(THREE.DynamicDrawUsage);
+    geo.setIndex(idx); geo.setDrawRange(0,0);
+    const tr=new THREE.LineSegments(geo,M.trail); tr.frustumCulled=false; tr.name='BT_CubeTrails';
+    root.add(tr); BT_CUBES.parts.push(tr); BT_CUBES.trails={mesh:tr,nSeg,js:new Int32Array(L.length).fill(-2)};
+    L.forEach((c,ci)=>BT_CUBES.copies.push({ci,off:ci/L.length}));
+  }
   BT_CUBES.span=span;BT_CUBES.built=true;
 }
 function _btcHud(){
@@ -8396,14 +8403,20 @@ function btCubesUpdate(dt){
   const i=Math.floor(W.step);
   for(let k=W.index+1;k<=i;k++){if(W.events[k]&&W.events[k].length){W.events[k].forEach(_btcLogEvent);W.flare=1;}}
   W.index=i;W.flare=Math.max(0,W.flare-dt*2.5);
-  const m4=new THREE.Matrix4(), v=new THREE.Vector3(), sc=1+W.flare*0.9+Math.sin(now/310)*0.1;
+  const m4=B._m4||(B._m4=new THREE.Matrix4()), m5=B._m5||(B._m5=new THREE.Matrix4()), v=B._v||(B._v=new THREE.Vector3()), sc=1+W.flare*0.9+Math.sin(now/310)*0.1;   // (v116) scratch, no per-frame allocation
+  const TR=B.trails; let trDirty=false;
   B.copies.forEach((c,ci)=>{
     const st=(W.step+c.off*limit)%limit, j=Math.floor(st), f=st-j;
     v.lerpVectors(pts[j],pts[Math.min(j+1,limit)],f);
-    m4.makeTranslation(v.x,v.y,v.z);B.trav.setMatrixAt(ci,m4.clone().premultiply(B.cubeM[ci]));
+    m5.makeTranslation(v.x,v.y,v.z);B.trav.setMatrixAt(ci,m5.premultiply(B.cubeM[ci]));
     m4.makeScale(sc,sc,sc).setPosition(v);B.halo.setMatrixAt(ci,m4.premultiply(B.cubeM[ci]));
-    c.trail.geometry.setDrawRange(0,j+2);
+    if(TR&&TR.js[ci]!==j){ TR.js[ci]=j; trDirty=true; }
   });
+  if(TR&&trDirty){   // walked segments 0..j of each copy (= the old per-cube drawRange(0,j+2))
+    const a=TR.mesh.geometry.index, I=a.array, n1=TR.nSeg+1; let k=0;
+    for(let ci=0;ci<TR.js.length;ci++){ const j=Math.min(TR.js[ci],TR.nSeg-1), b=ci*n1; for(let q=0;q<=j;q++){ I[k++]=b+q; I[k++]=b+q+1; } }
+    a.needsUpdate=true; TR.mesh.geometry.setDrawRange(0,k);
+  }
   B.trav.instanceMatrix.needsUpdate=true;B.halo.instanceMatrix.needsUpdate=true;
   B.mats.traveler.color.set(W.flare>0.05?BT_CUBE_COL.head:BT_CUBE_COL.event);
   B.mats.halo.color.set(W.flare>0.05?BT_CUBE_COL.head:BT_CUBE_COL.path);
@@ -17231,11 +17244,12 @@ function renderWithPostFX(){
   const _spec=window.DMSpec&&DMSpec.on; if(_spec) try{ DMSpec.pre(flightCamera); }catch(e){}
   try{ if(galSky.ready) updateGalSky(); }catch(e){}
   try{ if(window.DMStarBubble) { const n=performance.now(), d=_sbT?(n-_sbT)/1000:1/60; _sbT=n; if(window.DMStar) DMStar.frame(flightCamera,d); if(window.DMMist) DMMist.frame(flightCamera,d); DMStarBubble.frame(flightCamera,flightScene,d); } }catch(e){ console.warn('[starbubble] '+(e&&e.stack||e)); }
+  try{ if(window.DMBtInterior&&DMBtInterior.pre) DMBtInterior.pre(flightCamera); }catch(e){}   // (v116) sealed? decided before the temple lighting (the glass probe waits while no glass is in view)
   try{ if(window.BTL&&BTL.preRender) BTL.preRender(flightRenderer,flightScene,flightCamera); }catch(e){ if(window.BTL) BTL._err=String(e&&e.stack||e).slice(0,300); }   // v110 temple lights/shadow cache/glass probe
   // (v116) below deck with no opening in view: the outside world is hidden for this render and the atmosphere pass skipped (ui/dm-bt-interior.js)
-  let _seal=false; try{ if(window.DMBtInterior){ DMBtInterior.tick(); _seal=DMBtInterior.begin(flightScene,flightCamera); } }catch(e){ _seal=false; }
+  let _seal=false, _btib=false; try{ if(window.DMBtInterior){ DMBtInterior.tick(); _btib=true; _seal=DMBtInterior.begin(flightScene,flightCamera); } }catch(e){ _seal=false; }
   try{ const _hs=_taHideShells(); try{ DMGpuProf.push('atmo'); let _ta=false; try{ if(!_seal) _ta=_trueAtmoRender(flightRenderer,flightScene,flightCamera); } finally{ DMGpuProf.pop(); } if(!_ta) flightRenderer.render(flightScene,flightCamera); } finally{ _taShowShells(_hs); } _shotGrab(flightRenderer); try{ DMGpuProf.tick&&DMGpuProf.tick(); }catch(e){} }
-  finally{ if(_seal) try{ DMBtInterior.end(flightScene); }catch(e){} if(_spec) try{ DMSpec.post(flightCamera); }catch(e){} }
+  finally{ if(_btib) try{ DMBtInterior.end(flightScene); }catch(e){} if(_spec) try{ DMSpec.post(flightCamera); }catch(e){} }
   const _rtMs = performance.now()-_rt0;
   if(!window._renderTimingSamples) window._renderTimingSamples=[];
   window._renderTimingSamples.push(_rtMs);
