@@ -127,7 +127,7 @@
 `;
     document.head.appendChild(css);
     ov = document.createElement('div'); ov.id = 'btt-ov'; ov.setAttribute('role', 'dialog'); ov.setAttribute('aria-label', 'Autumn terminal');
-    ov.innerHTML = '<div class="gl"><video muted loop playsinline preload="none"></video><iframe title="Autumn" allow="autoplay; clipboard-write; microphone" allowtransparency="true" referrerpolicy="strict-origin-when-cross-origin"></iframe>' +
+    ov.innerHTML = '<div class="gl"><video muted loop playsinline preload="none"></video><iframe title="Autumn" sandbox="allow-scripts allow-same-origin allow-forms allow-popups" allow="autoplay; clipboard-write" allowtransparency="true" referrerpolicy="strict-origin-when-cross-origin"></iframe>' +
       '<button class="x" type="button" aria-label="Close">\u2715</button><div class="hint">ESC TO CLOSE</div></div>';
     document.body.appendChild(ov);
     ov.querySelector('video').src = cfg.video; ov.querySelector('video').muted = true;

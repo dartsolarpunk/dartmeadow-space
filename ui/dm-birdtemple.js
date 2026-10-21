@@ -537,9 +537,14 @@
     b.addEventListener('touchstart', fire, { passive: false });
     b.addEventListener('mousedown', fire);
     window.addEventListener('keydown', e => {
-      if (e.repeat || !BTI.cur || !SHIP_WALK.active || window.DM_TERMINAL_OPEN) return;
-      if (e.code === 'KeyF' || (e.code === 'KeyE' && BTI.cur.zone === 'aim')) { e.preventDefault(); BTI.act(); }
-    });
+      if (!BTI.cur || !SHIP_WALK.active || window.DM_TERMINAL_OPEN) return;
+      if (e.code === 'KeyE' && BTI.cur.zone === 'aim') {
+        // E on an aimed target = USE only: swallowed before the game's key map, so it never also rolls
+        e.preventDefault(); e.stopImmediatePropagation();
+        try { if (typeof KEYS === 'object' && KEYS) KEYS['KeyE'] = false; } catch (er) { }
+        if (!e.repeat) BTI.act();
+      } else if (e.code === 'KeyF' && !e.repeat) { e.preventDefault(); BTI.act(); }
+    }, true);
   }
   function showHud(it) {
     const b = $('bti-f'); if (!b) return;
