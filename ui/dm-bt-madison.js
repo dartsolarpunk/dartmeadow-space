@@ -13,11 +13,13 @@
  */
 (function () {
   'use strict';
-  const URL_GLB = 'assets/bt-engineering/madison.glb?v=2', URL_HAIR = 'assets/bt-engineering/madison_hair.bin?v=2';
+  const URL_GLB = 'assets/bt-engineering/madison.glb?v=4', URL_HAIR = 'assets/bt-engineering/madison_hair.bin?v=4';
   const cfg = {
     // seat on the desk, temple glTF frame (= Blender (-6.55, 90.93, -20.75) → glTF (x, z, -y)); doll units → temple units
     pos: [-6.55, -20.75, -90.93], yaw: -0.24, scale: 1.1, seatDrop: 0.29,
-    near: 14, nearY: 5, waveAt: 4.5, selfLight: 0.22, eyeLight: 0.55, hair: true,
+    near: 14, nearY: 5, waveAt: 4.5, ixRadius: 4.2, tapR: 1.25,
+    // idle layer (only while near): breathing, blinks, small head turns; greetings on tap / F
+    breath: 0.06, sway: 0.035, headYaw: 0.45, headPitch: 0.12, turnEvery: [2.2, 4.8], blinkEvery: [1.8, 4.5], selfLight: 0.22, eyeLight: 0.55, hair: true,
     hairParams: { bodyColliders: false, widthRoot: 0.016, widthTip: 0.008, hairRadius: 0.012, gravity: 5.0, maxRootStep: 0.03 },
   };
   const MAD = { cfg, ready: false, root: null, mixer: null, hair: null, actions: {}, active: false };
@@ -109,7 +111,119 @@
     try { if (window.DMWarm && DMWarm.add) DMWarm.add('Madison doll', warm); } catch (e) { }
     try { await warm(); } catch (e) { }
     B.scene.add(holder); holder.updateMatrixWorld(true);                  // shown only once compiled
-    // per-frame driver rides on dm-birdtemple's update (only runs while she walks the ship)
+    // ───────── procedural layer: idle life + greetings (bone offsets on top of the Sit clip) ─────────
+    const bone = {}; doll.traverse(o => { if (o.isBone) bone[o.name] = o; });
+    const rest = new Map(); for (const k in bone) rest.set(bone[k], bone[k].quaternion.clone());
+    let eyeTex = null; doll.traverse(o => { if (o.isMesh) for (const m of [o.material].flat()) if (m && m.name === 'MAD_Eye' && m.map) eyeTex = m.map; });
+    if (eyeTex) { eyeTex.matrixAutoUpdate = true; eyeTex.offset.set(0, 0); eyeTex.updateMatrix(); }
+    const X = new THREE.Vector3(1, 0, 0), Y = new THREE.Vector3(0, 1, 0), Z = new THREE.Vector3(0, 0, 1);
+    const _q = new THREE.Quaternion(), _pq = new THREE.Quaternion(), _rq = new THREE.Quaternion(), _ax = new THREE.Vector3(), _v = new THREE.Vector3(), _w = new THREE.Vector3();
+    // rotate a bone about an axis given in the doll's own frame (doll faces +Z, +X her left, +Y up)
+    function rot(b, axis, ang) {
+      if (!b || !ang) return;
+      doll.getWorldQuaternion(_rq); b.parent.getWorldQuaternion(_pq);
+      _ax.copy(axis).applyQuaternion(_rq).applyQuaternion(_pq.invert());
+      b.quaternion.premultiply(_q.setFromAxisAngle(_ax, ang));
+    }
+    const rnd = (a, b) => a + Math.random() * (b - a), sm = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+    const I = { t: 0, yaw: 0, pitch: 0, tYaw: 0, tPitch: 0, nextTurn: 1.5, lookAriel: 0, blinkT: -1, nextBlink: 2, g: null, last: '' };
+    MAD.idle = I;
+    let charHead = null;
+    function arielHead(out) {   // world position of Ariel's head (her Head bone, else her root + her height)
+      try {
+        if (typeof CHAR === 'undefined' || !CHAR.root) return null;
+        if (charHead === null) charHead = CHAR.root.getObjectByName('Head') || CHAR.root.getObjectByName('mixamorig:Head') || CHAR.root.getObjectByName('mixamorigHead') || false;
+        if (charHead) return charHead.getWorldPosition(out);
+        return CHAR.root.getWorldPosition(out).add(_w.set(0, 1.6 * CHAR.root.getWorldScale(_v).y, 0));
+      } catch (e) { return null; }
+    }
+    const GREET = ['hello', 'wave', 'kick', 'shy'];
+    MAD.greet = function (kind) {
+      if (I.g && I.g.t < I.g.dur * 0.7) return false;
+      if (!kind) { const pool = GREET.filter(k => k !== I.last); kind = pool[(Math.random() * pool.length) | 0]; }
+      I.last = kind; I.g = { kind, t: 0, dur: kind === 'wave' ? 2.6 : kind === 'shy' ? 2.8 : 2.2 };
+      if (kind === 'wave' && wave) { wave.reset().play(); if (sit) wave.crossFadeFrom(sit, 0.3, false); }
+      if (kind === 'shy') I.blinkT = 0;
+      try { if (typeof sfx !== 'undefined' && sfx.chirp) sfx.chirp(); } catch (e) { }
+      return true;
+    };
+    function life(dt) {
+      I.t += dt; const t = I.t, g = I.g;
+      if (g) { g.t += dt; if (g.t >= g.dur) I.g = null; }
+      const env = g ? sm(0, 0.35, g.t) * (1 - sm(g.dur - 0.45, g.dur, g.t)) : 0;
+      // idle head turns: a new small glance every few seconds, sometimes straight at Ariel
+      if ((I.nextTurn -= dt) <= 0) {
+        I.nextTurn = rnd(cfg.turnEvery[0], cfg.turnEvery[1]);
+        I.lookAriel = Math.random() < 0.35 ? 1 : 0;
+        I.tYaw = rnd(-cfg.headYaw, cfg.headYaw); I.tPitch = rnd(-cfg.headPitch, cfg.headPitch * 0.6);
+      }
+      // look-at toward Ariel's head, in the doll frame
+      let lYaw = 0, lPitch = 0; const hp = arielHead(_v);
+      if (hp && bone.Head) {
+        doll.worldToLocal(hp); bone.Head.getWorldPosition(_w); doll.worldToLocal(_w); hp.sub(_w);
+        lYaw = Math.max(-1.0, Math.min(1.0, Math.atan2(hp.x, hp.z)));
+        lPitch = Math.max(-0.55, Math.min(0.25, -Math.atan2(hp.y, Math.hypot(hp.x, hp.z))));
+      }
+      let wLook = I.lookAriel * 0.85;
+      if (g && g.kind !== 'shy') wLook = Math.max(wLook, env);
+      const k = Math.min(1, dt * 3.2);
+      I.yaw += ((I.tYaw * (1 - wLook) + lYaw * wLook) - I.yaw) * k;
+      I.pitch += ((I.tPitch * (1 - wLook) + lPitch * wLook) - I.pitch) * k;
+      // breathing + a slow sway
+      const br = Math.sin(t * 1.9), sw = Math.sin(t * 0.73);
+      rot(bone.Spine01, X, -cfg.breath * 0.5 * br);
+      rot(bone.Spine, X, -cfg.breath * 0.5 * br);
+      rot(bone.LeftShoulder, Z, -0.04 * br); rot(bone.RightShoulder, Z, 0.04 * br);
+      rot(bone.Hips, Z, cfg.sway * sw);
+      // greetings
+      let roll = 0, yawX = 0, pitchX = 0; doll.position.y = 0;
+      if (g && g.kind === 'hello') { roll = 0.34 * env * (lYaw >= 0 ? 1 : -1); pitchX = 0.08 * Math.sin(g.t * 7) * env; }
+      if (g && g.kind === 'kick') {
+        const s = Math.sin(g.t * 11);
+        rot(bone.LeftLeg, X, -0.55 * s * env); rot(bone.RightLeg, X, 0.55 * s * env);
+        doll.position.y = 0.025 * Math.abs(Math.sin(g.t * 5.5)) * env; pitchX = -0.06 * env;
+      }
+      if (g && g.kind === 'shy') {
+        yawX = (I.yaw >= 0 ? -1 : 1) * 0.55 * env - I.yaw * env; pitchX = 0.42 * env; roll = 0.12 * env;
+        rot(bone.LeftArm, X, -1.15 * env); rot(bone.RightArm, X, -1.15 * env);
+        rot(bone.LeftForeArm, X, -0.95 * env); rot(bone.RightForeArm, X, -0.95 * env);
+        rot(bone.LeftArm, Y, -0.35 * env); rot(bone.RightArm, Y, 0.35 * env);
+      }
+      // head: split the turn between neck and head so it reads as a gentle, plush move
+      const yaw = I.yaw + yawX, pitch = I.pitch + pitchX;
+      rot(bone.neck, Y, yaw * 0.35); rot(bone.Head, Y, yaw * 0.65);
+      rot(bone.neck, X, pitch * 0.35); rot(bone.Head, X, pitch * 0.65);
+      rot(bone.Head, Z, roll);
+      // blink: swap the eye sheet to its closed half for ~0.13 s (double blink now and then; eyes shut while shy)
+      if (eyeTex) {
+        if ((I.nextBlink -= dt) <= 0) { I.blinkT = 0; I.nextBlink = Math.random() < 0.2 ? 0.28 : rnd(cfg.blinkEvery[0], cfg.blinkEvery[1]); }
+        let closed = false;
+        if (I.blinkT >= 0) { I.blinkT += dt; closed = I.blinkT < 0.13; if (!closed) I.blinkT = -1; }
+        if (g && g.kind === 'shy' && g.t > 0.4 && g.t < g.dur - 0.6) closed = true;
+        const ox = closed ? 0.5 : 0; if (eyeTex.offset.x !== ox) { eyeTex.offset.x = ox; eyeTex.updateMatrix(); }
+      }
+    }
+    // F / interact button: one more interactable in dm-birdtemple's list (its F bubble, key and nearest-pick do the rest)
+    const ix = { obj: holder, type: 'madison', prompt: 'SAY HI', radius: cfg.ixRadius, pos: new THREE.Vector3(cfg.pos[0], cfg.pos[1], cfg.pos[2]) };
+    try {
+      if (BTI.ix && !BTI.ix.includes(ix)) BTI.ix.push(ix);
+      const act = BTI.act;
+      BTI.act = function () { if (BTI.cur === ix) { MAD.greet(); return; } return act.apply(this, arguments); };
+    } catch (e) { }
+    // tap / click on her (canvas only, never swallows the event: the player carries on)
+    const ray = new THREE.Raycaster(), ndc = new THREE.Vector2(), sph = new THREE.Sphere();
+    const lbox = new THREE.Box3().setFromObject(doll); const lsph = lbox.getBoundingSphere(new THREE.Sphere());
+    holder.updateMatrixWorld(true); const cLocal = holder.worldToLocal(lsph.center.clone()), rLocal = lsph.radius / holder.getWorldScale(new THREE.Vector3()).x;
+    window.addEventListener('pointerdown', e => {
+      try {
+        if (!MAD.active || !e.target || e.target.tagName !== 'CANVAS' || typeof flightCamera === 'undefined' || !flightCamera) return;
+        const r = e.target.getBoundingClientRect(); ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+        ray.setFromCamera(ndc, flightCamera);
+        sph.center.copy(cLocal); holder.localToWorld(sph.center); sph.radius = rLocal * holder.getWorldScale(_w).x * cfg.tapR;
+        if (ray.ray.intersectsSphere(sph)) MAD.greet();
+      } catch (err) { }
+    }, { passive: true });
+    // per-frame driver rides on dm-birdtemple's update (only runs while she walks the ship, and only near the desk)
     const P = new THREE.Vector3(...cfg.pos);
     tick = function (dt) {
       try {
@@ -119,8 +233,11 @@
         if (!near) { MAD._waved = false; return; }
         const d = Math.hypot(L.x - P.x, L.z - P.z);
         if (d > cfg.waveAt * 2) MAD._waved = false;
-        if (wave && d < cfg.waveAt && !MAD._waved) { MAD._waved = true; wave.reset().play(); if (sit) wave.crossFadeFrom(sit, 0.35, false); }
-        mixer.update(Math.min(dt, 0.1));
+        if (d < cfg.waveAt && !MAD._waved) { MAD._waved = true; MAD.greet('wave'); }
+        dt = Math.min(dt, 0.1);
+        for (const [b, q] of rest) b.quaternion.copy(q);   // bones the clip doesn't key go back to rest before the offsets
+        mixer.update(dt);
+        life(dt);
       } catch (e) { if (!MAD._err) { MAD._err = 1; console.warn('[Madison] update', e); } }
     };
     MAD.ready = true;

@@ -106,8 +106,8 @@ cols = [
 meta = {'version': 2, 'count': N, 'points': K, 'guides': G, 'headBone': 'Head', 'space': 'head-local, glTF y-up, doll units (height 1.0)',
         'color': [0.02, 0.05, 0.5], 'roughness': 0.6, 'groups': ['hair'], 'colliders': cols,
         'headCenter': list(head_local(HC)),
-        'gradient': {'root': [0.006, 0.018, 0.33], 'tip': [0.09, 0.02, 0.36], 'tipStart': 0.6, 'streak': [0.30, 0.06, 0.62], 'streakFrac': 0.3, 'streakStart': 0.3},
-        'fuzz': {'sheen': 0.9, 'sheenRoughness': 0.6, 'sheenColor': [0.35, 0.30, 0.95], 'fringe': 0.45},
+        'gradient': {'root': [0.02, 0.07, 0.62], 'tip': [0.20, 0.05, 0.62], 'tipStart': 0.55, 'streak': [0.45, 0.12, 0.90], 'streakFrac': 0.3, 'streakStart': 0.3},
+        'fuzz': {'sheen': 0.9, 'sheenRoughness': 0.6, 'sheenColor': [0.35, 0.30, 0.95], 'fringe': 0.45, 'glow': 0.35},
         'note': 'Madison plush (dm-bt-engineering.js). Built by assets/blender/bt-engineering/build_madison_hair.py'}
 js = json.dumps(meta).encode()
 js += b' ' * ((4 - len(js) % 4) % 4)

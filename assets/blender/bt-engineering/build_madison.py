@@ -139,7 +139,7 @@ for s in (1, -1):
     tz = n.cross(tx).normalized() * -1
     for f in bm.faces:
         for l in f.loops:
-            p = l.vert.co - c; l[uvl].uv = (0.5 + p.dot(tx) / 0.13, 0.5 + p.dot(Vector((0, 0, 1))) / 0.14)
+            p = l.vert.co - c; l[uvl].uv = ((0.5 + p.dot(tx) / 0.13) * 0.5, 0.5 + p.dot(Vector((0, 0, 1))) / 0.14)   # left half of the open/closed sheet
     bm.to_mesh(e.data); bm.free(); eyes.append(e)
     # upper lid rim + lashes (tapered cards fanning out), lower lashes
     lash = []
