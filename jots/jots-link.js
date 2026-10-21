@@ -246,6 +246,7 @@
       }
     },
     async _waitForToken(dev, onTick, onBusy) {
+      this.vaultError = '';
       this.lastAnswer = '';
       const until = dev.expiresAt || (Date.now() + (dev.expires_in || 900) * 1000);
       let wait = Math.max(5, dev.interval || 5) * 1000, last = 0;   // GitHub's minimum is 5 s between checks
@@ -292,6 +293,7 @@
       throw new Error('The sign-in code expired — try again.');
     },
     async finish(d) {
+      this.vaultError = '';
       token = d.access_token;
       if (!d.username) {                      // bridge answered with just the token: look the player up ourselves
         const u = await gh('GET', '/user');
@@ -306,7 +308,7 @@
       emit('auth', { signedIn: true, name: identity.name });
       // Never let setting up the save repo hold the sign-in screen open.
       try { await Promise.race([vault.ensure(), new Promise((_, rej) => setTimeout(() => rej(new Error('repo setup timed out')), 30000))]); }
-      catch (e) { console.warn('[JOTS] vault:', e); this.vaultError = String(e && e.message || e); setTimeout(() => vault.ensure().catch(() => {}), 15000); }
+      catch (e) { console.warn('[JOTS] vault:', e); this.vaultError = String(e && e.message || e); setTimeout(() => vault.ensure().then((ok) => { if (ok) this.vaultError = ''; }).catch(() => {}), 15000); }
       return identity;
     },
     // Re-validate a stored token on load.
@@ -843,7 +845,6 @@
   // Back from approving on GitHub → check the sign-in straight away.
   document.addEventListener('visibilitychange', () => { if (document.hidden) auth._hiddenAt = Date.now(); else auth.pollNow(true); });
   window.addEventListener('pagehide', () => { auth._hiddenAt = Date.now(); });
-  window.addEventListener('blur', () => { auth._hiddenAt = Date.now(); });
   window.addEventListener('focus', () => auth.pollNow(true));
   window.addEventListener('pageshow', () => auth.pollNow(true));
   window.addEventListener('online', () => auth.pollNow(true));
