@@ -6284,6 +6284,42 @@ function _btHoldSync(){
 // so their shaders are compiled and uploaded before the first frame that needs them instead of mid-flight.
 // fn may return a promise. Steps are run once each, in order, after the built-in ones.
 window.DMWarm=window.DMWarm||{steps:[],add(name,fn){ this.steps.push([name,fn]); }};
+// ── Aboard occlusion (engine-level, v103) ─────────────────────────────
+// Several far-field layers draw with depthTest off (classic planet atmosphere shells, galaxy star/sprite sets): from open
+// space nothing is ever in front of them. Aboard the Bird Temple the hull is, and they drew straight through it (planets'
+// glow and the Sun visible through the deck and walls). While aboard, those materials depth-test like everything else;
+// both pipeline variants are compiled at warm-up, so the switch on boarding costs no compile. Materials whose vertex
+// stage is custom (full-screen lens passes) and sprites (labels/markers) are left alone. Only .depthTest is toggled.
+const _AOCC={mats:null,on:false};
+function _aoccCollect(){
+  const set=new Set();
+  try{ flightScene.traverse(o=>{
+    if(!(o.isMesh||o.isPoints)||o.isSprite) return;
+    const ms=Array.isArray(o.material)?o.material:[o.material];
+    for(const m of ms){ if(m&&m.depthTest===false&&!m.vertexNode&&!/^BTI_|^BT_/.test(m.name||'')) set.add(m); }
+  }); }catch(e){}
+  return [...set];
+}
+function _aoccSet(on){
+  if(!_AOCC.mats) _AOCC.mats=_aoccCollect();
+  for(const m of _AOCC.mats){ if(on){ if(m.depthTest===false){ m.depthTest=true; m._aocc=1; m.needsUpdate=true; } }
+    else if(m._aocc){ m.depthTest=false; m._aocc=0; m.needsUpdate=true; } }
+  _AOCC.on=on;
+}
+async function _aoccWarm(){
+  _AOCC.mats=_aoccCollect(); if(!_AOCC.mats.length) return;
+  _aoccSet(true);
+  try{ await flightRenderer.compileAsync(flightScene,flightCamera); } finally{ _aoccSet(false); }
+}
+function _aoccTick(){
+  try{
+    const aboard=(typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active)||!!(window.BTI&&(BTI.cur||BTI._depth>0));
+    if(aboard===_AOCC.on) return;
+    if(aboard) _AOCC.mats=_aoccCollect().concat((_AOCC.mats||[]).filter(m=>m._aocc));   // worlds built since warm-up
+    _aoccSet(aboard);
+  }catch(e){}
+}
+setInterval(_aoccTick,200);
 async function _flightWarmup(){
   if(typeof flightRenderer==='undefined'||!flightRenderer||!flightRenderer.compileAsync) return;
   const t0=performance.now(); let pill=null; window._dmWarming=true;
@@ -6308,7 +6344,8 @@ async function _flightWarmup(){
     ['planet mist',()=>window.DMMist&&DMMist.warm&&DMMist.warm(flightCamera)],
     ['galaxy',()=>galSky&&galSky.ready&&_gsPrecompile()],
     ['atmosphere',()=>_taWarm(flightRenderer,flightScene,flightCamera)],   // the scene as drawn through the true-atmosphere pass: its own shader variants
-    ['planet maps',()=>_wmWarmAll()],   // the map-dressed planet material each world wears from up close: same program, compiled now
+    ['planet maps',()=>_wmWarmAll()],
+    ['aboard occlusion',()=>_aoccWarm()],   // depth-tested twins of the far-field layers, for when the hull is in front of them   // the map-dressed planet material each world wears from up close: same program, compiled now
     ['uploading',async()=>{ try{ flightRenderer.render(flightScene,flightCamera); }catch(e){} }]   // one real pass: buffers, textures, bind groups
   ];
   try{ for(const st of (window.DMWarm.steps||[])) steps.splice(steps.length-1,0,st); }catch(e){}
