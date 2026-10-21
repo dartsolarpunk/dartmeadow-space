@@ -28,6 +28,7 @@
   function BTI_RE_test(n) { return /^BT[IE]_/.test(n || ''); }
 
   let key = null, fills = null, altar = null, cubeGlow = null, caus = null, probe = null, probeRT = null, causRT = null, causQuad = null, causT = null;
+  let causMode = 'light', causEmis = null, causMat = null, floorMats = [];
   let glassMats = [], glassMeshes = [], windows = [], extNode = null, intNode = null, snap = null;
   let face = 0, frame = 0, lastCaus = 0;
 
@@ -58,7 +59,16 @@
       return TS.vec3(c.mul(1.0), c.mul(0.96), c.mul(0.85)).add(0.06).mul(vig);
     })();
     causQuad = new THREE.QuadMesh(cm);
-    caus = new THREE.SpotLight(0xfff0d6, 0, 9, 0.55, 0.4, 1.5); caus.name = 'BT_Caustic'; caus.castShadow = false; caus.map = causRT.texture; mk(caus, 'BT_Caustic');
+    caus = new THREE.SpotLight(0xfff0d6, 0, 9, 0.55, 0.4, 1.5); caus.name = 'BT_Caustic'; caus.castShadow = false; mk(caus, 'BT_Caustic');
+    // caustic path, decided once before anything compiles (the light key never changes afterwards):
+    //   'light'    — the cookie is BT_Caustic.map (three's projected spot-light map, WebGPU + WebGL2 node backends)
+    //   'emissive' — fallback: the same GPU cookie projected in the floor materials' emissive (no light map at all)
+    // ?caustic=light|emissive overrides; iOS defaults to 'emissive' (untested there), as does any build without SpotLight.map.
+    try { const q = (location.search.match(/[?&]caustic=(light|emissive)/) || [])[1];
+      causMode = q || ((!('map' in caus)) || (window.GFX && GFX.isIOS) ? 'emissive' : 'light'); } catch (e) { causMode = 'light'; }
+    if (causMode === 'light') caus.map = causRT.texture;
+    causEmis = TS.uniform(0); causMat = TS.uniform(new THREE.Matrix4());
+    BTL.causticMode = causMode;
     // probe
     probeRT = new THREE.CubeRenderTarget(tr[1], { type: THREE.HalfFloatType, generateMipmaps: false });
     probe = new THREE.CubeCamera(0.03, 1e6, probeRT); probe.name = 'BT_GlassProbe';
@@ -125,9 +135,16 @@
         if (m.lightsNode !== want) { m.lightsNode = want; m.needsUpdate = true; n++; }
         if (!m.userData.btl) m.userData.btl = true;
       }
+      if (causMode === 'emissive') for (const m of (Array.isArray(o.material) ? o.material : [o.material])) if (m && /^BTI_Floor/.test(m.name || '') && !m.userData.btCaus && 'emissiveNode' in m) {
+        const TS = T().TSL; m.userData.btCaus = true; floorMats.push(m);
+        const pc = causMat.mul(TS.vec4(TS.positionWorld, 1.0)), uvp = pc.xy.div(pc.w);   // shadow.matrix already maps to 0..1
+        const inside = TS.step(0.0, pc.w).mul(TS.step(0.0, uvp.x)).mul(TS.step(uvp.x, 1.0)).mul(TS.step(0.0, uvp.y)).mul(TS.step(uvp.y, 1.0));
+        const cst = TS.texture(causRT.texture, uvp).rgb.mul(TS.vec3(1.0, 0.94, 0.84)).mul(causEmis.mul(inside).mul(0.55));
+        m.emissiveNode = (m.emissiveNode || TS.materialEmissive).add(cst); m.needsUpdate = true;
+      }
       if (window.GFX && GFX.shadows) o.receiveShadow = true;
     });
-    BTL.stats.glass = glassMeshes.length; BTL.stats.windows = windows.length;
+    BTL.stats.causticMode = causMode; BTL.stats.causticFloors = floorMats.length; BTL.stats.glass = glassMeshes.length; BTL.stats.windows = windows.length;
     return n;
   }
   BTL.apply = function (root, inside) { const n = apply(root, inside); if (root === (typeof BIRD_TEMPLE !== 'undefined' && BIRD_TEMPLE.group)) BTL.ready = true; return n; };
@@ -154,19 +171,23 @@
 
   // ── per frame (called right before the main render) ──
   const V = () => T().Vector3;
-  let _a, _b, _c, _d, _q, lastSig = { star: null, key: null };
-  function sigOf(arr) { return arr.map(v => v.toFixed(3)).join(','); }
+  let _a, _b, _c, _d, _q, _m4 = null;
+  const SIG = { star: new Float64Array(9).fill(NaN), sun: new Float64Array(3).fill(NaN) };
+  function sigMoved(S, i, x, y, z, tol) { return !(Math.abs(S[i] - x) <= tol && Math.abs(S[i + 1] - y) <= tol && Math.abs(S[i + 2] - z) <= tol); }
+  function sigStore(S, i, x, y, z) { S[i] = x; S[i + 1] = y; S[i + 2] = z; }
+  function setFill(F, e, k) { if (e) { F.position.setFromMatrixPosition(e.mw); F.color.copy(e.src.color); F.intensity = e.on * k; F.distance = Math.max(3, e.src.distance * 1.2); F.updateMatrixWorld(); } else F.intensity = 0; }
+  const PROBE_REFRESH_MS = 4000;
+  let probeAt = null, dirty = 63, lastFull = 0, lastFaceFrame = -99, casters = null; const holdA = [], holdN = [];
   const _upV = { v: null }; function _up(g) { const THREE = T(); if (!_upV.v) _upV.v = new THREE.Vector3(); g.getWorldQuaternion(_q); return _upV.v.set(0, 1, 0).applyQuaternion(_q); }
   function shipAboard() { return typeof SHIP_WALK !== 'undefined' && SHIP_WALK.active; }
   function arielPos(out) { try { if (CHAR && CHAR.root) { CHAR.root.getWorldPosition(out); return true; } } catch (e) {} return false; }
   BTL.preRender = function (r, scene, cam) {
-    BTL._calls = (BTL._calls || 0) + 1;
     if (BTL.debugCam) { try { const THREE = T(), m = BTL._dm || (BTL._dm = new THREE.Matrix4()), up = BTL._du || (BTL._du = new THREE.Vector3());
       const g0 = BIRD_TEMPLE.group; up.set(0, 1, 0); if (g0) up.applyQuaternion(g0.getWorldQuaternion(new THREE.Quaternion()));
       m.lookAt(BTL.debugCam.pos, BTL.debugCam.look, up); m.setPosition(BTL.debugCam.pos); cam.matrixWorldAutoUpdate = false; cam.matrixWorld.copy(m); cam.matrixWorldInverse.copy(m).invert(); } catch (e) {} }   // headless screenshots only (unset in play)
     else if (BTL._dm && cam.matrixWorldAutoUpdate === false) { cam.matrixWorldAutoUpdate = true; }
     if (!key || typeof BIRD_TEMPLE === 'undefined' || !BIRD_TEMPLE.group) return;
-    const THREE = T(); if (!_a) { _a = new THREE.Vector3(); _b = new THREE.Vector3(); _c = new THREE.Vector3(); _d = new THREE.Vector3(); _q = new THREE.Quaternion(); }
+    const THREE = T(); if (!_a) { _m4 = new THREE.Matrix4(); _a = new THREE.Vector3(); _b = new THREE.Vector3(); _c = new THREE.Vector3(); _d = new THREE.Vector3(); _q = new THREE.Quaternion(); }
     const g = BIRD_TEMPLE.group; frame++;
     if (!BTL.ready) { if (BIRD_TEMPLE.spawned && window.BTI && BTI.ready) { apply(g); BTL.ready = true; } else return; }   // normally done by the interior warm-up first
     if (!g.visible) { for (const L of [fills[0], fills[1], altar, cubeGlow, caus]) L.intensity = 0; return; }
@@ -176,59 +197,65 @@
     const camNear = camW.distanceTo(_a) < R0 * 3;
     const aboard = shipAboard();
     const hasA = arielPos(_b);
+    const near = camNear || aboard;
+    if (!near) {   // far from the ship: nothing below runs (no window loop, no signatures); star shadow back to the game's own updates
+      fills[0].intensity = fills[1].intensity = caus.intensity = 0;
+      try { const L = _charShadowLight; if (L && L.shadow && !L.shadow.autoUpdate) { L.shadow.autoUpdate = true; SIG.star[0] = NaN; } } catch (e) {}
+      altar.intensity = 0; cubeGlow.intensity = 0; return;
+    }
     // star direction at the ship (Sol at the origin)
     _c.copy(_a); if (_c.lengthSq() < 1e-6) _c.set(1, 0.3, 0.2); _c.normalize();   // from Sol toward the ship
-    // 1) star cascade: cache its shadow while at the temple
+    // 1) star cascade: cached while at the temple; numeric signature (light pos, ship quat, Ariel) with tolerances
     try {
       const L = _charShadowLight;
       if (L && L.shadow) {
-        if (camNear || aboard) {
-          L.updateMatrixWorld(); g.getWorldQuaternion(_q);
-          const s = sigOf([L.position.x, L.position.y, L.position.z, _q.x, _q.y, _q.z, _q.w * 0].concat(hasA ? [_b.x, _b.y, _b.z] : []));
-          L.shadow.autoUpdate = false; if (s !== lastSig.star) { lastSig.star = s; L.shadow.needsUpdate = true; BTL.stats.starRenders = (BTL.stats.starRenders || 0) + 1; }
-        } else if (!L.shadow.autoUpdate) { L.shadow.autoUpdate = true; lastSig.star = null; }
+        L.updateMatrixWorld(); g.getWorldQuaternion(_q);
+        const S = SIG.star; L.shadow.autoUpdate = false;
+        if (sigMoved(S, 0, L.position.x, L.position.y, L.position.z, 0.01) || sigMoved(S, 3, _q.x, _q.y, _q.z, 0.0005) || (hasA && sigMoved(S, 6, _b.x, _b.y, _b.z, 0.01))) {
+          sigStore(S, 0, L.position.x, L.position.y, L.position.z); sigStore(S, 3, _q.x, _q.y, _q.z); if (hasA) sigStore(S, 6, _b.x, _b.y, _b.z);
+          L.shadow.needsUpdate = true; BTL.stats.starRenders = (BTL.stats.starRenders || 0) + 1;
+        }
       }
     } catch (e) {}
-    // 2) two reading lights: the lit interior lamps nearest Ariel (only below deck), unshadowed
-    const pick = [];
+    // 2) two reading lights: the lit interior lamps nearest Ariel (only below deck), unshadowed; top-2 search, no allocations
+    let e0 = null, e1 = null, d0 = 49, d1 = 49;
     if (aboard && hasA) {
-      try { for (const e of _btHold.used) { if (!e.src || !(e.on > 0)) continue; _d.setFromMatrixPosition(e.mw); pick.push([_d.distanceToSquared(_b), e]); } } catch (e) {}
-      pick.sort((x, y) => x[0] - y[0]);
+      try { for (const e of _btHold.used) { if (!e.src || !(e.on > 0)) continue; _d.setFromMatrixPosition(e.mw); const d = _d.distanceToSquared(_b);
+        if (d < d0) { e1 = e0; d1 = d0; e0 = e; d0 = d; } else if (d < d1) { e1 = e; d1 = d; } } } catch (e) {}
     }
-    for (let i = 0; i < 2; i++) {
-      const F = fills[i], it = pick[i];
-      if (it && it[0] < 49) { F.position.setFromMatrixPosition(it[1].mw); F.color.copy(it[1].src.color); F.intensity = it[1].on * (i ? 0.7 : 1.0); F.distance = Math.max(3, it[1].src.distance * 1.2); F.updateMatrixWorld(); }
-      else F.intensity = 0;
-    }
-    // outside: the altar light and the session cubes' glow (only while the temple is shown)
+    setFill(fills[0], e0, 1.0); setFill(fills[1], e1, 0.7);
+    // outside: the altar light and the session cubes' glow
     try { const an = BIRD_TEMPLE._altarNode || (BIRD_TEMPLE._altarNode = (typeof shipNode === 'function' && shipNode(g, 'Altar Group')) || null);
       if (an) { an.updateWorldMatrix(true, false); altar.position.setFromMatrixPosition(an.matrixWorld); altar.position.addScaledVector(_up(g), 0.45); altar.intensity = 6; altar.updateMatrixWorld(); } else altar.intensity = 0; } catch (e) { altar.intensity = 0; }
     try { const cr = (typeof BT_CUBES !== 'undefined') && BT_CUBES.root; if (cr && cr.visible) { cr.updateWorldMatrix(true, false); cubeGlow.position.setFromMatrixPosition(cr.matrixWorld); cubeGlow.intensity = 3; cubeGlow.updateMatrixWorld(); } else cubeGlow.intensity = 0; } catch (e) { cubeGlow.intensity = 0; }
-    // 3) caustic cookie through the window nearest Ariel (or the camera)
-    const ref = hasA && aboard ? _b : camW; let w = null, wd = 1e9;
-    for (const it of windows) { it.o.getWorldPosition(it.c); const d = it.c.distanceToSquared(ref); if (d < wd) { wd = d; w = it; } }
-    BTL._stage = 'caustic';
+    // 3) window centres (ship-relative, so refreshed only while near), nearest to Ariel (caustic) and to the camera (probe)
+    const ref = hasA && aboard ? _b : camW; let w = null, wd = 1e9, wc = null, cd = 1e9;
+    for (const it of windows) { it.o.getWorldPosition(it.c); const d = it.c.distanceToSquared(ref); if (d < wd) { wd = d; w = it; } const dc = it.c.distanceToSquared(camW); if (dc < cd) { cd = dc; wc = it; } }
     const tr = TIERS[tier()];
     if (aboard && w && wd < 100) {
       caus.position.copy(w.c).addScaledVector(_c, -1.2); caus.target.position.copy(w.c).addScaledVector(_c, 4);
       caus.updateMatrixWorld(); caus.target.updateMatrixWorld();
-      caus.intensity = 6;
+      if (causMode === 'light') caus.intensity = 6; else { caus.intensity = 0; causEmis.value = 1; caus.shadow.updateMatrices(caus); causMat.value.copy(caus.shadow.matrix); }
       const now = performance.now();
       if (now - lastCaus > 1000 / tr[3]) { lastCaus = now; try { renderCaustic(r, now / 1000); } catch (e) {} }
-    } else caus.intensity = 0;
-    BTL._stage = 'probe';
-    // 4) glass probe: one face per slice, at the window nearest the camera
-    if (camNear && w && probe && frame % tr[2] === 0) {
-      let wc = null, cd = 1e9; for (const it of windows) { const d = it.c.distanceToSquared(camW); if (d < cd) { cd = d; wc = it; } }
-      probe.position.copy(wc.c); probe.updateMatrixWorld(true);
-      const hold = []; scene.traverse(o => { if (o.isLight && o.shadow && o.castShadow) { hold.push([o, o.shadow.autoUpdate, o.shadow.needsUpdate]); o.shadow.autoUpdate = false; o.shadow.needsUpdate = false; } });
-      for (const m of glassMeshes) m.visible = false;
-      const prev = r.getRenderTarget(), pac = r.autoClear;
-      const tp = performance.now();
-      try { r.setRenderTarget(probeRT, face); r.autoClear = true; r.render(scene, probe.children[face]); BTL.stats.probeMs = Math.round(performance.now() - tp); }
-      catch (e) {}
-      finally { r.setRenderTarget(prev); r.autoClear = pac; for (const m of glassMeshes) m.visible = true; for (const [o, a, n] of hold) { o.shadow.autoUpdate = a; o.shadow.needsUpdate = n; } }
-      face = (face + 1) % 6; BTL.stats.probeFaces = (BTL.stats.probeFaces || 0) + 1;
+    } else { caus.intensity = 0; if (causEmis) causEmis.value = 0; }
+    // 4) glass probe: ON DEMAND. All 6 faces are marked dirty when the probe changes window or the star direction moves;
+    //    a slow refresh re-marks them every few seconds (the world drifts). At most one face per `every` frames.
+    if (camNear && wc && probe) {
+      if (wc !== probeAt || sigMoved(SIG.sun, 0, _c.x, _c.y, _c.z, 0.002)) { probeAt = wc; sigStore(SIG.sun, 0, _c.x, _c.y, _c.z); dirty = 63; }
+      const now = performance.now(); if (!dirty && now - lastFull > PROBE_REFRESH_MS) dirty = 63;
+      if (dirty && frame - lastFaceFrame >= Math.max(2, tr[2] + 1)) {
+        while (!(dirty & (1 << face))) face = (face + 1) % 6;
+        if (face === 0 || dirty === 63) probe.position.copy(wc.c), probe.updateMatrixWorld(true);
+        if (!casters) { casters = []; scene.traverse(o => { if (o.isLight && o.shadow && o.castShadow !== undefined) casters.push(o); }); }   // cached: the scene's light set is fixed
+        for (let i = 0; i < casters.length; i++) { const o = casters[i]; holdA[i] = o.shadow.autoUpdate; holdN[i] = o.shadow.needsUpdate; o.shadow.autoUpdate = false; o.shadow.needsUpdate = false; }
+        for (const m of glassMeshes) m.visible = false;
+        const prev = r.getRenderTarget(), pac = r.autoClear, tp = performance.now();
+        try { r.setRenderTarget(probeRT, face); r.autoClear = true; r.render(scene, probe.children[face]); BTL.stats.probeMs = Math.round(performance.now() - tp); }
+        catch (e) {}
+        finally { r.setRenderTarget(prev); r.autoClear = pac; for (const m of glassMeshes) m.visible = true; for (let i = 0; i < casters.length; i++) { casters[i].shadow.autoUpdate = holdA[i]; casters[i].shadow.needsUpdate = holdN[i]; } }
+        dirty &= ~(1 << face); if (!dirty) lastFull = now; lastFaceFrame = frame; face = (face + 1) % 6; BTL.stats.probeFaces = (BTL.stats.probeFaces || 0) + 1;
+      }
     }
   };
   BTL.afterSync = function () {};

@@ -6255,6 +6255,9 @@ function _btReserveLights(n){
   while(_btHold.free.length+_btHold.used.filter(e=>e.Q).length<n){ const l=new THREE.PointLight(0xffffff,0,1,2); l.userData.btStandIn=true; l.castShadow=false; l.matrixAutoUpdate=false; l.matrixWorldAutoUpdate=false; _btHold.group.add(l); _btHold.free.push(l); }
 }
 function _btAdoptLights(root){
+  // (v114) the temple brings no lights any more (GLB lights stripped at load; altar/rig/shard lamps removed; its pool lives in
+  // ui/dm-bt-lighting.js and is made before the warm-up). Anything still found is removed, never adopted, so the key stays fixed.
+  { const st=[]; root.traverse(o=>{ if(o.isLight&&!(o.userData&&o.userData.bti)) st.push(o); }); st.forEach(l=>{ if(l.parent) l.parent.remove(l); }); if(st.length) console.warn('[Bird Temple] removed',st.length,'unexpected lights'); return; }
   const ls=[]; root.traverse(o=>{ if(o.isPointLight&&!(o.userData&&o.userData.bti)) ls.push(o); });
   _btReserveLights(_btHold.used.filter(e=>e.Q).length+ls.length);
   ls.forEach(L=>{ const Q=_btHold.free.shift(); if(!Q||!L.parent) return;
@@ -7953,6 +7956,9 @@ async function buildSolarSystem(){
   // fails fetch on Safari/iOS (and many HTTP clients), leaving group null forever.
   _getGLBLoader().load(encodeURI('Bird Temple Interior.glb'), gltf=>{   // original model + hatch, three decks (ui/dm-birdtemple.js)
     const t=gltf.scene;
+    // (v114) light budget / fixed light key: any light that ships inside the GLB (KHR_lights_punctual or a stray lamp) is
+    // removed here, before the warm-up and before _btAdoptLights, so nothing can add a light to the scene after compile.
+    try{ const _gl=[]; t.traverse(o=>{ if(o.isLight) _gl.push(o); }); _gl.forEach(l=>{ if(l.parent) l.parent.remove(l); }); if(_gl.length) console.log('[Bird Temple] stripped',_gl.length,'GLB lights'); }catch(e){}
     t.scale.setScalar(1); // raw model scale — see wrapper group below for the real scale
     t.position.set(0,0,0);
     t.traverse(o=>{ if(o.isMesh){ o.castShadow=GFX.shadows; o.receiveShadow=GFX.shadows; }});
