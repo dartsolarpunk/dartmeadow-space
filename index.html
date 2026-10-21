@@ -6321,6 +6321,7 @@ async function _flightWarmup(){
   try{ for(const o of _unculled) o.frustumCulled=true; }catch(e){}
   try{ if(pill) pill.remove(); }catch(e){}
   try{ window._warmupMs=Math.round(performance.now()-t0); window._dmWarming=false; }catch(e){}
+  try{ setTimeout(_wmKickHome,500); }catch(e){}
 }
 let _flightLoopCv=null,_flightLoopLast=0,_csDirV=null;
 // Frame counter used by the flight loop's render-throttle during character
@@ -17324,6 +17325,13 @@ async function _wmWarmAll(){
   if(!back.length) return;
   try{ await flightRenderer.compileAsync(flightScene,flightCamera); }
   finally{ for(const [o,m] of back) o.material=m; }
+}
+// Earth wears its real map from the first sight, not only once you are within 90 R: before, the far views showed the
+// generic placeholder colouring (blocky ice sheet) until the map was requested on approach. The map is built in slices
+// between frames (worldMapFor), so starting it right after warm-up costs no frame.
+function _wmKickHome(){
+  try{ for(const b of (celestialBodies||[])){ if(!b||b.name!=='Earth'||b._wmReq||!b.mesh) continue; b._wmReq=true;
+    worldMapFor(b,m=>{ b._wm=m; _applyWorldMapToFlightBody(b,m); }); } }catch(e){ console.warn('[worldmap] home',e); }
 }
 function _applyWorldMapToFlightBody(b,m){
   const W=window;
