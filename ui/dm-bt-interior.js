@@ -43,7 +43,7 @@
     g.updateMatrixWorld(true); const inv = new THREE.Matrix4().copy(g.matrixWorld).invert();
     g.traverse(o => {
       if (!o.isMesh || !o.geometry) return; const m = Array.isArray(o.material) ? o.material[0] : o.material;
-      if (!m || !/glass|window/i.test(m.name || '') || /Holo/i.test(m.name || '')) return;
+      if (!m || !/glass|window/i.test(m.name || '') || /Holo|^FX_BTT/i.test(m.name || '')) return;   // (v124) not Madison's holo terminal (#173)
       if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
       out.push(o.geometry.boundingBox.clone().applyMatrix4(M4.multiplyMatrices(inv, o.matrixWorld)));
     });
@@ -125,6 +125,7 @@
     if (occ.map.size > 256) occ.map.delete(occ.map.keys().next().value);
     occ.map.set(key, res);
   }
+  S.rayHit = function (ox, oy, oz, dx, dy, dz, far) { if (typeof TCOL === 'undefined' || !TCOL.T) return -2; return rayHit(ox, oy, oz, dx, dy, dz, far); };   // temple-local; -1 = clear, -2 = no soup
   S._occ = occ; S._occRun = function (cx, cy, cz) { _tcolBuild(); const t0 = performance.now(); const it = occJob('t', cx, cy, cz, S._boxes); let n = 0; while (!it.next().done) n++; return { ms: performance.now() - t0, rays: n, res: Array.from(occ.map.get('t')) }; };
   function occStep() {
     if (!occ.job) return;

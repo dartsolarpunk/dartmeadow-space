@@ -989,9 +989,10 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-bt-engineering.js?v=5" defer></script>
 <script src="ui/dm-bt-madison.js?v=5" defer></script>
 <script src="ui/dm-bt-terminal.js?v=1" defer></script>
-<script src="ui/dm-bt-lighting.js?v=118" defer></script>
+<script src="ui/dm-bt-lighting.js?v=124" defer></script>
 <script src="ui/dm-bt-cargocam.js?v=1" defer></script>
-<script src="ui/dm-bt-interior.js?v=119" defer></script>
+<script src="ui/dm-bt-interior.js?v=124" defer></script>
+<script src="ui/dm-bt-bake.js?v=124" defer></script>
 </head>
 <body>
 <!-- LOADING -->
@@ -6359,6 +6360,7 @@ const _btiWarmIv=setInterval(async()=>{
     if(window.BTL&&!(window.BTI&&BTI.ready)) return;   // v107: interior materials final first
     try{ if(window.BTL&&BTL.apply) BTL.apply(BIRD_TEMPLE.group); }catch(e){ console.warn('[BTL] apply',e); }   // light lists + glass set before the compile
     _btiWarmed=true; clearInterval(_btiWarmIv);
+    try{ if(window.DMBtBake&&DMBtBake.on){ const d=await DMBtBake.load(); if(d) DMBtBake.apply(); } }catch(e){ console.warn('[bake] apply',e); }   // (v120) baked GI before the compile below
     const hid=[], unc=[];
     BIRD_TEMPLE.group.traverse(o=>{ if(!o.isMesh) return; const m=Array.isArray(o.material)?o.material[0]:o.material;
       if(m&&/^BTI_/.test(m.name||'')&&!o.visible){ hid.push(o); o.visible=true; } if(o.frustumCulled){ unc.push(o); o.frustumCulled=false; } });
@@ -6411,7 +6413,7 @@ async function _flightWarmup(){
   try{ window._warmupMs=Math.round(performance.now()-t0); window._dmWarming=false; }catch(e){}
   try{ setTimeout(_wmKickHome,500); }catch(e){}
 }
-let _flightLoopCv=null,_flightLoopLast=0,_csDirV=null,_csTp=null,_csCp=null;
+let _flightLoopCv=null,_flightLoopLast=0,_csDirV=null,_csTp=null,_csCp=null,_csAp=null;
 // Frame counter used by the flight loop's render-throttle during character
 // loading (see the _flightFrameCounter comment in _startFlightLoop). This
 // declaration was missing entirely, which made every read of it throw.
@@ -6515,10 +6517,16 @@ function _startFlightLoop(){
         const _bt=(typeof BIRD_TEMPLE!=='undefined')?BIRD_TEMPLE:null, _btR=_bt&&_bt._R0;
         let _btNear=false;
         if(_bt&&_bt.group&&_btR){ const tp=_bt.group.getWorldPosition(_csTp||(_csTp=new THREE.Vector3())); _btNear=SHIP_WALK.active||tp.distanceTo(boardFlight.position)<_btR*2.5; }
-        const sc=_charShadowLight.shadow.camera, want=_btNear?Math.min(_btR*0.75,60):6;
+        // (v124) one map, fitted by distance: camera close to Ariel aboard -> a tight box on her (crisp self/board shadows);
+        // camera pulled back -> the whole ship (hull, top deck, decks). Tiers 0/1 (Mali/iPhone) cap the box at 0.6 R (sharper, cheaper).
+        const _hiT=(GFX.shadowSize||1024)>=2048, _shipW=_btR*(_hiT?1.15:0.6), _arW=_btR*0.22;
+        let _f=1; const _ap=_csAp||(_csAp=new THREE.Vector3());
+        if(_btNear&&SHIP_WALK.active&&CHAR&&CHAR.root&&CHAR.root.parent){ CHAR.root.getWorldPosition(_ap); const cd=flightCamera.position.distanceTo(_ap); _f=Math.min(1,Math.max(0,(cd-_btR*0.08)/(_btR*0.5))); } else if(_btNear) _bt.group.getWorldPosition(_ap);
+        const _wq=_btNear?Math.round((_arW+(_shipW-_arW)*_f)*4)/4:6;   // quantised so the fit only re-sizes in steps
+        const sc=_charShadowLight.shadow.camera, want=_wq;
         // (v118) more normal bias at the temple: no acne on Ariel's face, neck and hair
         if(Math.abs(sc.right-want)>1e-3){ sc.left=-want; sc.right=want; sc.top=want; sc.bottom=-want; sc.far=_btNear?want*6:20; sc.updateProjectionMatrix(); _charShadowLight.shadow.bias=_btNear?-0.0008:-0.0015; _charShadowLight.shadow.normalBias=_btNear?want*0.005:0; }
-        const bp=_csCp||(_csCp=new THREE.Vector3()); if(_btNear&&SHIP_WALK.active&&CHAR&&CHAR.root&&CHAR.root.parent) CHAR.root.getWorldPosition(bp); else bp.copy(boardFlight.position);   // scratch copy: the board's own position is never touched
+        const bp=_csCp||(_csCp=new THREE.Vector3()); if(_btNear){ _bt.group.getWorldPosition(bp); bp.lerp(_ap,1-_f); } else bp.copy(boardFlight.position);   // (v124) ship centre <-> Ariel by the same blend   // scratch copy: the board's own position is never touched
         if(_btNear){ const tx=want*2/Math.max(256,GFX.shadowSize||1024); bp.set(Math.round(bp.x/tx)*tx,Math.round(bp.y/tx)*tx,Math.round(bp.z/tx)*tx); }
         const dir=_csDirV||(_csDirV=new THREE.Vector3()); if(bp.lengthSq()>0.001) dir.copy(bp).normalize(); else dir.set(1,0.3,0.2).normalize();   // scratch: no per-frame allocation
         _charShadowLight.position.copy(bp).addScaledVector(dir,-(sc.far*0.5));
@@ -8139,7 +8147,7 @@ async function buildSolarSystem(){
     wrapper.visible=false; // hidden until it has a real, randomized, safe spawn point
     flightScene.add(wrapper);
     try{ _btAdoptLights(wrapper); }catch(e){ console.warn('[Bird Temple] light stand-ins:',e); }
-    BIRD_TEMPLE.group=wrapper;
+    BIRD_TEMPLE.group=wrapper; BIRD_TEMPLE._glb=t;   // (v120) the GLB root: baked lightmap data is in its space (ui/dm-bt-bake.js)
     try{btCubesInit(wrapper,SHIP_SCALE);}catch(e){console.warn('[Bird Temple] session cubes:',e);}
     // v91: the temple is added hidden and was never precompiled, so its (new interior) pipelines compiled lazily
     // the first frame it showed up (multi-second hitch on Safari WebGPU). Compile it off to the side once the
@@ -14552,7 +14560,7 @@ window.dmSceneText=function(){
     return {platform:_dmPlatform(),app:(window.DMAndroid&&DMAndroid.version)?DMAndroid.version():null,webview:m[2]||null,
       backend:real===null?'not-started':real?'WebGPU':'WebGL2-fallback',navGpu:!!navigator.gpu,gpu:g.renderer||'',vendor:g.vendor||'',
       gpuClass:g.gpuClass,score:g.score,preset:g.preset,resScale:g.resScale,cores:navigator.hardwareConcurrency||0,mem:navigator.deviceMemory||0,
-      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:((String(window._dmSwCache||'').match(/engine-(v\d+)/)||[])[1]?'sw-'+String(window._dmSwCache).match(/engine-(v\d+)/)[1]:'sw-v119'),swCache:window._dmSwCache||null,lastGpuLost:(function(){ try{ return JSON.parse(localStorage.getItem('dm_lastGpuLost')||'null'); }catch(e){ return null; } })(),hair:(function(){ try{ const H=window.DART_HAIR; return H?{mode:H.stats.mode||'cpu',gcReason:H.stats.gpuFail||null,check:H.stats.gpuCheck||null,ms:+(H.stats.ms||0).toFixed(2),drawn:H.stats.drawn}:null; }catch(e){ return null; } })(),ua:navigator.userAgent};
+      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:((String(window._dmSwCache||'').match(/engine-(v\d+)/)||[])[1]?'sw-'+String(window._dmSwCache).match(/engine-(v\d+)/)[1]:'sw-v124'),swCache:window._dmSwCache||null,lastGpuLost:(function(){ try{ return JSON.parse(localStorage.getItem('dm_lastGpuLost')||'null'); }catch(e){ return null; } })(),hair:(function(){ try{ const H=window.DART_HAIR; return H?{mode:H.stats.mode||'cpu',gcReason:H.stats.gpuFail||null,check:H.stats.gpuCheck||null,ms:+(H.stats.ms||0).toFixed(2),drawn:H.stats.drawn}:null; }catch(e){ return null; } })(),ua:navigator.userAgent};
   }
   function flush(){
     const f=win.f; win.f=[]; const t0=win.t0; win.t0=performance.now();
@@ -17256,7 +17264,7 @@ function renderWithPostFX(){
   try{ if(window.DMBtInterior&&DMBtInterior.pre) DMBtInterior.pre(flightCamera); }catch(e){}   // (v116) sealed? decided before the temple lighting (the glass probe waits while no glass is in view)
   try{ if(window.BTL&&BTL.preRender) BTL.preRender(flightRenderer,flightScene,flightCamera); }catch(e){ if(window.BTL) BTL._err=String(e&&e.stack||e).slice(0,300); }   // v110 temple lights/shadow cache/glass probe
   // (v116) below deck with no opening in view: the outside world is hidden for this render and the atmosphere pass skipped (ui/dm-bt-interior.js)
-  let _seal=false, _btib=false; try{ if(window.DMBtInterior){ DMBtInterior.tick(); _btib=true; _seal=DMBtInterior.begin(flightScene,flightCamera); } }catch(e){ _seal=false; }
+  let _seal=false, _btib=false; try{ if(window.DMBtBake) DMBtBake.tick(); }catch(e){} try{ if(window.DMBtInterior){ DMBtInterior.tick(); _btib=true; _seal=DMBtInterior.begin(flightScene,flightCamera); } }catch(e){ _seal=false; }
   try{ const _hs=_taHideShells(); try{ DMGpuProf.push('atmo'); let _ta=false; try{ if(!_seal) _ta=_trueAtmoRender(flightRenderer,flightScene,flightCamera); } finally{ DMGpuProf.pop(); } if(!_ta) flightRenderer.render(flightScene,flightCamera); } finally{ _taShowShells(_hs); } _shotGrab(flightRenderer); try{ DMGpuProf.tick&&DMGpuProf.tick(); }catch(e){} }
   finally{ if(_btib) try{ DMBtInterior.end(flightScene); }catch(e){} if(_spec) try{ DMSpec.post(flightCamera); }catch(e){} }
   const _rtMs = performance.now()-_rt0;
