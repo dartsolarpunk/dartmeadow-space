@@ -979,8 +979,9 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-menuscene.js?v=7" defer></script>
 <script src="ui/dm-starbubble.js?v=3" defer></script>
 <script src="ui/dm-birdtemple.js?v=1" defer></script>
-<script src="ui/dm-bt-engineering.js?v=4" defer></script>
-<script src="ui/dm-bt-madison.js?v=2" defer></script>
+<script src="ui/dm-bt-engineering.js?v=5" defer></script>
+<script src="ui/dm-bt-madison.js?v=3" defer></script>
+<script src="ui/dm-bt-lighting.js?v=1" defer></script>
 </head>
 <body>
 <!-- LOADING -->
@@ -6250,12 +6251,12 @@ const _btHold={group:null,free:[],used:[]};
 function _btReserveLights(n){
   if(typeof flightScene==='undefined'||!flightScene||typeof THREE==='undefined') return;
   if(!_btHold.group){ const g=new THREE.Group(); g.name='JOTS_BTLightHold'; flightScene.add(g); _btHold.group=g;
-    const prev=flightScene.onBeforeRender; flightScene.onBeforeRender=function(){ try{ _btHoldSync(); }catch(e){} if(typeof prev==='function') return prev.apply(this,arguments); }; }
-  while(_btHold.free.length+_btHold.used.length<n){ const l=new THREE.PointLight(0xffffff,0,1,2); l.userData.btStandIn=true; l.castShadow=false; l.matrixAutoUpdate=false; l.matrixWorldAutoUpdate=false; _btHold.group.add(l); _btHold.free.push(l); }
+    const prev=flightScene.onBeforeRender; flightScene.onBeforeRender=function(){ try{ _btHoldSync(); }catch(e){} try{ if(window.BTL&&BTL.afterSync) BTL.afterSync(); }catch(e){} if(typeof prev==='function') return prev.apply(this,arguments); }; }
+  while(_btHold.free.length+_btHold.used.filter(e=>e.Q).length<n){ const l=new THREE.PointLight(0xffffff,0,1,2); l.userData.btStandIn=true; l.castShadow=false; l.matrixAutoUpdate=false; l.matrixWorldAutoUpdate=false; _btHold.group.add(l); _btHold.free.push(l); }
 }
 function _btAdoptLights(root){
   const ls=[]; root.traverse(o=>{ if(o.isPointLight&&!(o.userData&&o.userData.bti)) ls.push(o); });
-  _btReserveLights(_btHold.used.length+ls.length);
+  _btReserveLights(_btHold.used.filter(e=>e.Q).length+ls.length);
   ls.forEach(L=>{ const Q=_btHold.free.shift(); if(!Q||!L.parent) return;
     Q.color.copy(L.color); Q.distance=L.distance; Q.decay=L.decay; Q.castShadow=L.castShadow; Q.name=L.name||'BT_Light';
     L.updateMatrix(); const e={Q,P:L.parent,local:L.matrix.clone(),base:L.intensity,vis:null};
@@ -6268,15 +6269,15 @@ const BT_INTERIOR_LIGHTS=24;
 function _btAdoptInterior(){
   const B=window.BTI; if(!B||!B.ready||_btHold.btiDone||!_btHold.group) return; _btHold.btiDone=true;
   const ls=(B.lights||[]).map(x=>x&&x.L).filter(L=>L&&L.isPointLight&&L.parent);
-  _btReserveLights(_btHold.used.length+ls.length);
-  ls.forEach(L=>{ const Q=_btHold.free.shift(); if(!Q) return; Q.castShadow=L.castShadow; Q.distance=L.distance; Q.decay=L.decay; Q.name=L.name||'BTI_Light';
-    L.updateMatrix(); const e={Q,P:L.parent,local:L.matrix.clone(),base:0,vis:null,src:L}; L.parent.remove(L); _btHold.used.push(e); });
+  // (v110) no stand-ins: the 24 interior lamps become virtual lamps (position/colour/strength tracked here, never in the
+  // scene's light list). ui/dm-bt-lighting.js feeds the ones nearest Ariel into its fixed key/fill/rim/practical pool.
+  ls.forEach(L=>{ L.updateMatrix(); const e={Q:null,P:L.parent,local:L.matrix.clone(),base:0,vis:null,src:L,mw:new THREE.Matrix4(),on:0}; L.parent.remove(L); _btHold.used.push(e); });
 }
 function _btHoldSync(){
   if(!_btHold.btiDone&&window.BTI&&BTI.ready) _btAdoptInterior();
   for(let i=0;i<_btHold.used.length;i++){ const e=_btHold.used[i];
     if(e.src){ let v=e.src.visible, q=e.P; while(v&&q){ if(!q.visible) v=false; if(!q.parent&&q!==flightScene) v=false; q=q.parent; }
-      e.Q.intensity=v?e.src.intensity:0; if(v){ e.Q.color.copy(e.src.color); e.Q.distance=e.src.distance; e.P.updateWorldMatrix(true,false); e.Q.matrixWorld.multiplyMatrices(e.P.matrixWorld,e.local); } continue; }
+      e.on=v?e.src.intensity:0; if(v){ e.P.updateWorldMatrix(true,false); e.mw.multiplyMatrices(e.P.matrixWorld,e.local); } continue; }
     let v=true, q=e.P; while(q){ if(!q.visible){ v=false; break; } if(!q.parent&&q!==flightScene) v=false; q=q.parent; }
     if(v!==e.vis){ e.vis=v; e.Q.intensity=v?e.base:0; }
     if(v){ e.P.updateWorldMatrix(true,false); e.Q.matrixWorld.multiplyMatrices(e.P.matrixWorld,e.local); }
@@ -6342,12 +6343,16 @@ let _btiWarmed=false;
 const _btiWarmIv=setInterval(async()=>{
   try{
     if(_btiWarmed||window._dmWarming||typeof BIRD_TEMPLE==='undefined'||!BIRD_TEMPLE.group||!flightRenderer||!flightRenderer.compileAsync) return;
+    if(window.BTL&&!(window.BTI&&BTI.ready)) return;   // v107: interior materials final first
+    try{ if(window.BTL&&BTL.apply) BTL.apply(BIRD_TEMPLE.group); }catch(e){ console.warn('[BTL] apply',e); }   // light lists + glass set before the compile
     _btiWarmed=true; clearInterval(_btiWarmIv);
     const hid=[], unc=[];
     BIRD_TEMPLE.group.traverse(o=>{ if(!o.isMesh) return; const m=Array.isArray(o.material)?o.material[0]:o.material;
       if(m&&/^BTI_/.test(m.name||'')&&!o.visible){ hid.push(o); o.visible=true; } if(o.frustumCulled){ unc.push(o); o.frustumCulled=false; } });
     let p=null; try{ p=flightRenderer.compileAsync(flightScene,flightCamera); } finally{ for(const o of hid) o.visible=false; }
-    try{ await p; }catch(e){} for(const o of unc) o.frustumCulled=true;
+    try{ await p; }catch(e){}
+    if(window.BTL&&BTL.warmTemple){ for(const o of hid) o.visible=true; try{ await BTL.warmTemple(flightRenderer,flightScene); }catch(e){} for(const o of hid) o.visible=false; }   // the glass probe's target too
+    for(const o of unc) o.frustumCulled=true;
     console.log('[warmup] temple interior',hid.length,'meshes');
   }catch(e){ console.warn('[warmup] temple interior',e); }
 },1500);
@@ -6366,7 +6371,7 @@ async function _flightWarmup(){
   try{ flightScene.traverse(o=>{ if(o.frustumCulled){ o.frustumCulled=false; _unculled.push(o); } }); }catch(e){}
   try{ _nearFillReserve(2); }catch(e){}
   try{ _btBuildEnvRT(); }catch(e){}   // the Bird Temple's environment map: prefiltered now, not when the temple arrives
-  try{ _btReserveLights(5+BT_INTERIOR_LIGHTS); }catch(e){}   // its altar, hull-rig and shard light stand-ins, so the light key is final before compiling
+  try{ _btReserveLights(0); if(window.BTL&&BTL.build) BTL.build(); }catch(e){}   // (v110) no temple lamps in the scene's stand-in pool; ui/dm-bt-lighting.js adds its fixed 5-light pool (altar, cube glow, 2 fills, caustic) here, before anything compiles
   try{ _distLightT=1; updateDistantSystems(0); }catch(e){}   // the two distant-star lights exist before compiling
   try{ _lcApplyWorlds(); }catch(e){}   // (v105) worlds' own light lists, before anything compiles
   const steps=[
@@ -8018,9 +8023,8 @@ async function buildSolarSystem(){
     const altarNode=shipNode(t,'Altar Group');
     console.log('[Bird Temple] Altar Group found:',!!altarNode,'| Hull found:',!!shipNode(t,'Hull'),'(sanitization-aware lookups)');
     if(altarNode){
-      const altarLight=new THREE.PointLight(0xfff2cc,60,5,2);
-      altarLight.position.set(0,1.2,0); // local to Altar Group's own origin
-      altarNode.add(altarLight);
+      // (v110) the altar lamp is gone: the altar reads by its emissive self-light (_btSelfLight) + the star; one less
+      // real light for every temple fragment (light budget: one star + ambient outside, ≤4 studio/practical inside).
       // (The altar sparkles lived here. Rebuilt as instanced glows they were
       // sized in the Altar Group's own scaled frame and came out as big
       // grey blocks crowding the deck — replaced by the live Session
@@ -8093,11 +8097,9 @@ async function buildSolarSystem(){
       {pos:[0,15,-70], intensity:0.9, dist:12}, // fill — from the back
       {pos:[30,10,0], intensity:0.8, dist:10},  // rim — from the side
     ];
-    rig.forEach(r=>{
-      const l=new THREE.PointLight(0xdfe8ff,r.intensity,r.dist,2);
-      l.position.set(r.pos[0],r.pos[1],r.pos[2]);
-      hullNode.add(l);
-    });
+    // (v110) the 3-point hull rig is no longer built: the hull exterior is lit by the star (shadowed directional + Sol)
+    // and the ambient only. Kept as data for reference; no lights are created from it.
+    void rig; void hullNode;
     console.log('[Bird Temple] lighting rig attached — altar light + 3-point hull rig, total lights added:',1+rig.length);
     // Wrap the whole model in an empty parent group and scale THAT.
     // Recalibrated using the embedded 'Skyboard BT Ornament' reference
@@ -8439,7 +8441,7 @@ function _btSelfLight(root){
   });
   // A light of its own at the Bird Shard (world-space falloff, like the altar's).
   const shard=shipNode(root,'Bird Shard');
-  if(shard){const L=new THREE.PointLight(0xbfeaff,30,7,2);L.position.set(0,0,0);shard.add(L);}
+  void shard;   // (v110) the shard's lamp is gone (light budget): it glows by its emissive self-light; the deck's one local light is BT_AltarLight (ui/dm-bt-lighting.js)
 }
 // Idle motion + proximity trigger — called once per frame from updateBodies
 // alongside the planets, but kept as its own object (not pushed into
@@ -17221,6 +17223,7 @@ function renderWithPostFX(){
   const _spec=window.DMSpec&&DMSpec.on; if(_spec) try{ DMSpec.pre(flightCamera); }catch(e){}
   try{ if(galSky.ready) updateGalSky(); }catch(e){}
   try{ if(window.DMStarBubble) { const n=performance.now(), d=_sbT?(n-_sbT)/1000:1/60; _sbT=n; if(window.DMStar) DMStar.frame(flightCamera,d); if(window.DMMist) DMMist.frame(flightCamera,d); DMStarBubble.frame(flightCamera,flightScene,d); } }catch(e){ console.warn('[starbubble] '+(e&&e.stack||e)); }
+  try{ if(window.BTL&&BTL.preRender) BTL.preRender(flightRenderer,flightScene,flightCamera); }catch(e){}   // v110 temple lights/shadow cache/glass probe
   try{ const _hs=_taHideShells(); try{ DMGpuProf.push('atmo'); let _ta=false; try{ _ta=_trueAtmoRender(flightRenderer,flightScene,flightCamera); } finally{ DMGpuProf.pop(); } if(!_ta) flightRenderer.render(flightScene,flightCamera); } finally{ _taShowShells(_hs); } _shotGrab(flightRenderer); try{ DMGpuProf.tick&&DMGpuProf.tick(); }catch(e){} }
   finally{ if(_spec) try{ DMSpec.post(flightCamera); }catch(e){} }
   const _rtMs = performance.now()-_rt0;
