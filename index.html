@@ -6258,8 +6258,21 @@ function _btAdoptLights(root){
     L.parent.remove(L); _btHold.used.push(e); });
   _btHoldSync();
 }
+// interior lights (ui/dm-birdtemple.js, 24 of them, switched on only while she is aboard): their stand-ins mirror the
+// interior's own light objects every frame (colour, strength, on/off), so boarding and leaving never change the light key
+const BT_INTERIOR_LIGHTS=24;
+function _btAdoptInterior(){
+  const B=window.BTI; if(!B||!B.ready||_btHold.btiDone||!_btHold.group) return; _btHold.btiDone=true;
+  const ls=(B.lights||[]).map(x=>x&&x.L).filter(L=>L&&L.isPointLight&&L.parent);
+  _btReserveLights(_btHold.used.length+ls.length);
+  ls.forEach(L=>{ const Q=_btHold.free.shift(); if(!Q) return; Q.castShadow=L.castShadow; Q.distance=L.distance; Q.decay=L.decay; Q.name=L.name||'BTI_Light';
+    L.updateMatrix(); const e={Q,P:L.parent,local:L.matrix.clone(),base:0,vis:null,src:L}; L.parent.remove(L); _btHold.used.push(e); });
+}
 function _btHoldSync(){
+  if(!_btHold.btiDone&&window.BTI&&BTI.ready) _btAdoptInterior();
   for(let i=0;i<_btHold.used.length;i++){ const e=_btHold.used[i];
+    if(e.src){ let v=e.src.visible, q=e.P; while(v&&q){ if(!q.visible) v=false; if(!q.parent&&q!==flightScene) v=false; q=q.parent; }
+      e.Q.intensity=v?e.src.intensity:0; if(v){ e.Q.color.copy(e.src.color); e.Q.distance=e.src.distance; e.P.updateWorldMatrix(true,false); e.Q.matrixWorld.multiplyMatrices(e.P.matrixWorld,e.local); } continue; }
     let v=true, q=e.P; while(q){ if(!q.visible){ v=false; break; } if(!q.parent&&q!==flightScene) v=false; q=q.parent; }
     if(v!==e.vis){ e.vis=v; e.Q.intensity=v?e.base:0; }
     if(v){ e.P.updateWorldMatrix(true,false); e.Q.matrixWorld.multiplyMatrices(e.P.matrixWorld,e.local); }
@@ -6280,7 +6293,7 @@ async function _flightWarmup(){
   try{ flightScene.traverse(o=>{ if(o.frustumCulled){ o.frustumCulled=false; _unculled.push(o); } }); }catch(e){}
   try{ _nearFillReserve(2); }catch(e){}
   try{ _btBuildEnvRT(); }catch(e){}   // the Bird Temple's environment map: prefiltered now, not when the temple arrives
-  try{ _btReserveLights(5); }catch(e){}   // its altar, hull-rig and shard light stand-ins, so the light key is final before compiling
+  try{ _btReserveLights(5+BT_INTERIOR_LIGHTS); }catch(e){}   // its altar, hull-rig and shard light stand-ins, so the light key is final before compiling
   try{ _distLightT=1; updateDistantSystems(0); }catch(e){}   // the two distant-star lights exist before compiling
   const steps=[
     ['world',()=>flightRenderer.compileAsync(flightScene,flightCamera)],
