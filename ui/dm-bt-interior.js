@@ -43,7 +43,7 @@
     g.updateMatrixWorld(true); const inv = new THREE.Matrix4().copy(g.matrixWorld).invert();
     g.traverse(o => {
       if (!o.isMesh || !o.geometry) return; const m = Array.isArray(o.material) ? o.material[0] : o.material;
-      if (!m || !/glass|window/i.test(m.name || '') || /Holo/i.test(m.name || '')) return;
+      if (!m || !/glass|window/i.test(m.name || '') || /Holo|^FX_BTT/i.test(m.name || '')) return;   // (v124) not Madison's holo terminal (#173)
       if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
       out.push(o.geometry.boundingBox.clone().applyMatrix4(M4.multiplyMatrices(inv, o.matrixWorld)));
     });
