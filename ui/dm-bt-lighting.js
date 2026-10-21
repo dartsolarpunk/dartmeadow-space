@@ -301,4 +301,8 @@
 
   if (window.DMWarm) DMWarm.add('bt-lighting', () => BTL.warm()); else window.addEventListener('load', () => window.DMWarm && DMWarm.add('bt-lighting', () => BTL.warm()));
   BTL.build = build;
+  // (v118) Layer-3 hook only: a future 'Path Traced' GI tier (?gi=pt or BTL.setGiTier('pt')). Not implemented — it records the
+  // request and falls back to the hybrid path (cached star shadow + light pool + bounce probe + glass). Baked lightmaps = PR B.
+  BTL.giTier = (location.search.match(/[?&]gi=(pt|hybrid)\b/) || [])[1] || 'hybrid';
+  BTL.setGiTier = function (t) { BTL.giTier = t === 'pt' ? 'pt' : 'hybrid'; BTL.stats.giTierActive = 'hybrid'; return BTL.stats.giTierActive; };
 })();
