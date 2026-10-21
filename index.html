@@ -9327,7 +9327,7 @@ function updateShipWalk(dt){
     try{updateCharacterLocomotion(dt,(moving&&SHIP_WALK.grounded)||_landing,running&&!_landing,1,!SHIP_WALK.grounded&&!SHIP_WALK.climb,!!SHIP_WALK.climb,_landing?{crouch:true}:{});}catch(e){}
     // her lowest foot meets the deck: rays down onto the temple's own meshes
     try{ _footContact(dt,!SHIP_WALK.grounded||!!SHIP_WALK.climb,CHAR._shipScale||1,
-      (x,z,fy)=>_shipGroundHeight(x,z,fy+SHIP_CHAR_H*0.15),SHIP_CHAR_H/6); }catch(e){}
+      (x,z,fy)=>_shipGroundHeight(x,z,Math.max(fy,F.y)+SHIP_CHAR_H*0.25),SHIP_CHAR_H/6); }catch(e){}   // (v104) rays start above her walking height: a sunk foot no longer starts its ray under the deck and finds the floor below
   }
   // ── Follow camera: behind her along the look direction, pulled in if
   // the temple is in the way.
@@ -24265,22 +24265,28 @@ function _footContact(dt, airborne, sc, ground, unit){
   if(!_fcV) _fcV=new THREE.Vector3();
   const b=CHAR.bones; if(!b||!b.LeftFoot||!b.RightFoot) return;
   CHAR.root.updateMatrixWorld(true);
-  const soleLine=CHAR.root.position.y-(CHAR.feetOffset||0)*sc;   // where the model's lowest point sits
-  if(CHAR._ankleRest==null||CHAR._ankleRestSc!==sc){
-    if(CHAR.state!=='idle') return;                      // calibrate in the rest pose
+  // (v104) measured at the model's ACTUAL scale (root.scale), stored scale-free: the deck step-off eases her from
+  // riding size to deck size, and a rest-pose ankle height calibrated mid-ease (in world units) left her shin-deep in
+  // the temple deck for the rest of the walk. Recalibrates in any clean idle, not only on a scale change.
+  const asc=Math.abs(CHAR.root.scale.y)||sc;
+  const soleLine=CHAR.root.position.y-(CHAR.feetOffset||0)*sc-(CHAR._plantOff||0);   // where the sole would sit with no plant offset
+  const settled=Math.abs(asc-sc)<sc*0.02;
+  if(CHAR.state==='idle'&&!CHAR._transitioning&&!airborne&&settled&&(CHAR._ankleRestN==null||CHAR._ankleRestSc!==sc)){
     const l=b.LeftFoot.getWorldPosition(_fcV).y-soleLine, r=b.RightFoot.getWorldPosition(_fcV).y-soleLine;
-    CHAR._ankleRest=Math.min(l,r); CHAR._ankleRestSc=sc; CHAR._plantOff=0; return;
+    CHAR._ankleRestN=Math.max(0,Math.min(l,r))/asc; CHAR._ankleRestSc=sc;
   }
-  if(airborne||CHAR._transitioning){ CHAR._plantOff=(CHAR._plantOff||0)*Math.max(0,1-dt*8); return; }
+  if(CHAR._ankleRestN==null) return;
+  const ankleRest=CHAR._ankleRestN*asc;
+  if(airborne||CHAR._transitioning||!settled){ CHAR._plantOff=(CHAR._plantOff||0)*Math.max(0,1-dt*8); return; }
   let low=1e9;
   for(const f of [b.LeftFoot,b.RightFoot]){
     f.getWorldPosition(_fcV);
     const gy=ground(_fcV.x,_fcV.z,_fcV.y); if(gy==null||!isFinite(gy)) continue;
-    const gap=(_fcV.y-CHAR._ankleRest)-gy;   // >0 floating, <0 sunk
+    const gap=(_fcV.y-ankleRest)-gy;   // >0 floating, <0 sunk
     if(gap<low) low=gap;
   }
   if(!isFinite(low)) return;
-  const want=THREE.MathUtils.clamp((CHAR._plantOff||0)-low, -0.9*unit, 0.5*unit);
+  const want=THREE.MathUtils.clamp((CHAR._plantOff||0)-low, -0.9*unit, 1.2*unit);
   CHAR._plantOff=(CHAR._plantOff||0)+(want-(CHAR._plantOff||0))*Math.min(1,dt*14);
 }
 
