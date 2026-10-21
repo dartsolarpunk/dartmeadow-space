@@ -9,8 +9,9 @@
  *     FX_BTE_Holo   wireframe planet over the desk projector: the only per-frame cost (one rotation, only while aboard).
  *   BTE_DeskCollider  hidden box = the desk's footprint/height, the ONLY thing added to the walk collision.
  *
- * No lights, no shadows, nothing touched in the temple: it mirrors the temple LOD (shown exactly when the interior
- * decks are), and is compiled hidden (and registered with the flight warm-up) before it is ever shown.
+ * No lights, no shadows, nothing touched in the temple. Visibility mirrors the temple's interior LOD through a
+ * visible accessor on BTI_Floor_C (no polling, no timers). Collision: the desk's 12 triangles are appended to
+ * the already-baked TCOL grid (no rebake). Compiled hidden + registered with the flight warm-up before it shows.
  * Tuning: window.BTE.cfg (live).
  */
 (function () {
@@ -49,6 +50,60 @@
       m.needsUpdate = true;
     });
   }
+  function lodRef() {   // first BTI_-material mesh of the lower deck (the LOD's own unit of switching)
+    const g = BIRD_TEMPLE.group;
+    for (const n of ['BTI_Floor_C', 'BTI_Shell_C']) {
+      const o = g.getObjectByName(n); if (!o) continue;
+      let hit = null;
+      o.traverse(m => { if (!hit && m.isMesh) { const mt = Array.isArray(m.material) ? m.material[0] : m.material; if (mt && /^BTI_/.test(mt.name || '')) hit = m; } });
+      if (hit) return hit;
+    }
+    return null;
+  }
+  // Append the desk box's 12 triangles to the baked TCOL grid in place (same cells, same frame).
+  // If TCOL isn't baked yet, nothing to do: the first bake already includes BTE_DeskCollider.
+  function addDeskToCollision() {
+    if (typeof TCOL === 'undefined' || !BTE.collider) return;
+    const g = BIRD_TEMPLE.group;
+    if (TCOL.for !== g || !TCOL.T) return;
+    const mesh = []; BTE.collider.traverse(o => { if (o.isMesh) mesh.push(o); });
+    g.updateMatrixWorld(true);
+    const inv = new THREE.Matrix4().copy(g.matrixWorld).invert(), m = new THREE.Matrix4(), v = new THREE.Vector3();
+    const add = [];
+    for (const o of mesh) {
+      const geo = o.geometry, pos = geo.attributes.position, idx = geo.index; m.multiplyMatrices(inv, o.matrixWorld);
+      const n = idx ? idx.count : pos.count;
+      for (let i = 0; i + 2 < n; i += 3) {
+        const t = [];
+        for (let j = 0; j < 3; j++) { v.fromBufferAttribute(pos, idx ? idx.getX(i + j) : i + j).applyMatrix4(m); t.push(v.x, v.y, v.z); }
+        add.push(t);
+      }
+    }
+    const k0 = TCOL.n, K = k0 + add.length, T = new Float32Array(K * 9), N = new Float32Array(K * 3), ST = new Uint8Array(K);
+    T.set(TCOL.T.subarray(0, k0 * 9)); N.set(TCOL.N.subarray(0, k0 * 3)); if (TCOL.ST) ST.set(TCOL.ST.subarray(0, k0));
+    const cells = new Map(); let k = k0;
+    for (const t of add) {
+      const ux = t[3] - t[0], uy = t[4] - t[1], uz = t[5] - t[2], wx = t[6] - t[0], wy = t[7] - t[1], wz = t[8] - t[2];
+      const nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx, l = Math.hypot(nx, ny, nz);
+      if (!(l > 1e-9)) continue;
+      T.set(t, k * 9); N[k * 3] = nx / l; N[k * 3 + 1] = ny / l; N[k * 3 + 2] = nz / l;
+      const cl = (a, n) => Math.max(0, Math.min(n - 1, a));
+      const i0 = cl(Math.floor((Math.min(t[0], t[3], t[6]) - TCOL.x0) / TCOL.cs), TCOL.gx), i1 = cl(Math.floor((Math.max(t[0], t[3], t[6]) - TCOL.x0) / TCOL.cs), TCOL.gx);
+      const j0 = cl(Math.floor((Math.min(t[2], t[5], t[8]) - TCOL.z0) / TCOL.cs), TCOL.gz), j1 = cl(Math.floor((Math.max(t[2], t[5], t[8]) - TCOL.z0) / TCOL.cs), TCOL.gz);
+      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) { const c = j * TCOL.gx + i; (cells.get(c) || cells.set(c, []).get(c)).push(k); }
+      k++;
+    }
+    // rebuild the CSR cell index with the extra entries (array copy only, no mesh re-read)
+    const C = TCOL.gx * TCOL.gz, start = new Uint32Array(C + 1), old = TCOL.start, oi = TCOL.items;
+    for (let c = 0; c < C; c++) start[c + 1] = start[c] + (old[c + 1] - old[c]) + (cells.has(c) ? cells.get(c).length : 0);
+    const items = new Uint32Array(start[C]);
+    for (let c = 0; c < C; c++) {
+      let w = start[c]; for (let q = old[c]; q < old[c + 1]; q++) items[w++] = oi[q];
+      const ex = cells.get(c); if (ex) for (const t of ex) items[w++] = t;
+    }
+    Object.assign(TCOL, { T, N, ST, n: k, start, items, stamp: new Uint32Array(k), sid: 0 });
+    console.log('[BTE] desk added to temple collision:', k - k0, 'triangles (no rebake)');
+  }
   async function init() {
     const root = templeRoot(); if (!root) { console.log('[BTE] no temple interior — idle'); return; }
     const gltf = await (await loader()).loadAsync(URL_GLB);
@@ -67,18 +122,16 @@
     // compile before first show (same helper the temple uses), and register with the flight warm-up
     try { if (window.DMWarm && DMWarm.add) DMWarm.add('engineering office', () => (typeof _dmCompileObject === 'function') && _dmCompileObject(sc)); } catch (e) { }
     try { if (typeof _dmCompileObject === 'function') await _dmCompileObject(sc); } catch (e) { }
-    // walk collision: the desk box joins the temple's collision soup (decor is FX_ = excluded); rebake when idle
-    try {
-      if (typeof TCOL !== 'undefined') {
-        TCOL.for = null;
-        const go = () => { try { if (typeof _tcolBuild === 'function') _tcolBuild(); } catch (e) { console.warn('[BTE] collision bake', e); } };
-        (window.requestIdleCallback ? requestIdleCallback(go, { timeout: 1500 }) : setTimeout(go, 200));
-      }
-    } catch (e) { }
-    // mirror the temple LOD: visible exactly when the interior decks are
-    const ref = BIRD_TEMPLE.group.getObjectByName('BTI_Floor_C') || BIRD_TEMPLE.group.getObjectByName('BTI_Shell_C');
-    const lod = () => { try { const v = ref ? ref.visible : true; if (sc.visible !== v) sc.visible = v; } catch (e) { } };
-    lod(); BTE._lod = setInterval(lod, 250);
+    // walk collision: only the desk box joins the temple's existing collision soup (no rebake; decor is FX_ = excluded)
+    addDeskToCollision();
+    // visibility mirrors the temple's interior LOD (index.html toggles .visible on every BTI_-material mesh).
+    // No polling: BTI_Floor_C (a single-primitive BTI_Floor mesh in 'Bird Temple Interior.glb') gets a visible
+    // accessor that forwards each change to the office.
+    const ref = lodRef();
+    if (ref) {
+      let v = ref.visible; sc.visible = v;
+      Object.defineProperty(ref, 'visible', { configurable: true, enumerable: true, get() { return v; }, set(x) { v = x; sc.visible = x; } });
+    } else { sc.visible = true; console.warn('[BTE] no interior LOD reference mesh; office always visible'); }
     // the hologram spin rides on dm-birdtemple's per-frame update (runs only while she walks the ship)
     const up = BTI.update;
     BTI.update = function (dt) { up(dt); if (BTE.holo && sc.visible) BTE.holo.rotation.y += dt * cfg.holoSpin; };
