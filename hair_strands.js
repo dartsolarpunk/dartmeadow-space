@@ -274,10 +274,14 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   geo.setAttribute('normal', aNrm);
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
   geo.setIndex(new THREE.BufferAttribute(idx, 1));
-  const mat = new THREE.MeshStandardMaterial({
+  // meta.fuzz (optional, e.g. Madison's yarn): sheen on the strands, and on the GPU path a soft alpha-hashed fringe
+  // across each ribbon's width. Ariel's file has no fuzz block, so her material is unchanged.
+  const FZ = meta.fuzz || null;
+  const mat = new (FZ && THREE.MeshPhysicalMaterial ? THREE.MeshPhysicalMaterial : THREE.MeshStandardMaterial)({
     vertexColors: true, color: 0xffffff, roughness: meta.roughness ?? 0.5, metalness: 0.15,
     side: THREE.DoubleSide
   });
+  if (FZ && 'sheen' in mat) { mat.sheen = FZ.sheen ?? 0.8; mat.sheenRoughness = FZ.sheenRoughness ?? 0.5; if (FZ.sheenColor) mat.sheenColor.setRGB(...FZ.sheenColor); }
   const mesh = new THREE.Mesh(geo, mat);
   mesh.name = 'ArielHairStrands';
   mesh.frustumCulled = false; mesh.castShadow = false; mesh.receiveShadow = false;
@@ -385,7 +389,16 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
         return { pos: pk.add(w.mul(wd).mul(side)), nrm: n };
       };
       const aId = attribute('hsId', 'vec3'), aGk = attribute('hsGk', 'vec2');
-      const gmat = new THREE.MeshStandardNodeMaterial({ vertexColors: true, color: 0xffffff, roughness: mat.roughness, metalness: mat.metalness, side: THREE.DoubleSide });
+      const GM = FZ && THREE.MeshPhysicalNodeMaterial ? THREE.MeshPhysicalNodeMaterial : THREE.MeshStandardNodeMaterial;
+      const gmat = new GM({ vertexColors: true, color: 0xffffff, roughness: mat.roughness, metalness: mat.metalness, side: THREE.DoubleSide });
+      if (FZ) {
+        if ('sheen' in gmat) { gmat.sheen = mat.sheen; gmat.sheenRoughness = mat.sheenRoughness; if (mat.sheenColor) gmat.sheenColor.copy(mat.sheenColor); }
+        if (FZ.fringe && T.smoothstep && T.abs) {   // side is ±1 at the ribbon edges, 0 down the middle: fade the edges
+          const f0 = float(1 - FZ.fringe);
+          gmat.opacityNode = float(1).sub(T.smoothstep(f0, float(1), T.abs(attribute('hsId', 'vec3').z)));
+          gmat.alphaHash = true;
+        }
+      }
       gmat.positionNode = Fn(() => {
         const R = ribbon(aId.x, aId.y, aId.z, aGk.x, aGk.y);
         normalLocal.assign(R.nrm);

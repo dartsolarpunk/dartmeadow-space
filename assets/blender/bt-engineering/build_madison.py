@@ -315,6 +315,44 @@ col.data.materials.append(M_SUIT)
 tris = sum(len(p.vertices) - 2 for p in body.data.polygons)
 print('[mad] doll tris', tris)
 
+# ───────── v2: merge to an atlas — MAD_Felt (one felt material), MAD_Neon (2-texel emissive), MAD_Eye ─────────
+import subprocess
+subprocess.run(['python3', os.path.join(D, 'make_madison_textures.py'), '--atlas'], check=True)
+A_COL, A_N = img('madison_atlas.png'), img('madison_atlas_n.png'); A_N.colorspace_settings.name = 'Non-Color'
+M_FELT = bpy.data.materials.new('MAD_Felt'); M_FELT.use_nodes = True; nt = M_FELT.node_tree; bsdf = nt.nodes['Principled BSDF']
+tcol = nt.nodes.new('ShaderNodeTexImage'); tcol.image = A_COL; nt.links.new(tcol.outputs['Color'], bsdf.inputs['Base Color'])
+tn_ = nt.nodes.new('ShaderNodeTexImage'); tn_.image = A_N; nmap = nt.nodes.new('ShaderNodeNormalMap'); nmap.inputs['Strength'].default_value = 0.55
+nt.links.new(tn_.outputs['Color'], nmap.inputs['Color']); nt.links.new(nmap.outputs['Normal'], bsdf.inputs['Normal'])
+bsdf.inputs['Roughness'].default_value = 0.92; bsdf.inputs['Sheen Weight'].default_value = 0.7; bsdf.inputs['Sheen Roughness'].default_value = 0.5
+bsdf.inputs['Sheen Tint'].default_value = (1.0, 0.82, 0.7, 1)
+nt.links.new(tcol.outputs['Color'], bsdf.inputs['Emission Color']); bsdf.inputs['Emission Strength'].default_value = 0.0   # game sets warmth
+M_NEON = bpy.data.materials.new('MAD_Neon'); M_NEON.use_nodes = True; nn = M_NEON.node_tree; nb = nn.nodes['Principled BSDF']
+tne = nn.nodes.new('ShaderNodeTexImage'); tne.image = img('madison_neon.png'); tne.interpolation = 'Closest'
+nn.links.new(tne.outputs['Color'], nb.inputs['Base Color']); nn.links.new(tne.outputs['Color'], nb.inputs['Emission Color']); nb.inputs['Emission Strength'].default_value = 1.4
+eyb = M_EYE.node_tree.nodes['Principled BSDF']; eyb.inputs['Coat Weight'].default_value = 1.0; eyb.inputs['Coat Roughness'].default_value = 0.02
+PATCH_I = {'MAD_Mitten': 0, 'MAD_Zip': 1, 'MAD_Lash': 2, 'MAD_Scalp': 3}
+me_ = body.data; uvd = me_.uv_layers.active.data
+slot = [s_.material.name if s_.material else '' for s_ in body.material_slots]
+for poly in me_.polygons:
+    mn_ = slot[poly.material_index]
+    for li in poly.loop_indices:
+        u, v = uvd[li].uv
+        if mn_ == 'MAD_Suit': uvd[li].uv = (u * 0.5, v)
+        elif mn_ == 'MAD_Skin': uvd[li].uv = (0.5 + min(max(u, 0), 1) * 0.5, 0.5 + min(max(v, 0), 1) * 0.5)
+        elif mn_ in PATCH_I:
+            i = PATCH_I[mn_]; uu = (u % 1.0) if mn_ != 'MAD_Lash' else 0.5; vv = (v % 1.0) if mn_ != 'MAD_Lash' else 0.5
+            uvd[li].uv = (0.5 + (i + 0.06 + 0.88 * uu) * 0.125, 0.03 + 0.44 * vv)
+        elif mn_ == 'MAD_NeonCyan': uvd[li].uv = (0.25, 0.5)
+        elif mn_ == 'MAD_NeonMagenta': uvd[li].uv = (0.75, 0.5)
+newmats = [M_FELT, M_NEON, M_EYE]
+remap = {i: (2 if n == 'MAD_Eye' else 1 if n.startswith('MAD_Neon') else 0) for i, n in enumerate(slot)}
+idx = [remap[p.material_index] for p in me_.polygons]
+me_.materials.clear()
+for m in newmats: me_.materials.append(m)
+for p, i in zip(me_.polygons, idx): p.material_index = i
+col.data.materials.clear(); col.data.materials.append(M_FELT)
+print('[mad] materials:', [m.name for m in me_.materials])
+
 # ───────── actions (poses authored as armature-space bone directions) ─────────
 rig.animation_data_create()
 PB = rig.pose.bones; ORDER = list(J.keys())

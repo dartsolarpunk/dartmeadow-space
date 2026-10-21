@@ -29,36 +29,43 @@ for i in range(M_):
     d = Vector((r * math.cos(ph), r * math.sin(ph), z)); az = math.degrees(math.atan2(d.x, -d.y)); el = math.degrees(math.asin(z))
     if on_scalp(az, el): roots.append((d, az, el))
 rnd.shuffle(roots); roots = roots[:N]
+# clumped yarn locks: every strand takes its clump's exit/length/wave, and is pulled onto the clump's path toward the tip
+def params_for(d0, az, el, r):
+    side = 1 if az > 0 else -1
+    if abs(az) < 1.5: side = r.choice((-1, 1))
+    if abs(az) < 120: az_e = side * max(abs(az) + 25, 78 + 30 * (1 - min(1, abs(az) / 120)) * r.random())
+    else: az_e = az + r.uniform(-8, 8)
+    return dict(de=dirn(az_e, -12 + r.uniform(-6, 4)), L=r.uniform(0.54, 0.70) * (0.92 if abs(az) < 60 else 1.0),
+                wa=r.uniform(0.028, 0.046), wf=r.uniform(1.6, 2.4), wp=r.uniform(0, 6.3), vol=r.uniform(0.10, 0.19))
+def path(d0, P):
+    pts, Pe, exit_t = [], None, 0.27
+    for k in range(K):
+        s_ = (k / (K - 1)) ** 1.25 * P['L']
+        if s_ <= exit_t:
+            t = s_ / exit_t; p = capP(d0, 0.003) if k == 0 else capP(slerp(d0, P['de'], t), 0.002 + 0.034 * t * t); Pe = p
+        else:
+            u = (s_ - exit_t) / (P['L'] - exit_t); out = Vector((P['de'].x, P['de'].y, 0)).normalized(); tang = Vector((-out.y, out.x, 0))
+            w = P['wa'] * min(1, u * 1.6)
+            p = Pe + Vector((0, 0, -(s_ - exit_t))) + out * (P['vol'] * u ** 0.7) + tang * (w * math.sin(P['wf'] * u * 6.28 + P['wp'])) \
+                + out * (w * 0.7 * math.cos(P['wf'] * u * 6.28 + P['wp']))
+        pts.append(p)
+    return pts
+NC = 150
+centres = roots[:NC]
+cpar = [params_for(d, az, el, rnd) for (d, az, el) in centres]
+cpath = [path(d, P) for (d, az, el), P in zip(centres, cpar)]
 strands = []
 for (d0, az, el) in roots:
-    side = 1 if az > 0 else -1
-    if abs(az) < 1.5: side = rnd.choice((-1, 1))
-    # exit direction: front/top strands are combed away from the centre part, past the temples; back ones straight down
-    if abs(az) < 120:
-        az_e = side * max(abs(az) + 25, 78 + 30 * (1 - min(1, abs(az) / 120)) * rnd.random())
-    else:
-        az_e = az + rnd.uniform(-8, 8)
-    de = dirn(az_e, -14 + rnd.uniform(-6, 4))
-    L = rnd.uniform(0.52, 0.66) * (0.92 if abs(az) < 60 else 1.0)
-    wav_a = rnd.uniform(0.018, 0.034); wav_f = rnd.uniform(1.8, 2.8); wav_p = rnd.uniform(0, 6.3)
-    vol = rnd.uniform(0.07, 0.15)
+    ci = min(range(NC), key=lambda j: (centres[j][0] - d0).length_squared)
+    P = dict(cpar[ci]); P['L'] *= rnd.uniform(0.93, 1.04)
+    own = path(d0, P); cp = cpath[ci]
+    fr = rnd.uniform(0, 6.3)
     pts = []
-    exit_t = 0.28
-    Pe = None
     for k in range(K):
-        s = (k / (K - 1)) ** 1.25 * L                    # root-dense spacing
-        if s <= exit_t:
-            t = s / exit_t; dd = slerp(d0, de, t)
-            p = capP(dd, 0.002 + 0.03 * t * t)
-            if k == 0: p = capP(d0, 0.003)
-            pts.append(p); Pe = p
-        else:
-            u = (s - exit_t) / (L - exit_t)
-            out = Vector((de.x, de.y, 0)).normalized()
-            tang = Vector((-out.y, out.x, 0))
-            p = Pe + Vector((0, 0, -(s - exit_t))) + out * (vol * u ** 0.8) + tang * (wav_a * u * math.sin(wav_f * u * 6.28 + wav_p)) \
-                + out * (wav_a * 0.6 * u * math.cos(wav_f * u * 6.28 + wav_p))
-            pts.append(p)
+        u = k / (K - 1); c = 0.82 * min(1, max(0, (u - 0.2) / 0.6))      # tight clump toward the tip
+        p = own[k].lerp(cp[k], c)
+        if k > 2: p = p + Vector((math.sin(fr + u * 5), math.cos(fr * 1.3 + u * 5), 0)) * 0.012 * u   # a little frizz
+        pts.append(p)
     strands.append(pts)
 
 # ---------- glTF frames (read back from the exported GLB: Head joint world matrix at rest) ----------
@@ -100,6 +107,7 @@ meta = {'version': 2, 'count': N, 'points': K, 'guides': G, 'headBone': 'Head', 
         'color': [0.02, 0.05, 0.5], 'roughness': 0.6, 'groups': ['hair'], 'colliders': cols,
         'headCenter': list(head_local(HC)),
         'gradient': {'root': [0.006, 0.018, 0.33], 'tip': [0.09, 0.02, 0.36], 'tipStart': 0.6, 'streak': [0.30, 0.06, 0.62], 'streakFrac': 0.3, 'streakStart': 0.3},
+        'fuzz': {'sheen': 0.9, 'sheenRoughness': 0.6, 'sheenColor': [0.35, 0.30, 0.95], 'fringe': 0.45},
         'note': 'Madison plush (dm-bt-engineering.js). Built by assets/blender/bt-engineering/build_madison_hair.py'}
 js = json.dumps(meta).encode()
 js += b' ' * ((4 - len(js) % 4) % 4)
@@ -117,11 +125,11 @@ cam_side = Vector((1, 0, 0))
 for si, pts in enumerate(strands):
     streak = rnd.random() < 0.3
     for k, p in enumerate(pts):
-        tg = (pts[min(k + 1, K - 1)] - pts[max(k - 1, 0)]).normalized(); w = tg.cross((p - HC).normalized()).normalized() * (0.0065 - 0.0035 * k / (K - 1))
+        tg = (pts[min(k + 1, K - 1)] - pts[max(k - 1, 0)]).normalized(); rd = p - HC; rd.z = 0; w = tg.cross(rd.normalized() if rd.length > 1e-4 else Vector((0, -1, 0))).normalized() * (0.0085 - 0.0045 * k / (K - 1))
         vs += [p - w, p + w]; uvs += [(1.0 if streak else 0.0, k / (K - 1))] * 2
     o = si * K * 2
     for k in range(K - 1): fs.append((o + 2 * k, o + 2 * k + 1, o + 2 * k + 3, o + 2 * k + 2))
-me.from_pydata(vs, [], fs); uvl = me.uv_layers.new()
+me.from_pydata(vs, [], fs); me.shade_smooth(); uvl = me.uv_layers.new()
 for poly in me.polygons:
     for li in poly.loop_indices: uvl.data[li].uv = uvs[me.loops[li].vertex_index]
 ob = bpy.data.objects.new('MadisonHairPreview', me); bpy.context.scene.collection.objects.link(ob)
@@ -135,7 +143,7 @@ r2 = nt.nodes.new('ShaderNodeValToRGB'); r2.color_ramp.elements[0].color = (0.00
 nt.links.new(sp.outputs['Y'], r1.inputs[0]); nt.links.new(sp.outputs['Y'], r2.inputs[0])
 mx = nt.nodes.new('ShaderNodeMix'); mx.data_type = 'RGBA'; nt.links.new(sp.outputs['X'], mx.inputs['Factor'])
 nt.links.new(r1.outputs['Color'], mx.inputs[6]); nt.links.new(r2.outputs['Color'], mx.inputs[7]); nt.links.new(mx.outputs[2], bs.inputs['Base Color'])
-bs.inputs['Roughness'].default_value = 0.55; bs.inputs['Sheen Weight'].default_value = 0.15
+bs.inputs['Roughness'].default_value = 0.55; bs.inputs['Sheen Weight'].default_value = 0.8; bs.inputs['Sheen Tint'].default_value = (0.35, 0.3, 0.95, 1)
 me.materials.append(m)
 bpy.ops.wm.save_as_mainfile(filepath=bpy.data.filepath)
 print('[hair] preview saved')

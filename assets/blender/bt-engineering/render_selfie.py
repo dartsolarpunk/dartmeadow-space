@@ -65,9 +65,20 @@ bpy.ops.object.mode_set(mode='OBJECT'); bpy.context.view_layer.update()
 head = arm.matrix_world @ pb['Head'].head
 lsh = arm.matrix_world @ pb['LeftArm'].head; rsh = arm.matrix_world @ pb['RightArm'].head
 # Madison sits on her shoulder (the one nearer the camera's left)
-mad = bpy.data.objects['Madison']
+# v2: the rigged doll from madison.blend (body + hair ribbons), in her Sit pose, replaces the legacy primitive plush
+old = bpy.data.objects.get('Madison'); old_h = None
+if old:
+    bb = [old.matrix_world @ Vector(c) for c in old.bound_box]; old_h = max(v.z for v in bb) - min(v.z for v in bb)
+    for o in [old] + list(old.children_recursive): o.hide_render = True; o.name = 'LegacyPlush_' + o.name
+with bpy.data.libraries.load(os.path.join(D, 'madison.blend')) as (src, dst): dst.objects = list(src.objects)
+for o in dst.objects:
+    if o and o.type in ('ARMATURE', 'MESH', 'CURVE') and o.name != 'MadisonCollider': s.collection.objects.link(o)
+mad = bpy.data.objects['Madison']   # the v2 armature (root)
+if 'Sit' in bpy.data.actions: mad.animation_data_create(); mad.animation_data.action = bpy.data.actions['Sit']; s.frame_set(0)
+mad.scale = (float(os.environ.get('BTE_DOLL_SCALE', '0.5')),) * 3
+bpy.context.view_layer.update()
 sh = lsh if lsh.x < rsh.x else rsh
-mad.location = sh + Vector((0, 0, -0.06)); mad.rotation_euler = (0, 0, math.radians(200 - 180 + 8))
+mad.location = sh + Vector(tuple(float(v) for v in os.environ.get('BTE_DOLL_OFF', '-0.07,0.04,-0.05').split(','))); mad.rotation_euler = (0, 0, math.radians(200 - 180 + 8))
 # camera at arm's length, slightly above, looking at both faces
 mid = (head + mad.location + Vector((0, 0, 0.45))) / 2 + Vector((0, 0, 0.1))
 cam = bpy.data.objects.new('SelfieCam', bpy.data.cameras.new('SelfieCam')); s.collection.objects.link(cam); s.camera = cam

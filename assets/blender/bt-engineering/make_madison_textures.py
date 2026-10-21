@@ -16,7 +16,7 @@ def blur(a, r): return np.array(Image.fromarray(np.clip(a, 0, 255).astype(np.uin
 W, H = 1024, 512
 def uv(az, el):   # degrees → pixel (az 0 = front, + = her left = image right when facing her)
     return (0.5 + az / 360.0) * W, (0.5 - el / 180.0) * H
-skin = np.array([236, 192, 166], np.float32)
+skin = np.array([244, 186, 152], np.float32)   # warm peach felt
 fib = blur(rng.random((H, W)) * 255, 1.0)[..., None] / 255
 img = skin * (0.9 + 0.16 * fib + 0.03 * rng.random((H, W, 1)))
 im = Image.fromarray(np.clip(img, 0, 255).astype(np.uint8)); d = ImageDraw.Draw(im, 'RGBA')
@@ -102,3 +102,31 @@ if '--seams' in sys.argv and os.path.exists(os.path.join(T, 'madison_seams.json'
     n = np.dstack([-gx, gy, np.ones_like(hh)]); n /= np.linalg.norm(n, axis=2, keepdims=True)
     Image.fromarray(((n * 0.5 + 0.5) * 255).astype(np.uint8)).save(os.path.join(T, 'madison_suit_n.png'))
 print('ok')
+
+# ---------- v2 atlas (one felt material): 2048x1024 colour + normal ----------
+#   u 0..0.5            suit layout (body + boots), seams in the normal
+#   u 0.5..1, v .5..1   face (equirect head)
+#   u 0.5..1, v 0..0.5  four 256-px patches: mitten, zipper, lash/liner, scalp
+ATLAS_PATCHES = [('mitten', (238, 178, 146)), ('zip', (40, 40, 46)), ('lash', (22, 12, 10)), ('scalp', (14, 30, 120))]
+if '--atlas' in sys.argv:
+    AW, AH = 2048, 1024
+    col = np.zeros((AH, AW, 3), np.float32)
+    nap512 = np.array(Image.open(os.path.join(T, 'madison_felt_n.png')).convert('RGB'), np.float32)
+    def tile(w, h, rep):
+        t_ = np.array(Image.fromarray(nap512.astype(np.uint8)).resize((max(1, w // rep), max(1, h // rep))), np.float32)
+        return np.tile(t_, (rep + 1, rep + 1, 1))[:h, :w]
+    nrm = np.zeros((AH, AW, 3), np.float32)
+    fz = blur(rng.random((AH, AW)) * 255, 1.0)[..., None] / 255
+    col[:, :1024] = np.array([24, 24, 27.]) * (0.85 + 0.3 * fz[:, :1024])          # black fleece
+    nrm[:, :1024] = np.array(Image.open(os.path.join(T, 'madison_suit_n.png')).convert('RGB').resize((1024, 1024)), np.float32)
+    col[:512, 1024:] = np.array(Image.open(os.path.join(T, 'madison_face.png')).convert('RGB').resize((1024, 512)), np.float32)
+    nrm[:512, 1024:] = tile(1024, 512, 3)
+    for i, (nm_, c) in enumerate(ATLAS_PATCHES):
+        x0 = 1024 + i * 256
+        col[512:, x0:x0 + 256] = np.array(c, np.float32) * (0.88 + 0.24 * fz[512:, x0:x0 + 256])
+        nrm[512:, x0:x0 + 256] = tile(256, 512, 2)
+    Image.fromarray(np.clip(col, 0, 255).astype(np.uint8)).save(os.path.join(T, 'madison_atlas.png'))
+    Image.fromarray(np.clip(nrm, 0, 255).astype(np.uint8)).save(os.path.join(T, 'madison_atlas_n.png'))
+    nt_ = np.zeros((1, 2, 3), np.uint8); nt_[0, 0] = (40, 230, 255); nt_[0, 1] = (230, 50, 255)
+    Image.fromarray(nt_).save(os.path.join(T, 'madison_neon.png'))
+    print('atlas ok')
