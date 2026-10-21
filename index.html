@@ -150,6 +150,7 @@ if(location.search.indexOf('debug')!==-1){
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <script src="ui/dm-time.js?v=97"></script>
 <script src="ui/dm-earth.js?v=1"></script>
+<script src="ui/dm-earth-ice.js?v=120"></script>
 <script src="ui/dm-theme.js?v=81"></script>
 <script src="ui/dm-fluid.js?v=80"></script>
 <script src="ui/dm-journal.js?v=98"></script>
@@ -17708,9 +17709,11 @@ function worldMapFor(body,onPass){
 // slopes, snow (lower toward the poles), and a sun-from-the-north-west
 // hillshade so relief reads from orbit
 // map colour helpers (shared by the lush/dry branches and the v105 Earth desert blend; same formulas as before)
-function _wmLush(c,g1,g2,sand,rock,snow,h,slope,snowDrop,la,pal,ws,sm){
+function _wmLush(c,g1,g2,sand,rock,snow,h,slope,snowDrop,la,pal,ws,sm,iceW){
   c.copy(g1).lerp(g2,sm(10,40,h)*0.6);
   if(pal.water) c.lerp(sand,sm(6,1,h));
+  // (v120) Earth: white only where real glacier ice is (DMEarthIce mask) — no latitude/altitude snow rule
+  if(typeof iceW==='number'){ c.lerp(rock,Math.max(sm(30,46,h),sm(0.35,0.75,slope))*0.85); if(iceW>0) c.lerp(snow,iceW*0.92); return c; }
   c.lerp(rock,Math.max(sm(30-snowDrop*0.3,46,h),sm(0.35,0.75,slope)));
   c.lerp(snow,ws==='ice'?0.75:sm(52-snowDrop-6,52-snowDrop+8,h)*(1-slope*0.5));
   if(la>78) c.lerp(snow,sm(78,84,la)*0.85);
@@ -17749,7 +17752,13 @@ function _worldMapTexture(m,pal){
       const ws=styleAt(lat,(x+0.5)/W*360-180);
       const lonM=(x+0.5)/W*360-180;
       const dW=(m.body&&m.body.name==='Earth'&&window.DMWorldStyle&&DMWorldStyle.earthDesertW)?DMWorldStyle.earthDesertW(lat,lonM):-1;
-      if(pal.water&&h<0){ c.copy(wShal).lerp(wDeep,sm(0,-40,h)); }
+      const iceW=(m.body&&m.body.name==='Earth'&&window.DMEarthIce)?DMEarthIce.at(lat,lonM):undefined;
+      if(typeof iceW==='number'&&h>=0){
+        // (v120) Earth land: natural colour, white only on the real ice sheets / ice caps (matches the ground close up)
+        const cl=_wmLush(c,g1,g2,sand,rock,snow,h,slope,0,la,pal,'lush',sm,iceW);
+        if(dW>0.001&&iceW<0.01){ const cr=cl.r,cg=cl.g,cb=cl.b; const dc=_wmDry(c,g1,g2,sand,rock,snow,h,slope,0,hx,hz,cw,cell,'dunes'); c.setRGB(cr+(dc.r-cr)*dW,cg+(dc.g-cg)*dW,cb+(dc.b-cb)*dW); }
+      }
+      else if(pal.water&&h<0){ c.copy(wShal).lerp(wDeep,sm(0,-40,h)); if(typeof iceW==='number'){ const si=Math.max(iceW,DMEarthIce.seaIce(lat,lonM)); if(si>0) c.lerp(snow,si*0.9); } }
       else if(dW>=0&&h>=0&&(ws==='lush'||ws==='dunes')){
         // (v105) Earth: lush and desert colouring blended by a soft, ragged desert weight (no rectangles)
         const cl=_wmLush(c,g1,g2,sand,rock,snow,h,slope,snowDrop,la,pal,'lush',sm);
@@ -22286,6 +22295,10 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
   const seedU = uniform(seed);
   const biasU = uniform(siteBias);
   const siteLatU = uniform(siteLat);
+  // (v120) Earth: the patch's real glacier weight (DMEarthIce at the patch centre); no lat/height snow on Earth
+  const _iceLat=-((TERRAIN.wz0||0)+(opts.cz||0))*ATMO_DEG_PER_UNIT, _iceLon=((TERRAIN.wx0||0)+(opts.cx||0))*ATMO_DEG_PER_UNIT;
+  const earthIceU = uniform(earthGeo&&window.DMEarthIce?DMEarthIce.at(_iceLat,_iceLon):0);
+  const isEarthU = uniform(earthGeo&&window.DMEarthIce?1.0:0.0);
   const localScaleU = uniform(earthGeo?0.55:1.0); // match H(): h*0.55+geo on Earth
   const wStyle = window.DMWorldStyle?(opts.style||TERRAIN.style||'lush'):'lush';
   // the site's place on the planet's own map (same field the sky flies over)
@@ -22475,8 +22488,8 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
           let c=mix(sand, grass, height.add(2.0).div(10.0).clamp(0.0,1.0));
           c=mix(c, dirt, height.sub(12.0).div(14.0).clamp(0.0,1.0).mul(0.55));
           c=mix(c, rock, slope.smoothstep(0.32,0.75).max(height.sub(28.0).div(22.0).clamp(0.0,1.0)));
-          const snowT=height.sub(snowLine).div(12.0).clamp(0.0,1.0).mul(float(1.0).sub(slope.mul(0.55)));
-          const iceT=height.sub(iceLine).div(14.0).clamp(0.0,1.0).mul(float(1.0).sub(slope.mul(0.7)));
+          const snowT=mix(height.sub(snowLine).div(12.0).clamp(0.0,1.0),earthIceU.mul(0.85),isEarthU).mul(float(1.0).sub(slope.mul(0.55)));
+          const iceT=mix(height.sub(iceLine).div(14.0).clamp(0.0,1.0),earthIceU.mul(0.5),isEarthU).mul(float(1.0).sub(slope.mul(0.7)));
           c=mix(c, snow, snowT);
           c=mix(c, ice, iceT);
           // Rock speckles in snow — breaks featureless white plates
@@ -23015,7 +23028,9 @@ SkyGround.prototype._build=function(n){
   const copt=Object.assign({},this.copt,{siteLat:site.lat-(n.z0+n.size/2)*D});
   const tc=new THREE.Color();
   const colourAt=(x,z,h,ny,sea)=>{
-    if(sea){ tc.copy(this.wShal).lerp(this.wDeep,Math.min(1,Math.max(0,-h/40))); return tc; }
+    if(sea){ tc.copy(this.wShal).lerp(this.wDeep,Math.min(1,Math.max(0,-h/40)));
+      if(_sbcIsEarth()){ const la=-(z+F.sw.z)*D, lo=(x+F.sw.x)*D, si=Math.max(DMEarthIce.at(la,lo),DMEarthIce.seaIce(la,lo)); if(si>0) tc.lerp(_seaIceC(),si*0.9); }   // (v120) Arctic pack / ice shelves, as on the map
+      return tc; }
     return surfaceBiomeColor(x+F.sw.x,z+F.sw.z,h,Math.min(1,Math.max(0,1-ny)*1.6),pal,F.seed,copt);
   };
   for(let r=0;r<S1;r++) for(let q=0;q<S1;q++){
@@ -23364,6 +23379,8 @@ function _sbcPal(pal){
     sand:new THREE.Color(0xcbb87a),dirt:new THREE.Color(0x6b5340),snow:new THREE.Color(0xf4f6fa),ice:new THREE.Color(0xc8d8ea),rock2:new THREE.Color(0x8a7d6a)}; _sbcCache.set(pal,K); }
   return K;
 }
+let _SEA_ICE_C_=null; const _seaIceC=()=>_SEA_ICE_C_||(_SEA_ICE_C_=new THREE.Color(0xeef3fa));
+function _sbcIsEarth(){ try{ return !!(window.DMEarthIce&&typeof _surfBody!=='undefined'&&_surfBody&&_surfBody.name==='Earth'); }catch(e){ return false; } }
 function surfaceBiomeColor(x,z,h,slope,pal,seed,opts){
   opts=opts||{};
   const siteBias=(typeof opts.siteBias==='number')?opts.siteBias:0;
@@ -23385,7 +23402,9 @@ function surfaceBiomeColor(x,z,h,slope,pal,seed,opts){
   const dirtLine=14+n*6;
   const waterLine=5+n*3;
   let wSnow=smooth(snowLine-7,snowLine+7,hRel)*(1-slope*0.55);
-  const wIce=smooth(iceLine-6,iceLine+10,hRel)*(1-slope*0.7)*0.85;
+  let wIce=smooth(iceLine-6,iceLine+10,hRel)*(1-slope*0.7)*0.85;
+  // (v120) Earth: snow/ice only on real glaciers (DMEarthIce, by this point's lat/lon), never by latitude or height
+  if(_sbcIsEarth()){ const g=window.DMEarthIce.at(-z*ATMO_DEG_PER_UNIT,x*ATMO_DEG_PER_UNIT); wSnow=g*0.55*(1-slope*0.4); wIce=g*0.45*(1-slope*0.5); }
   wSnow=Math.max(0,wSnow-wIce*0.65);
   // Speckle rock through snow (sandbox density→material feel)
   const rockSpeck=smooth(0.55,0.85,nFine)*wSnow*0.45;
