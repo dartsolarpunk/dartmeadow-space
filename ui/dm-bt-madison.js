@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  const URL_GLB = 'assets/bt-engineering/madison.glb?v=3', URL_HAIR = 'assets/bt-engineering/madison_hair.bin?v=3';
+  const URL_GLB = 'assets/bt-engineering/madison.glb?v=4', URL_HAIR = 'assets/bt-engineering/madison_hair.bin?v=4';
   const cfg = {
     // seat on the desk, temple glTF frame (= Blender (-6.55, 90.93, -20.75) → glTF (x, z, -y)); doll units → temple units
     pos: [-6.55, -20.75, -90.93], yaw: -0.24, scale: 1.1, seatDrop: 0.29,

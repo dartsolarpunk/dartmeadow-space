@@ -281,6 +281,8 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     vertexColors: true, color: 0xffffff, roughness: meta.roughness ?? 0.5, metalness: 0.15,
     side: THREE.DoubleSide
   });
+  // fuzz.glow: a little self-light from the strand colour so dark yarn still reads in a dim room (no lights added)
+  if (FZ && FZ.glow && GR && mat.emissive) { mat.emissive.setRGB((GR.root[0] + GR.tip[0]) / 2, (GR.root[1] + GR.tip[1]) / 2, (GR.root[2] + GR.tip[2]) / 2); mat.emissiveIntensity = FZ.glow; }
   if (FZ && 'sheen' in mat) { mat.sheen = FZ.sheen ?? 0.8; mat.sheenRoughness = FZ.sheenRoughness ?? 0.5; if (FZ.sheenColor) mat.sheenColor.setRGB(...FZ.sheenColor); }
   const mesh = new THREE.Mesh(geo, mat);
   mesh.name = 'ArielHairStrands';
@@ -393,6 +395,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       const gmat = new GM({ vertexColors: true, color: 0xffffff, roughness: mat.roughness, metalness: mat.metalness, side: THREE.DoubleSide });
       if (FZ) {
         if ('sheen' in gmat) { gmat.sheen = mat.sheen; gmat.sheenRoughness = mat.sheenRoughness; if (mat.sheenColor) gmat.sheenColor.copy(mat.sheenColor); }
+        if (FZ.glow && T.vertexColor) gmat.emissiveNode = T.vertexColor().mul(float(FZ.glow));
         if (FZ.fringe && T.smoothstep && T.abs) {   // side is ±1 at the ribbon edges, 0 down the middle: fade the edges
           const f0 = float(1 - FZ.fringe);
           gmat.opacityNode = float(1).sub(T.smoothstep(f0, float(1), T.abs(attribute('hsId', 'vec3').z)));
