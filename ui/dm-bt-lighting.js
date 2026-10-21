@@ -2,8 +2,8 @@
  *
  * Light budget (Justin, v110): the star is the only light for the ship, inside and out, and casts every real-time shadow.
  *   Ship materials see at most:
- *     outside (hull, top deck, hatch, stairwell top): ambient + Sol + the star's shadowed directional + BT_AltarLight
- *                                                     + BT_CubeGlow (the session cubes' glow)            = 5
+ *     outside (hull, top deck, hatch, stairwell top): JOTS_NatAmbient + Sol + the star's shadowed directional
+ *                                                     + JOTS_MoonFill + BT_AltarLight + BT_CubeGlow       = 6
  *     inside  (decks, rooms, cargo bay, office):      ambient + the star's shadowed directional (through windows and the
  *                                                     open hatch) + BT_Caustic (the star's cookie through the nearest
  *                                                     window) + BT_Fill0/1 (2 unshadowed reading lights that follow
@@ -74,6 +74,7 @@
     const sol = (typeof _sunLight !== 'undefined') ? _sunLight : null;
     amb.forEach(l => { ext.push(l); int.push(l); });
     if (sol) ext.push(sol); if (star) { ext.push(star); int.push(star); }
+    try { if (window._NAT && _NAT.moon) ext.push(_NAT.moon); } catch (e) {}   // #165's moonlight fill (fixed, unshadowed) on the hull too
     ext.push(altar, cubeGlow); int.push(caus, fills[0], fills[1]);
     return { ext, int, sig: [sol, star].concat(amb) };
   }
