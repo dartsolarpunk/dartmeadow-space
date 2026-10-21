@@ -1,4 +1,4 @@
-/* dm-bt-interior.js — Bird Temple interior render budget (v116). Separate code path from the temple lighting (#166).
+/* dm-bt-interior.js — Bird Temple interior render budget (v116; v118 per-opening frustum seal). Separate code path from the temple lighting (#166).
  *
  * Below deck the hull hides the outside world, yet the frame still drew all of it: planets, the galaxy band, volumetric
  * dust, the star bubble, comets, the Oort cloud, the sky background and the true-atmosphere raymarch (full screen).
@@ -16,7 +16,7 @@
  */
 (function () {
   'use strict';
-  const cfg = { on: !/[?&]btseal=0\b/.test(location.search), occ: !/[?&]btocc=0\b/.test(location.search), occMs: 3, pad: 2.5, screenR: 45, hairR: 30, hairDY: 6 };
+  const cfg = { on: !/[?&]btseal=0\b/.test(location.search), occ: /[?&]btocc=1\b/.test(location.search), occMs: 3, pad: 2.5, screenR: 45, hairR: 30, hairDY: 6 };
   const S = { cfg, on: cfg.on, sealed: false, stats: { frames: 0, sealedFrames: 0, hidden: 0 }, _boxes: null, _hid: [], _bg: undefined };
   window.DMBtInterior = S;
   let THREE, fr, M4, box, v;
@@ -130,6 +130,16 @@
     try { while (performance.now() - t0 < cfg.occMs) { const r = occ.job.it.next(); if (r.done) { occ.job = null; S.stats.occCells = occ.map.size; return; } } }
     catch (e) { occ.job = null; S.stats.occErr = String(e && e.message || e).slice(0, 120); }
   }
+  const _sv = [];
+  function screenArea(b, cam) {   // NDC bbox of the box's 8 corners, clamped to the viewport; corners behind the camera = full width
+    if (!_sv.length) for (let k = 0; k < 8; k++) _sv.push(new THREE.Vector3());
+    let x0 = 1, x1 = -1, y0 = 1, y1 = -1, behind = false;
+    for (let k = 0; k < 8; k++) { const p = _sv[k].set(k & 1 ? b.max.x : b.min.x, k & 2 ? b.max.y : b.min.y, k & 4 ? b.max.z : b.min.z).applyMatrix4(cam.matrixWorldInverse);
+      if (p.z > -1e-3) { behind = true; continue; } p.applyMatrix4(cam.projectionMatrix); x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y); }
+    if (behind) return 1;
+    x0 = Math.max(-1, x0); x1 = Math.min(1, x1); y0 = Math.max(-1, y0); y1 = Math.min(1, y1);
+    return x1 > x0 && y1 > y0 ? (x1 - x0) * (y1 - y0) / 4 : 0;
+  }
   function isSealed(cam) {
     const B = window.BTI, g = typeof BIRD_TEMPLE !== 'undefined' && BIRD_TEMPLE.group;
     if (!S.on || !B || !B.vol || !g || !g.visible) return (S.why = 'off', false);
@@ -150,11 +160,17 @@
     cam.updateMatrixWorld();
     fr.setFromProjectionMatrix(M4.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse));
     const cw = v.setFromMatrixPosition(cam.matrixWorld);
+    // (v118) per-opening, frustum based: an opening whose box is in the view frustum (even partly) keeps the whole outside
+    // rendered. Occlusion is opt-in (?btocc=1): the ray soup includes the glass panes themselves, so it marked windows as hidden.
+    // Visible openings' projected screen area (0..1 of the viewport) goes to S.openArea for LOD consumers (glass probe rate).
+    let vis = 0, area = 0;
     for (let i = 0; i < S._boxes.length; i++) {
       box.copy(S._boxes[i]).expandByScalar(cfg.pad).applyMatrix4(g.matrixWorld);
-      if (box.containsPoint(cw)) return (S.why = 'inOpening' + i, false);
-      if (fr.intersectsBox(box) && !(oc && oc[i])) return (S.why = (oc ? 'opening' : 'pending') + i, false);
+      if (box.containsPoint(cw)) { S.openArea = 1; S.openVis = 1; return (S.why = 'inOpening' + i, false); }
+      if (fr.intersectsBox(box) && !(oc && oc[i])) { vis++; area += screenArea(box, cam); }
     }
+    S.openVis = vis; S.openArea = Math.min(1, area);
+    if (vis) return (S.why = 'openings' + vis, false);
     S.why = 'sealed';
     return true;
   }

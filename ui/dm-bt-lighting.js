@@ -59,7 +59,7 @@
       return TS.vec3(c.mul(1.0), c.mul(0.96), c.mul(0.85)).add(0.06).mul(vig);
     })();
     causQuad = new THREE.QuadMesh(cm);
-    caus = new THREE.SpotLight(0xfff0d6, 0, 9, 0.55, 0.4, 1.5); caus.name = 'BT_Caustic'; caus.castShadow = false; mk(caus, 'BT_Caustic');
+    caus = new THREE.SpotLight(0xfff0d6, 0, 16, 0.7, 0.35, 1.2); caus.name = 'BT_Caustic'; caus.castShadow = false; mk(caus, 'BT_Caustic');
     // caustic path, decided once before anything compiles (the light key never changes afterwards):
     //   'light'    — the cookie is BT_Caustic.map (three's projected spot-light map, WebGPU + WebGL2 node backends)
     //   'emissive' — fallback: the same GPU cookie projected in the floor materials' emissive (no light map at all)
@@ -95,21 +95,36 @@
   }
   function stale() { if (!snap) return true; return snap.sig.some(l => !l || !l.parent); }
 
+  // (v118) glass is TRANSPARENT again (#166 made it an opaque node material whose emissive was the probe: with a half-filled
+  // or outside-blind probe the panes read as flat pale panels). Now: alpha-blended, Fresnel opacity (≈8% head-on, ~85% grazing),
+  // refraction = the opaque pass behind the pane (viewport texture, offset by the normal) on tier ≥ 1 or plain see-through on
+  // tier 0, reflection = the cube probe weighted by Fresnel and only once all 6 faces are filled, plus animated caustic glints.
+  let probeReady = null, glassT = null;
   function glassMaterial(src, warm) {
     const THREE = T(), TS = THREE.TSL;
+    if (!probeReady) { probeReady = TS.uniform(0); glassT = TS.uniform(0); }
     const m = new THREE.MeshStandardNodeMaterial(); m.name = src.name || 'BT_Glass';
-    m.roughness = 0.04; m.metalness = 0.0; m.color = new THREE.Color(0.02, 0.025, 0.03); m.side = src.side;
-    m.userData.btGlass = true;
-    m.emissiveNode = TS.Fn(() => {
-      const V = TS.positionWorld.sub(TS.cameraPosition).normalize(), N = TS.normalWorld;
-      const R = TS.reflect(V, N), Tr = TS.refract(V, N, TS.float(0.667));
-      const cosT = TS.clamp(N.dot(V.negate()), 0.0, 1.0);
-      const F = TS.float(0.04).add(TS.float(0.96).mul(TS.pow(TS.float(1).sub(cosT), 5.0)));
-      const refl = TS.cubeTexture(probeRT.texture, R).rgb;
-      const refr = TS.cubeTexture(probeRT.texture, Tr).rgb.mul(TS.vec3(0.82, 0.92, 0.95));
-      const glow = TS.vec3(warm[0], warm[1], warm[2]);
-      return TS.mix(refr.mul(0.85).add(glow), refl, F);
-    })();
+    m.roughness = 0.04; m.metalness = 0.0; m.color = new THREE.Color(0, 0, 0); m.side = src.side;
+    m.transparent = true; m.depthWrite = false; m.userData.btGlass = true;
+    const useRefr = tier() >= 1 && typeof TS.viewportSharedTexture === 'function' && !/[?&]glassrefr=0\b/.test(location.search);
+    const V = TS.positionWorld.sub(TS.cameraPosition).normalize(), N = TS.normalWorld;
+    const cosT = TS.clamp(N.dot(V.negate()).abs(), 0.0, 1.0);
+    const F = TS.float(0.04).add(TS.float(0.96).mul(TS.pow(TS.float(1).sub(cosT), 5.0)));
+    const refl = TS.cubeTexture(probeRT.texture, TS.reflect(V, N)).rgb.mul(probeReady);
+    const pw = TS.positionWorld.mul(3.0);
+    const g1 = TS.sin(pw.x.add(glassT.mul(0.8)).add(TS.sin(pw.y.mul(1.3).add(glassT.mul(0.6))))).mul(TS.sin(pw.z.mul(1.1).sub(glassT.mul(0.7)).add(TS.cos(pw.x.mul(0.9)))));
+    const caus = TS.pow(TS.float(1).sub(TS.abs(g1)), 12.0).mul(0.12);
+    const tint = TS.vec3(warm[0], warm[1], warm[2]).mul(0.3);
+    if (useRefr) {
+      const off = TS.normalView.xy.mul(0.02);   // refraction offset
+      const behind = TS.viewportSharedTexture(TS.screenUV.add(off)).rgb.mul(TS.vec3(0.94, 0.98, 1.0));
+      m.opacityNode = TS.float(1.0);
+      m.emissiveNode = TS.mix(behind, refl, F).add(caus).add(tint);
+      m.userData.btRefr = true;
+    } else {
+      m.opacityNode = TS.clamp(F.mul(0.85).add(0.08), 0.0, 0.92);
+      m.emissiveNode = refl.mul(F).div(TS.max(F.mul(0.85).add(0.08), 0.05)).add(caus).add(tint);
+    }
     return m;
   }
 
@@ -182,7 +197,8 @@
   const SIG = { star: new Float64Array(9).fill(NaN), sun: new Float64Array(3).fill(NaN) };
   function sigMoved(S, i, x, y, z, tol) { return !(Math.abs(S[i] - x) <= tol && Math.abs(S[i + 1] - y) <= tol && Math.abs(S[i + 2] - z) <= tol); }
   function sigStore(S, i, x, y, z) { S[i] = x; S[i + 1] = y; S[i + 2] = z; }
-  BTL.cfg.minFill = 0.6;   // reading-light floor: a dark/switched-off room still gets this much from its nearest lamp
+  BTL.cfg.minFill = 1.4;   // (v118) was 0.6: the lamp pools did not read in the bay / below deck
+  BTL.cfg.poolR2 = 225;   // reading-light floor: a dark/switched-off room still gets this much from its nearest lamp
   function setFill(F, e, k) { if (e) { F.position.setFromMatrixPosition(e.mw); F.color.copy(e.src.color); F.intensity = Math.max(e.on || 0, BTL.cfg.minFill) * k; F.distance = Math.max(3, e.src.distance * 1.2); F.updateMatrixWorld(); } else F.intensity = 0; }
   const PROBE_REFRESH_MS = 4000;
   let probeAt = null, dirty = 63, lastFull = 0, lastFaceFrame = -99, casters = null; const holdA = [], holdN = [];
@@ -227,12 +243,13 @@
       }
     } catch (e) {}
     // 2) two reading lights: the lit interior lamps nearest Ariel (only below deck), unshadowed; top-2 search, no allocations
-    let e0 = null, e1 = null, d0 = 49, d1 = 49;
+    let e0 = null, e1 = null, d0 = BTL.cfg.poolR2, d1 = BTL.cfg.poolR2;
     if (aboard && hasA) {
       try { for (const e of _btHold.used) { if (!e.src) continue; _d.setFromMatrixPosition(e.mw); const d = _d.distanceToSquared(_b);
         if (d < d0) { e1 = e0; d1 = d0; e0 = e; d0 = d; } else if (d < d1) { e1 = e; d1 = d; } } } catch (e) {}
     }
-    setFill(fills[0], e0, 1.0); setFill(fills[1], e1, 0.7);
+    setFill(fills[0], e0, 1.6); setFill(fills[1], e1, 1.1);
+    if (aboard && hasA && !e0) { fills[0].position.copy(_b).addScaledVector(_up(g), 1.6); fills[0].color.setRGB(1, 0.86, 0.68); fills[0].intensity = BTL.cfg.minFill * 1.6; fills[0].distance = 6; fills[0].updateMatrixWorld(); }   // (v118) no lamp nearby: a warm pool over Ariel
     // outside: the altar light and the session cubes' glow
     try { const an = BIRD_TEMPLE._altarNode || (BIRD_TEMPLE._altarNode = (typeof shipNode === 'function' && shipNode(g, 'Altar Group')) || null);
       if (an) { an.updateWorldMatrix(true, false); altar.position.setFromMatrixPosition(an.matrixWorld); altar.position.addScaledVector(_up(g), 0.45); altar.intensity = 6; altar.updateMatrixWorld(); } else altar.intensity = 0; } catch (e) { altar.intensity = 0; }
@@ -241,19 +258,20 @@
     const ref = hasA && aboard ? _b : camW; let w = null, wd = 1e9, wc = null, cd = 1e9;
     for (const it of windows) { it.o.getWorldPosition(it.c); const d = it.c.distanceToSquared(ref); if (d < wd) { wd = d; w = it; } const dc = it.c.distanceToSquared(camW); if (dc < cd) { cd = dc; wc = it; } }
     const tr = TIERS[tier()];
-    if (aboard && w && wd < 100) {
+    if (aboard && w && wd < 400) {
       caus.position.copy(w.c).addScaledVector(_c, -1.2); caus.target.position.copy(w.c).addScaledVector(_c, 4);
       caus.updateMatrixWorld(); caus.target.updateMatrixWorld();
-      if (causMode === 'light') caus.intensity = 6; else { caus.intensity = 0; causEmis.value = 1; caus.shadow.updateMatrices(caus); causMat.value.copy(caus.shadow.matrix); }
+      if (causMode === 'light') caus.intensity = 14; else { caus.intensity = 0; causEmis.value = 1; caus.shadow.updateMatrices(caus); causMat.value.copy(caus.shadow.matrix); }
       const now = performance.now();
       if (now - lastCaus > 1000 / tr[3]) { lastCaus = now; try { renderCaustic(r, now / 1000); } catch (e) {} }
     } else { caus.intensity = 0; if (causEmis) causEmis.value = 0; }
     // 4) glass probe: ON DEMAND. All 6 faces are marked dirty when the probe changes window or the star direction moves;
     //    a slow refresh re-marks them every few seconds (the world drifts). At most one face per `every` frames.
+    if (glassT) glassT.value = performance.now() / 1000;
     const _sealed = !!(window.DMBtInterior && DMBtInterior.sealed);   // (v116) no glass in view: faces stay dirty and are rendered once glass is back in view
     if (camNear && wc && probe && !_sealed) {
-      if (wc !== probeAt || sigMoved(SIG.sun, 0, _c.x, _c.y, _c.z, 0.002)) { probeAt = wc; sigStore(SIG.sun, 0, _c.x, _c.y, _c.z); dirty = 63; }
-      const now = performance.now(); if (!dirty && now - lastFull > PROBE_REFRESH_MS) dirty = 63;
+      if (wc !== probeAt || sigMoved(SIG.sun, 0, _c.x, _c.y, _c.z, 0.002)) { if (wc !== probeAt && probeReady) probeReady.value = 0; probeAt = wc; sigStore(SIG.sun, 0, _c.x, _c.y, _c.z); dirty = 63; }
+      const now = performance.now(); const oa = (window.DMBtInterior && DMBtInterior.openArea) || 0; if (!dirty && now - lastFull > PROBE_REFRESH_MS * (oa > 0.15 ? 1 : 2)) dirty = 63;
       if (dirty && frame - lastFaceFrame >= Math.max(2, tr[2] + 1)) {
         while (!(dirty & (1 << face))) face = (face + 1) % 6;
         if (face === 0 || dirty === 63) probe.position.copy(wc.c), probe.updateMatrixWorld(true);
@@ -264,7 +282,7 @@
         try { r.setRenderTarget(probeRT, face); r.autoClear = true; r.render(scene, probe.children[face]); BTL.stats.probeMs = Math.round(performance.now() - tp); }
         catch (e) {}
         finally { r.setRenderTarget(prev); r.autoClear = pac; for (const m of glassMeshes) m.visible = true; for (let i = 0; i < casters.length; i++) { casters[i].shadow.autoUpdate = holdA[i]; casters[i].shadow.needsUpdate = holdN[i]; } }
-        dirty &= ~(1 << face); if (!dirty) lastFull = now; lastFaceFrame = frame; face = (face + 1) % 6; BTL.stats.probeFaces = (BTL.stats.probeFaces || 0) + 1;
+        dirty &= ~(1 << face); if (!dirty) { lastFull = now; if (probeReady) probeReady.value = 1; } lastFaceFrame = frame; face = (face + 1) % 6; BTL.stats.probeFaces = (BTL.stats.probeFaces || 0) + 1;
       }
     }
   };
