@@ -16995,7 +16995,7 @@ function renderWithPostFX(){
   const _spec=window.DMSpec&&DMSpec.on; if(_spec) try{ DMSpec.pre(flightCamera); }catch(e){}
   try{ if(galSky.ready) updateGalSky(); }catch(e){}
   try{ if(window.DMStarBubble) { const n=performance.now(), d=_sbT?(n-_sbT)/1000:1/60; _sbT=n; if(window.DMStar) DMStar.frame(flightCamera,d); if(window.DMMist) DMMist.frame(flightCamera,d); DMStarBubble.frame(flightCamera,flightScene,d); } }catch(e){ console.warn('[starbubble] '+(e&&e.stack||e)); }
-  try{ if(!_trueAtmoRender(flightRenderer,flightScene,flightCamera)) flightRenderer.render(flightScene,flightCamera); _shotGrab(flightRenderer); }
+  try{ const _hs=_taHideShells(); try{ if(!_trueAtmoRender(flightRenderer,flightScene,flightCamera)) flightRenderer.render(flightScene,flightCamera); } finally{ _taShowShells(_hs); } _shotGrab(flightRenderer); }
   finally{ if(_spec) try{ DMSpec.post(flightCamera); }catch(e){} }
   const _rtMs = performance.now()-_rt0;
   if(!window._renderTimingSamples) window._renderTimingSamples=[];
@@ -17805,6 +17805,18 @@ function _taParamsFor(ud){
   if(!P.heightFn) P.heightScale=0;
   return P;
 }
+// (v104) while the true atmosphere is on, it is the only air drawn: every world's classic shell (the Lague-style
+// additive rim — the reddish ring on the Sun side) is hidden for the frame, near or far. When the true atmosphere is
+// off (setting, failure, or an Auto-only reduction) the classic shells come back unchanged. Only .visible is touched.
+const _taShellBuf=[];
+function _taHideShells(){
+  _taShellBuf.length=0;
+  try{ if(_TA.failed||!_trueAtmoOn()||_taPerfOff()) return 0;
+    for(let i=0;i<_jotsFogAtmoRegistry.length;i++){ const e=_jotsFogAtmoRegistry[i], m=e&&e.mesh; if(m&&m.visible&&/^JOTS_(PlanetAtmo|DustyAtmo|WebGLAtmo)$/.test(m.name||'')){ m.visible=false; _taShellBuf.push(m); } }
+  }catch(e){}
+  return _taShellBuf.length;
+}
+function _taShowShells(n){ for(let i=0;i<_taShellBuf.length;i++) _taShellBuf[i].visible=true; _taShellBuf.length=0; }
 // open space / orbit: the nearest world's gas (others keep their light classic shells — cheap multi-planet)
 function _trueAtmoRender(r,scene,cam){
   if(_TA.failed||!_trueAtmoOn()||_taPerfOff()) return false;
