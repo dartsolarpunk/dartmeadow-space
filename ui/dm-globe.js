@@ -60,6 +60,17 @@
     G.tex=null; G.hm=null; G.target=null; G.zoom=1;
     homeView();
     const take=src=>{ try{
+        // the map's own pixels are kept on its canvas: resample them here (bilinear, like drawImage) — no getImageData
+        // readback, which stalls the main thread on a GPU-backed canvas
+        const R=src&&src.__dmRGBA, SW=src&&src.width, SH=src&&src.height;
+        if(R&&SW>1&&SH>1&&R.length===SW*SH*4){
+          const o=new Uint8ClampedArray(TW*TH*4), fx=SW/TW, fy=SH/TH;
+          for(let y=0;y<TH;y++){ let sy=(y+0.5)*fy-0.5; if(sy<0) sy=0; const y0=sy|0, y1=Math.min(SH-1,y0+1), wy=sy-y0;
+            for(let x=0;x<TW;x++){ let sx=(x+0.5)*fx-0.5; if(sx<0) sx=0; const x0=sx|0, x1=Math.min(SW-1,x0+1), wx=sx-x0;
+              const a=(y0*SW+x0)*4, b=(y0*SW+x1)*4, c=(y1*SW+x0)*4, d=(y1*SW+x1)*4, i=(y*TW+x)*4;
+              for(let k=0;k<4;k++){ const t=R[a+k]+(R[b+k]-R[a+k])*wx, u=R[c+k]+(R[d+k]-R[c+k])*wx; o[i+k]=t+(u-t)*wy; } } }
+          G.tex=o; G.texW=TW; G.texH=TH; return;
+        }
         const c=document.createElement('canvas'); c.width=TW; c.height=TH; const x=c.getContext('2d',{willReadFrequently:true});
         x.drawImage(src,0,0,TW,TH); G.tex=x.getImageData(0,0,TW,TH).data; G.texW=TW; G.texH=TH;
       }catch(e){ console.warn('[globe] texture',e); } };
@@ -196,7 +207,9 @@
   const THM={rgb:[0,229,255],lt:[150,240,255],t:0,key:''};
   function themeRead(now){
     if(now&&now-THM.t<500) return false; THM.t=now||performance.now();
-    const v=(getComputedStyle(document.documentElement).getPropertyValue('--acc-rgb')||'').trim();
+    // the theme writes --acc-rgb inline on <html>: read it there (no forced style recalc); computed style only if absent
+    const de=document.documentElement; let v=(de.style.getPropertyValue('--acc-rgb')||'').trim();
+    if(!v) v=(getComputedStyle(de).getPropertyValue('--acc-rgb')||'').trim();
     if(v===THM.key) return false; THM.key=v;
     const p=v.split(',').map(x=>parseFloat(x)); if(p.length<3||p.some(x=>!isFinite(x))) return false;
     THM.rgb=p.slice(0,3); THM.lt=THM.rgb.map(x=>Math.round(x+(255-x)*0.55)); return true;
@@ -220,6 +233,9 @@
     const dt=Math.min(0.1,(now-(G.hT||now))/1000); G.hT=now;
     if(G.hdg==null) G.hdg=h; else { const d=((h-G.hdg+540)%360)-180; G.hdg=(G.hdg+d*Math.min(1,dt*14)+360)%360; }   // smooth, the short way round
     const dpr=Math.min(2,window.devicePixelRatio||1), D=G.D, Hh=G.H, S=Math.round((D+2*Hh)*dpr);
+    // the ring only changes when the bearing, size or theme does: skip the redraw (8 shadowed labels + ticks) otherwise
+    const hk=G.hdg.toFixed(2)+'|'+S+'|'+THM.key+'|'+D+'|'+Hh;
+    if(hk===G.hKey&&cv.width===S) return; G.hKey=hk;
     if(cv.width!==S){ cv.width=S; cv.height=S; }
     const x=cv.getContext('2d'), c=S/2, r0=(D/2+1)*dpr, r1=(D/2+Hh)*dpr, rm=(r0+r1)/2, small=D<110;
     x.clearRect(0,0,S,S);

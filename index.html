@@ -972,7 +972,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-perflog.js?v=1" defer></script>
 <script src="ui/dm-spectator.js?v=1" defer></script>
 <script src="ui/dm-stack.js?v=1" defer></script>
-<script src="ui/dm-globe.js?v=7" defer></script>
+<script src="ui/dm-globe.js?v=8" defer></script>
 <script src="ui/dm-star.js?v=8" defer></script>
 <script src="ui/dm-mist.js?v=7" defer></script>
 <script src="ui/dm-atmo.js?v=1" defer></script>
@@ -3501,7 +3501,7 @@ function _initMenuBg2D(cv){
   window.addEventListener('resize',_queueMenuBgResize);
   if(window.visualViewport)window.visualViewport.addEventListener('resize',_queueMenuBgResize);
   function hexRgb(hex){return [parseInt(hex.slice(1,3),16),parseInt(hex.slice(3,5),16),parseInt(hex.slice(5,7),16)];}
-  (function frame(){menuAnim=requestAnimationFrame(frame);sizeMenuBgCanvas(cv,stars,arms);
+  (function frame(){menuAnim=requestAnimationFrame(frame);if(tick%30===0)sizeMenuBgCanvas(cv,stars,arms);   /* layout read twice a second, not every frame (resizes are also caught by the listener) */
     const w=W(),h=H(), cx=w*0.75, cy=h*0.67;
     ctx.clearRect(0,0,w,h);ctx.fillStyle='#000308';ctx.fillRect(0,0,w,h);
     gases.forEach(g=>{
@@ -3637,6 +3637,9 @@ function initMenuBg(){
   }catch(e){}
   const cv=$('menu-bg-canvas'); if(!cv)return;
   const start=()=>{
+    // the 2D fallback already took the canvas (THREE arrived after 2.5 s): a WebGL context can't be had on it, and the
+    // failed attempt used to start a SECOND full-screen 2D loop drawing over the first, every frame
+    if(menuAnim) return;
     try{ _initMenuSpiralPlate(cv); }
     catch(e){ console.warn('menu spiral plate failed, rich 2D fallback:',e); _initMenuBg2D(cv); }
   };
@@ -6221,11 +6224,13 @@ async function _flightWarmup(){
   // off for the duration of the warm-up so everything is compiled and uploaded, wherever it is, then put it back.
   const _unculled=[];
   try{ flightScene.traverse(o=>{ if(o.frustumCulled){ o.frustumCulled=false; _unculled.push(o); } }); }catch(e){}
+  try{ _nearFillReserve(2); }catch(e){}
   const steps=[
     ['world',()=>flightRenderer.compileAsync(flightScene,flightCamera)],
     ['sun and flares',()=>window.DMStar&&DMStar.warm&&DMStar.warm(flightCamera)],
     ['planet mist',()=>window.DMMist&&DMMist.warm&&DMMist.warm(flightCamera)],
     ['galaxy',()=>galSky&&galSky.ready&&_gsPrecompile()],
+    ['atmosphere',()=>_taWarm(flightRenderer,flightScene,flightCamera)],   // the scene as drawn through the true-atmosphere pass: its own shader variants
     ['uploading',async()=>{ try{ flightRenderer.render(flightScene,flightCamera); }catch(e){} }]   // one real pass: buffers, textures, bind groups
   ];
   for(let i=0;i<steps.length;i++){
@@ -6239,7 +6244,7 @@ async function _flightWarmup(){
   try{ if(pill) pill.remove(); }catch(e){}
   try{ window._warmupMs=Math.round(performance.now()-t0); window._dmWarming=false; }catch(e){}
 }
-let _flightLoopCv=null,_flightLoopLast=0;
+let _flightLoopCv=null,_flightLoopLast=0,_csDirV=null;
 // Frame counter used by the flight loop's render-throttle during character
 // loading (see the _flightFrameCounter comment in _startFlightLoop). This
 // declaration was missing entirely, which made every read of it throw.
@@ -6338,7 +6343,7 @@ function _startFlightLoop(){
     try{
       if(_charShadowLight && boardFlight){
         const bp=boardFlight.position;
-        const dir=bp.lengthSq()>0.001 ? bp.clone().normalize() : new THREE.Vector3(1,0.3,0.2).normalize();
+        const dir=_csDirV||(_csDirV=new THREE.Vector3()); if(bp.lengthSq()>0.001) dir.copy(bp).normalize(); else dir.set(1,0.3,0.2).normalize();   // scratch: no per-frame allocation
         _charShadowLight.position.copy(bp).addScaledVector(dir,-10);
         _charShadowLight.target.position.copy(bp);
         _charShadowLight.target.updateMatrixWorld();
@@ -6618,7 +6623,7 @@ function _pruneJotsFogRegistry(){
   }
   for(let i=_jotsFogNearFills.length-1;i>=0;i--){
     const e=_jotsFogNearFills[i];
-    if(!e||!e.light||!e.light.parent) _jotsFogNearFills.splice(i,1);
+    if(!e||!e.light||!e.light.parent||(e.group&&!(e.light.userData._nfP&&e.light.userData._nfP.group===e.group))) _jotsFogNearFills.splice(i,1);
   }
 }
 function _updateJotsWorldsFog(){
@@ -6650,7 +6655,8 @@ function _updateJotsWorldsFog(){
     for(let i=0;i<_jotsFogNearFills.length;i++){
       const e=_jotsFogNearFills[i];
       try{
-        e.light.getWorldPosition(center);
+        if(e.group){ const P=e.light.userData._nfP; if(!P||P.group!==e.group){ _jotsFogNearFills.splice(i--,1); continue; } e.group.getWorldPosition(center); }
+        else e.light.getWorldPosition(center);
         const dist=cam.distanceTo(center);
         const R=e.radius||1;
         // 0 far (system vacuum black) → 1 when inside ~2.2 R (near-side readable)
@@ -6662,15 +6668,44 @@ function _updateJotsWorldsFog(){
   }
 }
 /** Tiny local fill parented to body — NOT scene Ambient/Hemisphere wash. */
+const _nearFillPool=[];   // {light, group|null}
+function _nearFillScene(){ try{ return (typeof flightScene!=='undefined'&&flightScene)?flightScene:null; }catch(e){ return null; } }
+function _nearFillIn(g,sc){ let q=g; while(q.parent) q=q.parent; return !!sc&&q===sc; }   // still part of the scene it lights
+function _nearFillSync(){
+  for(let i=0;i<_nearFillPool.length;i++){ const P=_nearFillPool[i], g=P.group;
+    if(!g) continue;
+    if(_nearFillIn(g,P.light.parent)){ P.seen=true; g.updateWorldMatrix(true,false); P.light.position.setFromMatrixPosition(g.matrixWorld); P.light.updateMatrixWorld(); }
+    else if(P.seen||performance.now()-P.at>30000){ P.group=null; P.seen=false; P.light.intensity=0; }   // its world was removed: the light waits, dark, for the next one
+    else P.light.intensity=0; }   // built but not placed yet: dark until it is (a child light was out of the scene too)
+}
+function _nearFillTake(group, hex, R){
+  const sc=_nearFillScene();
+  if(!sc){ const pl=new THREE.PointLight(hex, 0.14, R*2.6, 2.0); group.add(pl); return pl; }   // no flight scene yet: as before
+  if(!sc.userData._nearFillHook){ sc.userData._nearFillHook=true; const prev=sc.onBeforeRender;
+    sc.onBeforeRender=function(){ try{ _nearFillSync(); }catch(e){} if(typeof prev==='function') return prev.apply(this,arguments); }; }
+  _nearFillSync();
+  let P=null; for(let i=0;i<_nearFillPool.length;i++){ if(!_nearFillPool[i].group){ P=_nearFillPool[i]; break; } }
+  if(!P){ const l=new THREE.PointLight(hex, 0, R*2.6, 2.0); sc.add(l); P={light:l,group:null}; _nearFillPool.push(P); }
+  P.group=group; P.seen=false; P.at=performance.now(); const l=P.light; l.userData._nfP=P; l.color.setHex(hex); l.intensity=0.14; l.distance=R*2.6; l.decay=2.0;
+  try{ group.updateWorldMatrix(true,false); l.position.setFromMatrixPosition(group.matrixWorld); }catch(e){}
+  return l;
+}
+// warm-up: hold a couple of spare pooled lights so the first LOD swaps don't change the light count either
+function _nearFillReserve(n){ const sc=_nearFillScene(); if(!sc||typeof THREE==='undefined') return; _nearFillSync();
+  let free=_nearFillPool.filter(P=>!P.group).length;
+  for(;free<n;free++){ const l=new THREE.PointLight(0x6a7a9a, 0, 1, 2.0); l.name='JOTS_NearFill'; l.userData.jotsNearFill=true; sc.add(l); _nearFillPool.push({light:l,group:null}); } }
 function _attachJotsNearFill(group, radius, tintHex){
   if(!group||typeof THREE==='undefined')return null;
   const col=new THREE.Color(tintHex!=null?tintHex:0x6a7a9a);
   const R=Math.max(0.2, radius||1);
-  const pl=new THREE.PointLight(col.getHex(), 0.14, R*2.6, 2.0);
+  // Pooled in the flight scene (follows the group's centre — where the child light sat): a planet rebuilt for a new level
+  // of detail takes a free light from the pool instead of adding a new one. Every new light (and every change in the
+  // order lights are found in) changes the scene's light key, which recompiles EVERY lit and unlit material at once —
+  // a multi-second freeze on each LOD swap. Same light, same place, same intensity curve: nothing looks different.
+  const pl=_nearFillTake(group, col.getHex(), R);
   pl.name='JOTS_NearFill';
   pl.userData.jotsNearFill=true;
-  group.add(pl);
-  _registerJotsNearFill({light:pl, radius:R, baseIntensity:0.12, nearBoost:0.40});
+  _registerJotsNearFill({light:pl, group, radius:R, baseIntensity:0.12, nearBoost:0.40});
   // Soft residual emissive so MeshStandard anti-Sol faces aren't pure black up close
   try{
     group.traverse(o=>{
@@ -14253,6 +14288,12 @@ window.dmSceneText=function(){
   (function(){
     const KEY='dm_hitch_log'; let hl=[]; try{ hl=JSON.parse(localStorage.getItem(KEY)||'[]'); }catch(e){}
     let cur=[], last=0;
+    // the log is written at most once a second (and at once when the page hides), never per slow frame:
+    // a synchronous localStorage write of the whole list on every hitch made a slow device slower still
+    let _hlT=0; const _hlFlush=()=>{ if(_hlT){ clearTimeout(_hlT); _hlT=0; } try{ localStorage.setItem(KEY,JSON.stringify(hl)); }catch(e){} };
+    const _hlSave=()=>{ if(!_hlT) _hlT=setTimeout(_hlFlush,1000); };
+    window.addEventListener('visibilitychange',()=>{ if(document.hidden&&_hlT) _hlFlush(); },true);
+    window.addEventListener('pagehide',()=>{ if(_hlT) _hlFlush(); },true);
     // time every animation-frame callback: if a slow frame shows 'raf' with small ms, the delay is the GPU / compositor, not our code
     try{ const raf0=window.requestAnimationFrame.bind(window); window.requestAnimationFrame=function(cb){ return raf0(function(t){ const s=performance.now(); try{ return cb(t); } finally{ const d=performance.now()-s; if(d>8&&cur.length<24) cur.push(['raf:'+(cb.name||'cb'),+d.toFixed(1)]); } }); }; }catch(e){}
     const rec=(n,ms)=>{ if(ms>8&&cur.length<24) cur.push([n,+ms.toFixed(1)]); };
@@ -14281,7 +14322,7 @@ window.dmSceneText=function(){
       if(last&&!document.hidden){ const d=t-last;
         if(d>70&&d<4000){ const top=cur.slice().sort((a,b)=>b[1]-a[1]).slice(0,6).map(x=>x[0]+' '+x[1]+'ms').join(', ');
           hl.push({at:new Date().toISOString().slice(11,19),screen:(typeof STATE!=='undefined'&&STATE.screen)||'?',ms:Math.round(d),top:top||'(no timed call — GPU/driver: shader compile or buffer upload)'});
-          if(hl.length>40) hl.shift(); try{ localStorage.setItem(KEY,JSON.stringify(hl)); }catch(e){} } }
+          if(hl.length>40) hl.shift(); _hlSave(); } }
       last=t; cur=[]; requestAnimationFrame(tick); }
     requestAnimationFrame(tick);
     const t0=window.dmPerfText; if(typeof t0==='function') window.dmPerfText=function(){ return t0()+'\n\nSHADER WARM-UP '+(window._warmupMs!=null?window._warmupMs+' ms':'not run')+'\n\nHITCHES (frames >70 ms, newest last)\n'+(hl.length?hl.map(e=>e.at+' '+e.screen+' '+e.ms+'ms  '+e.top).join('\n'):'none recorded'); };
@@ -17287,6 +17328,7 @@ function _worldMapTexture(m,pal){
     }
   }
   cx.putImageData(img,0,0);
+  try{ cv.__dmRGBA=d; }catch(e){}   // the pixels as built: readers (the globe) take these instead of a synchronous canvas readback
   const tex=new THREE.CanvasTexture(cv); tex.colorSpace=THREE.SRGBColorSpace; tex.wrapS=THREE.RepeatWrapping;
   return tex;
 }
@@ -17624,6 +17666,26 @@ function _trueAtmoRender(r,scene,cam){
     try{ _taRun(A,r,cam); } finally { m.visible=was; }
     return true;
   }catch(e){ _taFail(e); return false; }
+}
+// Warm-up (behind the start-up status line, culling off): draw the whole space scene once through the true-atmosphere
+// pass of the nearest world. Rendering into the pass's scene target gives every material a second shader variant
+// (no tone-map / colour-space output stage); left to the first approach, that compile hit mid-flight as a multi-second
+// freeze on entering any world's air (measured: 5–11 s single frames at Saturn and on autopilot toward Jupiter).
+// The pass is kept under the same key the frame uses, so that world reuses it as-is.
+async function _taWarm(r,scene,cam){
+  if(_TA.failed||!_trueAtmoOn()||_taPerfOff()||!r||!scene||!cam) return;
+  let best=null,bd=Infinity; const c=new THREE.Vector3();
+  for(let i=0;i<_jotsFogAtmoRegistry.length;i++){ const e=_jotsFogAtmoRegistry[i]; if(!e||!e.mesh||!e.mesh.parent||!e.mesh.userData.planetR) continue;
+    e.mesh.getWorldPosition(c); const d=c.distanceTo(cam.position)/e.mesh.userData.planetR; if(d<bd){ bd=d; best=e; } }
+  if(!best) return;
+  const ud=best.mesh.userData, E=window.DMEarth, key='sp|'+best.mesh.uuid+'|'+_taQ()+'|'+(E&&E.ready?1:0);
+  try{
+    let A=_TA.pipes.get(key);
+    if(!A){ _taPrune('sp|',key); A=DMAtmo.create(THREE,THREE.TSL,{renderer:r,scene,camera:cam,planet:_taParamsFor(ud),quality:_taQ(),logarithmicDepth:!!r.logarithmicDepthBuffer,halfRes:_taHalf()}); _TA.pipes.set(key,A); }
+    best.mesh.getWorldPosition(c); A.setCenter(c);
+    if(A.renderAsync) await A.renderAsync(0,cam); else _taRun(A,r,cam);
+    _TA.t=0;   // the warm-up frame is not a slow frame for the Auto perf watch
+  }catch(e){ console.warn('[warmup] atmosphere',e); }
 }
 // on the world (walk / low flight): the world scene, its sky composited behind, the gas over both by depth
 function _trueAtmoSurface(r,scene,cam,layered){
@@ -22813,17 +22875,19 @@ function _worldSeed(body){
   for(let i=0;i<key.length;i++){ h^=key.charCodeAt(i); h=Math.imul(h,16777619); }
   return 3+((h>>>0)%997);
 }
+let _SBC_T=null; const _sbcCache=new WeakMap();
+function _sbcPal(pal){
+  let K=_sbcCache.get(pal), sig=(pal.ground||0)+'|'+(pal.ground2||0)+'|'+(pal.rock||0);
+  if(!K||K.sig!==sig){ K={sig,c1:new THREE.Color(pal.ground||0x3a7d34),c2:new THREE.Color(pal.ground2||0x2a5d24),cr:new THREE.Color(pal.rock||0x6b5d4f),
+    sand:new THREE.Color(0xcbb87a),dirt:new THREE.Color(0x6b5340),snow:new THREE.Color(0xf4f6fa),ice:new THREE.Color(0xc8d8ea),rock2:new THREE.Color(0x8a7d6a)}; _sbcCache.set(pal,K); }
+  return K;
+}
 function surfaceBiomeColor(x,z,h,slope,pal,seed,opts){
   opts=opts||{};
   const siteBias=(typeof opts.siteBias==='number')?opts.siteBias:0;
   const siteLat=(typeof opts.siteLat==='number')?opts.siteLat:0;
-  const c1=new THREE.Color(pal.ground||0x3a7d34);
-  const c2=new THREE.Color(pal.ground2||0x2a5d24);
-  const cr=new THREE.Color(pal.rock||0x6b5d4f);
-  const sand=new THREE.Color(0xcbb87a);
-  const dirt=new THREE.Color(0x6b5340);
-  const snow=new THREE.Color(0xf4f6fa);
-  const ice=new THREE.Color(0xc8d8ea);
+  // palette colours are converted once per palette (not ~15 new Colours per vertex: that was the ground build's GC churn)
+  const K=_sbcPal(pal), c1=K.c1, c2=K.c2, cr=K.cr, sand=K.sand, dirt=K.dirt, snow=K.snow, ice=K.ice, T=_SBC_T||(_SBC_T=[0,1,2,3,4].map(()=>new THREE.Color()));
   const hRel=h-siteBias;
   const n=(_fbm(x*0.08+seed,z*0.08+seed,seed+81,3)-0.5);
   const n2=(_fbm(x*0.21+seed,z*0.21+seed,seed+91,2)-0.5);
@@ -22848,16 +22912,16 @@ function surfaceBiomeColor(x,z,h,slope,pal,seed,opts){
   const wDirt=smooth(dirtLine-6,dirtLine+8,hRel)*(1-wRock)*(1-wSnow)*(1-wIce)*0.7;
   const wSand=pal.water?smooth(waterLine+5,waterLine-4,hRel)*(1-wRock)*(1-wSnow)*(1-wIce)*(1-wDirt):0;
   const wGrass=Math.max(0,1-wSnow-wIce-wRock-wSand-wDirt);
-  const grassCol=c1.clone().lerp(c2,0.15+n*0.2);
+  const grassCol=T[0].copy(c1).lerp(c2,0.15+n*0.2);
   // Organic grass mottling
   grassCol.lerp(c2,Math.max(0,n2)*0.35);
-  const rockCol=cr.clone().lerp(new THREE.Color(0x8a7d6a),Math.max(0,n)*0.4);
+  const rockCol=T[1].copy(cr).lerp(K.rock2,Math.max(0,n)*0.4);
   rockCol.lerp(dirt,Math.max(0,-n2)*0.25);
   // Soft snow vs packed ice mottling
-  const snowCol=snow.clone().lerp(ice,0.15+nFine*0.35);
+  const snowCol=T[2].copy(snow).lerp(ice,0.15+nFine*0.35);
   snowCol.lerp(rockCol,rockSpeck*0.5);
-  const iceCol=ice.clone().lerp(snow,0.2+n2*0.2);
-  const dirtCol=dirt.clone().lerp(sand,0.2+Math.max(0,n)*0.25);
+  const iceCol=T[3].copy(ice).lerp(snow,0.2+n2*0.2);
+  const dirtCol=T[4].copy(dirt).lerp(sand,0.2+Math.max(0,n)*0.25);
   const c=new THREE.Color(0,0,0);
   c.r=grassCol.r*wGrass+rockCol.r*wRock+sand.r*wSand+dirtCol.r*wDirt+snowCol.r*wSnow+iceCol.r*wIce;
   c.g=grassCol.g*wGrass+rockCol.g*wRock+sand.g*wSand+dirtCol.g*wDirt+snowCol.g*wSnow+iceCol.g*wIce;
