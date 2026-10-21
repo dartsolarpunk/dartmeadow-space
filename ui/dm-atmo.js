@@ -312,31 +312,38 @@
             const rhoR = exp(hSea.negate().div(U.H)).mul(fadeTop);
             const rhoM = exp(hSea.negate().div(U.H.mul(0.25))).mul(fadeTop).add(exp(alt.negate().div(U.hazeH)).mul(U.haze));
             const n = gasNoise(up, hSea, 3.0);
-            let ext = U.betaR.mul(rhoR).add(vec3(U.mie).mul(rhoM).mul(n.mul(1.2).add(0.4)));
-            let scat = U.betaR.mul(rhoR).mul(phR).add(vec3(U.mie).mul(rhoM).mul(phM).mul(n.mul(1.2).add(0.4)));
+            // (v103) accumulated in vars so the cloud/weather/layer terms can be skipped where their altitude band is
+            // nil (gaussian < 1e-4: below what 8-bit output can show) — no 3-D texture reads for most samples
+            const ext = U.betaR.mul(rhoR).add(vec3(U.mie).mul(rhoM).mul(n.mul(1.2).add(0.4))).toVar();
+            const scat = U.betaR.mul(rhoR).mul(phR).add(vec3(U.mie).mul(rhoM).mul(phM).mul(n.mul(1.2).add(0.4))).toVar();
             // clouds / coloured gas layers: gaussian in altitude × noise, thickness = extinction coefficient
             const C = P.cloud;
             if (C) {
               const nc = gasNoise(up, hSea.mul(0.3), C.freq);
               const band = exp(hSea.sub(C.height).div(C.width).pow(2.0).negate());
-              const cd = smoothstep(float(1.0 - C.amount * 0.6), float(1.0 - C.amount * 0.6 + 0.25), nc).mul(band).mul(fadeTop);
-              ext = ext.add(vec3(C.ext).mul(cd));
-              scat = scat.add(vec3(C.ext * 0.9).mul(cd).mul(phM.mul(0.5).add(0.06)));
+              If(band.greaterThan(1e-4), () => {
+                const cd = smoothstep(float(1.0 - C.amount * 0.6), float(1.0 - C.amount * 0.6 + 0.25), nc).mul(band).mul(fadeTop);
+                ext.addAssign(vec3(C.ext).mul(cd));
+                scat.addAssign(vec3(C.ext * 0.9).mul(cd).mul(phM.mul(0.5).add(0.06)));
+              });
             }
             const Wx = P.weather;
             if (Wx) {
               // storm systems: a slowly drifting low-frequency mask over the planet (regional/hemisphere scale)
+              const band = exp(hSea.sub(Wx.alt).div(Wx.width).pow(2.0).negate());
+              If(band.greaterThan(1e-4), () => {
               const ld = toLocal(up);
               const q = ld.mul(Wx.scale).add(vec3(U.time.mul(Wx.speed), 0.0, U.time.mul(Wx.speed * 0.6)));
               const mask = smoothstep(float(1.0 - Wx.coverage), float(1.0 - Wx.coverage + 0.12), texture3D(volTex, q, 0).r.mul(0.6).add(texture3D(volTex, q.mul(0.37).add(0.21), 0).r.mul(0.4)));
-              const band = exp(hSea.sub(Wx.alt).div(Wx.width).pow(2.0).negate());
               const wd2 = mask.mul(band).mul(gasNoise(up, hSea, 4.0).mul(1.5).add(0.25)).mul(fadeTop);
               const e3 = vec3(Wx.ext).mul(wd2);
-              ext = ext.add(e3);
-              scat = scat.add(e3.mul(vec3(...Wx.albedo)).mul(phM.mul(0.4).add(0.05)));
+              ext.addAssign(e3);
+              scat.addAssign(e3.mul(vec3(...Wx.albedo)).mul(phM.mul(0.4).add(0.05)));
+              });
             }
             for (const Ly of (P.layers || [])) {
               const band = exp(hSea.sub(Ly.alt).div(Ly.width).pow(2.0).negate()).mul(Ly.amount);
+              If(band.greaterThan(1e-4), () => {
               let m = band;
               if (Ly.banded) {
                 const wd = warpDir(toLocal(up));
@@ -347,8 +354,9 @@
               // thickness/colour from the layer's extinction coefficient + single-scattering albedo, not extra samples
               const e3 = (Array.isArray(Ly.ext) ? vec3(...Ly.ext) : vec3(Ly.ext)).mul(m).mul(8.0);
               const alb = Array.isArray(Ly.albedo) ? vec3(...Ly.albedo) : vec3(Ly.albedo);
-              ext = ext.add(e3);
-              scat = scat.add(e3.mul(alb).mul(phM.mul(0.3).add(1.0 / (4 * Math.PI))));
+              ext.addAssign(e3);
+              scat.addAssign(e3.mul(alb).mul(phM.mul(0.3).add(1.0 / (4 * Math.PI))));
+              });
             }
             // sun visibility: planet shadow + airmass-scaled extinction toward the sun (no secondary march)
             const muS = dot(up, sun);
@@ -361,6 +369,8 @@
             Ltot.addAssign(Tr.mul(scat.mul(inv)).mul(sunT).mul(vec3(1.0).sub(a)).div(max(e, vec3(1e-6))));
             Tr.mulAssign(a);
           });
+          // (v103) opaque already: nothing further along the ray can show (< 1/1024 of it gets through)
+          If(max(Tr.x, max(Tr.y, Tr.z)).lessThan(1e-3), () => { Break(); });
         });
       });
       if (opt.debug === 4) return vec4(dbgV, 1.0);
@@ -433,5 +443,5 @@
     };
   }
 
-  root.DMAtmo = { create, prebakeHeight, presetEarth, presetDesert, presetGasGiant, STEPS, version: 'v98' };
+  root.DMAtmo = { create, prebakeHeight, presetEarth, presetDesert, presetGasGiant, STEPS, version: 'v103' };
 })(typeof window !== 'undefined' ? window : globalThis);
