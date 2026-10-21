@@ -242,7 +242,8 @@
     } else { caus.intensity = 0; if (causEmis) causEmis.value = 0; }
     // 4) glass probe: ON DEMAND. All 6 faces are marked dirty when the probe changes window or the star direction moves;
     //    a slow refresh re-marks them every few seconds (the world drifts). At most one face per `every` frames.
-    if (camNear && wc && probe) {
+    const _sealed = !!(window.DMBtInterior && DMBtInterior.sealed);   // (v116) no glass in view: faces stay dirty and are rendered once glass is back in view
+    if (camNear && wc && probe && !_sealed) {
       if (wc !== probeAt || sigMoved(SIG.sun, 0, _c.x, _c.y, _c.z, 0.002)) { probeAt = wc; sigStore(SIG.sun, 0, _c.x, _c.y, _c.z); dirty = 63; }
       const now = performance.now(); if (!dirty && now - lastFull > PROBE_REFRESH_MS) dirty = 63;
       if (dirty && frame - lastFaceFrame >= Math.max(2, tr[2] + 1)) {
