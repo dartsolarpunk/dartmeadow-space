@@ -27,7 +27,7 @@
 
   function BTI_RE_test(n) { return /^BT[IE]_/.test(n || ''); }
 
-  let key = null, fills = null, altar = null, cubeGlow = null, caus = null, probe = null, probeRT = null, causRT = null, causQuad = null, causT = null;
+  let bounce = null, key = null, fills = null, altar = null, cubeGlow = null, caus = null, probe = null, probeRT = null, causRT = null, causQuad = null, causT = null;
   let causMode = 'light', causEmis = null, causMat = null, floorMats = [];
   let glassMats = [], glassMeshes = [], windows = [], extNode = null, intNode = null, snap = null;
   let face = 0, frame = 0, lastCaus = 0;
@@ -40,6 +40,9 @@
     altar = mk(new THREE.PointLight(0xfff2cc, 0, 5, 2), 'BT_AltarLight');
     cubeGlow = mk(new THREE.PointLight(0x8fd8ff, 0, 3.5, 2), 'BT_CubeGlow');
     key = fills[0];
+    // (v118) bounce: one LightProbe (SH, no shadow, fixed in the light key) standing in for the star light bouncing off the
+    // sun-lit hull/deck/floors into the interior. Its SH is rebuilt on demand (star direction or ship attitude moved).
+    bounce = mk(new THREE.LightProbe(), 'BT_Bounce'); bounce.intensity = 0;
     // caustic cookie, generated on the GPU (TSL quad into a small render target)
     const TS = THREE.TSL;
     causRT = new THREE.RenderTarget(256, 256, { type: THREE.HalfFloatType, generateMipmaps: false });
@@ -73,7 +76,7 @@
     probeRT = new THREE.CubeRenderTarget(tr[1], { type: THREE.HalfFloatType, generateMipmaps: false });
     probe = new THREE.CubeCamera(0.03, 1e6, probeRT); probe.name = 'BT_GlassProbe';
     [key, caus, probe].forEach(o => { o.matrixAutoUpdate = true; });
-    BTL.stats = { shadowedLights: 1, poolLights: 5, probeRes: tr[1], probeFaceEvery: tr[2], causticHz: tr[3] };
+    BTL.stats = { shadowedLights: 1, poolLights: 6, probeRes: tr[1], probeFaceEvery: tr[2], causticHz: tr[3] };
   }
 
   // ── per-material light lists ──
@@ -85,7 +88,7 @@
     amb.forEach(l => { ext.push(l); int.push(l); });
     if (sol) ext.push(sol); if (star) { ext.push(star); int.push(star); }
     try { if (window._NAT && _NAT.moon) ext.push(_NAT.moon); } catch (e) {}   // #165's moonlight fill (fixed, unshadowed) on the hull too
-    ext.push(altar, cubeGlow); int.push(caus, fills[0], fills[1]);
+    ext.push(altar, cubeGlow); int.push(caus, fills[0], fills[1]); if (bounce) int.push(bounce);
     return { ext, int, sig: [sol, star].concat(amb) };
   }
   function nodes() {
@@ -194,7 +197,7 @@
   // ── per frame (called right before the main render) ──
   const V = () => T().Vector3;
   let _a, _b, _c, _d, _q, _m4 = null;
-  const SIG = { star: new Float64Array(9).fill(NaN), sun: new Float64Array(3).fill(NaN) };
+  const SIG = { star: new Float64Array(9).fill(NaN), sun: new Float64Array(3).fill(NaN), bnc: new Float64Array(3).fill(NaN) };
   function sigMoved(S, i, x, y, z, tol) { return !(Math.abs(S[i] - x) <= tol && Math.abs(S[i + 1] - y) <= tol && Math.abs(S[i + 2] - z) <= tol); }
   function sigStore(S, i, x, y, z) { S[i] = x; S[i + 1] = y; S[i + 2] = z; }
   BTL.cfg.minFill = 1.4;   // (v118) was 0.6: the lamp pools did not read in the bay / below deck
@@ -214,7 +217,7 @@
     const THREE = T(); if (!_a) { _m4 = new THREE.Matrix4(); _a = new THREE.Vector3(); _b = new THREE.Vector3(); _c = new THREE.Vector3(); _d = new THREE.Vector3(); _q = new THREE.Quaternion(); }
     const g = BIRD_TEMPLE.group; frame++;
     if (!BTL.ready) { if (BIRD_TEMPLE.spawned && window.BTI && BTI.ready) { apply(g); BTL.ready = true; } else return; }   // normally done by the interior warm-up first
-    if (!g.visible) { for (const L of [fills[0], fills[1], altar, cubeGlow, caus]) L.intensity = 0; return; }
+    if (!g.visible) { for (const L of [fills[0], fills[1], altar, cubeGlow, caus]) L.intensity = 0; if (bounce) bounce.intensity = 0; return; }
     { const nw = performance.now(); if (nw - lastSig > 1000) { lastSig = nw; try { recheck(); } catch (e) {} } }
     g.updateMatrixWorld(); g.getWorldPosition(_a);
     const R0 = (BIRD_TEMPLE._R0 || 10);
@@ -226,7 +229,7 @@
     if (!near) {   // far from the ship: nothing below runs (no window loop, no signatures); star shadow back to the game's own updates
       fills[0].intensity = fills[1].intensity = caus.intensity = 0;
       try { const L = _charShadowLight; if (L && L.shadow && !L.shadow.autoUpdate) { L.shadow.autoUpdate = true; SIG.star[0] = NaN; } } catch (e) {}
-      altar.intensity = 0; cubeGlow.intensity = 0; return;
+      altar.intensity = 0; cubeGlow.intensity = 0; if (bounce) bounce.intensity = 0; return;
     }
     // star direction at the ship (Sol at the origin)
     _c.copy(_a); if (_c.lengthSq() < 1e-6) _c.set(1, 0.3, 0.2); _c.normalize();   // from Sol toward the ship
@@ -268,6 +271,14 @@
     // 4) glass probe: ON DEMAND. All 6 faces are marked dirty when the probe changes window or the star direction moves;
     //    a slow refresh re-marks them every few seconds (the world drifts). At most one face per `every` frames.
     if (glassT) glassT.value = performance.now() / 1000;
+    // (v118) bounce probe: SH from the star direction in the ship frame. L0 = warm diffuse bounce (sun colour × deck albedo),
+    // L1 points AWAY from the star (light comes back up off the lit floors / in through the windows' far walls). Tier-scaled.
+    if (bounce) { const k = [0, 0.35, 0.55, 0.7][tier()] * (aboard ? 1 : 0);
+      if (sigMoved(SIG.bnc, 0, _c.x, _c.y, _c.z, 0.004) || bounce.intensity !== k) { sigStore(SIG.bnc, 0, _c.x, _c.y, _c.z);
+        const sh = bounce.sh.coefficients, col = [1.0, 0.86, 0.7], dx = -_c.x, dy = -_c.y, dz = -_c.z;
+        for (let i = 0; i < 9; i++) sh[i].set(0, 0, 0);
+        for (let ch = 0; ch < 3; ch++) { const c = col[ch]; sh[0].setComponent(ch, c * 0.9); sh[1].setComponent(ch, c * 0.5 * dy); sh[2].setComponent(ch, c * 0.5 * dz); sh[3].setComponent(ch, c * 0.5 * dx); }
+        bounce.intensity = k; BTL.stats.bounceUpdates = (BTL.stats.bounceUpdates || 0) + 1; } }
     const _sealed = !!(window.DMBtInterior && DMBtInterior.sealed);   // (v116) no glass in view: faces stay dirty and are rendered once glass is back in view
     if (camNear && wc && probe && !_sealed) {
       if (wc !== probeAt || sigMoved(SIG.sun, 0, _c.x, _c.y, _c.z, 0.002)) { if (wc !== probeAt && probeReady) probeReady.value = 0; probeAt = wc; sigStore(SIG.sun, 0, _c.x, _c.y, _c.z); dirty = 63; }
