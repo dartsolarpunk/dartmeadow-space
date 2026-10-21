@@ -139,8 +139,27 @@
       exposureScale: uniform(1 / P.top), // coefficients are per "top" length so they are scale-free
       rot: uniform(new THREE.Matrix4()),       // world -> planet-local rotation (terrain map + storms turn with the planet)
       locC: uniform(new THREE.Vector3(0, 0, 1)), locOn: uniform(0), // local LOD height map: centre x,z (world) + span
-      histK: uniform(0), skyW: uniform(1), aerialW: uniform(1)  // weights: rays that reach empty sky / that hit geometry
+      histK: uniform(0), skyW: uniform(1), aerialW: uniform(1),  // weights: rays that reach empty sky / that hit geometry
+      pixA: uniform(0.001),                                       // (v123) radians per pixel (sea wave-layer footprint)
+      wavePh: [uniform(new THREE.Vector4()), uniform(new THREE.Vector4()), uniform(new THREE.Vector4())]
     };
+    // (v123) ocean wave layers: wavelength (m) 600 m swell down to 1 m ripples, real deep-water dispersion (w = sqrt(g k)),
+    // equal slope per octave (k^-3 sea spectrum); directions spread on the sphere (golden spiral), so no global tiling.
+    const MPU = opt.metersPerUnit || (6371000 / Math.max(P.radius, 1e-6));
+    const OCEAN_WAVES = [600, 340, 190, 105, 60, 33, 18.5, 10.3, 5.8, 3.2, 1.8, 1.0].map((Lm, i) => {
+      const z = 1 - 2 * (i + 0.5) / 12, rr = Math.sqrt(1 - z * z), a = i * 2.39996323;
+      return { D: [rr * Math.cos(a), z, rr * Math.sin(a)], L: Lm / MPU, k: 2 * Math.PI * MPU / Lm, w: Math.sqrt(9.81 * 2 * Math.PI / Lm), s: i < 2 ? 0.06 : 0.075 };
+    });
+    const _camL = new THREE.Vector3();
+    function updateWaves() {
+      _camL.copy(U.camPos.value).sub(U.center.value).applyMatrix4(U.rot.value);
+      const t = U.time.value, TAU = Math.PI * 2;
+      for (let i = 0; i < OCEAN_WAVES.length; i++) {
+        const w = OCEAN_WAVES[i], d = w.D;
+        let ph = (w.k * (_camL.x * d[0] + _camL.y * d[1] + _camL.z * d[2]) - w.w * t) % TAU;
+        U.wavePh[i >> 2].value.setComponent(i & 3, ph);
+      }
+    }
     const hasSea = P.seaLevel != null && !!P.water;
     const steps = STEPS[opt.quality] || STEPS.medium;
 
@@ -220,6 +239,11 @@
       }
       return d;
     };
+    const gasNoiseW = (d, alt, freq) => {   // (v123) d = the already rotated + storm-warped direction (one warp per step)
+      const p = d.mul(freq).add(vec3(0.0, alt.mul(U.exposureScale).mul(2.0), 0.0));
+      const n1 = texture3D(volTex, p, 0).r, n2 = texture3D(volTex, p.mul(2.7).add(0.37), 0).r;
+      return n1.mul(0.65).add(n2.mul(0.35));
+    };
     const gasNoise = (dir, alt, freq) => {
       const d = warpDir(toLocal(dir));
       const p = d.mul(freq).add(vec3(0.0, alt.mul(U.exposureScale).mul(2.0), 0.0));
@@ -255,30 +279,63 @@
           const pw = ro.add(rd.mul(ts.x)), nUp = normalize(pw);
           const ground = groundAt(pw, nUp);
           If(ground.lessThan(U.sea), () => {
-            const depthAlong = min(sceneDist.sub(ts.x), U.top.mul(4.0));
-            const vert = U.sea.sub(ground); // column depth (for colour), path length for absorption
-            const path = max(depthAlong, vert);
-            const k = vec3(...W.absorb).mul(U.exposureScale).mul(60.0);
-            const trans = exp(k.mul(path).negate());
-            const deep = vec3(...W.deep);
-            const sunUp = clamp(dot(nUp, sun).mul(3.0).add(0.15), 0.0, 1.0);
-            const wcol = base.mul(trans).add(deep.mul(sunUp).mul(vec3(1.0).sub(trans)));
-            // gentle wave normal
-            const wp = pw.mul(W.waveFreq / P.radius).add(vec3(U.time.mul(0.3), 0.0, U.time.mul(0.2)));
-            const e = 0.05;
-            const n0 = mx_noise_float(wp), nx = mx_noise_float(wp.add(vec3(e, 0, 0))), nz = mx_noise_float(wp.add(vec3(0, 0, e)));
-            const tA = normalize(vec3(nUp.z.negate(), 0.0, nUp.x).add(vec3(0.0, 1e-4, 0.0)));
-            const tB = normalize(vec3(nUp.y.mul(tA.z).sub(nUp.z.mul(tA.y)), nUp.z.mul(tA.x).sub(nUp.x.mul(tA.z)), nUp.x.mul(tA.y).sub(nUp.y.mul(tA.x))));
-            const nW = normalize(nUp.sub(tA.mul(nx.sub(n0).div(e).mul(W.waveAmp * 0.1))).sub(tB.mul(nz.sub(n0).div(e).mul(W.waveAmp * 0.1))));
-            const cosI = clamp(dot(nW, rd.negate()), 0.0, 1.0);
-            const fres = float(0.02).add(float(0.98).mul(pow(float(1.0).sub(cosI), 5.0)));
-            const refl = rd.sub(nW.mul(dot(rd, nW).mul(2.0)));
-            // sky colour seen in reflection: rayleigh tint * sun elevation + horizon whitening
+            // (v123) photographic ocean. Colour comes from the real water column (ETOPO depth under this point):
+            // navy offshore, teal over the shelves, the sea bed showing through only where it is metres deep.
+            // Sun glint = a microfacet (Beckmann) lobe over the sea's slope variance, so from orbit it is the broad,
+            // textured glint of a real photo; wind fields and current slicks vary that roughness across the ocean.
+            // Fresnel sky reflection on the wave normal. Swell / wind-sea wave layers (Gerstner-style slopes with real
+            // deep-water dispersion) come in one by one as the pixel footprint drops below each wavelength, and the
+            // waves too small to resolve go into the roughness instead (no aliasing, no repeating dot/diamond tiles).
+            const nL = toLocal(nUp), vL = toLocal(rd).negate(), sL = toLocal(sun);
+            const groundM = ground.div(max(U.hScale, 1e-6)).mul(8848.0);
+            const depthM = max(groundM.negate(), 0.0);
             const sunEl = dot(nUp, sun);
+            const cosV0 = clamp(dot(nL, vL), 0.0, 1.0);
+            const pix = ts.x.mul(U.pixA).div(max(cosV0, 0.2));            // pixel footprint on the sea (units)
+            // wind field + current slicks + eddies, planet-fixed (turn with the planet)
+            const wq = nL.mul(2.1).add(vec3(U.time.mul(0.0015), 0.0, U.time.mul(-0.001)));
+            const wind = clamp(mx_noise_float(wq).mul(0.6).add(mx_noise_float(nL.mul(7.3).add(vec3(3.1, 1.7, 5.2))).mul(0.3)).add(0.75), 0.18, 1.6);
+            const cw = nL.mul(5.0);
+            const warp = vec3(mx_noise_float(cw), mx_noise_float(cw.add(7.7)), mx_noise_float(cw.add(13.1))).mul(0.55);
+            const cur = float(1.0).sub(abs(mx_noise_float(nL.mul(19.0).add(warp))));
+            const slick = smoothstep(0.9, 0.985, cur).mul(0.3);
+            const eddy = mx_noise_float(nL.mul(61.0).add(warp.mul(2.0)));
+            // resolved wave layers -> slope; unresolved -> roughness
+            const slope = vec3(0.0).toVar(), unres = float(0.0).toVar();
+            const dL = toLocal(rd).mul(ts.x);                            // camera-relative, local frame (precision)
+            const sw = sqrt(wind);
+            OCEAN_WAVES.forEach((wv, i) => {
+              const D = vec3(wv.D[0], wv.D[1], wv.D[2]);
+              const ph = dot(dL, D).mul(wv.k).add(U.wavePh[i >> 2]['xyzw'[i & 3]]);
+              const fade = float(1.0).sub(smoothstep(wv.L * 0.12, wv.L * 0.45, pix));
+              const Dt = D.sub(nL.mul(dot(nL, D)));
+              slope.addAssign(Dt.mul(cos(ph).mul(fade).mul(wv.s).mul(sw)));
+              unres.addAssign(float(1.0).sub(fade).mul(wv.s * wv.s * 0.5));
+            });
+            const sig2 = max(unres.mul(wind).add(0.0025).mul(float(1.0).sub(slick)), 0.0012);
+            const nW = normalize(nL.sub(slope));
+            const cosI = clamp(dot(nW, vL), 0.0, 1.0);
+            const fres = float(0.02).add(float(0.98).mul(pow(float(1.0).sub(cosI), 5.0)));
+            const refl = vL.negate().sub(nW.mul(dot(vL.negate(), nW).mul(2.0)));
+            // sky colour seen in reflection: rayleigh tint * sun elevation + horizon whitening
             const skyDay = U.betaR.div(33.1).mul(0.35).mul(smoothstep(-0.15, 0.25, sunEl));
             const horizon = vec3(1.0, 0.55, 0.3).mul(exp(abs(sunEl).mul(-8.0))).mul(0.25);
-            const skyC = skyDay.add(horizon).mul(smoothstep(-0.05, 0.4, dot(refl, nUp)).mul(0.6).add(0.4));
-            const spec = pow(clamp(dot(refl, sun), 0.0, 1.0), 400.0).mul(U.sunI).mul(smoothstep(-0.02, 0.05, sunEl));
+            const skyC = skyDay.add(horizon).mul(smoothstep(-0.05, 0.4, dot(refl, nL)).mul(0.6).add(0.4));
+            // Beckmann glint over the total slope variance
+            const hV = normalize(vL.add(sL));
+            const cH = clamp(dot(nW, hV), 0.05, 1.0), cH2 = cH.mul(cH);
+            const Db = exp(float(1.0).sub(cH2).div(cH2.mul(sig2)).negate()).div(sig2.mul(3.14159265).mul(cH2.mul(cH2)));
+            const Fh = float(0.02).add(float(0.98).mul(pow(float(1.0).sub(clamp(dot(hV, vL), 0.0, 1.0)), 5.0)));
+            const cL = clamp(dot(nW, sL), 0.0, 1.0);
+            const spec = Fh.mul(Db).mul(cL).div(max(cosI, 0.08).mul(max(cL, 0.08)).mul(4.0)).mul(U.sunI).mul(0.22)
+              .mul(smoothstep(-0.02, 0.05, sunEl)).min(U.sunI.mul(1.2));
+            // body colour from depth
+            const shelf = float(1.0).sub(smoothstep(25.0, 650.0, depthM));
+            const bedVis = exp(vec3(0.30, 0.055, 0.028).mul(depthM.add(0.5)).negate());
+            const deepC = vec3(0.006, 0.022, 0.050), shelfC = vec3(0.014, 0.082, 0.092), bedC = vec3(0.30, 0.28, 0.21);
+            const bodyC = mix(deepC, shelfC, shelf).mul(vec3(1.0, eddy.mul(0.22).add(1.0), 1.0));
+            const lit = clamp(sunEl.mul(2.2).add(0.06), 0.0, 1.0).mul(2.0);
+            const wcol = mix(bodyC, bedC, bedVis).mul(lit);
             if (mode !== 'gas') base.assign(mix(wcol, skyC, fres).add(spec));
             tEnd.assign(ts.x);
           });
@@ -311,7 +368,8 @@
             const fadeTop = smoothstep(Rtop, Rtop.sub(U.top.mul(0.25)), r);
             const rhoR = exp(hSea.negate().div(U.H)).mul(fadeTop);
             const rhoM = exp(hSea.negate().div(U.H.mul(0.25))).mul(fadeTop).add(exp(alt.negate().div(U.hazeH)).mul(U.haze));
-            const n = gasNoise(up, hSea, 3.0);
+            const wd0 = warpDir(toLocal(up)).toVar();   // (v123) shared by every gas noise lookup of this step
+            const n = gasNoiseW(wd0, hSea, 3.0);
             // (v103) accumulated in vars so the cloud/weather/layer terms can be skipped where their altitude band is
             // nil (gaussian < 1e-4: below what 8-bit output can show) — no 3-D texture reads for most samples
             const ext = U.betaR.mul(rhoR).add(vec3(U.mie).mul(rhoM).mul(n.mul(1.2).add(0.4))).toVar();
@@ -319,7 +377,7 @@
             // clouds / coloured gas layers: gaussian in altitude × noise, thickness = extinction coefficient
             const C = P.cloud;
             if (C) {
-              const nc = gasNoise(up, hSea.mul(0.3), C.freq);
+              const nc = gasNoiseW(wd0, hSea.mul(0.3), C.freq);
               const band = exp(hSea.sub(C.height).div(C.width).pow(2.0).negate());
               If(band.greaterThan(1e-4), () => {
                 const cd = smoothstep(float(1.0 - C.amount * 0.6), float(1.0 - C.amount * 0.6 + 0.25), nc).mul(band).mul(fadeTop);
@@ -335,7 +393,7 @@
               const ld = toLocal(up);
               const q = ld.mul(Wx.scale).add(vec3(U.time.mul(Wx.speed), 0.0, U.time.mul(Wx.speed * 0.6)));
               const mask = smoothstep(float(1.0 - Wx.coverage), float(1.0 - Wx.coverage + 0.12), texture3D(volTex, q, 0).r.mul(0.6).add(texture3D(volTex, q.mul(0.37).add(0.21), 0).r.mul(0.4)));
-              const wd2 = mask.mul(band).mul(gasNoise(up, hSea, 4.0).mul(1.5).add(0.25)).mul(fadeTop);
+              const wd2 = mask.mul(band).mul(gasNoiseW(wd0, hSea, 4.0).mul(1.5).add(0.25)).mul(fadeTop);
               const e3 = vec3(Wx.ext).mul(wd2);
               ext.addAssign(e3);
               scat.addAssign(e3.mul(vec3(...Wx.albedo)).mul(phM.mul(0.4).add(0.05)));
@@ -346,10 +404,10 @@
               If(band.greaterThan(1e-4), () => {
               let m = band;
               if (Ly.banded) {
-                const wd = warpDir(toLocal(up));
+                const wd = wd0;
                 const lat = asin(clamp(wd.y, -1.0, 1.0));
-                const zb = sin(lat.mul(S.bands * 2.0).add(gasNoise(up, hSea, 0.9).sub(0.5).mul(5.0))).mul(0.5).add(0.5);
-                m = band.mul(Ly.belt ? smoothstep(0.35, 0.65, zb) : smoothstep(0.65, 0.35, zb)).mul(gasNoise(up, hSea, 5.0).mul(1.4).add(0.3));
+                const zb = sin(lat.mul(S.bands * 2.0).add(gasNoiseW(wd0, hSea, 0.9).sub(0.5).mul(5.0))).mul(0.5).add(0.5);
+                m = band.mul(Ly.belt ? smoothstep(0.35, 0.65, zb) : smoothstep(0.65, 0.35, zb)).mul(gasNoiseW(wd0, hSea, 5.0).mul(1.4).add(0.3));
               }
               // thickness/colour from the layer's extinction coefficient + single-scattering albedo, not extra samples
               const e3 = (Array.isArray(Ly.ext) ? vec3(...Ly.ext) : vec3(Ly.ext)).mul(m).mul(8.0);
@@ -408,6 +466,8 @@
       U.invProj.value.copy(camera.projectionMatrixInverse);
       U.camWorld.value.copy(camera.matrixWorld);
       U.near.value = camera.near; U.far.value = camera.far;
+      try { const hpx = (renderer.domElement && renderer.domElement.height) || 1080; U.pixA.value = 2 / (Math.max(camera.projectionMatrix.elements[5], 1e-6) * hpx); } catch (e) {}
+      if (hasSea) updateWaves();
     }
     return {
       uniforms: U, params: P, isWebGPU, usesCompute: !!computeNode, steps,
