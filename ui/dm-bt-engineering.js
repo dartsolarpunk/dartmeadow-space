@@ -16,7 +16,7 @@
  */
 (function () {
   'use strict';
-  const URL_GLB = 'assets/bt-engineering/bt-engineering.glb?v=1';
+  const URL_GLB = 'assets/bt-engineering/bt-engineering.glb?v=2';
   const cfg = { holoSpin: 0.6, selfLight: 0.16, glow: 1.35, holoOpacity: 0.75 };
   const BTE = { cfg, ready: false, root: null, holo: null, collider: null };
   window.BTE = BTE;
