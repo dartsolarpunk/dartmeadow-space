@@ -6329,6 +6329,7 @@ function _aoccTick(){
   }catch(e){}
 }
 setInterval(_aoccTick,200);
+setInterval(()=>{ if(!window._dmWarming) _lcApplyWorlds(); },3000);   // worlds built later (other systems): same lists
 // (v104) the Bird Temple's enclosed decks are hidden while you are far from the ship, so no warm-up ever compiled
 // them: the first boarding compiled every BTI_ program in the frames you climbed in (log: PIPELINE BTI_Mess_Trays_2
 // mid-boarding, 0.5–1 s frames, then the GPU process died). Once the ship is in the scene, compile its interior in
@@ -6363,6 +6364,7 @@ async function _flightWarmup(){
   try{ _btBuildEnvRT(); }catch(e){}   // the Bird Temple's environment map: prefiltered now, not when the temple arrives
   try{ _btReserveLights(5+BT_INTERIOR_LIGHTS); }catch(e){}   // its altar, hull-rig and shard light stand-ins, so the light key is final before compiling
   try{ _distLightT=1; updateDistantSystems(0); }catch(e){}   // the two distant-star lights exist before compiling
+  try{ _lcApplyWorlds(); }catch(e){}   // (v105) worlds' own light lists, before anything compiles
   const steps=[
     ['world',()=>flightRenderer.compileAsync(flightScene,flightCamera)],
     ['sun and flares',()=>window.DMStar&&DMStar.warm&&DMStar.warm(flightCamera)],
@@ -12227,7 +12229,8 @@ async function upgradePlanetLOD(dt){
     // compile the new detail level hidden, beside the old one, so the swap never stalls the frame
     newGroup.visible=false; newGroup.position.copy(b.mesh.position); newGroup.rotation.copy(b.mesh.rotation);
     flightScene.add(newGroup);
-    if(b._wm){ const keep=b.mesh; b.mesh=newGroup; try{ _applyWorldMapToFlightBody(b,b._wm); } finally{ b.mesh=keep; } }   // (v104) wear the map before compiling: never one frame of procedural colours
+    if(b._wm){ const keep=b.mesh; b.mesh=newGroup; try{ _applyWorldMapToFlightBody(b,b._wm); } finally{ b.mesh=keep; } }
+    try{ _lcApplyObj(newGroup); }catch(e){}   // (v104) wear the map before compiling: never one frame of procedural colours
     await _dmCompileObject(newGroup);
     const oldGroup=b.mesh;
     // Preserve position/rotation and any tagged extras (rings, moon)
@@ -17024,6 +17027,29 @@ function updateDistantSystems(dt){
 }
 const _distLightPool=[];
 
+// ── Per-material light lists (v105, engine-level) ──────────────────────
+// Every lit material in the space scene looped over every light in it — 46 on Justin's sessions: the Bird Temple's 24
+// interior stand-ins (range 3.4, inside the hull) and the two distant-star lights (other systems) included, at
+// intensity 0 or far out of range, for every planet pixel. A finite-range point light contributes exactly zero beyond
+// its range, so a world's materials now carry their own light list (material.lightsNode) without those: same image,
+// ~26 fewer light evaluations per planet fragment (the full-screen pixels near Earth). Lists are rebuilt only when the
+// scene's light set changes (the pools are reserved at warm-up, so in practice once), and applied before compiles.
+const _LC={key:'',lights:null,node:null};
+function _lcExcluded(l){ return l.name==='BTI_Light'||l.name==='JOTS_DistStarLight'; }
+function _lcNode(){
+  if(typeof window.lights!=='function'||typeof flightScene==='undefined'||!flightScene) return null;
+  const all=[]; flightScene.traverse(o=>{ if(o.isLight) all.push(o); });
+  const key=all.length+'|'+all.map(l=>l.id).join(',');
+  if(key!==_LC.key){ _LC.key=key; _LC.lights=all.filter(l=>!_lcExcluded(l)); _LC.node=(_LC.lights.length<all.length)?window.lights(_LC.lights):null; }
+  return _LC.node;
+}
+function _lcApplyObj(root){
+  const n=_lcNode(); if(!root) return;
+  root.traverse(o=>{ if(!o.isMesh) return; const ms=Array.isArray(o.material)?o.material:[o.material];
+    for(const m of ms){ if(!m||!m.isNodeMaterial||m.lights===false||m.isMeshBasicMaterial||m.isMeshBasicNodeMaterial) continue;
+      if((m.lightsNode||null)!==n){ m.lightsNode=n; m.needsUpdate=true; } } });
+}
+function _lcApplyWorlds(){ try{ for(const b of (celestialBodies||[])){ if(b&&b.mesh&&b.type!=='Star'&&b.name!=='Sun') _lcApplyObj(b.mesh); } }catch(e){} }
 // ── GPU frame breakdown (v105, engine-level) ───────────────────────────
 // Every GPU pass the renderer records (each render context: main scene, true-atmosphere scene/quad passes, shadow
 // maps, compute dispatches) is tagged with the label of the code that issued it (DMGpuProf.push/pop) plus its kind
@@ -17452,7 +17478,7 @@ async function _wmWarmAll(){
       if(!b||!b.mesh||b.name==='Sun'||b.type==='Star'||b.isAsteroid||b.type==='Comet'||!isProximityLandEligible(b)) continue;
       const best=_wmBestMesh(b); if(!best) continue;
       let mat=best.userData._wmMat;
-      if(!mat){ mat=new THREE.MeshStandardNodeMaterial({roughness:0.92,metalness:0.02}); mat.colorNode=_wmColorNode(_wmStandIn); mat._wmTexNode=mat.colorNode; best.userData._wmMat=mat; best.userData._wmPrev=best.material; }
+      if(!mat){ mat=new THREE.MeshStandardNodeMaterial({roughness:0.92,metalness:0.02}); mat.colorNode=_wmColorNode(_wmStandIn); mat._wmTexNode=mat.colorNode; try{ mat.lightsNode=_lcNode(); }catch(e){} best.userData._wmMat=mat; best.userData._wmPrev=best.material; }
       if(best.material!==mat){ back.push([best,best.material]); best.material=mat; }
     }catch(e){}
   }
@@ -17478,7 +17504,7 @@ function _applyWorldMapToFlightBody(b,m){
     // the texture is swapped on the existing node (no new node graph, no rebuild); a fresh node only the first time
     if(mat._wmTexNode&&mat._wmTexNode.value!==undefined){ mat._wmTexNode.value=m.tex; }
     else { mat.colorNode=_wmColorNode(m.tex); mat._wmTexNode=mat.colorNode; mat.needsUpdate=true; }
-    best.material=mat;
+    best.material=mat; try{ const n=_lcNode(); if((mat.lightsNode||null)!==n){ mat.lightsNode=n; mat.needsUpdate=true; } }catch(e){}
   }catch(e){ console.warn('[worldmap] could not dress',b.name,e); }
 }
 // ── Whole-planet map (DART Engine) ───────────────────────────────────
