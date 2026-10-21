@@ -7179,6 +7179,7 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
     return h.div(3000); // normalized to roughly -1..1, same convention as the generic terrain node below
   };
 
+  const _earthRelief=(kind==='earth'&&window.DMEarth&&DMEarth.ready&&typeof window.texture==='function')?DMEarth.texture():null;
   const terrainRadiusAt=Fn(([dir])=>{
     const n1=mx_fractal_noise_float(dir.mul(2.3).add(seedU),5,2.0,0.5);
     const ridge=float(1.0).sub(n1.abs());
@@ -7200,7 +7201,15 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
     const craterRim=rim1.add(rim2);
     const genericRelief=terrain.mul(0.9).sub(bowl.mul(0.6)).add(craterRim.mul(0.6)).add(plateau).add(peaks); // roughly -1..1
     let relief;
-    if(kind==='mars'){
+    if(_earthRelief){
+      // (v104) Earth's far mesh carries the real continents (ETOPO5 land value, ui/dm-earth.js), so its coastline is
+      // the one the true-atmosphere sea body and the world map use: no procedural peaks poking through the sea (the
+      // dot grid) and no procedural highlands standing where the map has ocean (the stepped white blobs).
+      const la=dir.y.clamp(-1,1).asin(), lo=atan2(dir.z.negate(),dir.x);
+      const uvE=vec2(lo.div(Math.PI*2).add(0.5),la.div(Math.PI).add(0.5));
+      const land=texture(_earthRelief,uvE).level(0).r.mul(2.6).sub(1.0);   // -1 deep sea … 1.6 high peaks
+      relief=land.mul(0.55).add(terrain.mul(0.08)).add(peaks.mul(0.05).mul(land.max(0.0)));
+    } else if(kind==='mars'){
       relief=_marsFeatureTSL(dir).add(plateau.mul(0.35)).add(peaks.mul(0.5));
     } else {
       relief=genericRelief;
@@ -12179,6 +12188,7 @@ async function upgradePlanetLOD(dt){
     // compile the new detail level hidden, beside the old one, so the swap never stalls the frame
     newGroup.visible=false; newGroup.position.copy(b.mesh.position); newGroup.rotation.copy(b.mesh.rotation);
     flightScene.add(newGroup);
+    if(b._wm){ const keep=b.mesh; b.mesh=newGroup; try{ _applyWorldMapToFlightBody(b,b._wm); } finally{ b.mesh=keep; } }   // (v104) wear the map before compiling: never one frame of procedural colours
     await _dmCompileObject(newGroup);
     const oldGroup=b.mesh;
     // Preserve position/rotation and any tagged extras (rings, moon)
