@@ -385,7 +385,7 @@
     let gasRT = null;
     if (opt.halfRes && T.rtt) {
       gasRT = T.rtt(build('gas'), null, null, { type: THREE.HalfFloatType });
-      if (gasRT.setResolutionScale) gasRT.setResolutionScale(0.5);
+      if (gasRT.setResolutionScale) gasRT.setResolutionScale(opt.gasScale > 0 && opt.gasScale < 1 ? opt.gasScale : 0.5);
     }
     const atmo = gasRT ? build('composite', gasRT) : build('full');
 
