@@ -17552,6 +17552,27 @@ function worldMapFor(body,onPass){
 // sea level, sand at the shore, grass/soil, rock up high and on steep
 // slopes, snow (lower toward the poles), and a sun-from-the-north-west
 // hillshade so relief reads from orbit
+// map colour helpers (shared by the lush/dry branches and the v105 Earth desert blend; same formulas as before)
+function _wmLush(c,g1,g2,sand,rock,snow,h,slope,snowDrop,la,pal,ws,sm){
+  c.copy(g1).lerp(g2,sm(10,40,h)*0.6);
+  if(pal.water) c.lerp(sand,sm(6,1,h));
+  c.lerp(rock,Math.max(sm(30-snowDrop*0.3,46,h),sm(0.35,0.75,slope)));
+  c.lerp(snow,ws==='ice'?0.75:sm(52-snowDrop-6,52-snowDrop+8,h)*(1-slope*0.5));
+  if(la>78) c.lerp(snow,sm(78,84,la)*0.85);
+  return c;
+}
+function _wmDry(c,g1,g2,sand,rock,snow,h,slope,la,hx,hz,cw,cell,ws){
+  const sm=(a,b,v)=>{ const t=Math.min(1,Math.max(0,(v-a)/(b-a))); return t*t*(3-2*t); };
+  const band=0.5+0.5*Math.sin(h*0.22);
+  c.copy(g1).lerp(g2,0.25+band*0.35);
+  if(ws==='dunes') c.lerp(sand,0.55);
+  if(ws==='volcanic') c.multiplyScalar(0.55);
+  c.lerp(rock.clone().multiplyScalar(0.8),sm(0.4,0.85,slope)*0.7);
+  if(la>72) c.lerp(snow,sm(72,82,la)*0.8);
+  const shade=Math.max(0.55,Math.min(1.25,1+(-hx/cw+hz)/(2*cell)*0.9));
+  c.multiplyScalar(shade);
+  return c;
+}
 function _worldMapTexture(m,pal){
   const W=m.W, Hh=m.H, hs=m.heights;
   const cv=document.createElement('canvas'); cv.width=W; cv.height=Hh;
@@ -17571,7 +17592,16 @@ function _worldMapTexture(m,pal){
       const hx=hs[y*W+((x+1)%W)]-hs[y*W+((x-1+W)%W)], hz=hs[Math.min(Hh-1,y+1)*W+x]-hs[Math.max(0,y-1)*W+x];
       const slope=Math.min(1,Math.hypot(hx/(2*cell*cw),hz/(2*cell))*1.5);
       const ws=styleAt(lat,(x+0.5)/W*360-180);
+      const lonM=(x+0.5)/W*360-180;
+      const dW=(m.body&&m.body.name==='Earth'&&window.DMWorldStyle&&DMWorldStyle.earthDesertW)?DMWorldStyle.earthDesertW(lat,lonM):-1;
       if(pal.water&&h<0){ c.copy(wShal).lerp(wDeep,sm(0,-40,h)); }
+      else if(dW>=0&&h>=0&&(ws==='lush'||ws==='dunes')){
+        // (v105) Earth: lush and desert colouring blended by a soft, ragged desert weight (no rectangles)
+        const cl=_wmLush(c,g1,g2,sand,rock,snow,h,slope,snowDrop,la,pal,'lush',sm);
+        const cr=cl.r,cg=cl.g,cb=cl.b;
+        if(dW>0.001){ const dc=_wmDry(c,g1,g2,sand,rock,snow,h,slope,la,hx,hz,cw,cell,'dunes'); c.setRGB(cr+(dc.r-cr)*dW,cg+(dc.g-cg)*dW,cb+(dc.b-cb)*dW); }
+        else c.setRGB(cr,cg,cb);
+      }
       else if(ws==='lush'||ws==='ice'){
         c.copy(g1).lerp(g2,sm(10,40,h)*0.6);
         if(pal.water) c.lerp(sand,sm(6,1,h));
