@@ -125,6 +125,7 @@
     if (occ.map.size > 256) occ.map.delete(occ.map.keys().next().value);
     occ.map.set(key, res);
   }
+  S.rayHit = function (ox, oy, oz, dx, dy, dz, far) { if (typeof TCOL === 'undefined' || !TCOL.T) return -2; return rayHit(ox, oy, oz, dx, dy, dz, far); };   // temple-local; -1 = clear, -2 = no soup
   S._occ = occ; S._occRun = function (cx, cy, cz) { _tcolBuild(); const t0 = performance.now(); const it = occJob('t', cx, cy, cz, S._boxes); let n = 0; while (!it.next().done) n++; return { ms: performance.now() - t0, rays: n, res: Array.from(occ.map.get('t')) }; };
   function occStep() {
     if (!occ.job) return;

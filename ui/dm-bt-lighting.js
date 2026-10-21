@@ -27,7 +27,7 @@
 
   function BTI_RE_test(n) { return /^BT[IE]_/.test(n || ''); }
 
-  let bounce = null, key = null, fills = null, altar = null, cubeGlow = null, caus = null, probe = null, probeRT = null, probeRT2 = null, readRT = null, writeRT = null, bounceGen = 0, cubeNodes = [], causRT = null, causQuad = null, causT = null;
+  let bounce = null, key = null, fills = null, altar = null, cubeGlow = null, caus = null, probe = null, probeRT = null, readRT = null, writeRT = null, cubeNodes = [], causRT = null, causQuad = null, causT = null;
   let causMode = 'light', causEmis = null, causMat = null, floorMats = [];
   let glassMats = [], glassMeshes = [], windows = [], extNode = null, intNode = null, snap = null;
   let face = 0, frame = 0, lastCaus = 0;
@@ -75,11 +75,7 @@
     // probe
     probeRT = new THREE.CubeRenderTarget(tr[1], { type: THREE.HalfFloatType, generateMipmaps: false });
     probe = new THREE.CubeCamera(0.03, 1e6, probeRT); probe.name = 'BT_GlassProbe';
-    // (v124) multi-bounce: two cube targets ping-pong. The glass always samples the last COMPLETE cube (readRT) while the next
-    // one (writeRT) is filled face by face; on tier 2+ the glass is drawn inside that capture (sampling readRT — a different
-    // texture, so legal), so every refresh carries one more bounce: neighbouring windows show each other's reflections and
-    // what passes through them. Capped per tier (BOUNCES); tiers 0/1 keep one target's worth of work (glass hidden in capture).
-    probeRT2 = new THREE.CubeRenderTarget(tr[1], { type: THREE.HalfFloatType, generateMipmaps: false }); readRT = probeRT; writeRT = probeRT2;
+    readRT = writeRT = probeRT;
     [key, caus, probe].forEach(o => { o.matrixAutoUpdate = true; });
     BTL.stats = { shadowedLights: 1, poolLights: 6, probeRes: tr[1], probeFaceEvery: tr[2], causticHz: tr[3] };
   }
@@ -140,6 +136,7 @@
     const dh = TS.min(TS.min(tf.x, tf.y), tf.z), hit = Pl.add(Rl.mul(dh)), dW = probeU.toWorld.mul(TS.vec4(hit.sub(probeU.pos), 0.0)).xyz.normalize();
     const Rb = TS.mix(R, dW, probeU.boxOn);
     const cn = TS.cubeTexture(readRT.texture, Rb); cubeNodes.push(cn);
+    const cpl = TS.uniform(new THREE.Color(0, 0, 0)); m.userData.cpl = cpl;   // (v124) Σ_j T_ij·L_j from the pane solve (CPU)
     const refl = cn.rgb.mul(probeReady);
     const pw = TS.positionLocal.mul(0.9);   // (v121) glint pattern in model units (world units are ship-scaled: the pattern was mis-sized)
     const g1 = TS.sin(pw.x.add(glassT.mul(0.8)).add(TS.sin(pw.y.mul(1.3).add(glassT.mul(0.6))))).mul(TS.sin(pw.z.mul(1.1).sub(glassT.mul(0.7)).add(TS.cos(pw.x.mul(0.9)))));
@@ -151,10 +148,10 @@
     m.opacityNode = useRefr ? TS.clamp(alpha.add(0.25), 0.0, 0.92) : alpha;
     if (useRefr) {
       const behind = TS.viewportSharedTexture(TS.screenUV.add(TS.normalView.xy.mul(0.02))).rgb.mul(TS.vec3(0.94, 0.98, 1.0));
-      m.emissiveNode = TS.mix(behind, refl, F).add(caus).add(tint);
+      m.emissiveNode = TS.mix(behind, refl, F).add(caus).add(tint).add(cpl);
       m.userData.btRefr = true;
     } else {
-      m.emissiveNode = refl.mul(F).div(TS.max(alpha, 0.05)).add(caus).add(tint);
+      m.emissiveNode = refl.mul(F).div(TS.max(alpha, 0.05)).add(caus).add(tint).add(cpl.div(TS.max(alpha, 0.05)));
     }
     return m;
   }
@@ -225,6 +222,77 @@
   };
   // temple (and office) background compile: called by index.html's interior warm-up with decks visible
   BTL.warmTemple = async function (r, scene) { try { const t0 = performance.now(); await compileProbe(r, scene); BTL._warmedT = (BTL._warmedT || 0) + 1; BTL._warmedTms = Math.round(performance.now() - t0); } catch (e) {} };
+
+
+  // ── (v124) window-to-window light: one joint solve over all panes (replaces the ping-pong probe) ──
+  // Panes i = the glass meshes (temple-local centre c_i, unit normal n_i, area A_i, transmittance τ_i). Precomputed once
+  // (when the collision soup exists), in the temple frame so it moves with the ship:
+  //   T_ij = V_ij · F(cosθ_i) · (cosθ_i · cosθ_j · A_j) / (π r_ij² + A_j)        (i ≠ j, both faces: |n·d|)
+  //   V_ij = fraction of 5 rays (centre + 4 inset corners of j) from c_i that reach pane j without hitting the temple soup
+  //   F(c) = 0.04 + 0.96 (1 − c)^5  (Schlick, n≈1.5), the share of j's light that i reflects toward the viewer; the τ_j share
+  //   that j transmits is already in L_j.  Sparse: the 8 largest T_ij per row above 1e-4.
+  // Per solve (tier 1: every 8 frames, 1 Jacobi step; tier 2+: every 2 frames, 3 steps; tier 0: off):
+  //   E_i = F̄ · room_i + τ_i · sky_i     room_i = baked irradiance volume at c_i (or the reading-light level),
+  //                                       sky_i  = space radiance + the Sun's lobe when n_i faces it (transmitted sky)
+  //   L ← E + T·L   (Jacobi, from the previous frame's L, so 2–3 steps converge; ‖T‖∞ < 1 by construction)
+  //   each pane's shader gets cpl_i = Σ_j T_ij · L_j (RGB), added to its emissive: every pane sends and receives in the
+  //   same solve, no frame lag between panes.
+  const PS = { panes: null, T: null, L: null, E: null, tmp: null, frame: 0 };
+  BTL.paneSolve = PS;
+  function paneBuild(g) {
+    const THREE = T(), DI = window.DMBtInterior; if (!DI || !DI.rayHit || DI.rayHit(0, 0, 0, 1, 0, 0, 1) === -2) return false;
+    g.updateMatrixWorld(true); const inv = new THREE.Matrix4().copy(g.matrixWorld).invert(), M = new THREE.Matrix4(), n3 = new THREE.Matrix3();
+    const P = [];
+    for (const o of glassMeshes) {
+      const geo = o.geometry, pos = geo && geo.attributes.position; if (!pos) continue;
+      M.multiplyMatrices(inv, o.matrixWorld); n3.getNormalMatrix(M);
+      const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), cr = new THREE.Vector3(), C = new THREE.Vector3(), N = new THREE.Vector3(); let A = 0;
+      const idx = geo.index, nt = idx ? idx.count / 3 : pos.count / 3, bb = new THREE.Box3();
+      for (let t = 0; t < nt; t++) { const i0 = idx ? idx.getX(t * 3) : t * 3, i1 = idx ? idx.getX(t * 3 + 1) : t * 3 + 1, i2 = idx ? idx.getX(t * 3 + 2) : t * 3 + 2;
+        a.fromBufferAttribute(pos, i0).applyMatrix4(M); b.fromBufferAttribute(pos, i1).applyMatrix4(M); c.fromBufferAttribute(pos, i2).applyMatrix4(M);
+        cr.subVectors(b, a).cross(c.clone().sub(a)); const ar = cr.length() * 0.5; if (!(ar > 0)) continue;
+        if (N.dot(cr) < 0) cr.negate(); N.add(cr); A += ar; C.addScaledVector(a.add(b).add(c), ar / 3); bb.expandByPoint(a); bb.expandByPoint(b); bb.expandByPoint(c); }
+      if (!(A > 0)) continue; C.divideScalar(A); N.normalize();
+      P.push({ o, m: o.material, c: C, n: N, A, bb, tau: 0.92 });
+    }
+    const n = P.length; if (!n) return false;
+    const rows = [];
+    for (let i = 0; i < n; i++) { const pi = P[i], row = [];
+      for (let j = 0; j < n; j++) { if (i === j) continue; const pj = P[j];
+        const d = pj.c.clone().sub(pi.c), r2 = d.lengthSq(); if (r2 < 1e-6) continue; d.normalize();
+        const ci = Math.abs(pi.n.dot(d)), cj = Math.abs(pj.n.dot(d)); if (ci < 0.02 || cj < 0.02) continue;
+        const ff = ci * cj * pj.A / (Math.PI * r2 + pj.A), F = 0.04 + 0.96 * Math.pow(1 - ci, 5); let t = F * ff; if (t < 1e-4) continue;
+        // visibility: centre + 4 corners (inset 20%) of pane j's box
+        const s = pj.bb, k = 0.2, pts = [pj.c, new (T().Vector3)(s.min.x + (s.max.x - s.min.x) * k, s.min.y + (s.max.y - s.min.y) * k, s.min.z + (s.max.z - s.min.z) * k), new (T().Vector3)(s.max.x - (s.max.x - s.min.x) * k, s.max.y - (s.max.y - s.min.y) * k, s.max.z - (s.max.z - s.min.z) * k), new (T().Vector3)(s.min.x + (s.max.x - s.min.x) * k, s.max.y - (s.max.y - s.min.y) * k, s.min.z + (s.max.z - s.min.z) * k), new (T().Vector3)(s.max.x - (s.max.x - s.min.x) * k, s.min.y + (s.max.y - s.min.y) * k, s.max.z - (s.max.z - s.min.z) * k)];
+        let vis = 0; for (const q of pts) { const e = q.clone().sub(pi.c), L = e.length(); if (L < 1e-4) { vis++; continue; } e.divideScalar(L);
+          const o0 = pi.c.clone().addScaledVector(e, 0.08), h = DI.rayHit(o0.x, o0.y, o0.z, e.x, e.y, e.z, L - 0.16); if (h < 0) vis++; }
+        t *= vis / pts.length; if (t >= 1e-4) row.push([j, t]); }
+      row.sort((x, y) => y[1] - x[1]); row.length = Math.min(row.length, 8);
+      const sum = row.reduce((s2, x) => s2 + x[1], 0); if (sum > 0.9) for (const x of row) x[1] *= 0.9 / sum;   // keep ‖T‖∞ < 1
+      rows.push(row); }
+    PS.panes = P; PS.T = rows; PS.L = new Float32Array(n * 3); PS.E = new Float32Array(n * 3); PS.tmp = new Float32Array(n * 3);
+    BTL.stats.panes = n; BTL.stats.paneLinks = rows.reduce((s2, r) => s2 + r.length, 0);
+    return true;
+  }
+  const _pv = [0, 0, 0];
+  function paneSolve(g, sunLocal, hasSun) {
+    const tr = tier(); if (tr === 0) return;
+    const every = tr === 1 ? 8 : 2, iters = tr === 1 ? 1 : 3; if (++PS.frame % every) return;
+    if (!PS.panes) { if (!paneBuild(g)) return; }
+    const P = PS.panes, n = P.length, E = PS.E, L = PS.L, X = PS.tmp, B = window.DMBtBake, w = BTL._pw || (BTL._pw = new (T().Vector3)());
+    const sky = [0.012, 0.014, 0.022];   // space radiance (galaxy/stars) seen through a pane
+    for (let i = 0; i < n; i++) { const p = P[i];
+      let rr = 0.25, rg = 0.22, rb = 0.2;   // room level without the bake (reading light)
+      if (B && B.applied && B.sampleVol) { w.copy(p.c).applyMatrix4(g.matrixWorld); if (B.sampleVol(w, _pv)) { rr = _pv[0]; rg = _pv[1]; rb = _pv[2]; } }
+      const sunT = hasSun ? Math.pow(Math.max(0, Math.abs(p.n.dot(sunLocal))), 8) * 0.6 : 0;
+      E[i * 3] = 0.1 * rr + p.tau * (sky[0] + sunT); E[i * 3 + 1] = 0.1 * rg + p.tau * (sky[1] + sunT * 0.95); E[i * 3 + 2] = 0.1 * rb + p.tau * (sky[2] + sunT * 0.85); }
+    for (let it = 0; it < iters; it++) {
+      for (let i = 0; i < n; i++) { let r = E[i * 3], gg = E[i * 3 + 1], b = E[i * 3 + 2]; for (const [j, t] of PS.T[i]) { r += t * L[j * 3]; gg += t * L[j * 3 + 1]; b += t * L[j * 3 + 2]; } X[i * 3] = r; X[i * 3 + 1] = gg; X[i * 3 + 2] = b; }
+      L.set(X); }
+    for (let i = 0; i < n; i++) { let r = 0, gg = 0, b = 0; for (const [j, t] of PS.T[i]) { r += t * L[j * 3]; gg += t * L[j * 3 + 1]; b += t * L[j * 3 + 2]; }
+      const u = P[i].m && P[i].m.userData.cpl; if (u) u.value.setRGB(r, gg, b); }
+    BTL.stats.paneSolves = (BTL.stats.paneSolves || 0) + 1;
+  }
 
   // ── per frame (called right before the main render) ──
   const V = () => T().Vector3;
@@ -305,6 +373,7 @@
     // 4) glass probe: ON DEMAND. All 6 faces are marked dirty when the probe changes window or the star direction moves;
     //    a slow refresh re-marks them every few seconds (the world drifts). At most one face per `every` frames.
     if (glassT) glassT.value = performance.now() / 1000;
+    try { if (windows.length) { const sl = BTL._sl || (BTL._sl = new THREE.Vector3()); sl.copy(_c).negate().transformDirection(_m4.copy(g.matrixWorld).invert()); paneSolve(g, sl, true); } } catch (e) { BTL.stats.paneErr = String(e && e.message || e).slice(0, 120); }
     // (v118) bounce probe: SH from the star direction in the ship frame. L0 = warm diffuse bounce (sun colour × deck albedo),
     // L1 points AWAY from the star (light comes back up off the lit floors / in through the windows' far walls). Tier-scaled.
     if (bounce) { const k = (BTL.volRGB ? [0.3, 0.35, 0.55, 0.7] : [0, 0.35, 0.55, 0.7])[tier()] * (aboard ? 1 : 0);
@@ -316,7 +385,7 @@
         bounce.intensity = k; BTL.stats.bounceUpdates = (BTL.stats.bounceUpdates || 0) + 1; } }
     const _sealed = !!(window.DMBtInterior && DMBtInterior.sealed);   // (v116) no glass in view: faces stay dirty and are rendered once glass is back in view
     if (camNear && wc && probe && !_sealed) {
-      if (wc !== probeAt || sigMoved(SIG.sun, 0, _c.x, _c.y, _c.z, 0.002)) { bounceGen = 0; probeAt = wc; sigStore(SIG.sun, 0, _c.x, _c.y, _c.z); dirty = 63; }
+      if (wc !== probeAt || sigMoved(SIG.sun, 0, _c.x, _c.y, _c.z, 0.002)) { probeAt = wc; sigStore(SIG.sun, 0, _c.x, _c.y, _c.z); dirty = 63; }
       const now = performance.now(); const oa = (window.DMBtInterior && DMBtInterior.openArea) || 0; if (!dirty && now - lastFull > PROBE_REFRESH_MS * (oa > 0.15 ? 1 : 2)) dirty = 63;
       if (dirty && frame - lastFaceFrame >= Math.max(2, tr[2] + 1)) {
         while (!(dirty & (1 << face))) face = (face + 1) % 6;
@@ -329,15 +398,12 @@
           probe.updateMatrixWorld(true); }
         if (!casters) { casters = []; scene.traverse(o => { if (o.isLight && o.shadow && o.castShadow !== undefined) casters.push(o); }); }   // cached: the scene's light set is fixed
         for (let i = 0; i < casters.length; i++) { const o = casters[i]; holdA[i] = o.shadow.autoUpdate; holdN[i] = o.shadow.needsUpdate; o.shadow.autoUpdate = false; o.shadow.needsUpdate = false; }
-        const BOUNCES = [0, 0, 1, 2][tier()], showGlass = BOUNCES > 0 && bounceGen >= 1;   // glass in the capture = one more bounce
-        if (!showGlass) for (const m of glassMeshes) m.visible = false;
+        for (const m of glassMeshes) m.visible = false;
         const prev = r.getRenderTarget(), pac = r.autoClear, tp = performance.now();
         try { r.setRenderTarget(writeRT, face); r.autoClear = true; r.render(scene, probe.children[face]); BTL.stats.probeMs = Math.round(performance.now() - tp); }
         catch (e) {}
         finally { r.setRenderTarget(prev); r.autoClear = pac; for (const m of glassMeshes) m.visible = true; for (let i = 0; i < casters.length; i++) { casters[i].shadow.autoUpdate = holdA[i]; casters[i].shadow.needsUpdate = holdN[i]; } }
-        dirty &= ~(1 << face); if (!dirty) { lastFull = now;
-          const t = readRT; readRT = writeRT; writeRT = t; for (const n of cubeNodes) n.value = readRT.texture;   // swap: glass now shows the new cube
-          bounceGen = Math.min(bounceGen + 1, 3); BTL.stats.bounceGen = bounceGen; if (probeReady) probeReady.value = 1; } lastFaceFrame = frame; face = (face + 1) % 6; BTL.stats.probeFaces = (BTL.stats.probeFaces || 0) + 1;
+        dirty &= ~(1 << face); if (!dirty) { lastFull = now; if (probeReady) probeReady.value = 1; } lastFaceFrame = frame; face = (face + 1) % 6; BTL.stats.probeFaces = (BTL.stats.probeFaces || 0) + 1;
       }
     }
   };
