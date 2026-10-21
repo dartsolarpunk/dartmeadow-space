@@ -109,7 +109,8 @@
     const m = new THREE.MeshStandardNodeMaterial(); m.name = src.name || 'BT_Glass';
     m.roughness = 0.04; m.metalness = 0.0; m.color = new THREE.Color(0, 0, 0); m.side = src.side;
     m.transparent = true; m.depthWrite = false; m.userData.btGlass = true;
-    const useRefr = tier() >= 1 && typeof TS.viewportSharedTexture === 'function' && !/[?&]glassrefr=0\b/.test(location.search);
+    const useRefr = tier() >= 2 &&   // (v118) not on tier 0/1 (Mali): no per-frame opaque-pass copy there
+       typeof TS.viewportSharedTexture === 'function' && !/[?&]glassrefr=0\b/.test(location.search);
     const V = TS.positionWorld.sub(TS.cameraPosition).normalize(), N = TS.normalWorld;
     const cosT = TS.clamp(N.dot(V.negate()).abs(), 0.0, 1.0);
     const F = TS.float(0.04).add(TS.float(0.96).mul(TS.pow(TS.float(1).sub(cosT), 5.0)));
@@ -118,15 +119,16 @@
     const g1 = TS.sin(pw.x.add(glassT.mul(0.8)).add(TS.sin(pw.y.mul(1.3).add(glassT.mul(0.6))))).mul(TS.sin(pw.z.mul(1.1).sub(glassT.mul(0.7)).add(TS.cos(pw.x.mul(0.9)))));
     const caus = TS.pow(TS.float(1).sub(TS.abs(g1)), 12.0).mul(0.12);
     const tint = TS.vec3(warm[0], warm[1], warm[2]).mul(0.3);
+    // both paths alpha-blend over what is already drawn (Fresnel opacity ≈8% head-on): in refraction mode a stale or empty
+    // viewport copy can only tint the pane, never make it solid. The copy only happens while a pane is actually drawn.
+    const alpha = TS.clamp(F.mul(0.85).add(0.08), 0.0, 0.92);
+    m.opacityNode = useRefr ? TS.clamp(alpha.add(0.25), 0.0, 0.92) : alpha;
     if (useRefr) {
-      const off = TS.normalView.xy.mul(0.02);   // refraction offset
-      const behind = TS.viewportSharedTexture(TS.screenUV.add(off)).rgb.mul(TS.vec3(0.94, 0.98, 1.0));
-      m.opacityNode = TS.float(1.0);
+      const behind = TS.viewportSharedTexture(TS.screenUV.add(TS.normalView.xy.mul(0.02))).rgb.mul(TS.vec3(0.94, 0.98, 1.0));
       m.emissiveNode = TS.mix(behind, refl, F).add(caus).add(tint);
       m.userData.btRefr = true;
     } else {
-      m.opacityNode = TS.clamp(F.mul(0.85).add(0.08), 0.0, 0.92);
-      m.emissiveNode = refl.mul(F).div(TS.max(F.mul(0.85).add(0.08), 0.05)).add(caus).add(tint);
+      m.emissiveNode = refl.mul(F).div(TS.max(alpha, 0.05)).add(caus).add(tint);
     }
     return m;
   }

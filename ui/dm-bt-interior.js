@@ -16,7 +16,7 @@
  */
 (function () {
   'use strict';
-  const cfg = { on: !/[?&]btseal=0\b/.test(location.search), occ: /[?&]btocc=1\b/.test(location.search), occMs: 3, pad: 2.5, screenR: 45, hairR: 30, hairDY: 6 };
+  const cfg = { on: !/[?&]btseal=0\b/.test(location.search), occ: !/[?&]btocc=0\b/.test(location.search), occMs: 3, pad: 2.5, screenR: 45, hairR: 30, hairDY: 6 };
   const S = { cfg, on: cfg.on, sealed: false, stats: { frames: 0, sealedFrames: 0, hidden: 0 }, _boxes: null, _hid: [], _bg: undefined };
   window.DMBtInterior = S;
   let THREE, fr, M4, box, v;
@@ -113,6 +113,8 @@
             const dx = px - ox, dy = py - oy, dz = pz - oz, d = Math.hypot(dx, dy, dz); if (!(d > 1e-4)) { hidden = 0; break; }
             const h = rayHit(ox, oy, oz, dx / d, dy / d, dz / d, d);
             if (h < 0 || h > d - 0.05) hidden = 0;      // this ray reaches the opening
+            else { const hx = ox + dx / d * h, hy = oy + dy / d * h, hz = oz + dz / d * h;   // (v118) the hit is the pane/frame itself
+              if (hx >= x0 - 0.05 && hx <= x1 + 0.05 && hy >= y0 - 0.05 && hy <= y1 + 0.05 && hz >= z0 - 0.05 && hz <= z1 + 0.05) hidden = 0; }
             yield 0;
           }
           if (!hidden) break;
@@ -133,10 +135,11 @@
   const _sv = [];
   function screenArea(b, cam) {   // NDC bbox of the box's 8 corners, clamped to the viewport; corners behind the camera = full width
     if (!_sv.length) for (let k = 0; k < 8; k++) _sv.push(new THREE.Vector3());
-    let x0 = 1, x1 = -1, y0 = 1, y1 = -1, behind = false;
+    // (v118) corners behind the camera are pulled onto the near plane before projecting (their NDC lands far off-screen and is
+    // clamped below), so a box straddling the camera plane gives its true clipped area instead of a blanket 1
+    let x0 = 1, x1 = -1, y0 = 1, y1 = -1; const nz = -(cam.near || 0.01) * 1.001;
     for (let k = 0; k < 8; k++) { const p = _sv[k].set(k & 1 ? b.max.x : b.min.x, k & 2 ? b.max.y : b.min.y, k & 4 ? b.max.z : b.min.z).applyMatrix4(cam.matrixWorldInverse);
-      if (p.z > -1e-3) { behind = true; continue; } p.applyMatrix4(cam.projectionMatrix); x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y); }
-    if (behind) return 1;
+      if (p.z > nz) p.z = nz; p.applyMatrix4(cam.projectionMatrix); x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y); }
     x0 = Math.max(-1, x0); x1 = Math.min(1, x1); y0 = Math.max(-1, y0); y1 = Math.min(1, y1);
     return x1 > x0 && y1 > y0 ? (x1 - x0) * (y1 - y0) / 4 : 0;
   }
@@ -161,7 +164,8 @@
     fr.setFromProjectionMatrix(M4.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse));
     const cw = v.setFromMatrixPosition(cam.matrixWorld);
     // (v118) per-opening, frustum based: an opening whose box is in the view frustum (even partly) keeps the whole outside
-    // rendered. Occlusion is opt-in (?btocc=1): the ray soup includes the glass panes themselves, so it marked windows as hidden.
+    // rendered. Occlusion stays on (?btocc=0 off): a ray hit INSIDE the (padded) opening box — the glass pane, its frame —
+    // now counts as reaching the opening (it used to count as a wall, so windows read as hidden).
     // Visible openings' projected screen area (0..1 of the viewport) goes to S.openArea for LOD consumers (glass probe rate).
     let vis = 0, area = 0;
     for (let i = 0; i < S._boxes.length; i++) {

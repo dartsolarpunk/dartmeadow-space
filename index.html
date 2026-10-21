@@ -6514,7 +6514,8 @@ function _startFlightLoop(){
         let _btNear=false;
         if(_bt&&_bt.group&&_btR){ const tp=_bt.group.getWorldPosition(_csTp||(_csTp=new THREE.Vector3())); _btNear=SHIP_WALK.active||tp.distanceTo(boardFlight.position)<_btR*2.5; }
         const sc=_charShadowLight.shadow.camera, want=_btNear?Math.min(_btR*0.75,60):6;
-        if(Math.abs(sc.right-want)>1e-3){ sc.left=-want; sc.right=want; sc.top=want; sc.bottom=-want; sc.far=_btNear?want*6:20; sc.updateProjectionMatrix(); _charShadowLight.shadow.bias=_btNear?-0.0008:-0.0015; _charShadowLight.shadow.normalBias=_btNear?want*0.005:0;   // (v118) more normal bias at the temple: no acne on Ariel's face, neck and hair }
+        // (v118) more normal bias at the temple: no acne on Ariel's face, neck and hair
+        if(Math.abs(sc.right-want)>1e-3){ sc.left=-want; sc.right=want; sc.top=want; sc.bottom=-want; sc.far=_btNear?want*6:20; sc.updateProjectionMatrix(); _charShadowLight.shadow.bias=_btNear?-0.0008:-0.0015; _charShadowLight.shadow.normalBias=_btNear?want*0.005:0; }
         const bp=_csCp||(_csCp=new THREE.Vector3()); if(_btNear&&SHIP_WALK.active&&CHAR&&CHAR.root&&CHAR.root.parent) CHAR.root.getWorldPosition(bp); else bp.copy(boardFlight.position);   // scratch copy: the board's own position is never touched
         if(_btNear){ const tx=want*2/Math.max(256,GFX.shadowSize||1024); bp.set(Math.round(bp.x/tx)*tx,Math.round(bp.y/tx)*tx,Math.round(bp.z/tx)*tx); }
         const dir=_csDirV||(_csDirV=new THREE.Vector3()); if(bp.lengthSq()>0.001) dir.copy(bp).normalize(); else dir.set(1,0.3,0.2).normalize();   // scratch: no per-frame allocation
