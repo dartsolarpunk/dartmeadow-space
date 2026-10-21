@@ -16,7 +16,7 @@
  */
 (function () {
   'use strict';
-  const cfg = { on: !/[?&]btseal=0\b/.test(location.search), occ: !/[?&]btocc=0\b/.test(location.search), occMs: 3, pad: 2.5, screenR: 45, hairR: 30, hairDY: 6 };
+  const cfg = { on: !/[?&]btseal=0\b/.test(location.search), occ: !/[?&]btocc=0\b/.test(location.search), occMs: 3, pad: 2.5, depth: !/[?&]btdepth=0\b/.test(location.search), screenR: 45, hairR: 30, hairDY: 6 };
   const S = { cfg, on: cfg.on, sealed: false, stats: { frames: 0, sealedFrames: 0, hidden: 0 }, _boxes: null, _hid: [], _bg: undefined };
   window.DMBtInterior = S;
   let THREE, fr, M4, box, v;
@@ -152,6 +152,7 @@
     const cl = g.worldToLocal(v.setFromMatrixPosition(cam.matrixWorld));
     const V = B.vol, dy = B.hatch ? B.hatch.deckY : 0.75;
     if (cl.x < V.mn.x || cl.x > V.mx.x || cl.z < V.mn.z || cl.z > V.mx.z || cl.y < V.mn.y || cl.y > dy - 0.6) return (S.why = 'camOut', false);
+    S.camIn = true;
     const cx = cl.x, cy = cl.y, cz = cl.z;
     // occlusion for this camera cell (null while it is still being worked out)
     let oc = null;
@@ -200,10 +201,51 @@
     return fr.intersectsSphere(sp) ? null : r;
   }
   // before the temple lighting's preRender: decides SEALED for this frame (so the glass probe can wait while no glass is in view)
+  // (v119) space layers drawn with depthTest:false (galaxy sky stars/dust/lens, glows, atmosphere shells) painted over the
+  // window frames, walls and Ariel when seen from the temple. Whenever the camera is in the temple's bounds (any deck, the
+  // bridge, the top deck) or Ariel walks the temple — independent of ?btseal and of SEALED — every non-temple mesh/points/line
+  // material with depthTest:false gets depthTest:true (depthWrite unchanged) so the temple occludes it; restored on leaving.
+  // Materials also used by temple meshes are never flipped. No needsUpdate: depthTest is pipeline state, and both pipeline
+  // variants are compiled once in the background the first time the camera nears the temple (warmDepth), so there is no hitch.
+  const depthFix = { on: false, mats: null, warmed: false, warming: false };
+  function spaceMats(scene) {
+    const shared = new Set(), mats = new Set();
+    for (const top of scene.children) if (keep(top)) top.traverse(o => { const ms = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : []; for (const m of ms) shared.add(m); });
+    for (const top of scene.children) { if (keep(top)) continue;
+      top.traverse(o => { if (!(o.isMesh || o.isPoints || o.isLine) || o.isSprite) return; const ms = Array.isArray(o.material) ? o.material : [o.material];
+        for (const m of ms) if (m && m.depthTest === false && !shared.has(m)) mats.add(m); }); }
+    return [...mats];
+  }
+  function flip(mats, on) { for (const m of mats) m.depthTest = !on ? false : true; }
+  function warmDepth(scene, cam) {
+    if (depthFix.warmed || depthFix.warming) return;
+    const r = typeof flightRenderer !== 'undefined' && flightRenderer; if (!r || !r.compileAsync) { depthFix.warmed = true; return; }
+    depthFix.warming = true; const mats = spaceMats(scene), un = [];
+    let p = null;
+    try { flip(mats, true); scene.traverse(o => { if (o.frustumCulled && mats.includes(o.material)) { o.frustumCulled = false; un.push(o); } }); p = r.compileAsync(scene, cam); }
+    catch (e) { } finally { flip(mats, depthFix.on); for (const o of un) o.frustumCulled = true; }
+    Promise.resolve(p).catch(() => { }).then(() => { depthFix.warmed = true; depthFix.warming = false; S.stats.depthWarmed = mats.length; });
+  }
+  function camInTemple(cam) {
+    const B = window.BTI, g = typeof BIRD_TEMPLE !== 'undefined' && BIRD_TEMPLE.group;
+    if (!g || !g.visible) return false;
+    if (typeof SHIP_WALK !== 'undefined' && SHIP_WALK.active) return true;
+    if (!B || !B.vol) return false;
+    const cl = g.worldToLocal(v.setFromMatrixPosition(cam.matrixWorld)), V = B.vol, m = 2;
+    return cl.x > V.mn.x - m && cl.x < V.mx.x + m && cl.z > V.mn.z - m && cl.z < V.mx.z + m && cl.y > V.mn.y - m && cl.y < V.mx.y + 6;
+  }
+  function setSpaceDepth(scene, inside) {
+    if (!cfg.depth) return;
+    if (inside === depthFix.on) return;
+    if (inside) { depthFix.mats = spaceMats(scene); flip(depthFix.mats, true); S.stats.depthFixed = depthFix.mats.length; }
+    else if (depthFix.mats) { flip(depthFix.mats, false); depthFix.mats = null; }
+    depthFix.on = inside;
+  }
+  S.setSpaceDepth = setSpaceDepth;
   S.pre = function (cam) {
     if (!THREE && !init()) return false;
     occStep();
-    let sealed = false; try { sealed = isSealed(cam); } catch (e) { sealed = false; S.why = 'err'; }
+    S.camIn = false; let sealed = false; try { sealed = isSealed(cam); } catch (e) { sealed = false; S.why = 'err'; }
     S.sealed = sealed; S._preF = S.stats.frames + 1;
     return sealed;
   };
@@ -211,8 +253,11 @@
   S.begin = function (scene, cam) {
     if (!THREE && !init()) return false;
     S.stats.frames++;
-    if (S._preF !== S.stats.frames) { let sealed = false; try { occStep(); sealed = isSealed(cam); } catch (e) { sealed = false; } S.sealed = sealed; }
+    if (S._preF !== S.stats.frames) { S.camIn = false; let sealed = false; try { occStep(); sealed = isSealed(cam); } catch (e) { sealed = false; } S.sealed = sealed; }
     else { cam.updateMatrixWorld(); fr.setFromProjectionMatrix(M4.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse)); }
+    try { const inT = camInTemple(cam); S.inTemple = inT;
+      if (!depthFix.warmed && typeof BIRD_TEMPLE !== 'undefined' && BIRD_TEMPLE.group && BIRD_TEMPLE.group.visible) { const gp = BIRD_TEMPLE.group.getWorldPosition(new THREE.Vector3()); if (gp.distanceTo(v.setFromMatrixPosition(cam.matrixWorld)) < (BIRD_TEMPLE._R0 || 10) * 4) warmDepth(scene, cam); }
+      setSpaceDepth(scene, inT); } catch (e) { }
     const hid = S._hid; hid.length = 0;
     try { const c = cubesOff(cam); if (c) { c.visible = false; hid.push(c); S.stats.cubesCulled = (S.stats.cubesCulled || 0) + 1; } } catch (e) { }
     if (!S.sealed) return false;
