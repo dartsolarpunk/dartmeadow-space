@@ -531,12 +531,15 @@
 <svg viewBox="0 0 84 84"><g class="spin"><circle cx="42" cy="42" r="38" fill="none" stroke="#6ff7ea" stroke-width="2" stroke-dasharray="26 14 6 14" opacity=".95"/></g>
 <g class="spin2"><circle cx="42" cy="42" r="33" fill="none" stroke="#b4a0ff" stroke-width="1.4" stroke-dasharray="3 7" opacity=".9"/></g>
 <path d="M10 22 L10 10 L22 10 M62 10 L74 10 L74 22 M74 62 L74 74 L62 74 M22 74 L10 74 L10 62" fill="none" stroke="#ffc266" stroke-width="2"/></svg>
-<div class="f">F</div><div class="tag" id="bti-tag">USE</div>`;
+<div class="f" id="bti-key">F</div><div class="tag" id="bti-tag">USE</div>`;
     const jb = $('ship-jump-btn'); const host = (jb && jb.parentNode) || document.body; host.appendChild(b);
     const fire = e => { e.preventDefault(); e.stopPropagation(); BTI.act(); };
     b.addEventListener('touchstart', fire, { passive: false });
     b.addEventListener('mousedown', fire);
-    window.addEventListener('keydown', e => { if (e.code === 'KeyF' && !e.repeat && BTI.cur && SHIP_WALK.active) { e.preventDefault(); BTI.act(); } });
+    window.addEventListener('keydown', e => {
+      if (e.repeat || !BTI.cur || !SHIP_WALK.active || window.DM_TERMINAL_OPEN) return;
+      if (e.code === 'KeyF' || (e.code === 'KeyE' && BTI.cur.zone === 'aim')) { e.preventDefault(); BTI.act(); }
+    });
   }
   function showHud(it) {
     const b = $('bti-f'); if (!b) return;
@@ -546,6 +549,7 @@
     else if (it.type === 'switch') label = (BTI.state.groups[it.group] && BTI.state.groups[it.group].target ? 'LIGHTS DIM' : 'LIGHTS BRIGHT');
     else if (it.type === 'button') label = BTI.state.alert ? 'STAND DOWN' : 'RED ALERT';
     const tag = $('bti-tag'); if (tag && tag.textContent !== label) tag.textContent = label;
+    const key = $('bti-key'), kk = it.zone === 'aim' ? 'E' : 'F'; if (key && key.textContent !== kk) key.textContent = kk;
     b.classList.add('on');
   }
 
@@ -571,6 +575,33 @@
     }
   };
 
+  // ───────────────────────── v122 aim zoning (Madison, desk terminal) ─────────────────────────
+  // it.zone === 'aim': Ariel's feet within it.zoneM metres (horizontal, same deck) AND the screen-centre
+  // crosshair ray hits a sphere of it.aimM metres around it.pos (temple frame). Metres → temple units from
+  // her own height (SHIP_CHAR_H world units ≈ 1.83 m) and the temple's scale, so it holds at any ship scale.
+  let _aimRay = null, _aimSph = null, _aimV = null;
+  function unitsPerMetre() {
+    try {
+      const s = BIRD_TEMPLE.group.getWorldScale(_aimV).x || 1;
+      const h = (typeof SHIP_CHAR_H !== 'undefined') ? SHIP_CHAR_H : 0.454;
+      return (h / 1.83) / s;
+    } catch (e) { return 2.3; }
+  }
+  function aimGate(it, P) {
+    const THREE = T();
+    if (!_aimRay) { _aimRay = new THREE.Raycaster(); _aimSph = new THREE.Sphere(); _aimV = new THREE.Vector3(); }
+    const u = unitsPerMetre();
+    if (Math.abs(P.y + 2.5 - it.pos.y) > 1.6 * u) return false;
+    if (Math.hypot(P.x - it.pos.x, P.z - it.pos.z) > (it.zoneM || 1.8) * u) return false;
+    const cam = (typeof flightCamera !== 'undefined') && flightCamera; if (!cam) return false;
+    _aimRay.setFromCamera({ x: 0, y: 0 }, cam);
+    const g = BIRD_TEMPLE.group; g.updateMatrixWorld();
+    _aimSph.center.copy(it.pos).applyMatrix4(g.matrixWorld);
+    _aimSph.radius = (it.aimM || 0.45) * u * g.getWorldScale(_aimV).x;
+    return _aimRay.ray.intersectsSphere(_aimSph);
+  }
+  BTI.aimGate = aimGate; BTI.unitsPerMetre = unitsPerMetre;
+
   // ───────────────────────── per-frame ─────────────────────────
   const _lastP = { v: null, t: 0 };
   const _gl = new Map();   // global scene lights → {base, applied}
@@ -589,6 +620,7 @@
       let d;
       if (it.type === 'hatch') { if (Math.abs(P.y - it.pos.y) > 3) continue; d = Math.hypot(dx, dz); }
       else d = Math.hypot(dx, dz, P.y + 2.5 - it.pos.y);   // from about chest height, so the deck above/below never counts
+      if (it.zone === 'aim' && !aimGate(it, P)) continue;   // v122: close (≈1.8 m) AND crosshair on it
       if (d <= it.radius && d < bd) { bd = d; best = it; }
     }
     if (best !== BTI.cur) { BTI.cur = best; if (best) sfx.chirp(); }

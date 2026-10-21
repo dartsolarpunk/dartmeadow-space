@@ -17,7 +17,7 @@
   const cfg = {
     // seat on the desk, temple glTF frame (= Blender (-6.55, 90.93, -20.75) → glTF (x, z, -y)); doll units → temple units
     pos: [-6.55, -20.75, -90.93], yaw: -0.24, scale: 1.1, seatDrop: 0.29,
-    near: 14, nearY: 5, waveAt: 4.5, ixRadius: 4.2, tapR: 1.25,
+    near: 14, nearY: 5, waveAt: 4.5, ixRadius: 6, ixZoneM: 1.8, ixAimM: 0.4, tapR: 1.25,   // v122: E/F only when close AND aimed at
     // idle layer (only while near): breathing, blinks, small head turns; greetings on tap / F
     breath: 0.06, sway: 0.035, headYaw: 0.45, headPitch: 0.12, turnEvery: [2.2, 4.8], blinkEvery: [1.8, 4.5], selfLight: 0.22, eyeLight: 0.55, hair: true,
     hairParams: { bodyColliders: false, widthRoot: 0.016, widthTip: 0.008, hairRadius: 0.012, gravity: 5.0, maxRootStep: 0.03 },
@@ -204,7 +204,7 @@
       }
     }
     // F / interact button: one more interactable in dm-birdtemple's list (its F bubble, key and nearest-pick do the rest)
-    const ix = { obj: holder, type: 'madison', prompt: 'SAY HI', radius: cfg.ixRadius, pos: new THREE.Vector3(cfg.pos[0], cfg.pos[1], cfg.pos[2]) };
+    const ix = { obj: holder, type: 'madison', prompt: 'SAY HI', radius: cfg.ixRadius, zone: 'aim', zoneM: cfg.ixZoneM, aimM: cfg.ixAimM, pos: new THREE.Vector3(cfg.pos[0], cfg.pos[1], cfg.pos[2]) };
     try {
       if (BTI.ix && !BTI.ix.includes(ix)) BTI.ix.push(ix);
       const act = BTI.act;
