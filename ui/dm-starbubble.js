@@ -176,6 +176,31 @@
     return g;
   }
 
+  // load-time warm-up (v103): compile the lens, bubble (both sides: outside and from within) and interior plasma
+  // programs, and one ghost bubble, in front of the camera, before the first dive into a star. They used to compile on
+  // the first passes through the Sun.
+  SB.warm=async function(cam,scene){
+    const r=(typeof flightRenderer!=='undefined'&&flightRenderer)||null; if(!r||!r.compileAsync||!cam||!scene) return;
+    if(!SB.built&&!SB.failed) build(); if(!SB.built) return;
+    if(!V1){ V1=new THREE.Vector3(); V2=new THREE.Vector3(); V3=new THREE.Vector3(); }
+    attach(scene);
+    const g=ghostBubble(0); if(g.parent!==scene) scene.add(g);
+    const objs=[SB.lens,SB.bubble,SB.plasma,g], keep=objs.map(o=>[o.visible,o.position.clone(),o.scale.clone()]);
+    cam.getWorldDirection(V1); V2.copy(cam.position).addScaledVector(V1,10);
+    const inMat=(function(){ try{ for(const b of (window.celestialBodies||[])){ const h=b&&b.mesh&&b.mesh.userData.dmStar; if(h){ const m=window.DMStar&&DMStar.interiorMaterial(h); if(m) return m; } } }catch(e){} return null; })();
+    const pm0=SB.plasma.material; if(inMat) SB.plasma.material=inMat;
+    try{
+      for(const o of objs){ o.visible=true; o.position.copy(V2); o.scale.setScalar(1); }
+      SB.bubble.material.side=THREE.FrontSide; await r.compileAsync(scene,cam);
+      SB.bubble.material.side=THREE.BackSide; SB.bubble.material.needsUpdate=true; await r.compileAsync(scene,cam);
+    }catch(e){ console.warn('[starbubble] warm',e); }
+    finally{
+      SB.bubble.material.side=THREE.FrontSide; SB.bubble.material.needsUpdate=true;
+      if(!inMat) SB.plasma.material=pm0;
+      objs.forEach((o,i)=>{ o.visible=keep[i][0]; o.position.copy(keep[i][1]); o.scale.copy(keep[i][2]); });
+      g.visible=false;
+    }
+  };
   SB.frame=function(cam,scene,dt){
     if(SB.failed||typeof STATE==='undefined'||STATE.screen!=='flight'||!scene||!cam) return;
     const board=(typeof boardFlight!=='undefined')?boardFlight:null;

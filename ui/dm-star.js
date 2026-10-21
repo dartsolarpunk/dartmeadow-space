@@ -348,10 +348,22 @@
       const sc=(typeof flightScene!=='undefined'&&flightScene)||h.group.parent; if(!sc) return false;
       const m0=h.mesh.material, hid=[];
       h.group.traverse(o=>{ if(!o.visible){ hid.push(o); o.visible=true; } });
+      // every variant the star switches to on approach: near surface, near corona, the interior plasma (built now,
+      // drawn from within), so the first fly-through compiles nothing. Before v103 only matNear was swapped in, and the
+      // near corona / interior / bubble programs compiled on the first 2-3 passes (stalls of up to ~30 s on Mali).
       if(h.matNear) h.mesh.material=h.matNear;
+      const c0=h.corona?h.corona.material:null; if(h.corona&&h.corMatNear) h.corona.material=h.corMatNear;
+      const pass=async()=>{
+        await r.compileAsync(sc,cam);
+        if(h.corona&&h.corMat&&h.corMatNear){ h.corona.material=h.corMat; await r.compileAsync(sc,cam); }
+        if(h.matFar&&h.matFar!==h.matNear){ h.mesh.material=h.matFar; await r.compileAsync(sc,cam); }
+        const mi=interiorMaterial(h);
+        if(mi){ const mm=h.mesh.material; h.mesh.material=mi; try{ await r.compileAsync(sc,cam); } finally{ h.mesh.material=mm; } }
+      };
       let p=null;
-      try{ p=r.compileAsync(sc,cam); if(p&&p.catch) p.catch(()=>{}); }
-      finally{ h.mesh.material=m0; for(const o of hid) o.visible=false; }
+      try{ p=pass(); }catch(e){}
+      const done=()=>{ h.mesh.material=m0; if(h.corona&&c0) h.corona.material=c0; for(const o of hid) o.visible=false; };
+      if(p&&p.then){ p=p.catch(()=>{}).then(done); } else done();
       return p||true;
     }catch(e){ return false; }
   }

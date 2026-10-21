@@ -6304,6 +6304,7 @@ async function _flightWarmup(){
   const steps=[
     ['world',()=>flightRenderer.compileAsync(flightScene,flightCamera)],
     ['sun and flares',()=>window.DMStar&&DMStar.warm&&DMStar.warm(flightCamera)],
+    ['star dive',()=>window.DMStarBubble&&DMStarBubble.warm&&DMStarBubble.warm(flightCamera,flightScene)],   // lens/bubble/interior: compiled before the first pass through the Sun
     ['planet mist',()=>window.DMMist&&DMMist.warm&&DMMist.warm(flightCamera)],
     ['galaxy',()=>galSky&&galSky.ready&&_gsPrecompile()],
     ['atmosphere',()=>_taWarm(flightRenderer,flightScene,flightCamera)],   // the scene as drawn through the true-atmosphere pass: its own shader variants
