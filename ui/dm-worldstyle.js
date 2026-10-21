@@ -39,6 +39,24 @@
     return EARTH_DESERTS.some(([a, b, c, d]) => site.lat >= a && site.lat <= b && site.lon >= c && site.lon <= d);
   }
 
+  // (v105) soft desert weight 0..1 for colouring maps: 1 deep inside a desert box, easing to 0 across a ragged ~6°
+  // margin (two octaves of smooth value noise wobble the edge), so the map's deserts blend into the land around them
+  // instead of ending in straight lines. The hard earthDesert() above still decides the ground style (unchanged).
+  function _dn(x, y) { const h = (a, b) => { const v = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return v - Math.floor(v); };
+    const xi = Math.floor(x), yi = Math.floor(y), fx = x - xi, fy = y - yi, ux = fx * fx * (3 - 2 * fx), uy = fy * fy * (3 - 2 * fy);
+    const a = h(xi, yi), b = h(xi + 1, yi), c = h(xi, yi + 1), d = h(xi + 1, yi + 1);
+    return a + (b - a) * ux + (c - a) * uy + (a - b - c + d) * ux * uy; }
+  function earthDesertW(lat, lon) {
+    let best = 0;
+    const wob = (_dn(lat * 0.35, lon * 0.35) - 0.5) * 7 + (_dn(lat * 1.1 + 9, lon * 1.1 - 4) - 0.5) * 3;
+    for (const [a, b, c, d] of EARTH_DESERTS) {
+      const inside = Math.min(lat - a, b - lat, lon - c, d - lon) + wob;   // degrees inside the (wobbled) box edge
+      const w = Math.max(0, Math.min(1, (inside + 3) / 6)); const t = w * w * (3 - 2 * w);
+      if (t > best) best = t;
+    }
+    return best;
+  }
+
   // a body can name its own style, and regions of it (lat/lon centre, rad in
   // degrees of arc) can wear another — Pluto's cratered tholins round its
   // smooth nitrogen-ice heart. Data on the body; no world is special-cased here.
@@ -433,5 +451,5 @@
     return fallback;
   }
 
-  window.DMWorldStyle = { K, MARS, marsH, styleFor, shape, color, skyFor, shapeTSL, colorTSL, craters, duneH, earthDesert, isSand: (st) => st === 'dunes' || st === 'mesa' };
+  window.DMWorldStyle = { K, MARS, marsH, styleFor, shape, color, skyFor, shapeTSL, colorTSL, craters, duneH, earthDesert, earthDesertW, isSand: (st) => st === 'dunes' || st === 'mesa' };
 })();

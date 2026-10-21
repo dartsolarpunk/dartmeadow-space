@@ -21,6 +21,7 @@
  */
 (function () {
   'use strict';
+  window.DMPerfLogActive = true;   // (v105) GPU pass timing runs only while this log runs
   const SNAP_MS = 60000, MODE_MS = 5000, CAP = 48 * 1024, LKEY = 'dm_perf_session_v1';
   const rid = () => { try { return Array.from(crypto.getRandomValues(new Uint8Array(4))).map((b) => b.toString(16).padStart(2, '0')).join(''); } catch (e) { return Math.random().toString(16).slice(2, 10); } };
   const read = (k) => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { return null; } };
@@ -71,7 +72,7 @@
       build: env && env.build, swCache: (env && env.swCache) || window._dmSwCache || null,
       backend: env && env.backend, gpu: env && env.gpu, preset: env && env.preset, hair: env && env.hair,
       warmupMs: window._warmupMs != null ? window._warmupMs : null,
-      env, modes, summary, hitches: hitches.slice(), windows: windows.slice(-60), trimmed: 0,
+      env, modes, summary, gpuPasses: (function () { try { return window.DMGpuProf ? window.DMGpuProf.table() : null; } catch (e) { return null; } })(), hitches: hitches.slice(), windows: windows.slice(-60), trimmed: 0,
     };
     let s = JSON.stringify(doc);
     while (s.length > CAP && doc.windows.length) { doc.windows.splice(0, Math.ceil(doc.windows.length / 4) || 1); doc.trimmed = windows.length - doc.windows.length; s = JSON.stringify(doc); }

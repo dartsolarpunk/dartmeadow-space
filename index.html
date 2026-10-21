@@ -969,7 +969,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-safety.js?v=1" defer></script>
 <script src="jots/jots-link.js?v=87" defer></script>
 <script src="ui/dm-friends.js?v=2" defer></script>
-<script src="ui/dm-perflog.js?v=1" defer></script>
+<script src="ui/dm-perflog.js?v=2" defer></script>
 <script src="ui/dm-spectator.js?v=1" defer></script>
 <script src="ui/dm-stack.js?v=1" defer></script>
 <script src="ui/dm-globe.js?v=8" defer></script>
@@ -6084,7 +6084,7 @@ async function initFlightScene(){
   try{ detectCapabilities(); loadGfxChoice(); applyQualityTier(); }catch(e){console.warn('cap init:',e);}
 
   // Renderer — compatibility-first across Safari/Chrome/Edge/Firefox on all OSes
-  flightRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:!!GFX.antialias,alpha:false,powerPreference:'high-performance',logarithmicDepthBuffer:true});
+  flightRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:!!GFX.antialias,alpha:false,powerPreference:'high-performance',logarithmicDepthBuffer:true,trackTimestamp:_gpuTimeWanted()});   // (v105) GPU pass timings when timestamp-query / EXT_disjoint_timer_query exists (no-op otherwise)
   _guardRenderDepth(flightRenderer);
   try{
     await flightRenderer.init();
@@ -6094,6 +6094,7 @@ async function initFlightScene(){
     try{toast('⚠ Flight renderer failed to init: '+(e&&e.message?e.message:e),5000);}catch(_){}
     return;
   }
+  try{ _gpuProfInstall(flightRenderer); }catch(e){ console.warn('[gpuprof]',e); }
   // The GPU can drop the page (a phone reclaiming memory in the background, a
   // driver reset). Three.js can't bring a lost device back, so save where she
   // is and reload into it rather than sit on a black screen.
@@ -6249,7 +6250,7 @@ function _btReserveLights(n){
   if(typeof flightScene==='undefined'||!flightScene||typeof THREE==='undefined') return;
   if(!_btHold.group){ const g=new THREE.Group(); g.name='JOTS_BTLightHold'; flightScene.add(g); _btHold.group=g;
     const prev=flightScene.onBeforeRender; flightScene.onBeforeRender=function(){ try{ _btHoldSync(); }catch(e){} if(typeof prev==='function') return prev.apply(this,arguments); }; }
-  while(_btHold.free.length+_btHold.used.length<n){ const l=new THREE.PointLight(0xffffff,0,1,2); l.castShadow=false; l.matrixAutoUpdate=false; l.matrixWorldAutoUpdate=false; _btHold.group.add(l); _btHold.free.push(l); }
+  while(_btHold.free.length+_btHold.used.length<n){ const l=new THREE.PointLight(0xffffff,0,1,2); l.userData.btStandIn=true; l.castShadow=false; l.matrixAutoUpdate=false; l.matrixWorldAutoUpdate=false; _btHold.group.add(l); _btHold.free.push(l); }
 }
 function _btAdoptLights(root){
   const ls=[]; root.traverse(o=>{ if(o.isPointLight&&!(o.userData&&o.userData.bti)) ls.push(o); });
@@ -6328,6 +6329,10 @@ function _aoccTick(){
   }catch(e){}
 }
 setInterval(_aoccTick,200);
+// worlds built later (other systems) get the same list. Never a mid-flight recompile on its own: the timer only
+// assigns the current node to materials that do not carry it yet (new worlds, already compiling as they are built),
+// and the node itself changes only when the light-id key changes (logged above).
+setInterval(()=>{ if(window._dmWarming) return; const k0=_LC.key; const n=_lcNode(); if(_LC.key===k0&&_LC._applied===n) { _lcApplyNew(); return; } _LC._applied=n; _lcApplyWorlds(); },3000);
 // (v104) the Bird Temple's enclosed decks are hidden while you are far from the ship, so no warm-up ever compiled
 // them: the first boarding compiled every BTI_ program in the frames you climbed in (log: PIPELINE BTI_Mess_Trays_2
 // mid-boarding, 0.5–1 s frames, then the GPU process died). Once the ship is in the scene, compile its interior in
@@ -6362,6 +6367,7 @@ async function _flightWarmup(){
   try{ _btBuildEnvRT(); }catch(e){}   // the Bird Temple's environment map: prefiltered now, not when the temple arrives
   try{ _btReserveLights(5+BT_INTERIOR_LIGHTS); }catch(e){}   // its altar, hull-rig and shard light stand-ins, so the light key is final before compiling
   try{ _distLightT=1; updateDistantSystems(0); }catch(e){}   // the two distant-star lights exist before compiling
+  try{ _lcApplyWorlds(); }catch(e){}   // (v105) worlds' own light lists, before anything compiles
   const steps=[
     ['world',()=>flightRenderer.compileAsync(flightScene,flightCamera)],
     ['sun and flares',()=>window.DMStar&&DMStar.warm&&DMStar.warm(flightCamera)],
@@ -12226,7 +12232,8 @@ async function upgradePlanetLOD(dt){
     // compile the new detail level hidden, beside the old one, so the swap never stalls the frame
     newGroup.visible=false; newGroup.position.copy(b.mesh.position); newGroup.rotation.copy(b.mesh.rotation);
     flightScene.add(newGroup);
-    if(b._wm){ const keep=b.mesh; b.mesh=newGroup; try{ _applyWorldMapToFlightBody(b,b._wm); } finally{ b.mesh=keep; } }   // (v104) wear the map before compiling: never one frame of procedural colours
+    if(b._wm){ const keep=b.mesh; b.mesh=newGroup; try{ _applyWorldMapToFlightBody(b,b._wm); } finally{ b.mesh=keep; } }
+    try{ _lcApplyObj(newGroup); }catch(e){}   // (v104) wear the map before compiling: never one frame of procedural colours
     await _dmCompileObject(newGroup);
     const oldGroup=b.mesh;
     // Preserve position/rotation and any tagged extras (rings, moon)
@@ -14408,7 +14415,7 @@ window.dmSceneText=function(){
     return {platform:_dmPlatform(),app:(window.DMAndroid&&DMAndroid.version)?DMAndroid.version():null,webview:m[2]||null,
       backend:real===null?'not-started':real?'WebGPU':'WebGL2-fallback',navGpu:!!navigator.gpu,gpu:g.renderer||'',vendor:g.vendor||'',
       gpuClass:g.gpuClass,score:g.score,preset:g.preset,resScale:g.resScale,cores:navigator.hardwareConcurrency||0,mem:navigator.deviceMemory||0,
-      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:((String(window._dmSwCache||'').match(/engine-(v\d+)/)||[])[1]?'sw-'+String(window._dmSwCache).match(/engine-(v\d+)/)[1]:'sw-v104'),swCache:window._dmSwCache||null,lastGpuLost:(function(){ try{ return JSON.parse(localStorage.getItem('dm_lastGpuLost')||'null'); }catch(e){ return null; } })(),hair:(function(){ try{ const H=window.DART_HAIR; return H?{mode:H.stats.mode||'cpu',gcReason:H.stats.gpuFail||null,check:H.stats.gpuCheck||null,ms:+(H.stats.ms||0).toFixed(2),drawn:H.stats.drawn}:null; }catch(e){ return null; } })(),ua:navigator.userAgent};
+      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:((String(window._dmSwCache||'').match(/engine-(v\d+)/)||[])[1]?'sw-'+String(window._dmSwCache).match(/engine-(v\d+)/)[1]:'sw-v109'),swCache:window._dmSwCache||null,lastGpuLost:(function(){ try{ return JSON.parse(localStorage.getItem('dm_lastGpuLost')||'null'); }catch(e){ return null; } })(),hair:(function(){ try{ const H=window.DART_HAIR; return H?{mode:H.stats.mode||'cpu',gcReason:H.stats.gpuFail||null,check:H.stats.gpuCheck||null,ms:+(H.stats.ms||0).toFixed(2),drawn:H.stats.drawn}:null; }catch(e){ return null; } })(),ua:navigator.userAgent};
   }
   function flush(){
     const f=win.f; win.f=[]; const t0=win.t0; win.t0=performance.now();
@@ -17023,6 +17030,82 @@ function updateDistantSystems(dt){
 }
 const _distLightPool=[];
 
+// ── Per-material light lists (v105, engine-level) ──────────────────────
+// Every lit material in the space scene looped over every light in it — 46 on Justin's sessions: the Bird Temple's 24
+// interior stand-ins (range 3.4, inside the hull) and the two distant-star lights (other systems) included, at
+// intensity 0 or far out of range, for every planet pixel. A finite-range point light contributes exactly zero beyond
+// its range, so a world's materials now carry their own light list (material.lightsNode) without those: same image,
+// ~26 fewer light evaluations per planet fragment (the full-screen pixels near Earth). Lists are rebuilt only when the
+// scene's light set changes (the pools are reserved at warm-up, so in practice once), and applied before compiles.
+const _LC={key:'',lights:null,node:null};
+// the Bird Temple's light stand-ins (_btReserveLights: tagged at creation, named only later when adopted; range ≤ 12, at the ship)
+// and the two distant-star lights (other systems). Excluded by flag/name, never by a name that is set after the list is built.
+function _lcInTemple(l){ try{ const g=(typeof BIRD_TEMPLE!=='undefined')&&BIRD_TEMPLE.group; if(!g) return false; for(let p=l.parent;p;p=p.parent) if(p===g) return true; }catch(e){} return false; }
+function _lcExcluded(l){ const u=l.userData||{}; return !!(u.btStandIn||u.bti)||l.name==='BTI_Light'||l.name==='JOTS_DistStarLight'||_lcInTemple(l); }   // + the temple model's own lights (they arrive with its GLB, after warm-up, and are adopted into the stand-ins)
+function _lcNode(){
+  if(typeof window.lights!=='function'||typeof flightScene==='undefined'||!flightScene) return null;
+  const all=[]; flightScene.traverse(o=>{ if(o.isLight) all.push(o); });
+  // the key is the set of lights the worlds DO use (order-free): temple / distant-star lights coming and going never change it
+  const inc=all.filter(l=>!_lcExcluded(l)), key=inc.length+'|'+inc.map(l=>l.id).sort((a,b)=>a-b).join(',');
+  if(key!==_LC.key){ const first=!_LC.key; _LC.key=key; _LC.lights=inc; _LC.node=(_LC.lights.length<all.length)?window.lights(_LC.lights):null;
+    _LC.excluded=all.length-_LC.lights.length; _LC.changed=(_LC.changed||0)+1;
+    if(!first){ console.warn('[lightlists] light set changed ('+all.length+' lights, '+_LC.excluded+' excluded from worlds): world materials will recompile'); try{ (window._lcLog=window._lcLog||[]).push({at:new Date().toISOString(),n:all.length,ex:_LC.excluded,warming:!!window._dmWarming}); }catch(e){} } }
+  return _LC.node;
+}
+function _lcApplyObj(root){
+  const n=_lcNode(); if(!root) return;
+  root.traverse(o=>{ if(!o.isMesh) return; const ms=Array.isArray(o.material)?o.material:[o.material];
+    for(const m of ms){ if(!m||m.isMeshBasicMaterial||m.isMeshBasicNodeMaterial||m.isShaderMaterial||m.lights===false) continue;
+      if(!(m.isNodeMaterial||m.isMeshStandardMaterial||m.isMeshPhysicalMaterial||m.isMeshLambertMaterial||m.isMeshPhongMaterial||m.isMeshToonMaterial)) continue;   // WebGL2 too: three's node library copies .lightsNode when it converts a classic material
+      if((m.lightsNode||null)!==n){ m.lightsNode=n; m.needsUpdate=true; } } });
+}
+function _lcApplyNew(){ try{ const n=_LC.node; for(const b of (celestialBodies||[])){ if(!b||!b.mesh||b.type==='Star'||b.name==='Sun'||b.mesh.userData._lcN===n) continue; b.mesh.userData._lcN=n; _lcApplyObj(b.mesh); } }catch(e){} }
+function _lcApplyWorlds(){ try{ for(const b of (celestialBodies||[])){ if(b&&b.mesh&&b.type!=='Star'&&b.name!=='Sun') _lcApplyObj(b.mesh); } }catch(e){} }
+// GPU timing only while the perf log runs (ui/dm-perflog.js sets DMPerfLogActive); Safari's WebGPU only with ?gputime=1;
+// ?gputime=0 turns it off anywhere.
+function _gpuTimeWanted(){ try{ const q=location.search; if(/[?&]gputime=0\b/.test(q)) return false; if(!window.DMPerfLogActive) return false;
+  const ua=navigator.userAgent||'', safari=/Safari\//.test(ua)&&!/Chrome\/|Chromium\/|CriOS\/|EdgiOS\/|FxiOS\//.test(ua);
+  if(safari&&!/[?&]gputime=1\b/.test(q)) return false; return true; }catch(e){ return false; } }
+// ── GPU frame breakdown (v105, engine-level) ───────────────────────────
+// Every GPU pass the renderer records (each render context: main scene, true-atmosphere scene/quad passes, shadow
+// maps, compute dispatches) is tagged with the label of the code that issued it (DMGpuProf.push/pop) plus its kind
+// (shadow / scene / quad / compute). Timestamps are resolved off the frame path every ~30 frames and accumulated
+// into a per-label table: ms per frame (avg, p95 over resolves), share of the GPU frame, passes per frame.
+// Read by ui/dm-perflog.js (doc.gpuPasses). Costs two timestamp writes per pass; nothing when unsupported.
+const DMGpuProf=window.DMGpuProf={on:false,stack:['main'],map:new Map(),acc:{},frames:0,resolves:0,busy:false,
+  push(l){ this.stack.push(l); }, pop(){ if(this.stack.length>1) this.stack.pop(); },
+  table(){ const o={}, F=Math.max(1,this.frames); let tot=0; for(const k in this.acc) tot+=this.acc[k].ms;
+    for(const k of Object.keys(this.acc).sort((a,b)=>this.acc[b].ms-this.acc[a].ms)){ const a=this.acc[k], q=a.per.slice().sort((x,y)=>x-y);
+      o[k]={msPerFrame:+(a.ms/F).toFixed(2),p95:+(q[Math.floor(q.length*0.95)]||0).toFixed(2),share:+(100*a.ms/Math.max(1e-6,tot)).toFixed(1),passesPerFrame:+(a.n/F).toFixed(1)}; }
+    return this.on?{frames:this.frames,gpuMsPerFrame:+(tot/F).toFixed(2),passes:o}:{unsupported:true}; }};
+function _gpuProfInstall(r){
+  const be=r&&r.backend; if(!be||!r.trackTimestamp) return;
+  const shadowCams=new WeakSet();
+  const kindOf=(cam,sc)=>{ if(!cam) return 'pass'; if(shadowCams.has(cam)) return 'shadow'; if(cam.isOrthographicCamera) return 'quad';
+    try{ if(sc===flightScene) return 'space'; if(typeof PW!=='undefined'&&sc===PW.scene) return 'ground'; }catch(e){} return 'scene'; };
+  let cur='main:pass';
+  const r0=r.render.bind(r);
+  r.render=function(scene,cam){ const prev=cur; try{ cur=DMGpuProf.stack[DMGpuProf.stack.length-1]+':'+kindOf(cam,scene); }catch(e){} try{ return r0(scene,cam); } finally{ cur=prev; } };
+  if(r.compute){ const c0=r.compute.bind(r); r.compute=function(n,...a){ const prev=cur; cur=DMGpuProf.stack[DMGpuProf.stack.length-1]+':compute'; try{ return c0(n,...a); } finally{ cur=prev; } }; }
+  // shadow cameras: any light's shadow camera (collected lazily, they are created with the lights)
+  setInterval(()=>{ try{ flightScene&&flightScene.traverse(o=>{ if(o.isLight&&o.shadow&&o.shadow.camera) shadowCams.add(o.shadow.camera); }); if(PW&&PW.scene) PW.scene.traverse(o=>{ if(o.isLight&&o.shadow&&o.shadow.camera) shadowCams.add(o.shadow.camera); }); }catch(e){} },2000);
+  const hook=(pool)=>{ if(!pool||pool._dmHooked) return; pool._dmHooked=true; const a0=pool.allocateQueriesForContext.bind(pool);
+    pool.allocateQueriesForContext=function(uid){ const off=a0(uid); try{ if(off!=null) DMGpuProf.map.set(uid,cur); }catch(e){} return off; }; };
+  DMGpuProf.on=true;
+  DMGpuProf.tick=async function(){
+    this.frames++;
+    let P; try{ P=be.timestampQueryPool||{}; hook(P.render); hook(P.compute); }catch(e){ return; }
+    if(this.busy||this.frames%30) return; this.busy=true;
+    try{
+      for(const t of ['render','compute']){ const pool=P[t]; if(!pool) continue; await r.resolveTimestampsAsync(t);
+        const per={};
+        for(const [uid,ms] of pool.timestamps){ const l=this.map.get(uid)||('?:'+t); const a=this.acc[l]||(this.acc[l]={ms:0,n:0,per:[]}); a.ms+=ms; a.n++; per[l]=(per[l]||0)+ms; }
+        for(const l in per){ const a=this.acc[l]; a.per.push(per[l]/30); if(a.per.length>120) a.per.shift(); }
+        pool.timestamps.clear(); }
+      this.map.clear(); this.resolves++;
+    }catch(e){} finally{ this.busy=false; }
+  };
+}
 let _sbT=0;
 function renderWithPostFX(){
   // One plain render: the old bloom/motion-blur chain (raw ShaderMaterial +
@@ -17033,7 +17116,7 @@ function renderWithPostFX(){
   const _spec=window.DMSpec&&DMSpec.on; if(_spec) try{ DMSpec.pre(flightCamera); }catch(e){}
   try{ if(galSky.ready) updateGalSky(); }catch(e){}
   try{ if(window.DMStarBubble) { const n=performance.now(), d=_sbT?(n-_sbT)/1000:1/60; _sbT=n; if(window.DMStar) DMStar.frame(flightCamera,d); if(window.DMMist) DMMist.frame(flightCamera,d); DMStarBubble.frame(flightCamera,flightScene,d); } }catch(e){ console.warn('[starbubble] '+(e&&e.stack||e)); }
-  try{ const _hs=_taHideShells(); try{ if(!_trueAtmoRender(flightRenderer,flightScene,flightCamera)) flightRenderer.render(flightScene,flightCamera); } finally{ _taShowShells(_hs); } _shotGrab(flightRenderer); }
+  try{ const _hs=_taHideShells(); try{ DMGpuProf.push('atmo'); let _ta=false; try{ _ta=_trueAtmoRender(flightRenderer,flightScene,flightCamera); } finally{ DMGpuProf.pop(); } if(!_ta) flightRenderer.render(flightScene,flightCamera); } finally{ _taShowShells(_hs); } _shotGrab(flightRenderer); try{ DMGpuProf.tick&&DMGpuProf.tick(); }catch(e){} }
   finally{ if(_spec) try{ DMSpec.post(flightCamera); }catch(e){} }
   const _rtMs = performance.now()-_rt0;
   if(!window._renderTimingSamples) window._renderTimingSamples=[];
@@ -17411,7 +17494,7 @@ async function _wmWarmAll(){
       if(!b||!b.mesh||b.name==='Sun'||b.type==='Star'||b.isAsteroid||b.type==='Comet'||!isProximityLandEligible(b)) continue;
       const best=_wmBestMesh(b); if(!best) continue;
       let mat=best.userData._wmMat;
-      if(!mat){ mat=new THREE.MeshStandardNodeMaterial({roughness:0.92,metalness:0.02}); mat.colorNode=_wmColorNode(_wmStandIn); mat._wmTexNode=mat.colorNode; best.userData._wmMat=mat; best.userData._wmPrev=best.material; }
+      if(!mat){ mat=new THREE.MeshStandardNodeMaterial({roughness:0.92,metalness:0.02}); mat.colorNode=_wmColorNode(_wmStandIn); mat._wmTexNode=mat.colorNode; try{ mat.lightsNode=_lcNode(); }catch(e){} best.userData._wmMat=mat; best.userData._wmPrev=best.material; }
       if(best.material!==mat){ back.push([best,best.material]); best.material=mat; }
     }catch(e){}
   }
@@ -17437,7 +17520,7 @@ function _applyWorldMapToFlightBody(b,m){
     // the texture is swapped on the existing node (no new node graph, no rebuild); a fresh node only the first time
     if(mat._wmTexNode&&mat._wmTexNode.value!==undefined){ mat._wmTexNode.value=m.tex; }
     else { mat.colorNode=_wmColorNode(m.tex); mat._wmTexNode=mat.colorNode; mat.needsUpdate=true; }
-    best.material=mat;
+    best.material=mat; try{ const n=_lcNode(); if((mat.lightsNode||null)!==n){ mat.lightsNode=n; mat.needsUpdate=true; } }catch(e){}
   }catch(e){ console.warn('[worldmap] could not dress',b.name,e); }
 }
 // ── Whole-planet map (DART Engine) ───────────────────────────────────
@@ -17485,6 +17568,27 @@ function worldMapFor(body,onPass){
 // sea level, sand at the shore, grass/soil, rock up high and on steep
 // slopes, snow (lower toward the poles), and a sun-from-the-north-west
 // hillshade so relief reads from orbit
+// map colour helpers (shared by the lush/dry branches and the v105 Earth desert blend; same formulas as before)
+function _wmLush(c,g1,g2,sand,rock,snow,h,slope,snowDrop,la,pal,ws,sm){
+  c.copy(g1).lerp(g2,sm(10,40,h)*0.6);
+  if(pal.water) c.lerp(sand,sm(6,1,h));
+  c.lerp(rock,Math.max(sm(30-snowDrop*0.3,46,h),sm(0.35,0.75,slope)));
+  c.lerp(snow,ws==='ice'?0.75:sm(52-snowDrop-6,52-snowDrop+8,h)*(1-slope*0.5));
+  if(la>78) c.lerp(snow,sm(78,84,la)*0.85);
+  return c;
+}
+function _wmDry(c,g1,g2,sand,rock,snow,h,slope,la,hx,hz,cw,cell,ws){
+  const sm=(a,b,v)=>{ const t=Math.min(1,Math.max(0,(v-a)/(b-a))); return t*t*(3-2*t); };
+  const band=0.5+0.5*Math.sin(h*0.22);
+  c.copy(g1).lerp(g2,0.25+band*0.35);
+  if(ws==='dunes') c.lerp(sand,0.55);
+  if(ws==='volcanic') c.multiplyScalar(0.55);
+  c.lerp(rock.clone().multiplyScalar(0.8),sm(0.4,0.85,slope)*0.7);
+  if(la>72) c.lerp(snow,sm(72,82,la)*0.8);
+  const shade=Math.max(0.55,Math.min(1.25,1+(-hx/cw+hz)/(2*cell)*0.9));
+  c.multiplyScalar(shade);
+  return c;
+}
 function _worldMapTexture(m,pal){
   const W=m.W, Hh=m.H, hs=m.heights;
   const cv=document.createElement('canvas'); cv.width=W; cv.height=Hh;
@@ -17504,7 +17608,16 @@ function _worldMapTexture(m,pal){
       const hx=hs[y*W+((x+1)%W)]-hs[y*W+((x-1+W)%W)], hz=hs[Math.min(Hh-1,y+1)*W+x]-hs[Math.max(0,y-1)*W+x];
       const slope=Math.min(1,Math.hypot(hx/(2*cell*cw),hz/(2*cell))*1.5);
       const ws=styleAt(lat,(x+0.5)/W*360-180);
+      const lonM=(x+0.5)/W*360-180;
+      const dW=(m.body&&m.body.name==='Earth'&&window.DMWorldStyle&&DMWorldStyle.earthDesertW)?DMWorldStyle.earthDesertW(lat,lonM):-1;
       if(pal.water&&h<0){ c.copy(wShal).lerp(wDeep,sm(0,-40,h)); }
+      else if(dW>=0&&h>=0&&(ws==='lush'||ws==='dunes')){
+        // (v105) Earth: lush and desert colouring blended by a soft, ragged desert weight (no rectangles)
+        const cl=_wmLush(c,g1,g2,sand,rock,snow,h,slope,snowDrop,la,pal,'lush',sm);
+        const cr=cl.r,cg=cl.g,cb=cl.b;
+        if(dW>0.001){ const dc=_wmDry(c,g1,g2,sand,rock,snow,h,slope,la,hx,hz,cw,cell,'dunes'); c.setRGB(cr+(dc.r-cr)*dW,cg+(dc.g-cg)*dW,cb+(dc.b-cb)*dW); }
+        else c.setRGB(cr,cg,cb);
+      }
       else if(ws==='lush'||ws==='ice'){
         c.copy(g1).lerp(g2,sm(10,40,h)*0.6);
         if(pal.water) c.lerp(sand,sm(6,1,h));
@@ -17866,6 +17979,12 @@ function _trueAtmoRender(r,scene,cam){
       if(d<bd){ bd=d; best=e; }
     }
     if(!best||bd>60) return false;
+    // (v105) nothing the gas touches is on screen: camera outside the world's air (conservative 1.3 R) and that sphere
+    // outside the view frustum -> the full-screen march would only copy the scene through; draw the scene directly.
+    { best.mesh.getWorldPosition(c); const Rt=best.mesh.userData.planetR*1.3;
+      if(c.distanceTo(cam.position)>Rt){ const F=_TA._fr||(_TA._fr=new THREE.Frustum()), M=_TA._fm||(_TA._fm=new THREE.Matrix4()), S=_TA._fs||(_TA._fs=new THREE.Sphere());
+        cam.updateMatrixWorld(); M.multiplyMatrices(cam.projectionMatrix,cam.matrixWorldInverse); F.setFromProjectionMatrix(M,cam.coordinateSystem); S.center.copy(c); S.radius=Rt;
+        if(!F.intersectsSphere(S)) return false; } }
     const ud=best.mesh.userData, E=window.DMEarth;
     const key='sp|'+best.mesh.uuid+'|'+_taQ()+'|'+(E&&E.ready?1:0);
     let A=_TA.pipes.get(key);
@@ -17942,6 +18061,7 @@ function _pwRender(){
   const layered=PW.skyK<0.999&&_PWS.ok;
   const spec=window.DMSpec&&DMSpec.on;
   r.setRenderTarget(null);
+  DMGpuProf.push('world');
   try{
     if(layered){
       // the real sky — stars, the galaxy band, the sun and the other worlds — from where the camera really is
@@ -17968,6 +18088,7 @@ function _pwRender(){
     _shotGrab(r);
   }catch(e){ _animLoopWarn('world-render',e); }
   finally{
+    DMGpuProf.pop(); try{ DMGpuProf.tick&&DMGpuProf.tick(); }catch(e){}
     r.autoClearColor=true; r.toneMappingExposure=1.0;
     if(spec) try{ DMSpec.post(cam); }catch(e){}
     // the controllers keep their camera in the flat world
