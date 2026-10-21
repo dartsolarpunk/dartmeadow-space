@@ -88,6 +88,7 @@
       g.setAttribute('position', new THREE.BufferAttribute(p, 3)); g.setAttribute('color', new THREE.BufferAttribute(cc, 3));
       const m = new THREE.PointsMaterial({ size, sizeAttenuation: false, vertexColors: true, transparent: false, depthWrite: false, blending: THREE.AdditiveBlending, fog: false });
       const pts = new THREE.Points(g, m); pts.frustumCulled = false; pts.renderOrder = -9; pts.raycast = () => {};
+      pts.userData.dir = Float32Array.from(p, (x) => x / starR); pts.userData.c0 = cc.slice();   // for the horizon extinction (below)
       return pts;
     };
     const field = mkPoints(1800, false, 1.6), galaxy = mkPoints(2600, true, 1.2, 0xc8d4ff);
@@ -140,6 +141,22 @@
     let lastComet = null, lastMeteor = null;
     const v1 = new THREE.Vector3(), v2 = new THREE.Vector3(), v3 = new THREE.Vector3(), v4 = new THREE.Vector3(), M4 = new THREE.Matrix4(), SUNSET = new THREE.Color(0xff9a5a);
 
+    const AX = new THREE.Vector3(1, 0, 0), AY = new THREE.Vector3(0, 1, 0), qA = new THREE.Quaternion(), qB = new THREE.Quaternion();
+    // transmission through the air at elevation sin(alt)=y: Kasten–Young-ish airmass, k≈0.28 mag-ish per airmass
+    const ext = (y) => { if (!atmos) return y > -0.02 ? 1 : 0; if (y <= -0.01) return 0; const X = 1 / (Math.max(0, y) + 0.025 * Math.exp(-11 * Math.max(0, y))); return Math.exp(-0.22 * (X - 1)); };
+    const extinct = (pts) => {
+      const D = pts.userData.dir, C0 = pts.userData.c0, A = pts.geometry.attributes.color, C = A.array, q = stars.quaternion;
+      const x = q.x, y = q.y, z = q.z, w = q.w;
+      for (let i = 0; i < D.length; i += 3) {
+        const vx = D[i], vy = D[i + 1], vz = D[i + 2];
+        // world-up component of q·v
+        const tx = 2 * (y * vz - z * vy), tz = 2 * (x * vy - y * vx);
+        const wy = vy + w * (2 * (z * vx - x * vz)) + (z * tx - x * tz);
+        const t = ext(wy), red = 1 - t;
+        C[i] = C0[i] * t * (1 + 0.15 * red); C[i + 1] = C0[i + 1] * t * (1 - 0.1 * red); C[i + 2] = C0[i + 2] * t * (1 - 0.35 * red);
+      }
+      A.needsUpdate = true;
+    };
     const ctl = {
       dome, stars, sunDir, day: 1, sunLight: o.sunLight || null, fade: 1,
       // a: 1 = under the sky, 0 = above it (the air's own glow from outside takes over)
@@ -169,13 +186,22 @@
         const day = Math.max(0, Math.min(1, (sunDir.y + 0.1) / 0.25));
         ctl.day = day; U.day.value = day; U.dir.value.copy(sunDir);
         dome.position.copy(camera.position); stars.position.copy(camera.position); fx.position.copy(camera.position);
-        // the sky turns overhead with the day
-        stars.rotation.y = -H * 0.9; stars.rotation.x = phi * 0.5;
+        // the real night sky for this hour and season: the star sphere turns about the celestial pole (which stands
+        // at the site's latitude above the north horizon) by the local sidereal angle — the sun's hour angle plus its
+        // place in the year — so which stars and which stretch of the galaxy band are up depends on the hour and the season
+        let yr = 0;
+        try { const el = window.DMTime && o.body && DMTime.SOL && DMTime.SOL[o.body.name]; yr = (DMTime.days() / (365.25 * Math.abs((el && el.P) || 1))) % 1; } catch (e) {}
+        qA.setFromAxisAngle(AX, phi - Math.PI / 2); qB.setFromAxisAngle(AY, -(H + yr * Math.PI * 2));
+        stars.quaternion.copy(qA).multiply(qB);
         const vis = (atmos ? Math.pow(1 - day, 1.5) : 1) * ctl.fade;
+        // atmospheric extinction: stars dim and redden toward the horizon (airmass), gone below it — CPU, 4 Hz
+        ctl._extT = (ctl._extT || 0) + dt;
+        if (ctl._extT > 0.25 || !ctl._extOnce) { ctl._extT = 0; ctl._extOnce = true; extinct(field); extinct(galaxy);
+          bright.forEach((s) => { v1.copy(s.position).normalize().applyQuaternion(stars.quaternion); s.userData.ext = ext(v1.y); }); }
         field.visible = galaxy.visible = vis > 0.03;
         field.material.opacity = vis; galaxy.material.opacity = vis;
         field.material.color.setScalar(vis); galaxy.material.color.setScalar(vis);
-        bright.forEach((s) => { s.material.opacity = s.userData.base * Math.max(atmos ? 0.22 : 1, vis) * ctl.fade; });
+        bright.forEach((s) => { s.material.opacity = s.userData.base * Math.max(atmos ? 0.22 : 1, vis) * ctl.fade * (s.userData.ext == null ? 1 : s.userData.ext); });
         stars.visible = ctl.fade > 0.003;
         // meteors at night, comets now and then
         const cs = Math.floor(t / COMET_SLOT), ms = Math.floor(t / METEOR_SLOT);
@@ -214,7 +240,10 @@
           o.sunLight.intensity = (o.sunBase || 2) * (under * ctl.fade + (1 - ctl.fade));   // above the air: full sun
           o.sunLight.color.copy(sunCol).lerp(SUNSET, atmos ? (1 - day) * Math.max(0, 1 - Math.abs(sunDir.y) * 6) * 0.7 : 0);
         }
-        (o.fill || []).forEach((l) => { if (l.userData._base == null) l.userData._base = l.intensity; l.intensity = l.userData._base * (0.35 + 0.65 * day); });
+        // fill (sky light): full by day; at night only what the night sky gives — galaxy/star skylight plus moonlight,
+        // set from the game each frame (ctl.nightFill, a fraction of the day fill; 0.35 when nothing sets it)
+        const nf = ctl.nightFill == null ? 0.35 : ctl.nightFill;
+        (o.fill || []).forEach((l) => { if (l.userData._base == null) l.userData._base = l.intensity; l.intensity = l.userData._base * (nf + (1 - nf) * day); });
         if (scene.fog && atmos) { if (!ctl._fogDay) ctl._fogDay = scene.fog.color.clone(); scene.fog.color.copy(ctl._fogDay).multiplyScalar(0.12 + 0.88 * day); }
         if (scene.background && scene.background.isColor && atmos) { if (!ctl._bgDay) ctl._bgDay = scene.background.clone(); scene.background.copy(ctl._bgDay).multiplyScalar(0.05 + 0.95 * day); }
       },
