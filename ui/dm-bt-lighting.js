@@ -175,7 +175,8 @@
   const SIG = { star: new Float64Array(9).fill(NaN), sun: new Float64Array(3).fill(NaN) };
   function sigMoved(S, i, x, y, z, tol) { return !(Math.abs(S[i] - x) <= tol && Math.abs(S[i + 1] - y) <= tol && Math.abs(S[i + 2] - z) <= tol); }
   function sigStore(S, i, x, y, z) { S[i] = x; S[i + 1] = y; S[i + 2] = z; }
-  function setFill(F, e, k) { if (e) { F.position.setFromMatrixPosition(e.mw); F.color.copy(e.src.color); F.intensity = e.on * k; F.distance = Math.max(3, e.src.distance * 1.2); F.updateMatrixWorld(); } else F.intensity = 0; }
+  BTL.cfg.minFill = 0.6;   // reading-light floor: a dark/switched-off room still gets this much from its nearest lamp
+  function setFill(F, e, k) { if (e) { F.position.setFromMatrixPosition(e.mw); F.color.copy(e.src.color); F.intensity = Math.max(e.on || 0, BTL.cfg.minFill) * k; F.distance = Math.max(3, e.src.distance * 1.2); F.updateMatrixWorld(); } else F.intensity = 0; }
   const PROBE_REFRESH_MS = 4000;
   let probeAt = null, dirty = 63, lastFull = 0, lastFaceFrame = -99, casters = null; const holdA = [], holdN = [];
   const _upV = { v: null }; function _up(g) { const THREE = T(); if (!_upV.v) _upV.v = new THREE.Vector3(); g.getWorldQuaternion(_q); return _upV.v.set(0, 1, 0).applyQuaternion(_q); }
@@ -220,7 +221,7 @@
     // 2) two reading lights: the lit interior lamps nearest Ariel (only below deck), unshadowed; top-2 search, no allocations
     let e0 = null, e1 = null, d0 = 49, d1 = 49;
     if (aboard && hasA) {
-      try { for (const e of _btHold.used) { if (!e.src || !(e.on > 0)) continue; _d.setFromMatrixPosition(e.mw); const d = _d.distanceToSquared(_b);
+      try { for (const e of _btHold.used) { if (!e.src) continue; _d.setFromMatrixPosition(e.mw); const d = _d.distanceToSquared(_b);
         if (d < d0) { e1 = e0; d1 = d0; e0 = e; d0 = d; } else if (d < d1) { e1 = e; d1 = d; } } } catch (e) {}
     }
     setFill(fills[0], e0, 1.0); setFill(fills[1], e1, 0.7);
