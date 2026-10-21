@@ -967,7 +967,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 </style>
 
 <script src="ui/dm-safety.js?v=1" defer></script>
-<script src="jots/jots-link.js?v=85" defer></script>
+<script src="jots/jots-link.js?v=86" defer></script>
 <script src="ui/dm-friends.js?v=2" defer></script>
 <script src="ui/dm-perflog.js?v=1" defer></script>
 <script src="ui/dm-spectator.js?v=1" defer></script>
@@ -24399,7 +24399,10 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
         ?'Approved? Finishing sign-in…'
         :'Tap COPY CODE & OPEN GITHUB, paste the code there, press Continue, then Authorize. This screen finishes on its own when you come back.';
       if(resumeDev) setTimeout(()=>J().auth.pollNow(),0);
-      const tok=await J().auth.waitForToken(dev,()=>{ if(_deviceAbort) throw new Error('cancelled'); },
+      const _t0=Date.now();
+      const tok=await J().auth.waitForToken(dev,()=>{ if(_deviceAbort) throw new Error('cancelled');
+          const a=J().auth, el=$j('jots-device-status'); if(!a.lastPollAt||Date.now()-_t0<60000) return;
+          if(/Approved\?|Still checking/.test(el.textContent)) el.textContent='Still checking with GitHub… (last answer: '+(a.lastAnswer||'no reply yet')+'). If you approved, keep this open; otherwise tap TRY AGAIN.'; },
         (why)=>{ $j('jots-device-status').textContent=/too many times|urlfetch|quota/i.test(why)
           ?'Approved on GitHub? The LEATR bridge is at its daily GitHub limit — still checking every few seconds with your code. Keep this screen open, or play as a guest.'
           :'Approved on GitHub? The LEATR bridge is busy — still checking every few seconds…'; },
@@ -24409,7 +24412,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
       $j('jots-device-status').textContent='Signed in — setting up your private repository…';
       await J().auth.finish(tok);
       hideWelcome();
-      toast('✓ Signed in as '+J().identity.name+' · saves sync to '+J().vault.repo,3200);
+      toast(J().auth.vaultError?('✓ Signed in as '+J().identity.name+' · save repo not ready yet ('+J().auth.vaultError+'), retrying'):('✓ Signed in as '+J().identity.name+' · saves sync to '+J().vault.repo),3600);
     }catch(e){
       if(_deviceAbort) return;
       _codeP=null;
