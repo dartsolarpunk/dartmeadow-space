@@ -6225,6 +6225,7 @@ async function _flightWarmup(){
   const _unculled=[];
   try{ flightScene.traverse(o=>{ if(o.frustumCulled){ o.frustumCulled=false; _unculled.push(o); } }); }catch(e){}
   try{ _nearFillReserve(2); }catch(e){}
+  try{ _distLightT=1; updateDistantSystems(0); }catch(e){}   // the two distant-star lights exist before compiling
   const steps=[
     ['world',()=>flightRenderer.compileAsync(flightScene,flightCamera)],
     ['sun and flares',()=>window.DMStar&&DMStar.warm&&DMStar.warm(flightCamera)],
@@ -14255,7 +14256,7 @@ window.dmSceneText=function(){
     return {platform:_dmPlatform(),app:(window.DMAndroid&&DMAndroid.version)?DMAndroid.version():null,webview:m[2]||null,
       backend:real===null?'not-started':real?'WebGPU':'WebGL2-fallback',navGpu:!!navigator.gpu,gpu:g.renderer||'',vendor:g.vendor||'',
       gpuClass:g.gpuClass,score:g.score,preset:g.preset,resScale:g.resScale,cores:navigator.hardwareConcurrency||0,mem:navigator.deviceMemory||0,
-      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:'sw-v95',swCache:window._dmSwCache||null,hair:(function(){ try{ const H=window.DART_HAIR; return H?{mode:H.stats.mode||'cpu',gcReason:H.stats.gpuFail||null,check:H.stats.gpuCheck||null,ms:+(H.stats.ms||0).toFixed(2),drawn:H.stats.drawn}:null; }catch(e){ return null; } })(),ua:navigator.userAgent};
+      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:((String(window._dmSwCache||'').match(/engine-(v\d+)/)||[])[1]?'sw-'+String(window._dmSwCache).match(/engine-(v\d+)/)[1]:'sw-v102'),swCache:window._dmSwCache||null,hair:(function(){ try{ const H=window.DART_HAIR; return H?{mode:H.stats.mode||'cpu',gcReason:H.stats.gpuFail||null,check:H.stats.gpuCheck||null,ms:+(H.stats.ms||0).toFixed(2),drawn:H.stats.drawn}:null; }catch(e){ return null; } })(),ua:navigator.userAgent};
   }
   function flush(){
     const f=win.f; win.f=[]; const t0=win.t0; win.t0=performance.now();
@@ -16841,25 +16842,32 @@ function updateDistantSystems(dt){
   }
   ranked.sort((a,b)=>a.d-b.d);
   const keep=new Set(ranked.slice(0,2).map(r=>r.s));
-  // Remove lights no longer needed
-  for(let i=_distActiveLights.length-1;i>=0;i--){
-    const {sys,light}=_distActiveLights[i];
-    if(!keep.has(sys)){
-      if(light.parent)light.parent.remove(light);
-      try{light.dispose&&light.dispose();}catch(e){}
-      _distActiveLights.splice(i,1);
-    }
-  }
+  // Two persistent lights, handed from star to star (same colour, strength, range and place as the child light that used
+  // to be created and destroyed): adding/removing a light changes the scene's light key and recompiled every material
+  // in view each time the nearest pair of stars changed — the autopilot stalls.
+  if(!_distLightPool.length&&typeof flightScene!=='undefined'&&flightScene){
+    for(let k=0;k<2;k++){ const l=new THREE.PointLight(0xffeecc,0,1,SUN_LIGHT_DECAY); l.name='JOTS_DistStarLight'; flightScene.add(l); _distLightPool.push({light:l,sys:null}); } }
+  _distLightPool.forEach(P=>{ if(!P.light.parent&&typeof flightScene!=='undefined'&&flightScene) flightScene.add(P.light); });
+  for(let i=_distActiveLights.length-1;i>=0;i--){ const A=_distActiveLights[i]; if(keep.has(A.sys)) continue;
+    if(!_distLightPool.some(P=>P.light===A.light)){ if(A.light.parent) A.light.parent.remove(A.light); try{A.light.dispose&&A.light.dispose();}catch(e){} }
+    _distActiveLights.splice(i,1); }
+  _distLightPool.forEach(P=>{ if(P.sys&&!keep.has(P.sys)){ P.sys=null; P.light.intensity=0; } });
   keep.forEach(sys=>{
     if(_distActiveLights.some(x=>x.sys===sys))return;
     if(!sys.group)return;
     const col=(sys.group.children[0]&&sys.group.children[0].material&&sys.group.children[0].material.color)
       ?sys.group.children[0].material.color.getHex():0xffeecc;
-    const pl=new THREE.PointLight(col,SUN_LIGHT_I*0.8,(sys.starRadius||1)*350,SUN_LIGHT_DECAY);
+    const P=_distLightPool.find(x=>!x.sys);
+    if(P){ const pl=P.light; P.sys=sys; pl.color.setHex(col); pl.intensity=SUN_LIGHT_I*0.8; pl.distance=(sys.starRadius||1)*350; pl.decay=SUN_LIGHT_DECAY;
+      sys.group.updateWorldMatrix(true,false); pl.position.setFromMatrixPosition(sys.group.matrixWorld); pl.updateMatrixWorld();
+      _distActiveLights.push({sys,light:pl}); return; }
+    const pl=new THREE.PointLight(col,SUN_LIGHT_I*0.8,(sys.starRadius||1)*350,SUN_LIGHT_DECAY);   // (no flight scene: as before)
     sys.group.add(pl);
     _distActiveLights.push({sys,light:pl});
   });
+  _distLightPool.forEach(P=>{ if(P.sys&&P.sys.group){ P.sys.group.updateWorldMatrix(true,false); P.light.position.setFromMatrixPosition(P.sys.group.matrixWorld); } });
 }
+const _distLightPool=[];
 
 let _sbT=0;
 function renderWithPostFX(){
@@ -20017,12 +20025,17 @@ function _charXfStep(dt){
 function _charMeasureRaw(){ return _localBox(CHAR.root); }
 // Bounding box of an object in its own frame (its transform and parents factored out).
 function _localBox(r){
-  const par=r.parent, p=r.position.clone(), q=r.quaternion.clone(), sc=r.scale.clone();
+  const par=r.parent, p=r.position.clone(), q=r.quaternion.clone(), sc=r.scale.clone(), at=par?par.children.indexOf(r):-1;
   if(par) par.remove(r);
   r.position.set(0,0,0); r.quaternion.identity(); r.scale.set(1,1,1); r.updateMatrixWorld(true);
   let box;
   try{ box=new THREE.Box3().setFromObject(r); }
-  finally{ r.position.copy(p); r.quaternion.copy(q); r.scale.copy(sc); if(par) par.add(r); r.updateMatrixWorld(true); }
+  finally{ r.position.copy(p); r.quaternion.copy(q); r.scale.copy(sc);
+    if(par){ par.add(r);
+      // back in its old place among its siblings: re-added at the end, the board's lights came later in the scene's
+      // light list, which changes the light key and recompiled every material (each board re-measure)
+      const k=par.children.indexOf(r); if(at>=0&&k!==at&&at<par.children.length){ par.children.splice(k,1); par.children.splice(at,0,r); } }
+    r.updateMatrixWorld(true); }
   return box;
 }
 function _charWrapMixer(){
