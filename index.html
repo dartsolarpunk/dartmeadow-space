@@ -17963,6 +17963,12 @@ function _trueAtmoRender(r,scene,cam){
       if(d<bd){ bd=d; best=e; }
     }
     if(!best||bd>60) return false;
+    // (v105) nothing the gas touches is on screen: camera outside the world's air (conservative 1.3 R) and that sphere
+    // outside the view frustum -> the full-screen march would only copy the scene through; draw the scene directly.
+    { best.mesh.getWorldPosition(c); const Rt=best.mesh.userData.planetR*1.3;
+      if(c.distanceTo(cam.position)>Rt){ const F=_TA._fr||(_TA._fr=new THREE.Frustum()), M=_TA._fm||(_TA._fm=new THREE.Matrix4()), S=_TA._fs||(_TA._fs=new THREE.Sphere());
+        cam.updateMatrixWorld(); M.multiplyMatrices(cam.projectionMatrix,cam.matrixWorldInverse); F.setFromProjectionMatrix(M,cam.coordinateSystem); S.center.copy(c); S.radius=Rt;
+        if(!F.intersectsSphere(S)) return false; } }
     const ud=best.mesh.userData, E=window.DMEarth;
     const key='sp|'+best.mesh.uuid+'|'+_taQ()+'|'+(E&&E.ready?1:0);
     let A=_TA.pipes.get(key);
