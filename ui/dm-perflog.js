@@ -21,6 +21,7 @@
  */
 (function () {
   'use strict';
+  window.DMPerfLogActive = true;   // (v105) GPU pass timing runs only while this log runs
   const SNAP_MS = 60000, MODE_MS = 5000, CAP = 48 * 1024, LKEY = 'dm_perf_session_v1';
   const rid = () => { try { return Array.from(crypto.getRandomValues(new Uint8Array(4))).map((b) => b.toString(16).padStart(2, '0')).join(''); } catch (e) { return Math.random().toString(16).slice(2, 10); } };
   const read = (k) => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { return null; } };

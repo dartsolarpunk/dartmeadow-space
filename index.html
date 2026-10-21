@@ -969,7 +969,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-safety.js?v=1" defer></script>
 <script src="jots/jots-link.js?v=87" defer></script>
 <script src="ui/dm-friends.js?v=2" defer></script>
-<script src="ui/dm-perflog.js?v=1" defer></script>
+<script src="ui/dm-perflog.js?v=2" defer></script>
 <script src="ui/dm-spectator.js?v=1" defer></script>
 <script src="ui/dm-stack.js?v=1" defer></script>
 <script src="ui/dm-globe.js?v=8" defer></script>
@@ -6084,7 +6084,7 @@ async function initFlightScene(){
   try{ detectCapabilities(); loadGfxChoice(); applyQualityTier(); }catch(e){console.warn('cap init:',e);}
 
   // Renderer — compatibility-first across Safari/Chrome/Edge/Firefox on all OSes
-  flightRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:!!GFX.antialias,alpha:false,powerPreference:'high-performance',logarithmicDepthBuffer:true,trackTimestamp:true});   // (v105) GPU pass timings when timestamp-query / EXT_disjoint_timer_query exists (no-op otherwise)
+  flightRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:!!GFX.antialias,alpha:false,powerPreference:'high-performance',logarithmicDepthBuffer:true,trackTimestamp:_gpuTimeWanted()});   // (v105) GPU pass timings when timestamp-query / EXT_disjoint_timer_query exists (no-op otherwise)
   _guardRenderDepth(flightRenderer);
   try{
     await flightRenderer.init();
@@ -6250,7 +6250,7 @@ function _btReserveLights(n){
   if(typeof flightScene==='undefined'||!flightScene||typeof THREE==='undefined') return;
   if(!_btHold.group){ const g=new THREE.Group(); g.name='JOTS_BTLightHold'; flightScene.add(g); _btHold.group=g;
     const prev=flightScene.onBeforeRender; flightScene.onBeforeRender=function(){ try{ _btHoldSync(); }catch(e){} if(typeof prev==='function') return prev.apply(this,arguments); }; }
-  while(_btHold.free.length+_btHold.used.length<n){ const l=new THREE.PointLight(0xffffff,0,1,2); l.castShadow=false; l.matrixAutoUpdate=false; l.matrixWorldAutoUpdate=false; _btHold.group.add(l); _btHold.free.push(l); }
+  while(_btHold.free.length+_btHold.used.length<n){ const l=new THREE.PointLight(0xffffff,0,1,2); l.userData.btStandIn=true; l.castShadow=false; l.matrixAutoUpdate=false; l.matrixWorldAutoUpdate=false; _btHold.group.add(l); _btHold.free.push(l); }
 }
 function _btAdoptLights(root){
   const ls=[]; root.traverse(o=>{ if(o.isPointLight&&!(o.userData&&o.userData.bti)) ls.push(o); });
@@ -6329,7 +6329,10 @@ function _aoccTick(){
   }catch(e){}
 }
 setInterval(_aoccTick,200);
-setInterval(()=>{ if(!window._dmWarming) _lcApplyWorlds(); },3000);   // worlds built later (other systems): same lists
+// worlds built later (other systems) get the same list. Never a mid-flight recompile on its own: the timer only
+// assigns the current node to materials that do not carry it yet (new worlds, already compiling as they are built),
+// and the node itself changes only when the light-id key changes (logged above).
+setInterval(()=>{ if(window._dmWarming) return; const k0=_LC.key; const n=_lcNode(); if(_LC.key===k0&&_LC._applied===n) { _lcApplyNew(); return; } _LC._applied=n; _lcApplyWorlds(); },3000);
 // (v104) the Bird Temple's enclosed decks are hidden while you are far from the ship, so no warm-up ever compiled
 // them: the first boarding compiled every BTI_ program in the frames you climbed in (log: PIPELINE BTI_Mess_Trays_2
 // mid-boarding, 0.5–1 s frames, then the GPU process died). Once the ship is in the scene, compile its interior in
@@ -17035,21 +17038,34 @@ const _distLightPool=[];
 // ~26 fewer light evaluations per planet fragment (the full-screen pixels near Earth). Lists are rebuilt only when the
 // scene's light set changes (the pools are reserved at warm-up, so in practice once), and applied before compiles.
 const _LC={key:'',lights:null,node:null};
-function _lcExcluded(l){ return l.name==='BTI_Light'||l.name==='JOTS_DistStarLight'; }
+// the Bird Temple's light stand-ins (_btReserveLights: tagged at creation, named only later when adopted; range ≤ 12, at the ship)
+// and the two distant-star lights (other systems). Excluded by flag/name, never by a name that is set after the list is built.
+function _lcInTemple(l){ try{ const g=(typeof BIRD_TEMPLE!=='undefined')&&BIRD_TEMPLE.group; if(!g) return false; for(let p=l.parent;p;p=p.parent) if(p===g) return true; }catch(e){} return false; }
+function _lcExcluded(l){ const u=l.userData||{}; return !!(u.btStandIn||u.bti)||l.name==='BTI_Light'||l.name==='JOTS_DistStarLight'||_lcInTemple(l); }   // + the temple model's own lights (they arrive with its GLB, after warm-up, and are adopted into the stand-ins)
 function _lcNode(){
   if(typeof window.lights!=='function'||typeof flightScene==='undefined'||!flightScene) return null;
   const all=[]; flightScene.traverse(o=>{ if(o.isLight) all.push(o); });
-  const key=all.length+'|'+all.map(l=>l.id).join(',');
-  if(key!==_LC.key){ _LC.key=key; _LC.lights=all.filter(l=>!_lcExcluded(l)); _LC.node=(_LC.lights.length<all.length)?window.lights(_LC.lights):null; }
+  // the key is the set of lights the worlds DO use (order-free): temple / distant-star lights coming and going never change it
+  const inc=all.filter(l=>!_lcExcluded(l)), key=inc.length+'|'+inc.map(l=>l.id).sort((a,b)=>a-b).join(',');
+  if(key!==_LC.key){ const first=!_LC.key; _LC.key=key; _LC.lights=inc; _LC.node=(_LC.lights.length<all.length)?window.lights(_LC.lights):null;
+    _LC.excluded=all.length-_LC.lights.length; _LC.changed=(_LC.changed||0)+1;
+    if(!first){ console.warn('[lightlists] light set changed ('+all.length+' lights, '+_LC.excluded+' excluded from worlds): world materials will recompile'); try{ (window._lcLog=window._lcLog||[]).push({at:new Date().toISOString(),n:all.length,ex:_LC.excluded,warming:!!window._dmWarming}); }catch(e){} } }
   return _LC.node;
 }
 function _lcApplyObj(root){
   const n=_lcNode(); if(!root) return;
   root.traverse(o=>{ if(!o.isMesh) return; const ms=Array.isArray(o.material)?o.material:[o.material];
-    for(const m of ms){ if(!m||!m.isNodeMaterial||m.lights===false||m.isMeshBasicMaterial||m.isMeshBasicNodeMaterial) continue;
+    for(const m of ms){ if(!m||m.isMeshBasicMaterial||m.isMeshBasicNodeMaterial||m.isShaderMaterial||m.lights===false) continue;
+      if(!(m.isNodeMaterial||m.isMeshStandardMaterial||m.isMeshPhysicalMaterial||m.isMeshLambertMaterial||m.isMeshPhongMaterial||m.isMeshToonMaterial)) continue;   // WebGL2 too: three's node library copies .lightsNode when it converts a classic material
       if((m.lightsNode||null)!==n){ m.lightsNode=n; m.needsUpdate=true; } } });
 }
+function _lcApplyNew(){ try{ const n=_LC.node; for(const b of (celestialBodies||[])){ if(!b||!b.mesh||b.type==='Star'||b.name==='Sun'||b.mesh.userData._lcN===n) continue; b.mesh.userData._lcN=n; _lcApplyObj(b.mesh); } }catch(e){} }
 function _lcApplyWorlds(){ try{ for(const b of (celestialBodies||[])){ if(b&&b.mesh&&b.type!=='Star'&&b.name!=='Sun') _lcApplyObj(b.mesh); } }catch(e){} }
+// GPU timing only while the perf log runs (ui/dm-perflog.js sets DMPerfLogActive); Safari's WebGPU only with ?gputime=1;
+// ?gputime=0 turns it off anywhere.
+function _gpuTimeWanted(){ try{ const q=location.search; if(/[?&]gputime=0\b/.test(q)) return false; if(!window.DMPerfLogActive) return false;
+  const ua=navigator.userAgent||'', safari=/Safari\//.test(ua)&&!/Chrome\/|Chromium\/|CriOS\/|EdgiOS\/|FxiOS\//.test(ua);
+  if(safari&&!/[?&]gputime=1\b/.test(q)) return false; return true; }catch(e){ return false; } }
 // ── GPU frame breakdown (v105, engine-level) ───────────────────────────
 // Every GPU pass the renderer records (each render context: main scene, true-atmosphere scene/quad passes, shadow
 // maps, compute dispatches) is tagged with the label of the code that issued it (DMGpuProf.push/pop) plus its kind
@@ -17069,16 +17085,16 @@ function _gpuProfInstall(r){
     try{ if(sc===flightScene) return 'space'; if(typeof PW!=='undefined'&&sc===PW.scene) return 'ground'; }catch(e){} return 'scene'; };
   let cur='main:pass';
   const r0=r.render.bind(r);
-  r.render=function(scene,cam){ const prev=cur; cur=DMGpuProf.stack[DMGpuProf.stack.length-1]+':'+kindOf(cam,scene); try{ return r0(scene,cam); } finally{ cur=prev; } };
+  r.render=function(scene,cam){ const prev=cur; try{ cur=DMGpuProf.stack[DMGpuProf.stack.length-1]+':'+kindOf(cam,scene); }catch(e){} try{ return r0(scene,cam); } finally{ cur=prev; } };
   if(r.compute){ const c0=r.compute.bind(r); r.compute=function(n,...a){ const prev=cur; cur=DMGpuProf.stack[DMGpuProf.stack.length-1]+':compute'; try{ return c0(n,...a); } finally{ cur=prev; } }; }
   // shadow cameras: any light's shadow camera (collected lazily, they are created with the lights)
   setInterval(()=>{ try{ flightScene&&flightScene.traverse(o=>{ if(o.isLight&&o.shadow&&o.shadow.camera) shadowCams.add(o.shadow.camera); }); if(PW&&PW.scene) PW.scene.traverse(o=>{ if(o.isLight&&o.shadow&&o.shadow.camera) shadowCams.add(o.shadow.camera); }); }catch(e){} },2000);
   const hook=(pool)=>{ if(!pool||pool._dmHooked) return; pool._dmHooked=true; const a0=pool.allocateQueriesForContext.bind(pool);
-    pool.allocateQueriesForContext=function(uid){ const off=a0(uid); if(off!=null) DMGpuProf.map.set(uid,cur); return off; }; };
+    pool.allocateQueriesForContext=function(uid){ const off=a0(uid); try{ if(off!=null) DMGpuProf.map.set(uid,cur); }catch(e){} return off; }; };
   DMGpuProf.on=true;
   DMGpuProf.tick=async function(){
     this.frames++;
-    const P=be.timestampQueryPool||{}; hook(P.render); hook(P.compute);
+    let P; try{ P=be.timestampQueryPool||{}; hook(P.render); hook(P.compute); }catch(e){ return; }
     if(this.busy||this.frames%30) return; this.busy=true;
     try{
       for(const t of ['render','compute']){ const pool=P[t]; if(!pool) continue; await r.resolveTimestampsAsync(t);
