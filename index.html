@@ -6385,7 +6385,7 @@ async function _flightWarmup(){
   try{ window._warmupMs=Math.round(performance.now()-t0); window._dmWarming=false; }catch(e){}
   try{ setTimeout(_wmKickHome,500); }catch(e){}
 }
-let _flightLoopCv=null,_flightLoopLast=0,_csDirV=null;
+let _flightLoopCv=null,_flightLoopLast=0,_csDirV=null,_csTp=null,_csCp=null;
 // Frame counter used by the flight loop's render-throttle during character
 // loading (see the _flightFrameCounter comment in _startFlightLoop). This
 // declaration was missing entirely, which made every read of it throw.
@@ -6483,9 +6483,18 @@ function _startFlightLoop(){
     try{updateFlight(dt);}catch(e){_animLoopWarn('updateFlight',e);}
     try{
       if(_charShadowLight && boardFlight){
-        const bp=boardFlight.position;
+        // (v104) at the Bird Temple (aboard, or riding within a few ship-lengths) the star's shadow map is fitted to the
+        // ship around her instead of the 12-unit box round the board: the hull, deck and decks below are shadowed in real
+        // time. One directional map, re-fitted only when the box changes (texel-snapped, so it does not shimmer).
+        const _bt=(typeof BIRD_TEMPLE!=='undefined')?BIRD_TEMPLE:null, _btR=_bt&&_bt._R0;
+        let _btNear=false;
+        if(_bt&&_bt.group&&_btR){ const tp=_bt.group.getWorldPosition(_csTp||(_csTp=new THREE.Vector3())); _btNear=SHIP_WALK.active||tp.distanceTo(boardFlight.position)<_btR*2.5; }
+        const sc=_charShadowLight.shadow.camera, want=_btNear?Math.min(_btR*0.75,60):6;
+        if(Math.abs(sc.right-want)>1e-3){ sc.left=-want; sc.right=want; sc.top=want; sc.bottom=-want; sc.far=_btNear?want*6:20; sc.updateProjectionMatrix(); _charShadowLight.shadow.bias=_btNear?-0.0004:-0.0015; _charShadowLight.shadow.normalBias=_btNear?want*0.002:0; }
+        const bp=_csCp||(_csCp=new THREE.Vector3()); if(_btNear&&SHIP_WALK.active&&CHAR&&CHAR.root&&CHAR.root.parent) CHAR.root.getWorldPosition(bp); else bp.copy(boardFlight.position);   // scratch copy: the board's own position is never touched
+        if(_btNear){ const tx=want*2/Math.max(256,GFX.shadowSize||1024); bp.set(Math.round(bp.x/tx)*tx,Math.round(bp.y/tx)*tx,Math.round(bp.z/tx)*tx); }
         const dir=_csDirV||(_csDirV=new THREE.Vector3()); if(bp.lengthSq()>0.001) dir.copy(bp).normalize(); else dir.set(1,0.3,0.2).normalize();   // scratch: no per-frame allocation
-        _charShadowLight.position.copy(bp).addScaledVector(dir,-10);
+        _charShadowLight.position.copy(bp).addScaledVector(dir,-(sc.far*0.5));
         _charShadowLight.target.position.copy(bp);
         _charShadowLight.target.updateMatrixWorld();
       }
@@ -8113,6 +8122,10 @@ async function buildSolarSystem(){
         const bti=!!(m&&/^BTI_/.test(m.name||'')); if(bti) inner.push({o,v:o.visible}); else if(o.castShadow) casters.push(o); });
       const bs=new THREE.Box3().setFromObject(wrapper).getBoundingSphere(new THREE.Sphere());
       const R0=Math.max(1e-3,bs.radius); let far=null; const _p=new THREE.Vector3();
+      // (v104) lighting/shadow setup only: every temple surface (hull, deck, cargo bay, interior decks) RECEIVES the
+      // star's shadow, so the hull shades the deck and the decks below it the way the skyboard and the ground do.
+      // Casting is unchanged (hull casters as authored, toggled by the LOD below). Geometry/collision untouched.
+      try{ BIRD_TEMPLE._R0=R0; if(GFX.shadows) wrapper.traverse(o=>{ if(o.isMesh) o.receiveShadow=true; }); }catch(e){}
       BIRD_TEMPLE._lod=setInterval(()=>{ try{
         if(typeof flightCamera==='undefined'||!flightCamera) return;
         const aboard=(typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active)||(window.BTI&&(BTI.cur||BTI._depth>0));
