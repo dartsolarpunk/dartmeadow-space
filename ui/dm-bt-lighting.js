@@ -239,8 +239,10 @@
   //   same solve, no frame lag between panes.
   const PS = { panes: null, T: null, L: null, E: null, tmp: null, frame: 0 };
   BTL.paneSolve = PS;
-  function paneBuild(g) {
+  // (v126) built incrementally: a generator stepped ≤ 2 ms per frame (paneStep), one pane / one row of T per step
+  function* paneBuildGen(g) {
     const THREE = T(), DI = window.DMBtInterior; if (!DI || !DI.rayHit || DI.rayHit(0, 0, 0, 1, 0, 0, 1) === -2) return false;
+    yield 0;
     g.updateMatrixWorld(true); const inv = new THREE.Matrix4().copy(g.matrixWorld).invert(), M = new THREE.Matrix4(), n3 = new THREE.Matrix3();
     const P = [];
     for (const o of glassMeshes) {
@@ -253,7 +255,8 @@
         cr.subVectors(b, a).cross(c.clone().sub(a)); const ar = cr.length() * 0.5; if (!(ar > 0)) continue;
         if (N.dot(cr) < 0) cr.negate(); N.add(cr); A += ar; C.addScaledVector(a.add(b).add(c), ar / 3); bb.expandByPoint(a); bb.expandByPoint(b); bb.expandByPoint(c); }
       if (!(A > 0)) continue; C.divideScalar(A); N.normalize();
-      P.push({ o, m: o.material, c: C, n: N, A, bb, tau: 0.92 });
+      P.push({ o, m: o.material, c: C, n: N, A, bb, tau: 0.92, sunVis: 1 });
+      yield 0;
     }
     const n = P.length; if (!n) return false;
     const rows = [];
@@ -269,22 +272,42 @@
         t *= vis / pts.length; if (t >= 1e-4) row.push([j, t]); }
       row.sort((x, y) => y[1] - x[1]); row.length = Math.min(row.length, 8);
       const sum = row.reduce((s2, x) => s2 + x[1], 0); if (sum > 0.9) for (const x of row) x[1] *= 0.9 / sum;   // keep ‖T‖∞ < 1
-      rows.push(row); }
+      rows.push(row); yield 0; }
     PS.panes = P; PS.T = rows; PS.L = new Float32Array(n * 3); PS.E = new Float32Array(n * 3); PS.tmp = new Float32Array(n * 3);
     BTL.stats.panes = n; BTL.stats.paneLinks = rows.reduce((s2, r) => s2 + r.length, 0);
     return true;
+  }
+  let paneJob = null;
+  function paneStep(g) {   // true once built
+    if (PS.panes) return true;
+    if (!paneJob) paneJob = paneBuildGen(g);
+    const t0 = performance.now();
+    try { while (performance.now() - t0 < 2) { const r = paneJob.next(); if (r.done) { paneJob = null; return !!r.value; } } }
+    catch (e) { paneJob = null; BTL.stats.paneErr = String(e && e.message || e).slice(0, 120); }
+    return false;
+  }
+  // (v126) the Sun lobe is occlusion-tested per pane: one ray from the pane toward the Sun against the temple soup, cached
+  // and refreshed (8 panes per solve) only when the Sun direction in the ship frame moves
+  const sunSig = { x: NaN, y: NaN, z: NaN }; let sunNext = 0;
+  function paneSunVis(sunLocal) {
+    const P = PS.panes, DI = window.DMBtInterior; if (!P || !DI || !DI.rayHit) return;
+    if (!(Math.abs(sunSig.x - sunLocal.x) < 0.01 && Math.abs(sunSig.y - sunLocal.y) < 0.01 && Math.abs(sunSig.z - sunLocal.z) < 0.01)) { sunSig.x = sunLocal.x; sunSig.y = sunLocal.y; sunSig.z = sunLocal.z; sunNext = 0; }
+    for (let k = 0; k < 8 && sunNext < P.length; k++, sunNext++) { const p = P[sunNext], sd = p.n.dot(sunLocal) >= 0 ? 1 : -1;
+      const ox = p.c.x + p.n.x * 0.08 * sd, oy = p.c.y + p.n.y * 0.08 * sd, oz = p.c.z + p.n.z * 0.08 * sd;   // just off the sun-facing side
+      const h = DI.rayHit(ox, oy, oz, sunLocal.x, sunLocal.y, sunLocal.z, 400); p.sunVis = h < 0 ? 1 : 0; }
   }
   const _pv = [0, 0, 0];
   function paneSolve(g, sunLocal, hasSun) {
     const tr = tier(); if (tr === 0) return;
     const every = tr === 1 ? 8 : 2, iters = tr === 1 ? 1 : 3; if (++PS.frame % every) return;
-    if (!PS.panes) { if (!paneBuild(g)) return; }
+    if (!PS.panes) { paneStep(g); return; }
+    paneSunVis(sunLocal);
     const P = PS.panes, n = P.length, E = PS.E, L = PS.L, X = PS.tmp, B = window.DMBtBake, w = BTL._pw || (BTL._pw = new (T().Vector3)());
     const sky = [0.012, 0.014, 0.022];   // space radiance (galaxy/stars) seen through a pane
     for (let i = 0; i < n; i++) { const p = P[i];
       let rr = 0.25, rg = 0.22, rb = 0.2;   // room level without the bake (reading light)
       if (B && B.applied && B.sampleVol) { w.copy(p.c).applyMatrix4(g.matrixWorld); if (B.sampleVol(w, _pv)) { rr = _pv[0]; rg = _pv[1]; rb = _pv[2]; } }
-      const sunT = hasSun ? Math.pow(Math.max(0, Math.abs(p.n.dot(sunLocal))), 8) * 0.6 : 0;
+      const sunT = hasSun && p.sunVis ? Math.pow(Math.max(0, Math.abs(p.n.dot(sunLocal))), 8) * 0.6 : 0;
       E[i * 3] = 0.1 * rr + p.tau * (sky[0] + sunT); E[i * 3 + 1] = 0.1 * rg + p.tau * (sky[1] + sunT * 0.95); E[i * 3 + 2] = 0.1 * rb + p.tau * (sky[2] + sunT * 0.85); }
     for (let it = 0; it < iters; it++) {
       for (let i = 0; i < n; i++) { let r = E[i * 3], gg = E[i * 3 + 1], b = E[i * 3 + 2]; for (const [j, t] of PS.T[i]) { r += t * L[j * 3]; gg += t * L[j * 3 + 1]; b += t * L[j * 3 + 2]; } X[i * 3] = r; X[i * 3 + 1] = gg; X[i * 3 + 2] = b; }
@@ -373,7 +396,8 @@
     // 4) glass probe: ON DEMAND. All 6 faces are marked dirty when the probe changes window or the star direction moves;
     //    a slow refresh re-marks them every few seconds (the world drifts). At most one face per `every` frames.
     if (glassT) glassT.value = performance.now() / 1000;
-    try { if (windows.length) { const sl = BTL._sl || (BTL._sl = new THREE.Vector3()); sl.copy(_c).negate().transformDirection(_m4.copy(g.matrixWorld).invert()); paneSolve(g, sl, true); } } catch (e) { BTL.stats.paneErr = String(e && e.message || e).slice(0, 120); }
+    const _arNear = aboard || (hasA && _b.distanceTo(_a) < R0 * 3);   // (v126) only with Ariel aboard or near the temple
+    try { if (windows.length && _arNear) { const sl = BTL._sl || (BTL._sl = new THREE.Vector3()); sl.copy(_c).negate().transformDirection(_m4.copy(g.matrixWorld).invert()); paneSolve(g, sl, true); } } catch (e) { BTL.stats.paneErr = String(e && e.message || e).slice(0, 120); }
     // (v118) bounce probe: SH from the star direction in the ship frame. L0 = warm diffuse bounce (sun colour × deck albedo),
     // L1 points AWAY from the star (light comes back up off the lit floors / in through the windows' far walls). Tier-scaled.
     if (bounce) { const k = (BTL.volRGB ? [0.3, 0.35, 0.55, 0.7] : [0, 0.35, 0.55, 0.7])[tier()] * (aboard ? 1 : 0);
