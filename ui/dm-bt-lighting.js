@@ -147,10 +147,10 @@
   BTL.warm = async function () {
     build(); const r = window.flightRenderer || (typeof flightRenderer !== 'undefined' ? flightRenderer : null); if (!r) return;
     try { renderCaustic(r, 0); } catch (e) { console.warn('[BTL] caustic warm', e); }
-    try { await compileProbe(r, flightScene); } catch (e) {}
+    try { const t0 = performance.now(); await compileProbe(r, flightScene); BTL._warmed = Math.round(performance.now() - t0); } catch (e) {}
   };
   // temple (and office) background compile: called by index.html's interior warm-up with decks visible
-  BTL.warmTemple = async function (r, scene) { try { await compileProbe(r, scene); } catch (e) {} };
+  BTL.warmTemple = async function (r, scene) { try { const t0 = performance.now(); await compileProbe(r, scene); BTL._warmedT = (BTL._warmedT || 0) + 1; BTL._warmedTms = Math.round(performance.now() - t0); } catch (e) {} };
 
   // ── per frame (called right before the main render) ──
   const V = () => T().Vector3;
@@ -207,6 +207,7 @@
     // 3) caustic cookie through the window nearest Ariel (or the camera)
     const ref = hasA && aboard ? _b : camW; let w = null, wd = 1e9;
     for (const it of windows) { it.o.getWorldPosition(it.c); const d = it.c.distanceToSquared(ref); if (d < wd) { wd = d; w = it; } }
+    BTL._stage = 'caustic';
     const tr = TIERS[tier()];
     if (aboard && w && wd < 100) {
       caus.position.copy(w.c).addScaledVector(_c, -1.2); caus.target.position.copy(w.c).addScaledVector(_c, 4);
@@ -215,6 +216,7 @@
       const now = performance.now();
       if (now - lastCaus > 1000 / tr[3]) { lastCaus = now; try { renderCaustic(r, now / 1000); } catch (e) {} }
     } else caus.intensity = 0;
+    BTL._stage = 'probe';
     // 4) glass probe: one face per slice, at the window nearest the camera
     if (camNear && w && probe && frame % tr[2] === 0) {
       let wc = null, cd = 1e9; for (const it of windows) { const d = it.c.distanceToSquared(camW); if (d < cd) { cd = d; wc = it; } }
@@ -222,7 +224,8 @@
       const hold = []; scene.traverse(o => { if (o.isLight && o.shadow && o.castShadow) { hold.push([o, o.shadow.autoUpdate, o.shadow.needsUpdate]); o.shadow.autoUpdate = false; o.shadow.needsUpdate = false; } });
       for (const m of glassMeshes) m.visible = false;
       const prev = r.getRenderTarget(), pac = r.autoClear;
-      try { r.setRenderTarget(probeRT, face); r.autoClear = true; r.render(scene, probe.children[face]); }
+      const tp = performance.now();
+      try { r.setRenderTarget(probeRT, face); r.autoClear = true; r.render(scene, probe.children[face]); BTL.stats.probeMs = Math.round(performance.now() - tp); }
       catch (e) {}
       finally { r.setRenderTarget(prev); r.autoClear = pac; for (const m of glassMeshes) m.visible = true; for (const [o, a, n] of hold) { o.shadow.autoUpdate = a; o.shadow.needsUpdate = n; } }
       face = (face + 1) % 6; BTL.stats.probeFaces = (BTL.stats.probeFaces || 0) + 1;
