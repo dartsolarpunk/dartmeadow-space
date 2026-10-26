@@ -1,5 +1,5 @@
 /* DART Meadow — 3D HUD meshes (crunch 2), default on; opt out: localStorage 'dm.ui3d'='css' (tilt) or '0' (flat).
-   Default stays the CSS tilt (ui/dm-ui3d-core.js); '0' = flat.
+   The CSS tilt (ui/dm-ui3d-core.js) is the runtime fallback when WebGPU or the mesh draw is unavailable; '0' = flat.
 
    No second renderer / device: the HUD is drawn by the game's own flightRenderer as an overlay pass
    right after the frame (index.html calls DMUI3DMesh.overlay(flightRenderer) next to _shotGrab).
