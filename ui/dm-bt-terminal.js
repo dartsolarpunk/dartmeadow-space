@@ -2,8 +2,9 @@
  *
  *  In-world: the old monitor body / neck / neon strip (felt + glow triangles around the screen) are dropped from the
  *  merged FX_BTE_Office draw meshes at runtime (index-buffer filter, nothing else touched; the foot stays as the
- *  emitter base). The BTE_Screen plane becomes see-through glass: a 512×320 canvas (Autumn UI + the background video
- *  at reduced alpha + emissive edge glow) redrawn at ~10 fps, and only while it is on screen and near.
+ *  emitter base). The BTE_Screen plane becomes see-through glass showing a real screenshot of the in-game Autumn UI
+ *  (assets/bt-engineering/autumn-terminal.webp) through a light shader (scanlines, slow sweep, flicker, edge glow; v128).
+ *  Per frame it only writes a time uniform, and only while it is on screen and near.
  *  No iframe is ever rendered into the 3D scene.
  *  Interaction: one BTI interactable, zone 'aim' (≈1.8 m and crosshair on the panel), E / F / the HUD button → USE.
  *  USE opens a see-through glass overlay holding the in-game guest edition of Autumn (leatr.xyz/?embed=jots).
@@ -14,14 +15,15 @@
   'use strict';
   const cfg = {
     url: 'https://leatr.xyz/?embed=jots', video: 'assets/bt-engineering/autumn-bg.mp4',
-    fps: 10, nearR: 14, zoneM: 1.8, aimM: 0.55, videoAlpha: 0.42, glassAlpha: 0.16,
+    shot: 'assets/bt-engineering/autumn-terminal.webp',   // screenshot of the guest edition (leatr.xyz/?embed=jots), 1024x640
+    nearR: 14, zoneM: 1.8, aimM: 0.55, alpha: 0.7, gain: 1.35,
     accent: '#ff0073', bg1: '#6f00ff', bg2: '#00ff73',      // Justin's Autumn palette "Data Ariel"
     // terminal cut box, relative to the screen centre in the office glTF frame (Blender x, z, -y)
     cut: { x: 0.8, y0: -0.8, y1: 0.55, z0: -0.2, z1: 0.2 },
   };
   const BTT = { cfg, ready: false, open: false, mesh: null, ix: null };
   window.BTT = BTT;
-  let THREE, cv, ctx, tex, vid, last = 0, frame = 0;
+  let THREE, tex;
 
   function cutMonitor(sc, scr) {
     // screen centre in the BTE_Engineering frame; drop triangles of the other static meshes inside the cut box
@@ -53,48 +55,32 @@
     console.log('[BTT] monitor removed:', dropped, 'triangles (draw only, no collision change)');
   }
 
-  // \u2500\u2500\u2500\u2500\u2500 the glass texture: video (low alpha) + Autumn-style UI + edge glow, ~10 fps while visible \u2500\u2500\u2500\u2500\u2500
-  const W = 512, H = 320;
-  function draw(t) {
-    ctx.clearRect(0, 0, W, H);
-    const gr = ctx.createLinearGradient(0, 0, W, H); gr.addColorStop(0, 'rgba(111,0,255,' + cfg.glassAlpha + ')'); gr.addColorStop(1, 'rgba(0,255,115,' + cfg.glassAlpha * 0.6 + ')');
-    ctx.fillStyle = gr; ctx.fillRect(0, 0, W, H);
-    if (vid && vid.readyState >= 2) { ctx.globalAlpha = cfg.videoAlpha; try { ctx.drawImage(vid, 0, 0, W, H); } catch (e) { } ctx.globalAlpha = 1; }
-    // header
-    ctx.fillStyle = 'rgba(4,6,20,.45)'; ctx.fillRect(10, 10, W - 20, 34);
-    ctx.font = '700 18px ui-monospace,Menlo,monospace'; ctx.fillStyle = '#ffffff'; ctx.shadowColor = cfg.accent; ctx.shadowBlur = 10;
-    ctx.fillText('AUTUMN', 22, 33); ctx.shadowBlur = 0;
-    ctx.font = '11px ui-monospace,Menlo,monospace'; ctx.fillStyle = cfg.accent; ctx.fillText('LEATR \u00b7 GUEST \u00b7 JOTS', 112, 32);
-    const on = (Math.floor(t * 2) % 2) === 0; ctx.fillStyle = on ? '#00ff73' : 'rgba(0,255,115,.35)'; ctx.beginPath(); ctx.arc(W - 30, 27, 5, 0, 6.283); ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,255,.7)'; ctx.fillText('LIVE', W - 70, 31);
-    // chat bubbles (scrolling)
-    const lines = ['Welcome aboard the Bird Temple.', 'Ash memory: synced', 'Skyboard telemetry \u2713', 'Ask me anything, Ariel.', 'Engine room nominal.', 'LEATR reflex online'];
-    ctx.save(); ctx.beginPath(); ctx.rect(10, 52, W - 150, H - 104); ctx.clip();
-    const off = (t * 14) % 44;
-    for (let i = 0; i < 7; i++) {
-      const y = 60 + i * 44 - off, me = i % 2 === 1, s = lines[(i + Math.floor(t * 14 / 44)) % lines.length];
-      const bw = Math.min(W - 170, 30 + s.length * 7.2), x = me ? W - 150 - bw - 6 : 18;
-      ctx.fillStyle = me ? 'rgba(255,0,115,.28)' : 'rgba(10,12,40,.55)'; ctx.strokeStyle = me ? cfg.accent : 'rgba(0,255,115,.6)';
-      ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x, y, bw, 32, 10) : ctx.rect(x, y, bw, 32); ctx.fill(); ctx.stroke();
-      ctx.fillStyle = '#fff'; ctx.font = '12px ui-monospace,Menlo,monospace'; ctx.fillText(s, x + 12, y + 20);
+  // \u2500\u2500\u2500\u2500\u2500 the glass: a real screenshot of the in-game Autumn UI (shipped asset) on a see-through shader \u2500\u2500\u2500\u2500\u2500
+  // One static texture; the light animation (scan sweep, scanlines, soft flicker, edge glow) runs in the fragment shader,
+  // so a frame costs one uniform write while the panel is on screen and near (no canvas redraw, no video decode, no upload).
+  // WebGPURenderer (three r185): a MeshBasicNodeMaterial with TSL colour / opacity nodes; plain textured glass as fallback.
+  function glassMaterial(tex) {
+    const T = THREE.TSL;
+    if (!T || !THREE.MeshBasicNodeMaterial) {
+      const m = new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: cfg.alpha, depthWrite: false, side: THREE.DoubleSide, toneMapped: false });
+      return { mat: m, u: { uTime: { value: 0 }, uHot: { value: 0 }, uReady: { value: 1 } } };
     }
-    ctx.restore();
-    // side panel: waveform + rings
-    const px = W - 132; ctx.fillStyle = 'rgba(4,6,20,.4)'; ctx.fillRect(px, 52, 122, H - 104);
-    ctx.strokeStyle = cfg.accent; ctx.lineWidth = 1.5; ctx.beginPath();
-    for (let i = 0; i <= 110; i++) { const y = 92 + Math.sin(i * 0.22 + t * 4) * 14 * Math.sin(t * 1.3 + i * 0.05); i ? ctx.lineTo(px + 6 + i, y) : ctx.moveTo(px + 6, y); }
-    ctx.stroke();
-    ctx.strokeStyle = '#00ff73'; ctx.beginPath(); ctx.arc(px + 61, 180, 30, t, t + 4.2); ctx.stroke();
-    ctx.strokeStyle = 'rgba(111,0,255,.9)'; ctx.beginPath(); ctx.arc(px + 61, 180, 22, -t * 1.4, -t * 1.4 + 3.5); ctx.stroke();
-    ctx.fillStyle = '#fff'; ctx.font = '10px ui-monospace,Menlo,monospace'; ctx.fillText('ASH ' + (60 + Math.round(30 * Math.sin(t * 0.7))) + '%', px + 38, 184);
-    // input bar
-    ctx.fillStyle = 'rgba(4,6,20,.5)'; ctx.fillRect(10, H - 44, W - 20, 32); ctx.strokeStyle = 'rgba(255,0,115,.7)'; ctx.strokeRect(10, H - 44, W - 20, 32);
-    ctx.fillStyle = 'rgba(255,255,255,.75)'; ctx.font = '12px ui-monospace,Menlo,monospace'; ctx.fillText('Talk to Autumn\u2026' + (on ? '\u258c' : ''), 22, H - 23);
-    ctx.fillStyle = cfg.accent; ctx.fillText(BTT.cur ? '[E] USE' : 'APPROACH + AIM', W - 130, H - 23);
-    // emissive glass edge
-    ctx.shadowColor = '#7ff'; ctx.shadowBlur = 14; ctx.strokeStyle = 'rgba(140,255,250,.95)'; ctx.lineWidth = 3; ctx.strokeRect(3, 3, W - 6, H - 6);
-    ctx.shadowColor = cfg.accent; ctx.strokeStyle = 'rgba(255,0,115,.55)'; ctx.lineWidth = 1.5; ctx.strokeRect(8, 8, W - 16, H - 16); ctx.shadowBlur = 0;
-    tex.needsUpdate = true;
+    const { texture, uv, uniform, sin, fract, abs, smoothstep, min, vec2, vec3, float, dot, clamp } = T;
+    const u = { uTime: uniform(0), uHot: uniform(0), uReady: uniform(0) };
+    const accent = vec3(...new THREE.Color(cfg.accent).toArray()), tint = vec3(...new THREE.Color(cfg.bg1).toArray()), rimC = vec3(...new THREE.Color('#8cfffa').toArray());
+    const U = uv();
+    const img = texture(tex, U).rgb.mul(u.uReady).mul(cfg.gain);
+    const lum = dot(img, vec3(0.299, 0.587, 0.114));
+    const scan = sin(U.y.mul(900.0)).mul(0.10).add(0.90);                                         // fine scanlines
+    const sweep = float(1).sub(smoothstep(0.0, 0.10, abs(fract(U.y.sub(u.uTime.mul(0.08))).sub(0.5)).sub(0.38)));   // slow bright band
+    const flick = sin(u.uTime.mul(7.3)).mul(sin(u.uTime.mul(2.1))).mul(0.04).add(0.96);
+    const e = min(U, vec2(1.0).sub(U)), edge = min(e.x.mul(1.6), e.y);
+    const rim = float(1).sub(smoothstep(0.0, 0.022, edge)), rim2 = float(1).sub(smoothstep(0.0, 0.05, edge)).sub(rim);
+    const m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, side: THREE.DoubleSide, toneMapped: false });
+    m.colorNode = img.mul(scan).mul(flick).add(accent.mul(sweep.mul(0.10))).add(tint.mul(0.06))
+      .add(rimC.mul(rim.mul(1.2))).add(accent.mul(rim2.mul(u.uHot.mul(0.35).add(0.35))));
+    m.opacityNode = clamp(float(cfg.alpha).mul(lum.mul(0.45).add(0.55)).mul(scan).add(sweep.mul(0.06)).add(rim.mul(0.9)).add(rim2.mul(0.25)), 0.0, 1.0);
+    return { mat: m, u };
   }
   function visibleNow() {
     try {
@@ -168,13 +154,11 @@
     sc.traverse(o => { if (!scr && o.isMesh && o.material && o.material.name === 'BTE_Screen') scr = o; });
     if (!scr) { console.warn('[BTT] no terminal screen'); return; }
     try { cutMonitor(sc, scr); } catch (e) { console.warn('[BTT] monitor cut', e); }
-    cv = document.createElement('canvas'); cv.width = W; cv.height = H; ctx = cv.getContext('2d');
-    tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace; tex.flipY = false;
-    const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, side: THREE.DoubleSide, toneMapped: false });
+    tex = new THREE.TextureLoader().load(cfg.shot, () => { G.u.uReady.value = 1; });
+    tex.colorSpace = THREE.SRGBColorSpace; tex.flipY = false; tex.anisotropy = 4;
+    const G = glassMaterial(tex), mat = G.mat, uni = G.u;
     mat.name = 'FX_BTT_Glass';
-    scr.material = mat; scr.renderOrder = 5; BTT.mat = mat; BTT.mesh = scr;
-    vid = document.createElement('video'); vid.muted = true; vid.loop = true; vid.playsInline = true; vid.setAttribute('playsinline', ''); vid.preload = 'none'; vid.src = cfg.video;
-    draw(0);
+    scr.material = mat; scr.renderOrder = 5; BTT.mat = mat; BTT.mesh = scr; BTT.uni = uni;
     // interactable (temple frame) at the panel centre
     const g = BIRD_TEMPLE.group; g.updateMatrixWorld(true); if (!scr.geometry.boundingSphere) scr.geometry.computeBoundingSphere();
     const pos = g.worldToLocal(scr.geometry.boundingSphere.center.clone().applyMatrix4(scr.matrixWorld));
@@ -186,12 +170,9 @@
       up(dt);
       try {
         BTT.cur = BTI.cur === ix;
-        const now = performance.now();
-        if (now - last < 1000 / cfg.fps) return;
-        const vis = !BTT.open && visibleNow();
-        if (!vis) { if (!vid.paused) vid.pause(); return; }
-        if (vid.paused) vid.play().catch(() => { });
-        last = now; draw(now / 1000);
+        if (BTT.open || !visibleNow()) return;   // frozen (and nearly free) while off screen or while the overlay is open
+        const u = BTT.uni; u.uTime.value = performance.now() / 1000;
+        u.uHot.value += ((BTT.cur ? 1 : 0) - u.uHot.value) * Math.min(1, dt * 6 || .1);
       } catch (e) { if (!BTT._err) { BTT._err = 1; console.warn('[BTT] update', e); } }
     };
     BTT.ready = true; console.log('[BTT] glass terminal ready');
