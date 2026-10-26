@@ -20,7 +20,7 @@
   'use strict';
   if(window.DMUI3DMesh) return;
   var TARGETS=['.hud-c','.hud-l','.hud-r','.mini-kite'];
-  var MAX_DEG=16, LAYERS=6, DEPTH=14, FOV=40, ATLAS=2048, TATLAS=1024, PAD=2, LAYOUT_EVERY=20;
+  var MAX_DEG=18, LAYERS=6, DEPTH=24, FOV=40, ATLAS=2048, TATLAS=1024, PAD=2, LAYOUT_EVERY=20;
   var PROPS=['display','position','left','top','right','bottom','width','height','min-width','min-height','max-width','max-height',
     'margin-top','margin-right','margin-bottom','margin-left','padding-top','padding-right','padding-bottom','padding-left','box-sizing',
     'border-top','border-right','border-bottom','border-left','border-radius','background-color','background-image','background-size','background-position','background-repeat',
@@ -94,7 +94,7 @@
   // scratch canvas first and is probed with getImageData; on taint we switch (once) to SAFE: a canvas-2D box
   // painter (backgrounds, borders, radius, glow, clip-path polygons) + inline <svg> drawn as plain SVG images
   // (no foreignObject = no taint). The shared atlas itself is never tainted.
-  var SAFE=false, painter='foreignObject';
+  var SAFE=/[?&]ui3dsafe=1\b/.test(location.search), painter=SAFE?'box2d':'foreignObject';   // ?ui3dsafe=1: test the WebKit painter in Chromium; ?ui3dgl=1: allow the WebGL2 backend (headless checks)
   function scratch(w,h){ var c=document.createElement('canvas'); c.width=Math.max(1,w); c.height=Math.max(1,h); return c; }
   function clean(c){ try{ c.getContext('2d').getImageData(0,0,1,1); return true; }catch(e){ return false; } }
   function alphaOf(c){ var m=/rgba?\(([^)]*)\)/.exec(c||''); if(!m) return c&&c!=='transparent'?1:0; var a=m[1].split(/[ ,\/]+/).filter(Boolean); return a.length>3?parseFloat(a[3]):1; }
@@ -109,8 +109,8 @@
       var r=el.getBoundingClientRect(); if(r.width<1||r.height<1) continue; var x=r.left-base.left, y=r.top-base.top;
       if(el.tagName.toLowerCase()==='svg'){ var cl=el.cloneNode(true), so=[el].concat([].slice.call(el.querySelectorAll('*'))), sc=[cl].concat([].slice.call(cl.querySelectorAll('*')));
         for(var k=0;k<so.length;k++){ var s2=getComputedStyle(so[k]); ['fill','stroke','stroke-width','opacity','fill-opacity','stroke-opacity','stroke-dasharray','stroke-linecap','stroke-linejoin','stop-color','stop-opacity','font-size','font-family','font-weight'].forEach(function(pn){ var v=s2.getPropertyValue(pn); if(v) sc[k].style.setProperty(pn,v); }); }
-        cl.setAttribute('width',r.width); cl.setAttribute('height',r.height); cl.setAttribute('xmlns','http://www.w3.org/2000/svg');
-        var im=new Image(); try{ await within(new Promise(function(res,rej){ im.onload=res; im.onerror=rej; im.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(new XMLSerializer().serializeToString(cl)); }),4000); cx.drawImage(im,x,y,r.width,r.height); }catch(e){}
+        ['position','left','top','right','bottom','inset','transform','rotate','translate','scale','margin'].forEach(function(pn){ cl.style.removeProperty(pn); }); cl.setAttribute('width',r.width); cl.setAttribute('height',r.height); cl.setAttribute('xmlns','http://www.w3.org/2000/svg');
+        var im=new Image(); try{ await within(new Promise(function(res,rej){ im.onload=res; im.onerror=rej; im.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(new XMLSerializer().serializeToString(cl)); }),4000); cx.drawImage(im,x,y,r.width,r.height); }catch(e){ console.warn('[UI3D] svg paint',e&&(e.message||e.type)); }
         continue; }
       var bg=cs.backgroundColor, bw=parseFloat(cs.borderTopWidth)||0, bc=cs.borderTopColor, rad=Math.min(parseFloat(cs.borderTopLeftRadius)||0,r.width/2,r.height/2);
       if(alphaOf(bg)<=0&&(bw<=0||alphaOf(bc)<=0)) continue;
@@ -177,7 +177,7 @@
   // ---------- overlay pass on the game's renderer ----------
   function setup(R){
     T=window.THREE; if(!T) return false;
-    if(!(R&&R.backend&&R.backend.isWebGPUBackend)){ fallback('renderer backend is not WebGPU'); return false; }
+    if(!(R&&R.backend&&(R.backend.isWebGPUBackend||/[?&]ui3dgl=1\b/.test(location.search)))){ fallback('renderer backend is not WebGPU'); return false; }
     root=new T.Group(); scene=new T.Scene(); scene.add(root); cam=new T.PerspectiveCamera(FOV,1,1,10);
     aCv=document.createElement('canvas'); aCv.width=aCv.height=ATLAS; aCx=aCv.getContext('2d');
     tCv=document.createElement('canvas'); tCv.width=tCv.height=TATLAS; tCx=tCv.getContext('2d');
@@ -229,7 +229,7 @@
 
   window.DMUI3DMesh={
     get active(){ return on()&&ready&&!!(art&&(art.visible||txt.visible)); }, get mesh(){ return root; }, get scene(){ return scene; }, get camera(){ return cam; },
-    overlay:overlay, drawTo:drawTo,
+    overlay:overlay, drawTo:drawTo, _paintSafe:function(el){ var r=el.getBoundingClientRect(); return paintSafe({el:el,w:Math.ceil(r.width),h:Math.ceil(r.height)}).then(function(c){ return c.toDataURL(); }); },
     // what is really on screen: 'mesh' (WebGPU overlay drew OK), 'css' (tilt fallback / opt-out), 'flat'
     get status(){ var m=mode==='0'||(window.DMUI3D&&DMUI3D.enabled===false)?'flat':(on()&&ready&&drewOK)?'mesh':(on()?'mesh?':'css');
       return {mode:m, reason:why0, painter:painter, pending:on()&&!drewOK?Math.round(wdT0?performance.now()-wdT0:0):0}; },
