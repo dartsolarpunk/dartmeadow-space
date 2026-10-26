@@ -1,4 +1,4 @@
-/* DART Meadow — 3D HUD meshes (crunch 2), opt-in: localStorage 'dm.ui3d'='mesh'.
+/* DART Meadow — 3D HUD meshes (crunch 2), default on; opt out: localStorage 'dm.ui3d'='css' (tilt) or '0' (flat).
    Default stays the CSS tilt (ui/dm-ui3d-core.js); '0' = flat.
 
    No second renderer / device: the HUD is drawn by the game's own flightRenderer as an overlay pass
@@ -28,7 +28,9 @@
     'opacity','box-shadow','clip-path','transform','transform-origin','rotate','scale','translate','flex','flex-direction','flex-wrap','align-items','justify-content','gap','grid-template-columns',
     'z-index','visibility','fill','stroke','stroke-width','stroke-dasharray','stroke-dashoffset','font-variant-numeric','vertical-align','filter','mix-blend-mode','inset','object-fit'];
   var mode=(function(){ try{ return localStorage.getItem('dm.ui3d'); }catch(e){ return null; } })();
-  function on(){ return mode==='mesh'; }
+  // (v142) mesh HUD is the default everywhere (desktop, web app, AR). Opt out with dm.ui3d='css' (CSS tilt) or '0' (flat).
+  // The WebGPU gate + watchdog still fall back to CSS at runtime on devices where it can't draw.
+  function on(){ return mode!=='css'&&mode!=='0'; }
 
   var st=document.createElement('style'); st.textContent=
     'body.dm-ui3d-mesh .dm-ui3d-ghost{opacity:0!important;rotate:none!important;filter:none!important}';
