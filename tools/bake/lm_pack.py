@@ -9,12 +9,13 @@ H, W = ao.shape
 lum = irr.max(-1); cov = lum > 0
 MAX = float(np.percentile(lum[cov], 99.5)) if cov.any() else 1.0
 enc = np.clip(irr / MAX, 0, 1) ** (1 / 2.2)
-def save(arr, name, q):
-    im = Image.fromarray((np.clip(arr, 0, 1) * 255 + 0.5).astype(np.uint8))
+def save(arr, name, q, hq):
+    # runtime textures use flipY=false (glTF convention: image row = v*H) but the atlas arrays are row = (1-v)*H: flip rows
+    im = Image.fromarray((np.clip(arr[::-1], 0, 1) * 255 + 0.5).astype(np.uint8))
     im.save(os.path.join(OUT, name + '.webp'), 'WEBP', quality=q, method=6)
-    im.resize((W // 2, H // 2), Image.LANCZOS).save(os.path.join(OUT, name + '-half.webp'), 'WEBP', quality=q, method=6)
+    im.resize((W // 2, H // 2), Image.LANCZOS).save(os.path.join(OUT, name + '-half.webp'), 'WEBP', quality=hq, method=6)
 ao = np.where(ao <= 1e-4, 1.0, ao)   # texels the bake never reached: no occlusion rather than black
-save(enc, 'bt-irr', 72); save(ao, 'bt-ao', 45)   # AO: single channel (L), lower quality - it is smooth after lm_filter
+save(enc, 'bt-irr', 72, 50); save(ao, 'bt-ao', 45, 20)   # AO: single channel (L), lower quality - smooth after lm_filter; half (mobile) set ~0.6 MB
 # geometry remap: per primitive vm (orig vertex index), indices, uv2 (uint16 unorm)
 buf = bytearray(); prims = []
 def put(a):
