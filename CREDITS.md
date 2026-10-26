@@ -45,6 +45,7 @@ Use: **code** = code or tables included (licence terms apply) · **technique** =
 ## Data
 
 - **Natural Earth (110m coastlines)** — Tom Patterson, Nathaniel Vaughn Kelso & contributors. *Public domain* (data). Earth coastlines on the maps.
+- **MODIS land cover (MOD12C1, IGBP classes)** — NASA LP DAAC; rendering "Land cover IGBP.png" by Tomislav Hengl, Wikimedia Commons, *CC BY-SA 3.0*. Collapsed to 0.5° cover fractions in `static/earth/earth-biome.png` (`tools/bake/earth-biome.py`, CC BY-SA 3.0) for Earth's desert / dirt / grass / forest painting.
   <https://www.naturalearthdata.com/> · <https://github.com/nvkelso/natural-earth-vector>
 - **Galactic positions & distances** — NASA/IPAC Extragalactic Database (NED), SIMBAD (CDS Strasbourg). *Public scientific data* (data). Galactic l/b and distances of nearby stars, nebulae and the visitable galaxies (rounded).
   <https://ned.ipac.caltech.edu/> · <https://simbad.cds.unistra.fr/>
