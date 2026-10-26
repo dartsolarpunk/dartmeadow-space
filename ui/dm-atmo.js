@@ -438,7 +438,12 @@
       if (opt.debug === 2) return vec4(Tr, 1.0);
       if (opt.debug === 3) return vec4(sceneDist.div(5000.0), t0.div(5000.0), t1.div(5000.0), 1.0);
       // NaN / runaway guard: a broken sample never paints the screen (falls back to the scene as drawn)
-      const Lraw = Ltot.mul(U.sunI);
+      // (v130) the pale ocean veil from orbit: the Rayleigh path radiance over the disc (camera above the gas, ray ending on
+      // sea/ground) out-shone the dark sea ~3:1 at this exposure — measured: base (57,112,155) vs (23,73,118) with the
+      // in-scatter cut. Scale only the in-scatter of surface-ending rays seen from above the gas: the limb/rim (rays that
+      // reach empty sky), the sky from the ground and the extinction are untouched; it fades in over half an atmosphere height.
+      const spaceK = smoothstep(Rtop, Rtop.add(U.top.mul(0.5)), length(ro)).mul(tEnd.lessThan(1e19).select(float(1.0), float(0.0)));
+      const Lraw = Ltot.mul(U.sunI).mul(mix(float(1.0), float(0.4), spaceK));
       if (mode === 'gas') {
         const sL = dot(Lraw, vec3(1.0)), ok = sL.equal(sL).and(sL.lessThan(1e6));
         return ok.select(vec4(Lraw, dot(Tr, vec3(1.0 / 3.0))), vec4(0.0, 0.0, 0.0, 1.0));
