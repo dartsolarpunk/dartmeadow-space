@@ -154,6 +154,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-earth-paint.js?v=135"></script>
 <script src="ui/dm-theme.js?v=81"></script>
 <script src="ui/dm-sparsevox.js?v=2"></script>
+<script src="ui/dm-rockmat.js?v=145"></script>
 <script src="ui/dm-perf.js?v=3"></script>
 <script>/* (v136) no-op stub so the flight loop can never throw if dm-perf.js failed to load */
 window.DMPerf=window.DMPerf||{on:false,b(){},e(){},mark(){},measure(n,f){return f();},frame(){},stats(){return {fps:0,avgMs:0,p95Ms:0,worstMs:0,minFps:0,cpu:{},gpu:null,sparse:null};},show(){},hide(){}};</script>
@@ -7310,7 +7311,7 @@ async function _svLodPlanetMesh(o){
     If(slot.lessThan(uint(CAP)).and(jb.w.greaterThan(uint(0))),()=>{
       const lz=li.div(uint(BP*BP)), rem=li.mod(uint(BP*BP)), ly=rem.div(uint(BP)), lx=rem.mod(uint(BP));
       const p=gpos(jb,lx,ly,lz);
-      densityNode.element(slot.mul(uint(P3)).add(li)).assign(p.length().sub(o.terrainRadiusAt(p.normalize())));
+      densityNode.element(slot.mul(uint(P3)).add(li)).assign(o.rockD?p.length().sub(o.terrainRadiusAt(p.normalize())).sub(o.rockD(p)):p.length().sub(o.terrainRadiusAt(p.normalize())));
     });
   })().compute(DMAX*P3);
   const mcK=Fn(()=>{
@@ -7414,7 +7415,9 @@ async function _svLodPlanetMesh(o){
   const geo=new THREE.BufferGeometry();
   geo.setAttribute('position',vertexBuf); geo.setAttribute('normal',normalBuf); geo.setAttribute('color',colorBuf);
   geo.boundingSphere=new THREE.Sphere(new THREE.Vector3(0,0,0),HALF*1.5);
-  const mesh=new THREE.Mesh(geo,new THREE.MeshStandardNodeMaterial({vertexColors:true,roughness:0.92,metalness:0.02}));
+  const _lmat=new THREE.MeshStandardNodeMaterial({vertexColors:true,roughness:0.92,metalness:0.02});
+  if(window.DMRock) DMRock.applyPlanet(_lmat,o.kind,radius,o.seed);   // (v140) layered rock
+  const mesh=new THREE.Mesh(geo,_lmat);
   mesh.name='JOTS_GpuPlanetMC'; mesh.userData.jotsGpuMc=true; mesh.userData.svLod=ctl;
   mesh.userData.sparse={N:B*(1<<Lr),B,bricks:stream.resident.size,of:CAP,cells:stream.resident.size*C3,denseCells:Math.pow(B*(1<<Lr),3),ms:+(performance.now()-t0).toFixed(1),lod:true,levels:ctl.levels,relief:o.relief.measured};
   try{ SV.noteBuild((o.kind||'world')+'-lod',mesh.userData.sparse); }catch(e){}
@@ -7521,12 +7524,17 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
   };
   const _SV=window.DMSparseVox;
   // (v136) narrow band from this world's REAL relief extremes (GPU-sampled once per world), not a fixed guess
-  const _relief=await _svMeasureRelief(terrainRadiusAt,radius,(kind||'')+'|'+seedVal+'|'+radius);
+  let _relief=await _svMeasureRelief(terrainRadiusAt,radius,(kind||'')+'|'+seedVal+'|'+radius);
+  // (v140) layered rock (ui/dm-rockmat.js): 4 radial layers added to the density field (3D, so caves/overhangs stay
+  // possible); the narrow band is widened by the layer's bound so no brick that could hold rock is skipped. ?mat=0 = off.
+  const _rockPr=(window.DMRock&&DMRock.on)?DMRock.presetFor(kind):null;
+  const _rockRS=radius*0.012;
+  const _rockD=null; // orbital rock is colour+bump only (fix b): globe relief must match the landed patch; density rock lives only on patch cliffs
   let planetMcMesh;
   const HALF=radius*1.3;
   const _lodOn=!!(lodOpts&&lodOpts.lod&&_SV&&_SV.lodSelect);
   if(_lodOn){
-    planetMcMesh=await _svLodPlanetMesh({radius,HALF,res:lodOpts.res||32,cap:lodOpts.cap,cam:lodOpts.cam,terrainRadiusAt,colorAt:_colorAt,relief:_relief,kind});
+    planetMcMesh=await _svLodPlanetMesh({radius,HALF,res:lodOpts.res||32,cap:lodOpts.cap,cam:lodOpts.cam,terrainRadiusAt,colorAt:_colorAt,relief:_relief,kind,rockD:_rockD,seed:seedVal});
     if(GFX && GFX.shadows){ planetMcMesh.receiveShadow=true; planetMcMesh.castShadow=true; }
   } else {
     const _SV=window.DMSparseVox;
@@ -7565,7 +7573,7 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
       const dir=p.normalize();
       const base=p.length().sub(radius);
       const groundR=terrainRadiusAt(dir);
-      densityNode.element(idx).assign(base.sub(groundR.sub(radius)));
+      densityNode.element(idx).assign(_rockD?base.sub(groundR.sub(radius)).sub(_rockD(p)):base.sub(groundR.sub(radius)));
     });
     await flightRenderer.computeAsync(densityFn().compute(numPoints));
 
@@ -7642,6 +7650,7 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
     geo.setAttribute('color',colorBuf);
     geo.boundingSphere=new THREE.Sphere(new THREE.Vector3(0,0,0),HALF*1.5);
     const mat=new THREE.MeshStandardNodeMaterial({vertexColors:true,roughness:0.92,metalness:0.02});
+    if(window.DMRock) DMRock.applyPlanet(mat,kind,radius,seedVal);   // (v140) layered rock (?mat=0 = old look)
     planetMcMesh=new THREE.Mesh(geo,mat);
     planetMcMesh.name='JOTS_GpuPlanetMC';
     planetMcMesh.userData.jotsGpuMc=true;
@@ -22648,7 +22657,7 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
   let hcol=null;
   if(hFn){ hcol=new Float32Array(GRID*GRID); for(let gz=0;gz<GRID;gz++) for(let gx=0;gx<GRID;gx++) hcol[gx+gz*GRID]=hFn(gx*CELL+oX, gz*CELL+oZ); }
   const _svT0=performance.now();
-  const _plan=(hcol&&window.DMSparseVox)?DMSparseVox.planColumns({N,GRID,CELL,oY,hcol,below:16,above:2}):null;
+  const _plan=(hcol&&window.DMSparseVox)?DMSparseVox.planColumns({N,GRID,CELL,oY,hcol,below:16,above:(window.DMRock&&DMRock.on)?4:2}):null;
   const B=_plan?_plan.B:N, BP=B+1, P3=BP*BP*BP, C3=B*B*B, SLOTS=_plan?_plan.count:1;
   const brickArr=new Uint32Array(Math.max(1,SLOTS)*4); if(_plan) brickArr.set(_plan.coords);
   const brickNode=storage(new THREE.StorageBufferAttribute(brickArr,4),'uvec4',Math.max(1,SLOTS));
@@ -22745,7 +22754,16 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
     const caveRaw = mx_fractal_noise_float(p.mul(vec3(0.05,0.08,0.05)).add(seedU.mul(7.7)),3,2.0,0.5)
       .mul(mx_fractal_noise_float(p.mul(0.03).add(seedU).add(vec3(53,0,0)),3,2.0,0.5)).mul(9.0);
     const cave = caveRaw.mul(0.35).clamp(-0.8, 0.8);   // surface texture only — the shape itself is the world's height field, the same seen from the sky
-    const dSurf = p.y.sub(groundY).sub(cave);
+    // (v140) layered rock on cliffs only (|∇h| from the column heights): joints, notches, ledges — 3D, so overhangs form;
+    // flat ground is untouched, so landing / walking heights there are exactly as before. ?mat=0 = off.
+    let rockP=float(0);
+    if(heightNode&&window.DMRock&&DMRock.on){
+      const hx0=heightNode.element(gx.max(uint(1)).sub(uint(1)).add(gz.mul(uint(GRID)))), hx1=heightNode.element(gx.add(uint(1)).min(uint(GRID-1)).add(gz.mul(uint(GRID))));
+      const hz0=heightNode.element(gx.add(gz.max(uint(1)).sub(uint(1)).mul(uint(GRID)))), hz1=heightNode.element(gx.add(gz.add(uint(1)).min(uint(GRID-1)).mul(uint(GRID))));
+      const grad=vec2(hx1.sub(hx0),hz1.sub(hz0)).length().div(2.0*CELL);
+      rockP=DMRock.patchDisplaceTSL(vec3(p.x.add(wx0U),p.y,p.z.add(wz0U)),grad,DMRock.presetFor((typeof _surfBody!=='undefined'&&_surfBody)?_surfBody.name:''),seedU);
+    }
+    const dSurf = p.y.sub(groundY).sub(cave).sub(rockP);
     // Crust floor: always solid below (groundY - CRUST) → no through-holes
     const CRUST = float(14.0);
     const dFloor = p.y.sub(groundY.sub(CRUST));
@@ -24050,6 +24068,8 @@ function _terrainDetailMat(opts){
     const cliffTint=W.mix(W.float(1),W.float(0.84).add(layerTone.mul(0.3)).mul(W.float(1).sub(C0.split.mul(0.35))).mul(W.float(0.93).add(C0.ledge.mul(0.07))),steep.mul(fadeBand));
     m.colorNode=W.vertexColor().mul(W.float(1).sub(F0.crack.mul(TERRAIN.style==='mesa'?0.16:0.32).mul(fade)).add(F0.peb.mul(0.06).mul(fade))).mul(cliffTint).mul(basinTint);
     m.roughnessNode=sandy?W.float(0.98):W.float(0.95).sub(F0.peb.mul(0.28).mul(fade));
+    // (v140) layered rock (ui/dm-rockmat.js) on the walkable MC ground's cliffs — zones, varnish, oxide, slate, grain. ?mat=0 = off
+    if(opts.side===THREE.DoubleSide&&W.DMRock&&W.DMRock.on){ try{ m.colorNode=W.DMRock.patchColor(m.colorNode,p,nFlat,(typeof _surfBody!=='undefined'&&_surfBody)?_surfBody.name:'',0); }catch(e){} }
     m.userData.dmDetail=lvl;
     // the coarse ground is cut away where the tessellated patch round her takes over
     if(!opts.noHole&&TESS_HOLE.slots.length){
