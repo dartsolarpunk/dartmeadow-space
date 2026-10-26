@@ -116,10 +116,8 @@
   function stripSky(scene,T){
     var saved={bg:scene.background,env:scene.environment,hid:[]};
     scene.background=null;
-    scene.traverse(function(o){ if(!o.isMesh||!o.visible) return; var m=o.material, n=(o.name||'')+' '+((m&&m.name)||'');
-      var shell=/sky|starbox|backdrop|bgsphere|cubemap/i.test(n);
-      if(!shell&&m&&m.side===T.BackSide&&o.geometry){ try{ if(!o.geometry.boundingSphere) o.geometry.computeBoundingSphere(); var s=o.getWorldScale(new T.Vector3()); if(o.geometry.boundingSphere.radius*Math.max(s.x,s.y,s.z)>5000) shell=true; }catch(e){} }
-      if(shell){ o.visible=false; saved.hid.push(o); } });
+    // only shells the game marks itself (userData.dmSkyShell: the sky domes in index.html and ui/dm-sky.js)
+    scene.traverse(function(o){ if(o.visible&&o.userData&&o.userData.dmSkyShell){ o.visible=false; saved.hid.push(o); } });
     return saved;
   }
   function unstrip(scene,saved){ if(!saved) return; scene.background=saved.bg; saved.hid.forEach(function(o){ o.visible=true; }); }
@@ -143,7 +141,8 @@
     reticle.matrixAutoUpdate=false; reticle.visible=false; scene.add(reticle);
     var table=new T.Group(); table.matrixAutoUpdate=false; table.visible=false; scene.add(table);
     var rig=new T.Object3D(), rigCam=new T.PerspectiveCamera(60,1,0.05,1e9); rig.add(rigCam);
-    S={session:session,r:r,cv:cv,scene:scene,cam:cam,reticle:reticle,table:table,rig:rig,rigCam:rigCam,hitSrc:null,anchor:null,placed:false,D:null,sky:null,flight:null,mode:null};
+    var hudScene=new T.Scene(), plate=new T.Group(); plate.matrixAutoUpdate=false; hudScene.add(plate);
+    S={hudScene:hudScene,plate:plate,session:session,r:r,cv:cv,scene:scene,cam:cam,reticle:reticle,table:table,rig:rig,rigCam:rigCam,hitSrc:null,anchor:null,placed:false,D:null,sky:null,flight:null,mode:null};
     syncBtns();
     await r.xr.setSession(session);
     try{ var vs=await session.requestReferenceSpace('viewer'); S.hitSrc=await session.requestHitTestSource({space:vs}); }catch(e){ console.warn('[AR] hit-test',e); }
@@ -152,6 +151,7 @@
     // the hidden flight canvas stops drawing while AR owns the frame
     var FR=g('flightRenderer'); if(FR&&FR.render){ S.flight=FR; S.flightRender=FR.render; FR.render=function(){}; }
     pumpOn();
+    try{ window.DMUI3DMesh&&DMUI3DMesh.arHold(true); }catch(e){}
     document.body.classList.add('dm-ar-on'); document.documentElement.classList.add('dm-ar-on');
     r.setAnimationLoop(frame);
   }
@@ -173,13 +173,24 @@
       if(!S.placed&&xf&&S.hitSrc){ var hs=xf.getHitTestResults(S.hitSrc); if(hs.length){ _lastHit=hs[0]; var p=hs[0].getPose(ref); S.reticle.matrix.fromArray(p.transform.matrix); S.reticle.visible=true; } else S.reticle.visible=false; }
       if(S.anchor&&xf&&xf.trackedAnchors&&xf.trackedAnchors.has(S.anchor)){ var ap=xf.getPose(S.anchor.anchorSpace,ref); if(ap) S.table.matrix.fromArray(ap.transform.matrix); }
       if(S.placed){ if(!S.D){ S.D=buildDiorama(T); S.table.add(S.D.grp); } fillDiorama(S.D,ctx,false); }
-      S.r.render(S.scene,S.cam);
+      S.r.render(S.scene,S.cam); hud(S.cam);
     }else{
       var fs=g('flightScene'), fc=g('flightCamera');
       if(fs&&fc){ fc.updateMatrixWorld(); fc.matrixWorld.decompose(S.rig.position,S.rig.quaternion,S.rig.scale); S.rig.scale.setScalar(1); S.rig.updateMatrixWorld(true);
-        S.rigCam.near=fc.near; S.rigCam.far=fc.far; S.r.render(fs,S.rigCam); }
-      else S.r.render(S.scene,S.cam);
+        if(fs.background){ if(S.sky) S.sky.bg=fs.background; fs.background=null; }   // the game may re-set it each frame
+        S.rigCam.near=fc.near; S.rigCam.far=fc.far; S.r.render(fs,S.rigCam); hud(S.rigCam); }
+      else { S.r.render(S.scene,S.cam); hud(S.cam); }
     }
+  }
+  // the 3D HUD (ui/dm-ui3d-mesh.js): the very same merged mesh, on a head-locked plate 0.6 m out
+  var _m4=null;
+  function hud(camUsed){
+    var M=window.DMUI3DMesh; if(!M||!M.mesh||!M.mesh.visible) return; var T=window.THREE;
+    if(M.mesh.parent!==S.plate) S.plate.add(M.mesh);
+    var pe=camUsed.projectionMatrix.elements, fovY=2*Math.atan(1/(pe[5]||1)), d=0.6, sc=2*d*Math.tan(fovY/2)/(innerHeight||1);
+    _m4=_m4||new T.Matrix4(); camUsed.updateMatrixWorld();
+    S.plate.matrix.copy(camUsed.matrixWorld).multiply(_m4.makeTranslation(0,0,-d)).multiply(new T.Matrix4().makeScale(sc,sc,sc)); S.plate.matrixWorldNeedsUpdate=true;
+    var ac=S.r.autoClear; S.r.autoClear=false; try{ S.r.clearDepth&&S.r.clearDepth(); S.r.render(S.hudScene,camUsed); }catch(e){} S.r.autoClear=ac;
   }
   function switchMode(mode){
     var fs=g('flightScene');
@@ -193,6 +204,7 @@
     if(!S) return; var s=S; S=null;
     try{ s.r.setAnimationLoop(null); }catch(e){}
     pumpOff();
+    try{ var M=window.DMUI3DMesh; if(M&&M.mesh&&M.scene) M.scene.add(M.mesh); M&&M.arHold(false); }catch(e){}
     if(s.flight) s.flight.render=s.flightRender;
     var fs=g('flightScene'); if(fs) unstrip(fs,s.sky);
     try{ s.hitSrc&&s.hitSrc.cancel(); }catch(e){} try{ s.anchor&&s.anchor.delete&&s.anchor.delete(); }catch(e){}

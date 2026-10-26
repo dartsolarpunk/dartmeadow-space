@@ -160,7 +160,7 @@ window.DMPerf=window.DMPerf||{on:false,b(){},e(){},mark(){},measure(n,f){return 
 <script src="ui/dm-fluid.js?v=80"></script>
 <script src="ui/dm-journal.js?v=98"></script>
 <script src="ui/dm-worldstyle.js?v=94"></script>
-<script src="ui/dm-sky.js?v=111"></script>
+<script src="ui/dm-sky.js?v=138"></script>
 <script src="ui/dm-dust.js?v=95"></script>
 <!-- crunch1 true-fluid VFX (WebGPU only; WebGL keeps the current ocean/dust/fumes) -->
 <script src="ui/dm-fluid-core.js?v=136"></script>
@@ -1004,8 +1004,9 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-bt-cargocam.js?v=1" defer></script>
 <script src="ui/dm-bt-interior.js?v=124" defer></script>
 <script src="ui/dm-bt-bake.js?v=124" defer></script>
-<script src="ui/dm-ui3d-core.js?v=137" defer></script>
-<script src="ui/dm-ar-core.js?v=137" defer></script>
+<script src="ui/dm-ui3d-core.js?v=138" defer></script>
+<script src="ui/dm-ui3d-mesh.js?v=138" defer></script>
+<script src="ui/dm-ar-core.js?v=138" defer></script>
 </head>
 <body>
 <!-- LOADING -->
@@ -4911,7 +4912,7 @@ function _styledSky(scene,pal,body,radius,sunPos,fogNear,fogFar){
   const sk=window.DMWorldStyle?DMWorldStyle.skyFor(style,pal):{top:pal.sky[1],bottom:pal.sky[0],haze:pal.fog};
   const mat=makeSkyDomeMaterial(sk.top,sk.bottom,{haze:sk.haze,sun:sk.sun,glow:sk.glow,sunDir:sunPos,hazeAmt:style==='lush'?0.55:0.85});
   const dome=new THREE.Mesh(new THREE.SphereGeometry(radius,32,24),mat);
-  dome.renderOrder=-10; dome.frustumCulled=false;
+  dome.renderOrder=-10; dome.frustumCulled=false; dome.userData.dmSkyShell=true;   // (v137) AR passthrough hides it
   scene.add(dome); scene.userData.skyDome=dome;   // kept round the camera by the scene's loop
   if(scene.fog&&sk.haze!=null){ scene.fog.color.set(sk.haze); if(fogNear!=null){ scene.fog.near=fogNear; scene.fog.far=fogFar; } }
   scene.background=new THREE.Color(sk.haze!=null?sk.haze:pal.sky[1]);
