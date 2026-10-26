@@ -40,8 +40,8 @@ keep=[p for p in prims if p['blend']!='BLEND' and len(p['idx'])>=3]
 print('prims',len(prims),'kept',len(keep),'verts',sum(p['nv'] for p in keep))
 A=xatlas.Atlas()
 for p in keep: A.add_mesh(p['pos'],p['idx'].reshape(-1,3),p['nor'])
-co=xatlas.ChartOptions(); co.max_iterations=1
-po=xatlas.PackOptions(); po.resolution=RES; po.padding=3; po.bilinear=True; po.texels_per_unit=0
+co=xatlas.ChartOptions(); co.max_iterations=4; co.normal_deviation_weight=4.0; co.max_cost=2.0
+po=xatlas.PackOptions(); po.resolution=RES; po.padding=6; po.bilinear=True; po.texels_per_unit=0
 A.generate(co,po)
 print('atlases',A.atlas_count,A.width,A.height)
 meta=dict(res=[A.width,A.height],pages=A.atlas_count,src=os.path.basename(src),prims=[])
