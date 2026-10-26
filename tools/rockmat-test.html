@@ -1,0 +1,29 @@
+<!doctype html><html><head><meta charset="utf-8"><title>DMRock test</title>
+<style>body{margin:0;background:#000;color:#cfe;font:12px monospace}#l{position:fixed;left:6px;top:6px}</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js","three/webgpu":"https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js","three/tsl":"https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.tsl.js"}}</script>
+</head><body><div id="l"></div>
+<script>function resolvePreset(){return (location.search.match(/q=(\w+)/)||[])[1]||'high';}
+const SOL_CATALOG=[{name:'Moon',type:'Barren Moon'},{name:'Europa',type:'Ice'},{name:'Vesta',type:'Asteroid'},{name:'Io',type:'Volcanic'}];</script>
+<script type="module">
+import * as THREE from 'three'; import * as TSL from 'three/tsl';
+Object.assign(window,TSL); window.THREE=THREE;
+await import('../ui/dm-rockmat.js');
+const q=new URLSearchParams(location.search), body=q.get('body')||'Mars', near=q.get('view')==='near', R=10;
+const col={Mars:0xb5532c,Moon:0x9a9894,Earth:0x4f7a3a,Europa:0xd9cdb8,Vesta:0x8e8578,Io:0xd6bf52}[body]||0x888888;
+const r=new THREE.WebGPURenderer({antialias:true,forceWebGL:q.get('gl')==='1'}); r.setSize(960,600); document.body.appendChild(r.domElement); await r.init();
+const sc=new THREE.Scene(), cam=new THREE.PerspectiveCamera(near?50:35,960/600,0.001,1000);
+const g=new THREE.SphereGeometry(R,near?1024:512,near?512:256); const c=new Float32Array(g.attributes.position.count*3); const bc=new THREE.Color(col);
+for(let i=0;i<c.length;i+=3){c[i]=bc.r;c[i+1]=bc.g;c[i+2]=bc.b;} g.setAttribute('color',new THREE.BufferAttribute(c,3));
+const m=new THREE.MeshStandardNodeMaterial({vertexColors:true,roughness:0.92});
+const pr=DMRock.presetFor(body), seedU=uniform(body.length*7+3), RS=R*0.012*(near?3:1);
+const relief=mx_fractal_noise_float(positionLocal.normalize().mul(2.3).add(seedU),4,2.0,0.5).mul(RS);
+const d=pr.disp?DMRock.displaceTSL(positionLocal,R,RS,pr,seedU).mul(RS):float(0);
+if(q.get('mat')!=='0'){ m.positionNode=positionLocal.add(positionLocal.normalize().mul(relief.add(d))); DMRock.applyPlanet(m,body,R,body.length*7+3); }
+else m.positionNode=positionLocal.add(positionLocal.normalize().mul(relief));
+const me=new THREE.Mesh(g,m); sc.add(me);
+const L=new THREE.DirectionalLight(0xffffff,3); L.position.set(5,3,4); sc.add(L); sc.add(new THREE.AmbientLight(0x404050,0.6));
+if(near){ cam.position.set(0,R*0.35,R*1.04); cam.lookAt(0,R*0.55,R*0.75); } else { cam.position.set(0,0,R*3.4); cam.lookAt(0,0,0); }
+const t0=performance.now(); await r.renderAsync(sc,cam); await r.renderAsync(sc,cam);
+document.getElementById('l').textContent=body+' '+(near?'near':'orbit')+' preset '+pr.key+' q='+resolvePreset()+' backend '+r.backend.constructor.name+' '+(performance.now()-t0).toFixed(0)+'ms';
+window.DONE=1;
+</script></body></html>
