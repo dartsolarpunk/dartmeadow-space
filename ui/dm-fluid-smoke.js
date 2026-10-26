@@ -118,8 +118,10 @@
           const vz = cameraViewMatrix.mul(modelWorldMatrix.mul(vec4(p, 1.0))).z;
           If(vz.lessThan(depthClip), () => { Break(); });
         }
-        const uvw = p.add(0.5);
-        const dd = texture3D(A, uvw).w.max(0.0);
+        // clamp to the inner half texel and fade the outer 1.5 texels: no edge sheet / step-aliased dashes at the faces
+        const uvw = clamp(p.add(0.5), 0.5 * inv, 1.0 - 0.5 * inv);
+        const e3 = min(uvw, vec3(1.0).sub(uvw)), em = min(min(e3.x, e3.y), e3.z);
+        const dd = texture3D(A, uvw).w.max(0.0).mul(smoothstep(0.5 * inv, 2.0 * inv, em));
         const sig = dd.mul(U.dens).mul(U.fade);
         If(sig.greaterThan(0.002), () => {
           const sh = texture3D(A, uvw.add(sunL.mul(2.0 * inv))).w.max(0.0);
