@@ -54,7 +54,8 @@
     return b;
   }
 
-  function mark(name) { try { const P = W.DMPerf; if (P && typeof P.mark === 'function') P.mark(name); } catch (e) {} }
+  function seaY() { try { const O = W.DMOcean; if (O) { const v = typeof O.seaY === 'function' ? O.seaY() : O.seaY; if (isFinite(v)) return +v; } } catch (e) {} return 0; }
+  function mark(name) { try { const P = W.DMPerf; if (P && typeof P.mark === 'function') P.mark(name); else if (P && typeof P.b === 'function') P.b(name); } catch (e) {} }
 
   function renderer() { try { return (typeof flightRenderer !== 'undefined' && flightRenderer) || null; } catch (e) { return null; } }
   function ok(r) {
@@ -77,6 +78,8 @@
       const L = WAVES[i], ph = (x * L.dx + z * L.dz) * L.k - t * L.w + L.ph0, s = Math.sin(ph), c = Math.cos(ph);
       h += L.amp * s; const aw = L.amp * L.w; u += aw * s * L.dx; wv += aw * s * L.dz; v += -aw * c;
     }
+    // Prefer the real ocean (PR #183 window.DMOcean) when present; keep orbital velocity from the matched spectrum.
+    try { const O = W.DMOcean; if (O && typeof O.heightAt === 'function') { const y = O.heightAt(x, z); if (isFinite(y)) h = y - seaY(); } } catch (e) {}
     out = out || {}; out.h = h; out.u = u; out.v = v; out.w = wv; return out;
   }
   // TSL: returns {h, vel(vec3)} nodes
@@ -105,5 +108,5 @@
 
   const T0 = performance.now();
   function clock() { return (performance.now() - T0) / 1000; }
-  W.DMFluidCore = { clock, BUDGET, budget, preset, isAuto, govTick, gov, mark, ok, renderer, WAVES, waveJS, waveTSL, hashTSL };
+  W.DMFluidCore = { clock, BUDGET, budget, preset, isAuto, govTick, gov, mark, seaY, ok, renderer, WAVES, waveJS, waveTSL, hashTSL };
 })();

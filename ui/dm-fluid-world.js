@@ -41,7 +41,7 @@
     if (mode === 'fly') { const s = g('atmoState'); if (s) { pos = s.pos; vel = s.vel; } }
     else if (mode === 'walk') { const p = g('surfPlayer'); if (p) { pos = p.pos; vel = p.vel; } }
     if (!pos || !Wt || typeof H !== 'function') { if (L.apic) { L.apic.setVisible(false); L.spray.setVisible(false); } return; }
-    const seaY = Wt.surfaceY || 0, agl = pos.y - seaY;
+    const _oy = W.DMOcean && W.DMFluidCore.seaY(), seaY = (W.DMOcean && isFinite(_oy)) ? _oy : (Wt.surfaceY || 0), agl = pos.y - seaY;
     let wet = false; try { wet = H(pos.x, pos.z) < seaY - 0.3; } catch (e) {}
     // walk mode: the SPH pool (ui/dm-fluid.js) already handles her own wading; we only add impact splashes
     const want = wet && agl < (mode === 'fly' ? 22 : 6);
