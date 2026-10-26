@@ -84,7 +84,7 @@
     // minimap: live canvas texture
     var mc=document.getElementById('minimap-canvas'), mr=mc&&flightOn()&&visible(document.getElementById('minimap')||mc);
     if(mr){ if(!mm.material.map||mm.material.map.image!==mc){ mm.material.map=new T.CanvasTexture(mc); mm.material.map.colorSpace=T.SRGBColorSpace; mm.material.needsUpdate=true; }
-      var t=tilt(mr); mm.position.set(t.cx,t.cy,1); mm.quaternion.copy(t.q); mm.scale.set(mr.width,mr.height,1); mm.visible=true; mm.userData.el=document.getElementById('minimap'); mm.userData.el&&mm.userData.el.classList.add('dm-ui3d-ghost'); }
+      var t=tilt(mr); mm.position.set(t.cx,t.cy,1); mm.quaternion.copy(t.q); mm.scale.set(mr.width,mr.height,1); mm.visible=true; mm.userData.el=document.getElementById('minimap'); }
     else if(mm.visible){ mm.visible=false; var me=document.getElementById('minimap'); me&&me.classList.remove('dm-ui3d-ghost'); }
   }
   function paint(P){ P.busy=true; var gen=P.sig;
@@ -101,7 +101,7 @@
         for(var k=0;k<4;k++){ v.set(cs[k][0]+ox,cs[k][1]+oy,z).applyQuaternion(t.q); pos.set([v.x+t.cx,v.y+t.cy,v.z],q*12+k*3); col.set([sh,sh,sh],q*12+k*3); }
         uv.set([u0,v0,u1,v0,u1,v1,u0,v1],q*8); var b=q*4; idx.set([b,b+1,b+2,b,b+2,b+3],q*6); q++; } });
     setGeo(art,pos,uv,col,idx); aTex.needsUpdate=true;
-    rd.forEach(function(P){ P.el.classList.add('dm-ui3d-ghost'); });   // hide the DOM only once its mesh exists   // the atlas upload happens only here (layout change)
+    // DOM ghosting happens in ghostDrawn(), only after a frame actually rendered OK
   }
   function setGeo(m,pos,uv,col,idx){ var g=new T.BufferGeometry(); g.setAttribute('position',new T.BufferAttribute(pos,3)); g.setAttribute('uv',new T.BufferAttribute(uv,2)); if(col) g.setAttribute('color',new T.BufferAttribute(col,3)); g.setIndex(new T.BufferAttribute(idx,1)); m.geometry.dispose(); m.geometry=g; m.visible=idx.length>0; }
 
@@ -134,8 +134,9 @@
     if(ch) tTex.needsUpdate=true; }
 
   // ---------- overlay pass on the game's renderer ----------
-  function setup(){
+  function setup(R){
     T=window.THREE; if(!T) return false;
+    if(!(R&&R.backend&&R.backend.isWebGPUBackend)){ fallback('renderer backend is not WebGPU'); return false; }
     root=new T.Group(); scene=new T.Scene(); scene.add(root); cam=new T.PerspectiveCamera(30,1,1,10);
     aCv=document.createElement('canvas'); aCv.width=aCv.height=ATLAS; aCx=aCv.getContext('2d');
     tCv=document.createElement('canvas'); tCv.width=tCv.height=TATLAS; tCx=tCv.getContext('2d');
@@ -148,20 +149,31 @@
     [art,txt,mm].forEach(function(m){ m.frustumCulled=false; root.add(m); });
     document.body.classList.add('dm-ui3d-mesh'); ready=true; return true;
   }
-  function overlay(R){
-    if(!on()) return; if(!ready&&!setup()) return;
+  // ---------- fallback watchdog ----------
+  var drewOK=false, wdFrames=0, wdT0=0, WD_FRAMES=30, WD_MS=1000;
+  function fallback(why){ console.warn('[UI3D] mesh HUD failed ('+why+'); falling back to CSS tilt');
+    try{ stop(); }catch(e){} mode='css'; drewOK=false; wdFrames=0; wdT0=0; try{ if(window.DMUI3D) DMUI3D.refresh(); }catch(e){} }
+  function ghostDrawn(){ panels.forEach(function(P){ if(P.ready&&P.slot) P.el.classList.add('dm-ui3d-ghost'); });
+    if(mm.visible&&mm.userData.el) mm.userData.el.classList.add('dm-ui3d-ghost'); }
+  function overlay(R){ try{ overlayBody(R); }catch(e){ fallback('overlay threw: '+(e&&e.message)); } }
+  function overlayBody(R){
+    if(!on()) return; if(!ready&&!setup(R)) return;
     if(frameN++%LAYOUT_EVERY===0) layout();
     if(artDirty){ artDirty=false; buildArt(); txtGeoDirty=true; }
     if(txtGeoDirty){ txtGeoDirty=false; buildText(); }
     updateText(); if(mm.visible&&mm.material.map) mm.material.map.needsUpdate=true;
+    if(!drewOK&&!arHeld&&panels.size){ if(!wdT0) wdT0=performance.now(); if(++wdFrames>WD_FRAMES||performance.now()-wdT0>WD_MS){ fallback('no OK mesh frame within '+wdFrames+' frames / '+Math.round(performance.now()-wdT0)+' ms'); return; } }
     if(arHeld||!(art.visible||txt.visible||mm.visible)) return;
     var vw=innerWidth, vh=innerHeight, d=(vh/2)/Math.tan(15*Math.PI/180);
     cam.aspect=vw/vh; cam.near=d*0.5; cam.far=d*2; cam.position.set(0,0,d); cam.updateProjectionMatrix();
-    var ac=R.autoClear; R.autoClear=false;
-    try{ R.clearDepth&&R.clearDepth(); R.render(scene,cam); } finally { R.autoClear=ac; }
+    var ac=R.autoClear, ok=false; R.autoClear=false;
+    try{ R.clearDepth&&R.clearDepth(); R.render(scene,cam); ok=true; }
+    catch(e){ R.autoClear=ac; fallback('render threw: '+(e&&e.message)); return; }
+    finally { R.autoClear=ac; }
+    if(ok){ drewOK=true; ghostDrawn(); }   // drewOK only after R.render returned without throwing
   }
   function stop(){ panels.forEach(function(P,el){ el.classList.remove('dm-ui3d-ghost'); }); panels.clear(); var me=document.getElementById('minimap'); me&&me.classList.remove('dm-ui3d-ghost');
-    if(ready){ art.visible=txt.visible=mm.visible=false; } document.body.classList.remove('dm-ui3d-mesh'); }
+    drewOK=false; wdFrames=0; wdT0=0; if(ready){ art.visible=txt.visible=mm.visible=false; } document.body.classList.remove('dm-ui3d-mesh'); }
 
   window.DMUI3DMesh={
     get active(){ return on()&&ready&&!!(art&&(art.visible||txt.visible)); }, get mesh(){ return root; }, get scene(){ return scene; }, get camera(){ return cam; },
@@ -169,6 +181,6 @@
     setMode:function(m){ mode=m; try{ localStorage.setItem('dm.ui3d',m); }catch(e){} if(!on()) stop(); else if(ready) document.body.classList.add('dm-ui3d-mesh'); if(window.DMUI3D) DMUI3D.refresh(); },
     // AR: ui/dm-ar-core.js draws `mesh` itself on a head-locked plate; on release it goes back here
     arHold:function(h){ arHeld=!!h; if(!h&&root&&scene&&root.parent!==scene) scene.add(root); },
-    _stats:function(){ var o=[]; panels.forEach(function(P){ o.push({cls:P.el.className,ready:P.ready,leaves:P.leaves.length}); }); return {on:on(),ready:ready,frames:frameN,panels:o,minimap:!!(mm&&mm.visible)}; }
+    _stats:function(){ var o=[]; panels.forEach(function(P){ o.push({cls:P.el.className,ready:P.ready,leaves:P.leaves.length}); }); return {on:on(),ready:ready,frames:frameN,drewOK:drewOK,panels:o,minimap:!!(mm&&mm.visible)}; }
   };
 })();
