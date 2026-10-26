@@ -26,9 +26,9 @@
     const half = tier() < 2 ? '-half' : '';
     loading = (async () => {
       const THREE = window.THREE;
-      const [meta, bin] = await Promise.all([fetch(BASE + 'bt-lm.json?v=131').then(r => r.json()), fetch(BASE + 'bt-lm.bin?v=131').then(r => r.arrayBuffer())]);
+      const [meta, bin] = await Promise.all([fetch(BASE + 'bt-lm.json?v=134').then(r => r.json()), fetch(BASE + 'bt-lm.bin?v=134').then(r => r.arrayBuffer())]);
       const tl = new THREE.TextureLoader();
-      const [irr, ao] = await Promise.all(['bt-irr', 'bt-ao'].map(n => tl.loadAsync(BASE + n + half + '.webp?v=131')));
+      const [irr, ao] = await Promise.all(['bt-irr', 'bt-ao'].map(n => tl.loadAsync(BASE + n + half + '.webp?v=134')));
       irr.colorSpace = THREE.SRGBColorSpace; ao.colorSpace = THREE.NoColorSpace;
       for (const t of [irr, ao]) { t.channel = 1; t.flipY = false; t.generateMipmaps = true; t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter; }
       B.data = { meta, bin, irr, ao }; B.ready = true; B.stats.bytes = bin.byteLength; B.stats.half = !!half;

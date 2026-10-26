@@ -1000,7 +1000,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-bt-engineering.js?v=5" defer></script>
 <script src="ui/dm-bt-madison.js?v=5" defer></script>
 <script src="ui/dm-bt-terminal.js?v=2" defer></script>
-<script src="ui/dm-bt-lighting.js?v=131" defer></script>
+<script src="ui/dm-bt-lighting.js?v=134" defer></script>
 <script src="ui/dm-bt-cargocam.js?v=1" defer></script>
 <script src="ui/dm-bt-interior.js?v=124" defer></script>
 <script src="ui/dm-bt-bake.js?v=131" defer></script>
@@ -2026,7 +2026,7 @@ function buildSaveData(slot){
     themes:(window.DMTheme?window.DMTheme.exportData():null),
     // ...and so do your Journal waypoints.
     journal:(window.DMJournal?window.DMJournal.store.exportData():null),
-    btLights:(window.DMBtRoomLights?window.DMBtRoomLights.get():null)   // (v131) optional: Bird Temple room light modes (older saves lack it)
+    btLights:(window.DMBtRoomLights?window.DMBtRoomLights.get():null)   // (v134) optional: Bird Temple room light modes (older saves lack it)
   };
 }
 // Where the player is: galaxy, system, position, facing, and the nearest
@@ -2145,7 +2145,7 @@ function loadSaveData(data){
   }
   if(data.themes&&window.DMTheme){ try{ window.DMTheme.importData(data.themes,'save'); }catch(e){} }
   if(data.journal&&window.DMJournal){ try{ window.DMJournal.store.importData(data.journal,'save'); }catch(e){} }
-  if(data.btLights&&window.DMBtRoomLights){ try{ window.DMBtRoomLights.set(data.btLights); }catch(e){} }   // (v131)
+  if(data.btLights&&window.DMBtRoomLights){ try{ window.DMBtRoomLights.set(data.btLights); }catch(e){} }   // (v134)
   if(Array.isArray(data.discoveries)&&data.discoveries.length){
     try{
       const have=loadDiscoveries(), ids=new Set(have.map(d=>d.id));

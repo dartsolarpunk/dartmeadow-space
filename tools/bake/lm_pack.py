@@ -14,7 +14,7 @@ def save(arr, name, q):
     im.save(os.path.join(OUT, name + '.webp'), 'WEBP', quality=q, method=6)
     im.resize((W // 2, H // 2), Image.LANCZOS).save(os.path.join(OUT, name + '-half.webp'), 'WEBP', quality=q, method=6)
 ao = np.where(ao <= 1e-4, 1.0, ao)   # texels the bake never reached: no occlusion rather than black
-save(enc, 'bt-irr', 88); save(ao, 'bt-ao', 85)
+save(enc, 'bt-irr', 72); save(ao, 'bt-ao', 45)   # AO: single channel (L), lower quality - it is smooth after lm_filter
 # geometry remap: per primitive vm (orig vertex index), indices, uv2 (uint16 unorm)
 buf = bytearray(); prims = []
 def put(a):
