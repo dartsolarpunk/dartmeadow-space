@@ -7049,12 +7049,12 @@ function _buildJotsDustyRingGroup(planetR, opts){
   const useNode=typeof _isRealWebGPU==='function'&&typeof flightRenderer!=='undefined'&&_isRealWebGPU(flightRenderer)
     &&!!(THREE&&THREE.MeshBasicNodeMaterial)&&typeof Fn==='function';
   for(let b=0;b<bands;b++){
-    const bw=planetR*(0.14+Math.random()*0.22);
+    const bw=planetR*(0.14+Math.random()*0.22)*(opts.widthMul!=null?opts.widthMul:1);
     const gap=planetR*(0.025+Math.random()*0.045);
     const rOut=rIn+bw;
     const shade=0.55+Math.random()*0.45;
     const col=baseCol.clone().multiplyScalar(shade);
-    const opac=0.38+Math.random()*0.38;
+    const opac=(0.38+Math.random()*0.38)*(opts.opacityMul!=null?opts.opacityMul:1);
     const ringGeo=new THREE.RingGeometry(rIn,rOut,96,1);
     let ringMat=null;
     if(useNode){
@@ -7074,7 +7074,7 @@ function _buildJotsDustyRingGroup(planetR, opts){
         ringMat.opacityNode=Fn(()=>{
           const dist=cameraPosition.sub(positionWorld).length();
           const nearBoost=float(1.0).add(float(0.55).mul(smoothstep(nearR, farR, dist)));
-          return opacU.mul(nearBoost).clamp(0.12, 0.92);
+          return opacU.mul(nearBoost).clamp(opts.opacityMul!=null?0.03:0.12, 0.92);
         })();
       }catch(e){ ringMat=null; }
     }
@@ -7158,7 +7158,8 @@ function buildWebGLRichPlanetGroup(radius, seedVal, colorHex, hasAtmosphere, kin
   try{ _attachJotsNearFill(group, radius, colorHex||0x6688aa); }catch(e){}
   return group;
 }
-function buildWebGLRichGasGiant(radius, palette, hasStorm){
+function buildWebGLRichGasGiant(radius, palette, hasStorm, look){
+  look=look||GIANT_LOOKS.Jupiter;
   const group=new THREE.Group();
   group.userData.webglRich=true;
   const seg=_webglPlanetSegForPreset();
@@ -7170,8 +7171,9 @@ function buildWebGLRichGasGiant(radius, palette, hasStorm){
   for(let y=0;y<S;y++){
     for(let x=0;x<S*2;x++){
       const lat=1-y/S; // 0..1
-      const swirl=_fbm(x/(S*2)*4, lat*6, 17, 3);
-      const band=Math.sin((lat*6+swirl*0.35)*Math.PI)*0.5+0.5;
+      const th=x/(S*2)*Math.PI*2;   // swirl sampled on a circle in longitude: no seam where u wraps
+      const swirl=_fbm(Math.cos(th)*0.65+2, lat*6+Math.sin(th)*0.65, 17, 3);
+      const band=Math.sin((lat*look.bands+swirl*look.swirl)*Math.PI)*0.5*look.amp+0.5;
       let c=cols[0].clone().lerp(cols[1], THREE.MathUtils.smoothstep(band,0,0.5));
       c=c.lerp(cols[2], THREE.MathUtils.smoothstep(band,0.45,0.85));
       c=c.lerp(cols[3]||cols[2], THREE.MathUtils.smoothstep(band,0.8,1));
@@ -7180,6 +7182,7 @@ function buildWebGLRichGasGiant(radius, palette, hasStorm){
         const m=Math.max(0,1-Math.hypot(dx*3,dy*5)/0.35);
         if(m>0) c.lerp(new THREE.Color(0xd95a38), m*0.85);
       }
+      if(look.spot){ const m=Math.max(0,1-Math.hypot((x/(S*2)-0.3)*3,(lat-0.32)*5)/0.22); if(m>0) c.lerp(new THREE.Color(0x0d1a4d), m*0.85); }
       const i=(y*S*2+x)*4;
       d[i]=c.r*255; d[i+1]=c.g*255; d[i+2]=c.b*255; d[i+3]=255;
     }
@@ -7515,22 +7518,33 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
    Great Red Spot analog) rather than static bands. Same TSL techniques
    already proven working in the water/atmosphere code above (mx_fractal_
    noise_float, time-driven scrolling, MeshStandardNodeMaterial.colorNode). */
-function buildGasGiantMesh(radius, palette, hasStorm){
+// Per-giant band structure so no two giants read alike (v129: Saturn and the ice giants used Jupiter's band
+// frequency/contrast and looked like more Jupiters). bands: sin frequency over latitude; amp: band contrast;
+// swirl: edge turbulence; spot: dark oval (Neptune). Same values drive the WebGL fallback canvas.
+const GIANT_LOOKS={
+  Jupiter:{bands:6.0,amp:1.0,swirl:0.35},
+  Saturn: {bands:9.0,amp:0.45,swirl:0.12},
+  Uranus: {bands:3.0,amp:0.18,swirl:0.04},
+  Neptune:{bands:4.0,amp:0.6,swirl:0.2,spot:true},
+};
+function buildGasGiantMesh(radius, palette, hasStorm, look){
+  look=look||GIANT_LOOKS.Jupiter;
   const group = new THREE.Group();
   if(!(_isRealWebGPU(flightRenderer))){
-    return buildWebGLRichGasGiant(radius, palette, hasStorm);
+    return buildWebGLRichGasGiant(radius, palette, hasStorm, look);
   }
   const mat = new THREE.MeshStandardNodeMaterial({roughness:0.75,metalness:0.0});
   const c0=uniform(new THREE.Color(palette[0])), c1=uniform(new THREE.Color(palette[1])),
         c2=uniform(new THREE.Color(palette[2])), c3=uniform(new THREE.Color(palette[3]));
+  const lkBands=uniform(look.bands), lkAmp=uniform(look.amp), lkSwirl=uniform(look.swirl), lkSpot=uniform(look.spot?0.85:0);
   mat.colorNode = Fn(()=>{
     const p = normalize(positionWorld);
     const lat = p.y.asin(); // -PI/2..PI/2
     // Scrolling turbulence distorts the latitude input before banding,
     // so band boundaries swirl/wobble over time instead of sitting still.
     const swirl = mx_fractal_noise_float(vec3(p.x.mul(3.0).add(time.mul(0.02)), p.y.mul(3.0), p.z.mul(3.0).add(time.mul(0.015))), 4, 2.0, 0.5);
-    const distortedLat = lat.add(swirl.mul(0.35));
-    const bandT = distortedLat.mul(6.0).sin().mul(0.5).add(0.5); // 0..1 banding pattern
+    const distortedLat = lat.add(swirl.mul(lkSwirl));
+    const bandT = distortedLat.mul(lkBands).sin().mul(lkAmp.mul(0.5)).add(0.5); // 0..1 banding pattern
     let col = mix(c0, c1, smoothstep(0.0,0.5,bandT));
     col = mix(col, c2, smoothstep(0.45,0.85,bandT));
     col = mix(col, c3, smoothstep(0.8,1.0,bandT));
@@ -7545,6 +7559,9 @@ function buildGasGiantMesh(radius, palette, hasStorm){
         mx_fractal_noise_float(p.mul(5.0).add(vec3(time.mul(0.03),0,0)),3,2.0,0.5).mul(0.3).add(0.85));
       col = mix(col, vec3(0.85,0.35,0.22), stormMask.clamp(0.0,1.0));
     }
+    // Neptune's Great Dark Spot (strength 0 elsewhere — a uniform, so the non-storm giants share one pipeline)
+    const sm=float(1.0).sub(smoothstep(0.0,0.22,p.sub(vec3(-0.5,-0.35,0.79)).length()));
+    col = mix(col, vec3(0.05,0.1,0.3), sm.mul(lkSpot));
     return col;
   })();
   const mesh = new THREE.Mesh(new THREE.SphereGeometry(radius,48,32), mat);
@@ -7751,10 +7768,10 @@ async function buildSolarSystem(){
   // [deep band, base band, highlight band, pole band], loosely matched
   // to each real planet's actual banding colors.
   const GIANT_PALETTES = {
-    'Jupiter': [0x8a5a3a, 0xd9b280, 0xf0e0c0, 0xc47a52],
-    'Saturn':  [0xb89968, 0xe8d3a0, 0xf5ecd0, 0xcfa96a],
-    'Uranus':  [0x2a7a82, 0x6fd0d8, 0xb8ecec, 0x3f9aa0],
-    'Neptune': [0x1a3a8a, 0x3560c0, 0x6a92e0, 0x2848a0],
+    'Jupiter': [0x7a4426, 0xd9b280, 0xf3e6cc, 0xb0623c],
+    'Saturn':  [0xcdb27a, 0xe4cf98, 0xf0e2b8, 0xbfa070],   // pale butterscotch, low contrast (read as "a second Jupiter" before)
+    'Uranus':  [0x7cc8cf, 0x9ad9de, 0xb3e6e8, 0x86ccd2],   // near-featureless cyan
+    'Neptune': [0x1a3a8a, 0x2f58b8, 0x5c86d8, 0x22449c],
   };
   // Sequential (not parallel) so multiple simultaneous compute dispatches
   // don't contend for GPU resources building a whole system at once.
@@ -7765,7 +7782,7 @@ async function buildSolarSystem(){
     try{
       if(p.type==='Gas Giant' || p.type==='Ice Giant'){
         const palette = GIANT_PALETTES[p.name] || [p.col,p.col,p.col,p.col];
-        group = buildGasGiantMesh(p.r, palette, p.name==='Jupiter');
+        group = buildGasGiantMesh(p.r, palette, p.name==='Jupiter', GIANT_LOOKS[p.name]);
       } else {
         group = await buildProceduralPlanetMesh(p.r, seedVal, p.col||0x888888, p.hasAtm, undefined, p.name);
       }
@@ -7804,6 +7821,11 @@ async function buildSolarSystem(){
     // genuinely flat, not tube-shaped) with small gaps and varying
     // shade/opacity per band, parented together so they still orbit with
     // the planet as one unit.
+    if(p.name==='Uranus' && typeof _buildJotsDustyRingGroup==='function'){
+      // Uranus: faint, narrow, near-vertical rings (its 98° axial tilt)
+      try{ const ug=_buildJotsDustyRingGroup(p.r, {color:0x8aa0a8, bands:2, tilt:Math.PI*0.06, innerMul:1.6, opacityMul:0.35, widthMul:0.12});
+        ug.isPlanetExtra=true; mesh.add(ug); }catch(e){}
+    }
     if(p.hasRings){
       // Multi-band dusty rings — light-independent dust so near-side stays readable up close
       const ringGroup=(typeof _buildJotsDustyRingGroup==='function')
