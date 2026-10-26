@@ -27,7 +27,7 @@
     high:   { B: 16, bricks: 2, h: 0.5, ppc: 4, spray: 6144, smoke: 32, steps: 20, jac: 8,  sub: 1 },
     ultra:  { B: 20, bricks: 3, h: 0.45, ppc: 4, spray: 10240, smoke: 32, steps: 24, jac: 10, sub: 1 }
   };
-  BUDGET.custom = BUDGET.high;
+  BUDGET.custom = BUDGET.high; BUDGET.normal = BUDGET.medium;   // grids are sized per preset; no runtime cuts outside Auto
 
   function preset() {
     try { if (typeof resolvePreset === 'function') { const p = resolvePreset(); if (BUDGET[p]) return p; } } catch (e) {}

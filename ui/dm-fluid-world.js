@@ -5,8 +5,7 @@
  *                                         stable-fluids volume that follows the player, crest emitters + kick-up
  *                                         under her board at low altitude (flight smoke) and her feet
  *   DMFluidWorld.asteroidFumes(g, rad, o) drop-in for DMMist.asteroidFumes: vented gas as a stable-fluids volume
- *   DMFluidWorld.nebula(scene, o)         stable-fluids gas cloud (emissive), same idea for interstellar gas
- *   DMFluidWorld.frame(camera, dt)        from the space frame: steps the nearest fumes/nebula volumes
+ *   DMFluidWorld.frame(camera, dt)        from the space frame: steps the nearest fume volumes
  * All of it is WebGPU only; each entry returns null (callers fall back to the current effect) on WebGL.
  */
 (function () {
@@ -172,7 +171,7 @@
     };
   }
 
-  // ── space: asteroid fumes, nebula gas ──
+  // ── space: asteroid fumes ──
   const FUME_COLS = [[0.95, 0.85, 0.22, 1], [0.30, 0.85, 0.52, 1], [0.86, 0.38, 0.20, 1], [0.48, 0.72, 1.00, 1], [0.62, 0.42, 1.00, 1], [0.34, 0.31, 0.29, 0]];
   const vols = new Set();
   function asteroidFumes(group, rad, o) {
@@ -191,19 +190,6 @@
       vol.emit(v, 0.5 + d[0] * f, 0.5 + d[1] * f, 0.5 + d[2] * f, 0.04, d[0] * 0.05, d[1] * 0.05, d[2] * 0.05, 2.0 + rnd() * 1.5);
     }
     const h = { mesh: vol.mesh, group, rad, vol, range: rad * 160, kind: 'fume' };
-    vols.add(h); return h;
-  }
-  function nebula(scene, o) {
-    if (!ok()) return null;
-    o = o || {};
-    const THREE = W.THREE, c = C(), bud = c.budget(), S = o.size || 4000, rnd = o.rand || Math.random;
-    let vol;
-    try { vol = W.DMFluidSmoke.create(scene, { budget: bud, size: [S, S * 0.6, S], color: new THREE.Color(o.color != null ? o.color : 0x8866ff).getHex(), glow: 1.4, buoy: 0, diss: 0.01, turb: 0.8, dens: 1.2, depthClip: false, depthTest: true, renderOrder: 1 }); }
-    catch (e) { console.warn('[fluid] nebula off:', e); return null; }
-    if (o.position) vol.mesh.position.copy(o.position);
-    for (let v = 0; v < 4; v++) vol.emit(v, 0.3 + rnd() * 0.4, 0.3 + rnd() * 0.4, 0.3 + rnd() * 0.4, 0.12, (rnd() - 0.5) * 0.02, (rnd() - 0.5) * 0.02, (rnd() - 0.5) * 0.02, 0.8);
-    vol.U.light.value = 0.2;
-    const h = { mesh: vol.mesh, vol, range: S * 6, kind: 'nebula' };
     vols.add(h); return h;
   }
   const _wp = { x: 0, y: 0, z: 0 };
@@ -227,5 +213,5 @@
     }
   }
 
-  W.DMFluidWorld = { ok, tick, dust, asteroidFumes, nebula, frame, _L: L, _vols: vols };
+  W.DMFluidWorld = { ok, tick, dust, asteroidFumes, frame, _L: L, _vols: vols };
 })();
