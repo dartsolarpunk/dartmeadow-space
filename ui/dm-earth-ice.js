@@ -13,6 +13,9 @@
   // 0..1 glacier weight, bilinear so coasts of the ice are soft, not blocky
   function at(lat,lon){
     if(!(lat>-91&&lat<91)||!isFinite(lon)) return 0;
+    // (v132) the source mask stops short of the pole and its last rows leave a lon -30..-10 notch: the continent
+    // and the Ross / Ronne-Filchner shelves south of 76S are all ice, so fill them — no dark notch on the map
+    if(lat<-76) return 1;
     var fx=(lon+180)/360*W-0.5, fy=(90-lat)/180*H-0.5, x0=Math.floor(fx), y0=Math.floor(fy), tx=fx-x0, ty=fy-y0;
     var a=px(x0,y0), b=px(x0+1,y0), c=px(x0,y0+1), d=px(x0+1,y0+1);
     return (a*(1-tx)+b*tx)*(1-ty)+(c*(1-tx)+d*tx)*ty;
