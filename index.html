@@ -153,8 +153,10 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-earth-ice.js?v=132"></script>
 <script src="ui/dm-earth-paint.js?v=135"></script>
 <script src="ui/dm-theme.js?v=81"></script>
-<script src="ui/dm-sparsevox.js?v=1"></script>
-<script src="ui/dm-perf.js?v=1"></script>
+<script src="ui/dm-sparsevox.js?v=2"></script>
+<script src="ui/dm-perf.js?v=2"></script>
+<script>/* (v136) no-op stub so the flight loop can never throw if dm-perf.js failed to load */
+window.DMPerf=window.DMPerf||{on:false,b(){},e(){},mark(){},measure(n,f){return f();},frame(){},stats(){return {fps:0,avgMs:0,p95Ms:0,worstMs:0,minFps:0,cpu:{},gpu:null,sparse:null};},show(){},hide(){}};</script>
 <script src="ui/dm-fluid.js?v=80"></script>
 <script src="ui/dm-journal.js?v=98"></script>
 <script src="ui/dm-worldstyle.js?v=94"></script>
@@ -4448,11 +4450,13 @@ const GFX_BUDGETS = {
   // atmoView/SunSamples: Rayleigh march counts (sandbox peak 10/5) — Med/High raise thin 4/3 port.
   low:    {galaxyArm:14000, galaxyCore:6000, dustSprites:400,  nebulaClouds:2, starCount:2000,  planetSeg:24, mcPrefer:true,  mcPlanetHigh:16, mcPlanetMed:12, mcPlanetLow:8,  mcSurfHigh:20, mcSurfMed:16, mcSurfLow:12, atmoViewSamples:4,  atmoSunSamples:3},
   medium: {galaxyArm:24000, galaxyCore:7500,dustSprites:1200, nebulaClouds:4, starCount:5000,  planetSeg:48, mcPrefer:true,  mcPlanetHigh:28, mcPlanetMed:18, mcPlanetLow:10, mcSurfHigh:26, mcSurfMed:20, mcSurfLow:16, atmoViewSamples:6,  atmoSunSamples:4},
-  high:   {galaxyArm:39000, galaxyCore:11500,dustSprites:2500, nebulaClouds:6, starCount:12000, planetSeg:72, mcPrefer:true,  mcPlanetHigh:40, mcPlanetMed:20, mcPlanetLow:10, mcSurfHigh:24, mcSurfMed:24, mcSurfLow:18, atmoViewSamples:8,  atmoSunSamples:5},
-  ultra:  {galaxyArm:49000, galaxyCore:14000,dustSprites:5000, nebulaClouds:8, starCount:20000, planetSeg:96, mcPrefer:true,  mcPlanetHigh:40, mcPlanetMed:20, mcPlanetLow:10, mcSurfHigh:24, mcSurfMed:24, mcSurfLow:18, atmoViewSamples:10, atmoSunSamples:5},
+  high:   {galaxyArm:39000, galaxyCore:11500,dustSprites:2500, nebulaClouds:6, starCount:12000, planetSeg:72, mcPrefer:true,  mcPlanetHigh:32, mcPlanetMed:20, mcPlanetLow:10, mcSurfHigh:24, mcSurfMed:24, mcSurfLow:18, atmoViewSamples:8,  atmoSunSamples:5},
+  ultra:  {galaxyArm:49000, galaxyCore:14000,dustSprites:5000, nebulaClouds:8, starCount:20000, planetSeg:96, mcPrefer:true,  mcPlanetHigh:32, mcPlanetMed:20, mcPlanetLow:10, mcSurfHigh:24, mcSurfMed:24, mcSurfLow:18, atmoViewSamples:10, atmoSunSamples:5},
 };
 
 
+// (v136) 40 only behind ?res=40 until measured on the Mali-G615 tablet.
+try{ const _r=+((location.search.match(/[?&]res=(\d+)/)||[])[1]||0); if(_r>=16&&_r<=64){ GFX_BUDGETS.high.mcPlanetHigh=_r; GFX_BUDGETS.ultra.mcPlanetHigh=_r; } }catch(e){}
 function detectCapabilities(){
   if(GFX.scanned)return;
   const ua=navigator.userAgent;
@@ -6106,7 +6110,7 @@ async function initFlightScene(){
   try{ detectCapabilities(); loadGfxChoice(); applyQualityTier(); }catch(e){console.warn('cap init:',e);}
 
   // Renderer — compatibility-first across Safari/Chrome/Edge/Firefox on all OSes
-  flightRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:!!GFX.antialias,alpha:false,powerPreference:'high-performance',logarithmicDepthBuffer:true,trackTimestamp:_gpuTimeWanted()});   // (v105) GPU pass timings when timestamp-query / EXT_disjoint_timer_query exists (no-op otherwise)
+  flightRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:!!GFX.antialias,alpha:false,powerPreference:'high-performance',logarithmicDepthBuffer:true,trackTimestamp:_gpuTimeWanted(),forceWebGL:/[?&]gl=1\b/.test(location.search)});   // (v136) ?gl=1 forces the WebGL2 backend (headless A/B). (v105) GPU pass timings when timestamp-query / EXT_disjoint_timer_query exists (no-op otherwise)
   _guardRenderDepth(flightRenderer);
   try{
     await flightRenderer.init();
@@ -6595,7 +6599,7 @@ function _startFlightLoop(){
       }
     }catch(e){_animLoopWarn('charRemountSafety',e);}
     if(!CHAR.loading || _flightFrameCounter % 4 === 0){
-      DMPerf.b('renderWithPostFX'); try{ renderWithPostFX(); }catch(e){ _animLoopWarn('render',e); }    } DMPerf.e();
+      DMPerf.b('renderWithPostFX'); try{ renderWithPostFX(); }catch(e){ _animLoopWarn('render',e); } DMPerf.e();    }
   })();
 }
 
@@ -7234,7 +7238,177 @@ function buildWebGLRichGasGiant(radius, palette, hasStorm, look){
 }
 
 
-async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmosphere, resolution, kind){
+// ── (v136 crunch-1) Real relief extremes per world ───────────────────────────────────────────────
+// The sparse band used to be a fixed ±4.8%-of-radius guess. Now each world's own terrain function is
+// sampled on the GPU at 65 536 Fibonacci directions once (cached per kind|seed|radius) and the band is
+// its real min..max, padded by 20% of the span (peaks narrower than the sample spacing) — so no world
+// can poke a summit or a trench out of its bricks. Falls back to the old guess if readback fails.
+const _svReliefCache=new Map();
+async function _svMeasureRelief(terrainRadiusAt,radius,key){
+  if(_svReliefCache.has(key)) return _svReliefCache.get(key);
+  const guess={min:-radius*0.048,max:radius*0.048,band:radius*0.048,measured:false};
+  try{
+    const M=65536, buf=new THREE.StorageBufferAttribute(new Float32Array(M),1), node=storage(buf,'float',M);
+    const k=Fn(()=>{
+      const i=instanceIndex.toFloat().add(0.5);
+      const y=float(1).sub(i.mul(2.0/M)), r=float(1).sub(y.mul(y)).max(0.0).sqrt(), ph=i.mul(Math.PI*(3-Math.sqrt(5)));
+      const dir=vec3(ph.cos().mul(r),y,ph.sin().mul(r));
+      node.element(instanceIndex).assign(terrainRadiusAt(dir).sub(radius));
+    });
+    await flightRenderer.computeAsync(k().compute(M));
+    const a=new Float32Array(await flightRenderer.getArrayBufferAsync(buf));
+    let mn=Infinity,mx=-Infinity; for(let i=0;i<a.length;i++){ const v=a[i]; if(v<mn)mn=v; if(v>mx)mx=v; }
+    if(!isFinite(mn)||!isFinite(mx)) throw new Error('relief NaN');
+    const pad=(mx-mn)*0.2+radius*0.001;
+    const out={min:mn-pad,max:mx+pad,band:Math.max(Math.abs(mn),Math.abs(mx))+pad,measured:true,rawMin:mn,rawMax:mx};
+    try{ buf.array=null; }catch(e){}
+    _svReliefCache.set(key,out); return out;
+  }catch(e){ console.warn('[sparse] relief measure failed, using the fixed band',e&&e.message); _svReliefCache.set(key,guess); return guess; }
+}
+
+// ── (v136 crunch-1) Per-brick LOD planet mesh ────────────────────────────────────────────────────
+// One mesh, one draw call, a fixed pool of brick slots (ui/dm-sparsevox.js LodStream). Each slot holds one
+// B³-cell brick at any octree level (DMSparseVox.lodSelect: finer near the camera), plus skirts on its six
+// faces (each boundary face-cell's marching-squares segment extruded one cell toward the centre, both
+// windings) that cover the cracks where a brick meets a coarser or finer neighbour. Streaming is
+// incremental: the controller re-selects when the camera has moved, and each update builds only the
+// bricks that changed, in batches sized to a per-frame ms budget; replaced bricks are cleared only after
+// their replacements are in, so there is never a hole. No whole-world rebuild.
+const SV_LOD={B:4,DMAX:64,K:2.5,budgetMs:3,maxBodies:2,on:!/[?&]lod=0\b/.test(location.search)};
+async function _svLodPlanetMesh(o){
+  const SV=window.DMSparseVox, B=SV_LOD.B, BP=B+1, P3=BP*BP*BP, C3=B*B*B, FC=6*B*B, DMAX=SV_LOD.DMAX;
+  const radius=o.radius, HALF=o.HALF;
+  const Nf=Math.max(32,(o.res||32)*4), Lr=Math.round(Math.log2(Nf/B)), coarsest=Math.max(0,Lr-2), BASE=HALF*2/(B*(1<<Lr));
+  const CAP=o.cap||((GFX&&(GFX.preset==='ultra'||GFX.preset==='high'))?512:384);
+  const VPS=C3*15+FC*12, maxVerts=CAP*VPS;
+  const rMin=radius+o.relief.min, rMax=radius+o.relief.max;
+  const jobArr=new Uint32Array(DMAX*4), jobSlotArr=new Uint32Array(DMAX).fill(CAP);
+  const jobAttr=new THREE.StorageBufferAttribute(jobArr,4), jobNode=storage(jobAttr,'uvec4',DMAX);
+  const jsAttr=new THREE.StorageBufferAttribute(jobSlotArr,1), jsNode=storage(jsAttr,'uint',DMAX);
+  const densityBuf=new THREE.StorageInstancedBufferAttribute(CAP*P3,1), densityNode=storage(densityBuf,'float',CAP*P3);
+  const triTableFlat=new Int32Array(256*16); GPU_TriangleTable.forEach((row,i)=>{ for(let j=0;j<16;j++) triTableFlat[i*16+j]=row[j]; });
+  const triT=storage(new THREE.StorageBufferAttribute(triTableFlat,1),'int',256*16);
+  const vertexBuf=new THREE.StorageBufferAttribute(maxVerts,3), vertexNode=storage(vertexBuf,'vec3',maxVerts);
+  const normalBuf=new THREE.StorageBufferAttribute(maxVerts,3), normalNode=storage(normalBuf,'vec3',maxVerts);
+  const colorBuf=new THREE.StorageBufferAttribute(maxVerts,3), colorNode=storage(colorBuf,'vec3',maxVerts);
+  const gpos=(jb,lx,ly,lz)=>vec3(jb.x.add(lx.mul(jb.w)).toFloat().mul(BASE).sub(HALF),jb.y.add(ly.mul(jb.w)).toFloat().mul(BASE).sub(HALF),jb.z.add(lz.mul(jb.w)).toFloat().mul(BASE).sub(HALF));
+  const dAt=(slot,lx,ly,lz)=>densityNode.element(slot.mul(uint(P3)).add(lx).add(ly.mul(uint(BP))).add(lz.mul(uint(BP*BP))));
+  const densK=Fn(()=>{
+    const j=instanceIndex.div(uint(P3)), li=instanceIndex.mod(uint(P3)), slot=jsNode.element(j), jb=jobNode.element(j);
+    If(slot.lessThan(uint(CAP)).and(jb.w.greaterThan(uint(0))),()=>{
+      const lz=li.div(uint(BP*BP)), rem=li.mod(uint(BP*BP)), ly=rem.div(uint(BP)), lx=rem.mod(uint(BP));
+      const p=gpos(jb,lx,ly,lz);
+      densityNode.element(slot.mul(uint(P3)).add(li)).assign(p.length().sub(o.terrainRadiusAt(p.normalize())));
+    });
+  })().compute(DMAX*P3);
+  const mcK=Fn(()=>{
+    const j=instanceIndex.div(uint(C3)), lc=instanceIndex.mod(uint(C3)), slot=jsNode.element(j), jb=jobNode.element(j);
+    If(slot.lessThan(uint(CAP)),()=>{
+      const outBase=slot.mul(uint(VPS)).add(lc.mul(uint(15)));
+      Loop(15,({i})=>{ vertexNode.element(outBase.add(uint(i))).assign(vec3(0,0,0)); normalNode.element(outBase.add(uint(i))).assign(vec3(0,1,0)); colorNode.element(outBase.add(uint(i))).assign(vec3(0,0,0)); });
+      If(jb.w.greaterThan(uint(0)),()=>{
+        const cz=lc.div(uint(B*B)), cr=lc.mod(uint(B*B)), cy=cr.div(uint(B)), cx=cr.mod(uint(B));
+        const corners=[0,1,2,3,4,5,6,7].map(i=>{ const lx=cx.add(i&1), ly=cy.add((i>>1)&1), lz=cz.add((i>>2)&1); return {pos:gpos(jb,lx,ly,lz),density:dAt(slot,lx,ly,lz)}; });
+        const caseIdx=int(0).toVar();
+        corners.forEach((c,i)=>{ If(c.density.lessThan(0.0),()=>{ caseIdx.assign(caseIdx.bitOr(int(1<<i))); }); });
+        Loop(5,({i})=>{
+          const tb=caseIdx.mul(int(16)).add(i.mul(3)), e0=triT.element(tb);
+          If(e0.greaterThanEqual(0),()=>{
+            const e1=triT.element(tb.add(1)), e2=triT.element(tb.add(2));
+            const interp=(edge)=>{ let pa=corners[0].pos,pb=corners[0].pos,da=corners[0].density,db=corners[0].density;
+              EdgeVertexIndices.forEach(([va,vb],k)=>{ const m=edge.equal(int(k)); pa=select(m,corners[va].pos,pa); pb=select(m,corners[vb].pos,pb); da=select(m,corners[va].density,da); db=select(m,corners[vb].density,db); });
+              return pa.add(pb.sub(pa).mul(da.div(da.sub(db).add(1e-6)))); };
+            const v0=interp(e0), v1=interp(e1), v2=interp(e2), nrm=v1.sub(v0).cross(v2.sub(v0)).normalize();
+            const col=o.colorAt(v0,nrm).add(o.colorAt(v1,nrm)).add(o.colorAt(v2,nrm)).div(3.0);
+            const ob=outBase.add(uint(i.mul(3)));
+            [v0,v1,v2].forEach((v,q)=>{ vertexNode.element(ob.add(q)).assign(v); normalNode.element(ob.add(q)).assign(v.normalize().add(nrm.mul(0.35)).normalize()); colorNode.element(ob.add(q)).assign(col); });
+          });
+        });
+      });
+    });
+  })().compute(DMAX*C3);
+  const skK=Fn(()=>{
+    const j=instanceIndex.div(uint(FC)), r=instanceIndex.mod(uint(FC)), slot=jsNode.element(j), jb=jobNode.element(j);
+    If(slot.lessThan(uint(CAP)),()=>{
+      const ob=slot.mul(uint(VPS)).add(uint(C3*15)).add(r.mul(uint(12)));
+      Loop(12,({i})=>{ vertexNode.element(ob.add(uint(i))).assign(vec3(0,0,0)); normalNode.element(ob.add(uint(i))).assign(vec3(0,1,0)); colorNode.element(ob.add(uint(i))).assign(vec3(0,0,0)); });
+      If(jb.w.greaterThan(uint(0)),()=>{
+        const f=r.div(uint(B*B)), uv=r.mod(uint(B*B)), u=uv.mod(uint(B)), v=uv.div(uint(B)), ax=f.shiftRight(uint(1)), sB=f.bitAnd(uint(1)).mul(uint(B));
+        const q=[[0,0],[1,0],[1,1],[0,1]].map(([du,dv])=>{
+          const a=u.add(uint(du)), b=v.add(uint(dv));
+          const lx=select(ax.equal(uint(0)),sB,a), ly=select(ax.equal(uint(1)),sB,select(ax.equal(uint(0)),a,b)), lz=select(ax.equal(uint(2)),sB,b);
+          return {p:gpos(jb,lx,ly,lz),d:dAt(slot,lx,ly,lz)};
+        });
+        const pa=vec3(0,0,0).toVar(), pb=vec3(0,0,0).toVar(), cnt=int(0).toVar();
+        [[0,1],[1,2],[2,3],[3,0]].forEach(([x,y])=>{
+          const A=q[x], Bq=q[y];
+          If(A.d.mul(Bq.d).lessThan(0.0),()=>{
+            const c=A.p.add(Bq.p.sub(A.p).mul(A.d.div(A.d.sub(Bq.d))));
+            If(cnt.equal(int(0)),()=>{ pa.assign(c); }).Else(()=>{ If(cnt.equal(int(1)),()=>{ pb.assign(c); }); });
+            cnt.addAssign(1);
+          });
+        });
+        If(cnt.greaterThanEqual(int(2)),()=>{
+          const sk=jb.w.toFloat().mul(BASE*1.25);
+          const na=pa.normalize(), nb=pb.normalize(), pa2=pa.sub(na.mul(sk)), pb2=pb.sub(nb.mul(sk));
+          const col=o.colorAt(pa,na);
+          const tri=[pa,pb,pb2, pa,pb2,pa2, pa,pb2,pb, pa,pa2,pb2];
+          tri.forEach((P,k)=>{ vertexNode.element(ob.add(uint(k))).assign(P); normalNode.element(ob.add(uint(k))).assign(P.normalize()); colorNode.element(ob.add(uint(k))).assign(col); });
+        });
+      });
+    });
+  })().compute(DMAX*FC);
+
+  const stream=new SV.LodStream(CAP);
+  const ctl={stream,CAP,Lr,coarsest,BASE,busy:false,lastCam:null,lastSel:0,msPerBrick:0.25,built:0,cleared:0,batches:0,resident:0,lastMs:0,pending:0,
+    finest:B*BASE,
+    select(cam){
+      const r=SV.lodSelect({B,rootLevel:Lr,half:HALF,rMin,rMax,cam:cam?[cam.x,cam.y,cam.z]:null,k:SV_LOD.K,coarsest,maxBricks:CAP});
+      this.pending=stream.desire(r.leaves); this.lastCam=cam?cam.clone():null; this.lastSel=performance.now(); this.levels=r.leaves.reduce((m,l)=>{m[l.L]=(m[l.L]||0)+1;return m;},{});
+    },
+    async batch(n){
+      const st=stream.step(n), jobs=st.build.length+st.clear.length; if(!jobs) return 0;
+      for(let i=0;i<DMAX;i++){ jobSlotArr[i]=CAP; }
+      let k=0;
+      for(const b of st.build){ jobArr.set([b.ox,b.oy,b.oz,1<<b.L],k*4); jobSlotArr[k]=b.slot; k++; if(k>=DMAX) break; }
+      for(const c of st.clear){ if(k>=DMAX){ break; } jobArr.set([0,0,0,0],k*4); jobSlotArr[k]=c; k++; }
+      jobAttr.needsUpdate=true; jsAttr.needsUpdate=true;
+      const t0=performance.now();
+      flightRenderer.compute(densK); flightRenderer.compute(mcK); await flightRenderer.computeAsync(skK);
+      const ms=performance.now()-t0; this.lastMs=ms; this.msPerBrick=this.msPerBrick*0.7+(ms/Math.max(1,k))*0.3;
+      this.built+=st.build.length; this.cleared+=st.clear.length; this.batches++; this.resident=stream.resident.size; this.pending=st.pending;
+      return jobs;
+    },
+    // per-frame entry (not awaited by the loop): re-select when the camera moved ~half a finest brick or 0.4 s passed,
+    // then build one budgeted batch
+    async update(cam,budgetMs){
+      if(this.busy) return; this.busy=true;
+      const t0=performance.now();
+      try{
+        const moved=!this.lastCam||this.lastCam.distanceTo(cam)>this.finest*0.5;
+        if(moved&&t0-this.lastSel>400) this.select(cam);
+        if(this.pending||stream.stale.length){
+          const n=Math.max(2,Math.min(DMAX,Math.floor((budgetMs||SV_LOD.budgetMs)/Math.max(0.02,this.msPerBrick))));
+          await this.batch(n);
+        }
+      }catch(e){ console.warn('[sparse LOD] update',e&&e.message); }
+      finally{ this.busy=false; try{ window.DMPerf&&DMPerf.mark('sparseLOD',performance.now()-t0); }catch(e){} }
+    },
+  };
+  const t0=performance.now();
+  ctl.select(o.cam||null);
+  let guard=0; while((ctl.pending||stream.stale.length)&&guard++<64) await ctl.batch(DMAX);
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position',vertexBuf); geo.setAttribute('normal',normalBuf); geo.setAttribute('color',colorBuf);
+  geo.boundingSphere=new THREE.Sphere(new THREE.Vector3(0,0,0),HALF*1.5);
+  const mesh=new THREE.Mesh(geo,new THREE.MeshStandardNodeMaterial({vertexColors:true,roughness:0.92,metalness:0.02}));
+  mesh.name='JOTS_GpuPlanetMC'; mesh.userData.jotsGpuMc=true; mesh.userData.svLod=ctl;
+  mesh.userData.sparse={N:B*(1<<Lr),B,bricks:stream.resident.size,of:CAP,cells:stream.resident.size*C3,denseCells:Math.pow(B*(1<<Lr),3),ms:+(performance.now()-t0).toFixed(1),lod:true,levels:ctl.levels,relief:o.relief.measured};
+  try{ SV.noteBuild((o.kind||'world')+'-lod',mesh.userData.sparse); }catch(e){}
+  return mesh;
+}
+
+async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmosphere, resolution, kind, lodOpts){
   const group = new THREE.Group();
   kind=(kind||'').toLowerCase();
   if(!(_isRealWebGPU(flightRenderer))){
@@ -7249,30 +7423,6 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
   // picks them, from a brick pool with a free list). Shared brick faces evaluate the same density at the same points, so
   // neighbouring bricks meet without cracks. Memory and compute follow the shell (~N²), not the cube (N³).
   const _N0=(typeof resolution==='number'&&resolution>0)?resolution:((typeof _mcTierResTable==='function')?(_mcTierResTable().low||10):10);
-  const _SV=window.DMSparseVox;
-  const _plan=(_SV&&_N0>=28)?_SV.plan({N:_N0,half:radius*1.3,radius,reliefBand:radius*0.012*4.0}):null;
-  const N=_plan?_plan.N:_N0, GRID=N+1, HALF=radius*1.3, CELL=(HALF*2)/N;
-  const B=_plan?_plan.B:N, BP=B+1, P3=BP*BP*BP, C3=B*B*B, SLOTS=_plan?_plan.count:1;
-  const numPoints=SLOTS*P3, numCells=SLOTS*C3, MAX_TRIS=5, maxVerts=numCells*MAX_TRIS*3;
-  const brickArr=new Uint32Array(Math.max(1,SLOTS)*4);
-  if(_plan) brickArr.set(_plan.coords); // bx,by,bz,0 per slot
-  const brickAttr=new THREE.StorageBufferAttribute(brickArr,4);
-  const brickNode=storage(brickAttr,'uvec4',Math.max(1,SLOTS));
-  const _svT0=performance.now();
-
-  const densityBuf=new THREE.StorageInstancedBufferAttribute(numPoints,1);
-  const densityNode=storage(densityBuf,'float',numPoints);
-  const triTableFlat=new Int32Array(256*16);
-  GPU_TriangleTable.forEach((row,i)=>{ for(let j=0;j<16;j++) triTableFlat[i*16+j]=row[j]; });
-  const triTableAttr=new THREE.StorageBufferAttribute(triTableFlat,1);
-  const triTableStorage=storage(triTableAttr,'int',256*16);
-  const vertexBuf=new THREE.StorageBufferAttribute(maxVerts,3);
-  const vertexNode=storage(vertexBuf,'vec3',maxVerts);
-  const normalBuf=new THREE.StorageBufferAttribute(maxVerts,3);
-  const normalNode=storage(normalBuf,'vec3',maxVerts);
-  const colorBuf=new THREE.StorageBufferAttribute(maxVerts,3);
-  const colorNode=storage(colorBuf,'vec3',maxVerts);
-
   // Mars keeps its named features (TSL port of marsFeatureHeight) for the
   // far mesh; every other world, Earth included, uses the one generic relief.
   // Colour comes from the world's own map once it is built
@@ -7335,127 +7485,158 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
     return float(radius).add(relief.mul(reliefScale));
   });
 
-  const densityFn=Fn(()=>{
-    const idx=instanceIndex;
-    const slot=idx.div(uint(P3)), li=idx.mod(uint(P3));
-    const bc=brickNode.element(slot);
-    const gz=li.div(uint(BP*BP)).add(bc.z.mul(uint(B)));
-    const rem=li.mod(uint(BP*BP));
-    const gy=rem.div(uint(BP)).add(bc.y.mul(uint(B)));
-    const gx=rem.mod(uint(BP)).add(bc.x.mul(uint(B)));
-    const p=vec3(gx.toFloat().mul(CELL).sub(HALF),gy.toFloat().mul(CELL).sub(HALF),gz.toFloat().mul(CELL).sub(HALF));
-    const dir=p.normalize();
-    const base=p.length().sub(radius);
-    const groundR=terrainRadiusAt(dir);
-    densityNode.element(idx).assign(base.sub(groundR.sub(radius)));
-  });
-  await flightRenderer.computeAsync(densityFn().compute(numPoints));
+  // shared vertex colour (MC cells and LOD skirts): v = vertex, nrm = face normal
+  const _baseC=new THREE.Color(colorHex), _rockC=_baseC.clone().multiplyScalar(0.65), _snowC=new THREE.Color(0xeef2f6);
+  const _colorAt=(v,nrm)=>{
+    const up=v.normalize();
+    const slope=float(1).sub(nrm.dot(up).clamp(0,1));
+    const height=v.length().sub(radius);
+    if(_earthPaint){
+      // (v132) Earth: the real cover + glacier maps looked up at this vertex — no altitude/latitude snow; ice only where the glacier mask is.
+      const la=up.y.clamp(-1,1).asin().mul(180/Math.PI), lo=atan2(up.z.negate(),up.x).mul(180/Math.PI);
+      const n=mx_fractal_noise_float(up.mul(180.0).add(seedU),2,2.0,0.5).mul(0.5).add(0.5);
+      const nf=mx_fractal_noise_float(up.mul(900.0).add(seedU),2,2.0,0.5).mul(0.5).add(0.5);
+      return DMEarthPaint.tsl(la,lo,slope,n,nf);
+    }
+    // snow ~75% up the ~1.2%-of-radius relief range
+    const lat01=up.y.abs();
+    const snowT=height.sub(radius*0.011).div(radius*0.003).clamp(0,1).mul(float(0.55).add(lat01.mul(0.45)));
+    let c=vec3(_baseC.r,_baseC.g,_baseC.b);
+    c=mix(c,vec3(_rockC.r,_rockC.g,_rockC.b),slope.smoothstep(0.35,0.75));
+    c=mix(c,vec3(_snowC.r,_snowC.g,_snowC.b),snowT);
+    return c;
+  };
+  const _SV=window.DMSparseVox;
+  // (v136) narrow band from this world's REAL relief extremes (GPU-sampled once per world), not a fixed guess
+  const _relief=await _svMeasureRelief(terrainRadiusAt,radius,(kind||'')+'|'+seedVal+'|'+radius);
+  let planetMcMesh;
+  const HALF=radius*1.3;
+  const _lodOn=!!(lodOpts&&lodOpts.lod&&_SV&&_SV.lodSelect);
+  if(_lodOn){
+    planetMcMesh=await _svLodPlanetMesh({radius,HALF,res:lodOpts.res||32,cap:lodOpts.cap,cam:lodOpts.cam,terrainRadiusAt,colorAt:_colorAt,relief:_relief,kind});
+    if(GFX && GFX.shadows){ planetMcMesh.receiveShadow=true; planetMcMesh.castShadow=true; }
+  } else {
+    const _SV=window.DMSparseVox;
+    const _plan=(_SV&&_N0>=28)?_SV.plan({N:_N0,half:radius*1.3,radius,reliefBand:_relief.band}):null;
+    const N=_plan?_plan.N:_N0, GRID=N+1, HALF=radius*1.3, CELL=(HALF*2)/N;
+    const B=_plan?_plan.B:N, BP=B+1, P3=BP*BP*BP, C3=B*B*B, SLOTS=_plan?_plan.count:1;
+    const numPoints=SLOTS*P3, numCells=SLOTS*C3, MAX_TRIS=5, maxVerts=numCells*MAX_TRIS*3;
+    const brickArr=new Uint32Array(Math.max(1,SLOTS)*4);
+    if(_plan) brickArr.set(_plan.coords); // bx,by,bz,0 per slot
+    const brickAttr=new THREE.StorageBufferAttribute(brickArr,4);
+    const brickNode=storage(brickAttr,'uvec4',Math.max(1,SLOTS));
+    const _svT0=performance.now();
 
-  const mcFn=Fn(()=>{
-    const cellIdx=instanceIndex;
-    const slot=cellIdx.div(uint(C3)), lc=cellIdx.mod(uint(C3));
-    const bc=brickNode.element(slot);
-    const cz=lc.div(uint(B*B));
-    const crem=lc.mod(uint(B*B));
-    const cy=crem.div(uint(B));
-    const cx=crem.mod(uint(B));
-    const ox=bc.x.mul(uint(B)), oy=bc.y.mul(uint(B)), oz=bc.z.mul(uint(B));
-    const readCorner=(i)=>{
-      const dx=i&1, dy=(i>>1)&1, dz=(i>>2)&1;
-      const lx=cx.add(dx), ly=cy.add(dy), lz=cz.add(dz);
-      const gx=lx.add(ox), gy=ly.add(oy), gz=lz.add(oz);
-      const flat=slot.mul(uint(P3)).add(lx).add(ly.mul(uint(BP))).add(lz.mul(uint(BP*BP)));
-      return {
-        pos: vec3(gx.toFloat().mul(CELL).sub(HALF), gy.toFloat().mul(CELL).sub(HALF), gz.toFloat().mul(CELL).sub(HALF)),
-        density: densityNode.element(flat),
-      };
-    };
-    const c0=readCorner(0),c1=readCorner(1),c2=readCorner(2),c3=readCorner(3),
-          c4=readCorner(4),c5=readCorner(5),c6=readCorner(6),c7=readCorner(7);
-    const corners=[c0,c1,c2,c3,c4,c5,c6,c7];
-    const caseIdx=int(0).toVar();
-    corners.forEach((c,i)=>{ If(c.density.lessThan(0.0), ()=>{ caseIdx.assign(caseIdx.bitOr(int(1<<i))); }); });
-    const outBase=cellIdx.mul(uint(MAX_TRIS*3));
-    Loop(MAX_TRIS*3, ({i})=>{
-      vertexNode.element(outBase.add(uint(i))).assign(vec3(0,0,0));
-      normalNode.element(outBase.add(uint(i))).assign(vec3(0,1,0));
-      colorNode.element(outBase.add(uint(i))).assign(vec3(0,0,0));
+    const densityBuf=new THREE.StorageInstancedBufferAttribute(numPoints,1);
+    const densityNode=storage(densityBuf,'float',numPoints);
+    const triTableFlat=new Int32Array(256*16);
+    GPU_TriangleTable.forEach((row,i)=>{ for(let j=0;j<16;j++) triTableFlat[i*16+j]=row[j]; });
+    const triTableAttr=new THREE.StorageBufferAttribute(triTableFlat,1);
+    const triTableStorage=storage(triTableAttr,'int',256*16);
+    const vertexBuf=new THREE.StorageBufferAttribute(maxVerts,3);
+    const vertexNode=storage(vertexBuf,'vec3',maxVerts);
+    const normalBuf=new THREE.StorageBufferAttribute(maxVerts,3);
+    const normalNode=storage(normalBuf,'vec3',maxVerts);
+    const colorBuf=new THREE.StorageBufferAttribute(maxVerts,3);
+    const colorNode=storage(colorBuf,'vec3',maxVerts);
+
+    const densityFn=Fn(()=>{
+      const idx=instanceIndex;
+      const slot=idx.div(uint(P3)), li=idx.mod(uint(P3));
+      const bc=brickNode.element(slot);
+      const gz=li.div(uint(BP*BP)).add(bc.z.mul(uint(B)));
+      const rem=li.mod(uint(BP*BP));
+      const gy=rem.div(uint(BP)).add(bc.y.mul(uint(B)));
+      const gx=rem.mod(uint(BP)).add(bc.x.mul(uint(B)));
+      const p=vec3(gx.toFloat().mul(CELL).sub(HALF),gy.toFloat().mul(CELL).sub(HALF),gz.toFloat().mul(CELL).sub(HALF));
+      const dir=p.normalize();
+      const base=p.length().sub(radius);
+      const groundR=terrainRadiusAt(dir);
+      densityNode.element(idx).assign(base.sub(groundR.sub(radius)));
     });
-    Loop(MAX_TRIS, ({i})=>{
-      const triBase=caseIdx.mul(int(16)).add(i.mul(3));
-      const e0=triTableStorage.element(triBase);
-      If(e0.greaterThanEqual(0), ()=>{
-        const e1=triTableStorage.element(triBase.add(1));
-        const e2=triTableStorage.element(triBase.add(2));
-        const interp=(edge)=>{
-          let pa=corners[0].pos, pb=corners[0].pos, da=corners[0].density, db=corners[0].density;
-          EdgeVertexIndices.forEach(([va,vb],k)=>{
-            const match=edge.equal(int(k));
-            pa=select(match,corners[va].pos,pa); pb=select(match,corners[vb].pos,pb);
-            da=select(match,corners[va].density,da); db=select(match,corners[vb].density,db);
-          });
-          const t=da.div(da.sub(db).add(1e-6));
-          return pa.add(pb.sub(pa).mul(t));
+    await flightRenderer.computeAsync(densityFn().compute(numPoints));
+
+    const mcFn=Fn(()=>{
+      const cellIdx=instanceIndex;
+      const slot=cellIdx.div(uint(C3)), lc=cellIdx.mod(uint(C3));
+      const bc=brickNode.element(slot);
+      const cz=lc.div(uint(B*B));
+      const crem=lc.mod(uint(B*B));
+      const cy=crem.div(uint(B));
+      const cx=crem.mod(uint(B));
+      const ox=bc.x.mul(uint(B)), oy=bc.y.mul(uint(B)), oz=bc.z.mul(uint(B));
+      const readCorner=(i)=>{
+        const dx=i&1, dy=(i>>1)&1, dz=(i>>2)&1;
+        const lx=cx.add(dx), ly=cy.add(dy), lz=cz.add(dz);
+        const gx=lx.add(ox), gy=ly.add(oy), gz=lz.add(oz);
+        const flat=slot.mul(uint(P3)).add(lx).add(ly.mul(uint(BP))).add(lz.mul(uint(BP*BP)));
+        return {
+          pos: vec3(gx.toFloat().mul(CELL).sub(HALF), gy.toFloat().mul(CELL).sub(HALF), gz.toFloat().mul(CELL).sub(HALF)),
+          density: densityNode.element(flat),
         };
-        const v0=interp(e0), v1=interp(e1), v2=interp(e2);
-        const nrm=v1.sub(v0).cross(v2.sub(v0)).normalize();
-        const baseC=new THREE.Color(colorHex);
-        const rockC=baseC.clone().multiplyScalar(0.65);
-        const snowC=new THREE.Color(0xeef2f6);
-        const colorFor=(v)=>{
-          const up=v.normalize();
-          const slope=float(1).sub(nrm.dot(up).clamp(0,1));
-          const height=v.length().sub(radius);
-          // Snow threshold matches the new ~1.2%-of-radius relief scale
-          // (was radius*0.09, tuned to the old 12% relief — with the
-          // scale fix earlier this session that height was never reached
-          // by anything, so the whole snow-cap blend had gone silently
-          // dead). ~75% up the new relief range, same proportion as before.
-          if(_earthPaint){
-            // (v132) Earth: the real cover + glacier maps looked up at this vertex — no altitude/latitude snow (#53
-            // painted the Himalaya, Andes and Rockies white); ice only where the glacier mask is.
-            const la=up.y.clamp(-1,1).asin().mul(180/Math.PI), lo=atan2(up.z.negate(),up.x).mul(180/Math.PI);
-            const n=mx_fractal_noise_float(up.mul(180.0).add(seedU),2,2.0,0.5).mul(0.5).add(0.5);
-            const nf=mx_fractal_noise_float(up.mul(900.0).add(seedU),2,2.0,0.5).mul(0.5).add(0.5);
-            return DMEarthPaint.tsl(la,lo,slope,n,nf);
-          }
-          const lat01=up.y.abs();
-          const snowT=height.sub(radius*0.011).div(radius*0.003).clamp(0,1).mul(float(0.55).add(lat01.mul(0.45)));
-          let c=vec3(baseC.r,baseC.g,baseC.b);
-          c=mix(c,vec3(rockC.r,rockC.g,rockC.b),slope.smoothstep(0.35,0.75));
-          c=mix(c,vec3(snowC.r,snowC.g,snowC.b),snowT);
-          return c;
-        };
-        const col=colorFor(v0).add(colorFor(v1)).add(colorFor(v2)).div(3.0);
-        const slot=i.mul(3);
-        vertexNode.element(outBase.add(slot)).assign(v0);
-        vertexNode.element(outBase.add(slot).add(1)).assign(v1);
-        vertexNode.element(outBase.add(slot).add(2)).assign(v2);
-        // shading leans on the sphere's own normal so a coarse far mesh reads
-        // as a round world, not facets; the face normal keeps a little relief
-        normalNode.element(outBase.add(slot)).assign(v0.normalize().add(nrm.mul(0.35)).normalize());
-        normalNode.element(outBase.add(slot).add(1)).assign(v1.normalize().add(nrm.mul(0.35)).normalize());
-        normalNode.element(outBase.add(slot).add(2)).assign(v2.normalize().add(nrm.mul(0.35)).normalize());
-        colorNode.element(outBase.add(slot)).assign(col);
-        colorNode.element(outBase.add(slot).add(1)).assign(col);
-        colorNode.element(outBase.add(slot).add(2)).assign(col);
+      };
+      const c0=readCorner(0),c1=readCorner(1),c2=readCorner(2),c3=readCorner(3),
+            c4=readCorner(4),c5=readCorner(5),c6=readCorner(6),c7=readCorner(7);
+      const corners=[c0,c1,c2,c3,c4,c5,c6,c7];
+      const caseIdx=int(0).toVar();
+      corners.forEach((c,i)=>{ If(c.density.lessThan(0.0), ()=>{ caseIdx.assign(caseIdx.bitOr(int(1<<i))); }); });
+      const outBase=cellIdx.mul(uint(MAX_TRIS*3));
+      Loop(MAX_TRIS*3, ({i})=>{
+        vertexNode.element(outBase.add(uint(i))).assign(vec3(0,0,0));
+        normalNode.element(outBase.add(uint(i))).assign(vec3(0,1,0));
+        colorNode.element(outBase.add(uint(i))).assign(vec3(0,0,0));
+      });
+      Loop(MAX_TRIS, ({i})=>{
+        const triBase=caseIdx.mul(int(16)).add(i.mul(3));
+        const e0=triTableStorage.element(triBase);
+        If(e0.greaterThanEqual(0), ()=>{
+          const e1=triTableStorage.element(triBase.add(1));
+          const e2=triTableStorage.element(triBase.add(2));
+          const interp=(edge)=>{
+            let pa=corners[0].pos, pb=corners[0].pos, da=corners[0].density, db=corners[0].density;
+            EdgeVertexIndices.forEach(([va,vb],k)=>{
+              const match=edge.equal(int(k));
+              pa=select(match,corners[va].pos,pa); pb=select(match,corners[vb].pos,pb);
+              da=select(match,corners[va].density,da); db=select(match,corners[vb].density,db);
+            });
+            const t=da.div(da.sub(db).add(1e-6));
+            return pa.add(pb.sub(pa).mul(t));
+          };
+          const v0=interp(e0), v1=interp(e1), v2=interp(e2);
+          const nrm=v1.sub(v0).cross(v2.sub(v0)).normalize();
+          const colorFor=(v)=>_colorAt(v,nrm);
+          const col=colorFor(v0).add(colorFor(v1)).add(colorFor(v2)).div(3.0);
+          const slot=i.mul(3);
+          vertexNode.element(outBase.add(slot)).assign(v0);
+          vertexNode.element(outBase.add(slot).add(1)).assign(v1);
+          vertexNode.element(outBase.add(slot).add(2)).assign(v2);
+          // shading leans on the sphere's own normal so a coarse far mesh reads
+          // as a round world, not facets; the face normal keeps a little relief
+          normalNode.element(outBase.add(slot)).assign(v0.normalize().add(nrm.mul(0.35)).normalize());
+          normalNode.element(outBase.add(slot).add(1)).assign(v1.normalize().add(nrm.mul(0.35)).normalize());
+          normalNode.element(outBase.add(slot).add(2)).assign(v2.normalize().add(nrm.mul(0.35)).normalize());
+          colorNode.element(outBase.add(slot)).assign(col);
+          colorNode.element(outBase.add(slot).add(1)).assign(col);
+          colorNode.element(outBase.add(slot).add(2)).assign(col);
+        });
       });
     });
-  });
-  await flightRenderer.computeAsync(mcFn().compute(numCells));
+    await flightRenderer.computeAsync(mcFn().compute(numCells));
 
-  const geo=new THREE.BufferGeometry();
-  geo.setAttribute('position',vertexBuf);
-  geo.setAttribute('normal',normalBuf);
-  geo.setAttribute('color',colorBuf);
-  geo.boundingSphere=new THREE.Sphere(new THREE.Vector3(0,0,0),HALF*1.5);
-  const mat=new THREE.MeshStandardNodeMaterial({vertexColors:true,roughness:0.92,metalness:0.02});
-  const planetMcMesh=new THREE.Mesh(geo,mat);
-  planetMcMesh.name='JOTS_GpuPlanetMC';
-  planetMcMesh.userData.jotsGpuMc=true;
-  planetMcMesh.userData.sparse=_plan?{N,B,bricks:SLOTS,of:_plan.total,cells:numCells,denseCells:N*N*N,ms:+(performance.now()-_svT0).toFixed(1)}:null;
-  try{ if(_SV) _SV.noteBuild(kind||'world',planetMcMesh.userData.sparse); }catch(e){}
-  if(GFX && GFX.shadows){ planetMcMesh.receiveShadow=true; planetMcMesh.castShadow=true; }
+    const geo=new THREE.BufferGeometry();
+    geo.setAttribute('position',vertexBuf);
+    geo.setAttribute('normal',normalBuf);
+    geo.setAttribute('color',colorBuf);
+    geo.boundingSphere=new THREE.Sphere(new THREE.Vector3(0,0,0),HALF*1.5);
+    const mat=new THREE.MeshStandardNodeMaterial({vertexColors:true,roughness:0.92,metalness:0.02});
+    planetMcMesh=new THREE.Mesh(geo,mat);
+    planetMcMesh.name='JOTS_GpuPlanetMC';
+    planetMcMesh.userData.jotsGpuMc=true;
+    planetMcMesh.userData.sparse=_plan?{N,B,bricks:SLOTS,of:_plan.total,cells:numCells,denseCells:N*N*N,ms:+(performance.now()-_svT0).toFixed(1)}:null;
+    try{ if(_SV) _SV.noteBuild(kind||'world',planetMcMesh.userData.sparse); }catch(e){}
+    if(GFX && GFX.shadows){ planetMcMesh.receiveShadow=true; planetMcMesh.castShadow=true; }
+
+  }
   group.add(planetMcMesh);
 
   if(hasAtmosphere){
@@ -12438,6 +12619,27 @@ function _dmCompileObject(obj){
     }catch(e){ fin(); }
   });
 }
+// ── (v136) per-brick LOD bookkeeping: which worlds stream, and their per-frame tick ──
+function _svLodAllowed(){ return !!(SV_LOD.on&&window.DMSparseVox&&DMSparseVox.lodSelect&&_isRealWebGPU(flightRenderer)); }
+const _svTmpV=new THREE.Vector3();
+function _svCamLocal(b){ try{ const m=b._svLodMesh||b.mesh; m.updateWorldMatrix(true,false); return m.worldToLocal(_svTmpV.copy(STATE.flight.pos)).clone(); }catch(e){ return null; } }
+function _svLodTick(){
+  try{
+    let budget=SV_LOD.budgetMs;
+    // Auto preset only: shrink the streaming budget when frames run long (never touches fixed presets)
+    try{ if(GFX&&GFX.preset==='auto'&&window.DMPerf&&DMPerf.on){ const st=DMPerf.stats(); if(st.avgMs>40) budget=1; } }catch(e){}
+    for(const b of celestialBodies){ if(!b._svLod||!b._svLodMesh) continue; const c=_svCamLocal(b); if(c) b._svLod.update(c,budget); }
+  }catch(e){}
+}
+function _svLodWants(b){ const lod=celestialBodies.filter(x=>x._svLod&&x!==b); if(lod.length<SV_LOD.maxBodies) return true; const d=b.mesh.position.distanceTo(STATE.flight.pos); return lod.some(x=>x.mesh.position.distanceTo(STATE.flight.pos)>d); }
+// at most SV_LOD.maxBodies worlds hold a brick pool; the farthest extra one drops back to a static 'med' mesh
+function _svLodEvict(keep){
+  const lod=celestialBodies.filter(b=>b._svLod);
+  if(lod.length<=SV_LOD.maxBodies) return;
+  lod.sort((a,b)=>b.mesh.position.distanceTo(STATE.flight.pos)-a.mesh.position.distanceTo(STATE.flight.pos));
+  const far=lod.find(b=>b!==keep); if(!far) return;
+  far._svLod=null; far._svLodMesh=null; far.mcTier='med'; far._mcLodT=0;   // the normal tier pass rebuilds it (static) at its distance's tier
+}
 async function upgradePlanetLOD(dt){
   if(_lodPlanetBusy)return; // one rebuild in flight at a time — avoid GPU contention
   if(!STATE.flight||!STATE.flight.pos)return;
@@ -12448,10 +12650,13 @@ async function upgradePlanetLOD(dt){
     await upgradeWebGLPlanetLOD();
     return;
   }
+  // (v136) bodies on per-brick LOD stream their bricks every frame (budgeted) — no tier rebuilds for them
+  _svLodTick();
   let target=null,targetDist=Infinity;
   for(let i=0;i<celestialBodies.length;i++){
     const b=celestialBodies[i];
     if(!b.isProcedural||!b.mesh)continue;
+    if(b._svLod)continue;
     if(_MC_TIER_RANK[b.mcTier]>=2)continue; // already at 'high' — never rebuilds again for this body
     const dist=b.mesh.position.distanceTo(STATE.flight.pos);
     const tier=_mcTierFor(dist,b.mcRadius);
@@ -12471,7 +12676,10 @@ async function upgradePlanetLOD(dt){
   const b=target, newTier=b._wantTier, newRes=_mcTierResTable()[newTier];
   b._mcLodT=performance.now();
   try{
-    const newGroup=await buildProceduralPlanetMesh(b.mcRadius,b.mcSeed,b.mcColor,b.mcHasAtm,newRes,b.mcKind);
+    // (v136) the 'high' step goes onto per-brick LOD (ui/dm-sparsevox.js) when allowed: from then on the world streams
+    // its bricks around the camera instead of ever being rebuilt whole
+    const _lod=newTier==='high'&&_svLodAllowed()&&_svLodWants(b);
+    const newGroup=await buildProceduralPlanetMesh(b.mcRadius,b.mcSeed,b.mcColor,b.mcHasAtm,newRes,b.mcKind,_lod?{lod:true,res:newRes,cam:_svCamLocal(b)}:null);
     // compile the new detail level hidden, beside the old one, so the swap never stalls the frame
     newGroup.visible=false; newGroup.position.copy(b.mesh.position); newGroup.rotation.copy(b.mesh.rotation);
     flightScene.add(newGroup);
@@ -12489,8 +12697,10 @@ async function upgradePlanetLOD(dt){
     _disposeObject3D(oldGroup);
     b.mesh=newGroup;
     b.mcRes=newRes;b.mcTier=newTier;
+    { let lm=null; newGroup.traverse(m=>{ if(m.userData&&m.userData.svLod) lm=m; }); b._svLod=lm?lm.userData.svLod:null; b._svLodMesh=lm; }
     if(b._wm) _applyWorldMapToFlightBody(b,b._wm);   // keep wearing its map
     if(b.name==='Earth')earthMesh=newGroup;
+    if(b._svLod) _svLodEvict(b);
   }catch(e){
     console.warn('[planet LOD] rebuild failed for',b.name,'at tier',newTier,'-',e.message,e);
   }finally{
@@ -22307,7 +22517,7 @@ function _surfMcResForTier(tier){
 
 /** Trilinear sample of the GPU density field (negative = solid). */
 function sampleSurfDensityAt(wx, wy, wz){
-  const info = TERRAIN.mcGridInfo, arr = TERRAIN.mcDensityArray;
+  const info = TERRAIN.mcGridInfo; let arr = TERRAIN.mcDensityArray;
   if(!info || !arr) return 1;
   const {GRID, CELL, originX, originY, originZ} = info;
   let gx=(wx-originX)/CELL, gy=(wy-originY)/CELL, gz=(wz-originZ)/CELL;
@@ -22318,6 +22528,7 @@ function sampleSurfDensityAt(wx, wy, wz){
   const gx1=Math.min(gx0+1,GRID-1), gy1=Math.min(gy0+1,GRID-1), gz1=Math.min(gz0+1,GRID-1);
   const fx=gx-gx0, fy=gy-gy0, fz=gz-gz0;
   const idx=(x,y,z)=> x + y*GRID + z*GRID*GRID;
+  if(arr.isView){ const g=arr.get; arr={}; for(const [x,y,z] of [[gx0,gy0,gz0],[gx1,gy0,gz0],[gx0,gy1,gz0],[gx1,gy1,gz0],[gx0,gy0,gz1],[gx1,gy0,gz1],[gx0,gy1,gz1],[gx1,gy1,gz1]]){ const i=idx(x,y,z); arr[i]=g(i); } }
   const c000=arr[idx(gx0,gy0,gz0)], c100=arr[idx(gx1,gy0,gz0)];
   const c010=arr[idx(gx0,gy1,gz0)], c110=arr[idx(gx1,gy1,gz0)];
   const c001=arr[idx(gx0,gy0,gz1)], c101=arr[idx(gx1,gy0,gz1)];
@@ -22535,8 +22746,11 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
     const densityArrBuf = await surfRenderer.getArrayBufferAsync(densityBuf);
     densArr = new Float32Array(densityArrBuf);
     const _sparseArr = densArr;
-    // bricks the band skipped are plainly air above / rock below the column height
-    if(_plan) densArr = DMSparseVox.scatter(_plan, _sparseArr, GRID, (gx,gy,gz)=>(gy*CELL+oY)-hcol[gx+gz*GRID]);
+    // bricks the band skipped are plainly air above / rock below the column height.
+    // (v136) no sparse->dense copy: collision and the fragment cleaner read a dense-indexed VIEW of the bricks
+    // (DMSparseVox.View); only if a cleaner write lands outside every brick (spill) is the old dense copy made.
+    const _fill=(gx,gy,gz)=>(gy*CELL+oY)-hcol[gx+gz*GRID];
+    if(_plan) densArr = DMSparseVox.View(_plan, _sparseArr, GRID, _fill);
     // Clean the field before meshing: floating cave/overhang pieces either
     // join the main ground (if they nearly touch) or are removed, so the
     // mesh is one solid and collision (which reads this same grid) matches.
@@ -22544,7 +22758,12 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
       const st=mcCleanFragments(densArr, GRID, 2, 6);
       TERRAIN.mcFragments=st;
       if(st.joined||st.removed){
-        if(_plan){ DMSparseVox.gather(_plan, densArr, _sparseArr, GRID); if(densityBuf.array&&densityBuf.array.length===_sparseArr.length){ densityBuf.array.set(_sparseArr); densityBuf.needsUpdate=true; } }
+        if(_plan){
+          if(densArr.spill){   // rare: a bridge/removal outside the band — redo on a dense copy (old path)
+            const dn=DMSparseVox.scatter(_plan,_sparseArr,GRID,_fill); mcCleanFragments(dn,GRID,2,6); DMSparseVox.gather(_plan,dn,_sparseArr,GRID); densArr=dn;
+          }
+          if(densityBuf.array&&densityBuf.array.length===_sparseArr.length){ densityBuf.array.set(_sparseArr); densityBuf.needsUpdate=true; }
+        }
         else if(densityBuf.array&&densityBuf.array.length===densArr.length){ densityBuf.array.set(densArr); densityBuf.needsUpdate=true; }
         console.log('[GPU-MC] fragments: joined',st.joined,'· removed',st.removed,'('+st.removedCells+' cells) · bridged',st.bridgedCells,'cells');
       }
@@ -22746,12 +22965,14 @@ const MC_EDGE_CORNERS=[
 // body is joined to it by filling the run in between; any other floating
 // piece (and any speck under `minCells`) is turned to air.
 function mcCleanFragments(d, G, gap, minCells){
+  // (v136) d is a Float32Array or a DMSparseVox.View (dense-indexed view over the sparse bricks — no dense copy)
+  const V = d && d.isView, dg = V ? d.get : (i) => dg(i), ds = V ? d.set : (i, v) => { dg(i) = v; };
   gap = gap || 2; minCells = minCells || 6;
   const R = gap + 1;
   const N = G * G * G, lab = new Uint8Array(N), stack = new Int32Array(N);
   const GG = G * G;
   let sp = 0;
-  const push = i => { if (!lab[i] && d[i] < 0) { lab[i] = 1; stack[sp++] = i; } };
+  const push = i => { if (!lab[i] && dg(i) < 0) { lab[i] = 1; stack[sp++] = i; } };
   for (let z = 0; z < G; z++) for (let x = 0; x < G; x++) push((z * G) * G + x);          // floor y=0
   for (let y = 0; y < G; y++) for (let t = 0; t < G; t++) {                                  // sides
     push((0 * G + y) * G + t); push(((G - 1) * G + y) * G + t); push((t * G + y) * G + 0); push((t * G + y) * G + G - 1);
@@ -22760,21 +22981,21 @@ function mcCleanFragments(d, G, gap, minCells){
     while (sp) {
       const i = stack[--sp], x = i % G, y = ((i / G) | 0) % G, z = (i / GG) | 0;
       const nb = [x > 0 ? i - 1 : -1, x < G - 1 ? i + 1 : -1, y > 0 ? i - G : -1, y < G - 1 ? i + G : -1, z > 0 ? i - GG : -1, z < G - 1 ? i + GG : -1];
-      for (const j of nb) if (j >= 0 && !lab[j] && d[j] < 0) { lab[j] = mark; stack[sp++] = j; }
+      for (const j of nb) if (j >= 0 && !lab[j] && dg(j) < 0) { lab[j] = mark; stack[sp++] = j; }
     }
   };
   flood(1);
   let joined = 0, removed = 0, removedCells = 0, bridgedCells = 0;
   const cells = [];
   for (let s = 0; s < N; s++) {
-    if (lab[s] || d[s] >= 0) continue;
+    if (lab[s] || dg(s) >= 0) continue;
     // collect this floating piece
     cells.length = 0; lab[s] = 2; stack[sp++] = s;
     while (sp) {
       const i = stack[--sp]; cells.push(i);
       const x = i % G, y = ((i / G) | 0) % G, z = (i / GG) | 0;
       const nb = [x > 0 ? i - 1 : -1, x < G - 1 ? i + 1 : -1, y > 0 ? i - G : -1, y < G - 1 ? i + G : -1, z > 0 ? i - GG : -1, z < G - 1 ? i + GG : -1];
-      for (const j of nb) if (j >= 0 && !lab[j] && d[j] < 0) { lab[j] = 2; stack[sp++] = j; }
+      for (const j of nb) if (j >= 0 && !lab[j] && dg(j) < 0) { lab[j] = 2; stack[sp++] = j; }
     }
     // close to the main body? find the nearest main cell within `gap` and fill the straight run between
     let best = null, bd = 1e9;
@@ -22792,17 +23013,17 @@ function mcCleanFragments(d, G, gap, minCells){
       for (let k = 0; k <= steps; k++) {
         const X = Math.round(x0 + (x1 - x0) * k / steps), Y = Math.round(y0 + (y1 - y0) * k / steps), Z = Math.round(z0 + (z1 - z0) * k / steps);
         const j = (Z * G + Y) * G + X;
-        if (d[j] >= 0) { d[j] = -0.5; bridgedCells++; }
+        if (dg(j) >= 0) { ds(j, -0.5); bridgedCells++; }
         // thicken the bridge one cell across so the mesh closes around it
         for (const [ox, oz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
           const qx = X + ox, qz = Z + oz; if (qx < 0 || qz < 0 || qx >= G || qz >= G) continue;
-          const q = (qz * G + Y) * G + qx; if (d[q] >= 0) { d[q] = -0.25; bridgedCells++; }
+          const q = (qz * G + Y) * G + qx; if (dg(q) >= 0) { ds(q, -0.25); bridgedCells++; }
         }
       }
       for (const i of cells) lab[i] = 1;
       joined++;
     } else {
-      for (const i of cells) { d[i] = Math.max(0.5, -d[i]); lab[i] = 3; }
+      for (const i of cells) { ds(i, Math.max(0.5, -dg(i))); lab[i] = 3; }
       removed++; removedCells += cells.length;
     }
   }
