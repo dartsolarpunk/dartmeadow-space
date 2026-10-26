@@ -12630,8 +12630,10 @@ function _dmCompileObject(obj){
 }
 // ── (v136) per-brick LOD bookkeeping: which worlds stream, and their per-frame tick ──
 function _svLodAllowed(){ return !!(SV_LOD.on&&window.DMSparseVox&&DMSparseVox.lodSelect&&_isRealWebGPU(flightRenderer)); }
-const _svTmpV=new THREE.Vector3();
-function _svCamLocal(b){ try{ const m=b._svLodMesh||b.mesh; m.updateWorldMatrix(true,false); return m.worldToLocal(_svTmpV.copy(STATE.flight.pos)).clone(); }catch(e){ return null; } }
+// (v139) lazy: THREE is a module global that isn't defined yet while this classic script runs — a top-level
+// `new THREE.Vector3()` here threw and aborted the rest of the script (every later let/const stuck in TDZ).
+let _svTmpV=null;
+function _svCamLocal(b){ try{ const m=b._svLodMesh||b.mesh; m.updateWorldMatrix(true,false); return m.worldToLocal((_svTmpV||(_svTmpV=new THREE.Vector3())).copy(STATE.flight.pos)).clone(); }catch(e){ return null; } }
 function _svLodTick(){
   try{
     let budget=SV_LOD.budgetMs;
