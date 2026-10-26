@@ -7529,8 +7529,7 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
   // possible); the narrow band is widened by the layer's bound so no brick that could hold rock is skipped. ?mat=0 = off.
   const _rockPr=(window.DMRock&&DMRock.on)?DMRock.presetFor(kind):null;
   const _rockRS=radius*0.012;
-  const _rockD=(_rockPr&&_rockPr.disp)?((p)=>DMRock.displaceTSL(p,radius,_rockRS,_rockPr,seedU).mul(_rockRS)):null;
-  if(_rockD){ const pad=DMRock.displacePad(_rockPr)*_rockRS; _relief=Object.assign({},_relief,{min:_relief.min-pad,max:_relief.max+pad,band:(_relief.band||0)+pad}); }
+  const _rockD=null; // orbital rock is colour+bump only (fix b): globe relief must match the landed patch; density rock lives only on patch cliffs
   let planetMcMesh;
   const HALF=radius*1.3;
   const _lodOn=!!(lodOpts&&lodOpts.lod&&_SV&&_SV.lodSelect);
