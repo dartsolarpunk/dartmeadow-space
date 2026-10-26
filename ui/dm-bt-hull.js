@@ -1,4 +1,4 @@
-/* (v139) Bird Temple hull + Ariel look (overrides only — the GLB is untouched).
+/* (v144) Bird Temple hull + Ariel look (overrides only — the GLB is untouched).
  *   Hull: the 'Hull' node's (untextured) materials become brushed metal (metalness .55, roughness .38) with the baked
  *     'out' panorama (bake/bt-refl-out.webp) as their environment, so the metal has something to reflect; it receives the
  *     Sun's shadow (BTL sets receiveShadow) and Ariel + the board cast it (they already castShadow).

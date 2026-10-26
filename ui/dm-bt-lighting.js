@@ -12,7 +12,7 @@
  *   The pool (altar, cube glow, 2 fills, caustic) is fixed and created once before the warm-up compile, so nothing ever
  *   changes the light key. Only the star's directional casts shadows; at the temple its map is CACHED (re-rendered only
  *   when the star direction, the ship or Ariel move past a small tolerance).
- * (v139) BAKED GLASS: the live cube probe, viewport refraction, caustic cookie and the window joint (pane) solve are gone.
+ * (v144) BAKED GLASS: the live cube probe, viewport refraction, caustic cookie and the window joint (pane) solve are gone.
  *   Each room has a Cycles-baked equirect reflection (bake/bt-refl-<room>.webp, tools/bake/lm_cubes.py) looked up box-projected
  *   from a flat, camera-facing normal (the GLB's window normals are unreliable). Panes stay clear (≈10% opaque head-on).
  *   Only the Sun (star) shadow is live. Old notes below kept for history.
@@ -77,7 +77,7 @@
   // or outside-blind probe the panes read as flat pale panels). Now: alpha-blended, Fresnel opacity (≈8% head-on, ~85% grazing),
   // refraction = the opaque pass behind the pane (viewport texture, offset by the normal) on tier ≥ 1 or plain see-through on
   // tier 0, reflection = the cube probe weighted by Fresnel and only once all 6 faces are filled, plus animated caustic glints.
-  // (v139) baked reflections: one texture per room, filled when bake/rooms.json + webps arrive (lazy, near the temple)
+  // (v144) baked reflections: one texture per room, filled when bake/rooms.json + webps arrive (lazy, near the temple)
   let reflU = null; const REFL = { rooms: null, tex: {}, loading: false };
   function reflTex(k) {
     const THREE = T(); if (REFL.tex[k]) return REFL.tex[k];
@@ -175,7 +175,7 @@
   BTL.apply = function (root, inside) { const n = apply(root, inside); if (root === (typeof BIRD_TEMPLE !== 'undefined' && BIRD_TEMPLE.group)) BTL.ready = true; return n; };
 
   // ── compile everything this module adds, for both the canvas and the probe target ──
-  async function compileProbe() { /* (v139) no probe target any more: the canvas compile covers the glass */ }
+  async function compileProbe() { /* (v144) no probe target any more: the canvas compile covers the glass */ }
   function renderCaustic() {}
   BTL.warm = async function () {
     build(); const r = window.flightRenderer || (typeof flightRenderer !== 'undefined' ? flightRenderer : null); if (!r) return;
@@ -186,12 +186,12 @@
   BTL.warmTemple = async function (r, scene) { try { const t0 = performance.now(); await compileProbe(r, scene); BTL._warmedT = (BTL._warmedT || 0) + 1; BTL._warmedTms = Math.round(performance.now() - t0); } catch (e) {} };
 
 
-  BTL.paneSolve = null;   // (v139) removed: baked glass
+  BTL.paneSolve = null;   // (v144) removed: baked glass
   function sigMoved(S, i, x, y, z, tol) { return !(Math.abs(S[i] - x) <= tol && Math.abs(S[i + 1] - y) <= tol && Math.abs(S[i + 2] - z) <= tol); }
   function sigStore(S, i, x, y, z) { S[i] = x; S[i + 1] = y; S[i + 2] = z; }
   BTL.cfg.minFill = 1.4;   // (v118) was 0.6: the lamp pools did not read in the bay / below deck
   BTL.cfg.poolR2 = 225;   // reading-light floor: a dark/switched-off room still gets this much from its nearest lamp
-  function setFill(F, e, k) { if (e) { F.position.setFromMatrixPosition(e.mw); F.color.copy(e.src.color); const ud = e.src.userData || {}, mf = ud.btMinFill != null ? ud.btMinFill : BTL.cfg.minFill; F.intensity = Math.max(e.on || 0, mf) * k * (ud.btFillK != null ? ud.btFillK : 1); F.distance = Math.max(3, e.src.distance * 1.2); F.updateMatrixWorld(); } else F.intensity = 0; }   // (v139) per-room floor / mode scale (ui/dm-bt-roomlights.js)
+  function setFill(F, e, k) { if (e) { F.position.setFromMatrixPosition(e.mw); F.color.copy(e.src.color); const ud = e.src.userData || {}, mf = ud.btMinFill != null ? ud.btMinFill : BTL.cfg.minFill; F.intensity = Math.max(e.on || 0, mf) * k * (ud.btFillK != null ? ud.btFillK : 1); F.distance = Math.max(3, e.src.distance * 1.2); F.updateMatrixWorld(); } else F.intensity = 0; }   // (v144) per-room floor / mode scale (ui/dm-bt-roomlights.js)
   const PROBE_REFRESH_MS = 4000;
   let probeAt = null, dirty = 63, lastFull = 0, lastFaceFrame = -99, casters = null; const holdA = [], holdN = [];
   const _upV = { v: null }; function _up(g) { const THREE = T(); if (!_upV.v) _upV.v = new THREE.Vector3(); g.getWorldQuaternion(_q); return _upV.v.set(0, 1, 0).applyQuaternion(_q); }
@@ -209,7 +209,7 @@
     if (!g.visible) { for (const L of [fills[0], fills[1], altar, cubeGlow]) L.intensity = 0; if (bounce) bounce.intensity = 0; return; }
     { const nw = performance.now(); if (nw - lastSig > 1000) { lastSig = nw; try { recheck(); } catch (e) {} } }
     g.updateMatrixWorld(); g.getWorldPosition(_a);
-    if (reflU) { const gr = BIRD_TEMPLE._glb || g; gr.updateWorldMatrix(true, false); reflU.toLocal.value.copy(gr.matrixWorld).invert(); }   // (v139) baked reflections follow the ship
+    if (reflU) { const gr = BIRD_TEMPLE._glb || g; gr.updateWorldMatrix(true, false); reflU.toLocal.value.copy(gr.matrixWorld).invert(); }   // (v144) baked reflections follow the ship
     const R0 = (BIRD_TEMPLE._R0 || 10);
     const camW = BTL._cw || (BTL._cw = new THREE.Vector3()); camW.setFromMatrixPosition(cam.matrixWorld);
     const camNear = camW.distanceTo(_a) < R0 * 3;
@@ -249,7 +249,7 @@
     try { const an = BIRD_TEMPLE._altarNode || (BIRD_TEMPLE._altarNode = (typeof shipNode === 'function' && shipNode(g, 'Altar Group')) || null);
       if (an) { an.updateWorldMatrix(true, false); altar.position.setFromMatrixPosition(an.matrixWorld); altar.position.addScaledVector(_up(g), 0.45); altar.intensity = 6; altar.updateMatrixWorld(); } else altar.intensity = 0; } catch (e) { altar.intensity = 0; }
     try { const cr = (typeof BT_CUBES !== 'undefined') && BT_CUBES.root; if (cr && cr.visible) { cr.updateWorldMatrix(true, false); cubeGlow.position.setFromMatrixPosition(cr.matrixWorld); cubeGlow.intensity = 3; cubeGlow.updateMatrixWorld(); } else cubeGlow.intensity = 0; } catch (e) { cubeGlow.intensity = 0; }
-    // 3) (v139) glass: baked — only the inside/outside switch of the reflection set
+    // 3) (v144) glass: baked — only the inside/outside switch of the reflection set
     if (reflU) reflU.inside.value = aboard ? 1 : 0;
     // (v118) bounce probe: SH from the star direction in the ship frame. L0 = warm diffuse bounce (sun colour × deck albedo),
     // L1 points AWAY from the star (light comes back up off the lit floors / in through the windows' far walls). Tier-scaled.
