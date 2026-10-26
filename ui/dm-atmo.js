@@ -139,7 +139,7 @@
       exposureScale: uniform(1 / P.top), // coefficients are per "top" length so they are scale-free
       rot: uniform(new THREE.Matrix4()),       // world -> planet-local rotation (terrain map + storms turn with the planet)
       locC: uniform(new THREE.Vector3(0, 0, 1)), locOn: uniform(0), // local LOD height map: centre x,z (world) + span
-      histK: uniform(0), skyW: uniform(1), aerialW: uniform(1),  // weights: rays that reach empty sky / that hit geometry
+      histK: uniform(0), skyW: uniform(1), aerialW: uniform(1), gasTexel: uniform(new THREE.Vector2(1 / 960, 1 / 540)),  // weights: rays that reach empty sky / that hit geometry
       pixA: uniform(0.001),                                       // (v123) radians per pixel (sea wave-layer footprint)
       wavePh: [uniform(new THREE.Vector4()), uniform(new THREE.Vector4()), uniform(new THREE.Vector4())]
     };
@@ -444,7 +444,23 @@
         return ok.select(vec4(Lraw, dot(Tr, vec3(1.0 / 3.0))), vec4(0.0, 0.0, 0.0, 1.0));
       }
       let Lf = Lraw, Tf = Tr;
-      if (mode === 'composite') { const g = gasTex.sample(uv); Lf = g.rgb; Tf = vec3(g.a); }
+      if (mode === 'composite') {
+        // (v130) depth-aware (joint-bilateral) upsample of the half-res gas: of the 4 half-res texels round this pixel,
+        // those whose depth differs from this pixel's are dropped, so the planet limb and terrain silhouettes stay sharp
+        // instead of the gas bleeding a soft halo across them (a plain bilinear fetch did).
+        const hp = uv.div(U.gasTexel).sub(0.5), f = fract(hp), c0 = hp.sub(f).add(0.5);
+        const kD = logDepth ? 600.0 : 4000.0;
+        const acc = vec4(0.0).toVar(), wsum = float(0.0).toVar();
+        [[0, 0], [1, 0], [0, 1], [1, 1]].forEach(([ox, oy]) => {
+          const tuv = c0.add(vec2(ox, oy)).mul(U.gasTexel);
+          const wb = (ox ? f.x : float(1.0).sub(f.x)).mul(oy ? f.y : float(1.0).sub(f.y)).add(1e-3);
+          const wd = exp(abs(sceneDepth.sample(tuv).r.sub(dRaw)).mul(-kD));
+          const w = wb.mul(wd);
+          acc.addAssign(gasTex.sample(tuv).mul(w)); wsum.addAssign(w);
+        });
+        const g = wsum.greaterThan(1e-4).select(acc.div(wsum), gasTex.sample(uv));
+        Lf = g.rgb; Tf = vec3(g.a);
+      }
       const wgt = sceneDist.greaterThanEqual(1e19).select(U.skyW, U.aerialW);
       const outC = mix(base, base.mul(Tf).add(Lf), wgt);
       const sC = dot(outC, vec3(1.0));
@@ -468,6 +484,7 @@
       U.camWorld.value.copy(camera.matrixWorld);
       U.near.value = camera.near; U.far.value = camera.far;
       try { const hpx = (renderer.domElement && renderer.domElement.height) || 1080; U.pixA.value = 2 / (Math.max(camera.projectionMatrix.elements[5], 1e-6) * hpx); } catch (e) {}
+      try { const de = renderer.domElement; if (de) U.gasTexel.value.set(2 / Math.max(de.width, 2), 2 / Math.max(de.height, 2)); } catch (e) {}
       if (hasSea) updateWaves();
     }
     return {

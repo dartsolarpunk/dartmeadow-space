@@ -7524,9 +7524,9 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
 // frequency/contrast and looked like more Jupiters). bands: sin frequency over latitude; amp: band contrast;
 // swirl: edge turbulence; spot: dark oval (Neptune). Same values drive the WebGL fallback canvas.
 const GIANT_LOOKS={
-  Jupiter:{bands:6.0,amp:1.0,swirl:0.35},
+  Jupiter:{bands:9.0,amp:0.9,swirl:0.07},
   Saturn: {bands:9.0,amp:0.45,swirl:0.12},
-  Uranus: {bands:3.0,amp:0.18,swirl:0.04},
+  Uranus: {bands:3.0,amp:0.18,swirl:0.04,axis:[0,-Math.sin(Math.PI*0.06),Math.cos(Math.PI*0.06)]},   // pole = its ring plane's normal
   Neptune:{bands:4.0,amp:0.6,swirl:0.2,spot:true},
 };
 function buildGasGiantMesh(radius, palette, hasStorm, look){
@@ -7539,9 +7539,10 @@ function buildGasGiantMesh(radius, palette, hasStorm, look){
   const c0=uniform(new THREE.Color(palette[0])), c1=uniform(new THREE.Color(palette[1])),
         c2=uniform(new THREE.Color(palette[2])), c3=uniform(new THREE.Color(palette[3]));
   const lkBands=uniform(look.bands), lkAmp=uniform(look.amp), lkSwirl=uniform(look.swirl), lkSpot=uniform(look.spot?0.85:0);
+  const lkAxis=uniform(new THREE.Vector3(...(look.axis||[0,1,0])).normalize());   // band pole (Uranus: tipped with its rings)
   mat.colorNode = Fn(()=>{
     const p = normalize(positionLocal); // the planet's own frame (world position put every giant's bands/spot at one fixed direction)
-    const lat = p.y.asin(); // -PI/2..PI/2
+    const lat = p.dot(lkAxis).clamp(-1.0,1.0).asin(); // -PI/2..PI/2 about the band pole
     // Scrolling turbulence distorts the latitude input before banding,
     // so band boundaries swirl/wobble over time instead of sitting still.
     const swirl = mx_fractal_noise_float(vec3(p.x.mul(3.0).add(time.mul(0.02)), p.y.mul(3.0), p.z.mul(3.0).add(time.mul(0.015))), 4, 2.0, 0.5);
@@ -7554,10 +7555,10 @@ function buildGasGiantMesh(radius, palette, hasStorm, look){
       // A single slow-drifting turbulent blob standing in for a Great
       // Red Spot-style storm — separate, lower-frequency noise so it
       // reads as one coherent feature rather than more banding noise.
-      const stormCenter = vec3(0.3, -0.15, 0.85);
+      const stormCenter = vec3(0.32, -0.37, 0.87);   // ~22°S, like the Great Red Spot
       const drift = time.mul(0.008);
       const sp = p.sub(vec3(stormCenter.x.add(drift.sin().mul(0.15)), stormCenter.y, stormCenter.z));
-      const stormMask = float(1.0).sub(smoothstep(0.0, 0.35, sp.length())).mul(
+      const stormMask = float(1.0).sub(smoothstep(0.0, 0.2, vec3(sp.x, sp.y.mul(1.9), sp.z).length())).mul(   // an oval, long in longitude
         mx_fractal_noise_float(p.mul(5.0).add(vec3(time.mul(0.03),0,0)),3,2.0,0.5).mul(0.3).add(0.85));
       col = mix(col, vec3(0.85,0.35,0.22), stormMask.clamp(0.0,1.0));
     }
