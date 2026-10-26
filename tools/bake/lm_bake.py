@@ -26,6 +26,11 @@ for p in m['prims']:
     me.polygons.add(len(ind)); me.polygons.foreach_set('loop_start',np.arange(0,ind.size,3,dtype=np.int32)); me.polygons.foreach_set('loop_total',np.full(len(ind),3,np.int32))
     me.update(); L=me.uv_layers.new(name='UV2'); L.data.foreach_set('uv',uv[ind.ravel()].ravel())
     me.polygons.foreach_set('use_smooth',np.ones(len(ind),bool))
+    # (v129) bake with the GLB's own (hard-edge aware) normals: Blender's auto-smooth across xatlas seams/boxes made the blotches
+    nor=d['nor']
+    if np.abs(nor).sum()>0:
+        try: me.normals_split_custom_set_from_vertices([tuple(v) for v in (nor/np.maximum(np.linalg.norm(nor,axis=1,keepdims=True),1e-9))])
+        except Exception as ex: print('custom normals failed',ex)
     o=bpy.data.objects.new(p['file'],me); sc.collection.objects.link(o); me.materials.append(mat(p)); objs.append(o)
 # glTF is Y-up; the raw data is in glTF space — rotate the whole set to Blender Z-up via a parent (the bake is UV-space, so only lighting directions matter)
 root=bpy.data.objects.new('ROOT',None); sc.collection.objects.link(root)
@@ -43,7 +48,7 @@ for k,typ in (('ao','AO'),('irr','DIFFUSE')):
     for M in mats.values(): M.node_tree.nodes['BAKE'].image=img[k]
     t0=time.time()
     if typ=='DIFFUSE': sc.render.bake.use_pass_direct=True; sc.render.bake.use_pass_indirect=True; sc.render.bake.use_pass_color=False
-    sc.render.bake.margin=4; sc.render.bake.use_clear=True
+    sc.render.bake.margin=8; sc.render.bake.use_clear=True
     bpy.ops.object.bake(type=typ, uv_layer='UV2')
     print('BAKED',k,round(time.time()-t0,1),'s',flush=True)
     img[k].filepath_raw=os.path.join(OUT,f'{k}.exr'); img[k].file_format='OPEN_EXR'; img[k].save()
