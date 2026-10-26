@@ -46,23 +46,25 @@
     return o;
   }
   const _o = [0, 0, 0, 0, 0];
-  const mix3 = (A, t) => [A[0][0] + (A[1][0] - A[0][0]) * t, A[0][1] + (A[1][1] - A[0][1]) * t, A[0][2] + (A[1][2] - A[0][2]) * t];
+  // (v135) allocation-free: the CPU ground tiles call this once per vertex (tens of thousands per tile on Ultra);
+  // the v132 version built ~12 small arrays per call and looked the glacier mask up twice — GC churn on the main thread
+  const _c = [0, 0, 0];
+  const mx = (A, t, k) => A[0][k] + (A[1][k] - A[0][k]) * t;
   function ice(lat, lon) { return window.DMEarthIce ? DMEarthIce.at(lat, lon) : 0; }
   function color(lat, lon, slope, n, nf, c) {
     lin(); const w = cover(lat, lon, _o);
-    // fields: two tones by the caller's noise so farmland reads as a patchwork, not one flat green
-    const g = mix3(L.grass, n), f = mix3(L.field, nf), gf = [g[0] * 0.55 + f[0] * 0.45, g[1] * 0.55 + f[1] * 0.45, g[2] * 0.55 + f[2] * 0.45];
-    // (v132) boreal taiga (Canada, Siberia, Scandinavia) is darker conifer green than temperate forest
-    const fb = sm(45, 58, Math.abs(lat)), ft = mix3(L.forest, n), fbo = mix3(L.boreal, n);
-    const T = [mix3(L.desert, n), mix3(L.dirt, nf), gf, [ft[0] + (fbo[0] - ft[0]) * fb, ft[1] + (fbo[1] - ft[1]) * fb, ft[2] + (fbo[2] - ft[2]) * fb], mix3(L.tropic, nf)];
-    let r = 0, gg = 0, b = 0;
-    for (let k = 0; k < 5; k++) { r += T[k][0] * w[k]; gg += T[k][1] * w[k]; b += T[k][2] * w[k]; }
-    // forest cover keeps its canopy on slopes: rock only shows through bare/open cover
-    const rk = mix3(L.rock, nf), tr = sm(0.42, 0.8, slope) * 0.85 * (1 - 0.85 * Math.min(1, w[3] + w[4]));
-    r += (rk[0] - r) * tr; gg += (rk[1] - gg) * tr; b += (rk[2] - b) * tr;
-    const iw = ice(lat, lon);
-    if (iw > 0) { const ic = mix3(L.ice, nf * 0.6 + slope * 0.4), t = iw * (1 - slope * 0.35); r += (ic[0] - r) * t; gg += (ic[1] - gg) * t; b += (ic[2] - b) * t; }
-    return c ? (c.setRGB(r, gg, b), c) : [r, gg, b];
+    const fb = sm(45, 58, Math.abs(lat)), tr = sm(0.42, 0.8, slope) * 0.85 * (1 - 0.85 * Math.min(1, w[3] + w[4]));
+    const iw = ice(lat, lon); api.lastIce = iw;
+    const ti = iw > 0 ? iw * (1 - slope * 0.35) : 0, it = nf * 0.6 + slope * 0.4;
+    for (let k = 0; k < 3; k++) {
+      // fields: two tones by the caller's noise so farmland reads as a patchwork; boreal taiga darker than temperate forest
+      const gf = mx(L.grass, n, k) * 0.55 + mx(L.field, nf, k) * 0.45, ft = mx(L.forest, n, k);
+      let v = mx(L.desert, n, k) * w[0] + mx(L.dirt, nf, k) * w[1] + gf * w[2] + (ft + (mx(L.boreal, n, k) - ft) * fb) * w[3] + mx(L.tropic, nf, k) * w[4];
+      v += (mx(L.rock, nf, k) - v) * tr;          // forest keeps its canopy on slopes: rock only through bare/open cover
+      if (ti > 0) v += (mx(L.ice, it, k) - v) * ti;
+      _c[k] = v;
+    }
+    return c ? (c.setRGB(_c[0], _c[1], _c[2]), c) : [_c[0], _c[1], _c[2]];
   }
   function dataTex(px) {
     const t = new THREE.DataTexture(px, W, H, THREE.RGBAFormat, THREE.UnsignedByteType);
@@ -118,7 +120,7 @@
       .then((b) => createImageBitmap(b, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' }))
       .then(decode).catch((e) => { console.warn('[earth-paint] cover map', e); rs(false); });
   }
-  const api = { ready: false, cover, color, tsl, ice, iceTexture, coverTexture, P,
+  const api = { ready: false, lastIce: 0, cover, color, tsl, ice, iceTexture, coverTexture, P,
     whenReady(ms) { return ready ? Promise.resolve(true) : Promise.race([readyP, new Promise((r) => setTimeout(() => r(false), ms || 6000))]); } };
   window.DMEarthPaint = api;
   load();
