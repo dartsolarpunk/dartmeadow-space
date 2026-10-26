@@ -108,11 +108,118 @@
     return sparse;
   }
 
+
+  // ── Per-brick LOD (v136 crunch-1 part 2) ─────────────────────────────────────────────────────
+  // Octree over the world's cube [-half,half]^3. Every leaf is ONE brick of B³ cells; a leaf at level L
+  // spans B·2^L base cells (base cell = 2·half/(B·2^Lroot)), so every brick costs the same slot size
+  // and near bricks are finer than far ones. A node is refined when the camera is within k node-sizes of
+  // it (and it touches the relief shell [rMin,rMax] padded by one of its own cells), down to level 0;
+  // nodes above `coarsest` are always refined so a far world is never cruder than N_eff = B·2^(Lroot-coarsest).
+  // The leaf budget `maxBricks` is spent nearest-first. Seams between different levels are covered by
+  // skirts in the GPU kernel (index.html).
+  function lodSelect(o) {
+    const B = o.B, Lr = o.rootLevel, half = o.half, base = half * 2 / (B * (1 << Lr));
+    const cam = o.cam || [1e30, 1e30, 1e30], k = o.k || 2.5, coarsest = o.coarsest == null ? Lr : o.coarsest;
+    const maxB = o.maxBricks || 512, out = [];
+    const touches = (x0, y0, z0, w, pad) => {
+      const x1 = x0 + w, y1 = y0 + w, z1 = z0 + w;
+      const cx = Math.max(x0, Math.min(0, x1)), cy = Math.max(y0, Math.min(0, y1)), cz = Math.max(z0, Math.min(0, z1));
+      const dmin = Math.hypot(cx, cy, cz), dmax = Math.hypot(Math.max(-x0, x1), Math.max(-y0, y1), Math.max(-z0, z1));
+      return dmax >= o.rMin - pad && dmin <= o.rMax + pad;
+    };
+    const dist = (x0, y0, z0, w) => {
+      const dx = Math.max(x0 - cam[0], 0, cam[0] - x0 - w), dy = Math.max(y0 - cam[1], 0, cam[1] - y0 - w), dz = Math.max(z0 - cam[2], 0, cam[2] - z0 - w);
+      return Math.hypot(dx, dy, dz);
+    };
+    // node: [L, ox, oy, oz] in base cells; frontier refined nearest-first while the budget allows
+    let open = [[Lr, 0, 0, 0]], count = 1;
+    while (open.length) {
+      const next = [];
+      // nearest first, so a tight budget is spent where the camera is
+      open.forEach((n) => { const w = B * (1 << n[0]) * base; n[4] = dist(n[1] * base - half, n[2] * base - half, n[3] * base - half, w); });
+      open.sort((a, b) => a[4] - b[4]);
+      for (const n of open) {
+        const L = n[0], span = B * (1 << L), w = span * base, x0 = n[1] * base - half, y0 = n[2] * base - half, z0 = n[3] * base - half;
+        const want = L > 0 && (L > coarsest || n[4] < k * w);
+        let kids = null;
+        if (want) {
+          kids = []; const h = span >> 1;
+          for (let c = 0; c < 8; c++) {
+            const kx = n[1] + (c & 1) * h, ky = n[2] + ((c >> 1) & 1) * h, kz = n[3] + ((c >> 2) & 1) * h;
+            if (touches(kx * base - half, ky * base - half, kz * base - half, w / 2, (w / 2) / B * 1.01)) kids.push([L - 1, kx, ky, kz]);
+          }
+          if (count - 1 + kids.length + next.length > maxB && L <= coarsest) kids = null; // budget: stay a leaf
+        }
+        if (kids) { count += kids.length - 1; for (const c of kids) next.push(c); }
+        else out.push({ key: L + ':' + n[1] + ':' + n[2] + ':' + n[3], L, ox: n[1], oy: n[2], oz: n[3] });
+      }
+      open = next;
+    }
+    return { leaves: out, base, B, rootLevel: Lr };
+  }
+
+  // Incremental streaming on top of a Pool. desire(leaves) diffs against what is resident; step(n)
+  // hands out at most n bricks to build (nearest first, as lodSelect ordered them). Bricks that left
+  // the set stay drawn until every wanted brick is built, then are cleared in one go, so a level change
+  // never opens a hole (the old and new levels overlap for a few frames instead).
+  function LodStream(capacity) {
+    this.cap = capacity; this.pool = new Pool(); this.resident = new Map(); this.want = new Map(); this.todo = []; this.stale = [];
+  }
+  LodStream.prototype.desire = function (leaves) {
+    this.want = new Map(leaves.map((l) => [l.key, l]));
+    this.todo = leaves.filter((l) => !this.resident.has(l.key));
+    this.stale = Array.from(this.resident.keys()).filter((k) => !this.want.has(k));
+    return this.todo.length;
+  };
+  LodStream.prototype.step = function (n) {
+    const build = [], clear = [];
+    // free slots for new bricks: use the free list, else (pool full) release stale bricks early
+    while (build.length < n && this.todo.length) {
+      if (this.pool.free.length === 0 && this.pool.next >= this.cap) {
+        const k = this.stale.pop(); if (k == null) { this.todo.length = 0; break; }
+        clear.push(this.resident.get(k).slot); this.resident.delete(k); this.pool.release(k); continue;
+      }
+      const l = this.todo.shift(), slot = this.pool.alloc(l.key);
+      this.resident.set(l.key, { slot, l }); build.push(Object.assign({ slot }, l));
+    }
+    if (!this.todo.length && this.stale.length) {
+      for (const k of this.stale) { const r = this.resident.get(k); if (r) { clear.push(r.slot); this.resident.delete(k); this.pool.release(k); } }
+      this.stale = [];
+    }
+    return { build, clear, pending: this.todo.length };
+  };
+
+
+  // Dense-indexed view over the sparse brick samples — no G³ copy. get(gi)/set(gi,v) take the dense
+  // index gx + gy·G + gz·G². A point on a brick face/edge/corner lives in up to 8 bricks: get reads the
+  // first, set writes every copy (so the GPU re-mesh stays watertight). Points in no active brick read
+  // fill(gx,gy,gz) and ignore writes that keep their sign (a write that flips one marks `spill`).
+  function View(pl, sparse, GRID, fill) {
+    const B = pl.B, NB = pl.NB, BP = B + 1, P3 = BP * BP * BP, c = pl.coords, lut = new Int32Array(NB * NB * NB).fill(-1);
+    for (let s = 0; s < pl.count; s++) if (c[s * 4 + 3]) lut[c[s * 4] + NB * (c[s * 4 + 1] + NB * c[s * 4 + 2])] = s;
+    const GG = GRID * GRID, v = { length: GRID * GG, sparse, dirty: false, spill: 0, isView: true };
+    const cand = (g) => { const b = Math.min(NB - 1, (g / B) | 0); return (g % B === 0 && g > 0 && b === (g / B)) ? [b, b - 1] : [b]; };
+    v.get = (gi) => {
+      const gx = gi % GRID, gy = ((gi / GRID) | 0) % GRID, gz = (gi / GG) | 0;
+      const bx = Math.min(NB - 1, (gx / B) | 0), by = Math.min(NB - 1, (gy / B) | 0), bz = Math.min(NB - 1, (gz / B) | 0);
+      let s = lut[bx + NB * (by + NB * bz)];
+      if (s >= 0) return sparse[s * P3 + (gx - bx * B) + (gy - by * B) * BP + (gz - bz * B) * BP * BP];
+      for (const X of cand(gx)) for (const Y of cand(gy)) for (const Z of cand(gz)) { s = lut[X + NB * (Y + NB * Z)]; if (s >= 0) return sparse[s * P3 + (gx - X * B) + (gy - Y * B) * BP + (gz - Z * B) * BP * BP]; }
+      return fill(gx, gy, gz);
+    };
+    v.set = (gi, val) => {
+      const gx = gi % GRID, gy = ((gi / GRID) | 0) % GRID, gz = (gi / GG) | 0; let hit = false;
+      for (const X of cand(gx)) for (const Y of cand(gy)) for (const Z of cand(gz)) { const s = lut[X + NB * (Y + NB * Z)]; if (s >= 0) { sparse[s * P3 + (gx - X * B) + (gy - Y * B) * BP + (gz - Z * B) * BP * BP] = val; hit = true; } }
+      if (hit) v.dirty = true; else if ((val < 0) !== (fill(gx, gy, gz) < 0)) v.spill++;
+    };
+    return v;
+  }
+
   const builds = [];
   function noteBuild(kind, info) { if (!info) return; builds.push(Object.assign({ kind, t: Date.now() }, info)); if (builds.length > 40) builds.shift(); }
   // whole-feature off switch for A/B: ?sparse=0
   let on = true; try { on = !/[?&]sparse=0\b/.test(root.location.search); } catch (e) {}
-  const api = { Pool, plan, planColumns, scatter, gather, noteBuild, builds, on };
+  const api = { Pool, plan, lodSelect, LodStream, View, planColumns, scatter, gather, noteBuild, builds, on };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (on) root.DMSparseVox = api; else root.DMSparseVoxOff = api;
 })(typeof window !== 'undefined' ? window : globalThis);
