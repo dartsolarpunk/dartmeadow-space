@@ -21,7 +21,7 @@
   const P = {
     ice: [0xeef3f8, 0xcfe0ef], desert: [0xd9b47c, 0xc4955c], dirt: [0x8c7052, 0x6c5842],
     grass: [0x8d9c3e, 0x627e2f], field: [0xa9a04e, 0x7f9a3a], forest: [0x2e4a21, 0x40602b],
-    tropic: [0x1d4d18, 0x2c6322], rock: [0x6f675c, 0x857b6c]
+    boreal: [0x1c3418, 0x27431f], tropic: [0x1d4d18, 0x2c6322], rock: [0x6f675c, 0x857b6c]
   };
   const L = {};
   function lin() {
@@ -52,10 +52,13 @@
     lin(); const w = cover(lat, lon, _o);
     // fields: two tones by the caller's noise so farmland reads as a patchwork, not one flat green
     const g = mix3(L.grass, n), f = mix3(L.field, nf), gf = [g[0] * 0.55 + f[0] * 0.45, g[1] * 0.55 + f[1] * 0.45, g[2] * 0.55 + f[2] * 0.45];
-    const T = [mix3(L.desert, n), mix3(L.dirt, nf), gf, mix3(L.forest, n), mix3(L.tropic, nf)];
+    // (v132) boreal taiga (Canada, Siberia, Scandinavia) is darker conifer green than temperate forest
+    const fb = sm(45, 58, Math.abs(lat)), ft = mix3(L.forest, n), fbo = mix3(L.boreal, n);
+    const T = [mix3(L.desert, n), mix3(L.dirt, nf), gf, [ft[0] + (fbo[0] - ft[0]) * fb, ft[1] + (fbo[1] - ft[1]) * fb, ft[2] + (fbo[2] - ft[2]) * fb], mix3(L.tropic, nf)];
     let r = 0, gg = 0, b = 0;
     for (let k = 0; k < 5; k++) { r += T[k][0] * w[k]; gg += T[k][1] * w[k]; b += T[k][2] * w[k]; }
-    const rk = mix3(L.rock, nf), tr = sm(0.42, 0.8, slope) * 0.85;
+    // forest cover keeps its canopy on slopes: rock only shows through bare/open cover
+    const rk = mix3(L.rock, nf), tr = sm(0.42, 0.8, slope) * 0.85 * (1 - 0.85 * Math.min(1, w[3] + w[4]));
     r += (rk[0] - r) * tr; gg += (rk[1] - gg) * tr; b += (rk[2] - b) * tr;
     const iw = ice(lat, lon);
     if (iw > 0) { const ic = mix3(L.ice, nf * 0.6 + slope * 0.4), t = iw * (1 - slope * 0.35); r += (ic[0] - r) * t; gg += (ic[1] - gg) * t; b += (ic[2] - b) * t; }
@@ -92,8 +95,8 @@
     const gf = mix(T2('grass', n), T2('field', nf), 0.45);
     const trop = float(1).sub(cw.r).sub(cw.g).sub(cw.b).sub(cw.a).max(0.0);
     const pb = smoothstep(48, 58, lat.abs()).mul(cw.r), dsr = cw.r.sub(pb), drt = cw.g.add(pb);
-    let c = T2('desert', n).mul(dsr).add(T2('dirt', nf).mul(drt)).add(gf.mul(cw.b)).add(T2('forest', n).mul(cw.a)).add(T2('tropic', nf).mul(trop));
-    c = mix(c, T2('rock', nf), smoothstep(0.42, 0.8, slope).mul(0.85));
+    let c = T2('desert', n).mul(dsr).add(T2('dirt', nf).mul(drt)).add(gf.mul(cw.b)).add(mix(T2('forest', n), T2('boreal', n), smoothstep(45, 58, lat.abs())).mul(cw.a)).add(T2('tropic', nf).mul(trop));
+    c = mix(c, T2('rock', nf), smoothstep(0.42, 0.8, slope).mul(0.85).mul(float(1).sub(cw.a.add(trop).min(1).mul(0.85))));
     let ic = iw.r; if (opt && opt.seaIce) ic = ic.max(iw.g.mul(opt.seaIce));
     c = mix(c, mix(V(L.ice[0]), V(L.ice[1]), nf.mul(0.6).add(slope.mul(0.4))), ic.mul(float(1).sub(slope.mul(0.35))));
     return c;
@@ -111,7 +114,7 @@
   }
   function load() {
     if (!window.fetch || !window.createImageBitmap) { rs(false); return; }
-    fetch('static/earth/earth-biome.png?v=132').then((r) => { if (!r.ok) throw new Error(r.status); return r.blob(); })
+    fetch('static/earth/earth-biome.png?v=132b').then((r) => { if (!r.ok) throw new Error(r.status); return r.blob(); })
       .then((b) => createImageBitmap(b, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' }))
       .then(decode).catch((e) => { console.warn('[earth-paint] cover map', e); rs(false); });
   }
