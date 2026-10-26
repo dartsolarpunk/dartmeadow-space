@@ -88,7 +88,7 @@
     else if(mm.visible){ mm.visible=false; var me=document.getElementById('minimap'); me&&me.classList.remove('dm-ui3d-ghost'); }
   }
   function paint(P){ P.busy=true; var gen=P.sig;
-    raster(P.el,P.w,P.h).then(function(img){ if(P.sig!==gen||!P.slot) return; aCx.clearRect(P.slot.x,P.slot.y,P.w,P.h); aCx.drawImage(img,P.slot.x,P.slot.y,P.w,P.h); P.ready=true; artDirty=true; P.el.classList.add('dm-ui3d-ghost'); })
+    raster(P.el,P.w,P.h).then(function(img){ if(P.sig!==gen||!P.slot) return; aCx.clearRect(P.slot.x,P.slot.y,P.w,P.h); aCx.drawImage(img,P.slot.x,P.slot.y,P.w,P.h); P.ready=true; artDirty=true; })
       .catch(function(e){ console.warn('[UI3D] raster',e&&e.message); }).finally(function(){ P.busy=false; }); }
 
   // ---------- static art geometry: ONE merged buffer ----------
@@ -100,7 +100,8 @@
       for(var L=LAYERS;L>=0;L--){ var z=-DEPTH*L/LAYERS, sh=L===0?1:0.32-0.05*L, ox=L?t.nx*L*0.6:0, oy=L?-t.ny*L*0.4:0, cs=[[-w,-h],[w,-h],[w,h],[-w,h]];
         for(var k=0;k<4;k++){ v.set(cs[k][0]+ox,cs[k][1]+oy,z).applyQuaternion(t.q); pos.set([v.x+t.cx,v.y+t.cy,v.z],q*12+k*3); col.set([sh,sh,sh],q*12+k*3); }
         uv.set([u0,v0,u1,v0,u1,v1,u0,v1],q*8); var b=q*4; idx.set([b,b+1,b+2,b,b+2,b+3],q*6); q++; } });
-    setGeo(art,pos,uv,col,idx); aTex.needsUpdate=true;   // the atlas upload happens only here (layout change)
+    setGeo(art,pos,uv,col,idx); aTex.needsUpdate=true;
+    rd.forEach(function(P){ P.el.classList.add('dm-ui3d-ghost'); });   // hide the DOM only once its mesh exists   // the atlas upload happens only here (layout change)
   }
   function setGeo(m,pos,uv,col,idx){ var g=new T.BufferGeometry(); g.setAttribute('position',new T.BufferAttribute(pos,3)); g.setAttribute('uv',new T.BufferAttribute(uv,2)); if(col) g.setAttribute('color',new T.BufferAttribute(col,3)); g.setIndex(new T.BufferAttribute(idx,1)); m.geometry.dispose(); m.geometry=g; m.visible=idx.length>0; }
 
