@@ -982,7 +982,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-globe.js?v=8" defer></script>
 <script src="ui/dm-star.js?v=8" defer></script>
 <script src="ui/dm-mist.js?v=7" defer></script>
-<script src="ui/dm-atmo.js?v=1" defer></script>
+<script src="ui/dm-atmo.js?v=127" defer></script>
 <script src="ui/dm-menuscene.js?v=7" defer></script>
 <script src="ui/dm-starbubble.js?v=3" defer></script>
 <script src="ui/dm-birdtemple.js?v=122" defer></script>
@@ -14560,7 +14560,7 @@ window.dmSceneText=function(){
     return {platform:_dmPlatform(),app:(window.DMAndroid&&DMAndroid.version)?DMAndroid.version():null,webview:m[2]||null,
       backend:real===null?'not-started':real?'WebGPU':'WebGL2-fallback',navGpu:!!navigator.gpu,gpu:g.renderer||'',vendor:g.vendor||'',
       gpuClass:g.gpuClass,score:g.score,preset:g.preset,resScale:g.resScale,cores:navigator.hardwareConcurrency||0,mem:navigator.deviceMemory||0,
-      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:((String(window._dmSwCache||'').match(/engine-(v\d+)/)||[])[1]?'sw-'+String(window._dmSwCache).match(/engine-(v\d+)/)[1]:'sw-v126'),swCache:window._dmSwCache||null,lastGpuLost:(function(){ try{ return JSON.parse(localStorage.getItem('dm_lastGpuLost')||'null'); }catch(e){ return null; } })(),hair:(function(){ try{ const H=window.DART_HAIR; return H?{mode:H.stats.mode||'cpu',gcReason:H.stats.gpuFail||null,check:H.stats.gpuCheck||null,ms:+(H.stats.ms||0).toFixed(2),drawn:H.stats.drawn}:null; }catch(e){ return null; } })(),ua:navigator.userAgent};
+      dpr:window.devicePixelRatio,screen:(function(){ try{ const q=window.screen; return q?q.width+'x'+q.height:'n/a'; }catch(e){ return 'n/a'; } })(),inner:innerWidth+'x'+innerHeight,pxRatio:(function(){ try{ return +effectivePixelRatio().toFixed(2); }catch(e){ return null; } })(),build:((String(window._dmSwCache||'').match(/engine-(v\d+)/)||[])[1]?'sw-'+String(window._dmSwCache).match(/engine-(v\d+)/)[1]:'sw-v129'),swCache:window._dmSwCache||null,lastGpuLost:(function(){ try{ return JSON.parse(localStorage.getItem('dm_lastGpuLost')||'null'); }catch(e){ return null; } })(),hair:(function(){ try{ const H=window.DART_HAIR; return H?{mode:H.stats.mode||'cpu',gcReason:H.stats.gpuFail||null,check:H.stats.gpuCheck||null,ms:+(H.stats.ms||0).toFixed(2),drawn:H.stats.drawn}:null; }catch(e){ return null; } })(),ua:navigator.userAgent};
   }
   function flush(){
     const f=win.f; win.f=[]; const t0=win.t0; win.t0=performance.now();
@@ -22326,6 +22326,20 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
     for(let gz=0;gz<GRID;gz++) for(let gx=0;gx<GRID;gx++) hcol[gx+gz*GRID]=hFn(gx*CELL+oX, gz*CELL+oZ);
     heightNode=storage(new THREE.StorageBufferAttribute(hcol,1),'float',GRID*GRID);
   }
+  // (v123) Earth: the glacier weight per grid column (DMEarthIce at each column's own lat/lon, not one value for the
+  // whole patch — so ice edges follow the real glacier outline instead of stepping patch by patch), plus the Arctic
+  // sea-ice pack where the ground lies below sea level, the same rule the map and the sea tiles use.
+  let iceNode=null;
+  if(earthGeo&&window.DMEarthIce){
+    const icol=new Float32Array(GRID*GRID), D=ATMO_DEG_PER_UNIT, wx0=TERRAIN.wx0||0, wz0=TERRAIN.wz0||0;
+    for(let gz=0;gz<GRID;gz++) for(let gx=0;gx<GRID;gx++){
+      const x=gx*CELL+oX, z=gz*CELL+oZ, la=-(wz0+z)*D, lo=(wx0+x)*D;
+      let w=DMEarthIce.at(la,lo);
+      if(w<1&&hFn&&hFn(x,z)<0) w=Math.max(w,DMEarthIce.seaIce(la,lo));
+      icol[gx+gz*GRID]=w;
+    }
+    iceNode=storage(new THREE.StorageBufferAttribute(icol,1),'float',GRID*GRID);
+  }
   const triTableFlat=new Int32Array(256*16);
   GPU_TriangleTable.forEach((row,i)=>{ for(let j=0;j<16;j++) triTableFlat[i*16+j]=row[j]; });
   const triTableAttr=new THREE.StorageBufferAttribute(triTableFlat,1);
@@ -22497,8 +22511,17 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
           let c=mix(sand, grass, height.add(2.0).div(10.0).clamp(0.0,1.0));
           c=mix(c, dirt, height.sub(12.0).div(14.0).clamp(0.0,1.0).mul(0.55));
           c=mix(c, rock, slope.smoothstep(0.32,0.75).max(height.sub(28.0).div(22.0).clamp(0.0,1.0)));
-          const snowT=mix(height.sub(snowLine).div(12.0).clamp(0.0,1.0),earthIceU.mul(0.85),isEarthU).mul(float(1.0).sub(slope.mul(0.55)));
-          const iceT=mix(height.sub(iceLine).div(14.0).clamp(0.0,1.0),earthIceU.mul(0.5),isEarthU).mul(float(1.0).sub(slope.mul(0.7)));
+          // (v123) per-vertex glacier / sea-ice weight: bilinear in the column grid at this vertex
+          let iceW=earthIceU;
+          if(iceNode){
+            const fx=vl.x.sub(oX).div(CELL).clamp(0.0,GRID-1.001), fz=vl.z.sub(oZ).div(CELL).clamp(0.0,GRID-1.001);
+            const ix=fx.floor(), iz=fz.floor(), tx=fx.sub(ix), tz=fz.sub(iz);
+            const i00=uint(ix).add(uint(iz).mul(uint(GRID)));
+            const a=iceNode.element(i00), b2=iceNode.element(i00.add(uint(1))), c2=iceNode.element(i00.add(uint(GRID))), d2=iceNode.element(i00.add(uint(GRID+1)));
+            iceW=mix(mix(a,b2,tx),mix(c2,d2,tx),tz);
+          }
+          const snowT=mix(height.sub(snowLine).div(12.0).clamp(0.0,1.0),iceW.mul(0.85),isEarthU).mul(float(1.0).sub(slope.mul(0.55)));
+          const iceT=mix(height.sub(iceLine).div(14.0).clamp(0.0,1.0),iceW.mul(0.5),isEarthU).mul(float(1.0).sub(slope.mul(0.7)));
           c=mix(c, snow, snowT);
           c=mix(c, ice, iceT);
           // Rock speckles in snow — breaks featureless white plates
@@ -22506,7 +22529,7 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
           if(wStyle!=='lush') return DMWorldStyle.colorTSL(wStyle,window,v,nrm,height,seedU,pal,c);
           return c;
         };
-        const col=colorFor(v0).add(colorFor(v1)).add(colorFor(v2)).div(3.0);
+        // (v123) Earth: each vertex keeps its own colour (its own glacier weight), so ice edges are smooth, not per-triangle
         const slot=i.mul(3);
         vertexNode.element(outBase.add(slot)).assign(v0);
         vertexNode.element(outBase.add(slot).add(1)).assign(v1);
@@ -22514,9 +22537,16 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
         normalNode.element(outBase.add(slot)).assign(nrm);
         normalNode.element(outBase.add(slot).add(1)).assign(nrm);
         normalNode.element(outBase.add(slot).add(2)).assign(nrm);
-        colorNode.element(outBase.add(slot)).assign(col);
-        colorNode.element(outBase.add(slot).add(1)).assign(col);
-        colorNode.element(outBase.add(slot).add(2)).assign(col);
+        if(iceNode){
+          colorNode.element(outBase.add(slot)).assign(colorFor(v0));
+          colorNode.element(outBase.add(slot).add(1)).assign(colorFor(v1));
+          colorNode.element(outBase.add(slot).add(2)).assign(colorFor(v2));
+        } else {
+          const col=colorFor(v0).add(colorFor(v1)).add(colorFor(v2)).div(3.0);
+          colorNode.element(outBase.add(slot)).assign(col);
+          colorNode.element(outBase.add(slot).add(1)).assign(col);
+          colorNode.element(outBase.add(slot).add(2)).assign(col);
+        }
       });
     });
   });
@@ -22886,7 +22916,7 @@ function _shoreWaterMaterial(liqColor,opacity,rough){
   const W=window;
   if(!_viewportDepthOK()) return null;   // multisampled WebGPU: the plain water (see _viewportDepthOK)
   if(!THREE.MeshStandardNodeMaterial||typeof W.viewportDepthTexture!=='function'||typeof W.logarithmicDepthToViewZ!=='function') return null;
-  const {float,vec3,color,mix,smoothstep,clamp,positionView,cameraNear,cameraFar,viewportDepthTexture,mx_noise_float,time}=W;
+  const {float,vec3,color,mix,smoothstep,clamp,positionView,cameraNear,cameraFar,viewportDepthTexture,mx_noise_float,time,max}=W;
   const m=new THREE.MeshStandardNodeMaterial({transparent:true,depthWrite:false});
   const positionWorld=W.varying(W.modelWorldMatrix.mul(W.vec4(W.positionGeometry,1.0)).xyz);   // the flat world (the swell keeps its place as the frame moves)
   const depthToViewZ=(d,n,f)=>(flightRenderer&&flightRenderer.logarithmicDepthBuffer)?W.logarithmicDepthToViewZ(d,n,f):W.perspectiveDepthToViewZ(d,n,f);
@@ -22900,9 +22930,30 @@ function _shoreWaterMaterial(liqColor,opacity,rough){
   const body=mix(shallow,deep,smoothstep(0.0,22.0,thick));
   m.colorNode=mix(body,vec3(0.95,0.98,1.0),clamp(foam,0.0,1.0));
   m.opacityNode=clamp(mix(float(0.28),float(Math.max(0.85,opacity||0.82)),smoothstep(0.0,9.0,thick)).add(foam.mul(0.6)),0.0,1.0);
-  m.roughnessNode=mix(float(rough!=null?rough:0.15),float(0.85),clamp(foam,0.0,1.0));
+  // (v123) animated sea surface: wave layers (Gerstner-style slopes, deep-water dispersion w=sqrt(g k), 60 m swell down to
+  // 1 m chop) that come in one by one as each one is big enough on screen (pixel footprint from the derivatives), the
+  // unresolved ones folded into the roughness so far water glints broadly instead of shimmering or tiling.
+  let wN=null, wRough=float(0.0);
+  try{
+    const {dFdx,dFdy,length,cos,vec2,normalize,max}=W;
+    const xz=vec2(positionWorld.x,positionWorld.z);
+    const fp=max(length(dFdx(xz)),length(dFdy(xz)));
+    let sx=float(0.0), sz=float(0.0), un=float(0.0);
+    [60,34,19,10.5,5.9,3.3,1.85,1.0].forEach((L,i)=>{
+      const a=0.6+(((i*0.618034)%1)-0.5)*2.2, k=2*Math.PI/L, w=Math.sqrt(9.81*k), st=0.085;
+      const dx=Math.cos(a), dz=Math.sin(a);
+      const ph=xz.x.mul(dx*k).add(xz.y.mul(dz*k)).sub(time.mul(w)).add(i*1.7);
+      const fade=float(1.0).sub(smoothstep(L*0.12,L*0.45,fp));
+      const c=cos(ph).mul(fade).mul(st);
+      sx=sx.add(c.mul(dx)); sz=sz.add(c.mul(dz)); un=un.add(float(1.0).sub(fade).mul(st*st*0.5));
+    });
+    wN=normalize(vec3(sx.negate(),float(1.0),sz.negate()));
+    wRough=un.add(0.002).sqrt().mul(1.6);
+  }catch(e){ wN=null; }
+  m.roughnessNode=mix(max(float(rough!=null?rough:0.15),wRough),float(0.85),clamp(foam,0.0,1.0));
   m.metalnessNode=float(0.25);
-  if(_pwfReady()){ m.positionNode=_pwfNodeFor(null); m.userData._pwf=true; m.maskNode=_pwfMask(); m.normalNode=W.normalize(W.cameraViewMatrix.mul(W.vec4(_pwfRotN(positionWorld,W.normalize(W.modelNormalMatrix.mul(W.normalLocal))),0.0)).xyz); }
+  if(_pwfReady()){ m.positionNode=_pwfNodeFor(null); m.userData._pwf=true; m.maskNode=_pwfMask(); m.normalNode=W.normalize(W.cameraViewMatrix.mul(W.vec4(_pwfRotN(positionWorld,wN||W.normalize(W.modelNormalMatrix.mul(W.normalLocal))),0.0)).xyz); }
+  else if(wN){ m.normalNode=W.normalize(W.cameraViewMatrix.mul(W.vec4(wN,0.0)).xyz); }
   if(GFX&&GFX.envReflections&&typeof _envMap!=='undefined'&&_envMap) m.envMap=_envMap;
   return m;
 }
