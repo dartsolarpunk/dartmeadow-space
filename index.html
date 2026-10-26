@@ -151,7 +151,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-time.js?v=97"></script>
 <script src="ui/dm-earth.js?v=1"></script>
 <script src="ui/dm-earth-ice.js?v=132"></script>
-<script src="ui/dm-earth-paint.js?v=132b"></script>
+<script src="ui/dm-earth-paint.js?v=135"></script>
 <script src="ui/dm-theme.js?v=81"></script>
 <script src="ui/dm-fluid.js?v=80"></script>
 <script src="ui/dm-journal.js?v=98"></script>
@@ -983,7 +983,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-globe.js?v=8" defer></script>
 <script src="ui/dm-star.js?v=8" defer></script>
 <script src="ui/dm-mist.js?v=7" defer></script>
-<script src="ui/dm-atmo.js?v=127" defer></script>
+<script src="ui/dm-atmo.js?v=135" defer></script>
 <script src="ui/dm-menuscene.js?v=7" defer></script>
 <script src="ui/dm-starbubble.js?v=3" defer></script>
 <script src="ui/dm-birdtemple.js?v=122" defer></script>
@@ -12293,7 +12293,10 @@ function placeSolLeoOffset(clearance){
 let _lodPlanetBusy=false;
 function _mcTierFor(dist,radius){
   if(dist<radius*4)return'high';
-  if(dist<radius*12)return'med';
+  // (v135) 'low' (N=10) only past 60 R. Inside the true-atmosphere range (60 R, ~190,000 km for Earth) the 10-cell
+  // polyhedron read as a dark shell with a bright diamond lattice of facet edges over the sea and land; N=20 is a
+  // one-off compute of 21^3 points, no per-frame cost.
+  if(dist<radius*60)return'med';
   return'low';
 }
 const _MC_TIER_RANK={low:0,med:1,high:2};
@@ -23504,6 +23507,7 @@ function _sbcPal(pal){
   return K;
 }
 let _SEA_ICE_C_=null; const _seaIceC=()=>_SEA_ICE_C_||(_SEA_ICE_C_=new THREE.Color(0xeef3fa));
+let _SBC_EC=null;
 function _sbcIsEarth(){ try{ return !!(window.DMEarthIce&&typeof _surfBody!=='undefined'&&_surfBody&&_surfBody.name==='Earth'); }catch(e){ return false; } }
 function surfaceBiomeColor(x,z,h,slope,pal,seed,opts){
   opts=opts||{};
@@ -23519,8 +23523,9 @@ function surfaceBiomeColor(x,z,h,slope,pal,seed,opts){
   if(_sbcIsEarth()&&window.DMEarthPaint){
     // (v132) Earth: the one Earth paint at this point's own lat/lon (MODIS land cover + glacier mask), the same the
     // far globe, the map and the near patch use — no height/latitude snow, ice only on real glaciers; beaches at the sea.
-    const la=-z*ATMO_DEG_PER_UNIT, lo=x*ATMO_DEG_PER_UNIT, c=DMEarthPaint.color(la,lo,slope,0.5+n,nFine,new THREE.Color());
-    if(pal.water){ const b=smooth(8+n*3,1+n*3,hRel)*(1-slope)*(1-DMEarthPaint.ice(la,lo)); if(b>0) c.lerp(sand,b); }
+    // (v135) one shared Colour (every caller copies r/g/b out at once) and the glacier weight from the same lookup
+    const la=-z*ATMO_DEG_PER_UNIT, lo=x*ATMO_DEG_PER_UNIT, c=DMEarthPaint.color(la,lo,slope,0.5+n,nFine,_SBC_EC||(_SBC_EC=new THREE.Color()));
+    if(pal.water){ const b=smooth(8+n*3,1+n*3,hRel)*(1-slope)*(1-(DMEarthPaint.lastIce||0)); if(b>0) c.lerp(sand,b); }
     return c;
   }
   const latAbs=Math.abs(siteLat);

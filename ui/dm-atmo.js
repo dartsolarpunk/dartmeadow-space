@@ -278,7 +278,12 @@
         If(ts.x.greaterThan(0.0).and(ts.x.lessThan(sceneDist)), () => {
           const pw = ro.add(rd.mul(ts.x)), nUp = normalize(pw);
           const ground = groundAt(pw, nUp);
-          If(ground.lessThan(U.sea), () => {
+          // (v135) the water mask is the real coastline (ground below sea level, 0), not the sea sphere's lift: Earth's sphere
+          // sits R*2e-4 = 0.05 of the relief scale up (so the water wins the depth test), and testing ground < that lift
+          // drowned every lowland under ~440 m — Amazon, Congo, Siberia, the European and US plains, half of Australia — so
+          // from space the continents looked carved and shifted against the land paint beneath, and a glinting sea shell
+          // covered real terrain on approach. The sphere keeps its lift; only the mask moved.
+          If(ground.lessThan(0.0), () => {
             // (v123) photographic ocean. Colour comes from the real water column (ETOPO depth under this point):
             // navy offshore, teal over the shelves, the sea bed showing through only where it is metres deep.
             // Sun glint = a microfacet (Beckmann) lobe over the sea's slope variance, so from orbit it is the broad,
@@ -368,7 +373,7 @@
             const hSea = r.sub(Rsea);
             const fadeTop = smoothstep(Rtop, Rtop.sub(U.top.mul(0.25)), r);
             const rhoR = exp(hSea.negate().div(U.H)).mul(fadeTop);
-            const rhoM = exp(hSea.negate().div(U.H.mul(0.25))).mul(fadeTop).add(exp(alt.negate().div(U.hazeH)).mul(U.haze).mul(gnd.lessThan(U.sea).select(float(0.2), float(1.0))));   // (v130) marine air is clean: the dust/smog haze is a land layer (it veiled the ocean white from orbit)
+            const rhoM = exp(hSea.negate().div(U.H.mul(0.25))).mul(fadeTop).add(exp(alt.negate().div(U.hazeH)).mul(U.haze).mul(gnd.lessThan(0.0).select(float(0.2), float(1.0))));   // (v130) marine air is clean: the dust/smog haze is a land layer (it veiled the ocean white from orbit)
             const wd0 = warpDir(toLocal(up)).toVar();   // (v123) shared by every gas noise lookup of this step
             const n = gasNoiseW(wd0, hSea, 3.0);
             // (v103) accumulated in vars so the cloud/weather/layer terms can be skipped where their altitude band is
