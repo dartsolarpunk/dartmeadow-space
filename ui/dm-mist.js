@@ -50,8 +50,13 @@
     const cb = dot(ro, ro).sub(Rb * Rb), db = b.mul(b).sub(cb);
     const hitB = b.negate().sub(db.max(0.0).sqrt());
     t1 = select(db.greaterThan(0.0).and(hitB.greaterThan(t0)), hitB, t1);
-    const steps = low ? 5 : 6, lsteps = low ? 1 : 2;
+    // lite (Auto preset only): fewer view/light steps, with a per-pixel interleaved-gradient start offset rotated each
+    // frame so the coarser march dithers instead of banding. Manual presets (Ultra etc.) keep the full march, unjittered.
+    const lite = !!U.lite;
+    const steps = lite ? (low ? 3 : 4) : (low ? 5 : 6), lsteps = (low || lite) ? 1 : 2;
     const dt = t1.sub(t0).max(0.0).div(steps);
+    let jit = float(0.5);
+    if (lite && T.screenCoordinate) { const sp = T.screenCoordinate.xy.add(U.frame.mul(5.588238)); jit = T.fract(T.fract(sp.x.mul(0.06711056).add(sp.y.mul(0.00583715))).mul(52.9829189)); }
     const Ls = U.sunDir;
     const wind = time.mul(L.wind);
     const dens = (p) => {
@@ -74,7 +79,7 @@
     let Tr = float(1), acc = vec3(0, 0, 0);
     const k = L.dens / (thick * 2.0);
     for (let i = 0; i < steps; i++) {
-      const p = ro.add(rd.mul(t0.add(dt.mul(i + 0.5))));
+      const p = ro.add(rd.mul(t0.add(dt.mul(jit.add(i)))));
       const d = dens(p);
       // march toward the sun: the cloud casts its own shadow (and its neighbours')
       let od = float(0);
@@ -103,7 +108,7 @@
     if (!T || !L || !W.THREE.MeshBasicNodeMaterial) return null;
     opts = opts || {};
     const low = !!opts.low, R = radius;
-    const U = { center: T.uniform(new THREE.Vector3()), sunDir: T.uniform(new THREE.Vector3(1, 0.3, 0.2).normalize()), seed: T.uniform(new THREE.Vector3((opts.seed || 3) * 1.3 % 7, (opts.seed || 3) * 2.1 % 7, (opts.seed || 3) * 0.7 % 7)), fade: T.uniform(1) };
+    const U = { center: T.uniform(new THREE.Vector3()), sunDir: T.uniform(new THREE.Vector3(1, 0.3, 0.2).normalize()), seed: T.uniform(new THREE.Vector3((opts.seed || 3) * 1.3 % 7, (opts.seed || 3) * 2.1 % 7, (opts.seed || 3) * 0.7 % 7)), fade: T.uniform(1), frame: T.uniform(0), lite: !!opts.lite };
     const group = new THREE.Group(); group.name = 'JOTS_MistClouds';
     const geo = new THREE.SphereGeometry(R * L.shell[1], low ? 40 : 64, low ? 28 : 44);
     const out = new THREE.Mesh(geo, cloudMaterial(T, U, R, L, low, THREE.FrontSide));    // from space
@@ -437,6 +442,7 @@
       h.out.visible = !inside && dist < h.R * 70;
       h.inn.visible = inside;
       h.U.fade.value = 1;
+      if (h.U.lite) h.U.frame.value = (h.U.frame.value + 1) % 64;
     }
     for (const f of fumes) {   // asteroid fumes: only animate while you are within sight of the rock
       if (!f.group.parent) { fumes.delete(f); continue; }

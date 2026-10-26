@@ -139,7 +139,7 @@
       exposureScale: uniform(1 / P.top), // coefficients are per "top" length so they are scale-free
       rot: uniform(new THREE.Matrix4()),       // world -> planet-local rotation (terrain map + storms turn with the planet)
       locC: uniform(new THREE.Vector3(0, 0, 1)), locOn: uniform(0), // local LOD height map: centre x,z (world) + span
-      histK: uniform(0), skyW: uniform(1), aerialW: uniform(1),  // weights: rays that reach empty sky / that hit geometry
+      histK: uniform(0), skyW: uniform(1), aerialW: uniform(1), gasTexel: uniform(new THREE.Vector2(1 / 960, 1 / 540)),  // weights: rays that reach empty sky / that hit geometry
       pixA: uniform(0.001),                                       // (v123) radians per pixel (sea wave-layer footprint)
       wavePh: [uniform(new THREE.Vector4()), uniform(new THREE.Vector4()), uniform(new THREE.Vector4())]
     };
@@ -361,13 +361,14 @@
         Loop(steps, ({ i }) => {
           const t = t0.add(ds.mul(float(i).add(jit)));
           const p = ro.add(rd.mul(t)), r = length(p), up = p.div(r);
-          const solid = U.R0.add(max(groundAt(p, up), U.sea));   // gas boundary = max(terrain, water)
+          const gnd = groundAt(p, up);
+          const solid = U.R0.add(max(gnd, U.sea));   // gas boundary = max(terrain, water)
           const alt = r.sub(solid);
           If(alt.greaterThan(0.0), () => {
             const hSea = r.sub(Rsea);
             const fadeTop = smoothstep(Rtop, Rtop.sub(U.top.mul(0.25)), r);
             const rhoR = exp(hSea.negate().div(U.H)).mul(fadeTop);
-            const rhoM = exp(hSea.negate().div(U.H.mul(0.25))).mul(fadeTop).add(exp(alt.negate().div(U.hazeH)).mul(U.haze));
+            const rhoM = exp(hSea.negate().div(U.H.mul(0.25))).mul(fadeTop).add(exp(alt.negate().div(U.hazeH)).mul(U.haze).mul(gnd.lessThan(U.sea).select(float(0.2), float(1.0))));   // (v130) marine air is clean: the dust/smog haze is a land layer (it veiled the ocean white from orbit)
             const wd0 = warpDir(toLocal(up)).toVar();   // (v123) shared by every gas noise lookup of this step
             const n = gasNoiseW(wd0, hSea, 3.0);
             // (v103) accumulated in vars so the cloud/weather/layer terms can be skipped where their altitude band is
@@ -437,13 +438,34 @@
       if (opt.debug === 2) return vec4(Tr, 1.0);
       if (opt.debug === 3) return vec4(sceneDist.div(5000.0), t0.div(5000.0), t1.div(5000.0), 1.0);
       // NaN / runaway guard: a broken sample never paints the screen (falls back to the scene as drawn)
-      const Lraw = Ltot.mul(U.sunI);
+      // (v130) the pale ocean veil from orbit: the Rayleigh path radiance over the disc (camera above the gas, ray ending on
+      // sea/ground) out-shone the dark sea ~3:1 at this exposure — measured: base (57,112,155) vs (23,73,118) with the
+      // in-scatter cut. Scale only the in-scatter of surface-ending rays seen from above the gas: the limb/rim (rays that
+      // reach empty sky), the sky from the ground and the extinction are untouched; it fades in over half an atmosphere height.
+      const spaceK = smoothstep(Rtop, Rtop.add(U.top.mul(0.5)), length(ro)).mul(tEnd.lessThan(1e19).select(float(1.0), float(0.0)));
+      const Lraw = Ltot.mul(U.sunI).mul(mix(float(1.0), float(0.4), spaceK));
       if (mode === 'gas') {
         const sL = dot(Lraw, vec3(1.0)), ok = sL.equal(sL).and(sL.lessThan(1e6));
         return ok.select(vec4(Lraw, dot(Tr, vec3(1.0 / 3.0))), vec4(0.0, 0.0, 0.0, 1.0));
       }
       let Lf = Lraw, Tf = Tr;
-      if (mode === 'composite') { const g = gasTex.sample(uv); Lf = g.rgb; Tf = vec3(g.a); }
+      if (mode === 'composite') {
+        // (v130) depth-aware (joint-bilateral) upsample of the half-res gas: of the 4 half-res texels round this pixel,
+        // those whose depth differs from this pixel's are dropped, so the planet limb and terrain silhouettes stay sharp
+        // instead of the gas bleeding a soft halo across them (a plain bilinear fetch did).
+        const hp = uv.div(U.gasTexel).sub(0.5), f = fract(hp), c0 = hp.sub(f).add(0.5);
+        const kD = logDepth ? 600.0 : 4000.0;
+        const acc = vec4(0.0).toVar(), wsum = float(0.0).toVar();
+        [[0, 0], [1, 0], [0, 1], [1, 1]].forEach(([ox, oy]) => {
+          const tuv = c0.add(vec2(ox, oy)).mul(U.gasTexel);
+          const wb = (ox ? f.x : float(1.0).sub(f.x)).mul(oy ? f.y : float(1.0).sub(f.y)).add(1e-3);
+          const wd = exp(abs(sceneDepth.sample(tuv).r.sub(dRaw)).mul(-kD));
+          const w = wb.mul(wd);
+          acc.addAssign(gasTex.sample(tuv).mul(w)); wsum.addAssign(w);
+        });
+        const g = wsum.greaterThan(1e-4).select(acc.div(wsum), gasTex.sample(uv));
+        Lf = g.rgb; Tf = vec3(g.a);
+      }
       const wgt = sceneDist.greaterThanEqual(1e19).select(U.skyW, U.aerialW);
       const outC = mix(base, base.mul(Tf).add(Lf), wgt);
       const sC = dot(outC, vec3(1.0));
@@ -467,6 +489,7 @@
       U.camWorld.value.copy(camera.matrixWorld);
       U.near.value = camera.near; U.far.value = camera.far;
       try { const hpx = (renderer.domElement && renderer.domElement.height) || 1080; U.pixA.value = 2 / (Math.max(camera.projectionMatrix.elements[5], 1e-6) * hpx); } catch (e) {}
+      try { const de = renderer.domElement; if (de) U.gasTexel.value.set(2 / Math.max(de.width, 2), 2 / Math.max(de.height, 2)); } catch (e) {}
       if (hasSea) updateWaves();
     }
     return {
