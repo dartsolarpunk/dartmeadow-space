@@ -142,12 +142,12 @@
     var table=new T.Group(); table.matrixAutoUpdate=false; table.visible=false; scene.add(table);
     var rig=new T.Object3D(), rigCam=new T.PerspectiveCamera(60,1,0.05,1e9); rig.add(rigCam);
     var hudScene=new T.Scene(), plate=new T.Group(); plate.matrixAutoUpdate=false; hudScene.add(plate);
-    S={hudScene:hudScene,plate:plate,session:session,r:r,cv:cv,scene:scene,cam:cam,reticle:reticle,table:table,rig:rig,rigCam:rigCam,hitSrc:null,anchor:null,placed:false,D:null,sky:null,flight:null,mode:null};
+    S={hudScene:hudScene,plate:plate,session:session,r:r,cv:cv,scene:scene,cam:cam,reticle:reticle,table:table,rig:rig,rigCam:rigCam,hitSrc:null,anchor:null,placed:false,errs:0,D:null,sky:null,flight:null,mode:null};
+    session.addEventListener('end',cleanup);
     syncBtns();
     await r.xr.setSession(session);
     try{ var vs=await session.requestReferenceSpace('viewer'); S.hitSrc=await session.requestHitTestSource({space:vs}); }catch(e){ console.warn('[AR] hit-test',e); }
     session.addEventListener('select',onSelect);
-    session.addEventListener('end',cleanup);
     // the hidden flight canvas stops drawing while AR owns the frame
     var FR=g('flightRenderer'); if(FR&&FR.render){ S.flight=FR; S.flightRender=FR.render; FR.render=function(){}; }
     pumpOn();
@@ -165,6 +165,10 @@
   }
   function frame(t,xf){
     if(!S) return;
+    try{ frameBody(t,xf); S&&(S.errs=0); }
+    catch(e){ console.warn('[AR] frame',e); if(S&&++S.errs>=3) abort(e&&e.message); }
+  }
+  function frameBody(t,xf){
     pump(t);
     var T=window.THREE, ref=S.r.xr.getReferenceSpace();
     var ctx=terrainCtx(), mode=ctx?'terrain':'space';
@@ -200,21 +204,31 @@
     if(mode==='terrain'&&!S.placed) toast('Point at a flat surface and tap to place the world');
     if(mode==='terrain'&&S.D) fillDiorama(S.D,terrainCtx(),true);
   }
+  // Restoring the game's rAF and flightRenderer.render is guaranteed: each teardown step is isolated and the
+  // two swaps are undone in `finally`, whatever throws. Runs on session 'end', on a frame that keeps throwing,
+  // on window error / pagehide, and from enter() failures.
   function cleanup(){
     if(!S) return; var s=S; S=null;
-    try{ s.r.setAnimationLoop(null); }catch(e){}
-    pumpOff();
-    try{ var M=window.DMUI3DMesh; if(M&&M.mesh&&M.scene) M.scene.add(M.mesh); M&&M.arHold(false); }catch(e){}
-    if(s.flight) s.flight.render=s.flightRender;
-    var fs=g('flightScene'); if(fs) unstrip(fs,s.sky);
-    try{ s.hitSrc&&s.hitSrc.cancel(); }catch(e){} try{ s.anchor&&s.anchor.delete&&s.anchor.delete(); }catch(e){}
-    try{ s.D&&(s.D.geo.dispose(),s.D.mesh.material.dispose()); }catch(e){}
-    try{ s.r.dispose(); }catch(e){} s.cv.remove();
-    document.body.classList.remove('dm-ar-on'); document.documentElement.classList.remove('dm-ar-on'); toast(''); syncBtns();
-    try{ window.dispatchEvent(new Event('resize')); }catch(e){}
+    try{
+      try{ s.r.setAnimationLoop(null); }catch(e){}
+      try{ var M=window.DMUI3DMesh; M&&M.arHold(false); }catch(e){}
+      try{ var fs=g('flightScene'); if(fs) unstrip(fs,s.sky); }catch(e){}
+      try{ s.hitSrc&&s.hitSrc.cancel(); }catch(e){} try{ s.anchor&&s.anchor.delete&&s.anchor.delete(); }catch(e){}
+      try{ s.D&&(s.D.geo.dispose(),s.D.mesh.material.dispose()); }catch(e){}
+      try{ s.session&&s.session.removeEventListener('end',cleanup); }catch(e){}
+      try{ s.r.dispose(); }catch(e){} try{ s.cv.remove(); }catch(e){}
+    } finally {
+      try{ pumpOff(); }catch(e){ window.requestAnimationFrame=_raf; window.cancelAnimationFrame=_caf; }
+      if(s.flight&&s.flightRender) s.flight.render=s.flightRender;
+      document.body.classList.remove('dm-ar-on'); document.documentElement.classList.remove('dm-ar-on');
+      try{ toast(''); syncBtns(); window.dispatchEvent(new Event('resize')); }catch(e){}
+    }
   }
+  function abort(why){ console.warn('[AR] aborting session:',why); var s=S; cleanup(); try{ s&&s.session&&s.session.end().catch(function(){}); }catch(e){} }
+  window.addEventListener('pagehide',function(){ if(S) abort('pagehide'); });
+  window.addEventListener('error',function(ev){ if(S&&S.errs>=3) abort(ev&&ev.message); });
   function exit(){ if(S&&S.session) S.session.end().catch(cleanup); }
-  function toggle(){ if(S) exit(); else enter().catch(function(e){ console.warn('[AR] enter failed',e); if(S) cleanup(); toast('Could not start AR'); setTimeout(function(){toast('');},2500); }); }
+  function toggle(){ if(S) exit(); else enter().catch(function(e){ console.warn('[AR] enter failed',e); if(S) abort('enter failed'); toast('Could not start AR'); setTimeout(function(){toast('');},2500); }); }
 
   window.DMAR={toggle:toggle,exit:exit,get active(){ return !!S; },get supported(){ return supported; },_buildDiorama:buildDiorama,_fillDiorama:fillDiorama,_stripSky:stripSky,_unstrip:unstrip};
   function init(){
