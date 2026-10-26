@@ -22999,7 +22999,7 @@ const MC_EDGE_CORNERS=[
 // piece (and any speck under `minCells`) is turned to air.
 function mcCleanFragments(d, G, gap, minCells){
   // (v136) d is a Float32Array or a DMSparseVox.View (dense-indexed view over the sparse bricks — no dense copy)
-  const V = d && d.isView, dg = V ? d.get : (i) => dg(i), ds = V ? d.set : (i, v) => { dg(i) = v; };
+  const V = d && d.isView, dg = V ? d.get : (i) => d[i], ds = V ? d.set : (i, v) => { d[i] = v; };   // (v146) was `dg(i) = v` — a SyntaxError in Safari/WebKit that killed this whole script
   gap = gap || 2; minCells = minCells || 6;
   const R = gap + 1;
   const N = G * G * G, lab = new Uint8Array(N), stack = new Int32Array(N);
