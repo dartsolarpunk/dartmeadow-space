@@ -46,7 +46,8 @@
       const a = Array.from(ft.slice(0, fn)).sort((x, y) => x - y), avg = a.reduce((s, v) => s + v, 0) / Math.max(1, a.length);
       return { fps: avg ? 1000 / avg : 0, avgMs: avg, p95Ms: a[Math.floor(a.length * 0.95)] || 0, worstMs: a[a.length - 1] || 0, minFps: a.length ? 1000 / a[a.length - 1] : 0,
         cpu: Object.assign({}, ema), gpu: (window.DMGpuProf && window.DMGpuProf.table) ? window.DMGpuProf.table() : null,
-        sparse: window.DMSparseVox ? window.DMSparseVox.builds.slice(-4) : null };
+        sparse: window.DMSparseVox ? window.DMSparseVox.builds.slice(-4) : null,
+        lod: window._svLodResident ? window._svLodResident() : null };
     },
     show() { P.on = true; },
     hide() { P.on = false; if (hud) hud.remove(); hud = null; },
@@ -74,6 +75,7 @@
           out += '\nGPU ' + f(g.gpuMsPerFrame) + ' ms';
           Object.keys(g.passes).slice(0, 12).forEach((k) => { const p = g.passes[k]; out += '\n ' + f(p.msPerFrame) + '  ' + k + ' (' + p.passesPerFrame + ')'; });
         } else out += '\nGPU  (no timestamp queries here)';
+        if (s.lod) out += '\nLOD pool ' + s.lod.bodies + '/' + s.lod.maxBodies + ' bodies x ' + s.lod.cap + ' bricks  resident ' + s.lod.mb.toFixed(1) + ' MB (' + s.lod.bricks + ' bricks)';
         if (s.sparse && s.sparse.length) {
           out += '\nSparse MC';
           s.sparse.forEach((b) => { out += '\n ' + b.kind + ' N' + b.N + ' B' + b.B + ' bricks ' + b.bricks + '/' + b.of + ' cells ' + (100 * b.cells / b.denseCells).toFixed(0) + '% ' + b.ms + 'ms'; });

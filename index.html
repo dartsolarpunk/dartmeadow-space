@@ -154,7 +154,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-earth-paint.js?v=135"></script>
 <script src="ui/dm-theme.js?v=81"></script>
 <script src="ui/dm-sparsevox.js?v=2"></script>
-<script src="ui/dm-perf.js?v=2"></script>
+<script src="ui/dm-perf.js?v=3"></script>
 <script>/* (v136) no-op stub so the flight loop can never throw if dm-perf.js failed to load */
 window.DMPerf=window.DMPerf||{on:false,b(){},e(){},mark(){},measure(n,f){return f();},frame(){},stats(){return {fps:0,avgMs:0,p95Ms:0,worstMs:0,minFps:0,cpu:{},gpu:null,sparse:null};},show(){},hide(){}};</script>
 <script src="ui/dm-fluid.js?v=80"></script>
@@ -7274,12 +7274,17 @@ async function _svMeasureRelief(terrainRadiusAt,radius,key){
 // incremental: the controller re-selects when the camera has moved, and each update builds only the
 // bricks that changed, in batches sized to a per-frame ms budget; replaced bricks are cleared only after
 // their replacements are in, so there is never a hole. No whole-world rebuild.
-const SV_LOD={B:4,DMAX:64,K:2.5,budgetMs:3,maxBodies:2,on:!/[?&]lod=0\b/.test(location.search)};
+// (v137) fixed brick-pool size per preset (not a runtime cut): low/medium 1 resident LOD body × 256 bricks, high/ultra 2 × 512
+const SV_LOD_PRESET={low:{bodies:1,cap:256},medium:{bodies:1,cap:256},high:{bodies:2,cap:512},ultra:{bodies:2,cap:512}};
+function _svLodPreset(){ let p='medium'; try{ p=resolvePreset(); }catch(e){} return SV_LOD_PRESET[p]||SV_LOD_PRESET.medium; }
+// resident GPU MB of every live LOD brick pool (shown in ?perf=1)
+window._svLodResident=function(){ let mb=0,n=0,br=0; try{ celestialBodies.forEach(b=>{ if(b._svLod){ n++; mb+=b._svLod.poolMB||0; br+=b._svLod.resident||0; } }); }catch(e){} const p=_svLodPreset(); return {bodies:n,maxBodies:p.bodies,cap:p.cap,bricks:br,mb}; };
+const SV_LOD={B:4,DMAX:64,K:2.5,budgetMs:3,get maxBodies(){ return _svLodPreset().bodies; },on:!/[?&]lod=0\b/.test(location.search)};
 async function _svLodPlanetMesh(o){
   const SV=window.DMSparseVox, B=SV_LOD.B, BP=B+1, P3=BP*BP*BP, C3=B*B*B, FC=6*B*B, DMAX=SV_LOD.DMAX;
   const radius=o.radius, HALF=o.HALF;
   const Nf=Math.max(32,(o.res||32)*4), Lr=Math.round(Math.log2(Nf/B)), coarsest=Math.max(0,Lr-2), BASE=HALF*2/(B*(1<<Lr));
-  const CAP=o.cap||((GFX&&(GFX.preset==='ultra'||GFX.preset==='high'))?512:384);
+  const CAP=o.cap||_svLodPreset().cap;
   const VPS=C3*15+FC*12, maxVerts=CAP*VPS;
   const rMin=radius+o.relief.min, rMax=radius+o.relief.max;
   const jobArr=new Uint32Array(DMAX*4), jobSlotArr=new Uint32Array(DMAX).fill(CAP);
@@ -7360,7 +7365,8 @@ async function _svLodPlanetMesh(o){
   })().compute(DMAX*FC);
 
   const stream=new SV.LodStream(CAP);
-  const ctl={stream,CAP,Lr,coarsest,BASE,busy:false,lastCam:null,lastSel:0,msPerBrick:0.25,built:0,cleared:0,batches:0,resident:0,lastMs:0,pending:0,
+  const poolBytes=[densityBuf,vertexBuf,normalBuf,colorBuf,jobAttr,jsAttr].reduce((a,b)=>a+((b.array&&b.array.byteLength)||0),0);
+  const ctl={poolMB:poolBytes/1048576,stream,CAP,Lr,coarsest,BASE,busy:false,lastCam:null,lastSel:0,msPerBrick:0.25,built:0,cleared:0,batches:0,resident:0,lastMs:0,pending:0,
     finest:B*BASE,
     select(cam){
       const r=SV.lodSelect({B,rootLevel:Lr,half:HALF,rMin,rMax,cam:cam?[cam.x,cam.y,cam.z]:null,k:SV_LOD.K,coarsest,maxBricks:CAP});
