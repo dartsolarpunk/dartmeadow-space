@@ -7776,8 +7776,11 @@ async function buildSolarSystem(){
   // Hoisted via file-scope PLANET_VIS_SCALE for rebuildFlightForSystem / belt.
   const visR = ratio => {
     if(ratio<=2) return Math.max(0.28, ratio) * PLANET_VIS_SCALE;
-    const t = ratio - 2;
-    return (2 + Math.pow(t, 0.30) * 0.35) * PLANET_VIS_SCALE;
+    // (v133) Jupiter keeps its size; the other giants scale from it by their real radius ratio (gently compressed,
+    // ^0.85) — before, the ^0.30 soft-compress put Saturn/Uranus/Neptune within 12% of Jupiter, so every giant read
+    // as Jupiter-sized and Saturn's body crowded its rings. Now: Jupiter 2.66, Saturn 2.30, Uranus 1.11, Neptune 1.08 (×Earth).
+    const JUP = (2 + Math.pow(11.21 - 2, 0.30) * 0.35);
+    return JUP * Math.pow(Math.min(ratio, 11.21) / 11.21, 0.85) * PLANET_VIS_SCALE;
   };
   // Mean motion from documented Sol clock; other planets n = n_earth / P.
   planets.forEach(pl=>{
@@ -7838,6 +7841,9 @@ async function buildSolarSystem(){
       group.add(new THREE.Mesh(new THREE.SphereGeometry(p.r,24,24), new THREE.MeshStandardMaterial({color:p.col||0x888888,roughness:.85})));
     }
     const mesh = group; // keep the name "mesh" for the code below, unchanged from before
+    // (v133) the giant's name rides on its air shell so the true-atmosphere pass (_taParamsFor) gives each giant its own
+    // gas colours instead of the one Jupiter preset
+    if(p.type==='Gas Giant'||p.type==='Ice Giant') try{ mesh.traverse(o=>{ if(o.userData&&o.userData.jotsAtmo) o.userData.giantName=p.name; }); }catch(e){}
     console.log('[TIMING]', p.name, 'built in', (performance.now()-_pT0).toFixed(0), 'ms');
 
     // Orbit ring — TorusGeometry defaults to lying flat in the XY plane, but
@@ -18160,12 +18166,30 @@ function _taEarthHeight(R,HS){
   return (x,y,z)=>{ const lat=Math.asin(Math.max(-1,Math.min(1,y)))*180/Math.PI, lon=Math.atan2(-z,x)*180/Math.PI; const m=E.metres(lat,lon); return isFinite(m)?m/8848*HS:0; };
 }
 // per-planet gas: data-driven (scale height, coefficients, layers, weather); thickness from coefficients, never extra samples
+// (v133) ROOT CAUSE of "every giant past the belt is a Jupiter": the true-atmosphere pass (WebGPU, nearest world) gave
+// EVERY giant DMAtmo.presetGasGiant — Jupiter's orange-brown NH4SH belts, cream NH3 zones, 7 bands and the Great Red
+// Spot vortex — painted over the giant's own band shader. Each giant now gets its own gas: Jupiter unchanged; Saturn pale
+// butterscotch, faint; Uranus near-featureless cyan (no banded layers); Neptune deep blue with a dark spot.
+function _taGiantLook(P,name){
+  const L=P.layers, belt=L[0], zone=L[1], haze=L[2];
+  if(name==='Saturn'){
+    belt.albedo=[0.80,0.66,0.42]; zone.albedo=[0.95,0.88,0.68]; belt.amount*=0.45; zone.amount*=0.6;
+    P.storm={swirl:0.45,bands:9.0,speed:0.03}; P.rayleigh=[0.35,0.4,0.6];
+  } else if(name==='Uranus'){
+    P.layers=[haze]; haze.ext=[0.42,0.08,0.05];   // methane eats red: pale cyan, no belts
+    P.storm={swirl:0.08,bands:3.0,speed:0.01}; P.rayleigh=[0.15,0.55,0.75];
+  } else if(name==='Neptune'){
+    belt.albedo=[0.10,0.18,0.48]; zone.albedo=[0.28,0.44,0.86]; belt.amount*=0.6; zone.amount*=0.5; haze.ext=[0.55,0.12,0.03];
+    P.storm={swirl:0.6,bands:4.0,speed:0.05,vortex:[-0.5,-0.35,0.79]}; P.rayleigh=[0.1,0.35,1.3];
+  }
+  return P;
+}
 function _taParamsFor(ud){
   const R=ud.planetR, k=String(ud.atmoKind||'').toLowerCase(), top=Math.max(R*0.02, Math.min(R*0.25, ud.atmoTop||R*0.1));
   let P;
   if(k==='earth'||k==='habitable') P=DMAtmo.presetEarth(R);
   else if(k==='mars'||k==='desert') P=DMAtmo.presetDesert(R);
-  else if(k==='giant'){ P=DMAtmo.presetGasGiant(R); P.radius=R; P.layers.forEach(l=>{ l.amount*=0.3; }); }   // the giant's own banded map shows through
+  else if(k==='giant'){ P=DMAtmo.presetGasGiant(R); P.radius=R; P.layers.forEach(l=>{ l.amount*=0.3; }); _taGiantLook(P,ud.giantName); }   // the giant's own banded map shows through
   else { P=DMAtmo.presetEarth(R); P.cloud=null; P.weather=null; P.layers=[]; }
   if(k!=='giant'&&k!=='mars'){ const sc=(ud.atmoScatter||2.2)/3.8*1.25; P.rayleigh=[Math.pow(400/700,4)*sc,Math.pow(400/530,4)*sc,Math.pow(400/440,4)*sc]; }
   const sh=P.scaleHeight/P.top; P.top=top; P.scaleHeight=top*sh;
