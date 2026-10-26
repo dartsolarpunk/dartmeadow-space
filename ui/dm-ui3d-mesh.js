@@ -20,7 +20,7 @@
   'use strict';
   if(window.DMUI3DMesh) return;
   var TARGETS=['.hud-c','.hud-l','.hud-r','.mini-kite'];
-  var MAX_DEG=9, LAYERS=3, DEPTH=6, ATLAS=2048, TATLAS=1024, PAD=2, LAYOUT_EVERY=20;
+  var MAX_DEG=18, LAYERS=6, DEPTH=24, FOV=40, ATLAS=2048, TATLAS=1024, PAD=2, LAYOUT_EVERY=20;
   var PROPS=['display','position','left','top','right','bottom','width','height','min-width','min-height','max-width','max-height',
     'margin-top','margin-right','margin-bottom','margin-left','padding-top','padding-right','padding-bottom','padding-left','box-sizing',
     'border-top','border-right','border-bottom','border-left','border-radius','background-color','background-image','background-size','background-position','background-repeat',
@@ -89,9 +89,48 @@
       var t=tilt(mr); mm.position.set(t.cx,t.cy,1); mm.quaternion.copy(t.q); mm.scale.set(mr.width,mr.height,1); mm.visible=true; mm.userData.el=document.getElementById('minimap'); }
     else if(mm.visible){ mm.visible=false; var me=document.getElementById('minimap'); me&&me.classList.remove('dm-ui3d-ghost'); }
   }
+  // (v148) WebKit taints any canvas that draws an SVG <foreignObject> image; a tainted atlas makes the texture
+  // upload throw (SecurityError) and the watchdog dropped iPhone/iPad to the CSS tilt. Every raster now goes to a
+  // scratch canvas first and is probed with getImageData; on taint we switch (once) to SAFE: a canvas-2D box
+  // painter (backgrounds, borders, radius, glow, clip-path polygons) + inline <svg> drawn as plain SVG images
+  // (no foreignObject = no taint). The shared atlas itself is never tainted.
+  var SAFE=/[?&]ui3dsafe=1\b/.test(location.search), painter=SAFE?'box2d':'foreignObject';   // ?ui3dsafe=1: test the WebKit painter in Chromium; ?ui3dgl=1: allow the WebGL2 backend (headless checks)
+  function scratch(w,h){ var c=document.createElement('canvas'); c.width=Math.max(1,w); c.height=Math.max(1,h); return c; }
+  function clean(c){ try{ c.getContext('2d').getImageData(0,0,1,1); return true; }catch(e){ return false; } }
+  function alphaOf(c){ var m=/rgba?\(([^)]*)\)/.exec(c||''); if(!m) return c&&c!=='transparent'?1:0; var a=m[1].split(/[ ,\/]+/).filter(Boolean); return a.length>3?parseFloat(a[3]):1; }
+  function polyPath(cx,cp,x,y,w,h){ var m=/^polygon\((.*)\)$/.exec(cp||''); if(!m) return false; var pts=m[1].split(',');
+    pts.forEach(function(pt,i){ var v=pt.trim().split(/\s+/), f=function(t,L){ return /%$/.test(t)?parseFloat(t)/100*L:parseFloat(t)||0; }; var px=x+f(v[0],w), py=y+f(v[1],h); if(i) cx.lineTo(px,py); else cx.moveTo(px,py); });
+    cx.closePath(); return true; }
+  async function paintSafe(P){
+    var c=scratch(P.w,P.h), cx=c.getContext('2d'), base=P.el.getBoundingClientRect(), els=[P.el].concat([].slice.call(P.el.querySelectorAll('*')));
+    for(var i=0;i<els.length;i++){ var el=els[i];
+      if(el instanceof SVGElement&&el.tagName.toLowerCase()!=='svg') continue;
+      var cs=getComputedStyle(el); if(cs.display==='none'||cs.visibility==='hidden'||parseFloat(cs.opacity)===0) continue;
+      var r=el.getBoundingClientRect(); if(r.width<1||r.height<1) continue; var x=r.left-base.left, y=r.top-base.top;
+      if(el.tagName.toLowerCase()==='svg'){ var cl=el.cloneNode(true), so=[el].concat([].slice.call(el.querySelectorAll('*'))), sc=[cl].concat([].slice.call(cl.querySelectorAll('*')));
+        for(var k=0;k<so.length;k++){ var s2=getComputedStyle(so[k]); ['fill','stroke','stroke-width','opacity','fill-opacity','stroke-opacity','stroke-dasharray','stroke-linecap','stroke-linejoin','stop-color','stop-opacity','font-size','font-family','font-weight'].forEach(function(pn){ var v=s2.getPropertyValue(pn); if(v) sc[k].style.setProperty(pn,v); }); }
+        ['position','left','top','right','bottom','inset','transform','rotate','translate','scale','margin'].forEach(function(pn){ cl.style.removeProperty(pn); }); cl.setAttribute('width',r.width); cl.setAttribute('height',r.height); cl.setAttribute('xmlns','http://www.w3.org/2000/svg');
+        var im=new Image(); try{ await within(new Promise(function(res,rej){ im.onload=res; im.onerror=rej; im.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(new XMLSerializer().serializeToString(cl)); }),4000); cx.drawImage(im,x,y,r.width,r.height); }catch(e){ console.warn('[UI3D] svg paint',e&&(e.message||e.type)); }
+        continue; }
+      var bg=cs.backgroundColor, bw=parseFloat(cs.borderTopWidth)||0, bc=cs.borderTopColor, rad=Math.min(parseFloat(cs.borderTopLeftRadius)||0,r.width/2,r.height/2);
+      if(alphaOf(bg)<=0&&(bw<=0||alphaOf(bc)<=0)) continue;
+      cx.save(); cx.globalAlpha=Math.min(1,parseFloat(cs.opacity)||1); cx.beginPath();
+      if(!polyPath(cx,cs.clipPath,x,y,r.width,r.height)){ if(cx.roundRect) cx.roundRect(x+bw/2,y+bw/2,r.width-bw,r.height-bw,rad); else cx.rect(x+bw/2,y+bw/2,r.width-bw,r.height-bw); }
+      var g=/(rgba?\([^)]*\)|#[0-9a-f]+)\s+(-?[\d.]+)px\s+(-?[\d.]+)px\s+([\d.]+)px/i.exec(cs.boxShadow||''); if(g&&!/inset/.test(cs.boxShadow)){ cx.shadowColor=g[1]; cx.shadowOffsetX=+g[2]; cx.shadowOffsetY=+g[3]; cx.shadowBlur=+g[4]; }
+      if(alphaOf(bg)>0){ cx.fillStyle=bg; cx.fill(); cx.shadowColor='transparent'; }
+      if(bw>0&&alphaOf(bc)>0){ cx.lineWidth=bw; cx.strokeStyle=bc; cx.stroke(); }
+      cx.restore(); }
+    if(!clean(c)) throw new Error('2D box painter canvas tainted');
+    return c; }
+  async function paintSrc(P){
+    if(!SAFE){ try{ var img=await raster(P.el,P.w,P.h), c=scratch(P.w,P.h); c.getContext('2d').drawImage(img,0,0,P.w,P.h); if(clean(c)) return c;
+        console.warn('[UI3D] foreignObject raster taints the canvas here (WebKit); switching to the 2D box painter'); }
+      catch(e){ console.warn('[UI3D] foreignObject raster failed ('+(e&&e.message)+'); switching to the 2D box painter'); }
+      SAFE=true; painter='box2d'; }
+    return paintSafe(P); }
   function paint(P){ P.busy=true; var gen=P.sig;
-    raster(P.el,P.w,P.h).then(function(img){ if(P.sig!==gen||!P.slot) return; aCx.clearRect(P.slot.x,P.slot.y,P.w,P.h); aCx.drawImage(img,P.slot.x,P.slot.y,P.w,P.h); P.ready=true; artDirty=true; })
-      .catch(function(e){ console.warn('[UI3D] raster',e&&e.message); }).finally(function(){ P.busy=false; }); }
+    paintSrc(P).then(function(src){ if(P.sig!==gen||!P.slot) return; aCx.clearRect(P.slot.x,P.slot.y,P.w,P.h); aCx.drawImage(src,P.slot.x,P.slot.y,P.w,P.h); P.ready=true; artDirty=true; })
+      .catch(function(e){ P.failed=(P.failed||0)+1; console.warn('[UI3D] raster',e&&e.message); }).finally(function(){ P.busy=false; }); }
 
   // ---------- static art geometry: ONE merged buffer ----------
   function buildArt(){
@@ -99,7 +138,7 @@
     var nQ=rd.length*(LAYERS+1), pos=new Float32Array(nQ*12), uv=new Float32Array(nQ*8), col=new Float32Array(nQ*12), idx=new Uint32Array(nQ*6), q=0, v=new T.Vector3();
     rd.forEach(function(P){ var t=tilt(P.rect), w=P.rect.width/2, h=P.rect.height/2;
       var u0=P.slot.x/ATLAS, u1=(P.slot.x+P.w)/ATLAS, v0=1-(P.slot.y+P.h)/ATLAS, v1=1-P.slot.y/ATLAS;
-      for(var L=LAYERS;L>=0;L--){ var z=-DEPTH*L/LAYERS, sh=L===0?1:0.32-0.05*L, ox=L?t.nx*L*0.6:0, oy=L?-t.ny*L*0.4:0, cs=[[-w,-h],[w,-h],[w,h],[-w,h]];
+      for(var L=LAYERS;L>=0;L--){ var z=-DEPTH*L/LAYERS, sh=L===0?1:0.55-0.06*L, ox=L?t.nx*L*1.1:0, oy=L?-t.ny*L*0.8:0, cs=[[-w,-h],[w,-h],[w,h],[-w,h]];
         for(var k=0;k<4;k++){ v.set(cs[k][0]+ox,cs[k][1]+oy,z).applyQuaternion(t.q); pos.set([v.x+t.cx,v.y+t.cy,v.z],q*12+k*3); col.set([sh,sh,sh],q*12+k*3); }
         uv.set([u0,v0,u1,v0,u1,v1,u0,v1],q*8); var b=q*4; idx.set([b,b+1,b+2,b,b+2,b+3],q*6); q++; } });
     setGeo(art,pos,uv,col,idx); aTex.needsUpdate=true;
@@ -138,8 +177,8 @@
   // ---------- overlay pass on the game's renderer ----------
   function setup(R){
     T=window.THREE; if(!T) return false;
-    if(!(R&&R.backend&&R.backend.isWebGPUBackend)){ fallback('renderer backend is not WebGPU'); return false; }
-    root=new T.Group(); scene=new T.Scene(); scene.add(root); cam=new T.PerspectiveCamera(30,1,1,10);
+    if(!(R&&R.backend&&(R.backend.isWebGPUBackend||/[?&]ui3dgl=1\b/.test(location.search)))){ fallback('renderer backend is not WebGPU'); return false; }
+    root=new T.Group(); scene=new T.Scene(); scene.add(root); cam=new T.PerspectiveCamera(FOV,1,1,10);
     aCv=document.createElement('canvas'); aCv.width=aCv.height=ATLAS; aCx=aCv.getContext('2d');
     tCv=document.createElement('canvas'); tCv.width=tCv.height=TATLAS; tCx=tCv.getContext('2d');
     function tx(c){ var t=new T.CanvasTexture(c); t.colorSpace=T.SRGBColorSpace; t.generateMipmaps=false; t.minFilter=T.LinearFilter; return t; }
@@ -152,8 +191,8 @@
     document.body.classList.add('dm-ui3d-mesh'); ready=true; return true;
   }
   // ---------- fallback watchdog ----------
-  var drewOK=false, wdFrames=0, wdT0=0, WD_FRAMES=30, WD_MS=1000;
-  function fallback(why){ console.warn('[UI3D] mesh HUD failed ('+why+'); falling back to CSS tilt');
+  var drewOK=false, wdFrames=0, wdT0=0, WD_MS=15000, why0='';
+  function fallback(why){ why0=why; console.warn('[UI3D] mesh HUD failed ('+why+'); falling back to CSS tilt');
     try{ stop(); }catch(e){} mode='css'; drewOK=false; wdFrames=0; wdT0=0; try{ if(window.DMUI3D) DMUI3D.refresh(); }catch(e){} }
   function ghostDrawn(){ panels.forEach(function(P){ if(P.ready&&P.slot) P.el.classList.add('dm-ui3d-ghost'); });
     if(mm.visible&&mm.userData.el) mm.userData.el.classList.add('dm-ui3d-ghost'); }
@@ -164,25 +203,39 @@
     if(artDirty){ artDirty=false; buildArt(); txtGeoDirty=true; }
     if(txtGeoDirty){ txtGeoDirty=false; buildText(); }
     updateText(); if(mm.visible&&mm.material.map) mm.material.map.needsUpdate=true;
-    if(!drewOK&&!arHeld&&panels.size){ if(!wdT0) wdT0=performance.now(); if(++wdFrames>WD_FRAMES||performance.now()-wdT0>WD_MS){ fallback('no OK mesh frame within '+wdFrames+' frames / '+Math.round(performance.now()-wdT0)+' ms'); return; } }
+    // (v148) the old 30-frame / 1 s watchdog ran while the panels were still rasterizing (no art = nothing to draw),
+    // so a tablet/phone whose first raster took >1 s always fell back to CSS. Now: the DOM stays visible until a
+    // mesh frame draws OK; only a render throw or no art at all after 15 s (raster stall) falls back.
+    if(!drewOK&&!arHeld&&panels.size){ if(!wdT0) wdT0=performance.now(); wdFrames++; var anyArt=false; panels.forEach(function(P){ if(P.ready) anyArt=true; });
+      if(!anyArt&&performance.now()-wdT0>WD_MS){ fallback('no panel art after '+Math.round(performance.now()-wdT0)+' ms (raster stall, painter '+painter+')'); return; } }
     if(arHeld||!(art.visible||txt.visible||mm.visible)) return;
-    var vw=innerWidth, vh=innerHeight, d=(vh/2)/Math.tan(15*Math.PI/180);
+    var vw=innerWidth, vh=innerHeight, d=(vh/2)/Math.tan(FOV/2*Math.PI/180);
     cam.aspect=vw/vh; cam.near=d*0.5; cam.far=d*2; cam.position.set(0,0,d); cam.updateProjectionMatrix();
     var ac=R.autoClear, ok=false; R.autoClear=false;
     try{ R.clearDepth&&R.clearDepth(); R.render(scene,cam); ok=true; }
     catch(e){ R.autoClear=ac; fallback('render threw: '+(e&&e.message)); return; }
     finally { R.autoClear=ac; }
-    if(ok){ drewOK=true; ghostDrawn(); }   // drewOK only after R.render returned without throwing
+    if(ok){ drewOK=true; ghostDrawn(); }
+  }
+  // AR / camera passthrough: draw the HUD group on another renderer (layout/text keep updating in overlay())
+  function drawTo(R){ if(!ready||!on()||!(art.visible||txt.visible||mm.visible)) return false;
+    if(root.parent!==scene) scene.add(root);
+    var vw=innerWidth, vh=innerHeight, d=(vh/2)/Math.tan(FOV/2*Math.PI/180);
+    cam.aspect=vw/vh; cam.near=d*0.5; cam.far=d*2; cam.position.set(0,0,d); cam.updateProjectionMatrix();
+    var ac=R.autoClear; R.autoClear=false; try{ R.clearDepth&&R.clearDepth(); R.render(scene,cam); drewOK=true; ghostDrawn(); } finally { R.autoClear=ac; } return true;   // drewOK only after R.render returned without throwing
   }
   function stop(){ panels.forEach(function(P,el){ el.classList.remove('dm-ui3d-ghost'); }); panels.clear(); var me=document.getElementById('minimap'); me&&me.classList.remove('dm-ui3d-ghost');
     drewOK=false; wdFrames=0; wdT0=0; if(ready){ art.visible=txt.visible=mm.visible=false; } document.body.classList.remove('dm-ui3d-mesh'); }
 
   window.DMUI3DMesh={
     get active(){ return on()&&ready&&!!(art&&(art.visible||txt.visible)); }, get mesh(){ return root; }, get scene(){ return scene; }, get camera(){ return cam; },
-    overlay:overlay,
+    overlay:overlay, drawTo:drawTo, _paintSafe:function(el){ var r=el.getBoundingClientRect(); return paintSafe({el:el,w:Math.ceil(r.width),h:Math.ceil(r.height)}).then(function(c){ return c.toDataURL(); }); },
+    // what is really on screen: 'mesh' (WebGPU overlay drew OK), 'css' (tilt fallback / opt-out), 'flat'
+    get status(){ var m=mode==='0'||(window.DMUI3D&&DMUI3D.enabled===false)?'flat':(on()&&ready&&drewOK)?'mesh':(on()?'mesh?':'css');
+      return {mode:m, reason:why0, painter:painter, pending:on()&&!drewOK?Math.round(wdT0?performance.now()-wdT0:0):0}; },
     setMode:function(m){ mode=m; try{ localStorage.setItem('dm.ui3d',m); }catch(e){} if(!on()) stop(); else if(ready) document.body.classList.add('dm-ui3d-mesh'); if(window.DMUI3D) DMUI3D.refresh(); },
     // AR: ui/dm-ar-core.js draws `mesh` itself on a head-locked plate; on release it goes back here
     arHold:function(h){ arHeld=!!h; if(!h&&root&&scene&&root.parent!==scene) scene.add(root); },
-    _stats:function(){ var o=[]; panels.forEach(function(P){ o.push({cls:P.el.className,ready:P.ready,leaves:P.leaves.length}); }); return {on:on(),ready:ready,frames:frameN,drewOK:drewOK,panels:o,minimap:!!(mm&&mm.visible)}; }
+    _stats:function(){ var o=[]; panels.forEach(function(P){ o.push({cls:P.el.className,ready:P.ready,leaves:P.leaves.length}); }); return {on:on(),painter:painter,why:why0,ready:ready,frames:frameN,drewOK:drewOK,panels:o,minimap:!!(mm&&mm.visible)}; }
   };
 })();

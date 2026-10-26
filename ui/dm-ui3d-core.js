@@ -74,7 +74,7 @@
   // screens switch by class: re-measure when any .screen toggles
   try{ new MutationObserver(function(m){ for(var i=0;i<m.length;i++){ var t=m[i].target; if(t&&t.classList&&(t.classList.contains('screen')||t.id==='loading-screen')){ refresh(); return; } } })
     .observe(document.body,{subtree:true,attributes:true,attributeFilter:['class']}); }catch(e){}
-  window.DMUI3D={refresh:refresh,
+  window.DMUI3D={refresh:refresh, get enabled(){ return on; },
     enable:function(){ on=true; try{localStorage.setItem('dm.ui3d','1');}catch(e){} refresh(); },
     disable:function(){ on=false; try{localStorage.setItem('dm.ui3d','0');}catch(e){} document.body.classList.remove('dm-ui3d'); }};
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',refresh); else refresh();
