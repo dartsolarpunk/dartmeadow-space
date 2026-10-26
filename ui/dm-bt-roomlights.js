@@ -1,4 +1,4 @@
-/* (v134) Bird Temple room lights — switchable colour modes for every room, persisted in the save.
+/* (v139) Bird Temple room lights — switchable colour modes for every room, persisted in the save.
  *   Every room switch (IX_Switch_<room>: nav, mess, crew, store, engine, bay, cmd) now cycles
  *     AUTO (the existing dim/auto behaviour) → BRIGHT → WARM → COOL → NIGHT (pink-red, like nav's red-alert light) → OFF → AUTO.
  *   Hallways (group 'hall') keep their automatic lights. No lights are added: the room's existing virtual lamps change

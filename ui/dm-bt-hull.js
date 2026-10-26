@@ -1,4 +1,4 @@
-/* (v134) Bird Temple hull + Ariel look (overrides only — the GLB is untouched).
+/* (v139) Bird Temple hull + Ariel look (overrides only — the GLB is untouched).
  *   Hull: the 'Hull' node's (untextured) materials become brushed metal (metalness .55, roughness .38) with the baked
  *     'out' panorama (bake/bt-refl-out.webp) as their environment, so the metal has something to reflect; it receives the
  *     Sun's shadow (BTL sets receiveShadow) and Ariel + the board cast it (they already castShadow).
@@ -24,7 +24,7 @@
     });
     if (/[?&]bake=0\b/.test(location.search)) { H.stats.hullMats = hullMats.length; return true; }   // ?bake=0: no baked env fetch
     const im = new Image(); im.onload = () => { env = new THREE.Texture(im); env.mapping = THREE.EquirectangularReflectionMapping; env.colorSpace = THREE.SRGBColorSpace; env.needsUpdate = true; for (const m of hullMats) { m.envMap = env; m.needsUpdate = true; } H.stats.env = true; };
-    im.src = 'bake/bt-refl-out-half.webp?v=134';
+    im.src = 'bake/bt-refl-out-half.webp?v=139';
     H.stats.hullMats = hullMats.length; return true;
   }
   function mkBlob() {
