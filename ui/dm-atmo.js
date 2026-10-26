@@ -361,13 +361,14 @@
         Loop(steps, ({ i }) => {
           const t = t0.add(ds.mul(float(i).add(jit)));
           const p = ro.add(rd.mul(t)), r = length(p), up = p.div(r);
-          const solid = U.R0.add(max(groundAt(p, up), U.sea));   // gas boundary = max(terrain, water)
+          const gnd = groundAt(p, up);
+          const solid = U.R0.add(max(gnd, U.sea));   // gas boundary = max(terrain, water)
           const alt = r.sub(solid);
           If(alt.greaterThan(0.0), () => {
             const hSea = r.sub(Rsea);
             const fadeTop = smoothstep(Rtop, Rtop.sub(U.top.mul(0.25)), r);
             const rhoR = exp(hSea.negate().div(U.H)).mul(fadeTop);
-            const rhoM = exp(hSea.negate().div(U.H.mul(0.25))).mul(fadeTop).add(exp(alt.negate().div(U.hazeH)).mul(U.haze));
+            const rhoM = exp(hSea.negate().div(U.H.mul(0.25))).mul(fadeTop).add(exp(alt.negate().div(U.hazeH)).mul(U.haze).mul(gnd.lessThan(U.sea).select(float(0.2), float(1.0))));   // (v130) marine air is clean: the dust/smog haze is a land layer (it veiled the ocean white from orbit)
             const wd0 = warpDir(toLocal(up)).toVar();   // (v123) shared by every gas noise lookup of this step
             const n = gasNoiseW(wd0, hSea, 3.0);
             // (v103) accumulated in vars so the cloud/weather/layer terms can be skipped where their altitude band is
