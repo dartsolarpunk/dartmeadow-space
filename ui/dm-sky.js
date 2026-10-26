@@ -64,6 +64,7 @@
       return W.mix(c, U.haze.mul(U.day.mul(0.8).add(0.05)).mul(U.atm), W.smoothstep(W.float(0), W.float(-0.25), h));
     })();
     const dome = new THREE.Mesh(new THREE.SphereGeometry(R, 32, 24), mat);
+    dome.userData.dmSkyShell = true;   // (v137) AR passthrough hides it (ui/dm-ar-core.js)
     dome.renderOrder = -10; dome.frustumCulled = false; dome.raycast = () => {};
     scene.add(dome);
 
