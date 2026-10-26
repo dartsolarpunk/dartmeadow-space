@@ -6814,6 +6814,17 @@ function _pruneJotsFogRegistry(){
     if(!e||!e.light||!e.light.parent||(e.group&&!(e.light.userData._nfP&&e.light.userData._nfP.group===e.group))) _jotsFogNearFills.splice(i,1);
   }
 }
+// (v133) gas/ice-giant shells (_buildJotsDustyAtmoShell): the scattering is solved analytically per pixel, so which faces
+// rasterise only decides coverage. Seen from outside, the FRONT faces draw it, depth-tested, so anything nearer (the Bird
+// Temple's walls and decks, a moon, the ship) occludes it — before, a BackSide shell with depthTest:false painted Uranus'
+// cyan glow straight through the temple. From inside the shell (no near geometry to hide) it keeps the old BackSide look.
+function _jotsShellSide(mesh,cam,center){
+  const m=mesh.material; if(!m) return;
+  const R=(mesh.userData.shellR||0)*mesh.matrixWorld.getMaxScaleOnAxis();
+  const inside=cam.distanceTo(center)<R*1.002;
+  const side=inside?THREE.BackSide:THREE.FrontSide, dt=!inside;
+  if(m.side!==side||m.depthTest!==dt){ m.side=side; m.depthTest=dt; m.needsUpdate=true; }
+}
 function _updateJotsWorldsFog(){
   if(typeof THREE==='undefined')return;
   _pruneJotsFogRegistry();
@@ -6831,6 +6842,7 @@ function _updateJotsWorldsFog(){
     const e=_jotsFogAtmoRegistry[i];
     try{
       e.mesh.getWorldPosition(center);
+      if(cam&&e.mesh.userData.flipSide) _jotsShellSide(e.mesh,cam,center);
       if(e.planetCenterU&&e.planetCenterU.value) e.planetCenterU.value.copy(center);
       if(e.sunDirU&&e.sunDirU.value){
         e.sunDirU.value.copy(sunPos).sub(center);
@@ -6950,7 +6962,7 @@ function _buildJotsDustyAtmoShell(radius, opts){
     &&!!(THREE&&THREE.MeshBasicNodeMaterial)&&typeof Fn==='function';
   if(useNode){
     try{
-      const atmoMat=new THREE.MeshBasicNodeMaterial({transparent:true,side:THREE.BackSide,depthWrite:false,depthTest:false,blending:THREE.AdditiveBlending});
+      const atmoMat=new THREE.MeshBasicNodeMaterial({transparent:true,side:THREE.BackSide,depthWrite:false,depthTest:true,blending:THREE.AdditiveBlending});   // (v133) depth-tested: nearer geometry (Bird Temple walls, moons, the ship) occludes it; the side flips per frame (_jotsShellSide)
       const scatterCoeffs=uniform(new THREE.Vector3(Math.pow(400/700,4),Math.pow(400/530,4),Math.pow(400/440,4)).multiplyScalar(scatterMul));
       const sunDirU=uniform(new THREE.Vector3(1,0.3,0.2).normalize());
       const planetCenterU=uniform(new THREE.Vector3(0,0,0));
@@ -7020,7 +7032,7 @@ function _buildJotsDustyAtmoShell(radius, opts){
       const atmoMesh=new THREE.Mesh(new THREE.SphereGeometry(ATMO_R,32,24),atmoMat);
       atmoMesh.name='JOTS_DustyAtmo';
       atmoMesh.renderOrder=2;
-      atmoMesh.userData.jotsAtmo=true;
+      atmoMesh.userData.jotsAtmo=true; atmoMesh.userData.shellR=ATMO_R; atmoMesh.userData.flipSide=true;
       atmoMesh.userData.planetR=R; atmoMesh.userData.atmoTop=ATMO_R-R; atmoMesh.userData.atmoScatter=scatterMul; atmoMesh.userData.atmoTint=tint.getHex(); atmoMesh.userData.atmoKind=opts.kind||'giant';
       group.add(atmoMesh);
       _registerJotsAtmoFog({mesh:atmoMesh, sunDirU, planetCenterU});
@@ -7791,6 +7803,11 @@ async function buildSolarSystem(){
   };
   // Sequential (not parallel) so multiple simultaneous compute dispatches
   // don't contend for GPU resources building a whole system at once.
+  // (v133) Sol order guard: drop any stale Sol planet left by an earlier build (they're tagged below), and log the order
+  // so a cached/legacy layout is visible in the console — Mercury→Venus→Earth→Mars→belt→Jupiter→Saturn→Uranus→Neptune→Pluto.
+  try{ flightScene.children.filter(o=>o&&o.userData&&o.userData.solPlanet).forEach(o=>flightScene.remove(o)); }catch(e){}
+  try{ console.log('[sol] order (AU):', planets.map(q=>q.name+' '+(q.semiMajor/AU).toFixed(2)).join(' → '),
+    planets.every((q,i)=>!i||q.semiMajor>planets[i-1].semiMajor)?'ok':'OUT OF ORDER'); }catch(e){}
   for(const p of planets){
     const _pT0 = performance.now();
     const seedVal = p.name.length*7+3; // same seeding convention already used for the old canvas-texture look, kept for continuity
@@ -7840,7 +7857,7 @@ async function buildSolarSystem(){
     if(p.name==='Uranus' && typeof _buildJotsDustyRingGroup==='function'){
       // Uranus: faint, narrow, near-vertical rings (its 98° axial tilt)
       try{ const ug=_buildJotsDustyRingGroup(p.r, {color:0x8aa0a8, bands:2, tilt:Math.PI*0.06, innerMul:1.6, opacityMul:0.35, widthMul:0.12, seed:0x55a4a5});
-        ug.isPlanetExtra=true; mesh.add(ug);
+        ug.isPlanetExtra=true; ug.position.set(0,0,0); ug.name='SOL_Uranus_Rings'; mesh.add(ug);
         // pre-warm its ring pipelines off the first-view frame; shown once compiled
         if(typeof _dmCompileObject==='function'){ ug.visible=false; _dmCompileObject(ug).then(()=>{ ug.visible=true; }); } }catch(e){}
     }
@@ -7850,7 +7867,8 @@ async function buildSolarSystem(){
         ? _buildJotsDustyRingGroup(p.r, {color:0xddcc88, bands:4+Math.floor(Math.random()*2), tilt:Math.PI*.42})
         : (()=>{ const g=new THREE.Group(); g.isPlanetExtra=true; return g; })();
       ringGroup.isPlanetExtra=true; // preserved across an LOD mesh swap (see upgradePlanetLOD)
-      mesh.add(ringGroup); // parented to planet, orbits together
+      ringGroup.position.set(0,0,0); ringGroup.name='SOL_'+p.name+'_Rings';
+      mesh.add(ringGroup); // parented to planet, centred on it, orbits together
     }
 
     // Atmosphere is already built INSIDE buildProceduralPlanetMesh (the
@@ -7864,6 +7882,7 @@ async function buildSolarSystem(){
       const rr=p.semiMajor*ke.rFactor;
       mesh.position.set(rr*Math.cos(ke.nu), 0, rr*Math.sin(ke.nu));
     }
+    mesh.name='SOL_'+p.name; mesh.userData.solPlanet=p.name;
     flightScene.add(mesh);
     if(p.name==='Earth')earthMesh=mesh;
     const isProcedural = !(p.type==='Gas Giant' || p.type==='Ice Giant');
