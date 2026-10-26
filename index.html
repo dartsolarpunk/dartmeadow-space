@@ -158,6 +158,12 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-worldstyle.js?v=94"></script>
 <script src="ui/dm-sky.js?v=111"></script>
 <script src="ui/dm-dust.js?v=95"></script>
+<!-- crunch1 true-fluid VFX (WebGPU only; WebGL keeps the current ocean/dust/fumes) -->
+<script src="ui/dm-fluid-core.js?v=136"></script>
+<script src="ui/dm-fluid-apic.js?v=136"></script>
+<script src="ui/dm-fluid-spray.js?v=136"></script>
+<script src="ui/dm-fluid-smoke.js?v=136"></script>
+<script src="ui/dm-fluid-world.js?v=136"></script>
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js",
@@ -7958,6 +7964,7 @@ async function buildSolarSystem(){
       try{
         if(window.DMMist&&DMMist.asteroidFumes&&li!==1){
           const _lowF=(typeof _jotsAtmoSampleBudgets==='function')?(_jotsAtmoSampleBudgets().view<4):false;
+          if(!(window.DMFluidWorld&&DMFluidWorld.asteroidFumes(agroup,rad,{col:[0,1,3,2][li],low:_lowF,rand:seedRand(hashStr('sol:fume:'+landNames[li]))})))   // true-fluid gas on WebGPU
           DMMist.asteroidFumes(agroup,rad,{col:[0,1,3,2][li],low:_lowF,renderer:flightRenderer,cpu:/[?&]cpusmoke/.test(location.search),rand:seedRand(hashStr('sol:fume:'+landNames[li]))});
         }
       }catch(e){ console.warn('[mist] asteroid fumes',e); }
@@ -17328,7 +17335,7 @@ function renderWithPostFX(){
   flightRenderer.setRenderTarget(null);
   const _spec=window.DMSpec&&DMSpec.on; if(_spec) try{ DMSpec.pre(flightCamera); }catch(e){}
   try{ if(galSky.ready) updateGalSky(); }catch(e){}
-  try{ if(window.DMStarBubble) { const n=performance.now(), d=_sbT?(n-_sbT)/1000:1/60; _sbT=n; if(window.DMStar) DMStar.frame(flightCamera,d); if(window.DMMist) DMMist.frame(flightCamera,d); DMStarBubble.frame(flightCamera,flightScene,d); } }catch(e){ console.warn('[starbubble] '+(e&&e.stack||e)); }
+  try{ if(window.DMStarBubble) { const n=performance.now(), d=_sbT?(n-_sbT)/1000:1/60; _sbT=n; if(window.DMStar) DMStar.frame(flightCamera,d); if(window.DMMist) DMMist.frame(flightCamera,d); if(window.DMFluidWorld) DMFluidWorld.frame(flightCamera,d); DMStarBubble.frame(flightCamera,flightScene,d); } }catch(e){ console.warn('[starbubble] '+(e&&e.stack||e)); }
   try{ if(window.DMBtInterior&&DMBtInterior.pre) DMBtInterior.pre(flightCamera); }catch(e){}   // (v116) sealed? decided before the temple lighting (the glass probe waits while no glass is in view)
   try{ if(window.BTL&&BTL.preRender) BTL.preRender(flightRenderer,flightScene,flightCamera); }catch(e){ if(window.BTL) BTL._err=String(e&&e.stack||e).slice(0,300); }   // v110 temple lights/shadow cache/glass probe
   // (v116) below deck with no opening in view: the outside world is hidden for this render and the atmosphere pass skipped (ui/dm-bt-interior.js)
@@ -17998,7 +18005,8 @@ function _pwBuild(body,site,mode,focus){
   try{
     if(TERRAIN.dust){ TERRAIN.dust.dispose(); TERRAIN.dust=null; }
     const ds=window.DMDust&&window.DMWorldStyle?DMDust.forStyle(DMWorldStyle.styleFor(body,pal,site),pal):null;
-    if(ds) TERRAIN.dust=DMDust.create(scene,{height:(x,z)=>{ const h=_surfHeight?_surfHeight(x,z):0; return isFinite(h)?h:0; },color:ds.color,amount:ds.amount,quality:(GFX&&GFX.preset)||'medium',seed:_worldSeed(body)});
+    if(ds){ const dso={height:(x,z)=>{ const h=_surfHeight?_surfHeight(x,z):0; return isFinite(h)?h:0; },color:ds.color,amount:ds.amount,quality:(GFX&&GFX.preset)||'medium',seed:_worldSeed(body)};
+      TERRAIN.dust=(window.DMFluidWorld&&DMFluidWorld.dust(scene,dso))||DMDust.create(scene,dso); }   // true-fluid dust on WebGPU
   }catch(e){ console.warn('[dust]',e); }
   // ── one skyboard for the whole visit: ridden in space and the sky, beside her on foot
   const board=buildBoardMesh();
@@ -18101,6 +18109,7 @@ function _pwFrame(dt){
   try{ _updateCharDebugHUD(); }catch(e){}
   try{ updateBirdTemple(dt); }catch(e){ _animLoopWarn('birdTemple',e); }   // the ship keeps wandering + the shard keeps following, even off-screen
   try{ _pwWorldTick(dt); }catch(e){ _animLoopWarn('world',e); }
+  try{ if(window.DMFluidWorld) DMFluidWorld.tick(dt); }catch(e){ _animLoopWarn('fluidVfx',e); }   // APIC sea + PBF spray (ui/dm-fluid-world.js)
   try{ _dynRes(flightRenderer); }catch(e){}
   _pwRender();
   if(PW.mode==='space'){
@@ -18318,7 +18327,7 @@ function _pwRender(){
       if(Math.abs(flightCamera.fov-cam.fov)>1e-3||Math.abs(flightCamera.aspect-cam.aspect)>1e-4){ flightCamera.fov=cam.fov; flightCamera.aspect=cam.aspect; flightCamera.updateProjectionMatrix(); }
       flightCamera.updateMatrixWorld();
       try{ if(galSky.ready) updateGalSky(); }catch(e){}
-      try{ if(window.DMStarBubble){ const n=performance.now(), d=_pwSbT?(n-_pwSbT)/1000:1/60; _pwSbT=n; if(window.DMStar) DMStar.frame(flightCamera,d); if(window.DMMist) DMMist.frame(flightCamera,d); DMStarBubble.frame(flightCamera,flightScene,d); } }catch(e){}
+      try{ if(window.DMStarBubble){ const n=performance.now(), d=_pwSbT?(n-_pwSbT)/1000:1/60; _pwSbT=n; if(window.DMStar) DMStar.frame(flightCamera,d); if(window.DMMist) DMMist.frame(flightCamera,d); if(window.DMFluidWorld) DMFluidWorld.frame(flightCamera,d); DMStarBubble.frame(flightCamera,flightScene,d); } }catch(e){}
       r.toneMappingExposure=1.0;
       scene.background=null;
       if(spec) try{ DMSpec.pre(cam); }catch(e){}
