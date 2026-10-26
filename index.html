@@ -153,6 +153,8 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-earth-ice.js?v=132"></script>
 <script src="ui/dm-earth-paint.js?v=135"></script>
 <script src="ui/dm-theme.js?v=81"></script>
+<script src="ui/dm-sparsevox.js?v=1"></script>
+<script src="ui/dm-perf.js?v=1"></script>
 <script src="ui/dm-fluid.js?v=80"></script>
 <script src="ui/dm-journal.js?v=98"></script>
 <script src="ui/dm-worldstyle.js?v=94"></script>
@@ -4446,8 +4448,8 @@ const GFX_BUDGETS = {
   // atmoView/SunSamples: Rayleigh march counts (sandbox peak 10/5) — Med/High raise thin 4/3 port.
   low:    {galaxyArm:14000, galaxyCore:6000, dustSprites:400,  nebulaClouds:2, starCount:2000,  planetSeg:24, mcPrefer:true,  mcPlanetHigh:16, mcPlanetMed:12, mcPlanetLow:8,  mcSurfHigh:20, mcSurfMed:16, mcSurfLow:12, atmoViewSamples:4,  atmoSunSamples:3},
   medium: {galaxyArm:24000, galaxyCore:7500,dustSprites:1200, nebulaClouds:4, starCount:5000,  planetSeg:48, mcPrefer:true,  mcPlanetHigh:28, mcPlanetMed:18, mcPlanetLow:10, mcSurfHigh:26, mcSurfMed:20, mcSurfLow:16, atmoViewSamples:6,  atmoSunSamples:4},
-  high:   {galaxyArm:39000, galaxyCore:11500,dustSprites:2500, nebulaClouds:6, starCount:12000, planetSeg:72, mcPrefer:true,  mcPlanetHigh:32, mcPlanetMed:20, mcPlanetLow:10, mcSurfHigh:24, mcSurfMed:24, mcSurfLow:18, atmoViewSamples:8,  atmoSunSamples:5},
-  ultra:  {galaxyArm:49000, galaxyCore:14000,dustSprites:5000, nebulaClouds:8, starCount:20000, planetSeg:96, mcPrefer:true,  mcPlanetHigh:32, mcPlanetMed:20, mcPlanetLow:10, mcSurfHigh:24, mcSurfMed:24, mcSurfLow:18, atmoViewSamples:10, atmoSunSamples:5},
+  high:   {galaxyArm:39000, galaxyCore:11500,dustSprites:2500, nebulaClouds:6, starCount:12000, planetSeg:72, mcPrefer:true,  mcPlanetHigh:40, mcPlanetMed:20, mcPlanetLow:10, mcSurfHigh:24, mcSurfMed:24, mcSurfLow:18, atmoViewSamples:8,  atmoSunSamples:5},
+  ultra:  {galaxyArm:49000, galaxyCore:14000,dustSprites:5000, nebulaClouds:8, starCount:20000, planetSeg:96, mcPrefer:true,  mcPlanetHigh:40, mcPlanetMed:20, mcPlanetLow:10, mcSurfHigh:24, mcSurfMed:24, mcSurfLow:18, atmoViewSamples:10, atmoSunSamples:5},
 };
 
 
@@ -6507,15 +6509,15 @@ function _startFlightLoop(){
   _flightLoopLast=performance.now();
   (function loop(){
     flightAnimId=requestAnimationFrame(loop);
-    const now=performance.now();
+    const now=performance.now(); DMPerf.frame();
     const dt=Math.min((now-_flightLoopLast)/1000,0.05);
     _flightLoopLast=now;flightTime+=dt;
 
     _applyFlightResizeIfPending();
     // near a world (or in its sky, or on its ground) the planet world runs the frame — same loop, same canvas
-    if(PW.active&&PW.mode){ try{ _pwFrame(dt); }catch(e){ _animLoopWarn('world',e); } return; }
+    if(PW.active&&PW.mode){ DMPerf.b('world'); try{ _pwFrame(dt); }catch(e){ _animLoopWarn('world',e); } DMPerf.e(); return; }
 
-    try{updateFlight(dt);}catch(e){_animLoopWarn('updateFlight',e);}
+    DMPerf.b('updateFlight'); try{updateFlight(dt);}catch(e){_animLoopWarn('updateFlight',e);} DMPerf.e();
     try{
       if(_charShadowLight && boardFlight){
         // (v104) at the Bird Temple (aboard, or riding within a few ship-lengths) the star's shadow map is fitted to the
@@ -6541,23 +6543,23 @@ function _startFlightLoop(){
         _charShadowLight.target.updateMatrixWorld();
       }
     }catch(e){_animLoopWarn('charShadow',e);}
-    try{updateBodies(dt);}catch(e){_animLoopWarn('updateBodies',e);}
+    DMPerf.b('updateBodies'); try{updateBodies(dt);}catch(e){_animLoopWarn('updateBodies',e);} DMPerf.e();
     try{ _pwSpaceWatch(); }catch(e){_animLoopWarn('worldWatch',e);}   // a landable world close by: build its ground for the way down
-    try{upgradePlanetLOD(dt);}catch(e){_animLoopWarn('upgradePlanetLOD',e);}
-    try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){_animLoopWarn('skyboardStance',e);}
-    try{ updateCharOrbitCamera(); }catch(e){_animLoopWarn('charOrbit',e);}
-    try{ _dynRes(flightRenderer); }catch(e){}
+    DMPerf.b('upgradePlanetLOD'); try{upgradePlanetLOD(dt);}catch(e){_animLoopWarn('upgradePlanetLOD',e);} DMPerf.e();
+    DMPerf.b('applySkyboardStance'); try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){_animLoopWarn('skyboardStance',e);} DMPerf.e();
+    DMPerf.b('updateCharOrbitCamera'); try{ updateCharOrbitCamera(); }catch(e){_animLoopWarn('charOrbit',e);} DMPerf.e();
+    DMPerf.b('_dynRes'); try{ _dynRes(flightRenderer); }catch(e){} DMPerf.e();
     try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){_animLoopWarn('charMixer',e);}
     try{ applySkyboardHeadOverride(); }catch(e){_animLoopWarn('headOverride',e);}   // (fades with the stance)
-    try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);}
-    try{ if(SHIP_WALK.active) _shipWalkCarry(); }catch(e){_animLoopWarn('shipCarry',e);}
-    try{ if(SHIP_LAND) _shipLandTick(dt); }catch(e){ SHIP_LAND=null; _animLoopWarn('shipLand',e); }
-    try{_anchorPostUpdate();}catch(e){_animLoopWarn('anchor',e);}
-    try{updateDistantSystems(dt);}catch(e){_animLoopWarn('distantSystems',e);}
-    try{updateVolumetricDust(dt);}catch(e){_animLoopWarn('volumetricDust',e);}
-    try{updateHUD();}catch(e){_animLoopWarn('updateHUD',e);}
-    try{updateCrosshairLabel();}catch(e){_animLoopWarn('crosshair',e);}
-    try{drawMinimap();}catch(e){_animLoopWarn('minimap',e);}
+    DMPerf.b('updateBirdTemple'); try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);} DMPerf.e();
+    DMPerf.b('_shipWalkCarry'); try{ if(SHIP_WALK.active) _shipWalkCarry(); }catch(e){_animLoopWarn('shipCarry',e);} DMPerf.e();
+    DMPerf.b('_shipLandTick'); try{ if(SHIP_LAND) _shipLandTick(dt); }catch(e){ SHIP_LAND=null; _animLoopWarn('shipLand',e); } DMPerf.e();
+    DMPerf.b('_anchorPostUpdate'); try{_anchorPostUpdate();}catch(e){_animLoopWarn('anchor',e);} DMPerf.e();
+    DMPerf.b('updateDistantSystems'); try{updateDistantSystems(dt);}catch(e){_animLoopWarn('distantSystems',e);} DMPerf.e();
+    DMPerf.b('updateVolumetricDust'); try{updateVolumetricDust(dt);}catch(e){_animLoopWarn('volumetricDust',e);} DMPerf.e();
+    DMPerf.b('updateHUD'); try{updateHUD();}catch(e){_animLoopWarn('updateHUD',e);} DMPerf.e();
+    DMPerf.b('updateCrosshairLabel'); try{updateCrosshairLabel();}catch(e){_animLoopWarn('crosshair',e);} DMPerf.e();
+    DMPerf.b('drawMinimap'); try{drawMinimap();}catch(e){_animLoopWarn('minimap',e);} DMPerf.e();
     // Real fix for confirmed GPU-side contention during character loading
     // (measured live: her load took 90-130s in the full game context vs
     // ~12s in isolation) - each full render of the marching-cubes planets
@@ -6588,12 +6590,12 @@ function _startFlightLoop(){
       // (not while she's walking the Bird Temple deck: she's meant to be off the board there)
       if(boardFlight && CHAR.loaded && CHAR.root && !_charOnTempleDeck() && !CHAR._transitioning && (!CHAR.mounted || CHAR.root.parent!==boardFlight || !CHAR.root.visible)){
         if(_flightFrameCounter % 30 === 0){
-          try{ remountSkyboard(boardFlight); _forceCharVisible(); }catch(er){}
+          DMPerf.b('remountSkyboard'); try{ remountSkyboard(boardFlight); _forceCharVisible(); }catch(er){} DMPerf.e();
         }
       }
     }catch(e){_animLoopWarn('charRemountSafety',e);}
     if(!CHAR.loading || _flightFrameCounter % 4 === 0){
-      try{ renderWithPostFX(); }catch(e){ _animLoopWarn('render',e); }    }
+      DMPerf.b('renderWithPostFX'); try{ renderWithPostFX(); }catch(e){ _animLoopWarn('render',e); }    } DMPerf.e();
   })();
 }
 
@@ -7242,8 +7244,21 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
   }
   const seedU = uniform(seedVal);
   // Budgeted low-tier N on first build; upgradePlanetLOD raises toward mcPlanetHigh on approach.
-  const N=(typeof resolution==='number'&&resolution>0)?resolution:((typeof _mcTierResTable==='function')?(_mcTierResTable().low||10):10), GRID=N+1, HALF=radius*1.3, CELL=(HALF*2)/N;
-  const numPoints=GRID*GRID*GRID, numCells=N*N*N, MAX_TRIS=5, maxVerts=numCells*MAX_TRIS*3;
+  // (v136 crunch-1) Narrow-band SPARSE marching cubes: the cube around the world is cut into BxBxB-cell bricks and only
+  // the bricks whose bounds can touch the surface shell (radius ± relief budget) are generated and meshed (ui/dm-sparsevox.js
+  // picks them, from a brick pool with a free list). Shared brick faces evaluate the same density at the same points, so
+  // neighbouring bricks meet without cracks. Memory and compute follow the shell (~N²), not the cube (N³).
+  const _N0=(typeof resolution==='number'&&resolution>0)?resolution:((typeof _mcTierResTable==='function')?(_mcTierResTable().low||10):10);
+  const _SV=window.DMSparseVox;
+  const _plan=(_SV&&_N0>=28)?_SV.plan({N:_N0,half:radius*1.3,radius,reliefBand:radius*0.012*4.0}):null;
+  const N=_plan?_plan.N:_N0, GRID=N+1, HALF=radius*1.3, CELL=(HALF*2)/N;
+  const B=_plan?_plan.B:N, BP=B+1, P3=BP*BP*BP, C3=B*B*B, SLOTS=_plan?_plan.count:1;
+  const numPoints=SLOTS*P3, numCells=SLOTS*C3, MAX_TRIS=5, maxVerts=numCells*MAX_TRIS*3;
+  const brickArr=new Uint32Array(Math.max(1,SLOTS)*4);
+  if(_plan) brickArr.set(_plan.coords); // bx,by,bz,0 per slot
+  const brickAttr=new THREE.StorageBufferAttribute(brickArr,4);
+  const brickNode=storage(brickAttr,'uvec4',Math.max(1,SLOTS));
+  const _svT0=performance.now();
 
   const densityBuf=new THREE.StorageInstancedBufferAttribute(numPoints,1);
   const densityNode=storage(densityBuf,'float',numPoints);
@@ -7322,10 +7337,12 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
 
   const densityFn=Fn(()=>{
     const idx=instanceIndex;
-    const gz=idx.div(uint(GRID*GRID));
-    const rem=idx.mod(uint(GRID*GRID));
-    const gy=rem.div(uint(GRID));
-    const gx=rem.mod(uint(GRID));
+    const slot=idx.div(uint(P3)), li=idx.mod(uint(P3));
+    const bc=brickNode.element(slot);
+    const gz=li.div(uint(BP*BP)).add(bc.z.mul(uint(B)));
+    const rem=li.mod(uint(BP*BP));
+    const gy=rem.div(uint(BP)).add(bc.y.mul(uint(B)));
+    const gx=rem.mod(uint(BP)).add(bc.x.mul(uint(B)));
     const p=vec3(gx.toFloat().mul(CELL).sub(HALF),gy.toFloat().mul(CELL).sub(HALF),gz.toFloat().mul(CELL).sub(HALF));
     const dir=p.normalize();
     const base=p.length().sub(radius);
@@ -7336,14 +7353,18 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
 
   const mcFn=Fn(()=>{
     const cellIdx=instanceIndex;
-    const cz=cellIdx.div(uint(N*N));
-    const crem=cellIdx.mod(uint(N*N));
-    const cy=crem.div(uint(N));
-    const cx=crem.mod(uint(N));
+    const slot=cellIdx.div(uint(C3)), lc=cellIdx.mod(uint(C3));
+    const bc=brickNode.element(slot);
+    const cz=lc.div(uint(B*B));
+    const crem=lc.mod(uint(B*B));
+    const cy=crem.div(uint(B));
+    const cx=crem.mod(uint(B));
+    const ox=bc.x.mul(uint(B)), oy=bc.y.mul(uint(B)), oz=bc.z.mul(uint(B));
     const readCorner=(i)=>{
       const dx=i&1, dy=(i>>1)&1, dz=(i>>2)&1;
-      const gx=cx.add(dx), gy=cy.add(dy), gz=cz.add(dz);
-      const flat=gx.add(gy.mul(uint(GRID))).add(gz.mul(uint(GRID*GRID)));
+      const lx=cx.add(dx), ly=cy.add(dy), lz=cz.add(dz);
+      const gx=lx.add(ox), gy=ly.add(oy), gz=lz.add(oz);
+      const flat=slot.mul(uint(P3)).add(lx).add(ly.mul(uint(BP))).add(lz.mul(uint(BP*BP)));
       return {
         pos: vec3(gx.toFloat().mul(CELL).sub(HALF), gy.toFloat().mul(CELL).sub(HALF), gz.toFloat().mul(CELL).sub(HALF)),
         density: densityNode.element(flat),
@@ -7432,6 +7453,8 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
   const planetMcMesh=new THREE.Mesh(geo,mat);
   planetMcMesh.name='JOTS_GpuPlanetMC';
   planetMcMesh.userData.jotsGpuMc=true;
+  planetMcMesh.userData.sparse=_plan?{N,B,bricks:SLOTS,of:_plan.total,cells:numCells,denseCells:N*N*N,ms:+(performance.now()-_svT0).toFixed(1)}:null;
+  try{ if(_SV) _SV.noteBuild(kind||'world',planetMcMesh.userData.sparse); }catch(e){}
   if(GFX && GFX.shadows){ planetMcMesh.receiveShadow=true; planetMcMesh.castShadow=true; }
   group.add(planetMcMesh);
 
@@ -22393,8 +22416,18 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
   // centred on (cx, cz) — the patch follows her as she walks
   const cx0 = opts.cx||0, cz0 = opts.cz||0;
   const oX = cx0-halfIso, oY = yMin, oZ = cz0-halfIso;
-  const numPoints = GRID*GRID*GRID;
-  const numCells = N*N*N;
+  // (v136) narrow-band sparse bricks over the column heights (ui/dm-sparsevox.js): only bricks the ground surface (plus the
+  // cave term and the 14 m crust) can cross are generated and meshed; collision still gets the dense grid (scatter below).
+  const hFn=opts.heightFn||TERRAIN.H||null;
+  let hcol=null;
+  if(hFn){ hcol=new Float32Array(GRID*GRID); for(let gz=0;gz<GRID;gz++) for(let gx=0;gx<GRID;gx++) hcol[gx+gz*GRID]=hFn(gx*CELL+oX, gz*CELL+oZ); }
+  const _svT0=performance.now();
+  const _plan=(hcol&&window.DMSparseVox)?DMSparseVox.planColumns({N,GRID,CELL,oY,hcol,below:16,above:2}):null;
+  const B=_plan?_plan.B:N, BP=B+1, P3=BP*BP*BP, C3=B*B*B, SLOTS=_plan?_plan.count:1;
+  const brickArr=new Uint32Array(Math.max(1,SLOTS)*4); if(_plan) brickArr.set(_plan.coords);
+  const brickNode=storage(new THREE.StorageBufferAttribute(brickArr,4),'uvec4',Math.max(1,SLOTS));
+  const numPoints = SLOTS*P3;
+  const numCells = SLOTS*C3;
   const MAX_TRIS = 5;
   const maxVerts = numCells*MAX_TRIS*3;
   const seedU = uniform(seed);
@@ -22412,11 +22445,8 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
   // (the same TERRAIN.H the sky, the far terrain and collision use), so the
   // marching-cubes ground is exactly the ground seen from above; the GPU
   // adds the 3D cave/overhang term on top.
-  const hFn=opts.heightFn||TERRAIN.H||null;
   let heightNode=null;
-  if(hFn){
-    const hcol=new Float32Array(GRID*GRID);
-    for(let gz=0;gz<GRID;gz++) for(let gx=0;gx<GRID;gx++) hcol[gx+gz*GRID]=hFn(gx*CELL+oX, gz*CELL+oZ);
+  if(hcol){
     heightNode=storage(new THREE.StorageBufferAttribute(hcol,1),'float',GRID*GRID);
   }
   const triTableFlat=new Int32Array(256*16);
@@ -22470,10 +22500,12 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
 
   const densityFn=Fn(()=>{
     const idx=instanceIndex;
-    const gz=idx.div(uint(GRID*GRID));
-    const rem=idx.mod(uint(GRID*GRID));
-    const gy=rem.div(uint(GRID));
-    const gx=rem.mod(uint(GRID));
+    const slot=idx.div(uint(P3)), li=idx.mod(uint(P3));
+    const bc=brickNode.element(slot);
+    const gz=li.div(uint(BP*BP)).add(bc.z.mul(uint(B)));
+    const rem=li.mod(uint(BP*BP));
+    const gy=rem.div(uint(BP)).add(bc.y.mul(uint(B)));
+    const gx=rem.mod(uint(BP)).add(bc.x.mul(uint(B)));
     const p=vec3(
       gx.toFloat().mul(CELL).add(oX),
       gy.toFloat().mul(CELL).add(oY),
@@ -22502,6 +22534,9 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
   try{
     const densityArrBuf = await surfRenderer.getArrayBufferAsync(densityBuf);
     densArr = new Float32Array(densityArrBuf);
+    const _sparseArr = densArr;
+    // bricks the band skipped are plainly air above / rock below the column height
+    if(_plan) densArr = DMSparseVox.scatter(_plan, _sparseArr, GRID, (gx,gy,gz)=>(gy*CELL+oY)-hcol[gx+gz*GRID]);
     // Clean the field before meshing: floating cave/overhang pieces either
     // join the main ground (if they nearly touch) or are removed, so the
     // mesh is one solid and collision (which reads this same grid) matches.
@@ -22509,7 +22544,8 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
       const st=mcCleanFragments(densArr, GRID, 2, 6);
       TERRAIN.mcFragments=st;
       if(st.joined||st.removed){
-        if(densityBuf.array&&densityBuf.array.length===densArr.length){ densityBuf.array.set(densArr); densityBuf.needsUpdate=true; }
+        if(_plan){ DMSparseVox.gather(_plan, densArr, _sparseArr, GRID); if(densityBuf.array&&densityBuf.array.length===_sparseArr.length){ densityBuf.array.set(_sparseArr); densityBuf.needsUpdate=true; } }
+        else if(densityBuf.array&&densityBuf.array.length===densArr.length){ densityBuf.array.set(densArr); densityBuf.needsUpdate=true; }
         console.log('[GPU-MC] fragments: joined',st.joined,'· removed',st.removed,'('+st.removedCells+' cells) · bridged',st.bridgedCells,'cells');
       }
     }catch(e){ console.warn('[GPU-MC] fragment clean:',e); }
@@ -22526,14 +22562,18 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
 
   const mcFn=Fn(()=>{
     const cellIdx=instanceIndex;
-    const cz=cellIdx.div(uint(N*N));
-    const crem=cellIdx.mod(uint(N*N));
-    const cy=crem.div(uint(N));
-    const cx=crem.mod(uint(N));
+    const slot=cellIdx.div(uint(C3)), lc=cellIdx.mod(uint(C3));
+    const bc=brickNode.element(slot);
+    const cz=lc.div(uint(B*B));
+    const crem=lc.mod(uint(B*B));
+    const cy=crem.div(uint(B));
+    const cx=crem.mod(uint(B));
+    const ox=bc.x.mul(uint(B)), oy=bc.y.mul(uint(B)), oz=bc.z.mul(uint(B));
     const readCorner=(i)=>{
       const dx=i&1, dy=(i>>1)&1, dz=(i>>2)&1;
-      const gx=cx.add(dx), gy=cy.add(dy), gz=cz.add(dz);
-      const flat=gx.add(gy.mul(uint(GRID))).add(gz.mul(uint(GRID*GRID)));
+      const lx=cx.add(dx), ly=cy.add(dy), lz=cz.add(dz);
+      const gx=lx.add(ox), gy=ly.add(oy), gz=lz.add(oz);
+      const flat=slot.mul(uint(P3)).add(lx).add(ly.mul(uint(BP))).add(lz.mul(uint(BP*BP)));
       return {
         pos: vec3(gx.toFloat().mul(CELL).add(oX), gy.toFloat().mul(CELL).add(oY), gz.toFloat().mul(CELL).add(oZ)),
         density: densityNode.element(flat),
@@ -22636,6 +22676,8 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
   const mat=_terrainDetailMat({side:THREE.DoubleSide});
   const mesh=new THREE.Mesh(geo,mat);
   mesh.name='JOTS_GpuSurfacePatch';
+  mesh.userData.sparse=_plan?{N,B,bricks:SLOTS,of:_plan.total,cells:numCells,denseCells:N*N*N,ms:+(performance.now()-_svT0).toFixed(1)}:null;
+  try{ if(window.DMSparseVox) DMSparseVox.noteBuild('surface',mesh.userData.sparse); }catch(e){}
   mesh.userData.jotsGpuMc=true;
   mesh.userData.climbable=true; // Stabilizer climbing_up_wall / Grab_Bar
   mesh.userData.cliff=true;     // steep MC faces read as cliffs
