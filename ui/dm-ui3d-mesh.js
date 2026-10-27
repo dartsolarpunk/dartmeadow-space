@@ -24,7 +24,7 @@
   if(window.DMUI3DMesh) return;
   var CURVE_DEG=28, PUSH=0.08, PAR=4, LAYERS=1, DEPTH=0.6, FOV=40, ATLAS=2048, TATLAS=2048, PAD=2, PG=6, LAYOUT_MS=1000, WALK_EVERY=3, UNGHOST_MS=500;
   var SUB_SEL='.mini-kite,.hud-c';   // (v160) kites overflow their top bar: each is its own panel, cut out of the bar's raster
-  var DYN_SEL='.joystick-knob,[id$="-knob"]', SKIP_SEL='#dm-perf-hud,#account-modal,#profile-modal,.jots-ov,.modal,#warp-overlay,#jots-chat,script,style,video,iframe,template';
+  var DYN_SEL='.joystick-knob,[id$="-knob"]', SKIP_SEL='#dm-perf-hud,#account-modal,#profile-modal,.modal,#warp-overlay,#jots-chat,script,style,video,iframe,template';
   var FORM_SEL='input:not([type=checkbox]):not([type=radio]):not([type=range]),select,textarea';
   var PROPS=['display','position','left','top','right','bottom','width','height','min-width','min-height','max-width','max-height',
     'margin-top','margin-right','margin-bottom','margin-left','padding-top','padding-right','padding-bottom','padding-left','box-sizing',
@@ -87,7 +87,8 @@
     if(kind==='menu'){ f=$('screen-menu'); if(f&&f.classList.contains('active')) o.push(f); ['loading-screen','mini-loader'].forEach(function(id){ var e=$(id); if(showing(e)) o.push(e); }); }
     else { f=$('screen-flight'); if(f&&f.classList.contains('active')) o.push(f); ['surface-overlay','atmo-overlay','dm-globe','mini-loader'].forEach(function(id){ var e=$(id); if(showing(e)) o.push(e); }); }
     // (v175) transition menus (story / multiplayer choosers) are 3D too; any overlay with a text field stays DOM (caret, autofill, sign-in)
-    document.querySelectorAll('.jots-ov').forEach(function(e){ if(showing(e)&&!e.querySelector('input,textarea,select')) o.push(e); });
+    // (v197) .jots-ov is a root only (not in SKIP_SEL); skip one already inside another root so it is never painted twice
+    document.querySelectorAll('.jots-ov').forEach(function(e){ if(!showing(e)||e.querySelector('input,textarea,select')) return; for(var i=0;i<o.length;i++) if(o[i].contains(e)) return; o.push(e); });
     return o; }
   function alphaOf2(c){ var m=/rgba?\(([^)]*)\)/.exec(c||''); if(!m) return c&&c!=='transparent'?1:0; var a=m[1].split(/[ ,\/]+/).filter(Boolean); return a.length>3?parseFloat(a[3]):1; }
   function boxed(el,cs){ var tn=el.tagName; if(tn==='BUTTON'||tn==='IMG'||tn.toLowerCase()==='svg'||tn==='A') return true;
@@ -95,7 +96,7 @@
     if((parseFloat(cs.borderTopWidth)>0&&alphaOf2(cs.borderTopColor)>0.04)||(parseFloat(cs.borderBottomWidth)>0&&alphaOf2(cs.borderBottomColor)>0.04)||(parseFloat(cs.borderLeftWidth)>0&&alphaOf2(cs.borderLeftColor)>0.04)) return true;
     return cs.boxShadow!=='none'||cs.clipPath!=='none'; }
   function walk(el,out,vw,vh,depth){ for(var c=el.firstElementChild;c;c=c.nextElementSibling){
-    if(c.matches(SKIP_SEL)) continue; var cs=getComputedStyle(c);
+    if(c.matches(SKIP_SEL)) continue; if(c.classList.contains('jots-ov')&&c.querySelector('input,textarea,select')) continue; var cs=getComputedStyle(c);
     if(cs.display==='none'||cs.visibility==='hidden') continue;
     if(parseFloat(cs.opacity)<0.05&&!c.classList.contains('dm-ui3d-ghost')) continue;
     var r=c.getBoundingClientRect();
@@ -298,8 +299,13 @@
   function softSh(st){ var v=st.getPropertyValue('box-shadow'); if(!v||v==='none') return;
     st.setProperty('box-shadow',v.replace(/rgba?\(([^)]+)\)/g,function(m,a){ var p=a.split(','); var al=p.length>3?parseFloat(p[3]):1; return 'rgba('+p[0]+','+p[1]+','+p[2]+','+(al*0.25).toFixed(3)+')'; })); }
   // (v175) perf fallback (iPhone Safari / Mali): if the HUD pass averages > 3 ms over ~2 s, switch to the cheaper 2D box painter. No allocations.
-  var pgMs=0, pgN=0, IOS=/iP(hone|ad|od)/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
-  function perfGuard(dt){ if(SAFE) return; pgMs+=dt; if(++pgN<120) return; var avg=pgMs/pgN; pgMs=0; pgN=0; if(avg>(IOS?2.5:3.5)){ SAFE=true; painter='box2d'; console.warn('[UI3D] HUD pass '+avg.toFixed(1)+'ms: 2D box painter'); } }
+  // (v197) Watcher: ignore the first ~2 s (shader compile / first raster), need TWO bad windows in a row to drop to box2d,
+  // and three good windows on box2d return to foreignObject (unless box2d was forced by ?ui3dsafe or the WebKit probe).
+  var pgMs=0, pgN=0, pgT0=0, pgBad=0, pgGood=0, pgAuto=false, IOS=/iP(hone|ad|od)/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+  function perfGuard(dt){ if(SAFE&&!pgAuto) return; var n=performance.now(); if(!pgT0){ pgT0=n; return; } if(n-pgT0<2000) return;
+    pgMs+=dt; if(++pgN<120) return; var avg=pgMs/pgN, lim=IOS?2.5:3.5; pgMs=0; pgN=0;
+    if(!pgAuto){ if(avg>lim){ if(++pgBad>=2){ pgBad=0; pgGood=0; pgAuto=true; SAFE=true; painter='box2d'; console.warn('[UI3D] HUD pass '+avg.toFixed(1)+'ms x2: 2D box painter'); } } else pgBad=0; }
+    else if(avg<lim*0.5){ if(++pgGood>=3){ pgGood=0; pgAuto=false; SAFE=false; painter='foreignObject'; layoutDirty=true; panels.forEach(function(P){ P.busy=false; P.want=true; }); console.warn('[UI3D] HUD pass recovered: foreignObject painter'); } } else pgGood=0; }
   // ---------- overlay pass on the renderer that owns the screen ----------
   function tx(c){ var t=new T.CanvasTexture(c); t.colorSpace=T.SRGBColorSpace; t.generateMipmaps=false; t.minFilter=T.LinearFilter; t.premultiplyAlpha=true; return t; }
   // glass: no depth write / test (sorted by renderOrder + far-to-near buffer order), front faces only
@@ -308,7 +314,7 @@
   function setup(R){
     T=window.THREE; if(!T) return false;
     if(!rOK(R)) return false;   // not a node-material renderer: this pass simply does not run on it
-    root=new T.Group(); scene=new T.Scene(); scene.add(root); cam=new T.PerspectiveCamera(FOV,1,1,10);
+    root=new T.Group(); root.userData.dmNoWarm=true; scene=new T.Scene(); scene.userData.dmNoWarm=true; scene.add(root); cam=new T.PerspectiveCamera(FOV,1,1,10);
     aCv=document.createElement('canvas'); aCv.width=ATLAS; aCv.height=64; aCx=aCv.getContext('2d');
     tCv=document.createElement('canvas'); tCv.width=TATLAS; tCv.height=32; tCx=tCv.getContext('2d');
     aTex=tx(aCv); tTex=tx(tCv);
