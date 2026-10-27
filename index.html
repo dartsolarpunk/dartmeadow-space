@@ -1010,7 +1010,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-bt-pbr.js?v=192" defer></script>
 <script src="ui/dm-bt-bake.js?v=144" defer></script>
 <script src="ui/dm-ui3d-core.js?v=160" defer></script>
-<script src="ui/dm-ui3d-mesh.js?v=204" defer></script>
+<script src="ui/dm-ui3d-mesh.js?v=205" defer></script>
 <script src="ui/dm-ar-core.js?v=196" defer></script>
 <script src="ui/dm-bt-roomlights.js?v=144" defer></script>
 <script src="ui/dm-bt-hull.js?v=144" defer></script>
@@ -2150,7 +2150,7 @@ function loadSaveData(data){
       'gfxQuality','resScale','shadows','reflections','caustics','gi','marchingCubesTerrain'];
     Object.keys(data.settings).forEach(k=>{ if(!GFX_SETTING_KEYS.includes(k)) STATE.settings[k]=data.settings[k]; });
   }
-  if(data.settings&&typeof data.settings.legacyUI==='boolean'&&window.DMUI3DMesh){ try{ window.DMUI3DMesh.setLegacy(data.settings.legacyUI); }catch(e){} }   // (v160) Legacy UI follows the save
+  if(data.settings&&typeof data.settings.legacyUI==='boolean'&&window.DMUI3DMesh){ try{ let _ls0=null; try{ _ls0=localStorage.getItem('dm.ui3d'); }catch(e){} if(data.settings.legacyUI||_ls0!=='0') window.DMUI3DMesh.setLegacy(data.settings.legacyUI); else data.settings.legacyUI=true; }catch(e){} }   // (v200) a device-level dm.ui3d='0' is never re-enabled by a save   // (v160) Legacy UI follows the save
   if(data.themes&&window.DMTheme){ try{ window.DMTheme.importData(data.themes,'save'); }catch(e){} }
   if(data.journal&&window.DMJournal){ try{ window.DMJournal.store.importData(data.journal,'save'); }catch(e){} }
   if(data.btLights&&window.DMBtRoomLights){ try{ window.DMBtRoomLights.set(data.btLights); }catch(e){} }   // (v139)

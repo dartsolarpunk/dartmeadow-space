@@ -53,6 +53,12 @@
   function inlineImg(src){ if(imgCache.has(src)) return imgCache.get(src);
     var p=fetch(src).then(function(r){ return r.blob(); }).then(function(b){ return new Promise(function(res){ var fr=new FileReader(); fr.onload=function(){ res(fr.result); }; fr.readAsDataURL(b); }); }).catch(function(){ return src; });
     imgCache.set(src,p); return p; }
+  // (v200) SVG -> Image through a revoked blob: URL, never a data: URL. WebKit keeps every distinct data: URL image
+  // (and its decoded bitmap) in its memory cache, so a raster per panel per second grew the page ~25 MB/s.
+  function svgImg(str,ms){ var u=URL.createObjectURL(new Blob([str],{type:'image/svg+xml;charset=utf-8'})), im=new Image();
+    return within(new Promise(function(res,rej){ im.onload=function(){ res(im); }; im.onerror=rej; im.src=u; }),ms).finally(function(){ URL.revokeObjectURL(u); }); }
+  function dropImg(im){ if(!im) return; im.onload=im.onerror=null; try{ im.removeAttribute('src'); im.src=''; }catch(e){} }
+  function dropCv(c){ if(c){ c.width=c.height=0; } }   // free the backing store now instead of at GC
   function within(p,ms){ return Promise.race([p,new Promise(function(_,rej){ setTimeout(function(){ rej(new Error('timeout')); },ms); })]); }
   function inSub(n,el){ var k=n.closest&&n.closest(SUB_SEL); return !!(k&&k!==el&&el.contains(k)); }
   function isLeaf(el){ if(el instanceof SVGElement) return false; if(el.children.length) return false; var t=el.textContent; return !!(t&&t.trim()); }
@@ -77,9 +83,7 @@
     c.querySelectorAll('canvas,script,video,iframe').forEach(function(n){ n.remove(); });
     var W=w+2*PG, H=h+2*PG;
     var svg='<svg xmlns="http://www.w3.org/2000/svg" width="'+W+'" height="'+H+'"><foreignObject x="0" y="0" width="100%" height="100%"><div xmlns="http://www.w3.org/1999/xhtml" style="width:'+W+'px;height:'+H+'px;overflow:hidden">'+new XMLSerializer().serializeToString(c)+'</div></foreignObject></svg>';
-    var img=new Image();
-    await within(new Promise(function(res,rej){ img.onload=res; img.onerror=rej; img.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg); }),10000);
-    return img;
+    return svgImg(svg,10000);
   }
 
   // ---------- discovery: which elements are panels ----------
@@ -194,7 +198,7 @@
       if(el.tagName.toLowerCase()==='svg'){ var cl=el.cloneNode(true), so=[el].concat([].slice.call(el.querySelectorAll('*'))), sc=[cl].concat([].slice.call(cl.querySelectorAll('*')));
         for(var k=0;k<so.length;k++){ var s2=getComputedStyle(so[k]); ['fill','stroke','stroke-width','opacity','fill-opacity','stroke-opacity','stroke-dasharray','stroke-linecap','stroke-linejoin','stop-color','stop-opacity','font-size','font-family','font-weight'].forEach(function(pn){ var v=s2.getPropertyValue(pn); if(v) sc[k].style.setProperty(pn,v); }); }
         ['position','left','top','right','bottom','inset','transform','rotate','translate','scale','margin'].forEach(function(pn){ cl.style.removeProperty(pn); }); cl.setAttribute('width',r.width); cl.setAttribute('height',r.height); cl.setAttribute('xmlns','http://www.w3.org/2000/svg');
-        var im=new Image(); try{ await within(new Promise(function(res,rej){ im.onload=res; im.onerror=rej; im.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(new XMLSerializer().serializeToString(cl)); }),4000); cx.drawImage(im,x,y,r.width,r.height); }catch(e){ console.warn('[UI3D] svg paint',e&&(e.message||e.type)); }
+        var im=null; try{ im=await svgImg(new XMLSerializer().serializeToString(cl),4000); cx.drawImage(im,x,y,r.width,r.height); }catch(e){ console.warn('[UI3D] svg paint',e&&(e.message||e.type)); } dropImg(im);
         continue; }
       // (v198) box2d painter drew boxes only, so the menu/loader logo <img> (static/dartmeadow-logo.svg) came out as an empty frame
       if(el.tagName==='IMG'){ if(!(el.complete&&el.naturalWidth)){ if(imgGaveUp(P,el)) continue; throw new Error('img not ready'); } if(el.complete&&el.naturalWidth){ try{ cx.save(); cx.globalAlpha=Math.min(1,parseFloat(cs.opacity)||1); cx.drawImage(el,x,y,r.width,r.height); cx.restore(); }catch(e){ console.warn('[UI3D] img paint',e&&e.message); } } continue; }
@@ -219,15 +223,15 @@
       if(!(el.complete&&el.naturalWidth)){ if(imgGaveUp(P,el)) continue; try{ await within(el.decode?el.decode():Promise.reject(new Error('no decode')),1500); }catch(e){ throw new Error('img not ready'); } if(!(el.naturalWidth)){ if(imgGaveUp(P,el)) continue; throw new Error('img not ready'); } }   // retried a few times (backoff), then painted without the image: a 404/offline/undecodable img never blocks the panel
       var r=el.getBoundingClientRect(); cx.save(); cx.globalAlpha=Math.min(1,parseFloat(cs.opacity)||1); cx.drawImage(el,r.left-base.left+PG,r.top-base.top+PG,r.width,r.height); cx.restore(); } }
   async function paintSrc(P){
-    if(P.el.tagName==='IMG'){ var ci=scratch(P.w+2*PG,P.h+2*PG); await drawImgs(P,ci.getContext('2d')); if(clean(ci)) return ci; }   // (v204) a bare <img> panel (menu/loader logo, kite art) is drawn directly
-    if(!SAFE){ try{ var img=await raster(P.el,P.w,P.h), c=scratch(P.w+2*PG,P.h+2*PG), c2=c.getContext('2d'); c2.drawImage(img,0,0,P.w+2*PG,P.h+2*PG); await drawImgs(P,c2); if(clean(c)){ foFails=0; return c; }
+    if(P.el.tagName==='IMG'){ var ci=scratch(P.w+2*PG,P.h+2*PG); try{ await drawImgs(P,ci.getContext('2d')); if(clean(ci)) return ci; }catch(e){ dropCv(ci); throw e; } dropCv(ci); }   // (v204) a bare <img> panel (menu/loader logo, kite art) is drawn directly
+    if(!SAFE){ var img=null, c=null; try{ img=await raster(P.el,P.w,P.h); c=scratch(P.w+2*PG,P.h+2*PG); var c2=c.getContext('2d'); c2.drawImage(img,0,0,P.w+2*PG,P.h+2*PG); dropImg(img); img=null; await drawImgs(P,c2); if(clean(c)){ foFails=0; return c; } dropCv(c); c=null;
         console.warn('[UI3D] foreignObject raster taints the canvas here (WebKit); switching to the 2D box painter'); }
-      catch(e){ if(e&&e.message==='img not ready') throw e; if(++foFails<6){ console.warn('[UI3D] foreignObject raster failed ('+(e&&e.message)+'); retrying'); throw e; }   // (v204) a timeout while the scene loads is transient: retry, never latch box2d for the session
+      catch(e){ dropImg(img); dropCv(c); if(e&&e.message==='img not ready') throw e; if(++foFails<6){ console.warn('[UI3D] foreignObject raster failed ('+(e&&e.message)+'); retrying'); throw e; }   // (v204) a timeout while the scene loads is transient: retry, never latch box2d for the session
         console.warn('[UI3D] foreignObject raster failed '+foFails+'x; switching to the 2D box painter'); }
       SAFE=true; painter='box2d'; }
     return paintSafe(P); }
   function paint(P){ P.busy=true; var gen=P.slot;
-    paints++; paintSrc(P).then(function(src){ if(P.slot!==gen||!P.slot) return; aCx.clearRect(P.slot.x,P.slot.y,(P.cw||P.w)+2*PG,(P.ch||P.h)+2*PG); aCx.drawImage(src,P.slot.x,P.slot.y,P.w+2*PG,P.h+2*PG); P.ready=true; P.failed=0; P.imgFails=0; artDirty=true; if(P.dyn) P.built=false; })
+    paints++; paintSrc(P).then(function(src){ if(P.slot!==gen||!P.slot){ dropCv(src); return; } aCx.clearRect(P.slot.x,P.slot.y,(P.cw||P.w)+2*PG,(P.ch||P.h)+2*PG); aCx.drawImage(src,P.slot.x,P.slot.y,P.w+2*PG,P.h+2*PG); dropCv(src); P.ready=true; P.failed=0; P.imgFails=0; artDirty=true; if(P.dyn) P.built=false; })
       .catch(function(e){ var n=performance.now(); P.failed=(P.failed||0)+1; if(e&&e.message==='img not ready') P.imgFails=(P.imgFails||0)+1; P.want=true; var d=Math.min(4000,300*Math.pow(2,Math.min(P.failed,5)-1)); P.nb=n+d; setTimeout(function(){ layoutDirty=true; },d+20); console.warn('[UI3D] raster',e&&e.message,'(retry in '+d+' ms, #'+P.failed+')'); }).finally(function(){ P.busy=false; }); }
 
   // ---------- static art geometry: ONE merged buffer (knobs: one small mesh each) ----------
@@ -254,7 +258,12 @@
     var keep=P.rect; P.rect=null; quads(P,ID,pos,uv,col,0); P.rect=keep;
     if(!P.mesh){ P.mesh=new T.Mesh(new T.BufferGeometry(),art.material); P.mesh.renderOrder=1.6; P.mesh.frustumCulled=false; root.add(P.mesh); }
     setGeo(P.mesh,pos,uv,col,idxFor(n)); P.built=true; P.moved=true; }
-  function setGeo(m,pos,uv,col,idx){ var g=new T.BufferGeometry(); g.setAttribute('position',new T.BufferAttribute(pos,3)); g.setAttribute('uv',new T.BufferAttribute(uv,2)); if(col) g.setAttribute('color',new T.BufferAttribute(col,4)); g.setIndex(new T.BufferAttribute(idx,1)); m.geometry.dispose(); m.geometry=g; m.visible=idx.length>0; }
+  // (v200) reuse the BufferGeometry when the vertex count is unchanged (the usual case): copy in place + needsUpdate
+  function setGeo(m,pos,uv,col,idx){ var o=m.geometry, op=o&&o.getAttribute('position');
+    if(op&&op.array.length===pos.length&&o.index&&o.index.array.length===idx.length&&!!o.getAttribute('color')===!!col){
+      op.array.set(pos); op.needsUpdate=true; var ou=o.getAttribute('uv'); ou.array.set(uv); ou.needsUpdate=true; if(col){ var oc=o.getAttribute('color'); oc.array.set(col); oc.needsUpdate=true; }
+      m.visible=idx.length>0; return; }
+    var g=new T.BufferGeometry(); g.setAttribute('position',new T.BufferAttribute(pos,3)); g.setAttribute('uv',new T.BufferAttribute(uv,2)); if(col) g.setAttribute('color',new T.BufferAttribute(col,4)); g.setIndex(new T.BufferAttribute(idx,1)); m.geometry.dispose(); m.geometry=g; m.visible=idx.length>0; }
   // knobs follow the thumb every frame (one getBoundingClientRect each)
   function trackDyn(){ panels.forEach(function(P){ if(!P.dyn||!P.mesh) return; var r=P.el.getBoundingClientRect(); if(r.width<1){ P.mesh.visible=false; return; }
     P.mesh.visible=P.ready; var p=place(r); P.mesh.position.set((p.cx)*p.f,p.cy*p.f,p.zc+1); P.mesh.rotation.set(0,p.th,0); P.mesh.scale.set(p.f,p.f,p.f); }); }
@@ -299,7 +308,7 @@
 
 
   // ---------- change-driven layout (v156 ResizeObserver + 1 s fallback; v160 state-colour mutations refresh at once) ----------
-  var layoutDirty=true, layoutT=0, lastKind=null, discT=-1e9, discDirty=false, ro=null, mo=null, roSeen=new WeakSet();
+  var cvT=0, layoutDirty=true, layoutT=0, lastKind=null, discT=-1e9, discDirty=false, ro=null, mo=null, roSeen=new WeakSet();
   function selfOnly(m){ if(m.attributeName!=='class') return false;   // our own ghost toggles must not re-trigger layout
     var a=(m.oldValue||'').replace(/\bdm-ui3d-ghost\b/g,'').trim().split(/\s+/).sort().join(' '), b=String(m.target.className&&m.target.className.baseVal!==undefined?m.target.className.baseVal:m.target.className).replace(/\bdm-ui3d-ghost\b/g,'').trim().split(/\s+/).sort().join(' ');
     return a===b; }
@@ -387,7 +396,7 @@
     trackDyn();
     cvs.forEach(function(C){ setXf(C.mesh,C.p,C.rect.width,C.rect.height); C.mesh.position.z+=0.8; });
     // readouts + live canvases re-upload at most ~15 Hz
-    var tn=performance.now(); if(tn-txtT>=TXT_MS){ txtT=tn; updateText(); cvs.forEach(function(C){ C.tex.needsUpdate=true; }); }
+    var tn=performance.now(); if(tn-txtT>=TXT_MS){ txtT=tn; updateText(); if(tn-cvT>=250){ cvT=tn; cvs.forEach(function(C){ if(C.mesh.visible&&C.el.width&&C.el.height) C.tex.needsUpdate=true; }); } }   // (v204) TXT_MS readouts; (v200) live canvases at 4 Hz, visible only
     // the DOM stays visible until a mesh frame draws OK; only a render throw or no art at all after 15 s (raster stall) falls back
     if(!drewOK&&!arHeld&&panels.size){ if(!wdT0) wdT0=performance.now(); wdFrames++; var anyArt=false; panels.forEach(function(P){ if(P.ready) anyArt=true; });
       if(!anyArt&&performance.now()-wdT0>WD_MS){ console.warn('[UI3D] no panel art after '+Math.round(performance.now()-wdT0)+' ms (painter '+painter+'): re-rastering'); wdT0=performance.now(); panels.forEach(function(P){ P.busy=false; P.want=true; }); } }   // (v160) 15 s watchdog re-rasters instead of switching to CSS
@@ -406,8 +415,8 @@
     camSet();
     var ac=R.autoClear; R.autoClear=false; try{ R.clearDepth&&R.clearDepth(); R.render(scene,cam); drewOK=true; ghostDrawn(); } finally { R.autoClear=ac; } return true;   // drewOK only after R.render returned without throwing
   }
-  function stop(){ unghost(); if(ugT){ clearInterval(ugT); ugT=0; } try{ if(mo) mo.disconnect(); if(ro) ro.disconnect(); }catch(e){} mo=ro=null; roSeen=new WeakSet(); panels.forEach(function(P,el){ el.classList.remove('dm-ui3d-ghost'); if(P.mesh) P.mesh.visible=false; }); panels.clear();
-    cvs.forEach(function(C){ C.el.classList.remove('dm-ui3d-ghost'); C.mesh.visible=false; }); cvs.clear();
+  function stop(){ unghost(); if(ugT){ clearInterval(ugT); ugT=0; } try{ if(mo) mo.disconnect(); if(ro) ro.disconnect(); }catch(e){} mo=ro=null; roSeen=new WeakSet(); panels.forEach(function(P,el){ el.classList.remove('dm-ui3d-ghost'); if(P.mesh){ if(root) root.remove(P.mesh); P.mesh.geometry.dispose(); } }); panels.clear();
+    cvs.forEach(function(C){ C.el.classList.remove('dm-ui3d-ghost'); if(root) root.remove(C.mesh); C.mesh.geometry.dispose(); C.mesh.material.dispose(); C.tex.dispose(); }); cvs.clear();   // (v200) dispose, not just hide
     sx=sy=sh=0; layoutDirty=true;
     drewOK=false; wdFrames=0; wdT0=0; if(ready){ art.visible=txt.visible=false; } document.body.classList.remove('dm-ui3d-mesh'); }
 
