@@ -1534,6 +1534,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   <div id="ar-top">
     <!-- Left frame: soundtrack controls -->
     <div class="hud-l dm-frame">
+      <i class="dm-trim" aria-hidden="true"></i>
       <!-- ♫ In-game audio player -->
       <div id="audio-player" >
         <button class="aud-btn" onclick="audioPrev()" title="Previous track">⏮</button>
@@ -1567,6 +1568,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
       <button class="art-btn" onclick="promptExit()" title="Exit"><i class="ic">⏻</i>EXIT</button>
       <button class="art-btn profile-btn" id="profile-btn" onclick="openProfileMenu()" title="Your profile and display options"><span class="pf-av-mini" id="profile-btn-av">◉</span><span>PROFILE</span></button>
       </div>
+      <i class="dm-trim" aria-hidden="true"></i>
       <div class="hud-r-row">
         <button class="art-btn progress-btn" id="init-progress-btn" onclick="quickSave()" title="Initialize Progress: save right here. Signed in, it also goes to your private jots- repository. The game also initializes progress by itself at milestones and every 15 minutes.">⟐ INITIALIZE PROGRESS</button>
       </div>
@@ -1695,7 +1697,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <!-- ✦ SURFACE WALK OVERLAY -->
 <div id="surface-overlay" style="display:none;position:fixed;inset:0;z-index:3500;background:transparent;">
   <canvas id="surface-canvas" style="position:absolute;inset:0;display:block;touch-action:none;"></canvas>
-  <div style="position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:10px 16px calc(10px);background:rgba(var(--panel-rgb),.55);backdrop-filter:blur(10px);border-bottom:1px solid rgba(var(--acc-rgb),.15);pointer-events:none;">
+  <div style="position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:10px 16px calc(10px);isolation:isolate;pointer-events:none;">
+    <i class="dm-bar" aria-hidden="true"></i>
     <div class="world-music" id="wm-surf" title="Soundtrack"><button class="aud-btn" onclick="audioPrev()" title="Previous track">⏮</button><button class="aud-btn wm-pp" onclick="audioToggle()" title="Play / Pause">⏸</button><button class="aud-btn" onclick="audioStop()" title="Stop">■</button><button class="aud-btn" onclick="audioNext()" title="Next track">⏭</button><button class="aud-btn" onclick="audioPickFiles()" title="Load music from your device">📁</button><button class="aud-btn" onclick="openMusicBrowser()" title="Browse the soundtrack">📜</button><span class="wm-vol-wrap" title="Music volume"><span class="wm-vol-ico">♪</span><input class="wm-vol" type="range" min="0" max="100" value="100" oninput="audioSetVolume(this.value/100)" aria-label="Music volume"></span><span class="wm-name"></span></div>
     <div class="mini-kite"><svg class="mk-edge" viewBox="0 0 360 160" preserveAspectRatio="none" width="0" height="0" aria-hidden="true"><defs><linearGradient id="mk-grad-s" x1="0" y1="0" x2="0.35" y2="1"><stop offset="0" class="ks-a"/><stop offset=".55" class="ks-b"/><stop offset="1" class="ks-c"/></linearGradient></defs><polygon class="kite-line" style="stroke:url(#mk-grad-s)" fill="none" stroke="none" points="1.5,77 75.6,1.5 358.5,75.2 75.6,158.5"/><polyline class="kite-ridge" fill="none" stroke="none" points="2,77 358,75.2"/></svg><span id="surface-title" class="mk-name">—</span><span class="mk-mode">SURFACE</span><span id="surface-grav" class="mk-read">GRAV 1.00g</span></div>
     <div style="display:flex;gap:8px;">
@@ -1732,7 +1735,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <!-- ✦ ATMOSPHERIC FLIGHT (skyboard flight within a planet's atmosphere) -->
 <div id="atmo-overlay" style="display:none;position:fixed;inset:0;z-index:3450;background:transparent;">
   <canvas id="atmo-canvas" style="position:absolute;inset:0;display:block;touch-action:none;"></canvas>
-  <div style="position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:10px 16px;background:rgba(var(--panel-rgb),.5);backdrop-filter:blur(10px);border-bottom:1px solid rgba(var(--acc-rgb),.15);pointer-events:none;">
+  <div style="position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:10px 16px;isolation:isolate;pointer-events:none;">
+    <i class="dm-bar" aria-hidden="true"></i>
     <div class="world-music" id="wm-atmo" title="Soundtrack"><button class="aud-btn" onclick="audioPrev()" title="Previous track">⏮</button><button class="aud-btn wm-pp" onclick="audioToggle()" title="Play / Pause">⏸</button><button class="aud-btn" onclick="audioStop()" title="Stop">■</button><button class="aud-btn" onclick="audioNext()" title="Next track">⏭</button><button class="aud-btn" onclick="audioPickFiles()" title="Load music from your device">📁</button><button class="aud-btn" onclick="openMusicBrowser()" title="Browse the soundtrack">📜</button><span class="wm-vol-wrap" title="Music volume"><span class="wm-vol-ico">♪</span><input class="wm-vol" type="range" min="0" max="100" value="100" oninput="audioSetVolume(this.value/100)" aria-label="Music volume"></span><span class="wm-name"></span></div>
     <div class="mini-kite"><svg class="mk-edge" viewBox="0 0 360 160" preserveAspectRatio="none" width="0" height="0" aria-hidden="true"><defs><linearGradient id="mk-grad-a" x1="0" y1="0" x2="0.35" y2="1"><stop offset="0" class="ks-a"/><stop offset=".55" class="ks-b"/><stop offset="1" class="ks-c"/></linearGradient></defs><polygon class="kite-line" style="stroke:url(#mk-grad-a)" fill="none" stroke="none" points="1.5,77 75.6,1.5 358.5,75.2 75.6,158.5"/><polyline class="kite-ridge" fill="none" stroke="none" points="2,77 358,75.2"/></svg><span id="atmo-title" class="mk-name">—</span><span class="mk-mode">ATMOSPHERIC FLIGHT</span><span id="atmo-speed" class="mk-read">MACH 0.00</span></div>
     <div style="display:flex;gap:8px;">
@@ -26291,7 +26295,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 </script>
 
 <!-- ?v= stamps: bump on every UI change so browsers never mix a new page with cached old styles -->
-<link rel="stylesheet" href="ui/dm-ui.css?v=160">
+<link rel="stylesheet" href="ui/dm-ui.css?v=206">
 <link rel="stylesheet" href="ui/dm-hud.css?v=206">
 <link rel="stylesheet" href="ui/dm-friends.css?v=1">
 <link rel="stylesheet" href="ui/dm-safety.css?v=1">

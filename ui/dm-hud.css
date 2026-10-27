@@ -44,8 +44,11 @@
 #screen-flight .hud-r .art-btns{flex:none;max-width:100%;padding:0;gap:2px;justify-content:flex-end;}
 /* a thin hairline under each chip group ties the chips together */
 #screen-flight .hud-l,#screen-flight .hud-r .art-btns{position:relative;}
-#screen-flight .hud-l::after,#screen-flight .hud-r .art-btns::before{content:'';position:absolute;left:6px;right:6px;bottom:-5px;height:1px;
-  background:linear-gradient(90deg,transparent,rgba(var(--acc-rgb),.55),transparent);}
+/* (v207) the trim is a real 5px-tall element (its 1px line is a centred background), not a ::after outside the box: the 3D HUD can only
+   rasterise real elements, so the old pseudo-element stayed a flat 2D line. It is cut into the same curved ribbon as the top row. */
+#screen-flight .dm-trim{display:block;height:5px;pointer-events:none;background:linear-gradient(90deg,transparent,rgba(var(--acc-rgb),.55),transparent) center/100% 1px no-repeat;}
+#screen-flight .hud-l>.dm-trim{position:absolute;left:6px;right:6px;bottom:-7px;}
+#screen-flight .hud-r>.dm-trim{align-self:stretch;flex:none;margin:-6px 6px -7px;}   /* in flow, net zero height: sits 2px under the button row */
 
 /* INITIALIZE PROGRESS: a soft green slanted bar */
 #screen-flight .art-btn.progress-btn{height:30px;padding:0 18px;font-size:.54rem;color:#9ff5c6;

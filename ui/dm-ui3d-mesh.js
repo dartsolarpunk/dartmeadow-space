@@ -142,6 +142,18 @@
     var s=a<0.15?0:Math.min(1,(a-0.15)/0.8), e=s*s*(3-2*s), th=-(nx<0?-1:1)*CURVE_DEG*Math.PI/180*e, f=1-PUSH*e;
     return {cx:cx,cy:cy,th:th,f:f,c:Math.cos(th),s:Math.sin(th),zc:camD()*(1-f)}; }
   function xf(p,lx,ly,lz,out,o){ var x=lx*p.c+lz*p.s, z=-lx*p.s+lz*p.c; out[o]=(p.cx+x)*p.f; out[o+1]=(p.cy+ly)*p.f; out[o+2]=p.zc+z*p.f; }
+  // (v207) wide, short panels (the surface/atmosphere top bar, the top media row, the CAM/HOME/../PROFILE row, their underline trims,
+  // the throttle track) are one continuous ribbon on the SAME visor curve as the side tabs instead of one flat plate: it is cut into
+  // vertical strips that share their edge vertices, and every vertex sits at the depth the tab curve gives its screen x (curveZ: the
+  // integral of sin(tilt) from the centre, i.e. the ends come toward the camera). x stays on its DOM x (taps still hit the controls);
+  // toward the ends the row grows taller about its own centre line (nearer = larger), so it reads as wrapped, like the tabs.
+  var STRIP_PX=24, STRIP_MIN=96, STRIP_MAX=40, STRIP_RATIO=8;
+  function nStrips(P){ var r=P.rect; if(!r||P.dyn||r.width<=Math.max(STRIP_MIN,innerWidth*0.1)||r.width<r.height*STRIP_RATIO) return 1; return Math.min(STRIP_MAX,Math.ceil(r.width/STRIP_PX)); }
+  function curveZ(sx){ var hw=innerWidth/2, a=Math.min(Math.abs(sx),hw*1.2), n=Math.max(1,Math.ceil(a/16)), dx=a/n, z=0;
+    for(var i=0;i<n;i++){ var x=(i+0.5)*dx, t=Math.min(1,x/hw), s=t<0.15?0:Math.min(1,(t-0.15)/0.8), e=s*s*(3-2*s); z+=Math.sin(CURVE_DEG*Math.PI/180*e)*dx; }
+    return z; }
+  // screen offset (sx right of centre, sy up from centre; yc = the row's own centre line) + layer depth -> mesh position
+  function ribV(sx,sy,yc,lz,out,o){ var z=curveZ(sx), k=camD()/(camD()-z); out[o]=sx/k; out[o+1]=yc/k+(sy-yc); out[o+2]=z+lz; }
   var sx=0, sy=0, sh=0; function alloc(w,h,size,maxH){ if(sx+w>size){ sx=0; sy+=sh+PAD; sh=0; } if(sy+h>(maxH||size)) return null; var a={x:sx,y:sy,w:w,h:h}; sx+=w+PAD; sh=Math.max(sh,h); return a; }
   function pos4(r){ return [r.left,r.top,r.width,r.height].map(function(v){ return Math.round(v*2); }).join(','); }
 
@@ -316,9 +328,16 @@
 
   // ---------- static art geometry: ONE merged buffer (knobs: one small mesh each) ----------
   var ID={cx:0,cy:0,th:0,f:1,c:1,s:0,zc:0};
-  function quads(P,p,pos,uv,col,q){ var w=P.w/2+PG, h=P.h/2+PG, ox=P.rect?(P.rect.width-P.w)/2:0, AH=aCv.height;
+  function quads(P,p,pos,uv,col,q){ var w=P.w/2+PG, h=P.h/2+PG, ox=P.rect?(P.rect.width-P.w)/2:0, AH=aCv.height, N=nStrips(P);
     var u0=P.slot.x/ATLAS, u1=(P.slot.x+P.w+2*PG)/ATLAS, v0=1-(P.slot.y+P.h+2*PG)/AH, v1=1-P.slot.y/AH, cs=[[-w,-h],[w,-h],[w,h],[-w,h]];
     for(var L=LAYERS;L>=0;L--){ var z=LAYERS?-DEPTH*L/LAYERS:0, k;
+      if(N>1){   // one curved ribbon: N strips with shared edge vertices
+        var R=P.rect, hw=innerWidth/2, x0=R.left+R.width/2+ox-w-hw, yc=innerHeight/2-(R.top+R.height/2), sw=2*w/N;
+        for(var i=0;i<N;i++){ var xa=x0+i*sw, xb=xa+sw, ua=u0+(u1-u0)*i/N, ub=u0+(u1-u0)*(i+1)/N;
+          ribV(xa,yc-h,yc,z,pos,q*12); ribV(xb,yc-h,yc,z,pos,q*12+3); ribV(xb,yc+h,yc,z,pos,q*12+6); ribV(xa,yc+h,yc,z,pos,q*12+9);
+          for(k=0;k<4;k++){ if(L) col.set([0.8,0.86,1,0.12],q*16+k*4); else col.set([1,1,1,0.86],q*16+k*4); }
+          uv.set([ua,v0,ub,v0,ub,v1,ua,v1],q*8); q++; }
+        continue; }
       for(k=0;k<4;k++){ xf(p,cs[k][0]+ox,cs[k][1],z,pos,q*12+k*3);
         // back layers: dim, mostly transparent -> a thin glowing rim; front: the CSS glass as is, faint top sheen
         if(L) col.set([0.8,0.86,1,0.12],q*16+k*4); else col.set([1,1,1,0.86],q*16+k*4); }   // (v174) frosted glass: see-through front, faint rim, no gloss
@@ -328,7 +347,7 @@
   function buildArt(){
     var rd=[]; panels.forEach(function(P){ if(P.ready&&P.slot&&!P.dyn&&!P.miss) rd.push(P); });
     rd.forEach(function(P){ P.p=place(P.rect); }); rd.sort(function(a,b){ return a.p.zc-b.p.zc; });   // far first (centre), the nearer sides after
-    var nQ=rd.length*(LAYERS+1), pos=new Float32Array(nQ*12), uv=new Float32Array(nQ*8), col=new Float32Array(nQ*16), q=0;
+    var nQ=rd.reduce(function(t,P){ return t+nStrips(P)*(LAYERS+1); },0), pos=new Float32Array(nQ*12), uv=new Float32Array(nQ*8), col=new Float32Array(nQ*16), q=0;
     rd.forEach(function(P){ q=quads(P,P.p,pos,uv,col,q); });
     setGeo(art,pos,uv,col,idxFor(q)); aTex.needsUpdate=true;
     panels.forEach(function(P){ if(P.dyn&&P.ready&&P.slot&&!P.built) buildDyn(P); });
@@ -362,7 +381,9 @@
     all.forEach(function(L){ var w=L.sw, h=L.sh; if(!L.slot) return;
       var p=L.P.p||place(L.P.rect), pr=L.P.rect;
       var lx=(L.r.left+lw(L)/2)-(pr.left+pr.width/2), ly=(pr.top+pr.height/2)-(L.r.top+L.r.height/2), hw=w/DPR/2, hh=h/DPR/2, cs=[[-hw,-hh],[hw,-hh],[hw,hh],[-hw,hh]];
-      for(var k=0;k<4;k++) xf(p,lx+cs[k][0],ly+cs[k][1],0.6,pos,q*12+k*3);
+      if(nStrips(L.P)>1){ var hw2=innerWidth/2, ycp=innerHeight/2-(pr.top+pr.height/2), lcx=L.r.left+lw(L)/2-hw2, lcy=innerHeight/2-(L.r.top+L.r.height/2);   // ribbon panel: text rides the same curve
+        for(var k2=0;k2<4;k2++) ribV(lcx+cs[k2][0],lcy+cs[k2][1],ycp,0.6,pos,q*12+k2*3); }
+      else for(var k=0;k<4;k++) xf(p,lx+cs[k][0],ly+cs[k][1],0.6,pos,q*12+k*3);
       var u0=L.slot.x/TATLAS, u1=(L.slot.x+w)/TATLAS, v0=1-(L.slot.y+h)/TH, v1=1-L.slot.y/TH; uv.set([u0,v0,u1,v0,u1,v1,u0,v1],q*8); q++; });
     setGeo(txt,pos,uv,null,idxFor(q)); txt.userData.leaves=all;
   }
@@ -508,7 +529,7 @@
     // CPU ms per overlay call (layout + text + draw submit), averaged since the last read
     hudCost:function(){ var v=hudN?hudMs/hudN:0; hudMs=0; hudN=0; return v; },
     _atlas:function(){ return aCv&&aCv.toDataURL(); },
-    _stats:function(){ var o=[]; panels.forEach(function(P){ o.push({id:P.el.id||String(P.el.className).slice(0,30),ready:P.ready,g:!!P.g,dyn:P.dyn,leaves:P.leaves.length}); });
+    _stats:function(){ var o=[]; panels.forEach(function(P){ o.push({id:P.el.id||String(P.el.className).slice(0,30),w:P.rect?Math.round(P.rect.width):0,x:P.rect?Math.round(P.rect.left):0,y:P.rect?Math.round(P.rect.top):0,h:P.rect?Math.round(P.rect.height):0,strips:nStrips(P),ready:P.ready,g:!!P.g,dyn:P.dyn,leaves:P.leaves.length}); });
       return {on:on(),painter:painter,why:why0,ready:ready,frames:frameN,paints:paints,drewOK:drewOK,ghosted:ghosted,n:o.length,ready_n:o.filter(function(x){ return x.ready; }).length,canvases:cvs.size,panels:o.slice(0,60)}; }
   };
 })();
