@@ -40,8 +40,10 @@
 
 /* ── walk mode + atmospheric flight overlays: same language as the HUD ── */
 #surface-overlay>div:nth-of-type(1),#atmo-overlay>div:nth-of-type(1){
-  background:linear-gradient(180deg,rgba(var(--panel-rgb),.55),rgba(var(--panel-rgb),0)) !important;border:none !important;backdrop-filter:none !important;-webkit-backdrop-filter:none !important;padding:10px 12px 18px !important;}
+  background:none !important;border:none !important;isolation:isolate;backdrop-filter:none !important;-webkit-backdrop-filter:none !important;padding:10px 12px 18px !important;}
 /* surface / atmosphere titles live in the small kite (see .mini-kite in dm-hud.css) */
+/* (v207) the fade strip is its own element so the row's buttons become separate panels on the visor curve and the strip is cut into the curved ribbon */
+#surface-overlay>div:nth-of-type(1)>.dm-bar,#atmo-overlay>div:nth-of-type(1)>.dm-bar{position:absolute;inset:0;z-index:-1;display:block;pointer-events:none;background:linear-gradient(180deg,rgba(var(--panel-rgb),.55),rgba(var(--panel-rgb),0));}
 #surface-overlay>div:nth-of-type(1)>div:last-child,#atmo-overlay>div:nth-of-type(1)>div:last-child{margin-left:auto;}
 #surface-overlay>div:nth-of-type(1) button:where(:not(.dm-ar-btn)),#atmo-overlay>div:nth-of-type(1) button:where(:not(.dm-ar-btn)),
 #surf-jump-btn,#surf-run-btn,#surf-climb-btn{

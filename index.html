@@ -900,9 +900,9 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
    Backgrounds are slightly more opaque instead so they read the same. Modals that open on demand keep their blur. */
 .joystick-base,.ar-panel,#ar-top,.hud-toggle-btn,.assist-btn,.side-pad,.dart-pad,.joystick-zone>div,[style*="backdrop-filter:blur(8px)"][style*="border-radius:50%"]{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;}
 /* live FPS number: lower-left corner of the kite, medium gray so it reads on any theme without shouting */
-.dm-fps{position:absolute;left:122px;top:128px;transform:translate(-50%,-50%);display:flex;align-items:center;gap:5px;white-space:nowrap;font:400 .54rem/1 var(--font-mono,monospace);color:var(--text);pointer-events:none;font-variant-numeric:tabular-nums;z-index:3}   /* v151: a kite gauge like SPD / ALT (cyan label + mono value, theme colours), not a separate grey box */
-.dm-fps::before{content:'FPS';font-family:var(--font-hud);font-size:.48rem;letter-spacing:.16em;color:var(--cyan)}
-.mini-kite .dm-fps{left:66px;top:90px}   /* v151: bottom row under the readout, inside the kite outline */
+.dm-fps{position:absolute;left:126px;top:126px;transform:translate(-50%,-50%);display:flex;align-items:center;gap:6px;white-space:nowrap;font:500 .86rem/1 var(--font-mono,monospace);text-shadow:0 0 6px rgba(var(--acc-rgb),.7);color:var(--text);pointer-events:none;font-variant-numeric:tabular-nums;z-index:3}   /* v151: a kite gauge like SPD / ALT (cyan label + mono value, theme colours), not a separate grey box */
+.dm-fps::before{content:'FPS';font-family:var(--font-hud);font-size:.62rem;letter-spacing:.14em;color:var(--cyan)}
+.mini-kite .dm-fps{left:78px;top:88px}   /* v151: bottom row under the readout, inside the kite outline */
 #minimap{display:none!important;position:absolute;bottom:calc(100px + var(--safe-bot));left:8px;width:88px;height:88px;background:rgba(var(--panel-rgb),0.28);border:1px solid rgba(var(--acc-rgb),0.18);border-radius:50%;overflow:hidden;pointer-events:auto;z-index:22;touch-action:none;}
 #minimap-canvas{touch-action:none;}
 #mm-toggle{position:absolute;top:2px;right:2px;width:16px;height:16px;border-radius:50%;background:rgba(var(--panel-rgb),0.8);border:1px solid rgba(var(--acc-rgb),0.3);color:rgba(var(--acc-rgb),0.7);font-size:0.5rem;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;z-index:23;pointer-events:auto;}
@@ -1007,10 +1007,10 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-bt-lighting.js?v=144" defer></script>
 <script src="ui/dm-bt-cargocam.js?v=1" defer></script>
 <script src="ui/dm-bt-interior.js?v=124" defer></script>
-<script src="ui/dm-bt-pbr.js?v=192" defer></script>
+<script src="ui/dm-bt-pbr.js?v=206" defer></script>
 <script src="ui/dm-bt-bake.js?v=144" defer></script>
-<script src="ui/dm-ui3d-core.js?v=160" defer></script>
-<script src="ui/dm-ui3d-mesh.js?v=205" defer></script>
+<script src="ui/dm-ui3d-core.js?v=206" defer></script>
+<script src="ui/dm-ui3d-mesh.js?v=206" defer></script>
 <script src="ui/dm-ar-core.js?v=196" defer></script>
 <script src="ui/dm-bt-roomlights.js?v=144" defer></script>
 <script src="ui/dm-bt-hull.js?v=144" defer></script>
@@ -1534,6 +1534,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   <div id="ar-top">
     <!-- Left frame: soundtrack controls -->
     <div class="hud-l dm-frame">
+      <i class="dm-trim" aria-hidden="true"></i>
       <!-- ♫ In-game audio player -->
       <div id="audio-player" >
         <button class="aud-btn" onclick="audioPrev()" title="Previous track">⏮</button>
@@ -1567,6 +1568,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
       <button class="art-btn" onclick="promptExit()" title="Exit"><i class="ic">⏻</i>EXIT</button>
       <button class="art-btn profile-btn" id="profile-btn" onclick="openProfileMenu()" title="Your profile and display options"><span class="pf-av-mini" id="profile-btn-av">◉</span><span>PROFILE</span></button>
       </div>
+      <i class="dm-trim" aria-hidden="true"></i>
       <div class="hud-r-row">
         <button class="art-btn progress-btn" id="init-progress-btn" onclick="quickSave()" title="Initialize Progress: save right here. Signed in, it also goes to your private jots- repository. The game also initializes progress by itself at milestones and every 15 minutes.">⟐ INITIALIZE PROGRESS</button>
       </div>
@@ -1695,7 +1697,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <!-- ✦ SURFACE WALK OVERLAY -->
 <div id="surface-overlay" style="display:none;position:fixed;inset:0;z-index:3500;background:transparent;">
   <canvas id="surface-canvas" style="position:absolute;inset:0;display:block;touch-action:none;"></canvas>
-  <div style="position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:10px 16px calc(10px);background:rgba(var(--panel-rgb),.55);backdrop-filter:blur(10px);border-bottom:1px solid rgba(var(--acc-rgb),.15);pointer-events:none;">
+  <div style="position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:10px 16px calc(10px);isolation:isolate;pointer-events:none;">
+    <i class="dm-bar" aria-hidden="true"></i>
     <div class="world-music" id="wm-surf" title="Soundtrack"><button class="aud-btn" onclick="audioPrev()" title="Previous track">⏮</button><button class="aud-btn wm-pp" onclick="audioToggle()" title="Play / Pause">⏸</button><button class="aud-btn" onclick="audioStop()" title="Stop">■</button><button class="aud-btn" onclick="audioNext()" title="Next track">⏭</button><button class="aud-btn" onclick="audioPickFiles()" title="Load music from your device">📁</button><button class="aud-btn" onclick="openMusicBrowser()" title="Browse the soundtrack">📜</button><span class="wm-vol-wrap" title="Music volume"><span class="wm-vol-ico">♪</span><input class="wm-vol" type="range" min="0" max="100" value="100" oninput="audioSetVolume(this.value/100)" aria-label="Music volume"></span><span class="wm-name"></span></div>
     <div class="mini-kite"><svg class="mk-edge" viewBox="0 0 360 160" preserveAspectRatio="none" width="0" height="0" aria-hidden="true"><defs><linearGradient id="mk-grad-s" x1="0" y1="0" x2="0.35" y2="1"><stop offset="0" class="ks-a"/><stop offset=".55" class="ks-b"/><stop offset="1" class="ks-c"/></linearGradient></defs><polygon class="kite-line" style="stroke:url(#mk-grad-s)" fill="none" stroke="none" points="1.5,77 75.6,1.5 358.5,75.2 75.6,158.5"/><polyline class="kite-ridge" fill="none" stroke="none" points="2,77 358,75.2"/></svg><span id="surface-title" class="mk-name">—</span><span class="mk-mode">SURFACE</span><span id="surface-grav" class="mk-read">GRAV 1.00g</span></div>
     <div style="display:flex;gap:8px;">
@@ -1704,6 +1707,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
       <button id="surf-fly-btn" onclick="surfRemountSkyboard()" style="pointer-events:auto;padding:5px 12px;background:rgba(var(--acc-rgb),.1);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🛹 FLY</button>
       <button id="liftoff-btn" onclick="exitSurface()" style="pointer-events:auto;padding:5px 14px;background:rgba(var(--hi-rgb),.12);border:1px solid var(--gold);color:var(--gold);font-family:var(--font-hud);font-size:.52rem;letter-spacing:.12em;cursor:pointer;border-radius:2px;">🚀 LIFTOFF</button>
       <button class="profile-btn" onclick="openProfileMenu()" title="Your profile and display options" style="pointer-events:auto;padding:5px 12px;display:inline-flex;align-items:center;gap:5px;background:rgba(var(--acc-rgb),.08);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;"><span class="pf-av-mini" id="profile-btn-av-s">◉</span><span>PROFILE</span></button>   <!-- v151: PROFILE on the surface / sky HUD too (was space-only) -->
+      <button class="dm-exit-btn" onclick="promptExit()" title="Exit" style="pointer-events:auto;padding:5px 12px;display:inline-flex;align-items:center;gap:5px;background:linear-gradient(180deg,rgba(var(--hi-rgb),.22),rgba(var(--hi-rgb),.08));border:1px solid var(--gold);color:var(--gold);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;"><span>⏻</span><span>EXIT</span></button>   <!-- v206: EXIT on the surface / sky HUD too, same handler as the space HUD -->
     </div>
   </div>
   <button class="orbit-skyboard-btn hud-toggle-btn" onclick="toggleCharOrbit()" title="Orbit freely around the character — drag/scroll or pinch to look around" style="left:auto;right:10px;top:56px;background:rgba(var(--hi-rgb),0.10);color:#ff4fa3;border-color:rgba(var(--hi-rgb),0.35);z-index:36;">🔄 ORBIT</button>
@@ -1731,7 +1735,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <!-- ✦ ATMOSPHERIC FLIGHT (skyboard flight within a planet's atmosphere) -->
 <div id="atmo-overlay" style="display:none;position:fixed;inset:0;z-index:3450;background:transparent;">
   <canvas id="atmo-canvas" style="position:absolute;inset:0;display:block;touch-action:none;"></canvas>
-  <div style="position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:10px 16px;background:rgba(var(--panel-rgb),.5);backdrop-filter:blur(10px);border-bottom:1px solid rgba(var(--acc-rgb),.15);pointer-events:none;">
+  <div style="position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:10px 16px;isolation:isolate;pointer-events:none;">
+    <i class="dm-bar" aria-hidden="true"></i>
     <div class="world-music" id="wm-atmo" title="Soundtrack"><button class="aud-btn" onclick="audioPrev()" title="Previous track">⏮</button><button class="aud-btn wm-pp" onclick="audioToggle()" title="Play / Pause">⏸</button><button class="aud-btn" onclick="audioStop()" title="Stop">■</button><button class="aud-btn" onclick="audioNext()" title="Next track">⏭</button><button class="aud-btn" onclick="audioPickFiles()" title="Load music from your device">📁</button><button class="aud-btn" onclick="openMusicBrowser()" title="Browse the soundtrack">📜</button><span class="wm-vol-wrap" title="Music volume"><span class="wm-vol-ico">♪</span><input class="wm-vol" type="range" min="0" max="100" value="100" oninput="audioSetVolume(this.value/100)" aria-label="Music volume"></span><span class="wm-name"></span></div>
     <div class="mini-kite"><svg class="mk-edge" viewBox="0 0 360 160" preserveAspectRatio="none" width="0" height="0" aria-hidden="true"><defs><linearGradient id="mk-grad-a" x1="0" y1="0" x2="0.35" y2="1"><stop offset="0" class="ks-a"/><stop offset=".55" class="ks-b"/><stop offset="1" class="ks-c"/></linearGradient></defs><polygon class="kite-line" style="stroke:url(#mk-grad-a)" fill="none" stroke="none" points="1.5,77 75.6,1.5 358.5,75.2 75.6,158.5"/><polyline class="kite-ridge" fill="none" stroke="none" points="2,77 358,75.2"/></svg><span id="atmo-title" class="mk-name">—</span><span class="mk-mode">ATMOSPHERIC FLIGHT</span><span id="atmo-speed" class="mk-read">MACH 0.00</span></div>
     <div style="display:flex;gap:8px;">
@@ -1739,6 +1744,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
             <button onclick="openTempleHub()" style="pointer-events:auto;padding:5px 12px;background:rgba(255,255,255,.1);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🕊 TEMPLE</button>
       <button onclick="atmoExitToSpace()" style="pointer-events:auto;padding:5px 12px;background:rgba(var(--acc-rgb),.08);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🚀 TO SPACE</button>
       <button class="profile-btn" onclick="openProfileMenu()" title="Your profile and display options" style="pointer-events:auto;padding:5px 12px;display:inline-flex;align-items:center;gap:5px;background:rgba(var(--acc-rgb),.08);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;"><span class="pf-av-mini" id="profile-btn-av-a">◉</span><span>PROFILE</span></button>   <!-- v151: PROFILE on the surface / sky HUD too (was space-only) -->
+      <button class="dm-exit-btn" onclick="promptExit()" title="Exit" style="pointer-events:auto;padding:5px 12px;display:inline-flex;align-items:center;gap:5px;background:linear-gradient(180deg,rgba(var(--hi-rgb),.22),rgba(var(--hi-rgb),.08));border:1px solid var(--gold);color:var(--gold);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;"><span>⏻</span><span>EXIT</span></button>   <!-- v206: EXIT on the surface / sky HUD too, same handler as the space HUD -->
     </div>
   </div>
   <button class="orbit-skyboard-btn hud-toggle-btn" onclick="toggleCharOrbit()" title="Orbit freely around the character — drag/scroll or pinch to look around" style="left:auto;right:16px;top:360px;background:rgba(var(--hi-rgb),0.10);color:#ff4fa3;border-color:rgba(var(--hi-rgb),0.35);z-index:36;">🔄 ORBIT</button>
@@ -26289,8 +26295,8 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 </script>
 
 <!-- ?v= stamps: bump on every UI change so browsers never mix a new page with cached old styles -->
-<link rel="stylesheet" href="ui/dm-ui.css?v=160">
-<link rel="stylesheet" href="ui/dm-hud.css?v=205">
+<link rel="stylesheet" href="ui/dm-ui.css?v=206">
+<link rel="stylesheet" href="ui/dm-hud.css?v=206">
 <link rel="stylesheet" href="ui/dm-friends.css?v=1">
 <link rel="stylesheet" href="ui/dm-safety.css?v=1">
 <link rel="stylesheet" href="ui/dm-spectator.css?v=1">
