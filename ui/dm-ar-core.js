@@ -430,8 +430,8 @@
   var L_WORLD=300;   // world units per grid unit (Ariel's high-detail square)
   function buildBoard(T,r,scene){
     var TSL=T.TSL, bc=new T.PerspectiveCamera(60,1,1,1e5);
-    var U={c:TSL.uniform(new T.Vector2()),half:TSL.uniform(450),tx:TSL.uniform(1),ty:TSL.uniform(1),far:TSL.uniform(1e5),gy:TSL.uniform(0),fh:TSL.uniform(50),cw:TSL.uniform(new T.Matrix4())};
-    var sp=TSL.pass(scene,bc), col=sp.getTextureNode('output'), vz=sp.getViewZNode();
+    var U={c:TSL.uniform(new T.Vector2()),half:TSL.uniform(450),tx:TSL.uniform(1),ty:TSL.uniform(1),far:TSL.uniform(1e5),nr:TSL.uniform(1),gy:TSL.uniform(0),fh:TSL.uniform(50),cw:TSL.uniform(new T.Matrix4())};
+    var sp=TSL.pass(scene,bc), col=sp.getTextureNode('output'), vz=(r.logarithmicDepthBuffer&&TSL.logarithmicDepthToViewZ)?TSL.logarithmicDepthToViewZ(sp.getTextureNode('depth').r,U.nr,U.far):sp.getViewZNode();   // (v165) the game's renderer uses a log depth buffer
     var u=TSL.screenUV, dist=vz.negate();
     var vp=TSL.vec3(u.x.mul(2).sub(1).mul(U.tx),TSL.float(1).sub(u.y).mul(2).sub(1).mul(U.ty),-1).mul(dist);
     var wp=U.cw.mul(TSL.vec4(vp,1)).xyz;
@@ -482,7 +482,7 @@
       B.m.copy(S.table.matrixWorld).invert().multiply(S.cam.matrixWorld); B.m.decompose(B.p,B.q,B.sc);
       var bc=B.bc; bc.position.set(px+B.p.x*s,h+B.p.y*s,pz+B.p.z*s); bc.quaternion.copy(B.q);
       bc.fov=S.cam.fov; bc.aspect=innerWidth/innerHeight; bc.near=Math.max(0.5,0.02*s); bc.far=8*s; bc.updateProjectionMatrix(); bc.updateMatrixWorld(true);
-      var e=bc.projectionMatrix.elements; B.U.tx.value=1/e[0]; B.U.ty.value=1/e[5]; B.U.far.value=bc.far; B.U.cw.value.copy(bc.matrixWorld);
+      var e=bc.projectionMatrix.elements; B.U.tx.value=1/e[0]; B.U.ty.value=1/e[5]; B.U.far.value=bc.far; B.U.nr.value=bc.near; B.U.cw.value.copy(bc.matrixWorld);
       B.U.c.value.set(px,pz); B.U.half.value=half;
       if(!B.W){ B.W=buildWalls(T); scene.add(B.W.mesh); }
       var ah=B.ah||1.8; if(!B.ah) try{ var cb=window.CHAR&&CHAR.root; if(cb){ var bb=new T.Box3().setFromObject(cb); var hh=bb.max.y-bb.min.y; if(isFinite(hh)&&hh>0.2&&hh<50) ah=B.ah=hh; } }catch(e){}
@@ -514,7 +514,7 @@
     document.body.classList.toggle('dm-ar-full',full||mode==='terrain');
     S.cam.position.set(0,0,0); S.cam.quaternion.copy(q); S.cam.updateMatrixWorld(true);
     if(mode==='terrain'){   // the game's own loop draws the world onto the board (boardRender, called from _pwRender)
-      if(!S.placed){ S.table.position.set(0,TABLE_Y,-0.7); S.table.rotation.set(0,0,0); S.table.visible=true; S.placed=true; S.autoPlaced=true; toast(''); }
+      if(!S.placed){ S.ray.setFromCamera(new T.Vector2(0,0),S.cam); var ap=S.hit; if(!(S.ray.ray.intersectPlane(S.plane,ap)&&ap.length()<1.6)){ var fw=S.ray.ray.direction; ap.set(fw.x,0,fw.z); if(ap.lengthSq()<1e-6) ap.set(0,0,-1); ap.normalize().multiplyScalar(0.9); ap.y=-0.25; } S.table.position.copy(ap); S.table.rotation.set(0,Math.atan2(-ap.x,-ap.z)+Math.PI,0); S.table.visible=true; S.placed=true; S.autoPlaced=true; toast(''); }   // (v165) auto-placed where the phone looks: held level it sits ~15° below centre, inside the view
       return; }
     if(full){
       if(!S.q0) S.q0=q.clone().invert();
