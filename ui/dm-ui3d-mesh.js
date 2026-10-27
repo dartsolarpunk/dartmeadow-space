@@ -150,13 +150,18 @@
   var DPR=1.5;
   function buildText(){
     var all=[]; panels.forEach(function(P){ if(P.ready) P.leaves.forEach(function(L){ L.P=P; all.push(L); }); });
-    sx=sy=sh=0; tCx.clearRect(0,0,TATLAS,TATLAS);
+    sx=sy=sh=0;
     var pos=new Float32Array(all.length*12), uv=new Float32Array(all.length*8), idx=new Uint32Array(all.length*6), v=new T.Vector3(), q=0;
-    all.forEach(function(L){ var w=Math.ceil(L.r.width*DPR)+8, h=Math.ceil(L.r.height*DPR)+8; L.slot=alloc(w,h,TATLAS); L.sw=w; L.sh=h; L.text=null; if(!L.slot) return;
+    all.forEach(function(L){ var w=Math.ceil(L.r.width*DPR)+8, h=Math.ceil(L.r.height*DPR)+8; L.slot=alloc(w,h,TATLAS); L.sw=w; L.sh=h; L.text=null; });
+    // (v149) the text atlas is only as tall as the slots need (pow2): every changed readout re-uploads the whole
+    // texture, and a full 1024² RGBA upload per HUD tick was a 4 MB texSubImage per frame on the tablet
+    var TH=32; while(TH<sy+sh&&TH<TATLAS) TH*=2;
+    if(tCv.height!==TH){ tCv.height=TH; tTex.dispose(); tTex=tx(tCv); txt.material.map=tTex; txt.material.needsUpdate=true; } else tCx.clearRect(0,0,TATLAS,TH);
+    all.forEach(function(L){ var w=L.sw, h=L.sh; if(!L.slot) return;
       var t=tilt(L.P.rect), pc={x:L.P.rect.left+L.P.rect.width/2-innerWidth/2, y:innerHeight/2-(L.P.rect.top+L.P.rect.height/2)};
       var lx=L.r.left+L.r.width/2-innerWidth/2-pc.x, ly=innerHeight/2-(L.r.top+L.r.height/2)-pc.y, hw=w/DPR/2, hh=h/DPR/2, cs=[[-hw,-hh],[hw,-hh],[hw,hh],[-hw,hh]];
       for(var k=0;k<4;k++){ v.set(lx+cs[k][0],ly+cs[k][1],0.5).applyQuaternion(t.q); pos.set([v.x+t.cx,v.y+t.cy,v.z],q*12+k*3); }
-      var u0=L.slot.x/TATLAS, u1=(L.slot.x+w)/TATLAS, v0=1-(L.slot.y+h)/TATLAS, v1=1-L.slot.y/TATLAS; uv.set([u0,v0,u1,v0,u1,v1,u0,v1],q*8); var b=q*4; idx.set([b,b+1,b+2,b,b+2,b+3],q*6); q++; });
+      var u0=L.slot.x/TATLAS, u1=(L.slot.x+w)/TATLAS, v0=1-(L.slot.y+h)/TH, v1=1-L.slot.y/TH; uv.set([u0,v0,u1,v0,u1,v1,u0,v1],q*8); var b=q*4; idx.set([b,b+1,b+2,b,b+2,b+3],q*6); q++; });
     setGeo(txt,pos,uv,null,idx.subarray(0,q*6)); txt.userData.leaves=all;
   }
   function drawLeaf(L,s){
@@ -175,13 +180,13 @@
     if(ch) tTex.needsUpdate=true; }
 
   // ---------- overlay pass on the game's renderer ----------
+  function tx(c){ var t=new T.CanvasTexture(c); t.colorSpace=T.SRGBColorSpace; t.generateMipmaps=false; t.minFilter=T.LinearFilter; return t; }
   function setup(R){
     T=window.THREE; if(!T) return false;
     if(!(R&&R.backend&&(R.backend.isWebGPUBackend||/[?&]ui3dgl=1\b/.test(location.search)))){ fallback('renderer backend is not WebGPU'); return false; }
     root=new T.Group(); scene=new T.Scene(); scene.add(root); cam=new T.PerspectiveCamera(FOV,1,1,10);
     aCv=document.createElement('canvas'); aCv.width=aCv.height=ATLAS; aCx=aCv.getContext('2d');
     tCv=document.createElement('canvas'); tCv.width=tCv.height=TATLAS; tCx=tCv.getContext('2d');
-    function tx(c){ var t=new T.CanvasTexture(c); t.colorSpace=T.SRGBColorSpace; t.generateMipmaps=false; t.minFilter=T.LinearFilter; return t; }
     aTex=tx(aCv); tTex=tx(tCv);
     function mat(map,vc){ var m=new T.MeshBasicNodeMaterial({map:map,vertexColors:!!vc,transparent:true,depthWrite:false,depthTest:false,side:T.DoubleSide}); m.toneMapped=false; return m; }
     art=new T.Mesh(new T.BufferGeometry(),mat(aTex,true)); art.renderOrder=1;
@@ -191,7 +196,7 @@
     document.body.classList.add('dm-ui3d-mesh'); ready=true; return true;
   }
   // ---------- fallback watchdog ----------
-  var drewOK=false, wdFrames=0, wdT0=0, WD_MS=15000, why0='';
+  var txtT=0, drewOK=false, wdFrames=0, wdT0=0, WD_MS=15000, why0='';
   function fallback(why){ why0=why; console.warn('[UI3D] mesh HUD failed ('+why+'); falling back to CSS tilt');
     try{ stop(); }catch(e){} mode='css'; drewOK=false; wdFrames=0; wdT0=0; try{ if(window.DMUI3D) DMUI3D.refresh(); }catch(e){} }
   function ghostDrawn(){ panels.forEach(function(P){ if(P.ready&&P.slot) P.el.classList.add('dm-ui3d-ghost'); });
@@ -201,8 +206,9 @@
     if(!on()) return; if(!ready&&!setup(R)) return;
     if(frameN++%LAYOUT_EVERY===0) layout();
     if(artDirty){ artDirty=false; buildArt(); txtGeoDirty=true; }
-    if(txtGeoDirty){ txtGeoDirty=false; buildText(); }
-    updateText(); if(mm.visible&&mm.material.map) mm.material.map.needsUpdate=true;
+    if(txtGeoDirty){ txtGeoDirty=false; buildText(); txtT=0; }
+    // (v149) readouts + minimap re-upload at most ~15 Hz (was every frame: a full texture upload per frame)
+    var tn=performance.now(); if(tn-txtT>=66){ txtT=tn; updateText(); if(mm.visible&&mm.material.map) mm.material.map.needsUpdate=true; }
     // (v148) the old 30-frame / 1 s watchdog ran while the panels were still rasterizing (no art = nothing to draw),
     // so a tablet/phone whose first raster took >1 s always fell back to CSS. Now: the DOM stays visible until a
     // mesh frame draws OK; only a render throw or no art at all after 15 s (raster stall) falls back.
