@@ -290,7 +290,7 @@
       try{ viewBtn(false); s.gameCv&&s.gameCv.classList.remove('dm-ar-game'); document.body.classList.remove('dm-ar-full'); }catch(e){}
       try{ var fs=g('flightScene'); if(fs) unstrip(fs,s.sky); }catch(e){}
       try{ s.hitSrc&&s.hitSrc.cancel(); }catch(e){} try{ s.anchor&&s.anchor.delete&&s.anchor.delete(); }catch(e){}
-      try{ s.D&&s.D.dispose(); }catch(e){} try{ if(s.B){ s.B.pp.dispose(); if(s.B.W){ s.B.W.mesh.parent&&s.B.W.mesh.parent.remove(s.B.W.mesh); s.B.W.geo.dispose(); } } }catch(e){} try{ var _S=S; S=s; arBlend(false); S=_S; }catch(e){} try{ s.O&&disposeOrrery(s.O); }catch(e){}
+      try{ s.D&&s.D.dispose(); }catch(e){} try{ if(s.B){ s.B.pp.dispose(); if(s.B.W){ s.B.W.mesh.parent&&s.B.W.mesh.parent.remove(s.B.W.mesh); s.B.W.geo.dispose(); s.B.W.cap.parent&&s.B.W.cap.parent.remove(s.B.W.cap); s.B.W.cap.geometry.dispose(); } } }catch(e){} try{ var _S=S; S=s; arBlend(false); S=_S; }catch(e){} try{ s.O&&disposeOrrery(s.O); }catch(e){}
       try{ s.session&&s.session.removeEventListener('end',cleanup); }catch(e){}
       try{ s.r.dispose(); }catch(e){} try{ s.cv.remove(); }catch(e){}
     } finally {
@@ -464,10 +464,11 @@
     var M=T.MeshStandardNodeMaterial?new T.MeshStandardNodeMaterial():new T.MeshStandardMaterial();
     M.side=T.DoubleSide; M.roughness=0.95; M.metalness=0;
     if(TSL&&M.isNodeMaterial){ var y=TSL.positionWorld.y, k=TSL.sin(y.mul(0.35)).mul(0.5).add(0.5), k2=TSL.sin(y.mul(1.7).add(TSL.positionWorld.x.add(TSL.positionWorld.z).mul(0.05))).mul(0.5).add(0.5);
-      M.colorNode=TSL.mix(TSL.mix(TSL.color(0x5a4636),TSL.color(0x8a6f55),k),TSL.color(0x3e3229),k2.mul(0.35)); }
+      M.colorNode=TSL.mix(TSL.mix(TSL.color(0x5a4636),TSL.color(0x8a6f55),k),TSL.color(0x3e3229),k2.mul(0.35)); M.emissiveNode=M.colorNode.mul(0.45); }   // (v178) never reads black where the scene's light is far or behind
     else M.color.set(0x6b5442);
     var mesh=new T.Mesh(geo,M); mesh.frustumCulled=false; mesh.visible=false; mesh.userData.dmArWall=true;
-    return {mesh:mesh,pos:pos,geo:geo};
+    var cap=new T.Mesh(new T.PlaneGeometry(1,1).rotateX(-Math.PI/2),M); cap.frustumCulled=false; cap.visible=false; cap.userData.dmArWall=true;   // mesh maps: the plateau's top under the deck
+    return {mesh:mesh,pos:pos,geo:geo,cap:cap};
   }
   function fillWalls(W,H,cx,cz,half,depth,pal){
     var p=W.pos, lo=Infinity, tops=[];
@@ -485,7 +486,7 @@
     r.setClearAlpha(0);
     try{
       if(!S.placed||!ctx){ r.setRenderTarget(null); r.clear(); return true; }
-      if(!S.B||S.B.scene!==scene){ if(S.B) try{ S.B.pp.dispose(); if(S.B.W){ S.B.W.mesh.parent&&S.B.W.mesh.parent.remove(S.B.W.mesh); S.B.W.geo.dispose(); } }catch(e){} S.B=buildBoard(T,r,scene); }
+      if(!S.B||S.B.scene!==scene){ if(S.B) try{ S.B.pp.dispose(); if(S.B.W){ S.B.W.mesh.parent&&S.B.W.mesh.parent.remove(S.B.W.mesh); S.B.W.geo.dispose(); S.B.W.cap.parent&&S.B.W.cap.parent.remove(S.B.W.cap); S.B.W.cap.geometry.dispose(); } }catch(e){} S.B=buildBoard(T,r,scene); }
       var B=S.B, L=ctx.ship?SHIP_UNITS*(B.ah||1.8):L_WORLD, half=1.5*L, s=3*L/DIO_SIZE;   // (v178) mesh maps: a unit is a fixed number of Ariel heights
       var px=ctx.pos.x, pz=ctx.pos.z, h=NaN; try{ h=+ctx.H(px,pz); }catch(e){} if(!isFinite(h)) h=ctx.pos.y||0;
       S.table.updateMatrixWorld(true); S.cam.updateMatrixWorld(true);
@@ -494,12 +495,13 @@
       bc.fov=S.cam.fov; bc.aspect=innerWidth/innerHeight; bc.near=Math.max(0.5,0.02*s); bc.far=8*s; bc.updateProjectionMatrix(); bc.updateMatrixWorld(true);
       var e=bc.projectionMatrix.elements; B.U.tx.value=1/e[0]; B.U.ty.value=1/e[5]; B.U.far.value=bc.far; B.U.nr.value=bc.near; B.U.cw.value.copy(bc.matrixWorld);
       B.U.c.value.set(px,pz); B.U.half.value=half;
-      if(!B.W){ B.W=buildWalls(T); scene.add(B.W.mesh); }
+      if(!B.W){ B.W=buildWalls(T); scene.add(B.W.mesh); scene.add(B.W.cap); }
       var ah=B.ah||1.8; if(!B.ah) try{ var cb=window.CHAR&&CHAR.root; if(cb){ var bb=new T.Box3().setFromObject(cb); var hh=bb.max.y-bb.min.y; if(isFinite(hh)&&hh>0.2&&hh<50) ah=B.ah=hh; } }catch(e){}
       var depth=Math.max(4*ah,0.06*2*half);   // ~4x her height, never thinner than a readable slab at board scale
       var sw=g('surfWater'), sea=(sw&&sw.visible&&sw.position&&isFinite(sw.position.y))?sw.position.y:null;
       fillWalls(B.W,ctx.H,px,pz,half,depth,sea);
       B.U.gy.value=B.W.hi; B.U.fh.value=0.12*half; B.W.mesh.visible=true; hid.push(B.W.mesh); B.W._on=true;
+      if(ctx.ship){ B.W.cap.position.set(px,B.W.hi-0.02*(B.ah||1.8),pz); B.W.cap.scale.set(2*half,1,2*half); B.W.cap.visible=true; hid.push(B.W.cap); }
       scene.background=null;
       scene.traverseVisible(function(o){ if(o.userData&&(o.userData.dmSkyShell||o.userData.dmArHide)){ o.visible=false; hid.push(o); } });
       if(fog){ fs={n:fog.near,f:fog.far,d:fog.density}; if(fog.density!=null) fog.density=0; else { fog.near=1e12; fog.far=2e12; } }   // uniforms only: no recompile
