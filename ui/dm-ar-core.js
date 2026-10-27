@@ -358,7 +358,7 @@
     S.flight=FR0; S.flightRender=FR0render;
     // the game's renderer draws the full space overlay (fullRender) and the terrain board (boardRender, from _pwRender);
     // in the table-top orrery view it stays idle
-    if(FR0render) FR0.render=function(sc,cm){ if(!S||S.kind!=='camera') return FR0render.call(FR0,sc,cm); if(S.full) return fullRender(sc,cm); if(S.mode==='terrain') return FR0render.call(FR0,sc,cm); };
+    if(FR0render) FR0.render=function(sc,cm){ if(!S||S.kind!=='camera') return FR0render.call(FR0,sc,cm); if(S.full) return fullRender(sc,cm); if(S.mode==='terrain'&&S._inBoard) return FR0render.call(FR0,sc,cm); };   // terrain: only the board's own pass draws
     try{ var gc=FR0&&FR0.domElement; if(gc){ gc.classList.add('dm-ar-game'); S.gameCv=gc; } }catch(e){}
     viewBtn(true);
     try{ window.DMUI3DMesh&&DMUI3DMesh.arHold(true); }catch(e){}
@@ -490,7 +490,7 @@
       scene.background=null;
       scene.traverseVisible(function(o){ if(o.userData&&(o.userData.dmSkyShell||o.userData.dmArHide)){ o.visible=false; hid.push(o); } });
       if(fog){ fs={n:fog.near,f:fog.far,d:fog.density}; if(fog.density!=null) fog.density=0; else { fog.near=1e12; fog.far=2e12; } }   // uniforms only: no recompile
-      B.pp.render();
+      S._inBoard=true; try{ B.pp.render(); } finally { S._inBoard=false; }
       return true;
     } finally {
       r.setClearAlpha(ca); scene.background=bg; for(var i=0;i<hid.length;i++) hid[i].visible=!(hid[i].userData&&hid[i].userData.dmArWall);
