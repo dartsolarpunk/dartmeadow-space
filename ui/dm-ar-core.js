@@ -61,6 +61,7 @@
     var pos=null, flying=false;
     var sp=g('surfPlayer'); if(g('surfaceActive')&&sp&&sp.pos) pos=sp.pos;
     var ab=g('atmoBoard'); if(!pos&&g('atmoActive')&&ab&&ab.position){ pos=ab.position; flying=true; }
+    if(!pos&&g('atmoActive')&&PW.board&&PW.board.position){ pos=PW.board.position; flying=true; }
     if(!pos) return null;
     return {H:H,pos:pos,flying:flying,pal:PW.pal};
   }
