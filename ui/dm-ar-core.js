@@ -24,6 +24,7 @@
   // dom-overlay shows the page itself over passthrough: while AR is on, the game's own canvases and
   // screen backgrounds go transparent so only the HUD (and the minimap) sits on the camera image
   (function(){ var st=document.createElement('style'); st.textContent=
+    'html.dm-ar-on #intro-veil{display:none!important}'+   // (v182) a lingering boarding-intro veil (z 8450, opaque gradient) must never sit over the passthrough
     'html.dm-ar-on,body.dm-ar-on,body.dm-ar-on .screen,body.dm-ar-on #game-container{background:transparent!important}'+
     'body.dm-ar-on canvas:not(#dm-ar-canvas):not(#minimap-canvas){visibility:hidden!important}'+
     '#dm-ar-video{position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;z-index:-2;pointer-events:none;background:#000}'+
