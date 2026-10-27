@@ -498,6 +498,8 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;overscroll-behavior:non
 #intro-bar{height:100%;width:0;background:linear-gradient(90deg,var(--cyan),var(--purple));box-shadow:0 0 10px var(--cyan);transition:width .25s ease;}
 #intro-status{margin-top:9px;font-family:var(--font-mono);font-size:.6rem;letter-spacing:.1em;color:rgba(var(--acc-rgb),.75);}
 #intro-veil.iv-go #intro-ui{opacity:0;}
+body.intro-hold #dm-warm-pill{bottom:calc(12vh + 150px + env(safe-area-inset-bottom,0px))!important;}
+body.intro-play #dm-warm-pill{display:none!important;}
 #screen-menu.ms-pre .mm-panel,#screen-menu.ms-pre .menu-version,#screen-menu.ms-pre #menu-glow-wash{visibility:hidden;}
 #loading-screen{background:transparent !important;}
 #ls-ui-cluster{position:absolute !important;inset:0;justify-content:center;align-items:center;padding:0;}
@@ -1003,7 +1005,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-star.js?v=8" defer></script>
 <script src="ui/dm-mist.js?v=7" defer></script>
 <script src="ui/dm-atmo.js?v=150" defer></script>
-<script src="ui/dm-menuscene.js?v=9" defer></script>
+<script src="ui/dm-menuscene.js?v=10" defer></script>
 <script src="ui/dm-starbubble.js?v=3" defer></script>
 <script src="ui/dm-birdtemple.js?v=122" defer></script>
 <script src="ui/dm-bt-engineering.js?v=5" defer></script>
@@ -2916,7 +2918,7 @@ window._jotsIntro=INTRO;
 function _introBegin(){
   const M=window.DM_MENUSCENE, cv=document.getElementById('menu-scene-canvas');
   if(INTRO.on||!M||M.failed||!M._ctx||!cv||matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
-  INTRO.on=true; INTRO.phase='hold'; INTRO.where=null; INTRO.t0=performance.now(); INTRO.stable=0; INTRO.sig=''; INTRO.sigT=INTRO.t0; INTRO.skip=false; window.__JOTS_INTRO=INTRO;
+  INTRO.on=true; INTRO.phase='hold'; INTRO.where=null; INTRO.t0=performance.now(); INTRO.stable=0; INTRO.sig=''; INTRO.sigT=INTRO.t0; INTRO.skip=false; window.__JOTS_INTRO=INTRO; document.body.classList.add('intro-hold');
   let v=document.getElementById('intro-veil');
   if(!v){ v=document.createElement('div'); v.id='intro-veil';
     v.innerHTML='<div id="intro-ui"><img src="static/dartmeadow-logo.svg" alt=""><div class="iv-track"><div id="intro-bar"></div></div><div id="intro-status">Loading…</div></div>';
@@ -2953,19 +2955,19 @@ function _introTick(){
   if(INTRO.phase==='hold'&&(INTRO.stable>=10||stalled||now-INTRO.t0>25000)) _introPlay();
 }
 function _introPlay(){
-  INTRO.phase='play'; clearInterval(INTRO.iv); INTRO.veil.classList.add('iv-go');
+  INTRO.phase='play'; document.body.classList.remove('intro-hold'); document.body.classList.add('intro-play'); clearInterval(INTRO.iv); INTRO.veil.classList.add('iv-go');
   const M=window.DM_MENUSCENE;
   if(INTRO.skip||!M||!M._ctx){ _introDissolve(350); return; }
   let p=false;
   try{
     const clip=n=>CHAR.actions&&CHAR.actions[n]?CHAR.actions[n].getClip():null;
-    const _t=STATE.boardConfig.template; p=M.introStart({board:buildBoardMesh(),sharedTex:!!(_t&&_t!=='R'&&_t!=='procedural'),jump:clip(CHAR_BOARD_TRANSITIONS.step.clip),ride:clip('skyboard'),onFlyOff:()=>_introDissolve(900)});
+    const _t=STATE.boardConfig.template; p=M.introStart({scale:CHAR.scaleForBoard>0?1/CHAR.scaleForBoard:0,walk:clip('walk'),board:buildBoardMesh(),sharedTex:!!(_t&&_t!=='R'&&_t!=='procedural'),jump:clip(CHAR_BOARD_TRANSITIONS.step.clip),ride:clip('skyboard'),onFlyOff:()=>_introDissolve(900)});
   }catch(e){ console.warn('[intro]',e); }
   if(!p){ _introDissolve(350); return; }
-  // safety: dissolve if the intro stalls (no progress for ~10 s) or runs past 8 s of intro time
+  // safety: dissolve if the intro stalls (no progress for ~10 s) or runs past 14 s of intro time
   let _lt=-1,_sn=0; const _sf=setInterval(()=>{ const c=M._ctx&&M._ctx.intro, t=c?c.t:0;
     if(INTRO.phase!=='play'){ clearInterval(_sf); return; }
-    _sn=(t===_lt)?_sn+1:0; if(_sn>=5||t>8){ clearInterval(_sf); _introDissolve(500); } _lt=t; },2000);
+    _sn=(t===_lt)?_sn+1:0; if(_sn>=5||t>14){ clearInterval(_sf); _introDissolve(500); } _lt=t; },2000);
 }
 function _introDissolve(ms){
   if(!INTRO.on||INTRO.phase==='out') return;
@@ -2975,7 +2977,7 @@ function _introDissolve(ms){
 }
 function _introEnd(){
   const M=window.DM_MENUSCENE, cv=document.getElementById('menu-scene-canvas'), host=$('screen-menu'), star=$('menu-bg-canvas');
-  clearInterval(INTRO.iv); INTRO.on=false; INTRO.phase=''; window.__JOTS_INTRO=null;
+  clearInterval(INTRO.iv); INTRO.on=false; INTRO.phase=''; window.__JOTS_INTRO=null; document.body.classList.remove('intro-hold','intro-play');
   try{ if(M){ M.introReset(); M.pause(); } }catch(e){}
   try{ if(cv&&host) (star&&star.nextSibling)?host.insertBefore(cv,star.nextSibling):host.appendChild(cv); }catch(e){}
   if(INTRO.veil){ INTRO.veil.style.transition=''; INTRO.veil.remove(); INTRO.veil=null; }
@@ -6482,7 +6484,7 @@ async function _flightWarmup(){
   if(typeof flightRenderer==='undefined'||!flightRenderer||!flightRenderer.compileAsync) return;
   const t0=performance.now(); let pill=null; window._dmWarming=true;
   try{
-    pill=document.createElement('div');
+    pill=document.createElement('div'); pill.id='dm-warm-pill';
     pill.style.cssText='position:fixed;left:50%;bottom:calc(12% + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:9500;padding:8px 16px;border-radius:999px;background:rgba(4,10,18,.78);border:1px solid rgba(120,200,255,.35);color:#9fd8ff;font:600 11px/1.2 system-ui,sans-serif;letter-spacing:.14em;text-transform:uppercase;pointer-events:none';
     document.body.appendChild(pill);
   }catch(e){}
