@@ -166,15 +166,21 @@
     for(var i=0;i<CB.length;i++){ var b=CB[i]; if(!b||!b.mesh) continue; if(b.name==='Sun'){ sunB=b; continue; }
       if(/moon|station|ship|comet|asteroid/i.test((b.type||'')+' '+(b.name||''))) continue; if(b.orbitR>0) list.push(b); }
     var sp=O.tmp2.set(0,0,0); if(sunB) sunB.mesh.getWorldPosition(sp);
+    // orbits spaced by rank, not distance: one far body (a dwarf, a distant world) must not squeeze every planet
+    // into the Sun's glow. Each body's own orbit sets its ring; the ship is placed by interpolating between them.
+    list.sort(function(a,b){ return a.orbitR-b.orbitR; });
     var dmax=1; for(i=0;i<list.length;i++) dmax=Math.max(dmax,list[i].orbitR);
-    var comp=function(d){ return ORR_R*Math.sqrt(Math.max(0,d)/dmax); };   // sqrt: the inner planets don't collapse into the Sun
+    var nL=list.length, rk=function(j){ return ORR_R*(nL>1?0.22+0.78*j/(nL-1):0.6); };
+    var comp=function(d){ d=Math.max(0,d); if(!nL) return 0; if(d<=list[0].orbitR) return rk(0)*d/Math.max(1e-9,list[0].orbitR);
+      for(var j=1;j<nL;j++) if(d<=list[j].orbitR){ var a0=list[j-1].orbitR,a1=list[j].orbitR; return rk(j-1)+(rk(j)-rk(j-1))*(d-a0)/Math.max(1e-9,a1-a0); }
+      return rk(nL-1); };
     if(O.n!==list.length){   // (re)build the planet set
       O.items.forEach(function(it){ O.grp.remove(it.m); O.grp.remove(it.ring); it.m.material.dispose(); }); O.items.length=0;
       for(i=0;i<list.length;i++){ var b2=list[i], mt=b2.renderMesh&&b2.renderMesh.material||b2.mesh.material, c=0xb0c4de;
         try{ if(mt&&mt.color) c=mt.color.getHex(); }catch(e){}
         if(PCOL[b2.name]!=null) c=PCOL[b2.name]; else if(b2.col!=null) c=b2.col;   // textured planets report white
         var m=new T.Mesh(O.geo,new T.MeshBasicNodeMaterial({color:c})), ring=new T.Line(O.ringGeo,O.ringMat);
-        var rr=comp(b2.orbitR); ring.scale.set(rr,1,rr); m.scale.setScalar(Math.min(0.016,Math.max(0.005,0.006*Math.cbrt((b2.rRatio||1))))); 
+        var rr=comp(b2.orbitR); ring.scale.set(rr,1,rr); m.scale.setScalar(Math.min(0.018,Math.max(0.008,0.008*Math.cbrt((b2.rRatio||1))))); 
         O.grp.add(m); O.grp.add(ring); O.items.push({b:b2,m:m,ring:ring}); }
       O.n=list.length; }
     var v=O.tmp;
