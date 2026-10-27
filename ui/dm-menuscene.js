@@ -587,6 +587,10 @@
         ac.set(a.x, a.y, a.z); b.localToWorld(ac);
         IN.W = new THREE.Vector3(pb.max.x + 0.3, 0, ac.z);
         IN.W.y = surfY(IN.W.x, IN.W.z);
+        // v176: fine local collision patch under the board (rock + ground resampled at ~1/8 board length) so it never dips into them
+        if (window.DMLocalCollide && !IN.lc) { const o6 = new THREE.Vector3(), tg = [boulder, ground], hs6 = [];
+          IN.lc = DMLocalCollide.create(THREE, { n: 12, sample: (x, z) => { o6.set(x, 8, z); ray.set(o6, down); hs6.length = 0; ray.intersectObjects(tg, false, hs6); return hs6.length ? hs6[0].point.y : NaN; } }); }
+        if (IN.lc) { IN.lc.setCell(Lb / 8); const q0 = b.quaternion.clone(), p0 = b.position.clone(); b.position.set(0, 0, 0); b.quaternion.identity(); IN.lc.footprint(b); b.position.copy(p0); b.quaternion.copy(q0); b.updateMatrixWorld(true); }
         IN.D = new THREE.Vector3(); IN.F = new THREE.Vector3(); IN.FT = new THREE.Vector3(); IN.rel = null; IN.tmp = new THREE.Vector3(); IN.qa = new THREE.Quaternion(); IN.qb = new THREE.Quaternion();
         IN.seatPos = holder.position.clone(); IN.seatQ = holder.quaternion.clone(); IN.rideQ = new THREE.Quaternion().setFromAxisAngle(P.Y, IN.rideYaw);
         // feet start under her seat (world), walk to W
@@ -627,7 +631,8 @@
           b.rotation.set(-0.35 * Math.sin(Math.PI * tu), head, pit); b.quaternion.multiply(IN.qFlip);
           if (!IN.flew && s > 0.6) { IN.flew = true; try { IN.onFly && IN.onFly(); } catch (e) {} }
         }
-        b.updateMatrixWorld(true); IN.D.copy(IN.Dl); b.localToWorld(IN.D); IN.D.y += 0.03;
+        b.updateMatrixWorld(true); if (IN.lc) { const up = IN.lc.lift(b, 0.02); if (up > 0) { b.position.y += up; b.updateMatrixWorld(true); } }
+b.updateMatrixWorld(true); IN.D.copy(IN.Dl); b.localToWorld(IN.D); IN.D.y += 0.03;
         // her: stand + walk over, step on, ride
         if (t >= IN.T_WALK && IN.walk && !IN.walked) { IN.walked = true; IN.walk.reset().play(); }
         if (t >= T_STEP && IN.jump && !IN.jumped) { IN.jumped = true; IN.jump.reset().play(); if (IN.walk) IN.walk.crossFadeTo(IN.jump, 0.18, false); }
