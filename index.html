@@ -538,10 +538,9 @@ body.intro-play #dm-warm-pill{display:none!important;}
    the pilot art behind the panel instead of hiding it entirely, so the
    frosted glass has real background content to actually show through
    rather than just flat empty space. */
-@media (max-width:820px) and (orientation:portrait){#menu-pilot{right:auto;left:50%;transform:translateX(-50%);height:70%;max-width:95vw;opacity:0.4;bottom:auto;top:8%;}#screen-menu{justify-content:center;padding-left:0;}.menu-glass{width:min(420px,90vw);min-height:min(720px,90vh);position:relative;}}
+@media (max-width:820px) and (orientation:portrait){#menu-pilot{right:auto;left:50%;transform:translateX(-50%);height:70%;max-width:95vw;opacity:0.4;bottom:auto;top:8%;}#screen-menu{justify-content:center;padding-left:0;}}
 /* Narrow landscape too (small phones) — same centered-behind-panel treatment */
 @media (max-width:560px) and (orientation:landscape){#menu-pilot{right:auto;left:50%;transform:translateX(-50%);opacity:0.4;}#screen-menu{justify-content:center;padding-left:0;}}
-.menu-glass{position:relative;z-index:2;background:rgba(255,255,255,0.025);border:1px solid rgba(255,255,255,0.14);border-radius:3px;padding:2.6rem 1.7rem 2.3rem;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);width:min(360px,82vw);text-align:center;box-shadow:0 0 24px rgba(0,0,0,0.15);max-height:calc(var(--app-h) - 24px);overflow-y:auto;overscroll-behavior:contain;}
 .menu-logo{font-family:var(--font-hud);font-size:1.9rem;font-weight:900;color:var(--cyan);letter-spacing:0.18em;text-shadow:var(--glow-md);margin-bottom:0.2rem;}
 .menu-tagline{font-family:var(--font-mono);font-size:0.62rem;color:var(--text-dim);letter-spacing:0.2em;margin-bottom:1.4rem;}
 .menu-btn{width:100%;padding:0.85rem 1rem;margin-bottom:0.6rem;background:rgba(255,255,255,0.03);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);border:1px solid rgba(255,255,255,0.13);color:var(--cyan);font-family:var(--font-hud);font-size:0.7rem;font-weight:700;letter-spacing:0.18em;cursor:pointer;transition:var(--trans);border-radius:2px;text-transform:uppercase;text-shadow:0 0 4px currentColor;box-shadow:0 0 6px -3px currentColor;}
@@ -592,8 +591,6 @@ body.intro-play #dm-warm-pill{display:none!important;}
 .acct-guest-note{font-size:0.6rem;color:var(--text-dim);text-align:center;margin-top:0.4rem;line-height:1.5;}
 /* Compact side-by-side rows — two half-width buttons per row so more fits
    in the same vertical space without the panel getting taller. */
-.menu-row{display:flex;gap:0.5rem;width:100%;margin-bottom:0.6rem;}
-.menu-row .menu-btn{width:auto;flex:1;margin-bottom:0;padding:0.7rem 0.5rem;font-size:0.56rem;letter-spacing:0.1em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .menu-feedback-form{display:flex;flex-direction:column;gap:0.7rem;text-align:left;}
 .fb-cats{display:flex;gap:0.4rem;flex-wrap:wrap;}
 .fb-cat{font-family:var(--font-hud);font-size:0.5rem;letter-spacing:0.08em;padding:5px 10px;border-radius:3px;border:1px solid var(--border);background:transparent;color:var(--text-dim);cursor:pointer;transition:var(--trans);}
@@ -603,27 +600,18 @@ body.intro-play #dm-warm-pill{display:none!important;}
 #fb-counter{font-size:0.55rem;color:var(--text-dim);text-align:right;margin-top:-0.4rem;}
 #fb-status{font-size:0.6rem;letter-spacing:0.05em;color:var(--text-dim);text-align:center;min-height:1rem;}
 .fb-notice{font-size:0.58rem;line-height:1.6;color:var(--text-dim);border:1px solid var(--border2);border-radius:3px;padding:0.5rem 0.6rem;background:rgba(var(--acc-rgb),0.03);}
-.menu-sep{border:none;border-top:1px solid var(--border2);margin:1rem 0;}
 .menu-version{font-family:var(--font-mono);font-size:0.55rem;color:rgba(var(--acc-rgb),0.25);margin-top:0.8rem;}
 /* Short viewports (phone LANDSCAPE especially) — compact the whole panel so it fits without scrolling */
 @media (max-height:560px){
-  .menu-glass{padding:1rem 1.3rem;}
   .menu-logo{font-size:1.25rem;margin-bottom:0.05rem;}
   .menu-tagline{margin-bottom:0.6rem;font-size:0.55rem;}
   .menu-btn{padding:0.42rem 0.8rem;margin-bottom:0.3rem;font-size:0.58rem;}
-  .menu-row{margin-bottom:0.3rem;}
-  .menu-row .menu-btn{padding:0.42rem 0.4rem;font-size:0.5rem;}
-  .menu-sep{margin:0.4rem 0;}
   .menu-version{margin-top:0.4rem;font-size:0.46rem;}
 }
 @media (max-height:400px){
-  .menu-glass{padding:0.6rem 1rem;}
   .menu-logo{font-size:1rem;}
   .menu-tagline{margin-bottom:0.35rem;font-size:0.5rem;}
   .menu-btn{padding:0.28rem 0.7rem;margin-bottom:0.2rem;font-size:0.52rem;}
-  .menu-row{margin-bottom:0.2rem;}
-  .menu-row .menu-btn{padding:0.28rem 0.35rem;font-size:0.45rem;}
-  .menu-sep{margin:0.25rem 0;}
 }
 
 /* BUILDER */
@@ -3592,6 +3580,8 @@ function sizeMenuBgCanvas(cv,stars,arms){
   }
   return {w,h,changed:true};
 }
+let _menuBgScreenEl=null;
+function _menuBgHidden(){ if(document.hidden) return true; const el=_menuBgScreenEl||(_menuBgScreenEl=document.getElementById('screen-menu')); return !!el&&!el.classList.contains('active'); }
 let _menuSpiralPlate=null,_menuSpiralRenderer=null,_menuSpiralScene=null,_menuSpiralCam=null,_menuSpiralLast=0;
 function _initMenuBg2D(cv){
   sizeMenuBgCanvas(cv);
@@ -3625,7 +3615,7 @@ function _initMenuBg2D(cv){
   window.addEventListener('resize',_queueMenuBgResize);
   if(window.visualViewport)window.visualViewport.addEventListener('resize',_queueMenuBgResize);
   function hexRgb(hex){return [parseInt(hex.slice(1,3),16),parseInt(hex.slice(3,5),16),parseInt(hex.slice(5,7),16)];}
-  (function frame(){menuAnim=requestAnimationFrame(frame);if(tick%30===0)sizeMenuBgCanvas(cv,stars,arms);   /* layout read twice a second, not every frame (resizes are also caught by the listener) */
+  (function frame(){menuAnim=requestAnimationFrame(frame);if(_menuBgHidden())return;if(tick%30===0)sizeMenuBgCanvas(cv,stars,arms);   /* layout read twice a second, not every frame (resizes are also caught by the listener) */
     const w=W(),h=H(), cx=w*0.75, cy=h*0.67;
     ctx.clearRect(0,0,w,h);ctx.fillStyle='#000308';ctx.fillRect(0,0,w,h);
     gases.forEach(g=>{
@@ -3730,6 +3720,7 @@ function _initMenuSpiralPlate(cv){
   if(window.visualViewport)window.visualViewport.addEventListener('resize',onResize);
   (function frame(now){
     menuAnim=requestAnimationFrame(frame);
+    if(_menuBgHidden()){ _menuSpiralLast=now; return; }   // (v179) screen-menu is display:none in flight/surface: this full-screen pass used to keep rendering underneath every frame
     const dt=Math.min(0.05,(now-_menuSpiralLast)/1000);_menuSpiralLast=now;
     try{plate.update(dt);}catch(e){}
     try{
@@ -12858,6 +12849,10 @@ async function upgradePlanetLOD(dt){
 }
 
 let _hudT=0;
+// (v179) HUD writes only when the text actually changes: unchanged textContent/style writes still dirty style + layout on WebKit
+const _hudLast=Object.create(null);
+function _hudTxt(id,v){ if(_hudLast[id]===v) return; _hudLast[id]=v; const el=$(id); if(el) el.textContent=v; }
+function _hudW(id,v){ const k='w:'+id; if(_hudLast[k]===v) return; _hudLast[k]=v; const el=$(id); if(el) el.style.width=v; }
 function updateHUD(){
   if(!boardFlight)return;
   // Throttle to 5 Hz. Readable numbers don't need 60fps, and this function
@@ -12867,7 +12862,7 @@ function updateHUD(){
   if(_now-_hudT<200)return;
   _hudT=_now;
   const pos=STATE.flight.pos;const sp=STATE.flight;
-  $('hud-speed').textContent=sp.speed.toFixed(3);
+  _hudTxt('hud-speed',sp.speed.toFixed(3));
   // Ring gauges (log scale): SPD up to DART∞ top speed; ALT from low orbit
   // out through light-years.
   try{
@@ -12881,19 +12876,19 @@ function updateHUD(){
   const _altTxt=(galSky&&galSky.ready&&galSky.offsetLy>=0.05)
     ?(galSky.offsetLy<10?galSky.offsetLy.toFixed(2)+' ly':galSky.offsetLy<1e6?Math.round(galSky.offsetLy).toLocaleString()+' ly':(galSky.offsetLy/1e6).toFixed(2)+'M ly')
     :Math.round(pos.length()*400)+'km';
-  $('hud-alt').textContent=_altTxt;
-  $('hud-lat').textContent=(Math.atan2(pos.y,Math.sqrt(pos.x*pos.x+pos.z*pos.z))*180/Math.PI).toFixed(2)+'°';
-  $('hud-lon').textContent=(Math.atan2(pos.z,pos.x)*180/Math.PI).toFixed(2)+'°';
-  $('hud-alt2').textContent=_altTxt.replace('km',' km');
-  $('bar-energy').style.width=sp.energy+'%';$('hud-energy').textContent=Math.round(sp.energy)+'%';
-  $('bar-hull').style.width=sp.hull+'%';$('hud-hull').textContent=Math.round(sp.hull)+'%';
-  $('bar-shield').style.width=sp.shield+'%';$('hud-shield').textContent=Math.round(sp.shield)+'%';
+  _hudTxt('hud-alt',_altTxt);
+  _hudTxt('hud-lat',(Math.atan2(pos.y,Math.sqrt(pos.x*pos.x+pos.z*pos.z))*180/Math.PI).toFixed(2)+'°');
+  _hudTxt('hud-lon',(Math.atan2(pos.z,pos.x)*180/Math.PI).toFixed(2)+'°');
+  _hudTxt('hud-alt2',_altTxt.replace('km',' km'));
+  _hudW('bar-energy',sp.energy+'%');_hudTxt('hud-energy',Math.round(sp.energy)+'%');
+  _hudW('bar-hull',sp.hull+'%');_hudTxt('hud-hull',Math.round(sp.hull)+'%');
+  _hudW('bar-shield',sp.shield+'%');_hudTxt('hud-shield',Math.round(sp.shield)+'%');
   let nearest=celestialBodies[0],minD=999999;
   celestialBodies.forEach(b=>{const d=b.mesh.position.distanceTo(pos);if(d<minD){minD=d;nearest=b;}});
-  if(nearest){$('hud-body').textContent=nearest.name;$('hud-btype').textContent=nearest.type;$('hud-bdist').textContent=Math.round(minD*400)+' km';$('hud-btemp').textContent=nearest.temp;}
+  if(nearest){_hudTxt('hud-body',nearest.name);_hudTxt('hud-btype',nearest.type);_hudTxt('hud-bdist',Math.round(minD*400)+' km');_hudTxt('hud-btemp',nearest.temp);}
   const staff=STAFFS[STATE.boardConfig.staffIdx];
-  $('hud-ability').textContent=staff.icon+' '+staff.name+': '+staff.desc;
-  $('hud-grav').textContent=pos.length()<35?'1.0 g':'0.0 g';
+  _hudTxt('hud-ability',staff.icon+' '+staff.name+': '+staff.desc);
+  _hudTxt('hud-grav',pos.length()<35?'1.0 g':'0.0 g');
   // (approach prompt is managed in updateBodies based on the closest body)
 }
 // Minimap state: solar (local) vs galaxy (realistic position) + pan/zoom
