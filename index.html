@@ -1016,7 +1016,6 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-bt-lighting.js?v=144" defer></script>
 <script src="ui/dm-bt-cargocam.js?v=1" defer></script>
 <script src="ui/dm-bt-interior.js?v=124" defer></script>
-<script src="ui/dm-bt-pbr.js?v=177" defer></script>
 <script src="ui/dm-bt-bake.js?v=144" defer></script>
 <script src="ui/dm-ui3d-core.js?v=148" defer></script>
 <script src="ui/dm-ui3d-mesh.js?v=149" defer></script>
@@ -6472,7 +6471,6 @@ const _btiWarmIv=setInterval(async()=>{
     if(window.BTL&&!(window.BTI&&BTI.ready)) return;   // v107: interior materials final first
     try{ if(window.BTL&&BTL.apply) BTL.apply(BIRD_TEMPLE.group); }catch(e){ console.warn('[BTL] apply',e); }   // light lists + glass set before the compile
     _btiWarmed=true; clearInterval(_btiWarmIv);
-    try{ if(window.DMBtPbr&&DMBtPbr.on){ const d=await DMBtPbr.load(); if(d) DMBtPbr.apply(BIRD_TEMPLE._glb); } }catch(e){ console.warn('[bt-pbr] apply',e); }   // (v177) layered PBR maps before the bake clones + the compile
     try{ if(window.DMBtBake&&DMBtBake.on){ const d=await DMBtBake.load(); if(d) DMBtBake.apply(); } }catch(e){ console.warn('[bake] apply',e); }   // (v120) baked GI before the compile below
     const hid=[], unc=[];
     BIRD_TEMPLE.group.traverse(o=>{ if(!o.isMesh) return; const m=Array.isArray(o.material)?o.material[0]:o.material;
@@ -8373,7 +8371,7 @@ async function buildSolarSystem(){
   BIRD_TEMPLE._loading=true;
   // Space in filename must be percent-encoded — unencoded 'Bird Temple.glb'
   // fails fetch on Safari/iOS (and many HTTP clients), leaving group null forever.
-  _getGLBLoader().load(encodeURI('Bird Temple Interior.glb')+'?v=177', gltf=>{   // original model + hatch, three decks (ui/dm-birdtemple.js)
+  _getGLBLoader().load(encodeURI('Bird Temple Interior.glb'), gltf=>{   // original model + hatch, three decks (ui/dm-birdtemple.js)
     const t=gltf.scene;
     // (v114) light budget / fixed light key: any light that ships inside the GLB (KHR_lights_punctual or a stray lamp) is
     // removed here, before the warm-up and before _btAdoptLights, so nothing can add a light to the scene after compile.
@@ -17721,7 +17719,7 @@ function renderWithPostFX(){
   try{ if(window.DMBtInterior&&DMBtInterior.pre) DMBtInterior.pre(flightCamera); }catch(e){}   // (v116) sealed? decided before the temple lighting (the glass probe waits while no glass is in view)
   try{ if(window.BTL&&BTL.preRender) BTL.preRender(flightRenderer,flightScene,flightCamera); }catch(e){ if(window.BTL) BTL._err=String(e&&e.stack||e).slice(0,300); }   // v110 temple lights/shadow cache/glass probe
   // (v116) below deck with no opening in view: the outside world is hidden for this render and the atmosphere pass skipped (ui/dm-bt-interior.js)
-  let _seal=false, _btib=false; try{ if(window.DMBtBake) DMBtBake.tick(); }catch(e){} try{ if(window.DMBtHull) DMBtHull.tick(); }catch(e){} try{ if(window.DMBtPbr&&_btiWarmed) DMBtPbr.tick(); }catch(e){} try{ if(window.DMBtInterior){ DMBtInterior.tick(); _btib=true; _seal=DMBtInterior.begin(flightScene,flightCamera); } }catch(e){ _seal=false; }
+  let _seal=false, _btib=false; try{ if(window.DMBtBake) DMBtBake.tick(); }catch(e){} try{ if(window.DMBtHull) DMBtHull.tick(); }catch(e){} try{ if(window.DMBtInterior){ DMBtInterior.tick(); _btib=true; _seal=DMBtInterior.begin(flightScene,flightCamera); } }catch(e){ _seal=false; }
   try{ const _hs=_taHideShells(); try{ DMGpuProf.push('atmo'); let _ta=false; try{ if(!_seal) _ta=_trueAtmoRender(flightRenderer,flightScene,flightCamera); } finally{ DMGpuProf.pop(); } if(!_ta) flightRenderer.render(flightScene,flightCamera); } finally{ _taShowShells(_hs); } _shotGrab(flightRenderer); try{ if(window.DMUI3DMesh) DMUI3DMesh.overlay(flightRenderer); }catch(e){}   /* (v138) opt-in 3D HUD overlay pass, ui/dm-ui3d-mesh.js */ try{ DMGpuProf.tick&&DMGpuProf.tick(); }catch(e){} }
   finally{ if(_btib) try{ DMBtInterior.end(flightScene); }catch(e){} if(_spec) try{ DMSpec.post(flightCamera); }catch(e){} }
   const _rtMs = performance.now()-_rt0;
@@ -25181,13 +25179,16 @@ const _KB_FLOAT=[];
 function _kbTap(el,fn){ let last=0; const go=e=>{ e.preventDefault(); e.stopPropagation(); const t=performance.now(); if(t-last<350) return; last=t; try{ fn(); }catch(err){ console.warn('[kite-board]',err); } };
   el.addEventListener('touchend',go,{passive:false}); el.addEventListener('click',go);
   el.addEventListener('touchstart',e=>e.stopPropagation(),{passive:true}); }
-function _kbPlace(){
+function _kbPlace(){   // cheap: one rect read per host (display:none anywhere above -> 0x0 rect), no style walks; writes only on change
+  const sw=document.body.classList.contains('ship-walk');
   for(const F of _KB_FLOAT){
-    const h=F.host, r=h.getBoundingClientRect(); let show=r.width>8&&r.height>8&&getComputedStyle(h).visibility!=='hidden';
-    if(show&&F.shipOnly) show=document.body.classList.contains('ship-walk');
-    if(show){ for(let e=h; e&&e!==document.body; e=e.parentElement){ if(getComputedStyle(e).display==='none'){ show=false; break; } } }
-    const d=show?'flex':'none'; if(F.w.style.display!==d) F.w.style.display=d;
-    if(show){ const L=(r.left+r.width*0.185)+'px', T=(r.top+r.height*0.47)+'px'; if(F.w.style.left!==L) F.w.style.left=L; if(F.w.style.top!==T) F.w.style.top=T; }
+    const h=F.host, r=h.getBoundingClientRect();
+    let show=r.width>8&&r.height>8&&(!h.checkVisibility||h.checkVisibility({visibilityProperty:true}));
+    if(show&&F.shipOnly) show=sw;
+    const key=show?((r.left+r.width*0.185)|0)+','+((r.top+r.height*0.47)|0):'';
+    if(key===F.k) continue; F.k=key;
+    if(!show){ F.w.style.display='none'; continue; }
+    F.w.style.display='flex'; F.w.style.left=((r.left+r.width*0.185)|0)+'px'; F.w.style.top=((r.top+r.height*0.47)|0)+'px';
   }
 }
 function _installKiteBoardButtons(){

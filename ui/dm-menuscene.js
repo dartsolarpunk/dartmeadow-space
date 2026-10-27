@@ -632,7 +632,7 @@
           if (!IN.flew && s > 0.6) { IN.flew = true; try { IN.onFly && IN.onFly(); } catch (e) {} }
         }
         b.updateMatrixWorld(true); if (IN.lc) { const up = IN.lc.lift(b, 0.02); if (up > 0) { b.position.y += up; b.updateMatrixWorld(true); } }
-b.updateMatrixWorld(true); IN.D.copy(IN.Dl); b.localToWorld(IN.D); IN.D.y += 0.03;
+IN.D.copy(IN.Dl); b.localToWorld(IN.D); IN.D.y += 0.03;
         // her: stand + walk over, step on, ride
         if (t >= IN.T_WALK && IN.walk && !IN.walked) { IN.walked = true; IN.walk.reset().play(); }
         if (t >= T_STEP && IN.jump && !IN.jumped) { IN.jumped = true; IN.jump.reset().play(); if (IN.walk) IN.walk.crossFadeTo(IN.jump, 0.18, false); }
