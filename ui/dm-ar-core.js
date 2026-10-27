@@ -405,7 +405,7 @@
     if(!(fc&&cm===fc)&&!(S.fp&&cm&&(cm===g('surfCamera')||cm===g('atmoCamera')))) return orig.call(S.flight,sc,cm);   // (v178) first person on a planet map draws through surfCamera
     _fq=_fq||new T.Quaternion(); _fp=_fp||new T.Vector3(); _fv=_fv||new T.Vector3(); _fs=_fs||new T.Vector3();
     _fq.copy(cm.quaternion); _fp.copy(cm.position);
-    var bg=sc.background, hid=[], ca=null;
+    var bg=sc.background, hid=[], ca=null, lv=null;
     try{
       if(S.dq) cm.quaternion.multiply(S.dq);
       var sm=g('sunMesh'), R0=g('SOL_SUN_RADIUS')||160;
@@ -418,9 +418,10 @@
       if(((S.blendN=(S.blendN||0)+1)%45)===0) try{ arBlend(true,true); }catch(e){}   // pick up effects added since AR started
       sc.background=null; ca=S.flight.getClearAlpha(); S.flight.setClearAlpha(0);
       sc.traverseVisible&&sc.traverseVisible(function(o){ if(o.userData&&(o.userData.dmSkyShell||o.userData.dmArHide)){ o.visible=false; hid.push(o); } });
+      if(S.fp&&S.mode==='terrain') lv=arLit(sc,S.flight);   // (v196) life-scale ground: same light as the board
       return orig.call(S.flight,sc,cm);
     } finally {
-      if(ca!=null) S.flight.setClearAlpha(ca);
+      arUnlit(lv,S.flight); if(ca!=null) S.flight.setClearAlpha(ca);
       sc.background=bg; for(var i=0;i<hid.length;i++) hid[i].visible=!(hid[i].userData&&hid[i].userData.dmArWall);
       cm.quaternion.copy(_fq); cm.position.copy(_fp); cm.updateMatrixWorld(true);
     }
@@ -490,6 +491,16 @@
     for(var j=0;j<tops.length/3;j++){ var o=j*6; p[o]=tops[j*3]; p[o+1]=tops[j*3+1]; p[o+2]=tops[j*3+2]; p[o+3]=tops[j*3]; p[o+4]=base; p[o+5]=tops[j*3+2]; }
     W.geo.attributes.position.needsUpdate=true; W.geo.computeVertexNormals();
   }
+  // (v196) the non-AR terrain gets most of its light from the true-atmosphere pass (sky irradiance + sun through the
+  // air), which AR leaves out (it is an opaque full-screen pass). Without it the scene's own lights are a dim fill
+  // (sun ~0.16, sky ~0.05) and the ground reads black over the camera. For the AR terrain draw only, the lights are
+  // scaled (uniforms: no recompile) and restored after.
+  var LIT={d:7,a:12,e:1.2,tint:0.6}, _tc=null;
+  function arLit(scene,r){ var sv={l:[],e:r.toneMappingExposure};
+    scene.traverseVisible(function(o){ if(!o.isLight) return; var k=o.isDirectionalLight?LIT.d:(o.isAmbientLight||o.isHemisphereLight)?LIT.a:1; if(k!==1){ sv.l.push(o,o.intensity); o.intensity*=k; }
+      if(k===LIT.a&&LIT.tint>0){ var pw=window.PW, bg=pw&&pw.bg; if(bg&&bg.isColor){ var c=o.isHemisphereLight?o.color:o.color; sv.c=sv.c||[]; _tc=_tc||new (window.THREE.Color)(); sv.c.push(c,_tc.copy(c).getHex()); c.lerp(bg,LIT.tint); } } });   // the air's colour (the true-atmosphere pass tints the ground with it)
+    r.toneMappingExposure=sv.e*LIT.e; return sv; }
+  function arUnlit(sv,r){ if(!sv) return; for(var i=0;i<sv.l.length;i+=2) sv.l[i].intensity=sv.l[i+1]; if(sv.c) for(var j=0;j<sv.c.length;j+=2) sv.c[j].setHex(sv.c[j+1]); r.toneMappingExposure=sv.e; }
   function boardRender(r,scene,cam){
     if(!S||S.kind!=='camera'||S.mode!=='terrain') return false;
     var T=window.THREE, ctx=terrainCtx(), ca=r.getClearAlpha(), bg=scene.background, hid=[], fog=scene.fog, fs=null;
@@ -515,7 +526,7 @@
       scene.background=null;
       scene.traverseVisible(function(o){ if(o.userData&&(o.userData.dmSkyShell||o.userData.dmArHide)){ o.visible=false; hid.push(o); } });
       if(fog){ fs={n:fog.near,f:fog.far,d:fog.density}; if(fog.density!=null) fog.density=0; else { fog.near=1e12; fog.far=2e12; } }   // uniforms only: no recompile
-      S._inBoard=true; try{ B.pp.render(); } finally { S._inBoard=false; }
+      S._inBoard=true; var lv=arLit(scene,r); try{ B.pp.render(); } finally { S._inBoard=false; arUnlit(lv,r); }
       return true;
     } finally {
       r.setClearAlpha(ca); scene.background=bg; for(var i=0;i<hid.length;i++) hid[i].visible=!(hid[i].userData&&hid[i].userData.dmArWall);
@@ -559,7 +570,7 @@
     try{ window.DMUI3DMesh&&DMUI3DMesh.drawTo(S.r); }catch(e){}   // 3D HUD over the passthrough (DOM HUD if the mesh is off)
   }
 
-  window.DMAR={toggle:toggle,exit:exit,get active(){ return !!S; }, get letWarm(){ return !!(S&&S.full); }, get passthrough(){ return !!(S&&S.kind==='camera'&&(S.full||S.mode==='terrain')); }, get noAtmo(){ return !!(S&&S.kind==='camera'&&(S.full||S.mode==='terrain')); }, get boardOn(){ return !!(S&&S.kind==='camera'&&S.mode==='terrain'&&!S.fp); }, board:boardRender, get mode(){ return S?S.kind+'/'+(S.mode||'-')+(S.placed?' placed':''):(supported?'off (webxr ready)':'off (camera fallback)'); }, _cam:function(){ return S; },get supported(){ return supported; },_buildDiorama:buildDiorama,_fillDiorama:fillDiorama,_stripSky:stripSky,_unstrip:unstrip};
+  window.DMAR={toggle:toggle,exit:exit,get active(){ return !!S; }, get letWarm(){ return !!(S&&S.full); }, get passthrough(){ return !!(S&&S.kind==='camera'&&(S.full||S.mode==='terrain')); }, get noAtmo(){ return !!(S&&S.kind==='camera'&&(S.full||S.mode==='terrain')); }, get boardOn(){ return !!(S&&S.kind==='camera'&&S.mode==='terrain'&&!S.fp); }, board:boardRender, lit:LIT, get mode(){ return S?S.kind+'/'+(S.mode||'-')+(S.placed?' placed':''):(supported?'off (webxr ready)':'off (camera fallback)'); }, _cam:function(){ return S; },get supported(){ return supported; },_buildDiorama:buildDiorama,_fillDiorama:fillDiorama,_stripSky:stripSky,_unstrip:unstrip};
   function init(){
     placeButtons();
     try{ new MutationObserver(function(){ placeButtons(); }).observe(document.body,{childList:true,subtree:false}); }catch(e){}
