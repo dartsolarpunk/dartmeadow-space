@@ -153,7 +153,8 @@
         if (++n >= 24 || work > 12) break;   // amortized: <=12 ms of synchronous main-thread work per tick, the rest next tick
       }
       if (proms.length) { await Promise.all(proms); proms.length = 0; }
-      { const cap = !drained ? Infinity : (mobile() ? BATCH_MOBILE : BATCH_DESK), mob = drained && mobile();   // (v193) the initial drain is uncapped (it runs before play); the cap applies after
+      const xf = !drained && typeof window._dmLodFading === 'function' && window._dmLodFading();   // (v197) no uncapped batch while a LOD cross-fade runs
+      if (!xf) { const cap = !drained ? Infinity : (mobile() ? BATCH_MOBILE : BATCH_DESK), mob = drained && mobile();   // (v193) the initial drain is uncapped (it runs before play); the cap applies after
         for (const o of later) { if (batch.length >= cap) break; if (!o.parent || !o.visible) { later.delete(o); continue; } if (!mob || nearView(o, cm)) { batch.push(o); later.delete(o); } } }
       lastB = batch.length;
       if (batch.length) {   // ONE real frame with the batch unculled (GPU-clipped off-screen): atmo-pass + backSide render objects

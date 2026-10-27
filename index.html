@@ -7591,7 +7591,7 @@ async function _svLodPlanetMesh(o){
   // (v193) per-brick dither fade, multiplied into whatever opacity the rock layer set (set at build: never recompiles)
   { const f=varying(fadeNode.element(uint(vertexIndex).div(uint(VPS))));
     _lmat.opacityNode=(_lmat.opacityNode||materialOpacity).mul(f); _lmat.userData._lodOp=1; }
-  ctl.fading=true; ctl.mat=_lmat;
+  ctl.fading=_LOD_XFADE; ctl.mat=_lmat;
   const mesh=new THREE.Mesh(geo,_lmat);
   mesh.name='JOTS_GpuPlanetMC'; mesh.userData.jotsGpuMc=true; mesh.userData.svLod=ctl;
   mesh.userData.sparse={N:B*(1<<Lr),B,bricks:stream.resident.size,of:CAP,cells:stream.resident.size*C3,denseCells:Math.pow(B*(1<<Lr),3),ms:+(performance.now()-t0).toFixed(1),lod:true,levels:ctl.levels,relief:o.relief.measured};
@@ -12857,7 +12857,6 @@ async function upgradeWebGLPlanetLOD(){
     if(b._wm){ b.mesh=newGroup; try{ _applyWorldMapToFlightBody(b,b._wm); } finally{ b.mesh=oldGroup; } }
     try{ _lcApplyObj(newGroup); }catch(e){}
     await _dmCompileObject(newGroup);
-    { const fl=_lodFadeList(newGroup); for(const e of fl) _lodHash(e,true); if(fl.some(e=>!e[2])) await _dmCompileObject(newGroup); }   // (v197) both variants (plain + fading) compiled hidden: the switch back after the fade hits a warm pipeline
     newGroup.position.copy(oldGroup.position);
     newGroup.rotation.copy(oldGroup.rotation);
     const extras=oldGroup.children.filter(c=>c.isPlanetExtra);
@@ -12877,6 +12876,9 @@ async function upgradeWebGLPlanetLOD(){
 // Every planet material is made dither-fadeable (alphaHash) when it is BUILT, so fading later never recompiles.
 // The swap: the new level fades in over the old (opaque surfaces dithered 0→1, haze shells cross-fade), then
 // the old surface dithers out — no frame shows a hole or a hard switch. All bookkeeping is made once per swap.
+// (v197) cross-fade is opt-in (localStorage dm.lodXfade='1' or ?xfade=1): off by default until it matches main's frame budget
+var _LOD_XFADE=(()=>{try{return localStorage.getItem('dm.lodXfade')==='1'||/[?&]xfade=1/.test(location.search);}catch(e){return false;}})();
+window._dmLodFading=()=>_lodFades.length>0;
 const _LOD_FADE_MS=650;
 const _lodFades=[];
 function _lodFadePrep(g){
@@ -12894,13 +12896,13 @@ function _lodFadeList(g){
 // newG already in the scene (hidden, compiled). Moves extras across, fades, then removes oldG (disposed unless keepOld).
 function _lodCrossFade(oldG,newG,keepOld){
   return new Promise(res=>{
+    if(!_LOD_XFADE){ newG.visible=true; if(oldG&&oldG.parent){ oldG.parent.remove(oldG); if(!keepOld) _disposeObject3D(oldG); } res(); return; }
     const nm=_lodFadeList(newG);
     for(const e of nm){ e[0].opacity=0; _lodHash(e,true); }
     newG.visible=true;
     if(!oldG||!oldG.parent){ for(const e of nm) e[0].opacity=e[1]; res(); return; }
     const om=_lodFadeList(oldG);
-    for(const e of om) _lodHash(e,true);
-    _lodFades.push({oldG,newG,nm,om,keepOld:!!keepOld,t0:performance.now(),res});
+    _lodFades.push({oldG,newG,nm,om,hashOld:false,keepOld:!!keepOld,t0:performance.now(),res});
   });
 }
 // opaque surfaces dither (alphaHash) only while they fade — an always-on discard costs hidden-surface removal on Apple GPUs
@@ -12912,6 +12914,7 @@ function _lodFadeTick(){
     const F=_lodFades[i], t=(now-F.t0)/_LOD_FADE_MS;
     const a=t>=1?1:t*t*(3-2*t), u=t<=1?0:(t>=2?1:(t-1)*(t-1)*(3-2*(t-1)));
     F.oldG.position.copy(F.newG.position); F.oldG.quaternion.copy(F.newG.quaternion);   // fading copy rides along
+    if(t>=1&&!F.hashOld){ F.hashOld=true; for(const e of F.om) _lodHash(e,true); }
     for(const e of F.nm) e[0].opacity=e[1]*a;
     for(const e of F.om) e[0].opacity=e[1]*(e[2]?1-a:1-u);
     if(t>=2){
@@ -13016,7 +13019,6 @@ async function upgradePlanetLOD(dt){
     if(b._wm){ const keep=b.mesh; b.mesh=newGroup; try{ _applyWorldMapToFlightBody(b,b._wm); } finally{ b.mesh=keep; } }
     try{ _lcApplyObj(newGroup); }catch(e){}   // (v104) wear the map before compiling: never one frame of procedural colours
     await _dmCompileObject(newGroup);
-    { const fl=_lodFadeList(newGroup); for(const e of fl) _lodHash(e,true); if(fl.some(e=>!e[2])) await _dmCompileObject(newGroup); }   // (v197) both variants (plain + fading) compiled hidden: the switch back after the fade hits a warm pipeline
     const oldGroup=b.mesh;
     // Preserve position/rotation and any tagged extras (rings, moon)
     newGroup.position.copy(oldGroup.position);
