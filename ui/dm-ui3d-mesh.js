@@ -23,6 +23,7 @@
   'use strict';
   if(window.DMUI3DMesh) return;
   var CURVE_DEG=28, PUSH=0.08, PAR=4, LAYERS=4, DEPTH=7, FOV=40, ATLAS=2048, TATLAS=2048, PAD=2, PG=6, LAYOUT_MS=1000, WALK_EVERY=3, UNGHOST_MS=500;
+  var SUB_SEL='.mini-kite,.hud-c';   // (v160) kites overflow their top bar: each is its own panel, cut out of the bar's raster
   var DYN_SEL='.joystick-knob,[id$="-knob"]', SKIP_SEL='#dm-perf-hud,#account-modal,#profile-modal,.jots-ov,.modal,#warp-overlay,#jots-chat,script,style,video,iframe,template';
   var FORM_SEL='input:not([type=checkbox]):not([type=radio]):not([type=range]),select,textarea';
   var PROPS=['display','position','left','top','right','bottom','width','height','min-width','min-height','max-width','max-height',
@@ -53,6 +54,7 @@
     var p=fetch(src).then(function(r){ return r.blob(); }).then(function(b){ return new Promise(function(res){ var fr=new FileReader(); fr.onload=function(){ res(fr.result); }; fr.readAsDataURL(b); }); }).catch(function(){ return src; });
     imgCache.set(src,p); return p; }
   function within(p,ms){ return Promise.race([p,new Promise(function(_,rej){ setTimeout(function(){ rej(new Error('timeout')); },ms); })]); }
+  function inSub(n,el){ var k=n.closest&&n.closest(SUB_SEL); return !!(k&&k!==el&&el.contains(k)); }
   function isLeaf(el){ if(el instanceof SVGElement) return false; if(el.children.length) return false; var t=el.textContent; return !!(t&&t.trim()); }
   async function raster(el,w,h){
     var c=el.cloneNode(true), os=[el], cs=[c];
@@ -65,6 +67,7 @@
           for(var q2=0;q2<PROPS.length;q2++){ var v2=p.getPropertyValue(PROPS[q2]); if(v2) sp.style.setProperty(PROPS[q2],v2); }
           var m=/^["'](.*)["']$/.exec(ct); sp.textContent=m?m[1]:''; if(pe==='::before') cs[j].insertBefore(sp,cs[j].firstChild); else cs[j].appendChild(sp); }); }
       if(j&&o.matches&&o.matches(DYN_SEL)) cs[j].style.visibility='hidden';
+      if(j&&o.matches&&o.matches(SUB_SEL)) cs[j].style.opacity='0';
       if(isLeaf(o)){ cs[j].style.color='transparent'; cs[j].style.textShadow='none'; } }
     var rs=c.style; rs.position='relative'; rs.left=rs.top=PG+'px'; rs.right=rs.bottom='auto'; rs.margin='0'; rs.transform='none'; rs.rotate='none'; rs.scale='none'; rs.translate='none'; rs.filter='none'; rs.opacity='1'; var lw=el.offsetWidth||w, lh=el.offsetHeight||h, kx=w/lw, ky=h/lh; rs.width=lw+'px'; rs.height=lh+'px'; if(Math.abs(kx-1)>.01||Math.abs(ky-1)>.01){ rs.transformOrigin='0 0'; rs.transform='scale('+kx+','+ky+')'; }   /* (v160) scaled ancestors (compact kite .72): lay out at CSS size, scale to screen size, else the raster crops */ rs.boxSizing='border-box';
     c.classList.remove('dm-ui3d-ghost','dm-ui3d-p');
@@ -99,7 +102,7 @@
     if(r.right<0||r.bottom<0||r.left>vw||r.top>vh) continue;
     var big=r.width*r.height>vw*vh*0.4||r.width>vw*0.97&&r.height>vh*0.5;
     if(!big&&r.width>=6&&r.height>=4&&(c.matches(DYN_SEL)||boxed(c,cs)||isLeaf(c))){ out.w.push(c);
-      c.querySelectorAll(DYN_SEL).forEach(function(k){ out.w.push(k); }); c.querySelectorAll('canvas').forEach(function(k){ out.cv.push(k); }); }
+      c.querySelectorAll(DYN_SEL).forEach(function(k){ out.w.push(k); }); c.querySelectorAll(SUB_SEL).forEach(function(k){ out.w.push(k); }); c.querySelectorAll('canvas').forEach(function(k){ out.cv.push(k); }); }
     else if(depth<12) walk(c,out,vw,vh,depth+1); } }
   var found={w:[],cv:[]}, foundKind='';
   function discover(kind){ var o={w:[],cv:[]}, vw=innerWidth, vh=innerHeight; roots(kind).forEach(function(r){ walk(r,o,vw,vh,0); }); found=o; foundKind=kind; }
@@ -135,7 +138,7 @@
       var ps=pos4(r); if(ps!==P.ps){ P.ps=ps; P.rect=r; if(P.dyn) P.moved=true; else artDirty=true; txtGeoDirty=true; }
       var sg=paintSig(el,w,h); if(P.force&&now-P.lp<100) pend=true; else if(sg!==P.sig&&(now-P.lp>1000||!P.sig||P.force)){   /* (v160) forced repaints coalesce to <=10/s per panel */ P.sig=sg; P.ready=P.ready&&!!P.slot; P.want=true; P.force=false; }
       var Ls=[]; if(!P.dyn){ if(isLeaf(el)){ var lr0=visible(el); if(lr0) Ls.push({el:el,r:lr0,text:null}); }
-        else el.querySelectorAll('*').forEach(function(n){ if(!isLeaf(n)||n.closest(DYN_SEL)) return; var lr=visible(n); if(lr) Ls.push({el:n,r:lr,text:null}); }); }
+        else el.querySelectorAll('*').forEach(function(n){ if(!isLeaf(n)||n.closest(DYN_SEL)||inSub(n,el)) return; var lr=visible(n); if(lr) Ls.push({el:n,r:lr,text:null}); }); }
       if(Ls.length!==P.leaves.length||Ls.some(function(L,i){ var o=P.leaves[i]; return o.el!==L.el||Math.round(o.r.left)!==Math.round(L.r.left)||Math.round(o.r.top)!==Math.round(L.r.top)||Math.round(o.r.width)!==Math.round(L.r.width); })){ P.leaves=Ls; txtGeoDirty=true; }
     });
     if(pend) layoutDirty=true;
@@ -172,7 +175,7 @@
   async function paintSafe(P){
     var c=scratch(P.w+2*PG,P.h+2*PG), cx=c.getContext('2d'), base=P.el.getBoundingClientRect(), els=[P.el].concat([].slice.call(P.el.querySelectorAll('*')));
     for(var i=0;i<els.length;i++){ var el=els[i];
-      if(el instanceof SVGElement&&el.tagName.toLowerCase()!=='svg') continue; if(i&&el.closest&&el.closest(DYN_SEL)) continue;
+      if(el instanceof SVGElement&&el.tagName.toLowerCase()!=='svg') continue; if(i&&el.closest&&(el.closest(DYN_SEL)||inSub(el,P.el))) continue;
       var cs=getComputedStyle(el); if(cs.display==='none'||cs.visibility==='hidden'||parseFloat(cs.opacity)===0) continue;
       var r=el.getBoundingClientRect(); if(r.width<1||r.height<1) continue; var x=r.left-base.left+PG, y=r.top-base.top+PG;
       if(el.tagName.toLowerCase()==='svg'){ var cl=el.cloneNode(true), so=[el].concat([].slice.call(el.querySelectorAll('*'))), sc=[cl].concat([].slice.call(cl.querySelectorAll('*')));
@@ -246,6 +249,8 @@
       var u0=L.slot.x/TATLAS, u1=(L.slot.x+w)/TATLAS, v0=1-(L.slot.y+h)/TH, v1=1-L.slot.y/TH; uv.set([u0,v0,u1,v0,u1,v1,u0,v1],q*8); q++; });
     setGeo(txt,pos,uv,null,idxFor(q)); txt.userData.leaves=all;
   }
+  // (v160) glyph glow is blended in linear light on the mesh, so a CSS-strength glow piles up into a solid pill behind small text: keep ~35%
+  function soft(c){ var m=/rgba?\(([^)]*)\)/.exec(c); if(!m) return c; var a=m[1].split(/[ ,\/]+/).filter(Boolean); var al=a.length>3?parseFloat(a[3]):1; return 'rgba('+a[0]+','+a[1]+','+a[2]+','+(al*0.35).toFixed(3)+')'; }
   function drawLeaf(L,s){
     if(!L.cs){ var c0=getComputedStyle(L.el); L.cs={textTransform:c0.textTransform,fontStyle:c0.fontStyle,fontWeight:c0.fontWeight,fontSize:c0.fontSize,fontFamily:c0.fontFamily,letterSpacing:c0.letterSpacing,color:c0.color,textShadow:c0.textShadow,textAlign:c0.textAlign,paddingLeft:c0.paddingLeft,k:(L.el.offsetWidth>0?Math.min(4,Math.max(.25,L.r.width/L.el.offsetWidth)):1)}; }
     var cs=L.cs, x=L.slot.x, y=L.slot.y; tCx.clearRect(x,y,L.sw,L.sh);   // (v156) style snapshot per layout, not a style read per redraw
@@ -253,7 +258,7 @@
     tCx.save(); tCx.beginPath(); tCx.rect(x,y,L.sw,L.sh); tCx.clip(); var K=DPR*cs.k; tCx.scale(K,K);
     tCx.font=cs.fontStyle+' '+cs.fontWeight+' '+cs.fontSize+' '+cs.fontFamily; try{ tCx.letterSpacing=cs.letterSpacing==='normal'?'0px':cs.letterSpacing; }catch(e){}
     tCx.fillStyle=cs.color; tCx.textBaseline='middle';
-    var ts=cs.textShadow; if(ts&&ts!=='none'){ var m=ts.match(/(rgba?\([^)]*\)|#[0-9a-f]+)\s+(-?[\d.]+)px\s+(-?[\d.]+)px\s+([\d.]+)px/i); if(m){ tCx.shadowColor=m[1]; tCx.shadowOffsetX=+m[2]*K; tCx.shadowOffsetY=+m[3]*K; tCx.shadowBlur=+m[4]*K; } }
+    var ts=cs.textShadow; if(ts&&ts!=='none'){ var m=ts.match(/(rgba?\([^)]*\)|#[0-9a-f]+)\s+(-?[\d.]+)px\s+(-?[\d.]+)px\s+([\d.]+)px/i); if(m){ tCx.shadowColor=soft(m[1]); tCx.shadowOffsetX=+m[2]*K; tCx.shadowOffsetY=+m[3]*K; tCx.shadowBlur=+m[4]*K; } }
     var al=cs.textAlign, ox=x/K+TP/K, w=(L.sw-2*TP)/K; tCx.textAlign=al==='center'?'center':(al==='right'||al==='end')?'right':'left';
     var px=tCx.textAlign==='center'?ox+w/2:tCx.textAlign==='right'?ox+w:ox+(parseFloat(cs.paddingLeft)||0);
     tCx.fillText(s,px,y/K+L.sh/K/2); tCx.restore();
@@ -308,9 +313,9 @@
   // ---------- fallback watchdog ----------
   var paints=0, txtT=0, drewOK=false, wdFrames=0, wdT0=0, WD_MS=15000, why0='';
   // (v160) no automatic CSS mode switch: a failure shows the real DOM (un-ghost) for a few seconds, then the pass retries
-  var retryAt=0, wasOn=false;
+  var retryAt=0, wasOn=false, fails=0, sessionOff=false;   // (v160) 3 failures in a row: DOM HUD for this session only (nothing persisted)
   function fallback(why){ why0=why; console.warn('[UI3D] mesh HUD frame failed ('+why+'); DOM shown, retrying in 5 s');
-    try{ stop(); }catch(e){} drewOK=false; wdFrames=0; wdT0=0; retryAt=performance.now()+5000; layoutDirty=true; }
+    try{ stop(); }catch(e){} drewOK=false; wdFrames=0; wdT0=0; retryAt=performance.now()+5000; layoutDirty=true; if(++fails>=3){ sessionOff=true; console.warn('[UI3D] 3 consecutive failures: DOM HUD for this session'); } }
   var ugT=0;   // (v160) un-ghost watchdog runs only while something is ghosted under an on mesh HUD
   function ugTick(){ if(!ghosted||!on()){ clearInterval(ugT); ugT=0; if(ghosted) unghost(); return; } if(performance.now()-lastDraw>UNGHOST_MS) unghost(); }
   function ghostDrawn(){ lastDraw=performance.now(); ghosted=true; if(!ugT) ugT=setInterval(ugTick,125);
@@ -325,7 +330,7 @@
     ptr.ex+=(ptr.x-ptr.ex)*0.06; ptr.ey+=(ptr.y-ptr.ey)*0.06;
     cam.aspect=vw/vh; cam.near=d*0.3; cam.far=d*2; cam.position.set(ptr.ex*PAR,-ptr.ey*PAR,d); cam.lookAt(0,0,0); cam.updateProjectionMatrix(); }
   function overlayBody(R,kind){
-    if(!on()){ if(wasOn){ wasOn=false; stop(); } return; } if(performance.now()<retryAt) return; if(!ready&&!setup(R)) return; wasOn=true;
+    if(!on()||sessionOff){ if(wasOn){ wasOn=false; stop(); } return; } if(performance.now()<retryAt) return; if(!ready&&!setup(R)) return; wasOn=true;
     if((kind==='menu')!==menuHost()) return;
     if(introOn()){ if(ghosted) unghost(); return; }   // (v160) no HUD pass at all while the #197/#198 loading-intro veil or its dissolve is up
     if(!rOK(R)) return;
@@ -349,7 +354,7 @@
     try{ R.clearDepth&&R.clearDepth(); R.render(scene,cam); ok=true; }
     catch(e){ R.autoClear=ac; fallback('render threw: '+(e&&e.message)); return; }
     finally { R.autoClear=ac; }
-    if(ok){ drewOK=true; ghostDrawn(); }
+    if(ok){ drewOK=true; fails=0; ghostDrawn(); }
     hudMs+=performance.now()-t0; hudN++;
   }
   // AR / camera passthrough: draw the HUD group on another renderer (layout/text keep updating in overlay())
@@ -368,14 +373,12 @@
     // what is really on screen: 'mesh' (overlay drew OK), 'css' (tilt fallback / opt-out), 'flat'
     get status(){ var m=mode==='0'||(window.DMUI3D&&DMUI3D.enabled===false)?'flat':(on()&&ready&&drewOK)?'mesh':(on()?'mesh?':'css');
       return {mode:m, reason:why0, painter:painter, pending:on()&&!drewOK?Math.round(wdT0?performance.now()-wdT0:0):0}; },
-    _curve:function(){ var H=innerHeight; return [0,innerWidth/2-20,innerWidth-40].map(function(x){ var q=place({left:x,top:H/2-20,width:40,height:40}); return {x:x,zTowardCam:Math.round(q.zc*10)/10,rotYdeg:Math.round(q.th*1800/Math.PI)/10}; }); },
     setLegacy:function(v){ v=!!v; try{ if(typeof STATE!=='undefined'&&STATE&&STATE.settings) STATE.settings.legacyUI=v; }catch(e){} this.setMode(v?'css':'mesh'); },
     get legacy(){ return legacy(); },
     setMode:function(m){ mode=m; try{ localStorage.setItem('dm.ui3d',m); }catch(e){} if(!on()) stop(); else if(ready) document.body.classList.add('dm-ui3d-mesh'); if(window.DMUI3D) DMUI3D.refresh(); },
     // AR: ui/dm-ar-core.js draws `mesh` itself on a head-locked plate; on release it goes back here
     arHold:function(h){ arHeld=!!h; if(!h&&root&&scene&&root.parent!==scene) scene.add(root); },
     // CPU ms per overlay call (layout + text + draw submit), averaged since the last read
-    _dbg:function(){ return {t:tCv,a:aCv,leaves:(txt&&txt.userData.leaves||[]).map(function(L){ return {c:String(L.el.className),id:L.el.id,s:L.slot,w:L.sw,h:L.sh,k:L.cs&&L.cs.k,ts:L.cs&&L.cs.textShadow,col:L.cs&&L.cs.color}; }),panels:(function(){ var o=[]; panels.forEach(function(P){ if(P.el.closest('.mini-kite')) o.push({c:String(P.el.className),id:P.el.id,s:P.slot,w:P.w,h:P.h,cw:P.cw,ready:P.ready}); }); return o; })()}; },
     hudCost:function(){ var v=hudN?hudMs/hudN:0; hudMs=0; hudN=0; return v; },
     _stats:function(){ var o=[]; panels.forEach(function(P){ o.push({id:P.el.id||String(P.el.className).slice(0,30),ready:P.ready,g:!!P.g,dyn:P.dyn,leaves:P.leaves.length}); });
       return {on:on(),painter:painter,why:why0,ready:ready,frames:frameN,paints:paints,drewOK:drewOK,ghosted:ghosted,n:o.length,ready_n:o.filter(function(x){ return x.ready; }).length,canvases:cvs.size,panels:o.slice(0,60)}; }
