@@ -81,7 +81,9 @@
       if(Ls.length!==P.leaves.length||Ls.some(function(L,i){ var o=P.leaves[i]; return o.el!==L.el||Math.round(o.r.left)!==Math.round(L.r.left)||Math.round(o.r.top)!==Math.round(L.r.top)||Math.round(o.r.width)!==Math.round(L.r.width); })){ P.leaves=Ls; txtGeoDirty=true; }
     });
     panels.forEach(function(P,el){ if(!seen.has(el)){ el.classList.remove('dm-ui3d-ghost'); panels.delete(el); relay=true; txtGeoDirty=true; } });
-    if(relay){ sx=sy=sh=0; panels.forEach(function(P){ P.slot=alloc(P.w,P.h,ATLAS); }); aCx.clearRect(0,0,ATLAS,ATLAS); panels.forEach(function(P){ P.ready=false; }); artDirty=true; }
+    if(relay){ sx=sy=sh=0; panels.forEach(function(P){ P.slot=alloc(P.w,P.h,ATLAS); });
+      // (v149) the art atlas is only as tall as its slots (pow2): each finished panel raster re-uploads the whole texture
+      var AH=64; while(AH<sy+sh&&AH<ATLAS) AH*=2; if(aCv.height!==AH){ aCv.height=AH; aTex.dispose(); aTex=tx(aCv); art.material.map=aTex; art.material.needsUpdate=true; } else aCx.clearRect(0,0,ATLAS,AH); panels.forEach(function(P){ P.ready=false; }); artDirty=true; }
     panels.forEach(function(P){ if(!P.ready&&!P.busy&&P.slot) paint(P); });
     // minimap: live canvas texture
     var mc=document.getElementById('minimap-canvas'), mr=mc&&flightOn()&&visible(document.getElementById('minimap')||mc);
@@ -129,7 +131,7 @@
       SAFE=true; painter='box2d'; }
     return paintSafe(P); }
   function paint(P){ P.busy=true; var gen=P.sig;
-    paintSrc(P).then(function(src){ if(P.sig!==gen||!P.slot) return; aCx.clearRect(P.slot.x,P.slot.y,P.w,P.h); aCx.drawImage(src,P.slot.x,P.slot.y,P.w,P.h); P.ready=true; artDirty=true; })
+    paints++; paintSrc(P).then(function(src){ if(P.sig!==gen||!P.slot) return; aCx.clearRect(P.slot.x,P.slot.y,P.w,P.h); aCx.drawImage(src,P.slot.x,P.slot.y,P.w,P.h); P.ready=true; artDirty=true; })
       .catch(function(e){ P.failed=(P.failed||0)+1; console.warn('[UI3D] raster',e&&e.message); }).finally(function(){ P.busy=false; }); }
 
   // ---------- static art geometry: ONE merged buffer ----------
@@ -137,7 +139,7 @@
     var rd=[]; panels.forEach(function(P){ if(P.ready&&P.slot) rd.push(P); });
     var nQ=rd.length*(LAYERS+1), pos=new Float32Array(nQ*12), uv=new Float32Array(nQ*8), col=new Float32Array(nQ*12), idx=new Uint32Array(nQ*6), q=0, v=new T.Vector3();
     rd.forEach(function(P){ var t=tilt(P.rect), w=P.rect.width/2, h=P.rect.height/2;
-      var u0=P.slot.x/ATLAS, u1=(P.slot.x+P.w)/ATLAS, v0=1-(P.slot.y+P.h)/ATLAS, v1=1-P.slot.y/ATLAS;
+      var u0=P.slot.x/ATLAS, u1=(P.slot.x+P.w)/ATLAS, v0=1-(P.slot.y+P.h)/aCv.height, v1=1-P.slot.y/aCv.height;
       for(var L=LAYERS;L>=0;L--){ var z=-DEPTH*L/LAYERS, sh=L===0?1:0.55-0.06*L, ox=L?t.nx*L*1.1:0, oy=L?-t.ny*L*0.8:0, cs=[[-w,-h],[w,-h],[w,h],[-w,h]];
         for(var k=0;k<4;k++){ v.set(cs[k][0]+ox,cs[k][1]+oy,z).applyQuaternion(t.q); pos.set([v.x+t.cx,v.y+t.cy,v.z],q*12+k*3); col.set([sh,sh,sh],q*12+k*3); }
         uv.set([u0,v0,u1,v0,u1,v1,u0,v1],q*8); var b=q*4; idx.set([b,b+1,b+2,b,b+2,b+3],q*6); q++; } });
@@ -196,7 +198,7 @@
     document.body.classList.add('dm-ui3d-mesh'); ready=true; return true;
   }
   // ---------- fallback watchdog ----------
-  var txtT=0, drewOK=false, wdFrames=0, wdT0=0, WD_MS=15000, why0='';
+  var paints=0, txtT=0, drewOK=false, wdFrames=0, wdT0=0, WD_MS=15000, why0='';
   function fallback(why){ why0=why; console.warn('[UI3D] mesh HUD failed ('+why+'); falling back to CSS tilt');
     try{ stop(); }catch(e){} mode='css'; drewOK=false; wdFrames=0; wdT0=0; try{ if(window.DMUI3D) DMUI3D.refresh(); }catch(e){} }
   function ghostDrawn(){ panels.forEach(function(P){ if(P.ready&&P.slot) P.el.classList.add('dm-ui3d-ghost'); });
@@ -242,6 +244,6 @@
     setMode:function(m){ mode=m; try{ localStorage.setItem('dm.ui3d',m); }catch(e){} if(!on()) stop(); else if(ready) document.body.classList.add('dm-ui3d-mesh'); if(window.DMUI3D) DMUI3D.refresh(); },
     // AR: ui/dm-ar-core.js draws `mesh` itself on a head-locked plate; on release it goes back here
     arHold:function(h){ arHeld=!!h; if(!h&&root&&scene&&root.parent!==scene) scene.add(root); },
-    _stats:function(){ var o=[]; panels.forEach(function(P){ o.push({cls:P.el.className,ready:P.ready,leaves:P.leaves.length}); }); return {on:on(),painter:painter,why:why0,ready:ready,frames:frameN,drewOK:drewOK,panels:o,minimap:!!(mm&&mm.visible)}; }
+    _stats:function(){ var o=[]; panels.forEach(function(P){ o.push({cls:P.el.className,ready:P.ready,leaves:P.leaves.length}); }); return {on:on(),painter:painter,why:why0,ready:ready,frames:frameN,paints:paints,drewOK:drewOK,panels:o,minimap:!!(mm&&mm.visible)}; }
   };
 })();
