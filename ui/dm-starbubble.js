@@ -39,7 +39,7 @@
   /* ── materials ─────────────────────────────────────────────────── */
   function lensMat(T){
     const m=new THREE.MeshBasicNodeMaterial({transparent:true,depthTest:true,depthWrite:false,side:THREE.BackSide});
-    const u={c:T.uniform(new THREE.Vector2()),cw:T.uniform(new THREE.Vector3()),rw:T.uniform(1),a:T.uniform(0),pk:T.uniform(0),aspect:T.uniform(1)};
+    const u={c:T.uniform(new THREE.Vector2()),cw:T.uniform(new THREE.Vector3()),rw:T.uniform(1),a:T.uniform(0),pk:T.uniform(0),aspect:T.uniform(1),ar:T.uniform(0),rdy:T.uniform(0)};
     const {float,vec2,vec3,vec4,sin,cos,exp,smoothstep,atan,fract,floor,dot,normalize,mix,time}=T;
     // this pixel's ndc, from the same matrices the CPU uses for the bubble centre
     const clip=T.varying(T.cameraProjectionMatrix.mul(T.modelViewMatrix).mul(vec4(T.positionLocal,1.0)));
@@ -62,14 +62,15 @@
     const rd=vec2(dir.x.mul(cs).sub(dir.y.mul(sn)),dir.x.mul(sn).add(dir.y.mul(cs)));
     const W=window._lensWarpUV;
     const at=k=>T.viewportTexture(W(T,ndc,u.c.add(rd.mul(rv.mul(rs).mul(k))).sub(p).mul(u.a),u.aspect));
-    let col;
-    if(low) col=at(1.0).rgb;
-    else{ const ca=it.mul(0.014); col=vec3(at(ca.add(1.0)).r,at(1.0).g,at(float(1.0).sub(ca)).b); }
+    let col, sa;
+    if(low){ const s0=at(1.0); col=s0.rgb; sa=s0.a; }
+    else{ const ca=it.mul(0.014), s0=at(1.0); col=vec3(at(ca.add(1.0)).r,s0.g,at(float(1.0).sub(ca)).b); sa=s0.a; }
     // compressed light piles up: brighter toward the rim (bloom stand-in)
     col=col.mul(it.pow(3.0).mul(u.a.mul(0.9)).add(1.0));
     const out=r.sub(Rb).max(0.0);
-    const ring=exp(out.div(Rb.mul(0.05)).negate()).mul(smoothstep(Rb.mul(0.985),Rb,r));
-    const halo=exp(out.div(Rb.mul(0.35)).negate()).mul(smoothstep(Rb.mul(0.985),Rb,r));
+    // (v180) feathered rim: the ring and halo ease in over the last ~12% of the radius instead of a 1.5% hard step
+    const ring=exp(out.div(Rb.mul(0.07)).negate()).mul(smoothstep(Rb.mul(0.88),Rb,r));
+    const halo=exp(out.div(Rb.mul(0.35)).negate()).mul(smoothstep(Rb.mul(0.85),Rb,r));
     const ang=atan(dir.y,dir.x);
     const lr=r.max(1e-3).log();
     const st=sin(ang.mul(14.0).sub(lr.mul(9.0)).add(time.mul(2.2)).add(sin(ang.mul(3.0).sub(time.mul(0.5))).mul(3.0))).mul(0.5).add(0.5).max(0.0);
@@ -87,16 +88,39 @@
     const star=smoothstep(0.9955,1.0,h).mul(fract(h.mul(97.0)).mul(0.8).add(0.4));
     const q=r.div(Rb);
     const iris=cos(q.mul(14.0).add(vec3(0.0,2.07,4.14)).add(time.mul(0.6))).mul(0.5).add(0.5).mul(smoothstep(0.8,1.0,q)).mul(0.1);
-    const space=vec3(0.004,0.008,0.022).add(vec3(0.01,0.025,0.07).mul(float(1).sub(q))).add(vec3(star)).add(iris);
-    const inside=float(1).sub(smoothstep(Rb.mul(0.985),Rb,r));
-    m.colorNode=mix(col,space,inside);
-    m.opacityNode=u.a.mul(float(1).sub(smoothstep(Rl.mul(0.9),Rl,r))).clamp(0.0,1.0);
+    // (v180) pass-through window: no more opaque dark disc. The window shows the frame straight through
+    // (the pixel's own sample, undisplaced), cooled and dimmed like looking out of a soap bubble, with the
+    // stars and iris bands laid over it. Over plain space that is the same deep blue-black as before;
+    // over anything lit (a planet, the AR camera) you see it through the bubble.
+    const thru=T.viewportTexture(W(T,ndc,vec2(0.0,0.0),u.aspect));
+    const tint=vec3(0.62,0.74,1.0).mul(float(0.55).add(q.mul(0.3)));
+    const space=thru.rgb.mul(tint).add(vec3(0.004,0.008,0.022).add(vec3(0.01,0.025,0.07).mul(float(1).sub(q))).mul(thru.a)).add(vec3(star)).add(iris);
+    const inside=float(1).sub(smoothstep(Rb.mul(0.86),Rb.mul(1.03),r));     // soft, feathered window edge
+    const outC=mix(col,space,inside);
+    // AR passthrough (u.ar=1): the canvas there is premultiplied and see-through where the camera shows, so the lens
+    // must never lay an opaque disc over it. Coverage = what it actually carries (the warped frame's own alpha plus
+    // the light of the ring/flares/stars); colour is un-premultiplied by it so normal blending writes premultiplied
+    // light. u.ar=0 (normal play) is the plain output.
+    const lum=c=>c.r.max(c.g).max(c.b);
+    const rimA=sa.max(lum(col)).clamp(0.0,1.0);
+    const sw=vec3(star).add(iris), winA=thru.a.max(lum(sw).mul(1.5)).clamp(0.0,1.0);
+    const covA=mix(rimA,winA,inside);
+    m.colorNode=mix(outC,outC.div(covA.max(1e-3)).min(4.0),u.ar);
+    // feathered outer edge (wide smoothstep, squared) and u.rdy: zero until the screen copy has a few real frames
+    // in it, so the very first frame can never flash a black square/disc
+    const fo=float(1).sub(smoothstep(Rl.mul(0.55),Rl,r));
+    m.opacityNode=u.a.mul(fo.mul(fo)).mul(u.rdy).mul(mix(float(1),covA,u.ar)).clamp(0.0,1.0);
     m.toneMapped=false;
     m.userData.u=u;
     return m;
   }
   function bubbleMat(T){
-    const m=new THREE.MeshBasicNodeMaterial({transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,side:THREE.FrontSide});
+    const m=new THREE.MeshBasicNodeMaterial({transparent:true,depthWrite:false,blending:THREE.CustomBlending,side:THREE.FrontSide});
+    // light-only additive (v180): the same colour as AdditiveBlending (SrcAlpha·src + dst) but the framebuffer alpha is
+    // left alone, so over the AR camera the film's dark centre adds nothing (no black disc). Normal play clears alpha
+    // to 1, so it looks identical there.
+    m.blendEquation=THREE.AddEquation; m.blendSrc=THREE.SrcAlphaFactor; m.blendDst=THREE.OneFactor;
+    m.blendEquationAlpha=THREE.AddEquation; m.blendSrcAlpha=THREE.ZeroFactor; m.blendDstAlpha=THREE.OneFactor;
     const u={a:T.uniform(0),fire:T.uniform(0)};
     const {float,vec3,sin,cos,normalize,time,positionLocal}=T;
     const pl=positionLocal;
@@ -258,12 +282,15 @@
     V1.copy(pos).project(cam);
     const lensOn=on&&!camIn&&V1.z<1&&V1.z>-1;
     SB.lens.visible=lensOn;
+    SB._lf=lensOn?(SB._lf||0)+1:0;   // frames the lens has been up (its screen copy needs one real frame first)
     if(lensOn){
       const asp=(cam.aspect||1);
       const u=SB.lens.material.userData.u;
       u.c.value.set(V1.x*asp,V1.y); u.aspect.value=asp;
       u.cw.value.copy(pos); u.rw.value=Re;
       u.a.value=SB.a; u.pk.value=SB.pk;
+      u.rdy.value=Math.min(1,Math.max(0,(SB._lf-2)/6));   // ease in over ~6 frames after 2 warm-up frames
+      u.ar.value=arPass()?1:0;
       // just big enough to hold the lens's 2.6-radius reach: the lens samples
       // the frame (a screen copy) and every pixel it covers runs the shader, so
       // keep it off the rest of the screen unless the camera is that close
@@ -287,10 +314,16 @@
     }
     for(let i=n;i<SB.ghosts.size;i++){ const g=SB.ghosts.get(i); if(g) g.visible=false; }
   };
+  // camera passthrough on (AR): the AR module's flag, or the flight canvas cleared see-through
+  function arPass(){
+    try{ if(window.DMAR&&(DMAR.passthrough||DMAR.active)) return true; }catch(e){}
+    try{ const r=(typeof flightRenderer!=='undefined')&&flightRenderer; if(r&&r.getClearAlpha&&r.getClearAlpha()<0.99) return true; }catch(e){}
+    return false;
+  }
   function smooth(e0,e1,x){ const t=Math.max(0,Math.min(1,(x-e0)/(e1-e0))); return t*t*(3-2*t); }
   function hideAll(){
     if(window.DMStar) DMStar.setBubble(null,0);
-    SB.a=0; SB.pk=0; SB.flame=0; SB.pkT=0; SB.lastH=null; SB.inStar=0;
+    SB.a=0; SB._lf=0; SB.pk=0; SB.flame=0; SB.pkT=0; SB.lastH=null; SB.inStar=0;
     for(const o of [SB.lens,SB.bubble,SB.plasma]) if(o) o.visible=false;
     if(SB._hid){ for(const o of SB._hid) o.visible=true; SB._hid=null; }
     for(const g of SB.ghosts.values()) g.visible=false;
