@@ -81,7 +81,9 @@
       if(Ls.length!==P.leaves.length||Ls.some(function(L,i){ var o=P.leaves[i]; return o.el!==L.el||Math.round(o.r.left)!==Math.round(L.r.left)||Math.round(o.r.top)!==Math.round(L.r.top)||Math.round(o.r.width)!==Math.round(L.r.width); })){ P.leaves=Ls; txtGeoDirty=true; }
     });
     panels.forEach(function(P,el){ if(!seen.has(el)){ el.classList.remove('dm-ui3d-ghost'); panels.delete(el); relay=true; txtGeoDirty=true; } });
-    if(relay){ sx=sy=sh=0; panels.forEach(function(P){ P.slot=alloc(P.w,P.h,ATLAS); }); aCx.clearRect(0,0,ATLAS,ATLAS); panels.forEach(function(P){ P.ready=false; }); artDirty=true; }
+    if(relay){ sx=sy=sh=0; panels.forEach(function(P){ P.slot=alloc(P.w,P.h,ATLAS); });
+      // (v149) the art atlas is only as tall as its slots (pow2): each finished panel raster re-uploads the whole texture
+      var AH=64; while(AH<sy+sh&&AH<ATLAS) AH*=2; if(aCv.height!==AH){ aCv.height=AH; aTex.dispose(); aTex=tx(aCv); art.material.map=aTex; art.material.needsUpdate=true; } else aCx.clearRect(0,0,ATLAS,AH); panels.forEach(function(P){ P.ready=false; }); artDirty=true; }
     panels.forEach(function(P){ if(!P.ready&&!P.busy&&P.slot) paint(P); });
     // minimap: live canvas texture
     var mc=document.getElementById('minimap-canvas'), mr=mc&&flightOn()&&visible(document.getElementById('minimap')||mc);
@@ -129,7 +131,7 @@
       SAFE=true; painter='box2d'; }
     return paintSafe(P); }
   function paint(P){ P.busy=true; var gen=P.sig;
-    paintSrc(P).then(function(src){ if(P.sig!==gen||!P.slot) return; aCx.clearRect(P.slot.x,P.slot.y,P.w,P.h); aCx.drawImage(src,P.slot.x,P.slot.y,P.w,P.h); P.ready=true; artDirty=true; })
+    paints++; paintSrc(P).then(function(src){ if(P.sig!==gen||!P.slot) return; aCx.clearRect(P.slot.x,P.slot.y,P.w,P.h); aCx.drawImage(src,P.slot.x,P.slot.y,P.w,P.h); P.ready=true; artDirty=true; })
       .catch(function(e){ P.failed=(P.failed||0)+1; console.warn('[UI3D] raster',e&&e.message); }).finally(function(){ P.busy=false; }); }
 
   // ---------- static art geometry: ONE merged buffer ----------
@@ -137,7 +139,7 @@
     var rd=[]; panels.forEach(function(P){ if(P.ready&&P.slot) rd.push(P); });
     var nQ=rd.length*(LAYERS+1), pos=new Float32Array(nQ*12), uv=new Float32Array(nQ*8), col=new Float32Array(nQ*12), idx=new Uint32Array(nQ*6), q=0, v=new T.Vector3();
     rd.forEach(function(P){ var t=tilt(P.rect), w=P.rect.width/2, h=P.rect.height/2;
-      var u0=P.slot.x/ATLAS, u1=(P.slot.x+P.w)/ATLAS, v0=1-(P.slot.y+P.h)/ATLAS, v1=1-P.slot.y/ATLAS;
+      var u0=P.slot.x/ATLAS, u1=(P.slot.x+P.w)/ATLAS, v0=1-(P.slot.y+P.h)/aCv.height, v1=1-P.slot.y/aCv.height;
       for(var L=LAYERS;L>=0;L--){ var z=-DEPTH*L/LAYERS, sh=L===0?1:0.55-0.06*L, ox=L?t.nx*L*1.1:0, oy=L?-t.ny*L*0.8:0, cs=[[-w,-h],[w,-h],[w,h],[-w,h]];
         for(var k=0;k<4;k++){ v.set(cs[k][0]+ox,cs[k][1]+oy,z).applyQuaternion(t.q); pos.set([v.x+t.cx,v.y+t.cy,v.z],q*12+k*3); col.set([sh,sh,sh],q*12+k*3); }
         uv.set([u0,v0,u1,v0,u1,v1,u0,v1],q*8); var b=q*4; idx.set([b,b+1,b+2,b,b+2,b+3],q*6); q++; } });
@@ -150,13 +152,18 @@
   var DPR=1.5;
   function buildText(){
     var all=[]; panels.forEach(function(P){ if(P.ready) P.leaves.forEach(function(L){ L.P=P; all.push(L); }); });
-    sx=sy=sh=0; tCx.clearRect(0,0,TATLAS,TATLAS);
+    sx=sy=sh=0;
     var pos=new Float32Array(all.length*12), uv=new Float32Array(all.length*8), idx=new Uint32Array(all.length*6), v=new T.Vector3(), q=0;
-    all.forEach(function(L){ var w=Math.ceil(L.r.width*DPR)+8, h=Math.ceil(L.r.height*DPR)+8; L.slot=alloc(w,h,TATLAS); L.sw=w; L.sh=h; L.text=null; if(!L.slot) return;
+    all.forEach(function(L){ var w=Math.ceil(L.r.width*DPR)+8, h=Math.ceil(L.r.height*DPR)+8; L.slot=alloc(w,h,TATLAS); L.sw=w; L.sh=h; L.text=null; });
+    // (v149) the text atlas is only as tall as the slots need (pow2): every changed readout re-uploads the whole
+    // texture, and a full 1024² RGBA upload per HUD tick was a 4 MB texSubImage per frame on the tablet
+    var TH=32; while(TH<sy+sh&&TH<TATLAS) TH*=2;
+    if(tCv.height!==TH){ tCv.height=TH; tTex.dispose(); tTex=tx(tCv); txt.material.map=tTex; txt.material.needsUpdate=true; } else tCx.clearRect(0,0,TATLAS,TH);
+    all.forEach(function(L){ var w=L.sw, h=L.sh; if(!L.slot) return;
       var t=tilt(L.P.rect), pc={x:L.P.rect.left+L.P.rect.width/2-innerWidth/2, y:innerHeight/2-(L.P.rect.top+L.P.rect.height/2)};
       var lx=L.r.left+L.r.width/2-innerWidth/2-pc.x, ly=innerHeight/2-(L.r.top+L.r.height/2)-pc.y, hw=w/DPR/2, hh=h/DPR/2, cs=[[-hw,-hh],[hw,-hh],[hw,hh],[-hw,hh]];
       for(var k=0;k<4;k++){ v.set(lx+cs[k][0],ly+cs[k][1],0.5).applyQuaternion(t.q); pos.set([v.x+t.cx,v.y+t.cy,v.z],q*12+k*3); }
-      var u0=L.slot.x/TATLAS, u1=(L.slot.x+w)/TATLAS, v0=1-(L.slot.y+h)/TATLAS, v1=1-L.slot.y/TATLAS; uv.set([u0,v0,u1,v0,u1,v1,u0,v1],q*8); var b=q*4; idx.set([b,b+1,b+2,b,b+2,b+3],q*6); q++; });
+      var u0=L.slot.x/TATLAS, u1=(L.slot.x+w)/TATLAS, v0=1-(L.slot.y+h)/TH, v1=1-L.slot.y/TH; uv.set([u0,v0,u1,v0,u1,v1,u0,v1],q*8); var b=q*4; idx.set([b,b+1,b+2,b,b+2,b+3],q*6); q++; });
     setGeo(txt,pos,uv,null,idx.subarray(0,q*6)); txt.userData.leaves=all;
   }
   function drawLeaf(L,s){
@@ -175,13 +182,13 @@
     if(ch) tTex.needsUpdate=true; }
 
   // ---------- overlay pass on the game's renderer ----------
+  function tx(c){ var t=new T.CanvasTexture(c); t.colorSpace=T.SRGBColorSpace; t.generateMipmaps=false; t.minFilter=T.LinearFilter; return t; }
   function setup(R){
     T=window.THREE; if(!T) return false;
     if(!(R&&R.backend&&(R.backend.isWebGPUBackend||/[?&]ui3dgl=1\b/.test(location.search)))){ fallback('renderer backend is not WebGPU'); return false; }
     root=new T.Group(); scene=new T.Scene(); scene.add(root); cam=new T.PerspectiveCamera(FOV,1,1,10);
     aCv=document.createElement('canvas'); aCv.width=aCv.height=ATLAS; aCx=aCv.getContext('2d');
     tCv=document.createElement('canvas'); tCv.width=tCv.height=TATLAS; tCx=tCv.getContext('2d');
-    function tx(c){ var t=new T.CanvasTexture(c); t.colorSpace=T.SRGBColorSpace; t.generateMipmaps=false; t.minFilter=T.LinearFilter; return t; }
     aTex=tx(aCv); tTex=tx(tCv);
     function mat(map,vc){ var m=new T.MeshBasicNodeMaterial({map:map,vertexColors:!!vc,transparent:true,depthWrite:false,depthTest:false,side:T.DoubleSide}); m.toneMapped=false; return m; }
     art=new T.Mesh(new T.BufferGeometry(),mat(aTex,true)); art.renderOrder=1;
@@ -191,7 +198,7 @@
     document.body.classList.add('dm-ui3d-mesh'); ready=true; return true;
   }
   // ---------- fallback watchdog ----------
-  var drewOK=false, wdFrames=0, wdT0=0, WD_MS=15000, why0='';
+  var paints=0, txtT=0, drewOK=false, wdFrames=0, wdT0=0, WD_MS=15000, why0='';
   function fallback(why){ why0=why; console.warn('[UI3D] mesh HUD failed ('+why+'); falling back to CSS tilt');
     try{ stop(); }catch(e){} mode='css'; drewOK=false; wdFrames=0; wdT0=0; try{ if(window.DMUI3D) DMUI3D.refresh(); }catch(e){} }
   function ghostDrawn(){ panels.forEach(function(P){ if(P.ready&&P.slot) P.el.classList.add('dm-ui3d-ghost'); });
@@ -201,8 +208,9 @@
     if(!on()) return; if(!ready&&!setup(R)) return;
     if(frameN++%LAYOUT_EVERY===0) layout();
     if(artDirty){ artDirty=false; buildArt(); txtGeoDirty=true; }
-    if(txtGeoDirty){ txtGeoDirty=false; buildText(); }
-    updateText(); if(mm.visible&&mm.material.map) mm.material.map.needsUpdate=true;
+    if(txtGeoDirty){ txtGeoDirty=false; buildText(); txtT=0; }
+    // (v149) readouts + minimap re-upload at most ~15 Hz (was every frame: a full texture upload per frame)
+    var tn=performance.now(); if(tn-txtT>=66){ txtT=tn; updateText(); if(mm.visible&&mm.material.map) mm.material.map.needsUpdate=true; }
     // (v148) the old 30-frame / 1 s watchdog ran while the panels were still rasterizing (no art = nothing to draw),
     // so a tablet/phone whose first raster took >1 s always fell back to CSS. Now: the DOM stays visible until a
     // mesh frame draws OK; only a render throw or no art at all after 15 s (raster stall) falls back.
@@ -236,6 +244,6 @@
     setMode:function(m){ mode=m; try{ localStorage.setItem('dm.ui3d',m); }catch(e){} if(!on()) stop(); else if(ready) document.body.classList.add('dm-ui3d-mesh'); if(window.DMUI3D) DMUI3D.refresh(); },
     // AR: ui/dm-ar-core.js draws `mesh` itself on a head-locked plate; on release it goes back here
     arHold:function(h){ arHeld=!!h; if(!h&&root&&scene&&root.parent!==scene) scene.add(root); },
-    _stats:function(){ var o=[]; panels.forEach(function(P){ o.push({cls:P.el.className,ready:P.ready,leaves:P.leaves.length}); }); return {on:on(),painter:painter,why:why0,ready:ready,frames:frameN,drewOK:drewOK,panels:o,minimap:!!(mm&&mm.visible)}; }
+    _stats:function(){ var o=[]; panels.forEach(function(P){ o.push({cls:P.el.className,ready:P.ready,leaves:P.leaves.length}); }); return {on:on(),painter:painter,why:why0,ready:ready,frames:frameN,paints:paints,drewOK:drewOK,panels:o,minimap:!!(mm&&mm.visible)}; }
   };
 })();

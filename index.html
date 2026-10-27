@@ -1006,7 +1006,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-bt-interior.js?v=124" defer></script>
 <script src="ui/dm-bt-bake.js?v=144" defer></script>
 <script src="ui/dm-ui3d-core.js?v=148" defer></script>
-<script src="ui/dm-ui3d-mesh.js?v=148" defer></script>
+<script src="ui/dm-ui3d-mesh.js?v=149" defer></script>
 <script src="ui/dm-ar-core.js?v=148" defer></script>
 <script src="ui/dm-bt-roomlights.js?v=144" defer></script>
 <script src="ui/dm-bt-hull.js?v=144" defer></script>
@@ -7390,6 +7390,7 @@ async function _svLodPlanetMesh(o){
       const t0=performance.now();
       flightRenderer.compute(densK); flightRenderer.compute(mcK); await flightRenderer.computeAsync(skK);
       const ms=performance.now()-t0; this.lastMs=ms; this.msPerBrick=this.msPerBrick*0.7+(ms/Math.max(1,k))*0.3;
+      if(this.geo) this.geo.setDrawRange(0,Math.max(1,stream.pool.next)*VPS);   // (v149) draw only up to the pool's high-water slot, not all CAP×VPS vertices
       this.built+=st.build.length; this.cleared+=st.clear.length; this.batches++; this.resident=stream.resident.size; this.pending=st.pending;
       return jobs;
     },
@@ -7415,6 +7416,7 @@ async function _svLodPlanetMesh(o){
   const geo=new THREE.BufferGeometry();
   geo.setAttribute('position',vertexBuf); geo.setAttribute('normal',normalBuf); geo.setAttribute('color',colorBuf);
   geo.boundingSphere=new THREE.Sphere(new THREE.Vector3(0,0,0),HALF*1.5);
+  ctl.geo=geo; geo.setDrawRange(0,Math.max(1,stream.pool.next)*VPS);
   const _lmat=new THREE.MeshStandardNodeMaterial({vertexColors:true,roughness:0.92,metalness:0.02});
   if(window.DMRock) DMRock.applyPlanet(_lmat,o.kind,radius,o.seed);   // (v140) layered rock
   const mesh=new THREE.Mesh(geo,_lmat);
@@ -18262,7 +18264,8 @@ function _pwBuild(body,site,mode,focus){
   try{
     if(TERRAIN.dust){ TERRAIN.dust.dispose(); TERRAIN.dust=null; }
     const ds=window.DMDust&&window.DMWorldStyle?DMDust.forStyle(DMWorldStyle.styleFor(body,pal,site),pal):null;
-    if(ds){ const dso={height:(x,z)=>{ const h=_surfHeight?_surfHeight(x,z):0; return isFinite(h)?h:0; },color:ds.color,amount:ds.amount,quality:(GFX&&GFX.preset)||'medium',seed:_worldSeed(body)};
+    if(ds){ const dso={height:(x,z)=>{ const h=_pwGroundFast(x,z); return isFinite(h)?h:0; }   // (v149) dust grains use the height field, not the MC raycast (that brute-force raycast was ~89% of the walk frame's CPU)
+      ,color:ds.color,amount:ds.amount,quality:(GFX&&GFX.preset)||'medium',seed:_worldSeed(body)};
       TERRAIN.dust=(window.DMFluidWorld&&DMFluidWorld.dust(scene,dso))||DMDust.create(scene,dso); }   // true-fluid dust on WebGPU
   }catch(e){ console.warn('[dust]',e); }
   // ── one skyboard for the whole visit: ridden in space and the sky, beside her on foot
@@ -23759,6 +23762,8 @@ function _pwBuildGround(pal,fx,fz,mode){
 function _pwUnderlayY(){ return PW.ground?PW.ground.group.position.y:0; }
 // The ground at (x,z), finest first: the refined patch round her → the marching-cubes patch → the world's height field.
 function _tessAreaAt(x,z){ const A=TERRAIN.tessAreas; if(!A) return null; for(let i=0;i<A.length;i++){ const T=A[i]; if(T&&Math.hypot(x-T.cx,z-T.cz)<T.half*0.8) return T; } return null; }
+// (v149) cheap ground for effects (dust): the refined patch or the height field — no MC mesh raycast
+function _pwGroundFast(x,z){ const H=TERRAIN.H; if(!H) return 0; const T=_tessAreaAt(x,z); return T?_tessHeightIn(T,x,z):H(x,z); }
 function _pwGroundAt(x,z){
   const H=TERRAIN.H; if(!H) return 0;
   const T=_tessAreaAt(x,z); if(T) return _tessHeightIn(T,x,z);
@@ -23879,6 +23884,13 @@ function surfaceBiomeColor(x,z,h,slope,pal,seed,opts){
 const SURF_CHUNK=300;
 function _rng32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
 const _chunkSeed=(i,j,s)=>((i*73856093)^(j*19349663)^(s*83492791))|0;
+// (v149) chunk props share ONE material + geometry per kind: a fresh MeshStandardMaterial per streamed chunk
+// meant a node build + pipeline compile (and its shadow variant) every time a chunk streamed in — the flight hitch
+let _propShared=null;
+function _propKit(){ if(!_propShared){ const sh=(m)=>{ m.userData.shared=true; return m; };
+  _propShared={rock:sh(new THREE.MeshStandardMaterial({color:0xffffff,roughness:0.92})), trunk:sh(new THREE.MeshStandardMaterial({color:0x4a3220,roughness:1})), crown:sh(new THREE.MeshStandardMaterial({color:0xffffff,roughness:1})),
+    tGeo:new THREE.CylinderGeometry(0.7,1,1,6), cGeo:new THREE.ConeGeometry(1,1,7)}; _propShared.tGeo.userData.shared=_propShared.cGeo.userData.shared=true; }
+  return _propShared; }
 // Rocks (and trees on living worlds) for one near chunk — instanced, seeded by the chunk.
 function _hmChunkScatter(i,j){
   const H=TERRAIN.H, pal=TERRAIN.pal, C=SURF_CHUNK, rnd=_rng32(_chunkSeed(i,j,TERRAIN.seed||1));
@@ -23907,7 +23919,7 @@ function _hmChunkScatter(i,j){
   const geo=TERRAIN.rockGeo||(TERRAIN.rockGeo=new THREE.DodecahedronGeometry(1,0));
   const mkRocks=(list,climb)=>{
     if(!list.length) return;
-    const im=new THREE.InstancedMesh(geo,new THREE.MeshStandardMaterial({color:0xffffff,roughness:0.92}),list.length);
+    const im=new THREE.InstancedMesh(geo,_propKit().rock,list.length);
     const M=new THREE.Matrix4(), q=new THREE.Quaternion(), e=new THREE.Euler();
     list.forEach((r,k)=>{ e.set(r.r[0],r.r[1],r.r[2]); q.setFromEuler(e); M.compose(new THREE.Vector3(r.x,r.h+r.s*0.3,r.z),q,new THREE.Vector3(r.s,r.s*r.sy,r.s)); im.setMatrixAt(k,M); im.setColorAt(k,r.c); });
     im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true;
@@ -23920,9 +23932,9 @@ function _hmChunkScatter(i,j){
   if(pal.ground===0x3a7d34){
     const trees=rocks.filter(r=>r.h>3&&r.h<40&&((r.x*12.9898+r.z*78.233)%1+1)%1>0.6);
     if(trees.length){
-      const tGeo=new THREE.CylinderGeometry(0.7,1,1,6), cGeo=new THREE.ConeGeometry(1,1,7);
-      const trunks=new THREE.InstancedMesh(tGeo,new THREE.MeshStandardMaterial({color:0x4a3220,roughness:1}),trees.length);
-      const crowns=new THREE.InstancedMesh(cGeo,new THREE.MeshStandardMaterial({color:0xffffff,roughness:1}),trees.length);
+      const K=_propKit();
+      const trunks=new THREE.InstancedMesh(K.tGeo,K.trunk,trees.length);
+      const crowns=new THREE.InstancedMesh(K.cGeo,K.crown,trees.length);
       const M=new THREE.Matrix4(), q=new THREE.Quaternion();
       trees.forEach((t,k)=>{
         const th=R(2.5,4), tr=R(0.12,0.22), ch=R(2.5,4.5), cr=R(0.9,1.6), tx=t.x+3, tz=t.z+2, hh=H(tx,tz);
@@ -23936,7 +23948,7 @@ function _hmChunkScatter(i,j){
   return g;
 }
 function _disposeProps(g){
-  g.traverse(o=>{ if(o.isMesh){ if(o.material) o.material.dispose(); if(o.geometry&&o.geometry!==TERRAIN.rockGeo) o.geometry.dispose(); if(o.dispose&&o.isInstancedMesh) o.dispose(); } });
+  g.traverse(o=>{ if(o.isMesh){ if(o.material&&!(o.material.userData&&o.material.userData.shared)) o.material.dispose(); if(o.geometry&&o.geometry!==TERRAIN.rockGeo&&!o.geometry.userData.shared) o.geometry.dispose(); if(o.dispose&&o.isInstancedMesh) o.dispose(); } });
 }
 // swap a freshly built GPU patch in (mesh, collision grid and centre together)
 function _applyMcBuild(built){
