@@ -110,15 +110,47 @@
   function paint(o, m, s, tx) {
     const THREE = window.THREE, T = THREE.TSL; if (!T || !m.isNodeMaterial) return; uni();
     let nm = ''; for (let p = o; p; p = p.parent) { if (byName.has(san(p.name))) { nm = san(p.name); break; } }
-    const uvn = T.uv(), col = T.texture(tx.map, uvn), orm = T.texture(tx.orm, uvn), nt = T.texture(tx.nrm, uvn);
-    const lum = T.dot(col.rgb, T.vec3(0.2126, 0.7152, 0.0722)).div(AVG[s]).clamp(0.35, 1.6);   // layered detail kept on every palette
-    const metal = orm.b, dev = T.length(nt.xy.mul(2).sub(1));
-    // hairline brushed scratches: per-row hash streaks in high-tiled UV, faded in only up close
+    // (v192) anti-tiling. Two stochastic layers (hash per tile: random offset + 90-degree rotation, explicit gradients so
+    // mips stay seamless; layer B is shifted half a tile and covers A's cell borders), a low-frequency world-space noise
+    // that blends in a second, larger texture scale, and scattered grime / panel / scratch variation keyed to world cells.
+    // 7 fetches per pixel, all arithmetic otherwise; nodes are built once per material, nothing per frame.
+    const uvn = T.uv(), dx = T.dFdx(uvn), dy = T.dFdy(uvn);
+    const h2 = c => T.fract(T.sin(T.vec2(T.dot(c, T.vec2(127.1, 311.7)), T.dot(c, T.vec2(269.5, 183.3)))).mul(43758.5453));
+    const h1 = c => T.fract(T.sin(T.dot(c, T.vec2(12.9898, 78.233))).mul(43758.5453));
+    const layer = sh => {
+      const q = uvn.add(sh), c = T.floor(q), h = h2(c), a = T.floor(h.x.mul(4)).mul(1.5707963), cs = T.cos(a), sn = T.sin(a);
+      const rot = v => T.vec2(v.x.mul(cs).sub(v.y.mul(sn)), v.x.mul(sn).add(v.y.mul(cs)));
+      const u = rot(q).add(h.mul(T.vec2(5.37, 9.71))), gx = rot(dx), gy = rot(dy);
+      const f = T.fract(q), e = T.min(T.min(f.x, T.float(1).sub(f.x)), T.min(f.y, T.float(1).sub(f.y)));
+      const n0 = T.texture(tx.nrm, u).grad(gx, gy).xy.mul(2).sub(1);
+      const nxy = T.vec2(n0.x.mul(cs).add(n0.y.mul(sn)), n0.x.mul(sn).negate().add(n0.y.mul(cs)));   // back into the surface tangent frame
+      return { col: T.texture(tx.map, u).grad(gx, gy), orm: T.texture(tx.orm, u).grad(gx, gy), nxy, w: T.smoothstep(0.0, 0.22, e), h };
+    };
+    const A = layer(T.vec2(0, 0)), B = layer(T.vec2(0.5, 0.5));
+    const col = T.mix(B.col, A.col, A.w), orm = T.mix(B.orm, A.orm, A.w), nxy = T.mix(B.nxy, A.nxy, A.w);
+    const nt = T.vec3(nxy, T.sqrt(T.float(1).sub(T.dot(nxy, nxy)).max(0.0))).mul(0.5).add(0.5);
+    // low-frequency world noise (value noise, 2 octaves) -> blend toward a 0.31x rotated scale + grime + per-panel tint
+    const pw = T.positionWorld;
+    const vn = p2 => { const c = T.floor(p2), f = T.fract(p2), u2 = f.mul(f).mul(T.float(3).sub(f.mul(2)));
+      return T.mix(T.mix(h1(c), h1(c.add(T.vec2(1, 0))), u2.x), T.mix(h1(c.add(T.vec2(0, 1))), h1(c.add(T.vec2(1, 1))), u2.x), u2.y); };
+    const wp = T.vec2(pw.x.add(pw.y.mul(0.7)), pw.z.sub(pw.y.mul(0.4)));
+    const n1 = vn(wp.mul(0.045)), n2 = vn(wp.mul(0.17).add(13.1));
+    const um = T.vec2(uvn.x.mul(0.25).sub(uvn.y.mul(0.17)), uvn.x.mul(0.17).add(uvn.y.mul(0.25)));   // 0.31x scale, rotated ~34 deg
+    const colM = T.texture(tx.map, um);
+    const Y = T.vec3(0.2126, 0.7152, 0.0722);
+    const lumS = T.mix(T.dot(col.rgb, Y), T.dot(colM.rgb, Y), T.smoothstep(0.3, 0.75, n1).mul(0.6));
+    const grime = T.smoothstep(0.55, 0.9, n2.mul(0.65).add(n1.mul(0.35))).mul(T.float(1.25).sub(orm.r));   // pools in cavities (AO)
+    const panel = h1(T.floor(wp.mul(0.35)).add(T.floor(pw.y.mul(0.35))));                                 // scattered panel-to-panel variation
+    const lum = lumS.div(AVG[s]).mul(T.float(0.9).add(panel.mul(0.2))).mul(T.float(1).sub(grime.mul(0.3))).clamp(0.3, 1.6);   // layered detail kept on every palette
+    const metal = orm.b, dev = T.length(nxy);
+    // hairline brushed scratches in the per-tile rotated frame (direction varies tile to tile), density varies by world noise;
+    // continuous distance fade (no tiers)
     const near = T.float(1).sub(T.smoothstep(2.5, 14, T.length(T.positionView)));
-    const su = uvn.mul(T.vec2(6, 520)), row = T.floor(su.y);
+    const sc = T.mix(B.h, A.h, A.w), su = T.vec2(uvn.x.mul(sc.x.sub(0.5).mul(0.6).add(1)), uvn.y).mul(T.vec2(6, 520));
+    const row = T.floor(su.y.add(sc.y.mul(97)));
     const h = T.fract(T.sin(row.mul(12.9898).add(T.floor(su.x.add(T.fract(T.sin(row.mul(4.1)).mul(91.3)).mul(7))).mul(78.233))).mul(43758.5453));
-    const streak = T.smoothstep(0.82, 1.0, h).mul(near);
-    m.roughnessNode = orm.g.mul(T.float(1).sub(streak.mul(0.45))).add(near.mul(h.sub(0.5)).mul(0.08)).clamp(0.04, 1);
+    const streak = T.smoothstep(T.float(0.97).sub(n2.mul(0.2)), 1.0, h).mul(near);
+    m.roughnessNode = orm.g.add(grime.mul(0.22)).add(panel.sub(0.5).mul(0.08)).mul(T.float(1).sub(streak.mul(0.45))).add(near.mul(h.sub(0.5)).mul(0.08)).clamp(0.04, 1);
     m.normalNode = T.normalize(T.normalMap(nt, T.vec2(NRM[s], NRM[s])).add(T.tangentView.mul(h.sub(0.5).mul(0.06).mul(near))));
     m.metalnessNode = metal;
     m.vertexColors = false;
