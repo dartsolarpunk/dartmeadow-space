@@ -14,7 +14,7 @@ def blur(a, r): return np.array(Image.fromarray(np.clip(a, 0, 255).astype(np.uin
 # ---------- face ----------
 W, H = 1024, 1024
 def uv(az, el): return (0.5 + az / 360.0) * W, (0.5 - el / 180.0) * H
-skin = np.array([238, 196, 168], np.float32)
+skin = np.array([232, 184, 152], np.float32)
 n = blur(rng.random((H, W)) * 255, 2.0)[..., None] / 255
 base = skin * (0.95 + 0.07 * n)
 def face(closed):
@@ -28,17 +28,17 @@ def face(closed):
             w = 4.2 - 2.4 * (i / 29) ** 1.3
             d.ellipse([x - w, y - w * 0.5, x + w, y + w * 0.5], fill=(150, 72, 40, 230))
     for s in (-1, 1):   # eyes (almond)
-        cx, cy = uv(s * 17, 1.5); ew, eh = 30, 13
+        cx, cy = uv(s * 17, 1.5); ew, eh = 35, 15.5
         # socket shadow
         for r in range(10, 0, -1): d.ellipse([cx - ew - r * 2, cy - eh - r * 2.4, cx + ew + r * 2, cy + eh + r], fill=(180, 120, 110, 6))
         if not closed:
             d.ellipse([cx - ew, cy - eh, cx + ew, cy + eh], fill=(248, 244, 240, 255))
-            ir = 12.5; ix = cx - s * 1.5
+            ir = 14.5; ix = cx - s * 1.5
             d.ellipse([ix - ir, cy - ir, ix + ir, cy + ir], fill=(40, 110, 200, 255))
             d.ellipse([ix - ir * 0.75, cy - ir * 0.75, ix + ir * 0.75, cy + ir * 0.75], fill=(70, 150, 230, 255))
             for k in range(24):   # iris fibres
                 a = k / 24 * 2 * math.pi; d.line([ix + math.cos(a) * 4, cy + math.sin(a) * 4, ix + math.cos(a) * ir, cy + math.sin(a) * ir], fill=(140, 200, 250, 120), width=1)
-            d.ellipse([ix - 5, cy - 5, ix + 5, cy + 5], fill=(12, 14, 22, 255))
+            d.ellipse([ix - 5.8, cy - 5.8, ix + 5.8, cy + 5.8], fill=(12, 14, 22, 255))
             d.ellipse([ix + 3, cy - 8, ix + 8, cy - 3], fill=(255, 255, 255, 240))
             d.arc([cx - ew, cy - eh - 1, cx + ew, cy + eh + 1], 195, 345, fill=(40, 24, 20, 255), width=4)   # upper lash line
             d.arc([cx - ew, cy - eh, cx + ew, cy + eh], 20, 160, fill=(120, 70, 60, 160), width=2)

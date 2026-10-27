@@ -51,11 +51,11 @@
       for (const m of [o.material].flat()) {
         if (!m || seen.has(m)) continue; seen.add(m);
         const n = m.name || '';
-        if (n === 'NOVA_Face' && m.map) { faceTex = m.map; if (m.emissive) { m.emissive.setRGB(1, 0.85, 0.75); m.emissiveMap = m.map; m.emissiveIntensity = 0.12; } }
-        else if (n === 'NOVA_Skin' || n === 'NOVA_Wood') { if ('clearcoat' in m) { m.clearcoat = n === 'NOVA_Wood' ? 0.5 : 0.15; m.clearcoatRoughness = 0.35; } }
+        if (n === 'NOVA_Face' && m.map) { faceTex = m.map; if (m.emissive) { m.emissive.setRGB(1, 0.7, 0.55); m.emissiveMap = m.map; m.emissiveIntensity = 0.07; m.roughness = 0.5; } }
+        else if (n === 'NOVA_Skin' || n === 'NOVA_Wood') { if (n === 'NOVA_Skin') m.color.multiplyScalar(0.94).offsetHSL(0, 0.06, 0); if ('clearcoat' in m) { m.clearcoat = n === 'NOVA_Wood' ? 0.5 : 0.15; m.clearcoatRoughness = 0.35; } }
         else if (n === 'NOVA_Leather' || n === 'NOVA_Torso') { if ('clearcoat' in m) { m.clearcoat = 0.6; m.clearcoatRoughness = 0.25; } }
         else if (n === 'NOVA_Hair') {
-          m.side = THREE.DoubleSide; m.alphaTest = Math.max(m.alphaTest || 0, 0.45); m.transparent = false;
+          m.side = THREE.DoubleSide; m.alphaTest = 0.1; m.transparent = false; m.depthWrite = true;   // low cutoff: mip-averaged strand alpha must not drop below it at distance
           if ('sheen' in m) { m.sheen = 0.6; m.sheenRoughness = 0.4; m.sheenColor && m.sheenColor.setRGB(1, 0.6, 0.35); }
         }
         else if (n === 'NOVA_Visor') {
@@ -68,6 +68,7 @@
         }
       }
     });
+    const headBone = doll.getObjectByName('Head'); if (headBone) headBone.position.y -= 0.02;   // shorter neck (Head has no position tracks)
     const mixer = new THREE.AnimationMixer(doll); NOVA.mixer = mixer;
     for (const c of gltf.animations) NOVA.actions[c.name] = mixer.clipAction(c);
     const sit = NOVA.actions.Sit, wave = NOVA.actions.Wave;
