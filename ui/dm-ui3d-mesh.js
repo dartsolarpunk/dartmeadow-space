@@ -22,7 +22,7 @@
 (function(){
   'use strict';
   if(window.DMUI3DMesh) return;
-  var CURVE_DEG=28, PUSH=0.08, PAR=4, LAYERS=4, DEPTH=7, FOV=40, ATLAS=2048, TATLAS=2048, PAD=2, PG=6, LAYOUT_MS=1000, WALK_EVERY=3, UNGHOST_MS=500;
+  var CURVE_DEG=28, PUSH=0.08, PAR=4, LAYERS=1, DEPTH=2, FOV=40, ATLAS=2048, TATLAS=2048, PAD=2, PG=6, LAYOUT_MS=1000, WALK_EVERY=3, UNGHOST_MS=500;
   var SUB_SEL='.mini-kite,.hud-c';   // (v160) kites overflow their top bar: each is its own panel, cut out of the bar's raster
   var DYN_SEL='.joystick-knob,[id$="-knob"]', SKIP_SEL='#dm-perf-hud,#account-modal,#profile-modal,.jots-ov,.modal,#warp-overlay,#jots-chat,script,style,video,iframe,template';
   var FORM_SEL='input:not([type=checkbox]):not([type=radio]):not([type=range]),select,textarea';
@@ -31,7 +31,7 @@
     'border-top','border-right','border-bottom','border-left','border-radius','background-color','background-image','background-size','background-position','background-repeat',
     'color','font-family','font-size','font-weight','font-style','line-height','letter-spacing','text-align','text-transform','text-shadow','white-space','text-overflow','overflow',
     'opacity','box-shadow','clip-path','transform','transform-origin','rotate','scale','translate','flex','flex-direction','flex-wrap','align-items','justify-content','gap','grid-template-columns',
-    'z-index','visibility','fill','stroke','stroke-width','stroke-dasharray','stroke-dashoffset','font-variant-numeric','vertical-align','filter','mix-blend-mode','inset','object-fit'];
+    'z-index','visibility','fill','stroke','stroke-width','stroke-dasharray','stroke-dashoffset','font-variant-numeric','vertical-align','filter','mix-blend-mode','inset','object-fit','mask-image','-webkit-mask-image','mask-size','-webkit-mask-size'];
   var mode=(function(){ try{ return localStorage.getItem('dm.ui3d'); }catch(e){ return null; } })();
   // (v142) mesh HUD is the default everywhere (desktop, web app, AR). Opt out with dm.ui3d='css' (CSS tilt) or '0' (flat).
   // The WebGPU gate + watchdog still fall back to CSS at runtime on devices where it can't draw.
@@ -210,7 +210,7 @@
     for(var L=LAYERS;L>=0;L--){ var z=-DEPTH*L/LAYERS, k;
       for(k=0;k<4;k++){ xf(p,cs[k][0]+ox,cs[k][1],z,pos,q*12+k*3);
         // back layers: dim, mostly transparent -> a thin glowing rim; front: the CSS glass as is, faint top sheen
-        if(L) col.set([0.62,0.66,0.8,0.2],q*16+k*4); else { var hi=cs[k][1]>0?1.07:0.97; col.set([hi,hi,hi,1],q*16+k*4); } }
+        if(L) col.set([0.8,0.86,1,0.12],q*16+k*4); else col.set([1,1,1,0.86],q*16+k*4); }   // (v174) frosted glass: see-through front, faint rim, no gloss
       uv.set([u0,v0,u1,v0,u1,v1,u0,v1],q*8); q++; }
     return q; }
   function idxFor(n){ var idx=new Uint32Array(n*6); for(var q=0;q<n;q++){ var b=q*4; idx.set([b,b+1,b+2,b,b+2,b+3],q*6); } return idx; }
@@ -261,6 +261,8 @@
     var ts=cs.textShadow; if(ts&&ts!=='none'){ var m=ts.match(/(rgba?\([^)]*\)|#[0-9a-f]+)\s+(-?[\d.]+)px\s+(-?[\d.]+)px\s+([\d.]+)px/i); if(m){ tCx.shadowColor=soft(m[1]); tCx.shadowOffsetX=+m[2]*K; tCx.shadowOffsetY=+m[3]*K; tCx.shadowBlur=+m[4]*K; } }
     var al=cs.textAlign, ox=x/K+TP/K, w=(L.sw-2*TP)/K; tCx.textAlign=al==='center'?'center':(al==='right'||al==='end')?'right':'left';
     var px=tCx.textAlign==='center'?ox+w/2:tCx.textAlign==='right'?ox+w:ox+(parseFloat(cs.paddingLeft)||0);
+    var tw=tCx.measureText(s).width, fw=w-(tCx.textAlign==='left'?(parseFloat(cs.paddingLeft)||0):0);   // (v174) fit: a wider fallback font / phone scale must never clip ('DART ME')
+    if(tw>fw&&fw>0){ var fx=fw/tw; tCx.translate(px,0); tCx.scale(fx,1); px=0; }
     tCx.fillText(s,px,y/K+L.sh/K/2); tCx.restore();
   }
   function updateText(){ var Ls=txt.userData.leaves||[], ch=false;
