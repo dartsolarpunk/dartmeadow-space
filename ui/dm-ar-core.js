@@ -389,6 +389,7 @@
         if(d<safe){ _fv.sub(_fs); if(_fv.lengthSq()<1e-6) _fv.set(0,0,1); _fv.setLength(safe).add(_fs);
           if(cm.parent) cm.parent.worldToLocal(_fv); cm.position.copy(_fv); S.safeHold=true; } else S.safeHold=false; }
       cm.updateMatrixWorld(true);
+      if(((S.blendN=(S.blendN||0)+1)%45)===0) try{ arBlend(true,true); }catch(e){}   // pick up effects added since AR started
       sc.background=null; ca=S.flight.getClearAlpha(); S.flight.setClearAlpha(0);
       sc.traverseVisible&&sc.traverseVisible(function(o){ if(o.userData&&(o.userData.dmSkyShell||o.userData.dmArHide)){ o.visible=false; hid.push(o); } });
       return orig.call(S.flight,sc,cm);
@@ -401,16 +402,18 @@
   // Additive sprites, flares and glows: their colour is added as before, but in AR they must not add to the canvas
   // alpha (a black-cornered sprite quad would turn into an opaque black square over the camera). The premultiplied
   // canvas then composites their light additively over the passthrough with the sprite's own feathered falloff.
-  function arBlend(on){
+  function arBlend(on,rescan){
     var T=window.THREE, sc=g('flightScene'); if(!T||!sc) return;
-    if(on){ if(S.blendSaved) return; var sv=S.blendSaved=[];
+    if(on){ if(S.blendSaved&&!rescan) return; var sv=S.blendSaved=S.blendSaved||[], n0=sv.length;
+      // rescan: effects built after AR started (the star bubble, ghost bubbles, fumes, new bodies' glows) get the same
+      // light-only blend; already-converted materials are skipped by their _dmArB mark
       sc.traverse(function(o){ var ms=o.material; if(!ms) return; (Array.isArray(ms)?ms:[ms]).forEach(function(m){
         if(!m||m.blending!==T.AdditiveBlending||m._dmArB) return;
         m._dmArB={b:m.blending,s:m.blendSrc,d:m.blendDst,e:m.blendEquation,sa:m.blendSrcAlpha,da:m.blendDstAlpha,ea:m.blendEquationAlpha};
         m.blending=T.CustomBlending; m.blendEquation=T.AddEquation; m.blendSrc=m.premultipliedAlpha?T.OneFactor:T.SrcAlphaFactor; m.blendDst=T.OneFactor;
         m.blendEquationAlpha=T.AddEquation; m.blendSrcAlpha=T.ZeroFactor; m.blendDstAlpha=T.OneFactor; sv.push(m); }); });
       // compile the changed blend states now, off the frame, so the first AR frames don't hitch
-      try{ var fr=S.flight, fc=g('flightCamera'); if(fr&&fr.compileAsync&&fc) fr.compileAsync(sc,fc).catch(function(){}); }catch(e){}
+      if(!rescan||sv.length>n0) try{ var fr=S.flight, fc=g('flightCamera'); if(fr&&fr.compileAsync&&fc) fr.compileAsync(sc,fc).catch(function(){}); }catch(e){}
     } else if(S.blendSaved){ S.blendSaved.forEach(function(m){ var b=m._dmArB; if(!b) return; m.blending=b.b; m.blendSrc=b.s; m.blendDst=b.d; m.blendEquation=b.e; m.blendSrcAlpha=b.sa; m.blendDstAlpha=b.da; m.blendEquationAlpha=b.ea; delete m._dmArB; }); S.blendSaved=null; }
   }
   // ---------- terrain board: the real world, drawn by the game's renderer onto the anchored table ----------
@@ -524,7 +527,7 @@
     try{ window.DMUI3DMesh&&DMUI3DMesh.drawTo(S.r); }catch(e){}   // 3D HUD over the passthrough (DOM HUD if the mesh is off)
   }
 
-  window.DMAR={toggle:toggle,exit:exit,get active(){ return !!S; }, get letWarm(){ return !!(S&&S.full); }, get noAtmo(){ return !!(S&&S.kind==='camera'&&(S.full||S.mode==='terrain')); }, get boardOn(){ return !!(S&&S.kind==='camera'&&S.mode==='terrain'); }, board:boardRender, get mode(){ return S?S.kind+'/'+(S.mode||'-')+(S.placed?' placed':''):(supported?'off (webxr ready)':'off (camera fallback)'); }, _cam:function(){ return S; },get supported(){ return supported; },_buildDiorama:buildDiorama,_fillDiorama:fillDiorama,_stripSky:stripSky,_unstrip:unstrip};
+  window.DMAR={toggle:toggle,exit:exit,get active(){ return !!S; }, get letWarm(){ return !!(S&&S.full); }, get passthrough(){ return !!(S&&S.kind==='camera'&&(S.full||S.mode==='terrain')); }, get noAtmo(){ return !!(S&&S.kind==='camera'&&(S.full||S.mode==='terrain')); }, get boardOn(){ return !!(S&&S.kind==='camera'&&S.mode==='terrain'); }, board:boardRender, get mode(){ return S?S.kind+'/'+(S.mode||'-')+(S.placed?' placed':''):(supported?'off (webxr ready)':'off (camera fallback)'); }, _cam:function(){ return S; },get supported(){ return supported; },_buildDiorama:buildDiorama,_fillDiorama:fillDiorama,_stripSky:stripSky,_unstrip:unstrip};
   function init(){
     placeButtons();
     try{ new MutationObserver(function(){ placeButtons(); }).observe(document.body,{childList:true,subtree:false}); }catch(e){}
