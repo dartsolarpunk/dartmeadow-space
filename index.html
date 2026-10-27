@@ -155,7 +155,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-theme.js?v=81"></script>
 <script src="ui/dm-sparsevox.js?v=2"></script>
 <script src="ui/dm-rockmat.js?v=145"></script>
-<script src="ui/dm-perf.js?v=148"></script>
+<script src="ui/dm-perf.js?v=160"></script>
 <script>/* (v136) no-op stub so the flight loop can never throw if dm-perf.js failed to load */
 window.DMPerf=window.DMPerf||{on:false,b(){},e(){},mark(){},measure(n,f){return f();},frame(){},stats(){return {fps:0,avgMs:0,p95Ms:0,worstMs:0,minFps:0,cpu:{},gpu:null,sparse:null};},show(){},hide(){}};</script>
 <script src="ui/dm-fluid.js?v=80"></script>
@@ -900,8 +900,9 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
    Backgrounds are slightly more opaque instead so they read the same. Modals that open on demand keep their blur. */
 .joystick-base,.ar-panel,#ar-top,.hud-toggle-btn,.assist-btn,.side-pad,.dart-pad,.joystick-zone>div,[style*="backdrop-filter:blur(8px)"][style*="border-radius:50%"]{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;}
 /* live FPS number: lower-left corner of the kite, medium gray so it reads on any theme without shouting */
-.dm-fps{position:absolute;left:68px;top:121px;width:44px;text-align:center;font:600 17px/1 var(--font-mono,monospace);letter-spacing:.02em;color:rgba(150,156,168,.95);text-shadow:0 0 3px rgba(0,0,0,.7),0 0 1px rgba(0,0,0,.9);pointer-events:none;font-variant-numeric:tabular-nums;z-index:3}
-.mini-kite .dm-fps{left:57px;top:82px;width:44px;font-size:17px;font-weight:700;color:rgba(190,196,208,.98)}   /* v92: same size, look AND place (lower-left, under SPD/ALT: 25%/81% of the kite) as the flight / temple kite readout */
+.dm-fps{position:absolute;left:122px;top:128px;transform:translate(-50%,-50%);display:flex;align-items:center;gap:5px;white-space:nowrap;font:400 .54rem/1 var(--font-mono,monospace);color:var(--text);pointer-events:none;font-variant-numeric:tabular-nums;z-index:3}   /* v151: a kite gauge like SPD / ALT (cyan label + mono value, theme colours), not a separate grey box */
+.dm-fps::before{content:'FPS';font-family:var(--font-hud);font-size:.48rem;letter-spacing:.16em;color:var(--cyan)}
+.mini-kite .dm-fps{left:66px;top:90px}   /* v151: bottom row under the readout, inside the kite outline */
 #minimap{display:none!important;position:absolute;bottom:calc(100px + var(--safe-bot));left:8px;width:88px;height:88px;background:rgba(var(--panel-rgb),0.28);border:1px solid rgba(var(--acc-rgb),0.18);border-radius:50%;overflow:hidden;pointer-events:auto;z-index:22;touch-action:none;}
 #minimap-canvas{touch-action:none;}
 #mm-toggle{position:absolute;top:2px;right:2px;width:16px;height:16px;border-radius:50%;background:rgba(var(--panel-rgb),0.8);border:1px solid rgba(var(--acc-rgb),0.3);color:rgba(var(--acc-rgb),0.7);font-size:0.5rem;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;z-index:23;pointer-events:auto;}
@@ -1008,8 +1009,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-bt-interior.js?v=124" defer></script>
 <script src="ui/dm-bt-pbr.js?v=192" defer></script>
 <script src="ui/dm-bt-bake.js?v=144" defer></script>
-<script src="ui/dm-ui3d-core.js?v=148" defer></script>
-<script src="ui/dm-ui3d-mesh.js?v=149" defer></script>
+<script src="ui/dm-ui3d-core.js?v=160" defer></script>
+<script src="ui/dm-ui3d-mesh.js?v=198" defer></script>
 <script src="ui/dm-ar-core.js?v=196" defer></script>
 <script src="ui/dm-bt-roomlights.js?v=144" defer></script>
 <script src="ui/dm-bt-hull.js?v=144" defer></script>
@@ -1702,6 +1703,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
             <button onclick="openTempleHub()" style="pointer-events:auto;padding:5px 12px;background:rgba(255,255,255,.1);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🕊 TEMPLE</button>
       <button id="surf-fly-btn" onclick="surfRemountSkyboard()" style="pointer-events:auto;padding:5px 12px;background:rgba(var(--acc-rgb),.1);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🛹 FLY</button>
       <button id="liftoff-btn" onclick="exitSurface()" style="pointer-events:auto;padding:5px 14px;background:rgba(var(--hi-rgb),.12);border:1px solid var(--gold);color:var(--gold);font-family:var(--font-hud);font-size:.52rem;letter-spacing:.12em;cursor:pointer;border-radius:2px;">🚀 LIFTOFF</button>
+      <button class="profile-btn" onclick="openProfileMenu()" title="Your profile and display options" style="pointer-events:auto;padding:5px 12px;display:inline-flex;align-items:center;gap:5px;background:rgba(var(--acc-rgb),.08);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;"><span class="pf-av-mini" id="profile-btn-av-s">◉</span><span>PROFILE</span></button>   <!-- v151: PROFILE on the surface / sky HUD too (was space-only) -->
     </div>
   </div>
   <button class="orbit-skyboard-btn hud-toggle-btn" onclick="toggleCharOrbit()" title="Orbit freely around the character — drag/scroll or pinch to look around" style="left:auto;right:10px;top:56px;background:rgba(var(--hi-rgb),0.10);color:#ff4fa3;border-color:rgba(var(--hi-rgb),0.35);z-index:36;">🔄 ORBIT</button>
@@ -1736,6 +1738,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <button class="shot-btn" onclick="takeScreenshot()" title="Screenshot — save a full-screen photo (P)" aria-label="Take a screenshot"><svg viewBox="0 0 28 24" width="22" height="19" aria-hidden="true"><path d="M9.4 5.6 11 3.2h6l1.6 2.4" fill="currentColor" fill-opacity=".28" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><rect x="2" y="5.6" width="24" height="15.4" rx="3.2" fill="currentColor" fill-opacity=".2" stroke="currentColor" stroke-width="1.4"/><circle cx="14" cy="13.3" r="5.1" fill="currentColor" fill-opacity=".3" stroke="currentColor" stroke-width="1.4"/><circle cx="14" cy="13.3" r="2.5" fill="currentColor" fill-opacity=".55"/><circle cx="12.3" cy="11.6" r="1.05" fill="#fff" fill-opacity=".85"/><rect x="20.4" y="8.2" width="3.2" height="1.9" rx=".7" fill="currentColor" fill-opacity=".8"/><rect x="4.2" y="8.4" width="3.4" height="1.2" rx=".5" fill="currentColor" fill-opacity=".5"/></svg></button><button class="jn-open-btn" onclick="window.DMJournal&&DMJournal.toggle()" title="Journal — mark this spot, travel to your waypoints (J)"><span class="jn-ico">✦</span>JOURNAL</button>
             <button onclick="openTempleHub()" style="pointer-events:auto;padding:5px 12px;background:rgba(255,255,255,.1);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🕊 TEMPLE</button>
       <button onclick="atmoExitToSpace()" style="pointer-events:auto;padding:5px 12px;background:rgba(var(--acc-rgb),.08);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🚀 TO SPACE</button>
+      <button class="profile-btn" onclick="openProfileMenu()" title="Your profile and display options" style="pointer-events:auto;padding:5px 12px;display:inline-flex;align-items:center;gap:5px;background:rgba(var(--acc-rgb),.08);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;"><span class="pf-av-mini" id="profile-btn-av-a">◉</span><span>PROFILE</span></button>   <!-- v151: PROFILE on the surface / sky HUD too (was space-only) -->
     </div>
   </div>
   <button class="orbit-skyboard-btn hud-toggle-btn" onclick="toggleCharOrbit()" title="Orbit freely around the character — drag/scroll or pinch to look around" style="left:auto;right:16px;top:360px;background:rgba(var(--hi-rgb),0.10);color:#ff4fa3;border-color:rgba(var(--hi-rgb),0.35);z-index:36;">🔄 ORBIT</button>
@@ -2147,6 +2150,7 @@ function loadSaveData(data){
       'gfxQuality','resScale','shadows','reflections','caustics','gi','marchingCubesTerrain'];
     Object.keys(data.settings).forEach(k=>{ if(!GFX_SETTING_KEYS.includes(k)) STATE.settings[k]=data.settings[k]; });
   }
+  if(data.settings&&typeof data.settings.legacyUI==='boolean'&&window.DMUI3DMesh){ try{ window.DMUI3DMesh.setLegacy(data.settings.legacyUI); }catch(e){} }   // (v160) Legacy UI follows the save
   if(data.themes&&window.DMTheme){ try{ window.DMTheme.importData(data.themes,'save'); }catch(e){} }
   if(data.journal&&window.DMJournal){ try{ window.DMJournal.store.importData(data.journal,'save'); }catch(e){} }
   if(data.btLights&&window.DMBtRoomLights){ try{ window.DMBtRoomLights.set(data.btLights); }catch(e){} }   // (v139)
@@ -14561,6 +14565,7 @@ function _pfEnsure(){
     '<div class="pf-sec">DISPLAY</div>'+
     '<div class="pf-row"><div><div class="pf-row-t">Player name tags</div><div class="pf-row-d">Other players\u2019 usernames above them.</div></div><button class="pf-sw" id="pf-sw-players" role="switch"></button></div>'+
     '<div class="pf-row"><div><div class="pf-row-t">Object info</div><div class="pf-row-d">Names of planets, stars and other things when your crosshair is on them.</div></div><button class="pf-sw" id="pf-sw-objects" role="switch"></button></div>'+
+    '<div class="pf-row"><div><div class="pf-row-t">Legacy UI</div><div class="pf-row-d">Use the classic flat HUD instead of the 3D curved visor HUD. Kept with your save.</div></div><button class="pf-sw" id="pf-sw-legacy" role="switch" aria-label="Legacy UI on or off"></button></div>'+
     '<div id="pf-safety"></div>'+
     '<div class="pf-sec">THEME</div>'+
     '<div class="pf-themes" id="pf-themes"></div>'+
@@ -14614,8 +14619,10 @@ function _pfEnsure(){
   };
   bindSw('pf-sw-players','playerLabels');
   bindSw('pf-sw-objects','objectLabels',on=>{ if(!on) try{ hideCrosshairLabelNow(); }catch(e){} });
+  $('pf-sw-legacy').onclick=()=>{ const v=!_pfLegacyUI(); try{ window.DMUI3DMesh&&window.DMUI3DMesh.setLegacy(v); }catch(e){} STATE.settings.legacyUI=v; _pfRender(); };   // (v160) STATE.settings travels in every save
   _pfBindThemeTools();
 }
+function _pfLegacyUI(){ try{ return !!(window.DMUI3DMesh&&window.DMUI3DMesh.legacy); }catch(e){ return false; } }
 function _pfRender(){
   if(!$('profile-modal')) return;
   const who=_pfWho();
@@ -14657,6 +14664,7 @@ function _pfRender(){
   try{ window.DMSafety&&DMSafety.section($('pf-safety')); }catch(e){}
   $('pf-sw-players').setAttribute('aria-checked', DM_PREFS.playerLabels?'true':'false');
   $('pf-sw-objects').setAttribute('aria-checked', DM_PREFS.objectLabels?'true':'false');
+  $('pf-sw-legacy').setAttribute('aria-checked', _pfLegacyUI()?'true':'false');
 }
 // Theme chooser: presets + a custom theme built with the colour picker.
 function _pfRenderThemes(){
@@ -14793,9 +14801,8 @@ window.addEventListener('dm:themes',e=>{ if(e.detail&&e.detail.source==='account
 function openProfileMenu(){ try{releaseMouseLook();}catch(e){} _pfEnsure(); _pfRender(); $('profile-modal').classList.add('open'); }
 function closeProfileMenu(){ const m=$('profile-modal'); if(m) m.classList.remove('open'); }
 function refreshProfileBtn(){
-  const box=$('profile-btn-av'); if(!box) return;
   const who=_pfWho();
-  if(who.avatar) _pfAvatar(box, who); else box.textContent='\u25C9';
+  document.querySelectorAll('#profile-btn-av,[id^="profile-btn-av-"]').forEach(box=>{ if(who.avatar) _pfAvatar(box, who); else box.textContent='\u25C9'; });   // v151: every PROFILE button (space, surface, sky)
 }
 window.openProfileMenu=openProfileMenu; window.closeProfileMenu=closeProfileMenu;
 window.addEventListener('jots:auth',()=>{ refreshProfileBtn(); _pfRender(); });
@@ -26280,8 +26287,8 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 </script>
 
 <!-- ?v= stamps: bump on every UI change so browsers never mix a new page with cached old styles -->
-<link rel="stylesheet" href="ui/dm-ui.css?v=111">
-<link rel="stylesheet" href="ui/dm-hud.css?v=118">
+<link rel="stylesheet" href="ui/dm-ui.css?v=160">
+<link rel="stylesheet" href="ui/dm-hud.css?v=198">
 <link rel="stylesheet" href="ui/dm-friends.css?v=1">
 <link rel="stylesheet" href="ui/dm-safety.css?v=1">
 <link rel="stylesheet" href="ui/dm-spectator.css?v=1">
@@ -26290,6 +26297,6 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 <link rel="stylesheet" href="ui/dm-journal.css?v=97">
 <link rel="stylesheet" href="ui/dm-landmap.css?v=88">
 <link rel="stylesheet" href="ui/dm-type.css?v=89">
-<link rel="stylesheet" href="ui/dm-compact.css?v=102">
+<link rel="stylesheet" href="ui/dm-compact.css?v=160">
 </body>
 </html>

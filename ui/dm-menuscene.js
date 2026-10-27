@@ -727,6 +727,7 @@ IN.D.copy(IN.Dl); b.localToWorld(IN.D); IN.D.y += 0.03;
         if (MS._dbg) { camera.position.copy(MS._dbg.pos); camera.lookAt(MS._dbg.target); }
         if (cv.clientWidth !== lw || cv.clientHeight !== lh) { lw = cv.clientWidth; lh = cv.clientHeight; if (lw > 1) { fit(); adj = -120; ema = 16; } }
         renderer.render(scene, camera);
+        try { if (window.DMUI3DMesh) window.DMUI3DMesh.overlay(renderer, 'menu'); } catch (e) {}   // (v151) 3D HUD over the menu / loading scene
         if (++framesSeen === 3 && !MS.ready) { MS.ready = true; cv.classList.add('ms-in'); document.dispatchEvent(new CustomEvent('menuscene-ready')); try { const mv = document.querySelector('.menu-version'); if (mv && !/scene b/.test(mv.textContent)) mv.textContent += ' · scene b7'; } catch (e) {} info('ready (' + (renderer.backend && renderer.backend.isWebGPUBackend ? 'WebGPU' : 'WebGL2') + ', pr ' + pr.toFixed(2) + ')'); }
       };
       raf = requestAnimationFrame(loop);

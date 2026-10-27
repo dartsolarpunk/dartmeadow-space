@@ -25,10 +25,15 @@
     /* inner pieces of a tilted panel do not tilt again */
     'body.dm-ui3d .dm-ui3d-p .dm-ui3d-p{rotate:none;filter:none}'+
     'body.dm-ui3d .dm-ui3d-host{perspective:var(--ui3d-persp,900px)}'+
-    '.dm-ar-btn{position:absolute;left:118px;top:116px;width:34px;height:24px;padding:0;border:1px solid rgba(160,200,255,.55);border-radius:5px;'+
-    'background:rgba(14,22,40,.55);color:rgba(200,220,255,.95);font:700 11px/22px var(--font-mono,monospace);letter-spacing:.06em;cursor:pointer;z-index:4;pointer-events:auto}'+
-    '.mini-kite .dm-ar-btn{left:104px;top:79px}'+
-    '.dm-ar-btn.on{background:rgba(70,160,255,.85);color:#fff;border-color:#bfe0ff}'+
+    // (v151) the AR toggle is a kite item like SPD / ALT / ETA: theme label text with an accent underline, no dark box; centred inside the kite with margin
+    '.dm-ar-btn{position:absolute;left:75px;top:128px;transform:translate(-50%,-50%);padding:2px 4px 1px;margin:0;border:0;border-bottom:1px solid rgba(var(--acc-rgb),.75);border-radius:0;'+
+    'background:none;color:var(--cyan);font:400 .48rem/1 var(--font-hud,monospace);letter-spacing:.16em;'+
+    'text-shadow:0 0 6px rgba(var(--acc-rgb),.8);white-space:nowrap;cursor:pointer;z-index:4;pointer-events:auto}'+
+    '.dm-ar-btn::after{content:"";position:absolute;inset:-7px -6px}'+   // bigger thumb target, still inside the kite
+    '.mini-kite .dm-ar-btn,.hud-c .dm-ar-btn{display:block;min-width:0;min-height:0;height:auto;line-height:1}'+
+    '.hud-c .dm-ar-btn{left:262px;top:90px}'+   // (v160) space kite: beside the gauge row under ETA, not low-centre
+    '.mini-kite .dm-ar-btn{left:165px;top:60px}'+
+    '.dm-ar-btn.on{color:rgb(var(--hi-rgb));border-bottom-color:rgb(var(--hi-rgb));text-shadow:0 0 6px rgba(var(--hi-rgb),.6);background:none}'+
     '.dm-ar-btn[hidden]{display:none}';
   document.head.appendChild(css);
 

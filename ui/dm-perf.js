@@ -70,7 +70,7 @@
         const M = window.DMUI3DMesh, st = M && M.status;
         let hm = st ? st.mode : (window.DMUI3D && window.DMUI3D.enabled === false ? 'flat' : 'css');
         if (st && st.mode === 'mesh?') hm = 'css (mesh pending ' + (st.pending / 1000).toFixed(1) + 's)';
-        out += '\nHUD ' + hm + (st && st.mode === 'mesh' ? ' [' + st.painter + ']' : '') + (st && st.reason && st.mode !== 'mesh' ? '  ← ' + st.reason : '');
+        out += '\nHUD ' + hm + (st && st.mode === 'mesh' ? ' [' + st.painter + ']' : '') + (M && M.hudCost ? ' ' + M.hudCost().toFixed(2) + 'ms' : '') + (st && st.reason && st.mode !== 'mesh' ? '  ← ' + st.reason : '');
         if (window.DMAR && window.DMAR.mode) out += '\nAR ' + window.DMAR.mode;
       } catch (e) {}
       if (!small) {

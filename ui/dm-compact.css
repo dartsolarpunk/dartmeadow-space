@@ -39,7 +39,7 @@
   /* ── on the ground and in the sky: shared top bar ──────────────────── */
   .mini-kite{transform:translateX(-50%) scale(.72) !important;transform-origin:50% 0;left:40% !important;}
   #surface-overlay>div:nth-of-type(1),#atmo-overlay>div:nth-of-type(1){padding:6px 8px !important;}
-  #surface-overlay>div:nth-of-type(1) button,#atmo-overlay>div:nth-of-type(1) button{height:22px !important;padding:0 9px !important;font-size:.42rem !important;letter-spacing:.08em !important;}
+  #surface-overlay>div:nth-of-type(1) button:where(:not(.dm-ar-btn)),#atmo-overlay>div:nth-of-type(1) button:where(:not(.dm-ar-btn)){height:22px !important;padding:0 9px !important;font-size:.42rem !important;letter-spacing:.08em !important;}
   #surface-overlay>div:nth-of-type(1)>div:last-child,#atmo-overlay>div:nth-of-type(1)>div:last-child{gap:4px !important;}
   #surface-overlay .orbit-skyboard-btn{height:22px !important;font-size:.42rem !important;}
   .surf-view-btn{height:22px !important;font-size:.42rem !important;}
