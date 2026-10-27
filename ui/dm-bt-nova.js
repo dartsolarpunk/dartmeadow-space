@@ -12,10 +12,10 @@
   'use strict';
   const URL_GLB = 'assets/bt-engineering/nova.glb?v=1';
   const cfg = {
-    // stool on the floor right of Madison's desk, temple glTF frame (= Blender (-3.95, 90.75, -22.5) → glTF (x, z, -y)); turned toward Madison
-    pos: [-3.95, -22.5, -90.75], yaw: -0.5, scale: 2.2,
+    // stool on open floor just right of Madison's desk, clear of the drawer pedestal (desk x −8.4…−4.6), temple glTF frame (= Blender (-3.55, 90.2, -22.5) → glTF (x, z, -y)); turned toward Madison
+    pos: [-3.55, -22.5, -90.2], yaw: -0.9, scale: 2.2,
     near: 14, nearY: 5, waveAt: 4.0, ixRadius: 6, ixZoneM: 2.0, ixAimM: 0.5, tapR: 1.1,
-    breath: 0.05, sway: 0.03, headYaw: 0.4, headPitch: 0.1, turnEvery: [2.4, 5.2], blinkEvery: [2.0, 4.8], footTap: 0.12, shardGlow: 1.8,
+    breath: 0.05, sway: 0.03, headYaw: 0.4, headPitch: 0.1, turnEvery: [2.4, 5.2], blinkEvery: [2.0, 4.8], footTap: 0.12, shardGlow: 1.8, hairGlow: 0.22, skinGlow: 0.2, stoolGlow: 0.35,
   };
   const NOVA = { cfg, ready: false, root: null, mixer: null, actions: {}, active: false };
   let hooked = false, loading = false, tick = null;
@@ -51,13 +51,15 @@
       for (const m of [o.material].flat()) {
         if (!m || seen.has(m)) continue; seen.add(m);
         const n = m.name || '';
-        if (n === 'NOVA_Face' && m.map) { faceTex = m.map; if (m.emissive) { m.emissive.setRGB(1, 0.7, 0.55); m.emissiveMap = m.map; m.emissiveIntensity = 0.07; m.roughness = 0.5; } }
-        else if (n === 'NOVA_Skin' || n === 'NOVA_Wood') { if (n === 'NOVA_Skin') m.color.multiplyScalar(0.94).offsetHSL(0, 0.06, 0); if ('clearcoat' in m) { m.clearcoat = n === 'NOVA_Wood' ? 0.5 : 0.15; m.clearcoatRoughness = 0.35; } }
+        if (n === 'NOVA_Face' && m.map) { faceTex = m.map; if (m.emissive) { m.emissive.setRGB(1, 0.62, 0.45); m.emissiveMap = m.map; m.emissiveIntensity = cfg.skinGlow; m.roughness = 0.5; } }
+        else if (n === 'NOVA_Skin' || n === 'NOVA_Wood') { if (n === 'NOVA_Skin') { m.color.multiplyScalar(0.94).offsetHSL(0, 0.06, 0); if (m.emissive) { m.emissive.copy(m.color).multiplyScalar(0.9); m.emissiveIntensity = cfg.skinGlow; } } if ('clearcoat' in m) { m.clearcoat = n === 'NOVA_Wood' ? 0.5 : 0.15; m.clearcoatRoughness = 0.35; } }
         else if (n === 'NOVA_Leather' || n === 'NOVA_Torso') { if ('clearcoat' in m) { m.clearcoat = 0.6; m.clearcoatRoughness = 0.25; } }
         else if (n === 'NOVA_Hair') {
-          m.side = THREE.DoubleSide; m.alphaTest = 0.1; m.transparent = false; m.depthWrite = true;   // low cutoff: mip-averaged strand alpha must not drop below it at distance
+          m.side = THREE.DoubleSide; m.alphaTest = 0.1; m.transparent = false; m.depthWrite = true;
+          if (m.emissive) { m.emissive.setRGB(1, 0.45, 0.18); if (m.map) m.emissiveMap = m.map; m.emissiveIntensity = cfg.hairGlow; }   // faint copper self-glow so the hair reads orange under the purple office light   // low cutoff: mip-averaged strand alpha must not drop below it at distance
           if ('sheen' in m) { m.sheen = 0.6; m.sheenRoughness = 0.4; m.sheenColor && m.sheenColor.setRGB(1, 0.6, 0.35); }
         }
+        else if (n === 'NOVA_Stool') { if (m.emissive) { m.emissive.setRGB(0.9, 0.55, 0.3); m.emissiveIntensity = cfg.stoolGlow; } }   // warm lacquer so the stool reads in the dark office
         else if (n === 'NOVA_Visor') {
           m.transparent = true; m.depthWrite = false; m.opacity = Math.min(m.opacity == null ? 0.22 : m.opacity, 0.25); m.roughness = 0.04;
           if ('clearcoat' in m) { m.clearcoat = 1; m.clearcoatRoughness = 0.02; }
