@@ -368,7 +368,7 @@
     S.flight=FR0; S.flightRender=FR0render;
     // the game's renderer draws the full space overlay (fullRender) and the terrain board (boardRender, from _pwRender);
     // in the table-top orrery view it stays idle
-    if(FR0render) FR0.render=function(sc,cm){ if(!S||S.kind!=='camera') return FR0render.call(FR0,sc,cm); if(S.full) return fullRender(sc,cm); if(S.mode==='terrain'&&S._inBoard) return FR0render.call(FR0,sc,cm); if(S.mode==='terrain'&&S.shipBoard&&S._bfDone!==S._fn){ S._bfDone=S._fn; return boardRender(FR0,sc,cm); } };   // mesh maps draw their board from the flight loop (once per frame)   // terrain: only the board's own pass draws
+    if(FR0render) FR0.render=function(sc,cm){ if(!S||S.kind!=='camera') return FR0render.call(FR0,sc,cm); if(S.full) return fullRender(sc,cm); if(S.mode==='terrain'&&S._inBoard) return FR0render.call(FR0,sc,cm); if(S.mode==='terrain'&&!S.fp&&S.shipBoard&&S._bfDone!==S._fn){ S._bfDone=S._fn; return boardRender(FR0,sc,cm); } };   // mesh maps draw their board from the flight loop (once per frame)   // terrain: only the board's own pass draws
     try{ var gc=FR0&&FR0.domElement; if(gc){ gc.classList.add('dm-ar-game'); S.gameCv=gc; } }catch(e){}
     viewBtn(true);
     try{ window.DMUI3DMesh&&DMUI3DMesh.arHold(true); }catch(e){}
@@ -393,14 +393,14 @@
   var SAFE_K=4;   // standoff: 4 solar radii from the Sun's centre
   function fullRender(sc,cm){
     var fc=g('flightCamera'), orig=S.flightRender, T=window.THREE;
-    if(!fc||cm!==fc) return orig.call(S.flight,sc,cm);
+    if(!(fc&&cm===fc)&&!(S.fp&&cm&&cm===g('surfCamera'))) return orig.call(S.flight,sc,cm);   // (v178) first person on a planet map draws through surfCamera
     _fq=_fq||new T.Quaternion(); _fp=_fp||new T.Vector3(); _fv=_fv||new T.Vector3(); _fs=_fs||new T.Vector3();
     _fq.copy(cm.quaternion); _fp.copy(cm.position);
     var bg=sc.background, hid=[], ca=null;
     try{
       if(S.dq) cm.quaternion.multiply(S.dq);
       var sm=g('sunMesh'), R0=g('SOL_SUN_RADIUS')||160;
-      if(sm){ (sm.parent&&sm.parent.isGroup?sm.parent:sm).getWorldPosition(_fs); cm.getWorldPosition(_fv);
+      if(sm&&!S.fp){ (sm.parent&&sm.parent.isGroup?sm.parent:sm).getWorldPosition(_fs); cm.getWorldPosition(_fv);
         var d=_fv.distanceTo(_fs), safe=R0*SAFE_K;
         if(d<safe){ _fv.sub(_fs); if(_fv.lengthSq()<1e-6) _fv.set(0,0,1); _fv.setLength(safe).add(_fs);
           if(cm.parent) cm.parent.worldToLocal(_fv); cm.position.copy(_fv); S.safeHold=true; } else S.safeHold=false; }
@@ -522,11 +522,12 @@
     var T=window.THREE, ctx=terrainCtx(), mode=ctx?'terrain':'space';
     if(mode!==S.mode) switchMode(mode);
     S._fn=(S._fn|0)+1; S.shipBoard=!!(ctx&&ctx.ship);
-    S.view='full'; var q=camPose(T), full=mode==='space';   // (v178) space = full fly-through around the device; maps = tabletop
+    S.view='full'; var fp=mode==='terrain'&&!!(ctx&&(ctx.ship?((g('SHIP_WALK')||{}).fp):g('surfFirstPerson'))); S.fp=fp;
+    var q=camPose(T), full=mode==='space'||fp;   // (v178) first person on a map: the same scene at life scale around the viewer; back to 3rd person returns to the same table anchor   // (v178) space = full fly-through around the device; maps = tabletop
     if(full!==!!S.full){ S.full=full; if(full) S.q0=null; viewBtn(true); arBlend(full); }
     document.body.classList.toggle('dm-ar-full',full||mode==='terrain');
     S.cam.position.set(0,0,0); S.cam.quaternion.copy(q); S.cam.updateMatrixWorld(true);
-    if(mode==='terrain'){   // the game's own loop draws the world onto the board (boardRender, called from _pwRender)
+    if(mode==='terrain'&&!fp){   // the game's own loop draws the world onto the board (boardRender, called from _pwRender)
       if(!S.placed){ S.ray.setFromCamera(new T.Vector2(0,0),S.cam); var ap=S.hit; if(!(S.ray.ray.intersectPlane(S.plane,ap)&&ap.length()<1.6)){ var fw=S.ray.ray.direction; ap.set(fw.x,0,fw.z); if(ap.lengthSq()<1e-6) ap.set(0,0,-1); ap.normalize().multiplyScalar(0.9); ap.y=-0.25; } S.table.position.copy(ap); S.table.rotation.set(0,Math.atan2(-ap.x,-ap.z)+Math.PI,0); S.table.visible=true; S.placed=true; S.autoPlaced=true; toast(''); }   // (v165) auto-placed where the phone looks: held level it sits ~15° below centre, inside the view
       return; }
     if(full){
@@ -546,7 +547,7 @@
     try{ window.DMUI3DMesh&&DMUI3DMesh.drawTo(S.r); }catch(e){}   // 3D HUD over the passthrough (DOM HUD if the mesh is off)
   }
 
-  window.DMAR={toggle:toggle,exit:exit,get active(){ return !!S; }, get letWarm(){ return !!(S&&S.full); }, get passthrough(){ return !!(S&&S.kind==='camera'&&(S.full||S.mode==='terrain')); }, get noAtmo(){ return !!(S&&S.kind==='camera'&&(S.full||S.mode==='terrain')); }, get boardOn(){ return !!(S&&S.kind==='camera'&&S.mode==='terrain'); }, board:boardRender, get mode(){ return S?S.kind+'/'+(S.mode||'-')+(S.placed?' placed':''):(supported?'off (webxr ready)':'off (camera fallback)'); }, _cam:function(){ return S; },get supported(){ return supported; },_buildDiorama:buildDiorama,_fillDiorama:fillDiorama,_stripSky:stripSky,_unstrip:unstrip};
+  window.DMAR={toggle:toggle,exit:exit,get active(){ return !!S; }, get letWarm(){ return !!(S&&S.full); }, get passthrough(){ return !!(S&&S.kind==='camera'&&(S.full||S.mode==='terrain')); }, get noAtmo(){ return !!(S&&S.kind==='camera'&&(S.full||S.mode==='terrain')); }, get boardOn(){ return !!(S&&S.kind==='camera'&&S.mode==='terrain'&&!S.fp); }, board:boardRender, get mode(){ return S?S.kind+'/'+(S.mode||'-')+(S.placed?' placed':''):(supported?'off (webxr ready)':'off (camera fallback)'); }, _cam:function(){ return S; },get supported(){ return supported; },_buildDiorama:buildDiorama,_fillDiorama:fillDiorama,_stripSky:stripSky,_unstrip:unstrip};
   function init(){
     placeButtons();
     try{ new MutationObserver(function(){ placeButtons(); }).observe(document.body,{childList:true,subtree:false}); }catch(e){}
