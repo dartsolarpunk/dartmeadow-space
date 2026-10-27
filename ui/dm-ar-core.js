@@ -11,8 +11,7 @@
      diorama (grid-unit LOD by graphics preset), scrolled under the fixed anchor as Ariel
      nears the border, the edges fading through the world's horizon colour into the
      passthrough. Atmospheric flight keeps the same anchor and only widens the LOD span.
-   • Interstellar: the live space scene draws over passthrough, its background and sky
-     shells removed, the camera following the game camera with the device pose layered on.
+   • Interstellar: a table-top orrery (Sun, planets, orbits, your ship) placed like the terrain map; the game scene is not redrawn
    Game logic keeps running: while the session owns the frame, window rAF callbacks are
    pumped from the XR frame and the hidden flight canvas render is skipped (no double cost).
    Modular: nothing in index.html calls in here except the script tag. API: window.DMAR. */
@@ -126,6 +125,43 @@
   }
   function unstrip(scene,saved){ if(!saved) return; scene.background=saved.bg; saved.hid.forEach(function(o){ o.visible=true; }); }
 
+  // ---------- interstellar: a table-top orrery ----------
+  // Drawing the live flightScene through a second (WebGL) renderer meant recompiling every game material on the AR
+  // renderer (a long freeze on iOS) and put the AR eye wherever the game camera was, often inside the Sun's glow
+  // shells (the full-screen yellow-tan view). Space AR instead shows a small orrery, built from celestialBodies,
+  // on the placed table: one shared sphere geometry and a few flat materials, so it compiles in milliseconds.
+  var ORR_R=0.22, PCOL={Mercury:0x9c8a7a,Venus:0xddaa44,Earth:0x3a6fe0,Mars:0xcc4411,Jupiter:0xcc9944,Saturn:0xe0c27a,Uranus:0x7fd6e0,Neptune:0x3f5fe0,Pluto:0xc9b29a};   // metres: outermost orbit on the table
+  function buildOrrery(T){
+    var grp=new T.Group(), geo=new T.SphereGeometry(1,24,16), items=[], ringMat=new T.LineBasicNodeMaterial({color:0x8fd0ff,transparent:true,opacity:0.28});
+    var sunM=new T.Mesh(geo,new T.MeshBasicNodeMaterial({color:0xffd27a})); sunM.scale.setScalar(0.03); grp.add(sunM);
+    var halo=new T.Mesh(geo,new T.MeshBasicNodeMaterial({color:0xffb347,transparent:true,opacity:0.18,depthWrite:false})); halo.scale.setScalar(0.045); grp.add(halo);
+    var me=new T.Mesh(new T.OctahedronGeometry(1),new T.MeshBasicNodeMaterial({color:0x6effd8})); me.scale.setScalar(0.009); grp.add(me);
+    var ringGeo=(function(){ var pts=[]; for(var i=0;i<=64;i++){ var a=i/64*Math.PI*2; pts.push(new T.Vector3(Math.cos(a),0,Math.sin(a))); } return new T.BufferGeometry().setFromPoints(pts); })();
+    grp.position.y=0.06;   // hovering a little above the table
+    return {grp:grp,geo:geo,ringGeo:ringGeo,ringMat:ringMat,sun:sunM,me:me,items:items,mats:[sunM.material,halo.material,me.material,ringMat],tmp:new T.Vector3(),tmp2:new T.Vector3(),n:-1};
+  }
+  function fillOrrery(O,T){
+    var CB=g('celestialBodies')||[], sunB=null, list=[];
+    for(var i=0;i<CB.length;i++){ var b=CB[i]; if(!b||!b.mesh) continue; if(b.name==='Sun'){ sunB=b; continue; }
+      if(/moon|station|ship|comet|asteroid/i.test((b.type||'')+' '+(b.name||''))) continue; if(b.orbitR>0) list.push(b); }
+    var sp=O.tmp2.set(0,0,0); if(sunB) sunB.mesh.getWorldPosition(sp);
+    var dmax=1; for(i=0;i<list.length;i++) dmax=Math.max(dmax,list[i].orbitR);
+    var comp=function(d){ return ORR_R*Math.sqrt(Math.max(0,d)/dmax); };   // sqrt: the inner planets don't collapse into the Sun
+    if(O.n!==list.length){   // (re)build the planet set
+      O.items.forEach(function(it){ O.grp.remove(it.m); O.grp.remove(it.ring); it.m.material.dispose(); }); O.items.length=0;
+      for(i=0;i<list.length;i++){ var b2=list[i], mt=b2.renderMesh&&b2.renderMesh.material||b2.mesh.material, c=0xb0c4de;
+        try{ if(mt&&mt.color) c=mt.color.getHex(); }catch(e){}
+        if(PCOL[b2.name]!=null) c=PCOL[b2.name]; else if(b2.col!=null) c=b2.col;   // textured planets report white
+        var m=new T.Mesh(O.geo,new T.MeshBasicNodeMaterial({color:c})), ring=new T.Line(O.ringGeo,O.ringMat);
+        var rr=comp(b2.orbitR); ring.scale.set(rr,1,rr); m.scale.setScalar(Math.min(0.016,Math.max(0.005,0.006*Math.cbrt((b2.rRatio||1))))); 
+        O.grp.add(m); O.grp.add(ring); O.items.push({b:b2,m:m,ring:ring}); }
+      O.n=list.length; }
+    var v=O.tmp;
+    for(i=0;i<O.items.length;i++){ var it=O.items[i]; it.b.mesh.getWorldPosition(v); v.sub(sp); v.y=0; var d=v.length(), k=d>1e-6?comp(d)/d:0; it.m.position.set(v.x*k,0,v.z*k); }
+    var fc=g('flightCamera'); if(fc){ fc.getWorldPosition(v); v.sub(sp); var dy=v.y; v.y=0; var d2=v.length(), k2=d2>1e-6?Math.min(ORR_R*1.15,comp(d2))/d2:0; O.me.position.set(v.x*k2,Math.max(-0.05,Math.min(0.05,dy/dmax*ORR_R)),v.z*k2); }
+  }
+  function disposeOrrery(O){ try{ O.geo.dispose(); O.ringGeo.dispose(); O.me.geometry.dispose(); O.mats.forEach(function(m){ m.dispose(); }); O.items.forEach(function(it){ it.m.material.dispose(); }); }catch(e){} }
+
   // ---------- session ----------
   async function enter(){
     var T=window.THREE; if(!T||!navigator.xr){ toast('AR is not available on this device'); setTimeout(function(){toast('');},2500); return; }
@@ -177,18 +213,17 @@
     var T=window.THREE, ref=S.r.xr.getReferenceSpace();
     var ctx=terrainCtx(), mode=ctx?'terrain':'space';
     if(mode!==S.mode){ switchMode(mode); }
-    if(mode==='terrain'){
+    {
       if(!S.placed&&xf&&S.hitSrc){ var hs=xf.getHitTestResults(S.hitSrc); if(hs.length){ _lastHit=hs[0]; var p=hs[0].getPose(ref); S.reticle.matrix.fromArray(p.transform.matrix); S.reticle.visible=true; } else S.reticle.visible=false; }
       if(S.anchor&&xf&&xf.trackedAnchors&&xf.trackedAnchors.has(S.anchor)){ var ap=xf.getPose(S.anchor.anchorSpace,ref); if(ap) S.table.matrix.fromArray(ap.transform.matrix); }
-      if(S.placed){ if(!S.D){ S.D=buildDiorama(T); S.table.add(S.D.grp); } fillDiorama(S.D,ctx,false); }
+      if(S.placed) content(T,ctx,mode);
       S.r.render(S.scene,S.cam); hud(S.cam);
-    }else{
-      var fs=g('flightScene'), fc=g('flightCamera');
-      if(fs&&fc){ fc.updateMatrixWorld(); fc.matrixWorld.decompose(S.rig.position,S.rig.quaternion,S.rig.scale); S.rig.scale.setScalar(1); S.rig.updateMatrixWorld(true);
-        if(fs.background){ if(S.sky) S.sky.bg=fs.background; fs.background=null; }   // the game may re-set it each frame
-        S.rigCam.near=fc.near; S.rigCam.far=fc.far; S.r.render(fs,S.rigCam); hud(S.rigCam); }
-      else { S.r.render(S.scene,S.cam); hud(S.cam); }
     }
+  }
+  // what sits on the placed table: the terrain diorama, or the orrery in space (only the one in use is visible)
+  function content(T,ctx,mode){
+    if(mode==='terrain'){ if(!S.D){ S.D=buildDiorama(T); S.table.add(S.D.grp); } S.D.grp.visible=true; if(S.O) S.O.grp.visible=false; fillDiorama(S.D,ctx,false); }
+    else { if(!S.O){ S.O=buildOrrery(T); S.table.add(S.O.grp); } S.O.grp.visible=true; if(S.D) S.D.grp.visible=false; fillOrrery(S.O,T); }
   }
   // the 3D HUD (ui/dm-ui3d-mesh.js): the very same merged mesh, on a head-locked plate 0.6 m out
   var _m4=null;
@@ -201,11 +236,8 @@
     var ac=S.r.autoClear; S.r.autoClear=false; try{ S.r.clearDepth&&S.r.clearDepth(); S.r.render(S.hudScene,camUsed); }catch(e){} S.r.autoClear=ac;
   }
   function switchMode(mode){
-    var fs=g('flightScene');
-    if(S.mode==='space'&&fs) unstrip(fs,S.sky), S.sky=null;
-    S.mode=mode;
-    if(mode==='space'&&fs){ S.sky=stripSky(fs,window.THREE); S.q0=null; toast(''); }
-    if(mode==='terrain'&&!S.placed) toast(S.kind==='camera'?'Aim at a table and tap to place the world (approximate placement)':'Point at a flat surface and tap to place the world');
+    S.mode=mode;   // the game's flightScene is never drawn or modified in AR: nothing to strip, the AR canvas clears to transparent
+    if(!S.placed) prompt();
     if(mode==='terrain'&&S.D) fillDiorama(S.D,terrainCtx(),true);
   }
   // Restoring the game's rAF and flightRenderer.render is guaranteed: each teardown step is isolated and the
@@ -220,7 +252,7 @@
       try{ var M=window.DMUI3DMesh; M&&M.arHold(false); }catch(e){}
       try{ var fs=g('flightScene'); if(fs) unstrip(fs,s.sky); }catch(e){}
       try{ s.hitSrc&&s.hitSrc.cancel(); }catch(e){} try{ s.anchor&&s.anchor.delete&&s.anchor.delete(); }catch(e){}
-      try{ s.D&&(s.D.geo.dispose(),s.D.mesh.material.dispose()); }catch(e){}
+      try{ s.D&&(s.D.geo.dispose(),s.D.mesh.material.dispose()); }catch(e){} try{ s.O&&disposeOrrery(s.O); }catch(e){}
       try{ s.session&&s.session.removeEventListener('end',cleanup); }catch(e){}
       try{ s.r.dispose(); }catch(e){} try{ s.cv.remove(); }catch(e){}
     } finally {
@@ -234,6 +266,8 @@
   window.addEventListener('pagehide',function(){ if(S) abort('pagehide'); });
   window.addEventListener('error',function(ev){ if(S&&S.errs>=3) abort(ev&&ev.message); });
   function exit(){ if(S&&S.session) S.session.end().catch(cleanup); else if(S) cleanup(); }
+  function prompt(){ var what=S.mode==='space'?'the solar system':'the world';
+    toast(S.kind==='camera'?'Aim at a table and tap to place '+what+' (approximate placement)':'Point at a flat surface and tap to place '+what); }
   function say(m,ms){ toast(m); setTimeout(function(){ toast(''); },ms||3000); }
   function toggle(){
     if(S){ exit(); return; }
@@ -249,23 +283,30 @@
   function onOri(e){ if(e.alpha==null&&e.beta==null) return; ori.a=e.webkitCompassHeading!=null?-e.webkitCompassHeading:(e.alpha||0); ori.b=e.beta||0; ori.g=e.gamma||0; ori.ok=true; }
   function devQuat(T,out){   // three.js DeviceOrientationControls convention (camera looks down -Z)
     var D=Math.PI/180, so=window.screen&&window.screen.orientation, sa=(so&&so.angle)||(+window.orientation||0);
-    var e=new T.Euler(ori.b*D,(ori.a||0)*D,-ori.g*D,'YXZ'); out.setFromEuler(e);
+    var b=ori.ok?ori.b:90;   // no motion data yet: assume the phone held upright, looking ahead
+    var e=new T.Euler(b*D,(ori.a||0)*D,-ori.g*D,'YXZ'); out.setFromEuler(e);
     out.multiply(new T.Quaternion(-Math.sqrt(0.5),0,0,Math.sqrt(0.5)));
     out.multiply(new T.Quaternion().setFromAxisAngle(new T.Vector3(0,0,1),-sa*D)); return out; }
   var TABLE_Y=-0.45;   // the virtual table: 45 cm below the phone
   async function enterCam(perm){
     var T=window.THREE; if(!T) throw new Error('engine not loaded');
+    var _t0=performance.now(), _lg=function(w){ console.log('[AR] cam '+w+' '+Math.round(performance.now()-_t0)+'ms'); };
     var stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}}});
-    var pr=await perm; if(pr==='granted') window.addEventListener('deviceorientation',onOri,true);
+    _lg('stream'); var pr=await perm; if(pr==='granted') window.addEventListener('deviceorientation',onOri,true);
     var vid=document.createElement('video'); vid.id='dm-ar-video'; vid.muted=true; vid.playsInline=true; vid.setAttribute('playsinline',''); vid.autoplay=true; vid.srcObject=stream;
     var cv=document.createElement('canvas'); cv.id='dm-ar-canvas'; cv.style.cssText='position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none';
-    var drop=function(){ try{ stream.getTracks().forEach(function(k){ k.stop(); }); }catch(e){} vid.remove(); cv.remove(); window.removeEventListener('deviceorientation',onOri,true); };
+    // the hidden game canvas stops drawing from here on (it's covered by the camera anyway), so the AR renderer's
+    // context comes up without queuing behind full game frames on the GPU
+    var FR0=g('flightRenderer'), FR0render=FR0&&FR0.render; if(FR0render) FR0.render=function(){};
+    toast('Starting camera AR\u2026');
+    var drop=function(){ if(FR0render) FR0.render=FR0render;  try{ stream.getTracks().forEach(function(k){ k.stop(); }); }catch(e){} vid.remove(); cv.remove(); window.removeEventListener('deviceorientation',onOri,true); };
     // WebGL2 backend (as the WebXR path): alpha compositing over the <video> is dependable on iOS and it
     // doesn't stand up a second WebGPU device next to the game's
     var r=new T.WebGPURenderer({canvas:cv,alpha:true,antialias:true,forceWebGL:true,powerPreference:'high-performance'});
-    try{ document.body.appendChild(vid); document.body.appendChild(cv); try{ await vid.play(); }catch(e){}
+    try{ document.body.appendChild(vid); document.body.appendChild(cv); try{ await Promise.race([vid.play(),new Promise(function(r){ setTimeout(r,1500); })]); }catch(e){}   // play() can stay pending (autoplay policy, a stalled stream): never block entering on it
       await Promise.race([r.init(),new Promise(function(_,rej){ setTimeout(function(){ rej(new Error('renderer init timed out')); },10000); })]); }
     catch(e){ drop(); try{ r.dispose(); }catch(_){} throw e; }
+    _lg('renderer');
     r.setClearColor(0x000000,0); r.setPixelRatio(Math.min(2,window.devicePixelRatio||1)); r.setSize(innerWidth,innerHeight,false);
     var scene=new T.Scene();
     scene.add(new T.HemisphereLight(0xdfe8ff,0x40362a,1.4)); var sun=new T.DirectionalLight(0xffffff,1.6); sun.position.set(0.4,1,0.3); scene.add(sun);
@@ -276,13 +317,13 @@
     var rig=new T.Object3D(), rigCam=new T.PerspectiveCamera(60,1,0.05,1e9); rig.add(rigCam);
     S={kind:'camera',stream:stream,vid:vid,r:r,cv:cv,scene:scene,cam:cam,reticle:reticle,table:table,rig:rig,rigCam:rigCam,placed:false,errs:0,D:null,sky:null,flight:null,mode:null,
        q0:null,yaw0:null,ray:new T.Raycaster(),plane:new T.Plane(new T.Vector3(0,1,0),-TABLE_Y),hit:new T.Vector3(),hasHit:false,dq:new T.Quaternion()};
-    S.onTap=function(e){ if(!S||S.kind!=='camera'||S.mode!=='terrain') return; var t=e.target;
+    S.onTap=function(e){ if(!S||S.kind!=='camera'||S.placed) return; var t=e.target;
       if(t&&t.closest&&t.closest('button,a,input,.hud-c,.hud-l,.hud-r,.mini-kite,.joystick-base,.joystick,#minimap,.dm-ar-btn,.menu-panel,.art-btns')) return;
       camTapPlace(e.clientX,e.clientY); };
     window.addEventListener('pointerup',S.onTap,true);
     S.onResize=function(){ if(!S) return; S.r.setSize(innerWidth,innerHeight,false); S.cam.fov=innerHeight>innerWidth?68:50; S.cam.aspect=innerWidth/innerHeight; S.cam.updateProjectionMatrix(); };
     window.addEventListener('resize',S.onResize);
-    var FR=g('flightRenderer'); if(FR&&FR.render){ S.flight=FR; S.flightRender=FR.render; FR.render=function(){}; }
+    S.flight=FR0; S.flightRender=FR0render;
     try{ window.DMUI3DMesh&&DMUI3DMesh.arHold(true); }catch(e){}
     document.body.classList.add('dm-ar-on','dm-ar-cam'); document.documentElement.classList.add('dm-ar-on');
     syncBtns(); if(pr!=='granted') say('Motion access off: the view won\u2019t follow the phone (Settings \u203a Safari \u203a Motion & Orientation)',4500);
@@ -295,27 +336,18 @@
     return q; }
   function camTapPlace(x,y){ var T=window.THREE, nd=new T.Vector2(x/innerWidth*2-1,-(y/innerHeight)*2+1);
     S.ray.setFromCamera(nd,S.cam); var p=new T.Vector3();
-    if(!S.ray.ray.intersectPlane(S.plane,p)||p.length()>2.2){ var f=new T.Vector3(0,0,-1).applyQuaternion(S.cam.quaternion); f.y=0; if(f.lengthSq()<1e-6) f.set(0,0,-1); f.normalize(); p.set(f.x*0.7,TABLE_Y,f.z*0.7); }
+    if(!S.ray.ray.intersectPlane(S.plane,p)||p.length()>2.2){ p.copy(S.ray.ray.direction).multiplyScalar(0.8); p.y=Math.min(p.y,-0.12); }   // no table hit nearby: where the tap points, 80 cm out, kept just below eye level
     S.table.position.copy(p); S.table.rotation.set(0,Math.atan2(-p.x,-p.z)+Math.PI,0); S.table.visible=true; S.placed=true; S.reticle.visible=false; toast(''); }
   function camFrame(t){
     var T=window.THREE, ctx=terrainCtx(), mode=ctx?'terrain':'space';
     if(mode!==S.mode) switchMode(mode);
     var q=camPose(T);
-    if(mode==='terrain'){
+    {
       S.cam.position.set(0,0,0); S.cam.quaternion.copy(q); S.cam.updateMatrixWorld(true);
       if(!S.placed){ S.ray.setFromCamera(new T.Vector2(0,0),S.cam); var p=new T.Vector3();
         if(S.ray.ray.intersectPlane(S.plane,p)&&p.length()<2.2){ S.reticle.position.copy(p); S.reticle.visible=true; } else S.reticle.visible=false; }
-      if(S.placed){ if(!S.D){ S.D=buildDiorama(T); S.table.add(S.D.grp); } fillDiorama(S.D,ctx,false); }
+      if(S.placed) content(T,ctx,mode);
       S.r.render(S.scene,S.cam);
-    }else{
-      var fs=g('flightScene'), fc=g('flightCamera');
-      if(fs&&fc){ if(!S.q0) S.q0=q.clone().invert();
-        fc.updateMatrixWorld(); fc.matrixWorld.decompose(S.rig.position,S.rig.quaternion,S.rig.scale); S.rig.scale.setScalar(1);
-        S.rigCam.quaternion.copy(S.q0).multiply(q);   // device turn since entering space, layered on the game camera
-        S.rigCam.fov=fc.fov||60; S.rigCam.aspect=innerWidth/innerHeight; S.rigCam.near=fc.near; S.rigCam.far=fc.far; S.rigCam.updateProjectionMatrix(); S.rig.updateMatrixWorld(true);
-        if(fs.background){ if(S.sky) S.sky.bg=fs.background; fs.background=null; }
-        S.r.render(fs,S.rigCam); }
-      else S.r.render(S.scene,S.cam);
     }
     try{ window.DMUI3DMesh&&DMUI3DMesh.drawTo(S.r); }catch(e){}   // 3D HUD over the passthrough (DOM HUD if the mesh is off)
   }
