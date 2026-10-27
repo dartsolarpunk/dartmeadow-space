@@ -288,7 +288,7 @@
   const kick=()=>{ if(!G.raf) G.raf=requestAnimationFrame(frame); };
 
   // ── the bubbles ────────────────────────────────────────────────────────
-  const ICON={land:'⬇',sky:'🛹',mark:'✦',info:'ⓘ',reset:'⟲',spin:'❚❚',fly:'⇢',me:'⌖',clear:'✕',pick:'◎',cancel:'✕',idle:'⏸',mach:'≋'};
+  const ICON={land:'⬇',sky:'🛹',mark:'✦',info:'ⓘ',reset:'⟲',spin:'❚❚',fly:'⇢',me:'⌖',clear:'✕',list:'☰',pick:'◎',cancel:'✕',idle:'⏸',mach:'≋'};
   function machName(){ try{ return MACH_PRESETS[atmoPreset].name; }catch(e){ return 'M1'; } }
   // over the top in every mode (fixed angles: straight up, then up and left)
   const A_RESET=-90, A_SPIN=-126;
@@ -303,7 +303,8 @@
       {k:'land',t:'LAND',tip:'Land and walk at the marker (no marker: a spot is picked for you, under the board)',on:()=>goSurface()},
       {k:'sky',t:'SKY',tip:'Fly the skyboard at the default flight altitude (150 ft) over the marker (no marker: a spot is picked for you, under the board)',on:()=>goSky()},
       {k:'mark',t:'MARK',tip:'Save the plotted site to your Journal',need:true,on:()=>markTarget()},
-      {k:'info',t:'INFO',tip:'About this world',on:()=>info()}];
+      {k:'info',t:'INFO',tip:'About this world',on:()=>info()},
+      {k:'list',t:'BODIES',tip:'List this system\'s planets and moons — pick one to travel to',on:()=>{ try{ window.openSystemBodyList&&openSystemBodyList(); }catch(e){} }}];
     if(G.mode==='surf') return [
       {k:'fly',t:'FLY',tip:'FLY THERE — board, lift off and auto-fly to the marker at '+(()=>{ try{ return MACH_PRESETS[MACH_AUTO_DEFAULT].name; }catch(e){ return 'M5'; } })(),need:true,on:()=>{ const t=G.target; try{ _lmWalkFly(t.lat,t.lon); }catch(e){} }},
       {k:'sky',t:'SKY',tip:'Board the skyboard and lift off from here',on:()=>{ try{ surfRemountSkyboard(); }catch(e){} }},

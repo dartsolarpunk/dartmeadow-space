@@ -832,6 +832,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 #qt-tree .tt-row:active{background:rgba(var(--acc-rgb),0.16);}
 #qt-tree .tt-row.gal .tt-name{font-family:var(--font-hud);font-size:0.56rem;letter-spacing:0.12em;}
 #qt-tree .tt-row.sys .tt-name{color:#f2e6b8;}
+#qt-tree .tt-row.tt-flash{animation:ttFlash 1.6s ease-out 1;}
+@keyframes ttFlash{0%{background:rgba(var(--acc-rgb),0.42);}100%{background:transparent;}}
 #qt-tree .tt-row.here{border-color:var(--cyan);background:rgba(var(--acc-rgb),0.14);box-shadow:0 0 10px rgba(var(--acc-rgb),0.2) inset;}
 #qt-tree .tt-row.dest .tt-go{color:var(--gold);}
 #qt-tree .tt-tog{flex:0 0 30px;height:32px;display:flex;align-items:center;justify-content:center;background:none;border:1px solid rgba(var(--acc-rgb),0.18);border-radius:3px;color:var(--cyan);font-size:0.8rem;cursor:pointer;padding:0;}
@@ -989,13 +991,13 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-perflog.js?v=2" defer></script>
 <script src="ui/dm-spectator.js?v=1" defer></script>
 <script src="ui/dm-stack.js?v=1" defer></script>
-<script src="ui/dm-globe.js?v=8" defer></script>
+<script src="ui/dm-globe.js?v=9" defer></script>
 <script src="ui/dm-star.js?v=8" defer></script>
 <script src="ui/dm-mist.js?v=7" defer></script>
 <script src="ui/dm-atmo.js?v=150" defer></script>
 <script src="ui/dm-localcollide.js?v=1" defer></script>
 <script src="ui/dm-menuscene.js?v=13" defer></script>
-<script src="ui/dm-starbubble.js?v=3" defer></script>
+<script src="ui/dm-starbubble.js?v=4" defer></script>
 <script src="ui/dm-birdtemple.js?v=122" defer></script>
 <script src="ui/dm-bt-engineering.js?v=5" defer></script>
 <script src="ui/dm-bt-madison.js?v=5" defer></script>
@@ -5896,7 +5898,7 @@ function renderTravelTree(){
       const isHere=n.here||(inCurSys&&n.body&&hb&&n.body===hb);
       const row=document.createElement('div');
       row.className='tt-row'+(isHere?' here':'')+(inCurSys&&n.body&&n.body===destName?' dest':'')+(n.galNode?' gal':n.sysNode?' sys':'');
-      row.style.paddingLeft=(4+depth*14)+'px';
+      row.style.paddingLeft=(4+depth*14)+'px'; row.dataset.ttid=n.id;
       row.innerHTML=(n.kids?`<button class="tt-tog" aria-label="${open?'Collapse':'Expand'} ${_ttEsc(n.label)}">${open?'▾':'▸'}</button>`:'<span class="tt-tog tt-leaf">·</span>')
         +`<span class="tt-ico">${n.icon||''}</span><span class="tt-name">${_ttEsc(n.label)}</span>`
         +(n.count&&!open?`<span class="tt-n">${n.count}</span>`:'')
@@ -5940,6 +5942,27 @@ function toggleQtMap(force){
   if(on){ try{ ensureQtMiniMap(); }catch(e){} } else { try{ pauseQtMiniMap(); }catch(e){} }
 }
 function _qtMapWanted(){ try{ const v=localStorage.getItem('dm_qt_map_v1'); if(v!=null) return v==='1'; }catch(e){} return false; }   // the list first; 🗺 MAP opens the 3D chart (remembered)
+// Map tap → planet list (v180): tapping a system on the space map (Quick Travel chart, the
+// interstellar chart's Sun, or the globe's BODIES bubble in open space) opens the TRAVEL tree with
+// that galaxy and system unfolded — galaxy → star system → planet → moon — and scrolls to it, so the
+// player picks the body to travel to from the same rows (and the same travel paths) the list uses.
+function openSystemBodyList(gal,sysName,keepMap){
+  try{
+    gal=gal||_qtCurGalaxy(); sysName=sysName||_ttCurSysName()||'Sol';
+    try{ if($('galaxy-map')&&$('galaxy-map').classList.contains('open')) closeGalaxyMap(); }catch(e){}
+    const panel=$('ar-bottom'); if(!panel) return false;
+    if(!panel.classList.contains('open')) toggleQuickTravel();
+    if(!keepMap){ const w=$('qt-mapwrap'); if(w&&w.style.display!=='none'){ w.style.display='none'; const b=$('qt-map-btn'); if(b) b.classList.remove('active'); try{ pauseQtMiniMap(); }catch(e){} } }   // not remembered: the 🗺 pref is the player's
+    const sid='sys:'+gal+':'+sysName;
+    _ttOpen.add('gal:'+gal); _ttOpen.add(sid); _ttAutoOpened=true;
+    renderTravelTree();
+    const box=$('qt-tree'); if(!box) return true;
+    let row=null; box.querySelectorAll('.tt-row').forEach(r=>{ if(!row&&r.dataset.ttid===sid) row=r; });
+    if(row){ box.scrollTop=Math.max(0,row.offsetTop-box.offsetTop-8); row.classList.remove('tt-flash'); void row.offsetWidth; row.classList.add('tt-flash'); }
+    return true;
+  }catch(e){ console.warn('body list:',e); return false; }
+}
+window.openSystemBodyList=openSystemBodyList;
 function openTravelFromMap(){ closeGalaxyMap(); if(!$('ar-bottom').classList.contains('open')) toggleQuickTravel(); }
 function onQtMapClick(e){
   if(!qtRenderer||!qtCamera||!qtScene)return;
@@ -5956,13 +5979,13 @@ function onQtMapClick(e){
     if(d){$('hud-dest').textContent=d.name;plotCourse(u.destIdx);}
     closeQuickTravel();return;
   }
-  if(u.qtKind==='sol'){_qtJumpToSystem({home:true});return;}
+  if(u.qtKind==='sol'){openSystemBodyList(_qtCurGalaxy(),'Sol',true);return;}   // tap → that system's bodies (pick one there)
   if(u.qtKind==='blackhole'&&u.bh){
     const L=_bhLabel(u.bh);
     openFastTravel('FAST TRAVEL — '+L.name.toUpperCase(),L.type+'. Hold station beside it?',()=>travelToBlackHole(u.bh));
     closeQuickTravel();return;
   }
-  if(u.qtKind==='localSystem'&&u.entry){_qtJumpToSystem(u.entry);return;}
+  if(u.qtKind==='localSystem'&&u.entry){openSystemBodyList(_qtCurGalaxy(),u.entry.home?'Sol':u.entry.name,true);return;}
   if(u.qtKind==='galaxyHome'){_qtJumpToGalaxy('milkyway');return;}
   if(u.qtKind==='galaxy'&&u.galaxyId){_qtJumpToGalaxy(u.galaxyId,u.galaxyName,u.dist);return;}
   if(u.qtKind==='discovery'&&u.disc){
@@ -13882,8 +13905,7 @@ function onGalaxyMapClick(e){
   // Solar tier: tap the sun → fast-travel home; tap a planet → plot course
   if(gmCurrentTier==='solar'){
     const homeMeshes=[];gmTierGroups.solar&&gmTierGroups.solar.traverse(o=>{if(o.isMesh&&o.userData.isHome)homeMeshes.push(o);});
-    if(gmRaycaster.intersectObjects(homeMeshes).length){
-      openFastTravel('SOL SYSTEM — HOME','Fast-travel to your home position in the solar system?',()=>fastTravelToSystem(null));return;}
+    if(gmRaycaster.intersectObjects(homeMeshes).length){ openSystemBodyList('milkyway','Sol'); return; }   // the Sun → Sol's planets & moons to pick from
   }
   // Solar tier: tap a destination → plot course
   const meshes=[];gmDestGroup&&gmDestGroup.traverse(o=>{if(o.isMesh&&o.userData.destIdx!==undefined)meshes.push(o);});
