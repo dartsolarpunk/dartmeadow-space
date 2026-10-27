@@ -1014,7 +1014,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-ar-core.js?v=196" defer></script>
 <script src="ui/dm-bt-roomlights.js?v=144" defer></script>
 <script src="ui/dm-bt-hull.js?v=144" defer></script>
-<script src="ui/dm-edgewarm.js?v=193" defer></script>
+<script src="ui/dm-edgewarm.js?v=197" defer></script>
 </head>
 <body>
 <!-- LOADING -->
@@ -12848,7 +12848,7 @@ async function upgradeWebGLPlanetLOD(){
     }
     // (v193) dress it (map + light rig) BEFORE it is compiled hidden — dressing after it showed rebuilt it a 2nd time —
     // then cross-fade instead of a hard swap
-    _lodFadePrep(newGroup); for(const e of _lodFadeList(newGroup)) _lodHash(e,true);   // compile its fading variant hidden too
+    _lodFadePrep(newGroup);
     newGroup.visible=false;
     const oldGroup=b.mesh;
     newGroup.position.copy(oldGroup.position);
@@ -12857,6 +12857,7 @@ async function upgradeWebGLPlanetLOD(){
     if(b._wm){ b.mesh=newGroup; try{ _applyWorldMapToFlightBody(b,b._wm); } finally{ b.mesh=oldGroup; } }
     try{ _lcApplyObj(newGroup); }catch(e){}
     await _dmCompileObject(newGroup);
+    { const fl=_lodFadeList(newGroup); for(const e of fl) _lodHash(e,true); if(fl.some(e=>!e[2])) await _dmCompileObject(newGroup); }   // (v197) both variants (plain + fading) compiled hidden: the switch back after the fade hits a warm pipeline
     newGroup.position.copy(oldGroup.position);
     newGroup.rotation.copy(oldGroup.rotation);
     const extras=oldGroup.children.filter(c=>c.isPlanetExtra);
@@ -13009,12 +13010,13 @@ async function upgradePlanetLOD(dt){
     const _lod=newTier==='high'&&_svLodAllowed()&&_svLodWants(b);
     const newGroup=await buildProceduralPlanetMesh(b.mcRadius,b.mcSeed,b.mcColor,b.mcHasAtm,newRes,b.mcKind,_lod?{lod:true,res:newRes,cam:_svCamLocal(b)}:null);
     // compile the new detail level hidden, beside the old one, so the swap never stalls the frame
-    _lodFadePrep(newGroup); for(const e of _lodFadeList(newGroup)) _lodHash(e,true);   // compile its fading variant hidden too
+    _lodFadePrep(newGroup);
     newGroup.visible=false; newGroup.position.copy(b.mesh.position); newGroup.rotation.copy(b.mesh.rotation);
     flightScene.add(newGroup);
     if(b._wm){ const keep=b.mesh; b.mesh=newGroup; try{ _applyWorldMapToFlightBody(b,b._wm); } finally{ b.mesh=keep; } }
     try{ _lcApplyObj(newGroup); }catch(e){}   // (v104) wear the map before compiling: never one frame of procedural colours
     await _dmCompileObject(newGroup);
+    { const fl=_lodFadeList(newGroup); for(const e of fl) _lodHash(e,true); if(fl.some(e=>!e[2])) await _dmCompileObject(newGroup); }   // (v197) both variants (plain + fading) compiled hidden: the switch back after the fade hits a warm pipeline
     const oldGroup=b.mesh;
     // Preserve position/rotation and any tagged extras (rings, moon)
     newGroup.position.copy(oldGroup.position);

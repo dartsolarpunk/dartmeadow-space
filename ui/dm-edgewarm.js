@@ -123,6 +123,7 @@
     const h = hist.get(o) || 0; hist.set(o, h + 1); W.stats.compiled++;
     return p;
   }
+  let drained = false, lastB = 0;
   async function tick() {
     if (!W.on || busy) return; W.stats.left = 0;
     const r = R(), sc = scene(), cm = cam();
@@ -141,8 +142,9 @@
         if (++n >= 24 || work > 12) break;   // amortized: <=12 ms of synchronous main-thread work per tick, the rest next tick
       }
       if (proms.length) { await Promise.all(proms); proms.length = 0; }
-      { const cap = mobile() ? BATCH_MOBILE : BATCH_DESK, mob = mobile();
+      { const cap = !drained ? Infinity : (mobile() ? BATCH_MOBILE : BATCH_DESK), mob = drained && mobile();   // (v193) the initial drain is uncapped (it runs before play); the cap applies after
         for (const o of later) { if (batch.length >= cap) break; if (!o.parent || !o.visible) { later.delete(o); continue; } if (!mob || nearView(o, cm)) { batch.push(o); later.delete(o); } } }
+      lastB = batch.length;
       if (batch.length) {   // ONE real frame with the batch unculled (GPU-clipped off-screen): atmo-pass + backSide render objects
         const fc = batch.map(o => o.frustumCulled); for (const o of batch) o.frustumCulled = false;
         await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
@@ -150,11 +152,12 @@
         batch.length = 0;
       }
       W.stats.left = list.length - n; W.stats.later = later.size;
+      if (!drained && !W.stats.left && !later.size) drained = true;
       if (n) { W.stats.log.push(new Date().toLocaleTimeString() + ' warmed ' + n + '/' + list.length); if (W.stats.log.length > 40) W.stats.log.shift(); }
     } catch (e) { W.stats.err = String(e).slice(0, 120); }
     finally { busy = false; W.stats.lastMs = Math.round(performance.now() - t0); }
   }
   W.tick = tick;
   // drain fast while there is work (next tick in 60 ms), idle-poll at 400 ms otherwise
-  (function loop() { tick().finally(() => setTimeout(loop, (W.stats.left > 0) ? 60 : 400)); })();
+  (function loop() { tick().finally(() => setTimeout(loop, (W.stats.left > 0 || (later.size && lastB)) ? 60 : 400)); })();
 })();
