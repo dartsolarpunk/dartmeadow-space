@@ -8195,7 +8195,9 @@ async function buildSolarSystem(){
       try{
         if(window.DMMist&&DMMist.asteroidFumes&&li!==1){
           const _lowF=(typeof _jotsAtmoSampleBudgets==='function')?(_jotsAtmoSampleBudgets().view<4):false;
-          if(!(window.DMFluidWorld&&DMFluidWorld.asteroidFumes(agroup,rad,{col:[0,1,3,2][li],low:_lowF,rand:seedRand(hashStr('sol:fume:'+landNames[li]))})))   // true-fluid gas on WebGPU
+          // (v156) the true-fluid fume volume (DMFluidWorld) drew as an opaque green faceted blob + a solid dye bar near the
+          // Sun on WebGPU (dense low-res grid, depth-tested slab); asteroid gas is the GPU sprite smoke again. ?fluidfumes=1 re-enables it.
+          if(!(/[?&]fluidfumes=1\b/.test(location.search)&&window.DMFluidWorld&&DMFluidWorld.asteroidFumes(agroup,rad,{col:[0,1,3,2][li],low:_lowF,rand:seedRand(hashStr('sol:fume:'+landNames[li]))})))
           DMMist.asteroidFumes(agroup,rad,{col:[0,1,3,2][li],low:_lowF,renderer:flightRenderer,cpu:/[?&]cpusmoke/.test(location.search),rand:seedRand(hashStr('sol:fume:'+landNames[li]))});
         }
       }catch(e){ console.warn('[mist] asteroid fumes',e); }
