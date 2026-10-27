@@ -420,14 +420,16 @@
   var L_WORLD=300;   // world units per grid unit (Ariel's high-detail square)
   function buildBoard(T,r,scene){
     var TSL=T.TSL, bc=new T.PerspectiveCamera(60,1,1,1e5);
-    var U={c:TSL.uniform(new T.Vector2()),half:TSL.uniform(450),tx:TSL.uniform(1),ty:TSL.uniform(1),far:TSL.uniform(1e5),wy:TSL.uniform(0),cw:TSL.uniform(new T.Matrix4())};
+    var U={c:TSL.uniform(new T.Vector2()),half:TSL.uniform(450),tx:TSL.uniform(1),ty:TSL.uniform(1),far:TSL.uniform(1e5),gy:TSL.uniform(0),fh:TSL.uniform(50),cw:TSL.uniform(new T.Matrix4())};
     var sp=TSL.pass(scene,bc), col=sp.getTextureNode('output'), vz=sp.getViewZNode();
     var u=TSL.screenUV, dist=vz.negate();
     var vp=TSL.vec3(u.x.mul(2).sub(1).mul(U.tx),TSL.float(1).sub(u.y).mul(2).sub(1).mul(U.ty),-1).mul(dist);
     var wp=U.cw.mul(TSL.vec4(vp,1)).xyz;
     var d=TSL.max(TSL.abs(wp.x.sub(U.c.x)),TSL.abs(wp.z.sub(U.c.y))).div(U.half);
-    var wall=d.greaterThan(0.993).and(d.lessThan(1.007)).and(wp.y.lessThan(U.wy));
-    var a=wall.select(TSL.float(1),TSL.float(1).sub(TSL.smoothstep(2/3,1,d)).mul(d.lessThan(1).select(1,0))).mul(dist.lessThan(U.far.mul(0.98)).select(1,0));
+    // the block stays solid (ground at the rim, cliff faces); only what rises above the rim, the tall features and the
+    // horizon, feathers out toward the perimeter. Beyond the perimeter: a hard cut.
+    var tall=TSL.smoothstep(0,U.fh,wp.y.sub(U.gy));
+    var a=TSL.float(1).sub(TSL.smoothstep(2/3,1,d).mul(tall)).mul(d.lessThan(1.007).select(1,0)).mul(dist.lessThan(U.far.mul(0.98)).select(1,0));
     var pp=new (T.RenderPipeline||T.PostProcessing)(r);
     pp.outputNode=TSL.vec4(col.rgb.mul(a),col.a.mul(a));   // premultiplied
     return {scene:scene,bc:bc,U:U,pp:pp,m:new T.Matrix4(),p:new T.Vector3(),q:new T.Quaternion(),sc:new T.Vector3()};
@@ -453,7 +455,7 @@
       if(sd===0){x=cx+t*half; z=cz-half;} else if(sd===1){x=cx+half; z=cz+t*half;} else if(sd===2){x=cx-t*half; z=cz+half;} else {x=cx-half; z=cz-t*half;}
       var h=0; try{ h=+H(x,z); }catch(e){} if(!isFinite(h)) h=0; var sea=pal; if(sea!=null&&h<sea) h=sea;
       tops.push(x,h,z); if(h<lo) lo=h; }
-    var base=lo-depth;
+    var base=lo-depth; W.hi=-Infinity; for(var k=1;k<tops.length;k+=3) if(tops[k]>W.hi) W.hi=tops[k];
     for(var j=0;j<tops.length/3;j++){ var o=j*6; p[o]=tops[j*3]; p[o+1]=tops[j*3+1]; p[o+2]=tops[j*3+2]; p[o+3]=tops[j*3]; p[o+4]=base; p[o+5]=tops[j*3+2]; }
     W.geo.attributes.position.needsUpdate=true; W.geo.computeVertexNormals();
   }
@@ -477,7 +479,7 @@
       var depth=Math.max(4*ah,0.06*2*half);   // ~4x her height, never thinner than a readable slab at board scale
       var sw=g('surfWater'), sea=(sw&&sw.visible&&sw.position&&isFinite(sw.position.y))?sw.position.y:null;
       fillWalls(B.W,ctx.H,px,pz,half,depth,sea);
-      B.U.wy.value=h+0.5*depth+200; B.W.mesh.visible=true; hid.push(B.W.mesh); B.W._on=true;
+      B.U.gy.value=B.W.hi; B.U.fh.value=0.12*half; B.W.mesh.visible=true; hid.push(B.W.mesh); B.W._on=true;
       scene.background=null;
       scene.traverseVisible(function(o){ if(o.userData&&(o.userData.dmSkyShell||o.userData.dmArHide)){ o.visible=false; hid.push(o); } });
       if(fog){ fs={n:fog.near,f:fog.far,d:fog.density}; if(fog.density!=null) fog.density=0; else { fog.near=1e12; fog.far=2e12; } }   // uniforms only: no recompile
