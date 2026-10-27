@@ -1010,7 +1010,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-bt-bake.js?v=144" defer></script>
 <script src="ui/dm-ui3d-core.js?v=148" defer></script>
 <script src="ui/dm-ui3d-mesh.js?v=149" defer></script>
-<script src="ui/dm-ar-core.js?v=153" defer></script>
+<script src="ui/dm-ar-core.js?v=196" defer></script>
 <script src="ui/dm-bt-roomlights.js?v=144" defer></script>
 <script src="ui/dm-bt-hull.js?v=144" defer></script>
 </head>
@@ -6223,7 +6223,7 @@ async function initFlightScene(){
   try{ detectCapabilities(); loadGfxChoice(); applyQualityTier(); }catch(e){console.warn('cap init:',e);}
 
   // Renderer — compatibility-first across Safari/Chrome/Edge/Firefox on all OSes
-  flightRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:!!GFX.antialias,alpha:false,powerPreference:'high-performance',logarithmicDepthBuffer:true,trackTimestamp:_gpuTimeWanted(),forceWebGL:/[?&]gl=1\b/.test(location.search)});   // (v136) ?gl=1 forces the WebGL2 backend (headless A/B). (v105) GPU pass timings when timestamp-query / EXT_disjoint_timer_query exists (no-op otherwise)
+  flightRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:!!GFX.antialias,alpha:true,powerPreference:'high-performance',logarithmicDepthBuffer:true,trackTimestamp:_gpuTimeWanted(),forceWebGL:/[?&]gl=1\b/.test(location.search)});   // (v136) ?gl=1 forces the WebGL2 backend (headless A/B). (v105) GPU pass timings when timestamp-query / EXT_disjoint_timer_query exists (no-op otherwise)
   _guardRenderDepth(flightRenderer);
   try{
     await flightRenderer.init();
@@ -6249,6 +6249,15 @@ async function initFlightScene(){
   try{ cv.addEventListener('webglcontextlost',ev=>{ ev.preventDefault(); _gpuLost('webgl context lost'); },false); }catch(e){}
   flightRenderer.setPixelRatio(effectivePixelRatio());
   flightRenderer.setClearColor(0x000000,1); // pure black vacuum
+  try{ cv.style.background='#000'; }catch(e){}   // (v154) alpha:true canvas (AR draws over the camera with true alpha); normal play clears opaque, over black
+  // (v196) transparent canvas only in AR: the context is created alpha:true (the WebGL2 fallback cannot change it later),
+  // but on WebGPU the canvas is reconfigured opaque for normal play and premultiplied only while an AR session draws over
+  // the camera (DMAR calls this on enter/exit). renderer.alpha also gates three's clear-colour premultiply.
+  window._dmCanvasAlpha=function(on){ try{ const R=flightRenderer, B=R&&R.backend; on=!!on; R.alpha=on;
+    if(!B||!B.device||B.isWebGPUBackend!==true) return; const ctx=B.context||cv.getContext('webgpu'); if(!ctx||!ctx.configure) return;
+    ctx.configure({device:B.device,format:B.utils.getPreferredCanvasFormat(),usage:GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.COPY_SRC,alphaMode:on?'premultiplied':'opaque',toneMapping:{mode:(B.parameters&&B.parameters.outputType===THREE.HalfFloatType)?'extended':'standard'}});
+  }catch(e){ console.warn('[ar] canvas alpha',e); } };
+  window._dmCanvasAlpha(false);
   flightRenderer.setSize(W,H);
   flightRenderer.toneMapping=THREE.ACESFilmicToneMapping;
   flightRenderer.toneMappingExposure=1.0;
@@ -6530,7 +6539,8 @@ async function _flightWarmup(){
   try{ for(const st of (window.DMWarm.steps||[])) steps.splice(steps.length-1,0,st); }catch(e){}
   for(let i=0;i<steps.length;i++){
     // (v153) AR owns the GPU and the screen while it's on: the remaining warm-up steps wait until it ends (AR draws its own tiny scene)
-    while(window.DMAR&&DMAR.active){ if(pill) pill.style.display='none'; await new Promise(r=>setTimeout(r,300)); }
+    while(window.DMAR&&DMAR.active&&!DMAR.letWarm){   // (v154) the full space overlay draws the real scene: it lets the warm-up finish
+    if(pill) pill.style.display='none'; await new Promise(r=>setTimeout(r,300)); }
     if(pill) pill.style.display='';
     if(pill) pill.textContent='Preparing '+steps[i][0]+'  '+(i+1)+'/'+steps.length;
     const t=performance.now();
@@ -18575,6 +18585,7 @@ function _pwFrame(dt){
 // automatic quality drops here — those stay Auto-only).
 const _TA={pipes:new Map(),t:0,failed:false,loc:{t:0,x:NaN,z:NaN,gen:-1}};
 function _trueAtmoOn(){
+  if(window.DMAR&&DMAR.noAtmo) return false;   // (v154) AR overlays: the opaque full-screen gas pass is left out
   try{
     const q=location.search;
     if(/[?&]trueatmo=0\b/.test(q)) return false;
@@ -18769,7 +18780,8 @@ function _pwRender(){
   r.setRenderTarget(null);
   DMGpuProf.push('world');
   try{
-    if(layered){
+    if(window.DMAR&&DMAR.boardOn&&DMAR.board(r,scene,cam)){ /* (v154) AR: the world drawn onto the anchored tabletop board (ui/dm-ar-core.js) */ }
+    else if(layered){
       // the real sky — stars, the galaxy band, the sun and the other worlds — from where the camera really is
       _pwsFromDrawn(cam.position,flightCamera.position); _pwsQFromDrawn(cam.quaternion,flightCamera.quaternion);
       if(Math.abs(flightCamera.fov-cam.fov)>1e-3||Math.abs(flightCamera.aspect-cam.aspect)>1e-4){ flightCamera.fov=cam.fov; flightCamera.aspect=cam.aspect; flightCamera.updateProjectionMatrix(); }
