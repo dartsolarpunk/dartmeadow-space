@@ -546,10 +546,20 @@
       const IN = { on: false, t: 0, board: null };
       const introStart = (o) => {
         if (IN.on || !o || !o.board) return false;
-        const b = o.board, bb = new THREE.Box3().setFromObject(b), sz = bb.getSize(new THREE.Vector3());
+        const b = o.board; b.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(b), sz = bb.getSize(new THREE.Vector3());
         // gameplay proportion: in flight she wears CHAR.scaleForBoard inside the board's frame, so board = her ÷ scaleForBoard (o.scale)
         holder.updateMatrixWorld(true); const hs = Math.abs(holder.getWorldScale(new THREE.Vector3()).x) || 1;
-        b.scale.multiplyScalar(o.scale > 0 ? Math.min(o.scale, 12) * hs : 1.6 / Math.max(0.2, sz.x, sz.z));
+        // size from what's actually on screen: her bone-chain height here × the gameplay board:rider ratio (37 ft : 6 ft) over the
+        // board's own world length. CHAR.scaleForBoard is measured in the board's LOCAL frame (GLB templates bake a ~0.08-0.1 node
+        // scale), so 1/scaleForBoard × holder only matched the procedural board / pre-flight fallback; once flight init derived it
+        // from a GLB board (iOS waits for flightInited in the hold) the intro board came out ~1/10 size.
+        const herH = (() => { const v = (n) => bones[n] ? bones[n].getWorldPosition(new THREE.Vector3()) : null;
+          root.updateMatrixWorld(true); const H = v('Hips'), Hd = v('Head'), U = v('LeftUpLeg'), K = v('LeftLeg'), F = v('LeftFoot');
+          if (H && Hd && U && K && F) return (H.distanceTo(Hd) + U.distanceTo(K) + K.distanceTo(F)) * 1.1;
+          const rs = new THREE.Box3().setFromObject(root).getSize(new THREE.Vector3()); return isFinite(rs.y) ? rs.y : 0; })();
+        const len0 = Math.max(sz.x, sz.z), ratio = o.ratio > 0 ? o.ratio : 37 / 6;
+        const k = herH > 0.05 && len0 > 1e-4 ? herH * ratio / len0 : (o.scale > 0 ? Math.min(o.scale, 12) * hs : 1.6 / Math.max(0.2, len0));
+        b.scale.multiplyScalar(k); IN.sizeK = k; IN.herH = herH; IN.bScale = b.scale.clone();   // re-asserted every frame (a later heal/reset can't shrink it)
         b.traverse(m => { if (m.isMesh) { m.castShadow = true; m.frustumCulled = false; } });
         b.updateMatrixWorld(true); const bl = new THREE.Box3().setFromObject(b).getSize(new THREE.Vector3());
         const Lb = Math.max(bl.x, bl.z), Wb = Math.max(0.3, Math.min(bl.x, bl.z));
@@ -593,7 +603,7 @@
       const bez3 = (a, b1, c, d, u, out) => { const v = 1 - u; return out.set(0, 0, 0).addScaledVector(a, v * v * v).addScaledVector(b1, 3 * v * v * u).addScaledVector(c, 3 * v * u * u).addScaledVector(d, u * u * u); };
       // board + her placement for this frame (before the bones are posed)
       const introPre = (dt) => {
-        const b = IN.board; IN.t += dt; const t = IN.t, TF = IN.T_FLY, T_STEP = IN.T_STEP, T_LAND = IN.T_LAND, T_LIFT = IN.T_LIFT;
+        const b = IN.board; if (IN.bScale && !b.scale.equals(IN.bScale)) b.scale.copy(IN.bScale); IN.t += dt; const t = IN.t, TF = IN.T_FLY, T_STEP = IN.T_STEP, T_LAND = IN.T_LAND, T_LIFT = IN.T_LIFT;
         if (t < TF) {           // swoop in, round behind
           const u = Math.min(1, t / TF), e = u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2;
           bez3(IN.P0, IN.P1, IN.P2, IN.P3, e, b.position); bez3(IN.P0, IN.P1, IN.P2, IN.P3, Math.min(1, e + 0.01), IN.tmp);

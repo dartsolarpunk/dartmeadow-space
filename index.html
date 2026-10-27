@@ -1005,7 +1005,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-star.js?v=8" defer></script>
 <script src="ui/dm-mist.js?v=7" defer></script>
 <script src="ui/dm-atmo.js?v=150" defer></script>
-<script src="ui/dm-menuscene.js?v=10" defer></script>
+<script src="ui/dm-menuscene.js?v=12" defer></script>
 <script src="ui/dm-starbubble.js?v=3" defer></script>
 <script src="ui/dm-birdtemple.js?v=122" defer></script>
 <script src="ui/dm-bt-engineering.js?v=5" defer></script>
@@ -2962,7 +2962,7 @@ function _introPlay(){
   let p=false;
   try{
     const clip=n=>CHAR.actions&&CHAR.actions[n]?CHAR.actions[n].getClip():null;
-    const _t=STATE.boardConfig.template; p=M.introStart({scale:CHAR.scaleForBoard>0?1/CHAR.scaleForBoard:0,walk:clip('walk'),board:buildBoardMesh(),sharedTex:!!(_t&&_t!=='R'&&_t!=='procedural'),jump:clip(CHAR_BOARD_TRANSITIONS.step.clip),ride:clip('skyboard'),onFlyOff:()=>_introDissolve(900)});
+    const _t=STATE.boardConfig.template; p=M.introStart({ratio:BOARD_REAL_LEN_FT/CHAR_REAL_HEIGHT_FT,scale:CHAR.scaleForBoard>0?1/CHAR.scaleForBoard:0,walk:clip('walk'),board:buildBoardMesh(),sharedTex:!!(_t&&_t!=='R'&&_t!=='procedural'),jump:clip(CHAR_BOARD_TRANSITIONS.step.clip),ride:clip('skyboard'),onFlyOff:()=>_introDissolve(900)});
   }catch(e){ console.warn('[intro]',e); }
   if(!p){ _introDissolve(350); return; }
   // safety: dissolve if the intro stalls (no progress for ~10 s) or runs past 14 s of intro time
