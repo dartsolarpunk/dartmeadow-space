@@ -7516,6 +7516,10 @@ async function _svLodPlanetMesh(o){
   })().compute(DMAX*FC);
 
   const stream=new SV.LodStream(CAP);
+  // (v193) per-brick fade (no popping when bricks change level): a new brick dithers in, and a brick that left the set
+  // stays drawn, dithering out once its replacements are in, before its slot is cleared and handed back to the pool
+  const fadeArr=new Float32Array(CAP).fill(1), fadeAttr=new THREE.StorageBufferAttribute(fadeArr,1), fadeNode=storage(fadeAttr,'float',CAP);
+  const fadeIn=new Map(), fadeOut=new Map(), deadSlots=[], FADE=600;
   const poolBytes=[densityBuf,vertexBuf,normalBuf,colorBuf,jobAttr,jsAttr].reduce((a,b)=>a+((b.array&&b.array.byteLength)||0),0);
   const ctl={poolMB:poolBytes/1048576,stream,CAP,Lr,coarsest,BASE,busy:false,lastCam:null,lastSel:0,msPerBrick:0.25,built:0,cleared:0,batches:0,resident:0,lastMs:0,pending:0,
     finest:B*BASE,
@@ -7523,8 +7527,25 @@ async function _svLodPlanetMesh(o){
       const r=SV.lodSelect({B,rootLevel:Lr,half:HALF,rMin,rMax,cam:cam?[cam.x,cam.y,cam.z]:null,k:SV_LOD.K,coarsest,maxBricks:CAP});
       this.pending=stream.desire(r.leaves); this.lastCam=cam?cam.clone():null; this.lastSel=performance.now(); this.levels=r.leaves.reduce((m,l)=>{m[l.L]=(m[l.L]||0)+1;return m;},{});
     },
+    fading:false,
+    fadeTick(now){
+      if(!fadeIn.size&&!fadeOut.size) return;
+      for(const [sl,t0] of fadeIn){ const t=Math.min(1,(now-t0)/FADE); fadeArr[sl]=t*t*(3-2*t); if(t>=1) fadeIn.delete(sl); }
+      for(const [sl,t0] of fadeOut){ const t=Math.max(0,Math.min(1,(now-t0)/FADE)); fadeArr[sl]=1-t*t*(3-2*t); if(t>=1){ fadeOut.delete(sl); deadSlots.push(sl); } }
+      fadeAttr.needsUpdate=true;
+    },
     async batch(n){
-      const st=stream.step(n), jobs=st.build.length+st.clear.length; if(!jobs) return 0;
+      const st=stream.step(n), now=performance.now();
+      if(this.fading){
+        for(const b of st.build){ fadeIn.set(b.slot,now); fadeArr[b.slot]=0; fadeOut.delete(b.slot); }
+        // a released slot not re-used in this step: keep it (off the free list) while it fades out
+        const fr=stream.pool.free, keep=[];
+        for(const c of st.clear){ const i=fr.indexOf(c); if(i<0) keep.push(c); else { fr.splice(i,1); fadeOut.set(c,now+FADE); } }
+        st.clear=keep;
+        if(st.build.length) fadeAttr.needsUpdate=true;
+      }
+      let dead=0; while(deadSlots.length&&st.clear.length<DMAX){ st.clear.push(deadSlots.pop()); dead++; }
+      const jobs=st.build.length+st.clear.length; if(!jobs) return 0;
       for(let i=0;i<DMAX;i++){ jobSlotArr[i]=CAP; }
       let k=0;
       for(const b of st.build){ jobArr.set([b.ox,b.oy,b.oz,1<<b.L],k*4); jobSlotArr[k]=b.slot; k++; if(k>=DMAX) break; }
@@ -7532,6 +7553,7 @@ async function _svLodPlanetMesh(o){
       jobAttr.needsUpdate=true; jsAttr.needsUpdate=true;
       const t0=performance.now();
       flightRenderer.compute(densK); flightRenderer.compute(mcK); await flightRenderer.computeAsync(skK);
+      if(dead){ for(let i=st.clear.length-dead;i<st.clear.length;i++){ const sl=st.clear[i]; fadeArr[sl]=1; stream.pool.free.push(sl); } fadeAttr.needsUpdate=true; }
       const ms=performance.now()-t0; this.lastMs=ms; this.msPerBrick=this.msPerBrick*0.7+(ms/Math.max(1,k))*0.3;
       if(this.geo) this.geo.setDrawRange(0,Math.max(1,stream.pool.next)*VPS);   // (v149) draw only up to the pool's high-water slot, not all CAP×VPS vertices
       this.built+=st.build.length; this.cleared+=st.clear.length; this.batches++; this.resident=stream.resident.size; this.pending=st.pending;
@@ -7540,12 +7562,13 @@ async function _svLodPlanetMesh(o){
     // per-frame entry (not awaited by the loop): re-select when the camera moved ~half a finest brick or 0.4 s passed,
     // then build one budgeted batch
     async update(cam,budgetMs){
-      if(this.busy) return; this.busy=true;
       const t0=performance.now();
+      this.fadeTick(t0);
+      if(this.busy) return; this.busy=true;
       try{
         const moved=!this.lastCam||this.lastCam.distanceTo(cam)>this.finest*0.5;
         if(moved&&t0-this.lastSel>400) this.select(cam);
-        if(this.pending||stream.stale.length){
+        if(this.pending||stream.stale.length||deadSlots.length){
           const n=Math.max(2,Math.min(DMAX,Math.floor((budgetMs||SV_LOD.budgetMs)/Math.max(0.02,this.msPerBrick))));
           await this.batch(n);
         }
@@ -7562,6 +7585,10 @@ async function _svLodPlanetMesh(o){
   ctl.geo=geo; geo.setDrawRange(0,Math.max(1,stream.pool.next)*VPS);
   const _lmat=new THREE.MeshStandardNodeMaterial({vertexColors:true,roughness:0.92,metalness:0.02});
   if(window.DMRock) DMRock.applyPlanet(_lmat,o.kind,radius,o.seed);   // (v140) layered rock
+  // (v193) per-brick dither fade, multiplied into whatever opacity the rock layer set (set at build: never recompiles)
+  { const f=varying(fadeNode.element(uint(vertexIndex).div(uint(VPS))));
+    _lmat.opacityNode=(_lmat.opacityNode||materialOpacity).mul(f); _lmat.alphaHash=true; _lmat.userData._lodOp=1; }
+  ctl.fading=true;
   const mesh=new THREE.Mesh(geo,_lmat);
   mesh.name='JOTS_GpuPlanetMC'; mesh.userData.jotsGpuMc=true; mesh.userData.svLod=ctl;
   mesh.userData.sparse={N:B*(1<<Lr),B,bricks:stream.resident.size,of:CAP,cells:stream.resident.size*C3,denseCells:Math.pow(B*(1<<Lr),3),ms:+(performance.now()-t0).toFixed(1),lod:true,levels:ctl.levels,relief:o.relief.measured};
@@ -8020,7 +8047,7 @@ function _solCheapGroup(e,r,seed,rock){
   mesh.name='JOTS_SolBody';
   if(e.shape) mesh.scale.set(e.shape[0],e.shape[1],e.shape[2]);
   const group=new THREE.Group(); group.add(mesh);
-  return group;
+  return _lodFadePrep(group);
 }
 // Low-end budget: the planet LOD only ever steps up, which is fine for eight
 // planets but not for a dozen landable moons visited in one session. A catalog
@@ -8046,10 +8073,14 @@ function _solCatalogLODDown(){
     if(b._nearT<oldest){ oldest=b._nearT; victim=b; }
   }
   if(held<=KEEP||!victim||now-oldest<20000) return;      // under budget, or it was near within the last 20 s: keep it
-  const b=victim, old=b.mesh, g=_solCheapGroup(b.catalog,b.mcRadius,b.mcSeed,false);
+  if(_lodFades.some(F=>F.newG===victim.mesh||F.oldG===victim.mesh)) return;
+  // (v193) the cheap sphere built at start is KEPT (never rebuilt: same mesh, material, map and pipelines) and it
+  // cross-fades back in over the detailed one
+  const b=victim, old=b.mesh, g=b._cheapG||(b._cheapG=_solCheapGroup(b.catalog,b.mcRadius,b.mcSeed,false));
   g.position.copy(old.position); g.quaternion.copy(old.quaternion);
   old.children.filter(c=>c.isPlanetExtra).forEach(c=>g.add(c));
-  flightScene.add(g); flightScene.remove(old); try{ _disposeObject3D(old); }catch(e){}
+  g.visible=false; flightScene.add(g);
+  _lodCrossFade(old,g,false);
   b.mesh=g; b.mcTier='low'; b.mcRes=_mcTierResTable().low; b._webglSeg=0; b._mcLodT=performance.now();
   if(b._wm) try{ _applyWorldMapToFlightBody(b,b._wm); }catch(e){}
 }
@@ -8069,7 +8100,7 @@ function _buildSolCatalogBodies(){
     const rock=!e.land&&(e.kind==='asteroid'||e.kind==='comet'||e.lumpy);
     const group=_solCheapGroup(e,r,seed,rock);
     const world=!!e.land;                     // a walkable world (same pipeline as every planet)
-    const b={mesh:group,name:e.name,type:e.type,temp:e.temp,collisionRadius:r,gravity:e.g,
+    const b={mesh:group,_cheapG:world?group:null,name:e.name,type:e.type,temp:e.temp,collisionRadius:r,gravity:e.g,
       landable:!!e.land,hasTerrain:!!e.land,catalog:e,
       // airless unless the catalog names an atmosphere (its type's palette may assume air)
       surface:Object.assign({},e.atm?null:_AIRLESS,e.surface||null),style:e.style,regions:e.regions,
@@ -8197,7 +8228,7 @@ async function buildSolarSystem(){
         const palette = GIANT_PALETTES[p.name] || [p.col,p.col,p.col,p.col];
         group = buildGasGiantMesh(p.r, palette, p.name==='Jupiter', GIANT_LOOKS[p.name]);
       } else {
-        group = await buildProceduralPlanetMesh(p.r, seedVal, p.col||0x888888, p.hasAtm, undefined, p.name);
+        group = await buildProceduralPlanetMesh(p.r, seedVal, p.col||0x888888, p.hasAtm, undefined, p.name); _lodFadePrep(group);
       }
     }catch(e){
       // Real bug found while chasing 'still seeing the old planets' reports:
@@ -12812,17 +12843,24 @@ async function upgradeWebGLPlanetLOD(){
       planetMesh.geometry.dispose();
       planetMesh.geometry=new THREE.SphereGeometry(r, wantSeg, wantSeg);
     }
+    // (v193) dress it (map + light rig) BEFORE it is compiled hidden — dressing after it showed rebuilt it a 2nd time —
+    // then cross-fade instead of a hard swap
+    _lodFadePrep(newGroup);
+    newGroup.visible=false;
     const oldGroup=b.mesh;
+    newGroup.position.copy(oldGroup.position);
+    newGroup.rotation.copy(oldGroup.rotation);
+    flightScene.add(newGroup);
+    if(b._wm){ b.mesh=newGroup; try{ _applyWorldMapToFlightBody(b,b._wm); } finally{ b.mesh=oldGroup; } }
+    try{ _lcApplyObj(newGroup); }catch(e){}
+    await _dmCompileObject(newGroup);
     newGroup.position.copy(oldGroup.position);
     newGroup.rotation.copy(oldGroup.rotation);
     const extras=oldGroup.children.filter(c=>c.isPlanetExtra);
     extras.forEach(c=>newGroup.add(c));
-    flightScene.add(newGroup);
-    flightScene.remove(oldGroup);
-    _disposeObject3D(oldGroup);
     b.mesh=newGroup;
     b._webglSeg=wantSeg;
-    if(b._wm) _applyWorldMapToFlightBody(b,b._wm);   // keep wearing its map
+    await _lodCrossFade(oldGroup,newGroup,oldGroup===b._cheapG);
     if(b.name==='Earth')earthMesh=newGroup;
   }catch(e){
     console.warn('[planet LOD webgl] rebuild failed', e && e.message);
@@ -12831,6 +12869,53 @@ async function upgradeWebGLPlanetLOD(){
   }
 }
 
+// ── (v193) LOD cross-fade: a world's next detail level never pops in ─────────────────────────────────
+// Every planet material is made dither-fadeable (alphaHash) when it is BUILT, so fading later never recompiles.
+// The swap: the new level fades in over the old (opaque surfaces dithered 0→1, haze shells cross-fade), then
+// the old surface dithers out — no frame shows a hole or a hard switch. All bookkeeping is made once per swap.
+const _LOD_FADE_MS=650;
+const _lodFades=[];
+function _lodFadePrep(g){
+  try{ g.traverse(o=>{ if(!(o.isMesh||o.isPoints)||!o.material) return; const ms=Array.isArray(o.material)?o.material:[o.material];
+    for(const m of ms){ if(!m||!m.userData||m.userData._lodOp!=null) continue; m.userData._lodOp=m.opacity; if(!m.transparent) m.alphaHash=true; } }); }catch(e){}
+  return g;
+}
+function _lodFadeList(g){
+  const out=[], seen=new Set();
+  g.traverse(o=>{ if(!(o.isMesh||o.isPoints)||!o.material) return; const ms=Array.isArray(o.material)?o.material:[o.material];
+    for(const m of ms){ if(!m||seen.has(m)) continue; seen.add(m); const base=(m.userData&&m.userData._lodOp!=null)?m.userData._lodOp:m.opacity;
+      if(m.transparent||m.alphaHash) out.push([m,base,!!m.transparent]); } });
+  return out;
+}
+// newG already in the scene (hidden, compiled). Moves extras across, fades, then removes oldG (disposed unless keepOld).
+function _lodCrossFade(oldG,newG,keepOld){
+  return new Promise(res=>{
+    const nm=_lodFadeList(newG);
+    for(const e of nm) e[0].opacity=0;
+    newG.visible=true;
+    if(!oldG||!oldG.parent){ for(const e of nm) e[0].opacity=e[1]; res(); return; }
+    const om=_lodFadeList(oldG);
+    _lodFades.push({oldG,newG,nm,om,keepOld:!!keepOld,t0:performance.now(),res});
+  });
+}
+function _lodFadeTick(){
+  if(!_lodFades.length) return;
+  const now=performance.now();
+  for(let i=_lodFades.length-1;i>=0;i--){
+    const F=_lodFades[i], t=(now-F.t0)/_LOD_FADE_MS;
+    const a=t>=1?1:t*t*(3-2*t), u=t<=1?0:(t>=2?1:(t-1)*(t-1)*(3-2*(t-1)));
+    F.oldG.position.copy(F.newG.position); F.oldG.quaternion.copy(F.newG.quaternion);   // fading copy rides along
+    for(const e of F.nm) e[0].opacity=e[1]*a;
+    for(const e of F.om) e[0].opacity=e[1]*(e[2]?1-a:1-u);
+    if(t>=2){
+      _lodFades.splice(i,1);
+      for(const e of F.nm) e[0].opacity=e[1];
+      if(F.oldG.parent) F.oldG.parent.remove(F.oldG);
+      if(F.keepOld){ for(const e of F.om) e[0].opacity=e[1]; } else _disposeObject3D(F.oldG);
+      F.res();
+    }
+  }
+}
 // ── Compile-before-show ───────────────────────────────────────────────────
 // A mesh with a material the GPU has never drawn makes the phone stall 0.5–2 s the first frame it appears (the
 // pipeline is built right then). So anything created while you fly (a planet's next detail level, a rogue planet or
@@ -12877,6 +12962,7 @@ function _svLodEvict(keep){
   far._svLod=null; far._svLodMesh=null; far.mcTier='med'; far._mcLodT=0;   // the normal tier pass rebuilds it (static) at its distance's tier
 }
 async function upgradePlanetLOD(dt){
+  _lodFadeTick();           // (v193) running cross-fades advance every frame
   if(_lodPlanetBusy)return; // one rebuild in flight at a time — avoid GPU contention
   if(!STATE.flight||!STATE.flight.pos)return;
   _solCatalogLODDown();     // far catalog worlds back to plain spheres (low-end budget)
@@ -12917,6 +13003,7 @@ async function upgradePlanetLOD(dt){
     const _lod=newTier==='high'&&_svLodAllowed()&&_svLodWants(b);
     const newGroup=await buildProceduralPlanetMesh(b.mcRadius,b.mcSeed,b.mcColor,b.mcHasAtm,newRes,b.mcKind,_lod?{lod:true,res:newRes,cam:_svCamLocal(b)}:null);
     // compile the new detail level hidden, beside the old one, so the swap never stalls the frame
+    _lodFadePrep(newGroup);
     newGroup.visible=false; newGroup.position.copy(b.mesh.position); newGroup.rotation.copy(b.mesh.rotation);
     flightScene.add(newGroup);
     if(b._wm){ const keep=b.mesh; b.mesh=newGroup; try{ _applyWorldMapToFlightBody(b,b._wm); } finally{ b.mesh=keep; } }
@@ -12928,10 +13015,8 @@ async function upgradePlanetLOD(dt){
     newGroup.rotation.copy(oldGroup.rotation);
     const extras=oldGroup.children.filter(c=>c.isPlanetExtra);
     extras.forEach(c=>newGroup.add(c));
-    newGroup.visible=true;
-    flightScene.remove(oldGroup);
-    _disposeObject3D(oldGroup);
-    b.mesh=newGroup;
+    b.mesh=newGroup;   // (v193) the body now moves the new level; the fading old one rides along with it
+    await _lodCrossFade(oldGroup,newGroup,oldGroup===b._cheapG);
     b.mcRes=newRes;b.mcTier=newTier;
     { let lm=null; newGroup.traverse(m=>{ if(m.userData&&m.userData.svLod) lm=m; }); b._svLod=lm?lm.userData.svLod:null; b._svLodMesh=lm; }
     if(b._wm) _applyWorldMapToFlightBody(b,b._wm);   // keep wearing its map
@@ -14306,14 +14391,14 @@ async function rebuildFlightForSystem(system){
         ];
         group=buildGasGiantMesh(r, palette, bd.type==='Gas Giant' && sysRand()<0.5);
       } else {
-        group=await buildProceduralPlanetMesh(r, seedVal, col, hasAtm, undefined, bd.type==='Habitable'?'earth':(bd.name||bd.type||'rocky'));
+        group=await buildProceduralPlanetMesh(r, seedVal, col, hasAtm, undefined, bd.type==='Habitable'?'earth':(bd.name||bd.type||'rocky')); _lodFadePrep(group);
       }
     }catch(e){
       console.warn('[GPU planet] procedural system build failed for',bd.name,'-',e&&e.message,e);
       group=new THREE.Group();
       // Last-resort placeholder only — WebGL rich path should have caught Safari.
       if(typeof buildWebGLRichPlanetGroup==='function'){
-        try{ group=buildWebGLRichPlanetGroup(r, seedVal, col, hasAtm, bd.type, bd.name); }
+        try{ group=buildWebGLRichPlanetGroup(r, seedVal, col, hasAtm, bd.type, bd.name); _lodFadePrep(group); }
         catch(_e){ group.add(new THREE.Mesh(new THREE.SphereGeometry(r,24,24),new THREE.MeshStandardMaterial({color:col,roughness:.85}))); }
       } else {
         group.add(new THREE.Mesh(new THREE.SphereGeometry(r,24,24),new THREE.MeshStandardMaterial({color:col,roughness:.85})));
@@ -18193,7 +18278,7 @@ async function _wmWarmAll(){
       if(!b||!b.mesh||b.name==='Sun'||b.type==='Star'||b.isAsteroid||b.type==='Comet'||!isProximityLandEligible(b)) continue;
       const best=_wmBestMesh(b); if(!best) continue;
       let mat=best.userData._wmMat;
-      if(!mat){ mat=new THREE.MeshStandardNodeMaterial({roughness:0.92,metalness:0.02}); mat.colorNode=_wmColorNode(_wmStandIn); mat._wmTexNode=mat.colorNode; try{ mat.lightsNode=_lcNode(); }catch(e){} best.userData._wmMat=mat; best.userData._wmPrev=best.material; }
+      if(!mat){ mat=new THREE.MeshStandardNodeMaterial({roughness:0.92,metalness:0.02}); mat.alphaHash=true; mat.userData._lodOp=1; mat.colorNode=_wmColorNode(_wmStandIn); mat._wmTexNode=mat.colorNode; try{ mat.lightsNode=_lcNode(); }catch(e){} best.userData._wmMat=mat; best.userData._wmPrev=best.material; }
       if(best.material!==mat){ back.push([best,best.material]); best.material=mat; }
     }catch(e){}
   }
@@ -18215,7 +18300,7 @@ function _applyWorldMapToFlightBody(b,m){
   if(!best) return;
   try{
     let mat=best.userData._wmMat;
-    if(!mat){ mat=new THREE.MeshStandardNodeMaterial({roughness:0.92,metalness:0.02}); best.userData._wmMat=mat; best.userData._wmPrev=best.material; }
+    if(!mat){ mat=new THREE.MeshStandardNodeMaterial({roughness:0.92,metalness:0.02}); mat.alphaHash=true; mat.userData._lodOp=1; best.userData._wmMat=mat; best.userData._wmPrev=best.material; }
     // the texture is swapped on the existing node (no new node graph, no rebuild); a fresh node only the first time
     if(mat._wmTexNode&&mat._wmTexNode.value!==undefined){ mat._wmTexNode.value=m.tex; }
     else { mat.colorNode=_wmColorNode(m.tex); mat._wmTexNode=mat.colorNode; mat.needsUpdate=true; }
