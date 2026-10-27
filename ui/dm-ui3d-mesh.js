@@ -60,11 +60,11 @@
     var c=el.cloneNode(true), os=[el], cs=[c];
     for(var k=0;k<os.length;k++){ var a=os[k].children, b=cs[k].children; for(var i=0;i<a.length&&i<b.length;i++){ os.push(a[i]); cs.push(b[i]); } }
     for(var j=0;j<os.length;j++){ var o=os[j], isSvgIn=(o instanceof SVGElement)&&o.tagName.toLowerCase()!=='svg';
-      if(!isSvgIn){ var cst=getComputedStyle(o), s=cs[j].style; for(var q=0;q<PROPS.length;q++){ var v=cst.getPropertyValue(PROPS[q]); if(v) s.setProperty(PROPS[q],v); }
+      if(!isSvgIn){ var cst=getComputedStyle(o), s=cs[j].style; for(var q=0;q<PROPS.length;q++){ var v=cst.getPropertyValue(PROPS[q]); if(v) s.setProperty(PROPS[q],v); } softSh(s);
         // pseudo-elements (facet light, glows) become real spans: the foreignObject has no stylesheet
         if(!(o instanceof SVGElement)) ['::before','::after'].forEach(function(pe){ var p=getComputedStyle(o,pe), ct=p.content;
           if(!ct||ct==='none'||ct==='normal'||p.display==='none') return; var sp=document.createElement('span');
-          for(var q2=0;q2<PROPS.length;q2++){ var v2=p.getPropertyValue(PROPS[q2]); if(v2) sp.style.setProperty(PROPS[q2],v2); }
+          for(var q2=0;q2<PROPS.length;q2++){ var v2=p.getPropertyValue(PROPS[q2]); if(v2) sp.style.setProperty(PROPS[q2],v2); } softSh(sp.style);
           var m=/^["'](.*)["']$/.exec(ct); sp.textContent=m?m[1]:''; if(pe==='::before') cs[j].insertBefore(sp,cs[j].firstChild); else cs[j].appendChild(sp); }); }
       if(j&&o.matches&&o.matches(DYN_SEL)) cs[j].style.visibility='hidden';
       if(j&&o.matches&&o.matches(SUB_SEL)) cs[j].style.opacity='0';
@@ -291,6 +291,10 @@
     var rs=roots(foundKind||'game'); rs.forEach(function(r){ if(mo&&!roSeen.has(r)){ roSeen.add(r); mo.observe(r,{subtree:true,attributes:true,attributeFilter:['class','style','hidden','disabled'],attributeOldValue:true,childList:true}); } });
     if(ro) panels.forEach(function(P,el){ if(!roSeen.has(el)){ roSeen.add(el); ro.observe(el); } }); }
 
+  // (v183) the panel texture blends in linear light, so CSS glows/box-shadows that look faint on a page pile up into
+  // an opaque halo filling the padded atlas cell (the 'light slab' look). Keep them as a hint: alpha x0.25.
+  function softSh(st){ var v=st.getPropertyValue('box-shadow'); if(!v||v==='none') return;
+    st.setProperty('box-shadow',v.replace(/rgba?\(([^)]+)\)/g,function(m,a){ var p=a.split(','); var al=p.length>3?parseFloat(p[3]):1; return 'rgba('+p[0]+','+p[1]+','+p[2]+','+(al*0.25).toFixed(3)+')'; })); }
   // ---------- overlay pass on the renderer that owns the screen ----------
   function tx(c){ var t=new T.CanvasTexture(c); t.colorSpace=T.SRGBColorSpace; t.generateMipmaps=false; t.minFilter=T.LinearFilter; return t; }
   // glass: no depth write / test (sorted by renderOrder + far-to-near buffer order), front faces only
