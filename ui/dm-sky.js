@@ -31,6 +31,7 @@
     const R = o.radius || 1000, atmos = o.atmos !== false;
     const sk = (window.DMWorldStyle && o.pal) ? DMWorldStyle.skyFor(o.style || 'lush', o.pal) : { top: 0x3a6ea5, bottom: 0x88bbff, haze: 0xbfd8f0, glow: 0xffe0b0 };
     const sunCol = new THREE.Color(starColor(o.starType));
+    if (window.DMPolish) DMPolish.tintSun(sunCol, sk, atmos);   // the world's own tint on the star's colour (ui/dm-polish.js)
     const sunDir = new THREE.Vector3(0.4, 0.8, 0.3).normalize();
     const U = {
       top: W.uniform(new THREE.Color(sk.top)), bot: W.uniform(new THREE.Color(sk.bottom)), haze: W.uniform(new THREE.Color(sk.haze != null ? sk.haze : sk.bottom)),
@@ -269,7 +270,7 @@ function _dmDisc(){ if(window.dmSoftDiscTex) return window.dmSoftDiscTex(); if(w
         // set from the game each frame (ctl.nightFill, a fraction of the day fill; 0.35 when nothing sets it)
         const nf = ctl.nightFill == null ? 0.35 : ctl.nightFill;
         (o.fill || []).forEach((l) => { if (l.userData._base == null) l.userData._base = l.intensity; l.intensity = l.userData._base * (nf + (1 - nf) * day); });
-        if (scene.fog && atmos) { if (!ctl._fogDay) ctl._fogDay = scene.fog.color.clone(); scene.fog.color.copy(ctl._fogDay).multiplyScalar(0.12 + 0.88 * day); }
+        if (scene.fog && atmos) { if (!ctl._fogDay) ctl._fogDay = scene.fog.color.clone(); scene.fog.color.copy(ctl._fogDay); if (window.DMPolish) DMPolish.warmFog(scene.fog.color, camera, sunDir, day); scene.fog.color.multiplyScalar(0.12 + 0.88 * day); }
         if (scene.background && scene.background.isColor && atmos) { if (!ctl._bgDay) ctl._bgDay = scene.background.clone(); scene.background.copy(ctl._bgDay).multiplyScalar(0.05 + 0.95 * day); }
       },
     };

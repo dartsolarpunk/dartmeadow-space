@@ -161,7 +161,8 @@ window.DMPerf=window.DMPerf||{on:false,b(){},e(){},mark(){},measure(n,f){return 
 <script src="ui/dm-fluid.js?v=80"></script>
 <script src="ui/dm-journal.js?v=98"></script>
 <script src="ui/dm-worldstyle.js?v=94"></script>
-<script src="ui/dm-sky.js?v=191"></script>
+<script src="ui/dm-polish.js?v=209"></script>
+<script src="ui/dm-sky.js?v=209"></script>
 <script src="ui/dm-dust.js?v=191"></script>
 <!-- crunch1 true-fluid VFX (WebGPU only; WebGL keeps the current ocean/dust/fumes) -->
 <script src="ui/dm-fluid-core.js?v=136"></script>
@@ -2945,6 +2946,11 @@ function _introWorldReady(){
 }
 function _introTick(){
   if(!INTRO.on) return;
+  try{ _introTick2(); }catch(e){   // a throwing readiness probe must never leave the veil up forever (hold has a 25 s ceiling that sits below the probe)
+    if(INTRO.phase==='hold'&&performance.now()-INTRO.t0>25000){ console.warn('[intro] tick',e); try{ _introPlay(); }catch(_){ clearInterval(INTRO.iv); _introDissolve(350); } }
+  }
+}
+function _introTick2(){
   const pct=_loadTotalPct(), bar=document.getElementById('intro-bar'), st=document.getElementById('intro-status');
   const ok=_introWorldReady(), now=performance.now(); INTRO.stable=ok?INTRO.stable+1:0;
   // stall guard: once the base load is done, if the readiness inputs stop changing for ~10 s without settling
@@ -19050,8 +19056,10 @@ function _pwWorldTick(dt){
   const sun=TERRAIN.sun;
   if(sun){
     const d=sky?sky.sunDir:null, up=d&&d.y>0.05?d:null, fy=f.y||0;
-    if(up) sun.position.set(px+up.x*160,fy+up.y*160,pz+up.z*160); else sun.position.set(px+80,fy+120,pz+40);
-    sun.target.position.set(px,fy,pz); sun.target.updateMatrixWorld();
+    if(!(up&&window.DMPolish&&sun.castShadow&&DMPolish.fitSun(sun,up,px,fy,pz,mode==='walk'))){   // texel-snapped, tightened on foot (ui/dm-polish.js)
+      if(up) sun.position.set(px+up.x*160,fy+up.y*160,pz+up.z*160); else sun.position.set(px+80,fy+120,pz+40);
+      sun.target.position.set(px,fy,pz); sun.target.updateMatrixWorld();
+    }
   }
 }
 const _smooth01=v=>{ const u=Math.max(0,Math.min(1,v)); return u*u*(3-2*u); };
@@ -20421,7 +20429,7 @@ async function loadCharacterAssets(){
   function _hairStrandFraction(){ try{ const G=window.GFX; if(!G||G.preset!=='auto') return 1; const r=(typeof resolvePreset==='function')?resolvePreset():'medium'; return r==='low'?0.5:(r==='medium'||r==='balanced')?0.75:1; }catch(e){ return 1; } }
   // Real-time strand hair (hair_strands.js + characterassests/ariel_hair_strands.bin). Fails soft: if the
   // module/data is missing or the loaded character is a different file, she simply has no strand hair.
-  try{ import('./hair_strands.js').then(m=>m.attachHairStrands(CHAR,THREE,{url:CHAR_ASSET_BASE+'ariel_hair_strands.bin',getStrandFraction:_hairStrandFraction,getCalm:()=>{ try{ return _hairCalm(); }catch(e){ return false; } },getFrameVel:o=>{ try{ return _hairFrameVel(o); }catch(e){ return o.set(0,0,0); } },getGravityScale:()=>{try{if(surfaceActive)return 1;if(CHAR.mounted)return atmoActive?0.3:0.08;}catch(e){}return 1;}})).catch(e=>console.info('[hair] strands not attached:',e&&e.message)); }catch(e){}
+  try{ import('./hair_strands.js?v=209').then(m=>m.attachHairStrands(CHAR,THREE,{url:CHAR_ASSET_BASE+'ariel_hair_strands.bin',getStrandFraction:_hairStrandFraction,getCalm:()=>{ try{ return _hairCalm(); }catch(e){ return false; } },getFrameVel:o=>{ try{ return _hairFrameVel(o); }catch(e){ return o.set(0,0,0); } },getGravityScale:()=>{try{if(surfaceActive)return 1;if(CHAR.mounted)return atmoActive?0.3:0.08;}catch(e){}return 1;}})).catch(e=>console.info('[hair] strands not attached:',e&&e.message)); }catch(e){}
   try{ if(typeof boardFlight!=='undefined' && boardFlight) remountSkyboard(boardFlight); }catch(e){}
   CHAR._loadPromise=null;
   return CHAR.root;
@@ -24991,6 +24999,7 @@ function updateSurface(dt){
     // Console override CHAR._wantSwim still works for testing without water volumes.
     const feetY = supportH; // feet on whatever holds her up (seabed, ground, or floating at the surface)
     const inWater = !!CHAR._wantSwim || ((typeof window._surfWaterAt==='function') ? !!window._surfWaterAt(p.pos.x, feetY, p.pos.z) : false);
+    try{ if(window.DMPolish) DMPolish.contact(surfScene,p.pos.x,supportH,p.pos.z,groundNormal,CHAR_TERRAIN_HEIGHT,Math.max(0,p.pos.y-3.0-supportH),CHAR.root.visible&&!inWater&&!surfFirstPerson&&!climbN,TERRAIN.sky); }catch(e){}   // soft contact shadow (ui/dm-polish.js)
     const autoClimbFromSlope = (!!climbN || slopeDeg > 50) && moving;
     // Swim wins over climb while immersed so Swim_Forward actually plays in water volumes.
     const climbing = !inWater && (surfClimbHeld || autoClimbFromSlope);
