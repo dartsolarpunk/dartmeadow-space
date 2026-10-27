@@ -23461,10 +23461,18 @@ SkyGround.prototype.update=function(cam,budgetMs){
   for(const [k,n] of this.roots) if(!keep.has(k)){ this._drop([n]); this.roots.delete(k); }
   this.queue.length=0;
   for(const n of this.roots.values()) this._visit(n,c,0);
+  // (v151) the ground under whoever is driving comes first: every tile on the chain from the root down to her feet (and its
+  // siblings, which a level needs before it can take over from its parent) jumps the queue and is built this frame, whatever
+  // the budget — a few dozen small tiles at most, once per visit, then one or two as she crosses a tile edge. Before, the
+  // queue was ordered by view first, so a slow frame (a phone compiling shaders, ~1 tile a frame) left her standing on a
+  // kilometres-wide coarse tile for minutes, with its surface metres above the camera: culled from below, a black screen.
+  const fx=PWF.fx, fz=PWF.fz, has=(n)=>!n||(fx>=n.x0&&fx<n.x0+n.size&&fz>=n.z0&&fz<n.z0+n.size);
+  for(const n of this.queue) n._foc=has(n.parent)&&(!!n.parent||has(n));
   // in view before out of view, nearest (for its size) first, coarse before fine
-  this.queue.sort((a,b)=>((b._inView?1:0)-(a._inView?1:0))||(Math.floor(a._d/a.size*4)-Math.floor(b._d/b.size*4))||(b.size-a.size)||(a._d-b._d));
+  this.queue.sort((a,b)=>((b._foc?1:0)-(a._foc?1:0))||((b._inView?1:0)-(a._inView?1:0))||(Math.floor(a._d/a.size*4)-Math.floor(b._d/b.size*4))||(b.size-a.size)||(a._d-b._d));
   const t0=performance.now(), B=budgetMs!=null?budgetMs:this.budget;
-  for(let q=0;q<this.queue.length;q++){ const tb=performance.now(); this._build(this.queue[q]); this.buildMs=(this.buildMs||0)*0.9+(performance.now()-tb)*0.1; if(performance.now()-t0>B) break; }
+  let nf=0;
+  for(let q=0;q<this.queue.length;q++){ const n=this.queue[q], tb=performance.now(); this._build(n); if(n._foc) nf++; this.buildMs=(this.buildMs||0)*0.9+(performance.now()-tb)*0.1; if(!(n._foc&&nf<(GFX.isMobile?16:48))&&performance.now()-t0>B) break; }
   for(const n of this.roots.values()) this._show(n);
   const now=performance.now(), dt=this._lastT?Math.min(0.1,(now-this._lastT)/1000):0; this._lastT=now;
   this._morphTick(dt);
