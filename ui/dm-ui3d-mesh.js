@@ -22,7 +22,7 @@
 (function(){
   'use strict';
   if(window.DMUI3DMesh) return;
-  var CURVE_DEG=28, PUSH=0.08, PAR=4, LAYERS=1, DEPTH=2, FOV=40, ATLAS=2048, TATLAS=2048, PAD=2, PG=6, LAYOUT_MS=1000, WALK_EVERY=3, UNGHOST_MS=500;
+  var CURVE_DEG=28, PUSH=0.08, PAR=4, LAYERS=0, DEPTH=2, FOV=40, ATLAS=2048, TATLAS=2048, PAD=2, PG=6, LAYOUT_MS=1000, WALK_EVERY=3, UNGHOST_MS=500;
   var SUB_SEL='.mini-kite,.hud-c';   // (v160) kites overflow their top bar: each is its own panel, cut out of the bar's raster
   var DYN_SEL='.joystick-knob,[id$="-knob"]', SKIP_SEL='#dm-perf-hud,#account-modal,#profile-modal,.jots-ov,.modal,#warp-overlay,#jots-chat,script,style,video,iframe,template';
   var FORM_SEL='input:not([type=checkbox]):not([type=radio]):not([type=range]),select,textarea';
@@ -37,7 +37,7 @@
   // The WebGPU gate + watchdog still fall back to CSS at runtime on devices where it can't draw.
   // (v160) the 3D HUD is the default for everyone; only the player's Legacy UI choice (Profile > Display, kept in the
   // save as settings.legacyUI and mirrored to localStorage dm.ui3d for boot) turns it off. Nothing switches it off automatically.
-  function legacy(){ try{ if(typeof STATE!=='undefined'&&STATE&&STATE.settings&&typeof STATE.settings.legacyUI==='boolean') return STATE.settings.legacyUI; }catch(e){} return mode==='css'; }
+  function legacy(){ try{ if(typeof STATE!=='undefined'&&STATE&&STATE.settings&&typeof STATE.settings.legacyUI==='boolean') return STATE.settings.legacyUI; }catch(e){} return mode==='css'||mode==='0'; }
   function on(){ return mode!=='0'&&!legacy(); }
 
   var st=document.createElement('style'); st.textContent=
@@ -207,7 +207,7 @@
   var ID={cx:0,cy:0,th:0,f:1,c:1,s:0,zc:0};
   function quads(P,p,pos,uv,col,q){ var w=P.w/2+PG, h=P.h/2+PG, ox=P.rect?(P.rect.width-P.w)/2:0, AH=aCv.height;
     var u0=P.slot.x/ATLAS, u1=(P.slot.x+P.w+2*PG)/ATLAS, v0=1-(P.slot.y+P.h+2*PG)/AH, v1=1-P.slot.y/AH, cs=[[-w,-h],[w,-h],[w,h],[-w,h]];
-    for(var L=LAYERS;L>=0;L--){ var z=-DEPTH*L/LAYERS, k;
+    for(var L=LAYERS;L>=0;L--){ var z=LAYERS?-DEPTH*L/LAYERS:0, k;
       for(k=0;k<4;k++){ xf(p,cs[k][0]+ox,cs[k][1],z,pos,q*12+k*3);
         // back layers: dim, mostly transparent -> a thin glowing rim; front: the CSS glass as is, faint top sheen
         if(L) col.set([0.8,0.86,1,0.12],q*16+k*4); else col.set([1,1,1,0.86],q*16+k*4); }   // (v174) frosted glass: see-through front, faint rim, no gloss
@@ -296,9 +296,9 @@
   function softSh(st){ var v=st.getPropertyValue('box-shadow'); if(!v||v==='none') return;
     st.setProperty('box-shadow',v.replace(/rgba?\(([^)]+)\)/g,function(m,a){ var p=a.split(','); var al=p.length>3?parseFloat(p[3]):1; return 'rgba('+p[0]+','+p[1]+','+p[2]+','+(al*0.25).toFixed(3)+')'; })); }
   // ---------- overlay pass on the renderer that owns the screen ----------
-  function tx(c){ var t=new T.CanvasTexture(c); t.colorSpace=T.SRGBColorSpace; t.generateMipmaps=false; t.minFilter=T.LinearFilter; return t; }
+  function tx(c){ var t=new T.CanvasTexture(c); t.colorSpace=T.SRGBColorSpace; t.generateMipmaps=false; t.minFilter=T.LinearFilter; t.premultiplyAlpha=true; return t; }
   // glass: no depth write / test (sorted by renderOrder + far-to-near buffer order), front faces only
-  function mat(map,vc){ var m=new T.MeshBasicNodeMaterial({map:map,vertexColors:!!vc,transparent:true,depthWrite:false,depthTest:false,side:T.FrontSide}); m.toneMapped=false; return m; }
+  function mat(map,vc){ var m=new T.MeshBasicNodeMaterial({map:map,vertexColors:!!vc,transparent:true,depthWrite:false,depthTest:false,side:T.FrontSide}); m.toneMapped=false; m.premultipliedAlpha=true; return m; }
   function rOK(R){ var v=okR.get(R); if(v===undefined){ v=!!(R&&R.backend); okR.set(R,v); } return v; }   // (v160) WebGPU and its WebGL2 backend alike
   function setup(R){
     T=window.THREE; if(!T) return false;
@@ -379,13 +379,14 @@
     // what is really on screen: 'mesh' (overlay drew OK), 'css' (tilt fallback / opt-out), 'flat'
     get status(){ var m=mode==='0'||(window.DMUI3D&&DMUI3D.enabled===false)?'flat':(on()&&ready&&drewOK)?'mesh':(on()?'mesh?':'css');
       return {mode:m, reason:why0, painter:painter, pending:on()&&!drewOK?Math.round(wdT0?performance.now()-wdT0:0):0}; },
-    setLegacy:function(v){ v=!!v; try{ if(typeof STATE!=='undefined'&&STATE&&STATE.settings) STATE.settings.legacyUI=v; }catch(e){} this.setMode(v?'css':'mesh'); },
+    setLegacy:function(v){ v=!!v; try{ if(typeof STATE!=='undefined'&&STATE&&STATE.settings) STATE.settings.legacyUI=v; }catch(e){} if(v){ this.setMode('0'); if(window.DMUI3D) DMUI3D.disable(); try{ localStorage.setItem('dm.ui3d','0'); }catch(e){} } else { if(window.DMUI3D) DMUI3D.enable(); this.setMode('mesh'); } },   // (v175) Legacy UI = the flat 2D HUD, live, no reload
     get legacy(){ return legacy(); },
     setMode:function(m){ mode=m; try{ localStorage.setItem('dm.ui3d',m); }catch(e){} if(!on()) stop(); else if(ready) document.body.classList.add('dm-ui3d-mesh'); if(window.DMUI3D) DMUI3D.refresh(); },
     // AR: ui/dm-ar-core.js draws `mesh` itself on a head-locked plate; on release it goes back here
     arHold:function(h){ arHeld=!!h; if(!h&&root&&scene&&root.parent!==scene) scene.add(root); },
     // CPU ms per overlay call (layout + text + draw submit), averaged since the last read
     hudCost:function(){ var v=hudN?hudMs/hudN:0; hudMs=0; hudN=0; return v; },
+    _atlas:function(){ return aCv&&aCv.toDataURL(); },
     _stats:function(){ var o=[]; panels.forEach(function(P){ o.push({id:P.el.id||String(P.el.className).slice(0,30),ready:P.ready,g:!!P.g,dyn:P.dyn,leaves:P.leaves.length}); });
       return {on:on(),painter:painter,why:why0,ready:ready,frames:frameN,paints:paints,drewOK:drewOK,ghosted:ghosted,n:o.length,ready_n:o.filter(function(x){ return x.ready; }).length,canvases:cvs.size,panels:o.slice(0,60)}; }
   };
