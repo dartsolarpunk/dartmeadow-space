@@ -16,16 +16,20 @@
    flat, panels toward the sides turn inward up to CURVE_DEG and come a little closer, each placed so it projects
    onto its DOM rectangle (taps hit the real DOM, kept at opacity 0). Extrusion is thin (DEPTH), glass keeps the
    CSS alpha (no blur), with a soft edge glow from the back layers and a faint top specular.
-   Safety: drewOK/ghostDrawn (DOM hidden only after a mesh frame rendered), a 15 s raster-stall watchdog -> CSS,
-   the WebKit box2d painter, and an un-ghost timer: if no overlay has drawn for ~0.5 s the DOM comes back.
+   (v206) 3D UI only: a panel's DOM is hidden once its art is in the atlas and STAYS hidden. Nothing here looks at the
+   frame rate any more (no perfGuard, no 0.5 s un-ghost timer, no session-off latch); a stall, a relayout or an atlas
+   re-pack keeps the last art on screen while the panel repaints. The only DOM HUD is the Profile > Legacy UI switch.
+   Painters: foreignObject (data: URL, full CSS) and box2d (canvas 2D incl. linear/radial/conic gradients and the
+   ::before/::after boxes) -- same look; box2d is chosen once if the engine taints foreignObject canvases.
    AR (ui/dm-ar-core.js) draws the same `mesh` group on a head-locked plate (drawTo / arHold). */
 (function(){
   'use strict';
   if(window.DMUI3DMesh) return;
-  var CURVE_DEG=28, PUSH=0.08, PAR=4, LAYERS=1, DEPTH=0.6, FOV=40, ATLAS=2048, TATLAS=2048, PAD=2, PG=6, LAYOUT_MS=1000, WALK_EVERY=3, UNGHOST_MS=500;
+  var CURVE_DEG=28, PUSH=0.08, PAR=4, LAYERS=1, DEPTH=0.6, FOV=40, ATLAS=2048, TATLAS=2048, PAD=2, PG=6, LAYOUT_MS=1000, WALK_EVERY=3, TATLAS_H=4096, MISS_MAX=24, MAX_PAINTS=3;
   var SUB_SEL='.mini-kite,.hud-c';   // (v160) kites overflow their top bar: each is its own panel, cut out of the bar's raster
   var DYN_SEL='.joystick-knob,[id$="-knob"]', SKIP_SEL='#dm-perf-hud,#account-modal,#profile-modal,.modal,#warp-overlay,#jots-chat,script,style,video,iframe,template';
   var FORM_SEL='input:not([type=checkbox]):not([type=radio]):not([type=range]),select,textarea';
+  var SVGP=['fill','stroke','stroke-width','stroke-dasharray','stroke-dashoffset','stroke-linecap','stroke-linejoin','opacity','fill-opacity','stroke-opacity','stop-color','stop-opacity','font-size','font-family','font-weight'];  /* (v206) the foreignObject has no stylesheet: SVG children (gauge rings) need their paint inlined or they fill black */
   var PROPS=['display','position','left','top','right','bottom','width','height','min-width','min-height','max-width','max-height',
     'margin-top','margin-right','margin-bottom','margin-left','padding-top','padding-right','padding-bottom','padding-left','box-sizing',
     'border-top','border-right','border-bottom','border-left','border-radius','background-color','background-image','background-size','background-position','background-repeat',
@@ -48,20 +52,29 @@
 
   var T=null, root=null, scene=null, cam=null, art=null, txt=null, aCv, aCx, aTex, tCv, tCx, tTex;
   var panels=new Map(), cvs=new Map(), frameN=0, artDirty=false, txtGeoDirty=false, imgCache=new Map(), arHeld=false, ready=false;
-  var okR=new WeakMap(), lastDraw=0, ghosted=false, ptr={x:0,y:0,ex:0,ey:0}, theme='', hudMs=0, hudN=0;
+  var okR=new WeakMap(), ghosted=false, ptr={x:0,y:0,ex:0,ey:0}, theme='', hudMs=0, hudN=0;
   function $(id){ return document.getElementById(id); }
   function inlineImg(src){ if(imgCache.has(src)) return imgCache.get(src);
     var p=fetch(src).then(function(r){ return r.blob(); }).then(function(b){ return new Promise(function(res){ var fr=new FileReader(); fr.onload=function(){ res(fr.result); }; fr.readAsDataURL(b); }); }).catch(function(){ return src; });
     imgCache.set(src,p); return p; }
-  // (v200) SVG -> Image through a revoked blob: URL, never a data: URL. WebKit keeps every distinct data: URL image
-  // (and its decoded bitmap) in its memory cache, so a raster per panel per second grew the page ~25 MB/s.
-  function svgImg(str,ms){ var u=URL.createObjectURL(new Blob([str],{type:'image/svg+xml;charset=utf-8'})), im=new Image();
-    return within(new Promise(function(res,rej){ im.onload=function(){ res(im); }; im.onerror=rej; im.src=u; }),ms).finally(function(){ URL.revokeObjectURL(u); }); }
+  // (v206) SVG -> Image through a data: URL. A blob: URL taints the canvas in Chromium and WebKit alike (the v200 blob switch made every
+  // panel fall to the box painter = outline + text only). The v200 memory growth was backdrop-filter (disabled in dm-hud.css), and
+  // identical markup maps to the same cached data: image, so unchanged panels do not accumulate.
+  function svgImg(str,ms){ var im=new Image();
+    return within(new Promise(function(res,rej){ im.onload=function(){ res(im); }; im.onerror=rej; im.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(str); }),ms); }
   function dropImg(im){ if(!im) return; im.onload=im.onerror=null; try{ im.removeAttribute('src'); im.src=''; }catch(e){} }
   function dropCv(c){ if(c){ c.width=c.height=0; } }   // free the backing store now instead of at GC
   function within(p,ms){ return Promise.race([p,new Promise(function(_,rej){ setTimeout(function(){ rej(new Error('timeout')); },ms); })]); }
   function inSub(n,el){ var k=n.closest&&n.closest(SUB_SEL); return !!(k&&k!==el&&el.contains(k)); }
   function isLeaf(el){ if(el instanceof SVGElement) return false; if(el.children.length) return false; var t=el.textContent; return !!(t&&t.trim()); }
+  // (v206) text sitting directly inside an element that also has element children ('<i>⏻</i>EXIT', '→ <span>…</span>') is a text RUN: it gets its own
+  // text-atlas slot from a Range rect. Before, only childless elements were leaves, so those labels (EXIT, HOME, MAP, CFG ... in the right frame)
+  // only existed in the foreignObject raster and vanished with the box painter.
+  function hasOwnText(n){ if(n instanceof SVGElement||!n.children.length) return false; for(var c=n.firstChild;c;c=c.nextSibling) if(c.nodeType===3&&c.data.trim()) return true; return false; }
+  function runsOf(n,out){ if(!hasOwnText(n)) return; for(var c=n.firstChild;c;c=c.nextSibling){ if(c.nodeType===3&&c.data.trim()){ var rg=document.createRange(); rg.selectNodeContents(c); var r=rg.getBoundingClientRect(); if(r.width>=2&&r.height>=2) out.push({el:n,node:c,r:r,text:null}); } } }
+  // a leaf whose ::before/::after carries inline text ('FPS' label) is measured by its own text node, so the live number does not draw over the label
+  function pseudoInline(n){ if(n._dmPI===undefined){ n._dmPI=false; ['::before','::after'].forEach(function(pe){ var p=getComputedStyle(n,pe), ct=p.content; if(ct&&/^["'].+["']$/.test(ct)&&p.display!=='none'&&p.position!=='absolute'&&p.position!=='fixed') n._dmPI=true; }); } return n._dmPI; }
+  function leafEntry(n){ var lr=visible(n); if(!lr) return null; if(pseudoInline(n)){ for(var c=n.firstChild;c;c=c.nextSibling){ if(c.nodeType===3&&c.data.trim()){ var rg=document.createRange(); rg.selectNodeContents(c); var r=rg.getBoundingClientRect(); if(r.width>=2&&r.height>=2) return {el:n,node:c,r:r,text:null}; } } } return {el:n,r:lr,text:null}; }
   async function raster(el,w,h){
     var c=el.cloneNode(true), os=[el], cs=[c];
     for(var k=0;k<os.length;k++){ var a=os[k].children, b=cs[k].children; for(var i=0;i<a.length&&i<b.length;i++){ os.push(a[i]); cs.push(b[i]); } }
@@ -72,9 +85,10 @@
           if(!ct||ct==='none'||ct==='normal'||p.display==='none') return; var sp=document.createElement('span');
           for(var q2=0;q2<PROPS.length;q2++){ var v2=p.getPropertyValue(PROPS[q2]); if(v2) sp.style.setProperty(PROPS[q2],v2); } softSh(sp.style);
           var m=/^["'](.*)["']$/.exec(ct); sp.textContent=m?m[1]:''; if(pe==='::before') cs[j].insertBefore(sp,cs[j].firstChild); else cs[j].appendChild(sp); }); }
+      else { var cs3=getComputedStyle(o), s3=cs[j].style; for(var q3=0;q3<SVGP.length;q3++){ var v3=cs3.getPropertyValue(SVGP[q3]); if(v3) s3.setProperty(SVGP[q3],v3); } }
       if(j&&o.matches&&o.matches(DYN_SEL)) cs[j].style.visibility='hidden';
       if(j&&o.matches&&o.matches(SUB_SEL)) cs[j].style.opacity='0';
-      if(isLeaf(o)){ cs[j].style.color='transparent'; cs[j].style.textShadow='none'; } }
+      if(isLeaf(o)||hasOwnText(o)){ cs[j].style.color='transparent'; cs[j].style.textShadow='none'; } }
     var rs=c.style; rs.position='relative'; rs.left=rs.top=PG+'px'; rs.right=rs.bottom='auto'; rs.margin='0'; rs.transform='none'; rs.rotate='none'; rs.scale='none'; rs.translate='none'; rs.filter='none'; rs.opacity='1'; var lw=el.offsetWidth||w, lh=el.offsetHeight||h, kx=w/lw, ky=h/lh; rs.width=lw+'px'; rs.height=lh+'px'; if(Math.abs(kx-1)>.01||Math.abs(ky-1)>.01){ rs.transformOrigin='0 0'; rs.transform='scale('+kx+','+ky+')'; }   /* (v160) scaled ancestors (compact kite .72): lay out at CSS size, scale to screen size, else the raster crops */ rs.boxSizing='border-box';
     c.classList.remove('dm-ui3d-ghost','dm-ui3d-p');
     // (v204) <img> never goes inside the foreignObject: WebKit fires the outer SVG's onload before a nested image decodes, so on a
@@ -128,7 +142,7 @@
     var s=a<0.15?0:Math.min(1,(a-0.15)/0.8), e=s*s*(3-2*s), th=-(nx<0?-1:1)*CURVE_DEG*Math.PI/180*e, f=1-PUSH*e;
     return {cx:cx,cy:cy,th:th,f:f,c:Math.cos(th),s:Math.sin(th),zc:camD()*(1-f)}; }
   function xf(p,lx,ly,lz,out,o){ var x=lx*p.c+lz*p.s, z=-lx*p.s+lz*p.c; out[o]=(p.cx+x)*p.f; out[o+1]=(p.cy+ly)*p.f; out[o+2]=p.zc+z*p.f; }
-  var sx=0, sy=0, sh=0; function alloc(w,h,size){ if(sx+w>size){ sx=0; sy+=sh+PAD; sh=0; } if(sy+h>size) return null; var a={x:sx,y:sy}; sx+=w+PAD; sh=Math.max(sh,h); return a; }
+  var sx=0, sy=0, sh=0; function alloc(w,h,size,maxH){ if(sx+w>size){ sx=0; sy+=sh+PAD; sh=0; } if(sy+h>(maxH||size)) return null; var a={x:sx,y:sy,w:w,h:h}; sx+=w+PAD; sh=Math.max(sh,h); return a; }
   function pos4(r){ return [r.left,r.top,r.width,r.height].map(function(v){ return Math.round(v*2); }).join(','); }
 
   // (v204) never raster mid-transition: raster() copies each descendant's *computed* opacity/colour, so a panel painted while a
@@ -148,24 +162,30 @@
       if(el.matches(FORM_SEL)||el.querySelector(FORM_SEL)) return;          // typed fields stay real DOM
       if(el.getAnimations&&el.getAnimations().some(function(a){ return a.playState==='running'&&a.effect&&a.effect.getTiming&&a.effect.getTiming().iterations!==Infinity; })){ if(panels.has(el)) seen.add(el); return; }   /* (v160) a mid-transition panel keeps its slot (dropping it re-packed the whole atlas) */   // mid-transition: leave it to CSS
       seen.add(el);
-      var P=panels.get(el), w=Math.ceil(r.width), h=Math.ceil(r.height);
-      if(!P){ P={el:el,sig:'',ready:false,busy:false,leaves:[],dyn:el.matches(DYN_SEL),lp:0,mesh:null}; panels.set(el,P); }
+      var P=panels.get(el), w=Math.ceil(r.width), h=Math.ceil(r.height); if(P){ P.miss_n=0; if(P.miss){ P.miss=0; artDirty=true; txtGeoDirty=true; if(P.mesh) P.mesh.visible=P.ready; } }
+      if(!P){ P={el:el,sig:'',ready:false,busy:false,leaves:[],dyn:el.matches(DYN_SEL),lp:0,mesh:null,miss:0,miss_n:0}; panels.set(el,P); }
       if(P.w!==w||P.h!==h){ P.w=w; P.h=h; artDirty=true; if(!P.cw){ P.cw=w+24; P.ch=h+4; fresh.push(P); } else if(w>P.cw||h>P.ch||w<P.cw-96){ P.cw=w+24; P.ch=h+4; relay=true; } }   /* (v160) slot slack: a readout growing a few px repaints in place instead of re-packing (and un-readying) every panel */
       var ps=pos4(r); if(ps!==P.ps){ P.ps=ps; P.rect=r; if(P.dyn) P.moved=true; else artDirty=true; txtGeoDirty=true; }
-      var sg=paintSig(el,w,h); if(P.force&&now-P.lp<100) pend=true; else if(sg!==P.sig&&(now-P.lp>1000||!P.sig||P.force)){   /* (v160) forced repaints coalesce to <=10/s per panel */ P.sig=sg; P.ready=P.ready&&!!P.slot; P.want=true; P.force=false; }
-      var Ls=[]; if(!P.dyn){ if(isLeaf(el)){ var lr0=visible(el); if(lr0) Ls.push({el:el,r:lr0,text:null}); }
-        else el.querySelectorAll('*').forEach(function(n){ if(!isLeaf(n)||n.closest(DYN_SEL)||inSub(n,el)) return; var lr=visible(n); if(lr) Ls.push({el:n,r:lr,text:null}); }); }
-      if(Ls.length!==P.leaves.length||Ls.some(function(L,i){ var o=P.leaves[i]; return o.el!==L.el||Math.round(o.r.left)!==Math.round(L.r.left)||Math.round(o.r.top)!==Math.round(L.r.top)||Math.round(o.r.width)!==Math.round(L.r.width); })){ P.leaves=Ls; txtGeoDirty=true; }
+      var sg=paintSig(el,w,h); if(P.force&&now-P.lp<160) pend=true; else if(sg!==P.sig&&(now-P.lp>1000||!P.sig||P.force)){   /* (v160) forced repaints coalesce to <=10/s per panel */ P.sig=sg; P.ready=P.ready&&!!P.slot; P.want=true; P.force=false; }
+      var Ls=[]; if(!P.dyn){ if(isLeaf(el)){ var le0=leafEntry(el); if(le0) Ls.push(le0); }
+        else { if(hasOwnText(el)) runsOf(el,Ls); el.querySelectorAll('*').forEach(function(n){ if(n.closest(DYN_SEL)||inSub(n,el)) return; if(!isLeaf(n)){ if(hasOwnText(n)){ var rs0=[]; runsOf(n,rs0); rs0.forEach(function(L){ if(visible(n)) Ls.push(L); }); } return; } var le=leafEntry(n); if(le) Ls.push(le); }); } }
+      if(Ls.length!==P.leaves.length||Ls.some(function(L,i){ var o=P.leaves[i]; return o.el!==L.el||o.node!==L.node||Math.round(o.r.left)!==Math.round(L.r.left)||Math.round(o.r.top)!==Math.round(L.r.top)||Math.round(o.r.width)!==Math.round(L.r.width); })){ P.leaves=Ls; txtGeoDirty=true; }
     });
     if(pend) layoutDirty=true;
-    panels.forEach(function(P,el){ if(!seen.has(el)){ el.classList.remove('dm-ui3d-ghost'); if(P.mesh){ root.remove(P.mesh); P.mesh.geometry.dispose(); } panels.delete(el); artDirty=true; txtGeoDirty=true; } });
+    // (v206) a panel that is momentarily not 'seen' (mid-fade, a 0-size frame, a relayout) keeps its slot, art and ghosted DOM for MISS_MAX layouts:
+    // it only stops drawing. Dropping it at once un-ghosted the DOM (the pop-in/out) and re-packed the atlas when it came back.
+    panels.forEach(function(P,el){ if(seen.has(el)) return; if(el.isConnected&&++P.miss_n<MISS_MAX&&(P.miss=(P.miss||0)+1)){ if(P.miss===1){ artDirty=true; txtGeoDirty=true; if(P.mesh) P.mesh.visible=false; } return; }
+      el.classList.remove('dm-ui3d-ghost'); if(P.mesh){ root.remove(P.mesh); P.mesh.geometry.dispose(); } panels.delete(el); artDirty=true; txtGeoDirty=true; });
     if(!relay&&fresh.length){ var AH0=aCv.height; fresh.forEach(function(P){ if(!relay){ P.slot=alloc(P.cw+2*PG,P.ch+2*PG,ATLAS); if(!P.slot||sy+sh>AH0) relay=true; else { P.ready=false; P.want=true; artDirty=true; } } }); }   // (v160) new panels go into free atlas space; only a full atlas re-packs
-    if(relay){ sx=sy=sh=0; var list=[]; panels.forEach(function(P){ list.push(P); }); list.sort(function(a,b){ return b.ch-a.ch; });
+    if(relay){ var snap=null; try{ snap=scratch(aCv.width,aCv.height); snap.getContext('2d').drawImage(aCv,0,0); }catch(e){ snap=null; }   // (v206) re-pack keeps the old art: panels stay ready (no blank frame, no un-ghost) while they repaint
+      sx=sy=sh=0; var list=[], olds=new Map(); panels.forEach(function(P){ list.push(P); olds.set(P,P.slot); }); list.sort(function(a,b){ return b.ch-a.ch; });
       list.forEach(function(P){ P.slot=alloc(P.cw+2*PG,P.ch+2*PG,ATLAS); });
       // the art atlas is only as tall as its slots (pow2): each finished panel raster re-uploads the whole texture
       var AH=64; while(AH<sy+sh&&AH<ATLAS) AH*=2; if(aCv.height!==AH){ aCv.height=AH; aTex.dispose(); aTex=tx(aCv); art.material.map=aTex; art.material.needsUpdate=true; panels.forEach(function(P){ if(P.mesh) P.mesh.material=art.material; }); } else aCx.clearRect(0,0,ATLAS,AH);
-      panels.forEach(function(P){ P.ready=false; P.want=true; }); artDirty=true; }
-    panels.forEach(function(P){ if(P.want&&!P.busy&&P.slot&&now>=(P.nb||0)){ if(settling(P)){ P.nb=now+SETTLE_MS; setTimeout(function(){ layoutDirty=true; },SETTLE_MS+20); return; } P.want=false; P.lp=now; P.settleN=0; paint(P); } });   // (v204) a failing panel waits out its backoff (P.nb) instead of re-rastering every frame
+      panels.forEach(function(P){ var o=olds.get(P); if(snap&&o&&P.slot&&P.ready){ aCx.drawImage(snap,o.x,o.y,Math.min(o.w,P.slot.w),Math.min(o.h,P.slot.h),P.slot.x,P.slot.y,Math.min(o.w,P.slot.w),Math.min(o.h,P.slot.h)); } else P.ready=false; P.want=true; }); dropCv(snap); artDirty=true; }
+    var nBusy=0; panels.forEach(function(P){ if(P.busy) nBusy++; });   // (v206) at most MAX_PAINTS rasters in flight: a 20-panel HUD no longer rasters everything in one frame (a stutter on load / theme change)
+    panels.forEach(function(P){ if(P.want&&!P.busy&&P.slot&&now>=(P.nb||0)){ if(nBusy>=MAX_PAINTS){ pend=true; return; } if(settling(P)){ P.nb=now+SETTLE_MS; setTimeout(function(){ layoutDirty=true; },SETTLE_MS+20); return; } P.want=false; P.lp=now; P.settleN=0; nBusy++; paint(P); } });
+    if(pend) layoutDirty=true;   // (v204) a failing panel waits out its backoff (P.nb) instead of re-rastering every frame
     // live canvases (minimap, globe, compass halo)
     var cseen=new Set();
     found.cv.forEach(function(c){ if(cseen.has(c)||!c.isConnected) return; var r=visible(c); if(!r||!c.width||!c.height||faded(c)) return; cseen.add(c);
@@ -188,7 +208,76 @@
   function polyPath(cx,cp,x,y,w,h){ var m=/^polygon\((.*)\)$/.exec(cp||''); if(!m) return false; var pts=m[1].split(',');
     pts.forEach(function(pt,i){ var v=pt.trim().split(/\s+/), f=function(t,L){ return /%$/.test(t)?parseFloat(t)/100*L:parseFloat(t)||0; }; var px=x+f(v[0],w), py=y+f(v[1],h); if(i) cx.lineTo(px,py); else cx.moveTo(px,py); });
     cx.closePath(); return true; }
-  var GLASS='rgba(20,26,40,0.42)';
+  // (v206) box2d fills: real CSS gradients (linear / radial / conic, stacked layers) so the theme colour pills and glass fills paint exactly
+  // as they do in the DOM. The old painter took the first rgba stop and, for a panel root with no fill, a dark 'GLASS' rect -- that was the
+  // black bar across the top (the transparent top-bar wrapper) and the outline-only look. A box with no background now paints nothing.
+  function splitTop(str){ var o=[], d=0, b=0; for(var i=0;i<str.length;i++){ var ch=str.charAt(i); if(ch==='(') d++; else if(ch===')') d--; else if(ch===','&&!d){ o.push(str.slice(b,i).trim()); b=i+1; } } o.push(str.slice(b).trim()); return o; }
+  function stopsOf(parts,len,isAng){ var st=[], n=parts.length;
+    parts.forEach(function(t){ var m=/^(rgba?\([^)]*\)|color\([^)]*\)|hsla?\([^)]*\)|#[0-9a-f]{3,8}|[a-z]+)\s*(.*)$/i.exec(t); if(!m) return; var pos=null, rest=m[2].trim();
+      if(rest){ var pm=/^(-?[\d.]+)(%|px|deg|turn)?/.exec(rest); if(pm){ var v=parseFloat(pm[1]), u=pm[2]; pos=u==='%'?v/100:u==='px'?v/len:u==='deg'?v/360:u==='turn'?v:null; } }
+      st.push({c:m[1],p:pos}); });
+    if(!st.length) return st; if(st[0].p==null) st[0].p=0; if(st[st.length-1].p==null) st[st.length-1].p=1;
+    var last=0; for(var i=1;i<st.length;i++){ if(st[i].p!=null){ var j=i, a0=st[last].p, gap=i-last; for(var k=last+1;k<i;k++) st[k].p=a0+(st[i].p-a0)*(k-last)/gap; last=i; } }
+    var mx=-1e9; st.forEach(function(q){ q.p=Math.max(mx,q.p); mx=q.p; });
+    // canvas gradients interpolate un-premultiplied (CSS: premultiplied): a transparent-black stop would grey the ramp, so it borrows its neighbour's rgb at alpha 0
+    var rgbOf=function(c){ var m=/rgba?\(([^)]*)\)/.exec(c); if(!m) return null; var a=m[1].split(/[ ,\/]+/).filter(Boolean); return {r:a[0],g:a[1],b:a[2],a:a.length>3?parseFloat(a[3]):1}; };
+    st.forEach(function(q,i){ var c=rgbOf(q.c); if(q.c==='transparent'||(c&&c.a===0)){ var nb=null, k; for(k=i-1;k>=0&&!nb;k--){ var t=rgbOf(st[k].c); if(t&&t.a>0) nb=t; } for(k=i+1;k<st.length&&!nb;k++){ var t2=rgbOf(st[k].c); if(t2&&t2.a>0) nb=t2; } if(nb) q.c='rgba('+nb.r+','+nb.g+','+nb.b+',0)'; } });
+    return st; }
+  function addStops(g,st){ st.forEach(function(q){ try{ g.addColorStop(Math.max(0,Math.min(1,q.p)),q.c); }catch(e){} }); }
+  function posOf(tok,L,half){ if(tok==null) return half; var k={left:0,top:0,center:L/2,right:L,bottom:L}[tok]; if(k!==undefined) return k; if(/%$/.test(tok)) return parseFloat(tok)/100*L; return parseFloat(tok)||0; }
+  function fillGrad(cx,fn,args,x,y,w,h){   // fills the current path (already clipped) with one gradient layer
+    var parts=splitTop(args), head=parts[0], hasHead=!/^(rgba?\(|color\(|hsla?\(|#|[a-z]+\s*[\d.%]*\s*$)/i.test(head)||/^(to |from |at |circle|ellipse|closest|farthest|-?[\d.]+(deg|turn|rad)|in )/i.test(head);
+    var body=hasHead?parts.slice(1):parts, g=null, st;
+    if(fn==='linear-gradient'||fn==='repeating-linear-gradient'){ var th=Math.PI; if(hasHead){ var hm=/(-?[\d.]+)(deg|turn|rad)/.exec(head); if(hm){ var v=parseFloat(hm[1]); th=hm[2]==='deg'?v*Math.PI/180:hm[2]==='turn'?v*2*Math.PI:v; }
+        else { var tm=/to\s+(top|bottom|left|right)(?:\s+(top|bottom|left|right))?/.exec(head); if(tm){ var d1=tm[1], d2=tm[2]||'', dd=Math.atan2(h,w);
+          if(!d2) th={top:0,right:Math.PI/2,bottom:Math.PI,left:3*Math.PI/2}[d1];
+          else { var hz=/left|right/.test(d1)?d1:d2, vt=/top|bottom/.test(d1)?d1:d2; th=vt==='top'?(hz==='right'?dd:-dd):(hz==='right'?Math.PI-dd:Math.PI+dd); } } } }
+      var L=Math.abs(w*Math.sin(th))+Math.abs(h*Math.cos(th)), dx=Math.sin(th), dy=-Math.cos(th), mx=x+w/2, my=y+h/2;
+      g=cx.createLinearGradient(mx-dx*L/2,my-dy*L/2,mx+dx*L/2,my+dy*L/2); st=stopsOf(body,L); }
+    else if(fn==='radial-gradient'||fn==='repeating-radial-gradient'){ var at=/\bat\s+(\S+)(?:\s+(\S+))?/.exec(hasHead?head:''), ox=x+posOf(at&&at[1],w,w/2), oy=y+posOf(at&&(at[2]||(/^(top|bottom)$/.test(at[1])?'center':'center')),h,h/2);
+      if(at&&at[1]&&/^(top|bottom)$/.test(at[1])&&!at[2]){ ox=x+w/2; oy=y+posOf(at[1],h,h/2); }
+      var circ=/circle/.test(head)||(hasHead&&!/ellipse/.test(head)&&/^[\d.]+px(\s+at|$)/.test(head)), ddx=Math.max(Math.abs(ox-x),Math.abs(ox-x-w)), ddy=Math.max(Math.abs(oy-y),Math.abs(oy-y-h)), cdx=Math.min(Math.abs(ox-x),Math.abs(ox-x-w)), cdy=Math.min(Math.abs(oy-y),Math.abs(oy-y-h)), rx,ry;
+      var exp=/^[^a]*?([\d.]+)px(?:\s+([\d.]+)px)?/.exec(hasHead?head.replace(/\bat\b.*$/,''):'');
+      if(exp){ rx=parseFloat(exp[1]); ry=exp[2]?parseFloat(exp[2]):rx; }
+      else if(/closest-side/.test(head)){ rx=circ?Math.min(cdx,cdy):cdx; ry=circ?rx:cdy; }
+      else if(/farthest-side/.test(head)){ rx=circ?Math.max(ddx,ddy):ddx; ry=circ?rx:ddy; }
+      else if(/closest-corner/.test(head)){ rx=circ?Math.hypot(cdx,cdy):cdx*Math.SQRT2; ry=circ?rx:cdy*Math.SQRT2; }
+      else { rx=circ?Math.hypot(ddx,ddy):ddx*Math.SQRT2; ry=circ?rx:ddy*Math.SQRT2; }
+      rx=Math.max(1,rx); ry=Math.max(1,ry); st=stopsOf(body,rx);
+      cx.save(); cx.translate(ox,oy); cx.scale(1,ry/rx); g=cx.createRadialGradient(0,0,0,0,0,rx); addStops(g,st); cx.fillStyle=g; cx.fillRect(-(w+h)*2/1,-(w+h)*2/(ry/rx),(w+h)*4,(w+h)*4/(ry/rx)); cx.restore(); return; }
+    else if(fn==='conic-gradient'){ var fm=/from\s+(-?[\d.]+)(deg|turn|rad)/.exec(hasHead?head:''), fa=fm?(fm[2]==='deg'?parseFloat(fm[1])*Math.PI/180:fm[2]==='turn'?parseFloat(fm[1])*2*Math.PI:parseFloat(fm[1])):0, ca=/\bat\s+(\S+)(?:\s+(\S+))?/.exec(hasHead?head:''), px=x+posOf(ca&&ca[1],w,w/2), py=y+posOf(ca&&ca[2],h,h/2);
+      st=stopsOf(body,360,true); if(cx.createConicGradient){ g=cx.createConicGradient(fa-Math.PI/2,px,py); } else { cx.fillStyle=(st[0]&&st[0].c)||'transparent'; cx.fill(); return; } }
+    if(!g) return; addStops(g,st); cx.fillStyle=g; cx.fill(); }
+  function bgLayers(cx,cs,x,y,w,h){ var bi=cs.backgroundImage; if(!bi||bi==='none') return;
+    var ls=splitTop(bi); for(var i=ls.length-1;i>=0;i--){ var m=/^(repeating-)?(linear|radial|conic)-gradient\((.*)\)$/s.exec(ls[i]); if(m) try{ fillGrad(cx,(m[1]||'')+m[2]+'-gradient',m[3],x,y,w,h); }catch(e){ console.warn('[UI3D] gradient',e&&e.message); } } }
+  // one CSS box (an element or a ::before/::after) onto the canvas: shadow, fill colour, gradient layers, border, radius / polygon clip
+  function paintBox(cx,cs,x,y,w,h,root){
+    var bg=cs.backgroundColor, bw=parseFloat(cs.borderTopWidth)||0, bc=cs.borderTopColor, bwR=parseFloat(cs.borderRightWidth)||0, bwB=parseFloat(cs.borderBottomWidth)||0, bwL=parseFloat(cs.borderLeftWidth)||0,
+      uni=(bw===bwR&&bw===bwB&&bw===bwL&&bc===cs.borderBottomColor&&bc===cs.borderLeftColor&&bc===cs.borderRightColor), sideB=!uni&&(bw>0||bwR>0||bwB>0||bwL>0);   // (v206) one-sided borders (underline pills, rules) are drawn as strips
+    if(sideB){ bw=0; } rad=Math.min(parseFloat(cs.borderTopLeftRadius)||0,w/2,h/2), hasG=cs.backgroundImage&&cs.backgroundImage!=='none'&&/gradient\(/.test(cs.backgroundImage);
+    if(alphaOf(bg)<=0&&!hasG&&!sideB&&(bw<=0||alphaOf(bc)<=0)&&(!cs.boxShadow||cs.boxShadow==='none')) return;
+    cx.save(); cx.globalAlpha=Math.min(1,parseFloat(cs.opacity)||1); cx.beginPath();
+    if(!polyPath(cx,cs.clipPath,x,y,w,h)){ if(cx.roundRect) cx.roundRect(x+bw/2,y+bw/2,w-bw,h-bw,rad); else cx.rect(x+bw/2,y+bw/2,w-bw,h-bw); }
+    var g=/(rgba?\([^)]*\)|#[0-9a-f]+)\s+(-?[\d.]+)px\s+(-?[\d.]+)px\s+([\d.]+)px/i.exec(cs.boxShadow||''); if(g&&!/inset/.test(cs.boxShadow)&&(alphaOf(bg)>0||hasG||bw>0)){ cx.shadowColor=soft(g[1]).replace(/,([\d.]+)\)$/,function(m,a){ return ','+(parseFloat(a)*0.7).toFixed(3)+')'; }); cx.shadowOffsetX=+g[2]; cx.shadowOffsetY=+g[3]; cx.shadowBlur=+g[4]; }
+    if(alphaOf(bg)>0){ cx.fillStyle=bg; cx.fill(); }
+    cx.shadowColor='transparent';
+    if(hasG){ cx.save(); cx.clip(); bgLayers(cx,cs,x,y,w,h); cx.restore(); }   // gradients are clipped to the box (radius / polygon)
+    if(bw>0&&alphaOf(bc)>0){ cx.lineWidth=bw; cx.strokeStyle=bc; cx.stroke(); }
+    if(sideB){ var sd=[[cs.borderTopColor,bw0(cs.borderTopWidth),x,y,w,bw0(cs.borderTopWidth)],[cs.borderBottomColor,bwB,x,y+h-bwB,w,bwB],[cs.borderLeftColor,bwL,x,y,bwL,h],[cs.borderRightColor,bwR,x+w-bwR,y,bwR,h]];
+      sd.forEach(function(d){ if(d[1]>0&&alphaOf(d[0])>0){ cx.fillStyle=d[0]; cx.fillRect(d[2],d[3],d[4],d[5]); } }); }
+    cx.restore(); }
+  function bw0(v){ return parseFloat(v)||0; }
+  // (v206) static text that lives in a ::before/::after (the kite's 'FPS' label) has no DOM node for the text atlas: draw it with the box painter, on the element's content edge
+  function pseudoText(cx,el,cs,r,x,y){ ['::before','::after'].forEach(function(pe){ var p=getComputedStyle(el,pe), ct=p.content; if(!ct||p.display==='none'||p.position==='absolute'||p.position==='fixed') return;
+      var m=/^["'](.+)["']$/.exec(ct); if(!m) return; var t=m[1]; if(p.textTransform==='uppercase') t=t.toUpperCase();
+      cx.save(); cx.font=(p.fontStyle||'normal')+' '+(p.fontWeight||400)+' '+p.fontSize+' '+p.fontFamily; try{ cx.letterSpacing=p.letterSpacing==='normal'?'0px':p.letterSpacing; }catch(e){}
+      cx.fillStyle=p.color; cx.textBaseline='middle'; var pl=(parseFloat(cs.paddingLeft)||0)+(parseFloat(cs.borderLeftWidth)||0), pr=(parseFloat(cs.paddingRight)||0)+(parseFloat(cs.borderRightWidth)||0), ty=y+r.height/2;
+      if(pe==='::before'){ cx.textAlign='left'; cx.fillText(t,x+pl,ty); } else { cx.textAlign='right'; cx.fillText(t,x+r.width-pr,ty); } cx.restore(); }); }
+  function pseudoBoxes(cx,el,cs,r,x,y,under){ ['::before','::after'].forEach(function(pe){ var p=getComputedStyle(el,pe), ct=p.content; if(!ct||ct==='none'||ct==='normal'||p.display==='none') return; if((parseInt(p.zIndex,10)<0)!==under) return;   // z-index<0 pseudos sit behind the element's own fill
+    if(p.position!=='absolute'&&p.position!=='fixed') return; var w=parseFloat(p.width), h=parseFloat(p.height); if(!(w>0)||!(h>0)) return;
+    var bl=parseFloat(cs.borderLeftWidth)||0, bt=parseFloat(cs.borderTopWidth)||0, left=parseFloat(p.left), top=parseFloat(p.top);
+    if(isNaN(left)) left=r.width-bl-w-(parseFloat(p.right)||0); if(isNaN(top)) top=r.height-bt-h-(parseFloat(p.bottom)||0);
+    paintBox(cx,p,x+bl+left,y+bt+top,w,h); }); }
   async function paintSafe(P){
     var c=scratch(P.w+2*PG,P.h+2*PG), cx=c.getContext('2d'), base=P.el.getBoundingClientRect(), els=[P.el].concat([].slice.call(P.el.querySelectorAll('*')));
     for(var i=0;i<els.length;i++){ var el=els[i];
@@ -202,16 +291,7 @@
         continue; }
       // (v198) box2d painter drew boxes only, so the menu/loader logo <img> (static/dartmeadow-logo.svg) came out as an empty frame
       if(el.tagName==='IMG'){ if(!(el.complete&&el.naturalWidth)){ if(imgGaveUp(P,el)) continue; throw new Error('img not ready'); } if(el.complete&&el.naturalWidth){ try{ cx.save(); cx.globalAlpha=Math.min(1,parseFloat(cs.opacity)||1); cx.drawImage(el,x,y,r.width,r.height); cx.restore(); }catch(e){ console.warn('[UI3D] img paint',e&&e.message); } } continue; }
-      var bg=cs.backgroundColor, bw=parseFloat(cs.borderTopWidth)||0, bc=cs.borderTopColor, rad=Math.min(parseFloat(cs.borderTopLeftRadius)||0,r.width/2,r.height/2);
-      if(alphaOf(bg)<=0.02&&cs.backgroundImage!=='none'){ var gm=/rgba?\([^)]*\)/.exec(cs.backgroundImage); if(gm) bg=gm[0]; }   // (v204) gradients: first stop as the fill
-      if(i===0&&alphaOf(bg)<0.08) bg=GLASS;   // (v204) the panel root is always frosted glass: no bare white outline
-      if(alphaOf(bg)<=0&&(bw<=0||alphaOf(bc)<=0)) continue;
-      cx.save(); cx.globalAlpha=Math.min(1,parseFloat(cs.opacity)||1); cx.beginPath();
-      if(!polyPath(cx,cs.clipPath,x,y,r.width,r.height)){ if(cx.roundRect) cx.roundRect(x+bw/2,y+bw/2,r.width-bw,r.height-bw,rad); else cx.rect(x+bw/2,y+bw/2,r.width-bw,r.height-bw); }
-      var g=/(rgba?\([^)]*\)|#[0-9a-f]+)\s+(-?[\d.]+)px\s+(-?[\d.]+)px\s+([\d.]+)px/i.exec(cs.boxShadow||''); if(g&&!/inset/.test(cs.boxShadow)){ cx.shadowColor=soft(g[1]).replace(/,([\d.]+)\)$/,function(m,a){ return ','+(parseFloat(a)*0.7).toFixed(3)+')'; }); cx.shadowOffsetX=+g[2]; cx.shadowOffsetY=+g[3]; cx.shadowBlur=+g[4]; }
-      if(alphaOf(bg)>0){ cx.fillStyle=bg; cx.fill(); cx.shadowColor='transparent'; }
-      if(bw>0&&alphaOf(bc)>0){ cx.lineWidth=bw; cx.strokeStyle=bc; cx.stroke(); }
-      cx.restore(); }
+      pseudoBoxes(cx,el,cs,r,x,y,true); paintBox(cx,cs,x,y,r.width,r.height,i===0); pseudoBoxes(cx,el,cs,r,x,y,false); pseudoText(cx,el,cs,r,x,y); }
     if(!clean(c)) throw new Error('2D box painter canvas tainted');
     return c; }
   var IMG_TRIES=4;   // (v204) 'img not ready' retries per panel (~4 s with the backoff) before the panel paints without that image
@@ -232,7 +312,7 @@
     return paintSafe(P); }
   function paint(P){ P.busy=true; var gen=P.slot;
     paints++; paintSrc(P).then(function(src){ if(P.slot!==gen||!P.slot){ dropCv(src); return; } aCx.clearRect(P.slot.x,P.slot.y,(P.cw||P.w)+2*PG,(P.ch||P.h)+2*PG); aCx.drawImage(src,P.slot.x,P.slot.y,P.w+2*PG,P.h+2*PG); dropCv(src); P.ready=true; P.failed=0; P.imgFails=0; artDirty=true; if(P.dyn) P.built=false; })
-      .catch(function(e){ var n=performance.now(); P.failed=(P.failed||0)+1; if(e&&e.message==='img not ready') P.imgFails=(P.imgFails||0)+1; P.want=true; var d=Math.min(4000,300*Math.pow(2,Math.min(P.failed,5)-1)); P.nb=n+d; setTimeout(function(){ layoutDirty=true; },d+20); console.warn('[UI3D] raster',e&&e.message,'(retry in '+d+' ms, #'+P.failed+')'); }).finally(function(){ P.busy=false; }); }
+      .catch(function(e){ var n=performance.now(); P.failed=(P.failed||0)+1; if(e&&e.message==='img not ready') P.imgFails=(P.imgFails||0)+1; P.want=true; var d=Math.min(4000,300*Math.pow(2,Math.min(P.failed,5)-1)); P.nb=n+d; setTimeout(function(){ layoutDirty=true; },d+20); console.warn('[UI3D] raster',e&&e.message,'(retry in '+d+' ms, #'+P.failed+')'); }).finally(function(){ P.busy=false; layoutDirty=true; }); }
 
   // ---------- static art geometry: ONE merged buffer (knobs: one small mesh each) ----------
   var ID={cx:0,cy:0,th:0,f:1,c:1,s:0,zc:0};
@@ -246,7 +326,7 @@
     return q; }
   function idxFor(n){ var idx=new Uint32Array(n*6); for(var q=0;q<n;q++){ var b=q*4; idx.set([b,b+1,b+2,b,b+2,b+3],q*6); } return idx; }
   function buildArt(){
-    var rd=[]; panels.forEach(function(P){ if(P.ready&&P.slot&&!P.dyn) rd.push(P); });
+    var rd=[]; panels.forEach(function(P){ if(P.ready&&P.slot&&!P.dyn&&!P.miss) rd.push(P); });
     rd.forEach(function(P){ P.p=place(P.rect); }); rd.sort(function(a,b){ return a.p.zc-b.p.zc; });   // far first (centre), the nearer sides after
     var nQ=rd.length*(LAYERS+1), pos=new Float32Array(nQ*12), uv=new Float32Array(nQ*8), col=new Float32Array(nQ*16), q=0;
     rd.forEach(function(P){ q=quads(P,P.p,pos,uv,col,q); });
@@ -270,17 +350,18 @@
 
   // ---------- live text: per-leaf slot in the text atlas, redrawn only when its value changes ----------
   var DPR=1.5, TP=12;
+  function lw(L){ return L.r.width+(L.node?4:0); }
   function buildText(){
-    var all=[]; panels.forEach(function(P){ if(P.ready&&!P.dyn) P.leaves.forEach(function(L){ L.P=P; all.push(L); }); });
+    var all=[]; panels.forEach(function(P){ if(P.ready&&!P.dyn&&!P.miss) P.leaves.forEach(function(L){ L.P=P; all.push(L); }); });
     var cur0=[sx,sy,sh]; sx=sy=sh=0;   // text atlas packs with its own cursor; the art cursor is restored below
     var pos=new Float32Array(all.length*12), uv=new Float32Array(all.length*8), q=0;
     panels.forEach(function(P){ P.txtOk=true; });
-    all.forEach(function(L){ var w=Math.ceil(L.r.width*DPR)+2*TP, h=Math.ceil(L.r.height*DPR)+2*TP;   /* (v160) TP margin so glow shadows fade out instead of ending in a hard box */ L.slot=alloc(w,h,TATLAS); L.sw=w; L.sh=h; L.text=null; if(!L.slot) L.P.txtOk=false; });
-    var TH=32, tEnd=sy+sh; while(TH<tEnd&&TH<TATLAS) TH*=2; sx=cur0[0]; sy=cur0[1]; sh=cur0[2];
+    all.forEach(function(L){ var w=Math.ceil(lw(L)*DPR)+2*TP, h=Math.ceil(L.r.height*DPR)+2*TP;   /* (v160) TP margin so glow shadows fade out instead of ending in a hard box */ L.slot=alloc(w,h,TATLAS,TATLAS_H); L.sw=w; L.sh=h; L.text=null; if(!L.slot) L.P.txtOk=false; });
+    var TH=32, tEnd=sy+sh; while(TH<tEnd&&TH<TATLAS_H) TH*=2; sx=cur0[0]; sy=cur0[1]; sh=cur0[2];
     if(tCv.height!==TH){ tCv.height=TH; tTex.dispose(); tTex=tx(tCv); txt.material.map=tTex; txt.material.needsUpdate=true; } else tCx.clearRect(0,0,TATLAS,TH);
     all.forEach(function(L){ var w=L.sw, h=L.sh; if(!L.slot) return;
       var p=L.P.p||place(L.P.rect), pr=L.P.rect;
-      var lx=(L.r.left+L.r.width/2)-(pr.left+pr.width/2), ly=(pr.top+pr.height/2)-(L.r.top+L.r.height/2), hw=w/DPR/2, hh=h/DPR/2, cs=[[-hw,-hh],[hw,-hh],[hw,hh],[-hw,hh]];
+      var lx=(L.r.left+lw(L)/2)-(pr.left+pr.width/2), ly=(pr.top+pr.height/2)-(L.r.top+L.r.height/2), hw=w/DPR/2, hh=h/DPR/2, cs=[[-hw,-hh],[hw,-hh],[hw,hh],[-hw,hh]];
       for(var k=0;k<4;k++) xf(p,lx+cs[k][0],ly+cs[k][1],0.6,pos,q*12+k*3);
       var u0=L.slot.x/TATLAS, u1=(L.slot.x+w)/TATLAS, v0=1-(L.slot.y+h)/TH, v1=1-L.slot.y/TH; uv.set([u0,v0,u1,v0,u1,v1,u0,v1],q*8); q++; });
     setGeo(txt,pos,uv,null,idxFor(q)); txt.userData.leaves=all;
@@ -288,7 +369,7 @@
   // (v160) glyph glow is blended in linear light on the mesh, so a CSS-strength glow piles up into a solid pill behind small text: keep ~35%
   function soft(c){ var m=/rgba?\(([^)]*)\)/.exec(c); if(!m) return c; var a=m[1].split(/[ ,\/]+/).filter(Boolean); var al=a.length>3?parseFloat(a[3]):1; return 'rgba('+a[0]+','+a[1]+','+a[2]+','+(al*0.35).toFixed(3)+')'; }
   function drawLeaf(L,s){
-    if(!L.cs){ var c0=getComputedStyle(L.el); L.cs={textTransform:c0.textTransform,fontStyle:c0.fontStyle,fontWeight:c0.fontWeight,fontSize:c0.fontSize,fontFamily:c0.fontFamily,letterSpacing:c0.letterSpacing,color:c0.color,textShadow:c0.textShadow,textAlign:c0.textAlign,paddingLeft:c0.paddingLeft,k:(L.el.offsetWidth>0?Math.min(4,Math.max(.25,L.r.width/L.el.offsetWidth)):1)}; }
+    if(!L.cs){ var c0=getComputedStyle(L.el); L.cs={textTransform:c0.textTransform,fontStyle:c0.fontStyle,fontWeight:c0.fontWeight,fontSize:c0.fontSize,fontFamily:c0.fontFamily,letterSpacing:c0.letterSpacing,color:c0.color,textShadow:c0.textShadow,textAlign:L.node?'left':c0.textAlign,paddingLeft:L.node?'0px':c0.paddingLeft,k:(L.el.offsetWidth>0?Math.min(4,Math.max(.25,(L.node?L.el.getBoundingClientRect().width:L.r.width)/L.el.offsetWidth)):1)}; }
     if(L.cs.k<0.9&&L.P&&L.P.el.getAnimations&&L.P.el.getAnimations({subtree:true}).some(function(a){ return a.playState==='running'; })){ L.cs.k=1; layoutDirty=true; }   // (v204) mid scale-in: draw at 1:1, next layout re-reads
     var cs=L.cs, x=L.slot.x, y=L.slot.y; tCx.clearRect(x,y,L.sw,L.sh);   // (v156) style snapshot per layout, not a style read per redraw
     if(cs.textTransform==='uppercase') s=s.toUpperCase();
@@ -303,7 +384,7 @@
     tCx.fillText(s,px,y/K+L.sh/K/2); tCx.restore();
   }
   function updateText(){ var Ls=txt.userData.leaves||[], ch=false;
-    for(var i=0;i<Ls.length;i++){ var L=Ls[i]; if(!L.slot) continue; var s=L.el.textContent.trim(); if(s!==L.text){ L.text=s; drawLeaf(L,s); ch=true; } }
+    for(var i=0;i<Ls.length;i++){ var L=Ls[i]; if(!L.slot) continue; var s=(L.node?L.node.data:L.el.textContent).trim(); if(s!==L.text){ L.text=s; drawLeaf(L,s); ch=true; } }
     if(ch) tTex.needsUpdate=true; }
 
 
@@ -332,14 +413,8 @@
   // an opaque halo filling the padded atlas cell (the 'light slab' look). Keep them as a hint: alpha x0.25.
   function softSh(st){ var v=st.getPropertyValue('box-shadow'); if(!v||v==='none') return;
     st.setProperty('box-shadow',v.replace(/rgba?\(([^)]+)\)/g,function(m,a){ var p=a.split(','); var al=p.length>3?parseFloat(p[3]):1; return 'rgba('+p[0]+','+p[1]+','+p[2]+','+(al*0.25).toFixed(3)+')'; })); }
-  // (v175) perf fallback (iPhone Safari / Mali): if the HUD pass averages > 3 ms over ~2 s, switch to the cheaper 2D box painter. No allocations.
-  // (v197) Watcher: ignore the first ~2 s (shader compile / first raster) and need TWO bad windows in a row to drop to box2d.
-  // The fallback then latches for the session: box2d timings can't judge foreignObject's cost, so no flip-flop / re-raster loop.
-  var pgMs=0, pgN=0, pgT0=0, pgBad=0, IOS=/iP(hone|ad|od)/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
-  function perfGuard(dt){ if(TXT_MS>66) return; var n=performance.now(); if(!pgT0){ pgT0=n; return; } if(n-pgT0<2000) return;
-    pgMs+=dt; if(++pgN<120) return; var avg=pgMs/pgN; pgMs=0; pgN=0;
-    if(avg>(IOS?2.5:3.5)){ if(++pgBad>=2&&TXT_MS<200){ TXT_MS=200; console.warn('[UI3D] HUD pass '+avg.toFixed(1)+'ms x2: readouts at 5 Hz (painter unchanged)'); } } else pgBad=0; }
-  var TXT_MS=66;   // (v204) was: latch the 2D box painter. On iPhone the first seconds of a load always spike, so the HUD randomly came up outline-only / red slabs
+  // (v206) perfGuard removed: the HUD never changes painter, rate or visibility with the frame rate. Readouts upload at a fixed 10 Hz.
+  var TXT_MS=100;
   // ---------- overlay pass on the renderer that owns the screen ----------
   function tx(c){ var t=new T.CanvasTexture(c); t.colorSpace=T.SRGBColorSpace; t.generateMipmaps=false; t.minFilter=T.LinearFilter; t.premultiplyAlpha=true; return t; }
   // glass: no depth write / test (sorted by renderOrder + far-to-near buffer order), front faces only
@@ -364,14 +439,13 @@
   function anyVis(){ if(art.visible||txt.visible) return true; var v=false; cvs.forEach(function(){ v=true; }); return v; }
   // ---------- fallback watchdog ----------
   var paints=0, txtT=0, drewOK=false, wdFrames=0, wdT0=0, WD_MS=15000, why0='';
-  // (v160) no automatic CSS mode switch: a failure shows the real DOM (un-ghost) for a few seconds, then the pass retries
-  var retryAt=0, wasOn=false, fails=0, sessionOff=false;   // (v160) 3 failures in a row: DOM HUD for this session only (nothing persisted)
-  function fallback(why){ why0=why; console.warn('[UI3D] mesh HUD frame failed ('+why+'); DOM shown, retrying in 5 s');
-    try{ stop(); }catch(e){} drewOK=false; wdFrames=0; wdT0=0; retryAt=performance.now()+5000; layoutDirty=true; if(++fails>=3){ sessionOff=true; console.warn('[UI3D] 3 consecutive failures: DOM HUD for this session'); } }
-  var ugT=0;   // (v160) un-ghost watchdog runs only while something is ghosted under an on mesh HUD
-  function ugTick(){ if(!ghosted||!on()){ clearInterval(ugT); ugT=0; if(ghosted) unghost(); return; } if(performance.now()-lastDraw>UNGHOST_MS) unghost(); }
-  function ghostDrawn(){ lastDraw=performance.now(); ghosted=true; if(!ugT) ugT=setInterval(ugTick,125);
-    panels.forEach(function(P){ var g=P.ready&&P.slot&&P.txtOk!==false&&(!P.dyn||P.mesh); if(g!==!!P.g){ P.g=g; P.el.classList.toggle('dm-ui3d-ghost',g); } });
+  // (v206) One recovery path, for a render that THROWS (not for a slow frame): after 12 throws in a row the DOM HUD is shown and the pass retries
+  // every 3 s until a frame draws again. No session latch, nothing frame-rate based; ghosting is sticky otherwise.
+  var retryAt=0, wasOn=false, fails=0;
+  function fallback(why){ why0=why; fails++; if(fails<12) return; console.warn('[UI3D] mesh HUD frame failed '+fails+'x ('+why+'); DOM shown, retrying in 3 s');
+    try{ stop(); }catch(e){} drewOK=false; wdFrames=0; wdT0=0; retryAt=performance.now()+3000; layoutDirty=true; fails=0; }
+  function ghostDrawn(){ ghosted=true;
+    panels.forEach(function(P){ var g=P.ready&&P.slot&&(!P.dyn||P.mesh); if(g&&!P.g){ P.g=true; P.el.classList.add('dm-ui3d-ghost'); } });   // sticky: a ghosted panel is only un-ghosted when it leaves the page or Legacy UI is switched on
     cvs.forEach(function(C){ if(!C.g){ C.g=true; C.el.classList.add('dm-ui3d-ghost'); } }); }
   function unghost(){ ghosted=false; panels.forEach(function(P){ if(P.g){ P.g=false; P.el.classList.remove('dm-ui3d-ghost'); } }); cvs.forEach(function(C){ if(C.g){ C.g=false; C.el.classList.remove('dm-ui3d-ghost'); } }); }
   function introOn(){ try{ if(typeof INTRO!=='undefined'&&INTRO&&INTRO.on) return true; }catch(e){}
@@ -382,9 +456,9 @@
     ptr.ex+=(ptr.x-ptr.ex)*0.06; ptr.ey+=(ptr.y-ptr.ey)*0.06;
     cam.aspect=vw/vh; cam.near=d*0.3; cam.far=d*2; cam.position.set(ptr.ex*PAR,-ptr.ey*PAR,d); cam.lookAt(0,0,0); cam.updateProjectionMatrix(); }
   function overlayBody(R,kind){
-    if(!on()||sessionOff){ if(wasOn){ wasOn=false; stop(); } return; } if(performance.now()<retryAt) return; if(!ready&&!setup(R)) return; wasOn=true;
+    if(!on()){ if(wasOn){ wasOn=false; stop(); } return; } if(performance.now()<retryAt) return; if(!ready&&!setup(R)) return; wasOn=true;
     if((kind==='menu')!==menuHost()) return;
-    if(introOn()){ if(ghosted) unghost(); return; }   // (v160) no HUD pass at all while the #197/#198 loading-intro veil or its dissolve is up
+    if(introOn()) return;   // (v160) no HUD pass while the #197/#198 loading-intro veil or its dissolve is up (the veil covers the page; panels stay ghosted)
     if(!rOK(R)) return;
     var t0=performance.now();
     // (v156/v160) layout() forces a sync style+layout pass, so it is change-driven: a watched panel resizes, the window
@@ -407,7 +481,7 @@
     catch(e){ R.autoClear=ac; fallback('render threw: '+(e&&e.message)); return; }
     finally { R.autoClear=ac; }
     if(ok){ drewOK=true; fails=0; ghostDrawn(); }
-    var dtH=performance.now()-t0; hudMs+=dtH; hudN++; perfGuard(dtH);
+    var dtH=performance.now()-t0; hudMs+=dtH; hudN++;
   }
   // AR / camera passthrough: draw the HUD group on another renderer (layout/text keep updating in overlay())
   function drawTo(R){ if(!ready||!on()||!anyVis()) return false;
@@ -415,7 +489,7 @@
     camSet();
     var ac=R.autoClear; R.autoClear=false; try{ R.clearDepth&&R.clearDepth(); R.render(scene,cam); drewOK=true; ghostDrawn(); } finally { R.autoClear=ac; } return true;   // drewOK only after R.render returned without throwing
   }
-  function stop(){ unghost(); if(ugT){ clearInterval(ugT); ugT=0; } try{ if(mo) mo.disconnect(); if(ro) ro.disconnect(); }catch(e){} mo=ro=null; roSeen=new WeakSet(); panels.forEach(function(P,el){ el.classList.remove('dm-ui3d-ghost'); if(P.mesh){ if(root) root.remove(P.mesh); P.mesh.geometry.dispose(); } }); panels.clear();
+  function stop(){ unghost(); try{ if(mo) mo.disconnect(); if(ro) ro.disconnect(); }catch(e){} mo=ro=null; roSeen=new WeakSet(); panels.forEach(function(P,el){ el.classList.remove('dm-ui3d-ghost'); if(P.mesh){ if(root) root.remove(P.mesh); P.mesh.geometry.dispose(); } }); panels.clear();
     cvs.forEach(function(C){ C.el.classList.remove('dm-ui3d-ghost'); if(root) root.remove(C.mesh); C.mesh.geometry.dispose(); C.mesh.material.dispose(); C.tex.dispose(); }); cvs.clear();   // (v200) dispose, not just hide
     sx=sy=sh=0; layoutDirty=true;
     drewOK=false; wdFrames=0; wdT0=0; if(ready){ art.visible=txt.visible=false; } document.body.classList.remove('dm-ui3d-mesh'); }

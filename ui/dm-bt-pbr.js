@@ -8,8 +8,8 @@
  * at 2K and 1K. Sections (UDIM-style, one texture set each, own texel density): hull, temple, altar, trim.
  * uv.py rewrote ONLY the exterior TEXCOORD_0 + TANGENT bytes of 'Bird Temple Interior.glb' in place (box projection);
  * positions, indices, colours, node names, transforms, deckAnchor and every collision input are byte-identical (verify.py).
- * Runtime: materials only — maps on the existing exterior materials, no lights, no new geometry. 2K at tier >= 2, else 1K
- * (Mali-class tablets). Applied before the temple warm-up compile (index.html), with a tick() fallback. ?pbr=0 disables.
+ * Runtime: materials only — maps on the existing exterior materials, no lights, no new geometry. 2K at tier >= 3 (tier 2 on non-mobile), else 1K
+ * (phones, Mali-class tablets). Applied before the temple warm-up compile (index.html), with a tick() fallback. ?pbr=0 disables.
  */
 (function () {
   'use strict';
@@ -29,7 +29,8 @@
   P.load = function () {
     if (!P.on) return Promise.resolve(null);
     if (loading) return loading;
-    const res = tier() >= 2 ? '2k' : '1k';
+    // (v206) phones/tablets take the 1K set even at tier 2: twelve 2K maps with mips are ~270 MB of GPU memory + a long upload stall on load, and a handheld screen cannot show the extra texels
+    const res = (tier() >= 3 || (tier() >= 2 && !(window.GFX && GFX.isMobile))) ? '2k' : '1k';
     loading = (async () => {
       const THREE = window.THREE, tl = new THREE.TextureLoader(), sets = {};
       await Promise.all(Object.keys(SEC).map(async s => {

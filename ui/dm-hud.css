@@ -449,8 +449,7 @@ body.ship-walk #ship-view-btn{display:block !important;}
   .kite-board.kb-float .kb-btn{width:34px;height:34px;}
   .kite-board.kb-float .kb-btn svg{width:22px;height:22px;}
 }
-/* (v198) 3D HUD: the kite outline is a thin white line (Legacy UI keeps the gradient edge) */
-body.dm-ui3d .kite-line,body.dm-ui3d .mini-kite .kite-line{stroke:#fff !important;filter:drop-shadow(0 0 2px rgba(255,255,255,.55)) !important;}
+/* (v206) the kite outline keeps its theme gradient edge in the 3D HUD too (v198 forced it white) */
 /* (v200) MEMORY LEAK FIX: backdrop-filter over the live WebGL canvas leaks GPU/compositor
    memory every frame in WebKit (iOS Safari tab killed after 1-7 min; headless WPE +25-40 MB/s).
    Bisected: stripping backdrop-filter alone (ui3d=0, flat HUD) stops the growth; the panels keep
