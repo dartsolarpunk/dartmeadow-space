@@ -87,7 +87,7 @@
       }
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.BufferAttribute(p, 3)); g.setAttribute('color', new THREE.BufferAttribute(cc, 3));
-      const m = new THREE.PointsMaterial({ size, sizeAttenuation: false, vertexColors: true, transparent: false, depthWrite: false, blending: THREE.AdditiveBlending, fog: false });
+      const m = new THREE.PointsMaterial({ size: size * 1.6, sizeAttenuation: false, vertexColors: true, map: (window.dmSoftDiscTex?window.dmSoftDiscTex():null), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false });
       const pts = new THREE.Points(g, m); pts.frustumCulled = false; pts.renderOrder = -9; pts.raycast = () => {};
       pts.userData.dir = Float32Array.from(p, (x) => x / starR); pts.userData.c0 = cc.slice();   // for the horizon extinction (below)
       return pts;

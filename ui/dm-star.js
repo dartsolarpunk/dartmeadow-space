@@ -121,9 +121,11 @@
     // photosphere is still seen in her window)
     const toP=T.positionWorld.sub(T.cameraPosition), D=T.normalize(toP), L=B.c.sub(T.cameraPosition);
     const tca=T.dot(L,D), d2=T.dot(L,L).sub(tca.mul(tca));
-    const hole=d2.lessThan(B.r.mul(B.r)).and(toP.length().lessThan(tca.add(B.r)));
-    m.opacityNode=hole.select(0.0,1.0);
-    m.alphaTest=0.5;
+    const front=toP.length().lessThan(tca.add(B.r));
+    // (v189) feathered window rim (last ~8% of the radius) instead of an alphaTest cut-out
+    const edge=T.smoothstep(B.r.mul(0.92),B.r,d2.max(0.0).sqrt());
+    m.opacityNode=front.select(edge,1.0);
+    m.transparent=true; m.depthWrite=true;
     const d=T.normalize(T.positionLocal);
     const V=T.normalize(T.cameraPosition.sub(T.positionWorld));
     const ndv=T.normalWorld.dot(V).clamp(0.0,1.0);

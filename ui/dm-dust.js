@@ -39,7 +39,7 @@
     const pa = new THREE.BufferAttribute(pos, 3), ca = new THREE.BufferAttribute(col, 3);
     pa.setUsage(THREE.DynamicDrawUsage); ca.setUsage(THREE.DynamicDrawUsage);
     geo.setAttribute('position', pa); geo.setAttribute('color', ca);
-    const mat = new THREE.PointsMaterial({ size: 1, sizeAttenuation: false, vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false });
+    const mat = new THREE.PointsMaterial({ size: 1, sizeAttenuation: false, vertexColors: true, map: (window.dmSoftDiscTex?window.dmSoftDiscTex():null), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false });
     const pts = new THREE.Points(geo, mat);
     pts.frustumCulled = false; pts.raycast = () => {}; pts.renderOrder = 3;
     scene.add(pts);
