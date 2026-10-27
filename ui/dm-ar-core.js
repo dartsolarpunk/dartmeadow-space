@@ -11,7 +11,7 @@
      diorama (grid-unit LOD by graphics preset), scrolled under the fixed anchor as Ariel
      nears the border, the edges fading through the world's horizon colour into the
      passthrough. Atmospheric flight keeps the same anchor and only widens the LOD span.
-   • Interstellar: a table-top orrery (Sun, planets, orbits, your ship) placed like the terrain map; the game scene is not redrawn
+   • Interstellar: full 3D fly-through around the device (the live scene, chase camera, sticks steer); visited maps (terrain/atmosphere) sit on the anchored table
    Game logic keeps running: while the session owns the frame, window rAF callbacks are
    pumped from the XR frame and the hidden flight canvas render is skipped (no double cost).
    Modular: nothing in index.html calls in here except the script tag. API: window.DMAR. */
@@ -250,7 +250,7 @@
   // what sits on the placed table: the terrain diorama, or the orrery in space (only the one in use is visible)
   function content(T,ctx,mode){
     if(mode==='terrain'){ if(!S.D){ S.D=buildDiorama(T); S.table.add(S.D.grp); } S.D.grp.visible=true; if(S.O) S.O.grp.visible=false; fillDiorama(S.D,ctx,false); }
-    else { if(!S.O){ S.O=buildOrrery(T); S.table.add(S.O.grp); } S.O.grp.visible=true; if(S.D) S.D.grp.visible=false; fillOrrery(S.O,T); }
+    else { if(S.O) S.O.grp.visible=false; if(S.D) S.D.grp.visible=false; }   // (v178) space is never a table-top: no orrery
   }
   // the 3D HUD (ui/dm-ui3d-mesh.js): the very same merged mesh, on a head-locked plate 0.6 m out
   var _m4=null;
@@ -294,9 +294,9 @@
   window.addEventListener('pagehide',function(){ if(S) abort('pagehide'); });
   window.addEventListener('error',function(ev){ if(S&&S.errs>=3) abort(ev&&ev.message); });
   function exit(){ if(S&&S.session) S.session.end().catch(cleanup); else if(S) cleanup(); }
-  function prompt(){ if(S.kind==='camera'&&S.mode==='space'&&S.view==='full'){ say('Full space view: turn the phone to look around. \u25a6 Table view shows the system on a table',3500); viewBtn(true); return; }
+  function prompt(){ if(S.kind==='camera'&&S.mode==='space'&&S.view==='full'){ say('Space all around you: steer with the sticks, turn the phone to look around',3500); viewBtn(false); return; }
     try{ viewBtn(S.kind==='camera'); }catch(e){}
-    var what=S.mode==='space'?'the solar system':'the world';
+    var what='the world';
     toast(S.kind==='camera'?'Aim at a table and tap to place '+what+' (approximate placement)':'Point at a flat surface and tap to place '+what); }
   function say(m,ms){ toast(m); setTimeout(function(){ toast(''); },ms||3000); }
   function toggle(){
@@ -505,11 +505,11 @@
     if(!b){ b=document.createElement('button'); b.id='dm-ar-view'; b.type='button';
       b.addEventListener('click',function(e){ e.stopPropagation(); if(!S) return; S.view=S.view==='full'?'table':'full'; S.placed=false; S.table.visible=false; if(S.mode) switchMode(S.mode); });
       document.body.appendChild(b); }
-    b.textContent=S&&S.view==='full'?'\u25a6 Table view':'\u2726 Full space'; b.style.display=S&&S.mode==='space'?'':'none'; }
+    b.textContent=S&&S.view==='full'?'\u25a6 Table view':'\u2726 Full space'; b.style.display='none'; }   // (v178) no table/full toggle: the mode follows where Ariel is
   function camFrame(t){
     var T=window.THREE, ctx=terrainCtx(), mode=ctx?'terrain':'space';
     if(mode!==S.mode) switchMode(mode);
-    var q=camPose(T), full=mode==='space'&&S.view==='full';
+    S.view='full'; var q=camPose(T), full=mode==='space';   // (v178) space = full fly-through around the device; maps = tabletop
     if(full!==!!S.full){ S.full=full; if(full) S.q0=null; viewBtn(true); arBlend(full); }
     document.body.classList.toggle('dm-ar-full',full||mode==='terrain');
     S.cam.position.set(0,0,0); S.cam.quaternion.copy(q); S.cam.updateMatrixWorld(true);
