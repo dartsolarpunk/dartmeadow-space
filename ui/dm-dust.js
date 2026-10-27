@@ -39,7 +39,11 @@
     const pa = new THREE.BufferAttribute(pos, 3), ca = new THREE.BufferAttribute(col, 3);
     pa.setUsage(THREE.DynamicDrawUsage); ca.setUsage(THREE.DynamicDrawUsage);
     geo.setAttribute('position', pa); geo.setAttribute('color', ca);
-    const mat = new THREE.PointsMaterial({ size: 1, sizeAttenuation: false, vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false });
+function _dmDisc(){ if(window.dmSoftDiscTex) return window.dmSoftDiscTex(); if(window._dmLocalDisc) return window._dmLocalDisc;
+  const c=document.createElement('canvas'); c.width=c.height=32; const g=c.getContext('2d'); const gr=g.createRadialGradient(16,16,0,16,16,16);
+  [[0,1],[0.2,.82],[.4,.5],[.6,.22],[.8,.06],[1,0]].forEach(([s,a])=>gr.addColorStop(s,'rgba(255,255,255,'+a+')')); g.fillStyle=gr; g.fillRect(0,0,32,32);
+  const t=new THREE.CanvasTexture(c); t.colorSpace=THREE.SRGBColorSpace; window._dmLocalDisc=t; return t; }
+    const mat = new THREE.PointsMaterial({ size: 1, sizeAttenuation: false, vertexColors: true, map: _dmDisc(), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false });
     const pts = new THREE.Points(geo, mat);
     pts.frustumCulled = false; pts.raycast = () => {}; pts.renderOrder = 3;
     scene.add(pts);

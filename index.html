@@ -161,8 +161,8 @@ window.DMPerf=window.DMPerf||{on:false,b(){},e(){},mark(){},measure(n,f){return 
 <script src="ui/dm-fluid.js?v=80"></script>
 <script src="ui/dm-journal.js?v=98"></script>
 <script src="ui/dm-worldstyle.js?v=94"></script>
-<script src="ui/dm-sky.js?v=162"></script>
-<script src="ui/dm-dust.js?v=95"></script>
+<script src="ui/dm-sky.js?v=191"></script>
+<script src="ui/dm-dust.js?v=191"></script>
 <!-- crunch1 true-fluid VFX (WebGPU only; WebGL keeps the current ocean/dust/fumes) -->
 <script src="ui/dm-fluid-core.js?v=136"></script>
 <script src="ui/dm-fluid-apic.js?v=136"></script>
@@ -992,7 +992,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-spectator.js?v=1" defer></script>
 <script src="ui/dm-stack.js?v=1" defer></script>
 <script src="ui/dm-globe.js?v=9" defer></script>
-<script src="ui/dm-star.js?v=8" defer></script>
+<script src="ui/dm-star.js?v=191" defer></script>
 <script src="ui/dm-mist.js?v=7" defer></script>
 <script src="ui/dm-atmo.js?v=150" defer></script>
 <script src="ui/dm-localcollide.js?v=188" defer></script>
@@ -3704,7 +3704,7 @@ function _initMenuSpiralPlate(cv){
     tgeo.setAttribute('position',new THREE.BufferAttribute(tpos,3));
     tgeo.setAttribute('color',new THREE.BufferAttribute(tcol,3));
     const tmat=new THREE.PointsMaterial({
-      size:low?0.018:0.012, sizeAttenuation:true, vertexColors:true,
+      size:low?0.018:0.012, sizeAttenuation:true, vertexColors:true, map:dmSoftDiscTex(),
       transparent:true, opacity:0.95, depthWrite:false,
       blending:THREE.AdditiveBlending
     });
@@ -4641,7 +4641,7 @@ function applyPreset(name){
     resScale:p.resScale, shadows:p.shadows, shadowSize:p.shadowSize,
     envReflections:p.envReflections, caustics:p.caustics, fakeGI:p.fakeGI,
     refraction:p.refraction, ssao:p.ssao, volumetricDust:p.volumetricDust,
-    dustDensity:p.dustDensity, aniso:p.aniso, antialias:p.antialias,
+    dustDensity:p.dustDensity, aniso:p.aniso,   // (v189) antialias is a user preference: presets never reset it
   });
   GFX.maxPixelRatio=GFX.isMobile?2:2;
   clampToHardware();
@@ -4893,7 +4893,7 @@ function buildCustomPanel(){
     + row('cf-refraction','Refraction','Glass / water bending',GFX.refraction,cap.refraction,reason.refraction)
     + row('cf-caustics','Water Caustics','Animated underwater light',GFX.caustics,cap.caustics)
     + row('cf-reflections','Env Reflections','Cubemap reflections on metal/water',GFX.envReflections,cap.envReflections)
-    + row('cf-aa','Anti-aliasing','Smooth edges (MSAA) · off by default · applies on next launch',GFX.antialias,cap.antialias)
+    + row('cf-aa','Anti-aliasing','Smooth edges (MSAA 4×, canvas alpha kept for AR) · off by default · applies on next launch',GFX.antialias,cap.antialias)
     + row('cf-ptx','⚡ Path-traced Accents','Experimental WebGPU GI/reflections',GFX.pathTraceAccents,cap.pathTraceAccents,reason.pathTraceAccents);
 }
 
@@ -5222,7 +5222,7 @@ function buildOortCloud(opts){
   const cg=new THREE.BufferGeometry();
   cg.setAttribute('position',new THREE.BufferAttribute(cp.subarray(0,cn*3),3));
   cg.setAttribute('color',new THREE.BufferAttribute(cc.subarray(0,cn*3),3));
-  grp.add(new THREE.Points(cg,new THREE.PointsMaterial({size:1.6,vertexColors:true,transparent:true,opacity:0.9,sizeAttenuation:true,blending:THREE.AdditiveBlending,depthWrite:false})));
+  grp.add(new THREE.Points(cg,new THREE.PointsMaterial({size:1.6,vertexColors:true,map:dmSoftDiscTex(),transparent:true,opacity:0.9,sizeAttenuation:true,blending:THREE.AdditiveBlending,depthWrite:false})));
 
   flightScene.add(grp);
   oortCloudGroup=grp;
@@ -6725,16 +6725,25 @@ function _startFlightLoop(){
 
 // ── Shared soft-circle sprite texture for all particles ──────────
 function makeCircleTex(size,col,alpha){
+  // (v189) AR-safe: colour held constant to the rim and ONLY alpha falls off (smooth gaussian-ish
+  // curve to exactly 0 at the edge), so additive/normal particles never draw a dark quad or a
+  // hard disc rim over a transparent canvas. Accepts 'rgb(..)', 'rgba(..)' or '#hex'.
+  size=Math.max(8,size|0); if(alpha==null) alpha=1;
   const c=document.createElement('canvas');c.width=size;c.height=size;
   const ctx=c.getContext('2d');
   const half=size/2;
+  let r=255,gg=255,b=255;
+  try{ const k=new THREE.Color(String(col||'#fff').replace(/rgba\(([^,]+),([^,]+),([^,]+),[^)]*\)/,'rgb($1,$2,$3)')); r=Math.round(k.r*255);gg=Math.round(k.g*255);b=Math.round(k.b*255); }catch(e){}
   const g=ctx.createRadialGradient(half,half,0,half,half,half);
-  g.addColorStop(0,col.replace(')',`,${alpha})`).replace('rgb','rgba'));
-  g.addColorStop(0.4,col.replace(')',`,${alpha*0.6})`).replace('rgb','rgba'));
-  g.addColorStop(1,'rgba(0,0,0,0)');
+  const st=[[0,1],[0.2,0.82],[0.4,0.5],[0.6,0.22],[0.8,0.06],[1,0]];
+  for(const [t,a] of st) g.addColorStop(t,'rgba('+r+','+gg+','+b+','+(alpha*a).toFixed(4)+')');
   ctx.fillStyle=g;ctx.fillRect(0,0,size,size);
-  return new THREE.CanvasTexture(c);
+  const t=new THREE.CanvasTexture(c); t.colorSpace=THREE.SRGBColorSpace; return t;
 }
+// (v189) one lazily-built feathered disc for Points that had no map (they rendered as squares)
+let _dmSoftDisc=null;
+function dmSoftDiscTex(){ return _dmSoftDisc||(_dmSoftDisc=makeCircleTex(32,'#ffffff',1)); }
+try{ window.dmSoftDiscTex=dmSoftDiscTex; }catch(e){}
 
 function buildFlightStars(){
   // The to-scale galaxy layer carries the real star field (nearest stars at
@@ -6753,7 +6762,7 @@ function buildFlightStars(){
     const cl=pal[i%pal.length];const b=0.4+Math.random()*0.6;c[i*3]=cl[0]*b;c[i*3+1]=cl[1]*b;c[i*3+2]=cl[2]*b;
   }
   const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(p,3));g.setAttribute('color',new THREE.BufferAttribute(c,3));
-  flightScene.add(new THREE.Points(g,new THREE.PointsMaterial({size:1.2,sizeAttenuation:false,vertexColors:true,map:starTex,alphaTest:0.05,transparent:true,depthWrite:false})));}
+  flightScene.add(new THREE.Points(g,new THREE.PointsMaterial({size:1.2,sizeAttenuation:false,vertexColors:true,map:starTex,transparent:true,depthWrite:false})));}
 
   // Mid-field accent stars — cut 1400→500 (local arm immersion + MW band
   // now carry near-field density; this was doubling particle cost at home).
@@ -6764,7 +6773,7 @@ function buildFlightStars(){
     const b=0.6+Math.random()*0.4;c[i*3]=b;c[i*3+1]=b;c[i*3+2]=b;
   }
   const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(p,3));g.setAttribute('color',new THREE.BufferAttribute(c,3));
-  flightScene.add(new THREE.Points(g,new THREE.PointsMaterial({size:1.8,sizeAttenuation:false,vertexColors:true,map:starTex,alphaTest:0.05,transparent:true,depthWrite:false})));}
+  flightScene.add(new THREE.Points(g,new THREE.PointsMaterial({size:1.8,sizeAttenuation:false,vertexColors:true,map:starTex,transparent:true,depthWrite:false})));}
 }
 // Worlds dead stub removed: makeNebulaCloudMaterial (TSL Sprite cards).
 // Live nebulae = buildFlightNebulae Points only — no dual dust stack.
@@ -6810,7 +6819,7 @@ function buildFlightNebulae(){
     g.setAttribute('color',new THREE.BufferAttribute(c,3));
     const pts=new THREE.Points(g,new THREE.PointsMaterial({
       size:(GFX.preset==='low')?60:88,sizeAttenuation:true,vertexColors:true,map:tex,
-      transparent:true,opacity:0.72,depthWrite:false,blending:THREE.AdditiveBlending,alphaTest:0.02
+      transparent:true,opacity:0.72,depthWrite:false,blending:THREE.AdditiveBlending
     }));
     flightScene.add(pts);
     if(typeof flightNebulae!=='undefined')flightNebulae.push(pts);
@@ -8058,7 +8067,7 @@ function _buildSolCatalogBodies(){
       const N=56, tp=new Float32Array(N*3), cr=seedRand(seed);
       for(let j=0;j<N;j++){ const t=j/N; tp[j*3]=t; tp[j*3+1]=(cr()-0.5)*0.06*(0.2+t); tp[j*3+2]=(cr()-0.5)*0.06*(0.2+t); }
       const tg=new THREE.BufferGeometry(); tg.setAttribute('position',new THREE.BufferAttribute(tp,3));
-      const tail=new THREE.Points(tg,new THREE.PointsMaterial({size:0.12,color:0xa8c8ff,transparent:true,opacity:0.55,depthWrite:false}));
+      const tail=new THREE.Points(tg,new THREE.PointsMaterial({size:0.12,color:0xa8c8ff,map:dmSoftDiscTex(),transparent:true,opacity:0.55,depthWrite:false}));
       tail.name='JOTS_CometTail'; tail.frustumCulled=false;
       flightScene.add(tail); if(typeof _trackSystemExtra==='function')_trackSystemExtra(tail);
       b.tail=tail;
@@ -8334,7 +8343,7 @@ async function buildSolarSystem(){
     const tp=new Float32Array(60*3);
     for(let j=0;j<180;j++){const x=j*-.08+(cometRand()-0.5)*0.08, y=(cometRand()-0.5)*0.04, z=(cometRand()-0.5)*0.08; if(j%3===0){const k=j/3; tp[k*3]=x;tp[k*3+1]=y;tp[k*3+2]=z;}}
     const tg=new THREE.BufferGeometry();tg.setAttribute('position',new THREE.BufferAttribute(tp,3));
-    cg.add(new THREE.Points(tg,new THREE.PointsMaterial({size:.1,color:0x8888ff,transparent:true,opacity:.55})));
+    cg.add(new THREE.Points(tg,new THREE.PointsMaterial({size:.1,color:0x8888ff,map:dmSoftDiscTex(),transparent:true,opacity:.55})));
     cg.position.set((cometRand()-0.5)*AU*20,(cometRand()-0.5)*40,(cometRand()-0.5)*AU*20);
     flightScene.add(cg);if(typeof _trackSystemExtra==='function')_trackSystemExtra(cg);
     // (background nebulae retired for now: too intense. DMMist.nebula stays available in ui/dm-mist.js)
@@ -13897,13 +13906,13 @@ function addPoints(group,pos,col,siz,size,attenuate){
   const g=new THREE.BufferGeometry();
   g.setAttribute('position',new THREE.BufferAttribute(pos,3));
   if(col)g.setAttribute('color',new THREE.BufferAttribute(col,3));
-  const m=new THREE.PointsMaterial({size:size,sizeAttenuation:attenuate,vertexColors:!!col,transparent:true,opacity:0.92,depthWrite:false,blending:THREE.AdditiveBlending});
+  const m=new THREE.PointsMaterial({size:size,sizeAttenuation:attenuate,vertexColors:!!col,map:dmSoftDiscTex(),transparent:true,opacity:0.92,depthWrite:false,blending:THREE.AdditiveBlending});
   if(!col)m.color=new THREE.Color(0x99aacc);
   const pts=new THREE.Points(g,m);pts.frustumCulled=false;group.add(pts);return pts;
 }
 function makeGlowSprite(rgba,scale){
   const c=document.createElement('canvas');c.width=c.height=128;const x=c.getContext('2d');
-  const grd=x.createRadialGradient(64,64,0,64,64,64);grd.addColorStop(0,rgba);grd.addColorStop(0.4,rgba.replace(/[\d.]+\)$/,'0.25)'));grd.addColorStop(1,'rgba(0,0,0,0)');
+  const grd=x.createRadialGradient(64,64,0,64,64,64);grd.addColorStop(0,rgba);grd.addColorStop(0.4,rgba.replace(/[\d.]+\)$/,'0.25)'));grd.addColorStop(1,rgba.replace(/[\d.]+\)$/,'0)'));   // (v189) fade the same colour to 0 alpha (no dark fringe)
   x.fillStyle=grd;x.fillRect(0,0,128,128);
   const t=new THREE.CanvasTexture(c);const s=new THREE.Sprite(new THREE.SpriteMaterial({map:t,transparent:true,depthTest:false,blending:THREE.AdditiveBlending}));
   s.scale.set(scale,scale,1);return s;
@@ -16022,7 +16031,7 @@ function _buildGalaxyDustDraw(positions, colors, opts){
     const mat=new THREE.PointsMaterial({
       size:opts.pointSize!=null?opts.pointSize:3.2,
       sizeAttenuation:!!opts.sizeAttenuation,
-      vertexColors:true, map:tex, alphaTest:0.02,
+      vertexColors:true, map:tex,
       transparent:true, opacity:opts.opacity!=null?opts.opacity:0.92,
       depthWrite:false, blending:THREE.AdditiveBlending
     });
@@ -16157,7 +16166,7 @@ function buildMenuGalaxySpiralPlate(parent, opts){
   const mat=new THREE.PointsMaterial({
     size:o.pointSize||0.028, sizeAttenuation:true, vertexColors:true,
     map:map, transparent:true, opacity:0.94, depthWrite:false,
-    blending:THREE.AdditiveBlending, alphaTest:0.02
+    blending:THREE.AdditiveBlending
   });
   const points=new THREE.Points(geo, mat);
   points.frustumCulled=false;
@@ -18046,7 +18055,7 @@ function buildVolumetricDust(){
   const tex=makeCircleTex(32,'rgb(200,220,255)',0.7);
   const mat=new THREE.PointsMaterial({
     size:3.2,sizeAttenuation:true,vertexColors:true,map:tex,
-    transparent:true,opacity:0.72,depthWrite:false,blending:THREE.AdditiveBlending,alphaTest:0.01
+    transparent:true,opacity:0.72,depthWrite:false,blending:THREE.AdditiveBlending
   });
   flightDust=new THREE.Points(g,mat);
   flightDust.frustumCulled=false;
@@ -23986,7 +23995,7 @@ function _pwBuildGround(pal,fx,fz,mode){
       vel[i*3]=rnd(1.2,3.5); vel[i*3+1]=rnd(-0.15,0.25); vel[i*3+2]=rnd(-0.8,0.8);
     }
     const wgeo=new THREE.BufferGeometry(); wgeo.setAttribute('position',new THREE.BufferAttribute(pos,3));
-    const wp=new THREE.Points(wgeo,new THREE.PointsMaterial({color:0xddeeff,size:0.55,sizeAttenuation:true,transparent:true,opacity:0.35,depthWrite:false}));
+    const wp=new THREE.Points(wgeo,new THREE.PointsMaterial({color:0xddeeff,size:0.55,map:dmSoftDiscTex(),sizeAttenuation:true,transparent:true,opacity:0.35,depthWrite:false}));
     wp.name='JOTS_Wind'; wp.userData.windVel=vel; wp.frustumCulled=false;
     PW.scene.add(wp); TERRAIN.windPoints=wp;
   }
@@ -25024,7 +25033,7 @@ function _bcTrail(c,reset){
   }
   // a few glittering motes shed along the path
   const pg=new THREE.BufferGeometry(); pg.setAttribute('position',new THREE.BufferAttribute(new Float32Array(N*3),3));
-  const pts=new THREE.Points(pg,new THREE.PointsMaterial({color:0xe6f6ff,size:3,sizeAttenuation:false,transparent:true,opacity:.9,depthWrite:false,fog:false}));
+  const pts=new THREE.Points(pg,new THREE.PointsMaterial({color:0xe6f6ff,size:3,map:dmSoftDiscTex(),sizeAttenuation:false,transparent:true,opacity:.9,depthWrite:false,fog:false}));
   pts.frustumCulled=false; g.add(pts);
   c.scene.add(g); T.trail=g;
 }
