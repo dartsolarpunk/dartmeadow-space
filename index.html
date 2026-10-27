@@ -6491,9 +6491,9 @@ const _btiWarmIv=setInterval(async()=>{
     const hid=[], unc=[];
     BIRD_TEMPLE.group.traverse(o=>{ if(!o.isMesh) return; const m=Array.isArray(o.material)?o.material[0]:o.material;
       if(m&&/^BTI_/.test(m.name||'')&&!o.visible){ hid.push(o); o.visible=true; } if(o.frustumCulled){ unc.push(o); o.frustumCulled=false; } });
-    let p=null; try{ p=flightRenderer.compileAsync(flightScene,flightCamera); } finally{ for(const o of hid) o.visible=false; }
+    let p=null; try{ p=flightRenderer.compileAsync(flightScene,flightCamera); } finally{ for(const o of hid) o.visible=false; }   // (v185) synchronous: nothing else ran since they were forced on
     try{ await p; }catch(e){}
-    if(window.BTL&&BTL.warmTemple){ let q=null; for(const o of hid) o.visible=true; try{ q=BTL.warmTemple(flightRenderer,flightScene); }catch(e){} finally{ for(const o of hid) o.visible=false; } try{ await q; }catch(e){} }   // (v119) hidden meshes visible ONLY for the synchronous compile call: they used to stay visible across the await (seconds of real frames) — the white shape popping into the hallway   // the glass probe's target too
+    if(window.BTL&&BTL.warmTemple){ let q=null; const was=hid.map(o=>o.visible); for(const o of hid) o.visible=true; try{ q=BTL.warmTemple(flightRenderer,flightScene); }catch(e){} finally{ for(let i=0;i<hid.length;i++) hid[i].visible=was[i]; } try{ await q; }catch(e){} }   // (v185) restore the LIVE visibility: the temple LOD (BIRD_TEMPLE._lod) may have shown the decks during the await above (slower since the v177 PBR maps); forcing them false here hid the landing bay + command room for good   // (v119) hidden meshes visible ONLY for the synchronous compile call: they used to stay visible across the await (seconds of real frames) — the white shape popping into the hallway   // the glass probe's target too
     for(const o of unc) o.frustumCulled=true;
     console.log('[warmup] temple interior',hid.length,'meshes');
   }catch(e){ console.warn('[warmup] temple interior',e); }
