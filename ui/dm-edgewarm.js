@@ -1,4 +1,4 @@
-/* (v186) Edge warm: no hitch when a map-level object (the Bird Temple first of all) crosses the screen edge.
+/* (v193) Edge warm: no hitch when a map-level object (the Bird Temple first of all) crosses the screen edge.
  *   Why: three's WebGPU renderer only (re)builds an object's render object — node graph, bindings, pipeline, and the GPU
  *   upload of any texture it has not drawn yet — inside the first frame that object passes the frustum test. The flight
  *   warm-up and the temple warm-up compile everything once, culling off. But the ship's materials keep changing after
@@ -21,7 +21,7 @@
   const sig = new WeakMap();     // mesh -> last compiled signature
   const texSeen = new WeakMap(); // texture -> version uploaded
   const bndSeen = new WeakSet(); // geometry already audited
-  let busy = false;
+  let busy = false; const batch = []; let hist = new WeakMap(); let histAt = 0;
   W.add = function (root) { if (root && W.roots.indexOf(root) < 0) W.roots.push(root); };
   function R() { return (typeof flightRenderer !== 'undefined' && flightRenderer) || null; }
   function scene() { return (typeof flightScene !== 'undefined' && flightScene) || null; }
@@ -37,8 +37,13 @@
     for (const k of TEX) { const t = m[k]; if (t && t.isTexture) out.push(t); }
     return out;
   }
+  // Structural key, NOT material.version: DMBtPbr.tick / BTL.recheck set needsUpdate every few seconds as a no-op, and
+  // reacting to the bare version made us recompile the same meshes forever. Only what changes the shader or its inputs
+  // counts: node slots, flags, light list and the textures (id + version).
+  const NODES = ['colorNode', 'normalNode', 'roughnessNode', 'metalnessNode', 'emissiveNode', 'opacityNode', 'positionNode', 'aoNode', 'lightsNode', 'envNode', 'outputNode', 'fragmentNode', 'vertexNode', 'transmissionNode', 'iridescenceNode', 'clearcoatNode'];
   function matSig(m) {
-    let s = m.id + '.' + m.version + (m.lightsNode ? 'L' + m.lightsNode.id : '');
+    let s = m.id + ':' + m.type + (m.transparent ? 't' : '') + m.side + '.' + m.blending + (m.alphaTest > 0 ? 'a' : '') + (m.vertexColors ? 'v' : '') + (m.flatShading ? 'f' : '') + (m.transmission > 0 ? 'T' : '') + (m.depthWrite ? 'w' : '');
+    for (const k of NODES) { const n = m[k]; if (n) s += k[0] + (n.id != null ? n.id : 1); }
     for (const k of TEX) { const t = m[k]; if (t && t.isTexture) s += '|' + k + t.id + '.' + t.version + (t.image ? 1 : 0); }
     return s;
   }
@@ -67,7 +72,7 @@
         if (!(o.isMesh || o.isLine || o.isPoints) || !o.material) return;
         fixBounds(o);
         const s = meshSig(o);
-        if (sig.get(o) !== s) out.push([o, s]);
+        if (sig.get(o) !== s && (hist.get(o) || 0) < 4) out.push([o, s]);   // >4 changes in a minute = a ticking material: leave it (guard against a recompile loop)
       });
     }
     return out;
@@ -94,32 +99,40 @@
     //    render objects (ctx3, pbackSide) were still created on first edge entry. So let this one mesh
     //    ride ONE real frame unculled while off-screen (the GPU clips it; visibility is never touched),
     //    which builds exactly the render objects the on-screen frame will use.
-    if (o.visible) {
-      const fc2 = o.frustumCulled; o.frustumCulled = false;
-      await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
-      o.frustumCulled = fc2;
-    }
-    sig.set(o, s); W.stats.compiled++;
+    if (o.visible && o.frustumCulled) batch.push(o);   // the real-context draw happens for the whole batch at once, below
+    sig.set(o, s);
+    const h = hist.get(o) || 0; hist.set(o, h + 1); W.stats.compiled++;
   }
   async function tick() {
-    if (!W.on || busy) return;
+    if (!W.on || busy) return; W.stats.left = 0;
     const r = R(), sc = scene(), cm = cam();
     if (!r || !sc || !cm || !r.compileAsync || !r.initTexture || r._initialized === false) return;
     if (window._warmupMs == null || (typeof _btiWarmed !== 'undefined' && !_btiWarmed && typeof BIRD_TEMPLE !== 'undefined' && BIRD_TEMPLE.group)) return;   // after the flight + temple warm-ups (they compile everything once)
     if (window._dmWarming || document.hidden || (window.DMAR && DMAR.active)) return;
     busy = true; const t0 = performance.now();
     try {
+      if (t0 - histAt > 60000) { hist = new WeakMap(); histAt = t0; }
       const list = pending(); W.stats.ticks++; W.stats.meshes = list.length;
-      let n = 0;
+      let n = 0; let work = 0;
       for (const [o, s] of list) {
+        const a = performance.now();
         await warmOne(r, sc, cm, o, s);
-        if (++n >= 8 || performance.now() - t0 > 40) break;   // amortized: the rest next tick
+        work += performance.now() - a;
+        if (++n >= 16 || work > 12) break;   // amortized: <=12 ms of main-thread work per tick, the rest next tick
         await new Promise(res => setTimeout(res, 0));
       }
+      if (batch.length) {   // ONE real frame with the batch unculled (GPU-clipped off-screen): atmo-pass + backSide render objects
+        const fc = batch.map(o => o.frustumCulled); for (const o of batch) o.frustumCulled = false;
+        await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
+        for (let i = 0; i < batch.length; i++) batch[i].frustumCulled = fc[i];
+        batch.length = 0;
+      }
+      W.stats.left = list.length - n;
       if (n) { W.stats.log.push(new Date().toLocaleTimeString() + ' warmed ' + n + '/' + list.length); if (W.stats.log.length > 40) W.stats.log.shift(); }
     } catch (e) { W.stats.err = String(e).slice(0, 120); }
     finally { busy = false; W.stats.lastMs = Math.round(performance.now() - t0); }
   }
   W.tick = tick;
-  setInterval(tick, 400);
+  // drain fast while there is work (next tick in 60 ms), idle-poll at 400 ms otherwise
+  (function loop() { tick().finally(() => setTimeout(loop, (W.stats.left > 0) ? 60 : 400)); })();
 })();
