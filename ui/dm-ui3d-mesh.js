@@ -71,7 +71,9 @@
       if(isLeaf(o)){ cs[j].style.color='transparent'; cs[j].style.textShadow='none'; } }
     var rs=c.style; rs.position='relative'; rs.left=rs.top=PG+'px'; rs.right=rs.bottom='auto'; rs.margin='0'; rs.transform='none'; rs.rotate='none'; rs.scale='none'; rs.translate='none'; rs.filter='none'; rs.opacity='1'; var lw=el.offsetWidth||w, lh=el.offsetHeight||h, kx=w/lw, ky=h/lh; rs.width=lw+'px'; rs.height=lh+'px'; if(Math.abs(kx-1)>.01||Math.abs(ky-1)>.01){ rs.transformOrigin='0 0'; rs.transform='scale('+kx+','+ky+')'; }   /* (v160) scaled ancestors (compact kite .72): lay out at CSS size, scale to screen size, else the raster crops */ rs.boxSizing='border-box';
     c.classList.remove('dm-ui3d-ghost','dm-ui3d-p');
-    var imgs=c.querySelectorAll('img'); for(var m=0;m<imgs.length;m++){ var src=imgs[m].currentSrc||imgs[m].src; if(src&&!/^data:/.test(src)) imgs[m].setAttribute('src',await within(inlineImg(src),4000).catch(function(){ return src; })); }
+    // (v204) <img> never goes inside the foreignObject: WebKit fires the outer SVG's onload before a nested image decodes, so on a
+    // cold/slow load the logo/kite art rasterized as the broken-image white outline (intermittent). Imgs are drawn by drawImgs().
+    c.querySelectorAll('img').forEach(function(n){ var sp=document.createElement('span'); sp.setAttribute('style',n.getAttribute('style')||''); sp.style.display='inline-block'; sp.style.visibility='hidden'; n.replaceWith(sp); });   // a src-less <img> still paints WebKit's grey placeholder frame
     c.querySelectorAll('canvas,script,video,iframe').forEach(function(n){ n.remove(); });
     var W=w+2*PG, H=h+2*PG;
     var svg='<svg xmlns="http://www.w3.org/2000/svg" width="'+W+'" height="'+H+'"><foreignObject x="0" y="0" width="100%" height="100%"><div xmlns="http://www.w3.org/1999/xhtml" style="width:'+W+'px;height:'+H+'px;overflow:hidden">'+new XMLSerializer().serializeToString(c)+'</div></foreignObject></svg>';
@@ -125,6 +127,13 @@
   var sx=0, sy=0, sh=0; function alloc(w,h,size){ if(sx+w>size){ sx=0; sy+=sh+PAD; sh=0; } if(sy+h>size) return null; var a={x:sx,y:sy}; sx+=w+PAD; sh=Math.max(sh,h); return a; }
   function pos4(r){ return [r.left,r.top,r.width,r.height].map(function(v){ return Math.round(v*2); }).join(','); }
 
+  // (v204) never raster mid-transition: raster() copies each descendant's *computed* opacity/colour, so a panel painted while a
+  // fade/slide runs (hover, class swap, panel open) bakes the dim in-between frame into the atlas, and paintSig (class/style only)
+  // does not change when the transition ends -> frames/tabs/kite stayed ghost-dim with only the text leaves visible. Wait it out (<=~2 s), then paint.
+  var SETTLE_MS=120, SETTLE_MAX=40;
+  function settling(P){ if(!P.el.getAnimations||(P.settleN||0)>=SETTLE_MAX) return false;
+    var run=false; try{ run=P.el.getAnimations({subtree:true}).some(function(a){ if(a.playState!=='running') return false; var t=a.effect&&a.effect.getTiming&&a.effect.getTiming(); return !(t&&t.iterations===Infinity); }); }catch(e){}
+    if(run) P.settleN=(P.settleN||0)+1; return run; }
   function layout(kind){
     var dn=performance.now(); if(foundKind!==kind||dn-discT>=LAYOUT_MS*WALK_EVERY||discDirty){ discT=dn; discDirty=false; discover(kind); watch(); }
     panels.forEach(function(P){ P.leaves.forEach(function(L){ if(L.cs){ L.cs=null; L.text=null; } }); });   // (v156) leaf styles re-read once per layout
@@ -152,7 +161,7 @@
       // the art atlas is only as tall as its slots (pow2): each finished panel raster re-uploads the whole texture
       var AH=64; while(AH<sy+sh&&AH<ATLAS) AH*=2; if(aCv.height!==AH){ aCv.height=AH; aTex.dispose(); aTex=tx(aCv); art.material.map=aTex; art.material.needsUpdate=true; panels.forEach(function(P){ if(P.mesh) P.mesh.material=art.material; }); } else aCx.clearRect(0,0,ATLAS,AH);
       panels.forEach(function(P){ P.ready=false; P.want=true; }); artDirty=true; }
-    panels.forEach(function(P){ if(P.want&&!P.busy&&P.slot){ P.want=false; P.lp=now; paint(P); } });
+    panels.forEach(function(P){ if(P.want&&!P.busy&&P.slot&&now>=(P.nb||0)){ if(settling(P)){ P.nb=now+SETTLE_MS; setTimeout(function(){ layoutDirty=true; },SETTLE_MS+20); return; } P.want=false; P.lp=now; P.settleN=0; paint(P); } });   // (v204) a failing panel waits out its backoff (P.nb) instead of re-rastering every frame
     // live canvases (minimap, globe, compass halo)
     var cseen=new Set();
     found.cv.forEach(function(c){ if(cseen.has(c)||!c.isConnected) return; var r=visible(c); if(!r||!c.width||!c.height||faded(c)) return; cseen.add(c);
@@ -168,13 +177,14 @@
   // scratch canvas first and is probed with getImageData; on taint we switch (once) to SAFE: a canvas-2D box
   // painter (backgrounds, borders, radius, glow, clip-path polygons) + inline <svg> drawn as plain SVG images
   // (no foreignObject = no taint). The shared atlas itself is never tainted.
-  var SAFE=/[?&]ui3dsafe=1\b/.test(location.search), painter=SAFE?'box2d':'foreignObject';   // ?ui3dsafe=1: test the WebKit painter in Chromium; ?ui3dgl=1: allow the WebGL2 backend (headless checks)
+  var foFails=0, SAFE=/[?&]ui3dsafe=1\b/.test(location.search), painter=SAFE?'box2d':'foreignObject';   // ?ui3dsafe=1: test the WebKit painter in Chromium; ?ui3dgl=1: allow the WebGL2 backend (headless checks)
   function scratch(w,h){ var c=document.createElement('canvas'); c.width=Math.max(1,w); c.height=Math.max(1,h); return c; }
   function clean(c){ try{ c.getContext('2d').getImageData(0,0,1,1); return true; }catch(e){ return false; } }
   function alphaOf(c){ var m=/rgba?\(([^)]*)\)/.exec(c||''); if(!m) return c&&c!=='transparent'?1:0; var a=m[1].split(/[ ,\/]+/).filter(Boolean); return a.length>3?parseFloat(a[3]):1; }
   function polyPath(cx,cp,x,y,w,h){ var m=/^polygon\((.*)\)$/.exec(cp||''); if(!m) return false; var pts=m[1].split(',');
     pts.forEach(function(pt,i){ var v=pt.trim().split(/\s+/), f=function(t,L){ return /%$/.test(t)?parseFloat(t)/100*L:parseFloat(t)||0; }; var px=x+f(v[0],w), py=y+f(v[1],h); if(i) cx.lineTo(px,py); else cx.moveTo(px,py); });
     cx.closePath(); return true; }
+  var GLASS='rgba(20,26,40,0.42)';
   async function paintSafe(P){
     var c=scratch(P.w+2*PG,P.h+2*PG), cx=c.getContext('2d'), base=P.el.getBoundingClientRect(), els=[P.el].concat([].slice.call(P.el.querySelectorAll('*')));
     for(var i=0;i<els.length;i++){ var el=els[i];
@@ -187,26 +197,38 @@
         var im=new Image(); try{ await within(new Promise(function(res,rej){ im.onload=res; im.onerror=rej; im.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(new XMLSerializer().serializeToString(cl)); }),4000); cx.drawImage(im,x,y,r.width,r.height); }catch(e){ console.warn('[UI3D] svg paint',e&&(e.message||e.type)); }
         continue; }
       // (v198) box2d painter drew boxes only, so the menu/loader logo <img> (static/dartmeadow-logo.svg) came out as an empty frame
-      if(el.tagName==='IMG'){ if(el.complete&&el.naturalWidth){ try{ cx.save(); cx.globalAlpha=Math.min(1,parseFloat(cs.opacity)||1); cx.drawImage(el,x,y,r.width,r.height); cx.restore(); }catch(e){ console.warn('[UI3D] img paint',e&&e.message); } } continue; }
+      if(el.tagName==='IMG'){ if(!(el.complete&&el.naturalWidth)){ if(imgGaveUp(P,el)) continue; throw new Error('img not ready'); } if(el.complete&&el.naturalWidth){ try{ cx.save(); cx.globalAlpha=Math.min(1,parseFloat(cs.opacity)||1); cx.drawImage(el,x,y,r.width,r.height); cx.restore(); }catch(e){ console.warn('[UI3D] img paint',e&&e.message); } } continue; }
       var bg=cs.backgroundColor, bw=parseFloat(cs.borderTopWidth)||0, bc=cs.borderTopColor, rad=Math.min(parseFloat(cs.borderTopLeftRadius)||0,r.width/2,r.height/2);
+      if(alphaOf(bg)<=0.02&&cs.backgroundImage!=='none'){ var gm=/rgba?\([^)]*\)/.exec(cs.backgroundImage); if(gm) bg=gm[0]; }   // (v204) gradients: first stop as the fill
+      if(i===0&&alphaOf(bg)<0.08) bg=GLASS;   // (v204) the panel root is always frosted glass: no bare white outline
       if(alphaOf(bg)<=0&&(bw<=0||alphaOf(bc)<=0)) continue;
       cx.save(); cx.globalAlpha=Math.min(1,parseFloat(cs.opacity)||1); cx.beginPath();
       if(!polyPath(cx,cs.clipPath,x,y,r.width,r.height)){ if(cx.roundRect) cx.roundRect(x+bw/2,y+bw/2,r.width-bw,r.height-bw,rad); else cx.rect(x+bw/2,y+bw/2,r.width-bw,r.height-bw); }
-      var g=/(rgba?\([^)]*\)|#[0-9a-f]+)\s+(-?[\d.]+)px\s+(-?[\d.]+)px\s+([\d.]+)px/i.exec(cs.boxShadow||''); if(g&&!/inset/.test(cs.boxShadow)){ cx.shadowColor=g[1]; cx.shadowOffsetX=+g[2]; cx.shadowOffsetY=+g[3]; cx.shadowBlur=+g[4]; }
+      var g=/(rgba?\([^)]*\)|#[0-9a-f]+)\s+(-?[\d.]+)px\s+(-?[\d.]+)px\s+([\d.]+)px/i.exec(cs.boxShadow||''); if(g&&!/inset/.test(cs.boxShadow)){ cx.shadowColor=soft(g[1]).replace(/,([\d.]+)\)$/,function(m,a){ return ','+(parseFloat(a)*0.7).toFixed(3)+')'; }); cx.shadowOffsetX=+g[2]; cx.shadowOffsetY=+g[3]; cx.shadowBlur=+g[4]; }
       if(alphaOf(bg)>0){ cx.fillStyle=bg; cx.fill(); cx.shadowColor='transparent'; }
       if(bw>0&&alphaOf(bc)>0){ cx.lineWidth=bw; cx.strokeStyle=bc; cx.stroke(); }
       cx.restore(); }
     if(!clean(c)) throw new Error('2D box painter canvas tainted');
     return c; }
+  var IMG_TRIES=4;   // (v204) 'img not ready' retries per panel (~4 s with the backoff) before the panel paints without that image
+  function imgGaveUp(P,el){ if(el&&el._dmGU) return true; if((P.imgFails||0)<IMG_TRIES) return false;
+    if(el){ el._dmGU=1; el.addEventListener('load',function(){ el._dmGU=0; P.imgFails=0; P.force=true; P.sig=''; layoutDirty=true; },{once:true}); }   // a late image repaints the panel once it arrives
+    return true; }
+  async function drawImgs(P,cx){ var base=P.el.getBoundingClientRect(), ims=P.el.tagName==='IMG'?[P.el]:P.el.querySelectorAll('img');
+    for(var i=0;i<ims.length;i++){ var el=ims[i]; if(el!==P.el&&el.closest(DYN_SEL)) continue; var cs=getComputedStyle(el); if(cs.display==='none'||cs.visibility==='hidden'||parseFloat(cs.opacity)===0) continue;
+      if(!(el.complete&&el.naturalWidth)){ if(imgGaveUp(P,el)) continue; try{ await within(el.decode?el.decode():Promise.reject(new Error('no decode')),1500); }catch(e){ throw new Error('img not ready'); } if(!(el.naturalWidth)){ if(imgGaveUp(P,el)) continue; throw new Error('img not ready'); } }   // retried a few times (backoff), then painted without the image: a 404/offline/undecodable img never blocks the panel
+      var r=el.getBoundingClientRect(); cx.save(); cx.globalAlpha=Math.min(1,parseFloat(cs.opacity)||1); cx.drawImage(el,r.left-base.left+PG,r.top-base.top+PG,r.width,r.height); cx.restore(); } }
   async function paintSrc(P){
-    if(!SAFE){ try{ var img=await raster(P.el,P.w,P.h), c=scratch(P.w+2*PG,P.h+2*PG); c.getContext('2d').drawImage(img,0,0,P.w+2*PG,P.h+2*PG); if(clean(c)) return c;
+    if(P.el.tagName==='IMG'){ var ci=scratch(P.w+2*PG,P.h+2*PG); await drawImgs(P,ci.getContext('2d')); if(clean(ci)) return ci; }   // (v204) a bare <img> panel (menu/loader logo, kite art) is drawn directly
+    if(!SAFE){ try{ var img=await raster(P.el,P.w,P.h), c=scratch(P.w+2*PG,P.h+2*PG), c2=c.getContext('2d'); c2.drawImage(img,0,0,P.w+2*PG,P.h+2*PG); await drawImgs(P,c2); if(clean(c)){ foFails=0; return c; }
         console.warn('[UI3D] foreignObject raster taints the canvas here (WebKit); switching to the 2D box painter'); }
-      catch(e){ console.warn('[UI3D] foreignObject raster failed ('+(e&&e.message)+'); switching to the 2D box painter'); }
+      catch(e){ if(e&&e.message==='img not ready') throw e; if(++foFails<6){ console.warn('[UI3D] foreignObject raster failed ('+(e&&e.message)+'); retrying'); throw e; }   // (v204) a timeout while the scene loads is transient: retry, never latch box2d for the session
+        console.warn('[UI3D] foreignObject raster failed '+foFails+'x; switching to the 2D box painter'); }
       SAFE=true; painter='box2d'; }
     return paintSafe(P); }
   function paint(P){ P.busy=true; var gen=P.slot;
-    paints++; paintSrc(P).then(function(src){ if(P.slot!==gen||!P.slot) return; aCx.clearRect(P.slot.x,P.slot.y,(P.cw||P.w)+2*PG,(P.ch||P.h)+2*PG); aCx.drawImage(src,P.slot.x,P.slot.y,P.w+2*PG,P.h+2*PG); P.ready=true; artDirty=true; if(P.dyn) P.built=false; })
-      .catch(function(e){ P.failed=(P.failed||0)+1; console.warn('[UI3D] raster',e&&e.message); }).finally(function(){ P.busy=false; }); }
+    paints++; paintSrc(P).then(function(src){ if(P.slot!==gen||!P.slot) return; aCx.clearRect(P.slot.x,P.slot.y,(P.cw||P.w)+2*PG,(P.ch||P.h)+2*PG); aCx.drawImage(src,P.slot.x,P.slot.y,P.w+2*PG,P.h+2*PG); P.ready=true; P.failed=0; P.imgFails=0; artDirty=true; if(P.dyn) P.built=false; })
+      .catch(function(e){ var n=performance.now(); P.failed=(P.failed||0)+1; if(e&&e.message==='img not ready') P.imgFails=(P.imgFails||0)+1; P.want=true; var d=Math.min(4000,300*Math.pow(2,Math.min(P.failed,5)-1)); P.nb=n+d; setTimeout(function(){ layoutDirty=true; },d+20); console.warn('[UI3D] raster',e&&e.message,'(retry in '+d+' ms, #'+P.failed+')'); }).finally(function(){ P.busy=false; }); }
 
   // ---------- static art geometry: ONE merged buffer (knobs: one small mesh each) ----------
   var ID={cx:0,cy:0,th:0,f:1,c:1,s:0,zc:0};
@@ -258,6 +280,7 @@
   function soft(c){ var m=/rgba?\(([^)]*)\)/.exec(c); if(!m) return c; var a=m[1].split(/[ ,\/]+/).filter(Boolean); var al=a.length>3?parseFloat(a[3]):1; return 'rgba('+a[0]+','+a[1]+','+a[2]+','+(al*0.35).toFixed(3)+')'; }
   function drawLeaf(L,s){
     if(!L.cs){ var c0=getComputedStyle(L.el); L.cs={textTransform:c0.textTransform,fontStyle:c0.fontStyle,fontWeight:c0.fontWeight,fontSize:c0.fontSize,fontFamily:c0.fontFamily,letterSpacing:c0.letterSpacing,color:c0.color,textShadow:c0.textShadow,textAlign:c0.textAlign,paddingLeft:c0.paddingLeft,k:(L.el.offsetWidth>0?Math.min(4,Math.max(.25,L.r.width/L.el.offsetWidth)):1)}; }
+    if(L.cs.k<0.9&&L.P&&L.P.el.getAnimations&&L.P.el.getAnimations({subtree:true}).some(function(a){ return a.playState==='running'; })){ L.cs.k=1; layoutDirty=true; }   // (v204) mid scale-in: draw at 1:1, next layout re-reads
     var cs=L.cs, x=L.slot.x, y=L.slot.y; tCx.clearRect(x,y,L.sw,L.sh);   // (v156) style snapshot per layout, not a style read per redraw
     if(cs.textTransform==='uppercase') s=s.toUpperCase();
     tCx.save(); tCx.beginPath(); tCx.rect(x,y,L.sw,L.sh); tCx.clip(); var K=DPR*cs.k; tCx.scale(K,K);
@@ -304,9 +327,10 @@
   // (v197) Watcher: ignore the first ~2 s (shader compile / first raster) and need TWO bad windows in a row to drop to box2d.
   // The fallback then latches for the session: box2d timings can't judge foreignObject's cost, so no flip-flop / re-raster loop.
   var pgMs=0, pgN=0, pgT0=0, pgBad=0, IOS=/iP(hone|ad|od)/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
-  function perfGuard(dt){ if(SAFE) return; var n=performance.now(); if(!pgT0){ pgT0=n; return; } if(n-pgT0<2000) return;
+  function perfGuard(dt){ if(TXT_MS>66) return; var n=performance.now(); if(!pgT0){ pgT0=n; return; } if(n-pgT0<2000) return;
     pgMs+=dt; if(++pgN<120) return; var avg=pgMs/pgN; pgMs=0; pgN=0;
-    if(avg>(IOS?2.5:3.5)){ if(++pgBad>=2){ SAFE=true; painter='box2d'; console.warn('[UI3D] HUD pass '+avg.toFixed(1)+'ms x2: 2D box painter (latched)'); } } else pgBad=0; }
+    if(avg>(IOS?2.5:3.5)){ if(++pgBad>=2&&TXT_MS<200){ TXT_MS=200; console.warn('[UI3D] HUD pass '+avg.toFixed(1)+'ms x2: readouts at 5 Hz (painter unchanged)'); } } else pgBad=0; }
+  var TXT_MS=66;   // (v204) was: latch the 2D box painter. On iPhone the first seconds of a load always spike, so the HUD randomly came up outline-only / red slabs
   // ---------- overlay pass on the renderer that owns the screen ----------
   function tx(c){ var t=new T.CanvasTexture(c); t.colorSpace=T.SRGBColorSpace; t.generateMipmaps=false; t.minFilter=T.LinearFilter; t.premultiplyAlpha=true; return t; }
   // glass: no depth write / test (sorted by renderOrder + far-to-near buffer order), front faces only
@@ -363,7 +387,7 @@
     trackDyn();
     cvs.forEach(function(C){ setXf(C.mesh,C.p,C.rect.width,C.rect.height); C.mesh.position.z+=0.8; });
     // readouts + live canvases re-upload at most ~15 Hz
-    var tn=performance.now(); if(tn-txtT>=66){ txtT=tn; updateText(); cvs.forEach(function(C){ C.tex.needsUpdate=true; }); }
+    var tn=performance.now(); if(tn-txtT>=TXT_MS){ txtT=tn; updateText(); cvs.forEach(function(C){ C.tex.needsUpdate=true; }); }
     // the DOM stays visible until a mesh frame draws OK; only a render throw or no art at all after 15 s (raster stall) falls back
     if(!drewOK&&!arHeld&&panels.size){ if(!wdT0) wdT0=performance.now(); wdFrames++; var anyArt=false; panels.forEach(function(P){ if(P.ready) anyArt=true; });
       if(!anyArt&&performance.now()-wdT0>WD_MS){ console.warn('[UI3D] no panel art after '+Math.round(performance.now()-wdT0)+' ms (painter '+painter+'): re-rastering'); wdT0=performance.now(); panels.forEach(function(P){ P.busy=false; P.want=true; }); } }   // (v160) 15 s watchdog re-rasters instead of switching to CSS
