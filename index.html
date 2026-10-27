@@ -20297,6 +20297,10 @@ async function loadCharacterAssets(){
   // Real-time strand hair (hair_strands.js + characterassests/ariel_hair_strands.bin). Fails soft: if the
   // module/data is missing or the loaded character is a different file, she simply has no strand hair.
   try{ import('./hair_strands.js').then(m=>m.attachHairStrands(CHAR,THREE,{url:CHAR_ASSET_BASE+'ariel_hair_strands.bin',getStrandFraction:_hairStrandFraction,getCalm:()=>{ try{ return _hairCalm(); }catch(e){ return false; } },getFrameVel:o=>{ try{ return _hairFrameVel(o); }catch(e){ return o.set(0,0,0); } },getGravityScale:()=>{try{if(surfaceActive)return 1;if(CHAR.mounted)return atmoActive?0.3:0.08;}catch(e){}return 1;}})).catch(e=>console.info('[hair] strands not attached:',e&&e.message)); }catch(e){}
+  // (v190) PROTOTYPE garment cloth (ui/dm-ariel-cloth.js). OFF by default: only imported when localStorage dm_cloth_v1='1' or ?cloth=1.
+  // Post-skin offsets on her garments only; rig, stance, skyboard pose and the hair strand solver are untouched. Fails soft.
+  try{ let _cw=/[?&]cloth=1\b/.test(location.search); try{ _cw=_cw||localStorage.getItem('dm_cloth_v1')==='1'; }catch(e){}
+    if(_cw) import('./ui/dm-ariel-cloth.js?v=194').then(m=>m.attachArielCloth(CHAR,THREE,{TSL:THREE.TSL||window.TSL,renderer:(typeof flightRenderer!=='undefined')?flightRenderer:null,getGravityScale:()=>{try{if(surfaceActive)return 1;if(CHAR.mounted)return atmoActive?0.3:0.08;}catch(e){}return 1;}})).catch(e=>console.info('[cloth] not attached:',e&&e.message)); }catch(e){}
   try{ if(typeof boardFlight!=='undefined' && boardFlight) remountSkyboard(boardFlight); }catch(e){}
   CHAR._loadPromise=null;
   return CHAR.root;
