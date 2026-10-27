@@ -125,7 +125,7 @@
     // (v189) feathered window rim (last ~8% of the radius) instead of an alphaTest cut-out
     const edge=T.smoothstep(B.r.mul(0.92),B.r,d2.max(0.0).sqrt());
     m.opacityNode=front.select(edge,1.0);
-    m.transparent=true; m.depthWrite=true;
+    m.transparent=true; m.depthWrite=true; m.alphaTest=0.01; // discard window hole so #208 pass-through stays see-through in depth
     const d=T.normalize(T.positionLocal);
     const V=T.normalize(T.cameraPosition.sub(T.positionWorld));
     const ndv=T.normalWorld.dot(V).clamp(0.0,1.0);
