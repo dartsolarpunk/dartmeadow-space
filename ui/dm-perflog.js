@@ -30,8 +30,32 @@
   // windows / hitches already in localStorage from earlier sessions aren't ours
   const seen = new Set();
   try { (read('dm_perf_log') || []).concat(read('dm_hitch_log') || []).forEach((e) => seen.add(JSON.stringify(e))); } catch (e) {}
+  const prevLocal = read(LKEY);
+  const prevUnclean = !!(prevLocal && prevLocal.sessionId && !prevLocal.final);
   const windows = [], hitches = [], modes = {}, byScreen = {};
-  let lastSig = '', dirty = true, ended = false, writing = false;
+  let lastSig = '', dirty = true, ended = false, writing = false, endNote = null;
+  // (v200) memory per 10 s window: GPU objects, draw load, DOM / scene size, JS heap
+  const mem = [], MEM_MS = 10000; let uaMem = null;
+  function countScene() { try { let n = 0; const sc = window.scene || (typeof scene !== 'undefined' ? scene : null); if (sc && sc.traverse) sc.traverse(() => { n++; }); return n; } catch (e) { return null; } }
+  function sampleMem() {
+    try {
+      const r = window.flightRenderer || (typeof flightRenderer !== 'undefined' ? flightRenderer : null);
+      const i = r && r.info, pm = performance.memory;
+      const m = { t: Math.round((Date.now() - start.getTime()) / 1000), screen: curMode(), hidden: document.hidden,
+        geo: i && i.memory ? i.memory.geometries : null, tex: i && i.memory ? i.memory.textures : null,
+        progs: i && i.programs ? i.programs.length : null,
+        calls: i && i.render ? i.render.calls : null, tris: i && i.render ? i.render.triangles : null,
+        dom: document.getElementsByTagName('*').length, sceneObj: countScene(),
+        heapUsed: pm ? Math.round(pm.usedJSHeapSize / 1048576) : null, heapTotal: pm ? Math.round(pm.totalJSHeapSize / 1048576) : null,
+        heapLimit: pm ? Math.round(pm.jsHeapSizeLimit / 1048576) : null, uaMB: uaMem };
+      mem.push(m); if (mem.length > 120) mem.splice(0, mem.length - 120); dirty = true;
+      if (window.crossOriginIsolated && performance.measureUserAgentSpecificMemory) {
+        performance.measureUserAgentSpecificMemory().then((x) => { uaMem = Math.round(x.bytes / 1048576); }).catch(() => {});
+      }
+    } catch (e) {}
+  }
+  // (v200) previous session ended uncleanly? (its last local copy never got a pagehide final)
+  let navType = null; try { const ne = performance.getEntriesByType('navigation')[0]; navType = ne ? ne.type : null; } catch (e) {}
 
   function curMode() {
     let scr = '?', m = '';
@@ -72,10 +96,12 @@
       build: env && env.build, swCache: (env && env.swCache) || window._dmSwCache || null,
       backend: env && env.backend, gpu: env && env.gpu, preset: env && env.preset, hair: env && env.hair,
       warmupMs: window._warmupMs != null ? window._warmupMs : null,
-      env, modes, summary, gpuPasses: (function () { try { return window.DMGpuProf ? window.DMGpuProf.table() : null; } catch (e) { return null; } })(), hitches: hitches.slice(), windows: windows.slice(-60), trimmed: 0,
+      navType, prevUnclean, prevSessionId: prevLocal && prevLocal.sessionId || null, endNote: final ? endNote : null,
+      env, modes, mem: mem.slice(), summary, gpuPasses: (function () { try { return window.DMGpuProf ? window.DMGpuProf.table() : null; } catch (e) { return null; } })(), hitches: hitches.slice(), windows: windows.slice(-60), trimmed: 0,
     };
     let s = JSON.stringify(doc);
     while (s.length > CAP && doc.windows.length) { doc.windows.splice(0, Math.ceil(doc.windows.length / 4) || 1); doc.trimmed = windows.length - doc.windows.length; s = JSON.stringify(doc); }
+    while (s.length > CAP && doc.mem.length > 12) { doc.mem.splice(0, Math.ceil(doc.mem.length / 4)); s = JSON.stringify(doc); }
     while (s.length > CAP && doc.hitches.length > 10) { doc.hitches.splice(0, 10); s = JSON.stringify(doc); }
     return doc;
   }
@@ -93,13 +119,13 @@
     } catch (e) { writing = false; }
   }
   // the previous session's last local copy (in case its final write never landed)
-  let carried = false; const prevLocal = read(LKEY);
+  let carried = false;
   function carryOver() {
     if (carried) return; const V = vault(); if (!V) return; carried = true;
     try {
       const prev = prevLocal;
       if (prev && prev.sessionId && prev.sessionId !== sessionId) {
-        if (!prev.end) { prev.end = prev.updated; prev.final = true; prev.endNote = 'closed; end time = last snapshot'; }
+        if (!prev.end) { prev.end = prev.updated; prev.final = true; prev.endNote = 'unclean end (no pagehide; tab killed/crashed?); end time = last snapshot; next session navType=' + navType; prev.unclean = true; }
         V.putJSON('perf/' + prev.sessionId + '.json', prev, 'jots: perf ' + prev.sessionId + ' (end)').catch(() => {});
       }
     } catch (e) {}
@@ -109,8 +135,9 @@
     setInterval(() => { if (!document.hidden) snapshot(false); }, SNAP_MS);
     window.addEventListener('jots:vault', () => { carryOver(); setTimeout(() => snapshot(false), 3000); });
     document.addEventListener('visibilitychange', () => { if (document.hidden) snapshot(false); });
-    window.addEventListener('pagehide', () => { if (ended) return; ended = true; snapshot(true); });
+    window.addEventListener('pagehide', (ev) => { if (ended) return; ended = true; endNote = 'pagehide' + (ev && ev.persisted ? ' (bfcache)' : ''); sampleMem(); snapshot(true); });
+    setInterval(sampleMem, MEM_MS);
     setTimeout(carryOver, 8000);
   } catch (e) {}
-  window.dmPerfLog = { sessionId, snapshot: () => snapshot(false), build: () => build(false) };
+  window.dmPerfLog = { sessionId, snapshot: () => snapshot(false), build: () => build(false), mem: () => mem.slice() };
 })();
