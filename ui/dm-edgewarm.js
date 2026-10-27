@@ -127,7 +127,7 @@
   // (v197) play has started: the fly-in finished with the board mounted (INTRO.on went true then false), or the first
   // input while in flight. (STATE.screen alone is not a signal: launchFlight sets 'flight' before the scene is built.)
   let introSeen = false, flewInput = false;
-  ['keydown', 'pointerdown', 'touchstart'].forEach((ev) => addEventListener(ev, () => { try { if (!flewInput && typeof STATE !== 'undefined' && STATE.screen === 'flight' && typeof boardFlight !== 'undefined' && boardFlight) flewInput = true; } catch (e) {} }, { capture: true, passive: true }));
+  ['keydown', 'pointerdown', 'touchstart'].forEach((ev) => addEventListener(ev, (e) => { try { if (e.key === 'Escape' || e.key === 'Tab') return; if (!flewInput && typeof STATE !== 'undefined' && STATE.screen === 'flight' && typeof boardFlight !== 'undefined' && boardFlight) flewInput = true; } catch (e) {} }, { capture: true, passive: true }));
   const introIv = setInterval(() => { try { if (typeof INTRO !== 'undefined' && INTRO.on) { introSeen = true; clearInterval(introIv); } } catch (e) {} }, 200);
   function playing() {
     if (flewInput) return true;
