@@ -142,7 +142,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     stretchBias: 0.5,                                // parent share of a length correction (root side heavier)
     wind: new THREE.Vector3(0, 0, 0), windGust: 0.35, iterations: 2, reach: 0.08, hairRadius: 0.006,
     minClear: 0.002, maxClear: 0.02, sdfEvery: 1, capsuleEveryIteration: false, broadPhase: true, friction: 0.35, collideChildren: true,
-    maxRootStep: 0.06, drag: 1.6, motionWind: 0.05, maxMotionWind: 14, teleportSpeed: 400, popSpeed: 22, bodyColliders: true,
+    maxRootStep: 0.06, hitchMs: 250, settleTime: 0.45, maxDeflect: 2.5, drag: 1.6, motionWind: 0.05, maxMotionWind: 14, teleportSpeed: 400, popSpeed: 22, bodyColliders: true,
     minGravityScale: 0.0, interleave: 1, autoQuality: true, strandFraction: 1, scalpSheenOff: true,
     deferToRender: true,   // hooked mode: simulate in the strands' onBeforeRender, after every pose layer (see hook below)
     widthRoot: 0.0046, widthTip: 0.0022,
@@ -224,6 +224,8 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     }
   }
   buildStiffness();
+  const gLen = new Float32Array(G);   // chain length per guide (runaway bound for the blow-up guard)
+  for (let g = 0; g < G; g++) { let l = 0; for (let k = 0; k < K - 1; k++) l += segLen[g * (K - 1) + k]; gLen[g] = l; }
   let stiffDirty = false;
   const kMaxG = new Uint8Array(G);
   for (let g = 0; g < G; g++) kMaxG[g] = kMaxC[guideStrand[g]];
@@ -294,6 +296,11 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   // pre-override head and the strands floated off the rotated scalp. Running the step here, after
   // the renderer has updated every world matrix, always matches the skinned scalp being drawn.
   let pendingDt = 0, renderSeen = false;
+  // frame-stall recovery: a wall-clock gap > P.hitchMs between mixer updates means the game clamped dt
+  // but the character still travelled the whole stall; reseed to the groom and hold the motion-driven
+  // terms (inertial shift, apparent wind) for P.settleTime so nothing is flung out of the head
+  let lastWall = 0, hitch = false, settleT = 0, resanitized = 0;
+  const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
   const pM = new Float32Array(16); let havePM = false, headMoved = true;
   mesh.onBeforeRender = function (renderer, scene, camera) {
     camera.getWorldPosition(camPos); haveCam = true; renderSeen = true;
@@ -711,15 +718,34 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     _update(dt);
     if (!primed && P.enabled && root.visible && dt > 0 && renderSeen && gpu !== null && ++warm >= 4) prime();
   }
+  // CPU path: any guide point that went non-finite or ran away (> P.maxDeflect x its chain length from the
+  // groom) reseeds its whole guide to the groom. The GPU path does the same inside the compute shader.
+  function sanitizeCPU() {
+    const sc = Math.sqrt(hsc2) || 1;
+    for (let g = 0; g < G; g++) {
+      const lim = P.maxDeflect * gLen[g] * sc, lim2 = lim * lim, b = g * K * 3;
+      let bad = false;
+      for (let k = 2; k < K; k++) {
+        const o = b + k * 3, dx = sp[o] - restM[o], dy = sp[o + 1] - restM[o + 1], dz = sp[o + 2] - restM[o + 2];
+        if (!(dx * dx + dy * dy + dz * dz < lim2)) { bad = true; break; }   // NaN fails the compare too
+      }
+      if (bad) { for (let k = 0; k < K * 3; k++) { sp[b + k] = restM[b + k]; sq[b + k] = restM[b + k]; } resanitized++; }
+    }
+  }
   function _update(dt) {
     if (!P.enabled || !(dt > 0) || !root.visible) return;
     const t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    if (dt >= 0.25) hitch = true;
+    if (hitch) { hitch = false; needInit = true; haveLast = false; havePM = false; haveHL = false; velS.set(0, 0, 0); settleT = P.settleTime; }
+    if (settleT > 0) settleT -= dt;
     root.updateWorldMatrix(true, false);
     head.updateWorldMatrix(true, false);
     rootInv.copy(root.matrixWorld).invert();
     M.multiplyMatrices(rootInv, head.matrixWorld);   // head bone (= scalp frame) in root-local space
     Mi.copy(M).invert();
     me = M.elements; mi = Mi.elements;
+    // NaN / Infinity in the head frame (degenerate matrix after a teleport) would poison every strand for good
+    if (!(Math.abs(me[0] + me[5] + me[10] + me[12] + me[13] + me[14]) < 1e9) || !(Math.abs(M.determinant()) > 1e-12)) { needInit = true; return; }
     hcx = me[0] * sdfC[0] + me[4] * sdfC[1] + me[8] * sdfC[2] + me[12];
     hcy = me[1] * sdfC[0] + me[5] * sdfC[1] + me[9] * sdfC[2] + me[13];
     hcz = me[2] * sdfC[0] + me[6] * sdfC[1] + me[10] * sdfC[2] + me[14];
@@ -777,7 +803,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     v3.setFromMatrixPosition(head.matrixWorld);
     const rs = Math.cbrt(Math.abs(root.matrixWorld.determinant())) || 1;
     let motionWind = 0;
-    if (haveLast && dt < 0.25) {
+    if (haveLast && dt < 0.25 && settleT <= 0) {
       v3b.copy(v3).sub(lastRootW);
       // v94: motion relative to the frame she stands on (the moving Bird Temple deck), not raw world motion
       if (opts.getFrameVel) { opts.getFrameVel(fvel); v3b.addScaledVector(fvel, -dt); }
@@ -801,6 +827,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
         }
       }
     } else if (dt >= 0.25) { if (!onGPU) { sp.set(restM); sq.set(restM); } reset = true; velS.set(0, 0, 0); }
+    else if (settleT > 0) velS.set(0, 0, 0);   // post-stall settle: no inertial shift / apparent wind
     lastRootW.copy(v3); haveLast = true;
     const vl = velS.length(), spd = vl / rs;
     motionWind = Math.min(P.maxMotionWind, spd * P.motionWind);
@@ -812,8 +839,10 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     // gravity / wind into root-local directions
     const up = opts.getDown ? opts.getDown() : null;   // optional: world-space "down" vector
     gravL.set(up ? up.x : 0, up ? up.y : -1, up ? up.z : 0).transformDirection(rootInv);
-    const gsT = opts.getGravityScale ? opts.getGravityScale() : 1;
-    gScale += (gsT - gScale) * (1 - Math.exp(-dt * 3));
+    let gsT = opts.getGravityScale ? opts.getGravityScale() : 1;
+    if (!Number.isFinite(gsT)) gsT = 1;
+    if (!Number.isFinite(gScale)) gScale = 1;   // a single NaN here used to poison gravL permanently
+    gScale += (gsT - gScale) * (1 - Math.exp(-Math.min(dt, 0.25) * 3));
     gravL.multiplyScalar(Math.max(P.minGravityScale, gScale));
     const wl = windW.length();
     windL.copy(windW).transformDirection(rootInv).multiplyScalar(wl);
@@ -844,6 +873,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       if (probe) { try { gc.setFrame(fillF()); ran = gc.run(null, false); } catch (e) { gcFail('run', e); } }
       if (probe && gc && !ran) gcResync = true;   // pipeline not ready yet: hand the CPU state over again once it is
       for (let s = 0; s < n; s++) step(h, time);
+      sanitizeCPU();
       stats.uploadBytes = gpu ? GK * 16 : VERTS * 24;
       if (probe && gc && ran) probeCheck();
     }
@@ -936,6 +966,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     origUpdate = CHAR.mixer.update.bind(CHAR.mixer);
     CHAR.mixer.update = function (dt) {
       const r = origUpdate(dt);
+      { const w = nowMs(); if (lastWall && w - lastWall > P.hitchMs) hitch = true; lastWall = w; }
       if (P.deferToRender && renderSeen && mesh.visible) { if (dt > 0) pendingDt = Math.min(pendingDt + dt, 0.1); }
       else { try { update(dt); } catch (e) { if (!H._warned) { H._warned = 1; console.warn('[hair] update', e); } } }
       return r;
@@ -952,6 +983,8 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     // debug / parity: GPU guide state read back (null on the CPU path)
     async readGuides() { return gc ? gc.read() : null; },
     _dbg() { return { sp, sq, restM }; },
+    get recovered() { return resanitized; },
+    hitchNow() { hitch = true; },
     // test: points of a guide state inside the head (d < 0) / closer than 50 % of their clearance
     _penetration(a) {
       let inside = 0, under = 0; if (!SDF) return { inside, under };
@@ -1168,6 +1201,14 @@ fn main(@builtin(global_invocation_id) id : vec3u) {
   for (var k = 0u; k < K; k++) { p[k] += u.shift.xyz; q[k] += u.shift.xyz; }
   var nc = 0u;
   for (var s = 0u; s < u.ip.w; s++) { nc += step(g); }
+  { // blow-up guard: NaN / runaway (> 2.5 x chain length from the groom, scaled) reseeds the guide to its groom
+    var chain = 0.0;
+    for (var k = 1u; k < K; k++) { chain += A[base + k].w; }
+    let lim = 2.5 * chain; let lim2 = lim * lim * u.p0.x;
+    var bad = false;
+    for (var k = 2u; k < K; k++) { let dv = p[k] - r[k]; if (!(dot(dv, dv) < lim2)) { bad = true; } }
+    if (bad) { for (var k = 0u; k < K; k++) { p[k] = r[k]; q[k] = r[k]; } }
+  }
   for (var k = 0u; k < K; k++) {
     st[base + k] = vec4f(p[k], 0.0); st[GK + base + k] = vec4f(q[k], 0.0);
     outD[g * 16u + k] = vec4f(p[k] - r[k], 0.0);
