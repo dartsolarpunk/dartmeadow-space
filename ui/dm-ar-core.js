@@ -304,7 +304,7 @@
   window.addEventListener('pagehide',function(){ if(S) abort('pagehide'); });
   window.addEventListener('error',function(ev){ if(S&&S.errs>=3) abort(ev&&ev.message); });
   function exit(){ if(S&&S.session) S.session.end().catch(cleanup); else if(S) cleanup(); }
-  function prompt(){ if(S.kind==='camera'&&S.mode==='space'&&S.view==='full'){ say('Space all around you: steer with the sticks, turn the phone to look around',3500); viewBtn(false); return; }
+  function prompt(){ if(S.kind==='camera'&&S.mode==='space'&&S.view==='full'){ say('Space all around you: steer with the sticks, turn the phone to look around',3500); viewBtn(true); return; }
     try{ viewBtn(S.kind==='camera'); }catch(e){}
     var what='the world';
     toast(S.kind==='camera'?'Aim at a table and tap to place '+what+' (approximate placement)':'Point at a flat surface and tap to place '+what); }
@@ -389,11 +389,18 @@
   // The game keeps drawing its own scene with its own renderer and its already-compiled pipelines; each of its
   // passes that uses the flight camera is drawn with the device turn layered on and, near a star, from a safe
   // standoff outside the photosphere and glow shells. The sky/background is stripped for those calls only.
-  var _fq=null,_fp=null,_fv=null,_fs=null;
+  var _fq=null,_fp=null,_fv=null,_fs=null,_eye=null,_ev=null;
+  function eyeCam(cm,hid,T){
+    var C=window.CHAR, root=C&&C.root; if(!root||!root.visible) return;
+    root.updateMatrixWorld(true);
+    if(!_eye){ var bb=new T.Box3().setFromObject(root); if(bb.isEmpty()) return; _eye=root.worldToLocal(new T.Vector3((bb.min.x+bb.max.x)/2,bb.min.y+0.93*(bb.max.y-bb.min.y),(bb.min.z+bb.max.z)/2)); _ev=new T.Vector3(); }
+    _ev.copy(_eye); root.localToWorld(_ev); if(cm.parent) cm.parent.worldToLocal(_ev); cm.position.copy(_ev);
+    root.visible=false; hid.push(root);   // restored by fullRender's finally (not a wall)
+  }
   var SAFE_K=4;   // standoff: 4 solar radii from the Sun's centre
   function fullRender(sc,cm){
     var fc=g('flightCamera'), orig=S.flightRender, T=window.THREE;
-    if(!(fc&&cm===fc)&&!(S.fp&&cm&&cm===g('surfCamera'))) return orig.call(S.flight,sc,cm);   // (v178) first person on a planet map draws through surfCamera
+    if(!(fc&&cm===fc)&&!(S.fp&&cm&&(cm===g('surfCamera')||cm===g('atmoCamera')))) return orig.call(S.flight,sc,cm);   // (v178) first person on a planet map draws through surfCamera
     _fq=_fq||new T.Quaternion(); _fp=_fp||new T.Vector3(); _fv=_fv||new T.Vector3(); _fs=_fs||new T.Vector3();
     _fq.copy(cm.quaternion); _fp.copy(cm.position);
     var bg=sc.background, hid=[], ca=null;
@@ -404,6 +411,7 @@
         var d=_fv.distanceTo(_fs), safe=R0*SAFE_K;
         if(d<safe){ _fv.sub(_fs); if(_fv.lengthSq()<1e-6) _fv.set(0,0,1); _fv.setLength(safe).add(_fs);
           if(cm.parent) cm.parent.worldToLocal(_fv); cm.position.copy(_fv); S.safeHold=true; } else S.safeHold=false; }
+      if(S.eyeOn) eyeCam(cm,hid,T);   // (v178) AR first person in space / atmosphere: through Ariel's eyes
       cm.updateMatrixWorld(true);
       if(((S.blendN=(S.blendN||0)+1)%45)===0) try{ arBlend(true,true); }catch(e){}   // pick up effects added since AR started
       sc.background=null; ca=S.flight.getClearAlpha(); S.flight.setClearAlpha(0);
@@ -515,14 +523,16 @@
   function viewBtn(on){ var b=document.getElementById('dm-ar-view');
     if(!on){ if(b) b.remove(); return; }
     if(!b){ b=document.createElement('button'); b.id='dm-ar-view'; b.type='button';
-      b.addEventListener('click',function(e){ e.stopPropagation(); if(!S) return; S.view=S.view==='full'?'table':'full'; S.placed=false; S.table.visible=false; if(S.mode) switchMode(S.mode); });
+      b.addEventListener('click',function(e){ e.stopPropagation(); if(!S) return; S.arFP=!S.arFP; viewBtn(true); });   // (v178) first person (her eyes) in AR
       document.body.appendChild(b); }
-    b.textContent=S&&S.view==='full'?'\u25a6 Table view':'\u2726 Full space'; b.style.display='none'; }   // (v178) no table/full toggle: the mode follows where Ariel is
+    b.textContent=S&&S.arFP?'\ud83d\udc41 3RD PERSON':'\ud83d\udc41 1ST PERSON'; b.style.display=S&&S.arBtn?'':'none'; }   // space + atmosphere (maps on foot use the game's own 1st-person button)   // (v178) no table/full toggle: the mode follows where Ariel is
   function camFrame(t){
     var T=window.THREE, ctx=terrainCtx(), mode=ctx?'terrain':'space';
     if(mode!==S.mode) switchMode(mode);
     S._fn=(S._fn|0)+1; S.shipBoard=!!(ctx&&ctx.ship);
-    S.view='full'; var fp=mode==='terrain'&&!!(ctx&&(ctx.ship?((g('SHIP_WALK')||{}).fp):g('surfFirstPerson'))); S.fp=fp;
+    S.view='full'; var atmoFly=mode==='terrain'&&!!(ctx&&!ctx.ship&&g('atmoActive')&&!g('surfaceActive'));
+    var fp=mode==='terrain'&&!!(ctx&&(ctx.ship?((g('SHIP_WALK')||{}).fp):(g('surfFirstPerson')&&g('surfaceActive')))); if(atmoFly&&S.arFP) fp=true; S.fp=fp;
+    var wantBtn=mode==='space'||atmoFly; S.eyeOn=!!(S.arFP&&wantBtn); if(wantBtn!==!!S.arBtn){ S.arBtn=wantBtn; viewBtn(true); }
     var q=camPose(T), full=mode==='space'||fp;   // (v178) first person on a map: the same scene at life scale around the viewer; back to 3rd person returns to the same table anchor   // (v178) space = full fly-through around the device; maps = tabletop
     if(full!==!!S.full){ S.full=full; if(full) S.q0=null; viewBtn(true); arBlend(full); }
     document.body.classList.toggle('dm-ar-full',full||mode==='terrain');
