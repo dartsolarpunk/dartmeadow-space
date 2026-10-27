@@ -8613,7 +8613,9 @@ async function buildSolarSystem(){
       // star's shadow, so the hull shades the deck and the decks below it the way the skyboard and the ground do.
       // Casting is unchanged (hull casters as authored, toggled by the LOD below). Geometry/collision untouched.
       try{ BIRD_TEMPLE._R0=R0; if(GFX.shadows) wrapper.traverse(o=>{ if(o.isMesh) o.receiveShadow=true; }); }catch(e){}
+      let _csOn=null;   // (v193) hull casters follow GFX.shadows (set only when the setting changes: no per-tick writes)
       BIRD_TEMPLE._lod=setInterval(()=>{ try{
+        { const on=!!(GFX&&GFX.shadows); if(on!==_csOn){ _csOn=on; for(const o of casters) o.castShadow=on; } }
         if(typeof flightCamera==='undefined'||!flightCamera) return;
         const aboard=(typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active)||(window.BTI&&(BTI.cur||BTI._depth>0));
         const R=R0*(wrapper.scale.x/SHIP_SCALE||1), d=flightCamera.getWorldPosition(_p).distanceTo(wrapper.getWorldPosition(new THREE.Vector3()));

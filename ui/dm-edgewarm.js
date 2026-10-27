@@ -21,7 +21,27 @@
   const sig = new WeakMap();     // mesh -> last compiled signature
   const texSeen = new WeakMap(); // texture -> version uploaded
   const bndSeen = new WeakSet(); // geometry already audited
-  let busy = false; const batch = [], proms = []; let hist = new WeakMap(); let histAt = 0;
+  let busy = false; const batch = [], proms = [], later = new Set(); let hist = new WeakMap(); let histAt = 0;
+  // (v193) the real-context batch frame draws its meshes unculled. On mobile that frame is capped (BATCH_MOBILE) and only
+  // takes meshes inside a widened view cone (about to cross an edge); the rest wait in `later` and ride a later frame
+  // when they come near the view. Scratch vectors are created lazily (no top-level THREE allocations).
+  const BATCH_MOBILE = 6, BATCH_DESK = 24; let _v0 = null, _v1 = null;
+  function mobile() { try { return !!(typeof GFX !== 'undefined' && GFX.isMobile); } catch (e) { return false; } }
+  function nearView(o, cm) {
+    try {
+      const T = window.THREE; if (!T) return true;
+      const c = _v0 || (_v0 = new T.Vector3()), f = _v1 || (_v1 = new T.Vector3());
+      const g = o.geometry; if (!g || !g.boundingSphere) return true;
+      c.copy(g.boundingSphere.center).applyMatrix4(o.matrixWorld);
+      const r = g.boundingSphere.radius * o.matrixWorld.getMaxScaleOnAxis();
+      cm.getWorldPosition(f); c.sub(f); const d = c.length(); if (d <= r) return true;
+      cm.getWorldDirection(f);
+      const half = (cm.fov || 60) * Math.PI / 360, hx = Math.atan(Math.tan(half) * (cm.aspect || 1));
+      const cone = Math.min(Math.PI, Math.hypot(half, hx) * 1.6);   // diagonal half-angle, widened 60%
+      const ang = Math.acos(Math.max(-1, Math.min(1, c.dot(f) / d))) - Math.asin(Math.min(1, r / d));
+      return ang < cone;
+    } catch (e) { return true; }
+  }
   W.add = function (root) { if (root && W.roots.indexOf(root) < 0) W.roots.push(root); };
   function R() { return (typeof flightRenderer !== 'undefined' && flightRenderer) || null; }
   function scene() { return (typeof flightScene !== 'undefined' && flightScene) || null; }
@@ -98,7 +118,7 @@
     //    pass the frame runs) only exists in a real draw; the WebKit probe saw those (energy rings, shards: pbackSide)
     //    still created on first edge entry. So the batch rides ONE real frame unculled while off-screen (GPU-clipped;
     //    .visible is never touched), building exactly the render objects the on-screen frame will use.
-    if (o.visible && o.frustumCulled) batch.push(o);   // the real-context draw happens for the whole batch at once, below
+    if (o.visible && o.frustumCulled) later.add(o);   // the real-context draw happens for the whole batch at once, below
     sig.set(o, s);
     const h = hist.get(o) || 0; hist.set(o, h + 1); W.stats.compiled++;
     return p;
@@ -121,13 +141,15 @@
         if (++n >= 24 || work > 12) break;   // amortized: <=12 ms of synchronous main-thread work per tick, the rest next tick
       }
       if (proms.length) { await Promise.all(proms); proms.length = 0; }
+      { const cap = mobile() ? BATCH_MOBILE : BATCH_DESK, mob = mobile();
+        for (const o of later) { if (batch.length >= cap) break; if (!o.parent || !o.visible) { later.delete(o); continue; } if (!mob || nearView(o, cm)) { batch.push(o); later.delete(o); } } }
       if (batch.length) {   // ONE real frame with the batch unculled (GPU-clipped off-screen): atmo-pass + backSide render objects
         const fc = batch.map(o => o.frustumCulled); for (const o of batch) o.frustumCulled = false;
         await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
         for (let i = 0; i < batch.length; i++) batch[i].frustumCulled = fc[i];
         batch.length = 0;
       }
-      W.stats.left = list.length - n;
+      W.stats.left = list.length - n; W.stats.later = later.size;
       if (n) { W.stats.log.push(new Date().toLocaleTimeString() + ' warmed ' + n + '/' + list.length); if (W.stats.log.length > 40) W.stats.log.shift(); }
     } catch (e) { W.stats.err = String(e).slice(0, 120); }
     finally { busy = false; W.stats.lastMs = Math.round(performance.now() - t0); }
