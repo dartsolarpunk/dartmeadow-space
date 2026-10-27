@@ -9,7 +9,6 @@
  */
 #screen-menu{padding:0 !important;justify-content:center !important;align-items:stretch !important;perspective:1600px;overflow:hidden;
   --m-line:rgba(var(--acc-rgb),.62);--m-glass:rgba(var(--panel-rgb),.42);}
-#screen-menu .menu-glass{display:none;}
 
 /* ── panels + hinges ────────────────────────────────────────────────── */
 #screen-menu .mm-panel{position:absolute;z-index:3;transform-style:preserve-3d;backface-visibility:hidden;}
