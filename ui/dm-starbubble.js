@@ -39,7 +39,7 @@
   /* ── materials ─────────────────────────────────────────────────── */
   function lensMat(T){
     const m=new THREE.MeshBasicNodeMaterial({transparent:true,depthTest:true,depthWrite:false,side:THREE.BackSide});
-    const u={c:T.uniform(new THREE.Vector2()),cw:T.uniform(new THREE.Vector3()),rw:T.uniform(1),a:T.uniform(0),pk:T.uniform(0),aspect:T.uniform(1)};
+    const u={c:T.uniform(new THREE.Vector2()),cw:T.uniform(new THREE.Vector3()),rw:T.uniform(1),a:T.uniform(0),pk:T.uniform(0),aspect:T.uniform(1),ar:T.uniform(0)};
     const {float,vec2,vec3,vec4,sin,cos,exp,smoothstep,atan,fract,floor,dot,normalize,mix,time}=T;
     // this pixel's ndc, from the same matrices the CPU uses for the bubble centre
     const clip=T.varying(T.cameraProjectionMatrix.mul(T.modelViewMatrix).mul(vec4(T.positionLocal,1.0)));
@@ -62,9 +62,9 @@
     const rd=vec2(dir.x.mul(cs).sub(dir.y.mul(sn)),dir.x.mul(sn).add(dir.y.mul(cs)));
     const W=window._lensWarpUV;
     const at=k=>T.viewportTexture(W(T,ndc,u.c.add(rd.mul(rv.mul(rs).mul(k))).sub(p).mul(u.a),u.aspect));
-    let col;
-    if(low) col=at(1.0).rgb;
-    else{ const ca=it.mul(0.014); col=vec3(at(ca.add(1.0)).r,at(1.0).g,at(float(1.0).sub(ca)).b); }
+    let col, sa;
+    if(low){ const s0=at(1.0); col=s0.rgb; sa=s0.a; }
+    else{ const ca=it.mul(0.014), s0=at(1.0); col=vec3(at(ca.add(1.0)).r,s0.g,at(float(1.0).sub(ca)).b); sa=s0.a; }
     // compressed light piles up: brighter toward the rim (bloom stand-in)
     col=col.mul(it.pow(3.0).mul(u.a.mul(0.9)).add(1.0));
     const out=r.sub(Rb).max(0.0);
@@ -89,14 +89,28 @@
     const iris=cos(q.mul(14.0).add(vec3(0.0,2.07,4.14)).add(time.mul(0.6))).mul(0.5).add(0.5).mul(smoothstep(0.8,1.0,q)).mul(0.1);
     const space=vec3(0.004,0.008,0.022).add(vec3(0.01,0.025,0.07).mul(float(1).sub(q))).add(vec3(star)).add(iris);
     const inside=float(1).sub(smoothstep(Rb.mul(0.985),Rb,r));
-    m.colorNode=mix(col,space,inside);
-    m.opacityNode=u.a.mul(float(1).sub(smoothstep(Rl.mul(0.9),Rl,r))).clamp(0.0,1.0);
+    // AR passthrough (u.ar=1): the canvas behind is see-through (premultiplied, alpha 0 where the camera shows), so the
+    // lens must not lay an opaque disc over the camera. Its coverage becomes what it carries: the warped scene's own
+    // alpha plus the light of the ring/flares in the rim, only the stars and iris bands in the window (deep space is
+    // the camera). Colour is un-premultiplied by that coverage so normal blending writes premultiplied light. u.ar=0
+    // (normal play) is exactly the old output.
+    const rimA=sa.max(col.r.max(col.g).max(col.b)).clamp(0.0,1.0);
+    const sw=vec3(star).add(iris), winA=sw.x.max(sw.y).max(sw.z).mul(1.5).clamp(0.0,1.0);
+    const covA=mix(rimA,winA,inside);
+    const outC=mix(col,space,inside);
+    m.colorNode=mix(outC,outC.div(covA.max(1e-3)).min(4.0),u.ar);
+    m.opacityNode=u.a.mul(float(1).sub(smoothstep(Rl.mul(0.9),Rl,r))).mul(mix(float(1),covA,u.ar)).clamp(0.0,1.0);
     m.toneMapped=false;
     m.userData.u=u;
     return m;
   }
   function bubbleMat(T){
-    const m=new THREE.MeshBasicNodeMaterial({transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,side:THREE.FrontSide});
+    const m=new THREE.MeshBasicNodeMaterial({transparent:true,depthWrite:false,blending:THREE.CustomBlending,side:THREE.FrontSide});
+    // light-only additive: the same colour as AdditiveBlending (SrcAlpha·src + dst, alpha 1), but the framebuffer alpha
+    // is left alone, so over the AR camera the film's dark centre adds nothing (no black disc). Normal play clears alpha
+    // to 1, so it looks identical there.
+    m.blendEquation=THREE.AddEquation; m.blendSrc=THREE.SrcAlphaFactor; m.blendDst=THREE.OneFactor;
+    m.blendEquationAlpha=THREE.AddEquation; m.blendSrcAlpha=THREE.ZeroFactor; m.blendDstAlpha=THREE.OneFactor;
     const u={a:T.uniform(0),fire:T.uniform(0)};
     const {float,vec3,sin,cos,normalize,time,positionLocal}=T;
     const pl=positionLocal;
@@ -263,7 +277,7 @@
       const u=SB.lens.material.userData.u;
       u.c.value.set(V1.x*asp,V1.y); u.aspect.value=asp;
       u.cw.value.copy(pos); u.rw.value=Re;
-      u.a.value=SB.a; u.pk.value=SB.pk;
+      u.a.value=SB.a; u.pk.value=SB.pk; u.ar.value=(window.DMAR&&DMAR.passthrough)?1:0;
       // just big enough to hold the lens's 2.6-radius reach: the lens samples
       // the frame (a screen copy) and every pixel it covers runs the shader, so
       // keep it off the rest of the screen unless the camera is that close

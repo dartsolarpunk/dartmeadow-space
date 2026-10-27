@@ -27,7 +27,12 @@
     'html.dm-ar-on,body.dm-ar-on,body.dm-ar-on .screen,body.dm-ar-on #game-container{background:transparent!important}'+
     'body.dm-ar-on canvas:not(#dm-ar-canvas):not(#minimap-canvas){visibility:hidden!important}'+
     '#dm-ar-video{position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;z-index:-2;pointer-events:none;background:#000}'+
-    'body.dm-ar-cam #dm-ar-canvas{z-index:-1!important}';
+    'body.dm-ar-cam #dm-ar-canvas{z-index:-1!important}'+
+    // full space overlay and terrain board: the game's own canvas (alpha:true, premultiplied) drawn over the camera with
+    // true alpha. Normal play clears it opaque black; in AR it clears to alpha 0 and the content writes its own alpha
+    'html.dm-ar-on body.dm-ar-full canvas.dm-ar-game:not(#dm-ar-canvas):not(#minimap-canvas){visibility:visible!important;background:transparent!important}'+
+    'body.dm-ar-full #dm-ar-canvas{visibility:hidden!important}'+
+    '#dm-ar-view{position:fixed;right:calc(12px + env(safe-area-inset-right,0px));top:calc(50% - 18px);z-index:99997;padding:8px 12px;border-radius:4px;border:1px solid rgba(120,200,255,.45);background:rgba(6,12,24,.7);color:#bfe6ff;font:600 11px/1 var(--font-mono,monospace);letter-spacing:.08em;text-transform:uppercase}';
     document.head.appendChild(st); })();
 
   // ---------- button ----------
@@ -50,62 +55,78 @@
   // ---------- game-state probes (classic-script globals, read defensively) ----------
   function g(name){ try{ return (0,eval)('typeof '+name+'!=="undefined"?'+name+':undefined'); }catch(e){ return undefined; } }
   function terrainCtx(){
-    var PW=window.PW; if(!PW||!PW.active) return null;
+    var PW=window.PW; if(!PW||!PW.active||window._dmWarming||!(g('surfaceActive')||g('atmoActive'))) return null;
     var H=g('_surfHeight')||g('_atmoHeight')||((g('TERRAIN')||{}).H);
     if(typeof H!=='function') return null;
     var pos=null, flying=false;
     var sp=g('surfPlayer'); if(g('surfaceActive')&&sp&&sp.pos) pos=sp.pos;
     var ab=g('atmoBoard'); if(!pos&&g('atmoActive')&&ab&&ab.position){ pos=ab.position; flying=true; }
-    if(!pos&&PW.board&&PW.board.position){ pos=PW.board.position; flying=true; }
+    if(!pos&&g('atmoActive')&&PW.board&&PW.board.position){ pos=PW.board.position; flying=true; }
     if(!pos) return null;
     return {H:H,pos:pos,flying:flying,pal:PW.pal};
   }
   function preset(){ var G=g('GFX'); var p=G&&G.preset; if(p==='auto'&&G.isMobile) p='medium'; return p||'medium'; }
 
   // ---------- diorama ----------
-  var DIO_SIZE=0.56;   // metres across on the table
-  function buildDiorama(T){
-    var N=preset()==='ultra'?72:preset()==='low'?40:56;   // grid units per side
-    var geo=new T.PlaneGeometry(DIO_SIZE,DIO_SIZE,N-1,N-1); geo.rotateX(-Math.PI/2);
+  var DIO_SIZE=0.48;   // metres across on the table (3x3 units; the inner square ~16 cm)
+  // Board layout (Justin's spec): a 3x3 grid of equal units. The centre unit is Ariel's high-detail square at full grid
+  // resolution; the ring of 8 units around it is the same scenery at a lower LOD, fully opaque out to halfway across
+  // the ring, then feathering in true alpha to fully transparent at the outer perimeter; beyond it, only passthrough.
+  // The inner square stays centred on her (the board scrolls under its fixed anchor in whole cells); flight uses the
+  // same board and area, she just lifts above it.
+  var L_UNIT=320;   // world units per grid unit (the high-detail square)
+  function boardMesh(T,N,size,ring){
+    var geo=new T.PlaneGeometry(size,size,N-1,N-1); geo.rotateX(-Math.PI/2);
     var cnt=N*N, col=new Float32Array(cnt*3), fade=new Float32Array(cnt);
-    for(var j=0;j<N;j++) for(var i=0;i<N;i++){ var u=i/(N-1)*2-1, v=j/(N-1)*2-1, r=Math.max(Math.abs(u),Math.abs(v)), rr=Math.hypot(u,v)/1.25;
-      var e=Math.max(r,rr); fade[j*N+i]=Math.max(0,Math.min(1,(1-e)/0.22)); }
-    geo.setAttribute('color',new T.BufferAttribute(col,3));
-    geo.setAttribute('fade',new T.BufferAttribute(fade,1));
-    var TSL=T.TSL, horizon=TSL.uniform(new T.Color(0x9fb8d8));
-    var m=new T.MeshLambertNodeMaterial({transparent:true,depthWrite:true});
-    var f=TSL.attribute('fade','float');
-    m.colorNode=TSL.mix(horizon,TSL.vertexColor(),TSL.smoothstep(0.0,0.8,f));
-    m.opacityNode=f;
-    var mesh=new T.Mesh(geo,m); mesh.frustumCulled=false;
-    var marker=new T.Mesh(new T.ConeGeometry(0.008,0.022,10),new T.MeshBasicNodeMaterial({color:0xffd27a}));
-    marker.rotation.x=Math.PI;
-    var grp=new T.Group(); grp.add(mesh); grp.add(marker);
-    return {N:N,geo:geo,mesh:mesh,marker:marker,grp:grp,horizon:horizon,cx:NaN,cz:NaN,span:0,hRef:0};
+    for(var j=0;j<N;j++) for(var i=0;i<N;i++){ var e=Math.max(Math.abs(i/(N-1)*2-1),Math.abs(j/(N-1)*2-1));   // 0 centre .. 1 perimeter
+      fade[j*N+i]=ring?Math.max(0,Math.min(1,(1-e)/(1-2/3))):1; }   // ring: opaque to 2/3 (halfway across it), 0 at the edge
+    geo.setAttribute('color',new T.BufferAttribute(col,3)); geo.setAttribute('fade',new T.BufferAttribute(fade,1));
+    var TSL=T.TSL, f=TSL.attribute('fade','float'), horizon=TSL.uniform(new T.Color(0x9fb8d8));
+    var m=new T.MeshLambertNodeMaterial({transparent:ring,depthWrite:true,polygonOffset:ring,polygonOffsetFactor:ring?2:0,polygonOffsetUnits:ring?2:0});
+    m.colorNode=ring?TSL.mix(horizon,TSL.vertexColor(),TSL.smoothstep(0.0,1.0,f)):TSL.vertexColor();
+    if(ring) m.opacityNode=f.mul(f).mul(TSL.float(3).sub(f.mul(2)));   // smoothstep feather in alpha (premultiplied by the renderer), never keyed to black
+    var mesh=new T.Mesh(geo,m); mesh.frustumCulled=false; mesh.renderOrder=ring?1:0;
+    return {N:N,size:size,geo:geo,mesh:mesh,horizon:horizon};
+  }
+  function buildDiorama(T){
+    var pr=preset(), Ni=pr==='ultra'?72:pr==='low'?40:56, No=pr==='ultra'?60:pr==='low'?36:48;   // inner: full detail; ring: lower LOD over 3x the span
+    var unit=DIO_SIZE/3;
+    var inner=boardMesh(T,Ni,unit,false), outer=boardMesh(T,No,DIO_SIZE,true);
+    var marker=new T.Mesh(new T.ConeGeometry(0.006,0.018,10),new T.MeshBasicNodeMaterial({color:0xffd27a})); marker.rotation.x=Math.PI;
+    var grp=new T.Group(), board=new T.Group(); board.add(outer.mesh); board.add(inner.mesh); grp.add(board); grp.add(marker);
+    return {inner:inner,outer:outer,geo:inner.geo,mesh:inner.mesh,marker:marker,grp:grp,board:board,horizon:inner.horizon,cx:NaN,cz:NaN,span:0,hRef:0,
+      dispose:function(){ [inner,outer].forEach(function(b){ b.geo.dispose(); b.mesh.material.dispose(); }); marker.geometry.dispose(); marker.material.dispose(); }};
+  }
+  function fillBoard(B,ctx,cx,cz,span,lo,k,ex,pal){
+    var P=B.geo.attributes.position, C=B.geo.attributes.color, N=B.N, C3=window.THREE.Color, sea=pal.water?(pal.seaLevel!=null?pal.seaLevel:0):-1e9;
+    var c0=new C3(pal.ground2!=null?pal.ground2:0x4a5a30), c1=new C3(pal.ground!=null?pal.ground:0x6b7b3a), c2=new C3(pal.rock!=null?pal.rock:0x9a8a7a),
+        seaC=new C3(pal.liquidColor!=null?pal.liquidColor:0x1a4a7a), c=new C3(), hi=lo+0.16/(k*ex);
+    for(var j=0;j<N;j++) for(var i=0;i<N;i++){ var n=j*N+i, h=0; try{ h=+ctx.H(cx+(i/(N-1)-0.5)*span,cz+(j/(N-1)-0.5)*span); }catch(e){} if(!isFinite(h)) h=lo;
+      P.setY(n,(Math.max(h,sea>-1e8?sea:h)-lo)*k*ex+0.004); var t=Math.max(0,Math.min(1,(h-lo)/(hi-lo)));
+      if(h<sea) c.copy(seaC); else if(t<0.5) c.copy(c0).lerp(c1,t*2); else c.copy(c1).lerp(c2,(t-0.5)*2); C.setXYZ(n,c.r,c.g,c.b); }
+    P.needsUpdate=true; C.needsUpdate=true; B.geo.computeVertexNormals();
   }
   function fillDiorama(D,ctx,force){
-    var span=ctx.flying?1800:520;                 // world units across: flight = coarser LOD, same anchor
-    var cell=span/(D.N-1);
+    var unit=L_UNIT, span=unit*3, cell=unit/(D.inner.N-1), k=DIO_SIZE/span;
     var px=ctx.pos.x, pz=ctx.pos.z;
-    var need=force||D.span!==span||!isFinite(D.cx)||Math.abs(px-D.cx)>span*0.2||Math.abs(pz-D.cz)>span*0.2;
+    var need=force||D.span!==span||!isFinite(D.cx)||Math.abs(px-D.cx)>cell*2||Math.abs(pz-D.cz)>cell*2;
     if(need){
-      D.span=span; D.cx=Math.round(px/cell)*cell; D.cz=Math.round(pz/cell)*cell;   // scroll in whole grid units
-      var P=D.geo.attributes.position, C=D.geo.attributes.color, N=D.N, k=DIO_SIZE/span, ex=1.6;
-      var hs=new Float32Array(N*N), lo=Infinity, hi=-Infinity;
-      for(var j=0;j<N;j++) for(var i=0;i<N;i++){ var wx=D.cx+(i/(N-1)-0.5)*span, wz=D.cz+(j/(N-1)-0.5)*span, h=0;
-        try{ h=+ctx.H(wx,wz); }catch(e){} if(!isFinite(h)) h=0; hs[j*N+i]=h; if(h<lo) lo=h; if(h>hi) hi=h; }
-      if((hi-lo)*k*ex>0.16) ex=0.16/((hi-lo)*k); D.ex=ex;   // keep relief table-sized
-      D.hRef=lo; var pal=ctx.pal||{}, C3=window.THREE.Color, sea=pal.water?(pal.seaLevel!=null?pal.seaLevel:0):-1e9;
-      var c0=new C3(pal.ground2!=null?pal.ground2:0x4a5a30), c1=new C3(pal.ground!=null?pal.ground:0x6b7b3a), c2=new C3(pal.rock!=null?pal.rock:0x9a8a7a),
-          seaC=new C3(pal.liquidColor!=null?pal.liquidColor:0x1a4a7a), c=new C3();
-      for(var n=0;n<N*N;n++){ var hh=hs[n]; P.setY(n,(Math.max(hh,sea>-1e8?sea:hh)-lo)*k*ex+0.004);
-        var t=hi>lo?(hh-lo)/(hi-lo):0; if(hh<sea) c.copy(seaC); else if(t<0.5) c.copy(c0).lerp(c1,t*2); else c.copy(c1).lerp(c2,(t-0.5)*2); C.setXYZ(n,c.r,c.g,c.b); }
-      P.needsUpdate=true; C.needsUpdate=true; D.geo.computeVertexNormals();
-      // edge fade through the world's horizon colour (its fog / lower sky); airless worlds just fade out
-      try{ var hz=pal.atmos?(pal.fog!=null?pal.fog:(pal.sky&&pal.sky[0])):null; D.horizon.value.set(hz!=null?hz:(pal.ground!=null?pal.ground:0x808080)); }catch(e){}
+      D.span=span; D.cx=Math.round(px/cell)*cell; D.cz=Math.round(pz/cell)*cell;   // re-centre in whole cells: the inner square follows her
+      var lo=Infinity, hi=-Infinity, n=24;
+      for(var j=0;j<n;j++) for(var i=0;i<n;i++){ var h=0; try{ h=+ctx.H(D.cx+(i/(n-1)-0.5)*span,D.cz+(j/(n-1)-0.5)*span); }catch(e){} if(isFinite(h)){ if(h<lo) lo=h; if(h>hi) hi=h; } }
+      if(!isFinite(lo)){ lo=0; hi=1; }
+      if(D.hRef===0||force||Math.abs(lo-D.hRef)>(hi-lo)*0.25) D.hRef=lo;   // keep the base steady while scrolling
+      var ex=1.6; if((hi-D.hRef)*k*ex>0.12) ex=0.12/Math.max(1e-6,(hi-D.hRef)*k); D.ex=ex;   // relief kept table-sized
+      var pal=ctx.pal||{};
+      fillBoard(D.inner,ctx,D.cx,D.cz,unit,D.hRef,k,ex,pal);
+      fillBoard(D.outer,ctx,D.cx,D.cz,span,D.hRef,k,ex,pal);
+      try{ var hz=pal.atmos?(pal.fog!=null?pal.fog:(pal.sky&&pal.sky[0])):null; D.outer.horizon.value.set(hz!=null?hz:(pal.ground!=null?pal.ground:0x808080)); }catch(e){}
     }
-    var k2=DIO_SIZE/D.span, h0=0; try{ h0=+ctx.H(px,pz); }catch(e){}
-    D.marker.position.set((px-D.cx)*k2,((isFinite(h0)?h0:D.hRef)-D.hRef)*k2*(D.ex||1.6)+0.016+(ctx.flying?0.03:0),(pz-D.cz)*k2);
+    // sub-cell scroll: the board slides so she stays at the centre; the marker sits on her
+    D.board.position.set((D.cx-px)*k,0,(D.cz-pz)*k);
+    var h0=0; try{ h0=+ctx.H(px,pz); }catch(e){}
+    var lift=0; if(ctx.flying){ var y=ctx.pos.y; lift=isFinite(y)&&isFinite(h0)?Math.max(0.02,Math.min(0.12,(y-h0)*k*(D.ex||1.6))):0.04; }   // flight: lifted above the board, within its volume
+    D.marker.position.set(0,((isFinite(h0)?h0:D.hRef)-D.hRef)*k*(D.ex||1.6)+0.014+lift,0);
   }
 
   // ---------- rAF pump + render skip ----------
@@ -250,9 +271,10 @@
       if(s.kind==='camera'){ try{ _caf(s.raf); }catch(e){} try{ s.stream.getTracks().forEach(function(k){ k.stop(); }); }catch(e){} try{ s.vid.remove(); }catch(e){}
         try{ window.removeEventListener('pointerup',s.onTap,true); window.removeEventListener('resize',s.onResize); window.removeEventListener('deviceorientation',onOri,true); }catch(e){} }
       try{ var M=window.DMUI3DMesh; M&&M.arHold(false); }catch(e){}
+      try{ viewBtn(false); s.gameCv&&s.gameCv.classList.remove('dm-ar-game'); document.body.classList.remove('dm-ar-full'); }catch(e){}
       try{ var fs=g('flightScene'); if(fs) unstrip(fs,s.sky); }catch(e){}
       try{ s.hitSrc&&s.hitSrc.cancel(); }catch(e){} try{ s.anchor&&s.anchor.delete&&s.anchor.delete(); }catch(e){}
-      try{ s.D&&(s.D.geo.dispose(),s.D.mesh.material.dispose()); }catch(e){} try{ s.O&&disposeOrrery(s.O); }catch(e){}
+      try{ s.D&&s.D.dispose(); }catch(e){} try{ if(s.B){ s.B.pp.dispose(); if(s.B.W){ s.B.W.mesh.parent&&s.B.W.mesh.parent.remove(s.B.W.mesh); s.B.W.geo.dispose(); } } }catch(e){} try{ var _S=S; S=s; arBlend(false); S=_S; }catch(e){} try{ s.O&&disposeOrrery(s.O); }catch(e){}
       try{ s.session&&s.session.removeEventListener('end',cleanup); }catch(e){}
       try{ s.r.dispose(); }catch(e){} try{ s.cv.remove(); }catch(e){}
     } finally {
@@ -266,7 +288,9 @@
   window.addEventListener('pagehide',function(){ if(S) abort('pagehide'); });
   window.addEventListener('error',function(ev){ if(S&&S.errs>=3) abort(ev&&ev.message); });
   function exit(){ if(S&&S.session) S.session.end().catch(cleanup); else if(S) cleanup(); }
-  function prompt(){ var what=S.mode==='space'?'the solar system':'the world';
+  function prompt(){ if(S.kind==='camera'&&S.mode==='space'&&S.view==='full'){ say('Full space view: turn the phone to look around. \u25a6 Table view shows the system on a table',3500); viewBtn(true); return; }
+    try{ viewBtn(S.kind==='camera'); }catch(e){}
+    var what=S.mode==='space'?'the solar system':'the world';
     toast(S.kind==='camera'?'Aim at a table and tap to place '+what+' (approximate placement)':'Point at a flat surface and tap to place '+what); }
   function say(m,ms){ toast(m); setTimeout(function(){ toast(''); },ms||3000); }
   function toggle(){
@@ -303,11 +327,13 @@
     // WebGL2 backend (as the WebXR path): alpha compositing over the <video> is dependable on iOS and it
     // doesn't stand up a second WebGPU device next to the game's
     var r=new T.WebGPURenderer({canvas:cv,alpha:true,antialias:true,forceWebGL:true,powerPreference:'high-performance'});
-    try{ document.body.appendChild(vid); document.body.appendChild(cv); try{ await Promise.race([vid.play(),new Promise(function(r){ setTimeout(r,1500); })]); }catch(e){}   // play() can stay pending (autoplay policy, a stalled stream): never block entering on it
-      await Promise.race([r.init(),new Promise(function(_,rej){ setTimeout(function(){ rej(new Error('renderer init timed out')); },10000); })]); }
-    catch(e){ drop(); try{ r.dispose(); }catch(_){} throw e; }
-    _lg('renderer');
-    r.setClearColor(0x000000,0); r.setPixelRatio(Math.min(2,window.devicePixelRatio||1)); r.setSize(innerWidth,innerHeight,false);
+    try{ document.body.appendChild(vid); document.body.appendChild(cv); try{ await Promise.race([vid.play(),new Promise(function(r){ setTimeout(r,1500); })]); }catch(e){} }   // play() can stay pending (autoplay policy, a stalled stream): never block entering on it
+    catch(e){ drop(); throw e; }
+    // the small AR renderer (table-top views, terrain board) comes up in the background: the full space overlay
+    // draws with the game's own renderer, so entering never waits on a second context
+    var rInit=Promise.race([r.init(),new Promise(function(_,rej){ setTimeout(function(){ rej(new Error('renderer init timed out')); },15000); })]);
+    rInit.then(function(){ _lg('renderer'); r.setClearColor(0x000000,0); r.setPixelRatio(Math.min(2,window.devicePixelRatio||1)); r.setSize(innerWidth,innerHeight,false); if(S&&S.r===r) S.rReady=true; })
+      .catch(function(e){ console.warn('[AR] table renderer',e); if(S&&S.r===r) S.rFail=true; });
     var scene=new T.Scene();
     scene.add(new T.HemisphereLight(0xdfe8ff,0x40362a,1.4)); var sun=new T.DirectionalLight(0xffffff,1.6); sun.position.set(0.4,1,0.3); scene.add(sun);
     var cam=new T.PerspectiveCamera(innerHeight>innerWidth?68:50,innerWidth/innerHeight,0.01,100);
@@ -315,15 +341,20 @@
     reticle.visible=false; scene.add(reticle);
     var table=new T.Group(); table.visible=false; scene.add(table);
     var rig=new T.Object3D(), rigCam=new T.PerspectiveCamera(60,1,0.05,1e9); rig.add(rigCam);
-    S={kind:'camera',stream:stream,vid:vid,r:r,cv:cv,scene:scene,cam:cam,reticle:reticle,table:table,rig:rig,rigCam:rigCam,placed:false,errs:0,D:null,sky:null,flight:null,mode:null,
+    S={kind:'camera',view:'full',rReady:false,stream:stream,vid:vid,r:r,cv:cv,scene:scene,cam:cam,reticle:reticle,table:table,rig:rig,rigCam:rigCam,placed:false,errs:0,D:null,sky:null,flight:null,mode:null,
        q0:null,yaw0:null,ray:new T.Raycaster(),plane:new T.Plane(new T.Vector3(0,1,0),-TABLE_Y),hit:new T.Vector3(),hasHit:false,dq:new T.Quaternion()};
-    S.onTap=function(e){ if(!S||S.kind!=='camera'||S.placed) return; var t=e.target;
+    S.onTap=function(e){ if(!S||S.kind!=='camera'||S.full||(S.placed&&!(S.mode==='terrain'))) return; var t=e.target;
       if(t&&t.closest&&t.closest('button,a,input,.hud-c,.hud-l,.hud-r,.mini-kite,.joystick-base,.joystick,#minimap,.dm-ar-btn,.menu-panel,.art-btns')) return;
       camTapPlace(e.clientX,e.clientY); };
     window.addEventListener('pointerup',S.onTap,true);
-    S.onResize=function(){ if(!S) return; S.r.setSize(innerWidth,innerHeight,false); S.cam.fov=innerHeight>innerWidth?68:50; S.cam.aspect=innerWidth/innerHeight; S.cam.updateProjectionMatrix(); };
+    S.onResize=function(){ if(!S) return; if(S.rReady) S.r.setSize(innerWidth,innerHeight,false); S.cam.fov=innerHeight>innerWidth?68:50; S.cam.aspect=innerWidth/innerHeight; S.cam.updateProjectionMatrix(); };
     window.addEventListener('resize',S.onResize);
     S.flight=FR0; S.flightRender=FR0render;
+    // the game's renderer draws the full space overlay (fullRender) and the terrain board (boardRender, from _pwRender);
+    // in the table-top orrery view it stays idle
+    if(FR0render) FR0.render=function(sc,cm){ if(!S||S.kind!=='camera') return FR0render.call(FR0,sc,cm); if(S.full) return fullRender(sc,cm); if(S.mode==='terrain') return FR0render.call(FR0,sc,cm); };
+    try{ var gc=FR0&&FR0.domElement; if(gc){ gc.classList.add('dm-ar-game'); S.gameCv=gc; } }catch(e){}
+    viewBtn(true);
     try{ window.DMUI3DMesh&&DMUI3DMesh.arHold(true); }catch(e){}
     document.body.classList.add('dm-ar-on','dm-ar-cam'); document.documentElement.classList.add('dm-ar-on');
     syncBtns(); if(pr!=='granted') say('Motion access off: the view won\u2019t follow the phone (Settings \u203a Safari \u203a Motion & Orientation)',4500);
@@ -338,13 +369,157 @@
     S.ray.setFromCamera(nd,S.cam); var p=new T.Vector3();
     if(!S.ray.ray.intersectPlane(S.plane,p)||p.length()>2.2){ p.copy(S.ray.ray.direction).multiplyScalar(0.8); p.y=Math.min(p.y,-0.12); }   // no table hit nearby: where the tap points, 80 cm out, kept just below eye level
     S.table.position.copy(p); S.table.rotation.set(0,Math.atan2(-p.x,-p.z)+Math.PI,0); S.table.visible=true; S.placed=true; S.reticle.visible=false; toast(''); }
+  // ---------- full live space overlay (camera fallback) ----------
+  // The game keeps drawing its own scene with its own renderer and its already-compiled pipelines; each of its
+  // passes that uses the flight camera is drawn with the device turn layered on and, near a star, from a safe
+  // standoff outside the photosphere and glow shells. The sky/background is stripped for those calls only.
+  var _fq=null,_fp=null,_fv=null,_fs=null;
+  var SAFE_K=4;   // standoff: 4 solar radii from the Sun's centre
+  function fullRender(sc,cm){
+    var fc=g('flightCamera'), orig=S.flightRender, T=window.THREE;
+    if(!fc||cm!==fc) return orig.call(S.flight,sc,cm);
+    _fq=_fq||new T.Quaternion(); _fp=_fp||new T.Vector3(); _fv=_fv||new T.Vector3(); _fs=_fs||new T.Vector3();
+    _fq.copy(cm.quaternion); _fp.copy(cm.position);
+    var bg=sc.background, hid=[], ca=null;
+    try{
+      if(S.dq) cm.quaternion.multiply(S.dq);
+      var sm=g('sunMesh'), R0=g('SOL_SUN_RADIUS')||160;
+      if(sm){ (sm.parent&&sm.parent.isGroup?sm.parent:sm).getWorldPosition(_fs); cm.getWorldPosition(_fv);
+        var d=_fv.distanceTo(_fs), safe=R0*SAFE_K;
+        if(d<safe){ _fv.sub(_fs); if(_fv.lengthSq()<1e-6) _fv.set(0,0,1); _fv.setLength(safe).add(_fs);
+          if(cm.parent) cm.parent.worldToLocal(_fv); cm.position.copy(_fv); S.safeHold=true; } else S.safeHold=false; }
+      cm.updateMatrixWorld(true);
+      if(((S.blendN=(S.blendN||0)+1)%45)===0) try{ arBlend(true,true); }catch(e){}   // pick up effects added since AR started
+      sc.background=null; ca=S.flight.getClearAlpha(); S.flight.setClearAlpha(0);
+      sc.traverseVisible&&sc.traverseVisible(function(o){ if(o.userData&&(o.userData.dmSkyShell||o.userData.dmArHide)){ o.visible=false; hid.push(o); } });
+      return orig.call(S.flight,sc,cm);
+    } finally {
+      if(ca!=null) S.flight.setClearAlpha(ca);
+      sc.background=bg; for(var i=0;i<hid.length;i++) hid[i].visible=!(hid[i].userData&&hid[i].userData.dmArWall);
+      cm.quaternion.copy(_fq); cm.position.copy(_fp); cm.updateMatrixWorld(true);
+    }
+  }
+  // Additive sprites, flares and glows: their colour is added as before, but in AR they must not add to the canvas
+  // alpha (a black-cornered sprite quad would turn into an opaque black square over the camera). The premultiplied
+  // canvas then composites their light additively over the passthrough with the sprite's own feathered falloff.
+  function arBlend(on,rescan){
+    var T=window.THREE, sc=g('flightScene'); if(!T||!sc) return;
+    if(on){ if(S.blendSaved&&!rescan) return; var sv=S.blendSaved=S.blendSaved||[], n0=sv.length;
+      // rescan: effects built after AR started (the star bubble, ghost bubbles, fumes, new bodies' glows) get the same
+      // light-only blend; already-converted materials are skipped by their _dmArB mark
+      sc.traverse(function(o){ var ms=o.material; if(!ms) return; (Array.isArray(ms)?ms:[ms]).forEach(function(m){
+        if(!m||m.blending!==T.AdditiveBlending||m._dmArB) return;
+        m._dmArB={b:m.blending,s:m.blendSrc,d:m.blendDst,e:m.blendEquation,sa:m.blendSrcAlpha,da:m.blendDstAlpha,ea:m.blendEquationAlpha};
+        m.blending=T.CustomBlending; m.blendEquation=T.AddEquation; m.blendSrc=m.premultipliedAlpha?T.OneFactor:T.SrcAlphaFactor; m.blendDst=T.OneFactor;
+        m.blendEquationAlpha=T.AddEquation; m.blendSrcAlpha=T.ZeroFactor; m.blendDstAlpha=T.OneFactor; sv.push(m); }); });
+      // compile the changed blend states now, off the frame, so the first AR frames don't hitch
+      if(!rescan||sv.length>n0) try{ var fr=S.flight, fc=g('flightCamera'); if(fr&&fr.compileAsync&&fc) fr.compileAsync(sc,fc).catch(function(){}); }catch(e){}
+    } else if(S.blendSaved){ S.blendSaved.forEach(function(m){ var b=m._dmArB; if(!b) return; m.blending=b.b; m.blendSrc=b.s; m.blendDst=b.d; m.blendEquation=b.e; m.blendSrcAlpha=b.sa; m.blendDstAlpha=b.da; m.blendEquationAlpha=b.ea; delete m._dmArB; }); S.blendSaved=null; }
+  }
+  // ---------- terrain board: the real world, drawn by the game's renderer onto the anchored table ----------
+  // A board camera stands where the phone is relative to the placed board, scaled up to world size and centred on
+  // Ariel, and draws the game's own world scene (terrain mesh, materials, water, props, Ariel) through one pass. The
+  // pass keeps only what lies inside the 3x3 square: opaque to halfway across the outer ring, then a premultiplied
+  // alpha feather to zero at the perimeter, a hard cut beyond. The world's sky and fog are left out.
+  var L_WORLD=300;   // world units per grid unit (Ariel's high-detail square)
+  function buildBoard(T,r,scene){
+    var TSL=T.TSL, bc=new T.PerspectiveCamera(60,1,1,1e5);
+    var U={c:TSL.uniform(new T.Vector2()),half:TSL.uniform(450),tx:TSL.uniform(1),ty:TSL.uniform(1),far:TSL.uniform(1e5),gy:TSL.uniform(0),fh:TSL.uniform(50),cw:TSL.uniform(new T.Matrix4())};
+    var sp=TSL.pass(scene,bc), col=sp.getTextureNode('output'), vz=sp.getViewZNode();
+    var u=TSL.screenUV, dist=vz.negate();
+    var vp=TSL.vec3(u.x.mul(2).sub(1).mul(U.tx),TSL.float(1).sub(u.y).mul(2).sub(1).mul(U.ty),-1).mul(dist);
+    var wp=U.cw.mul(TSL.vec4(vp,1)).xyz;
+    var d=TSL.max(TSL.abs(wp.x.sub(U.c.x)),TSL.abs(wp.z.sub(U.c.y))).div(U.half);
+    // the block stays solid (ground at the rim, cliff faces); only what rises above the rim, the tall features and the
+    // horizon, feathers out toward the perimeter. Beyond the perimeter: a hard cut.
+    var tall=TSL.smoothstep(0,U.fh,wp.y.sub(U.gy));
+    var a=TSL.float(1).sub(TSL.smoothstep(2/3,1,d).mul(tall)).mul(d.lessThan(1.007).select(1,0)).mul(dist.lessThan(U.far.mul(0.98)).select(1,0));
+    var pp=new (T.RenderPipeline||T.PostProcessing)(r);
+    pp.outputNode=TSL.vec4(col.rgb.mul(a),col.a.mul(a));   // premultiplied
+    return {scene:scene,bc:bc,U:U,pp:pp,m:new T.Matrix4(),p:new T.Vector3(),q:new T.Quaternion(),sc:new T.Vector3()};
+  }
+  // cliff walls: the board is a solid block. Four skirts follow the terrain's edge profile down to a flat base
+  // (about 4x Ariel's height below the ground, with a floor so a low view still reads as a plateau), rock strata.
+  var WSEG=48;
+  function buildWalls(T){
+    var TSL=T.TSL, n=4*(WSEG+1), pos=new Float32Array(n*2*3), idx=[];
+    for(var sd=0;sd<4;sd++) for(var i=0;i<WSEG;i++){ var a=(sd*(WSEG+1)+i)*2, b=a+2; idx.push(a,a+1,b, b,a+1,b+1); }
+    var geo=new T.BufferGeometry(); geo.setAttribute('position',new T.BufferAttribute(pos,3)); geo.setIndex(idx);
+    var M=T.MeshStandardNodeMaterial?new T.MeshStandardNodeMaterial():new T.MeshStandardMaterial();
+    M.side=T.DoubleSide; M.roughness=0.95; M.metalness=0;
+    if(TSL&&M.isNodeMaterial){ var y=TSL.positionWorld.y, k=TSL.sin(y.mul(0.35)).mul(0.5).add(0.5), k2=TSL.sin(y.mul(1.7).add(TSL.positionWorld.x.add(TSL.positionWorld.z).mul(0.05))).mul(0.5).add(0.5);
+      M.colorNode=TSL.mix(TSL.mix(TSL.color(0x5a4636),TSL.color(0x8a6f55),k),TSL.color(0x3e3229),k2.mul(0.35)); }
+    else M.color.set(0x6b5442);
+    var mesh=new T.Mesh(geo,M); mesh.frustumCulled=false; mesh.visible=false; mesh.userData.dmArWall=true;
+    return {mesh:mesh,pos:pos,geo:geo};
+  }
+  function fillWalls(W,H,cx,cz,half,depth,pal){
+    var p=W.pos, lo=Infinity, tops=[];
+    for(var sd=0;sd<4;sd++) for(var i=0;i<=WSEG;i++){ var t=-1+2*i/WSEG, x,z;
+      if(sd===0){x=cx+t*half; z=cz-half;} else if(sd===1){x=cx+half; z=cz+t*half;} else if(sd===2){x=cx-t*half; z=cz+half;} else {x=cx-half; z=cz-t*half;}
+      var h=0; try{ h=+H(x,z); }catch(e){} if(!isFinite(h)) h=0; var sea=pal; if(sea!=null&&h<sea) h=sea;
+      tops.push(x,h,z); if(h<lo) lo=h; }
+    var base=lo-depth; W.hi=-Infinity; for(var k=1;k<tops.length;k+=3) if(tops[k]>W.hi) W.hi=tops[k];
+    for(var j=0;j<tops.length/3;j++){ var o=j*6; p[o]=tops[j*3]; p[o+1]=tops[j*3+1]; p[o+2]=tops[j*3+2]; p[o+3]=tops[j*3]; p[o+4]=base; p[o+5]=tops[j*3+2]; }
+    W.geo.attributes.position.needsUpdate=true; W.geo.computeVertexNormals();
+  }
+  function boardRender(r,scene,cam){
+    if(!S||S.kind!=='camera'||S.mode!=='terrain') return false;
+    var T=window.THREE, ctx=terrainCtx(), ca=r.getClearAlpha(), bg=scene.background, hid=[], fog=scene.fog, fs=null;
+    r.setClearAlpha(0);
+    try{
+      if(!S.placed||!ctx){ r.setRenderTarget(null); r.clear(); return true; }
+      if(!S.B||S.B.scene!==scene){ if(S.B) try{ S.B.pp.dispose(); if(S.B.W){ S.B.W.mesh.parent&&S.B.W.mesh.parent.remove(S.B.W.mesh); S.B.W.geo.dispose(); } }catch(e){} S.B=buildBoard(T,r,scene); }
+      var B=S.B, half=1.5*L_WORLD, s=3*L_WORLD/DIO_SIZE;
+      var px=ctx.pos.x, pz=ctx.pos.z, h=NaN; try{ h=+ctx.H(px,pz); }catch(e){} if(!isFinite(h)) h=ctx.pos.y||0;
+      S.table.updateMatrixWorld(true); S.cam.updateMatrixWorld(true);
+      B.m.copy(S.table.matrixWorld).invert().multiply(S.cam.matrixWorld); B.m.decompose(B.p,B.q,B.sc);
+      var bc=B.bc; bc.position.set(px+B.p.x*s,h+B.p.y*s,pz+B.p.z*s); bc.quaternion.copy(B.q);
+      bc.fov=S.cam.fov; bc.aspect=innerWidth/innerHeight; bc.near=Math.max(0.5,0.02*s); bc.far=8*s; bc.updateProjectionMatrix(); bc.updateMatrixWorld(true);
+      var e=bc.projectionMatrix.elements; B.U.tx.value=1/e[0]; B.U.ty.value=1/e[5]; B.U.far.value=bc.far; B.U.cw.value.copy(bc.matrixWorld);
+      B.U.c.value.set(px,pz); B.U.half.value=half;
+      if(!B.W){ B.W=buildWalls(T); scene.add(B.W.mesh); }
+      var ah=B.ah||1.8; if(!B.ah) try{ var cb=window.CHAR&&CHAR.root; if(cb){ var bb=new T.Box3().setFromObject(cb); var hh=bb.max.y-bb.min.y; if(isFinite(hh)&&hh>0.2&&hh<50) ah=B.ah=hh; } }catch(e){}
+      var depth=Math.max(4*ah,0.06*2*half);   // ~4x her height, never thinner than a readable slab at board scale
+      var sw=g('surfWater'), sea=(sw&&sw.visible&&sw.position&&isFinite(sw.position.y))?sw.position.y:null;
+      fillWalls(B.W,ctx.H,px,pz,half,depth,sea);
+      B.U.gy.value=B.W.hi; B.U.fh.value=0.12*half; B.W.mesh.visible=true; hid.push(B.W.mesh); B.W._on=true;
+      scene.background=null;
+      scene.traverseVisible(function(o){ if(o.userData&&(o.userData.dmSkyShell||o.userData.dmArHide)){ o.visible=false; hid.push(o); } });
+      if(fog){ fs={n:fog.near,f:fog.far,d:fog.density}; if(fog.density!=null) fog.density=0; else { fog.near=1e12; fog.far=2e12; } }   // uniforms only: no recompile
+      B.pp.render();
+      return true;
+    } finally {
+      r.setClearAlpha(ca); scene.background=bg; for(var i=0;i<hid.length;i++) hid[i].visible=!(hid[i].userData&&hid[i].userData.dmArWall);
+      if(fog&&fs){ fog.near=fs.n; fog.far=fs.f; if(fs.d!=null) fog.density=fs.d; }
+    }
+  }
+  function viewBtn(on){ var b=document.getElementById('dm-ar-view');
+    if(!on){ if(b) b.remove(); return; }
+    if(!b){ b=document.createElement('button'); b.id='dm-ar-view'; b.type='button';
+      b.addEventListener('click',function(e){ e.stopPropagation(); if(!S) return; S.view=S.view==='full'?'table':'full'; S.placed=false; S.table.visible=false; if(S.mode) switchMode(S.mode); });
+      document.body.appendChild(b); }
+    b.textContent=S&&S.view==='full'?'\u25a6 Table view':'\u2726 Full space'; b.style.display=S&&S.mode==='space'?'':'none'; }
   function camFrame(t){
     var T=window.THREE, ctx=terrainCtx(), mode=ctx?'terrain':'space';
     if(mode!==S.mode) switchMode(mode);
-    var q=camPose(T);
+    var q=camPose(T), full=mode==='space'&&S.view==='full';
+    if(full!==!!S.full){ S.full=full; if(full) S.q0=null; viewBtn(true); arBlend(full); }
+    document.body.classList.toggle('dm-ar-full',full||mode==='terrain');
+    S.cam.position.set(0,0,0); S.cam.quaternion.copy(q); S.cam.updateMatrixWorld(true);
+    if(mode==='terrain'){   // the game's own loop draws the world onto the board (boardRender, called from _pwRender)
+      if(!S.placed){ S.table.position.set(0,TABLE_Y,-0.7); S.table.rotation.set(0,0,0); S.table.visible=true; S.placed=true; S.autoPlaced=true; toast(''); }
+      return; }
+    if(full){
+      if(!S.q0) S.q0=q.clone().invert();
+      S.dq.copy(S.q0).multiply(q);   // device turn since entering, layered on the game camera in fullRender
+      if(S.safeHold&&!S._safeSaid){ S._safeSaid=true; say('Holding a safe distance from the Sun in AR',2500); }
+      return;   // the game's own loop draws (see fullRender)
+    }
+    if(!S.rReady){ if(S.rFail&&!S._failSaid){ S._failSaid=true; say('Table view isn\u2019t available on this device',3000); } return; }
     {
       S.cam.position.set(0,0,0); S.cam.quaternion.copy(q); S.cam.updateMatrixWorld(true);
-      if(!S.placed){ S.ray.setFromCamera(new T.Vector2(0,0),S.cam); var p=new T.Vector3();
+      if(!S.placed){ S.ray.setFromCamera(new T.Vector2(0,0),S.cam); var p=S.hit;
         if(S.ray.ray.intersectPlane(S.plane,p)&&p.length()<2.2){ S.reticle.position.copy(p); S.reticle.visible=true; } else S.reticle.visible=false; }
       if(S.placed) content(T,ctx,mode);
       S.r.render(S.scene,S.cam);
@@ -352,7 +527,7 @@
     try{ window.DMUI3DMesh&&DMUI3DMesh.drawTo(S.r); }catch(e){}   // 3D HUD over the passthrough (DOM HUD if the mesh is off)
   }
 
-  window.DMAR={toggle:toggle,exit:exit,get active(){ return !!S; }, get mode(){ return S?S.kind+'/'+(S.mode||'-')+(S.placed?' placed':''):(supported?'off (webxr ready)':'off (camera fallback)'); }, _cam:function(){ return S; },get supported(){ return supported; },_buildDiorama:buildDiorama,_fillDiorama:fillDiorama,_stripSky:stripSky,_unstrip:unstrip};
+  window.DMAR={toggle:toggle,exit:exit,get active(){ return !!S; }, get letWarm(){ return !!(S&&S.full); }, get passthrough(){ return !!(S&&S.kind==='camera'&&(S.full||S.mode==='terrain')); }, get noAtmo(){ return !!(S&&S.kind==='camera'&&(S.full||S.mode==='terrain')); }, get boardOn(){ return !!(S&&S.kind==='camera'&&S.mode==='terrain'); }, board:boardRender, get mode(){ return S?S.kind+'/'+(S.mode||'-')+(S.placed?' placed':''):(supported?'off (webxr ready)':'off (camera fallback)'); }, _cam:function(){ return S; },get supported(){ return supported; },_buildDiorama:buildDiorama,_fillDiorama:fillDiorama,_stripSky:stripSky,_unstrip:unstrip};
   function init(){
     placeButtons();
     try{ new MutationObserver(function(){ placeButtons(); }).observe(document.body,{childList:true,subtree:false}); }catch(e){}
