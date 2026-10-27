@@ -419,10 +419,10 @@
       if(((S.blendN=(S.blendN||0)+1)%45)===0) try{ arBlend(true,true); }catch(e){}   // pick up effects added since AR started
       sc.background=null; ca=S.flight.getClearAlpha(); S.flight.setClearAlpha(0);
       sc.traverseVisible&&sc.traverseVisible(function(o){ if(o.userData&&(o.userData.dmSkyShell||o.userData.dmArHide)){ o.visible=false; hid.push(o); } });
-      if(S.fp&&S.mode==='terrain') lv=arLit(sc,S.flight);   // (v196) life-scale ground: same light as the board
+      if(S.fp&&S.mode==='terrain'){ lv=_rv; arLit(sc,S.flight); }   // (v196) life-scale ground: same light as the board
       return orig.call(S.flight,sc,cm);
     } finally {
-      arUnlit(lv,S.flight); if(ca!=null) S.flight.setClearAlpha(ca);
+      arUnlit(lv); if(ca!=null) S.flight.setClearAlpha(ca);
       sc.background=bg; for(var i=0;i<hid.length;i++) hid[i].visible=!(hid[i].userData&&hid[i].userData.dmArWall);
       cm.quaternion.copy(_fq); cm.position.copy(_fp); cm.updateMatrixWorld(true);
     }
@@ -497,11 +497,17 @@
   // (sun ~0.16, sky ~0.05) and the ground reads black over the camera. For the AR terrain draw only, the lights are
   // scaled (uniforms: no recompile) and restored after.
   var LIT={d:7,a:12,e:1.2,tint:0.6}, _tc=null;
-  function arLit(scene,r){ var sv={l:[],e:r.toneMappingExposure};
-    scene.traverseVisible(function(o){ if(!o.isLight) return; var k=o.isDirectionalLight?LIT.d:(o.isAmbientLight||o.isHemisphereLight)?LIT.a:1; if(k!==1){ sv.l.push(o,o.intensity); o.intensity*=k; }
-      if(k===LIT.a&&LIT.tint>0){ var pw=window.PW, bg=pw&&pw.bg; if(bg&&bg.isColor){ var c=o.isHemisphereLight?o.color:o.color; sv.c=sv.c||[]; _tc=_tc||new (window.THREE.Color)(); sv.c.push(c,_tc.copy(c).getHex()); c.lerp(bg,LIT.tint); } } });   // the air's colour (the true-atmosphere pass tints the ground with it)
+  // (v196) one reusable restore record (filled BEFORE each change, so a throw partway still restores everything) and a
+  // light list cached per scene (re-walked every 120 draws, not every frame).
+  var _rv={on:false,l:[],c:[],e:1,r:null}, _ls={sc:null,n:0,a:[]};
+  function arLights(scene){ if(_ls.sc!==scene||(++_ls.n%120)===0){ _ls.sc=scene; _ls.a.length=0; scene.traverse(function(o){ if(o.isLight) _ls.a.push(o); }); } return _ls.a; }
+  function arLit(scene,r){ var sv=_rv; arUnlit(sv); sv.on=true; sv.r=r; sv.e=r.toneMappingExposure; sv.l.length=0; sv.c.length=0;
+    var L=arLights(scene), pw=window.PW, bg=pw&&pw.bg;
+    for(var i=0;i<L.length;i++){ var o=L[i]; if(!o.visible) continue; var k=o.isDirectionalLight?LIT.d:(o.isAmbientLight||o.isHemisphereLight)?LIT.a:1; if(k===1) continue;
+      sv.l.push(o,o.intensity); o.intensity*=k;
+      if(k===LIT.a&&LIT.tint>0&&bg&&bg.isColor){ sv.c.push(o.color,o.color.getHex()); o.color.lerp(bg,LIT.tint); } }   // the air's colour (the true-atmosphere pass tints the ground with it)
     r.toneMappingExposure=sv.e*LIT.e; return sv; }
-  function arUnlit(sv,r){ if(!sv) return; for(var i=0;i<sv.l.length;i+=2) sv.l[i].intensity=sv.l[i+1]; if(sv.c) for(var j=0;j<sv.c.length;j+=2) sv.c[j].setHex(sv.c[j+1]); r.toneMappingExposure=sv.e; }
+  function arUnlit(sv){ sv=sv||_rv; if(!sv.on) return; sv.on=false; for(var i=0;i<sv.l.length;i+=2) sv.l[i].intensity=sv.l[i+1]; for(var j=0;j<sv.c.length;j+=2) sv.c[j].setHex(sv.c[j+1]); sv.l.length=0; sv.c.length=0; if(sv.r) sv.r.toneMappingExposure=sv.e; }
   function boardRender(r,scene,cam){
     if(!S||S.kind!=='camera'||S.mode!=='terrain') return false;
     var T=window.THREE, ctx=terrainCtx(), ca=r.getClearAlpha(), bg=scene.background, hid=[], fog=scene.fog, fs=null;
@@ -527,7 +533,7 @@
       scene.background=null;
       scene.traverseVisible(function(o){ if(o.userData&&(o.userData.dmSkyShell||o.userData.dmArHide)){ o.visible=false; hid.push(o); } });
       if(fog){ fs={n:fog.near,f:fog.far,d:fog.density}; if(fog.density!=null) fog.density=0; else { fog.near=1e12; fog.far=2e12; } }   // uniforms only: no recompile
-      S._inBoard=true; var lv=arLit(scene,r); try{ B.pp.render(); } finally { S._inBoard=false; arUnlit(lv,r); }
+      S._inBoard=true; try{ arLit(scene,r); B.pp.render(); } finally { S._inBoard=false; arUnlit(_rv); }
       return true;
     } finally {
       r.setClearAlpha(ca); scene.background=bg; for(var i=0;i<hid.length;i++) hid[i].visible=!(hid[i].userData&&hid[i].userData.dmArWall);
