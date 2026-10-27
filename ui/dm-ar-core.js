@@ -54,7 +54,17 @@
 
   // ---------- game-state probes (classic-script globals, read defensively) ----------
   function g(name){ try{ return (0,eval)('typeof '+name+'!=="undefined"?'+name+':undefined'); }catch(e){ return undefined; } }
+  // (v178) mesh maps (Bird Temple and other walkable ships/stations): a flat-based board around Ariel's deck
+  var _shipH=0; function _shipFlat(){ return _shipH; }
+  function shipCtx(){
+    var SW=g('SHIP_WALK'); if(!SW||!SW.active||window._dmWarming) return null;
+    var st=g('STATE'), sp=st&&st.flight; if(!sp||!sp.pos) return null;
+    var gh=null, f=g('_shipGroundHeight'); try{ if(f) gh=f(sp.pos.x,sp.pos.z,sp.pos.y+0.05); }catch(e){}
+    _shipH=(gh!=null&&isFinite(gh))?gh:sp.pos.y;
+    return {H:_shipFlat,pos:sp.pos,flying:!SW.grounded,pal:null,ship:true};
+  }
   function terrainCtx(){
+    var sc=shipCtx(); if(sc) return sc;
     var PW=window.PW; if(!PW||!PW.active||window._dmWarming||!(g('surfaceActive')||g('atmoActive'))) return null;
     var H=g('_surfHeight')||g('_atmoHeight')||((g('TERRAIN')||{}).H);
     if(typeof H!=='function') return null;
@@ -358,7 +368,7 @@
     S.flight=FR0; S.flightRender=FR0render;
     // the game's renderer draws the full space overlay (fullRender) and the terrain board (boardRender, from _pwRender);
     // in the table-top orrery view it stays idle
-    if(FR0render) FR0.render=function(sc,cm){ if(!S||S.kind!=='camera') return FR0render.call(FR0,sc,cm); if(S.full) return fullRender(sc,cm); if(S.mode==='terrain'&&S._inBoard) return FR0render.call(FR0,sc,cm); };   // terrain: only the board's own pass draws
+    if(FR0render) FR0.render=function(sc,cm){ if(!S||S.kind!=='camera') return FR0render.call(FR0,sc,cm); if(S.full) return fullRender(sc,cm); if(S.mode==='terrain'&&S._inBoard) return FR0render.call(FR0,sc,cm); if(S.mode==='terrain'&&S.shipBoard&&S._bfDone!==S._fn){ S._bfDone=S._fn; return boardRender(FR0,sc,cm); } };   // mesh maps draw their board from the flight loop (once per frame)   // terrain: only the board's own pass draws
     try{ var gc=FR0&&FR0.domElement; if(gc){ gc.classList.add('dm-ar-game'); S.gameCv=gc; } }catch(e){}
     viewBtn(true);
     try{ window.DMUI3DMesh&&DMUI3DMesh.arHold(true); }catch(e){}
@@ -427,7 +437,7 @@
   // Ariel, and draws the game's own world scene (terrain mesh, materials, water, props, Ariel) through one pass. The
   // pass keeps only what lies inside the 3x3 square: opaque to halfway across the outer ring, then a premultiplied
   // alpha feather to zero at the perimeter, a hard cut beyond. The world's sky and fog are left out.
-  var L_WORLD=300;   // world units per grid unit (Ariel's high-detail square)
+  var L_WORLD=300, SHIP_UNITS=10;   // terrain: world units per unit; mesh maps: Ariel heights per unit   // world units per grid unit (Ariel's high-detail square)
   function buildBoard(T,r,scene){
     var TSL=T.TSL, bc=new T.PerspectiveCamera(60,1,1,1e5);
     var U={c:TSL.uniform(new T.Vector2()),half:TSL.uniform(450),tx:TSL.uniform(1),ty:TSL.uniform(1),far:TSL.uniform(1e5),nr:TSL.uniform(1),gy:TSL.uniform(0),fh:TSL.uniform(50),cw:TSL.uniform(new T.Matrix4())};
@@ -476,7 +486,7 @@
     try{
       if(!S.placed||!ctx){ r.setRenderTarget(null); r.clear(); return true; }
       if(!S.B||S.B.scene!==scene){ if(S.B) try{ S.B.pp.dispose(); if(S.B.W){ S.B.W.mesh.parent&&S.B.W.mesh.parent.remove(S.B.W.mesh); S.B.W.geo.dispose(); } }catch(e){} S.B=buildBoard(T,r,scene); }
-      var B=S.B, half=1.5*L_WORLD, s=3*L_WORLD/DIO_SIZE;
+      var B=S.B, L=ctx.ship?SHIP_UNITS*(B.ah||1.8):L_WORLD, half=1.5*L, s=3*L/DIO_SIZE;   // (v178) mesh maps: a unit is a fixed number of Ariel heights
       var px=ctx.pos.x, pz=ctx.pos.z, h=NaN; try{ h=+ctx.H(px,pz); }catch(e){} if(!isFinite(h)) h=ctx.pos.y||0;
       S.table.updateMatrixWorld(true); S.cam.updateMatrixWorld(true);
       B.m.copy(S.table.matrixWorld).invert().multiply(S.cam.matrixWorld); B.m.decompose(B.p,B.q,B.sc);
@@ -509,6 +519,7 @@
   function camFrame(t){
     var T=window.THREE, ctx=terrainCtx(), mode=ctx?'terrain':'space';
     if(mode!==S.mode) switchMode(mode);
+    S._fn=(S._fn|0)+1; S.shipBoard=!!(ctx&&ctx.ship);
     S.view='full'; var q=camPose(T), full=mode==='space';   // (v178) space = full fly-through around the device; maps = tabletop
     if(full!==!!S.full){ S.full=full; if(full) S.q0=null; viewBtn(true); arBlend(full); }
     document.body.classList.toggle('dm-ar-full',full||mode==='terrain');
