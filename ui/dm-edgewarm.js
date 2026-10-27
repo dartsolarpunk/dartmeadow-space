@@ -124,7 +124,15 @@
     return p;
   }
   let drained = false, lastB = 0, drainT0 = 0;
-  function playing() { try { const sc = typeof STATE !== 'undefined' && STATE && STATE.screen; return sc === 'flight' || sc === 'atmo' || sc === 'surface'; } catch (e) { return false; } }
+  // (v197) play has started: the fly-in finished with the board mounted (INTRO.on went true then false), or the first
+  // input while in flight. (STATE.screen alone is not a signal: launchFlight sets 'flight' before the scene is built.)
+  let introSeen = false, flewInput = false;
+  ['keydown', 'pointerdown', 'touchstart'].forEach((ev) => addEventListener(ev, () => { try { if (!flewInput && typeof STATE !== 'undefined' && STATE.screen === 'flight' && typeof boardFlight !== 'undefined' && boardFlight) flewInput = true; } catch (e) {} }, { capture: true, passive: true }));
+  const introIv = setInterval(() => { try { if (typeof INTRO !== 'undefined' && INTRO.on) { introSeen = true; clearInterval(introIv); } } catch (e) {} }, 200);
+  function playing() {
+    if (flewInput) return true;
+    try { if (typeof INTRO === 'undefined') return false; if (INTRO.on) { introSeen = true; return false; } return introSeen && typeof boardFlight !== 'undefined' && !!boardFlight; } catch (e) { return false; }
+  }
   async function tick() {
     if (!W.on || busy) return; W.stats.left = 0;
     const r = R(), sc = scene(), cm = cam();
@@ -132,7 +140,7 @@
     if (window._warmupMs == null || (typeof _btiWarmed !== 'undefined' && !_btiWarmed && typeof BIRD_TEMPLE !== 'undefined' && BIRD_TEMPLE.group)) return;   // after the flight + temple warm-ups (they compile everything once)
     if (window._dmWarming || document.hidden || (window.DMAR && DMAR.active)) return;
     busy = true; const t0 = performance.now();
-    // (v197) the uncapped first drain ends when play starts (flight / atmosphere / surface) or 45 s after it began
+    // (v197) the uncapped first drain ends when play starts (see playing()) or 45 s after it began
     if (!drained) { if (!drainT0) drainT0 = t0; if (t0 - drainT0 > 45000 || playing()) drained = true; }
     try {
       if (t0 - histAt > 60000) { hist = new WeakMap(); histAt = t0; }
