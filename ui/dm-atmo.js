@@ -25,7 +25,7 @@
  */
 (function (root) {
   'use strict';
-  const STEPS = { low: 10, medium: 16, high: 24, ultra: 36, auto: 16, custom: 20 };
+  const STEPS = { low: 10, medium: 16, high: 22, ultra: 28, auto: 16, custom: 20 };   // (v150) high/ultra trimmed (jittered + temporal blend); medium unchanged
   const VOX = 32;
 
   // Baseline look = the current in-game JOTS_PlanetAtmo / dusty shell (Lague-style):

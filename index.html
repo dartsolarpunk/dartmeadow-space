@@ -994,7 +994,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-globe.js?v=8" defer></script>
 <script src="ui/dm-star.js?v=8" defer></script>
 <script src="ui/dm-mist.js?v=7" defer></script>
-<script src="ui/dm-atmo.js?v=135" defer></script>
+<script src="ui/dm-atmo.js?v=150" defer></script>
 <script src="ui/dm-menuscene.js?v=7" defer></script>
 <script src="ui/dm-starbubble.js?v=3" defer></script>
 <script src="ui/dm-birdtemple.js?v=122" defer></script>
@@ -18405,7 +18405,7 @@ function _taDt(){
 function _taAuto(){ try{ return typeof GFX!=='undefined'&&GFX.preset==='auto'; }catch(e){ return false; } }
 // automatic reductions are Auto-only: the low tier under Auto, or a sustained bad frame time, hands back to the classic shells
 function _taPerfOff(){ if(!_taAuto()||/[?&]trueatmo=1\b/.test(location.search)) return false; if(_TA.slow) return true; try{ return typeof resolvePreset==='function'&&resolvePreset()==='low'; }catch(e){ return false; } }
-function _taHalf(){ try{ return _taAuto(); }catch(e){ return false; } }   // (v130) half-res gas march under Auto on every device; manual presets stay full-res
+function _taHalf(){ try{ return _taAuto()||(GFX.isMobile&&(GFX.preset==='high'||GFX.preset==='ultra')); }catch(e){ return false; } }   // (v150) phones/tablets on High/Ultra: half-res gas, depth-aware composite at full res (Low/Medium unchanged)   // (v130) half-res gas march under Auto on every device; manual presets stay full-res
 // async WebGPU failure fallback: device loss, and validation/OOM errors raised by the pass itself in its first frames
 function _taGuardBegin(r){
   const dev=r&&r.backend&&r.backend.isWebGPUBackend?r.backend.device:null; if(!dev) return null;
@@ -23067,6 +23067,45 @@ function mcCleanFragments(d, G, gap, minCells){
 }
 window.mcCleanFragments=mcCleanFragments;
 
+// XZ bucket grid over a static mesh's triangles (built once per mesh, lazily). Query returns the topmost triangle under (x,z)
+// whose height is ≤ yTop — the first hit of a straight-down ray — as {point:{x,y,z},face:{normal},object}.
+function _mcGridBuild(m){
+  const g=m.geometry, P=g.attributes.position.array, I=g.index?g.index.array:null, nt=(I?I.length:P.length/3)/3|0;
+  g.computeBoundingBox(); const bb=g.boundingBox, C=4, nx=Math.max(1,Math.ceil((bb.max.x-bb.min.x)/C)), nz=Math.max(1,Math.ceil((bb.max.z-bb.min.z)/C));
+  const cnt=new Uint32Array(nx*nz+1), tri=new Float32Array(nt*9);
+  const cell=(v,mn,n)=>Math.min(n-1,Math.max(0,Math.floor((v-mn)/C)));
+  const rng=new Int32Array(nt*4);
+  for(let t=0;t<nt;t++){ let x0=1e30,x1=-1e30,z0=1e30,z1=-1e30;
+    for(let k=0;k<3;k++){ const vi=I?I[t*3+k]:t*3+k; const X=P[vi*3],Y=P[vi*3+1],Z=P[vi*3+2]; tri[t*9+k*3]=X; tri[t*9+k*3+1]=Y; tri[t*9+k*3+2]=Z; if(X<x0)x0=X; if(X>x1)x1=X; if(Z<z0)z0=Z; if(Z>z1)z1=Z; }
+    const a=cell(x0,bb.min.x,nx),b=cell(x1,bb.min.x,nx),c=cell(z0,bb.min.z,nz),d=cell(z1,bb.min.z,nz); rng[t*4]=a;rng[t*4+1]=b;rng[t*4+2]=c;rng[t*4+3]=d;
+    for(let j=c;j<=d;j++) for(let i=a;i<=b;i++) cnt[j*nx+i+1]++; }
+  for(let i=1;i<cnt.length;i++) cnt[i]+=cnt[i-1];
+  const fill=cnt.slice(0,nx*nz), list=new Uint32Array(cnt[nx*nz]);
+  for(let t=0;t<nt;t++) for(let j=rng[t*4+2];j<=rng[t*4+3];j++) for(let i=rng[t*4];i<=rng[t*4+1];i++) list[fill[j*nx+i]++]=t;
+  return {mnx:bb.min.x,mnz:bb.min.z,C,nx,nz,start:cnt,list,tri};
+}
+function _mcGridHit(m,wx,wz,yTop){
+  if(!m.geometry||!m.geometry.attributes.position) return null;
+  let G=m.userData._xzGrid; if(!G||G.geo!==m.geometry){ G=_mcGridBuild(m); G.geo=m.geometry; m.userData._xzGrid=G; }
+  const E=m.matrixWorld.elements;
+  if(Math.abs(E[0]-1)+Math.abs(E[5]-1)+Math.abs(E[10]-1)+Math.abs(E[1])+Math.abs(E[2])+Math.abs(E[4])+Math.abs(E[6])+Math.abs(E[8])+Math.abs(E[9])>1e-9){
+    // rotated/scaled parent: fall back to the plain downward raycast
+    if(!_mcGridHit.ray){ _mcGridHit.ray=new THREE.Raycaster(); _mcGridHit.ray.far=1000; }
+    _mcGridHit.ray.set(new THREE.Vector3(wx,yTop,wz),new THREE.Vector3(0,-1,0)); const h=_mcGridHit.ray.intersectObject(m,false); return h.length?h[0]:null; }
+  const tx=E[12],ty=E[13],tz=E[14], x=wx-tx, z=wz-tz, top=yTop-ty;
+  const i=Math.floor((x-G.mnx)/G.C), j=Math.floor((z-G.mnz)/G.C); if(i<0||j<0||i>=G.nx||j>=G.nz) return null;
+  const T=G.tri, c=j*G.nx+i; let best=-1e30, bt=-1;
+  for(let q=G.start[c];q<G.start[c+1];q++){ const o=G.list[q]*9;
+    const ax=T[o],az=T[o+2],bx=T[o+3],bz=T[o+5],cx=T[o+6],cz=T[o+8];
+    const d=(bz-cz)*(ax-cx)+(cx-bx)*(az-cz); if(d===0) continue;
+    const u=((bz-cz)*(x-cx)+(cx-bx)*(z-cz))/d, v=((cz-az)*(x-cx)+(ax-cx)*(z-cz))/d, w=1-u-v;
+    if(u<-1e-9||v<-1e-9||w<-1e-9) continue;
+    const y=u*T[o+1]+v*T[o+4]+w*T[o+7]; if(y<=top&&y>best){ best=y; bt=o; } }
+  if(bt<0) return null;
+  const o=bt, e1x=T[o+3]-T[o],e1y=T[o+4]-T[o+1],e1z=T[o+5]-T[o+2], e2x=T[o+6]-T[o],e2y=T[o+7]-T[o+1],e2z=T[o+8]-T[o+2];
+  const nx=e1y*e2z-e1z*e2y, ny=e1z*e2x-e1x*e2z, nz=e1x*e2y-e1y*e2x, nl=Math.hypot(nx,ny,nz)||1;
+  return {point:{x:wx,y:best+ty,z:wz},face:{normal:new THREE.Vector3(nx/nl,ny/nl,nz/nl)},object:m};
+}
 function marchingCubesMesh(densityFn,origin,size,resolution,isoLevel){
   isoLevel=isoLevel||0;
   const step=size/resolution;
@@ -23674,9 +23713,9 @@ function _pwBuildGround(pal,fx,fz,mode){
         M.chunks.set(key,mesh);
       }};
     TERRAIN.cpuMc=M;
-    const mcRay=new THREE.Raycaster(); mcRay.far=1000;
+    // exact top-down hit via a per-chunk XZ triangle grid (same answer as a downward raycast from H+300, without testing every triangle)
     const hitAt=(x,z)=>{ const m=M.chunks.get(Math.floor((x+MC_CHUNK/2)/MC_CHUNK)+'_'+Math.floor((z+MC_CHUNK/2)/MC_CHUNK)); if(!m) return null;
-      mcRay.set(new THREE.Vector3(x,H(x,z)+300,z),new THREE.Vector3(0,-1,0)); const hits=mcRay.intersectObject(m,false); return hits.length?hits[0]:null; };
+      return _mcGridHit(m,x,z,H(x,z)+300); };
     TERRAIN.mcY=(x,z,h)=>{ const hit=hitAt(x,z); return hit?Math.max(hit.point.y,h+_pwUnderlayY()):null; };
     TERRAIN.mcN=(x,z)=>{ const hit=hitAt(x,z); return hit&&hit.face?hit.face.normal.clone().transformDirection(hit.object.matrixWorld):null; };
   }
@@ -23729,9 +23768,14 @@ function _pwBuildGround(pal,fx,fz,mode){
       if(PW.scene){
         if(!TERRAIN._climbRay){ TERRAIN._climbRay=new THREE.Raycaster(); TERRAIN._climbRay.far=3.2; }
         const origin=new THREE.Vector3(x,y,z);
+        // (v150) only the climbable subtrees are tested (hits on anything else were skipped anyway); the list of topmost
+        // climbable objects is refreshed every 250 ms instead of ray-testing the whole scene (skinned character included) 8×
+        const now=performance.now(); let roots=TERRAIN._climbRoots;
+        if(!roots||now-(TERRAIN._climbRootsT||0)>250){ roots=[]; const walk=o=>{ const u=o.userData; if(u&&(u.climbable||u.cliff||u.rope)){ roots.push(o); return; } const ch=o.children; for(let k=0;k<ch.length;k++) walk(ch[k]); }; walk(PW.scene); TERRAIN._climbRoots=roots; TERRAIN._climbRootsT=now; }
+        if(!roots.length) return null;
         for(let i=0;i<8;i++){
           const a=i*Math.PI/4; TERRAIN._climbRay.set(origin,new THREE.Vector3(Math.cos(a),0,Math.sin(a))); TERRAIN._climbRay.camera=PW.camera;   // sprites in the scene need it
-          const hits=TERRAIN._climbRay.intersectObjects(PW.scene.children,true);
+          const hits=TERRAIN._climbRay.intersectObjects(roots,true);
           for(const h of hits){
             let climb=false; for(let cur=h.object;cur;cur=cur.parent){ const u=cur.userData; if(u&&(u.climbable||u.cliff||u.rope)){ climb=true; break; } }
             if(climb&&h.face) return h.face.normal.clone().transformDirection(h.object.matrixWorld).normalize();
@@ -23891,6 +23935,17 @@ function _propKit(){ if(!_propShared){ const sh=(m)=>{ m.userData.shared=true; r
   _propShared={rock:sh(new THREE.MeshStandardMaterial({color:0xffffff,roughness:0.92})), trunk:sh(new THREE.MeshStandardMaterial({color:0x4a3220,roughness:1})), crown:sh(new THREE.MeshStandardMaterial({color:0xffffff,roughness:1})),
     tGeo:new THREE.CylinderGeometry(0.7,1,1,6), cGeo:new THREE.ConeGeometry(1,1,7)}; _propShared.tGeo.userData.shared=_propShared.cGeo.userData.shared=true; }
   return _propShared; }
+// (v150) three's node InstanceNode bakes the instance count into the shader (a uniform mat4 array of that size), so every
+// chunk with a different rock/tree count built a new pipeline mid-walk (84 in 10 s headless, 77% of the CPU). Counts are
+// rounded up to a few fixed sizes; the spare slots copy instance 0's position at zero scale (no area, bounds unchanged).
+function _propCap(n){ let c=16; while(c<n) c*=2; return c; }
+function _propPad(im,n){
+  const cap=im.count; if(n>=cap) return;
+  const M=new THREE.Matrix4(), p=new THREE.Vector3(), q=new THREE.Quaternion(), sc=new THREE.Vector3();
+  im.getMatrixAt(0,M); M.decompose(p,q,sc); M.compose(p,q,sc.set(0,0,0));
+  const c=im.instanceColor?new THREE.Color():null; if(c) im.getColorAt(0,c);
+  for(let k=n;k<cap;k++){ im.setMatrixAt(k,M); if(c) im.setColorAt(k,c); }
+}
 // Rocks (and trees on living worlds) for one near chunk — instanced, seeded by the chunk.
 function _hmChunkScatter(i,j){
   const H=TERRAIN.H, pal=TERRAIN.pal, C=SURF_CHUNK, rnd=_rng32(_chunkSeed(i,j,TERRAIN.seed||1));
@@ -23919,9 +23974,10 @@ function _hmChunkScatter(i,j){
   const geo=TERRAIN.rockGeo||(TERRAIN.rockGeo=new THREE.DodecahedronGeometry(1,0));
   const mkRocks=(list,climb)=>{
     if(!list.length) return;
-    const im=new THREE.InstancedMesh(geo,_propKit().rock,list.length);
+    const im=new THREE.InstancedMesh(geo,_propKit().rock,_propCap(list.length));
     const M=new THREE.Matrix4(), q=new THREE.Quaternion(), e=new THREE.Euler();
     list.forEach((r,k)=>{ e.set(r.r[0],r.r[1],r.r[2]); q.setFromEuler(e); M.compose(new THREE.Vector3(r.x,r.h+r.s*0.3,r.z),q,new THREE.Vector3(r.s,r.s*r.sy,r.s)); im.setMatrixAt(k,M); im.setColorAt(k,r.c); });
+    _propPad(im,list.length);
     im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true;
     if(climb){ im.userData.climbable=true; im.userData.cliff=true; }
     if(GFX.shadows){ im.receiveShadow=true; im.castShadow=(GFX.shadowSize||0)>=1024; }
@@ -23933,8 +23989,8 @@ function _hmChunkScatter(i,j){
     const trees=rocks.filter(r=>r.h>3&&r.h<40&&((r.x*12.9898+r.z*78.233)%1+1)%1>0.6);
     if(trees.length){
       const K=_propKit();
-      const trunks=new THREE.InstancedMesh(K.tGeo,K.trunk,trees.length);
-      const crowns=new THREE.InstancedMesh(K.cGeo,K.crown,trees.length);
+      const trunks=new THREE.InstancedMesh(K.tGeo,K.trunk,_propCap(trees.length));
+      const crowns=new THREE.InstancedMesh(K.cGeo,K.crown,_propCap(trees.length));
       const M=new THREE.Matrix4(), q=new THREE.Quaternion();
       trees.forEach((t,k)=>{
         const th=R(2.5,4), tr=R(0.12,0.22), ch=R(2.5,4.5), cr=R(0.9,1.6), tx=t.x+3, tz=t.z+2, hh=H(tx,tz);
@@ -23942,6 +23998,7 @@ function _hmChunkScatter(i,j){
         M.compose(new THREE.Vector3(tx,hh+th+ch*0.35,tz),q,new THREE.Vector3(cr,ch,cr)); crowns.setMatrixAt(k,M);
         crowns.setColorAt(k,new THREE.Color(0x1f5520).offsetHSL(0,0,(rnd()-0.5)*0.12));
       });
+      _propPad(trunks,trees.length); _propPad(crowns,trees.length);
       [trunks,crowns].forEach(o=>{ o.instanceMatrix.needsUpdate=true; if(o.instanceColor) o.instanceColor.needsUpdate=true; if(GFX.shadows) o.castShadow=true; o.computeBoundingSphere(); g.add(o); });
     }
   }
@@ -24073,7 +24130,13 @@ function _terrainDetailMat(opts){
       const dy=cliff(p.add(W.vec3(0,ec,0))).h.sub(C0.h);
       const cg=lvl>=3?W.vec3(cliff(p.add(W.vec3(ec,0,0))).h.sub(C0.h),dy,cliff(p.add(W.vec3(0,0,ec))).h.sub(C0.h)).div(ec):W.vec3(W.float(0),dy,W.float(0)).div(ec);
       nW=nW.sub(cg.sub(N.mul(W.dot(cg,N))).mul(kc));
-      m.normalNode=toView(nW);
+      // (v150) distance LOD: past the bump's reach (fade and fadeC both 0) the result is exactly nFlat, so the extra
+      // 2–5 field/cliff evaluations (worley + fBm each) are skipped per pixel by a real branch — same image, less GPU
+      let nOut=nW;
+      if(typeof W.Fn==='function'&&typeof W.If==='function'){
+        try{ nOut=W.Fn(()=>{ const v=W.vec3(nFlat).toVar(); W.If(fade.add(steep.mul(fadeC)).greaterThan(0.0),()=>{ v.assign(nW); }); return v; })(); }catch(e){ nOut=nW; }
+      }
+      m.normalNode=toView(nOut);
     }
     // cracks shade darker, pebbles a touch lighter and glossier (Low: the colour only);
     // cliff layers each take their own tint, split lines darker, ledges catch a little light
