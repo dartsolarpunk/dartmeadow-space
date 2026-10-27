@@ -31,11 +31,6 @@
     'text-shadow:0 0 6px rgba(var(--acc-rgb),.8);white-space:nowrap;cursor:pointer;z-index:4;pointer-events:auto}'+
     '.dm-ar-btn::after{content:"";position:absolute;inset:-7px -6px}'+   // bigger thumb target, still inside the kite
     '.mini-kite .dm-ar-btn,.hud-c .dm-ar-btn{display:block;min-width:0;min-height:0;height:auto;line-height:1}'+
-    // the surface / sky top-bar button skin (ui/dm-ui.css, !important) also matches the mini kite: keep the AR toggle a kite item
-    'html #surface-overlay .mini-kite .dm-ar-btn,html #atmo-overlay .mini-kite .dm-ar-btn,html #surface-overlay .mini-kite .dm-ar-btn:hover,html #atmo-overlay .mini-kite .dm-ar-btn:hover{display:block!important;height:auto!important;padding:2px 4px 1px!important;'+
-    'border:0!important;border-bottom:1px solid rgba(var(--acc-rgb),.75)!important;border-radius:0!important;font-family:var(--font-hud)!important;font-size:.48rem!important;letter-spacing:.16em!important;color:var(--cyan)!important;'+
-    'background:linear-gradient(180deg,rgba(var(--acc-rgb),0),rgba(var(--acc-rgb),.16))!important;box-shadow:none!important;clip-path:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}'+
-    'html #surface-overlay .mini-kite .dm-ar-btn.on,html #atmo-overlay .mini-kite .dm-ar-btn.on{color:rgb(var(--hi-rgb))!important;border-bottom-color:rgb(var(--hi-rgb))!important;background:linear-gradient(180deg,rgba(var(--hi-rgb),0),rgba(var(--hi-rgb),.22))!important}'+
     '.mini-kite .dm-ar-btn{left:165px;top:60px}'+
     '.dm-ar-btn.on{color:rgb(var(--hi-rgb));border-bottom-color:rgb(var(--hi-rgb));text-shadow:0 0 8px rgba(var(--hi-rgb),.9);background:linear-gradient(180deg,rgba(var(--hi-rgb),0),rgba(var(--hi-rgb),.22))}'+
     '.dm-ar-btn[hidden]{display:none}';

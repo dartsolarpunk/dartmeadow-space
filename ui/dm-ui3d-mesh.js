@@ -63,7 +63,7 @@
           var m=/^["'](.*)["']$/.exec(ct); sp.textContent=m?m[1]:''; if(pe==='::before') cs[j].insertBefore(sp,cs[j].firstChild); else cs[j].appendChild(sp); }); }
       if(j&&o.matches&&o.matches(DYN_SEL)) cs[j].style.visibility='hidden';
       if(isLeaf(o)){ cs[j].style.color='transparent'; cs[j].style.textShadow='none'; } }
-    var rs=c.style; rs.position='relative'; rs.left=rs.top=PG+'px'; rs.right=rs.bottom='auto'; rs.margin='0'; rs.transform='none'; rs.rotate='none'; rs.scale='none'; rs.translate='none'; rs.filter='none'; rs.opacity='1'; rs.width=w+'px'; rs.height=h+'px'; rs.boxSizing='border-box';
+    var rs=c.style; rs.position='relative'; rs.left=rs.top=PG+'px'; rs.right=rs.bottom='auto'; rs.margin='0'; rs.transform='none'; rs.rotate='none'; rs.scale='none'; rs.translate='none'; rs.filter='none'; rs.opacity='1'; var lw=el.offsetWidth||w, lh=el.offsetHeight||h, kx=w/lw, ky=h/lh; rs.width=lw+'px'; rs.height=lh+'px'; if(Math.abs(kx-1)>.01||Math.abs(ky-1)>.01){ rs.transformOrigin='0 0'; rs.transform='scale('+kx+','+ky+')'; }   /* (v160) scaled ancestors (compact kite .72): lay out at CSS size, scale to screen size, else the raster crops */ rs.boxSizing='border-box';
     c.classList.remove('dm-ui3d-ghost','dm-ui3d-p');
     var imgs=c.querySelectorAll('img'); for(var m=0;m<imgs.length;m++){ var src=imgs[m].currentSrc||imgs[m].src; if(src&&!/^data:/.test(src)) imgs[m].setAttribute('src',await within(inlineImg(src),4000).catch(function(){ return src; })); }
     c.querySelectorAll('canvas,script,video,iframe').forEach(function(n){ n.remove(); });
@@ -119,7 +119,7 @@
     var dn=performance.now(); if(foundKind!==kind||dn-discT>=LAYOUT_MS*WALK_EVERY||discDirty){ discT=dn; discDirty=false; discover(kind); watch(); }
     panels.forEach(function(P){ P.leaves.forEach(function(L){ if(L.cs){ L.cs=null; L.text=null; } }); });   // (v156) leaf styles re-read once per layout
     theme=getComputedStyle(document.documentElement).getPropertyValue('--acc-rgb')+getComputedStyle(document.documentElement).getPropertyValue('--hi-rgb');
-    var seen=new Set(), relay=false, now=performance.now();
+    var seen=new Set(), relay=false, now=performance.now(), pend=false;
     found.w.forEach(function(el){
       if(seen.has(el)||!el.isConnected) return; var r=visible(el); if(!r) return;
       if(el.matches(FORM_SEL)||el.querySelector(FORM_SEL)) return;          // typed fields stay real DOM
@@ -129,11 +129,12 @@
       if(!P){ P={el:el,sig:'',ready:false,busy:false,leaves:[],dyn:el.matches(DYN_SEL),lp:0,mesh:null}; panels.set(el,P); }
       if(P.w!==w||P.h!==h){ P.w=w; P.h=h; relay=true; }
       var ps=pos4(r); if(ps!==P.ps){ P.ps=ps; P.rect=r; if(P.dyn) P.moved=true; else artDirty=true; txtGeoDirty=true; }
-      var sg=paintSig(el,w,h); if(sg!==P.sig&&(now-P.lp>1000||!P.sig||P.force)){ P.sig=sg; P.ready=P.ready&&!!P.slot; P.want=true; P.force=false; }
+      var sg=paintSig(el,w,h); if(P.force&&now-P.lp<100) pend=true; else if(sg!==P.sig&&(now-P.lp>1000||!P.sig||P.force)){   /* (v160) forced repaints coalesce to <=10/s per panel */ P.sig=sg; P.ready=P.ready&&!!P.slot; P.want=true; P.force=false; }
       var Ls=[]; if(!P.dyn){ if(isLeaf(el)){ var lr0=visible(el); if(lr0) Ls.push({el:el,r:lr0,text:null}); }
         else el.querySelectorAll('*').forEach(function(n){ if(!isLeaf(n)||n.closest(DYN_SEL)) return; var lr=visible(n); if(lr) Ls.push({el:n,r:lr,text:null}); }); }
       if(Ls.length!==P.leaves.length||Ls.some(function(L,i){ var o=P.leaves[i]; return o.el!==L.el||Math.round(o.r.left)!==Math.round(L.r.left)||Math.round(o.r.top)!==Math.round(L.r.top)||Math.round(o.r.width)!==Math.round(L.r.width); })){ P.leaves=Ls; txtGeoDirty=true; }
     });
+    if(pend) layoutDirty=true;
     panels.forEach(function(P,el){ if(!seen.has(el)){ el.classList.remove('dm-ui3d-ghost'); if(P.mesh){ root.remove(P.mesh); P.mesh.geometry.dispose(); } panels.delete(el); artDirty=true; txtGeoDirty=true; } });
     if(relay){ sx=sy=sh=0; var list=[]; panels.forEach(function(P){ list.push(P); }); list.sort(function(a,b){ return b.h-a.h; });
       list.forEach(function(P){ P.slot=alloc(P.w+2*PG,P.h+2*PG,ATLAS); });
@@ -224,13 +225,13 @@
     P.mesh.visible=P.ready; var p=place(r); P.mesh.position.set((p.cx)*p.f,p.cy*p.f,p.zc+1); P.mesh.rotation.set(0,p.th,0); P.mesh.scale.set(p.f,p.f,p.f); }); }
 
   // ---------- live text: per-leaf slot in the text atlas, redrawn only when its value changes ----------
-  var DPR=1.5;
+  var DPR=1.5, TP=12;
   function buildText(){
     var all=[]; panels.forEach(function(P){ if(P.ready&&!P.dyn) P.leaves.forEach(function(L){ L.P=P; all.push(L); }); });
     sx=sy=sh=0;
     var pos=new Float32Array(all.length*12), uv=new Float32Array(all.length*8), q=0;
     panels.forEach(function(P){ P.txtOk=true; });
-    all.forEach(function(L){ var w=Math.ceil(L.r.width*DPR)+8, h=Math.ceil(L.r.height*DPR)+8; L.slot=alloc(w,h,TATLAS); L.sw=w; L.sh=h; L.text=null; if(!L.slot) L.P.txtOk=false; });
+    all.forEach(function(L){ var w=Math.ceil(L.r.width*DPR)+2*TP, h=Math.ceil(L.r.height*DPR)+2*TP;   /* (v160) TP margin so glow shadows fade out instead of ending in a hard box */ L.slot=alloc(w,h,TATLAS); L.sw=w; L.sh=h; L.text=null; if(!L.slot) L.P.txtOk=false; });
     var TH=32; while(TH<sy+sh&&TH<TATLAS) TH*=2;
     if(tCv.height!==TH){ tCv.height=TH; tTex.dispose(); tTex=tx(tCv); txt.material.map=tTex; txt.material.needsUpdate=true; } else tCx.clearRect(0,0,TATLAS,TH);
     all.forEach(function(L){ var w=L.sw, h=L.sh; if(!L.slot) return;
@@ -241,16 +242,16 @@
     setGeo(txt,pos,uv,null,idxFor(q)); txt.userData.leaves=all;
   }
   function drawLeaf(L,s){
-    if(!L.cs){ var c0=getComputedStyle(L.el); L.cs={textTransform:c0.textTransform,fontStyle:c0.fontStyle,fontWeight:c0.fontWeight,fontSize:c0.fontSize,fontFamily:c0.fontFamily,letterSpacing:c0.letterSpacing,color:c0.color,textShadow:c0.textShadow,textAlign:c0.textAlign,paddingLeft:c0.paddingLeft}; }
+    if(!L.cs){ var c0=getComputedStyle(L.el); L.cs={textTransform:c0.textTransform,fontStyle:c0.fontStyle,fontWeight:c0.fontWeight,fontSize:c0.fontSize,fontFamily:c0.fontFamily,letterSpacing:c0.letterSpacing,color:c0.color,textShadow:c0.textShadow,textAlign:c0.textAlign,paddingLeft:c0.paddingLeft,k:(L.el.offsetWidth>0?Math.min(4,Math.max(.25,L.r.width/L.el.offsetWidth)):1)}; }
     var cs=L.cs, x=L.slot.x, y=L.slot.y; tCx.clearRect(x,y,L.sw,L.sh);   // (v156) style snapshot per layout, not a style read per redraw
     if(cs.textTransform==='uppercase') s=s.toUpperCase();
-    tCx.save(); tCx.beginPath(); tCx.rect(x,y,L.sw,L.sh); tCx.clip(); tCx.scale(DPR,DPR);
+    tCx.save(); tCx.beginPath(); tCx.rect(x,y,L.sw,L.sh); tCx.clip(); var K=DPR*cs.k; tCx.scale(K,K);
     tCx.font=cs.fontStyle+' '+cs.fontWeight+' '+cs.fontSize+' '+cs.fontFamily; try{ tCx.letterSpacing=cs.letterSpacing==='normal'?'0px':cs.letterSpacing; }catch(e){}
     tCx.fillStyle=cs.color; tCx.textBaseline='middle';
-    var ts=cs.textShadow; if(ts&&ts!=='none'){ var m=ts.match(/(rgba?\([^)]*\)|#[0-9a-f]+)\s+(-?[\d.]+)px\s+(-?[\d.]+)px\s+([\d.]+)px/i); if(m){ tCx.shadowColor=m[1]; tCx.shadowOffsetX=+m[2]*DPR; tCx.shadowOffsetY=+m[3]*DPR; tCx.shadowBlur=+m[4]*DPR; } }
-    var al=cs.textAlign, ox=x/DPR+4/DPR, w=(L.sw-8)/DPR; tCx.textAlign=al==='center'?'center':(al==='right'||al==='end')?'right':'left';
+    var ts=cs.textShadow; if(ts&&ts!=='none'){ var m=ts.match(/(rgba?\([^)]*\)|#[0-9a-f]+)\s+(-?[\d.]+)px\s+(-?[\d.]+)px\s+([\d.]+)px/i); if(m){ tCx.shadowColor=m[1]; tCx.shadowOffsetX=+m[2]*K; tCx.shadowOffsetY=+m[3]*K; tCx.shadowBlur=+m[4]*K; } }
+    var al=cs.textAlign, ox=x/K+TP/K, w=(L.sw-2*TP)/K; tCx.textAlign=al==='center'?'center':(al==='right'||al==='end')?'right':'left';
     var px=tCx.textAlign==='center'?ox+w/2:tCx.textAlign==='right'?ox+w:ox+(parseFloat(cs.paddingLeft)||0);
-    tCx.fillText(s,px,y/DPR+L.sh/DPR/2); tCx.restore();
+    tCx.fillText(s,px,y/K+L.sh/K/2); tCx.restore();
   }
   function updateText(){ var Ls=txt.userData.leaves||[], ch=false;
     for(var i=0;i<Ls.length;i++){ var L=Ls[i]; if(!L.slot) continue; var s=L.el.textContent.trim(); if(s!==L.text){ L.text=s; drawLeaf(L,s); ch=true; } }
@@ -271,7 +272,7 @@
       if(selfOnly(m)) continue;
       if(m.attributeName==='style'&&!styleLook(m.oldValue,t.getAttribute('style'))) continue;   // moves / sizes: ResizeObserver + 1 s net; knobs per frame
       layoutDirty=true;
-      for(var n=t;n&&n.nodeType===1;n=n.parentElement){ var P=panels.get(n); if(P){ P.force=true; P.sig=''; break; } } } }
+      for(var n=t;n&&n.nodeType===1;n=n.parentElement){ var P=panels.get(n); if(P){ P.force=true; break; } } } }   // paintSig sees the change; force skips the 1 s gate, capped at 10/s
   function watch(){
     if(!ro&&window.ResizeObserver){ ro=new ResizeObserver(function(){ layoutDirty=true; }); addEventListener('resize',function(){ layoutDirty=true; }); }
     if(!mo&&window.MutationObserver) mo=new MutationObserver(onMut);
@@ -296,7 +297,6 @@
     addEventListener('pointermove',function(e){ ptr.x=(e.clientX/innerWidth-0.5)*2; ptr.y=(e.clientY/innerHeight-0.5)*2; },{passive:true});
     // hover / press states repaint the panel under the pointer
     ['pointerover','pointerout','pointerdown','pointerup'].forEach(function(ev){ addEventListener(ev,function(e){ for(var n=e.target;n&&n.nodeType===1;n=n.parentElement){ var P=panels.get(n); if(P){ P.force=true; P.sig=''; break; } } },{passive:true}); });
-    setInterval(function(){ if(ghosted&&performance.now()-lastDraw>UNGHOST_MS) unghost(); },125);
     document.body.classList.add('dm-ui3d-mesh'); ready=true; return true;
   }
   function anyVis(){ if(art.visible||txt.visible) return true; var v=false; cvs.forEach(function(){ v=true; }); return v; }
@@ -304,10 +304,14 @@
   var paints=0, txtT=0, drewOK=false, wdFrames=0, wdT0=0, WD_MS=15000, why0='';
   function fallback(why){ why0=why; console.warn('[UI3D] mesh HUD failed ('+why+'); falling back to CSS tilt');
     try{ stop(); }catch(e){} mode='css'; drewOK=false; wdFrames=0; wdT0=0; try{ if(window.DMUI3D) DMUI3D.refresh(); }catch(e){} }
-  function ghostDrawn(){ lastDraw=performance.now(); ghosted=true;
+  var ugT=0;   // (v160) un-ghost watchdog runs only while something is ghosted under an on mesh HUD
+  function ugTick(){ if(!ghosted||!on()){ clearInterval(ugT); ugT=0; if(ghosted) unghost(); return; } if(performance.now()-lastDraw>UNGHOST_MS) unghost(); }
+  function ghostDrawn(){ lastDraw=performance.now(); ghosted=true; if(!ugT) ugT=setInterval(ugTick,125);
     panels.forEach(function(P){ var g=P.ready&&P.slot&&P.txtOk!==false&&(!P.dyn||P.mesh); if(g!==!!P.g){ P.g=g; P.el.classList.toggle('dm-ui3d-ghost',g); } });
     cvs.forEach(function(C){ if(!C.g){ C.g=true; C.el.classList.add('dm-ui3d-ghost'); } }); }
   function unghost(){ ghosted=false; panels.forEach(function(P){ if(P.g){ P.g=false; P.el.classList.remove('dm-ui3d-ghost'); } }); cvs.forEach(function(C){ if(C.g){ C.g=false; C.el.classList.remove('dm-ui3d-ghost'); } }); }
+  function introOn(){ try{ if(typeof INTRO!=='undefined'&&INTRO&&INTRO.on) return true; }catch(e){}
+    var v=document.getElementById('intro-veil'); if(v&&v.isConnected){ var c=getComputedStyle(v); if(c.display!=='none'&&parseFloat(c.opacity)>0.01) return true; } return false; }
   function overlay(R,kind){ try{ overlayBody(R,kind||'game'); }catch(e){ fallback('overlay threw: '+(e&&e.message)); } }
   function camSet(){ var vw=innerWidth, vh=innerHeight, d=camD();
     // camera-locked visor: a few px of parallax toward the pointer (the flat centre does not move)
@@ -315,13 +319,14 @@
     cam.aspect=vw/vh; cam.near=d*0.3; cam.far=d*2; cam.position.set(ptr.ex*PAR,-ptr.ey*PAR,d); cam.lookAt(0,0,0); cam.updateProjectionMatrix(); }
   function overlayBody(R,kind){
     if(!on()) return; if(!ready&&!setup(R)) return;
-    if((kind==='menu')!==menuHost()) return;               // only the renderer that owns the screen draws the HUD
+    if((kind==='menu')!==menuHost()) return;
+    if(introOn()){ if(ghosted) unghost(); return; }   // (v160) no HUD pass at all while the #197/#198 loading-intro veil or its dissolve is up
     if(!rOK(R)) return;
     var t0=performance.now();
     // (v156/v160) layout() forces a sync style+layout pass, so it is change-driven: a watched panel resizes, the window
     // resizes, a class/style changes inside the HUD (warning colours: immediate), the screen kind changes, or a 1 s safety net
     frameN++; var ln=performance.now();
-    if((layoutDirty&&ln-layoutT>=50)||kind!==lastKind||ln-layoutT>=LAYOUT_MS){ layoutDirty=false; lastKind=kind; layoutT=ln; layout(kind); }
+    if((layoutDirty&&ln-layoutT>=100)||kind!==lastKind||ln-layoutT>=LAYOUT_MS){ layoutDirty=false; lastKind=kind; layoutT=ln; layout(kind); }
     if(artDirty){ artDirty=false; buildArt(); txtGeoDirty=true; }
     if(txtGeoDirty){ txtGeoDirty=false; buildText(); txtT=0; }
     trackDyn();
@@ -346,7 +351,7 @@
     camSet();
     var ac=R.autoClear; R.autoClear=false; try{ R.clearDepth&&R.clearDepth(); R.render(scene,cam); drewOK=true; ghostDrawn(); } finally { R.autoClear=ac; } return true;   // drewOK only after R.render returned without throwing
   }
-  function stop(){ unghost(); panels.forEach(function(P,el){ el.classList.remove('dm-ui3d-ghost'); if(P.mesh) P.mesh.visible=false; }); panels.clear();
+  function stop(){ unghost(); if(ugT){ clearInterval(ugT); ugT=0; } try{ if(mo) mo.disconnect(); if(ro) ro.disconnect(); }catch(e){} mo=ro=null; roSeen=new WeakSet(); panels.forEach(function(P,el){ el.classList.remove('dm-ui3d-ghost'); if(P.mesh) P.mesh.visible=false; }); panels.clear();
     cvs.forEach(function(C){ C.el.classList.remove('dm-ui3d-ghost'); C.mesh.visible=false; }); cvs.clear();
     drewOK=false; wdFrames=0; wdT0=0; if(ready){ art.visible=txt.visible=false; } document.body.classList.remove('dm-ui3d-mesh'); }
 
