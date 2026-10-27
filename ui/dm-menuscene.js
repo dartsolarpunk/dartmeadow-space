@@ -534,13 +534,84 @@
       const par = { x: 0, y: 0, tx: 0, ty: 0 };
       const onPtr = (e) => { const p = e.touches ? e.touches[0] : e; if (!p) return; par.tx = (p.clientX / window.innerWidth - 0.5); par.ty = (p.clientY / window.innerHeight - 0.5); };
       window.addEventListener('pointermove', onPtr, { passive: true });
-      const startFocus = () => { if (FOC.phase === 1 || FOC.phase === 2) { if (FOC.phase === 2) FOC.t0 = t; return; } FOC.from = FOC.w; FOC.phase = 1; FOC.t0 = t; };
+      const startFocus = () => { if (IN.on || window.__JOTS_INTRO) return; if (FOC.phase === 1 || FOC.phase === 2) { if (FOC.phase === 2) FOC.t0 = t; return; } FOC.from = FOC.w; FOC.phase = 1; FOC.t0 = t; };
       const okTarget = (el) => !(el && el.closest && el.closest('.mm-panel,button,a,input,select,textarea,.modal,.modal-box,#account-chip,#float-music,[onclick]'));
       let gx = 0, gy = 0, gOk = false, gDone = false;
       const onDown = (e) => { const p = e.touches ? e.touches[0] : e; gx = p.clientX; gy = p.clientY; gOk = okTarget(e.target); gDone = false; };
       const onMove = (e) => { if (!gOk || gDone) return; const p = e.touches ? e.touches[0] : e; if (!p) return; if (Math.hypot(p.clientX - gx, p.clientY - gy) > 22 && (e.buttons || e.touches)) { gDone = true; startFocus(); } };
       const onUp = (e) => { if (gOk && !gDone && okTarget(e.target)) { gDone = true; startFocus(); } };
       window.addEventListener('pointerdown', onDown, { passive: true }); window.addEventListener('pointermove', onMove, { passive: true }); window.addEventListener('pointerup', onUp, { passive: true });
+      /* launch intro (v151): her skyboard flies over, she steps up onto it and lifts off into space.
+         The game hands in its own board mesh (her saved style) and its step + stance clips; nothing is shared back. */
+      const IN = { on: false, t: 0, board: null };
+      const introStart = (o) => {
+        if (IN.on || !o || !o.board) return false;
+        const b = o.board, bb = new THREE.Box3().setFromObject(b), sz = bb.getSize(new THREE.Vector3());
+        b.scale.multiplyScalar(1.6 / Math.max(0.2, sz.x, sz.z)); b.traverse(m => { if (m.isMesh) { m.castShadow = true; m.frustumCulled = false; } });
+        const N = new THREE.Vector3(-0.55, 0, -0.85).normalize();
+        const seatY = surfY(SEAT_X, 0, [boulder]);
+        const H = new THREE.Vector3(-1.0, seatY - 0.05, 0.5);
+        IN.H = H; IN.N = N; IN.phi = Math.atan2(-N.z, N.x); IN.rideYaw = Math.atan2(N.x, N.z) + (o.yawOff || 0);
+        IN.S = H.clone().add(new THREE.Vector3(6, 4, -10)); IN.Cc = H.clone().add(new THREE.Vector3(4.2, 0.5, 2.2));
+        IN.L = N.clone().multiplyScalar(0.75).add(new THREE.Vector3(0, 0.66, 0)).normalize();
+        IN.anchor = b.userData.deckAnchor || { x: 0, y: 0, z: 0 };
+        IN.D = new THREE.Vector3(); IN.F = new THREE.Vector3(); IN.rel = null; IN.tmp = new THREE.Vector3(); IN.qa = new THREE.Quaternion(); IN.qb = new THREE.Quaternion();
+        IN.seatPos = holder.position.clone(); IN.seatQ = holder.quaternion.clone(); IN.rideQ = new THREE.Quaternion().setFromAxisAngle(P.Y, IN.rideYaw);
+        IN.list = Object.keys(bones).map(n => bones[n]); IN.sq = IN.list.map(bn => bn.quaternion.clone()); IN.sp = IN.list.map(bn => bn.position.clone());
+        IN.keep = IN.list.map(bn => [bn.position.clone(), bn.quaternion.clone()]);
+        IN.jump = o.jump ? C.mixer.clipAction(o.jump) : null; IN.ride = o.ride ? C.mixer.clipAction(o.ride) : null;
+        if (IN.jump) { IN.jump.setLoop(THREE.LoopOnce, 1); IN.jump.clampWhenFinished = true; IN.jump.timeScale = Math.max(0.6, Math.min(2.4, o.jump.duration / (0.62 * 1.15))); }
+        IN.onFly = o.onFlyOff; IN.flew = false; IN.t = 0; IN.w = 0;
+        b.position.copy(IN.S); b.visible = false; scene.add(b); IN.board = b;
+        return renderer.compileAsync(scene, camera).catch(() => {}).then(() => { if (!IN.board) return; b.visible = true; IN.on = true; });
+      };
+      const bez = (a, c, d, u, out) => out.set(0, 0, 0).addScaledVector(a, (1 - u) * (1 - u)).addScaledVector(c, 2 * u * (1 - u)).addScaledVector(d, u * u);
+      const T_STEP = 1.85, T_LAND = T_STEP + 0.62, T_LIFT = T_LAND + 0.42;
+      // board + her placement for this frame (before the bones are posed)
+      const introPre = (dt) => {
+        const b = IN.board; IN.t += dt; const t = IN.t;
+        if (t < T_LIFT) {
+          const u = Math.min(1, t / 1.6), e = 1 - Math.pow(1 - u, 3);
+          bez(IN.S, IN.Cc, IN.H, e, b.position); bez(IN.S, IN.Cc, IN.H, Math.min(1, e + 0.02), IN.tmp);
+          const ty = IN.tmp.sub(b.position).lengthSq() > 1e-8 ? Math.atan2(-IN.tmp.z, IN.tmp.x) : IN.phi;
+          let dy = IN.phi - ty; dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+          b.rotation.set(0, ty + dy * smooth(0.45, 1, u), 0.0);
+          b.rotation.x = -0.45 * Math.sin(Math.PI * u) * (1 - u);
+          b.position.y += 0.025 * Math.sin(t * 2.6) * smooth(0.8, 1, u) - (t > T_LAND ? 0.05 * smooth(T_LAND, T_LAND + 0.15, t) * (1 - smooth(T_LAND + 0.15, T_LIFT, t)) : 0);
+        } else {
+          const s = t - T_LIFT, d = 0.45 * (Math.exp(3.4 * s) - 1);
+          b.position.copy(IN.H).addScaledVector(IN.L, d); b.rotation.set(0, IN.phi, 0.32 * smooth(0, 0.35, s));
+          if (!IN.flew && s > 0.55) { IN.flew = true; try { IN.onFly && IN.onFly(); } catch (e) {} }
+        }
+        b.updateMatrixWorld(true); IN.D.set(IN.anchor.x, IN.anchor.y, IN.anchor.z); b.localToWorld(IN.D); IN.D.y += 0.07;
+        if (t >= T_STEP && IN.jump && !IN.jump.isRunning() && !IN.jumped) { IN.jumped = true; IN.jump.reset().play(); }
+        if (t >= T_LAND - 0.12 && IN.ride && !IN.rode) { IN.rode = true; IN.ride.reset().play(); if (IN.jump) IN.jump.crossFadeTo(IN.ride, 0.28, false); }
+        const k = Math.min(1, Math.max(0, (t - T_STEP) / 0.62)), e = k * k * (3 - 2 * k);
+        IN.w = smooth(T_STEP - 0.05, T_STEP + 0.22, t);
+        if (IN.rel) { IN.tmp.copy(IN.D).add(IN.rel); holder.position.lerpVectors(IN.seatPos, IN.tmp, e); holder.position.y += Math.sin(Math.PI * k) * 0.22; }
+        holder.quaternion.slerpQuaternions(IN.seatQ, IN.rideQ, e);
+        holder.updateMatrixWorld(true);
+      };
+      // blend the seated pose (already solved this frame, snapshot into sq/sp) toward the clip pose
+      const introPost = () => {
+        const w = IN.w;
+        if (w > 0) for (let i = 0; i < IN.list.length; i++) { const bn = IN.list[i]; IN.qa.copy(bn.quaternion); bn.quaternion.slerpQuaternions(IN.sq[i], IN.qa, w); IN.tmp.copy(bn.position); bn.position.lerpVectors(IN.sp[i], IN.tmp, w); }
+        root.updateMatrixWorld(true);
+        if (IN.w > 0.5 && bones.LeftFoot && bones.RightFoot) {    // holder offset that puts her feet on the deck
+          bones.LeftFoot.getWorldPosition(IN.F); bones.RightFoot.getWorldPosition(IN.tmp); IN.F.add(IN.tmp).multiplyScalar(0.5);
+          IN.F.y = Math.min(IN.F.y, IN.tmp.y); const r = holder.position.clone().sub(IN.F);
+          if (!IN.rel) IN.rel = r; else IN.rel.lerp(r, IN.t > T_LAND ? 0.25 : 0.5);
+        } else if (!IN.rel && IN.w > 0) { /* first frames of the step: hold seat */ }
+      };
+      const introSnap = () => { for (let i = 0; i < IN.list.length; i++) { IN.sq[i].copy(IN.list[i].quaternion); IN.sp[i].copy(IN.list[i].position); } };
+      const introReset = () => {
+        if (IN.board) { scene.remove(IN.board); IN.board = null; }
+        if (!IN.list) return; IN.on = false;
+        try { C.mixer.stopAllAction(); if (IN.jump) C.mixer.uncacheAction(IN.jump.getClip()); if (IN.ride) C.mixer.uncacheAction(IN.ride.getClip()); } catch (e) {}
+        IN.list.forEach((bn, i) => { bn.position.copy(IN.keep[i][0]); bn.quaternion.copy(IN.keep[i][1]); });
+        holder.position.copy(IN.seatPos); holder.quaternion.copy(IN.seatQ); holder.updateMatrixWorld(true);
+        IN.list = null; IN.rel = null; IN.jumped = IN.rode = false;
+      };
       let raf = 0; const wind = new THREE.Vector3();
       const loop = (now) => {
         raf = requestAnimationFrame(loop); MS._raf = raf;
@@ -548,9 +619,11 @@
         const dt = Math.min(0.05, (now - last) / 1000); last = now; t += dt;
         ema += (dt * 1000 - ema) * 0.04;
         if (++adj > 90) { adj = 0; if (ema > 36 && pr > sc.pr * 0.5) { pr = Math.max(0.5, pr - 0.15); fit(); } else if (ema < 20 && pr < sc.pr) { pr = Math.min(sc.pr, pr + 0.1); fit(); } }
-        pose(t); face(t); root.updateMatrixWorld(true);
+        if (IN.on) introPre(dt);
+        pose(t); face(t); if (IN.on) introSnap(); root.updateMatrixWorld(true);
         if (hair) { wind.set(0.35 + 0.25 * Math.sin(t * 0.37), 0.02, 0.15 + 0.2 * Math.sin(t * 0.53 + 1)); hair.params.wind.copy(wind); }
         C.mixer.update(dt);
+        if (IN.on) introPost();
         // dust motes drift on the wind
         for (let i = 0; i < NM; i++) { const o = i * 3; mp[o] += mv[o] * dt; mp[o + 1] += mv[o + 1] * dt + Math.sin(t * 0.7 + i) * 0.0008; mp[o + 2] += mv[o + 2] * dt; if (mp[o] > 6) mp[o] = -6; if (mp[o + 1] > 3.6) mp[o + 1] = 0; if (mp[o + 1] < 0) mp[o + 1] = 3.6; }
         mg.attributes.position.needsUpdate = true;
@@ -575,14 +648,15 @@
           camera.position.lerp(closeP, e); camera.position.y += arc * 0.28; camera.position.addScaledVector(tmpC, arc * 0.18);
           tgtW.copy(headW); tgtW.y -= 0.03; tgtW.addScaledVector(tmpC, -0.12);
           camera.lookAt(tmpB.lerpVectors(TARGET, tgtW, e));
-        } else camera.lookAt(TARGET);
+        } else if (IN.on && IN.t > T_LIFT) { const s = IN.t - T_LIFT; bones.Hips.getWorldPosition(tmpC); camera.lookAt(tmpB.lerpVectors(TARGET, tmpC, 0.55 * smooth(0, 0.6, s))); }
+        else camera.lookAt(TARGET);
         if (MS._dbg) { camera.position.copy(MS._dbg.pos); camera.lookAt(MS._dbg.target); }
         if (cv.clientWidth !== lw || cv.clientHeight !== lh) { lw = cv.clientWidth; lh = cv.clientHeight; if (lw > 1) { fit(); adj = -120; ema = 16; } }
         renderer.render(scene, camera);
         if (++framesSeen === 3 && !MS.ready) { MS.ready = true; cv.classList.add('ms-in'); document.dispatchEvent(new CustomEvent('menuscene-ready')); try { const mv = document.querySelector('.menu-version'); if (mv && !/scene b/.test(mv.textContent)) mv.textContent += ' · scene b7'; } catch (e) {} info('ready (' + (renderer.backend && renderer.backend.isWebGPUBackend ? 'WebGPU' : 'WebGL2') + ', pr ' + pr.toFixed(2) + ')'); }
       };
       raf = requestAnimationFrame(loop);
-      MS._ctx = { focus: startFocus, FOC, renderer, scene, camera, hair: () => hair, pose, setMenuOpen: () => { menuT = t; }, cv, holder, root, boulder, ground, P, bones };
+      MS._ctx = { introStart, introReset, intro: IN, focus: startFocus, FOC, renderer, scene, camera, hair: () => hair, pose, setMenuOpen: () => { menuT = t; }, cv, holder, root, boulder, ground, P, bones };
       MS.dispose = function () {
         MS.disposed = true; MS.ready = false; cancelAnimationFrame(raf); window.removeEventListener('resize', onResize); window.removeEventListener('orientationchange', onResize); window.removeEventListener('pointermove', onPtr); window.removeEventListener('pointerdown', onDown); window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp);
         try { if (window.visualViewport) window.visualViewport.removeEventListener('resize', onResize); } catch (e) {}
@@ -599,6 +673,8 @@
     return MS._p;
   };
   MS.menuOpen = function () { try { MS._ctx && MS._ctx.setMenuOpen(); } catch (e) { } MS._menuOpenWanted = true; };
+  MS.introStart = function (o) { const c = MS._ctx; return c && c.introStart ? c.introStart(o) : false; };
+  MS.introReset = function () { try { MS._ctx && MS._ctx.introReset(); } catch (e) { } };
   MS.pause = function () { MS.paused = true; };
   MS.resume = function () { MS.paused = false; if (MS.disposed) { MS.disposed = false; MS._p = null; MS.start(); } };
 })();
