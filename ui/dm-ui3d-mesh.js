@@ -22,7 +22,7 @@
 (function(){
   'use strict';
   if(window.DMUI3DMesh) return;
-  var CURVE_DEG=28, PUSH=0.08, PAR=4, LAYERS=0, DEPTH=2, FOV=40, ATLAS=2048, TATLAS=2048, PAD=2, PG=6, LAYOUT_MS=1000, WALK_EVERY=3, UNGHOST_MS=500;
+  var CURVE_DEG=28, PUSH=0.08, PAR=4, LAYERS=1, DEPTH=0.6, FOV=40, ATLAS=2048, TATLAS=2048, PAD=2, PG=6, LAYOUT_MS=1000, WALK_EVERY=3, UNGHOST_MS=500;
   var SUB_SEL='.mini-kite,.hud-c';   // (v160) kites overflow their top bar: each is its own panel, cut out of the bar's raster
   var DYN_SEL='.joystick-knob,[id$="-knob"]', SKIP_SEL='#dm-perf-hud,#account-modal,#profile-modal,.jots-ov,.modal,#warp-overlay,#jots-chat,script,style,video,iframe,template';
   var FORM_SEL='input:not([type=checkbox]):not([type=radio]):not([type=range]),select,textarea';
@@ -86,6 +86,8 @@
   function roots(kind){ var o=[], f;
     if(kind==='menu'){ f=$('screen-menu'); if(f&&f.classList.contains('active')) o.push(f); ['loading-screen','mini-loader'].forEach(function(id){ var e=$(id); if(showing(e)) o.push(e); }); }
     else { f=$('screen-flight'); if(f&&f.classList.contains('active')) o.push(f); ['surface-overlay','atmo-overlay','dm-globe','mini-loader'].forEach(function(id){ var e=$(id); if(showing(e)) o.push(e); }); }
+    // (v175) transition menus (story / multiplayer choosers) are 3D too; any overlay with a text field stays DOM (caret, autofill, sign-in)
+    document.querySelectorAll('.jots-ov').forEach(function(e){ if(showing(e)&&!e.querySelector('input,textarea,select')) o.push(e); });
     return o; }
   function alphaOf2(c){ var m=/rgba?\(([^)]*)\)/.exec(c||''); if(!m) return c&&c!=='transparent'?1:0; var a=m[1].split(/[ ,\/]+/).filter(Boolean); return a.length>3?parseFloat(a[3]):1; }
   function boxed(el,cs){ var tn=el.tagName; if(tn==='BUTTON'||tn==='IMG'||tn.toLowerCase()==='svg'||tn==='A') return true;
@@ -295,6 +297,9 @@
   // an opaque halo filling the padded atlas cell (the 'light slab' look). Keep them as a hint: alpha x0.25.
   function softSh(st){ var v=st.getPropertyValue('box-shadow'); if(!v||v==='none') return;
     st.setProperty('box-shadow',v.replace(/rgba?\(([^)]+)\)/g,function(m,a){ var p=a.split(','); var al=p.length>3?parseFloat(p[3]):1; return 'rgba('+p[0]+','+p[1]+','+p[2]+','+(al*0.25).toFixed(3)+')'; })); }
+  // (v175) perf fallback (iPhone Safari / Mali): if the HUD pass averages > 3 ms over ~2 s, switch to the cheaper 2D box painter. No allocations.
+  var pgMs=0, pgN=0, IOS=/iP(hone|ad|od)/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+  function perfGuard(dt){ if(SAFE) return; pgMs+=dt; if(++pgN<120) return; var avg=pgMs/pgN; pgMs=0; pgN=0; if(avg>(IOS?2.5:3.5)){ SAFE=true; painter='box2d'; console.warn('[UI3D] HUD pass '+avg.toFixed(1)+'ms: 2D box painter'); } }
   // ---------- overlay pass on the renderer that owns the screen ----------
   function tx(c){ var t=new T.CanvasTexture(c); t.colorSpace=T.SRGBColorSpace; t.generateMipmaps=false; t.minFilter=T.LinearFilter; t.premultiplyAlpha=true; return t; }
   // glass: no depth write / test (sorted by renderOrder + far-to-near buffer order), front faces only
@@ -361,7 +366,7 @@
     catch(e){ R.autoClear=ac; fallback('render threw: '+(e&&e.message)); return; }
     finally { R.autoClear=ac; }
     if(ok){ drewOK=true; fails=0; ghostDrawn(); }
-    hudMs+=performance.now()-t0; hudN++;
+    var dtH=performance.now()-t0; hudMs+=dtH; hudN++; perfGuard(dtH);
   }
   // AR / camera passthrough: draw the HUD group on another renderer (layout/text keep updating in overlay())
   function drawTo(R){ if(!ready||!on()||!anyVis()) return false;
@@ -371,6 +376,7 @@
   }
   function stop(){ unghost(); if(ugT){ clearInterval(ugT); ugT=0; } try{ if(mo) mo.disconnect(); if(ro) ro.disconnect(); }catch(e){} mo=ro=null; roSeen=new WeakSet(); panels.forEach(function(P,el){ el.classList.remove('dm-ui3d-ghost'); if(P.mesh) P.mesh.visible=false; }); panels.clear();
     cvs.forEach(function(C){ C.el.classList.remove('dm-ui3d-ghost'); C.mesh.visible=false; }); cvs.clear();
+    sx=sy=sh=0; layoutDirty=true;
     drewOK=false; wdFrames=0; wdT0=0; if(ready){ art.visible=txt.visible=false; } document.body.classList.remove('dm-ui3d-mesh'); }
 
   window.DMUI3DMesh={
