@@ -299,13 +299,12 @@
   function softSh(st){ var v=st.getPropertyValue('box-shadow'); if(!v||v==='none') return;
     st.setProperty('box-shadow',v.replace(/rgba?\(([^)]+)\)/g,function(m,a){ var p=a.split(','); var al=p.length>3?parseFloat(p[3]):1; return 'rgba('+p[0]+','+p[1]+','+p[2]+','+(al*0.25).toFixed(3)+')'; })); }
   // (v175) perf fallback (iPhone Safari / Mali): if the HUD pass averages > 3 ms over ~2 s, switch to the cheaper 2D box painter. No allocations.
-  // (v197) Watcher: ignore the first ~2 s (shader compile / first raster), need TWO bad windows in a row to drop to box2d,
-  // and three good windows on box2d return to foreignObject (unless box2d was forced by ?ui3dsafe or the WebKit probe).
-  var pgMs=0, pgN=0, pgT0=0, pgBad=0, pgGood=0, pgAuto=false, IOS=/iP(hone|ad|od)/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
-  function perfGuard(dt){ if(SAFE&&!pgAuto) return; var n=performance.now(); if(!pgT0){ pgT0=n; return; } if(n-pgT0<2000) return;
-    pgMs+=dt; if(++pgN<120) return; var avg=pgMs/pgN, lim=IOS?2.5:3.5; pgMs=0; pgN=0;
-    if(!pgAuto){ if(avg>lim){ if(++pgBad>=2){ pgBad=0; pgGood=0; pgAuto=true; SAFE=true; painter='box2d'; console.warn('[UI3D] HUD pass '+avg.toFixed(1)+'ms x2: 2D box painter'); } } else pgBad=0; }
-    else if(avg<lim*0.5){ if(++pgGood>=3){ pgGood=0; pgAuto=false; SAFE=false; painter='foreignObject'; layoutDirty=true; panels.forEach(function(P){ P.busy=false; P.want=true; }); console.warn('[UI3D] HUD pass recovered: foreignObject painter'); } } else pgGood=0; }
+  // (v197) Watcher: ignore the first ~2 s (shader compile / first raster) and need TWO bad windows in a row to drop to box2d.
+  // The fallback then latches for the session: box2d timings can't judge foreignObject's cost, so no flip-flop / re-raster loop.
+  var pgMs=0, pgN=0, pgT0=0, pgBad=0, IOS=/iP(hone|ad|od)/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+  function perfGuard(dt){ if(SAFE) return; var n=performance.now(); if(!pgT0){ pgT0=n; return; } if(n-pgT0<2000) return;
+    pgMs+=dt; if(++pgN<120) return; var avg=pgMs/pgN; pgMs=0; pgN=0;
+    if(avg>(IOS?2.5:3.5)){ if(++pgBad>=2){ SAFE=true; painter='box2d'; console.warn('[UI3D] HUD pass '+avg.toFixed(1)+'ms x2: 2D box painter (latched)'); } } else pgBad=0; }
   // ---------- overlay pass on the renderer that owns the screen ----------
   function tx(c){ var t=new T.CanvasTexture(c); t.colorSpace=T.SRGBColorSpace; t.generateMipmaps=false; t.minFilter=T.LinearFilter; t.premultiplyAlpha=true; return t; }
   // glass: no depth write / test (sorted by renderOrder + far-to-near buffer order), front faces only
@@ -314,7 +313,8 @@
   function setup(R){
     T=window.THREE; if(!T) return false;
     if(!rOK(R)) return false;   // not a node-material renderer: this pass simply does not run on it
-    root=new T.Group(); root.userData.dmNoWarm=true; scene=new T.Scene(); scene.userData.dmNoWarm=true; scene.add(root); cam=new T.PerspectiveCamera(FOV,1,1,10);
+    root=new T.Group(); scene=new T.Scene();   // own overlay scene: edgewarm (#215) only walks flightScene, so HUD meshes are never warmed/batched there
+    scene.add(root); cam=new T.PerspectiveCamera(FOV,1,1,10);
     aCv=document.createElement('canvas'); aCv.width=ATLAS; aCv.height=64; aCx=aCv.getContext('2d');
     tCv=document.createElement('canvas'); tCv.width=TATLAS; tCv.height=32; tCx=tCv.getContext('2d');
     aTex=tx(aCv); tTex=tx(tCv);
