@@ -560,19 +560,19 @@
         IN.phi = Math.atan2(-N.z, N.x);
         // place from its real bounds at the parked pose (GLB pivots aren't centred): right side 0.7 m off the rock, nose end level with the rock's front
         const H = new THREE.Vector3(0, gY + 0.32, 0); b.position.copy(H); b.rotation.set(0, IN.phi, 0); b.updateMatrixWorld(true);
-        const pb = new THREE.Box3().setFromObject(b); H.x += (rb.min.x - 0.7) - pb.max.x; H.z += (rb.max.z + 0.3) - pb.max.z;
+        const a = b.userData.deckAnchor || { x: 0, y: 0, z: 0 };
+        const pb = new THREE.Box3().setFromObject(b), ac = b.localToWorld(new THREE.Vector3(a.x, a.y, a.z));
+        H.x += (rb.min.x - 0.7) - pb.max.x; H.z += (rb.min.z + rb.max.z) * 0.5 - ac.z;   // beside the rock: deck centre level with the rock's middle
         IN.H = H; IN.N = N; IN.rideYaw = Math.atan2(N.x, N.z) + (o.yawOff || 0);
         // flight: in from the front-right high, sweep across in front of the rock, swing round behind, then straight up the line to the stop
         IN.P0 = new THREE.Vector3(9, 5, -6); IN.P1 = new THREE.Vector3(2.5, 2.4, 3.5);
         IN.P2 = new THREE.Vector3(H.x - Lb * 0.8, 2.0, H.z - Lb * 1.6); IN.P3 = H.clone().addScaledVector(N, -Lb * 1.1); IN.P3.y += 0.5;
         IN.L = new THREE.Vector3(0, 1, 0).addScaledVector(N, -0.35).normalize();
         // where she boards: the deck beside the rock (local point under world z≈0 at the final pose)
-        const a = b.userData.deckAnchor || { x: 0, y: 0, z: 0 };
         b.position.copy(H); b.rotation.set(0, IN.phi, 0); b.updateMatrixWorld(true); pb.setFromObject(b);
-        const bz = Math.max(pb.min.z + 0.5, rb.max.z - 0.2), cx = (pb.min.x + pb.max.x) * 0.5;
-        const lp = b.worldToLocal(new THREE.Vector3(cx, H.y, bz));
-        IN.Dl = new THREE.Vector3(lp.x, a.y, a.z);
-        IN.W = new THREE.Vector3(pb.max.x + 0.3, 0, bz);
+        IN.Dl = new THREE.Vector3(a.x, a.y, a.z);                       // she boards and rides on the deck centre
+        ac.set(a.x, a.y, a.z); b.localToWorld(ac);
+        IN.W = new THREE.Vector3(pb.max.x + 0.3, 0, ac.z);
         IN.W.y = surfY(IN.W.x, IN.W.z);
         IN.D = new THREE.Vector3(); IN.F = new THREE.Vector3(); IN.FT = new THREE.Vector3(); IN.rel = null; IN.tmp = new THREE.Vector3(); IN.qa = new THREE.Quaternion(); IN.qb = new THREE.Quaternion();
         IN.seatPos = holder.position.clone(); IN.seatQ = holder.quaternion.clone(); IN.rideQ = new THREE.Quaternion().setFromAxisAngle(P.Y, IN.rideYaw);
