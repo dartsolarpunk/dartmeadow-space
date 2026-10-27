@@ -161,7 +161,7 @@ window.DMPerf=window.DMPerf||{on:false,b(){},e(){},mark(){},measure(n,f){return 
 <script src="ui/dm-fluid.js?v=80"></script>
 <script src="ui/dm-journal.js?v=98"></script>
 <script src="ui/dm-worldstyle.js?v=94"></script>
-<script src="ui/dm-sky.js?v=138"></script>
+<script src="ui/dm-sky.js?v=162"></script>
 <script src="ui/dm-dust.js?v=95"></script>
 <!-- crunch1 true-fluid VFX (WebGPU only; WebGL keeps the current ocean/dust/fumes) -->
 <script src="ui/dm-fluid-core.js?v=136"></script>
@@ -6611,7 +6611,10 @@ function _startFlightLoop(){
   (function loop(){
     flightAnimId=requestAnimationFrame(loop);
     const now=performance.now(); DMPerf.frame();
-    const dt=Math.min((now-_flightLoopLast)/1000,0.05);
+    // (v162) after a stall (tab switch, a GC or a late shader build) advance one normal frame, not the 50 ms cap:
+    // held sticks/keys then pick up where they were instead of lurching forward by the whole cap.
+    const _rawDt=(now-_flightLoopLast)/1000, dt=_rawDt>0.25?1/60:Math.min(_rawDt,0.05);
+    if(_rawDt>0.25) window._dmLongFrameAt=now;
     _flightLoopLast=now;flightTime+=dt;
 
     _applyFlightResizeIfPending();
