@@ -1,0 +1,32 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Board detail viewer (three r185)</title>
+<style>html,body{margin:0;background:#05060a}canvas{display:block}</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js","three/webgpu":"https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js","three/tsl":"https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.tsl.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.185.0/examples/jsm/"}}</script>
+</head><body><script type="module">
+// Standalone close-up viewer: pulls the live _alloyMaterial (+ detail helper)
+// out of the page source (?src=../index.html) and renders skyboard_B.glb.
+// ?dist=0.35 camera distance (board is 3 units long).
+import * as THREE_NS from 'three/webgpu'; import * as TSL from 'three/tsl';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+const THREE=Object.assign({},THREE_NS); THREE.TSL=TSL; window.THREE=THREE; Object.assign(window,TSL);
+const q=new URLSearchParams(location.search), dist=+(q.get('dist')||0.35);
+window.STATE={boardConfig:{}}; window.GFX={envReflections:false};
+const src=await (await fetch(q.get('src')||'../index.html')).text();
+const grab=(start,end)=>{const i=src.indexOf(start);return src.slice(i,src.indexOf(end,i));};
+let code=grab('function _alloyMaterial','\n// Translucent pieces');
+if(src.includes('let _boardDetail=null')) code=grab('let _boardDetail=null','function _alloyMaterial')+code;
+code=code.replace(/assets\/board-detail/g,'../assets/board-detail');
+(0,eval)(code.replace('let _boardDetail','var _boardDetail'));
+const r=new THREE.WebGPURenderer({antialias:true,forceWebGL:q.has('gl')}); r.setSize(1280,720); r.setPixelRatio(1); document.body.appendChild(r.domElement); await r.init();
+const scene=new THREE.Scene(), cam=new THREE.PerspectiveCamera(50,1280/720,0.01,100);
+scene.add(new THREE.AmbientLight(0x404050,1.0)); const sun=new THREE.DirectionalLight(0xfff4e0,3.2); sun.position.set(-1,1.6,0.6); scene.add(sun);
+const g=await new GLTFLoader().loadAsync('../skyboard_B.glb'); const root=g.scene;
+root.updateMatrixWorld(true); root.traverse(o=>{ if(o.isMesh){ o.geometry=o.geometry.clone(); o.geometry.applyMatrix4(o.matrixWorld);} }); root.traverse(o=>{o.position.set(0,0,0);o.rotation.set(0,0,0);o.scale.set(1,1,1);});
+const box=new THREE.Box3().setFromObject(root), sz=box.getSize(new THREE.Vector3()), c=box.getCenter(new THREE.Vector3());
+const M=new THREE.Matrix4(); if(sz.y>=sz.x&&sz.y>=sz.z) M.makeRotationZ(Math.PI/2); M.multiply(new THREE.Matrix4().makeTranslation(-c.x,-c.y,-c.z));
+const s=3/Math.max(sz.x,sz.y,sz.z); root.scale.setScalar(s); const pivot=root; scene.add(root);
+root.traverse(o=>{ if(!o.isMesh) return; o.geometry.applyMatrix4(M); const n=o.geometry.attributes.position.count, a=new Float32Array(n*3); for(let i=0;i<n;i++){a[i*3]=0.62;a[i*3+1]=0.66;a[i*3+2]=0.74;} o.geometry.setAttribute('color',new THREE.BufferAttribute(a,3)); o.material=window._alloyMaterial(0.8,{shine:0.6,brush:0.7,scale:0.5,pattern:'linear',bump:0.5,height:0.08,detailScale:s})||o.material; });
+scene.updateMatrixWorld(true); const bb=new THREE.Box3().setFromObject(pivot);
+cam.position.set(0.2,bb.max.y+dist*0.8,dist); cam.lookAt(0.0,bb.max.y-0.02,0);
+await new Promise(r=>setTimeout(r,1500)); for(let i=0;i<4;i++){ await r.renderAsync(scene,cam); await new Promise(r=>setTimeout(r,200)); }
+document.title='READY';
+</script></body></html>
