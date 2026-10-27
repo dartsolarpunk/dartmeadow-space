@@ -233,7 +233,7 @@ html.xh-off #ar-crosshair{display:none !important;}
 }
 
 /* ── small kite: the world you're visiting, on the surface and in atmospheric flight ── */
-.mini-kite{position:absolute;top:6px;left:50%;width:230px;height:102px;transform:translateX(-50%);pointer-events:none;isolation:isolate;z-index:1;
+.mini-kite{position:absolute;top:6px;left:50%;width:244px;height:112px;transform:translateX(-50%);pointer-events:none;isolation:isolate;z-index:1;
   background:linear-gradient(158deg,rgba(var(--hi-rgb),.2),rgba(var(--panel-rgb),.3) 42%,rgba(var(--panel-rgb),.26) 60%,rgba(var(--acc-rgb),.24));
   backdrop-filter:blur(12px) saturate(140%);-webkit-backdrop-filter:blur(12px) saturate(140%);
   clip-path:polygon(0 48%,21% 0,100% 47%,21% 100%);}
@@ -247,7 +247,7 @@ html.xh-off #ar-crosshair{display:none !important;}
 .mini-kite>span{position:absolute;transform:translate(-50%,-50%);white-space:nowrap;}
 .mini-kite .mk-name{left:40%;top:28%;max-width:58%;overflow:hidden;text-overflow:ellipsis;font-family:var(--font-hud);font-size:.74rem;letter-spacing:.34em;color:var(--text);text-shadow:0 0 10px rgba(var(--acc-rgb),.7);}
 .mini-kite .mk-mode{left:58%;top:41%;font-family:var(--font-hud);font-size:.42rem;letter-spacing:.22em;color:rgba(var(--hi-rgb),.95);text-shadow:0 0 4px rgba(0,0,0,.6),0 0 8px rgba(var(--hi-rgb),.6);}
-.mini-kite .mk-read{left:36%;top:66%;font-family:var(--font-mono);font-size:.58rem;color:var(--text);text-shadow:0 0 6px rgba(var(--hi-rgb),.8);}
+.mini-kite .mk-read{left:38%;top:61%;font-family:var(--font-mono);font-size:.58rem;color:var(--text);text-shadow:0 0 6px rgba(var(--hi-rgb),.8);}
 @media (max-width:760px){ .mini-kite{transform:translateX(-50%) scale(.8);transform-origin:50% 0;} }
 /* nothing under the crosshair to anchor to: a short shake instead of a message */
 #screen-flight .side-pad.nope{animation:padNope .4s ease;}
