@@ -23768,9 +23768,14 @@ function _pwBuildGround(pal,fx,fz,mode){
       if(PW.scene){
         if(!TERRAIN._climbRay){ TERRAIN._climbRay=new THREE.Raycaster(); TERRAIN._climbRay.far=3.2; }
         const origin=new THREE.Vector3(x,y,z);
+        // (v150) only the climbable subtrees are tested (hits on anything else were skipped anyway); the list of topmost
+        // climbable objects is refreshed every 250 ms instead of ray-testing the whole scene (skinned character included) 8×
+        const now=performance.now(); let roots=TERRAIN._climbRoots;
+        if(!roots||now-(TERRAIN._climbRootsT||0)>250){ roots=[]; const walk=o=>{ const u=o.userData; if(u&&(u.climbable||u.cliff||u.rope)){ roots.push(o); return; } const ch=o.children; for(let k=0;k<ch.length;k++) walk(ch[k]); }; walk(PW.scene); TERRAIN._climbRoots=roots; TERRAIN._climbRootsT=now; }
+        if(!roots.length) return null;
         for(let i=0;i<8;i++){
           const a=i*Math.PI/4; TERRAIN._climbRay.set(origin,new THREE.Vector3(Math.cos(a),0,Math.sin(a))); TERRAIN._climbRay.camera=PW.camera;   // sprites in the scene need it
-          const hits=TERRAIN._climbRay.intersectObjects(PW.scene.children,true);
+          const hits=TERRAIN._climbRay.intersectObjects(roots,true);
           for(const h of hits){
             let climb=false; for(let cur=h.object;cur;cur=cur.parent){ const u=cur.userData; if(u&&(u.climbable||u.cliff||u.rope)){ climb=true; break; } }
             if(climb&&h.face) return h.face.normal.clone().transformDirection(h.object.matrixWorld).normalize();
@@ -23930,6 +23935,17 @@ function _propKit(){ if(!_propShared){ const sh=(m)=>{ m.userData.shared=true; r
   _propShared={rock:sh(new THREE.MeshStandardMaterial({color:0xffffff,roughness:0.92})), trunk:sh(new THREE.MeshStandardMaterial({color:0x4a3220,roughness:1})), crown:sh(new THREE.MeshStandardMaterial({color:0xffffff,roughness:1})),
     tGeo:new THREE.CylinderGeometry(0.7,1,1,6), cGeo:new THREE.ConeGeometry(1,1,7)}; _propShared.tGeo.userData.shared=_propShared.cGeo.userData.shared=true; }
   return _propShared; }
+// (v150) three's node InstanceNode bakes the instance count into the shader (a uniform mat4 array of that size), so every
+// chunk with a different rock/tree count built a new pipeline mid-walk (84 in 10 s headless, 77% of the CPU). Counts are
+// rounded up to a few fixed sizes; the spare slots copy instance 0's position at zero scale (no area, bounds unchanged).
+function _propCap(n){ let c=16; while(c<n) c*=2; return c; }
+function _propPad(im,n){
+  const cap=im.count; if(n>=cap) return;
+  const M=new THREE.Matrix4(), p=new THREE.Vector3(), q=new THREE.Quaternion(), sc=new THREE.Vector3();
+  im.getMatrixAt(0,M); M.decompose(p,q,sc); M.compose(p,q,sc.set(0,0,0));
+  const c=im.instanceColor?new THREE.Color():null; if(c) im.getColorAt(0,c);
+  for(let k=n;k<cap;k++){ im.setMatrixAt(k,M); if(c) im.setColorAt(k,c); }
+}
 // Rocks (and trees on living worlds) for one near chunk — instanced, seeded by the chunk.
 function _hmChunkScatter(i,j){
   const H=TERRAIN.H, pal=TERRAIN.pal, C=SURF_CHUNK, rnd=_rng32(_chunkSeed(i,j,TERRAIN.seed||1));
@@ -23958,9 +23974,10 @@ function _hmChunkScatter(i,j){
   const geo=TERRAIN.rockGeo||(TERRAIN.rockGeo=new THREE.DodecahedronGeometry(1,0));
   const mkRocks=(list,climb)=>{
     if(!list.length) return;
-    const im=new THREE.InstancedMesh(geo,_propKit().rock,list.length);
+    const im=new THREE.InstancedMesh(geo,_propKit().rock,_propCap(list.length));
     const M=new THREE.Matrix4(), q=new THREE.Quaternion(), e=new THREE.Euler();
     list.forEach((r,k)=>{ e.set(r.r[0],r.r[1],r.r[2]); q.setFromEuler(e); M.compose(new THREE.Vector3(r.x,r.h+r.s*0.3,r.z),q,new THREE.Vector3(r.s,r.s*r.sy,r.s)); im.setMatrixAt(k,M); im.setColorAt(k,r.c); });
+    _propPad(im,list.length);
     im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true;
     if(climb){ im.userData.climbable=true; im.userData.cliff=true; }
     if(GFX.shadows){ im.receiveShadow=true; im.castShadow=(GFX.shadowSize||0)>=1024; }
@@ -23972,8 +23989,8 @@ function _hmChunkScatter(i,j){
     const trees=rocks.filter(r=>r.h>3&&r.h<40&&((r.x*12.9898+r.z*78.233)%1+1)%1>0.6);
     if(trees.length){
       const K=_propKit();
-      const trunks=new THREE.InstancedMesh(K.tGeo,K.trunk,trees.length);
-      const crowns=new THREE.InstancedMesh(K.cGeo,K.crown,trees.length);
+      const trunks=new THREE.InstancedMesh(K.tGeo,K.trunk,_propCap(trees.length));
+      const crowns=new THREE.InstancedMesh(K.cGeo,K.crown,_propCap(trees.length));
       const M=new THREE.Matrix4(), q=new THREE.Quaternion();
       trees.forEach((t,k)=>{
         const th=R(2.5,4), tr=R(0.12,0.22), ch=R(2.5,4.5), cr=R(0.9,1.6), tx=t.x+3, tz=t.z+2, hh=H(tx,tz);
@@ -23981,6 +23998,7 @@ function _hmChunkScatter(i,j){
         M.compose(new THREE.Vector3(tx,hh+th+ch*0.35,tz),q,new THREE.Vector3(cr,ch,cr)); crowns.setMatrixAt(k,M);
         crowns.setColorAt(k,new THREE.Color(0x1f5520).offsetHSL(0,0,(rnd()-0.5)*0.12));
       });
+      _propPad(trunks,trees.length); _propPad(crowns,trees.length);
       [trunks,crowns].forEach(o=>{ o.instanceMatrix.needsUpdate=true; if(o.instanceColor) o.instanceColor.needsUpdate=true; if(GFX.shadows) o.castShadow=true; o.computeBoundingSphere(); g.add(o); });
     }
   }
