@@ -1003,7 +1003,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-star.js?v=8" defer></script>
 <script src="ui/dm-mist.js?v=7" defer></script>
 <script src="ui/dm-atmo.js?v=150" defer></script>
-<script src="ui/dm-menuscene.js?v=8" defer></script>
+<script src="ui/dm-menuscene.js?v=9" defer></script>
 <script src="ui/dm-starbubble.js?v=3" defer></script>
 <script src="ui/dm-birdtemple.js?v=122" defer></script>
 <script src="ui/dm-bt-engineering.js?v=5" defer></script>
@@ -2916,13 +2916,13 @@ window._jotsIntro=INTRO;
 function _introBegin(){
   const M=window.DM_MENUSCENE, cv=document.getElementById('menu-scene-canvas');
   if(INTRO.on||!M||M.failed||!M._ctx||!cv||matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
-  INTRO.on=true; INTRO.phase='hold'; INTRO.where=null; INTRO.t0=performance.now(); INTRO.stable=0; INTRO.skip=false; window.__JOTS_INTRO=INTRO;
+  INTRO.on=true; INTRO.phase='hold'; INTRO.where=null; INTRO.t0=performance.now(); INTRO.stable=0; INTRO.sig=''; INTRO.sigT=INTRO.t0; INTRO.skip=false; window.__JOTS_INTRO=INTRO;
   let v=document.getElementById('intro-veil');
   if(!v){ v=document.createElement('div'); v.id='intro-veil';
     v.innerHTML='<div id="intro-ui"><img src="static/dartmeadow-logo.svg" alt=""><div class="iv-track"><div id="intro-bar"></div></div><div id="intro-status">Loading…</div></div>';
     document.body.appendChild(v); }
   v.className=''; v.style.opacity='1'; v.insertBefore(cv,v.firstChild); INTRO.veil=v;
-  v.onpointerdown=()=>{ INTRO.skip=true; if(INTRO.phase==='play') _introDissolve(350); };
+  v.onpointerdown=()=>{ INTRO.skip=true; if(INTRO.phase==='hold'||INTRO.phase==='play'){ clearInterval(INTRO.iv); _introDissolve(350); } };
   clearTimeout(M._dispT); M.resume();
   clearInterval(INTRO.iv); INTRO.iv=setInterval(_introTick,100);
   return true;
@@ -2940,11 +2940,17 @@ function _introWorldReady(){
 function _introTick(){
   if(!INTRO.on) return;
   const pct=_loadTotalPct(), bar=document.getElementById('intro-bar'), st=document.getElementById('intro-status');
-  const ok=_introWorldReady(); INTRO.stable=ok?INTRO.stable+1:0;
+  const ok=_introWorldReady(), now=performance.now(); INTRO.stable=ok?INTRO.stable+1:0;
+  // stall guard: once the base load is done, if the readiness inputs stop changing for ~10 s without settling
+  // (stuck in-view tile, saved-mode mismatch, …) stop waiting
+  const G=PW.ground, MC=typeof TERRAIN!=='undefined'&&TERRAIN.cpuMc;
+  const sig=[pct|0,flightInited,!!CHAR.loaded,PW.active,PW.mode,!!PW.opening,!!PW._resumeHold,!!SHIP_WALK.active,G&&G.queue?G.queue.length:-1,MC&&MC.queue?MC.queue.length:-1].join();
+  if(ok||sig!==INTRO.sig){ INTRO.sig=sig; INTRO.sigT=now; }
+  const stalled=!ok&&pct>=100&&now-INTRO.sigT>10000;
   if(bar) bar.style.width=Math.min(100,pct*0.8+(ok?20:0))+'%';
   if(st&&INTRO.phase==='hold') st.textContent=pct<100?'Loading Ariel…':'Building the world…';
-  // ~1 s settled (or a 150 s ceiling so a stuck build never traps the player behind the veil)
-  if(INTRO.phase==='hold'&&(INTRO.stable>=10||performance.now()-INTRO.t0>150000)) _introPlay();
+  // ~1 s settled, a ~10 s stall, or a 25 s ceiling so a stuck build never traps the player behind the veil
+  if(INTRO.phase==='hold'&&(INTRO.stable>=10||stalled||now-INTRO.t0>25000)) _introPlay();
 }
 function _introPlay(){
   INTRO.phase='play'; clearInterval(INTRO.iv); INTRO.veil.classList.add('iv-go');
@@ -2953,7 +2959,7 @@ function _introPlay(){
   let p=false;
   try{
     const clip=n=>CHAR.actions&&CHAR.actions[n]?CHAR.actions[n].getClip():null;
-    p=M.introStart({board:buildBoardMesh(),jump:clip(CHAR_BOARD_TRANSITIONS.step.clip),ride:clip('skyboard'),onFlyOff:()=>_introDissolve(900)});
+    const _t=STATE.boardConfig.template; p=M.introStart({board:buildBoardMesh(),sharedTex:!!(_t&&_t!=='R'&&_t!=='procedural'),jump:clip(CHAR_BOARD_TRANSITIONS.step.clip),ride:clip('skyboard'),onFlyOff:()=>_introDissolve(900)});
   }catch(e){ console.warn('[intro]',e); }
   if(!p){ _introDissolve(350); return; }
   // safety: dissolve if the intro stalls (no progress for ~10 s) or runs past 8 s of intro time

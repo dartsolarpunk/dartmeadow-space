@@ -561,7 +561,7 @@
         IN.keep = IN.list.map(bn => [bn.position.clone(), bn.quaternion.clone()]);
         IN.jump = o.jump ? C.mixer.clipAction(o.jump) : null; IN.ride = o.ride ? C.mixer.clipAction(o.ride) : null;
         if (IN.jump) { IN.jump.setLoop(THREE.LoopOnce, 1); IN.jump.clampWhenFinished = true; IN.jump.timeScale = Math.max(0.6, Math.min(2.4, o.jump.duration / (0.62 * 1.15))); }
-        IN.onFly = o.onFlyOff; IN.flew = false; IN.t = 0; IN.w = 0;
+        IN.sharedTex = !!o.sharedTex; IN.onFly = o.onFlyOff; IN.flew = false; IN.t = 0; IN.w = 0;
         b.position.copy(IN.S); b.visible = false; scene.add(b); IN.board = b;
         return renderer.compileAsync(scene, camera).catch(() => {}).then(() => { if (!IN.board) return; b.visible = true; IN.on = true; });
       };
@@ -605,9 +605,15 @@
       };
       const introSnap = () => { for (let i = 0; i < IN.list.length; i++) { IN.sq[i].copy(IN.list[i].quaternion); IN.sp[i].copy(IN.list[i].position); } };
       const introReset = () => {
-        if (IN.board) { scene.remove(IN.board); IN.board = null; }
+        if (IN.board) { // the intro board is its own instance (GLB clones own geometry+materials); textures of a GLB template stay with the game's cache
+          const b = IN.board; scene.remove(b); IN.board = null;
+          b.traverse(m => { if (!m.geometry && !m.material) return; try { m.geometry && m.geometry.dispose(); } catch (e) {}
+            (Array.isArray(m.material) ? m.material : [m.material]).forEach(mt => { if (!mt) return;
+              if (!IN.sharedTex) for (const k in mt) { const v = mt[k]; if (v && v.isTexture) try { v.dispose(); } catch (e) {} }
+              try { mt.dispose(); } catch (e) {} }); });
+        }
         if (!IN.list) return; IN.on = false;
-        try { C.mixer.stopAllAction(); if (IN.jump) C.mixer.uncacheAction(IN.jump.getClip()); if (IN.ride) C.mixer.uncacheAction(IN.ride.getClip()); } catch (e) {}
+        try { [IN.jump, IN.ride].forEach(a => { if (a) a.stop(); }); if (IN.jump) C.mixer.uncacheAction(IN.jump.getClip()); if (IN.ride) C.mixer.uncacheAction(IN.ride.getClip()); } catch (e) {}
         IN.list.forEach((bn, i) => { bn.position.copy(IN.keep[i][0]); bn.quaternion.copy(IN.keep[i][1]); });
         holder.position.copy(IN.seatPos); holder.quaternion.copy(IN.seatQ); holder.updateMatrixWorld(true);
         IN.list = null; IN.rel = null; IN.jumped = IN.rode = false;
