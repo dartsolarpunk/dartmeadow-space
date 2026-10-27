@@ -994,7 +994,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-globe.js?v=8" defer></script>
 <script src="ui/dm-star.js?v=8" defer></script>
 <script src="ui/dm-mist.js?v=7" defer></script>
-<script src="ui/dm-atmo.js?v=135" defer></script>
+<script src="ui/dm-atmo.js?v=150" defer></script>
 <script src="ui/dm-menuscene.js?v=7" defer></script>
 <script src="ui/dm-starbubble.js?v=3" defer></script>
 <script src="ui/dm-birdtemple.js?v=122" defer></script>
@@ -18405,7 +18405,7 @@ function _taDt(){
 function _taAuto(){ try{ return typeof GFX!=='undefined'&&GFX.preset==='auto'; }catch(e){ return false; } }
 // automatic reductions are Auto-only: the low tier under Auto, or a sustained bad frame time, hands back to the classic shells
 function _taPerfOff(){ if(!_taAuto()||/[?&]trueatmo=1\b/.test(location.search)) return false; if(_TA.slow) return true; try{ return typeof resolvePreset==='function'&&resolvePreset()==='low'; }catch(e){ return false; } }
-function _taHalf(){ try{ return _taAuto(); }catch(e){ return false; } }   // (v130) half-res gas march under Auto on every device; manual presets stay full-res
+function _taHalf(){ try{ return _taAuto()||(GFX.isMobile&&(GFX.preset==='high'||GFX.preset==='ultra')); }catch(e){ return false; } }   // (v150) phones/tablets on High/Ultra: half-res gas, depth-aware composite at full res (Low/Medium unchanged)   // (v130) half-res gas march under Auto on every device; manual presets stay full-res
 // async WebGPU failure fallback: device loss, and validation/OOM errors raised by the pass itself in its first frames
 function _taGuardBegin(r){
   const dev=r&&r.backend&&r.backend.isWebGPUBackend?r.backend.device:null; if(!dev) return null;
@@ -23067,6 +23067,45 @@ function mcCleanFragments(d, G, gap, minCells){
 }
 window.mcCleanFragments=mcCleanFragments;
 
+// XZ bucket grid over a static mesh's triangles (built once per mesh, lazily). Query returns the topmost triangle under (x,z)
+// whose height is ≤ yTop — the first hit of a straight-down ray — as {point:{x,y,z},face:{normal},object}.
+function _mcGridBuild(m){
+  const g=m.geometry, P=g.attributes.position.array, I=g.index?g.index.array:null, nt=(I?I.length:P.length/3)/3|0;
+  g.computeBoundingBox(); const bb=g.boundingBox, C=4, nx=Math.max(1,Math.ceil((bb.max.x-bb.min.x)/C)), nz=Math.max(1,Math.ceil((bb.max.z-bb.min.z)/C));
+  const cnt=new Uint32Array(nx*nz+1), tri=new Float32Array(nt*9);
+  const cell=(v,mn,n)=>Math.min(n-1,Math.max(0,Math.floor((v-mn)/C)));
+  const rng=new Int32Array(nt*4);
+  for(let t=0;t<nt;t++){ let x0=1e30,x1=-1e30,z0=1e30,z1=-1e30;
+    for(let k=0;k<3;k++){ const vi=I?I[t*3+k]:t*3+k; const X=P[vi*3],Y=P[vi*3+1],Z=P[vi*3+2]; tri[t*9+k*3]=X; tri[t*9+k*3+1]=Y; tri[t*9+k*3+2]=Z; if(X<x0)x0=X; if(X>x1)x1=X; if(Z<z0)z0=Z; if(Z>z1)z1=Z; }
+    const a=cell(x0,bb.min.x,nx),b=cell(x1,bb.min.x,nx),c=cell(z0,bb.min.z,nz),d=cell(z1,bb.min.z,nz); rng[t*4]=a;rng[t*4+1]=b;rng[t*4+2]=c;rng[t*4+3]=d;
+    for(let j=c;j<=d;j++) for(let i=a;i<=b;i++) cnt[j*nx+i+1]++; }
+  for(let i=1;i<cnt.length;i++) cnt[i]+=cnt[i-1];
+  const fill=cnt.slice(0,nx*nz), list=new Uint32Array(cnt[nx*nz]);
+  for(let t=0;t<nt;t++) for(let j=rng[t*4+2];j<=rng[t*4+3];j++) for(let i=rng[t*4];i<=rng[t*4+1];i++) list[fill[j*nx+i]++]=t;
+  return {mnx:bb.min.x,mnz:bb.min.z,C,nx,nz,start:cnt,list,tri};
+}
+function _mcGridHit(m,wx,wz,yTop){
+  if(!m.geometry||!m.geometry.attributes.position) return null;
+  let G=m.userData._xzGrid; if(!G||G.geo!==m.geometry){ G=_mcGridBuild(m); G.geo=m.geometry; m.userData._xzGrid=G; }
+  const E=m.matrixWorld.elements;
+  if(Math.abs(E[0]-1)+Math.abs(E[5]-1)+Math.abs(E[10]-1)+Math.abs(E[1])+Math.abs(E[2])+Math.abs(E[4])+Math.abs(E[6])+Math.abs(E[8])+Math.abs(E[9])>1e-9){
+    // rotated/scaled parent: fall back to the plain downward raycast
+    if(!_mcGridHit.ray){ _mcGridHit.ray=new THREE.Raycaster(); _mcGridHit.ray.far=1000; }
+    _mcGridHit.ray.set(new THREE.Vector3(wx,yTop,wz),new THREE.Vector3(0,-1,0)); const h=_mcGridHit.ray.intersectObject(m,false); return h.length?h[0]:null; }
+  const tx=E[12],ty=E[13],tz=E[14], x=wx-tx, z=wz-tz, top=yTop-ty;
+  const i=Math.floor((x-G.mnx)/G.C), j=Math.floor((z-G.mnz)/G.C); if(i<0||j<0||i>=G.nx||j>=G.nz) return null;
+  const T=G.tri, c=j*G.nx+i; let best=-1e30, bt=-1;
+  for(let q=G.start[c];q<G.start[c+1];q++){ const o=G.list[q]*9;
+    const ax=T[o],az=T[o+2],bx=T[o+3],bz=T[o+5],cx=T[o+6],cz=T[o+8];
+    const d=(bz-cz)*(ax-cx)+(cx-bx)*(az-cz); if(d===0) continue;
+    const u=((bz-cz)*(x-cx)+(cx-bx)*(z-cz))/d, v=((cz-az)*(x-cx)+(ax-cx)*(z-cz))/d, w=1-u-v;
+    if(u<-1e-9||v<-1e-9||w<-1e-9) continue;
+    const y=u*T[o+1]+v*T[o+4]+w*T[o+7]; if(y<=top&&y>best){ best=y; bt=o; } }
+  if(bt<0) return null;
+  const o=bt, e1x=T[o+3]-T[o],e1y=T[o+4]-T[o+1],e1z=T[o+5]-T[o+2], e2x=T[o+6]-T[o],e2y=T[o+7]-T[o+1],e2z=T[o+8]-T[o+2];
+  const nx=e1y*e2z-e1z*e2y, ny=e1z*e2x-e1x*e2z, nz=e1x*e2y-e1y*e2x, nl=Math.hypot(nx,ny,nz)||1;
+  return {point:{x:wx,y:best+ty,z:wz},face:{normal:new THREE.Vector3(nx/nl,ny/nl,nz/nl)},object:m};
+}
 function marchingCubesMesh(densityFn,origin,size,resolution,isoLevel){
   isoLevel=isoLevel||0;
   const step=size/resolution;
@@ -23674,9 +23713,9 @@ function _pwBuildGround(pal,fx,fz,mode){
         M.chunks.set(key,mesh);
       }};
     TERRAIN.cpuMc=M;
-    const mcRay=new THREE.Raycaster(); mcRay.far=1000;
+    // exact top-down hit via a per-chunk XZ triangle grid (same answer as a downward raycast from H+300, without testing every triangle)
     const hitAt=(x,z)=>{ const m=M.chunks.get(Math.floor((x+MC_CHUNK/2)/MC_CHUNK)+'_'+Math.floor((z+MC_CHUNK/2)/MC_CHUNK)); if(!m) return null;
-      mcRay.set(new THREE.Vector3(x,H(x,z)+300,z),new THREE.Vector3(0,-1,0)); const hits=mcRay.intersectObject(m,false); return hits.length?hits[0]:null; };
+      return _mcGridHit(m,x,z,H(x,z)+300); };
     TERRAIN.mcY=(x,z,h)=>{ const hit=hitAt(x,z); return hit?Math.max(hit.point.y,h+_pwUnderlayY()):null; };
     TERRAIN.mcN=(x,z)=>{ const hit=hitAt(x,z); return hit&&hit.face?hit.face.normal.clone().transformDirection(hit.object.matrixWorld):null; };
   }
@@ -24073,7 +24112,13 @@ function _terrainDetailMat(opts){
       const dy=cliff(p.add(W.vec3(0,ec,0))).h.sub(C0.h);
       const cg=lvl>=3?W.vec3(cliff(p.add(W.vec3(ec,0,0))).h.sub(C0.h),dy,cliff(p.add(W.vec3(0,0,ec))).h.sub(C0.h)).div(ec):W.vec3(W.float(0),dy,W.float(0)).div(ec);
       nW=nW.sub(cg.sub(N.mul(W.dot(cg,N))).mul(kc));
-      m.normalNode=toView(nW);
+      // (v150) distance LOD: past the bump's reach (fade and fadeC both 0) the result is exactly nFlat, so the extra
+      // 2–5 field/cliff evaluations (worley + fBm each) are skipped per pixel by a real branch — same image, less GPU
+      let nOut=nW;
+      if(typeof W.Fn==='function'&&typeof W.If==='function'){
+        try{ nOut=W.Fn(()=>{ const v=W.vec3(nFlat).toVar(); W.If(fade.add(steep.mul(fadeC)).greaterThan(0.0),()=>{ v.assign(nW); }); return v; })(); }catch(e){ nOut=nW; }
+      }
+      m.normalNode=toView(nOut);
     }
     // cracks shade darker, pebbles a touch lighter and glossier (Low: the colour only);
     // cliff layers each take their own tint, split lines darker, ledges catch a little light
