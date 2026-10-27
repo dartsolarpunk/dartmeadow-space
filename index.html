@@ -987,7 +987,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 </style>
 
 <script src="ui/dm-safety.js?v=1" defer></script>
-<script src="jots/jots-link.js?v=87" defer></script>
+<script src="jots/jots-link.js?v=88" defer></script>
 <script src="ui/dm-friends.js?v=2" defer></script>
 <script src="ui/dm-perflog.js?v=2" defer></script>
 <script src="ui/dm-spectator.js?v=1" defer></script>
@@ -25746,8 +25746,9 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
       if(resumeDev) setTimeout(()=>J().auth.pollNow(),0);
       const _t0=Date.now();
       const tok=await J().auth.waitForToken(dev,()=>{ if(_deviceAbort) throw new Error('cancelled');
-          const a=J().auth, el=$j('jots-device-status'); if(!a.lastPollAt||Date.now()-_t0<60000) return;
-          if(/Approved\?|Still checking/.test(el.textContent)) el.textContent='Still checking with GitHub… (last answer: '+(a.lastAnswer||'no reply yet')+'). If you approved, keep this open; otherwise tap TRY AGAIN.'; },
+          const a=J().auth, el=$j('jots-device-status'); if(!a.lastPollAt) return; const n=a.secondsToNextCheck();
+          if(Date.now()-_t0<60000){ if(/^Approved\?/.test(el.textContent)) el.textContent='Approved? Finishing sign-in… '+(n?'checking again in '+n+'s':'checking now'); return; }
+          if(/Approved\?|Still checking/.test(el.textContent)) el.textContent='Still checking with GitHub… (last answer: '+(a.lastAnswer||'no reply yet')+') — '+(n?'checking again in '+n+'s':'checking now')+'. If you approved, keep this open; otherwise tap TRY AGAIN.'; },
         (why)=>{ $j('jots-device-status').textContent=/too many times|urlfetch|quota/i.test(why)
           ?'Approved on GitHub? The LEATR bridge is at its daily GitHub limit — still checking every few seconds with your code. Keep this screen open, or play as a guest.'
           :'Approved on GitHub? The LEATR bridge is busy — still checking every few seconds…'; },
@@ -25770,7 +25771,8 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
       $j('jots-device-done').onclick=()=>{ $j('jots-device-done').textContent='✓ I’VE APPROVED IT — CONTINUE'; $j('jots-device-done').onclick=approvedTap; deviceSignIn(); };
     }
   }
-  function approvedTap(){ $j('jots-device-status').textContent='Approved? Finishing sign-in…'; J().auth.pollNow(); }
+  // Never re-polls inside GitHub's wait (that earns slow_down +5 s): pollNow only checks early if the wait is over.
+  function approvedTap(){ const a=J().auth; a.pollNow(); const n=a.secondsToNextCheck(); $j('jots-device-status').textContent='Approved? Finishing sign-in… '+(n?'checking again in '+n+'s':'checking now'); }
   $j('jots-open-gh').onclick=()=>{
     if(!_ghCode) return;
     copyCode(_ghCode);                                   // inside the tap, so the copy is allowed

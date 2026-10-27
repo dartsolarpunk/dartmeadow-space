@@ -203,7 +203,7 @@
     clearPending() { try { localStorage.removeItem('jots_device_flow_v1'); } catch (e) {} },
     // Check right now: cuts short a check that's still hanging from before
     // the app went to the background (iOS freezes timers and requests), and
-    // skips the wait. `resumed` = the app just came back to the front.
+    // skips the rest of the wait only if it is already over (never polls early). `resumed` = the app just came back to the front.
     pollNow(resumed) {
       this._now = true;
       if (!this._polling) return;
@@ -220,8 +220,8 @@
       // Split screen / two windows: the game window may never get a focus or visibility event when you approve in the
       // other one, so any sign of life here (a tap, a resize, the window coming back, the network returning) checks at once.
       let _lastKick = 0;
-      const kick = () => { const n = Date.now(); if (n - _lastKick < 5500) return; _lastKick = n; if (!this._ctl && this._wake) { this._now = true; this._wake(); } };
-      const evs = ['pointerdown', 'pointermove', 'touchstart', 'resize', 'mouseover'];
+      const kick = () => { const n = Date.now(); if (n - _lastKick < 5500) return; _lastKick = n; if (!this._ctl && this._wake) { this._now = true; this._wake(); } };   // only ever skips a wait that is already over
+      const evs = ['pointerdown'];   // focus / visibility / online / pageshow call pollNow below; hover and drag never poll
       evs.forEach((e) => window.addEventListener(e, kick, { passive: true }));
       // Watchdog on wall-clock time: a frozen setTimeout (iOS background)
       // can't be trusted to fire, but this interval runs again on return
@@ -229,6 +229,7 @@
       const dog = setInterval(() => {
         if (this._ctl && Date.now() - this._ctlT > STUCK_MS) { try { this._ctl.abort(); } catch (e) {} }
         if (this._waitUntil && Date.now() >= this._waitUntil && this._wake) this._wake();
+        else if (this._waitUntil && onTick) { try { onTick(); } catch (e) {} }   // keeps the 'checking again in Ns' countdown live
       }, 1000);
       this._polling = true; this._onResume = onResume || null;
       this.savePending(dev);
@@ -250,37 +251,41 @@
       this.lastAnswer = '';
       const until = dev.expiresAt || (Date.now() + (dev.expires_in || 900) * 1000);
       let wait = Math.max(5, dev.interval || 5) * 1000, last = 0;   // GitHub's minimum is 5 s between checks
+      this.pollWait = wait; this.nextPollAt = 0;
       while (Date.now() < until) {
-        if (!this._now) {
-          const ms = Math.max(0, wait - (Date.now() - last));
-          this._waitUntil = Date.now() + ms;
-          await new Promise((r) => { const t = setTimeout(r, ms); this._wake = () => { clearTimeout(t); r(); }; });
+        // Every check, urgent or not, waits `wait` since the previous one:
+        // GitHub answers an early check with slow_down and adds 5 s to the
+        // interval each time, so a tap / Continue / coming back only skips
+        // whatever is left of a wait that is already over.
+        const due = last + wait;
+        this.nextPollAt = due;
+        if (Date.now() < due) {
+          this._waitUntil = due;
+          await new Promise((r) => { const t = setTimeout(r, Math.max(0, due - Date.now())); this._wake = () => { clearTimeout(t); r(); }; });
+          this._wake = null;
+          this._now = false;
+          if (onTick) onTick();
+          continue;                                        // re-check the clock; never poll before `due`
         }
-        this._wake = null; this._waitUntil = 0;
-        const urgent = this._now; this._now = false;
+        this._wake = null; this._waitUntil = 0; this._now = false;
         if (onTick) onTick();
-        if (!urgent && Date.now() - last < 2500) continue;  // GitHub asks for ≥5 s between checks
         last = Date.now();
         let d = null;
-        // One check = up to 3 tries, each cut off after STUCK_MS (bridge cold starts take ~12 s).
-        for (let tryN = 0; tryN < 3 && !d; tryN++) {
-          const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), STUCK_MS);
-          this._ctl = ctl; this._ctlT = Date.now(); this.lastPollAt = this._ctlT;
-          try {
-            const r = await fetch(CFG.gas + '?action=devicepoll&device_code=' + encodeURIComponent(dev.device_code) + '&t=' + Date.now(), { signal: ctl.signal, cache: 'no-store' });
-            const text = await r.text();
-            try { d = JSON.parse(text); } catch (e) { d = null; }
-          } catch (e) { d = null; }
-          finally { clearTimeout(to); this._ctl = null; }
-          if (!d && !this._now && tryN < 2) await new Promise((r) => { const t = setTimeout(r, 1200); this._wake = () => { clearTimeout(t); r(); }; this._waitUntil = Date.now() + 1200; });
-          this._wake = null; this._waitUntil = 0;
-          if (this._now && !d) break;                     // cut short by pollNow: go straight round again
-        }
+        // One check = one request, cut off after STUCK_MS (bridge cold starts take ~12 s).
+        // A failed or cut-off request still counts as a check: the next one waits `wait` too.
+        const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), STUCK_MS);
+        this._ctl = ctl; this._ctlT = last; this.lastPollAt = last;
+        try {
+          const r = await fetch(CFG.gas + '?action=devicepoll&device_code=' + encodeURIComponent(dev.device_code) + '&t=' + Date.now(), { signal: ctl.signal, cache: 'no-store' });
+          const text = await r.text();
+          try { d = JSON.parse(text); } catch (e) { d = null; }
+        } catch (e) { d = null; }
+        finally { clearTimeout(to); this._ctl = null; }
         if (onTick) onTick();
         if (!d) continue;                                  // busy / error page / cut short: ask again
         if (d.access_token) return d;
         this.lastAnswer = d.error || 'unknown';
-        if (d.error === 'slow_down') wait = Math.max(wait + 5000, (d.interval || 0) * 1000);
+        if (d.error === 'slow_down') { wait = Math.max(wait, (Number(d.interval) || 0) * 1000) + 5000; this.pollWait = wait; }  // GitHub's new interval (if the bridge passes it) + 5 s
         else if (d.error === 'expired_token') throw new Error('The sign-in code expired — try again.');
         else if (d.error === 'access_denied') throw new Error('Sign-in was cancelled on GitHub.');
         else if (/incorrect_device_code|incorrect_client|unsupported_grant|device_flow_disabled/.test(d.error || '')) throw new Error(d.error);
@@ -292,6 +297,8 @@
       }
       throw new Error('The sign-in code expired — try again.');
     },
+    // Seconds until the next check is allowed (0 = checking now / due).
+    secondsToNextCheck() { return this.nextPollAt ? Math.max(0, Math.ceil((this.nextPollAt - Date.now()) / 1000)) : 0; },
     async finish(d) {
       this.vaultError = '';
       token = d.access_token;
