@@ -24883,15 +24883,15 @@ function _lcPatch(key,cell,o){ let P=LCOL[key]; if(!P&&window.DMLocalCollide){ P
 function _lcFootprint(P,b){ if(P.owner===b&&P.np) return; P.footprint(b); }   // footprint is in the board's own frame: pose-independent
 let _lcWS=null;
 function _lcBoardLen(b){ if(!_lcWS)_lcWS=new THREE.Vector3(); b.getWorldScale(_lcWS); const k=Math.abs(_lcWS.x)||1; if(!b._lcLen){ const q=b.quaternion.clone(); b.quaternion.identity(); b.updateMatrixWorld(true); const sz=new THREE.Box3().setFromObject(b).getSize(new THREE.Vector3()); b.quaternion.copy(q); b.updateMatrixWorld(true); b._lcLen=(Math.max(sz.x,sz.z)||1)/k; } return b._lcLen*k; }
-function _lcSurfBoard(b){ try{ const P=_lcPatch('surfB',_lcBoardLen(b)/8,{sample:(x,z)=>_pwGroundAt(x,z)}); if(!P) return 0; if(P.owner!==b){ P.owner=null; P.np=0; } _lcFootprint(P,b); b.updateMatrixWorld(true); return P.lift(b,0.18); }catch(e){ return 0; } }
-function _lcSurfGround(x,z){ const h=_surfHeight(x,z); const P=_lcPatch('surfF',CHAR_TERRAIN_HEIGHT/12,{sample:(a,c)=>_pwGroundAt(a,c)}); if(!P) return h; P.ensure(x,z,0); const f=P.heightAt(x,z); return (isFinite(h)&&f>h)?f:h; }
+function _lcSurfBoard(b){ try{ const P=_lcPatch('surfB',_lcBoardLen(b)/8,{sample:(x,z)=>{ const h=_surfHeight(x,z); return isFinite(h)?h:NaN; }}); if(!P) return 0; if(P.owner!==b){ P.owner=null; P.np=0; } _lcFootprint(P,b); b.updateMatrixWorld(true); return P.lift(b,0.18*Math.abs(_lcWS.x||1)/2.4);   // pad scales with the board (0.18 at terrain scale 2.4) }catch(e){ return 0; } }
+function _lcSurfGround(x,z){ const h=_surfHeight(x,z); try{ const P=_lcPatch('surfF',CHAR_TERRAIN_HEIGHT/12,{sample:(a,c)=>{ const v=_surfHeight(a,c); return isFinite(v)?v:NaN; }}); if(!P) return h; P.ensure(x,z,0); const f=P.heightAt(x,z); return (isFinite(h)&&f>h)?f:h; }catch(e){ return h; } }
 function _lcShipBoard(b){ try{ const g=BIRD_TEMPLE.group; if(!g) return 0; const s=_shipScaleK(); _tcolBuild();
   const P=_lcPatch('shipB',_lcBoardLen(b)/8/s,{frame:g,yTol:SHIP_CHAR_H*0.5/s,sample:(x,z,y)=>{ const v=_tcolRampGround(x,z,y+SHIP_CHAR_H*0.5/s); return v===null?NaN:v; }}); if(!P) return 0;
   if(P.owner!==b){ P.owner=null; P.np=0; } _lcFootprint(P,b); g.updateMatrixWorld(true); b.updateMatrixWorld(true); return P.lift(b,0.02); }catch(e){ return 0; } }
-let _lcV=null;
+let _lcV=null,_lcL=null;
 function _lcShipGround(x,z,fy){ const w=_shipGroundHeight(x,z,fy); const g=BIRD_TEMPLE.group; if(w===null||!g) return w; const s=_shipScaleK();
   const P=_lcPatch('shipF',SHIP_CHAR_H/12/s,{frame:g,yTol:SHIP_CHAR_H*0.4/s,sample:(a,c,y)=>{ const v=_tcolRampGround(a,c,y+SHIP_CHAR_H*0.3/s); return v===null?NaN:v; }}); if(!P) return w;
-  if(!_lcV)_lcV=new THREE.Vector3(); const l=_tcolToLocal(x,w,z), lx=l.x, ly=l.y, lz=l.z; P.ensure(lx,lz,ly); const f=P.heightAt(lx,lz);
+  if(!_lcV){ _lcV=new THREE.Vector3(); _lcL=new THREE.Vector3(); } _tcolBuild(); const l=g.worldToLocal(_lcL.set(x,w,z)), lx=l.x, ly=l.y, lz=l.z; P.ensure(lx,lz,ly); const f=P.heightAt(lx,lz);
   if(!(f>ly)||f-ly>SHIP_CHAR_H*0.25/s) return w; return g.localToWorld(_lcV.set(lx,f,lz)).y; }
 function _surfFootContact(dt, airborne, sc){
   if(typeof _surfHeight!=='function') return;
