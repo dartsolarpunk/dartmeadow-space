@@ -555,10 +555,11 @@
         // from a GLB board (iOS waits for flightInited in the hold) the intro board came out ~1/10 size.
         const herH = (() => { const v = (n) => bones[n] ? bones[n].getWorldPosition(new THREE.Vector3()) : null;
           root.updateMatrixWorld(true); const H = v('Hips'), Hd = v('Head'), U = v('LeftUpLeg'), K = v('LeftLeg'), F = v('LeftFoot');
-          return H && Hd && U && K && F ? (H.distanceTo(Hd) + U.distanceTo(K) + K.distanceTo(F)) * 1.1 : 0; })();
+          if (H && Hd && U && K && F) return (H.distanceTo(Hd) + U.distanceTo(K) + K.distanceTo(F)) * 1.1;
+          const rs = new THREE.Box3().setFromObject(root).getSize(new THREE.Vector3()); return isFinite(rs.y) ? rs.y : 0; })();
         const len0 = Math.max(sz.x, sz.z), ratio = o.ratio > 0 ? o.ratio : 37 / 6;
         const k = herH > 0.05 && len0 > 1e-4 ? herH * ratio / len0 : (o.scale > 0 ? Math.min(o.scale, 12) * hs : 1.6 / Math.max(0.2, len0));
-        b.scale.multiplyScalar(k); IN.sizeK = k; IN.herH = herH;
+        b.scale.multiplyScalar(k); IN.sizeK = k; IN.herH = herH; IN.bScale = b.scale.clone();   // re-asserted every frame (a later heal/reset can't shrink it)
         b.traverse(m => { if (m.isMesh) { m.castShadow = true; m.frustumCulled = false; } });
         b.updateMatrixWorld(true); const bl = new THREE.Box3().setFromObject(b).getSize(new THREE.Vector3());
         const Lb = Math.max(bl.x, bl.z), Wb = Math.max(0.3, Math.min(bl.x, bl.z));
@@ -602,7 +603,7 @@
       const bez3 = (a, b1, c, d, u, out) => { const v = 1 - u; return out.set(0, 0, 0).addScaledVector(a, v * v * v).addScaledVector(b1, 3 * v * v * u).addScaledVector(c, 3 * v * u * u).addScaledVector(d, u * u * u); };
       // board + her placement for this frame (before the bones are posed)
       const introPre = (dt) => {
-        const b = IN.board; IN.t += dt; const t = IN.t, TF = IN.T_FLY, T_STEP = IN.T_STEP, T_LAND = IN.T_LAND, T_LIFT = IN.T_LIFT;
+        const b = IN.board; if (IN.bScale && !b.scale.equals(IN.bScale)) b.scale.copy(IN.bScale); IN.t += dt; const t = IN.t, TF = IN.T_FLY, T_STEP = IN.T_STEP, T_LAND = IN.T_LAND, T_LIFT = IN.T_LIFT;
         if (t < TF) {           // swoop in, round behind
           const u = Math.min(1, t / TF), e = u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2;
           bez3(IN.P0, IN.P1, IN.P2, IN.P3, e, b.position); bez3(IN.P0, IN.P1, IN.P2, IN.P3, Math.min(1, e + 0.01), IN.tmp);
