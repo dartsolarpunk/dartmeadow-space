@@ -1016,6 +1016,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-bt-lighting.js?v=144" defer></script>
 <script src="ui/dm-bt-cargocam.js?v=1" defer></script>
 <script src="ui/dm-bt-interior.js?v=124" defer></script>
+<script src="ui/dm-bt-pbr.js?v=177" defer></script>
 <script src="ui/dm-bt-bake.js?v=144" defer></script>
 <script src="ui/dm-ui3d-core.js?v=148" defer></script>
 <script src="ui/dm-ui3d-mesh.js?v=149" defer></script>
@@ -6471,6 +6472,7 @@ const _btiWarmIv=setInterval(async()=>{
     if(window.BTL&&!(window.BTI&&BTI.ready)) return;   // v107: interior materials final first
     try{ if(window.BTL&&BTL.apply) BTL.apply(BIRD_TEMPLE.group); }catch(e){ console.warn('[BTL] apply',e); }   // light lists + glass set before the compile
     _btiWarmed=true; clearInterval(_btiWarmIv);
+    try{ if(window.DMBtPbr&&DMBtPbr.on){ const d=await DMBtPbr.load(); if(d) DMBtPbr.apply(BIRD_TEMPLE._glb); } }catch(e){ console.warn('[bt-pbr] apply',e); }   // (v177) layered PBR maps before the bake clones + the compile
     try{ if(window.DMBtBake&&DMBtBake.on){ const d=await DMBtBake.load(); if(d) DMBtBake.apply(); } }catch(e){ console.warn('[bake] apply',e); }   // (v120) baked GI before the compile below
     const hid=[], unc=[];
     BIRD_TEMPLE.group.traverse(o=>{ if(!o.isMesh) return; const m=Array.isArray(o.material)?o.material[0]:o.material;
@@ -8371,7 +8373,7 @@ async function buildSolarSystem(){
   BIRD_TEMPLE._loading=true;
   // Space in filename must be percent-encoded — unencoded 'Bird Temple.glb'
   // fails fetch on Safari/iOS (and many HTTP clients), leaving group null forever.
-  _getGLBLoader().load(encodeURI('Bird Temple Interior.glb'), gltf=>{   // original model + hatch, three decks (ui/dm-birdtemple.js)
+  _getGLBLoader().load(encodeURI('Bird Temple Interior.glb')+'?v=177', gltf=>{   // original model + hatch, three decks (ui/dm-birdtemple.js)
     const t=gltf.scene;
     // (v114) light budget / fixed light key: any light that ships inside the GLB (KHR_lights_punctual or a stray lamp) is
     // removed here, before the warm-up and before _btAdoptLights, so nothing can add a light to the scene after compile.
@@ -9879,7 +9881,7 @@ function updateShipWalk(dt){
     const btx=F.x+bRx*0.38, btz=F.z+bRz*0.38;
     const boardGroundY=_shipGroundHeight(btx,btz,F.y+SHIP_EYE);
     const hoverY=Math.max(boardGroundY!==null?boardGroundY:F.y,F.y)+0.23+Math.sin(bt.t*1.6)*0.01;
-    const k=Math.min(1,dt*4);
+    const k=Math.min(1,dt*4); _bcSetRest(btx,hoverY,btz);
     boardFlight.position.x+=(btx-boardFlight.position.x)*k;
     boardFlight.position.z+=(btz-boardFlight.position.z)*k;
     boardFlight.position.y+=(hoverY-boardFlight.position.y)*Math.min(1,dt*5);
@@ -17719,7 +17721,7 @@ function renderWithPostFX(){
   try{ if(window.DMBtInterior&&DMBtInterior.pre) DMBtInterior.pre(flightCamera); }catch(e){}   // (v116) sealed? decided before the temple lighting (the glass probe waits while no glass is in view)
   try{ if(window.BTL&&BTL.preRender) BTL.preRender(flightRenderer,flightScene,flightCamera); }catch(e){ if(window.BTL) BTL._err=String(e&&e.stack||e).slice(0,300); }   // v110 temple lights/shadow cache/glass probe
   // (v116) below deck with no opening in view: the outside world is hidden for this render and the atmosphere pass skipped (ui/dm-bt-interior.js)
-  let _seal=false, _btib=false; try{ if(window.DMBtBake) DMBtBake.tick(); }catch(e){} try{ if(window.DMBtHull) DMBtHull.tick(); }catch(e){} try{ if(window.DMBtInterior){ DMBtInterior.tick(); _btib=true; _seal=DMBtInterior.begin(flightScene,flightCamera); } }catch(e){ _seal=false; }
+  let _seal=false, _btib=false; try{ if(window.DMBtBake) DMBtBake.tick(); }catch(e){} try{ if(window.DMBtHull) DMBtHull.tick(); }catch(e){} try{ if(window.DMBtPbr&&_btiWarmed) DMBtPbr.tick(); }catch(e){} try{ if(window.DMBtInterior){ DMBtInterior.tick(); _btib=true; _seal=DMBtInterior.begin(flightScene,flightCamera); } }catch(e){ _seal=false; }
   try{ const _hs=_taHideShells(); try{ DMGpuProf.push('atmo'); let _ta=false; try{ if(!_seal) _ta=_trueAtmoRender(flightRenderer,flightScene,flightCamera); } finally{ DMGpuProf.pop(); } if(!_ta) flightRenderer.render(flightScene,flightCamera); } finally{ _taShowShells(_hs); } _shotGrab(flightRenderer); try{ if(window.DMUI3DMesh) DMUI3DMesh.overlay(flightRenderer); }catch(e){}   /* (v138) opt-in 3D HUD overlay pass, ui/dm-ui3d-mesh.js */ try{ DMGpuProf.tick&&DMGpuProf.tick(); }catch(e){} }
   finally{ if(_btib) try{ DMBtInterior.end(flightScene); }catch(e){} if(_spec) try{ DMSpec.post(flightCamera); }catch(e){} }
   const _rtMs = performance.now()-_rt0;
@@ -24631,6 +24633,7 @@ function updateSurface(dt){
     // Centre the board's length beside her (its pivot is off-centre, so it
     // used to jut far back toward the camera and off the bottom of frame).
     const ctx=tx-nX*dims.cx, ctz=tz-nZ*dims.cx;
+    _bcSetRest(ctx,Math.max(boardGroundH+0.18,playerFeet+SURF_BOARD_WAIST),ctz);
     surfBoard.position.x += (ctx-surfBoard.position.x)*lerp;
     surfBoard.position.z += (ctz-surfBoard.position.z)*lerp;
     const bx=surfBoard.position.x, bz=surfBoard.position.z;
@@ -24867,7 +24870,10 @@ function _surfFootContact(dt, airborne, sc){
 // it is — or, if it's already beside her, swoops in from far off — and
 // flies a curved path to her side, slowing as it arrives, with two
 // whispering trails off its tail. She turns to watch it come.
-const BOARD_CALL={parked:false,parkPos:null,parkQuat:null,summon:null,trail:null,look:null,lookW:0};
+const BOARD_CALL={parked:false,parkPos:null,parkQuat:null,summon:null,trail:null,look:null,lookW:0,rest:null,restN:-1,n:0};
+// v176: where the walk code wants the board this frame (beside her). A summon flies to THIS, not to last frame's
+// path point (that made the call crawl a few % per frame, so it hung far off or stopped short).
+function _bcSetRest(x,y,z){ const T=BOARD_CALL; if(!T.rest) T.rest=new THREE.Vector3(); T.rest.set(x,y,z); T.restN=T.n; }
 let _bcV1=null,_bcV2=null,_bcV3=null;
 function _bcCtx(){
   if(typeof surfaceActive!=='undefined'&&surfaceActive&&surfBoard&&surfPlayer)
@@ -24980,7 +24986,7 @@ function _bcTrailPush(c,dt,live){
 // After the walk code has placed the board for this frame (its normal spot
 // beside her): hold it where it was parked, or fly it in.
 function _boardCallTick(dt){
-  const c=_bcCtx(); const T=BOARD_CALL;
+  const c=_bcCtx(); const T=BOARD_CALL; T.n++;
   if(!c){ T.look=null; T.lookW=0; return; }
   if(!_bcV1){ _bcV1=new THREE.Vector3(); _bcV2=new THREE.Vector3(); _bcV3=new THREE.Vector3(); }
   const b=c.b;
@@ -24990,7 +24996,7 @@ function _boardCallTick(dt){
   const S=T.summon;
   if(S){
     S.t+=dt; const k=Math.min(1,S.t/S.dur);
-    const target=_bcV1.copy(b.position);                     // where the walk code wants it: beside her
+    const target=_bcV1.copy(T.rest&&T.restN===T.n-1?T.rest:b.position);   // where the walk code wants it: beside her
     const ctrl=_bcV2.copy(S.from).lerp(target,0.5); ctrl.y=Math.max(S.from.y,target.y)+S.from.distanceTo(target)*0.18;
     const e=1-Math.pow(1-k,3);                              // fast away, slowing as it comes alongside
     const u=1-e, p=_bcV3.set(0,0,0).addScaledVector(S.from,u*u).addScaledVector(ctrl,2*u*e).addScaledVector(target,e*e);
@@ -25166,23 +25172,36 @@ function _boardCallReset(){ BC_COL.y=null; BC_COL.hv=false; BOARD_CALL.parkLocal
 const _KB_STEP='<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="13.6" cy="4.2" r="2" fill="currentColor"/><path d="M12.8 7.2l-2.6 4.4 2.8 2.2-.6 5.2M10.2 11.6l-3.4 1.6M13 9.6l3.6 2.4M13 13.8l3.4 1.4.4 3.8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 20.6h7.4l2-2.4h8.6" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-opacity=".75"/></svg>';
 const _KB_PARK='<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="4.5" width="15" height="15" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 16.5v-9h3a2.6 2.6 0 0 1 0 5.2h-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></svg>';
 const _KB_BOARD='<svg viewBox="0 0 24 24" aria-hidden="true"><g transform="rotate(-30 12 12)"><path d="M1.6 12l2.6-2.3h12.6L22.6 12l-5.8 2.3H4.2z" fill="currentColor" fill-opacity=".22" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M1.6 12L.4 9.8M1.6 12L.4 14.2" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/><circle cx="8.2" cy="12" r="1.25" fill="currentColor"/><circle cx="13.6" cy="12" r="1.25" fill="currentColor"/></g></svg>';
-function _installKiteBoardButtons(){
-  const mk=(host)=>{ if(!host||host.querySelector('.kite-board')) return;
-    const w=document.createElement('div'); w.className='kite-board';
-    w.innerHTML='<button type="button" class="kb-btn kb-park" aria-label="Park the skyboard" title="Park the skyboard here">'+_KB_PARK+'</button><button type="button" class="kb-btn kb-call" aria-label="Summon the skyboard" title="Summon the skyboard">'+_KB_BOARD+'</button>';
-    w.querySelector('.kb-park').onclick=e=>{ e.stopPropagation(); parkSkyboard(); };
-    w.querySelector('.kb-call').onclick=e=>{ e.stopPropagation(); summonSkyboard(); };
-    host.appendChild(w); };
-  mk(document.querySelector('#surface-overlay .mini-kite'));
-  mk(document.querySelector('#screen-flight .hud-c'));
-  // in the sky: step off (when flying low) — she hops down and walks on, the board trailing her
-  const ak=document.querySelector('#atmo-overlay .mini-kite');
-  if(ak&&!ak.querySelector('.kite-board')){
-    const w=document.createElement('div'); w.className='kite-board';
-    w.innerHTML='<button type="button" class="kb-btn kb-step" aria-label="Step off and walk" title="Step off and walk (fly low first)">'+_KB_STEP+'</button>';
-    w.querySelector('.kb-step').onclick=e=>{ e.stopPropagation(); atmoStepOff(); };
-    ak.appendChild(w);
+// v176: the park / summon / step-off buttons float as their own flat DOM layer over the kite instead of living
+// inside it. Inside, the mesh HUD (ui/dm-ui3d-mesh.js) ghosts the real kite to opacity 0 and draws a tilted,
+// once-rasterised copy, so on iPhone the drawn buttons sat a few px off their real 22 px hit boxes (6 px apart):
+// a tap on SUMMON landed on PARK (or nothing), and the drawn PARK never showed its new state. Now what she sees
+// is the real button, it fires on touchend (no 300 ms / ghost-click loss) and the hit box is bigger on touch.
+const _KB_FLOAT=[];
+function _kbTap(el,fn){ let last=0; const go=e=>{ e.preventDefault(); e.stopPropagation(); const t=performance.now(); if(t-last<350) return; last=t; try{ fn(); }catch(err){ console.warn('[kite-board]',err); } };
+  el.addEventListener('touchend',go,{passive:false}); el.addEventListener('click',go);
+  el.addEventListener('touchstart',e=>e.stopPropagation(),{passive:true}); }
+function _kbPlace(){
+  for(const F of _KB_FLOAT){
+    const h=F.host, r=h.getBoundingClientRect(); let show=r.width>8&&r.height>8&&getComputedStyle(h).visibility!=='hidden';
+    if(show&&F.shipOnly) show=document.body.classList.contains('ship-walk');
+    if(show){ for(let e=h; e&&e!==document.body; e=e.parentElement){ if(getComputedStyle(e).display==='none'){ show=false; break; } } }
+    const d=show?'flex':'none'; if(F.w.style.display!==d) F.w.style.display=d;
+    if(show){ const L=(r.left+r.width*0.185)+'px', T=(r.top+r.height*0.47)+'px'; if(F.w.style.left!==L) F.w.style.left=L; if(F.w.style.top!==T) F.w.style.top=T; }
   }
+}
+function _installKiteBoardButtons(){
+  const mk=(host,html,wire,shipOnly)=>{ if(!host||host.dataset.kbFloat) return; host.dataset.kbFloat='1';
+    const w=document.createElement('div'); w.className='kite-board kb-float'+(shipOnly?' kb-ship':''); w.innerHTML=html; wire(w);
+    document.body.appendChild(w); _KB_FLOAT.push({host,w,shipOnly}); };
+  const pc='<button type="button" class="kb-btn kb-park" aria-label="Park the skyboard" title="Park the skyboard here">'+_KB_PARK+'</button><button type="button" class="kb-btn kb-call" aria-label="Summon the skyboard" title="Summon the skyboard">'+_KB_BOARD+'</button>';
+  const wirePC=w=>{ _kbTap(w.querySelector('.kb-park'),parkSkyboard); _kbTap(w.querySelector('.kb-call'),summonSkyboard); };
+  mk(document.querySelector('#surface-overlay .mini-kite'),pc,wirePC,false);
+  mk(document.querySelector('#screen-flight .hud-c'),pc,wirePC,true);
+  // in the sky: step off (when flying low) — she hops down and walks on, the board trailing her
+  mk(document.querySelector('#atmo-overlay .mini-kite'),'<button type="button" class="kb-btn kb-step" aria-label="Step off and walk" title="Step off and walk (fly low first)">'+_KB_STEP+'</button>',w=>_kbTap(w.querySelector('.kb-step'),atmoStepOff),false);
+  if(!_installKiteBoardButtons.t){ _installKiteBoardButtons.t=setInterval(_kbPlace,250); addEventListener('resize',_kbPlace); }
+  _kbPlace();
   _bcButtons();
 }
 // Flying low, she can simply step off: the board brakes and settles, she
@@ -26161,7 +26180,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 
 <!-- ?v= stamps: bump on every UI change so browsers never mix a new page with cached old styles -->
 <link rel="stylesheet" href="ui/dm-ui.css?v=111">
-<link rel="stylesheet" href="ui/dm-hud.css?v=117">
+<link rel="stylesheet" href="ui/dm-hud.css?v=118">
 <link rel="stylesheet" href="ui/dm-friends.css?v=1">
 <link rel="stylesheet" href="ui/dm-safety.css?v=1">
 <link rel="stylesheet" href="ui/dm-spectator.css?v=1">

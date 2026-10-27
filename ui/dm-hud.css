@@ -440,3 +440,12 @@ body.ship-walk #screen-flight .hud-c .kite-board{display:flex;}
 
 /* v92: 1st/3rd person toggle on the Bird Temple deck + interior */
 body.ship-walk #ship-view-btn{display:block !important;}
+/* v176: park / summon / step-off float over the kite as a flat layer (placed by _kbPlace in index.html) */
+.kite-board.kb-float{position:fixed;z-index:26;touch-action:manipulation;-webkit-tap-highlight-color:transparent;}
+.kite-board.kb-ship .kb-btn{width:30px;height:30px;}
+.kite-board.kb-ship .kb-btn svg{width:22px;height:22px;}
+@media (pointer:coarse){
+  .kite-board.kb-float{gap:10px;}
+  .kite-board.kb-float .kb-btn{width:34px;height:34px;}
+  .kite-board.kb-float .kb-btn svg{width:22px;height:22px;}
+}
