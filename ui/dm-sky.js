@@ -119,6 +119,27 @@
       x.fillStyle = g; x.fillRect(0, 4, 256, 8); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
     })();
     const live = [];
+    // (v162) streaks and comet heads come from a small pool that is built once with the sky and never disposed: a fresh
+    // MeshBasicMaterial per meteor (and its dispose a second later) cost a new shader + pipeline every time one crossed
+    // the view — a multi-frame freeze on WebGPU. Pooled items are visible on the first frame (opacity 0, so the warm-up
+    // compile and the first frame build their pipelines up front), then hide until a spawn takes them.
+    const streakGeo = new THREE.PlaneGeometry(1, 1), pool = [], heads = [];
+    const mkStreak = () => {
+      const m = new THREE.Mesh(streakGeo, new THREE.MeshBasicMaterial({ map: streakTex, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, fog: false, color: 0xfff2d0, side: THREE.DoubleSide }));
+      m.raycast = () => {}; m.frustumCulled = false; m.userData.busy = false;
+      m.onAfterRender = () => { if (!m.userData.busy) m.visible = false; };
+      fx.add(m); pool.push(m); return m;
+    };
+    const mkHead = () => {
+      const h = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xe8f6ff, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
+      h.raycast = () => {}; h.frustumCulled = false; h.userData.busy = false;
+      h.onAfterRender = () => { if (!h.userData.busy) h.visible = false; };
+      fx.add(h); heads.push(h); return h;
+    };
+    for (let i = 0; i < 3; i++) mkStreak();
+    mkHead();
+    const take = (arr, mk) => { let o = arr.find((x) => !x.userData.busy); if (!o) o = mk(); o.userData.busy = true; o.visible = true; o.material.opacity = 0; return o; };
+    const give = (o) => { o.userData.busy = false; o.visible = false; o.material.opacity = 0; };
     // events come from the shared world clock: every player under this sky
     // sees the same comet (and the same meteors) at the same moment
     function spawn(kind, id, age) {
@@ -126,16 +147,15 @@
       r(); r();
       const Math = { random: r, PI: window.Math.PI, cos: window.Math.cos, sin: window.Math.sin };
       const len = kind === 'comet' ? R * (0.22 + Math.random() * 0.12) : R * (0.05 + Math.random() * 0.06);
-      const m = new THREE.Mesh(new THREE.PlaneGeometry(len, kind === 'comet' ? len * 0.06 : len * 0.02),
-        new THREE.MeshBasicMaterial({ map: streakTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false, color: kind === 'comet' ? 0xd8f0ff : 0xfff2d0, side: THREE.DoubleSide }));
-      m.raycast = () => {}; m.frustumCulled = false;
+      const m = take(pool, mkStreak);
+      m.scale.set(len, kind === 'comet' ? len * 0.06 : len * 0.02, 1);
+      m.material.color.setHex(kind === 'comet' ? 0xd8f0ff : 0xfff2d0);
       // a start point high in the sky and a direction across it
       const el = 0.35 + Math.random() * 0.5, az = Math.random() * Math.PI * 2;
       const start = new THREE.Vector3(Math.cos(az) * Math.cos(el), Math.sin(el), Math.sin(az) * Math.cos(el)).multiplyScalar(R * 0.85);
       const dir = new THREE.Vector3(Math.random() - 0.5, -0.25 - Math.random() * 0.4, Math.random() - 0.5).normalize();
-      const head = kind === 'comet' ? new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xe8f6ff, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false })) : null;
-      if (head) { const k = 26 * R / 1000; head.scale.set(k, k, 1); fx.add(head); }
-      fx.add(m);
+      const head = kind === 'comet' ? take(heads, mkHead) : null;
+      if (head) { const k = 26 * R / 1000; head.scale.set(k, k, 1); }
       live.push({ m, head, kind, t: age || 0, life: kind === 'comet' ? 40 + Math.random() * 30 : 0.7 + Math.random() * 0.8, start, dir, speed: kind === 'comet' ? R * 0.004 : R * 0.45, len });
     }
     const COMET_SLOT = 240, METEOR_SLOT = 6;   // a comet window every 4 minutes, a meteor chance every 6 s
@@ -222,7 +242,7 @@
         for (let i = live.length - 1; i >= 0; i--) {
           const L = live[i]; L.t += dt;
           const a = L.t / L.life;
-          if (a >= 1) { fx.remove(L.m); L.m.geometry.dispose(); L.m.material.dispose(); if (L.head) { fx.remove(L.head); L.head.material.dispose(); } live.splice(i, 1); continue; }
+          if (a >= 1) { give(L.m); if (L.head) give(L.head); live.splice(i, 1); continue; }
           const p = v1.copy(L.start).addScaledVector(L.dir, L.speed * L.t);
           L.m.position.copy(p).addScaledVector(L.dir, -L.len * 0.5);
           // lie along its path, facing the viewer
