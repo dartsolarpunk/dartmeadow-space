@@ -6250,6 +6250,14 @@ async function initFlightScene(){
   flightRenderer.setPixelRatio(effectivePixelRatio());
   flightRenderer.setClearColor(0x000000,1); // pure black vacuum
   try{ cv.style.background='#000'; }catch(e){}   // (v154) alpha:true canvas (AR draws over the camera with true alpha); normal play clears opaque, over black
+  // (v196) transparent canvas only in AR: the context is created alpha:true (the WebGL2 fallback cannot change it later),
+  // but on WebGPU the canvas is reconfigured opaque for normal play and premultiplied only while an AR session draws over
+  // the camera (DMAR calls this on enter/exit). renderer.alpha also gates three's clear-colour premultiply.
+  window._dmCanvasAlpha=function(on){ try{ const R=flightRenderer, B=R&&R.backend; on=!!on; R.alpha=on;
+    if(!B||!B.device||B.isWebGPUBackend!==true) return; const ctx=B.context||cv.getContext('webgpu'); if(!ctx||!ctx.configure) return;
+    ctx.configure({device:B.device,format:B.utils.getPreferredCanvasFormat(),usage:GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.COPY_SRC,alphaMode:on?'premultiplied':'opaque',toneMapping:{mode:(B.parameters&&B.parameters.outputType===THREE.HalfFloatType)?'extended':'standard'}});
+  }catch(e){ console.warn('[ar] canvas alpha',e); } };
+  window._dmCanvasAlpha(false);
   flightRenderer.setSize(W,H);
   flightRenderer.toneMapping=THREE.ACESFilmicToneMapping;
   flightRenderer.toneMappingExposure=1.0;

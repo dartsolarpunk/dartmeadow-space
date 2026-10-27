@@ -227,7 +227,7 @@
     try{ var vs=await session.requestReferenceSpace('viewer'); S.hitSrc=await session.requestHitTestSource({space:vs}); }catch(e){ console.warn('[AR] hit-test',e); }
     session.addEventListener('select',onSelect);
     // the hidden flight canvas stops drawing while AR owns the frame
-    var FR=g('flightRenderer'); if(FR&&FR.render){ S.flight=FR; S.flightRender=FR.render; FR.render=function(){}; }
+    var FR=g('flightRenderer'); if(FR&&FR.render){ S.flight=FR; S.flightRender=FR.render; FR.render=function(){}; } try{ window._dmCanvasAlpha&&_dmCanvasAlpha(true); }catch(e){}
     pumpOn();
     try{ window.DMUI3DMesh&&DMUI3DMesh.arHold(true); }catch(e){}
     document.body.classList.add('dm-ar-on'); document.documentElement.classList.add('dm-ar-on');
@@ -297,6 +297,7 @@
     } finally {
       if(s.kind!=='camera') try{ pumpOff(); }catch(e){ window.requestAnimationFrame=_raf; window.cancelAnimationFrame=_caf; }
       if(s.flight&&s.flightRender) s.flight.render=s.flightRender;
+      try{ window._dmCanvasAlpha&&_dmCanvasAlpha(false); }catch(e){}   // (v196) back to an opaque canvas
       document.body.classList.remove('dm-ar-on','dm-ar-cam'); document.documentElement.classList.remove('dm-ar-on');
       try{ toast(''); syncBtns(); window.dispatchEvent(new Event('resize')); }catch(e){}
     }
@@ -366,7 +367,7 @@
     window.addEventListener('pointerup',S.onTap,true);
     S.onResize=function(){ if(!S) return; if(S.rReady) S.r.setSize(innerWidth,innerHeight,false); S.cam.fov=innerHeight>innerWidth?68:50; S.cam.aspect=innerWidth/innerHeight; S.cam.updateProjectionMatrix(); };
     window.addEventListener('resize',S.onResize);
-    S.flight=FR0; S.flightRender=FR0render;
+    S.flight=FR0; S.flightRender=FR0render; try{ window._dmCanvasAlpha&&_dmCanvasAlpha(true); }catch(e){}   // (v196) alpha canvas for AR only
     // the game's renderer draws the full space overlay (fullRender) and the terrain board (boardRender, from _pwRender);
     // in the table-top orrery view it stays idle
     if(FR0render) FR0.render=function(sc,cm){ if(!S||S.kind!=='camera') return FR0render.call(FR0,sc,cm); if(S.full) return fullRender(sc,cm); if(S.mode==='terrain'&&S._inBoard) return FR0render.call(FR0,sc,cm); if(S.mode==='terrain'&&!S.fp&&S.shipBoard&&S._bfDone!==S._fn){ S._bfDone=S._fn; return boardRender(FR0,sc,cm); } };   // mesh maps draw their board from the flight loop (once per frame)   // terrain: only the board's own pass draws
