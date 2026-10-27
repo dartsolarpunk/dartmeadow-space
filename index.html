@@ -490,6 +490,14 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;overscroll-behavior:non
 /* LIVE MENU SCENE */
 #menu-scene-canvas{position:absolute;inset:0;width:100%;height:100%;z-index:1;pointer-events:none;opacity:0;transition:opacity 1.8s ease;}
 #menu-scene-canvas.ms-in{opacity:1;}
+#intro-veil{position:fixed;inset:0;z-index:8450;background:radial-gradient(ellipse at 50% 30%,#1a0f2e 0%,#07040f 70%);touch-action:none;}
+#intro-veil #menu-scene-canvas{opacity:1;}
+#intro-ui{position:absolute;left:50%;bottom:12vh;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;transition:opacity .45s ease;pointer-events:none;}
+#intro-ui img{width:min(140px,34vw);opacity:.85;margin-bottom:12px;}
+#intro-ui .iv-track{width:min(240px,64vw);height:3px;background:rgba(var(--acc-rgb),.15);border-radius:2px;overflow:hidden;}
+#intro-bar{height:100%;width:0;background:linear-gradient(90deg,var(--cyan),var(--purple));box-shadow:0 0 10px var(--cyan);transition:width .25s ease;}
+#intro-status{margin-top:9px;font-family:var(--font-mono);font-size:.6rem;letter-spacing:.1em;color:rgba(var(--acc-rgb),.75);}
+#intro-veil.iv-go #intro-ui{opacity:0;}
 #screen-menu.ms-pre .mm-panel,#screen-menu.ms-pre .menu-version,#screen-menu.ms-pre #menu-glow-wash{visibility:hidden;}
 #loading-screen{background:transparent !important;}
 #ls-ui-cluster{position:absolute !important;inset:0;justify-content:center;align-items:center;padding:0;}
@@ -995,7 +1003,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-star.js?v=8" defer></script>
 <script src="ui/dm-mist.js?v=7" defer></script>
 <script src="ui/dm-atmo.js?v=150" defer></script>
-<script src="ui/dm-menuscene.js?v=7" defer></script>
+<script src="ui/dm-menuscene.js?v=8" defer></script>
 <script src="ui/dm-starbubble.js?v=3" defer></script>
 <script src="ui/dm-birdtemple.js?v=122" defer></script>
 <script src="ui/dm-bt-engineering.js?v=5" defer></script>
@@ -2444,6 +2452,7 @@ function resumeJourney(data){
   // Earth's sky round the launch spot and swallow the real restore).
   if(w) _resumeHold(true);
   launchFlight();
+  if(INTRO.on) INTRO.where=w||null;
   if(!w) return;
   const gal=w.gal||'milkyway', want=(w.sys&&w.sys.name)||'Sol';
   let travelled=false, t0=Date.now();
@@ -2867,7 +2876,7 @@ function goScreen(name){
   }catch(e){}
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   STATE.screen=name;
-  try{ const M=window.DM_MENUSCENE; if(M){ if(name==='menu'){ const mm=$('screen-menu'); if(mm&&mm.classList.contains('ms-pre')){ mm.classList.remove('ms-pre'); void mm.offsetWidth; } clearTimeout(M._dispT); M.resume(); M.start(); setTimeout(()=>M.menuOpen(),350); } else { M.pause(); clearTimeout(M._dispT); if(name==='flight') M._dispT=setTimeout(()=>{ if(STATE.screen!=='menu'&&M.dispose&&M._ctx) M.dispose(); },15000); } } }catch(e){}
+  try{ const M=window.DM_MENUSCENE; if(M){ if(name==='menu'){ const mm=$('screen-menu'); if(mm&&mm.classList.contains('ms-pre')){ mm.classList.remove('ms-pre'); void mm.offsetWidth; } clearTimeout(M._dispT); M.resume(); M.start(); setTimeout(()=>M.menuOpen(),350); } else { M.pause(); clearTimeout(M._dispT); if(name==='flight') M._dispT=setTimeout(()=>{ if(STATE.screen!=='menu'&&!INTRO.on&&M.dispose&&M._ctx) M.dispose(); },15000); } } }catch(e){}
   if(name==='builder'){$('screen-builder').classList.add('active');requestAnimationFrame(()=>requestAnimationFrame(initBuilderScene));showFloatingMusic();}
   else if(name==='flight'){$('screen-flight').classList.add('active');hideFloatingMusicInGame();}
   else{try{$('screen-menu').classList.remove('mm-leaving');}catch(e){}
@@ -2897,8 +2906,79 @@ function startGame(){
   toast('🚀 Launching with your current skyboard…');
   launchFlight();
 }
+// ── Launch intro (v151) ─────────────────────────────────────────
+// Continue / New Game from the menu: the rock scene stays up (with a small
+// loader) until her saved spot is fully built, then her skyboard flies over,
+// she steps up and lifts off, and the veil dissolves straight into the game.
+// Presentation only: the game boots/restores underneath exactly as before.
+const INTRO={on:false,phase:'',where:null,t0:0,stable:0,skip:false,veil:null,iv:0};
+window._jotsIntro=INTRO;
+function _introBegin(){
+  const M=window.DM_MENUSCENE, cv=document.getElementById('menu-scene-canvas');
+  if(INTRO.on||!M||M.failed||!M._ctx||!cv||matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
+  INTRO.on=true; INTRO.phase='hold'; INTRO.where=null; INTRO.t0=performance.now(); INTRO.stable=0; INTRO.skip=false; window.__JOTS_INTRO=INTRO;
+  let v=document.getElementById('intro-veil');
+  if(!v){ v=document.createElement('div'); v.id='intro-veil';
+    v.innerHTML='<div id="intro-ui"><img src="static/dartmeadow-logo.svg" alt=""><div class="iv-track"><div id="intro-bar"></div></div><div id="intro-status">Loading…</div></div>';
+    document.body.appendChild(v); }
+  v.className=''; v.style.opacity='1'; v.insertBefore(cv,v.firstChild); INTRO.veil=v;
+  v.onpointerdown=()=>{ INTRO.skip=true; if(INTRO.phase==='play') _introDissolve(350); };
+  clearTimeout(M._dispT); M.resume();
+  clearInterval(INTRO.iv); INTRO.iv=setInterval(_introTick,100);
+  return true;
+}
+function _introWorldReady(){
+  if(!(flightInited&&flightAnimId&&_loadTotalPct()>=100&&CHAR.loaded&&!CHAR._transitioning&&!PW.opening&&!PW._resumeHold)) return false;
+  const m=INTRO.where&&INTRO.where.mode;
+  if(m==='deck') return !!SHIP_WALK.active;
+  if(m==='surface'||m==='sky'){ if(!PW.active||PW.mode!==(m==='surface'?'walk':'fly')) return false; }
+  else if(!PW.active) return !!CHAR.mounted;   // space (or a new game that stays in space)
+  const G=PW.ground; if(G&&G.queue&&G.queue.some(n=>n&&n._inView)) return false;
+  const MC=typeof TERRAIN!=='undefined'&&TERRAIN.cpuMc; if(MC&&MC.queue&&MC.queue.length) return false;
+  return true;
+}
+function _introTick(){
+  if(!INTRO.on) return;
+  const pct=_loadTotalPct(), bar=document.getElementById('intro-bar'), st=document.getElementById('intro-status');
+  const ok=_introWorldReady(); INTRO.stable=ok?INTRO.stable+1:0;
+  if(bar) bar.style.width=Math.min(100,pct*0.8+(ok?20:0))+'%';
+  if(st&&INTRO.phase==='hold') st.textContent=pct<100?'Loading Ariel…':'Building the world…';
+  // ~1 s settled (or a 150 s ceiling so a stuck build never traps the player behind the veil)
+  if(INTRO.phase==='hold'&&(INTRO.stable>=10||performance.now()-INTRO.t0>150000)) _introPlay();
+}
+function _introPlay(){
+  INTRO.phase='play'; clearInterval(INTRO.iv); INTRO.veil.classList.add('iv-go');
+  const M=window.DM_MENUSCENE;
+  if(INTRO.skip||!M||!M._ctx){ _introDissolve(350); return; }
+  let p=false;
+  try{
+    const clip=n=>CHAR.actions&&CHAR.actions[n]?CHAR.actions[n].getClip():null;
+    p=M.introStart({board:buildBoardMesh(),jump:clip(CHAR_BOARD_TRANSITIONS.step.clip),ride:clip('skyboard'),onFlyOff:()=>_introDissolve(900)});
+  }catch(e){ console.warn('[intro]',e); }
+  if(!p){ _introDissolve(350); return; }
+  // safety: dissolve if the intro stalls (no progress for ~10 s) or runs past 8 s of intro time
+  let _lt=-1,_sn=0; const _sf=setInterval(()=>{ const c=M._ctx&&M._ctx.intro, t=c?c.t:0;
+    if(INTRO.phase!=='play'){ clearInterval(_sf); return; }
+    _sn=(t===_lt)?_sn+1:0; if(_sn>=5||t>8){ clearInterval(_sf); _introDissolve(500); } _lt=t; },2000);
+}
+function _introDissolve(ms){
+  if(!INTRO.on||INTRO.phase==='out') return;
+  INTRO.phase='out'; const v=INTRO.veil;
+  v.style.transition='opacity '+ms+'ms ease'; requestAnimationFrame(()=>{ v.style.opacity='0'; });
+  setTimeout(_introEnd,ms+60);
+}
+function _introEnd(){
+  const M=window.DM_MENUSCENE, cv=document.getElementById('menu-scene-canvas'), host=$('screen-menu'), star=$('menu-bg-canvas');
+  clearInterval(INTRO.iv); INTRO.on=false; INTRO.phase=''; window.__JOTS_INTRO=null;
+  try{ if(M){ M.introReset(); M.pause(); } }catch(e){}
+  try{ if(cv&&host) (star&&star.nextSibling)?host.insertBefore(cv,star.nextSibling):host.appendChild(cv); }catch(e){}
+  if(INTRO.veil){ INTRO.veil.style.transition=''; INTRO.veil.remove(); INTRO.veil=null; }
+  if(M&&STATE.screen==='flight'){ clearTimeout(M._dispT); M._dispT=setTimeout(()=>{ if(STATE.screen!=='menu'&&M.dispose&&M._ctx) M.dispose(); },15000); }
+}
 function launchFlight(){
+  const _fromMenu=(STATE.screen==='menu'||STATE.screen==='loading')&&!flightInited;
   goScreen('flight');
+  if(_fromMenu) _introBegin();
   charOrbitActive = false; // don't let a leftover orbit-view from another scene hijack this camera either
   CHAR._transitioning = false; // same leftover-state guard — an interrupted mount/dismount sequence must not permanently freeze her pose/position
   // Real bug found: this used to unconditionally reset the "mounted" step
@@ -19674,6 +19754,7 @@ function _renderMiniLoader(){
   if(pct>=100) _hideMiniLoader();
 }
 function _showMiniLoader(){
+  if(INTRO.on) return;
   const el=document.getElementById('mini-loader');
   if(el) el.style.display='flex';
   _renderMiniLoader();
