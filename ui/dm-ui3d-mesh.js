@@ -186,6 +186,8 @@
         ['position','left','top','right','bottom','inset','transform','rotate','translate','scale','margin'].forEach(function(pn){ cl.style.removeProperty(pn); }); cl.setAttribute('width',r.width); cl.setAttribute('height',r.height); cl.setAttribute('xmlns','http://www.w3.org/2000/svg');
         var im=new Image(); try{ await within(new Promise(function(res,rej){ im.onload=res; im.onerror=rej; im.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(new XMLSerializer().serializeToString(cl)); }),4000); cx.drawImage(im,x,y,r.width,r.height); }catch(e){ console.warn('[UI3D] svg paint',e&&(e.message||e.type)); }
         continue; }
+      // (v198) box2d painter drew boxes only, so the menu/loader logo <img> (static/dartmeadow-logo.svg) came out as an empty frame
+      if(el.tagName==='IMG'){ if(el.complete&&el.naturalWidth){ try{ cx.save(); cx.globalAlpha=Math.min(1,parseFloat(cs.opacity)||1); cx.drawImage(el,x,y,r.width,r.height); cx.restore(); }catch(e){ console.warn('[UI3D] img paint',e&&e.message); } } continue; }
       var bg=cs.backgroundColor, bw=parseFloat(cs.borderTopWidth)||0, bc=cs.borderTopColor, rad=Math.min(parseFloat(cs.borderTopLeftRadius)||0,r.width/2,r.height/2);
       if(alphaOf(bg)<=0&&(bw<=0||alphaOf(bc)<=0)) continue;
       cx.save(); cx.globalAlpha=Math.min(1,parseFloat(cs.opacity)||1); cx.beginPath();
