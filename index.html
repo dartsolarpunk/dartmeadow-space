@@ -2150,6 +2150,7 @@ function loadSaveData(data){
       'gfxQuality','resScale','shadows','reflections','caustics','gi','marchingCubesTerrain'];
     Object.keys(data.settings).forEach(k=>{ if(!GFX_SETTING_KEYS.includes(k)) STATE.settings[k]=data.settings[k]; });
   }
+  if(data.settings&&typeof data.settings.legacyUI==='boolean'&&window.DMUI3DMesh){ try{ window.DMUI3DMesh.setLegacy(data.settings.legacyUI); }catch(e){} }   // (v160) Legacy UI follows the save
   if(data.themes&&window.DMTheme){ try{ window.DMTheme.importData(data.themes,'save'); }catch(e){} }
   if(data.journal&&window.DMJournal){ try{ window.DMJournal.store.importData(data.journal,'save'); }catch(e){} }
   if(data.btLights&&window.DMBtRoomLights){ try{ window.DMBtRoomLights.set(data.btLights); }catch(e){} }   // (v139)
@@ -14564,6 +14565,7 @@ function _pfEnsure(){
     '<div class="pf-sec">DISPLAY</div>'+
     '<div class="pf-row"><div><div class="pf-row-t">Player name tags</div><div class="pf-row-d">Other players\u2019 usernames above them.</div></div><button class="pf-sw" id="pf-sw-players" role="switch"></button></div>'+
     '<div class="pf-row"><div><div class="pf-row-t">Object info</div><div class="pf-row-d">Names of planets, stars and other things when your crosshair is on them.</div></div><button class="pf-sw" id="pf-sw-objects" role="switch"></button></div>'+
+    '<div class="pf-row"><div><div class="pf-row-t">Legacy UI</div><div class="pf-row-d">Use the classic flat HUD instead of the 3D curved visor HUD. Kept with your save.</div></div><button class="pf-sw" id="pf-sw-legacy" role="switch" aria-label="Legacy UI on or off"></button></div>'+
     '<div id="pf-safety"></div>'+
     '<div class="pf-sec">THEME</div>'+
     '<div class="pf-themes" id="pf-themes"></div>'+
@@ -14617,8 +14619,10 @@ function _pfEnsure(){
   };
   bindSw('pf-sw-players','playerLabels');
   bindSw('pf-sw-objects','objectLabels',on=>{ if(!on) try{ hideCrosshairLabelNow(); }catch(e){} });
+  $('pf-sw-legacy').onclick=()=>{ const v=!_pfLegacyUI(); try{ window.DMUI3DMesh&&window.DMUI3DMesh.setLegacy(v); }catch(e){} STATE.settings.legacyUI=v; _pfRender(); };   // (v160) STATE.settings travels in every save
   _pfBindThemeTools();
 }
+function _pfLegacyUI(){ try{ return !!(window.DMUI3DMesh&&window.DMUI3DMesh.legacy); }catch(e){ return false; } }
 function _pfRender(){
   if(!$('profile-modal')) return;
   const who=_pfWho();
@@ -14660,6 +14664,7 @@ function _pfRender(){
   try{ window.DMSafety&&DMSafety.section($('pf-safety')); }catch(e){}
   $('pf-sw-players').setAttribute('aria-checked', DM_PREFS.playerLabels?'true':'false');
   $('pf-sw-objects').setAttribute('aria-checked', DM_PREFS.objectLabels?'true':'false');
+  $('pf-sw-legacy').setAttribute('aria-checked', _pfLegacyUI()?'true':'false');
 }
 // Theme chooser: presets + a custom theme built with the colour picker.
 function _pfRenderThemes(){

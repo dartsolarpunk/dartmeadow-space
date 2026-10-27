@@ -31,6 +31,7 @@
     'text-shadow:0 0 6px rgba(var(--acc-rgb),.8);white-space:nowrap;cursor:pointer;z-index:4;pointer-events:auto}'+
     '.dm-ar-btn::after{content:"";position:absolute;inset:-7px -6px}'+   // bigger thumb target, still inside the kite
     '.mini-kite .dm-ar-btn,.hud-c .dm-ar-btn{display:block;min-width:0;min-height:0;height:auto;line-height:1}'+
+    '.hud-c .dm-ar-btn{left:262px;top:90px}'+   // (v160) space kite: beside the gauge row under ETA, not low-centre
     '.mini-kite .dm-ar-btn{left:165px;top:60px}'+
     '.dm-ar-btn.on{color:rgb(var(--hi-rgb));border-bottom-color:rgb(var(--hi-rgb));text-shadow:0 0 8px rgba(var(--hi-rgb),.9);background:linear-gradient(180deg,rgba(var(--hi-rgb),0),rgba(var(--hi-rgb),.22))}'+
     '.dm-ar-btn[hidden]{display:none}';

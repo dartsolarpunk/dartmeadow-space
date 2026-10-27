@@ -22,7 +22,7 @@
 (function(){
   'use strict';
   if(window.DMUI3DMesh) return;
-  var CURVE_DEG=28, PUSH=0.08, PAR=4, LAYERS=4, DEPTH=10, FOV=40, ATLAS=2048, TATLAS=2048, PAD=2, PG=6, LAYOUT_MS=1000, WALK_EVERY=3, UNGHOST_MS=500;
+  var CURVE_DEG=28, PUSH=0.08, PAR=4, LAYERS=4, DEPTH=7, FOV=40, ATLAS=2048, TATLAS=2048, PAD=2, PG=6, LAYOUT_MS=1000, WALK_EVERY=3, UNGHOST_MS=500;
   var DYN_SEL='.joystick-knob,[id$="-knob"]', SKIP_SEL='#dm-perf-hud,#account-modal,#profile-modal,.jots-ov,.modal,#warp-overlay,#jots-chat,script,style,video,iframe,template';
   var FORM_SEL='input:not([type=checkbox]):not([type=radio]):not([type=range]),select,textarea';
   var PROPS=['display','position','left','top','right','bottom','width','height','min-width','min-height','max-width','max-height',
@@ -34,7 +34,10 @@
   var mode=(function(){ try{ return localStorage.getItem('dm.ui3d'); }catch(e){ return null; } })();
   // (v142) mesh HUD is the default everywhere (desktop, web app, AR). Opt out with dm.ui3d='css' (CSS tilt) or '0' (flat).
   // The WebGPU gate + watchdog still fall back to CSS at runtime on devices where it can't draw.
-  function on(){ return mode!=='css'&&mode!=='0'; }
+  // (v160) the 3D HUD is the default for everyone; only the player's Legacy UI choice (Profile > Display, kept in the
+  // save as settings.legacyUI and mirrored to localStorage dm.ui3d for boot) turns it off. Nothing switches it off automatically.
+  function legacy(){ try{ if(typeof STATE!=='undefined'&&STATE&&STATE.settings&&typeof STATE.settings.legacyUI==='boolean') return STATE.settings.legacyUI; }catch(e){} return mode==='css'; }
+  function on(){ return mode!=='0'&&!legacy(); }
 
   var st=document.createElement('style'); st.textContent=
     'body.dm-ui3d-mesh .dm-ui3d-ghost{opacity:0!important;rotate:none!important;filter:none!important}'+
@@ -104,6 +107,7 @@
   function paintSig(el,w,h){ var s=w+'x'+h+'|'+theme+'|'+el.className+(el.getAttribute('style')||'')+(el.disabled?'D':''), n=el.getElementsByTagName('*');
     for(var i=0;i<n.length&&i<80;i++){ var e=n[i]; if(e.matches(DYN_SEL)) continue; s+='|'+(e.getAttribute('class')||'')+(e.getAttribute('style')||'')+(e.checked?'C':'')+(e.hidden?'H':''); }
     return s; }
+  function faded(el){ var o=1; for(var p=el;p&&p!==document.body;p=p.parentElement){ if(p.classList&&p.classList.contains('dm-ui3d-ghost')) continue; var c=getComputedStyle(p); if(c.visibility==='hidden'||c.display==='none') return true; o*=parseFloat(c.opacity); if(o<0.05) return true; } return false; }
   function visible(el){ var r=el.getBoundingClientRect(); if(r.width<2||r.height<2) return null; var cs=getComputedStyle(el); if(cs.display==='none'||cs.visibility==='hidden') return null; return r; }
 
   // ---------- visor placement: concave cylinder about the camera's Y axis ----------
@@ -119,15 +123,15 @@
     var dn=performance.now(); if(foundKind!==kind||dn-discT>=LAYOUT_MS*WALK_EVERY||discDirty){ discT=dn; discDirty=false; discover(kind); watch(); }
     panels.forEach(function(P){ P.leaves.forEach(function(L){ if(L.cs){ L.cs=null; L.text=null; } }); });   // (v156) leaf styles re-read once per layout
     theme=getComputedStyle(document.documentElement).getPropertyValue('--acc-rgb')+getComputedStyle(document.documentElement).getPropertyValue('--hi-rgb');
-    var seen=new Set(), relay=false, now=performance.now(), pend=false;
+    var seen=new Set(), relay=false, now=performance.now(), pend=false, fresh=[];
     found.w.forEach(function(el){
-      if(seen.has(el)||!el.isConnected) return; var r=visible(el); if(!r) return;
+      if(seen.has(el)||!el.isConnected) return; var r=visible(el); if(!r||faded(el)) return;   // (v160) a faded/hidden ancestor (space kite while the atmo/terrain kite shows) drops the panel: no double kite
       if(el.matches(FORM_SEL)||el.querySelector(FORM_SEL)) return;          // typed fields stay real DOM
-      if(el.getAnimations&&el.getAnimations().some(function(a){ return a.playState==='running'&&a.effect&&a.effect.getTiming&&a.effect.getTiming().iterations!==Infinity; })) return;   // mid-transition: leave it to CSS
+      if(el.getAnimations&&el.getAnimations().some(function(a){ return a.playState==='running'&&a.effect&&a.effect.getTiming&&a.effect.getTiming().iterations!==Infinity; })){ if(panels.has(el)) seen.add(el); return; }   /* (v160) a mid-transition panel keeps its slot (dropping it re-packed the whole atlas) */   // mid-transition: leave it to CSS
       seen.add(el);
       var P=panels.get(el), w=Math.ceil(r.width), h=Math.ceil(r.height);
       if(!P){ P={el:el,sig:'',ready:false,busy:false,leaves:[],dyn:el.matches(DYN_SEL),lp:0,mesh:null}; panels.set(el,P); }
-      if(P.w!==w||P.h!==h){ P.w=w; P.h=h; relay=true; }
+      if(P.w!==w||P.h!==h){ P.w=w; P.h=h; artDirty=true; if(!P.cw){ P.cw=w+24; P.ch=h+4; fresh.push(P); } else if(w>P.cw||h>P.ch||w<P.cw-96){ P.cw=w+24; P.ch=h+4; relay=true; } }   /* (v160) slot slack: a readout growing a few px repaints in place instead of re-packing (and un-readying) every panel */
       var ps=pos4(r); if(ps!==P.ps){ P.ps=ps; P.rect=r; if(P.dyn) P.moved=true; else artDirty=true; txtGeoDirty=true; }
       var sg=paintSig(el,w,h); if(P.force&&now-P.lp<100) pend=true; else if(sg!==P.sig&&(now-P.lp>1000||!P.sig||P.force)){   /* (v160) forced repaints coalesce to <=10/s per panel */ P.sig=sg; P.ready=P.ready&&!!P.slot; P.want=true; P.force=false; }
       var Ls=[]; if(!P.dyn){ if(isLeaf(el)){ var lr0=visible(el); if(lr0) Ls.push({el:el,r:lr0,text:null}); }
@@ -136,15 +140,16 @@
     });
     if(pend) layoutDirty=true;
     panels.forEach(function(P,el){ if(!seen.has(el)){ el.classList.remove('dm-ui3d-ghost'); if(P.mesh){ root.remove(P.mesh); P.mesh.geometry.dispose(); } panels.delete(el); artDirty=true; txtGeoDirty=true; } });
-    if(relay){ sx=sy=sh=0; var list=[]; panels.forEach(function(P){ list.push(P); }); list.sort(function(a,b){ return b.h-a.h; });
-      list.forEach(function(P){ P.slot=alloc(P.w+2*PG,P.h+2*PG,ATLAS); });
+    if(!relay&&fresh.length){ var AH0=aCv.height; fresh.forEach(function(P){ if(!relay){ P.slot=alloc(P.cw+2*PG,P.ch+2*PG,ATLAS); if(!P.slot||sy+sh>AH0) relay=true; else { P.ready=false; P.want=true; artDirty=true; } } }); }   // (v160) new panels go into free atlas space; only a full atlas re-packs
+    if(relay){ sx=sy=sh=0; var list=[]; panels.forEach(function(P){ list.push(P); }); list.sort(function(a,b){ return b.ch-a.ch; });
+      list.forEach(function(P){ P.slot=alloc(P.cw+2*PG,P.ch+2*PG,ATLAS); });
       // the art atlas is only as tall as its slots (pow2): each finished panel raster re-uploads the whole texture
       var AH=64; while(AH<sy+sh&&AH<ATLAS) AH*=2; if(aCv.height!==AH){ aCv.height=AH; aTex.dispose(); aTex=tx(aCv); art.material.map=aTex; art.material.needsUpdate=true; panels.forEach(function(P){ if(P.mesh) P.mesh.material=art.material; }); } else aCx.clearRect(0,0,ATLAS,AH);
       panels.forEach(function(P){ P.ready=false; P.want=true; }); artDirty=true; }
     panels.forEach(function(P){ if(P.want&&!P.busy&&P.slot){ P.want=false; P.lp=now; paint(P); } });
     // live canvases (minimap, globe, compass halo)
     var cseen=new Set();
-    found.cv.forEach(function(c){ if(cseen.has(c)||!c.isConnected) return; var r=visible(c); if(!r||!c.width||!c.height) return; cseen.add(c);
+    found.cv.forEach(function(c){ if(cseen.has(c)||!c.isConnected) return; var r=visible(c); if(!r||!c.width||!c.height||faded(c)) return; cseen.add(c);
       var C=cvs.get(c); if(!C){ var t=tx(c); t.generateMipmaps=false; var m=new T.Mesh(quadGeo(),mat(t)); m.renderOrder=1.5; m.frustumCulled=false; root.add(m); C={el:c,mesh:m,tex:t}; cvs.set(c,C); }
       if(C.tex.image!==c){ C.tex.image=c; C.tex.needsUpdate=true; }
       C.rect=r; C.p=place(r); });
@@ -192,7 +197,7 @@
       SAFE=true; painter='box2d'; }
     return paintSafe(P); }
   function paint(P){ P.busy=true; var gen=P.slot;
-    paints++; paintSrc(P).then(function(src){ if(P.slot!==gen||!P.slot) return; aCx.clearRect(P.slot.x,P.slot.y,P.w+2*PG,P.h+2*PG); aCx.drawImage(src,P.slot.x,P.slot.y,P.w+2*PG,P.h+2*PG); P.ready=true; artDirty=true; if(P.dyn) P.built=false; })
+    paints++; paintSrc(P).then(function(src){ if(P.slot!==gen||!P.slot) return; aCx.clearRect(P.slot.x,P.slot.y,(P.cw||P.w)+2*PG,(P.ch||P.h)+2*PG); aCx.drawImage(src,P.slot.x,P.slot.y,P.w+2*PG,P.h+2*PG); P.ready=true; artDirty=true; if(P.dyn) P.built=false; })
       .catch(function(e){ P.failed=(P.failed||0)+1; console.warn('[UI3D] raster',e&&e.message); }).finally(function(){ P.busy=false; }); }
 
   // ---------- static art geometry: ONE merged buffer (knobs: one small mesh each) ----------
@@ -228,11 +233,11 @@
   var DPR=1.5, TP=12;
   function buildText(){
     var all=[]; panels.forEach(function(P){ if(P.ready&&!P.dyn) P.leaves.forEach(function(L){ L.P=P; all.push(L); }); });
-    sx=sy=sh=0;
+    var cur0=[sx,sy,sh]; sx=sy=sh=0;   // text atlas packs with its own cursor; the art cursor is restored below
     var pos=new Float32Array(all.length*12), uv=new Float32Array(all.length*8), q=0;
     panels.forEach(function(P){ P.txtOk=true; });
     all.forEach(function(L){ var w=Math.ceil(L.r.width*DPR)+2*TP, h=Math.ceil(L.r.height*DPR)+2*TP;   /* (v160) TP margin so glow shadows fade out instead of ending in a hard box */ L.slot=alloc(w,h,TATLAS); L.sw=w; L.sh=h; L.text=null; if(!L.slot) L.P.txtOk=false; });
-    var TH=32; while(TH<sy+sh&&TH<TATLAS) TH*=2;
+    var TH=32, tEnd=sy+sh; while(TH<tEnd&&TH<TATLAS) TH*=2; sx=cur0[0]; sy=cur0[1]; sh=cur0[2];
     if(tCv.height!==TH){ tCv.height=TH; tTex.dispose(); tTex=tx(tCv); txt.material.map=tTex; txt.material.needsUpdate=true; } else tCx.clearRect(0,0,TATLAS,TH);
     all.forEach(function(L){ var w=L.sw, h=L.sh; if(!L.slot) return;
       var p=L.P.p||place(L.P.rect), pr=L.P.rect;
@@ -283,10 +288,10 @@
   function tx(c){ var t=new T.CanvasTexture(c); t.colorSpace=T.SRGBColorSpace; t.generateMipmaps=false; t.minFilter=T.LinearFilter; return t; }
   // glass: no depth write / test (sorted by renderOrder + far-to-near buffer order), front faces only
   function mat(map,vc){ var m=new T.MeshBasicNodeMaterial({map:map,vertexColors:!!vc,transparent:true,depthWrite:false,depthTest:false,side:T.FrontSide}); m.toneMapped=false; return m; }
-  function rOK(R){ var v=okR.get(R); if(v===undefined){ v=!!(R&&R.backend&&(R.backend.isWebGPUBackend||/[?&]ui3dgl=1\b/.test(location.search))); okR.set(R,v); } return v; }
+  function rOK(R){ var v=okR.get(R); if(v===undefined){ v=!!(R&&R.backend); okR.set(R,v); } return v; }   // (v160) WebGPU and its WebGL2 backend alike
   function setup(R){
     T=window.THREE; if(!T) return false;
-    if(!rOK(R)){ fallback('renderer backend is not WebGPU'); return false; }
+    if(!rOK(R)) return false;   // not a node-material renderer: this pass simply does not run on it
     root=new T.Group(); scene=new T.Scene(); scene.add(root); cam=new T.PerspectiveCamera(FOV,1,1,10);
     aCv=document.createElement('canvas'); aCv.width=ATLAS; aCv.height=64; aCx=aCv.getContext('2d');
     tCv=document.createElement('canvas'); tCv.width=TATLAS; tCv.height=32; tCx=tCv.getContext('2d');
@@ -302,8 +307,10 @@
   function anyVis(){ if(art.visible||txt.visible) return true; var v=false; cvs.forEach(function(){ v=true; }); return v; }
   // ---------- fallback watchdog ----------
   var paints=0, txtT=0, drewOK=false, wdFrames=0, wdT0=0, WD_MS=15000, why0='';
-  function fallback(why){ why0=why; console.warn('[UI3D] mesh HUD failed ('+why+'); falling back to CSS tilt');
-    try{ stop(); }catch(e){} mode='css'; drewOK=false; wdFrames=0; wdT0=0; try{ if(window.DMUI3D) DMUI3D.refresh(); }catch(e){} }
+  // (v160) no automatic CSS mode switch: a failure shows the real DOM (un-ghost) for a few seconds, then the pass retries
+  var retryAt=0, wasOn=false;
+  function fallback(why){ why0=why; console.warn('[UI3D] mesh HUD frame failed ('+why+'); DOM shown, retrying in 5 s');
+    try{ stop(); }catch(e){} drewOK=false; wdFrames=0; wdT0=0; retryAt=performance.now()+5000; layoutDirty=true; }
   var ugT=0;   // (v160) un-ghost watchdog runs only while something is ghosted under an on mesh HUD
   function ugTick(){ if(!ghosted||!on()){ clearInterval(ugT); ugT=0; if(ghosted) unghost(); return; } if(performance.now()-lastDraw>UNGHOST_MS) unghost(); }
   function ghostDrawn(){ lastDraw=performance.now(); ghosted=true; if(!ugT) ugT=setInterval(ugTick,125);
@@ -318,7 +325,7 @@
     ptr.ex+=(ptr.x-ptr.ex)*0.06; ptr.ey+=(ptr.y-ptr.ey)*0.06;
     cam.aspect=vw/vh; cam.near=d*0.3; cam.far=d*2; cam.position.set(ptr.ex*PAR,-ptr.ey*PAR,d); cam.lookAt(0,0,0); cam.updateProjectionMatrix(); }
   function overlayBody(R,kind){
-    if(!on()) return; if(!ready&&!setup(R)) return;
+    if(!on()){ if(wasOn){ wasOn=false; stop(); } return; } if(performance.now()<retryAt) return; if(!ready&&!setup(R)) return; wasOn=true;
     if((kind==='menu')!==menuHost()) return;
     if(introOn()){ if(ghosted) unghost(); return; }   // (v160) no HUD pass at all while the #197/#198 loading-intro veil or its dissolve is up
     if(!rOK(R)) return;
@@ -335,7 +342,7 @@
     var tn=performance.now(); if(tn-txtT>=66){ txtT=tn; updateText(); cvs.forEach(function(C){ C.tex.needsUpdate=true; }); }
     // the DOM stays visible until a mesh frame draws OK; only a render throw or no art at all after 15 s (raster stall) falls back
     if(!drewOK&&!arHeld&&panels.size){ if(!wdT0) wdT0=performance.now(); wdFrames++; var anyArt=false; panels.forEach(function(P){ if(P.ready) anyArt=true; });
-      if(!anyArt&&performance.now()-wdT0>WD_MS){ fallback('no panel art after '+Math.round(performance.now()-wdT0)+' ms (raster stall, painter '+painter+')'); return; } }
+      if(!anyArt&&performance.now()-wdT0>WD_MS){ console.warn('[UI3D] no panel art after '+Math.round(performance.now()-wdT0)+' ms (painter '+painter+'): re-rastering'); wdT0=performance.now(); panels.forEach(function(P){ P.busy=false; P.want=true; }); } }   // (v160) 15 s watchdog re-rasters instead of switching to CSS
     if(arHeld||!anyVis()){ hudMs+=performance.now()-t0; hudN++; return; }
     camSet();
     var ac=R.autoClear, ok=false; R.autoClear=false;
@@ -361,10 +368,14 @@
     // what is really on screen: 'mesh' (overlay drew OK), 'css' (tilt fallback / opt-out), 'flat'
     get status(){ var m=mode==='0'||(window.DMUI3D&&DMUI3D.enabled===false)?'flat':(on()&&ready&&drewOK)?'mesh':(on()?'mesh?':'css');
       return {mode:m, reason:why0, painter:painter, pending:on()&&!drewOK?Math.round(wdT0?performance.now()-wdT0:0):0}; },
+    _curve:function(){ var H=innerHeight; return [0,innerWidth/2-20,innerWidth-40].map(function(x){ var q=place({left:x,top:H/2-20,width:40,height:40}); return {x:x,zTowardCam:Math.round(q.zc*10)/10,rotYdeg:Math.round(q.th*1800/Math.PI)/10}; }); },
+    setLegacy:function(v){ v=!!v; try{ if(typeof STATE!=='undefined'&&STATE&&STATE.settings) STATE.settings.legacyUI=v; }catch(e){} this.setMode(v?'css':'mesh'); },
+    get legacy(){ return legacy(); },
     setMode:function(m){ mode=m; try{ localStorage.setItem('dm.ui3d',m); }catch(e){} if(!on()) stop(); else if(ready) document.body.classList.add('dm-ui3d-mesh'); if(window.DMUI3D) DMUI3D.refresh(); },
     // AR: ui/dm-ar-core.js draws `mesh` itself on a head-locked plate; on release it goes back here
     arHold:function(h){ arHeld=!!h; if(!h&&root&&scene&&root.parent!==scene) scene.add(root); },
     // CPU ms per overlay call (layout + text + draw submit), averaged since the last read
+    _dbg:function(){ return {t:tCv,a:aCv,leaves:(txt&&txt.userData.leaves||[]).map(function(L){ return {c:String(L.el.className),id:L.el.id,s:L.slot,w:L.sw,h:L.sh,k:L.cs&&L.cs.k,ts:L.cs&&L.cs.textShadow,col:L.cs&&L.cs.color}; }),panels:(function(){ var o=[]; panels.forEach(function(P){ if(P.el.closest('.mini-kite')) o.push({c:String(P.el.className),id:P.el.id,s:P.slot,w:P.w,h:P.h,cw:P.cw,ready:P.ready}); }); return o; })()}; },
     hudCost:function(){ var v=hudN?hudMs/hudN:0; hudMs=0; hudN=0; return v; },
     _stats:function(){ var o=[]; panels.forEach(function(P){ o.push({id:P.el.id||String(P.el.className).slice(0,30),ready:P.ready,g:!!P.g,dyn:P.dyn,leaves:P.leaves.length}); });
       return {on:on(),painter:painter,why:why0,ready:ready,frames:frameN,paints:paints,drewOK:drewOK,ghosted:ghosted,n:o.length,ready_n:o.filter(function(x){ return x.ready; }).length,canvases:cvs.size,panels:o.slice(0,60)}; }
