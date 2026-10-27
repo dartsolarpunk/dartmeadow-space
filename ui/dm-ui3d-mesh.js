@@ -20,7 +20,7 @@
   'use strict';
   if(window.DMUI3DMesh) return;
   var TARGETS=['.hud-c','.hud-l','.hud-r','.mini-kite'];
-  var MAX_DEG=18, LAYERS=6, DEPTH=24, FOV=40, ATLAS=2048, TATLAS=1024, PAD=2, LAYOUT_EVERY=20;
+  var MAX_DEG=18, LAYERS=6, DEPTH=24, FOV=40, ATLAS=2048, TATLAS=1024, PAD=2, LAYOUT_EVERY=20;   // (v156) superseded by LAYOUT_MS + ResizeObserver below
   var PROPS=['display','position','left','top','right','bottom','width','height','min-width','min-height','max-width','max-height',
     'margin-top','margin-right','margin-bottom','margin-left','padding-top','padding-right','padding-bottom','padding-left','box-sizing',
     'border-top','border-right','border-bottom','border-left','border-radius','background-color','background-image','background-size','background-position','background-repeat',
@@ -37,6 +37,9 @@
   document.head.appendChild(st);
 
   var T=null, root=null, scene=null, cam=null, art=null, txt=null, mm=null, aCv, aCx, aTex, tCv, tCx, tTex;
+  var layoutDirty=true, layoutT=0, lastFlight=null, LAYOUT_MS=1000, ro=null, roSeen=new WeakSet();
+  function watch(){ if(!ro&&window.ResizeObserver){ ro=new ResizeObserver(function(){ layoutDirty=true; }); addEventListener('resize',function(){ layoutDirty=true; }); }
+    if(ro) panels.forEach(function(P,el){ if(!roSeen.has(el)){ roSeen.add(el); ro.observe(el); } }); }
   var panels=new Map(), frameN=0, artDirty=false, txtGeoDirty=false, imgCache=new Map(), arHeld=false, ready=false;
 
   // ---------- one-time static raster (text leaves transparent) ----------
@@ -84,6 +87,7 @@
     if(relay){ sx=sy=sh=0; panels.forEach(function(P){ P.slot=alloc(P.w,P.h,ATLAS); });
       // (v149) the art atlas is only as tall as its slots (pow2): each finished panel raster re-uploads the whole texture
       var AH=64; while(AH<sy+sh&&AH<ATLAS) AH*=2; if(aCv.height!==AH){ aCv.height=AH; aTex.dispose(); aTex=tx(aCv); art.material.map=aTex; art.material.needsUpdate=true; } else aCx.clearRect(0,0,ATLAS,AH); panels.forEach(function(P){ P.ready=false; }); artDirty=true; }
+    panels.forEach(function(P){ P.leaves.forEach(function(L){ if(L.cs){ L.cs=null; L.text=null; } }); });   // restyle (state colours) at most once per layout
     panels.forEach(function(P){ if(!P.ready&&!P.busy&&P.slot) paint(P); });
     // minimap: live canvas texture
     var mc=document.getElementById('minimap-canvas'), mr=mc&&flightOn()&&visible(document.getElementById('minimap')||mc);
@@ -167,7 +171,8 @@
     setGeo(txt,pos,uv,null,idx.subarray(0,q*6)); txt.userData.leaves=all;
   }
   function drawLeaf(L,s){
-    var cs=getComputedStyle(L.el), x=L.slot.x, y=L.slot.y; tCx.clearRect(x,y,L.sw,L.sh);
+    if(!L.cs){ var c0=getComputedStyle(L.el); L.cs={textTransform:c0.textTransform,fontStyle:c0.fontStyle,fontWeight:c0.fontWeight,fontSize:c0.fontSize,fontFamily:c0.fontFamily,letterSpacing:c0.letterSpacing,color:c0.color,textShadow:c0.textShadow,textAlign:c0.textAlign,paddingLeft:c0.paddingLeft}; }
+    var cs=L.cs, x=L.slot.x, y=L.slot.y; tCx.clearRect(x,y,L.sw,L.sh);   // (v156) style snapshot per layout, not a style read per redraw
     if(cs.textTransform==='uppercase') s=s.toUpperCase();
     tCx.save(); tCx.beginPath(); tCx.rect(x,y,L.sw,L.sh); tCx.clip(); tCx.scale(DPR,DPR);
     tCx.font=cs.fontStyle+' '+cs.fontWeight+' '+cs.fontSize+' '+cs.fontFamily; try{ tCx.letterSpacing=cs.letterSpacing==='normal'?'0px':cs.letterSpacing; }catch(e){}
@@ -206,7 +211,11 @@
   function overlay(R){ try{ overlayBody(R); }catch(e){ fallback('overlay threw: '+(e&&e.message)); } }
   function overlayBody(R){
     if(!on()) return; if(!ready&&!setup(R)) return;
-    if(frameN++%LAYOUT_EVERY===0) layout();
+    // (v156) layout() forces a synchronous style+layout pass (getBoundingClientRect/getComputedStyle on every panel and
+    // leaf) right after the game wrote the HUD text: run every 20 frames it was a ~3 Hz hitch. Now it runs when a
+    // watched panel resizes, the window resizes, flight toggles, or as a slow 1 s safety net.
+    frameN++; var ln=performance.now(), fo=flightOn();
+    if(layoutDirty||fo!==lastFlight||ln-layoutT>=LAYOUT_MS){ layoutDirty=false; lastFlight=fo; layoutT=ln; layout(); watch(); }
     if(artDirty){ artDirty=false; buildArt(); txtGeoDirty=true; }
     if(txtGeoDirty){ txtGeoDirty=false; buildText(); txtT=0; }
     // (v149) readouts + minimap re-upload at most ~15 Hz (was every frame: a full texture upload per frame)

@@ -193,10 +193,12 @@
     vols.add(h); return h;
   }
   const _wp = { x: 0, y: 0, z: 0 };
+  let _v3 = null, _cp = null;
   function frame(cam, dt) {
     if (!vols.size || !cam) return;
     const c = C(), r = c && c.renderer(); if (!r) return;
-    const THREE = W.THREE, v3 = new THREE.Vector3(), cp = cam.getWorldPosition ? cam.getWorldPosition(new THREE.Vector3()) : cam.position;
+    const THREE = W.THREE; if (!_v3) { _v3 = new THREE.Vector3(); _cp = new THREE.Vector3(); }   // (v156) reused: no per-frame garbage
+    const v3 = _v3, cp = cam.getWorldPosition ? cam.getWorldPosition(_cp) : cam.position;
     let best = [];
     for (const h of vols) {
       if (!h.mesh.parent) { vols.delete(h); continue; }
