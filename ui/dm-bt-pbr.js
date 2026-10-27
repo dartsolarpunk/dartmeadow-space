@@ -54,12 +54,16 @@
       const m = o.material; if (seen.has(m) || (m.userData && m.userData.btPbr && m.map === P.sets[m.userData.btPbr].map) || /^BTI_/.test(m.name || '') || (m.userData && m.userData.btGlass) || !('metalness' in m)) return;
       if (m.transmission > 0 || !o.geometry.attributes.uv || !o.geometry.attributes.tangent) return;
       const s = sectionOf(o, root); if (!s) return;
+      // (v181) the exterior prims ship without NORMAL: TSL fell back to a constant normal, so lighting + normal maps read flat gray
+      if (!o.geometry.attributes.normal) { o.geometry.computeVertexNormals(); P.stats.nrmFix = (P.stats.nrmFix || 0) + 1; }
       if (!uvOk(o.geometry.attributes.uv)) { P.stats.oldUV = (P.stats.oldUV || 0) + 1; return; }   // a stale (pre-v177) GLB: keep its plain look
       seen.add(m);
       const t = P.sets[s];
       m.map = t.map; m.normalMap = t.nrm; m.normalScale = new THREE.Vector2(NRM[s], NRM[s]);
       m.roughnessMap = t.orm; m.metalnessMap = t.orm; m.roughness = 1; m.metalness = 1;
-      m.userData.btPbr = s; m.needsUpdate = true; n++;
+      m.userData.btPbr = s; n++;
+      try { paint(o, m, s, t); } catch (e) { P.stats.paintErr = String(e && e.message || e).slice(0, 120); }
+      m.needsUpdate = true;
       try { if (window.BTL && BTL.track) BTL.track(m); } catch (e) { }
     });
     P.applied = true; P.stats.mats = (P.stats.mats || 0) + n; if (n) console.log('[bt-pbr] layered PBR on', n, 'exterior materials (' + P.stats.res + ')');
@@ -74,4 +78,79 @@
     const now = performance.now(); if (P.applied && now - lastScan < 2000) return; lastScan = now;
     P.apply();
   };
+  // ---------------------------------------------------------------------------------------------------------------
+  // (v181) palettes: shared TSL uniforms, values blended slowly in tick() (no allocations, no texture regeneration).
+  // hull, trim, glow (emissive seam lines) + k, arch, altar border, maze inlay. Slabs stay white.
+  const PAL = [
+    { name: 'Gunmetal / cyan', hull: 0x22272e, trim: 0x3a414b, glow: 0x2fe6ff, k: 1.6, arch: 0xe6ebf2, border: 0xd8dde4, maze: 0x22e4ff },
+    { name: 'Crimson / gold', hull: 0x4a0a10, trim: 0xc89b3c, glow: 0xffb040, k: 0.5, arch: 0xf6eedf, border: 0xd9ad3a, maze: 0xffbf2e },
+    { name: 'Ivory / cobalt', hull: 0x1d2a48, trim: 0xe4e9f0, glow: 0x4a9dff, k: 0.9, arch: 0xf4f7fb, border: 0x9db8e6, maze: 0x3a86ff },
+    { name: 'Verdigris / bronze', hull: 0x123029, trim: 0xa8713a, glow: 0x52ffb0, k: 0.7, arch: 0xeef4ec, border: 0xb3834a, maze: 0x2cffa0 },
+    { name: 'Obsidian / violet', hull: 0x15111f, trim: 0x6a5a8e, glow: 0xb57cff, k: 1.1, arch: 0xf2eefa, border: 0xc4b4e6, maze: 0xa56cff },
+  ];
+  P.palettes = PAL.map(p => p.name);
+  const HOLD = 3 * 3600e3, FADE = 20 * 60e3;          // 3 h per palette, 20 min cross-fade
+  let U = null, cA = null, cB = null;
+  function uni() {
+    if (U) return U; const THREE = window.THREE, T = THREE.TSL; cA = new THREE.Color(); cB = new THREE.Color();
+    U = { time: T.uniform(0) }; for (const k of ['hull', 'trim', 'glow', 'arch', 'border', 'maze']) U[k] = T.uniform(new THREE.Color());
+    U.k = T.uniform(1); setPal(); return U;
+  }
+  P.lock = function (v) { try { localStorage.setItem('dm_bt_palette', String(v)); } catch (e) { } setPal(); };
+  P.lockValue = function () { try { return localStorage.getItem('dm_bt_palette') || 'auto'; } catch (e) { return 'auto'; } };
+  function setPal() {
+    if (!U) return; let i = 0, j = 0, f = 0; const lv = P.lockValue(); const li = parseInt(lv, 10);
+    if (lv !== 'auto' && li >= 0 && li < PAL.length) { i = j = li; }
+    else { const t = (P.clock ? P.clock() : Date.now()); const c = Math.floor(t / HOLD); i = c % PAL.length; j = (i + 1) % PAL.length; const r = t - c * HOLD; f = r > HOLD - FADE ? (r - (HOLD - FADE)) / FADE : 0; f = f * f * (3 - 2 * f); }
+    const A = PAL[i], B = PAL[j];
+    for (const k of ['hull', 'trim', 'glow', 'arch', 'border', 'maze']) { cA.setHex(A[k]); cB.setHex(B[k]); U[k].value.copy(cA).lerp(cB, f); }
+    U.k.value = A.k + (B.k - A.k) * f; P.stats.pal = f > 0 ? A.name + ' > ' + B.name + ' ' + (f * 100 | 0) + '%' : A.name;
+  }
+  const AVG = { hull: 0.707, temple: 0.745, altar: 0.717, trim: 0.54 };   // mean linear luminance of each colour map
+  function paint(o, m, s, tx) {
+    const THREE = window.THREE, T = THREE.TSL; if (!T || !m.isNodeMaterial) return; uni();
+    let nm = ''; for (let p = o; p; p = p.parent) { if (byName.has(san(p.name))) { nm = san(p.name); break; } }
+    const uvn = T.uv(), col = T.texture(tx.map, uvn), orm = T.texture(tx.orm, uvn), nt = T.texture(tx.nrm, uvn);
+    const lum = T.dot(col.rgb, T.vec3(0.2126, 0.7152, 0.0722)).div(AVG[s]).clamp(0.35, 1.6);   // layered detail kept on every palette
+    const metal = orm.b, dev = T.length(nt.xy.mul(2).sub(1));
+    // hairline brushed scratches: per-row hash streaks in high-tiled UV, faded in only up close
+    const near = T.float(1).sub(T.smoothstep(2.5, 14, T.length(T.positionView)));
+    const su = uvn.mul(T.vec2(6, 520)), row = T.floor(su.y);
+    const h = T.fract(T.sin(row.mul(12.9898).add(T.floor(su.x.add(T.fract(T.sin(row.mul(4.1)).mul(91.3)).mul(7))).mul(78.233))).mul(43758.5453));
+    const streak = T.smoothstep(0.82, 1.0, h).mul(near);
+    m.roughnessNode = orm.g.mul(T.float(1).sub(streak.mul(0.45))).add(near.mul(h.sub(0.5)).mul(0.08)).clamp(0.04, 1);
+    m.normalNode = T.normalize(T.normalMap(nt, T.vec2(NRM[s], NRM[s])).add(T.tangentView.mul(h.sub(0.5).mul(0.06).mul(near))));
+    m.metalnessNode = metal;
+    m.vertexColors = false;
+    const k0 = s === 'hull' ? 0.05 : 0.12;
+    if (nm === 'Lower_maze' || nm === 'Upper_maze') {
+      // white slab; the maze channels (vertical walls) carry the vibrant inlay + a subtle glow
+      const wall = T.float(1).sub(T.abs(T.normalGeometry.y)).smoothstep(0.65, 0.95);
+      m.colorNode = T.mix(T.vec3(0.93, 0.94, 0.95).mul(lum.mul(0.25).add(0.75)), U.maze, wall.mul(0.7));
+      m.emissiveNode = U.maze.mul(wall.mul(0.9)).add(T.vec3(0.05));
+      m.metalnessNode = metal.mul(0.2); return;
+    }
+    if (nm === 'Temple') {
+      // arches: white with a slow iridescent sheen (time + view angle + height); one cos per pixel
+      const fr = T.float(1).sub(T.abs(T.dot(T.normalView, T.positionViewDirection))).pow(2);
+      const ph = U.time.mul(0.004).add(T.positionWorld.y.mul(0.015)).add(fr.mul(0.6));
+      const irid = T.cos(T.vec3(0, 2.094, 4.188).add(ph.mul(6.2832))).mul(0.5).add(0.5);
+      const base = U.arch.mul(lum);
+      m.colorNode = T.mix(base, base.mul(irid.mul(0.6).add(0.55)), fr.mul(0.5).add(0.2));
+      m.emissiveNode = base.mul(0.1).add(irid.mul(fr).mul(0.12)); return;
+    }
+    if (nm === 'Altar') { m.colorNode = U.border.mul(lum); m.emissiveNode = U.border.mul(0.08); return; }
+    if (s === 'hull') {
+      const base = T.mix(U.hull, U.trim, metal.smoothstep(0.4, 0.8)).mul(lum);
+      const line = dev.smoothstep(0.3, 0.5);   // panel seams / raised trim edges in the normal map
+      m.colorNode = T.mix(base, U.glow, line.mul(0.5));
+      m.emissiveNode = base.mul(k0).add(U.glow.mul(line).mul(U.k)); return;
+    }
+    if (s === 'trim') { m.colorNode = U.trim.mul(lum); m.emissiveNode = U.trim.mul(k0); return; }
+    // obelisks, shard, gods/angels: keep their own vertex colour + self-light; detail + scratches still apply
+    m.vertexColors = !!o.geometry.attributes.color;
+  }
+  let palT = 0;
+  const _tick = P.tick;
+  P.tick = function () { _tick(); if (!U) return; const now = performance.now(); U.time.value = now / 1000; if (now - palT > 1000) { palT = now; setPal(); } };
 })();
