@@ -6660,7 +6660,7 @@ function _startFlightLoop(){
     try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){_animLoopWarn('charMixer',e);}
     try{ applySkyboardHeadOverride(); }catch(e){_animLoopWarn('headOverride',e);}   // (fades with the stance)
     DMPerf.b('updateBirdTemple'); try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);} DMPerf.e();
-    DMPerf.b('_shipWalkCarry'); try{ if(SHIP_WALK.active) _shipWalkCarry(); }catch(e){_animLoopWarn('shipCarry',e);} DMPerf.e();
+    DMPerf.b('_shipWalkCarry'); try{ if(SHIP_WALK.active) _shipWalkCarry(); else if(SHIP_LIFT.on) _shipLiftCarry(); }catch(e){_animLoopWarn('shipCarry',e);} DMPerf.e();
     DMPerf.b('_shipLandTick'); try{ if(SHIP_LAND) _shipLandTick(dt); }catch(e){ SHIP_LAND=null; _animLoopWarn('shipLand',e); } DMPerf.e();
     DMPerf.b('_anchorPostUpdate'); try{_anchorPostUpdate();}catch(e){_animLoopWarn('anchor',e);} DMPerf.e();
     DMPerf.b('updateDistantSystems'); try{updateDistantSystems(dt);}catch(e){_animLoopWarn('distantSystems',e);} DMPerf.e();
@@ -9109,7 +9109,7 @@ function updateBirdTemple(dt){
     // surface right under the board, close below it. Landing then goes to that spot (landOnBirdTemple).
     if(landPrompt){
       let over=false;
-      if(!SHIP_LAND&&dist<_btHullR()*1.2){ try{ const gy=_shipGroundHeight(sp.pos.x,sp.pos.z,sp.pos.y+0.05); over=gy!==null&&sp.pos.y-gy>=-0.05&&sp.pos.y-gy<SHIP_LAND_ABOVE; }catch(e){} }
+      if(!SHIP_LAND&&!SHIP_LIFT.on&&performance.now()>=(bt._fcGrace||0)&&!CHAR._transitioning&&dist<_btHullR()*1.2){ try{ const gy=_shipGroundHeight(sp.pos.x,sp.pos.z,sp.pos.y+0.05); over=gy!==null&&sp.pos.y-gy>=-0.05&&sp.pos.y-gy<SHIP_LAND_ABOVE; }catch(e){} }
       const want=over?'block':'none'; if(landPrompt.style.display!==want) landPrompt.style.display=want;
     }
   }
@@ -9411,9 +9411,31 @@ function _shipCharStepOff(feet){
 // v95: a step-on's completion runs exactly once, and is forced after ~2.5 s if the
 // mount sequence never calls back (so she can't be left frozen mid-air)
 function _bmsOnce(fn,ms){ let done=false; const run=()=>{ if(done) return; done=true; clearTimeout(t); try{ fn(); }catch(e){ console.warn('[mount] hand-off:',e); } }; const t=setTimeout(()=>{ if(!done){ console.warn('[mount] sequence timed out: forcing the hand-off'); try{ CHAR._transitioning=false; }catch(e){} run(); } },ms||2500); return run; }
-function _shipLiftOff(sp,h){
+function _shipLiftOff(sp,h,onDone){
   let done=0; const t0=performance.now();
-  (function up(){ const k=Math.min(1,(performance.now()-t0)/800), d=h*k*k*(3-2*k)-done; sp.pos.y+=d; done+=d; if(k<1) requestAnimationFrame(up); })();
+  (function up(){ const k=Math.min(1,(performance.now()-t0)/800), d=h*k*k*(3-2*k)-done; sp.pos.y+=d; done+=d; if(k<1) requestAnimationFrame(up); else if(onDone) onDone(); })();
+}
+// v176: LIFTOFF from the moving Bird Temple. The step-on used to play in fixed world coordinates while the deck
+// kept wandering, so she slid to the deck edge / hung in space, the hull collision woke mid-step and the land
+// prompt re-armed under her. Now the deck's motion carries her, the board, the flight pos and the camera until
+// the climb is done; hull collision and the land prompt stay off for that whole time (+ a short grace after).
+const SHIP_LIFT={on:false,C:null,F0:null,F:null,L:null,t0:0};
+function _shipLiftBegin(world){
+  if(!SHIP_LIFT.C){ SHIP_LIFT.C=new THREE.Vector3(); SHIP_LIFT.F0=new THREE.Vector3(); SHIP_LIFT.F=new THREE.Vector3(); SHIP_LIFT.L=new THREE.Vector3(); }
+  SHIP_LIFT.on=true; SHIP_LIFT.t0=performance.now(); SHIP_LIFT.C.set(0,0,0); SHIP_LIFT.F0.copy(world);
+  SHIP_LIFT.L.copy(SHIP_WALK.localPos);
+}
+function _shipLiftEnd(){ if(!SHIP_LIFT.on) return; SHIP_LIFT.on=false; BIRD_TEMPLE._fcGrace=performance.now()+1500; }
+function _shipLiftCarry(){
+  const g=BIRD_TEMPLE.group; if(!g){ _shipLiftEnd(); return; }
+  if(performance.now()-SHIP_LIFT.t0>12000){ _shipLiftEnd(); return; }   // safety: never hold the hull open forever
+  g.updateMatrixWorld(true); const F=g.localToWorld(SHIP_LIFT.F.copy(SHIP_LIFT.L));
+  const dx=F.x-SHIP_LIFT.F0.x-SHIP_LIFT.C.x, dy=F.y-SHIP_LIFT.F0.y-SHIP_LIFT.C.y, dz=F.z-SHIP_LIFT.F0.z-SHIP_LIFT.C.z;
+  if(!dx&&!dy&&!dz) return;
+  SHIP_LIFT.C.x+=dx; SHIP_LIFT.C.y+=dy; SHIP_LIFT.C.z+=dz;
+  const sp=STATE.flight; if(sp&&sp.pos){ sp.pos.x+=dx; sp.pos.y+=dy; sp.pos.z+=dz; }
+  if(boardFlight){ boardFlight.position.x+=dx; boardFlight.position.y+=dy; boardFlight.position.z+=dz; }
+  if(flightCamera){ flightCamera.position.x+=dx; flightCamera.position.y+=dy; flightCamera.position.z+=dz; flightCamera.updateMatrixWorld(true); }
 }
 // v92: LAND ON THE BIRD TEMPLE plays the terrain LAND sequence: the board
 // flies down onto the deck under it (in the ship's moving frame), then she
@@ -9496,7 +9518,7 @@ function _btFlightCollide(){
 }
 function landOnBirdTemple(){
   const bt=BIRD_TEMPLE, sp=STATE.flight;
-  if(!bt.group||!sp||SHIP_WALK.active||SHIP_LAND)return;
+  if(!bt.group||!sp||SHIP_WALK.active||SHIP_LAND||SHIP_LIFT.on)return;   // (v176: not while lifting off)
   let y=_shipGroundHeight(sp.pos.x,sp.pos.z,sp.pos.y+0.05);
   if(y===null)y=_shipGroundHeight(sp.pos.x,sp.pos.z,sp.pos.y,true);
   if(y===null){ enterShipWalk(); return; }
@@ -9595,11 +9617,12 @@ function exitShipWalk(){
   if(stepOn){
     try{
       const ride=CHAR.scaleForBoard*Math.abs(boardFlight.getWorldScale(new THREE.Vector3()).x);
-      boardMountSequence(boardFlight, flightScene, _bmsOnce(()=>_shipLiftOff(sp,1.5)), {endSize:ride});
-    }catch(e){ console.warn('[ShipWalk] step-on:',e); try{remountSkyboard(boardFlight);}catch(_){} }
+      _shipLiftBegin(world);
+      boardMountSequence(boardFlight, flightScene, _bmsOnce(()=>_shipLiftOff(sp,1.5,_shipLiftEnd)), {endSize:ride,carry:SHIP_LIFT.C});
+    }catch(e){ console.warn('[ShipWalk] step-on:',e); _shipLiftEnd(); try{remountSkyboard(boardFlight);}catch(_){} }
   } else if(SHIP_WALK.charOn&&boardFlight){try{remountSkyboard(boardFlight);}catch(e){console.warn('[ShipWalk] remount:',e);}}
   SHIP_WALK.charOn=false;
-  BIRD_TEMPLE._fcGrace=performance.now()+1800;   // v95: the lift-off climb clears the deck before the hull is solid again
+  BIRD_TEMPLE._fcGrace=performance.now()+(SHIP_LIFT.on?60000:1800);   // v95: the lift-off climb clears the deck before the hull is solid again (v176: held for the whole step-on)
   $('ship-liftoff-btn').style.display='none';
   $('ship-jump-btn').style.display='none';
   toast('🚀 Lifting off the Bird Temple',2000);
@@ -21319,7 +21342,7 @@ function boardMountSequence(targetBoard, hostScene, onComplete, opts){
     const t=(performance.now()-t0)/1000;
     if(t<walkT){
       const k=t/walkT;
-      W.lerpVectors(P.pos,E,k); CHAR.root.position.copy(W);
+      W.lerpVectors(P.pos,E,k); if(opts&&opts.carry) W.add(opts.carry); CHAR.root.position.copy(W);
       CHAR.root.quaternion.slerpQuaternions(Q0,Qw,Math.min(1,t/0.28));
       requestAnimationFrame(step); return;
     }
@@ -21331,6 +21354,7 @@ function boardMountSequence(targetBoard, hostScene, onComplete, opts){
     const k=Math.min(1,(t-walkT)/stepT), e=_ease(k);
     const from=walkT>0?E:P.pos;
     W.lerpVectors(from,P1,e); W.y+=Math.sin(Math.PI*k)*size*0.12;   // a little lift as she steps up
+    if(opts&&opts.carry) W.add(opts.carry);   // v176: a moving deck (Bird Temple) carries the whole step-on with it
     CHAR.root.position.copy(W);
     if(endSize!==size){ const sz=size+(endSize-size)*e; CHAR.root.scale.set(sz,sz,-sz); }
     CHAR.root.quaternion.slerpQuaternions(walkT>0?Qw:Q0,Q1,e);
