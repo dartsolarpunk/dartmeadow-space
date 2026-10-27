@@ -389,10 +389,11 @@
   // The game keeps drawing its own scene with its own renderer and its already-compiled pipelines; each of its
   // passes that uses the flight camera is drawn with the device turn layered on and, near a star, from a safe
   // standoff outside the photosphere and glow shells. The sky/background is stripped for those calls only.
-  var _fq=null,_fp=null,_fv=null,_fs=null,_eye=null,_ev=null;
+  var _fq=null,_fp=null,_fv=null,_fs=null,_eye=null,_ev=null,_eyeRoot=null;
   function eyeCam(cm,hid,T){
     var C=window.CHAR, root=C&&C.root; if(!root||!root.visible) return;
     root.updateMatrixWorld(true);
+    if(_eyeRoot!==root){ _eye=null; _eyeRoot=root; }   // her model changed: measure the eye again
     if(!_eye){ var bb=new T.Box3().setFromObject(root); if(bb.isEmpty()) return; _eye=root.worldToLocal(new T.Vector3((bb.min.x+bb.max.x)/2,bb.min.y+0.93*(bb.max.y-bb.min.y),(bb.min.z+bb.max.z)/2)); _ev=new T.Vector3(); }
     _ev.copy(_eye); root.localToWorld(_ev); if(cm.parent) cm.parent.worldToLocal(_ev); cm.position.copy(_ev);
     root.visible=false; hid.push(root);   // restored by fullRender's finally (not a wall)
