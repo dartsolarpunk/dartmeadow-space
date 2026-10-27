@@ -28,11 +28,9 @@
     'body.dm-ar-on canvas:not(#dm-ar-canvas):not(#minimap-canvas){visibility:hidden!important}'+
     '#dm-ar-video{position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;z-index:-2;pointer-events:none;background:#000}'+
     'body.dm-ar-cam #dm-ar-canvas{z-index:-1!important}'+
-    // full-overlay view: the game's own canvas, screen-blended over the camera. Screen is the alpha-correct composite for
-    // this content without touching any shader: black (the stripped sky, the black discs of the lens bubble, keyed sprite
-    // quads) contributes nothing, additive glows/sprites/smoke add their light with their own feathered edges, and the
-    // game's AA, bloom, tonemap and post passes all stay as they are
-    'html.dm-ar-on body.dm-ar-full canvas.dm-ar-game:not(#dm-ar-canvas):not(#minimap-canvas){visibility:visible!important;mix-blend-mode:screen}'+
+    // full space overlay and terrain board: the game's own canvas (alpha:true, premultiplied) drawn over the camera with
+    // true alpha. Normal play clears it opaque black; in AR it clears to alpha 0 and the content writes its own alpha
+    'html.dm-ar-on body.dm-ar-full canvas.dm-ar-game:not(#dm-ar-canvas):not(#minimap-canvas){visibility:visible!important;background:transparent!important}'+
     'body.dm-ar-full #dm-ar-canvas{visibility:hidden!important}'+
     '#dm-ar-view{position:fixed;right:calc(12px + env(safe-area-inset-right,0px));top:calc(50% - 18px);z-index:99997;padding:8px 12px;border-radius:4px;border:1px solid rgba(120,200,255,.45);background:rgba(6,12,24,.7);color:#bfe6ff;font:600 11px/1 var(--font-mono,monospace);letter-spacing:.08em;text-transform:uppercase}';
     document.head.appendChild(st); })();
@@ -57,13 +55,12 @@
   // ---------- game-state probes (classic-script globals, read defensively) ----------
   function g(name){ try{ return (0,eval)('typeof '+name+'!=="undefined"?'+name+':undefined'); }catch(e){ return undefined; } }
   function terrainCtx(){
-    var PW=window.PW; if(!PW||!PW.active) return null;
+    var PW=window.PW; if(!PW||!PW.active||window._dmWarming||!(g('surfaceActive')||g('atmoActive'))) return null;
     var H=g('_surfHeight')||g('_atmoHeight')||((g('TERRAIN')||{}).H);
     if(typeof H!=='function') return null;
     var pos=null, flying=false;
     var sp=g('surfPlayer'); if(g('surfaceActive')&&sp&&sp.pos) pos=sp.pos;
     var ab=g('atmoBoard'); if(!pos&&g('atmoActive')&&ab&&ab.position){ pos=ab.position; flying=true; }
-    if(!pos&&PW.board&&PW.board.position){ pos=PW.board.position; flying=true; }
     if(!pos) return null;
     return {H:H,pos:pos,flying:flying,pal:PW.pal};
   }
@@ -276,7 +273,7 @@
       try{ viewBtn(false); s.gameCv&&s.gameCv.classList.remove('dm-ar-game'); document.body.classList.remove('dm-ar-full'); }catch(e){}
       try{ var fs=g('flightScene'); if(fs) unstrip(fs,s.sky); }catch(e){}
       try{ s.hitSrc&&s.hitSrc.cancel(); }catch(e){} try{ s.anchor&&s.anchor.delete&&s.anchor.delete(); }catch(e){}
-      try{ s.D&&s.D.dispose(); }catch(e){} try{ s.O&&disposeOrrery(s.O); }catch(e){}
+      try{ s.D&&s.D.dispose(); }catch(e){} try{ if(s.B){ s.B.pp.dispose(); if(s.B.W){ s.B.W.mesh.parent&&s.B.W.mesh.parent.remove(s.B.W.mesh); s.B.W.geo.dispose(); } } }catch(e){} try{ var _S=S; S=s; arBlend(false); S=_S; }catch(e){} try{ s.O&&disposeOrrery(s.O); }catch(e){}
       try{ s.session&&s.session.removeEventListener('end',cleanup); }catch(e){}
       try{ s.r.dispose(); }catch(e){} try{ s.cv.remove(); }catch(e){}
     } finally {
@@ -345,14 +342,16 @@
     var rig=new T.Object3D(), rigCam=new T.PerspectiveCamera(60,1,0.05,1e9); rig.add(rigCam);
     S={kind:'camera',view:'full',rReady:false,stream:stream,vid:vid,r:r,cv:cv,scene:scene,cam:cam,reticle:reticle,table:table,rig:rig,rigCam:rigCam,placed:false,errs:0,D:null,sky:null,flight:null,mode:null,
        q0:null,yaw0:null,ray:new T.Raycaster(),plane:new T.Plane(new T.Vector3(0,1,0),-TABLE_Y),hit:new T.Vector3(),hasHit:false,dq:new T.Quaternion()};
-    S.onTap=function(e){ if(!S||S.kind!=='camera'||S.placed||S.full) return; var t=e.target;
+    S.onTap=function(e){ if(!S||S.kind!=='camera'||S.full||(S.placed&&!(S.mode==='terrain'))) return; var t=e.target;
       if(t&&t.closest&&t.closest('button,a,input,.hud-c,.hud-l,.hud-r,.mini-kite,.joystick-base,.joystick,#minimap,.dm-ar-btn,.menu-panel,.art-btns')) return;
       camTapPlace(e.clientX,e.clientY); };
     window.addEventListener('pointerup',S.onTap,true);
     S.onResize=function(){ if(!S) return; if(S.rReady) S.r.setSize(innerWidth,innerHeight,false); S.cam.fov=innerHeight>innerWidth?68:50; S.cam.aspect=innerWidth/innerHeight; S.cam.updateProjectionMatrix(); };
     window.addEventListener('resize',S.onResize);
     S.flight=FR0; S.flightRender=FR0render;
-    if(FR0render) FR0.render=function(sc,cm){ return S&&S.kind==='camera'&&S.full?fullRender(sc,cm):undefined; };   // the game draws only in the full overlay
+    // the game's renderer draws the full space overlay (fullRender) and the terrain board (boardRender, from _pwRender);
+    // in the table-top orrery view it stays idle
+    if(FR0render) FR0.render=function(sc,cm){ if(!S||S.kind!=='camera') return FR0render.call(FR0,sc,cm); if(S.full) return fullRender(sc,cm); if(S.mode==='terrain') return FR0render.call(FR0,sc,cm); };
     try{ var gc=FR0&&FR0.domElement; if(gc){ gc.classList.add('dm-ar-game'); S.gameCv=gc; } }catch(e){}
     viewBtn(true);
     try{ window.DMUI3DMesh&&DMUI3DMesh.arHold(true); }catch(e){}
@@ -380,7 +379,7 @@
     if(!fc||cm!==fc) return orig.call(S.flight,sc,cm);
     _fq=_fq||new T.Quaternion(); _fp=_fp||new T.Vector3(); _fv=_fv||new T.Vector3(); _fs=_fs||new T.Vector3();
     _fq.copy(cm.quaternion); _fp.copy(cm.position);
-    var bg=sc.background, hid=[];
+    var bg=sc.background, hid=[], ca=null;
     try{
       if(S.dq) cm.quaternion.multiply(S.dq);
       var sm=g('sunMesh'), R0=g('SOL_SUN_RADIUS')||160;
@@ -389,12 +388,104 @@
         if(d<safe){ _fv.sub(_fs); if(_fv.lengthSq()<1e-6) _fv.set(0,0,1); _fv.setLength(safe).add(_fs);
           if(cm.parent) cm.parent.worldToLocal(_fv); cm.position.copy(_fv); S.safeHold=true; } else S.safeHold=false; }
       cm.updateMatrixWorld(true);
-      sc.background=null;
-      sc.traverseVisible&&sc.traverseVisible(function(o){ if(o.userData&&o.userData.dmSkyShell){ o.visible=false; hid.push(o); } });
+      sc.background=null; ca=S.flight.getClearAlpha(); S.flight.setClearAlpha(0);
+      sc.traverseVisible&&sc.traverseVisible(function(o){ if(o.userData&&(o.userData.dmSkyShell||o.userData.dmArHide)){ o.visible=false; hid.push(o); } });
       return orig.call(S.flight,sc,cm);
     } finally {
-      sc.background=bg; for(var i=0;i<hid.length;i++) hid[i].visible=true;
+      if(ca!=null) S.flight.setClearAlpha(ca);
+      sc.background=bg; for(var i=0;i<hid.length;i++) hid[i].visible=!(hid[i].userData&&hid[i].userData.dmArWall);
       cm.quaternion.copy(_fq); cm.position.copy(_fp); cm.updateMatrixWorld(true);
+    }
+  }
+  // Additive sprites, flares and glows: their colour is added as before, but in AR they must not add to the canvas
+  // alpha (a black-cornered sprite quad would turn into an opaque black square over the camera). The premultiplied
+  // canvas then composites their light additively over the passthrough with the sprite's own feathered falloff.
+  function arBlend(on){
+    var T=window.THREE, sc=g('flightScene'); if(!T||!sc) return;
+    if(on){ if(S.blendSaved) return; var sv=S.blendSaved=[];
+      sc.traverse(function(o){ var ms=o.material; if(!ms) return; (Array.isArray(ms)?ms:[ms]).forEach(function(m){
+        if(!m||m.blending!==T.AdditiveBlending||m._dmArB) return;
+        m._dmArB={b:m.blending,s:m.blendSrc,d:m.blendDst,e:m.blendEquation,sa:m.blendSrcAlpha,da:m.blendDstAlpha,ea:m.blendEquationAlpha};
+        m.blending=T.CustomBlending; m.blendEquation=T.AddEquation; m.blendSrc=m.premultipliedAlpha?T.OneFactor:T.SrcAlphaFactor; m.blendDst=T.OneFactor;
+        m.blendEquationAlpha=T.AddEquation; m.blendSrcAlpha=T.ZeroFactor; m.blendDstAlpha=T.OneFactor; sv.push(m); }); });
+      // compile the changed blend states now, off the frame, so the first AR frames don't hitch
+      try{ var fr=S.flight, fc=g('flightCamera'); if(fr&&fr.compileAsync&&fc) fr.compileAsync(sc,fc).catch(function(){}); }catch(e){}
+    } else if(S.blendSaved){ S.blendSaved.forEach(function(m){ var b=m._dmArB; if(!b) return; m.blending=b.b; m.blendSrc=b.s; m.blendDst=b.d; m.blendEquation=b.e; m.blendSrcAlpha=b.sa; m.blendDstAlpha=b.da; m.blendEquationAlpha=b.ea; delete m._dmArB; }); S.blendSaved=null; }
+  }
+  // ---------- terrain board: the real world, drawn by the game's renderer onto the anchored table ----------
+  // A board camera stands where the phone is relative to the placed board, scaled up to world size and centred on
+  // Ariel, and draws the game's own world scene (terrain mesh, materials, water, props, Ariel) through one pass. The
+  // pass keeps only what lies inside the 3x3 square: opaque to halfway across the outer ring, then a premultiplied
+  // alpha feather to zero at the perimeter, a hard cut beyond. The world's sky and fog are left out.
+  var L_WORLD=300;   // world units per grid unit (Ariel's high-detail square)
+  function buildBoard(T,r,scene){
+    var TSL=T.TSL, bc=new T.PerspectiveCamera(60,1,1,1e5);
+    var U={c:TSL.uniform(new T.Vector2()),half:TSL.uniform(450),tx:TSL.uniform(1),ty:TSL.uniform(1),far:TSL.uniform(1e5),wy:TSL.uniform(0),cw:TSL.uniform(new T.Matrix4())};
+    var sp=TSL.pass(scene,bc), col=sp.getTextureNode('output'), vz=sp.getViewZNode();
+    var u=TSL.screenUV, dist=vz.negate();
+    var vp=TSL.vec3(u.x.mul(2).sub(1).mul(U.tx),TSL.float(1).sub(u.y).mul(2).sub(1).mul(U.ty),-1).mul(dist);
+    var wp=U.cw.mul(TSL.vec4(vp,1)).xyz;
+    var d=TSL.max(TSL.abs(wp.x.sub(U.c.x)),TSL.abs(wp.z.sub(U.c.y))).div(U.half);
+    var wall=d.greaterThan(0.993).and(d.lessThan(1.007)).and(wp.y.lessThan(U.wy));
+    var a=wall.select(TSL.float(1),TSL.float(1).sub(TSL.smoothstep(2/3,1,d)).mul(d.lessThan(1).select(1,0))).mul(dist.lessThan(U.far.mul(0.98)).select(1,0));
+    var pp=new (T.RenderPipeline||T.PostProcessing)(r);
+    pp.outputNode=TSL.vec4(col.rgb.mul(a),col.a.mul(a));   // premultiplied
+    return {scene:scene,bc:bc,U:U,pp:pp,m:new T.Matrix4(),p:new T.Vector3(),q:new T.Quaternion(),sc:new T.Vector3()};
+  }
+  // cliff walls: the board is a solid block. Four skirts follow the terrain's edge profile down to a flat base
+  // (about 4x Ariel's height below the ground, with a floor so a low view still reads as a plateau), rock strata.
+  var WSEG=48;
+  function buildWalls(T){
+    var TSL=T.TSL, n=4*(WSEG+1), pos=new Float32Array(n*2*3), idx=[];
+    for(var sd=0;sd<4;sd++) for(var i=0;i<WSEG;i++){ var a=(sd*(WSEG+1)+i)*2, b=a+2; idx.push(a,a+1,b, b,a+1,b+1); }
+    var geo=new T.BufferGeometry(); geo.setAttribute('position',new T.BufferAttribute(pos,3)); geo.setIndex(idx);
+    var M=T.MeshStandardNodeMaterial?new T.MeshStandardNodeMaterial():new T.MeshStandardMaterial();
+    M.side=T.DoubleSide; M.roughness=0.95; M.metalness=0;
+    if(TSL&&M.isNodeMaterial){ var y=TSL.positionWorld.y, k=TSL.sin(y.mul(0.35)).mul(0.5).add(0.5), k2=TSL.sin(y.mul(1.7).add(TSL.positionWorld.x.add(TSL.positionWorld.z).mul(0.05))).mul(0.5).add(0.5);
+      M.colorNode=TSL.mix(TSL.mix(TSL.color(0x5a4636),TSL.color(0x8a6f55),k),TSL.color(0x3e3229),k2.mul(0.35)); }
+    else M.color.set(0x6b5442);
+    var mesh=new T.Mesh(geo,M); mesh.frustumCulled=false; mesh.visible=false; mesh.userData.dmArWall=true;
+    return {mesh:mesh,pos:pos,geo:geo};
+  }
+  function fillWalls(W,H,cx,cz,half,depth,pal){
+    var p=W.pos, lo=Infinity, tops=[];
+    for(var sd=0;sd<4;sd++) for(var i=0;i<=WSEG;i++){ var t=-1+2*i/WSEG, x,z;
+      if(sd===0){x=cx+t*half; z=cz-half;} else if(sd===1){x=cx+half; z=cz+t*half;} else if(sd===2){x=cx-t*half; z=cz+half;} else {x=cx-half; z=cz-t*half;}
+      var h=0; try{ h=+H(x,z); }catch(e){} if(!isFinite(h)) h=0; var sea=pal; if(sea!=null&&h<sea) h=sea;
+      tops.push(x,h,z); if(h<lo) lo=h; }
+    var base=lo-depth;
+    for(var j=0;j<tops.length/3;j++){ var o=j*6; p[o]=tops[j*3]; p[o+1]=tops[j*3+1]; p[o+2]=tops[j*3+2]; p[o+3]=tops[j*3]; p[o+4]=base; p[o+5]=tops[j*3+2]; }
+    W.geo.attributes.position.needsUpdate=true; W.geo.computeVertexNormals();
+  }
+  function boardRender(r,scene,cam){
+    if(!S||S.kind!=='camera'||S.mode!=='terrain') return false;
+    var T=window.THREE, ctx=terrainCtx(), ca=r.getClearAlpha(), bg=scene.background, hid=[], fog=scene.fog, fs=null;
+    r.setClearAlpha(0);
+    try{
+      if(!S.placed||!ctx){ r.setRenderTarget(null); r.clear(); return true; }
+      if(!S.B||S.B.scene!==scene){ if(S.B) try{ S.B.pp.dispose(); if(S.B.W){ S.B.W.mesh.parent&&S.B.W.mesh.parent.remove(S.B.W.mesh); S.B.W.geo.dispose(); } }catch(e){} S.B=buildBoard(T,r,scene); }
+      var B=S.B, half=1.5*L_WORLD, s=3*L_WORLD/DIO_SIZE;
+      var px=ctx.pos.x, pz=ctx.pos.z, h=NaN; try{ h=+ctx.H(px,pz); }catch(e){} if(!isFinite(h)) h=ctx.pos.y||0;
+      S.table.updateMatrixWorld(true); S.cam.updateMatrixWorld(true);
+      B.m.copy(S.table.matrixWorld).invert().multiply(S.cam.matrixWorld); B.m.decompose(B.p,B.q,B.sc);
+      var bc=B.bc; bc.position.set(px+B.p.x*s,h+B.p.y*s,pz+B.p.z*s); bc.quaternion.copy(B.q);
+      bc.fov=S.cam.fov; bc.aspect=innerWidth/innerHeight; bc.near=Math.max(0.5,0.02*s); bc.far=8*s; bc.updateProjectionMatrix(); bc.updateMatrixWorld(true);
+      var e=bc.projectionMatrix.elements; B.U.tx.value=1/e[0]; B.U.ty.value=1/e[5]; B.U.far.value=bc.far; B.U.cw.value.copy(bc.matrixWorld);
+      B.U.c.value.set(px,pz); B.U.half.value=half;
+      if(!B.W){ B.W=buildWalls(T); scene.add(B.W.mesh); }
+      var ah=B.ah||1.8; if(!B.ah) try{ var cb=window.CHAR&&CHAR.root; if(cb){ var bb=new T.Box3().setFromObject(cb); var hh=bb.max.y-bb.min.y; if(isFinite(hh)&&hh>0.2&&hh<50) ah=B.ah=hh; } }catch(e){}
+      var depth=Math.max(4*ah,0.06*2*half);   // ~4x her height, never thinner than a readable slab at board scale
+      var sw=g('surfWater'), sea=(sw&&sw.visible&&sw.position&&isFinite(sw.position.y))?sw.position.y:null;
+      fillWalls(B.W,ctx.H,px,pz,half,depth,sea);
+      B.U.wy.value=h+0.5*depth+200; B.W.mesh.visible=true; hid.push(B.W.mesh); B.W._on=true;
+      scene.background=null;
+      scene.traverseVisible(function(o){ if(o.userData&&(o.userData.dmSkyShell||o.userData.dmArHide)){ o.visible=false; hid.push(o); } });
+      if(fog){ fs={n:fog.near,f:fog.far,d:fog.density}; if(fog.density!=null) fog.density=0; else { fog.near=1e12; fog.far=2e12; } }   // uniforms only: no recompile
+      B.pp.render();
+      return true;
+    } finally {
+      r.setClearAlpha(ca); scene.background=bg; for(var i=0;i<hid.length;i++) hid[i].visible=!(hid[i].userData&&hid[i].userData.dmArWall);
+      if(fog&&fs){ fog.near=fs.n; fog.far=fs.f; if(fs.d!=null) fog.density=fs.d; }
     }
   }
   function viewBtn(on){ var b=document.getElementById('dm-ar-view');
@@ -407,7 +498,12 @@
     var T=window.THREE, ctx=terrainCtx(), mode=ctx?'terrain':'space';
     if(mode!==S.mode) switchMode(mode);
     var q=camPose(T), full=mode==='space'&&S.view==='full';
-    if(full!==!!S.full){ S.full=full; document.body.classList.toggle('dm-ar-full',full); if(full) S.q0=null; viewBtn(true); }
+    if(full!==!!S.full){ S.full=full; if(full) S.q0=null; viewBtn(true); arBlend(full); }
+    document.body.classList.toggle('dm-ar-full',full||mode==='terrain');
+    S.cam.position.set(0,0,0); S.cam.quaternion.copy(q); S.cam.updateMatrixWorld(true);
+    if(mode==='terrain'){   // the game's own loop draws the world onto the board (boardRender, called from _pwRender)
+      if(!S.placed){ S.table.position.set(0,TABLE_Y,-0.7); S.table.rotation.set(0,0,0); S.table.visible=true; S.placed=true; S.autoPlaced=true; toast(''); }
+      return; }
     if(full){
       if(!S.q0) S.q0=q.clone().invert();
       S.dq.copy(S.q0).multiply(q);   // device turn since entering, layered on the game camera in fullRender
@@ -425,7 +521,7 @@
     try{ window.DMUI3DMesh&&DMUI3DMesh.drawTo(S.r); }catch(e){}   // 3D HUD over the passthrough (DOM HUD if the mesh is off)
   }
 
-  window.DMAR={toggle:toggle,exit:exit,get active(){ return !!S; }, get mode(){ return S?S.kind+'/'+(S.mode||'-')+(S.placed?' placed':''):(supported?'off (webxr ready)':'off (camera fallback)'); }, _cam:function(){ return S; },get supported(){ return supported; },_buildDiorama:buildDiorama,_fillDiorama:fillDiorama,_stripSky:stripSky,_unstrip:unstrip};
+  window.DMAR={toggle:toggle,exit:exit,get active(){ return !!S; }, get letWarm(){ return !!(S&&S.full); }, get noAtmo(){ return !!(S&&S.kind==='camera'&&(S.full||S.mode==='terrain')); }, get boardOn(){ return !!(S&&S.kind==='camera'&&S.mode==='terrain'); }, board:boardRender, get mode(){ return S?S.kind+'/'+(S.mode||'-')+(S.placed?' placed':''):(supported?'off (webxr ready)':'off (camera fallback)'); }, _cam:function(){ return S; },get supported(){ return supported; },_buildDiorama:buildDiorama,_fillDiorama:fillDiorama,_stripSky:stripSky,_unstrip:unstrip};
   function init(){
     placeButtons();
     try{ new MutationObserver(function(){ placeButtons(); }).observe(document.body,{childList:true,subtree:false}); }catch(e){}
