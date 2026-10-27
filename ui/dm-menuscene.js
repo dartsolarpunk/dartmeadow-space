@@ -568,8 +568,11 @@
         // parked to the rock's left, nose toward the viewer, its nose end level with the rock's front: it pulls up from behind
         const N = new THREE.Vector3(0.12, 0, 1).normalize();
         IN.phi = Math.atan2(-N.z, N.x);
+        // v176: the board model's nose is its local -X, so every pose below is turned 180 deg about the board's own up (same path,
+        // same bank/pitch): the nose now leads the fly-in, points at the viewer when parked, and she steps on facing it
+        IN.qFlip = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
         // place from its real bounds at the parked pose (GLB pivots aren't centred): right side 0.7 m off the rock, nose end level with the rock's front
-        const H = new THREE.Vector3(0, gY + 0.32, 0); b.position.copy(H); b.rotation.set(0, IN.phi, 0); b.updateMatrixWorld(true);
+        const H = new THREE.Vector3(0, gY + 0.32, 0); b.position.copy(H); b.rotation.set(0, IN.phi, 0); b.quaternion.multiply(IN.qFlip); b.updateMatrixWorld(true);
         const a = b.userData.deckAnchor || { x: 0, y: 0, z: 0 };
         const pb = new THREE.Box3().setFromObject(b), ac = b.localToWorld(new THREE.Vector3(a.x, a.y, a.z));
         H.x += (rb.min.x - 0.7) - pb.max.x; H.z += (rb.min.z + rb.max.z) * 0.5 - ac.z;   // beside the rock: deck centre level with the rock's middle
@@ -579,7 +582,7 @@
         IN.P2 = new THREE.Vector3(H.x - Lb * 0.8, 2.0, H.z - Lb * 1.6); IN.P3 = H.clone().addScaledVector(N, -Lb * 1.1); IN.P3.y += 0.5;
         IN.L = new THREE.Vector3(0, 1, 0).addScaledVector(N, -0.35).normalize();
         // where she boards: the deck beside the rock (local point under world z≈0 at the final pose)
-        b.position.copy(H); b.rotation.set(0, IN.phi, 0); b.updateMatrixWorld(true); pb.setFromObject(b);
+        b.position.copy(H); b.rotation.set(0, IN.phi, 0); b.quaternion.multiply(IN.qFlip); b.updateMatrixWorld(true); pb.setFromObject(b);
         IN.Dl = new THREE.Vector3(a.x, a.y, a.z);                       // she boards and rides on the deck centre
         ac.set(a.x, a.y, a.z); b.localToWorld(ac);
         IN.W = new THREE.Vector3(pb.max.x + 0.3, 0, ac.z);
@@ -610,10 +613,10 @@
           const dx = IN.tmp.x - b.position.x, dz = IN.tmp.z - b.position.z;
           const ty = dx * dx + dz * dz > 1e-8 ? Math.atan2(-dz, dx) : IN.phi;
           let dy = IN.phi - ty; dy = Math.atan2(Math.sin(dy), Math.cos(dy));
-          b.rotation.set(0, ty + dy * smooth(0.8, 1, u), -0.5 * Math.sin(Math.PI * u));
+          b.rotation.set(0, ty + dy * smooth(0.8, 1, u), -0.5 * Math.sin(Math.PI * u)); b.quaternion.multiply(IN.qFlip);
         } else if (t < T_LIFT) { // pull up from behind to the stop, then hover
           const u = Math.min(1, (t - TF) / 1.1), e = 1 - Math.pow(1 - u, 3);
-          b.position.lerpVectors(IN.P3, IN.H, e); b.rotation.set(0, IN.phi, 0.06 * (1 - e));
+          b.position.lerpVectors(IN.P3, IN.H, e); b.rotation.set(0, IN.phi, 0.06 * (1 - e)); b.quaternion.multiply(IN.qFlip);
           b.position.y += 0.03 * Math.sin(t * 2.6) * smooth(0.7, 1, u) - (t > T_LAND ? 0.06 * smooth(T_LAND, T_LAND + 0.15, t) * (1 - smooth(T_LAND + 0.15, T_LIFT, t)) : 0);
         } else {                 // lift off into space, fast
           // banked climb: turn from facing the camera to heading out over the rocks, nose up ~28 deg, accelerating
@@ -621,7 +624,7 @@
           if (!IN.lift) { IN.lift = true; IN.hd = IN.phi; }
           const head = IN.phi + 2.3 * tu, pit = 0.49 * smooth(0, 0.5, s), v = 1.2 + 5.5 * s * s;
           b.position.x += Math.cos(head) * Math.cos(pit) * v * ds; b.position.z -= Math.sin(head) * Math.cos(pit) * v * ds; b.position.y += Math.sin(pit) * v * ds;
-          b.rotation.set(-0.35 * Math.sin(Math.PI * tu), head, pit);
+          b.rotation.set(-0.35 * Math.sin(Math.PI * tu), head, pit); b.quaternion.multiply(IN.qFlip);
           if (!IN.flew && s > 0.6) { IN.flew = true; try { IN.onFly && IN.onFly(); } catch (e) {} }
         }
         b.updateMatrixWorld(true); IN.D.copy(IN.Dl); b.localToWorld(IN.D); IN.D.y += 0.03;
