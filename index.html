@@ -10860,6 +10860,22 @@ function setAlloyPreset(k){
   if($('z-pattern')) $('z-pattern').value=P.pattern;
   rb();
 }
+// ── Board fine detail (v187) ──────────────────────────────────────────
+// Two small tiled 512 WebP maps (assets/board-detail): a detail normal
+// (hairline brushed scratches, micro panel seams + rivets) and a roughness
+// detail (0.5 = neutral). Blended over the alloy's own procedural bump and
+// roughness, faded by camera distance via the detail map's texel footprint
+// per pixel (scale-independent, so it works at any FLIGHT_BOARD_WORLD_SCALE):
+// full strength up close, gone before it can alias. Loaded once, lazily.
+let _boardDetail=null;
+function _boardDetailTex(){
+  if(_boardDetail) return _boardDetail;
+  try{
+    const L=new THREE.TextureLoader(), mk=(url,srgb)=>{ const t=L.load(url); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.colorSpace=THREE.NoColorSpace; t.anisotropy=4; return t; };
+    _boardDetail={ n:mk('assets/board-detail/board_detail_n.webp'), r:mk('assets/board-detail/board_detail_r.webp') };
+  }catch(e){ _boardDetail={n:null,r:null}; }
+  return _boardDetail;
+}
 function _alloyMaterial(metal,A){
   const W=window;
   if(!THREE.MeshStandardNodeMaterial||typeof W.Fn!=='function'||typeof W.mx_noise_float!=='function') return null;
@@ -10892,9 +10908,29 @@ function _alloyMaterial(metal,A){
     const k=U.bump.mul(0.0035);
     const dHx=H.dFdx().mul(k), dHy=H.dFdy().mul(k);
     const grad=sign(det).mul(R1.mul(dHx).add(R2.mul(dHy)));
-    m.normalNode=normalize(abs(det).mul(N).sub(grad));
+    let nrm=normalize(abs(det).mul(N).sub(grad));
     m.metalnessNode=U.metal;
-    const rough=clamp(U.rough.add(hair.sub(0.5).mul(U.brush).mul(0.28)).add(deep.mul(0.18)).add(forge.sub(0.5).mul(U.relief).mul(0.2)),0.04,1.0);
+    let rough=clamp(U.rough.add(hair.sub(0.5).mul(U.brush).mul(0.28)).add(deep.mul(0.18)).add(forge.sub(0.5).mul(U.relief).mul(0.2)),0.04,1.0);
+    // fine detail layer, close-up only (see _boardDetailTex)
+    const DT=_boardDetailTex(), tex=THREE.TSL&&THREE.TSL.texture;
+    if(DT.n&&DT.r&&typeof tex==='function'){
+      // project on the deck (+Y up after the template bake), sides use XY;
+      // A.detailScale = the template root's scale, so tiles are in board units
+      const nl=W.normalLocal, side=float(1.0).sub(smoothstep(0.45,0.7,abs(nl.y)));
+      const duv=mix(p.xz,p.xy,side).mul(5.0*(A.detailScale||1));   // ~0.2 board-units per tile (board is 3 long)
+      const fp=max(duv.x.fwidth(),duv.y.fwidth()).mul(512.0);   // texels per pixel
+      U.detail=uniform(1.0);
+      const fade=float(1.0).sub(smoothstep(1.2,5.0,fp)).mul(U.detail);
+      const tn=tex(DT.n,duv).xyz.mul(2.0).sub(1.0);
+      // cotangent frame from screen derivatives (the board has no tangents)
+      const du1=duv.dFdx(), du2=duv.dFdy(), q1=cross(sY,nrm), q2=cross(nrm,sX);
+      const T=q1.mul(du1.x).add(q2.mul(du2.x)), B=q1.mul(du1.y).add(q2.mul(du2.y));
+      const inv=W.inverseSqrt(max(max(dot(T,T),dot(B,B)),1e-20));
+      const nd=normalize(T.mul(inv).mul(tn.x).add(B.mul(inv).mul(tn.y)).add(nrm.mul(tn.z)));
+      nrm=normalize(mix(nrm,nd,fade.mul(0.7)));
+      rough=clamp(rough.add(tex(DT.r,duv).x.sub(0.5).mul(0.55).mul(fade)),0.04,1.0);
+    }
+    m.normalNode=nrm;
     m.roughnessNode=rough;
     // soft studio sky in the reflection, so it reads as metal even with no environment
     const ry=reflectVector.y;
@@ -10967,6 +11003,7 @@ function applyPartStyle(mesh, style, zd){
   if(F.type==='crystal'||F.type==='energy'){ mesh.material=_crystalMaterial(F,mid); mesh.renderOrder=3; return; }
   // the board's metal parts: real brushed alloy (WebGPU node shader)
   if(F.type==='alloy'){ const A=Object.assign({},(STATE.boardConfig&&STATE.boardConfig.alloy)||{}); if(F.shine!=null)A.shine=F.shine; if(F.brush!=null)A.brush=F.brush;
+    if(zd.detailScale) A.detailScale=zd.detailScale;
     const am=_alloyMaterial(zd.metal,A); if(am){ if(F.glow>0){ am.emissive=mid.clone(); am.emissiveIntensity=F.glow*2; } mesh.material=am; return; } }
   mesh.material=new THREE.MeshStandardMaterial({
     color:0xffffff, vertexColors:true,
@@ -11011,6 +11048,7 @@ function buildBoardFromGLB(tmplKey){
     // a split piece inherits its old merged part's saved style until restyled
     const st=styles[part]||(o.userData.basePart&&styles[o.userData.basePart])||_legacyStyleForPart(part,c);
     zd.finish=_partFinish(part,styles[part]);
+    zd.detailScale=cached.scale.x;   // fine-detail tiling in board units
     if(st.visible===false){o.visible=false;return;}
     o.visible=true;
     applyPartStyle(o,st,zd);
