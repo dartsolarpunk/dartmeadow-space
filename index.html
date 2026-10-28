@@ -991,6 +991,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="jots/jots-link.js?v=88" defer></script>
 <script src="ui/dm-friends.js?v=2" defer></script>
 <script src="ui/dm-perflog.js?v=3" defer></script>
+<script src="ui/dm-webkit.js?v=209" defer></script>
 <script src="ui/dm-spectator.js?v=1" defer></script>
 <script src="ui/dm-stack.js?v=1" defer></script>
 <script src="ui/dm-globe.js?v=9" defer></script>
@@ -3362,14 +3363,24 @@ function initAudio(){
   if(fi)fi.addEventListener('change',onMusicFilesPicked);
   // Autoplay needs a user gesture in every browser. Capture the FIRST tap/click
   // anywhere and start the soundtrack then (covers the "LAUNCH SEQUENCE" click).
+  // (webkit-polish) iOS Safari does NOT count a touch's pointerdown as a user activation (only touchend / click /
+  // pointerup do), so the old pointerdown-only kick was rejected on iPhone and then removed itself, and music
+  // never started until the ♫ button was tapped. Listen on the events iOS accepts too, and stay armed until
+  // the track is really playing.
+  const _kickEv=['pointerdown','pointerup','touchend','click','keydown'];
   const kick=()=>{
     AUDIO.userInteracted=true;
     if(!AUDIO.started&&!AUDIO.stopped)audioPlay();
-    window.removeEventListener('pointerdown',kick);
-    window.removeEventListener('keydown',kick);
   };
-  window.addEventListener('pointerdown',kick,{once:false});
-  window.addEventListener('keydown',kick,{once:false});
+  _kickEv.forEach(t=>window.addEventListener(t,kick,{capture:true,passive:true}));
+  AUDIO.el.addEventListener('playing',()=>{ _kickEv.forEach(t=>window.removeEventListener(t,kick,true)); },{once:true});
+  // iOS pauses the element when the page goes to the background / a call or Siri interrupts; pick the
+  // soundtrack back up on return if it was playing and the player didn't stop it.
+  let _wasPlaying=false;
+  document.addEventListener('visibilitychange',()=>{
+    if(document.hidden){ _wasPlaying=!!(AUDIO.el&&!AUDIO.el.paused&&!AUDIO.stopped); return; }
+    if(_wasPlaying&&AUDIO.el&&AUDIO.el.paused&&!AUDIO.stopped){ _wasPlaying=false; try{ const pr=AUDIO.el.play(); if(pr&&pr.catch) pr.catch(()=>{ AUDIO.started=false; _kickEv.forEach(t=>window.addEventListener(t,kick,{capture:true,passive:true})); AUDIO.el.addEventListener('playing',()=>{ _kickEv.forEach(t=>window.removeEventListener(t,kick,true)); },{once:true}); }); }catch(e){} }
+  });
 }
 
 // Start music when entering the main menu (if not stopped by user)
@@ -3384,9 +3395,10 @@ function audioPlay(){
   if(!AUDIO.el)return;
   AUDIO.stopped=false;
   const pr=AUDIO.el.play();
-  if(pr&&pr.catch)pr.catch(()=>{ /* blocked until gesture — kick handles it */ });
   AUDIO.started=true;
   syncAudioUI(true);
+  // blocked until a gesture (iOS / Chrome autoplay policy): forget that we "started" so the next tap retries
+  if(pr&&pr.catch)pr.catch(()=>{ if(AUDIO.el&&AUDIO.el.paused){ AUDIO.started=false; syncAudioUI(false); } });
 }
 function audioPause(){ if(AUDIO.el){AUDIO.el.pause();syncAudioUI(false);} }
 function audioToggle(){ if(!AUDIO.el)return; if(AUDIO.el.paused)audioPlay(); else audioPause(); }
@@ -6258,9 +6270,17 @@ async function initFlightScene(){
     if(window._dmGpuLost) return; window._dmGpuLost=true;
     console.warn('[gpu] lost:',why);
     try{ localStorage.setItem('dm_lastGpuLost',JSON.stringify({at:new Date().toISOString(),why:String(why).slice(0,200),screen:STATE&&STATE.screen,aboard:!!((typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active)||(window.BTI&&(BTI.cur||BTI._depth>0))),build:window._dmSwCache||null})); }catch(e){}   // (v104) the next session's perf report carries why the last one died
-    try{ if(typeof quickSave==='function'&&STATE.screen==='flight') quickSave(); }catch(e){}
+    // (webkit-polish) silent save on every in-world screen (flight / surface / atmo), not only flight; and a reload-loop guard:
+    // iOS can drop the context again right after a reload under memory pressure, which used to bounce the page forever.
+    try{ if(typeof buildSaveData==='function'&&(STATE.screen==='flight'||STATE.screen==='surface'||STATE.screen==='atmo')){ const d=buildSaveData('auto'); localStorage.setItem('dm_autosave',JSON.stringify(d)); try{ if(typeof journeyBackupLive==='function') journeyBackupLive(d,false); }catch(e){} } }catch(e){}
+    let _loop=false;
+    try{ const k='dm_gpuLostLog', now=Date.now(); let a=JSON.parse(localStorage.getItem(k)||'[]').filter(t=>now-t<120000); a.push(now); localStorage.setItem(k,JSON.stringify(a)); _loop=a.length>=3; }catch(e){}
+    if(_loop){ try{ toast('⚠ The graphics keep resetting — close other tabs and apps, then reload the page to continue',60000); }catch(e){} window._dmGpuLostHold=true; return; }
     try{ toast('⚠ Graphics reset by the device — restoring…',2400); }catch(e){}
-    setTimeout(()=>{ try{ location.reload(); }catch(e){} },1200);
+    // a backgrounded page reloads when it comes back (a reload while hidden is often cut off by the OS anyway)
+    const _go=()=>{ try{ location.reload(); }catch(e){} };
+    if(document.hidden){ const f=()=>{ if(!document.hidden){ document.removeEventListener('visibilitychange',f); setTimeout(_go,300); } }; document.addEventListener('visibilitychange',f); }
+    else setTimeout(_go,1200);
   };
   try{ flightRenderer.onDeviceLost=(info)=>_gpuLost(info&&info.message||'device lost'); }catch(e){}
   try{ cv.addEventListener('webglcontextlost',ev=>{ ev.preventDefault(); _gpuLost('webgl context lost'); },false); }catch(e){}
@@ -20184,7 +20204,9 @@ function _finalizeCharMeshReady(reason){
   try{
     const st=_charStatus();
     console.log('[CHAR] mesh ready ('+reason+')', st);
-    if(!st.mounted || !st.visible){
+    // (webkit-polish) only a real problem once a board exists to ride; on the splash/menu there is no
+    // boardFlight yet, so "not mounted" is the normal state and the warning was a false alarm.
+    if((!st.mounted || !st.visible) && typeof boardFlight!=='undefined' && boardFlight){
       try{toast('⚠ Autumn mesh ready but not visible yet — remounting…',2500);}catch(_){}
     }
   }catch(e){}
@@ -26111,6 +26133,9 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
   }
   window.jotsMilestone=milestone;
   setInterval(()=>{ if(!document.hidden) autosaveHere(); },AUTO_BACKUP_MS);
+  // (webkit-polish) iOS can kill a foreground tab for memory with no pagehide/visibilitychange at all, so also drop a
+  // cheap checkpoint of just dm_autosave (no slot rewrite, no upload, no vault) every minute; the 5-min cadence above stays for the backup/upload.
+  setInterval(()=>{ if(document.hidden||typeof STATE==='undefined'||typeof buildSaveData!=='function') return; if(STATE.screen!=='flight'&&STATE.screen!=='surface'&&STATE.screen!=='atmo') return; try{ localStorage.setItem('dm_autosave',JSON.stringify(buildSaveData('auto'))); }catch(e){} },60000);
   let _hideUp=0;
   const _toBackground=()=>{ const up=Date.now()-_hideUp>60000; if(up) _hideUp=Date.now(); saveLocal(up); };
   document.addEventListener('visibilitychange',()=>{ if(document.hidden) _toBackground(); });
@@ -26415,5 +26440,6 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 <link rel="stylesheet" href="ui/dm-landmap.css?v=88">
 <link rel="stylesheet" href="ui/dm-type.css?v=89">
 <link rel="stylesheet" href="ui/dm-compact.css?v=160">
+<link rel="stylesheet" href="ui/dm-webkit.css?v=209">
 </body>
 </html>

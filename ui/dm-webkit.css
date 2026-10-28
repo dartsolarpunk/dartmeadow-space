@@ -1,0 +1,33 @@
+/* DART Meadow — iPhone Safari / WebKit polish.
+ * Loaded last. Everything here is a no-op on desktop (env() insets are 0 there).
+ *
+ * 1. Notch / Dynamic Island / home-bar: the page is viewport-fit=cover, but most HUD pieces were only
+ *    inset on top/bottom. In landscape (how it is mostly played) the notch side ate the thumbstick, the
+ *    left tabs and the right rail. We use margin (not left/right) so the existing per-breakpoint
+ *    left/right values — including the !important ones in dm-compact.css — keep working untouched.
+ * 2. Touch hygiene: no grey tap flash, no long-press callout/selection on game controls, no double-tap zoom.
+ */
+:root{--dm-sal:env(safe-area-inset-left,0px);--dm-sar:env(safe-area-inset-right,0px);--dm-sat:env(safe-area-inset-top,0px);}
+
+/* left-anchored */
+#builder-drawer-btn,#hud-logs-panel,#temple-hub-panel,#roll-row,#minimap,
+#screen-flight .hud-toggle-btn,#screen-flight #hud-logs-panel,#screen-flight #minimap,#screen-flight #roll-row{margin-left:var(--dm-sal);}
+/* right-anchored */
+#builder-hud,.world-rail,#jots-chat,.surf-view-btn,#surface-overlay .surf-view-btn{margin-right:var(--dm-sar);}
+/* the full-width rows: pad instead */
+#joysticks{padding-left:calc(20px + var(--dm-sal));padding-right:calc(20px + var(--dm-sar));}
+#screen-flight #ar-top{padding-left:calc(12px + var(--dm-sal)) !important;padding-right:calc(12px + var(--dm-sar)) !important;padding-top:calc(10px + var(--dm-sat)) !important;}
+@media (max-width:640px){
+  #screen-flight #ar-top{padding-left:calc(6px + var(--dm-sal)) !important;padding-right:calc(6px + var(--dm-sar)) !important;}
+}
+
+/* touch hygiene */
+html,body{-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none;touch-action:manipulation;}
+#screen-flight button,#screen-flight .joystick-zone,#screen-flight .joystick-base,#screen-flight .side-pad,#screen-flight .dart-pad,
+#screen-flight #joysticks,#screen-flight .world-rail,#screen-flight .hud-toggle-btn,#screen-builder button,#screen-builder #builder-hud{
+  -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;}
+canvas{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;}
+/* iOS zooms the whole page when a field under 16px is focused, and often never zooms back out */
+@supports (-webkit-touch-callout:none){
+  input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=color]),textarea,select{font-size:max(16px,1em) !important;}
+}
