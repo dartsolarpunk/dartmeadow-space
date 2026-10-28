@@ -1007,7 +1007,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-atmo.js?v=211" defer></script>
 <script src="ui/dm-localcollide.js?v=188" defer></script>
 <script src="ui/dm-cgroup.js?v=214" defer></script>
-<script src="ui/dm-projector.js?v=223" defer></script>
+<script src="ui/dm-projector.js?v=224" defer></script>
 <script src="ui/dm-groundmark.js?v=220" defer></script>
 <script src="ui/dm-charm.js?v=222" defer></script>
 <script src="ui/dm-menuscene.js?v=214" defer></script>
@@ -1031,8 +1031,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-bt-roomlights.js?v=144" defer></script>
 <script src="ui/dm-bt-hull.js?v=144" defer></script>
 <script src="ui/dm-edgewarm.js?v=217" defer></script>
-<script src="ui/dm-arielhome.js?v=223" defer></script>
-<script src="ui/dm-facilities.js?v=223" defer></script>
+<script src="ui/dm-arielhome.js?v=224" defer></script>
+<script src="ui/dm-facilities.js?v=224" defer></script>
 </head>
 <body>
 <!-- LOADING -->
@@ -14481,6 +14481,26 @@ function fastTravelToGalaxy(galaxyId,galaxyName){
 // Swap the active flight to a procedural system's bodies (when already flying).
 // Worlds: MC / WebGL-rich planets (no flat SphereGeometry stubs). Uses Cosmos
 // seed (system.seed) so the same arm-cell chart regenerates identically.
+// (v224) A system built after start-up was never pre-compiled: the first-load warm-up only covers the scene that existed
+// then, and compileAsync skips whatever is outside the camera's view. So each planet, moon and star of Veyra (or any
+// system you travel to) compiled the first time it crossed the screen edge: a freeze, then a skip past it. Right after
+// a rebuild, switch culling off for the single synchronous call that collects the render list, restore it at once
+// (nothing is drawn unculled), and let the GPU finish compiling in the background.
+let _sysWarmBusy=false;
+async function _warmSystemAfterRebuild(){
+  if(_sysWarmBusy||window._dmWarming||typeof flightRenderer==='undefined'||!flightRenderer||!flightRenderer.compileAsync) return;
+  _sysWarmBusy=true;
+  try{
+    await new Promise(r=>setTimeout(r,600));   // the arrival frame draws first
+    const un=[]; let p=null;
+    try{ flightScene.traverse(o=>{ if(o.frustumCulled){ o.frustumCulled=false; un.push(o); } }); p=flightRenderer.compileAsync(flightScene,flightCamera); }
+    finally{ for(const o of un) o.frustumCulled=true; }
+    const ps=[p]; try{ if(window.DMStar&&DMStar.warm) ps.push(DMStar.warm(flightCamera)); }catch(e){}
+    await Promise.race([Promise.all(ps),new Promise(r=>setTimeout(r,8000))]);
+    console.log('[warmup] system rebuilt');
+  }catch(e){ console.warn('[warmup] system',e); }
+  finally{ _sysWarmBusy=false; }
+}
 async function rebuildFlightForSystem(system){
   try{ setGalSkySystem(system); }catch(e){}
   if(!system){ // back to Sol — rebuild the real solar system
@@ -14597,6 +14617,7 @@ async function rebuildFlightForSystem(system){
   if(window._ftArrivePos){STATE.flight.pos.copy(window._ftArrivePos);if(boardFlight)boardFlight.position.copy(STATE.flight.pos);window._ftArrivePos=null;}
   try{ _clearLandPrompt(); }catch(e){}
   try{ if(CHAR.loaded && CHAR.root && boardFlight) remountSkyboard(boardFlight); }catch(e){}
+  try{ _warmSystemAfterRebuild(); }catch(e){}
   toast('🪐 '+system.name+' — '+bodies.length+' bodies. '+bodies.filter(b=>b.landable).length+' landable.',3500);
 }
 
