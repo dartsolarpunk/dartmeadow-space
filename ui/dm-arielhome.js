@@ -29,7 +29,7 @@
   ];
   function hash(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
   A.system = { name: 'Veyra', starType: 'G yellow', ariel: true, binary: BIN, bodies: BODIES, ang: 0.62, rad: 0.38, seed: hash('sys:Veyra:lumenreach:home'),
-    star2: 'K orange', starNote: 'Veyra A (G) + Veyra B (K), 60-day binary' };
+    star2: 'K orange', starK: 5000, starK2: 3900, starR: BIN.rA, starNote: 'Veyra A (G) + Veyra B (K), 60-day binary' };
   A.bodyDef = n => BODIES.find(b => b.name === n) || null;
   A.patch = function (g) { if (g && Array.isArray(g.systems)) g.systems[0] = A.system; return g; };
 
@@ -53,10 +53,13 @@
   const S = { b: null, aMesh: null, aGroup: null, kA: 0, kB: 0 };
   A.buildStars = function (system, star, starK) {
     const c = C(), THREE = c.THREE;
-    S.aGroup = star.group; S.aGroup.scale.setScalar(BIN.rA / c.SOL_SUN_RADIUS);
-    const kB = c.DMStar.tempFor(system.star2 || 'K orange');
-    const sb = c.DMStar.build({ radius: c.SOL_SUN_RADIUS, temp: kB, seed: (system.seed % 997) + 7 });
-    sb.group.scale.setScalar(BIN.rB / c.SOL_SUN_RADIUS); sb.group.name = 'JOTS_StarB';
+    // Star A is already built at BIN.rA (index.html passes system.starR). Both stars are built at their real radius, never
+    // by scaling the group: the corona/fume shaders bake the build radius into their ray-march, so a scaled star showed
+    // a hard-edged shell and stacked halo rings.
+    S.aGroup = star.group;
+    const kB = system.starK2 || c.DMStar.tempFor(system.star2 || 'K orange');
+    const sb = c.DMStar.build({ radius: BIN.rB, temp: kB, seed: (system.seed % 997) + 7 });
+    sb.group.name = 'JOTS_StarB';
     c.flightScene.add(sb.group); c.trackExtra(sb.group); S.b = sb.group;
     A.active = true; A.tick();
     return sb;

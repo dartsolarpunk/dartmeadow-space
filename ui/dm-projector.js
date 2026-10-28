@@ -84,7 +84,7 @@
     const soft=halo.add(mid).add(inner).add(ticks).add(arm.mul(0.9)).add(comet.mul(0.2)).add(B_(k,q,px));
     return c.colorU.mul(soft.add(core.mul(0.5)).add(dots.mul(0.6))).add(W.vec3(1.0,0.55,0.45).mul(U.gain).mul(hot).mul(0.5)).mul(br);
   });
-  function B_(k,q,px){ return k.B(0.06,0.84).mul(0.05); }   // faint fill inside the red zone (reads as light spilled on the ground)
+  function B_(k,q,px){ return k.F(0); }   // no fill: the red zone is laser lines only (the old 5% disc read as a see-through red sheet)
 
   // OUTER zone (blue): the annulus is a circular frame band for the skyboard's extended bounds
   D.registerPattern('laserBlue',function(c){
@@ -109,7 +109,7 @@
     const dc=W.fract(a.mul(10).add(r3)).sub(0.5);
     const dd=W.length(W.vec2(dc.mul(TAU*0.34/10).div(1.0),q.sub(0.34)));  // dots, arclength in q units (annulus ≈ same scale)
     const dots=F(1).sub(sm(F(0.025),F(0.025).add(px.mul(1.6)),dd));
-    const haze=k.B(0.05,0.95).mul(0.05);
+    const haze=F(0);                                                  // no fill: the blue zone is laser lines only
     const soft=halo.add(bars).add(thin).add(ticks).add(hair).add(haze).add(comet.mul(0.25));
     const hot=edge.add(comet.mul(0.8)).add(dots);
     return c.colorU.mul(soft.add(edge.mul(0.55)).add(dots.mul(0.5))).add(W.vec3(0.55,0.8,1.0).mul(U.gain).mul(hot).mul(0.5)).mul(br);
