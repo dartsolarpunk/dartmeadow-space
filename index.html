@@ -1009,6 +1009,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-cgroup.js?v=214" defer></script>
 <script src="ui/dm-projector.js?v=220" defer></script>
 <script src="ui/dm-groundmark.js?v=220" defer></script>
+<script src="ui/dm-charm.js?v=221" defer></script>
 <script src="ui/dm-menuscene.js?v=214" defer></script>
 <script src="ui/dm-starbubble.js?v=4" defer></script>
 <script src="ui/dm-hazardbubble.js?v=215" defer></script>
@@ -6776,6 +6777,7 @@ function _startFlightLoop(){
     DMPerf.b('updateCharOrbitCamera'); try{ updateCharOrbitCamera(); }catch(e){_animLoopWarn('charOrbit',e);} DMPerf.e();
     DMPerf.b('_dynRes'); try{ _dynRes(flightRenderer); }catch(e){} DMPerf.e();
     try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){_animLoopWarn('charMixer',e);}
+    try{ _charmTick(dt); }catch(e){_animLoopWarn('charm',e);}
     try{ applySkyboardHeadOverride(); }catch(e){_animLoopWarn('headOverride',e);}   // (fades with the stance)
     DMPerf.b('updateBirdTemple'); try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);} DMPerf.e();
     DMPerf.b('_shipWalkCarry'); try{ if(SHIP_WALK.active) _shipWalkCarry(); else if(SHIP_LIFT.on) _shipLiftCarry(); }catch(e){_animLoopWarn('shipCarry',e);} DMPerf.e();
@@ -18803,6 +18805,7 @@ function _pwFrame(dt){
   try{ if(CHAR.mounted) applySkyboardStance(now/1000); }catch(e){}
   if(PW.mode!=='walk'){
     try{ CHAR.mixer&&CHAR.mixer.update(dt); }catch(e){ _animLoopWarn('charMixer',e); }
+    try{ _charmTick(dt); }catch(e){ _animLoopWarn('charm',e); }
     try{ applySkyboardHeadOverride(); }catch(e){ _animLoopWarn('headOverride',e); }   // (fades with the stance)
   } else {
     try{ updateCaustics(dt); }catch(e){ _animLoopWarn('caustics',e); }
@@ -20401,6 +20404,7 @@ async function loadCharacterAssets(){
   });
   // her bound rest pose (the board stance is solved relative to it)
   CHAR.restPose={}; Object.keys(CHAR.bones).forEach(n=>{ const b=CHAR.bones[n]; CHAR.restPose[n]={p:b.position.clone(),q:b.quaternion.clone(),s:b.scale.clone()}; });
+  try{ if(window.DMCharm) DMCharm.attach(CHAR); }catch(e){ console.warn('[charm]',e); }   // necklace + kite charm on the chest bone (ui/dm-charm.js)
   const boneCount = Object.keys(CHAR.bones).length;
   if(boneCount===0){
     console.error('Character load: mesh loaded but ZERO bones were found in the traversal — the procedural skyboard stance and animations will silently do nothing. Check that the GLB actually contains a skeleton, not just a static mesh.');
@@ -25330,7 +25334,7 @@ function _surfFootContact(dt, airborne, sc){
 // it is — or, if it's already beside her, swoops in from far off — and
 // flies a curved path to her side, slowing as it arrives, with two
 // whispering trails off its tail. She turns to watch it come.
-const BOARD_CALL={parked:false,parkPos:null,parkQuat:null,summon:null,trail:null,look:null,lookW:0,rest:null,restN:-1,n:0};
+const BOARD_CALL={rejoin:0,parked:false,parkPos:null,parkQuat:null,summon:null,trail:null,look:null,lookW:0,rest:null,restN:-1,n:0};
 // v176: where the walk code wants the board this frame (beside her). A summon flies to THIS, not to last frame's
 // path point (that made the call crawl a few % per frame, so it hung far off or stopped short).
 function _bcSetRest(x,y,z){ const T=BOARD_CALL; if(!T.rest) T.rest=new THREE.Vector3(); T.rest.set(x,y,z); T.restN=T.n; }
@@ -25356,7 +25360,7 @@ function _bcReparkOnShip(){
 function _bcParkedWorld(){ return BOARD_CALL.parked&&BOARD_CALL.parkPos&&!BOARD_CALL.parkLocal; }
 function parkSkyboard(){
   const c=_bcCtx(); if(!c) return;
-  if(BOARD_CALL.parked){ BOARD_CALL.parked=false; toast('🛹 Skyboard follows you again',1600); }
+  if(BOARD_CALL.parked){ BOARD_CALL.parked=false; BOARD_CALL.rejoin=performance.now(); toast('🛹 Skyboard follows you again',1600); }
   else{
     BOARD_CALL.parked=true; BC_COL.y=null; BC_COL.hv=false; BOARD_CALL.summon=null; BOARD_CALL.parkPos=c.b.position.clone(); BOARD_CALL.parkQuat=c.b.quaternion.clone(); BOARD_CALL.parkLocal=null;
     // v92: anchored (manually, via ANCHOR) to the Bird Temple → park it exactly where it is, in the
@@ -25368,6 +25372,19 @@ function parkSkyboard(){
     } else toast('🅿 Skyboard parked',1600);
   }
   _bcButtons();
+}
+// Kite-charm glow (ui/dm-charm.js) runs ONLY while the skyboard is coming back to her:
+// (1) Summon in flight (BOARD_CALL.summon), (2) Park toggled OFF and the board flying back to its spot beside her
+// (BOARD_CALL.rejoin, cleared once it is at its rest spot), (3) the fall-catch rescue (surfPlayer._catch/_caught).
+function _charmTick(dt){
+  const C=window.DMCharm; if(!C||!C.built) return;
+  const T=BOARD_CALL; let r=!!T.summon;
+  if(!r){ const p=surfPlayer; if(p&&(p._catch||p._caught)) r=true; }
+  if(!r&&T.rejoin){
+    const b=(surfaceActive&&surfBoard)?surfBoard:((typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active)?boardFlight:null), rs=T.rest, age=performance.now()-T.rejoin;
+    if(!b||!rs||T.parked||age>8000||(age>250&&Math.abs(b.position.x-rs.x)+Math.abs(b.position.z-rs.z)+Math.abs(b.position.y-rs.y)<CHAR_TERRAIN_HEIGHT*0.12)) T.rejoin=0; else r=true;
+  }
+  C.tick(dt,r);
 }
 function summonSkyboard(){
   const c=_bcCtx(); if(!c) return;
@@ -25626,7 +25643,7 @@ function _bcApplyPose(c,F,S){
     b.quaternion.copy(Y.qy).multiply(T.parkQuat);
   }
 }
-function _boardCallReset(){ BC_COL.y=null; BC_COL.hv=false; BOARD_CALL.parkLocal=null; BOARD_CALL.parked=false; BOARD_CALL.summon=null; BOARD_CALL.look=null; BOARD_CALL.lookW=0; _bcTrail(null,true); _bcButtons(); }
+function _boardCallReset(){ BOARD_CALL.rejoin=0; BC_COL.y=null; BC_COL.hv=false; BOARD_CALL.parkLocal=null; BOARD_CALL.parked=false; BOARD_CALL.summon=null; BOARD_CALL.look=null; BOARD_CALL.lookW=0; _bcTrail(null,true); _bcButtons(); }
 // the two little round buttons, part of the kite: a parking mark, and a
 // skyboard traced from the board itself (pointed nose, two deck discs, tail fins)
 const _KB_STEP='<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="13.6" cy="4.2" r="2" fill="currentColor"/><path d="M12.8 7.2l-2.6 4.4 2.8 2.2-.6 5.2M10.2 11.6l-3.4 1.6M13 9.6l3.6 2.4M13 13.8l3.4 1.4.4 3.8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 20.6h7.4l2-2.4h8.6" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-opacity=".75"/></svg>';
