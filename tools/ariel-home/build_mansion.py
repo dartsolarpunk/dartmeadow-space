@@ -260,6 +260,30 @@ def build_house(b, detail=1.0):
     b.box(0, 3, -22, 70, 14, 8, dict(top='concrete', bot='concrete', side='concrete'))    # lower glazed wing, set into the cliff
     glass_wall(b, (-34, 10.1), (34, 10.1), -21.5, -15.4, fins=0.0, mullion=3.0)
     b.box(0, 3, -15.0, 76, 18, .6, dict(top='slate', bot='wood', side='dark'))
+    # ── 5b. stealth-fighter wing canopy: one huge triangular roof plate swept over the east deck + pool, tip pointing at the sea ──
+    # (V3: huge triangular roofs, sharp pointed cantilevers.)  Plate is thin, slate above / warm timber below, raked on two struts.
+    wing = [(14, -3), (84, 8), (58, 70)]
+    wz = [15.0, 11.0, 4.6]
+    WA, WB, WC = [(p[0], p[1], z) for p, z in zip(wing, wz)]
+    th = 0.55
+    b.tri(WA, WB, WC, 'slate'); b.tri((WC[0], WC[1], WC[2] - th), (WB[0], WB[1], WB[2] - th), (WA[0], WA[1], WA[2] - th), 'wood')
+    for P0, P1 in ((WA, WB), (WB, WC), (WC, WA)):
+        b.quad(P0, P1, (P1[0], P1[1], P1[2] - th), (P0[0], P0[1], P0[2] - th), 'dark')
+    b.tri((WA[0], WA[1], WA[2] + .02), (WB[0], WB[1], WB[2] + .02), (WC[0], WC[1], WC[2] + .02), 'slate')
+    neon_strip(b, (WA[0] + 0, WA[1]), (WC[0], WC[1]), 9.9, .12)
+    for (x, y, zt) in [(70, 30, 8.2), (50, 52, 5.6)]:           # raked slate columns
+        b.prism([(x - .8, y - .8), (x + .8, y - .8), (x + .8, y + .8), (x - .8, y + .8)], 0.0, zt, 'dark')
+    # ── 5c. needle cantilever: a long triangular deck knifing out of the upper wing, tip far over the water ──
+    nd = rotpts([(-12, -9), (12, -9), (0, 64)], 0, -18, yaw)
+    b.prism(nd, 18.4, 19.4, 'concrete', top='concrete', bot='concrete')
+    b.prism(rotpts([(-1.2, 40), (1.2, 40), (0, 64)], 0, -18, yaw), 19.3, 19.5, 'warm', top='warm', bot='none')
+    # ── 5d. second delta: west side triangular roof over the lower terrace, pointing seaward-west ──
+    dl = [(-60, 6), (-30, 8), (-62, 52)]
+    dz = [-6.0, -6.0, -9.5]
+    DA, DB, DC = [(p[0], p[1], z) for p, z in zip(dl, dz)]
+    b.tri(DA, DB, DC, 'slate'); b.tri((DC[0], DC[1], DC[2] - .5), (DB[0], DB[1], DB[2] - .5), (DA[0], DA[1], DA[2] - .5), 'wood')
+    for P0, P1 in ((DA, DB), (DB, DC), (DC, DA)):
+        b.quad(P0, P1, (P1[0], P1[1], P1[2] - .5), (P0[0], P0[1], P0[2] - .5), 'dark')
     # structural piers down to the rock under the cantilevers
     for (x, y) in [(-40, 30), (-14, 46), (22, 34), (40, 14), (58, 30)]:
         top = -1.5 if y < 40 else -1.3
