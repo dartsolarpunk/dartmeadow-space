@@ -4,9 +4,9 @@
    every animation, the board stance and the root scale. Procedural geometry only, no assets.
 
    The charm carries a pulsing blue additive glow (a child of the charm mesh, so it can never
-   drift off it): a soft orb + inner core + an expanding halo ring + a few crystalline shard
-   streaks. Billboard sprites with additive blending, depthWrite false — no custom shader, so it
-   works on the WebGPU and the WebGL paths alike. The glow is OFF (hidden, zero cost) normally and
+   drift off it) that hugs the kite's own 3D contour: 3 inflated shells of the charm geometry
+   (offset along smoothed normals) with a fresnel rim (TSL node material; plain additive basic
+   material if TSL is missing) + a few small shards lying along the kite edges. depthWrite false. The glow is OFF (hidden, zero cost) normally and
    runs ONLY while the skyboard is on its way back to her:  DMCharm.setReturning(true|false)
    (index.html also drives it from _charmTick: summon, park-off rejoin, fall-catch rescue).
    Fades in ~0.25 s, out ~0.6 s. Kill switch ?charm=0. Nothing is allocated per frame.
@@ -14,7 +14,7 @@
 (function(){
   'use strict';
   const G={off:/[?&]charm=0\b/.test(location.search),built:false,manual:false,g:0,t:0,last:-1,
-    rig:null,kite:null,glow:null,orb:null,core:null,halo:null,shards:null,mats:null,kmat:null,
+    rig:null,kite:null,glow:null,shells:null,shards:null,kmat:null,
     FADE_IN:0.25,FADE_OUT:0.6};
   window.DMCharm=G;
   G.setReturning=function(on){ G.manual=!!on; };
@@ -93,16 +93,35 @@
     const kite=new T.Mesh(kg,kmat); kite.name='ArielKiteCharm'; kite.position.set(0,-0.0035*H,0.0025*H); kite.rotation.x=-0.18; rig.add(kite);
     const bail=new T.Mesh(new T.TorusGeometry(0.0036*H,0.0011*H,4,10),chainMat); bail.position.set(0,0.2*kt+0.0026*H,0); kite.add(bail);
 
-    // ── glow: children of the charm mesh, centred on the kite body
-    const glow=new T.Group(); glow.name='ArielCharmGlow'; glow.position.set(0,-0.3*kt,0.012*H); glow.visible=false; kite.add(glow);
-    const soft=canvasTex(128,(x,s)=>{ const g=x.createRadialGradient(s/2,s/2,0,s/2,s/2,s/2); g.addColorStop(0,'rgba(255,255,255,1)'); g.addColorStop(0.15,'rgba(200,230,255,.7)'); g.addColorStop(0.45,'rgba(90,160,255,.16)'); g.addColorStop(1,'rgba(20,60,255,0)'); x.fillStyle=g; x.fillRect(0,0,s,s); });
-    const ring=canvasTex(128,(x,s)=>{ const g=x.createRadialGradient(s/2,s/2,s*0.28,s/2,s/2,s/2); g.addColorStop(0,'rgba(80,150,255,0)'); g.addColorStop(0.72,'rgba(140,200,255,.7)'); g.addColorStop(1,'rgba(40,90,255,0)'); x.fillStyle=g; x.fillRect(0,0,s,s); });
+    // ── glow: a few inflated shells of the kite's OWN geometry (smoothed normals, pushed outward by a hair), additive
+    //    with a fresnel rim, plus small shards hugging the kite edges. All children of the charm mesh.
+    const glow=new T.Group(); glow.name='ArielCharmGlow'; glow.visible=false; kite.add(glow);
+    const TS=T.TSL, nodeOK=!!(TS&&T.MeshBasicNodeMaterial&&TS.uniform&&TS.vec3&&TS.normalView&&TS.positionViewDirection);
+    function inflated(src,d){                                              // weld by position → smooth normals → offset along them
+      const g=src.clone(), P=g.attributes.position, N=g.attributes.normal, key=new Map(), q=1/(H*1e-5), sm=[];
+      for(let k=0;k<P.count;k++){ const kk=Math.round(P.getX(k)*q)+'|'+Math.round(P.getY(k)*q)+'|'+Math.round(P.getZ(k)*q); let e=key.get(kk); if(!e){ e=[0,0,0]; key.set(kk,e); } e[0]+=N.getX(k); e[1]+=N.getY(k); e[2]+=N.getZ(k); sm.push(e); }
+      for(let k=0;k<P.count;k++){ const e=sm[k], l=Math.hypot(e[0],e[1],e[2])||1, nx=e[0]/l, ny=e[1]/l, nz=e[2]/l;
+        P.setXYZ(k,P.getX(k)+nx*d,P.getY(k)+ny*d,P.getZ(k)+nz*d); N.setXYZ(k,nx,ny,nz); }
+      P.needsUpdate=true; N.needsUpdate=true; return g;
+    }
+    function glowMat(r,gc,b,pw){
+      if(!nodeOK){ const m=new T.MeshBasicMaterial({color:new T.Color(r,gc,b),transparent:true,opacity:0,blending:T.AdditiveBlending,depthWrite:false,side:T.DoubleSide,fog:false,toneMapped:false}); return {m,set:v=>{ m.opacity=Math.min(1,v*0.3); }}; }
+      const u=TS.uniform(0), m=new T.MeshBasicNodeMaterial({transparent:true,blending:T.AdditiveBlending,depthWrite:false,side:T.DoubleSide});
+      const rim=TS.float(1).sub(TS.normalize(TS.normalView).dot(TS.positionViewDirection).abs().clamp(0,1)).pow(pw);   // 0 face-on → 1 at the silhouette
+      m.colorNode=TS.vec3(r,gc,b).mul(TS.float(0.05).add(rim.mul(2.0)).mul(u)); m.fog=false; m.toneMapped=false;
+      return {m,set:v=>{ u.value=v; }};
+    }
+    G.shells=[]; const SH=[[0.0016,0.55,0.85,1,2.2,1.0],[0.0034,0.3,0.62,1,1.8,0.7],[0.0058,0.18,0.42,1,1.4,0.45]];   // offset/H, rgb, rim power, gain
+    for(let k=0;k<SH.length;k++){ const c=SH[k], gm=glowMat(c[1],c[2],c[3],c[4]), me=new T.Mesh(inflated(kg,c[0]*H),gm.m); me.renderOrder=11+k; me.frustumCulled=false; me.name='ArielCharmShell'+k; glow.add(me); G.shells.push({mesh:me,set:gm.set,gain:c[5],ph:k*0.9}); }
     const streak=canvasTex(64,(x,s)=>{ x.translate(s/2,s/2); const g=x.createLinearGradient(0,-s/2,0,s/2); g.addColorStop(0,'rgba(60,140,255,0)'); g.addColorStop(0.5,'rgba(230,245,255,1)'); g.addColorStop(1,'rgba(60,140,255,0)');
-      x.fillStyle=g; x.beginPath(); x.moveTo(0,-s/2); x.lineTo(s*0.09,0); x.lineTo(0,s/2); x.lineTo(-s*0.09,0); x.closePath(); x.fill(); });
-    const mk=(tex,r,g,b,order)=>{ const sp=new T.Sprite(spriteMat(tex,r,g,b)); sp.renderOrder=order; sp.frustumCulled=false; glow.add(sp); return sp; };
-    G.orb=mk(soft,0.25,0.55,1,12); G.core=mk(soft,0.7,0.88,1,13); G.halo=mk(ring,0.4,0.7,1,11);
-    G.shards=[]; const NS=7;
-    for(let i=0;i<NS;i++){ const sp=mk(streak,0.55,0.8,1,14); sp.userData={a:i/NS*Math.PI+((i*0.37)%0.4),ph:i*1.9,len:(0.13+0.07*((i*5)%3)/2)*H,sp:0.7+0.25*(i%3)}; G.shards.push(sp); }
+      x.fillStyle=g; x.beginPath(); x.moveTo(0,-s/2); x.lineTo(s*0.12,0); x.lineTo(0,s/2); x.lineTo(-s*0.12,0); x.closePath(); x.fill(); });
+    const sg=new T.PlaneGeometry(1,1), V=[[0,0.2*kt],[kw,0],[0,-0.8*kt],[-kw,0]];           // the kite's four corners
+    G.shards=[]; const NS=6;
+    for(let i=0;i<NS;i++){                                                  // a shard lying along an edge, a little off the face
+      const a=V[i%4], b=V[(i+1)%4], u=0.3+0.4*((i*0.37)%1), ex=b[0]-a[0], ey=b[1]-a[1], el=Math.hypot(ex,ey);
+      const m=new T.MeshBasicMaterial({map:streak,color:new T.Color(0.6,0.85,1),transparent:true,opacity:0,blending:T.AdditiveBlending,depthWrite:false,side:T.DoubleSide,fog:false,toneMapped:false});
+      const me=new T.Mesh(sg,m); me.position.set(a[0]+ex*u,a[1]+ey*u,(i&1?-1:1)*0.0042*H); me.rotation.z=Math.atan2(ey,ex)-Math.PI/2;
+      me.scale.set(0.022*H,el*0.6,1); me.renderOrder=14; me.frustumCulled=false; me.userData={ph:i*1.9,sp:0.7+0.25*(i%3),l0:el*0.6}; glow.add(me); G.shards.push(me); }
     G.H=H; G.rig=rig; G.kite=kite; G.glow=glow; G.kmat=kmat; G.built=true;
     return true;
   };
@@ -119,14 +138,10 @@
     const f=G.g*G.g*(3-2*G.g), t=G.t, H=G.H;
     const p=0.5+0.5*Math.sin(t*5.2), p2=0.5+0.5*Math.sin(t*8.3+1.3);       // pulses
     G.kmat.emissiveIntensity=0.15+f*(0.9+0.9*p);
-    G.orb.material.opacity=f*(0.5+0.3*p); G.orb.scale.setScalar(H*(0.13+0.04*p));
-    G.core.material.opacity=f*(0.7+0.3*p2); G.core.scale.setScalar(H*(0.035+0.012*p2));
-    const hp=(t*0.9)%1; G.halo.material.opacity=f*0.55*(1-hp); G.halo.scale.setScalar(H*(0.05+0.11*hp));
+    for(let i=0;i<G.shells.length;i++){ const sh=G.shells[i]; sh.set(f*sh.gain*(0.7+0.9*(0.5+0.5*Math.sin(t*5.2-sh.ph)))); }   // pulse ripples outward shell by shell
     for(let i=0;i<G.shards.length;i++){
-      const s=G.shards[i], u=s.userData, fl=Math.max(0,Math.sin(t*(3+u.sp*3)+u.ph)), fl2=fl*fl;
-      s.material.rotation=u.a+t*0.35*u.sp*(i&1?1:-1);
-      s.material.opacity=f*(0.15+0.85*fl2);
-      s.scale.set(H*0.016,u.len*(0.55+0.65*fl)*(0.8+0.3*p),1);
+      const s=G.shards[i], u=s.userData, fl=Math.max(0,Math.sin(t*(3+u.sp*3)+u.ph));
+      s.material.opacity=f*(0.1+0.9*fl*fl); s.scale.y=s.userData.l0*(0.6+0.5*fl)*(0.85+0.25*p2);
     }
   };
 })();
