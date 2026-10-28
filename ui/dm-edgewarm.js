@@ -64,17 +64,25 @@
   // reacting to the bare version made us recompile the same meshes forever. Only what changes the shader or its inputs
   // counts: node slots, flags, light list and the textures (id + version).
   const NODES = ['colorNode', 'normalNode', 'roughnessNode', 'metalnessNode', 'emissiveNode', 'opacityNode', 'positionNode', 'aoNode', 'lightsNode', 'envNode', 'outputNode', 'fragmentNode', 'vertexNode', 'transmissionNode', 'iridescenceNode', 'clearcoatNode'];
+  // (fps) numeric hash instead of a built string: this runs for every visible mesh under every map root each poll, and the
+  // strings (one per mesh, ~100+ chars) were the main steady-state allocation of the idle loop. A hash collision would only
+  // mean one missed re-warm, never a visual change.
+  const TYPES = new Map(); let typeN = 0;
+  const hx = (h, x) => (Math.imul(h, 31) + (x | 0)) | 0;
   function matSig(m) {
-    let s = m.id + ':' + m.type + (m.transparent ? 't' : '') + m.side + '.' + m.blending + (m.alphaTest > 0 ? 'a' : '') + (m.vertexColors ? 'v' : '') + (m.flatShading ? 'f' : '') + (m.transmission > 0 ? 'T' : '') + (m.depthWrite ? 'w' : '');
-    for (const k of NODES) { const n = m[k]; if (n) s += k[0] + (n.id != null ? n.id : 1); }
-    for (const k of TEX) { const t = m[k]; if (t && t.isTexture) s += '|' + k + t.id + '.' + t.version + (t.image ? 1 : 0); }
-    return s;
+    let ty = TYPES.get(m.type); if (ty === undefined) { ty = ++typeN; TYPES.set(m.type, ty); }
+    let h = hx(hx(7, m.id), ty);
+    h = hx(h, (m.transparent ? 1 : 0) | (m.side << 1) | (m.blending << 4) | (m.alphaTest > 0 ? 256 : 0) | (m.vertexColors ? 512 : 0) | (m.flatShading ? 1024 : 0) | (m.transmission > 0 ? 2048 : 0) | (m.depthWrite ? 4096 : 0));
+    for (let i = 0; i < NODES.length; i++) { const n = m[NODES[i]]; if (n) h = hx(hx(h, i + 1), n.id != null ? n.id : 1); }
+    for (let i = 0; i < TEX.length; i++) { const t = m[TEX[i]]; if (t && t.isTexture) h = hx(hx(hx(h, i + 1), t.id), (t.version << 1) | (t.image ? 1 : 0)); }
+    return h;
   }
   function meshSig(o) {
-    const ms = Array.isArray(o.material) ? o.material : [o.material];
-    let s = (o.geometry ? o.geometry.id : 0) + ':' + (o.castShadow ? 1 : 0) + (o.receiveShadow ? 1 : 0);
-    for (const m of ms) if (m) s += '/' + matSig(m);
-    return s;
+    let h = hx(hx(11, o.geometry ? o.geometry.id : 0), (o.castShadow ? 1 : 0) | (o.receiveShadow ? 2 : 0));
+    const ms = o.material;
+    if (Array.isArray(ms)) { for (let i = 0; i < ms.length; i++) if (ms[i]) h = hx(h, matSig(ms[i])); }
+    else if (ms) h = hx(h, matSig(ms));
+    return h;
   }
   // bounds: computed at idle (not inside a frame's frustum test); corrected when smaller than the vertices
   function fixBounds(o) {
@@ -170,6 +178,6 @@
     finally { busy = false; W.stats.lastMs = Math.round(performance.now() - t0); }
   }
   W.tick = tick;
-  // drain fast while there is work (next tick in 60 ms), idle-poll at 400 ms otherwise
-  (function loop() { tick().finally(() => setTimeout(loop, (W.stats.left > 0 || (later.size && lastB)) ? 60 : 400)); })();
+  // drain fast while there is work (next tick in 60 ms), idle-poll at 400 ms (900 ms once the first drain is done) otherwise
+  (function loop() { tick().finally(() => setTimeout(loop, (W.stats.left > 0 || (later.size && lastB)) ? 60 : (drained ? 900 : 400))); })();
 })();

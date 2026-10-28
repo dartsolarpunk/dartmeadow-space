@@ -763,7 +763,10 @@
           const dt = (m.ts - prev.ts) / 1000;
           if (dt < 6) v = [(m.p[0] - prev.p[0]) / dt, (m.p[1] - prev.p[1]) / dt, (m.p[2] - prev.p[2]) / dt];
         }
-        this.peers.set(m.id, { ...m, v, seen: now });
+        // The same signed-in account open on another device is not another pilot: its
+        // board used to be cloned as a lagging ghost on top of our own (and counted online).
+        const own = identity.kind === 'github' && m.k === 'h' && String(m.n || '').toLowerCase() === String(identity.name || '').toLowerCase();
+        this.peers.set(m.id, { ...m, v, seen: now, own });
         if (!had) { emit('peers', { peers: [...this.peers.values()] }); analytics.track('players_online', this.peers.size + 1); }
       } else if (m.t === 'leave' && m.id !== sessionId) {
         if (this.peers.delete(m.id)) emit('peers', { peers: [...this.peers.values()] });
