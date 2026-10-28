@@ -26,13 +26,14 @@
     'body.dm-ui3d .dm-ui3d-p .dm-ui3d-p{rotate:none;filter:none}'+
     'body.dm-ui3d .dm-ui3d-host{perspective:var(--ui3d-persp,900px)}'+
     // (v206) the AR / EXIT toggle is a real themed pill in the kite (accent gradient fill + rim + glow, readable size), painted into the 3D kite like every other panel colour
-    '.dm-ar-btn{position:absolute;left:75px;top:128px;transform:translate(-50%,-50%);padding:3px 9px 3px;margin:0;border:1px solid rgba(var(--acc-rgb),.8);border-radius:999px;'+
-    'background:linear-gradient(180deg,rgba(var(--acc-rgb),.42),rgba(var(--acc-rgb),.16));color:var(--text);font:600 .62rem/1 var(--font-hud,monospace);letter-spacing:.14em;'+
+    '.dm-ar-btn{position:absolute;left:75px;top:128px;transform:translate(-50%,-50%);box-sizing:border-box;width:40px;height:14px;padding:0;margin:0;border:1px solid rgba(var(--acc-rgb),.8);border-radius:999px;'+
+    'background:linear-gradient(180deg,rgba(var(--acc-rgb),.42),rgba(var(--acc-rgb),.16));color:var(--text);font:600 .56rem/12px var(--font-hud,monospace);letter-spacing:.1em;text-indent:.1em;text-align:center;'+
     'text-shadow:0 0 6px rgba(var(--acc-rgb),.8);box-shadow:0 0 8px rgba(var(--acc-rgb),.35);white-space:nowrap;cursor:pointer;z-index:4;pointer-events:auto}'+
-    '.dm-ar-btn::after{content:"";position:absolute;inset:-7px -6px}'+   // bigger thumb target, still inside the kite
-    '.mini-kite .dm-ar-btn,.hud-c .dm-ar-btn{display:block;min-width:0;min-height:0;height:auto;line-height:1}'+
-    '.hud-c .dm-ar-btn{left:256px;top:94px}'+   // space kite: right of the gauge row, inside the lower facet
-    '.mini-kite .dm-ar-btn{left:168px;top:62px}'+
+    '.dm-ar-btn::after{content:"";position:absolute;inset:-3px -4px}'+   // thumb target: small slop only, so the hit area stays inside the kite outline
+    '.mini-kite .dm-ar-btn,.hud-c .dm-ar-btn{display:block;min-width:0;min-height:0;width:40px;height:14px;line-height:12px}'+
+    // (v208) pill (AR and EXIT share one 40x14 box) sits fully inside the kite outline with >=9.5px clearance to every kite edge (same inset class as the FPS / readout text), clear of the gauge / readout text
+    '.hud-c .dm-ar-btn{left:243px;top:87px}'+   // space kite: right of the ALT gauge, inside the lower-right facet
+    '.mini-kite .dm-ar-btn{left:143px;top:59px}'+   // surface / atmo mini kite: under the mode label, right of the readout
     '.dm-ar-btn.on{color:#fff;border-color:rgb(var(--hi-rgb));background:linear-gradient(180deg,rgba(var(--hi-rgb),.55),rgba(var(--hi-rgb),.22));text-shadow:0 0 6px rgba(var(--hi-rgb),.7);box-shadow:0 0 10px rgba(var(--hi-rgb),.5)}'+
     '.dm-ar-btn[hidden]{display:none}';
   document.head.appendChild(css);
