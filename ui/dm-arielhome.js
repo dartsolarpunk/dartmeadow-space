@@ -117,10 +117,39 @@
     const c = C(); if (!pend) return;
     const s = pend, sysOk = (s.sys || 'Sol') === c.curSysName() && c.curGalaxy() === s.gal;
     const b = sysOk && c.celestialBodies.find(x => x.name === s.body && x.mesh);
-    if (b && !c.PW.opening) { pend = null; try { window.DM_FAC = window.DM_FAC || {}; window.DM_FAC.arriveAt = s.id; c.enterAtmosphericFlight(b, { lat: s.lat, lon: s.lon }); } catch (e) { console.warn('[home] land', e); } return; }
+    if (b && !c.PW.opening) { pend = null; try { window.DM_FAC = window.DM_FAC || {}; window.DM_FAC.arriveAt = s.id; window.DM_FAC.homeDeck = !!s.deck; c.enterAtmosphericFlight(b, { lat: s.lat, lon: s.lon }); } catch (e) { console.warn('[home] land', e); } return; }
     if (++s.tries > 80) { pend = null; return; }
     setTimeout(pollLand, 600);
   }
+  // HOME button: Quick Travel straight to Ariel's mansion deck, from space, the sky or the ground (no confirm — the button IS the intent)
+  let homing = false;
+  A.homeNow = function () {
+    const c = C(), s = A.site('home-mansion'); if (!c || !s || homing) return;
+    c.closeQuickTravel();
+    window.DM_FAC = window.DM_FAC || {};
+    const onHome = A.inHome() && c.PW && c.PW.active && c.PW.body && c.PW.body.name === A.HOME;
+    if (c.atmoActive && onHome) { window.DM_FAC.homeDeck = true; window.DM_FAC.arriveAt = s.id; c.toast('🏠 Home — heading for the mansion deck', 2200); return; }
+    const go = () => {
+      const here = A.inHome() && c.flightInited;
+      pend = { id: s.id, body: s.body, sys: s.sys, gal: s.gal, lat: s.lat, lon: s.lon, tries: 0, deck: true };
+      c.toast('🏠 Home — Quick Travel to ' + s.label, 2400);
+      if (!here) { c.GALAXY_DB.current = s.gal; c.fastTravelToSystem(A.system, s.gal); }
+      setTimeout(pollLand, here ? 100 : 2200);
+    };
+    if (c.atmoActive || c.surfaceActive) {     // leave the world first (the same exits as TO SPACE / LIFTOFF), then travel
+      homing = true; c.toast('🏠 Home — leaving this world first…', 2400);
+      try { c.atmoActive ? c.atmoExitToSpace() : c.exitSurface(); } catch (e) { }
+      let n = 0;
+      (function wait() {
+        const st = c.STATE && c.STATE.screen;
+        if (!c.atmoActive && !c.surfaceActive && st === 'flight' && c.flightInited) { homing = false; go(); return; }
+        if (++n > 240) { homing = false; return; }
+        setTimeout(wait, 500);
+      })();
+      return;
+    }
+    go();
+  };
   A.visit = function (id) {
     const c = C(), s = A.site(id); if (!c || !s) return;
     c.closeQuickTravel();

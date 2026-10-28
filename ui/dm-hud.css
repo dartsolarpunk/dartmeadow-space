@@ -101,6 +101,9 @@
 
 /* things under the top bar sit just below it */
 #screen-flight #orbit-skyboard-btn{top:96px !important;}
+/* first person while flying: right under ORBIT, same tab shape. On the Bird Temple deck #ship-view-btn takes this slot. */
+#screen-flight #fp-btn-flight{top:136px !important;right:0;}
+body.ship-walk #fp-btn-flight{display:none !important;}
 /* online/chat chip rides beside INITIALIZE PROGRESS; the chat log opens under the ORBIT tab */
 #screen-flight .hud-r-row{display:flex;align-items:center;justify-content:flex-end;gap:10px;}
 #screen-flight .hud-r-row #jots-mp-hud{position:static;transform:none;}
@@ -220,6 +223,7 @@ html.xh-off #ar-crosshair{display:none !important;}
   #screen-flight #hud-logs-panel{top:368px;}
   #screen-flight #qt-panel{top:292px;}
   #screen-flight #orbit-skyboard-btn{top:216px !important;}
+  #screen-flight #fp-btn-flight{top:256px !important;}
   #jots-chat{top:calc(254px + env(safe-area-inset-top,0px)) !important;}
   #screen-flight .hud-r-row{flex-direction:column;align-items:flex-end;gap:6px;}
   #screen-flight .hud-r-row #jots-mp-hud{order:2;}
