@@ -989,8 +989,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 </style>
 
 <script src="ui/dm-safety.js?v=1" defer></script>
-<script src="jots/jots-link.js?v=88" defer></script>
-<script src="ui/dm-friends.js?v=2" defer></script>
+<script src="jots/jots-link.js?v=216" defer></script>
+<script src="ui/dm-friends.js?v=216" defer></script>
 <script src="ui/dm-perflog.js?v=3" defer></script>
 <script src="ui/dm-webkit.js?v=210" defer></script>
 <script src="ui/dm-spectator.js?v=1" defer></script>
@@ -1012,7 +1012,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-bt-lighting.js?v=144" defer></script>
 <script src="ui/dm-bt-cargocam.js?v=1" defer></script>
 <script src="ui/dm-bt-interior.js?v=124" defer></script>
-<script src="ui/dm-bt-pbr.js?v=206" defer></script>
+<script src="ui/dm-bt-pbr.js?v=216" defer></script>
 <script src="ui/dm-bt-bake.js?v=144" defer></script>
 <script src="ui/dm-ui3d-core.js?v=208" defer></script>
 <script src="ui/dm-ui3d-mesh.js?v=206" defer></script>
@@ -1023,7 +1023,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-marine.js?v=216" defer></script>
 <script src="ui/dm-bt-roomlights.js?v=144" defer></script>
 <script src="ui/dm-bt-hull.js?v=144" defer></script>
-<script src="ui/dm-edgewarm.js?v=199" defer></script>
+<script src="ui/dm-edgewarm.js?v=216" defer></script>
 </head>
 <body>
 <!-- LOADING -->
@@ -5669,6 +5669,7 @@ function _qtBuildDiscoveriesTab(){
 }
 function rebuildQtMarkers(){
   if(!qtScene||!qtControls)return;
+  _qtDirty=true;
   _qtClearContent();
   if(qtTab==='galaxies')_qtBuildGalaxiesTab();
   else if(qtTab==='discoveries')_qtBuildDiscoveriesTab();
@@ -6036,10 +6037,18 @@ function onQtMapClick(e){
 function qtLoop(){
   if(!qtRunning||!$('ar-bottom')||!$('ar-bottom').classList.contains('open')){qtAnimId=0;return;}
   qtAnimId=requestAnimationFrame(qtLoop);
-  if(qtControls)qtControls.update();
-  if(qtYouAre){const s=1+Math.sin(performance.now()*0.004)*0.15;qtYouAre.scale.setScalar(s);qtYouAre.quaternion.copy(qtCamera.quaternion);}
+  // fps: the map is a second WebGPU renderer sharing the GPU with the game. It
+  // used to redraw every frame (an 8000-instance additive cloud + markers). Now it
+  // draws while the camera is moving (drag / damping / zoom), at ~10 Hz for the
+  // pulsing you-are-here ring, and ~2 Hz when still, so the flight view gets the GPU.
+  const ch=qtControls?qtControls.update():false;
+  const now=performance.now();
+  if(!(ch||_qtDirty||now-_qtLastDraw>=(qtYouAre?100:500)))return;
+  _qtDirty=false;_qtLastDraw=now;
+  if(qtYouAre){const s=1+Math.sin(now*0.004)*0.15;qtYouAre.scale.setScalar(s);qtYouAre.quaternion.copy(qtCamera.quaternion);}
   if(qtRenderer&&qtScene&&qtCamera)qtRenderer.render(qtScene,qtCamera);
 }
+let _qtDirty=true,_qtLastDraw=0;
 
 // ══════════════════════════════════════════════════════════════
 //  ✦ DISCOVERIES — asteroids, comets and rogue planets in the dark
@@ -18843,12 +18852,18 @@ function _taShowShells(n){ for(let i=0;i<_taShellBuf.length;i++) _taShellBuf[i].
 function _trueAtmoRender(r,scene,cam){
   if(_TA.failed||!_trueAtmoOn()||_taPerfOff()) return false;
   try{
-    let best=null,bd=Infinity; const c=_TA._c||(_TA._c=new THREE.Vector3()), q=_TA._q||(_TA._q=new THREE.Quaternion());
+    let best=null,bd=Infinity,pd=Infinity; const c=_TA._c||(_TA._c=new THREE.Vector3()), q=_TA._q||(_TA._q=new THREE.Quaternion());
     for(let i=0;i<_jotsFogAtmoRegistry.length;i++){
       const e=_jotsFogAtmoRegistry[i]; if(!e||!e.mesh||!e.mesh.parent||!e.mesh.userData.planetR) continue;
       e.mesh.getWorldPosition(c); const d=c.distanceTo(cam.position)/e.mesh.userData.planetR;
       if(d<bd){ bd=d; best=e; }
+      if(e===_TA._bestE) pd=d;
     }
+    // (fps) hysteresis: between two worlds at similar range (Earth/Moon, a planet and its sun) the nearest flips back and forth,
+    // and every flip built a new full-screen pass (shader compile + target allocation) and pruned the old one: a hitch each time.
+    // Stay with the previous world until another is clearly (25%) closer.
+    if(best&&best!==_TA._bestE&&_TA._bestE&&pd<=60&&bd>pd*0.75){ best=_TA._bestE; bd=pd; }
+    _TA._bestE=best;
     if(!best||bd>60) return false;
     // (v105) nothing the gas touches is on screen: camera outside the world's air (conservative 1.3 R) and that sphere
     // outside the view frustum -> the full-screen march would only copy the scene through; draw the scene directly.
@@ -26386,7 +26401,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
     if(mp.active&&typeof STATE!=='undefined'&&STATE.screen==='flight'){
       let animated=0;
       for(const p of mp.peers.values()){
-        if(p.gal!==gal||p.sys!==sys||!p.p) continue;
+        if(p.own||p.gal!==gal||p.sys!==sys||!p.p) continue;   // p.own: our own account on another device
         if(window.DMSafety&&DMSafety.isBlocked(p.n)) continue;          // blocked: no board, no tag
         live.add(p.id);
         let g=ghosts.get(p.id);
@@ -26470,7 +26485,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
     $j('jots-mp-hud').style.display=on?'flex':'none';
     if(!on){ $j('jots-chat').style.display='none'; return; }
     if(!mp.active){ $j('jots-mp-chip').textContent='🌐 GO ONLINE · CHAT'; $j('jots-chat').style.display='none'; return; }
-    const n=mp.peers.size+1;
+    let n=1; for(const p of mp.peers.values()) if(!p.own) n++;
     $j('jots-mp-chip').textContent=mp.status==='online'?('🌐 '+n+' ONLINE · CHAT'):mp.status==='connecting'?'🌐 CONNECTING…':'🌐 '+mp.status.toUpperCase();
   }
   setInterval(hudRefresh,1000);

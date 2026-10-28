@@ -277,7 +277,7 @@
     const sentL = Object.values(S.sent);
     if (sentL.length) { h += '<div class="fr-h">ASKED</div>'; sentL.forEach((r) => { h += '<div class="fr-row fr-dim"><span class="fr-name">' + esc(r.name) + '</span><span class="fr-q">waiting…</span><button class="fr-b" data-cancel="' + esc(r.name) + '">✕</button></div>'; }); }
     if (online) {
-      const others = [...j.mp.peers.values()].filter((p) => p.n && !blocked(p.n) && !isFriend(p.n) && !S.sent[keyOf(p.n)] && !S.inbox[keyOf(p.n)]);
+      const others = [...j.mp.peers.values()].filter((p) => p.n && !p.own && !blocked(p.n) && !isFriend(p.n) && !S.sent[keyOf(p.n)] && !S.inbox[keyOf(p.n)]);
       if (others.length) {
         h += '<div class="fr-h">ONLINE NOW</div>';
         others.slice(0, 20).forEach((p) => { h += '<div class="fr-row"><span class="fr-dot on"></span><span class="fr-name">' + esc(p.n) + '</span><button class="fr-b fr-ok" data-add="' + esc(p.n) + '" data-kind="' + (p.k === 'h' ? 'github' : 'guest') + '">＋ ADD</button></div>'; });

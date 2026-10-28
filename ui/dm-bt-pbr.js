@@ -30,7 +30,7 @@
     if (!P.on) return Promise.resolve(null);
     if (loading) return loading;
     // (v206) phones/tablets take the 1K set even at tier 2: twelve 2K maps with mips are ~270 MB of GPU memory + a long upload stall on load, and a handheld screen cannot show the extra texels
-    const res = (tier() >= 3 || (tier() >= 2 && !(window.GFX && GFX.isMobile))) ? '2k' : '1k';
+    const res = ((window.GFX && GFX.isMobile) ? false : tier() >= 2) ? '2k' : '1k';   // (fps) mobile is always 1K now, even on the 4096-shadow tier
     loading = (async () => {
       const THREE = window.THREE, tl = new THREE.TextureLoader(), sets = {};
       await Promise.all(Object.keys(SEC).map(async s => {
@@ -46,6 +46,7 @@
   function sectionOf(o, root) { for (let p = o; p && p !== root; p = p.parent) { const s = byName.get(san(p.name)); if (s) return s; } return null; }
   // the v177 GLB carries box-projected UVs spanning many repeats; the old TEXCOORD_0 sat inside [0,1] with ~zero area
   function uvOk(a) { if (!a) return false; let lo = 1e9, hi = -1e9; const n = Math.min(a.count, 4000); for (let i = 0; i < n; i++) { const u = a.getX(i); if (u < lo) lo = u; if (u > hi) hi = u; } return lo < -0.01 || hi > 1.01; }
+  const rejUV = new WeakSet();
   P.apply = function (root) {
     if (!P.on || !P.ready) return 0;
     const T = window.BIRD_TEMPLE; root = root || (T && (T._glb || T.group)); if (!root) return 0;
@@ -57,7 +58,8 @@
       const s = sectionOf(o, root); if (!s) return;
       // (v181) the exterior prims ship without NORMAL: TSL fell back to a constant normal, so lighting + normal maps read flat gray
       if (!o.geometry.attributes.normal) { o.geometry.computeVertexNormals(); P.stats.nrmFix = (P.stats.nrmFix || 0) + 1; }
-      if (!uvOk(o.geometry.attributes.uv)) { P.stats.oldUV = (P.stats.oldUV || 0) + 1; return; }   // a stale (pre-v177) GLB: keep its plain look
+      if (rejUV.has(o.geometry)) return;   // (fps) already judged stale: do not re-read 4000 UVs every scan
+      if (!uvOk(o.geometry.attributes.uv)) { rejUV.add(o.geometry); P.stats.oldUV = (P.stats.oldUV || 0) + 1; return; }   // a stale (pre-v177) GLB: keep its plain look
       seen.add(m);
       const t = P.sets[s];
       m.map = t.map; m.normalMap = t.nrm; m.normalScale = new THREE.Vector2(NRM[s], NRM[s]);
@@ -76,7 +78,7 @@
   P.tick = function () {
     if (!P.on) return; const T = window.BIRD_TEMPLE; if (!T || !T.group) return;
     if (!P.ready) { P.load(); return; }
-    const now = performance.now(); if (P.applied && now - lastScan < 2000) return; lastScan = now;
+    const now = performance.now(); if (P.applied && now - lastScan < (T.group.visible === false ? 8000 : 4000)) return; lastScan = now;   // (fps) the full-temple traverse ran every 2 s; GI-bake swaps land within a few s of load
     P.apply();
   };
   // ---------------------------------------------------------------------------------------------------------------
