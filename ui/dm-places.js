@@ -15,7 +15,7 @@ const OFF=Q.get('places')==='0';
 const LS_KEY='dm_places_v1';
 const BASE=(Q.get('placesbase')||'assets/places/');
 const S={ ready:false, T:null, defs:null, byId:null, man:0, found:null, listeners:0,
-  world:null, space:null, cache:new Map(), mem:0, loadQ:[], loading:0, t4:0, tSp:0, tPlan:0, stats:{sites:0,l0:0,l1:0,imp:0,box:0,beacon:0,planMs:0,tickMs:0,mem:0,assets:0,props:0,orb:0} };
+  world:null, space:null, eWait:0, cache:new Map(), mem:0, loadQ:[], loading:0, t4:0, tSp:0, tPlan:0, stats:{sites:0,l0:0,l1:0,imp:0,box:0,beacon:0,planMs:0,tickMs:0,mem:0,assets:0,props:0,orb:0} };
 const mob=()=>!!(S.env&&S.env.GFX&&S.env.GFX.isMobile);
 const KCOL={town:0xffd27a,village:0x9cf0b4,venue:0xff8fc8,station:0x8fe6ff,ship:0xb8a6ff,hub:0xffffff,prop:0xffffff};
 let TMP=null;   // preallocated THREE temporaries (built at the first tick, when THREE exists)
@@ -159,7 +159,8 @@ function buildWorld(env){
   const w={gen:PW.gen,key:String(body.name),body,G:new T.Group(),F,recs:[],plan:null,done:false,ds:null,sw:env.siteXZ(PW.site),n:0,env:null,props:null,propKey:'',l0:[],l1:[]};
   w.G.name='JOTS_Places'; w.G.userData.noBend=false; PW.scene.add(w.G);
   const core=env.terrainCore, W=360/D, x0=-180/D, zN=-89.9/D, zS=89.9/D;
-  w.env={key:w.key.toLowerCase(),seed:F.seed,W,x0,zN,zS,D,H:(x,z)=>core(C.wrapX(x,W,x0),z<zN?zN:(z>zS?zS:z),F.seed,F.ws)};
+  const geo=body.name==='Earth'&&env.geoH;   // Earth's live ground is the real relief blended over the core noise: site on THAT (absolute lat/lon, so it is the same from any landing site)
+  w.env={key:w.key.toLowerCase(),seed:F.seed,W,x0,zN,zS,D,H:geo?((x,z)=>{ x=C.wrapX(x,W,x0); z=z<zN?zN:(z>zS?zS:z); return env.geoH(core(x,z,F.seed,F.ws),x,z,F.seed); }):((x,z)=>core(C.wrapX(x,W,x0),z<zN?zN:(z>zS?zS:z),F.seed,F.ws))};
   w.ds=S.defs.filter(d=>(d.kind!=='station'&&d.kind!=='ship'&&d.kind!=='hub')&&C.defForBody(d,body));
   w.plan=C.planSurface(w.env,w.ds,{});
   return w;
@@ -177,14 +178,20 @@ function finishPlan(w,sites){
 }
 function distTo(w,rec,fx,fy,fz,env){
   const D=env.D, ax=rec.s.x-w.sw.x, dx=C.wrapDx(ax-fx,360/D), dz=(rec.s.z-w.sw.z)-fz;
-  rec.lx=fx+dx; rec.lz=fz+dz; const dy=fy-rec.yLive; return Math.sqrt(dx*dx+dz*dz+dy*dy);
+  rec.lx=fx+dx; rec.lz=fz+dz;
+  if(rec.st<3&&(Math.abs(rec.lx-rec.rx)>25||Math.abs(rec.lz-rec.rz)>25)){   // far: ride the LIVE ground (core height minus this world's site bias), refreshed as she moves
+    rec.rx=rec.lx; rec.rz=rec.lz; rec.yLive=rec.s.afloat?Math.max(rec.s.baseY,0.05):env.TERRAIN.H(rec.lx,rec.lz);
+  }
+  const dy=fy-rec.yLive; return Math.sqrt(dx*dx+dz*dz+dy*dy);
 }
 function tick(dt,env){
+  if(S.pause){ if(S.world&&S.world.G.visible) S.world.G.visible=false; return; }
   if(OFF||!env||!init(env)) return; const PW=env.PW; if(!PW.scene||!PW.ground||!PW.ground.F||!PW.body||!hasDefs()||!PW.camera) return;
   const t0=performance.now();
   let w=S.world; if(w&&(w.gen!==PW.gen)) { teardown(w,false); S.world=w=null; }
-  if(!w){ w=S.world=buildWorld(env); }
-  if(!w.G.parent) PW.scene.add(w.G);
+  if(!w){ if(PW.body.name==='Earth'&&env.earthReady&&!env.earthReady()&&(S.eWait+=dt)<20) return;   // the real relief map arrives async: plan once it is in (≤20 s wait)
+    S.eWait=0; w=S.world=buildWorld(env); }
+  if(!w.G.parent) PW.scene.add(w.G); w.G.visible=true;
   stepPlan(w,mob()?1.2:2.5);
   pumpLoads(); S.cloneBudget=1;
   if(!w.done){ S.stats.tickMs=performance.now()-t0; return; }
@@ -202,7 +209,6 @@ function decide(w,env,fx,fy,fz,mode){
   const alt=fy-(w.recs.length?0:0), farBeacon=mob()?7000:14000;
   // 1 distances + desired state
   for(const rec of w.recs){
-    if(rec.rx===-1e9||rec.st<3){ rec.yLive=rec.s.baseY; }
     const d=distTo(w,rec,fx,fy,fz,env); rec.dist=d;
     if(!rec.disc&&d<450+rec.s.radius){ discover(w,rec,env); }
     const d0=lodDist(rec,0), d1=lodDist(rec,1), d2=lodDist(rec,2), hy=rec.st>=4?1.12:1, hy1=rec.st>=3?1.12:1, hy2=rec.st>=2?1.12:1;
@@ -320,7 +326,7 @@ function qtNode(gal,ctx){
 
 // ── space: stations, ship villages and deep-space hubs (flightScene) ──
 function spaceTick(dt,env){
-  if(OFF||!env||!init(env)||!hasDefs()) return; const st=env.STATE; if(!st||st.screen!=='flight'||!st.flight||!st.flight.pos||env.PW.active) return;
+  if(OFF||S.pause||!env||!init(env)||!hasDefs()) return; const st=env.STATE; if(!st||st.screen!=='flight'||!st.flight||!st.flight.pos||env.PW.active) return;
   const fs=env.flightScene; if(!fs) return; const T=S.T;
   S.tSp+=dt; if(S.tSp<0.25){ if(S.space&&S.space.key) spaceFrame(S.space,env); return; } S.tSp=0; const t0=performance.now();
   const ref=env.sysRef(), sysKey=(ref.gal||'milkyway')+':'+((ref.sys&&ref.sys.name)||'Sol');
@@ -383,6 +389,7 @@ function teardownSpace(sp){ for(const rec of sp.recs){ if(rec.beacon){ rec.beaco
 
 function stats(){ return Object.assign({},S.stats,{manifest:S.man,defs:S.defs?S.defs.length:0,found:Object.keys(loadFound()).length}); }
 root.DMPlaces={tick,spaceTick,onWorldClose,qtNode,travel,stats,loadFound,
+  pause(on){ S.pause=!!on; },   // A/B perf switch (tools/perf only)
   reset(){ if(S.world) teardown(S.world,false); S.world=null; if(S.space) teardownSpace(S.space); S.space=null; },
   _S:S,get off(){ return OFF; }};
 })(window);

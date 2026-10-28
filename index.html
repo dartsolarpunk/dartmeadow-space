@@ -18992,7 +18992,7 @@ function _pwVec(i){ return _pwV[i]||(_pwV[i]=new THREE.Vector3()); }
 // near-ground detail builds round whoever is driving.
 // the one persistent environment object the places / creatures modules read (built once; nothing per frame)
 let _plE=null;
-function _plEnv(){ return _plE||(_plE={THREE,GFX,PW,PWF,TERRAIN,STATE,D:ATMO_DEG_PER_UNIT,terrainCore:_terrainCore,siteXZ:_siteWorldXZ,pwfMap:_pwfMap,pwMapTag:_pwMapTag,
+function _plEnv(){ return _plE||(_plE={THREE,GFX,PW,PWF,TERRAIN,STATE,D:ATMO_DEG_PER_UNIT,terrainCore:_terrainCore,geoH:(h,x,z,seed)=>_earthBlend(h,earthSiteHeightBias(0,0,seed,x,z,ATMO_DEG_PER_UNIT)),earthReady:()=>!!(window.DMEarth&&DMEarth.ready),siteXZ:_siteWorldXZ,pwfMap:_pwfMap,pwMapTag:_pwMapTag,
   surfH:(x,z)=>window._surfHeight(x,z),atmoState:()=>atmoState,surfPlayer:()=>surfPlayer,sysRef:_jnSysRef,toast,get flightScene(){ return flightScene; },
   celestial:()=>celestialBodies,bodyVisR:_bodyVisRadius,get flightCamera(){ return flightCamera; }}); }
 function _pwWorldTick(dt){

@@ -121,6 +121,7 @@ function brain(cr,dt,env,px,pz){
   }
 }
 function tick(dt,env){
+  if(S.pause){ if(S.world&&S.world.G.visible) S.world.G.visible=false; return; }
   if(OFF||!env||!init(env)||!S.defs) return; const PW=env.PW; if(!PW.scene||!PW.ground||!PW.body||!PW.camera||!env.TERRAIN.H) return;
   const mode=PW.mode; if(mode==='space'){ if(S.world&&S.world.G.visible) S.world.G.visible=false; return; }
   const t0=performance.now(); const w=bind(env); w.G.visible=true; if(w.G.parent!==PW.scene) PW.scene.add(w.G);
@@ -146,5 +147,5 @@ function tick(dt,env){
   }
   S.stats.active=S.act.length; S.stats.anim=anim; S.stats.tickMs=performance.now()-t0;
 }
-root.DMCreatures={tick,onWorldClose,onPlaces,setBrain(fn){ S.brain=fn; },stats(){ return Object.assign({},S.stats,{manifest:S.man,defs:S.defs?S.defs.length:0}); },_S:S,get off(){ return OFF; }};
+root.DMCreatures={tick,onWorldClose,onPlaces,pause(on){ S.pause=!!on; },setBrain(fn){ S.brain=fn; },stats(){ return Object.assign({},S.stats,{manifest:S.man,defs:S.defs?S.defs.length:0}); },_S:S,get off(){ return OFF; }};
 })(window);
