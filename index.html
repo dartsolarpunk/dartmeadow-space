@@ -1024,6 +1024,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-bt-roomlights.js?v=144" defer></script>
 <script src="ui/dm-bt-hull.js?v=144" defer></script>
 <script src="ui/dm-edgewarm.js?v=217" defer></script>
+<script src="ui/dm-arielhome.js?v=1" defer></script>
+<script src="ui/dm-facilities.js?v=1" defer></script>
 </head>
 <body>
 <!-- LOADING -->
@@ -5707,6 +5709,7 @@ function refreshQtJumpCards(){
   };
   const cur=_qtCurGalaxy();
   if(qtTab==='galaxies'){
+    { const a=_ah(); if(a) addCard('🏠','Return Home',a.inHome()?'You are here':'Solenne','Veyra · Lumenreach',()=>a.goHome(),a.inHome()); }
     addCard('🌌','Milky Way',cur==='milkyway'?'You are here':'Home','Home galaxy',()=>_qtJumpToGalaxy('milkyway'),cur==='milkyway');
     (typeof VISITABLE_GALAXIES!=='undefined'?VISITABLE_GALAXIES:[]).forEach(g=>{
       const key=galaxyKey(g.n), c=GS_VISIT_CATALOG[key];
@@ -5827,12 +5830,13 @@ function _ttSolKids(gal){
   const cat=SOL_CATALOG.filter(e=>!(e.hidden&&!_qtUnlocked(e.name)));
   const node=e=>({id:'sol:'+e.name,icon:e.icon,label:e.name,meta:(e.kind==='moon'?'Moon':e.kind==='dwarf'?'Dwarf planet':e.type)+(e.kind!=='moon'&&_solCatalogDist(e)?' · '+_solCatalogDist(e):''),
     body:e.name,go:()=>_ttGoBody(gal,'Sol',null,e.name),kids:null});
+  const _sites=n=>{ const a=_ah(); return a?a.siteNodes(n,'Sol'):[]; };
   const byParent={};
   cat.forEach(e=>{ if(e.kind==='moon'){ (byParent[e.parent]=byParent[e.parent]||[]).push(e); } });
   const withMoons=e=>{
     const n=node(e), ms=(byParent[e.name]||[]).slice();
     if(e.name==='Earth'){ const leo=cat.find(x=>x.name==='Low Earth Orbit'); if(leo) ms.unshift(leo); }
-    if(ms.length){ n.kids=()=>ms.map(node); n.count=ms.length; }
+    const st=_sites(e.name); if(st.length||ms.length){ const mk=ms.map(node).concat(st); n.kids=()=>mk; n.count=mk.length; }
     return n;
   };
   const out=[{id:'sol:Sun',icon:'☀️',label:'Sun',meta:'G2V star',body:'Sun',go:()=>_ttGoBody(gal,'Sol',null,'Sun'),kids:null}];
@@ -5848,6 +5852,7 @@ function _ttSolKids(gal){
 // systems don't build their moons as separate places yet).
 function _ttSeededKids(gal,e){
   const sys=e.sys||{}, bodies=sys.bodies||[];
+  if(sys.ariel){ const a=_ah(); if(a) return a.treeKids(gal,e,_ttGoBody); }
   const out=[{id:'sys:'+gal+':'+e.name+':*',icon:'⭐',label:e.name,meta:(sys.starType||e.star||'Star'),body:e.name,go:()=>_ttGoBody(gal,e.name,sys,e.name),kids:null}];
   bodies.forEach(bd=>out.push({id:'sys:'+gal+':'+bd.name,icon:bd.landable?'🪐':'🟠',label:bd.name,
     meta:(bd.type||'Planet')+(bd.moons?' · '+bd.moons+(bd.moons>1?' moons':' moon'):'')+(bd.landable?' · landable':''),
@@ -5901,12 +5906,38 @@ function _ttGalaxyKids(gal){
   try{ const pn=window.DMPlaces&&DMPlaces.qtNode(gal,{close:closeQuickTravel,ask:openFastTravel}); if(pn) out.push(pn); }catch(e){}
   return out;
 }
+// ── Ariel's home + cliff landmarks (ui/dm-arielhome.js, ui/dm-facilities.js) — they load after this module, so bind on first use ──
+let _ahBound=false,_facBound=false;
+function _ah(){
+  if(!window.DMArielHome) return null;
+  if(!_ahBound){ _ahBound=true;
+    DMArielHome.bind({ THREE, DMStar, SOL_SUN_RADIUS, PLANET_VIS_SCALE, buildProceduralPlanetMesh,
+      get flightScene(){return flightScene;}, get celestialBodies(){return celestialBodies;}, trackExtra:_trackSystemExtra,
+      lowRes:()=>(typeof _mcTierResTable==='function'?_mcTierResTable().low:10), get STATE(){return STATE;}, get boardFlight(){return boardFlight;},
+      closeQuickTravel, openFastTravel, fastTravelToSystem, enterAtmosphericFlight, GALAXY_DB, curGalaxy:()=>_qtCurGalaxy(),
+      curSysName:()=>_ttCurSysName()||'', get flightInited(){return flightInited;}, get PW(){return PW;} });
+  }
+  return DMArielHome;
+}
+function _fac(){
+  if(!window.DMFac) return null;
+  if(!_facBound){ _facBound=true;
+    DMFac.bind({ THREE, PW:()=>PW, TERRAIN:()=>TERRAIN, atmoState:()=>atmoState, atmoXZ:(la,lo)=>_atmoXZ(la,lo), mapTag:_pwMapTag,
+      curSysName:()=>_ttCurSysName()||'', shadows:()=>!!GFX.shadows, isMobile:()=>!!GFX.isMobile,
+      tier:()=>({low:0,medium:1,high:2,ultra:3})[(GFX.preset==='auto'||!GFX.preset)?autoPreset():GFX.preset]|0,
+      loadGLB:u=>new Promise((ok,no)=>{ const L=_getGLBLoader(); if(!L) return no(new Error('no GLTFLoader')); L.load(u,ok,undefined,no); }),
+      afterTeleport:()=>{ try{ if(PW) PW._jump=true; }catch(e){} } });
+  }
+  return DMFac;
+}
 function _ttRoots(){
   const cur=_qtCurGalaxy();
   const gs=[{key:'milkyway',name:'Milky Way',dist:'Home galaxy'}];
   (typeof VISITABLE_GALAXIES!=='undefined'?VISITABLE_GALAXIES:[]).forEach(g=>gs.push({key:galaxyKey(g.n),name:g.n.replace(/\s*\(.+\)/,''),dist:g.dist||''}));
-  return gs.map(g=>({id:'gal:'+g.key,icon:'🌌',label:g.name,meta:g.key===cur?'You are here':g.dist,here:g.key===cur,galNode:true,
+  const roots=gs.map(g=>({id:'gal:'+g.key,icon:'🌌',label:g.name,meta:g.key===cur?'You are here':g.dist,here:g.key===cur,galNode:true,
     go:()=>_qtJumpToGalaxy(g.key,g.name,g.dist),kids:()=>_ttGalaxyKids(g.key)}));
+  const a=_ah(); if(a) roots.unshift(a.rootNode());   // Return Home
+  return roots;
 }
 function _ttAutoOpen(){
   const cur=_qtCurGalaxy(), sn=_ttCurSysName();
@@ -12530,6 +12561,7 @@ function _trackSystemExtra(obj){
   return obj;
 }
 function _clearFlightSystemScene(){
+  try{ if(window.DMArielHome) DMArielHome.stop(); }catch(e){}   // Veyra's second star rides on trackExtra; just drop the references
   // Remove prior Sol/procedural bodies + orbit rings / belts / oort / comets
   // tagged via _trackSystemExtra — prevents dual stacks on system swap.
   for(let i=0;i<celestialBodies.length;i++){
@@ -12613,6 +12645,7 @@ function updateBodies(dt){
   // inside the ship the hull doesn't cast shadows: keep the star off the cabin walls
   if(_sunLight) _sunLight.intensity=SUN_LIGHT_I*(SHIP_WALK.active?0.25:1);
   _approachBestDist=Infinity;_approachBestBody=null;
+  if(window.DMArielHome&&DMArielHome.active) DMArielHome.tick();   // Veyra A + B round their barycentre
   // Plain for-loop instead of .forEach(b=>{...}) — the arrow-function
   // callback was a NEW closure object allocated every single frame
   // (60/sec), on top of the Vector3 fix above. Small individually, but
@@ -13896,6 +13929,8 @@ const VISITABLE_GALAXIES=[
   {n:'Ursa Minor Dwarf',    x:4000,  y:16000, z:-6000,  r:170,  c:0xc0c8d8, tilt:0.12, type:'elliptical', dist:'230k ly'},
   {n:'Leo I',               x:-5000, y:12000, z:14000,  r:200,  c:0xd0d8e8, tilt:0.18, type:'elliptical', dist:'820k ly'},
   {n:'Phoenix Dwarf',       x:-14000,y:-18000,z:8000,   r:190,  c:0xb8c8e0, tilt:0.22, type:'irregular', dist:'1.4M ly'},
+  // ── Ariel's home galaxy (original name; appended — nothing above moves) ──
+  {n:'Lumenreach',          x:-66000,y:-14000,z:-34000, r:1500, c:0xffd7a8, tilt:0.6,  type:'spiral', arms:3, dist:'38M ly'},
 ];
 function buildIntergalactic(group,fid){
   gmGalaxyLODs=[];
@@ -14250,6 +14285,11 @@ function seedRand(seed){return function(){seed|=0;seed=seed+0x6D2B79F5|0;let t=M
 function hashStr(s){let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619);}return h>>>0;}
 
 function getGalaxySystems(galaxyId,galaxyName,count){
+  const g=_getGalaxySystemsBase(galaxyId,galaxyName,count);
+  if(galaxyId==='lumenreach'){ const a=_ah(); if(a) a.patch(g); }   // Ariel's home galaxy: slot 0 is the fixed Veyra binary
+  return g;
+}
+function _getGalaxySystemsBase(galaxyId,galaxyName,count){
   // Target richness for charts (Justin iPhone). Existing systems never reshuffle —
   // we only APPEND when a chart is thinner than the target.
   const target=count||(12+Math.floor(seedRand(hashStr('galaxy:'+galaxyId+':n:'+WORLD_SEED))()*10));
@@ -14420,6 +14460,7 @@ async function rebuildFlightForSystem(system){
   const starGroup=_star.group, starMesh=_star.mesh;
   starGroup.position.set(0,0,0);flightScene.add(starGroup);
   sunMesh=starMesh;
+  if(system.ariel){ const a=_ah(); if(a) a.buildStars(system,_star,starK); }   // the Veyra binary: scale A, build B, swing both about the barycentre
   celestialBodies.push({mesh:starGroup,name:system.name,type:'Star',temp:Math.round(starK/100)*100+' K',orbitR:0,orbitSpd:0,angle:0,renderMesh:starMesh});
 
   const GIANT_FALLBACK=[0x8a5a3a,0xd9b280,0xf0e0c0,0xc47a52];
@@ -14430,7 +14471,7 @@ async function rebuildFlightForSystem(system){
     // Same Earth-class near-field scale as Sol
     const r=Math.max(0.35*PLANET_VIS_SCALE, (bd.radius|| (0.5+sysRand()*1.5))*PLANET_VIS_SCALE);
     const col=bd.color||0x888888;
-    const oR=AU*(1+i*1.4);
+    const oR=(system.ariel&&bd.orbitAU)?AU*bd.orbitAU:AU*(1+i*1.4);
     const ang=sysRand()*Math.PI*2;
     bodyAngs.push(ang);
     const isGiant=bd.type==='Gas Giant'||bd.type==='Ice Giant';
@@ -14487,24 +14528,27 @@ async function rebuildFlightForSystem(system){
       collisionRadius:r, hasTerrain:!!isProcedural && bd.landable!==false,
       isProcedural, mcRadius:r, mcSeed:seedVal, mcColor:col, mcHasAtm:hasAtm,
       mcKind:bd.type==='Habitable'?'earth':(bd.name||bd.type||'rocky'),
-      mcRes:(typeof _mcTierResTable==='function'?_mcTierResTable().low:10), mcTier:'low'
+      mcRes:(typeof _mcTierResTable==='function'?_mcTierResTable().low:10), mcTier:'low',
+      ...(system.ariel&&bd.habitable?{habitable:true}:null)
     });
   }
+  if(system.ariel){ const a=_ah(); if(a) await a.buildMoons(system); }   // Solenne's moons, Sol-style (orbitParent)
 
-  const outermostR=AU*(1+Math.max(0,bodies.length-1)*1.4);
+  let outermostR=AU*(1+Math.max(0,bodies.length-1)*1.4);
+  if(system.ariel) outermostR=AU*Math.max(...bodies.map(b=>b.orbitAU||0));
   // Oort owns its singleton (buildOortCloud clears prior) — do not dual-track.
   buildOortCloud({innerR:outermostR*1.5,outerR:outermostR*2.3,seedKey:system.name,count:700});
 
   DESTINATIONS.length=0;
   bodies.forEach((bd,i)=>{
     const ang=bodyAngs[i];
-    const oR=AU*(1+i*1.4);
-    DESTINATIONS.push({name:bd.name,icon:bd.landable?'🪐':'🟠',type:bd.type,dist:(i+1)+' AU',
+    const oR=(system.ariel&&bd.orbitAU)?AU*bd.orbitAU:AU*(1+i*1.4);
+    DESTINATIONS.push({name:bd.name,icon:bd.landable?'🪐':'🟠',type:bd.type,dist:((system.ariel&&bd.orbitAU)||(i+1))+' AU',
       pos:new THREE.Vector3(Math.cos(ang)*oR,2,Math.sin(ang)*oR),
       landable:bd.landable});
   });
   buildDestinationUI();
-  STATE.flight.pos.set(AU*1.2,3,4);if(boardFlight)boardFlight.position.copy(STATE.flight.pos);
+  { const _a=system.ariel?_ah():null; if(!(_a&&_a.arrive())){ STATE.flight.pos.set(AU*1.2,3,4);if(boardFlight)boardFlight.position.copy(STATE.flight.pos); } }   // Veyra: arrive in the lee of Solenne, not inside a star
   if(window._ftArrivePos){STATE.flight.pos.copy(window._ftArrivePos);if(boardFlight)boardFlight.position.copy(STATE.flight.pos);window._ftArrivePos=null;}
   try{ _clearLandPrompt(); }catch(e){}
   try{ if(CHAR.loaded && CHAR.root && boardFlight) remountSkyboard(boardFlight); }catch(e){}
@@ -16787,6 +16831,7 @@ const GS_VISIT_CATALOG={
   lmc:[280.47,-32.89,163000,7000,'irregular'],
   smc:[302.80,-44.30,203000,3500,'irregular'],
   bodesgalaxym81:[142.09,40.90,11800000,45000,'spiral'],
+  lumenreach:[247.00,-38.00,38000000,52000,'spiral'],
   cigargalaxym82:[141.41,40.57,11500000,20000,'irregular'],
   blackeyem64:[315.68,84.42,17300000,27000,'spiral'],
   southernpinwheelm83:[314.58,31.97,14700000,28000,'spiral'],
@@ -19022,6 +19067,7 @@ function _pwWorldTick(dt){
   const sf=!space&&window.DMSpec&&DMSpec.focusXZ&&DMSpec.focusXZ();
   const px=sf?sf.x:f.x, pz=sf?sf.z:f.z;
   const gH=H(f.x,f.z), agl=f.y-gH;
+  if(!space){ try{ const _f=_fac(); if(_f) _f.tick(dt,f,mode); }catch(e){ _animLoopWarn('fac',e); } }   // cliff facilities, ocean cities, Ariel's mansion
   // ── the planet frame at the focus; the camera into it
   if(space){
     _pwfSet(px,pz,PW.sp.camAlt||f.y,PW.site); _pwsSync(PW.body,PW.site);
@@ -24054,11 +24100,12 @@ function _pwBuildGround(pal,fx,fz,mode){
   const body=PW.body, site=PW.site;
   const F=_groundField(body,site,pal), H=F.H, seed=F.seed;
   TERRAIN.style=F.ws; TERRAIN.wx0=F.sw.x; TERRAIN.wz0=F.sw.z;
-  TERRAIN.pal=pal; TERRAIN.H=H; TERRAIN.seed=seed; TERRAIN.siteBias=F.siteBias; TERRAIN.siteLat=F.siteLat;
+  const Hs=(()=>{ try{ const f=_fac(); return f?f.wrapH(H):H; }catch(e){ return H; } })();   // decks, pads, island tops and the mansion stand on the ground (the drawn ground below keeps the plain H)
+  TERRAIN.pal=pal; TERRAIN.H=Hs; TERRAIN.seed=seed; TERRAIN.siteBias=F.siteBias; TERRAIN.siteLat=F.siteLat;
   TERRAIN.mcY=null; TERRAIN.mcN=null; TERRAIN.cpuMc=null; TERRAIN.mcGpu=false; TERRAIN._mcBusy=false; TERRAIN._mcUpg=false;
   TERRAIN.mcTier='low'; TERRAIN.mcUpgradeLocked=false; TERRAIN.mcDensityArray=null; TERRAIN.mcGridInfo=null; TERRAIN.mcGroup=null;
   TERRAIN.waterFollow=null; TERRAIN._wgx=null; TERRAIN.rockGeo=null;
-  _atmoHeight=H;   // what the board flies over (the refined ground below is what her feet and the touchdown use)
+  _atmoHeight=Hs;   // what the board flies over (the refined ground below is what her feet and the touchdown use)
   const dd=drawDistanceTier(); TERRAIN.rootSize=dd.rootSize;
   TERRAIN.group=new THREE.Group(); TERRAIN.group.name='JOTS_PlanetGround'; PW.scene.add(TERRAIN.group);
   surfTerrainMesh=TERRAIN.group;
