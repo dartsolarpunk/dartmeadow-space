@@ -526,8 +526,9 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   const gravL = new THREE.Vector3(), windL = new THREE.Vector3(), windW = new THREE.Vector3(), velS = new THREE.Vector3();
   let gScale = 1;
   const extra = [];   // user colliders
+  let curIts = 0;     // solver iterations this frame = P.iterations x physics intensity (ui/dm-cgroup.js); 0 = P.iterations
   let time = 0, frame = 0, ema = 2, cool = 0;
-  const stats = { ms: 0, simMs: 0, strands: N, drawn: NR, guides: G, sdf: !!SDF, contacts: 0 };
+  const stats = { ms: 0, simMs: 0, strands: N, drawn: NR, guides: G, sdf: !!SDF, contacts: 0, intensity: 1, segLen: (() => { let s = 0, c = 0; for (let i = 0; i < segLen.length; i++) if (segLen[i] > 0) { s += segLen[i]; c++; } return c ? s / c : 0; })() };
   let me = M.elements, mi = Mi.elements;
   // SDF box bounding sphere (head-local centre / radius), moved to root-local each frame
   let hcx = 0, hcy = 0, hcz = 0, hcR2 = 0, hsc2 = 1;
@@ -601,7 +602,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       }
     }
     // 2. constraints
-    const its = Math.max(1, P.iterations | 0), wp = P.stretchBias, sdfEvery = Math.max(1, P.sdfEvery | 0), capsAll = !!P.capsuleEveryIteration;
+    const its = Math.max(1, curIts || (P.iterations | 0)), wp = P.stretchBias, sdfEvery = Math.max(1, P.sdfEvery | 0), capsAll = !!P.capsuleEveryIteration;
     for (let it = 0; it < its; it++) {
       const last = it === its - 1;
       const doSdf = SDF && (last || (it % sdfEvery) === sdfEvery - 1);
@@ -848,7 +849,11 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     windL.copy(windW).transformDirection(rootInv).multiplyScalar(wl);
 
     time += dt;
-    const n = Math.min(2, Math.max(1, Math.ceil(dt / (1 / 60))));
+    // physics intensity (character group): scales iterations + substeps; exactly 1 = the original behaviour
+    let kI = 1; if (opts.getIntensity) { try { kI = +opts.getIntensity(); } catch (e) { kI = 1; } }
+    kI = kI >= 0.5 ? Math.min(3, kI) : (kI > 0 ? 0.5 : 1); stats.intensity = kI;
+    curIts = Math.max(1, Math.round((P.iterations | 0) * kI));
+    const n = Math.min(3, Math.max(1, Math.round(Math.min(2, Math.max(1, Math.ceil(dt / (1 / 60)))) * kI)));
     const h = Math.min(dt, 1 / 30) / n;
     const fillF = () => {
       const F = gF, hh = h * h, gs = P.gravity * hh, wd = P.drag * hh;
@@ -859,7 +864,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       F.trig[0] = Math.sin(time * 2.1); F.trig[1] = Math.cos(time * 2.1); F.trig[2] = Math.sin(time * 0.7); F.trig[3] = Math.cos(time * 0.7);
       F.hc[0] = hcx; F.hc[1] = hcy; F.hc[2] = hcz; F.hc[3] = hcR2;
       F.p0[0] = hsc2; F.p0[1] = P.friction; F.p0[2] = P.stretchBias; F.p0[3] = P.hairRadius;
-      F.ip[0] = Math.max(1, P.iterations | 0); F.ip[1] = Math.max(1, P.sdfEvery | 0); F.ip[2] = (P.capsuleEveryIteration ? 1 : 0) | (P.broadPhase ? 2 : 0) | (SDF ? 4 : 0); F.ip[3] = n;
+      F.ip[0] = Math.max(1, curIts || (P.iterations | 0)); F.ip[1] = Math.max(1, P.sdfEvery | 0); F.ip[2] = (P.capsuleEveryIteration ? 1 : 0) | (P.broadPhase ? 2 : 0) | (SDF ? 4 : 0); F.ip[3] = n;
       F.ext.length = 0;
       for (const C of extra) F.ext.push([C.la.x, C.la.y, C.la.z, C.lb.x, C.lb.y, C.lb.z, C.lr]);
       if (stiffDirty) { gc.setStiffness(); stiffDirty = false; }
