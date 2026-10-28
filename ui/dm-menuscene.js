@@ -597,12 +597,14 @@
         IN.S0 = new THREE.Vector3(SEAT_X + 0.35, 0, 0.35); IN.S0.y = surfY(IN.S0.x, IN.S0.z);
         const wd = IN.W.clone().sub(IN.S0).setY(0); IN.walkQ = new THREE.Quaternion().setFromAxisAngle(P.Y, Math.atan2(wd.x, wd.z));
         IN.T_FLY = 3.0; IN.T_WALK = 2.3; IN.walkDur = Math.max(1.2, Math.min(3.2, wd.length() / 1.15));
-        IN.T_STEP = IN.T_WALK + 0.45 + IN.walkDur; IN.T_LAND = IN.T_STEP + 0.62; IN.T_LIFT = IN.T_LAND + 0.5;
+        // the rebaked Mount_Step clip (~1.15 s) plays at ~1x: the step window follows the clip instead of squeezing it
+        IN.stepDur = o.jump ? Math.max(0.62, Math.min(1.1, o.jump.duration * 0.88)) : 0.62;
+        IN.T_STEP = IN.T_WALK + 0.85 + IN.walkDur; IN.T_LAND = IN.T_STEP + IN.stepDur; IN.T_LIFT = IN.T_LAND + 0.5;
         IN.list = Object.keys(bones).map(n => bones[n]); IN.sq = IN.list.map(bn => bn.quaternion.clone()); IN.sp = IN.list.map(bn => bn.position.clone());
         IN.keep = IN.list.map(bn => [bn.position.clone(), bn.quaternion.clone()]);
         IN.walk = o.walk ? C.mixer.clipAction(o.walk) : null;
         IN.jump = o.jump ? C.mixer.clipAction(o.jump) : null; IN.ride = o.ride ? C.mixer.clipAction(o.ride) : null;
-        if (IN.jump) { IN.jump.setLoop(THREE.LoopOnce, 1); IN.jump.clampWhenFinished = true; IN.jump.timeScale = Math.max(0.6, Math.min(2.4, o.jump.duration / (0.62 * 1.15))); }
+        if (IN.jump) { IN.jump.setLoop(THREE.LoopOnce, 1); IN.jump.clampWhenFinished = true; IN.jump.timeScale = Math.max(0.6, Math.min(2.4, o.jump.duration / (IN.stepDur * 1.15))); }
         IN.sharedTex = !!o.sharedTex; IN.onFly = o.onFlyOff; IN.flew = false; IN.t = 0; IN.w = 0; IN.walked = IN.jumped = IN.rode = false; IN.lockM = null; IN.lift = false;
         b.position.copy(IN.P0); b.visible = false; scene.add(b); IN.board = b;
         return renderer.compileAsync(scene, camera).catch(() => {}).then(() => { if (!IN.board) return; b.visible = true; IN.on = true; });
@@ -634,14 +636,14 @@
         b.updateMatrixWorld(true); if (IN.lc) { const up = IN.lc.lift(b, 0.02); if (up > 0) { b.position.y += up; b.updateMatrixWorld(true); } }
 IN.D.copy(IN.Dl); b.localToWorld(IN.D); IN.D.y += 0.03;
         // her: stand + walk over, step on, ride
-        if (t >= IN.T_WALK && IN.walk && !IN.walked) { IN.walked = true; IN.walk.reset().play(); }
+        if (t >= IN.T_WALK - 0.1 && IN.walk && !IN.walked) { IN.walked = true; IN.walk.reset().play(); }
         if (t >= T_STEP && IN.jump && !IN.jumped) { IN.jumped = true; IN.jump.reset().play(); if (IN.walk) IN.walk.crossFadeTo(IN.jump, 0.18, false); }
-        if (t >= T_LAND - 0.12 && IN.ride && !IN.rode) { IN.rode = true; IN.ride.reset().play(); if (IN.jump) IN.jump.crossFadeTo(IN.ride, 0.28, false); }
-        IN.w = smooth(IN.T_WALK - 0.05, IN.T_WALK + 0.45, t);
-        const uw = smooth(IN.T_WALK + 0.2, T_STEP, t);            // along the walk
-        const k = Math.min(1, Math.max(0, (t - T_STEP) / 0.62)), ks = k * k * (3 - 2 * k);
+        if (t >= T_LAND - 0.32 && IN.ride && !IN.rode) { IN.rode = true; IN.ride.reset().play(); if (IN.jump) IN.jump.crossFadeTo(IN.ride, 0.5, false); }   // the ride stance eases in under the landing: no snap to it
+        IN.w = smooth(IN.T_WALK - 0.1, IN.T_WALK + 0.85, t);   // stand up: the seated pose eases into the walk over ~1 s
+        const uw = smooth(IN.T_WALK + 0.5, T_STEP, t);            // along the walk
+        const k = Math.min(1, Math.max(0, (t - T_STEP) / IN.stepDur)), ks = k * k * (3 - 2 * k);
         IN.FT.lerpVectors(IN.S0, IN.W, uw); IN.FT.y = surfY(IN.FT.x, IN.FT.z);
-        if (k > 0) { IN.FT.lerp(IN.D, ks); IN.FT.y += Math.sin(Math.PI * k) * 0.28; }
+        if (k > 0) { IN.FT.lerp(IN.D, ks); IN.FT.y += Math.sin(Math.PI * k) * 0.08; }   // the clip carries the step up; only a hint of root lift
         if (t >= T_LIFT && IN.lockM) {   // planted on the deck: ride the board's transform rigidly
           IN.lockW.multiplyMatrices(b.matrixWorld, IN.lockM); IN.lockW.decompose(holder.position, holder.quaternion, IN.lockS);
           holder.updateMatrixWorld(true); return;
@@ -659,7 +661,7 @@ IN.D.copy(IN.Dl); b.localToWorld(IN.D); IN.D.y += 0.03;
         const w = IN.w;
         if (w > 0) for (let i = 0; i < IN.list.length; i++) { const bn = IN.list[i]; IN.qa.copy(bn.quaternion); bn.quaternion.slerpQuaternions(IN.sq[i], IN.qa, w); IN.tmp.copy(bn.position); bn.position.lerpVectors(IN.sp[i], IN.tmp, w); }
         root.updateMatrixWorld(true);
-        if (IN.w > 0.5 && !IN.lockM && bones.LeftFoot && bones.RightFoot) {    // holder offset that puts her feet on the deck
+        if (IN.w > 0.04 && !IN.lockM && bones.LeftFoot && bones.RightFoot) {    // holder offset that puts her feet on the deck
           bones.LeftFoot.getWorldPosition(IN.F); bones.RightFoot.getWorldPosition(IN.tmp); IN.F.add(IN.tmp).multiplyScalar(0.5);
           IN.F.y = Math.min(IN.F.y, IN.tmp.y); const r = holder.position.clone().sub(IN.F);
           if (!IN.rel) IN.rel = r; else IN.rel.lerp(r, IN.t > IN.T_LAND ? 0.25 : 0.5);
