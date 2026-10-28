@@ -29,7 +29,7 @@
   ];
   function hash(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
   A.system = { name: 'Veyra', starType: 'G yellow', ariel: true, binary: BIN, bodies: BODIES, ang: 0.62, rad: 0.38, seed: hash('sys:Veyra:lumenreach:home'),
-    star2: 'K orange', starK: 5000, starK2: 3900, starR: BIN.rA, starNote: 'Veyra A (G) + Veyra B (K), 60-day binary' };
+    star2: 'M red', starK: 8200, starK2: 3000, starR: BIN.rA, starNote: 'Veyra A (blue-white) + Veyra B (red dwarf), 60-day binary' };
   A.bodyDef = n => BODIES.find(b => b.name === n) || null;
   A.patch = function (g) { if (g && Array.isArray(g.systems)) g.systems[0] = A.system; return g; };
 

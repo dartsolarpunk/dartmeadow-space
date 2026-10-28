@@ -355,7 +355,10 @@
       let y0 = H(px, pz); for (const [lx, lz] of [[0, 40], [-30, 40], [30, 40], [0, 80], [-60, 0], [60, 0]]) { y0 = Math.max(y0, H(px + lx * ct + lz * st, pz - lx * st + lz * ct)); }   // local +Z is inland
       y0 += 0.3;
       const root = mansionInstance(T); root.position.set(px, y0, pz); root.rotation.y = th; root.updateMatrixWorld(true);
-      PW.scene.add(root); F.ctx.mapTag(root); rec.group = root; rec.mansion = true; rec.x = px; rec.z = pz; rec.y = y0; rec.th = th; rec.ready = true;
+      PW.scene.add(root);
+      // (v224) compile the mansion's pipelines now, in the background, instead of in the frame it first draws as you approach (the freeze, then the skip)
+      try { if (PW.renderer && PW.renderer.compileAsync && PW.camera) PW.renderer.compileAsync(PW.scene, PW.camera).catch(() => { }); } catch (e) { }
+      F.ctx.mapTag(root); rec.group = root; rec.mansion = true; rec.x = px; rec.z = pz; rec.y = y0; rec.th = th; rec.ready = true;
       const col = MAN.col, nx = col.nx, ny = col.ny, inv = 1 / col.scale, cell = col.cell, hh = col.h;
       const R = 230;
       F.solids.push({ x0: px - R, x1: px + R, z0: pz - R, z1: pz + R, grid: (x, z) => {
