@@ -1007,6 +1007,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-atmo.js?v=211" defer></script>
 <script src="ui/dm-localcollide.js?v=188" defer></script>
 <script src="ui/dm-cgroup.js?v=214" defer></script>
+<script src="ui/dm-projector.js?v=220" defer></script>
+<script src="ui/dm-groundmark.js?v=220" defer></script>
 <script src="ui/dm-menuscene.js?v=214" defer></script>
 <script src="ui/dm-starbubble.js?v=4" defer></script>
 <script src="ui/dm-hazardbubble.js?v=215" defer></script>
@@ -18810,6 +18812,7 @@ function _pwFrame(dt){
   try{ _updateCharDebugHUD(); }catch(e){}
   try{ updateBirdTemple(dt); }catch(e){ _animLoopWarn('birdTemple',e); }   // the ship keeps wandering + the shard keeps following, even off-screen
   try{ _pwWorldTick(dt); }catch(e){ _animLoopWarn('world',e); }
+  try{ if(window.DMGroundMark) DMGroundMark.tick(dt,(PW.mode==='walk'&&surfaceActive&&CHAR.root&&!CHAR._transitioning&&!CHAR.mounted)?surfPlayer:null,surfBoard,PW.gen,window._surfHeight,_pwfMap,CHAR.root?_cgWorldH():0,BOARD_CALL); }catch(e){ _animLoopWarn('groundmark',e); }   // red/blue laser ground marks (ui/dm-groundmark.js); fades out on liftoff
   try{ if(window.DM_HAZ) DM_HAZ.tick(dt); }catch(e){ _animLoopWarn('hazard',e); }   // habitability orb + underwater look (ui/dm-hazardbubble.js)
   try{ if(window.DMFluidWorld) DMFluidWorld.tick(dt); }catch(e){ _animLoopWarn('fluidVfx',e); }   // APIC sea + PBF spray (ui/dm-fluid-world.js)
   try{ _dynRes(flightRenderer); }catch(e){}
@@ -22542,19 +22545,21 @@ function _pwfRotN(wp,nf){
 // globe hands over to it, far out in space; 1 = solid)
 function _pwfMask(){ const W=window; return W.interleavedGradientNoise(W.screenCoordinate.xy).lessThan(PWF.u.reveal); }
 // give every material under `root` the planet frame (skips the sky, the board, her and anything marked noBend)
-function _pwMapTag(root){
+function _pwMapTag(root,gm){
   if(!root||!_pwfReady()||root.userData.noBend||root.isLight||root.isCamera||(typeof CHAR!=='undefined'&&root===CHAR.root)) return;
+  if(root.userData.groundMark===true) gm=true;
   if(root.material&&!root.isSprite&&!root.isLine){
     const mats=Array.isArray(root.material)?root.material:[root.material];
     for(const m of mats){
       if(!m||m.userData._pwf||m.isShaderMaterial||m.isRawShaderMaterial) continue;
       m.userData._pwf=true; m.positionNode=_pwfNodeFor(m.positionNode||null);
       if(!m.maskNode) m.maskNode=_pwfMask();
+      if(gm&&window.DMGroundMark){ try{ DMGroundMark.tagMaterial(m); }catch(e){} }   // opted-in static meshes (userData.groundMark) receive the laser projectors
       m.needsUpdate=true;
     }
     if(root.isMesh||root.isInstancedMesh) root.frustumCulled=false;   // three culls by the flat bounds; what's drawn is elsewhere
   }
-  for(const c of root.children) _pwMapTag(c);
+  for(const c of root.children) _pwMapTag(c,gm);
 }
 // ── open space ↔ the planet frame ──
 // body frame (the planet's own, as its mesh turns): lon = atan2(-z, x), lat = asin(y)
@@ -24444,7 +24449,8 @@ const _chunkSeed=(i,j,s)=>((i*73856093)^(j*19349663)^(s*83492791))|0;
 // meant a node build + pipeline compile (and its shadow variant) every time a chunk streamed in — the flight hitch
 let _propShared=null;
 function _propKit(){ if(!_propShared){ const sh=(m)=>{ m.userData.shared=true; return m; };
-  _propShared={rock:sh(new THREE.MeshStandardMaterial({color:0xffffff,roughness:0.92})), trunk:sh(new THREE.MeshStandardMaterial({color:0x4a3220,roughness:1})), crown:sh(new THREE.MeshStandardMaterial({color:0xffffff,roughness:1})),
+  const SM=THREE.MeshStandardNodeMaterial||THREE.MeshStandardMaterial;   // node materials (what the renderer would convert these to anyway) so the laser projectors can light them
+  _propShared={rock:sh(new SM({color:0xffffff,roughness:0.92})), trunk:sh(new SM({color:0x4a3220,roughness:1})), crown:sh(new SM({color:0xffffff,roughness:1})),
     tGeo:new THREE.CylinderGeometry(0.7,1,1,6), cGeo:new THREE.ConeGeometry(1,1,7)}; _propShared.tGeo.userData.shared=_propShared.cGeo.userData.shared=true; }
   return _propShared; }
 // (v150) three's node InstanceNode bakes the instance count into the shader (a uniform mat4 array of that size), so every
@@ -24462,7 +24468,7 @@ function _propPad(im,n){
 function _hmChunkScatter(i,j){
   const H=TERRAIN.H, pal=TERRAIN.pal, C=SURF_CHUNK, rnd=_rng32(_chunkSeed(i,j,TERRAIN.seed||1));
   const R=(a,b)=>a+(b-a)*rnd();
-  const g=new THREE.Group(); g.name='JOTS_ChunkProps';
+  const g=new THREE.Group(); g.name='JOTS_ChunkProps'; g.userData.groundMark=true;
   const per=Math.round((Math.min(300,({low:60,med:140,high:240,ultra:300})[STATE.settings.particles]||140))*(C*C)/(560*560));
   const base={h:0,s:0,l:0}; new THREE.Color(pal.rock||0x777777).getHSL(base);
   const rocks=[];
@@ -24669,6 +24675,7 @@ function _terrainDetailMat(opts){
     console.warn('[ground detail] plain material:',e);
     m=new THREE.MeshStandardMaterial({vertexColors:true,roughness:0.95,metalness:0.0,side:opts.side||THREE.FrontSide});
   }
+  try{ if(window.DMGroundMark) DMGroundMark.receive(m); }catch(e){ console.warn('[groundmark]',e); }   // laser-projector receiver (ui/dm-projector.js): zero cost while its fade is 0
   return m;
 }
 
