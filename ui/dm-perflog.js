@@ -86,6 +86,38 @@
       if (hitches.length > 80) hitches.splice(0, hitches.length - 80);
     } catch (e) {}
   }
+  // (v224) What the scene is actually made of: for each top-level object of the flight scene and the world scene, the
+  // visible draw count, triangles (instances included) and how many of those triangles also draw in the shadow pass.
+  // Perf logs said "2.4 M triangles a frame" but not whose; this names them. Recomputed at most every 25 s.
+  let _census = null, _censusAt = 0;
+  function census() {
+    const now = Date.now(); if (_census && now - _censusAt < 25000) return _census;
+    const out = {};
+    try {
+      const roots = [];
+      if (typeof flightScene !== 'undefined' && flightScene) roots.push(['flight', flightScene]);
+      if (typeof PW !== 'undefined' && PW && PW.active && PW.scene) roots.push(['world', PW.scene]);
+      for (const [rn, root] of roots) {
+        const rows = [];
+        for (const ch of root.children) {
+          if (!ch.visible) continue;
+          let draws = 0, tris = 0, shTris = 0, inst = 0, mat = '';
+          ch.traverseVisible((o) => {
+            const g = o.geometry; if (!g || !(o.isMesh || o.isPoints || o.isLine || o.isSprite)) return;
+            const pos = g.attributes && g.attributes.position; if (!pos) return;
+            const n = (g.index ? g.index.count : pos.count) / (o.isMesh ? 3 : 1);
+            const k = o.isInstancedMesh ? (o.count || 0) : 1;
+            draws++; tris += n * k; if (o.isInstancedMesh) inst += k; if (o.castShadow) shTris += n * k;
+            if (!mat) { const m = Array.isArray(o.material) ? o.material[0] : o.material; mat = (m && m.name) || ''; }
+          });
+          if (draws) rows.push({ name: (ch.name || ch.type) + (mat ? ' [' + mat + ']' : ''), draws, tris: Math.round(tris), shadowTris: Math.round(shTris), inst });
+        }
+        rows.sort((a, b) => b.tris - a.tris);
+        out[rn] = { total: Math.round(rows.reduce((a, r) => a + r.tris, 0)), shadowTotal: Math.round(rows.reduce((a, r) => a + r.shadowTris, 0)), top: rows.slice(0, 22) };
+      }
+    } catch (e) { out.err = String(e && e.message || e).slice(0, 120); }
+    _census = out; _censusAt = now; return out;
+  }
   function build(final) {
     harvest();
     let env = null; try { env = typeof window.dmPerfEnv === 'function' ? window.dmPerfEnv() : null; } catch (e) {}
@@ -100,7 +132,7 @@
       backend: env && env.backend, gpu: env && env.gpu, preset: env && env.preset, hair: env && env.hair,
       warmupMs: window._warmupMs != null ? window._warmupMs : null,
       navType, prevUnclean, prevSessionId: prevLocal && prevLocal.sessionId || null, endNote: final ? endNote : null,
-      env, modes, mem: mem.slice(), summary, gpuPasses: (function () { try { return window.DMGpuProf ? window.DMGpuProf.table() : null; } catch (e) { return null; } })(), hitches: hitches.slice(), windows: windows.slice(-60), trimmed: 0,
+      env, modes, mem: mem.slice(), summary, gpuPasses: (function () { try { return window.DMGpuProf ? window.DMGpuProf.table() : null; } catch (e) { return null; } })(), hitches: hitches.slice(), windows: windows.slice(-60), trimmed: 0, census: census(),
     };
     let s = JSON.stringify(doc);
     while (s.length > CAP && doc.windows.length) { doc.windows.splice(0, Math.ceil(doc.windows.length / 4) || 1); doc.trimmed = windows.length - doc.windows.length; s = JSON.stringify(doc); }
