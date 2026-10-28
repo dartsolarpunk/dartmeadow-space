@@ -1014,8 +1014,6 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-bt-interior.js?v=124" defer></script>
 <script src="ui/dm-bt-pbr.js?v=217" defer></script>
 <script src="ui/dm-bt-bake.js?v=144" defer></script>
-<script src="ui/dm-ui3d-core.js?v=208" defer></script>
-<script src="ui/dm-ui3d-mesh.js?v=206" defer></script>
 <script src="ui/dm-ar-core.js?v=209" defer></script>
 <script src="ui/dm-places-core.js?v=213" defer></script>
 <script src="ui/dm-places.js?v=213" defer></script>
@@ -1546,7 +1544,6 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   <div id="ar-top">
     <!-- Left frame: soundtrack controls -->
     <div class="hud-l dm-frame">
-      <i class="dm-trim" aria-hidden="true"></i>
       <!-- ♫ In-game audio player -->
       <div id="audio-player" >
         <button class="aud-btn" onclick="audioPrev()" title="Previous track">⏮</button>
@@ -1580,7 +1577,6 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
       <button class="art-btn" onclick="promptExit()" title="Exit"><i class="ic">⏻</i>EXIT</button>
       <button class="art-btn profile-btn" id="profile-btn" onclick="openProfileMenu()" title="Your profile and display options"><span class="pf-av-mini" id="profile-btn-av">◉</span><span>PROFILE</span></button>
       </div>
-      <i class="dm-trim" aria-hidden="true"></i>
       <div class="hud-r-row">
         <button class="art-btn progress-btn" id="init-progress-btn" onclick="quickSave()" title="Initialize Progress: save right here. Signed in, it also goes to your private jots- repository. The game also initializes progress by itself at milestones and every 15 minutes.">⟐ INITIALIZE PROGRESS</button>
       </div>
@@ -1709,8 +1705,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <!-- ✦ SURFACE WALK OVERLAY -->
 <div id="surface-overlay" style="display:none;position:fixed;inset:0;z-index:3500;background:transparent;">
   <canvas id="surface-canvas" style="position:absolute;inset:0;display:block;touch-action:none;"></canvas>
-  <div style="position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:10px 16px calc(10px);isolation:isolate;pointer-events:none;">
-    <i class="dm-bar" aria-hidden="true"></i>
+  <div style="position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:10px 16px calc(10px);background:rgba(var(--panel-rgb),.55);backdrop-filter:blur(10px);border-bottom:1px solid rgba(var(--acc-rgb),.15);pointer-events:none;">
     <div class="world-music" id="wm-surf" title="Soundtrack"><button class="aud-btn" onclick="audioPrev()" title="Previous track">⏮</button><button class="aud-btn wm-pp" onclick="audioToggle()" title="Play / Pause">⏸</button><button class="aud-btn" onclick="audioStop()" title="Stop">■</button><button class="aud-btn" onclick="audioNext()" title="Next track">⏭</button><button class="aud-btn" onclick="audioPickFiles()" title="Load music from your device">📁</button><button class="aud-btn" onclick="openMusicBrowser()" title="Browse the soundtrack">📜</button><span class="wm-vol-wrap" title="Music volume"><span class="wm-vol-ico">♪</span><input class="wm-vol" type="range" min="0" max="100" value="100" oninput="audioSetVolume(this.value/100)" aria-label="Music volume"></span><span class="wm-name"></span></div>
     <div class="mini-kite"><svg class="mk-edge" viewBox="0 0 360 160" preserveAspectRatio="none" width="0" height="0" aria-hidden="true"><defs><linearGradient id="mk-grad-s" x1="0" y1="0" x2="0.35" y2="1"><stop offset="0" class="ks-a"/><stop offset=".55" class="ks-b"/><stop offset="1" class="ks-c"/></linearGradient></defs><polygon class="kite-line" style="stroke:url(#mk-grad-s)" fill="none" stroke="none" points="1.5,77 75.6,1.5 358.5,75.2 75.6,158.5"/><polyline class="kite-ridge" fill="none" stroke="none" points="2,77 358,75.2"/></svg><span id="surface-title" class="mk-name">—</span><span class="mk-mode">SURFACE</span><span id="surface-grav" class="mk-read">GRAV 1.00g</span></div>
     <div style="display:flex;gap:8px;">
@@ -1719,7 +1714,6 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
       <button id="surf-fly-btn" onclick="surfRemountSkyboard()" style="pointer-events:auto;padding:5px 12px;background:rgba(var(--acc-rgb),.1);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🛹 FLY</button>
       <button id="liftoff-btn" onclick="exitSurface()" style="pointer-events:auto;padding:5px 14px;background:rgba(var(--hi-rgb),.12);border:1px solid var(--gold);color:var(--gold);font-family:var(--font-hud);font-size:.52rem;letter-spacing:.12em;cursor:pointer;border-radius:2px;">🚀 LIFTOFF</button>
       <button class="profile-btn" onclick="openProfileMenu()" title="Your profile and display options" style="pointer-events:auto;padding:5px 12px;display:inline-flex;align-items:center;gap:5px;background:rgba(var(--acc-rgb),.08);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;"><span class="pf-av-mini" id="profile-btn-av-s">◉</span><span>PROFILE</span></button>   <!-- v151: PROFILE on the surface / sky HUD too (was space-only) -->
-      <button class="dm-exit-btn" onclick="promptExit()" title="Exit" style="pointer-events:auto;padding:5px 12px;display:inline-flex;align-items:center;gap:5px;background:linear-gradient(180deg,rgba(var(--hi-rgb),.22),rgba(var(--hi-rgb),.08));border:1px solid var(--gold);color:var(--gold);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;"><span>⏻</span><span>EXIT</span></button>   <!-- v206: EXIT on the surface / sky HUD too, same handler as the space HUD -->
     </div>
   </div>
   <button class="orbit-skyboard-btn hud-toggle-btn" onclick="toggleCharOrbit()" title="Orbit freely around the character — drag/scroll or pinch to look around" style="left:auto;right:10px;top:56px;background:rgba(var(--hi-rgb),0.10);color:#ff4fa3;border-color:rgba(var(--hi-rgb),0.35);z-index:36;">🔄 ORBIT</button>
@@ -1747,8 +1741,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <!-- ✦ ATMOSPHERIC FLIGHT (skyboard flight within a planet's atmosphere) -->
 <div id="atmo-overlay" style="display:none;position:fixed;inset:0;z-index:3450;background:transparent;">
   <canvas id="atmo-canvas" style="position:absolute;inset:0;display:block;touch-action:none;"></canvas>
-  <div style="position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:10px 16px;isolation:isolate;pointer-events:none;">
-    <i class="dm-bar" aria-hidden="true"></i>
+  <div style="position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:10px 16px;background:rgba(var(--panel-rgb),.5);backdrop-filter:blur(10px);border-bottom:1px solid rgba(var(--acc-rgb),.15);pointer-events:none;">
     <div class="world-music" id="wm-atmo" title="Soundtrack"><button class="aud-btn" onclick="audioPrev()" title="Previous track">⏮</button><button class="aud-btn wm-pp" onclick="audioToggle()" title="Play / Pause">⏸</button><button class="aud-btn" onclick="audioStop()" title="Stop">■</button><button class="aud-btn" onclick="audioNext()" title="Next track">⏭</button><button class="aud-btn" onclick="audioPickFiles()" title="Load music from your device">📁</button><button class="aud-btn" onclick="openMusicBrowser()" title="Browse the soundtrack">📜</button><span class="wm-vol-wrap" title="Music volume"><span class="wm-vol-ico">♪</span><input class="wm-vol" type="range" min="0" max="100" value="100" oninput="audioSetVolume(this.value/100)" aria-label="Music volume"></span><span class="wm-name"></span></div>
     <div class="mini-kite"><svg class="mk-edge" viewBox="0 0 360 160" preserveAspectRatio="none" width="0" height="0" aria-hidden="true"><defs><linearGradient id="mk-grad-a" x1="0" y1="0" x2="0.35" y2="1"><stop offset="0" class="ks-a"/><stop offset=".55" class="ks-b"/><stop offset="1" class="ks-c"/></linearGradient></defs><polygon class="kite-line" style="stroke:url(#mk-grad-a)" fill="none" stroke="none" points="1.5,77 75.6,1.5 358.5,75.2 75.6,158.5"/><polyline class="kite-ridge" fill="none" stroke="none" points="2,77 358,75.2"/></svg><span id="atmo-title" class="mk-name">—</span><span class="mk-mode">ATMOSPHERIC FLIGHT</span><span id="atmo-speed" class="mk-read">MACH 0.00</span></div>
     <div style="display:flex;gap:8px;">
@@ -1756,7 +1749,6 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
             <button onclick="openTempleHub()" style="pointer-events:auto;padding:5px 12px;background:rgba(255,255,255,.1);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🕊 TEMPLE</button>
       <button onclick="atmoExitToSpace()" style="pointer-events:auto;padding:5px 12px;background:rgba(var(--acc-rgb),.08);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🚀 TO SPACE</button>
       <button class="profile-btn" onclick="openProfileMenu()" title="Your profile and display options" style="pointer-events:auto;padding:5px 12px;display:inline-flex;align-items:center;gap:5px;background:rgba(var(--acc-rgb),.08);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;"><span class="pf-av-mini" id="profile-btn-av-a">◉</span><span>PROFILE</span></button>   <!-- v151: PROFILE on the surface / sky HUD too (was space-only) -->
-      <button class="dm-exit-btn" onclick="promptExit()" title="Exit" style="pointer-events:auto;padding:5px 12px;display:inline-flex;align-items:center;gap:5px;background:linear-gradient(180deg,rgba(var(--hi-rgb),.22),rgba(var(--hi-rgb),.08));border:1px solid var(--gold);color:var(--gold);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;"><span>⏻</span><span>EXIT</span></button>   <!-- v206: EXIT on the surface / sky HUD too, same handler as the space HUD -->
     </div>
   </div>
   <button class="orbit-skyboard-btn hud-toggle-btn" onclick="toggleCharOrbit()" title="Orbit freely around the character — drag/scroll or pinch to look around" style="left:auto;right:16px;top:360px;background:rgba(var(--hi-rgb),0.10);color:#ff4fa3;border-color:rgba(var(--hi-rgb),0.35);z-index:36;">🔄 ORBIT</button>
@@ -2168,7 +2160,6 @@ function loadSaveData(data){
       'gfxQuality','resScale','shadows','reflections','caustics','gi','marchingCubesTerrain'];
     Object.keys(data.settings).forEach(k=>{ if(!GFX_SETTING_KEYS.includes(k)) STATE.settings[k]=data.settings[k]; });
   }
-  if(data.settings&&typeof data.settings.legacyUI==='boolean'&&window.DMUI3DMesh){ try{ let _ls0=null; try{ _ls0=localStorage.getItem('dm.ui3d'); }catch(e){} if(data.settings.legacyUI||_ls0!=='0') window.DMUI3DMesh.setLegacy(data.settings.legacyUI); else data.settings.legacyUI=true; }catch(e){} }   // (v200) a device-level dm.ui3d='0' is never re-enabled by a save   // (v160) Legacy UI follows the save
   if(data.themes&&window.DMTheme){ try{ window.DMTheme.importData(data.themes,'save'); }catch(e){} }
   if(data.journal&&window.DMJournal){ try{ window.DMJournal.store.importData(data.journal,'save'); }catch(e){} }
   if(data.btLights&&window.DMBtRoomLights){ try{ window.DMBtRoomLights.set(data.btLights); }catch(e){} }   // (v139)
@@ -14762,7 +14753,6 @@ function _pfEnsure(){
     '<div class="pf-sec">DISPLAY</div>'+
     '<div class="pf-row"><div><div class="pf-row-t">Player name tags</div><div class="pf-row-d">Other players\u2019 usernames above them.</div></div><button class="pf-sw" id="pf-sw-players" role="switch"></button></div>'+
     '<div class="pf-row"><div><div class="pf-row-t">Object info</div><div class="pf-row-d">Names of planets, stars and other things when your crosshair is on them.</div></div><button class="pf-sw" id="pf-sw-objects" role="switch"></button></div>'+
-    '<div class="pf-row"><div><div class="pf-row-t">Legacy UI</div><div class="pf-row-d">Use the classic flat HUD instead of the 3D curved visor HUD. Kept with your save.</div></div><button class="pf-sw" id="pf-sw-legacy" role="switch" aria-label="Legacy UI on or off"></button></div>'+
     '<div id="pf-safety"></div>'+
     '<div class="pf-sec">THEME</div>'+
     '<div class="pf-themes" id="pf-themes"></div>'+
@@ -14816,10 +14806,8 @@ function _pfEnsure(){
   };
   bindSw('pf-sw-players','playerLabels');
   bindSw('pf-sw-objects','objectLabels',on=>{ if(!on) try{ hideCrosshairLabelNow(); }catch(e){} });
-  $('pf-sw-legacy').onclick=()=>{ const v=!_pfLegacyUI(); try{ window.DMUI3DMesh&&window.DMUI3DMesh.setLegacy(v); }catch(e){} STATE.settings.legacyUI=v; _pfRender(); };   // (v160) STATE.settings travels in every save
   _pfBindThemeTools();
 }
-function _pfLegacyUI(){ try{ return !!(window.DMUI3DMesh&&window.DMUI3DMesh.legacy); }catch(e){ return false; } }
 function _pfRender(){
   if(!$('profile-modal')) return;
   const who=_pfWho();
@@ -14861,7 +14849,6 @@ function _pfRender(){
   try{ window.DMSafety&&DMSafety.section($('pf-safety')); }catch(e){}
   $('pf-sw-players').setAttribute('aria-checked', DM_PREFS.playerLabels?'true':'false');
   $('pf-sw-objects').setAttribute('aria-checked', DM_PREFS.objectLabels?'true':'false');
-  $('pf-sw-legacy').setAttribute('aria-checked', _pfLegacyUI()?'true':'false');
 }
 // Theme chooser: presets + a custom theme built with the colour picker.
 function _pfRenderThemes(){
@@ -18002,7 +17989,7 @@ function renderWithPostFX(){
   try{ if(window.BTL&&BTL.preRender) BTL.preRender(flightRenderer,flightScene,flightCamera); }catch(e){ if(window.BTL) BTL._err=String(e&&e.stack||e).slice(0,300); }   // v110 temple lights/shadow cache/glass probe
   // (v116) below deck with no opening in view: the outside world is hidden for this render and the atmosphere pass skipped (ui/dm-bt-interior.js)
   let _seal=false, _btib=false; try{ if(window.DMBtBake) DMBtBake.tick(); }catch(e){} try{ if(window.DMBtHull) DMBtHull.tick(); }catch(e){} try{ if(window.DMBtPbr) DMBtPbr.tick(); }catch(e){} try{ if(window.DMBtInterior){ DMBtInterior.tick(); _btib=true; _seal=DMBtInterior.begin(flightScene,flightCamera); } }catch(e){ _seal=false; }
-  try{ const _hs=_taHideShells(); try{ DMGpuProf.push('atmo'); let _ta=false; try{ if(!_seal) _ta=_trueAtmoRender(flightRenderer,flightScene,flightCamera); } finally{ DMGpuProf.pop(); } if(!_ta) flightRenderer.render(flightScene,flightCamera); } finally{ _taShowShells(_hs); } _shotGrab(flightRenderer); try{ if(window.DMUI3DMesh) DMUI3DMesh.overlay(flightRenderer); }catch(e){}   /* (v138) opt-in 3D HUD overlay pass, ui/dm-ui3d-mesh.js */ try{ DMGpuProf.tick&&DMGpuProf.tick(); }catch(e){} }
+  try{ const _hs=_taHideShells(); try{ DMGpuProf.push('atmo'); let _ta=false; try{ if(!_seal) _ta=_trueAtmoRender(flightRenderer,flightScene,flightCamera); } finally{ DMGpuProf.pop(); } if(!_ta) flightRenderer.render(flightScene,flightCamera); } finally{ _taShowShells(_hs); } _shotGrab(flightRenderer); try{ DMGpuProf.tick&&DMGpuProf.tick(); }catch(e){} }
   finally{ if(_btib) try{ DMBtInterior.end(flightScene); }catch(e){} if(_spec) try{ DMSpec.post(flightCamera); }catch(e){} }
   const _rtMs = performance.now()-_rt0;
   if(!window._renderTimingSamples) window._renderTimingSamples=[];
@@ -19017,7 +19004,7 @@ function _pwRender(){
       r.toneMappingExposure=1.0+0.05*PW.skyK;
       if(!_trueAtmoSurface(r,scene,cam,false)) r.render(scene,cam);
     }
-    _shotGrab(r); try{ if(window.DMUI3DMesh) DMUI3DMesh.overlay(r); }catch(e){}   // (v148) the 3D mesh HUD on the terrain levels too (it was only hooked into the space render, so planets showed the CSS tilt)
+    _shotGrab(r);
   }catch(e){ _animLoopWarn('world-render',e); }
   finally{
     DMGpuProf.pop(); try{ DMGpuProf.tick&&DMGpuProf.tick(); }catch(e){}
@@ -25571,9 +25558,7 @@ const _KB_STEP='<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="13.6" cy
 const _KB_PARK='<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="4.5" width="15" height="15" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 16.5v-9h3a2.6 2.6 0 0 1 0 5.2h-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></svg>';
 const _KB_BOARD='<svg viewBox="0 0 24 24" aria-hidden="true"><g transform="rotate(-30 12 12)"><path d="M1.6 12l2.6-2.3h12.6L22.6 12l-5.8 2.3H4.2z" fill="currentColor" fill-opacity=".22" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M1.6 12L.4 9.8M1.6 12L.4 14.2" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/><circle cx="8.2" cy="12" r="1.25" fill="currentColor"/><circle cx="13.6" cy="12" r="1.25" fill="currentColor"/></g></svg>';
 // v176: the park / summon / step-off buttons float as their own flat DOM layer over the kite instead of living
-// inside it. Inside, the mesh HUD (ui/dm-ui3d-mesh.js) ghosts the real kite to opacity 0 and draws a tilted,
-// once-rasterised copy, so on iPhone the drawn buttons sat a few px off their real 22 px hit boxes (6 px apart):
-// a tap on SUMMON landed on PARK (or nothing), and the drawn PARK never showed its new state. Now what she sees
+// inside it, so they never sit a few px off their real hit boxes: a tap on SUMMON can't land on PARK. What she sees
 // is the real button, it fires on touchend (no 300 ms / ghost-click loss) and the hit box is bigger on touch.
 const _KB_FLOAT=[];
 function _kbTap(el,fn){ let last=0; const go=e=>{ e.preventDefault(); e.stopPropagation(); const t=performance.now(); if(t-last<350) return; last=t; try{ fn(); }catch(err){ console.warn('[kite-board]',err); } };

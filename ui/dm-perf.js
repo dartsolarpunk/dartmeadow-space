@@ -65,14 +65,7 @@
       }
       const s = P.stats(), f = (v) => v.toFixed(1).padStart(5);
       let out = 'FPS ' + s.fps.toFixed(0) + '  min ' + s.minFps.toFixed(0) + '  ms avg ' + s.avgMs.toFixed(1) + ' p95 ' + s.p95Ms.toFixed(1) + ' worst ' + s.worstMs.toFixed(1);
-      // (v148) which HUD is really on screen: mesh (WebGPU overlay drew OK) / css (tilt fallback) / flat
-      try {
-        const M = window.DMUI3DMesh, st = M && M.status;
-        let hm = st ? st.mode : (window.DMUI3D && window.DMUI3D.enabled === false ? 'flat' : 'css');
-        if (st && st.mode === 'mesh?') hm = 'css (mesh pending ' + (st.pending / 1000).toFixed(1) + 's)';
-        out += '\nHUD ' + hm + (st && st.mode === 'mesh' ? ' [' + st.painter + ']' : '') + (M && M.hudCost ? ' ' + M.hudCost().toFixed(2) + 'ms' : '') + (st && st.reason && st.mode !== 'mesh' ? '  ← ' + st.reason : '');
-        if (window.DMAR && window.DMAR.mode) out += '\nAR ' + window.DMAR.mode;
-      } catch (e) {}
+      try { if (window.DMAR && window.DMAR.mode) out += '\nAR ' + window.DMAR.mode; } catch (e) {}
       if (!small) {
         const cpu = Object.keys(s.cpu).filter((k) => s.cpu[k] > 0.05).sort((a, b) => s.cpu[b] - s.cpu[a]);
         let tot = 0; cpu.forEach((k) => { tot += s.cpu[k]; });

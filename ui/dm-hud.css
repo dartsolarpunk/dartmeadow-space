@@ -44,11 +44,8 @@
 #screen-flight .hud-r .art-btns{flex:none;max-width:100%;padding:0;gap:2px;justify-content:flex-end;}
 /* a thin hairline under each chip group ties the chips together */
 #screen-flight .hud-l,#screen-flight .hud-r .art-btns{position:relative;}
-/* (v207) the trim is a real 5px-tall element (its 1px line is a centred background), not a ::after outside the box: the 3D HUD can only
-   rasterise real elements, so the old pseudo-element stayed a flat 2D line. It is cut into the same curved ribbon as the top row. */
-#screen-flight .dm-trim{display:block;height:5px;pointer-events:none;background:linear-gradient(90deg,transparent,rgba(var(--acc-rgb),.55),transparent) center/100% 1px no-repeat;}
-#screen-flight .hud-l>.dm-trim{position:absolute;left:6px;right:6px;bottom:-7px;}
-#screen-flight .hud-r>.dm-trim{align-self:stretch;flex:none;margin:-6px 6px -7px;}   /* in flow, net zero height: sits 2px under the button row */
+#screen-flight .hud-l::after,#screen-flight .hud-r .art-btns::before{content:'';position:absolute;left:6px;right:6px;bottom:-5px;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(var(--acc-rgb),.55),transparent);}
 
 /* INITIALIZE PROGRESS: a soft green slanted bar */
 #screen-flight .art-btn.progress-btn{height:30px;padding:0 18px;font-size:.54rem;color:#9ff5c6;
@@ -452,10 +449,9 @@ body.ship-walk #ship-view-btn{display:block !important;}
   .kite-board.kb-float .kb-btn{width:34px;height:34px;}
   .kite-board.kb-float .kb-btn svg{width:22px;height:22px;}
 }
-/* (v206) the kite outline keeps its theme gradient edge in the 3D HUD too (v198 forced it white) */
 /* (v200) MEMORY LEAK FIX: backdrop-filter over the live WebGL canvas leaks GPU/compositor
    memory every frame in WebKit (iOS Safari tab killed after 1-7 min; headless WPE +25-40 MB/s).
-   Bisected: stripping backdrop-filter alone (ui3d=0, flat HUD) stops the growth; the panels keep
+   Bisected: stripping backdrop-filter alone stops the growth; the panels keep
    their translucent fill, only the blur-behind is dropped inside the game screens. */
 #screen-flight,#screen-flight *,#screen-flight *::before,#screen-flight *::after,
 #screen-builder,#screen-builder *,#screen-builder *::before,#screen-builder *::after{
