@@ -1,0 +1,43 @@
+<!doctype html><html><body style="margin:0;background:#111"><canvas id=c width=800 height=500 style="display:block"></canvas>
+<script type=importmap>{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js","three/webgpu":"https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js","three/tsl":"https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.tsl.js"}}</script>
+<script type=module>
+// Standalone harness for ui/dm-projector.js + ui/dm-groundmark.js (the same shader code the game uses) on a noisy
+// displaced terrain with instanced rocks. Drives DMGroundMark.tick with the game's argument shapes.
+import * as THREE_NS from 'three/webgpu'; import * as TSL from 'three/tsl';
+window.THREE=Object.assign({},THREE_NS); Object.assign(window,TSL);
+const THREE=window.THREE;
+const hf=(x,z)=>0.5*Math.sin(x*0.35)*Math.cos(z*0.3)+0.18*Math.sin(x*1.7+z*1.3)+0.07*Math.sin(x*5.1)*Math.sin(z*4.7)+0.002*(x*0.4);
+const rocks=[]; for(let i=0;i<70;i++){ const a=i*2.399, r=1.2+((i*37)%100)/100*9; rocks.push([Math.cos(a)*r,Math.sin(a)*r,0.12+((i*13)%10)/40]); }
+const bump=(x,z)=>{ let b=0; for(const[rx,rz,rs] of rocks){ const d=Math.hypot(x-rx,z-rz); if(d<rs*1.6) b=Math.max(b,rs*0.9*Math.pow(1-d/(rs*1.6),0.6)); } return b; };
+const gnd=(x,z)=>hf(x,z)+bump(x,z);
+const r=new THREE.WebGPURenderer({canvas:document.getElementById('c'),antialias:true,forceWebGL:true}); await r.init();
+const scene=new THREE.Scene(); scene.background=new THREE.Color(0x2a1a14);
+const cam=new THREE.PerspectiveCamera(48,800/500,0.1,200);
+scene.add(new THREE.HemisphereLight(0xffd8b0,0x402818,0.9)); const sun=new THREE.DirectionalLight(0xffe0c0,1.6); sun.position.set(-6,9,4); scene.add(sun);
+const N=420,S=44, geo=new THREE.PlaneGeometry(S,S,N,N); geo.rotateX(-Math.PI/2);
+const P=geo.attributes.position, col=new Float32Array(P.count*3);
+for(let i=0;i<P.count;i++){ const x=P.getX(i),z=P.getZ(i); P.setY(i,gnd(x,z)); const k=0.55+0.3*Math.sin(x*3)*Math.sin(z*2.7)+bump(x,z)*0.8; col[i*3]=0.62*k; col[i*3+1]=0.33*k; col[i*3+2]=0.2*k; }
+geo.setAttribute('color',new THREE.BufferAttribute(col,3)); geo.computeVertexNormals();
+const gm=new THREE.MeshStandardNodeMaterial({vertexColors:true,roughness:0.95}); scene.add(new THREE.Mesh(geo,gm));
+const rg=new THREE.IcosahedronGeometry(1,2), rm=new THREE.MeshStandardNodeMaterial({color:0x6b4a38,roughness:0.9});
+const im=new THREE.InstancedMesh(rg,rm,rocks.length*2); const M=new THREE.Matrix4(); let k=0;
+for(const[rx,rz,rs] of rocks){ for(let j=0;j<2;j++){ const s=rs*(j?0.35:0.8); M.compose(new THREE.Vector3(rx+(j?rs*1.1:0),hf(rx,rz)+s*0.3,rz),new THREE.Quaternion(),new THREE.Vector3(s,s*0.7,s)); im.setMatrixAt(k++,M);} }
+scene.add(im);
+// a mock Ariel (capsule, 1.7 tall) and board (3.0 x 0.8 x 0.2)
+const ari=new THREE.Mesh(new THREE.CapsuleGeometry(0.22,1.2,4,10),new THREE.MeshStandardNodeMaterial({color:0xe8e8f0})); scene.add(ari);
+const board=new THREE.Mesh(new THREE.BoxGeometry(3,0.2,0.8),new THREE.MeshStandardNodeMaterial({color:0x3a4a6a})); scene.add(board);
+window._surfBoardDims=()=>({half:1.5,halfW:0.4,halfT:0.1,minX:-1.5,maxX:1.5,minZ:-0.4,maxZ:0.4,minY:-0.1,cx:0,cz:0});
+await new Promise(res=>{ const s=document.createElement('script'); s.src='../ui/dm-projector.js'; s.onload=res; document.head.appendChild(s); });
+await new Promise(res=>{ const s=document.createElement('script'); s.src='../ui/dm-groundmark.js'; s.onload=res; document.head.appendChild(s); });
+const GM=window.DMGroundMark; window.__gm=gm; GM.receive(gm); GM.tagMaterial(rm);   // terrain + opted-in static rocks
+const player={pos:new THREE.Vector3()}; const BC={parked:false,summon:null};
+const st={px:0,pz:0,yaw:0,vis:true,bx:2.4,bz:0.2};
+function place(){ const y=gnd(st.px,st.pz); player.pos.set(st.px,y+3,st.pz); ari.position.set(st.px,y+0.85,st.pz);
+  board.position.set(st.bx,gnd(st.bx,st.bz)+0.9,st.bz); board.rotation.set(0,st.yaw,0); board.updateMatrixWorld(true); }
+const id=(x,y,z,o)=>o.set(x,y,z);
+let gen=1;
+window.stepSim=(n,dt)=>{ for(let i=0;i<n;i++){ place(); GM.tick(dt||1/30,st.vis?player:null,st.vis?board:null,gen,gnd,id,1.7,BC); } };
+window.setSt=(o)=>{ Object.assign(st,o); }; window.setPark=(v)=>{ BC.parked=v; };
+window.shot=async(camPos,look)=>{ cam.position.set(...camPos); cam.lookAt(...look); place(); await r.renderAsync(scene,cam); await r.renderAsync(scene,cam); return document.getElementById('c').toDataURL('image/jpeg',0.92); };
+window.stats=()=>GM.stats(); window._r=r; window._cam=cam; window.ready=true;
+</script></body></html>
