@@ -4691,11 +4691,6 @@ function applyPreset(name){
   // option instead of leaving some at whatever they last happened to be.
   const b=GFX_BUDGETS[t]||GFX_BUDGETS.medium;
   GFX.budgets=Object.assign({},b);
-  // (v224) Ultra on a phone/tablet keeps every Ultra feature switched on but with resource counts between Medium and
-  // High: perf logs of the Mali-G615 tablet on Ultra show 2.4-2.7 M triangles a frame, 6-20 fps and the tab killed.
-  if(t==='ultra'&&GFX.isMobile){ const bb=GFX.budgets, cap=(k,v)=>{ if(typeof bb[k]==='number') bb[k]=Math.min(bb[k],v); };
-    cap('galaxyArm',30000); cap('galaxyCore',9000); cap('dustSprites',2500); cap('starCount',10000); cap('planetSeg',72);
-    cap('mcPlanetHigh',24); cap('mcSurfHigh',20); cap('mcSurfMed',20); cap('atmoViewSamples',6); cap('atmoSunSamples',4); }
   if(typeof STATE!=='undefined'&&STATE&&STATE.settings){
     const ex=PRESET_SETTINGS_EXTRA[t]||PRESET_SETTINGS_EXTRA.medium;
     Object.assign(STATE.settings,ex);
