@@ -2933,6 +2933,8 @@ function startGame(){
 // Presentation only: the game boots/restores underneath exactly as before.
 const INTRO={on:false,phase:'',where:null,t0:0,stable:0,skip:false,veil:null,iv:0};
 window._jotsIntro=INTRO;
+// true while the launch intro's veil is fully opaque and the menu scene is playing (phase 'play'); 'hold' keeps drawing so the world's first frames are already uploaded
+function _introCovers(){ return INTRO.on&&INTRO.phase==='play'; }
 function _introBegin(){
   const M=window.DM_MENUSCENE, cv=document.getElementById('menu-scene-canvas');
   if(INTRO.on||!M||M.failed||!M._ctx||!cv||matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
@@ -6822,7 +6824,10 @@ function _startFlightLoop(){
         }
       }
     }catch(e){_animLoopWarn('charRemountSafety',e);}
-    if(!CHAR.loading || _flightFrameCounter % 4 === 0){
+    // (v226) while the launch intro plays, the opaque veil covers the game canvas: drawing the whole space scene behind it
+    // doubled the GPU load of the skyboard fly-in (50-60 fps in the loader, 20-25 fps in the intro). The simulation keeps
+    // running; the game scene is drawn again from the dissolve on.
+    if((!CHAR.loading || _flightFrameCounter % 4 === 0) && !_introCovers()){
       DMPerf.b('renderWithPostFX'); try{ renderWithPostFX(); }catch(e){ _animLoopWarn('render',e); } DMPerf.e();    }
   })();
 }
@@ -19058,7 +19063,8 @@ function _pwRender(){
   r.setRenderTarget(null);
   DMGpuProf.push('world');
   try{
-    if(window.DMAR&&DMAR.boardOn&&DMAR.board(r,scene,cam)){ /* (v154) AR: the world drawn onto the anchored tabletop board (ui/dm-ar-core.js) */ }
+    if(_introCovers()){ /* (v226) the intro veil is opaque: the world is not drawn until it dissolves */ }
+    else if(window.DMAR&&DMAR.boardOn&&DMAR.board(r,scene,cam)){ /* (v154) AR: the world drawn onto the anchored tabletop board (ui/dm-ar-core.js) */ }
     else if(layered){
       // the real sky — stars, the galaxy band, the sun and the other worlds — from where the camera really is
       _pwsFromDrawn(cam.position,flightCamera.position); _pwsQFromDrawn(cam.quaternion,flightCamera.quaternion);
