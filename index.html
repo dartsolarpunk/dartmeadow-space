@@ -1015,6 +1015,9 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-ui3d-core.js?v=208" defer></script>
 <script src="ui/dm-ui3d-mesh.js?v=206" defer></script>
 <script src="ui/dm-ar-core.js?v=209" defer></script>
+<script src="ui/dm-places-core.js?v=209" defer></script>
+<script src="ui/dm-places.js?v=209" defer></script>
+<script src="ui/dm-creatures.js?v=209" defer></script>
 <script src="ui/dm-bt-roomlights.js?v=144" defer></script>
 <script src="ui/dm-bt-hull.js?v=144" defer></script>
 <script src="ui/dm-edgewarm.js?v=199" defer></script>
@@ -5891,6 +5894,7 @@ function _ttGalaxyKids(gal){
   if(disc.length) out.push({id:'disc:'+gal,icon:'✦',label:'Discoveries',meta:disc.length+' found',count:disc.length,kids:()=>disc.slice().reverse().map((d,i)=>({
     id:'disc:'+gal+':'+i+':'+d.name,icon:d.type==='Rogue Planet'?'🌑':d.type==='Comet'?'☄️':'🪨',label:d.name,meta:d.type+' · near '+d.sysName,
     go:()=>{openFastTravel('RETURN — '+d.name.toUpperCase(),'Fly back to '+d.name+' ('+d.type+') near '+d.sysName+'?',()=>travelToDiscovery(d));closeQuickTravel();},kids:null}))});
+  try{ const pn=window.DMPlaces&&DMPlaces.qtNode(gal,{close:closeQuickTravel,ask:openFastTravel}); if(pn) out.push(pn); }catch(e){}
   return out;
 }
 function _ttRoots(){
@@ -12756,6 +12760,7 @@ function updateBodies(dt){
   // Sol GAL LOD — yellow arm-dot when far; restore full SYS when near
   try{ if(typeof updateSolGalLod==='function') updateSolGalLod(); }catch(e){}
   try{ if(typeof updateDiscoveries==='function') updateDiscoveries(1/60); }catch(e){}
+  try{ if(window.DMPlaces) DMPlaces.spaceTick(1/60,_plEnv()); }catch(e){}
   // Wire atmo sunDir → real Sol + camera-near local fill intensities
   try{ if(typeof _updateJotsWorldsFog==='function') _updateJotsWorldsFog(); }catch(e){}
 }
@@ -18985,6 +18990,11 @@ function _pwVec(i){ return _pwV[i]||(_pwV[i]=new THREE.Vector3()); }
 // goes into it, the ground's level of detail follows the camera (its true
 // distance, height included), the sky thins to space as you climb, and the
 // near-ground detail builds round whoever is driving.
+// the one persistent environment object the places / creatures modules read (built once; nothing per frame)
+let _plE=null;
+function _plEnv(){ return _plE||(_plE={THREE,GFX,PW,PWF,TERRAIN,STATE,D:ATMO_DEG_PER_UNIT,terrainCore:_terrainCore,siteXZ:_siteWorldXZ,pwfMap:_pwfMap,pwMapTag:_pwMapTag,
+  surfH:(x,z)=>window._surfHeight(x,z),atmoState:()=>atmoState,surfPlayer:()=>surfPlayer,sysRef:_jnSysRef,toast,get flightScene(){ return flightScene; },
+  celestial:()=>celestialBodies,bodyVisR:_bodyVisRadius,get flightCamera(){ return flightCamera; }}); }
 function _pwWorldTick(dt){
   const cam=PW.camera, scene=PW.scene, H=TERRAIN.H; if(!cam||!scene||!H||!PW.ground) return;
   const mode=PW.mode, fly=mode==='fly', space=mode==='space';
@@ -19041,6 +19051,7 @@ function _pwWorldTick(dt){
   if(Math.abs(cam.far-farClip)>farClip*0.05||Math.abs(cam.near-nearClip)>nearClip*0.05){ cam.far=farClip; cam.near=nearClip; cam.updateProjectionMatrix(); }
   _pwSeaFollow(px,pz,Math.min(viewR,16384));
   _pwPropsTick(px,pz,space?1e9:(fly?agl:0));
+  try{ if(window.DMPlaces) DMPlaces.tick(dt,_plEnv()); if(window.DMCreatures) DMCreatures.tick(dt,_plEnv()); }catch(e){ if(!window._plWarn){ window._plWarn=1; console.warn('[places]',e); } }
   // marching cubes + the refined patch: always on foot; in the sky only low and slow
   // (the approach), so they're built round the touchdown point before she lands
   const nearGround=!space&&(!fly||landing||(agl<40&&atmoMach<0.12));
@@ -19117,6 +19128,7 @@ function _pwPropsTick(px,pz,agl){
 // replaces it), so nothing fades and nothing goes black.
 function _pwClose(opts){
   if(!PW.active&&!PW.opening) return;
+  try{ if(window.DMPlaces) DMPlaces.onWorldClose(); }catch(e){}   // our group + caches go before the scene is disposed
   const scene=PW.scene, body=PW.body; ++PW.gen;
   PW.active=false; PW.opening=false;
   surfaceActive=false; atmoActive=false; PW.mode=null; PW.blend=null; PW.sp=null; PW._camFlat=null; PW.atmo=null;
