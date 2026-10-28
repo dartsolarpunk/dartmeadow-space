@@ -448,7 +448,7 @@
       try{ s.D&&s.D.dispose(); }catch(e){} try{ if(s.B){ s.B.pp.dispose(); if(s.B.W){ s.B.W.mesh.parent&&s.B.W.mesh.parent.remove(s.B.W.mesh); s.B.W.geo.dispose(); s.B.W.cap.parent&&s.B.W.cap.parent.remove(s.B.W.cap); s.B.W.cap.geometry.dispose(); } } }catch(e){} try{ var _S=S; S=s; arBlend(false); S=_S; }catch(e){} try{ s.O&&disposeOrrery(s.O); }catch(e){}
       try{ s.reticle&&s.reticle.geometry.dispose(); s.reticle&&s.reticle.material.dispose(); }catch(e){}
       try{ s.session&&s.session.removeEventListener('end',cleanup); }catch(e){}
-      try{ s.r&&s.r.dispose(); }catch(e){} try{ s.cv.remove(); }catch(e){}
+      try{ s.r&&s.r.dispose(); }catch(e){} try{ s.cv&&s.cv.remove(); }catch(e){}
     } finally {
       if(s.kind!=='camera') try{ pumpOff(); }catch(e){ window.requestAnimationFrame=_rafO; window.cancelAnimationFrame=_cafO; }
       if(s.flight&&s.flightRender) s.flight.render=s.flightRender;
