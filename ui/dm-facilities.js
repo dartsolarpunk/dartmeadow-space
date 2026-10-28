@@ -251,7 +251,7 @@
   function upgrade2K(T) {       // desktop only: swap the 1K maps for the 2K hero set once she's near
     const c = F.ctx; if (hiTried || c.isMobile() || c.tier() < 2 || !MAN.glb) return; hiTried = true;
     const L = new T.TextureLoader(), load = u => new Promise((ok, no) => L.load(u, ok, undefined, no));
-    const byName = {}; MAN.glb.scene.traverse(o => { if (o.isMesh && o.material && /^ah_(slate|concrete|wood|rock)$/.test(o.material.name)) byName[o.material.name] = o.material; });
+    const byName = {}; MAN.glb.scene.traverse(o => { if (o.isMesh && o.material && /^ah_(slate|concrete|wood|rock|dark|leaf)$/.test(o.material.name)) byName[o.material.name] = o.material; });
     Object.keys(byName).forEach(k => {
       const n = k.slice(3), mat = byName[k], base = 'assets/ariel-home/tex/' + n;
       Promise.all(['color', 'nrm', 'orm'].map(t => load(base + '-' + t + '-2k.webp?v=' + F.ver))).then(([a, b, o]) => {
