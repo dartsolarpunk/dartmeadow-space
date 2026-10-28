@@ -161,7 +161,7 @@
       }
     }
     const hasSea = P.seaLevel != null && !!P.water;
-    const steps = STEPS[opt.quality] || STEPS.medium;
+    const steps = Math.min(STEPS[opt.quality] || STEPS.medium, opt.maxSteps > 0 ? opt.maxSteps : 99);
 
     const cachedH = P.heightKey && HCACHE.get(P.heightKey);
     const heightTex = cachedH ? cachedH : P.heightFn ? bakeHeight(THREE, (x, y, z) => P.heightFn(x, y, z) / Math.max(P.heightScale, 1e-6)) : (() => {
