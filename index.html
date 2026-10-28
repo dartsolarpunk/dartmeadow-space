@@ -999,6 +999,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-localcollide.js?v=188" defer></script>
 <script src="ui/dm-menuscene.js?v=13" defer></script>
 <script src="ui/dm-starbubble.js?v=4" defer></script>
+<script src="ui/dm-hazardbubble.js?v=206" defer></script>
 <script src="ui/dm-birdtemple.js?v=122" defer></script>
 <script src="ui/dm-bt-engineering.js?v=5" defer></script>
 <script src="ui/dm-bt-madison.js?v=5" defer></script>
@@ -18431,6 +18432,7 @@ function _pwBuild(body,site,mode,focus){
   PW.active=true; PW.mode=null; PW.body=body; PW.site=site||null;
   _surfBody=_atmoBody=body; _surfSite=_atmoSite=site||null;
   const pal=getSurfacePalette(body); PW.pal=pal; _atmoPal=pal;
+  try{ if(window.DM_HAZ) DM_HAZ.tag(body); }catch(e){}   // per-body habitable flag (own derived RNG stream, terrain untouched)
   if(!GFX.scanned) try{ detectCapabilities(); loadGfxChoice(); applyPreset(GFX.preset); }catch(e){}
   const r=flightRenderer;
   const W=window.innerWidth,H=window.innerHeight;
@@ -18574,6 +18576,7 @@ function _pwFrame(dt){
   try{ _updateCharDebugHUD(); }catch(e){}
   try{ updateBirdTemple(dt); }catch(e){ _animLoopWarn('birdTemple',e); }   // the ship keeps wandering + the shard keeps following, even off-screen
   try{ _pwWorldTick(dt); }catch(e){ _animLoopWarn('world',e); }
+  try{ if(window.DM_HAZ) DM_HAZ.tick(dt); }catch(e){ _animLoopWarn('hazard',e); }   // habitability orb + underwater look (ui/dm-hazardbubble.js)
   try{ if(window.DMFluidWorld) DMFluidWorld.tick(dt); }catch(e){ _animLoopWarn('fluidVfx',e); }   // APIC sea + PBF spray (ui/dm-fluid-world.js)
   try{ _dynRes(flightRenderer); }catch(e){}
   _pwRender();
@@ -18991,6 +18994,7 @@ function _pwClose(opts){
   document.body.classList.remove('pw-hud');
   if(body&&body.mesh) body.mesh.visible=true;   // the orbit globe is the planet again
   _pwfOff(); _pwfReveal(1);
+  try{ if(window.DM_HAZ) DM_HAZ.close(scene); }catch(e){}   // detach the orb before the world's scene is disposed
   try{ if(scene) disposeObject3D(scene); }catch(e){}
   try{ _applyCamOffset(); }catch(e){}
   PW.renderer=PW.scene=PW.camera=PW.board=PW.ground=null; PW.props=new Map(); PW.propsGroup=null; PW.seaSpan=0;
@@ -19162,6 +19166,7 @@ function updateAtmoFlight(dt){
     // ── the pilot flies: exactly the open-space model ──
     const c=_boardControls(s,dt,(look,thr)=>ATMO_AP.on&&_atmoApTick(s,dt,look,thr,K));
     tf=c.tf; ts=c.ts;
+    if(window.DM_HAZ) DM_HAZ.waterDrag(s,dt);   // below the sea surface: same controls, water damping (ui/dm-hazardbubble.js)
     const J=_atmoJ(s.pos.y);
     s.pos.x+=s.vel.x*K/J.jx; s.pos.y+=s.vel.y*K; s.pos.z+=s.vel.z*K/J.jz;
     _atmoYP(s);
