@@ -65,7 +65,7 @@ function bind(env){
   S.world=w; S.act.length=0; return w;
 }
 function unbind(){ const w=S.world; if(!w) return; for(const cr of S.act) if(cr.rig) release(cr); S.act.length=0; if(w.G.parent) w.G.parent.remove(w.G); S.world=null; }
-function onWorldClose(){ unbind(); }
+function onWorldClose(){ unbind(); const M=root.DMMarine; if(M&&M.onWorldClose) M.onWorldClose(); }
 
 const bandOK=(c,y)=>y>=c.alt[0]&&y<=c.alt[1];
 function newCrit(){ return {c:null,rig:null,live:false,x:0,y:0,z:0,yaw:0,tx:0,tz:0,ty:0,home:0,hx:0,hz:0,t:0,state:0,spd:0,clip:'',vis:true,seed:0,anim:false,dist:0,phase:0,flockLead:null,npcSite:null}; }
@@ -121,6 +121,7 @@ function brain(cr,dt,env,px,pz){
   }
 }
 function tick(dt,env){
+  const M=root.DMMarine; if(M){ try{ M.tick(dt,env,S.pause); }catch(e){ if(!S.mW){ S.mW=1; console.warn('[marine]',e); } } }   // marine life (ui/dm-marine.js): zero-cost unless the rider is in or near water
   if(S.pause){ if(S.world&&S.world.G.visible) S.world.G.visible=false; return; }
   if(OFF||!env||!init(env)||!S.defs) return; const PW=env.PW; if(!PW.scene||!PW.ground||!PW.body||!PW.camera||!env.TERRAIN.H) return;
   const mode=PW.mode; if(mode==='space'){ if(S.world&&S.world.G.visible) S.world.G.visible=false; return; }
