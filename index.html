@@ -156,6 +156,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-sparsevox.js?v=2"></script>
 <script src="ui/dm-rockmat.js?v=145"></script>
 <script src="ui/dm-perf.js?v=160"></script>
+<script src="ui/dm-governor.js?v=1"></script>
 <script>/* (v136) no-op stub so the flight loop can never throw if dm-perf.js failed to load */
 window.DMPerf=window.DMPerf||{on:false,b(){},e(){},mark(){},measure(n,f){return f();},frame(){},stats(){return {fps:0,avgMs:0,p95Ms:0,worstMs:0,minFps:0,cpu:{},gpu:null,sparse:null};},show(){},hide(){}};</script>
 <script src="ui/dm-fluid.js?v=80"></script>
@@ -4694,6 +4695,7 @@ function syncSettingsUIFromState(){
 // Hard ceilings — never let a setting exceed device capability.
 function clampToHardware(){
   GFX.shadowSize=Math.min(GFX.shadowSize, GFX.maxTexSize, GFX.isMobile?2048:4096);
+  if(GFX.isMobile) GFX.maxAniso=Math.min(GFX.maxAniso||1, 4);   // 8x/16x on a phone GPU is bandwidth for no visible gain at that screen size
   GFX.aniso=Math.min(GFX.aniso, GFX.maxAniso||1);
   if(STATE&&STATE.settings){ STATE.settings.bloom=false; STATE.settings.bloomIntensity=0; }
   if(!GFX.floatTex&&!GFX.halfFloatTex){ if(STATE&&STATE.settings){STATE.settings.motion=false;} }
@@ -4712,6 +4714,7 @@ function applyQualityTier(){applyPreset(GFX.preset);}
 // the ceiling, so a fast device always gets exactly what it picked.
 function _dynRes(r){
   if(!r||GFX.dynamicRes===false) return;
+  if(window.DMGov){ DMGov.frame(r,GFX,effectivePixelRatio()); return; }   // ui/dm-governor.js: small rate-limited steps, probes for headroom, remembers the settled scale, runs on every preset (the old ladder below is the fallback)
   const now=performance.now(), d=r._dr||(r._dr={t:now,ema:16.7,k:1,hold:0,cool:0});
   // Only on AUTO graphics (or an explicit dynamicRes opt-in). A player who
   // picked Low/Medium/High/Ultra/Custom gets exactly that resolution —
@@ -4748,7 +4751,7 @@ const GFX_STORE_KEY='dm_gfx_v2';
 const GFX_KNOB_KEYS=['preset','resScale','shadows','shadowSize','envReflections','caustics','fakeGI','refraction','ssao','volumetricDust','dustDensity','aniso','antialias','pathTraceAccents','showCharDebug','dynamicRes'];
 function saveGfxChoice(){
   try{
-    const payload={chosen:true, aaV:2, resolved:resolvePreset(), ts:Date.now()};
+    const payload={chosen:true, aaV:2, govV:1, resolved:resolvePreset(), ts:Date.now()};
     GFX_KNOB_KEYS.forEach(k=>{payload[k]=GFX[k];});
     if(GFX.budgets)payload.budgets=Object.assign({},GFX.budgets);
     if(typeof STATE!=='undefined'&&STATE&&STATE.settings){
@@ -4771,6 +4774,7 @@ function loadGfxChoice(){
     const d=JSON.parse(raw);
     if(!d||!d.chosen)return false;
     GFX_KNOB_KEYS.forEach(k=>{ if(d[k]!==undefined)GFX[k]=d[k]; });
+    if(d.govV!==1&&GFX.dynamicRes===false){ GFX.dynamicRes=undefined; }   // one-time: auto-balance (ui/dm-governor.js) now runs on every preset; an old unticked box was only the default
     if(d.aaV!==2){ GFX.antialias=false; }          // one-time: anti-aliasing is now off by default for everyone
     if(GFX.preset && GFX.preset!=='custom'){
       applyPreset(GFX.preset);
@@ -14385,7 +14389,7 @@ function closeSupport(){const m=$('support-modal');if(m)m.style.display='none';}
 
 function openSettings(){try{releaseMouseLook();}catch(e){}
   // sync controls to live GFX + STATE.settings
-  try{ if($('set-quality'))$('set-quality').value=GFX.preset||'auto'; if($('set-autobal')){ $('set-autobal').checked=(GFX.preset==='auto')||GFX.dynamicRes===true; $('set-autobal').disabled=(GFX.preset==='auto'); } }catch(e){}
+  try{ if($('set-quality'))$('set-quality').value=GFX.preset||'auto'; if($('set-autobal')){ $('set-autobal').checked=(GFX.preset==='auto')||GFX.dynamicRes!==false; $('set-autobal').disabled=(GFX.preset==='auto'); } }catch(e){}
   syncSettingsUIFromState();
   $('settings-modal').classList.add('open');
 }
@@ -18635,6 +18639,7 @@ function _taPrebakeEarth(){
     (window.requestIdleCallback||((f)=>setTimeout(f,400)))(go); }catch(e){}
 }
 try{ window.addEventListener('dm:earth-ready',()=>setTimeout(_taPrebakeEarth,0)); setTimeout(_taPrebakeEarth,3000); }catch(e){}
+function _taMaxSteps(){ return (typeof GFX!=='undefined'&&GFX.isMobile)?20:0; }   // mobile: cap the volumetric ray steps (jitter + temporal blend carry the rest)
 function _taQ(){ return (typeof GFX!=='undefined'&&GFX.preset)||'medium'; }
 function _taPrune(prefix,keep){ for(const [k,A] of _TA.pipes){ if(k.startsWith(prefix)&&k!==keep){ try{ A.dispose(); }catch(e){} _TA.pipes.delete(k); } } }
 function _taFail(e){ _TA.failed=true; _animLoopWarn('true-atmo',e); try{ console.warn('[true-atmo] falling back to the classic shells',e); }catch(_){} }
@@ -18712,7 +18717,7 @@ function _trueAtmoRender(r,scene,cam){
     const ud=best.mesh.userData, E=window.DMEarth;
     const key='sp|'+best.mesh.uuid+'|'+_taQ()+'|'+(E&&E.ready?1:0);
     let A=_TA.pipes.get(key);
-    if(!A){ _taPrune('sp|',key); A=DMAtmo.create(THREE,THREE.TSL,{renderer:r,scene,camera:cam,planet:_taParamsFor(ud),quality:_taQ(),logarithmicDepth:!!r.logarithmicDepthBuffer,halfRes:_taHalf()}); _TA.pipes.set(key,A); }
+    if(!A){ _taPrune('sp|',key); A=DMAtmo.create(THREE,THREE.TSL,{renderer:r,scene,camera:cam,planet:_taParamsFor(ud),quality:_taQ(),maxSteps:_taMaxSteps(),logarithmicDepth:!!r.logarithmicDepthBuffer,halfRes:_taHalf()}); _TA.pipes.set(key,A); }
     best.mesh.getWorldPosition(c); A.setCenter(c);
     best.mesh.getWorldQuaternion(q); A.setRotation(q);
     if(best.sunDirU&&best.sunDirU.value) A.setSun(best.sunDirU.value);
@@ -18736,7 +18741,7 @@ async function _taWarm(r,scene,cam){
   const ud=best.mesh.userData, E=window.DMEarth, key='sp|'+best.mesh.uuid+'|'+_taQ()+'|'+(E&&E.ready?1:0);
   try{
     let A=_TA.pipes.get(key);
-    if(!A){ _taPrune('sp|',key); A=DMAtmo.create(THREE,THREE.TSL,{renderer:r,scene,camera:cam,planet:_taParamsFor(ud),quality:_taQ(),logarithmicDepth:!!r.logarithmicDepthBuffer,halfRes:_taHalf()}); _TA.pipes.set(key,A); }
+    if(!A){ _taPrune('sp|',key); A=DMAtmo.create(THREE,THREE.TSL,{renderer:r,scene,camera:cam,planet:_taParamsFor(ud),quality:_taQ(),maxSteps:_taMaxSteps(),logarithmicDepth:!!r.logarithmicDepthBuffer,halfRes:_taHalf()}); _TA.pipes.set(key,A); }
     best.mesh.getWorldPosition(c); A.setCenter(c);
     if(A.renderAsync) await A.renderAsync(0,cam); else _taRun(A,r,cam);
     _TA.t=0;   // the warm-up frame is not a slow frame for the Auto perf watch
@@ -18757,7 +18762,7 @@ function _trueAtmoSurface(r,scene,cam,layered){
       if(P.cloud) Object.assign(P.cloud,{height:1150,width:180});
       if(P.weather) Object.assign(P.weather,{alt:mars?250:1100,width:mars?300:260});
       P.layers=(P.layers||[]).map(l=>Object.assign({},l,{alt:mars?250:1700,width:mars?350:250}));
-      A=DMAtmo.create(THREE,THREE.TSL,{renderer:r,scene,camera:cam,planet:P,quality:_taQ(),logarithmicDepth:!!r.logarithmicDepthBuffer,
+      A=DMAtmo.create(THREE,THREE.TSL,{renderer:r,scene,camera:cam,planet:P,quality:_taQ(),maxSteps:_taMaxSteps(),logarithmicDepth:!!r.logarithmicDepthBuffer,
         skyScene:layered?flightScene:null,skyCamera:layered?flightCamera:null,localRes:128,halfRes:_taHalf()});
       _TA.pipes.set(key,A); _TA.loc.gen=-1;
     }
