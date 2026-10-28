@@ -901,10 +901,15 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 /* PERF: always-on HUD pieces must not blur the live 3D canvas behind them (a per-frame full-screen read + blur on mobile GPUs).
    Backgrounds are slightly more opaque instead so they read the same. Modals that open on demand keep their blur. */
 .joystick-base,.ar-panel,#ar-top,.hud-toggle-btn,.assist-btn,.side-pad,.dart-pad,.joystick-zone>div,[style*="backdrop-filter:blur(8px)"][style*="border-radius:50%"]{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;}
-/* live FPS number: lower-left corner of the kite, medium gray so it reads on any theme without shouting */
-.dm-fps{position:absolute;left:126px;top:126px;transform:translate(-50%,-50%);display:flex;align-items:center;gap:6px;white-space:nowrap;font:500 .86rem/1 var(--font-mono,monospace);text-shadow:0 0 6px rgba(var(--acc-rgb),.7);color:var(--text);pointer-events:none;font-variant-numeric:tabular-nums;z-index:3}   /* v151: a kite gauge like SPD / ALT (cyan label + mono value, theme colours), not a separate grey box */
-.dm-fps::before{content:'FPS';font-family:var(--font-hud);font-size:.62rem;letter-spacing:.14em;color:var(--cyan)}
-.mini-kite .dm-fps{left:78px;top:88px}   /* v151: bottom row under the readout, inside the kite outline */
+/* live FPS number + the AR button: one row near the bottom of the kite, both placed in % of the kite box so they stay inside the outline at every --ks scale / viewport */
+.dm-fps{position:absolute;left:24.5%;top:77%;transform:translate(-50%,-50%);display:flex;align-items:center;gap:5px;white-space:nowrap;font:500 .7rem/1 var(--font-mono,monospace);text-shadow:0 0 6px rgba(var(--acc-rgb),.7);color:var(--text);pointer-events:none;font-variant-numeric:tabular-nums;z-index:3}
+.dm-fps::before{content:'FPS';font-family:var(--font-hud);font-size:.5rem;letter-spacing:.14em;color:var(--cyan)}
+.mini-kite .dm-fps{left:31%;top:76%}
+.dm-ar-btn{position:absolute;left:38.6%;top:77%;transform:translate(-50%,-50%);box-sizing:border-box;display:block;width:34px;height:13px;min-width:0;min-height:0;padding:0;margin:0;border:1px solid rgba(var(--acc-rgb),.8);border-radius:999px;background:linear-gradient(180deg,rgba(var(--acc-rgb),.42),rgba(var(--acc-rgb),.16));color:var(--text);font:600 .5rem/11px var(--font-hud,monospace);letter-spacing:.1em;text-indent:.1em;text-align:center;text-shadow:0 0 6px rgba(var(--acc-rgb),.8);box-shadow:0 0 8px rgba(var(--acc-rgb),.35);white-space:nowrap;cursor:pointer;z-index:4;pointer-events:auto}
+.dm-ar-btn::after{content:"";position:absolute;inset:-8px -6px}   /* the kite can be scaled to ~.6: keep a thumb-sized hit area */
+.mini-kite .dm-ar-btn{left:63%;top:55%}
+.dm-ar-btn.on{color:#fff;border-color:rgb(var(--hi-rgb));background:linear-gradient(180deg,rgba(var(--hi-rgb),.55),rgba(var(--hi-rgb),.22));text-shadow:0 0 6px rgba(var(--hi-rgb),.7);box-shadow:0 0 10px rgba(var(--hi-rgb),.5)}
+.dm-ar-btn[hidden]{display:none}
 #minimap{display:none!important;position:absolute;bottom:calc(100px + var(--safe-bot));left:8px;width:88px;height:88px;background:rgba(var(--panel-rgb),0.28);border:1px solid rgba(var(--acc-rgb),0.18);border-radius:50%;overflow:hidden;pointer-events:auto;z-index:22;touch-action:none;}
 #minimap-canvas{touch-action:none;}
 #mm-toggle{position:absolute;top:2px;right:2px;width:16px;height:16px;border-radius:50%;background:rgba(var(--panel-rgb),0.8);border:1px solid rgba(var(--acc-rgb),0.3);color:rgba(var(--acc-rgb),0.7);font-size:0.5rem;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;z-index:23;pointer-events:auto;}
@@ -995,6 +1000,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-webkit.js?v=210" defer></script>
 <script src="ui/dm-spectator.js?v=1" defer></script>
 <script src="ui/dm-stack.js?v=1" defer></script>
+<script src="ui/dm-padbind.js?v=219" defer></script>
 <script src="ui/dm-globe.js?v=9" defer></script>
 <script src="ui/dm-star.js?v=191" defer></script>
 <script src="ui/dm-mist.js?v=7" defer></script>
@@ -1014,8 +1020,6 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-bt-interior.js?v=124" defer></script>
 <script src="ui/dm-bt-pbr.js?v=217" defer></script>
 <script src="ui/dm-bt-bake.js?v=144" defer></script>
-<script src="ui/dm-ui3d-core.js?v=208" defer></script>
-<script src="ui/dm-ui3d-mesh.js?v=206" defer></script>
 <script src="ui/dm-ar-core.js?v=209" defer></script>
 <script src="ui/dm-places-core.js?v=213" defer></script>
 <script src="ui/dm-places.js?v=213" defer></script>
@@ -1024,8 +1028,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-bt-roomlights.js?v=144" defer></script>
 <script src="ui/dm-bt-hull.js?v=144" defer></script>
 <script src="ui/dm-edgewarm.js?v=217" defer></script>
-<script src="ui/dm-arielhome.js?v=218" defer></script>
-<script src="ui/dm-facilities.js?v=218" defer></script>
+<script src="ui/dm-arielhome.js?v=219" defer></script>
+<script src="ui/dm-facilities.js?v=219" defer></script>
 </head>
 <body>
 <!-- LOADING -->
@@ -1546,7 +1550,6 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   <div id="ar-top">
     <!-- Left frame: soundtrack controls -->
     <div class="hud-l dm-frame">
-      <i class="dm-trim" aria-hidden="true"></i>
       <!-- ♫ In-game audio player -->
       <div id="audio-player" >
         <button class="aud-btn" onclick="audioPrev()" title="Previous track">⏮</button>
@@ -1573,14 +1576,13 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     <div class="hud-r">
       <div class="art-btns dm-frame">
       <button class="art-btn active" id="cam-btn" onclick="cycleCamMode()">CAM 1</button>
-      <button class="art-btn" id="lockon-btn" onclick="returnHome()" title="Return to home base (Earth) and track it"><i class="ic">⌂</i>HOME</button>
+      <button class="art-btn" id="lockon-btn" onclick="goHomeAriel()" title="Quick Travel home — Ariel's cliffside mansion on Solenne, Lumenreach"><i class="ic">⌂</i>HOME</button>
       <button class="art-btn" onclick="openGalaxyMap()" title="Galaxy map (M)"><i class="ic">⬡</i>MAP</button>
       <button class="art-btn" onclick="openSettings()" title="Settings"><i class="ic">⚙</i>CFG</button>
       <button class="art-btn" onclick="returnToMenu()" title="Return to main menu (your game stays loaded)"><i class="ic">☰</i>MENU</button>
       <button class="art-btn" onclick="promptExit()" title="Exit"><i class="ic">⏻</i>EXIT</button>
       <button class="art-btn profile-btn" id="profile-btn" onclick="openProfileMenu()" title="Your profile and display options"><span class="pf-av-mini" id="profile-btn-av">◉</span><span>PROFILE</span></button>
       </div>
-      <i class="dm-trim" aria-hidden="true"></i>
       <div class="hud-r-row">
         <button class="art-btn progress-btn" id="init-progress-btn" onclick="quickSave()" title="Initialize Progress: save right here. Signed in, it also goes to your private jots- repository. The game also initializes progress by itself at milestones and every 15 minutes.">⟐ INITIALIZE PROGRESS</button>
       </div>
@@ -1688,6 +1690,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   <div id="ship-land-prompt" onclick="landOnBirdTemple()" style="display:none;position:absolute;top:56%;left:50%;transform:translate(-50%,-50%);background:rgba(255,255,255,.12);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.6rem;letter-spacing:.15em;padding:.5rem 1.2rem;border-radius:3px;pointer-events:auto;cursor:pointer;z-index:30;text-align:center;">🕊 TAP TO LAND ON THE BIRD TEMPLE</div>
   <button id="ship-liftoff-btn" onclick="exitShipWalk()" style="display:none;position:absolute;bottom:calc(20px + var(--safe-bot));left:50%;transform:translateX(-50%);pointer-events:auto;padding:8px 20px;background:rgba(255,255,255,.12);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.6rem;letter-spacing:.15em;cursor:pointer;border-radius:3px;z-index:31;">🚀 LIFTOFF</button>
   <button id="ship-view-btn" class="surf-view-btn" onclick="toggleShipFirstPerson()" title="Switch between first-person (her eyes) and third-person views (V)" style="display:none;top:136px;pointer-events:auto;">👁 1ST PERSON</button>
+  <button id="fp-btn-flight" class="surf-view-btn" onclick="toggleFlightFirstPerson()" title="Switch between first-person (her eyes) and third-person views (V)" style="pointer-events:auto;">👁 1ST PERSON</button>
   <button id="ship-jump-btn" style="display:none;position:absolute;bottom:calc(190px + var(--safe-bot));left:200px;pointer-events:auto;width:56px;height:56px;border-radius:50%;background:rgba(255,255,255,.1);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.6rem;letter-spacing:.08em;cursor:pointer;z-index:31;touch-action:none;">JUMP</button>
   <div id="ar-bottom" onclick="closeQuickTravel()">
     <div id="qt-panel" onclick="event.stopPropagation()">
@@ -1709,8 +1712,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <!-- ✦ SURFACE WALK OVERLAY -->
 <div id="surface-overlay" style="display:none;position:fixed;inset:0;z-index:3500;background:transparent;">
   <canvas id="surface-canvas" style="position:absolute;inset:0;display:block;touch-action:none;"></canvas>
-  <div style="position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:10px 16px calc(10px);isolation:isolate;pointer-events:none;">
-    <i class="dm-bar" aria-hidden="true"></i>
+  <div style="position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:10px 16px calc(10px);background:rgba(var(--panel-rgb),.55);backdrop-filter:blur(10px);border-bottom:1px solid rgba(var(--acc-rgb),.15);pointer-events:none;">
     <div class="world-music" id="wm-surf" title="Soundtrack"><button class="aud-btn" onclick="audioPrev()" title="Previous track">⏮</button><button class="aud-btn wm-pp" onclick="audioToggle()" title="Play / Pause">⏸</button><button class="aud-btn" onclick="audioStop()" title="Stop">■</button><button class="aud-btn" onclick="audioNext()" title="Next track">⏭</button><button class="aud-btn" onclick="audioPickFiles()" title="Load music from your device">📁</button><button class="aud-btn" onclick="openMusicBrowser()" title="Browse the soundtrack">📜</button><span class="wm-vol-wrap" title="Music volume"><span class="wm-vol-ico">♪</span><input class="wm-vol" type="range" min="0" max="100" value="100" oninput="audioSetVolume(this.value/100)" aria-label="Music volume"></span><span class="wm-name"></span></div>
     <div class="mini-kite"><svg class="mk-edge" viewBox="0 0 360 160" preserveAspectRatio="none" width="0" height="0" aria-hidden="true"><defs><linearGradient id="mk-grad-s" x1="0" y1="0" x2="0.35" y2="1"><stop offset="0" class="ks-a"/><stop offset=".55" class="ks-b"/><stop offset="1" class="ks-c"/></linearGradient></defs><polygon class="kite-line" style="stroke:url(#mk-grad-s)" fill="none" stroke="none" points="1.5,77 75.6,1.5 358.5,75.2 75.6,158.5"/><polyline class="kite-ridge" fill="none" stroke="none" points="2,77 358,75.2"/></svg><span id="surface-title" class="mk-name">—</span><span class="mk-mode">SURFACE</span><span id="surface-grav" class="mk-read">GRAV 1.00g</span></div>
     <div style="display:flex;gap:8px;">
@@ -1718,8 +1720,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
             <button onclick="openTempleHub()" style="pointer-events:auto;padding:5px 12px;background:rgba(255,255,255,.1);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🕊 TEMPLE</button>
       <button id="surf-fly-btn" onclick="surfRemountSkyboard()" style="pointer-events:auto;padding:5px 12px;background:rgba(var(--acc-rgb),.1);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🛹 FLY</button>
       <button id="liftoff-btn" onclick="exitSurface()" style="pointer-events:auto;padding:5px 14px;background:rgba(var(--hi-rgb),.12);border:1px solid var(--gold);color:var(--gold);font-family:var(--font-hud);font-size:.52rem;letter-spacing:.12em;cursor:pointer;border-radius:2px;">🚀 LIFTOFF</button>
+      <button class="home-btn" onclick="goHomeAriel()" title="Quick Travel home — Ariel's cliffside mansion on Solenne, Lumenreach" style="pointer-events:auto;padding:5px 12px;background:rgba(var(--hi-rgb),.1);border:1px solid var(--gold);color:var(--gold);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🏠 HOME</button>
       <button class="profile-btn" onclick="openProfileMenu()" title="Your profile and display options" style="pointer-events:auto;padding:5px 12px;display:inline-flex;align-items:center;gap:5px;background:rgba(var(--acc-rgb),.08);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;"><span class="pf-av-mini" id="profile-btn-av-s">◉</span><span>PROFILE</span></button>   <!-- v151: PROFILE on the surface / sky HUD too (was space-only) -->
-      <button class="dm-exit-btn" onclick="promptExit()" title="Exit" style="pointer-events:auto;padding:5px 12px;display:inline-flex;align-items:center;gap:5px;background:linear-gradient(180deg,rgba(var(--hi-rgb),.22),rgba(var(--hi-rgb),.08));border:1px solid var(--gold);color:var(--gold);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;"><span>⏻</span><span>EXIT</span></button>   <!-- v206: EXIT on the surface / sky HUD too, same handler as the space HUD -->
     </div>
   </div>
   <button class="orbit-skyboard-btn hud-toggle-btn" onclick="toggleCharOrbit()" title="Orbit freely around the character — drag/scroll or pinch to look around" style="left:auto;right:10px;top:56px;background:rgba(var(--hi-rgb),0.10);color:#ff4fa3;border-color:rgba(var(--hi-rgb),0.35);z-index:36;">🔄 ORBIT</button>
@@ -1747,19 +1749,19 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <!-- ✦ ATMOSPHERIC FLIGHT (skyboard flight within a planet's atmosphere) -->
 <div id="atmo-overlay" style="display:none;position:fixed;inset:0;z-index:3450;background:transparent;">
   <canvas id="atmo-canvas" style="position:absolute;inset:0;display:block;touch-action:none;"></canvas>
-  <div style="position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:10px 16px;isolation:isolate;pointer-events:none;">
-    <i class="dm-bar" aria-hidden="true"></i>
+  <div style="position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:10px 16px;background:rgba(var(--panel-rgb),.5);backdrop-filter:blur(10px);border-bottom:1px solid rgba(var(--acc-rgb),.15);pointer-events:none;">
     <div class="world-music" id="wm-atmo" title="Soundtrack"><button class="aud-btn" onclick="audioPrev()" title="Previous track">⏮</button><button class="aud-btn wm-pp" onclick="audioToggle()" title="Play / Pause">⏸</button><button class="aud-btn" onclick="audioStop()" title="Stop">■</button><button class="aud-btn" onclick="audioNext()" title="Next track">⏭</button><button class="aud-btn" onclick="audioPickFiles()" title="Load music from your device">📁</button><button class="aud-btn" onclick="openMusicBrowser()" title="Browse the soundtrack">📜</button><span class="wm-vol-wrap" title="Music volume"><span class="wm-vol-ico">♪</span><input class="wm-vol" type="range" min="0" max="100" value="100" oninput="audioSetVolume(this.value/100)" aria-label="Music volume"></span><span class="wm-name"></span></div>
     <div class="mini-kite"><svg class="mk-edge" viewBox="0 0 360 160" preserveAspectRatio="none" width="0" height="0" aria-hidden="true"><defs><linearGradient id="mk-grad-a" x1="0" y1="0" x2="0.35" y2="1"><stop offset="0" class="ks-a"/><stop offset=".55" class="ks-b"/><stop offset="1" class="ks-c"/></linearGradient></defs><polygon class="kite-line" style="stroke:url(#mk-grad-a)" fill="none" stroke="none" points="1.5,77 75.6,1.5 358.5,75.2 75.6,158.5"/><polyline class="kite-ridge" fill="none" stroke="none" points="2,77 358,75.2"/></svg><span id="atmo-title" class="mk-name">—</span><span class="mk-mode">ATMOSPHERIC FLIGHT</span><span id="atmo-speed" class="mk-read">MACH 0.00</span></div>
     <div style="display:flex;gap:8px;">
 <button class="shot-btn" onclick="takeScreenshot()" title="Screenshot — save a full-screen photo (P)" aria-label="Take a screenshot"><svg viewBox="0 0 28 24" width="22" height="19" aria-hidden="true"><path d="M9.4 5.6 11 3.2h6l1.6 2.4" fill="currentColor" fill-opacity=".28" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><rect x="2" y="5.6" width="24" height="15.4" rx="3.2" fill="currentColor" fill-opacity=".2" stroke="currentColor" stroke-width="1.4"/><circle cx="14" cy="13.3" r="5.1" fill="currentColor" fill-opacity=".3" stroke="currentColor" stroke-width="1.4"/><circle cx="14" cy="13.3" r="2.5" fill="currentColor" fill-opacity=".55"/><circle cx="12.3" cy="11.6" r="1.05" fill="#fff" fill-opacity=".85"/><rect x="20.4" y="8.2" width="3.2" height="1.9" rx=".7" fill="currentColor" fill-opacity=".8"/><rect x="4.2" y="8.4" width="3.4" height="1.2" rx=".5" fill="currentColor" fill-opacity=".5"/></svg></button><button class="jn-open-btn" onclick="window.DMJournal&&DMJournal.toggle()" title="Journal — mark this spot, travel to your waypoints (J)"><span class="jn-ico">✦</span>JOURNAL</button>
             <button onclick="openTempleHub()" style="pointer-events:auto;padding:5px 12px;background:rgba(255,255,255,.1);border:1px solid #fff;color:#fff;font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🕊 TEMPLE</button>
       <button onclick="atmoExitToSpace()" style="pointer-events:auto;padding:5px 12px;background:rgba(var(--acc-rgb),.08);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🚀 TO SPACE</button>
+      <button class="home-btn" onclick="goHomeAriel()" title="Quick Travel home — Ariel's cliffside mansion on Solenne, Lumenreach" style="pointer-events:auto;padding:5px 12px;background:rgba(var(--hi-rgb),.1);border:1px solid var(--gold);color:var(--gold);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;">🏠 HOME</button>
       <button class="profile-btn" onclick="openProfileMenu()" title="Your profile and display options" style="pointer-events:auto;padding:5px 12px;display:inline-flex;align-items:center;gap:5px;background:rgba(var(--acc-rgb),.08);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;"><span class="pf-av-mini" id="profile-btn-av-a">◉</span><span>PROFILE</span></button>   <!-- v151: PROFILE on the surface / sky HUD too (was space-only) -->
-      <button class="dm-exit-btn" onclick="promptExit()" title="Exit" style="pointer-events:auto;padding:5px 12px;display:inline-flex;align-items:center;gap:5px;background:linear-gradient(180deg,rgba(var(--hi-rgb),.22),rgba(var(--hi-rgb),.08));border:1px solid var(--gold);color:var(--gold);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;cursor:pointer;border-radius:2px;"><span>⏻</span><span>EXIT</span></button>   <!-- v206: EXIT on the surface / sky HUD too, same handler as the space HUD -->
     </div>
   </div>
   <button class="orbit-skyboard-btn hud-toggle-btn" onclick="toggleCharOrbit()" title="Orbit freely around the character — drag/scroll or pinch to look around" style="left:auto;right:16px;top:360px;background:rgba(var(--hi-rgb),0.10);color:#ff4fa3;border-color:rgba(var(--hi-rgb),0.35);z-index:36;">🔄 ORBIT</button>
+  <button id="fp-btn-atmo" class="surf-view-btn" onclick="toggleFlightFirstPerson()" title="Switch between first-person (her eyes) and third-person views (V)" style="top:440px;right:0;pointer-events:auto;">👁 1ST PERSON</button>
   <!-- altitude + mach preset selector (left) -->
   <div style="position:absolute;top:64px;left:16px;pointer-events:none;font-family:var(--font-mono);font-size:.52rem;color:rgba(var(--acc-rgb),.8);line-height:1.6;">
     <div>ALT <span id="atmo-alt">150</span> ft</div>
@@ -2168,7 +2170,6 @@ function loadSaveData(data){
       'gfxQuality','resScale','shadows','reflections','caustics','gi','marchingCubesTerrain'];
     Object.keys(data.settings).forEach(k=>{ if(!GFX_SETTING_KEYS.includes(k)) STATE.settings[k]=data.settings[k]; });
   }
-  if(data.settings&&typeof data.settings.legacyUI==='boolean'&&window.DMUI3DMesh){ try{ let _ls0=null; try{ _ls0=localStorage.getItem('dm.ui3d'); }catch(e){} if(data.settings.legacyUI||_ls0!=='0') window.DMUI3DMesh.setLegacy(data.settings.legacyUI); else data.settings.legacyUI=true; }catch(e){} }   // (v200) a device-level dm.ui3d='0' is never re-enabled by a save   // (v160) Legacy UI follows the save
   if(data.themes&&window.DMTheme){ try{ window.DMTheme.importData(data.themes,'save'); }catch(e){} }
   if(data.journal&&window.DMJournal){ try{ window.DMJournal.store.importData(data.journal,'save'); }catch(e){} }
   if(data.btLights&&window.DMBtRoomLights){ try{ window.DMBtRoomLights.set(data.btLights); }catch(e){} }   // (v139)
@@ -2799,14 +2800,13 @@ setInterval(()=>{ try{ _jnBeaconsTick(); }catch(e){} },100);
 // keep "You are here" current while the Journal is open
 setInterval(()=>{ try{ if(window.DMJournal&&window.DMJournal.isOpen()) window.DMJournal.refreshHere(); }catch(e){} },1000);
 
-// J opens the Journal anywhere in the game; V swaps first/third person on the ground.
+// J opens the Journal anywhere in the game; V swaps first/third person in space, the sky and on the ground.
 window.addEventListener('keydown',e=>{
   const t=e.target, typing=t&&(t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable);
   if(typing||e.ctrlKey||e.metaKey||e.altKey) return;
   if(e.code==='KeyJ'&&window.DMJournal&&(STATE.screen==='flight'||surfaceActive||atmoActive||window.DMJournal.isOpen())){ e.preventDefault(); window.DMJournal.toggle(); }
   else if(e.code==='Escape'&&window.DMJournal&&window.DMJournal.isOpen()){ window.DMJournal.close(); }
-  else if(e.code==='KeyV'&&!surfaceActive&&typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active&&!(window.DMJournal&&window.DMJournal.isOpen())){ toggleShipFirstPerson(); }
-  else if(e.code==='KeyV'&&surfaceActive&&!(window.DMJournal&&window.DMJournal.isOpen())){ toggleSurfFirstPerson(); }
+  else if(e.code==='KeyV'&&!(window.DMJournal&&window.DMJournal.isOpen())){ toggleFirstPerson(); }   // sky / space, on foot, Bird Temple deck
 });
 if(window.DMJournal) window.DMJournal.init({here:_jnHere,go:journalTravel,describe:_jnDescribe,syncNote:_jnSyncNote});
 function loadFromSlot(idx){
@@ -5915,6 +5915,7 @@ function _ah(){
       get flightScene(){return flightScene;}, get celestialBodies(){return celestialBodies;}, trackExtra:_trackSystemExtra,
       lowRes:()=>(typeof _mcTierResTable==='function'?_mcTierResTable().low:10), get STATE(){return STATE;}, get boardFlight(){return boardFlight;},
       closeQuickTravel, openFastTravel, fastTravelToSystem, enterAtmosphericFlight, GALAXY_DB, curGalaxy:()=>_qtCurGalaxy(),
+      toast, atmoExitToSpace, exitSurface, get atmoActive(){return atmoActive;}, get surfaceActive(){return surfaceActive;},
       curSysName:()=>_ttCurSysName()||'', get flightInited(){return flightInited;}, get PW(){return PW;} });
   }
   return DMArielHome;
@@ -5926,7 +5927,7 @@ function _fac(){
       curSysName:()=>_ttCurSysName()||'', shadows:()=>!!GFX.shadows, isMobile:()=>!!GFX.isMobile,
       tier:()=>({low:0,medium:1,high:2,ultra:3})[(GFX.preset==='auto'||!GFX.preset)?autoPreset():GFX.preset]|0,
       loadGLB:u=>new Promise((ok,no)=>{ const L=_getGLBLoader(); if(!L) return no(new Error('no GLTFLoader')); L.load(u,ok,undefined,no); }),
-      afterTeleport:()=>{ try{ if(PW) PW._jump=true; }catch(e){} } });
+      afterTeleport:(land)=>{ try{ if(PW) PW._jump=true; }catch(e){} if(land){ try{ atmoThrottle=0; atmoMach=0; try{ $('atmo-throttle').value=0; }catch(e){} if(atmoState){ atmoState.landing=true; atmoState.takeoff=0; atmoState.auto=null; } }catch(e){} } } });
   }
   return DMFac;
 }
@@ -11690,8 +11691,38 @@ function cycleCamMode(){
 }
 function _applyCamOffset(){
   const o=CAM_OFFSETS[camMode];
-  if(flightCamera&&o.fov){flightCamera.fov=o.fov;flightCamera.updateProjectionMatrix();}
+  if(flightCamera&&o.fov){flightCamera.fov=flightFP?FLIGHT_FP_FOV:o.fov;flightCamera.updateProjectionMatrix();}
 }
+// ── First person while flying (open space and the sky): the camera sits at her eyes on the board and the
+//    rider + board are hidden; on the ground and on the Bird Temple deck the existing toggles own it.
+//    One dispatcher (button / V) picks the right toggle for wherever she is.
+let flightFP=false, _flightFpHidB=false, _flightFpHidA=false;
+const FLIGHT_FP_FOV=74, FLIGHT_FP_EYE_UP=0.95, FLIGHT_FP_EYE_FWD=0.18;
+function _flightFpBtn(){
+  const t=flightFP?'👁 3RD PERSON':'👁 1ST PERSON';
+  for(const id of ['fp-btn-flight','fp-btn-atmo']){ const b=$(id); if(!b) continue; b.textContent=t; b.classList.toggle('fp',flightFP); }
+}
+// restores whichever board the first-person view hid (safe to call any time)
+function _flightFpRestore(){
+  if(_flightFpHidB){ _flightFpHidB=false; try{ if(boardFlight&&STATE.screen==='flight') boardFlight.visible=true; }catch(e){} }
+  if(_flightFpHidA){ _flightFpHidA=false; try{ if(atmoBoard) atmoBoard.visible=true; }catch(e){} }
+}
+function toggleFlightFirstPerson(force){
+  if(surfaceActive||(typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active)) return;
+  flightFP=(typeof force==='boolean')?force:!flightFP;
+  _followInit=false; _atmoCamInit=false;           // the third-person camera re-seats itself on the way out
+  if(!flightFP) _flightFpRestore();
+  _applyCamOffset(); _flightFpBtn();
+  try{ toast(flightFP?'👁 First person — you steer where you look':'👁 Third person',1600); }catch(e){}
+}
+window.toggleFlightFirstPerson=toggleFlightFirstPerson;
+// one entry point for the button / V key in every mode: sky + space, on foot, on the Bird Temple deck
+function toggleFirstPerson(){
+  if(surfaceActive) toggleSurfFirstPerson();
+  else if(typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active) toggleShipFirstPerson();
+  else if(atmoActive||STATE.screen==='flight') toggleFlightFirstPerson();
+}
+window.toggleFirstPerson=toggleFirstPerson;
 
 // ── DART Speed Mode (multi-tap button near right joystick) ───────────
 // OFF → YELLOW (33% c³) → BLUE (70% c³) → WHITE (400% c³) → OFF
@@ -11953,6 +11984,8 @@ function toggleIdle(){
 
 // HOME button — track Earth as home base. Travels there if far, then settles
 // into a stable trailing position that keeps Earth AND its moon fully in view.
+// HOME → Ariel's mansion deck on Solenne (Lumenreach), from space, the sky or the ground — reuses the Quick Travel jump + atmosphere entry (ui/dm-arielhome.js)
+function goHomeAriel(){ try{ const a=_ah(); if(a) a.homeNow(); else toast('⚠ Home isn\'t loaded yet'); }catch(e){ console.warn('[home]',e); } }
 function returnHome(){
   const earth=celestialBodies.find(b=>b.name==='Earth');
   if(!earth){toast('⚠ Home base not found');return;}
@@ -12546,6 +12579,14 @@ function updateFollowCam(dt){
   if(_bad(_camRel)||_bad(_camUp)||_camUp.lengthSq()<1e-8) _followInit=false;
   if(!_followInit){_camRel.copy(desiredRel);_camUp.copy(up);_followInit=true;}
   else _camRel.lerp(desiredRel,Math.min(1,dt*6));
+  if(flightFP){   // her eyes on the board: the nose is the view; rider + board stay out of frame
+    if(boardFlight&&boardFlight.visible){ boardFlight.visible=false; _flightFpHidB=true; }
+    _camUp.copy(up);
+    flightCamera.position.copy(sp.pos).addScaledVector(up,FLIGHT_FP_EYE_UP).addScaledVector(fwd,FLIGHT_FP_EYE_FWD);
+    flightCamera.up.copy(up);
+    flightCamera.lookAt(_sV4.copy(flightCamera.position).add(fwd));
+    return;
+  }
   flightCamera.position.copy(sp.pos).add(_camRel);
   _camUp.lerp(up,Math.min(1,dt*6)).normalize();
   // aim a bit ahead of the board so it sits in the lower-center of frame
@@ -14762,7 +14803,6 @@ function _pfEnsure(){
     '<div class="pf-sec">DISPLAY</div>'+
     '<div class="pf-row"><div><div class="pf-row-t">Player name tags</div><div class="pf-row-d">Other players\u2019 usernames above them.</div></div><button class="pf-sw" id="pf-sw-players" role="switch"></button></div>'+
     '<div class="pf-row"><div><div class="pf-row-t">Object info</div><div class="pf-row-d">Names of planets, stars and other things when your crosshair is on them.</div></div><button class="pf-sw" id="pf-sw-objects" role="switch"></button></div>'+
-    '<div class="pf-row"><div><div class="pf-row-t">Legacy UI</div><div class="pf-row-d">Use the classic flat HUD instead of the 3D curved visor HUD. Kept with your save.</div></div><button class="pf-sw" id="pf-sw-legacy" role="switch" aria-label="Legacy UI on or off"></button></div>'+
     '<div id="pf-safety"></div>'+
     '<div class="pf-sec">THEME</div>'+
     '<div class="pf-themes" id="pf-themes"></div>'+
@@ -14816,10 +14856,8 @@ function _pfEnsure(){
   };
   bindSw('pf-sw-players','playerLabels');
   bindSw('pf-sw-objects','objectLabels',on=>{ if(!on) try{ hideCrosshairLabelNow(); }catch(e){} });
-  $('pf-sw-legacy').onclick=()=>{ const v=!_pfLegacyUI(); try{ window.DMUI3DMesh&&window.DMUI3DMesh.setLegacy(v); }catch(e){} STATE.settings.legacyUI=v; _pfRender(); };   // (v160) STATE.settings travels in every save
   _pfBindThemeTools();
 }
-function _pfLegacyUI(){ try{ return !!(window.DMUI3DMesh&&window.DMUI3DMesh.legacy); }catch(e){ return false; } }
 function _pfRender(){
   if(!$('profile-modal')) return;
   const who=_pfWho();
@@ -14861,7 +14899,6 @@ function _pfRender(){
   try{ window.DMSafety&&DMSafety.section($('pf-safety')); }catch(e){}
   $('pf-sw-players').setAttribute('aria-checked', DM_PREFS.playerLabels?'true':'false');
   $('pf-sw-objects').setAttribute('aria-checked', DM_PREFS.objectLabels?'true':'false');
-  $('pf-sw-legacy').setAttribute('aria-checked', _pfLegacyUI()?'true':'false');
 }
 // Theme chooser: presets + a custom theme built with the colour picker.
 function _pfRenderThemes(){
@@ -18002,7 +18039,7 @@ function renderWithPostFX(){
   try{ if(window.BTL&&BTL.preRender) BTL.preRender(flightRenderer,flightScene,flightCamera); }catch(e){ if(window.BTL) BTL._err=String(e&&e.stack||e).slice(0,300); }   // v110 temple lights/shadow cache/glass probe
   // (v116) below deck with no opening in view: the outside world is hidden for this render and the atmosphere pass skipped (ui/dm-bt-interior.js)
   let _seal=false, _btib=false; try{ if(window.DMBtBake) DMBtBake.tick(); }catch(e){} try{ if(window.DMBtHull) DMBtHull.tick(); }catch(e){} try{ if(window.DMBtPbr) DMBtPbr.tick(); }catch(e){} try{ if(window.DMBtInterior){ DMBtInterior.tick(); _btib=true; _seal=DMBtInterior.begin(flightScene,flightCamera); } }catch(e){ _seal=false; }
-  try{ const _hs=_taHideShells(); try{ DMGpuProf.push('atmo'); let _ta=false; try{ if(!_seal) _ta=_trueAtmoRender(flightRenderer,flightScene,flightCamera); } finally{ DMGpuProf.pop(); } if(!_ta) flightRenderer.render(flightScene,flightCamera); } finally{ _taShowShells(_hs); } _shotGrab(flightRenderer); try{ if(window.DMUI3DMesh) DMUI3DMesh.overlay(flightRenderer); }catch(e){}   /* (v138) opt-in 3D HUD overlay pass, ui/dm-ui3d-mesh.js */ try{ DMGpuProf.tick&&DMGpuProf.tick(); }catch(e){} }
+  try{ const _hs=_taHideShells(); try{ DMGpuProf.push('atmo'); let _ta=false; try{ if(!_seal) _ta=_trueAtmoRender(flightRenderer,flightScene,flightCamera); } finally{ DMGpuProf.pop(); } if(!_ta) flightRenderer.render(flightScene,flightCamera); } finally{ _taShowShells(_hs); } _shotGrab(flightRenderer); try{ DMGpuProf.tick&&DMGpuProf.tick(); }catch(e){} }
   finally{ if(_btib) try{ DMBtInterior.end(flightScene); }catch(e){} if(_spec) try{ DMSpec.post(flightCamera); }catch(e){} }
   const _rtMs = performance.now()-_rt0;
   if(!window._renderTimingSamples) window._renderTimingSamples=[];
@@ -19017,7 +19054,7 @@ function _pwRender(){
       r.toneMappingExposure=1.0+0.05*PW.skyK;
       if(!_trueAtmoSurface(r,scene,cam,false)) r.render(scene,cam);
     }
-    _shotGrab(r); try{ if(window.DMUI3DMesh) DMUI3DMesh.overlay(r); }catch(e){}   // (v148) the 3D mesh HUD on the terrain levels too (it was only hooked into the space render, so planets showed the CSS tilt)
+    _shotGrab(r);
   }catch(e){ _animLoopWarn('world-render',e); }
   finally{
     DMGpuProf.pop(); try{ DMGpuProf.tick&&DMGpuProf.tick(); }catch(e){}
@@ -19088,7 +19125,7 @@ function _pwWorldTick(dt){
       cam.position.copy(dp);
     }
     // the sky keeps the open-space camera's field of view; on foot it eases to the ground's
-    const fovT=fly?((CAM_OFFSETS[camMode]||CAM_OFFSETS[0]).fov||62):72; if(Math.abs(cam.fov-fovT)>0.01){ cam.fov+= (fovT-cam.fov)*Math.min(1,dt*1.5); cam.updateProjectionMatrix(); }
+    const fovT=fly?(flightFP?FLIGHT_FP_FOV:((CAM_OFFSETS[camMode]||CAM_OFFSETS[0]).fov||62)):72; if(Math.abs(cam.fov-fovT)>0.01){ cam.fov+= (fovT-cam.fov)*Math.min(1,dt*1.5); cam.updateProjectionMatrix(); }
     // where the board is in open space (leaving the world puts you back right there)
     try{ const bp=fly?atmoState.pos:surfPlayer.pos; _pwsFromDrawn(_pwVec(3).set(px,bp.y,pz),STATE.flight.pos); if(boardFlight) boardFlight.position.copy(STATE.flight.pos); }catch(e){}
   }
@@ -19436,6 +19473,16 @@ function updateAtmoFlight(dt){
   const o=CAM_OFFSETS[camMode]||CAM_OFFSETS[0];
   const ck=_atmoCamBack()/o.back*((atmoBoard.scale.x||ATMO_BOARD_SCALE)/ATMO_BOARD_SCALE);
   const fwd=_pwVec(1).set(0,0,-1).applyQuaternion(s.quat), up=_pwVec(2).set(0,1,0).applyQuaternion(s.quat);
+  if(flightFP&&!landing&&!s.touchdown){   // first person in the sky: eyes on the board, same view-follows-nose as open space
+    if(atmoBoard.visible){ atmoBoard.visible=false; _flightFpHidA=true; }
+    const es=(atmoBoard.scale.x||ATMO_BOARD_SCALE);
+    _atmoCamUp.copy(up); _atmoCamInit=false;
+    atmoCamera.position.copy(s.pos).addScaledVector(up,FLIGHT_FP_EYE_UP*es).addScaledVector(fwd,FLIGHT_FP_EYE_FWD*es);
+    { const cgh=_atmoHeight?_atmoHeight(atmoCamera.position.x,atmoCamera.position.z):-1e9; if(atmoCamera.position.y<cgh+2) atmoCamera.position.y=cgh+2; }
+    atmoCamera.up.copy(up);
+    atmoCamera.lookAt(_pwVec(3).copy(atmoCamera.position).add(fwd));
+  } else {
+  if(_flightFpHidA){ _flightFpHidA=false; atmoBoard.visible=true; }
   const desiredRel=_pwVec(3).copy(fwd).multiplyScalar(-o.back*ck).addScaledVector(up,o.up*ck);
   { const J=_atmoJ(s.pos.y); desiredRel.x/=J.jx; desiredRel.z/=J.jz; }   // (true-world offset → flat)
   if(!_atmoCamInit){ _atmoCamRel.copy(desiredRel); _atmoCamUp.copy(up); _atmoCamInit=true; }
@@ -19455,6 +19502,7 @@ function updateAtmoFlight(dt){
   { const cgh=_atmoHeight?_atmoHeight(atmoCamera.position.x,atmoCamera.position.z):-1e9; if(atmoCamera.position.y<cgh+2) atmoCamera.position.y=cgh+2; }
   atmoCamera.up.copy(_atmoCamUp);
   atmoCamera.lookAt(_pwVec(3).copy(s.pos).addScaledVector(fwd,o.look*ck).addScaledVector(_atmoCamUp,0.4*ck));
+  }
   // HUD
   const altFt=Math.round((s.pos.y-groundH)*3.28);
   { const ll=_atmoLatLon(s.pos.x,s.pos.z); _localClock('atmo-speed','MACH '+atmoMach.toFixed(2),ll.lon); }
@@ -19692,8 +19740,14 @@ function _pwSpaceStep(dt,first){
   flightCamera.position.copy(sp.pos).addScaledVector(_camRel,sc.fc);
   flightCamera.up.copy(_camUp);
   flightCamera.lookAt(_pwVec(1).copy(sp.pos).addScaledVector(fwd,o.look*sc.fc).addScaledVector(_camUp,0.4*sc.fc));
+  if(flightFP){   // first person through the descent: eyes on the board at this approach's scale
+    if(boardFlight&&boardFlight.visible){ boardFlight.visible=false; _flightFpHidB=true; }
+    const fup=_pwVec(2).set(0,1,0).applyQuaternion(q);
+    flightCamera.position.copy(sp.pos).addScaledVector(fup,FLIGHT_FP_EYE_UP*sc.fc).addScaledVector(fwd,FLIGHT_FP_EYE_FWD*sc.fc);
+    flightCamera.up.copy(fup); flightCamera.lookAt(_pwVec(1).copy(flightCamera.position).add(fwd));
+  }
   if(charOrbitActive) try{ _charOrbitPlace(flightCamera,_pwVec(2).copy(sp.pos),sc.fc,false); }catch(e){ _animLoopWarn('charOrbit',e); }   // ORBIT view: round her, at this approach's scale
-  const fovT=o.fov||62; if(Math.abs(flightCamera.fov-fovT)>0.01){ flightCamera.fov+=(fovT-flightCamera.fov)*Math.min(1,(dt||0)*1.5); flightCamera.updateProjectionMatrix(); }
+  const fovT=flightFP?FLIGHT_FP_FOV:(o.fov||62); if(Math.abs(flightCamera.fov-fovT)>0.01){ flightCamera.fov+=(fovT-flightCamera.fov)*Math.min(1,(dt||0)*1.5); flightCamera.updateProjectionMatrix(); }
   // 3. into the world's frame: the focus is the point under the board
   la=_pwsLatLonAlt(b,sp.pos);
   const xz=_atmoXZ(la.lat,la.lon); S.flat.set(xz.x,la.alt,xz.z);
@@ -22250,6 +22304,7 @@ function _pwBeginWalk(opts){
     camPos:fresh?null:PW.camera.position.clone()};
   if(fresh) PW.camera.position.set(x,g+3.0,z);
   surfFirstPerson=false; _surfFpHidden=false; _surfViewBtn();   // every landing starts in third person
+  flightFP=false; _flightFpRestore(); _flightFpBtn();
   atmoState=null; atmoBoard=null; surfBoard=board;
   board.scale.setScalar(1); board.visible=true;
   _pwSetMode('walk');
@@ -25571,9 +25626,7 @@ const _KB_STEP='<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="13.6" cy
 const _KB_PARK='<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="4.5" width="15" height="15" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 16.5v-9h3a2.6 2.6 0 0 1 0 5.2h-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></svg>';
 const _KB_BOARD='<svg viewBox="0 0 24 24" aria-hidden="true"><g transform="rotate(-30 12 12)"><path d="M1.6 12l2.6-2.3h12.6L22.6 12l-5.8 2.3H4.2z" fill="currentColor" fill-opacity=".22" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M1.6 12L.4 9.8M1.6 12L.4 14.2" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/><circle cx="8.2" cy="12" r="1.25" fill="currentColor"/><circle cx="13.6" cy="12" r="1.25" fill="currentColor"/></g></svg>';
 // v176: the park / summon / step-off buttons float as their own flat DOM layer over the kite instead of living
-// inside it. Inside, the mesh HUD (ui/dm-ui3d-mesh.js) ghosts the real kite to opacity 0 and draws a tilted,
-// once-rasterised copy, so on iPhone the drawn buttons sat a few px off their real 22 px hit boxes (6 px apart):
-// a tap on SUMMON landed on PARK (or nothing), and the drawn PARK never showed its new state. Now what she sees
+// inside it, so they never sit a few px off their real hit boxes: a tap on SUMMON can't land on PARK. What she sees
 // is the real button, it fires on touchend (no 300 ms / ghost-click loss) and the hit box is bigger on touch.
 const _KB_FLOAT=[];
 function _kbTap(el,fn){ let last=0; const go=e=>{ e.preventDefault(); e.stopPropagation(); const t=performance.now(); if(t-last<350) return; last=t; try{ fn(); }catch(err){ console.warn('[kite-board]',err); } };

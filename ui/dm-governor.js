@@ -14,7 +14,7 @@
  *    remembers that ceiling (it relaxes again after a few minutes), so a vsync-locked device still recovers;
  *  - notices a display/OS frame cap (a step down that bought nothing) and leaves the scale alone;
  *  - remembers the settled scale per device+preset (localStorage) so the next launch starts there;
- *  - never touches any UI (DMUI3D, the HUD): it only calls renderer.setPixelRatio, and it pauses itself during
+ *  - never touches any UI (the HUD): it only calls renderer.setPixelRatio, and it pauses itself during
  *    warm-up, hidden tabs and the hitch frames around world changes.
  *
  * Public: DMGov.frame(renderer, gfx, basePixelRatio)  (once per rendered frame)   DMGov.prime(...) (warm-up)   DMGov.stats()

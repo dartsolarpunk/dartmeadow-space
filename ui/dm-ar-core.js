@@ -295,8 +295,7 @@
       var reticle=new T.Mesh(new T.RingGeometry(0.04,0.055,32).rotateX(-Math.PI/2),new T.MeshBasicNodeMaterial({color:0x8fd0ff}));
       reticle.matrixAutoUpdate=false; reticle.visible=false; scene.add(reticle);
       var table=new T.Group(); table.matrixAutoUpdate=false; table.visible=false; scene.add(table);
-      var hudScene=new T.Scene(), plate=new T.Group(); plate.matrixAutoUpdate=false; hudScene.add(plate);
-      S={kind:'webxr',session:session,r:r,cv:cv,scene:scene,cam:cam,hemi:hemi,sun:sun,reticle:reticle,table:table,hudScene:hudScene,plate:plate,screen:screen,target:target,
+      S={kind:'webxr',session:session,r:r,cv:cv,scene:scene,cam:cam,hemi:hemi,sun:sun,reticle:reticle,table:table,screen:screen,target:target,
          base:new T.Matrix4(),scale:1,yaw:0,placed:false,havePose:false,errs:0,D:null,O:null,mode:null,hitSrc:null,ctl:new Map(),anchor:null,rGood:true,
          vx:0,vy:0,vz:0,hx:0,hy:0,hz:0,rx:0,ry:0,rz:0,hit:false,probe:null,depthOn:has('depth-sensing'),lightOn:has('light-estimation'),anchorsOn:has('anchors'),
          pid:null,persistOn:!!(session.requestPersistentAnchor&&session.restorePersistentAnchor),ses:session};
@@ -313,7 +312,6 @@
       // the hidden flight canvas stops drawing while AR owns the frame (WebXR draws with its own renderer: the game canvas is not touched)
       var FR=g('flightRenderer'); if(FR&&FR.render){ S.flight=FR; S.flightRender=FR.render; FR.render=function(){}; }
       pumpOn();
-      try{ window.DMUI3DMesh&&DMUI3DMesh.arHold(true); }catch(e){}
       document.body.classList.add('dm-ar-on'); document.documentElement.classList.add('dm-ar-on');
       if(screen) document.documentElement.classList.add('dm-ar-dom');
       r.setAnimationLoop(frame);
@@ -399,27 +397,13 @@
         if(sh&&sh.length>=3){ var amb=Math.max(0.15,Math.min(2,0.886*Math.max(sh[0],sh[1],sh[2]))); s.hemi.color.setRGB(Math.min(1,sh[0]/Math.max(sh[0],sh[1],sh[2],1e-3)),Math.min(1,sh[1]/Math.max(sh[0],sh[1],sh[2],1e-3)),Math.min(1,sh[2]/Math.max(sh[0],sh[1],sh[2],1e-3)));
           s.hemi.groundColor.copy(s.hemi.color).multiplyScalar(0.55); s.hemi.intensity+=(amb*1.6-s.hemi.intensity)*a; } } }
     toolsSync();
-    s.r.render(s.scene,s.cam); hud(s.cam);
+    s.r.render(s.scene,s.cam);
   }
   // what sits on the placed table: the terrain diorama, or (space) the orrery. The game's own space scene can't be drawn by this
   // renderer, so a table-top orrery is what space shows on WebXR; the full fly-through is the camera path.
   function content(T,ctx,mode){
     if(mode==='terrain'){ if(!S.D){ S.D=buildDiorama(T); S.table.add(S.D.grp); } S.D.grp.visible=true; if(S.O) S.O.grp.visible=false; fillDiorama(S.D,ctx,false); }
     else { if(S.D) S.D.grp.visible=false; if(!S.O){ S.O=buildOrrery(T); S.table.add(S.O.grp); } S.O.grp.visible=true; if(((S.fn|0)%3)===0) fillOrrery(S.O,T); }
-  }
-  // the 3D HUD (ui/dm-ui3d-mesh.js): the very same merged mesh on a head-locked plate. Handheld: it fills the view (the page's pixel
-  // layout, 0.6 m out). Headset: a fixed 0.5 m tall panel 0.9 m out, so the screen-shaped layout never stretches across the whole FOV.
-  function hud(camUsed){
-    var M=window.DMUI3DMesh, s=S; if(!M||!M.mesh||!M.active) return;   // no 3D HUD (legacy / opt-out / not ready): the real DOM HUD is what shows
-    var d=s.screen?0.6:0.9, sc;
-    if(s.screen){ var pe=camUsed.projectionMatrix.elements, fovY=2*Math.atan(1/(pe[5]||1)); sc=2*d*Math.tan(fovY/2)/(innerHeight||1); } else sc=0.5/(innerHeight||1);
-    if(M.mesh.parent!==s.plate) s.plate.add(M.mesh);
-    var k=K; camUsed.updateMatrixWorld(); k.p.set(0,s.screen?0:-0.04,-d); k.q.identity(); k.s.setScalar(sc); k.m2.compose(k.p,k.q,k.s);
-    s.plate.matrix.copy(camUsed.matrixWorld).multiply(k.m2); s.plate.matrixWorldNeedsUpdate=true;
-    var ac=s.r.autoClear; s.r.autoClear=false; try{ s.r.clearDepth&&s.r.clearDepth(); s.r.render(s.hudScene,camUsed); }catch(e){ s.r.autoClear=ac; return; } s.r.autoClear=ac;
-    // the plate drew, so the real panels must ghost: DMUI3DMesh.drawTo does exactly that bookkeeping (it draws its own, now
-    // empty, scene because the mesh lives on the plate, then ghostDrawn()). Called every frame so the ghost can never time out.
-    try{ M.drawTo&&M.drawTo(s.r); }catch(e){}
   }
   function switchMode(mode){
     S.mode=mode;   // the game's flightScene is never drawn or modified by the WebXR path: nothing to strip, the AR canvas clears to transparent
@@ -439,9 +423,8 @@
         try{ s.session.removeEventListener('select',onSelect); s.session.removeEventListener('squeezestart',onSqueeze); s.session.removeEventListener('inputsourceschange',onInputs); }catch(e){}
         try{ s.ctl.forEach(function(h){ try{ h.cancel(); }catch(e){} }); s.ctl.clear(); }catch(e){}
         try{ document.documentElement.classList.remove('dm-ar-dom'); }catch(e){}
-        try{ var HM=window.DMUI3DMesh; if(HM&&HM.mesh&&HM.mesh.parent===s.plate) s.plate.remove(HM.mesh); }catch(e){} }
+      }
       try{ gOff(); var td=document.getElementById('dm-ar-tools'); if(td) td.remove(); }catch(e){}
-      try{ var M=window.DMUI3DMesh; M&&M.arHold(false); }catch(e){}
       try{ viewBtn(false); s.gameCv&&s.gameCv.classList.remove('dm-ar-game'); document.body.classList.remove('dm-ar-full'); }catch(e){}
       try{ var fs=g('flightScene'); if(fs) unstrip(fs,s.sky); }catch(e){}
       try{ s.hitSrc&&s.hitSrc.cancel(); }catch(e){} try{ s.anchor&&s.anchor.delete&&s.anchor.delete(); }catch(e){}   // the anchor object only: a persistent anchor stays saved
@@ -516,9 +499,9 @@
     S.flight=FR0; S.flightRender=FR0render; try{ window._dmCanvasAlpha&&_dmCanvasAlpha(true); }catch(e){}   // (v196) alpha canvas for AR only
     // the game's renderer draws the full space overlay (fullRender) and the terrain board (boardRender, from _pwRender);
     // in the table-top orrery view it stays idle
-    if(FR0render) FR0.render=function(sc,cm){ if(!S||S.kind!=='camera') return FR0render.call(FR0,sc,cm); var UM=window.DMUI3DMesh; if(UM&&sc===UM.scene) return FR0render.call(FR0,sc,cm);   /* the 3D HUD pass (overlay) draws normally over every camera view */ if(S.full) return fullRender(sc,cm); if(S.mode==='terrain'&&S._inBoard) return FR0render.call(FR0,sc,cm); if(S.mode==='terrain'&&!S.fp&&S.shipBoard&&S._bfDone!==S._fn){ S._bfDone=S._fn; return boardRender(FR0,sc,cm); } };   // mesh maps draw their board from the flight loop (once per frame)   // terrain: only the board's own pass draws
+    if(FR0render) FR0.render=function(sc,cm){ if(!S||S.kind!=='camera') return FR0render.call(FR0,sc,cm); if(S.full) return fullRender(sc,cm); if(S.mode==='terrain'&&S._inBoard) return FR0render.call(FR0,sc,cm); if(S.mode==='terrain'&&!S.fp&&S.shipBoard&&S._bfDone!==S._fn){ S._bfDone=S._fn; return boardRender(FR0,sc,cm); } };   // mesh maps draw their board from the flight loop (once per frame)   // terrain: only the board's own pass draws
     try{ var gc=FR0&&FR0.domElement; if(gc){ gc.classList.add('dm-ar-game'); S.gameCv=gc; } }catch(e){}
-    viewBtn(true);   // (the 3D HUD is NOT held on this path: the game's own overlay pass draws it over the camera, so its DOM ghosts stay consistent with what is on screen)
+    viewBtn(true);
     document.body.classList.add('dm-ar-on','dm-ar-cam'); document.documentElement.classList.add('dm-ar-on');
     syncBtns(); if(pr!=='granted') say('Motion access off: the view won\u2019t follow the phone (Settings \u203a Safari \u203a Motion & Orientation)',4500);
     var loop=function(t){ if(!S||S.kind!=='camera') return; S.raf=_raf(loop); try{ camFrame(t); S.errs=0; }catch(e){ console.warn('[AR] cam frame',e); if(++S.errs>=3) abort(e&&e.message); } };

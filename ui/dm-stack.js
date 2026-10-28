@@ -25,6 +25,19 @@
     if(m==='atmo'){
       const mp=document.getElementById('atmo-presets'), ob=ov.querySelector('.orbit-skyboard-btn');
       if(ob&&mp&&vis(mp)){ const r=mp.getBoundingClientRect(), o=ov.getBoundingClientRect(); setImp(ob,'top',Math.round(r.bottom-o.top+10)+'px'); setImp(ob,'right','0px'); }
+      const fb=document.getElementById('fp-btn-atmo');   // 1ST PERSON docks right under ORBIT
+      if(ob&&fb&&vis(ob)){
+        const r=ob.getBoundingClientRect(), o=ov.getBoundingClientRect(), fh=fb.getBoundingClientRect().height||22;
+        const cz=document.getElementById('atmo-climb-zone'), cr=cz&&vis(cz)?cz.getBoundingClientRect():null;
+        const ib=document.getElementById('atmo-idle-btn'), ir=ib&&vis(ib)?ib.getBoundingClientRect():null;
+        const floor=Math.min(H-8,cr?cr.top-26:H,ir&&ir.right>W*0.5?ir.top-6:H);          // never down into the thrust stick / its IDLE bubble
+        let top=r.bottom+8, right=0;
+        if(top+fh>floor){ // no room under ORBIT → above it (clear of the Mach bubbles) → else tucked beside it
+          const ab=r.top-8-fh, mpb=mp&&vis(mp)?mp.getBoundingClientRect().bottom:0;
+          if(ab>=mpb+4&&ab>=40) top=ab; else { top=r.top; right=Math.round(r.width+6); }
+        }
+        setImp(fb,'top',Math.round(top-o.top)+'px'); setImp(fb,'right',right+'px');
+      }
     }
     const chat=document.getElementById('jots-chat');
     if(!chat||chat.style.display!=='flex') return;
@@ -34,7 +47,7 @@
     let railB=hdr&&vis(hdr)?hdr.getBoundingClientRect().bottom:56;
     if(rail){ const rr=rail.getBoundingClientRect(); if(rr.top<H*0.4) railB=Math.max(railB,rr.bottom); }
     // the column under the rail on the right edge
-    const col=[...q(ov,'.orbit-skyboard-btn,#orbit-skyboard-btn,#surf-view-btn'),...(m==='atmo'?q(ov,'#atmo-presets'):[])]
+    const col=[...q(ov,'.orbit-skyboard-btn,#orbit-skyboard-btn,#surf-view-btn,#fp-btn-flight,#fp-btn-atmo'),...(m==='atmo'?q(ov,'#atmo-presets'):[])]
       .map(e=>e.getBoundingClientRect()).filter(r=>r.right>W*0.55&&r.top>=railB-4&&r.top<H*0.7);
     const colB=col.reduce((b,r)=>Math.max(b,r.bottom),railB), colL=col.reduce((l,r)=>Math.min(l,r.left),W);
     const cw=Math.min(300,W*0.7);

@@ -21,6 +21,7 @@
   #screen-flight #hud-logs-panel{top:200px !important;left:96px !important;max-height:calc(100% - 300px) !important;}
   #screen-flight #qt-panel{top:122px !important;left:96px !important;}
   #screen-flight #orbit-skyboard-btn{top:76px !important;height:22px !important;font-size:.42rem !important;}
+  #screen-flight #fp-btn-flight{top:104px !important;}
   /* minimap: smaller, same corner */
   #screen-flight #minimap{width:56px !important;height:56px !important;left:6px !important;bottom:calc(126px + var(--safe-bot)) !important;}
   #screen-flight #minimap-canvas{width:54px !important;height:54px !important;}
@@ -70,6 +71,12 @@ body:has(#profile-modal.open) #float-music{opacity:0 !important;pointer-events:n
 @media (orientation:portrait) and (max-width:600px){
   /* the world label drops below the top-bar buttons instead of covering them */
   #screen-surface .mini-kite,#screen-atmo .mini-kite,.mini-kite{top:46px !important;}
+  /* world top bar: PROFILE and HOME lead the row (always on screen); the rest scrolls sideways beside the music transport */
+  #surface-overlay div:has(>.profile-btn),#atmo-overlay div:has(>.profile-btn){flex-wrap:nowrap !important;overflow-x:auto;max-width:calc(100vw - 112px);scrollbar-width:none;gap:5px !important;}
+  #surface-overlay div:has(>.profile-btn)::-webkit-scrollbar,#atmo-overlay div:has(>.profile-btn)::-webkit-scrollbar{display:none;}
+  #surface-overlay div:has(>.profile-btn)>*,#atmo-overlay div:has(>.profile-btn)>*{flex:0 0 auto;}
+  #surface-overlay .profile-btn,#atmo-overlay .profile-btn{order:-2;}
+  #surface-overlay .home-btn,#atmo-overlay .home-btn{order:-1;}
   /* builder: fullscreen toggle sits right of the drawer button, not on it */
   body:has(#screen-builder.active) #fs-exit,
   body:has(#screen-builder.active) #fs-enter{left:56px !important;}

@@ -377,12 +377,17 @@
   function teleport(rec) {
     const c = F.ctx, st = c.atmoState(); if (!st || !rec.ready || DM.arriveAt !== rec.def.id) return;
     DM.arriveAt = null;
-    let tx, tz, ty, fx, fz;
+    let tx, tz, ty, fx, fz, land = false;
     if (rec.def.kind === 'city') { tx = rec.x + 330; tz = rec.z + 80; ty = 70; fx = rec.x - tx; fz = rec.z - tz; }
+    else if (rec.mansion && DM.homeDeck) {   // HOME: set her down on the arrowhead skyboard deck (collision-grid flat patch, local x≈-68, 22 m off the lip)
+      const ct = Math.cos(rec.th), sn = Math.sin(rec.th), lx = -68, lz = -22;
+      tx = rec.x + lx * ct + lz * sn; tz = rec.z - lx * sn + lz * ct; ty = rec.y + 8; fx = rec.x - tx; fz = rec.z - tz; land = true;
+    }
     else if (rec.mansion) { const sd = [rec.best.dx, rec.best.dz]; tx = rec.x + sd[0] * 260; tz = rec.z + sd[1] * 260; ty = Math.max(SEA, rec.y - 62) + 55; fx = rec.x - tx; fz = rec.z - tz; }
     else { const sd = [rec.best.dx, rec.best.dz]; tx = rec.x + sd[0] * 120; tz = rec.z + sd[1] * 120; ty = rec.y + 22; fx = rec.x - tx; fz = rec.z - tz; }
     st.pos.set(tx, ty, tz); st.vel.set(0, 0, 0); st.yaw = Math.atan2(-fx, -fz); st.pitch = -0.08;
-    try { c.afterTeleport(); } catch (e) { }
+    DM.homeDeck = false;
+    try { c.afterTeleport(land); } catch (e) { }
   }
 
   let lastScan = 0, mlastEv = 0, lastM = -1, lastIn = false;
