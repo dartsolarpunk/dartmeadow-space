@@ -232,7 +232,8 @@
   function loadMansion() {
     if (MAN.glb || MAN.loading || MAN.failed) return;
     MAN.loading = true; const c = F.ctx;
-    Promise.all([c.loadGLB('assets/ariel-home/ariel-home.glb?v=' + F.ver), fetch('assets/ariel-home/ariel-home-collide.json?v=' + F.ver).then(r => r.json())]).then(([gl, col]) => {
+    // (v223) phones/tablets load the half-size-map mansion (≈75 MB less graphics memory)
+    Promise.all([c.loadGLB('assets/ariel-home/' + (c.isMobile() ? 'ariel-home-512.glb' : 'ariel-home.glb') + '?v=' + F.ver), fetch('assets/ariel-home/ariel-home-collide.json?v=' + F.ver).then(r => r.json())]).then(([gl, col]) => {
       const bin = atob(col.data), n = bin.length >> 1, a = new Int16Array(n);
       for (let i = 0; i < n; i++) { const v = bin.charCodeAt(i * 2) | (bin.charCodeAt(i * 2 + 1) << 8); a[i] = v > 32767 ? v - 65536 : v; }
       col.h = a; MAN.col = col; MAN.glb = gl; MAN.loading = false;
@@ -243,7 +244,7 @@
     const sc = MAN.glb.scene.clone(true);      // materials stay shared with the loaded scene on purpose (one set of textures)
     const lod0 = sc.getObjectByName('Mansion_LOD0'), lod1 = sc.getObjectByName('Mansion_LOD1');
     root.add(sc); root.userData.lod0 = lod0; root.userData.lod1 = lod1;
-    const sh = F.ctx.shadows();
+    const sh = F.ctx.shadows() && !F.ctx.isMobile();   // (v223) the mansion casts no shadows on phones/tablets: saves a 59k-triangle shadow pass
     sc.traverse(o => { if (o.isMesh) { o.frustumCulled = false; const n = o.material && o.material.name; if (sh && lod0 && o.parent === lod0 || sh && lod0 && lod0.getObjectById(o.id)) { o.castShadow = n !== 'ah_rock' && n !== 'ah_glass'; o.receiveShadow = true; } } });
     return root;
   }

@@ -61,7 +61,10 @@
     let scr = '?', m = '';
     try { scr = (typeof STATE !== 'undefined' && STATE.screen) || '?'; } catch (e) {}
     try { m = (window.JOTS && window.JOTS.mode) || ''; } catch (e) {}
-    return m && scr !== 'menu' ? scr + ':' + m : scr;
+    // (v223) where in the world: lets a log say "died on Solenne's surface" instead of just "flight"
+    let w = '';
+    try { if (typeof PW !== 'undefined' && PW && PW.active && PW.body) w = '@' + PW.body.name + (typeof atmoActive !== 'undefined' && atmoActive ? '/atmo' : (typeof surfaceActive !== 'undefined' && surfaceActive ? '/surf' : '')); } catch (e) {}
+    return (m && scr !== 'menu' ? scr + ':' + m : scr) + w;
   }
   function sampleMode() {
     try {
