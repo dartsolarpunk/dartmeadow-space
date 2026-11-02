@@ -1033,8 +1033,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-edgewarm.js?v=217" defer></script>
 <script src="ui/dm-arielhome.js?v=228" defer></script>
 <script src="ui/dm-mansion-look.js?v=229" defer></script>
-<script src="ui/dm-mansion-interior.js?v=229" defer></script>
-<script src="ui/dm-facilities.js?v=229" defer></script>
+<script src="ui/dm-mansion-interior.js?v=230" defer></script>
+<script src="ui/dm-facilities.js?v=230" defer></script>
 </head>
 <body>
 <!-- LOADING -->
@@ -25013,7 +25013,7 @@ function updateSurface(dt){
   // gravity + ground collision
   p.vel.y-=9.8*p.grav*dt;
   p.pos.y+=p.vel.y*dt;
-  const groundH=_surfHeight?_surfHeight(p.pos.x,p.pos.z):0;
+  const groundH=_surfHeight?(window.DMMansionInt?DMMansionInt.ground(_surfHeight,p.pos.x,p.pos.z):_surfHeight(p.pos.x,p.pos.z)):0;   // her own ground query only: inside the mansion F.ovr answers with the interior floor (other height lookups keep the roof)
   // Deep water: she floats at the surface (body under, head above) and swims
   // through the live water instead of walking the seabed.
   const _wtr=window.JOTS_WATER, floatFeet=(_wtr&&groundH<_wtr.surfaceY-2.6)?_wtr.surfaceY-2.4:-1e9;
