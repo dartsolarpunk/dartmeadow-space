@@ -230,7 +230,7 @@
   // ── Ariel's mansion (GLB + collision grid) ───────────────────────────────────────────────────────────────
   const MAN = { glb: null, col: null, loading: false, failed: false };
   function loadMansion() {
-    if (MAN.glb || MAN.loading || MAN.failed || F.ctx.sysBusy) return;    // a system rebuild is running: wait (retried from tick), same gate as pollLand
+    if (MAN.glb || MAN.loading || MAN.failed) return;     // NOT gated on sysBusy: the GLB fetch + parse is network/decode only, and a HOME landing/warm-up needs MAN.glb; only place() (scene add + compile) waits for the rebuild
     MAN.loading = true; const c = F.ctx;
     // (v223) phones/tablets load the half-size-map mansion (≈75 MB less graphics memory)
     Promise.all([c.loadGLB('assets/ariel-home/' + (c.isMobile() ? 'ariel-home-512.glb' : 'ariel-home.glb') + '?v=' + F.ver), fetch('assets/ariel-home/ariel-home-collide.json?v=' + F.ver).then(r => r.json())]).then(([gl, col]) => {
