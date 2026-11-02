@@ -18,6 +18,9 @@
 //   Low = AO only (256, R8, 64 KB). Probes: probeTick() samples the grid (no allocation) and scales the world's EXISTING ambient + hemisphere light colours while she is
 //   indoors (uniform writes only, restored on exit), so Ariel and every moving object pick up the room's light with zero extra lights / recompiles. ?mgi=0 or
 //   localStorage dm_mansion_gi=0 turns the baked GI off (A/B).
+// Low-memory load order (Chrome Aw-Snap OOM fix): apply(root, ctx, null) first (GLB parsed, shared atlas swapped in), THEN `await DMMansionLook.loadGI(ctx, ver)` (GI fetched + decoded one file at a
+//   time, attached to the already-applied atlas, resolves true/false), THEN the loader's compileAsync (lightMap/aoMap change the atlas program key). Every ImageBitmap-backed texture (GLB atlas maps,
+//   GI lightmap/AO) closes its CPU bitmap in Texture.onUpdate, i.e. right after the first GPU upload. release()/destroy() (the 400 m dispose hook) cancel an in-flight loadGI. prefetch()+apply(.., gi) still works.
 // Light modes (flat-DOM-free API, same set as the Bird Temple room lights, ui/dm-bt-roomlights.js): DMMansionLook.set('auto'|'bright'|'warm'|'cool'|'night'|'off'),
 // .cycle(), .get(). Persisted in localStorage 'dm_mansion_light'; ?minlight=warm overrides for a session. A mode change only writes two uniforms.
 (function () {
@@ -28,7 +31,7 @@
   const GI_LM = 16, GI_EG = 0.45;   // lightMapIntensity at 'auto' (lightmap texel x meta.gain = irradiance; tuned against the vertex-baked look so mean brightness stays level while the lamp pools, window light and contact shadows come from the bake), unlit fill share kept when a lightmap is on
   // [fill, [r,g,b] tint]
   const SPEC = { auto: [0.52, [1, 1, 1]], bright: [0.8, [1, 1, 1]], warm: [0.58, [1, 0.78, 0.52]], cool: [0.58, [0.7, 0.85, 1]], night: [0.22, [1, 0.24, 0.28]], off: [0.1, [1, 1, 1]] };
-  const S = { mode: 'auto', U: null, atlas: null, tex: [], lowCount: 0, loads: 0, THREE: null, lastMem: 0, gi: null, giOn: true, lmK: GI_LM, egK: GI_EG, tl: [], tlBase: [], tlLast: [], k: [1, 1, 1], pt: 0, plx: 1e9, ply: 1e9, plz: 1e9, active: false };
+  const S = { mode: 'auto', U: null, atlas: null, tex: [], lowCount: 0, loads: 0, THREE: null, lastMem: 0, gi: null, giOn: true, lmK: GI_LM, egK: GI_EG, tl: [], tlBase: [], tlLast: [], k: [1, 1, 1], pt: 0, plx: 1e9, ply: 1e9, plz: 1e9, active: false, gen: 0, giP: null, pend: null, ver: '' };
   try { const q = (new URLSearchParams(G.location.search)).get('mgi'); if (q === '0' || (q === null && G.localStorage.getItem('dm_mansion_gi') === '0')) S.giOn = false; } catch (e) { }
   try { const m = (new URLSearchParams(G.location.search)).get('minlight') || G.localStorage.getItem(LS); if (m && MODES.indexOf(m) >= 0) S.mode = m; } catch (e) { }
 
@@ -93,19 +96,54 @@
       return { w, h, data: o };
     } catch (e) { return null; }
   }
-  // Resolves to a payload for apply() (or null: the old look stays, nothing breaks). Runs in parallel with the interior GLB.
-  function prefetch(ctx, ver) {
-    if (!S.giOn || !G.fetch || !G.createImageBitmap) return Promise.resolve(null);
+  // Resolves to a payload for attachGI (or null: the old look stays, nothing breaks). OOM fix: the GI files are fetched and decoded ONE AT A TIME (small buffers first, then the AO PNG -> R8 -> its bitmap
+  // closed, then the lightmap PNG), with a macrotask yield between steps, so at most one decoded bitmap is alive here instead of all of them at once next to the GLB parse. `stale()` (optional)
+  // aborts between steps and closes whatever was decoded (the interior was released while this ran).
+  const yieldT = () => new Promise(res => G.setTimeout(res, 0));
+  async function fetchGI(ctx, ver, stale) {
+    if (ver !== undefined) S.ver = ver;
+    if (!S.giOn || !G.fetch || !G.createImageBitmap) return null;
     const low = (ctx.tier ? ctx.tier() : 2) < 1, mobile = !!(ctx.isMobile && ctx.isMobile()), q = '?v=' + ver, dir = ctx.giBase || GI_DIR;
-    return fetch(dir + 'ariel-home-interior-gi.json' + q).then(r => { if (!r.ok) throw new Error('gi ' + r.status); return r.json(); }).then(meta => {
-      const f = meta.files, lmK = (low ? 0 : mobile ? 256 : 512), aoK = (low || mobile) ? 256 : 512, u = n => dir + n + q;
-      return Promise.all([
-        fetchBin(u(f.uv2)), lmK ? fetchBmp(u(f.lm[lmK])) : null, fetchBmp(u(f.ao[aoK])), fetchBin(u(f.probes)),
-      ]).then(([uv2, lm, aoB, pr]) => {
-        const ao = toR8(aoB); if (ao) { try { aoB.close(); } catch (e) { } }
-        return { meta, uv2: new Uint16Array(uv2), lm, ao, aoBmp: ao ? null : aoB, probes: new Uint8Array(pr), low, mobile };
-      });
-    }).catch(e => { console.warn('[mansion-look] baked GI unavailable, using the vertex-baked look', e && e.message); return null; });
+    let lm = null, aoB = null;
+    try {
+      const r = await fetch(dir + 'ariel-home-interior-gi.json' + q); if (!r.ok) throw new Error('gi ' + r.status);
+      const meta = await r.json(), f = meta.files, lmK = (low ? 0 : mobile ? 256 : 512), aoK = (low || mobile) ? 256 : 512, u = n => dir + n + q;
+      const uv2 = new Uint16Array(await fetchBin(u(f.uv2))); await yieldT(); if (stale && stale()) return null;
+      const probes = new Uint8Array(await fetchBin(u(f.probes))); await yieldT(); if (stale && stale()) return null;
+      aoB = await fetchBmp(u(f.ao[aoK])); const ao = toR8(aoB); if (ao) { try { aoB.close(); } catch (e) { } aoB = null; } await yieldT();
+      if (stale && stale()) { if (aoB) aoB.close(); return null; }
+      if (lmK) { lm = await fetchBmp(u(f.lm[lmK])); if (stale && stale()) { lm.close(); if (aoB) aoB.close(); return null; } }
+      return { meta, uv2, lm, ao, aoBmp: aoB, probes, low, mobile };
+    } catch (e) { try { if (lm) lm.close(); if (aoB) aoB.close(); } catch (e2) { } console.warn('[mansion-look] baked GI unavailable, using the vertex-baked look', e && e.message); return null; }
+  }
+  // Legacy entry (the loader may still start it in parallel with the GLB and hand the payload to apply()): same sequential decode. Prefer loadGI() AFTER apply().
+  function prefetch(ctx, ver) { return fetchGI(ctx, ver); }
+  // Awaitable, call AFTER apply() has returned (GLB parsed + materials swapped): fetches + decodes the GI sequentially, attaches uv1 / lightMap / aoMap / probes to the shared atlas, resolves true when
+  // attached (false = no GI / mismatch / released meanwhile: the vertex-baked look stays). Call it BEFORE compileAsync: lightMap + aoMap change the atlas program key, so attaching them after the compile
+  // costs one extra (atlas-only) recompile. Single flight; release()/destroy() cancel it.
+  function loadGI(ctx, ver) {
+    if (S.gi) return Promise.resolve(true);
+    if (S.giP) return S.giP;
+    const pend = S.pend; if (!pend || !S.giOn) return Promise.resolve(false);
+    const gen = S.gen;
+    const p = fetchGI(ctx, ver === undefined ? S.ver : ver, () => gen !== S.gen).then(gi => {
+      if (S.giP === p) S.giP = null;
+      if (!gi) return false;
+      if (gen !== S.gen || S.pend !== pend) { discard(gi); return false; }
+      let ok = false; try { ok = S.U && S.U.node && attachGI(pend.geo, S.atlas, gi, ctx.THREE); } catch (e) { console.warn('[mansion-look] GI attach', e); }
+      if (!ok) { S.atlas.lightMap = null; S.atlas.aoMap = null; S.gi = null; discard(gi); return false; }
+      if (S.gi.probes) { const L = lightList(ctx); if (L) { for (let i = 0; i < L.length && i < 6; i++) S.tl.push(L[i]); } }
+      applyMode(); S.atlas.needsUpdate = true;
+      const A = S.atlas, add = texBytes(A.lightMap) + texBytes(A.aoMap); S.lastMem += add; S.gi.mb = +((add + (S.gi.probes ? S.gi.probes.length : 0) + S.gi.uv2) / 1048576).toFixed(2);   // GLB textures may already be uploaded + closed (0 bytes now): only add the GI maps
+      return true;
+    });
+    S.giP = p; return p;
+  }
+  // Close an ImageBitmap-backed texture's CPU copy as soon as three has uploaded it (Texture.onUpdate fires right after the upload): the decoded bitmap is the biggest JS-side holder. A texture that is
+  // disposed and used again re-decodes from the GLB / GI files on the next visit (release() frees, apply()/loadGI() rebuild), so nothing re-uploads from a closed bitmap.
+  function closeAfterUpload(t) {
+    if (!t || !t.image || typeof t.image.close !== 'function' || t._dmClose) return; t._dmClose = true; const prev = t.onUpdate;
+    t.onUpdate = tx => { tx.onUpdate = prev || null; try { if (tx.image && tx.image.close) tx.image.close(); } catch (e) { } if (prev) prev(tx); };
   }
   function discard(gi) { try { if (gi && gi.lm && gi.lm.close) gi.lm.close(); if (gi && gi.aoBmp && gi.aoBmp.close) gi.aoBmp.close(); } catch (e) { } }
   function psumOf(g) {   // same fingerprint as bake_gi.js posSum(): refuse lightmaps baked for a different interior GLB
@@ -123,8 +161,8 @@
     let ao = null, lm = null;
     if (gi.ao) { ao = new THREE.DataTexture(gi.ao.data, gi.ao.w, gi.ao.h, THREE.RedFormat, THREE.UnsignedByteType); ao.colorSpace = THREE.NoColorSpace; ao.unpackAlignment = 1; }
     else if (gi.aoBmp) { ao = new THREE.Texture(gi.aoBmp); ao.colorSpace = THREE.NoColorSpace; gi.aoBmp = null; }
-    if (ao) A.aoMap = mk(ao);
-    if (gi.lm) { lm = new THREE.Texture(gi.lm); lm.colorSpace = THREE.SRGBColorSpace; gi.lm = null; A.lightMap = mk(lm); }
+    if (ao) { if (gi.aoBmp === null && ao.isTexture && !ao.isDataTexture) closeAfterUpload(ao); A.aoMap = mk(ao); }
+    if (gi.lm) { lm = new THREE.Texture(gi.lm); lm.colorSpace = THREE.SRGBColorSpace; gi.lm = null; closeAfterUpload(lm); A.lightMap = mk(lm); }
     A.aoMapIntensity = 0.85;
     const pm = m.probes, d = pm.dim, n = d[0] * d[1] * d[2];
     for (let i = 0; i < 256; i++) { const v = i / 255, c = (i - 128) / 127; LUT0[i] = pm.m0 * v * v; LUT1[i] = pm.m1 * Math.sign(c) * c * c; }
@@ -200,19 +238,20 @@
         for (let i = 0; i < ms.length; i++) {
           const m = ms[i]; if (!m) continue;
           if (m.name === 'int_atlas') {
-            old.add(m); if (gi && !giMesh && n.geometry.attributes.position) giMesh = n.geometry;
+            old.add(m); if (!giMesh && n.geometry.attributes.position) giMesh = n.geometry;
             for (const k of ['map', 'normalMap', 'metalnessMap', 'roughnessMap']) { const t = m[k]; if (t && !seen.has(t)) { seen.add(t); } }
             ms[i] = A;
           } else { if (m.name === 'int_water') { m.depthWrite = false; } }
         }
         if (!Array.isArray(n.material)) n.material = ms[0];
       });
+      S.pend = giMesh ? { geo: giMesh } : null;   // loadGI() attaches uv1 / lightMap / aoMap to this geometry after apply()
       // textures → the shared atlas material
       let g0 = null; for (const m of old) { g0 = m; break; }
       const prev = S.tex.slice(); S.tex.length = 0;
       let giOK = false;
       if (g0) {
-        const set = (key, t) => { A[key] = t || null; if (t) { t.anisotropy = aniso; if (S.tex.indexOf(t) < 0) S.tex.push(t); } };
+        const set = (key, t) => { A[key] = t || null; if (t) { t.anisotropy = aniso; if (S.tex.indexOf(t) < 0) S.tex.push(t); closeAfterUpload(t); } };
         set('map', g0.map); if (!S.U.node) A.emissiveMap = g0.map || null;
         if (low) {
           for (const k of ['normalMap', 'metalnessMap', 'roughnessMap']) { const t = g0[k]; if (t && t !== g0.map) freeTex(t); }   // never uploaded: only the CPU bitmap is released
@@ -238,10 +277,10 @@
       return { meshes, tris: Math.round(tris), textures: S.tex.length, texMB: +(bytes / 1048576).toFixed(2), gi: S.gi ? { lightmap: S.gi.lm, ao: S.gi.ao, probes: !!S.gi.probes, lights: S.tl.length, giMB: +(giB / 1048576).toFixed(2) } : null, low, aniso, lights: S.atlasLights ? 'amb+hemi' : 'scene', ms: +(performance.now() - t0).toFixed(1) };
     },
     // interior unloaded (she walked away): GPU textures + CPU bitmaps freed; the shared material objects stay (cheap) for the next visit
-    release() { probeRelease(); S.gi = null; for (const t of S.tex) freeTex(t); S.tex.length = 0; S.lastMem = 0; if (S.atlas) { S.atlas.lightMap = null; S.atlas.aoMap = null; S.atlas.color.setRGB(1, 1, 1); S.atlas.map = null; S.atlas.emissiveMap = null; S.atlas.normalMap = null; S.atlas.metalnessMap = null; S.atlas.roughnessMap = null; } },
+    release() { S.gen++; S.giP = null; S.pend = null; probeRelease(); S.gi = null; for (const t of S.tex) freeTex(t); S.tex.length = 0; S.lastMem = 0; if (S.atlas) { S.atlas.lightMap = null; S.atlas.aoMap = null; S.atlas.color.setRGB(1, 1, 1); S.atlas.map = null; S.atlas.emissiveMap = null; S.atlas.normalMap = null; S.atlas.metalnessMap = null; S.atlas.roughnessMap = null; } },
     // the home world is gone: drop everything
     destroy() { API.release(); if (S.atlas) { try { S.atlas.dispose(); } catch (e) { } S.atlas = null; } S.atlasLights = undefined; },
-    prefetch, discard, probeTick,
+    prefetch, loadGI, discard, probeTick,
     // baked probe irradiance (lightmap units x meta.gain = irradiance) at a nav-frame point, for moving objects that want their own tint; writes out[0..2] (mean). false = no probes loaded
     probeAt(x, y, z, out) { if (!S.gi || !S.gi.probes) return false; sampleProbes(x, y, z); out[0] = PR[6]; out[1] = PR[7]; out[2] = PR[8]; return true; },
     set(m) { if (MODES.indexOf(m) < 0) return S.mode; S.mode = m; try { G.localStorage.setItem(LS, m); } catch (e) { } applyMode(); return m; },
