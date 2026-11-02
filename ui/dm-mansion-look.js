@@ -277,7 +277,7 @@
       try {
         if (keys.length) {
           if (!url || !G.fetch || !G.createImageBitmap) return false;
-          const r = await fetch(url + (S.ver ? '?v=' + S.ver : '')); if (!r.ok) throw new Error('glb ' + r.status);
+          const r = await fetch(url + (S.ver && url.indexOf('?') < 0 ? '?v=' + S.ver : '')); if (!r.ok) throw new Error('glb ' + r.status);
           const blobs = glbImages(await r.arrayBuffer(), closed); await yieldT(); if (stale()) return false;
           for (const k of keys) {   // one decode at a time; the swap happens only when every image decoded
             if (!blobs[k]) throw new Error('image ' + k); const b = await G.createImageBitmap(blobs[k], BMP_OPT); fresh.push([closed[k], b]); await yieldT();
