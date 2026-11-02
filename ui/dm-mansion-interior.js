@@ -113,9 +113,10 @@
   function walk(pos) {
     if (NAV === null || S.rec === null) return;
     const dx = pos.x - S.px, dz = pos.z - S.pz;
-    if (dx * dx + dz * dz > LIVE_R2) { S.live = false; S.have = false; return; }
+    if (dx * dx + dz * dz > LIVE_R2) { S.live = false; S.have = false; if (G.DMMansionLook) G.DMMansionLook.probeTick(0, 0, 0, false); return; }
     const lx = dx * S.ct - dz * S.st, ly = -(dx * S.st + dz * S.ct), feet = pos.y - 3.0 - S.y0, b = NAV.bbox;
     S.feet = feet; S.live = true; S.t = performance.now();
+    if (G.DMMansionLook) G.DMMansionLook.probeTick(lx, ly, feet, S.state === 2 && inRoom(lx, ly));   // baked light-probe tint of the world's own ambient/hemi lights (uniform writes only; restores when she steps out)
     if (!S.have || Math.abs(lx - S.lx) > TELE || Math.abs(ly - S.ly) > TELE || lx < b[0] - 3 || lx > b[2] + 3 || ly < b[1] - 3 || ly > b[3] + 3) { S.lx = lx; S.ly = ly; S.have = true; return; }
     const mx = lx - S.lx, my = ly - S.ly, dist = Math.abs(mx) + Math.abs(my);
     if (dist < 1e-6) return;
@@ -153,12 +154,13 @@
     const F = S.F, c = F.ctx, rec = S.rec, gen = ++S.gen; S.state = 1;
     const base = 'assets/ariel-home/ariel-home-interior', v = '?v=' + F.ver;
     ensureNav(F);
-    Promise.all([c.loadGLB(base + (c.isMobile() ? '-512' : '') + '.glb' + v), navP]).then(([gl]) => {
-      if (gen !== S.gen || !S.rec || !S.rec.group) { disposeObj(gl.scene); return; }
-      if (NAV === null) { disposeObj(gl.scene); throw new Error('no nav'); }
+    const LK = G.DMMansionLook, giP = LK && LK.prefetch ? LK.prefetch(c, F.ver) : null;   // baked lightmap/AO/probes (assets/ariel-home/gi/), fetched in parallel with the GLB; null = old look
+    Promise.all([c.loadGLB(base + (c.isMobile() ? '-512' : '') + '.glb' + v), navP, giP]).then(([gl, , gi]) => {
+      if (gen !== S.gen || !S.rec || !S.rec.group) { disposeObj(gl.scene); if (LK && LK.discard) LK.discard(gi); return; }
+      if (NAV === null) { disposeObj(gl.scene); if (LK && LK.discard) LK.discard(gi); throw new Error('no nav'); }
       const root = gl.scene; root.name = 'ArielInterior';
       root.traverse(n => { if (n.isMesh) { n.castShadow = false; n.receiveShadow = false; n.matrixAutoUpdate = false; } });
-      if (G.DMMansionLook) { try { G.DMMansionLook.apply(root, c); } catch (e) { console.warn('[mansion-interior] look', e); } }   // shared materials + cheap fake-light (ui/dm-mansion-look.js)
+      if (G.DMMansionLook) { try { G.DMMansionLook.apply(root, c, gi); } catch (e) { console.warn('[mansion-interior] look', e); } }   // shared materials + cheap fake-light (ui/dm-mansion-look.js)
       S.rec.group.add(root); S.root = root; root.updateMatrixWorld(true);
       // same order as the mansion itself (#239): tag FIRST, compile SECOND, once.
       c.mapTag(root);
