@@ -122,7 +122,8 @@
     const s = pend, sysOk = (s.sys || 'Sol') === c.curSysName() && c.curGalaxy() === s.gal;
     const b = sysOk && c.celestialBodies.find(x => x.name === s.body && x.mesh);
     if (b && !c.PW.opening && !c.sysBusy) { pend = null; try { window.DM_FAC = window.DM_FAC || {}; window.DM_FAC.arriveAt = s.id; window.DM_FAC.homeDeck = !!s.deck; c.enterAtmosphericFlight(b, { lat: s.lat, lon: s.lon }); } catch (e) { console.warn('[home] land', e); } return; }
-    if (++s.tries > 80) { pend = null; return; }
+    // (v232) a slow phone's system rebuild can take minutes: while it runs the landing is waiting, not failing (bounded at 6 min)
+    if (c.sysBusy) { if (++s.busy > 600) { pend = null; return; } } else if (++s.tries > 80) { pend = null; return; }
     setTimeout(pollLand, 600);
   }
   // HOME button: Quick Travel straight to Ariel's mansion deck, from space, the sky or the ground (no confirm — the button IS the intent)
@@ -135,7 +136,7 @@
     if (c.atmoActive && onHome) { window.DM_FAC.homeDeck = true; window.DM_FAC.arriveAt = s.id; c.toast('🏠 Home — heading for the mansion deck', 2200); return; }
     const go = () => {
       const here = A.inHome() && c.flightInited;
-      pend = { id: s.id, body: s.body, sys: s.sys, gal: s.gal, lat: s.lat, lon: s.lon, tries: 0, deck: true };
+      pend = { id: s.id, body: s.body, sys: s.sys, gal: s.gal, lat: s.lat, lon: s.lon, tries: 0, busy: 0, deck: true };
       c.toast('🏠 Home — Quick Travel to ' + s.label, 2400);
       if (!here) { c.GALAXY_DB.current = s.gal; c.fastTravelToSystem(A.system, s.gal); }
       setTimeout(pollLand, here ? 100 : 2200);
@@ -163,7 +164,7 @@
   function openLand(s, here) {
     const c = C();
     c.openFastTravel('LAND — ' + s.label.toUpperCase(), (here ? 'Descend to ' : 'Jump to ' + (s.sys || 'Sol') + ' and descend to ') + s.label + ' on ' + s.body + '?', () => {
-      pend = { id: s.id, body: s.body, sys: s.sys, gal: s.gal, lat: s.lat, lon: s.lon, tries: 0 };
+      pend = { id: s.id, body: s.body, sys: s.sys, gal: s.gal, lat: s.lat, lon: s.lon, tries: 0, busy: 0 };
       if (!here) { c.GALAXY_DB.current = s.gal; c.fastTravelToSystem(s.sys ? A.system : null, s.gal); }
       setTimeout(pollLand, here ? 100 : 2200);
     });

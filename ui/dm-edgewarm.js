@@ -42,6 +42,31 @@
       return ang < cone;
     } catch (e) { return true; }
   }
+  // (v231) Mobile only: stay out of the way while a world is arriving or being walked. Measured on a Pixel-7 emulation: right after the
+  // HOME teleport this module made ~430 compileAsync calls (flight-scene planets, moons, orbit lines) and geometries went 797 -> 997 in ~8 s
+  // while the world's own compile, the mansion's and the interior's were running. On foot the flight scene is not drawn, so nothing can
+  // cross an edge there; it catches up (same capped drain as ever) once she is back in the sky or in space. Edge-stutter warming in flight,
+  // in space and in the atmo pass (#215) is unchanged, and desktop is unchanged.
+  let holdUntil = 0;
+  function arriving() {
+    try {
+      const P = window.PW;
+      if (P && (P.opening || (P.active && P.mode === 'walk'))) return true;
+      if (window.__sysBusy) return true;     // system rebuild running
+      const A = window.DMArielHome; if (A && A.landPending && A.landPending()) return true;   // a landing is queued
+      const D = window.DM_FAC; if (D && D.arriveAt) return true;                            // landing set up, teleport not done
+      const I = window.DMMansionInt; if (I && I.status && I.status().state === 1) return true; // interior loading / compiling
+      if (window.DMFac && DMFac.sites) for (const r of DMFac.sites.values()) if (r.mansion && r.ready && r.warmed === false) return true;   // mansion compile in flight
+    } catch (e) {}
+    return false;
+  }
+  function held(now) {
+    if (!mobile()) return false;
+    if (arriving()) { holdUntil = now + 4000; return true; }
+    return now < holdUntil;     // short grace: the burst of mesh/material changes right after arrival settles first
+  }
+  W.held = () => held(performance.now());
+
   W.add = function (root) { if (root && W.roots.indexOf(root) < 0) W.roots.push(root); };
   function R() { return (typeof flightRenderer !== 'undefined' && flightRenderer) || null; }
   function scene() { return (typeof flightScene !== 'undefined' && flightScene) || null; }
@@ -147,6 +172,7 @@
     if (!r || !sc || !cm || !r.compileAsync || !r.initTexture || r._initialized === false) return;
     if (window._warmupMs == null || (typeof _btiWarmed !== 'undefined' && !_btiWarmed && typeof BIRD_TEMPLE !== 'undefined' && BIRD_TEMPLE.group)) return;   // after the flight + temple warm-ups (they compile everything once)
     if (window._dmWarming || document.hidden || (window.DMAR && DMAR.active)) return;
+    if (held(performance.now())) { W.stats.held = (W.stats.held || 0) + 1; return; }   // (v231) mobile arrival / on foot: see arriving()
     busy = true; const t0 = performance.now();
     // (v197) the uncapped first drain ends when play starts (see playing()) or 45 s after it began
     if (!drained) { if (!drainT0) drainT0 = t0; if (t0 - drainT0 > 45000 || playing()) drained = true; }

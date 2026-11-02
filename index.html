@@ -1030,8 +1030,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-marine.js?v=216" defer></script>
 <script src="ui/dm-bt-roomlights.js?v=144" defer></script>
 <script src="ui/dm-bt-hull.js?v=144" defer></script>
-<script src="ui/dm-edgewarm.js?v=217" defer></script>
-<script src="ui/dm-arielhome.js?v=228" defer></script>
+<script src="ui/dm-edgewarm.js?v=231" defer></script>
+<script src="ui/dm-arielhome.js?v=231" defer></script>
 <script src="ui/dm-mansion-look.js?v=229" defer></script>
 <script src="ui/dm-mansion-interior.js?v=230" defer></script>
 <script src="ui/dm-facilities.js?v=230" defer></script>
@@ -14493,9 +14493,10 @@ function fastTravelToGalaxy(galaxyId,galaxyName){
 // system you travel to) compiled the first time it crossed the screen edge: a freeze, then a skip past it. Right after
 // a rebuild, switch culling off for the single synchronous call that collects the render list, restore it at once
 // (nothing is drawn unculled), and let the GPU finish compiling in the background.
-let _sysWarmBusy=false;
+let _sysWarmBusy=false, _sysWarmDeferred=false;
 function _sysLandPending(){ try{ return !!(window.DMArielHome&&DMArielHome.landPending&&DMArielHome.landPending()); }catch(e){ return false; } }
 let _sysRebuildBusy=0;   // (v228) > 0 while rebuildFlightForSystem runs: a landing must not open a world over a half-built system
+Object.defineProperty(window,'__sysBusy',{configurable:true,get(){return _sysRebuildBusy>0;}});   // read by ui/dm-edgewarm.js (module-scoped lets aren't visible to classic scripts)
 async function _warmSystemAfterRebuild(){
   if(_sysWarmBusy||window._dmWarming||typeof flightRenderer==='undefined'||!flightRenderer||!flightRenderer.compileAsync) return;
   _sysWarmBusy=true;
@@ -14505,7 +14506,8 @@ async function _warmSystemAfterRebuild(){
     // compiling every star, planet and moon at once on top of the world's own compile and the mansion's was the phone's arrival crash. It runs once
     // the world is closed (bounded wait: 1 s steps, 5 min at most).
     for(let n=0;n<300&&(PW.active||PW.opening||_sysLandPending());n++) await new Promise(r=>setTimeout(r,1000));
-    if(PW.active||PW.opening) return;
+    if(PW.active||PW.opening){ _sysWarmDeferred=true; return; }   // (v232) re-run on world exit (_pwRestoreSpace)
+    _sysWarmDeferred=false;
     const un=[]; let p=null;
     try{ flightScene.traverse(o=>{ if(o.frustumCulled){ o.frustumCulled=false; un.push(o); } }); p=flightRenderer.compileAsync(flightScene,flightCamera); }
     finally{ for(const o of un) o.frustumCulled=true; }
@@ -19880,6 +19882,7 @@ function _pwSpaceClose(){
 }
 // she rides the space board again (the one loop carries on)
 function _pwRestoreSpace(keepCam){
+  if(_sysWarmDeferred){ _sysWarmDeferred=false; try{ setTimeout(()=>{ try{ _warmSystemAfterRebuild(); }catch(e){} },1500); }catch(e){} }   // (v232) the system warm-up was held back while the world was open: run it once now
   try{ rebuildFlightBoardIfBroken('backToSpace'); }catch(e){}
   if(boardFlight){ boardFlight.visible=true; boardFlight.position.copy(STATE.flight.pos); }
   if(CHAR.loaded&&CHAR.root&&boardFlight){ try{ mountSkyboard(boardFlight); _forceCharVisible(); }catch(e){} }
