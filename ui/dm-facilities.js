@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  const F = window.DMFac = { ctx: null, sites: new Map(), solids: [], scene: null, ver: '218' };
+  const F = window.DMFac = { ctx: null, sites: new Map(), solids: [], scene: null, ver: '229' };
   const DM = window.DM_FAC = window.DM_FAC || {};
   DM.bay = DM.bay || { inside: false, membrane: 0 };
   F.bind = c => { F.ctx = c; };
@@ -322,7 +322,9 @@
     for (let i = 0; i < L.length; i++) { const s = L[i]; if (x < s.x0 || x > s.x1 || z < s.z0 || z > s.z1) continue; const v = solidAt(s, x, z); if (v > h) h = v; }
     return h;
   };
-  F.wrapH = function (H) { F.baseH = H; return (x, z) => { const h = H(x, z); if (!F.solids.length) return h; const s = F.heightAt(x, z); return s > h ? s : h; }; };
+  // F.ovr (ui/dm-mansion-interior.js): while she walks inside the mansion it answers with the exact interior floor height (or NaN), bypassing the max-with-base below.
+  F.ovr = null;
+  F.wrapH = function (H) { F.baseH = H; return (x, z) => { const o = F.ovr; if (o !== null) { const v = o(x, z); if (v === v) return v; } const h = H(x, z); if (!F.solids.length) return h; const s = F.heightAt(x, z); return s > h ? s : h; }; };
   // world-space solids from a landmark's local ones (rotation θ about Y at (px,pz), local y0 offset)
   function addSolids(list, px, pz, th, y0, flip) {
     const ct = Math.cos(th), st = Math.sin(th);
@@ -339,6 +341,7 @@
   const hashS = s => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
   function dispose(o) { o.traverse(n => { if (n.geometry) n.geometry.dispose(); }); }
   function teardown() {
+    if (window.DMMansionInt) { try { DMMansionInt.detach(); } catch (e) { } }
     for (const r of F.sites.values()) { if (r.group && r.group.parent) r.group.parent.remove(r.group); if (r.group && !r.mansion) dispose(r.group); }
     F.sites.clear(); F.solids.length = 0; F.bay = null; DM.bay.inside = false; DM.bay.membrane = 0; hiTried = false;
   }
@@ -368,6 +371,7 @@
         else rec.warmed = true;
       } catch (e) { rec.warmed = true; }
       rec.group = root; rec.mansion = true; rec.x = px; rec.z = pz; rec.y = y0; rec.th = th; rec.ready = true;
+      if (window.DMMansionInt) { try { DMMansionInt.attach(F, rec, px, pz, y0, th); } catch (e) { console.warn('[mansion-interior] attach', e); } }
       const col = MAN.col, nx = col.nx, ny = col.ny, inv = 1 / col.scale, cell = col.cell, hh = col.h;
       const R = 230;
       F.solids.push({ x0: px - R, x1: px + R, z0: pz - R, z1: pz + R, grid: (x, z) => {
@@ -445,6 +449,7 @@
         const u = rec.group.userData, near = d2 < 420 * 420, far = d2 > 5200 * 5200;
         if (u.lod0) u.lod0.visible = near && !far; if (u.lod1) u.lod1.visible = !near && !far;
         if (d2 < 1100 * 1100) upgrade2K(T);
+        if (window.DMMansionInt) DMMansionInt.tick(rec, d2, now, DM.arriveAt === rec.def.id);
       } else rec.group.visible = d2 < 6000 * 6000;
       if (rec.clouds) for (const p of rec.clouds) { const t = p.material.map; t.offset.x += p.userData.v * dt; t.offset.y += p.userData.v * 0.6 * dt; }
       if (rec.bay) {

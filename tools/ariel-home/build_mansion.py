@@ -343,21 +343,39 @@ def post_on(b, poly, ztop, tags, mat, sink=0.12):
         b.quad((a[0], a[1], gz[i] - sink), (c[0], c[1], gz[(i + 1) % n] - sink), (c[0], c[1], ztop), (a[0], a[1], ztop), mat)
     b.face([(p[0], p[1], ztop) for p in poly], mat)
 
-def glass_wall(b, p0, p1, z0, cap, tags, fins=0.0, mullion=2.4, detail=1.0):
-    """floor-to-roof glazing; every panel, mullion and fin is clipped to the soffit above it"""
+def glass_wall(b, p0, p1, z0, cap, tags, fins=0.0, mullion=2.4, detail=1.0, gaps=(), door_h=4.6, glow=True):
+    """floor-to-roof glazing; every panel, mullion and fin is clipped to the soffit above it.
+    gaps = [(s0, s1)] door openings (distance along the wall from p0): no glass/mullions below door_h, a transom + lintel above.
+    glow=False drops the warm glow sheet (LOD0 walls that have a walkable interior behind them)."""
     (x0, y0), (x1, y1) = p0, p1
     L = math.hypot(x1 - x0, y1 - y0)
-    sheet(b, p0, p1, z0, cap, 'glass', tags, gap=0.04)
+    at = lambda s: (x0 + (x1 - x0) * s / L, y0 + (y1 - y0) * s / L)
     nx_, ny_ = (y1 - y0) / L, -(x1 - x0) / L            # outward-ish normal
-    inset = 1.2
-    sheet(b, (x0 - nx_ * inset, y0 - ny_ * inset), (x1 - nx_ * inset, y1 - ny_ * inset), z0 + .05, cap, 'glow', tags, gap=0.2, two=False, step=1.0)
-    n = max(1, int(L / mullion)); rz = math.atan2(y1 - y0, x1 - x0)
-    for i in range(n + 1):
-        t = i / n; x = x0 + (x1 - x0) * t; y = y0 + (y1 - y0) * t
+    inset = 1.2; rz = math.atan2(y1 - y0, x1 - x0)
+    spans = []; cur = 0.0
+    for a, c in sorted(gaps):
+        if a > cur: spans.append((cur, a, z0))
+        spans.append((a, c, z0 + door_h)); cur = c
+    if cur < L: spans.append((cur, L, z0))
+    for sa, sc, zb in spans:
+        pa, pc = at(sa), at(sc)
+        sheet(b, pa, pc, zb, cap, 'glass', tags, gap=0.04)
+        if glow: sheet(b, (pa[0] - nx_ * inset, pa[1] - ny_ * inset), (pc[0] - nx_ * inset, pc[1] - ny_ * inset), zb + .05, cap, 'glow', tags, gap=0.2, two=False, step=1.0)
+    n = max(1, int(L / mullion))
+    ss = [L * i / n for i in range(n + 1)]
+    for a, c in gaps:                                   # jamb posts + lintel bar at the door edges
+        ss = [s for s in ss if not (a - 1e-6 <= s <= c + 1e-6)] + [a, c]
+        mx, my = at((a + c) / 2)
+        b.box(mx, my, z0 + door_h - 0.12, c - a, 0.26, 0.24, 'dark', rz=rz)
+    for s in sorted(ss):
+        x, y = at(s)
         post_up(b, x, y, 0.22, 0.22, z0, tags, cap, 'dark', rz=rz, gap=0.03)
         if fins: post_up(b, x + nx_ * 0.4, y + ny_ * 0.4, 0.12, fins, z0, tags, cap, 'slate', rz=rz + math.pi / 2, gap=0.05)
 
 POOLS = []
+# door openings (distance from the wall's p0, unscaled units): hall front = west deck / prow / east deck; arrival wing = pedestrian + garage
+HALL_GAPS = [(-44.5 + 50.9, -38.5 + 50.9), (-5.0 + 50.9, 5.0 + 50.9)]
+WING_GAPS = [(-50.0 + 63.8, -45.4 + 63.8), (-20.0 + 63.8, -8.0 + 63.8)]
 def deck(b, poly, z, th, pool=None, rail=True, side='concrete', tag='deck', norail=()):
     """slab with a real sunken pool basin (Exact Boolean DIFFERENCE), registered for pier / column trimming; rock is carved under it"""
     d = B(); d.prism(poly, z - th, z, side, top='concrete', bot='concrete')
@@ -430,9 +448,18 @@ def build_house(b, detail=1.0):
     ring = [(cx + (r - .6) * math.cos(2 * math.pi * i / N), cy + (r - .6) * math.sin(2 * math.pi * i / N)) for i in range(N)]
     ribbon(b, ring + [ring[0]], .22, z=0.5, lift=0.02, step=9)
     # ── 1. arrival wing (inland, long low gunmetal block, flat roof with upstand) ──
-    b.box(-30, -62, 0.3, 70, 18, 7.2, dict(top='slate', bot='concrete', side='concrete', front='concrete'))
+    # (hollow shell since the walkable interior: three concrete walls + a glazed front with a pedestrian door and a wide garage opening)
+    if detail >= 1:
+        wall_box(b, (-65, -70.4), (5, -70.4), 1.2, 0.3, 'concrete', (), 7.5, bot=False)
+        wall_box(b, (-64.4, -71), (-64.4, -52.4), 1.2, 0.3, 'concrete', (), 7.5, bot=False)
+        wall_box(b, (4.4, -71), (4.4, -52.4), 1.2, 0.3, 'concrete', (), 7.5, bot=False)
+    else:
+        b.box(-30, -62, 0.3, 70, 18, 7.2, dict(top='slate', bot='concrete', side='concrete', front='concrete'))
     b.box(-30, -62, 7.5, 74, 22, .55, dict(top='slate', bot='wood', side='dark'))
-    glass_wall(b, (-62, -52.9), (2, -52.9), 0.5, 7.45, (), fins=0.5, mullion=3.2)
+    if detail >= 1:
+        glass_wall(b, (-63.8, -52.9), (3.8, -52.9), 0.5, 7.45, (), fins=0.5, mullion=3.2, gaps=WING_GAPS, door_h=5.2, glow=False)
+    else:
+        glass_wall(b, (-62, -52.9), (2, -52.9), 0.5, 7.45, (), fins=0.5, mullion=3.2)
     # ── 2. main hall: long, parallel to the cliff, folded delta roof ──
     hx0, hx1, hy0, hy1 = -52, 54, -30, -2
     nL = [(-62, -38), (-20, -37), (14, -35), (50, -33), (66, -32)]
@@ -459,7 +486,10 @@ def build_house(b, detail=1.0):
     main_c = bool_apply(main, [cut_by_prow]); prow_c = bool_apply(prow, [cut_by_main]); canopy_c = bool_apply(canopy, [cut_by_main, cut_by_prow])
     for o, tag in ((main_c, 'main'), (prow_c, 'prow'), (canopy_c, 'canopy')): b.append(o); reg_from_B(o, tag)
     # hall walls / glass follow the roof contour
-    glass_wall(b, (hx0 + 3, hy1), (hx1 - 3, hy1), 0.35, 24, ('main',), fins=0.9, detail=detail)
+    if detail >= 1:   # full-width glazing to the end walls, with door openings onto the west deck / prow / east deck
+        glass_wall(b, (hx0 + 1.1, hy1), (hx1 - 1.1, hy1), 0.35, 24, ('main',), fins=0.9, detail=detail, gaps=HALL_GAPS, door_h=4.6, glow=False)
+    else:
+        glass_wall(b, (hx0 + 3, hy1), (hx1 - 3, hy1), 0.35, 24, ('main',), fins=0.9, detail=detail)
     wall_box(b, (hx0, hy0), (hx0, hy1), 2.2, 0.35, 'concrete', ('main',), 24, gap=0.05)             # end walls (gabled to the roof)
     wall_box(b, (hx1, hy0), (hx1, hy1), 2.2, 0.35, 'concrete', ('main',), 24, gap=0.05)
     wall_box(b, (hx0, hy0), (hx1, hy0), 2.0, 0.35, 'concrete', ('main',), 24, gap=0.05)             # rear wall
@@ -473,7 +503,7 @@ def build_house(b, detail=1.0):
     b.prism(pr, -1.3, -0.1, 'concrete', top='concrete', bot='concrete', reg='deck')
     for i in range(1, 5):
         a, c = pr[i], pr[(i + 1) % len(pr)]      # all four outer edges (west edge was missing), tops follow the roofs above
-        glass_wall(b, a, c, -0.1, 14, ('prow', 'main'), fins=0.0 if detail < 1 else 0.7, mullion=2.6, detail=detail)
+        glass_wall(b, a, c, -0.1, 14, ('prow', 'main'), fins=0.0 if detail < 1 else 0.7, mullion=2.6, detail=detail, glow=detail < 1)
     ribbon(b, [(-23.5, 0.5), (-11.8, 37.5), (-0.3, 54.6)], .12, tags=('prow',), lift=0.03)
     ribbon(b, [(23.5, 0.5), (11.8, 37.5), (0.3, 54.6)], .12, tags=('prow',), lift=0.03)
     # ── 4. upper guest wing, yawed 14 degrees, with its own folded roof ──
