@@ -1,0 +1,28 @@
+<!doctype html><html><body style="margin:0;background:#000"><canvas id=c width=960 height=540 style="display:block"></canvas>
+<script type=importmap>{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js","three/webgpu":"https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js","three/tsl":"https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.tsl.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.185.0/examples/jsm/"}}</script>
+<script type=module>
+// (needs assets/ariel-home/ariel-home-interior*.glb from the mansion-interior PR; serve the repo root, open this file, screenshot after window.__done)
+// Standalone harness for ui/dm-mansion-look.js: loads the real interior GLB, applies the shared look exactly like ui/dm-mansion-interior.js does, and renders it
+// with the world's ambient + hemisphere + sun light set. ?cam=x,y,z&look=x,y,z&mode=auto|night|...&tier=0..3&sun=0|1&mobile=1&reload=1 (unload+apply again)
+import * as THREE_NS from 'three/webgpu'; import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+const THREE = Object.assign({}, THREE_NS); window.THREE = THREE;
+const q = new URLSearchParams(location.search), v3 = (s, d) => (s || d).split(',').map(Number);
+const cv = document.getElementById('c'); const r = new THREE_NS.WebGPURenderer({ canvas: cv, antialias: false, forceWebGL: true }); await r.init();
+r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 1.0;
+const scene = new THREE.Scene(); scene.background = new THREE.Color(+(q.get('sky') || 0x0a0f1a));
+const hemi = new THREE.HemisphereLight(0xbfd8ff, 0x4a3a2a, 0.55), amb = new THREE.AmbientLight(0xffffff, 0.25), sun = new THREE.DirectionalLight(0xfff0d8, +(q.get('sunI') || 2.2));
+sun.position.set(30, 60, 20); if (q.get('sun') !== '0') scene.add(sun); scene.add(hemi, amb);
+const cam = new THREE.PerspectiveCamera(70, 960 / 540, 0.05, 400); cam.position.set(...v3(q.get('cam'), '-54,1.7,-5')); cam.lookAt(...v3(q.get('look'), '-40,1.5,-5')); cam.updateMatrixWorld();
+const PW = { scene, camera: cam, renderer: r };
+const ctx = { THREE, PW: () => PW, isMobile: () => q.get('mobile') === '1', tier: () => +(q.get('tier') || 2) };
+await new Promise(res => { const s = document.createElement('script'); s.src = '../../ui/dm-mansion-look.js'; s.onload = res; document.head.appendChild(s); });
+if (q.get('mode')) DMMansionLook.set(q.get('mode'));
+const loader = new GLTFLoader(); const url = '../../assets/ariel-home/ariel-home-interior' + (q.get('mobile') === '1' ? '-512' : '') + '.glb';
+let root = null, stats = null;
+async function load() { const gl = await loader.loadAsync(url); root = gl.scene; stats = q.get('nolook') === '1' ? null : DMMansionLook.apply(root, ctx); scene.add(root); await r.compileAsync(root, cam, scene); }
+await load();
+if (q.get('stockcycle') === '1') { const t0 = r.info.memory.textures; await r.renderAsync(scene, cam); const t1 = r.info.memory.textures; const tx = new Set(); root.traverse(n => { if (n.material) for (const k in n.material) { const v = n.material[k]; if (v && v.isTexture) tx.add(v); } }); scene.remove(root); tx.forEach(t => t.dispose()); window.__stock = [t0, t1, tx.size, r.info.memory.textures]; }
+if (q.get('reload') === '1') { scene.remove(root); root.traverse(n => { if (n.geometry) n.geometry.dispose(); if (n.material && !n.material.userData.dmMansionLook) n.material.dispose(); }); const b0 = r.info.memory.textures; DMMansionLook.release(); await r.renderAsync(scene, cam); window.__rel = [b0, r.info.memory.textures]; await load(); if (q.get('reload2') === '1') { scene.remove(root); root.traverse(n => { if (n.geometry) n.geometry.dispose(); if (n.material && !n.material.userData.dmMansionLook) n.material.dispose(); }); DMMansionLook.release(); await r.renderAsync(scene, cam); window.__rel.push(r.info.memory.textures); await load(); for (let i = 0; i < 2; i++) await r.renderAsync(scene, cam); window.__rel.push(r.info.memory.textures); } }
+window.__t1 = r.info.memory.textures; if (q.get('nolook') !== '1') { const A = DMMansionLook._S.atlas; window.__dbg = ['map','normalMap','metalnessMap','roughnessMap','aoMap','emissiveMap','bumpMap'].map(k => [k, A[k] && A[k].id, A[k] && A[k].source.uuid.slice(0,4)]); } for (let i = 0; i < 3; i++) await r.renderAsync(scene, cam);
+window.__done = { stats, mem: DMMansionLook.mem(), info: { calls: r.info.render.calls, tris: r.info.render.triangles, geoms: r.info.memory.geometries, textures: r.info.memory.textures }, mode: DMMansionLook.get(), rel: window.__rel, stock: window.__stock, t1: window.__t1, dbg: window.__dbg };
+</script></body></html>
