@@ -157,7 +157,9 @@
   async function loadSeq(F, c, gen) {
     const base = 'assets/ariel-home/ariel-home-interior', v = '?v=' + F.ver, LK = G.DMMansionLook;
     const stale = () => gen !== S.gen || !S.rec || !S.rec.group;
-    const gl = (await Promise.all([c.loadGLB(base + (c.isMobile() ? '-512' : '') + '.glb' + v), navP]))[0];
+    const glbUrl = base + (c.isMobile() ? '-512' : '') + '.glb' + v;
+    c.glbUrl = glbUrl;                               // the file actually loaded (-512 on mobile): look's context-restore / closed-bitmap guard rebuilds from it
+    const gl = (await Promise.all([c.loadGLB(glbUrl), navP]))[0];
     if (stale()) { disposeObj(gl.scene); return; }
     if (NAV === null) { disposeObj(gl.scene); throw new Error('no nav'); }
     const root = gl.scene; root.name = 'ArielInterior';
