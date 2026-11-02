@@ -20,7 +20,7 @@ if (q.get('lm')) DMMansionLook._S.lmK = +q.get('lm'); if (q.get('eg')) DMMansion
 if (q.get('mode')) DMMansionLook.set(q.get('mode'));
 if (q.get('dbg')) window.__dbgmode = q.get('dbg');
 const loader = new GLTFLoader(); const url = '../../assets/ariel-home/ariel-home-interior' + (q.get('mobile') === '1' ? '-512' : '') + '.glb';
-let root = null, stats = null; window.__h = { loader, url, ctx };   // for ad-hoc lifecycle tests (release mid-load etc.)
+let root = null, stats = null; ctx.glbUrl = url; window.__h = { loader, url, ctx, r, scene, cam, T: THREE_NS };   // for ad-hoc lifecycle tests (release mid-load etc.)
 // baked GI (assets/ariel-home/gi/, tools/ariel-home/bake_gi.js): on by default, ?gi=0 = the vertex-baked look only (the 'before' of the A/B renders)
 // ?seq=1: the OOM-safe order (GLB -> apply(root, ctx, null) -> await loadGI -> compile); default keeps the legacy prefetch-in-parallel order. Both report the JS heap peak (needs --enable-precise-memory-info).
 let heapPeak = 0; const heapMB = () => (performance.memory ? performance.memory.usedJSHeapSize / 1048576 : 0); setInterval(() => { heapPeak = Math.max(heapPeak, heapMB()); }, 5);

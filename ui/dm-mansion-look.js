@@ -21,6 +21,10 @@
 // Low-memory load order (Chrome Aw-Snap OOM fix): apply(root, ctx, null) first (GLB parsed, shared atlas swapped in), THEN `await DMMansionLook.loadGI(ctx, ver)` (GI fetched + decoded one file at a
 //   time, attached to the already-applied atlas, resolves true/false), THEN the loader's compileAsync (lightMap/aoMap change the atlas program key). Every ImageBitmap-backed texture (GLB atlas maps,
 //   GI lightmap/AO) closes its CPU bitmap in Texture.onUpdate, i.e. right after the first GPU upload. release()/destroy() (the 400 m dispose hook) cancel an in-flight loadGI. prefetch()+apply(.., gi) still works.
+// Context loss / closed-bitmap safety: closed bitmaps cannot re-upload, so (1) DMMansionLook.gpuLost() marks state dirty (host calls it from its device-lost handler; the look also listens for
+//   'webglcontextlost' / 'webglcontextrestored' on ctx.PW().renderer.domElement), (2) restore(ctx) re-decodes the atlas maps from ctx.glbUrl (+GI via loadGI) and re-uploads, auto-run on
+//   'webglcontextrestored' when ctx.glbUrl is set. (3) Any later needsUpdate on a texture whose bitmap is closed (colorSpace/format change, tier swap) is swallowed, console.warn'd and routed to
+//   the same restore() instead of uploading from a closed bitmap. Note three r185 cannot revive a lost renderer by itself (the host creates a fresh renderer or reloads); this is the look-side half.
 // Light modes (flat-DOM-free API, same set as the Bird Temple room lights, ui/dm-bt-roomlights.js): DMMansionLook.set('auto'|'bright'|'warm'|'cool'|'night'|'off'),
 // .cycle(), .get(). Persisted in localStorage 'dm_mansion_light'; ?minlight=warm overrides for a session. A mode change only writes two uniforms.
 (function () {
@@ -31,7 +35,7 @@
   const GI_LM = 16, GI_EG = 0.45;   // lightMapIntensity at 'auto' (lightmap texel x meta.gain = irradiance; tuned against the vertex-baked look so mean brightness stays level while the lamp pools, window light and contact shadows come from the bake), unlit fill share kept when a lightmap is on
   // [fill, [r,g,b] tint]
   const SPEC = { auto: [0.52, [1, 1, 1]], bright: [0.8, [1, 1, 1]], warm: [0.58, [1, 0.78, 0.52]], cool: [0.58, [0.7, 0.85, 1]], night: [0.22, [1, 0.24, 0.28]], off: [0.1, [1, 1, 1]] };
-  const S = { mode: 'auto', U: null, atlas: null, tex: [], lowCount: 0, loads: 0, THREE: null, lastMem: 0, gi: null, giOn: true, lmK: GI_LM, egK: GI_EG, tl: [], tlBase: [], tlLast: [], k: [1, 1, 1], pt: 0, plx: 1e9, ply: 1e9, plz: 1e9, active: false, gen: 0, giP: null, pend: null, ver: '' };
+  const S = { mode: 'auto', U: null, atlas: null, tex: [], lowCount: 0, loads: 0, THREE: null, lastMem: 0, gi: null, giOn: true, lmK: GI_LM, egK: GI_EG, tl: [], tlBase: [], tlLast: [], k: [1, 1, 1], pt: 0, plx: 1e9, ply: 1e9, plz: 1e9, active: false, gen: 0, giP: null, pend: null, ver: '', lost: false, giWant: false, restoreP: null, ctx: null, hookEl: null };
   try { const q = (new URLSearchParams(G.location.search)).get('mgi'); if (q === '0' || (q === null && G.localStorage.getItem('dm_mansion_gi') === '0')) S.giOn = false; } catch (e) { }
   try { const m = (new URLSearchParams(G.location.search)).get('minlight') || G.localStorage.getItem(LS); if (m && MODES.indexOf(m) >= 0) S.mode = m; } catch (e) { }
 
@@ -125,6 +129,7 @@
     if (S.gi) return Promise.resolve(true);
     if (S.giP) return S.giP;
     const pend = S.pend; if (!pend || !S.giOn) return Promise.resolve(false);
+    S.giWant = true;
     const gen = S.gen;
     const p = fetchGI(ctx, ver === undefined ? S.ver : ver, () => gen !== S.gen).then(gi => {
       if (S.giP === p) S.giP = null;
@@ -134,7 +139,7 @@
       if (!ok) { S.atlas.lightMap = null; S.atlas.aoMap = null; S.gi = null; discard(gi); return false; }
       if (S.gi.probes) { const L = lightList(ctx); if (L) { for (let i = 0; i < L.length && i < 6; i++) S.tl.push(L[i]); } }
       applyMode(); S.atlas.needsUpdate = true;
-      const A = S.atlas, add = texBytes(A.lightMap) + texBytes(A.aoMap); S.lastMem += add; S.gi.mb = +((add + (S.gi.probes ? S.gi.probes.length : 0) + S.gi.uv2) / 1048576).toFixed(2);   // GLB textures may already be uploaded + closed (0 bytes now): only add the GI maps
+      const A = S.atlas, add = texBytes(A.lightMap) + texBytes(A.aoMap); S.lastMem += add; S.gi.bytes = add; S.gi.mb = +((add + (S.gi.probes ? S.gi.probes.length : 0) + S.gi.uv2) / 1048576).toFixed(2);   // GLB textures may already be uploaded + closed (0 bytes now): only add the GI maps
       return true;
     });
     S.giP = p; return p;
@@ -142,8 +147,25 @@
   // Close an ImageBitmap-backed texture's CPU copy as soon as three has uploaded it (Texture.onUpdate fires right after the upload): the decoded bitmap is the biggest JS-side holder. A texture that is
   // disposed and used again re-decodes from the GLB / GI files on the next visit (release() frees, apply()/loadGI() rebuild), so nothing re-uploads from a closed bitmap.
   function closeAfterUpload(t) {
-    if (!t || !t.image || typeof t.image.close !== 'function' || t._dmClose) return; t._dmClose = true; const prev = t.onUpdate;
-    t.onUpdate = tx => { tx.onUpdate = prev || null; try { if (tx.image && tx.image.close) tx.image.close(); } catch (e) { } if (prev) prev(tx); };
+    if (!t || !t.image || typeof t.image.close !== 'function' || t._dmClose) return; t._dmClose = true; guardClosed(t); const prev = t.onUpdate;
+    t.onUpdate = tx => { tx.onUpdate = prev || null; try { if (tx.image && tx.image.close) { tx.image.close(); tx._dmClosed = true; } } catch (e) { } if (prev) prev(tx); };
+  }
+  // Guard: once a texture's bitmap is closed, a later needsUpdate (colorSpace / format change, tier swap, a stray flag) must not re-upload from it (a black or throwing upload). The request is swallowed
+  // (the GPU copy stays valid), warned about, and routed to the same rebuild-from-file path as a context restore (restore(): re-decode from ctx.glbUrl + GI, then needsUpdate on the fresh bitmap, which
+  // passes the guard because _dmClosed is cleared first). Both Texture.needsUpdate and Source.needsUpdate are covered. Without ctx.glbUrl the request is only warned about and dropped.
+  function guardClosed(t) {
+    if (t._dmGuard) return; t._dmGuard = true;
+    const hook = (o, route) => {
+      let pr = o, d = null; while (pr && !(d = Object.getOwnPropertyDescriptor(pr, 'needsUpdate'))) pr = Object.getPrototypeOf(pr); if (!d || !d.set) return;
+      Object.defineProperty(o, 'needsUpdate', { configurable: true, get() { return d.get ? d.get.call(o) : undefined; }, set(v) {
+        if (v === true && t._dmClosed) { route(); return; } d.set.call(o, v); } });
+    };
+    const route = () => {
+      if (S.restoreP) return;   // a rebuild is already running: it re-uploads this texture (with whatever colorSpace / format it has by then)
+      const c = S.ctx; console.warn('[mansion-look] needsUpdate on a texture whose bitmap is closed: ' + (c && c.glbUrl ? 'rebuilding from file' : 'dropped (no ctx.glbUrl to rebuild from)'));
+      if (c && c.glbUrl && S.atlas) { restore(c).catch(() => { }); }
+    };
+    hook(t, route); if (t.source) hook(t.source, route);
   }
   function discard(gi) { try { if (gi && gi.lm && gi.lm.close) gi.lm.close(); if (gi && gi.aoBmp && gi.aoBmp.close) gi.aoBmp.close(); } catch (e) { } }
   function psumOf(g) {   // same fingerprint as bake_gi.js posSum(): refuse lightmaps baked for a different interior GLB
@@ -166,7 +188,7 @@
     A.aoMapIntensity = 0.85;
     const pm = m.probes, d = pm.dim, n = d[0] * d[1] * d[2];
     for (let i = 0; i < 256; i++) { const v = i / 255, c = (i - 128) / 127; LUT0[i] = pm.m0 * v * v; LUT1[i] = pm.m1 * Math.sign(c) * c * c; }
-    S.gi = { meta: m, probes: gi.probes.length === n * 12 ? gi.probes : null, pm, lm: !!lm, ao: !!ao, uv2: pc * 4 };
+    S.gi = { meta: m, probes: gi.probes.length === n * 12 ? gi.probes : null, pm, lm: !!lm, ao: !!ao, uv2: pc * 4, bytes: texBytes(A.lightMap) + texBytes(A.aoMap) };
     return true;
   }
   // E(n) at a nav-frame point: trilinear over the 8 surrounding probes. Fills PR (up, down, mean; rgb each). No allocation.
@@ -221,11 +243,74 @@
   }
   function probeRelease() { if (S.active) { for (let q = 0; q < 9; q++) KC[q] = 1; writeLights(true); } S.active = false; S.tl.length = 0; }
 
+  // ---- GPU loss / restore --------------------------------------------------------------------------------------------------------------------------------------------------------------
+  // The uploaded bitmaps are closed (see closeAfterUpload), so after a lost GL context / WebGPU device there is nothing left to re-upload from. three r185 cannot revive a lost renderer on its own
+  // (WebGPURenderer sets _isDeviceLost and the host reloads, see index.html _gpuLost); this is the look's half of a recovery for a host that brings up a working renderer again:
+  //   gpuLost()           mark dirty (also fired by the canvas' 'webglcontextlost'); cancels an in-flight loadGI / restore. Host: call it from its WebGPU device-lost handler.
+  //   restore(ctx)        re-decode the closed atlas maps from ctx.glbUrl (a minimal GLB reader: JSON + BIN chunk, no GLTFLoader) one at a time, rebuild the GI via loadGI (sequential, as on a normal
+  //                       visit), set needsUpdate so the (new) renderer re-uploads, and close each bitmap again after that upload. Auto-runs on 'webglcontextrestored' when ctx.glbUrl is set.
+  //                       Resolves true when everything was restored; false = nothing to restore / no glbUrl / released meanwhile. Idempotent; release()/destroy() cancel it.
+  const BMP_OPT = { premultiplyAlpha: 'none', colorSpaceConversion: 'none' };   // what GLTFLoader's ImageBitmapLoader decodes with
+  function glbImages(buf, want) {   // want: { map, normalMap, metalnessMap } -> { key: Blob } for the int_atlas material's colour / normal / ORM images
+    const dv = new DataView(buf); if (dv.getUint32(0, true) !== 0x46546C67) throw new Error('not a GLB');
+    let off = 12, js = null, bin = null;
+    while (off + 8 <= buf.byteLength) { const len = dv.getUint32(off, true), ty = dv.getUint32(off + 4, true); if (ty === 0x4E4F534A) js = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, off + 8, len))); else if (ty === 0x004E4942 && !bin) bin = off + 8; off += 8 + len; }
+    if (!js || bin === null) throw new Error('GLB chunks');
+    const m = (js.materials || []).find(x => x.name === 'int_atlas'); if (!m) throw new Error('no int_atlas');
+    const pb = m.pbrMetallicRoughness || {}, idx = { map: pb.baseColorTexture, normalMap: m.normalTexture, metalnessMap: pb.metallicRoughnessTexture }, out = {};
+    for (const k in want) {
+      const ti = idx[k] && idx[k].index; if (ti === undefined) continue; const t = js.textures[ti]; let src = t.source;
+      if (src === undefined && t.extensions) for (const e in t.extensions) if (t.extensions[e].source !== undefined) { src = t.extensions[e].source; break; }
+      const im = js.images[src], bv = js.bufferViews[im.bufferView]; if (!bv) continue;
+      out[k] = new Blob([new Uint8Array(buf, bin + (bv.byteOffset || 0), bv.byteLength)], { type: im.mimeType || 'image/png' });
+    }
+    return out;
+  }
+  function gpuLost() { if (!S.atlas) return; S.lost = true; S.gen++; S.giP = null; S.restoreP = null; }
+  function restore(ctx) {
+    const A = S.atlas; if (!A || !S.U || !S.pend) return Promise.resolve(false);
+    if (S.restoreP) return S.restoreP;
+    const url = ctx && ctx.glbUrl, gen = ++S.gen, stale = () => gen !== S.gen, closed = {};
+    for (const k of ['map', 'normalMap', 'metalnessMap']) { const t = A[k]; if (t && t._dmClosed) closed[k] = t; }
+    const p = (async () => {
+      const keys = Object.keys(closed); let fresh = [];
+      try {
+        if (keys.length) {
+          if (!url || !G.fetch || !G.createImageBitmap) return false;
+          const r = await fetch(url + (S.ver ? '?v=' + S.ver : '')); if (!r.ok) throw new Error('glb ' + r.status);
+          const blobs = glbImages(await r.arrayBuffer(), closed); await yieldT(); if (stale()) return false;
+          for (const k of keys) {   // one decode at a time; the swap happens only when every image decoded
+            if (!blobs[k]) throw new Error('image ' + k); const b = await G.createImageBitmap(blobs[k], BMP_OPT); fresh.push([closed[k], b]); await yieldT();
+            if (stale()) { for (const f of fresh) f[1].close(); fresh = []; return false; }
+          }
+          for (const [t, b] of fresh) { t.image = b; t._dmClosed = false; t._dmClose = false; closeAfterUpload(t); t.needsUpdate = true; if (t === A.metalnessMap && A.roughnessMap === t) A.roughnessMap = t; }
+          fresh = [];
+        }
+        // GI: drop the old (closed) maps and rebuild through the same sequential path as a normal visit
+        S.giP = null;
+        if (S.gi) { S.lastMem = Math.max(0, S.lastMem - (S.gi.bytes || 0)); probeRelease(); for (const t of [A.lightMap, A.aoMap]) if (t) { freeTex(t); const i = S.tex.indexOf(t); if (i >= 0) S.tex.splice(i, 1); } A.lightMap = null; A.aoMap = null; S.gi = null; applyMode(); A.needsUpdate = true; }
+        if (S.giWant && S.giOn && ctx) await loadGI(ctx, S.ver);   // false = GI unavailable: the vertex-baked look stays, same as a normal visit
+        if (stale()) return false;
+        S.lost = false; return true;
+      } catch (e) { for (const f of fresh) { try { f[1].close(); } catch (e2) { } } console.warn('[mansion-look] restore failed (the next visit rebuilds from files)', e && e.message); return false; }
+      finally { Promise.resolve().then(() => { if (S.restoreP === p) S.restoreP = null; }); }   // deferred: an early synchronous return runs this before `p` is assigned
+    })();
+    S.restoreP = p; return p;
+  }
+  function onLost() { gpuLost(); }
+  function onRestored() { if (S.ctx && S.ctx.glbUrl) restore(S.ctx).catch(() => { }); }
+  function unhook() { const el = S.hookEl; if (el) { try { el.removeEventListener('webglcontextlost', onLost); el.removeEventListener('webglcontextrestored', onRestored); } catch (e) { } } S.hookEl = null; S.ctx = null; }
+  function hook(ctx) {
+    let el = null; try { const PW = ctx.PW && ctx.PW(); el = PW && PW.renderer && PW.renderer.domElement; } catch (e) { }
+    S.ctx = ctx; if (!el || !el.addEventListener || S.hookEl === el) return; unhook(); S.ctx = ctx; S.hookEl = el;
+    el.addEventListener('webglcontextlost', onLost, false); el.addEventListener('webglcontextrestored', onRestored, false);
+  }
+
   const API = {
     MODES, SPEC,
     // root = the freshly parsed interior GLB scene. Swaps its materials for the shared set and trims textures for the preset. Returns a stats object.
     apply(root, ctx, gi) {
-      const t0 = performance.now(); ensureShared(ctx); S.loads++;
+      const t0 = performance.now(); ensureShared(ctx); S.loads++; S.lost = false; S.restoreP = null; hook(ctx);
       const low = (ctx.tier ? ctx.tier() : 2) < 1, mobile = !!(ctx.isMobile && ctx.isMobile());
       let maxA = 1; try { const PW = ctx.PW(); maxA = (PW && PW.renderer && PW.renderer.getMaxAnisotropy && PW.renderer.getMaxAnisotropy()) || 1; } catch (e) { }
       const aniso = low ? 1 : Math.min(maxA, mobile ? 2 : 4);
@@ -265,7 +350,7 @@
       if (gi && giMesh && S.U.node && S.giOn) { try { giOK = attachGI(giMesh, A, gi, ctx.THREE); } catch (e) { console.warn('[mansion-look] GI attach', e); giOK = false; } }
       if (!giOK) { A.lightMap = null; A.aoMap = null; S.gi = null; discard(gi); }
       else if (S.gi.probes) { const L = lightList(ctx); if (L) { for (let i = 0; i < L.length && i < 6; i++) S.tl.push(L[i]); } }
-      applyMode();
+      S.giWant = !!S.gi; applyMode();
       for (const t of prev) if (S.tex.indexOf(t) < 0) freeTex(t);
       // light list: ambient + hemisphere only, once per world (null → default list)
       if (S.U.node) { const L = lightList(ctx); const want = L && ctx.THREE.TSL.lights(L); if (S.atlasLights === undefined || (L && !S.atlasLights)) { A.lightsNode = want || null; S.atlasLights = want || null; } }
@@ -277,16 +362,16 @@
       return { meshes, tris: Math.round(tris), textures: S.tex.length, texMB: +(bytes / 1048576).toFixed(2), gi: S.gi ? { lightmap: S.gi.lm, ao: S.gi.ao, probes: !!S.gi.probes, lights: S.tl.length, giMB: +(giB / 1048576).toFixed(2) } : null, low, aniso, lights: S.atlasLights ? 'amb+hemi' : 'scene', ms: +(performance.now() - t0).toFixed(1) };
     },
     // interior unloaded (she walked away): GPU textures + CPU bitmaps freed; the shared material objects stay (cheap) for the next visit
-    release() { S.gen++; S.giP = null; S.pend = null; probeRelease(); S.gi = null; for (const t of S.tex) freeTex(t); S.tex.length = 0; S.lastMem = 0; if (S.atlas) { S.atlas.lightMap = null; S.atlas.aoMap = null; S.atlas.color.setRGB(1, 1, 1); S.atlas.map = null; S.atlas.emissiveMap = null; S.atlas.normalMap = null; S.atlas.metalnessMap = null; S.atlas.roughnessMap = null; } },
+    release() { S.giWant = false; S.gen++; S.giP = null; S.restoreP = null; S.pend = null; S.lost = false; unhook(); probeRelease(); S.gi = null; for (const t of S.tex) freeTex(t); S.tex.length = 0; S.lastMem = 0; if (S.atlas) { S.atlas.lightMap = null; S.atlas.aoMap = null; S.atlas.color.setRGB(1, 1, 1); S.atlas.map = null; S.atlas.emissiveMap = null; S.atlas.normalMap = null; S.atlas.metalnessMap = null; S.atlas.roughnessMap = null; } },
     // the home world is gone: drop everything
     destroy() { API.release(); if (S.atlas) { try { S.atlas.dispose(); } catch (e) { } S.atlas = null; } S.atlasLights = undefined; },
-    prefetch, loadGI, discard, probeTick,
+    prefetch, loadGI, restore, gpuLost, discard, probeTick,
     // baked probe irradiance (lightmap units x meta.gain = irradiance) at a nav-frame point, for moving objects that want their own tint; writes out[0..2] (mean). false = no probes loaded
     probeAt(x, y, z, out) { if (!S.gi || !S.gi.probes) return false; sampleProbes(x, y, z); out[0] = PR[6]; out[1] = PR[7]; out[2] = PR[8]; return true; },
     set(m) { if (MODES.indexOf(m) < 0) return S.mode; S.mode = m; try { G.localStorage.setItem(LS, m); } catch (e) { } applyMode(); return m; },
     get() { return S.mode; },
     cycle() { return API.set(MODES[(MODES.indexOf(S.mode) + 1) % MODES.length]); },
-    mem() { return { texMB: +(S.lastMem / 1048576).toFixed(2), textures: S.tex.length, loads: S.loads, gi: !!S.gi }; },
+    mem() { return { texMB: +(S.lastMem / 1048576).toFixed(2), textures: S.tex.length, loads: S.loads, gi: !!S.gi, lost: S.lost }; },
     _S: S,
   };
   G.DMMansionLook = API;
