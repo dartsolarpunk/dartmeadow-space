@@ -230,7 +230,7 @@
   // ── Ariel's mansion (GLB + collision grid) ───────────────────────────────────────────────────────────────
   const MAN = { glb: null, col: null, loading: false, failed: false };
   function loadMansion() {
-    if (MAN.glb || MAN.loading || MAN.failed) return;
+    if (MAN.glb || MAN.loading || MAN.failed || F.ctx.sysBusy) return;    // a system rebuild is running: wait (retried from tick), same gate as pollLand
     MAN.loading = true; const c = F.ctx;
     // (v223) phones/tablets load the half-size-map mansion (≈75 MB less graphics memory)
     Promise.all([c.loadGLB('assets/ariel-home/' + (c.isMobile() ? 'ariel-home-512.glb' : 'ariel-home.glb') + '?v=' + F.ver), fetch('assets/ariel-home/ariel-home-collide.json?v=' + F.ver).then(r => r.json())]).then(([gl, col]) => {
@@ -245,7 +245,7 @@
     const lod0 = sc.getObjectByName('Mansion_LOD0'), lod1 = sc.getObjectByName('Mansion_LOD1');
     root.add(sc); root.userData.lod0 = lod0; root.userData.lod1 = lod1;
     const sh = F.ctx.shadows() && !F.ctx.isMobile();   // (v223) the mansion casts no shadows on phones/tablets: saves a 59k-triangle shadow pass
-    sc.traverse(o => { if (o.isMesh) { o.frustumCulled = false; const n = o.material && o.material.name; if (sh && lod0 && o.parent === lod0 || sh && lod0 && lod0.getObjectById(o.id)) { o.castShadow = n !== 'ah_rock' && n !== 'ah_glass'; o.receiveShadow = true; } } });
+    sc.traverse(o => { if (o.isMesh) { if (o.geometry && !o.geometry.boundingSphere) o.geometry.computeBoundingSphere(); const n = o.material && o.material.name; if (sh && lod0 && o.parent === lod0 || sh && lod0 && lod0.getObjectById(o.id)) { o.castShadow = n !== 'ah_rock' && n !== 'ah_glass'; o.receiveShadow = true; } } });
     return root;
   }
   let hiTried = false;
@@ -431,10 +431,12 @@
     }
     for (const rec of F.sites.values()) {
       if (rec.ready) continue;
+      if (rec.def.kind === 'mansion' && !MAN.glb && !MAN.loading) loadMansion();
       if (rec.sr.i < rec.sr.cells.length) { stepSearch(rec.sr, F.baseH, 4); }
       if (rec.sr.i >= rec.sr.cells.length) {
         if (!rec.best) { rec.best = rec.sr.best || { x: rec.sr.cells[0][0], z: rec.sr.cells[0][1], dx: 0, dz: 1, h: F.baseH(rec.sr.cells[0][0], rec.sr.cells[0][1]), s: -1 }; }
         if (rec.def.kind === 'mansion' && !MAN.glb) { if (MAN.failed) { rec.ready = true; rec.failed = true; } continue; }
+        if (rec.def.kind === 'mansion' && c.sysBusy) continue;     // a system rebuild is running: place when it is done
         try { place(rec, T, PW, TERRAIN); } catch (e) { console.warn('[facilities] place', rec.def.id, e); rec.ready = true; rec.failed = true; }
       }
     }
