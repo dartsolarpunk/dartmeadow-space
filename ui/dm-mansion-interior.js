@@ -150,24 +150,95 @@
     if (!navP) navP = fetch('assets/ariel-home/ariel-home-interior-nav.json?v=' + F.ver).then(r => { if (!r.ok) throw new Error('nav ' + r.status); return r.json(); }).then(j => { NAV = parseNav(j); }, e => { navP = null; console.warn('[mansion-interior] nav', e); });
     return navP;
   }
-  function load() {
-    const F = S.F, c = F.ctx, rec = S.rec, gen = ++S.gen; S.state = 1;
-    const base = 'assets/ariel-home/ariel-home-interior', v = '?v=' + F.ver;
-    ensureNav(F);
-    const LK = G.DMMansionLook, giP = LK && LK.prefetch ? LK.prefetch(c, F.ver) : null;   // baked lightmap/AO/probes (assets/ariel-home/gi/), fetched in parallel with the GLB; null = old look
-    Promise.all([c.loadGLB(base + (c.isMobile() ? '-512' : '') + '.glb' + v), navP, giP]).then(([gl, , gi]) => {
-      if (gen !== S.gen || !S.rec || !S.rec.group) { disposeObj(gl.scene); if (LK && LK.discard) LK.discard(gi); return; }
-      if (NAV === null) { disposeObj(gl.scene); if (LK && LK.discard) LK.discard(gi); throw new Error('no nav'); }
-      const root = gl.scene; root.name = 'ArielInterior';
-      root.traverse(n => { if (n.isMesh) { n.castShadow = false; n.receiveShadow = false; n.matrixAutoUpdate = false; } });
-      if (G.DMMansionLook) { try { G.DMMansionLook.apply(root, c, gi); } catch (e) { console.warn('[mansion-interior] look', e); } }   // shared materials + cheap fake-light (ui/dm-mansion-look.js)
-      S.rec.group.add(root); S.root = root; root.updateMatrixWorld(true);
-      // same order as the mansion itself (#239): tag FIRST, compile SECOND, once.
-      c.mapTag(root);
-      const PW = c.PW(), done = () => { if (gen !== S.gen) return; S.state = 2; };
-      try { if (PW && PW.renderer && PW.renderer.compileAsync && PW.camera) PW.renderer.compileAsync(root, PW.camera, PW.scene).then(done, done); else done(); } catch (e) { done(); }
-    }).catch(e => { if (gen !== S.gen) return; S.failed = performance.now(); S.state = 0; console.warn('[mansion-interior] load failed', e); });
+  const nextFrame = () => new Promise(res => { let d = false; const f = () => { if (!d) { d = true; res(); } }; if (G.requestAnimationFrame) G.requestAnimationFrame(f); G.setTimeout(f, 250); });
+  // OOM fix (Chrome Aw-Snap): the GLB parse, the GI decode and the compile no longer overlap. Order: GLB parse (nav JSON alongside) -> look.apply(root, c, null)
+  // -> await look.loadGI() (GI decoded one file at a time, attached to the shared atlas) -> a frame later: parent + tag + compileAsync, ONCE, with everything in.
+  // The root stays out of the scene until then, so nothing half-lit is ever drawn or compiled. unload() -> look.release() cancels an in-flight loadGI.
+  async function loadSeq(F, c, gen) {
+    const base = 'assets/ariel-home/ariel-home-interior', v = '?v=' + F.ver, LK = G.DMMansionLook;
+    const stale = () => gen !== S.gen || !S.rec || !S.rec.group;
+    const gl = (await Promise.all([c.loadGLB(base + (c.isMobile() ? '-512' : '') + '.glb' + v), navP]))[0];
+    if (stale()) { disposeObj(gl.scene); return; }
+    if (NAV === null) { disposeObj(gl.scene); throw new Error('no nav'); }
+    const root = gl.scene; root.name = 'ArielInterior';
+    root.traverse(n => { if (n.isMesh) { n.castShadow = false; n.receiveShadow = false; n.matrixAutoUpdate = false; } });
+    S.root = root;                                   // unload() owns the disposal from here on (it is not in the scene yet)
+    if (LK && typeof LK.loadGI === 'function') {
+      try { LK.apply(root, c, null); } catch (e) { console.warn('[mansion-interior] look', e); }   // shared materials + cheap fake-light (ui/dm-mansion-look.js)
+      if (stale()) return;
+      try { await LK.loadGI(c, F.ver); } catch (e) { console.warn('[mansion-interior] gi', e); }  // false/throw = the vertex-baked look stays
+    } else if (LK && LK.apply) {                    // older look script: its own prefetch, but still after the GLB parse (sequential, never in parallel with it)
+      let gi = null; try { gi = LK.prefetch ? await LK.prefetch(c, F.ver) : null; } catch (e) { }
+      if (stale()) { if (LK.discard) LK.discard(gi); return; }
+      try { LK.apply(root, c, gi); } catch (e) { console.warn('[mansion-interior] look', e); }
+    }
+    if (stale()) return;
+    await nextFrame(); if (stale()) return;           // compile only after the GI is in, not in the same task as its attach
+    S.rec.group.add(root); root.updateMatrixWorld(true);
+    // same order as the mansion itself (#239): tag FIRST, compile SECOND, once.
+    c.mapTag(root);
+    const PW = c.PW(), done = () => { if (gen !== S.gen) return; S.state = 2; };
+    try { if (PW && PW.renderer && PW.renderer.compileAsync && PW.camera) PW.renderer.compileAsync(root, PW.camera, PW.scene).then(done, done); else done(); } catch (e) { done(); }
   }
+  function load() {
+    const F = S.F, gen = ++S.gen; S.state = 1;
+    ensureNav(F);
+    loadSeq(F, F.ctx, gen).catch(e => { if (gen !== S.gen) return; S.failed = performance.now(); S.state = 0; console.warn('[mansion-interior] load failed', e); });
+  }
+
+  // ── sealed room: skip the outside world (ported from the Bird Temple, ui/dm-bt-interior.js #168) ───────────────────────────────────────
+  // SEALED = the camera is inside one of the three enclosed rooms, under the roof, and no glass of the house is inside the view frustum. While sealed, for the main
+  // world render only: every planet-world top-level object that is not the mansion / Ariel / her board / a light holder is hidden, and the caller skips the
+  // atmosphere pass (visibility only; no material, pipeline or light change; restored in end()). Conservative: ANY glass in view (even behind a wall) draws the
+  // world as before. The Bird Temple's occJob (rays against a baked triangle soup) is not ported: the mansion has no collision triangles, so occlusion is always "visible".
+  const Q = { fr: null, m4: null, box: null, v: null, glass: null, cell: 10, pad: 2.5, hid: [], rec: null };
+  function glassBoxes(THREE) {     // world-space boxes of the house's glass, binned by triangle centroid into 10 m cells (a pane never spans the whole house); built once per mansion
+    const out = [], cells = new Map(), g = S.rec.group, lod = g.userData.lod0 || g;
+    g.updateMatrixWorld(true);
+    lod.traverse(o => {
+      if (!o.isMesh || !o.geometry || !o.material || o.material.name !== 'ah_glass') return;
+      const P = o.geometry.attributes.position, I = o.geometry.index, M = o.matrixWorld, n = I ? I.count : P.count, a = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
+      for (let i = 0; i + 2 < n; i += 3) {
+        let cx = 0, cy = 0, cz = 0;
+        for (let k = 0; k < 3; k++) { a[k].fromBufferAttribute(P, I ? I.getX(i + k) : i + k).applyMatrix4(M); cx += a[k].x; cy += a[k].y; cz += a[k].z; }
+        const key = Math.floor(cx / 3 / Q.cell) + ',' + Math.floor(cy / 3 / Q.cell) + ',' + Math.floor(cz / 3 / Q.cell);
+        let b = cells.get(key); if (!b) { b = new THREE.Box3(); cells.set(key, b); out.push(b); }
+        for (let k = 0; k < 3; k++) b.expandByPoint(a[k]);
+      }
+    });
+    for (const b of out) b.expandByScalar(Q.pad);
+    return out;
+  }
+  function keepObj(o, g, k0, k1) {
+    if (o.isLight || o.isCamera || o === g || o === k0 || o === k1) return true;
+    for (let i = 0; i < o.children.length; i++) if (o.children[i].isLight) return true;     // a light's holder (target groups)
+    return false;
+  }
+  function isSealed(scene, cam) {
+    if (S.state !== 2 || !S.live || !S.rec || !S.rec.group || !S.root || !NAV) return false;
+    const THREE = S.F.ctx.THREE; if (!THREE) return false;
+    if (!Q.fr) { Q.fr = new THREE.Frustum(); Q.m4 = new THREE.Matrix4(); Q.v = new THREE.Vector3(); }
+    const cf = S.F.ctx.PW() && S.F.ctx.PW()._camFlat, cp = cf ? cf.p : cam.position;     // the flat-world camera (the drawn one is bent round the focus)
+    const dx = cp.x - S.px, dz = cp.z - S.pz, lx = dx * S.ct - dz * S.st, ly = -(dx * S.st + dz * S.ct), ch = cp.y - S.y0;
+    if (!inRoom(lx, ly) || ch >= soffAt(lx, ly) - 0.3) return false;                    // outside, or on / above the roof
+    if (Q.rec !== S.rec) { Q.rec = S.rec; Q.glass = null; }
+    if (!Q.glass) Q.glass = glassBoxes(THREE);
+    cam.updateMatrixWorld(); Q.fr.setFromProjectionMatrix(Q.m4.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse));
+    for (let i = 0; i < Q.glass.length; i++) { const b = Q.glass[i]; if (b.containsPoint(Q.v.copy(cp)) || Q.fr.intersectsBox(b)) return false; }
+    return true;
+  }
+  // call right before the main world render with the planet scene + camera (+ the two things to keep: her root, her board); true = sealed (caller skips the atmosphere pass)
+  function begin(scene, cam, k0, k1) {
+    Q.hid.length = 0; S.sealed = false;
+    let sealed = false; try { sealed = isSealed(scene, cam); } catch (e) { sealed = false; }
+    if (!sealed) return false;
+    const g = S.rec.group, ch = scene.children;
+    for (let i = 0; i < ch.length; i++) { const o = ch[i]; if (o.visible && !keepObj(o, g, k0, k1)) { o.visible = false; Q.hid.push(o); } }
+    S.sealed = true; return true;
+  }
+  function end() { for (let i = 0; i < Q.hid.length; i++) Q.hid[i].visible = true; Q.hid.length = 0; S.sealed = false; }
+
+  const F_busy = () => !!(S.F && S.F.ctx && S.F.ctx.sysBusy);   // system rebuild running: the interior waits (same gate as pollLand)
 
   const API = {
     // place() calls this once the mansion root exists (px,pz = world origin of the root, y0 = its world y, th = its yaw)
@@ -180,15 +251,15 @@
       if (rec !== S.rec) return;
       if (S.live && now - S.t > 200) { S.live = false; S.have = false; }
       if (S.state === 0) {
-        if (d2 < LOAD_D * LOAD_D && rec.warmed && !arriving) {
+        if (d2 < LOAD_D * LOAD_D && rec.warmed && !arriving && !F_busy()) {
           if (!S.nearAt) S.nearAt = now;
           if (now - S.nearAt > 800 && (!S.failed || now - S.failed > 30000)) load();
         } else S.nearAt = 0;
       } else if (d2 > DROP_D * DROP_D) { if (!S.farAt) S.farAt = now; if (now - S.farAt > 3000) { unload(); S.nearAt = S.farAt = 0; } } else S.farAt = 0;
     },
     detach() { unload(); if (S.F && S.F.ovr === ovr) S.F.ovr = null; if (G.DMMansionLook) { try { G.DMMansionLook.destroy(); } catch (e) { } } S.rec = null; S.F = null; },
-    walk, ground,
-    status() { return { state: S.state, live: S.live, loaded: !!S.root, feet: S.feet, lx: S.lx, ly: S.ly }; },
+    walk, ground, begin, end,
+    status() { return { state: S.state, live: S.live, sealed: S.sealed, loaded: !!S.root, feet: S.feet, lx: S.lx, ly: S.ly }; },
     spawn() { return NAV ? NAV.spawn : null; },
     _test: { parse: j => { NAV = parseNav(j); }, surf, blocked, setFrame(px, pz, y0, th) { S.px = px; S.pz = pz; S.y0 = y0; S.ct = Math.cos(th); S.st = Math.sin(th); S.state = 2; S.F = { ovr: null }; }, ovr, S },
   };

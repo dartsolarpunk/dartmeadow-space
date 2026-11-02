@@ -5931,7 +5931,7 @@ function _fac(){
   if(!window.DMFac) return null;
   if(!_facBound){ _facBound=true;
     DMFac.bind({ THREE, PW:()=>PW, TERRAIN:()=>TERRAIN, atmoState:()=>atmoState, atmoXZ:(la,lo)=>_atmoXZ(la,lo), mapTag:_pwMapTag,
-      curSysName:()=>_ttCurSysName()||'', shadows:()=>!!GFX.shadows, isMobile:()=>!!GFX.isMobile,
+      curSysName:()=>_ttCurSysName()||'', get sysBusy(){return _sysRebuildBusy>0;}, shadows:()=>!!GFX.shadows, isMobile:()=>!!GFX.isMobile,
       tier:()=>({low:0,medium:1,high:2,ultra:3})[(GFX.preset==='auto'||!GFX.preset)?autoPreset():GFX.preset]|0,
       loadGLB:u=>new Promise((ok,no)=>{ const L=_getGLBLoader(); if(!L) return no(new Error('no GLTFLoader')); L.load(u,ok,undefined,no); }),
       afterTeleport:(land)=>{ try{ if(PW) PW._jump=true; }catch(e){} if(land){ try{ atmoThrottle=0; atmoMach=0; try{ $('atmo-throttle').value=0; }catch(e){} if(atmoState){ atmoState.landing=true; atmoState.takeoff=0; atmoState.auto=null; } }catch(e){} } } });
@@ -19079,6 +19079,7 @@ function _pwRender(){
   const spec=window.DMSpec&&DMSpec.on;
   r.setRenderTarget(null);
   DMGpuProf.push('world');
+  let _ms=false; try{ if(window.DMMansionInt&&DMMansionInt.begin) _ms=DMMansionInt.begin(scene,cam,CHAR.root,PW.board); }catch(e){ _ms=false; }   // sealed mansion room: outside world hidden + atmosphere pass skipped (ui/dm-mansion-interior.js)
   try{
     if(_introCovers()){ /* (v226) the intro veil is opaque: the world is not drawn until it dissolves */ }
     else if(window.DMAR&&DMAR.boardOn&&DMAR.board(r,scene,cam)){ /* (v154) AR: the world drawn onto the anchored tabletop board (ui/dm-ar-core.js) */ }
@@ -19092,7 +19093,8 @@ function _pwRender(){
       r.toneMappingExposure=1.0;
       scene.background=null;
       if(spec) try{ DMSpec.pre(cam); }catch(e){}
-      if(!_trueAtmoSurface(r,scene,cam,true)){
+      if(_ms){ r.render(scene,cam); }
+      else if(!_trueAtmoSurface(r,scene,cam,true)){
         r.render(flightScene,flightCamera);
         r.autoClearColor=false;   // the world draws over it (depth cleared)
         r.toneMappingExposure=1.0+0.05*PW.skyK;
@@ -19102,11 +19104,12 @@ function _pwRender(){
       scene.background=PW.bg;
       if(spec) try{ DMSpec.pre(cam); }catch(e){}
       r.toneMappingExposure=1.0+0.05*PW.skyK;
-      if(!_trueAtmoSurface(r,scene,cam,false)) r.render(scene,cam);
+      if(_ms||!_trueAtmoSurface(r,scene,cam,false)) r.render(scene,cam);
     }
     _shotGrab(r);
   }catch(e){ _animLoopWarn('world-render',e); }
   finally{
+    if(_ms) try{ DMMansionInt.end(); }catch(e){}
     DMGpuProf.pop(); try{ DMGpuProf.tick&&DMGpuProf.tick(); }catch(e){}
     r.autoClearColor=true; r.toneMappingExposure=1.0;
     if(spec) try{ DMSpec.post(cam); }catch(e){}
