@@ -116,11 +116,12 @@
   };
   // after a jump: poll until the system's bodies are built, then land at the landmark
   let pend = null;
+  A.landPending = () => !!pend;   // (v228) a landing is queued: the system warm-up waits for it
   function pollLand() {
     const c = C(); if (!pend) return;
     const s = pend, sysOk = (s.sys || 'Sol') === c.curSysName() && c.curGalaxy() === s.gal;
     const b = sysOk && c.celestialBodies.find(x => x.name === s.body && x.mesh);
-    if (b && !c.PW.opening) { pend = null; try { window.DM_FAC = window.DM_FAC || {}; window.DM_FAC.arriveAt = s.id; window.DM_FAC.homeDeck = !!s.deck; c.enterAtmosphericFlight(b, { lat: s.lat, lon: s.lon }); } catch (e) { console.warn('[home] land', e); } return; }
+    if (b && !c.PW.opening && !c.sysBusy) { pend = null; try { window.DM_FAC = window.DM_FAC || {}; window.DM_FAC.arriveAt = s.id; window.DM_FAC.homeDeck = !!s.deck; c.enterAtmosphericFlight(b, { lat: s.lat, lon: s.lon }); } catch (e) { console.warn('[home] land', e); } return; }
     if (++s.tries > 80) { pend = null; return; }
     setTimeout(pollLand, 600);
   }

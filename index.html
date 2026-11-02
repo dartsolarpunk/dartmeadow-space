@@ -1031,7 +1031,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-bt-roomlights.js?v=144" defer></script>
 <script src="ui/dm-bt-hull.js?v=144" defer></script>
 <script src="ui/dm-edgewarm.js?v=217" defer></script>
-<script src="ui/dm-arielhome.js?v=224" defer></script>
+<script src="ui/dm-arielhome.js?v=228" defer></script>
 <script src="ui/dm-facilities.js?v=227" defer></script>
 </head>
 <body>
@@ -5921,7 +5921,7 @@ function _ah(){
       lowRes:()=>(typeof _mcTierResTable==='function'?_mcTierResTable().low:10), get STATE(){return STATE;}, get boardFlight(){return boardFlight;},
       closeQuickTravel, openFastTravel, fastTravelToSystem, enterAtmosphericFlight, GALAXY_DB, curGalaxy:()=>_qtCurGalaxy(),
       toast, atmoExitToSpace, exitSurface, get atmoActive(){return atmoActive;}, get surfaceActive(){return surfaceActive;},
-      curSysName:()=>_ttCurSysName()||'', get flightInited(){return flightInited;}, get PW(){return PW;} });
+      curSysName:()=>_ttCurSysName()||'', get flightInited(){return flightInited;}, get PW(){return PW;}, get sysBusy(){return _sysRebuildBusy>0;} });
   }
   return DMArielHome;
 }
@@ -14492,11 +14492,18 @@ function fastTravelToGalaxy(galaxyId,galaxyName){
 // a rebuild, switch culling off for the single synchronous call that collects the render list, restore it at once
 // (nothing is drawn unculled), and let the GPU finish compiling in the background.
 let _sysWarmBusy=false;
+function _sysLandPending(){ try{ return !!(window.DMArielHome&&DMArielHome.landPending&&DMArielHome.landPending()); }catch(e){ return false; } }
+let _sysRebuildBusy=0;   // (v228) > 0 while rebuildFlightForSystem runs: a landing must not open a world over a half-built system
 async function _warmSystemAfterRebuild(){
   if(_sysWarmBusy||window._dmWarming||typeof flightRenderer==='undefined'||!flightRenderer||!flightRenderer.compileAsync) return;
   _sysWarmBusy=true;
   try{
     await new Promise(r=>setTimeout(r,600));   // the arrival frame draws first
+    // (v228) Not while a world is open, opening, or a Return Home / landmark landing is about to open one: the flight scene is not even drawn then, and
+    // compiling every star, planet and moon at once on top of the world's own compile and the mansion's was the phone's arrival crash. It runs once
+    // the world is closed (bounded wait: 1 s steps, 5 min at most).
+    for(let n=0;n<300&&(PW.active||PW.opening||_sysLandPending());n++) await new Promise(r=>setTimeout(r,1000));
+    if(PW.active||PW.opening) return;
     const un=[]; let p=null;
     try{ flightScene.traverse(o=>{ if(o.frustumCulled){ o.frustumCulled=false; un.push(o); } }); p=flightRenderer.compileAsync(flightScene,flightCamera); }
     finally{ for(const o of un) o.frustumCulled=true; }
@@ -14507,6 +14514,11 @@ async function _warmSystemAfterRebuild(){
   finally{ _sysWarmBusy=false; }
 }
 async function rebuildFlightForSystem(system){
+  _sysRebuildBusy++;
+  try{ return await _rebuildFlightForSystem(system); }
+  finally{ _sysRebuildBusy--; }
+}
+async function _rebuildFlightForSystem(system){
   try{ setGalSkySystem(system); }catch(e){}
   if(!system){ // back to Sol — rebuild the real solar system
     _clearFlightSystemScene();
@@ -14621,7 +14633,8 @@ async function rebuildFlightForSystem(system){
   { const _a=system.ariel?_ah():null; if(!(_a&&_a.arrive())){ STATE.flight.pos.set(AU*1.2,3,4);if(boardFlight)boardFlight.position.copy(STATE.flight.pos); } }   // Veyra: arrive in the lee of Solenne, not inside a star
   if(window._ftArrivePos){STATE.flight.pos.copy(window._ftArrivePos);if(boardFlight)boardFlight.position.copy(STATE.flight.pos);window._ftArrivePos=null;}
   try{ _clearLandPrompt(); }catch(e){}
-  try{ if(CHAR.loaded && CHAR.root && boardFlight) remountSkyboard(boardFlight); }catch(e){}
+  // (v228) not over an open world: she is on that world's board (the space board is hidden while it is up); _pwRestoreSpace puts her back on leaving
+  try{ if(CHAR.loaded && CHAR.root && boardFlight && !(PW.active||PW.opening)) remountSkyboard(boardFlight); }catch(e){}
   try{ _warmSystemAfterRebuild(); }catch(e){}
   toast('🪐 '+system.name+' — '+bodies.length+' bodies. '+bodies.filter(b=>b.landable).length+' landable.',3500);
 }
