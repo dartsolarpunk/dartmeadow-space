@@ -126,5 +126,21 @@ for (const [vn, v] of [['walk', 14], ['run', 30]]) { const P = newPlayer(-45, -1
   ok(X.ovr(wx, wz) !== X.ovr(wx, wz), 'narrow: F.ovr answers NaN outside ground()');
   let threw = false; try { D.ground(() => { throw new Error('x'); }, wx, wz); } catch (e) { threw = true; } ok(threw && X.ovr(wx, wz) !== X.ovr(wx, wz), 'narrow: flag cleared even when the lookup throws');
   ok(D.ground(wrapH, wx, wz) === her && wrapH(wx, wz) === other, 'narrow: repeat calls stay consistent (no leaked state)'); }
+// camera clamps: index.html's _surfHCam (follow camera in updateSurface + orbit camera in _charOrbitPlace) goes through DMMansionInt.ground too, so indoors the clamps see the interior floor, not the roof
+{ const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const m = html.match(/^const _surfHCam=.*$/m); ok(!!m, 'camera: _surfHCam helper present in index.html');
+  const mk = (win) => vm.runInNewContext('var _surfHeight=H;' + (m ? m[0].replace(/^const /, 'var ') : '') + '\n_surfHCam', { window: win, DMMansionInt: win.DMMansionInt, H: wrapH });
+  const camIn = mk(sb), camOut = mk({});   // camOut: no DMMansionInt in scope -> must fall back to the plain lookup (no throw)
+  const P = newPlayer(-30, -10, 0.6); D.walk(P.pos); T_NOW += 50; D.walk(P.pos);
+  const [wx, wz] = toW(-20, -10), floor = Y0 + 0.6;
+  ok(Math.abs(camIn(wx, wz) - floor) < 0.05, 'camera: clamp lookup indoors = interior floor ' + (camIn(wx, wz) - Y0).toFixed(2) + ' (roof is ' + (wrapH(wx, wz) - Y0).toFixed(2) + ')');
+  ok(camOut(wx, wz) === wrapH(wx, wz) && camOut(wx, wz) === extH(wx, wz), 'camera: DMMansionInt missing -> plain lookup, no throw');
+  ok(X.ovr(wx, wz) !== X.ovr(wx, wz), 'camera: F.ovr flag cleared after the camera lookup');
+  const [fx, fz] = toW(-54, 400); ok(camIn(fx, fz) === extH(fx, fz), 'camera: away from the mansion the clamp sees the exterior grid');
+  const fol = html.slice(html.indexOf('function updateSurface('), html.indexOf('function _balanceTrim('));
+  const camSec = fol.slice(fol.indexOf('Third-person follow camera'), fol.indexOf('surfCamera.position.copy(p.camPos);\n  surfCamera.rotation.order'));
+  const orb = html.slice(html.indexOf('function _charOrbitPlace('), html.indexOf('cam.lookAt(target);', html.indexOf('function _charOrbitPlace(')));
+  ok(camSec.length > 1000 && !/_surfHeight\(/.test(camSec.replace(/typeof _surfHeight==='function'/g, '').replace(/_surfHeight\?_surfHCam/g, '')) && (camSec.match(/_surfHCam\(/g) || []).length === 5, 'camera: follow-camera clamps all use _surfHCam (5 lookups)');
+  ok(!/_surfHeight\(/.test(orb) && /_surfHCam\(/.test(orb), 'camera: orbit-camera clamp uses _surfHCam'); }
 console.log((fails ? 'FAILED ' : 'OK ') + (checks - fails) + '/' + checks + ' checks');
 process.exit(fails ? 1 : 0);

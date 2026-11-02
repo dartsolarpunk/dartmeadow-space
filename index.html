@@ -22203,7 +22203,7 @@ function _charOrbitPlace(cam,target,k,head){
   } else if(cam.up.y<0.999) cam.up.set(0,1,0);
   // on the ground the orbit camera can't dip into the terrain either
   if(surfaceActive&&typeof _surfHeight==='function'){
-    const g=_surfHeight(cam.position.x,cam.position.z);
+    const g=_surfHCam(cam.position.x,cam.position.z);
     if(typeof g==='number'&&isFinite(g)&&cam.position.y<g+SURF_CAM_CLEAR) cam.position.y=g+SURF_CAM_CLEAR;
   }
   cam.lookAt(target);
@@ -22422,6 +22422,7 @@ let surfBoard=null,surfTerrainMesh=null,_surfHeight=null,_surfBoardV=null;
 // hides her body so it never blocks the view. ORBIT still works from either.
 let surfFirstPerson=false, _surfFpHidden=false;
 const SURF_CAM_CLEAR=CHAR_TERRAIN_HEIGHT*5/6;   // 5 ft (she is 6 ft = CHAR_TERRAIN_HEIGHT units) — the closest the trailing camera may come to the ground
+const _surfHCam=(x,z)=>window.DMMansionInt?DMMansionInt.ground(_surfHeight,x,z):_surfHeight(x,z);   // camera clamps: inside Ariel's mansion see the interior floor (same ground() path as her groundH), plain lookup if DMMansionInt is missing
 let _camPull=1;
 const SURF_CAM_MAX_RISE=60;      // how far above her head it may climb to see over a ridge
 function _surfFpBody(){
@@ -25123,7 +25124,7 @@ function updateSurface(dt){
   const followDist=Math.max(GFX&&GFX.isMobile?16.5:14.5, _near+(GFX&&GFX.isMobile?11:10)), followHeight=GFX&&GFX.isMobile?7.2:6.6;
   const _mid=surfBoard?_surfBoardSide(surfBoard)*0.5:0;
   let camTX=p.pos.x - fx*followDist + rx*_mid, camTZ=p.pos.z - fz*followDist + rz*_mid;
-  const camGroundH=_surfHeight?_surfHeight(camTX,camTZ):groundH;
+  const camGroundH=_surfHeight?_surfHCam(camTX,camTZ):groundH;
   let camTY=Math.max(eye+followHeight*0.55, camGroundH+followHeight+1.2);
   // ── The camera is a solid body: it never goes into the ground ──
   // It keeps its default distance and height, but stays at least 5 ft
@@ -25131,7 +25132,7 @@ function updateSurface(dt){
   // comes between it and her it rises over it (along its own line to her)
   // instead of cutting through.
   if(typeof _surfHeight==='function'){
-    const gAt=(x,z)=>{ const h=_surfHeight(x,z); return (typeof h==='number'&&isFinite(h))?h:groundH; };
+    const gAt=(x,z)=>{ const h=_surfHCam(x,z); return (typeof h==='number'&&isFinite(h))?h:groundH; };
     // clearance around the camera itself
     let near=camGroundH;
     for(let k=0;k<8;k++){ const a=k*Math.PI/4; near=Math.max(near,gAt(camTX+Math.cos(a)*SURF_CAM_CLEAR,camTZ+Math.sin(a)*SURF_CAM_CLEAR)); }
@@ -25160,18 +25161,18 @@ function updateSurface(dt){
   p.camPos.z+=(camTZ-p.camPos.z)*camLerp;
   // hard floor wherever the smoothing has it this frame — never inside a hill
   if(typeof _surfHeight==='function'){
-    const g=_surfHeight(p.camPos.x,p.camPos.z);
+    const g=_surfHCam(p.camPos.x,p.camPos.z);
     if(typeof g==='number'&&isFinite(g)&&p.camPos.y<g+SURF_CAM_CLEAR) p.camPos.y=g+SURF_CAM_CLEAR;
     // and the smoothed camera never sees her THROUGH a hill either: the
     // easing can swing it round behind a ridge between targets, so the
     // line from her head to where it actually is gets the same spring arm.
     const hY=supportH+CHAR_TERRAIN_HEIGHT*0.9, c=p.camPos;
     for(let i=1;i<=20;i++){
-      const t=i/20, x=p.pos.x+(c.x-p.pos.x)*t, z=p.pos.z+(c.z-p.pos.z)*t, gh=_surfHeight(x,z);
+      const t=i/20, x=p.pos.x+(c.x-p.pos.x)*t, z=p.pos.z+(c.z-p.pos.z)*t, gh=_surfHCam(x,z);
       if(typeof gh==='number'&&isFinite(gh)&&hY+(c.y-hY)*t<gh+SURF_CAM_CLEAR*0.3){
         const k=Math.max(0.1,(i-1)/20);
         c.x=p.pos.x+(c.x-p.pos.x)*k; c.z=p.pos.z+(c.z-p.pos.z)*k; c.y=hY+(c.y-hY)*k;
-        const g2=_surfHeight(c.x,c.z); if(typeof g2==='number'&&isFinite(g2)) c.y=Math.max(c.y,g2+SURF_CAM_CLEAR*0.5);
+        const g2=_surfHCam(c.x,c.z); if(typeof g2==='number'&&isFinite(g2)) c.y=Math.max(c.y,g2+SURF_CAM_CLEAR*0.5);
         _camPull=Math.min(_camPull,k);
         break;
       }
