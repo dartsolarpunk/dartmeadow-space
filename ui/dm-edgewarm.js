@@ -47,14 +47,19 @@
   // while the world's own compile, the mansion's and the interior's were running. On foot the flight scene is not drawn, so nothing can
   // cross an edge there; it catches up (same capped drain as ever) once she is back in the sky or in space. Edge-stutter warming in flight,
   // in space and in the atmo pass (#215) is unchanged, and desktop is unchanged.
-  let holdUntil = 0;
+  let holdUntil = 0, arriveId = null, arriveSince = 0;
   function arriving() {
     try {
       const P = window.PW;
       if (P && (P.opening || (P.active && P.mode === 'walk'))) return true;
       if (window.__sysBusy) return true;     // system rebuild running
       const A = window.DMArielHome; if (A && A.landPending && A.landPending()) return true;   // a landing is queued
-      const D = window.DM_FAC; if (D && D.arriveAt) return true;                            // landing set up, teleport not done
+      const D = window.DM_FAC;
+      if (D && D.arriveAt) {                                                                // landing set up, teleport not done
+        const nowT = performance.now();
+        if (arriveId !== D.arriveAt) { arriveId = D.arriveAt; arriveSince = nowT; }
+        if (nowT - arriveSince < 20000) return true;                                         // older than ~20 s = an aborted arrival: stale, don't hold on it
+      } else { arriveId = null; }
       const I = window.DMMansionInt; if (I && I.status && I.status().state === 1) return true; // interior loading / compiling
       if (window.DMFac && DMFac.sites) for (const r of DMFac.sites.values()) if (r.mansion && r.ready && r.warmed === false) return true;   // mansion compile in flight
     } catch (e) {}

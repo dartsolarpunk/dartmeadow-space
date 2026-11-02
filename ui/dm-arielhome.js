@@ -122,7 +122,7 @@
     const s = pend, sysOk = (s.sys || 'Sol') === c.curSysName() && c.curGalaxy() === s.gal;
     const b = sysOk && c.celestialBodies.find(x => x.name === s.body && x.mesh);
     if (b && !c.PW.opening && !c.sysBusy) { pend = null; try { window.DM_FAC = window.DM_FAC || {}; window.DM_FAC.arriveAt = s.id; window.DM_FAC.homeDeck = !!s.deck; c.enterAtmosphericFlight(b, { lat: s.lat, lon: s.lon }); } catch (e) { console.warn('[home] land', e); } return; }
-    // (v232) a slow phone's system rebuild can take minutes: while it runs the landing is waiting, not failing (bounded at 6 min)
+    // (v231) a slow phone's system rebuild can take minutes: while it runs the landing is waiting, not failing (bounded at 6 min)
     if (c.sysBusy) { if (++s.busy > 600) { pend = null; return; } } else if (++s.tries > 80) { pend = null; return; }
     setTimeout(pollLand, 600);
   }
