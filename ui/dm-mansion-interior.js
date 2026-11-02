@@ -15,7 +15,8 @@
 (function () {
   'use strict';
   const G = typeof window !== 'undefined' ? window : globalThis;
-  const STEP = 1.5, BODY = 3.2, RAD = 0.7, SEGR = 0.5, WALL_UP = 4.5, LIVE_R2 = 170 * 170, LOAD_D = 260, DROP_D = 400;
+  const STEP = 1.5, BODY = 3.2, RAD = 0.7, SEGR = 0.5, WALL_UP = 4.5, LIVE_R2 = 170 * 170, LOAD_D = 260, DROP_D = 400,
+    TELE = 24, MAXSUB = 48;   // a frame hitch (compile / GC, even at run speed) is swept in <= 0.5 m sub-steps so it cannot tunnel a wall; only a jump of > 24 m is a teleport (re-seat, no sweep)
   const S = {
     F: null, rec: null, state: 0 /* 0 idle · 1 loading · 2 ready */, gen: 0, root: null, failed: 0,
     px: 0, pz: 0, y0: 0, ct: 1, st: 0, live: false, t: 0, feet: 0, have: false, lx: 0, ly: 0, nearAt: 0, farAt: 0,
@@ -78,6 +79,7 @@
     return NaN;
   }
   function blocked(x, y, feet) {
+    if (S.state !== 2 && inRoom(x, y)) return true;   // doorway gate: the interior meshes are not in yet (loading / not started), so the glass holds her out instead of letting her into an empty shell
     surf(x, y, feet); if (_wall) return true;
     const O = NAV.obs, top = feet + BODY - 0.4;
     for (let i = 0; i < O.length; i += 6) {
@@ -95,25 +97,30 @@
   }
 
   // ── engine hooks ─────────────────────────────────────────────────────────────────────────────────────────
-  // F.ovr(x,z): exact interior ground height (world y) or NaN. Only live while walk() ran in the last 200 ms, so flying over the roof is untouched.
+  // F.ovr(x,z): exact interior ground height (world y) or NaN. It answers ONLY inside ground() (her own ground query in updateSurface) and only while
+  // walk() is live, so the board, trees, camera probes, ground marks and every other TERRAIN.H lookup keep seeing the roof / exterior grid.
+  let _q = false;
   function ovr(x, z) {
-    if (!S.live) return NaN;
+    if (!_q || !S.live) return NaN;
     const dx = x - S.px, dz = z - S.pz, lx = dx * S.ct - dz * S.st, ly = -(dx * S.st + dz * S.ct), b = NAV.bbox;
     if (lx < b[0] || lx > b[2] || ly < b[1] || ly > b[3]) return NaN;
     const h = surf(lx, ly, S.feet); return h === h ? S.y0 + h : NaN;
   }
+  // updateSurface asks for her ground height through this: ground(_surfHeight, x, z). fn is the wrapped height path (TERRAIN.H -> F.wrapH), so F.ovr is
+  // consulted for this one call and nothing else (no allocation; the flag is cleared even if fn throws).
+  function ground(fn, x, z) { _q = true; try { return fn(x, z); } finally { _q = false; } }
   // updateSurface calls this right after it moves p.pos in x/z (feet = pos.y - 3). Walls/props stop the move; she slides along them.
   function walk(pos) {
-    if (S.state !== 2) return;
+    if (NAV === null || S.rec === null) return;
     const dx = pos.x - S.px, dz = pos.z - S.pz;
     if (dx * dx + dz * dz > LIVE_R2) { S.live = false; S.have = false; return; }
     const lx = dx * S.ct - dz * S.st, ly = -(dx * S.st + dz * S.ct), feet = pos.y - 3.0 - S.y0, b = NAV.bbox;
     S.feet = feet; S.live = true; S.t = performance.now();
-    if (!S.have || Math.abs(lx - S.lx) > 6 || Math.abs(ly - S.ly) > 6 || lx < b[0] - 3 || lx > b[2] + 3 || ly < b[1] - 3 || ly > b[3] + 3) { S.lx = lx; S.ly = ly; S.have = true; return; }
+    if (!S.have || Math.abs(lx - S.lx) > TELE || Math.abs(ly - S.ly) > TELE || lx < b[0] - 3 || lx > b[2] + 3 || ly < b[1] - 3 || ly > b[3] + 3) { S.lx = lx; S.ly = ly; S.have = true; return; }
     const mx = lx - S.lx, my = ly - S.ly, dist = Math.abs(mx) + Math.abs(my);
     if (dist < 1e-6) return;
     if (blocked(S.lx, S.ly, feet)) { S.lx = lx; S.ly = ly; return; }      // already inside something (spawned in, landed on a prop): let her walk out
-    const n = Math.min(12, Math.ceil(dist / 0.5)), sx = mx / n, sy = my / n; let cx = S.lx, cy = S.ly;
+    const n = Math.min(MAXSUB, Math.ceil(dist / 0.5)), sx = mx / n, sy = my / n; let cx = S.lx, cy = S.ly;
     for (let i = 0; i < n; i++) {
       if (!blocked(cx + sx, cy + sy, feet)) { cx += sx; cy += sy; }
       else if (sx !== 0 && !blocked(cx + sx, cy, feet)) cx += sx;
@@ -134,23 +141,28 @@
   }
   function unload() {
     S.gen++; S.state = 0; S.live = false; S.have = false;
-    if (S.F && S.F.ovr === ovr) S.F.ovr = null;
     if (S.root) { if (S.root.parent) S.root.parent.remove(S.root); disposeObj(S.root); S.root = null; }
     if (G.DMMansionLook) { try { G.DMMansionLook.release(); } catch (e) { } }   // shared materials stay; GPU textures + bitmaps go
+  }
+  // the nav JSON is 14 KB: it is fetched as soon as the mansion is placed (not with the 1 MB mesh) so the doorway gate and the terrace apron are live from the first step on the deck
+  function ensureNav(F) {
+    if (!navP) navP = fetch('assets/ariel-home/ariel-home-interior-nav.json?v=' + F.ver).then(r => { if (!r.ok) throw new Error('nav ' + r.status); return r.json(); }).then(j => { NAV = parseNav(j); }, e => { navP = null; console.warn('[mansion-interior] nav', e); });
+    return navP;
   }
   function load() {
     const F = S.F, c = F.ctx, rec = S.rec, gen = ++S.gen; S.state = 1;
     const base = 'assets/ariel-home/ariel-home-interior', v = '?v=' + F.ver;
-    if (!navP) navP = fetch(base + '-nav.json' + v).then(r => { if (!r.ok) throw new Error('nav ' + r.status); return r.json(); }).then(j => { NAV = parseNav(j); });
+    ensureNav(F);
     Promise.all([c.loadGLB(base + (c.isMobile() ? '-512' : '') + '.glb' + v), navP]).then(([gl]) => {
       if (gen !== S.gen || !S.rec || !S.rec.group) { disposeObj(gl.scene); return; }
+      if (NAV === null) { disposeObj(gl.scene); throw new Error('no nav'); }
       const root = gl.scene; root.name = 'ArielInterior';
       root.traverse(n => { if (n.isMesh) { n.castShadow = false; n.receiveShadow = false; n.matrixAutoUpdate = false; } });
       if (G.DMMansionLook) { try { G.DMMansionLook.apply(root, c); } catch (e) { console.warn('[mansion-interior] look', e); } }   // shared materials + cheap fake-light (ui/dm-mansion-look.js)
       S.rec.group.add(root); S.root = root; root.updateMatrixWorld(true);
       // same order as the mansion itself (#239): tag FIRST, compile SECOND, once.
       c.mapTag(root);
-      const PW = c.PW(), done = () => { if (gen !== S.gen) return; S.state = 2; S.F.ovr = ovr; };
+      const PW = c.PW(), done = () => { if (gen !== S.gen) return; S.state = 2; };
       try { if (PW && PW.renderer && PW.renderer.compileAsync && PW.camera) PW.renderer.compileAsync(root, PW.camera, PW.scene).then(done, done); else done(); } catch (e) { done(); }
     }).catch(e => { if (gen !== S.gen) return; S.failed = performance.now(); S.state = 0; console.warn('[mansion-interior] load failed', e); });
   }
@@ -159,7 +171,7 @@
     // place() calls this once the mansion root exists (px,pz = world origin of the root, y0 = its world y, th = its yaw)
     attach(F, rec, px, pz, y0, th) {
       if (S.state) unload();
-      S.F = F; S.rec = rec; S.px = px; S.pz = pz; S.y0 = y0; S.ct = Math.cos(th); S.st = Math.sin(th); S.nearAt = S.farAt = 0; S.failed = 0;
+      S.F = F; S.rec = rec; F.ovr = ovr; ensureNav(F); S.px = px; S.pz = pz; S.y0 = y0; S.ct = Math.cos(th); S.st = Math.sin(th); S.nearAt = S.farAt = 0; S.failed = 0;
     },
     // F.tick, per mansion, after the LOD upkeep: load when she has been near for a moment (and the exterior is warmed), drop when she has gone
     tick(rec, d2, now, arriving) {
@@ -172,8 +184,8 @@
         } else S.nearAt = 0;
       } else if (d2 > DROP_D * DROP_D) { if (!S.farAt) S.farAt = now; if (now - S.farAt > 3000) { unload(); S.nearAt = S.farAt = 0; } } else S.farAt = 0;
     },
-    detach() { unload(); if (G.DMMansionLook) { try { G.DMMansionLook.destroy(); } catch (e) { } } S.rec = null; S.F = null; },
-    walk,
+    detach() { unload(); if (S.F && S.F.ovr === ovr) S.F.ovr = null; if (G.DMMansionLook) { try { G.DMMansionLook.destroy(); } catch (e) { } } S.rec = null; S.F = null; },
+    walk, ground,
     status() { return { state: S.state, live: S.live, loaded: !!S.root, feet: S.feet, lx: S.lx, ly: S.ly }; },
     spawn() { return NAV ? NAV.spawn : null; },
     _test: { parse: j => { NAV = parseNav(j); }, surf, blocked, setFrame(px, pz, y0, th) { S.px = px; S.pz = pz; S.y0 = y0; S.ct = Math.cos(th); S.st = Math.sin(th); S.state = 2; S.F = { ovr: null }; }, ovr, S },

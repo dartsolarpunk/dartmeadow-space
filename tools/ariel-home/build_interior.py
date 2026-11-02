@@ -171,7 +171,7 @@ for (a, b) in ((HX0, D1[0]), (D1[1], D2[0]), (D2[1], HX1)): nav.wall(a, HY1 + 0.
 for x in range(-60, 66, 9): lampbulb(x, HY0 + 1.2, 6.5, 0.0, 22, 0.55)
 
 # ── terrace (covered, in front of D1; the existing deck floor is at 0) ────────────────
-nav.rect(-81.0, HY1 - 0.1, -29.2, 11.4, 0.0)
+nav.rect(-81.0, HY1 - 0.1, -29.2, 13.1, 0.0)   # to 13.1: the roof overhang edge in the exterior collision grid is ~13 (a 1.6 m strip past 11.4 used to snap her onto the roof)
 
 # ── KITCHEN / DINING (x -66..-36) ─────────────────────────────────────────────────────
 LO = 10.2   # loft floor
