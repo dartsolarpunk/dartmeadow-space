@@ -356,9 +356,18 @@
       y0 += 0.3;
       const root = mansionInstance(T); root.position.set(px, y0, pz); root.rotation.y = th; root.updateMatrixWorld(true);
       PW.scene.add(root);
-      // (v224) compile the mansion's pipelines now, in the background, instead of in the frame it first draws as you approach (the freeze, then the skip)
-      try { if (PW.renderer && PW.renderer.compileAsync && PW.camera) PW.renderer.compileAsync(PW.scene, PW.camera).catch(() => { }); } catch (e) { }
-      F.ctx.mapTag(root); rec.group = root; rec.mansion = true; rec.x = px; rec.z = pz; rec.y = y0; rec.th = th; rec.ready = true;
+      // (v227) Tag FIRST, compile SECOND. mapTag gives every material its planet-frame positionNode/maskNode and flips needsUpdate, so compiling
+      // before it (the v224 order) built pipelines that the first real draw threw away and rebuilt, a second compile storm in the arrival frame.
+      F.ctx.mapTag(root);
+      // Warm only the LOD that will be seen: on the HOME deck that is lod0 (she lands inside 420 m); otherwise the far one. Never both.
+      const u0 = root.userData, homeNear = !!(DM.homeDeck && DM.arriveAt === site.id);
+      if (u0.lod0) u0.lod0.visible = homeNear; if (u0.lod1) u0.lod1.visible = !homeNear;
+      rec.placedAt = performance.now(); rec.warmed = false;
+      try {
+        if (PW.renderer && PW.renderer.compileAsync && PW.camera) PW.renderer.compileAsync(root, PW.camera, PW.scene).then(() => { rec.warmed = true; }, () => { rec.warmed = true; });
+        else rec.warmed = true;
+      } catch (e) { rec.warmed = true; }
+      rec.group = root; rec.mansion = true; rec.x = px; rec.z = pz; rec.y = y0; rec.th = th; rec.ready = true;
       const col = MAN.col, nx = col.nx, ny = col.ny, inv = 1 / col.scale, cell = col.cell, hh = col.h;
       const R = 230;
       F.solids.push({ x0: px - R, x1: px + R, z0: pz - R, z1: pz + R, grid: (x, z) => {
@@ -428,7 +437,9 @@
     // per-landmark upkeep: LOD, 2K, drift, bay hook
     for (const rec of F.sites.values()) {
       if (!rec.ready || !rec.group) continue;
-      if (rec.teleported !== true && DM.arriveAt === rec.def.id) { teleport(rec); rec.teleported = true; }
+      // (v227) hold the arrival until the mansion's pipelines are built (or 9 s, whichever first), so landing, surface setup and the first
+      // mansion draw no longer all hit the same frame (the iPhone Safari reload). Free flight is unaffected.
+      if (rec.teleported !== true && DM.arriveAt === rec.def.id && (!rec.mansion || rec.warmed || now - rec.placedAt > 9000)) { teleport(rec); rec.teleported = true; }
       const dx = f.x - rec.x, dz = f.z - rec.z, d2 = dx * dx + dz * dz;
       if (rec.mansion) {
         const u = rec.group.userData, near = d2 < 420 * 420, far = d2 > 5200 * 5200;
