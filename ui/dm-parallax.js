@@ -264,12 +264,14 @@
     S.ready = true; return true;
   }
 
-  // Build the POM node for one material.  o: {uv (vec2 node), tex (height THREE.Texture), size (texels), mat props via materialReference: pxDepth, pxBias, pxNear, pxFar,
-  //   aspect (uv->world ratio vec2 JS), N (view normal node), strength}.  Returns {uv, h, shade, N, T, B, fade} nodes.
-  function build(o) {
-    const T = S.T, THREE = S.THREE, B = BOUNDS[S.klass];
-    const { Fn, Loop, If, Break, float, vec2, vec3, vec4, mix, smoothstep, max, min, clamp: tclamp, dot, cross, normalize, length, abs, texture, dFdx, dFdy, positionView, normalView, cameraViewMatrix, materialReference, inversesqrt, log2 } = T;
-    const depth = materialReference('pxDepth', 'float'), bias = materialReference('pxBias', 'float'), near = materialReference('pxNear', 'float'), far = materialReference('pxFar', 'float'), strength = materialReference('pxStrength', 'float');
+  // The shared march: tangent frame from derivatives, view vector in tangent space, the layered search + relief refine (+ soft shadow on desktop).
+  // o: { uv, H(uvNode, lodNode) -> float node (optional; default = o.tex .r), size (texels of the height map), N (view normal node), mask, aspect,
+  //      depth, bias, near, far (nodes) }.  Returns { uv (hit), h, shade (soft shadow), Tt, Bt, N0, V, fade, dEff, lod }.
+  // Everything past the fade distance is behind a real branch: nothing is fetched there.
+  function marchNodes(o) {
+    const T = S.T, B = BOUNDS[S.klass];
+    const { Fn, Loop, If, Break, float, vec2, vec3, vec4, smoothstep, max, min, clamp: tclamp, dot, cross, normalize, length, texture, dFdx, dFdy, positionView, normalView, cameraViewMatrix, log2 } = T;
+    const depth = o.depth, bias = o.bias, near = o.near, far = o.far;
     const asp = vec2(o.aspect ? o.aspect[0] : 1, o.aspect ? o.aspect[1] : 1), size = float(o.size);
     const U = S.U, N0 = o.N || normalView, uv0 = o.uv;
     // tangent frame from screen-space derivatives (no tangents needed)
@@ -279,12 +281,14 @@
     const V = normalize(positionView.negate());
     const Vt = vec3(dot(V, Tt), dot(V, Bt), dot(V, N0));
     const dist = length(positionView), fade = float(1).sub(smoothstep(near, far, dist)).mul(o.mask || float(1));
-    const lod = tclamp(log2(max(length(du1.mul(size)), length(du2.mul(size))).max(1.0)), 0.0, 5.0);
-    const H = (u) => texture(o.tex, u).level(lod).r;
+    const lod = tclamp(log2(max(length(du1.mul(size)), length(du2.mul(size))).max(1.0)), 0.0, o.lodMax == null ? 5.0 : o.lodMax);
+    const H = o.H ? ((u) => o.H(u, lod)) : ((u) => texture(o.tex, u).level(lod).r);
     const res = Fn(() => {
-    const res = vec4(uv0.x, uv0.y, H(uv0), 1.0).toVar();
+    const res = vec4(uv0.x, uv0.y, 0.5, 1.0).toVar();
     const MAXI = B.maxN + 1;
-    If(fade.greaterThan(0.002).and(U.steps.greaterThan(0.5)), () => {
+    If(fade.greaterThan(0.002), () => {
+      res.assign(vec4(uv0.x, uv0.y, H(uv0), 1.0));    // (the height at the unshifted point: also the answer when the march is off)
+    If(U.steps.greaterThan(0.5), () => {
       const vz = max(Vt.z, 0.1), dEff = depth.mul(fade);
       let P = vec2(Vt.x, Vt.y).div(vz).mul(dEff).mul(asp);
       const pl = length(P), lim = dEff.mul(6.0);
@@ -327,9 +331,22 @@
         });
       }
     });
+    });
     return res;
-    })();
-    const uvOut = vec2(res.x, res.y), hOut = res.z, shade = res.w;
+    })().toVar();
+    return { uv: vec2(res.x, res.y), h: res.z, shade: res.w, Tt, Bt, N0, V, fade, lod, size };
+  }
+
+  // Build the POM node for one material.  o: {uv (vec2 node), tex (height THREE.Texture), size (texels), mat props via materialReference: pxDepth, pxBias, pxNear, pxFar,
+  //   aspect (uv->world ratio vec2 JS), N (view normal node), strength}.  Returns {uv, h, shade, N, T, B, fade} nodes.
+  function build(o) {
+    const T = S.T;
+    const { float, vec2, vec3, mix, normalize, texture, materialReference } = T;
+    const depth = materialReference('pxDepth', 'float'), bias = materialReference('pxBias', 'float'), near = materialReference('pxNear', 'float'), far = materialReference('pxFar', 'float'), strength = materialReference('pxStrength', 'float');
+    const asp = vec2(o.aspect ? o.aspect[0] : 1, o.aspect ? o.aspect[1] : 1), size = float(o.size);
+    const c = marchNodes(Object.assign({}, o, { depth, bias, near, far }));
+    const { Tt, Bt, N0, fade } = c, uvOut = c.uv, hOut = c.h, shade = c.shade, lod = c.lod;
+    const H = (u) => texture(o.tex, u).level(lod).r;
     // normal from the height gradient at the hit, in the tangent frame
     const e = float(1).div(size), hx = H(uvOut.add(vec2(e, 0.0))).sub(hOut), hy = H(uvOut.add(vec2(0.0, e))).sub(hOut);
     const k = depth.mul(size).mul(float(o.nScale || 1)), nt = normalize(vec3(hx.negate().mul(k).div(asp.x), hy.negate().mul(k).div(asp.y), 1.0));
@@ -339,6 +356,12 @@
     const cav = mix(float(1), float(0.35).add(hOut.mul(0.65)), fade.mul(strength).clamp(0.0, 1.0));
     S.builds++;
     return { uv: uvOut, h: hOut, shade: mix(float(1), shade, fade), cavity: cav, N: Nout, fade };
+  }
+  // Layered/atlas users (ui/dm-groundlib.js, structures): the march with a caller-supplied height function and constant depth/bias/range; the caller shades.
+  function buildCore(o) {
+    const T = S.T, { float } = T;
+    S.builds++;
+    return marchNodes(Object.assign({}, o, { depth: float(o.depthUV), bias: float(o.bias == null ? 0.55 : o.bias), near: float(o.near), far: float(o.far) }));
   }
 
   function setProps(mat, p) {
@@ -403,7 +426,7 @@
 
   G.DMParallax = {
     on: !off, ref: { march, shadow, distFade, layersFor, TIERS, BOUNDS },
-    heightFromRGBA, heightFromNormals, makeTile, heightTexture, tileTexture, refresh, texelsLanded, applyToMaterial, applyGround, init,
+    heightFromRGBA, heightFromNormals, makeTile, heightTexture, tileTexture, refresh, texelsLanded, applyToMaterial, applyGround, init, buildCore,
     config: () => ({ tier: S.tier, klass: S.klass, scale: S.scale, cfg: S.cfg }),
     status: () => ({ ready: S.ready, tier: S.tier, cfg: S.cfg, maps: S.tex.size, materials: S.mats, graphs: S.builds, off, gov: { lvl: S.gov.lvl, emaMs: +S.gov.ema.toFixed(1), changes: S.gov.changes, fails: S.gov.fails, holdMs: S.gov.hold } }),
     _S: S,

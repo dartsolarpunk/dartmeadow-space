@@ -156,7 +156,8 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-theme.js?v=81"></script>
 <script src="ui/dm-sparsevox.js?v=2"></script>
 <script src="ui/dm-rockmat.js?v=145"></script>
-<script src="ui/dm-parallax.js?v=236"></script>
+<script src="ui/dm-parallax.js?v=243"></script>
+<script src="ui/dm-groundlib.js?v=243"></script>
 <script src="ui/dm-perf.js?v=160"></script>
 <script src="ui/dm-governor.js?v=235"></script>
 <script>/* (v136) no-op stub so the flight loop can never throw if dm-perf.js failed to load */
@@ -24504,6 +24505,7 @@ function _pwBuildGround(pal,fx,fz,mode){
   TERRAIN.style=F.ws; TERRAIN.wx0=F.sw.x; TERRAIN.wz0=F.sw.z;
   const Hs=(()=>{ try{ const f=_fac(); return f?f.wrapH(H):H; }catch(e){ return H; } })();   // decks, pads, island tops and the mansion stand on the ground (the drawn ground below keeps the plain H)
   TERRAIN.pal=pal; TERRAIN.H=Hs; TERRAIN.seed=seed; TERRAIN.siteBias=F.siteBias; TERRAIN.siteLat=F.siteLat;
+  try{ if(window.DMGround) DMGround.beginWorld({style:F.ws,seed,water:!!pal.water,lat:F.siteLat}); }catch(e){ console.warn('[ground lib] bake',e); }   // atlas + region map baked in 2-3 ms slices between frames (the materials start on a neutral atlas, so nothing waits)
   TERRAIN.mcY=null; TERRAIN.mcN=null; TERRAIN.cpuMc=null; TERRAIN.mcGpu=false; TERRAIN._mcBusy=false; TERRAIN._mcUpg=false;
   TERRAIN.mcTier='low'; TERRAIN.mcUpgradeLocked=false; TERRAIN.mcDensityArray=null; TERRAIN.mcGridInfo=null; TERRAIN.mcGroup=null;
   TERRAIN.waterFollow=null; TERRAIN._wgx=null; TERRAIN.rockGeo=null;
@@ -24941,20 +24943,21 @@ function _terrainDetailMat(opts){
         // fine, soft sand: wind ripples and a dusty grain, no cracks or pebbles
         const w=W.mx_fractal_noise_float(xz.mul(0.09),2,2.0,0.5).mul(3.0);
         const rip=W.sin(xz.x.mul(0.82).add(xz.z.mul(0.57)).mul(3.1).add(w));
-        const grain=W.mx_fractal_noise_float(xz.mul(9.0),2,2.0,0.5);
-        return {h:rip.mul(0.09).add(grain.mul(0.03)), crack:W.float(0), peb:rip.mul(0.5).add(0.5).mul(0.25)};
+        const grain=W.mx_fractal_noise_float(xz.mul(22.0),2,2.0,0.5);   // (scale) grain ~0.05 u = a tenth of her shoe
+        const rip2=W.sin(xz.x.mul(5.9).sub(xz.z.mul(3.4)).add(w.mul(2.2)));   // fine ripples, 0.9 u... 0.2 u across = half a shoe
+        return {h:rip.mul(0.09).add(rip2.mul(0.035)).add(grain.mul(0.03)), crack:W.float(0), peb:rip.mul(0.5).add(0.5).mul(0.25)};
       }
       const crk=W.float(1).sub(W.abs(W.mx_fractal_noise_float(xz.mul(0.55).add(W.vec3(17,0,3)),3,2.0,0.5)));
       const crack=W.smoothstep(W.float(0.95),W.float(0.995),crk);
       let h=crack.mul(TERRAIN.style==='mesa'?-0.12:-0.6), peb=W.float(0);   // Mars: windswept regolith, only faint hairline cracks
       if(lvl>=2){
         const patch=W.smoothstep(W.float(0.42),W.float(0.68),W.mx_fractal_noise_float(xz.mul(0.18).add(W.vec3(41,0,7)),2,2.0,0.5).mul(0.5).add(0.5));
-        const f1=W.mx_worley_noise_float(xz.mul(2.6),1.0,0);
+        const f1=W.mx_worley_noise_float(xz.mul(4.8),1.0,0);   // (scale) cell 0.21 u: pebbles about half her shoe (shoe = 0.48 u; 1 u = 0.56 m)
         peb=W.float(1).sub(W.smoothstep(W.float(0.04),W.float(0.3),f1)).mul(patch.mul(0.8).add(0.2));
         if(lvl>=3){
-          const f2=W.mx_worley_noise_float(xz.mul(6.1).add(W.vec3(5,0,9)),1.0,0);
+          const f2=W.mx_worley_noise_float(xz.mul(11.0).add(W.vec3(5,0,9)),1.0,0);   // (scale) fine pebbles / grit, 0.09 u
           peb=W.max(peb,W.float(1).sub(W.smoothstep(W.float(0.04),W.float(0.3),f2)).mul(0.5));
-          h=h.add(W.mx_fractal_noise_float(xz.mul(3.2),2,2.0,0.5).mul(0.1));   // grit
+          h=h.add(W.mx_fractal_noise_float(xz.mul(7.0),2,2.0,0.5).mul(0.1));   // grit
         }
         h=h.add(peb.mul(0.45));
       }
@@ -25007,13 +25010,14 @@ function _terrainDetailMat(opts){
       basinTint=W.float(1).add(low.mul(W.float(0.1).sub(seam.mul(0.22))));
     }
     if(lvl>=2){
-      const k=W.float(opts.strength||0.55).mul(fade);
+      const _glOn=!!(window.DMGround&&window.DMParallax&&DMParallax.on&&!/[?&]ground=0\b/.test(location.search));   // (ground lib) it supplies the fine relief per region; the old single-style bump then only adds the broad hollows
+      const k=W.float(opts.strength||0.55).mul(fade).mul(_glOn?0.3:1.0);
       // the cliff relief, in 3-D, pressed into the face (only the part across the face)
       const kc=W.float(0.9).mul(steep).mul(fadeC);
       // The slope of the detail (finite differences, world space — the same on every GPU backend) where the detail shows, and the cliff relief gradient
       // (High/Ultra: the full 3-D relief; Medium: up the face only, one extra sample) where a face is steep and near. Built INSIDE the normal's own
       // function so that only the normal pass carries them, and filled into variables at its top level before the final branch.
-      const slopeOf=()=>{ const fh=W.float(field(xz).h).toVar(), e=0.05; return W.vec4(0,0,field(xz.add(W.vec3(e,0,0))).h.sub(fh).div(e),field(xz.add(W.vec3(0,0,e))).h.sub(fh).div(e)); };
+      const slopeOf=()=>{ const fh=W.float(field(xz).h).toVar(), e=0.02; return W.vec4(0,0,field(xz.add(W.vec3(e,0,0))).h.sub(fh).div(e),field(xz.add(W.vec3(0,0,e))).h.sub(fh).div(e)); };
       const reliefOf=()=>{ const ec=0.06, ch=W.float(cliff(p).h).toVar(), dy=cliff(p.add(W.vec3(0,ec,0))).h.sub(ch);
         const cg=(lvl>=3?W.vec3(cliff(p.add(W.vec3(ec,0,0))).h.sub(ch),dy,cliff(p.add(W.vec3(0,0,ec))).h.sub(ch)):W.vec3(W.float(0),dy,W.float(0))).div(ec); return W.vec4(0,cg.x,cg.y,cg.z); };
       const nWof=(d,c)=>{ const nW=nFlat.add(W.vec3(d.z.negate(),W.float(0),d.w.negate()).mul(k)), cg=W.vec3(c.y,c.z,c.w); return nW.sub(cg.sub(N.mul(W.dot(cg,N))).mul(kc)); };
@@ -25038,7 +25042,10 @@ function _terrainDetailMat(opts){
     m.roughnessNode=sandy?W.float(0.98):W.float(0.95).sub(F0.peb.mul(0.28).mul(fade));
     // (v140) layered rock (ui/dm-rockmat.js) on the walkable MC ground's cliffs — zones, varnish, oxide, slate, grain. ?mat=0 = off
     if(opts.side===THREE.DoubleSide&&W.DMRock&&W.DMRock.on){ try{ m.colorNode=W.DMRock.patchColor(m.colorNode,p,nFlat,(typeof _surfBody!=='undefined'&&_surfBody)?_surfBody.name:'',0); }catch(e){} }
-    try{ if(window.DMParallax&&m.userData&&!m.userData.noParallax&&opts.parallax!==false) DMParallax.applyGround(m,{p,flat,lvl,N:null,kind:'cobble',near:reach*0.13,far:reach*0.3,seed:TERRAIN.style==='mesa'?11:7}); }catch(e){}   // (ui/dm-parallax.js) real depth in the pebbles/plates close to her: marched only inside ~0.3 reach, Low off
+    // (ui/dm-groundlib.js) the multi-material ground: 12 pattern/deformation types baked once per world into an atlas, chosen per region, height-blended (moss, puddles in the crevices), baked bump + parallax relief; no per-pixel noise
+    let _gl=false;
+    try{ if(window.DMGround&&window.DMParallax&&m.userData&&!m.userData.noParallax&&opts.parallax!==false&&!/[?&]ground=0\b/.test(location.search)) _gl=DMGround.apply(m,{p,flat,nFlat,lvl,reach,near:reach*0.16,far:reach*0.34,strength:1}); }catch(e){ console.warn('[ground lib]',e); }
+    if(!_gl) try{ if(window.DMParallax&&m.userData&&!m.userData.noParallax&&opts.parallax!==false) DMParallax.applyGround(m,{p,flat,lvl,N:null,kind:'cobble',near:reach*0.13,far:reach*0.3,seed:TERRAIN.style==='mesa'?11:7}); }catch(e){}   // (ui/dm-parallax.js) real depth in the pebbles/plates close to her: marched only inside ~0.3 reach, Low off
     m.userData.dmDetail=lvl;
     // the coarse ground is cut away where the tessellated patch round her takes over
     if(!opts.noHole&&TESS_HOLE.slots.length){
