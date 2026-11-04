@@ -23715,7 +23715,7 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
   geo.setAttribute('normal',normalBuf);
   geo.setAttribute('color',colorBuf);
   geo.boundingSphere=new THREE.Sphere(new THREE.Vector3(cx0,(yMin+yMax)*0.5,cz0), halfIso*1.6);
-  const mat=_terrainDetailMat({side:THREE.DoubleSide});
+  const mat=_mcSharedMat();   // (perf) one ground material per world visit, not a new ~60-node-deep one (JS graph build + shader build) per patch rebuild
   const mesh=new THREE.Mesh(geo,mat);
   mesh.name='JOTS_GpuSurfacePatch';
   mesh.userData.sparse=_plan?{N,B,bricks:SLOTS,of:_plan.total,cells:numCells,denseCells:N*N*N,ms:+(performance.now()-_svT0).toFixed(1)}:null;
@@ -24804,10 +24804,17 @@ function _hmChunkScatter(i,j){
 function _disposeProps(g){
   g.traverse(o=>{ if(o.isMesh){ if(o.material&&!(o.material.userData&&o.material.userData.shared)) o.material.dispose(); if(o.geometry&&o.geometry!==TERRAIN.rockGeo&&!o.geometry.userData.shared) o.geometry.dispose(); if(o.dispose&&o.isInstancedMesh) o.dispose(); } });
 }
+// The marching-cubes ground material is identical for every patch of one world visit (it reads only world-constant state), so it is built once per
+// PW.gen and shared; patch teardown must not dispose it (userData.shared), the world's close does (disposeObject3D on the scene).
+function _mcSharedMat(){
+  const m=TERRAIN._mcMat;
+  if(m&&TERRAIN._mcMatGen===PW.gen) return m;
+  const n=_terrainDetailMat({side:THREE.DoubleSide}); n.userData.shared=true; TERRAIN._mcMat=n; TERRAIN._mcMatGen=PW.gen; return n;
+}
 // swap a freshly built GPU patch in (mesh, collision grid and centre together)
 function _applyMcBuild(built){
   if(!TERRAIN.group) return;
-  if(TERRAIN.mcGroup){ TERRAIN.group.remove(TERRAIN.mcGroup); TERRAIN.mcGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material)o.material.dispose(); }); }
+  if(TERRAIN.mcGroup){ TERRAIN.group.remove(TERRAIN.mcGroup); TERRAIN.mcGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&!(o.material.userData&&o.material.userData.shared))o.material.dispose(); }); }
   const g=new THREE.Group(); g.name='JOTS_GpuMcGroup'; g.userData.climbable=true;
   built.mesh.userData.climbable=true; g.add(built.mesh);
   TERRAIN.group.add(g); TERRAIN.mcGroup=g;
@@ -25086,11 +25093,21 @@ function* _tessJob(cx,cz,half,slot){
   return {mesh:m,T};
 }
 // height of the refined surface inside area T (same maths as the mesh)
+// (perf) exact memo of the micro-relief at a point (pure in x,z for one world: same seed/amp/style): a standing player, the board's contour probes,
+// the camera's clearance rings and the foot patch ask the same coordinates frame after frame. Direct-mapped, verified on both coordinates.
+const _tdK=new Float64Array(8192), _tdV=new Float64Array(4096); let _tdSig='';
+function _tessDeformM(x,z){
+  const sg=(TERRAIN.seed||1)+'|'+(TERRAIN.tessCfg?TERRAIN.tessCfg.amp:1)+'|'+(TERRAIN.sandy?1:0);
+  if(sg!==_tdSig){ _tdSig=sg; _tdK.fill(NaN); }
+  const i=((Math.imul((x*4096)|0,73856093)^Math.imul((z*4096)|0,19349663))>>>0)&4095;
+  if(_tdK[i*2]===x&&_tdK[i*2+1]===z) return _tdV[i];
+  const v=_tessDeform(x,z); _tdK[i*2]=x; _tdK[i*2+1]=z; _tdV[i]=v; return v;
+}
 function _tessHeightIn(T,x,z){
   const fc=(x-T.x0)/T.step+1, fr=(z-T.z0)/T.step+1, S=T.S, cn=T.cn, cb=T.base;
   const gc=fc/S, gr=fr/S, ci=Math.max(0,Math.min(cn-2,Math.floor(gc))), ri=Math.max(0,Math.min(cn-2,Math.floor(gr))), u=gc-ci, v=gr-ri;
   const a=cb[ri*cn+ci], b=cb[ri*cn+ci+1], c2=cb[(ri+1)*cn+ci], d=cb[(ri+1)*cn+ci+1];
-  return a+(b-a)*u+(c2-a)*v+(a-b-c2+d)*u*v + _tessDeform(x,z)*_tessW(x,z,T);
+  return a+(b-a)*u+(c2-a)*v+(a-b-c2+d)*u*v + _tessDeformM(x,z)*_tessW(x,z,T);
 }
 function _tessInit(){
   const tier=(typeof resolvePreset==='function')?resolvePreset():'medium';
