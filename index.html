@@ -512,8 +512,6 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;overscroll-behavior:non
 #intro-veil.iv-instant{background:transparent;}
 #intro-veil.iv-instant::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at 50% 30%,#1a0f2e 0%,#07040f 70%);animation:ivBackdrop .6s ease-out both;}
 @keyframes ivBackdrop{from{opacity:0}to{opacity:1}}
-body.intro-hold #dm-warm-pill{bottom:calc(12vh + 150px + env(safe-area-inset-bottom,0px))!important;}
-body.intro-play #dm-warm-pill{display:none!important;}
 #screen-menu.ms-pre .mm-panel,#screen-menu.ms-pre .menu-version,#screen-menu.ms-pre #menu-glow-wash{visibility:hidden;}
 #loading-screen{background:transparent !important;}
 #ls-ui-cluster{position:absolute !important;inset:0;justify-content:center;align-items:center;padding:0;}
@@ -980,11 +978,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 .save-slot-name{font-family:var(--font-hud);font-size:0.65rem;flex:1;color:var(--text);}
 .save-slot-info{font-family:var(--font-mono);font-size:0.55rem;color:var(--text-dim);}
 .save-slot-btns{display:flex;gap:0.3rem;}
-/* Toast */
-#toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(20px);background:rgba(0,8,20,0.97);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:0.62rem;letter-spacing:0.1em;padding:0.55rem 1.3rem;border-radius:3px;z-index:9999;opacity:0;transition:all 0.3s ease;box-shadow:var(--glow-sm);pointer-events:none;}
-#toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
-#toast.warn{border-color:var(--gold);color:var(--gold);}
-#toast.err{border-color:var(--red);color:var(--red);}
+/* Toast: retired (v240) — every system message goes through window.dmSys() (ui/dm-sys.js, bottom-right strip) */
 /* Upload file input hidden */
 #file-upload{display:none;}
 
@@ -1035,7 +1029,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-bt-interior.js?v=124" defer></script>
 <script src="ui/dm-bt-pbr.js?v=217" defer></script>
 <script src="ui/dm-bt-bake.js?v=144" defer></script>
-<script src="ui/dm-ar-core.js?v=209" defer></script>
+<script src="ui/dm-ar-core.js?v=240" defer></script>
 <script src="ui/dm-places-core.js?v=213" defer></script>
 <script src="ui/dm-places.js?v=213" defer></script>
 <script src="ui/dm-creatures.js?v=216" defer></script>
@@ -1047,6 +1041,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-mansion-look.js?v=232" defer></script>
 <script src="ui/dm-mansion-interior.js?v=232" defer></script>
 <script src="ui/dm-facilities.js?v=240" defer></script>
+<script src="ui/dm-sys.js?v=240"></script>
 </head>
 <body>
 <!-- LOADING -->
@@ -1086,6 +1081,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   }
   function markLoadReady(){
     loadReady = true;
+    try{ if(window.dmSys) dmSys.done('boot'); }catch(e){}
     syncEnter();
   }
   function startUiFade(){
@@ -1119,6 +1115,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   if(typeof window.enterApp !== 'function'){
     window.enterApp = function(){
       try{
+        try{ if(window.dmSys) dmSys.done('boot'); }catch(e){}
         var ls = el('loading-screen');
         if(ls){ ls.classList.add('out'); ls.style.display = 'none'; }
         var app = el('app');
@@ -1131,6 +1128,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
           tip.style.cssText = 'position:fixed;bottom:10%;left:50%;transform:translateX(-50%);z-index:99999;color:#7eb6ff;font:600 12px/1.45 system-ui,sans-serif;text-align:center;max-width:90vw;padding:10px 14px;background:rgba(0,8,16,0.85);border:1px solid rgba(var(--acc-rgb),0.35);border-radius:6px;';
           tip.textContent = 'Core script still loading. If the menu never appears, hard-refresh (clear site data) and try again.';
           document.body.appendChild(tip);
+          try{ if(window.dmSys){ dmSys('Core script still loading — hard-refresh if the menu never appears',{dur:6000,cls:'warn'}); tip.remove(); } }catch(e){}
         }
         if(window.__THREE_LOAD_FAILED__ && typeof toast === 'function'){
           try{ toast('⚠ 3D engine unavailable — try refresh', 4500, 'warn'); }catch(e){}
@@ -1158,10 +1156,12 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
         p = Math.min(p + (7 + Math.random() * 11), 100);
         if(bar) bar.style.width = p + '%';
         if(stat) stat.textContent = msgs[Math.min(Math.floor(p / 15), msgs.length - 1)];
+        try{ if(window.dmSys) dmSys.load('boot', msgs[Math.min(Math.floor(p / 15), msgs.length - 1)].replace(/\.+$/,'') + '... ' + Math.round(p) + '%'); }catch(e){}
         if(p < 100) setTimeout(adv, 180 + Math.random() * 200);
         else setTimeout(markLoadReady, 250);
       }catch(e){ markLoadReady(); }
     }
+    try{ if(window.dmSys) dmSys.load('boot','Initializing stellar cartography... 0%'); }catch(e){}
     setTimeout(adv, 180);
   }catch(e){ markLoadReady(); }
   /* Failsafe: mark ready so Enter appears after progress stall — not waiting on video fade */
@@ -1993,7 +1993,6 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 </div>
 
 <div id="warp-overlay"><div id="warp-status">DART DRIVE INITIATING...</div></div>
-<div id="toast"></div>
 
 <script src="ui/dm-launchgate.js?v=237"></script>
 <script>
@@ -2002,11 +2001,10 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 //  DART MEADOW v3  —  DART Energy Ring Systems
 // ══════════════════════════════════════════════════════════════
 function $(id){return document.getElementById(id);}
-let _toastTimer,_toastClass='';
-function toast(msg,dur=2800,cls=''){
-  const el=$('toast');el.textContent=msg;
-  el.className='show'+(cls?' '+cls:'');
-  clearTimeout(_toastTimer);_toastTimer=setTimeout(()=>el.className='',dur);
+// (v240) toast() is a shim: every in-game message goes through the single bottom-right strip (ui/dm-sys.js). Call shapes kept:
+// toast(m) · toast(m,ms) · toast(m,'warn'|'err') · toast(m,'warn',ms) · toast(m,'',ms)
+function toast(msg,dur,cls){
+  try{ if(window.dmSys) window.dmSys(msg,dur,cls); else console.log('[sys]',msg); }catch(e){}
 }
 function lerp(a,b,t){return a+(b-a)*t;}
 function rnd(a,b){return a+Math.random()*(b-a);}
@@ -3039,6 +3037,14 @@ const INTRO_HOLD_MAX_MS=15000;   // the fallback hold (assets not ready at the p
 // work that must not happen inside the fly-out (world build, multiplayer connect, slider sync …): runs when the fly-out has ended, immediately when no fly-out runs
 window.dmAfterFlyout=function(fn){ try{ if(INTRO.on&&INTRO.gate&&!INTRO.gate.isOpen){ INTRO.gate.run(fn); return true; } }catch(e){} try{ fn(); }catch(e){ console.warn('[intro] afterFlyout',e); } return false; };
 function _introOpenGate(){ try{ if(INTRO.gate) INTRO.gate.open(); }catch(e){ console.warn('[intro] gate',e); } }
+function _introSkipTap(e){
+  try{
+    if(!INTRO.on||INTRO.flown) return false;
+    if(performance.now()-(INTRO.t0v||0)<150) return false;
+    if(INTRO.phase!=='hold'&&INTRO.phase!=='play') return false;
+    INTRO.skip=true; _introFlown('skip'); return true;
+  }catch(err){ console.warn('[intro] skip',err); return false; }
+}
 function _introBegin(){
   const M=window.DM_MENUSCENE, cv=document.getElementById('menu-scene-canvas');
   if(INTRO.on||!M||M.failed||!M._ctx||!cv||!window.DMLaunch||matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
@@ -3052,7 +3058,11 @@ function _introBegin(){
   // the veil must not hide the menu it is leaving: it starts transparent (the panels fold away under it) and its backdrop fades in (CSS .iv-instant); the
   // loader UI stays out of sight while the fly-out plays
   v.className=instant?'iv-go iv-instant':''; v.style.opacity='1'; v.insertBefore(cv,v.firstChild); INTRO.veil=v;
-  v.onpointerdown=()=>{ INTRO.skip=true; if(INTRO.phase==='hold'||INTRO.phase==='play') _introFlown('skip'); };   // skipping ends the fly-out (the world still has to be built: the loader takes over)
+  INTRO.t0v=performance.now(); window._introSkipTap=_introSkipTap;
+  // a tap anywhere skips the fly-out straight to the loader / wait phase (the world still has to be built: the loader takes over).
+  // pointerdown covers mouse / pen / touch; touchstart is the iOS-Safari belt-and-braces (a throttled first pointer event on a freshly
+  // inserted layer); both funnel into one idempotent function, and a tap in the first 150 ms (the press that started the launch) is ignored.
+  v.onpointerdown=_introSkipTap; v.addEventListener('touchstart',_introSkipTap,{passive:true});
   clearTimeout(M._dispT); M.resume();
   if(instant){ _introPlay('press'); return true; }
   // not ready at the press (first run / killed-tab recovery): only the character is loaded now; the world stays gated until the fly-out is over
@@ -3082,7 +3092,7 @@ function _introTick2(){
   if(INTRO.phase==='hold'){   // bounded fallback: only the character clips / board template are waited for, never the world
     const nx=window.DMLaunch.introNext({phase:'hold',ready:_introReadyToFly(),skip:INTRO.skip,heldMs:now-INTRO.t0,holdMax:INTRO_HOLD_MAX_MS});
     const st=document.getElementById('intro-status'), bar=document.getElementById('intro-bar');
-    if(st) st.textContent='Loading Ariel…'; if(bar) bar.style.width=Math.min(60,_loadTotalPct()*0.6)+'%';
+    { const _m='Loading Ariel… '+_loadTotalPct()+'%'; if(st) st.textContent=_m; try{ dmSys.load('intro',_m); }catch(e){} } if(bar) bar.style.width=Math.min(60,_loadTotalPct()*0.6)+'%';
     if(nx==='play') _introPlay(_introReadyToFly()?'ready':'hold-ceiling'); else if(nx==='wait') _introFlown('skip');
     return;
   }
@@ -3101,7 +3111,9 @@ function _introTick2(){
   const stalled=!ok&&(building?now-INTRO.sigT>40000:(pct>=100&&now-INTRO.sigT>10000));
   const wTot=window._warmTotal||0, wDone=(window._warmSteps||[]).length;
   if(bar) bar.style.width=Math.min(100,pct*0.8+(warming&&wTot?Math.min(1,wDone/wTot)*10:(pct>=100&&!building?10:0))+(ok?10:0))+'%';
-  if(st) st.textContent=pct<100?'Loading Ariel…':(warming?'Preparing the sky… '+Math.min(wDone+1,wTot||wDone+1)+(wTot?'/'+wTot:''):'Building the world…');
+  { const _m=pct<100?'Loading Ariel… '+pct+'%':(warming?(window._dmWarmMsg||('Preparing the sky… '+Math.min(wDone+1,wTot||wDone+1)+(wTot?'/'+wTot:''))):'Building the world…');
+    if(st) st.textContent=_m;   // the centred loader and the bottom-right strip read the same message (the warm-up owns the strip while it runs)
+    if(!warming){ try{ dmSys.load('intro',_m); }catch(e){} } }
   // the menu scene behind the loader is decoration only: during the shader warm-up it draws every 3rd frame (the compiles and its own draws
   // share the GPU process; the menu pose / dt still advance), full rate again as soon as the warm-up is over
   try{ const M=window.DM_MENUSCENE; if(M) M.skipN=warming?3:1; }catch(e){}
@@ -3114,7 +3126,7 @@ function _introPlay(why){
   try{ _trPhase('play',why||''); }catch(e){}
   try{ const M0=window.DM_MENUSCENE; if(M0) M0.skipN=1; }catch(e){}
   clearInterval(INTRO.iv);
-  INTRO.phase='play'; document.body.classList.remove('intro-hold'); document.body.classList.add('intro-play'); INTRO.veil.classList.add('iv-go');
+  INTRO.phase='play'; document.body.classList.remove('intro-hold'); document.body.classList.add('intro-play'); INTRO.veil.classList.add('iv-go'); try{ dmSys.load('intro','Tap to skip'); }catch(e){}
   const M=window.DM_MENUSCENE;
   if(INTRO.skip||!M||!M._ctx){ _introFlown('noflyout'); return; }
   let p=false;
@@ -3155,7 +3167,7 @@ function _introDissolve(ms){
 }
 function _introEnd(){
   const M=window.DM_MENUSCENE, cv=document.getElementById('menu-scene-canvas'), host=$('screen-menu'), star=$('menu-bg-canvas');
-  clearInterval(INTRO.iv); INTRO.on=false; INTRO.phase=''; window.__JOTS_INTRO=null; document.body.classList.remove('intro-hold','intro-play'); _introOpenGate();
+  clearInterval(INTRO.iv); INTRO.on=false; INTRO.phase=''; window.__JOTS_INTRO=null; try{ dmSys.done('intro'); }catch(e){} document.body.classList.remove('intro-hold','intro-play'); _introOpenGate();
   window._dmQuietUntil=performance.now()+2500;   // (menu-perf) arrival settle: no housekeeping compiles / LOD builds / snapshots for 2.5 s
   try{ _trPhase('post'); setTimeout(_trFinish,3000); }catch(e){}
   // the intro board's dispose (geometry / material / texture teardown) and the menu scene pause happen off the arrival frames
@@ -3258,7 +3270,7 @@ let _gameInProgress=false;
 (function(){
   // Late splash helpers (audio; legacy stars DOM removed). Progress + SEQUENCE DART owned by
   // the early independent controller; keep a belt-and-suspenders reveal here too.
-  const reveal=()=>{try{
+  const reveal=()=>{try{ try{dmSys.done('boot');}catch(e){}
     if(typeof window.__revealSplashEnter==='function'){window.__revealSplashEnter();return;}
     const enter=$('ls-enter');
     if(enter){enter.classList.add('vis');enter.style.setProperty('display','block','important');enter.style.setProperty('opacity','1','important');}
@@ -3271,7 +3283,7 @@ let _gameInProgress=false;
       const msgs=['Mapping stellar cartography...','Loading galaxy particle systems...','Calibrating DART drive...','Synthesizing celestial bodies...','Initializing board forge...','Configuring orbital mechanics...','Building DART energy ring assemblies...','All systems nominal.'];
       let p=0;
       const bar=$('ls-bar'),stat=$('ls-status');
-      const adv=()=>{try{p=Math.min(p+rnd(7,18),100);if(bar)bar.style.width=p+'%';if(stat)stat.textContent=msgs[Math.min(Math.floor(p/15),msgs.length-1)];if(p<100)setTimeout(adv,rnd(180,380));else setTimeout(reveal,300);}catch(e){reveal();}};
+      const adv=()=>{try{p=Math.min(p+rnd(7,18),100);if(bar)bar.style.width=p+'%';if(stat)stat.textContent=msgs[Math.min(Math.floor(p/15),msgs.length-1)];try{dmSys.load('boot',msgs[Math.min(Math.floor(p/15),msgs.length-1)].replace(/\.+$/,'')+'... '+Math.round(p)+'%');}catch(e){}if(p<100)setTimeout(adv,rnd(180,380));else setTimeout(reveal,300);}catch(e){reveal();}};
       setTimeout(adv,350);
     } else {
       // Early path already advancing; ensure reveal eventually even if timers stalled.
@@ -6761,12 +6773,9 @@ const _btiWarmIv=setInterval(async()=>{
 },1500);
 async function _flightWarmup(){
   if(typeof flightRenderer==='undefined'||!flightRenderer||!flightRenderer.compileAsync) return;
-  const t0=performance.now(); let pill=null; window._dmWarming=true;
-  try{
-    pill=document.createElement('div'); pill.id='dm-warm-pill';
-    pill.style.cssText='position:fixed;left:50%;bottom:calc(12% + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:9500;padding:8px 16px;border-radius:999px;background:rgba(4,10,18,.78);border:1px solid rgba(120,200,255,.35);color:#9fd8ff;font:600 11px/1.2 system-ui,sans-serif;letter-spacing:.14em;text-transform:uppercase;pointer-events:none';
-    document.body.appendChild(pill);
-  }catch(e){}
+  const t0=performance.now(); window._dmWarming=true;
+  // (v240) the old centre-screen 'Preparing …' pill is gone: every warm-up message goes to the loader text and the bottom-right strip (dmSys.load)
+  try{ dmSys.load('warm','Preparing the sky… 0%'); }catch(e){}
   // compileAsync skips anything outside the camera's view (it culls like a real frame) — so the Sun, planets and
   // clouds behind you were never compiled, and the first time you turned toward them the phone stalled. Switch culling
   // off for the duration of the warm-up so everything is compiled and uploaded, wherever it is, then put it back.
@@ -6798,9 +6807,8 @@ async function _flightWarmup(){
     if(_deferNames&&_deferNames.has(steps[i][0])){ _later.push(steps[i]); window._warmSteps.push([steps[i][0],'deferred']); continue; }
     // (v153) AR owns the GPU and the screen while it's on: the remaining warm-up steps wait until it ends (AR draws its own tiny scene)
     while(window.DMAR&&DMAR.active&&!DMAR.letWarm){   // (v154) the full space overlay draws the real scene: it lets the warm-up finish
-    if(pill) pill.style.display='none'; await new Promise(r=>setTimeout(r,300)); }
-    if(pill) pill.style.display='';
-    if(pill) pill.textContent='Preparing '+steps[i][0]+'  '+(i+1)+'/'+steps.length;
+    await new Promise(r=>setTimeout(r,300)); }
+    try{ window._dmWarmMsg='Preparing '+steps[i][0]+' '+(i+1)+'/'+steps.length; dmSys.load('warm',window._dmWarmMsg+' · '+Math.round(i/steps.length*100)+'%'); }catch(e){}
     // (perf-stability) the 7 s cap below only stops WAITING; the compile it abandons keeps running on the GPU process. Starting the next
     // step on top of it stacked compile storms (hundreds of pipelines at once). Let the abandoned one finish (bounded) before the next starts.
     if(_prevStep){ try{ await Promise.race([_prevStep,new Promise(r=>setTimeout(r,20000))]); }catch(e){} _prevStep=null; }
@@ -6812,7 +6820,7 @@ async function _flightWarmup(){
     await new Promise(r=>setTimeout(r,16));   // let the page breathe between steps
   }
   try{ for(const o of _unculled) o.frustumCulled=true; }catch(e){}
-  try{ if(pill) pill.remove(); }catch(e){}
+  try{ window._dmWarmMsg=''; dmSys.done('warm'); }catch(e){}
   if(_prevStep){ try{ await Promise.race([_prevStep,new Promise(r=>setTimeout(r,20000))]); }catch(e){} }
   try{ window._warmupMs=Math.round(performance.now()-t0); window._dmWarming=false; window._dmWarmPhase=null; }catch(e){}
   try{ const _kh=()=>{ if(window._dmQuiet&&window._dmQuiet()) setTimeout(_kh,1000); else _wmKickHome(); }; setTimeout(_kh,500); }catch(e){}   // (menu-perf) the home map is built in slices; not over the fly-out / arrival
@@ -15681,19 +15689,8 @@ function _dmNativeExitCopy(){
   const sv=m.querySelector('.save-exit'); if(sv) sv.innerHTML='💾 SAVE &amp; EXIT';
   const ju=m.querySelector('.just-exit'); if(ju) ju.style.display='none';
 }
-function _dmSwipeHint(){
-  let h=$('dm-ios-swipe-hint');
-  if(!h){
-    h=document.createElement('div'); h.id='dm-ios-swipe-hint'; h.setAttribute('role','status');
-    h.style.cssText='position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom,0px) + 18px);transform:translate(-50%,12px);z-index:2147483000;display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 18px;border-radius:14px;background:rgba(4,8,24,.86);border:1px solid rgba(var(--hi-rgb,91,127,255),.45);box-shadow:0 0 24px rgba(var(--hi-rgb,91,127,255),.25);color:#cfd8ff;font:600 12px/1.3 Orbitron,system-ui,sans-serif;letter-spacing:.08em;text-align:center;opacity:0;transition:opacity .35s ease,transform .35s ease;pointer-events:none;';
-    h.innerHTML='<span style="font-size:18px;line-height:1;animation:dmSwipeUp 1.2s ease-in-out infinite">⌃</span><span id="dm-ios-swipe-txt">Swipe up to close DART Meadow</span>';
-    const st=document.createElement('style'); st.textContent='@keyframes dmSwipeUp{0%,100%{transform:translateY(4px);opacity:.5}50%{transform:translateY(-4px);opacity:1}}';
-    document.head.appendChild(st); document.body.appendChild(h);
-  }
-  try{ const t=$('dm-ios-swipe-txt'); if(t) t.textContent=_dmIsAndroid()?'Press back twice to close DART Meadow':'Swipe up to close DART Meadow'; }catch(e){}
-  clearTimeout(h.__t);
-  requestAnimationFrame(()=>{ h.style.opacity='1'; h.style.transform='translate(-50%,0)'; });
-  h.__t=setTimeout(()=>{ h.style.opacity='0'; h.style.transform='translate(-50%,12px)'; },4500);
+function _dmSwipeHint(){   // (v240) goes through the bottom-right strip like every other system message
+  try{ toast('⌃ '+(_dmIsAndroid()?'Press back twice to close DART Meadow':'Swipe up to close DART Meadow'),4500); }catch(e){}
 }
 function _dmNativeExit(){
   try{ $('exit-modal').classList.remove('open'); }catch(e){}
@@ -20424,6 +20421,7 @@ function _renderMiniLoader(){
       cur = 'Ready';
     }
     status.textContent = cur;
+    try{ const ml=document.getElementById('mini-loader'); if(ml&&ml.style.display!=='none'&&pct<100) dmSys.load('mini',cur.replace(/\.{3}$/,'…')+' '+pct+'%'); }catch(e){}
   }
   if(pct>=100) _hideMiniLoader();
 }
@@ -20436,6 +20434,7 @@ function _showMiniLoader(){
 function _hideMiniLoader(){
   const el=document.getElementById('mini-loader');
   if(el) el.style.display='none';
+  try{ dmSys.done('mini'); }catch(e){}
 }
 // Mount yaw: every board template normalizes nose to local +X; this
 // offset is applied to CHAR.root.rotation.y at mount time (and matched

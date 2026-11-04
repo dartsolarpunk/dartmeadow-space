@@ -59,7 +59,8 @@
     syncBtns();
   }
   function syncBtns(){ document.querySelectorAll('.dm-ar-btn').forEach(function(b){ b.classList.toggle('on',!!S); b.textContent=S?'EXIT':'AR'; }); }
-  function toast(msg){ var t=document.getElementById('dm-ar-toast'); if(!t){ t=document.createElement('div'); t.id='dm-ar-toast';
+  function toast(msg){ if(window.dmSys){ if(msg) window.dmSys(msg,{sticky:true,dur:3000}); else window.dmSys.clear(); return; }   // (v240) AR messages go through the bottom-right strip; '' clears
+    var t=document.getElementById('dm-ar-toast'); if(!t){ t=document.createElement('div'); t.id='dm-ar-toast';
       t.style.cssText='position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:99998;padding:8px 14px;border-radius:4px;background:rgba(6,12,24,.82);color:#dfeaff;font:600 12px/1.3 var(--font-mono,monospace);letter-spacing:.05em;pointer-events:none;max-width:90vw;text-align:center';
       document.body.appendChild(t); }
     t.textContent=msg; t.style.display=msg?'block':'none'; }
