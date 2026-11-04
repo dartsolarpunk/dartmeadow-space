@@ -19,7 +19,7 @@ await import('../../ui/dm-parallax.js'); await import('../../ui/dm-groundlib.js'
 const src=await (await fetch('../../index.html')).text();
 const a=src.indexOf('function _terrainDetailMat(opts){'), b=src.indexOf('\n}\n',a)+3;
 const fn=new Function('THREE','TERRAIN','TESS_HOLE','resolvePreset','_pwfReady','window',src.slice(a,b)+'\nreturn _terrainDetailMat;')(THREE,window.TERRAIN,window.TESS_HOLE,window.resolvePreset,window._pwfReady,window);
-const r=new TH.WebGPURenderer({canvas:document.getElementById('c'),forceWebGL:true,antialias:false}); await r.init();
+const r=new TH.WebGPURenderer({canvas:document.getElementById('c'),forceWebGL:true,antialias:false}); await r.init(); if(q('sky')==='1'){ }
 window.backend=r.backend.constructor.name;
 const sc=new TH.Scene(); sc.background=new TH.Color(0x9ec0e0); sc.fog=new TH.Fog(0x9ec0e0,80,400);
 const view=q('view','wide');
@@ -47,5 +47,6 @@ let t0=performance.now(); await r.compileAsync(sc,cam); window.compileMs=perform
 if(window.DMParallax._S.U){ window.DMParallax._S.U.steps.value=+q('steps',window.DMParallax._S.U.steps.value); }
 t0=performance.now(); for(let i=0;i<3;i++) await r.renderAsync(sc,cam); window.frameMs=(performance.now()-t0)/3;
 window.prof=prof&&prof.names; window.bakeMs=bakeMs; window.status=window.DMParallax.status(); window.gstatus=window.DMGround.status();
+if(window.DMGround._S.U){ window.DMGround._S.U.skyAmt.value=1; await r.renderAsync(sc,cam); }
 window.done=true;
 </script>

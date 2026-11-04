@@ -484,8 +484,8 @@
         });
         return wb;
       })().toVar();
-      // puddle level in height units: wet regions fill the low 46% of the relief, only on flat ground
-      const level = wetF.mul(0.46).mul(smoothstep(float(0.8), float(0.96), nY));
+      // puddle level in height units: wet regions fill the low 64% of the relief at full wetness, only on flat ground
+      const level = wetF.mul(0.64).mul(smoothstep(float(0.8), float(0.96), nY));
       const Hn = (uvw, lodv) => {
         const hv = F1(uvw, iA, lodv).x.toVar();
         If(WB.greaterThan(0.004), () => { hv.assign(tmix(hv, F1(uvw, iB, lodv).x, WB)); });
