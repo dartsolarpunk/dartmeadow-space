@@ -1005,7 +1005,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-safety.js?v=1" defer></script>
 <script src="jots/jots-link.js?v=217" defer></script>
 <script src="ui/dm-friends.js?v=217" defer></script>
-<script src="ui/dm-perflog.js?v=236" defer></script>
+<script src="ui/dm-perflog.js?v=237" defer></script>
 <script src="ui/dm-webkit.js?v=210" defer></script>
 <script src="ui/dm-spectator.js?v=1" defer></script>
 <script src="ui/dm-stack.js?v=1" defer></script>
@@ -3123,7 +3123,8 @@ function _introTick2(){
     if(!warming){ try{ dmSys.load('intro',_m); }catch(e){} } }
   // the menu scene behind the loader is decoration only: during the shader warm-up it draws every 3rd frame (the compiles and its own draws
   // share the GPU process; the menu pose / dt still advance), full rate again as soon as the warm-up is over
-  try{ const M=window.DM_MENUSCENE; if(M) M.skipN=warming?3:1; }catch(e){}
+  try{ const M=window.DM_MENUSCENE; if(M){ const gap=INTRO._tk?now-INTRO._tk:0; INTRO._tk=now; INTRO._slow=gap>600?6:Math.max(0,(INTRO._slow||0)-1);
+    M.skipN=warming?(INTRO._slow>0?12:3):1; } }catch(e){}   // (stability) this tick running >600 ms late = the main thread is stuck on the GPU (iOS compile storms): the decoration scene backs off to every 12th frame for a while
   const over=now-INTRO.tw>(building?150000:25000);
   const nx=window.DMLaunch.introNext({phase:'wait',worldReady:INTRO.stable>=10,stalled,over});
   if(nx==='dissolve'){ clearInterval(INTRO.iv); try{ if(_TR.rec) _TR.rec.why=INTRO.stable>=10?'ready':stalled?'stall':'ceiling'; }catch(e){} _introDissolve(900); }
@@ -19297,7 +19298,7 @@ function _trueAtmoSurface0(r,scene,cam,layered){
     const L=_TA.loc, now=performance.now(), span=4096, H=TERRAIN.H;
     if(typeof H==='function'&&(L.gen!==PW.gen||((Math.abs(PWF.fx-L.x)>span/8||Math.abs(PWF.fz-L.z)>span/8)&&now-L.t>500))){
       const uy=_pwUnderlayY();
-      A.setLocalHeight(PWF.fx,PWF.fz,span,(x,z)=>H(x,z)+uy); L.x=PWF.fx; L.z=PWF.fz; L.t=now; L.gen=PW.gen;
+      _crB('heightBake'); try{ A.setLocalHeight(PWF.fx,PWF.fz,span,(x,z)=>H(x,z)+uy); } finally{ _crE('heightBake'); } L.x=PWF.fx; L.z=PWF.fz; L.t=now; L.gen=PW.gen;
     }
     // empty-sky pixels: the classic dome owns the sky low down; the gas takes it over with height (same weight as the old shell)
     A.setWeights(layered?1:Math.max(0,Math.min(1,PW._atmoK!=null?PW._atmoK:0)),1);
@@ -19515,13 +19516,19 @@ function _pwPropsTick(px,pz,agl){
   const C=SURF_CHUNK, pi=Math.floor((px+C/2)/C), pj=Math.floor((pz+C/2)/C), want=new Set(), M=PW.props;
   if(!PW.propsGroup){ PW.propsGroup=new THREE.Group(); PW.propsGroup.name='JOTS_ChunkPropsAll'; TERRAIN.group.add(PW.propsGroup); }
   if(agl<220){
-    let built=0;
-    for(let dj=-1;dj<=1;dj++) for(let di=-1;di<=1;di++){
-      const k=(pi+di)+'_'+(pj+dj); want.add(k);
-      if(!M.has(k)&&built<1){ try{ const g=_hmChunkScatter(pi+di,pj+dj); PW.propsGroup.add(g); M.set(k,g); }catch(e){ M.set(k,null); } built++; }
+    // (stability) nearest chunk first (it used to be row order), at most one per 3 frames, and never in the frame of / during an MC patch build: the first
+    // seconds on foot used to put nine chunk scatters (each ~1000 height-field calls + its instance buffers) back to back with the first patch builds.
+    let built=0; const _pf=PW._propF=(PW._propF||0)+1, _ord=[[0,0],[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,1],[1,-1],[-1,-1]];
+    for(let q=0;q<9;q++){
+      const di=_ord[q][0], dj=_ord[q][1], k=(pi+di)+'_'+(pj+dj); want.add(k);
+      if(!M.has(k)&&built<1&&(_pf%3===0)&&!TERRAIN._mcBusy){
+        _crB('chunkScatter',{k,n:M.size});
+        try{ const g=_hmChunkScatter(pi+di,pj+dj); PW.propsGroup.add(g); M.set(k,g); let by=0; g.traverse(o=>{ if(o.isInstancedMesh){ by+=(o.instanceMatrix?o.instanceMatrix.array.byteLength:0)+(o.instanceColor?o.instanceColor.array.byteLength:0); } }); g.userData.crumbKey='chunk#'+k; _crG('chunk#'+k,by); }catch(e){ M.set(k,null); }
+        _crE('chunkScatter',{n:M.size}); _crL('chunks',M.size); built++;
+      }
     }
   }
-  for(const [k,g] of M) if(!want.has(k)){ if(g){ PW.propsGroup.remove(g); _disposeProps(g); } M.delete(k); }
+  for(const [k,g] of M) if(!want.has(k)){ if(g){ PW.propsGroup.remove(g); _disposeProps(g); _crG('chunk#'+k,0); } M.delete(k); }
 }
 // Leave the world (to open space, a journey load, the menu): instant — the
 // one loop draws open space on the very next frame (or the view that
@@ -23438,7 +23445,20 @@ window._surfClimbNormal=window._surfClimbNormal||function(){ return null; };
  * Build a local GPU MC terrain patch around the landing site.
  * @returns {Promise<{mesh:THREE.Mesh, half:number}|null>}
  */
+// (stability) crash breadcrumbs: tiny wrappers over window.DMCrumb (ui/dm-perflog.js), safe if it is not loaded
+const _crB=(n,i)=>{ try{ window.DMCrumb&&DMCrumb.begin(n,i); }catch(e){} }, _crE=(n,i)=>{ try{ window.DMCrumb&&DMCrumb.end(n,i); }catch(e){} },
+      _crM=(n,i)=>{ try{ window.DMCrumb&&DMCrumb.mark(n,i); }catch(e){} }, _crG=(k,b)=>{ try{ window.DMCrumb&&DMCrumb.gpu(k,b); }catch(e){} }, _crL=(n,v)=>{ try{ window.DMCrumb&&DMCrumb.live(n,v); }catch(e){} };
+let _mcSeq=0;
+// give a GPU patch's resources back (a built patch that is never swapped in must not wait for the GC to find it)
+function _discardMcBuild(b){
+  try{ if(!b||!b.mesh) return; const k=b.mesh.userData&&b.mesh.userData.crumbKey; if(b.mesh.geometry) b.mesh.geometry.dispose(); if(k) _crG(k,0); }catch(e){}
+}
 async function buildGpuSurfacePatch(surfRenderer, opts){
+  const id=++_mcSeq; _crB('mcBuild',{id,N:opts&&opts.N,tier:opts&&opts.tier});
+  try{ return await _buildGpuSurfacePatch0(surfRenderer,opts,id); }
+  finally{ _crE('mcBuild',{id}); }
+}
+async function _buildGpuSurfacePatch0(surfRenderer, opts, mcId){
   opts = opts || {};
   if(!_isRealWebGPU(surfRenderer)) return null;
   const seed = opts.seed||1;
@@ -23584,7 +23604,9 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
     const dFloor = p.y.sub(groundY.sub(CRUST));
     densityNode.element(idx).assign(dSurf.min(dFloor));
   });
-  await surfRenderer.computeAsync(densityFn().compute(numPoints));
+  _crM('mc:density',{pts:numPoints});
+  const densityCompute=densityFn().compute(numPoints);
+  await surfRenderer.computeAsync(densityCompute);
 
   // Density readback — collision stays pixel-consistent with the mesh.
   // kept local until the patch is swapped in, so collision never reads a half-built grid
@@ -23733,7 +23755,17 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
       });
     });
   });
-  await surfRenderer.computeAsync(mcFn().compute(numCells));
+  _crM('mc:mesh',{cells:numCells});
+  const mcCompute=mcFn().compute(numCells);
+  await surfRenderer.computeAsync(mcCompute);
+  // (stability) the two kernels are done: release what only they used. A compute node keeps its bind groups / pipeline entry until .dispose(), and a storage
+  // attribute that is not part of a geometry (density, bricks, column heights, tri-table) is never freed by any geometry.dispose(): its GPUBuffer then waits
+  // for the JS GC to notice it. Every patch rebuild leaked these (and the CPU arrays behind them) until now. The vertex/normal/colour buffers stay: they ARE the mesh.
+  try{
+    densityCompute.dispose(); mcCompute.dispose();
+    const AT=surfRenderer._attributes;
+    if(AT&&typeof AT.delete==='function'){ [densityBuf,brickNode.value,(heightNode&&heightNode.value),triTableAttr].forEach(a=>{ if(a) try{ AT.delete(a); }catch(e){} }); }
+  }catch(e){ console.warn('[GPU-MC] release:',e); }
 
   const geo=new THREE.BufferGeometry();
   geo.setAttribute('position',vertexBuf);
@@ -23746,6 +23778,7 @@ async function buildGpuSurfacePatch(surfRenderer, opts){
   mesh.userData.sparse=_plan?{N,B,bricks:SLOTS,of:_plan.total,cells:numCells,denseCells:N*N*N,ms:+(performance.now()-_svT0).toFixed(1)}:null;
   try{ if(window.DMSparseVox) DMSparseVox.noteBuild('surface',mesh.userData.sparse); }catch(e){}
   mesh.userData.jotsGpuMc=true;
+  { const key='mc#'+mcId; mesh.userData.crumbKey=key; _crG(key,maxVerts*3*3*4+(densArr?0:0)+GRID*GRID*4); }   // the three vertex-rate buffers (the density / brick buffers were released above)
   mesh.userData.climbable=true; // Stabilizer climbing_up_wall / Grab_Bar
   mesh.userData.cliff=true;     // steep MC faces read as cliffs
   mesh.userData.mcTier=tier;
@@ -23777,7 +23810,8 @@ async function upgradeSurfaceMcLOD(surfRenderer, pal, seed, siteLandBias){
         tier:next,halfExtent:90,cx:Math.round(px),cz:Math.round(pz),yMin:gh-60,yMax:gh+130
       }));
     }finally{ TERRAIN._mcBusy=false; }
-    if(!built || !surfaceActive || !TERRAIN.group) return;
+    if(!built) return;
+    if(!surfaceActive || !TERRAIN.group){ _discardMcBuild(built); return; }
     _applyMcBuild(built);
     TERRAIN.mcTier=next;
     if(next==='high') TERRAIN.mcUpgradeLocked=true;
@@ -24649,11 +24683,16 @@ function _pwMcRebuildAt(px,pz){
   const gh=TERRAIN.H(px,pz);
   buildGpuSurfacePatch(r,Object.assign({},TERRAIN.mcOpts,{tier:TERRAIN.mcTier||'low',halfExtent:90,cx:Math.round(px),cz:Math.round(pz),yMin:gh-60,yMax:gh+130}))
     .then(built=>{
-      if(!built||gen!==PW.gen||!PW.active) return;
+      if(!built) return;
+      if(gen!==PW.gen||!PW.active){ _discardMcBuild(built); return; }
       _applyMcBuild(built);
       if(PW.ground) PW.ground.group.position.y=-0.35;   // the LOD ground becomes the underlay
       // staged detail upgrade once she's on foot (one-way lock, never during her load)
-      if(!TERRAIN._mcUpg&&surfaceActive){ TERRAIN._mcUpg=true; setTimeout(()=>{ if(gen===PW.gen&&surfaceActive&&!CHAR.loading) upgradeSurfaceMcLOD(PW.renderer,PW.pal,TERRAIN.seed,TERRAIN.siteBias).catch(()=>{}); },2500); }
+      if(!TERRAIN._mcUpg&&surfaceActive){ TERRAIN._mcUpg=true; const _go=(n)=>{ if(gen!==PW.gen||!surfaceActive) return; const pa=window._dmPrevAlive, killed=!!(pa&&pa.clean===false&&/surf/.test(pa.screen||'')&&Date.now()-pa.t<600000);
+        if(killed){ _crM('mcUpgrade:skip','prev kill on surf'); return; }   // (stability) the last session died on this surface: stay on the first (cheaper) tier
+        if(CHAR.loading||TERRAIN._mcBusy||(TERRAIN._shDt||0)>0.05){ if(n<20) setTimeout(()=>_go(n+1),3000); return; }   // wait for a quiet, healthy moment (re-check every 3 s)
+        upgradeSurfaceMcLOD(PW.renderer,PW.pal,TERRAIN.seed,TERRAIN.siteBias).catch(()=>{}); };
+        setTimeout(()=>_go(0),6000); }
     })
     .catch(e=>{ console.warn('[GPU-MC] patch failed, keeping the LOD ground:',e); if(gen===PW.gen) TERRAIN.mcGpu=false; })
     .finally(()=>{ if(gen===PW.gen) TERRAIN._mcBusy=false; });
@@ -24839,7 +24878,8 @@ function _mcSharedMat(){
 // swap a freshly built GPU patch in (mesh, collision grid and centre together)
 function _applyMcBuild(built){
   if(!TERRAIN.group) return;
-  if(TERRAIN.mcGroup){ TERRAIN.group.remove(TERRAIN.mcGroup); TERRAIN.mcGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&!(o.material.userData&&o.material.userData.shared))o.material.dispose(); }); }
+  if(TERRAIN.mcGroup){ TERRAIN.group.remove(TERRAIN.mcGroup); TERRAIN.mcGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.userData&&o.userData.crumbKey) _crG(o.userData.crumbKey,0); if(o.material&&!(o.material.userData&&o.material.userData.shared))o.material.dispose(); }); }
+  _crL('mcPatches',1);
   const g=new THREE.Group(); g.name='JOTS_GpuMcGroup'; g.userData.climbable=true;
   built.mesh.userData.climbable=true; g.add(built.mesh);
   TERRAIN.group.add(g); TERRAIN.mcGroup=g;
@@ -25073,6 +25113,8 @@ function _tessW(x,z,T){
   const u=Math.min(1,Math.max(0,(e-0.62)/0.33)); return 1-u*u*(3-2*u);
 }
 // one refined area, built a few rows at a time
+let _tessSeq=0;
+function _tessFree(m){ try{ if(!m) return; if(m.geometry) m.geometry.dispose(); if(m.userData&&m.userData.crumbKey) _crG(m.userData.crumbKey,0); }catch(e){} }
 function* _tessJob(cx,cz,half,slot){
   const cfg=TERRAIN.tessCfg, seg=Math.max(16,Math.round(cfg.seg*half/cfg.half)), n=seg+1, step=half*2/seg, nb=n+2;
   const T={cx,cz,half,slot}, base=TERRAIN.tessBase, pal=TERRAIN.pal, seed=TERRAIN.seed;
@@ -25114,6 +25156,7 @@ function* _tessJob(cx,cz,half,slot){
   if(!TERRAIN.tessMat){ TERRAIN.tessMat=_terrainDetailMat({noHole:true}); TERRAIN.tessMat.polygonOffset=true; TERRAIN.tessMat.polygonOffsetFactor=-2; TERRAIN.tessMat.polygonOffsetUnits=-4; }
   const m=new THREE.Mesh(geo,TERRAIN.tessMat);
   m.name='JOTS_TessPatch'; m.userData.climbable=true;
+  { const key='tess#'+slot+'#'+(++_tessSeq); m.userData.crumbKey=key; _crG(key,pos.byteLength+nor.byteLength+col.byteLength+idx.byteLength); }
   if(GFX.shadows){ m.receiveShadow=true; m.castShadow=(GFX.shadowSize||0)>=1024; }
   return {mesh:m,T};
 }
@@ -25174,9 +25217,9 @@ function _tessTick(){
       const r=J.next();
       if(r.done){
         TERRAIN._tessJobs[slot]=null;
-        if(!r.value||!TERRAIN.group) break;
-        if(T&&T.mesh){ TERRAIN.group.remove(T.mesh); T.mesh.geometry.dispose(); }
-        r.value.T.mesh=r.value.mesh; TERRAIN.group.add(r.value.mesh); TERRAIN.tessAreas[slot]=r.value.T;
+        if(!r.value||!TERRAIN.group){ if(r.value) _tessFree(r.value.mesh); break; }
+        if(T&&T.mesh){ TERRAIN.group.remove(T.mesh); _tessFree(T.mesh); }
+        r.value.T.mesh=r.value.mesh; _crM('tess:swap',slot); TERRAIN.group.add(r.value.mesh); TERRAIN.tessAreas[slot]=r.value.T;
         const h=TESS_HOLE.slots[slot]; if(h){ h.c.value.set(r.value.T.cx,r.value.T.cz); h.r.value=r.value.T.half*0.8; }
         break;
       }
@@ -25184,7 +25227,7 @@ function _tessTick(){
   }
 }
 function _tessDrop(slot){
-  const T=TERRAIN.tessAreas[slot]; if(T&&T.mesh&&TERRAIN.group){ TERRAIN.group.remove(T.mesh); T.mesh.geometry.dispose(); }
+  const T=TERRAIN.tessAreas[slot]; if(T&&T.mesh&&TERRAIN.group){ TERRAIN.group.remove(T.mesh); _tessFree(T.mesh); }
   TERRAIN.tessAreas[slot]=null; TERRAIN._tessJobs[slot]=null;
   const h=TESS_HOLE.slots[slot]; if(h) h.r.value=0;
 }

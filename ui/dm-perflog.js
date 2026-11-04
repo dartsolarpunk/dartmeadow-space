@@ -43,6 +43,37 @@
   function beat(clean) {
     try { localStorage.setItem(AKEY, JSON.stringify({ sid: sessionId, t: Date.now(), up: Math.round((Date.now() - start.getTime()) / 1000), screen: curMode(), phase: window._dmWarmPhase || null, warming: !!window._dmWarming, hidden: !!document.hidden, clean: !!clean })); } catch (e) {}
   }
+  // (stability) CRASH BREADCRUMBS. An iOS tab kill leaves no pagehide and no JS error, so the only evidence is what was written just before. window.DMCrumb is a tiny
+  // registry the heavy paths report into (begin/end of a patch rebuild, a chunk scatter, an MC dispatch, a height bake, a warm-up step; our own GPU byte estimates;
+  // live patch / chunk counts). It is flushed to localStorage once a second (a ~0.8 KB string) together with renderer.info and the worst main-thread stall of that
+  // second, and the NEXT session copies it into prevAlive.crumb. Nothing here runs per frame.
+  const CKEY = 'dm_crumb_v1';
+  const prevCrumb = read(CKEY);
+  const CR = { active: new Map(), trail: [], gpu: new Map(), live: {}, stallMax: 0, flushes: 0 };
+  const crT = () => Math.round(performance.now());
+  window.DMCrumb = {
+    mark(n, info) { try { CR.trail.push([crT(), String(n).slice(0, 32), info == null ? undefined : (typeof info === 'object' ? JSON.stringify(info).slice(0, 80) : String(info).slice(0, 80))]); if (CR.trail.length > 12) CR.trail.shift(); } catch (e) {} },
+    begin(n, info) { try { CR.active.set(n, crT()); this.mark(n + ':start', info); this.flush(); } catch (e) {} },   // flushed at once: if the tab dies inside, this is the last thing written
+    end(n, info) { try { CR.active.delete(n); this.mark(n + ':end', info); } catch (e) {} },
+    gpu(key, bytes) { try { if (bytes > 0) CR.gpu.set(key, Math.round(bytes)); else CR.gpu.delete(key); } catch (e) {} },
+    live(n, v) { try { CR.live[n] = v; } catch (e) {} },
+    gpuBytes() { let t = 0; CR.gpu.forEach((v) => { t += v; }); return t; },
+    flush() {
+      try {
+        const r = window.flightRenderer || (typeof flightRenderer !== 'undefined' ? flightRenderer : null), i = r && r.info;
+        const now = crT(), act = []; CR.active.forEach((t0, n) => { act.push(n + '@' + (now - t0)); });
+        const top = Array.from(CR.gpu.entries()).sort((a, b) => b[1] - a[1]).slice(0, 4).map((e) => e[0].slice(0, 16) + ':' + Math.round(e[1] / 1024) + 'K');
+        const o = { sid: sessionId, t: Date.now(), up: Math.round((Date.now() - start.getTime()) / 1000), screen: curMode(), active: act, trail: CR.trail.slice(-8),
+          ourGpuMB: +(this.gpuBytes() / 1048576).toFixed(1), ourTop: top, live: CR.live, stallMs: CR.stallMax,
+          geo: i && i.memory ? i.memory.geometries : null, tex: i && i.memory ? i.memory.textures : null, rMB: i && i.memory && i.memory.total != null ? +(i.memory.total / 1048576).toFixed(1) : null,
+          calls: i && i.render ? i.render.calls : null, tris: i && i.render ? i.render.triangles : null };
+        CR.stallMax = 0; CR.flushes++;
+        localStorage.setItem(CKEY, JSON.stringify(o));
+      } catch (e) {}
+    },
+  };
+  let _crLast = performance.now();
+  setInterval(() => { const n = performance.now(), late = n - _crLast - 1000; _crLast = n; if (late > CR.stallMax) CR.stallMax = Math.round(late); window.DMCrumb.flush(); }, 1000);
   const prevUnclean = !!(prevLocal && prevLocal.sessionId && !prevLocal.final);
   const windows = [], hitches = [], modes = {}, byScreen = {};
   let lastSig = '', dirty = true, ended = false, writing = false, endNote = null;
@@ -162,7 +193,7 @@
       build: env && env.build, swCache: (env && env.swCache) || window._dmSwCache || null,
       backend: env && env.backend, gpu: env && env.gpu, preset: env && env.preset, hair: env && env.hair,
       warmupMs: window._warmupMs != null ? window._warmupMs : null,
-      reloadWhy, prevAlive: prevAlive ? { sid: prevAlive.sid, clean: prevAlive.clean, upSec: prevAlive.up, screen: prevAlive.screen, phase: prevAlive.phase, warming: prevAlive.warming, hidden: prevAlive.hidden, deadAfterSec: prevAlive.t ? Math.round((start.getTime() - prevAlive.t) / 1000) : null } : null,
+      reloadWhy, prevAlive: prevAlive ? { sid: prevAlive.sid, clean: prevAlive.clean, upSec: prevAlive.up, screen: prevAlive.screen, phase: prevAlive.phase, warming: prevAlive.warming, hidden: prevAlive.hidden, deadAfterSec: prevAlive.t ? Math.round((start.getTime() - prevAlive.t) / 1000) : null, crumb: (prevCrumb && prevAlive.sid === prevCrumb.sid) ? prevCrumb : null } : null,
       warmSteps: window._warmSteps || null, recovery: !!window._dmRecoveryUsed,
       transitions: window._dmTransitions && window._dmTransitions.length ? window._dmTransitions.slice() : null,   // (menu-perf) launch fly-out markers: per phase frames / max gap / gaps > 50, 100 ms
       navType, prevUnclean, prevSessionId: prevLocal && prevLocal.sessionId || null, endNote: final ? endNote : null,
