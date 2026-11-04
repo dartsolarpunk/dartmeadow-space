@@ -424,9 +424,68 @@
     } catch (e) { try { console.warn('[parallax] ground', e); } catch (_) { } return false; }
   }
 
+  /* ─────────────────── 5. structures: cliffs, mansion, Bird Temple (GLB materials with maps + a height map) ─────────────────── */
+  // GLB materials are classic MeshStandardMaterials; the march needs a node material, so each one is adopted ONCE into a node twin that replaces it on its meshes.
+  // The twin samples its colour / normal / ORM through the parallax-displaced uv (explicit TextureNodes, swapped with structureMaps() when the streaming code
+  // upgrades the maps), so everything the original had (vertex colour = macro tint, aoMap on uv1 = baked GI, positionNode = planet bend) carries over.
+  // Cost: the SAME shared uniforms as the ground (preset steps, governor level, shadow/relief) — nothing extra to tune; distance-faded (near..far in scene units).
+  function adopt(root, mat) {
+    try {
+      if (off || !mat || !root) return mat;
+      if (mat.isNodeMaterial) return mat;
+      if (mat.userData && mat.userData.dmPxTwin) return mat.userData.dmPxTwin;
+      const THREE = G.THREE; if (!THREE || !THREE.MeshStandardNodeMaterial || !mat.isMeshStandardMaterial) return mat;
+      const n = new THREE.MeshStandardNodeMaterial();
+      const keep = ['name', 'color', 'roughness', 'metalness', 'map', 'normalMap', 'normalScale', 'roughnessMap', 'metalnessMap', 'aoMap', 'aoMapIntensity', 'lightMap', 'lightMapIntensity', 'envMap', 'envMapIntensity',
+        'emissive', 'emissiveIntensity', 'emissiveMap', 'vertexColors', 'side', 'transparent', 'opacity', 'alphaTest', 'depthWrite', 'depthTest', 'flatShading', 'polygonOffset', 'polygonOffsetFactor', 'polygonOffsetUnits', 'shadowSide', 'toneMapped', 'fog'];
+      for (const k of keep) { if (mat[k] === undefined) continue; const v = mat[k]; n[k] = (v && v.isColor) ? v.clone() : (v && v.isVector2) ? v.clone() : v; }
+      for (const k of ['positionNode', 'maskNode', 'colorNode', 'opacityNode']) if (mat[k]) n[k] = mat[k];
+      n.userData = Object.assign({}, mat.userData); n.userData.dmPxFrom = mat; mat.userData = mat.userData || {}; mat.userData.dmPxTwin = n;
+      root.traverse((o) => { if (o.isMesh) { if (o.material === mat) o.material = n; else if (Array.isArray(o.material)) o.material = o.material.map((x) => (x === mat ? n : x)); } });
+      n.needsUpdate = true; return n;
+    } catch (e) { try { console.warn('[parallax] adopt', e); } catch (_) { } return mat; }
+  }
+  // Height from a loaded THREE.Texture's image (normal map -> integrated slopes; or colour -> luminance high-pass), at most `max` px, cached R8.
+  function deriveHeight(key, srcTex, kind, max) {
+    try {
+      let t = S.tex.get(key); if (t) return t;
+      const im = srcTex && srcTex.image; if (!im || !im.width || !G.document) return null;
+      const sc = Math.min(1, max / Math.max(im.width, im.height)), w = Math.max(16, Math.round(im.width * sc)), h = Math.max(16, Math.round(im.height * sc));
+      const cv = G.document.createElement('canvas'); cv.width = w; cv.height = h; const cx = cv.getContext('2d', { willReadFrequently: true }); cx.drawImage(im, 0, 0, w, h);
+      const d = cx.getImageData(0, 0, w, h).data, bytes = kind === 'nrm' ? heightFromNormals(d, w, h, { flipY: false }) : heightFromRGBA(d, w, h);
+      return heightTexture(key, bytes, w, h);
+    } catch (e) { return null; }
+  }
+  // Give an adopted twin parallax relief.  o: { tex:{map,nrm,orm} (THREE.Texture), height (THREE.Texture, .r = height 1 proud), hSize, tileM (metres per uv unit), depthM,
+  //   near, far (scene units), bias, nrmScale }.  Returns true when built.  Low preset / ?px=0 build nothing.
+  function structure(mat, o) {
+    try {
+      if (off || !mat || !mat.isNodeMaterial || !o || !o.height || (mat.userData && mat.userData.dmPxStruct)) return false;
+      if (curTier() === 'low' || !init()) return false;
+      const T = S.T, { float, vec2, vec3, texture, normalMap, mix, uv, materialColor, materialRoughness, materialMetalness } = T;
+      const hs = o.hSize || (o.height.image && o.height.image.width) || 512;
+      const b = buildCore({ uv: uv(), H: (u, lod) => texture(o.height, u).level(lod).r, size: hs, N: T.normalView, mask: float(1), depthUV: (o.depthM || 0.05) / (o.tileM || 1), bias: o.bias == null ? 0.5 : o.bias, near: o.near || 14, far: o.far || 40, lodMax: 4.0 });
+      const nm = { map: texture(o.tex.map, b.uv), nrm: texture(o.tex.nrm, b.uv), orm: o.tex.orm ? texture(o.tex.orm, b.uv) : null };
+      const gate = b.fade.clamp(0.0, 1.0), cav = mix(float(1), float(0.55).add(b.h.mul(0.45)), gate.mul(o.cavity == null ? 0.8 : o.cavity));
+      mat.map = null; mat.normalMap = null; mat.roughnessMap = null; mat.metalnessMap = null;
+      mat.colorNode = nm.map.rgb.mul(materialColor.rgb).mul(cav).mul(mix(float(1), b.shade, gate));
+      mat.normalNode = normalMap(nm.nrm, vec2(o.nrmScale == null ? 1 : o.nrmScale, o.nrmScale == null ? 1 : o.nrmScale));
+      if (nm.orm) { mat.roughnessNode = materialRoughness.mul(nm.orm.g); mat.metalnessNode = materialMetalness.mul(nm.orm.b); }
+      mat.userData.dmPxStruct = nm; mat.needsUpdate = true; S.mats++;
+      return true;
+    } catch (e) { try { console.warn('[parallax] structure', e); } catch (_) { } return false; }
+  }
+  // the streaming code swapped the map set (512 -> 1K -> 2K): point the twin's texture nodes at the new textures (no recompile: same types)
+  function structureMaps(mat, t) {
+    try {
+      const nm = mat && mat.userData && mat.userData.dmPxStruct; if (!nm) return false;
+      if (t.map) nm.map.value = t.map; if (t.nrm) nm.nrm.value = t.nrm; if (t.orm && nm.orm) nm.orm.value = t.orm; return true;
+    } catch (e) { return false; }
+  }
+
   G.DMParallax = {
     on: !off, ref: { march, shadow, distFade, layersFor, TIERS, BOUNDS },
-    heightFromRGBA, heightFromNormals, makeTile, heightTexture, tileTexture, refresh, texelsLanded, applyToMaterial, applyGround, init, buildCore,
+    heightFromRGBA, heightFromNormals, makeTile, heightTexture, tileTexture, refresh, texelsLanded, applyToMaterial, applyGround, init, buildCore, adopt, structure, structureMaps, deriveHeight,
     config: () => ({ tier: S.tier, klass: S.klass, scale: S.scale, cfg: S.cfg }),
     status: () => ({ ready: S.ready, tier: S.tier, cfg: S.cfg, maps: S.tex.size, materials: S.mats, graphs: S.builds, off, gov: { lvl: S.gov.lvl, emaMs: +S.gov.ema.toFixed(1), changes: S.gov.changes, fails: S.gov.fails, holdMs: S.gov.hold } }),
     _S: S,

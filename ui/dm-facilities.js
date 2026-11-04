@@ -285,9 +285,13 @@
       const [a, b, o] = got;
       for (const t of [a, b, o]) { t.flipY = false; t.wrapS = t.wrapT = T.RepeatWrapping; t.anisotropy = 8; }
       a.colorSpace = T.SRGBColorSpace;
-      const old = [mat.map, mat.normalMap, mat.roughnessMap];
-      mat.map = a; mat.normalMap = b; mat.roughnessMap = o; mat.metalnessMap = o; mat.needsUpdate = true;
+      // (parallax) slate / concrete / wood / dark: relief from a height map integrated once from the normal map (512 px, cached R8), tile sizes from build_mansion.py TILE
+      let tgt = mat; const PXD = { slate: [4, 0.04], concrete: [4, 0.012], wood: [3, 0.02], dark: [2, 0.012] }[n];
+      if (PXD && window.DMParallax && DMParallax.on && !/[?&]manpx=0\b/.test(location.search)) { try { const rts = [MAN.glb.scene].concat(Array.from(F.sites.values()).filter(r => r.mansion && r.group).map(r => r.group)); rts.forEach(rt => { tgt = DMParallax.adopt(rt, mat); }); } catch (e) { tgt = mat; } }
+      const old = [tgt.map, tgt.normalMap, tgt.roughnessMap];
+      tgt.map = a; tgt.normalMap = b; tgt.roughnessMap = o; tgt.metalnessMap = o; tgt.needsUpdate = true;
       old.forEach(x => { if (x && x.dispose && x !== a && x !== b && x !== o) x.dispose(); });   // the 1K maps the GLB shipped with go once the 2K ones are on the material
+      if (PXD && tgt.isNodeMaterial) { try { const hg = DMParallax.deriveHeight('man|' + n, b, 'nrm', 512); if (hg && !DMParallax.structure(tgt, { tex: { map: a, nrm: b, orm: o }, height: hg, hSize: hg.image.width, tileM: PXD[0], depthM: PXD[1], near: 10, far: 30, cavity: 0.6 })) { /* stays on the plain maps */ } } catch (e) { console.warn('[ariel-home] mansion parallax', n, e); } }
     }, () => { hiTried = false; }));
   }
 
@@ -305,6 +309,11 @@
     fetch('assets/ariel-home/cliff/cliff-materials.json?v=' + F.ver).then(r => r.json()).then(J => {
       const L = new T.TextureLoader(), load = u => new Promise((ok, no) => L.load(u, ok, undefined, no)), aniso = mob ? 4 : 8, ids = Object.keys(J.sets);
       const hp = J.heightTierFor ? J.heightTierFor[res || '512'] : (res || '512');
+      // (parallax) real relief on the cliff: each rock material is adopted into a node twin (ui/dm-parallax.js) that marches the set's height map, sharing the ground's
+      // governor/preset uniforms (uniform writes only). Desktop tier >= 1, phones tier >= 2 with the 1K maps; ?px=0 / Low = the plain maps as before.
+      const pxOn = !!(res && window.DMParallax && DMParallax.on && !/[?&]cliffpx=0\b/.test(location.search));
+      const pxRoots = () => [MAN.glb.scene].concat(Array.from(F.sites.values()).filter(r => r.mansion && r.group).map(r => r.group));
+      if (pxOn) ids.forEach(id => { const S = J.sets[id], m0 = byName[S.material]; if (!m0) return; let tw = m0; pxRoots().forEach(rt => { tw = DMParallax.adopt(rt, m0); }); byName[S.material] = tw; });
       ids.forEach(id => { const S = J.sets[id], mat = byName[S.material]; if (mat) mat.userData.dmCliff = { set: id, tileM: J.tileM, depthM: S.depthM, height: J.base + id + '-height-' + hp + '.webp?v=' + F.ver, uvOrigin: J.uv }; });
       if (!res) return;
       ids.forEach(id => F.heavy('cliff:' + id + ':' + res, async (alive) => {   // one set per queue step (>= GAP ms apart, only while the page keeps up); its three images load one after the other
@@ -318,6 +327,13 @@
         const old = [mat.map, mat.normalMap, mat.roughnessMap];
         mat.map = a; mat.normalMap = b; mat.roughnessMap = o; mat.metalnessMap = o; mat.needsUpdate = true;
         old.forEach(x => { if (x && x.dispose && x !== a && x !== b && x !== o) x.dispose(); });   // the embedded 512 maps go as soon as the new ones are on the material
+        if (pxOn && mat.isNodeMaterial) {   // (parallax) the set's height map (8-bit, 1 = proud), marched in the 14..40 m fade band from cliff-materials.json
+          try {
+            const ht = await load(J.base + id + '-height-' + hp + '.webp?v=' + F.ver); ht.flipY = false; ht.wrapS = ht.wrapT = T.RepeatWrapping; ht.anisotropy = 2; ht.colorSpace = T.NoColorSpace;
+            if (!alive()) { ht.dispose(); return; }
+            if (!DMParallax.structure(mat, { tex: { map: a, nrm: b, orm: o }, height: ht, hSize: ht.image && ht.image.width, tileM: J.tileM, depthM: S.depthM, near: (J.parallax && J.parallax.fadeStartM) || 14, far: (J.parallax && J.parallax.fadeEndM) || 40 })) ht.dispose();
+          } catch (e) { console.warn('[ariel-home] cliff parallax', id, e); }
+        }
       }, () => { cliffTried = false; }));
     }).catch(e => console.warn('[ariel-home] cliff set', e));
   }
