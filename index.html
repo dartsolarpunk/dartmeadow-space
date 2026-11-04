@@ -156,6 +156,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-theme.js?v=81"></script>
 <script src="ui/dm-sparsevox.js?v=2"></script>
 <script src="ui/dm-rockmat.js?v=145"></script>
+<script src="ui/dm-parallax.js?v=233"></script>
 <script src="ui/dm-perf.js?v=160"></script>
 <script src="ui/dm-governor.js?v=211"></script>
 <script>/* (v136) no-op stub so the flight loop can never throw if dm-perf.js failed to load */
@@ -10621,6 +10622,7 @@ window.DMNatLights=(function(){
   const req=new Map(); let id=0;
   return {
     request(pos,color,intensity,range){ const k=++id; req.set(k,{pos:pos.clone?pos.clone():new THREE.Vector3(pos.x,pos.y,pos.z),color:new THREE.Color(color),i:intensity||1,r:range||12}); return k; },
+    set(k,pos,intensity){ const e=req.get(k); if(!e) return; e.pos.copy(pos); if(intensity!=null) e.i=intensity; },   // move / re-strength a live request in place (no allocation) — the kite-charm glow follows her
     release(k){ req.delete(k); }, clear(){ req.clear(); }, get count(){ return req.size; },
     _tick(cam){
       const pool=TERRAIN.natPool; if(!pool) return;
@@ -15257,6 +15259,8 @@ const CREDITS=[
  {t:'three-nanite',a:'AIFanatic',l:'MIT',use:'technique',u:['https://github.com/AIFanatic/three-nanite'],w:'Meshlet LOD reference.'},
  {t:'Web3D Asset Compiler',a:'Abdul Rafay Khalid (ARafayKhalid)',l:'GPL-3.0-or-later',use:'technique',
   u:['https://github.com/ARafayKhalid/web3d-asset-compiler'],w:'Keyframe-reduction idea for character animation clips; re-implemented, no code copied.'},
+ {t:'Parallax Node',a:'MultLabs (https://multlabs.com)',l:'GPL-3.0-or-later',use:'technique',
+  u:['https://multlabs.com'],w:'Inspiration for the height-field ray-march approach (Depth / Bias / iterations); the algorithm (Policarpo relief mapping, Tatarchuk POM) was re-implemented independently in ui/dm-parallax.js, no code copied.'},
  {t:'UE5: Sprite-Sheets (Niagara Particles!)',a:'Royal Skies',l:'Tutorial video',use:'technique',
   u:['https://youtu.be/iXBZwiiwwfI'],w:'Reference for volumetric sprite particles in the galaxy.'},
  {t:'Fields Galaxy (Blender geometry nodes)',a:'DART Meadow — built by following a YouTube Blender galaxy tutorial (tutorial link to be added)',l:'DART Meadow project',use:'technique',
@@ -15667,7 +15671,7 @@ function makePlanetTexture(type,baseHex,seed){
   const w=_getTexWorker();
   if(w){
     const id=++_texJobId;
-    _texJobs.set(id,d=>{data.set(d);tex.needsUpdate=true;});
+    _texJobs.set(id,d=>{data.set(d);tex.needsUpdate=true;try{if(window.DMParallax)DMParallax.texelsLanded(tex);}catch(e){}});
     w.postMessage({id,type,r:base.r,g:base.g,b:base.b,seed,S});
   }else{
     const d=new Uint8ClampedArray(data.length);_planetTexels(type,base.r,base.g,base.b,seed,S,d);data.set(d);tex.needsUpdate=true;
@@ -15688,6 +15692,8 @@ function applyProceduralTextures(){
     m.material.roughness=b.type.includes('Giant')?0.85:0.95;
     m.material.metalness=0.02;
     m.material.needsUpdate=true;
+    // parallax relief on rocky crusts (ui/dm-parallax.js): per-material opt-in, Low tier = plain; gas/ice giants have no surface to carve
+    try{ if(window.DMParallax&&!/Giant|Gas/.test(b.type)&&m.geometry&&m.geometry.parameters&&m.geometry.parameters.radius){ const pm=DMParallax.applyToMaterial(m.material,tex,m.geometry.parameters.radius*(m.scale?m.scale.x:1),'crust|'+b.name); if(pm&&pm!==m.material){ const old=m.material; m.material=pm; try{old.dispose();}catch(e){} } } }catch(e){ console.warn('parallax:',e); }
     b.textured=true;
   });
 }
@@ -24756,6 +24762,7 @@ function _terrainDetailMat(opts){
     m.roughnessNode=sandy?W.float(0.98):W.float(0.95).sub(F0.peb.mul(0.28).mul(fade));
     // (v140) layered rock (ui/dm-rockmat.js) on the walkable MC ground's cliffs — zones, varnish, oxide, slate, grain. ?mat=0 = off
     if(opts.side===THREE.DoubleSide&&W.DMRock&&W.DMRock.on){ try{ m.colorNode=W.DMRock.patchColor(m.colorNode,p,nFlat,(typeof _surfBody!=='undefined'&&_surfBody)?_surfBody.name:'',0); }catch(e){} }
+    try{ if(window.DMParallax&&m.userData&&!m.userData.noParallax&&opts.parallax!==false) DMParallax.applyGround(m,{p,flat,lvl,N:null,kind:'cobble',near:reach*0.13,far:reach*0.3,seed:TERRAIN.style==='mesa'?11:7}); }catch(e){}   // (ui/dm-parallax.js) real depth in the pebbles/plates close to her: marched only inside ~0.3 reach, Low off
     m.userData.dmDetail=lvl;
     // the coarse ground is cut away where the tessellated patch round her takes over
     if(!opts.noHole&&TESS_HOLE.slots.length){

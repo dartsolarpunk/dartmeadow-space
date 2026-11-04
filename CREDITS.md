@@ -35,6 +35,8 @@ Use: **code** = code or tables included (licence terms apply) · **technique** =
 - **three-nanite** — AIFanatic. *MIT* (technique). Meshlet LOD reference.
   <https://github.com/AIFanatic/three-nanite>
 - **Web3D Asset Compiler** — Abdul Rafay Khalid (ARafayKhalid). *GPL-3.0-or-later* (technique). Keyframe-reduction idea for character animation clips; re-implemented, no code copied.
+- **Parallax Node** — MultLabs (<https://multlabs.com>). *GPL-3.0-or-later* (technique). Parallax Node by MultLabs (https://multlabs.com), GPL-3.0-or-later, inspiration for the height-field ray-march approach; algorithm re-implemented independently (Policarpo et al. relief mapping 2005, Tatarchuk POM 2006, Dachsbacher & Tatarchuk 2007), no code copied. `ui/dm-parallax.js`.
+  <https://multlabs.com>
   <https://github.com/ARafayKhalid/web3d-asset-compiler>
 - **UE5: Sprite-Sheets (Niagara Particles!)** — Royal Skies. *Tutorial video* (technique). Reference for volumetric sprite particles in the galaxy.
   <https://youtu.be/iXBZwiiwwfI>

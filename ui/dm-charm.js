@@ -15,10 +15,10 @@
   'use strict';
   const G={off:/[?&]charm=0\b/.test(location.search),built:false,manual:false,g:0,t:0,last:-1,
     rig:null,kite:null,glow:null,shells:null,shards:null,kmat:null,
-    FADE_IN:0.25,FADE_OUT:0.6};
+    FADE_IN:0.25,FADE_OUT:0.6,lid:null,wp:null,lastI:0,LIGHT_I:0.02,LIGHT_MAX:0.03,LIGHT_R:1.2};
   window.DMCharm=G;
   G.setReturning=function(on){ G.manual=!!on; };
-  G.stats=function(){ return G.built?{glow:+G.g.toFixed(3),manual:G.manual,visible:!!(G.glow&&G.glow.visible)}:null; };
+  G.stats=function(){ return G.built?{glow:+G.g.toFixed(3),manual:G.manual,visible:!!(G.glow&&G.glow.visible),light:G.lid!=null,lightI:+G.lastI.toFixed(4)}:null; };
 
   function canvasTex(size,draw){
     const c=document.createElement('canvas'); c.width=c.height=size; draw(c.getContext('2d'),size);
@@ -89,7 +89,7 @@
     ks.moveTo(0,0.2*kt); ks.lineTo(kw,0); ks.lineTo(0,-0.8*kt); ks.lineTo(-kw,0); ks.closePath();
     const kg=new T.ExtrudeGeometry(ks,{depth:0.0035*H,bevelEnabled:true,bevelThickness:0.0012*H,bevelSize:0.0012*H,bevelSegments:1});
     kg.translate(0,0,-0.00175*H);
-    const kmat=new T.MeshStandardMaterial({color:0x9fd2ff,metalness:0.85,roughness:0.22,emissive:0x1b5cff,emissiveIntensity:0.15});
+    const kmat=new T.MeshStandardMaterial({color:0x0d0f14,metalness:0.85,roughness:0.3,emissive:0x1b5cff,emissiveIntensity:0});   // a small BLACK kite; its blue only comes with the glow
     const kite=new T.Mesh(kg,kmat); kite.name='ArielKiteCharm'; kite.position.set(0,-0.0035*H,0.0025*H); kite.rotation.x=-0.18; rig.add(kite);
     const bail=new T.Mesh(new T.TorusGeometry(0.0036*H,0.0011*H,4,10),chainMat); bail.position.set(0,0.2*kt+0.0026*H,0); kite.add(bail);
 
@@ -104,24 +104,33 @@
         P.setXYZ(k,P.getX(k)+nx*d,P.getY(k)+ny*d,P.getZ(k)+nz*d); N.setXYZ(k,nx,ny,nz); }
       P.needsUpdate=true; N.needsUpdate=true; return g;
     }
+    // ONE shared node program for every glow piece (3 shells + the shards): colour / rim power / gain are material properties read through
+    // materialReference, so a pulse is a property write (no uniform nodes, no per-material graph, one tiny compile). Facet term: the flat
+    // screen-space face normal gives the crystal a faceted shimmer on top of the smooth rim (still the kite's own shape).
     function glowMat(r,gc,b,pw){
-      if(!nodeOK){ const m=new T.MeshBasicMaterial({color:new T.Color(r,gc,b),transparent:true,opacity:0,blending:T.AdditiveBlending,depthWrite:false,side:T.DoubleSide,fog:false,toneMapped:false}); return {m,set:v=>{ m.opacity=Math.min(1,v*0.3); }}; }
-      const u=TS.uniform(0), m=new T.MeshBasicNodeMaterial({transparent:true,blending:T.AdditiveBlending,depthWrite:false,side:T.DoubleSide});
-      const rim=TS.float(1).sub(TS.normalize(TS.normalView).dot(TS.positionViewDirection).abs().clamp(0,1)).pow(pw);   // 0 face-on → 1 at the silhouette
-      m.colorNode=TS.vec3(r,gc,b).mul(TS.float(0.05).add(rim.mul(2.0)).mul(u)); m.fog=false; m.toneMapped=false;
-      return {m,set:v=>{ u.value=v; }};
+      if(!nodeOK||!TS.materialReference||!TS.dFdx){ const m=new T.MeshBasicMaterial({color:new T.Color(r,gc,b),transparent:true,opacity:0,blending:T.AdditiveBlending,depthWrite:false,side:T.DoubleSide,fog:false,toneMapped:false}); return {m,set:v=>{ m.opacity=Math.min(1,v*0.3); }}; }
+      const m=new T.MeshBasicNodeMaterial({transparent:true,blending:T.AdditiveBlending,depthWrite:false,side:T.DoubleSide});
+      m.cgR=r; m.cgG=gc; m.cgB=b; m.cgPow=pw; m.cgGain=0;
+      const ref=(n)=>TS.materialReference(n,'float'), V=TS.positionViewDirection;
+      const rim=TS.float(1).sub(TS.normalize(TS.normalView).dot(V).abs().clamp(0,1)).pow(ref('cgPow'));          // 0 face-on -> 1 at the silhouette
+      const fn=TS.normalize(TS.cross(TS.dFdx(TS.positionView),TS.dFdy(TS.positionView)));
+      const facet=TS.float(1).sub(fn.dot(V).abs().clamp(0,1)).pow(1.5);                                         // flat facets catch light differently
+      const k=TS.float(0.05).add(rim.mul(1.6)).add(facet.mul(0.5).mul(rim.add(0.25)));
+      m.colorNode=TS.vec3(ref('cgR'),ref('cgG'),ref('cgB')).mul(k).mul(ref('cgGain')); m.fog=false; m.toneMapped=false;
+      return {m,set:v=>{ m.cgGain=v; }};
     }
-    G.shells=[]; const SH=[[0.0016,0.55,0.85,1,2.2,1.0],[0.0034,0.3,0.62,1,1.8,0.7],[0.0058,0.18,0.42,1,1.4,0.45]];   // offset/H, rgb, rim power, gain
+    G.shells=[]; const SH=[[0.0022,0.55,0.85,1,2.2,1.0],[0.0048,0.3,0.62,1,1.8,0.7],[0.0085,0.18,0.42,1,1.4,0.45]];   // offset/H, rgb, rim power, gain
     for(let k=0;k<SH.length;k++){ const c=SH[k], gm=glowMat(c[1],c[2],c[3],c[4]), me=new T.Mesh(inflated(kg,c[0]*H),gm.m); me.renderOrder=11+k; me.frustumCulled=false; me.name='ArielCharmShell'+k; glow.add(me); G.shells.push({mesh:me,set:gm.set,gain:c[5],ph:k*0.9}); }
-    const streak=canvasTex(64,(x,s)=>{ x.translate(s/2,s/2); const g=x.createLinearGradient(0,-s/2,0,s/2); g.addColorStop(0,'rgba(60,140,255,0)'); g.addColorStop(0.5,'rgba(230,245,255,1)'); g.addColorStop(1,'rgba(60,140,255,0)');
-      x.fillStyle=g; x.beginPath(); x.moveTo(0,-s/2); x.lineTo(s*0.12,0); x.lineTo(0,s/2); x.lineTo(-s*0.12,0); x.closePath(); x.fill(); });
-    const sg=new T.PlaneGeometry(1,1), V=[[0,0.2*kt],[kw,0],[0,-0.8*kt],[-kw,0]];           // the kite's four corners
+    // crystal shards: little elongated bipyramids (faceted 3-D geometry, not sprites) lying along the kite's edges, same shared program
+    const sg=new T.OctahedronGeometry(1,0), V=[[0,0.2*kt],[kw,0],[0,-0.8*kt],[-kw,0]], cx0=0, cy0=-0.3*kt;      // the kite's four corners, its centre
+    const sgm=glowMat(0.6,0.85,1,1.6);
     G.shards=[]; const NS=6;
-    for(let i=0;i<NS;i++){                                                  // a shard lying along an edge, a little off the face
+    for(let i=0;i<NS;i++){
       const a=V[i%4], b=V[(i+1)%4], u=0.3+0.4*((i*0.37)%1), ex=b[0]-a[0], ey=b[1]-a[1], el=Math.hypot(ex,ey);
-      const m=new T.MeshBasicMaterial({map:streak,color:new T.Color(0.6,0.85,1),transparent:true,opacity:0,blending:T.AdditiveBlending,depthWrite:false,side:T.DoubleSide,fog:false,toneMapped:false});
-      const me=new T.Mesh(sg,m); me.position.set(a[0]+ex*u,a[1]+ey*u,(i&1?-1:1)*0.0042*H); me.rotation.z=Math.atan2(ey,ex)-Math.PI/2;
-      me.scale.set(0.022*H,el*0.6,1); me.renderOrder=14; me.frustumCulled=false; me.userData={ph:i*1.9,sp:0.7+0.25*(i%3),l0:el*0.6}; glow.add(me); G.shards.push(me); }
+      let px=a[0]+ex*u, py=a[1]+ey*u; const ox=px-cx0, oy=py-cy0, ol=Math.hypot(ox,oy)||1; px+=ox/ol*0.0022*H; py+=oy/ol*0.0022*H;   // a hair outside the rim
+      const me=new T.Mesh(sg,sgm.m); me.position.set(px,py,(i&1?-1:1)*0.0028*H); me.rotation.z=Math.atan2(ey,ex)-Math.PI/2; me.rotation.y=0.5*(i&1?-1:1);
+      me.scale.set(0.0042*H,el*0.42,0.0030*H); me.renderOrder=14; me.frustumCulled=false; me.userData={ph:i*1.9,sp:0.7+0.25*(i%3),l0:el*0.42}; glow.add(me); G.shards.push(me); }
+    G.shardSet=sgm.set;
     G.H=H; G.rig=rig; G.kite=kite; G.glow=glow; G.kmat=kmat; G.built=true;
     return true;
   };
@@ -133,15 +142,29 @@
     dt=dt>0?Math.min(dt,0.1):0.016;
     const want=(ret||G.manual)?1:0;
     G.g+= want?dt/G.FADE_IN:-dt/G.FADE_OUT; if(G.g<0)G.g=0; if(G.g>1)G.g=1;
-    if(G.g<=0.002){ if(G.glow.visible){ G.glow.visible=false; G.kmat.emissiveIntensity=0.15; } return; }
+    if(G.g<=0.002){ if(G.glow.visible){ G.glow.visible=false; G.kmat.emissiveIntensity=0; light(0,0); } return; }
     G.glow.visible=true; G.t+=dt;
     const f=G.g*G.g*(3-2*G.g), t=G.t, H=G.H;
     const p=0.5+0.5*Math.sin(t*5.2), p2=0.5+0.5*Math.sin(t*8.3+1.3);       // pulses
-    G.kmat.emissiveIntensity=0.15+f*(0.9+0.9*p);
+    G.kmat.emissiveIntensity=f*(0.2+0.45*p);
     for(let i=0;i<G.shells.length;i++){ const sh=G.shells[i]; sh.set(f*sh.gain*(0.7+0.9*(0.5+0.5*Math.sin(t*5.2-sh.ph)))); }   // pulse ripples outward shell by shell
+    let sf=0;
     for(let i=0;i<G.shards.length;i++){
-      const s=G.shards[i], u=s.userData, fl=Math.max(0,Math.sin(t*(3+u.sp*3)+u.ph));
-      s.material.opacity=f*(0.1+0.9*fl*fl); s.scale.y=s.userData.l0*(0.6+0.5*fl)*(0.85+0.25*p2);
+      const s=G.shards[i], u=s.userData, fl=Math.max(0,Math.sin(t*(3+u.sp*3)+u.ph)); sf=Math.max(sf,0.1+0.9*fl*fl);
+      s.scale.y=u.l0*(0.6+0.5*fl)*(0.85+0.25*p2);
     }
+    G.shardSet(f*(0.5+1.6*sf));
+    light(f,p);
   };
+  // a little blue light from the charm: borrows one of the world's FIXED pooled natural lights (DMNatLights, index.html) so the scene's light set never
+  // changes (adding a light would recompile every lit material). Ground only (where the pool exists); bounded; no shadow; no per-frame allocation.
+  function light(f,p){
+    const NL=window.DMNatLights, H=G.H; if(!NL||!NL.set) return;
+    if(f<0.02){ if(G.lid!=null){ NL.release(G.lid); G.lid=null; } return; }
+    if(!G.wp) G.wp=new THREE.Vector3();
+    G.kite.getWorldPosition(G.wp);
+    const I=Math.min(G.LIGHT_MAX*H*H,G.LIGHT_I*H*H*f*(0.75+0.5*p));
+    if(G.lid==null) G.lid=NL.request(G.wp,0x5aa8ff,I,G.LIGHT_R*H); else NL.set(G.lid,G.wp,I);
+    G.lastI=I;
+  }
 })();
