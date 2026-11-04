@@ -156,11 +156,18 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-theme.js?v=81"></script>
 <script src="ui/dm-sparsevox.js?v=2"></script>
 <script src="ui/dm-rockmat.js?v=145"></script>
-<script src="ui/dm-parallax.js?v=234"></script>
+<script src="ui/dm-parallax.js?v=236"></script>
 <script src="ui/dm-perf.js?v=160"></script>
 <script src="ui/dm-governor.js?v=235"></script>
 <script>/* (v136) no-op stub so the flight loop can never throw if dm-perf.js failed to load */
 window.DMPerf=window.DMPerf||{on:false,b(){},e(){},mark(){},measure(n,f){return f();},frame(){},stats(){return {fps:0,avgMs:0,p95Ms:0,worstMs:0,minFps:0,cpu:{},gpu:null,sparse:null};},show(){},hide(){}};</script>
+<script>/* (v236) always-on frame-phase clock for the perf log: EMA of the main-thread ms spent in each phase of a frame (logic / world tick / scene render / atmosphere pass / HUD …),
+  plus a decaying max. Two performance.now() reads per phase; read by ui/dm-perflog.js. (DMPerf.b/e needs ?perf=1; this does not.) */
+window.DMFT=window.DMFT||(function(){ const E=Object.create(null), X=Object.create(null); let frames=0;
+  return { add(k,ms){ if(!(ms>=0)) return; const e=E[k]; E[k]=e==null?ms:e+(ms-e)*0.1; const x=X[k]||0; X[k]=ms>x?ms:x*0.985; },
+    set(k,v){ E[k]=v; }, frame(){ frames++; }, get frames(){ return frames; },
+    snap(){ const o={}; for(const k in E){ o[k]=+E[k].toFixed(2); } const m={}; for(const k in X){ if(X[k]>8) m[k]=+X[k].toFixed(1); } o._max=m; return o; } }; })();
+</script>
 <script src="ui/dm-fluid.js?v=80"></script>
 <script src="ui/dm-journal.js?v=98"></script>
 <script src="ui/dm-worldstyle.js?v=94"></script>
@@ -998,7 +1005,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-safety.js?v=1" defer></script>
 <script src="jots/jots-link.js?v=217" defer></script>
 <script src="ui/dm-friends.js?v=217" defer></script>
-<script src="ui/dm-perflog.js?v=235" defer></script>
+<script src="ui/dm-perflog.js?v=236" defer></script>
 <script src="ui/dm-webkit.js?v=210" defer></script>
 <script src="ui/dm-spectator.js?v=1" defer></script>
 <script src="ui/dm-stack.js?v=1" defer></script>
@@ -6904,9 +6911,10 @@ function _startFlightLoop(){
     DMPerf.b('updateVolumetricDust'); try{updateVolumetricDust(dt);}catch(e){_animLoopWarn('volumetricDust',e);} DMPerf.e();
     // (menu-perf) HUD text / crosshair label / minimap canvas are DOM + 2D-canvas work under an opaque veil during 'play': skipped there (they redraw on the next frame)
     const _dmCov=_introCovers();
+    const _hu0=performance.now();
     DMPerf.b('updateHUD'); try{ if(!_dmCov) updateHUD(); }catch(e){_animLoopWarn('updateHUD',e);} DMPerf.e();
     DMPerf.b('updateCrosshairLabel'); try{ if(!_dmCov) updateCrosshairLabel(); }catch(e){_animLoopWarn('crosshair',e);} DMPerf.e();
-    DMPerf.b('drawMinimap'); try{ if(!_dmCov) drawMinimap(); }catch(e){_animLoopWarn('minimap',e);} DMPerf.e();
+    DMPerf.b('drawMinimap'); try{ if(!_dmCov) drawMinimap(); }catch(e){_animLoopWarn('minimap',e);} DMPerf.e(); DMFT.add('hud',performance.now()-_hu0);
     // Real fix for confirmed GPU-side contention during character loading
     // (measured live: her load took 90-130s in the full game context vs
     // ~12s in isolation) - each full render of the marching-cubes planets
@@ -6945,7 +6953,8 @@ function _startFlightLoop(){
     // doubled the GPU load of the skyboard fly-in (50-60 fps in the loader, 20-25 fps in the intro). The simulation keeps
     // running; the game scene is drawn again from the dissolve on.
     if((!CHAR.loading || _flightFrameCounter % 4 === 0) && !_introCovers()){
-      DMPerf.b('renderWithPostFX'); try{ renderWithPostFX(); }catch(e){ _animLoopWarn('render',e); } DMPerf.e();    }
+      const _rp0=performance.now(); DMFT.add('spaceLogic',_rp0-now);
+      DMPerf.b('renderWithPostFX'); try{ renderWithPostFX(); }catch(e){ _animLoopWarn('render',e); } DMPerf.e(); DMFT.add('spaceRender',performance.now()-_rp0); DMFT.frame();    }
   })();
 }
 
@@ -15439,9 +15448,9 @@ function _dmCheckApkUpdate(){
 if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',()=>setTimeout(_dmCheckApkUpdate,4000)); else setTimeout(_dmCheckApkUpdate,4000);
 // Live FPS readout (every .dm-fps: the kite, and the mini kites on the walking / flight screens)
 (function(){
-  let n=0,t0=performance.now();
+  let n=0,t0=performance.now(),_lastF=-1,_lastFt=0;
   function ensure(){ document.querySelectorAll('.mini-kite').forEach(k=>{ if(!k.querySelector('.dm-fps')){ const e=document.createElement('span'); e.className='dm-fps'; e.setAttribute('aria-hidden','true'); e.textContent='--'; k.appendChild(e); } }); }
-  function tick(t){ n++; if(t-t0>=500){ const f=Math.round(n*1000/(t-t0)); n=0; t0=t; ensure(); document.querySelectorAll('.dm-fps').forEach(e=>{ e.textContent=f; }); } requestAnimationFrame(tick); }
+  function tick(t){ n++; if(t-t0>=500){ const f=Math.round(n*1000/(t-t0)); n=0; t0=t; if(f!==_lastF||t-_lastFt>4000){ _lastF=f; _lastFt=t; ensure(); document.querySelectorAll('.dm-fps').forEach(e=>{ const v=String(f); if(e.textContent!==v) e.textContent=v; }); } } requestAnimationFrame(tick); }
   requestAnimationFrame(tick);
 })();
 
@@ -15544,7 +15553,8 @@ window.dmSceneText=function(){
     function wrapFn(name){ try{ const f=window[name]; if(typeof f!=='function'||f.__dmT) return; const w=function(){ const t=performance.now(); try{ return f.apply(this,arguments); } finally{ rec(name,performance.now()-t); } }; w.__dmT=1; Object.keys(f).forEach(k=>{ try{ w[k]=f[k]; }catch(e){} }); window[name]=w; }catch(e){} }
     function wrapObj(o,label,names){ try{ if(!o) return; names.forEach(n=>{ const f=o[n]; if(typeof f!=='function'||f.__dmT) return; const w=function(){ const t=performance.now(); try{ return f.apply(this,arguments); } finally{ rec(label+'.'+n,performance.now()-t); } }; w.__dmT=1; o[n]=w; }); }catch(e){} }
     setTimeout(()=>{
-      ['updateGalSky','buildGalSky','setGalSkySystem','upgradePlanetLOD','buildProceduralPlanetMesh','rebuildFlightForSystem','buildSolarSystem',
+      ['updateSurface','_pwWorldTick','_pwRender','_trueAtmoSurface0','updateAtmoFlight','_tessTick','_cpuMcTick','updateCaustics','_surfFluidTick','_pwMcRebuildAt','_pwPropsTick','_pwSeaFollow','_natSurfaceTick',   // (v236) the walk / atmosphere frame's own entry points, so a >70 ms hitch names them
+       'updateGalSky','buildGalSky','setGalSkySystem','upgradePlanetLOD','buildProceduralPlanetMesh','rebuildFlightForSystem','buildSolarSystem',
        'generateSeededStarField','loadCharacterAssets','updateFlight','updateBodies','_pwSpaceWatch','updateCharOrbitCamera','updateBirdTemple','updateDistantSystems','updateVolumetricDust','updateHUD','updateCrosshairLabel','drawMinimap','applySkyboardStance','_updateCharDebugHUD','_gsUpdateBlackHoles','renderWithPostFX','_attachJotsNearFill','_updateJotsWorldsFog','mountSkyboard','remountSkyboard']
         .forEach(wrapFn);
       wrapObj(window.DMStar,'DMStar',['frame','build']); wrapObj(window.DMMist,'DMMist',['frame','planetClouds','beltDust']);
@@ -18208,7 +18218,7 @@ function renderWithPostFX(){
   try{ if(window.BTL&&BTL.preRender) BTL.preRender(flightRenderer,flightScene,flightCamera); }catch(e){ if(window.BTL) BTL._err=String(e&&e.stack||e).slice(0,300); }   // v110 temple lights/shadow cache/glass probe
   // (v116) below deck with no opening in view: the outside world is hidden for this render and the atmosphere pass skipped (ui/dm-bt-interior.js)
   let _seal=false, _btib=false; try{ if(window.DMBtBake) DMBtBake.tick(); }catch(e){} try{ if(window.DMBtHull) DMBtHull.tick(); }catch(e){} try{ if(window.DMBtPbr) DMBtPbr.tick(); }catch(e){} try{ if(window.DMBtInterior){ DMBtInterior.tick(); _btib=true; _seal=DMBtInterior.begin(flightScene,flightCamera); } }catch(e){ _seal=false; }
-  try{ const _hs=_taHideShells(); try{ DMGpuProf.push('atmo'); let _ta=false; try{ if(!_seal) _ta=_trueAtmoRender(flightRenderer,flightScene,flightCamera); } finally{ DMGpuProf.pop(); } if(!_ta) flightRenderer.render(flightScene,flightCamera); } finally{ _taShowShells(_hs); } _shotGrab(flightRenderer); try{ DMGpuProf.tick&&DMGpuProf.tick(); }catch(e){} }
+  try{ const _hs=_taHideShells(); try{ DMGpuProf.push('atmo'); let _ta=false; try{ if(!_seal){ const _a0=performance.now(); try{ _ta=_trueAtmoRender(flightRenderer,flightScene,flightCamera); } finally{ DMFT.add('atmoPass',performance.now()-_a0); } } } finally{ DMGpuProf.pop(); } if(!_ta){ const _s0=performance.now(); flightRenderer.render(flightScene,flightCamera); DMFT.add('sceneRender',performance.now()-_s0); } } finally{ _taShowShells(_hs); } _shotGrab(flightRenderer); try{ DMGpuProf.tick&&DMGpuProf.tick(); }catch(e){} }
   finally{ if(_btib) try{ DMBtInterior.end(flightScene); }catch(e){} if(_spec) try{ DMSpec.post(flightCamera); }catch(e){} }
   const _rtMs = performance.now()-_rt0;
   if(!window._renderTimingSamples) window._renderTimingSamples=[];
@@ -18948,20 +18958,26 @@ function _pwSetMode(mode){
   try{ window.DMGlobe&&DMGlobe.sync(); }catch(e){}
 }
 // One frame of the world (called from the one flight loop).
+// (fps) On a world's ground / in its air the open-space sky is not drawn once the dome is closed (skyK >= 0.999 — the same test _pwRender calls `layered`).
+// Then the planets' orbits/spins and the Bird Temple's wander are bookkeeping nobody can see: they are placed from the world clock (absolute, not
+// integrated), so running them ~10x a second with the dt accumulated gives the same positions; as soon as the sky is drawn again they run every frame.
+let _pwBodyAcc=0,_pwBtAcc=0;
+function _pwSkyHidden(){ try{ return !(PW.skyK<0.999&&_PWS.ok); }catch(e){ return false; } }
 function _pwFrame(dt){
   const mode=PW.mode, now=performance.now();
   if(mode==='space'){
     _pwSpaceStep(dt);
     if(PW.mode&&PW.mode!=='space'){ _pwFrame(0); return; }   // handed over to the sky this frame: its camera draws it
   } else {
-    try{ updateBodies(dt); }catch(e){ _animLoopWarn('updateBodies',e); }   // the planets keep turning on the world clock (the sky above is the real one)
+    _pwBodyAcc+=dt;
+    if(!_pwSkyHidden()||_pwBodyAcc>=0.1){ const _ub=performance.now(); try{ updateBodies(_pwBodyAcc); }catch(e){ _animLoopWarn('updateBodies',e); } _pwBodyAcc=0; DMFT.add('updateBodies',performance.now()-_ub); }   // the planets keep turning on the world clock (the sky above is the real one)
     if(mode==='fly'){
       try{ updateAtmoFlight(dt); }catch(e){ _animLoopWarn('atmoFlight',e); }
       if(PW.mode!=='fly'){ _pwFrame(0); return; }   // handed over to open space this frame
       try{ if(atmoBoard&&atmoState){ const s=atmoState; updateBoardWake(atmoBoard,PW.scene,dt,Math.min(1.2,atmoMach/0.6),new THREE.Vector3(-Math.sin(s.yaw)*Math.cos(s.pitch),Math.sin(s.pitch),-Math.cos(s.yaw)*Math.cos(s.pitch))); } }catch(e){ _animLoopWarn('boardWake',e); }
     } else {
       surfTime+=dt;
-      try{ updateSurface(dt); }catch(e){ _animLoopWarn('updateSurface',e); }
+      const _us=performance.now(); try{ updateSurface(dt); }catch(e){ _animLoopWarn('updateSurface',e); } DMFT.add('updateSurface',performance.now()-_us);
     }
     try{ updateCharOrbitCamera(); }catch(e){ _animLoopWarn('charOrbit',e); }
     _pwCamBlend(dt);   // (in the flat world, near the focus where the frame leaves things be)
@@ -18978,17 +18994,21 @@ function _pwFrame(dt){
     try{ _surfFpBody(); }catch(e){}
   }
   try{ _updateCharDebugHUD(); }catch(e){}
-  try{ updateBirdTemple(dt); }catch(e){ _animLoopWarn('birdTemple',e); }   // the ship keeps wandering + the shard keeps following, even off-screen
-  try{ _pwWorldTick(dt); }catch(e){ _animLoopWarn('world',e); }
+  { _pwBtAcc+=dt;
+    let _btGo=true; try{ if(mode!=='space'&&!SHIP_WALK.active&&!SHIP_LAND&&!(SHIP_LIFT&&SHIP_LIFT.on)&&_pwSkyHidden()&&_pwBtAcc<0.1) _btGo=false; }catch(e){}
+    if(_btGo){ const _bt=performance.now(); try{ updateBirdTemple(_pwBtAcc); }catch(e){ _animLoopWarn('birdTemple',e); } _pwBtAcc=0; DMFT.add('updateBirdTemple',performance.now()-_bt); } }   // the ship keeps wandering + the shard keeps following, even off-screen
+  { const _wt=performance.now(); try{ _pwWorldTick(dt); }catch(e){ _animLoopWarn('world',e); } DMFT.add('pwWorldTick',performance.now()-_wt); }
   try{ if(window.DMGroundMark) DMGroundMark.tick(dt,(PW.mode==='walk'&&surfaceActive&&CHAR.root&&!CHAR._transitioning&&!CHAR.mounted)?surfPlayer:null,surfBoard,PW.gen,window._surfHeight,_pwfMap,CHAR.root?_cgWorldH():0,BOARD_CALL); }catch(e){ _animLoopWarn('groundmark',e); }   // red/blue laser ground marks (ui/dm-groundmark.js); fades out on liftoff
   try{ if(window.DM_HAZ) DM_HAZ.tick(dt); }catch(e){ _animLoopWarn('hazard',e); }   // habitability orb + underwater look (ui/dm-hazardbubble.js)
-  try{ if(window.DMFluidWorld) DMFluidWorld.tick(dt); }catch(e){ _animLoopWarn('fluidVfx',e); }   // APIC sea + PBF spray (ui/dm-fluid-world.js)
+  { const _fw=performance.now(); try{ if(window.DMFluidWorld) DMFluidWorld.tick(dt); }catch(e){ _animLoopWarn('fluidVfx',e); } DMFT.add('fluidWorld',performance.now()-_fw); }   // APIC sea + PBF spray (ui/dm-fluid-world.js)
   try{ _dynRes(flightRenderer); }catch(e){}
-  _pwRender();
+  { const _t1=performance.now(); DMFT.add('worldLogic',_t1-now); _pwRender(); { const _d=performance.now()-_t1; DMFT.add('worldRender',_d); DMFT.add(TERRAIN._shRef?'worldRenderShadowFrame':'worldRenderNoShadowFrame',_d); } DMFT.frame(); }
   if(PW.mode==='space'){
+    const _h0=performance.now();
     try{updateHUD();}catch(e){_animLoopWarn('updateHUD',e);}
     try{updateCrosshairLabel();}catch(e){_animLoopWarn('crosshair',e);}
     try{drawMinimap();}catch(e){_animLoopWarn('minimap',e);}
+    DMFT.add('hud',performance.now()-_h0);
   }
 }
 // ── v98 true volumetric atmosphere (ui/dm-atmo.js) ─────────────────────────
@@ -19158,7 +19178,8 @@ async function _taWarm(r,scene,cam){
   }catch(e){ console.warn('[warmup] atmosphere',e); }
 }
 // on the world (walk / low flight): the world scene, its sky composited behind, the gas over both by depth
-function _trueAtmoSurface(r,scene,cam,layered){
+function _trueAtmoSurface(r,scene,cam,layered){ const _a0=performance.now(); try{ return _trueAtmoSurface0(r,scene,cam,layered); } finally{ DMFT.add('atmoPass',performance.now()-_a0); } }
+function _trueAtmoSurface0(r,scene,cam,layered){
   if(_TA.failed||!_trueAtmoOn()||_taPerfOff()||!PW.pal||!PW.pal.atmos||!PW.atmo) return false;
   try{
     const R=_planetR(), mars=!!(PW.body&&/mars/i.test(PW.body.name||''));
@@ -19215,16 +19236,19 @@ function _pwRender(){
       scene.background=null;
       if(spec) try{ DMSpec.pre(cam); }catch(e){}
       if(!_trueAtmoSurface(r,scene,cam,true)){
+        const _s0=performance.now();
         r.render(flightScene,flightCamera);
+        const _s1=performance.now(); DMFT.add('skyRender',_s1-_s0);
         r.autoClearColor=false;   // the world draws over it (depth cleared)
         r.toneMappingExposure=1.0+0.05*PW.skyK;
         r.render(scene,cam);
+        DMFT.add('sceneRender',performance.now()-_s1);
       }
     } else {
       scene.background=PW.bg;
       if(spec) try{ DMSpec.pre(cam); }catch(e){}
       r.toneMappingExposure=1.0+0.05*PW.skyK;
-      if(!_trueAtmoSurface(r,scene,cam,false)) r.render(scene,cam);
+      if(!_trueAtmoSurface(r,scene,cam,false)){ const _s0=performance.now(); r.render(scene,cam); DMFT.add('sceneRender',performance.now()-_s0); }
     }
     _shotGrab(r);
   }catch(e){ _animLoopWarn('world-render',e); }
@@ -19367,8 +19391,9 @@ function _pwWorldTick(dt){
     // (Solenne's cliffside + ground put ~290 k triangles into every sun-shadow pass).
     const dtS=(dt>0&&dt<1)?dt:(1/60); TERRAIN._shDt=TERRAIN._shDt?TERRAIN._shDt*0.9+dtS*0.1:dtS;
     const every=lowSh?3:(TERRAIN._shDt>0.05?3:(TERRAIN._shDt>0.025?2:1));
-    if(every===1) r.shadowMap.autoUpdate=true;
-    else { r.shadowMap.autoUpdate=false; TERRAIN._shF=((TERRAIN._shF||0)+1)%every; if(TERRAIN._shF===0) r.shadowMap.needsUpdate=true; }
+    if(every===1){ r.shadowMap.autoUpdate=true; TERRAIN._shRef=true; }
+    else { r.shadowMap.autoUpdate=false; TERRAIN._shF=((TERRAIN._shF||0)+1)%every; TERRAIN._shRef=TERRAIN._shF===0; if(TERRAIN._shRef) r.shadowMap.needsUpdate=true; }
+    TERRAIN._shEvery=every;
   }
   // the sun's shadow box stays centred on her / the board, lit from where the sun is now
   const sun=TERRAIN.sun;
@@ -24787,7 +24812,19 @@ function _terrainDetailMat(opts){
       return {h,crack,peb};
     };
     const xz=W.vec3(p.x,W.float(0),p.z);
-    const F0=field(xz);
+    // (fps) Every term of the ground detail is multiplied by a distance / walkable / steepness weight that is exactly 0 for most of the screen
+    // (past `reach`, on flat far ground, on a cliff-free pixel). TSL writes a node expression out once per place it is used, so the old graph
+    // carried 13 worley and 19 fractal-noise evaluations in EVERY ground pixel (counted on the generated WGSL), the same field several times over,
+    // for pixels where the result was multiplied by 0. Now each term is evaluated ONCE into a variable, inside a real branch on its weight:
+    // where the weight is 0 the result is what 0 x anything was before; where it is not, the same numbers.
+    const _gate=(cond,dflt,build)=>{
+      if(!(typeof W.Fn==='function'&&typeof W.If==='function')) return build();
+      return W.Fn(()=>{ const o=W.vec4(dflt[0],dflt[1],dflt[2],dflt[3]).toVar(); W.If(cond,()=>{ o.assign(build()); }); return o; })().toVar();
+    };
+    // colour + roughness read the crack / pebble weights; the normal reads the slope of the same field (built below, inside the normal's own function):
+    // the renderer builds the normal and the colour in separate passes over the graph, so each gets exactly the terms it uses, once.
+    const DETC=_gate(fade.greaterThan(0.0),[0,0,0,0],()=>{ const f0=field(xz); return W.vec4(f0.crack,f0.peb,0,0); });
+    const F0={crack:DETC.x,peb:DETC.y};
     // ── steep faces: sediment strata, slate fracture, grit (cliffs, mesa walls, crater rims)
     // Bedding runs along the height of the face, gently warped so it isn't ruler-straight;
     // every layer is a step (a ledge at its foot), takes its own tint of the planet's rock,
@@ -24804,8 +24841,11 @@ function _terrainDetailMat(opts){
       const grit=lvl>=3?W.mx_fractal_noise_float(q.mul(2.2),2,2.0,0.5):W.float(0);
       return {h:ledge.mul(0.35).sub(split.mul(0.25)).add(grit.mul(0.06)), id:W.floor(bed), ledge, split};
     };
-    const C0=cliff(p);
-    const layerTone=W.fract(W.sin(C0.id.mul(12.9898)).mul(43758.5453));
+    // (fps) cliff strata tint: only where the face is steep AND inside the band distance (flat ground and the far plain skip all of it)
+    const CLT=_gate(steep.mul(fadeBand).greaterThan(0.0),[1,0,0,0],()=>{
+      const C0=cliff(p), layerTone=W.fract(W.sin(C0.id.mul(12.9898)).mul(43758.5453));
+      return W.vec4(W.mix(W.float(1),W.float(0.84).add(layerTone.mul(0.3)).mul(W.float(1).sub(C0.split.mul(0.35))).mul(W.float(0.93).add(C0.ledge.mul(0.07))),steep.mul(fadeBand)),0,0,0);
+    });
     // ── dried basins (dry worlds, low ground): big mud-crack plates with a paler crust
     const dry=opts.dry!=null?!!opts.dry:!(TERRAIN.pal&&TERRAIN.pal.water);
     let basinTint=W.float(1);
@@ -24818,28 +24858,33 @@ function _terrainDetailMat(opts){
       basinTint=W.float(1).add(low.mul(W.float(0.1).sub(seam.mul(0.22))));
     }
     if(lvl>=2){
-      // slope of the detail in world space (finite differences) — the same on every GPU backend
-      const e=0.05, k=W.float(opts.strength||0.55).mul(fade);
-      const gx=field(xz.add(W.vec3(e,0,0))).h.sub(F0.h).div(e);
-      const gz=field(xz.add(W.vec3(0,0,e))).h.sub(F0.h).div(e);
-      let nW=nFlat.add(W.vec3(gx.negate(),W.float(0),gz.negate()).mul(k));
+      const k=W.float(opts.strength||0.55).mul(fade);
       // the cliff relief, in 3-D, pressed into the face (only the part across the face)
-      const ec=0.06, kc=W.float(0.9).mul(steep).mul(fadeC);
-      // High/Ultra: the full 3-D relief; Medium: up the face only (the strata ridges), one extra sample
-      const dy=cliff(p.add(W.vec3(0,ec,0))).h.sub(C0.h);
-      const cg=lvl>=3?W.vec3(cliff(p.add(W.vec3(ec,0,0))).h.sub(C0.h),dy,cliff(p.add(W.vec3(0,0,ec))).h.sub(C0.h)).div(ec):W.vec3(W.float(0),dy,W.float(0)).div(ec);
-      nW=nW.sub(cg.sub(N.mul(W.dot(cg,N))).mul(kc));
+      const kc=W.float(0.9).mul(steep).mul(fadeC);
+      // The slope of the detail (finite differences, world space — the same on every GPU backend) where the detail shows, and the cliff relief gradient
+      // (High/Ultra: the full 3-D relief; Medium: up the face only, one extra sample) where a face is steep and near. Built INSIDE the normal's own
+      // function so that only the normal pass carries them, and filled into variables at its top level before the final branch.
+      const slopeOf=()=>{ const fh=W.float(field(xz).h).toVar(), e=0.05; return W.vec4(0,0,field(xz.add(W.vec3(e,0,0))).h.sub(fh).div(e),field(xz.add(W.vec3(0,0,e))).h.sub(fh).div(e)); };
+      const reliefOf=()=>{ const ec=0.06, ch=W.float(cliff(p).h).toVar(), dy=cliff(p.add(W.vec3(0,ec,0))).h.sub(ch);
+        const cg=(lvl>=3?W.vec3(cliff(p.add(W.vec3(ec,0,0))).h.sub(ch),dy,cliff(p.add(W.vec3(0,0,ec))).h.sub(ch)):W.vec3(W.float(0),dy,W.float(0))).div(ec); return W.vec4(0,cg.x,cg.y,cg.z); };
+      const nWof=(d,c)=>{ const nW=nFlat.add(W.vec3(d.z.negate(),W.float(0),d.w.negate()).mul(k)), cg=W.vec3(c.y,c.z,c.w); return nW.sub(cg.sub(N.mul(W.dot(cg,N))).mul(kc)); };
       // (v150) distance LOD: past the bump's reach (fade and fadeC both 0) the result is exactly nFlat, so the extra
-      // 2–5 field/cliff evaluations (worley + fBm each) are skipped per pixel by a real branch — same image, less GPU
-      let nOut=nW;
+      // 2–5 field/cliff evaluations (worley + fBm each) are skipped per pixel by a real branch — same image, less GPU.
+      let nOut;
       if(typeof W.Fn==='function'&&typeof W.If==='function'){
-        try{ nOut=W.Fn(()=>{ const v=W.vec3(nFlat).toVar(); W.If(fade.add(steep.mul(fadeC)).greaterThan(0.0),()=>{ v.assign(nW); }); return v; })(); }catch(e){ nOut=nW; }
-      }
+        nOut=W.Fn(()=>{
+          const dd=W.vec4(0,0,0,0).toVar(), cc=W.vec4(0,0,0,0).toVar(), v=W.vec3(nFlat).toVar();
+          W.If(fade.greaterThan(0.0),()=>{ dd.assign(slopeOf()); });
+          W.If(steep.mul(fadeC).greaterThan(0.0),()=>{ cc.assign(reliefOf()); });
+          W.If(fade.add(steep.mul(fadeC)).greaterThan(0.0),()=>{ v.assign(nWof(dd,cc)); });
+          return v;
+        })();
+      } else nOut=nWof(slopeOf(),reliefOf());
       m.normalNode=toView(nOut);
     }
     // cracks shade darker, pebbles a touch lighter and glossier (Low: the colour only);
     // cliff layers each take their own tint, split lines darker, ledges catch a little light
-    const cliffTint=W.mix(W.float(1),W.float(0.84).add(layerTone.mul(0.3)).mul(W.float(1).sub(C0.split.mul(0.35))).mul(W.float(0.93).add(C0.ledge.mul(0.07))),steep.mul(fadeBand));
+    const cliffTint=CLT.x;
     m.colorNode=W.vertexColor().mul(W.float(1).sub(F0.crack.mul(TERRAIN.style==='mesa'?0.16:0.32).mul(fade)).add(F0.peb.mul(0.06).mul(fade))).mul(cliffTint).mul(basinTint);
     m.roughnessNode=sandy?W.float(0.98):W.float(0.95).sub(F0.peb.mul(0.28).mul(fade));
     // (v140) layered rock (ui/dm-rockmat.js) on the walkable MC ground's cliffs — zones, varnish, oxide, slate, grain. ?mat=0 = off
@@ -25026,11 +25071,15 @@ function _tessDrop(slot){
 
 // Animated caustic pattern — interfering sine ripples drawn each frame
 let surfWater=null,surfCausticCanvas=null,surfCausticCtx=null,surfCausticTex=null,_causticT=0;
+let _causticImg=null,_causticAcc=0;
 function updateCaustics(dt){
   if(!surfCausticCtx||!surfCausticTex)return;
   _causticT+=dt;
+  // (fps) the 256x256 pattern is a slow shimmer (the phase moves ~1.4 rad/s): rebuilt and re-uploaded ~20 times a second instead of every frame, into one
+  // ImageData that is kept (no 256 KB allocation per frame). The phase still advances with real time, so the animation speed is unchanged.
+  _causticAcc+=dt; if(_causticAcc<0.05&&_causticImg) return; _causticAcc=0;
   const c=surfCausticCtx,S=surfCausticCanvas.width;
-  const img=c.createImageData(S,S),d=img.data;
+  const img=(_causticImg&&_causticImg.width===S)?_causticImg:(_causticImg=c.createImageData(S,S)),d=img.data;
   const t=_causticT*1.4;
   for(let y=0;y<S;y+=2){
     for(let x=0;x<S;x+=2){

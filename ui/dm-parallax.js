@@ -26,6 +26,12 @@
  *   · view-angle adaptive step count (fewer steps looking straight down), grazing clamp (|V.xy/V.z| limited) for silhouettes.
  *   · self-shadow of the height field along the sun (soft, 6 taps) only on the desktop tier.
  *   · ui/dm-governor.js render scale < ~0.9 lowers the step count and drops shadows (uniform writes only, polled twice a second).
+ *   · FRAME-TIME GOVERNOR (v236): the march is a per-pixel cost on all the walkable ground near the camera, so it follows the MEASURED frame time,
+ *     not only the preset. Three levels, uniforms only (no recompile, no material rebuild): 2 = the preset's own steps (+ shadow/relief on desktop),
+ *     1 = at most 4 steps, 0 = the march branch is skipped (the height-gradient normal and cavity stay, so the ground keeps its relief; only the
+ *     hidden-behind-the-stone parallax shift goes).  Phones/tablets START at level 1 and are promoted to 2 only after the frames have been inside
+ *     budget for a while; any stretch over budget steps down at once.  A promotion that is undone within 20 s doubles the wait before the next try
+ *     (hysteresis + back-off), so a device where the preset's march is too dear settles on the cheaper level instead of flapping.  ?pxgov=0 disables it.
  *   · height maps are derived ONCE from the generated texels and cached (R8, 1/4 of the RGBA), shared by every material using them.
  *   · ?px=0 turns it all off.  ?px=ultra|high|medium|low forces a tier for testing.
  *
@@ -169,7 +175,8 @@
   }
 
   /* ─────────────────── 4. runtime: tiers, uniforms, cache, TSL ─────────────────── */
-  const S = { ready: false, tier: 'medium', klass: 'desktop', cfg: TIERS.desktop.medium, scale: 1, U: null, THREE: null, T: null, fn: null, tex: new Map(), tiles: new Map(), mats: 0, builds: 0, q: [], qt: 0, sun: null, last: '' };
+  const govOff = /[?&]pxgov=0\b/.test((G.location && G.location.search) || '');
+  const S = { gov: { lvl: 2, ema: 0, n: 0, over: 0, calm: 0, hold: 8000, since: 0, lastUp: -1e9, changes: 0, fails: 0, fpsMs: 0 }, ready: false, tier: 'medium', klass: 'desktop', cfg: TIERS.desktop.medium, scale: 1, U: null, THREE: null, T: null, fn: null, tex: new Map(), tiles: new Map(), mats: 0, builds: 0, q: [], qt: 0, sun: null, last: '' };
   function klass() { try { return (G.GFX && G.GFX.isMobile) ? 'mobile' : 'desktop'; } catch (e) { return 'desktop'; } }
   function curTier() {
     if (forced) return forced;
@@ -181,10 +188,36 @@
   function refreshCfg() {
     const t = curTier(), c = TIERS[S.klass][t] || TIERS[S.klass].medium, sc = governorScale(), b = BOUNDS[S.klass];
     let steps = Math.min(b.maxN, Math.round(c.steps * sc)); if (steps < 4) steps = 0;
-    const key = t + '|' + steps + '|' + (sc >= 1 ? c.shadow : 0);
-    S.tier = t; S.scale = sc; S.cfg = { steps, shadow: sc >= 1 ? c.shadow : 0, relief: sc >= 0.6 ? c.relief : 0 };
+    const lv = S.gov.lvl;   // frame-time governor level (2 = preset, 1 = coarse, 0 = march off)
+    if (lv < 2 && steps > 0) steps = lv === 1 ? Math.min(steps, 4) : 0;
+    const key = t + '|' + steps + '|' + (sc >= 1 && lv >= 2 ? c.shadow : 0);
+    S.tier = t; S.scale = sc; S.cfg = { steps, shadow: sc >= 1 && lv >= 2 ? c.shadow : 0, relief: sc >= 0.6 && lv >= 2 ? c.relief : 0 };
     if (S.U) { S.U.steps.value = S.cfg.steps; S.U.shadow.value = S.cfg.shadow; S.U.relief.value = S.cfg.relief; }
     S.last = key;
+  }
+  // ── frame-time governor: a tiny rAF probe (one subtraction per frame) + a decision every 500 ms ──
+  // budget = the slowest frame we accept before the march is made cheaper; promote = how fast frames must be, for `hold` ms, before it is given back.
+  function govTick() {
+    const g = S.gov;
+    if (govOff || forced) return;
+    const mobile = S.klass === 'mobile', now = (G.performance && G.performance.now) ? G.performance.now() : Date.now();
+    if (G.document && G.document.hidden) { g.n = 0; return; }
+    if (G._dmWarming || g.n < 12) return;                         // warm-up / not enough frames yet
+    const budget = mobile ? 34 : 22, promote = mobile ? 24 : 14, e = g.ema;
+    if (e > budget) { g.over += 500; g.calm = 0; } else if (e < promote) { g.calm += 500; g.over = Math.max(0, g.over - 250); } else { g.over = Math.max(0, g.over - 250); g.calm = Math.max(0, g.calm - 250); }
+    if (g.over >= 1500 && g.lvl > 0) {                           // 1.5 s over budget: one level down (and the wait before the next promotion doubles if we had just promoted)
+      if (now - g.lastUp < 20000) { g.fails++; g.hold = Math.min(240000, g.hold * 2); }
+      g.lvl--; g.over = 0; g.calm = 0; g.since = now; g.changes++; refreshCfg();
+    } else if (g.calm >= g.hold && g.lvl < 2 && now - g.since > g.hold) {   // inside budget for `hold`: one level up
+      g.lvl++; g.calm = 0; g.over = 0; g.since = now; g.lastUp = now; g.changes++; refreshCfg();
+    }
+  }
+  let probeOn = false;
+  function startProbe() {
+    if (probeOn || !G.requestAnimationFrame) return; probeOn = true;
+    let last = 0;
+    const fr = (t) => { if (last) { const d = t - last; if (d > 0 && d < 1000) { const g = S.gov, c = d > 250 ? 250 : d; g.ema = g.n ? g.ema + (c - g.ema) * 0.08 : c; g.n++; } else S.gov.n = 0; } last = t; G.requestAnimationFrame(fr); };
+    G.requestAnimationFrame(fr);
   }
   function sunTick() {
     if (!S.U) return;
@@ -225,8 +258,9 @@
     S.THREE = THREE; S.T = T; S.klass = klass();
     const { uniform, float, vec3 } = T;
     S.U = { steps: uniform(0), shadow: uniform(0), relief: uniform(0), lit: uniform(0), light: uniform(new THREE.Vector3(0.3, 0.8, 0.2).normalize()) };
-    refreshCfg(); sunTick();
-    setInterval(() => { try { refreshCfg(); sunTick(); } catch (e) { } }, 500);   // uniform writes only
+    S.gov.lvl = (S.klass === 'mobile' && !govOff && !forced) ? 1 : 2;   // phones/tablets start coarse and earn the preset's march (see the header)
+    refreshCfg(); sunTick(); startProbe();
+    setInterval(() => { try { govTick(); refreshCfg(); sunTick(); } catch (e) { } }, 500);   // uniform writes only
     S.ready = true; return true;
   }
 
@@ -371,7 +405,7 @@
     on: !off, ref: { march, shadow, distFade, layersFor, TIERS, BOUNDS },
     heightFromRGBA, heightFromNormals, makeTile, heightTexture, tileTexture, refresh, texelsLanded, applyToMaterial, applyGround, init,
     config: () => ({ tier: S.tier, klass: S.klass, scale: S.scale, cfg: S.cfg }),
-    status: () => ({ ready: S.ready, tier: S.tier, cfg: S.cfg, maps: S.tex.size, materials: S.mats, graphs: S.builds, off }),
+    status: () => ({ ready: S.ready, tier: S.tier, cfg: S.cfg, maps: S.tex.size, materials: S.mats, graphs: S.builds, off, gov: { lvl: S.gov.lvl, emaMs: +S.gov.ema.toFixed(1), changes: S.gov.changes, fails: S.gov.fails, holdMs: S.gov.hold } }),
     _S: S,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = G.DMParallax;

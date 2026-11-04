@@ -13,7 +13,7 @@
  *   • Nothing runs per frame here. It reads what the existing perf log
  *     already keeps (dm_perf_log / dm_hitch_log in localStorage and
  *     window.dmPerfEnv) and samples the mode every 5 s.
- *   • Size-capped (~48 KB): env, summaries and hitches are kept, and the
+ *   • Size-capped (~80 KB): env, summaries and hitches are kept, and the
  *     10 s windows are trimmed first.
  *   • Guests (not signed in) keep the last session on this device only.
  *     The newest local session goes up when the vault becomes ready.
@@ -22,7 +22,7 @@
 (function () {
   'use strict';
   window.DMPerfLogActive = true;   // (v105) GPU pass timing runs only while this log runs
-  const SNAP_MS = 60000, MODE_MS = 5000, CAP = 48 * 1024, LKEY = 'dm_perf_session_v1';
+  const SNAP_MS = 60000, MODE_MS = 5000, CAP = 80 * 1024, LKEY = 'dm_perf_session_v1';
   const rid = () => { try { return Array.from(crypto.getRandomValues(new Uint8Array(4))).map((b) => b.toString(16).padStart(2, '0')).join(''); } catch (e) { return Math.random().toString(16).slice(2, 10); } };
   const read = (k) => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { return null; } };
   const start = new Date();
@@ -48,6 +48,23 @@
   let lastSig = '', dirty = true, ended = false, writing = false, endNote = null;
   // (v200) memory per 10 s window: GPU objects, draw load, DOM / scene size, JS heap
   const mem = [], MEM_MS = 10000; let uaMem = null;
+  // (v236) What each frame is made of, at sample time: main-thread ms per phase (index.html DMFT: logic / world tick / sceneRender / atmoPass / hud …; EMA, `_max` = recent worst),
+  // the parallax tier and its frame-time governor, the resolution governor, and the world-frame state (layered sky? shadow cadence).
+  function phases() { try { return window.DMFT ? window.DMFT.snap() : null; } catch (e) { return null; } }
+  function pxState() { try { const st = window.DMParallax && window.DMParallax.status && window.DMParallax.status(); return st ? { tier: st.tier, steps: st.cfg && st.cfg.steps, shadow: st.cfg && st.cfg.shadow, relief: st.cfg && st.cfg.relief, gov: st.gov } : null; } catch (e) { return null; } }
+  function govState() { try { return window.DMGov && window.DMGov.stats ? window.DMGov.stats() : null; } catch (e) { return null; } }
+  function frameState() {
+    try {
+      const o = {};
+      if (typeof PW !== 'undefined' && PW && PW.active) {
+        o.pw = { mode: PW.mode, skyK: PW.skyK != null ? +PW.skyK.toFixed(3) : null, layered: PW.skyK != null && PW.skyK < 0.999 && !!(typeof _PWS !== 'undefined' && _PWS && _PWS.ok), body: PW.body && PW.body.name, fog: PW.scene && PW.scene.fog ? [Math.round(PW.scene.fog.near), Math.round(PW.scene.fog.far)] : null };
+      }
+      const r = window.flightRenderer || (typeof flightRenderer !== 'undefined' ? flightRenderer : null);
+      if (r && r.shadowMap) o.shadow = { on: !!r.shadowMap.enabled, auto: r.shadowMap.autoUpdate, ms: typeof TERRAIN !== 'undefined' && TERRAIN && TERRAIN._shDt ? +(TERRAIN._shDt * 1000).toFixed(1) : null };
+      if (r) o.px = { pr: +(r.getPixelRatio ? r.getPixelRatio() : 0).toFixed(2), w: window.innerWidth, h: window.innerHeight };
+      return o;
+    } catch (e) { return null; }
+  }
   function countScene() { try { let n = 0; const sc = window.scene || (typeof scene !== 'undefined' ? scene : null); if (sc && sc.traverse) sc.traverse(() => { n++; }); return n; } catch (e) { return null; } }
   function quiet() { try { return !!(window._dmQuiet && window._dmQuiet()); } catch (e) { return false; } }   // fly-out / dissolve / 2.5 s settle only; the loader hold keeps sampling (memory during the warm-up matters)
   function sampleMem() {
@@ -55,14 +72,14 @@
       if (quiet()) return;   // (menu-perf) no DOM walk / scene traverse during the launch transition
       const r = window.flightRenderer || (typeof flightRenderer !== 'undefined' ? flightRenderer : null);
       const i = r && r.info, pm = performance.memory;
-      const m = { t: Math.round((Date.now() - start.getTime()) / 1000), screen: curMode(), hidden: document.hidden,
+      const m = { t: Math.round((Date.now() - start.getTime()) / 1000), screen: curMode(), hidden: document.hidden, ph: phases(), px: pxState(), gov: govState(), st: frameState(),
         geo: i && i.memory ? i.memory.geometries : null, tex: i && i.memory ? i.memory.textures : null,
         progs: i && i.programs ? i.programs.length : null,
         calls: i && i.render ? i.render.calls : null, tris: i && i.render ? i.render.triangles : null,
         dom: document.getElementsByTagName('*').length, sceneObj: countScene(),
         heapUsed: pm ? Math.round(pm.usedJSHeapSize / 1048576) : null, heapTotal: pm ? Math.round(pm.totalJSHeapSize / 1048576) : null,
         heapLimit: pm ? Math.round(pm.jsHeapSizeLimit / 1048576) : null, uaMB: uaMem };
-      mem.push(m); if (mem.length > 120) mem.splice(0, mem.length - 120); dirty = true;
+      mem.push(m); if (mem.length > 72) mem.splice(0, mem.length - 72); dirty = true;
       if (window.crossOriginIsolated && performance.measureUserAgentSpecificMemory) {
         performance.measureUserAgentSpecificMemory().then((x) => { uaMem = Math.round(x.bytes / 1048576); }).catch(() => {});
       }
@@ -112,9 +129,9 @@
       if (typeof flightScene !== 'undefined' && flightScene) roots.push(['flight', flightScene]);
       if (typeof PW !== 'undefined' && PW && PW.active && PW.scene) roots.push(['world', PW.scene]);
       for (const [rn, root] of roots) {
-        const rows = [];
+        const rows = [], off = [];
         for (const ch of root.children) {
-          if (!ch.visible) continue;
+          if (!ch.visible) { if (off.length < 40) off.push((ch.name || ch.type) + (ch.isInstancedMesh ? ' x' + ch.count : '')); continue; }
           let draws = 0, tris = 0, shTris = 0, inst = 0, mat = '';
           ch.traverseVisible((o) => {
             const g = o.geometry; if (!g || !(o.isMesh || o.isPoints || o.isLine || o.isSprite)) return;
@@ -127,7 +144,7 @@
           if (draws) rows.push({ name: (ch.name || ch.type) + (mat ? ' [' + mat + ']' : ''), draws, tris: Math.round(tris), shadowTris: Math.round(shTris), inst });
         }
         rows.sort((a, b) => b.tris - a.tris);
-        out[rn] = { total: Math.round(rows.reduce((a, r) => a + r.tris, 0)), shadowTotal: Math.round(rows.reduce((a, r) => a + r.shadowTris, 0)), top: rows.slice(0, 22) };
+        out[rn] = { total: Math.round(rows.reduce((a, r) => a + r.tris, 0)), shadowTotal: Math.round(rows.reduce((a, r) => a + r.shadowTris, 0)), nVisible: rows.length, nHidden: off.length, hidden: off, top: rows.slice(0, 22) };
       }
     } catch (e) { out.err = String(e && e.message || e).slice(0, 120); }
     _census = out; _censusAt = now; return out;
