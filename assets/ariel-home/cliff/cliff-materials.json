@@ -1,0 +1,130 @@
+{
+ "version": 1,
+ "tileM": 3.0,
+ "base": "assets/ariel-home/cliff/",
+ "about": "Procedural cliff rock for Ariel's mansion (tools/ariel-home/gen_cliff_textures.py). Tileable 3 m x 3 m sets; mesh UVs are true surface metres / tileM, so 1 UV unit = 3 m.",
+ "uv": {
+  "u": "world x metres / tileM along the wall",
+  "v": "metres up the wall / tileM (Blender v up; glTF v is flipped, load with flipY=false); image row 0 = top = up the cliff",
+  "note": "meshes: Mansion_LOD0 prims ah_rock / ah_rockc / ah_rocks / ah_rockt carry COLOR_0 = macro tint (multiply into albedo) and NORMAL; tangents are derived from the UVs"
+ },
+ "tiers": {
+  "2k": {
+   "px": 2048,
+   "pxPerM": 683
+  },
+  "1k": {
+   "px": 1024,
+   "pxPerM": 341
+  },
+  "512": {
+   "px": 512,
+   "pxPerM": 171
+  }
+ },
+ "heightTierFor": {
+  "2k": "2k",
+  "1k": "1k",
+  "512": "512"
+ },
+ "files": "<set>-<map>-<tier>.webp, map in color|nrm|orm|height, tier in 2k|1k|512",
+ "channels": {
+  "color": "sRGB albedo, already flattened at tile scale; multiply by COLOR_0",
+  "nrm": "tangent-space normal, OpenGL (+Y = up the wall), RGB 8-bit, linear",
+  "orm": "linear: R ambient occlusion, G roughness, B metalness (0)",
+  "height": "8-bit gray, linear, 1 = proud, 0 = deepest; for parallax occlusion: depth = (1 - h) * depthM below the surface plane"
+ },
+ "parallax": {
+  "steps": {
+   "near": 24,
+   "far": 8
+  },
+  "fadeStartM": 14,
+  "fadeEndM": 40,
+  "note": "use heightmap tier of the loaded albedo tier; skip POM on the 512 tier / mobile if the frame budget is tight"
+ },
+ "sets": {
+  "strata": {
+   "material": "ah_rock",
+   "name": "Stratified sandstone / limestone ledges",
+   "depthM": 0.16,
+   "bytes": {
+    "color-2k": 307174,
+    "nrm-2k": 2664486,
+    "orm-2k": 260036,
+    "height-2k": 176270,
+    "color-1k": 63728,
+    "nrm-1k": 579510,
+    "orm-1k": 73612,
+    "height-1k": 62176,
+    "color-512": 16328,
+    "nrm-512": 116176,
+    "orm-512": 23264,
+    "height-512": 22712
+   }
+  },
+  "columnar": {
+   "material": "ah_rockc",
+   "name": "Columnar basalt",
+   "depthM": 0.14,
+   "bytes": {
+    "color-2k": 309190,
+    "nrm-2k": 1925140,
+    "orm-2k": 113888,
+    "height-2k": 66570,
+    "color-1k": 59022,
+    "nrm-1k": 402136,
+    "orm-1k": 36692,
+    "height-1k": 22234,
+    "color-512": 13476,
+    "nrm-512": 68730,
+    "orm-512": 13286,
+    "height-512": 8676
+   }
+  },
+  "sheet": {
+   "material": "ah_rocks",
+   "name": "Granite exfoliation sheets",
+   "depthM": 0.07,
+   "bytes": {
+    "color-2k": 901270,
+    "nrm-2k": 2017444,
+    "orm-2k": 196774,
+    "height-2k": 106628,
+    "color-1k": 208358,
+    "nrm-1k": 422650,
+    "orm-1k": 45536,
+    "height-1k": 33198,
+    "color-512": 43168,
+    "nrm-512": 71670,
+    "orm-512": 10214,
+    "height-512": 11554
+   }
+  },
+  "talus": {
+   "material": "ah_rockt",
+   "name": "Talus / scree",
+   "depthM": 0.2,
+   "bytes": {
+    "color-2k": 460404,
+    "nrm-2k": 2630290,
+    "orm-2k": 308372,
+    "height-2k": 229146,
+    "color-1k": 99550,
+    "nrm-1k": 581002,
+    "orm-1k": 103994,
+    "height-1k": 92054,
+    "color-512": 27586,
+    "nrm-512": 119432,
+    "orm-512": 39010,
+    "height-512": 38300
+   }
+  }
+ },
+ "use": {
+  "strata": "ledged beds on the main wall",
+  "columnar": "basalt band (z -18..-40 m, flank windows)",
+  "sheet": "granite sheeting on the flanks + plateau pavement",
+  "talus": "aprons / rubble at the base"
+ }
+}

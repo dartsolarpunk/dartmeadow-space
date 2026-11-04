@@ -16,6 +16,12 @@ from mathutils.bvhtree import BVHTree
 argv = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
 TEX, OUT = argv[0], argv[1]
 RENDER = argv[argv.index('--render') + 1] if '--render' in argv else None
+MOBILE = '--mobile' in argv          # writes ariel-home-512.glb: mobile cliff tessellation + 512 px rock maps, no collision json
+CLIFF = argv[argv.index('--cliff') + 1] if '--cliff' in argv else os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'assets', 'ariel-home', 'cliff')
+GLBNAME = 'ariel-home-512.glb' if MOBILE else 'ariel-home.glb'
+CLIFF_EMBED = '512'                    # rock maps embedded in the GLB (placeholder tier; ui/dm-facilities.js swaps the 1K/2K set in lazily)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import cliff_mesh
 AUDIT = argv[argv.index('--audit') + 1] if '--audit' in argv else None
 EXPORT = argv[argv.index('--export') + 1] if '--export' in argv else None
 os.makedirs(OUT, exist_ok=True)
@@ -24,12 +30,20 @@ SEA = -62.0
 SC = 1.3
 
 # ───────────────────────── mesh builder ─────────────────────────
-MATS = ['slate', 'concrete', 'wood', 'rock', 'glass', 'warm', 'pool', 'neon', 'dark', 'glow', 'leaf']
-TILE = {'slate': 4.0, 'concrete': 4.0, 'wood': 3.0, 'rock': 14.0, 'dark': 2.0, 'leaf': 1.5}
+MATS = ['slate', 'concrete', 'wood', 'rock', 'glass', 'warm', 'pool', 'neon', 'dark', 'glow', 'leaf', 'rockc', 'rocks', 'rockt']
+# rock material sets (see gen_cliff_textures.py): rock = stratified sandstone/limestone, rockc = columnar basalt, rocks = granite sheeting / pavement, rockt = talus
+ROCKS = ('rock', 'rockc', 'rocks', 'rockt'); ROCKSET = {'rock': 'strata', 'rockc': 'columnar', 'rocks': 'sheet', 'rockt': 'talus'}
+TILE = {'slate': 4.0, 'concrete': 4.0, 'wood': 3.0, 'rock': 3.0, 'rockc': 3.0, 'rocks': 3.0, 'rockt': 3.0, 'dark': 2.0, 'leaf': 1.5}
 MATS_BPY = []
 
 class B:
-    def __init__(s): s.v = []; s.f = []; s.m = []
+    def __init__(s): s.v = []; s.f = []; s.m = []; s.fuv = {}; s.fcol = {}      # fuv/fcol: per-face explicit UV (metres) + vertex colour (rock cliff)
+    def rtri(s, pts, uvs, cols, mat):
+        ids = [s.vert(p) for p in pts]; s.fuv[len(s.f)] = list(uvs); s.fcol[len(s.f)] = list(cols); s.f.append(tuple(ids)); s.m.append(MATS.index(mat))
+    def rquad(s, pts, uvs, cols, mat):
+        a, b, c, d = [Vector(p) for p in pts]
+        tr = [(0, 1, 2), (0, 2, 3)] if (a - c).length <= (b - d).length else [(0, 1, 3), (1, 2, 3)]
+        for t in tr: s.rtri([pts[i] for i in t], [uvs[i] for i in t], [cols[i] for i in t], mat)
     def vert(s, p): s.v.append(tuple(p)); return len(s.v) - 1
     def face(s, pts, mat):
         ids = [s.vert(p) for p in pts]
@@ -71,7 +85,9 @@ class B:
         """quads between two equal-length 3D polylines"""
         for i in range(len(A) - 1): s.quad(A[i], A[i + 1], Bp[i + 1], Bp[i], mat)
     def append(s, o):
-        off = len(s.v); s.v += o.v; s.f += [tuple(i + off for i in f) for f in o.f]; s.m += o.m
+        off = len(s.v); n0 = len(s.f); s.v += o.v; s.f += [tuple(i + off for i in f) for f in o.f]; s.m += o.m
+        for k, u in o.fuv.items(): s.fuv[k + n0] = u
+        for k, u in o.fcol.items(): s.fcol[k + n0] = u
 
 def rotpts(pts, cx, cy, rz):
     c, sn = math.cos(rz), math.sin(rz)
@@ -250,17 +266,11 @@ def rock_h(x, y):
         if bb[0] <= x <= bb[2] and bb[1] <= y <= bb[3] and h > zb and inpoly((x, y), poly): h = zb
     return h
 
-def build_rock(b, nx, ny, x0=-200, x1=200, y0=-125, y1=125):
-    xs = np.linspace(x0, x1, nx); ys = np.linspace(y0, y1, ny)
-    H = np.zeros((ny, nx))
-    for j, y in enumerate(ys):
-        for i, x in enumerate(xs): H[j, i] = rock_h(x, y)
-    for j in range(ny - 1):
-        for i in range(nx - 1):
-            p = lambda ii, jj: (xs[ii], ys[jj], H[jj, ii])
-            a, c_, d_, e = p(i, j), p(i + 1, j), p(i + 1, j + 1), p(i, j + 1)
-            b.quad(a, c_, d_, e, 'rock')
-    return H, xs, ys
+def build_rock(b, tier, house_bvh=None):
+    """cliff + plateau + sea floor as a profile sweep (see cliff_mesh.py); returns the sweep dict"""
+    R = cliff_mesh.build_cliff(rock_h, edge_y, tier=tier, house_bvh=house_bvh, sea=SEA)
+    for pts, uvs, cols, mat in cliff_mesh.cliff_quads(R, ROCKS): b.rquad(pts, uvs, cols, mat)
+    return R
 
 # ───────────────────────── the house ─────────────────────────
 def facet_roof(b, L, Rg, Rt, zl, zr, mat='slate', th=0.5):
@@ -591,7 +601,14 @@ def tex_node(nt, path, cs):
 def make_mat(name):
     m = bpy.data.materials.new('ah_' + name); m.use_nodes = True
     nt = m.node_tree; bsdf = nt.nodes['Principled BSDF']
-    if name in TILE and os.path.exists(f'{TEX}/{name}-color-1k.webp'):
+    if name in ROCKSET:
+        st = ROCKSET[name]; D = f'{CLIFF}/{st}'
+        c = tex_node(nt, f'{D}-color-{CLIFF_EMBED}.webp', 'sRGB'); o = tex_node(nt, f'{D}-orm-{CLIFF_EMBED}.webp', 'Non-Color'); nr = tex_node(nt, f'{D}-nrm-{CLIFF_EMBED}.webp', 'Non-Color')
+        nt.links.new(c.outputs['Color'], bsdf.inputs['Base Color'])
+        sp = nt.nodes.new('ShaderNodeSeparateColor'); nt.links.new(o.outputs['Color'], sp.inputs['Color'])
+        nt.links.new(sp.outputs['Green'], bsdf.inputs['Roughness']); nt.links.new(sp.outputs['Blue'], bsdf.inputs['Metallic'])
+        nm = nt.nodes.new('ShaderNodeNormalMap'); nt.links.new(nr.outputs['Color'], nm.inputs['Color']); nt.links.new(nm.outputs['Normal'], bsdf.inputs['Normal'])
+    elif name in TILE and os.path.exists(f'{TEX}/{name}-color-1k.webp'):
         c = tex_node(nt, f'{TEX}/{name}-color-1k.webp', 'sRGB'); o = tex_node(nt, f'{TEX}/{name}-orm-1k.webp', 'Non-Color')
         nr = tex_node(nt, f'{TEX}/{name}-nrm-1k.webp', 'Non-Color')
         nt.links.new(c.outputs['Color'], bsdf.inputs['Base Color'])
@@ -635,15 +652,24 @@ def make_obj(name, b, mats):
     for pi, p in enumerate(me.polygons):
         idx = list(p.vertices); P = verts[idx]; n = np.abs(np.array(p.normal))
         tile = TILE.get(MATS[b.m[pi]], 4.0)
-        if n[2] >= n[0] and n[2] >= n[1] or (MATS[b.m[pi]] == 'rock' and n[2] > 0.55): u, v = P[:, 0], P[:, 1]
+        if pi in b.fuv:        # explicit surface UVs (metres) from the cliff sweep
+            for li, (uu, vv) in zip(p.loop_indices, b.fuv[pi]): uv[li] = (uu / tile, vv / tile)
+            continue
+        if n[2] >= n[0] and n[2] >= n[1] or (MATS[b.m[pi]] in ROCKS and n[2] > 0.55): u, v = P[:, 0], P[:, 1]
         elif n[0] >= n[1]: u, v = P[:, 1], P[:, 2]
         else: u, v = P[:, 0], P[:, 2]
         for li, k in zip(p.loop_indices, range(len(idx))): uv[li] = (u[k] / tile, v[k] / tile)
     uvl.data.foreach_set('uv', uv.ravel())
+    if b.fcol:     # COLOR_0: macro tint for the rock (white elsewhere), exported as the glTF vertex colour
+        ca = me.color_attributes.new('Col', 'BYTE_COLOR', 'CORNER'); cl = np.ones((len(me.loops), 4), dtype=np.float32)
+        for pi, p in enumerate(me.polygons):
+            if pi in b.fcol:
+                for li, c3 in zip(p.loop_indices, b.fcol[pi]): cl[li, :3] = c3
+        ca.data.foreach_set('color', cl.ravel()); me.color_attributes.active_color = ca
     ob = bpy.data.objects.new(name, me); bpy.context.collection.objects.link(ob)
     bm = bmesh.new(); bm.from_mesh(me)
     bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.002); bm.to_mesh(me); bm.free()
-    sm = {MATS.index('rock'), MATS.index('leaf')}      # smooth rock/foliage -> shared vertices (GLB size) and softer shading
+    sm = {MATS.index(r) for r in ROCKS} | {MATS.index('leaf')}      # smooth rock/foliage -> shared vertices (GLB size) and softer shading
     for pi, pgn in enumerate(me.polygons): pgn.use_smooth = int(b.m[pi]) in sm
     return ob
 
@@ -659,16 +685,18 @@ def main():
     bpy.context.collection.objects.link(root0); bpy.context.collection.objects.link(root1)
     # LOD0: house first (fills CARVES), then the rock is carved under it
     h0 = house_scaled(1.0)
-    b0 = B(); H0, xs0, ys0 = build_rock(b0, 150, 100); b0.append(h0); plants_world(b0)
+    hbv = BVHTree.FromPolygons([Vector(v) for v in h0.v], h0.f)
+    b0 = B(); R0 = build_rock(b0, 'mob' if MOBILE else 'hi', hbv); b0.append(h0); plants_world(b0)
+    if '--dump' in argv: np.savez(argv[argv.index('--dump') + 1], **{k: v for k, v in R0.items()})
     if AUDIT:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         from audit import audit; audit(b0, MATS, AUDIT)
     o0 = make_obj('Mansion_LOD0_mesh', b0, mats); o0.parent = root0
     # LOD1: coarser rock, simplified house
     h1 = house_scaled(0.0)
-    b1 = B(); build_rock(b1, 50, 34); b1.append(h1)
+    b1 = B(); build_rock(b1, 'lod1', hbv); b1.append(h1)
     o1 = make_obj('Mansion_LOD1_mesh', b1, mats); o1.parent = root1
-    print('TRIS LOD0', len(b0.f), 'LOD1', len(b1.f))
+    print('TRIS LOD0', len(b0.f), 'LOD1', len(b1.f), 'rock LOD0', sum(1 for m in b0.m if MATS[m] in ROCKS), 'rock LOD1', sum(1 for m in b1.m if MATS[m] in ROCKS))
     # collision grid: top-down hits on everything but glass / pool surface / neon / foliage
     solid = [i for i, m in enumerate(b0.m) if MATS[m] not in ('glass', 'pool', 'neon', 'warm', 'leaf')]
     bv = BVHTree.FromPolygons([Vector(v) for v in b0.v], [b0.f[i] for i in solid])
@@ -681,17 +709,19 @@ def main():
             if hit[0] is not None: G[j, i] = hit[0].z
     q = np.clip(np.round(G * 20), -32000, 32000).astype('<i2')
     json.dump({'x0': gx0, 'y0': gy0, 'cell': cs, 'nx': nx, 'ny': ny, 'scale': 20, 'plateau': 0.0, 'sea': SEA,
-               'data': base64.b64encode(q.tobytes()).decode()}, open(f'{OUT}/ariel-home-collide.json', 'w'), separators=(',', ':'))
+               'data': base64.b64encode(q.tobytes()).decode()}, open(f'{OUT}/ariel-home-collide.json' if not MOBILE else os.devnull, 'w'), separators=(',', ':'))
     bpy.ops.object.select_all(action='DESELECT')
     for o in (root0, root1, o0, o1): o.select_set(True)
-    bpy.ops.export_scene.gltf(filepath=f'{OUT}/ariel-home.glb', export_format='GLB', use_selection=True, export_image_format='WEBP',
+    bpy.ops.export_scene.gltf(filepath=f'{OUT}/' + GLBNAME, export_format='GLB', use_selection=True, export_image_format='WEBP', export_vertex_color='ACTIVE',
                               export_yup=True, export_apply=True, export_materials='EXPORT', export_cameras=False, export_lights=False,
                               export_extras=False)
-    print('GLB', os.path.getsize(f'{OUT}/ariel-home.glb'))
+    print('GLB', os.path.getsize(f'{OUT}/' + GLBNAME))
     # desktop tier: swap every embedded map to its 2K bake (same names, '-2k'); used for the standalone export and the renders
     for im in bpy.data.images:
         if im.filepath and '-1k.' in im.filepath:
             im.filepath = im.filepath.replace('-1k.', '-2k.'); im.reload()
+        elif im.filepath and f'-{CLIFF_EMBED}.' in im.filepath:
+            im.filepath = im.filepath.replace(f'-{CLIFF_EMBED}.', '-2k.'); im.reload()
     if EXPORT:
         os.makedirs(os.path.dirname(EXPORT), exist_ok=True)
         bpy.ops.object.select_all(action='DESELECT')
@@ -706,7 +736,10 @@ DISP = {'slate': 0.07, 'concrete': 0.05, 'rock': 0.8, 'wood': 0.03, 'dark': 0.01
 
 def render_materials(o0):
     """renders only: REAL displacement from the Ucupaint height bakes (adaptive simple subdivision), clear reflective glass"""
-    sc = bpy.context.scene; sc.cycles.feature_set = 'EXPERIMENTAL'; sc.cycles.dicing_rate = 4.0; sc.cycles.offscreen_dicing_scale = 16.0; sc.cycles.preview_dicing_rate = 8
+    sc = bpy.context.scene; sc.render.engine = 'CYCLES'
+    for k_, v_ in (('feature_set', 'EXPERIMENTAL'), ('dicing_rate', 4.0), ('offscreen_dicing_scale', 16.0), ('preview_dicing_rate', 8)):
+        try: setattr(sc.cycles, k_, v_)
+        except Exception: pass
     for n, sc_m in DISP.items():
         m = bpy.data.materials.get('ah_' + n); hp = f'{TEX}/{n}-height-1k.png'
         if not m or not os.path.exists(hp): continue
@@ -717,23 +750,29 @@ def render_materials(o0):
             if l.to_node.type == 'TEX_IMAGE' and l.to_socket.name == 'Vector' and l.to_node != t: nt.links.new(l.from_socket, t.inputs['Vector']); break
         nt.links.new(t.outputs['Color'], d.inputs['Height']); nt.links.new(d.outputs['Displacement'], out.inputs['Displacement'])
         m.displacement_method = 'BOTH'
+    for n in ROCKS:                       # renders only: the glTF carries the macro tint as COLOR_0; Blender needs it wired in
+        m = bpy.data.materials['ah_' + n]; nt = m.node_tree; bs = nt.nodes['Principled BSDF']
+        link = [l for l in nt.links if l.to_socket == bs.inputs['Base Color']][0]
+        ca = nt.nodes.new('ShaderNodeVertexColor'); ca.layer_name = 'Col'; mx = nt.nodes.new('ShaderNodeMix'); mx.data_type = 'RGBA'; mx.blend_type = 'MULTIPLY'; mx.inputs[0].default_value = 1.0
+        nt.links.new(link.from_socket, mx.inputs[6]); nt.links.new(ca.outputs['Color'], mx.inputs[7]); nt.links.new(mx.outputs[2], bs.inputs['Base Color'])
     g = bpy.data.materials['ah_glass']; b = g.node_tree.nodes['Principled BSDF']
     b.inputs['Alpha'].default_value = 1.0; g.blend_method = 'OPAQUE'
     b.inputs['Transmission Weight'].default_value = 0.92; b.inputs['Roughness'].default_value = 0.02; b.inputs['Base Color'].default_value = (0.55, 0.7, 0.75, 1)
     b.inputs['Specular IOR Level'].default_value = 1.0; b.inputs['IOR'].default_value = 1.45
     o0.modifiers.new('subd', 'SUBSURF'); md = o0.modifiers['subd']; md.subdivision_type = 'SIMPLE'; md.levels = 0; md.render_levels = 0
-    o0.cycles.use_adaptive_subdivision = True
+    try: o0.cycles.use_adaptive_subdivision = True
+    except Exception: pass
 
 def do_render(root0, root1, o0):
     sc = bpy.context.scene
     render_materials(o0)
     for o in root1.children: o.hide_render = True
-    sc.render.engine = 'CYCLES'; sc.cycles.samples = 40; sc.cycles.use_denoising = True; sc.cycles.device = 'CPU'
-    sc.render.resolution_x, sc.render.resolution_y = 1600, 900
+    sc.render.engine = 'CYCLES'; sc.cycles.samples = 16 if '--fast' in argv else 40; sc.cycles.use_denoising = True; sc.cycles.device = 'CPU'
+    sc.render.resolution_x, sc.render.resolution_y = (1280, 720) if '--fast' in argv else (1600, 900)
     w = bpy.data.worlds.new('w'); sc.world = w; w.use_nodes = True
     bg = w.node_tree.nodes['Background']; bg.inputs[0].default_value = (0.42, 0.46, 0.52, 1); bg.inputs[1].default_value = 1.1
     sun = bpy.data.lights.new('sun', 'SUN'); sun.energy = 2.4; sun.angle = math.radians(25)
-    so = bpy.data.objects.new('sun', sun); bpy.context.collection.objects.link(so); so.rotation_euler = (math.radians(58), 0, math.radians(-25))
+    so = bpy.data.objects.new('sun', sun); bpy.context.collection.objects.link(so); so.rotation_euler = (math.radians(70), 0, math.radians(-35))
     # overcast sea plane
     bpy.ops.mesh.primitive_plane_add(size=2000, location=(0, 0, SEA))
     sea = bpy.context.object; sm = bpy.data.materials.new('sea'); sm.use_nodes = True
@@ -741,11 +780,11 @@ def do_render(root0, root1, o0):
     sm.node_tree.nodes['Principled BSDF'].inputs['Roughness'].default_value = 0.12; sea.data.materials.append(sm)
     cam = bpy.data.cameras.new('c'); cam.lens = 24; co = bpy.data.objects.new('c', cam); bpy.context.collection.objects.link(co); sc.camera = co
     shots = {'front': ((40, 240, -14), (0, 10, -8)), 'threeq': ((-200, 190, 20), (0, 20, -8)), 'aerial': ((150, 150, 110), (0, 15, -10)), 'low': ((180, 150, -45), (0, 25, -10)),
-             'closeup': ((60, 95, 40), (10, 20, 12))}
+             'closeup': ((60, 95, 40), (10, 20, 12)), 'deck': ((-40, 40, -2), (-75, 70, -30)), 'wall': ((-95, 100, -18), (-105, 30, -26)), 'wall2': ((95, 95, -10), (100, 30, -22)), 'wallw': ((-60, 80, -35), (-85, 30, -40))}
     ONLY = argv[argv.index('--shots') + 1].split(',') if '--shots' in argv else None
     for k, (p, t) in shots.items():
         if ONLY and k not in ONLY: continue
-        co.location = p; co.data.lens = 24 if k != 'closeup' else 42
+        co.location = p; co.data.lens = 24 if k not in ('closeup', 'wall', 'wall2', 'wallw', 'deck') else (42 if k == 'closeup' else 28 if k == 'deck' else 32)
         d = Vector(t) - Vector(p); co.rotation_euler = d.to_track_quat('-Z', 'Y').to_euler()
         sc.render.filepath = f'{RENDER}/mansion-{k}.png'; bpy.ops.render.render(write_still=True)
     if '--macros' not in argv: return

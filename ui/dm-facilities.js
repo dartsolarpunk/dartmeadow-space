@@ -245,14 +245,14 @@
     const lod0 = sc.getObjectByName('Mansion_LOD0'), lod1 = sc.getObjectByName('Mansion_LOD1');
     root.add(sc); root.userData.lod0 = lod0; root.userData.lod1 = lod1;
     const sh = F.ctx.shadows() && !F.ctx.isMobile();   // (v223) the mansion casts no shadows on phones/tablets: saves a 59k-triangle shadow pass
-    sc.traverse(o => { if (o.isMesh) { o.frustumCulled = false; const n = o.material && o.material.name; if (sh && lod0 && o.parent === lod0 || sh && lod0 && lod0.getObjectById(o.id)) { o.castShadow = n !== 'ah_rock' && n !== 'ah_glass'; o.receiveShadow = true; } } });
+    sc.traverse(o => { if (o.isMesh) { o.frustumCulled = false; const n = o.material && o.material.name; if (sh && lod0 && o.parent === lod0 || sh && lod0 && lod0.getObjectById(o.id)) { o.castShadow = !/^ah_rock/.test(n) && n !== 'ah_glass'; o.receiveShadow = true; } } });
     return root;
   }
   let hiTried = false;
   function upgrade2K(T) {       // desktop only: swap the 1K maps for the 2K hero set once she's near
     const c = F.ctx; if (hiTried || c.isMobile() || c.tier() < 2 || !MAN.glb) return; hiTried = true;
     const L = new T.TextureLoader(), load = u => new Promise((ok, no) => L.load(u, ok, undefined, no));
-    const byName = {}; MAN.glb.scene.traverse(o => { if (o.isMesh && o.material && /^ah_(slate|concrete|wood|rock|dark|leaf)$/.test(o.material.name)) byName[o.material.name] = o.material; });
+    const byName = {}; MAN.glb.scene.traverse(o => { if (o.isMesh && o.material && /^ah_(slate|concrete|wood|dark|leaf)$/.test(o.material.name)) byName[o.material.name] = o.material; });
     Object.keys(byName).forEach(k => {
       const n = k.slice(3), mat = byName[k], base = 'assets/ariel-home/tex/' + n;
       Promise.all(['color', 'nrm', 'orm'].map(t => load(base + '-' + t + '-2k.webp?v=' + F.ver))).then(([a, b, o]) => {
@@ -260,6 +260,35 @@
         a.colorSpace = T.SRGBColorSpace; mat.map = a; mat.normalMap = b; mat.roughnessMap = o; mat.metalnessMap = o; mat.needsUpdate = true;
       }).catch(e => console.warn('[ariel-home] 2K', n, e));
     });
+  }
+
+  // Cliff rock sets (tools/ariel-home/gen_cliff_textures.py + cliff_mesh.py): 4 tileable 3 m sets (strata / columnar / sheet / talus), each colour + normal + ORM + height.
+  // The GLB embeds the 512 tier (low preset stays on it); tier >= 1 desktop gets 1K, tier >= 2 desktop 2K (683 px/m), phones/tablets 1K from tier 2. Sets stream in one at a time
+  // (spreads the GPU uploads), old 512 maps are disposed. mat.userData.dmCliff carries the height-map URL + tile/depth for the parallax-occlusion helper (ui/dm-parallax.js).
+  let cliffTried = false;
+  function upgradeCliff(T) {
+    const c = F.ctx; if (cliffTried || !MAN.glb) return; cliffTried = true;
+    const t = c.tier(), mob = c.isMobile(), res = mob ? (t >= 2 ? '1k' : null) : (t >= 2 ? '2k' : t >= 1 ? '1k' : null);
+    const byName = {}; MAN.glb.scene.traverse(o => { if (o.isMesh && o.material && /^ah_rock/.test(o.material.name)) byName[o.material.name] = o.material; });
+    fetch('assets/ariel-home/cliff/cliff-materials.json?v=' + F.ver).then(r => r.json()).then(J => {
+      const L = new T.TextureLoader(), load = u => new Promise((ok, no) => L.load(u, ok, undefined, no)), aniso = mob ? 4 : 8, ids = Object.keys(J.sets);
+      const hp = J.heightTierFor ? J.heightTierFor[res || '512'] : (res || '512');
+      ids.forEach(id => { const S = J.sets[id], mat = byName[S.material]; if (mat) mat.userData.dmCliff = { set: id, tileM: J.tileM, depthM: S.depthM, height: J.base + id + '-height-' + hp + '.webp?v=' + F.ver, uvOrigin: J.uv }; });
+      if (!res) return;
+      let i = 0;
+      const next = () => {
+        if (i >= ids.length) return; const id = ids[i++], S = J.sets[id], mat = byName[S.material]; if (!mat) return next();
+        const base = J.base + id + '-';
+        Promise.all(['color', 'nrm', 'orm'].map(k => load(base + k + '-' + res + '.webp?v=' + F.ver))).then(([a, b, o]) => {
+          for (const x of [a, b, o]) { x.flipY = false; x.wrapS = x.wrapT = T.RepeatWrapping; x.anisotropy = aniso; }
+          a.colorSpace = T.SRGBColorSpace;
+          const old = [mat.map, mat.normalMap, mat.roughnessMap];
+          mat.map = a; mat.normalMap = b; mat.roughnessMap = o; mat.metalnessMap = o; mat.needsUpdate = true;
+          old.forEach(x => { if (x && x.dispose) x.dispose(); });
+        }).catch(e => console.warn('[ariel-home] cliff', id, e)).then(() => setTimeout(next, 350));
+      };
+      next();
+    }).catch(e => console.warn('[ariel-home] cliff set', e));
   }
 
   // ── search: time-sliced sampling of the world's height field ─────────────────────────────────────────────
@@ -448,7 +477,7 @@
       if (rec.mansion) {
         const u = rec.group.userData, near = d2 < 420 * 420, far = d2 > 5200 * 5200;
         if (u.lod0) u.lod0.visible = near && !far; if (u.lod1) u.lod1.visible = !near && !far;
-        if (d2 < 1100 * 1100) upgrade2K(T);
+        if (d2 < 1100 * 1100) { upgrade2K(T); upgradeCliff(T); }
         if (window.DMMansionInt) DMMansionInt.tick(rec, d2, now, DM.arriveAt === rec.def.id);
       } else rec.group.visible = d2 < 6000 * 6000;
       if (rec.clouds) for (const p of rec.clouds) { const t = p.material.map; t.offset.x += p.userData.v * dt; t.offset.y += p.userData.v * 0.6 * dt; }
