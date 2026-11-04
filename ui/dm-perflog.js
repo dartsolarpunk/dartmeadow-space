@@ -198,7 +198,7 @@
       warmSteps: window._warmSteps || null, recovery: !!window._dmRecoveryUsed,
       transitions: window._dmTransitions && window._dmTransitions.length ? window._dmTransitions.slice() : null,   // (menu-perf) launch fly-out markers: per phase frames / max gap / gaps > 50, 100 ms
       navType, prevUnclean, prevSessionId: prevLocal && prevLocal.sessionId || null, endNote: final ? endNote : null,
-      env, modes, mem: mem.slice(), summary, gpuPasses: (function () { try { return window.DMGpuProf ? window.DMGpuProf.table() : null; } catch (e) { return null; } })(), hitches: hitches.slice(), windows: windows.slice(-60), trimmed: 0, census: census(),
+      env, modes, mem: mem.slice(), summary, gpuPasses: (function () { try { return window.DMGpuProf ? window.DMGpuProf.table() : null; } catch (e) { return null; } })(), hitches: hitches.slice(), windows: windows.slice(-60), trimmed: 0, events: (typeof evs !== 'undefined' ? evs.slice(-30) : []), census: census(),
     };
     let s = JSON.stringify(doc);
     while (s.length > CAP && doc.windows.length) { doc.windows.splice(0, Math.ceil(doc.windows.length / 4) || 1); doc.trimmed = windows.length - doc.windows.length; s = JSON.stringify(doc); }
@@ -241,5 +241,5 @@
     setInterval(sampleMem, MEM_MS);
     setTimeout(carryOver, 8000);
   } catch (e) {}
-  window.dmPerfLog = { sessionId, touch: () => { dirty = true; }, snapshot: () => snapshot(false), build: () => build(false), mem: () => mem.slice() };
+  const evs = []; window.dmPerfLog = { sessionId, event: (n, d) => { try { evs.push({ at: new Date().toISOString(), n: String(n).slice(0, 24), d: d == null ? null : JSON.parse(JSON.stringify(d)) }); if (evs.length > 40) evs.shift(); dirty = true; } catch (e) {} }, touch: () => { dirty = true; }, snapshot: () => snapshot(false), build: () => build(false), mem: () => mem.slice() };
 })();

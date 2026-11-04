@@ -1003,7 +1003,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-safety.js?v=1" defer></script>
 <script src="jots/jots-link.js?v=217" defer></script>
 <script src="ui/dm-friends.js?v=217" defer></script>
-<script src="ui/dm-perflog.js?v=237" defer></script>
+<script src="ui/dm-perflog.js?v=249" defer></script>
 <script src="ui/dm-webkit.js?v=210" defer></script>
 <script src="ui/dm-spectator.js?v=1" defer></script>
 <script src="ui/dm-stack.js?v=1" defer></script>
@@ -3241,6 +3241,7 @@ function launchFlight(){
     // mounted, try again.
     (async()=>{
       try{ await ensureAutumnOnBoard('launchFlight-resume'); }catch(e){}
+      try{ _riderCheck('launchResume'); }catch(e){}
       try{_startFlightLoop();}catch(e){}
     })();
     return;
@@ -6616,6 +6617,7 @@ async function initFlightScene(){
   }
   try{ await _flightWarmup(); }catch(e){ console.warn('warmup:',e); }
   _startFlightLoop();
+  try{ _riderCheck('initFlight'); }catch(e){}
   // Persist until mounted (or ~3 min). Cold cache + GPU contention can finish
   // after the gate; flight-loop 30-frame safety alone is not enough if load
   // is still in flight and remount no-ops without a root.
@@ -6625,7 +6627,7 @@ async function initFlightScene(){
     CHAR._coldMountWatch=setInterval(async()=>{
       tries++;
       try{ await ensureAutumnOnBoard('cold-watch'); }catch(e){}
-      const ok=!!(CHAR.mounted && CHAR.root && boardFlight && CHAR.root.parent===boardFlight && CHAR.root.visible);
+      const _rb=_riderBoard(), ok=!!(CHAR.mounted && CHAR.root && _rb && CHAR.root.parent===_rb && CHAR.root.visible) || (typeof PW!=='undefined'&&PW.active&&!_rb);
       if(ok){
         clearInterval(CHAR._coldMountWatch); CHAR._coldMountWatch=null;
         if(!toasted && tries>3){ toasted=true; try{toast('👤 Autumn mounted on the skyboard',2000);}catch(_){} }
@@ -11609,6 +11611,7 @@ function buildBoardMesh(){
     preloadSkyboardTemplates();
   }
   const grp=new THREE.Group();
+  grp.userData.procFallback=!!(tmpl&&tmpl!=='procedural'&&tmpl!=='R');   // (riderfix) the chosen GLB wasn't loaded yet: this long dark box is a stand-in, swapped when the template arrives
   const c=STATE.boardConfig;
   const col=new THREE.Color(c.col1),emit=new THREE.Color(c.emit);
   const hW=c.width/2,hL=c.length/2,T=c.thick;
@@ -19641,6 +19644,7 @@ function _pwBeginFly(start,opts){
     try{ mountSkyboard(board); _forceCharVisible(); }catch(e){}
   }
   _pwSetMode('fly');
+  try{ _riderCheck('beginFly'); }catch(e){}
   if(_pendingAutoFly) setTimeout(_takePendingAutoFly,0);
   else if(!fromSpace) toast(start&&!fresh?'🛹 Lifting off — the sticks fly the board just like open space':'🛹 Skyboard airborne over '+PW.body.name+' — the sticks fly it just like open space',2600);
 }
@@ -20148,6 +20152,7 @@ function _pwRestoreSpace(keepCam){
   if(CHAR.loaded&&CHAR.root&&boardFlight){ try{ mountSkyboard(boardFlight); _forceCharVisible(); }catch(e){} }
   if(!keepCam) _followInit=false;
   try{ _applyCamOffset(); }catch(e){}
+  try{ _riderCheck('restoreSpace'); }catch(e){}
   if(!flightAnimId) _startFlightLoop();
 }
 // TO SPACE (sky HUD) and LIFTOFF (on foot): climb out through the air to open space — one flight, no cut
@@ -22214,8 +22219,26 @@ function jotsResyncRiderToBoard(reason){
 window.jotsResyncRiderToBoard = jotsResyncRiderToBoard;
 window.rebuildFlightBoardIfBroken = rebuildFlightBoardIfBroken;
 
+// (riderfix) THE board she should be riding right now, or null when she is not on one. While a world is open (sky / space-in-world) she rides the
+// WORLD's board (PW.board, drawn in PW.scene) and the space board is hidden in flightScene; on foot she rides nothing. Every remount used to
+// target boardFlight blindly, so a late character load / cold-mount watch / resume-from-menu moved her onto the hidden space board: no rider.
+function _riderBoard(){
+  try{
+    if(typeof PW!=='undefined'&&PW&&PW.active){
+      if(!PW.board) return null;
+      return (PW.mode==='fly'||PW.mode==='space')?PW.board:null;
+    }
+  }catch(e){}
+  return (typeof boardFlight!=='undefined')?boardFlight:null;
+}
+window._riderBoard=_riderBoard;
 function remountSkyboard(boardObj){
   if(_charOnTempleDeck()) return false;   // walking the Bird Temple: exitShipWalk puts her back on
+  if(boardObj===boardFlight && typeof PW!=='undefined' && PW && (PW.active||PW.opening)){   // (riderfix) a world is open/opening: redirect to its board
+    if(PW.opening&&!PW.active) return false;                 // still being built: she stays on the (still drawn) space board; _pwBeginFly mounts her
+    const rb=_riderBoard(); if(!rb) return false;            // on foot: not riding
+    boardObj=rb;
+  }
   // on foot on a world (a resumed save lands her before her late full load
   // finishes): the space board isn't hers right now — LIFTOFF / leaving the
   // world puts her back on it (_pwRestoreSpace runs after surfaceActive clears)
@@ -22243,6 +22266,87 @@ function remountSkyboard(boardObj){
   if(!ok) console.warn('[CHAR] remountSkyboard assert failed', _charStatus());
   return ok;
 }
+
+// ── (riderfix) RIDER WATCHDOG ─────────────────────────────────────────────────────────────────────────────
+// On flight entry and every ~1 s while flying: she must be attached to THE board she rides (_riderBoard), in a scene that is drawn, with every
+// ancestor visible, her meshes visible / not culled / opaque, and finite matrices. Anything else is repaired from the cached character (never
+// reloaded) and logged: DMCrumb mark 'riderFix' + perf-log event 'riderFix' (ui/dm-perflog.js `events`).
+function _riderProblems(){
+  const out=[];
+  if(!CHAR||!CHAR.loaded||!CHAR.root) return out;                       // still loading: the load's own remount handles it
+  if(CHAR._transitioning||_charOnTempleDeck()) return out;
+  if(typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active) return out;
+  if(typeof surfaceActive!=='undefined'&&surfaceActive) return out;     // on foot
+  const rb=_riderBoard(); if(!rb) return out;
+  const R=CHAR.root, fp=!!(typeof flightFP!=='undefined'&&flightFP)||!!(typeof _flightFpHidA!=='undefined'&&_flightFpHidA)||!!(typeof _flightFpHidB!=='undefined'&&_flightFpHidB);
+  if(R.parent!==rb) out.push('parent:'+(R.parent?(R.parent.name||R.parent.type):'none'));
+  if(!CHAR.mounted) out.push('notMounted');
+  let top=R; while(top.parent) top=top.parent;
+  const drawn=(typeof PW!=='undefined'&&PW&&PW.active&&PW.scene)?PW.scene:(typeof flightScene!=='undefined'?flightScene:null);
+  if(drawn&&top!==drawn) out.push('sceneNotDrawn');
+  for(let o=R;o;o=o.parent){ if(o.visible===false && !(fp&&o===rb)){ out.push('hidden:'+(o.name||o.type)); break; } }
+  let bad=0, nan=0;
+  R.traverse(o=>{
+    if(!(o.isMesh||o.isSkinnedMesh)) return;
+    if(!o.visible||o.frustumCulled) bad++;
+    const ms=Array.isArray(o.material)?o.material:[o.material];
+    for(const m of ms){ if(m&&(m.visible===false||(m.transparent&&m.opacity<=0.01))) bad++; }
+  });
+  if(bad) out.push('meshes:'+bad);
+  try{ R.updateMatrixWorld(true); const e=R.matrixWorld.elements; for(let i=0;i<16;i++) if(!isFinite(e[i])){ nan++; break; } }catch(er){}
+  if(!isFinite(R.position.x+R.position.y+R.position.z)||!isFinite(R.scale.x+R.scale.y+R.scale.z)||Math.abs(R.scale.x)<1e-6) nan++;
+  try{ const h=CHAR.bones&&CHAR.bones.Hips; if(h&&!isFinite(h.position.x+h.position.y+h.position.z+h.quaternion.x+h.quaternion.w)) nan++; }catch(er){}
+  if(nan) out.push('nan');
+  if(rb.userData&&rb.userData.procFallback&&_riderTemplateReady()) out.push('boardProcedural');
+  return out;
+}
+function _riderTemplateReady(){ try{ const t=STATE.boardConfig.template; return !!(t&&t!=='procedural'&&t!=='R'&&_glbCache[SKYBOARD_TEMPLATES[t]]); }catch(e){ return false; } }
+let _riderFixN=0;
+function _riderEvent(reason,probs,fixed){
+  _riderFixN++;
+  const info={why:reason,p:probs.slice(0,4),ok:fixed,mode:(typeof PW!=='undefined'&&PW&&PW.active)?PW.mode:'space'};
+  try{ window.DMCrumb&&DMCrumb.mark('riderFix',info); }catch(e){}
+  try{ window.dmPerfLog&&dmPerfLog.event&&dmPerfLog.event('riderFix',info); }catch(e){}
+  try{ console.warn('[riderFix]',info); }catch(e){}
+}
+function _riderCheck(reason){
+  let probs=[];
+  try{ probs=_riderProblems(); }catch(e){ return false; }
+  if(!probs.length) return true;
+  try{
+    // the world board is the long dark stand-in and the real template is here now: swap it (same pose / scale / noBend), she is re-mounted below
+    if(probs.indexOf('boardProcedural')>=0){
+      const old=_riderBoard(), par=old.parent, nb=buildBoardMesh();
+      if(par&&nb&&!nb.userData.procFallback){
+        if(CHAR.root&&CHAR.root.parent===old) old.remove(CHAR.root);
+        nb.position.copy(old.position); nb.quaternion.copy(old.quaternion); nb.scale.copy(old.scale); nb.userData.noBend=true; nb.visible=old.visible;
+        if(GFX.shadows) nb.traverse(o=>{ if(o.isMesh){ o.castShadow=true; o.receiveShadow=true; } });
+        par.remove(old); par.add(nb);
+        if(typeof PW!=='undefined'&&PW&&PW.active){ if(PW.board===old) PW.board=nb; if(typeof atmoBoard!=='undefined'&&atmoBoard===old) atmoBoard=nb; if(typeof surfBoard!=='undefined'&&surfBoard===old) surfBoard=nb; }
+        else if(old===boardFlight){ boardFlight=nb; }
+        try{ disposeObject3D(old); }catch(e){}
+        CHAR.mounted=false;
+      }
+    }
+    const rb=_riderBoard();
+    if(probs.some(p=>/^nan/.test(p))&&CHAR.restPose){   // skinned / root NaN: back to her rest pose, then a clean mount
+      for(const n in CHAR.restPose){ const b=CHAR.bones[n], r=CHAR.restPose[n]; if(b){ b.position.copy(r.p); b.quaternion.copy(r.q); b.scale.copy(r.s); } }
+      CHAR.root.position.set(0,0,0); CHAR.root.scale.setScalar(CHAR.scaleForBoard||1);
+    }
+    if(rb){
+      rb.visible=rb.visible||!(typeof flightFP!=='undefined'&&flightFP);
+      if(probs.some(p=>/^(parent|notMounted|sceneNotDrawn|nan|boardProcedural)/.test(p))) mountSkyboard(rb);   // cheap flags (culled / hidden meshes) need no re-mount
+      for(let o=CHAR.root;o;o=o.parent) if(o.visible===false&&o!==rb) o.visible=true;
+      CHAR.root.traverse(o=>{ if(o.isMesh||o.isSkinnedMesh){ const ms=Array.isArray(o.material)?o.material:[o.material]; ms.forEach(m=>{ if(m){ m.visible=true; if(m.transparent&&m.opacity<=0.01) m.opacity=1; } }); } });
+      _forceCharVisible();
+    }
+  }catch(e){ console.warn('[riderFix] repair',e); }
+  let after=[]; try{ after=_riderProblems().filter(p=>p!=='boardProcedural'); }catch(e){}
+  _riderEvent(reason,probs,after.length===0);
+  return after.length===0;
+}
+window._riderCheck=_riderCheck; window._riderProblems=_riderProblems;
+setInterval(()=>{ try{ if(document.hidden||STATE.screen!=='flight'||(typeof INTRO!=='undefined'&&INTRO.on)||window._dmWarming) return; _riderCheck('tick'); }catch(e){} },1000);
 window.remountSkyboard = remountSkyboard;
 window.stripCharacterMount = stripCharacterMount;
 async function ensureAutumnOnBoard(reason){
@@ -22250,12 +22354,12 @@ async function ensureAutumnOnBoard(reason){
   // Await in-flight mesh-first promise even when CHAR.loaded was flipped early.
   // Cold cache: never abort on a missing boardFlight mid-retry — wait for it.
   const _sleep = ms => new Promise(r=>setTimeout(r,ms));
-  const _ok = () => !!(CHAR.root && typeof boardFlight!=='undefined' && boardFlight
-    && CHAR.root.parent===boardFlight && CHAR.mounted && CHAR.root.visible);
+  const _ok = () => { const rb=_riderBoard(); return !!(CHAR.root && rb && CHAR.root.parent===rb && CHAR.mounted && CHAR.root.visible); };
 
   for(let attempt=1; attempt<=8; attempt++){
     if(_charOnTempleDeck()) return true;   // she's standing on the Bird Temple deck, not riding
     if(typeof surfaceActive!=='undefined'&&surfaceActive) return true;   // on foot on a world (e.g. a resumed save): not riding the space board
+    if(typeof PW!=='undefined'&&PW&&PW.active&&!_riderBoard()) return true;   // (riderfix) world open, no rider board (walking)
     if(CHAR._transitioning&&CHAR.loaded&&CHAR.root){ if(attempt<8) await _sleep(300); continue; }   // mid step-on/step-off: let it finish
     try{
       if(CHAR._loadPromise){
@@ -22277,12 +22381,13 @@ async function ensureAutumnOnBoard(reason){
       remountSkyboard(boardFlight);
       try{ _forceCharVisible(); }catch(e){ CHAR.root.visible=true; }
       // Hard verify parent — remount may have failed silently
-      if(CHAR.root.parent!==boardFlight){
-        try{ boardFlight.add(CHAR.root); CHAR.mounted=true; }catch(e){}
+      const _rb=_riderBoard()||boardFlight;
+      if(CHAR.root.parent!==_rb){
+        try{ _rb.add(CHAR.root); CHAR.mounted=true; }catch(e){}
         try{ _forceCharVisible(); }catch(e){}
       }
-      // Board itself must be visible in the flight scene (cache-clear path).
-      try{ boardFlight.visible=true; }catch(e){}
+      // Board itself must be visible in the flight scene (cache-clear path). (A world's open: the space board stays hidden.)
+      try{ if(_rb===boardFlight) boardFlight.visible=true; else _rb.visible=true; }catch(e){}
       try{ console.log('[CHAR] ensureAutumnOnBoard', reason, 'attempt', attempt, _charStatus()); }catch(e){}
       if(_ok()) return true;
     }catch(e){
