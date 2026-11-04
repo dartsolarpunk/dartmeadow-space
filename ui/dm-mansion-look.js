@@ -18,6 +18,10 @@
 //   Low = AO only (256, R8, 64 KB). Probes: probeTick() samples the grid (no allocation) and scales the world's EXISTING ambient + hemisphere light colours while she is
 //   indoors (uniform writes only, restored on exit), so Ariel and every moving object pick up the room's light with zero extra lights / recompiles. ?mgi=0 or
 //   localStorage dm_mansion_gi=0 turns the baked GI off (A/B).
+// Room lights (ui/dm-mansion-rooms.js, ui/dm-lamps.js): every vertex of the atlas and lamp meshes carries a room id (classified once per load from its position). Both
+//   materials multiply their colour by ONE vertex-stage lookup in a 12-float uniform array (colorNode = materialColor x levels[room]): the diffuse colour drives the baked
+//   lightmap, the ambient fill and the lamp tint alike, so a room switch / dusk fade is 10 float writes (setRoomLevels), no light is added or removed, nothing recompiles.
+//   The bulbs / screens (int_emit) dim with their room too. Rooms are -1 (= level 1) when ui/dm-mansion-rooms.js is missing.
 // Light modes (flat-DOM-free API, same set as the Bird Temple room lights, ui/dm-bt-roomlights.js): DMMansionLook.set('auto'|'bright'|'warm'|'cool'|'night'|'off'),
 // .cycle(), .get(). Persisted in localStorage 'dm_mansion_light'; ?minlight=warm overrides for a session. A mode change only writes two uniforms.
 (function () {
@@ -28,7 +32,7 @@
   const GI_LM = 16, GI_EG = 0.45;   // lightMapIntensity at 'auto' (lightmap texel x meta.gain = irradiance; tuned against the vertex-baked look so mean brightness stays level while the lamp pools, window light and contact shadows come from the bake), unlit fill share kept when a lightmap is on
   // [fill, [r,g,b] tint]
   const SPEC = { auto: [0.52, [1, 1, 1]], bright: [0.8, [1, 1, 1]], warm: [0.58, [1, 0.78, 0.52]], cool: [0.58, [0.7, 0.85, 1]], night: [0.22, [1, 0.24, 0.28]], off: [0.1, [1, 1, 1]] };
-  const S = { mode: 'auto', U: null, atlas: null, tex: [], lowCount: 0, loads: 0, THREE: null, lastMem: 0, gi: null, giOn: true, lmK: GI_LM, egK: GI_EG, tl: [], tlBase: [], tlLast: [], k: [1, 1, 1], pt: 0, plx: 1e9, ply: 1e9, plz: 1e9, active: false };
+  const S = { mode: 'auto', U: null, atlas: null, tex: [], lowCount: 0, loads: 0, THREE: null, lastMem: 0, gi: null, giOn: true, lmK: GI_LM, egK: GI_EG, emit: null, tl: [], tlBase: [], tlLast: [], k: [1, 1, 1], pt: 0, plx: 1e9, ply: 1e9, plz: 1e9, active: false };
   try { const q = (new URLSearchParams(G.location.search)).get('mgi'); if (q === '0' || (q === null && G.localStorage.getItem('dm_mansion_gi') === '0')) S.giOn = false; } catch (e) { }
   try { const m = (new URLSearchParams(G.location.search)).get('minlight') || G.localStorage.getItem(LS); if (m && MODES.indexOf(m) >= 0) S.mode = m; } catch (e) { }
 
@@ -47,12 +51,26 @@
     try { t.dispose(); } catch (e) { }
     try { const d = t.source && t.source.data; if (d && typeof d.close === 'function') d.close(); } catch (e) { }
   }
+  const RK_N = 12;   // 10 rooms + the 'no room' slot (always 1) + spare
+  function roomK(T) { return T.varying(S.U.rk.element(T.attribute('roomIdx', 'float').toInt())); }
+  function ensureEmit(ctx) {   // the lamp / screen prim: one shared unlit node material (the GLB's own unlit MeshBasicMaterial cannot take a colorNode)
+    const THREE = ctx.THREE, T = THREE.TSL;
+    if (!S.emit && S.U && S.U.rk && THREE.MeshBasicNodeMaterial) { const m = new THREE.MeshBasicNodeMaterial(); m.vertexColors = true; m.name = 'int_emit'; m.colorNode = T.materialColor.mul(roomK(T)); m.userData.dmMansionLook = true; S.emit = m; }
+    return S.emit;
+  }
+  // per-vertex room slot (Float32, GLB frame: x east, y up, z = -seaward), classified with the room boxes of ui/dm-mansion-rooms.js
+  function tagRooms(g) {
+    const a = g.attributes.position, n = a.count, R = G.DMMansionRooms, none = RK_N - 2, o = new Float32Array(n);
+    for (let i = 0; i < n; i++) { const r = R ? R.classify(a.getX(i), -a.getZ(i), a.getY(i)) : -1; o[i] = r < 0 ? none : r; }
+    g.setAttribute('roomIdx', new S.THREE.BufferAttribute(o, 1));
+  }
   function ensureShared(ctx) {
     const THREE = ctx.THREE, T = THREE.TSL;
     S.THREE = THREE;
     if (!S.U) {
       const node = !!(THREE.MeshStandardNodeMaterial && T && T.uniform && T.diffuseColor && T.lights);
-      S.U = { node, fill: node ? T.uniform(1) : { value: 1 }, eg: node ? T.uniform(1) : { value: 1 }, tint: node ? T.uniform(new THREE.Color(1, 1, 1)) : { value: new THREE.Color(1, 1, 1) } };
+      const rk = node && T.uniformArray && T.attribute && T.varying ? T.uniformArray(new Array(RK_N).fill(1), 'float') : null;
+      S.U = { node, rk, fill: node ? T.uniform(1) : { value: 1 }, eg: node ? T.uniform(1) : { value: 1 }, tint: node ? T.uniform(new THREE.Color(1, 1, 1)) : { value: new THREE.Color(1, 1, 1) } };
     }
     if (!S.atlas) {
       const T2 = THREE.TSL, U = S.U;
@@ -60,6 +78,7 @@
         const m = new THREE.MeshStandardNodeMaterial({ roughness: 1, metalness: 1 });
         m.vertexColors = true; m.name = 'int_atlas';
         m.emissiveNode = T2.diffuseColor.rgb.mul(U.tint).mul(U.fill).mul(U.eg).mul(T2.materialAO || 1);   // materialAO = 1 unless the baked aoMap is on
+        if (U.rk) m.colorNode = T2.materialColor.mul(roomK(T2));   // room light level (see the header)
         S.atlas = m;
       } else { const m = new THREE.MeshStandardMaterial({ roughness: 1, metalness: 1 }); m.vertexColors = true; m.name = 'int_atlas'; m.emissive = new THREE.Color(0.3, 0.3, 0.3); S.atlas = m; }
       S.atlas.userData.dmMansionLook = true; S.atlasLow = null; S.atlasLights = undefined;
@@ -200,15 +219,16 @@
         for (let i = 0; i < ms.length; i++) {
           const m = ms[i]; if (!m) continue;
           if (m.name === 'int_atlas') {
-            old.add(m); if (gi && !giMesh && n.geometry.attributes.position) giMesh = n.geometry;
+            old.add(m); if (S.U.rk && !n.geometry.attributes.roomIdx) tagRooms(n.geometry); if (gi && !giMesh && n.geometry.attributes.position) giMesh = n.geometry;
             for (const k of ['map', 'normalMap', 'metalnessMap', 'roughnessMap']) { const t = m[k]; if (t && !seen.has(t)) { seen.add(t); } }
             ms[i] = A;
-          } else { if (m.name === 'int_water') { m.depthWrite = false; } }
+          } else if (m.name === 'int_emit' && S.U.rk && ensureEmit(ctx)) { old.add(m); ms[i] = S.emit; if (!n.geometry.attributes.roomIdx) tagRooms(n.geometry); }
+          else { if (m.name === 'int_water') { m.depthWrite = false; } }
         }
         if (!Array.isArray(n.material)) n.material = ms[0];
       });
       // textures → the shared atlas material
-      let g0 = null; for (const m of old) { g0 = m; break; }
+      let g0 = null; for (const m of old) { if (m.name === 'int_atlas') { g0 = m; break; } }
       const prev = S.tex.slice(); S.tex.length = 0;
       let giOK = false;
       if (g0) {
@@ -240,8 +260,10 @@
     // interior unloaded (she walked away): GPU textures + CPU bitmaps freed; the shared material objects stay (cheap) for the next visit
     release() { probeRelease(); S.gi = null; for (const t of S.tex) freeTex(t); S.tex.length = 0; S.lastMem = 0; if (S.atlas) { S.atlas.lightMap = null; S.atlas.aoMap = null; S.atlas.color.setRGB(1, 1, 1); S.atlas.map = null; S.atlas.emissiveMap = null; S.atlas.normalMap = null; S.atlas.metalnessMap = null; S.atlas.roughnessMap = null; } },
     // the home world is gone: drop everything
-    destroy() { API.release(); if (S.atlas) { try { S.atlas.dispose(); } catch (e) { } S.atlas = null; } S.atlasLights = undefined; },
+    destroy() { API.release(); if (S.atlas) { try { S.atlas.dispose(); } catch (e) { } S.atlas = null; } if (S.emit) { try { S.emit.dispose(); } catch (e) { } S.emit = null; } S.atlasLights = undefined; },
     prefetch, discard, probeTick,
+    // room light levels 0..1 (ui/dm-mansion-rooms.js order); uniform writes only
+    setRoomLevels(a, n) { const rk = S.U && S.U.rk; if (!rk) return false; const arr = rk.array; for (let i = 0; i < n && i < RK_N - 2; i++) arr[i] = a[i]; return true; },
     // baked probe irradiance (lightmap units x meta.gain = irradiance) at a nav-frame point, for moving objects that want their own tint; writes out[0..2] (mean). false = no probes loaded
     probeAt(x, y, z, out) { if (!S.gi || !S.gi.probes) return false; sampleProbes(x, y, z); out[0] = PR[6]; out[1] = PR[7]; out[2] = PR[8]; return true; },
     set(m) { if (MODES.indexOf(m) < 0) return S.mode; S.mode = m; try { G.localStorage.setItem(LS, m); } catch (e) { } applyMode(); return m; },
