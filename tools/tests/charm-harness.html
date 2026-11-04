@@ -1,0 +1,27 @@
+<!doctype html><meta charset=utf8><body style="margin:0;background:#000"><canvas id=c width=720 height=720></canvas>
+<script type="importmap">{"imports":{"three":"./three/build/three.webgpu.js","three/webgpu":"./three/build/three.webgpu.js","three/tsl":"./three/build/three.tsl.js"}}</script>
+<script type="module">
+import * as TH from 'three/webgpu'; import * as TSL from 'three/tsl'; import {GLTFLoader} from './three/examples/jsm/loaders/GLTFLoader.js';
+const THREE=Object.assign({},TH); THREE.TSL=TSL; window.THREE=THREE;
+const reqs=[]; window.DMNatLights={request(p,c,i,r){reqs.push(['req',i,r]);return 1;},set(k,p,i){reqs.push(['set',i]);},release(){reqs.push(['rel']);}};
+await import('./ui/dm-charm.js');
+const r=new TH.WebGPURenderer({canvas:document.getElementById('c'),forceWebGL:true,antialias:true}); await r.init();
+const sc=new TH.Scene(); sc.background=new TH.Color(0x2a3140);
+sc.add(new TH.HemisphereLight(0xbfd8ff,0x403830,0.8)); const sun=new TH.DirectionalLight(0xfff0d0,2.0); sun.position.set(2,3,4); sc.add(sun);
+const g=await new GLTFLoader().loadAsync('./chars/Meshy_AI_Autumn_biped_Character_output.glb');
+const CHAR={root:g.scene,bones:{}}; sc.add(CHAR.root);
+CHAR.root.traverse(o=>{ if(o.isBone) CHAR.bones[o.name]=o; });
+window.bones=Object.keys(CHAR.bones).join(',');
+CHAR.root.updateMatrixWorld(true);
+window.attached=DMCharm.attach(CHAR);
+const cam=new TH.PerspectiveCamera(30,1,0.01,50);
+const kp=DMCharm.kite.getWorldPosition(new TH.Vector3()); const box=new TH.Box3().setFromObject(CHAR.root); window.H=box.max.y-box.min.y;
+const mode=(location.search.match(/mode=(\w+)/)||[])[1]||'glow';
+const zoom=+((location.search.match(/z=([\d.]+)/)||[])[1]||0.35);
+// face direction guess: toward +z (the rig fwd); try both by picking the side the kite normal faces
+cam.position.copy(kp).add(new TH.Vector3(0.0,0.02*H,zoom*H*1.0)); cam.lookAt(kp);
+if(mode==='glow'){ DMCharm.setReturning(true); }
+let t0=performance.now(); for(let i=0;i<40;i++){ DMCharm.tick(0.03,false); await new Promise(r=>setTimeout(r,4)); }
+await r.render(sc,cam); await new Promise(r=>setTimeout(r,200)); r.render(sc,cam);
+window.stats=DMCharm.stats(); window.reqs=reqs.slice(0,3); window.done=true;
+</script>

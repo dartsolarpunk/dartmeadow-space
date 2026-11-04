@@ -1,0 +1,23 @@
+<!doctype html><meta charset=utf8><body style="margin:0;background:#000"><canvas id=c width=640 height=400></canvas>
+<script type="importmap">{"imports":{"three":"./three/build/three.webgpu.js","three/webgpu":"./three/build/three.webgpu.js","three/tsl":"./three/build/three.tsl.js"}}</script>
+<script type="module">
+import * as TH from 'three/webgpu'; import * as TSL from 'three/tsl';
+const THREE=Object.assign({},TH); THREE.TSL=TSL; window.THREE=THREE;
+window.GFX={isMobile:/mob=1/.test(location.search)};
+window.resolvePreset=()=>(location.search.match(/tier=(\w+)/)||[])[1]||'ultra';
+window.TERRAIN={sun:{position:new TH.Vector3(8,3,2),target:{position:new TH.Vector3()}}};
+await import('./ui/dm-parallax.js');
+const r=new TH.WebGPURenderer({canvas:document.getElementById('c'),forceWebGL:true,antialias:false}); await r.init();
+window.backend=r.backend.constructor.name;
+const sc=new TH.Scene(); sc.background=new TH.Color(0x7aa0c0);
+const cam=new TH.PerspectiveCamera(50,640/400,0.1,100); cam.position.set(0,1.6,3.2); cam.lookAt(0,0,0.5);
+sc.add(new TH.HemisphereLight(0xbfd8ff,0x403830,0.7)); const sun=new TH.DirectionalLight(0xfff0d0,2.2); sun.position.set(8,3,2); sc.add(sun);
+const m=new TH.MeshStandardNodeMaterial({color:0x8a8478,roughness:0.9});
+const mode=(location.search.match(/mode=(\w+)/)||[])[1]||'on';
+m.colorNode=TSL.vec3(0.55,0.52,0.47);
+if(mode!=='off'){ const px=window.DMParallax; px.init(); window.ok=px.applyGround(m,{p:TSL.positionWorld,flat:TSL.float(1),lvl:3,near:10,far:22,kind:'cobble'}); }
+const g=new TH.Mesh(new TH.PlaneGeometry(14,14),m); g.rotation.x=-Math.PI/2; sc.add(g);
+let t0=performance.now(); await r.compileAsync(sc,cam); window.compileMs=performance.now()-t0;
+t0=performance.now(); for(let i=0;i<3;i++) await r.renderAsync(sc,cam); window.frameMs=(performance.now()-t0)/3;
+window.done=true; window.status=window.DMParallax.status();
+</script>
