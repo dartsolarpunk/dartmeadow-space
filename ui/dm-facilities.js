@@ -254,6 +254,7 @@
 
   // ── Ariel's mansion (GLB + collision grid) ───────────────────────────────────────────────────────────────
   const MAN = { glb: null, col: null, loading: false, failed: false };
+  F.manCol = () => MAN.col;   // the exterior collision grid (ui/dm-lamps.js plans light pools on it)
   function loadMansion() {
     if (MAN.glb || MAN.loading || MAN.failed) return;
     MAN.loading = true; const c = F.ctx;
@@ -419,6 +420,7 @@
   function teardown() {
     crumb('begin', 'fac:teardown');
     HQ.epoch++; const dropped = HQ.q.splice(0); dropped.forEach(j => { try { j.stale && j.stale(); } catch (e) { } }); crumb('live', 'facQueue', 0);   // queued texture / interior steps belong to the world that is gone
+    if (window.DMLamps) { try { DMLamps.detach(); } catch (e) { } }
     if (window.DMMansionInt) { try { DMMansionInt.detach(); } catch (e) { } }
     for (const r of F.sites.values()) { if (r.group && r.group.parent) r.group.parent.remove(r.group); if (r.group && !r.mansion) dispose(r.group); }
     F.sites.clear(); F.solids.length = 0; F.bay = null; DM.bay.inside = false; DM.bay.membrane = 0;
@@ -453,6 +455,7 @@
       } catch (e) { rec.warmed = true; }
       rec.group = root; rec.mansion = true; rec.x = px; rec.z = pz; rec.y = y0; rec.th = th; rec.ready = true;
       if (window.DMMansionInt) { try { DMMansionInt.attach(F, rec, px, pz, y0, th); } catch (e) { console.warn('[mansion-interior] attach', e); } }
+      if (window.DMLamps) { try { DMLamps.attach(F, rec, px, pz, y0, th); } catch (e) { console.warn('[lamps] attach', e); } }
       const col = MAN.col, nx = col.nx, ny = col.ny, inv = 1 / col.scale, cell = col.cell, hh = col.h;
       const R = 230;
       F.solids.push({ x0: px - R, x1: px + R, z0: pz - R, z1: pz + R, grid: (x, z) => {
@@ -534,6 +537,7 @@
         if (u.lod0) u.lod0.visible = near && !far; if (u.lod1) u.lod1.visible = !near && !far;
         if (d2 < 1100 * 1100) { upgrade2K(T); upgradeCliff(T); }
         if (window.DMMansionInt) DMMansionInt.tick(rec, d2, now, DM.arriveAt === rec.def.id);
+        if (window.DMLamps) { try { DMLamps.tick(rec, d2, now, dt, f, mode); } catch (e) { if (!rec.lampWarn) { rec.lampWarn = 1; console.warn('[lamps] tick', e); } } }   // street lamps + room switches (a failure here must never stop the facility upkeep)
       } else rec.group.visible = d2 < 6000 * 6000;
       if (rec.clouds) for (const p of rec.clouds) { const t = p.material.map; t.offset.x += p.userData.v * dt; t.offset.y += p.userData.v * 0.6 * dt; }
       if (rec.bay) {

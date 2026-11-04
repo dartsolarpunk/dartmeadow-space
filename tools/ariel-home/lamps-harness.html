@@ -1,0 +1,37 @@
+<!doctype html><html><head><base href="../../"><meta charset="utf-8"></head><body style="margin:0;background:#000"><canvas id=c width=960 height=540 style="display:block"></canvas>
+<script type=importmap>{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js","three/webgpu":"https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js","three/tsl":"https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.tsl.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.185.0/examples/jsm/"}}</script>
+<script type=module>
+// Standalone harness for ui/dm-lamps.js (serve the repo root; open tools/ariel-home/lamps-harness.html; screenshot after window.__done). Loads the real exterior mansion GLB (512 maps),
+// stands it at the origin (no planet bend: mapTag is a no-op here), fakes the facility context and drives DMLamps.tick like ui/dm-facilities.js does.
+//   ?day=0..1 (world day: 0 night)  &cam=x,y,z &look=x,y,z (three frame: x east, y up, z = -seaward)  &me=x,y,z (her nav-frame position x,y,z for the switch prompt)  &lamplights=2  &mobile=1  &tier=0..3  &rl=i:lvl,...
+import * as THREE_NS from 'three/webgpu'; import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+const THREE = Object.assign({}, THREE_NS); window.THREE = THREE;
+const q = new URLSearchParams(location.search), v3 = (s, d) => (s || d).split(',').map(Number), day = +(q.get('day') ?? 0);
+const r = new THREE_NS.WebGPURenderer({ canvas: document.getElementById('c'), antialias: false, forceWebGL: true }); await r.init(); r.toneMapping = THREE.ACESFilmicToneMapping;
+const scene = new THREE.Scene(); scene.background = new THREE.Color(day < 0.5 ? 0x04070d : 0x8fb0d8);
+scene.add(new THREE.HemisphereLight(0x405070, 0x181410, day < 0.5 ? 0.35 : 1.2), new THREE.AmbientLight(0x202838, day < 0.5 ? 0.25 : 0.6));
+if (day > 0.5) { const s = new THREE.DirectionalLight(0xfff0d8, 2.4); s.position.set(60, 90, 40); scene.add(s); }
+const cam = new THREE.PerspectiveCamera(65, 960 / 540, 0.1, 900); cam.position.set(...v3(q.get('cam'), '-40,26,-70')); cam.lookAt(...v3(q.get('look'), '-10,6,-50')); cam.updateMatrixWorld();
+const PW = { scene, camera: cam, renderer: r }, mobile = q.get('mobile') !== '0';
+const root = new THREE.Group(); scene.add(root);
+const gl = await new GLTFLoader().loadAsync('assets/ariel-home/ariel-home' + (mobile ? '-512' : '') + '.glb'); root.add(gl.scene); const lod1 = gl.scene.getObjectByName('Mansion_LOD1'); if (lod1) lod1.visible = false;
+const colJ = await (await fetch('assets/ariel-home/ariel-home-collide.json')).json(); { const bin = atob(colJ.data), n = bin.length >> 1, a = new Int16Array(n); for (let i = 0; i < n; i++) { const v = bin.charCodeAt(i * 2) | (bin.charCodeAt(i * 2 + 1) << 8); a[i] = v > 32767 ? v - 65536 : v; } colJ.h = a; }
+if (q.get('ground') !== '0') {   // the collision grid as a dim lit height field (stand-in ground; the exterior GLB is near black at night)
+  const nx = colJ.nx, ny = colJ.ny, P = [], C = [], I = [], inv = 1 / colJ.scale;
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) { const h = colJ.h[j * nx + i] * inv, ok = h > colJ.sea + 0.6, y = ok ? h : colJ.sea; P.push(colJ.x0 + i * colJ.cell, y, -(colJ.y0 + j * colJ.cell)); const t = ok ? 0.018 + 0.012 * Math.min(1, Math.max(0, (h + 20) / 60)) : 0.004; C.push(t, t * 0.95, t * 0.9); }
+  for (let j = 0; j < ny - 1; j++) for (let i = 0; i < nx - 1; i++) { const a = j * nx + i, b = a + 1, c = a + nx, d = c + 1; if (colJ.h[a] * inv > colJ.sea + 0.6 && colJ.h[d] * inv > colJ.sea + 0.6) I.push(a, c, b, b, c, d); }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(C, 3)); g.setIndex(I);
+  const gm = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide })); root.add(gm); if (q.get('glb') === '0') gl.scene.visible = false;
+}
+const ctx = { THREE, tier: () => +(q.get('tier') || 2), isMobile: () => mobile, PW: () => PW, mapTag: () => { }, skyDay: () => day };
+const F = { ctx, ver: 'h', manCol: () => colJ };
+for (const f of ['dm-mansion-rooms', 'dm-mansion-look', 'dm-lamps']) await new Promise(res => { const s = document.createElement('script'); s.src = 'ui/' + f + '.js'; s.onload = res; document.head.appendChild(s); });
+if (q.get('rl')) { const a = new Float32Array(10).fill(1); q.get('rl').split(',').forEach(p => { const [i, v] = p.split(':'); a[+i] = +v; }); }
+const rec = { group: root, warmed: true }; DMLamps.attach(F, rec, 0, 0, 0, 0);
+const me = v3(q.get('me'), '-50,-70,0.5'); const f = { x: me[0], z: -me[1], y: me[2] + 3 }; let now = 1000;
+for (let i = 0; i < 12; i++) { await new Promise(res => setTimeout(res, 120)); now += 1000; DMLamps.tick(rec, 0, now, 0.9, f, 'walk'); }
+const hb = document.getElementById('dm-sw'), hudOn = !!(hb && hb.classList.contains('on')), hudTxt = hb && hb.textContent;
+if (q.get('toggle') && hb) { hb.dispatchEvent(new Event('pointerdown')); hb.dispatchEvent(new Event('pointerup')); for (let i = 0; i < 8; i++) { now += 100; DMLamps.tick(rec, 0, now, 0.05, f, 'walk'); } }
+await r.compileAsync(scene, cam); r.render(scene, cam); await new Promise(res => setTimeout(res, 300)); r.render(scene, cam);
+window.__done = { st: DMLamps.status(), calls: r.info.render.calls, tris: r.info.render.triangles, geoms: r.info.memory.geometries, hud: hudOn, hudTxt, rooms: DMMansionRooms.get(), lvl: Array.from(DMMansionRooms.S.lvl).map(v => +v.toFixed(2)) };
+</script></body></html>

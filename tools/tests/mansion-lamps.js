@@ -51,6 +51,17 @@ R.ROOMS.forEach((r, i) => {
 });
 for (let a = 0; a < R.N; a++) for (let b = a + 1; b < R.N; b++) if (a !== b) { const [x, y, z] = R.ROOMS[a].sw, [u, v, w] = R.ROOMS[b].sw; ok(Math.hypot(x - u, y - v) > 5 || Math.abs(z - w) > 3, R.ROOMS[a].id + '/' + R.ROOMS[b].id + ' switches are apart'); }
 
+console.log('== render data (ui/dm-lamps.js pure part)');
+{ const sb2 = { window: null, console, Math, Float64Array, Int32Array, Uint8Array, Promise, URLSearchParams, fetch: () => Promise.reject(new Error('no net')), location: { search: '' } }; sb2.window = sb2; sb2.globalThis = sb2;
+  vm.runInNewContext(fs.readFileSync(path.join(root, 'ui/dm-mansion-rooms.js'), 'utf8'), sb2); vm.runInNewContext(fs.readFileSync(path.join(root, 'ui/dm-lamps.js'), 'utf8'), sb2, { filename: 'dm-lamps.js' });
+  const PU = sb2.DMLamps._pure, lamps = PU.withYaw(L), pl = PU.pools(COL, lamps, g);
+  ok(pl.P.length / 3 > 500 && pl.P.length / 3 < 9000, 'pool vertex count ' + pl.P.length / 3); ok(pl.I.length % 3 === 0 && Math.max(...pl.I) < pl.P.length / 3, 'pool indices valid');
+  let bad = 0; for (let v = 0; v < pl.P.length / 3; v++) { const x = pl.P[v * 3], y = -pl.P[v * 3 + 2], h = pl.P[v * 3 + 1]; if (!(gh(x, y) > COL.sea + 0.6)) bad++; if (!lamps.some(l => Math.abs(l[2] - (h - 0.08)) < 0.36 && Math.hypot(PU.headPos(l)[0] - x, PU.headPos(l)[1] - y) <= PU.POOL_R + 1e-6)) bad++; }
+  ok(bad === 0, 'every pool vertex is land, at its lamp\'s own height (never over a drop) and inside the pool radius');
+  ok(pl.A.every(a => a >= 0 && a <= 1), 'pool alpha 0..1');
+  const pa = PU.poleArrays(), ys = pa.P.filter((_, i) => i % 3 === 1); ok(Math.abs(Math.max(...ys) - (PU.POLE_H + 0.17 * PU.UPM)) < 1e-6 && PU.POLE_H / PU.UPM > 4 && PU.POLE_H / PU.UPM < 5, 'pole is ~4.4 m on the 1.78 units/m scale (Ariel 1.7 m)');
+  ok(pa.P.length / 3 < 200 && fs.statSync(path.join(root, 'assets/ariel-home/ariel-home-lamps.json')).size < 4000, 'lamp mesh < 200 verts, data < 4 KB (no GLB at all)');
+}
 console.log('== state');
 ok(R.lampLevel(1) === 0 && R.lampLevel(0) === 1 && R.lampLevel(0.3) > R.lampLevel(0.5), 'lamp dusk curve: off by day, on at night, monotone');
 R.resetAll(); R.step(1, 0);                         // night, seeded

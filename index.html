@@ -1040,9 +1040,10 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-edgewarm.js?v=235" defer></script>
 <script src="ui/dm-arielhome.js?v=231" defer></script>
 <script src="ui/dm-mansion-rooms.js?v=250" defer></script>
-<script src="ui/dm-mansion-look.js?v=250" defer></script>
+<script src="ui/dm-mansion-look.js?v=251" defer></script>
 <script src="ui/dm-mansion-interior.js?v=233" defer></script>
-<script src="ui/dm-facilities.js?v=248" defer></script>
+<script src="ui/dm-facilities.js?v=251" defer></script>
+<script src="ui/dm-lamps.js?v=251" defer></script>
 <script src="ui/dm-sys.js?v=241"></script>
 </head>
 <body>
@@ -2071,6 +2072,7 @@ function buildSaveData(slot){
     themes:(window.DMTheme?window.DMTheme.exportData():null),
     // ...and so do your Journal waypoints.
     journal:(window.DMJournal?window.DMJournal.store.exportData():null),
+    mansionLights:(window.DMMansionRooms?window.DMMansionRooms.get():null),   // optional: per-room light switch modes of Ariel's mansion (older saves lack it)
     btLights:(window.DMBtRoomLights?window.DMBtRoomLights.get():null)   // (v139) optional: Bird Temple room light modes (older saves lack it)
   };
 }
@@ -2190,6 +2192,7 @@ function loadSaveData(data){
   }
   if(data.themes&&window.DMTheme){ try{ window.DMTheme.importData(data.themes,'save'); }catch(e){} }
   if(data.journal&&window.DMJournal){ try{ window.DMJournal.store.importData(data.journal,'save'); }catch(e){} }
+  if(data.mansionLights&&window.DMLamps){ try{ window.DMLamps.set(data.mansionLights); }catch(e){} }
   if(data.btLights&&window.DMBtRoomLights){ try{ window.DMBtRoomLights.set(data.btLights); }catch(e){} }   // (v139)
   if(Array.isArray(data.discoveries)&&data.discoveries.length){
     try{
@@ -6118,7 +6121,7 @@ function _fac(){
   if(!window.DMFac) return null;
   if(!_facBound){ _facBound=true;
     DMFac.bind({ THREE, PW:()=>PW, TERRAIN:()=>TERRAIN, atmoState:()=>atmoState, atmoXZ:(la,lo)=>_atmoXZ(la,lo), mapTag:_pwMapTag,
-      curSysName:()=>_ttCurSysName()||'', shadows:()=>!!GFX.shadows, isMobile:()=>!!GFX.isMobile,
+      curSysName:()=>_ttCurSysName()||'', skyDay:()=>{ const k=TERRAIN&&TERRAIN.sky; return k&&typeof k.day==='number'?k.day:1; }, shadows:()=>!!GFX.shadows, isMobile:()=>!!GFX.isMobile,
       tier:()=>({low:0,medium:1,high:2,ultra:3})[(GFX.preset==='auto'||!GFX.preset)?autoPreset():GFX.preset]|0,
       loadGLB:u=>new Promise((ok,no)=>{ const L=_getGLBLoader(); if(!L) return no(new Error('no GLTFLoader')); L.load(u,ok,undefined,no); }),
       afterTeleport:(land)=>{ try{ if(PW) PW._jump=true; }catch(e){} if(land){ try{ atmoThrottle=0; atmoMach=0; try{ $('atmo-throttle').value=0; }catch(e){} if(atmoState){ atmoState.landing=true; atmoState.takeoff=0; atmoState.auto=null; } }catch(e){} } } });

@@ -6,7 +6,7 @@
  *   node tools/ariel-home/plan_lamps.js --check    exits 1 when the committed JSON differs from what this would write
  *
  * Input: the exterior collision grid (assets/ariel-home/ariel-home-collide.json, 2-unit cells, mansion frame x east / y seaward, 1.78 units = 1 m) and the interior nav
- * (door aprons, rooms). Output: lamps [x, y, groundZ, kind] in the same frame. Kinds: 0 path (court, between the doors), 1 deck / terrace edge (cliff levels), 2 facade.
+ * (door aprons, rooms). Output: lamps [x, y, groundZ, kind, armYaw] in the same frame. Kinds: 0 path (court, between the doors), 1 deck / terrace edge (cliff levels), 2 facade.
  *
  * Method (cheap enough to read in one sitting):
  *   1. flat cells = land cells whose land neighbours are within 0.12 of them or a real step (> 1.2) away; connected same-height flats form LEVELS (court, decks, lower
@@ -137,7 +137,8 @@ function plan(col, nav) {
     }
     if (!best) break;
     for (let dj = -rr; dj <= rr; dj++) for (let di = -rr; di <= rr; di++) { const a = best.i + di, b = best.j + dj; if (!inb(a, b)) continue; const q = id(a, b); if (target[q] && !covered[q] && levelOf[q] === levelOf[best.k] && Math.hypot(di, dj) * c <= RC) { covered[q] = 1; left--; } }
-    lamps.push([best.x, best.y, +g[best.k].toFixed(2), best.edge === 1 ? 1 : best.edge === 2 ? 2 : 0]);
+    const L = levels[levelOf[best.k]]; let mx = 0, my = 0; for (const k of L.cells) { mx += X(k % nx); my += Y(Math.floor(k / nx)); } mx /= L.cells.length; my /= L.cells.length;
+    lamps.push([best.x, best.y, +g[best.k].toFixed(2), best.edge === 1 ? 1 : best.edge === 2 ? 2 : 0, +Math.atan2(my - best.y, mx - best.x).toFixed(3)]);   // arm yaw: toward the middle of the level
   }
   return { lamps, uncovered: left, targets: tcells.length, levels: levels.map(L => ({ h: +L.h.toFixed(1), area: L.area, w: L.w * c, d: L.d * c })) };
 }

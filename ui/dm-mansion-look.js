@@ -252,6 +252,7 @@
       if (S.U.node) { const L = lightList(ctx); const want = L && ctx.THREE.TSL.lights(L); if (S.atlasLights === undefined || (L && !S.atlasLights)) { A.lightsNode = want || null; S.atlasLights = want || null; } }
       A.needsUpdate = true;   // textures/low-path changed: one program lookup (same key as last visit → pipeline cache hit, no new compile)
       for (const m of old) { try { m.dispose(); } catch (e) { } }   // the GLB's own copies (textures now belong to the shared material)
+      if (S.U.rk && G.DMMansionRooms) API.setRoomLevels(G.DMMansionRooms.S.lvl, G.DMMansionRooms.N);   // a fresh visit starts at the rooms' current levels
       if (low) S.lowCount++;
       let bytes = 0; for (const t of S.tex) bytes += texBytes(t); S.lastMem = bytes;
       const giB = S.gi ? S.tex.reduce((a, t) => a + (t === A.lightMap || t === A.aoMap ? texBytes(t) : 0), 0) + (S.gi.probes ? S.gi.probes.length : 0) + S.gi.uv2 : 0;
