@@ -460,7 +460,10 @@
     }
     for (const rec of F.sites.values()) {
       if (rec.ready) continue;
-      if (rec.sr.i < rec.sr.cells.length) { stepSearch(rec.sr, F.baseH, 4); }
+      // (perf) the search result does not depend on how it is sliced (cells are visited in the same order), so the per-frame slice follows the frame:
+      // the full 4 ms only while an arrival is waiting on it; otherwise 2 ms, 1 ms on a slow frame (dt > 40 ms) - it used to cost 4 ms of EVERY frame
+      // (a 3.4k-cell mansion coast search of 8 rays x 5 height-field samples each) on a 15 fps tablet, and nobody is waiting for a landmark 7 km away.
+      if (rec.sr.i < rec.sr.cells.length) { stepSearch(rec.sr, F.baseH, DM.arriveAt === rec.def.id ? 4 : (dt > 0.04 ? 1 : 2)); }
       if (rec.sr.i >= rec.sr.cells.length) {
         if (!rec.best) { rec.best = rec.sr.best || { x: rec.sr.cells[0][0], z: rec.sr.cells[0][1], dx: 0, dz: 1, h: F.baseH(rec.sr.cells[0][0], rec.sr.cells[0][1]), s: -1 }; }
         if (rec.def.kind === 'mansion' && !MAN.glb) { if (MAN.failed) { rec.ready = true; rec.failed = true; } continue; }

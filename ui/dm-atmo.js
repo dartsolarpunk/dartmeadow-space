@@ -485,7 +485,7 @@
     const atmo = gasRT ? build('composite', gasRT) : build('full');
 
     pp.outputNode = atmo;
-    let frame = 0;
+    let frame = 0, compT = null;
     function syncCamera(cam) {
       camera = cam || camera; scenePass.camera = camera;
       camera.updateMatrixWorld();
@@ -515,7 +515,10 @@
       render(dt, cam) {
         U.time.value += dt || 0; U.frame.value = (frame++) % 64;
         syncCamera(cam);
-        if (computeNode && (frame % 2 === 1)) renderer.compute(computeNode);
+        // (perf) the density volume drifts by U.time*0.05 / *0.03 noise units per second (a few percent of one noise cell per second): re-evaluating it
+        // on a fixed ~15 Hz wall-clock cadence moves it ~0.003 units per refresh - far below one texel of change - so the look is the same, but the compute
+        // cost no longer scales with the frame rate (it was every 2nd frame: 30 passes/s at 60 fps, and one per 2 slow frames at 15 fps).
+        if (computeNode && (compT === null || U.time.value - compT >= 0.066 || U.time.value < compT)) { compT = U.time.value; renderer.compute(computeNode); }
         if (skyPass) {
           if (opt.skyCamera) skyPass.camera = opt.skyCamera;
           const ca = renderer.getClearAlpha(); renderer.setClearAlpha(0);
