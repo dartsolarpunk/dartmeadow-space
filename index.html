@@ -509,6 +509,9 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;overscroll-behavior:non
 #intro-bar{height:100%;width:0;background:linear-gradient(90deg,var(--cyan),var(--purple));box-shadow:0 0 10px var(--cyan);transition:width .25s ease;}
 #intro-status{margin-top:9px;font-family:var(--font-mono);font-size:.6rem;letter-spacing:.1em;color:rgba(var(--acc-rgb),.75);}
 #intro-veil.iv-go #intro-ui{opacity:0;}
+#intro-veil.iv-instant{background:transparent;}
+#intro-veil.iv-instant::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at 50% 30%,#1a0f2e 0%,#07040f 70%);animation:ivBackdrop .6s ease-out both;}
+@keyframes ivBackdrop{from{opacity:0}to{opacity:1}}
 body.intro-hold #dm-warm-pill{bottom:calc(12vh + 150px + env(safe-area-inset-bottom,0px))!important;}
 body.intro-play #dm-warm-pill{display:none!important;}
 #screen-menu.ms-pre .mm-panel,#screen-menu.ms-pre .menu-version,#screen-menu.ms-pre #menu-glow-wash{visibility:hidden;}
@@ -1019,7 +1022,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-projector.js?v=224" defer></script>
 <script src="ui/dm-groundmark.js?v=220" defer></script>
 <script src="ui/dm-charm.js?v=234" defer></script>
-<script src="ui/dm-menuscene.js?v=235" defer></script>
+<script src="ui/dm-menuscene.js?v=237" defer></script>
 <script src="ui/dm-starbubble.js?v=4" defer></script>
 <script src="ui/dm-hazardbubble.js?v=215" defer></script>
 <script src="ui/dm-birdtemple.js?v=122" defer></script>
@@ -1992,6 +1995,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <div id="warp-overlay"><div id="warp-status">DART DRIVE INITIATING...</div></div>
 <div id="toast"></div>
 
+<script src="ui/dm-launchgate.js?v=237"></script>
 <script>
 'use strict';
 // ══════════════════════════════════════════════════════════════
@@ -2477,7 +2481,6 @@ function _systemFromRef(gal,ref){
 // beside the same one, at the same offset, facing the same way).
 function resumeJourney(data){
   if(!data||!loadSaveData(data)) return;
-  try{ syncSlidersToBoardConfig(); }catch(e){}
   const w=data.where;
   // While a resume is putting her back, the near-world watcher must not open
   // the world the start position happens to be beside (it used to open
@@ -2485,12 +2488,13 @@ function resumeJourney(data){
   if(w) _resumeHold(true);
   launchFlight();
   if(INTRO.on) INTRO.where=w||null;
+  window.dmAfterFlyout(()=>{ try{ syncSlidersToBoardConfig(); }catch(e){} });   // builder sliders only: not inside the fly-out
   if(!w) return;
   const gal=w.gal||'milkyway', want=(w.sys&&w.sys.name)||'Sol';
   let travelled=false, t0=Date.now();
   // one self-rescheduling waiter (every retry below calls wait()); gives up after 150 s
   function wait(){
-    if(Date.now()-t0>150000){ _resumeHold(false); return; }
+    if(Date.now()-t0>180000){ _resumeHold(false); return; }
     try{ _resumeWait(); }catch(e){ console.warn('[resume]',e); _resumeHold(false); }
   }
   wait();
@@ -2925,29 +2929,53 @@ function goScreen(name){
     }
   }
 }
-// (menu-perf) Menu idle: the character's GLB parse + animation clips + hair data are renderer-free work that the launch would otherwise start
-// on the tap (and then fight the solar-system build and the warm-up for the main thread: her load has taken 90 s+ under that contention).
-// When a saved game exists and the menu scene has been up for a few seconds, load her now, in the background. Not after a killed-tab boot
-// (the lean/recovery path keeps memory minimal), not on data-saver, not in the builder / flight. Same function, same assets, same
-// guards (CHAR.loaded / CHAR.loading) as initFlightScene's own call, which then finds her already loaded.
-let _menuPrepT=0;
+// (menu-perf) Menu idle: everything about the launch that does not need the flight renderer is prepared HERE, before the press, so the press itself only
+// has to start the fly-out. (1) The character's GLB parse + animation clips + hair data (a saved game exists, the menu scene has been up for a few
+// seconds; the lean/recovery path after a killed tab, data-saver and ?noprep=1 skip everything). (2) The intro skyboard: its mesh is built and the menu
+// scene compiles / uploads it parked below the floor (ui/dm-menuscene.js introPrecompile), as small jobs through DMLaunch's slicer: one job per
+// frame at most, <= 3 ms of budget, and only on frames that follow a smooth menu frame, so the menu never stutters for it. The board is keyed by
+// boardStyleSig(): a changed board (builder, loaded save) drops the parked one and the press builds fresh. The destination WORLD cannot be prepared
+// here: its renderer, scene and shaders do not exist until the launch (a second GPU device in the menu would raise the very peak that kills tabs),
+// so that work is gated behind the fly-out instead (see _introFlown).
+let _menuPrepT=0, _idleBoard=null, _idleStop=null;
 function _menuIdlePrep(){
   clearTimeout(_menuPrepT);
   let tries=0;
   const go=()=>{
     try{
-      if(STATE.screen!=='menu'||flightInited||CHAR.loaded||CHAR.loading||(typeof INTRO!=='undefined'&&INTRO.on)) return;
+      if(STATE.screen!=='menu'||flightInited||(typeof INTRO!=='undefined'&&INTRO.on)) return;
       if(document.hidden||++tries>20){ if(tries<=20) _menuPrepT=setTimeout(go,2000); return; }
       if(/[?&]noprep=1\b/.test(location.search)) return;
-      if(!localStorage.getItem('dm_autosave')) return;
       const pa=window._dmPrevAlive; if(pa&&pa.clean===false&&!pa.hidden) return;
       const nc=navigator.connection; if(nc&&nc.saveData) return;
       const M=window.DM_MENUSCENE; if(M&&!M.failed&&!M.ready){ _menuPrepT=setTimeout(go,1000); return; }   // the menu scene's own first frames first
-      window._dmMenuPrepAt=Date.now(); CHAR._menuPrep=true;
-      loadCharacterAssets().catch(()=>{});
+      if(!CHAR.loaded&&!CHAR.loading&&localStorage.getItem('dm_autosave')){ window._dmMenuPrepAt=Date.now(); CHAR._menuPrep=true; loadCharacterAssets().catch(()=>{}); }
+      if(!_idleBoardPrep(M)) _menuPrepT=setTimeout(go,2000);   // not ready yet (she / the board template are still loading): look again
     }catch(e){}
   };
   _menuPrepT=setTimeout(go,3500);
+}
+// true when the intro board for the CURRENT board style is built and (being) compiled in the menu scene; false = try again later
+function _idleBoardPrep(M){
+  if(!M||M.failed||!M._ctx||!M.introPrecompile||!window.DMLaunch) return true;   // nothing to prepare on this path (the press builds it)
+  const sig=boardStyleSig();
+  if(_idleBoard&&_idleBoard.sig===sig&&_idleBoard.state!=='abort') return true;
+  if(!CHAR.loaded||(LOAD_TRACK.steps.boardTemplate||0)<1) return false;       // the board mesh would come out procedural, and she has no clips yet
+  if(_idleBoard){ try{ M.introReset(); }catch(e){} _idleBoard=null; }          // a different board was parked: dropped (disposes only its own geometry / materials)
+  const rec=_idleBoard={sig,mesh:null,state:'new',p:null};
+  const sl=window.DMLaunch.createSlicer({budgetMs:3});
+  const live=()=>_idleBoard===rec&&STATE.screen==='menu'&&!INTRO.on;
+  sl.add('board-build',()=>{ if(!live()){ rec.state='abort'; return true; } rec.mesh=buildBoardMesh(); rec.state='built'; return true; });
+  sl.add('board-compile',()=>{
+    if(rec.state!=='built') return true;
+    if(!live()){ rec.state='abort'; return true; }
+    if(!rec.p){ rec.p=Promise.resolve(M.introPrecompile(rec.mesh)).catch(()=>{}).then(()=>{ if(rec.state==='built') rec.state='warm'; }); }
+    return rec.state==='warm';
+  });
+  sl.onError=(n,e)=>{ rec.state='abort'; console.warn('[intro] idle prep',n,e); };
+  if(_idleStop) _idleStop();
+  _idleStop=window.DMLaunch.drive(sl,{canRun:()=>live(),calmMs:24});
+  return true;
 }
 // Show floating music control on pre-flight screens (if music isn't stopped)
 function showFloatingMusic(){
@@ -2979,35 +3007,56 @@ window._dmQuiet=function(){ try{ return (INTRO.on&&(INTRO.phase==='play'||INTRO.
 // while the intro runs (+3 s after it), no allocation per frame.
 window._dmTransitions=window._dmTransitions||[];
 const _TR={rec:null};
-function _trStart(){
-  const r=_TR.rec={at:new Date().toISOString(),t0:performance.now(),cur:'hold',last:0,ph:{},why:'',warmMsAtPlay:null,warmingAtPlay:null,raf:0};
+function _trStart(first){
+  const r=_TR.rec={at:new Date().toISOString(),t0:performance.now(),cur:first||'hold',last:0,ph:{},why:'',warmMsAtPlay:null,warmingAtPlay:null,raf:0};
   const step=now=>{ if(_TR.rec!==r) return; if(r.last){ const g=now-r.last, p=r.ph[r.cur]||(r.ph[r.cur]={frames:0,ms:0,max:0,n50:0,n100:0}); p.frames++; p.ms+=g; if(g>p.max) p.max=g; if(g>50) p.n50++; if(g>100) p.n100++; } r.last=now; r.raf=requestAnimationFrame(step); };
   r.raf=requestAnimationFrame(step);
 }
 function _trPhase(name,why){ const r=_TR.rec; if(!r) return; r.cur=name; r.last=0; r['t_'+name]=Math.round(performance.now()-r.t0); if(why) r.why=why; }
 function _trFinish(){
   const r=_TR.rec; if(!r) return; _TR.rec=null; cancelAnimationFrame(r.raf);
-  let maxPlay=0,n100=0; for(const k of ['play','out','post']){ const p=r.ph[k]; if(p){ maxPlay=Math.max(maxPlay,p.max); n100+=p.n100; } }
-  const o={at:r.at,why:r.why,holdMs:r.t_play!=null?r.t_play:null,warmMsAtPlay:r.warmMsAtPlay,warmingAtPlay:r.warmingAtPlay,maxGapMs:Math.round(maxPlay),gaps100:n100,
+  let maxPlay=0,n100=0; for(const k of ['play','wait','out','post']){ const p=r.ph[k]; if(p){ maxPlay=Math.max(maxPlay,p.max); n100+=p.n100; } }
+  const fo=r.ph.play||{max:0,n50:0,n100:0,frames:0,ms:0};   // the fly-out itself (press -> board gone): the numbers that matter for smoothness
+  const o={at:r.at,why:r.why,flyOnMs:r.flyOnMs!=null?r.flyOnMs:null,flyMaxGapMs:Math.round(fo.max),flyGaps50:fo.n50,flyGaps100:fo.n100,flyMs:r.t_wait!=null&&r.t_play!=null?r.t_wait-r.t_play:null,waitMs:r.t_out!=null&&r.t_wait!=null?r.t_out-r.t_wait:null,holdMs:r.t_play!=null?r.t_play:null,warmMsAtPlay:r.warmMsAtPlay,warmingAtPlay:r.warmingAtPlay,maxGapMs:Math.round(maxPlay),gaps100:n100,
     phases:Object.keys(r.ph).reduce((a,k)=>{ const p=r.ph[k]; a[k]={frames:p.frames,avgMs:p.frames?+(p.ms/p.frames).toFixed(1):0,maxMs:Math.round(p.max),n50:p.n50,n100:p.n100}; return a; },{}),
     warmupMs:window._warmupMs!=null?window._warmupMs:null,recovery:!!window._dmRecoveryUsed};
   try{ window._dmTransitions.push(o); if(window._dmTransitions.length>5) window._dmTransitions.shift(); }catch(e){}
   try{ console.log('[intro] transition',JSON.stringify(o)); }catch(e){}
   try{ window.dmPerfLog&&window.dmPerfLog.touch&&window.dmPerfLog.touch(); }catch(e){}
 }
-// true while the launch intro's veil is fully opaque and the menu scene is playing (phase 'play'); 'hold' keeps drawing so the world's first frames are already uploaded
-function _introCovers(){ return INTRO.on&&INTRO.phase==='play'; }
+// The fly-out plays on the menu scene alone ('hold' only exists for the rare press where the board / her clips are not ready yet, and is bounded). The
+// destination world does not exist yet at that point: its build is gated behind the fly-out (INTRO.gate), so no world render, atmosphere, shadow or
+// compile work can land inside the animation. 'wait' = the fly-out is over and the loader sits over the last menu frame while the world builds.
+function _introCovers(){ return INTRO.on&&(INTRO.phase==='play'||INTRO.phase==='hold'); }
+// her walk / step / ride clips and the board template are what the fly-out is made of; ready = it can start this frame
+function _introReadyToFly(){
+  try{
+    if(!CHAR.loaded||!CHAR.actions||(LOAD_TRACK.steps.boardTemplate||0)<1) return false;
+    return !!(CHAR.actions.walk&&CHAR.actions.skyboard&&CHAR.actions[_boardTransition().clip]);
+  }catch(e){ return false; }
+}
+const INTRO_HOLD_MAX_MS=15000;   // the fallback hold (assets not ready at the press) never waits longer than this, then the fly-out plays with what exists
+// work that must not happen inside the fly-out (world build, multiplayer connect, slider sync …): runs when the fly-out has ended, immediately when no fly-out runs
+window.dmAfterFlyout=function(fn){ try{ if(INTRO.on&&INTRO.gate&&!INTRO.gate.isOpen){ INTRO.gate.run(fn); return true; } }catch(e){} try{ fn(); }catch(e){ console.warn('[intro] afterFlyout',e); } return false; };
+function _introOpenGate(){ try{ if(INTRO.gate) INTRO.gate.open(); }catch(e){ console.warn('[intro] gate',e); } }
 function _introBegin(){
   const M=window.DM_MENUSCENE, cv=document.getElementById('menu-scene-canvas');
-  if(INTRO.on||!M||M.failed||!M._ctx||!cv||matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
-  INTRO.on=true; INTRO.phase='hold'; INTRO.where=null; INTRO.t0=performance.now(); INTRO.stable=0; INTRO.sig=''; INTRO.sigT=INTRO.t0; INTRO.skip=false; INTRO.pre=0; INTRO.board=null; window.__JOTS_INTRO=INTRO; document.body.classList.add('intro-hold'); try{ _trStart(); }catch(e){}
+  if(INTRO.on||!M||M.failed||!M._ctx||!cv||!window.DMLaunch||matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
+  const instant=_introReadyToFly();
+  INTRO.on=true; INTRO.phase='hold'; INTRO.where=null; INTRO.t0=performance.now(); INTRO.stable=0; INTRO.sig=''; INTRO.sigT=INTRO.t0; INTRO.skip=false; INTRO.flown=false; INTRO.tw=0; INTRO.board=null;
+  INTRO.gate=window.DMLaunch.createGate(); window.__JOTS_INTRO=INTRO; document.body.classList.add(instant?'intro-play':'intro-hold'); try{ _trStart(instant?'play':'hold'); }catch(e){}
   let v=document.getElementById('intro-veil');
   if(!v){ v=document.createElement('div'); v.id='intro-veil';
     v.innerHTML='<div id="intro-ui"><img src="static/dartmeadow-logo.svg" alt=""><div class="iv-track"><div id="intro-bar"></div></div><div id="intro-status">Loading…</div></div>';
     document.body.appendChild(v); }
-  v.className=''; v.style.opacity='1'; v.insertBefore(cv,v.firstChild); INTRO.veil=v;
-  v.onpointerdown=()=>{ INTRO.skip=true; if(INTRO.phase==='hold'||INTRO.phase==='play'){ clearInterval(INTRO.iv); _introDissolve(350); } };
+  // the veil must not hide the menu it is leaving: it starts transparent (the panels fold away under it) and its backdrop fades in (CSS .iv-instant); the
+  // loader UI stays out of sight while the fly-out plays
+  v.className=instant?'iv-go iv-instant':''; v.style.opacity='1'; v.insertBefore(cv,v.firstChild); INTRO.veil=v;
+  v.onpointerdown=()=>{ INTRO.skip=true; if(INTRO.phase==='hold'||INTRO.phase==='play') _introFlown('skip'); };   // skipping ends the fly-out (the world still has to be built: the loader takes over)
   clearTimeout(M._dispT); M.resume();
+  if(instant){ _introPlay('press'); return true; }
+  // not ready at the press (first run / killed-tab recovery): only the character is loaded now; the world stays gated until the fly-out is over
+  try{ if(!CHAR.loaded&&!CHAR.loading) loadCharacterAssets().catch(()=>{}); }catch(e){}
   clearInterval(INTRO.iv); INTRO.iv=setInterval(_introTick,100);
   return true;
 }
@@ -3023,68 +3072,90 @@ function _introWorldReady(){
 }
 function _introTick(){
   if(!INTRO.on) return;
-  try{ _introTick2(); }catch(e){   // a throwing readiness probe must never leave the veil up forever (hold has a 25 s ceiling that sits below the probe)
-    if(INTRO.phase==='hold'&&performance.now()-INTRO.t0>25000){ console.warn('[intro] tick',e); try{ _introPlay(); }catch(_){ clearInterval(INTRO.iv); _introDissolve(350); } }
+  try{ _introTick2(); }catch(e){   // a throwing readiness probe must never leave the veil up forever (the wait phase has a ceiling that sits below the probe)
+    if(INTRO.phase==='hold'&&performance.now()-INTRO.t0>INTRO_HOLD_MAX_MS+5000){ console.warn('[intro] tick',e); try{ _introPlay('tick-error'); }catch(_){ _introFlown('tick-error'); } }
+    else if(INTRO.phase==='wait'&&performance.now()-INTRO.tw>25000){ console.warn('[intro] tick',e); clearInterval(INTRO.iv); _introDissolve(350); }
   }
 }
-// (menu-perf) Build the intro's board mesh while the menu is still idle behind the loader and let the menu scene compile / upload it
-// (ui/dm-menuscene.js introPrecompile), so the fly-in does not start with a pipeline build + texture upload for the board.
-function _introPrecompile(){
-  const M=window.DM_MENUSCENE; if(!M||!M._ctx||!M.introPrecompile) return;
-  const go=()=>{ try{ if(!INTRO.on||INTRO.phase!=='hold'||INTRO.board) return; const b=buildBoardMesh(); INTRO.board=b; M.introPrecompile(b); }catch(e){ console.warn('[intro] precompile',e); INTRO.board=null; } };
-  if(window.requestIdleCallback) requestIdleCallback(go,{timeout:2500}); else setTimeout(go,600);
-}
 function _introTick2(){
+  const now=performance.now();
+  if(INTRO.phase==='hold'){   // bounded fallback: only the character clips / board template are waited for, never the world
+    const nx=window.DMLaunch.introNext({phase:'hold',ready:_introReadyToFly(),skip:INTRO.skip,heldMs:now-INTRO.t0,holdMax:INTRO_HOLD_MAX_MS});
+    const st=document.getElementById('intro-status'), bar=document.getElementById('intro-bar');
+    if(st) st.textContent='Loading Ariel…'; if(bar) bar.style.width=Math.min(60,_loadTotalPct()*0.6)+'%';
+    if(nx==='play') _introPlay(_introReadyToFly()?'ready':'hold-ceiling'); else if(nx==='wait') _introFlown('skip');
+    return;
+  }
+  if(INTRO.phase!=='wait') return;
   const pct=_loadTotalPct(), bar=document.getElementById('intro-bar'), st=document.getElementById('intro-status');
-  const ok=_introWorldReady(), now=performance.now(); INTRO.stable=ok?INTRO.stable+1:0;
+  const ok=_introWorldReady(); INTRO.stable=ok?INTRO.stable+1:0;
   // stall guard: once the base load is done, if the readiness inputs stop changing for ~10 s without settling
   // (stuck in-view tile, saved-mode mismatch, …) stop waiting
   const G=PW.ground, MC=typeof TERRAIN!=='undefined'&&TERRAIN.cpuMc;
-  // (menu-perf) While the world is still being built and warmed (the game loop has not started yet: flightInited && !flightAnimId) the
-  // fly-out must NOT start: the 11-step shader warm-up takes 50-80 s on the phones (perf logs: warmupMs), the old 25 s ceiling / 10 s stall
-  // guard fired in the middle of it and the whole fly-out and arrival played over compiles ("PREPARING SUN AND FLARES 2/11" on screen at
-  // the end of the transition). Warm-up progress (phase, steps done) counts as progress; the stall guard is 40 s there and the ceiling 150 s.
+  // While the world is being built and warmed (flightInited && !flightAnimId) the shader warm-up takes 50-80 s on the phones (perf logs: warmupMs):
+  // warm-up progress (phase, steps done) counts as progress; the stall guard is 40 s there and the ceiling 150 s. The clocks run from the END of the
+  // fly-out (INTRO.tw), which is when the world build was released.
   const warming=!!window._dmWarming, building=!!(flightInited&&!flightAnimId);
   const sig=[pct|0,flightInited,!!CHAR.loaded,PW.active,PW.mode,!!PW.opening,!!PW._resumeHold,!!SHIP_WALK.active,G&&G.queue?G.queue.length:-1,MC&&MC.queue?MC.queue.length:-1,warming,window._dmWarmPhase||'',(window._warmSteps||[]).length].join();
   if(ok||sig!==INTRO.sig){ INTRO.sig=sig; INTRO.sigT=now; }
   const stalled=!ok&&(building?now-INTRO.sigT>40000:(pct>=100&&now-INTRO.sigT>10000));
   const wTot=window._warmTotal||0, wDone=(window._warmSteps||[]).length;
   if(bar) bar.style.width=Math.min(100,pct*0.8+(warming&&wTot?Math.min(1,wDone/wTot)*10:(pct>=100&&!building?10:0))+(ok?10:0))+'%';
-  if(st&&INTRO.phase==='hold') st.textContent=pct<100?'Loading Ariel…':(warming?'Preparing the sky… '+Math.min(wDone+1,wTot||wDone+1)+(wTot?'/'+wTot:''):'Building the world…');
+  if(st) st.textContent=pct<100?'Loading Ariel…':(warming?'Preparing the sky… '+Math.min(wDone+1,wTot||wDone+1)+(wTot?'/'+wTot:''):'Building the world…');
   // the menu scene behind the loader is decoration only: during the shader warm-up it draws every 3rd frame (the compiles and its own draws
   // share the GPU process; the menu pose / dt still advance), full rate again as soon as the warm-up is over
-  try{ const M=window.DM_MENUSCENE; if(M) M.skipN=(INTRO.phase==='hold'&&warming)?3:1; }catch(e){}
-  if(!INTRO.pre&&INTRO.phase==='hold'&&!INTRO.skip&&flightInited&&(LOAD_TRACK.steps.boardTemplate||0)>=1&&CHAR.loaded){ INTRO.pre=1; _introPrecompile(); }
-  // ~1 s settled, a stall, or a ceiling (25 s of plain loading; 150 s while the world's own warm-up is still running) so a stuck build never traps the player behind the veil
-  const over=now-INTRO.t0>(building?150000:25000);
-  if(INTRO.phase==='hold'&&(INTRO.stable>=10||stalled||over)) _introPlay(INTRO.stable>=10?'ready':stalled?'stall':'ceiling');
+  try{ const M=window.DM_MENUSCENE; if(M) M.skipN=warming?3:1; }catch(e){}
+  const over=now-INTRO.tw>(building?150000:25000);
+  const nx=window.DMLaunch.introNext({phase:'wait',worldReady:INTRO.stable>=10,stalled,over});
+  if(nx==='dissolve'){ clearInterval(INTRO.iv); try{ if(_TR.rec) _TR.rec.why=INTRO.stable>=10?'ready':stalled?'stall':'ceiling'; }catch(e){} _introDissolve(900); }
 }
+// The fly-out starts here, on the press (or at the end of the bounded fallback hold). Nothing in this function waits for the world.
 function _introPlay(why){
-  try{ const r=_TR.rec; if(r){ r.warmMsAtPlay=window._warmupMs!=null?window._warmupMs:null; r.warmingAtPlay=!!window._dmWarming; } _trPhase('play',why||''); }catch(e){}
+  try{ _trPhase('play',why||''); }catch(e){}
   try{ const M0=window.DM_MENUSCENE; if(M0) M0.skipN=1; }catch(e){}
-  INTRO.phase='play'; document.body.classList.remove('intro-hold'); document.body.classList.add('intro-play'); clearInterval(INTRO.iv); INTRO.veil.classList.add('iv-go');
+  clearInterval(INTRO.iv);
+  INTRO.phase='play'; document.body.classList.remove('intro-hold'); document.body.classList.add('intro-play'); INTRO.veil.classList.add('iv-go');
   const M=window.DM_MENUSCENE;
-  if(INTRO.skip||!M||!M._ctx){ _introDissolve(350); return; }
+  if(INTRO.skip||!M||!M._ctx){ _introFlown('noflyout'); return; }
   let p=false;
   try{
     const clip=n=>CHAR.actions&&CHAR.actions[n]?CHAR.actions[n].getClip():null;
-    const _t=STATE.boardConfig.template; p=M.introStart({ratio:BOARD_REAL_LEN_FT/CHAR_REAL_HEIGHT_FT,scale:CHAR.scaleForBoard>0?1/CHAR.scaleForBoard:0,walk:clip('walk'),board:INTRO.board||buildBoardMesh(),sharedTex:!!(_t&&_t!=='R'&&_t!=='procedural'),jump:clip(_boardTransition().clip),ride:clip('skyboard'),onFlyOff:()=>_introDissolve(900)});
+    const _t=STATE.boardConfig.template, rec=_idleBoard; _idleBoard=null;
+    let b=null;   // the board parked + compiled in the menu's idle time, when it is still the board she is wearing
+    if(rec&&rec.mesh&&rec.sig===boardStyleSig()&&(rec.state==='warm'||rec.state==='built')) b=rec.mesh;
+    else if(rec){ try{ M.introReset(); }catch(e){} }
+    INTRO.board=b||buildBoardMesh();
+    p=M.introStart({ratio:BOARD_REAL_LEN_FT/CHAR_REAL_HEIGHT_FT,scale:CHAR.scaleForBoard>0?1/CHAR.scaleForBoard:0,walk:clip('walk'),board:INTRO.board,sharedTex:!!(_t&&_t!=='R'&&_t!=='procedural'),jump:clip(_boardTransition().clip),ride:clip('skyboard'),onFlyOff:()=>_introFlown('flown')});
   }catch(e){ console.warn('[intro]',e); }
-  if(!p){ _introDissolve(350); return; }
-  // safety: dissolve if the intro stalls (no progress for ~10 s) or runs past 14 s of intro time
+  if(!p){ _introFlown('nostart'); return; }
+  try{ const r=_TR.rec; Promise.resolve(p).then(()=>{ if(r&&_TR.rec===r&&r.flyOnMs==null) r.flyOnMs=Math.round(performance.now()-r.t0); }); }catch(e){}
+  // safety: end the fly-out if it stalls (no progress for ~10 s) or runs past 14 s of intro time
   let _lt=-1,_sn=0; const _sf=setInterval(()=>{ const c=M._ctx&&M._ctx.intro, t=c?c.t:0;
     if(INTRO.phase!=='play'){ clearInterval(_sf); return; }
-    _sn=(t===_lt)?_sn+1:0; if(_sn>=5||t>14){ clearInterval(_sf); _introDissolve(500); } _lt=t; },2000);
+    _sn=(t===_lt)?_sn+1:0; if(_sn>=5||t>14){ clearInterval(_sf); _introFlown('safety'); } _lt=t; },2000);
+}
+// The fly-out is over (the board left, or it was skipped / failed): NOW the destination world may be built (gate opens), and the loader shows over the
+// last menu frame until the world is stable. Cross-fade happens in _introDissolve.
+function _introFlown(why){
+  if(!INTRO.on||INTRO.flown||INTRO.phase==='wait'||INTRO.phase==='out') return;
+  INTRO.flown=true; INTRO.tw=performance.now(); INTRO.stable=0; INTRO.sig=''; INTRO.sigT=INTRO.tw;
+  try{ _trPhase('wait',why||''); }catch(e){}
+  clearInterval(INTRO.iv);
+  INTRO.phase='wait'; document.body.classList.remove('intro-play'); document.body.classList.add('intro-hold');
+  try{ if(INTRO.veil) INTRO.veil.classList.remove('iv-go'); }catch(e){}
+  _introOpenGate();
+  INTRO.iv=setInterval(_introTick,100);
 }
 function _introDissolve(ms){
   if(!INTRO.on||INTRO.phase==='out') return;
+  _introOpenGate();
   INTRO.phase='out'; try{ _trPhase('out'); }catch(e){} const v=INTRO.veil;
   v.style.transition='opacity '+ms+'ms ease'; requestAnimationFrame(()=>{ v.style.opacity='0'; });
   setTimeout(_introEnd,ms+60);
 }
 function _introEnd(){
   const M=window.DM_MENUSCENE, cv=document.getElementById('menu-scene-canvas'), host=$('screen-menu'), star=$('menu-bg-canvas');
-  clearInterval(INTRO.iv); INTRO.on=false; INTRO.phase=''; window.__JOTS_INTRO=null; document.body.classList.remove('intro-hold','intro-play');
+  clearInterval(INTRO.iv); INTRO.on=false; INTRO.phase=''; window.__JOTS_INTRO=null; document.body.classList.remove('intro-hold','intro-play'); _introOpenGate();
   window._dmQuietUntil=performance.now()+2500;   // (menu-perf) arrival settle: no housekeeping compiles / LOD builds / snapshots for 2.5 s
   try{ _trPhase('post'); setTimeout(_trFinish,3000); }catch(e){}
   // the intro board's dispose (geometry / material / texture teardown) and the menu scene pause happen off the arrival frames
@@ -3160,7 +3231,9 @@ function launchFlight(){
       initFlightScene(); // give up waiting and init anyway
     }
   }
-  requestAnimationFrame(()=>requestAnimationFrame(tryInit));
+  // (menu-perf) the destination world (renderer, scene, solar system, warm-up) is built only once the fly-out has ended; no fly-out running = right away
+  const _kick=()=>requestAnimationFrame(()=>requestAnimationFrame(tryInit));
+  if(INTRO.on&&INTRO.gate&&!INTRO.gate.isOpen) INTRO.gate.run(_kick); else _kick();
 }
 
 // Return to the main menu WITHOUT leaving the game. Pauses the flight render
@@ -25158,11 +25231,16 @@ function _surfFallCatch(p,dt,supportH){
 }
 function updateSurface(dt){
   const p=surfPlayer;if(!p)return;
+  let _m0=performance.now(), _m1;   // (perf) sub-step clock for the perf log: us.wind / us.move / us.board / us.cam / us.char / us.cg / us.foot
   // Subtle Earth wind drift (Points) — cheap CPU update of positions only
   if(TERRAIN.windPoints && TERRAIN.windPoints.geometry){
     const pos=TERRAIN.windPoints.geometry.attributes.position.array;
     const vel=TERRAIN.windPoints.userData.windVel;
     const n=pos.length/3;
+    // (perf) each particle keeps the ground height it last looked up and only asks again after drifting 0.25 units in x or z: the world
+    // height field is a full fBm stack per call (up to 280 calls a frame before), the particles drift ~3 units/s, and the soft floor /
+    // ceiling they are clamped to is the same height to within a hand's width. Slots: wg[3i]=ground+1.2, wg[3i+1]=x, wg[3i+2]=z asked at.
+    const WU=TERRAIN.windPoints.userData, wg=WU.wg||(WU.wg=new Float32Array(n*3)), HH=TERRAIN.H;
     for(let i=0;i<n;i++){
       pos[i*3]+=vel[i*3]*dt;
       pos[i*3+1]+=vel[i*3+1]*dt;
@@ -25170,12 +25248,16 @@ function updateSurface(dt){
       // the breeze wraps round her, wherever she walks
       if(pos[i*3]>p.pos.x+240||pos[i*3]<p.pos.x-260||Math.abs(pos[i*3+2]-p.pos.z)>240){ pos[i*3]=p.pos.x-240; pos[i*3+2]=p.pos.z+rnd(-220,220); }
       // Soft vertical wrap near ground
-      const gh=(TERRAIN.H?TERRAIN.H(pos[i*3],pos[i*3+2]):0)+1.2;
+      let gh;
+      if(HH){ const k=i*3, dx=pos[k]-wg[k+1], dz=pos[k+2]-wg[k+2];
+        if(wg[k]===0||dx>0.25||dx<-0.25||dz>0.25||dz<-0.25){ wg[k]=HH(pos[k],pos[k+2])+1.2; wg[k+1]=pos[k]; wg[k+2]=pos[k+2]; }
+        gh=wg[k]; } else gh=1.2;
       if(pos[i*3+1]<gh) pos[i*3+1]=gh+rnd(0.5,8);
       if(pos[i*3+1]>gh+18) pos[i*3+1]=gh+rnd(2,10);
     }
     TERRAIN.windPoints.geometry.attributes.position.needsUpdate=true;
   }
+  _m1=performance.now(); DMFT.add('us.wind',_m1-_m0); _m0=_m1;
 
   // LOOK from LEFT joystick + drag
   p.yaw-=surfLookJoy.x*4.4*dt;
@@ -25219,6 +25301,7 @@ function updateSurface(dt){
   // or a flicker while walking can't start one unrequested.
   if(surfJumpPressed && p.onGround){ p.vel.y=6*Math.sqrt(p.grav); p.jumpActive=true; }
   try{ _surfFallCatch(p,dt,supportH); }catch(e){ p._catch=null; console.warn('[surf] fall catch:',e); }
+  _m1=performance.now(); DMFT.add('us.move',_m1-_m0); _m0=_m1;
   surfJumpPressed=false; // consume the press — it's an edge-triggered action, not a held state
   // stream terrain LOD around the player (subdivide nearby, coarsen far)
   // ── Hovering companion board: trails beside & slightly behind the player,
@@ -25287,7 +25370,9 @@ function updateSurface(dt){
     if(surfBoard.position.y<need) surfBoard.position.y=need;   // never inside the hill, even mid-lerp
     { const up=_lcSurfBoard(surfBoard); if(up>0) surfBoard.position.y+=up; }   // v188 fine local patch: nothing between the samples clips
   }
+  _m1=performance.now(); DMFT.add('us.board',_m1-_m0); _m0=_m1;
   _boardCallTick(dt);   // parked here, or flying in when summoned
+  _m1=performance.now(); DMFT.add('us.call',_m1-_m0); _m0=_m1;
   // ── Third-person follow camera ──────────────────────────────────
   //    Real bug found: the camera was being placed at the exact same
   //    x/z as her own character mesh (only y differed), so the camera
@@ -25374,6 +25459,7 @@ function updateSurface(dt){
     surfCamera.rotation.x=p.pitch;
   }
 
+  _m1=performance.now(); DMFT.add('us.cam',_m1-_m0); _m0=_m1;
   // ── Character sync — feet at ground level (not the +3 eye-height
   //    camera position), facing the same way the player's looking.
   //    Animation state driven from the same input this frame already
@@ -25435,6 +25521,7 @@ function updateSurface(dt){
     if(jumping||climbing||inWater){ CHAR._trimF=0; CHAR._trimS=0; CHAR._leanAvgF=0; CHAR._leanAvgS=0; }
     CHAR.root.rotation.x = CHAR._trimF||0; CHAR.root.rotation.z = CHAR._trimS||0;
 
+    _m1=performance.now(); DMFT.add('us.slope',_m1-_m0); _m0=_m1;
     updateCharacterLocomotion(dt, moving, running, dirSign, jumping, climbing, {
       swim: inWater,
       rope: !!CHAR._wantRope, // STUB until rope interactable exists
@@ -25442,9 +25529,12 @@ function updateSurface(dt){
       prone: CHAR.stanceMode==='prone', // never auto-set from slope
       crouch: CHAR.stanceMode==='crouch', // no autoCrouch-from-slope
     });
+    _m1=performance.now(); DMFT.add('us.anim',_m1-_m0); _m0=_m1;
     _cgFrame(dt, CHAR.mounted?'ride':inWater?'swim':climbing?'climb':jumping?'jump':running?'run':moving?'walk':'idle');
+    _m1=performance.now(); DMFT.add('us.cg',_m1-_m0); _m0=_m1;
     _surfFootContact(dt, jumping||climbing||inWater, _sSurf);
     if(!(jumping||climbing||inWater)) _balanceTrim(dt, p.yaw);
+    _m1=performance.now(); DMFT.add('us.foot',_m1-_m0); _m0=_m1;
   }
 }
 // Planted-foot contact. After the walk/run/idle pose is applied, measure
@@ -26421,7 +26511,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
     $j('jots-mode-who').textContent=(J().auth.signedIn?'SIGNED IN · ':'GUEST · ')+J().identity.name;
     $j('jots-mode').classList.add('show');
     $j('jots-mode-story').onclick=()=>{ $j('jots-mode').classList.remove('show'); J().mode='story'; J().mp.stop(); J().analytics.track('mode','story'); then(); };
-    $j('jots-mode-mp').onclick=()=>{ $j('jots-mode').classList.remove('show'); J().mode='multiplayer'; then(); J().mp.start(); };
+    $j('jots-mode-mp').onclick=()=>{ $j('jots-mode').classList.remove('show'); J().mode='multiplayer'; then(); (window.dmAfterFlyout||(f=>f()))(()=>J().mp.start()); };
   }
 
   // ── Wrap the game's entry points (after the main script defined them)

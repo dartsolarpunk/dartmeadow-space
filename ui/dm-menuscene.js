@@ -546,7 +546,7 @@
       const IN = { on: false, t: 0, board: null };
       const introStart = (o) => {
         if (IN.on || !o || !o.board) return false;
-        const b = o.board; if (b === IN.parked) IN.parked = null; b.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(b), sz = bb.getSize(new THREE.Vector3());
+        const b = o.board; const warm = (b === IN.parked && IN.warmed === b); if (b === IN.parked) IN.parked = null; b.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(b), sz = bb.getSize(new THREE.Vector3());
         // gameplay proportion: in flight she wears CHAR.scaleForBoard inside the board's frame, so board = her ÷ scaleForBoard (o.scale)
         holder.updateMatrixWorld(true); const hs = Math.abs(holder.getWorldScale(new THREE.Vector3()).x) || 1;
         // size from what's actually on screen: her bone-chain height here × the gameplay board:rider ratio (37 ft : 6 ft) over the
@@ -613,6 +613,9 @@
         // (menu-perf) compileAsync collects only VISIBLE objects: with the board hidden (as it was) nothing of it was compiled and its pipelines
         // were built on the first real draw, i.e. the first fly-in frames. Visible for the synchronous collect only (nothing draws in between),
         // hidden again at once; when introPrecompile already did this during the loader hold, this is a cache hit.
+        // (launch) when the idle-time precompile already finished for this very board (introPrecompile: pipelines, buffers, textures, bind groups,
+        // two real frames), nothing is left to compile: the fly-out starts THIS frame instead of after another compile round-trip
+        if (warm) { IN.warmed = null; b.visible = true; IN.on = true; return Promise.resolve(true); }
         let pc = null; b.visible = true; try { pc = renderer.compileAsync(scene, camera); } catch (e) { pc = null; } finally { b.visible = false; }
         return Promise.resolve(pc).catch(() => {}).then(() => { if (!IN.board) return; b.visible = true; IN.on = true; });
       };
@@ -696,7 +699,7 @@ IN.D.copy(IN.Dl); b.localToWorld(IN.D); IN.D.y += 0.03;
         IN.parked = b; b.position.set(0, -400, 0); b.traverse(m => { if (m.isMesh) { m.castShadow = true; m.frustumCulled = false; } });
         scene.add(b); b.updateMatrixWorld(true);
         let pc = null; b.visible = true; try { pc = renderer.compileAsync(scene, camera); } catch (e) { pc = null; }
-        return Promise.resolve(pc).catch(() => {}).then(() => new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)))).then(() => { if (IN.parked === b) b.visible = false; return true; });
+        return Promise.resolve(pc).catch(() => {}).then(() => new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)))).then(() => { if (IN.parked === b) { b.visible = false; IN.warmed = b; } return true; });
       };
       const introReset = () => {
         if (IN.parked && !IN.board) { const pb = IN.parked; IN.parked = null; try { disposeBoard(pb); } catch (e) {} }
