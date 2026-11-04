@@ -509,6 +509,9 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;overscroll-behavior:non
 #intro-bar{height:100%;width:0;background:linear-gradient(90deg,var(--cyan),var(--purple));box-shadow:0 0 10px var(--cyan);transition:width .25s ease;}
 #intro-status{margin-top:9px;font-family:var(--font-mono);font-size:.6rem;letter-spacing:.1em;color:rgba(var(--acc-rgb),.75);}
 #intro-veil.iv-go #intro-ui{opacity:0;}
+#intro-skip{position:absolute;left:50%;bottom:calc(9vh + env(safe-area-inset-bottom,0px));transform:translateX(-50%);min-width:112px;min-height:48px;padding:0 26px;border-radius:999px;border:1px solid rgba(var(--acc-rgb),.55);background:rgba(8,6,20,.62);color:rgba(var(--acc-rgb),.95);font:600 .72rem/1 var(--font-mono);letter-spacing:.22em;text-transform:uppercase;z-index:3;touch-action:manipulation;-webkit-tap-highlight-color:transparent;cursor:pointer;opacity:0;animation:ivSkipIn .5s ease 1.2s both;}
+body:not(.intro-play) #intro-skip{display:none;}
+@keyframes ivSkipIn{from{opacity:0}to{opacity:1}}
 #intro-veil.iv-instant{background:transparent;}
 #intro-veil.iv-instant::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at 50% 30%,#1a0f2e 0%,#07040f 70%);animation:ivBackdrop .6s ease-out both;}
 @keyframes ivBackdrop{from{opacity:0}to{opacity:1}}
@@ -1016,7 +1019,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-projector.js?v=224" defer></script>
 <script src="ui/dm-groundmark.js?v=220" defer></script>
 <script src="ui/dm-charm.js?v=234" defer></script>
-<script src="ui/dm-menuscene.js?v=237" defer></script>
+<script src="ui/dm-menuscene.js?v=243" defer></script>
 <script src="ui/dm-starbubble.js?v=4" defer></script>
 <script src="ui/dm-hazardbubble.js?v=215" defer></script>
 <script src="ui/dm-birdtemple.js?v=122" defer></script>
@@ -3045,6 +3048,9 @@ function _introSkipTap(e){
     INTRO.skip=true; _introFlown('skip'); return true;
   }catch(err){ console.warn('[intro] skip',err); return false; }
 }
+// belt and braces for devices where the veil never sees the tap (an overlay above it, a handler that stops propagation, iOS delaying the first
+// pointer event on a new layer): the CAPTURE phase on window sees every pointer / touch before any element can stop it. No-op unless the fly-out plays.
+try{ ['pointerdown','touchstart'].forEach(ev=>window.addEventListener(ev,e=>{ if(INTRO.on&&INTRO.phase==='play'||INTRO.on&&INTRO.phase==='hold') _introSkipTap(e); },{capture:true,passive:true})); }catch(e){}
 function _introBegin(){
   const M=window.DM_MENUSCENE, cv=document.getElementById('menu-scene-canvas');
   if(INTRO.on||!M||M.failed||!M._ctx||!cv||!window.DMLaunch||matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
@@ -3053,7 +3059,7 @@ function _introBegin(){
   INTRO.gate=window.DMLaunch.createGate(); window.__JOTS_INTRO=INTRO; document.body.classList.add(instant?'intro-play':'intro-hold'); try{ _trStart(instant?'play':'hold'); }catch(e){}
   let v=document.getElementById('intro-veil');
   if(!v){ v=document.createElement('div'); v.id='intro-veil';
-    v.innerHTML='<div id="intro-ui"><img src="static/dartmeadow-logo.svg" alt=""><div class="iv-track"><div id="intro-bar"></div></div><div id="intro-status">Loading…</div></div>';
+    v.innerHTML='<div id="intro-ui"><img src="static/dartmeadow-logo.svg" alt=""><div class="iv-track"><div id="intro-bar"></div></div><div id="intro-status">Loading…</div></div><button id="intro-skip" type="button">Skip</button>';
     document.body.appendChild(v); }
   // the veil must not hide the menu it is leaving: it starts transparent (the panels fold away under it) and its backdrop fades in (CSS .iv-instant); the
   // loader UI stays out of sight while the fly-out plays
@@ -3063,6 +3069,7 @@ function _introBegin(){
   // pointerdown covers mouse / pen / touch; touchstart is the iOS-Safari belt-and-braces (a throttled first pointer event on a freshly
   // inserted layer); both funnel into one idempotent function, and a tap in the first 150 ms (the press that started the launch) is ignored.
   v.onpointerdown=_introSkipTap; v.addEventListener('touchstart',_introSkipTap,{passive:true});
+  try{ const sk=v.querySelector('#intro-skip'); if(sk&&!sk._b){ sk._b=1; sk.addEventListener('click',_introSkipTap); sk.addEventListener('touchend',e=>{ e.preventDefault(); _introSkipTap(e); },{passive:false}); } }catch(e){}
   clearTimeout(M._dispT); M.resume();
   if(instant){ _introPlay('press'); return true; }
   // not ready at the press (first run / killed-tab recovery): only the character is loaded now; the world stays gated until the fly-out is over
@@ -3150,13 +3157,24 @@ function _introPlay(why){
 // last menu frame until the world is stable. Cross-fade happens in _introDissolve.
 function _introFlown(why){
   if(!INTRO.on||INTRO.flown||INTRO.phase==='wait'||INTRO.phase==='out') return;
-  INTRO.flown=true; INTRO.tw=performance.now(); INTRO.stable=0; INTRO.sig=''; INTRO.sigT=INTRO.tw;
+  INTRO.flown=true; INTRO.stable=0; INTRO.sig='';
   try{ _trPhase('wait',why||''); }catch(e){}
   clearInterval(INTRO.iv);
   INTRO.phase='wait'; document.body.classList.remove('intro-play'); document.body.classList.add('intro-hold');
-  try{ if(INTRO.veil) INTRO.veil.classList.remove('iv-go'); }catch(e){}
-  _introOpenGate();
-  INTRO.iv=setInterval(_introTick,100);
+  // The fly-out ends VISIBLY and completely before anything else shows: the menu canvas (Ariel, the board, the rock) fades to the backdrop on the
+  // compositor (a skip cuts it in 0.2 s: the board must not keep flying under the loader), the menu scene is paused, and only then the loader appears
+  // and the destination world build is released. Nothing of the loader / warm-up status is ever on screen over the animation.
+  const M=window.DM_MENUSCENE, cv=document.getElementById('menu-scene-canvas'), fade=why==='skip'?220:550;
+  try{ if(cv){ cv.style.transition='opacity '+fade+'ms ease'; cv.style.opacity='0'; } }catch(e){}
+  try{ dmSys.done('intro'); }catch(e){}
+  setTimeout(()=>{
+    if(!INTRO.on) return;
+    try{ if(M) M.pause(); }catch(e){}
+    INTRO.tw=performance.now(); INTRO.sigT=INTRO.tw;
+    try{ if(INTRO.veil) INTRO.veil.classList.remove('iv-go'); }catch(e){}
+    _introOpenGate();
+    clearInterval(INTRO.iv); INTRO.iv=setInterval(_introTick,100);
+  },fade+40);
 }
 function _introDissolve(ms){
   if(!INTRO.on||INTRO.phase==='out') return;
@@ -3173,6 +3191,7 @@ function _introEnd(){
   // the intro board's dispose (geometry / material / texture teardown) and the menu scene pause happen off the arrival frames
   try{ if(M){ M.skipN=1; M.pause(); clearTimeout(M._resetT); M._resetT=setTimeout(()=>{ M._resetT=0; try{ M.introReset(); }catch(e){} },1800); } }catch(e){}
   try{ if(cv&&host) (star&&star.nextSibling)?host.insertBefore(cv,star.nextSibling):host.appendChild(cv); }catch(e){}
+  try{ if(cv){ cv.style.transition=''; cv.style.opacity=''; } }catch(e){}
   if(INTRO.veil){ INTRO.veil.style.transition=''; INTRO.veil.remove(); INTRO.veil=null; }
   if(M&&STATE.screen==='flight'){ clearTimeout(M._dispT); M._dispT=setTimeout(()=>{ if(STATE.screen!=='menu'&&M.dispose&&M._ctx) M.dispose(); },15000); }
 }
@@ -6434,7 +6453,10 @@ function travelToBlackHole(e){
 window.travelToBlackHole=travelToBlackHole;
 
 async function initFlightScene(){
-  if(flightInited)return;flightInited=true;
+  if(flightInited)return;
+  // (launch) belt and braces: whoever calls this (tryInit, a test hook, a retry), the world is never built while the fly-out plays
+  try{ if(INTRO.on&&INTRO.gate&&!INTRO.gate.isOpen){ INTRO.gate.run(()=>initFlightScene()); return; } }catch(e){}
+  flightInited=true;
   buildDestinations();buildDestinationUI();
 
   // Fire off a plain network prefetch of both character files as early as
@@ -6773,6 +6795,7 @@ const _btiWarmIv=setInterval(async()=>{
 },1500);
 async function _flightWarmup(){
   if(typeof flightRenderer==='undefined'||!flightRenderer||!flightRenderer.compileAsync) return;
+  try{ for(let n=0;n<600&&INTRO.on&&(INTRO.phase==='play'||INTRO.phase==='hold');n++) await new Promise(r=>setTimeout(r,100)); }catch(e){}   // (launch) no warm-up compile / upload inside the fly-out, from any caller
   const t0=performance.now(); window._dmWarming=true;
   // (v240) the old centre-screen 'Preparing …' pill is gone: every warm-up message goes to the loader text and the bottom-right strip (dmSys.load)
   try{ dmSys.load('warm','Preparing the sky… 0%'); }catch(e){}

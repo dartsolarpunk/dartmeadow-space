@@ -559,7 +559,7 @@
           const rs = new THREE.Box3().setFromObject(root).getSize(new THREE.Vector3()); return isFinite(rs.y) ? rs.y : 0; })();
         const len0 = Math.max(sz.x, sz.z), ratio = o.ratio > 0 ? o.ratio : 37 / 6;
         const k = herH > 0.05 && len0 > 1e-4 ? herH * ratio / len0 : (o.scale > 0 ? Math.min(o.scale, 12) * hs : 1.6 / Math.max(0.2, len0));
-        b.scale.multiplyScalar(k); IN.sizeK = k; IN.herH = herH; IN.bScale = b.scale.clone();   // re-asserted every frame (a later heal/reset can't shrink it)
+        b.scale.multiplyScalar(k); IN.sizeK = k; IN._n = 0; IN._s = 0; MS.half = false; IN.herH = herH; IN.bScale = b.scale.clone();   // re-asserted every frame (a later heal/reset can't shrink it)
         b.traverse(m => { if (m.isMesh) { m.castShadow = true; m.frustumCulled = false; } });
         b.updateMatrixWorld(true); const bl = new THREE.Box3().setFromObject(b).getSize(new THREE.Vector3());
         const Lb = Math.max(bl.x, bl.z), Wb = Math.max(0.3, Math.min(bl.x, bl.z));
@@ -710,6 +710,7 @@ IN.D.copy(IN.Dl); b.localToWorld(IN.D); IN.D.y += 0.03;
               if (!IN.sharedTex) for (const k in mt) { const v = mt[k]; if (v && v.isTexture) try { v.dispose(); } catch (e) {} }
               try { mt.dispose(); } catch (e) {} }); });
         }
+        MS.half = false;
         if (!IN.list) return; IN.on = false;
         try { [IN.walk, IN.jump, IN.ride].forEach(a => { if (a) a.stop(); }); if (IN.walk) C.mixer.uncacheAction(IN.walk.getClip()); if (IN.jump) C.mixer.uncacheAction(IN.jump.getClip()); if (IN.ride) C.mixer.uncacheAction(IN.ride.getClip()); } catch (e) {}
         IN.list.forEach((bn, i) => { bn.position.copy(IN.keep[i][0]); bn.quaternion.copy(IN.keep[i][1]); });
@@ -722,12 +723,17 @@ IN.D.copy(IN.Dl); b.localToWorld(IN.D); IN.D.y += 0.03;
         if (MS.paused || document.hidden) { last = now; return; }
         // (menu-perf) Behind the launch loader the scene is decoration while the game world compiles on the same GPU: draw every skipN-th frame
         // (dt keeps accumulating, capped as always, so the pose does not slow; the intro itself is never throttled). Set by index.html's intro tick.
+        // (launch) a fly-out that cannot hold 60 on this device (measured over its first 30 frames: average 20-36 ms) is paced at a steady
+        // 30 fps instead (every second vsync, dt integrates): even pacing reads smoother than 22-45 ms alternating, and halves the GPU / hair /
+        // shadow work per second. Nothing is lowered in quality; a device that holds 60 never enters this.
+        if (IN.on && MS.half) { MS._hk = !MS._hk; if (MS._hk) return; }
         if (MS.skipN > 1 && !IN.on) { MS._sk = ((MS._sk | 0) + 1) % MS.skipN; if (MS._sk) return; }
         const dt = Math.min(0.05, (now - last) / 1000); last = now; t += dt;
         // (menu-perf) while the world warms up the frame time is the compile's, not this scene's: neither measure it nor let it cut the
         // resolution (the fly-out would then run soft until the slow recovery climbs back)
         if (window._dmWarming || MS.skipN > 1) { ema = 16; adj = 0; } else ema += (dt * 1000 - ema) * 0.04;
         if (++adj > 90) { adj = 0; if (ema > 36 && pr > sc.pr * 0.5) { pr = Math.max(0.5, pr - 0.15); fit(); } else if (ema < 20 && pr < sc.pr) { pr = Math.min(sc.pr, pr + 0.1); fit(); } }
+        if (IN.on) { IN._n = (IN._n | 0) + 1; if (IN._n > 6 && IN._n <= 36) IN._s = (IN._s || 0) + dt; if (IN._n === 36) { const av = IN._s / 30 * 1000; MS.half = av > 20 && av < 36; } }
         if (IN.on) introPre(dt);
         pose(t); face(t); if (IN.on) introSnap(); root.updateMatrixWorld(true);
         if (hair) { wind.set(0.35 + 0.25 * Math.sin(t * 0.37), 0.02, 0.15 + 0.2 * Math.sin(t * 0.53 + 1)); hair.params.wind.copy(wind); }
