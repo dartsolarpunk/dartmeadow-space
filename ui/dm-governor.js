@@ -69,6 +69,10 @@
     let d = r._dr;
     // AR owns the pixel ratio and the rAF while it is active (ui/dm-ar-core.js wraps effectivePixelRatio and pumps XR frames): hands off
     if (root.DMAR && root.DMAR.active) { if (d && d.ring) { d.t = now; d.skip = 6; } return; }
+    // (menu-perf) The launch intro (loader hold, fly-out, dissolve) is not a measurement of the game: the menu scene is drawing beside the
+    // world, the shader warm-up is compiling and the world is drawn only part of the time. Frames there must never move the render scale (a
+    // cut made during the transition would also be remembered for the next launch); the frames right after it are skipped too.
+    if (root.__JOTS_INTRO) { if (d && d.ring) { d.t = now; d.skip = 12; d.since = Math.max(d.since, now - 1000); d.count = 0; } return; }
     if (!d || !d.ring) { init(r, gfx, basePR, now); return; }   // fresh (or reset by applyGraphicsLive): restore last settled scale
     const raw = now - d.t; d.t = now;
     if (raw <= 0) return;

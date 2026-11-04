@@ -177,6 +177,7 @@
     if (!r || !sc || !cm || !r.compileAsync || !r.initTexture || r._initialized === false) return;
     if (window._warmupMs == null || (typeof _btiWarmed !== 'undefined' && !_btiWarmed && typeof BIRD_TEMPLE !== 'undefined' && BIRD_TEMPLE.group)) return;   // after the flight + temple warm-ups (they compile everything once)
     if (window._dmWarming || document.hidden || (window.DMAR && DMAR.active)) return;
+    if (window._dmQuiet && window._dmQuiet()) return;   // (menu-perf) not over the launch fly-out / dissolve / 2.5 s arrival settle (the loader hold is fine: nobody sees it)
     if (held(performance.now())) { W.stats.held = (W.stats.held || 0) + 1; return; }   // (v231) mobile arrival / on foot: see arriving()
     busy = true; const t0 = performance.now();
     // (v197) the uncapped first drain ends when play starts (see playing()) or 45 s after it began

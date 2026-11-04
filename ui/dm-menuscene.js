@@ -546,7 +546,7 @@
       const IN = { on: false, t: 0, board: null };
       const introStart = (o) => {
         if (IN.on || !o || !o.board) return false;
-        const b = o.board; b.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(b), sz = bb.getSize(new THREE.Vector3());
+        const b = o.board; if (b === IN.parked) IN.parked = null; b.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(b), sz = bb.getSize(new THREE.Vector3());
         // gameplay proportion: in flight she wears CHAR.scaleForBoard inside the board's frame, so board = her ÷ scaleForBoard (o.scale)
         holder.updateMatrixWorld(true); const hs = Math.abs(holder.getWorldScale(new THREE.Vector3()).x) || 1;
         // size from what's actually on screen: her bone-chain height here × the gameplay board:rider ratio (37 ft : 6 ft) over the
@@ -564,6 +564,9 @@
         b.updateMatrixWorld(true); const bl = new THREE.Box3().setFromObject(b).getSize(new THREE.Vector3());
         const Lb = Math.max(bl.x, bl.z), Wb = Math.max(0.3, Math.min(bl.x, bl.z));
         const rb = new THREE.Box3().setFromObject(boulder);
+        // (menu-perf) the highest surface anywhere in the scene (rock top / ground bounds): a board whose lowest footprint point is above it
+        // cannot touch anything, so the per-frame collision lift (up to 169 raycasts per patch rebuild) is skipped in flight
+        IN.yClear = Math.max(rb.max.y, new THREE.Box3().setFromObject(ground).max.y) + 0.05;
         const gY = surfY(rb.min.x - 3, 0, [ground]);
         // parked to the rock's left, nose toward the viewer, its nose end level with the rock's front: it pulls up from behind
         const N = new THREE.Vector3(0.12, 0, 1).normalize();
@@ -607,7 +610,11 @@
         if (IN.jump) { IN.jump.setLoop(THREE.LoopOnce, 1); IN.jump.clampWhenFinished = true; IN.jump.timeScale = Math.max(0.6, Math.min(2.4, o.jump.duration / (IN.stepDur * 1.15))); }
         IN.sharedTex = !!o.sharedTex; IN.onFly = o.onFlyOff; IN.flew = false; IN.t = 0; IN.w = 0; IN.walked = IN.jumped = IN.rode = false; IN.lockM = null; IN.lift = false;
         b.position.copy(IN.P0); b.visible = false; scene.add(b); IN.board = b;
-        return renderer.compileAsync(scene, camera).catch(() => {}).then(() => { if (!IN.board) return; b.visible = true; IN.on = true; });
+        // (menu-perf) compileAsync collects only VISIBLE objects: with the board hidden (as it was) nothing of it was compiled and its pipelines
+        // were built on the first real draw, i.e. the first fly-in frames. Visible for the synchronous collect only (nothing draws in between),
+        // hidden again at once; when introPrecompile already did this during the loader hold, this is a cache hit.
+        let pc = null; b.visible = true; try { pc = renderer.compileAsync(scene, camera); } catch (e) { pc = null; } finally { b.visible = false; }
+        return Promise.resolve(pc).catch(() => {}).then(() => { if (!IN.board) return; b.visible = true; IN.on = true; });
       };
       const bez3 = (a, b1, c, d, u, out) => { const v = 1 - u; return out.set(0, 0, 0).addScaledVector(a, v * v * v).addScaledVector(b1, 3 * v * v * u).addScaledVector(c, 3 * v * u * u).addScaledVector(d, u * u * u); };
       // board + her placement for this frame (before the bones are posed)
@@ -633,7 +640,15 @@
           b.rotation.set(-0.35 * Math.sin(Math.PI * tu), head, pit); b.quaternion.multiply(IN.qFlip);
           if (!IN.flew && s > 0.6) { IN.flew = true; try { IN.onFly && IN.onFly(); } catch (e) {} }
         }
-        b.updateMatrixWorld(true); if (IN.lc) { const up = IN.lc.lift(b, 0.02); if (up > 0) { b.position.y += up; b.updateMatrixWorld(true); } }
+        b.updateMatrixWorld(true);
+        if (IN.lc) {
+          // (menu-perf) lowest world-y of the contact footprint (<= 288 points, a few dot products): above every surface -> nothing to lift,
+          // and the patch is not (re)sampled; it rebuilds by itself on the way back down (same lift() as before, only called when it can matter)
+          let lo = 1e9; const pts = IN.lc.pts, e = b.matrixWorld.elements;
+          if (pts && IN.lc.np && IN.yClear != null) { for (let k = 0; k < IN.lc.np * 3; k += 3) { const wy = e[1] * pts[k] + e[5] * pts[k + 1] + e[9] * pts[k + 2] + e[13]; if (wy < lo) lo = wy; } }
+          if (lo > (IN.yClear == null ? 1e9 : IN.yClear) + 0.4) { /* airborne */ }
+          else { const up = IN.lc.lift(b, 0.02); if (up > 0) { b.position.y += up; b.updateMatrixWorld(true); } }
+        }
 IN.D.copy(IN.Dl); b.localToWorld(IN.D); IN.D.y += 0.03;
         // her: stand + walk over, step on, ride
         if (t >= IN.T_WALK - 0.1 && IN.walk && !IN.walked) { IN.walked = true; IN.walk.reset().play(); }
@@ -668,7 +683,23 @@ IN.D.copy(IN.Dl); b.localToWorld(IN.D); IN.D.y += 0.03;
         } else if (!IN.rel && IN.w > 0) { /* first frames of the step: hold seat */ }
       };
       const introSnap = () => { for (let i = 0; i < IN.list.length; i++) { IN.sq[i].copy(IN.list[i].quaternion); IN.sp[i].copy(IN.list[i].position); } };
+      const disposeBoard = (b) => { scene.remove(b);   // never disposes textures: a parked board that introStart never took may share the game board's template textures
+        b.traverse(m => { if (!m.geometry && !m.material) return; try { m.geometry && m.geometry.dispose(); } catch (e) {}
+          (Array.isArray(m.material) ? m.material : [m.material]).forEach(mt => { if (!mt) return;
+            try { mt.dispose(); } catch (e) {} }); }); };
+      // (menu-perf) Called by index.html while the loader hold is up and the world compiles: the intro board is added to the scene VISIBLE and
+      // parked far below the floor (frustumCulled off, so it is submitted and clipped by the GPU) for the compile and two real frames, which builds its
+      // pipelines (incl. the shadow-caster variant), uploads its buffers / textures and creates its bind groups; then hidden and parked until
+      // introStart picks it up. Nothing is visible on screen at any point.
+      const introPrecompile = (b) => {
+        if (IN.on || IN.board || IN.parked || !b) return Promise.resolve(false);
+        IN.parked = b; b.position.set(0, -400, 0); b.traverse(m => { if (m.isMesh) { m.castShadow = true; m.frustumCulled = false; } });
+        scene.add(b); b.updateMatrixWorld(true);
+        let pc = null; b.visible = true; try { pc = renderer.compileAsync(scene, camera); } catch (e) { pc = null; }
+        return Promise.resolve(pc).catch(() => {}).then(() => new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)))).then(() => { if (IN.parked === b) b.visible = false; return true; });
+      };
       const introReset = () => {
+        if (IN.parked && !IN.board) { const pb = IN.parked; IN.parked = null; try { disposeBoard(pb); } catch (e) {} }
         if (IN.board) { // the intro board is its own instance (GLB clones own geometry+materials); textures of a GLB template stay with the game's cache
           const b = IN.board; scene.remove(b); IN.board = null;
           b.traverse(m => { if (!m.geometry && !m.material) return; try { m.geometry && m.geometry.dispose(); } catch (e) {}
@@ -686,8 +717,13 @@ IN.D.copy(IN.Dl); b.localToWorld(IN.D); IN.D.y += 0.03;
       const loop = (now) => {
         raf = requestAnimationFrame(loop); MS._raf = raf;
         if (MS.paused || document.hidden) { last = now; return; }
+        // (menu-perf) Behind the launch loader the scene is decoration while the game world compiles on the same GPU: draw every skipN-th frame
+        // (dt keeps accumulating, capped as always, so the pose does not slow; the intro itself is never throttled). Set by index.html's intro tick.
+        if (MS.skipN > 1 && !IN.on) { MS._sk = ((MS._sk | 0) + 1) % MS.skipN; if (MS._sk) return; }
         const dt = Math.min(0.05, (now - last) / 1000); last = now; t += dt;
-        ema += (dt * 1000 - ema) * 0.04;
+        // (menu-perf) while the world warms up the frame time is the compile's, not this scene's: neither measure it nor let it cut the
+        // resolution (the fly-out would then run soft until the slow recovery climbs back)
+        if (window._dmWarming || MS.skipN > 1) { ema = 16; adj = 0; } else ema += (dt * 1000 - ema) * 0.04;
         if (++adj > 90) { adj = 0; if (ema > 36 && pr > sc.pr * 0.5) { pr = Math.max(0.5, pr - 0.15); fit(); } else if (ema < 20 && pr < sc.pr) { pr = Math.min(sc.pr, pr + 0.1); fit(); } }
         if (IN.on) introPre(dt);
         pose(t); face(t); if (IN.on) introSnap(); root.updateMatrixWorld(true);
@@ -732,7 +768,7 @@ IN.D.copy(IN.Dl); b.localToWorld(IN.D); IN.D.y += 0.03;
         if (++framesSeen === 3 && !MS.ready) { MS.ready = true; cv.classList.add('ms-in'); document.dispatchEvent(new CustomEvent('menuscene-ready')); try { const mv = document.querySelector('.menu-version'); if (mv && !/scene b/.test(mv.textContent)) mv.textContent += ' · scene b7'; } catch (e) {} info('ready (' + (renderer.backend && renderer.backend.isWebGPUBackend ? 'WebGPU' : 'WebGL2') + ', pr ' + pr.toFixed(2) + ')'); }
       };
       raf = requestAnimationFrame(loop);
-      MS._ctx = { introStart, introReset, intro: IN, focus: startFocus, FOC, renderer, scene, camera, hair: () => hair, pose, setMenuOpen: () => { menuT = t; }, cv, holder, root, boulder, ground, P, bones };
+      MS._ctx = { introStart, introReset, introPrecompile, intro: IN, focus: startFocus, FOC, renderer, scene, camera, hair: () => hair, pose, setMenuOpen: () => { menuT = t; }, cv, holder, root, boulder, ground, P, bones };
       MS.dispose = function () {
         MS.disposed = true; MS.ready = false; cancelAnimationFrame(raf); window.removeEventListener('resize', onResize); window.removeEventListener('orientationchange', onResize); window.removeEventListener('pointermove', onPtr); window.removeEventListener('pointerdown', onDown); window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp);
         try { if (window.visualViewport) window.visualViewport.removeEventListener('resize', onResize); } catch (e) {}
@@ -750,7 +786,8 @@ IN.D.copy(IN.Dl); b.localToWorld(IN.D); IN.D.y += 0.03;
   };
   MS.menuOpen = function () { try { MS._ctx && MS._ctx.setMenuOpen(); } catch (e) { } MS._menuOpenWanted = true; };
   MS.introStart = function (o) { const c = MS._ctx; return c && c.introStart ? c.introStart(o) : false; };
+  MS.introPrecompile = function (b) { const c = MS._ctx; return c && c.introPrecompile ? c.introPrecompile(b) : Promise.resolve(false); };
   MS.introReset = function () { try { MS._ctx && MS._ctx.introReset(); } catch (e) { } };
   MS.pause = function () { MS.paused = true; };
-  MS.resume = function () { MS.paused = false; if (MS.disposed) { MS.disposed = false; MS._p = null; MS.start(); } };
+  MS.resume = function () { if (MS._resetT) { clearTimeout(MS._resetT); MS._resetT = 0; try { MS.introReset(); } catch (e) { } } MS.paused = false; if (MS.disposed) { MS.disposed = false; MS._p = null; MS.start(); } };
 })();

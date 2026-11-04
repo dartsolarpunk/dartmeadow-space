@@ -49,8 +49,10 @@
   // (v200) memory per 10 s window: GPU objects, draw load, DOM / scene size, JS heap
   const mem = [], MEM_MS = 10000; let uaMem = null;
   function countScene() { try { let n = 0; const sc = window.scene || (typeof scene !== 'undefined' ? scene : null); if (sc && sc.traverse) sc.traverse(() => { n++; }); return n; } catch (e) { return null; } }
+  function quiet() { try { return !!(window._dmQuiet && window._dmQuiet()); } catch (e) { return false; } }   // fly-out / dissolve / 2.5 s settle only; the loader hold keeps sampling (memory during the warm-up matters)
   function sampleMem() {
     try {
+      if (quiet()) return;   // (menu-perf) no DOM walk / scene traverse during the launch transition
       const r = window.flightRenderer || (typeof flightRenderer !== 'undefined' ? flightRenderer : null);
       const i = r && r.info, pm = performance.memory;
       const m = { t: Math.round((Date.now() - start.getTime()) / 1000), screen: curMode(), hidden: document.hidden,
@@ -145,6 +147,7 @@
       warmupMs: window._warmupMs != null ? window._warmupMs : null,
       reloadWhy, prevAlive: prevAlive ? { sid: prevAlive.sid, clean: prevAlive.clean, upSec: prevAlive.up, screen: prevAlive.screen, phase: prevAlive.phase, warming: prevAlive.warming, hidden: prevAlive.hidden, deadAfterSec: prevAlive.t ? Math.round((start.getTime() - prevAlive.t) / 1000) : null } : null,
       warmSteps: window._warmSteps || null, recovery: !!window._dmRecoveryUsed,
+      transitions: window._dmTransitions && window._dmTransitions.length ? window._dmTransitions.slice() : null,   // (menu-perf) launch fly-out markers: per phase frames / max gap / gaps > 50, 100 ms
       navType, prevUnclean, prevSessionId: prevLocal && prevLocal.sessionId || null, endNote: final ? endNote : null,
       env, modes, mem: mem.slice(), summary, gpuPasses: (function () { try { return window.DMGpuProf ? window.DMGpuProf.table() : null; } catch (e) { return null; } })(), hitches: hitches.slice(), windows: windows.slice(-60), trimmed: 0, census: census(),
     };
@@ -158,7 +161,7 @@
   function snapshot(final) {
     try {
       const doc = build(final);
-      const sig = JSON.stringify([windows.length, hitches.length, modes, final]);
+      const sig = JSON.stringify([windows.length, hitches.length, modes, final, window._dmTransitions ? window._dmTransitions.length : 0]);
       try { localStorage.setItem(LKEY, JSON.stringify(doc)); } catch (e) {}
       const V = vault(); if (!V || writing) return;
       if (!final && sig === lastSig && !dirty) return;
@@ -182,12 +185,12 @@
   try {
     setInterval(sampleMode, MODE_MS);
     beat(false); setInterval(() => { beat(false); }, 5000);
-    setInterval(() => { if (!document.hidden) snapshot(false); }, SNAP_MS);
+    setInterval(() => { if (!document.hidden && !quiet()) snapshot(false); }, SNAP_MS);   // (menu-perf) not mid-transition (JSON of the whole log + vault upload); the next tick takes it
     window.addEventListener('jots:vault', () => { carryOver(); setTimeout(() => snapshot(false), 3000); });
     document.addEventListener('visibilitychange', () => { if (document.hidden) snapshot(false); });
     window.addEventListener('pagehide', (ev) => { if (ended) return; ended = true; endNote = 'pagehide' + (ev && ev.persisted ? ' (bfcache)' : ''); beat(true); sampleMem(); snapshot(true); });
     setInterval(sampleMem, MEM_MS);
     setTimeout(carryOver, 8000);
   } catch (e) {}
-  window.dmPerfLog = { sessionId, snapshot: () => snapshot(false), build: () => build(false), mem: () => mem.slice() };
+  window.dmPerfLog = { sessionId, touch: () => { dirty = true; }, snapshot: () => snapshot(false), build: () => build(false), mem: () => mem.slice() };
 })();
