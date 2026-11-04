@@ -141,7 +141,7 @@
     tex.forEach(t => t.dispose());
   }
   function unload() {
-    S.gen++; S.state = 0; S.live = false; S.have = false;
+    S.gen++; S.state = 0; S.live = false; S.have = false; S.queued = false;
     if (S.root) { if (S.root.parent) S.root.parent.remove(S.root); disposeObj(S.root); S.root = null; }
     if (G.DMMansionLook) { try { G.DMMansionLook.release(); } catch (e) { } }   // shared materials stay; GPU textures + bitmaps go
   }
@@ -150,13 +150,23 @@
     if (!navP) navP = fetch('assets/ariel-home/ariel-home-interior-nav.json?v=' + F.ver).then(r => { if (!r.ok) throw new Error('nav ' + r.status); return r.json(); }).then(j => { NAV = parseNav(j); }, e => { navP = null; console.warn('[mansion-interior] nav', e); });
     return navP;
   }
+  // (stability) the interior GLB + GI maps + compile is ONE step of the mansion's serial heavy-load gate (ui/dm-facilities.js F.heavy): it never overlaps a cliff texture set,
+  // and a step still queued when the world closes (or she walks away) is dropped, not run against a dead scene. state 1 = queued or loading.
   function load() {
+    const F0 = S.F;
+    if (!(F0 && F0.heavy)) { loadNow(null); return; }
+    if (S.queued) return; S.queued = true; S.state = 1; const g = S.gen;
+    F0.heavy('interior', () => new Promise(ok => { S.queued = false; if (S.gen !== g || !S.rec || !S.rec.group || S.state !== 1) { ok(); return; } loadNow(ok); }),
+      () => { S.queued = false; if (S.state === 1 && S.gen === g) S.state = 0; });
+  }
+  function loadNow(fin) {
+    fin = fin || (() => { });
     const F = S.F, c = F.ctx, rec = S.rec, gen = ++S.gen; S.state = 1;
     const base = 'assets/ariel-home/ariel-home-interior', v = '?v=' + F.ver;
     ensureNav(F);
     const LK = G.DMMansionLook, giP = LK && LK.prefetch ? LK.prefetch(c, F.ver) : null;   // baked lightmap/AO/probes (assets/ariel-home/gi/), fetched in parallel with the GLB; null = old look
     Promise.all([c.loadGLB(base + (c.isMobile() ? '-512' : '') + '.glb' + v), navP, giP]).then(([gl, , gi]) => {
-      if (gen !== S.gen || !S.rec || !S.rec.group) { disposeObj(gl.scene); if (LK && LK.discard) LK.discard(gi); return; }
+      if (gen !== S.gen || !S.rec || !S.rec.group) { disposeObj(gl.scene); if (LK && LK.discard) LK.discard(gi); fin(); return; }
       if (NAV === null) { disposeObj(gl.scene); if (LK && LK.discard) LK.discard(gi); throw new Error('no nav'); }
       const root = gl.scene; root.name = 'ArielInterior';
       root.traverse(n => { if (n.isMesh) { n.castShadow = false; n.receiveShadow = false; n.matrixAutoUpdate = false; } });
@@ -164,9 +174,9 @@
       S.rec.group.add(root); S.root = root; root.updateMatrixWorld(true);
       // same order as the mansion itself (#239): tag FIRST, compile SECOND, once.
       c.mapTag(root);
-      const PW = c.PW(), done = () => { if (gen !== S.gen) return; S.state = 2; };
+      const PW = c.PW(), done = () => { if (gen === S.gen) S.state = 2; fin(); };
       try { if (PW && PW.renderer && PW.renderer.compileAsync && PW.camera) PW.renderer.compileAsync(root, PW.camera, PW.scene).then(done, done); else done(); } catch (e) { done(); }
-    }).catch(e => { if (gen !== S.gen) return; S.failed = performance.now(); S.state = 0; console.warn('[mansion-interior] load failed', e); });
+    }).catch(e => { fin(); if (gen !== S.gen) return; S.failed = performance.now(); S.state = 0; console.warn('[mansion-interior] load failed', e); });
   }
 
   const API = {

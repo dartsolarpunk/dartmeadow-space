@@ -227,6 +227,31 @@
     return { group: g, solids: sol, clouds };
   }
 
+  // (stability) HEAVY-LOAD GATE. Arriving at the mansion used to start, in the same second: the exterior GLB, the interior GLB + GI maps, the 2K hero set and every cliff
+  // texture set (each three 1-2K images decoding + uploading + a material recompile). On an iPhone that is the moment the tab is killed. Every GPU-heavy asset step of the
+  // mansion now goes through this ONE serial queue: a step starts only when the page is visible, the last step finished >= GAP ms ago (1.6 s phones, 0.4 s desktop) and a
+  // requestAnimationFrame gap just measured is under 90 ms (the page is keeping up). Steps report to the crash breadcrumbs (DMCrumb) so a kill names the step it died in.
+  const HQ = { q: [], busy: false, last: 0, n: 0, epoch: 0 };   // epoch: bumped when the world closes; a step queued or running under an older epoch is dropped / disposes what it loaded
+  const crumb = (m, n, i) => { try { window.DMCrumb && window.DMCrumb[m](n, i); } catch (e) { } };
+  const isIOS = (() => { try { return /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); } catch (e) { return false; } })();
+  const recentKill = () => { try { const a = window._dmPrevAlive; return !!(a && a.clean === false && !a.hidden && Date.now() - a.t < 600000); } catch (e) { return false; } };
+  function rafGap() { return new Promise(ok => { const t0 = performance.now(); requestAnimationFrame(() => { const t1 = performance.now(); requestAnimationFrame(() => ok(performance.now() - t1 + 0 * t0)); }); }); }
+  function hqPump() {
+    if (HQ.busy || !HQ.q.length) return;
+    const gap = (F.ctx && F.ctx.isMobile && F.ctx.isMobile()) ? 1600 : 400, wait = gap - (performance.now() - HQ.last);
+    if (document.hidden || wait > 0) { setTimeout(hqPump, Math.max(200, wait)); return; }
+    HQ.busy = true;
+    rafGap().then(g => {
+      if (g > 90 && HQ.n++ < 40) { HQ.busy = false; setTimeout(hqPump, 700); return; }   // the page is struggling: wait (bounded, so a permanently slow device still finishes)
+      HQ.n = 0; const job = HQ.q.shift();
+      if (job.epoch !== HQ.epoch) { if (job.stale) job.stale(); HQ.busy = false; hqPump(); return; }
+      crumb('begin', 'fac:' + job.name);
+      let p; try { p = Promise.resolve(job.fn(() => job.epoch === HQ.epoch)); } catch (e) { p = Promise.reject(e); }
+      p.catch(e => console.warn('[facilities] heavy', job.name, e)).then(() => { if (job.epoch !== HQ.epoch && job.stale) job.stale(); crumb('end', 'fac:' + job.name); HQ.last = performance.now(); HQ.busy = false; crumb('live', 'facQueue', HQ.q.length); hqPump(); });
+    });
+  }
+  F.heavy = function (name, fn, stale) { HQ.q.push({ name, fn, stale, epoch: HQ.epoch }); crumb('live', 'facQueue', HQ.q.length); hqPump(); };
+
   // ── Ariel's mansion (GLB + collision grid) ───────────────────────────────────────────────────────────────
   const MAN = { glb: null, col: null, loading: false, failed: false };
   function loadMansion() {
@@ -253,13 +278,17 @@
     const c = F.ctx; if (hiTried || c.isMobile() || c.tier() < 2 || !MAN.glb) return; hiTried = true;
     const L = new T.TextureLoader(), load = u => new Promise((ok, no) => L.load(u, ok, undefined, no));
     const byName = {}; MAN.glb.scene.traverse(o => { if (o.isMesh && o.material && /^ah_(slate|concrete|wood|dark|leaf)$/.test(o.material.name)) byName[o.material.name] = o.material; });
-    Object.keys(byName).forEach(k => {
-      const n = k.slice(3), mat = byName[k], base = 'assets/ariel-home/tex/' + n;
-      Promise.all(['color', 'nrm', 'orm'].map(t => load(base + '-' + t + '-2k.webp?v=' + F.ver))).then(([a, b, o]) => {
-        for (const t of [a, b, o]) { t.flipY = false; t.wrapS = t.wrapT = T.RepeatWrapping; t.anisotropy = 8; }
-        a.colorSpace = T.SRGBColorSpace; mat.map = a; mat.normalMap = b; mat.roughnessMap = o; mat.metalnessMap = o; mat.needsUpdate = true;
-      }).catch(e => console.warn('[ariel-home] 2K', n, e));
-    });
+    Object.keys(byName).forEach(k => F.heavy('2k:' + k, async (alive) => {   // one material per step, one 2K image decoded at a time (never three at once)
+      const n = k.slice(3), mat = byName[k], base = 'assets/ariel-home/tex/' + n, got = [];
+      try { for (const t of ['color', 'nrm', 'orm']) got.push(await load(base + '-' + t + '-2k.webp?v=' + F.ver)); } catch (e) { console.warn('[ariel-home] 2K', n, e); got.forEach(t => t.dispose && t.dispose()); return; }
+      if (!alive()) { got.forEach(t => t.dispose && t.dispose()); return; }   // the world closed while the images were loading: nothing to apply them to
+      const [a, b, o] = got;
+      for (const t of [a, b, o]) { t.flipY = false; t.wrapS = t.wrapT = T.RepeatWrapping; t.anisotropy = 8; }
+      a.colorSpace = T.SRGBColorSpace;
+      const old = [mat.map, mat.normalMap, mat.roughnessMap];
+      mat.map = a; mat.normalMap = b; mat.roughnessMap = o; mat.metalnessMap = o; mat.needsUpdate = true;
+      old.forEach(x => { if (x && x.dispose && x !== a && x !== b && x !== o) x.dispose(); });   // the 1K maps the GLB shipped with go once the 2K ones are on the material
+    }, () => { hiTried = false; }));
   }
 
   // Cliff rock sets (tools/ariel-home/gen_cliff_textures.py + cliff_mesh.py): 4 tileable 3 m sets (strata / columnar / sheet / talus), each colour + normal + ORM + height.
@@ -268,26 +297,28 @@
   let cliffTried = false;
   function upgradeCliff(T) {
     const c = F.ctx; if (cliffTried || !MAN.glb) return; cliffTried = true;
-    const t = c.tier(), mob = c.isMobile(), res = mob ? (t >= 2 ? '1k' : null) : (t >= 2 ? '2k' : t >= 1 ? '1k' : null);
+    // (stability) phones: 1K at most, and only when the last session was not killed; iPhone/iPad (no deviceMemory to ask, the tab limit is tight) 1K only from tier 3. Otherwise
+    // the 512 maps the GLB embeds stay (they are the look the low preset already ships).
+    const t = c.tier(), mob = c.isMobile(), res = mob ? ((t >= 2 && !recentKill() && (!isIOS || t >= 3)) ? '1k' : null) : (t >= 2 ? '2k' : t >= 1 ? '1k' : null);
+    crumb('mark', 'cliffRes', res || '512');
     const byName = {}; MAN.glb.scene.traverse(o => { if (o.isMesh && o.material && /^ah_rock/.test(o.material.name)) byName[o.material.name] = o.material; });
     fetch('assets/ariel-home/cliff/cliff-materials.json?v=' + F.ver).then(r => r.json()).then(J => {
       const L = new T.TextureLoader(), load = u => new Promise((ok, no) => L.load(u, ok, undefined, no)), aniso = mob ? 4 : 8, ids = Object.keys(J.sets);
       const hp = J.heightTierFor ? J.heightTierFor[res || '512'] : (res || '512');
       ids.forEach(id => { const S = J.sets[id], mat = byName[S.material]; if (mat) mat.userData.dmCliff = { set: id, tileM: J.tileM, depthM: S.depthM, height: J.base + id + '-height-' + hp + '.webp?v=' + F.ver, uvOrigin: J.uv }; });
       if (!res) return;
-      let i = 0;
-      const next = () => {
-        if (i >= ids.length) return; const id = ids[i++], S = J.sets[id], mat = byName[S.material]; if (!mat) return next();
-        const base = J.base + id + '-';
-        Promise.all(['color', 'nrm', 'orm'].map(k => load(base + k + '-' + res + '.webp?v=' + F.ver))).then(([a, b, o]) => {
-          for (const x of [a, b, o]) { x.flipY = false; x.wrapS = x.wrapT = T.RepeatWrapping; x.anisotropy = aniso; }
-          a.colorSpace = T.SRGBColorSpace;
-          const old = [mat.map, mat.normalMap, mat.roughnessMap];
-          mat.map = a; mat.normalMap = b; mat.roughnessMap = o; mat.metalnessMap = o; mat.needsUpdate = true;
-          old.forEach(x => { if (x && x.dispose) x.dispose(); });
-        }).catch(e => console.warn('[ariel-home] cliff', id, e)).then(() => setTimeout(next, 350));
-      };
-      next();
+      ids.forEach(id => F.heavy('cliff:' + id + ':' + res, async (alive) => {   // one set per queue step (>= GAP ms apart, only while the page keeps up); its three images load one after the other
+        const S = J.sets[id], mat = byName[S.material]; if (!mat) return;
+        const base = J.base + id + '-', got = [];
+        try { for (const k of ['color', 'nrm', 'orm']) got.push(await load(base + k + '-' + res + '.webp?v=' + F.ver)); } catch (e) { console.warn('[ariel-home] cliff', id, e); got.forEach(t => t.dispose && t.dispose()); return; }
+        if (!alive()) { got.forEach(t => t.dispose && t.dispose()); return; }
+        const [a, b, o] = got;
+        for (const x of [a, b, o]) { x.flipY = false; x.wrapS = x.wrapT = T.RepeatWrapping; x.anisotropy = aniso; }
+        a.colorSpace = T.SRGBColorSpace;
+        const old = [mat.map, mat.normalMap, mat.roughnessMap];
+        mat.map = a; mat.normalMap = b; mat.roughnessMap = o; mat.metalnessMap = o; mat.needsUpdate = true;
+        old.forEach(x => { if (x && x.dispose && x !== a && x !== b && x !== o) x.dispose(); });   // the embedded 512 maps go as soon as the new ones are on the material
+      }, () => { cliffTried = false; }));
     }).catch(e => console.warn('[ariel-home] cliff set', e));
   }
 
@@ -370,10 +401,15 @@
   const hashS = s => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
   function dispose(o) { o.traverse(n => { if (n.geometry) n.geometry.dispose(); }); }
   function teardown() {
+    crumb('begin', 'fac:teardown');
+    HQ.epoch++; const dropped = HQ.q.splice(0); dropped.forEach(j => { try { j.stale && j.stale(); } catch (e) { } }); crumb('live', 'facQueue', 0);   // queued texture / interior steps belong to the world that is gone
     if (window.DMMansionInt) { try { DMMansionInt.detach(); } catch (e) { } }
     for (const r of F.sites.values()) { if (r.group && r.group.parent) r.group.parent.remove(r.group); if (r.group && !r.mansion) dispose(r.group); }
-    F.sites.clear(); F.solids.length = 0; F.bay = null; DM.bay.inside = false; DM.bay.membrane = 0; hiTried = false;
+    F.sites.clear(); F.solids.length = 0; F.bay = null; DM.bay.inside = false; DM.bay.membrane = 0;
+    crumb('end', 'fac:teardown');
   }
+  // called by index.html _pwClose BEFORE the world scene is disposed: the interior and every queued step go first, so nothing loads into / touches a scene that is being freed
+  F.close = function () { try { if (F.scene || F.sites.size) { teardown(); } F.scene = null; } catch (e) { console.warn('[facilities] close', e); } };
   function place(rec, T, PW, TERRAIN) {
     const H = F.baseH || TERRAIN.H, site = rec.def, b = rec.best, d = [b.dx, b.dz];
     if (site.kind === 'city') {
@@ -504,4 +540,5 @@
       }
     } else if (DM.bay.inside || DM.bay.membrane) { DM.bay.inside = false; DM.bay.membrane = 0; if (lastIn || lastM > 0) { lastIn = false; lastM = 0; try { window.dispatchEvent(new CustomEvent('dm:bay', { detail: { id: 'titan', inside: false, membrane: 0 } })); } catch (e) { } } }
   };
+  F._t = { get upgradeCliff() { return upgradeCliff; }, get upgrade2K() { return upgrade2K; }, MAN, HQ };   // test hooks (tools/tests/mansion-cycle.js)
 })();

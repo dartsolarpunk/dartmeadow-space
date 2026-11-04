@@ -1039,8 +1039,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-edgewarm.js?v=235" defer></script>
 <script src="ui/dm-arielhome.js?v=231" defer></script>
 <script src="ui/dm-mansion-look.js?v=232" defer></script>
-<script src="ui/dm-mansion-interior.js?v=232" defer></script>
-<script src="ui/dm-facilities.js?v=240" defer></script>
+<script src="ui/dm-mansion-interior.js?v=233" defer></script>
+<script src="ui/dm-facilities.js?v=241" defer></script>
 <script src="ui/dm-sys.js?v=241"></script>
 </head>
 <body>
@@ -19005,13 +19005,16 @@ function _pwBuild(body,site,mode,focus){
 // Build, then compile the world's shaders while the view you came from keeps
 // running (no frozen frame, no black); resolves true when it can take over.
 async function _pwOpen(body,site,mode,focus){
+  _crB('pw:open',{b:body&&body.name,mode});
   const gen=_pwBuild(body,site,mode,focus);
+  _crM('pw:built');
   try{
     const c=PW.camera, gh=(_surfHeight&&_surfHeight(focus.x,focus.z))||0;
     c.position.set(focus.x,gh+(mode==='walk'?3:60),focus.z+8); c.lookAt(focus.x,gh,focus.z);
     if(PW.atmo){ PW.atmo.mesh.visible=true; }
     if(flightRenderer.compileAsync) await flightRenderer.compileAsync(PW.scene,PW.camera);
   }catch(e){ console.warn('[pw] precompile',e); }
+  _crE('pw:open');
   return gen===PW.gen&&PW.active;
 }
 // Who drives: 'space' (the space flight model, near the world), 'fly' (the board in the sky) or 'walk' (her, on foot).
@@ -19531,6 +19534,7 @@ function _pwPropsTick(px,pz,agl){
 // replaces it), so nothing fades and nothing goes black.
 function _pwClose(opts){
   if(!PW.active&&!PW.opening) return;
+  _crM('pw:close');
   try{ if(window.DMPlaces) DMPlaces.onWorldClose(); }catch(e){}   // our group + caches go before the scene is disposed
   const scene=PW.scene, body=PW.body; ++PW.gen;
   PW.active=false; PW.opening=false;
@@ -19546,7 +19550,11 @@ function _pwClose(opts){
   if(body&&body.mesh) body.mesh.visible=true;   // the orbit globe is the planet again
   _pwfOff(); _pwfReveal(1);
   try{ if(window.DM_HAZ) DM_HAZ.close(scene); }catch(e){}   // detach the orb before the world's scene is disposed
+  _crM('pw:close:fac');
+  try{ const _f=_fac(); if(_f&&_f.close) _f.close(); }catch(e){ console.warn('[pw] fac close',e); }   // (stability) the mansion's interior + its queued texture steps go BEFORE the scene is freed
+  _crM('pw:close:dispose');
   try{ if(scene) disposeObject3D(scene); }catch(e){}
+  try{ if(window.DMCrumb){ ['mc#','tess#','chunk#'].forEach(k=>DMCrumb.gpuClear(k)); DMCrumb.live('chunks',0); DMCrumb.live('mcPatches',0); } }catch(e){}
   try{ _applyCamOffset(); }catch(e){}
   PW.renderer=PW.scene=PW.camera=PW.board=PW.ground=null; PW.props=new Map(); PW.propsGroup=null; PW.seaSpan=0;
   surfRenderer=atmoRenderer=null; surfScene=atmoScene=null; surfCamera=atmoCamera=null;

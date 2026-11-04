@@ -56,6 +56,7 @@
     begin(n, info) { try { CR.active.set(n, crT()); this.mark(n + ':start', info); this.flush(); } catch (e) {} },   // flushed at once: if the tab dies inside, this is the last thing written
     end(n, info) { try { CR.active.delete(n); this.mark(n + ':end', info); } catch (e) {} },
     gpu(key, bytes) { try { if (bytes > 0) CR.gpu.set(key, Math.round(bytes)); else CR.gpu.delete(key); } catch (e) {} },
+    gpuClear(prefix) { try { Array.from(CR.gpu.keys()).forEach((k) => { if (k.indexOf(prefix) === 0) CR.gpu.delete(k); }); } catch (e) {} },
     live(n, v) { try { CR.live[n] = v; } catch (e) {} },
     gpuBytes() { let t = 0; CR.gpu.forEach((v) => { t += v; }); return t; },
     flush() {
