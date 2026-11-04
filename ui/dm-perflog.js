@@ -31,6 +31,18 @@
   const seen = new Set();
   try { (read('dm_perf_log') || []).concat(read('dm_hitch_log') || []).forEach((e) => seen.add(JSON.stringify(e))); } catch (e) {}
   const prevLocal = read(LKEY);
+  // (perf-stability) Heartbeat: a tiny key rewritten every 5 s with where the session is and whether it ended cleanly. The 60 s snapshot cadence
+  // only bounds a death to a minute; this pins it to ~5 s, names the screen / warm-up phase it died in, and lets the next session tell a
+  // killed tab (heartbeat left clean:false, no pagehide) from a script-initiated reload (window.dmReloadWhy() leaves a reason in sessionStorage).
+  // window._dmPrevAlive is also what the warm-up reads to boot lean after a kill (index.html _dmRecovery).
+  const AKEY = 'dm_alive_v1', RKEY = 'dm_reloadWhy';
+  const prevAlive = read(AKEY);
+  let reloadWhy = null; try { reloadWhy = JSON.parse(sessionStorage.getItem(RKEY) || 'null'); sessionStorage.removeItem(RKEY); } catch (e) {}
+  window._dmPrevAlive = prevAlive;
+  window.dmReloadWhy = (why) => { try { sessionStorage.setItem(RKEY, JSON.stringify({ why: String(why).slice(0, 80), at: Date.now(), screen: curMode() })); } catch (e) {} };
+  function beat(clean) {
+    try { localStorage.setItem(AKEY, JSON.stringify({ sid: sessionId, t: Date.now(), up: Math.round((Date.now() - start.getTime()) / 1000), screen: curMode(), phase: window._dmWarmPhase || null, warming: !!window._dmWarming, hidden: !!document.hidden, clean: !!clean })); } catch (e) {}
+  }
   const prevUnclean = !!(prevLocal && prevLocal.sessionId && !prevLocal.final);
   const windows = [], hitches = [], modes = {}, byScreen = {};
   let lastSig = '', dirty = true, ended = false, writing = false, endNote = null;
@@ -131,6 +143,8 @@
       build: env && env.build, swCache: (env && env.swCache) || window._dmSwCache || null,
       backend: env && env.backend, gpu: env && env.gpu, preset: env && env.preset, hair: env && env.hair,
       warmupMs: window._warmupMs != null ? window._warmupMs : null,
+      reloadWhy, prevAlive: prevAlive ? { sid: prevAlive.sid, clean: prevAlive.clean, upSec: prevAlive.up, screen: prevAlive.screen, phase: prevAlive.phase, warming: prevAlive.warming, hidden: prevAlive.hidden, deadAfterSec: prevAlive.t ? Math.round((start.getTime() - prevAlive.t) / 1000) : null } : null,
+      warmSteps: window._warmSteps || null, recovery: !!window._dmRecoveryUsed,
       navType, prevUnclean, prevSessionId: prevLocal && prevLocal.sessionId || null, endNote: final ? endNote : null,
       env, modes, mem: mem.slice(), summary, gpuPasses: (function () { try { return window.DMGpuProf ? window.DMGpuProf.table() : null; } catch (e) { return null; } })(), hitches: hitches.slice(), windows: windows.slice(-60), trimmed: 0, census: census(),
     };
@@ -167,10 +181,11 @@
   }
   try {
     setInterval(sampleMode, MODE_MS);
+    beat(false); setInterval(() => { beat(false); }, 5000);
     setInterval(() => { if (!document.hidden) snapshot(false); }, SNAP_MS);
     window.addEventListener('jots:vault', () => { carryOver(); setTimeout(() => snapshot(false), 3000); });
     document.addEventListener('visibilitychange', () => { if (document.hidden) snapshot(false); });
-    window.addEventListener('pagehide', (ev) => { if (ended) return; ended = true; endNote = 'pagehide' + (ev && ev.persisted ? ' (bfcache)' : ''); sampleMem(); snapshot(true); });
+    window.addEventListener('pagehide', (ev) => { if (ended) return; ended = true; endNote = 'pagehide' + (ev && ev.persisted ? ' (bfcache)' : ''); beat(true); sampleMem(); snapshot(true); });
     setInterval(sampleMem, MEM_MS);
     setTimeout(carryOver, 8000);
   } catch (e) {}
