@@ -93,3 +93,36 @@ assert(n.max <= 20 && n.over50 === 0, 'new: no fly-out frame is longer than ~1 f
 // the cost: on this model the world is ready (fly-out + build) later than the old order only by the fly-out time
 assert(n.total - o.total < 9000, 'total time to the world stays within one fly-out of the old order');
 console.log('launchgate: all passed');
+
+// ── 6. departure path: C1 (no velocity jumps), small pitch, banking into the turn, eased speed ──────────────
+{
+  for (const Lc of [3, 4.6, 6.5]) {
+    const d = L.departure({ L: Lc, psi0: -1.45, T: 9, theta: -2.9, vmax: 2.2 * Lc, gmax: 0.3, bank: 0.42 });
+    const dt = 1 / 60; let prev = null, maxJump = 0, maxA = 0, maxPitch = 0, maxRoll = 0, maxZ = -1e9, v0 = null, prevH = d.heading(0), maxHJump = 0, prevRoll = d.roll(0), maxRJump = 0;
+    for (let i = 0; i < 9 * 60; i++) {
+      const v = d.step(dt), s = d.st.s;
+      if (v0 === null) v0 = Math.hypot(v.vx, v.vy, v.vz);
+      if (prev) { const dv = Math.hypot(v.vx - prev.vx, v.vy - prev.vy, v.vz - prev.vz); maxJump = Math.max(maxJump, dv); maxA = Math.max(maxA, dv / dt); }
+      prev = v; maxPitch = Math.max(maxPitch, d.pitch(s)); maxRoll = Math.max(maxRoll, Math.abs(d.roll(s)));
+      maxHJump = Math.max(maxHJump, Math.abs(d.heading(s) - prevH)); prevH = d.heading(s); maxRJump = Math.max(maxRJump, Math.abs(d.roll(s) - prevRoll)); prevRoll = d.roll(s);
+      maxZ = Math.max(maxZ, d.st.z);
+    }
+    const accBound = d.D.vmax * 6 / 7.4 / 1.0 * 1.5;   // smoothstep peak acceleration ~1.5 * vmax / ramp length, with margin
+    console.log('departure L=' + Lc, 'v0', v0.toFixed(4), 'max dv/step', maxJump.toFixed(3), 'maxAcc', maxA.toFixed(2), 'pitch deg', (maxPitch * 57.3).toFixed(1), 'bank deg', (maxRoll * 57.3).toFixed(1), 'maxZ/L', (maxZ / Lc).toFixed(2));
+    assert(v0 < 0.01 * d.D.vmax, 'leaves from rest');
+    assert(maxA < accBound, 'velocity is continuous: acceleration bounded (no jumps), got ' + maxA);
+    assert(maxPitch * 57.3 <= 25, 'pitch <= 25 deg');
+    assert(maxRoll * 57.3 <= 25, 'bank sane');
+    assert(maxHJump < 0.02 && maxRJump < 0.01, 'heading and bank change smoothly per frame');
+    assert(maxZ < 0.6 * Lc, 'never swings close to the camera');
+    // speed is monotonic non-decreasing (accelerates gradually) and the heading rate is a bell (zero at both ends)
+    let ok = true; for (let s = 0.01; s < 9; s += 0.01) if (d.speed(s) < d.speed(s - 0.01) - 1e-9) ok = false; assert(ok, 'speed never drops');
+    assert(Math.abs(d.omega(0)) < 1e-9 && Math.abs(d.omega(9)) < 1e-9, 'turn rate eases in and out');
+    assert(d.pitch(0) === 0 && d.roll(0) === 0, 'hand-over from the hover is level');
+  }
+  // the frame step must not matter: 30 fps and 60 fps give the same path
+  const a = L.departure({ L: 4.6, psi0: -1.45, T: 9, vmax: 10 }), b = L.departure({ L: 4.6, psi0: -1.45, T: 9, vmax: 10 });
+  for (let i = 0; i < 270; i++) a.step(1 / 30); for (let i = 0; i < 540; i++) b.step(1 / 60);
+  assert(Math.hypot(a.st.x - b.st.x, a.st.y - b.st.y, a.st.z - b.st.z) < 0.02, 'frame-rate independent');
+  console.log('departure: all passed');
+}

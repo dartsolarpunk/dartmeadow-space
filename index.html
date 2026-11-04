@@ -509,9 +509,6 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;overscroll-behavior:non
 #intro-bar{height:100%;width:0;background:linear-gradient(90deg,var(--cyan),var(--purple));box-shadow:0 0 10px var(--cyan);transition:width .25s ease;}
 #intro-status{margin-top:9px;font-family:var(--font-mono);font-size:.6rem;letter-spacing:.1em;color:rgba(var(--acc-rgb),.75);}
 #intro-veil.iv-go #intro-ui{opacity:0;}
-#intro-skip{position:absolute;left:50%;bottom:calc(9vh + env(safe-area-inset-bottom,0px));transform:translateX(-50%);min-width:112px;min-height:48px;padding:0 26px;border-radius:999px;border:1px solid rgba(var(--acc-rgb),.55);background:rgba(8,6,20,.62);color:rgba(var(--acc-rgb),.95);font:600 .72rem/1 var(--font-mono);letter-spacing:.22em;text-transform:uppercase;z-index:3;touch-action:manipulation;-webkit-tap-highlight-color:transparent;cursor:pointer;opacity:0;animation:ivSkipIn .5s ease 1.2s both;}
-body:not(.intro-play) #intro-skip{display:none;}
-@keyframes ivSkipIn{from{opacity:0}to{opacity:1}}
 #intro-veil.iv-instant{background:transparent;}
 #intro-veil.iv-instant::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at 50% 30%,#1a0f2e 0%,#07040f 70%);animation:ivBackdrop .6s ease-out both;}
 @keyframes ivBackdrop{from{opacity:0}to{opacity:1}}
@@ -1019,7 +1016,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-projector.js?v=224" defer></script>
 <script src="ui/dm-groundmark.js?v=220" defer></script>
 <script src="ui/dm-charm.js?v=234" defer></script>
-<script src="ui/dm-menuscene.js?v=243" defer></script>
+<script src="ui/dm-menuscene.js?v=244" defer></script>
 <script src="ui/dm-starbubble.js?v=4" defer></script>
 <script src="ui/dm-hazardbubble.js?v=215" defer></script>
 <script src="ui/dm-birdtemple.js?v=122" defer></script>
@@ -1997,7 +1994,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 
 <div id="warp-overlay"><div id="warp-status">DART DRIVE INITIATING...</div></div>
 
-<script src="ui/dm-launchgate.js?v=237"></script>
+<script src="ui/dm-launchgate.js?v=244"></script>
 <script>
 'use strict';
 // ══════════════════════════════════════════════════════════════
@@ -3059,7 +3056,7 @@ function _introBegin(){
   INTRO.gate=window.DMLaunch.createGate(); window.__JOTS_INTRO=INTRO; document.body.classList.add(instant?'intro-play':'intro-hold'); try{ _trStart(instant?'play':'hold'); }catch(e){}
   let v=document.getElementById('intro-veil');
   if(!v){ v=document.createElement('div'); v.id='intro-veil';
-    v.innerHTML='<div id="intro-ui"><img src="static/dartmeadow-logo.svg" alt=""><div class="iv-track"><div id="intro-bar"></div></div><div id="intro-status">Loading…</div></div><button id="intro-skip" type="button">Skip</button>';
+    v.innerHTML='<div id="intro-ui"><img src="static/dartmeadow-logo.svg" alt=""><div class="iv-track"><div id="intro-bar"></div></div><div id="intro-status">Loading…</div></div>';
     document.body.appendChild(v); }
   // the veil must not hide the menu it is leaving: it starts transparent (the panels fold away under it) and its backdrop fades in (CSS .iv-instant); the
   // loader UI stays out of sight while the fly-out plays
@@ -3069,7 +3066,6 @@ function _introBegin(){
   // pointerdown covers mouse / pen / touch; touchstart is the iOS-Safari belt-and-braces (a throttled first pointer event on a freshly
   // inserted layer); both funnel into one idempotent function, and a tap in the first 150 ms (the press that started the launch) is ignored.
   v.onpointerdown=_introSkipTap; v.addEventListener('touchstart',_introSkipTap,{passive:true});
-  try{ const sk=v.querySelector('#intro-skip'); if(sk&&!sk._b){ sk._b=1; sk.addEventListener('click',_introSkipTap); sk.addEventListener('touchend',e=>{ e.preventDefault(); _introSkipTap(e); },{passive:false}); } }catch(e){}
   clearTimeout(M._dispT); M.resume();
   if(instant){ _introPlay('press'); return true; }
   // not ready at the press (first run / killed-tab recovery): only the character is loaded now; the world stays gated until the fly-out is over
@@ -3149,10 +3145,10 @@ function _introPlay(why){
   }catch(e){ console.warn('[intro]',e); }
   if(!p){ _introFlown('nostart'); return; }
   try{ const r=_TR.rec; Promise.resolve(p).then(()=>{ if(r&&_TR.rec===r&&r.flyOnMs==null) r.flyOnMs=Math.round(performance.now()-r.t0); }); }catch(e){}
-  // safety: end the fly-out if it stalls (no progress for ~10 s) or runs past 14 s of intro time
+  // safety: end the fly-out if it stalls (no progress for ~10 s) or runs past 30 s of intro time
   let _lt=-1,_sn=0; const _sf=setInterval(()=>{ const c=M._ctx&&M._ctx.intro, t=c?c.t:0;
     if(INTRO.phase!=='play'){ clearInterval(_sf); return; }
-    _sn=(t===_lt)?_sn+1:0; if(_sn>=5||t>14){ clearInterval(_sf); _introFlown('safety'); } _lt=t; },2000);
+    _sn=(t===_lt)?_sn+1:0; if(_sn>=5||t>30){ clearInterval(_sf); _introFlown('safety'); } _lt=t; },2000);
 }
 // The fly-out is over (the board left, or it was skipped / failed): NOW the destination world may be built (gate opens), and the loader shows over the
 // last menu frame until the world is stable. Cross-fade happens in _introDissolve.

@@ -408,6 +408,13 @@
       const mg = new THREE.BufferGeometry(); mg.setAttribute('position', new THREE.BufferAttribute(mp, 3));
       const motes = new THREE.Points(mg, new THREE.PointsMaterial({ size: 0.022, color: 0xffb98a, transparent: true, opacity: 0.55, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
       motes.frustumCulled = false; scene.add(motes);
+      /* board dust trail (departure only): a small ring of additive grains emitted at the board's tail; emission scales with speed and with how low the
+         board is, so it starts forming as she picks up speed near the ground and thins out as she climbs. Hidden and untouched until the lift-off. */
+      const NT = lowTier ? 90 : 160, tpos = new Float32Array(NT * 3), tcol = new Float32Array(NT * 3), tvel = new Float32Array(NT * 3), tage = new Float32Array(NT).fill(9), tlife = new Float32Array(NT).fill(1);
+      const tgeo = new THREE.BufferGeometry(); tgeo.setAttribute('position', new THREE.BufferAttribute(tpos, 3)); tgeo.setAttribute('color', new THREE.BufferAttribute(tcol, 3));
+      const trail = new THREE.Points(tgeo, new THREE.PointsMaterial({ size: 0.16, vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
+      trail.frustumCulled = false; trail.visible = false; scene.add(trail);
+      let tHead = 0, tAcc = 0, tAlive = 0;
 
       /* Ariel */
       const holder = new THREE.Object3D(); scene.add(holder);
@@ -562,7 +569,7 @@
         b.scale.multiplyScalar(k); IN.sizeK = k; IN._n = 0; IN._s = 0; MS.half = false; IN.herH = herH; IN.bScale = b.scale.clone();   // re-asserted every frame (a later heal/reset can't shrink it)
         b.traverse(m => { if (m.isMesh) { m.castShadow = true; m.frustumCulled = false; } });
         b.updateMatrixWorld(true); const bl = new THREE.Box3().setFromObject(b).getSize(new THREE.Vector3());
-        const Lb = Math.max(bl.x, bl.z), Wb = Math.max(0.3, Math.min(bl.x, bl.z));
+        const Lb = Math.max(bl.x, bl.z); IN.Lb = Lb; const Wb = Math.max(0.3, Math.min(bl.x, bl.z));
         const rb = new THREE.Box3().setFromObject(boulder);
         // (menu-perf) the highest surface anywhere in the scene (rock top / ground bounds): a board whose lowest footprint point is above it
         // cannot touch anything, so the per-frame collision lift (up to 169 raycasts per patch rebuild) is skipped in flight
@@ -599,10 +606,15 @@
         // feet start under her seat (world), walk to W
         IN.S0 = new THREE.Vector3(SEAT_X + 0.35, 0, 0.35); IN.S0.y = surfY(IN.S0.x, IN.S0.z);
         const wd = IN.W.clone().sub(IN.S0).setY(0); IN.walkQ = new THREE.Quaternion().setFromAxisAngle(P.Y, Math.atan2(wd.x, wd.z));
-        IN.T_FLY = 3.0; IN.T_WALK = 2.3; IN.walkDur = Math.max(1.2, Math.min(3.2, wd.length() / 1.15));
+        // (choreography) slow and natural: the board glides in (3.6 s) while she is still on the rock; she gets up over ~1.5 s, walks at ~1 m/s, steps on,
+        // settles into the standing ride over ~1.4 s, and only then departs (see introPre / DMLaunch.departure)
+        IN.T_FLY = 3.6; IN.T_WALK = 3.0; IN.walkDur = Math.max(1.8, Math.min(4.5, wd.length() / 1.0));
         // the rebaked Mount_Step clip (~1.15 s) plays at ~1x: the step window follows the clip instead of squeezing it
         IN.stepDur = o.jump ? Math.max(0.62, Math.min(1.1, o.jump.duration * 0.88)) : 0.62;
-        IN.T_STEP = IN.T_WALK + 0.85 + IN.walkDur; IN.T_LAND = IN.T_STEP + IN.stepDur; IN.T_LIFT = IN.T_LAND + 0.5;
+        IN.T_STAND = 1.5; IN.T_STEP = IN.T_WALK + IN.T_STAND + IN.walkDur; IN.T_LAND = IN.T_STEP + IN.stepDur; IN.T_LIFT = IN.T_LAND + 1.4;
+        IN.T_DEP = 9; IN.Ls = Math.min(Math.max(camBase.z, 3), 6.5);
+        IN.dep = (window.DMLaunch && window.DMLaunch.departure) ? window.DMLaunch.departure({ L: IN.Ls, psi0: IN.phi, theta: -2.9, T: IN.T_DEP, vmax: 2.2 * IN.Ls, gmax: 0.3, bank: 0.42 }) : null;
+        b.rotation.order = 'YZX';   // yaw, then pitch about the board's own lateral axis, then bank about its own nose axis
         IN.list = Object.keys(bones).map(n => bones[n]); IN.sq = IN.list.map(bn => bn.quaternion.clone()); IN.sp = IN.list.map(bn => bn.position.clone());
         IN.keep = IN.list.map(bn => [bn.position.clone(), bn.quaternion.clone()]);
         IN.walk = o.walk ? C.mixer.clipAction(o.walk) : null;
@@ -633,15 +645,14 @@
         } else if (t < T_LIFT) { // pull up from behind to the stop, then hover
           const u = Math.min(1, (t - TF) / 1.1), e = 1 - Math.pow(1 - u, 3);
           b.position.lerpVectors(IN.P3, IN.H, e); b.rotation.set(0, IN.phi, 0.06 * (1 - e)); b.quaternion.multiply(IN.qFlip);
-          b.position.y += 0.03 * Math.sin(t * 2.6) * smooth(0.7, 1, u) - (t > T_LAND ? 0.06 * smooth(T_LAND, T_LAND + 0.15, t) * (1 - smooth(T_LAND + 0.15, T_LIFT, t)) : 0);
-        } else {                 // lift off into space, fast
-          // banked climb: turn from facing the camera to heading out over the rocks, nose up ~28 deg, accelerating
-          const s = t - T_LIFT, ds = Math.min(dt, 0.05), tu = smooth(0, 1.1, s);
-          if (!IN.lift) { IN.lift = true; IN.hd = IN.phi; }
-          const head = IN.phi + 2.3 * tu, pit = 0.49 * smooth(0, 0.5, s), v = 1.2 + 5.5 * s * s;
-          b.position.x += Math.cos(head) * Math.cos(pit) * v * ds; b.position.z -= Math.sin(head) * Math.cos(pit) * v * ds; b.position.y += Math.sin(pit) * v * ds;
-          b.rotation.set(-0.35 * Math.sin(Math.PI * tu), head, pit); b.quaternion.multiply(IN.qFlip);
-          if (!IN.flew && s > 0.6) { IN.flew = true; try { IN.onFly && IN.onFly(); } catch (e) {} }
+          // hover bob fades out before the departure so the board leaves from rest (no velocity step at the hand-over)
+          b.position.y += 0.03 * Math.sin(t * 2.6) * smooth(0.7, 1, u) * (1 - smooth(T_LIFT - 0.9, T_LIFT, t)) - (t > T_LAND ? 0.06 * smooth(T_LAND, T_LAND + 0.15, t) * (1 - smooth(T_LAND + 0.15, T_LIFT, t)) : 0);
+        } else {                 // calm departure: a wide climbing turn-around (DMLaunch.departure: C1 path, eased speed, small pitch, banking)
+          const s = t - T_LIFT, d = IN.dep, ds = Math.min(dt, 0.05);
+          if (!IN.lift) { IN.lift = true; IN.depStart = 0; }
+          if (d) { d.step(ds); b.position.set(IN.H.x + d.st.x, IN.H.y + d.st.y, IN.H.z + d.st.z); b.rotation.set(d.roll(d.st.s), d.heading(d.st.s), d.pitch(d.st.s)); b.quaternion.multiply(IN.qFlip); }
+          else { b.position.y += 1.2 * ds; }
+          if (!IN.flew && s > IN.T_DEP - 1.6) { IN.flew = true; try { IN.onFly && IN.onFly(); } catch (e) {} }
         }
         b.updateMatrixWorld(true);
         if (IN.lc) {
@@ -654,11 +665,12 @@
         }
 IN.D.copy(IN.Dl); b.localToWorld(IN.D); IN.D.y += 0.03;
         // her: stand + walk over, step on, ride
-        if (t >= IN.T_WALK - 0.1 && IN.walk && !IN.walked) { IN.walked = true; IN.walk.reset().play(); }
+        if (t >= IN.T_WALK - 0.1 && IN.walk && !IN.walked) { IN.walked = true; IN.walk.reset().play(); IN.walk.timeScale = 0.9; }
         if (t >= T_STEP && IN.jump && !IN.jumped) { IN.jumped = true; IN.jump.reset().play(); if (IN.walk) IN.walk.crossFadeTo(IN.jump, 0.18, false); }
-        if (t >= T_LAND - 0.32 && IN.ride && !IN.rode) { IN.rode = true; IN.ride.reset().play(); if (IN.jump) IN.jump.crossFadeTo(IN.ride, 0.5, false); }   // the ride stance eases in under the landing: no snap to it
-        IN.w = smooth(IN.T_WALK - 0.1, IN.T_WALK + 0.85, t);   // stand up: the seated pose eases into the walk over ~1 s
-        const uw = smooth(IN.T_WALK + 0.5, T_STEP, t);            // along the walk
+        if (t >= T_LAND - 0.2 && IN.ride && !IN.rode) { IN.rode = true; IN.ride.reset().play(); if (IN.jump) IN.jump.crossFadeTo(IN.ride, 0.9, false); }
+        if (IN.rode && !IN.cleaned && t > T_LAND + 1.0) { IN.cleaned = true; try { if (IN.walk) IN.walk.stop(); if (IN.jump) IN.jump.stop(); } catch (e) {} }   // only the standing ride stance is left   // the ride stance eases in under the landing: no snap to it
+        IN.w = smooth(IN.T_WALK - 0.1, IN.T_WALK + IN.T_STAND - 0.1, t);   // stand up: the seated pose eases into the walk over ~1 s
+        const uw = smooth(IN.T_WALK + 1.0, T_STEP, t);            // along the walk
         const k = Math.min(1, Math.max(0, (t - T_STEP) / IN.stepDur)), ks = k * k * (3 - 2 * k);
         IN.FT.lerpVectors(IN.S0, IN.W, uw); IN.FT.y = surfY(IN.FT.x, IN.FT.z);
         if (k > 0) { IN.FT.lerp(IN.D, ks); IN.FT.y += Math.sin(Math.PI * k) * 0.08; }   // the clip carries the step up; only a hint of root lift
@@ -710,13 +722,38 @@ IN.D.copy(IN.Dl); b.localToWorld(IN.D); IN.D.y += 0.03;
               if (!IN.sharedTex) for (const k in mt) { const v = mt[k]; if (v && v.isTexture) try { v.dispose(); } catch (e) {} }
               try { mt.dispose(); } catch (e) {} }); });
         }
-        MS.half = false;
+        MS.half = false; trailClear(); IN.cleaned = false; IN.dep = null;
         if (!IN.list) return; IN.on = false;
         try { [IN.walk, IN.jump, IN.ride].forEach(a => { if (a) a.stop(); }); if (IN.walk) C.mixer.uncacheAction(IN.walk.getClip()); if (IN.jump) C.mixer.uncacheAction(IN.jump.getClip()); if (IN.ride) C.mixer.uncacheAction(IN.ride.getClip()); } catch (e) {}
         IN.list.forEach((bn, i) => { bn.position.copy(IN.keep[i][0]); bn.quaternion.copy(IN.keep[i][1]); });
         holder.position.copy(IN.seatPos); holder.quaternion.copy(IN.seatQ); holder.updateMatrixWorld(true);
         IN.list = null; IN.rel = null; IN.lockM = null; IN.lift = false; IN.walked = IN.jumped = IN.rode = false; IN.walk = null;
       };
+      const trailTick = (dt) => {
+        const d = IN.dep, b = IN.board;
+        if (IN.on && IN.lift && d && b) {
+          const vr = d.speed(d.st.s) / d.D.vmax, alt = Math.max(0, b.position.y - IN.H.y);
+          const low = 1 - 0.7 * smooth(0.3, 6 * IN.Ls / 4.6, alt);                       // thins out with altitude
+          tAcc += 90 * smooth(0.04, 0.7, vr) * low * dt;                                   // forms with speed
+          const psi = d.heading(d.st.s), cg = Math.cos(d.pitch(d.st.s)), fx = Math.cos(psi) * cg, fz = -Math.sin(psi) * cg;
+          while (tAcc >= 1) {
+            tAcc -= 1; const i = tHead, o = i * 3; tHead = (tHead + 1) % NT;
+            tpos[o] = b.position.x - fx * IN.Lb * 0.45 + (Math.random() - 0.5) * 0.2; tpos[o + 1] = b.position.y - 0.05 + (Math.random() - 0.5) * 0.08; tpos[o + 2] = b.position.z - fz * IN.Lb * 0.45 + (Math.random() - 0.5) * 0.2;
+            tvel[o] = -fx * 0.25 + (Math.random() - 0.5) * 0.3; tvel[o + 1] = 0.05 + Math.random() * 0.12; tvel[o + 2] = -fz * 0.25 + (Math.random() - 0.5) * 0.3;
+            tage[i] = 0; tlife[i] = 1.2 + Math.random() * 1.1;
+          }
+        }
+        let alive = 0;
+        for (let i = 0; i < NT; i++) {
+          const o = i * 3; if (tage[i] >= tlife[i]) { if (tcol[o] !== 0) { tcol[o] = tcol[o + 1] = tcol[o + 2] = 0; } continue; }
+          tage[i] += dt; alive++; const k = 1 - tage[i] / tlife[i], f = k * k * 0.5;
+          tpos[o] += tvel[o] * dt; tpos[o + 1] += tvel[o + 1] * dt; tpos[o + 2] += tvel[o + 2] * dt; tvel[o] *= 0.97; tvel[o + 2] *= 0.97;
+          tcol[o] = 0.86 * f; tcol[o + 1] = 0.64 * f; tcol[o + 2] = 0.44 * f;
+        }
+        if (alive || tAlive) { tgeo.attributes.position.needsUpdate = true; tgeo.attributes.color.needsUpdate = true; }
+        tAlive = alive; trail.visible = alive > 0;
+      };
+      const trailClear = () => { tage.fill(9); tcol.fill(0); tAcc = 0; tAlive = 0; trail.visible = false; };
       let raf = 0; const wind = new THREE.Vector3();
       const loop = (now) => {
         raf = requestAnimationFrame(loop); MS._raf = raf;
@@ -735,6 +772,7 @@ IN.D.copy(IN.Dl); b.localToWorld(IN.D); IN.D.y += 0.03;
         if (++adj > 90) { adj = 0; if (ema > 36 && pr > sc.pr * 0.5) { pr = Math.max(0.5, pr - 0.15); fit(); } else if (ema < 20 && pr < sc.pr) { pr = Math.min(sc.pr, pr + 0.1); fit(); } }
         if (IN.on) { IN._n = (IN._n | 0) + 1; if (IN._n > 6 && IN._n <= 36) IN._s = (IN._s || 0) + dt; if (IN._n === 36) { const av = IN._s / 30 * 1000; MS.half = av > 20 && av < 36; } }
         if (IN.on) introPre(dt);
+        if (IN.on || tAlive) trailTick(dt);
         pose(t); face(t); if (IN.on) introSnap(); root.updateMatrixWorld(true);
         if (hair) { wind.set(0.35 + 0.25 * Math.sin(t * 0.37), 0.02, 0.15 + 0.2 * Math.sin(t * 0.53 + 1)); hair.params.wind.copy(wind); }
         C.mixer.update(dt);
@@ -768,7 +806,7 @@ IN.D.copy(IN.Dl); b.localToWorld(IN.D); IN.D.y += 0.03;
           const k = smooth(IN.T_WALK - 0.3, IN.T_STEP, IN.t);
           camera.position.x -= 2.2 * k; camera.position.y += 0.6 * k; camera.position.z += 3.4 * k;
           tmpA.set(TARGET.x - 2.3 * k, TARGET.y - 0.2 * k, TARGET.z - 1.2 * k);
-          if (IN.t > IN.T_LIFT) { bones.Hips.getWorldPosition(tmpC); tmpA.lerp(tmpC, 0.92 * smooth(0, 0.45, IN.t - IN.T_LIFT)); }
+          if (IN.t > IN.T_LIFT - 0.5) { bones.Hips.getWorldPosition(tmpC); tmpA.lerp(tmpC, 0.92 * smooth(0, 4.5, IN.t - (IN.T_LIFT - 0.5))); }   // the look-at eases onto her over 4.5 s: no whip pan
           camera.lookAt(tmpA);
         } else camera.lookAt(TARGET);
         if (MS._dbg) { camera.position.copy(MS._dbg.pos); camera.lookAt(MS._dbg.target); }

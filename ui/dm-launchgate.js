@@ -80,7 +80,40 @@
     return () => { on = false; try { caf && caf(id); } catch (e) {} };
   }
 
-  const api = { introNext, createGate, createSlicer, drive };
+
+  /* ── departure: the board's calm take-off, a wide climbing turn-around ─────────────────
+     Kinematic and analytic, so it is C1 by construction and testable without a scene. Along the path coordinate s (seconds of departure):
+       speed   v(s) = vmax * ( 0.12*S(0,1.6) + 0.88*S(1.6,T) )      S = smoothstep; v(0) = 0, so it leaves from the hover with no velocity jump
+       heading psi(s) = psi0 + theta * S(0.4, T*0.9)                the turn rate is a smooth bell (zero at both ends); radius grows with speed
+       pitch   gam(s) = gmax * S(0.8, T*0.45) * (1 - 0.55*S(T*0.6, T))   a small angle, ramping up slowly and easing off again
+       bank    roll(s) = -bankMax * omega/omegaMax                   into the turn (omega = dpsi/ds); continuous, zero at both ends
+     Heading convention of the menu scene: direction = (cos psi, -sin psi) in x/z. step(dt) integrates the position (sub-stepped). */
+  function departure(o) {
+    const S = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+    const D = { L: o.L || 5, psi0: o.psi0 || 0, theta: o.theta == null ? -2.9 : o.theta, T: o.T || 9, vmax: o.vmax, gmax: o.gmax == null ? 0.3 : o.gmax, bank: o.bank == null ? 0.42 : o.bank };
+    if (!(D.vmax > 0)) D.vmax = 2.2 * D.L;
+    const T = D.T, t0 = 0.2, tEnd = T * 0.62, wMax = Math.abs(D.theta) * 1.5 / (tEnd - t0);
+    const speed = s => D.vmax * (0.12 * S(0, 1.6, s) + 0.88 * S(1.6, T, s));
+    const heading = s => D.psi0 + D.theta * S(t0, tEnd, s);
+    const omega = s => { const u = Math.max(0, Math.min(1, (s - t0) / (tEnd - t0))); return D.theta * 6 * u * (1 - u) / (tEnd - t0); };
+    const pitch = s => D.gmax * S(0.8, T * 0.45, s) * (1 - 0.55 * S(T * 0.6, T, s));
+    const roll = s => -D.bank * omega(s) / wMax;
+    const st = { s: 0, x: 0, y: 0, z: 0 };
+    return {
+      D, speed, heading, omega, pitch, roll, st,
+      step(dt) {   // integrate in <= 1/120 s sub-steps; returns the instantaneous velocity vector components
+        let n = Math.max(1, Math.ceil(dt * 120)), h = dt / n, vx = 0, vy = 0, vz = 0;
+        for (let i = 0; i < n; i++) {
+          const s = st.s + h * 0.5, v = speed(s), p = heading(s), g = pitch(s), cg = Math.cos(g);
+          vx = v * cg * Math.cos(p); vy = v * Math.sin(g); vz = -v * cg * Math.sin(p);
+          st.x += vx * h; st.y += vy * h; st.z += vz * h; st.s += h;
+        }
+        return { vx, vy, vz };
+      }
+    };
+  }
+
+  const api = { introNext, createGate, createSlicer, drive, departure };
   root.DMLaunch = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
