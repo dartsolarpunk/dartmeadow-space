@@ -60,6 +60,10 @@
     W.setActor(cr._act, cr.x, cr.y || 0, cr.z);
   };
   W.npcDrop = (cr) => { if (cr && cr._act != null && cr._act >= 0) { W.removeActor(cr._act); cr._act = -1; } };
+  // other players on foot (multiplayer ghosts): kinematic actors, so she cannot walk through them; boards in the air are not bodies on the ground
+  const peers = new Map();
+  W.peerActor = (id, x, y, z, onFoot) => { if (!W.enabled) return; id = String(id); let a = peers.get(id); if (!onFoot) { if (a != null) { W.removeActor(a); peers.delete(id); } return; } if (a == null) { a = W.addActor(x, y, z, 0.7, 3.2, true, id); if (a < 0) return; peers.set(id, a); } W.setActor(a, x, y, z); };
+  W.peerDrop = (id) => { id = String(id); const a = peers.get(id); if (a != null) { W.removeActor(a); peers.delete(id); } };
   // standing on a prop: its top at the character's footprint, tested with last frame's feet so a 15 fps fall cannot sink through it
   W.supportFor = (p, prevFeet) => { if (!W.enabled || !W.count()) return -1e9; const s = W.supportAt(p.pos.x, p.pos.z, prevFeet, C.step, 0.35); return s; };
   W.landed = (p, vy) => { if (vy < -3.5) W.emit('land', W.lastMat, p.pos.x, p.pos.y - EYE, p.pos.z, -vy); };
@@ -114,6 +118,6 @@
     }
     lastT = W.time;
   };
-  W.closeWorld = () => { jobs.length = 0; cur = null; W.reset(); if (P) { try { P.scene.remove(P.pts); P.g.dispose(); } catch (e) { } P = null; } if (dbg) { try { dbg.dispose(); } catch (e) { } dbg = null; dbgTried = false; } W.setGround(null); };
+  W.closeWorld = () => { peers.clear(); jobs.length = 0; cur = null; W.reset(); if (P) { try { P.scene.remove(P.pts); P.g.dispose(); } catch (e) { } P = null; } if (dbg) { try { dbg.dispose(); } catch (e) { } dbg = null; dbgTried = false; } W.setGround(null); };
   W.report = () => ({ colliders: W.count(), pending: W.pendingJobs(), bodies: W.stats.bodies, actors: W.stats.actors, groups: W.stats.groups, pushes: W.stats.pushes, subSteps: W.stats.subSteps, overflow: W.stats.overflow, ms: +W.stats.ms.toFixed(3), peak: W.stats.peak });
 })(typeof window !== 'undefined' ? window : globalThis);

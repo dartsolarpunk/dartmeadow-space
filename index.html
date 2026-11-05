@@ -1020,8 +1020,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-mist.js?v=7" defer></script>
 <script src="ui/dm-atmo.js?v=212" defer></script>
 <script src="ui/dm-localcollide.js?v=188" defer></script>
-<script src="ui/dm-collide.js?v=269" defer></script>
-<script src="ui/dm-collide-game.js?v=269" defer></script>
+<script src="ui/dm-collide.js?v=270" defer></script>
+<script src="ui/dm-collide-game.js?v=270" defer></script>
 <script src="ui/dm-cgroup.js?v=214" defer></script>
 <script src="ui/dm-projector.js?v=224" defer></script>
 <script src="ui/dm-groundmark.js?v=220" defer></script>
@@ -19855,6 +19855,7 @@ function updateAtmoFlight(dt){
   const s=atmoState;if(!s)return;
   if(!s.quat||!s.quat.isQuaternion) s.quat=_atmoAimQ(s.yaw||0,s.pitch||0).clone();
   if(!s.vel) s.vel=new THREE.Vector3();
+  const _cx0=s.pos.x, _cy0=s.pos.y, _cz0=s.pos.z;   // where the board was: the prop sweep below runs from here to where it ended up
   const landing=!!s.landing, K=_atmoK();
   // a stick, key or roll pad: the pilot has the board (ends lift-off, auto-flight, IDLE and TO SPACE)
   if(!landing&&!s.touchdown&&_atmoManualInput()){
@@ -19891,6 +19892,13 @@ function updateAtmoFlight(dt){
     s.quat.slerp(_atmoAimQ(s.yaw,s.pitch),1-Math.exp(-dt*6)).normalize();
     { const J=_atmoJ(s.pos.y); s.vel.set(fx*J.jx,fy,fz*J.jz).multiplyScalar(speed/60/K); }
   }
+  // low flight meets the props (rocks, trunks, crowns, structures): swept sphere from last frame's position, so a 15 fps frame at speed cannot tunnel a trunk. It stops
+  // at the contact point (slides along the surface by the leftover motion) and the speed bleeds off; the contact event drives dust / sparks / audio.
+  if(window.DMCollide&&DMCollide.enabled&&DMCollide.count()&&!landing){ const W=DMCollide, dx=s.pos.x-_cx0, dy=s.pos.y-_cy0, dz=s.pos.z-_cz0;
+    if(dx*dx+dy*dy+dz*dz>1e-6&&W.sweepSphere(_cx0,_cy0,_cz0,s.pos.x,s.pos.y,s.pos.z,1.0)){ const h=W.hit, rem=(1-h.t), vn=dx*h.nx+dy*h.ny+dz*h.nz;
+      s.pos.set(h.x+(dx-vn*h.nx)*rem*0.5,h.y+(dy-vn*h.ny)*rem*0.5,h.z+(dz-vn*h.nz)*rem*0.5);
+      const vv=s.vel.x*h.nx+s.vel.y*h.ny+s.vel.z*h.nz; if(vv<0){ s.vel.x-=vv*h.nx*1.3; s.vel.y-=vv*h.ny*1.3; s.vel.z-=vv*h.nz*1.3; s.vel.multiplyScalar(0.85); }
+      W.emit('impact',h.mat,h.x,h.y,h.z,Math.sqrt(dx*dx+dy*dy+dz*dz)/Math.max(dt,1e-3)); } }
   // terrain floor (the board slides along it; nothing pulls it down)
   const groundH=_atmoHeight?_atmoHeight(s.pos.x,s.pos.z):0;
   if(landing){
@@ -27247,6 +27255,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
     return g;
   }
   function disposeGhost(g){
+    if(window.DMCollide&&g&&g.name) DMCollide.peerDrop(g.name.slice(11));
     flightScene.remove(g);
     try{ if(g.userData.mixer) g.userData.mixer.stopAllAction(); }catch(e){}
     // Only dispose what the ghost made itself; the cloned board and rider
@@ -27314,6 +27323,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
         // name tag above whoever's visible: her when on foot, else the board
         const tagAt=(u.rider&&!u.mounted)?u.rider.position:b.position;
         const lift=(u.rider&&!u.mounted)?(p.cs?0.6:u.L*0.45):u.L*0.45;
+        if(window.DMCollide&&DMCollide.enabled&&typeof surfaceActive!=='undefined'&&surfaceActive) DMCollide.peerActor(p.id,tagAt.x,tagAt.y,tagAt.z,!!(u.rider&&!u.mounted));   // an on-foot pilot is a body she cannot walk through
         u.label.visible=!(window.DM_PREFS&&window.DM_PREFS.playerLabels===false);
         u.label.position.set(tagAt.x,tagAt.y+lift,tagAt.z);
         const s=(u.rider&&!u.mounted)?0.35:1;

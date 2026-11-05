@@ -68,6 +68,9 @@ function dts(frames, spike) { const a = []; for (let i = 0; i < frames; i++) { c
   ok(W.sweepSphere(-5, 6, 0, 5, 6, 0, 0.2) && W.hit.t < 0.5, 'but projectiles hit it');
   W.addBox('b', 20, 1, 0, 1, 1, 1, 0.7, 'wood'); const out = [0, 0]; const dpt = W.pushOut(20.5, 0, 0.2, 0.7, 3, 0, out); ok(dpt > 0.7, 'pushOut leaves the box ' + dpt.toFixed(2)); }
 
+// 6b. sweepSphere from inside a collider can leave; tunnelling at speed
+{ const W = mk(); W.addEllipsoid('r', 0, 1, 0, 2, 2, 'rock'); ok(!W.sweepSphere(0, 1, 0, 6, 1, 0, 0.5), 'start inside: leaving is not a hit'); W.addBox('w', 30, 3, 0, 0.1, 3, 10, 0, 'stone'); ok(W.sweepSphere(10, 3, 0, 60, 3, 0, 0.5) && W.hit.x < 30, 'a 50 u sweep stops at a thin wall (x ' + W.hit.x.toFixed(2) + ')'); }
+
 // 7. relaxDiscs ---------------------------------------------------------------------------------------------------------------------
 { const N = 90, xs = new Float32Array(N), zs = new Float32Array(N), rs = new Float32Array(N), bad = new Uint8Array(N); for (let i = 0; i < N; i++) { xs[i] = rnd() * 300 - 150; zs[i] = rnd() * 300 - 150; rs[i] = 0.4 + rnd() * 2.2; }
   const W = mk(); const left = W.relaxDiscs(xs, zs, rs, N, -150, 150, -150, 150, 0.3, 8, bad); let ov = 0; for (let i = 0; i < N; i++) { ok(xs[i] - rs[i] >= -150 - 1e-3 && xs[i] + rs[i] <= 150 + 1e-3, 'inside chunk bounds'); for (let j = i + 1; j < N; j++) if (!bad[i] && !bad[j]) { const d = Math.hypot(xs[i] - xs[j], zs[i] - zs[j]); if (d < rs[i] + rs[j] - 1e-3) ov++; } }

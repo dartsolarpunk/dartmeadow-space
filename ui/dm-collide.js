@@ -418,14 +418,16 @@
     W.wakeNear = (x, z, r) => { for (let b = 0; b < NB; b++) if (bOn[b] && bAsleep[b]) { const dx = bX[b] - x, dz = bZ[b] - z; if (dx * dx + dz * dz < r * r) { bAsleep[b] = 0; bSleep[b] = 0; } } };
 
     // swept sphere through statics: first hit along p0→p1 (marching at r/2). Fills W.hit {t,x,y,z,nx,ny,nz,id,mat}. Used for the board in flight, projectiles.
+    const SKIP = new Uint8Array(256);
     W.hit = { t: 1, x: 0, y: 0, z: 0, nx: 0, ny: 1, nz: 0, id: -1, mat: 0 };
     W.sweepSphere = (x0, y0, z0, x1, y1, z1, r) => {
       const dx = x1 - x0, dy = y1 - y0, dz = z1 - z0, L = sqrt(dx * dx + dy * dy + dz * dz), H = W.hit; H.t = 1; H.id = -1;
       let ns = Math.ceil(L / max(0.05, r * 0.5)); if (ns < 1) ns = 1; if (ns > 256) ns = 256;
       const n = queryInto(Q2, 256, min(x0, x1) - r, min(z0, z1) - r, max(x0, x1) + r, max(z0, z1) + r); if (!n) return false;
+      for (let k = 0; k < n; k++) SKIP[k] = 0;   // anything already overlapping at the start is ignored (a body that spawned / was pushed inside must be able to leave)
       for (let s = 0; s <= ns; s++) {
         const t = s / ns, x = x0 + dx * t, y = y0 + dy * t, z = z0 + dz * t;
-        for (let k = 0; k < n; k++) { const i = Q2[k]; if (flg[i] & (F_TRIG | F_ACTOR)) continue; if (y - r > yHi(i) || y + r < yLo(i)) continue; const pen = spherePen(i, x, y, z, r); if (pen > 0) { H.t = t; H.x = x + DN[0] * pen; H.y = y + DN[1] * pen; H.z = z + DN[2] * pen; H.nx = DN[0]; H.ny = DN[1]; H.nz = DN[2]; H.id = i; H.mat = mat[i]; return true; } }
+        for (let k = 0; k < n; k++) { const i = Q2[k]; if (SKIP[k] === 2 || flg[i] & (F_TRIG | F_ACTOR)) continue; if (y - r > yHi(i) || y + r < yLo(i)) continue; const pen = spherePen(i, x, y, z, r); if (pen > 0 && s === 0) { SKIP[k] = 1; continue; } if (pen > 0 && SKIP[k] === 1) continue; if (pen <= 0 && SKIP[k] === 1) SKIP[k] = 0; if (pen > 0) { H.t = t; H.x = x + DN[0] * pen; H.y = y + DN[1] * pen; H.z = z + DN[2] * pen; H.nx = DN[0]; H.ny = DN[1]; H.nz = DN[2]; H.id = i; H.mat = mat[i]; return true; } }
       }
       return false;
     };
