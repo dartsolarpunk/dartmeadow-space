@@ -67,7 +67,7 @@
         const o = { sid: sessionId, t: Date.now(), up: Math.round((Date.now() - start.getTime()) / 1000), screen: curMode(), active: act, trail: CR.trail.slice(-8),
           ourGpuMB: +(this.gpuBytes() / 1048576).toFixed(1), ourTop: top, live: CR.live, stallMs: CR.stallMax,
           geo: i && i.memory ? i.memory.geometries : null, tex: i && i.memory ? i.memory.textures : null, rMB: i && i.memory && i.memory.total != null ? +(i.memory.total / 1048576).toFixed(1) : null,
-          calls: i && i.render ? i.render.calls : null, tris: i && i.render ? i.render.triangles : null };
+          calls: i && i.render ? i.render.calls : null, tris: i && i.render ? i.render.triangles : null, bp: window.DMBudget && window.DMBudget.on ? window.DMBudget.p : null };   // bp: frame-budget pressure at the last flush (v256)
         CR.stallMax = 0; CR.flushes++;
         localStorage.setItem(CKEY, JSON.stringify(o));
       } catch (e) {}

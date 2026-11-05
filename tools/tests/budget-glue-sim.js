@@ -10,7 +10,7 @@ function boot(opts) {
   G.localStorage = { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } };
   G.GFX = Object.assign({ isMobile: true, gpuClass: 'low', score: 51, deviceMem: 4 }, opts.gfx || {});
   if (opts.prev) G._dmPrevAlive = opts.prev;
-  const realST = G.setTimeout; G.setTimeout = () => 0;
+  const realST = G.setTimeout; G.setTimeout = () => 0; G.__ivs = []; G.setInterval = (cb) => { G.__ivs.push(cb); return 1; };
   delete require.cache[require.resolve('../../ui/dm-budget.js')]; require('../../ui/dm-budget.js'); G.setTimeout = realST;
   G.DMBudget.start();
   return { B: G.DMBudget, store, frame: (ms) => { now += ms; raf(now); }, run: (n, ms) => { for (let i = 0; i < n; i++) { now += ms; raf(now); } }, now: () => now };
@@ -43,4 +43,9 @@ assert.strictEqual(boot({ search: '?gov=7' }).B.p, 7);
   const p1 = B.p; t.run(400, 120); assert(B.p > p1);
   t.run(300, 16.7); // calm again, saves happen on the 32-frame tick
   const j = JSON.parse(t.store.dm_budget_v1 || 'null'); console.log('stored', j && j.p, 'live p', B.p); }
+// 6. memory floor: the renderer's byte estimate over the limit holds the ladder up; below 90 % of it the floor lifts
+{ const t = boot({ gfx: { isMobile: false, gpuClass: 'high' } }); const B = t.B; const iv = globalThis.__ivs[0]; globalThis.flightRenderer = { info: { memory: { total: 1500 * 1048576 } } }; globalThis.GFX.isMobile = true;
+  iv(); assert.strictEqual(B.p, 15, 'hard limit -> p>=15'); globalThis.flightRenderer.info.memory.total = 1100 * 1048576; iv(); assert(B.p >= 13); globalThis.flightRenderer.info.memory.total = 600 * 1048576; iv();
+  assert.strictEqual(B.stats().floorP, 0); delete globalThis.flightRenderer; }
 console.log('budget-glue-sim OK');
+process.exit(0);

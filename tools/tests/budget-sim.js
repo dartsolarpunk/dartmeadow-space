@@ -61,3 +61,7 @@ const gain = (p) => Math.pow(0.93, p);   // each step buys ~7 % (17 steps ~ 0.29
 // 10. cost of the controller itself: 1e6 frames of bookkeeping
 { const c = createController({}); const t0 = process.hrtime.bigint(); let t = 0; for (let i = 0; i < 1e6; i++) { t += 16.7; c.sample(16.7, t); } const us = Number(process.hrtime.bigint() - t0) / 1e3 / 1e6; console.log('controller cost ' + us.toFixed(3) + ' us/frame'); assert(us < 20); }
 console.log('budget-sim OK');
+// 11. memory floor: floorP holds the ladder up even on a calm scene, and releases it stepwise afterwards
+{ const c = createController({}); let t = 0; c.floorP = 13; for (let i = 0; i < 400; i++) { t += 16.7; c.sample(16.7, t); } assert.strictEqual(c.p, 13); for (let i = 0; i < 3000; i++) { t += 16.7; c.sample(16.7, t); } assert.strictEqual(c.p, 13, 'held');
+  c.floorP = 0; for (let i = 0; i < 12000; i++) { t += 16.7; c.sample(16.7, t); } assert.strictEqual(c.p, 0, 'released'); }
+console.log('budget-sim memory floor OK');

@@ -63,7 +63,7 @@
       ring: new Float32Array(N), head: 0, count: 0, ema: 0, emaOK: false, t: 0,
       nextEval: 0, over: 0, calm: 0, lastChange: -1e9, lastRecover: -1e9, lastEval: 0, settleUntil: 0,
       lock: new Float64Array(MAX + 2), hold: new Float64Array(MAX + 2),
-      changes: 0, esc: 0, rec: 0, fails: 0, history: [], lv: levelsAt(0), ver: 0, exhausted: false, p95: 0, settledP: 0, settledSince: 0, recTo: -1, onChange: o.onChange || null,
+      changes: 0, esc: 0, rec: 0, fails: 0, history: [], lv: levelsAt(0), ver: 0, exhausted: false, p95: 0, settledP: 0, settledSince: 0, recTo: -1, floorP: 0, onChange: o.onChange || null,
     };
     for (let i = 0; i < C.hold.length; i++) C.hold[i] = 20000;
 
@@ -104,6 +104,7 @@
 
     C.evaluate = function (now) {
       const dtE = C.lastEval ? Math.min(1500, now - C.lastEval) : 400; C.lastEval = now;
+      if (C.p < C.floorP) { C.set(C.floorP, now, 'mem'); return true; }   // memory pressure: a floor under the ladder (shadow map, render scale are what give memory back)
       if (now < C.settleUntil || C.count < 8) return false;
       const B = C.budget, e = C.ema, p95 = pct95(); C.p95 = p95;
       const sev = e / B;
@@ -125,7 +126,7 @@
         }
         return false;
       }
-      if (calm && C.p > 0 && C.calm >= 4000 && now - C.lastChange >= 4000) {
+      if (calm && C.p > C.floorP && C.calm >= 4000 && now - C.lastChange >= 4000) {
         const target = C.p - 1;
         if (now < C.lock[C.p]) return false;
         C.rec++; C.exhausted = false; C.lastRecover = now; C.recTo = target; C.set(target, now, 'rec ' + Math.round(e) + 'ms');
@@ -217,6 +218,17 @@
       if ((++tickN & 31) === 0) { S.screen = curScreen(); persist(false); }
     };
     W.requestAnimationFrame(fr);
+    // GPU/memory watch (the OS kills the tab, not the frame rate): the renderer's own byte estimate (info.memory.total: textures + buffers + render targets).
+    // Logs: the Galaxy Tab died at 1.75 GB on 4 GB, the iPhone at geo 1037 / tex 269.  Over the soft limit the ladder is held at >= 13 (half shadow map, slow atmosphere),
+    // over the hard limit at >= 15 (render scale <= 0.85 -> smaller targets); the floor lifts again 10 % below the limit.
+    setInterval(() => {
+      try {
+        const r = W.flightRenderer || (typeof flightRenderer !== 'undefined' ? flightRenderer : null), tot = r && r.info && r.info.memory && r.info.memory.total; if (!(tot > 0)) return;
+        const mb = tot / 1048576, ios = !!(W.GFX && W.GFX.isIOS), mob = !!(W.GFX && W.GFX.isMobile), soft = ios ? 700 : mob ? 1000 : 2600, hard = ios ? 900 : mob ? 1300 : 3400; S.memMB = Math.round(mb);
+        let f = c.floorP; if (mb > hard) f = 15; else if (mb > soft) f = Math.max(f === 15 && mb > hard * 0.9 ? 15 : 0, 13); else if (mb < soft * 0.9) f = 0;
+        if (f !== c.floorP) { c.floorP = f; if (f > c.p) c.set(f, now(), 'mem ' + Math.round(mb) + 'MB'); }
+      } catch (e) { }
+    }, 2000);
     W.addEventListener('pagehide', () => { persist(true); });
     if (/[?&]govhud=1\b/.test(Q)) hud();
   }
@@ -226,7 +238,7 @@
     setInterval(() => { const s = out.stats(); if (!s) return; const l = s.lv; d.textContent = 'BUD p' + s.p + '/' + s.max + '  ' + s.emaMs + 'ms p95 ' + s.p95Ms + '\npx' + l.parallax + ' pxs' + l.pxshadow + ' gnd' + l.ground + ' wat' + l.water + ' shd' + l.shadow + ' atm' + l.atmo + ' res' + l.res + (s.exhausted ? ' EXHAUSTED' : ''); }, 500);
   }
 
-  out.stats = function () { const c = S.C; if (!c) return null; const s = c.stats(); s.seed = out.seedWhy; s.dev = devKey(); s.screens = S.perScreen; return s; };
+  out.stats = function () { const c = S.C; if (!c) return null; const s = c.stats(); s.seed = out.seedWhy; s.dev = devKey(); s.memMB = S.memMB; s.floorP = c.floorP; s.screens = S.perScreen; return s; };
   out.force = function (p) { if (S.C) S.C.set(p, now(), 'force'); };
   out.lvl = function (n) { return out.lv[n] | 0; };
   // typed accessors for the feature hooks; each returns the neutral value while the controller is off or at level 0
