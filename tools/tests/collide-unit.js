@@ -131,6 +131,19 @@ function dts(frames, spike) { const a = []; for (let i = 0; i < frames; i++) { c
   r = walk(30, -8, 0, 1, 40, 0.6); ok(r[1] < -1.5, 'east wall beside the deck door is solid (y ' + r[1].toFixed(1) + ')');
   r = walk(-54, -8, 0, 1, 40, 0.6); ok(r[1] > 1, 'west doorway (x -57.9..-50) open (y ' + r[1].toFixed(1) + ')'); r = walk(0, -8, 0, 1, 40, 0.6); ok(r[1] > 1, 'central hall opening (x -6.5..6.5) open (y ' + r[1].toFixed(1) + ')'); }
 
+// 8d. safe landing spots: clearAt / findClear around lamps, props, water, steep ground, board footprint
+{ const W = mk({ capacity: 2048 }); W.setGround((x, z) => 0 + (x > 60 ? (x - 60) * 2 : 0)); W.setWater((x, z) => (z < -40 ? 5 : -1e9), null);
+  const o = { ground: (x, z) => W.groundAt ? W.groundAt(x, z) : (x > 60 ? (x - 60) * 2 : 0), r: 0.9, h: 3.1, margin: 0.4, bl: 1.6, bw: 0.5, ux: 1, uz: 0, side: [0, 1.6] };
+  ok(W.clearAt(0, 0, o), 'open ground is clear');
+  W.addCylinder('lamps', 0, 0, 7.8, 0, 0.2, 'metal'); W.addBox('lamps', 0, 0.5, 0, 0.8, 0.5, 0.8, 0, 'stone');
+  ok(!W.clearAt(0, 0, o), 'a lamp pole + plinth at the target blocks it'); ok(!W.clearAt(1.0, 0, o), 'the board footprint overlapping the plinth blocks it');
+  const r = W.findClear(0, 0, o); ok(r.ok && r.moved && r.dist > 0.8 && r.dist < 8, 'ring search finds a nearby clear spot (' + r.dist.toFixed(1) + ' m, ' + r.tried + ' probes)'); ok(W.clearAt(r.x, r.z, o), 'and it validates');
+  ok(!W.clearAt(0, -50, o), 'under water is rejected'); ok(!W.clearAt(80, 0, o), 'steep slope is rejected');
+  // a ring of props around the target: search must go past it
+  for (let k = 0; k < 16; k++) W.addCylinder('ring', Math.cos(k * 0.3927) * 4, 0, 5, Math.sin(k * 0.3927) * 4, 0.5, 'wood');
+  const r2 = W.findClear(0, 0, o); ok(r2.ok && Math.hypot(r2.x, r2.z) > 4.2 || (r2.ok && Math.hypot(r2.x, r2.z) < 3.0 && W.clearAt(r2.x, r2.z, o)), 'search escapes a prop ring (' + r2.x.toFixed(1) + ',' + r2.z.toFixed(1) + ')');
+  const r3 = W.findClear(0, -50, Object.assign({ maxR: 2 }, o)); ok(!r3.ok, 'no spot within reach reports failure'); }
+
 // 9. determinism --------------------------------------------------------------------------------------------------------------------------
 { const run = () => { seed = 99; const W = mk(); for (let i = 0; i < 100; i++) W.addEllipsoid('g', rnd() * 50, 0.5, rnd() * 50, 1, 1, 'rock'); const c = W.makeChar({ x: 0, y: 0, z: 0 }); for (let i = 0; i < 300; i++) W.walk(c, 0.4, 0.3); return c.x.toFixed(5) + ',' + c.z.toFixed(5); }; ok(run() === run(), 'deterministic'); }
 console.log(fails ? fails + ' FAILED of ' + n : 'collide-unit: all ' + n + ' checks passed'); process.exit(fails ? 1 : 0);

@@ -586,6 +586,43 @@
         if (W.addBox(name, b[0], b[1], b[2], L, (r[5] - r[4]) / 2 * sc, thick / 2, yaw, opts.wallMat || 'stone') >= 0) n++; }
       return n;
     };
+    // ── safe spots (landing, mount, summon, respawn) ─────────────────────────────────────────────────────────────────────────────────────────────
+    // clearAt(x,z,o): is (x,z) a good place to set a rider down? o = { ground(x,z), r (capsule radius), h, margin, step, slopeTan, waterMargin, blocked(x,z),
+    //   side:[sx,sz] (where her feet go relative to the board centre), bl/bw/ux/uz (board half length / half width / long axis) }.
+    // Terrain finite, above the water, gentle, nothing solid in her capsule (or on top of her), and the board's footprint is free of solids.
+    const POUT2 = [0, 0];
+    W.clearAt = (x, z, o) => {
+      const gnd = o.ground; if (!gnd) return false; const g = gnd(x, z); if (!(g === g) || g < -5000 || g > 1e7) return false;
+      const wy = W.water ? W.water(x, z) : NaN; if (wy === wy && wy > -1e8 && g < wy + (o.waterMargin == null ? 0.4 : o.waterMargin)) return false;
+      const r = o.r || 0.9, h = o.h || 3.1, mg = o.margin == null ? 0.4 : o.margin, e = Math.max(1, r * 1.5), sx = o.side ? o.side[0] : 0, sz = o.side ? o.side[1] : 0;
+      for (let k = 0; k < 2; k++) {   // the board centre, then her own spot beside it
+        const px_ = k ? x + sx : x, pz_ = k ? z + sz : z; if (k && !o.side) break; const gk = k ? gnd(px_, pz_) : g; if (!(gk === gk) || gk < -5000) return false;
+        const a = gnd(px_ + e, pz_), b = gnd(px_ - e, pz_), c = gnd(px_, pz_ + e), d = gnd(px_, pz_ - e); if (!(a === a && b === b && c === c && d === d)) return false;
+        if (max(abs(a - gk), abs(b - gk), abs(c - gk), abs(d - gk)) / e > (o.slopeTan || 0.7)) return false;
+        if (k) { const wk = W.water ? W.water(px_, pz_) : NaN; if (wk === wk && wk > -1e8 && gk < wk + (o.waterMargin == null ? 0.4 : o.waterMargin)) return false; }
+        if (o.blocked && o.blocked(px_, pz_)) return false;
+        if (W.count()) {
+          if (W.pushOut(px_, gk, pz_, r + mg, h, o.step == null ? 0.6 : o.step, POUT2) > 1e-3) return false;
+          if (W.topAt(px_, pz_, gk + h, gk + (o.step == null ? 0.6 : o.step) + 0.05, r) > -1e8) return false;   // a prop's top inside her body height: she would be standing in it
+        }
+      }
+      if (o.bl > 0 && W.count()) {
+        const ux = o.ux == null ? 1 : o.ux, uz = o.uz || 0, vx = -uz, vz = ux, rad = 0.4 + mg;
+        for (let i = -2; i <= 2; i++) for (let j = -1; j <= 1; j++) { const qx = x + ux * o.bl * i * 0.5 + vx * (o.bw || 0.5) * j, qz = z + uz * o.bl * i * 0.5 + vz * (o.bw || 0.5) * j, gq = gnd(qx, qz); if (!(gq === gq)) return false; if (W.sphereOut(qx, gq + 0.5 + 0.2, qz, rad) > 0.02) return false; }
+      }
+      return true;
+    };
+    // findClear(x,z,o): the spot itself if it is clear, else the nearest clear one on widening rings (ring step o.step2, up to o.maxR, ~600 probes at most). Result in W.clearRes.
+    W.clearRes = { x: 0, z: 0, ok: false, moved: false, tried: 0, dist: 0 };
+    W.findClear = (x, z, o) => {
+      const R_ = W.clearRes; R_.tried = 1; R_.moved = false; if (W.clearAt(x, z, o)) { R_.x = x; R_.z = z; R_.ok = true; R_.dist = 0; return R_; }
+      const st = o.ring || 1.6, maxR = o.maxR || 70, a0 = o.angle || 0; let budget = o.maxProbes || 600;
+      for (let rg = 1; rg * st <= maxR && budget > 0; rg++) {
+        const rad = rg * st, n = Math.max(8, Math.ceil(6.2831853 * rad / st));
+        for (let k = 0; k < n && budget > 0; k++, budget--) { const a = a0 + (k & 1 ? -1 : 1) * Math.ceil(k / 2) * 6.2831853 / n, cx = x + Math.cos(a) * rad, cz = z + Math.sin(a) * rad; R_.tried++; if (W.clearAt(cx, cz, o)) { R_.x = cx; R_.z = cz; R_.ok = true; R_.moved = true; R_.dist = rad; return R_; } }
+      }
+      R_.x = x; R_.z = z; R_.ok = false; R_.dist = 0; return R_;
+    };
     W.runGen = (it) => { let r; do { r = it.next(); } while (!r.done); return r.value; };   // finish a generator at once (tests, small props)
 
     // ── terrain / water hooks (set by the game)
