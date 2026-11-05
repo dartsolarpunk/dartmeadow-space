@@ -101,14 +101,46 @@
   }
   function sunVisBrute(hf, x, y, z, lx, ly, lz, maxD) { if (ly <= 0.02) return 0; const st = hf.cell * 0.05; for (let t = hf.cell * 0.6; t <= maxD; t += st) if (y + ly * t < hf.h(x + lx * t, z + lz * t)) return 0; return 1; }
 
+  // Long-range soft shadows: the near field (2 m cells, to nearMax) then the coarse field (8 m cells, to farMax) with a wider penumbra (big, soft shadows of ridges / cliffs / the mansion)
+  function sunVisLong(hfN, hfF, x, y, z, lx, ly, lz, nSteps, fSteps, nearMax, farMax, penN, penF, bias) {
+    if (ly <= 0.02) return 0; let vis = nSteps > 0 ? sunVis(hfN, x, y, z, lx, ly, lz, nSteps, nearMax, penN, bias) : 1; if (vis <= 0 || !hfF || fSteps <= 0) return vis;
+    for (let s = 1; s <= fSteps; s++) {
+      const f = s / fSteps, t = nearMax + (farMax - nearMax) * Math.pow(f, 1.5), dh = y + ly * t - hfF.h(x + lx * t, z + lz * t) + (bias || 0), v = 0.5 + 0.5 * dh / (penF * t + 1e-4);
+      if (v < vis) { vis = v < 0 ? 0 : v; if (vis <= 0) return 0; }
+    }
+    return vis;
+  }
+  // World-aligned height overlay from a rotated local grid (the mansion collision grid).  g: local heights (nx*ny, row = y), local frame x0,y0,cell; fwd(lx,ly,lz) -> [wx,wy,wz];
+  // inv(wx,wz) -> [lx,ly] (local nav x,y of a world point).  Cells where the grid holds no structure (h <= floor) stay empty.
+  function rasterizeOverlay(g, nx, ny, x0, y0, cell, fwd, inv, wcell, floor) {
+    let minx = 1e30, maxx = -1e30, minz = 1e30, maxz = -1e30;
+    for (const [i, j] of [[0, 0], [nx - 1, 0], [0, ny - 1], [nx - 1, ny - 1]]) { const w = fwd(x0 + i * cell, y0 + j * cell, 0); minx = Math.min(minx, w[0]); maxx = Math.max(maxx, w[0]); minz = Math.min(minz, w[2]); maxz = Math.max(maxz, w[2]); }
+    const ox = Math.floor(minx / wcell) * wcell, oz = Math.floor(minz / wcell) * wcell, wn = Math.ceil((maxx - ox) / wcell) + 1, wm = Math.ceil((maxz - oz) / wcell) + 1, out = new Float32Array(wn * wm).fill(-1e9);
+    for (let j = 0; j < wm; j++) for (let i = 0; i < wn; i++) {
+      const wx = ox + i * wcell, wz = oz + j * wcell, l = inv(wx, wz), fx = (l[0] - x0) / cell, fy = (l[1] - y0) / cell; if (fx < 0 || fy < 0 || fx >= nx - 1 || fy >= ny - 1) continue;
+      const a = fx | 0, b = fy | 0, tx = fx - a, ty = fy - b, h00 = g[b * nx + a], h10 = g[b * nx + a + 1], h01 = g[(b + 1) * nx + a], h11 = g[(b + 1) * nx + a + 1];
+      if (h00 <= floor && h10 <= floor && h01 <= floor && h11 <= floor) continue;
+      const h = (h00 * (1 - tx) + h10 * tx) * (1 - ty) + (h01 * (1 - tx) + h11 * tx) * ty; out[j * wn + i] = fwd(l[0], l[1], h)[1];
+    }
+    return { x0: ox, z0: oz, cell: wcell, nx: wn, nz: wm, h: out, floor: -1e8 };
+  }
+  // compute-path ray set: the same stratified spiral as rayDirs, jitter + yaw from a hash of (probe, frame) so the GPU needs no RNG state.  hash1 mirrors the TSL fract(sin()) hash.
+  function hash1(x) { const s = Math.sin(x) * 43758.5453; return s - Math.floor(s); }
+  function csRayDirs(n, probe, frame, out) { return rayDirs(n, hash1(probe * 12.9898 + frame * 78.233), hash1(probe * 39.346 + frame * 11.135) * 6.2831853, out); }
+  // a boot that never reached its 240th frame (shader / device failure during compile) steps the tier down for the next boot; a healthy boot clears the mark
+  function stepDownTier(t) { const i = TIER_ORDER.indexOf(t); return i <= 1 ? 'off' : TIER_ORDER[i - 1]; }
+  function bootTier(want, mark) { return mark && mark.pend ? stepDownTier(mark.tier && TIER_ORDER.indexOf(mark.tier) < TIER_ORDER.indexOf(want) ? mark.tier : want) : want; }
+
   /* ───── tiers: every number the ladder moves is a plain parameter (uniform write / cadence); nothing here changes a shader graph ───── */
-  const TIERS = {   // rays per probe update, cascades updated, probe ms budget per frame, march steps (rays), HF sun steps (shader), HF cells, cascade probes (P x P x L), compute allowed
-    off:   { rays: 0,  casc: 0, ms: 0,   mSteps: 0,  sunSteps: 0,  hfN: 0,   P: 0,  L: 0, cs: false },
-    low:   { rays: 4,  casc: 1, ms: 0.6, mSteps: 6,  sunSteps: 6,  hfN: 64,  P: 16, L: 3, cs: false },
-    med:   { rays: 8,  casc: 2, ms: 1.0, mSteps: 8,  sunSteps: 8,  hfN: 128, P: 24, L: 4, cs: false },
-    high:  { rays: 16, casc: 2, ms: 1.5, mSteps: 10, sunSteps: 12, hfN: 128, P: 32, L: 4, cs: false },
-    ultra: { rays: 16, casc: 2, ms: 2.0, mSteps: 12, sunSteps: 12, hfN: 256, P: 32, L: 4, cs: true },
+  const TIERS = {   // rays per probe update, cascades updated, probe ms budget per frame, march steps (rays), HF sun steps (shader), HF cells, cascade probes (P x P x L), compute allowed,
+    // far-shadow steps (long-range soft shadows from the coarse 8 m field, 1 km window) and its cell count
+    off:   { rays: 0,  casc: 0, ms: 0,   mSteps: 0,  sunSteps: 0,  hfN: 0,   P: 0,  L: 0, cs: false, farSteps: 0, farN: 0 },
+    low:   { rays: 4,  casc: 1, ms: 0.6, mSteps: 6,  sunSteps: 6,  hfN: 64,  P: 16, L: 3, cs: false, farSteps: 0, farN: 0 },
+    med:   { rays: 8,  casc: 2, ms: 1.0, mSteps: 8,  sunSteps: 8,  hfN: 128, P: 24, L: 4, cs: false, farSteps: 4, farN: 64 },
+    high:  { rays: 16, casc: 2, ms: 1.5, mSteps: 10, sunSteps: 12, hfN: 128, P: 32, L: 4, cs: false, farSteps: 6, farN: 128 },
+    ultra: { rays: 16, casc: 2, ms: 2.0, mSteps: 12, sunSteps: 12, hfN: 256, P: 32, L: 4, cs: true,  farSteps: 8, farN: 128 },
   };
+  const FAR_CELL = 8, NEAR_MAX = 64, FAR_MAX = 720;
   const TIER_ORDER = ['off', 'low', 'med', 'high', 'ultra'];
   // ladder level (ui/dm-budget.js stage 'light', 0..3) -> effective parameters.  L1 halves rays/steps and closes the compute path, L2 = 4 rays, one cascade
   // fewer updates and half the update budget, L3 = the cache is frozen (held, still read) and the shader march is short.
@@ -116,13 +148,14 @@
     const b = TIERS[tier] || TIERS.off, e = Object.assign({}, b); lvl = lvl | 0;
     if (!b.rays) return Object.assign(e, { tier, lvl, cs: false, freeze: true });
     e.cs = !!(b.cs && lvl === 0 && headroom); e.freeze = false;
-    if (lvl >= 1) { e.rays = Math.max(4, b.rays >> 1); e.mSteps = Math.max(5, b.mSteps >> 1); e.sunSteps = Math.max(5, (b.sunSteps * 2 / 3) | 0); }
-    if (lvl >= 2) { e.rays = 4; e.casc = Math.max(1, b.casc - 1); e.ms = b.ms * 0.5; e.mSteps = 5; e.sunSteps = Math.max(5, b.sunSteps >> 1); }
-    if (lvl >= 3) { e.freeze = true; e.ms = 0; e.sunSteps = 5; }
+    e.farSteps = b.farSteps;
+    if (lvl >= 1) { e.farSteps = b.farSteps >> 1; e.rays = Math.max(4, b.rays >> 1); e.mSteps = Math.max(5, b.mSteps >> 1); e.sunSteps = Math.max(5, (b.sunSteps * 2 / 3) | 0); }
+    if (lvl >= 2) { e.rays = 4; e.casc = Math.max(1, b.casc - 1); e.ms = b.ms * 0.5; e.mSteps = 5; e.sunSteps = Math.max(5, b.sunSteps >> 1); e.farSteps = b.farSteps >> 2; }
+    if (lvl >= 3) { e.freeze = true; e.ms = 0; e.sunSteps = 5; e.farSteps = Math.min(e.farSteps, 1); }
     e.tier = tier; e.lvl = lvl; return e;
   }
   // relative per-second cost (CPU rays + shader fetches) used by the monotonicity test and the status line
-  function cost(e) { return e.ms * 100 + e.sunSteps * 2 + (e.cs ? 400 : 0) + e.casc * 4; }
+  function cost(e) { return e.ms * 100 + e.sunSteps * 2 + (e.farSteps || 0) * 2 + (e.cs ? 400 : 0) + e.casc * 4; }
   // tier from the device description (GFX in index.html); flag overrides
   function pickTier(g, flag) {
     if (flag && TIERS[flag]) return flag; g = g || {};
@@ -209,7 +242,7 @@
     return outE;   // [bounce r, g, b, sky visibility]
   }
 
-  const core = { Y0, Y1, shProject, shEval, bentNormal, rng, rayDirs, createHF, overlayAt, march, marchBrute, sunVis, sunVisBrute, TIERS, TIER_ORDER, effective, cost, pickTier, createHeadroom, createCascade, neutralProbe, traceProbe, updateCascade, sampleCascade };
+  const core = { FAR_CELL, NEAR_MAX, FAR_MAX, sunVisLong, rasterizeOverlay, hash1, csRayDirs, stepDownTier, bootTier, Y0, Y1, shProject, shEval, bentNormal, rng, rayDirs, createHF, overlayAt, march, marchBrute, sunVis, sunVisBrute, TIERS, TIER_ORDER, effective, cost, pickTier, createHeadroom, createCascade, neutralProbe, traceProbe, updateCascade, sampleCascade };
   if (typeof module !== 'undefined' && module.exports) module.exports = core;
   if (typeof window === 'undefined') return;
 

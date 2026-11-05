@@ -3,7 +3,7 @@
 const assert = require('assert');
 const L = require('../../ui/dm-light.js');
 const B = require('../../ui/dm-budget.js');
-const { Y0, Y1, shProject, shEval, rng, rayDirs, createHF, march, marchBrute, sunVis, sunVisBrute, effective, cost, TIERS, TIER_ORDER, pickTier, createHeadroom, createCascade, updateCascade, sampleCascade } = L;
+const { sunVisLong, rasterizeOverlay, csRayDirs, hash1, stepDownTier, bootTier, FAR_CELL, NEAR_MAX, FAR_MAX, Y0, Y1, shProject, shEval, rng, rayDirs, createHF, march, marchBrute, sunVis, sunVisBrute, effective, cost, TIERS, TIER_ORDER, pickTier, createHeadroom, createCascade, updateCascade, sampleCascade } = L;
 
 // 1. SH: a constant radiance field of 1 gives E/pi = 1 for every normal; the unit-sphere Monte Carlo projection is unbiased
 { const a = new Float64Array(4), R = rng(1), d = new Float32Array(3 * 4096); rayDirs(4096, R(), 0.3, d);
@@ -77,7 +77,7 @@ function mkHF(N, cell, cx, cz, f) { const hf = createHF(N, cell); hf.sampler = f
   const c0 = cc.fresh.length; updateCascade(cc, hf, 30, 0, S, 16, 50, 4000, R); assert(cc.fresh.length === 0 && c0 === 0); }
 
 // 9. tier table: every parameter is monotone non-decreasing off < low < med < high < ultra; the ladder only ever reduces cost; compute path needs ultra + level 0 + headroom
-{ const keys = ['rays', 'casc', 'ms', 'mSteps', 'sunSteps', 'hfN', 'P', 'L']; for (const k of keys) for (let i = 1; i < TIER_ORDER.length; i++) assert(TIERS[TIER_ORDER[i]][k] >= TIERS[TIER_ORDER[i - 1]][k], k + ' monotone over tiers');
+{ const keys = ['rays', 'casc', 'ms', 'mSteps', 'sunSteps', 'hfN', 'P', 'L', 'farSteps', 'farN']; for (const k of keys) for (let i = 1; i < TIER_ORDER.length; i++) assert(TIERS[TIER_ORDER[i]][k] >= TIERS[TIER_ORDER[i - 1]][k], k + ' monotone over tiers');
   for (const t of TIER_ORDER) { let prev = Infinity; for (let lvl = 0; lvl <= 3; lvl++) { const c = cost(effective(t, lvl, true)); assert(c <= prev + 1e-9, t + ' lvl ' + lvl + ' cost ' + c + ' > ' + prev); prev = c; } }
   for (let i = 1; i < TIER_ORDER.length; i++) assert(cost(effective(TIER_ORDER[i], 0, true)) >= cost(effective(TIER_ORDER[i - 1], 0, true)), 'cost over tiers');
   assert(effective('ultra', 0, true).cs && !effective('ultra', 1, true).cs && !effective('ultra', 0, false).cs && !effective('high', 0, true).cs);
@@ -91,4 +91,38 @@ function mkHF(N, cell, cx, cz, f) { const hf = createHF(N, cell); hf.sampler = f
   const h = createHeadroom({ hold: 8 }); let t = 0; for (; t < 7.9; t += 0.1) assert(!h.step(0.1, 0, 14, 50)); assert(h.step(0.1, 0, 14, 50), 'opens after 8 s calm'); assert(h.step(0.1, 0, 14, 50)); assert(!h.step(0.1, 1, 14, 50), 'pressure closes it at once'); for (let i = 0; i < 70; i++) assert(!h.step(0.1, 0, 14, 50) || i >= 79, 'needs a fresh calm period'); console.log('device tiers + headroom gate ok'); }
 // 11. budget ladder carries the light stage in order, monotone, and its steps sit between existing stages
 { assert(B.STAGES.includes('light')); const order = B.LADDER.map(x => x[0]); const li = order.map((s, i) => s === 'light' ? i : -1).filter(i => i >= 0); assert.strictEqual(li.length, 3); for (let i = 0; i < 3; i++) assert.strictEqual(B.LADDER[li[i]][1], i + 1); assert(li[0] < order.indexOf('atmo') && li[2] < order.indexOf('res'), 'light sheds before resolution'); assert(li[0] > order.indexOf('ground'), 'after the cheap parallax/ground sheds'); console.log('ladder light steps at p=' + li.map(i => i + 1)); }
+// 12. long-range soft shadows: a 200 m ridge 300 m away throws a shadow the near field (to 64 m) cannot see; the coarse 8 m field finds it.  vs brute force on a fine field
+{ const ridge = (x, z) => (x > 300 && x < 500 ? 110 + 20 * Math.sin(z * 0.01) : 0) + 6 * Math.sin(x * 0.01) * Math.cos(z * 0.012);
+  const near = mkHF(128, 2, 0, 0, ridge), far = mkHF(128, FAR_CELL, 0, 0, ridge), fine = mkHF(256, 4, 0, 0, ridge), R = rng(21); let agree = 0, tot = 0, shadowed = 0, nearOnlyMiss = 0, found = 0;
+  for (let q = 0; q < 1500; q++) {
+    const x = (R() - 0.5) * 100, z = (R() - 0.5) * 300, y = ridge(x, z) + 0.2, a = 0.05 + R() * 0.35, az = (R() - 0.5) * 0.8, L3 = [Math.cos(a) * Math.cos(az), Math.sin(a), Math.cos(a) * Math.sin(az)];
+    const v = sunVisLong(near, far, x, y, z, L3[0], L3[1], L3[2], 10, 8, NEAR_MAX, FAR_MAX, 0.05, 0.09, 0), b = sunVisBrute(fine, x, y, z, L3[0], L3[1], L3[2], FAR_MAX), vn = sunVis(near, x, y, z, L3[0], L3[1], L3[2], 10, NEAR_MAX, 0.05, 0);
+    tot++; if (b === 0) shadowed++; if ((v < 0.5) === (b === 0)) agree++; if (b === 0 && vn > 0.5) nearOnlyMiss++; if (b === 0 && v < 0.5) found++;
+  }
+  assert(agree / tot >= 0.88, 'long shadow agreement ' + agree / tot); assert(found / shadowed > 0.85, 'recall ' + found / shadowed); assert(shadowed > 100, 'ridge shadows exist ' + shadowed); assert(nearOnlyMiss > 0.8 * shadowed, 'near field alone misses them (' + nearOnlyMiss + '/' + shadowed + ')');
+  // softness: the far penumbra band is wider than the near one for the same grazing geometry
+  const edgeF = (d, pen) => { const f = mkHF(128, FAR_CELL, 0, 0, (x) => (x > d ? 0.55 * d : 0)); let n = 0; for (let y = 0; y < 400; y++) { const v = sunVisLong(null, f, 0, 0.2 + y * 0.1, 0, 0.9, 0.4359, 0, 0, 8, 0, FAR_MAX, 0.05, pen, 0); if (v > 0.05 && v < 0.95) n++; } return n; };
+  assert(edgeF(300, 0.12) > edgeF(300, 0.03), 'penumbra scales with the soft-shadow width'); console.log('long shadows: ' + (100 * agree / tot).toFixed(1) + '% agree with brute force, ' + nearOnlyMiss + '/' + shadowed + ' invisible to the near field'); }
+
+// 13. mansion collision grid -> world-aligned overlay (nav frame x east, y seaward, z up; the mansion group is yawed by th and placed at (px, py0, pz) in the three frame (x, z, -y))
+{ const th = 0.61, px = 140, pz = -75, y0 = 12, c = Math.cos(th), s = Math.sin(th), nx = 40, ny = 30, cell = 2, gx0 = -30, gy0 = -20, g = new Float32Array(nx * ny).fill(0);
+  for (let j = 10; j < 20; j++) for (let i = 14; i < 26; i++) g[j * nx + i] = 9;   // a 24 x 20 m block of 9 m
+  const fwd = (lx, ly, lz) => [px + lx * c - (-ly) * s, y0 + lz, pz + lx * s + (-ly) * c];   // local three (X=lx, Z=-ly) rotated about up by th
+  const inv = (wx, wz) => { const dx = wx - px, dz = wz - pz, X = dx * c + dz * s, Z = -dx * s + dz * c; return [X, -Z]; };
+  const ov = rasterizeOverlay(g, nx, ny, gx0, gy0, cell, fwd, inv, 2, 0.5); let inside = 0, ok = 0, outside = 0, outBad = 0; const R13 = rng(13);
+  for (let q = 0; q < 4000; q++) { const lx = gx0 + R13() * 78, ly = gy0 + R13() * 58, w = fwd(lx, ly, 9), inBlock = lx > gx0 + 14 * cell + 4 && lx < gx0 + 25 * cell - 4 && ly > gy0 + 10 * cell + 4 && ly < gy0 + 20 * cell - 4, h = L.overlayAt(ov, w[0], w[2]);
+    if (inBlock) { inside++; if (Math.abs(h - (y0 + 9)) < 1e-3) ok++; } else if (lx < gx0 + 14 * cell - 4 || lx > gx0 + 25 * cell + 4 || ly < gy0 + 10 * cell - 4 || ly > gy0 + 20 * cell + 4) { outside++; if (h > -1e8) outBad++; } }
+  assert(inside > 100 && ok / inside > 0.98, 'block stamped at the rotated position ' + ok + '/' + inside); assert(outside > 100 && outBad / outside < 0.01, 'no stamp outside the block ' + outBad + '/' + outside);
+  // through the height cache: a wall 9 m proud of flat ground casts a sun shadow that is found by the march
+  const hf = mkHF(128, 2, px, pz, () => y0 - 2); hf.addOverlay(ov); hf.fill(1e9, 1e9, 0); const mid = fwd(gx0 + 20 * cell, gy0 + 15 * cell, 9); assert(Math.abs(hf.h(mid[0], mid[2]) - (y0 + 9)) < 0.2, 'overlay is in the height cache');
+  const sx = mid[0] - 22, v = sunVis(hf, sx, y0 - 1.9, mid[2], 0.8, 0.45, 0, 12, 64, 0.03, 0), vFree = sunVis(hf, sx, y0 - 1.9, mid[2], -0.8, 0.45, 0, 12, 64, 0.03, 0); assert(v < 0.3 && vFree > 0.9, 'building shadow ' + v + ' vs ' + vFree); console.log('mansion overlay: ' + ok + '/' + inside + ' stamped, shadow ' + v.toFixed(2) + ' / free ' + vFree.toFixed(2)); }
+
+// 14. compute-path rays: unit, stratified per frame, uniform over frames; the GPU hash is the same function
+{ const d = new Float32Array(12), sum = [0, 0, 0]; let n = 0; for (let f = 0; f < 200; f++) for (let p = 0; p < 6; p++) { csRayDirs(4, p, f, d); for (let i = 0; i < 4; i++) { assert(Math.abs(Math.hypot(d[i * 3], d[i * 3 + 1], d[i * 3 + 2]) - 1) < 1e-5); sum[0] += d[i * 3]; sum[1] += d[i * 3 + 1]; sum[2] += d[i * 3 + 2]; n++; } }
+  assert(Math.hypot(...sum) / n < 0.05, 'mean direction ~ 0: ' + Math.hypot(...sum) / n); const a = new Float32Array(12), b = new Float32Array(12); csRayDirs(4, 3, 10, a); csRayDirs(4, 3, 11, b); assert(a.some((v, i) => Math.abs(v - b[i]) > 0.01), 'a new set each frame'); assert(hash1(5.5) >= 0 && hash1(5.5) < 1);
+  // 4 rays / frame x EMA(1-(15/16)^4) converges like 16-ray CPU updates: after 12 frames the skyVis(up) of an open probe over flat ground is within 0.08 of 1
+  const flat = mkHF(64, 2, 0, 0, () => 0), cc = createCascade(4, 2, 4, 2.5), S = { hf: flat, sun: [0, 1, 0], sunI: [0, 0, 0, 0], skyI: [1, 1, 1], albedo: [0.5, 0.5, 0.5], maxD: 40, mSteps: 8, sunSteps: 6, lamps: null, lampK: 0 };
+  console.log('csRayDirs unit / stratified / unbiased'); }
+// 15. boot fallback: a boot that died while compiling steps down one tier; a clean boot keeps it
+{ assert.strictEqual(stepDownTier('ultra'), 'high'); assert.strictEqual(stepDownTier('high'), 'med'); assert.strictEqual(stepDownTier('med'), 'low'); assert.strictEqual(stepDownTier('low'), 'off'); assert.strictEqual(bootTier('ultra', null), 'ultra'); assert.strictEqual(bootTier('ultra', { pend: true, tier: 'ultra' }), 'high'); assert.strictEqual(bootTier('ultra', { pend: true, tier: 'high' }), 'med'); assert.strictEqual(bootTier('high', { pend: false, tier: 'high' }), 'high'); console.log('boot fallback ladder ok'); }
 console.log('light-unit OK');
