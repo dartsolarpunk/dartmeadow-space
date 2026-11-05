@@ -267,18 +267,19 @@
     if (!o.depthOK) opacity = F(Math.min(0.93, opBase)).add(foam.mul(0.07));
 
     // view vector, Fresnel sky reflection, subsurface crest tint, sun glint sparkle
+    let sunUpL = U.sunUp; try { const DL = W.DMLight, sv = DL && DL.on && DL.sunVisNode ? DL.sunVisNode(T.positionWorld) : null; if (sv) sunUpL = U.sunUp.mul(sv); } catch (e) { }   // (ui/dm-light.js) mountain / cliff / building shadows fall on the sea: glint, subsurface and caustics follow the height-cache sun visibility
     const nWf = nW;
     const Vd = normalize(cameraPosition.sub(vec3(flatP.x, F(0), flatP.z)));
     const nd = max(dot(nWf, Vd), 0.0), Fr = float(0.02).add(float(0.98).mul(pow(float(1.0).sub(nd), 5.0))).mul(float(1.0).sub(foam)).mul(float(1.0).sub(iceM.mul(0.6)));
     const R = reflect(Vd.negate(), nWf), ry = clamp(R.y, 0.0, 1.0), skyC = mix(U.skyHor, U.skyTop, pow(ry, 0.45)), envOn = (o.envMap ? 0.35 : 1.0) * P.sky;
-    const sunD = max(dot(R, U.sunDir), 0.0), glint = pow(sunD, 900.0).mul(60.0).add(pow(sunD, 60.0).mul(1.6)).mul(U.sunUp).mul(float(1.0).sub(foam)).mul(float(1.0).sub(iceM.mul(0.7))).mul(smoothstep(0.0, 0.35, ry.add(0.02)));
+    const sunD = max(dot(R, U.sunDir), 0.0), glint = pow(sunD, 900.0).mul(60.0).add(pow(sunD, 60.0).mul(1.6)).mul(sunUpL).mul(float(1.0).sub(foam)).mul(float(1.0).sub(iceM.mul(0.7))).mul(smoothstep(0.0, 0.35, ry.add(0.02)));
     const emissiveParts = [skyC.mul(Fr).mul(envOn), U.sunCol.mul(glint).mul(Fr.mul(0.7).add(0.3)).mul(tier.glint ? 1.0 : 0.0)];
     emissiveParts.push(U.foamCol.mul(foam).mul(U.sunUp.mul(0.4).add(0.14)));     // foam is lit by the whole sky, not just the key light
     let sssAmt = F(0);
     if (tier.sss && P.sss > 0.05 && !isLava) {
       const Ld = normalize(U.sunDir.add(nWf.mul(0.22))), s1 = pow(clamp(dot(Vd, Ld.negate()), 0.0, 1.0), 4.0), s2 = pow(clamp(float(0.5).sub(dot(nWf, U.sunDir).mul(0.5)), 0.0, 1.0), 3.0);
       const crest = smoothstep(-0.05, 0.6, hgt.div(Math.max(0.6, P.HsTotal * 0.55))).mul(float(0.35).add(slopeMag.mul(1.6).min(0.65)));
-      sssAmt = s1.add(s2.mul(0.35)).mul(crest).mul(U.sunUp.mul(0.85).add(0.15)).mul(float(1.0).sub(foam)).mul(P.sss).mul(float(1.0).sub(U.under));
+      sssAmt = s1.add(s2.mul(0.35)).mul(crest).mul(sunUpL.mul(0.85).add(0.15)).mul(float(1.0).sub(foam)).mul(P.sss).mul(float(1.0).sub(U.under));
       emissiveParts.push(U.scatter.mul(sssAmt).mul(1.15));
     }
     // caustics on the shallow bed: the baked tile, two scrolled copies, projected along the sun through the surface
@@ -286,7 +287,7 @@
       const bedV = positionView.mul(sceneZ.div(positionView.z)), bedW = cameraWorldMatrix.mul(vec4(bedV, 1.0)).xyz, dep = clamp(bedW.y.negate(), 0.0, 40.0);
       const L = U.sunDir, off = vec2(L.x, L.z).div(max(L.y, 0.3)).mul(dep.mul(0.75)), cuv = bedW.xz.add(off).add(slope.mul(dep.mul(1.2))), t = U.time;
       const ca = texture(tex.caustic, cuv.mul(0.075).add(vec2(t.mul(0.011), t.mul(0.007)))).rgb, cb = texture(tex.caustic, rot(cuv, 0.9).mul(0.0521).add(vec2(t.mul(-0.009), t.mul(0.013)))).rgb;
-      const cc = min(ca, cb).mul(2.1), amt = U.sunUp.mul(exp(dep.mul(-0.16))).mul(smoothstep(0.05, 0.8, dep)).mul(float(1.0).sub(foam)).mul(float(1.0).sub(opacity)).div(max(opacity, 0.28)).mul(U.lvl.mul(0.5).add(0.5)).mul(mix(F(0.7), F(1.3), regD));
+      const cc = min(ca, cb).mul(2.1), amt = sunUpL.mul(exp(dep.mul(-0.16))).mul(smoothstep(0.05, 0.8, dep)).mul(float(1.0).sub(foam)).mul(float(1.0).sub(opacity)).div(max(opacity, 0.28)).mul(U.lvl.mul(0.5).add(0.5)).mul(mix(F(0.7), F(1.3), regD));
       emissiveParts.push(cc.mul(U.sunCol).mul(amt).mul(0.7));
     }
     // glow: Solenne's bioluminescence (crests, foam edges and the wake pulse at dusk and night) and lava's melt

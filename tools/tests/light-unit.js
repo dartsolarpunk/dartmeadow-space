@@ -3,7 +3,7 @@
 const assert = require('assert');
 const L = require('../../ui/dm-light.js');
 const B = require('../../ui/dm-budget.js');
-const { sunVisLong, rasterizeOverlay, csRayDirs, hash1, stepDownTier, bootTier, FAR_CELL, NEAR_MAX, FAR_MAX, Y0, Y1, shProject, shEval, rng, rayDirs, createHF, march, marchBrute, sunVis, sunVisBrute, effective, cost, TIERS, TIER_ORDER, pickTier, createHeadroom, createCascade, updateCascade, sampleCascade } = L;
+const { sunVisLong, rasterizeOverlay, csRayDirs, hash1, stepDownTier, bootTier, capTier, FAR_CELL, NEAR_MAX, FAR_MAX, Y0, Y1, shProject, shEval, rng, rayDirs, createHF, march, marchBrute, sunVis, sunVisBrute, effective, cost, TIERS, TIER_ORDER, pickTier, createHeadroom, createCascade, updateCascade, sampleCascade } = L;
 
 // 1. SH: a constant radiance field of 1 gives E/pi = 1 for every normal; the unit-sphere Monte Carlo projection is unbiased
 { const a = new Float64Array(4), R = rng(1), d = new Float32Array(3 * 4096); rayDirs(4096, R(), 0.3, d);
@@ -124,5 +124,5 @@ function mkHF(N, cell, cx, cz, f) { const hf = createHF(N, cell); hf.sampler = f
   const flat = mkHF(64, 2, 0, 0, () => 0), cc = createCascade(4, 2, 4, 2.5), S = { hf: flat, sun: [0, 1, 0], sunI: [0, 0, 0, 0], skyI: [1, 1, 1], albedo: [0.5, 0.5, 0.5], maxD: 40, mSteps: 8, sunSteps: 6, lamps: null, lampK: 0 };
   console.log('csRayDirs unit / stratified / unbiased'); }
 // 15. boot fallback: a boot that died while compiling steps down one tier; a clean boot keeps it
-{ assert.strictEqual(stepDownTier('ultra'), 'high'); assert.strictEqual(stepDownTier('high'), 'med'); assert.strictEqual(stepDownTier('med'), 'low'); assert.strictEqual(stepDownTier('low'), 'off'); assert.strictEqual(bootTier('ultra', null), 'ultra'); assert.strictEqual(bootTier('ultra', { pend: true, tier: 'ultra' }), 'high'); assert.strictEqual(bootTier('ultra', { pend: true, tier: 'high' }), 'med'); assert.strictEqual(bootTier('high', { pend: false, tier: 'high' }), 'high'); console.log('boot fallback ladder ok'); }
+{ assert.strictEqual(stepDownTier('ultra'), 'high'); assert.strictEqual(stepDownTier('high'), 'med'); assert.strictEqual(stepDownTier('med'), 'low'); assert.strictEqual(stepDownTier('low'), 'off'); assert.strictEqual(bootTier('ultra', null), 'ultra'); assert.strictEqual(bootTier('ultra', { pend: true, tier: 'ultra' }), 'high'); assert.strictEqual(bootTier('ultra', { pend: true, tier: 'high' }), 'med'); assert.strictEqual(bootTier('high', { pend: false, tier: 'high' }), 'high'); assert.strictEqual(capTier('ultra', 'med'), 'med'); assert.strictEqual(capTier('low', 'med'), 'low'); assert.strictEqual(capTier('high', null), 'high'); console.log('boot fallback ladder ok'); }
 console.log('light-unit OK');
