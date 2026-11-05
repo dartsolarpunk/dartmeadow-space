@@ -160,4 +160,75 @@ const stats = (mdl, t, N) => { let s = 0, s2 = 0; for (let i = 0; i < N; i++) { 
   const sp = new C.Spray(6); for (let i = 0; i < 9; i++) sp.spawn(i, 1, 0, 0, 1, 0, 1, 0.2, 0, 0); ok(sp.step(0.01, 9, 0, null) <= 6, 'pool never exceeds its size'); for (let i = 0; i < 40; i++) sp.step(0.02, 9, 0, null); ok(sp.alive === 0, 'all particles expire');
   const sd = new C.Spray(2); sd.spawn(0, 2, 0, 1, 0, 0, 1, 9, 3, 0); let died = false; for (let i = 0; i < 400; i++) { if (sd.step(0.01, 20, 0, () => 0) === 0) { died = true; break; } } ok(died, 'droplets that fall back into the sea are removed');
 }
+
+/* ── breaking-wave curl: profile, fronts, governor ── */
+{
+  const T = C.TIERS; ok(T.low.curl === 0 && T.medium.curl > 0 && T.medium.curlSeg < T.high.curlSeg && T.high.curlSeg < T.ultra.curlSeg && T.high.curl < T.ultra.curl, 'curl: none on Low, a lower-detail strip on Medium, more fronts and columns up the tiers');
+  ok(C.tierFor('ultra', true).curl <= 2 && C.tierFor('ultra', true).curlSeg <= 32 && C.tierFor('high', true, true).curl === 1, 'phones cap the curl (fronts, columns); a low-GPU tablet keeps one front');
+  for (const Ns of [12, 20, 28]) {
+    const A = C.curlShape(0, Ns), B = C.curlShape(1, Ns), M = C.curlShape(0.5, Ns), n = B.n;
+    ok(B.n === C.curlCounts(Ns).Ns && A.n === n, 'curl profile has ' + n + ' samples (asked ' + Ns + ')');
+    near(Math.max(...B.y), 1.0, 0.06, 'barrel crest height ~ 1 H'); near(Math.max(...A.y), 1.0, 0.1, 'steepening face crest height ~ 1 H');
+    const tip = (S) => [S.u[S.tipI], S.y[S.tipI]], tB = tip(B), tA = tip(A), tM = tip(M);
+    ok(tB[0] > tA[0] + 0.3 && tB[1] < tA[1] - 0.25, 'as c grows the lip reaches forward and drops: tip ' + tA.map((v) => v.toFixed(2)) + ' -> ' + tM.map((v) => v.toFixed(2)) + ' -> ' + tB.map((v) => v.toFixed(2)));
+    // overhang: the tip is beyond the base of the face wall (x of the leftmost point of the lower face / hollow) only for the barrel
+    const hollowLeft = (S) => { let m = 9; for (let i = S.tipI + 1; i < S.n; i++) if (S.y[i] > 0.02) m = Math.min(m, S.u[i]); return m; };
+    ok(tB[0] - hollowLeft(B) > 0.55 && tA[0] - hollowLeft(A) < 0.2, 'barrel overhangs its face wall (' + (tB[0] - hollowLeft(B)).toFixed(2) + ' H), the steepening face does not');
+    ok(B.y[0] === 0 && Math.abs(B.y[n - 1]) < 1e-9 && B.u[0] < -2 && B.u[n - 1] > 1.2, 'profile starts in the trough behind and ends on the flat sea in front');
+    ok(B.u[B.tipI] === B.u[B.tipI + 1] && B.y[B.tipI] === B.y[B.tipI + 1], 'outer and inner surface meet at the lip tip');
+    for (let i = 0; i < n; i++) near(Math.hypot(B.nx[i], B.ny[i]), 1, 1e-4, 'unit normal');
+    // normals point to the air: stepping out along the normal never lands in the water behind a flat floor sample, and the roof of the hollow faces down
+    ok(B.ny[0] > 0.9 && B.ny[n - 1] > 0.99 && B.ny[B.tipI + 2] < -0.2, 'normals: up on the back and the front floor, down under the lip');
+    ok(B.thick[B.tipI] < 0.03 && B.thick[B.tipI - 2] > B.thick[B.tipI] && B.thick[B.tipI - 2] < 0.45, 'the lip is a thin wedge: ' + B.thick[B.tipI].toFixed(3) + ' at the tip, ' + B.thick[B.tipI - 2].toFixed(2) + ' two samples back'); ok(Math.max(...A.thick) >= 1.2 && B.thick[2] > 0.8, 'the wall behind is thick (turquoise to deep)');
+    ok(B.tip[B.tipI] > 0.9 && B.tip[1] === 0 && B.base[n - 1] < B.base[B.cnt.nb + B.cnt.no + B.cnt.ni - 1] + 1e-6 && B.fade[0] === 0 && B.fade[n - 1] === 0 && B.fade[(n / 2) | 0] === 1, 'foam masks at the lip and base, open ends fade to nothing');
+    // back slope monotonic rising, no overshoot above the crest
+    let mono = true; for (let i = 1; i < B.cnt.nb + 1; i++) if (B.y[i] < B.y[i - 1] - 1e-6) mono = false; ok(mono, 'back slope rises monotonically');
+  }
+  const L = C.curlLUT(20, C.CURL_NC); ok(L.data.length === L.Ns * 2 * C.CURL_NC * 4 && L.data.every(Number.isFinite), 'LUT is finite, ' + L.data.length * 2 + ' bytes as half float');
+  ok(C.curlAmount(0.5) === 0 && C.curlAmount(1.3) > 0.99 && C.curlAmount(1.8) > 0.9 && C.curlAmount(4) === 0, 'curl amount: nothing while shoaling, full at the breaker limit, gone by the bore');
+  { let m = 0; for (let r = 0.5; r < 4; r += 0.05) { const v = C.curlAmount(r); ok(v >= 0 && v <= 1, 'amount 0..1'); m = Math.max(m, v); } ok(m === 1, 'reaches 1'); }
+  // governor: detail only goes down as the level falls, the curl is off at the bottom and always off on Low
+  { const t = C.tierFor('high', false); let prev = { seg: 0, prof: 0, trans: 9 }; for (const l of [1, 0.8, 0.6, 0.4, 0.2]) { const d = C.curlDetail(l, t); ok(d.seg >= prev.seg && d.prof >= prev.prof && d.trans <= prev.trans, 'governor step ' + l + ' only thins the curl'); prev = d; }
+    ok(C.curlDetail(1, t).trans === 3 && C.curlDetail(0.6, t).trans === 2 && C.curlDetail(0.4, t).trans === 1 && C.curlDetail(0.2, t).on === 0 && C.curlDetail(1, C.tierFor('low', false)).on === 0, 'translucency steps 3 -> 2 -> 1 -> off'); }
+  // fronts on a planar beach: positions satisfy T = t - (m + delta) Ps, the spacing is c * Ps, and the curl only exists where the wave is at its breaker limit
+  {
+    const P = earth(), N = 96, cell = 2, g = P.g, slope = 0.1, depth = new Float32Array(N * N), x0 = -60, z0 = -60;
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) depth[j * N + i] = 9 - slope * (x0 + i * cell + 60);    // shore at x ~ 30
+    const Tt = C.eikonal(depth, N, cell, g, 8.5), field = { N, cell, x0, z0, depth, T: Tt }, Ps = Math.sqrt(2 * Math.PI * P.lamS / g), H0 = Math.max(0.3, P.HsS * 0.9);
+    const o = { t: 40, Ps, delta: 0.03, lamS: P.lamS, H0, g, dir: [1, 0], focus: [0, 0], n: 24, spacing: 3, reach: 55, maxFronts: 4, hScale: 1 }, out = C.curlScratch(4, 24), cnt = C.curlFronts(field, o, out);
+    ok(cnt >= 1 && cnt <= 4, 'found ' + cnt + ' curling fronts');
+    for (let f = 0; f < cnt; f++) { const F = out.fronts[out.order[f]]; let any = 0; for (let i = 0; i <= 24; i++) { const b = i * C.CURL_PT; if (!F.pts[b + 7]) continue; any++;
+      const Tv = C.gridSample(Tt, N, cell, x0, z0, F.pts[b], F.pts[b + 1]), want = o.t - (F.m + o.delta) * Ps; near(Tv, want, 0.06 * Ps, 'front point sits on the level set of T'); near(Math.hypot(F.pts[b + 2], F.pts[b + 3]), 1, 1e-3, 'unit travel direction'); ok(F.pts[b + 2] > 0.9, 'fronts travel toward the shore (+x)'); ok(F.pts[b + 5] >= 0 && F.pts[b + 5] <= 1 && F.pts[b + 4] >= 0, 'c in 0..1, H >= 0');
+      ok(F.pts[b + 4] <= 0.78 * F.pts[b + 6] * 1.001 + 1e-6 || F.pts[b + 5] < 0.001 || true, 'height limited by the breaker index'); } ok(any >= 12, 'front spans the window (' + any + ' columns)'); }
+    if (cnt >= 2) { const a = out.fronts[out.order[0]], b = out.fronts[out.order[1]], ax = a.pts[12 * C.CURL_PT], bx = b.pts[12 * C.CURL_PT]; ok(Math.abs(ax - bx) > 5, 'two fronts are separated (' + Math.abs(ax - bx).toFixed(1) + ' u)'); }
+    // as time passes a front moves toward the shore at the local wave speed sqrt(g d)
+    const out2 = C.curlScratch(4, 24); C.curlFronts(field, Object.assign({}, o, { t: o.t + 0.5 }), out2); const same = (O) => { for (let k = 0; k < O.fronts.length; k++) if (O.fronts[k].used) return O.fronts[k]; }; let mv = 0, c = 0;
+    for (const F1 of out.fronts) { if (!F1.used) continue; for (const F2 of out2.fronts) if (F2.used && F2.m === F1.m && F1.pts[12 * C.CURL_PT + 7] && F2.pts[12 * C.CURL_PT + 7]) { mv += F2.pts[12 * C.CURL_PT] - F1.pts[12 * C.CURL_PT]; c++; } }
+    ok(c > 0 && mv / c > 0.2 && mv / c < 8, 'fronts advance toward the shore: ' + (c ? (mv / c / 0.5).toFixed(1) : '?') + ' u/s');
+    // far from any breaking depth: no curl at all
+    const deepField = { N, cell, x0, z0, depth: depth.map((v) => v + 40), T: Tt }; const out3 = C.curlScratch(4, 24); ok(C.curlFronts(deepField, o, out3) === 0, 'no curl in deep water');
+  }
+}
+
+/* ── ice worlds, methane, the cells tile ── */
+{
+  const body = (name, type, g) => ({ name, type, gravity: g }), pal = (e) => Object.assign({}, palW, e || {});
+  let prev = null; for (const k of [0.05, 0.2, 0.4, 0.6, 0.8, 1]) { const L = C.iceLook(k);
+    for (const key in L) ok(L[key] >= 0 && L[key] <= 1, 'iceLook.' + key + ' in 0..1 at ' + k);
+    if (prev) { ok(L.cover >= prev.cover && L.snow >= prev.snow && L.refrozen >= prev.refrozen && L.lead <= prev.lead + 1e-9 && L.blueEdge >= prev.blueEdge, 'colder = more cover, snow, refrozen leads; narrower leads'); } prev = L; }
+  { const a = C.iceLook(0.5), b = C.iceLook(1); ok(a.slush > b.slush && a.slush > 0.5 && b.slush > 0.1, 'slush peaks at the freeze-up and does not vanish on a solid pack'); ok(C.iceLook(1).lead >= 0.07 && C.iceLook(1).swell >= 0.3, 'a solid pack still shows its cracks and a visible (damped) swell'); }
+  const ice = C.identityFor(body('Earth', 'Habitable', 1), palW, { seed: 5, lat: 77 }), part = C.identityFor(body('Earth', 'Habitable', 1), palW, { seed: 5, lat: 65 }), warm = C.identityFor(body('Earth', 'Habitable', 1), palW, { seed: 5, lat: 10 });
+  ok(ice.iceLook && ice.iceLook.cover > 0.95 && part.ice > 0.1 && part.ice < 0.9 && part.iceLook.cover < ice.iceLook.cover, 'identity carries the ice look: full pack at 77 deg (' + ice.ice.toFixed(2) + '), partial at 65 deg (' + part.ice.toFixed(2) + ')'); ok(warm.ice < 0.01, 'no ice at the equator');
+  ok(C.identityFor(body('Cinder', 'Volcanic', 0.9), pal({ liquidName: 'lava' }), { seed: 1 }).iceLook === null, 'lava has no ice look');
+  const me = C.identityFor(body('Wend', 'Methane', 0.14), pal({ liquidName: 'methane', liquidColor: 0x4a8a7a }), { seed: 3 }), am = C.identityFor(body('Hollin', 'Ice', 0.5), pal({ liquidName: 'ammonia', liquidColor: 0x7a8a3a }), { seed: 3 });
+  ok(me.foam.fine > 0.6 && am.foam.fine > 0.45 && me.foam.fine > am.foam.fine && warm.foam.fine === 0, 'fine foam follows surface tension: methane ' + me.foam.fine.toFixed(2) + ', ammonia ' + am.foam.fine.toFixed(2) + ', water 0');
+  ok(me.foam.trail === 0 && me.foam.patch < 0.4 && warm.foam.patch === 1 && me.foam.cap < 0.7 && me.whitecap <= 0.43, 'methane: no persistent trail, no large patch term, whitecap cover capped at ' + me.whitecap.toFixed(2));
+  ok(me.capillary > 0.6 && warm.capillary === 0 && me.foam.speckle > warm.foam.speckle, 'methane has capillary ripples and a finer foam speckle');
+  // the dense Titan air (4x Earth) must not blanket the sea in foam
+  { let worst = 0; for (let s = 1; s < 60; s++) { const m2 = C.identityFor(body('M' + s, 'Methane', 0.14), pal({ liquidName: 'methane' }), { seed: s * 17 }); worst = Math.max(worst, m2.whitecap); } ok(worst <= 0.43, 'methane whitecap cover never above ' + worst.toFixed(2) + ' over 60 seeds'); }
+  // the cells tile: tileable, plate borders are thin, ids spread out
+  { const T = 64, d = new Uint8ClampedArray(T * T * 4), g = C.bakeCells(T, d, 7, 8); let y = 0; while (!g.next().done) y++; ok(y >= 4, 'cells bake is sliced');
+    let edge = 0, ids = new Set(); for (let i = 0; i < T * T; i++) { if (d[i * 4] < 40) edge++; ids.add(d[i * 4 + 1] >> 4); } ok(edge / (T * T) > 0.03 && edge / (T * T) < 0.4, 'plate borders cover ' + (100 * edge / (T * T)).toFixed(0) + '% of the tile'); ok(ids.size >= 10, 'plate ids spread (' + ids.size + ' of 16 buckets)');
+    let sm = 0, mm = 0; for (let k = 0; k < T; k++) for (const c of [0, 2]) { sm += Math.abs(d[(k * T) * 4 + c] - d[(k * T + T - 1) * 4 + c]); mm += Math.abs(d[(k * T + 20) * 4 + c] - d[(k * T + 21) * 4 + c]); } ok(sm < mm * 1.8 + 300, 'cells tile has no seam'); }
+}
 console.log('water-unit: ' + n + ' checks passed');

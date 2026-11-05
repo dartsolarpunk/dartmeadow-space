@@ -39,6 +39,8 @@ Use: **code** = code or tables included (licence terms apply) · **technique** =
 - **Fast sweeping method for eikonal equations** — Hongkai Zhao (Mathematics of Computation, 2005). *Published paper* (technique). Coastal wave travel-time field for shoaling and breaking.
   <https://doi.org/10.1090/S0025-5718-04-01678-3>
 - **Moana ocean (Splash solver, Hyperion)** — Walt Disney Animation Studios. *Concept only* (inspiration). Look reference only; no assets or code used.
+- **Practical Real-Time Hex-Tiling** — Morten S. Mikkelsen (2022). *Published paper* (technique). The stochastic triangle-lattice blend that breaks up the repeat of the foam tile (`ui/dm-water-sea.js`, High / Ultra, near the camera).
+- **Moana baby-wave scene (glassy turquoise curling wave)** — Walt Disney Animation Studios. *Concept only* (look reference). The breaking-wave curl (`ui/dm-water-curl.js`) is our own parametric barrel profile, thin-lip transmission and spray; no assets or code used.
   <https://disneyanimation.com/technology/hyperion/>
 - **Avatar: The Way of Water** — Wētā FX. *Concept only* (inspiration). Look reference only; no assets or code used.
   <https://www.wetafx.co.nz/>

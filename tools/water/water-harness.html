@@ -2,7 +2,7 @@
 <script type="importmap">{"imports":{"three":"/three/build/three.webgpu.js","three/webgpu":"/three/build/three.webgpu.js","three/tsl":"/three/build/three.tsl.js"}}</script>
 <script type="module">
 // Headless render of the REAL water modules (ui/dm-water*.js) over a stand-in beach. Software GL (WebGL2 backend of WebGPURenderer).
-// ?world=earth|solenne|methane|ice|lava|lowg  ?tier=low|medium|high|ultra  ?mob=1  ?view=wide|beach|low|surf|under|top|swell  ?t=seconds  ?night=1  ?sun=elevation(0..1)  ?px=1 (no depth)
+// ?world=earth|solenne|methane|ice|lava|lowg|ammonia  ?tier=low|medium|high|ultra  ?mob=1  ?view=wide|beach|low|surf|under|top|swell|curl|curl2|curlside  ?t=seconds  ?night=1  ?sun=elevation(0..1)  ?px=1 (no depth)
 const Q=new URLSearchParams(location.search), q=(k,d)=>Q.get(k)??d;
 import * as TH from 'three/webgpu'; import * as TSL from 'three/tsl';
 const THREE=Object.assign({},TH); THREE.TSL=TSL; window.THREE=THREE; Object.assign(window,TSL);
@@ -12,7 +12,7 @@ const sunEl=+q('sun',0.55), sunAz=0.6;
 const sunPos=new TH.Vector3(Math.cos(sunAz)*Math.cos(sunEl*1.2)*100,Math.sin(sunEl*1.2)*100,Math.sin(sunAz)*Math.cos(sunEl*1.2)*100);
 window.TERRAIN={sun:{position:sunPos,target:{position:new TH.Vector3()},color:new TH.Color(1,0.95,0.85),intensity:2.4}};
 await import('../../ui/dm-water-core.js'); await import('../../ui/dm-water.js'); await import('../../ui/dm-water-sea.js'); window.DM_WATER_SHEET='/repo/assets/water/spray-sheet.webp';
-try{ await import('../../ui/dm-water-fx.js'); }catch(e){ console.log('fx not present',String(e).slice(0,80)); }
+try{ await import('../../ui/dm-water-curl.js'); await import('../../ui/dm-water-fx.js'); }catch(e){ console.log('fx not present',String(e).slice(0,80)); }
 const r=new TH.WebGPURenderer({canvas:document.getElementById('c'),forceWebGL:true,antialias:false}); await r.init(); window.flightRenderer=r;
 const worlds={
  earth:{body:{name:'Earth',type:'Habitable',gravity:1},pal:{water:true,liquidColor:0x1a4a7a,atmos:true,sky:[0x88bbff,0x9ec4e8]}},
@@ -20,6 +20,7 @@ const worlds={
  methane:{body:{name:'Wend',type:'Methane',gravity:0.14},pal:{water:true,liquidColor:0x4a8a7a,liquidName:'methane',atmos:true,sky:[0xc99a5a,0x8a6a3a]}},
  ice:{body:{name:'Earth',type:'Habitable',gravity:1},pal:{water:true,liquidColor:0x1a4a7a,atmos:true,sky:[0xbcd8ee,0x88aacc]},lat:77},
  lava:{body:{name:'Cinder',type:'Volcanic',gravity:0.9},pal:{water:true,liquidColor:0xff5a10,liquidName:'lava',atmos:true,sky:[0x70302a,0x401815]}},
+ ammonia:{body:{name:'Hollin',type:'Ice',gravity:0.5},pal:{water:true,liquidColor:0x7a8a3a,liquidName:'ammonia',atmos:true,sky:[0xd8c890,0xb8a870]}},
  lowg:{body:{name:'Lowg',type:'Ocean',gravity:0.3},pal:{water:true,liquidColor:0x1a4a7a,atmos:true,sky:[0x7ab0e0,0x8ec0e0]}}
 };
 const W0=worlds[q('world','earth')];
@@ -34,7 +35,7 @@ const gg=new TH.PlaneGeometry(600,420,300,210); gg.rotateX(-Math.PI/2); gg.trans
 for(let i=0;i<pa.count;i++){ const x=pa.getX(i), z=pa.getZ(i), h=H(x,z); pa.setY(i,h); const sand=h>0.1; const k=sand?0.5+0.1*Math.sin(x*0.3)*Math.sin(z*0.27):0.25; cols[i*3]=sand?0.78*k*1.5:0.35*k; cols[i*3+1]=sand?0.68*k*1.5:0.33*k; cols[i*3+2]=sand?0.5*k*1.5:0.28*k; }
 gg.setAttribute('color',new TH.BufferAttribute(cols,3)); gg.computeVertexNormals();
 const gm=new TH.MeshStandardNodeMaterial({vertexColors:true,roughness:0.95}); gm.colorNode=TSL.vertexColor(); gm.roughnessNode=TSL.float(0.95);
-const P=DMWater.begin(Object.assign({refMs:400,seed:11,lat:+(W0.lat||10)},W0));
+const P=DMWater.begin(Object.assign({refMs:400,seed:11},W0,{lat:+q('lat',W0.lat||10)}));
 DMWater.receiveShore(gm,{p:TSL.positionWorld});
 const ground=new TH.Mesh(gg,gm); sc.add(ground);
 const sea=new TH.Mesh(new TH.BufferGeometry(),null); sea.renderOrder=1;
@@ -42,8 +43,8 @@ const mat=DMWater.material({opacity:0.82,depthOK:q('px')!=='1',logDepth:false});
 sea.material=mat; DMWater.attachSea(sea,4096); sc.add(sea);
 DMWater.bakeNow();
 let t=0; const view=q('view','wide'), simT=+q('t',6);
-const camPos={wide:[-120,14,-60],beach:[8,5,40],low:[-30,2.2,10],surf:[20,6,-40],under:[0,-3,0],top:[0,160,0],swell:[-300,26,-100],close:[-10,3,6],ride:[-60,3.2,-33],wade:[30,2.6,-6],shafts:[-30,-5,0]}[view]||[-120,14,-60];
-const look={wide:[40,0,0],beach:[55,0,-10],low:[40,1,0],surf:[58,0,10],under:[40,0,0],top:[0,0,0.01],swell:[0,0,40],close:[40,0,10],ride:[-34,0,-20],wade:[46,0,6],shafts:[24,-0.5,14]}[view];
+const camPos={wide:[-120,14,-60],beach:[8,5,40],low:[-30,2.2,10],surf:[20,6,-40],under:[0,-3,0],top:[0,160,0],swell:[-300,26,-100],close:[-10,3,6],ride:[-60,3.2,-33],curl:[22,2.2,-14],curl2:[24,1.2,8],curlside:[26,2.4,-34],curl3:[2,4.5,-50],curl4:[30,1.8,-52],curl5:[57,2.2,-6],wade:[30,2.6,-6],shafts:[-30,-5,0]}[view]||[-120,14,-60];
+const look={wide:[40,0,0],beach:[55,0,-10],low:[40,1,0],surf:[58,0,10],under:[40,0,0],top:[0,0,0.01],swell:[0,0,40],close:[40,0,10],ride:[-34,0,-20],curl:[44,1.2,0],curl2:[48,1.4,16],curlside:[46,1.2,2],curl3:[40,0.5,-6],curl4:[46,1.0,0],curl5:[30,0.8,-6],wade:[46,0,6],shafts:[24,-0.5,14]}[view];
 cam.position.set(...camPos); cam.lookAt(...look);
 // advance the simulation clock (and the shore field slices) before the shot
 for(let i=0;i<Math.round(simT/0.05)+120;i++){ DMWater.follow(cam.position.x,cam.position.z); DMWater.tick(0.05,{camera:cam,scene:sc,x:(cam.position.x+look[0])/2,z:(cam.position.z+look[2])/2,H,mode:'cam'}); }

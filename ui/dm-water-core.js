@@ -21,6 +21,7 @@
   const PI2 = Math.PI * 2;
   const UNIT_M = 0.561;                       // metres per scene unit (Ariel is 3.26 u = 1.83 m)
   const G0 = 9.81 / UNIT_M;                   // Earth gravity in scene units / s^2
+  const CURL_NC = 8;                           // curl profile LUT rows (curl amount 0..1)
 
   function hashStr(s) { let h = 2166136261; s = String(s); for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
   function rng(seed) { let a = (seed | 0) || 1; return () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
@@ -39,10 +40,10 @@
   /* ───────────────────────────── 1. tiers ───────────────────────────── */
   // T: band tile texels; layers: taps per band; grid: clip-map (n cells per level, finest cell c0); disp: vertex displacement radius (0 = flat mesh)
   const TIERS = {
-    low:    { bands: 1, T: [96],              layers: 1, grid: { n: 32, c0: 2.0 }, disp: 0,   shore: 0,  curl: 0, spray: 0,   ripples: 4,  causticT: 0,   detailT: 96,  foamTaps: 0, wake: 0, sss: 0, caustic: 0, glint: 1, under: 1 },
-    medium: { bands: 2, T: [128, 128],        layers: 2, grid: { n: 48, c0: 1.5 }, disp: 0,   shore: 32, curl: 0, spray: 96,  ripples: 8,  causticT: 96,  detailT: 128, foamTaps: 2, wake: 1, sss: 1, caustic: 1, glint: 1, under: 1 },
-    high:   { bands: 3, T: [192, 192, 128],   layers: 2, grid: { n: 64, c0: 1.0 }, disp: 110, shore: 40, curl: 3, spray: 192, ripples: 12, causticT: 128, detailT: 128, foamTaps: 3, wake: 1, sss: 1, caustic: 1, glint: 1, under: 1 },
-    ultra:  { bands: 3, T: [256, 256, 192],   layers: 2, grid: { n: 64, c0: 1.0 }, disp: 140, shore: 48, curl: 5, spray: 320, ripples: 16, causticT: 128, detailT: 128, foamTaps: 3, wake: 1, sss: 1, caustic: 1, glint: 1, under: 1 }
+    low:    { bands: 1, T: [96],              layers: 1, grid: { n: 32, c0: 2.0 }, disp: 0,   shore: 0,  curl: 0, curlSeg: 0,  curlProf: 0,  spray: 0,   ripples: 4,  causticT: 0,   detailT: 96,  foamTaps: 0, wake: 0, sss: 0, caustic: 0, glint: 1, under: 1 },
+    medium: { bands: 2, T: [128, 128],        layers: 2, grid: { n: 48, c0: 1.5 }, disp: 0,   shore: 32, curl: 2, curlSeg: 24, curlProf: 12, spray: 96,  ripples: 8,  causticT: 96,  detailT: 128, foamTaps: 2, wake: 1, sss: 1, caustic: 1, glint: 1, under: 1 },
+    high:   { bands: 3, T: [192, 192, 128],   layers: 2, grid: { n: 64, c0: 1.0 }, disp: 110, shore: 40, curl: 3, curlSeg: 40, curlProf: 20, spray: 192, ripples: 12, causticT: 128, detailT: 128, foamTaps: 3, wake: 1, sss: 1, caustic: 1, glint: 1, under: 1 },
+    ultra:  { bands: 3, T: [256, 256, 192],   layers: 2, grid: { n: 64, c0: 1.0 }, disp: 140, shore: 48, curl: 5, curlSeg: 56, curlProf: 28, spray: 320, ripples: 16, causticT: 128, detailT: 128, foamTaps: 3, wake: 1, sss: 1, caustic: 1, glint: 1, under: 1 }
   };
   const TIER_ORDER = ['low', 'medium', 'high', 'ultra'];
   // preset name (+ phone flag) -> the tier config actually used. Phones cap at 'high' and trim the pools (memory pressure kills tabs).
@@ -50,15 +51,18 @@
     let name = TIERS[preset] ? preset : 'medium';
     if (mobile && TIER_ORDER.indexOf(name) > 2) name = 'high';
     const t = Object.assign({}, TIERS[name]); t.name = name; t.mobile = !!mobile;
-    // (v259) a Mali-class tablet: ONE tap per band (3 band samples a pixel instead of 6), no curl detail, a shorter shore field - the sea reads the same at a distance, the close-up chop is a bit softer
-    if (mobile && lowGpu) { t.layers = 1; t.curl = 0; t.disp = Math.min(t.disp, 60); t.foamTaps = Math.min(t.foamTaps, 2); t.glint = 1; }
-    if (mobile) { t.spray = Math.round(t.spray * 0.6); t.ripples = Math.min(t.ripples, 12); t.T = t.T.map((v) => Math.min(v, 192)); t.shore = Math.min(t.shore, 40); t.bakeMs = 2; } else t.bakeMs = 3;
+    if (mobile) { t.spray = Math.round(t.spray * 0.6); t.ripples = Math.min(t.ripples, 12); t.T = t.T.map((v) => Math.min(v, 192)); t.shore = Math.min(t.shore, 40); t.bakeMs = 2; t.curl = Math.min(t.curl, 2); t.curlSeg = Math.min(t.curlSeg, 32); t.curlProf = Math.min(t.curlProf, 18); } else t.bakeMs = 3;
+    // (v259) a Mali-class tablet: ONE tap per band (3 band samples a pixel instead of 6), a shorter shore field - the sea reads the same at a distance, the close-up chop is a bit softer.
+    // The curl stays (one front, 24 columns x 12 profile rows; the governor thins it further, see curlDetail) - it is one cheap draw.
+    if (mobile && lowGpu) { t.layers = 1; t.disp = Math.min(t.disp, 60); t.foamTaps = Math.min(t.foamTaps, 2); t.glint = 1; if (t.curl) { t.curl = 1; t.curlSeg = Math.min(t.curlSeg, 24); t.curlProf = Math.min(t.curlProf, 12); } }
     return t;
   }
   function tierBytes(t) {                      // GPU bytes of the baked textures (RGBA8 + mips) - for DMCrumb.gpu and the memory test
     let b = 0; t.T.forEach((s) => { b += s * s * 4 * 1.34; });
     b += t.detailT * t.detailT * 4 * 1.34; b += (t.causticT || 0) * (t.causticT || 0) * 4 * 1.34;
-    b += (t.shore || 0) * (t.shore || 0) * 8; return Math.round(b);
+    b += (t.shore || 0) * (t.shore || 0) * 8;
+    if (t.curl) b += (t.curlProf || 0) * 2 * CURL_NC * 8 + (t.curlSeg + 1) * t.curl * 2 * 16;             // curl profile LUT (half float RGBA) + the per-front data texture (float RGBA)
+    return Math.round(b);
   }
 
   /* ───────────────────────────── 2. world wind + per-planet identity ───────────────────────────── */
@@ -75,10 +79,10 @@
   const TEMP_BY_TYPE = { Habitable: 288, Ocean: 296, Methane: 94, Desert: 318, Ice: 228, Volcanic: 560, Rocky: 250, 'Barren Moon': 200 };
   // liquids: rho (water = 1), mu (viscosity LOOK 0..1), melt / boil K at 1 atm, latent heat J/mol, absorption (1/unit, rgb), foam gain, hex colours
   const LIQUIDS = {
-    water:   { rho: 1.0,  mu: 0.05, melt: 273.15, boil: 373.15, dH: 40660, abs: [0.34, 0.052, 0.022], foam: 1.0,  foamTau: 4.0,  scatter: 0x1fd6b8, foamCol: 0xf4fbff, deep: 0x1a4a7a },
-    methane: { rho: 0.42, mu: 0.02, melt: 90.7,   boil: 111.7, dH: 8200,  abs: [0.16, 0.30, 0.46],   foam: 0.45, foamTau: 2.2,  scatter: 0x7fc9a0, foamCol: 0xd9e6c8, deep: 0x4a8a7a },
-    ammonia: { rho: 0.68, mu: 0.08, melt: 195.4,  boil: 239.8, dH: 23300, abs: [0.10, 0.12, 0.42],   foam: 0.7,  foamTau: 3.0,  scatter: 0xd8e08a, foamCol: 0xfff6d8, deep: 0x7a8a3a },
-    lava:    { rho: 2.6,  mu: 0.97, melt: 1400,   boil: 3000,  dH: 200000, abs: [0.02, 0.2, 0.9],    foam: 0.12, foamTau: 30.0, scatter: 0xff6a1a, foamCol: 0x2a1410, deep: 0x3a0e06 }
+    water:   { rho: 1.0,  tension: 72,  mu: 0.05, melt: 273.15, boil: 373.15, dH: 40660, abs: [0.34, 0.052, 0.022], foam: 1.0,  foamTau: 4.0,  scatter: 0x1fd6b8, foamCol: 0xf4fbff, deep: 0x1a4a7a },
+    methane: { rho: 0.42, tension: 17,  mu: 0.02, melt: 90.7,   boil: 111.7, dH: 8200,  abs: [0.16, 0.30, 0.46],   foam: 0.45, foamTau: 2.2,  scatter: 0x7fc9a0, foamCol: 0xd9e6c8, deep: 0x4a8a7a },
+    ammonia: { rho: 0.68, tension: 23,  mu: 0.08, melt: 195.4,  boil: 239.8, dH: 23300, abs: [0.10, 0.12, 0.42],   foam: 0.7,  foamTau: 3.0,  scatter: 0xd8e08a, foamCol: 0xfff6d8, deep: 0x7a8a3a },
+    lava:    { rho: 2.6,  tension: 400, mu: 0.97, melt: 1400,   boil: 3000,  dH: 200000, abs: [0.02, 0.2, 0.9],    foam: 0.12, foamTau: 30.0, scatter: 0xff6a1a, foamCol: 0x2a1410, deep: 0x3a0e06 }
   };
   const boilK = (L, P) => (P <= 1e-6 ? 0 : 1 / (1 / L.boil - (8.314 / L.dH) * Math.log(P)));   // Clausius-Clapeyron
 
@@ -121,7 +125,10 @@
     const minLam = 0.9 + 26 * mu * mu;                                       // viscosity eats the short waves
     const chop = clamp(0.38 + 0.5 * clamp(Ue / 11, 0, 1) - 0.4 * mu, 0.1, 0.92);
     // whitecaps: need wind, air that can entrain bubbles, and a liquid that foams
-    const wc = clamp(L.foam * Math.sqrt(rhoAir) * clamp((Ue - 3.2) / 8, 0.05, 1.1) * (1 - ice * 0.85), 0, 1);
+    // low surface tension (methane 17, ammonia 23 mN/m vs water 72): the bubbles are small and the film drains in a second or two -> a fine speckle that dies at once,
+    // never a persistent whitecap, and the capillary ripples ride everywhere. fine 0 (water) .. ~0.7 (methane). Dense air (Titan: 4.4 x Earth) must not turn that into a blanket of foam.
+    const fine = clamp(1 - L.tension / 60, 0, 1);
+    const wc = clamp(L.foam * Math.sqrt(Math.min(rhoAir, mix(40, 1.6, fine))) * clamp((Ue - 3.2) / 8, 0.05, 1.1) * (1 - ice * 0.85), 0, mix(1, 0.2, fine));
     // colours
     const liq = pal.liquidColor != null ? pal.liquidColor : L.deep;
     const deep = rgbOf(liq), shallow = lerp3(deep, [0.37, 0.82, 0.78], lname === 'water' ? 0.55 : 0.3);
@@ -130,7 +137,8 @@
     const out = {
       v: 1, name, type, seed, kind: lname, liquid: lname, gRel, g, P, T, Tloc, Tb, rhoAir, rhoLiq,
       wind: { x: w0.x, z: w0.z, s: Ue, ang: w0.ang, s0: w0.s }, lamP, Hs, lamS, HsS, HsTotal: Math.sqrt(Hs * Hs + HsS * HsS), mu, minLam, chop, whitecap: wc,
-      foam: { gain: L.foam, tau: L.foamTau, trail: lname === 'lava' ? 0.5 : clamp(0.1 + 0.1 * wc, 0.1, 0.22), cell: 0, lace: 1 },
+      foam: { gain: L.foam, tau: L.foamTau, trail: lname === 'lava' ? 0.5 : fine > 0.3 ? 0 : clamp(0.1 + 0.1 * wc, 0.1, 0.22), cell: 0, lace: 1, fine, speckle: mix(1.0, 2.4, fine), patch: 1 - fine, cap: mix(1, 0.5, fine) },
+      capillary: fine, tension: L.tension,
       ice, steam, glow: lname === 'lava' ? 1 : 0, ice0: ice,
       colors: { deep, shallow, scatter, foam: foamCol, skyTop: rgbOf(skyArr[0]), skyHor: rgbOf(skyArr[skyArr.length - 1]), sunGlint: [1, 0.96, 0.86] },
       absorb: L.abs.slice(), sss: lname === 'water' ? 1 : lname === 'lava' ? 0.2 : 0.55, rough: 0.07 + 0.5 * mu + (lname === 'methane' ? 0.1 : 0),
@@ -140,6 +148,7 @@
       crust: lname === 'lava' ? 1 : 0, swash: clamp(0.35 + 0.5 * Hs * 0.5, 0.25, 1.4), bubbly: lname === 'methane' ? 0.35 : 0
     };
     if (lname === 'methane') { out.colors.foam = rgbOf(0xcfe0c0); out.foam.lace = 0.7; }
+    out.iceLook = lname === 'lava' ? null : iceLook(ice);
     if (lname === 'lava') { out.pattern = 'crust'; out.colors.foam = rgbOf(0x1a0c08); out.colors.shallow = rgbOf(0xa02a08); out.colors.deep = rgbOf(0x2a0804); }
     // Earth: a realistic open-ocean preset (blue-green, white lace, turquoise crest light)
     if (name === 'Earth') { out.sig = 'earth'; out.colors.deep = rgbOf(0x0b3e66); out.colors.shallow = rgbOf(0x2fa7a8); out.colors.scatter = rgbOf(0x20e0b4); out.foam.trail = 0.16; out.wind.s = Math.max(out.wind.s, 6.2); }
@@ -509,11 +518,196 @@
     this.alive = live; return live;
   };
 
+  /* ───────────────────────────── 11. ice worlds: what a frozen sea looks like ───────────────────────────── */
+  // ice (0..1: how far below this liquid's melting point the surface is) -> readable parameters for the shader (all 0..1 unless noted). A sea at the freezing
+  // edge is mostly open water with slush and a few floes; at 1 it is a plated pack of floes whose cracks have refrozen into thin blue ice, dusted with snow.
+  function iceLook(ice) {
+    const k = clamp(ice, 0, 1);
+    return {
+      cover: sstep(0.04, 0.96, k),                                    // fraction of the surface under floes (the rest is open water in leads and polynyas)
+      slush: clamp(0.18 + 3.2 * k * (1 - k) + 0.25 * k, 0, 0.85),     // brash / slush patches: peak at the freeze-up, a little left on a solid pack
+      lead: clamp(0.07 + 0.5 * Math.pow(1 - k, 1.2), 0.07, 0.6),      // width of the lead (crack) network between plates (0..1 of the cell border band)
+      refrozen: sstep(0.3, 0.92, k),                                  // how much of the lead is thin blue ice instead of open dark water
+      snow: Math.pow(k, 1.5) * 0.75,                                  // snow dust on the plates
+      blueEdge: 0.45 + 0.5 * k,                                       // translucent blue rim where a plate thins out toward its crack
+      swell: 0.3 + 0.5 * (1 - k),                                     // how much of the (damped) swell the plates show - low contrast, never invisible
+      leadBlue: 0.5 + 0.5 * k                                         // subsurface blue in the cracks
+    };
+  }
+
+  /* ───────────────────────────── 12. cells tile (ice floes, lava crust) ───────────────────────────── */
+  function worleyId(u, v, N, s) {
+    const x = u * N, y = v * N, ix = Math.floor(x), iy = Math.floor(y); let d1 = 9, d2 = 9, id = 0;
+    for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) { const gx = ix + ox, gy = iy + oy, wx = wrap(gx, N), wy = wrap(gy, N), fx = gx + 0.15 + 0.7 * h2(wx, wy, s) - x, fy = gy + 0.15 + 0.7 * h2(wx, wy, s + 77) - y, d = Math.sqrt(fx * fx + fy * fy); if (d < d1) { d2 = d1; d1 = d; id = h2(wx, wy, s + 501); } else if (d < d2) d2 = d; }
+    return [d1, d2, id];
+  }
+  // RGBA8, tileable. R = coarse plate border distance (0 on the crack, 1 inside), G = plate id (0..1), B = fine plate border distance (small floes / crust crazing), A = dust / brash noise
+  function* bakeCells(T, out, seed, rowsPerYield) {
+    const rows = rowsPerYield || 16;
+    for (let y = 0; y < T; y++) {
+      const v = y / T;
+      for (let x = 0; x < T; x++) {
+        const u = x / T, wu = u + 0.05 * (fbm(u, v, 3, 3, seed + 11) - 0.5), wv = v + 0.05 * (fbm(u, v, 3, 3, seed + 12) - 0.5);
+        const a = worleyId(wu, wv, 7, seed + 13), b = worleyId(wu + 0.013, wv - 0.02, 19, seed + 14), dust = fbm(u, v, 6, 4, seed + 15), i4 = (y * T + x) * 4;
+        out[i4] = clamp(Math.round(clamp((a[1] - a[0]) / 0.6, 0, 1) * 255), 0, 255); out[i4 + 1] = Math.round(a[2] * 255);
+        out[i4 + 2] = clamp(Math.round(clamp((b[1] - b[0]) / 0.55, 0, 1) * 255), 0, 255); out[i4 + 3] = clamp(Math.round(dust * 255), 0, 255);
+      }
+      if ((y + 1) % rows === 0) yield;
+    }
+  }
+
+  /* ───────────────────────────── 13. breaking-wave curl ───────────────────────────── */
+  // The glassy turquoise barrel of a small breaker: a baked parametric cross-section of the free surface, extruded along the shore-parallel wave front by
+  // ui/dm-water-curl.js. Coordinates are in units of the wave height H: u forward (the way the wave travels), y up, trough/back at the left.
+  //   one ordered curve per curl amount c (0 = a steepening face, 1 = a full barrel):  back slope -> over the crest -> out along the lip to its tip  |  tip -> under the lip
+  //   (the roof of the hollow) -> down the face wall -> the floor of the hollow, then the flat sea in front.  The two keys have the same sample layout, so any c in
+  //   between is a straight blend of them (the lip drops and reaches forward as c grows).
+  function curlCounts(Ns) { const nb = Math.max(3, Math.round(Ns * 0.2)), no = Math.max(4, Math.round(Ns * 0.3)), ni = Math.max(5, Math.round(Ns * 0.34)), nf = Math.max(2, Ns - nb - no - ni); return { nb, no, ni, nf, Ns: nb + no + ni + nf }; }
+  function hermite(p0, m0, p1, m1, t) { const t2 = t * t, t3 = t2 * t, a = 2 * t3 - 3 * t2 + 1, b = t3 - 2 * t2 + t, c = -2 * t3 + 3 * t2, d = t3 - t2; return [a * p0[0] + b * m0[0] + c * p1[0] + d * m1[0], a * p0[1] + b * m0[1] + c * p1[1] + d * m1[1]]; }
+  function bezier(p0, p1, p2, p3, t) { const u = 1 - t, a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t; return [a * p0[0] + b * p1[0] + c * p2[0] + d * p3[0], a * p0[1] + b * p1[1] + c * p2[1] + d * p3[1]]; }
+  const CURL_TROUGH = [-2.7, 0], CURL_FLOOR_LEN = 1.7;
+  const CURL_BARREL = { r: 0.34, xc: 0.28, tipDeg: 22, backDeg: 155, tm: 0.46 };
+  function curlKey(cnt, full) {
+    const pts = [], { nb, no, ni, nf } = cnt;
+    if (full) {
+      const B = CURL_BARREL, r = B.r, yc = r, xc = B.xc, th0 = B.tipDeg * Math.PI / 180, thb = B.backDeg * Math.PI / 180, tm = B.tm;
+      const P = (th) => { const w = clamp((th - th0) / (thb - th0), 0, 1), rho = r + tm * Math.pow(w, 0.75); return [xc + rho * Math.cos(th), yc + rho * Math.sin(th)]; };
+      const Pb = P(thb), Pb2 = P(thb - 0.04), tb = [Pb[0] - Pb2[0], Pb[1] - Pb2[1]], tl = Math.hypot(tb[0], tb[1]) || 1;      // travel direction at the end of the back slope (toward the crest)
+      for (let j = 0; j < nb; j++) pts.push(hermite(CURL_TROUGH, [1.1, 0], Pb, [tb[0] / tl * 0.45, tb[1] / tl * 0.45], j / nb));
+      for (let i = 0; i < no; i++) pts.push(P(thb + (th0 - thb) * i / (no - 1)));
+      for (let i = 0; i < ni; i++) { const th = th0 + (1.5 * Math.PI - th0) * i / (ni - 1); pts.push([xc + r * Math.cos(th), yc + r * Math.sin(th)]); }
+      for (let k = 1; k <= nf; k++) pts.push([xc + CURL_FLOOR_LEN * Math.pow(k / nf, 1.2), 0]);
+    } else {
+      const Pa = [-0.95, 0.5], nose = [0.16, 0.88], base = [0.62, 0];
+      for (let j = 0; j < nb; j++) pts.push(hermite(CURL_TROUGH, [1.1, 0], Pa, [0.4, 0.35], j / nb));
+      for (let i = 0; i < no; i++) pts.push(bezier(Pa, [-0.6, 0.86], [-0.1, 1.06], nose, i / (no - 1)));
+      for (let i = 0; i < ni; i++) pts.push(bezier(nose, [0.24, 0.62], [0.46, 0.3], [base[0], 0.0], i / (ni - 1)));
+      for (let k = 1; k <= nf; k++) pts.push([base[0] + CURL_FLOOR_LEN * Math.pow(k / nf, 1.2), 0]);
+    }
+    return pts;
+  }
+  // blend, outward normals (the air side: left of the direction of travel along the curve), thickness of the water behind each point (ray along the inward normal to the
+  // nearest other piece of the surface, else down to a bed 0.6 H under the trough), foam masks (lip + base) and the fade at the two open ends. c in 0..1.
+  function curlShape(c, Ns) {
+    const cnt = curlCounts(Ns), n = cnt.Ns, A = curlKey(cnt, 0), B = curlKey(cnt, 1), m = sstep(0, 1, clamp(c, 0, 1)), p = [];
+    for (let i = 0; i < n; i++) p.push([mix(A[i][0], B[i][0], m), mix(A[i][1], B[i][1], m)]);
+    const nx = new Float32Array(n), ny = new Float32Array(n), th = new Float32Array(n), tip = new Float32Array(n), base = new Float32Array(n), fade = new Float32Array(n);
+    const tipI = cnt.nb + cnt.no - 1, EPS = 1e-6;
+    for (let i = 0; i < n; i++) {
+      const a = p[Math.max(0, i - 1)], b = p[Math.min(n - 1, i + 1)], c0 = p[i];
+      let tx = b[0] - a[0], ty = b[1] - a[1];
+      if (i > 0 && Math.hypot(c0[0] - p[i - 1][0], c0[1] - p[i - 1][1]) < EPS) { tx = b[0] - c0[0]; ty = b[1] - c0[1]; }
+      else if (i < n - 1 && Math.hypot(p[i + 1][0] - c0[0], p[i + 1][1] - c0[1]) < EPS) { tx = c0[0] - a[0]; ty = c0[1] - a[1]; }
+      const l = Math.hypot(tx, ty) || 1; nx[i] = -ty / l; ny[i] = tx / l;
+    }
+    // arc length from the tip along the surface: the lip foam sits on both sides of it
+    const arc = new Float32Array(n); { let acc = 0; for (let i = tipI; i >= 1; i--) { acc += Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1]); arc[i - 1] = acc; } acc = 0; for (let i = tipI + 1; i < n - 1; i++) { acc += Math.hypot(p[i + 1][0] - p[i][0], p[i + 1][1] - p[i][1]); arc[i + 1] = acc; } }
+    const segHit = (ox, oy, dx, dy, skipA, skipB) => {    // nearest hit of the ray (o + t d) with the polyline, ignoring the segments next to the origin
+      let best = 1e9;
+      for (let k = 0; k < n - 1; k++) {
+        if (k >= skipA && k <= skipB) continue; const ax = p[k][0], ay = p[k][1], ex = p[k + 1][0] - ax, ey = p[k + 1][1] - ay, den = dx * ey - dy * ex; if (Math.abs(den) < 1e-9) continue;
+        const t = ((ax - ox) * ey - (ay - oy) * ex) / den, u = ((ax - ox) * dy - (ay - oy) * dx) / den; if (t > 1e-3 && u >= 0 && u <= 1 && t < best) best = t;
+      }
+      return best;
+    };
+    const thick = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const dx = -nx[i], dy = -ny[i], hit = segHit(p[i][0] + dx * 1e-4, p[i][1] + dy * 1e-4, dx, dy, i - 2, i + 1);
+      const bed = dy < -0.15 ? (p[i][1] + 0.6) / -dy : 1.5;
+      thick[i] = Math.min(1.5, hit, bed); if (i >= cnt.nb && i < cnt.nb + cnt.no + cnt.ni && arc[i] < 0.6) thick[i] = Math.min(thick[i], 0.015 + 0.55 * arc[i]);   // the lip is a wedge: nothing at its tip
+      if (Math.abs(p[i][1]) < 1e-3 && ny[i] > 0.9) thick[i] = Math.min(thick[i], 0.6);   // the flat floor in front: shallow
+    }
+    const { nb, no, ni, nf } = cnt, i1 = nb + no, i2 = nb + no + ni;
+    for (let i = 0; i < n; i++) {
+      if (i >= nb && i < i2) tip[i] = (1 - sstep(0.0, 0.3, arc[i] || 0)) * 0.95 + (i < i1 ? 0.15 * (1 - sstep(0, 0.9, arc[i] || 0)) : 0);
+      const fl = i - (i2 - 1); base[i] = fl >= 0 ? 1 - sstep(0.0, 1.0, fl / nf) * 0.8 : (i >= i2 - 3 ? 0.5 : 0);
+      fade[i] = i < nb ? sstep(0, 1, i / nb) : 1 - sstep(0, 1, Math.max(0, i - (n - nf - 1)) / nf);
+    }
+    fade[0] = 0; fade[n - 1] = 0;
+    return { cnt, n, u: Float32Array.from(p, (q) => q[0]), y: Float32Array.from(p, (q) => q[1]), nx, ny, thick, tip, base, fade, tipI };
+  }
+  // the two lookup blocks the vertex shader samples (rows = curl amount): block 0 = (u, y, thickness, end fade), block 1 = (nx, ny, lip foam, base foam). Float32Array Ns * 2Nc * 4.
+  function curlLUT(Ns, Nc) {
+    Nc = Nc || CURL_NC; const cnt = curlCounts(Ns), n = cnt.Ns, data = new Float32Array(n * 2 * Nc * 4);
+    for (let r = 0; r < Nc; r++) {
+      const sh = curlShape(r / (Nc - 1), Ns);
+      for (let i = 0; i < n; i++) {
+        const a = (r * n + i) * 4, b = ((Nc + r) * n + i) * 4;
+        data[a] = sh.u[i]; data[a + 1] = sh.y[i]; data[a + 2] = sh.thick[i]; data[a + 3] = sh.fade[i];
+        data[b] = sh.nx[i]; data[b + 1] = sh.ny[i]; data[b + 2] = sh.tip[i]; data[b + 3] = sh.base[i];
+      }
+    }
+    return { Ns: n, Nc, data, cnt };
+  }
+  // curl amount of a wave at a depth ratio (the sea shader's shoaling ratio: gain * H0 / (0.78 d)): nothing while the wave is still shoaling, a full barrel as it
+  // reaches the breaker limit, it keeps curling (smaller and smaller) as it runs up the shoaling beach, and is gone into the bore (foam in the sea shader) by ~3
+  function curlAmount(ratio) { return sstep(0.8, 1.05, ratio) * (1 - sstep(2.2, 3.3, ratio)); }
+  function vnoise1(x, s) { const i = Math.floor(x), f = x - i, a = h2(i, 0, s), b = h2(i + 1, 0, s), t = f * f * (3 - 2 * f); return a + (b - a) * t; }
+  function gridSample(F, N, cell, x0, z0, x, z) {          // bilinear fetch of a cell-centred N x N grid (cell (0,0) centred on x0,z0); -1e9 outside
+    const fx = (x - x0) / cell, fz = (z - z0) / cell; if (fx < 0 || fz < 0 || fx > N - 1 || fz > N - 1) return -1e9;
+    const i = Math.min(N - 2, Math.floor(fx)), j = Math.min(N - 2, Math.floor(fz)), tx = fx - i, tz = fz - j, k = j * N + i;
+    return (F[k] * (1 - tx) + F[k + 1] * tx) * (1 - tz) + (F[k + N] * (1 - tx) + F[k + N + 1] * tx) * tz;
+  }
+  // Find the curling wave fronts in the shore field. The fronts are the level sets of the travel time T at t - (m + delta) Ps (m integer: the crests of the shore wave
+  // train, exactly where the sea shader puts them). For each of `n` columns on a line across the wave direction `dir`, march from deep to shallow water and bracket every
+  // crossing. Per point: x z, travel direction nx nz (grad T), wave height H, curl amount c, depth d, valid.
+  // field {N, cell, x0, z0, depth, T}; o {t, Ps, delta, lamS, H0, g, dir:[x,z], focus:[x,z], n, spacing, reach, maxFronts, hScale, cMax}; out = curlScratch(maxFronts, n)
+  const CURL_PT = 8;
+  function curlScratch(maxFronts, n) { const f = []; for (let i = 0; i < Math.max(8, maxFronts); i++) f.push({ m: 0, used: false, sumC: 0, pts: new Float32Array((n + 1) * CURL_PT) }); return { fronts: f, order: [], count: 0, n: n + 1 }; }
+  function curlFronts(field, o, out) {
+    const { N, cell, x0, z0, depth, T } = field, n1 = o.n + 1, nF = out.fronts.length, D = o.dir, L = [-D[1], D[0]], reach = o.reach, ds = cell * 0.5, delta = o.delta || 0;
+    const fa = o.focus, q0 = Math.round((fa[0] * L[0] + fa[1] * L[1]) / o.spacing) * o.spacing, sf = fa[0] * D[0] + fa[1] * D[1], hs = o.hScale == null ? 1.1 : o.hScale, cMax = o.cMax == null ? 1 : o.cMax;
+    for (let f = 0; f < nF; f++) { const F = out.fronts[f]; F.used = false; F.sumC = 0; F.pts.fill(0); }
+    let used = 0;
+    for (let i = 0; i < n1; i++) {
+      const q = q0 + (i - o.n / 2) * o.spacing; let prevU = null, prevS = 0;
+      for (let s = sf - reach; s <= sf + reach; s += ds) {
+        const x = q * L[0] + s * D[0], z = q * L[1] + s * D[1], Tv = gridSample(T, N, cell, x0, z0, x, z); if (Tv < -1e8) { prevU = null; continue; }
+        const dv = gridSample(depth, N, cell, x0, z0, x, z); if (dv < 0.12) break;                                      // the shore: nothing further in
+        const u = (o.t - Tv) / o.Ps - delta;
+        if (prevU !== null && prevU > u) {
+          for (let m = Math.floor(prevU); m >= u && m >= prevU - 3; m--) {
+            if (m > prevU) continue; const f = (prevU - m) / (prevU - u), sx = prevS + (s - prevS) * f, px = q * L[0] + sx * D[0], pz = q * L[1] + sx * D[1];
+            // the front for this integer m (a new one takes a free slot; beyond the scratch size it is ignored)
+            let slot = -1; for (let k = 0; k < nF; k++) if (out.fronts[k].used && out.fronts[k].m === m) { slot = k; break; }
+            if (slot < 0) { for (let k = 0; k < nF; k++) if (!out.fronts[k].used) { slot = k; out.fronts[k].used = true; out.fronts[k].m = m; used++; break; } }
+            if (slot < 0) continue;
+            const e = cell * 0.6, tx = gridSample(T, N, cell, x0, z0, px + e, pz) - gridSample(T, N, cell, x0, z0, px - e, pz), tz = gridSample(T, N, cell, x0, z0, px, pz + e) - gridSample(T, N, cell, x0, z0, px, pz - e), gl = Math.hypot(tx, tz);
+            const nxv = gl > 1e-6 && Math.abs(tx) < 1e8 && Math.abs(tz) < 1e8 ? tx / gl : D[0], nzv = gl > 1e-6 && Math.abs(tx) < 1e8 && Math.abs(tz) < 1e8 ? tz / gl : D[1];
+            const d = gridSample(depth, N, cell, x0, z0, px, pz), gain = clamp(Math.pow(0.5 * o.lamS / Math.max(d, 0.05), 0.25), 1, 2), Hw = Math.min(gain * o.H0, 0.78 * Math.max(d, 0)), ratio = gain * o.H0 / Math.max(0.78 * d, 1e-3);
+            const nz = 0.65 + 0.7 * vnoise1(q * 0.085 + m * 7.3, 3), cc = clamp(curlAmount(ratio) * nz, 0, 1) * cMax, F = out.fronts[slot], b = i * CURL_PT;
+            F.pts[b] = px; F.pts[b + 1] = pz; F.pts[b + 2] = nxv; F.pts[b + 3] = nzv; F.pts[b + 4] = Hw * hs * (0.85 + 0.3 * vnoise1(q * 0.13 + m * 3.1, 9)); F.pts[b + 5] = cc; F.pts[b + 6] = d; F.pts[b + 7] = 1;
+          }
+        }
+        prevU = u; prevS = s;
+      }
+    }
+    // smooth c along the front (3 taps), taper to zero toward the two ends of the window, and total the curl so the strongest fronts win the draw slots
+    const ord = out.order; ord.length = 0;
+    for (let f = 0; f < nF; f++) {
+      const F = out.fronts[f]; if (!F.used) continue; const P = F.pts, tmp = new Float32Array(n1);   // (n1 floats: tiny, once per front per update)
+      for (let i = 0; i < n1; i++) { const a = P[Math.max(0, i - 1) * CURL_PT + 5] * P[Math.max(0, i - 1) * CURL_PT + 7], b = P[i * CURL_PT + 5] * P[i * CURL_PT + 7], c = P[Math.min(n1 - 1, i + 1) * CURL_PT + 5] * P[Math.min(n1 - 1, i + 1) * CURL_PT + 7]; tmp[i] = (a + 2 * b + c) * 0.25; }
+      let sum = 0; for (let i = 0; i < n1; i++) { const edge = Math.min(1, Math.min(i, n1 - 1 - i) / 4); P[i * CURL_PT + 5] = P[i * CURL_PT + 7] ? tmp[i] * (edge * edge * (3 - 2 * edge)) : 0; sum += P[i * CURL_PT + 5]; }
+      F.sumC = sum; if (sum > 0.15) ord.push(f);
+    }
+    ord.sort((a, b) => out.fronts[b].sumC - out.fronts[a].sumC); out.count = Math.min(ord.length, o.maxFronts);
+    return out.count;
+  }
+  // governor steps: S.lvl (1 = full .. 0.15) -> how much curl to draw. seg: along-front column stride, prof: profile row stride, trans: translucency steps (3 refraction+backlit+lace, 2 backlit, 1 flat tint)
+  function curlDetail(lvl, tier) {
+    if (!tier || !tier.curl) return { seg: 1, prof: 1, trans: 0, on: 0 };
+    if (lvl >= 0.75) return { seg: 1, prof: 1, trans: 3, on: 1 };
+    if (lvl >= 0.5) return { seg: 2, prof: 1, trans: 2, on: 1 };
+    if (lvl >= 0.3) return { seg: 2, prof: 2, trans: 1, on: 1 };
+    return { seg: 4, prof: 2, trans: 0, on: 0 };
+  }
+
   /* ───────────────────────────── exports ───────────────────────────── */
   const API = {
     VERSION: 1, UNIT_M, G0, TIERS, TIER_ORDER, tierFor, tierBytes, windFor, identityFor, LIQUIDS, boilK,
     bandPlan, buildSpectrum, bakeBand, bakeBandSync, bakeDetail, bakeCaustics, LAYERS, layerUV, heightAt, slopeAt, bilin,
     clipmap, levelsFor, eikonal, shoal, swashProfile, wetStep, Ripples, Wake, Spray,
+    iceLook, bakeCells, worleyId, CURL_NC, CURL_PT, curlCounts, curlShape, curlLUT, curlAmount, curlFronts, curlScratch, curlDetail, gridSample,
     util: { clamp, sstep, mix, hashStr, rng, ndtri, fbm, worley, h2 }
   };
   root.DMWaterCore = API;

@@ -8,6 +8,7 @@
  *                    two at a time. CPU: a ballistic pool step + a compaction into two preallocated attribute arrays (no allocation in the tick).
  *            wake    : ONE draw, a 5-wide ribbon (<= 72 history points) on the surface; foam breakup from the baked detail tile.
  *            shafts  : ONE draw of 12 additive quads, only while the camera is under the surface; fog is the scene fog recoloured (no extra pass).
+ *   The breaking-wave curl (ui/dm-water-curl.js) is created here on the first tick (High 3 fronts, Ultra 5, Medium 2, phones 2): one more instanced draw, no extra pass.
  *   Low tier: no spray / wake / shafts (the sea alone, plus the ripple ring); Medium: spray 96 + wake.
  *   The sheet goes through the serial heavy-load queue (DMFac.heavy) with a DMCrumb breadcrumb; until it lands, nothing is drawn.
  *
@@ -146,6 +147,7 @@
     function build(scene) {
       if (fx.built || !scene) return; fx.built = true; fx.scene = scene;
       [sprayMesh, wakeMesh, shaftMesh].forEach((o) => { if (o) scene.add(o); });
+      try { if (tier.curl && W.DMWaterCurl) { fx.curl = W.DMWaterCurl.create(S, fx); if (fx.curl) fx.curl.build(scene); } } catch (e) { fx.curl = null; try { console.warn('[water] curl', e); } catch (_) { } }
       loadSheet(); D()._log('fx built', 'spray', NS, 'wake', NW, 'shafts', !!shaftMesh);
     }
 
@@ -224,6 +226,7 @@
     }
 
     /* ───────────── per-frame ───────────── */
+    fx.sprayAt = (x, y, z, vx, vy, vz, size, life, type, rot) => { if (spray) spray.spawn(x, y, z, vx, vy, vz, size, life, type, rot || 0); };
     fx.tick = function (dt, ctx, SS) {
       if (fx.dead) return; ctx = ctx || {};
       if (!fx.built) { const sc = ctx.scene || (S.mesh && S.mesh.parent); if (S.ready >= 1 && sc) build(sc); else return; }
@@ -279,11 +282,12 @@
           wposA.needsUpdate = true; wattA.needsUpdate = true; wakeMesh.geometry.setDrawRange(0, (pts - 1) * 24); wakeMesh.visible = true;
         } else wakeMesh.visible = false;
       }
+      if (fx.curl) { try { fx.curl.tick(dt, ctx); } catch (e) { try { console.warn('[water] curl tick', e); } catch (_) { } fx.curl.dispose(); fx.curl = null; } }
       underwater(dt, ctx);
     };
 
     fx.dispose = function () {
-      fx.dead = true;
+      fx.dead = true; if (fx.curl) { fx.curl.dispose(); fx.curl = null; }
       [sprayMesh, wakeMesh, shaftMesh].forEach((o) => { if (!o) return; try { if (o.parent) o.parent.remove(o); o.geometry.dispose(); o.material.dispose(); } catch (e) { } });
       try { if (sheetTex) sheetTex.dispose(); if (fx.sheetU && fx.sheetU.value) fx.sheetU.value.dispose(); } catch (e) { }
       if (st.fogSaved && fx.scene && fx.scene.fog && fx.scene.fog.color.equals(st.lastSet)) fx.scene.fog.color.copy(st.fogCol);

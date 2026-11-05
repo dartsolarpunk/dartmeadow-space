@@ -2,7 +2,7 @@
  *
  * Where it plugs in (index.html):  DMWater.begin() beside DMGround.beginWorld  ·  _shoreWaterMaterial() asks DMWater.material() first (old shader stays as the fallback)
  *   ·  the sea sheet takes DMWater.attachSea() (clip-map grid)  ·  _pwSeaFollow -> DMWater.follow()  ·  DMWater.tick() once per world frame (replaces updateCaustics' CPU texture)
- *   ·  _terrainDetailMat ends with DMWater.receiveShore() (wet sand, swash film)  ·  world close -> DMWater.end().  ui/dm-water-fx.js adds spray / wake / curl / underwater.
+ *   ·  _terrainDetailMat ends with DMWater.receiveShore() (wet sand, swash film)  ·  world close -> DMWater.end().  ui/dm-water-fx.js adds spray / wake / underwater and hosts ui/dm-water-curl.js (the breaking-wave curl).
  *
  * COST MODEL (the frame rate is the budget):
  *   bake    : 1-3 band tiles + detail + caustic tile, CPU, ONCE per world, 2-3 ms slices (DMWaterCore generators), RGBA8 + mips, 0.1-1.1 MB by tier
@@ -35,14 +35,18 @@
     t.wrapS = t.wrapT = THREE.RepeatWrapping; t.magFilter = THREE.LinearFilter; t.minFilter = mips ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter;
     t.generateMipmaps = !!mips; t.colorSpace = THREE.NoColorSpace; t.needsUpdate = true; return t;
   }
-  function allocTextures(THREE, tier, spec) {
-    const tex = { bands: [], data: [], detail: null, detailData: null, caustic: null, causticData: null, shore: null, shoreData: null, bytes: 0 };
+  function allocTextures(THREE, tier, spec, P) {
+    const tex = { cells: null, cellsData: null, bands: [], data: [], detail: null, detailData: null, caustic: null, causticData: null, shore: null, shoreData: null, bytes: 0 };
     spec.bands.forEach((b) => {
       const d = new Uint8Array(b.T * b.T * 4); for (let i = 0; i < b.T * b.T; i++) { d[i * 4] = 128; d[i * 4 + 1] = 128; d[i * 4 + 2] = 128; d[i * 4 + 3] = 0; d[i * 4 + 3] = 0; }
       tex.data.push(d); tex.bands.push(mkTex(THREE, d, b.T, b.T, true)); tex.bytes += b.T * b.T * 4 * 1.34;
     });
     const dT = tier.detailT; tex.detailData = new Uint8Array(dT * dT * 4); for (let i = 0; i < dT * dT; i++) { tex.detailData[i * 4] = 110; tex.detailData[i * 4 + 1] = 90; tex.detailData[i * 4 + 2] = 128; tex.detailData[i * 4 + 3] = 128; }
     tex.detail = mkTex(THREE, tex.detailData, dT, dT, true); tex.bytes += dT * dT * 4 * 1.34;
+    if (P && (P.ice > 0.02 || P.kind === 'lava')) {      // ice floes / lava crust plates: one more tileable RGBA8 tile, only on those worlds
+      tex.cellsData = new Uint8Array(dT * dT * 4); for (let i = 0; i < dT * dT; i++) { tex.cellsData[i * 4] = 200; tex.cellsData[i * 4 + 1] = 128; tex.cellsData[i * 4 + 2] = 200; tex.cellsData[i * 4 + 3] = 128; }
+      tex.cells = mkTex(THREE, tex.cellsData, dT, dT, true); tex.bytes += dT * dT * 4 * 1.34;
+    }
     const cT = tier.causticT || 8; tex.causticData = new Uint8Array(cT * cT * 4); for (let i = 0; i < cT * cT; i++) { tex.causticData[i * 4] = tex.causticData[i * 4 + 1] = tex.causticData[i * 4 + 2] = 60; tex.causticData[i * 4 + 3] = 255; }
     tex.caustic = mkTex(THREE, tex.causticData, cT, cT, true); tex.bytes += cT * cT * 4 * 1.34;
     const sN = tier.shore || 8; tex.shoreData = new Uint16Array(sN * sN * 4);
@@ -54,7 +58,7 @@
   }
   function disposeTextures() {
     const t = S.tex; if (!t) return;
-    try { t.bands.forEach((x) => x.dispose()); t.detail.dispose(); t.caustic.dispose(); t.shore.dispose(); } catch (e) { }
+    try { t.bands.forEach((x) => x.dispose()); t.detail.dispose(); if (t.cells) t.cells.dispose(); t.caustic.dispose(); t.shore.dispose(); } catch (e) { }
     crumb('gpu', 'water:tex', 0); S.tex = null;
   }
 
@@ -66,7 +70,7 @@
       sunDir: uniform(new THREE.Vector3(0.3, 0.8, 0.3).normalize()), sunCol: uniform(new THREE.Color(1, 0.96, 0.88)), skyTop: uniform(Cc(P.colors.skyTop)), skyHor: uniform(Cc(P.colors.skyHor)),
       deep: uniform(Cc(P.colors.deep)), shallow: uniform(Cc(P.colors.shallow)), scatter: uniform(Cc(P.colors.scatter)), foamCol: uniform(Cc(P.colors.foam)), absorb: uniform(Raw(P.absorb)),
       glowCol: uniform(Cc(P.glowCol)), glowCol2: uniform(Cc(P.glowCol2)), glow: uniform(P.glow), pulse: uniform(1), ice: uniform(P.ice), steam: uniform(P.steam),
-      under: uniform(0), time: uniform(0), nRip: uniform(0, 'int'), shoreOn: uniform(0), shoreC: uniform(V3()), shoreP: uniform(V3()), wetTop: uniform(0), swashA: uniform(P.swash), swashT: uniform(0),
+      under: uniform(0), curlOn: uniform(0), layerFar: uniform(260), hexFar: uniform(90), time: uniform(0), nRip: uniform(0, 'int'), shoreOn: uniform(0), shoreC: uniform(V3()), shoreP: uniform(V3()), wetTop: uniform(0), swashA: uniform(P.swash), swashT: uniform(0),
       bandAmt: [], bm: [], bg: [], boff: [], bhw: []
     };
     spec.bands.forEach((b, i) => {
@@ -90,7 +94,7 @@
       const P = core.identityFor(o.body, o.pal, { seed: o.seed, lat: o.lat, t: 0 });
       S.tier = tier; S.P = P; S.body = o.body; S.pal = o.pal; S.opts = o; S.seed = P.seed;
       S.spec = core.buildSpectrum(P, tier);
-      S.tex = allocTextures(THREE, tier, S.spec); S.U = makeUniforms(THREE, T, P, S.spec, tier);
+      S.tex = allocTextures(THREE, tier, S.spec, P); S.U = makeUniforms(THREE, T, P, S.spec, tier);
       S.model = { bands: S.spec.bands.map((b, i) => ({ band: b, tile: S.tex.data[i], T: b.T })), layers: tier.layers, windRot: 0, amp: 1 };
       S.t = 0; S.ready = 0; S.epoch++; S.t0 = now(); S.jobMs = 0; S.shore = null; S.active = true; S.on = true; S.lvl = 1; S.under = 0;
       S.job = bakeJob(); S.deliver = null; S.rip = new core.Ripples(Math.max(1, tier.ripples)); S.wetTop = 0;
@@ -119,11 +123,12 @@
   function* bakeJob() {
     const core = C(), tier = S.tier, P = S.P, rows = tier.bakeMs >= 3 ? 12 : 8;
     for (let i = 0; i < S.spec.bands.length; i++) {
-      const b = S.spec.bands[i], gen = core.bakeBand(b, b.T, S.tex.data[i], rows, { foamTaps: tier.foamTaps, trail: P.foam.trail });
+      const b = S.spec.bands[i], gen = core.bakeBand(b, b.T, S.tex.data[i], rows, { foamTaps: P.foam.fine > 0.3 ? 0 : tier.foamTaps, trail: P.foam.trail });
       let r; while (!(r = gen.next()).done) yield;
       S.tex.bands[i].needsUpdate = true; S.U.bandAmt[i].value = 0; S.ready = i + 1; S.bandDoneAt = S.bandDoneAt || []; S.bandDoneAt[i] = S.t; yield;
     }
     { const g = core.bakeDetail(tier.detailT, S.tex.detailData, P.seed, rows); while (!g.next().done) yield; S.tex.detail.needsUpdate = true; yield; }
+    if (S.tex.cells) { const g = core.bakeCells(tier.detailT, S.tex.cellsData, P.seed, rows); while (!g.next().done) yield; S.tex.cells.needsUpdate = true; yield; }
     if (tier.causticT) { const g = core.bakeCaustics(tier.causticT, S.tex.causticData, P.seed, rows); while (!g.next().done) yield; S.tex.caustic.needsUpdate = true; }
   }
   let pumpT = 0;
@@ -152,7 +157,7 @@
     if (S.slow >= 3) { want = Math.max(0.15, S.lvl - 0.28); S.slow = 0; } else if (S.fast >= 10) { want = Math.min(1, S.lvl + 0.15); S.fast = 0; }
     let cap = k >= 0.9 ? 1 : k >= 0.75 ? 0.75 : k >= 0.62 ? 0.45 : 0.2; try { const B = W.DMBudget; if (B && B.on && B.waterCap) cap = Math.min(cap, B.waterCap()); } catch (e) { }   // (v256) frame-budget ladder (ui/dm-budget.js): water stages 1-3 lower this cap
     S.lvl = Math.min(want, cap);
-    if (S.U) { S.U.lvl.value = S.lvl; S.U.disp.value = S.lvl >= 0.45 ? 1 : 0; }
+    if (S.U) { S.U.lvl.value = S.lvl; S.U.disp.value = S.lvl >= 0.45 ? 1 : 0; S.U.layerFar.value = 70 + 220 * S.lvl; S.U.hexFar.value = S.lvl >= 0.6 ? 40 + 70 * S.lvl : 0; }
   }
   function sunPoll(U) {
     try {
@@ -171,7 +176,7 @@
     const breathe = 1 + P.pulse * Math.sin(S.t * Math.PI * 2 * P.pulseHz), calmIce = 1 - 0.8 * P.ice;
     S.model.windRot = wr; S.model.amp = gust * calmIce;
     U.amp.value = S.model.amp; U.swellAmp.value = breathe * 1.0; U.pulse.value = 0.78 + 0.22 * Math.sin(S.t * 2.1 + 1.0);
-    U.wc.value = clamp(P.whitecap * Math.pow(w.s / Math.max(1, P.wind.s0), 1.6) + P.steam * 0.28, 0, 1) * (1 - P.ice * 0.8);
+    U.wc.value = clamp(P.whitecap * Math.pow(w.s / Math.max(1, P.wind.s0), 1.6) + P.steam * 0.28, 0, P.foam.cap) * (1 - P.ice * 0.8);
     U.time.value = S.t; U.drift.value.set(-w.x * S.t * 0.03 * (1 + 0.5 * P.mu * 0), -w.z * S.t * 0.03);
     const cr = Math.cos(wr), sr = Math.sin(wr);
     let k = 0;
@@ -280,7 +285,7 @@
   W.DMWater = {
     S, enabled, begin, end, tick, follow, attachSea, bakeNow, pump, heightAt, slopeAt, ripple,
     get active() { return S.active; }, get tier() { return S.tier; }, get identity() { return S.P; }, get ready() { return S.ready; },
-    status: () => ({ active: S.active, tier: S.tier && S.tier.name, ready: S.ready, bands: S.spec && S.spec.bands.length, jobMs: +S.jobMs.toFixed(0), wallMs: +S.bakeWall.toFixed(0), lvl: S.lvl, bytes: S.tex ? Math.round(S.tex.bytes) : 0, kind: S.P && S.P.kind, sig: S.P && S.P.sig, mats: S.mats, shore: S.shore ? { has: S.shore.has, minD: S.shore.minD, ver: S.shore.ver } : null }),
+    status: () => ({ active: S.active, tier: S.tier && S.tier.name, ready: S.ready, bands: S.spec && S.spec.bands.length, jobMs: +S.jobMs.toFixed(0), wallMs: +S.bakeWall.toFixed(0), lvl: S.lvl, bytes: S.tex ? Math.round(S.tex.bytes) : 0, kind: S.P && S.P.kind, sig: S.P && S.P.sig, mats: S.mats, curl: S.fx && S.fx.curl ? S.fx.curl.status() : null, cells: !!(S.tex && S.tex.cells), shore: S.shore ? { has: S.shore.has, minD: S.shore.minD, ver: S.shore.ver } : null }),
     _crumb: crumb, _log: log
   };
 })(typeof window !== 'undefined' ? window : globalThis);
