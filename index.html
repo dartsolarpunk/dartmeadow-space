@@ -158,9 +158,10 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-rockmat.js?v=145"></script>
 <script src="ui/dm-parallax.js?v=252"></script>
 <script src="ui/dm-groundlib.js?v=252"></script>
-<script src="ui/dm-water-core.js?v=253"></script>
-<script src="ui/dm-water.js?v=253"></script>
-<script src="ui/dm-water-sea.js?v=253"></script>   <!-- water: baked sea, shore, ground hook (?water=0 = the previous sea) -->
+<script src="ui/dm-water-core.js?v=254"></script>
+<script src="ui/dm-water.js?v=254"></script>
+<script src="ui/dm-water-sea.js?v=254"></script>
+<script src="ui/dm-water-fx.js?v=254"></script>   <!-- water: spray / splash / mist sprites, wake, footstep ripples, shore-break spray, underwater fog + shafts (?waterfx=0 off) -->   <!-- water: baked sea, shore, ground hook (?water=0 = the previous sea) -->
 <script src="ui/dm-perf.js?v=160"></script>
 <script src="ui/dm-governor.js?v=235"></script>
 <script>/* (v136) no-op stub so the flight loop can never throw if dm-perf.js failed to load */
@@ -19453,7 +19454,7 @@ function _pwWorldTick(dt){
   const nearClip=space?Math.max(0.1,Math.min(50,(PW.sp.fc||1)*20)):0.1+(Math.max(0.5,Math.min(6,calt*0.01))-0.1)*k;
   if(Math.abs(cam.far-farClip)>farClip*0.05||Math.abs(cam.near-nearClip)>nearClip*0.05){ cam.far=farClip; cam.near=nearClip; cam.updateProjectionMatrix(); }
   _pwSeaFollow(px,pz,Math.min(viewR,16384));
-  try{ if(window.DMWater&&DMWater.active) DMWater.tick(dt,{camera:cam,x:px,z:pz,H,mode:PW.mode}); }catch(e){ if(!window._dmwWarn){ window._dmwWarn=1; console.warn('[water] tick',e); } }
+  try{ if(window.DMWater&&DMWater.active) DMWater.tick(dt,{camera:cam,scene,x:px,z:pz,y:f.y,H,mode:PW.mode}); }catch(e){ if(!window._dmwWarn){ window._dmwWarn=1; console.warn('[water] tick',e); } }
   _pwPropsTick(px,pz,space?1e9:(fly?agl:0));
   try{ if(window.DMPlaces) DMPlaces.tick(dt,_plEnv()); if(window.DMCreatures) DMCreatures.tick(dt,_plEnv()); }catch(e){ if(!window._plWarn){ window._plWarn=1; console.warn('[places]',e); } }
   // marching cubes + the refined patch: always on foot; in the sky only low and slow

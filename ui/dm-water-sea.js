@@ -41,7 +41,7 @@
     const THREE = W.THREE, T = THREE.TSL, P = S.P, U = S.U, tier = S.tier, spec = S.spec, tex = S.tex, pwf = o.pwf || null;
     const { Fn, If, float, vec2, vec3, vec4, mix, smoothstep, clamp, max, min, pow, exp, abs, dot, normalize, length, sin, cos, sqrt, floor, fract, texture, select,
       attribute, varying, positionView, cameraNear, cameraFar, viewportDepthTexture, dFdx, dFdy, reflect, cameraPosition, cameraViewMatrix, cameraWorldMatrix, faceDirection } = T;
-    const m = new THREE.MeshStandardNodeMaterial({ transparent: true, depthWrite: false, side: THREE.FrontSide });
+    const m = new THREE.MeshStandardNodeMaterial({ transparent: true, depthWrite: false, side: THREE.DoubleSide });
     const nb = spec.bands.length, nl = tier.layers, F = (v) => float(v);
 
     /* ---------- vertex: clip-map position (per-level snap), displacement from the swell + mid tiles ---------- */

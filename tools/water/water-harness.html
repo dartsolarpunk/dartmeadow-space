@@ -11,7 +11,7 @@ window.resolvePreset=()=>q('tier','high');
 const sunEl=+q('sun',0.55), sunAz=0.6;
 const sunPos=new TH.Vector3(Math.cos(sunAz)*Math.cos(sunEl*1.2)*100,Math.sin(sunEl*1.2)*100,Math.sin(sunAz)*Math.cos(sunEl*1.2)*100);
 window.TERRAIN={sun:{position:sunPos,target:{position:new TH.Vector3()},color:new TH.Color(1,0.95,0.85),intensity:2.4}};
-await import('../../ui/dm-water-core.js'); await import('../../ui/dm-water.js'); await import('../../ui/dm-water-sea.js');
+await import('../../ui/dm-water-core.js'); await import('../../ui/dm-water.js'); await import('../../ui/dm-water-sea.js'); window.DM_WATER_SHEET='/repo/assets/water/spray-sheet.webp';
 try{ await import('../../ui/dm-water-fx.js'); }catch(e){ console.log('fx not present',String(e).slice(0,80)); }
 const r=new TH.WebGPURenderer({canvas:document.getElementById('c'),forceWebGL:true,antialias:false}); await r.init(); window.flightRenderer=r;
 const worlds={
@@ -42,16 +42,26 @@ const mat=DMWater.material({opacity:0.82,depthOK:q('px')!=='1',logDepth:false});
 sea.material=mat; DMWater.attachSea(sea,4096); sc.add(sea);
 DMWater.bakeNow();
 let t=0; const view=q('view','wide'), simT=+q('t',6);
-const camPos={wide:[-120,14,-60],beach:[8,5,40],low:[-30,2.2,10],surf:[20,6,-40],under:[0,-3,0],top:[0,160,0],swell:[-300,26,-100],close:[-10,3,6]}[view]||[-120,14,-60];
-const look={wide:[40,0,0],beach:[55,0,-10],low:[40,1,0],surf:[58,0,10],under:[40,0,0],top:[0,0,0.01],swell:[0,0,40],close:[40,0,10]}[view];
+const camPos={wide:[-120,14,-60],beach:[8,5,40],low:[-30,2.2,10],surf:[20,6,-40],under:[0,-3,0],top:[0,160,0],swell:[-300,26,-100],close:[-10,3,6],ride:[-60,3.2,-33],wade:[30,2.6,-6],shafts:[-30,-5,0]}[view]||[-120,14,-60];
+const look={wide:[40,0,0],beach:[55,0,-10],low:[40,1,0],surf:[58,0,10],under:[40,0,0],top:[0,0,0.01],swell:[0,0,40],close:[40,0,10],ride:[-34,0,-20],wade:[46,0,6],shafts:[24,-0.5,14]}[view];
 cam.position.set(...camPos); cam.lookAt(...look);
 // advance the simulation clock (and the shore field slices) before the shot
-for(let i=0;i<Math.round(simT/0.05)+120;i++){ DMWater.follow(cam.position.x,cam.position.z); DMWater.tick(0.05,{camera:cam,x:(cam.position.x+look[0])/2,z:(cam.position.z+look[2])/2,H}); }
+for(let i=0;i<Math.round(simT/0.05)+120;i++){ DMWater.follow(cam.position.x,cam.position.z); DMWater.tick(0.05,{camera:cam,scene:sc,x:(cam.position.x+look[0])/2,z:(cam.position.z+look[2])/2,H,mode:'cam'}); }
 // footstep ripples + a few extras so the ring shows
 if(q('rip','1')==='1'&&DMWater.ripple){ DMWater.ripple(30,2,0.6); DMWater.ripple(34,5,0.4); }
-for(let i=0;i<2;i++){ DMWater.follow(cam.position.x,cam.position.z); DMWater.tick(0.05,{camera:cam,x:(cam.position.x+look[0])/2,z:(cam.position.z+look[2])/2,H}); }
+for(let i=0;i<2;i++){ DMWater.follow(cam.position.x,cam.position.z); DMWater.tick(0.05,{camera:cam,scene:sc,x:(cam.position.x+look[0])/2,z:(cam.position.z+look[2])/2,H,mode:'cam'}); }
+// a moving player: ride = skyboard skimming the sea, wade = walking through the shallows
+if(view==='ride'||view==='wade'){
+  const ride=view==='ride'; let x=ride?-100:38, z=ride?-20:-14; const sp=ride?+q('spd',17):2.6, dt=0.033;
+  for(let i=0;i<Math.round(+q('sim',(ride?5.2:5))/dt);i++){ if(ride){ x+=sp*dt; } else { z+=sp*dt; x=40+Math.sin(i*0.02)*2; }
+    const y=ride?DMWater.heightAt(x,z)+1.1:H(x,z); DMWater.follow(cam.position.x,cam.position.z); DMWater.tick(dt,{camera:cam,scene:sc,x,z,y,H,mode:ride?'fly':'walk'}); }
+  { const fx0=ride?-100+sp*+q('sim',5.2):40, fz0=ride?-20:6; cam.position.set(fx0-(ride?+q('cd',9):7),+q('ch',3.4),fz0-(ride?7:5)); cam.lookAt(fx0+(ride?4:0),0.6,fz0); DMWater.follow(cam.position.x,cam.position.z); }
+  await new Promise(r=>setTimeout(r,1500));
+  for(let i=0;i<Math.round(+q('post',0)/0.033);i++){ DMWater.tick(0.033,{camera:cam,scene:sc,x:ride?-100+sp*+q('sim',5.2):40,z:ride?-20:6,y:ride?DMWater.heightAt(-100+sp*+q('sim',5.2),-20)+1.1:H(40,6),H,mode:'fly'}); }
+  window.__fx=DMWater.S.fx&&DMWater.S.fx.status();
+}
 await r.renderAsync(sc,cam); await r.renderAsync(sc,cam);
 const t0=performance.now(); for(let i=0;i<3;i++) await r.renderAsync(sc,cam);
-window.__info={status:DMWater.status(),backend:r.backend.constructor.name,ms:(performance.now()-t0)/3,calls:r.info.render.calls,tris:r.info.render.triangles,tex:r.info.memory.textures,world:q('world','earth'),tier:q('tier','high')};
+window.__info={fx:window.__fx,status:DMWater.status(),backend:r.backend.constructor.name,ms:(performance.now()-t0)/3,calls:r.info.render.calls,tris:r.info.render.triangles,tex:r.info.memory.textures,world:q('world','earth'),tier:q('tier','high')};
 window.__done=true;
 </script>

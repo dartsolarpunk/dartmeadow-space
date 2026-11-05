@@ -94,6 +94,7 @@
       S.t = 0; S.ready = 0; S.epoch++; S.t0 = now(); S.jobMs = 0; S.shore = null; S.active = true; S.on = true; S.lvl = 1; S.under = 0;
       S.job = bakeJob(); S.deliver = null; S.rip = new core.Ripples(Math.max(1, tier.ripples)); S.wetTop = 0;
       hookOcean();
+      try { if (W.DMWaterFX && W.DMWaterFX.enabled()) S.fx = W.DMWaterFX.create(S); } catch (e) { S.fx = null; try { console.warn('[water] fx', e); } catch (_) { } }
       crumb('gpu', 'water:tex', S.tex.bytes); crumb('live', 'water', tier.name);
       pumpLater(30);
       log('begin', P.name || P.type, tier.name, 'lamS', P.lamS.toFixed(0), 'HsTot', P.HsTotal.toFixed(2), 'bytes', Math.round(S.tex.bytes));
