@@ -49,18 +49,19 @@
     const snap = floor(U.focus.div(aLvl)).mul(aLvl), xzV = aPos.add(snap);
     // shore field fetch (vertex: level 0)
     const shoreUV = (xz) => xz.sub(vec2(U.shoreC.x, U.shoreC.y)).div(U.shoreC.z).add(0.5);
-    const shoreInside = (uv) => smoothstep(0.0, 0.07, uv.x).mul(smoothstep(0.0, 0.07, uv.y)).mul(float(1.0).sub(smoothstep(0.93, 1.0, uv.x))).mul(float(1.0).sub(smoothstep(0.93, 1.0, uv.y))).mul(U.shoreOn);
+    const shoreInside = (uv) => smoothstep(0.0, 0.16, uv.x).mul(smoothstep(0.0, 0.16, uv.y)).mul(float(1.0).sub(smoothstep(0.84, 1.0, uv.x))).mul(float(1.0).sub(smoothstep(0.84, 1.0, uv.y))).mul(U.shoreOn);
     const dDeep = Math.min(30, Math.max(6, 0.2 * P.lamS)), H0 = Math.max(0.3, P.HsS * 0.9), Ps = Math.sqrt(PI2 * P.lamS / P.g);
     const hasShore = tier.shore > 0;
     const shore = (xz, vtx) => {
       if (!hasShore) return { d: F(80), T: F(0), g: vec2(0.0, 0.0), inside: F(0), amp: F(1), blend: F(0), ratio: F(0) };
-      const uv = shoreUV(xz), tx = vtx ? texture(tex.shore, uv).level(F(0)) : texture(tex.shore, uv), inside = shoreInside(uv), d = max(mix(F(80), tx.x, inside), 0.05);
+      const uv = shoreUV(xz), tx = vtx ? texture(tex.shore, uv).level(F(0)) : texture(tex.shore, uv), inside = shoreInside(uv).mul(smoothstep(-2.5, -0.6, tx.x)), d = max(mix(F(80), tx.x, inside), 0.05);
       const gain = clamp(pow(F(0.5 * P.lamS).div(d), 0.25), 1.0, 2.0), waveH = min(gain.mul(H0), d.mul(0.78)), amp = clamp(waveH.div(H0), 0.0, 1.0), ratio = gain.mul(H0).div(d.mul(0.78));
       const blend = float(1.0).sub(smoothstep(U.shoreP.x.mul(0.5), U.shoreP.x.mul(1.0), d)).mul(inside);
       return { d, T: tx.y, g: vec2(tx.z, tx.w), inside, amp: mix(F(1), amp, inside), blend, ratio, waveH };
     };
     // one sea evaluation: slope (vec2), height, whitecap potential. vtx = vertex stage (level-0 fetch, swell + mid only, no footprint fade)
     let regMod = null;      // world-space gust-patch modulation of the shorter bands (set in the fragment stage before the sea is evaluated)
+    const layerBoost = Math.hypot(0.78, 0.62) / 0.78;   // energy of the two incoherent layers over layer 0 alone (LAYERS weights in dm-water-core.js)
     const sea = (xz, vtx, fp, sh) => {
       let unres = F(0);
       const bandW = (bi, fade) => fade.mul(U.bandAmt[bi]).mul(bi === 0 ? U.swellAmp.mul(sh.amp).mul(float(1.0).sub(sh.blend.mul(0.88))) : (!vtx && regMod ? regMod : F(1)));
@@ -76,15 +77,16 @@
       }
       // fragment stage: a band whose weight has faded out (finer than a pixel, or the governor switched it off) costs NOTHING (a real branch on a coherent value), and the
       // second layer of each band is only fetched near the camera (it exists to break the repeat of the first; beyond ~U.layerFar the footprint averages it out anyway)
-      const dcam = length(positionView);
+      const dcam = length(positionView), lyW = float(1.0).sub(smoothstep(U.layerFar.mul(0.62), U.layerFar, dcam));
       const acc = Fn(() => {
         const a = vec4(0.0, 0.0, 0.0, 0.0).toVar();
         for (let bi = 0; bi < nb; bi++) {
           const b = spec.bands[bi], fade = float(1.0).sub(smoothstep(b.lamMin * 0.14, b.lamMin * 0.5, fp)), wt = bandW(bi, fade);
           If(wt.greaterThan(0.004), () => {
             for (let L = 0; L < nl; L++) {
-              const body = () => { const r = tap(bi, L, xz, false); a.x.addAssign(r.sl.x.mul(wt)); a.y.addAssign(r.sl.y.mul(wt)); a.z.addAssign(r.h.mul(wt)); if (L === 0 && (bi > 0 || nb === 1)) a.w.assign(max(a.w, r.pot.mul(wt))); };
-              if (L === 0) body(); else If(dcam.lessThan(U.layerFar), body);
+              // layer 0 always; the others ease out with distance (their weight falls to nothing, layer 0 takes up the energy) so no ring marks where they stop
+              const body = (gw) => { const r = tap(bi, L, xz, false), w2 = gw ? wt.mul(gw) : wt; a.x.addAssign(r.sl.x.mul(w2)); a.y.addAssign(r.sl.y.mul(w2)); a.z.addAssign(r.h.mul(w2)); if (L === 0 && (bi > 0 || nb === 1)) a.w.assign(max(a.w, r.pot.mul(wt))); };
+              if (L === 0) { if (nl > 1) body(mix(F(layerBoost), F(1.0), lyW)); else body(); } else If(lyW.greaterThan(0.004), () => body(lyW));
             }
           });
           unres = unres.add(float(1.0).sub(fade).mul(b.smax * b.smax * 0.3));
@@ -128,8 +130,11 @@
     const depthToViewZ = (d) => (o.logDepth ? W.logarithmicDepthToViewZ(d, cameraNear, cameraFar) : W.perspectiveDepthToViewZ(d, cameraNear, cameraFar));
     const vDepth = o.depthOK ? viewportDepthTexture().r : null, sceneZ = o.depthOK ? depthToViewZ(vDepth) : null;
     // an unwritten texel of the depth copy (resized after a render-scale change, or a region not yet copied) reads 0 = 'surface at the near plane': that made contact foam paint a white rectangle. Treat it as open water.
-    const thick = o.depthOK ? select(vDepth.lessThan(0.000001), F(500), clamp(positionView.z.sub(sceneZ), 0.0, 500.0)) : F(40);
+    const thickRaw = o.depthOK ? select(vDepth.lessThan(0.000001), F(500), clamp(positionView.z.sub(sceneZ), 0.0, 500.0)) : F(40);
     const fp = max(length(dFdx(xz)), length(dFdy(xz)));
+    // the scene depth is only trustworthy near the camera (a depth buffer's resolution is metres at a kilometre: blocky false shorelines and a patchwork of opacity), so everything it drives eases out with distance
+    const depthTrust = float(1.0).sub(smoothstep(110.0, 420.0, length(positionView)));
+    const thick = o.depthOK ? mix(F(40), thickRaw, depthTrust) : thickRaw;
     /* ---------- breaking up the repeats: nothing here is sampled on a single lattice ---------- */
     // every tile is sampled through its own rotation and an incommensurate scale (the band layers 0 / 0.61 rad at 1 / 1.37, the detail layers 0 / 0.64 rad at 0.17 / 0.5413, the
     // caustic copies 0 / 0.9 rad), the foam tile through a stochastic hex blend near the camera, and the foam density, the gust patches and the shorter bands ride world-space noise
@@ -150,7 +155,7 @@
     let slope = se.sl.add(sw.sl), hgt = se.h.add(sw.h), foamLaceMix = null, foamLaceRaw = null, foamPatch = null, lavaHeat = null;
     // detail tile first (the foam, the capillary ripples and the ice read it): lace foam, pearl cells, micro slope
     const uvA = xz.mul(0.17).add(U.drift);
-    const lace1 = (tier.name === 'high' || tier.name === 'ultra') ? Fn(() => { const r = vec4(0.0, 0.0, 0.0, 0.0).toVar(); If(dcam0.lessThan(U.hexFar), () => { r.assign(hexTap(tex.detail, uvA)); }).Else(() => { r.assign(texture(tex.detail, uvA)); }); return r; })() : texture(tex.detail, uvA);
+    const lace1 = (tier.name === 'high' || tier.name === 'ultra') ? Fn(() => { const r = vec4(0.0, 0.0, 0.0, 0.0).toVar(); const hw = float(1.0).sub(smoothstep(U.hexFar.mul(0.6), U.hexFar, dcam0)); r.assign(texture(tex.detail, uvA)); If(hw.greaterThan(0.004), () => { r.assign(mix(r, hexTap(tex.detail, uvA), hw)); }); return r; })() : texture(tex.detail, uvA);
     // parallax relief on the foam (High / Ultra): the second foam layer is read through a view-dependent shift by the first layer's height, so lace and bubbles have depth
     const par = (tier.name === 'high' || tier.name === 'ultra') ? vec2(Vd0.x, Vd0.z).div(max(Vd0.y, 0.2)).mul(lace1.x.sub(0.5).mul(0.11)).mul(float(1.0).sub(smoothstep(60.0, 160.0, dcam0))) : vec2(0.0, 0.0);
     const lace2 = texture(tex.detail, rot(xz, 0.64).mul(0.5413).sub(U.drift.mul(1.3)).add(0.37).add(par));
@@ -180,8 +185,8 @@
     // contact foam: where the sea meets the ground or any object piercing it (scene depth), with the swash breathing the line
     let phiS = hasShore ? sw.phi : F(0); const fr = fract(phiS), swashP = select(fr.lessThan(0.22), sin(fr.div(0.22).mul(1.5708)), pow(max(float(1.0).sub(fr.sub(0.22).div(0.78)), 0.0), 1.7));
     const swell = hasShore ? swashP.mul(U.swashA) : lace2.z.mul(0.9);
-    const edge = o.depthOK ? float(1.0).sub(smoothstep(0.0, 1.8, thick.sub(swell.mul(hasShore ? 1.6 : 0.9)))) : F(0);
-    const contact = o.depthOK ? edge.mul(smoothstep(0.3, 0.7, laceV).mul(0.6).add(0.4)).add(float(1.0).sub(smoothstep(0.0, 0.6, thick)).mul(0.6)) : F(0);
+    const edge = o.depthOK ? float(1.0).sub(smoothstep(0.0, 1.8, thick.sub(swell.mul(hasShore ? 1.6 : 0.9)))).mul(depthTrust) : F(0);
+    const contact = o.depthOK ? edge.mul(smoothstep(0.3, 0.7, laceV).mul(0.6).add(0.4)).add(float(1.0).sub(smoothstep(0.0, 0.6, thick)).mul(0.6).mul(depthTrust)) : F(0);
     const isLava = P.kind === 'lava';
     let foam;
     if (isFine) {

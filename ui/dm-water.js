@@ -157,7 +157,7 @@
     if (S.slow >= 3) { want = Math.max(0.15, S.lvl - 0.28); S.slow = 0; } else if (S.fast >= 10) { want = Math.min(1, S.lvl + 0.15); S.fast = 0; }
     let cap = k >= 0.9 ? 1 : k >= 0.75 ? 0.75 : k >= 0.62 ? 0.45 : 0.2; try { const B = W.DMBudget; if (B && B.on && B.waterCap) cap = Math.min(cap, B.waterCap()); } catch (e) { }   // (v256) frame-budget ladder (ui/dm-budget.js): water stages 1-3 lower this cap
     S.lvl = Math.min(want, cap);
-    if (S.U) { S.U.lvl.value = S.lvl; S.U.disp.value = S.lvl >= 0.45 ? 1 : 0; S.U.layerFar.value = 70 + 220 * S.lvl; S.U.hexFar.value = S.lvl >= 0.6 ? 40 + 70 * S.lvl : 0; }
+    if (S.U) { S.U.lvl.value = S.lvl; S.U.disp.value = clamp((S.lvl - 0.35) / 0.2, 0, 1); S.U.layerFar.value = 70 + 220 * S.lvl; S.U.hexFar.value = S.lvl >= 0.5 ? 40 + 70 * S.lvl : 0; }
   }
   function sunPoll(U) {
     try {
@@ -182,7 +182,7 @@
     let k = 0;
     spec.bands.forEach((b, bi) => {
       // fade each band in 1.5 s after its tile lands
-      const done = S.bandDoneAt && S.bandDoneAt[bi]; const a = done == null ? 0 : clamp((S.t - done) / 1.5, 0, 1); U.bandAmt[bi].value = a * (bi === 2 ? (S.lvl >= 0.3 ? 1 : 0) : 1);
+      const done = S.bandDoneAt && S.bandDoneAt[bi]; const a = done == null ? 0 : clamp((S.t - done) / 1.5, 0, 1); U.bandAmt[bi].value = a * (bi === 2 ? clamp((S.lvl - 0.2) / 0.2, 0, 1) : 1);
       for (let L = 0; L < tier.layers; L++, k++) {
         const ly = core.LAYERS[L], c2 = Math.cos(ly.rot), s2 = Math.sin(ly.rot), Sg = b.S * ly.s;
         const m00 = c2 * cr - s2 * sr, m01 = -c2 * sr - s2 * cr, m10 = s2 * cr + c2 * sr, m11 = -s2 * sr + c2 * cr;
@@ -215,7 +215,7 @@
     if (!sh.job) {
       const moved = Math.hypot(px - sh.cx, pz - sh.cz);
       if (sh.wait <= 0 && (moved > R * 0.38 || sh.tAge > (sh.has ? 12 : 5))) {
-        const cx = Math.round(px / cell) * cell, cz = Math.round(pz / cell) * cell; sh.job = shoreJob(sh, cx, cz, ctx.H); sh.tAge = 0;
+        const cx = Math.round(px / cell) * cell, cz = Math.round(pz / cell) * cell; sh.job = shoreJob(sh, cx, cz, ctx.Hw || ctx.H); sh.tAge = 0;
       }
     }
     if (sh.job) { const t0 = now(), budget = tier.mobile ? 0.7 : 1.1; let n = 0; try { while (now() - t0 < budget) { const r = sh.job.next(); n++; if (r.done) { sh.job = null; break; } } } catch (e) { sh.job = null; sh.wait = 5; try { console.warn('[water] shore', e); } catch (_) { } } if (W.DMPerf) W.DMPerf.mark('water.shore', now() - t0); }
@@ -224,9 +224,13 @@
     const core = C(), N = sh.N, cell = sh.cell, d = sh.depth, seaY = 0, x0 = cx - sh.R + cell * 0.5, z0 = cz - sh.R + cell * 0.5;
     let t0 = now(), minD = 99, maxD = -99;
     for (let j = 0; j < N; j++) {
-      for (let i = 0; i < N; i++) { let h = H(x0 + i * cell, z0 + j * cell); if (!(h > -1e5 && h < 1e5)) h = -80; const v = seaY - h; d[j * N + i] = v; if (v < minD) minD = v; if (v > maxD) maxD = v; }
+      for (let i = 0; i < N; i++) { const h = H(x0 + i * cell, z0 + j * cell); d[j * N + i] = seaY - h; }
       if (now() - t0 > 0.8) { yield; t0 = now(); }
     }
+    // the ground callback can answer NaN / garbage while terrain is still streaming: those cells become open water, and a field that is mostly garbage is not used at all
+    const bad = core.sanitizeDepth(d, 60);
+    if (bad > N * N * 0.2) { sh.wait = 1.5; sh.tAge = 0; log('shore field skipped: ' + bad + ' unreadable cells'); return; }
+    for (let k = 0; k < N * N; k++) { const v = d[k]; if (v < minD) minD = v; if (v > maxD) maxD = v; }
     const P = S.P, dDeep = Math.max(1.5, Math.min(clamp(0.2 * P.lamS, 6, 30), maxD * 0.9)), T = sh.T;
     core.eikonal(d, N, cell, P.g, dDeep, T); yield;
     // pack: depth, T, dT/dx, dT/dz  (half floats)

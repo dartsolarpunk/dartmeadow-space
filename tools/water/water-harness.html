@@ -27,6 +27,8 @@ const W0=worlds[q('world','earth')];
 // beach: land to the +x side, shore near x=60, a rock out in the surf
 const SH=+q('shore',60);
 const H=(x,z)=>{ let h=(x-SH)*0.11+0.9*Math.sin(z*0.045)+0.4*Math.sin(z*0.13+x*0.02); const rd=Math.hypot(x-(SH-30),z-18); h=Math.max(h,3.2-rd*0.5); return Math.max(h,-40); };
+// deck=1: a solid pad (a deck / mansion-box stand-in) standing 3 m over open sea sits in the WALKING height the game passes as ctx.H; the sea must read the natural ground (ctx.Hw) and show no rectangle
+const Hd=(x,z)=>(q('deck','0')==='1'&&Math.abs(x-(SH-150))<90&&Math.abs(z-10)<70)?Math.max(H(x,z),3.0):H(x,z);
 const sc=new TH.Scene(); const skyHex=W0.pal.sky; sc.background=new TH.Color(skyHex[1]); sc.fog=new TH.Fog(skyHex[1],300,2600);
 const cam=new TH.PerspectiveCamera(55,960/540,0.1,6000);
 sc.add(new TH.HemisphereLight(0xbfd8ff,0x504838,0.9)); const sun=new TH.DirectionalLight(0xfff0d0,2.4); sun.position.copy(sunPos); sc.add(sun);
@@ -47,10 +49,10 @@ const camPos={wide:[-120,14,-60],beach:[8,5,40],low:[-30,2.2,10],surf:[20,6,-40]
 const look={wide:[40,0,0],beach:[55,0,-10],low:[40,1,0],surf:[58,0,10],under:[40,0,0],top:[0,0,0.01],swell:[0,0,40],close:[40,0,10],ride:[-34,0,-20],curl:[44,1.2,0],curl2:[48,1.4,16],curlside:[46,1.2,2],curl3:[40,0.5,-6],curl4:[46,1.0,0],curl5:[30,0.8,-6],wade:[46,0,6],shafts:[24,-0.5,14]}[view];
 cam.position.set(...camPos); cam.lookAt(...look);
 // advance the simulation clock (and the shore field slices) before the shot
-for(let i=0;i<Math.round(simT/0.05)+120;i++){ DMWater.follow(cam.position.x,cam.position.z); DMWater.tick(0.05,{camera:cam,scene:sc,x:(cam.position.x+look[0])/2,z:(cam.position.z+look[2])/2,H,mode:'cam'}); }
+for(let i=0;i<Math.round(simT/0.05)+120;i++){ DMWater.follow(cam.position.x,cam.position.z); DMWater.tick(0.05,{camera:cam,scene:sc,x:(cam.position.x+look[0])/2,z:(cam.position.z+look[2])/2,H:Hd,Hw:H,mode:'cam'}); }
 // footstep ripples + a few extras so the ring shows
 if(q('rip','1')==='1'&&DMWater.ripple){ DMWater.ripple(30,2,0.6); DMWater.ripple(34,5,0.4); }
-for(let i=0;i<2;i++){ DMWater.follow(cam.position.x,cam.position.z); DMWater.tick(0.05,{camera:cam,scene:sc,x:(cam.position.x+look[0])/2,z:(cam.position.z+look[2])/2,H,mode:'cam'}); }
+for(let i=0;i<2;i++){ DMWater.follow(cam.position.x,cam.position.z); DMWater.tick(0.05,{camera:cam,scene:sc,x:(cam.position.x+look[0])/2,z:(cam.position.z+look[2])/2,H:Hd,Hw:H,mode:'cam'}); }
 // a moving player: ride = skyboard skimming the sea, wade = walking through the shallows
 if(view==='ride'||view==='wade'){
   const ride=view==='ride'; let x=ride?-100:38, z=ride?-20:-14; const sp=ride?+q('spd',17):2.6, dt=0.033;
@@ -58,7 +60,7 @@ if(view==='ride'||view==='wade'){
     const y=ride?DMWater.heightAt(x,z)+1.1:H(x,z); DMWater.follow(cam.position.x,cam.position.z); DMWater.tick(dt,{camera:cam,scene:sc,x,z,y,H,mode:ride?'fly':'walk'}); }
   { const fx0=ride?-100+sp*+q('sim',5.2):40, fz0=ride?-20:6; cam.position.set(fx0-(ride?+q('cd',9):7),+q('ch',3.4),fz0-(ride?7:5)); cam.lookAt(fx0+(ride?4:0),0.6,fz0); DMWater.follow(cam.position.x,cam.position.z); }
   await new Promise(r=>setTimeout(r,1500));
-  for(let i=0;i<Math.round(+q('post',0)/0.033);i++){ DMWater.tick(0.033,{camera:cam,scene:sc,x:ride?-100+sp*+q('sim',5.2):40,z:ride?-20:6,y:ride?DMWater.heightAt(-100+sp*+q('sim',5.2),-20)+1.1:H(40,6),H,mode:'fly'}); }
+  for(let i=0;i<Math.round(+q('post',0)/0.033);i++){ DMWater.tick(0.033,{camera:cam,scene:sc,x:ride?-100+sp*+q('sim',5.2):40,z:ride?-20:6,y:ride?DMWater.heightAt(-100+sp*+q('sim',5.2),-20)+1.1:H(40,6),H:Hd,Hw:H,mode:'fly'}); }
   window.__fx=DMWater.S.fx&&DMWater.S.fx.status();
 }
 await r.renderAsync(sc,cam); await r.renderAsync(sc,cam);

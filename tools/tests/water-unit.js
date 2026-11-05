@@ -231,4 +231,29 @@ const stats = (mdl, t, N) => { let s = 0, s2 = 0; for (let i = 0; i < N; i++) { 
     let edge = 0, ids = new Set(); for (let i = 0; i < T * T; i++) { if (d[i * 4] < 40) edge++; ids.add(d[i * 4 + 1] >> 4); } ok(edge / (T * T) > 0.03 && edge / (T * T) < 0.4, 'plate borders cover ' + (100 * edge / (T * T)).toFixed(0) + '% of the tile'); ok(ids.size >= 10, 'plate ids spread (' + ids.size + ' of 16 buckets)');
     let sm = 0, mm = 0; for (let k = 0; k < T; k++) for (const c of [0, 2]) { sm += Math.abs(d[(k * T) * 4 + c] - d[(k * T + T - 1) * 4 + c]); mm += Math.abs(d[(k * T + 20) * 4 + c] - d[(k * T + 21) * 4 + c]); } ok(sm < mm * 1.8 + 300, 'cells tile has no seam'); }
 }
+
+/* ── regression: Solenne v272 (white rectangle, patchy waves) ── */
+{
+  // the shore field must survive a ground callback that answers garbage while terrain streams
+  const N = 24, d = new Float32Array(N * N).fill(30); d[5] = NaN; d[40] = Infinity; d[100] = -1e9; d[200] = undefined;
+  ok(C.sanitizeDepth(d, 60) === 4 && d[5] === 60 && d[40] === 60 && d[100] === 60 && d[200] === 60 && d[7] === 30, 'sanitizeDepth turns unreadable cells into open water and counts them');
+  // a 3 m high solid pad over deep water (a deck, the mansion box) must not read as a beach: land fades the shore terms out, a real beach keeps them
+  ok(C.landFade(0) === 1 && C.landFade(-0.6) === 1 && C.landFade(-3) === 0 && C.landFade(-1.5) > 0 && C.landFade(-1.5) < 1, 'landFade: beach foam kept, ground 2.5 m up carries none');
+  let mono = true, pv = 0; for (let x = -4; x <= 1; x += 0.05) { const v = C.landFade(x); if (v < pv - 1e-9) mono = false; pv = v; } ok(mono, 'landFade is monotonic (no ring)');
+  for (const [a, b] of [[60, 260], [110, 420], [90, 160]]) { let m = true, p = 1; for (let x = 0; x < b * 1.5; x += 2) { const v = C.farFade(x, a, b); if (v > p + 1e-9) m = false; p = v; } ok(m && C.farFade(a, a, b) === 1 && C.farFade(b, a, b) === 0, 'farFade(' + a + ',' + b + ') eases 1 -> 0 monotonically');}
+  // a field with a pad: the eikonal run over the PAD-FREE ground and over the pad-carrying ground differ only where the pad is, and the pad-free one has no zero-depth block
+  const cell = 4, depth = new Float32Array(N * N), T = new Float32Array(N * N); for (let k = 0; k < N * N; k++) depth[k] = 25;
+  for (let j = 8; j < 16; j++) for (let i = 4; i < 20; i++) depth[j * N + i] = -3;      // the pad
+  let landCells = 0, foamy = 0; for (let k = 0; k < N * N; k++) { if (depth[k] < 0) { landCells++; if (Math.max(depth[k], 0.05) < 1.5 * C.landFade(depth[k]) + 1e-9 && C.landFade(depth[k]) > 0) foamy++; } }
+  ok(landCells > 100 && foamy === 0, 'every cell of a 3 m pad has a zero shore weight (' + landCells + ' cells)');
+  C.eikonal(depth, N, cell, 9.81, 12, T); let fin = true; for (let k = 0; k < N * N; k++) if (!Number.isFinite(T[k])) fin = false; ok(fin, 'eikonal stays finite around a pad');
+}
+
+{ // static guards: no distance switch in the sea shader may be a hard edge again; the sea reads the natural ground
+  const fs = require('fs'), path = require('path'), root = path.join(__dirname, '..', '..'), sea = fs.readFileSync(path.join(root, 'ui/dm-water-sea.js'), 'utf8'), idx = fs.readFileSync(path.join(root, 'index.html'), 'utf8'), rt = fs.readFileSync(path.join(root, 'ui/dm-water.js'), 'utf8');
+  ok(!/lessThan\(U\.layerFar\)|lessThan\(U\.hexFar\)/.test(sea), 'no hard layerFar / hexFar branch in the sea shader');
+  ok(/depthTrust/.test(sea) && /smoothstep\(-2\.5, -0\.6, tx\.x\)/.test(sea), 'scene-depth terms fade with distance and land has no shore terms');
+  ok(!/S\.lvl >= 0\.\d+ \? 1 : 0/.test(rt), 'governor level switches are ramps, not steps');
+  ok(/Hw:TERRAIN\.Hw\|\|null/.test(idx) && /TERRAIN\.Hw=F\.H0\|\|H/.test(idx) && /ctx\.Hw \|\| ctx\.H/.test(rt), 'the shore field reads the natural ground (TERRAIN.Hw), not decks / the mansion carve');
+}
 console.log('water-unit: ' + n + ' checks passed');

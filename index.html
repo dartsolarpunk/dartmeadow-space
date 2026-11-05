@@ -19563,7 +19563,7 @@ function _pwWorldTick(dt){
   const nearClip=space?Math.max(0.1,Math.min(50,(PW.sp.fc||1)*20)):0.1+(Math.max(0.5,Math.min(6,calt*0.01))-0.1)*k;
   if(Math.abs(cam.far-farClip)>farClip*0.05||Math.abs(cam.near-nearClip)>nearClip*0.05){ cam.far=farClip; cam.near=nearClip; cam.updateProjectionMatrix(); }
   _pwSeaFollow(px,pz,Math.min(viewR,16384));
-  try{ if(window.DMWater&&DMWater.active) DMWater.tick(dt,{camera:cam,scene,x:px,z:pz,y:f.y,H,mode:PW.mode}); }catch(e){ if(!window._dmwWarn){ window._dmwWarn=1; console.warn('[water] tick',e); } }
+  try{ if(window.DMWater&&DMWater.active) DMWater.tick(dt,{camera:cam,scene,x:px,z:pz,y:f.y,H,Hw:TERRAIN.Hw||null,mode:PW.mode}); }catch(e){ if(!window._dmwWarn){ window._dmwWarn=1; console.warn('[water] tick',e); } }
   try{ if(window.DMLight&&DMLight.on) DMLight.tick(dt,{x:px,y:f.y,z:pz,H,sunDir:TERRAIN.sky?TERRAIN.sky.sunDir:null,day:TERRAIN.sky?TERRAIN.sky.day:1,scene,walk:mode!=='space'}); }catch(e){ if(!window._dmlWarn){ window._dmlWarn=1; console.warn('[light] tick',e); } }   // (ui/dm-light.js) time-sliced probe + height-cache update, amortised <= ~1-2 ms
   _pwPropsTick(px,pz,space?1e9:(fly?agl:0));
   try{ if(window.DMPlaces) DMPlaces.tick(dt,_plEnv()); if(window.DMCreatures) DMCreatures.tick(dt,_plEnv()); }catch(e){ if(!window._plWarn){ window._plWarn=1; console.warn('[places]',e); } }
@@ -19714,7 +19714,7 @@ function _pwClose(opts){
   surfTerrainMesh=null; surfWater=null; surfCausticCtx=null; surfCausticTex=null;
   TERRAIN.mcGroup=null; TERRAIN._mcBuildGen=(TERRAIN._mcBuildGen||0)+1; TERRAIN.mcY=null; TERRAIN.mcN=null;
   TERRAIN.group=null; TERRAIN.mcDensityArray=null; TERRAIN.mcGridInfo=null; TERRAIN.cpuMc=null; TERRAIN.mcGpu=false; TERRAIN._mcBusy=false;
-  TERRAIN.waterFollow=null; TERRAIN.waterVolume=null; TERRAIN.sun=null; TERRAIN.moon=null; TERRAIN.natPool=null; TERRAIN.starDome=null; TERRAIN.sky=null; TERRAIN.windPoints=null; TERRAIN.H=null;
+  TERRAIN.waterFollow=null; TERRAIN.waterVolume=null; TERRAIN.sun=null; TERRAIN.moon=null; TERRAIN.natPool=null; TERRAIN.starDome=null; TERRAIN.sky=null; TERRAIN.windPoints=null; TERRAIN.H=null; TERRAIN.Hw=null;
   if(TERRAIN.dust){ try{ TERRAIN.dust.dispose(); }catch(e){} TERRAIN.dust=null; }
   TERRAIN.tessAreas=[]; TERRAIN._tessJobs=[]; TERRAIN.tessMat=null; TESS_HOLE.slots.forEach(h=>{ h.r.value=0; }); TERRAIN.rockGeo=null;
   window._surfWaterAt=function(){ return false; };
@@ -24779,7 +24779,7 @@ function _pwBuildGround(pal,fx,fz,mode){
   const F=_groundField(body,site,pal); try{ const _f0=_fac(); if(_f0&&_f0.carveField) _f0.carveField(F); }catch(e){} const H=F.H, seed=F.seed;   // (exclusion) F.H = the planet ground with the mansion's box carved out (ui/dm-facilities.js F.carve): every DRAWN-ground consumer below samples it
   TERRAIN.style=F.ws; TERRAIN.wx0=F.sw.x; TERRAIN.wz0=F.sw.z;
   const Hs=(()=>{ try{ const f=_fac(); return f?f.wrapH(F.H0||H):H; }catch(e){ return H; } })();   // decks, pads, island tops and the mansion stand on the ground (the drawn ground below keeps the plain H)
-  TERRAIN.pal=pal; TERRAIN.H=Hs; TERRAIN.Hg=H; TERRAIN.exBox=(()=>{ try{ const f=_fac(); return f&&f.exBox?f.exBox:null; }catch(e){ return null; } })(); TERRAIN.seed=seed; TERRAIN.siteBias=F.siteBias; TERRAIN.siteLat=F.siteLat;
+  TERRAIN.pal=pal; TERRAIN.H=Hs; TERRAIN.Hg=H; TERRAIN.Hw=F.H0||H;   /* Hw: the natural ground (no decks / mansion solids, no mansion-box carve) = what the sea's shore field should read */ TERRAIN.exBox=(()=>{ try{ const f=_fac(); return f&&f.exBox?f.exBox:null; }catch(e){ return null; } })(); TERRAIN.seed=seed; TERRAIN.siteBias=F.siteBias; TERRAIN.siteLat=F.siteLat;
   try{ if(window.DMGround) DMGround.beginWorld({style:F.ws,seed,water:!!pal.water,lat:F.siteLat}); }catch(e){ console.warn('[ground lib] bake',e); }
   try{ if(window.DMWater) DMWater.begin({body,pal,seed,lat:F.siteLat}); }catch(e){ console.warn('[water] begin',e); }   // (ui/dm-water*.js) the sea's wave tiles / identity from this world's gravity, air and liquid, baked in 2-3 ms slices   // atlas + region map baked in 2-3 ms slices between frames (the materials start on a neutral atlas, so nothing waits)
   TERRAIN.mcY=null; TERRAIN.mcN=null; TERRAIN.cpuMc=null; TERRAIN.mcGpu=false; TERRAIN._mcBusy=false; TERRAIN._mcUpg=false;

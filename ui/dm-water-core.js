@@ -406,6 +406,15 @@
 
   /* ───────────────────────────── 7. shore field (depth, wave travel time, gradient) ───────────────────────────── */
   // depth: Float32Array N*N (sea level - ground height, > 0 under water); returns T (seconds the wave takes from deep water, eikonal |grad T| = 1/c, c = sqrt(g d)) by fast sweeping
+  // Repair a depth field in place: a height callback can answer NaN / Infinity / garbage while the ground it reads is still streaming in. Such cells become open water
+  // (deepFill) so they can never read as a beach, and the number repaired is returned (the caller keeps the old field when too many were bad).
+  function sanitizeDepth(d, deepFill) {
+    let bad = 0; for (let k = 0; k < d.length; k++) { const v = d[k]; if (!(v > -1e5 && v < 1e5)) { d[k] = deepFill; bad++; } } return bad;
+  }
+  // mirrors of the shader's smooth terms (the tests pin their constants): ground standing well above the sea carries no surf / bore / contact foam (a deck, a pier, a cliff the
+  // sea cannot reach), and every distance-gated term eases out instead of switching
+  const landFade = (rawDepth) => sstep(-2.5, -0.6, rawDepth);
+  const farFade = (dist, a, b) => 1 - sstep(a, b, dist);
   function eikonal(depth, N, cell, g, dDeep, out) {
     const Tm = out || new Float32Array(N * N), BIG = 1e9;
     for (let i = 0; i < N * N; i++) Tm[i] = depth[i] >= dDeep ? 0 : BIG;
@@ -706,7 +715,7 @@
   const API = {
     VERSION: 1, UNIT_M, G0, TIERS, TIER_ORDER, tierFor, tierBytes, windFor, identityFor, LIQUIDS, boilK,
     bandPlan, buildSpectrum, bakeBand, bakeBandSync, bakeDetail, bakeCaustics, LAYERS, layerUV, heightAt, slopeAt, bilin,
-    clipmap, levelsFor, eikonal, shoal, swashProfile, wetStep, Ripples, Wake, Spray,
+    clipmap, levelsFor, eikonal, sanitizeDepth, landFade, farFade, shoal, swashProfile, wetStep, Ripples, Wake, Spray,
     iceLook, bakeCells, worleyId, CURL_NC, CURL_PT, curlCounts, curlShape, curlLUT, curlAmount, curlFronts, curlScratch, curlDetail, gridSample,
     util: { clamp, sstep, mix, hashStr, rng, ndtri, fbm, worley, h2 }
   };
