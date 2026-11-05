@@ -571,6 +571,21 @@
         if (reg >= cap) break; const hx = len * cell / 2, hy = (r.b - r.a) * ly / 2; const id = W.addBox(name, ox + (r.ix + len / 2) * cell, oy + (r.a + (r.b - r.a) / 2) * ly, oz + (r.iz + 0.5) * cell, hx, hy, cell / 2, 0, r.mt); if (id >= 0) reg++; if (reg % 120 === 0) yield reg; }
       return reg;
     };
+    // Ariel's interior nav data (assets/ariel-home/ariel-home-interior-nav.json): furniture boxes (obs) and thin walls / rails (seg) become colliders, so NPCs, bodies and particles meet
+    // them too (she already walks it with ui/dm-mansion-interior.js). map(lx,ly,lz,out) takes the nav frame (x east, y seaward, z up) to world; sc = world units per nav unit.
+    W.fromNav = (name, nav, map, sc, opts) => {
+      opts = opts || {}; sc = sc || 1; const a = [0, 0, 0], b = [0, 0, 0], thick = (opts.thick || 0.5) * sc; let n = 0;
+      const O = nav.obs, S = nav.seg, no = O.length / (O.length && O[0] !== undefined && typeof O[0] === 'number' ? 6 : 1), isFlat = typeof O[0] === 'number';
+      const row = (arr, i) => (isFlat ? [arr[i * 6], arr[i * 6 + 1], arr[i * 6 + 2], arr[i * 6 + 3], arr[i * 6 + 4], arr[i * 6 + 5]] : arr[i]);
+      for (let i = 0; i < no; i++) { const r = row(O, i); map((r[0] + r[2]) / 2, (r[1] + r[3]) / 2, r[4], a); map((r[0] + r[2]) / 2, (r[1] + r[3]) / 2, r[5], b); const hy = abs(b[1] - a[1]) / 2; if (hy < 0.02) continue;
+        map(r[0], r[1], r[4], a); map(r[2], r[1], r[4], b); const yaw = Math.atan2(b[2] - a[2], b[0] - a[0]); map((r[0] + r[2]) / 2, (r[1] + r[3]) / 2, (r[4] + r[5]) / 2, b);
+        if (W.addBox(name, b[0], b[1], b[2], abs(r[2] - r[0]) / 2 * sc, hy, abs(r[3] - r[1]) / 2 * sc, yaw, opts.obsMat || 'wood') >= 0) n++; }
+      const ns = S.length / (typeof S[0] === 'number' ? 6 : 1), sFlat = typeof S[0] === 'number';
+      for (let i = 0; i < ns; i++) { const r = sFlat ? [S[i * 6], S[i * 6 + 1], S[i * 6 + 2], S[i * 6 + 3], S[i * 6 + 4], S[i * 6 + 5]] : S[i]; if (r[5] - r[4] < 0.05) continue; map(r[0], r[1], r[4], a); map(r[2], r[3], r[4], b);
+        const L = sqrt((b[0] - a[0]) * (b[0] - a[0]) + (b[2] - a[2]) * (b[2] - a[2])) / 2, yaw = Math.atan2(b[2] - a[2], b[0] - a[0]); map((r[0] + r[2]) / 2, (r[1] + r[3]) / 2, (r[4] + r[5]) / 2, b);
+        if (W.addBox(name, b[0], b[1], b[2], L, (r[5] - r[4]) / 2 * sc, thick / 2, yaw, opts.wallMat || 'stone') >= 0) n++; }
+      return n;
+    };
     W.runGen = (it) => { let r; do { r = it.next(); } while (!r.done); return r.value; };   // finish a generator at once (tests, small props)
 
     // ── terrain / water hooks (set by the game)

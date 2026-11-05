@@ -119,6 +119,18 @@ function dts(frames, spike) { const a = []; for (let i = 0; i < frames; i++) { c
   for (let i = 0; i < N; i++) { const dt = i % 4 === 0 ? 1 / 15 : 1 / 60; ang += 0.01; C._dt = dt; C.walk(ch, Math.cos(ang) * 30 * dt, Math.sin(ang) * 30 * dt); C.step(dt); }
   const ms = Number(process.hrtime.bigint() - t0) / 1e6 / N; console.log('cost: ' + ms.toFixed(4) + ' ms/frame with 200 colliders + 16 bodies (node; mobile ~5x) pushes/frame ' + (C.stats.pushes / N).toFixed(2) + ' cands ' + (C.stats.cands / C.stats.queries).toFixed(1)); ok(ms < 0.3, 'frame cost < 0.3 ms in node (= < 1.5 ms at 5x slower mobile): ' + ms.toFixed(3)); }
 
+// 8c. Ariel's interior nav data -> colliders: all three new entrances stay open, walls stay solid
+{ const nav = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, '../../assets/ariel-home/ariel-home-interior-nav.json'), 'utf8')); const W = mk({ capacity: 4096 });
+  const map = (lx, ly, lz, o) => { o[0] = lx; o[1] = lz; o[2] = -ly; };   // the mansion root maps nav (x east, y seaward, z up) to (x, up, -y)
+  const n = W.fromNav('mansion', nav, map, 1); ok(n > 60, 'nav walls + furniture registered (' + n + ')');
+  const walk = (x0, y0, dx, dy, steps, z0) => { const c = W.makeChar({ x: x0, y: z0 || 0.6, z: -y0, ground: () => z0 || 0.6 }); for (let i = 0; i < steps; i++) { W._dt = 1 / 15; W.walk(c, dx * 1.5, -dy * 1.5); } return [c.x, -c.z]; };
+  // hall rear wall (y = -37.7): main court door x -5.5..5.5; walking seaward-to-inland (y decreasing) through x=0 must cross it, through x=20 must not
+  let r = walk(0, -30, 0, -1, 30, 0.6); ok(r[1] < -40, 'court main door is open (ended at y ' + r[1].toFixed(1) + ')');
+  r = walk(20, -30, 0, -1, 40, 0.6); ok(r[1] > -38.5, 'the hall rear wall beside it stays solid (y ' + r[1].toFixed(1) + ')');
+  r = walk(52, -8, 0, 1, 40, 0.6); ok(r[1] > 1, 'east deck door (x 48..56, y -2.6) is open (ended at y ' + r[1].toFixed(1) + ')');
+  r = walk(30, -8, 0, 1, 40, 0.6); ok(r[1] < -1.5, 'east wall beside the deck door is solid (y ' + r[1].toFixed(1) + ')');
+  r = walk(-54, -8, 0, 1, 40, 0.6); ok(r[1] > 1, 'west doorway (x -57.9..-50) open (y ' + r[1].toFixed(1) + ')'); r = walk(0, -8, 0, 1, 40, 0.6); ok(r[1] > 1, 'central hall opening (x -6.5..6.5) open (y ' + r[1].toFixed(1) + ')'); }
+
 // 9. determinism --------------------------------------------------------------------------------------------------------------------------
 { const run = () => { seed = 99; const W = mk(); for (let i = 0; i < 100; i++) W.addEllipsoid('g', rnd() * 50, 0.5, rnd() * 50, 1, 1, 'rock'); const c = W.makeChar({ x: 0, y: 0, z: 0 }); for (let i = 0; i < 300; i++) W.walk(c, 0.4, 0.3); return c.x.toFixed(5) + ',' + c.z.toFixed(5); }; ok(run() === run(), 'deterministic'); }
 console.log(fails ? fails + ' FAILED of ' + n : 'collide-unit: all ' + n + ' checks passed'); process.exit(fails ? 1 : 0);
