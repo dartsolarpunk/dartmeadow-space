@@ -13,18 +13,21 @@
   root.DMCollide = W;
   W.on = W.on; W.enabled = Q.get('collide') !== '0'; W.on_ = W.enabled;
   const EYE = 3.0;                                   // updateSurface keeps p.pos at eye height: feet = pos.y - 3.0
-  const C = W.makeChar({ r: 0.7, h: 3.26, step: 0.6, snap: 0.5, slope: Math.tan(((+Q.get('slope')) || 55) * Math.PI / 180), strideLen: 2.6 });
+  const C = W.makeChar({ r: 0.7, h: 3.1, step: 0.6, snap: 0.5, slope: Math.tan(((+Q.get('slope')) || 55) * Math.PI / 180), strideLen: 2.6 });
   W.char = C;
   const slopeDeg = +Q.get('slope') || 0;
   // ── streamed chunk registration (time-sliced)
   const jobs = []; let cur = null;
   function specsOf(g) { const out = []; g.traverse(o => { if (o.isInstancedMesh && o.userData && o.userData.col) out.push(o); }); return out; }
   W.regChunk = (key, g) => { if (!W.enabled || !g) return; const ims = specsOf(g); if (ims.length) jobs.push({ key, ims, i: 0, it: null }); };
+  // a loaded object (GLB structure, prop model): walls rasterised from its triangles ('walls') or one box per mesh ('boxes'); sliced like the chunk jobs
+  W.regObject = (key, obj, opts) => { if (!W.enabled || !obj) return; opts = opts || {}; try { obj.updateWorldMatrix(true, true); } catch (e) { } jobs.push({ key, ims: [], i: 0, it: null, gen: opts.mode === 'boxes' ? W.fromObjectGen(key, obj, opts, 6) : W.fromMeshGen(key, obj, opts, 400) }); };
   W.dropChunk = (key) => { for (let k = jobs.length - 1; k >= 0; k--) if (jobs[k].key === key) jobs.splice(k, 1); if (cur && cur.key === key) cur = null; W.clearGroup(key); };
   function pump(ms) {
     const t0 = performance.now();
     while (performance.now() - t0 < ms) {
       if (!cur) { cur = jobs.shift(); if (!cur) return; }
+      if (cur.gen) { let r; try { r = cur.gen.next(); } catch (e) { cur = null; continue; } if (r.done) cur = null; continue; }
       if (!cur.it) { const im = cur.ims[cur.i]; if (!im) { cur = null; continue; } const sp = im.userData.col; cur.it = W.fromInstancedGen(cur.key, im.instanceMatrix.array, im.count, sp, 24); }
       const r = cur.it.next(); if (r.done) { cur.it = null; cur.i++; }
     }
@@ -46,6 +49,17 @@
     W.walk(C, dx, dz); p.pos.x = C.x; p.pos.z = C.z;
     if (C.grounded && C.y + EYE > p.pos.y) p.pos.y = C.y + EYE;
   };
+  // NPCs / creatures (ui/dm-creatures.js): a kinematic actor each (the player is stopped by it), pushed out of props and out of the player. cr = {x,y,z,rig}
+  const PO = [0, 0];
+  W.npcStep = (cr, r, h) => {
+    if (!W.enabled) return; r = r || Math.min(1.1, Math.max(0.3, ((cr.rig && cr.rig.sphereR) || 1.5) * 0.3)); h = h || 3;
+    if (cr._act == null || cr._act < 0) { cr._act = W.addActor(cr.x, cr.y, cr.z, r, h, false, cr); if (cr._act < 0) return; }
+    if (W.count() && !cr.npcSite) { const d = W.pushOut(cr.x, cr.y || 0, cr.z, r, h, 0.5, PO); if (d > 1e-4) { cr.x += PO[0]; cr.z += PO[1]; } }
+    const dx = cr.x - C.x, dz = cr.z - C.z, R = r + C.r, d2 = dx * dx + dz * dz;   // not through the player either (she is moved by her own sweep)
+    if (d2 < R * R && Math.abs((cr.y || 0) - C.y) < h) { const d = Math.sqrt(d2) || 1e-3; cr.x += dx / d * (R - d); cr.z += dz / d * (R - d); }
+    W.setActor(cr._act, cr.x, cr.y || 0, cr.z);
+  };
+  W.npcDrop = (cr) => { if (cr && cr._act != null && cr._act >= 0) { W.removeActor(cr._act); cr._act = -1; } };
   // standing on a prop: its top at the character's footprint, tested with last frame's feet so a 15 fps fall cannot sink through it
   W.supportFor = (p, prevFeet) => { if (!W.enabled || !W.count()) return -1e9; const s = W.supportAt(p.pos.x, p.pos.z, prevFeet, C.step, 0.35); return s; };
   W.landed = (p, vy) => { if (vy < -3.5) W.emit('land', W.lastMat, p.pos.x, p.pos.y - EYE, p.pos.z, -vy); };

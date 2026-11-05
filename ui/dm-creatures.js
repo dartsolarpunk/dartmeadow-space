@@ -53,7 +53,7 @@ function takeRig(t){
 }
 function play(cr,name,fade){ const r=cr.rig; if(!r.mixer||cr.clip===name) return; const a=r.acts[name]||r.acts.idle||r.acts.walk; if(!a) return; const o=r.cur; r.cur=a; cr.clip=name;
   a.reset(); a.enabled=true; a.setEffectiveWeight(1); a.play(); if(o&&o!==a) o.crossFadeTo(a,fade||0.25,false); }
-function release(cr){ const r=cr.rig; r.grp.visible=false; if(r.grp.parent) r.grp.parent.remove(r.grp); if(r.mixer) r.mixer.stopAllAction(); r.cur=null; cr.clip=''; let l=S.pool.get(r.t.c.id); if(!l){ l=[]; S.pool.set(r.t.c.id,l); } if(l.length<6) l.push(r); cr.rig=null; cr.live=false; }
+function release(cr){ if(root.DMCollide) root.DMCollide.npcDrop(cr); const r=cr.rig; r.grp.visible=false; if(r.grp.parent) r.grp.parent.remove(r.grp); if(r.mixer) r.mixer.stopAllAction(); r.cur=null; cr.clip=''; let l=S.pool.get(r.t.c.id); if(!l){ l=[]; S.pool.set(r.t.c.id,l); } if(l.length<6) l.push(r); cr.rig=null; cr.live=false; }
 
 // ── world binding ──
 function bind(env){
@@ -140,6 +140,7 @@ function tick(dt,env){
     if(d>R*1.45||(!cr.npcSite&&agl>500)||(cr.npcSite&&(!cr.npcSite.g||cr.npcSite.st!==4))){ release(cr); S.act.splice(i,1); continue; }
     cr.dist=d; brain(cr,dt,env,fx,fz);
     const gy=H(cr.x,cr.z); const air=cr.c.medium==='air';
+    if(!air&&root.DMCollide) root.DMCollide.npcStep(cr);   // props and the player stop it (ui/dm-collide-game.js); it is an actor the player collides with
     if(air){ const want=gy+cr.c.fly[0]+(cr.c.fly[1]-cr.c.fly[0])*(0.5+0.5*Math.sin(cr.phase+S.tA*0.15)); cr.y+=(want-cr.y)*Math.min(1,dt*0.8); if(cr.y<gy+2) cr.y=gy+2; }
     else cr.y=cr.npcSite?cr.npcSite.y:gy;
     map(cr.x,cr.y,cr.z,m.v); rig.grp.position.copy(m.v); rig.grp.rotation.y=cr.yaw;

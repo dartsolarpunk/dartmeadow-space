@@ -110,7 +110,14 @@ function mkRec(s,def){
   const d=def||(S.byId&&S.byId[s.asset]); const h=Math.max(8,(d&&d.height)||s.radius*0.6);
   return {s,d,st:0,h,lx:0,lz:0,y:0,yLive:0,seen:0,beacon:null,imp:null,g:null,lod0:null,lod1:null,box:null,disc:0,dist:1e9,vis:true,a:null,props:0,rx:-1e9,rz:-1e9};
 }
+// collision (ui/dm-collide.js): the fully-modelled (LOD0) site's walls become colliders once, sliced over frames, and go when it drops below LOD0
+function colSync(rec){
+  const DC=root.DMCollide; if(!DC||!DC.enabled) return; const key='place#'+rec.s.id;
+  if(rec.st===4&&rec.lod0&&rec.colFor!==rec.lod0){ DC.dropChunk(key); rec.colFor=rec.lod0; DC.regObject(key,rec.lod0,{mode:'walls',cell:1,layer:0.5,mat:'stone',maxBoxes:700}); }
+  else if(rec.st!==4&&rec.colFor){ DC.dropChunk(key); rec.colFor=null; }
+}
 function dropObj(w,rec){
+  if(rec.colFor&&root.DMCollide){ root.DMCollide.dropChunk('place#'+rec.s.id); rec.colFor=null; }
   if(rec.beacon){ w.G.remove(rec.beacon); rec.beacon.material.dispose(); rec.beacon=null; }
   if(rec.imp){ w.G.remove(rec.imp); rec.imp.material.dispose(); rec.imp=null; }
   if(rec.g){ w.G.remove(rec.g); rec.g=null; rec.lod0=rec.lod1=rec.box=null; }
@@ -234,6 +241,7 @@ function decide(w,env,fx,fy,fz,mode){
       if(rec.st===4&&rec.seen<2&&rec.dist<rec.s.radius*2.5+80){ rec.seen++; if(rec.seen===2){ rec.y=siteY(env,rec,rec.lx,rec.lz,true); rec.yLive=rec.y; if(rec.g) rec.g.position.y=rec.y; } }
       ensureModel(w,rec,rec.st);
       if(rec.g) rec.g.position.y=rec.y;
+      colSync(rec);
     }
     if(rec.st===4) st.l0++; else if(rec.st===3){ if(rec.box) st.box++; else st.l1++; } else if(rec.st===2) st.imp++; else if(rec.st===1) st.beacon++;
   }
@@ -273,11 +281,12 @@ function updateProps(w,env){
         const lx=r.lx+Math.cos(r.s.yaw||0)*p.x+Math.sin(r.s.yaw||0)*p.z, lz=r.lz-Math.sin(r.s.yaw||0)*p.x+Math.cos(r.s.yaw||0)*p.z;
         const gy=env.surfH?env.surfH(lx,lz):env.TERRAIN.H(lx,lz); TMP.e.set(0,p.yaw,0); TMP.q.setFromEuler(TMP.e); TMP.v.set(lx,gy,lz); TMP.s.set(p.s,p.s,p.s);
         TMP.m.compose(TMP.v,TMP.q,TMP.s).multiply(rel); im.setMatrixAt(i++,TMP.m); }
-      im.instanceMatrix.needsUpdate=true; w.props.add(im); total+=list.length; });
+      im.instanceMatrix.needsUpdate=true; w.props.add(im); total+=list.length;
+      try{ const bb=o.geometry.boundingBox||(o.geometry.computeBoundingBox(),o.geometry.boundingBox); if(bb&&root.DMCollide) im.userData.col={kind:'bbox',mat:'wood',k:1,bb:{cx:(bb.min.x+bb.max.x)/2,cy:(bb.min.y+bb.max.y)/2,cz:(bb.min.z+bb.max.z)/2,hx:(bb.max.x-bb.min.x)/2,hy:(bb.max.y-bb.min.y)/2,hz:(bb.max.z-bb.min.z)/2}}; }catch(e){} });   // props (benches, crates, lamps...) are boxes
   });
-  S.stats.props=total;
+  S.stats.props=total; if(root.DMCollide){ root.DMCollide.dropChunk('placeprops#'+w.key); root.DMCollide.regChunk('placeprops#'+w.key,w.props); }
 }
-function clearProps(w){ if(w.props){ w.G.remove(w.props); w.props.children.forEach(c=>{ if(c.dispose) c.dispose(); }); w.props=null; } if(w.propAssets){ w.propAssets.forEach(a=>{ a.refs--; }); w.propAssets=null; } w.propKey=''; w.propsDone=false; }
+function clearProps(w){ if(root.DMCollide) root.DMCollide.dropChunk('placeprops#'+w.key); if(w.props){ w.G.remove(w.props); w.props.children.forEach(c=>{ if(c.dispose) c.dispose(); }); w.props=null; } if(w.propAssets){ w.propAssets.forEach(a=>{ a.refs--; }); w.propAssets=null; } w.propKey=''; w.propsDone=false; }
 function teardown(w,full){
   if(!w) return; try{ clearProps(w); for(const rec of w.recs) dropObj(w,rec); if(w.G.parent) w.G.parent.remove(w.G); }catch(e){}
   if(full){ S.cache.forEach(a=>{ disposeTpl(a); a.state=0; a.refs=0; }); S.loadQ.length=0; S.loading=0; }

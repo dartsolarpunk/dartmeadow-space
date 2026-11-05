@@ -78,6 +78,20 @@ function dts(frames, spike) { const a = []; for (let i = 0; i < frames; i++) { c
 { const W = mk(); const fx = new Float32Array([0, 10]), fz = new Float32Array([0, 0]), fr = new Float32Array([2, 2]); const xs = new Float32Array([1, 9.5, 40]), zs = new Float32Array([0.5, 0.2, 40]), rs = new Float32Array([0.6, 0.6, 0.6]), bad = new Uint8Array(3);
   const left = W.pushDiscsFrom(xs, zs, rs, 3, fx, fz, fr, 2, 0.3, -50, 50, -50, 50, bad); let clear = true; for (let i = 0; i < 3; i++) for (let j = 0; j < 2; j++) if (!bad[i] && Math.hypot(xs[i] - fx[j], zs[i] - fz[j]) < rs[i] + fr[j]) clear = false; ok(clear, 'trees pushed clear of rocks (' + left + ' flagged)'); near(xs[2], 40, 1e-6, 'far disc untouched'); }
 
+// 8b. wall rasterisation from triangles: a hollow 12x12 building (4 m walls, 3 m wide door in the south wall with a lintel above 3 m), roof and floor not solid
+{ const W = mk(); const pos = [], idx = []; const quad = (a, b, c, d) => { const o = pos.length / 3; pos.push(...a, ...b, ...c, ...d); idx.push(o, o + 1, o + 2, o, o + 2, o + 3); };
+  const wall = (x0, z0, x1, z1, y0, y1) => quad([x0, y0, z0], [x1, y0, z1], [x1, y1, z1], [x0, y1, z0]);
+  wall(-6, 6, -6, -6, 0, 4); wall(6, -6, 6, 6, 0, 4); wall(-6, -6, 6, -6, 0, 4);                  // west, east, north
+  wall(-6, 6, -1.5, 6, 0, 4); wall(1.5, 6, 6, 6, 0, 4); wall(-1.5, 6, 1.5, 6, 3.5, 4);             // south with a door (lintel from y=3.5)
+  quad([-6, 4, -6], [6, 4, -6], [6, 4, 6], [-6, 4, 6]); quad([-6, 0, -6], [6, 0, -6], [6, 0, 6], [-6, 0, 6]);     // roof, floor
+  const P = new Float32Array(pos), I = new Uint32Array(idx);
+  const mesh = { isMesh: true, userData: {}, matrixWorld: { elements: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 100, 0, 100, 1] }, geometry: { attributes: { position: { count: P.length / 3, getX: (i) => P[i * 3], getY: (i) => P[i * 3 + 1], getZ: (i) => P[i * 3 + 2] } }, index: { count: I.length, getX: (i) => I[i] } } };
+  const root = { matrixWorld: { elements: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 100, 0, 100, 1] }, updateMatrixWorld() { }, traverse(f) { f(mesh); } };
+  const it = W.fromMeshGen('house', root, { cell: 0.5, layer: 0.5, mat: 'stone' }, 4); let steps = 0, r; while (!(r = it.next()).done) steps++; ok(r.value > 10 && r.value < 200, 'wall boxes merged (' + r.value + ', ' + steps + ' slices)');
+  const out = W.makeChar({ x: 104, y: 0, z: 120 }); for (let i = 0; i < 40; i++) W.walk(out, 0, -0.5); ok(out.z > 100 + 6 + 0.7 - 0.1, 'outside: cannot walk through the south wall (z ' + (out.z - 100).toFixed(2) + ')');
+  const door = W.makeChar({ x: 100, y: 0, z: 120 }); for (let i = 0; i < 80; i++) W.walk(door, 0, -0.5); ok(door.z < 100 - 4 && door.z > 100 - 6, 'through the 3 m doorway (lintel at 3.5 clears her 3.26 body; z ' + (door.z - 100).toFixed(2) + ')');
+  const inside = W.makeChar({ x: 100, y: 0, z: 100 }); for (let i = 0; i < 40; i++) W.walk(inside, 0.5, 0); ok(inside.x < 100 + 6 - 0.7 + 0.1, 'inside: the east wall stops her'); }
+
 // 8. instanced registration + cost ---------------------------------------------------------------------------------------------------
 { const W = mk(); const M = new Float32Array(16 * 64); for (let k = 0; k < 64; k++) { const o = k * 16; M[o] = M[o + 5] = M[o + 10] = k < 60 ? 1.5 : 0; M[o + 15] = 1; M[o + 12] = k * 4; M[o + 13] = 1; M[o + 14] = 2; }
   const it = W.fromInstancedGen('chunk#1', M, 64, { kind: 'ellipsoid', mat: 'rock', k: 0.92 }, 16); let steps = 0, r; while (!(r = it.next()).done) steps++; ok(r.value === 60 && W.count() === 60, 'zero-scale padding skipped (' + r.value + ')'); ok(steps >= 3, 'time-sliced in steps (' + steps + ')'); W.clearGroup('chunk#1');

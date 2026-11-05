@@ -483,6 +483,7 @@
         if (spec.kind === 'sphere') id = W.addSphere(name, x, y, z, max(sx, sz) * k, spec.mat, soft);
         else if (spec.kind === 'cyl') { const rr = max(sx, sz) * k, hy = sy * (spec.hy || 0.5); id = W.addCylinder(name, x - 0 + 0, y - hy + (spec.yShift || 0) * sy, y + hy + (spec.yShift || 0) * sy, z, rr, spec.mat, soft); }
         else if (spec.kind === 'box') { const yaw = Math.atan2(-M[o + 8], M[o]); id = W.addBox(name, x, y, z, sx * k, sy * ky, sz * k, yaw, spec.mat, soft); }
+        else if (spec.kind === 'bbox') { const b = spec.bb, wx = M[o] * b.cx + M[o + 4] * b.cy + M[o + 8] * b.cz + M[o + 12], wy = M[o + 1] * b.cx + M[o + 5] * b.cy + M[o + 9] * b.cz + M[o + 13], wz = M[o + 2] * b.cx + M[o + 6] * b.cy + M[o + 10] * b.cz + M[o + 14]; id = W.addBox(name, wx, wy, wz, sx * b.hx * k, sy * b.hy * ky, sz * b.hz * k, Math.atan2(-M[o + 8], M[o]), spec.mat, soft); }
         else id = W.addEllipsoid(name, x, y, z, max(sx, sz) * k, sy * ky, spec.mat, soft);
         if (id >= 0) nReg++;
       }
@@ -503,6 +504,32 @@
         const id = (hy > 3 * max(hx, hz) && abs(hx - hz) < 0.3 * max(hx, hz) && max(hx, hz) < 2) ? W.addCylinder(name, wx, wy - hy, wy + hy, wz, max(hx, hz), mt, fl) : W.addBox(name, wx, wy, wz, hx, hy, hz, yaw, mt, fl);
         if (id >= 0) reg++;
       }
+      return reg;
+    };
+    // Walls from triangles: every steep triangle (|normal.y| < wallNy) of the meshes under `obj` is sampled onto a (cell x cell x layer) voxel set; vertical runs are
+    // merged along x into boxes. Floors/roofs are not solid (she walks under a roof and through an open doorway; a lintel only blocks where it really is).
+    // Built once at generation (sliced: yields every `per` triangles). opts: { cell:1, layer:0.5, wallNy:0.7, mat:'stone', maxTris:60000, maxBoxes:900, glass(mesh) }
+    W.fromMeshGen = function* (name, obj, opts, per) {
+      opts = opts || {}; per = per || 300; const cell = opts.cell || 1, ly = opts.layer || 0.5, wny = opts.wallNy == null ? 0.7 : opts.wallNy, maxT = opts.maxTris || 60000;
+      obj.updateMatrixWorld(true); const meshes = []; obj.traverse(m => { if (m.isMesh && m.geometry && !m.isInstancedMesh && m.geometry.attributes && m.geometry.attributes.position && !(m.userData && m.userData.noCollide)) meshes.push(m); });
+      const ox = obj.matrixWorld.elements[12], oz = obj.matrixWorld.elements[14], oy = obj.matrixWorld.elements[13] - 20; const cols = new Map(); let tri = 0;
+      const v = new Float64Array(9), mark = (x, y, z, mt) => { const ix = Math.floor((x - ox) / cell), iz = Math.floor((z - oz) / cell), iy = Math.max(0, Math.min(2047, Math.floor((y - oy) / ly))); const k = ((ix + 4096) * 8192 + (iz + 4096)); let c = cols.get(k); if (!c) { c = { ix, iz, ys: new Map() }; cols.set(k, c); } c.ys.set(iy, mt); };
+      for (const m of meshes) {
+        const g = m.geometry, pa = g.attributes.position, idx = g.index, e = m.matrixWorld.elements, nT = idx ? (idx.count / 3) | 0 : (pa.count / 3) | 0, mt = opts.glass && opts.glass(m) ? MID.glass : matId(opts.mat || 'stone');
+        for (let t = 0; t < nT; t++) {
+          if (++tri > maxT) break; if (tri % per === 0) yield cols.size;
+          for (let k = 0; k < 3; k++) { const vi = idx ? idx.getX(t * 3 + k) : t * 3 + k, x = pa.getX(vi), y = pa.getY(vi), z = pa.getZ(vi); v[k * 3] = e[0] * x + e[4] * y + e[8] * z + e[12]; v[k * 3 + 1] = e[1] * x + e[5] * y + e[9] * z + e[13]; v[k * 3 + 2] = e[2] * x + e[6] * y + e[10] * z + e[14]; }
+          const ux = v[3] - v[0], uy = v[4] - v[1], uz = v[5] - v[2], wx = v[6] - v[0], wy = v[7] - v[1], wz = v[8] - v[2], nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx, nl = sqrt(nx * nx + ny * ny + nz * nz); if (nl < 1e-9 || abs(ny) / nl >= wny) continue;
+          const l1 = sqrt(ux * ux + uy * uy + uz * uz), l2 = sqrt(wx * wx + wy * wy + wz * wz), steps = Math.min(48, Math.ceil(max(l1, l2) / (min(cell, ly) * 0.7)) + 1);
+          for (let a = 0; a <= steps; a++) for (let b = 0; a + b <= steps; b++) { const fa = a / steps, fb = b / steps; mark(v[0] + ux * fa + wx * fb, v[1] + uy * fa + wy * fb, v[2] + uz * fa + wz * fb, mt); }
+        }
+      }
+      // runs per column, merged along +x
+      const runs = new Map(), list = []; let n = 0;
+      for (const c of cols.values()) { const ys = Array.from(c.ys.keys()).sort((a, b) => a - b); let a = ys[0], p = a; const mt = c.ys.get(a); for (let i = 1; i <= ys.length; i++) { if (i < ys.length && ys[i] === p + 1) { p = ys[i]; continue; } const r = { ix: c.ix, iz: c.iz, a, b: p + 1, len: 1, mt, used: false }; runs.set(c.ix + ',' + c.iz + ',' + a + ',' + (p + 1), r); list.push(r); if (i < ys.length) { a = p = ys[i]; } } if (++n % 200 === 0) yield cols.size; }
+      list.sort((r1, r2) => r1.iz - r2.iz || r1.a - r2.a || r1.ix - r2.ix); let reg = 0; const cap = opts.maxBoxes || 900;
+      for (const r of list) { if (r.used) continue; r.used = true; let len = 1; for (;;) { const nx = runs.get((r.ix + len) + ',' + r.iz + ',' + r.a + ',' + r.b); if (!nx || nx.used) break; nx.used = true; len++; }
+        if (reg >= cap) break; const hx = len * cell / 2, hy = (r.b - r.a) * ly / 2; const id = W.addBox(name, ox + (r.ix + len / 2) * cell, oy + (r.a + (r.b - r.a) / 2) * ly, oz + (r.iz + 0.5) * cell, hx, hy, cell / 2, 0, r.mt); if (id >= 0) reg++; if (reg % 120 === 0) yield reg; }
       return reg;
     };
     W.runGen = (it) => { let r; do { r = it.next(); } while (!r.done); return r.value; };   // finish a generator at once (tests, small props)
