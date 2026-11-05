@@ -37,17 +37,21 @@ def horiz(cx, cy, d, z=3.0, lim=120):
     h = EB.ray_cast(Vector((cx, cy, z)), Vector(d), lim); return None if h[0] is None else (h[0].x, h[0].y)
 
 # ── rooms: measure the real inner faces ──────────────────────────────────────────────
-hx0 = horiz(0, -20, (-1, 0, 0))[0] + 0.02; hx1 = horiz(0, -20, (1, 0, 0))[0] - 0.02; hy0 = horiz(0, -20, (0, -1, 0))[1] + 0.02
+hx0 = horiz(0, -20, (-1, 0, 0))[0] + 0.02; hx1 = horiz(0, -20, (1, 0, 0))[0] - 0.02; hy0 = horiz(-20, -20, (0, -1, 0))[1] + 0.02   # (v3) off the court door at x 0 so the ray still meets the rear wall
 HX0, HX1, HY0, HY1 = hx0, hx1, hy0, -2.75
 wx0 = horiz(-30, -80, (-1, 0, 0))[0] + 0.02; wx1 = horiz(-30, -80, (1, 0, 0))[0] - 0.02; wy0 = horiz(-30, -80, (0, -1, 0))[1] + 0.02
 WX0, WX1, WY0, WY1 = wx0, wx1, wy0, -69.2
 print('hall', HX0, HX1, HY0, HY1, 'wing', WX0, WX1, WY0, WY1)
 HF, PF, WF = 0.6, 0.1, 0.55              # hall / prow / wing interior floor tops
 PROW = [(-31.0, -2.75), (31.0, -2.75), (13.2, 49.2), (0.0, 72.4), (-13.2, 49.2)]
-D1 = (-57.85, -50.05); D2 = (-6.5, 6.5)     # hall front door gaps (D3 east door is closed)
+D1 = (-57.85, -50.05); D2 = (-6.5, 6.5)     # hall front door gaps
+D3 = (48.0, 56.0)                            # (v3) east deck door: hall front glass line -> pool deck
+D4 = (-5.5, 5.5)                             # (v3) arrival court MAIN ENTRANCE in the hall's rear (court side) wall
+DOOR_H = 6.0                                 # door head (nav units); the wall above stays
+BAL = 2.0, 7.8                               # (v3) balcony door: along the prow's west glass edge from its hall-front corner (distance range, nav units)
 WD = [(-65.0, -59.0), (-26.0, -10.4)]       # wing front doors (pedestrian, garage)
 
-Me = Mesh(); nav = Nav()
+Me = Mesh(); nav = Nav(); EXTRA = []     # EXTRA: entrance aprons, appended AFTER every other nav patch (tests index the patch list)
 PI = lambda a, b, c, d=1: (a, b, c, d)
 def tint(r, g=None, b=None):
     return (r, r, r, 1) if g is None else (r, g, b, 1)
@@ -158,15 +162,16 @@ rect_floor(Me, -34.0, HY0, 33.6, HY1, HF, OAK, (0.95, 0.9, 0.85, 1))            
 rect_floor(Me, 33.6, -12.0, HX1, HY1, HF, MARBLE, (0.95, 0.95, 0.95, 1))          # pool deck apron
 # walls
 hall_top = lambda x, y: soff(x, y, HF + 0.2)
-wall(Me, (HX0, HY0), (HX1, HY0), HF, hall_top, PLASTER, -1, CREAM)                  # rear
+wall(Me, (HX0, HY0), (HX1, HY0), HF, hall_top, PLASTER, -1, CREAM, gaps=[(D4[0] - HX0, D4[1] - HX0)], gap_h=HF + DOOR_H)                  # rear (court entrance gap, lintel above)
 wall(Me, (HX0, HY1), (HX0, HY0), HF, hall_top, PLASTER, -1, CREAM)                  # west
 wall(Me, (HX1, HY0), (HX1, HY1), HF, hall_top, PLASTER, -1, CREAM)                  # east
 # ceiling (follows the roof underside)
 fill(Me, 0, PLASTER, [(HX0, HY0), (HX1, HY0), (HX1, HY1), (HX0, HY1)], lambda x, y: soff(x, y, HF + 0.2), False, (0.88, 0.88, 0.9, 1), 3.0)
 nav.rect(HX0, HY0, HX1, HY1 + 0.15, HF)
-nav.wall(HX0, HY0, HX1, HY0, 0, 40); nav.wall(HX0, HY1, HX0, HY0, 0, 40); nav.wall(HX1, HY0, HX1, HY1, 0, 40)
+nav.wall(HX0, HY0, D4[0], HY0, 0, 40); nav.wall(D4[1], HY0, HX1, HY0, 0, 40); EXTRA.append(('r', D4[0] - 2.0, HY0 - 9.9, D4[1] + 2.0, HY0 + 0.2, 0.45))   # court apron out beyond the eave (the top-down grid reads the eave as ground there); nav.wall(HX0, HY1, HX0, HY0, 0, 40); nav.wall(HX1, HY0, HX1, HY1, 0, 40)
 # front glass line: closed except D1; D2 is the opening into the prow
-for (a, b) in ((HX0, D1[0]), (D1[1], D2[0]), (D2[1], HX1)): nav.wall(a, HY1 + 0.1, b, HY1 + 0.1, 0, 40)
+for (a, b) in ((HX0, D1[0]), (D1[1], D2[0]), (D2[1], D3[0]), (D3[1], HX1)): nav.wall(a, HY1 + 0.1, b, HY1 + 0.1, 0, 40)
+EXTRA.append(('r', D3[0] - 2.0, HY1 - 0.3, D3[1] + 2.0, HY1 + 12.0, 0.1))   # east deck apron
 # ceiling light cove: warm strip along the rear wall top
 for x in range(-60, 66, 9): lampbulb(x, HY0 + 1.2, 6.5, 0.0, 22, 0.55)
 
@@ -248,7 +253,7 @@ B(Fr(-15.0, -13.0, HF), 0, 0, 0, mt(1.5), mt(0.85), mt(0.4), MARBLE, obs=True)
 armchair(Fr(-9.0, -11.0, HF, 1), (0.6, 0.35, 0.2, 1)); armchair(Fr(-9.0, -8.0, HF, 1), (0.55, 0.32, 0.18, 1))
 plant(Fr(-31.0, -6.0, HF), 0, 0, 2.6)
 # rear wall unit with a fireplace and books
-bookshelf(Fr(-31.0, -37.5, HF, 0), 3.5, 3.6, 0.35, seed=3); bookshelf(Fr(-2.5, -37.5, HF, 0), 3.5, 3.6, 0.35, seed=4)
+bookshelf(Fr(-31.0, -37.5, HF, 0), 3.5, 3.6, 0.35, seed=3); bookshelf(Fr(-22.5, -37.5, HF, 0), 3.5, 3.6, 0.35, seed=4)   # (v3) moved off the new court entrance
 B(Fr(-17.0, -37.5, HF), 0, 0, 0, mt(2.4), mt(0.4), mt(1.25), CONC, (0.55, 0.55, 0.58, 1))
 emit(-14.5, -37.0, HF + 0.4, -10.5, -36.8, HF + 1.5, (1, 0.5, 0.15, 1)); lamp(-12.5, -35.5, HF + 1.0, 16, (1, 0.5, 0.2), 1.0)
 armchair(Fr(-21.0, -31.0, HF, 2), (0.3, 0.45, 0.55, 1)); armchair(Fr(-16.0, -31.0, HF, 2), (0.3, 0.45, 0.55, 1))
@@ -316,6 +321,11 @@ nav.poly(PROW, PF)
 for i in range(len(PROW)):
     a, b = PROW[i], PROW[(i + 1) % len(PROW)]
     if i == 0: continue
+    if i == len(PROW) - 1:       # (v3) west glass edge: balcony door onto the west deck (gap measured from b = the hall-front corner)
+        L = math.hypot(b[0] - a[0], b[1] - a[1]); P = lambda s: (b[0] + (a[0] - b[0]) * s / L, b[1] + (a[1] - b[1]) * s / L)
+        p0, p1 = P(BAL[0]), P(BAL[1]); nav.wall(a[0], a[1], p1[0], p1[1], 0, 40); nav.wall(p0[0], p0[1], b[0], b[1], 0, 40)
+        EXTRA.append(('r', p0[0] - 3.6, p0[1] - 1.4, p1[0] - 0.4, p1[1] + 1.6, 0.05))   # threshold apron out onto the deck
+        continue
     nav.wall(a[0], a[1], b[0], b[1], 0, 40)
 # lighting strips along the glass
 for (x, y) in ((-24, 12), (-17, 30), (-9, 44), (24, 12), (17, 30), (9, 44)): lampbulb(x, y, 6.5, 0.0, 22, 0.55)
@@ -511,6 +521,7 @@ cx, cy = 0.0, 22.0
 rooms.append(['p', [[round(cx + (x - cx) * 1.08 + 0.0, 2), round(cy + (y - cy) * 1.06, 2)] for (x, y) in PROW[1:]] + [[round(cx + (PROW[0][0] - cx) * 1.08, 2), round(cy + (PROW[0][1] - cy) * 1.0 + 0.25, 2)]]])
 rooms[2][1] = [[round(cx + (x - cx) * 1.06, 2), round(cy + (y - cy) * 1.04, 2)] for (x, y) in PROW]
 rooms[2][1][0][1] = HY1 + 0.25; rooms[2][1][1][1] = HY1 + 0.25
+for e in EXTRA: nav.rect(*e[1:])
 nj = {'v': 1, 'frame': 'mansion blender: x east, y seaward, z up', 'floor': {'hall': HF, 'prow': PF, 'wing': WF},
       'patches': nav.patches, 'obs': nav.obs, 'seg': nav.seg, 'rooms': rooms,
       'soff': {'x0': GX0, 'y0': GY0, 'cell': GC, 'nx': GNX, 'ny': GNY, 'data': base64.b64encode(bytes(soffg)).decode()},

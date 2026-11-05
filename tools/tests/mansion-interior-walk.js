@@ -87,6 +87,25 @@ for (const [hz, dt] of [[60, 1 / 60], [20, 1 / 20]]) {
     r = route(P, [[-60.15, -66], [-60.15, -72], [-60.15, -80], [-56, -80]], v, dt, tag + ' wing ped door');
     ok(!r.stuck && Math.abs(loc(P).f - WF) < 0.05, tag + ': in the wing on its floor ' + JSON.stringify(loc(P)));
     r = route(P, [[-60.15, -80], [-60.15, -72], [-60.15, -64]], v, dt, tag + ' wing out');
+    // 5b. (v3) THE NEW ENTRANCES, each walked in and back out: court main entrance (hall rear wall, x +-5.5), balcony door (prow west glass, deck side), east deck door (hall front line, x 48..56)
+    P = newPlayer(0, -50, 0.45); D.walk(P.pos); T_NOW += 300;
+    r = route(P, [[0, -46], [0, -39.5], [0, -36], [0, -30], [0, -20]], v, dt, tag + ' court entrance in');
+    ok(!r.stuck && near(P, 0, -20, 1.0) && Math.abs(loc(P).f - HF) < 0.05 && r.maxDrop < 1.0, tag + ': court main entrance leads into the hall ' + JSON.stringify(loc(P)));
+    r = route(P, [[0, -30], [0, -37], [0, -41], [0, -46], [0, -50]], v, dt, tag + ' court entrance out');
+    ok(!r.stuck && near(P, 0, -50, 1.0) && Math.abs(loc(P).f - 0.45) < 0.2 && r.maxDrop < 1.0, tag + ': ... and back out onto the court ' + JSON.stringify(loc(P)));
+    P = newPlayer(-38, 3, 0); D.walk(P.pos); T_NOW += 300;
+    r = route(P, [[-34, 3], [-30.4, 2.2], [-27, 2.6], [-24, 4], [-15, 4], [-12, 10]], v, dt, tag + ' balcony door in');
+    ok(!r.stuck && near(P, -12, 10, 1.0) && Math.abs(loc(P).f - PF) < 0.1 && r.maxDrop < 1.0, tag + ': balcony door leads from the west deck into the music studio ' + JSON.stringify(loc(P)));
+    r = route(P, [[-15, 4], [-24, 4], [-27, 2.6], [-30.4, 2.2], [-34, 3], [-40, 3]], v, dt, tag + ' balcony door out');
+    ok(!r.stuck && near(P, -40, 3, 1.0) && Math.abs(loc(P).f) < 0.15 && r.maxDrop < 1.0, tag + ': ... and back out onto the deck ' + JSON.stringify(loc(P)));
+    P = newPlayer(52, 8.5, 0.1); D.walk(P.pos); T_NOW += 300;
+    r = route(P, [[52, 4], [52, 0], [52, -2.7], [52, -6], [52, -9]], v, dt, tag + ' east door in');
+    ok(!r.stuck && near(P, 52, -9, 1.0) && Math.abs(loc(P).f - HF) < 0.1 && r.maxDrop < 1.0, tag + ': east deck door leads into the hall ' + JSON.stringify(loc(P)));
+    r = route(P, [[52, -6], [52, -2.7], [52, 1], [52, 4], [52, 8.5]], v, dt, tag + ' east door out');
+    ok(!r.stuck && near(P, 52, 8.5, 1.0) && Math.abs(loc(P).f) < 0.15 && r.maxDrop < 1.0, tag + ': ... and back out onto the east deck ' + JSON.stringify(loc(P)));
+    // the pre-existing doors must still hold their walls: push into the rear wall beside the new door, and the glass beside the east door
+    P = newPlayer(-20, -14, 0); D.walk(P.pos); T_NOW += 300; for (let i = 0; i < 400; i++) step(P, -20, -60, v, dt); ok(loc(P).ly > -39.5 && Math.abs(loc(P).f - HF) < 0.05, tag + ': rear wall still holds away from the new door ' + JSON.stringify(loc(P)));
+    P = newPlayer(40, -6, 0); D.walk(P.pos); T_NOW += 300; for (let i = 0; i < 300; i++) step(P, 40, 20, v, dt); ok(loc(P).ly < -2.0 && Math.abs(loc(P).f - HF) < 0.1, tag + ': glass still holds beside the east door ' + JSON.stringify(loc(P)));
     // 6. walls: from inside the hall push into the rear / west / east walls and the glass front line: she must stay inside
     for (const [tx, ty] of [[0, -60], [-120, -20], [120, -20]]) {
       P = newPlayer(-45, -14, 0); D.walk(P.pos); T_NOW += 300;

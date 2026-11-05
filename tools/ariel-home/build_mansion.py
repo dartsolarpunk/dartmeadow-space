@@ -353,7 +353,7 @@ def post_on(b, poly, ztop, tags, mat, sink=0.12):
         b.quad((a[0], a[1], gz[i] - sink), (c[0], c[1], gz[(i + 1) % n] - sink), (c[0], c[1], ztop), (a[0], a[1], ztop), mat)
     b.face([(p[0], p[1], ztop) for p in poly], mat)
 
-def glass_wall(b, p0, p1, z0, cap, tags, fins=0.0, mullion=2.4, detail=1.0, gaps=(), door_h=4.6, glow=True):
+def glass_wall(b, p0, p1, z0, cap, tags, fins=0.0, mullion=2.4, detail=1.0, gaps=(), door_h=4.6, glow=False):   # (v3) the warm glow sheets floated through walls and windows; holographic panels (ui/dm-holo.js) replace them
     """floor-to-roof glazing; every panel, mullion and fin is clipped to the soffit above it.
     gaps = [(s0, s1)] door openings (distance along the wall from p0): no glass/mullions below door_h, a transom + lintel above.
     glow=False drops the warm glow sheet (LOD0 walls that have a walkable interior behind them)."""
@@ -384,7 +384,7 @@ def glass_wall(b, p0, p1, z0, cap, tags, fins=0.0, mullion=2.4, detail=1.0, gaps
 
 POOLS = []
 # door openings (distance from the wall's p0, unscaled units): hall front = west deck / prow / east deck; arrival wing = pedestrian + garage
-HALL_GAPS = [(-44.5 + 50.9, -38.5 + 50.9), (-5.0 + 50.9, 5.0 + 50.9)]
+HALL_GAPS = [(-44.5 + 50.9, -38.5 + 50.9), (-5.0 + 50.9, 5.0 + 50.9), (36.9 + 50.9, 43.1 + 50.9)]   # west deck / prow / (v3) east deck
 WING_GAPS = [(-50.0 + 63.8, -45.4 + 63.8), (-20.0 + 63.8, -8.0 + 63.8)]
 def deck(b, poly, z, th, pool=None, rail=True, side='concrete', tag='deck', norail=()):
     """slab with a real sunken pool basin (Exact Boolean DIFFERENCE), registered for pier / column trimming; rock is carved under it"""
@@ -502,7 +502,10 @@ def build_house(b, detail=1.0):
         glass_wall(b, (hx0 + 3, hy1), (hx1 - 3, hy1), 0.35, 24, ('main',), fins=0.9, detail=detail)
     wall_box(b, (hx0, hy0), (hx0, hy1), 2.2, 0.35, 'concrete', ('main',), 24, gap=0.05)             # end walls (gabled to the roof)
     wall_box(b, (hx1, hy0), (hx1, hy1), 2.2, 0.35, 'concrete', ('main',), 24, gap=0.05)
-    wall_box(b, (hx0, hy0), (hx1, hy0), 2.0, 0.35, 'concrete', ('main',), 24, gap=0.05)             # rear wall
+    # (v3) arrival-court MAIN ENTRANCE: the rear wall is split at x -4.2..4.2 (nav -5.5..5.5), a lintel wall carries on above the door head
+    wall_box(b, (hx0, hy0), (-4.2, hy0), 2.0, 0.35, 'concrete', ('main',), 24, gap=0.05); wall_box(b, (4.2, hy0), (hx1, hy0), 2.0, 0.35, 'concrete', ('main',), 24, gap=0.05)
+    wall_box(b, (-4.2, hy0), (4.2, hy0), 2.0, 4.8, 'concrete', ('main',), 24, gap=0.05, bot=False)
+    b.box(0, hy0 - 1.2, 0.2, 9.6, 2.8, 0.18, 'concrete')           # threshold step out onto the court
     b.box((hx0 + hx1) / 2, (hy0 + hy1 - 0.1) / 2 , 0.35, hx1 - hx0 - 2.4, hy1 - hy0 - 2.2, .03, 'wood')   # warm floor, sits on the court
     # blade tower: tall triangular monolith, standing CLEAR of the roof eave (was piercing it)
     tri = [(-48, -46), (-38, -46), (-44, -39.5)]
@@ -513,7 +516,9 @@ def build_house(b, detail=1.0):
     b.prism(pr, -1.3, -0.1, 'concrete', top='concrete', bot='concrete', reg='deck')
     for i in range(1, 5):
         a, c = pr[i], pr[(i + 1) % len(pr)]      # all four outer edges (west edge was missing), tops follow the roofs above
-        glass_wall(b, a, c, -0.1, 14, ('prow', 'main'), fins=0.0 if detail < 1 else 0.7, mullion=2.6, detail=detail, glow=detail < 1)
+        gp = [(36.4, 40.8)] if (i == 4 and detail >= 1) else ()     # (v3) balcony door onto the west deck (the glass edge pr[4] -> pr[0], measured from pr[4])
+        glass_wall(b, a, c, -0.1, 14, ('prow', 'main'), fins=0.0 if detail < 1 else 0.7, mullion=2.6, detail=detail, glow=False, gaps=gp, door_h=4.6)
+    if detail >= 1: b.prism([(-25.2, -1.0), (-21.4, -1.0), (-21.6, 4.2), (-25.4, 4.2)], -1.3, -0.04, 'concrete', top='concrete', bot='concrete')   # (v3) threshold slab bridging the deck edge to the prow door
     ribbon(b, [(-23.5, 0.5), (-11.8, 37.5), (-0.3, 54.6)], .12, tags=('prow',), lift=0.03)
     ribbon(b, [(23.5, 0.5), (11.8, 37.5), (0.3, 54.6)], .12, tags=('prow',), lift=0.03)
     # ── 4. upper guest wing, yawed 14 degrees, with its own folded roof ──

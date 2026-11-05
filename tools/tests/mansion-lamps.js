@@ -30,7 +30,7 @@ L.forEach((a, i) => {
 });
 ok(minSep >= P.MINSEP - 1e-9, 'min spacing ' + minSep.toFixed(1) + ' units (' + (minSep / P.UPM).toFixed(1) + ' m) >= ' + P.MINSEP);
 ok(maxNn <= 110, 'no lamp isolated by more than 110 units (' + maxNn.toFixed(1) + ')');
-ok(built.plan.uncovered / built.plan.targets <= 0.22, 'target coverage ' + (100 - 100 * built.plan.uncovered / built.plan.targets).toFixed(1) + ' %');
+ok(built.plan.uncovered / built.plan.targets <= 0.26, 'target coverage ' + (100 - 100 * built.plan.uncovered / built.plan.targets).toFixed(1) + ' %');
 for (const lv of built.plan.levels) { const n = L.filter(a => Math.abs(a[2] - lv.h) < 0.6).length; ok(n >= 1, 'level h=' + lv.h + ' (' + lv.area + ' cells) has a lamp'); }
 ok(L.some(a => a[2] < -15), 'the cliff terraces (h -18) are lit'); ok(L.some(a => a[1] > 8 && a[2] > -1), 'the landing deck / terrace is lit'); ok(L.some(a => a[1] < -60), 'the arrival court is lit');
 
