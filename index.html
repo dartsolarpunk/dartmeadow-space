@@ -21189,12 +21189,12 @@ function _reversedClipPreservingRoot(clip){
    the mixer post step, before thumbs/palms/gaze and before the hair step, and
    allocates nothing per frame. */
 const BOARD_STANCE = window.BOARD_STANCE = window.BOARD_STANCE || {
-  hips:[0.0,0.77,-0.04],                          // root-space hips (m): low, deep relaxed knees
+  hips:[0.0,0.93,-0.04],                          // root-space hips (m): upright, knees only slightly bent (rest hips 0.97; was 0.77 = a deep crouch that read as sitting)
   // root space: +z = board nose (travel), +x = toe edge. Bone "Left*" reads as her
   // visual right (the mount mirrors her), so bone RightFoot is the front (nose) foot.
   ankleL:[0.07,0.128,-0.37], ankleR:[-0.04,0.128,0.28],   // wide stance
-  yawHips:80, pitchHips:10,                      // deg from the nose: sideways, slightly open
-  yawChest:-15, pitchChest:6,                    // small twist toward travel, slight forward lean
+  yawHips:80, pitchHips:5,                       // deg from the nose: sideways, slightly open
+  yawChest:-15, pitchChest:3,                    // small twist toward travel, slight forward lean
   yawHead:-45, pitchHead:-4,                     // look ahead along the board (DART_HEAD finishes it)
   footYawL:95, footYawR:45, kneeOut:0.25,        // back foot across the board, front foot angled forward
   // arm directions in her body frame (x = bone-left, y = up, z = facing); elbows soft
