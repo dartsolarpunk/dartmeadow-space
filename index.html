@@ -158,6 +158,9 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-rockmat.js?v=145"></script>
 <script src="ui/dm-parallax.js?v=252"></script>
 <script src="ui/dm-groundlib.js?v=252"></script>
+<script src="ui/dm-water-core.js?v=253"></script>
+<script src="ui/dm-water.js?v=253"></script>
+<script src="ui/dm-water-sea.js?v=253"></script>   <!-- water: baked sea, shore, ground hook (?water=0 = the previous sea) -->
 <script src="ui/dm-perf.js?v=160"></script>
 <script src="ui/dm-governor.js?v=235"></script>
 <script>/* (v136) no-op stub so the flight loop can never throw if dm-perf.js failed to load */
@@ -19450,6 +19453,7 @@ function _pwWorldTick(dt){
   const nearClip=space?Math.max(0.1,Math.min(50,(PW.sp.fc||1)*20)):0.1+(Math.max(0.5,Math.min(6,calt*0.01))-0.1)*k;
   if(Math.abs(cam.far-farClip)>farClip*0.05||Math.abs(cam.near-nearClip)>nearClip*0.05){ cam.far=farClip; cam.near=nearClip; cam.updateProjectionMatrix(); }
   _pwSeaFollow(px,pz,Math.min(viewR,16384));
+  try{ if(window.DMWater&&DMWater.active) DMWater.tick(dt,{camera:cam,x:px,z:pz,H,mode:PW.mode}); }catch(e){ if(!window._dmwWarn){ window._dmwWarn=1; console.warn('[water] tick',e); } }
   _pwPropsTick(px,pz,space?1e9:(fly?agl:0));
   try{ if(window.DMPlaces) DMPlaces.tick(dt,_plEnv()); if(window.DMCreatures) DMCreatures.tick(dt,_plEnv()); }catch(e){ if(!window._plWarn){ window._plWarn=1; console.warn('[places]',e); } }
   // marching cubes + the refined patch: always on foot; in the sky only low and slow
@@ -19510,6 +19514,7 @@ const _smooth01=v=>{ const u=Math.max(0,Math.min(1,v)); return u*u*(3-2*u); };
 // the sea: one sheet at sea level round the focus, sized to the view (far off, the coarse ground draws the sea itself)
 function _pwSeaFollow(x,z,span){
   const wm=surfWater; if(!wm) return;
+  if(wm.userData&&wm.userData.dmWater){ DMWater.follow(x,z); return; }   // the clip-map snaps its own levels to the focus (ui/dm-water.js)
   const want=Math.pow(2,Math.ceil(Math.log2(Math.max(4096,span*2.2))));
   if(PW.seaSpan!==want){
     const seg=128;   // a vertex every span/128 — plenty for the planet's curve, light on phones
@@ -19561,6 +19566,7 @@ function _pwClose(opts){
   _crM('pw:close:fac');
   try{ const _f=_fac(); if(_f&&_f.close) _f.close(); }catch(e){ console.warn('[pw] fac close',e); }   // (stability) the mansion's interior + its queued texture steps go BEFORE the scene is freed
   _crM('pw:close:dispose');
+  try{ if(window.DMWater) DMWater.end(); }catch(e){}   // wave tiles / shore field / uniforms go before the scene
   try{ if(scene) disposeObject3D(scene); }catch(e){}
   try{ if(window.DMCrumb){ ['mc#','tess#','chunk#'].forEach(k=>DMCrumb.gpuClear(k)); DMCrumb.live('chunks',0); DMCrumb.live('mcPatches',0); } }catch(e){}
   try{ _applyCamOffset(); }catch(e){}
@@ -24288,6 +24294,12 @@ function _viewportDepthOK(){
 }
 function _shoreWaterMaterial(liqColor,opacity,rough){
   const W=window;
+  // (ui/dm-water-sea.js) baked sea: wave tiles + clip-map grid + shoaling / bore foam / caustics, per-world identity. Any failure falls through to the shader below.
+  try{ if(W.DMWater&&DMWater.active&&DMWater.material){
+    const _dm=DMWater.material({opacity,rough,depthOK:!!(_viewportDepthOK()&&THREE.MeshStandardNodeMaterial&&typeof W.viewportDepthTexture==='function'&&typeof W.logarithmicDepthToViewZ==='function'),logDepth:!!(flightRenderer&&flightRenderer.logarithmicDepthBuffer),
+      envMap:(GFX&&GFX.envReflections&&typeof _envMap!=='undefined'&&_envMap)?_envMap:null,pwf:_pwfReady()?{ready:_pwfReady,nodeFor:(b)=>{ const r=_pwfNodeFor(b); try{ PWF.cache.delete(b); }catch(e){} return r; },rotN:_pwfRotN,mask:_pwfMask}:null});
+    if(_dm) return _dm;
+  } }catch(e){ console.warn('[water] baked sea off, previous shader',e); }
   if(!_viewportDepthOK()) return null;   // multisampled WebGPU: the plain water (see _viewportDepthOK)
   if(!THREE.MeshStandardNodeMaterial||typeof W.viewportDepthTexture!=='function'||typeof W.logarithmicDepthToViewZ!=='function') return null;
   const {float,vec3,color,mix,smoothstep,clamp,positionView,cameraNear,cameraFar,viewportDepthTexture,mx_noise_float,time,max}=W;
@@ -24614,7 +24626,8 @@ function _pwBuildGround(pal,fx,fz,mode){
   TERRAIN.style=F.ws; TERRAIN.wx0=F.sw.x; TERRAIN.wz0=F.sw.z;
   const Hs=(()=>{ try{ const f=_fac(); return f?f.wrapH(H):H; }catch(e){ return H; } })();   // decks, pads, island tops and the mansion stand on the ground (the drawn ground below keeps the plain H)
   TERRAIN.pal=pal; TERRAIN.H=Hs; TERRAIN.seed=seed; TERRAIN.siteBias=F.siteBias; TERRAIN.siteLat=F.siteLat;
-  try{ if(window.DMGround) DMGround.beginWorld({style:F.ws,seed,water:!!pal.water,lat:F.siteLat}); }catch(e){ console.warn('[ground lib] bake',e); }   // atlas + region map baked in 2-3 ms slices between frames (the materials start on a neutral atlas, so nothing waits)
+  try{ if(window.DMGround) DMGround.beginWorld({style:F.ws,seed,water:!!pal.water,lat:F.siteLat}); }catch(e){ console.warn('[ground lib] bake',e); }
+  try{ if(window.DMWater) DMWater.begin({body,pal,seed,lat:F.siteLat}); }catch(e){ console.warn('[water] begin',e); }   // (ui/dm-water*.js) the sea's wave tiles / identity from this world's gravity, air and liquid, baked in 2-3 ms slices   // atlas + region map baked in 2-3 ms slices between frames (the materials start on a neutral atlas, so nothing waits)
   TERRAIN.mcY=null; TERRAIN.mcN=null; TERRAIN.cpuMc=null; TERRAIN.mcGpu=false; TERRAIN._mcBusy=false; TERRAIN._mcUpg=false;
   TERRAIN.mcTier='low'; TERRAIN.mcUpgradeLocked=false; TERRAIN.mcDensityArray=null; TERRAIN.mcGridInfo=null; TERRAIN.mcGroup=null;
   TERRAIN.waterFollow=null; TERRAIN._wgx=null; TERRAIN.rockGeo=null;
@@ -24702,6 +24715,7 @@ function _pwBuildGround(pal,fx,fz,mode){
     wm.name='JOTS_WaterSurface'; wm.userData.isWaterSurface=true; wm.userData.liquidName=pal.liquidName||'water';
     if(GFX.shadows) wm.receiveShadow=true;
     PW.scene.add(wm); surfWater=wm;
+    if(mat.userData&&mat.userData.dmWater){ try{ if(!DMWater.attachSea(wm,4096)){ mat.userData.dmWater=false; } }catch(e){ console.warn('[water] sea mesh',e); } }   // clip-map grid (one draw call) instead of the 128x128 sheet
     const SZ=dd.rootSize, depth=WATER_SURFACE_Y-WATER_FLOOR_Y;
     const vol=new THREE.Mesh(new THREE.BoxGeometry(SZ,depth,SZ,Math.round(SZ/35),1,Math.round(SZ/35)),new THREE.MeshBasicMaterial({color:liqColor,transparent:true,opacity:0.08,depthWrite:false,side:THREE.DoubleSide}));
     vol.position.set(fx,WATER_SURFACE_Y-depth*0.5,fz);
@@ -24713,7 +24727,7 @@ function _pwBuildGround(pal,fx,fz,mode){
     window.JOTS_WATER={surfaceY:WATER_SURFACE_Y,floorY:WATER_FLOOR_Y,liquidName:pal.liquidName||'water',volumeMesh:vol,surfaceMesh:wm,
       containsPoint(p){ return !!p&&window._surfWaterAt(p.x,p.y,p.z); },
       immersionDepth(p){ return this.containsPoint(p)?Math.max(0,WATER_SURFACE_Y-p.y):0; }};
-    if(GFX.caustics){
+    if(GFX.caustics&&!(mat.userData&&mat.userData.dmWater)){   // (the baked sea draws its own caustics on the shallow bed: no CPU canvas, no extra plane)
       const cz=256, cc=document.createElement('canvas'); cc.width=cz; cc.height=cz;
       surfCausticCanvas=cc; surfCausticCtx=cc.getContext('2d');
       const ctex=new THREE.CanvasTexture(cc); ctex.wrapS=ctex.wrapT=THREE.RepeatWrapping; ctex.repeat.set(8,8); surfCausticTex=ctex;
@@ -25156,6 +25170,7 @@ function _terrainDetailMat(opts){
     try{ if(window.DMGround&&window.DMParallax&&m.userData&&!m.userData.noParallax&&opts.parallax!==false&&!/[?&]ground=0\b/.test(location.search)) _gl=DMGround.apply(m,{p,flat,nFlat,lvl,reach,near:reach*0.16,far:reach*0.34,strength:1}); }catch(e){ console.warn('[ground lib]',e); }
     if(!_gl) try{ if(window.DMParallax&&m.userData&&!m.userData.noParallax&&opts.parallax!==false) DMParallax.applyGround(m,{p,flat,lvl,N:null,kind:'cobble',near:reach*0.13,far:reach*0.3,seed:TERRAIN.style==='mesa'?11:7}); }catch(e){}   // (ui/dm-parallax.js) real depth in the pebbles/plates close to her: marched only inside ~0.3 reach, Low off
     m.userData.dmDetail=lvl;
+    try{ if(window.DMWater&&DMWater.active&&DMWater.receiveShore&&TERRAIN.pal&&TERRAIN.pal.water&&opts.shore!==false) DMWater.receiveShore(m,{p}); }catch(e){ console.warn('[water] shore hook',e); }   // wet sand that outlives the wave + the swash film (only below the run-up height)
     // the coarse ground is cut away where the tessellated patch round her takes over
     if(!opts.noHole&&TESS_HOLE.slots.length){
       m.alphaTest=0.5;

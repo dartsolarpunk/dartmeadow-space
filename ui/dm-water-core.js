@@ -332,9 +332,9 @@
       const v = y / T;
       for (let x = 0; x < T; x++) {
         const u = x / T;
-        const wu = u + 0.08 * (fbm(u, v, 4, 2, seed + 1) - 0.5), wv = v + 0.08 * (fbm(u, v, 4, 2, seed + 2) - 0.5);
-        const c = worley(wu, wv, 7, seed + 3), lace = 1 - sstep(0.0, 0.34, c[1] - c[0]);                      // thin filaments along cell borders ...
-        const bil = fbm(wu, wv, 9, 3, seed + 4), lace2 = clamp(lace * 0.75 + (bil - 0.4) * 1.1, 0, 1);       // ... broken up by billows
+        const wu = u + 0.09 * (fbm(u, v, 4, 2, seed + 1) - 0.5), wv = v + 0.09 * (fbm(u, v, 4, 2, seed + 2) - 0.5);
+        const c = worley(wu, wv, 8, seed + 3), fil = 1 - sstep(0.0, 0.3, c[1] - c[0]);                         // filaments along the cell borders ...
+        const bil = fbm(wu, wv, 5, 4, seed + 4), lace2 = sstep(0.34, 0.74, bil * 0.62 + fil * 0.5);               // ... carried by organic billows: patches with ragged lace edges
         const pc = worley(u, v, 6, seed + 5), pearl = 1 - sstep(0.0, 0.5, pc[0]) * 0.9;                       // round bubble cells (centre bright)
         const gxn = fbm(u, v, 24, 2, seed + 6), gzn = fbm(u, v, 24, 2, seed + 7), i4 = (y * T + x) * 4;
         out[i4] = clamp(Math.round(lace2 * 255), 0, 255); out[i4 + 1] = clamp(Math.round(pearl * 255), 0, 255); out[i4 + 2] = Math.round(gxn * 255); out[i4 + 3] = Math.round(gzn * 255);
