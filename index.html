@@ -165,7 +165,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-water-fx.js?v=269"></script>   <!-- water: spray / splash / mist sprites, wake, footstep ripples, shore-break spray, underwater fog + shafts (?waterfx=0 off) -->   <!-- water: baked sea, shore, ground hook (?water=0 = the previous sea) -->
 <script src="ui/dm-perf.js?v=160"></script>
 <script src="ui/dm-governor.js?v=264"></script>
-<script src="ui/dm-budget.js?v=264"></script>
+<script src="ui/dm-budget.js?v=273"></script>
 <script src="ui/dm-light.js?v=260"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
 <script>/* (v136) no-op stub so the flight loop can never throw if dm-perf.js failed to load */
 window.DMPerf=window.DMPerf||{on:false,b(){},e(){},mark(){},measure(n,f){return f();},frame(){},stats(){return {fps:0,avgMs:0,p95Ms:0,worstMs:0,minFps:0,cpu:{},gpu:null,sparse:null};},show(){},hide(){}};</script>
@@ -1010,7 +1010,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-safety.js?v=1" defer></script>
 <script src="jots/jots-link.js?v=217" defer></script>
 <script src="ui/dm-friends.js?v=217" defer></script>
-<script src="ui/dm-perflog.js?v=265" defer></script>
+<script src="ui/dm-perflog.js?v=273" defer></script>
 <script src="ui/dm-webkit.js?v=210" defer></script>
 <script src="ui/dm-spectator.js?v=1" defer></script>
 <script src="ui/dm-stack.js?v=1" defer></script>
@@ -4955,7 +4955,7 @@ function applyQualityTier(){applyPreset(GFX.preset);}
 // one); when there is headroom it eases back up. The chosen quality stays
 // the ceiling, so a fast device always gets exactly what it picked.
 function _dynRes(r){
-  if(!r||GFX.dynamicRes===false) return;
+  if(!r||GFX.dynamicRes===false) return;   // (the frame-budget ladder's own enforcer in ui/dm-budget.js still caps the render scale for a player who switched auto-balance off)
   if(window.DMGov){ DMGov.frame(r,GFX,effectivePixelRatio()); return; }   // ui/dm-governor.js: small rate-limited steps, probes for headroom, remembers the settled scale, runs on every preset (the old ladder below is the fallback)
   const now=performance.now(), d=r._dr||(r._dr={t:now,ema:16.7,k:1,hold:0,cool:0});
   // Only on AUTO graphics (or an explicit dynamicRes opt-in). A player who
@@ -5288,6 +5288,7 @@ function buildEnvMap(renderer,scene){
 //  FLIGHT SCENE
 // ══════════════════════════════════════════════════════════════
 let flightRenderer,flightScene,flightCamera,boardFlight,flightInited=false;
+try{ Object.defineProperty(window,'flightRenderer',{get:()=>flightRenderer,configurable:true}); }catch(e){}   // (v273) a top-level `let` is not a window property: DMGov.stats / DMBudget read window.flightRenderer
 let _charShadowLight=null;
 let _builtBoardTemplate=null; // last template key that was built into boardFlight
 let _landTargetBody=null,_approachBestDist=Infinity,_approachBestBody=null;

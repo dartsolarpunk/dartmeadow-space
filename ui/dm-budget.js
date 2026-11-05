@@ -212,6 +212,21 @@
     try { if (W.DMCrumb && W.DMCrumb.mark) W.DMCrumb.mark('budget', 'p' + c.p); } catch (e) { }
   }
 
+  // (v273) RENDER-SCALE ENFORCER.  The v272 log of the Mali tablet: the ladder sat at its last step (p 27, res stage 5 = cap 0.42) for 6 minutes at ~4 fps while the renderer's pixel
+  // ratio stayed 1.5 - the one lever that scales fill cost never moved, because it was only ever applied through ui/dm-governor.js, which is off for a player whose saved
+  // "auto balance" is unticked (GFX.dynamicRes === false) and silent while its own gates hold.  The controller now guarantees its own cap: every ~0.5 s the drawing buffer is
+  // brought down to effectivePixelRatio() x cap (and handed back to the governor / restored when the cap lifts).  Independent of the governor's state.
+  function enforceRes() {
+    try {
+      if (!out.on || W.__JOTS_INTRO || (W.DMAR && W.DMAR.active) || typeof W.effectivePixelRatio !== 'function') return;
+      const r = W.flightRenderer || (typeof flightRenderer !== 'undefined' ? flightRenderer : null); if (!r || !r.getPixelRatio || !r.setPixelRatio) return;
+      const cap = out.resCap(), cur = r.getPixelRatio(), base = W.effectivePixelRatio(), d = r._dr && r._dr.ring ? r._dr : null;
+      const want = base * Math.min(cap, d ? d.k : 1);
+      if (cap < 1 && cur > want * 1.03) { r.setPixelRatio(base * cap); if (d) { d.k = Math.min(d.k, cap); d.since = now(); } r._dmEnf = cap; S.enf = (S.enf | 0) + 1; }
+      else if (cap >= 1 && r._dmEnf && !d && cur < base * 0.98) { r.setPixelRatio(base); r._dmEnf = 0; S.enf = (S.enf | 0) + 1; }   // no governor to hand it back: restore it here
+      else if (cap >= 1 && r._dmEnf) r._dmEnf = 0;
+    } catch (e) { }
+  }
   function start() {
     if (S.started || !out.on) return; S.started = true;
     const c = S.C = createController({ budgetMs: budgetOv || 50, onChange: applied });
@@ -229,7 +244,7 @@
         if (sc && d > 0 && d < 1500) { let r = S.perScreen[sc]; if (!r) r = S.perScreen[sc] = { n: 0, ema: 0, max: 0, over: 0, h: [0, 0, 0, 0, 0, 0, 0, 0] }; const f = d > 250 ? 250 : d; r.n++; r.ema += (f - r.ema) * 0.02; if (f > r.max) r.max = f; if (f > 66.7) r.over++; r.h[f <= 17.5 ? 0 : f <= 25 ? 1 : f <= 33.4 ? 2 : f <= 50 ? 3 : f <= 66.7 ? 4 : f <= 100 ? 5 : f <= 200 ? 6 : 7]++; }   // bins: <=17.5 <=25 <=33 <=50 <=67 <=100 <=200 >200 ms (p95 per screen = read off the cumulative counts)
       }
       last = t;
-      if ((++tickN & 31) === 0) { S.screen = curScreen(); persist(false); }
+      if ((++tickN & 31) === 0) { S.screen = curScreen(); persist(false); enforceRes(); }
     };
     W.requestAnimationFrame(fr);
     // GPU/memory watch (the OS kills the tab, not the frame rate): the renderer's own byte estimate (info.memory.total: textures + buffers + render targets).
@@ -253,7 +268,7 @@
     setInterval(() => { const s = out.stats(); if (!s) return; const l = s.lv; d.textContent = 'BUD p' + s.p + '/' + s.max + '  ' + s.emaMs + 'ms p95 ' + s.p95Ms + '\npx' + l.parallax + ' pxs' + l.pxshadow + ' gnd' + l.ground + ' wat' + l.water + ' shd' + l.shadow + ' atm' + l.atmo + ' res' + l.res + (s.exhausted ? ' EXHAUSTED' : ''); }, 500);
   }
 
-  out.stats = function () { const c = S.C; if (!c) return null; const s = c.stats(); s.seed = out.seedWhy; s.dev = devKey(); s.memMB = S.memMB; s.floorP = c.floorP; s.screens = S.perScreen; return s; };
+  out.stats = function () { const c = S.C; if (!c) return null; const s = c.stats(); s.seed = out.seedWhy; s.dev = devKey(); s.memMB = S.memMB; s.floorP = c.floorP; s.screens = S.perScreen; s.enf = S.enf | 0; return s; };
   out.force = function (p) { if (S.C) S.C.set(p, now(), 'force'); };
   out.lvl = function (n) { return out.lv[n] | 0; };
   // typed accessors for the feature hooks; each returns the neutral value while the controller is off or at level 0

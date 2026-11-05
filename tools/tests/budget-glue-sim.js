@@ -47,5 +47,10 @@ assert.strictEqual(boot({ search: '?gov=7' }).B.p, 7);
 { const t = boot({ gfx: { isMobile: false, gpuClass: 'high' } }); const B = t.B; const iv = globalThis.__ivs[0]; globalThis.flightRenderer = { info: { memory: { total: 1500 * 1048576 } } }; globalThis.GFX.isMobile = true;
   iv(); const K = B.core; assert.strictEqual(B.p, K.pOf('res', 1), 'hard limit -> res L1'); globalThis.flightRenderer.info.memory.total = 1100 * 1048576; iv(); assert(B.p >= K.pOf('shadow', 3)); globalThis.flightRenderer.info.memory.total = 600 * 1048576; iv();
   assert.strictEqual(B.stats().floorP, 0); delete globalThis.flightRenderer; }
+// 7. (v273) the enforcer: ladder at its last step -> the renderer's pixel ratio is brought down to base x 0.42 even with NO governor state (auto-balance off); lifted again when the cap lifts
+{ const t = boot({ gfx: { isMobile: false, gpuClass: 'high' }, search: '?gov=0' }); const B = t.B; let pr = 1.5; globalThis.effectivePixelRatio = () => 1.5;
+  globalThis.flightRenderer = { getPixelRatio: () => pr, setPixelRatio: (v) => { pr = v; } };
+  B.force(B.core.MAX); t.run(40, 16.7); assert(Math.abs(pr - 1.5 * 0.42) < 1e-6, 'enforced pr=' + pr);
+  B.force(0); t.run(40, 16.7); assert(Math.abs(pr - 1.5) < 1e-6, 'restored pr=' + pr); assert(B.stats().enf >= 2); delete globalThis.flightRenderer; delete globalThis.effectivePixelRatio; }
 console.log('budget-glue-sim OK');
 process.exit(0);
