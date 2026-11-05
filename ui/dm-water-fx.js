@@ -227,6 +227,7 @@
 
     /* ───────────── per-frame ───────────── */
     fx.sprayAt = (x, y, z, vx, vy, vz, size, life, type, rot) => { if (spray) spray.spawn(x, y, z, vx, vy, vz, size, life, type, rot || 0); };
+    fx.wakePush = (x, z, spd, width) => { if (wake) wake.push(x, z, S.t, spd, width || 1); };   // a floating body's wake joins the same ribbon
     fx.splash = splash;   // exposed for the contact-event layer (ui/dm-collide-game.js): a body entering the water gets the same crown + ripple
     fx.tick = function (dt, ctx, SS) {
       if (fx.dead) return; ctx = ctx || {};

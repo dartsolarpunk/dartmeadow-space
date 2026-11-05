@@ -165,6 +165,8 @@
       const dx = x - (ax + bx * t), dy = y - (ay + by * t), dz = z - (az + bz * t), dd = Math.sqrt(dx * dx + dy * dy + dz * dz), pen = C[q + 6] + r - dd;
       if (pen > best) { best = pen; const il = dd > 1e-9 ? 1 / dd : 0; o.nx = dx * il; o.ny = dd > 1e-9 ? dy * il : 1; o.nz = dz * il; o.src = 'caps'; }
     }
+    const DC = root.DMCollide;   // props, rocks, trunks, structures, the parked board (ui/dm-collide.js): hair / cloth / fluid particles stay out of them too
+    if (DC && DC.enabled && DC.count()) { const d = DC.sphereOut(x, y, z, r); if (d > best) { best = d; o.nx = DC.out[0]; o.ny = DC.out[1]; o.nz = DC.out[2]; o.src = 'props'; } }
     o.depth = best; return best > 0 ? o : null;
   };
 

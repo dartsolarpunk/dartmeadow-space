@@ -34,10 +34,11 @@
   }
   W.pendingJobs = () => jobs.length + (cur ? 1 : 0);
   // ── hooks the game fills in
+  // the water surface is the SAME function the sea mesh / ripple ring use (ui/dm-water.js CPU mirror of the displaced bands), so contact height matches what is drawn
   W.setGround(null); W.setWater(function (x, z) {
-    const w = root.JOTS_WATER; if (!w || typeof w.surfaceY !== 'number') return NaN; let y = w.surfaceY;
-    const D = root.DMWater; if (D && D.active && D.heightAt) { try { y += D.heightAt(x, z) || 0; } catch (e) { } } return y;
-  });
+    const w = root.JOTS_WATER; if (!w || typeof w.surfaceY !== 'number') return NaN; const D = root.DMWater; let y = w.surfaceY;
+    if (D && D.active) { try { const m = D.S && D.S.mesh; if (m && m.position) y = m.position.y; y += D.heightAt(x, z) || 0; } catch (e) { } } return y;
+  }, function (x, z, out) { const D = root.DMWater; out[0] = out[1] = 0; if (D && D.active) { try { const s = D.slopeAt(x, z); out[0] = s.sx || 0; out[1] = s.sz || 0; } catch (e) { } } });
   // ── the character
   W.surfWalk = (p, dx, dz, dt) => {
     if (!(dx === dx && dz === dz) || Math.abs(dx) > 1e4 || Math.abs(dz) > 1e4) { dx = 0; dz = 0; }   // (v274) a NaN / absurd step must never reach the position
@@ -62,15 +63,30 @@
     if (!W.enabled) return; r = r || Math.min(1.1, Math.max(0.3, ((cr.rig && cr.rig.sphereR) || 1.5) * 0.3)); h = h || 3;
     if (cr._act == null || cr._act < 0) { cr._act = W.addActor(cr.x, cr.y, cr.z, r, h, false, cr); if (cr._act < 0) return; }
     if (W.count() && !cr.npcSite) { const d = W.pushOut(cr.x, cr.y || 0, cr.z, r, h, 0.5, PO); if (d > 1e-4) { cr.x += PO[0]; cr.z += PO[1]; } }
+    if (W.actorCount() > 1) { const d = W.separate(cr._act, cr.x, cr.y || 0, cr.z, r, h, PO); if (d > 1e-4) { cr.x += PO[0]; cr.z += PO[1]; } }   // NPC vs NPC, vs other pilots, vs the rider
     const dx = cr.x - C.x, dz = cr.z - C.z, R = r + C.r, d2 = dx * dx + dz * dz;   // not through the player either (she is moved by her own sweep)
     if (d2 < R * R && Math.abs((cr.y || 0) - C.y) < h) { const d = Math.sqrt(d2) || 1e-3; cr.x += dx / d * (R - d); cr.z += dz / d * (R - d); }
     W.setActor(cr._act, cr.x, cr.y || 0, cr.z);
   };
   W.npcDrop = (cr) => { if (cr && cr._act != null && cr._act >= 0) { W.removeActor(cr._act); cr._act = -1; } };
+  // Bird Temple deck walking (its own TCOL soup does the blocking): the same footstep / landing events as the planet surface. dist = distance walked this frame in planet units.
+  const SH = { stride: 0 };
+  W.shipStride = (grounded, wasGrounded, dist, x, y, z, fallV, dt) => {
+    if (!W.enabled) return; W.time += 0; if (grounded) { if (!wasGrounded && fallV > 3.5) W.emit('land', 'metal', x, y, z, fallV); SH.stride += dist; if (SH.stride > 2.6) { SH.stride = 0; W.emit('step', 'metal', x, y, z, dist / Math.max(dt, 1e-3)); W.flush(); } } };
+  // the parked skyboard: ONE oriented box (long axis th, half length L, half width Wd) that follows the board's yield / re-park animation; null removes it
+  let pbId = -1;
+  W.parkedBoard = (board, cx, cz, th, L, Wd) => {
+    if (!board) { if (pbId >= 0) { W.remove(pbId); pbId = -1; } return; }
+    const y = board.position.y; if (pbId < 0 || !W.isValid(pbId)) pbId = W.addBox('board', cx, y, cz, L, 0.35, Wd, th, 'plastic'); else W.move(pbId, cx, y, cz, th);
+  };
   // other players on foot (multiplayer ghosts): kinematic actors, so she cannot walk through them; boards in the air are not bodies on the ground
   const peers = new Map();
-  W.peerActor = (id, x, y, z, onFoot) => { if (!W.enabled) return; id = String(id); let a = peers.get(id); if (!onFoot) { if (a != null) { W.removeActor(a); peers.delete(id); } return; } if (a == null) { a = W.addActor(x, y, z, 0.7, 3.2, true, id); if (a < 0) return; peers.set(id, a); } W.setActor(a, x, y, z); };
-  W.peerDrop = (id) => { id = String(id); const a = peers.get(id); if (a != null) { W.removeActor(a); peers.delete(id); } };
+  W.peerActor = (id, x, y, z, onFoot, boardR) => {   // onFoot: a pilot walking; otherwise a pilot riding a board (a wider, shorter body at the board's height)
+    if (!W.enabled) return; id = String(id); let a = peers.get(id), kind = onFoot ? 1 : 2; if (a != null && peers.get(id + '#k') !== kind) { W.removeActor(a); peers.delete(id); a = null; }
+    if (a == null) { a = onFoot ? W.addActor(x, y, z, 0.7, 3.2, true, id) : W.addActor(x, y, z, boardR || 1.2, 1.6, true, id); if (a < 0) return; peers.set(id, a); peers.set(id + '#k', kind); } W.setActor(a, x, y, z); };
+  // the local pilot flying low on a board is a body too (creatures, thrown bodies and other pilots get out of her way)
+  let riderAct = -1; W.riderActor = (on, x, y, z, r) => { if (!W.enabled) return; if (!on) { if (riderAct >= 0) { W.removeActor(riderAct); riderAct = -1; } return; } if (riderAct < 0) riderAct = W.addActor(x, y - 0.8, z, r || 1.2, 1.6, true, 'rider'); if (riderAct >= 0) W.setActor(riderAct, x, y - 0.8, z); };
+  W.peerDrop = (id) => { id = String(id); const a = peers.get(id); if (a != null) { W.removeActor(a); peers.delete(id); peers.delete(id + '#k'); } };
   // standing on a prop: its top at the character's footprint, tested with last frame's feet so a 15 fps fall cannot sink through it
   W.supportFor = (p, prevFeet) => { if (!W.enabled || !W.count() || p._ghostUntil > performance.now()) return -1e9; const s = W.supportAt(p.pos.x, p.pos.z, prevFeet, C.step, 0.35); return (s === s && s < 1e6) ? s : -1e9; };   // (v274) NaN / absurd support heights are ignored
   W.landed = (p, vy) => { if (vy < -3.5) W.emit('land', W.lastMat, p.pos.x, p.pos.y - EYE, p.pos.z, -vy); };
@@ -99,6 +115,7 @@
       const D = root.DMWater; if (D && D.active) { try { const f = D.S && D.S.fx; if (f && f.splash) f.splash(e.x, e.z, Math.min(1.6, 0.25 + e.speed * 0.08)); else D.ripple(e.x, e.z, Math.min(1, 0.2 + e.speed * 0.05)); } catch (er) { } }
       return;
     }
+    if (e.type === 'wake') { const D = root.DMWater; if (D && D.active) { try { const f = D.S && D.S.fx; if (e.speed > 3 && f && f.sprayAt) f.sprayAt(e.x, e.y + 0.1, e.z, e.nx * 1.5, 1.2, e.nz * 1.5, 1.6, 0.6, 1, 0); else D.ripple(e.x, e.z, 0.12); } catch (er) { } } return; }
     if (e.type === 'exit') { const D = root.DMWater; if (D && D.active) { try { D.ripple(e.x, e.z, 0.2); } catch (er) { } } return; }
     if (e.type === 'step') { if (e.speed > 20 && (fx === 'dust')) burst('dust', e.x, e.y, e.z, 0, 1, 0, 1); return; }
     if (e.type === 'impact' || e.type === 'land' || e.type === 'hit') { if (e.speed > 1.5) burst(fx, e.x, e.y, e.z, e.nx, e.ny, e.nz, e.speed); if (e.type === 'land' || (e.type === 'impact' && e.mat === 0 && e.speed > 3)) { const D = root.DMWater; void D; } return; }
@@ -125,6 +142,6 @@
     }
     lastT = W.time;
   };
-  W.closeWorld = () => { peers.clear(); jobs.length = 0; cur = null; W.reset(); if (P) { try { P.scene.remove(P.pts); P.g.dispose(); } catch (e) { } P = null; } if (dbg) { try { dbg.dispose(); } catch (e) { } dbg = null; dbgTried = false; } W.setGround(null); };
+  W.closeWorld = () => { peers.clear(); pbId = -1; riderAct = -1; jobs.length = 0; cur = null; W.reset(); if (P) { try { P.scene.remove(P.pts); P.g.dispose(); } catch (e) { } P = null; } if (dbg) { try { dbg.dispose(); } catch (e) { } dbg = null; dbgTried = false; } W.setGround(null); };
   W.report = () => ({ colliders: W.count(), pending: W.pendingJobs(), bodies: W.stats.bodies, actors: W.stats.actors, groups: W.stats.groups, pushes: W.stats.pushes, subSteps: W.stats.subSteps, overflow: W.stats.overflow, ms: +W.stats.ms.toFixed(3), peak: W.stats.peak });
 })(typeof window !== 'undefined' ? window : globalThis);

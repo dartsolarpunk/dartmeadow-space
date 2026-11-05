@@ -59,6 +59,17 @@ function dts(frames, spike) { const a = []; for (let i = 0; i < frames; i++) { c
   // body vs body
   const W5 = mk(); W5.setGround(() => 0); const A = W5.addBody({ x: 0, y: 0.3, z: 0, vx: 5, r: 0.3, mat: 'rock', gravityScale: 0 }), B = W5.addBody({ x: 3, y: 0.3, z: 0, r: 0.3, mat: 'rock', gravityScale: 0 }); for (let i = 0; i < 60; i++) W5.step(1 / 15); ok(W5.bodies.vx[B] > 0.5 && W5.bodies.x[B] > 3, 'momentum passes between bodies'); }
 
+// 4b. real wave surface: buoyancy follows heave, slope drives drift, wake events
+{ const W = mk(); let T = 0; W.setWater((x, z) => 0.8 * Math.sin(x * 0.4 - T * 2) , (x, z, o) => { o[0] = 0.32 * Math.cos(x * 0.4 - T * 2); o[1] = 0; }); W.setGround(() => -20); const ev = []; W.on(e => ev.push(e.type));
+  const b = W.addBody({ x: 0, y: 0, z: 0, r: 0.4, mat: 'wood', vx: 4 }); let minRel = 1e9, maxRel = -1e9, xs = 0; for (let i = 0; i < 400; i++) { T += 1 / 15; W.step(1 / 15); const rel = W.bodies.y[b] - W.water(W.bodies.x[b], W.bodies.z[b]); if (i > 100) { minRel = Math.min(minRel, rel); maxRel = Math.max(maxRel, rel); } }
+  ok(minRel > -1.0 && maxRel < 1.0, 'wood rides the moving wave surface within a metre (rel ' + minRel.toFixed(2) + '..' + maxRel.toFixed(2) + ')'); ok(ev.indexOf('splash') >= 0 || ev.indexOf('wake') >= 0, 'water events fired: ' + Array.from(new Set(ev)).join(','));
+  const W2 = mk(); W2.setWater(() => 0); W2.setGround(() => -20); const evs = []; W2.on(e => { if (e.type === 'wake') evs.push(e.speed); }); const c = W2.addBody({ x: 0, y: 0, z: 0, r: 0.4, mat: 'wood', vx: 6, gravityScale: 1 }); for (let i = 0; i < 60; i++) W2.step(1 / 15); ok(evs.length > 0, 'a moving floating body emits wake events (' + evs.length + ')');
+  const q = mk(); q.setWater(() => 0.3); const t0 = process.hrtime.bigint(); for (let i = 0; i < 48; i++) q.addBody({ x: i, y: 0, z: 0, r: 0.3, mat: 'wood' }); for (let i = 0; i < 300; i++) q.step(1 / 15); const per = Number(process.hrtime.bigint() - t0) / 1e6 / 300; ok(per < 0.6, '48 floating bodies at 15 fps: ' + per.toFixed(3) + ' ms/frame'); }
+
+// 4c. character vs character
+{ const W = mk(); const a = W.addActor(0, 0, 0, 0.7, 3, false), b = W.addActor(0.5, 0, 0, 0.7, 3, false), o = [0, 0]; ok(W.separate(a, 0, 0, 0, 0.7, 3, o) > 0.4 && o[0] < 0, 'movable actors part half each'); const k = W.addActor(10, 0, 0, 0.7, 3, true); ok(W.separate(a, 9.5, 0, 0, 0.7, 3, o) > 0.8 && o[0] < 0, 'kinematic actors are immovable');
+  const board = W.addActor(20, 5, 0, 1.2, 1.6, true); ok(W.separate(a, 20.5, 5, 0, 0.7, 3, o) > 0.5, 'a rider is a body at its own height'); ok(W.separate(a, 20.5, 0, 0, 0.7, 3, o) === 0, 'height-separated actors pass'); }
+
 // 5. actors ----------------------------------------------------------------------------------------------------------------------
 { const W = mk(); const a = W.addActor(5, 0, 0, 0.7, 3.2, true); const c = W.makeChar({ x: 0, y: 0, z: 0 }); for (let i = 0; i < 40; i++) W.walk(c, 0.5, 0); ok(c.x <= 5 - 1.4 + 0.01, 'a kinematic actor blocks the character ' + c.x.toFixed(2));
   const b = W.addActor(0, 0, 10, 0.7, 3.2, false); const d = W.makeChar({ x: 0, y: 0, z: 10.5 }); W.walk(d, 0, 0.05); const o = [0, 0]; W.actorPush(b, o); ok(Math.abs(o[1]) > 0.0 || Math.abs(d.z - 10.5) > 0, 'soft actors split the push'); }
@@ -70,6 +81,10 @@ function dts(frames, spike) { const a = []; for (let i = 0; i < frames; i++) { c
 
 // 6b. sweepSphere from inside a collider can leave; tunnelling at speed
 { const W = mk(); W.addEllipsoid('r', 0, 1, 0, 2, 2, 'rock'); ok(!W.sweepSphere(0, 1, 0, 6, 1, 0, 0.5), 'start inside: leaving is not a hit'); W.addBox('w', 30, 3, 0, 0.1, 3, 10, 0, 'stone'); ok(W.sweepSphere(10, 3, 0, 60, 3, 0, 0.5) && W.hit.x < 30, 'a 50 u sweep stops at a thin wall (x ' + W.hit.x.toFixed(2) + ')'); }
+
+// 6c. particle proxies: hair chains / cloth against props
+{ const W = mk(); W.addEllipsoid('r', 0, 1, 0, 2, 1.5, 'rock'); W.addBox('b', 10, 1, 0, 1, 1, 1, 0.5, 'wood'); const pts = new Float32Array(3 * 12); for (let i = 0; i < 12; i++) { pts[i * 3] = -0.5 + (i % 3) * 0.5; pts[i * 3 + 1] = 1 + (i >> 2) * 0.2; pts[i * 3 + 2] = 0.1 * i; }
+  const moved = W.collideChain(pts, 12, 0.05); let inside = 0; for (let i = 0; i < 12; i++) if (W.sphereOut(pts[i * 3], pts[i * 3 + 1], pts[i * 3 + 2], 0.05) > 0.011) inside++; ok(moved > 0 && inside === 0, 'hair chain pushed out of a rock (' + moved + ' moved, ' + inside + ' still in)'); ok(W.sphereOut(10, 1, 0, 0.1) > 0.9 && W.sphereOut(30, 1, 0, 0.1) === 0, 'sphere vs box and clear space'); }
 
 // 7. relaxDiscs ---------------------------------------------------------------------------------------------------------------------
 { const N = 90, xs = new Float32Array(N), zs = new Float32Array(N), rs = new Float32Array(N), bad = new Uint8Array(N); for (let i = 0; i < N; i++) { xs[i] = rnd() * 300 - 150; zs[i] = rnd() * 300 - 150; rs[i] = 0.4 + rnd() * 2.2; }

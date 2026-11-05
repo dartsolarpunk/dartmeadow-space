@@ -162,7 +162,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-water.js?v=277"></script>
 <script src="ui/dm-water-sea.js?v=278"></script>
 <script src="ui/dm-water-curl.js?v=277"></script>   <!-- water: the breaking-wave curl (glassy turquoise barrel along the shore-parallel wave fronts; Medium+; created by dm-water-fx) -->
-<script src="ui/dm-water-fx.js?v=277"></script>   <!-- water: spray / splash / mist sprites, wake, footstep ripples, shore-break spray, underwater fog + shafts (?waterfx=0 off) -->   <!-- water: baked sea, shore, ground hook (?water=0 = the previous sea) -->
+<script src="ui/dm-water-fx.js?v=281"></script>   <!-- water: spray / splash / mist sprites, wake, footstep ripples, shore-break spray, underwater fog + shafts (?waterfx=0 off) -->   <!-- water: baked sea, shore, ground hook (?water=0 = the previous sea) -->
 <script src="ui/dm-perf.js?v=160"></script>
 <script src="ui/dm-governor.js?v=264"></script>
 <script src="ui/dm-budget.js?v=273"></script>
@@ -1022,9 +1022,9 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-mist.js?v=7" defer></script>
 <script src="ui/dm-atmo.js?v=212" defer></script>
 <script src="ui/dm-localcollide.js?v=188" defer></script>
-<script src="ui/dm-collide.js?v=270" defer></script>
-<script src="ui/dm-collide-game.js?v=274" defer></script>
-<script src="ui/dm-cgroup.js?v=214" defer></script>
+<script src="ui/dm-collide.js?v=281" defer></script>
+<script src="ui/dm-collide-game.js?v=281" defer></script>
+<script src="ui/dm-cgroup.js?v=281" defer></script>
 <script src="ui/dm-projector.js?v=224" defer></script>
 <script src="ui/dm-groundmark.js?v=220" defer></script>
 <script src="ui/dm-charm.js?v=234" defer></script>
@@ -10324,6 +10324,13 @@ function updateShipWalk(dt){
   _boardCallTick(dt);   // parked here, or flying in when summoned
   if(SHIP_WALK.drift) try{ _shipDriftBoard(dt,F); }catch(e){ console.warn('[ShipWalk] catch:',e); SHIP_WALK.drift=null; }
 }
+// (collision) Bird Temple walking keeps its own triangle-soup collision (TCOL) and reports to the shared contact-event layer: footsteps on the deck (metal), landings, so
+// audio / particles / the HUD hear the same events as on a planet. Stride length is in HER scale (SHIP_CHAR_H / 3.26 of a planet unit).
+{ const _o=updateShipWalk; updateShipWalk=function(dt){
+    const lp=SHIP_WALK.localPos, x0=lp?lp.x:0, z0=lp?lp.z:0, y0=lp?lp.y:0, g0=SHIP_WALK.grounded; _o(dt);
+    try{ const W=window.DMCollide; if(W&&W.enabled&&SHIP_WALK.localPos&&BIRD_TEMPLE.group){ const q=SHIP_WALK.localPos, k=3.26/SHIP_CHAR_H, s=_shipScaleK?_shipScaleK():1;
+      W.shipStride(SHIP_WALK.grounded,g0,Math.hypot(q.x-x0,q.z-z0)*s*k,q.x,q.y,q.z,(y0-q.y)*s*k/Math.max(dt,1e-3),dt); } }catch(e){}
+  }; }
 // The temple moves after the walk step each frame (updateBirdTemple runs
 // later in the loop). Carry her, the board and the camera along by exactly
 // what the deck under her moved, so all three stay locked to the deck's
@@ -19939,7 +19946,8 @@ function updateAtmoFlight(dt){
   const s=atmoState;if(!s)return;
   if(!s.quat||!s.quat.isQuaternion) s.quat=_atmoAimQ(s.yaw||0,s.pitch||0).clone();
   if(!s.vel) s.vel=new THREE.Vector3();
-  const _cx0=s.pos.x, _cy0=s.pos.y, _cz0=s.pos.z;   // where the board was: the prop sweep below runs from here to where it ended up
+  const _cx0=s.pos.x, _cy0=s.pos.y, _cz0=s.pos.z;
+  if(window.DMCollide&&DMCollide.enabled) DMCollide.riderActor(true,s.pos.x,s.pos.y,s.pos.z,1.2);   // where the board was: the prop sweep below runs from here to where it ended up
   const landing=!!s.landing, K=_atmoK();
   // a stick, key or roll pad: the pilot has the board (ends lift-off, auto-flight, IDLE and TO SPACE)
   if(!landing&&!s.touchdown&&_atmoManualInput()){
@@ -25257,6 +25265,7 @@ function* _hmChunkScatterG(i,j){
         for(let n=0;n<rocks.length;n++){ fx[n]=rocks[n].x; fz[n]=rocks[n].z; fr[n]=rocks[n].s*0.92; }
         _DC.pushDiscsFrom(xs,zs,rs,N,fx,fz,fr,rocks.length,0.2,_cx0,_cx1,_cz0,_cz1,bad);
         _DC.relaxDiscs(xs,zs,rs,N,_cx0,_cx1,_cz0,_cz1,0.1,4,bad);   // crowns clear of each other
+        _DC.pushDiscsFrom(xs,zs,rs,N,fx,fz,fr,rocks.length,0.2,_cx0,_cx1,_cz0,_cz1,bad);   // and once more: separating the crowns may have nudged one back toward a rock
         for(let n=0;n<N;n++){ td[n].x=xs[n]; td[n].z=zs[n]; td[n].ok=!bad[n]; }
         yield;
       }
@@ -25838,7 +25847,8 @@ function updateSurface(dt){
   if(window.DMCollide&&DMCollide.enabled){ const _cs=DMCollide.supportFor(p,_pFeet); if(_cs>groundH) groundH=_cs; }   // rock / ledge / crate tops she can stand on   // her own ground query only: inside the mansion F.ovr answers with the interior floor (other height lookups keep the roof)
   // Deep water: she floats at the surface (body under, head above) and swims
   // through the live water instead of walking the seabed.
-  const _wtr=window.JOTS_WATER, floatFeet=(_wtr&&groundH<_wtr.surfaceY-2.6)?_wtr.surfaceY-2.4:-1e9;
+  const _wtr=window.JOTS_WATER; let _wsy=_wtr?_wtr.surfaceY:0; if(_wtr&&window.DMCollide&&DMCollide.enabled){ const _w2=DMCollide.waterAt(p.pos.x,p.pos.z); if(_w2===_w2&&_w2>-1e8) _wsy=_w2; }   // the drawn wave surface under her, not the flat sea level
+  const floatFeet=(_wtr&&groundH<_wsy-2.6)?_wsy-2.4:-1e9;
   const supportH=Math.max(groundH,floatFeet);
   p._floating=floatFeet>groundH;
   const eye=supportH+3.0;
@@ -25856,7 +25866,7 @@ function updateSurface(dt){
   // or a flicker while walking can't start one unrequested.
   if(surfJumpPressed && p.onGround){ p.vel.y=6*Math.sqrt(p.grav); p.jumpActive=true; }
   try{ _surfFallCatch(p,dt,supportH); }catch(e){ p._catch=null; console.warn('[surf] fall catch:',e); }
-  try{ if(window.DMCollide&&DMCollide.enabled) DMCollide.tick(dt,{scene:PW.scene,THREE,x:p.pos.x,z:p.pos.z,mobile:!!(GFX&&GFX.isMobile)}); }catch(e){ if(!DMCollide._err){ DMCollide._err=1; console.warn('[collide] tick',e); } }   // registration slices, dynamic bodies, contact fx, ?collider=1 wireframes
+  try{ if(window.DMCollide&&DMCollide.enabled){ DMCollide.riderActor(false); DMCollide.tick(dt,{scene:PW.scene,THREE,x:p.pos.x,z:p.pos.z,mobile:!!(GFX&&GFX.isMobile)}); } }catch(e){ if(!DMCollide._err){ DMCollide._err=1; console.warn('[collide] tick',e); } }   // registration slices, dynamic bodies, contact fx, ?collider=1 wireframes
   try{ _surfGuard(p,mf,ms,dt); }catch(e){ console.warn('[surfGuard]',e); }   // (v274) non-finite / stuck-in-a-collider recovery
   _m1=performance.now(); DMFT.add('us.move',_m1-_m0); _m0=_m1;
   surfJumpPressed=false; // consume the press — it's an edge-triggered action, not a held state
@@ -26452,7 +26462,7 @@ function _bcCollide(dt,c){
   const off=!T.parked||T.summon||!CHAR||CHAR._transitioning||
     (c.b===boardFlight&&(SHIP_WALK.drift||!SHIP_WALK.charOn))||
     (c.b===surfBoard&&surfPlayer&&(surfPlayer._catch||surfPlayer._caught));
-  if(off){ if(!T.parked) Y.y=null; Y.hv=false; if(!T.parked||T.summon) return; }
+  if(off){ if(!T.parked) Y.y=null; Y.hv=false; if(window.DMCollide&&(!T.parked||T.summon)) DMCollide.parkedBoard(null); if(!T.parked||T.summon) return; }
   const F=_bcColFrame(c); if(!F) return;
   const dims=_surfBoardDims(c.b), L=dims.half/F.s, W=dims.halfW/F.s;
   const R=(c.b===boardFlight?SHIP_R:CHAR_TERRAIN_HEIGHT/6*1.1)/F.s, M=R*0.6;
@@ -26465,6 +26475,7 @@ function _bcCollide(dt,c){
   const e=S.t*S.t*(3-2*S.t);
   S.ox=S.fx+(S.tx-S.fx)*e; S.oz=S.fz+(S.tz-S.fz)*e; S.od=S.fd+(S.td-S.fd)*e;
   const cx=F.px+S.ox, cz=F.pz+S.oz, th=F.th-S.od;
+  if(window.DMCollide&&DMCollide.enabled&&c.b===surfBoard&&Math.abs(F.s-1)<1e-3) DMCollide.parkedBoard(off?null:c.b,cx,cz,th,L,W);   // the parked board is a shared collider too (NPCs, thrown bodies, other players stop at it)
   if(!off){
     const o=Y.o||(Y.o={nx:0,nz:0,d:0});
     const d=_bcBoxDist(F,cx,cz,th,L,W,o);
@@ -27453,7 +27464,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
         // name tag above whoever's visible: her when on foot, else the board
         const tagAt=(u.rider&&!u.mounted)?u.rider.position:b.position;
         const lift=(u.rider&&!u.mounted)?(p.cs?0.6:u.L*0.45):u.L*0.45;
-        if(window.DMCollide&&DMCollide.enabled&&typeof surfaceActive!=='undefined'&&surfaceActive) DMCollide.peerActor(p.id,tagAt.x,tagAt.y,tagAt.z,!!(u.rider&&!u.mounted));   // an on-foot pilot is a body she cannot walk through
+        if(window.DMCollide&&DMCollide.enabled&&typeof surfaceActive!=='undefined'&&surfaceActive) DMCollide.peerActor(p.id,tagAt.x,tagAt.y,tagAt.z,!!(u.rider&&!u.mounted),u.L*0.35);   // pilots, on foot or riding, are bodies
         u.label.visible=!(window.DM_PREFS&&window.DM_PREFS.playerLabels===false);
         u.label.position.set(tagAt.x,tagAt.y+lift,tagAt.z);
         const s=(u.rider&&!u.mounted)?0.35:1;

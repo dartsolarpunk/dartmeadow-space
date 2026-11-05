@@ -294,11 +294,20 @@
     W.removeActor = (a) => { if (a >= 0 && aOn[a]) { aOn[a] = 0; aUd[a] = null; nAct--; W.stats.actors = nAct; } };
     W.actorPush = (a, out) => { out[0] = apx[a]; out[1] = apz[a]; apx[a] = apz[a] = 0; return out; };
     W.actorCount = () => nAct;
+    // character vs character: where would an actor at (x,y,z,r,h) have to move to clear every OTHER actor (the caller applies it). Kinematic actors are immovable (full push), movable
+    // ones split it, so two walking NPCs part half-and-half. out[0],out[1] = dx,dz; returns the depth.
+    W.separate = (self, x, y, z, r, h, out) => {
+      let ox = 0, oz = 0;
+      for (let a = 0; a < NA; a++) { if (!aOn[a] || a === self) continue; const dx = x - ax[a], dz = z - az[a], R = r + ar[a]; if (dx * dx + dz * dz >= R * R || y > ay[a] + ah[a] || y + h < ay[a]) continue;
+        const d = sqrt(dx * dx + dz * dz) || 1e-3, dep = R - d, w = aKin[a] ? 1 : 0.5; ox += dx / d * dep * w; oz += dz / d * dep * w; }
+      out[0] = ox; out[1] = oz; return sqrt(ox * ox + oz * oz);
+    };
 
     // ── dynamic bodies (spheres)
     const bX = new Float32Array(NB), bY = new Float32Array(NB), bZ = new Float32Array(NB), bVX = new Float32Array(NB), bVY = new Float32Array(NB), bVZ = new Float32Array(NB);
     const bR = new Float32Array(NB), bIM = new Float32Array(NB), bMat = new Uint8Array(NB), bOn = new Uint8Array(NB), bSleep = new Float32Array(NB), bWet = new Uint8Array(NB), bAsleep = new Uint8Array(NB), bGrav = new Float32Array(NB), bDamp = new Float32Array(NB);
     const bUd = new Array(NB).fill(null); let nBod = 0, acc = 0;
+    const wY = new Float32Array(NB), wSx = new Float32Array(NB), wSz = new Float32Array(NB), wVy = new Float32Array(NB), wHas = new Uint8Array(NB);   // per-frame water sample (surface height / slope / heave) of each body
     W.bodies = { x: bX, y: bY, z: bZ, vx: bVX, vy: bVY, vz: bVZ, r: bR, on: bOn, asleep: bAsleep, ud: bUd, cap: NB };
     W.addBody = (b) => {
       for (let i = 0; i < NB; i++) if (!bOn[i]) {
@@ -357,16 +366,22 @@
       return -vn;
     }
     function stepBodies(h) {
-      const g = W.gravity, wf = W.water, gf = W.ground;
+      const g = W.gravity, gf = W.ground;
       for (let b = 0; b < NB; b++) {
         if (!bOn[b] || bAsleep[b]) continue; const r = bR[b];
         bVY[b] -= g * bGrav[b] * h;
-        // water: buoyancy from the submerged fraction, drag, splash on entry / exit
+        // water: the REAL wave surface (sampled once a frame per body in step()): buoyancy from the submerged fraction, heave and slope drive, drag, splash / wake events
         let wet = 0;
-        if (wf) { const ws = wf(bX[b], bZ[b]); if (ws === ws && ws > -1e8) { const depth = ws - (bY[b] - r); wet = clamp(depth / (2 * r), 0, 1);
-          if (wet > 0) { const rho = DENS[bMat[b]], buoy = g * bGrav[b] * (1000 / max(60, rho)) * wet; bVY[b] += buoy * h; const dr = 1 - min(0.9, (2.5 + 4 * wet) * h * wet); bVX[b] *= dr; bVY[b] *= dr; bVZ[b] *= dr; }
-          if (wet > 0 && !bWet[b]) { const sp = abs(bVY[b]) + sqrt(bVX[b] * bVX[b] + bVZ[b] * bVZ[b]) * 0.5; emit('splash', MID.water, bMat[b], bX[b], ws, bZ[b], 0, 1, 0, sp, b, -1, 100 + b, 0.12); bWet[b] = 1; }
-          else if (wet === 0 && bWet[b]) { bWet[b] = 0; emit('exit', MID.water, bMat[b], bX[b], ws, bZ[b], 0, 1, 0, abs(bVY[b]), b, -1, 200 + b, 0.2); } } }
+        if (wHas[b]) { const ws = wY[b]; const depth = ws - (bY[b] - r); wet = clamp(depth / (2 * r), 0, 1);
+          if (wet > 0) {
+            const rho = DENS[bMat[b]], buoy = g * bGrav[b] * (1000 / max(60, rho)) * wet; bVY[b] += buoy * h;
+            const k = min(0.9, (2.5 + 4 * wet) * h * wet); bVX[b] -= bVX[b] * k; bVZ[b] -= bVZ[b] * k; bVY[b] += (wVy[b] - bVY[b]) * k;   // drag relative to the surface's own heave
+            bVX[b] -= wSx[b] * g * 0.35 * wet * h; bVZ[b] -= wSz[b] * g * 0.35 * wet * h;                                                    // slides down the wave face
+          }
+          if (wet > 0 && !bWet[b]) { const sp = abs(bVY[b] - wVy[b]) + sqrt(bVX[b] * bVX[b] + bVZ[b] * bVZ[b]) * 0.5; emit('splash', MID.water, bMat[b], bX[b], ws, bZ[b], 0, 1, 0, sp, b, -1, 100 + b, 0.12); bWet[b] = 1; }
+          else if (wet === 0 && bWet[b]) { bWet[b] = 0; emit('exit', MID.water, bMat[b], bX[b], ws, bZ[b], 0, 1, 0, abs(bVY[b]), b, -1, 200 + b, 0.2); }
+          else if (wet > 0.15) { const hs = sqrt(bVX[b] * bVX[b] + bVZ[b] * bVZ[b]); if (hs > 1.2) emit('wake', MID.water, bMat[b], bX[b], ws, bZ[b], bVX[b] / hs, 0, bVZ[b] / hs, hs, b, -1, 400 + b, 0.1); }
+        }
         const damp = 1 - bDamp[b] * h; bVX[b] *= damp; bVY[b] *= damp; bVZ[b] *= damp;
         let spd = sqrt(bVX[b] * bVX[b] + bVY[b] * bVY[b] + bVZ[b] * bVZ[b]); let ns = Math.ceil(spd * h / (r * 0.5)); if (ns < 1) ns = 1; if (ns > 8) ns = 8; const hh = h / ns;
         for (let s = 0; s < ns; s++) {
@@ -409,9 +424,21 @@
       } }
     }
     // advance dynamic bodies by a frame time (fixed sub-steps; a 15 fps frame = 8 sub-steps of 1/120)
+    // the water surface at each live body, once per frame (a few band taps each): height, slope and heave (from last frame's sample)
+    function sampleWater(dt) {
+      const wf = W.water, sf = W.waterSlope; if (!wf) { wHas.fill(0); return; }
+      for (let b = 0; b < NB; b++) {
+        if (!bOn[b]) { wHas[b] = 0; continue; } const y = wf(bX[b], bZ[b]);
+        if (!(y === y) || y < -1e8) { wHas[b] = 0; continue; }
+        wVy[b] = wHas[b] && dt > 1e-4 ? clamp((y - wY[b]) / dt, -8, 8) : 0; wY[b] = y; wHas[b] = 1;
+        if (sf && bY[b] - bR[b] < y + 2) { sf(bX[b], bZ[b], SL); wSx[b] = SL[0]; wSz[b] = SL[1]; } else { wSx[b] = 0; wSz[b] = 0; }
+        if (bAsleep[b] && bY[b] - bR[b] < y - 0.05) { bAsleep[b] = 0; bSleep[b] = 0; }   // a resting body the water has risen over floats again
+      }
+    }
+    const SL = [0, 0];
     W.step = (dt) => {
       W._dt = dt > 1e-4 ? dt : 0.016; const t0 = (root.performance || Date).now(); W.time += dt;
-      if (nBod) { acc += min(dt, FIX * MAXSTEPS); let n = 0; while (acc >= FIX && n < MAXSTEPS) { stepBodies(FIX); acc -= FIX; n++; } if (n === MAXSTEPS) acc = 0; }
+      if (nBod) { sampleWater(dt); acc += min(dt, FIX * MAXSTEPS); let n = 0; while (acc >= FIX && n < MAXSTEPS) { stepBodies(FIX); acc -= FIX; n++; } if (n === MAXSTEPS) acc = 0; }
       W.flush(); W.stats.ms = (root.performance || Date).now() - t0;
     };
     // wake sleeping bodies near a moving character / actor
@@ -438,6 +465,16 @@
       return -1;
     };
 
+    // deepest static penetration of a sphere (hair / cloth / fluid particles, camera probes): depth, with W.out = [nx,ny,nz] pointing out of the collider. 0 when clear.
+    W.out = new Float32Array(3);
+    W.sphereOut = (x, y, z, r) => {
+      const n = queryInto(Q3, 64, x - r, z - r, x + r, z + r); let best = 0;
+      for (let k = 0; k < n; k++) { const i = Q3[k]; if (flg[i] & (F_TRIG | F_ACTOR)) continue; if (y - r > yHi(i) || y + r < yLo(i)) continue; const pen = spherePen(i, x, y, z, r); if (pen > best) { best = pen; W.out[0] = DN[0]; W.out[1] = DN[1]; W.out[2] = DN[2]; } }
+      return best;
+    };
+    // a chain of particles (a hair strand, a cloth row): pts = Float32Array xyz*n; each is moved out of the statics; returns the number moved. Cheap: one hash lookup each.
+    W.collideChain = (pts, n, r) => { let m = 0; for (let i = 0; i < n; i++) { const o = i * 3, d = W.sphereOut(pts[o], pts[o + 1], pts[o + 2], r); if (d > 0) { pts[o] += W.out[0] * d; pts[o + 1] += W.out[1] * d; pts[o + 2] += W.out[2] * d; m++; } } return m; };
+    const Q3 = new Int32Array(64);
     // ── generation helpers ────────────────────────────────────────────────────────────────────────────────────────
     // Deterministic de-overlap of scattered discs (rocks / trunks): no RNG, in place, O(n^2) over one chunk. xs/zs/rs are arrays; n entries; `fixed[i]` (optional)
     // marks entries that do not move. Everything is also kept inside [x0,x1]x[z0,z1] (a chunk never leaks a prop into its neighbour, so chunks never overlap each other).
@@ -537,7 +574,9 @@
     W.runGen = (it) => { let r; do { r = it.next(); } while (!r.done); return r.value; };   // finish a generator at once (tests, small props)
 
     // ── terrain / water hooks (set by the game)
-    W.setGround = (fn) => { W.ground = fn; }; W.setWater = (fn) => { W.water = fn; };
+    W.setGround = (fn) => { W.ground = fn; }; W.setWater = (fn, slopeFn) => { W.water = fn; W.waterSlope = slopeFn || null; };
+    // the wave surface at (x,z) for anything that floats (character swim height, board): NaN where there is no water
+    W.waterAt = (x, z) => (W.water ? W.water(x, z) : NaN);
     W.reset = () => { for (const name of Array.from(gNames.keys())) W.clearGroup(name); for (let b = 0; b < NB; b++) if (bOn[b]) W.removeBody(b); for (let a = 0; a < NA; a++) if (aOn[a]) W.removeActor(a); evCount = 0; };
     W.count = () => CAP - nFreeC;
     W._raw = { typ, mat, flg, px, py, pz, ea, eb, ec, bx0, bx1, bz0, bz1, hf };
