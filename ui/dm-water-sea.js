@@ -128,7 +128,10 @@
     const edge = o.depthOK ? float(1.0).sub(smoothstep(0.0, 1.8, thick.sub(swell.mul(hasShore ? 1.6 : 0.9)))) : F(0);
     const contact = o.depthOK ? edge.mul(smoothstep(0.3, 0.7, laceV).mul(0.6).add(0.4)).add(float(1.0).sub(smoothstep(0.0, 0.6, thick)).mul(0.6)) : F(0);
     let foamRaw = clamp(potT.mul(1.0).add(steepF).add(boreF).add(contact.mul(0.9)), 0.0, 1.4);
-    const laceMix = P.foam.cell > 0 ? mix(laceV, pearlV, F(P.foam.cell * 0.85)) : laceV;
+    // the tile's filaments read as a fishnet when they alone gate the foam: pull them toward their mean and break them up with a slow, large-scale patchiness
+    const patchV = texture(tex.detail, xz.mul(0.037).add(U.drift.mul(0.3)).add(0.61)).x;
+    const laceRaw = P.foam.cell > 0 ? mix(laceV, pearlV, F(P.foam.cell * 0.85)) : laceV;
+    const laceMix = mix(F(0.46), laceRaw, 0.55).mul(mix(F(0.62), F(1.3), smoothstep(0.25, 0.75, patchV)));
     const foam = smoothstep(0.16, 0.5, foamRaw.sub(float(1.0).sub(laceMix).mul(0.5))).mul(front);
     // ice slush (cold worlds): plates from the pearl cells, flat and white-blue
     let iceM = F(0);
@@ -177,8 +180,8 @@
       emissiveParts.push(mix(U.glowCol, U.glowCol2, clamp(laceV.mul(1.4).add(sin(xz.x.mul(0.05).add(U.time.mul(0.2))).mul(0.3)), 0.0, 1.0)).mul(amt).mul(1.8));
     }
     if (isLava) {
-      const melt = float(1.0).sub(foam), flow = smoothstep(0.25, 0.8, laceMix).mul(0.5).add(0.5);
-      emissiveParts.push(mix(vec3(0.9, 0.22, 0.03), vec3(1.0, 0.65, 0.15), flow).mul(melt).mul(2.6));
+      const crack = smoothstep(0.3, 0.55, laceRaw.mul(0.7).add(patchV.mul(0.3))), melt = float(1.0).sub(foam).mul(crack.mul(0.92).add(0.06)), flow = smoothstep(0.25, 0.8, laceMix).mul(0.5).add(0.5);
+      emissiveParts.push(mix(vec3(0.9, 0.22, 0.03), vec3(1.0, 0.65, 0.15), flow).mul(melt).mul(1.6));
     }
     let emissive = emissiveParts[0]; for (let i = 1; i < emissiveParts.length; i++) emissive = emissive.add(emissiveParts[i]);
 

@@ -30,6 +30,18 @@ Use: **code** = code or tables included (licence terms apply) · **technique** =
   <http://tulrich.com/geekstuff/chunklod.html>
 - **Geometry Clipmaps** — F. Losasso & H. Hoppe, Microsoft Research (2004). *Published paper* (technique). Terrain level-of-detail approach.
   <https://hhoppe.com/proj/geomclipmap/>
+- **Simulating Ocean Water** — Jerry Tessendorf (SIGGRAPH course notes, 2001). *Published paper* (technique). Statistical ocean surface: directional spectrum, dispersion ω² = gk, Jacobian foam trigger, tileable wave textures (baked once per world).
+  <https://people.computing.clemson.edu/~jtessen/reports/papers_files/coursenotes2004.pdf>
+- **Effective Water Simulation from Physical Models (Gerstner / trochoidal waves)** — Mark Finch, NVIDIA — GPU Gems ch. 1 (2004); after F. Gerstner (1802). *Published chapter* (technique). Gerstner waves with steepness budgets; Kelvin wake angle for the board wake.
+  <https://developer.nvidia.com/gpugems/gpugems/part-i-natural-effects/chapter-1-effective-water-simulation-physical-models>
+- **JONSWAP / Pierson–Moskowitz wind-wave spectra** — K. Hasselmann et al. (1973); W. Pierson & L. Moskowitz (1964). *Published papers* (technique). Peak shape and directional spreading of the ocean bands.
+  <https://en.wikipedia.org/wiki/Wind_wave_model>
+- **Fast sweeping method for eikonal equations** — Hongkai Zhao (Mathematics of Computation, 2005). *Published paper* (technique). Coastal wave travel-time field for shoaling and breaking.
+  <https://doi.org/10.1090/S0025-5718-04-01678-3>
+- **Moana ocean (Splash solver, Hyperion)** — Walt Disney Animation Studios. *Concept only* (inspiration). Look reference only; no assets or code used.
+  <https://disneyanimation.com/technology/hyperion/>
+- **Avatar: The Way of Water** — Wētā FX. *Concept only* (inspiration). Look reference only; no assets or code used.
+  <https://www.wetafx.co.nz/>
 - **Nanite (continuous LOD concept)** — Epic Games — Unreal Engine 5. *Concept only* (technique). Inspiration for the walking-terrain LOD.
   <https://dev.epicgames.com/documentation/en-us/unreal-engine/nanite-virtualized-geometry-in-unreal-engine>
 - **three-nanite** — AIFanatic. *MIT* (technique). Meshlet LOD reference.

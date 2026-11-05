@@ -157,11 +157,11 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-sparsevox.js?v=2"></script>
 <script src="ui/dm-rockmat.js?v=145"></script>
 <script src="ui/dm-parallax.js?v=252"></script>
-<script src="ui/dm-groundlib.js?v=252"></script>
-<script src="ui/dm-water-core.js?v=254"></script>
-<script src="ui/dm-water.js?v=254"></script>
-<script src="ui/dm-water-sea.js?v=254"></script>
-<script src="ui/dm-water-fx.js?v=254"></script>   <!-- water: spray / splash / mist sprites, wake, footstep ripples, shore-break spray, underwater fog + shafts (?waterfx=0 off) -->   <!-- water: baked sea, shore, ground hook (?water=0 = the previous sea) -->
+<script src="ui/dm-groundlib.js?v=255"></script>
+<script src="ui/dm-water-core.js?v=255"></script>
+<script src="ui/dm-water.js?v=255"></script>
+<script src="ui/dm-water-sea.js?v=255"></script>
+<script src="ui/dm-water-fx.js?v=255"></script>   <!-- water: spray / splash / mist sprites, wake, footstep ripples, shore-break spray, underwater fog + shafts (?waterfx=0 off) -->   <!-- water: baked sea, shore, ground hook (?water=0 = the previous sea) -->
 <script src="ui/dm-perf.js?v=160"></script>
 <script src="ui/dm-governor.js?v=235"></script>
 <script>/* (v136) no-op stub so the flight loop can never throw if dm-perf.js failed to load */
@@ -15457,6 +15457,18 @@ const CREDITS=[
   u:['http://tulrich.com/geekstuff/chunklod.html'],w:'Terrain level-of-detail approach.'},
  {t:'Geometry Clipmaps',a:'F. Losasso & H. Hoppe, Microsoft Research (2004)',l:'Published paper',use:'technique',
   u:['https://hhoppe.com/proj/geomclipmap/'],w:'Terrain level-of-detail approach.'},
+ {t:'Simulating Ocean Water',a:'Jerry Tessendorf (SIGGRAPH course notes, 2001)',l:'Published paper',use:'technique',
+  u:['https://people.computing.clemson.edu/~jtessen/reports/papers_files/coursenotes2004.pdf'],w:'Statistical ocean surface: a directional wave spectrum summed into a height field with the deep-water dispersion relation ω² = gk, the Jacobian of the horizontal displacement as the whitecap/foam trigger, and tileable wave textures (ui/dm-water-core.js). Baked once per world rather than run per frame.'},
+ {t:'Effective Water Simulation from Physical Models (Gerstner / trochoidal waves)',a:'Mark Finch, NVIDIA — GPU Gems ch. 1 (2004); after F. Gerstner (1802)',l:'Published chapter',use:'technique',
+  u:['https://developer.nvidia.com/gpugems/gpugems/part-i-natural-effects/chapter-1-effective-water-simulation-physical-models'],w:'Gerstner waves (circular particle motion: crests sharpen, troughs flatten) with a per-band steepness budget, and the Kelvin wake angle (19.47°) for the board wake.'},
+ {t:'JONSWAP / Pierson–Moskowitz wind-wave spectra',a:'K. Hasselmann et al. (1973); W. Pierson & L. Moskowitz (1964)',l:'Published papers',use:'technique',
+  u:['https://en.wikipedia.org/wiki/Wind_wave_model'],w:'Peak shape and directional spreading (cos^2s) of the ocean swell/mid/chop bands; the peak period follows from the planet’s gravity and wind.'},
+ {t:'Fast sweeping method for eikonal equations',a:'Hongkai Zhao (Mathematics of Computation, 2005)',l:'Published paper',use:'technique',
+  u:['https://doi.org/10.1090/S0025-5718-04-01678-3'],w:'Wave travel-time field around the coast, used for shoaling, refraction of the wave fronts, and the phase of breaking waves and swash (Green’s law, breaker index 0.78).'},
+ {t:'Moana ocean (Splash solver, Hyperion)',a:'Walt Disney Animation Studios',l:'Concept only',use:'technique',
+  u:['https://disneyanimation.com/technology/hyperion/'],w:'Look reference only (layered swell, foam, translucent turquoise curl, particle splash sheets). No assets or code used; the game bakes cheap stand-ins.'},
+ {t:'Avatar: The Way of Water',a:'Wētā FX',l:'Concept only',use:'technique',
+  u:['https://www.wetafx.co.nz/'],w:'Look reference only (light through breaking water, foam persistence, spray). No assets or code used.'},
  {t:'Nanite (continuous LOD concept)',a:'Epic Games — Unreal Engine 5',l:'Concept only',use:'technique',
   u:['https://dev.epicgames.com/documentation/en-us/unreal-engine/nanite-virtualized-geometry-in-unreal-engine'],w:'Inspiration for the walking-terrain LOD.'},
  {t:'three-nanite',a:'AIFanatic',l:'MIT',use:'technique',u:['https://github.com/AIFanatic/three-nanite'],w:'Meshlet LOD reference.'},

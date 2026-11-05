@@ -514,6 +514,11 @@
       const fadeN = float(1).sub(smoothstep(reach.mul(0.3), reach.mul(0.75), dist)).mul(ctx.flat);
       const Nn = normalize(b.Tt.mul(nt.x).add(b.Bt.mul(nt.y)).add(b.N0.mul(nt.z)));
       m.normalNode = normalize(tmix(b.N0, tmix(Nn, b.N0, water.mul(0.96)), fadeN.mul(float(ctx.strength || 1)).clamp(0.0, 1.0)));
+      // footfall / splash rings on the puddle surface (ui/dm-water.js ripple ring; nothing is evaluated while no ripple is alive)
+      try {
+        const DW = G.DMWater, rg = DW && DW.active && DW.rippleGrad ? DW.rippleGrad(vec2(p.x, p.z)) : null;
+        if (rg) { const wv = T.transformDirection(vec3(rg.x.negate(), float(0.0), rg.y.negate()), T.cameraViewMatrix); m.normalNode = normalize(m.normalNode.add(wv.mul(water.mul(fadeN).mul(1.2)))); }
+      } catch (e) { }
       // ---- colour: lightness + tint of the tile, moss in the crevices (and over the ruins), wet darkening, water
       const cav = tmix(float(1), float(0.62).add(hHit.mul(0.38)), fadeF.mul(0.85));
       const low = float(1).sub(smoothstep(float(0.35), float(0.82), hHit));   // 1 in crevices
@@ -544,7 +549,15 @@
     if (mossCol) S.U.mossCol.value.copy(mossCol);
   }
 
+  // region wetness at a world point (0..1), nearest texel of the region map; 0 until the bake has landed. Used for puddle footfalls (ui/dm-water-fx.js).
+  function wetAt(x, z) {
+    const r = S.tex && S.tex.region; if (!r || !S.done) return 0;
+    let u = (x / REG_UNITS) % 1, v = (z / REG_UNITS) % 1; if (u < 0) u += 1; if (v < 0) v += 1;
+    return r[(((v * REG) | 0) * REG + ((u * REG) | 0)) * 4 + 2] / 255;
+  }
+
   G.DMGround = {
+    wetAt,
     TYPES, BIOMES, profile, bake, bakeSync, bakeTile, packTile, allocAtlas, newTileBuf, layout, REG, REG_UNITS, COLS, ROWS, PAD, GS,
     beginWorld, pump, apply, skyTick,
     ref: { h2, vn, fbm, wor },

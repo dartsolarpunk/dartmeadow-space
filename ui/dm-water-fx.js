@@ -252,7 +252,10 @@
             st.stride += st.spd * dt; const sl = clamp(1.1 + st.spd * 0.16, 1.4, 3.2);
             if (st.stride > sl) { st.stride = 0; const a = clamp(0.2 + st.spd * 0.05, 0.2, 0.55); D().ripple(px + dx * 0.4, pz + dz * 0.4, a); if (spray && st.spd > 2.5) { const hang = P.spray.hang || 1; for (let i = 0; i < 3; i++) sprayAt(px + dx * 0.5 + (rnd() - 0.5) * 0.6, ys + 0.1, pz + dz * 0.5 + (rnd() - 0.5) * 0.6, (rnd() - 0.5) * 1.2 + dx * st.spd * 0.2, 1.2 + rnd() * 1.8, (rnd() - 0.5) * 1.2 + dz * st.spd * 0.2, 0.5 + rnd() * 0.5, 0.5 * hang, 3, 0); } }
           }
-        } else if (wake && wake.count && !st.riding && S.t - wake.last > 0.5) { /* the ribbon fades out by age on its own */ }
+        } else if (walk && !st.contact && st.spd > 0.8 && W.DMGround && W.DMGround.wetAt) {                 // puddle footfalls on wet ground
+          st.stride += st.spd * dt; const sl = clamp(1.4 + st.spd * 0.14, 1.6, 3.4);
+          if (st.stride > sl) { st.stride = 0; const wt = W.DMGround.wetAt(px, pz); if (wt > 0.35) { D().ripple(px + st.vx / st.spd * 0.4, pz + st.vz / st.spd * 0.4, clamp(0.1 + (wt - 0.35) * 0.4 + st.spd * 0.02, 0.1, 0.32)); } }
+        }
         if (spray && px != null) shoreSpray(dt, px, pz);
       }
       // pools
