@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  const F = window.DMFac = { ctx: null, sites: new Map(), solids: [], scene: null, ver: '280' };
+  const F = window.DMFac = { ctx: null, sites: new Map(), solids: [], scene: null, ver: '283' };
   const DM = window.DM_FAC = window.DM_FAC || {};
   DM.bay = DM.bay || { inside: false, membrane: 0 };
   F.bind = c => { F.ctx = c; };
@@ -520,6 +520,7 @@
   function teardown() {
     crumb('begin', 'fac:teardown');
     HQ.epoch++; const dropped = HQ.q.splice(0); dropped.forEach(j => { try { j.stale && j.stale(); } catch (e) { } }); crumb('live', 'facQueue', 0);   // queued texture / interior steps belong to the world that is gone
+    if (window.DMMansionCol) { try { DMMansionCol.detach(); } catch (e) { } }
     if (window.DMHolo) { try { DMHolo.detach(); } catch (e) { } }
     if (window.DMLamps) { try { DMLamps.detach(); } catch (e) { } }
     if (window.DMMansionInt) { try { DMMansionInt.detach(); } catch (e) { } }
@@ -558,6 +559,7 @@
       carveActivate(px, pz, ct, st, y0);
       rec.group = root; rec.mansion = true; rec.x = px; rec.z = pz; rec.y = y0; rec.th = th; rec.ready = true;
       if (window.DMMansionInt) { try { DMMansionInt.attach(F, rec, px, pz, y0, th); } catch (e) { console.warn('[mansion-interior] attach', e); } }
+      if (window.DMMansionCol) { try { DMMansionCol.attach(F, rec); } catch (e) { console.warn('[mansion-collide] attach', e); } }
       if (window.DMHolo) { try { DMHolo.attach(F, rec); } catch (e) { console.warn('[holo] attach', e); } }
       if (window.DMLamps) { try { DMLamps.attach(F, rec, px, pz, y0, th); } catch (e) { console.warn('[lamps] attach', e); } }
       const col = MAN.col, nx = col.nx, ny = col.ny, inv = 1 / col.scale, cell = col.cell, hh = col.h;

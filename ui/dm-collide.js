@@ -547,12 +547,12 @@
     };
     // Walls from triangles: every steep triangle (|normal.y| < wallNy) of the meshes under `obj` is sampled onto a (cell x cell x layer) voxel set; vertical runs are
     // merged along x into boxes. Floors/roofs are not solid (she walks under a roof and through an open doorway; a lintel only blocks where it really is).
-    // Built once at generation (sliced: yields every `per` triangles). opts: { cell:1, layer:0.5, wallNy:0.7, mat:'stone', maxTris:60000, maxBoxes:900, glass(mesh) }
+    // Built once at generation (sliced: yields every `per` triangles). opts: { cell:1, layer:0.5, wallNy:0.7, mat:'stone', maxTris:60000, maxBoxes:900, yMin, yMax (relative to the object origin), glass(mesh) }
     W.fromMeshGen = function* (name, obj, opts, per) {
       opts = opts || {}; per = per || 300; const cell = opts.cell || 1, ly = opts.layer || 0.5, wny = opts.wallNy == null ? 0.7 : opts.wallNy, maxT = opts.maxTris || 60000;
       obj.updateMatrixWorld(true); const meshes = []; obj.traverse(m => { if (m.isMesh && m.geometry && !m.isInstancedMesh && m.geometry.attributes && m.geometry.attributes.position && !(m.userData && m.userData.noCollide)) meshes.push(m); });
-      const ox = obj.matrixWorld.elements[12], oz = obj.matrixWorld.elements[14], oy = obj.matrixWorld.elements[13] - 20; const cols = new Map(); let tri = 0;
-      const v = new Float64Array(9), mark = (x, y, z, mt) => { const ix = Math.floor((x - ox) / cell), iz = Math.floor((z - oz) / cell), iy = Math.max(0, Math.min(2047, Math.floor((y - oy) / ly))); const k = ((ix + 4096) * 8192 + (iz + 4096)); let c = cols.get(k); if (!c) { c = { ix, iz, ys: new Map() }; cols.set(k, c); } c.ys.set(iy, mt); };
+      const ox = obj.matrixWorld.elements[12], oz = obj.matrixWorld.elements[14], oy = obj.matrixWorld.elements[13] - 20; const cols = new Map(); let tri = 0; const yMaxW = opts.yMax == null ? 1e9 : obj.matrixWorld.elements[13] + opts.yMax, yMinW = opts.yMin == null ? -1e9 : obj.matrixWorld.elements[13] + opts.yMin;   // yMin/yMax: heights relative to the object's origin (skip roofs / deep foundations)
+      const v = new Float64Array(9), mark = (x, y, z, mt) => { if (y > yMaxW || y < yMinW) return; const ix = Math.floor((x - ox) / cell), iz = Math.floor((z - oz) / cell), iy = Math.max(0, Math.min(2047, Math.floor((y - oy) / ly))); const k = ((ix + 4096) * 8192 + (iz + 4096)); let c = cols.get(k); if (!c) { c = { ix, iz, ys: new Map() }; cols.set(k, c); } c.ys.set(iy, mt); };
       for (const m of meshes) {
         const g = m.geometry, pa = g.attributes.position, idx = g.index, e = m.matrixWorld.elements, nT = idx ? (idx.count / 3) | 0 : (pa.count / 3) | 0, mt = opts.glass && opts.glass(m) ? MID.glass : matId(opts.mat || 'stone');
         for (let t = 0; t < nT; t++) {

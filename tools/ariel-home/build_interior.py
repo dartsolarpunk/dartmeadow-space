@@ -360,15 +360,13 @@ for i in range(3):
     B(fp, u, 4.0, 0, u + 0.15, 4.15, mt(0.9), DMETAL, obs=False); prism(Me, *fp.w(u + 0.3, 4.1), PF + mt(0.25), PF + mt(0.65), mt(0.18), 6, [RED, BLUE, YEL][i], (1, 1, 1, 1), r1=mt(0.16)); B(fp, u + 0.25, 4.05, mt(0.65), u + 0.35, 4.15, mt(1.1), WALNUT, (0.5, 0.35, 0.25, 1), obs=False)
 B(fp, -19.5, 6.0, 0, -17.0, 7.2, mt(0.7), BLACK, (0.3, 0.3, 0.32, 1)); box(Me, -19.3, 7.2, PF + 0.4, -17.2, 7.22, PF + mt(0.55), DMETAL, skip='b')
 # acoustic panels + beanbags
-for (x0, y0, x1, y1) in ((-24.5, 20.0, -24.3, 27.0), (-22.0, 36.0, -16.0, 36.2), (-7.0, 40.0, -3.5, 40.2)):
+for (x0, y0, x1, y1) in ((-20.6, 20.0, -20.4, 27.0), (-17.0, 36.0, -11.0, 36.2), (-7.0, 40.0, -3.5, 40.2)):   # (v4) the first two stood 2-3 units OUTSIDE the prow glass (brick-looking tiles through the windows); now >= 2 units inside
     B(fp, x0, y0, 0.0, x1, y1, 7.0 if (x1 - x0) < 1 else 6.0, ACOUS, (0.9, 0.9, 1, 1)) if False else B(fp, x0, y0, 0.0, x1, y1, 6.0, ACOUS, (0.9, 0.9, 1, 1), uvs=2.0)
 for (u, v, col) in ((-22.0, 18.0, (0.8, 0.25, 0.25, 1)), (-20.0, 20.0, (0.25, 0.5, 0.8, 1))):
     C(fp, u, v, 0, mt(0.55), mt(0.45), 7, LEATHER, col, obs=True, r1=mt(0.35))
 # ── game lounge (east half) ──
 rug(Fr(8.0, 22.0, PF), 12.0, 9.0, FABC, (0.2, 0.2, 0.3, 1))
-B(fp, 6.0, 36.0, 0, 20.0, 37.2, mt(0.55), DMETAL, (0.25, 0.25, 0.28, 1))                          # media console
-box(Me, 6.5, 36.2, PF + mt(0.55) + 0.1, 19.5, 36.6, PF + mt(0.55) + 7.2, BLACK, skip='b')
-Me.quad(1, [(6.8, 36.19, PF + mt(0.55) + 0.4), (19.2, 36.19, PF + mt(0.55) + 0.4), (19.2, 36.19, PF + mt(0.55) + 6.9), (6.8, 36.19, PF + mt(0.55) + 6.9)], [sw_uv(14)] * 4, (0.45, 0.55, 0.95, 1))
+B(fp, 2.0, 36.0, 0, 15.5, 37.2, mt(0.55), DMETAL, (0.25, 0.25, 0.28, 1))                          # media console (v4: shortened to sit inside the glass; the TV is now the holographic panels of ui/dm-holo.js)
 lamp(13, 33, PF + 5, 22, (0.45, 0.55, 1.0), 0.9)
 sofa(Fr(8.0, 24.0, PF, 0), 5.5, (0.25, 0.28, 0.4, 1), FABC, 1.0)
 sofa(Fr(18.5, 24.5, PF, 1), 2.6, (0.25, 0.28, 0.4, 1), FABC, 1.0)
