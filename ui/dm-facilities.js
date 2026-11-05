@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  const F = window.DMFac = { ctx: null, sites: new Map(), solids: [], scene: null, ver: '267' };
+  const F = window.DMFac = { ctx: null, sites: new Map(), solids: [], scene: null, ver: '271' };
   const DM = window.DM_FAC = window.DM_FAC || {};
   DM.bay = DM.bay || { inside: false, membrane: 0 };
   F.bind = c => { F.ctx = c; };
@@ -478,6 +478,7 @@
   function teardown() {
     crumb('begin', 'fac:teardown');
     HQ.epoch++; const dropped = HQ.q.splice(0); dropped.forEach(j => { try { j.stale && j.stale(); } catch (e) { } }); crumb('live', 'facQueue', 0);   // queued texture / interior steps belong to the world that is gone
+    if (window.DMHolo) { try { DMHolo.detach(); } catch (e) { } }
     if (window.DMLamps) { try { DMLamps.detach(); } catch (e) { } }
     if (window.DMMansionInt) { try { DMMansionInt.detach(); } catch (e) { } }
     for (const r of F.sites.values()) { if (r.group && r.group.parent) r.group.parent.remove(r.group); if (r.group && !r.mansion) dispose(r.group); }
@@ -514,6 +515,7 @@
       carveActivate(px, pz, ct, st, y0);
       rec.group = root; rec.mansion = true; rec.x = px; rec.z = pz; rec.y = y0; rec.th = th; rec.ready = true;
       if (window.DMMansionInt) { try { DMMansionInt.attach(F, rec, px, pz, y0, th); } catch (e) { console.warn('[mansion-interior] attach', e); } }
+      if (window.DMHolo) { try { DMHolo.attach(F, rec); } catch (e) { console.warn('[holo] attach', e); } }
       if (window.DMLamps) { try { DMLamps.attach(F, rec, px, pz, y0, th); } catch (e) { console.warn('[lamps] attach', e); } }
       const col = MAN.col, nx = col.nx, ny = col.ny, inv = 1 / col.scale, cell = col.cell, hh = col.h;
       const R = 230;
@@ -600,6 +602,7 @@
         if (u.lod0) u.lod0.visible = near && !far; if (u.lod1) u.lod1.visible = !near && !far;
         if (d2 < 1100 * 1100) { upgrade2K(T); mansionPx(T); upgradeCliff(T); }
         if (window.DMMansionInt) DMMansionInt.tick(rec, d2, now, DM.arriveAt === rec.def.id);
+        if (window.DMHolo) { try { DMHolo.tick(rec, d2, now, dt); } catch (e) { if (!rec.holoWarn) { rec.holoWarn = 1; console.warn('[holo] tick', e); } } }
         if (window.DMLamps) { try { DMLamps.tick(rec, d2, now, dt, f, mode); } catch (e) { if (!rec.lampWarn) { rec.lampWarn = 1; console.warn('[lamps] tick', e); } } }   // street lamps + room switches (a failure here must never stop the facility upkeep)
       } else rec.group.visible = d2 < 6000 * 6000;
       if (rec.clouds) for (const p of rec.clouds) { const t = p.material.map; t.offset.x += p.userData.v * dt; t.offset.y += p.userData.v * 0.6 * dt; }
