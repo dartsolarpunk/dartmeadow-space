@@ -733,8 +733,13 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       if (bad) { for (let k = 0; k < K * 3; k++) { sp[b + k] = restM[b + k]; sq[b + k] = restM[b + k]; } resanitized++; }
     }
   }
+  let bAcc = 0, bCnt = 0;
   function _update(dt) {
     if (!P.enabled || !(dt > 0) || !root.visible) return;
+    // (v259) frame-budget ladder (ui/dm-budget.js, stage 'hair'): the guide solver (~10-13 ms a frame on the tablet) runs every 3rd frame with the accumulated step
+    // (capped well below the 0.25 s hitch reset), the strands keep moving, the cost drops to a third.
+    { const B = (typeof window !== 'undefined') ? window.DMBudget : null, ev = B && B.on && B.hairEvery ? B.hairEvery() : 1;
+      if (ev > 1) { bAcc += dt; if ((++bCnt % ev) !== 0) return; dt = bAcc > 0.05 ? 0.05 : bAcc; bAcc = 0; } else if (bAcc > 0) { bAcc = 0; } }
     const t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
     if (dt >= 0.25) hitch = true;
     if (hitch) { hitch = false; needInit = true; haveLast = false; havePM = false; haveHL = false; velS.set(0, 0, 0); settleT = P.settleTime; }

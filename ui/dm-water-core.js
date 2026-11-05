@@ -46,10 +46,12 @@
   };
   const TIER_ORDER = ['low', 'medium', 'high', 'ultra'];
   // preset name (+ phone flag) -> the tier config actually used. Phones cap at 'high' and trim the pools (memory pressure kills tabs).
-  function tierFor(preset, mobile) {
+  function tierFor(preset, mobile, lowGpu) {
     let name = TIERS[preset] ? preset : 'medium';
     if (mobile && TIER_ORDER.indexOf(name) > 2) name = 'high';
     const t = Object.assign({}, TIERS[name]); t.name = name; t.mobile = !!mobile;
+    // (v259) a Mali-class tablet: ONE tap per band (3 band samples a pixel instead of 6), no curl detail, a shorter shore field - the sea reads the same at a distance, the close-up chop is a bit softer
+    if (mobile && lowGpu) { t.layers = 1; t.curl = 0; t.disp = Math.min(t.disp, 60); t.foamTaps = Math.min(t.foamTaps, 2); t.glint = 1; }
     if (mobile) { t.spray = Math.round(t.spray * 0.6); t.ripples = Math.min(t.ripples, 12); t.T = t.T.map((v) => Math.min(v, 192)); t.shore = Math.min(t.shore, 40); t.bakeMs = 2; } else t.bakeMs = 3;
     return t;
   }

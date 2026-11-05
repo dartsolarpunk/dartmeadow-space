@@ -78,6 +78,7 @@
   }
 
   /* ───────────────────────── begin / bake ───────────────────────── */
+  function lowGpu() { try { const g = W.GFX || {}; return !!(g.isMobile && (g.gpuClass === 'low' || (g.score != null && g.score < 55))); } catch (e) { return false; } }   // (v259) Mali-class tablets
   function enabled() { return !FLAG_OFF && !S.failed && !!(W.THREE && W.THREE.TSL && W.DMWaterCore); }
   // o: { body, pal, seed, lat }. Builds the identity, allocates (neutral) textures + uniforms, starts the sliced bake. Returns the identity or null.
   function begin(o) {
@@ -85,7 +86,7 @@
     try {
       end(true);
       const THREE = W.THREE, T = THREE.TSL, core = C(), mobile = isMobile();
-      const tier = core.tierFor(FORCE || presetName(), mobile);
+      const tier = core.tierFor(FORCE || presetName(), mobile, lowGpu());
       const P = core.identityFor(o.body, o.pal, { seed: o.seed, lat: o.lat, t: 0 });
       S.tier = tier; S.P = P; S.body = o.body; S.pal = o.pal; S.opts = o; S.seed = P.seed;
       S.spec = core.buildSpectrum(P, tier);

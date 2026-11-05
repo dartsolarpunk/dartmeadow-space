@@ -34,8 +34,8 @@ assert.strictEqual(boot({ search: '?gov=7' }).B.p, 7);
 { const t = boot({ search: '?gov=off' }); assert.strictEqual(t.B.on, false); assert.strictEqual(t.B.p, 0); assert.strictEqual(t.B.stats(), null); assert.strictEqual(t.B.resCap(), 1); assert.strictEqual(t.B.shadowEvery(), 1); }
 // 4. accessors follow the ladder
 { const t = boot({ search: '?gov=0', gfx: { isMobile: false, gpuClass: 'high' } }); const B = t.B; assert.strictEqual(B.shadowEvery(), 1); assert.strictEqual(B.resCap(), 1); assert.strictEqual(B.parallax().steps, 1);
-  B.force(17); assert.strictEqual(B.resCap(), 0.6); assert.strictEqual(B.shadowEvery(), 3); assert.strictEqual(B.shadowHalf(), true); assert.strictEqual(B.parallax().off, true); assert.strictEqual(B.sprayK(), 0); assert.strictEqual(B.atmoPeriod(), 0.4);
-  B.force(2); assert.strictEqual(B.parallax().stepsMax, 4); assert.strictEqual(B.parallax().shadow, 1); B.force(3); assert.strictEqual(B.parallax().shadow, 0); assert.strictEqual(B.groundReach(), 1); B.force(5); assert.strictEqual(B.groundDual(), 0); }
+  const K = B.core; B.force(K.MAX); assert.strictEqual(B.resCap(), 0.42); assert.strictEqual(B.hudLite(), true); assert.strictEqual(B.skinEvery(), 2); assert.strictEqual(B.hairEvery(), 3); assert.strictEqual(B.propsK(), 0.45); assert.strictEqual(B.shadowEvery(), 3); assert.strictEqual(B.shadowHalf(), true); assert.strictEqual(B.parallax().off, true); assert.strictEqual(B.sprayK(), 0); assert.strictEqual(B.atmoPeriod(), 0.4);
+  B.force(2); assert.strictEqual(B.parallax().stepsMax, 4); assert.strictEqual(B.parallax().shadow, 1); assert.strictEqual(B.hudLite(), false); B.force(K.pOf('hudfx', 1)); assert.strictEqual(B.hudLite(), true); B.force(K.pOf('pxshadow', 1)); assert.strictEqual(B.parallax().shadow, 0); assert.strictEqual(B.groundReach(), 1); B.force(K.pOf('ground', 2)); assert.strictEqual(B.groundDual(), 0); assert.strictEqual(B.groundReach(), 0.6); }
 // 5. live: warm-up pause, escalation on slow frames, persistence only after 15 s at a pressure
 { const t = boot({ gfx: { isMobile: false, gpuClass: 'high' } }); const B = t.B; assert.strictEqual(B.p, 0);
   globalThis._dmWarming = true; t.run(200, 120); assert.strictEqual(B.p, 0, 'no decisions during the warm-up'); globalThis._dmWarming = false;
@@ -45,7 +45,7 @@ assert.strictEqual(boot({ search: '?gov=7' }).B.p, 7);
   const j = JSON.parse(t.store.dm_budget_v1 || 'null'); console.log('stored', j && j.p, 'live p', B.p); }
 // 6. memory floor: the renderer's byte estimate over the limit holds the ladder up; below 90 % of it the floor lifts
 { const t = boot({ gfx: { isMobile: false, gpuClass: 'high' } }); const B = t.B; const iv = globalThis.__ivs[0]; globalThis.flightRenderer = { info: { memory: { total: 1500 * 1048576 } } }; globalThis.GFX.isMobile = true;
-  iv(); assert.strictEqual(B.p, 15, 'hard limit -> p>=15'); globalThis.flightRenderer.info.memory.total = 1100 * 1048576; iv(); assert(B.p >= 13); globalThis.flightRenderer.info.memory.total = 600 * 1048576; iv();
+  iv(); const K = B.core; assert.strictEqual(B.p, K.pOf('res', 1), 'hard limit -> res L1'); globalThis.flightRenderer.info.memory.total = 1100 * 1048576; iv(); assert(B.p >= K.pOf('shadow', 3)); globalThis.flightRenderer.info.memory.total = 600 * 1048576; iv();
   assert.strictEqual(B.stats().floorP, 0); delete globalThis.flightRenderer; }
 console.log('budget-glue-sim OK');
 process.exit(0);

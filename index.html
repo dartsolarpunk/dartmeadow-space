@@ -158,13 +158,13 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-rockmat.js?v=145"></script>
 <script src="ui/dm-parallax.js?v=260"></script>
 <script src="ui/dm-groundlib.js?v=260"></script>
-<script src="ui/dm-water-core.js?v=255"></script>
-<script src="ui/dm-water.js?v=255"></script>
+<script src="ui/dm-water-core.js?v=264"></script>
+<script src="ui/dm-water.js?v=264"></script>
 <script src="ui/dm-water-sea.js?v=255"></script>
 <script src="ui/dm-water-fx.js?v=255"></script>   <!-- water: spray / splash / mist sprites, wake, footstep ripples, shore-break spray, underwater fog + shafts (?waterfx=0 off) -->   <!-- water: baked sea, shore, ground hook (?water=0 = the previous sea) -->
 <script src="ui/dm-perf.js?v=160"></script>
-<script src="ui/dm-governor.js?v=259"></script>
-<script src="ui/dm-budget.js?v=258"></script>
+<script src="ui/dm-governor.js?v=264"></script>
+<script src="ui/dm-budget.js?v=264"></script>
 <script>/* (v136) no-op stub so the flight loop can never throw if dm-perf.js failed to load */
 window.DMPerf=window.DMPerf||{on:false,b(){},e(){},mark(){},measure(n,f){return f();},frame(){},stats(){return {fps:0,avgMs:0,p95Ms:0,worstMs:0,minFps:0,cpu:{},gpu:null,sparse:null};},show(){},hide(){}};</script>
 <script>/* (v236) always-on frame-phase clock for the perf log: EMA of the main-thread ms spent in each phase of a frame (logic / world tick / scene render / atmosphere pass / HUD …),
@@ -4979,8 +4979,16 @@ function _dynRes(r){
   else d.hold=0;
   if(k!==d.k){ d.k=k; d.cool=5000; window._dmResChanges=(window._dmResChanges||0)+1; try{ r.setPixelRatio(effectivePixelRatio()*k); }catch(e){} }   // setPixelRatio already resizes the drawing buffer; a second setSize reallocated it twice
 }
+// (v259) drawing-buffer BUDGET: a 1920x1200 window at devicePixelRatio 2 is a 9.2 MP canvas (3840x2400) - the fill cost alone is a slide show on most GPUs (the HUD read FPS 1-2).
+// The ratio is capped so the buffer never exceeds a per-preset pixel count (Ultra 12 MP, High 5.2 MP, Auto/Medium 3.6 MP, Low 2 MP); the player's own resolution scale multiplies on top.
+const _PX_MP={ultra:12,high:5.2,custom:5.2,auto:4.2,medium:3.6,low:2.0};
 function effectivePixelRatio(){
-  return Math.min(GFX.dpr,GFX.maxPixelRatio)*GFX.resScale;
+  let r=Math.min(GFX.dpr,GFX.maxPixelRatio);
+  try{
+    const w=window.innerWidth||0, h=window.innerHeight||0, mp=_PX_MP[GFX.preset]||3.6;
+    if(w>0&&h>0){ const cap=Math.sqrt(mp*1e6/(w*h)); if(cap<r) r=Math.max(0.75,cap); }
+  }catch(e){}
+  return r*GFX.resScale;
 }
 
 // ── Persistence ─────────────────────────────────────────────────
@@ -19639,6 +19647,22 @@ function _pwPropsTick(px,pz,agl){
     }
   }
   for(const [k,g] of M) if(!want.has(k)){ if(g){ PW.propsGroup.remove(g); _disposeProps(g); _crG('chunk#'+k,0); } M.delete(k); }
+  _propsLod(px,pz,agl);
+}
+// (v259) prop LOD by chunk distance: only the near chunks cast into the sun's shadow map (the shadow pass re-draws every caster; boulders and trees 150 m away throw no shadow
+// you can see), and chunks past the fog are not drawn at all.  The distances shrink with the frame-budget ladder's 'props' stage (x0.7 / x0.45).  Throttled to every 6th frame.
+function _propsLod(px,pz,agl){
+  const M=PW.props; if(!M||!M.size) return;
+  if((PW._plodF=(PW._plodF||0)+1)%6!==0) return;
+  let k=1; try{ if(window.DMBudget&&DMBudget.on&&DMBudget.propsK) k=DMBudget.propsK(); }catch(e){}
+  const fog=PW.scene&&PW.scene.fog?PW.scene.fog.far:900, farD=Math.max(260,Math.min(fog,agl>60?260:900))*k, shD=(GFX.isMobile?110:170)*k, half=SURF_CHUNK*0.71;
+  for(const g of M.values()){
+    if(!g||g.userData.cx===undefined) continue;
+    const d=Math.hypot(px-g.userData.cx,pz-g.userData.cz)-half, vis=d<farD, cast=d<shD;
+    if(g.visible!==vis) g.visible=vis;
+    if(g.userData._cast===cast) continue; g.userData._cast=cast;
+    const ch=g.children; for(let q=0;q<ch.length;q++){ const o=ch[q]; if(!o.isInstancedMesh) continue; if(o.userData._cs0===undefined) o.userData._cs0=!!o.castShadow; o.castShadow=cast&&o.userData._cs0; }
+  }
 }
 // Leave the world (to open space, a journey load, the menu): instant — the
 // one loop draws open space on the very next frame (or the view that
@@ -21019,7 +21043,7 @@ async function loadCharacterAssets(){
   function _hairStrandFraction(){ try{ const G=window.GFX; if(!G||G.preset!=='auto') return 1; const r=(typeof resolvePreset==='function')?resolvePreset():'medium'; return r==='low'?0.5:(r==='medium'||r==='balanced')?0.75:1; }catch(e){ return 1; } }
   // Real-time strand hair (hair_strands.js + characterassests/ariel_hair_strands.bin). Fails soft: if the
   // module/data is missing or the loaded character is a different file, she simply has no strand hair.
-  try{ import('./hair_strands.js?v=214').then(m=>m.attachHairStrands(CHAR,THREE,{url:CHAR_ASSET_BASE+'ariel_hair_strands.bin',getStrandFraction:_hairStrandFraction,getCalm:()=>{ try{ return _hairCalm(); }catch(e){ return false; } },getFrameVel:o=>{ try{ return _hairFrameVel(o); }catch(e){ return o.set(0,0,0); } },getIntensity:()=>{ try{ return (window.DMCGroup&&surfaceActive)?Math.max(1,DMCGroup.intensity):1; }catch(e){ return 1; } },getGravityScale:()=>{try{if(surfaceActive)return 1;if(CHAR.mounted)return atmoActive?0.3:0.08;}catch(e){}return 1;}})).catch(e=>console.info('[hair] strands not attached:',e&&e.message)); }catch(e){}
+  try{ import('./hair_strands.js?v=264').then(m=>m.attachHairStrands(CHAR,THREE,{url:CHAR_ASSET_BASE+'ariel_hair_strands.bin',getStrandFraction:_hairStrandFraction,getCalm:()=>{ try{ return _hairCalm(); }catch(e){ return false; } },getFrameVel:o=>{ try{ return _hairFrameVel(o); }catch(e){ return o.set(0,0,0); } },getIntensity:()=>{ try{ return (window.DMCGroup&&surfaceActive)?Math.max(1,DMCGroup.intensity):1; }catch(e){ return 1; } },getGravityScale:()=>{try{if(surfaceActive)return 1;if(CHAR.mounted)return atmoActive?0.3:0.08;}catch(e){}return 1;}})).catch(e=>console.info('[hair] strands not attached:',e&&e.message)); }catch(e){}
   // (v206) Ariel's garment cloth (ui/dm-ariel-cloth.js, finished from draft #213). Automatic = ON only with the WebGPU compute path;
   // ?cloth=1 forces the CPU path, ?cloth=0 / dm_cloth_v1='0' turns it off. Post-skin offsets on her garments only (rig, stance, skyboard pose and
   // the hair solver untouched). Collision = the character group's patch (DMCGroup ground grid) + body/hair capsules + the skyboard; substeps scale
@@ -25066,10 +25090,14 @@ function* _hmChunkScatterG(i,j){
   const per=Math.round((Math.min(300,({low:60,med:140,high:240,ultra:300})[STATE.settings.particles]||140))*(C*C)/(560*560));
   const base={h:0,s:0,l:0}; new THREE.Color(pal.rock||0x777777).getHSL(base);
   const rocks=[];
+  // (v259) nothing lodged in the sea: a rock needs its whole footprint above the water line plus the swell/wet-sand margin (the old test, h<3, let boulders sit half in the surf
+  // and, where the LOD ground and the real shore differ, out in the open ocean)
+  const WL=pal.water?4.0:-1e9;
+  g.userData.cx=i*C; g.userData.cz=j*C;
   for(let n=0;n<per;n++){
     if(n%48===47) yield;
     const x=i*C+R(-C/2,C/2), z=j*C+R(-C/2,C/2), h=H(x,z);
-    if(h<3&&pal.water){ rnd(); rnd(); continue; }
+    if(h<WL){ rnd(); rnd(); continue; }
     rocks.push({x,z,h,s:R(0.4,2.4),sy:R(0.6,1.2),r:[R(0,6),R(0,6),R(0,6)],c:new THREE.Color().setHSL(base.h+(rnd()-0.5)*0.03,Math.max(0,Math.min(1,base.s+(rnd()-0.5)*0.15)),Math.max(0,Math.min(1,base.l+(rnd()-0.5)*0.18)))});
   }
   // boulders lodged on ledges and fallen at the foot of cliffs: wherever the ground
@@ -25077,7 +25105,7 @@ function* _hmChunkScatterG(i,j){
   for(let n=0;n<Math.round(per*0.35);n++){
     if(n%12===11) yield;   // (each boulder candidate costs nine height samples)
     const x=i*C+R(-C/2,C/2), z=j*C+R(-C/2,C/2), h=H(x,z);
-    if(h<3&&pal.water){ rnd(); continue; }
+    if(h<WL+1){ rnd(); continue; }
     const hl=H(x-1.5,z), hr=H(x+1.5,z), hu=H(x,z-1.5), hd=H(x,z+1.5);
     const level=Math.max(Math.abs(hl-h),Math.abs(hr-h),Math.abs(hu-h),Math.abs(hd-h))<1.4;
     const rise=Math.max(H(x-7,z),H(x+7,z),H(x,z-7),H(x,z+7))-h;
@@ -25097,10 +25125,12 @@ function* _hmChunkScatterG(i,j){
     if(GFX.shadows){ im.receiveShadow=true; im.castShadow=(GFX.shadowSize||0)>=1024; }
     im.computeBoundingSphere(); g.add(im);
   };
+  { // the big ones also keep clear of the water by their own radius (a 4.6 boulder on a 4.2 m shore is half in the sea)
+    for(let q=rocks.length-1;q>=0;q--){ const r=rocks[q]; if(pal.water&&r.h<WL+r.s*0.6) rocks.splice(q,1); } }
   mkRocks(rocks.filter(r=>r.s<=1.35),false); mkRocks(rocks.filter(r=>r.s>1.35),true);
   // trees on the green worlds
   if(pal.ground===0x3a7d34){
-    const trees=rocks.filter(r=>r.h>3&&r.h<40&&((r.x*12.9898+r.z*78.233)%1+1)%1>0.6);
+    const trees=rocks.filter(r=>r.h>WL+1&&r.h<40&&((r.x*12.9898+r.z*78.233)%1+1)%1>0.6);
     if(trees.length){
       const K=_propKit();
       const trunks=new THREE.InstancedMesh(K.tGeo,K.trunk,_propCap(trees.length));
@@ -25166,8 +25196,9 @@ function _cpuMcTick(px,pz){
 function _terrainDetailMat(opts){
   opts=opts||{};
   const tier=(typeof resolvePreset==='function')?resolvePreset():'medium';
-  const lvl=({low:1,medium:2,high:3,ultra:3,custom:2})[tier]||2;
-  const reach=opts.reach||({1:22,2:30,3:40})[lvl];   // (an exporter can ask for the detail everywhere)
+  const _lowG=!!(GFX.isMobile&&(GFX.gpuClass==='low'||(GFX.score!=null&&GFX.score<55)));   // (v259) Mali-class tablets: one detail level less (no second worley / grit octave), 20 % shorter reach
+  const lvl=Math.min(_lowG?2:3,({low:1,medium:2,high:3,ultra:3,custom:2})[tier]||2);
+  const reach=opts.reach||({1:22,2:30,3:40})[lvl]*(_lowG?0.8:1);   // (an exporter can ask for the detail everywhere)
   let m;
   try{
     m=new THREE.MeshStandardNodeMaterial({vertexColors:true,roughness:0.94,metalness:0.0,side:opts.side||THREE.FrontSide});
@@ -25578,6 +25609,7 @@ function _surfFallCatch(p,dt,supportH){
     else setTimeout(go,0);
   }
 }
+const _surfGN=new THREE.Vector3(), _surfCN=new THREE.Vector3();   // (v259) scratch for the held ground / climb normals (updateSurface)
 function updateSurface(dt){
   const p=surfPlayer;if(!p)return;
   let _m0=performance.now(), _m1;   // (perf) sub-step clock for the perf log: us.wind / us.move / us.board / us.cam / us.char / us.cg / us.foot
@@ -25841,14 +25873,19 @@ function updateSurface(dt){
     // underneath (which read as a 175° "slope") no longer start a climb on
     // flat dunes; a real cliff still does.
     let groundNormal; const _sl0=performance.now();
-    if(typeof _surfHeight==='function'){
+    // (v259) the stencil (4 ground-height lookups, each a tessellation / density / mesh query) and the climb probe (7 density samples + 3 ground queries) are only
+    // re-evaluated after 80 ms or 0.12 m of travel: a decision about "is this a wall" does not change in a frame, and the answer is held in between.
+    const _gm=CHAR._gnMemo, _gmOk=!!_gm&&_sl0-_gm.t<80&&Math.abs(_gm.x-p.pos.x)+Math.abs(_gm.z-p.pos.z)<0.12&&Math.abs(_gm.y-p.pos.y)<0.25&&_gm.gen===PW.gen;
+    if(_gmOk){ groundNormal=_surfGN.copy(_gm.n); }
+    else if(typeof _surfHeight==='function'){
       const e=1.2, X=p.pos.x, Z=p.pos.z, Hs=_surfHeight;
       groundNormal=new THREE.Vector3(-(Hs(X+e,Z)-Hs(X-e,Z)),2*e,-(Hs(X,Z+e)-Hs(X,Z-e)));
       if(!isFinite(groundNormal.x+groundNormal.z)) groundNormal.set(0,1,0);
       groundNormal.normalize();
     } else groundNormal=new THREE.Vector3(0,1,0);
     const _sl1=performance.now(); DMFT.add('us.s.height',_sl1-_sl0);
-    const climbN = (typeof window._surfClimbNormal==='function') ? window._surfClimbNormal(p.pos.x, p.pos.y, p.pos.z) : null;
+    const climbN = _gmOk ? (_gm.c?_surfCN.copy(_gm.c):null) : ((typeof window._surfClimbNormal==='function') ? window._surfClimbNormal(p.pos.x, p.pos.y, p.pos.z) : null);
+    if(!_gmOk){ const m=CHAR._gnMemo||(CHAR._gnMemo={n:new THREE.Vector3(),c:null}); m.t=_sl0; m.x=p.pos.x; m.y=p.pos.y; m.z=p.pos.z; m.gen=PW.gen; m.n.copy(groundNormal); m.c=climbN?(m.c||new THREE.Vector3()).copy(climbN):null; }
     if(climbN) groundNormal = climbN;
     const _sl2=performance.now(); DMFT.add('us.s.climb',_sl2-_sl1);
     const slopeDeg = THREE.MathUtils.radToDeg(groundNormal.angleTo(new THREE.Vector3(0,1,0)));
@@ -27231,7 +27268,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
           }
           // animate the near ones only (and never more than 12 at once)
           const d2=camDist2(u.mounted?b.position:u.rider.position);
-          if(u.mixer&&d2<250*250&&animated<12){ u.mixer.update(dt); animated++; }
+          if(u.mixer&&d2<250*250&&animated<12){ const _se=(window.DMBudget&&DMBudget.on&&DMBudget.skinEvery)?DMBudget.skinEvery():1; if(_se>1){ u._skA=(u._skA||0)+dt; if(((u._skN=(u._skN||0)+1)%_se)===0){ u.mixer.update(Math.min(0.1,u._skA)); u._skA=0; } } else u.mixer.update(dt); animated++; }   // (v259) frame-budget ladder stage 'skin': remote pilots animate on every 2nd frame under pressure
         }
         // name tag above whoever's visible: her when on foot, else the board
         const tagAt=(u.rider&&!u.mounted)?u.rider.position:b.position;
@@ -27334,7 +27371,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 
 <!-- ?v= stamps: bump on every UI change so browsers never mix a new page with cached old styles -->
 <link rel="stylesheet" href="ui/dm-ui.css?v=206">
-<link rel="stylesheet" href="ui/dm-hud.css?v=206">
+<link rel="stylesheet" href="ui/dm-hud.css?v=264">
 <link rel="stylesheet" href="ui/dm-friends.css?v=1">
 <link rel="stylesheet" href="ui/dm-safety.css?v=1">
 <link rel="stylesheet" href="ui/dm-spectator.css?v=1">

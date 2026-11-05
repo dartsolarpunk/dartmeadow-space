@@ -41,13 +41,15 @@
 
   /* ───────────────────────── pure core ───────────────────────── */
   const LADDER = [
-    ['parallax', 1], ['parallax', 2], ['pxshadow', 1], ['ground', 1], ['ground', 2],
+    ['parallax', 1], ['parallax', 2], ['hudfx', 1], ['pxshadow', 1], ['ground', 1], ['props', 1], ['ground', 2],
     ['water', 1], ['water', 2], ['water', 3], ['parallax', 3],
-    ['shadow', 1], ['shadow', 2], ['atmo', 1], ['shadow', 3], ['atmo', 2],
-    ['res', 1], ['res', 2], ['res', 3],
+    ['shadow', 1], ['skin', 1], ['shadow', 2], ['hair', 1], ['atmo', 1], ['props', 2], ['shadow', 3], ['atmo', 2],
+    ['res', 1], ['res', 2], ['res', 3], ['res', 4], ['res', 5],
   ];
   const MAX = LADDER.length;
-  const STAGES = ['parallax', 'pxshadow', 'ground', 'water', 'shadow', 'atmo', 'res'];
+  const STAGES = ['parallax', 'pxshadow', 'hudfx', 'ground', 'props', 'water', 'shadow', 'skin', 'hair', 'atmo', 'res'];
+  // pressure at which a stage first reaches a level (the memory floors below are expressed in stages, not magic numbers)
+  function pOf(stage, level) { for (let i = 0; i < LADDER.length; i++) if (LADDER[i][0] === stage && LADDER[i][1] === level) return i + 1; return LADDER.length; }
   function levelsAt(p, out) {
     out = out || {};
     for (let i = 0; i < STAGES.length; i++) out[STAGES[i]] = 0;
@@ -60,7 +62,7 @@
     const N = 96, sorted = new Float32Array(N);
     const C = {
       budget: o.budgetMs || 50, p: 0, base: 0, max: MAX,
-      ring: new Float32Array(N), head: 0, count: 0, ema: 0, emaOK: false, t: 0,
+      ring: new Float32Array(N), head: 0, count: 0, ema: 0, prevMs: 0, min2: 0, lastHitch: 0, emaOK: false, t: 0,
       nextEval: 0, over: 0, calm: 0, lastChange: -1e9, lastRecover: -1e9, lastEval: 0, settleUntil: 0,
       lock: new Float64Array(MAX + 2), hold: new Float64Array(MAX + 2),
       changes: 0, esc: 0, rec: 0, fails: 0, history: [], lv: levelsAt(0), ver: 0, exhausted: false, p95: 0, settledP: 0, settledSince: 0, recTo: -1, floorP: 0, onChange: o.onChange || null,
@@ -85,10 +87,16 @@
     // one real frame (ms).  Returns true when a decision changed something or hit the floor.
     C.sample = function (ms, now) {
       if (!(ms > 0)) return false;
-      if (ms > 1500) { C.reset(); return false; }          // tab sleep / shader compile / GC: not a measurement
-      const f = ms > 250 ? 250 : ms;
+      if (ms > 1500) {   // a lone 1.5 s+ gap is a tab sleep / shader compile / GC: not a measurement.  Two in a row is a device at < 0.7 fps: that IS the measurement.
+        if (ms > 8000 || !C.lastHitch || now - C.lastHitch > ms * 1.6) { C.lastHitch = now; C.reset(); C.prevMs = 0; return false; }
+        C.lastHitch = now;
+      }
+      // (v259) a frame of 1.5-4 s used to RESET the window, so a device at 0.5-1 fps never produced a decision at all.  Slow frames are evidence now: the ring holds up to
+      // 1 s, and a lone hitch cannot move the ladder far because the big jumps below look at the SMALLER of the last two frames (min2).
+      const f = ms > 1000 ? 1000 : ms;
+      C.min2 = C.prevMs > 0 && C.prevMs < f ? C.prevMs : f; C.prevMs = f;
       C.ring[C.head] = f; C.head = (C.head + 1) % N; if (C.count < N) C.count++;
-      if (!C.emaOK) { C.ema = f; C.emaOK = true; } else C.ema += (f - C.ema) * (1 - Math.exp(-f / 1000));
+      if (!C.emaOK) { C.ema = f; C.emaOK = true; } else C.ema += (f - C.ema) * (1 - Math.exp(-(f > 250 ? 250 : f) / 1000));   // (the EMA keeps its 250 ms clip: one hitch must not look like a slideshow)
       C.t = now;
       if (now < C.nextEval) return false;
       C.nextEval = now + 400;
@@ -105,21 +113,25 @@
     C.evaluate = function (now) {
       const dtE = C.lastEval ? Math.min(1500, now - C.lastEval) : 400; C.lastEval = now;
       if (C.p < C.floorP) { C.set(C.floorP, now, 'mem'); return true; }   // memory pressure: a floor under the ladder (shadow map, render scale are what give memory back)
-      if (now < C.settleUntil || C.count < 8) return false;
-      const B = C.budget, e = C.ema, p95 = pct95(); C.p95 = p95;
-      const sev = e / B;
+      const slowNow = C.min2 > C.budget * 3;   // two slow frames in a row: no need to wait for 8 of them (at 1 fps that was 8 s per ladder step)
+      if (now < C.settleUntil && !slowNow) return false;
+      if (C.count < (slowNow ? 2 : C.ema > 2.5 * C.budget ? 3 : 8)) return false;
+      const B = C.budget, p95 = pct95(); C.p95 = p95;
+      const e = slowNow ? Math.max(C.ema, Math.min(C.min2, 1000) * 0.5) : C.ema;   // a sustained slideshow: the EMA lags (tau 1 s, 250 ms clip) - use the faster of the two
+      const sev = e / B, sev2 = C.min2 / B;      // sev2: the smaller of the last two frames (a lone hitch cannot raise it)
       const bad = e > B || (p95 > B * 2.2 && e > B * 0.75);
       const calm = e < B * 0.72 && p95 < B * 1.5;
       if (bad) { C.over += dtE; C.calm = 0; } else { C.over = Math.max(0, C.over - dtE * 0.5); C.calm = calm ? C.calm + dtE : Math.max(0, C.calm - dtE * 0.5); }
       if (C.recTo >= 0 && C.p === C.recTo && now - C.lastRecover > 40000) { const k = C.recTo + 1; C.hold[k] = Math.max(20000, C.hold[k] / 2); C.recTo = -1; }   // a recovery that held 40 s relaxes its back-off
       if (C.settledP !== C.p) { C.settledP = C.p; C.settledSince = now; }
       if (bad) {
-        const dwell = sev > 2 ? 600 : sev > 1.4 ? 1000 : 1600;
-        if (C.over >= dwell && now - C.lastChange >= 900) {
+        const dwell = sev2 > 4 ? 0 : sev > 2 ? 600 : sev > 1.4 ? 1000 : 1600;
+        if (C.over >= dwell && now - C.lastChange >= (sev2 > 4 ? 300 : 900)) {
           if (C.p >= MAX) { C.exhausted = true; return true; }
-          const step = sev > 2.2 && C.p + 2 <= MAX ? 2 : 1;
+          // how far to jump: a slideshow (frames > 4x the budget) sheds in big strides - the render scale at the end of the ladder is what usually buys most - then settles
+          let step = sev2 > 16 ? 9 : sev2 > 8 ? 6 : sev2 > 4 ? 4 : sev > 2.2 ? 2 : 1; if (C.p + step > MAX) step = MAX - C.p; if (step < 1) step = 1;
           if (C.lastRecover > 0 && now - C.lastRecover < 12000) {   // an undone recovery: the level we just left is locked (exponential back-off)
-            const lv = Math.min(MAX, C.p + step); C.fails++; C.hold[lv] = Math.min(300000, C.hold[lv] * 2); C.lock[lv] = now + C.hold[lv];   // lock[k]: do not leave pressure k downwards
+            const lv = Math.min(MAX, C.p + 1); C.fails++; C.hold[lv] = Math.min(300000, C.hold[lv] * 2); C.lock[lv] = now + C.hold[lv];   // lock[k]: do not leave pressure k downwards
           }
           C.esc++; C.exhausted = false; C.set(C.p + step, now, 'esc ' + Math.round(e) + 'ms');
           return true;
@@ -136,12 +148,12 @@
       return false;
     };
     C.stats = function () {
-      return { p: C.p, max: MAX, base: C.base, lv: C.lv, emaMs: +C.ema.toFixed(1), p95Ms: +C.p95.toFixed(1), budgetMs: C.budget, changes: C.changes, esc: C.esc, rec: C.rec, locks: C.fails, exhausted: C.exhausted, hist: C.history.slice(-12) };
+      return { min2: +C.min2.toFixed(0), p: C.p, max: MAX, base: C.base, lv: C.lv, emaMs: +C.ema.toFixed(1), p95Ms: +C.p95.toFixed(1), budgetMs: C.budget, changes: C.changes, esc: C.esc, rec: C.rec, locks: C.fails, exhausted: C.exhausted, hist: C.history.slice(-12) };
     };
     return C;
   }
 
-  const core = { createController: createController, LADDER: LADDER, STAGES: STAGES, levelsAt: levelsAt, MAX: MAX };
+  const core = { createController: createController, LADDER: LADDER, STAGES: STAGES, levelsAt: levelsAt, MAX: MAX, pOf: pOf };
   if (typeof module !== 'undefined' && module.exports) module.exports = core;
   if (typeof window === 'undefined') return;
 
@@ -192,8 +204,9 @@
     S.saveT = t; S.savedP = hp;
     try { W.localStorage.setItem(KEY, JSON.stringify({ key: devKey(), p: hp, t: Date.now(), max: c.p })); } catch (e) { }
   }
+  function hudClass(on) { try { const d = W.document && W.document.documentElement; if (d) d.classList.toggle('dm-hudlite', !!on); } catch (e) { } }   // ui/dm-hud.css: no filter / shadow / animation / transition on the HUD
   function applied(c) {
-    out.lv = c.lv; out.ver = c.ver; out.p = c.p;
+    out.lv = c.lv; out.ver = c.ver; out.p = c.p; hudClass(c.lv.hudfx >= 1);
     try { W.dispatchEvent(new W.CustomEvent('dm:budget', { detail: { p: c.p, lv: c.lv } })); } catch (e) { }
     try { if (W.DMCrumb && W.DMCrumb.mark) W.DMCrumb.mark('budget', 'p' + c.p); } catch (e) { }
   }
@@ -203,7 +216,7 @@
     const c = S.C = createController({ budgetMs: budgetOv || 50, onChange: applied });
     S.seed = seedP(); let p0 = S.seed.p;
     if (forceP != null) { p0 = +forceP; S.seed.why = 'forced'; }
-    c.seed(p0, now()); out.lv = c.lv; out.ver = c.ver + 1; out.p = c.p; out.seedWhy = S.seed.why;
+    c.seed(p0, now()); hudClass(c.lv.hudfx >= 1); out.lv = c.lv; out.ver = c.ver + 1; out.p = c.p; out.seedWhy = S.seed.why;
     let last = 0, tickN = 0;
     const fr = (t) => {
       W.requestAnimationFrame(fr);
@@ -219,13 +232,14 @@
     };
     W.requestAnimationFrame(fr);
     // GPU/memory watch (the OS kills the tab, not the frame rate): the renderer's own byte estimate (info.memory.total: textures + buffers + render targets).
-    // Logs: the Galaxy Tab died at 1.75 GB on 4 GB, the iPhone at geo 1037 / tex 269.  Over the soft limit the ladder is held at >= 13 (half shadow map, slow atmosphere),
-    // over the hard limit at >= 15 (render scale <= 0.85 -> smaller targets); the floor lifts again 10 % below the limit.
+    // Logs: the Galaxy Tab died at 1.75 GB on 4 GB, the iPhone at geo 1037 / tex 269.  Over the soft limit the ladder is held at shadow L3 (half shadow map, slow atmosphere),
+    // over the hard limit at res L1 (render scale <= 0.85 -> smaller targets); the floor lifts again 10 % below the limit.
     setInterval(() => {
       try {
         const r = W.flightRenderer || (typeof flightRenderer !== 'undefined' ? flightRenderer : null), tot = r && r.info && r.info.memory && r.info.memory.total; if (!(tot > 0)) return;
         const mb = tot / 1048576, ios = !!(W.GFX && W.GFX.isIOS), mob = !!(W.GFX && W.GFX.isMobile), soft = ios ? 700 : mob ? 1000 : 2600, hard = ios ? 900 : mob ? 1300 : 3400; S.memMB = Math.round(mb);
-        let f = c.floorP; if (mb > hard) f = 15; else if (mb > soft) f = Math.max(f === 15 && mb > hard * 0.9 ? 15 : 0, 13); else if (mb < soft * 0.9) f = 0;
+        const P_HARD = core.pOf('res', 1), P_SOFT = core.pOf('shadow', 3);
+        let f = c.floorP; if (mb > hard) f = P_HARD; else if (mb > soft) f = Math.max(f === P_HARD && mb > hard * 0.9 ? P_HARD : 0, P_SOFT); else if (mb < soft * 0.9) f = 0;
         if (f !== c.floorP) { c.floorP = f; if (f > c.p) c.set(f, now(), 'mem ' + Math.round(mb) + 'MB'); }
       } catch (e) { }
     }, 2000);
@@ -252,7 +266,11 @@
   out.shadowHalf = function () { return out.lvl('shadow') >= 3; };
   out.atmoPeriod = function () { const l = out.lvl('atmo'); return l >= 2 ? 0.4 : l >= 1 ? 0.15 : 0.066; };   // seconds between density-volume computes
   out.atmoBakeGap = function () { const l = out.lvl('atmo'); return l >= 2 ? 1800 : l >= 1 ? 900 : 500; };       // ms between near-ground height re-bakes
-  out.resCap = function () { return [1, 0.85, 0.72, 0.6][out.lvl('res')] || 1; };
+  out.resCap = function () { return [1, 0.85, 0.72, 0.6, 0.5, 0.42][out.lvl('res')] || 1; };
+  out.hudLite = function () { return out.lvl('hudfx') >= 1; };                       // HUD: no filter / shadow / animation / transition while the canvas animates
+  out.propsK = function () { return [1, 0.7, 0.45][out.lvl('props')] || 1; };            // prop draw distance multiplier (planet props, boulders, scatter)
+  out.skinEvery = function () { return out.lvl('skin') >= 1 ? 2 : 1; };                 // skinned meshes (NPC / creatures / far characters) animate every 2nd frame
+  out.hairEvery = function () { return out.lvl('hair') >= 1 ? 3 : 1; };                  // strand-hair guide solver runs every 3rd frame (accumulated step)
 
   out.start = start;
   // start once the page globals it reads (GFX from detectCapabilities) exist; the first frame is a while away

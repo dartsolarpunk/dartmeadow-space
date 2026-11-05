@@ -460,3 +460,9 @@ body.ship-walk #ship-view-btn{display:block !important;}
 #screen-flight,#screen-flight *,#screen-flight *::before,#screen-flight *::after,
 #screen-builder,#screen-builder *,#screen-builder *::before,#screen-builder *::after{
   backdrop-filter:none !important;-webkit-backdrop-filter:none !important;}
+
+/* (v259) frame-budget ladder stage 'hudfx' (ui/dm-budget.js sets html.dm-hudlite under pressure): while the 3D canvas is struggling the HUD stops asking the compositor for
+   anything expensive - no CSS filters (drop-shadow glows), box/text shadows, blend modes, keyframe animations or transitions.  The panels keep their layout, fills and borders. */
+html.dm-hudlite #screen-flight *,html.dm-hudlite #screen-flight *::before,html.dm-hudlite #screen-flight *::after{
+  filter:none !important;box-shadow:none !important;text-shadow:none !important;mix-blend-mode:normal !important;
+  animation:none !important;transition:none !important;backdrop-filter:none !important;-webkit-backdrop-filter:none !important;}

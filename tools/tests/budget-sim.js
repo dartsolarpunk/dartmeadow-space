@@ -56,12 +56,28 @@ const gain = (p) => Math.pow(0.93, p);   // each step buys ~7 % (17 steps ~ 0.29
 // 9. ladder order is the contract: parallax first, resolution last; levels are monotone per stage
 { assert.strictEqual(LADDER[0][0], 'parallax'); assert.strictEqual(LADDER[LADDER.length - 1][0], 'res'); const order = LADDER.map((x) => x[0]);
   assert(order.indexOf('pxshadow') < order.indexOf('ground') && order.indexOf('ground') < order.indexOf('water') && order.indexOf('water') < order.indexOf('shadow') && order.indexOf('shadow') < order.indexOf('atmo') && order.indexOf('atmo') < order.indexOf('res'));
-  let prev = levelsAt(0); for (let p = 1; p <= MAX; p++) { const l = levelsAt(p); for (const k in l) assert(l[k] >= prev[k]); prev = l; } assert.strictEqual(levelsAt(MAX).res, 3); assert.strictEqual(levelsAt(MAX).shadow, 3); }
+  let prev = levelsAt(0); for (let p = 1; p <= MAX; p++) { const l = levelsAt(p); for (const k in l) assert(l[k] >= prev[k]); prev = l; } assert.strictEqual(levelsAt(MAX).res, 5); assert(order.indexOf('hudfx') < order.indexOf('water') && order.indexOf('props') < order.indexOf('shadow')); assert.strictEqual(levelsAt(MAX).hair, 1); assert.strictEqual(levelsAt(MAX).skin, 1); assert.strictEqual(levelsAt(MAX).shadow, 3); }
 
 // 10. cost of the controller itself: 1e6 frames of bookkeeping
 { const c = createController({}); const t0 = process.hrtime.bigint(); let t = 0; for (let i = 0; i < 1e6; i++) { t += 16.7; c.sample(16.7, t); } const us = Number(process.hrtime.bigint() - t0) / 1e3 / 1e6; console.log('controller cost ' + us.toFixed(3) + ' us/frame'); assert(us < 20); }
 console.log('budget-sim OK');
 // 11. memory floor: floorP holds the ladder up even on a calm scene, and releases it stepwise afterwards
-{ const c = createController({}); let t = 0; c.floorP = 13; for (let i = 0; i < 400; i++) { t += 16.7; c.sample(16.7, t); } assert.strictEqual(c.p, 13); for (let i = 0; i < 3000; i++) { t += 16.7; c.sample(16.7, t); } assert.strictEqual(c.p, 13, 'held');
+{ const c = createController({}); let t = 0; c.floorP = B.pOf('shadow', 3); for (let i = 0; i < 400; i++) { t += 16.7; c.sample(16.7, t); } assert.strictEqual(c.p, B.pOf('shadow', 3)); for (let i = 0; i < 3000; i++) { t += 16.7; c.sample(16.7, t); } assert.strictEqual(c.p, B.pOf('shadow', 3), 'held');
   c.floorP = 0; for (let i = 0; i < 12000; i++) { t += 16.7; c.sample(16.7, t); } assert.strictEqual(c.p, 0, 'released'); }
 console.log('budget-sim memory floor OK');
+
+// 12. (v259) a SLIDESHOW (FPS 1-2, the desktop screenshots): the old controller needed 8 frames per decision (8 s at 1 fps) and reset on a > 1.5 s frame, so it never rescued.
+//     Now: the first decision after 2 slow frames, jumps scale with severity; a scene whose cost halves at the res stages reaches playable within a few seconds.
+{ const resP = B.pOf('res', 1);
+  // GPU-bound scene: 1000 ms at p=0, all of the cost falls away only through the render scale (res stages 1..5 -> x0.72 .. x0.18 fill), a bit through the others
+  const fill = [1, 0.72, 0.52, 0.36, 0.25, 0.18];
+  const model = (p) => { const l = levelsAt(p); return 1000 * (0.35 + 0.65 * fill[l.res]) * Math.pow(0.97, p - l.res); };
+  const r = sim({ durMs: 60000, frame: (t, p) => model(p) });
+  const first = r.trace[0]; console.log('1 fps GPU-bound: first decision at ' + (first[0] / 1000).toFixed(1) + ' s (p=' + first[1] + '), settled p=' + r.c.p + ' at ' + (r.trace[r.trace.length - 1][0] / 1000).toFixed(1) + ' s, frame ' + model(r.c.p).toFixed(0) + ' ms');
+  assert(first[0] <= 2600, 'first decision within ~2 s of the slideshow starting: ' + first[0]); assert(r.trace[r.trace.length - 1][0] <= 12000, 'settled within 12 s');
+  assert(r.c.p >= resP, 'went through the resolution stages'); }
+{ // 0.5 fps (2 s frames, each > 1.5 s): still decided on, not ignored as hitches
+  const r = sim({ durMs: 90000, frame: (t, p) => 2000 * Math.pow(0.8, p) }); assert(r.c.p >= 8, '2 s frames shed, p=' + r.c.p); console.log('0.5 fps: p=' + r.c.p + ', first decision ' + (r.trace[0][0] / 1000).toFixed(1) + ' s'); }
+{ // a lone 3 s hitch followed by 16 ms frames never moves anything; a hitch followed by a few slow-ish frames costs at most the normal single step
+  let n = 0; const r = sim({ durMs: 60000, frame: () => { n++; return n % 120 === 0 ? 3000 : 16; } }); assert.strictEqual(r.maxP, 0); }
+console.log('budget-sim slideshow OK');

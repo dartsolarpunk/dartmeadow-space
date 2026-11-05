@@ -76,11 +76,16 @@
     if (!d || !d.ring) { init(r, gfx, basePR, now); return; }   // fresh (or reset by applyGraphicsLive): restore last settled scale
     const raw = now - d.t; d.t = now;
     if (raw <= 0) return;
+    // (v259) the frame-budget ladder's render-scale cap applies at once, BEFORE any of the sampling gates below: at FPS 1-2 every gate (frames > 400 ms are
+    // skipped, 24 samples needed, rate limits) kept this governor from ever acting - the log of the tablet at 3-5 fps shows the pixel ratio at 1.5 for 10 minutes.
+    { const cp = bcap(); if (cp < 1 && d.k > cp + 0.005) { setK(r, d, gfx, basePR, cp, now); d.skip = 0; return; } }
+    // a SUSTAINED slide-show is a measurement, not a hitch: two slow frames in a row count (clipped at 1 s), a lone > 400 ms frame is still skipped
+    const slowRun = raw > 220 && d.lastRaw > 220; d.lastRaw = raw;
     // pause: warm-up, hidden, world-change hitches (a >400 ms frame is a compile/upload, not load) and the frames after
-    if (root._dmWarming || root.document && root.document.hidden || raw > 400) { d.skip = 6; d.since = Math.max(d.since, now - 1000); return; }
-    if (d.skip > 0) { d.skip--; return; }
-    d.ring[d.head] = Math.min(raw, 250); d.head = (d.head + 1) % N; if (d.count < N) d.count++;
-    if (now < d.nextEval || d.count < 24) return;
+    if (root._dmWarming || root.document && root.document.hidden || (raw > 400 && !slowRun)) { d.skip = 6; d.since = Math.max(d.since, now - 1000); return; }
+    if (d.skip > 0 && !slowRun) { d.skip--; return; }
+    d.ring[d.head] = Math.min(raw, 1000); d.head = (d.head + 1) % N; if (d.count < N) d.count++;
+    if (now < d.nextEval || d.count < (raw > 150 ? 5 : 24)) return;   // (a slow scene is judged after 5 frames, not 24)
     d.nextEval = now + 500;
 
     const mobile = !!gfx.isMobile;
@@ -101,6 +106,8 @@
     const target = d.ref * mult;
     const n = Math.min(d.count, 72);
     const p70 = pct(d, n, 0.70), p90 = pct(d, n, 0.90), med = pct(d, n, 0.5), p10 = pct(d, n, 0.10);
+    if (p70 > 150) d.emUntil = now + 300000;                              // sticky: five minutes below the preset floor (no 0.42 <-> 0.6 flapping), refreshed while it stays a slide-show
+    if (now < (d.emUntil || 0)) { floor = Math.min(floor, 0.42); d.floor = floor; }   // (v259) a slide-show (> 150 ms frames): resolution is the lever left, the preset floor yields (it climbs back up when calm)
     // display period: the fastest steady cadence seen (a 120 Hz iPad Pro gets 8.3, a 30 Hz low-power phone stays above 16.7)
     if (p10 < d.ref - 0.3 && p10 > 6.5) d.ref += (p10 - d.ref) * 0.25;
     else if (p10 > d.ref * 1.5 && d.count >= N) d.ref += (Math.min(16.7, p10) - d.ref) * 0.01;
@@ -139,10 +146,10 @@
     if (over > 1.12 && d.k > floor + 0.005 && !frozen && !(now < d.lock30 && p70 <= 38)) {   // (a locked 30 fps cadence is left alone; a genuinely slower one still gets cut)
       // (v256) parallax steps / reach / depth are traded BEFORE resolution: ui/dm-parallax.js trims its quality first (bounded to ~6 s per episode, and released when the frame is >2.5x over budget)
       try { if (root.DMParallax && root.DMParallax.trimFirst && root.DMParallax.trimFirst(p70)) return; } catch (e) {}
-      if (since < (over > 2 ? 1400 : 2600)) return;                         // rate limit
+      if (since < (over > 4 ? 500 : over > 2 ? 1400 : 2600)) return;        // rate limit (a slide-show is cut again after half a second)
       // size the step from how far over we are (fill cost ~ k^2), but never a pop: 0.03 .. 0.07, 0.10 when several times over
       const need = d.k - d.k * Math.sqrt(1 / over) * 0.97;
-      let step = Math.min(over > 2.2 ? 0.10 : 0.07, Math.max(0.03, need));
+      let step = Math.min(over > 4 ? 0.25 : over > 2.2 ? 0.10 : 0.07, Math.max(0.03, need));   // (v259) several times over: a big first cut, the fill cost falls with k^2
       if (star) step *= 1.5;
       if (!d.lastDown && !d.noGain) d.walkFrom = d.k;
       d.lastDown = { med: med };
