@@ -40,15 +40,22 @@
   });
   // ── the character
   W.surfWalk = (p, dx, dz, dt) => {
-    if (!W.enabled) { p.pos.x += dx; p.pos.z += dz; return; }
+    if (!(dx === dx && dz === dz) || Math.abs(dx) > 1e4 || Math.abs(dz) > 1e4) { dx = 0; dz = 0; }   // (v274) a NaN / absurd step must never reach the position
+    if (!W.enabled || (p._ghostUntil > performance.now())) { p.pos.x += dx; p.pos.z += dz; return; }   // ghost: the unstick watchdog lets her walk out of whatever holds her
+    const px0 = p.pos.x, py0 = p.pos.y, pz0 = p.pos.z;
     C.x = p.pos.x; C.z = p.pos.z; C.y = p.pos.y - EYE; C.grounded = !!p.onGround && !p._floating; W._dt = dt;
     if (slopeDeg > 0 && root._surfHeight && C.grounded) {   // optional terrain slope limit (off by default)
       const tan = Math.tan(slopeDeg * Math.PI / 180), ox = C.x, oz = C.z, g0 = root._surfHeight(ox, oz), g1 = root._surfHeight(ox + dx, oz + dz), d = Math.hypot(dx, dz);
       if (d > 1e-5 && g1 - g0 > tan * d && g1 > C.y + C.step) { const k = 0.0; dx *= k; dz *= k; }
     }
-    W.walk(C, dx, dz); p.pos.x = C.x; p.pos.z = C.z;
-    if (C.grounded && C.y + EYE > p.pos.y) p.pos.y = C.y + EYE;
+    W.walk(C, dx, dz);
+    if (!(C.x === C.x && C.z === C.z && C.y === C.y) || Math.abs(C.x) > 1e7 || Math.abs(C.z) > 1e7) { C.x = px0; C.z = pz0; C.y = py0 - EYE; W.stats.nan = (W.stats.nan | 0) + 1; return; }   // (v274) the sweep produced a non-finite result: keep the old position
+    p.pos.x = C.x; p.pos.z = C.z;
+    if (C.grounded && C.y + EYE > p.pos.y) p.pos.y = Math.min(C.y + EYE, py0 + 6);   // (v274) a step-up is a ledge, never a launch (at most 6 m in one frame)
   };
+  // overlapping a collider (inside a prop / wall after a spawn, a late registration or a moving actor): push her out; true when she moved
+  W.unstick = (p) => { if (!W.enabled || !W.count()) return false; const d = W.pushOut(p.pos.x, p.pos.y - EYE, p.pos.z, C.r, 3, 0.5, PO); if (d > 1e-4 && PO[0] === PO[0] && PO[1] === PO[1]) { p.pos.x += PO[0]; p.pos.z += PO[1]; return true; } return false; };
+  W.overlapping = (p) => !!(W.enabled && W.count() && W.pushOut(p.pos.x, p.pos.y - EYE, p.pos.z, C.r, 3, 0.5, PO) > 1e-4);
   // NPCs / creatures (ui/dm-creatures.js): a kinematic actor each (the player is stopped by it), pushed out of props and out of the player. cr = {x,y,z,rig}
   const PO = [0, 0];
   W.npcStep = (cr, r, h) => {
@@ -65,7 +72,7 @@
   W.peerActor = (id, x, y, z, onFoot) => { if (!W.enabled) return; id = String(id); let a = peers.get(id); if (!onFoot) { if (a != null) { W.removeActor(a); peers.delete(id); } return; } if (a == null) { a = W.addActor(x, y, z, 0.7, 3.2, true, id); if (a < 0) return; peers.set(id, a); } W.setActor(a, x, y, z); };
   W.peerDrop = (id) => { id = String(id); const a = peers.get(id); if (a != null) { W.removeActor(a); peers.delete(id); } };
   // standing on a prop: its top at the character's footprint, tested with last frame's feet so a 15 fps fall cannot sink through it
-  W.supportFor = (p, prevFeet) => { if (!W.enabled || !W.count()) return -1e9; const s = W.supportAt(p.pos.x, p.pos.z, prevFeet, C.step, 0.35); return s; };
+  W.supportFor = (p, prevFeet) => { if (!W.enabled || !W.count() || p._ghostUntil > performance.now()) return -1e9; const s = W.supportAt(p.pos.x, p.pos.z, prevFeet, C.step, 0.35); return (s === s && s < 1e6) ? s : -1e9; };   // (v274) NaN / absurd support heights are ignored
   W.landed = (p, vy) => { if (vy < -3.5) W.emit('land', W.lastMat, p.pos.x, p.pos.y - EYE, p.pos.z, -vy); };
   // ── contact → particles / ripples / audio. Particles: one pooled Points object, CPU-simulated, no allocation.
   const NP = 160; let P = null, pn = 0;

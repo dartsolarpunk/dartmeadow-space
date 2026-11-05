@@ -1021,7 +1021,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-atmo.js?v=212" defer></script>
 <script src="ui/dm-localcollide.js?v=188" defer></script>
 <script src="ui/dm-collide.js?v=270" defer></script>
-<script src="ui/dm-collide-game.js?v=270" defer></script>
+<script src="ui/dm-collide-game.js?v=274" defer></script>
 <script src="ui/dm-cgroup.js?v=214" defer></script>
 <script src="ui/dm-projector.js?v=224" defer></script>
 <script src="ui/dm-groundmark.js?v=220" defer></script>
@@ -19901,6 +19901,7 @@ function updateAtmoFlight(dt){
       s.pos.set(h.x+(dx-vn*h.nx)*rem*0.5,h.y+(dy-vn*h.ny)*rem*0.5,h.z+(dz-vn*h.nz)*rem*0.5);
       const vv=s.vel.x*h.nx+s.vel.y*h.ny+s.vel.z*h.nz; if(vv<0){ s.vel.x-=vv*h.nx*1.3; s.vel.y-=vv*h.ny*1.3; s.vel.z-=vv*h.nz*1.3; s.vel.multiplyScalar(0.85); }
       W.emit('impact',h.mat,h.x,h.y,h.z,Math.sqrt(dx*dx+dy*dy+dz*dz)/Math.max(dt,1e-3)); } }
+  if(!_fin3(s.pos)||!isFinite(s.vel.x+s.vel.y+s.vel.z)){ const ok0=_fin3({x:_cx0,y:_cy0,z:_cz0}); s.pos.set(ok0?_cx0:0,ok0?_cy0:60,ok0?_cz0:0); s.vel.set(0,0,0); _surfEvent('atmo-nonfinite',{ok0}); }   // (v274) a non-finite sweep / step result never survives a frame
   // terrain floor (the board slides along it; nothing pulls it down)
   const groundH=_atmoHeight?_atmoHeight(s.pos.x,s.pos.z):0;
   if(landing){
@@ -25653,6 +25654,49 @@ function _surfFallCatch(p,dt,supportH){
     else setTimeout(go,0);
   }
 }
+// ── (v274) ON-FOOT SAFETY NET ─────────────────────────────────────────────────────────────────────────────
+// Report: mid-session on Solenne the character and her skyboard vanished and she could not move.  Every cause of that has the same shape: a non-finite (or absurd) position / velocity
+// / camera that nothing ever recovers from (position += NaN stays NaN forever; the renderer draws nothing at a NaN camera), or her being parented outside the drawn scene / hidden.
+// _surfGuard runs inside updateSurface right after the movement + collision block (cheap: one finite test; a 400 ms last-good snapshot), _surfWatch ticks every second like the
+// riding watchdog (_riderCheck) and repairs the character / board / camera.  Both log 'surfFix' (DMCrumb + perf-log event) so the next log names the cause.
+function _surfEvent(why,info){ const o=Object.assign({why:why},info||{}); try{ window.DMCrumb&&DMCrumb.mark('surfFix',o); }catch(e){} try{ window.dmPerfLog&&dmPerfLog.event&&dmPerfLog.event('surfFix',o); }catch(e){} try{ console.warn('[surfFix]',o); }catch(e){} }
+function _fin3(v){ return !!v&&isFinite(v.x+v.y+v.z)&&Math.abs(v.x)<1e7&&Math.abs(v.y)<1e6&&Math.abs(v.z)<1e7; }
+function _surfRestore(p,why){
+  const g=p._good; let x=g?g.x:0, z=g?g.z:0, y=g?g.y:3;
+  if(!g){ try{ const b=surfBoard||PW.board; if(b&&_fin3(b.position)){ x=b.position.x; z=b.position.z; } }catch(e){} try{ const h=_surfHeight(x,z); y=(isFinite(h)?h:0)+3; }catch(e){} }
+  p.pos.set(x,y+0.4,z); p.vel.set(0,0,0); p.onGround=false; p.jumpActive=false; p._caught=null; p._ghostUntil=performance.now()+800;
+  if(!isFinite(p.yaw)) p.yaw=0; if(!isFinite(p.pitch)) p.pitch=0;
+  try{ if(p.camPos) p.camPos.copy(p.pos); if(PW.camera) PW.camera.position.copy(p.pos); }catch(e){}
+  CHAR._gnMemo=null; _surfEvent(why,{x:+x.toFixed(1),y:+y.toFixed(1),z:+z.toFixed(1),good:!!g});
+}
+function _surfGuard(p,mf,ms,dt){
+  const t=performance.now();
+  if(!_fin3(p.pos)||!isFinite(p.vel.x+p.vel.y+p.vel.z)||!isFinite(p.yaw+p.pitch)){ _surfRestore(p,'nonfinite'); return; }
+  if(p.onGround&&(!p._good||t-p._good.t>400)){ const g=p._good||(p._good={x:0,y:0,z:0,t:0}); g.x=p.pos.x; g.y=p.pos.y; g.z=p.pos.z; g.t=t; }
+  // overlapping a collider (spawned / registered inside a prop or wall) while trying to move: push out, and if that does not free her within 2.5 s let her walk through for a moment
+  const want=Math.abs(mf)+Math.abs(ms)>0.3;
+  if(want&&window.DMCollide&&DMCollide.enabled&&DMCollide.overlapping&&DMCollide.overlapping(p)){
+    p._ovT=(p._ovT||0)+dt; DMCollide.unstick(p);
+    if(p._ovT>2.5){ p._ghostUntil=t+1500; p._ovT=0; _surfEvent('overlap-stuck',{x:+p.pos.x.toFixed(1),z:+p.pos.z.toFixed(1)}); }
+  } else p._ovT=0;
+}
+function _surfWatch(){
+  const p=surfPlayer; if(!p||!surfaceActive||PW.mode!=='walk') return;
+  if(!_fin3(p.pos)||!isFinite(p.vel.x+p.vel.y+p.vel.z)) _surfRestore(p,'nonfinite-watch');
+  const probs=[], cam=PW.camera;
+  if(cam&&!_fin3(cam.position)){ cam.position.copy(p.pos); if(p.camPos) p.camPos.copy(p.pos); probs.push('cam'); }
+  if(p.camPos&&!_fin3(p.camPos)){ p.camPos.copy(p.pos); probs.push('camPos'); }
+  const R=CHAR&&CHAR.loaded?CHAR.root:null;
+  if(R&&!CHAR._transitioning&&!CHAR.mounted&&!(typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active)&&!_charOnTempleDeck()){
+    if(R.parent!==PW.scene){ probs.push('charParent:'+(R.parent?(R.parent.name||R.parent.type):'none')); try{ if(R.parent) R.parent.remove(R); PW.scene.add(R); CHAR.scene=PW.scene; }catch(e){} }
+    if(!_fin3(R.position)||!isFinite(R.scale.x+R.scale.y+R.scale.z)||Math.abs(R.scale.x)<1e-6){ probs.push('charXform'); const s=CHAR.scaleForTerrain||CHAR.scaleForBoard||1; R.scale.set(s,s,s); R.position.set(p.pos.x,p.pos.y-3.0,p.pos.z); R.quaternion.identity(); }
+    if(!surfFirstPerson){ let hid=null; for(let o=R;o;o=o.parent){ if(o.visible===false){ hid=o.name||o.type; o.visible=true; } } if(hid){ probs.push('charHidden:'+hid); try{ _forceCharVisible(); }catch(e){} } }
+    try{ R.updateMatrixWorld(true); const e=R.matrixWorld.elements; for(let i=0;i<16;i++) if(!isFinite(e[i])){ probs.push('charMatrix'); CHAR.restPose&&Object.keys(CHAR.restPose).forEach(n=>{ const b=CHAR.bones[n], r=CHAR.restPose[n]; if(b){ b.position.copy(r.p); b.quaternion.copy(r.q); b.scale.copy(r.s); } }); break; } }catch(e){}
+  }
+  const b=surfBoard; if(b&&!_fin3(b.position)){ probs.push('boardNaN'); b.position.set(p.pos.x+2,p.pos.y-3.0,p.pos.z); b.scale.setScalar(1); b.quaternion.identity(); }
+  if(probs.length) _surfEvent('watch',{p:probs.slice(0,5)});
+}
+setInterval(()=>{ try{ if(document.hidden||typeof surfaceActive==='undefined'||!surfaceActive||window._dmWarming) return; _surfWatch(); }catch(e){} },1000);
 const _surfGN=new THREE.Vector3(), _surfCN=new THREE.Vector3();   // (v259) scratch for the held ground / climb normals (updateSurface)
 function updateSurface(dt){
   const p=surfPlayer;if(!p)return;
@@ -25730,6 +25774,7 @@ function updateSurface(dt){
   if(surfJumpPressed && p.onGround){ p.vel.y=6*Math.sqrt(p.grav); p.jumpActive=true; }
   try{ _surfFallCatch(p,dt,supportH); }catch(e){ p._catch=null; console.warn('[surf] fall catch:',e); }
   try{ if(window.DMCollide&&DMCollide.enabled) DMCollide.tick(dt,{scene:PW.scene,THREE,x:p.pos.x,z:p.pos.z,mobile:!!(GFX&&GFX.isMobile)}); }catch(e){ if(!DMCollide._err){ DMCollide._err=1; console.warn('[collide] tick',e); } }   // registration slices, dynamic bodies, contact fx, ?collider=1 wireframes
+  try{ _surfGuard(p,mf,ms,dt); }catch(e){ console.warn('[surfGuard]',e); }   // (v274) non-finite / stuck-in-a-collider recovery
   _m1=performance.now(); DMFT.add('us.move',_m1-_m0); _m0=_m1;
   surfJumpPressed=false; // consume the press — it's an edge-triggered action, not a held state
   // stream terrain LOD around the player (subdivide nearby, coarsen far)
