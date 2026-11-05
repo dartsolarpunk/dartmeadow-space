@@ -166,6 +166,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-perf.js?v=160"></script>
 <script src="ui/dm-governor.js?v=264"></script>
 <script src="ui/dm-budget.js?v=273"></script>
+<script src="ui/dm-lod.js?v=279"></script>   <!-- far-range LOD: the ONE distance table per device class (props, mansion, landmarks, vantage reach); ?lod=off|low|mobile|desktop -->
 <script src="ui/dm-light.js?v=278"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
 <script>/* (v136) no-op stub so the flight loop can never throw if dm-perf.js failed to load */
 window.DMPerf=window.DMPerf||{on:false,b(){},e(){},mark(){},measure(n,f){return f();},frame(){},stats(){return {fps:0,avgMs:0,p95Ms:0,worstMs:0,minFps:0,cpu:{},gpu:null,sparse:null};},show(){},hide(){}};</script>
@@ -1051,7 +1052,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-mansion-rooms.js?v=250" defer></script>
 <script src="ui/dm-mansion-look.js?v=251" defer></script>
 <script src="ui/dm-mansion-interior.js?v=262" defer></script>
-<script src="ui/dm-facilities.js?v=272" defer></script>
+<script src="ui/dm-facilities.js?v=279" defer></script>
 <script src="ui/dm-lamps.js?v=278" defer></script>
 <script src="ui/dm-holo.js?v=271" defer></script>
 <script src="ui/dm-sys.js?v=241"></script>
@@ -19538,7 +19539,10 @@ function _pwWorldTick(dt){
   const skyR=Math.max(3500,space?1e9:horizon);
   // on foot the haze closes in (the walking distance); up with the board it opens to the sky's — one blend, no switch
   const k=space?1:(fly?_smooth01((agl-5)/35):0), dd=drawDistanceTier();
-  const walkR=scene.fog?Math.max(1200,dd.fogFar*2.5):skyR;   // nothing past the haze is drawn on foot (airless worlds see to the horizon)
+  let walkR=scene.fog?Math.max(1200,dd.fogFar*2.5):skyR;   // nothing past the haze is drawn on foot (airless worlds see to the horizon)
+  // (far-range 2) from a high vantage the drawn radius opens to the device class's vantage reach (ui/dm-lod.js: 1.8 / 2.8 / 4.5 km, the ladder's ground stage scales the extension).
+  // The quadtree draws that far ring as coarse tiles (geomorphed, skirted), so it costs tiles, not detail.  Eased by _vtK, so no switch.
+  if(scene.fog&&!space&&PW._vtK>0.001&&window.DMLod&&DMLod.on) walkR=Math.max(walkR,Math.min(skyR,DMLod.vantage(PW._vtK,walkR)));
   const viewR=walkR+(skyR-walkR)*k;
   const G=PW.ground; G.viewR=viewR;
   // the sky dome thins to space as you climb (airless worlds: open space all the way down)
@@ -19556,6 +19560,7 @@ function _pwWorldTick(dt){
   }
   const vtK=(!space&&PW._vtK)||0;
   let far=dd.fogFar*(1+1.1*vtK)+(skyFar-dd.fogFar)*k, near=40*(1+vtK)+(Math.min(skyFar*0.2,300+calt*0.6)-40)*k;
+  if(vtK>0&&window.DMLod&&DMLod.on) far=Math.max(far,DMLod.vantageFog(vtK,dd.fogFar,walkR)+(skyFar-dd.fogFar)*k);   // (far-range 2) the haze opens toward 0.62 x the vantage reach: a cliff 2-3 km off is fogged, not erased
   if(vtK>0&&far>walkR*0.9) far=Math.max(dd.fogFar,walkR*0.9);
   if(dome<1){ const thin=1-dome; far+=thin*thin*2e6; near+=thin*thin*1e6; }   // the haze lifts with the dome
   if(scene.fog){ scene.fog.far=far; scene.fog.near=near; }
@@ -19642,13 +19647,17 @@ function _pwPropsTick(px,pz,agl){
   if(agl<220){
     // (stability) nearest chunk first (it used to be row order), at most one per 3 frames, and never in the frame of / during an MC patch build: the first
     // seconds on foot used to put nine chunk scatters (each ~1000 height-field calls + its instance buffers) back to back with the first patch builds.
-    const _pf=PW._propF=(PW._propF||0)+1, _ord=[[0,0],[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,1],[1,-1],[-1,-1]];
-    for(let q=0;q<9;q++) want.add((pi+_ord[q][0])+'_'+(pj+_ord[q][1]));
+    // (far-range 3) PRE-ROLL: chunks stream in RINGS of the distance table (ui/dm-lod.js propRing: ceil(draw cut x 1.06 / 300 m), capped 1 / 2 / 3 by device class and by the
+    // ladder's props stage), so a chunk is built while it is still beyond the draw cut (hidden, see below) and is never built inside the drawn range.  The keep set is one ring
+    // wider than the load set: walking back and forth over a chunk border no longer drops and rebuilds the chunk behind you.
+    const _pf=PW._propF=(PW._propF||0)+1, _L=(window.DMLod&&DMLod.on)?DMLod:null, _fogF=PW.scene&&PW.scene.fog?PW.scene.fog.far:900, _R=_L?_L.propRing(_fogF,agl):1, _KR=_R+1;
+    for(let di=-_KR;di<=_KR;di++) for(let dj=-_KR;dj<=_KR;dj++) want.add((pi+di)+'_'+(pj+dj));
     // (v256) one chunk at a time, built over several frames (generator, ~2.5 ms a frame on a phone / 4 ms otherwise); a job whose chunk is no longer wanted is dropped
     let job=PW._propJob; if(job&&(job.gen!==PW.gen||M.has(job.k)||!want.has(job.k))){ job=PW._propJob=null; }
     if(!job&&!TERRAIN._mcBusy&&_pf>=(PW._propNext||0)){
-      for(let q=0;q<9;q++){ const di=_ord[q][0], dj=_ord[q][1], k=(pi+di)+'_'+(pj+dj);
-        if(!M.has(k)){ job=PW._propJob={k,it:_hmChunkScatterG(pi+di,pj+dj),gen:PW.gen}; _crM('chunkScatter:start',JSON.stringify({k,n:M.size})); break; } }
+      let bd=1e30, bi=0, bj=0;   // nearest missing chunk first (by distance to the walker, not by row)
+      for(let di=-_R;di<=_R;di++) for(let dj=-_R;dj<=_R;dj++){ if(M.has((pi+di)+'_'+(pj+dj))) continue; const d2=(((pi+di)*C-px)**2)+(((pj+dj)*C-pz)**2); if(d2<bd){ bd=d2; bi=pi+di; bj=pj+dj; } }
+      if(bd<1e30){ const k=bi+'_'+bj; job=PW._propJob={k,i:bi,j:bj,it:_hmChunkScatterG(bi,bj),gen:PW.gen}; _crM('chunkScatter:start',JSON.stringify({k,n:M.size})); }
     }
     if(job&&!TERRAIN._mcBusy){
       const k=job.k, t0=performance.now(), budget=GFX.isMobile?2.5:4; let r=null, err=false;
@@ -19656,12 +19665,16 @@ function _pwPropsTick(px,pz,agl){
       if(err){ M.set(k,null); PW._propJob=null; }
       else if(r.done){
         PW._propJob=null; PW._propNext=_pf+3;
-        try{ const g=r.value; PW.propsGroup.add(g); M.set(k,g); if(window.DMCollide) DMCollide.regChunk('chunk#'+k,g);   /* ui/dm-collide.js: its rocks / trunks / crowns become colliders, a slice a frame */ let by=0; g.traverse(o=>{ if(o.isInstancedMesh){ by+=(o.instanceMatrix?o.instanceMatrix.array.byteLength:0)+(o.instanceColor?o.instanceColor.array.byteLength:0); } }); g.userData.crumbKey='chunk#'+k; _crG('chunk#'+k,by); }catch(e){ M.set(k,null); }
+        try{ const g=r.value; g.visible=false; PW._plodF=5; PW.propsGroup.add(g); M.set(k,g);   /* hidden until _propsLod shows it inside the draw cut (next frame) */
+          if(Math.max(Math.abs(job.i-pi),Math.abs(job.j-pj))<=1){ if(window.DMCollide) DMCollide.regChunk('chunk#'+k,g); } else g.userData._colWait=true;   /* far-ring chunks get colliders when they come within one chunk */   /* ui/dm-collide.js: its rocks / trunks / crowns become colliders, a slice a frame */ let by=0; g.traverse(o=>{ if(o.isInstancedMesh){ by+=(o.instanceMatrix?o.instanceMatrix.array.byteLength:0)+(o.instanceColor?o.instanceColor.array.byteLength:0); } }); g.userData.crumbKey='chunk#'+k; _crG('chunk#'+k,by); }catch(e){ M.set(k,null); }
         _crM('chunkScatter:end',JSON.stringify({n:M.size})); _crL('chunks',M.size);
       }
     }
   }
-  for(const [k,g] of M) if(!want.has(k)){ if(g){ PW.propsGroup.remove(g); _disposeProps(g); _crG('chunk#'+k,0); } if(window.DMCollide) DMCollide.dropChunk('chunk#'+k); M.delete(k); }
+  for(const [k,g] of M){
+    if(!want.has(k)){ if(g){ PW.propsGroup.remove(g); _disposeProps(g); _crG('chunk#'+k,0); } if(window.DMCollide) DMCollide.dropChunk('chunk#'+k); M.delete(k); continue; }
+    if(g&&g.userData._colWait&&Math.max(Math.abs(g.userData.cx/C-pi),Math.abs(g.userData.cz/C-pj))<=1.01){ g.userData._colWait=false; if(window.DMCollide) DMCollide.regChunk('chunk#'+k,g); }
+  }
   _propsLod(px,pz,agl);
 }
 // (v259) prop LOD by chunk distance: only the near chunks cast into the sun's shadow map (the shadow pass re-draws every caster; boulders and trees 150 m away throw no shadow
@@ -19670,7 +19683,9 @@ function _propsLod(px,pz,agl){
   const M=PW.props; if(!M||!M.size) return;
   if((PW._plodF=(PW._plodF||0)+1)%6!==0) return;
   let k=1; try{ if(window.DMBudget&&DMBudget.on&&DMBudget.propsK) k=DMBudget.propsK(); }catch(e){}
-  const fog=PW.scene&&PW.scene.fog?PW.scene.fog.far:900, farD=Math.max(260,Math.min(fog*1.05,agl>60?Math.max(260,fog*0.85):1400))*k, shD=(GFX.isMobile?110:170)*k, half=SURF_CHUNK*0.71;
+  const fog=PW.scene&&PW.scene.fog?PW.scene.fog.far:900, _L=(window.DMLod&&DMLod.on)?DMLod:null;
+  // (far-range 1) the distances come from the shared table (ui/dm-lod.js, per device class; same numbers as before on desktop / phone, the ladder's props stage scales them)
+  const farD=_L?_L.propCut(fog,agl):Math.max(260,Math.min(fog*1.05,agl>60?Math.max(260,fog*0.85):1400))*k, shD=(_L?_L.get('prop.shadow'):(GFX.isMobile?110:170))*k, half=SURF_CHUNK*0.71;
   for(const g of M.values()){
     if(!g||g.userData.cx===undefined) continue;
     const d=Math.hypot(px-g.userData.cx,pz-g.userData.cz)-half, vis=g.visible?d<farD*1.06:d<farD, cast=d<shD;   // (6% hysteresis: no flicker at the cut)
@@ -25118,12 +25133,12 @@ function* _hmChunkScatterG(i,j){
   const rocks=[];
   // (v259) nothing lodged in the sea: a rock needs its whole footprint above the water line plus the swell/wet-sand margin (the old test, h<3, let boulders sit half in the surf
   // and, where the LOD ground and the real shore differ, out in the open ocean)
-  const WL=pal.water?4.0:-1e9;
+  const WL=pal.water?((window.DMLod&&DMLod.on)?DMLod.get('water.minH'):4.0):-1e9;   // (far-range 4) the table's shore margin
   g.userData.cx=i*C; g.userData.cz=j*C;
   for(let n=0;n<per;n++){
     if(n%48===47) yield;
     const x=i*C+R(-C/2,C/2), z=j*C+R(-C/2,C/2), h=H(x,z);
-    if(h<WL){ rnd(); rnd(); continue; }
+    if(h<WL||(h<WL+6&&(H(x-4,z)<WL||H(x+4,z)<WL||H(x,z-4)<WL||H(x,z+4)<WL))){ rnd(); rnd(); continue; }   // (far-range 4) nor on a rim with water within 4 m: no prop stands half in the surf, wherever the LOD ground and the real shore disagree
     rocks.push({x,z,h,s:R(0.4,2.4),sy:R(0.6,1.2),r:[R(0,6),R(0,6),R(0,6)],c:new THREE.Color().setHSL(base.h+(rnd()-0.5)*0.03,Math.max(0,Math.min(1,base.s+(rnd()-0.5)*0.15)),Math.max(0,Math.min(1,base.l+(rnd()-0.5)*0.18)))});
   }
   // boulders lodged on ledges and fallen at the foot of cliffs: wherever the ground

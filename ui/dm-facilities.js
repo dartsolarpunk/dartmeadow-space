@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  const F = window.DMFac = { ctx: null, sites: new Map(), solids: [], scene: null, ver: '272' };
+  const F = window.DMFac = { ctx: null, sites: new Map(), solids: [], scene: null, ver: '279' };
   const DM = window.DM_FAC = window.DM_FAC || {};
   DM.bay = DM.bay || { inside: false, membrane: 0 };
   F.bind = c => { F.ctx = c; };
@@ -596,15 +596,16 @@
       if (rec.mansion) {
         // (LOD) hysteresis (enter 400 m / leave 470 m; phones 300 / 360) so a hover on the boundary cannot flip the two meshes frame to frame, and the interior (ui/dm-mansion-interior.js
         // LOAD_D) is requested BEFORE the swap to LOD0 so the windows are never "lit sheets" at LOD1 and empty glass at LOD0.
-        const u = rec.group.userData, mob = F.ctx.isMobile(), nIn = mob ? 300 : 400, nOut = mob ? 360 : 470, d1 = Math.sqrt(d2);
+        const u = rec.group.userData, mob = F.ctx.isMobile(), LD = window.DMLod && DMLod.on ? DMLod.mansion() : null, nIn = LD ? LD.nIn : mob ? 300 : 400, nOut = LD ? LD.nOut : mob ? 360 : 470, farM = LD ? LD.far : 5200, d1 = Math.sqrt(d2);   // distances: ui/dm-lod.js table (same 300/360 phone, 400/470 desktop)
         if (rec.lodNear === undefined) rec.lodNear = d1 < nIn; else if (rec.lodNear && d1 > nOut) rec.lodNear = false; else if (!rec.lodNear && d1 < nIn) rec.lodNear = true;
-        const near = rec.lodNear, far = d2 > 5200 * 5200;
+        const inR = rec.inRange === undefined ? d1 < farM : (rec.inRange ? d1 <= farM * 1.04 : d1 < farM); rec.inRange = inR;   // 4 % hysteresis at the cull
+        const near = rec.lodNear, far = !inR;
         if (u.lod0) u.lod0.visible = near && !far; if (u.lod1) u.lod1.visible = !near && !far;
         if (d2 < 1100 * 1100) { upgrade2K(T); mansionPx(T); upgradeCliff(T); }
         if (window.DMMansionInt) DMMansionInt.tick(rec, d2, now, DM.arriveAt === rec.def.id);
         if (window.DMHolo) { try { DMHolo.tick(rec, d2, now, dt); } catch (e) { if (!rec.holoWarn) { rec.holoWarn = 1; console.warn('[holo] tick', e); } } }
         if (window.DMLamps) { try { DMLamps.tick(rec, d2, now, dt, f, mode); } catch (e) { if (!rec.lampWarn) { rec.lampWarn = 1; console.warn('[lamps] tick', e); } } }   // street lamps + room switches (a failure here must never stop the facility upkeep)
-      } else rec.group.visible = d2 < 6000 * 6000;
+      } else { const fc = window.DMLod && DMLod.on ? DMLod.get('facility.cull') : 6000; rec.group.visible = d2 < fc * fc; }
       if (rec.clouds) for (const p of rec.clouds) { const t = p.material.map; t.offset.x += p.userData.v * dt; t.offset.y += p.userData.v * 0.6 * dt; }
       if (rec.bay) {
         const bm = rec.bay.meshes; for (let i = 0; i < bm.length; i++) { const t = bm[i].material.map; t.offset.x += (0.012 + i * 0.004) * dt; t.offset.y += 0.006 * dt; }
