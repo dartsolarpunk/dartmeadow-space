@@ -17,7 +17,7 @@
  *      standing on a flat cell that is not on a lip. Ties break by cell order, so the output is identical on every run. */
 const fs = require('fs'), path = require('path');
 const root = path.join(__dirname, '..', '..');
-const UPM = 1.78, RC = 12, MINSEP = 14, CAP = 96;
+const UPM = 1.78, RC = 18, MINSEP = 32, CAP = 18;
 
 function load(file) { return JSON.parse(fs.readFileSync(path.join(root, file), 'utf8')); }
 function decode(col) {

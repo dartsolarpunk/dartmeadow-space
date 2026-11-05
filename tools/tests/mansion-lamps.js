@@ -19,7 +19,7 @@ ok(file === built.json, 'committed lamp JSON matches the planner output (run nod
 ok(P.build().json === built.json, 'planner is deterministic');
 const J = JSON.parse(file), L = J.lamps, g = P.decode(COL);
 const gh = (x, y) => g[Math.round((y - COL.y0) / COL.cell) * COL.nx + Math.round((x - COL.x0) / COL.cell)];
-ok(L.length >= 20 && L.length <= 96, 'lamp count ' + L.length + ' within 20..96');
+ok(L.length >= 10 && L.length <= 40, 'lamp count ' + L.length + ' within 10..40');
 let minSep = 1e9, maxNn = 0;
 L.forEach((a, i) => {
   ok(gh(a[0], a[1]) > COL.sea + 0.6, 'lamp ' + i + ' stands on land');
@@ -29,8 +29,8 @@ L.forEach((a, i) => {
   for (const r of NAV.rooms) if (r[0] === 'r') ok(!(a[0] >= r[1] && a[0] <= r[3] && a[1] >= r[2] && a[1] <= r[4]), 'lamp ' + i + ' outside room footprint');
 });
 ok(minSep >= P.MINSEP - 1e-9, 'min spacing ' + minSep.toFixed(1) + ' units (' + (minSep / P.UPM).toFixed(1) + ' m) >= ' + P.MINSEP);
-ok(maxNn <= 60, 'no lamp isolated by more than 60 units (' + maxNn.toFixed(1) + ')');
-ok(built.plan.uncovered / built.plan.targets <= 0.06, 'target coverage ' + (100 - 100 * built.plan.uncovered / built.plan.targets).toFixed(1) + ' %');
+ok(maxNn <= 110, 'no lamp isolated by more than 110 units (' + maxNn.toFixed(1) + ')');
+ok(built.plan.uncovered / built.plan.targets <= 0.22, 'target coverage ' + (100 - 100 * built.plan.uncovered / built.plan.targets).toFixed(1) + ' %');
 for (const lv of built.plan.levels) { const n = L.filter(a => Math.abs(a[2] - lv.h) < 0.6).length; ok(n >= 1, 'level h=' + lv.h + ' (' + lv.area + ' cells) has a lamp'); }
 ok(L.some(a => a[2] < -15), 'the cliff terraces (h -18) are lit'); ok(L.some(a => a[1] > 8 && a[2] > -1), 'the landing deck / terrace is lit'); ok(L.some(a => a[1] < -60), 'the arrival court is lit');
 
