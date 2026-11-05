@@ -94,7 +94,7 @@
       }
       const r = window.flightRenderer || (typeof flightRenderer !== 'undefined' ? flightRenderer : null);
       if (r && r.shadowMap) o.shadow = { on: !!r.shadowMap.enabled, auto: r.shadowMap.autoUpdate, ms: typeof TERRAIN !== 'undefined' && TERRAIN && TERRAIN._shDt ? +(TERRAIN._shDt * 1000).toFixed(1) : null };
-      if (r) o.px = { pr: +(r.getPixelRatio ? r.getPixelRatio() : 0).toFixed(2), w: window.innerWidth, h: window.innerHeight };
+      if (r) o.px = { pr: +(r.getPixelRatio ? r.getPixelRatio() : 0).toFixed(2), w: window.innerWidth, h: window.innerHeight, mp: +((r.domElement ? r.domElement.width * r.domElement.height : 0) / 1e6).toFixed(2), gov: window.DMGov && window.DMGov.stats ? window.DMGov.stats() : null, ladder: window.DMBudget && window.DMBudget.on ? window.DMBudget.p : null };   // (v264) drawing-buffer megapixels + the render-scale governor's state + the ladder pressure, so the next log shows whether the dials moved
       return o;
     } catch (e) { return null; }
   }
