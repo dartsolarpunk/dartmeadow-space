@@ -345,7 +345,7 @@
   function marchNodes(o) {
     const T = S.T, B = BOUNDS[S.klass];
     const { Fn, Loop, If, Break, float, vec2, vec3, vec4, smoothstep, max, min, clamp: tclamp, dot, cross, normalize, length, texture, dFdx, dFdy, positionView, normalView, cameraViewMatrix, log2 } = T;
-    const U = S.U, depth = o.depth.mul(U.depthK), bias = o.bias, near = o.near.mul(U.reachK), far = o.far.mul(U.reachK);   // (v256) tier / governor: relief depth and every fade distance are shared uniforms
+    const U = S.U, depth = o.depth.mul(U.depthK).mul(o.depthMul || 1), bias = o.bias, near = o.near.mul(U.reachK), far = o.far.mul(U.reachK);   // (v256) tier / governor: relief depth and every fade distance are shared uniforms
     const asp = vec2(o.aspect ? o.aspect[0] : 1, o.aspect ? o.aspect[1] : 1), size = o.size && o.size.isNode ? o.size : float(o.size);
     const N0 = o.N || normalView, uv0 = o.uv;
     // tangent frame from screen-space derivatives (no tangents needed)
@@ -568,33 +568,86 @@
     } catch (e) { return null; }
   }
   // Give an adopted twin parallax relief.  o: { tex:{map,nrm,orm} (THREE.Texture), height (THREE.Texture, .r = height 1 proud), hSize, tileM (metres per uv unit), depthM,
-  //   near, far (scene units), bias, nrmScale, cavity }.  Returns true when built.  ALL tiers build it (Low is just small numbers in the shared uniforms); only ?px=0 builds nothing.
-  // depth / bias / range / map size are material properties (pxDepth ...): every structure material shares ONE shader program.
+  //   near, far (scene units), bias, nrmScale, cavity, rot: 'flip'|'quarter'|'none', macro, stain, lichen, lichenCol:[r,g,b] }.  Returns true when built.
+  //   ALL tiers build it (Low is just small numbers in the shared uniforms); only ?px=0 builds nothing.  Material properties (pxDepth, pxBias, pxNear, pxFar, pxSize, pxRot,
+  //   pxMacro, pxStain, pxLichen, pxLichenCol) carry every number: all structure materials share ONE shader program.
+  // (v260) ANTI-REPETITION. The texture is no longer one repeating lattice: every uv cell (1 tile) gets its own random offset and rotation (flip = 0/180 deg, quarter = 0/90/180/270,
+  //   none = offset only), a second layer half a tile away covers the cell borders, the two are blended with the Heitz-Neyret variance-preserving rule (contrast does not wash out
+  //   in the blend band; the mean comes from the top mip), the normal is rotated back into the surface frame, and THE HEIGHT MARCH FOLLOWS THE SAME CELL TRANSFORM: each step's
+  //   tangent offset is rotated by the cell rotation and read from the same stochastic texel, so the displaced colour / normal / ORM fetches land on the heights that were marched.
+  //   Layer B's fetches sit behind a branch on the border weight (inside a cell: one layer, three fetches).  On top: a low-frequency macro albedo / depth modulation, a second larger
+  //   colour scale, vertical water stains and lichen in the crevices (ALU only, no extra fetches beyond the one macro colour tap).
   function structure(mat, o) {
     try {
       if (off || !mat || !mat.isNodeMaterial || !o || !o.height || !o.tex || !o.tex.map || (mat.userData && mat.userData.dmPxStruct)) return false;
       if (!init()) return false;
-      const T = S.T, { float, vec2, texture, normalMap, mix, uv, materialColor, materialRoughness, materialMetalness } = T;
+      const T = S.T, { float, vec2, vec3, vec4, texture, normalMap, mix, uv, materialColor, materialRoughness, materialMetalness, materialReference, dFdx, dFdy, floor, fract, sin, cos, dot, min, smoothstep, sqrt, Fn, If } = T;
       const hs = o.hSize || (o.height.image && o.height.image.width) || 512;
       setProps(mat, { depth: (o.depthM || 0.05) / (o.tileM || 1), bias: o.bias == null ? 0.5 : o.bias, near: o.near || 14, far: o.far || 40, strength: 1, size: hs });
-      const b = marchRef({ uv: uv(), H: (u, lod) => texture(o.height, u).level(lod).r, N: T.normalView, mask: float(1), lodMax: 4.0 });
-      const nm = { map: texture(o.tex.map, b.uv), nrm: o.tex.nrm ? texture(o.tex.nrm, b.uv) : null, orm: o.tex.orm ? texture(o.tex.orm, b.uv) : null };
+      const rotMode = o.rot || 'flip'; mat.pxRot = rotMode === 'quarter' ? Math.PI / 2 : rotMode === 'none' ? 0 : Math.PI;
+      mat.pxMacro = o.macro == null ? 0.22 : o.macro; mat.pxStain = o.stain || 0; mat.pxLichen = o.lichen || 0; mat.pxLichenCol = (o.lichenCol && o.lichenCol.length === 3) ? new S.THREE.Vector3(o.lichenCol[0], o.lichenCol[1], o.lichenCol[2]) : new S.THREE.Vector3(0.28, 0.38, 0.14);
+      const rStep = materialReference('pxRot', 'float'), kMacro = materialReference('pxMacro', 'float'), kStain = materialReference('pxStain', 'float'), kLichen = materialReference('pxLichen', 'float'), lichCol = materialReference('pxLichenCol', 'vec3');
+      const uvn = uv(), dx = dFdx(uvn), dy = dFdy(uvn);
+      const h2 = c => fract(sin(vec2(dot(c, vec2(127.1, 311.7)), dot(c, vec2(269.5, 183.3)))).mul(43758.5453));
+      const h1 = c => fract(sin(dot(c, vec2(12.9898, 78.233))).mul(43758.5453));
+      const vnoise = p2 => { const c = floor(p2), f = fract(p2), u2 = f.mul(f).mul(float(3).sub(f.mul(2)));
+        return mix(mix(h1(c), h1(c.add(vec2(1, 0))), u2.x), mix(h1(c.add(vec2(0, 1))), h1(c.add(vec2(1, 1))), u2.x), u2.y); };
+      // stage 1: the stochastic cell of this pixel
+      const cell = (sh) => {
+        const q = uvn.add(sh), c = floor(q), h = h2(c), a = floor(h.x.mul(4)).mul(rStep), cs = cos(a), sn = sin(a);
+        const rot = v => vec2(v.x.mul(cs).sub(v.y.mul(sn)), v.x.mul(sn).add(v.y.mul(cs)));
+        const f = fract(q), e = min(min(f.x, float(1).sub(f.x)), min(f.y, float(1).sub(f.y)));
+        return { cs, sn, rot, u0: rot(q).add(h.mul(vec2(5.37, 9.71))), gx: rot(dx), gy: rot(dy), w: smoothstep(0.0, 0.22, e) };
+      };
+      const cA = cell(vec2(0, 0)), cB = cell(vec2(0.5, 0.5));
+      const gateB = cA.w.lessThan(0.995);
+      // stage 2 (after the march): the fetches at the displaced point
+      const buildMaps = (Ph) => {
+        const uOf = (C) => C.u0.add(C.rot(Ph));
+        const colF = (C) => texture(o.tex.map, uOf(C)).grad(C.gx, C.gy).rgb;
+        const ormF = (C) => (o.tex.orm ? texture(o.tex.orm, uOf(C)).grad(C.gx, C.gy).rgb : vec3(1, 0.8, 0));
+        const nrmF = (C) => { if (!o.tex.nrm) return vec2(0, 0); const n0 = texture(o.tex.nrm, uOf(C)).grad(C.gx, C.gy).xy.mul(2).sub(1); return vec2(n0.x.mul(C.cs).add(n0.y.mul(C.sn)), n0.x.mul(C.sn).negate().add(n0.y.mul(C.cs))); };
+        const aCol = colF(cA), aOrm = ormF(cA), aN = nrmF(cA);
+        // layer B only where its weight is non-zero (the cell borders): each channel group is fetched once, behind the branch
+        const colB = Fn(() => { const v = aCol.toVar(); If(gateB, () => { v.assign(colF(cB)); }); return v; })();
+        const onB = Fn(() => { const v = vec4(aOrm.g, aOrm.b, aN.x, aN.y).toVar(); If(gateB, () => { const o2 = ormF(cB), n2 = nrmF(cB); v.assign(vec4(o2.g, o2.b, n2.x, n2.y)); }); return v; })();
+        const w = cA.w, vp = sqrt(w.mul(w).add(float(1).sub(w).mul(float(1).sub(w))));      // Heitz-Neyret: keep the variance of the blend
+        const meanC = texture(o.tex.map, vec2(0.5, 0.5)).level(float(12)).rgb;
+        const col = meanC.add(aCol.mul(w).add(colB.mul(float(1).sub(w))).sub(meanC).div(vp)).max(0.0);
+        const mixed = vec4(aOrm.g, aOrm.b, aN.x, aN.y).mul(w).add(onB.mul(float(1).sub(w)));
+        return { col, orm: vec3(1.0, mixed.x, mixed.y), nxy: vec2(mixed.z, mixed.w) };
+      };
+      // the stochastic height: layer A's cell, plus layer B's where B still has weight (same blend weight as the colour)
+      const Hs = (u, lod) => {
+        const off2 = u.sub(uvn), hv = float(0).toVar();
+        hv.assign(texture(o.height, cA.u0.add(cA.rot(off2))).level(lod).r);
+        If(gateB, () => { hv.assign(mix(texture(o.height, cB.u0.add(cB.rot(off2))).level(lod).r, hv, cA.w)); });
+        return hv;
+      };
+      const macro = vnoise(uvn.mul(0.11).add(7.3)).mul(0.6).add(vnoise(uvn.mul(0.37).add(1.7)).mul(0.4));      // 0..1, patches of ~9 and ~3 tiles
+      const b = marchRef({ uv: uvn, H: Hs, N: T.normalView, mask: float(1), lodMax: 4.0, depthMul: float(1).add(macro.sub(0.5).mul(kMacro).mul(1.6)) });
+      const Ph = b.uv.sub(uvn), m = buildMaps(Ph);
       const gate = b.fade.clamp(0.0, 1.0), cav = mix(float(1), float(0.55).add(b.h.mul(0.45)), gate.mul(o.cavity == null ? 0.8 : o.cavity));
+      // macro albedo: +-kMacro/2 patch brightness, plus a larger colour scale (0.31x, rotated) blended in by the same noise
+      const uvp = uvn.add(Ph), um = vec2(uvp.x.mul(0.25).sub(uvp.y.mul(0.17)), uvp.x.mul(0.17).add(uvp.y.mul(0.25)));
+      const colM = texture(o.tex.map, um).rgb, Y = vec3(0.2126, 0.7152, 0.0722);
+      const big = smoothstep(0.35, 0.75, vnoise(uvn.mul(0.19).add(3.1))).mul(0.55).mul(kMacro.mul(4.0).min(1.0));
+      let alb = m.col.mul(float(1).sub(kMacro.mul(0.5)).add(macro.mul(kMacro)));
+      alb = mix(alb, colM.mul(dot(alb, Y).div(dot(colM, Y).max(0.02))), big);                    // the larger-scale texture carries the same luminance: it re-patterns, it does not re-light
+      // decals / scatter: vertical stains (streaks up the surface, stretched along v) and lichen in the crevices
+      const sn1 = vnoise(vec2(uvn.x.mul(2.3), uvn.y.mul(0.35)).add(11.0)), stain = smoothstep(0.55, 0.85, sn1.mul(0.7).add(vnoise(vec2(uvn.x.mul(7.0), uvn.y.mul(0.9))).mul(0.3))).mul(kStain);
+      const lp = smoothstep(0.58, 0.8, vnoise(uvn.mul(0.9).add(5.5)).mul(0.65).add(vnoise(uvn.mul(3.1)).mul(0.35))), lichen = lp.mul(float(1).sub(smoothstep(0.25, 0.7, b.h))).mul(kLichen);
+      alb = mix(alb.mul(float(1).sub(stain.mul(0.45))), lichCol.mul(dot(alb, Y).mul(1.4).add(0.25)), lichen.clamp(0.0, 0.85));
       mat.map = null; mat.normalMap = null; mat.roughnessMap = null; mat.metalnessMap = null;
-      mat.colorNode = nm.map.rgb.mul(materialColor.rgb).mul(cav).mul(mix(float(1), b.shade, gate));
-      if (nm.nrm) mat.normalNode = normalMap(nm.nrm, vec2(o.nrmScale == null ? 1 : o.nrmScale, o.nrmScale == null ? 1 : o.nrmScale));
-      if (nm.orm) { mat.roughnessNode = materialRoughness.mul(nm.orm.g); mat.metalnessNode = materialMetalness.mul(nm.orm.b); }
-      mat.userData.dmPxStruct = nm; mat.needsUpdate = true; S.mats++;
+      mat.colorNode = alb.mul(materialColor.rgb).mul(cav).mul(mix(float(1), b.shade, gate));
+      if (o.tex.nrm) { const ns = o.nrmScale == null ? 1 : o.nrmScale; mat.normalNode = normalMap(vec3(m.nxy, sqrt(float(1).sub(dot(m.nxy, m.nxy)).max(0.0))).mul(0.5).add(0.5), vec2(ns, ns)); }
+      if (o.tex.orm) { mat.roughnessNode = materialRoughness.mul(m.orm.g).add(lichen.mul(0.3)).add(stain.mul(0.1)).clamp(0.04, 1.0); mat.metalnessNode = materialMetalness.mul(m.orm.b); }
+      mat.userData.dmPxStruct = { stoch: true }; mat.needsUpdate = true; S.mats++;
       return true;
     } catch (e) { try { console.warn('[parallax] structure', e); } catch (_) { } return false; }
   }
   // the streaming code swapped the map set (512 -> 1K -> 2K): point the twin's texture nodes at the new textures (no recompile: same types)
-  function structureMaps(mat, t) {
-    try {
-      const nm = mat && mat.userData && mat.userData.dmPxStruct; if (!nm) return false;
-      if (t.map) nm.map.value = t.map; if (t.nrm && nm.nrm) nm.nrm.value = t.nrm; if (t.orm && nm.orm) nm.orm.value = t.orm; return true;
-    } catch (e) { return false; }
-  }
+  function structureMaps(mat, t) { return false; }   // (v260) the stochastic graph owns its texture nodes: swap the map set BEFORE structure() (the cliff / mansion loaders already do)
   // SHARED OPT-IN HELPER: anything that wears a standard material with a colour map + normal map (wood, metal, plaster, GLB props ...) can get parallax with one call:
   //   DMParallax.optIn(root, mat, { key, tileM, depthM, near, far, heightTex?, nrmScale, cavity })  -> Promise<boolean>
   // It adopts the material into its node twin on every mesh under `root`, derives (time-sliced, cached by key, capped at the tier's hMax) a height map from the material's

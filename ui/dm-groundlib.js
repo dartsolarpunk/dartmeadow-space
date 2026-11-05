@@ -445,7 +445,16 @@
       if (!S.tex) S.tex = mkTextures(THREE, S.T);
       const tex = S.tex, Lc = tex.L, tileWj = S.world ? S.world.tileW : 4.0;
       const { Fn, If, float, vec2, vec3, vec4, mix: tmix, smoothstep, max, min, clamp: tcl, floor, fract, texture, normalize, length, dot, abs, mod, positionView, dFdx, dFdy, log2, step } = T;
-      const U = S.U, p = ctx.p, uv0 = vec2(p.x, p.z).div(float(tileWj)), reach = float(ctx.reach).mul(U.reachK);   // U.reachK / U.dual: ui/dm-budget.js ladder (uniforms; 1 = full)
+      const U = S.U, p = ctx.p, reach = float(ctx.reach).mul(U.reachK);
+      // (v260) ANTI-REPETITION: the tile lattice is domain-warped by two octaves of smooth world noise (ALU only, no fetch), so identical pits / cobbles no longer sit on a visible
+      // grid; the SAME warped uv feeds the height march, the baked slopes and the colour, so relief and colour stay consistent.  A macro patch noise then modulates albedo
+      // and relief depth over ~6-25 m patches (world-space, so it never follows the tile).
+      const hs1 = (c) => fract(T.sin(dot(c, vec2(12.9898, 78.233))).mul(43758.5453));
+      const vnz = (p2) => { const c = floor(p2), f = fract(p2), u2 = f.mul(f).mul(float(3).sub(f.mul(2))); return tmix(tmix(hs1(c), hs1(c.add(vec2(1, 0))), u2.x), tmix(hs1(c.add(vec2(0, 1))), hs1(c.add(vec2(1, 1))), u2.x), u2.y); };
+      const uvRaw = vec2(p.x, p.z).div(float(tileWj));
+      const warp = vec2(vnz(uvRaw.mul(0.31).add(vec2(3.7, 1.3))), vnz(uvRaw.mul(0.31).add(vec2(9.1, 5.9)))).sub(0.5).mul(0.55).add(vec2(vnz(uvRaw.mul(0.97).add(vec2(2.2, 8.4))), vnz(uvRaw.mul(0.97).add(vec2(6.6, 0.8)))).sub(0.5).mul(0.16));
+      const uv0 = uvRaw.add(warp);
+      const macroN = vnz(vec2(p.x, p.z).mul(0.045).add(vec2(17.3, 4.1))).mul(0.6).add(vnz(vec2(p.x, p.z).mul(0.16).add(vec2(1.9, 23.7))).mul(0.4));   // 0..1, ~6-25 m patches   // U.reachK / U.dual: ui/dm-budget.js ladder (uniforms; 1 = full)
       const dist = length(positionView);
       // weights: the tile detail (colour / roughness / baked bump) runs to `reach`; the parallax march only close in (ctx.near .. ctx.far)
       const nY = ctx.nFlat.y;
@@ -500,7 +509,7 @@
         return max(hv, level);
       };
       const depthUV = 0.105 / tileWj;
-      const b = P.buildCore({ uv: uv0, H: Hn, size: Lc.T, N: m.normalNode || T.normalView, mask: ctx.flat, depthUV, bias: 0.55, near: ctx.near, far: ctx.far, lodMax: 2.4 });
+      const b = P.buildCore({ uv: uv0, H: Hn, size: Lc.T, N: m.normalNode || T.normalView, mask: ctx.flat, depthUV, depthMul: float(1).add(macroN.sub(0.5).mul(0.7)), bias: 0.55, near: ctx.near, far: ctx.far, lodMax: 2.4 });
       const uvH = b.uv;
       // ---- final fetch at the displaced uv (A, blended with B where the weight is non-zero)
       const FinA = Fn(() => {   // (height, slope x, slope y, lightness/2)
@@ -531,7 +540,7 @@
       const cav = tmix(float(1), float(0.62).add(hHit.mul(0.38)), fadeF.mul(0.85));
       const low = float(1).sub(smoothstep(float(0.35), float(0.82), hHit));   // 1 in crevices
       const mossAmt = tcl(mossF.mul(1.5).add(ruinF.mul(0.7)).mul(float(0.25).add(low.mul(0.95))).sub(0.26).mul(1.7), 0.0, 1.0).mul(float(1).sub(water)).mul(smoothstep(float(0.6), float(0.9), nY)).mul(fadeF);
-      const tiled = m.colorNode.mul(tmix(vec3(1.0), vec3(lum).mul(tint), fadeF)).mul(cav).mul(b.shade.mul(0.5).add(0.5));
+      const tiled = m.colorNode.mul(tmix(vec3(1.0), vec3(lum).mul(tint).mul(float(0.84).add(macroN.mul(0.32))), fadeF)).mul(cav).mul(b.shade.mul(0.5).add(0.5));
       const mossed = tmix(tiled, vec3(U.mossCol).mul(float(0.55).add(lum.mul(0.5))).mul(tmix(float(0.85), float(1.15), hHit)), mossAmt.mul(0.85));
       const wetDark = mossed.mul(float(1).sub(tcl(wetF.mul(2.0), 0.0, 1.0).mul(fadeF).mul(0.38)));
       m.colorNode = tmix(wetDark, vec3(U.waterCol), water.mul(0.88));

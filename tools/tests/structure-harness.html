@@ -18,7 +18,7 @@ const cm=new TH.MeshStandardMaterial({map,normalMap:nrm,roughnessMap:orm,metalne
 const wall=new TH.Mesh(g,cm); const sc=new TH.Scene(); sc.background=new TH.Color(0x8fb0d0); sc.add(wall);
 sc.add(new TH.HemisphereLight(0xbfd8ff,0x403830,0.8)); const sun=new TH.DirectionalLight(0xfff0d0,2.8); sun.position.set(-6,3,5); sc.add(sun);
 let ok=false;
-if(useP){ window.DMParallax.init(); const tw=window.DMParallax.adopt(wall,cm); ok=window.DMParallax.structure(tw,{tex:{map,nrm,orm},height:hgt,hSize:q('res','1k')==='512'?512:1024,tileM:J.tileM,depthM:S.depthM*+q('depth',1),near:14,far:40}); if(!ok){ window.extra={structureFailed:true}; } window.twin=tw; }
+if(useP){ window.DMParallax.init(); const tw=window.DMParallax.adopt(wall,cm); ok=window.DMParallax.structure(tw,{tex:{map,nrm,orm},height:hgt,hSize:q('res','1k')==='512'?512:1024,tileM:J.tileM,depthM:S.depthM*+q('depth',1),rot:'flip',macro:0.3,stain:0.5,lichen:0.35,near:14,far:40}); if(!ok){ window.extra={structureFailed:true}; } window.twin=tw; }
 const cam=new TH.PerspectiveCamera(50,960/540,0.1,200); const v=q('view','oblique');
 if(v==='front'){ cam.position.set(0,0,5); cam.lookAt(0,0,0); } else { cam.position.set(4.5,-0.3,3.2); cam.lookAt(-1,0.3,0); }
 let t0=performance.now(); await r.compileAsync(sc,cam); window.compileMs=performance.now()-t0;

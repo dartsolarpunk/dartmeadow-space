@@ -292,7 +292,7 @@
       const old = [tgt.map, tgt.normalMap, tgt.roughnessMap];
       tgt.map = a; tgt.normalMap = b; tgt.roughnessMap = o; tgt.metalnessMap = o; tgt.needsUpdate = true;
       old.forEach(x => { if (x && x.dispose && x !== a && x !== b && x !== o) x.dispose(); });   // the 1K maps the GLB shipped with go once the 2K ones are on the material
-      if (PXD && tgt.isNodeMaterial) { try { const hg = await DMParallax.deriveHeightAsync('man|' + n, b, 'nrm', DMParallax.tierRow(DMParallax.tierName()).hMax); if (hg && alive() && !DMParallax.structure(tgt, { tex: { map: a, nrm: b, orm: o }, height: hg, hSize: hg.image.width, tileM: PXD[0], depthM: PXD[1], near: 10, far: 30, cavity: 0.6 })) { /* stays on the plain maps */ } } catch (e) { console.warn('[ariel-home] mansion parallax', n, e); } }
+      if (PXD && tgt.isNodeMaterial) { try { const hg = await DMParallax.deriveHeightAsync('man|' + n, b, 'nrm', DMParallax.tierRow(DMParallax.tierName()).hMax); if (hg && alive() && !DMParallax.structure(tgt, { tex: { map: a, nrm: b, orm: o }, height: hg, hSize: hg.image.width, tileM: PXD[0], depthM: PXD[1], rot: 'flip', macro: 0.16, stain: 0.18, lichen: n === 'slate' ? 0.1 : 0, near: 10, far: 30, cavity: 0.6 })) { /* stays on the plain maps */ } } catch (e) { console.warn('[ariel-home] mansion parallax', n, e); } }
     }, () => { hiTried = false; }));
   }
 
@@ -313,7 +313,7 @@
         let tgt = mat; rts.forEach(rt => { tgt = DMParallax.adopt(rt, mat); });
         if (!tgt || !tgt.isNodeMaterial || !tgt.map || !tgt.normalMap) return;
         const hg = await DMParallax.deriveHeightAsync('man|' + n, tgt.normalMap, 'nrm', DMParallax.tierRow(DMParallax.tierName()).hMax);
-        if (hg && alive()) DMParallax.structure(tgt, { tex: { map: tgt.map, nrm: tgt.normalMap, orm: tgt.roughnessMap }, height: hg, hSize: hg.image.width, tileM: PXD[0], depthM: PXD[1], near: 10, far: 30, cavity: 0.6 });
+        if (hg && alive()) DMParallax.structure(tgt, { tex: { map: tgt.map, nrm: tgt.normalMap, orm: tgt.roughnessMap }, height: hg, hSize: hg.image.width, tileM: PXD[0], depthM: PXD[1], rot: 'flip', macro: 0.16, stain: 0.18, lichen: n === 'slate' ? 0.1 : 0, near: 10, far: 30, cavity: 0.6 });
       } catch (e) { console.warn('[ariel-home] mansion parallax', n, e); }
     }, () => { manPxTried = false; }));
   }
@@ -345,7 +345,7 @@
           try {
             const ht = await load(J.base + id + '-height-' + hp + '.webp?v=' + F.ver); ht.flipY = false; ht.wrapS = ht.wrapT = T.RepeatWrapping; ht.anisotropy = 1; ht.colorSpace = T.NoColorSpace;
             if (!alive()) { ht.dispose(); return; }
-            if (!DMParallax.structure(mat, { tex: { map: mat.map, nrm: mat.normalMap, orm: mat.roughnessMap }, height: ht, hSize: ht.image && ht.image.width, tileM: J.tileM, depthM: S.depthM, near: (J.parallax && J.parallax.fadeStartM) || 14, far: (J.parallax && J.parallax.fadeEndM) || 40 })) ht.dispose();
+            if (!DMParallax.structure(mat, { tex: { map: mat.map, nrm: mat.normalMap, orm: mat.roughnessMap }, height: ht, hSize: ht.image && ht.image.width, tileM: J.tileM, depthM: S.depthM, rot: 'flip', macro: 0.3, stain: 0.5, lichen: 0.35, near: (J.parallax && J.parallax.fadeStartM) || 14, far: (J.parallax && J.parallax.fadeEndM) || 40 })) ht.dispose();
           } catch (e) { console.warn('[ariel-home] cliff parallax 512', id, e); }
         }, () => { cliffTried = false; }));
         return;
@@ -365,7 +365,7 @@
           try {
             const ht = await load(J.base + id + '-height-' + hp + '.webp?v=' + F.ver); ht.flipY = false; ht.wrapS = ht.wrapT = T.RepeatWrapping; ht.anisotropy = 2; ht.colorSpace = T.NoColorSpace;
             if (!alive()) { ht.dispose(); return; }
-            if (!DMParallax.structure(mat, { tex: { map: a, nrm: b, orm: o }, height: ht, hSize: ht.image && ht.image.width, tileM: J.tileM, depthM: S.depthM, near: (J.parallax && J.parallax.fadeStartM) || 14, far: (J.parallax && J.parallax.fadeEndM) || 40 })) ht.dispose();
+            if (!DMParallax.structure(mat, { tex: { map: a, nrm: b, orm: o }, height: ht, hSize: ht.image && ht.image.width, tileM: J.tileM, depthM: S.depthM, rot: 'flip', macro: 0.3, stain: 0.5, lichen: 0.35, near: (J.parallax && J.parallax.fadeStartM) || 14, far: (J.parallax && J.parallax.fadeEndM) || 40 })) ht.dispose();
           } catch (e) { console.warn('[ariel-home] cliff parallax', id, e); }
         }
       }, () => { cliffTried = false; }));

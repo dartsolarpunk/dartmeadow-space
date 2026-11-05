@@ -30,7 +30,7 @@ with sync_playwright() as p:
     br = p.chromium.launch(executable_path=CHROME, args=ARGS, headless=True) if CHROME else p.chromium.launch(args=ARGS, headless=True)
     pg = br.new_page(viewport={'width': 960, 'height': 540})
     pg.on('pageerror', lambda e: errs.append(str(e)[:300]))
-    pg.on('console', lambda m: errs.append(m.text[:300]) if m.type in ('error',) else None)
+    pg.on('console', lambda m: errs.append(m.text[:300]) if m.type in ('error','warning') else None)
     pg.goto('http://127.0.0.1:%d/%s' % (port, a.url.lstrip('/')))
     try: pg.wait_for_function('window.done===true', timeout=a.wait * 1000)
     except Exception as e: errs.append('timeout ' + str(e)[:100])
