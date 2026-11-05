@@ -1,24 +1,24 @@
 <!doctype html><meta charset=utf8><body style="margin:0;background:#000"><canvas id=c width=960 height=540></canvas>
 <script type="importmap">{"imports":{"three":"/three/build/three.webgpu.js","three/webgpu":"/three/build/three.webgpu.js","three/tsl":"/three/build/three.tsl.js"}}</script>
 <script type="module">
-// Headless render of a cliff wall (real cliff-materials.json set, 1K maps) through DMParallax.adopt + structure.   ?set=columnar|strata|sheet|talus &px=0 &steps=N &view=front|oblique
+// Headless render of a cliff wall (real cliff-materials.json set) through DMParallax.adopt + structure.   ?set=columnar|strata|sheet|talus &px=0 &steps=N &view=front|oblique &res=512|1k &tier=low|medium|high|ultra &mob=1 &q=0..1 (pins the quality)
 import * as TH from 'three/webgpu'; import * as TSL from 'three/tsl';
 const Q=new URLSearchParams(location.search), q=(k,d)=>Q.get(k)??d;
 const THREE=Object.assign({},TH); THREE.TSL=TSL; window.THREE=THREE; Object.assign(window,TSL);
-window.GFX={isMobile:q('mob')==='1'}; window.resolvePreset=()=>q('tier','ultra');
+window.GFX={isMobile:q('mob')==='1'}; if(q('q')!==null) history.replaceState(null,'','?'+Q.toString()+'&pxq='+q('q')); window.resolvePreset=()=>q('tier','ultra');
 window.TERRAIN={sun:{position:new TH.Vector3(6,4,5),target:{position:new TH.Vector3()}}};
 const useP=q('px')!=='0';
 await import('../../ui/dm-parallax.js');
 const J=await (await fetch('../../assets/ariel-home/cliff/cliff-materials.json')).json(), id=q('set','columnar'), S=J.sets[id];
 const r=new TH.WebGPURenderer({canvas:document.getElementById('c'),forceWebGL:true,antialias:false}); await r.init();
-const L=new TH.TextureLoader(), ld=async(k,srgb)=>{ const t=await L.loadAsync('../../'+J.base+id+'-'+k+'-1k.webp'); t.flipY=false; t.wrapS=t.wrapT=TH.RepeatWrapping; t.anisotropy=8; t.colorSpace=srgb?TH.SRGBColorSpace:TH.NoColorSpace; return t; };
+const L=new TH.TextureLoader(), ld=async(k,srgb)=>{ const t=await L.loadAsync('../../'+J.base+id+'-'+k+'-'+q('res','1k')+'.webp'); t.flipY=false; t.wrapS=t.wrapT=TH.RepeatWrapping; t.anisotropy=8; t.colorSpace=srgb?TH.SRGBColorSpace:TH.NoColorSpace; return t; };
 const [map,nrm,orm,hgt]=await Promise.all([ld('color',true),ld('nrm'),ld('orm'),ld('height')]);
 const g=new TH.PlaneGeometry(14,9,1,1); const uv=g.attributes.uv, pos=g.attributes.position; for(let i=0;i<uv.count;i++) uv.setXY(i,(pos.getX(i)+7)/J.tileM,(pos.getY(i)+4.5)/J.tileM);
 const cm=new TH.MeshStandardMaterial({map,normalMap:nrm,roughnessMap:orm,metalnessMap:orm,roughness:1,metalness:1});
 const wall=new TH.Mesh(g,cm); const sc=new TH.Scene(); sc.background=new TH.Color(0x8fb0d0); sc.add(wall);
 sc.add(new TH.HemisphereLight(0xbfd8ff,0x403830,0.8)); const sun=new TH.DirectionalLight(0xfff0d0,2.8); sun.position.set(-6,3,5); sc.add(sun);
 let ok=false;
-if(useP){ window.DMParallax.init(); const tw=window.DMParallax.adopt(wall,cm); ok=window.DMParallax.structure(tw,{tex:{map,nrm,orm},height:hgt,hSize:1024,tileM:J.tileM,depthM:S.depthM*+q('depth',1),near:14,far:40}); window.twin=tw; }
+if(useP){ window.DMParallax.init(); const tw=window.DMParallax.adopt(wall,cm); ok=window.DMParallax.structure(tw,{tex:{map,nrm,orm},height:hgt,hSize:q('res','1k')==='512'?512:1024,tileM:J.tileM,depthM:S.depthM*+q('depth',1),near:14,far:40}); if(!ok){ window.extra={structureFailed:true}; } window.twin=tw; }
 const cam=new TH.PerspectiveCamera(50,960/540,0.1,200); const v=q('view','oblique');
 if(v==='front'){ cam.position.set(0,0,5); cam.lookAt(0,0,0); } else { cam.position.set(4.5,-0.3,3.2); cam.lookAt(-1,0.3,0); }
 let t0=performance.now(); await r.compileAsync(sc,cam); window.compileMs=performance.now()-t0;

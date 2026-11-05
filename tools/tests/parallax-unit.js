@@ -35,8 +35,11 @@ ok(R.shadow(wall, 0.5, 0.5, 0.1, [0, 0, 1], { depth: 0.1 }) === 1, 'overhead lig
 // distance fade + view-adaptive layers + tiers
 ok(R.distFade(1, 5, 10) === 1 && R.distFade(20, 5, 10) === 0 && R.distFade(7.5, 5, 10) > 0.4, 'distFade');
 ok(R.layersFor(1, 24) < R.layersFor(0.2, 24) && R.layersFor(0.2, 24) <= 24, 'adaptive layers');
-const T = R.TIERS; ok(T.desktop.ultra.steps === 24 && T.desktop.medium.steps === 16 && T.mobile.medium.steps === 6 && T.mobile.ultra.steps === 10 && T.desktop.low.steps === 0 && T.mobile.low.steps === 0, 'tier counts');
-ok(R.BOUNDS.mobile.shN === 0 && R.BOUNDS.mobile.rel === 0, 'mobile has no shadow/relief code');
+const T = R.TIERS; ok(T.desktop.ultra.steps === 24 && T.desktop.medium.steps === 16 && T.mobile.medium.steps === 8 && T.mobile.ultra.steps === 16, 'tier counts');
+ok(R.BOUNDS.mobile.shN === 3 && R.BOUNDS.mobile.rel === 1, 'mobile carries a 3-tap shadow and one relief step (uniform-gated)');
+// the derivations are generators (time-sliced at runtime): they must yield between slices and produce exactly what the plain functions return
+{ const W2 = 96, d = new Uint8Array(W2 * W2 * 4); for (let i = 0; i < W2 * W2; i++) { const x = i % W2, y = (i / W2) | 0, c = ((x >> 3) + (y >> 3)) & 1 ? 190 : 60; d[i * 4] = c; d[i * 4 + 1] = 128 + (x & 15); d[i * 4 + 2] = 255; d[i * 4 + 3] = 255; }
+  for (const [g, f] of [[P.heightFromRGBAG, P.heightFromRGBA], [P.heightFromNormalsG, P.heightFromNormals]]) { const it = g(d, W2, W2, {}); let y = 0, r; do { r = it.next(); if (!r.done) y++; } while (!r.done); const e = f(d, W2, W2, {}); ok(y >= 4 && r.value.every((v, i) => v === e[i]), 'sliced == sync, yields=' + y); } }
 // height derivation: colour with a dark crack grid -> cracks low, plates high; deterministic
 const W = 64, rgba = new Uint8Array(W * W * 4);
 for (let y = 0; y < W; y++) for (let x = 0; x < W; x++) { const c = (x % 16 < 2 || y % 16 < 2) ? 40 : 170; const i = (y * W + x) * 4; rgba[i] = rgba[i + 1] = rgba[i + 2] = c; rgba[i + 3] = 255; }

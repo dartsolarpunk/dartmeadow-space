@@ -292,8 +292,30 @@
       const old = [tgt.map, tgt.normalMap, tgt.roughnessMap];
       tgt.map = a; tgt.normalMap = b; tgt.roughnessMap = o; tgt.metalnessMap = o; tgt.needsUpdate = true;
       old.forEach(x => { if (x && x.dispose && x !== a && x !== b && x !== o) x.dispose(); });   // the 1K maps the GLB shipped with go once the 2K ones are on the material
-      if (PXD && tgt.isNodeMaterial) { try { const hg = DMParallax.deriveHeight('man|' + n, b, 'nrm', 512); if (hg && !DMParallax.structure(tgt, { tex: { map: a, nrm: b, orm: o }, height: hg, hSize: hg.image.width, tileM: PXD[0], depthM: PXD[1], near: 10, far: 30, cavity: 0.6 })) { /* stays on the plain maps */ } } catch (e) { console.warn('[ariel-home] mansion parallax', n, e); } }
+      if (PXD && tgt.isNodeMaterial) { try { const hg = await DMParallax.deriveHeightAsync('man|' + n, b, 'nrm', DMParallax.tierRow(DMParallax.tierName()).hMax); if (hg && alive() && !DMParallax.structure(tgt, { tex: { map: a, nrm: b, orm: o }, height: hg, hSize: hg.image.width, tileM: PXD[0], depthM: PXD[1], near: 10, far: 30, cavity: 0.6 })) { /* stays on the plain maps */ } } catch (e) { console.warn('[ariel-home] mansion parallax', n, e); } }
     }, () => { hiTried = false; }));
+  }
+
+  // (v256) Parallax on the mansion materials at EVERY tier. Desktop tier >= 2 gets it with the 2K set above; everyone else (phones / tablets, desktop Low-Medium) keeps the maps
+  // the GLB shipped with (1K desktop, 512 phone GLB) and gets the same shared march on them: the height map is derived once from the embedded normal map (time-sliced, capped
+  // at the tier's hMax: Low 256 px ... Ultra 1024), one material per queue step. Numbers per tier (steps, depth, reach) are shared uniforms in ui/dm-parallax.js.
+  const MAN_PXD = { slate: [4, 0.04], concrete: [4, 0.012], wood: [3, 0.02], dark: [2, 0.012] };   // [tileM, depthM] (tile sizes from build_mansion.py TILE)
+  let manPxTried = false;
+  function mansionPx(T) {
+    const c = F.ctx; if (manPxTried || !MAN.glb || !window.DMParallax || !DMParallax.on || /[?&]manpx=0\b/.test(location.search)) return;
+    if (!c.isMobile() && c.tier() >= 2) return;      // upgrade2K adds it with the 2K maps
+    manPxTried = true;
+    const byName = {}; MAN.glb.scene.traverse(o => { if (o.isMesh && o.material && /^ah_(slate|concrete|wood|dark)$/.test(o.material.name)) byName[o.material.name] = o.material; });
+    Object.keys(byName).forEach(k => F.heavy('mpx:' + k, async (alive) => {
+      const n = k.slice(3), PXD = MAN_PXD[n], mat = byName[k]; if (!PXD || !alive()) return;
+      try {
+        const rts = [MAN.glb.scene].concat(Array.from(F.sites.values()).filter(r => r.mansion && r.group).map(r => r.group));
+        let tgt = mat; rts.forEach(rt => { tgt = DMParallax.adopt(rt, mat); });
+        if (!tgt || !tgt.isNodeMaterial || !tgt.map || !tgt.normalMap) return;
+        const hg = await DMParallax.deriveHeightAsync('man|' + n, tgt.normalMap, 'nrm', DMParallax.tierRow(DMParallax.tierName()).hMax);
+        if (hg && alive()) DMParallax.structure(tgt, { tex: { map: tgt.map, nrm: tgt.normalMap, orm: tgt.roughnessMap }, height: hg, hSize: hg.image.width, tileM: PXD[0], depthM: PXD[1], near: 10, far: 30, cavity: 0.6 });
+      } catch (e) { console.warn('[ariel-home] mansion parallax', n, e); }
+    }, () => { manPxTried = false; }));
   }
 
   // Cliff rock sets (tools/ariel-home/gen_cliff_textures.py + cliff_mesh.py): 4 tileable 3 m sets (strata / columnar / sheet / talus), each colour + normal + ORM + height.
@@ -309,14 +331,25 @@
     const byName = {}; MAN.glb.scene.traverse(o => { if (o.isMesh && o.material && /^ah_rock/.test(o.material.name)) byName[o.material.name] = o.material; });
     fetch('assets/ariel-home/cliff/cliff-materials.json?v=' + F.ver).then(r => r.json()).then(J => {
       const L = new T.TextureLoader(), load = u => new Promise((ok, no) => L.load(u, ok, undefined, no)), aniso = mob ? 4 : 8, ids = Object.keys(J.sets);
-      const hp = J.heightTierFor ? J.heightTierFor[res || '512'] : (res || '512');
+      const pxRes = res || '512', hp = J.heightTierFor ? J.heightTierFor[pxRes] : pxRes;
       // (parallax) real relief on the cliff: each rock material is adopted into a node twin (ui/dm-parallax.js) that marches the set's height map, sharing the ground's
-      // governor/preset uniforms (uniform writes only). Desktop tier >= 1, phones tier >= 2 with the 1K maps; ?px=0 / Low = the plain maps as before.
-      const pxOn = !!(res && window.DMParallax && DMParallax.on && !/[?&]cliffpx=0\b/.test(location.search));
+      // governor/preset uniforms (uniform writes only). (v256) EVERY tier: where no bigger set streams in (Low, phones below the memory gates) the 512 maps the GLB embeds
+      // stay on the material and only the 512 height map (8-22 KB each) is fetched; the tier table scales steps / depth / fade band. Only ?px=0 / ?cliffpx=0 turn it off.
+      const pxOn = !!(window.DMParallax && DMParallax.on && !/[?&]cliffpx=0\b/.test(location.search));
       const pxRoots = () => [MAN.glb.scene].concat(Array.from(F.sites.values()).filter(r => r.mansion && r.group).map(r => r.group));
       if (pxOn) ids.forEach(id => { const S = J.sets[id], m0 = byName[S.material]; if (!m0) return; let tw = m0; pxRoots().forEach(rt => { tw = DMParallax.adopt(rt, m0); }); byName[S.material] = tw; });
       ids.forEach(id => { const S = J.sets[id], mat = byName[S.material]; if (mat) mat.userData.dmCliff = { set: id, tileM: J.tileM, depthM: S.depthM, height: J.base + id + '-height-' + hp + '.webp?v=' + F.ver, uvOrigin: J.uv }; });
-      if (!res) return;
+      if (!res) {   // 512 maps stay; the height map joins them (one set per serial queue step, same gate as the texture sets)
+        if (pxOn) ids.forEach(id => F.heavy('cliffpx:' + id + ':512', async (alive) => {
+          const S = J.sets[id], mat = byName[S.material]; if (!mat || !mat.isNodeMaterial || !mat.map || !mat.normalMap) return;
+          try {
+            const ht = await load(J.base + id + '-height-' + hp + '.webp?v=' + F.ver); ht.flipY = false; ht.wrapS = ht.wrapT = T.RepeatWrapping; ht.anisotropy = 1; ht.colorSpace = T.NoColorSpace;
+            if (!alive()) { ht.dispose(); return; }
+            if (!DMParallax.structure(mat, { tex: { map: mat.map, nrm: mat.normalMap, orm: mat.roughnessMap }, height: ht, hSize: ht.image && ht.image.width, tileM: J.tileM, depthM: S.depthM, near: (J.parallax && J.parallax.fadeStartM) || 14, far: (J.parallax && J.parallax.fadeEndM) || 40 })) ht.dispose();
+          } catch (e) { console.warn('[ariel-home] cliff parallax 512', id, e); }
+        }, () => { cliffTried = false; }));
+        return;
+      }
       ids.forEach(id => F.heavy('cliff:' + id + ':' + res, async (alive) => {   // one set per queue step (>= GAP ms apart, only while the page keeps up); its three images load one after the other
         const S = J.sets[id], mat = byName[S.material]; if (!mat) return;
         const base = J.base + id + '-', got = [];
@@ -535,7 +568,7 @@
       if (rec.mansion) {
         const u = rec.group.userData, near = d2 < 420 * 420, far = d2 > 5200 * 5200;
         if (u.lod0) u.lod0.visible = near && !far; if (u.lod1) u.lod1.visible = !near && !far;
-        if (d2 < 1100 * 1100) { upgrade2K(T); upgradeCliff(T); }
+        if (d2 < 1100 * 1100) { upgrade2K(T); mansionPx(T); upgradeCliff(T); }
         if (window.DMMansionInt) DMMansionInt.tick(rec, d2, now, DM.arriveAt === rec.def.id);
         if (window.DMLamps) { try { DMLamps.tick(rec, d2, now, dt, f, mode); } catch (e) { if (!rec.lampWarn) { rec.lampWarn = 1; console.warn('[lamps] tick', e); } } }   // street lamps + room switches (a failure here must never stop the facility upkeep)
       } else rec.group.visible = d2 < 6000 * 6000;

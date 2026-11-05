@@ -1,0 +1,33 @@
+<!doctype html><meta charset=utf8><base href="/"><body style="margin:0;background:#000"><canvas id=c width=960 height=540></canvas>
+<script type="importmap">{"imports":{"three":"/three/build/three.webgpu.js","three/webgpu":"/three/build/three.webgpu.js","three/tsl":"/three/build/three.tsl.js"}}</script>
+<script type="module">
+// Headless render of a Bird Temple exterior panel through the REAL ui/dm-bt-pbr.js (stochastic-tiling shader + the v256 parallax march).
+// ?sec=hull|temple|altar|trim  &tier=low|medium|high|ultra  &mob=1  &px=0 (parallax off)  &q=0..1 (pin quality)  &view=oblique|front|grazing
+import * as TH from 'three/webgpu'; import * as TSL from 'three/tsl';
+const Q=new URLSearchParams(location.search), q=(k,d)=>Q.get(k)??d;
+const THREE=Object.assign({},TH); THREE.TSL=TSL; window.THREE=THREE; Object.assign(window,TSL);
+const tier=q('tier','ultra'); window.GFX={isMobile:q('mob')==='1',shadowSize:{low:512,medium:1024,high:2048,ultra:4096}[tier]}; window.resolvePreset=()=>tier;
+window.TERRAIN={sun:{position:new TH.Vector3(6,4,5),target:{position:new TH.Vector3()}}};
+const sec=q('sec','hull'), TILE={hull:10,temple:6,altar:2.5,trim:1}[sec], NAME={hull:'Hull',temple:'Temple',altar:'Altar',trim:'Staff base'}[sec];
+await import('/ui/dm-parallax.js'); await import('/ui/dm-bt-pbr.js');
+const r=new TH.WebGPURenderer({canvas:document.getElementById('c'),forceWebGL:true,antialias:false}); await r.init(); window.backend=r.backend.constructor.name;
+const W=14,H=9, g=new TH.PlaneGeometry(W,H,1,1), pos=g.attributes.position, uv=g.attributes.uv, n=pos.count;
+for(let i=0;i<n;i++) uv.setXY(i,(pos.getX(i)+W/2)/TILE+0.37,(pos.getY(i)+H/2)/TILE+0.11);   // box projection: world units / tile, spans several repeats
+g.setAttribute('tangent',new TH.BufferAttribute(new Float32Array(n*4).map((v,i)=>i%4===0?1:i%4===3?1:0),4));
+const m=new TH.MeshStandardNodeMaterial({roughness:1,metalness:1}); m.name=NAME;
+const mesh=new TH.Mesh(g,m); mesh.name=NAME;
+const root=new TH.Group(); root.add(mesh); const grp=new TH.Group(); grp.add(root); grp.scale.setScalar(1);
+window.BIRD_TEMPLE={group:grp,_glb:root};
+const sc=new TH.Scene(); sc.background=new TH.Color(0x101820); sc.add(grp);
+sc.add(new TH.HemisphereLight(0xbfd8ff,0x303038,0.9)); const sun=new TH.DirectionalLight(0xfff0d0,2.8); sun.position.set(-6,3,5); sc.add(sun);
+const P=window.DMBtPbr; await P.load(); const nApplied=P.apply(root);
+const useP=q('px')!=='0';
+const cam=new TH.PerspectiveCamera(50,960/540,0.1,200); const v=q('view','oblique');
+if(v==='front'){ cam.position.set(0,0,5); cam.lookAt(0,0,0); } else if(v==='grazing'){ cam.position.set(6.5,-0.2,1.6); cam.lookAt(-1,0.1,0); } else { cam.position.set(4.5,-0.3,3.2); cam.lookAt(-1,0.3,0); }
+// wait for the time-sliced height map of this section (the strength is 0 until it lands: the march costs nothing before)
+const sleep=ms=>new Promise(o=>setTimeout(o,ms)); let waited=0; const ps=window.DMBtPbr.pxSec[sec];
+while(useP&&ps&&!ps.ready&&waited<120000){ await sleep(250); waited+=250; }
+let t0=performance.now(); await r.compileAsync(sc,cam); window.compileMs=performance.now()-t0;
+t0=performance.now(); for(let i=0;i<3;i++) await r.renderAsync(sc,cam); window.frameMs=(performance.now()-t0)/3;
+window.ok=nApplied>0; window.status=Object.assign({applied:nApplied,heightWaitMs:waited,heightTex:ps&&ps.tex?ps.tex.image.width:0,ready:!!(ps&&ps.ready)},P.stats,{px:window.DMParallax.status().cfg}); window.extra=window.status; window.done=true;
+</script>

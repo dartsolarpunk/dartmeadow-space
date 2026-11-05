@@ -10,6 +10,11 @@
  * positions, indices, colours, node names, transforms, deckAnchor and every collision input are byte-identical (verify.py).
  * Runtime: materials only — maps on the existing exterior materials, no lights, no new geometry. 2K at tier >= 3 (tier 2 on non-mobile), else 1K
  * (phones, Mali-class tablets). Applied before the temple warm-up compile (index.html), with a tick() fallback. ?pbr=0 disables.
+ * (v256) PARALLAX on every tier: the 7-fetch stochastic-tiling shader below gets a height march (ui/dm-parallax.js, the same shared uniforms / tier table / quality governor as the
+ * ground). The height map of each section is derived ONCE from its normal map (time-sliced, cached, capped at the tier's hMax) and sampled through the SAME per-cell random
+ * offset + 90-degree rotation as the colour / normal / ORM fetches: the tangent-space view offset of each march step is rotated by the cell's rotation (layer A, layer B half a tile
+ * away) and the two layer heights are blended with the same border weight, so the displaced colour/normal fetches land on the texels the height was read from.  Layer B's height is
+ * only fetched in the border band where its weight is non-zero.  ?btpx=0 turns just this off.  Depth / range ride on material properties: all sections share one march program.
  */
 (function () {
   'use strict';
@@ -22,6 +27,10 @@
     trim: ['Staff stuck', 'Staff amulet ring', 'Staff amulet triangle', 'Staff amulet', 'Staff base', 'dart', 'ornament', 'staff'],
   };
   const NRM = { hull: 0.9, temple: 0.8, altar: 0.6, trim: 0.5 };
+  const PXDEPTH = { hull: 0.007, temple: 0.009, altar: 0.014, trim: 0.03 };   // relief depth in texture-tile units (tile = 10 / 6 / 2.5 / 1 root units: ~7 cm hull ... 3 cm trim)
+  const PXNEAR = 3, PXFAR = 15;                                                // scene units, before the tier's reach multiplier (same band as the scratch fade below)
+  P.pxSec = {};                                                                 // section -> { tex, ready, mats }
+  const pxAllowed = () => { try { return !/[?&]btpx=0\b/.test(location.search); } catch (e) { return true; } };
   const san = n => String(n || '').replace(/\s/g, '_').replace(/[\[\].:\/]/g, '');
   const byName = new Map(); for (const s in SEC) for (const n of SEC[s]) byName.set(san(n), s);
   const tier = () => { const s = (window.GFX && GFX.shadowSize) || 1024; return s >= 4096 ? 3 : s >= 2048 ? 2 : s >= 1024 ? 1 : 0; };
@@ -120,16 +129,53 @@
     const uvn = T.uv(), dx = T.dFdx(uvn), dy = T.dFdy(uvn);
     const h2 = c => T.fract(T.sin(T.vec2(T.dot(c, T.vec2(127.1, 311.7)), T.dot(c, T.vec2(269.5, 183.3)))).mul(43758.5453));
     const h1 = c => T.fract(T.sin(T.dot(c, T.vec2(12.9898, 78.233))).mul(43758.5453));
-    const layer = sh => {
+    // stage 1: the stochastic cell of this pixel (hash -> random offset + 90-degree rotation), its border weight, explicit gradients
+    const cell = sh => {
       const q = uvn.add(sh), c = T.floor(q), h = h2(c), a = T.floor(h.x.mul(4)).mul(1.5707963), cs = T.cos(a), sn = T.sin(a);
       const rot = v => T.vec2(v.x.mul(cs).sub(v.y.mul(sn)), v.x.mul(sn).add(v.y.mul(cs)));
-      const u = rot(q).add(h.mul(T.vec2(5.37, 9.71))), gx = rot(dx), gy = rot(dy);
       const f = T.fract(q), e = T.min(T.min(f.x, T.float(1).sub(f.x)), T.min(f.y, T.float(1).sub(f.y)));
-      const n0 = T.texture(tx.nrm, u).grad(gx, gy).xy.mul(2).sub(1);
-      const nxy = T.vec2(n0.x.mul(cs).add(n0.y.mul(sn)), n0.x.mul(sn).negate().add(n0.y.mul(cs)));   // back into the surface tangent frame
-      return { col: T.texture(tx.map, u).grad(gx, gy), orm: T.texture(tx.orm, u).grad(gx, gy), nxy, w: T.smoothstep(0.0, 0.22, e), h };
+      return { h, cs, sn, rot, u0: rot(q).add(h.mul(T.vec2(5.37, 9.71))), gx: rot(dx), gy: rot(dy), w: T.smoothstep(0.0, 0.22, e) };
     };
-    const A = layer(T.vec2(0, 0)), B = layer(T.vec2(0.5, 0.5));
+    // stage 2: the fetches.  Ph = the parallax offset of the surface uv (tangent frame); the cell's own rotation carries it into the texture frame (rot(q + Ph) = rot(q) + rot(Ph))
+    const fetch = (C, Ph) => {
+      const u = Ph ? C.u0.add(C.rot(Ph)) : C.u0, cs = C.cs, sn = C.sn;
+      const n0 = T.texture(tx.nrm, u).grad(C.gx, C.gy).xy.mul(2).sub(1);
+      const nxy = T.vec2(n0.x.mul(cs).add(n0.y.mul(sn)), n0.x.mul(sn).negate().add(n0.y.mul(cs)));   // back into the surface tangent frame
+      return { col: T.texture(tx.map, u).grad(C.gx, C.gy), orm: T.texture(tx.orm, u).grad(C.gx, C.gy), nxy, w: C.w, h: C.h };
+    };
+    const cA = cell(T.vec2(0, 0)), cB = cell(T.vec2(0.5, 0.5));
+    // ---- parallax: march a height map through the same cells ----
+    let Ph = null, pxCav = null, pxShade = null;
+    const DP = window.DMParallax, sec0 = P.pxSec[s];
+    if (DP && DP.on && pxAllowed() && tx.nrm && tx.nrm.image && !sec0 || sec0.tex) {
+      try {
+        if (DP.init()) {
+          const sec = P.pxSec[s] || (P.pxSec[s] = (() => {
+            const cap = DP.tierRow(DP.tierName()).hMax, r = DP.deriveHeightInto('bt|' + s + '|' + P.stats.res, tx.nrm, 'nrm', cap), o = { tex: r.tex, ready: false, mats: [] };
+            if (r.tex) r.ready.then(t => { if (t) { o.ready = true; o.mats.forEach(mm => { mm.pxStrength = 1; }); P.stats.pxReady = (P.stats.pxReady || 0) + 1; } });
+            return o;
+          })());
+          if (sec.tex) {
+            DP.setProps(m, { depth: PXDEPTH[s], bias: 0.5, near: PXNEAR, far: PXFAR, strength: sec.ready ? 1 : 0, size: sec.tex.image.width });
+            sec.mats.push(m);
+            const ht = sec.tex;
+            const Hs = (u, lod) => {   // the blended stochastic height: layer A's cell, plus layer B's where B still has weight
+              const off = u.sub(uvn), hv = T.float(0).toVar();
+              hv.assign(T.texture(ht, cA.u0.add(cA.rot(off))).level(lod).r);
+              T.If(cA.w.lessThan(0.995), () => { hv.assign(T.mix(T.texture(ht, cB.u0.add(cB.rot(off))).level(lod).r, hv, cA.w)); });
+              return hv;
+            };
+            const b = DP.marchRef({ uv: uvn, H: Hs, N: T.normalView, lodMax: 4.0 });
+            Ph = b.uv.sub(uvn);
+            const gate = b.fade.clamp(0.0, 1.0);
+            pxCav = T.mix(T.float(1), T.float(0.55).add(b.h.mul(0.45)), gate.mul(0.75));
+            pxShade = T.mix(T.float(1), b.shade, gate.mul(0.8));
+            P.stats.pxMats = (P.stats.pxMats || 0) + 1;
+          }
+        }
+      } catch (e) { P.stats.pxErr = String(e && e.message || e).slice(0, 120); Ph = null; pxCav = null; pxShade = null; }
+    }
+    const A = Object.assign({}, cA, fetch(cA, Ph)), B = Object.assign({}, cB, fetch(cB, Ph));
     const col = T.mix(B.col, A.col, A.w), orm = T.mix(B.orm, A.orm, A.w), nxy = T.mix(B.nxy, A.nxy, A.w);
     const nt = T.vec3(nxy, T.sqrt(T.float(1).sub(T.dot(nxy, nxy)).max(0.0))).mul(0.5).add(0.5);
     // low-frequency world noise (value noise, 2 octaves) -> blend toward a 0.31x rotated scale + grime + per-panel tint
@@ -138,13 +184,15 @@
       return T.mix(T.mix(h1(c), h1(c.add(T.vec2(1, 0))), u2.x), T.mix(h1(c.add(T.vec2(0, 1))), h1(c.add(T.vec2(1, 1))), u2.x), u2.y); };
     const wp = T.vec2(pw.x.add(pw.y.mul(0.7)), pw.z.sub(pw.y.mul(0.4)));
     const n1 = vn(wp.mul(0.045)), n2 = vn(wp.mul(0.17).add(13.1));
-    const um = T.vec2(uvn.x.mul(0.25).sub(uvn.y.mul(0.17)), uvn.x.mul(0.17).add(uvn.y.mul(0.25)));   // 0.31x scale, rotated ~34 deg
+    const uvp = Ph ? uvn.add(Ph) : uvn;   // (v256) the second, larger scale follows the parallax hit too
+    const um = T.vec2(uvp.x.mul(0.25).sub(uvp.y.mul(0.17)), uvp.x.mul(0.17).add(uvp.y.mul(0.25)));   // 0.31x scale, rotated ~34 deg
     const colM = T.texture(tx.map, um);
     const Y = T.vec3(0.2126, 0.7152, 0.0722);
     const lumS = T.mix(T.dot(col.rgb, Y), T.dot(colM.rgb, Y), T.smoothstep(0.3, 0.75, n1).mul(0.6));
     const grime = T.smoothstep(0.55, 0.9, n2.mul(0.65).add(n1.mul(0.35))).mul(T.float(1.25).sub(orm.r));   // pools in cavities (AO)
     const panel = h1(T.floor(wp.mul(0.35)).add(T.floor(pw.y.mul(0.35))));                                 // scattered panel-to-panel variation
-    const lum = lumS.div(AVG[s]).mul(T.float(0.9).add(panel.mul(0.2))).mul(T.float(1).sub(grime.mul(0.3))).clamp(0.3, 1.6);   // layered detail kept on every palette
+    let lum = lumS.div(AVG[s]).mul(T.float(0.9).add(panel.mul(0.2))).mul(T.float(1).sub(grime.mul(0.3))).clamp(0.3, 1.6);   // layered detail kept on every palette
+    if (pxCav) lum = lum.mul(pxCav).mul(pxShade);   // (v256) crevices fall dark, proud parts catch the light (depth gate = the march's own distance fade)
     const metal = orm.b, dev = T.length(nxy);
     // hairline brushed scratches in the per-tile rotated frame (direction varies tile to tile), density varies by world noise;
     // continuous distance fade (no tiers)

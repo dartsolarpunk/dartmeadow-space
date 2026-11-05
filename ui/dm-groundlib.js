@@ -345,7 +345,7 @@
     }
   }
 
-  // The whole bake as one generator (tiles first, then the region map); yields between slices.  sizeT: tile texels (mobile 128, desktop 192).
+  // The whole bake as one generator (tiles first, then the region map); yields between slices.  sizeT: tile texels (tier table: 96..256).
   function* bake(prof, atlas, region, sizeT) {
     const buf = newTileBuf(sizeT);
     for (let s = 0; s < 8; s++) {
@@ -360,7 +360,13 @@
   const S = { ready: false, world: null, job: null, jobT: 0, jobMs: 0, bakes: 0, mats: 0, T: 0, lastProf: null, tex: null, U: null, bakeMsTotal: 0, done: false };
   function now() { return (G.performance && G.performance.now) ? G.performance.now() : Date.now(); }
   function klassMobile() { try { return !!(G.GFX && G.GFX.isMobile); } catch (e) { return false; } }
-  function texSize() { return klassMobile() ? 128 : 192; }
+  // (v256) tile texels follow the parallax tier table (Low 96, phones 128-192, desktop 160-256); pinned for the session once the first atlas exists (the shaders bake the atlas
+  // geometry in as constants, so a preset change takes effect at the next launch for this one number; every other tier parameter is a live uniform).
+  function texSize() {
+    if (S.T) return S.T;
+    try { const P = G.DMParallax; if (P && P.tierRow) { const t = P.tierRow(P.tierName()).hTile; if (t >= 64 && t <= 320) return t; } } catch (e) { }
+    return klassMobile() ? 128 : 192;
+  }
 
   function mkTextures(THREE, T) {
     const L = layout(T), mk = (data, w, h, mips, sRGB) => {
@@ -431,7 +437,7 @@
   function apply(m, ctx) {
     try {
       const P = G.DMParallax; if (!P || !P.on || !m || !ctx || !m.isNodeMaterial) return false;
-      if (ctx.lvl < 2 || (m.userData && m.userData.noParallax)) return false;
+      if (m.userData && m.userData.noParallax) return false;   // (v256) every tier: Low gets the same graph with small numbers (ui/dm-parallax.js TIERS)
       if (!P.init()) return false;
       const THREE = G.THREE, T = THREE.TSL;
       if (!S.T) S.T = texSize();
@@ -510,7 +516,7 @@
       const hHit = max(FinA.x, level), lum = FinA.w.mul(2.0), tint = vec3(FinB.x, FinB.y, FinB.z).mul(2.0), rgh = FinB.w;
       // baked slopes -> tangent-space normal, in the tangent frame of the march, blended into the existing view-space normal
       const gx = FinA.y.mul(2.0).sub(1.0).div(float(GS)), gy = FinA.z.mul(2.0).sub(1.0).div(float(GS));
-      const kN = float(depthUV).mul(TT).mul(float(ctx.bumpGain || 1.0));
+      const kN = float(depthUV).mul(TT).mul(P._S.U.depthK).mul(float(ctx.bumpGain || 1.0));
       const nt = normalize(vec3(gx.mul(kN).negate(), gy.mul(kN).negate(), float(1.0)));
       const water = smoothstep(level.add(0.03), level, FinA.x).mul(step(float(0.01), level)).mul(fadeF);   // 1 where the pixel sits at the puddle surface
       const fadeN = float(1).sub(smoothstep(reach.mul(0.3), reach.mul(0.75), dist)).mul(ctx.flat);

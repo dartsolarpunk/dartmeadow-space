@@ -137,6 +137,8 @@
     }
 
     if (over > 1.12 && d.k > floor + 0.005 && !frozen && !(now < d.lock30 && p70 <= 38)) {   // (a locked 30 fps cadence is left alone; a genuinely slower one still gets cut)
+      // (v256) parallax steps / reach / depth are traded BEFORE resolution: ui/dm-parallax.js trims its quality first (bounded to ~6 s per episode, and released when the frame is >2.5x over budget)
+      try { if (root.DMParallax && root.DMParallax.trimFirst && root.DMParallax.trimFirst(p70)) return; } catch (e) {}
       if (since < (over > 2 ? 1400 : 2600)) return;                         // rate limit
       // size the step from how far over we are (fill cost ~ k^2), but never a pop: 0.03 .. 0.07, 0.10 when several times over
       const need = d.k - d.k * Math.sqrt(1 / over) * 0.97;
