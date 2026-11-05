@@ -196,7 +196,7 @@
       backend: env && env.backend, gpu: env && env.gpu, preset: env && env.preset, hair: env && env.hair,
       warmupMs: window._warmupMs != null ? window._warmupMs : null,
       reloadWhy, prevAlive: prevAlive ? { sid: prevAlive.sid, clean: prevAlive.clean, upSec: prevAlive.up, screen: prevAlive.screen, phase: prevAlive.phase, warming: prevAlive.warming, hidden: prevAlive.hidden, deadAfterSec: prevAlive.t ? Math.round((start.getTime() - prevAlive.t) / 1000) : null, crumb: (prevCrumb && prevAlive.sid === prevCrumb.sid) ? prevCrumb : null } : null,
-      warmSteps: window._warmSteps || null, pwCompile: window._pwCompile || null, recovery: !!window._dmRecoveryUsed,
+      warmSteps: window._warmSteps || null, pwCompile: window._pwCompile || null, flightCompile: window._flightCompile || null, recovery: !!window._dmRecoveryUsed,
       transitions: window._dmTransitions && window._dmTransitions.length ? window._dmTransitions.slice() : null,   // (menu-perf) launch fly-out markers: per phase frames / max gap / gaps > 50, 100 ms
       navType, prevUnclean, prevSessionId: prevLocal && prevLocal.sessionId || null, endNote: final ? endNote : null,
       env, modes, mem: mem.slice(), summary, gpuPasses: (function () { try { return window.DMGpuProf ? window.DMGpuProf.table() : null; } catch (e) { return null; } })(), hitches: hitches.slice(), windows: windows.slice(-60), trimmed: 0, events: (typeof evs !== 'undefined' ? evs.slice(-30) : []), census: census(),

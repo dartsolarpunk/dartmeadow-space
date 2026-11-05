@@ -6821,7 +6821,7 @@ async function _flightWarmup(){
   try{ _distLightT=1; updateDistantSystems(0); }catch(e){}   // the two distant-star lights exist before compiling
   try{ _lcApplyWorlds(); }catch(e){}   // (v105) worlds' own light lists, before anything compiles
   const steps=[
-    ['world',()=>flightRenderer.compileAsync(flightScene,flightCamera)],
+    ['world',()=>{ const rec=window._flightCompile={ groups:[], ms:0, capped:false, single:false }; return _compileStaged(flightScene,flightCamera,{rec,cap:GFX.isMobile?13000:22000,step:GFX.isMobile?6000:9000}); },GFX.isMobile?15000:25000],   // (v256) in small groups, one cap for the whole step
     ['sun and flares',()=>window.DMStar&&DMStar.warm&&DMStar.warm(flightCamera)],
     ['star dive',()=>window.DMStarBubble&&DMStarBubble.warm&&DMStarBubble.warm(flightCamera,flightScene)],   // lens/bubble/interior: compiled before the first pass through the Sun
     ['planet mist',()=>window.DMMist&&DMMist.warm&&DMMist.warm(flightCamera)],
@@ -6839,6 +6839,9 @@ async function _flightWarmup(){
   window._warmSteps=[]; window._warmTotal=steps.length-_later.length; let _prevStep=null;
   for(let i=0;i<steps.length;i++){
     if(_deferNames&&_deferNames.has(steps[i][0])){ _later.push(steps[i]); window._warmSteps.push([steps[i][0],'deferred']); continue; }
+    // (v256) the loader's total is BOUNDED: once the first steps have used the budget (24 s phones/tablets, 45 s desktops) the optional ones move to the quiet-moment queue
+    // (same compiles, later, one at a time) instead of every step taking its full cap in a row (logs: 33-77 s, every step at its 7 s cap).
+    if(i>=2&&i<steps.length-1&&performance.now()-t0>(GFX.isMobile?24000:45000)&&!/[?&]fullwarm=1\b/.test(location.search)){ _later.push(steps[i]); window._warmSteps.push([steps[i][0],'deferred:budget']); continue; }
     // (v153) AR owns the GPU and the screen while it's on: the remaining warm-up steps wait until it ends (AR draws its own tiny scene)
     while(window.DMAR&&DMAR.active&&!DMAR.letWarm){   // (v154) the full space overlay draws the real scene: it lets the warm-up finish
     await new Promise(r=>setTimeout(r,300)); }
@@ -6848,7 +6851,7 @@ async function _flightWarmup(){
     if(_prevStep){ try{ await Promise.race([_prevStep,new Promise(r=>setTimeout(r,20000))]); }catch(e){} _prevStep=null; }
     window._dmWarmPhase=steps[i][0];
     const t=performance.now();
-    try{ const _p=Promise.resolve(steps[i][1]()); _prevStep=_p.catch(()=>{}); await Promise.race([_p,new Promise(r=>setTimeout(r,7000))]); }catch(e){ console.warn('[warmup]',steps[i][0],e); }
+    try{ const _p=Promise.resolve(steps[i][1]()); _prevStep=_p.catch(()=>{}); await Promise.race([_p,new Promise(r=>setTimeout(r,steps[i][2]||7000))]); }catch(e){ console.warn('[warmup]',steps[i][0],e); }
     try{ window._warmSteps.push([steps[i][0],Math.round(performance.now()-t)]); }catch(e){}
     console.log('[warmup]',steps[i][0],(performance.now()-t).toFixed(0)+'ms');
     await new Promise(r=>setTimeout(r,16));   // let the page breathe between steps
@@ -19042,35 +19045,38 @@ function _pwBuild(body,site,mode,focus){
 // its compile with a cap, restores visibility and yields to the browser.  Total time is bounded (the rest compiles in-frame as before); every group's ms is
 // reported in the perf log (pwCompile).  Hidden-until-needed objects (water spray / wake / shafts, the lamp group) are warmed afterwards, off-screen, by
 // _pwWarmExtras, so no program compiles for the first time in play.  ?stagedwarm=0 restores the single call.
-async function _pwCompileStaged(gen){
-  const r=flightRenderer, scene=PW.scene, cam=PW.camera, t00=performance.now();
-  const rec=window._pwCompile={ groups:[], ms:0, capped:false, single:false };
+async function _compileStaged(scene,cam,o){
+  const r=flightRenderer, t00=performance.now(), rec=o.rec;
   if(/[?&]stagedwarm=0\b/.test(location.search)){ rec.single=true; await r.compileAsync(scene,cam); rec.ms=Math.round(performance.now()-t00); return; }
-  const CAP=GFX.isMobile?12000:20000, STEP=GFX.isMobile?5000:8000;
-  const count=o=>{ let n=0; o.traverse(c=>{ if(c.isMesh||c.isPoints||c.isLine||c.isSprite) n++; }); return n; };
-  const kids=scene.children.filter(o=>!o.isLight&&o.visible&&!o.isCamera);
+  const CAP=o.cap||(GFX.isMobile?12000:20000), STEP=o.step||(GFX.isMobile?5000:8000), alive=o.alive||(()=>true);
+  const count=c0=>{ let n=0; c0.traverse(c=>{ if(c.isMesh||c.isPoints||c.isLine||c.isSprite) n++; }); return n; };
+  const kids=scene.children.filter(c=>!c.isLight&&c.visible&&!c.isCamera);
   const groups=[]; let cur=null;
-  for(const o of kids){ const n=count(o); if(!n) continue;
-    if(n>=14){ groups.push({k:[o],n,name:o.name||o.type}); cur=null; continue; }
-    if(!cur||cur.n>=10||cur.k.length>=8){ cur={k:[],n:0,name:'misc'}; groups.push(cur); } cur.k.push(o); cur.n+=n; }
+  for(const c of kids){ const n=count(c); if(!n) continue;
+    if(n>=14){ groups.push({k:[c],n,name:c.name||c.type}); cur=null; continue; }
+    if(!cur||cur.n>=10||cur.k.length>=8){ cur={k:[],n:0,name:'misc'}; groups.push(cur); } cur.k.push(c); cur.n+=n; }
   const total=groups.length; let prev=null;
   for(let gi=0;gi<total;gi++){
-    if(gen!==PW.gen||!PW.active) return;
+    if(!alive()) return;
     if(performance.now()-t00>CAP){ rec.capped=true; break; }
     const g=groups[gi], keep=new Set(g.k), hid=[];
-    try{ dmSys.load('pwc','Preparing the world '+(gi+1)+'/'+total); }catch(e){}
-    for(const o of kids){ if(!keep.has(o)){ o.visible=false; hid.push(o); } }
+    try{ if(o.label) dmSys.load(o.label,(o.text||'Preparing')+' '+(gi+1)+'/'+total); }catch(e){}
+    for(const c of kids){ if(!keep.has(c)){ c.visible=false; hid.push(c); } }
     const t=performance.now(); let p=null;
-    try{ p=r.compileAsync(scene,cam); } catch(e){ p=null; } finally{ for(const o of hid) o.visible=true; }   // the projection is synchronous: visibility is back before anything else runs
+    try{ p=r.compileAsync(scene,cam); } catch(e){ p=null; } finally{ for(const c of hid) c.visible=true; }   // the projection is synchronous: visibility is back before anything else runs
     prev=p?Promise.resolve(p).catch(()=>{}):null;
     try{ if(prev) await Promise.race([prev,new Promise(res=>setTimeout(res,STEP))]); }catch(e){}
     rec.groups.push([g.name,g.n,Math.round(performance.now()-t)]);
     await new Promise(res=>setTimeout(res,0));   // let the page breathe (progress text, input) between groups
   }
   if(prev){ try{ await Promise.race([prev,new Promise(res=>setTimeout(res,STEP))]); }catch(e){} }
-  try{ dmSys.done('pwc'); }catch(e){}
+  try{ if(o.label) dmSys.done(o.label); }catch(e){}
   rec.ms=Math.round(performance.now()-t00);
-  _pwWarmExtrasStart(gen);
+}
+async function _pwCompileStaged(gen){
+  const rec=window._pwCompile={ groups:[], ms:0, capped:false, single:false };
+  await _compileStaged(PW.scene,PW.camera,{rec,alive:()=>gen===PW.gen&&PW.active,label:'pwc',text:'Preparing the world'});
+  if(gen===PW.gen&&PW.active) _pwWarmExtrasStart(gen);
 }
 // Objects that are hidden until their moment (compileAsync skips invisible ones) are compiled off-screen, one at a time, on a calm timer: forced visible for the
 // synchronous projection only, then restored.  Looks for the water effect meshes, the lamp group and anything tagged userData.dmWarm.
