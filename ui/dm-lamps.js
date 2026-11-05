@@ -110,12 +110,16 @@
     // optional real lights
     const nl = Math.min(4, +(q.get('lamplights') || 0) | 0); S.nl = nl;
     if (nl > 0) { const PW = c.PW(); for (let i = 0; i < nl; i++) { const L = new THREE.PointLight(0xffc27a, 0, 55, 1.5); L.castShadow = false; L.userData.dmLamp = true; PW.scene.add(L); S.lights.push(L); } }
-    S.lamps = lamps; S.built = true; return true;
+    S.lamps = lamps; S.built = true;
+    try {   // lamp heads in the world frame -> the radiance cache ([x,y,z, r,g,b, radius] each; warm sodium colour, 16 m reach)
+      if (G.DMLight && G.DMLight.on) { grp.updateMatrixWorld(true); const V3 = new THREE.Vector3(), a = new Float32Array(n * 7); for (let i = 0; i < n; i++) { const h = headPos(lamps[i]); grp.localToWorld(V3.set(h[0], h[2] - 0.06 * UPM, -h[1])); a.set([V3.x, V3.y, V3.z, 14, 8.7, 4.2, 16], i * 7); } G.DMLight.setLamps(a); }
+    } catch (e) { }
+    return true;
   }
   function destroy() {
     try { if (S.grp && S.grp.parent) S.grp.parent.remove(S.grp); for (const g of S.geos) g.dispose(); for (const m of S.mats) m.dispose(); if (S.plates && S.plates.dispose) S.plates.dispose(); } catch (e) { }
     for (const L of S.lights) { try { if (L.parent) L.parent.remove(L); L.dispose && L.dispose(); } catch (e) { } }
-    S.lights.length = 0; S.geos.length = 0; S.mats.length = 0; S.grp = null; S.built = false; S.sg = null; S.plates = null; S.U = null; S.on = 0; hideHud();
+    S.lights.length = 0; S.geos.length = 0; S.mats.length = 0; S.grp = null; S.built = false; try { if (G.DMLight) { G.DMLight.setLamps([]); G.DMLight.setLampLevel(0); } } catch (e) { } S.sg = null; S.plates = null; S.U = null; S.on = 0; hideHud();
   }
 
   // ── the USE bubble (same look as the Bird Temple's F bubble) ─────────────────────────────────────────────
@@ -181,7 +185,8 @@
       }
       // dusk fade, eased (~1.2 s) so a sunset never pops
       const tgt = R.lampLevel(day), k = Math.min(1, dt / 0.9); S.on += (tgt - S.on) * k; if (Math.abs(tgt - S.on) < 0.002) S.on = tgt;
-      S.U.on.value = S.on; const near = d2 < DRAW_D2;
+      S.U.on.value = S.on; try { if (G.DMLight && G.DMLight.on) G.DMLight.setLampLevel(S.on); } catch (e) { }   // (ui/dm-light.js) the radiance cache lights its probes from the lamps at the same eased level
+      const near = d2 < DRAW_D2;
       S.grp.visible = near && (S.on > 0.004 || d2 < SW_D2);   // by day only the switches (near) stay
       // lamps (poles + heads + glow + pools) hide by day; the switch group is its own child
       for (const ch of S.grp.children) if (ch !== S.sg) ch.visible = S.on > 0.004;

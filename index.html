@@ -165,6 +165,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-perf.js?v=160"></script>
 <script src="ui/dm-governor.js?v=264"></script>
 <script src="ui/dm-budget.js?v=264"></script>
+<script src="ui/dm-light.js?v=260"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
 <script>/* (v136) no-op stub so the flight loop can never throw if dm-perf.js failed to load */
 window.DMPerf=window.DMPerf||{on:false,b(){},e(){},mark(){},measure(n,f){return f();},frame(){},stats(){return {fps:0,avgMs:0,p95Ms:0,worstMs:0,minFps:0,cpu:{},gpu:null,sparse:null};},show(){},hide(){}};</script>
 <script>/* (v236) always-on frame-phase clock for the perf log: EMA of the main-thread ms spent in each phase of a frame (logic / world tick / scene render / atmosphere pass / HUD …),
@@ -19550,6 +19551,7 @@ function _pwWorldTick(dt){
   if(Math.abs(cam.far-farClip)>farClip*0.05||Math.abs(cam.near-nearClip)>nearClip*0.05){ cam.far=farClip; cam.near=nearClip; cam.updateProjectionMatrix(); }
   _pwSeaFollow(px,pz,Math.min(viewR,16384));
   try{ if(window.DMWater&&DMWater.active) DMWater.tick(dt,{camera:cam,scene,x:px,z:pz,y:f.y,H,mode:PW.mode}); }catch(e){ if(!window._dmwWarn){ window._dmwWarn=1; console.warn('[water] tick',e); } }
+  try{ if(window.DMLight&&DMLight.on) DMLight.tick(dt,{x:px,y:f.y,z:pz,H,sunDir:TERRAIN.sky?TERRAIN.sky.sunDir:null,day:TERRAIN.sky?TERRAIN.sky.day:1,scene,walk:mode!=='space'}); }catch(e){ if(!window._dmlWarn){ window._dmlWarn=1; console.warn('[light] tick',e); } }   // (ui/dm-light.js) time-sliced probe + height-cache update, amortised <= ~1-2 ms
   _pwPropsTick(px,pz,space?1e9:(fly?agl:0));
   try{ if(window.DMPlaces) DMPlaces.tick(dt,_plEnv()); if(window.DMCreatures) DMCreatures.tick(dt,_plEnv()); }catch(e){ if(!window._plWarn){ window._plWarn=1; console.warn('[places]',e); } }
   // marching cubes + the refined patch: always on foot; in the sky only low and slow
@@ -25325,6 +25327,7 @@ function _terrainDetailMat(opts){
     try{ if(window.DMGround&&window.DMParallax&&m.userData&&!m.userData.noParallax&&opts.parallax!==false&&!/[?&]ground=0\b/.test(location.search)) _gl=DMGround.apply(m,{p,flat,nFlat,lvl,reach,near:reach*0.16,far:reach*0.34,strength:1}); }catch(e){ console.warn('[ground lib]',e); }
     if(!_gl) try{ if(window.DMParallax&&m.userData&&!m.userData.noParallax&&opts.parallax!==false) DMParallax.applyGround(m,{p,flat,lvl,N:null,kind:'cobble',near:reach*0.13,far:reach*0.3,seed:TERRAIN.style==='mesa'?11:7}); }catch(e){}   // (ui/dm-parallax.js) real depth in the pebbles/plates close to her: marched only inside ~0.3 reach, every tier (Low = 2-3 steps, short reach, small relief; the per-tier table lives in the parallax module)
     m.userData.dmDetail=lvl;
+    try{ if(window.DMLight&&DMLight.on&&opts.side!==THREE.DoubleSide&&!(m.userData&&m.userData.noLight)) DMLight.applyMaterial(m,{p,h:m.userData.dmReliefH||null}); }catch(e){}   // (ui/dm-light.js) walkable ground: indirect bounce + sky-visibility AO + height-cache sun shadow
     try{ if(window.DMWater&&DMWater.active&&DMWater.receiveShore&&TERRAIN.pal&&TERRAIN.pal.water&&opts.shore!==false) DMWater.receiveShore(m,{p}); }catch(e){ console.warn('[water] shore hook',e); }   // wet sand that outlives the wave + the swash film (only below the run-up height)
     // the coarse ground is cut away where the tessellated patch round her takes over
     if(!opts.noHole&&TESS_HOLE.slots.length){

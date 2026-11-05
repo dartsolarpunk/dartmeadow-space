@@ -14,6 +14,7 @@
  *    6 water L1     curl/foam detail, spray x0.7, mist x0.6        7 water L2   spray x0.4, no mist, band weights down
  *    8 water L3     no displacement, spray/mist off                9 parallax L3  march off (normal + cavity stay)
  *   10 shadow L1    sun shadow map refreshed every 2nd frame      11 shadow L2   every 3rd frame
+ *   (v264 DMLight, ui/dm-light.js, stage 'light': L1 rays/steps halved + compute path closed (after ground 2) · L2 4 rays, far cascade idle, half the probe budget (after water 3) · L3 cache frozen, short shader march (after shadow 2))
  *   12 atmo L1      cloud/density volume re-evaluated at ~7 Hz     13 shadow L3   shadow map side halved (the one allocation, late)
  *   14 atmo L2      volume at 2.5 Hz, near-ground height re-bake slower   15 res L1  render scale <= 0.85   16 res L2  <= 0.72   17 res L3  <= 0.6
  *
@@ -41,13 +42,13 @@
 
   /* ───────────────────────── pure core ───────────────────────── */
   const LADDER = [
-    ['parallax', 1], ['parallax', 2], ['hudfx', 1], ['pxshadow', 1], ['ground', 1], ['props', 1], ['ground', 2],
-    ['water', 1], ['water', 2], ['water', 3], ['parallax', 3],
-    ['shadow', 1], ['skin', 1], ['shadow', 2], ['hair', 1], ['atmo', 1], ['props', 2], ['shadow', 3], ['atmo', 2],
+    ['parallax', 1], ['parallax', 2], ['hudfx', 1], ['pxshadow', 1], ['ground', 1], ['props', 1], ['ground', 2], ['light', 1],
+    ['water', 1], ['water', 2], ['water', 3], ['light', 2], ['parallax', 3],
+    ['shadow', 1], ['skin', 1], ['shadow', 2], ['light', 3], ['hair', 1], ['atmo', 1], ['props', 2], ['shadow', 3], ['atmo', 2],
     ['res', 1], ['res', 2], ['res', 3], ['res', 4], ['res', 5],
   ];
   const MAX = LADDER.length;
-  const STAGES = ['parallax', 'pxshadow', 'hudfx', 'ground', 'props', 'water', 'shadow', 'skin', 'hair', 'atmo', 'res'];
+  const STAGES = ['parallax', 'pxshadow', 'hudfx', 'ground', 'light', 'props', 'water', 'shadow', 'skin', 'hair', 'atmo', 'res'];
   // pressure at which a stage first reaches a level (the memory floors below are expressed in stages, not magic numbers)
   function pOf(stage, level) { for (let i = 0; i < LADDER.length; i++) if (LADDER[i][0] === stage && LADDER[i][1] === level) return i + 1; return LADDER.length; }
   function levelsAt(p, out) {
@@ -266,6 +267,7 @@
   out.shadowHalf = function () { return out.lvl('shadow') >= 3; };
   out.atmoPeriod = function () { const l = out.lvl('atmo'); return l >= 2 ? 0.4 : l >= 1 ? 0.15 : 0.066; };   // seconds between density-volume computes
   out.atmoBakeGap = function () { const l = out.lvl('atmo'); return l >= 2 ? 1800 : l >= 1 ? 900 : 500; };       // ms between near-ground height re-bakes
+  out.lightLvl = function () { return out.lvl('light'); };
   out.resCap = function () { return [1, 0.85, 0.72, 0.6, 0.5, 0.42][out.lvl('res')] || 1; };
   out.hudLite = function () { return out.lvl('hudfx') >= 1; };                       // HUD: no filter / shadow / animation / transition while the canvas animates
   out.propsK = function () { return [1, 0.7, 0.45][out.lvl('props')] || 1; };            // prop draw distance multiplier (planet props, boulders, scatter)

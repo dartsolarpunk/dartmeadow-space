@@ -642,7 +642,9 @@
       mat.colorNode = alb.mul(materialColor.rgb).mul(cav).mul(mix(float(1), b.shade, gate));
       if (o.tex.nrm) { const ns = o.nrmScale == null ? 1 : o.nrmScale; mat.normalNode = normalMap(vec3(m.nxy, sqrt(float(1).sub(dot(m.nxy, m.nxy)).max(0.0))).mul(0.5).add(0.5), vec2(ns, ns)); }
       if (o.tex.orm) { mat.roughnessNode = materialRoughness.mul(m.orm.g).add(lichen.mul(0.3)).add(stain.mul(0.1)).clamp(0.04, 1.0); mat.metalnessNode = materialMetalness.mul(m.orm.b); }
-      mat.userData.dmPxStruct = { stoch: true }; mat.needsUpdate = true; S.mats++;
+      mat.userData.dmPxStruct = { stoch: true }; mat.userData.dmReliefH = b.h; mat.needsUpdate = true; S.mats++;
+      try { if (G.DMLight && G.DMLight.on && !(mat.userData && mat.userData.noLight)) G.DMLight.applyMaterial(mat, { p: T.positionWorld, n: T.normalWorld, h: b.h }); } catch (e) { }   // (ui/dm-light.js) radiance cache: bent-normal AO + bounce + height-cache sun visibility; the relief height darkens crevices
+
       return true;
     } catch (e) { try { console.warn('[parallax] structure', e); } catch (_) { } return false; }
   }

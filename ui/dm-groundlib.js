@@ -551,7 +551,7 @@
         m.emissiveNode = (m.emissiveNode || vec3(0, 0, 0)).add(vec3(U.sky).mul(water).mul(fres.mul(1.4).add(0.12)).mul(U.skyAmt));
       } catch (e) { }
       if (G.__GDBG) { const d = G.__GDBG; m.colorNode = d === 'h' ? vec3(FinA.x) : d === 'lum' ? vec3(lum.mul(0.5)) : d === 'tint' ? tint.mul(0.5) : d === 'nt' ? vec3(nt.x.mul(0.5).add(0.5), nt.y.mul(0.5).add(0.5), 0.5) : d === 'ia' ? vec3(iA.div(8)) : d === 'wet' ? vec3(wetF) : d === 'moss' ? vec3(mossF) : d === 'ruin' ? vec3(ruinF) : d === 'wb' ? vec3(WB) : vec3(FinB.w); m.emissiveNode = m.colorNode; m.colorNode = vec3(0, 0, 0); }
-      m.userData.dmGround = { slots: 8, atlas: true };
+      m.userData.dmGround = { slots: 8, atlas: true }; m.userData.dmReliefH = hHit;   // (ui/dm-light.js reads the relief height: crevices darken in the radiance cache's sky term)
       m.needsUpdate = true; S.mats++;
       return true;
     } catch (e) { try { console.warn('[ground] apply', e); } catch (_) { } return false; }
