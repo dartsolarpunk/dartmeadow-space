@@ -160,13 +160,13 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-groundlib.js?v=260"></script>
 <script src="ui/dm-water-core.js?v=277"></script>
 <script src="ui/dm-water.js?v=277"></script>
-<script src="ui/dm-water-sea.js?v=277"></script>
+<script src="ui/dm-water-sea.js?v=278"></script>
 <script src="ui/dm-water-curl.js?v=277"></script>   <!-- water: the breaking-wave curl (glassy turquoise barrel along the shore-parallel wave fronts; Medium+; created by dm-water-fx) -->
 <script src="ui/dm-water-fx.js?v=277"></script>   <!-- water: spray / splash / mist sprites, wake, footstep ripples, shore-break spray, underwater fog + shafts (?waterfx=0 off) -->   <!-- water: baked sea, shore, ground hook (?water=0 = the previous sea) -->
 <script src="ui/dm-perf.js?v=160"></script>
 <script src="ui/dm-governor.js?v=264"></script>
 <script src="ui/dm-budget.js?v=273"></script>
-<script src="ui/dm-light.js?v=260"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
+<script src="ui/dm-light.js?v=278"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
 <script>/* (v136) no-op stub so the flight loop can never throw if dm-perf.js failed to load */
 window.DMPerf=window.DMPerf||{on:false,b(){},e(){},mark(){},measure(n,f){return f();},frame(){},stats(){return {fps:0,avgMs:0,p95Ms:0,worstMs:0,minFps:0,cpu:{},gpu:null,sparse:null};},show(){},hide(){}};</script>
 <script>/* (v236) always-on frame-phase clock for the perf log: EMA of the main-thread ms spent in each phase of a frame (logic / world tick / scene render / atmosphere pass / HUD …),
@@ -1052,7 +1052,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-mansion-look.js?v=251" defer></script>
 <script src="ui/dm-mansion-interior.js?v=262" defer></script>
 <script src="ui/dm-facilities.js?v=272" defer></script>
-<script src="ui/dm-lamps.js?v=251" defer></script>
+<script src="ui/dm-lamps.js?v=278" defer></script>
 <script src="ui/dm-holo.js?v=271" defer></script>
 <script src="ui/dm-sys.js?v=241"></script>
 </head>
