@@ -1046,8 +1046,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-arielhome.js?v=231" defer></script>
 <script src="ui/dm-mansion-rooms.js?v=250" defer></script>
 <script src="ui/dm-mansion-look.js?v=251" defer></script>
-<script src="ui/dm-mansion-interior.js?v=233" defer></script>
-<script src="ui/dm-facilities.js?v=260" defer></script>
+<script src="ui/dm-mansion-interior.js?v=262" defer></script>
+<script src="ui/dm-facilities.js?v=262" defer></script>
 <script src="ui/dm-lamps.js?v=251" defer></script>
 <script src="ui/dm-sys.js?v=241"></script>
 </head>
@@ -19390,7 +19390,7 @@ function _trueAtmoSurface0(r,scene,cam,layered){
     _pwfCentre(c); A.setCenter(c);
     const sky=TERRAIN.sky; if(sky&&sky.sunDir) A.setSun(sky.sunDir);
     // near LOD of the real ground (the world's own height field) round the focus; rebaked as it travels
-    const L=_TA.loc, now=performance.now(), span=4096, H=TERRAIN.H;
+    const L=_TA.loc, now=performance.now(), span=4096, H=TERRAIN.Hg||TERRAIN.H;
     // (v256) the first bake of a world is whole (behind the loader); every later re-bake is sliced over frames (ui/dm-atmo.js setLocalHeightSliced, 3.5 ms a frame on a phone)
     // instead of one 128x128 H() sweep in a single frame (300-400 ms on the Galaxy Tab), and waits longer under frame-budget pressure.
     const _bakeGap=(window.DMBudget&&DMBudget.on&&DMBudget.atmoBakeGap)?DMBudget.atmoBakeGap():500;
@@ -23703,7 +23703,7 @@ async function _buildGpuSurfacePatch0(surfRenderer, opts, mcId){
   const oX = cx0-halfIso, oY = yMin, oZ = cz0-halfIso;
   // (v136) narrow-band sparse bricks over the column heights (ui/dm-sparsevox.js): only bricks the ground surface (plus the
   // cave term and the 14 m crust) can cross are generated and meshed; collision still gets the dense grid (scatter below).
-  const hFn=opts.heightFn||TERRAIN.H||null;
+  const hFn=opts.heightFn||TERRAIN.Hg||TERRAIN.H||null;   // Hg: ground without the mansion's solids (they used to be extruded into the marching-cubes columns)
   let hcol=null;
   if(hFn){ hcol=new Float32Array(GRID*GRID); for(let gz=0;gz<GRID;gz++) for(let gx=0;gx<GRID;gx++) hcol[gx+gz*GRID]=hFn(gx*CELL+oX, gz*CELL+oZ); }
   const _svT0=performance.now();
@@ -24444,6 +24444,13 @@ function _shoreWaterMaterial(liqColor,opacity,rough){
 // ── One ground for every view (DART Engine) ─────────────────────────────
 // The height of the world at a site's local (x,z): the same recipe whether
 // you walk it or fly over it — the world's style, Earth's real relief.
+// (exclusion) the mansion's box was just carved out of the drawn ground (ui/dm-facilities.js): rebuild only the sky-ground tiles that touch it
+window._dmGroundDirty=function(x0,z0,x1,z1){
+  const G=PW&&PW.ground; if(!G||!G.roots) return;
+  const hit=n=>!(n.x0>x1||n.x0+n.size<x0||n.z0>z1||n.z0+n.size<z0);
+  const inv=n=>{ if(!hit(n)) return; if(n.kids) n.kids.forEach(inv); if(n.mesh){ G.group.remove(n.mesh); n.mesh.geometry.dispose(); n.mesh=null; if(G.morphing) G.morphing.delete(n); } };
+  for(const n of G.roots.values()) inv(n);
+};
 function _groundField(body,site,pal){
   const seed=_worldSeed(body);
   const geo=!!(body&&body.name==='Earth'&&site&&typeof site.lat==='number');
@@ -24720,10 +24727,10 @@ function _pwAtmoShell(pal,sky){
 // rocks and trees; the sea is one sheet that follows the view.
 function _pwBuildGround(pal,fx,fz,mode){
   const body=PW.body, site=PW.site;
-  const F=_groundField(body,site,pal), H=F.H, seed=F.seed;
+  const F=_groundField(body,site,pal); try{ const _f0=_fac(); if(_f0&&_f0.carveField) _f0.carveField(F); }catch(e){} const H=F.H, seed=F.seed;   // (exclusion) F.H = the planet ground with the mansion's box carved out (ui/dm-facilities.js F.carve): every DRAWN-ground consumer below samples it
   TERRAIN.style=F.ws; TERRAIN.wx0=F.sw.x; TERRAIN.wz0=F.sw.z;
-  const Hs=(()=>{ try{ const f=_fac(); return f?f.wrapH(H):H; }catch(e){ return H; } })();   // decks, pads, island tops and the mansion stand on the ground (the drawn ground below keeps the plain H)
-  TERRAIN.pal=pal; TERRAIN.H=Hs; TERRAIN.seed=seed; TERRAIN.siteBias=F.siteBias; TERRAIN.siteLat=F.siteLat;
+  const Hs=(()=>{ try{ const f=_fac(); return f?f.wrapH(F.H0||H):H; }catch(e){ return H; } })();   // decks, pads, island tops and the mansion stand on the ground (the drawn ground below keeps the plain H)
+  TERRAIN.pal=pal; TERRAIN.H=Hs; TERRAIN.Hg=H; TERRAIN.exBox=(()=>{ try{ const f=_fac(); return f&&f.exBox?f.exBox:null; }catch(e){ return null; } })(); TERRAIN.seed=seed; TERRAIN.siteBias=F.siteBias; TERRAIN.siteLat=F.siteLat;
   try{ if(window.DMGround) DMGround.beginWorld({style:F.ws,seed,water:!!pal.water,lat:F.siteLat}); }catch(e){ console.warn('[ground lib] bake',e); }
   try{ if(window.DMWater) DMWater.begin({body,pal,seed,lat:F.siteLat}); }catch(e){ console.warn('[water] begin',e); }   // (ui/dm-water*.js) the sea's wave tiles / identity from this world's gravity, air and liquid, baked in 2-3 ms slices   // atlas + region map baked in 2-3 ms slices between frames (the materials start on a neutral atlas, so nothing waits)
   TERRAIN.mcY=null; TERRAIN.mcN=null; TERRAIN.cpuMc=null; TERRAIN.mcGpu=false; TERRAIN._mcBusy=false; TERRAIN._mcUpg=false;
@@ -24902,9 +24909,10 @@ function _pwUnderlayY(){ return PW.ground?PW.ground.group.position.y:0; }
 // The ground at (x,z), finest first: the refined patch round her → the marching-cubes patch → the world's height field.
 function _tessAreaAt(x,z){ const A=TERRAIN.tessAreas; if(!A) return null; for(let i=0;i<A.length;i++){ const T=A[i]; if(T&&Math.hypot(x-T.cx,z-T.cz)<T.half*0.8) return T; } return null; }
 // (v149) cheap ground for effects (dust): the refined patch or the height field — no MC mesh raycast
-function _pwGroundFast(x,z){ const H=TERRAIN.H; if(!H) return 0; const T=_tessAreaAt(x,z); return T?_tessHeightIn(T,x,z):H(x,z); }
+function _pwGroundFast(x,z){ const H=TERRAIN.H; if(!H) return 0; if(TERRAIN.exBox&&TERRAIN.exBox(x,z)) return H(x,z); const T=_tessAreaAt(x,z); return T?_tessHeightIn(T,x,z):H(x,z); }
 function _pwGroundAt(x,z){
   const H=TERRAIN.H; if(!H) return 0;
+  if(TERRAIN.exBox&&TERRAIN.exBox(x,z)) return H(x,z);   // inside the mansion box the walkable ground is the collision grid / interior floor, not the (carved) drawn ground
   const T=_tessAreaAt(x,z); if(T) return _tessHeightIn(T,x,z);
   const h=H(x,z);
   if(TERRAIN.mcY){ const m=TERRAIN.mcY(x,z,h); if(m!==null) return m; }
@@ -24912,8 +24920,8 @@ function _pwGroundAt(x,z){
 }
 function _pwGroundNormal(x,z){
   const H=TERRAIN.H; if(!H) return new THREE.Vector3(0,1,0);
-  if(_tessAreaAt(x,z)){ const e=0.3, h=_pwGroundAt(x,z); return new THREE.Vector3(-(_pwGroundAt(x+e,z)-h),e,-(_pwGroundAt(x,z+e)-h)).normalize(); }
-  if(TERRAIN.mcN){ const n=TERRAIN.mcN(x,z,H(x,z)); if(n) return n; }
+  if(!(TERRAIN.exBox&&TERRAIN.exBox(x,z))&&_tessAreaAt(x,z)){ const e=0.3, h=_pwGroundAt(x,z); return new THREE.Vector3(-(_pwGroundAt(x+e,z)-h),e,-(_pwGroundAt(x,z+e)-h)).normalize(); }
+  if(TERRAIN.mcN&&!(TERRAIN.exBox&&TERRAIN.exBox(x,z))){ const n=TERRAIN.mcN(x,z,H(x,z)); if(n) return n; }
   const e=0.75; return new THREE.Vector3(-(H(x+e,z)-H(x-e,z)),2*e,-(H(x,z+e)-H(x,z-e))).normalize();
 }
 // GPU marching cubes round (px,pz) — async; the LOD ground shows until it's in
@@ -25052,7 +25060,7 @@ function _propPad(im,n){
 // instead of ~1000 height-field calls (+ colours + instance buffers) in one go (chunkScatter was a 40-130 ms frame on the tablet).  _hmChunkScatter runs it whole.
 function _hmChunkScatter(i,j){ const it=_hmChunkScatterG(i,j); let r; do{ r=it.next(); }while(!r.done); return r.value; }
 function* _hmChunkScatterG(i,j){
-  const H=TERRAIN.H, pal=TERRAIN.pal, C=SURF_CHUNK, rnd=_rng32(_chunkSeed(i,j,TERRAIN.seed||1));
+  const H=TERRAIN.Hg||TERRAIN.H, pal=TERRAIN.pal, C=SURF_CHUNK, rnd=_rng32(_chunkSeed(i,j,TERRAIN.seed||1));
   const R=(a,b)=>a+(b-a)*rnd();
   const g=new THREE.Group(); g.name='JOTS_ChunkProps'; g.userData.groundMark=true;
   const per=Math.round((Math.min(300,({low:60,med:140,high:240,ultra:300})[STATE.settings.particles]||140))*(C*C)/(560*560));
@@ -25435,7 +25443,7 @@ function _tessInit(){
   if(GFX.tessellation===false){ TERRAIN.tessCfg=null; return; }
   TERRAIN.tessCfg=Object.assign({},TESS_TIER[tier]||TESS_TIER.medium);
   TERRAIN.sandy=!!(window.DMWorldStyle&&(TERRAIN.style==='dunes'));
-  const H=TERRAIN.H;
+  const H=TERRAIN.Hg||TERRAIN.H;
   // the refined ground sits on the world's own height field — exactly the
   // ground seen from the sky and the far terrain, for every player
   TERRAIN.tessBase=(x,z)=>H(x,z);

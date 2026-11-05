@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  const F = window.DMFac = { ctx: null, sites: new Map(), solids: [], scene: null, ver: '239' };
+  const F = window.DMFac = { ctx: null, sites: new Map(), solids: [], scene: null, ver: '262' };
   const DM = window.DM_FAC = window.DM_FAC || {};
   DM.bay = DM.bay || { inside: false, membrane: 0 };
   F.bind = c => { F.ctx = c; };
@@ -434,6 +434,31 @@
   };
   // F.ovr (ui/dm-mansion-interior.js): while she walks inside the mansion it answers with the exact interior floor height (or NaN), bypassing the max-with-base below.
   F.ovr = null;
+  // ── EXCLUSION VOLUME of the mansion (stability: "the cliff builds over the windows as I get close") ──────────────────────────────────────
+  // Root cause (measured, see docs/ariel-home/lod-evidence.md): TERRAIN.H is wrapH() = max(planet ground, mansion collision grid). The marching-cubes patch (streams in
+  // within ~100 m), the refined tessellation, the sky ground quadtree (sharpening as she dives), the prop scatter and the atmosphere's local height all sampled THAT, so the
+  // moment each of them generated near the mansion it extruded a solid column up to every roof / deck / overhang (rooms filled, windows buried, boulders on pier tops over the sea).
+  // Now every DRAWN-ground consumer samples F.carve(): inside the mansion box (the GLB's own cliff + plateau + sea floor cover it) the planet ground is lowered under the GLB with a
+  // 14 m feather at the box edge; the WALKING height inside the box stays exactly the old wrapH (collision grid, interior override) via TERRAIN.exBox.
+  F.car = null;          // { px, pz, ct, st, y0 } once the mansion is placed
+  const BOX = { x0: -196, x1: 196, y0: -121, y1: 121, feather: 14, deep: 128 };   // mansion Blender frame: x along the wall, y seaward (= -local z); the GLB cliff sweep spans x +-200, y +-125
+  function boxD(x, z) {      // metres inside the box (<= 0 outside)
+    const c = F.car; if (!c) return 0;
+    const dx = x - c.px, dz = z - c.pz; if (dx > 330 || dx < -330 || dz > 330 || dz < -330) return 0;
+    const lx = dx * c.ct - dz * c.st, lz = dx * c.st + dz * c.ct, bx = lx, by = -lz;
+    return Math.min(bx - BOX.x0, BOX.x1 - bx, by - BOX.y0, BOX.y1 - by);
+  }
+  F.exBox = (x, z) => F.car !== null && boxD(x, z) > 0;
+  F.carve = function (x, z, h) {
+    const d = boxD(x, z); if (d <= 0) return h;
+    const t = Math.min(1, d / BOX.feather), w = t * t * (3 - 2 * t), deep = F.car.y0 - BOX.deep;
+    return h > deep ? h + (deep - h) * w : h;
+  };
+  F.carveField = function (Fd) { if (Fd.H0) return; const H0 = Fd.H; Fd.H0 = H0; Fd.H = (x, z) => { const h = H0(x, z); return F.car === null ? h : F.carve(x, z, h); }; };
+  function carveActivate(px, pz, ct, st, y0) {
+    F.car = { px, pz, ct, st, y0 };
+    try { if (window._dmGroundDirty) window._dmGroundDirty(px - 340, pz - 340, px + 340, pz + 340); } catch (e) { console.warn('[facilities] ground dirty', e); }
+  }
   F.wrapH = function (H) { F.baseH = H; return (x, z) => { const o = F.ovr; if (o !== null) { const v = o(x, z); if (v === v) return v; } const h = H(x, z); if (!F.solids.length) return h; const s = F.heightAt(x, z); return s > h ? s : h; }; };
   // world-space solids from a landmark's local ones (rotation θ about Y at (px,pz), local y0 offset)
   function addSolids(list, px, pz, th, y0, flip) {
@@ -456,7 +481,7 @@
     if (window.DMLamps) { try { DMLamps.detach(); } catch (e) { } }
     if (window.DMMansionInt) { try { DMMansionInt.detach(); } catch (e) { } }
     for (const r of F.sites.values()) { if (r.group && r.group.parent) r.group.parent.remove(r.group); if (r.group && !r.mansion) dispose(r.group); }
-    F.sites.clear(); F.solids.length = 0; F.bay = null; DM.bay.inside = false; DM.bay.membrane = 0;
+    F.car = null; F.sites.clear(); F.solids.length = 0; F.bay = null; DM.bay.inside = false; DM.bay.membrane = 0;
     crumb('end', 'fac:teardown');
   }
   // called by index.html _pwClose BEFORE the world scene is disposed: the interior and every queued step go first, so nothing loads into / touches a scene that is being freed
@@ -486,6 +511,7 @@
         if (PW.renderer && PW.renderer.compileAsync && PW.camera) PW.renderer.compileAsync(root, PW.camera, PW.scene).then(() => { rec.warmed = true; }, () => { rec.warmed = true; });
         else rec.warmed = true;
       } catch (e) { rec.warmed = true; }
+      carveActivate(px, pz, ct, st, y0);
       rec.group = root; rec.mansion = true; rec.x = px; rec.z = pz; rec.y = y0; rec.th = th; rec.ready = true;
       if (window.DMMansionInt) { try { DMMansionInt.attach(F, rec, px, pz, y0, th); } catch (e) { console.warn('[mansion-interior] attach', e); } }
       if (window.DMLamps) { try { DMLamps.attach(F, rec, px, pz, y0, th); } catch (e) { console.warn('[lamps] attach', e); } }
@@ -566,7 +592,11 @@
       if (rec.teleported !== true && DM.arriveAt === rec.def.id && (!rec.mansion || rec.warmed || now - rec.placedAt > 9000)) { teleport(rec); rec.teleported = true; }
       const dx = f.x - rec.x, dz = f.z - rec.z, d2 = dx * dx + dz * dz;
       if (rec.mansion) {
-        const u = rec.group.userData, near = d2 < 420 * 420, far = d2 > 5200 * 5200;
+        // (LOD) hysteresis (enter 400 m / leave 470 m; phones 300 / 360) so a hover on the boundary cannot flip the two meshes frame to frame, and the interior (ui/dm-mansion-interior.js
+        // LOAD_D) is requested BEFORE the swap to LOD0 so the windows are never "lit sheets" at LOD1 and empty glass at LOD0.
+        const u = rec.group.userData, mob = F.ctx.isMobile(), nIn = mob ? 300 : 400, nOut = mob ? 360 : 470, d1 = Math.sqrt(d2);
+        if (rec.lodNear === undefined) rec.lodNear = d1 < nIn; else if (rec.lodNear && d1 > nOut) rec.lodNear = false; else if (!rec.lodNear && d1 < nIn) rec.lodNear = true;
+        const near = rec.lodNear, far = d2 > 5200 * 5200;
         if (u.lod0) u.lod0.visible = near && !far; if (u.lod1) u.lod1.visible = !near && !far;
         if (d2 < 1100 * 1100) { upgrade2K(T); mansionPx(T); upgradeCliff(T); }
         if (window.DMMansionInt) DMMansionInt.tick(rec, d2, now, DM.arriveAt === rec.def.id);

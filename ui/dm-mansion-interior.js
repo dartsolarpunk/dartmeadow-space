@@ -15,7 +15,7 @@
 (function () {
   'use strict';
   const G = typeof window !== 'undefined' ? window : globalThis;
-  const STEP = 1.5, BODY = 3.2, RAD = 0.7, SEGR = 0.5, WALL_UP = 4.5, LIVE_R2 = 170 * 170, LOAD_D = 260, DROP_D = 400,
+  const STEP = 1.5, BODY = 3.2, RAD = 0.7, SEGR = 0.5, WALL_UP = 4.5, LIVE_R2 = 170 * 170, LOAD_DM = 440, DROP_DM = 560, LOAD_D0 = 340, DROP_D0 = 420,
     TELE = 24, MAXSUB = 48;   // a frame hitch (compile / GC, even at run speed) is swept in <= 0.5 m sub-steps so it cannot tunnel a wall; only a jump of > 24 m is a teleport (re-seat, no sweep)
   const S = {
     F: null, rec: null, state: 0 /* 0 idle · 1 loading · 2 ready */, gen: 0, root: null, failed: 0,
@@ -188,6 +188,7 @@
     // F.tick, per mansion, after the LOD upkeep: load when she has been near for a moment (and the exterior is warmed), drop when she has gone
     tick(rec, d2, now, arriving) {
       if (rec !== S.rec) return;
+      const mob = !!(G.GFX && G.GFX.isMobile), LOAD_D = mob ? LOAD_D0 : LOAD_DM, DROP_D = mob ? DROP_D0 : DROP_DM;   // desktop requests the interior before the LOD0 swap (400 m)
       if (S.live && now - S.t > 200) { S.live = false; S.have = false; }
       if (S.state === 0) {
         if (d2 < LOAD_D * LOAD_D && rec.warmed && !arriving) {
