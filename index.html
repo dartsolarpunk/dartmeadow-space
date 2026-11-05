@@ -156,8 +156,8 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-theme.js?v=81"></script>
 <script src="ui/dm-sparsevox.js?v=2"></script>
 <script src="ui/dm-rockmat.js?v=145"></script>
-<script src="ui/dm-parallax.js?v=260"></script>
-<script src="ui/dm-groundlib.js?v=260"></script>
+<script src="ui/dm-parallax.js?v=280"></script>
+<script src="ui/dm-groundlib.js?v=280"></script>
 <script src="ui/dm-water-core.js?v=277"></script>
 <script src="ui/dm-water.js?v=277"></script>
 <script src="ui/dm-water-sea.js?v=278"></script>
@@ -166,7 +166,8 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-perf.js?v=160"></script>
 <script src="ui/dm-governor.js?v=264"></script>
 <script src="ui/dm-budget.js?v=273"></script>
-<script src="ui/dm-lod.js?v=279"></script>   <!-- far-range LOD: the ONE distance table per device class (props, mansion, landmarks, vantage reach); ?lod=off|low|mobile|desktop -->
+<script src="ui/dm-lod.js?v=280"></script>
+<script src="ui/dm-impostor.js?v=280"></script>   <!-- far-range LOD: vertex-clustering impostor (mansion LOD2, colours baked) -->   <!-- far-range LOD: the ONE distance table per device class (props, mansion, landmarks, vantage reach); ?lod=off|low|mobile|desktop -->
 <script src="ui/dm-light.js?v=278"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
 <script>/* (v136) no-op stub so the flight loop can never throw if dm-perf.js failed to load */
 window.DMPerf=window.DMPerf||{on:false,b(){},e(){},mark(){},measure(n,f){return f();},frame(){},stats(){return {fps:0,avgMs:0,p95Ms:0,worstMs:0,minFps:0,cpu:{},gpu:null,sparse:null};},show(){},hide(){}};</script>
@@ -1052,7 +1053,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-mansion-rooms.js?v=250" defer></script>
 <script src="ui/dm-mansion-look.js?v=251" defer></script>
 <script src="ui/dm-mansion-interior.js?v=262" defer></script>
-<script src="ui/dm-facilities.js?v=279" defer></script>
+<script src="ui/dm-facilities.js?v=280" defer></script>
 <script src="ui/dm-lamps.js?v=278" defer></script>
 <script src="ui/dm-holo.js?v=271" defer></script>
 <script src="ui/dm-sys.js?v=241"></script>
@@ -19655,9 +19656,14 @@ function _pwPropsTick(px,pz,agl){
     // (v256) one chunk at a time, built over several frames (generator, ~2.5 ms a frame on a phone / 4 ms otherwise); a job whose chunk is no longer wanted is dropped
     let job=PW._propJob; if(job&&(job.gen!==PW.gen||M.has(job.k)||!want.has(job.k))){ job=PW._propJob=null; }
     if(!job&&!TERRAIN._mcBusy&&_pf>=(PW._propNext||0)){
-      let bd=1e30, bi=0, bj=0;   // nearest missing chunk first (by distance to the walker, not by row)
-      for(let di=-_R;di<=_R;di++) for(let dj=-_R;dj<=_R;dj++){ if(M.has((pi+di)+'_'+(pj+dj))) continue; const d2=(((pi+di)*C-px)**2)+(((pj+dj)*C-pz)**2); if(d2<bd){ bd=d2; bi=pi+di; bj=pj+dj; } }
+      // nearest missing chunk first (by distance to the walker, not by row).  The inner ring (the 3x3 you stand in) streams inline, a slice a frame, as before.  The OUTER pre-roll rings
+      // (far-range) are queued on the facilities' serial heavy-load gate (DMFac.heavy: one step at a time, only while the page keeps up, a pause between steps), one chunk per step, so they
+      // can never pile onto a texture / interior step or onto each other.
+      let bd=1e30, bi=0, bj=0, od=1e30, oi=0, oj=0;
+      for(let di=-_R;di<=_R;di++) for(let dj=-_R;dj<=_R;dj++){ if(M.has((pi+di)+'_'+(pj+dj))) continue; const d2=(((pi+di)*C-px)**2)+(((pj+dj)*C-pz)**2);
+        if(Math.max(Math.abs(di),Math.abs(dj))<=1){ if(d2<bd){ bd=d2; bi=pi+di; bj=pj+dj; } } else if(d2<od){ od=d2; oi=pi+di; oj=pj+dj; } }
       if(bd<1e30){ const k=bi+'_'+bj; job=PW._propJob={k,i:bi,j:bj,it:_hmChunkScatterG(bi,bj),gen:PW.gen}; _crM('chunkScatter:start',JSON.stringify({k,n:M.size})); }
+      else if(od<1e30&&!(PW._propHv&&PW._propHv.gen===PW.gen)&&window.DMFac&&DMFac.heavy){ _propHeavy(oi,oj); }
     }
     if(job&&!TERRAIN._mcBusy){
       const k=job.k, t0=performance.now(), budget=GFX.isMobile?2.5:4; let r=null, err=false;
@@ -19665,17 +19671,70 @@ function _pwPropsTick(px,pz,agl){
       if(err){ M.set(k,null); PW._propJob=null; }
       else if(r.done){
         PW._propJob=null; PW._propNext=_pf+3;
-        try{ const g=r.value; g.visible=false; PW._plodF=5; PW.propsGroup.add(g); M.set(k,g);   /* hidden until _propsLod shows it inside the draw cut (next frame) */
-          if(Math.max(Math.abs(job.i-pi),Math.abs(job.j-pj))<=1){ if(window.DMCollide) DMCollide.regChunk('chunk#'+k,g); } else g.userData._colWait=true;   /* far-ring chunks get colliders when they come within one chunk */   /* ui/dm-collide.js: its rocks / trunks / crowns become colliders, a slice a frame */ let by=0; g.traverse(o=>{ if(o.isInstancedMesh){ by+=(o.instanceMatrix?o.instanceMatrix.array.byteLength:0)+(o.instanceColor?o.instanceColor.array.byteLength:0); } }); g.userData.crumbKey='chunk#'+k; _crG('chunk#'+k,by); }catch(e){ M.set(k,null); }
+        try{ _propAdopt(k,r.value,job.i,job.j,pi,pj); }catch(e){ M.set(k,null); }
         _crM('chunkScatter:end',JSON.stringify({n:M.size})); _crL('chunks',M.size);
       }
     }
   }
+  // outer-ring chunks finished on the heavy gate join the scene here (one a frame, on the main loop), then the shown-chunk fade-in runs
+  if(PW._propDone&&PW._propDone.length){ const d=PW._propDone.shift(); try{ if(d.gen===PW.gen&&M.has(d.k)&&M.get(d.k)===null&&want.has(d.k)) _propAdopt(d.k,d.g,d.i,d.j,pi,pj); else _disposeProps(d.g); }catch(e){ M.set(d.k,null); } }
+  _propFadeTick(performance.now());
+  _propsCull(px,pz);
   for(const [k,g] of M){
     if(!want.has(k)){ if(g){ PW.propsGroup.remove(g); _disposeProps(g); _crG('chunk#'+k,0); } if(window.DMCollide) DMCollide.dropChunk('chunk#'+k); M.delete(k); continue; }
     if(g&&g.userData._colWait&&Math.max(Math.abs(g.userData.cx/C-pi),Math.abs(g.userData.cz/C-pj))<=1.01){ g.userData._colWait=false; if(window.DMCollide) DMCollide.regChunk('chunk#'+k,g); }
   }
   _propsLod(px,pz,agl);
+}
+function _propAdopt(k,g,ci,cj,pi,pj){
+  const M=PW.props; g.visible=false; PW._plodF=5; PW.propsGroup.add(g); M.set(k,g);   /* hidden until _propsLod shows it inside the draw cut (next frame) */
+  if(Math.max(Math.abs(ci-pi),Math.abs(cj-pj))<=1){ if(window.DMCollide) DMCollide.regChunk('chunk#'+k,g); } else g.userData._colWait=true;   /* far-ring chunks get colliders when they come within one chunk */
+  let by=0; g.traverse(o=>{ if(o.isInstancedMesh){ by+=(o.instanceMatrix?o.instanceMatrix.array.byteLength:0)+(o.instanceColor?o.instanceColor.array.byteLength:0); } }); g.userData.crumbKey='chunk#'+k; _crG('chunk#'+k,by);
+}
+// (far-range 5) an OUTER-ring chunk, built on DMFac.heavy's serial gate: the generator runs in 2.5 / 4 ms slices, one per animation frame (never during an MC patch build), then waits in PW._propDone for the loop to add it
+function _propHeavy(i,j){
+  const k=i+'_'+j, M=PW.props, gen=PW.gen; M.set(k,null); PW._propHv={k,gen};
+  DMFac.heavy('chunk:'+k, async (alive)=>{
+    try{
+      const it=_hmChunkScatterG(i,j), raf=()=>new Promise(ok=>requestAnimationFrame(ok)); let r=null;
+      do{
+        if(gen!==PW.gen||!alive()){ if(PW.props===M&&M.get(k)===null) M.delete(k); return; }
+        if(TERRAIN._mcBusy){ await raf(); continue; }
+        const t0=performance.now(), budget=GFX.isMobile?2.5:4;
+        do{ r=it.next(); }while(!r.done&&performance.now()-t0<budget);
+        if(!r.done) await raf();
+      }while(!r.done);
+      (PW._propDone||(PW._propDone=[])).push({k,g:r.value,i,j,gen});
+    }catch(e){ console.warn('[props] heavy chunk',k,e); }
+    finally{ if(PW._propHv&&PW._propHv.k===k) PW._propHv=null; }
+  }, ()=>{ if(PW._propHv&&PW._propHv.k===k) PW._propHv=null; if(PW.props===M&&M.get(k)===null) M.delete(k); });
+}
+// (far-range 6) shown-chunk fade-in: the first time _propsLod shows a chunk its meshes take the interval [0, a) of the screen noise and a runs 0 -> 1 over prop.fadeS seconds (DMLod.fadeMask put the
+// test into the three shared prop materials, so there is no per-chunk material).  Without a fade-capable material the chunk simply appears (it is hidden behind the haze by the pre-roll anyway).
+// (far-range 7) CHUNK CULL.  The planet frame turns frustum culling off for everything it tags (three would test the FLAT bounds), so every chunk inside the draw cut was drawn - also the ones
+// behind you.  Here each chunk is tested in the flat frame against the flat camera, CONSERVATIVELY (the bend only moves far geometry down): a horizontal wedge of half-angle
+// atan(tan(hfov/2) / cos(pitch)) + 25 deg + asin(R / dist); never within 150 m of the chunk's edge (its shadows reach into view), never when looking nearly straight up / down.
+// Two instanced draws per chunk fewer for roughly half of them while you look one way.  ?lodcull=0 off.
+const _LODCULL=!/[?&]lodcull=0\b/.test(location.search);
+function _propsCull(px,pz){
+  const M=PW.props, cf=PW._camFlat, cam=PW.camera, L=window.DMLod; if(!_LODCULL||!L||!L.on||!L.core.chunkCulled||!M||!M.size||!cf||!cam) return;
+  const q=cf.q, R=SURF_CHUNK*0.71;
+  for(const g of M.values()){
+    if(!g||g.userData.cx===undefined) continue;
+    const cull=L.core.chunkCulled(cf.p.x,cf.p.z,q.x,q.y,q.z,q.w,cam.fov,cam.aspect,g.userData.cx,g.userData.cz,R);
+    if(cull!==!!g.userData._cull){ g.userData._cull=cull; g.visible=g.userData._lv===true&&!cull; }
+  }
+}
+function _propFadeTick(now){
+  const L=(window.DMLod&&DMLod.on)?DMLod:null; if(!L||!L.fadeOn) return;
+  if(!PW._propFadeOK&&((PW._pfS=(PW._pfS||0)+1)%30===0)&&PW.propsGroup&&PW.propsGroup.children.length) PW._propFadeOK=L.fadeMask(PW.propsGroup)>0;
+  const F=PW._propFades; if(!F||!F.length) return;
+  const dur=L.get('prop.fadeS')*1000;
+  for(let q=F.length-1;q>=0;q--){
+    const f=F[q], g=f.g, a=Math.min(1,(now-f.t0)/dur), e=a*a*(3-2*a);
+    if(g.parent){ const ch=g.children; for(let c=0;c<ch.length;c++) L.setFade(ch[c],0,e>=1?2:e*1.0001); }
+    if(a>=1||!g.parent) F.splice(q,1);
+  }
 }
 // (v259) prop LOD by chunk distance: only the near chunks cast into the sun's shadow map (the shadow pass re-draws every caster; boulders and trees 150 m away throw no shadow
 // you can see), and chunks past the fog are not drawn at all.  The distances shrink with the frame-budget ladder's 'props' stage (x0.7 / x0.45).  Throttled to every 6th frame.
@@ -19688,8 +19747,8 @@ function _propsLod(px,pz,agl){
   const farD=_L?_L.propCut(fog,agl):Math.max(260,Math.min(fog*1.05,agl>60?Math.max(260,fog*0.85):1400))*k, shD=(_L?_L.get('prop.shadow'):(GFX.isMobile?110:170))*k, half=SURF_CHUNK*0.71;
   for(const g of M.values()){
     if(!g||g.userData.cx===undefined) continue;
-    const d=Math.hypot(px-g.userData.cx,pz-g.userData.cz)-half, vis=g.visible?d<farD*1.06:d<farD, cast=d<shD;   // (6% hysteresis: no flicker at the cut)
-    if(g.visible!==vis) g.visible=vis;
+    const d=Math.hypot(px-g.userData.cx,pz-g.userData.cz)-half, lv=g.userData._lv===true, vis=lv?d<farD*1.06:d<farD, cast=d<shD;   // (6% hysteresis: no flicker at the cut)
+    if(lv!==vis){ g.userData._lv=vis; g.visible=vis&&!g.userData._cull; if(vis&&!g.userData._shown){ g.userData._shown=1; if(PW._propFadeOK){ (PW._propFades||(PW._propFades=[])).push({g,t0:performance.now()}); const ch=g.children; for(let c=0;c<ch.length;c++) DMLod.setFade(ch[c],0,0); } } }
     if(g.userData._cast===cast) continue; g.userData._cast=cast;
     const ch=g.children; for(let q=0;q<ch.length;q++){ const o=ch[q]; if(!o.isInstancedMesh) continue; if(o.userData._cs0===undefined) o.userData._cs0=!!o.castShadow; o.castShadow=cast&&o.userData._cs0; }
   }

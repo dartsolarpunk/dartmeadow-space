@@ -355,7 +355,8 @@
     const V = normalize(positionView.negate());
     const Vt = vec3(dot(V, Tt), dot(V, Bt), dot(V, N0));
     const dist = length(positionView), fade = float(1).sub(smoothstep(near, far, dist)).mul(o.mask || float(1));
-    const lod = tclamp(log2(max(length(du1.mul(size)), length(du2.mul(size))).max(1.0)).add(U.lodBias), 0.0, o.lodMax == null ? 5.0 : o.lodMax);
+    const mipB = float(root.DMLod && root.DMLod.on ? root.DMLod.get('mip.bias') : 0.6);   // (far-range) the relief / height taps go up to mipB mips softer as the march fades out: no shimmer at the edge of the band
+    const lod = tclamp(log2(max(length(du1.mul(size)), length(du2.mul(size))).max(1.0)).add(U.lodBias).add(smoothstep(near, far, dist).mul(mipB)), 0.0, o.lodMax == null ? 5.0 : o.lodMax);
     const H = o.H ? ((u) => o.H(u, lod)) : ((u) => texture(o.tex, u).level(lod).r);
     const res = Fn(() => {
     const res = vec4(uv0.x, uv0.y, 0.5, 1.0).toVar();

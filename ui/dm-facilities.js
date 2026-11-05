@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  const F = window.DMFac = { ctx: null, sites: new Map(), solids: [], scene: null, ver: '279' };
+  const F = window.DMFac = { ctx: null, sites: new Map(), solids: [], scene: null, ver: '280' };
   const DM = window.DM_FAC = window.DM_FAC || {};
   DM.bay = DM.bay || { inside: false, membrane: 0 };
   F.bind = c => { F.ctx = c; };
@@ -274,6 +274,48 @@
     sc.traverse(o => { if (o.isMesh) { o.frustumCulled = false; const n = o.material && o.material.name; if (sh && lod0 && o.parent === lod0 || sh && lod0 && lod0.getObjectById(o.id)) { o.castShadow = !/^ah_rock/.test(n) && n !== 'ah_glass'; o.receiveShadow = true; } } });
     return root;
   }
+  // ── far-range LOD (ui/dm-lod.js, ui/dm-impostor.js): three levels with a screen-door cross-fade ──────────────────────────────────────────────────────────────────
+  // LOD0 (interior-grade) < nIn/nOut < LOD1 (15k tris) < lod2In < IMPOSTOR (one draw call, ~2.6k tris, colours baked) < far cull.  A level change no longer swaps: the levels trade
+  // places over xfade.s seconds through the planet mask every material already carries (DMLod.fadeMask), each object drawing its own interval of the screen noise, so a pixel belongs
+  // to exactly one level.  Without fade-capable materials (?lodfade=0, mask not there yet) dur = 0 and it snaps exactly like before.
+  function kickLod2(T) {
+    MAN.lod2Tried = true;
+    F.heavy('lod2:build', async () => {
+      const src = MAN.glb && MAN.glb.scene.getObjectByName('Mansion_LOD1'); if (!src) return;
+      const r = DMImpostor.build(src, T, { tris: DMLod.get('impostor.tris') });
+      if (r) { MAN.lod2 = r; r.err = r.cell * 0.9; crumb('mark', 'lod2', r.tris + 'tris/' + Math.round(r.ms) + 'ms'); } else console.warn('[ariel-home] impostor: nothing to build');
+    }, () => { MAN.lod2Tried = false; });
+  }
+  function attachLod2(rec, T) {
+    const src = rec.group && rec.group.userData.lod1, IM = MAN.lod2; if (!src || !src.parent || !IM) return;
+    const g = new T.Group(); g.name = 'Mansion_LOD2'; g.position.copy(src.position); g.quaternion.copy(src.quaternion); g.scale.copy(src.scale);
+    const m = new T.Mesh(IM.geometry, IM.material); m.name = 'Mansion_LOD2_mesh'; m.frustumCulled = false; g.add(m); g.visible = false;
+    src.parent.add(g); rec.group.userData.lod2 = g; rec.lod2 = g;
+    F.ctx.mapTag(g); DMLod.fadeMask(g);
+    try {   // build its pipeline now, off to the side (a never-drawn material is a stall the first frame it shows)
+      const PW = F.ctx.PW(); if (PW && PW.renderer && PW.renderer.compileAsync && PW.camera) { g.visible = true; try { PW.renderer.compileAsync(g, PW.camera, PW.scene); } finally { g.visible = false; } }
+    } catch (e) { }
+  }
+  function lodBands(rec, u, near, far, d1, dt, T) {
+    const D = window.DMLod && DMLod.on ? DMLod : null;
+    if (!D) { if (u.lod0) u.lod0.visible = near && !far; if (u.lod1) u.lod1.visible = !near && !far; return; }
+    let target = near ? 0 : 1;
+    if (rec.lod2) {   // LOD1 -> impostor where the impostor's own error (its clustering cell) projects to <= tau px (DMLod.lod2Dist), recomputed ~2x a second: follows render scale, fov and the ladder
+      if (!rec.l2T || (rec.l2N = (rec.l2N || 0) + 1) % 30 === 0) { const PW = F.ctx.PW(), cam = PW && PW.camera, el = PW && PW.renderer && PW.renderer.domElement; rec.l2T = D.lod2Dist(MAN.lod2.err, cam && cam.fov, el && el.height); }
+      const l2 = rec.l2T; rec.far2 = rec.far2 === undefined ? d1 > l2 : (rec.far2 ? d1 >= l2 * 0.92 : d1 > l2); if (!near && rec.far2) target = 2; }
+    const X = rec.xf || (rec.xf = D.createXfade(3, 0)), objs = [u.lod0, u.lod1, u.lod2];
+    if ((rec.fmT = (rec.fmT || 0) + 1) % 90 === 1) rec.fadeOK = D.fadeMask(rec.group) > 0;   // (re)wraps materials that appeared since (parallax twins, the impostor)
+    X.dur = rec.fadeOK ? D.get('xfade.s') : 0;
+    if (far) { X.snap(target); for (const o of objs) if (o) o.visible = false; return; }
+    X.set(target); X.step(dt);
+    const iv = [0, 0];
+    for (let i = 0; i < 3; i++) { const o = objs[i]; if (!o) continue; o.visible = X.w[i] > 0.001; if (o.visible) { X.interval(i, iv); D.setFade(o, iv[0], iv[1]); } else D.setFade(o, 0, 2); }
+    // the renderer reads the interval per drawn mesh (frame.object): hand each level's interval down to its meshes while a fade runs (and once more when it ends, to clear them)
+    if (X.fading || rec.fdPrev) {
+      for (let i = 0; i < 3; i++) { const o = objs[i]; if (!o) continue; const f = o.userData.dmFade; o.traverse(c => { if (c !== o && c.isMesh) { if (f) { const cf = c.userData.dmFade || (c.userData.dmFade = [0, 1.0001]); cf[0] = f[0]; cf[1] = f[1]; } else if (c.userData.dmFade) c.userData.dmFade = null; } }); }
+    }
+    rec.fdPrev = X.fading;
+  }
   let hiTried = false;
   function upgrade2K(T) {       // desktop only: swap the 1K maps for the 2K hero set once she's near
     const c = F.ctx; if (hiTried || c.isMobile() || c.tier() < 2 || !MAN.glb) return; hiTried = true;
@@ -504,6 +546,7 @@
       // (v227) Tag FIRST, compile SECOND. mapTag gives every material its planet-frame positionNode/maskNode and flips needsUpdate, so compiling
       // before it (the v224 order) built pipelines that the first real draw threw away and rebuilt, a second compile storm in the arrival frame.
       F.ctx.mapTag(root);
+      if (window.DMLod && DMLod.on) { try { DMLod.fadeMask(root); } catch (e) { } }   // (far-range) the cross-fade test joins the planet mask BEFORE the warm-up compile, so it is not compiled twice
       // Warm only the LOD that will be seen: on the HOME deck that is lod0 (she lands inside 420 m); otherwise the far one. Never both.
       const u0 = root.userData, homeNear = !!(DM.homeDeck && DM.arriveAt === site.id);
       if (u0.lod0) u0.lod0.visible = homeNear; if (u0.lod1) u0.lod1.visible = !homeNear;
@@ -600,7 +643,9 @@
         if (rec.lodNear === undefined) rec.lodNear = d1 < nIn; else if (rec.lodNear && d1 > nOut) rec.lodNear = false; else if (!rec.lodNear && d1 < nIn) rec.lodNear = true;
         const inR = rec.inRange === undefined ? d1 < farM : (rec.inRange ? d1 <= farM * 1.04 : d1 < farM); rec.inRange = inR;   // 4 % hysteresis at the cull
         const near = rec.lodNear, far = !inR;
-        if (u.lod0) u.lod0.visible = near && !far; if (u.lod1) u.lod1.visible = !near && !far;
+        lodBands(rec, u, near, far, d1, dt, T);
+        if (MAN.glb && !MAN.lod2Tried && window.DMImpostor && window.DMLod && DMLod.on) kickLod2(T);
+        if (MAN.lod2 && !rec.lod2) attachLod2(rec, T);
         if (d2 < 1100 * 1100) { upgrade2K(T); mansionPx(T); upgradeCliff(T); }
         if (window.DMMansionInt) DMMansionInt.tick(rec, d2, now, DM.arriveAt === rec.def.id);
         if (window.DMHolo) { try { DMHolo.tick(rec, d2, now, dt); } catch (e) { if (!rec.holoWarn) { rec.holoWarn = 1; console.warn('[holo] tick', e); } } }

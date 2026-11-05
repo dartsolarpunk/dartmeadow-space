@@ -468,7 +468,8 @@
       const F1 = (uvw, idx, lod) => texture(tex.t1, tileUV(uvw, idx)).level(lod);
       const F2 = (uvw, idx, lod) => texture(tex.t2, tileUV(uvw, idx)).level(lod);
       const du1 = dFdx(uv0), du2 = dFdy(uv0);
-      const lod = tcl(log2(max(length(du1.mul(TT)), length(du2.mul(TT))).max(1.0)), 0.0, 2.4);
+      const mipB = float(G.DMLod && G.DMLod.on ? G.DMLod.get('mip.bias') : 0.6);   // (far-range) extra mip toward the far end of the detail band (ui/dm-lod.js 'mip.bias'): the tile detail averages out instead of shimmering as it fades
+      const lod = tcl(log2(max(length(du1.mul(TT)), length(du2.mul(TT))).max(1.0)).add(smoothstep(reach.mul(0.3), reach, dist).mul(mipB)), 0.0, 2.4);
       // ---- region: the two tiles of this pixel, the blend weight, moss / wetness / ruin (one bilinear fetch of the 160x160 region map)
       const RGa = Fn(() => {   // (slotA, slotB, t, 0)
         const o = vec4(0, 0, 0, 0).toVar();

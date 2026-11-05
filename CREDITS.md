@@ -115,3 +115,5 @@ Use: **code** = code or tables included (licence terms apply) · **technique** =
   <https://github.com/>
 - **jsDelivr · Google Fonts · AllOrigins** — jsDelivr, Google, AllOrigins. *Service terms* (service). Serving libraries, fonts and the coastline data.
   <https://www.jsdelivr.com/> · <https://fonts.google.com/> · <https://allorigins.win/>
+- **nanite-webgpu** — Scthe (Marcin Matuszczyk). *MIT* (ideas, no code copied). The far-range LOD work (ui/dm-lod.js, ui/dm-impostor.js) takes its approach to screen-space-error LOD selection, view-angle billboard impostors (12 views around the up axis, dithered blend) and previous-frame depth-pyramid culling from this project's README; nothing of its software rasterizer or `atomic<u64>` packing is used.
+  <https://github.com/Scthe/nanite-webgpu>
