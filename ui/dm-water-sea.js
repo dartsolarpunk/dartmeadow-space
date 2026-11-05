@@ -126,8 +126,9 @@
 
     /* ---------- fragment ---------- */
     const depthToViewZ = (d) => (o.logDepth ? W.logarithmicDepthToViewZ(d, cameraNear, cameraFar) : W.perspectiveDepthToViewZ(d, cameraNear, cameraFar));
-    const sceneZ = o.depthOK ? depthToViewZ(viewportDepthTexture().r) : null;
-    const thick = o.depthOK ? clamp(positionView.z.sub(sceneZ), 0.0, 500.0) : F(40);
+    const vDepth = o.depthOK ? viewportDepthTexture().r : null, sceneZ = o.depthOK ? depthToViewZ(vDepth) : null;
+    // an unwritten texel of the depth copy (resized after a render-scale change, or a region not yet copied) reads 0 = 'surface at the near plane': that made contact foam paint a white rectangle. Treat it as open water.
+    const thick = o.depthOK ? select(vDepth.lessThan(0.000001), F(500), clamp(positionView.z.sub(sceneZ), 0.0, 500.0)) : F(40);
     const fp = max(length(dFdx(xz)), length(dFdy(xz)));
     /* ---------- breaking up the repeats: nothing here is sampled on a single lattice ---------- */
     // every tile is sampled through its own rotation and an incommensurate scale (the band layers 0 / 0.61 rad at 1 / 1.37, the detail layers 0 / 0.64 rad at 0.17 / 0.5413, the

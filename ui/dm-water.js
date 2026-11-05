@@ -224,7 +224,7 @@
     const core = C(), N = sh.N, cell = sh.cell, d = sh.depth, seaY = 0, x0 = cx - sh.R + cell * 0.5, z0 = cz - sh.R + cell * 0.5;
     let t0 = now(), minD = 99, maxD = -99;
     for (let j = 0; j < N; j++) {
-      for (let i = 0; i < N; i++) { const h = H(x0 + i * cell, z0 + j * cell); const v = seaY - h; d[j * N + i] = v; if (v < minD) minD = v; if (v > maxD) maxD = v; }
+      for (let i = 0; i < N; i++) { let h = H(x0 + i * cell, z0 + j * cell); if (!(h > -1e5 && h < 1e5)) h = -80; const v = seaY - h; d[j * N + i] = v; if (v < minD) minD = v; if (v > maxD) maxD = v; }
       if (now() - t0 > 0.8) { yield; t0 = now(); }
     }
     const P = S.P, dDeep = Math.max(1.5, Math.min(clamp(0.2 * P.lamS, 6, 30), maxD * 0.9)), T = sh.T;
