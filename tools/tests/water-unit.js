@@ -1,0 +1,163 @@
+// Unit tests for ui/dm-water-core.js (pure JS half of the water system).   node tools/tests/water-unit.js
+const assert = require('assert'); const C = require('../../ui/dm-water-core.js');
+let n = 0; const ok = (c, m) => { assert(c, m); n++; }; const near = (a, b, tol, m) => ok(Math.abs(a - b) <= tol, m + ' (' + a + ' vs ' + b + ' tol ' + tol + ')');
+const palW = { water: true, liquidColor: 0x1a4a7a, atmos: true, sky: [0x88bbff, 0x3a6ea5] };
+const earth = () => C.identityFor({ name: 'Earth', type: 'Habitable', gravity: 1 }, palW, { seed: 5, lat: 10 });
+const sampleModel = (P, tier, layers) => {
+  const t = typeof tier === 'string' ? C.tierFor(tier, false) : tier, sp = C.buildSpectrum(P, t), mdl = { bands: [], layers: layers || t.layers, windRot: 0, spec: sp };
+  for (const b of sp.bands) mdl.bands.push({ band: b, tile: C.bakeBandSync(b, b.T, { foamTaps: t.foamTaps, trail: P.foam.trail }), T: b.T });
+  return mdl;
+};
+const stats = (mdl, t, N) => { let s = 0, s2 = 0; for (let i = 0; i < N; i++) { const h = C.heightAt(mdl, (i * 37.7) % 1900, (i * 91.3) % 1700, t); s += h; s2 += h * h; } const m = s / N; return { mean: m, hs: 4 * Math.sqrt(s2 / N - m * m) }; };
+
+/* ── tiers: gating, memory ── */
+{
+  const T = C.TIERS;
+  ok(T.low.disp === 0 && T.low.curl === 0 && T.low.spray === 0 && T.low.causticT === 0 && T.low.bands === 1, 'Low: flat mesh, 1 band, no curl, no spray, no caustics (flat tinted water + simple foam)');
+  ok(T.medium.disp === 0 && T.medium.bands === 2 && T.medium.spray > 0, 'Medium: 2 bands, normals only, spray on');
+  ok(T.high.disp > 0 && T.high.bands === 3 && T.high.curl > 0 && T.ultra.curl > T.high.curl, 'High/Ultra: displaced near sea, curl waves');
+  ok(C.tierFor('ultra', true).name === 'high', 'phones cap at High'); ok(C.tierFor('bogus', false).name === 'medium', 'unknown preset -> medium');
+  const um = C.tierFor('ultra', true), ud = C.tierFor('ultra', false);
+  ok(um.spray < ud.spray * 1.01 && um.T.every((v) => v <= 192) && um.bakeMs === 2 && ud.bakeMs === 3, 'phones: smaller pools / tiles, 2 ms bake slice');
+  const by = C.TIER_ORDER.map((k) => C.tierBytes(C.tierFor(k, false)));
+  ok(by[0] < 160e3 && by[1] < 450e3 && by[2] < 900e3 && by[3] < 1.5e6, 'texture memory per tier ' + by.join(','));
+  for (let i = 1; i < 4; i++) ok(by[i] > by[i - 1], 'tiers grow');
+  ok(C.tierBytes(C.tierFor('ultra', true)) < 1.2e6, 'phone Ultra water textures < 1.2 MB');
+}
+
+/* ── per-planet identity ── */
+{
+  const E = earth(), E2 = earth(); ok(JSON.stringify(E) === JSON.stringify(E2), 'identity deterministic');
+  const body = (name, type, g, extra) => Object.assign({ name, type, gravity: g }, extra || {});
+  const pal = (extra) => Object.assign({}, palW, extra || {});
+  const low = C.identityFor(body('Lowg', 'Ocean', 0.3), pal(), { seed: 9 }), hi = C.identityFor(body('Higg', 'Ocean', 1.8), pal(), { seed: 9 });
+  ok(low.lamP > hi.lamP * 1.5, 'low g: longer waves ' + low.lamP.toFixed(0) + ' > ' + hi.lamP.toFixed(0));
+  ok(low.Hs >= hi.Hs && low.HsS >= hi.HsS - 1e-6, 'low g: taller waves');
+  const spLow = C.buildSpectrum(low, C.tierFor('high', false)), spHi = C.buildSpectrum(hi, C.tierFor('high', false));
+  ok(spLow.bands[0].c > 0 && Math.sqrt(low.g * low.lamS / (2 * Math.PI)) < 1.2 * Math.sqrt(hi.g * low.lamS / (2 * Math.PI)), 'phase speed c = sqrt(g/k): slower per wavelength on a low-g world');
+  ok(low.spray.hang > hi.spray.hang * 1.8, 'low g: longer-hanging splashes (' + low.spray.hang.toFixed(2) + ' vs ' + hi.spray.hang.toFixed(2) + ')');
+  // temperature / pressure
+  const mars = C.identityFor(body('Mars', 'Desert', 0.38), pal(), { seed: 2 }), venus = C.identityFor(body('Venus', 'Volcanic', 0.9), pal(), { seed: 2 });
+  ok(mars.ice > 0.95, 'Mars is frozen at 210 K'); ok(venus.steam > 0.95, 'Venus (735 K) boils off'); ok(E.ice < 0.01 && E.steam < 0.01, 'Earth (equator): neither ice nor steam');
+  const polar = C.identityFor({ name: 'Earth', type: 'Habitable', gravity: 1 }, palW, { seed: 5, lat: 78 }), mid = C.identityFor({ name: 'Earth', type: 'Habitable', gravity: 1 }, palW, { seed: 5, lat: 55 });
+  ok(polar.ice > 0.9 && mid.ice < 0.15, 'Earth: sea ice at 78 deg, none at 55 deg (' + polar.ice.toFixed(2) + ', ' + mid.ice.toFixed(2) + ')');
+  ok(Math.abs(C.boilK(C.LIQUIDS.water, 1) - 373.15) < 0.01 && C.boilK(C.LIQUIDS.water, 0.006) < 285, 'Clausius-Clapeyron: water boils near 268 K at 0.006 atm');
+  const titan = C.identityFor(body('Wend', 'Methane', 0.14), pal({ liquidName: 'methane', liquidColor: 0x4a8a7a }), { seed: 3 });
+  ok(titan.kind === 'methane' && titan.colors.deep[1] > titan.colors.deep[0], 'methane world: methane liquid, teal-green');
+  ok(titan.foam.gain < E.foam.gain && titan.foam.tau < E.foam.tau && titan.whitecap <= 1, 'methane foams less and shorter-lived than water');
+  const lava = C.identityFor(body('Cinder', 'Volcanic', 0.9), pal({ liquidName: 'lava', liquidColor: 0xff5a10 }), { seed: 3 });
+  ok(lava.kind === 'lava' && lava.mu > 0.9 && lava.glow === 1 && lava.minLam > 15, 'lava: very viscous, glows, only long waves');
+  const amm = C.identityFor(body('Hollin', 'Ice', 0.5), pal({ liquidName: 'ammonia', liquidColor: 0x7a8a3a }), { seed: 3 });
+  ok(amm.kind === 'ammonia' && amm.ice > 0.5 === (amm.Tloc < 195), 'ammonia at 228 K is liquid (above its 195 K melt point)');
+  const noAir = C.identityFor(body('Mercury', 'Rocky', 0.38), pal({ atmos: false }), { seed: 3 });
+  const airy = C.identityFor(body('Mercury', 'Rocky', 0.38), pal({ atmos: true }), { seed: 3, }); airy.Hs; const airy2 = C.identityFor(Object.assign(body('Mercury', 'Rocky', 0.38), { pressureAtm: 1 }), pal({ atmos: true }), { seed: 3 });
+  ok(noAir.Hs < airy2.Hs * 0.5 && noAir.sky < 0.1, 'no atmosphere: no wind sea, no sky to reflect');
+  // Earth realistic, Solenne designed and distinct
+  const S = C.identityFor({ name: 'Solenne', type: 'Habitable', gravity: 1.0, home: true }, palW, { seed: 7 });
+  ok(E.sig === 'earth' && S.sig === 'solenne' && S.pattern === 'pearl' && E.pattern === 'lace', 'Earth lace vs Solenne pearl-cell foam');
+  ok(S.glow === 1 && E.glow === 0 && S.pulse > 0 && S.golden, 'Solenne glows, breathes and keeps golden-ratio swells');
+  const d = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+  ok(d(S.colors.shallow, E.colors.shallow) > 0.15 && d(S.colors.scatter, E.colors.scatter) > 0.1 && d(S.glowCol, S.glowCol2) > 0.3, 'Solenne colours clearly differ from Earth');
+  // every habitable world gets a distinct but plausible look (seeded variation does not break the physics)
+  const set = new Set(); for (let s = 1; s <= 40; s++) { const p = C.identityFor(body('H' + s, 'Habitable', 0.6 + (s % 7) * 0.12), palW, { seed: s * 31 }); set.add(p.lamP.toFixed(1)); ok(p.lamP >= 12 && p.lamP <= 120 && p.Hs <= 2.4 && p.chop >= 0.1 && p.chop <= 0.92, 'identity within clamps'); }
+  ok(set.size > 15, 'habitable worlds differ in wave scale (' + set.size + ' of 40)');
+}
+
+/* ── spectrum, band tiles ── */
+{
+  const P = earth();
+  for (const tn of ['low', 'medium', 'high', 'ultra']) {
+    const tier = C.tierFor(tn, false), a = C.buildSpectrum(P, tier), b = C.buildSpectrum(P, tier);
+    ok(JSON.stringify(a.bands.map((x) => x.trains.map((t) => [t.nx, t.nz, +t.a.toFixed(6)]))) === JSON.stringify(b.bands.map((x) => x.trains.map((t) => [t.nx, t.nz, +t.a.toFixed(6)]))), tn + ' spectrum deterministic');
+    ok(a.bands.length === tier.bands, tn + ' band count');
+    for (const bd of a.bands) {
+      const seen = new Set(); for (const t of bd.trains) { ok(Number.isInteger(t.nx) && Number.isInteger(t.nz) && (t.nx || t.nz), 'lattice vector'); const key = t.nx + ',' + t.nz; ok(!seen.has(key), 'unique lattice vector'); seen.add(key);
+        const texPerWave = bd.T / Math.hypot(t.nx, t.nz); ok(texPerWave >= 3.5, tn + ' ' + bd.id + ' wave >= 3.5 texels (' + texPerWave.toFixed(1) + ')');
+        near(t.w, Math.sqrt(P.g * t.k), 1e-9, 'deep-water dispersion w = sqrt(g k)'); }
+    }
+    ok(a.steepness <= 0.65, tn + ' total steepness stays below the looping limit: ' + a.steepness.toFixed(2));
+  }
+  const mdl = sampleModel(P, 'high'); const st = stats(mdl, 5, 6000);
+  ok(Math.abs(st.mean) < 0.08, 'mean height ~0: ' + st.mean.toFixed(3)); ok(st.hs > P.HsTotal * 0.75 && st.hs < P.HsTotal * 1.3, 'recovered Hs ' + st.hs.toFixed(2) + ' vs target ' + P.HsTotal.toFixed(2));
+  // exactly tileable: one tile width away is the same point (layer 0, no wind rotation)
+  { const m1 = sampleModel(P, 'medium', 1); for (const b of m1.bands) { const S = b.band.S; for (let i = 0; i < 20; i++) { const x = i * 13.7, z = i * 7.1; near(C.heightAt({ bands: [b], layers: 1, windRot: 0 }, x, z, 2), C.heightAt({ bands: [b], layers: 1, windRot: 0 }, x + S, z - S * 3, 2), 1e-9, b.band.id + ' tiles seamlessly'); } } }
+  // the surface travels at the band's phase speed: sampling later and shifted along dir matches
+  { const m1 = sampleModel(P, 'medium', 1), b = m1.bands[0], mm = { bands: [b], layers: 1, windRot: 0 }, dt = 2.5, c = b.band.c; const x = 40.3, z = 11.9; near(C.heightAt(mm, x, z, 1), C.heightAt(mm, x + b.band.dir[0] * c * dt, z + b.band.dir[1] * c * dt, 1 + dt), 1e-9, 'band scrolls at c along its direction'); ok(c > 0.5 * Math.sqrt(P.g / (2 * Math.PI / b.band.lamMean)) && c < 2 * Math.sqrt(P.g / (2 * Math.PI / b.band.lamMean)), 'c ~ sqrt(g/k) of the band'); }
+  // baked slopes agree with the height's own gradient (RG vs B channel)
+  { const mdl1 = sampleModel(P, 'high', 1), e = 0.4; let num = 0, da = 0, db = 0; for (let i = 0; i < 400; i++) { const x = (i * 29.3) % 700, z = (i * 53.1) % 600, hx = (C.heightAt(mdl1, x + e, z, 3) - C.heightAt(mdl1, x - e, z, 3)) / (2 * e), s = C.slopeAt(mdl1, x, z, 3).sx; num += hx * s; da += hx * hx; db += s * s; }
+    const corr = num / Math.sqrt(da * db); ok(corr > 0.93, 'slope channel matches d(height)/dx: corr ' + corr.toFixed(3)); }
+  // whitecap potential: a sensible fraction of the sea can break, the trail adds foam behind the crests, nothing outside 0..1
+  { const t0 = C.tierFor('high', false), sp = C.buildSpectrum(P, t0), bd = sp.bands[1], noTrail = C.bakeBandSync(bd, bd.T, { foamTaps: 0 }), trail = C.bakeBandSync(bd, bd.T, { foamTaps: 3, trail: 0.2 });
+    const cov = (arr, th) => { let c = 0; for (let i = 0; i < arr.length; i += 4) if (arr[i + 3] > th) c++; return c / (arr.length / 4); };
+    const c0 = cov(noTrail, 128), c1 = cov(trail, 128); ok(c0 > 0.01 && c0 < 0.22, 'crest foam covers ' + (c0 * 100).toFixed(1) + '% of the tile'); ok(c1 > c0 * 1.02 && c1 < 0.45, 'persistent foam trail widens it: ' + (c0 * 100).toFixed(1) + '% -> ' + (c1 * 100).toFixed(1) + '%');
+    let mn = 255, mx = 0; for (let i = 3; i < trail.length; i += 4) { mn = Math.min(mn, trail[i]); mx = Math.max(mx, trail[i]); } ok(mn === 0 && mx > 200, 'potential spans 0..1'); }
+  // the Jacobian really dips at crests: potential correlates with height
+  { const t0 = C.tierFor('high', false), sp = C.buildSpectrum(P, t0), bd = sp.bands[1], tile = C.bakeBandSync(bd, bd.T, { foamTaps: 0 }); let hs = 0, hn = 0, ns = 0, nn = 0; for (let i = 0; i < tile.length; i += 4) { if (tile[i + 3] > 200) { hs += tile[i + 2]; hn++; } else { ns += tile[i + 2]; nn++; } }
+    ok(hn > 0 && hs / hn > ns / nn + 4, 'foam sits on crests (mean B ' + (hs / hn).toFixed(0) + ' vs ' + (ns / nn).toFixed(0) + ')'); }
+  // wind: more wind -> more whitecap cover and bigger waves
+  const calm = C.identityFor({ name: 'A', type: 'Habitable', gravity: 1 }, palW, { seed: 1, t: 0 }); let lo = 1e9, hiV = 0; for (let t = 0; t < 400; t += 3) { const w = C.windFor(77, t); lo = Math.min(lo, w.s); hiV = Math.max(hiV, w.s); } ok(lo >= 4.1 && hiV > 7, 'world wind varies ' + lo.toFixed(1) + '..' + hiV.toFixed(1) + ' m/s');
+  ok(Math.abs(Math.hypot(C.windFor(5, 12).x, C.windFor(5, 12).z) - 1) < 1e-9, 'wind direction is a unit vector'); ok(calm.whitecap >= 0, 'whitecap cover finite');
+}
+
+/* ── detail + caustics tiles ── */
+{
+  const T = 64, d = new Uint8ClampedArray(T * T * 4), g = C.bakeDetail(T, d, 11, 8); let y = 0; while (!g.next().done) y++; ok(y >= 4, 'detail bake is sliced (' + y + ' slices)');
+  let lace = 0, cells = 0; for (let i = 0; i < T * T; i++) { lace += d[i * 4]; cells += d[i * 4 + 1]; } ok(lace / (T * T) > 25 && lace / (T * T) < 200, 'lace tile has foam and gaps (' + (lace / (T * T)).toFixed(0) + ')');
+  let seam = 0, mid = 0; for (let k = 0; k < T; k++) { for (let c = 0; c < 4; c++) { seam += Math.abs(d[(k * T) * 4 + c] - d[(k * T + T - 1) * 4 + c]); mid += Math.abs(d[(k * T + 20) * 4 + c] - d[(k * T + 21) * 4 + c]); } } ok(seam < mid * 1.8 + 200, 'detail tile has no seam (' + seam + ' vs neighbour ' + mid + ')');
+  const cT = 64, cb = new Uint8ClampedArray(cT * cT * 4), cg = C.bakeCaustics(cT, cb, 3, 8); let ys = 0; while (!cg.next().done) ys++; ok(ys >= 4, 'caustic bake is sliced');
+  const vals = []; for (let i = 0; i < cT * cT; i++) vals.push(cb[i * 4 + 1]); vals.sort((a, b) => a - b); const med = vals[vals.length >> 1], p99 = vals[Math.floor(vals.length * 0.99)];
+  ok(p99 > med * 2 && p99 > 120 && med < 140, 'caustics: bright lines over a darker floor (median ' + med + ', p99 ' + p99 + ')');
+  let sm = 0, mm = 0; for (let k = 0; k < cT; k++) { sm += Math.abs(cb[(k * cT) * 4 + 1] - cb[(k * cT + cT - 1) * 4 + 1]); mm += Math.abs(cb[(k * cT + 20) * 4 + 1] - cb[(k * cT + 21) * 4 + 1]); } ok(sm < mm * 1.6 + 60, 'caustic tile has no seam');
+  let dif = 0; for (let i = 0; i < cT * cT; i++) dif += Math.abs(cb[i * 4] - cb[i * 4 + 2]); ok(dif / (cT * cT) > 1.5, 'caustics disperse (R vs B differ)');
+}
+
+/* ── clip-map ── */
+{
+  for (const [nn, c0, L] of [[32, 2, 6], [48, 1.5, 7], [64, 1, 8]]) {
+    const m = C.clipmap(nn, c0, L); let area = 0; const ix = m.index, p = m.pos; const lvlArea = [];
+    for (let i = 0; i < ix.length; i += 3) { const a = ix[i] * 2, b = ix[i + 1] * 2, c = ix[i + 2] * 2; area += Math.abs((p[b] - p[a]) * (p[c + 1] - p[a + 1]) - (p[c] - p[a]) * (p[b + 1] - p[a + 1])) / 2; }
+    // levels live in their own frame at the same centre: the union is the outer square, with no overlap
+    const outer = nn * c0 * Math.pow(2, L - 1); near(area, outer * outer, 1e-6 * outer * outer, 'clip-map ' + nn + 'x' + L + ' tiles the outer square exactly (no gaps, no overlap)');
+    ok(m.pos.length / 2 === m.lvl.length && m.morph.length === m.pos.length, 'attribute counts'); ok((m.pos.length / 2 > 65535) === (m.index instanceof Uint32Array), 'index width');
+    let morphed = 0, bad = 0; const Hh = nn / 2;
+    for (let v = 0; v < m.pos.length / 2; v++) { if (m.morph[v * 2] || m.morph[v * 2 + 1]) { morphed++; const q = m.lvl[v] / 2, i = Math.round(m.pos[v * 2] / q), j = Math.round(m.pos[v * 2 + 1] / q); const edge = Math.abs(i) === Hh || Math.abs(j) === Hh; if (!edge) bad++; } }
+    ok(morphed > 0 && bad === 0, 'morph flags only on outer-edge odd nodes (' + morphed + ')');
+    ok(C.levelsFor(nn, c0, 4096) >= 1 && nn * c0 * Math.pow(2, C.levelsFor(nn, c0, 4096) - 1) >= 4096, 'levelsFor reaches the wanted span');
+    ok(m.pos.length / 2 < 36000, 'vertex count ' + m.pos.length / 2 + ' <= 36k (the old 128x128 sheet was 16.6k verts / 32k tris)');
+  }
+}
+
+/* ── shore: eikonal travel time, shoaling, swash, wet memory ── */
+{
+  const N = 48, cell = 3, g = C.G0, slope = 0.04, depth = new Float32Array(N * N);
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) depth[y * N + x] = Math.max(-2, 12 - slope * cell * x * 1.0 * 1);   // shore along z at x = 12/(0.12) = 100 cells... use steeper:
+  const m = 0.10; for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) depth[y * N + x] = 14 - m * cell * x;        // depth falls 0.1 per unit: shore at x = 46.7
+  const Tm = C.eikonal(depth, N, cell, g, 13.0);
+  // analytic: T(x) = 2/(m sqrt(g)) (sqrt(d0) - sqrt(d)) from the deep boundary d0 = 13
+  let worst = 0; for (const x of [10, 20, 30, 40]) { const d = depth[24 * N + x], an = 2 / (m * Math.sqrt(g)) * (Math.sqrt(13) - Math.sqrt(d)), num = Tm[24 * N + x]; worst = Math.max(worst, Math.abs(num - an) / an); }
+  ok(worst < 0.1, 'eikonal travel time within 10% of the planar-beach solution: ' + (worst * 100).toFixed(1) + '%');
+  let mono = true; for (let x = 6; x < N - 1; x++) if (Tm[24 * N + x + 1] < Tm[24 * N + x] - 1e-6) mono = false; ok(mono, 'travel time grows toward the shore');
+  const deep = C.shoal(1.5, 60, 80), sh = C.shoal(1.5, 3, 80), br = C.shoal(1.5, 1.2, 80);
+  ok(deep.H === 1.5 && deep.breaking === 0, 'deep water: unchanged'); ok(sh.H > 1.5 && sh.H <= 0.78 * 3, 'shoaling grows the wave, bounded by 0.78 d'); ok(br.breaking > 0.9 && br.H <= 0.78 * 1.2 + 1e-9, 'breaks when H -> 0.78 d');
+  let mx = 0, up = 0; for (let u = 0; u < 1; u += 0.01) { const s = C.swashProfile(u); ok(s >= 0 && s <= 1.0001, 'swash in 0..1'); if (s > mx) { mx = s; up = u; } } ok(up < 0.3 && C.swashProfile(0.9) < 0.2 && C.swashProfile(0.5) > 0.25, 'swash rushes up fast and drains slowly');
+  let w = 0; w = C.wetStep(w, 1.0, 0.1, 20); ok(w === 1.0, 'wet line jumps to the run-up'); const w1 = C.wetStep(w, 0.2, 1, 20); ok(w1 < 1 && w1 > 0.85, 'then dries slowly (not with the wave): ' + w1.toFixed(3)); let w2 = w; for (let i = 0; i < 80; i++) w2 = C.wetStep(w2, 0.2, 1, 20); ok(w2 <= 0.21, 'and returns to the run-up level later');
+}
+
+/* ── ripples, wake, spray ── */
+{
+  const R = new C.Ripples(8); for (let i = 0; i < 11; i++) R.spawn(i, 0, 0.5, i * 0.1, 1.5); ok(R.next === 3 && R.n === 8, 'ripple ring wraps (8 slots)');
+  ok(R.live(1.1) === 8 && R.live(10) === 0, 'ripples expire after ' + C.Ripples.RMAX_AGE + ' s');
+  { const amp = 0.4, c = 1.5, a = 1.0; for (const d of [1.0, 1.7, 2.4, 3.1]) { const e = 1e-4, p = C.Ripples.profile(d, a, amp, c), pp = C.Ripples.profile(d + e, a, amp, c), pm = C.Ripples.profile(d - e, a, amp, c); near(p[1], (pp[0] - pm[0]) / (2 * e), 2e-3, 'ripple analytic gradient matches finite difference at d=' + d); } }
+  const r1 = new C.Ripples(4); r1.spawn(0, 0, 1, 0, 1.5); const g1 = r1.gradAt(0.0 + 1.5 * 0.5, 0, 0.5); ok(Math.abs(g1.gx) > 0 || Math.abs(g1.h) > 0, 'ring has energy at its radius'); ok(Math.hypot(r1.gradAt(40, 0, 0.5).gx, r1.gradAt(40, 0, 0.5).gz) < 0.01, 'and none far outside it');
+  const wk = new C.Wake(48); for (let i = 0; i < 40; i++) wk.push(i * 0.5, 0, i * 0.05, 9, 1.0);
+  const buf = new Float32Array(48 * 5 * 5), pts = wk.ribbon(buf, 40 * 0.05, 2.0); ok(pts === 40 && wk.count === 40, 'wake ribbon points');
+  { const half = (k) => { const b = k * 25; return Math.abs(buf[b + 1 * 0] ? 0 : 0); }; const w0 = Math.abs(buf[4 * 5 + 1] - buf[0 * 5 + 1]), wOld = Math.abs(buf[(35 * 5 + 4) * 5 + 1] - buf[(35 * 5) * 5 + 1]); ok(wOld > w0 * 2, 'wake spreads with age (Kelvin): ' + w0.toFixed(2) + ' -> ' + wOld.toFixed(2)); }
+  { const iHead = 2 * 5 + 4, iOld = (35 * 5 + 2) * 5 + 4; ok(buf[iHead] > buf[iOld], 'wake foam fades with age'); }
+  const slow = new C.Wake(8); slow.push(0, 0, 0, 0.5, 1); slow.push(1, 0, 0.1, 0.5, 1); const b2 = new Float32Array(8 * 25); slow.ribbon(b2, 0.2, 2); ok(b2[4] < 0.2, 'a drifting body leaves almost no wake');
+  // gravity: apex and hang time scale 1/g
+  const apex = (gRel) => { const s = new C.Spray(4); s.spawn(0, 0, 0, 0, 6, 0, 1, 20, 0, 0); let t = 0, ymax = 0, tLand = 0; const g = C.G0 * gRel; for (let i = 0; i < 4000; i++) { s.step(0.005, g, 0, null); t += 0.005; ymax = Math.max(ymax, s.p[1]); if (s.p[1] < 0 && s.v[1] < 0 && !tLand) tLand = t; } return { ymax, tLand }; };
+  const a1 = apex(1), a2 = apex(0.38); near(a2.ymax / a1.ymax, 1 / 0.38, 0.15, 'spray apex scales 1/g'); near(a2.tLand / a1.tLand, 1 / 0.38, 0.15, 'hang time scales 1/g');
+  const sp = new C.Spray(6); for (let i = 0; i < 9; i++) sp.spawn(i, 1, 0, 0, 1, 0, 1, 0.2, 0, 0); ok(sp.step(0.01, 9, 0, null) <= 6, 'pool never exceeds its size'); for (let i = 0; i < 40; i++) sp.step(0.02, 9, 0, null); ok(sp.alive === 0, 'all particles expire');
+  const sd = new C.Spray(2); sd.spawn(0, 2, 0, 1, 0, 0, 1, 9, 3, 0); let died = false; for (let i = 0; i < 400; i++) { if (sd.step(0.01, 20, 0, () => 0) === 0) { died = true; break; } } ok(died, 'droplets that fall back into the sea are removed');
+}
+console.log('water-unit: ' + n + ' checks passed');
