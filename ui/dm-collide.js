@@ -458,6 +458,19 @@
       for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) { const dx = xs[j] - xs[i], dz = zs[j] - zs[i], R = rs[i] + rs[j] + gap * 0.5; if (dx * dx + dz * dz < R * R * 0.98) { if (bad) { const k = rs[i] >= rs[j] ? j : i; if (!bad[k]) { bad[k] = 1; left++; } } else left++; } }
       return left;
     };
+    // Move discs (xs,zs,rs; n) clear of FIXED discs (fx,fz,fr; m) by pushing radially outward; clamps to the chunk box. Returns how many are still overlapping (flag them / drop them).
+    W.pushDiscsFrom = (xs, zs, rs, n, fx, fz, fr, m, gap, x0, x1, z0, z1, bad) => {
+      gap = gap || 0; let left = 0;
+      for (let i = 0; i < n; i++) {
+        if (bad && bad[i]) continue;
+        for (let it = 0; it < 4; it++) { let any = 0;
+          for (let j = 0; j < m; j++) { const dx = xs[i] - fx[j], dz = zs[i] - fz[j], R = rs[i] + fr[j] + gap; if (dx > R || dx < -R || dz > R || dz < -R) continue; const d2 = dx * dx + dz * dz; if (d2 >= R * R) continue; any = 1;
+            const d = sqrt(d2); let ux, uz; if (d < 1e-5) { ux = Math.cos(j * 2.399963); uz = Math.sin(j * 2.399963); } else { ux = dx / d; uz = dz / d; } xs[i] = fx[j] + ux * R; zs[i] = fz[j] + uz * R; }
+          xs[i] = clamp(xs[i], x0 + rs[i], x1 - rs[i]); zs[i] = clamp(zs[i], z0 + rs[i], z1 - rs[i]); if (!any) break; }
+        for (let j = 0; j < m; j++) { const dx = xs[i] - fx[j], dz = zs[i] - fz[j], R = rs[i] + fr[j] + gap * 0.5; if (dx * dx + dz * dz < R * R * 0.98) { if (bad) bad[i] = 1; left++; break; } }
+      }
+      return left;
+    };
     // register an instanced mesh's transforms as colliders in time-sliced steps. Generator: yields every `per` instances.
     // spec: { kind:'ellipsoid'|'sphere'|'cyl'|'box', mat, k (radius factor on scale), ky, y0f, y1f (cyl: base/top as fraction of scale.y about the centre), soft }
     // M = Float32Array of instance matrices (column-major 16 floats each), count = real instances (zero-scale padding is skipped).
@@ -487,8 +500,8 @@
         if (max(hx, hz) < (opts.minSize || 0.12) && hy < (opts.minSize || 0.12)) continue;
         const wx = e[0] * cx + e[4] * cy + e[8] * cz + e[12], wy = e[1] * cx + e[5] * cy + e[9] * cz + e[13], wz = e[2] * cx + e[6] * cy + e[10] * cz + e[14], yaw = Math.atan2(-e[8], e[0]);
         const isGlass = opts.glass ? opts.glass(m) : false, mt = isGlass ? 'glass' : (opts.matOf ? opts.matOf(m) : (opts.mat || 'stone')), fl = opts.soft ? F_SOFT : 0;
-        const id = (hy > 3 * max(hx, hz) && abs(hx - hz) < 0.3 * max(hx, hz) && max(hx, hz) < 2) ? W.addCylinder(name, wy - hy, wy + hy, wx, wz, max(hx, hz)) : W.addBox(name, wx, wy, wz, hx, hy, hz, yaw, mt, fl);
-        if (id >= 0) { if (id < CAP && typ[id] === T_CYL) { mat[id] = matId(mt); } reg++; }
+        const id = (hy > 3 * max(hx, hz) && abs(hx - hz) < 0.3 * max(hx, hz) && max(hx, hz) < 2) ? W.addCylinder(name, wx, wy - hy, wy + hy, wz, max(hx, hz), mt, fl) : W.addBox(name, wx, wy, wz, hx, hy, hz, yaw, mt, fl);
+        if (id >= 0) reg++;
       }
       return reg;
     };

@@ -227,6 +227,7 @@
 
     /* ───────────── per-frame ───────────── */
     fx.sprayAt = (x, y, z, vx, vy, vz, size, life, type, rot) => { if (spray) spray.spawn(x, y, z, vx, vy, vz, size, life, type, rot || 0); };
+    fx.splash = splash;   // exposed for the contact-event layer (ui/dm-collide-game.js): a body entering the water gets the same crown + ripple
     fx.tick = function (dt, ctx, SS) {
       if (fx.dead) return; ctx = ctx || {};
       if (!fx.built) { const sc = ctx.scene || (S.mesh && S.mesh.parent); if (S.ready >= 1 && sc) build(sc); else return; }

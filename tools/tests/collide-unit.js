@@ -74,6 +74,10 @@ function dts(frames, spike) { const a = []; for (let i = 0; i < frames; i++) { c
   ok(ov === 0, 'no overlapping discs remain among kept ones (' + ov + ' overlaps, ' + left + ' flagged)');
   const A = new Float32Array(10).fill(0), B = new Float32Array(10).fill(0), C = new Float32Array(10).fill(1); const w2 = mk(); w2.relaxDiscs(A, B, C, 10, -50, 50, -50, 50, 0, 20); let mind = 1e9; for (let i = 0; i < 10; i++) for (let j = i + 1; j < 10; j++) mind = Math.min(mind, Math.hypot(A[i] - A[j], B[i] - B[j])); ok(mind > 1.9, 'coincident discs are separated deterministically ' + mind.toFixed(2)); }
 
+// 7b. pushDiscsFrom (trees away from rocks)
+{ const W = mk(); const fx = new Float32Array([0, 10]), fz = new Float32Array([0, 0]), fr = new Float32Array([2, 2]); const xs = new Float32Array([1, 9.5, 40]), zs = new Float32Array([0.5, 0.2, 40]), rs = new Float32Array([0.6, 0.6, 0.6]), bad = new Uint8Array(3);
+  const left = W.pushDiscsFrom(xs, zs, rs, 3, fx, fz, fr, 2, 0.3, -50, 50, -50, 50, bad); let clear = true; for (let i = 0; i < 3; i++) for (let j = 0; j < 2; j++) if (!bad[i] && Math.hypot(xs[i] - fx[j], zs[i] - fz[j]) < rs[i] + fr[j]) clear = false; ok(clear, 'trees pushed clear of rocks (' + left + ' flagged)'); near(xs[2], 40, 1e-6, 'far disc untouched'); }
+
 // 8. instanced registration + cost ---------------------------------------------------------------------------------------------------
 { const W = mk(); const M = new Float32Array(16 * 64); for (let k = 0; k < 64; k++) { const o = k * 16; M[o] = M[o + 5] = M[o + 10] = k < 60 ? 1.5 : 0; M[o + 15] = 1; M[o + 12] = k * 4; M[o + 13] = 1; M[o + 14] = 2; }
   const it = W.fromInstancedGen('chunk#1', M, 64, { kind: 'ellipsoid', mat: 'rock', k: 0.92 }, 16); let steps = 0, r; while (!(r = it.next()).done) steps++; ok(r.value === 60 && W.count() === 60, 'zero-scale padding skipped (' + r.value + ')'); ok(steps >= 3, 'time-sliced in steps (' + steps + ')'); W.clearGroup('chunk#1');

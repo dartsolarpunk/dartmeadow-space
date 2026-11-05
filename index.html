@@ -1020,6 +1020,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-mist.js?v=7" defer></script>
 <script src="ui/dm-atmo.js?v=212" defer></script>
 <script src="ui/dm-localcollide.js?v=188" defer></script>
+<script src="ui/dm-collide.js?v=264" defer></script>
+<script src="ui/dm-collide-game.js?v=264" defer></script>
 <script src="ui/dm-cgroup.js?v=214" defer></script>
 <script src="ui/dm-projector.js?v=224" defer></script>
 <script src="ui/dm-groundmark.js?v=220" defer></script>
@@ -19644,12 +19646,12 @@ function _pwPropsTick(px,pz,agl){
       if(err){ M.set(k,null); PW._propJob=null; }
       else if(r.done){
         PW._propJob=null; PW._propNext=_pf+3;
-        try{ const g=r.value; PW.propsGroup.add(g); M.set(k,g); let by=0; g.traverse(o=>{ if(o.isInstancedMesh){ by+=(o.instanceMatrix?o.instanceMatrix.array.byteLength:0)+(o.instanceColor?o.instanceColor.array.byteLength:0); } }); g.userData.crumbKey='chunk#'+k; _crG('chunk#'+k,by); }catch(e){ M.set(k,null); }
+        try{ const g=r.value; PW.propsGroup.add(g); M.set(k,g); if(window.DMCollide) DMCollide.regChunk('chunk#'+k,g);   /* ui/dm-collide.js: its rocks / trunks / crowns become colliders, a slice a frame */ let by=0; g.traverse(o=>{ if(o.isInstancedMesh){ by+=(o.instanceMatrix?o.instanceMatrix.array.byteLength:0)+(o.instanceColor?o.instanceColor.array.byteLength:0); } }); g.userData.crumbKey='chunk#'+k; _crG('chunk#'+k,by); }catch(e){ M.set(k,null); }
         _crM('chunkScatter:end',JSON.stringify({n:M.size})); _crL('chunks',M.size);
       }
     }
   }
-  for(const [k,g] of M) if(!want.has(k)){ if(g){ PW.propsGroup.remove(g); _disposeProps(g); _crG('chunk#'+k,0); } M.delete(k); }
+  for(const [k,g] of M) if(!want.has(k)){ if(g){ PW.propsGroup.remove(g); _disposeProps(g); _crG('chunk#'+k,0); } if(window.DMCollide) DMCollide.dropChunk('chunk#'+k); M.delete(k); }
   _propsLod(px,pz,agl);
 }
 // (v259) prop LOD by chunk distance: only the near chunks cast into the sun's shadow map (the shadow pass re-draws every caster; boulders and trees 150 m away throw no shadow
@@ -19695,6 +19697,7 @@ function _pwClose(opts){
   try{ if(scene) disposeObject3D(scene); }catch(e){}
   try{ if(window.DMCrumb){ ['mc#','tess#','chunk#'].forEach(k=>DMCrumb.gpuClear(k)); DMCrumb.live('chunks',0); DMCrumb.live('mcPatches',0); } }catch(e){}
   try{ _applyCamOffset(); }catch(e){}
+  try{ if(window.DMCollide) DMCollide.closeWorld(); }catch(e){}   // every collider, body, actor and the debug / particle objects go with the world
   PW.renderer=PW.scene=PW.camera=PW.board=PW.ground=null; PW.props=new Map(); PW.propsGroup=null; PW.seaSpan=0;
   surfRenderer=atmoRenderer=null; surfScene=atmoScene=null; surfCamera=atmoCamera=null;
   surfPlayer=null; surfBoard=null; atmoBoard=null; atmoState=null; _atmoSky=null; _atmoHeight=null; _atmoPal=null;
@@ -25116,6 +25119,18 @@ function* _hmChunkScatterG(i,j){
     const sz=R(1.6,Math.min(4.6,1.6+rise*0.12));
     rocks.push({x,z,h,s:sz,sy:R(0.55,0.95),r:[R(0,6),R(0,6),R(0,6)],c:new THREE.Color().setHSL(base.h+(rnd()-0.5)*0.03,Math.max(0,Math.min(1,base.s+(rnd()-0.5)*0.12)),Math.max(0,Math.min(1,base.l*0.9+(rnd()-0.5)*0.14)))});
   }
+  // (collision 2/4) props never interpenetrate: the rock discs are relaxed apart deterministically (no RNG), kept inside this chunk's box (neighbouring
+  // chunks can then never overlap each other), those still overlapping are dropped, and moved ones re-read the ground. Sunk deeper on slopes (lowest of four
+  // ground samples) so the uphill side never floats and the downhill side stays closed against the ground.
+  const _DC=window.DMCollide, _cx0=i*C-C/2, _cx1=i*C+C/2, _cz0=j*C-C/2, _cz1=j*C+C/2;
+  if(_DC&&rocks.length>1){
+    const N=rocks.length, xs=new Float32Array(N), zs=new Float32Array(N), rs=new Float32Array(N), bad=new Uint8Array(N);
+    for(let n=0;n<N;n++){ xs[n]=rocks[n].x; zs[n]=rocks[n].z; rs[n]=rocks[n].s*0.92; }
+    _DC.relaxDiscs(xs,zs,rs,N,_cx0,_cx1,_cz0,_cz1,0.25,6,bad);
+    const keep=[]; for(let n=0;n<N;n++){ if(bad[n]) continue; const r=rocks[n]; if(Math.abs(r.x-xs[n])+Math.abs(r.z-zs[n])>1e-4){ r.x=xs[n]; r.z=zs[n]; r.h=H(r.x,r.z); } keep.push(r); if(n%16===15) yield; }
+    rocks.length=0; for(const r of keep) rocks.push(r);
+  }
+  for(let n=0;n<rocks.length;n++){ const r=rocks[n]; if(r.s>0.9){ const d=r.s*0.7; r.h=Math.min(r.h,H(r.x-d,r.z),H(r.x+d,r.z),H(r.x,r.z-d),H(r.x,r.z+d)); if(n%6===5) yield; } }
   const geo=TERRAIN.rockGeo||(TERRAIN.rockGeo=new THREE.DodecahedronGeometry(1,0));
   const mkRocks=(list,climb)=>{
     if(!list.length) return;
@@ -25125,6 +25140,7 @@ function* _hmChunkScatterG(i,j){
     _propPad(im,list.length);
     im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true;
     if(climb){ im.userData.climbable=true; im.userData.cliff=true; }
+    im.userData.col={kind:'ellipsoid',mat:'rock',k:0.92,ky:0.92};   // ui/dm-collide.js registers these instances (ellipsoid = the scaled dodecahedron's bulk)
     if(GFX.shadows){ im.receiveShadow=true; im.castShadow=(GFX.shadowSize||0)>=1024; }
     im.computeBoundingSphere(); g.add(im);
   };
@@ -25139,13 +25155,27 @@ function* _hmChunkScatterG(i,j){
       const trunks=new THREE.InstancedMesh(K.tGeo,K.trunk,_propCap(trees.length));
       const crowns=new THREE.InstancedMesh(K.cGeo,K.crown,_propCap(trees.length));
       const M=new THREE.Matrix4(), q=new THREE.Quaternion();
-      trees.forEach((t,k)=>{
-        const th=R(2.5,4), tr=R(0.12,0.22), ch=R(2.5,4.5), cr=R(0.9,1.6), tx=t.x+3, tz=t.z+2, hh=H(tx,tz);
-        M.compose(new THREE.Vector3(tx,hh+th/2,tz),q,new THREE.Vector3(tr,th,tr)); trunks.setMatrixAt(k,M);
+      // dimensions are drawn in the original order (same RNG stream), then trees are kept clear of every rock and of each other's crowns
+      const td=trees.map(t=>({th:R(2.5,4),tr:R(0.12,0.22),ch:R(2.5,4.5),cr:R(0.9,1.6),jit:rnd()-0.5,x:t.x+3,z:t.z+2,ok:true}));
+      if(_DC){
+        const N=td.length, xs=new Float32Array(N), zs=new Float32Array(N), rs=new Float32Array(N), bad=new Uint8Array(N), fx=new Float32Array(rocks.length), fz=new Float32Array(rocks.length), fr=new Float32Array(rocks.length);
+        for(let n=0;n<N;n++){ xs[n]=td[n].x; zs[n]=td[n].z; rs[n]=Math.max(td[n].tr+0.2,td[n].cr*0.7); }
+        for(let n=0;n<rocks.length;n++){ fx[n]=rocks[n].x; fz[n]=rocks[n].z; fr[n]=rocks[n].s*0.92; }
+        _DC.pushDiscsFrom(xs,zs,rs,N,fx,fz,fr,rocks.length,0.2,_cx0,_cx1,_cz0,_cz1,bad);
+        _DC.relaxDiscs(xs,zs,rs,N,_cx0,_cx1,_cz0,_cz1,0.1,4,bad);   // crowns clear of each other
+        for(let n=0;n<N;n++){ td[n].x=xs[n]; td[n].z=zs[n]; td[n].ok=!bad[n]; }
+        yield;
+      }
+      let k=0;
+      td.forEach((t)=>{
+        if(!t.ok) return;
+        const th=t.th, tr=t.tr, ch=t.ch, cr=t.cr, tx=t.x, tz=t.z, hh=Math.min(H(tx,tz),H(tx-0.4,tz),H(tx+0.4,tz),H(tx,tz-0.4),H(tx,tz+0.4));   // trunk base sunk to the lowest ground under it: closed against a slope
+        M.compose(new THREE.Vector3(tx,hh+th/2-0.25,tz),q,new THREE.Vector3(tr,th+0.5,tr)); trunks.setMatrixAt(k,M);
         M.compose(new THREE.Vector3(tx,hh+th+ch*0.35,tz),q,new THREE.Vector3(cr,ch,cr)); crowns.setMatrixAt(k,M);
-        crowns.setColorAt(k,new THREE.Color(0x1f5520).offsetHSL(0,0,(rnd()-0.5)*0.12));
+        crowns.setColorAt(k,new THREE.Color(0x1f5520).offsetHSL(0,0,t.jit*0.12)); k++;
       });
-      _propPad(trunks,trees.length); _propPad(crowns,trees.length);
+      _propPad(trunks,k); _propPad(crowns,k);
+      trunks.userData.col={kind:'cyl',mat:'wood',k:0.9,hy:0.5}; crowns.userData.col={kind:'ellipsoid',mat:'foliage',k:0.7,ky:0.45,soft:true};
       [trunks,crowns].forEach(o=>{ o.instanceMatrix.needsUpdate=true; if(o.instanceColor) o.instanceColor.needsUpdate=true; if(GFX.shadows) o.castShadow=true; o.computeBoundingSphere(); g.add(o); });
     }
   }
@@ -25659,20 +25689,23 @@ function updateSurface(dt){
   const spd=(_runOn?SURF_RUN_SPEED:SURF_WALK_SPEED)*(p._floating?0.45:1);   // swimming is slower than walking
   const fx=-Math.sin(p.yaw),fz=-Math.cos(p.yaw);
   const rx=Math.cos(p.yaw),rz=-Math.sin(p.yaw);
-  p.pos.x+=(fx*mf+rx*ms)*spd*dt;
-  p.pos.z+=(fz*mf+rz*ms)*spd*dt;
+  { const _dx=(fx*mf+rx*ms)*spd*dt, _dz=(fz*mf+rz*ms)*spd*dt;
+    if(window.DMCollide&&DMCollide.enabled) DMCollide.surfWalk(p,_dx,_dz,dt);   // ui/dm-collide.js: props, rocks, trunks, actors stop her (sub-stepped sweep: no tunnelling at 15 fps), steps up ledges
+    else{ p.pos.x+=_dx; p.pos.z+=_dz; } }
   if(window.DMMansionInt) DMMansionInt.walk(p.pos);   // Ariel's mansion: walls and props stop her indoors (ui/dm-mansion-interior.js; no-op away from the home)
   // gravity + ground collision
+  const _pFeet=p.pos.y-3.0, _pVy=p.vel.y, _pWasOn=p.onGround;   // last frame's feet: props are stood on by where she WAS, so a fast fall cannot sink through one
   p.vel.y-=9.8*p.grav*dt;
   p.pos.y+=p.vel.y*dt;
-  const groundH=_surfHeight?(window.DMMansionInt?DMMansionInt.ground(_surfHeight,p.pos.x,p.pos.z):_surfHeight(p.pos.x,p.pos.z)):0;   // her own ground query only: inside the mansion F.ovr answers with the interior floor (other height lookups keep the roof)
+  let groundH=_surfHeight?(window.DMMansionInt?DMMansionInt.ground(_surfHeight,p.pos.x,p.pos.z):_surfHeight(p.pos.x,p.pos.z)):0;
+  if(window.DMCollide&&DMCollide.enabled){ const _cs=DMCollide.supportFor(p,_pFeet); if(_cs>groundH) groundH=_cs; }   // rock / ledge / crate tops she can stand on   // her own ground query only: inside the mansion F.ovr answers with the interior floor (other height lookups keep the roof)
   // Deep water: she floats at the surface (body under, head above) and swims
   // through the live water instead of walking the seabed.
   const _wtr=window.JOTS_WATER, floatFeet=(_wtr&&groundH<_wtr.surfaceY-2.6)?_wtr.surfaceY-2.4:-1e9;
   const supportH=Math.max(groundH,floatFeet);
   p._floating=floatFeet>groundH;
   const eye=supportH+3.0;
-  if(p.pos.y<=eye){p.pos.y=eye;p.vel.y=0;p.onGround=true;p.jumpActive=false;}else p.onGround=false;
+  if(p.pos.y<=eye){ if(!_pWasOn&&window.DMCollide&&DMCollide.enabled) DMCollide.landed(p,_pVy); p.pos.y=eye;p.vel.y=0;p.onGround=true;p.jumpActive=false;}else p.onGround=false;
   // Real bug found: this used to be `const jumping = !p.onGround`, checked
   // every single frame in the character-sync block below — meaning ANY
   // momentary airborne frame (walking downhill faster than gravity settles
@@ -25686,6 +25719,7 @@ function updateSurface(dt){
   // or a flicker while walking can't start one unrequested.
   if(surfJumpPressed && p.onGround){ p.vel.y=6*Math.sqrt(p.grav); p.jumpActive=true; }
   try{ _surfFallCatch(p,dt,supportH); }catch(e){ p._catch=null; console.warn('[surf] fall catch:',e); }
+  try{ if(window.DMCollide&&DMCollide.enabled) DMCollide.tick(dt,{scene:PW.scene,THREE,x:p.pos.x,z:p.pos.z,mobile:!!(GFX&&GFX.isMobile)}); }catch(e){ if(!DMCollide._err){ DMCollide._err=1; console.warn('[collide] tick',e); } }   // registration slices, dynamic bodies, contact fx, ?collider=1 wireframes
   _m1=performance.now(); DMFT.add('us.move',_m1-_m0); _m0=_m1;
   surfJumpPressed=false; // consume the press — it's an edge-triggered action, not a held state
   // stream terrain LOD around the player (subdivide nearby, coarsen far)
@@ -25714,7 +25748,8 @@ function updateSurface(dt){
     const byaw=p.yaw-Math.PI/2;
     const nX=Math.cos(byaw), nZ=-Math.sin(byaw);   // board nose (+X) in world
     const lX=Math.sin(byaw), lZ=Math.cos(byaw);    // board-left (+Z) in world
-    const H=(x,z)=>{ const h=_surfHeight?_surfHeight(x,z):0; return isFinite(h)?h:boardGroundH; };
+    const _DCb=window.DMCollide&&DMCollide.enabled&&DMCollide.count()?DMCollide:null, _bCeil=playerFeet+SURF_BOARD_WAIST+SURF_BOARD_WAIST;
+    const H=(x,z)=>{ let h=_surfHeight?_surfHeight(x,z):0; h=isFinite(h)?h:boardGroundH; if(_DCb){ const c=_DCb.topAt(x,z,_bCeil,-1e9,0.2); if(c>h) h=c; } return h; };   // it rides OVER rocks / crates (tops below waist height+); taller ones push it aside below
     const lerp=Math.min(1,dt*10);
     // Centre the board's length beside her (its pivot is off-centre, so it
     // used to jut far back toward the camera and off the bottom of frame).
@@ -25722,6 +25757,8 @@ function updateSurface(dt){
     _bcSetRest(ctx,Math.max(boardGroundH+0.18,playerFeet+SURF_BOARD_WAIST),ctz);
     surfBoard.position.x += (ctx-surfBoard.position.x)*lerp;
     surfBoard.position.z += (ctz-surfBoard.position.z)*lerp;
+    if(_DCb){ const _po=_DCb._po||(_DCb._po=[0,0]), _by=surfBoard.position.y-0.3, _br=Math.max(0.5,(dims.maxZ-dims.minZ)*0.5);   // props taller than its hover push the board aside: three discs along its length
+      for(let _k=0;_k<3;_k++){ const _l=dims.minX+(dims.maxX-dims.minX)*(_k*0.5); _DCb.pushOut(surfBoard.position.x+nX*_l+lX*dims.cz, _by, surfBoard.position.z+nZ*_l+lZ*dims.cz, _br, 0.6, 0.3, _po); surfBoard.position.x+=_po[0]; surfBoard.position.z+=_po[1]; } }
     const bx=surfBoard.position.x, bz=surfBoard.position.z;
     const at=(lx,lz)=>H(bx+nX*lx+lX*lz, bz+nZ*lx+lZ*lz);   // ground under a board-local x/z
     const cx=dims.cx, cz=dims.cz;
