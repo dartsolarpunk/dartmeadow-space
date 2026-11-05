@@ -109,8 +109,8 @@ def finish(rng, col, H, rough, warp_px=14, fbm=0.10, chip=0.10, mott=0.28, chip_
     return col, H, rough
 
 def set_strata(rng):
-    nb = 13
-    th = rng.lognormal(0, 0.55, nb); th = th / th.sum()
+    nb = 7
+    th = rng.lognormal(0, 0.75, nb); th = th / th.sum()
     cuts = np.concatenate([[0], np.cumsum(th)])[:-1] + rng.random() * 0.0
     cuts = np.sort(cuts)
     hard = rng.random(nb) < 0.5
@@ -158,12 +158,13 @@ def set_strata(rng):
     # colour
     pal = np.array([[0.26, 0.23, 0.20], [0.31, 0.22, 0.14], [0.15, 0.145, 0.145], [0.34, 0.29, 0.22], [0.20, 0.17, 0.155]], F32)
     pi = (tone * len(pal)).astype(int) % len(pal)
-    col = pal[pi][bed] * (0.85 + 0.3 * lam[..., None]) * (0.96 + 0.08 * bt[..., None])
+    pm = pal.mean(0); pal = pm + (pal - pm) * 0.40            # (v2) the old 13-band orange/grey stripes read as painted contour lines: bed colour contrast cut to 40 %, the mesh carries the bed tone
+    col = pal[pi][bed] * (0.80 + 0.45 * lam[..., None]) * (0.94 + 0.12 * bt[..., None])
     rust = np.array([0.30, 0.13, 0.07], F32)
     oxm = (ox[bed] * (0.4 + 0.6 * sm(0.3, 0.75, fnoise(rng, 2.0, sx=1.0, sy=0.2)))).astype(F32)
-    col = mix(col, rust * (0.8 + 0.4 * gr[..., None]), np.clip(oxm, 0, 0.85))
+    col = mix(col, rust * (0.8 + 0.4 * gr[..., None]), np.clip(oxm * 0.5, 0, 0.5))
     varn = sm(0.66, 0.84, fnoise(rng, 2.3, sx=0.035, sy=1.0)) * sm(0.35, 0.7, fnoise(rng, 2.0))   # desert varnish: long vertical streaks
-    col = mix(col, np.array([0.065, 0.058, 0.055], F32), varn * 0.8)
+    col = mix(col, np.array([0.12, 0.105, 0.095], F32), varn * 0.22)   # (v2) was a 0.8 black stripe: one dark column per 3 m tile = the most visible repetition
     lich = sm(0.7, 0.85, fnoise(rng, 2.6)) * sm(0.55, 0.8, gr) * (1 - varn)
     col = mix(col, np.array([0.22, 0.25, 0.14], F32), lich * 0.45)
     rough = 0.80 + 0.1 * gr - 0.08 * ph + 0.06 * (1 - ph) - 0.22 * varn
@@ -240,7 +241,7 @@ def set_sheet(rng):
     return col * 0.88, H, rough, dict(depth_m=0.07, name='Granite exfoliation sheets')
 
 def set_talus(rng):
-    f1, f2, cid, cen = voronoi(rng, 70, aniso=(1.0, 1.0), relax=1)
+    f1, f2, cid, cen = voronoi(rng, 120, aniso=(1.0, 0.75), relax=0)
     n1 = len(np.unique(cid))
     g1 = rng.normal(0, 0.9, (n1, 2)); lvl = rng.normal(0, 0.12, n1)
     dx = (xx - cen[..., 0] + 0.5) % 1 - 0.5; dy = (yy - cen[..., 1] + 0.5) % 1 - 0.5
@@ -262,14 +263,14 @@ def set_talus(rng):
     col = mix(col, np.array([0.40, 0.36, 0.30], F32), dust * 0.5)
     lich = sm(0.74, 0.9, fnoise(rng, 2.8)) * (inblock > 0.5)
     col = mix(col, np.array([0.25, 0.28, 0.13], F32), lich * 0.35)
-    lum = col.mean(-1, keepdims=True); col = lum * 0.62 + col * 0.38                 # scree is mostly grey; keep only a hint of the palette
+    lum = col.mean(-1, keepdims=True); col = lum * 0.75 + col * 0.25                 # scree is mostly grey; keep only a hint of the palette
     col = col * (0.75 + 0.5 * fnoise(rng, 2.0)[..., None])
     rough = 0.86 + 0.1 * fnoise(rng, 1.2)
     return col, H, rough, dict(depth_m=0.20, name='Talus / scree')
 
 BUILD = dict(strata=set_strata, columnar=set_columnar, sheet=set_sheet, talus=set_talus)
 FIN = dict(strata=dict(warp_px=30, fbm=0.22, chip=0.035, mott=0.38, chip_n=350), columnar=dict(warp_px=10, fbm=0.12, chip=0.03, mott=0.34, chip_n=400),
-           sheet=dict(warp_px=14, fbm=0.10, chip=0.025, mott=0.26, chip_n=300), talus=dict(warp_px=4, fbm=0.08, chip=0.02, mott=0.36, chip_n=800))
+           sheet=dict(warp_px=14, fbm=0.10, chip=0.025, mott=0.26, chip_n=300), talus=dict(warp_px=26, fbm=0.16, chip=0.05, mott=0.5, chip_n=1200))
 SEED = dict(strata=4101, columnar=4202, sheet=4303, talus=4404)
 
 # ───────────────────────── derived maps + export ─────────────────────────
