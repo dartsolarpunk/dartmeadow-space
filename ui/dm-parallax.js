@@ -188,11 +188,15 @@
   function refreshCfg() {
     const t = curTier(), c = TIERS[S.klass][t] || TIERS[S.klass].medium, sc = governorScale(), b = BOUNDS[S.klass];
     let steps = Math.min(b.maxN, Math.round(c.steps * sc)); if (steps < 4) steps = 0;
-    const lv = S.gov.lvl;   // frame-time governor level (2 = preset, 1 = coarse, 0 = march off)
+    let lv = S.gov.lvl;   // frame-time governor level (2 = preset, 1 = coarse, 0 = march off)
+    // (v256) ui/dm-budget.js owns the ladder when it runs: parallax steps / reach / depth, then the self-shadow taps, then the march itself (uniforms only).
+    // This file's own 3-level governor stays out of its way (govTick returns early) so two controllers never fight over one dial.
+    const B = G.DMBudget && G.DMBudget.on && G.DMBudget.parallax ? G.DMBudget.parallax() : null; let reach = 1, depthK = 1, bShadow = 1;
+    if (B) { lv = 2; reach = B.reach; depthK = B.depth; bShadow = B.shadow; if (B.off) steps = 0; else if (steps > 0) { steps = Math.round(steps * B.steps); if (steps > B.stepsMax) steps = B.stepsMax; if (steps < 3) steps = 3; } }
     if (lv < 2 && steps > 0) steps = lv === 1 ? Math.min(steps, 4) : 0;
     const key = t + '|' + steps + '|' + (sc >= 1 && lv >= 2 ? c.shadow : 0);
-    S.tier = t; S.scale = sc; S.cfg = { steps, shadow: sc >= 1 && lv >= 2 ? c.shadow : 0, relief: sc >= 0.6 && lv >= 2 ? c.relief : 0 };
-    if (S.U) { S.U.steps.value = S.cfg.steps; S.U.shadow.value = S.cfg.shadow; S.U.relief.value = S.cfg.relief; }
+    S.tier = t; S.scale = sc; S.cfg = { steps, shadow: sc >= 1 && lv >= 2 && bShadow ? c.shadow : 0, relief: sc >= 0.6 && lv >= 2 && !(B && B.lvl >= 1) ? c.relief : 0, reach, depthK };
+    if (S.U) { S.U.steps.value = S.cfg.steps; S.U.shadow.value = S.cfg.shadow; S.U.relief.value = S.cfg.relief; S.U.reach.value = reach; S.U.depthK.value = depthK; }
     S.last = key;
   }
   // ── frame-time governor: a tiny rAF probe (one subtraction per frame) + a decision every 500 ms ──
@@ -200,6 +204,7 @@
   function govTick() {
     const g = S.gov;
     if (govOff || forced) return;
+    if (G.DMBudget && G.DMBudget.on && G.DMBudget.parallax) return;   // (v256) the global budget ladder drives this dial
     const mobile = S.klass === 'mobile', now = (G.performance && G.performance.now) ? G.performance.now() : Date.now();
     if (G.document && G.document.hidden) { g.n = 0; return; }
     if (G._dmWarming || g.n < 12) return;                         // warm-up / not enough frames yet
@@ -257,7 +262,7 @@
     if (off || !T || !T.Fn || !T.Loop || !T.If || !T.Break || !T.materialReference || !T.dFdx || !THREE.DataTexture) return false;
     S.THREE = THREE; S.T = T; S.klass = klass();
     const { uniform, float, vec3 } = T;
-    S.U = { steps: uniform(0), shadow: uniform(0), relief: uniform(0), lit: uniform(0), light: uniform(new THREE.Vector3(0.3, 0.8, 0.2).normalize()) };
+    S.U = { steps: uniform(0), shadow: uniform(0), relief: uniform(0), reach: uniform(1), depthK: uniform(1), lit: uniform(0), light: uniform(new THREE.Vector3(0.3, 0.8, 0.2).normalize()) };
     S.gov.lvl = (S.klass === 'mobile' && !govOff && !forced) ? 1 : 2;   // phones/tablets start coarse and earn the preset's march (see the header)
     refreshCfg(); sunTick(); startProbe();
     setInterval(() => { try { govTick(); refreshCfg(); sunTick(); } catch (e) { } }, 500);   // uniform writes only
@@ -280,7 +285,7 @@
     const Tt = normalize(p2.mul(du1.x).add(p1.mul(du2.x))), Bt = normalize(p2.mul(du1.y).add(p1.mul(du2.y)));
     const V = normalize(positionView.negate());
     const Vt = vec3(dot(V, Tt), dot(V, Bt), dot(V, N0));
-    const dist = length(positionView), fade = float(1).sub(smoothstep(near, far, dist)).mul(o.mask || float(1));
+    const dist = length(positionView), fade = float(1).sub(smoothstep(near.mul(U.reach), far.mul(U.reach), dist)).mul(o.mask || float(1));   // U.reach / U.depthK: ui/dm-budget.js ladder (uniforms, 1 = full)
     const lod = tclamp(log2(max(length(du1.mul(size)), length(du2.mul(size))).max(1.0)), 0.0, o.lodMax == null ? 5.0 : o.lodMax);
     const H = o.H ? ((u) => o.H(u, lod)) : ((u) => texture(o.tex, u).level(lod).r);
     const res = Fn(() => {
@@ -289,7 +294,7 @@
     If(fade.greaterThan(0.002), () => {
       res.assign(vec4(uv0.x, uv0.y, H(uv0), 1.0));    // (the height at the unshifted point: also the answer when the march is off)
     If(U.steps.greaterThan(0.5), () => {
-      const vz = max(Vt.z, 0.1), dEff = depth.mul(fade);
+      const vz = max(Vt.z, 0.1), dEff = depth.mul(U.depthK).mul(fade);
       let P = vec2(Vt.x, Vt.y).div(vz).mul(dEff).mul(asp);
       const pl = length(P), lim = dEff.mul(6.0);
       P = P.mul(min(float(1), lim.div(max(pl, 1e-5))));

@@ -485,7 +485,21 @@
     const atmo = gasRT ? build('composite', gasRT) : build('full');
 
     pp.outputNode = atmo;
-    let frame = 0, compT = null;
+    let frame = 0, compT = null, locJob = null;
+    const locNext = new Uint16Array(LOC_N * LOC_N);
+    // (v256) frame-budget ladder (ui/dm-budget.js): seconds between density-volume computes (0.066 = the old fixed 15 Hz)
+    const computePeriod = () => { const B = root.DMBudget; return B && B.on && B.atmoPeriod ? B.atmoPeriod() : 0.066; };
+    const nowMs = () => (root.performance && root.performance.now ? root.performance.now() : Date.now());
+    // advance the sliced near-ground height bake by at most `ms` of main-thread time (rows of LOC_N samples); the live map is replaced only when the whole map is done
+    function pumpLocal(ms) {
+      const j = locJob; if (!j) return; const t0 = nowMs(), N = LOC_N, toH = THREE.DataUtils.toHalfFloat;
+      while (j.row < N) {
+        const z = j.cz + ((j.row + 0.5) / N - 0.5) * j.span;
+        for (let i = 0; i < N; i++) { let h = j.fn(j.cx + ((i + 0.5) / N - 0.5) * j.span, z); if (!isFinite(h)) h = 0; locNext[j.row * N + i] = toH(h); }
+        j.row++; if (nowMs() - t0 >= ms) break;
+      }
+      if (j.row >= N) { locData.set(locNext); locTex.needsUpdate = true; U.locC.value.set(j.cx, j.cz, j.span); U.locOn.value = 1; locJob = null; }
+    }
     function syncCamera(cam) {
       camera = cam || camera; scenePass.camera = camera;
       camera.updateMatrixWorld();
@@ -506,19 +520,25 @@
       setRotation(q) { U.rot.value.makeRotationFromQuaternion(q).invert(); },
       // bake the near LOD height map: fn(x,z) -> height above sea (units), centred at world (cx,cz), span units
       setLocalHeight(cx, cz, span, fn) {
+        locJob = null;
         if (!fn) { U.locOn.value = 0; return; }
         const N = LOC_N, toH = THREE.DataUtils.toHalfFloat;
         for (let j = 0; j < N; j++) { const z = cz + ((j + 0.5) / N - 0.5) * span;
           for (let i = 0; i < N; i++) { let h = fn(cx + ((i + 0.5) / N - 0.5) * span, z); if (!isFinite(h)) h = 0; locData[j * N + i] = toH(h); } }
         locTex.needsUpdate = true; U.locC.value.set(cx, cz, span); U.locOn.value = 1;
       },
+      // sliced variant of setLocalHeight: the same map, built over several frames (a 128x128 CPU bake was 300-400 ms on a Mali tablet in ONE frame); the old map stays
+      // valid until the new one is complete.  Restarting while a job runs drops the old job (its window is stale).
+      setLocalHeightSliced(cx, cz, span, fn) { if (!fn) { locJob = null; U.locOn.value = 0; return; } locJob = { cx, cz, span, fn, row: 0 }; },
+      get localBusy() { return !!locJob; },
       render(dt, cam) {
+        if (locJob) pumpLocal(root.GFX && root.GFX.isMobile ? 3.5 : 6);
         U.time.value += dt || 0; U.frame.value = (frame++) % 64;
         syncCamera(cam);
         // (perf) the density volume drifts by U.time*0.05 / *0.03 noise units per second (a few percent of one noise cell per second): re-evaluating it
         // on a fixed ~15 Hz wall-clock cadence moves it ~0.003 units per refresh - far below one texel of change - so the look is the same, but the compute
         // cost no longer scales with the frame rate (it was every 2nd frame: 30 passes/s at 60 fps, and one per 2 slow frames at 15 fps).
-        if (computeNode && (compT === null || U.time.value - compT >= 0.066 || U.time.value < compT)) { compT = U.time.value; renderer.compute(computeNode); }
+        if (computeNode && (compT === null || U.time.value - compT >= computePeriod() || U.time.value < compT)) { compT = U.time.value; renderer.compute(computeNode); }
         if (skyPass) {
           if (opt.skyCamera) skyPass.camera = opt.skyCamera;
           const ca = renderer.getClearAlpha(); renderer.setClearAlpha(0);

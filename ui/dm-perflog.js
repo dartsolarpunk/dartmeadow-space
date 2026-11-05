@@ -84,6 +84,7 @@
   // the parallax tier and its frame-time governor, the resolution governor, and the world-frame state (layered sky? shadow cadence).
   function phases() { try { return window.DMFT ? window.DMFT.snap() : null; } catch (e) { return null; } }
   function pxState() { try { const st = window.DMParallax && window.DMParallax.status && window.DMParallax.status(); return st ? { tier: st.tier, steps: st.cfg && st.cfg.steps, shadow: st.cfg && st.cfg.shadow, relief: st.cfg && st.cfg.relief, gov: st.gov } : null; } catch (e) { return null; } }
+  function budState() { try { return window.DMBudget && window.DMBudget.stats ? window.DMBudget.stats() : null; } catch (e) { return null; } }   // (v256) ui/dm-budget.js: pressure p, level per stage, EMA/p95, seed, history, per-screen frame-time histogram
   function govState() { try { return window.DMGov && window.DMGov.stats ? window.DMGov.stats() : null; } catch (e) { return null; } }
   function frameState() {
     try {
@@ -104,7 +105,7 @@
       if (quiet()) return;   // (menu-perf) no DOM walk / scene traverse during the launch transition
       const r = window.flightRenderer || (typeof flightRenderer !== 'undefined' ? flightRenderer : null);
       const i = r && r.info, pm = performance.memory;
-      const m = { t: Math.round((Date.now() - start.getTime()) / 1000), screen: curMode(), hidden: document.hidden, ph: phases(), px: pxState(), gov: govState(), st: frameState(),
+      const m = { t: Math.round((Date.now() - start.getTime()) / 1000), screen: curMode(), hidden: document.hidden, ph: phases(), px: pxState(), gov: govState(), bud: budState(), st: frameState(),
         geo: i && i.memory ? i.memory.geometries : null, tex: i && i.memory ? i.memory.textures : null,
         progs: i && i.programs ? i.programs.length : null,
         calls: i && i.render ? i.render.calls : null, tris: i && i.render ? i.render.triangles : null,
@@ -195,7 +196,7 @@
       backend: env && env.backend, gpu: env && env.gpu, preset: env && env.preset, hair: env && env.hair,
       warmupMs: window._warmupMs != null ? window._warmupMs : null,
       reloadWhy, prevAlive: prevAlive ? { sid: prevAlive.sid, clean: prevAlive.clean, upSec: prevAlive.up, screen: prevAlive.screen, phase: prevAlive.phase, warming: prevAlive.warming, hidden: prevAlive.hidden, deadAfterSec: prevAlive.t ? Math.round((start.getTime() - prevAlive.t) / 1000) : null, crumb: (prevCrumb && prevAlive.sid === prevCrumb.sid) ? prevCrumb : null } : null,
-      warmSteps: window._warmSteps || null, recovery: !!window._dmRecoveryUsed,
+      warmSteps: window._warmSteps || null, pwCompile: window._pwCompile || null, recovery: !!window._dmRecoveryUsed,
       transitions: window._dmTransitions && window._dmTransitions.length ? window._dmTransitions.slice() : null,   // (menu-perf) launch fly-out markers: per phase frames / max gap / gaps > 50, 100 ms
       navType, prevUnclean, prevSessionId: prevLocal && prevLocal.sessionId || null, endNote: final ? endNote : null,
       env, modes, mem: mem.slice(), summary, gpuPasses: (function () { try { return window.DMGpuProf ? window.DMGpuProf.table() : null; } catch (e) { return null; } })(), hitches: hitches.slice(), windows: windows.slice(-60), trimmed: 0, events: (typeof evs !== 'undefined' ? evs.slice(-30) : []), census: census(),

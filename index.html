@@ -164,6 +164,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-water-fx.js?v=255"></script>   <!-- water: spray / splash / mist sprites, wake, footstep ripples, shore-break spray, underwater fog + shafts (?waterfx=0 off) -->   <!-- water: baked sea, shore, ground hook (?water=0 = the previous sea) -->
 <script src="ui/dm-perf.js?v=160"></script>
 <script src="ui/dm-governor.js?v=235"></script>
+<script src="ui/dm-budget.js?v=256"></script>
 <script>/* (v136) no-op stub so the flight loop can never throw if dm-perf.js failed to load */
 window.DMPerf=window.DMPerf||{on:false,b(){},e(){},mark(){},measure(n,f){return f();},frame(){},stats(){return {fps:0,avgMs:0,p95Ms:0,worstMs:0,minFps:0,cpu:{},gpu:null,sparse:null};},show(){},hide(){}};</script>
 <script>/* (v236) always-on frame-phase clock for the perf log: EMA of the main-thread ms spent in each phase of a frame (logic / world tick / scene render / atmosphere pass / HUD …),
@@ -4818,6 +4819,8 @@ function detectCapabilities(){
     }
   }catch(e){console.warn('cap probe:',e);}
   GFX.gpuClass=classifyGPU(GFX.renderer);
+  // (v256) a tablet in "desktop site" mode (Galaxy Tab: Linux x86_64 UA, 1280 px wide) was classed as a desktop: desktop parallax/atmosphere tiers on a Mali. Touch + a mobile GPU family = mobile.
+  try{ if(!GFX.isMobile&&navigator.maxTouchPoints>1&&/\b(Mali|Adreno|PowerVR|Immortalis|Xclipse|Apple GPU)\b/i.test(GFX.renderer||'')) GFX.isMobile=true; }catch(e){}
   GFX.score=computeDeviceScore();
   GFX.scanned=true;
   console.log('[GFX scan]',{score:GFX.score,gpu:GFX.gpuClass,renderer:GFX.renderer,webgl2:GFX.webgl2,webgpu:GFX.webgpu,cores:GFX.cores,mem:GFX.deviceMem,maxTex:GFX.maxTexSize,aniso:GFX.maxAniso,mobile:GFX.isMobile});
@@ -18366,12 +18369,19 @@ function _sunShadowFit(l){
   const c=l.shadow.camera; c.near=1; c.far=520; c.left=-half; c.right=half; c.top=half; c.bottom=-half; c.updateProjectionMatrix();
   l.shadow.normalBias=size<=1024?0.04:0.02;
 }
+// (v256) ui/dm-budget.js ladder step "shadow L3": the sun's shadow map side is halved (the one allocation in the ladder; it comes after the cadence cuts and
+// before any render-scale cut).  Applied when the step changes and to every sun built while it stands; undone (re-allocated at full size) on recovery.
+function _budgetShadowSize(){ const sz=GFX.shadowSize||1024; try{ if(window.DMBudget&&DMBudget.on&&DMBudget.shadowHalf()) return Math.max(512,sz>>1); }catch(e){} return sz; }
+window.addEventListener('dm:budget',()=>{ try{
+  const l=TERRAIN&&TERRAIN.sun; if(!l||!l.shadow) return; const sz=_budgetShadowSize();
+  if(l.shadow.mapSize.x!==sz){ l.shadow.mapSize.set(sz,sz); if(l.shadow.map){ try{ l.shadow.map.dispose(); }catch(e){} l.shadow.map=null; } }
+}catch(e){} });
 function _gfxApplyShadows(sc){
   const on=!!GFX.shadows, size=GFX.shadowSize;
   sc.traverse(o=>{
     if(o.isLight&&o.userData.shadowKey){
       o.castShadow=on; if(o.userData.shadowOnlyLight) o.visible=on;
-      if(o.shadow&&o.shadow.mapSize.x!==size){ o.shadow.mapSize.set(size,size); if(o.shadow.map){ try{o.shadow.map.dispose();}catch(e){} o.shadow.map=null; } }
+      if(o.shadow&&o.shadow.mapSize.x!==(o===TERRAIN.sun?_budgetShadowSize():size)){ const _sz=(o===TERRAIN.sun?_budgetShadowSize():size); o.shadow.mapSize.set(_sz,_sz); if(o.shadow.map){ try{o.shadow.map.dispose();}catch(e){} o.shadow.map=null; } }
       if(o.isDirectionalLight) _sunShadowFit(o);
     } else if(on&&o.isMesh&&!o.userData._gfxShadow){
       const m=o.material;
@@ -18972,7 +18982,7 @@ function _pwBuild(body,site,mode,focus){
   // ── Light: a shadow-casting sun (its box follows the board or her) + hemisphere fake-GI
   const sun=new THREE.DirectionalLight(0xfff2e0,pal.atmos?2.0:2.6);
   sun.position.set(80,120,40); sun.userData.shadowKey=true;
-  sun.castShadow=!!GFX.shadows; sun.shadow.mapSize.set(GFX.shadowSize,GFX.shadowSize); sun.shadow.bias=-0.0004; _sunShadowFit(sun);
+  sun.castShadow=!!GFX.shadows; { const _bs=_budgetShadowSize(); sun.shadow.mapSize.set(_bs,_bs); } sun.shadow.bias=-0.0004; _sunShadowFit(sun);
   scene.add(sun); scene.add(sun.target); TERRAIN.sun=sun;
   // the ground bounce is a soft, desaturated fill — not a wash of the ground colour
   if(GFX.fakeGI){
@@ -19026,6 +19036,62 @@ function _pwBuild(body,site,mode,focus){
   try{ for(const o of scene.children) _pwMapTag(o); }catch(e){ console.warn('[pwf]',e); }
   return gen;
 }
+// (v256) The world's programs, compiled in SMALL ASYNC STEPS instead of one compileAsync(PW.scene): that one call projects the whole scene and builds every node
+// graph synchronously (a ~3 s main-thread block on the Galaxy Tab, then the new ground / cliff / water / mansion programs on top).  Here the top-level children are
+// split into groups (a heavy subtree alone, small ones together); each step shows only its group (lights stay on, so the pipeline keys are the real ones), awaits
+// its compile with a cap, restores visibility and yields to the browser.  Total time is bounded (the rest compiles in-frame as before); every group's ms is
+// reported in the perf log (pwCompile).  Hidden-until-needed objects (water spray / wake / shafts, the lamp group) are warmed afterwards, off-screen, by
+// _pwWarmExtras, so no program compiles for the first time in play.  ?stagedwarm=0 restores the single call.
+async function _pwCompileStaged(gen){
+  const r=flightRenderer, scene=PW.scene, cam=PW.camera, t00=performance.now();
+  const rec=window._pwCompile={ groups:[], ms:0, capped:false, single:false };
+  if(/[?&]stagedwarm=0\b/.test(location.search)){ rec.single=true; await r.compileAsync(scene,cam); rec.ms=Math.round(performance.now()-t00); return; }
+  const CAP=GFX.isMobile?12000:20000, STEP=GFX.isMobile?5000:8000;
+  const count=o=>{ let n=0; o.traverse(c=>{ if(c.isMesh||c.isPoints||c.isLine||c.isSprite) n++; }); return n; };
+  const kids=scene.children.filter(o=>!o.isLight&&o.visible&&!o.isCamera);
+  const groups=[]; let cur=null;
+  for(const o of kids){ const n=count(o); if(!n) continue;
+    if(n>=14){ groups.push({k:[o],n,name:o.name||o.type}); cur=null; continue; }
+    if(!cur||cur.n>=10||cur.k.length>=8){ cur={k:[],n:0,name:'misc'}; groups.push(cur); } cur.k.push(o); cur.n+=n; }
+  const total=groups.length; let prev=null;
+  for(let gi=0;gi<total;gi++){
+    if(gen!==PW.gen||!PW.active) return;
+    if(performance.now()-t00>CAP){ rec.capped=true; break; }
+    const g=groups[gi], keep=new Set(g.k), hid=[];
+    try{ dmSys.load('pwc','Preparing the world '+(gi+1)+'/'+total); }catch(e){}
+    for(const o of kids){ if(!keep.has(o)){ o.visible=false; hid.push(o); } }
+    const t=performance.now(); let p=null;
+    try{ p=r.compileAsync(scene,cam); } catch(e){ p=null; } finally{ for(const o of hid) o.visible=true; }   // the projection is synchronous: visibility is back before anything else runs
+    prev=p?Promise.resolve(p).catch(()=>{}):null;
+    try{ if(prev) await Promise.race([prev,new Promise(res=>setTimeout(res,STEP))]); }catch(e){}
+    rec.groups.push([g.name,g.n,Math.round(performance.now()-t)]);
+    await new Promise(res=>setTimeout(res,0));   // let the page breathe (progress text, input) between groups
+  }
+  if(prev){ try{ await Promise.race([prev,new Promise(res=>setTimeout(res,STEP))]); }catch(e){} }
+  try{ dmSys.done('pwc'); }catch(e){}
+  rec.ms=Math.round(performance.now()-t00);
+  _pwWarmExtrasStart(gen);
+}
+// Objects that are hidden until their moment (compileAsync skips invisible ones) are compiled off-screen, one at a time, on a calm timer: forced visible for the
+// synchronous projection only, then restored.  Looks for the water effect meshes, the lamp group and anything tagged userData.dmWarm.
+let _pweIv=0;
+function _pwWarmExtrasStart(gen){
+  if(_pweIv) clearInterval(_pweIv); let n=0;
+  _pweIv=setInterval(async()=>{
+    try{
+      if(gen!==PW.gen||!PW.active||++n>40){ clearInterval(_pweIv); _pweIv=0; return; }
+      if(window._dmWarming||window._dmQuiet()||document.hidden) return;
+      const b=window.DMBudget&&DMBudget.on?DMBudget.stats():null; if(b&&b.emaMs>45) return;   // only while frames are healthy
+      const todo=[]; PW.scene.traverse(o=>{ if(o.visible===false&&!o.userData._dmWarmed&&(o.isMesh||o.isPoints||o.isGroup)&&(/^dmWater(Spray|Wake|Shafts)$/.test(o.name||'')||o.name==='JOTS_ArielLamps'||o.userData.dmWarm)) todo.push(o); });
+      if(!todo.length) return;
+      const o=todo[0]; o.userData._dmWarmed=true; const t=performance.now(), uc=[]; o.traverse(c=>{ if(c.frustumCulled){ c.frustumCulled=false; uc.push(c); } });
+      o.visible=true; let p=null; try{ p=flightRenderer.compileAsync(PW.scene,PW.camera); } finally{ o.visible=false; }
+      try{ await Promise.race([Promise.resolve(p).catch(()=>{}),new Promise(res=>setTimeout(res,5000))]); }catch(e){}
+      for(const c of uc) c.frustumCulled=true;
+      if(window._pwCompile) window._pwCompile.groups.push(['extra:'+(o.name||o.type),1,Math.round(performance.now()-t)]);
+    }catch(e){}
+  },2500);
+}
 // Build, then compile the world's shaders while the view you came from keeps
 // running (no frozen frame, no black); resolves true when it can take over.
 async function _pwOpen(body,site,mode,focus){
@@ -19036,7 +19102,7 @@ async function _pwOpen(body,site,mode,focus){
     const c=PW.camera, gh=(_surfHeight&&_surfHeight(focus.x,focus.z))||0;
     c.position.set(focus.x,gh+(mode==='walk'?3:60),focus.z+8); c.lookAt(focus.x,gh,focus.z);
     if(PW.atmo){ PW.atmo.mesh.visible=true; }
-    if(flightRenderer.compileAsync) await flightRenderer.compileAsync(PW.scene,PW.camera);
+    if(flightRenderer.compileAsync) await _pwCompileStaged(gen);
   }catch(e){ console.warn('[pw] precompile',e); }
   _crE('pw:open');
   return gen===PW.gen&&PW.active;
@@ -19319,9 +19385,12 @@ function _trueAtmoSurface0(r,scene,cam,layered){
     const sky=TERRAIN.sky; if(sky&&sky.sunDir) A.setSun(sky.sunDir);
     // near LOD of the real ground (the world's own height field) round the focus; rebaked as it travels
     const L=_TA.loc, now=performance.now(), span=4096, H=TERRAIN.H;
-    if(typeof H==='function'&&(L.gen!==PW.gen||((Math.abs(PWF.fx-L.x)>span/8||Math.abs(PWF.fz-L.z)>span/8)&&now-L.t>500))){
-      const uy=_pwUnderlayY();
-      _crB('heightBake'); try{ A.setLocalHeight(PWF.fx,PWF.fz,span,(x,z)=>H(x,z)+uy); } finally{ _crE('heightBake'); } L.x=PWF.fx; L.z=PWF.fz; L.t=now; L.gen=PW.gen;
+    // (v256) the first bake of a world is whole (behind the loader); every later re-bake is sliced over frames (ui/dm-atmo.js setLocalHeightSliced, 3.5 ms a frame on a phone)
+    // instead of one 128x128 H() sweep in a single frame (300-400 ms on the Galaxy Tab), and waits longer under frame-budget pressure.
+    const _bakeGap=(window.DMBudget&&DMBudget.on&&DMBudget.atmoBakeGap)?DMBudget.atmoBakeGap():500;
+    if(typeof H==='function'&&!A.localBusy&&(L.gen!==PW.gen||((Math.abs(PWF.fx-L.x)>span/8||Math.abs(PWF.fz-L.z)>span/8)&&now-L.t>_bakeGap))){
+      const uy=_pwUnderlayY(), first=L.gen!==PW.gen||!A.setLocalHeightSliced;
+      _crB('heightBake'); try{ if(first) A.setLocalHeight(PWF.fx,PWF.fz,span,(x,z)=>H(x,z)+uy); else A.setLocalHeightSliced(PWF.fx,PWF.fz,span,(x,z)=>H(x,z)+uy); } finally{ _crE('heightBake'); } L.x=PWF.fx; L.z=PWF.fz; L.t=now; L.gen=PW.gen;
     }
     // empty-sky pixels: the classic dome owns the sky low down; the gas takes it over with height (same weight as the old shell)
     A.setWeights(layered?1:Math.max(0,Math.min(1,PW._atmoK!=null?PW._atmoK:0)),1);
@@ -19508,7 +19577,8 @@ function _pwWorldTick(dt){
     // a texel-snapped box, so it only trails a walking caster by <= 2 frames — and a slow frame no longer pays the whole caster set again
     // (Solenne's cliffside + ground put ~290 k triangles into every sun-shadow pass).
     const dtS=(dt>0&&dt<1)?dt:(1/60); TERRAIN._shDt=TERRAIN._shDt?TERRAIN._shDt*0.9+dtS*0.1:dtS;
-    const every=lowSh?3:(TERRAIN._shDt>0.05?3:(TERRAIN._shDt>0.025?2:1));
+    let every=lowSh?3:(TERRAIN._shDt>0.05?3:(TERRAIN._shDt>0.025?2:1));
+    try{ if(window.DMBudget&&DMBudget.on){ const be=DMBudget.shadowEvery(); if(be>every) every=be; } }catch(e){}   // (v256) ui/dm-budget.js: the frame-budget ladder can ask for a slower shadow cadence on top of the measured one
     if(every===1){ r.shadowMap.autoUpdate=true; TERRAIN._shRef=true; }
     else { r.shadowMap.autoUpdate=false; TERRAIN._shF=((TERRAIN._shF||0)+1)%every; TERRAIN._shRef=TERRAIN._shF===0; if(TERRAIN._shRef) r.shadowMap.needsUpdate=true; }
     TERRAIN._shEvery=every;
@@ -19543,13 +19613,22 @@ function _pwPropsTick(px,pz,agl){
   if(agl<220){
     // (stability) nearest chunk first (it used to be row order), at most one per 3 frames, and never in the frame of / during an MC patch build: the first
     // seconds on foot used to put nine chunk scatters (each ~1000 height-field calls + its instance buffers) back to back with the first patch builds.
-    let built=0; const _pf=PW._propF=(PW._propF||0)+1, _ord=[[0,0],[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,1],[1,-1],[-1,-1]];
-    for(let q=0;q<9;q++){
-      const di=_ord[q][0], dj=_ord[q][1], k=(pi+di)+'_'+(pj+dj); want.add(k);
-      if(!M.has(k)&&built<1&&(_pf%3===0)&&!TERRAIN._mcBusy){
-        _crB('chunkScatter',{k,n:M.size});
-        try{ const g=_hmChunkScatter(pi+di,pj+dj); PW.propsGroup.add(g); M.set(k,g); let by=0; g.traverse(o=>{ if(o.isInstancedMesh){ by+=(o.instanceMatrix?o.instanceMatrix.array.byteLength:0)+(o.instanceColor?o.instanceColor.array.byteLength:0); } }); g.userData.crumbKey='chunk#'+k; _crG('chunk#'+k,by); }catch(e){ M.set(k,null); }
-        _crE('chunkScatter',{n:M.size}); _crL('chunks',M.size); built++;
+    const _pf=PW._propF=(PW._propF||0)+1, _ord=[[0,0],[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,1],[1,-1],[-1,-1]];
+    for(let q=0;q<9;q++) want.add((pi+_ord[q][0])+'_'+(pj+_ord[q][1]));
+    // (v256) one chunk at a time, built over several frames (generator, ~2.5 ms a frame on a phone / 4 ms otherwise); a job whose chunk is no longer wanted is dropped
+    let job=PW._propJob; if(job&&(job.gen!==PW.gen||M.has(job.k)||!want.has(job.k))){ job=PW._propJob=null; }
+    if(!job&&!TERRAIN._mcBusy&&_pf>=(PW._propNext||0)){
+      for(let q=0;q<9;q++){ const di=_ord[q][0], dj=_ord[q][1], k=(pi+di)+'_'+(pj+dj);
+        if(!M.has(k)){ job=PW._propJob={k,it:_hmChunkScatterG(pi+di,pj+dj),gen:PW.gen}; _crM('chunkScatter:start',JSON.stringify({k,n:M.size})); break; } }
+    }
+    if(job&&!TERRAIN._mcBusy){
+      const k=job.k, t0=performance.now(), budget=GFX.isMobile?2.5:4; let r=null, err=false;
+      try{ do{ r=job.it.next(); }while(!r.done&&performance.now()-t0<budget); }catch(e){ err=true; }
+      if(err){ M.set(k,null); PW._propJob=null; }
+      else if(r.done){
+        PW._propJob=null; PW._propNext=_pf+3;
+        try{ const g=r.value; PW.propsGroup.add(g); M.set(k,g); let by=0; g.traverse(o=>{ if(o.isInstancedMesh){ by+=(o.instanceMatrix?o.instanceMatrix.array.byteLength:0)+(o.instanceColor?o.instanceColor.array.byteLength:0); } }); g.userData.crumbKey='chunk#'+k; _crG('chunk#'+k,by); }catch(e){ M.set(k,null); }
+        _crM('chunkScatter:end',JSON.stringify({n:M.size})); _crL('chunks',M.size);
       }
     }
   }
@@ -24768,16 +24847,29 @@ function _pwBuildGround(pal,fx,fz,mode){
         // (v150) only the climbable subtrees are tested (hits on anything else were skipped anyway); the list of topmost
         // climbable objects is refreshed every 250 ms instead of ray-testing the whole scene (skinned character included) 8×
         const now=performance.now(); let roots=TERRAIN._climbRoots;
-        if(!roots||now-(TERRAIN._climbRootsT||0)>250){ roots=[]; const walk=o=>{ const u=o.userData; if(u&&(u.climbable||u.cliff||u.rope)){ roots.push(o); return; } const ch=o.children; for(let k=0;k<ch.length;k++) walk(ch[k]); }; walk(PW.scene); TERRAIN._climbRoots=roots; TERRAIN._climbRootsT=now; }
+        if(!roots||now-(TERRAIN._climbRootsT||0)>250){ roots=[]; const walk=o=>{ const u=o.userData; if(u&&(u.climbable||u.cliff||u.rope)){ roots.push(o); return; } const ch=o.children; for(let k=0;k<ch.length;k++) walk(ch[k]); }; walk(PW.scene); TERRAIN._climbRoots=roots; TERRAIN._climbRootsT=now; TERRAIN._climbBoxT=0; }
         if(!roots.length) return null;
-        for(let i=0;i<8;i++){
+        // (v256) us.slope was 150-630 ms a frame on the tablet: 8 rays x every triangle of a cliff set (~290 k tris, no BVH) EVERY frame whenever her origin sat inside a
+        // climbable mesh's bounding sphere.  Now (1) a padded world box per root (refreshed every 750 ms) drops every root further than the ray length from her;
+        // (2) with a root in reach the 8 directions are spread over 3 frames (round robin) and the answer is held for 180 ms / 0.4 m of travel — a wall she walks
+        // up to is still found within ~200 ms, a flat walk past the cliff no longer pays 8 full mesh tests per frame.
+        if(!TERRAIN._climbBoxes||now-(TERRAIN._climbBoxT||0)>750){ TERRAIN._climbBoxes=roots.map(o=>{ try{ return new THREE.Box3().setFromObject(o).expandByScalar(3.4); }catch(e){ return null; } }); TERRAIN._climbBoxT=now; }
+        const near=[]; for(let i=0;i<roots.length;i++){ const bx=TERRAIN._climbBoxes[i]; if(!bx||bx.containsPoint(origin)) near.push(roots[i]); }
+        if(!near.length){ TERRAIN._climbHold=null; return null; }
+        const H0=TERRAIN._climbHold;
+        if(H0&&now-H0.t<180&&Math.abs(H0.x-x)+Math.abs(H0.z-z)<0.4&&Math.abs(H0.y-y)<0.6) return H0.n?H0.n.clone():null;
+        const slice=3, k0=(TERRAIN._climbRR=((TERRAIN._climbRR||0)+1)%slice); let found=null;
+        for(let i=k0;i<8&&!found;i+=slice){
           const a=i*Math.PI/4; TERRAIN._climbRay.set(origin,new THREE.Vector3(Math.cos(a),0,Math.sin(a))); TERRAIN._climbRay.camera=PW.camera;   // sprites in the scene need it
-          const hits=TERRAIN._climbRay.intersectObjects(roots,true);
+          const hits=TERRAIN._climbRay.intersectObjects(near,true);
           for(const h of hits){
             let climb=false; for(let cur=h.object;cur;cur=cur.parent){ const u=cur.userData; if(u&&(u.climbable||u.cliff||u.rope)){ climb=true; break; } }
-            if(climb&&h.face) return h.face.normal.clone().transformDirection(h.object.matrixWorld).normalize();
+            if(climb&&h.face){ found=h.face.normal.clone().transformDirection(h.object.matrixWorld).normalize(); break; }
           }
         }
+        // a hit is held; a miss is only held for the part of the circle that was tested, so the other directions are checked on the next frames
+        TERRAIN._climbHold=found?{t:now,x,y,z,n:found}:{t:now-120,x,y,z,n:null};
+        if(found) return found.clone();
       }
     }catch(e){}
     return null;
@@ -24950,7 +25042,10 @@ function _propPad(im,n){
   for(let k=n;k<cap;k++){ im.setMatrixAt(k,M); if(c) im.setColorAt(k,c); }
 }
 // Rocks (and trees on living worlds) for one near chunk — instanced, seeded by the chunk.
-function _hmChunkScatter(i,j){
+// (v256) the scatter of one chunk as a GENERATOR (same RNG order, same result): it yields every 48 samples so _pwPropsTick can spend ~2.5 ms of a frame on it
+// instead of ~1000 height-field calls (+ colours + instance buffers) in one go (chunkScatter was a 40-130 ms frame on the tablet).  _hmChunkScatter runs it whole.
+function _hmChunkScatter(i,j){ const it=_hmChunkScatterG(i,j); let r; do{ r=it.next(); }while(!r.done); return r.value; }
+function* _hmChunkScatterG(i,j){
   const H=TERRAIN.H, pal=TERRAIN.pal, C=SURF_CHUNK, rnd=_rng32(_chunkSeed(i,j,TERRAIN.seed||1));
   const R=(a,b)=>a+(b-a)*rnd();
   const g=new THREE.Group(); g.name='JOTS_ChunkProps'; g.userData.groundMark=true;
@@ -24958,6 +25053,7 @@ function _hmChunkScatter(i,j){
   const base={h:0,s:0,l:0}; new THREE.Color(pal.rock||0x777777).getHSL(base);
   const rocks=[];
   for(let n=0;n<per;n++){
+    if(n%48===47) yield;
     const x=i*C+R(-C/2,C/2), z=j*C+R(-C/2,C/2), h=H(x,z);
     if(h<3&&pal.water){ rnd(); rnd(); continue; }
     rocks.push({x,z,h,s:R(0.4,2.4),sy:R(0.6,1.2),r:[R(0,6),R(0,6),R(0,6)],c:new THREE.Color().setHSL(base.h+(rnd()-0.5)*0.03,Math.max(0,Math.min(1,base.s+(rnd()-0.5)*0.15)),Math.max(0,Math.min(1,base.l+(rnd()-0.5)*0.18)))});
@@ -24965,6 +25061,7 @@ function _hmChunkScatter(i,j){
   // boulders lodged on ledges and fallen at the foot of cliffs: wherever the ground
   // is level enough to hold one but rises sharply just beside it
   for(let n=0;n<Math.round(per*0.35);n++){
+    if(n%12===11) yield;   // (each boulder candidate costs nine height samples)
     const x=i*C+R(-C/2,C/2), z=j*C+R(-C/2,C/2), h=H(x,z);
     if(h<3&&pal.water){ rnd(); continue; }
     const hl=H(x-1.5,z), hr=H(x+1.5,z), hu=H(x,z-1.5), hd=H(x,z+1.5);
@@ -25729,21 +25826,24 @@ function updateSurface(dt){
     // a stride (±1.2 units ≈ 2 ft): sand ripples and a mesh normal seen from
     // underneath (which read as a 175° "slope") no longer start a climb on
     // flat dunes; a real cliff still does.
-    let groundNormal;
+    let groundNormal; const _sl0=performance.now();
     if(typeof _surfHeight==='function'){
       const e=1.2, X=p.pos.x, Z=p.pos.z, Hs=_surfHeight;
       groundNormal=new THREE.Vector3(-(Hs(X+e,Z)-Hs(X-e,Z)),2*e,-(Hs(X,Z+e)-Hs(X,Z-e)));
       if(!isFinite(groundNormal.x+groundNormal.z)) groundNormal.set(0,1,0);
       groundNormal.normalize();
     } else groundNormal=new THREE.Vector3(0,1,0);
+    const _sl1=performance.now(); DMFT.add('us.s.height',_sl1-_sl0);
     const climbN = (typeof window._surfClimbNormal==='function') ? window._surfClimbNormal(p.pos.x, p.pos.y, p.pos.z) : null;
     if(climbN) groundNormal = climbN;
+    const _sl2=performance.now(); DMFT.add('us.s.climb',_sl2-_sl1);
     const slopeDeg = THREE.MathUtils.radToDeg(groundNormal.angleTo(new THREE.Vector3(0,1,0)));
     // Stabilizer swim seam: Worlds installs window._surfWaterAt(x,y,z).
     // Console override CHAR._wantSwim still works for testing without water volumes.
     const feetY = supportH; // feet on whatever holds her up (seabed, ground, or floating at the surface)
     const inWater = !!CHAR._wantSwim || ((typeof window._surfWaterAt==='function') ? !!window._surfWaterAt(p.pos.x, feetY, p.pos.z) : false);
     try{ if(window.DMPolish) DMPolish.contact(surfScene,p.pos.x,supportH,p.pos.z,groundNormal,CHAR_TERRAIN_HEIGHT,Math.max(0,p.pos.y-3.0-supportH),CHAR.root.visible&&!inWater&&!surfFirstPerson&&!climbN,TERRAIN.sky); }catch(e){}   // soft contact shadow (ui/dm-polish.js)
+    DMFT.add('us.s.contact',performance.now()-_sl2);
     const autoClimbFromSlope = (!!climbN || slopeDeg > 50) && moving;
     // Swim wins over climb while immersed so Swim_Forward actually plays in water volumes.
     const climbing = !inWater && (surfClimbHeld || autoClimbFromSlope);

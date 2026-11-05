@@ -150,7 +150,7 @@
     }
 
     /* ───────────── emitters ───────────── */
-    function sprayAt(x, y, z, vx, vy, vz, size, life, type, rot) { if (spray) spray.spawn(x, y, z, vx, vy, vz, size, life, type, rot || 0); }
+    function sprayAt(x, y, z, vx, vy, vz, size, life, type, rot) { const B = W.DMBudget; if (B && B.on) { const k = type === 2 ? B.mistK() : B.sprayK(); if (k < 1 && Math.random() >= k) return; } /* (v256) frame-budget ladder: thin the sprites (overdraw) */ if (spray) spray.spawn(x, y, z, vx, vy, vz, size, life, type, rot || 0); }
     function splash(x, z, strength) {              // a crown + droplets + a ripple (entering, landing, a hard footfall)
       const y = surfY(x, z), s = clamp(strength, 0.2, 1.6), hang = P.spray.hang || 1, g = gSpray();
       if (spray) {

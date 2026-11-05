@@ -84,6 +84,7 @@
     d.nextEval = now + 500;
 
     const mobile = !!gfx.isMobile;
+    { const cp = bcap(); if (cp < 1 && d.k > cp + 0.005 && now - d.since > 1200) { setK(r, d, gfx, basePR, cp, now); return; } }   // budget cap (see setK)
     const star = !!(root.DMStarBubble && (root.DMStarBubble.a > 0.05 || root.DMStarBubble.inStar));
     const auto = gfx.preset === 'auto';
     // lowest scale: a chosen preset keeps most of its sharpness; Auto may go lower; diving into a star lowers it further
@@ -155,12 +156,16 @@
       }
     } else if (!calm) d.calm = Math.max(0, d.calm - 250);
     // persist a settled scale (stable for a while, not mid-probe)
-    if (!d.probe && since > 20000 && now - d.saveT > 30000 && Math.abs(d.k - d.saved) >= 0.02) { d.saved = d.k; d.saveT = now; save(gfx, d.k); }
+    if (bcap() < 1) { /* capped by the frame-budget ladder: not the device's own settled scale */ }
+    else if (!d.probe && since > 20000 && now - d.saveT > 30000 && Math.abs(d.k - d.saved) >= 0.02) { d.saved = d.k; d.saveT = now; save(gfx, d.k); }
     else if (!d.probe && d.k >= 1 && d.saved < 1 && since > 20000) { d.saved = 1; d.saveT = now; save(gfx, 1); }
   }
 
+  // (v256) ui/dm-budget.js: the global frame-budget ladder's last stages cap the render scale (0.85 / 0.72 / 0.6).  The cap is an upper bound only: this governor still
+  // decides everything below it, and a capped scale is never remembered as the device's settled scale (the budget controller seeds its own stage next launch).
+  function bcap() { const B = root.DMBudget; return B && B.on && B.resCap ? B.resCap() : 1; }
   function setK(r, d, gfx, basePR, k, now) {
-    k = snap(Math.min(1, Math.max(0.3, k)));
+    k = snap(Math.min(1, Math.max(0.3, k))); const cp = bcap(); if (k > cp) k = snap(cp);
     if (k === d.k) return;
     d.k = k; d.since = now; d.changes++; root._dmResChanges = (root._dmResChanges || 0) + 1;
     d.count = Math.min(d.count, 8); d.nextEval = now + 800;                 // judge the new scale on fresh frames only

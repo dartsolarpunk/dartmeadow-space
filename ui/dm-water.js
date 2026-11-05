@@ -149,7 +149,8 @@
     if (S.ema > ref * 1.55) { S.slow++; S.fast = 0; } else if (S.ema < ref * 1.18) { S.fast++; S.slow = 0; } else { S.slow = 0; S.fast = 0; }
     let want = S.lvl;
     if (S.slow >= 3) { want = Math.max(0.15, S.lvl - 0.28); S.slow = 0; } else if (S.fast >= 10) { want = Math.min(1, S.lvl + 0.15); S.fast = 0; }
-    const cap = k >= 0.9 ? 1 : k >= 0.75 ? 0.75 : k >= 0.62 ? 0.45 : 0.2; S.lvl = Math.min(want, cap);
+    let cap = k >= 0.9 ? 1 : k >= 0.75 ? 0.75 : k >= 0.62 ? 0.45 : 0.2; try { const B = W.DMBudget; if (B && B.on && B.waterCap) cap = Math.min(cap, B.waterCap()); } catch (e) { }   // (v256) frame-budget ladder (ui/dm-budget.js): water stages 1-3 lower this cap
+    S.lvl = Math.min(want, cap);
     if (S.U) { S.U.lvl.value = S.lvl; S.U.disp.value = S.lvl >= 0.45 ? 1 : 0; }
   }
   function sunPoll(U) {

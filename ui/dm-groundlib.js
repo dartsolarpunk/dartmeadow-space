@@ -408,12 +408,13 @@
   }
   function initUniforms() {
     const THREE = G.THREE, T = THREE.TSL, { uniform } = T;
-    S.U = { moss: uniform(S.world ? S.world.moss : 0), wet: uniform(S.world ? S.world.wet : 0), ready: uniform(0), sky: uniform(new THREE.Color(0.35, 0.5, 0.7)), skyAmt: uniform(0.0), mossCol: uniform(new THREE.Color(0.32, 0.46, 0.18)), waterCol: uniform(new THREE.Color(0.05, 0.08, 0.1)) };
+    S.U = { reachK: uniform(1), dual: uniform(1), moss: uniform(S.world ? S.world.moss : 0), wet: uniform(S.world ? S.world.wet : 0), ready: uniform(0), sky: uniform(new THREE.Color(0.35, 0.5, 0.7)), skyAmt: uniform(0.0), mossCol: uniform(new THREE.Color(0.32, 0.46, 0.18)), waterCol: uniform(new THREE.Color(0.05, 0.08, 0.1)) };
     if (S.done) S.U.ready.value = 1;
     setInterval(pollSky, 600);   // uniform writes only
   }
   // sun height + sky / water / moss colours from the surface state (TERRAIN is a classic-script const in index.html, so reach it through typeof)
   function pollSky() {
+    try { const B = G.DMBudget; if (S.U && B && B.on && B.groundReach) { S.U.reachK.value = B.groundReach(); S.U.dual.value = B.groundDual(); } else if (S.U) { S.U.reachK.value = 1; S.U.dual.value = 1; } } catch (e) { }
     try {
       const TR = (typeof TERRAIN !== 'undefined') ? TERRAIN : null; if (!TR || !S.U) return;
       const sun = TR.sun; let el = 0.6;
@@ -438,7 +439,7 @@
       if (!S.tex) S.tex = mkTextures(THREE, S.T);
       const tex = S.tex, Lc = tex.L, tileWj = S.world ? S.world.tileW : 4.0;
       const { Fn, If, float, vec2, vec3, vec4, mix: tmix, smoothstep, max, min, clamp: tcl, floor, fract, texture, normalize, length, dot, abs, mod, positionView, dFdx, dFdy, log2, step } = T;
-      const U = S.U, p = ctx.p, uv0 = vec2(p.x, p.z).div(float(tileWj)), reach = float(ctx.reach);
+      const U = S.U, p = ctx.p, uv0 = vec2(p.x, p.z).div(float(tileWj)), reach = float(ctx.reach).mul(U.reachK);   // U.reachK / U.dual: ui/dm-budget.js ladder (uniforms; 1 = full)
       const dist = length(positionView);
       // weights: the tile detail (colour / roughness / baked bump) runs to `reach`; the parallax march only close in (ctx.near .. ctx.far)
       const nY = ctx.nFlat.y;
@@ -475,15 +476,16 @@
       })().toVar();
       const iA = RGa.x, iB = RGa.y, tRaw = RGa.z, mossF = RGb.x, wetF = RGb.y, ruinF = RGb.z;
       // height-blend of the two tiles at the pixel's own uv: the higher tile pokes through the other near the seam
-      const WB = Fn(() => {
+      const WB0 = Fn(() => {
         const wb = tRaw.toVar();
-        If(fadeF.greaterThan(0.0).and(tRaw.greaterThan(0.002)).and(tRaw.lessThan(0.998)), () => {
+        If(fadeF.greaterThan(0.0).and(tRaw.greaterThan(0.002)).and(tRaw.lessThan(0.998)).and(U.dual.greaterThan(0.5)), () => {
           const ha = F1(uv0, iA, lod).x, hb = F1(uv0, iB, lod).x, sa = ha.add(float(1).sub(tRaw)), sb = hb.add(tRaw), mm = max(sa, sb).sub(0.22);
           const wa = max(sa.sub(mm), 0.0), wbb = max(sb.sub(mm), 0.0);
           wb.assign(wbb.div(wa.add(wbb).max(1e-4)));
         });
         return wb;
       })().toVar();
+      const WB = WB0.mul(U.dual);   // budget stage "ground L2": no second-tile blend (every later fetch behind WB > 0.004 is skipped)
       // puddle level in height units: wet regions fill the low 64% of the relief at full wetness, only on flat ground
       const level = wetF.mul(0.64).mul(smoothstep(float(0.8), float(0.96), nY));
       const Hn = (uvw, lodv) => {
