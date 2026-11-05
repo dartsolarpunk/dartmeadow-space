@@ -19548,7 +19548,15 @@ function _pwWorldTick(dt){
   const landing=fly&&atmoState&&atmoState.landing;
   G.update(cam,PW._jump?400:(landing?(GFX.isMobile?7:11):undefined)); PW._jump=false;   // (after a DART cruise skip: the new spot at once)
   const skyFar=Math.min(skyR,Math.max(2400,2400+calt*5));
-  let far=dd.fogFar+(skyFar-dd.fogFar)*k, near=40+(Math.min(skyFar*0.2,300+calt*0.6)-40)*k;
+  // aerial perspective from a vantage point: standing well above the land around you (the mansion deck, a cliff top) the haze thins, so the far coast and cliffs read
+  // instead of vanishing at the low-ground fog distance. Sampled on a ring (8 analytic heights every ~24 frames), smoothed, capped inside the drawn ground reach.
+  if(!space&&scene.fog){
+    if((PW._vtF=(PW._vtF||0)+1)%24===1){ let s8=0; const rr=450; for(let q=0;q<8;q++){ const a8=q*0.7854; const hh=H(px+Math.cos(a8)*rr,pz+Math.sin(a8)*rr); s8+=isFinite(hh)?hh:gH; } PW._vtT=Math.max(0,Math.min(1,(f.y-s8/8-25)/90)); }
+    PW._vtK=(PW._vtK||0)+((PW._vtT||0)-(PW._vtK||0))*Math.min(1,dt*0.8);
+  }
+  const vtK=(!space&&PW._vtK)||0;
+  let far=dd.fogFar*(1+1.1*vtK)+(skyFar-dd.fogFar)*k, near=40*(1+vtK)+(Math.min(skyFar*0.2,300+calt*0.6)-40)*k;
+  if(vtK>0&&far>walkR*0.9) far=Math.max(dd.fogFar,walkR*0.9);
   if(dome<1){ const thin=1-dome; far+=thin*thin*2e6; near+=thin*thin*1e6; }   // the haze lifts with the dome
   if(scene.fog){ scene.fog.far=far; scene.fog.near=near; }
   const farClip=space||dome<1?Math.max(4000,c.distanceTo(C)+R*1.2):Math.max(1200,viewR*1.15);
@@ -19662,10 +19670,10 @@ function _propsLod(px,pz,agl){
   const M=PW.props; if(!M||!M.size) return;
   if((PW._plodF=(PW._plodF||0)+1)%6!==0) return;
   let k=1; try{ if(window.DMBudget&&DMBudget.on&&DMBudget.propsK) k=DMBudget.propsK(); }catch(e){}
-  const fog=PW.scene&&PW.scene.fog?PW.scene.fog.far:900, farD=Math.max(260,Math.min(fog,agl>60?260:900))*k, shD=(GFX.isMobile?110:170)*k, half=SURF_CHUNK*0.71;
+  const fog=PW.scene&&PW.scene.fog?PW.scene.fog.far:900, farD=Math.max(260,Math.min(fog*1.05,agl>60?Math.max(260,fog*0.85):1400))*k, shD=(GFX.isMobile?110:170)*k, half=SURF_CHUNK*0.71;
   for(const g of M.values()){
     if(!g||g.userData.cx===undefined) continue;
-    const d=Math.hypot(px-g.userData.cx,pz-g.userData.cz)-half, vis=d<farD, cast=d<shD;
+    const d=Math.hypot(px-g.userData.cx,pz-g.userData.cz)-half, vis=g.visible?d<farD*1.06:d<farD, cast=d<shD;   // (6% hysteresis: no flicker at the cut)
     if(g.visible!==vis) g.visible=vis;
     if(g.userData._cast===cast) continue; g.userData._cast=cast;
     const ch=g.children; for(let q=0;q<ch.length;q++){ const o=ch[q]; if(!o.isInstancedMesh) continue; if(o.userData._cs0===undefined) o.userData._cs0=!!o.castShadow; o.castShadow=cast&&o.userData._cs0; }
