@@ -367,6 +367,7 @@ body.ship-walk #screen-flight .hud-c .kite-board{display:flex;}
 #qt-panel .dest-card.active{background:linear-gradient(90deg,rgba(var(--hi-rgb),.26),rgba(var(--hi-rgb),.04)) !important;box-shadow:inset 2px 0 0 var(--gold);}
 
 /* ── Autopilot bubble (the pilot's profile): above the left stick in the sky, beside ANCHOR in space ── */
+#atmo-level-btn{position:absolute;left:104px;bottom:calc(222px + var(--safe-bot));width:48px;height:48px;z-index:6;pointer-events:auto;}
 #ap-btn-atmo{position:absolute;left:50px;bottom:calc(222px + var(--safe-bot));width:48px;height:48px;z-index:6;pointer-events:auto;}
 .ap-pad .sp-ico{font-size:.95rem !important;display:flex;align-items:center;justify-content:center;}
 .ap-pad .ap-ico{display:block;filter:drop-shadow(0 0 2px rgba(0,0,0,.6));}
@@ -374,7 +375,7 @@ body.ship-walk #screen-flight .hud-c .kite-board{display:flex;}
 .ap-pad.active .ap-ico{filter:drop-shadow(0 0 5px #fff) drop-shadow(0 0 10px rgba(var(--acc-rgb),1));}
 @keyframes apGlow{0%,100%{box-shadow:0 0 12px rgba(var(--acc-rgb),.6)}50%{box-shadow:0 0 26px rgba(var(--acc-rgb),1),0 0 6px rgba(255,255,255,.8)}}
 @media (prefers-reduced-motion:reduce){.ap-pad.active{animation:none;box-shadow:0 0 18px rgba(var(--acc-rgb),.9);}}
-@media (orientation:landscape) and (max-height:500px){#ap-btn-atmo{left:44px;bottom:calc(206px + var(--safe-bot));width:40px;height:40px;}}
+@media (orientation:landscape) and (max-height:500px){#atmo-level-btn{left:92px;bottom:calc(206px + var(--safe-bot));width:40px;height:40px;}#ap-btn-atmo{left:44px;bottom:calc(206px + var(--safe-bot));width:40px;height:40px;}}
 
 /* ── Ground & sky soundtrack player: the space HUD's top-left chip row,
    first item in each world's own header row ─────────────────────────── */
@@ -436,10 +437,10 @@ body.ship-walk #screen-flight .hud-c .kite-board{display:flex;}
    centred throttle on narrow screens. ── */
 @media (orientation:landscape){
   #atmo-steer-zone,#atmo-climb-zone{bottom:calc(30px + var(--safe-bot)) !important;}
-  #ap-btn-atmo,#atmo-idle-btn{bottom:calc(160px + var(--safe-bot)) !important;}
+  #atmo-level-btn,#ap-btn-atmo,#atmo-idle-btn{bottom:calc(160px + var(--safe-bot)) !important;}
 }
 @media (orientation:landscape) and (max-height:500px){
-  #ap-btn-atmo,#atmo-idle-btn{bottom:calc(152px + var(--safe-bot)) !important;}
+  #atmo-level-btn,#ap-btn-atmo,#atmo-idle-btn{bottom:calc(152px + var(--safe-bot)) !important;}
 }
 
 /* v92: 1st/3rd person toggle on the Bird Temple deck + interior */

@@ -1016,7 +1016,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-webkit.js?v=210" defer></script>
 <script src="ui/dm-spectator.js?v=1" defer></script>
 <script src="ui/dm-stack.js?v=1" defer></script>
-<script src="ui/dm-padbind.js?v=219" defer></script>
+<script src="ui/dm-level.js?v=286" defer></script>
+<script src="ui/dm-padbind.js?v=286" defer></script>
 <script src="ui/dm-globe.js?v=9" defer></script>
 <script src="ui/dm-star.js?v=191" defer></script>
 <script src="ui/dm-mist.js?v=7" defer></script>
@@ -1809,6 +1810,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   </div>
   <!-- autopilot: holds the height you're at, climbs over (or banks round) whatever is ahead -->
   <button id="ap-btn-atmo" class="side-pad ap-pad" onclick="toggleAtmoAutopilot()" title="Autopilot — holds this altitude, avoids terrain ahead"><span class="sp-ico"><svg class="ap-ico" viewBox="0 0 24 24" width="1.5em" height="1.5em" aria-hidden="true"><defs><linearGradient id="apGA" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#d9d2ff" stop-opacity=".95"/><stop offset=".5" stop-color="#7b93ff" stop-opacity=".75"/><stop offset="1" stop-color="#ff4fa3" stop-opacity=".8"/></linearGradient></defs><path d="M9.2 3.3C12.7 2.1 17.7 3.6 18.5 8.2c.5 3.3.2 7.8.8 12.8h-5.9c-1-1.4-2-2.6-2.5-4.2l-.3-1.5c-1 .3-2.1-.1-2.7-1-.3-.7-.2-1.2-.5-1.5-.3-.3-.4-.6-.1-.9-.4-.3-.7-.5-.5-.8-.6-.2-.8-.6-.4-1.1l1-1.4c.1-2 .5-4 1.8-5.2z" fill="url(#apGA)" stroke="#fff" stroke-opacity=".7" stroke-width=".55" stroke-linejoin="round"/><path d="M14.2 4.6c2.4 1.2 3.4 3.6 3.6 6.6.2 3.4 0 6.6.6 9.8" fill="none" stroke="#fff" stroke-opacity=".35" stroke-width=".6" stroke-linecap="round"/><path d="M10.9 16.8c-2.6 1.1-4.6 2.4-5.6 4.2h8.6c-1.2-1.3-2.2-2.6-3-4.2z" fill="url(#apGA)" fill-opacity=".7" stroke="#fff" stroke-opacity=".55" stroke-width=".5" stroke-linejoin="round"/><path d="M6.9 8.9h4.6" stroke="#fff" stroke-width=".9" stroke-linecap="round"/><circle cx="8.6" cy="8.95" r=".6" fill="#ff3b6b"/><circle cx="12.3" cy="10.7" r=".7" fill="none" stroke="#fff" stroke-opacity=".6" stroke-width=".45"/></svg></span>AUTO</button>
+  <button id="atmo-level-btn" class="side-pad ap-pad" onclick="atmoLevel()" title="Level — wings level to the local horizon, keeps heading, speed and altitude (L)"><span class="sp-ico"><svg viewBox="0 0 24 24" width="1.5em" height="1.5em" aria-hidden="true"><path d="M3 12h5m8 0h5" stroke="#fff" stroke-width="1.6" stroke-linecap="round" fill="none"/><path d="M8 12l4-4 4 4-4 4z" fill="none" stroke="#9bd0ff" stroke-width="1.4" stroke-linejoin="round"/><path d="M4 18h16" stroke="#fff" stroke-opacity=".45" stroke-width="1" stroke-linecap="round"/></svg></span>LEVEL</button>
   <!-- left joystick: look / aim — the same stick as open space (free 6-DOF) -->
   <div style="position:absolute;bottom:calc(96px + var(--safe-bot));left:24px;width:100px;height:100px;pointer-events:auto;" id="atmo-steer-zone">
     <div style="position:absolute;top:-16px;left:50%;transform:translateX(-50%);font-family:var(--font-hud);font-size:.44rem;color:rgba(var(--acc-rgb),.4);letter-spacing:.08em;">LOOK / AIM</div>
@@ -11920,7 +11922,7 @@ function takeMouseLook(){
 function releaseMouseLook(){ if(document.pointerLockElement){ try{document.exitPointerLock();}catch(e){} } }
 window.releaseMouseLook=releaseMouseLook;
 
-function onKey(e){KEYS[e.code]=true;if(e.code==='KeyB')activateDart();if(e.code==='KeyM')openGalaxyMap();}
+function onKey(e){KEYS[e.code]=true;if(e.code==='KeyB')activateDart();if(e.code==='KeyM')openGalaxyMap();if(e.code==='KeyL'&&!e.repeat&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&atmoState)atmoLevel();}
 function onKeyUp(e){KEYS[e.code]=false;}
 
 function activateDart(){
@@ -19939,6 +19941,26 @@ function _atmoJ(y){ const rh=(_planetR()+y)/_planetR(); return {jx:Math.max(0.05
 function _atmoYP(s){ const f=_pwVec(0).set(0,0,-1).applyQuaternion(s.quat); s.pitch=Math.asin(_clamp(f.y,-1,1)); s.yaw=Math.atan2(-f.x,-f.z); }
 const _atmoQ=[null,null];
 function _atmoAimQ(yaw,pitch){ const q=_atmoQ[0]||(_atmoQ[0]=new THREE.Quaternion()), e=_atmoQ[1]||(_atmoQ[1]=new THREE.Euler(0,0,0,'YXZ')); e.set(pitch,yaw,0,'YXZ'); return q.setFromEuler(e); }
+// ── LEVEL (L / the LEVEL pad beside AUTO): eased slerp to wings-level on the local horizon (ui/dm-level.js). Heading, speed and
+// altitude stay; the look stick, roll pads, arrow keys or mouse cancel it; the altitude autopilot is paused while it sweeps.
+let _atmoLvl=null;
+function _atmoLvlInput(){ return Math.abs(JOY.Lx)+Math.abs(JOY.Ly)>0.18||!!ROLL_HOLD||!!MOUSE_LOOK.dx||!!MOUSE_LOOK.dy||
+  !!(KEYS['KeyQ']||KEYS['KeyE']||KEYS['ArrowUp']||KEYS['ArrowDown']||KEYS['ArrowLeft']||KEYS['ArrowRight']); }
+function _atmoLevelStop(){ _atmoLvl=null; const b=$('atmo-level-btn'); if(b) b.classList.remove('active'); }
+function atmoLevel(){
+  const s=atmoState; if(!s||!window.DMLevel||s.landing||s.touchdown||s.takeoff>0||s.auto||atmoIdle||s.toSpace) return;
+  if(_atmoLvl){ _atmoLevelStop(); return; }   // tap again = stop where it is
+  const q=s.quat, R=_planetR(), up=DMLevel.radialUp([s.pos.x,s.pos.y,s.pos.z],[s.pos.x,s.pos.y-R,s.pos.z]);   // flat sky frame: the centre is straight below, so local up is +Y
+  const a=[q.x,q.y,q.z,q.w], b=DMLevel.level(a,up), ang=DMLevel.angle(a,b);
+  if(ang<0.004){ toast('Already level',900); return; }
+  _atmoLvl={s:s,a:a,b:b,t:0,dur:DMLevel.duration(ang)};
+  const el=$('atmo-level-btn'); if(el) el.classList.add('active');
+}
+function _atmoLevelStep(s,dt){
+  const L=_atmoLvl; L.t+=dt/L.dur;
+  const r=DMLevel.slerp(L.a,L.b,DMLevel.ease(L.t)); s.quat.set(r[0],r[1],r[2],r[3]);
+  if(L.t>=1) _atmoLevelStop();
+}
 function _atmoManualInput(){
   return Math.abs(JOY.Lx)+Math.abs(JOY.Ly)+Math.abs(JOY.Rx)+Math.abs(JOY.Ry)>0.18||!!ROLL_HOLD||!!MOUSE_LOOK.dx||!!MOUSE_LOOK.dy||
     !!(KEYS['KeyW']||KEYS['KeyS']||KEYS['KeyA']||KEYS['KeyD']||KEYS['KeyQ']||KEYS['KeyE']||KEYS['ArrowUp']||KEYS['ArrowDown']||KEYS['ArrowLeft']||KEYS['ArrowRight']);
@@ -19958,10 +19980,13 @@ function updateAtmoFlight(dt){
   }
   let tf=0, ts=0;
   const scripted=landing||s.touchdown||s.takeoff>0||!!s.auto||atmoIdle||!!s.toSpace;
+  if(scripted&&_atmoLvl) _atmoLevelStop();
   if(!scripted){
     // ── the pilot flies: exactly the open-space model ──
-    const c=_boardControls(s,dt,(look,thr)=>ATMO_AP.on&&_atmoApTick(s,dt,look,thr,K));
+    if(_atmoLvl&&(_atmoLvl.s!==s||_atmoLvlInput())) _atmoLevelStop();   // the pilot touches the look stick / roll / arrows / mouse: they have it
+    const c=_boardControls(s,dt,(look,thr)=>ATMO_AP.on&&!_atmoLvl&&_atmoApTick(s,dt,look,thr,K));
     tf=c.tf; ts=c.ts;
+    if(_atmoLvl) _atmoLevelStep(s,dt);
     if(window.DM_HAZ) DM_HAZ.waterDrag(s,dt);   // below the sea surface: same controls, water damping (ui/dm-hazardbubble.js)
     const J=_atmoJ(s.pos.y);
     s.pos.x+=s.vel.x*K/J.jx; s.pos.y+=s.vel.y*K; s.pos.z+=s.vel.z*K/J.jz;
@@ -27564,7 +27589,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 
 <!-- ?v= stamps: bump on every UI change so browsers never mix a new page with cached old styles -->
 <link rel="stylesheet" href="ui/dm-ui.css?v=206">
-<link rel="stylesheet" href="ui/dm-hud.css?v=264">
+<link rel="stylesheet" href="ui/dm-hud.css?v=286">
 <link rel="stylesheet" href="ui/dm-friends.css?v=1">
 <link rel="stylesheet" href="ui/dm-safety.css?v=1">
 <link rel="stylesheet" href="ui/dm-spectator.css?v=1">
