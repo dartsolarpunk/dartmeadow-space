@@ -179,6 +179,22 @@
         rows.sort((a, b) => b.tris - a.tris);
         out[rn] = { total: Math.round(rows.reduce((a, r) => a + r.tris, 0)), shadowTotal: Math.round(rows.reduce((a, r) => a + r.shadowTris, 0)), nVisible: rows.length, nHidden: off.length, hidden: off, top: rows.slice(0, 22) };
       }
+      // where the memory sits (the OS kills the tab on bytes, not on fps): unique textures (width x height x 4 B x 1.33 for mips) and geometry buffers, biggest first, per top-level child
+      const seenT = new Set(), seenG = new Set(), texRows = [], geoRows = []; let texB = 0, geoB = 0;
+      const texBytes = (t) => { const im = t.image || (t.source && t.source.data); const w = (im && (im.width || im.videoWidth)) || 0, h = (im && (im.height || im.videoHeight)) || 0; const d = (im && im.depth) || 1; return w * h * d * (t.type === 1016 || t.type === 1015 ? (t.type === 1015 ? 16 : 8) : 4) * (t.generateMipmaps === false || t.isDataTexture || t.isRenderTargetTexture ? 1 : 1.33); };
+      const addTex = (t, who) => { if (!t || !t.isTexture || seenT.has(t)) return; seenT.add(t); const b = texBytes(t); if (!(b > 0)) return; texB += b; texRows.push([b, (t.name || who || '?') + ' ' + ((t.image && t.image.width) || '?') + 'x' + ((t.image && t.image.height) || '?')]); };
+      const scanMat = (m, who) => { if (!m) return; for (const k in m) { let v; try { v = m[k]; } catch (e) { continue; } if (!v || typeof v !== 'object') continue; if (v.isTexture) addTex(v, who); else if (v.isNode || v.isTextureNode) { let n = 0; const walk = (nd, dep) => { if (!nd || dep > 5 || n > 400) return; n++; if (nd.value && nd.value.isTexture) addTex(nd.value, who); const ch = nd._cacheKey === undefined && !nd.getChildren ? null : (nd.getChildren ? nd.getChildren() : null); if (ch) for (const c of ch) walk(c, dep + 1); }; try { walk(v, 0); } catch (e) { } } } };
+      for (const [rn, root] of roots) {
+        const per = new Map();
+        root.traverse((o) => {
+          let top = o; while (top.parent && top.parent !== root) top = top.parent; const who = top.name || top.type;
+          const g = o.geometry; if (g && !seenG.has(g)) { seenG.add(g); let b = 0; const at = g.attributes; if (at) for (const k in at) { const a = at[k]; if (a && a.array) b += a.array.byteLength; } if (g.index && g.index.array) b += g.index.array.byteLength; geoB += b; per.set(who, (per.get(who) || 0) + b); }
+          const ms = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : []; for (const m of ms) scanMat(m, who);
+        });
+        for (const [k, b] of per) geoRows.push([b, rn + ':' + k]);
+      }
+      texRows.sort((a, b) => b[0] - a[0]); geoRows.sort((a, b) => b[0] - a[0]);
+      out.mem = { texMB: Math.round(texB / 1048576), geoMB: Math.round(geoB / 1048576), nTex: seenT.size, texTop: texRows.slice(0, 10).map((r) => Math.round(r[0] / 1048576 * 10) / 10 + 'MB ' + r[1]), geoTop: geoRows.slice(0, 8).map((r) => Math.round(r[0] / 1048576 * 10) / 10 + 'MB ' + r[1]) };
     } catch (e) { out.err = String(e && e.message || e).slice(0, 120); }
     _census = out; _censusAt = now; return out;
   }

@@ -44,7 +44,7 @@
   const LADDER = [
     ['parallax', 1], ['parallax', 2], ['hudfx', 1], ['pxshadow', 1], ['ground', 1], ['props', 1], ['ground', 2], ['light', 1],
     ['water', 1], ['water', 2], ['water', 3], ['light', 2], ['parallax', 3],
-    ['shadow', 1], ['skin', 1], ['shadow', 2], ['light', 3], ['hair', 1], ['atmo', 1], ['props', 2], ['shadow', 3], ['atmo', 2],
+    ['shadow', 1], ['skin', 1], ['shadow', 2], ['light', 3], ['hair', 1], ['atmo', 1], ['props', 2], ['shadow', 3], ['atmo', 2], ['shadow', 4],
     ['res', 1], ['res', 2], ['res', 3], ['res', 4], ['res', 5],
   ];
   const MAX = LADDER.length;
@@ -253,7 +253,7 @@
     setInterval(() => {
       try {
         const r = W.flightRenderer || (typeof flightRenderer !== 'undefined' ? flightRenderer : null), tot = r && r.info && r.info.memory && r.info.memory.total; if (!(tot > 0)) return;
-        const mb = tot / 1048576, ios = !!(W.GFX && W.GFX.isIOS), mob = !!(W.GFX && W.GFX.isMobile), soft = ios ? 700 : mob ? 1000 : 2600, hard = ios ? 900 : mob ? 1300 : 3400; S.memMB = Math.round(mb);
+        const mb = tot / 1048576, ios = !!(W.GFX && W.GFX.isIOS), mob = !!(W.GFX && W.GFX.isMobile), soft = ios ? 700 : mob ? 800 : 2600, hard = ios ? 900 : mob ? 950 : 3400;   // (logs: the Mali-G615 tab died at 917-990 MB renderer bytes, the iPhone at 900) S.memMB = Math.round(mb);
         const P_HARD = core.pOf('res', 1), P_SOFT = core.pOf('shadow', 3);
         let f = c.floorP; if (mb > hard) f = P_HARD; else if (mb > soft) f = Math.max(f === P_HARD && mb > hard * 0.9 ? P_HARD : 0, P_SOFT); else if (mb < soft * 0.9) f = 0;
         if (f !== c.floorP) { c.floorP = f; if (f > c.p) c.set(f, now(), 'mem ' + Math.round(mb) + 'MB'); }
@@ -278,7 +278,7 @@
   out.waterCap = function () { return [1, 0.85, 0.6, 0.3][out.lvl('water')] || 1; };   // multiplies the water governor's own cap
   out.sprayK = function () { const k = [1, 0.7, 0.4, 0][out.lvl('water')]; return k == null ? 1 : k; };
   out.mistK = function () { const k = [1, 0.6, 0, 0][out.lvl('water')]; return k == null ? 1 : k; };
-  out.shadowEvery = function () { const l = out.lvl('shadow'); return l >= 2 ? 3 : l >= 1 ? 2 : 1; };
+  out.shadowEvery = function () { const l = out.lvl('shadow'); return l >= 4 ? 30 : l >= 2 ? 3 : l >= 1 ? 2 : 1; };   // L4 (last resort, logs: the sun-shadow pass alone cost ~50 ms on the Mali tab at 0.4 MP): the map refreshes about twice a second
   out.shadowHalf = function () { return out.lvl('shadow') >= 3; };
   out.atmoPeriod = function () { const l = out.lvl('atmo'); return l >= 2 ? 0.4 : l >= 1 ? 0.15 : 0.066; };   // seconds between density-volume computes
   out.atmoBakeGap = function () { const l = out.lvl('atmo'); return l >= 2 ? 1800 : l >= 1 ? 900 : 500; };       // ms between near-ground height re-bakes

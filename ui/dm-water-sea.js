@@ -208,6 +208,8 @@
       foamLaceMix = laceMix; foamLaceRaw = laceRaw; foamPatch = patchV;
     }
     if (isLava) foam = F(0);
+    // seen from altitude the baked whitecap tile is stretched into long repeating white streaks: thin the foam with distance (the sparkle of the far sea is left to the sun glint)
+    else foam = foam.mul(mix(float(1.0), float(0.4), smoothstep(350.0, 1800.0, dcam0)));
     const laceMix = foamLaceMix || mix(F(0.46), laceV, 0.55);
 
     // plate network of the cells tile (ice floes, lava crust): two scales of coarse plates (one rotated) picked by a broad noise, so floes are neither one size nor a lattice
