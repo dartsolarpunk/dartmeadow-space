@@ -203,4 +203,25 @@ function glue(q, GFX, bud) {
   for (let i = 0; i < 5000; i++) { const d = size * K * 1.7 + (rnd() - 0.5) * size * 0.3; const split = d < size * kk(kids); if (split !== kids) { flips++; kids = split; } } ok(flips <= 3, 'split hysteresis flips: ' + flips);
 }
 
+// 17. (v289) mansion size fade: monotone in distance, 0 from near-space, 1 from the deck / sea, ladder of classes
+{
+  const R = 250, H = 1080, fov = 60;
+  for (const t of L.TIERS) {
+    const g = L.get(t, 'mansion.goneDiam'), f = L.get(t, 'mansion.fullDiam'); ok(g > 0 && g < f, t + ' gone < full');
+    let prev = 2; for (let d = 50; d < 80000; d *= 1.15) { const a = L.sizeFade(L.billboardPx(R, d, fov, H), g, f); ok(a >= 0 && a <= 1 && a <= prev + 1e-12, t + ' sizeFade monotone'); prev = a; }
+    ok(L.sizeFade(L.billboardPx(R, 400, fov, H), g, f) === 1, t + ' from the deck: fully drawn');
+    ok(L.sizeFade(L.billboardPx(R, 2500, fov, H), g, f) === 1, t + ' from the sea 2.5 km: fully drawn');
+    ok(L.sizeFade(L.billboardPx(R, 20000, fov, H), g, f) === 0, t + ' from 20 km up (near-space): gone');
+  }
+  ok(L.sizeFade(10, 40, 70) === 0 && L.sizeFade(100, 40, 70) === 1 && L.sizeFade(5, 3, 3) === 1, 'sizeFade edges / degenerate');
+}
+
+// 18. no polar / Arctic ice generator anywhere in the world engine (a new Arctic system is designed later)
+{
+  const fs = require('fs'), path = require('path'), root = path.join(__dirname, '..', '..');
+  ok(!fs.existsSync(path.join(root, 'ui', 'dm-earth-ice.js')), 'dm-earth-ice.js is gone');
+  const txt = ['index.html', 'ui/dm-earth-paint.js', 'ui/dm-planet.js'].map(f => fs.readFileSync(path.join(root, f), 'utf8')).join('\n');
+  for (const re of [/DMEarthIce\.(at|seaIce)/, /snowDrop/, /Math\.abs\(lat\)>78/, /\.seaIce\b/, /marsIce/]) ok(!re.test(txt), 'no ' + re);
+}
+
 console.log('lod-unit OK (' + n + ' checks)');
