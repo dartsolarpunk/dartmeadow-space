@@ -24,7 +24,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 (function(){
   'use strict';
-  const G={off:/[?&]groundmark=0\b/.test(location.search),A:null,B:null,built:false,gen:-1,
+  const G={_pf:0,off:/[?&]groundmark=0\b/.test(location.search),A:null,B:null,built:false,gen:-1,
     fa:0,fb:0,has:false,mode:0,mt:1,frame:0,lastR:0,
     // B's current state + the state it left from when the mode flipped (plain numbers)
     bx:0,bz:0,bRi:0,bR:0,fx:0,fz:0,fRi:0,fR:0,
@@ -42,7 +42,20 @@
   }
 
   /* ── receivers ─────────────────────────────────────────────────────── */
-  G.receive=function(mat){ if(G.off||!build()) return false; return window.DMProjector.receive(mat,{projectors:[G.A,G.B]}); };
+  // A material built before the projectors can exist (TSL globals / DMProjector not up yet — warm-up, shared ground materials made early) used to be
+  // dropped for good, so the rings never showed on it. Remember it and attach as soon as build() succeeds (retried from tick, then every ~1 s).
+  G._pend=[];
+  G.receive=function(mat){
+    if(G.off) return false;
+    if(!build()){ if(mat&&G._pend.indexOf(mat)<0&&G._pend.length<96) G._pend.push(mat); return false; }
+    return window.DMProjector.receive(mat,{projectors:[G.A,G.B]});
+  };
+  G._flushPend=function(){
+    if(!G._pend.length||G.off||!build()) return 0;
+    const l=G._pend; G._pend=[]; let n=0;
+    for(const m of l){ try{ if(window.DMProjector.receive(m,{projectors:[G.A,G.B]})){ n++; m.needsUpdate=true; } }catch(e){} }
+    return n;
+  };
   // static meshes opt in through userData.groundMark (see _pwMapTag); lit node materials only
   G.tagMaterial=function(mat){
     if(G.off||!mat||mat.transparent||!mat.isMeshStandardNodeMaterial) return false;
@@ -87,6 +100,7 @@
      gen: PW.gen (a new world resets); gnd(x,z): ground height; map(x,y,z,out): flat → drawn frame;
      charH: her height; bc: BOARD_CALL (parked / summon). */
   G.tick=function(dt,player,board,gen,gnd,map,charH,bc){
+    if(G._pend.length&&(++G._pf%30===1)) G._flushPend();
     if(G.off||!G.built) return;
     if(gen!==G.gen){ G.gen=gen; reset(); }
     const A=G.A, B=G.B;
