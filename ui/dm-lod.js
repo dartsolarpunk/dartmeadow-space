@@ -63,6 +63,8 @@
     'prop.errM':     [1.0, 1.2, 1.4],        // typical prop size (m) whose projected size sets the chunk draw cut (a boulder / tree crown)
     'prop.tauPx':    [2.2, 1.8, 1.4],        // ... drawn while that size projects to >= this many pixels
     'terrain.reliefK': [0.4, 0.7, 1.0],      // how much more finely the far ground tiles split where they hold relief (cliffs, coast scarps)
+    'mansion.goneDiam': [56, 48, 40],        // (v289) mansion + cliff is invisible when its bounding sphere projects to <= this many px across (altitude / distance fade)
+    'mansion.fullDiam': [96, 84, 70],        // ... and fully drawn at >= this many px (smoothstep between): it cannot be seen from near-space
     'mip.bias':      [1.0, 0.8, 0.5],        // extra texture LOD (mips) at the far end of a detail band: far surfaces average instead of shimmering
   };
   const WALK_R = 1200;     // the on-foot draw radius floor in index.html (walkR = max(1200, fogFar x 2.5)); a vantage extends it, never shrinks it
@@ -176,6 +178,10 @@
     return (dx * fx + dz * fz) / (dist * hl) < Math.cos(half + slack);
   }
 
+  /* (v289) screen-size fade: 0 when the object's projected diameter is <= gone px, 1 at >= full px, smoothstep between.  The caller multiplies this into the screen-door interval
+     (a landmark that is a speck from altitude is not drawn at all, so the 5 % of the planet radius that Ariel's cliff mansion spans is not seen from near-space). */
+  function sizeFade(diamPx, gone, full) { if (!(full > gone)) return diamPx > gone ? 1 : 0; const t = Math.max(0, Math.min(1, (diamPx - gone) / (full - gone))); return t * t * (3 - 2 * t); }
+
   /* Extra texture LOD for a detail band: 0 at / inside `a`, `bias` at / beyond `b`, smooth between. */
   function mipBias(d, a, b, bias) { return (1 - fade(d, a, b)) * bias; }
 
@@ -193,6 +199,7 @@
       if (!(get(t, 'prop.errM') > 0 && get(t, 'prop.tauPx') > 0 && get(t, 'terrain.reliefK') >= 0 && get(t, 'terrain.reliefK') <= 1)) bad.push(t + ': prop err / relief row');
       if (!(get(t, 'lod.tauPx') > 0 && get(t, 'billboard.px') > 0)) bad.push(t + ': tau / billboard row');
       if (!(get(t, 'xfade.s') > 0 && get(t, 'prop.fadeS') > 0 && get(t, 'impostor.tris') >= 500 && get(t, 'mip.bias') >= 0 && get(t, 'mip.bias') <= 2)) bad.push(t + ': xfade / impostor / mip row out of range');
+      if (!(get(t, 'mansion.goneDiam') > 0 && get(t, 'mansion.goneDiam') < get(t, 'mansion.fullDiam'))) bad.push(t + ': mansion size fade gone >= full');
       if (!(get(t, 'vantage.reach') > WALK_R)) bad.push(t + ': vantage does not extend the walk radius');
       if (!(get(t, 'prop.cutMax') < get(t, 'vantage.reach'))) bad.push(t + ': props reach past the vantage draw radius');
       if (get(t, 'prop.ring') !== Math.floor(get(t, 'prop.ring')) || get(t, 'prop.ring') < 1) bad.push(t + ': ring not a positive integer');
@@ -201,7 +208,7 @@
     return bad;
   }
 
-  const core = { TIERS: TIERS, TABLE: TABLE, WALK_R: WALK_R, CHUNK: CHUNK, get: get, sw: sw, fade: fade, propCutErr: propCutErr, reliefBoost: reliefBoost, projErrPx: projErrPx, errDist: errDist, lod2Dist: lod2Dist, levelByError: levelByError, billboardViews: billboardViews, chunkCulled: chunkCulled, billboardPx: billboardPx, createXfade: createXfade, mipBias: mipBias, propCut: propCut, propRing: propRing, vantageReach: vantageReach, vantageFog: vantageFog, validate: validate, tierIndex: tierIndex };
+  const core = { TIERS: TIERS, TABLE: TABLE, WALK_R: WALK_R, CHUNK: CHUNK, get: get, sw: sw, fade: fade, propCutErr: propCutErr, reliefBoost: reliefBoost, projErrPx: projErrPx, errDist: errDist, lod2Dist: lod2Dist, sizeFade: sizeFade, levelByError: levelByError, billboardViews: billboardViews, chunkCulled: chunkCulled, billboardPx: billboardPx, createXfade: createXfade, mipBias: mipBias, propCut: propCut, propRing: propRing, vantageReach: vantageReach, vantageFog: vantageFog, validate: validate, tierIndex: tierIndex };
   if (typeof module !== 'undefined' && module.exports) module.exports = core;
   if (typeof window === 'undefined') return;
 
@@ -228,6 +235,8 @@
   out.vantage = function (vt, walk) { return vantageReach(out.tier, vt, walk, bud('groundReach', 1)); };
   out.vantageFog = function (vt, fogFar, drawR) { return vantageFog(out.tier, vt, fogFar, drawR); };
   out.mansion = function () { return { nIn: out.get('mansion.in'), nOut: out.get('mansion.out'), far: out.get('mansion.far') }; };
+  out.mansionSize = function () { return { gone: out.get('mansion.goneDiam'), full: out.get('mansion.fullDiam') }; };
+  out.sizeFade = sizeFade; out.billboardPx = billboardPx;
   out.sw = sw; out.fade = fade; out.createXfade = createXfade;
   out.lod2Dist = function (errM, fovDeg, viewH) { return lod2Dist(out.tier, errM, fovDeg, viewH, bud('propsK', 1)); };
   out.mipBias = function () { return out.on ? out.get('mip.bias') : 0; };

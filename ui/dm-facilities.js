@@ -308,15 +308,28 @@
     const X = rec.xf || (rec.xf = D.createXfade(3, 0)), objs = [u.lod0, u.lod1, u.lod2];
     if ((rec.fmT = (rec.fmT || 0) + 1) % 90 === 1) rec.fadeOK = D.fadeMask(rec.group) > 0;   // (re)wraps materials that appeared since (parallax twins, the impostor)
     X.dur = rec.fadeOK ? D.get('xfade.s') : 0;
+    // (v289) SIZE FADE.  The cliff mansion spans ~400 m on a world whose walking radius is ~7.2 km (360 deg / ATMO_DEG_PER_UNIT), so from altitude it is a huge landmark on a small ball.  Its bounding sphere's
+    // projected diameter (DMLod.billboardPx) drives a screen-door fade [goneDiam .. fullDiam] px, and the last 15 % of the far cull is a fade too (no pop at 5.2 km).  Gone = not drawn.
+    // Without fade-capable materials (rec.fadeOK false) it is a plain hide below the half-way size.
+    let szA = 1;
+    if (D.sizeFade) {
+      if (!rec.rad) { try { const bb = new T.Box3().setFromObject(u.lod1 || u.lod0 || rec.group), sp = bb.getBoundingSphere(new T.Sphere()); rec.rad = sp.radius > 20 ? sp.radius : 250; } catch (e) { rec.rad = 250; } }
+      if (!rec.szT || (rec.szN = (rec.szN || 0) + 1) % 20 === 0) { const PW = F.ctx.PW(), cam = PW && PW.camera, el = PW && PW.renderer && PW.renderer.domElement; rec.szT = { fov: (cam && cam.fov) || 60, h: (el && el.height) || 1080 }; }
+      const SZ = D.mansionSize(), px = D.billboardPx(rec.rad, Math.max(1, d1), rec.szT.fov, rec.szT.h);
+      szA = Math.min(D.sizeFade(px, SZ.gone, SZ.full), rec.farM ? D.fade(d1, rec.farM * 0.85, rec.farM) : 1);
+      if (!rec.fadeOK) szA = szA >= 0.5 ? 1 : 0;
+      if (szA < 0.004) far = true;
+    }
+    rec.szA = szA;
     if (far) { X.snap(target); for (const o of objs) if (o) o.visible = false; return; }
     X.set(target); X.step(dt);
     const iv = [0, 0];
-    for (let i = 0; i < 3; i++) { const o = objs[i]; if (!o) continue; o.visible = X.w[i] > 0.001; if (o.visible) { X.interval(i, iv); D.setFade(o, iv[0], iv[1]); } else D.setFade(o, 0, 2); }
+    for (let i = 0; i < 3; i++) { const o = objs[i]; if (!o) continue; o.visible = X.w[i] > 0.001; if (o.visible) { X.interval(i, iv); D.setFade(o, iv[0] * szA, iv[1] * szA); } else D.setFade(o, 0, 2); }
     // the renderer reads the interval per drawn mesh (frame.object): hand each level's interval down to its meshes while a fade runs (and once more when it ends, to clear them)
-    if (X.fading || rec.fdPrev) {
+    if (X.fading || rec.fdPrev || szA < 1 || rec.szPrev) {
       for (let i = 0; i < 3; i++) { const o = objs[i]; if (!o) continue; const f = o.userData.dmFade; o.traverse(c => { if (c !== o && c.isMesh) { if (f) { const cf = c.userData.dmFade || (c.userData.dmFade = [0, 1.0001]); cf[0] = f[0]; cf[1] = f[1]; } else if (c.userData.dmFade) c.userData.dmFade = null; } }); }
     }
-    rec.fdPrev = X.fading;
+    rec.fdPrev = X.fading; rec.szPrev = szA < 1;
   }
   let hiTried = false;
   function upgrade2K(T) {       // desktop only: swap the 1K maps for the 2K hero set once she's near
@@ -645,18 +658,19 @@
       if (rec.mansion) {
         // (LOD) hysteresis (enter 400 m / leave 470 m; phones 300 / 360) so a hover on the boundary cannot flip the two meshes frame to frame, and the interior (ui/dm-mansion-interior.js
         // LOAD_D) is requested BEFORE the swap to LOD0 so the windows are never "lit sheets" at LOD1 and empty glass at LOD0.
-        const u = rec.group.userData, mob = F.ctx.isMobile(), LD = window.DMLod && DMLod.on ? DMLod.mansion() : null, nIn = LD ? LD.nIn : mob ? 300 : 400, nOut = LD ? LD.nOut : mob ? 360 : 470, farM = LD ? LD.far : 5200, d1 = Math.sqrt(d2);   // distances: ui/dm-lod.js table (same 300/360 phone, 400/470 desktop)
+        const u = rec.group.userData, mob = F.ctx.isMobile(), LD = window.DMLod && DMLod.on ? DMLod.mansion() : null, nIn = LD ? LD.nIn : mob ? 300 : 400, nOut = LD ? LD.nOut : mob ? 360 : 470, farM = LD ? LD.far : 5200, dyA = f.y - rec.y, d3sq = d2 + (dyA === dyA && isFinite(dyA) ? dyA * dyA : 0), d1 = Math.sqrt(d3sq);   // (v289) 3-D distance: altitude counts, so a mansion 20 km below you is far, not 'near' (it used to be measured on the ground plane only)
+        rec.farM = farM;   // distances: ui/dm-lod.js table (same 300/360 phone, 400/470 desktop)
         if (rec.lodNear === undefined) rec.lodNear = d1 < nIn; else if (rec.lodNear && d1 > nOut) rec.lodNear = false; else if (!rec.lodNear && d1 < nIn) rec.lodNear = true;
         const inR = rec.inRange === undefined ? d1 < farM : (rec.inRange ? d1 <= farM * 1.04 : d1 < farM); rec.inRange = inR;   // 4 % hysteresis at the cull
         const near = rec.lodNear, far = !inR;
         lodBands(rec, u, near, far, d1, dt, T);
         if (MAN.glb && !MAN.lod2Tried && window.DMImpostor && window.DMLod && DMLod.on) kickLod2(T);
         if (MAN.lod2 && !rec.lod2) attachLod2(rec, T);
-        if (d2 < 1100 * 1100) { upgrade2K(T); mansionPx(T); upgradeCliff(T); }
-        if (window.DMMansionInt) DMMansionInt.tick(rec, d2, now, DM.arriveAt === rec.def.id);
-        if (window.DMHolo) { try { DMHolo.tick(rec, d2, now, dt); } catch (e) { if (!rec.holoWarn) { rec.holoWarn = 1; console.warn('[holo] tick', e); } } }
-        if (window.DMLamps) { try { DMLamps.tick(rec, d2, now, dt, f, mode); } catch (e) { if (!rec.lampWarn) { rec.lampWarn = 1; console.warn('[lamps] tick', e); } } }   // street lamps + room switches (a failure here must never stop the facility upkeep)
-      } else { const fc = window.DMLod && DMLod.on ? DMLod.get('facility.cull') : 6000; rec.group.visible = d2 < fc * fc; }
+        if (d3sq < 1100 * 1100) { upgrade2K(T); mansionPx(T); upgradeCliff(T); }
+        if (window.DMMansionInt) DMMansionInt.tick(rec, d3sq, now, DM.arriveAt === rec.def.id);
+        if (window.DMHolo) { try { DMHolo.tick(rec, d3sq, now, dt); } catch (e) { if (!rec.holoWarn) { rec.holoWarn = 1; console.warn('[holo] tick', e); } } }
+        if (window.DMLamps) { try { DMLamps.tick(rec, d3sq, now, dt, f, mode); } catch (e) { if (!rec.lampWarn) { rec.lampWarn = 1; console.warn('[lamps] tick', e); } } }   // street lamps + room switches (a failure here must never stop the facility upkeep)
+      } else { const fc = window.DMLod && DMLod.on ? DMLod.get('facility.cull') : 6000; const dyB = f.y - rec.y; rec.group.visible = d2 + (dyB === dyB && isFinite(dyB) ? dyB * dyB : 0) < fc * fc; }   // (v289) altitude counts here too
       if (rec.clouds) for (const p of rec.clouds) { const t = p.material.map; t.offset.x += p.userData.v * dt; t.offset.y += p.userData.v * 0.6 * dt; }
       if (rec.bay) {
         const bm = rec.bay.meshes; for (let i = 0; i < bm.length; i++) { const t = bm[i].material.map; t.offset.x += (0.012 + i * 0.004) * dt; t.offset.y += 0.006 * dt; }

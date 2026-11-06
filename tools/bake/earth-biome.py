@@ -7,7 +7,7 @@ Source: "Land cover IGBP.png" (MODIS MOD12C1 IGBP classes, rendering by T. Hengl
   forest (needleleaf / deciduous / mixed, and broadleaf poleward of ~30 deg), tropical (evergreen broadleaf).
 Output 1440x360 RGB, row 0 = 90N: left 720 cols R=desert G=dirt B=grass; right 720 cols R=forest G=tropical.
 Water / snow (both white in the source), borders and grid lines are filled from the nearest classified cell;
-unclassified land poleward of 60 deg (white = snow/tundra in the source) is dirt. Ice itself comes from DMEarthIce.
+unclassified land poleward of 60 deg (white = snow/tundra in the source) is dirt. (Polar ice generation was removed in v287; no ice layer exists.)
 usage: python3 tools/bake/earth-biome.py igbp.png static/earth/earth-biome.png"""
 import sys
 import numpy as np

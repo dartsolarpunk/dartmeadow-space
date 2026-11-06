@@ -151,7 +151,6 @@ if(location.search.indexOf('debug')!==-1){
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <script src="ui/dm-time.js?v=97"></script>
 <script src="ui/dm-earth.js?v=1"></script>
-<script src="ui/dm-earth-ice.js?v=132"></script>
 <script src="ui/dm-earth-paint.js?v=135"></script>
 <script src="ui/dm-theme.js?v=81"></script>
 <script src="ui/dm-sparsevox.js?v=2"></script>
@@ -7231,7 +7230,7 @@ function makeFlightPlanetTexture(kind, colorHex, seedVal, bodyName){
   const C=h=>new THREE.Color(h).convertLinearToSRGB();
   const base=C(colorHex||0x888888);
   const rock=base.clone().multiplyScalar(0.75);
-  const marsRock=C(0xb5623a), marsDark=C(0x7a3a24), marsIce=C(0xe8d8c8);
+  const marsRock=C(0xb5623a), marsDark=C(0x7a3a24);
   const img=cx.createImageData(S*2,S); const d=img.data;
   for(let y=0;y<S;y++){
     for(let x=0;x<S*2;x++){
@@ -7242,15 +7241,12 @@ function makeFlightPlanetTexture(kind, colorHex, seedVal, bodyName){
         const t=(h+1200)/3400;
         const tc=THREE.MathUtils.clamp(t,0,1);
         const c=marsDark.clone().lerp(marsRock,THREE.MathUtils.smoothstep(tc,0.25,0.65));
-        const withIce=c.clone().lerp(marsIce, Math.abs(lat)>78?THREE.MathUtils.smoothstep(tc,0.5,0.9)*0.6:0);
-        r=withIce.r*255; g=withIce.g*255; b=withIce.b*255;
+        r=c.r*255; g=c.g*255; b=c.b*255;   // (v287) no polar cap: the Arctic ice generator was removed from every world
       } else {
         const u=x/(S*2)*6, v=y/S*3;
         const n=_fbm(u+seed*0.01,v,seed,5);
-        // (v132) Earth: ice only where the real glacier mask is, not a blanket cap at |lat|>78
-        const pole=_isEarthTex?(window.DMEarthIce?DMEarthIce.at(lat,lon)>0.5:false):Math.abs(lat)>78;
-        if(pole && (kind==='ice'||n>0.55)){ r=230; g=236; b=248; }
-        else if(n>0.52){
+        // (v287) no polar ice cap of any kind (the old |lat|>78 / glacier-mask cap was the Arctic ice generator)
+        if(n>0.52){
           const e=(n-0.52)*2.0;
           const c=base.clone().lerp(rock, Math.min(1,e));
           r=c.r*255*(0.75+e*0.35); g=c.g*255*(0.75+e*0.35); b=c.b*255*(0.75+e*0.35);
@@ -8048,8 +8044,7 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
       return DMEarthPaint.tsl(la,lo,slope,n,nf);
     }
     // snow ~75% up the ~1.2%-of-radius relief range
-    const lat01=up.y.abs();
-    const snowT=height.sub(radius*0.011).div(radius*0.003).clamp(0,1).mul(float(0.55).add(lat01.mul(0.45)));
+    const snowT=height.sub(radius*0.011).div(radius*0.003).clamp(0,1).mul(0.75);   // (v287) altitude only: no latitude weighting (polar ice removed)
     let c=vec3(_baseC.r,_baseC.g,_baseC.b);
     c=mix(c,vec3(_rockC.r,_rockC.g,_rockC.b),slope.smoothstep(0.35,0.75));
     c=mix(c,vec3(_snowC.r,_snowC.g,_snowC.b),snowT);
@@ -18841,12 +18836,11 @@ function worldMapFor(body,onPass){
 // slopes, snow (lower toward the poles), and a sun-from-the-north-west
 // hillshade so relief reads from orbit
 // map colour helpers (shared by the lush/dry branches and the v105 Earth desert blend; same formulas as before)
-function _wmLush(c,g1,g2,sand,rock,snow,h,slope,snowDrop,la,pal,ws,sm){
+function _wmLush(c,g1,g2,sand,rock,snow,h,slope,la,pal,ws,sm){
   c.copy(g1).lerp(g2,sm(10,40,h)*0.6);
   if(pal.water) c.lerp(sand,sm(6,1,h));
-  c.lerp(rock,Math.max(sm(30-snowDrop*0.3,46,h),sm(0.35,0.75,slope)));
-  c.lerp(snow,ws==='ice'?0.75:sm(52-snowDrop-6,52-snowDrop+8,h)*(1-slope*0.5));
-  if(la>78) c.lerp(snow,sm(78,84,la)*0.85);
+  c.lerp(rock,Math.max(sm(30,46,h),sm(0.35,0.75,slope)));
+  c.lerp(snow,ws==='ice'?0.75:sm(46,60,h)*(1-slope*0.5));   // (v287) altitude snow only; no polar cap
   return c;
 }
 function _wmDry(c,g1,g2,sand,rock,snow,h,slope,la,hx,hz,cw,cell,ws){
@@ -18856,7 +18850,6 @@ function _wmDry(c,g1,g2,sand,rock,snow,h,slope,la,hx,hz,cw,cell,ws){
   if(ws==='dunes') c.lerp(sand,0.55);
   if(ws==='volcanic') c.multiplyScalar(0.55);
   c.lerp(rock.clone().multiplyScalar(0.8),sm(0.4,0.85,slope)*0.7);
-  if(la>72) c.lerp(snow,sm(72,82,la)*0.8);
   const shade=Math.max(0.55,Math.min(1.25,1+(-hx/cw+hz)/(2*cell)*0.9));
   c.multiplyScalar(shade);
   return c;
@@ -18874,7 +18867,6 @@ function _worldMapTexture(m,pal){
   const styleAt=(lat,lon)=>window.DMWorldStyle&&m.body?DMWorldStyle.styleFor(m.body,pal,{lat,lon}):'lush';
   for(let y=0;y<Hh;y++){
     const lat=90-(y+0.5)/Hh*180, la=Math.abs(lat), cw=Math.max(0.15,Math.cos(lat*Math.PI/180));
-    const snowDrop=la>55?Math.min(50,(la-55)*1.7):(la>32?(la-32)*0.65:0);
     for(let x=0;x<W;x++){
       const i=y*W+x, h=hs[i];
       const hx=hs[y*W+((x+1)%W)]-hs[y*W+((x-1+W)%W)], hz=hs[Math.min(Hh-1,y+1)*W+x]-hs[Math.max(0,y-1)*W+x];
@@ -18882,18 +18874,17 @@ function _worldMapTexture(m,pal){
       const ws=styleAt(lat,(x+0.5)/W*360-180);
       const lonM=(x+0.5)/W*360-180;
       const dW=(m.body&&m.body.name==='Earth'&&window.DMWorldStyle&&DMWorldStyle.earthDesertW)?DMWorldStyle.earthDesertW(lat,lonM):-1;
-      const iceW=(m.body&&m.body.name==='Earth'&&window.DMEarthIce)?DMEarthIce.at(lat,lonM):undefined;
-      if(typeof iceW==='number'&&h>=0&&window.DMEarthPaint){
-        // (v132) Earth land: the one Earth paint (MODIS land cover + glacier mask), the same the far globe and the
-        // ground use — ice only on the real ice sheets / ice caps / glaciers, deserts/forests/fields from real data.
+      const isEarthMap=!!(m.body&&m.body.name==='Earth');
+      if(isEarthMap&&h>=0&&window.DMEarthPaint){
+        // (v132) Earth land: the one Earth paint (MODIS land cover), the same the far globe and the ground use.
         const n=0.5+0.5*Math.sin(x*0.37+y*0.71)*Math.cos(x*0.13-y*0.29), nf=Math.abs((Math.sin(x*12.9898+y*78.233)*43758.5453)%1);
         DMEarthPaint.color(lat,lonM,slope,n,nf,c); c.convertLinearToSRGB();
         const shade=Math.max(0.8,Math.min(1.15,1+(-hx/cw+hz)/(2*cell)*0.5)); c.multiplyScalar(shade);
       }
-      else if(pal.water&&h<0){ c.copy(wShal).lerp(wDeep,sm(0,-40,h)); if(typeof iceW==='number'){ const si=Math.max(iceW,DMEarthIce.seaIce(lat,lonM)); if(si>0) c.lerp(snow,si*0.9); } }
+      else if(pal.water&&h<0){ c.copy(wShal).lerp(wDeep,sm(0,-40,h)); }
       else if(dW>=0&&h>=0&&(ws==='lush'||ws==='dunes')){
         // (v105) Earth: lush and desert colouring blended by a soft, ragged desert weight (no rectangles)
-        const cl=_wmLush(c,g1,g2,sand,rock,snow,h,slope,snowDrop,la,pal,'lush',sm);
+        const cl=_wmLush(c,g1,g2,sand,rock,snow,h,slope,la,pal,'lush',sm);
         const cr=cl.r,cg=cl.g,cb=cl.b;
         if(dW>0.001){ const dc=_wmDry(c,g1,g2,sand,rock,snow,h,slope,la,hx,hz,cw,cell,'dunes'); c.setRGB(cr+(dc.r-cr)*dW,cg+(dc.g-cg)*dW,cb+(dc.b-cb)*dW); }
         else c.setRGB(cr,cg,cb);
@@ -18901,19 +18892,17 @@ function _worldMapTexture(m,pal){
       else if(ws==='lush'||ws==='ice'){
         c.copy(g1).lerp(g2,sm(10,40,h)*0.6);
         if(pal.water) c.lerp(sand,sm(6,1,h));
-        c.lerp(rock,Math.max(sm(30-snowDrop*0.3,46,h),sm(0.35,0.75,slope)));
-        c.lerp(snow,ws==='ice'?0.75:sm(52-snowDrop-6,52-snowDrop+8,h)*(1-slope*0.5));
-        if(la>78) c.lerp(snow,sm(78,84,la)*0.85);
+        c.lerp(rock,Math.max(sm(30,46,h),sm(0.35,0.75,slope)));
+        c.lerp(snow,ws==='ice'?0.75:sm(46,60,h)*(1-slope*0.5));
       } else {
         // dry worlds colour by strata and slope like their ground shader:
         // banded layers up the mesas, dark scree on steep faces, pale sand
-        // in the dune seas, polar frost only near the poles
+        // in the dune seas, no polar frost
         const band=0.5+0.5*Math.sin(h*0.22);
         c.copy(g1).lerp(g2,0.25+band*0.35);
         if(ws==='dunes') c.lerp(sand,0.55);
         if(ws==='volcanic') c.multiplyScalar(0.55);
         c.lerp(rock.clone().multiplyScalar(0.8),sm(0.4,0.85,slope)*0.7);
-        if(la>72) c.lerp(snow,sm(72,82,la)*0.8);
         const shade=Math.max(0.55,Math.min(1.25,1+(-hx/cw+hz)/(2*cell)*0.9));
         c.multiplyScalar(shade);
       }
@@ -24019,8 +24008,7 @@ async function _buildGpuSurfacePatch0(surfRenderer, opts, mcId){
   const oXU = uniform(oX), oYU = uniform(oY), oZU = uniform(oZ);
   const seedU = uniform(seed);
   const biasU = uniform(siteBias);
-  const siteLatU = uniform(siteLat);
-  const isEarthPaint = !!(earthGeo&&window.DMEarthPaint&&window.DMEarthIce);   // (v132) one Earth paint, looked up per vertex below
+  const isEarthPaint = !!(earthGeo&&window.DMEarthPaint);   // (v132) one Earth paint, looked up per vertex below
   const localScaleU = uniform(earthGeo?0.55:1.0); // match H(): h*0.55+geo on Earth
   const wStyle = window.DMWorldStyle?(opts.style||TERRAIN.style||'lush'):'lush';
   // the site's place on the planet's own map (same field the sky flies over)
@@ -24222,10 +24210,7 @@ async function _buildGpuSurfacePatch0(surfRenderer, opts, mcId){
           const slope=float(1.0).sub(nrm.y.clamp(0.0,1.0));
           const mott=mx_fractal_noise_float(vec3(v.x,float(0),v.z).mul(0.09).add(seedU),3,2.0,0.5).mul(0.5).add(0.5);
           const mottFine=mx_fractal_noise_float(vec3(v.x,float(0),v.z).mul(0.28).add(seedU).add(vec3(5,0,9)),2,2.0,0.5).mul(0.5).add(0.5);
-          const latAbs=siteLatU.abs();
-          const snowDrop=select(latAbs.greaterThan(55.0),latAbs.sub(55.0).mul(1.7).min(50.0),
-            select(latAbs.greaterThan(32.0),latAbs.sub(32.0).mul(0.65),float(0.0)));
-          const snowLine=float(52.0).sub(snowDrop);
+          const snowLine=float(52.0);   // (v287) fixed altitude snow line: the latitude snow drop (polar ice) is gone
           const iceLine=snowLine.add(10.0);
           const grass=mix(vec3(gCol.r,gCol.g,gCol.b),vec3(g2Col.r,g2Col.g,g2Col.b),mott.mul(0.45));
           const rock=mix(vec3(rCol.r,rCol.g,rCol.b),vec3(dirtC.r,dirtC.g,dirtC.b),mottFine.mul(0.35));
@@ -24238,9 +24223,9 @@ async function _buildGpuSurfacePatch0(surfRenderer, opts, mcId){
           c=mix(c, rock, slope.smoothstep(0.32,0.75).max(height.sub(28.0).div(22.0).clamp(0.0,1.0)));
           if(isEarthPaint){
             // (v132) Earth: the same land-cover + glacier lookup the far globe and map use, at this vertex's own
-            // lat/lon (so ice/biome edges follow the real outlines on whatever mesh is drawn); Arctic pack below sea level.
+            // lat/lon (so biome edges follow the real outlines on whatever mesh is drawn).
             const D=ATMO_DEG_PER_UNIT;
-            return DMEarthPaint.tsl(v.z.mul(-D),v.x.mul(D),slope,mott,mottFine,{seaIce:select(height.lessThan(0.0),float(1.0),float(0.0))});
+            return DMEarthPaint.tsl(v.z.mul(-D),v.x.mul(D),slope,mott,mottFine);
           }
           const snowT=height.sub(snowLine).div(12.0).clamp(0.0,1.0).mul(float(1.0).sub(slope.mul(0.55)));
           const iceT=height.sub(iceLine).div(14.0).clamp(0.0,1.0).mul(float(1.0).sub(slope.mul(0.7)));
@@ -24891,7 +24876,6 @@ SkyGround.prototype._build=function(n){
   const tc=new THREE.Color();
   const colourAt=(x,z,h,ny,sea)=>{
     if(sea){ tc.copy(this.wShal).lerp(this.wDeep,Math.min(1,Math.max(0,-h/40)));
-      if(_sbcIsEarth()){ const la=-(z+F.sw.z)*D, lo=(x+F.sw.x)*D, si=Math.max(DMEarthIce.at(la,lo),DMEarthIce.seaIce(la,lo)); if(si>0) tc.lerp(_seaIceC(),si*0.9); }   // (v120) Arctic pack / ice shelves, as on the map
       return tc; }
     return surfaceBiomeColor(x+F.sw.x,z+F.sw.z,h,Math.min(1,Math.max(0,1-ny)*1.6),pal,F.seed,copt);
   };
@@ -25271,9 +25255,8 @@ function _sbcPal(pal){
     sand:new THREE.Color(0xcbb87a),dirt:new THREE.Color(0x6b5340),snow:new THREE.Color(0xf4f6fa),ice:new THREE.Color(0xc8d8ea),rock2:new THREE.Color(0x8a7d6a)}; _sbcCache.set(pal,K); }
   return K;
 }
-let _SEA_ICE_C_=null; const _seaIceC=()=>_SEA_ICE_C_||(_SEA_ICE_C_=new THREE.Color(0xeef3fa));
 let _SBC_EC=null;
-function _sbcIsEarth(){ try{ return !!(window.DMEarthIce&&typeof _surfBody!=='undefined'&&_surfBody&&_surfBody.name==='Earth'); }catch(e){ return false; } }
+function _sbcIsEarth(){ try{ return !!(window.DMEarthPaint&&typeof _surfBody!=='undefined'&&_surfBody&&_surfBody.name==='Earth'); }catch(e){ return false; } }
 function surfaceBiomeColor(x,z,h,slope,pal,seed,opts){
   opts=opts||{};
   const siteBias=(typeof opts.siteBias==='number')?opts.siteBias:0;
@@ -25290,16 +25273,13 @@ function surfaceBiomeColor(x,z,h,slope,pal,seed,opts){
     // far globe, the map and the near patch use — no height/latitude snow, ice only on real glaciers; beaches at the sea.
     // (v135) one shared Colour (every caller copies r/g/b out at once) and the glacier weight from the same lookup
     const la=-z*ATMO_DEG_PER_UNIT, lo=x*ATMO_DEG_PER_UNIT, c=DMEarthPaint.color(la,lo,slope,0.5+n,nFine,_SBC_EC||(_SBC_EC=new THREE.Color()));
-    if(pal.water){ const b=smooth(8+n*3,1+n*3,hRel)*(1-slope)*(1-(DMEarthPaint.lastIce||0)); if(b>0) c.lerp(sand,b); }
+    if(pal.water){ const b=smooth(8+n*3,1+n*3,hRel)*(1-slope); if(b>0) c.lerp(sand,b); }
     return c;
   }
-  const latAbs=Math.abs(siteLat);
-  // High latitude drops the snow line so polar coasts get real snow/ice
-  // without waiting for absolute Y>55 (which siteBias alone can fake-flatten).
-  const snowDrop=latAbs>55?Math.min(50,(latAbs-55)*1.7):(latAbs>32?(latAbs-32)*0.65:0);
-  const snowLine=52+n*8-snowDrop;
+  // (v287) fixed altitude snow line: the latitude snow drop (polar ice generation) was removed from every world
+  const snowLine=52+n*8;
   const iceLine=snowLine+10+n2*4;
-  const rockLine=30+n*10-snowDrop*0.3;
+  const rockLine=30+n*10;
   const dirtLine=14+n*6;
   const waterLine=5+n*3;
   let wSnow=smooth(snowLine-7,snowLine+7,hRel)*(1-slope*0.55);

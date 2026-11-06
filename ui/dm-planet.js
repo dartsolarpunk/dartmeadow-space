@@ -320,8 +320,8 @@
   function biome(out, h, slope, lat, ero, n, pal) {
     const sm = (e0, e1, v) => { const u = Math.min(1, Math.max(0, (v - e0) / (e1 - e0))); return u * u * (3 - 2 * u); };
     const la = Math.abs(lat);
-    const snowDrop = la > 55 ? Math.min(60, (la - 55) * 2) : (la > 30 ? (la - 30) * 0.6 : 0);
-    const snowLine = 95 + n * 10 - snowDrop, rockLine = 62 + n * 10 - snowDrop * 0.3, dirtLine = 28 + n * 6;
+    // (v287) snow line is altitude only: the old latitude snow drop (polar ice generation) was removed from every world
+    const snowLine = 95 + n * 10, rockLine = 62 + n * 10, dirtLine = 28 + n * 6;
     let wSnow = sm(snowLine - 8, snowLine + 8, h) * (1 - slope * 0.6);
     let wRock = Math.max(sm(rockLine - 10, rockLine + 10, h), sm(0.34, 0.7, slope)) * (1 - wSnow * 0.85);
     // carved channels show rock and gravel, deposits show soil and sand
