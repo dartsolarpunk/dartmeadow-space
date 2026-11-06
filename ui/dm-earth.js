@@ -59,6 +59,8 @@
     const px = cx.getImageData(0, 0, W, H).data;
     data = new Float32Array(W * H);
     for (let i = 0; i < W * H; i++) data[i] = px[i * 4] * 256 + px[i * 4 + 1] - 11000;
+    // (memory lane) the decoded bitmap (8 MB) and the scratch canvas (8 MB) are dead once the heights are copied out
+    try { if (src && typeof src.close === 'function') src.close(); cv.width = cv.height = 0; } catch (e) { }
     api.ready = true; readyResolve(true);
     try { window.dispatchEvent(new CustomEvent('dm:earth-ready')); } catch (e) {}
   }

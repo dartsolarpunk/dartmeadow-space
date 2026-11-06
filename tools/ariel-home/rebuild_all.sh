@@ -16,5 +16,6 @@ $B -b -P "$HERE/build_mansion.py" -- "$S/tex1k" "$S/ext" --mobile > "$S/extm.log
 python3 "$HERE/make_interior_atlas.py" "$S/tex1k" "$S/atlas"
 $B -b -P "$HERE/build_interior.py" -- "$S/ext/ariel-home.glb" "$S/atlas" "$S/int" > "$S/int.log" 2>&1
 cp "$S/ext/ariel-home.glb" "$S/ext/ariel-home-512.glb" "$S/ext/ariel-home-collide.json" "$S/int/"* "$A/"
+python3 "$HERE/shrink_glb_textures.py" "$A/ariel-home-512.glb" 512   # phone GLB: true 512 px images (memory lane); the desktop GLB keeps its 1K set
 node "$HERE/plan_lamps.js"
 node "$HERE/bake_gi.js"

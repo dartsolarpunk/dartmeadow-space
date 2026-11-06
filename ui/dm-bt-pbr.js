@@ -59,7 +59,7 @@
   P.apply = function (root) {
     if (!P.on || !P.ready) return 0;
     const T = window.BIRD_TEMPLE; root = root || (T && (T._glb || T.group)); if (!root) return 0;
-    const THREE = window.THREE; let n = 0; const seen = new Set();
+    const THREE = window.THREE; let n = 0; const seen = new Set(), oldTex = new Set();
     root.traverse(o => {
       if (!o.isMesh || !o.material || Array.isArray(o.material)) return;
       const m = o.material; if (seen.has(m) || (m.userData && m.userData.btPbr && m.map === P.sets[m.userData.btPbr].map) || /^BTI_/.test(m.name || '') || (m.userData && m.userData.btGlass) || !('metalness' in m)) return;
@@ -71,6 +71,7 @@
       if (!uvOk(o.geometry.attributes.uv)) { rejUV.add(o.geometry); P.stats.oldUV = (P.stats.oldUV || 0) + 1; return; }   // a stale (pre-v177) GLB: keep its plain look
       seen.add(m);
       const t = P.sets[s];
+      for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap']) { const x = m[k]; if (x && x.isTexture && x !== t.map && x !== t.nrm && x !== t.orm) oldTex.add(x); }   // (memory lane) the GLB's own maps this replaces
       m.map = t.map; m.normalMap = t.nrm; m.normalScale = new THREE.Vector2(NRM[s], NRM[s]);
       m.roughnessMap = t.orm; m.metalnessMap = t.orm; m.roughness = 1; m.metalness = 1;
       m.userData.btPbr = s; n++;
@@ -78,6 +79,8 @@
       m.needsUpdate = true;
       try { if (window.BTL && BTL.track) BTL.track(m); } catch (e) { }
     });
+    // (memory lane) the replaced GLB maps (up to 28 images, ~64 MB GPU if they had been uploaded, ~53 MB of decoded bitmaps) are freed once no material under the temple uses them
+    try { if (oldTex.size && window.DMMem) { const f = DMMem.sweepUnused(oldTex, [root]); P.stats.swept = (P.stats.swept || 0) + f; } } catch (e) { }
     P.applied = true; P.stats.mats = (P.stats.mats || 0) + n; if (n) console.log('[bt-pbr] layered PBR on', n, 'exterior materials (' + P.stats.res + ')');
     return n;
   };

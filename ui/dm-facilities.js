@@ -261,7 +261,7 @@
     if (MAN.glb || MAN.loading || MAN.failed) return;
     MAN.loading = true; const c = F.ctx;
     // (v223) phones/tablets load the half-size-map mansion (≈75 MB less graphics memory)
-    Promise.all([c.loadGLB('assets/ariel-home/' + (c.isMobile() ? 'ariel-home-512.glb' : 'ariel-home.glb') + '?v=' + F.ver), fetch('assets/ariel-home/ariel-home-collide.json?v=' + F.ver).then(r => r.json())]).then(([gl, col]) => {
+    Promise.all([c.loadGLB('assets/ariel-home/' + (c.isMobile() ? 'ariel-home-512.glb' : 'ariel-home.glb') + '?v=' + F.ver + (c.isMobile() ? 'm292' : '')), fetch('assets/ariel-home/ariel-home-collide.json?v=' + F.ver).then(r => r.json())]).then(([gl, col]) => {
       const bin = atob(col.data), n = bin.length >> 1, a = new Int16Array(n);
       for (let i = 0; i < n; i++) { const v = bin.charCodeAt(i * 2) | (bin.charCodeAt(i * 2 + 1) << 8); a[i] = v > 32767 ? v - 65536 : v; }
       col.h = a; MAN.col = col; MAN.glb = gl; MAN.loading = false;
@@ -383,7 +383,10 @@
     const c = F.ctx; if (cliffTried || !MAN.glb) return; cliffTried = true;
     // (stability) phones: 1K at most, and only when the last session was not killed; iPhone/iPad (no deviceMemory to ask, the tab limit is tight) 1K only from tier 3. Otherwise
     // the 512 maps the GLB embeds stay (they are the look the low preset already ships).
-    const t = c.tier(), mob = c.isMobile(), res = mob ? ((t >= 2 && !recentKill() && (!isIOS || t >= 3)) ? '1k' : null) : (t >= 2 ? '2k' : t >= 1 ? '1k' : null);
+    // (memory lane) the 1K rock sets are 4 sets x (colour + normal + ORM + height) = 16 mipped RGBA8 maps = ~90 MB against ~22 MB for the embedded 512 ones; phones/tablets only take them when the browser
+    // reports >= 8 GB (Chrome caps navigator.deviceMemory at 8) and has not killed the tab lately.  ?cliff=1k forces them, ?cliff=512 forbids them.
+    const _cq = (location.search.match(/[?&]cliff=(1k|512)\b/) || [])[1], _mem8 = (navigator.deviceMemory || 0) >= 8;
+    const t = c.tier(), mob = c.isMobile(), res = mob ? ((t >= 2 && !recentKill() && (!isIOS || t >= 3) && (_mem8 || _cq === '1k') && _cq !== '512') ? '1k' : null) : (t >= 2 ? '2k' : t >= 1 ? '1k' : null);
     crumb('mark', 'cliffRes', res || '512');
     const byName = {}; MAN.glb.scene.traverse(o => { if (o.isMesh && o.material && /^ah_rock/.test(o.material.name)) byName[o.material.name] = o.material; });
     fetch('assets/ariel-home/cliff/cliff-materials.json?v=' + F.ver).then(r => r.json()).then(J => {

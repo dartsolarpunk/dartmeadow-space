@@ -150,7 +150,7 @@ if(location.search.indexOf('debug')!==-1){
 })();</script>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <script src="ui/dm-time.js?v=97"></script>
-<script src="ui/dm-earth.js?v=1"></script>
+<script src="ui/dm-earth.js?v=292"></script>
 <script src="ui/dm-earth-paint.js?v=290"></script>
 <script src="ui/dm-theme.js?v=81"></script>
 <script src="ui/dm-sparsevox.js?v=2"></script>
@@ -165,6 +165,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-perf.js?v=160"></script>
 <script src="ui/dm-governor.js?v=264"></script>
 <script src="ui/dm-budget.js?v=285"></script>
+<script src="ui/dm-mem.js?v=292"></script>
 <script src="ui/dm-lod.js?v=290"></script>
 <script src="ui/dm-terrain-lod.js?v=294"></script>   <!-- one terrain across every altitude band: shared slope / skirt / sea-tint contract between the globe map and the sky ground -->
 <script src="ui/dm-impostor.js?v=280"></script>   <!-- far-range LOD: vertex-clustering impostor (mansion LOD2, colours baked) -->   <!-- far-range LOD: the ONE distance table per device class (props, mansion, landmarks, vantage reach); ?lod=off|low|mobile|desktop -->
@@ -1020,7 +1021,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-safety.js?v=1" defer></script>
 <script src="jots/jots-link.js?v=217" defer></script>
 <script src="ui/dm-friends.js?v=217" defer></script>
-<script src="ui/dm-perflog.js?v=288" defer></script>
+<script src="ui/dm-perflog.js?v=292" defer></script>
 <script src="ui/dm-webkit.js?v=210" defer></script>
 <script src="ui/dm-spectator.js?v=1" defer></script>
 <script src="ui/dm-stack.js?v=1" defer></script>
@@ -1050,7 +1051,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-bt-lighting.js?v=144" defer></script>
 <script src="ui/dm-bt-cargocam.js?v=1" defer></script>
 <script src="ui/dm-bt-interior.js?v=124" defer></script>
-<script src="ui/dm-bt-pbr.js?v=259" defer></script>
+<script src="ui/dm-bt-pbr.js?v=292" defer></script>
 <script src="ui/dm-bt-bake.js?v=144" defer></script>
 <script src="ui/dm-ar-core.js?v=241" defer></script>
 <script src="ui/dm-places-core.js?v=213" defer></script>
@@ -1064,7 +1065,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-mansion-rooms.js?v=250" defer></script>
 <script src="ui/dm-mansion-look.js?v=251" defer></script>
 <script src="ui/dm-mansion-interior.js?v=262" defer></script>
-<script src="ui/dm-facilities.js?v=290" defer></script>
+<script src="ui/dm-facilities.js?v=295" defer></script>
 <script src="ui/dm-lamps.js?v=293" defer></script>
 <script src="ui/dm-mansion-collide.js?v=283" defer></script>
 <script src="ui/dm-holo.js?v=283" defer></script>
@@ -2939,7 +2940,18 @@ function goScreen(name){
     }
   }catch(e){}
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  const _prevScreen=STATE.screen;
   STATE.screen=name;
+  // (memory lane, ui/dm-mem.js) phones/tablets: the menu's start-button turntable is a SECOND WebGPU device holding a 2.4 M-vertex model (~110 MB GPU + the same again on
+  // the CPU); it goes once the game is under way and comes back (lazily) with the menu.  The builder's MSAA drawing buffer is handed back while the screen is not shown.
+  try{
+    clearTimeout(goScreen._sgT);
+    if(name!=='menu'&&window.DMMem&&DMMem.lean()) goScreen._sgT=setTimeout(function _sgK(){ if(STATE.screen==='menu') return; if(typeof INTRO!=='undefined'&&INTRO.on){ goScreen._sgT=setTimeout(_sgK,2000); return; } disposeStartBtnTurntable(); },name==='flight'?4000:1500);
+    if(window.DMMem&&DMMem.lean()&&typeof builderRenderer!=='undefined'&&builderRenderer){
+      if(_prevScreen==='builder'&&name!=='builder') DMMem.park(builderRenderer,'builder');
+      else if(name==='builder') DMMem.unpark(builderRenderer);
+    }
+  }catch(e){}
   try{ const M=window.DM_MENUSCENE; if(M){ if(name==='menu'){ const mm=$('screen-menu'); if(mm&&mm.classList.contains('ms-pre')){ mm.classList.remove('ms-pre'); void mm.offsetWidth; } clearTimeout(M._dispT); M.resume(); M.start(); setTimeout(()=>M.menuOpen(),350); } else { M.pause(); clearTimeout(M._dispT); if(name==='flight') M._dispT=setTimeout(()=>{ if(STATE.screen!=='menu'&&!INTRO.on&&M.dispose&&M._ctx) M.dispose(); },15000); } } }catch(e){}
   if(name==='builder'){$('screen-builder').classList.add('active');requestAnimationFrame(()=>requestAnimationFrame(initBuilderScene));showFloatingMusic();}
   else if(name==='flight'){$('screen-flight').classList.add('active');hideFloatingMusicInGame();}
@@ -4035,7 +4047,27 @@ function initMenuBg(){
 //  1 soft directional key + 3 low-intensity color spot accents
 //  (magenta, cyan, gold) for a moody rim-lit product-shot look.
 // ══════════════════════════════════════════════════════════════
-let sgScene,sgRenderer,sgCamera,sgModel,sgAnimId,sgInited=false,sgLoading=true;
+let sgScene,sgRenderer,sgCamera,sgModel,sgAnimId,sgInited=false,sgLoading=true,sgGen=0,_sgResizeBound=false;
+// (memory lane) tear the start-button turntable down completely: its own GPU device, the 2.4 M-vertex GLB (geometry + textures), the PMREM environment and the canvas.
+// initStartBtnTurntable() builds it again when the menu is shown.  A load/init still in flight when this runs notices the generation change and discards what it built.
+function disposeStartBtnTurntable(){
+  if(!sgInited) return false;
+  sgGen++;
+  try{ if(sgAnimId) cancelAnimationFrame(sgAnimId); }catch(e){} sgAnimId=null;
+  const r=sgRenderer, sc=sgScene;
+  try{
+    if(sc){
+      const tex=window.DMMem?DMMem.collectTextures(sc):new Set(); if(sc.environment&&sc.environment.dispose) tex.add(sc.environment);
+      sc.traverse(o=>{ if(o.geometry&&o.geometry.dispose)o.geometry.dispose(); const ms=o.material?(Array.isArray(o.material)?o.material:[o.material]):[]; ms.forEach(m=>{ try{ m&&m.dispose&&m.dispose(); }catch(e){} }); });
+      tex.forEach(t=>{ try{ t.dispose(); }catch(e){} });
+      sc.environment=null; sc.clear();
+    }
+  }catch(e){}
+  try{ if(r){ if(r.domElement&&r.domElement.parentNode) r.domElement.parentNode.removeChild(r.domElement); if(r.dispose) r.dispose(); } }catch(e){}
+  sgRenderer=null; sgScene=null; sgModel=null; sgCamera=null; sgInited=false; sgLoading=true;
+  try{ const le=$('sg-loading'); if(le) le.style.opacity=''; DMMem&&DMMem.note&&DMMem.note('sg',1); }catch(e){}
+  return true;
+}
 
 async function initStartBtnTurntable(){
   if(sgInited)return;
@@ -4048,7 +4080,7 @@ async function initStartBtnTurntable(){
     window.__whenThreeReady(initStartBtnTurntable);
     return;
   }
-  sgInited=true;
+  sgInited=true; const _myGen=++sgGen;
 
   const w=host.clientWidth||140, h=host.clientHeight||140;
 
@@ -4060,6 +4092,7 @@ async function initStartBtnTurntable(){
 
   sgRenderer=new THREE.WebGPURenderer({antialias:true,alpha:true,powerPreference:'low-power'});
   await sgRenderer.init();
+  if(_myGen!==sgGen){ try{ sgRenderer&&sgRenderer.dispose&&sgRenderer.dispose(); }catch(e){} return; }   // (memory lane) torn down while the device was starting
   sgRenderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
   sgRenderer.setSize(w,h);
   sgRenderer.setClearColor(0x000000,0);
@@ -4109,6 +4142,7 @@ async function initStartBtnTurntable(){
   if(!loader){sgInited=false;return;}
 
   loader.load('latedecemberSG.glb', gltf=>{
+    if(_myGen!==sgGen){ try{ gltf.scene.traverse(o=>{ if(o.geometry)o.geometry.dispose(); }); }catch(e){} return; }   // (memory lane) the menu is gone again: drop the model unbuilt
     sgModel=gltf.scene;
 
     // Use the lighting rig authored in the GLB itself (KHR_lights_punctual,
@@ -4184,6 +4218,7 @@ async function initStartBtnTurntable(){
     // whenever the menu screen isn't visible.
     let sgFailCount=0;
     (function frame(){
+      if(_myGen!==sgGen) return;   // (memory lane) disposed: the loop ends with it
       sgAnimId=requestAnimationFrame(frame);
       // Don't render the menu turntable while the player is elsewhere.
       const menuEl=$('screen-menu');
@@ -4212,6 +4247,7 @@ async function initStartBtnTurntable(){
   });
 
   var _sgResizeT=null;
+  if(!_sgResizeBound){ _sgResizeBound=true;
   window.addEventListener('resize',()=>{
     clearTimeout(_sgResizeT);
     _sgResizeT=setTimeout(()=>{
@@ -4221,7 +4257,7 @@ async function initStartBtnTurntable(){
       sgCamera.aspect=nw/nh;
       sgCamera.updateProjectionMatrix();
     },100);
-  });
+  }); }
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -6986,7 +7022,7 @@ let _viewsResizeT=null;
 function _resizeAllViews(){
   const s=(typeof window.__jotsLayoutSize==='function')?window.__jotsLayoutSize():{w:innerWidth,h:innerHeight};
   const W=s.w,H=s.h; if(W<10||H<10) return;
-  const fit=(r,cam,w,h,style)=>{ if(!r||!cam) return; try{ r.setPixelRatio(effectivePixelRatio()); r.setSize(w,h,style!==false); r._dr=null; cam.aspect=w/h; cam.updateProjectionMatrix(); }catch(e){} };
+  const fit=(r,cam,w,h,style)=>{ if(!r||!cam) return; if(window.DMMem&&DMMem.isParked(r)) return; try{ r.setPixelRatio(effectivePixelRatio()); r.setSize(w,h,style!==false); r._dr=null; cam.aspect=w/h; cam.updateProjectionMatrix(); }catch(e){} };
   try{ if(typeof PW!=='undefined'&&PW.active&&PW.camera) fit(flightRenderer,PW.camera,W,H); }catch(e){}   // a world's sky / ground (drawn by the flight renderer)
   try{ if(typeof gmRenderer!=='undefined'&&gmRenderer) fit(gmRenderer,gmCamera,Math.min(W*.92,1100),Math.min(H*.74,640)); }catch(e){}
   try{ if(typeof qtRenderer!=='undefined'&&qtRenderer){ const cv=qtRenderer.domElement; if(cv&&cv.clientWidth>10) fit(qtRenderer,qtCamera,cv.clientWidth,cv.clientHeight,false); } }catch(e){}
@@ -7785,7 +7821,9 @@ async function _svMeasureRelief(terrainRadiusAt,radius,key){
 // their replacements are in, so there is never a hole. No whole-world rebuild.
 // (v137) fixed brick-pool size per preset (not a runtime cut): low/medium 1 resident LOD body × 256 bricks, high/ultra 2 × 512
 const SV_LOD_PRESET={low:{bodies:1,cap:256},medium:{bodies:1,cap:256},high:{bodies:2,cap:512},ultra:{bodies:2,cap:512}};
-function _svLodPreset(){ let p='medium'; try{ p=resolvePreset(); }catch(e){} return SV_LOD_PRESET[p]||SV_LOD_PRESET.medium; }
+// (memory lane) one resident brick pool costs cap x 2112 verts x 96 B (position + normal + colour, vec3 padded to vec4, on the GPU AND in the CPU array three keeps) = 104 MB at cap 512.
+// Phones/tablets (DMMem.lean) keep ONE resident body at High, with the same cap: the nearest world keeps every brick it had, the second-nearest falls back to its static mesh.
+function _svLodPreset(){ let p='medium'; try{ p=resolvePreset(); }catch(e){} const r=SV_LOD_PRESET[p]||SV_LOD_PRESET.medium; try{ if(r.bodies>1&&window.DMMem&&DMMem.lean()) return {bodies:1,cap:r.cap}; }catch(e){} return r; }
 // resident GPU MB of every live LOD brick pool (shown in ?perf=1)
 window._svLodResident=function(){ let mb=0,n=0,br=0; try{ celestialBodies.forEach(b=>{ if(b._svLod){ n++; mb+=b._svLod.poolMB||0; br+=b._svLod.resident||0; } }); }catch(e){} const p=_svLodPreset(); return {bodies:n,maxBodies:p.bodies,cap:p.cap,bricks:br,mb}; };
 const SV_LOD={B:4,DMAX:64,K:2.5,budgetMs:3,get maxBodies(){ return _svLodPreset().bodies; },on:!/[?&]lod=0\b/.test(location.search)};
@@ -8817,6 +8855,9 @@ async function buildSolarSystem(){
     t.scale.setScalar(1); // raw model scale — see wrapper group below for the real scale
     t.position.set(0,0,0);
     t.traverse(o=>{ if(o.isMesh){ o.castShadow=GFX.shadows; o.receiveShadow=GFX.shadows; }});
+    // (memory lane) the GLB's 28 decoded images (~53 MB of ImageBitmaps; all of them the interior's signs / holos / floor) are closed as soon as the renderer has uploaded each one.
+    // The temple lives for the whole session and nothing re-creates its textures, so a closed bitmap is never needed again.
+    try{ if(window.DMMem&&DMMem.lean()){ const _ts=DMMem.collectTextures(t); _ts.forEach(x=>DMMem.releaseBitmapAfterUpload(x)); DMMem.shrinkAll(_ts,512); } }catch(e){}   // (+ the 1024x640 sign / holo / floor images fit 512 px on a handheld: 64 -> 16 MB mipped)
     // Brightness fix, round 3 — the real bug behind 'light reaches Saturn/
     // my board from miles away' isn't the distance number on the lights.
     // Three.js lights illuminate EVERY object within range regardless of
@@ -13305,7 +13346,7 @@ function _lodFadeList(g){
 // newG already in the scene (hidden, compiled). Moves extras across, fades, then removes oldG (disposed unless keepOld).
 function _lodCrossFade(oldG,newG,keepOld){
   return new Promise(res=>{
-    if(!_LOD_XFADE){ newG.visible=true; if(oldG&&oldG.parent){ oldG.parent.remove(oldG); if(!keepOld) _disposeObject3D(oldG); } res(); return; }
+    if(!_LOD_XFADE){ newG.visible=true; if(oldG&&oldG.parent){ oldG.parent.remove(oldG); if(!keepOld) _disposeObject3D(oldG,newG); } res(); return; }
     const nm=_lodFadeList(newG);
     for(const e of nm){ e[0].opacity=0; _lodHash(e,true); }
     newG.visible=true;
@@ -13330,7 +13371,7 @@ function _lodFadeTick(){
       _lodFades.splice(i,1);
       for(const e of F.nm){ e[0].opacity=e[1]; _lodHash(e,false); }
       if(F.oldG.parent) F.oldG.parent.remove(F.oldG);
-      if(F.keepOld){ for(const e of F.om){ e[0].opacity=e[1]; _lodHash(e,false); } } else _disposeObject3D(F.oldG);
+      if(F.keepOld){ for(const e of F.om){ e[0].opacity=e[1]; _lodHash(e,false); } } else _disposeObject3D(F.oldG,F.newG);
       F.res();
     }
   }
@@ -13759,10 +13800,14 @@ let gmRaycaster,gmDestPoints,gmDestPositions;
 
 function openGalaxyMap(){try{releaseMouseLook();}catch(e){}
   $('galaxy-map').classList.add('open');
+  // (memory lane) a map closed for a while had handed its MSAA colour + depth buffers back (ui/dm-mem.js park); they return with the open map
+  try{ clearTimeout(closeGalaxyMap._pT); if(gmRenderer&&window.DMMem&&DMMem.isParked(gmRenderer)){ DMMem.unpark(gmRenderer); window.dispatchEvent(new Event('resize')); } }catch(e){}
   if(!gmInited)initGalaxyMapScene();
   else if(gmAnimId){}
 }
-function closeGalaxyMap(){$('galaxy-map').classList.remove('open');}
+function closeGalaxyMap(){$('galaxy-map').classList.remove('open');
+  try{ clearTimeout(closeGalaxyMap._pT); if(window.DMMem&&DMMem.lean()) closeGalaxyMap._pT=setTimeout(()=>{ try{ const m=$('galaxy-map'); if(gmRenderer&&m&&!m.classList.contains('open')) DMMem.park(gmRenderer,'gm'); }catch(e){} },15000); }catch(e){}
+}
 
 async function initGalaxyMapScene(){
   gmInited=true;
@@ -15952,8 +15997,11 @@ function applyProceduralTextures(){
 
 // ── 2. IN-FLIGHT MILKY WAY BAND (point cloud, scaled, colorful) ──
 let flightGalaxyBand=null,flightGalaxyCore=null,flightNebulae=[],flightGalaxyNeighbourhood=null;
-function _disposeObject3D(obj){
+function _disposeObject3D(obj,keep){
   if(!obj)return;
+  // (memory lane) three r185's WebGPU info keeps a strong Map of every uploaded texture, so a texture nobody disposes is never freed.  A LOD swap passes the NEW level
+  // as `keep`: whatever the old level held that the new one does not (its own canvas/data textures) goes with it; shared textures stay.
+  if(keep&&window.DMMem){ try{ DMMem.disposeTexturesExcept(obj,keep); }catch(e){} }
   obj.traverse(o=>{
     if(o.geometry)o.geometry.dispose();
     if(o.material){
@@ -20849,6 +20897,9 @@ function _landToolsReset(){ stopLandPick(); LP.marker=null; try{ _mkReset(); }ca
 // than hand-tracking every named mesh variable in each scene.
 function disposeObject3D(root){
   if(!root)return;
+  // (memory lane) the world's textures that live only in TSL nodes (ground atlas, parallax height maps, band textures ...) or in the less common slots were never disposed
+  // and, held by three's strong info Map, stayed on the GPU after every world close.  Collected BEFORE the materials are disposed; they re-upload on demand if reused.
+  try{ if(window.DMMem){ const _t=DMMem.collectTextures(root); _t.forEach(t=>{ try{ if(!(t.userData&&t.userData.dmKeep)) t.dispose(); }catch(e){} }); } }catch(e){}
   root.traverse(o=>{
     if(o.isMesh||o.isPoints||o.isLine){
       if(o.geometry)o.geometry.dispose();
