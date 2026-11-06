@@ -173,6 +173,14 @@ if(location.search.indexOf('debug')!==-1){
 window.DMPerf=window.DMPerf||{on:false,b(){},e(){},mark(){},measure(n,f){return f();},frame(){},stats(){return {fps:0,avgMs:0,p95Ms:0,worstMs:0,minFps:0,cpu:{},gpu:null,sparse:null};},show(){},hide(){}};</script>
 <script>/* (v236) always-on frame-phase clock for the perf log: EMA of the main-thread ms spent in each phase of a frame (logic / world tick / scene render / atmosphere pass / HUD …),
   plus a decaying max. Two performance.now() reads per phase; read by ui/dm-perflog.js. (DMPerf.b/e needs ?perf=1; this does not.) */
+/* (v287) periodic-hitch hunt: every setInterval / setTimeout callback is timed from the very start of the page; a slow one (>8 ms) is named with its period ('iv3000:cb')
+   in the hitch line of the perf log (the tracer further down sets window.__dmRec). */
+(function(){ try{
+  const si0=window.setInterval.bind(window), st0=window.setTimeout.bind(window);
+  const wt=(kind,per,fn)=>{ if(typeof fn!=='function'||fn.__dmW) return fn; let nm=null; const w=function(){ const t=performance.now(); try{ return fn.apply(this,arguments); } finally{ const d=performance.now()-t; if(d>8&&window.__dmRec){ if(!nm) nm=kind+(per>0?Math.round(per):'')+':'+(fn.name||String(fn).replace(/\s+/g,' ').slice(0,36)); window.__dmRec(nm,d); } } }; w.__dmW=1; return w; };
+  window.setInterval=function(fn,per){ const a=Array.prototype.slice.call(arguments); a[0]=wt('iv',per,fn); return si0.apply(null,a); };
+  window.setTimeout=function(fn,per){ const a=Array.prototype.slice.call(arguments); a[0]=wt('to',per,fn); return st0.apply(null,a); };
+}catch(e){} })();
 window.DMFT=window.DMFT||(function(){ const E=Object.create(null), X=Object.create(null); let frames=0;
   return { add(k,ms){ if(!(ms>=0)) return; const e=E[k]; E[k]=e==null?ms:e+(ms-e)*0.1; const x=X[k]||0; X[k]=ms>x?ms:x*0.985; },
     set(k,v){ E[k]=v; }, frame(){ frames++; }, get frames(){ return frames; },
@@ -1012,7 +1020,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-safety.js?v=1" defer></script>
 <script src="jots/jots-link.js?v=217" defer></script>
 <script src="ui/dm-friends.js?v=217" defer></script>
-<script src="ui/dm-perflog.js?v=285" defer></script>
+<script src="ui/dm-perflog.js?v=288" defer></script>
 <script src="ui/dm-webkit.js?v=210" defer></script>
 <script src="ui/dm-spectator.js?v=1" defer></script>
 <script src="ui/dm-stack.js?v=1" defer></script>
@@ -15707,6 +15715,8 @@ window.dmSceneText=function(){
     // time every animation-frame callback: if a slow frame shows 'raf' with small ms, the delay is the GPU / compositor, not our code
     try{ const raf0=window.requestAnimationFrame.bind(window); window.requestAnimationFrame=function(cb){ return raf0(function(t){ const s=performance.now(); try{ return cb(t); } finally{ const d=performance.now()-s; if(d>8&&cur.length<24) cur.push(['raf:'+(cb.name||'cb'),+d.toFixed(1)]); } }); }; }catch(e){}
     const rec=(n,ms)=>{ if(ms>8&&cur.length<24) cur.push([n,+ms.toFixed(1)]); };
+    window.__dmRec=rec;   // the early timer wrapper (top of the page) reports slow setInterval / setTimeout callbacks here
+    let _lastHitchT=0, _heap0=0;
     function wrapFn(name){ try{ const f=window[name]; if(typeof f!=='function'||f.__dmT) return; const w=function(){ const t=performance.now(); try{ return f.apply(this,arguments); } finally{ rec(name,performance.now()-t); } }; w.__dmT=1; Object.keys(f).forEach(k=>{ try{ w[k]=f[k]; }catch(e){} }); window[name]=w; }catch(e){} }
     function wrapObj(o,label,names){ try{ if(!o) return; names.forEach(n=>{ const f=o[n]; if(typeof f!=='function'||f.__dmT) return; const w=function(){ const t=performance.now(); try{ return f.apply(this,arguments); } finally{ rec(label+'.'+n,performance.now()-t); } }; w.__dmT=1; o[n]=w; }); }catch(e){} }
     setTimeout(()=>{
@@ -15714,6 +15724,10 @@ window.dmSceneText=function(){
        'updateGalSky','buildGalSky','setGalSkySystem','upgradePlanetLOD','buildProceduralPlanetMesh','rebuildFlightForSystem','buildSolarSystem',
        'generateSeededStarField','loadCharacterAssets','updateFlight','updateBodies','_pwSpaceWatch','updateCharOrbitCamera','updateBirdTemple','updateDistantSystems','updateVolumetricDust','updateHUD','updateCrosshairLabel','drawMinimap','applySkyboardStance','_updateCharDebugHUD','_gsUpdateBlackHoles','renderWithPostFX','_attachJotsNearFill','_updateJotsWorldsFog','mountSkyboard','remountSkyboard']
         .forEach(wrapFn);
+      // (v287) the scheduled loaders and caches a periodic freeze could come from: a >8 ms call shows in the hitch line by name
+      ['_propAdopt','_propsCull','_propsLod','_propFadeTick','_hmChunkScatterG','_propHeavy','_disposeProps'].forEach(wrapFn);
+      try{ if(typeof SkyGround==='function') wrapObj(SkyGround.prototype,'Ground',['update']); }catch(e){}
+      wrapObj(window.DMLight,'DMLight',['tick','applyMaterial']); wrapObj(window.DMCollide,'DMCollide',['regChunk','dropChunk','tick']); wrapObj(window.DMWater,'DMWater',['tick','follow']); wrapObj(window.DMFac,'DMFac',['tick']);
       wrapObj(window.DMStar,'DMStar',['frame','build']); wrapObj(window.DMMist,'DMMist',['frame','planetClouds','beltDust']);
     },4000);
     // name every pipeline the GPU had to build in the middle of a frame (slow ones only): that is the 0.5–2 s freeze
@@ -15730,9 +15744,11 @@ window.dmSceneText=function(){
     }
     function tick(t){
       if(!pipeWrapped) wrapPipes();
+      let dh=0; try{ const pm=performance.memory; if(pm){ const h=pm.usedJSHeapSize/1048576; dh=_heap0?h-_heap0:0; _heap0=h; } }catch(e){}   // a heap DROP between frames = a garbage collection
       if(last&&!document.hidden){ const d=t-last;
         if(d>70&&d<4000){ const top=cur.slice().sort((a,b)=>b[1]-a[1]).slice(0,6).map(x=>x[0]+' '+x[1]+'ms').join(', ');
-          hl.push({at:new Date().toISOString().slice(11,19),screen:(typeof STATE!=='undefined'&&STATE.screen)||'?',ms:Math.round(d),top:top||'(no timed call — GPU/driver: shader compile or buffer upload)'});
+          const tn=t/1000, gap=_lastHitchT?+(tn-_lastHitchT).toFixed(2):0; _lastHitchT=tn;
+          hl.push({at:new Date().toISOString().slice(11,19),t:+tn.toFixed(2),gap:gap,dh:+dh.toFixed(1),gc:dh<-3?1:0,screen:(typeof STATE!=='undefined'&&STATE.screen)||'?',ms:Math.round(d),top:top||'(no timed call — GPU/driver: shader compile or buffer upload; gc='+(dh<-3?'YES '+dh.toFixed(1)+'MB':'no')+')'});
           if(hl.length>40) hl.shift(); _hlSave(); } }
       last=t; cur=[]; requestAnimationFrame(tick); }
     requestAnimationFrame(tick);
@@ -18331,7 +18347,7 @@ function _gpuProfInstall(r){
   r.render=function(scene,cam){ const prev=cur; try{ cur=DMGpuProf.stack[DMGpuProf.stack.length-1]+':'+kindOf(cam,scene); }catch(e){} try{ return r0(scene,cam); } finally{ cur=prev; } };
   if(r.compute){ const c0=r.compute.bind(r); r.compute=function(n,...a){ const prev=cur; cur=DMGpuProf.stack[DMGpuProf.stack.length-1]+':compute'; try{ return c0(n,...a); } finally{ cur=prev; } }; }
   // shadow cameras: any light's shadow camera (collected lazily, they are created with the lights)
-  setInterval(()=>{ try{ flightScene&&flightScene.traverse(o=>{ if(o.isLight&&o.shadow&&o.shadow.camera) shadowCams.add(o.shadow.camera); }); if(PW&&PW.scene) PW.scene.traverse(o=>{ if(o.isLight&&o.shadow&&o.shadow.camera) shadowCams.add(o.shadow.camera); }); }catch(e){} },2000);
+  setInterval(()=>{ try{ flightScene&&flightScene.traverse(o=>{ if(o.isLight&&o.shadow&&o.shadow.camera) shadowCams.add(o.shadow.camera); }); if(PW&&PW.scene) PW.scene.traverse(o=>{ if(o.isLight&&o.shadow&&o.shadow.camera) shadowCams.add(o.shadow.camera); }); }catch(e){} },10000);   // (v287) was every 2 s: a full traverse of both scenes (thousands of prop meshes) at a fixed period
   const hook=(pool)=>{ if(!pool||pool._dmHooked) return; pool._dmHooked=true; const a0=pool.allocateQueriesForContext.bind(pool);
     pool.allocateQueriesForContext=function(uid){ const off=a0(uid); try{ if(off!=null) DMGpuProf.map.set(uid,cur); }catch(e){} return off; }; };
   DMGpuProf.on=true;

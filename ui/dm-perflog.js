@@ -153,7 +153,7 @@
   // (v224) What the scene is actually made of: for each top-level object of the flight scene and the world scene, the
   // visible draw count, triangles (instances included) and how many of those triangles also draw in the shadow pass.
   // Perf logs said "2.4 M triangles a frame" but not whose; this names them. Recomputed at most every 25 s.
-  let _census = null, _censusAt = 0;
+  let _census = null, _censusAt = 0, _memCache = null, _memAt = 0, _memForce = false;
   function census() {
     const now = Date.now(); if (_census && now - _censusAt < 25000) return _census;
     const out = {};
@@ -180,6 +180,8 @@
         out[rn] = { total: Math.round(rows.reduce((a, r) => a + r.tris, 0)), shadowTotal: Math.round(rows.reduce((a, r) => a + r.shadowTris, 0)), nVisible: rows.length, nHidden: off.length, hidden: off, top: rows.slice(0, 22) };
       }
       // where the memory sits (the OS kills the tab on bytes, not on fps): unique textures (width x height x 4 B x 1.33 for mips) and geometry buffers, biggest first, per top-level child
+      if (_memCache && Date.now() - _memAt < 120000 && !_memForce) { out.mem = _memCache; throw 0; }   // the scan walks every object and node graph: at most every 2 min (and it reports its own cost)
+      const _mt0 = performance.now();
       const seenT = new Set(), seenG = new Set(), texRows = [], geoRows = []; let texB = 0, geoB = 0;
       const texBytes = (t) => { const im = t.image || (t.source && t.source.data); const w = (im && (im.width || im.videoWidth)) || 0, h = (im && (im.height || im.videoHeight)) || 0; const d = (im && im.depth) || 1; return w * h * d * (t.type === 1016 || t.type === 1015 ? (t.type === 1015 ? 16 : 8) : 4) * (t.generateMipmaps === false || t.isDataTexture || t.isRenderTargetTexture ? 1 : 1.33); };
       const addTex = (t, who) => { if (!t || !t.isTexture || seenT.has(t)) return; seenT.add(t); const b = texBytes(t); if (!(b > 0)) return; texB += b; texRows.push([b, (t.name || who || '?') + ' ' + ((t.image && t.image.width) || '?') + 'x' + ((t.image && t.image.height) || '?')]); };
@@ -194,8 +196,9 @@
         for (const [k, b] of per) geoRows.push([b, rn + ':' + k]);
       }
       texRows.sort((a, b) => b[0] - a[0]); geoRows.sort((a, b) => b[0] - a[0]);
-      out.mem = { texMB: Math.round(texB / 1048576), geoMB: Math.round(geoB / 1048576), nTex: seenT.size, texTop: texRows.slice(0, 10).map((r) => Math.round(r[0] / 1048576 * 10) / 10 + 'MB ' + r[1]), geoTop: geoRows.slice(0, 8).map((r) => Math.round(r[0] / 1048576 * 10) / 10 + 'MB ' + r[1]) };
-    } catch (e) { out.err = String(e && e.message || e).slice(0, 120); }
+      out.mem = _memCache = { ms: +(performance.now() - _mt0).toFixed(1), texMB: Math.round(texB / 1048576), geoMB: Math.round(geoB / 1048576), nTex: seenT.size, texTop: texRows.slice(0, 10).map((r) => Math.round(r[0] / 1048576 * 10) / 10 + 'MB ' + r[1]), geoTop: geoRows.slice(0, 8).map((r) => Math.round(r[0] / 1048576 * 10) / 10 + 'MB ' + r[1]) };
+      _memAt = Date.now(); try { if (window.__dmRec) window.__dmRec('perflog.memCensus', out.mem.ms); } catch (e) { }
+    } catch (e) { if (e !== 0) out.err = String(e && e.message || e).slice(0, 120); }
     _census = out; _censusAt = now; return out;
   }
   function build(final) {
