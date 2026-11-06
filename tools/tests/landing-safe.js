@@ -14,7 +14,7 @@ class V3 { constructor(x = 0, y = 0, z = 0) { this.x = x; this.y = y; this.z = z
 const mkObj = () => ({ parent: null, visible: true, position: new V3(), scale: { x: 1, setScalar(a) { this.x = a; }, set(a) { this.x = a; } }, rotation: { x: 0, y: 0, z: 0, set(a, b, c) { this.x = a; this.y = b; this.z = c; } } });
 let clock = 1000; const events = [];
 const scene = { children: [], add(o) { if (o.parent) o.parent.remove(o); o.parent = this; this.children.push(o); }, remove(o) { const i = this.children.indexOf(o); if (i >= 0) this.children.splice(i, 1); o.parent = null; } };
-const ctx = { console, Math, isFinite, window: { DMCollide: W, DMCrumb: { mark: (a, b) => events.push([a, b]) }, dmPerfLog: { event: (a, b) => events.push([a, b]) } }, document: { hidden: false }, performance: { now: () => clock }, THREE: { Vector3: V3 }, setInterval: () => 0, toast() { }, setCharState() { }, _forceCharVisible() { },
+const ctx = { console, Math, isFinite, window: { DMCollide: W, DMLandZones: require('../../ui/dm-landzones.js'), DMCrumb: { mark: (a, b) => events.push([a, b]) }, dmPerfLog: { event: (a, b) => events.push([a, b]) } }, document: { hidden: false }, performance: { now: () => clock }, THREE: { Vector3: V3 }, setInterval: () => 0, toast() { }, setCharState() { }, _forceCharVisible() { },
   SURF_BOARD_SIDE: 1.5, SURF_BOARD_WAIST: 1, CHAR_MOUNT_YAW_OFFSET: 0, CHAR_TERRAIN_YAW_EXTRA: 0, _surfBoardDims: () => ({ half: 1.5, halfW: 0.4 }), _terrainBoardSideWorld: () => 1.2, _surfBoardSide: () => 1.5 };
 ctx.PW = { active: true, body: {}, site: {}, scene, board: mkObj(), pal: { grav: 9 }, camera: { position: new V3() } }; scene.add(ctx.PW.board);
 ctx.CHAR = { loaded: true, root: mkObj(), _transitioning: false, mounted: true, feetOffset: 0, scaleForTerrain: 1 };
@@ -40,6 +40,10 @@ const flat = (x, z) => 0;
   const rw = run('_landSafe(100,-210,0)'); ok(rw.ok && rw.moved && rw.z >= -200.01, 'a landing over the lake moves to the shore (z ' + rw.z.toFixed(1) + ')');
   const rs = run('_landSafe(415,100,0)'); ok(rs.ok && rs.moved && rs.x < 405, 'a landing on the steep wall moves to gentle ground (x ' + rs.x.toFixed(1) + ')');
   const rh = run('_landSafe(100,100,0,{her:true})'); ok(rh.ok && rh.moved, 'starting from her own spot works too'); }
+// 1b ─ near the mansion the planned landing pads win over a random clear patch
+{ const Zr = ctx.window.DMLandZones; Zr.set([{ x: 125, y: 100, z: 0, r: 8, kind: 'deck', patch: 1, app: 8 }], (x, y, zz, o) => { o[0] = x; o[1] = zz; o[2] = y; }, 1);
+  const r = run('_landSafe(100,100,0)'); ok(r.ok && r.zone === 'deck' && Math.abs(r.x - 125) < 1e-6, 'a blocked landing next to the mansion goes to the free deck pad (' + r.x.toFixed(1) + ',' + r.z.toFixed(1) + ')');
+  Zr.set([{ x: 100, y: 100, z: 0, r: 8, kind: 'deck', patch: 1, app: 8 }], (x, y, zz, o) => { o[0] = x; o[1] = zz; o[2] = y; }, 1); const r2 = run('_landSafe(100,100,0)'); ok(r2.ok && !r2.zone && (r2.x !== 100 || r2.z !== 100), 'a pad that is itself blocked is skipped'); Zr.clear(); }
 // 2 ─ steering while landing re-validates and ends clear
 { const s = { pos: new V3(100, 6, 100), yaw: 0, landing: true, vel: new V3() }; ctx.__s = s; clock = 5000;
   for (let i = 0; i < 90; i++) { clock += 66; run('_landSteer(__s,1/15)'); }

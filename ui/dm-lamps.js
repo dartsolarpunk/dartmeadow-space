@@ -117,6 +117,10 @@
     const nl = Math.min(4, +(q.get('lamplights') || 0) | 0); S.nl = nl;
     if (nl > 0) { const PW = c.PW(); for (let i = 0; i < nl; i++) { const L = new THREE.PointLight(0xffc27a, 0, 55, 1.5); L.castShadow = false; L.userData.dmLamp = true; PW.scene.add(L); S.lights.push(L); } }
     S.lamps = lamps; S.built = true;
+    // landing pads (patios, decks, courts, terraces) from the mansion plan: ui/dm-landzones.js; the lamps are part of the plan, so no pad has a lamp or planter in it
+    try { const Z = G.DMLandZones; if (Z && G.fetch) fetch('assets/ariel-home/ariel-home-interior-nav.json?v=' + F.ver).then(r => r.json()).then(nav => {
+      if (S.grp !== grp) return; const pads = Z.build(nav, lamps).concat(Z.buildGrid(nav, lamps, g, col)), me = grp.matrixWorld.elements, sc = Math.hypot(me[0], me[1], me[2]) || 1, wp = new THREE.Vector3();
+      grp.updateMatrixWorld(true); Z.set(pads, (lx, ly, lz, o) => { wp.set(lx, lz, -ly); grp.localToWorld(wp); o[0] = wp.x; o[1] = wp.y; o[2] = wp.z; }, sc); }).catch(() => { }); } catch (e) { }
     try {   // lamp heads in the world frame -> the radiance cache ([x,y,z, r,g,b, radius] each; warm sodium colour, 16 m reach)
       if (G.DMLight && G.DMLight.on) { grp.updateMatrixWorld(true); const V3 = new THREE.Vector3(), a = new Float32Array(n * 7); for (let i = 0; i < n; i++) { const h = headPos(lamps[i]); grp.localToWorld(V3.set(h[0], h[2] - 0.06 * UPM, -h[1])); a.set([V3.x, V3.y, V3.z, 14, 8.7, 4.2, 16], i * 7); } G.DMLight.setLamps(a);
         // the collision grid (terraces, decks, walls) into the height cache: sun shadows and probe rays see the property.  nav (x east, y seaward, z up) -> group local (x, z, -y) -> world
@@ -129,7 +133,7 @@
     return true;
   }
   function destroy() {
-    try { if (G.DMCollide && G.DMCollide.clearGroup) G.DMCollide.clearGroup('lamps'); } catch (e) { }
+    try { if (G.DMCollide && G.DMCollide.clearGroup) G.DMCollide.clearGroup('lamps'); if (G.DMLandZones) G.DMLandZones.clear(); } catch (e) { }
     try { if (S.grp && S.grp.parent) S.grp.parent.remove(S.grp); for (const g of S.geos) g.dispose(); for (const m of S.mats) m.dispose(); if (S.plates && S.plates.dispose) S.plates.dispose(); } catch (e) { }
     for (const L of S.lights) { try { if (L.parent) L.parent.remove(L); L.dispose && L.dispose(); } catch (e) { } }
     S.lights.length = 0; S.geos.length = 0; S.mats.length = 0; S.grp = null; S.built = false; try { if (G.DMLight) { G.DMLight.setLamps([]); G.DMLight.setLampLevel(0); G.DMLight.clearOverlays(); } } catch (e) { } S.sg = null; S.plates = null; S.U = null; S.on = 0; hideHud();

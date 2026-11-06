@@ -1024,7 +1024,9 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-spectator.js?v=1" defer></script>
 <script src="ui/dm-stack.js?v=1" defer></script>
 <script src="ui/dm-level.js?v=286" defer></script>
-<script src="ui/dm-padbind.js?v=286" defer></script>
+<script src="ui/dm-landmark.js?v=293" defer></script>
+<script src="ui/dm-landzones.js?v=293" defer></script>
+<script src="ui/dm-padbind.js?v=293" defer></script>
 <script src="ui/dm-globe.js?v=9" defer></script>
 <script src="ui/dm-star.js?v=191" defer></script>
 <script src="ui/dm-mist.js?v=7" defer></script>
@@ -1062,7 +1064,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-mansion-look.js?v=251" defer></script>
 <script src="ui/dm-mansion-interior.js?v=262" defer></script>
 <script src="ui/dm-facilities.js?v=290" defer></script>
-<script src="ui/dm-lamps.js?v=287" defer></script>
+<script src="ui/dm-lamps.js?v=293" defer></script>
 <script src="ui/dm-mansion-collide.js?v=283" defer></script>
 <script src="ui/dm-holo.js?v=283" defer></script>
 <script src="ui/dm-sys.js?v=241"></script>
@@ -1818,6 +1820,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   <!-- autopilot: holds the height you're at, climbs over (or banks round) whatever is ahead -->
   <button id="ap-btn-atmo" class="side-pad ap-pad" onclick="toggleAtmoAutopilot()" title="Autopilot — holds this altitude, avoids terrain ahead"><span class="sp-ico"><svg class="ap-ico" viewBox="0 0 24 24" width="1.5em" height="1.5em" aria-hidden="true"><defs><linearGradient id="apGA" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#d9d2ff" stop-opacity=".95"/><stop offset=".5" stop-color="#7b93ff" stop-opacity=".75"/><stop offset="1" stop-color="#ff4fa3" stop-opacity=".8"/></linearGradient></defs><path d="M9.2 3.3C12.7 2.1 17.7 3.6 18.5 8.2c.5 3.3.2 7.8.8 12.8h-5.9c-1-1.4-2-2.6-2.5-4.2l-.3-1.5c-1 .3-2.1-.1-2.7-1-.3-.7-.2-1.2-.5-1.5-.3-.3-.4-.6-.1-.9-.4-.3-.7-.5-.5-.8-.6-.2-.8-.6-.4-1.1l1-1.4c.1-2 .5-4 1.8-5.2z" fill="url(#apGA)" stroke="#fff" stroke-opacity=".7" stroke-width=".55" stroke-linejoin="round"/><path d="M14.2 4.6c2.4 1.2 3.4 3.6 3.6 6.6.2 3.4 0 6.6.6 9.8" fill="none" stroke="#fff" stroke-opacity=".35" stroke-width=".6" stroke-linecap="round"/><path d="M10.9 16.8c-2.6 1.1-4.6 2.4-5.6 4.2h8.6c-1.2-1.3-2.2-2.6-3-4.2z" fill="url(#apGA)" fill-opacity=".7" stroke="#fff" stroke-opacity=".55" stroke-width=".5" stroke-linejoin="round"/><path d="M6.9 8.9h4.6" stroke="#fff" stroke-width=".9" stroke-linecap="round"/><circle cx="8.6" cy="8.95" r=".6" fill="#ff3b6b"/><circle cx="12.3" cy="10.7" r=".7" fill="none" stroke="#fff" stroke-opacity=".6" stroke-width=".45"/></svg></span>AUTO</button>
   <button id="atmo-level-btn" class="side-pad ap-pad" onclick="atmoLevel()" title="Level — wings level to the local horizon, keeps heading, speed and altitude (L)"><span class="sp-ico"><svg viewBox="0 0 24 24" width="1.5em" height="1.5em" aria-hidden="true"><path d="M3 12h5m8 0h5" stroke="#fff" stroke-width="1.6" stroke-linecap="round" fill="none"/><path d="M8 12l4-4 4 4-4 4z" fill="none" stroke="#9bd0ff" stroke-width="1.4" stroke-linejoin="round"/><path d="M4 18h16" stroke="#fff" stroke-opacity=".45" stroke-width="1" stroke-linecap="round"/></svg></span>LEVEL</button>
+  <button id="atmo-mark-btn" class="side-pad ap-pad" onclick="atmoMark()" title="Mark landing spot — tap the ground, the craft flies there and sets down exactly on it (tap again to cancel)"><span class="sp-ico"><svg viewBox="0 0 24 24" width="1.5em" height="1.5em" aria-hidden="true"><path d="M12 3.5l7.5 13H4.5z" fill="none" stroke="#5cc8ff" stroke-width="1.5" stroke-linejoin="round"/><circle cx="12" cy="12.6" r="2.2" fill="none" stroke="#fff" stroke-width="1.3"/><path d="M12 9.2v2M12 14.8v2M8.8 12.6h2M13.2 12.6h2" stroke="#fff" stroke-width="1" stroke-linecap="round"/></svg></span>MARK</button>
   <!-- left joystick: look / aim — the same stick as open space (free 6-DOF) -->
   <div style="position:absolute;bottom:calc(96px + var(--safe-bot));left:24px;width:100px;height:100px;pointer-events:auto;" id="atmo-steer-zone">
     <div style="position:absolute;top:-16px;left:50%;transform:translateX(-50%);font-family:var(--font-hud);font-size:.44rem;color:rgba(var(--acc-rgb),.4);letter-spacing:.08em;">LOOK / AIM</div>
@@ -20216,6 +20219,10 @@ function _landSafe(x,z,yaw,o){
   let r; try{ r=W.findClear(bx,bz,{ground:gf,r:0.9,h:3.1,margin:0.4,step:0.6,slopeTan:0.7,waterMargin:0.4,bl,bw,ux:fx,uz:fz,side:[-rx*sd,-rz*sd],maxR:o.maxR||70,maxProbes:o.maxProbes||450}); }catch(e){ return R; }
   R.ok=!!r.ok; R.moved=!!r.moved; R.dist=r.dist; R.tried=r.tried;
   if(r.ok){ R.x=r.x; R.z=r.z; } else { R.x=bx; R.z=bz; }
+  // blocked here and the mansion's planned landing pads (decks, patios, courts, terraces) are near: prefer a free pad over a random clear patch
+  try{ const Z=window.DMLandZones; if(Z&&Z.count()&&(!r.ok||r.moved)){ const skip=[]; for(let t=0;t<4;t++){ const zn=Z.nearest(bx,bz,o.zoneD||90,skip); if(!zn) break; skip.push(zn.i);
+        const co={ground:gf,r:0.9,h:3.1,margin:0.4,step:0.6,slopeTan:0.7,waterMargin:0.4,bl,bw,ux:fx,uz:fz,side:[-rx*sd,-rz*sd]};
+        if(W.clearAt(zn.pad.x,zn.pad.z,co)&&(!r.ok||zn.dist<=r.dist+30)){ R.ok=true; R.moved=true; R.x=zn.pad.x; R.z=zn.pad.z; R.dist=zn.dist; R.zone=zn.pad.kind; break; } } } }catch(e){}
   R.hx=R.x-rx*sd; R.hz=R.z-rz*sd;
   return R;
 }
@@ -20321,6 +20328,7 @@ function atmoLandHere(){
   // LAND: the board brakes and settles to hover height; once it's slow and
   // low, she steps off (_atmoTouchdown) into walk mode facing the same way.
   if(CHAR._transitioning || !atmoState || atmoState.landing) return;
+  if(_mk&&(_mk.state==='flying'||_mk.state==='picking')) _mkReset();   // LAND here instead of the mark
   atmoState.landing=true; atmoState.takeoff=0; atmoState.landT0=performance.now(); atmoState.landT=null; atmoState.landTt=0; atmoState.landWarn=false; _landTok++;
   atmoThrottle=0; try{ $('atmo-throttle').value=0; }catch(e){}
   try{ window.DMGlobe&&DMGlobe.sync(); }catch(e){}
@@ -20670,7 +20678,7 @@ function _atmoAutopilot(s,dt){
   atmoMach=THREE.MathUtils.lerp(atmoMach,wantMach,Math.min(1,dt*2));
   if(dist<(a.land?5:30)){
     s.auto=null; atmoMach*=0.3; atmoThrottle=0; try{ $('atmo-throttle').value=0; }catch(e){}
-    if(a.land){ atmoLandHere(); }
+    if(a.land){ if(a.mark&&_mk) _mk.arrive(); atmoLandHere(); }
     else { toast('◎ Arrived over '+_lmFmt(a.lat,a.lon),2000); setTimeout(()=>{ if(atmoActive&&atmoState&&!atmoState.landing) window.DMGlobe&&DMGlobe.expand(); },500); }
   }
   return true;
@@ -20700,6 +20708,7 @@ function _atmoGroundHit(clientX,clientY){
   const ndc=new THREE.Vector2(((clientX-r.left)/r.width)*2-1,-((clientY-r.top)/r.height)*2+1);
   const ray=new THREE.Raycaster(); ray.setFromCamera(ndc,atmoCamera);
   const o=ray.ray.origin, d=ray.ray.direction;
+  if(window.DMLandMark){ const pk=DMLandMark.pickGround([o.x,o.y,o.z],[d.x,d.y,d.z],_atmoHeight,{maxT:6000}); return pk?new THREE.Vector3(pk[0],pk[1],pk[2]):null; }
   let prev=0, step=3;
   for(let t=step;t<6000;t+=step){
     const x=o.x+d.x*t, y=o.y+d.y*t, z=o.z+d.z*t;
@@ -20713,7 +20722,7 @@ function _atmoGroundHit(clientX,clientY){
   }
   return null;
 }
-function _landMarkerClear(){ if(LP.marker&&LP.marker.parent){ LP.marker.parent.remove(LP.marker); try{ disposeObject3D(LP.marker); }catch(e){} } LP.marker=null; }
+function _landMarkerClear(){ try{ _mkReset(); }catch(e){} if(LP.marker&&LP.marker.parent){ LP.marker.parent.remove(LP.marker); try{ disposeObject3D(LP.marker); }catch(e){} } LP.marker=null; }
 function _landMarkerAt(p){
   _landMarkerClear(); if(!atmoScene) return;
   const g=new THREE.Group(); g.name='land-marker';
@@ -20755,8 +20764,66 @@ document.addEventListener('pointerup',e=>{
 });
 window.addEventListener('keydown',e=>{ if(e.key==='Escape'&&LP.on) stopLandPick(); });
 setInterval(()=>{ try{ _landMarkerTick(); }catch(e){} },50);
+// ── MARK LANDING SPOT (the MARK pad beside LEVEL; ui/dm-landmark.js is the pure logic) ─────────────────────────────────────────────────────
+// Tap MARK -> tap the terrain in the flight view (the screen ray is marched against the height field, from the air or near the ground) -> the spot is validated with
+// the clear-footprint search (her capsule + the skyboard, mansion landing pads preferred); a blocked tap snaps to the nearest clear spot and says so -> a glowing
+// neon-blue marker (one merged additive mesh, scaled by distance, pulsing, fading as the craft sets down) -> the autopilot flies there and lands exactly on it.
+// Tapping MARK again, the sticks, or LAND cancel; LEVEL / AUTO are scripted-flight no-ops while it flies. Nothing is persisted.
+let _mk=null, _mkMarker=null, _mkDown=null;
+function _mkState(){ return _mk||(_mk=window.DMLandMark?DMLandMark.create():null); }
+function _mkBtn(){ const b=$('atmo-mark-btn'); if(b) b.classList.toggle('active',!!_mk&&_mk.state!=='idle'); }
+function _mkMarkerClear(){ const m=_mkMarker; _mkMarker=null; if(m&&m.parent){ m.parent.remove(m); try{ disposeObject3D(m); }catch(e){} } }
+function _mkReset(){ if(_mk) _mk.cancel(); try{ document.body.classList.remove('mk-picking'); }catch(e){} _mkMarkerClear(); _mkBtn(); }
+function atmoMark(){
+  const s=atmoState, M=_mkState(); if(!M||!s||!atmoActive) return;
+  if(M.state==='idle'&&(s.landing||s.touchdown||s.takeoff>0||atmoIdle||s.toSpace)){ toast('Finish the current manoeuvre first',1200); return; }
+  const r=M.toggle(true);
+  if(r==='picking'){ if(_atmoLvl) _atmoLevelStop(); document.body.classList.add('mk-picking'); toast('◎ Tap the ground to mark a landing spot',2400); }
+  else if(r==='cancel-flying'){ if(s.auto&&s.auto.mark){ s.auto=null; atmoThrottle=0; try{ $('atmo-throttle').value=0; }catch(e){} } _mkReset(); toast('Landing mark cancelled — you have the board',1500); }
+  else if(r==='cancel-picking'){ _mkReset(); }
+  _mkBtn();
+}
+function _mkGeometry(){
+  const parts=[], M4=new THREE.Matrix4(), add=(g,x,y,z,rx,rz)=>{ g=g.toNonIndexed(); M4.makeRotationFromEuler(new THREE.Euler(rx||0,0,rz||0)); M4.setPosition(x,y,z); g.applyMatrix4(M4); parts.push(g); };
+  for(let k=0;k<3;k++){ const a=Math.PI/2+k*Math.PI*2/3, x=Math.cos(a)*7, z=Math.sin(a)*7; add(new THREE.CylinderGeometry(0.3,0.5,16,6,1,true),x,8,z); add(new THREE.SphereGeometry(0.9,8,6),x,16.4,z); }
+  add(new THREE.TorusGeometry(3.2,0.22,6,40),0,0.35,0,Math.PI/2);
+  add(new THREE.BoxGeometry(6.4,0.12,0.3),0,0.4,0); add(new THREE.BoxGeometry(0.3,0.12,6.4),0,0.4,0);
+  let n=0; parts.forEach(g=>{ n+=g.attributes.position.count; }); const pos=new Float32Array(n*3); let o=0; parts.forEach(g=>{ pos.set(g.attributes.position.array,o); o+=g.attributes.position.count*3; g.dispose(); });
+  const G=new THREE.BufferGeometry(); G.setAttribute('position',new THREE.BufferAttribute(pos,3)); return G;
+}
+function _mkMarkerAt(x,y,z){
+  _mkMarkerClear(); if(!atmoScene) return;
+  const m=new THREE.Mesh(_mkGeometry(),new THREE.MeshBasicMaterial({color:0x33b4ff,transparent:true,opacity:0.9,blending:THREE.AdditiveBlending,depthWrite:false,fog:false,side:THREE.DoubleSide}));
+  m.name='mark-landing'; m.frustumCulled=false; m.renderOrder=60; m.raycast=()=>{}; m.position.set(x,y,z); m.userData.t0=performance.now(); atmoScene.add(m); _mkMarker=m;
+}
+function _mkTick(){
+  const m=_mkMarker; if(!m||!atmoCamera||!atmoState){ return; }
+  const t=(performance.now()-m.userData.t0)/1000, d=atmoCamera.position.distanceTo(m.position), p=0.5+0.5*Math.sin(t*5);
+  m.scale.setScalar(DMLandMark.scaleAt(d)*(1+0.05*p));
+  m.material.opacity=(0.55+0.4*p)*DMLandMark.fade(Math.hypot(atmoState.pos.x-m.position.x,atmoState.pos.z-m.position.z));
+}
+function _mkTap(cx,cy){
+  const s=atmoState, M=_mk; if(!s||!M) return;
+  const hit=_atmoGroundHit(cx,cy);
+  const res=M.tap(hit?[hit.x,hit.y,hit.z]:null,(x,z)=>{ const r=_landSafe(x,z,s.yaw,{maxR:70}); return {ok:r.ok,x:r.x,z:r.z,moved:r.moved}; });
+  if(!res||!res.ok){ toast(!hit?'No ground there — tap the terrain':'No clear spot near there — try another',1800); return; }
+  let gy=hit?hit.y:0; try{ const h=_atmoHeight(res.x,res.z); if(isFinite(h)) gy=h; }catch(e){}
+  _mkMarkerAt(res.x,gy,res.z); document.body.classList.remove('mk-picking');
+  const ll=_atmoLatLon(res.x,res.z), dist=Math.hypot(res.x-s.pos.x,res.z-s.pos.z);
+  atmoFlyTo(ll.lat,ll.lon,{land:true,cruise:dist>420});
+  if(s.auto){ s.auto.x=res.x; s.auto.z=res.z; s.auto.mark=true; }
+  toast(res.snapped?'◎ That spot was blocked — marked the nearest clear one ('+res.dist.toFixed(0)+' m away)':'◎ Landing on your mark',2200);
+  _mkBtn();
+}
+document.addEventListener('pointerdown',e=>{ if(_mk&&_mk.state==='picking'&&e.target&&e.target.id==='atmo-canvas') _mkDown={x:e.clientX,y:e.clientY}; });
+document.addEventListener('pointerup',e=>{
+  const d=_mkDown; _mkDown=null; if(!d||!_mk||_mk.state!=='picking'||!e.target||e.target.id!=='atmo-canvas') return;
+  if(Math.hypot(e.clientX-d.x,e.clientY-d.y)>10) return; _mkTap(e.clientX,e.clientY);
+});
+setInterval(()=>{ try{ _mkTick(); }catch(e){} },50);
+window.atmoMark=atmoMark;
 // leaving the sky clears the tools
-function _landToolsReset(){ stopLandPick(); LP.marker=null; }
+function _landToolsReset(){ stopLandPick(); LP.marker=null; try{ _mkReset(); }catch(e){} }
 
 // Recursively dispose every mesh's geometry + material(s) + any textures
 // under `root` (a Scene or Object3D). Setting a variable to null only drops
@@ -23121,6 +23188,7 @@ function _pwBeginWalk(opts){
   if(fresh) PW.camera.position.set(x,g+3.0,z);
   surfFirstPerson=false; _surfFpHidden=false; _surfViewBtn();   // every landing starts in third person
   flightFP=false; _flightFpRestore(); _flightFpBtn();
+  try{ _mkReset(); }catch(e){}
   atmoState=null; atmoBoard=null; surfBoard=board;
   board.scale.setScalar(1); board.visible=true;
   _pwSetMode('walk');
@@ -27714,7 +27782,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 
 <!-- ?v= stamps: bump on every UI change so browsers never mix a new page with cached old styles -->
 <link rel="stylesheet" href="ui/dm-ui.css?v=206">
-<link rel="stylesheet" href="ui/dm-hud.css?v=286">
+<link rel="stylesheet" href="ui/dm-hud.css?v=293">
 <link rel="stylesheet" href="ui/dm-friends.css?v=1">
 <link rel="stylesheet" href="ui/dm-safety.css?v=1">
 <link rel="stylesheet" href="ui/dm-spectator.css?v=1">

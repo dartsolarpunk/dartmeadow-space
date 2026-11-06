@@ -82,10 +82,11 @@
   // ── sky HUD: autopilot above the left stick, IDLE above the right ──
   function sky(){
     var sl=$('atmo-steer-zone'), sr=$('atmo-climb-zone'); if(!vis(sl)||!vis(sr)) return;
-    var ap=$('ap-btn-atmo'), lvl=$('atmo-level-btn'), idle=$('atmo-idle-btn'), W=window.innerWidth, sf=safe();
+    var ap=$('ap-btn-atmo'), lvl=$('atmo-level-btn'), mrk=$('atmo-mark-btn'), idle=$('atmo-idle-btn'), W=window.innerWidth, sf=safe();
     var a=sl.getBoundingClientRect(), b=sr.getBoundingClientRect();
     if(ap&&vis(ap)){ var s=size(ap); put(ap,clampX(a.left+a.width/2-s.w/2,s.w,sf,W),a.top-LBL-s.h-2,ap.offsetParent||document.body); }
     if(ap&&lvl&&vis(ap)&&vis(lvl)){ var s2=size(ap), l2=size(lvl); put(lvl,clampX(a.left+a.width/2-s2.w/2+s2.w+8,l2.w,sf,W),a.top-LBL-l2.h-2,lvl.offsetParent||document.body); }
+    if(ap&&lvl&&mrk&&vis(ap)&&vis(lvl)&&vis(mrk)){ var s3=size(ap), l3=size(lvl), m3=size(mrk); put(mrk,clampX(a.left+a.width/2-s3.w/2+s3.w+8+l3.w+8,m3.w,sf,W),a.top-LBL-m3.h-2,mrk.offsetParent||document.body); }
     if(idle&&vis(idle)){ var t=size(idle); put(idle,clampX(b.left+b.width/2-t.w/2,t.w,sf,W),b.top-LBL-t.h-2,idle.offsetParent||document.body); }
   }
 
@@ -94,7 +95,7 @@
   function watch(){   // ResizeObserver on the sticks and the clusters (their size changes with the breakpoints)
     if(!window.ResizeObserver) return;
     if(!ro) ro=new ResizeObserver(schedule);
-    ['jL','jR','roll-row','level-stack','dart-pads','assist-row','atmo-steer-zone','atmo-climb-zone','ap-btn-atmo','atmo-level-btn','atmo-idle-btn'].forEach(function(id){
+    ['jL','jR','roll-row','level-stack','dart-pads','assist-row','atmo-steer-zone','atmo-climb-zone','ap-btn-atmo','atmo-level-btn','atmo-mark-btn','atmo-idle-btn'].forEach(function(id){
       var e=$(id); if(e&&observed.indexOf(e)<0){ observed.push(e); ro.observe(e); } });
   }
   window.addEventListener('resize',schedule);

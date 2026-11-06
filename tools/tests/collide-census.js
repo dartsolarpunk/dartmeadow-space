@@ -97,6 +97,7 @@ const OTHER = [
   ['companion board', 'index.html', /_DCb\.pushOut/], ['parked board', 'index.html', /DMCollide\.parkedBoard/], ['board in low flight', 'index.html', /W\.sweepSphere\(_cx0/], ['water surface bodies', 'ui/dm-collide-game.js', /setWater\(/],
   ['landing finds a clear footprint (her capsule + board)', 'index.html', /function _landSafe[\s\S]*findClear/], ['landing steers + re-validates', 'index.html', /_landSteer\(s,dt\)/], ['touchdown moves to the safe spot', 'index.html', /_landSafe\(board\.position\.x/],
   ['walk start pushes her out of solids', 'index.html', /_riderEvent\('landMove',\['walkStart'/], ['board unstick after summon', 'index.html', /_boardUnstick\(b\)/], ['landing watchdog forces completion', 'index.html', /_landForce\('timeout'\)/], ['Ariel lamp poles', 'ui/dm-lamps.js', /addCylinder\('lamps'/], ['Ariel island trees + towers', 'ui/dm-facilities.js', /addCylinder\('facility'/],
+  ['MARK landing spot validates with the clear-footprint search', 'index.html', /function _mkTap[\s\S]*_landSafe\(x,z,s\.yaw/], ['landing pads preferred near the mansion', 'index.html', /DMLandZones/], ['landing pads built from the mansion plan', 'ui/dm-lamps.js', /Z\.buildGrid\(nav, lamps, g, col\)/],
   ['hair / cloth / fluid particles', 'ui/dm-cgroup.js', /DC\.sphereOut/], ['the local character', 'index.html', /DMCollide\.surfWalk/], ['scatter chunk registration + drop', 'index.html', /DMCollide\.dropChunk\('chunk#'/],
 ];
 for (const [name, f, re] of OTHER) ok(re.test(fs.readFileSync(path.join(root, f), 'utf8')), 'has a body: ' + name);
