@@ -30,6 +30,8 @@
  *   impostor.tris   impostor triangle target                        1600   2600   4200
  *   lod.tauPx       screen-space error threshold (px)                 6    4.5      3
  *   billboard.px    prop -> billboard below this size (px)           30     24     18
+ *   prop.errM/tauPx prop size (m) / px for the error-driven chunk cut 1.0/2.2 1.2/1.8 1.4/1.4
+ *   terrain.reliefK relief-aware ground tile split                  0.4    0.7    1.0
  *   mip.bias        extra mip level at the far end of a detail band   1.0    0.8    0.5
  *
  * Public: DMLod.tier · .on · .get(key) (tier value) · .propCut(fog, agl) · .propRing(fog, agl) · .vantage(vt) · .mansion() · .sw(state, d, enter, leave) · .core
@@ -58,6 +60,9 @@
     'impostor.tris': [1600, 2600, 4200],     // impostor triangle target (vertex clustering)
     'lod.tauPx':     [6, 4.5, 3],            // error-driven LOD: a level is used while its geometric error projects to <= this many pixels
     'billboard.px':  [30, 24, 18],           // on-screen size (px) below which an instanced prop may be drawn as a view billboard (groundwork)
+    'prop.errM':     [1.0, 1.2, 1.4],        // typical prop size (m) whose projected size sets the chunk draw cut (a boulder / tree crown)
+    'prop.tauPx':    [2.2, 1.8, 1.4],        // ... drawn while that size projects to >= this many pixels
+    'terrain.reliefK': [0.4, 0.7, 1.0],      // how much more finely the far ground tiles split where they hold relief (cliffs, coast scarps)
     'mip.bias':      [1.0, 0.8, 0.5],        // extra texture LOD (mips) at the far end of a detail band: far surfaces average instead of shimmering
   };
   const WALK_R = 1200;     // the on-foot draw radius floor in index.html (walkR = max(1200, fogFar x 2.5)); a vantage extends it, never shrinks it
@@ -129,6 +134,21 @@
     const d = errDist(errM, get(tier, 'lod.tauPx') / Math.max(0.25, k == null ? 1 : k), fovDeg, viewH);
     return Math.max(get(tier, 'mansion.out') * 1.5, Math.min(get(tier, 'mansion.far') * 0.9, d));
   }
+  /* Prop chunk draw cut, error-driven: the table's fog-bound cut (propCut) is capped at the distance where a typical prop (prop.errM) projects to prop.tauPx pixels, so a smaller
+     drawing buffer (render scale, a phone) or a narrower view draws fewer / nearer chunks by itself.  Never below prop.cutMin; k = ladder scale (applied last). */
+  function propCutErr(tier, fog, agl, k, fovDeg, viewH) {
+    const raw = propCut(tier, fog, agl, 1), cutMin = get(tier, 'prop.cutMin');
+    if (!(fovDeg > 1) || !(viewH > 0)) return raw * (k == null ? 1 : k);
+    const e = errDist(get(tier, 'prop.errM'), get(tier, 'prop.tauPx'), fovDeg, viewH);
+    return Math.max(cutMin, Math.min(raw, e)) * (k == null ? 1 : k);
+  }
+  /* Ground tile split boost for relief: a tile of `size` m holding `range` m of height (a cliff, a coastal scarp) splits farther out, so the drop keeps its edge instead of becoming a
+     50 m ramp: factor 1 + min(0.7, 2.5 x range / size) x reliefK x gk (reliefK from the table, gk = ladder ground reach). 1 for flat ground; <= 1.7 always. */
+  function reliefBoost(tier, range, size, gk) {
+    if (!(range > 0) || !(size > 0)) return 1;
+    return 1 + Math.min(0.7, 2.5 * range / size) * get(tier, 'terrain.reliefK') * (gk == null ? 1 : gk);
+  }
+
   /* index of the cheapest level of an error chain (errors ascending: [e0 < e1 < ...], level 0 = full detail) that still projects <= tau; hysteresis `prev` (last answer, -1 none): the
      finer level returns only when the coarser one exceeds tau x 1.15 */
   function levelByError(chain, dist, tauPx, fovDeg, viewH, prev) {
@@ -170,6 +190,7 @@
       if (!(get(t, 'prop.shadow') < get(t, 'prop.cutMax'))) bad.push(t + ': shadow >= cut');
       if (!(get(t, 'prop.cutMin') <= get(t, 'prop.cutMax'))) bad.push(t + ': cutMin > cutMax');
       if (!(get(t, 'mansion.lod2In') > get(t, 'mansion.out') && get(t, 'mansion.lod2In') < get(t, 'mansion.far'))) bad.push(t + ': lod2In outside (out, far)');
+      if (!(get(t, 'prop.errM') > 0 && get(t, 'prop.tauPx') > 0 && get(t, 'terrain.reliefK') >= 0 && get(t, 'terrain.reliefK') <= 1)) bad.push(t + ': prop err / relief row');
       if (!(get(t, 'lod.tauPx') > 0 && get(t, 'billboard.px') > 0)) bad.push(t + ': tau / billboard row');
       if (!(get(t, 'xfade.s') > 0 && get(t, 'prop.fadeS') > 0 && get(t, 'impostor.tris') >= 500 && get(t, 'mip.bias') >= 0 && get(t, 'mip.bias') <= 2)) bad.push(t + ': xfade / impostor / mip row out of range');
       if (!(get(t, 'vantage.reach') > WALK_R)) bad.push(t + ': vantage does not extend the walk radius');
@@ -180,7 +201,7 @@
     return bad;
   }
 
-  const core = { TIERS: TIERS, TABLE: TABLE, WALK_R: WALK_R, CHUNK: CHUNK, get: get, sw: sw, fade: fade, projErrPx: projErrPx, errDist: errDist, lod2Dist: lod2Dist, levelByError: levelByError, billboardViews: billboardViews, chunkCulled: chunkCulled, billboardPx: billboardPx, createXfade: createXfade, mipBias: mipBias, propCut: propCut, propRing: propRing, vantageReach: vantageReach, vantageFog: vantageFog, validate: validate, tierIndex: tierIndex };
+  const core = { TIERS: TIERS, TABLE: TABLE, WALK_R: WALK_R, CHUNK: CHUNK, get: get, sw: sw, fade: fade, propCutErr: propCutErr, reliefBoost: reliefBoost, projErrPx: projErrPx, errDist: errDist, lod2Dist: lod2Dist, levelByError: levelByError, billboardViews: billboardViews, chunkCulled: chunkCulled, billboardPx: billboardPx, createXfade: createXfade, mipBias: mipBias, propCut: propCut, propRing: propRing, vantageReach: vantageReach, vantageFog: vantageFog, validate: validate, tierIndex: tierIndex };
   if (typeof module !== 'undefined' && module.exports) module.exports = core;
   if (typeof window === 'undefined') return;
 
@@ -201,8 +222,9 @@
   out.refresh = refresh;
   out.get = function (key) { return get(out.tier, key); };
   const bud = (fn, d) => { try { const B = W.DMBudget; if (B && B.on && B[fn]) return B[fn](); } catch (e) { } return d; };
-  out.propCut = function (fog, agl) { return propCut(out.tier, fog, agl, bud('propsK', 1)); };
-  out.propRing = function (fog, agl) { return propRing(out.tier, propCut(out.tier, fog, agl, bud('propsK', 1))); };
+  out.propCut = function (fog, agl, fov, viewH) { return propCutErr(out.tier, fog, agl, bud('propsK', 1), fov, viewH); };
+  out.reliefK = function () { return get(out.tier, 'terrain.reliefK') * bud('groundReach', 1); };
+  out.propRing = function (fog, agl, fov, viewH) { return propRing(out.tier, propCutErr(out.tier, fog, agl, bud('propsK', 1), fov, viewH)); };
   out.vantage = function (vt, walk) { return vantageReach(out.tier, vt, walk, bud('groundReach', 1)); };
   out.vantageFog = function (vt, fogFar, drawR) { return vantageFog(out.tier, vt, fogFar, drawR); };
   out.mansion = function () { return { nIn: out.get('mansion.in'), nOut: out.get('mansion.out'), far: out.get('mansion.far') }; };

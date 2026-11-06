@@ -166,7 +166,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-perf.js?v=160"></script>
 <script src="ui/dm-governor.js?v=264"></script>
 <script src="ui/dm-budget.js?v=285"></script>
-<script src="ui/dm-lod.js?v=280"></script>
+<script src="ui/dm-lod.js?v=289"></script>
 <script src="ui/dm-impostor.js?v=280"></script>   <!-- far-range LOD: vertex-clustering impostor (mansion LOD2, colours baked) -->   <!-- far-range LOD: the ONE distance table per device class (props, mansion, landmarks, vantage reach); ?lod=off|low|mobile|desktop -->
 <script src="ui/dm-light.js?v=278"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
 <script>/* (v136) no-op stub so the flight loop can never throw if dm-perf.js failed to load */
@@ -19677,7 +19677,7 @@ function _pwPropsTick(px,pz,agl){
     // (far-range 3) PRE-ROLL: chunks stream in RINGS of the distance table (ui/dm-lod.js propRing: ceil(draw cut x 1.06 / 300 m), capped 1 / 2 / 3 by device class and by the
     // ladder's props stage), so a chunk is built while it is still beyond the draw cut (hidden, see below) and is never built inside the drawn range.  The keep set is one ring
     // wider than the load set: walking back and forth over a chunk border no longer drops and rebuilds the chunk behind you.
-    const _pf=PW._propF=(PW._propF||0)+1, _L=(window.DMLod&&DMLod.on)?DMLod:null, _fogF=PW.scene&&PW.scene.fog?PW.scene.fog.far:900, _R=_L?_L.propRing(_fogF,agl):1, _KR=_R+1;
+    const _pf=PW._propF=(PW._propF||0)+1, _L=(window.DMLod&&DMLod.on)?DMLod:null, _fogF=PW.scene&&PW.scene.fog?PW.scene.fog.far:900, _R=_L?_L.propRing(_fogF,agl,PW.camera&&PW.camera.fov,PW.renderer&&PW.renderer.domElement&&PW.renderer.domElement.height):1, _KR=_R+1;
     for(let di=-_KR;di<=_KR;di++) for(let dj=-_KR;dj<=_KR;dj++) want.add((pi+di)+'_'+(pj+dj));
     // (v256) one chunk at a time, built over several frames (generator, ~2.5 ms a frame on a phone / 4 ms otherwise); a job whose chunk is no longer wanted is dropped
     let job=PW._propJob; if(job&&(job.gen!==PW.gen||M.has(job.k)||!want.has(job.k))){ job=PW._propJob=null; }
@@ -19770,7 +19770,7 @@ function _propsLod(px,pz,agl){
   let k=1; try{ if(window.DMBudget&&DMBudget.on&&DMBudget.propsK) k=DMBudget.propsK(); }catch(e){}
   const fog=PW.scene&&PW.scene.fog?PW.scene.fog.far:900, _L=(window.DMLod&&DMLod.on)?DMLod:null;
   // (far-range 1) the distances come from the shared table (ui/dm-lod.js, per device class; same numbers as before on desktop / phone, the ladder's props stage scales them)
-  const farD=_L?_L.propCut(fog,agl):Math.max(260,Math.min(fog*1.05,agl>60?Math.max(260,fog*0.85):1400))*k, shD=(_L?_L.get('prop.shadow'):(GFX.isMobile?110:170))*k, half=SURF_CHUNK*0.71;
+  const farD=_L?_L.propCut(fog,agl,PW.camera&&PW.camera.fov,PW.renderer&&PW.renderer.domElement&&PW.renderer.domElement.height):Math.max(260,Math.min(fog*1.05,agl>60?Math.max(260,fog*0.85):1400))*k, shD=(_L?_L.get('prop.shadow'):(GFX.isMobile?110:170))*k, half=SURF_CHUNK*0.71;
   for(const g of M.values()){
     if(!g||g.userData.cx===undefined) continue;
     const d=Math.hypot(px-g.userData.cx,pz-g.userData.cz)-half, lv=g.userData._lv===true, vis=lv?d<farD*1.06:d<farD, cast=d<shD;   // (6% hysteresis: no flicker at the cut)
@@ -24830,7 +24830,7 @@ SkyGround.prototype.update=function(cam,budgetMs){
     if(!this.roots.has(k)) this.roots.set(k,this._node(dm.x0+i*T,dm.z0+j*T,T,null));
   }
   for(const [k,n] of this.roots) if(!keep.has(k)){ this._drop([n]); this.roots.delete(k); }
-  this.queue.length=0;
+  this.queue.length=0; this._rk=(window.DMLod&&DMLod.on)?DMLod.reliefK():0;
   for(const n of this.roots.values()) this._visit(n,c,0);
   // (v151) the ground under whoever is driving comes first: every tile on the chain from the root down to her feet (and its
   // siblings, which a level needs before it can take over from its parent) jumps the queue and is built this frame, whatever
@@ -24853,7 +24853,11 @@ SkyGround.prototype._visit=function(n,c,depth){
   this._measure(n,c);
   const far=(n._d>this.viewR||!n._vis)&&n.parent;   // beyond what can be seen: let it go
   n._hidden=!!far;
-  const split=!far&&n._vis&&n.size>this.MIN&&n._d<n.size*this.K;
+  // (far-range 8) relief-aware split: a tile that holds a cliff / scarp splits farther out (DMLod.reliefBoost), so the drop keeps its edge at range instead of a 50 m ramp.  The relief is the
+  // tile's OWN measured range (stored at build; an unbuilt tile uses its parent's), existing children keep 12 % hysteresis so a finished split never flips back.
+  const rk=this._rk||0, rel=n._rel!==undefined?n._rel:(n.parent&&n.parent._rel)||0;
+  const kk=this.K*(rk>0&&rel>0?1+Math.min(0.7,2.5*rel)*rk:1)*(n.kids?1.12:1);
+  const split=!far&&n._vis&&n.size>this.MIN&&n._d<n.size*kk;
   if(split){
     if(!n.kids){ const h=n.size/2; n.kids=[this._node(n.x0,n.z0,h,n),this._node(n.x0+h,n.z0,h,n),this._node(n.x0,n.z0+h,h,n),this._node(n.x0+h,n.z0+h,h,n)]; }
     if(!n.mesh) this.queue.push(n);   // every level gets its own tiles, so detail sharpens a level at a time (coarse first)
@@ -24937,7 +24941,7 @@ SkyGround.prototype._build=function(n){
   geo.computeBoundingSphere();
   const m=new THREE.Mesh(geo,this.mat); m.position.set(n.x0,0,n.z0); m.visible=false; m.userData.skyTile=n.size; m.frustumCulled=false;   // culled here, on the sphere
   if(GFX.shadows) m.receiveShadow=true;
-  this.group.add(m); n.mesh=m; n.minH=mn; n.maxH=mx; n.morph=morph;
+  this.group.add(m); n.mesh=m; n.minH=mn; n.maxH=mx; n._rel=(mx-mn)/n.size; n.morph=morph;
   if(morph) this._applyMorph(n,0);
 };
 // write the tile's vertices at morph amount w (0 = parent's shape, 1 = full detail)

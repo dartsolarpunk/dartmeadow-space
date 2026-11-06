@@ -36,6 +36,12 @@ Desktop values equal the previous hard-coded numbers (test: `propCut` == the old
 - **Meshlet / cluster LOD from meshoptimizer, baked in tools/:** not done. The impostor above is a runtime-clustered level with a known error; a proper offline chain (meshopt simplify + error per level, packed in the GLB) for the cliff and mansion needs a bake step in `tools/` and an asset re-export, which is the cliff/mansion lane's pipeline. `levelByError` already takes such a chain.
 - **Billboards for props / Bird Temple:** the selector and tests are in; the view baker (render 12 views to an atlas) and the atlas material are not, since they are untestable shader code here.
 
+## Part 3 (sw v289)
+- **Relief-aware ground tiles (ordinary terrain cliffs / coast scarps).** A far ground tile that holds relief splits farther out (`DMLod.reliefBoost`, up to x1.7 by class 0.4 / 0.7 / 1.0 and the ladder's ground stage, 12 % hysteresis for finished splits), so a drop keeps its edge at range instead of becoming a 50 m ramp. A height field still cannot hold a true overhang: those exist only in the near marching-cubes patch.
+- **Prop chunk cut and pre-roll ring are error-driven** (`propCutErr`): the fog-bound cut is capped where a typical prop (1.0-1.4 m) projects to 1.4-2.2 px, so a smaller drawing buffer or a narrower view draws fewer chunks and streams fewer rings.
+- **`tools/lod-chain/bake.mjs`** (offline; meshoptimizer MIT + gltf-transform): adds `<node>_E<k>` siblings sharing the source vertex buffers with shorter index buffers and `extras.dmError` (metres). Run on `ariel-home-512.glb` LOD1 (15,156 tris): 11.6k / 9.4k / 8.1k tris at 0.6 / 1.6 / 4.0 m. NOT shipped and NOT consumed at runtime yet (no re-exported GLB, no visual check); `levelByError` is the intended selector.
+- **Billboard baker: deliberately not built.** Rocks are 36-tri dodecahedra and trees ~24 tris, drawn as 3 instanced meshes per chunk: billboards would not be cheaper. It only pays for high-poly props (Bird Temple, places).
+
 ## Tests
 `node tools/tests/lod-unit.js` — table validity, class monotonicity, `propCut` equals the legacy formula, ring bounds (a chunk entering the wanted set is >= cut x hysteresis away), hysteresis has no flip-flop under jitter and exactly two transitions out and back, `fade` shape, vantage monotone in vt / ladder / class and never below the walk radius, glue class detection and ladder scaling in a sandbox.
 

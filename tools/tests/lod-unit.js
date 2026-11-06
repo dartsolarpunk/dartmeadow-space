@@ -184,4 +184,23 @@ function glue(q, GFX, bud) {
   const up = [-Math.sin(Math.PI / 4), 0, 0, Math.cos(Math.PI / 4)]; ok(L.chunkCulled(0, 0, up[0], up[1], up[2], up[3], 60, 1.7, 0, 900, 213) === false, 'looking straight up: no cull');
 }
 
+// 16. error-driven prop cut + relief-aware ground split
+{
+  for (const t of L.TIERS) {
+    ok(L.propCutErr(t, 420, 0, 1, 0, 0) === L.propCut(t, 420, 0, 1), 'unknown view -> table cut');
+    for (const H of [480, 720, 1080, 1440]) for (const fov of [50, 60, 90]) for (const fog of [280, 420, 820]) {
+      const c = L.propCutErr(t, fog, 0, 1, fov, H); ok(c <= L.propCut(t, fog, 0, 1) + 1e-9 && c >= L.get(t, 'prop.cutMin') - 1e-9, t + ' errCut bounds');
+    }
+    ok(L.propCutErr(t, 820, 0, 1, 60, 480) <= L.propCutErr(t, 820, 0, 1, 60, 1080) + 1e-9, t + ' smaller buffer -> nearer cut');
+    ok(L.propCutErr(t, 820, 0, 1, 90, 1080) <= L.propCutErr(t, 820, 0, 1, 50, 1080) + 1e-9, t + ' wider fov -> nearer cut');
+    ok(Math.abs(L.propCutErr(t, 820, 0, 0.45, 60, 1080) - 0.45 * L.propCutErr(t, 820, 0, 1, 60, 1080)) < 1e-9, t + ' ladder scales last');
+    let prev = 1; for (const range of [0, 5, 20, 60, 150, 400]) { const b = L.reliefBoost(t, range, 400, 1); ok(b >= prev - 1e-12 && b >= 1 && b <= 1.7 + 1e-9, t + ' reliefBoost shape'); prev = b; }
+    ok(L.reliefBoost(t, 100, 400, 0.6) <= L.reliefBoost(t, 100, 400, 1) + 1e-12 && L.reliefBoost(t, 0, 400, 1) === 1 && L.reliefBoost(t, 100, 0, 1) === 1, t + ' reliefBoost ladder / flat / degenerate');
+  }
+  ok(L.reliefBoost('low', 200, 400, 1) <= L.reliefBoost('mobile', 200, 400, 1) && L.reliefBoost('mobile', 200, 400, 1) <= L.reliefBoost('desktop', 200, 400, 1), 'relief boost ordered by class');
+  // no flip-flop: simulate a tile whose split decision uses n._rel and 12 % hysteresis while the camera jitters at the boundary
+  const K = 1.8, size = 400, rel = 0.3, kk = (kids) => K * (1 + Math.min(0.7, 2.5 * rel) * 1) * (kids ? 1.12 : 1); let kids = false, flips = 0, seed = 9; const rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
+  for (let i = 0; i < 5000; i++) { const d = size * K * 1.7 + (rnd() - 0.5) * size * 0.3; const split = d < size * kk(kids); if (split !== kids) { flips++; kids = split; } } ok(flips <= 3, 'split hysteresis flips: ' + flips);
+}
+
 console.log('lod-unit OK (' + n + ' checks)');

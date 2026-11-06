@@ -1,0 +1,7 @@
+{
+  "name": "dm-lod-chain",
+  "private": true,
+  "type": "module",
+  "description": "Offline LOD-chain baker for DART Meadow GLBs (meshoptimizer, MIT). Not shipped to the browser.",
+  "dependencies": { "@gltf-transform/core": "^4.0.0", "@gltf-transform/extensions": "^4.0.0", "meshoptimizer": "^1.3.0" }
+}
