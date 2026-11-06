@@ -36,7 +36,7 @@
     t.generateMipmaps = !!mips; t.colorSpace = THREE.NoColorSpace; t.needsUpdate = true; return t;
   }
   function allocTextures(THREE, tier, spec, P) {
-    const tex = { cells: null, cellsData: null, bands: [], data: [], detail: null, detailData: null, caustic: null, causticData: null, shore: null, shoreData: null, bytes: 0 };
+    const tex = { cells: null, cellsData: null, bands: [], data: [], detail: null, detailData: null, caustic: null, causticData: null, shore: null, shoreData: null, cover: null, coverData: null, bytes: 0 };
     spec.bands.forEach((b) => {
       const d = new Uint8Array(b.T * b.T * 4); for (let i = 0; i < b.T * b.T; i++) { d[i * 4] = 128; d[i * 4 + 1] = 128; d[i * 4 + 2] = 128; d[i * 4 + 3] = 0; d[i * 4 + 3] = 0; }
       tex.data.push(d); tex.bands.push(mkTex(THREE, d, b.T, b.T, true)); tex.bytes += b.T * b.T * 4 * 1.34;
@@ -54,8 +54,14 @@
     const st = new THREE.DataTexture(tex.shoreData, sN, sN, THREE.RGBAFormat, THREE.HalfFloatType);
     st.wrapS = st.wrapT = THREE.ClampToEdgeWrapping; st.magFilter = st.minFilter = THREE.LinearFilter; st.generateMipmaps = false; st.colorSpace = THREE.NoColorSpace; st.needsUpdate = true;
     tex.shore = st; tex.bytes += sN * sN * 8;
+    // water coverage mask (lowest natural ground above the sea, coarse; see core.coverJob): R half float. 60 = 'high ground' until built, but coverOn=0 keeps it unused
+    const cN = coverN(tier); tex.coverData = new Uint16Array(cN * cN * 4); for (let i = 0; i < cN * cN; i++) tex.coverData[i * 4] = h(-10);
+    const ct = new THREE.DataTexture(tex.coverData, cN, cN, THREE.RGBAFormat, THREE.HalfFloatType);
+    ct.wrapS = ct.wrapT = THREE.ClampToEdgeWrapping; ct.magFilter = ct.minFilter = THREE.LinearFilter; ct.generateMipmaps = false; ct.colorSpace = THREE.NoColorSpace; ct.needsUpdate = true;
+    tex.cover = ct; tex.bytes += cN * cN * 8;
     return tex;
   }
+  const coverN = (tier) => (tier.name === 'ultra' || tier.name === 'high') ? 64 : (tier.name === 'medium' ? 48 : 32);
   function disposeTextures() {
     const t = S.tex; if (!t) return;
     try { t.bands.forEach((x) => x.dispose()); t.detail.dispose(); if (t.cells) t.cells.dispose(); t.caustic.dispose(); t.shore.dispose(); } catch (e) { }
@@ -70,7 +76,7 @@
       sunDir: uniform(new THREE.Vector3(0.3, 0.8, 0.3).normalize()), sunCol: uniform(new THREE.Color(1, 0.96, 0.88)), skyTop: uniform(Cc(P.colors.skyTop)), skyHor: uniform(Cc(P.colors.skyHor)),
       deep: uniform(Cc(P.colors.deep)), shallow: uniform(Cc(P.colors.shallow)), scatter: uniform(Cc(P.colors.scatter)), foamCol: uniform(Cc(P.colors.foam)), absorb: uniform(Raw(P.absorb)),
       glowCol: uniform(Cc(P.glowCol)), glowCol2: uniform(Cc(P.glowCol2)), glow: uniform(P.glow), pulse: uniform(1), ice: uniform(P.ice), steam: uniform(P.steam),
-      under: uniform(0), curlOn: uniform(0), layerFar: uniform(260), hexFar: uniform(90), time: uniform(0), nRip: uniform(0, 'int'), shoreOn: uniform(0), shoreC: uniform(V3()), shoreP: uniform(V3()), wetTop: uniform(0), swashA: uniform(P.swash), swashT: uniform(0),
+      under: uniform(0), curlOn: uniform(0), layerFar: uniform(260), hexFar: uniform(90), time: uniform(0), nRip: uniform(0, 'int'), shoreOn: uniform(0), coverOn: uniform(0), coverC: uniform(V3()), shoreC: uniform(V3()), shoreP: uniform(V3()), wetTop: uniform(0), swashA: uniform(P.swash), swashT: uniform(0),
       bandAmt: [], bm: [], bg: [], boff: [], bhw: []
     };
     spec.bands.forEach((b, i) => {
@@ -96,7 +102,7 @@
       S.spec = core.buildSpectrum(P, tier);
       S.tex = allocTextures(THREE, tier, S.spec, P); S.U = makeUniforms(THREE, T, P, S.spec, tier);
       S.model = { bands: S.spec.bands.map((b, i) => ({ band: b, tile: S.tex.data[i], T: b.T })), layers: tier.layers, windRot: 0, amp: 1 };
-      S.t = 0; S.ready = 0; S.epoch++; S.t0 = now(); S.jobMs = 0; S.shore = null; S.active = true; S.on = true; S.lvl = 1; S.under = 0;
+      S.t = 0; S.ready = 0; S.epoch++; S.t0 = now(); S.jobMs = 0; S.shore = null; S.cover = null; S.cmTiles = null; S.active = true; S.on = true; S.lvl = 1; S.under = 0;
       S.job = bakeJob(); S.deliver = null; S.rip = new core.Ripples(Math.max(1, tier.ripples)); S.wetTop = 0;
       hookOcean();
       try { if (W.DMWaterFX && W.DMWaterFX.enabled()) S.fx = W.DMWaterFX.create(S); } catch (e) { S.fx = null; try { console.warn('[water] fx', e); } catch (_) { } }
@@ -199,12 +205,46 @@
     packRipples();
     if (S.fx) S.fx.tick(dt, ctx, S);
     if (tier.shore && ctx.H) shoreTick(dt, ctx);
+    if (ctx.Hw || ctx.H) coverTick(dt, ctx);
+    cullTick(dt);
     wetTick(dt);
   }
 
   /* ───────────────────────── CPU mirror (the board, swimmers, spray ride the surface the GPU draws) ───────────────────────── */
   function heightAt(x, z, t) { if (!S.active || !S.ready) return 0; const m = S.model; return C().heightAt(m, x, z, t == null ? S.t : t) * (S.shoreAmpAt ? S.shoreAmpAt(x, z) : 1); }
   function slopeAt(x, z, t) { if (!S.active || !S.ready) return { sx: 0, sz: 0 }; return C().slopeAt(S.model, x, z, t == null ? S.t : t); }
+
+  /* ───────────────────────── water coverage: no tile, no fragment over high ground ───────────────────────── */
+  // A coarse mask of the lowest natural ground (above the sea) over the whole clip-map span, rebuilt in slices when the player has moved a quarter of the way to its edge. It
+  // (1) drops every clip-map tile that cannot show water from the draw (cullTick: the index list is re-packed from the tiles that can), and (2) lets the fragment stage discard
+  // water over ground well above the sea (ui/dm-water-sea.js) with a smooth shore fade. Until the first build, and outside the grid, everything is drawn (conservative).
+  function coverTick(dt, ctx) {
+    const tier = S.tier, N = coverN(tier), span = Math.max(1024, Math.min(S.seaSpan || 4096, 4096)), cell = span / N;
+    const cv = S.cover || (S.cover = { job: null, cx: 1e9, cz: 1e9, wait: 0, N, cell, span, mask: new Float32Array(N * N), tmp: new Float32Array(N * N), has: false, ver: 0, tAge: 0 });
+    cv.wait -= dt; cv.tAge += dt; const px = ctx.x, pz = ctx.z; if (px == null) return;
+    if (!cv.job) {
+      const moved = Math.max(Math.abs(px - cv.cx), Math.abs(pz - cv.cz));
+      if (cv.wait <= 0 && (moved > span * 0.18 || cv.tAge > 40 || !cv.has)) { const Hf = ctx.Hw || ctx.H, cx = Math.round(px / cell) * cell, cz = Math.round(pz / cell) * cell; cv.job = (function* () { yield* C().coverJob(Hf, cx, cz, N, cell, tier.mobile ? 2 : 2, 0, cv.tmp); cv.mask.set(cv.tmp); cv.cx = cx; cv.cz = cz; cv.ver++; })(); cv.tAge = 0; }
+    }
+    if (cv.job) {
+      const t0 = now(), budget = tier.mobile ? 0.5 : 0.9; try { while (now() - t0 < budget) { const r = cv.job.next(); if (r.done) { cv.job = null; finishCover(cv); break; } } } catch (e) { cv.job = null; cv.wait = 8; try { console.warn('[water] cover', e); } catch (_) { } }
+    }
+  }
+  function finishCover(cv) {
+    const th = W.THREE.DataUtils.toHalfFloat, d = S.tex.coverData, m = cv.mask; for (let k = 0; k < m.length; k++) d[k * 4] = th(clamp(m[k], -200, 200));
+    S.tex.cover.needsUpdate = true; cv.has = true; cv.wait = 1; cv.dirty = true;
+    if (S.U) { S.U.coverC.value.set(cv.cx, cv.cz, cv.N * cv.cell); S.U.coverOn.value = 1; }
+    let wet = 0; for (let k = 0; k < m.length; k++) if (m[k] <= C().COVER_LAND) wet++; cv.wetFrac = wet / m.length; log('cover mask', cv.N + 'x' + cv.N, 'cell', cv.cell.toFixed(0), 'wet', (cv.wetFrac * 100).toFixed(0) + '%');
+  }
+  // re-pack the clip-map's index list from the tiles that can show water (cheap: a few hundred box tests; the buffer is rewritten only when the set changes)
+  function cullTick(dt) {
+    const cm = S.cmTiles, cv = S.cover; if (!cm || !cv || !cv.has || !S.mesh) return;
+    S.cullT = (S.cullT || 0) - dt; if (S.cullT > 0 && !cv.dirty) return; S.cullT = 0.1; cv.dirty = false;
+    const kept = C().tilesWet(cm.tiles, S.focus, cv.mask, cv.N, cv.cell, cv.cx, cv.cz, cm.flags); let h = 0; for (let k = 0; k < cm.flags.length; k++) h = (h * 31 + cm.flags[k] + 7) | 0;
+    if (h === cm.hash) return; cm.hash = h;
+    const out = cm.packed; let o = 0; for (let k = 0; k < cm.tiles.length; k++) if (cm.flags[k]) { const t = cm.tiles[k]; out.set(cm.full.subarray(t.start, t.start + t.count), o); o += t.count; }
+    const geo = S.mesh.geometry; geo.index.needsUpdate = true; geo.setDrawRange(0, o); cm.drawn = o; cm.keptTiles = kept;
+  }
 
   /* ───────────────────────── shore field ───────────────────────── */
   // N x N half-float texture around the player: R depth (sea level - ground, units), G wave travel time (s), B/A gradient of the travel time. Built in slices.
@@ -262,11 +302,11 @@
   /* ───────────────────────── clip-map mesh ───────────────────────── */
   function attachSea(mesh, span) {
     if (!S.active || !mesh || !W.THREE) return false;
-    const THREE = W.THREE, core = C(), g = S.tier.grid, want = Math.max(4096, span || 4096), levels = Math.min(9, core.levelsFor(g.n, g.c0, want)), cm = core.clipmap(g.n, g.c0, levels);
+    const THREE = W.THREE, core = C(), g = S.tier.grid, want = Math.max(4096, span || 4096), levels = Math.min(9, core.levelsFor(g.n, g.c0, want)), cm = core.clipmap(g.n, g.c0, levels, Math.max(2, g.n / 8));
     const geo = new THREE.BufferGeometry();
     const pos3 = new Float32Array(cm.pos.length / 2 * 3); for (let i = 0; i < cm.pos.length / 2; i++) { pos3[i * 3] = cm.pos[i * 2]; pos3[i * 3 + 2] = cm.pos[i * 2 + 1]; }
     geo.setAttribute('position', new THREE.BufferAttribute(pos3, 3)); geo.setAttribute('wpos', new THREE.BufferAttribute(cm.pos, 2)); geo.setAttribute('wlvl', new THREE.BufferAttribute(cm.lvl, 1)); geo.setAttribute('wmorph', new THREE.BufferAttribute(cm.morph, 2));
-    geo.setIndex(new THREE.BufferAttribute(cm.index, 1));
+    const packed = cm.index.slice(); geo.setIndex(new THREE.BufferAttribute(packed, 1)); S.cmTiles = { tiles: cm.tiles, flags: new Uint8Array(cm.tiles.length), full: cm.index, packed, hash: null, drawn: cm.index.length, keptTiles: cm.tiles.length };
     geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), cm.half * 1.5); geo.boundingBox = new THREE.Box3(new THREE.Vector3(-cm.half, -10, -cm.half), new THREE.Vector3(cm.half, 10, cm.half));
     if (mesh.geometry) mesh.geometry.dispose(); mesh.geometry = geo; mesh.rotation.set(0, 0, 0); mesh.position.set(0, mesh.position.y, 0); mesh.frustumCulled = false; mesh.userData.dmWater = true;
     S.mesh = mesh; S.seaSpan = want; S.levels = levels; crumb('live', 'waterVerts', cm.pos.length / 2);
@@ -280,7 +320,7 @@
     if (S.fx) { try { S.fx.dispose(); } catch (e) { } S.fx = null; }
     if (pumpT) { clearTimeout(pumpT); pumpT = 0; }
     if (S.bakeBegun) { crumb('end', 'water:bake'); S.bakeBegun = false; }
-    S.job = null; S.active = false; S.on = false; S.mesh = null; S.shore = null; S.matBuilt = false; S.wetTop = 0; S.bandDoneAt = null; S.sprayTex = null;
+    S.job = null; S.active = false; S.on = false; S.mesh = null; S.shore = null; S.cover = null; S.cmTiles = null; S.matBuilt = false; S.wetTop = 0; S.bandDoneAt = null; S.sprayTex = null;
     disposeTextures(); S.U = null; S.model = null;
     if (S.matCache) { try { S.matCache.dispose && S.matCache.dispose(); } catch (e) { } S.matCache = null; }
     crumb('live', 'water', 0);
@@ -289,7 +329,7 @@
   W.DMWater = {
     S, enabled, begin, end, tick, follow, attachSea, bakeNow, pump, heightAt, slopeAt, ripple,
     get active() { return S.active; }, get tier() { return S.tier; }, get identity() { return S.P; }, get ready() { return S.ready; },
-    status: () => ({ active: S.active, tier: S.tier && S.tier.name, ready: S.ready, bands: S.spec && S.spec.bands.length, jobMs: +S.jobMs.toFixed(0), wallMs: +S.bakeWall.toFixed(0), lvl: S.lvl, bytes: S.tex ? Math.round(S.tex.bytes) : 0, kind: S.P && S.P.kind, sig: S.P && S.P.sig, mats: S.mats, curl: S.fx && S.fx.curl ? S.fx.curl.status() : null, cells: !!(S.tex && S.tex.cells), shore: S.shore ? { has: S.shore.has, minD: S.shore.minD, ver: S.shore.ver } : null }),
+    status: () => ({ cover: S.cover && S.cmTiles ? { has: S.cover.has, wet: S.cover.wetFrac, tiles: S.cmTiles.keptTiles + '/' + S.cmTiles.tiles.length, idx: S.cmTiles.drawn + '/' + S.cmTiles.full.length } : null, active: S.active, tier: S.tier && S.tier.name, ready: S.ready, bands: S.spec && S.spec.bands.length, jobMs: +S.jobMs.toFixed(0), wallMs: +S.bakeWall.toFixed(0), lvl: S.lvl, bytes: S.tex ? Math.round(S.tex.bytes) : 0, kind: S.P && S.P.kind, sig: S.P && S.P.sig, mats: S.mats, curl: S.fx && S.fx.curl ? S.fx.curl.status() : null, cells: !!(S.tex && S.tex.cells), shore: S.shore ? { has: S.shore.has, minD: S.shore.minD, ver: S.shore.ver } : null }),
     _crumb: crumb, _log: log
   };
 })(typeof window !== 'undefined' ? window : globalThis);

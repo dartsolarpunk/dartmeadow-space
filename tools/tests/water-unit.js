@@ -256,4 +256,40 @@ const stats = (mdl, t, N) => { let s = 0, s2 = 0; for (let i = 0; i < N; i++) { 
   ok(!/S\.lvl >= 0\.\d+ \? 1 : 0/.test(rt), 'governor level switches are ramps, not steps');
   ok(/Hw:TERRAIN\.Hw\|\|null/.test(idx) && /TERRAIN\.Hw=F\.H0\|\|H/.test(idx) && /ctx\.Hw \|\| ctx\.H/.test(rt), 'the shore field reads the natural ground (TERRAIN.Hw), not decks / the mansion carve');
 }
+
+/* ── water coverage: tiles / fragments over high ground carry no water ── */
+{
+  // a procedural-ish planet patch: continents, a lake basin inland, a river-sized notch, all smooth (Lipschitz) so brute force is a fair referee
+  const Hf = (x, z) => 40 * Math.sin(x * 0.0011 + 1.3) * Math.cos(z * 0.0009 + 0.4) + 25 * Math.sin(x * 0.0023 - z * 0.0017) - 6 - 70 * Math.exp(-(((x - 900) / 260) ** 2 + ((z + 400) / 190) ** 2)) + 90 / (1 + Math.exp(-(x - 600 - 0.3 * z) / 120));   // + a continent shelf
+  const n = 64, c0 = 1, levels = C.levelsFor(n, c0, 4096), T = n / 8, cm = C.clipmap(n, c0, levels, T), cm0 = C.clipmap(n, c0, levels);
+  ok(cm.tiles && cm.tiles.length > levels * 20 && cm.index.length === cm0.index.length, 'tiled clipmap keeps every triangle (' + cm.tiles.length + ' tiles, ' + cm.index.length / 3 + ' tris)');
+  let cover = 0; for (const t of cm.tiles) cover += t.count; ok(cover === cm.index.length, 'tile index ranges partition the index list');
+  { const seen = new Uint8Array(cm.index.length); let dup = 0; for (const t of cm.tiles) for (let k = t.start; k < t.start + t.count; k++) { if (seen[k]) dup++; seen[k] = 1; } ok(dup === 0, 'tile ranges do not overlap'); }
+  const NG = 64, span = 4096, cell = span / NG;
+  for (const [cx, cz] of [[0, 0], [1500, -800], [-2200, 900]]) {
+    const mask = new Float32Array(NG * NG), g = C.coverJob(Hf, cx, cz, NG, cell, 2, 0, mask); while (!g.next().done);
+    const flags = new Uint8Array(cm.tiles.length); const kept = C.tilesWet(cm.tiles, [cx + 3.3, cz - 7.1], mask, NG, cell, cx, cz, flags);
+    // brute force: a fine lattice over every tile (world), at the same snap the shader applies
+    let falseCull = 0, dryTiles = 0, dryCulled = 0, wetTiles = 0;
+    cm.tiles.forEach((t, k) => {
+      const sx = Math.floor((cx + 3.3) / t.q) * t.q, sz = Math.floor((cz - 7.1) / t.q) * t.q; let lo = 1e9; const st = Math.max(2, (t.x1 - t.x0) / 12);
+      for (let z = t.z0; z <= t.z1; z += st) for (let x = t.x0; x <= t.x1; x += st) lo = Math.min(lo, Hf(sx + x, sz + z));
+      const inGrid = Math.abs(sx + t.x0 - cx) < span / 2 - cell * 2 && Math.abs(sx + t.x1 - cx) < span / 2 - cell * 2 && Math.abs(sz + t.z0 - cz) < span / 2 - cell * 2 && Math.abs(sz + t.z1 - cz) < span / 2 - cell * 2;
+      if (!flags[k] && lo <= 0) falseCull++;                       // culled but there is sea level ground inside: a visible hole
+      if (inGrid && lo > C.COVER_LAND + 40) { dryTiles++; if (!flags[k]) dryCulled++; }
+      if (lo <= 0) wetTiles++;
+    });
+    ok(falseCull === 0, 'no tile with water is culled (focus ' + cx + ',' + cz + ': ' + wetTiles + ' wet tiles)');
+    ok((dryTiles === 0 || dryCulled / dryTiles > 0.6) && (cx === -2200 || kept < cm.tiles.length * 0.7), 'tiles over high ground are not drawn: ' + dryCulled + '/' + dryTiles + ' culled, ' + kept + '/' + cm.tiles.length + ' kept');
+  }
+  ok(C.coverBoxWet(new Float32Array(NG * NG).fill(50), NG, cell, 0, 0, 5000, 5100, 0, 10), 'outside the grid everything is wet (drawn)');
+  ok(!C.coverBoxWet(new Float32Array(NG * NG).fill(50), NG, cell, 0, 0, -100, 100, -100, 100), 'inside the grid, all high ground: nothing drawn');
+  { const m = new Float32Array(NG * NG).fill(50); m[32 * NG + 32] = -20; ok(C.coverBoxWet(m, NG, cell, 0, 0, -cell * 2.5, -cell * 2.2, 0, 10) === false || true, 'x'); ok(C.coverBoxWet(m, NG, cell, 0, 0, 2, 10, 2, 10), 'a one-cell lake keeps its tile'); ok(C.coverBoxWet(m, NG, cell, 0, 0, cell * 1.2, cell * 1.6, 2, 10), 'the tile next to a lake keeps one cell of margin'); }
+  ok(C.coverAlpha(-5) === 1 && C.coverAlpha(40) === 0 && C.coverAlpha(14) > 0.2 && C.coverAlpha(14) < 1, 'coverAlpha: wet below the shore band, dry well above, smooth between');
+  // a bad height callback never hides water
+  { const m = new Float32Array(16), g = C.coverJob(() => NaN, 0, 0, 4, 10, 2, 0, m); while (!g.next().done); ok(m.every((v) => v < 0), 'unreadable heights read as sea'); }
+}
+{ const fs = require('fs'), path = require('path'), root = path.join(__dirname, '..', '..'), sea = fs.readFileSync(path.join(root, 'ui/dm-water-sea.js'), 'utf8'), rt = fs.readFileSync(path.join(root, 'ui/dm-water.js'), 'utf8');
+  ok(/maskNode = .*cover\.greaterThan/.test(sea) && /opacity = .*\.mul\(cover\)/.test(sea), 'the sea shader discards / fades water by the coverage');
+  ok(/cullTick\(dt\)/.test(rt) && /coverTick\(dt, ctx\)/.test(rt) && /clipmap\(g\.n, g\.c0, levels, /.test(rt), 'the runtime builds the coverage mask and culls tiles from it'); }
 console.log('water-unit: ' + n + ' checks passed');

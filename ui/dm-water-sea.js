@@ -40,7 +40,7 @@
     o = o || {};
     const THREE = W.THREE, T = THREE.TSL, P = S.P, U = S.U, tier = S.tier, spec = S.spec, tex = S.tex, pwf = o.pwf || null; S.pwf = pwf;
     const { Fn, If, Loop, float, vec2, vec3, vec4, mix, smoothstep, clamp, max, min, pow, exp, abs, dot, normalize, length, sin, cos, sqrt, floor, fract, texture, select,
-      attribute, varying, positionView, cameraNear, cameraFar, viewportDepthTexture, dFdx, dFdy, reflect, cameraPosition, cameraViewMatrix, cameraWorldMatrix, faceDirection } = T;
+      attribute, varying, step, positionView, cameraNear, cameraFar, viewportDepthTexture, dFdx, dFdy, reflect, cameraPosition, cameraViewMatrix, cameraWorldMatrix, faceDirection } = T;
     const m = new THREE.MeshStandardNodeMaterial({ transparent: true, depthWrite: false, side: THREE.DoubleSide });
     const nb = spec.bands.length, nl = tier.layers, F = (v) => float(v);
 
@@ -53,11 +53,11 @@
     const dDeep = Math.min(30, Math.max(6, 0.2 * P.lamS)), H0 = Math.max(0.3, P.HsS * 0.9), Ps = Math.sqrt(PI2 * P.lamS / P.g);
     const hasShore = tier.shore > 0;
     const shore = (xz, vtx) => {
-      if (!hasShore) return { d: F(80), T: F(0), g: vec2(0.0, 0.0), inside: F(0), amp: F(1), blend: F(0), ratio: F(0) };
+      if (!hasShore) return { raw: F(0), win: F(0), d: F(80), T: F(0), g: vec2(0.0, 0.0), inside: F(0), amp: F(1), blend: F(0), ratio: F(0) };
       const uv = shoreUV(xz), tx = vtx ? texture(tex.shore, uv).level(F(0)) : texture(tex.shore, uv), inside = shoreInside(uv).mul(smoothstep(-2.5, -0.6, tx.x)), d = max(mix(F(80), tx.x, inside), 0.05);
       const gain = clamp(pow(F(0.5 * P.lamS).div(d), 0.25), 1.0, 2.0), waveH = min(gain.mul(H0), d.mul(0.78)), amp = clamp(waveH.div(H0), 0.0, 1.0), ratio = gain.mul(H0).div(d.mul(0.78));
       const blend = float(1.0).sub(smoothstep(U.shoreP.x.mul(0.5), U.shoreP.x.mul(1.0), d)).mul(inside);
-      return { d, T: tx.y, g: vec2(tx.z, tx.w), inside, amp: mix(F(1), amp, inside), blend, ratio, waveH };
+      return { d, T: tx.y, g: vec2(tx.z, tx.w), inside, amp: mix(F(1), amp, inside), blend, ratio, waveH, raw: tx.x, win: shoreInside(uv) };
     };
     // one sea evaluation: slope (vec2), height, whitecap potential. vtx = vertex stage (level-0 fetch, swell + mid only, no footprint fade)
     let regMod = null;      // world-space gust-patch modulation of the shorter bands (set in the fragment stage before the sea is evaluated)
@@ -152,6 +152,13 @@
       return texture(tx, uv.add(hash2(v1))).mul(q.x).add(texture(tx, uv.add(hash2(v2))).mul(q.y)).add(texture(tx, uv.add(hash2(v3))).mul(q.z));
     };
     const sh = shore(xz, false), se = sea(xz, false, fp, sh), sw = shoreWave(sh);
+    // water coverage: nothing over ground well above the sea. Far field from the coarse coverage mask (lowest natural ground per cell, bilinear), near field from the shore field's exact
+    // depth; both fade smoothly. Outside either grid (or before they are built) the water is simply drawn.
+    const COVER_LAND = W.DMWaterCore.COVER_LAND, COVER_FADE = W.DMWaterCore.COVER_FADE;
+    const cUV = xz.sub(vec2(U.coverC.x, U.coverC.y)).div(U.coverC.z).add(0.5), cIn = step(0.0, cUV.x).mul(step(cUV.x, 1.0)).mul(step(0.0, cUV.y)).mul(step(cUV.y, 1.0)).mul(U.coverOn);
+    const coarseCover = mix(F(1.0), float(1.0).sub(smoothstep(COVER_LAND - 4, COVER_LAND + COVER_FADE - 4, texture(tex.cover, cUV).x)), cIn);
+    const nearCover = hasShore ? mix(F(1.0), smoothstep(-3.5, -2.5, sh.raw), sh.win) : F(1.0);
+    const cover = min(coarseCover, nearCover);
     let slope = se.sl.add(sw.sl), hgt = se.h.add(sw.h), foamLaceMix = null, foamLaceRaw = null, foamPatch = null, lavaHeat = null;
     // detail tile first (the foam, the capillary ripples and the ice read it): lace foam, pearl cells, micro slope
     const uvA = xz.mul(0.17).add(U.drift);
@@ -264,7 +271,7 @@
       color = mix(vec3(0.045, 0.037, 0.034), vec3(0.1, 0.08, 0.07), net.dust).mul(float(1.0).sub(heat.min(1.0).mul(0.8)));
     }
     const opBase = Math.max(0.85, o.opacity || 0.82);
-    let opacity = clamp(mix(F(0.28), F(opBase), smoothstep(0.0, 9.0, thick)).add(foam.mul(0.6)), 0.0, 1.0);
+    let opacity = clamp(mix(F(0.28), F(opBase), smoothstep(0.0, 9.0, thick)).add(foam.mul(0.6)), 0.0, 1.0).mul(cover);
     if (P.ice > 0.02) opacity = max(opacity, iceM.mul(0.97));
     if (!o.depthOK) opacity = F(Math.min(0.93, opBase)).add(foam.mul(0.07));
 
@@ -312,14 +319,14 @@
     function skyColUnder() { return mix(U.skyHor, U.skyTop, 0.5).mul(0.85); }
     m.colorNode = select(under, underCol, color);
     m.emissiveNode = select(under, underEm, emissive);
-    m.opacityNode = select(under, F(0.93), opacity);
+    m.opacityNode = select(under, F(0.93).mul(cover), opacity);
     const rough = clamp(float(P.rough).add(se.unres.add(0.002).sqrt().mul(1.6)).add(microN.length().mul(0.04)), 0.03, 1.0);
     m.roughnessNode = mix(rough, F(0.85), clamp(foam, 0.0, 1.0)); if (iceRough) m.roughnessNode = mix(m.roughnessNode, iceRough, iceM); if (isLava) m.roughnessNode = F(0.9);
     m.metalnessNode = F(0.12);
     // micro slope + ripples are in `slope`; the micro tile only roughens (cheap) - add it to the normal on High/Ultra near the camera
     const nFinal = tier.name === 'high' || tier.name === 'ultra' || (P.ice > 0.02 && tier.name === 'medium') ? normalize(nW.add(vec3(microN.x, 0.0, microN.y).mul(float(0.22).mul(float(1.0).sub(smoothstep(8.0, 40.0, distCam))))).mul(select(under, F(-1), F(1)))) : nW.mul(select(under, F(-1), F(1)));
-    if (pwf && pwf.ready()) { m.positionNode = pwf.nodeFor(posNode); m.userData._pwf = true; m.maskNode = pwf.mask(); m.normalNode = normalize(cameraViewMatrix.mul(vec4(pwf.rotN(vec3(flatP.x, F(0), flatP.z), nFinal), 0.0)).xyz); }
-    else { m.positionNode = posNode; m.normalNode = normalize(cameraViewMatrix.mul(vec4(nFinal, 0.0)).xyz); }
+    if (pwf && pwf.ready()) { m.positionNode = pwf.nodeFor(posNode); m.userData._pwf = true; m.maskNode = pwf.mask().and(cover.greaterThan(0.02)); m.normalNode = normalize(cameraViewMatrix.mul(vec4(pwf.rotN(vec3(flatP.x, F(0), flatP.z), nFinal), 0.0)).xyz); }
+    else { m.maskNode = cover.greaterThan(0.02); m.positionNode = posNode; m.normalNode = normalize(cameraViewMatrix.mul(vec4(nFinal, 0.0)).xyz); }
     if (o.envMap) m.envMap = o.envMap;
     if (W.__WDBG) { const d = W.__WDBG, v = d === 'h' ? vec3(hgt.mul(0.25).add(0.5)) : d === 'foam' ? vec3(foam) : d === 'bore' ? vec3(boreF) : d === 'phi' ? vec3(fract(sw.phi)) : d === 'pot' ? vec3(se.pot) : d === 'd' ? vec3(sh.d.div(20.0)) : d === 'blend' ? vec3(sh.blend) : d === 'ratio' ? vec3(sh.ratio.div(3.0)) : d === 'slope' ? vec3(slope.x.mul(2.0).add(0.5), slope.y.mul(2.0).add(0.5), 0.5) : vec3(0.0); m.colorNode = vec3(0.0, 0.0, 0.0); m.emissiveNode = v; m.opacityNode = F(1.0); m.lightsNode = null; try { m.lights = false; } catch (e) { } }
     m.userData.dmWater = true; S.mats++; S.matCache = m; S.matBuilt = true;

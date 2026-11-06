@@ -381,8 +381,8 @@
   // Concentric square rings, cell size doubling per level. Level l covers +-n*c0*2^l/2 minus the finer level inside it.
   // attributes: pos (x,z in the level's own frame), lvl (snap quantum 2*cell of that level), morph (dx,dz): the odd nodes on the OUTER edge of a level
   // (not the last) carry the unit step along the edge so the vertex shader can pull them to the average of their two even neighbours (no cracks).
-  function clipmap(n, c0, levels) {
-    const pos = [], lvl = [], morph = [], idx = [], H = n / 2;
+  function clipmap(n, c0, levels, T) {
+    const pos = [], lvl = [], morph = [], idx = [], H = n / 2, tileIdx = T ? new Map() : null, push = (l, i, j, v) => { if (!tileIdx) { for (let k = 0; k < v.length; k++) idx.push(v[k]); return; } const key = l * 1e6 + Math.floor((i + H) / T) * 1e3 + Math.floor((j + H) / T); let t = tileIdx.get(key); if (!t) { t = { l, ti: Math.floor((i + H) / T), tj: Math.floor((j + H) / T), v: [] }; tileIdx.set(key, t); } for (let k = 0; k < v.length; k++) t.v.push(v[k]); };
     for (let l = 0; l < levels; l++) {
       const c = c0 * Math.pow(2, l), q = 2 * c, map = new Map();
       const node = (i, j) => {
@@ -397,10 +397,13 @@
         if (l > 0 && i >= -hole && i < hole && j >= -hole && j < hole) continue;
         const a = node(i, j), b = node(i + 1, j), d = node(i, j + 1), e = node(i + 1, j + 1);
         // alternate the diagonal so the mesh is symmetric
-        if (((i + j) & 1) === 0) idx.push(a, d, b, b, d, e); else idx.push(a, d, e, a, e, b);
+        push(l, i, j, ((i + j) & 1) === 0 ? [a, d, b, b, d, e] : [a, d, e, a, e, b]);
       }
     }
-    return { pos: new Float32Array(pos), lvl: new Float32Array(lvl), morph: new Float32Array(morph), index: pos.length / 2 > 65535 ? new Uint32Array(idx) : new Uint16Array(idx), levels, n, c0, half: n * c0 * Math.pow(2, levels - 1) / 2 };
+    // tiles (T x T cells each, one level): the index list regrouped per tile so a runtime can draw only the tiles that can show water. x0..z1 are LOCAL extents (add the level's snap).
+    let tiles = null;
+    if (tileIdx) { tiles = []; for (const t of tileIdx.values()) { const c = c0 * Math.pow(2, t.l); t.start = idx.length; t.count = t.v.length; for (let k = 0; k < t.v.length; k++) idx.push(t.v[k]); t.x0 = (t.ti * T - H) * c; t.x1 = (t.ti * T + T - H) * c; t.z0 = (t.tj * T - H) * c; t.z1 = (t.tj * T + T - H) * c; t.q = 2 * c; delete t.v; tiles.push(t); } }
+    return { tiles, pos: new Float32Array(pos), lvl: new Float32Array(lvl), morph: new Float32Array(morph), index: pos.length / 2 > 65535 ? new Uint32Array(idx) : new Uint16Array(idx), levels, n, c0, half: n * c0 * Math.pow(2, levels - 1) / 2 };
   }
   function levelsFor(n, c0, want) { let l = 1; while (n * c0 * Math.pow(2, l - 1) < want) l++; return l; }
 
@@ -408,6 +411,32 @@
   // depth: Float32Array N*N (sea level - ground height, > 0 under water); returns T (seconds the wave takes from deep water, eikonal |grad T| = 1/c, c = sqrt(g d)) by fast sweeping
   // Repair a depth field in place: a height callback can answer NaN / Infinity / garbage while the ground it reads is still streaming in. Such cells become open water
   // (deepFill) so they can never read as a beach, and the number repaired is returned (the caller keeps the old field when too many were bad).
+  // ── water coverage mask: a coarse N x N grid of the lowest natural ground height (above the sea, metres) round a centre. Drawn tiles / fragments over ground well above the sea
+  // carry no water. Heights are sampled on a sub x sub lattice per cell and the MINIMUM kept (conservative: a cell with any low ground stays wet).
+  const COVER_LAND = 14, COVER_FADE = 8;      // a cell whose lowest ground is > 14 m above the sea cannot show water (swell + swash reach a few metres); the shader fades over 8 m more
+  function* coverJob(H, cx, cz, N, cell, sub, seaY, out) {
+    const x0 = cx - N * cell / 2, z0 = cz - N * cell / 2, st = cell / sub; let t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    for (let j = 0; j < N; j++) {
+      for (let i = 0; i < N; i++) {
+        let m = 1e9; for (let b = 0; b < sub; b++) for (let a = 0; a < sub; a++) { let h = H(x0 + i * cell + (a + 0.5) * st, z0 + j * cell + (b + 0.5) * st); if (!(h > -1e5 && h < 1e5)) h = seaY - 80; if (h - seaY < m) m = h - seaY; }
+        out[j * N + i] = m;
+      }
+      const t1 = (typeof performance !== 'undefined' ? performance.now() : Date.now()); if (t1 - t0 > 0.8) { yield; t0 = t1; }
+    }
+  }
+  // can any water show in the box [x0,x1] x [z0,z1] (world)? Looks at every cell the box touches plus one more all round (a shoreline between two cell centres is never lost). Outside the grid = wet.
+  function coverBoxWet(mask, N, cell, cx, cz, x0, x1, z0, z1) {
+    const gx = cx - N * cell / 2, gz = cz - N * cell / 2, i0 = Math.floor((x0 - gx) / cell) - 1, i1 = Math.floor((x1 - gx) / cell) + 1, j0 = Math.floor((z0 - gz) / cell) - 1, j1 = Math.floor((z1 - gz) / cell) + 1;
+    if (i0 < 0 || j0 < 0 || i1 >= N || j1 >= N) return true;
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) if (mask[j * N + i] <= COVER_LAND) return true;
+    return false;
+  }
+  // coverage fraction of the shader (mirror): 1 over water, 0 over high ground; v = bilinear mask value
+  const coverAlpha = (v) => 1 - sstep(COVER_LAND - 4, COVER_LAND + COVER_FADE - 4, v);
+  // which tiles of a tiled clip-map (clipmap(n, c0, levels, T)) are drawn for a focus: returns a Uint8Array flag per tile and the number kept
+  function tilesWet(tiles, focus, mask, N, cell, cx, cz, flags) {
+    let kept = 0; for (let k = 0; k < tiles.length; k++) { const t = tiles[k], sx = Math.floor(focus[0] / t.q) * t.q, sz = Math.floor(focus[1] / t.q) * t.q, w = coverBoxWet(mask, N, cell, cx, cz, sx + t.x0, sx + t.x1, sz + t.z0, sz + t.z1); flags[k] = w ? 1 : 0; kept += w ? 1 : 0; } return kept;
+  }
   function sanitizeDepth(d, deepFill) {
     let bad = 0; for (let k = 0; k < d.length; k++) { const v = d[k]; if (!(v > -1e5 && v < 1e5)) { d[k] = deepFill; bad++; } } return bad;
   }
@@ -715,7 +744,7 @@
   const API = {
     VERSION: 1, UNIT_M, G0, TIERS, TIER_ORDER, tierFor, tierBytes, windFor, identityFor, LIQUIDS, boilK,
     bandPlan, buildSpectrum, bakeBand, bakeBandSync, bakeDetail, bakeCaustics, LAYERS, layerUV, heightAt, slopeAt, bilin,
-    clipmap, levelsFor, eikonal, sanitizeDepth, landFade, farFade, shoal, swashProfile, wetStep, Ripples, Wake, Spray,
+    clipmap, levelsFor, eikonal, coverJob, coverBoxWet, coverAlpha, tilesWet, COVER_LAND, COVER_FADE, sanitizeDepth, landFade, farFade, shoal, swashProfile, wetStep, Ripples, Wake, Spray,
     iceLook, bakeCells, worleyId, CURL_NC, CURL_PT, curlCounts, curlShape, curlLUT, curlAmount, curlFronts, curlScratch, curlDetail, gridSample,
     util: { clamp, sstep, mix, hashStr, rng, ndtri, fbm, worley, h2 }
   };
