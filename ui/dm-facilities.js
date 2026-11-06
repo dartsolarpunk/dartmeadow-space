@@ -186,6 +186,7 @@
         const prof = [[0.01, 0], [8, 0], [6.8, H * 0.2], [5.4, H * 0.46], [7.6, H * 0.74], [11.5, H * 0.97], [9, H], [0.01, H]].map(p => new T.Vector2(p[0], p[1]));
         const lg = new T.LatheGeometry(prof, 22), tw = new T.Mesh(lg, m.tower);
         tw.position.set(o.x + Math.cos(a) * rr, 3.5, o.z + Math.sin(a) * rr); g.add(tw);
+        sol.push({ col: 'cyl', x: tw.position.x, z: tw.position.z, y0: 3.5, y1: 3.5 + H, r: 6.5, mat: 'stone' });   // (landfix) the tower is a solid column for DMCollide
         const cap = new T.Mesh(new T.CylinderGeometry(0.25, 0.25, 22, 6), m.trim); cap.position.set(tw.position.x, 3.5 + H + 10, tw.position.z); g.add(cap);
         const tip = new T.Mesh(new T.SphereGeometry(0.7, 8, 6), m.neonP); tip.position.set(tw.position.x, 3.5 + H + 21, tw.position.z); g.add(tip);
       }
@@ -193,6 +194,7 @@
       for (let i = 0; i < n; i++) {
         const a = rnd() * 6.283, rr = o.r * (0.45 + rnd() * 0.5), h = 0.8 + rnd() * 1.1;
         ps.set(o.x + Math.cos(a) * rr, 3.5 + 2.5 * h, o.z + Math.sin(a) * rr); sc.set(h, h, h); mt4.compose(ps, q, sc); trees.setMatrixAt(tn++, mt4);
+        sol.push({ col: 'cyl', x: ps.x, z: ps.z, y0: 3.5, y1: 3.5 + 5 * h, r: 0.55 * h + 0.15, mat: 'wood' });   // (landfix) island trees are solid trunks (cone: the trunk core, not the crown base)
       }
     });
     trees.count = tn; trees.instanceMatrix.needsUpdate = true; g.add(trees);
@@ -507,6 +509,7 @@
     const ct = Math.cos(th), st = Math.sin(th);
     const W = (lx, lz) => [px + lx * ct + lz * st, pz - lx * st + lz * ct];
     for (const s of list) {
+      if (s.col) { try { const D = window.DMCollide, w = W(s.x, s.z); if (D && D.addCylinder) D.addCylinder('facility', w[0], y0 + s.y0, y0 + s.y1, w[1], s.r, s.mat || 'stone'); } catch (e) { } continue; }
       if (s.circle) { const w = W(s.circle[0], s.circle[1]); F.solids.push({ circle: [w[0], w[1], s.circle[2]], y: y0 + s.y, x0: w[0] - s.circle[2], x1: w[0] + s.circle[2], z0: w[1] - s.circle[2], z1: w[1] + s.circle[2], _own: 1 }); }
       else if (s.obb) { const o = s.obb, w = W(o[0], o[1]), R = Math.hypot(o[2], o[3]); F.solids.push({ obb: [w[0], w[1], o[2], o[3], o[4]], y: y0 + s.y, x0: w[0] - R, x1: w[0] + R, z0: w[1] - R, z1: w[1] + R }); }
       else if (s.rect) { const r = s.rect, c4 = [W(r[0], r[1]), W(r[2], r[1]), W(r[2], r[3]), W(r[0], r[3])]; F.solids.push({ poly: c4, y: y0 + s.y, x0: Math.min(...c4.map(p => p[0])), x1: Math.max(...c4.map(p => p[0])), z0: Math.min(...c4.map(p => p[1])), z1: Math.max(...c4.map(p => p[1])) }); }
@@ -525,6 +528,7 @@
     if (window.DMLamps) { try { DMLamps.detach(); } catch (e) { } }
     if (window.DMMansionInt) { try { DMMansionInt.detach(); } catch (e) { } }
     for (const r of F.sites.values()) { if (r.group && r.group.parent) r.group.parent.remove(r.group); if (r.group && !r.mansion) dispose(r.group); }
+    try { if (window.DMCollide && DMCollide.clearGroup) DMCollide.clearGroup('facility'); } catch (e) { }
     F.car = null; F.sites.clear(); F.solids.length = 0; F.bay = null; DM.bay.inside = false; DM.bay.membrane = 0;
     crumb('end', 'fac:teardown');
   }

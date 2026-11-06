@@ -107,6 +107,12 @@
       rs.forEach((r, i) => { place(post, i, r.sw[0], r.sw[2], -r.sw[1], 0); place(plate, i, r.sw[0], r.sw[2], -r.sw[1], 0); plate.setColorAt(i, new THREE.Color(1, 0.8, 0.5)); });
       post.instanceMatrix.needsUpdate = true; plate.instanceMatrix.needsUpdate = true; if (plate.instanceColor) plate.instanceColor.needsUpdate = true; S.sg = new THREE.Group(); S.sg.add(post, plate); S.sg.visible = false; grp.add(S.sg); }
     rec.group.add(grp); grp.updateMatrixWorld(true); c.mapTag(grp);
+    // collision: every lamp pole (+ collar + plinth) and room switch post is a solid in DMCollide (group 'lamps'), so walking, the board and dynamic bodies meet them
+    try { const W = G.DMCollide; if (W && W.addCylinder) { W.clearGroup('lamps'); const me = grp.matrixWorld.elements, sc = Math.hypot(me[0], me[1], me[2]) || 1, wp = new THREE.Vector3(); let nc = 0;
+      const solid = (lx, ly, lz) => { wp.set(lx, ly, lz); grp.localToWorld(wp); W.addCylinder('lamps', wp.x, wp.y, wp.y + POLE_H * sc, wp.z, 0.11 * UPM * 1.4 * sc, 'metal'); W.addBox('lamps', wp.x, wp.y + 0.15 * UPM * sc, wp.z, 0.45 * UPM * sc, 0.15 * UPM * sc, 0.45 * UPM * sc, 0, 'stone'); nc += 2; };
+      for (const l of lamps) solid(l[0], l[2], -l[1]);
+      for (const r of R.ROOMS) if (r.sw) { wp.set(r.sw[0], r.sw[2], -r.sw[1]); grp.localToWorld(wp); W.addCylinder('lamps', wp.x, wp.y, wp.y + 1.05 * UPM * sc, wp.z, 0.2 * UPM * sc, 'metal'); nc++; }
+      S.nCol = nc; } } catch (e) { }
     // optional real lights
     const nl = Math.min(4, +(q.get('lamplights') || 0) | 0); S.nl = nl;
     if (nl > 0) { const PW = c.PW(); for (let i = 0; i < nl; i++) { const L = new THREE.PointLight(0xffc27a, 0, 55, 1.5); L.castShadow = false; L.userData.dmLamp = true; PW.scene.add(L); S.lights.push(L); } }
@@ -123,6 +129,7 @@
     return true;
   }
   function destroy() {
+    try { if (G.DMCollide && G.DMCollide.clearGroup) G.DMCollide.clearGroup('lamps'); } catch (e) { }
     try { if (S.grp && S.grp.parent) S.grp.parent.remove(S.grp); for (const g of S.geos) g.dispose(); for (const m of S.mats) m.dispose(); if (S.plates && S.plates.dispose) S.plates.dispose(); } catch (e) { }
     for (const L of S.lights) { try { if (L.parent) L.parent.remove(L); L.dispose && L.dispose(); } catch (e) { } }
     S.lights.length = 0; S.geos.length = 0; S.mats.length = 0; S.grp = null; S.built = false; try { if (G.DMLight) { G.DMLight.setLamps([]); G.DMLight.setLampLevel(0); G.DMLight.clearOverlays(); } } catch (e) { } S.sg = null; S.plates = null; S.U = null; S.on = 0; hideHud();

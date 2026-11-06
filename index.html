@@ -20023,6 +20023,7 @@ function updateAtmoFlight(dt){
   if(landing){
     // Settle toward hover height over the ground while braking.
     s.pos.y+=((groundH+4)-s.pos.y)*Math.min(1,dt*1.6);
+    try{ _landSteer(s,dt); }catch(e){}   // (landfix) a clear footprint under the board, whatever lamp / prop was below
   }
   if(s.pos.y<groundH+4){ s.pos.y=groundH+4; if(s.vel.y<0) s.vel.y=0; }
   const agl=s.pos.y-groundH;
@@ -20190,6 +20191,122 @@ function setupAtmoJoysticks(){
   mk('atmo-climb-zone','atmo-climb-knob','R');
 }
 
+// ── (landfix) SAFE LANDING SPOTS + LANDING WATCHDOG ──────────────────────────────────────────────────────────────────────────────────────────
+// Setting down on a lamp pole / prop / trunk / water / cliff used to jam the landing (she hung under the board, dropped out of frame, park + summon
+// went dead). Now: the landing target is a spot where BOTH her capsule and the skyboard's footprint (+margin) are clear (DMCollide.findClear: ring
+// search, slope limited, above water, clear of colliders); the board steers there while it lands and re-validates; the touchdown moves to it; the walk
+// start pushes her out of any solid; and a watchdog force-completes a landing that stalls (timeout / non-finite / below the terrain) and restores
+// park / summon. Every correction is logged: DMCrumb 'riderFix' + perf-log event (reason landMove / landForce:* / landUnstick / surfRepair).
+let _landTok=0, _landWd={sink:0,stuck:0,trans:0,tdAt:0};
+function _landSafe(x,z,yaw,o){
+  o=o||{}; const R={x,z,hx:x,hz:z,ok:true,moved:false,dist:0,tried:0}, W=window.DMCollide;
+  const gf=(typeof _surfHeight==='function'&&_surfHeight)||(typeof _atmoHeight==='function'&&_atmoHeight)||null;
+  if(!W||!W.enabled||!W.findClear||!gf||!isFinite(x+z)) return R;
+  const b=(typeof atmoBoard!=='undefined'&&atmoBoard)||(typeof surfBoard!=='undefined'&&surfBoard)||(typeof PW!=='undefined'&&PW.board)||null;
+  let bl=1.5, bw=0.4, sd=1.4;
+  try{ if(b){ const d=_surfBoardDims(b), sc=Math.abs(b.scale.x)||1; bl=d.half/sc; bw=d.halfW/sc; sd=Math.min(_terrainBoardSideWorld(b),1.4); } }catch(e){}
+  if(!isFinite(yaw)) yaw=0;
+  const rx=Math.cos(yaw), rz=-Math.sin(yaw), fx=-Math.sin(yaw), fz=-Math.cos(yaw);
+  const bx=o.her?x+rx*sd:x, bz=o.her?z+rz*sd:z;
+  let r; try{ r=W.findClear(bx,bz,{ground:gf,r:0.9,h:3.1,margin:0.4,step:0.6,slopeTan:0.7,waterMargin:0.4,bl,bw,ux:fx,uz:fz,side:[-rx*sd,-rz*sd],maxR:o.maxR||70,maxProbes:o.maxProbes||450}); }catch(e){ return R; }
+  R.ok=!!r.ok; R.moved=!!r.moved; R.dist=r.dist; R.tried=r.tried;
+  if(r.ok){ R.x=r.x; R.z=r.z; } else { R.x=bx; R.z=bz; }
+  R.hx=R.x-rx*sd; R.hz=R.z-rz*sd;
+  return R;
+}
+// put her + the board down at (hx,hz) on foot, clear any stuck transition and restore park / summon
+function _surfPlaceAt(hx,hz,yaw){
+  if(!surfPlayer||!isFinite(hx+hz)) return false;
+  let g=NaN; try{ g=_surfHeight(hx,hz); }catch(e){} if(!isFinite(g)||g<-5000) g=isFinite(surfPlayer.pos.y)?surfPlayer.pos.y-3.0:0; if(!isFinite(g)) g=0;
+  const sy=isFinite(yaw)?yaw:(surfPlayer.yaw||0), rx=Math.cos(sy), rz=-Math.sin(sy), sd=surfBoard?_surfBoardSide(surfBoard):SURF_BOARD_SIDE;
+  surfPlayer.pos.set(hx,g+3.0,hz); surfPlayer.vel.set(0,0,0); surfPlayer.onGround=true; surfPlayer.jumpActive=false;
+  if(CHAR.root&&CHAR.root.parent===PW.scene){ const s=CHAR.scaleForTerrain||CHAR.scaleForBoard||1; CHAR.root.position.set(hx,g+(CHAR.feetOffset||0)*s,hz); }
+  if(surfBoard){ surfBoard.visible=true; surfBoard.scale.setScalar(1); surfBoard.position.set(hx+rx*sd,g+SURF_BOARD_WAIST,hz+rz*sd); }
+  CHAR._transitioning=false;
+  try{ _boardCallReset(); }catch(e){}
+  return true;
+}
+// is she (feet = eye-3) inside a solid? (a standing-on-a-prop is fine: pushOut counts only the sideways penetration at her real feet height)
+function _surfInSolid(){
+  const W=window.DMCollide; if(!W||!W.enabled||!W.count()||!surfPlayer) return false;
+  const fy=surfPlayer.pos.y-3.0; if(!isFinite(fy+surfPlayer.pos.x+surfPlayer.pos.z)) return false;
+  try{ return W.pushOut(surfPlayer.pos.x,fy,surfPlayer.pos.z,0.7,3.1,0.6,[0,0])>0.12; }catch(e){ return false; }
+}
+function _landSteer(s,dt){   // while the board lands: keep a clear footprint under it, steering to the nearest clear spot (re-validated ~3x a second)
+  const now=performance.now(); if(!s.landT0) s.landT0=now;
+  if(!s.landTt||now-s.landTt>350){ s.landTt=now; const r=_landSafe(s.pos.x,s.pos.z,s.yaw); s.landT=r.ok&&r.moved?{x:r.x,z:r.z}:null; if(!r.ok&&!s.landWarn){ s.landWarn=true; _riderEvent('landNoSpot',['noClearSpot'],false); } }
+  if(s.landT){ const k=Math.min(1,dt*1.4); s.pos.x+=(s.landT.x-s.pos.x)*k; s.pos.z+=(s.landT.z-s.pos.z)*k; }
+}
+// the board itself ended up inside a solid (summon / mount / landing): slide it to the nearest clear footprint
+function _boardUnstick(b){
+  const W=window.DMCollide, gf=(typeof _surfHeight==='function')?_surfHeight:null; if(!W||!W.enabled||!W.count()||!gf||!b) return false;
+  let bl=1.5,bw=0.4; try{ const d=_surfBoardDims(b), sc=Math.abs(b.scale.x)||1; bl=d.half/sc; bw=d.halfW/sc; }catch(e){}
+  const th=b.rotation.y, o={ground:gf,r:0.3,h:0.6,margin:0.3,step:0.6,slopeTan:1.2,waterMargin:0.2,bl,bw,ux:Math.cos(th),uz:-Math.sin(th),maxR:14,maxProbes:200};
+  const r=W.findClear(b.position.x,b.position.z,o);
+  if(r.ok&&r.moved){ b.position.x=r.x; b.position.z=r.z; _riderEvent('landUnstick',['board',+r.dist.toFixed(1)],true); return true; }
+  return false;
+}
+function _landForce(reason){
+  const tok=++_landTok; let done=false;
+  try{
+    if(!PW.active||!PW.body) return false;
+    const s=atmoState, b=PW.board||atmoBoard||surfBoard;
+    let x=0,z=0,yaw=0;
+    if(s&&isFinite(s.pos.x+s.pos.z)){ x=s.pos.x; z=s.pos.z; yaw=isFinite(s.yaw)?s.yaw:0; }
+    else if(surfPlayer&&isFinite(surfPlayer.pos.x+surfPlayer.pos.z)){ x=surfPlayer.pos.x; z=surfPlayer.pos.z; yaw=surfPlayer.yaw||0; }
+    else if(b&&isFinite(b.position.x+b.position.z)){ x=b.position.x; z=b.position.z; }
+    const sf=_landSafe(x,z,yaw,{maxR:90});
+    if(surfaceActive&&surfPlayer){ done=_surfPlaceAt(sf.hx,sf.hz,yaw); _riderEvent('landForce:'+reason,['surface',sf.ok?'moved':'noSpot'],done); return done; }
+    if(!atmoActive||!b) return false;
+    // still in the sky / touching down: stand her on the ground at the safe spot, board beside, then the normal hand-over
+    let g=0; try{ const h=_surfHeight(sf.hx,sf.hz); if(isFinite(h)&&h>-5000) g=h; }catch(e){}
+    CHAR._transitioning=false;
+    const sc=CHAR.scaleForTerrain||CHAR.scaleForBoard||1, rx=Math.cos(yaw), rz=-Math.sin(yaw), sd=_surfBoardSide(b);
+    b.scale.setScalar(1); b.visible=true; b.position.set(sf.hx+rx*sd,g+SURF_BOARD_WAIST,sf.hz+rz*sd);
+    if(CHAR.loaded&&CHAR.root){
+      if(CHAR.root.parent&&CHAR.root.parent!==PW.scene) CHAR.root.parent.remove(CHAR.root);
+      if(CHAR.root.parent!==PW.scene) PW.scene.add(CHAR.root);
+      CHAR.root.scale.set(sc,sc,sc); CHAR.root.position.set(sf.hx,g+(CHAR.feetOffset||0)*sc,sf.hz); CHAR.root.rotation.set(0,(yaw-Math.PI/2)+CHAR_MOUNT_YAW_OFFSET+CHAR_TERRAIN_YAW_EXTRA,0);
+      CHAR.mounted=false; CHAR.stanceMode='stand'; CHAR.scene=PW.scene;
+      try{ _forceCharVisible(); }catch(e){ CHAR.root.visible=true; }
+      try{ setCharState('idle',{force:true,fade:0.15}); }catch(e){}
+    }
+    if(atmoState) atmoState.landing=true;
+    enterSurface(PW.body,PW.site,{inPlace:true,yaw});
+    done=true; _riderEvent('landForce:'+reason,['sky',sf.ok?'moved':'noSpot'],true);
+  }catch(e){ console.warn('[landfix] force',e); }
+  return done;
+}
+// ~2 Hz: stalled landing, lost / non-finite / sunk rider on foot, dead park + summon
+function _landWatchTick(){
+  try{
+    if(document.hidden||typeof PW==='undefined'||!PW.active) return;
+    const now=performance.now();
+    if(atmoActive&&!surfaceActive&&atmoState){
+      const s=atmoState, lt=s.landT0||0;
+      if(s.landing&&lt&&now-lt>16000){ s.landT0=now; _landForce('timeout'); return; }
+      if(s.touchdown){ if(!_landWd.tdAt) _landWd.tdAt=now; if(now-_landWd.tdAt>7000){ _landWd.tdAt=0; _landForce('touchdown'); return; } } else _landWd.tdAt=0;
+      if(!isFinite(s.pos.x+s.pos.y+s.pos.z)){ _landForce('nonfinite'); return; }
+    } else _landWd.tdAt=0;
+    if(surfaceActive){
+      if(!surfPlayer||!surfBoard){   // park / summon need both (BOARD_CALL's context): rebuild what is missing
+        if(!surfBoard&&PW.board) surfBoard=PW.board;
+        if(!surfPlayer&&CHAR.root){ const v=CHAR.root.position; surfPlayer={pos:new THREE.Vector3(v.x,v.y+3,v.z),vel:new THREE.Vector3(),yaw:0,pitch:0,grav:PW.pal.grav,onGround:true,jumpActive:false,camPos:PW.camera.position.clone()}; }
+        _riderEvent('surfRepair',['ctx'],!!(surfPlayer&&surfBoard)); return;
+      }
+      let g=NaN; try{ g=_surfHeight(surfPlayer.pos.x,surfPlayer.pos.z); }catch(e){}
+      const bad=!isFinite(surfPlayer.pos.x+surfPlayer.pos.y+surfPlayer.pos.z)||(isFinite(g)&&surfPlayer.pos.y<g-40)||!isFinite(surfBoard.position.x+surfBoard.position.y+surfBoard.position.z);
+      if(bad){ const px=isFinite(surfPlayer.pos.x)?surfPlayer.pos.x:(isFinite(surfBoard.position.x)?surfBoard.position.x:0), pz=isFinite(surfPlayer.pos.z)?surfPlayer.pos.z:(isFinite(surfBoard.position.z)?surfBoard.position.z:0); const sf=_landSafe(px,pz,surfPlayer.yaw,{her:true,maxR:90}); _surfPlaceAt(sf.hx,sf.hz,surfPlayer.yaw); _riderEvent('surfRepair',['sunk/nonfinite'],true); return; }
+      if(CHAR._transitioning){ if(!_landWd.trans) _landWd.trans=now; if(now-_landWd.trans>9000){ _landWd.trans=0; CHAR._transitioning=false; try{ _boardCallReset(); }catch(e){} _riderEvent('landForce:transition',['stuckTransition'],true); } } else _landWd.trans=0;
+      if(!CHAR._transitioning&&_surfInSolid()){ if(++_landWd.stuck>=3){ _landWd.stuck=0; const sf=_landSafe(surfPlayer.pos.x,surfPlayer.pos.z,surfPlayer.yaw,{her:true,maxR:60}); if(sf.ok){ _surfPlaceAt(sf.hx,sf.hz,surfPlayer.yaw); _riderEvent('landUnstick',['inSolid'],true); } } } else _landWd.stuck=0;
+      const T=BOARD_CALL;   // a summon that never arrives, or a park with a lost position
+      if(T.summon&&T.summonAt&&now-T.summonAt>20000){ _boardCallReset(); _riderEvent('landForce:summon',['stuckSummon'],true); }
+      if(T.parked&&T.parkPos&&!T.parkLocal&&!isFinite(T.parkPos.x+T.parkPos.y+T.parkPos.z)){ _boardCallReset(); _riderEvent('landForce:park',['badPark'],true); }
+    }
+  }catch(e){ console.warn('[landfix] watch',e); }
+}
+setInterval(_landWatchTick,500);
+
 // Land from atmospheric flight → walk mode at the current spot.
 // Plays the actual step-down transition (boardDismountSequence) first, in
 // the still-live atmo scene, so the player sees her get off the board for
@@ -20199,33 +20316,36 @@ function atmoLandHere(){
   // LAND: the board brakes and settles to hover height; once it's slow and
   // low, she steps off (_atmoTouchdown) into walk mode facing the same way.
   if(CHAR._transitioning || !atmoState || atmoState.landing) return;
-  atmoState.landing=true; atmoState.takeoff=0;
+  atmoState.landing=true; atmoState.takeoff=0; atmoState.landT0=performance.now(); atmoState.landT=null; atmoState.landTt=0; atmoState.landWarn=false; _landTok++;
   atmoThrottle=0; try{ $('atmo-throttle').value=0; }catch(e){}
   try{ window.DMGlobe&&DMGlobe.sync(); }catch(e){}
   toast('🛬 Landing…',1600);
 }
 function _atmoTouchdown(){
   if(!atmoActive||!PW.active) return;
-  if(CHAR._transitioning){ setTimeout(_atmoTouchdown,200); return; }
-  const body=PW.body, board=atmoBoard, s=atmoState, gen=PW.gen;
+  if(CHAR._transitioning){ const s0=atmoState; if(s0){ s0._tdTry=(s0._tdTry||0)+1; if(s0._tdTry>25) CHAR._transitioning=false; } setTimeout(_atmoTouchdown,200); return; }   // (landfix) a stuck flag is cleared after 5 s
+  const body=PW.body, board=atmoBoard, s=atmoState, gen=PW.gen, tok=_landTok;
   const yaw=(s&&isFinite(s.yaw))?s.yaw:0;
   if(!CHAR.loaded||!CHAR.root||!board){ enterSurface(body,PW.site,{inPlace:true,yaw}); return; }
   // the board sets down on the finished ground under it (built while it came in), back at walking size;
   // she steps off beside it (board-left) and the same world carries on under her feet
-  const groundY=_surfHeight(board.position.x,board.position.z);
+  const sfe=_landSafe(board.position.x,board.position.z,yaw);   // (landfix) set down where both she and the board fit
+  const bx0=board.position.x, bz0=board.position.z, bx1=sfe.ok?sfe.x:bx0, bz1=sfe.ok?sfe.z:bz0;
+  if(sfe.moved) _riderEvent('landMove',['touchdown',+sfe.dist.toFixed(1)],sfe.ok);
+  const groundY=_surfHeight(bx1,bz1);
   const side=Math.min(_terrainBoardSideWorld(board),1.4);
   const endYaw=(yaw-Math.PI/2)+CHAR_MOUNT_YAW_OFFSET+CHAR_TERRAIN_YAW_EXTRA;
   const by0=board.position.y, by1=groundY+0.08, sc0=board.scale.x;
   CHAR._transitioning=true;
   const t0=performance.now(), dur=420;
   (function descend(){
-    if(gen!==PW.gen||!atmoActive){ CHAR._transitioning=false; return; }
+    if(gen!==PW.gen||!atmoActive||tok!==_landTok){ if(tok===_landTok) CHAR._transitioning=false; return; }
     const t=Math.min(1,(performance.now()-t0)/dur), e=t*t*(3-2*t);
-    board.position.y=by0+(by1-by0)*e; board.scale.setScalar(sc0+(1-sc0)*e);
+    board.position.set(bx0+(bx1-bx0)*e,by0+(by1-by0)*e,bz0+(bz1-bz0)*e); board.scale.setScalar(sc0+(1-sc0)*e);
     if(t<1){ requestAnimationFrame(descend); return; }
     const size=CHAR.scaleForTerrain||CHAR.scaleForBoard||1;
     boardDismountSequence(PW.scene,groundY+(CHAR.feetOffset||0)*size,()=>{
-      if(gen!==PW.gen||!atmoActive) return;
+      if(gen!==PW.gen||!atmoActive||tok!==_landTok) return;
       enterSurface(body,PW.site,{inPlace:true,yaw});
     },{board,sideOffset:side,yaw,endYaw,endSize:size});
   })();
@@ -22983,8 +23103,13 @@ function _pwBeginWalk(opts){
   if(fresh){ x=opts.spawn.x; z=opts.spawn.z; }
   else if(CHAR.loaded&&CHAR.root){ const v=new THREE.Vector3(); CHAR.root.getWorldPosition(v); x=v.x; z=v.z; }
   else { x=board.position.x; z=board.position.z; }
-  let g=0; try{ const h=_surfHeight(x,z); if(isFinite(h)&&h>-5000) g=h; }catch(e){}
   const yaw=isFinite(opts.yaw)?opts.yaw:0;   // landing keeps her heading
+  // (landfix) never start on foot inside a lamp / prop / trunk: nearest clear spot for her and the board
+  try{ if(!isFinite(x+z)){ x=board.position.x; z=board.position.z; if(!isFinite(x+z)){ x=0; z=0; } }
+    let gg=0; try{ const h0=_surfHeight(x,z); if(isFinite(h0)&&h0>-5000) gg=h0; }catch(e){}
+    const W=window.DMCollide; if(W&&W.enabled&&W.count()&&W.pushOut(x,gg,z,0.7,3.1,0.6,[0,0])>1e-3){ const sf=_landSafe(x,z,yaw,{her:true,maxR:60}); if(sf.ok&&sf.moved){ x=sf.hx; z=sf.hz; if(CHAR.root&&CHAR.root.parent===PW.scene){ CHAR.root.position.x=x; CHAR.root.position.z=z; } _riderEvent('landMove',['walkStart',+sf.dist.toFixed(1)],true); } } }catch(e){}
+  let g=0; try{ const h=_surfHeight(x,z); if(isFinite(h)&&h>-5000) g=h; }catch(e){}
+  if(!fresh&&CHAR.root&&CHAR.root.parent===PW.scene) CHAR.root.position.y=g+(CHAR.feetOffset||0)*(CHAR.scaleForTerrain||CHAR.scaleForBoard||1);
   // the walking camera picks up from wherever the camera is now
   surfPlayer={pos:new THREE.Vector3(x,g+3.0,z),vel:new THREE.Vector3(),yaw,pitch:0,grav:PW.pal.grav,onGround:true,jumpActive:false,
     camPos:fresh?null:PW.camera.position.clone()};
@@ -26323,7 +26448,7 @@ function summonSkyboard(){
   }
   const dist=from.distanceTo(her);
   BOARD_CALL.parked=false;
-  BOARD_CALL.summon={t:0,dur:THREE.MathUtils.clamp(dist/(95*ft),1.8,4.2),from,ft,nose:c.nose};
+  BOARD_CALL.summon={t:0,dur:THREE.MathUtils.clamp(dist/(95*ft),1.8,4.2),from,ft,nose:c.nose}; BOARD_CALL.summonAt=performance.now();
   b.visible=true; b.position.copy(from);
   _bcTrail(c,true);
   _bcButtons();
@@ -26413,7 +26538,7 @@ function _boardCallTick(dt){
     T.look={x:p.x-c.her.x,z:p.z-c.her.z};
     T.lookW=Math.min(1,T.lookW+dt*3)*(k>0.92?Math.max(0,(1-k)/0.08):1);
     _bcTrailPush(c,dt,true);
-    if(k>=1){ T.summon=null; }
+    if(k>=1){ T.summon=null; T.summonAt=0; try{ _boardUnstick(b); }catch(e){} }
   } else {
     T.lookW=Math.max(0,T.lookW-dt*2.5); if(T.lookW<=0) T.look=null;
     if(T.trail) _bcTrailPush(c,dt,false);

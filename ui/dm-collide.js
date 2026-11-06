@@ -616,9 +616,9 @@
     W.clearRes = { x: 0, z: 0, ok: false, moved: false, tried: 0, dist: 0 };
     W.findClear = (x, z, o) => {
       const R_ = W.clearRes; R_.tried = 1; R_.moved = false; if (W.clearAt(x, z, o)) { R_.x = x; R_.z = z; R_.ok = true; R_.dist = 0; return R_; }
-      const st = o.ring || 1.6, maxR = o.maxR || 70, a0 = o.angle || 0; let budget = o.maxProbes || 600;
-      for (let rg = 1; rg * st <= maxR && budget > 0; rg++) {
-        const rad = rg * st, n = Math.max(8, Math.ceil(6.2831853 * rad / st));
+      const st = o.ring || 1.6, maxR = o.maxR || 70, a0 = o.angle || 0; let budget = o.maxProbes || 500, rad = 0;
+      for (let rg = 1; budget > 0; rg++) {
+        rad += rg <= 6 ? st : st * 2.2; if (rad > maxR) break; const n = Math.max(8, Math.ceil(6.2831853 * rad / (st * 1.5)));
         for (let k = 0; k < n && budget > 0; k++, budget--) { const a = a0 + (k & 1 ? -1 : 1) * Math.ceil(k / 2) * 6.2831853 / n, cx = x + Math.cos(a) * rad, cz = z + Math.sin(a) * rad; R_.tried++; if (W.clearAt(cx, cz, o)) { R_.x = cx; R_.z = cz; R_.ok = true; R_.moved = true; R_.dist = rad; return R_; } }
       }
       R_.x = x; R_.z = z; R_.ok = false; R_.dist = 0; return R_;

@@ -69,9 +69,9 @@ const CENSUS = [
   { file: 'index.html', pat: /InstancedMesh\(K\.cGeo/, id: 'scatter tree crowns (soft)', status: 'collider', proof: /kind:'ellipsoid',mat:'foliage'/ },
   { file: 'ui/dm-places.js', pat: /InstancedMesh\(o\.geometry/, id: 'settlement props', status: 'collider', proof: /kind:'bbox'/ },
   { file: 'index.html', pat: /InstancedMesh\(rockGeo,rockMat,count\)/, id: 'space asteroids / boulders (flight scene)', status: 'own', proof: /Bounding-sphere collision against celestial bodies/ },
-  { file: 'ui/dm-facilities.js', pat: /InstancedMesh\(new T\.ConeGeometry\(1\.4/, id: 'Ariel island trees (mansion area)', status: 'gap', owner: 'mansion worker (adaae78): register via DMCollide.regChunk / userData.col' },
+  { file: 'ui/dm-facilities.js', pat: /InstancedMesh\(new T\.ConeGeometry\(1\.4/, id: 'Ariel island trees (mansion area)', status: 'collider', proof: /col: 'cyl', x: ps\.x/ },
   { file: 'ui/dm-lamps.js', pat: /InstancedMesh\(new THREE\.PlaneGeometry/, id: 'lamp glow sprites', status: 'exempt', why: 'light sprites' },
-  { file: 'ui/dm-lamps.js', pat: /const mk = \(arr, mat, count, name\)/, id: 'Ariel street-lamp poles and heads (mansion area)', status: 'gap', owner: 'mansion worker (adaae78): poles are cylinders at the lamp plan positions (mansion-local frame)' },
+  { file: 'ui/dm-lamps.js', pat: /const mk = \(arr, mat, count, name\)/, id: 'Ariel street-lamp poles and heads (mansion area)', status: 'collider', proof: /W\.addCylinder\('lamps'/ },
   { file: 'ui/dm-marine.js', pat: /InstancedMesh\(geo,mat,cap\)/, id: 'marine life (fish)', status: 'exempt', why: 'swim-through ambient life in the water volume' },
   { file: 'ui/dm-fluid.js', pat: /JOTS_FluidDrops|JOTS_FluidFoam/, id: 'fluid drops / foam', status: 'exempt', why: 'effect particles (they collide with the fluid solver itself)' },
   { file: 'ui/dm-hazardbubble.js', pat: /S\.bub=new THREE\.InstancedMesh/, id: 'hazard bubble', status: 'exempt', why: 'effect volume' },
@@ -87,6 +87,7 @@ for (const s of sites) { if (/ui\/dm-(collide|collide-game)\.js/.test(s.f)) cont
 ok(unclassified === 0, 'every InstancedMesh spawner is classified in the census (' + unclassified + ' new)');
 for (const [k, c] of CENSUS.entries()) { ok(used.has(k) || c.pat.test(fs.readFileSync(path.join(root, c.file), 'utf8')), 'census entry still matches the code: ' + c.id); if (c.proof) ok(c.proof.test(fs.readFileSync(path.join(root, c.file), 'utf8')) || c.proof.test(html), 'collider proof present for ' + c.id); }
 const gaps = CENSUS.filter(c => c.status === 'gap'); const by = {}; CENSUS.forEach(c => { by[c.status] = (by[c.status] || 0) + 1; });
+ok(gaps.length === 0, 'no census gaps remain (' + gaps.map(g => g.id).join(', ') + ')');
 console.log('spawner census:', JSON.stringify(by), gaps.map(g => 'GAP ' + g.id + ' -> ' + g.owner).join('; '));
 // non-instanced spawners and the characters / structures, with the code that gives each a body
 const OTHER = [
@@ -94,6 +95,8 @@ const OTHER = [
   ['Bird Temple walking (TCOL) + step events', 'index.html', /W\.shipStride/], ['Bird Temple flight hull', 'index.html', /_btFlightCollide/], ['settlement walls (LOD0 GLB)', 'ui/dm-places.js', /regObject\(key,rec\.lod0/],
   ['creatures / NPCs', 'ui/dm-creatures.js', /npcStep/], ['other pilots (on foot / riding)', 'index.html', /DMCollide\.peerActor/], ['local rider on the board', 'index.html', /DMCollide\.riderActor\(true/],
   ['companion board', 'index.html', /_DCb\.pushOut/], ['parked board', 'index.html', /DMCollide\.parkedBoard/], ['board in low flight', 'index.html', /W\.sweepSphere\(_cx0/], ['water surface bodies', 'ui/dm-collide-game.js', /setWater\(/],
+  ['landing finds a clear footprint (her capsule + board)', 'index.html', /function _landSafe[\s\S]*findClear/], ['landing steers + re-validates', 'index.html', /_landSteer\(s,dt\)/], ['touchdown moves to the safe spot', 'index.html', /_landSafe\(board\.position\.x/],
+  ['walk start pushes her out of solids', 'index.html', /_riderEvent\('landMove',\['walkStart'/], ['board unstick after summon', 'index.html', /_boardUnstick\(b\)/], ['landing watchdog forces completion', 'index.html', /_landForce\('timeout'\)/], ['Ariel lamp poles', 'ui/dm-lamps.js', /addCylinder\('lamps'/], ['Ariel island trees + towers', 'ui/dm-facilities.js', /addCylinder\('facility'/],
   ['hair / cloth / fluid particles', 'ui/dm-cgroup.js', /DC\.sphereOut/], ['the local character', 'index.html', /DMCollide\.surfWalk/], ['scatter chunk registration + drop', 'index.html', /DMCollide\.dropChunk\('chunk#'/],
 ];
 for (const [name, f, re] of OTHER) ok(re.test(fs.readFileSync(path.join(root, f), 'utf8')), 'has a body: ' + name);
