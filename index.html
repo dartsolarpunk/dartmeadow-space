@@ -166,6 +166,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-governor.js?v=264"></script>
 <script src="ui/dm-budget.js?v=285"></script>
 <script src="ui/dm-lod.js?v=290"></script>
+<script src="ui/dm-terrain-lod.js?v=292"></script>   <!-- one terrain across every altitude band: shared slope / skirt / sea-tint contract between the globe map and the sky ground -->
 <script src="ui/dm-impostor.js?v=280"></script>   <!-- far-range LOD: vertex-clustering impostor (mansion LOD2, colours baked) -->   <!-- far-range LOD: the ONE distance table per device class (props, mansion, landmarks, vantage reach); ?lod=off|low|mobile|desktop -->
 <script src="ui/dm-light.js?v=278"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
 <script>/* (v136) no-op stub so the flight loop can never throw if dm-perf.js failed to load */
@@ -13082,7 +13083,7 @@ function updateBodies(dt){
         _approachBestDist=dist;_approachBestBody=b;
       }
       // getting close: dress the planet in the map of the ground you'd land on
-      if(!b._wmReq && dist<rad*(b.name==='Earth'?90:30) && !b.isAsteroid && b.type!=='Comet'){
+      if(!b._wmReq && dist<rad*((b.name==='Earth'||b.habitable)?90:30) && !b.isAsteroid && b.type!=='Comet'){
         b._wmReq=true;
         try{ worldMapFor(b,m=>{ b._wm=m; _applyWorldMapToFlightBody(b,m); }); }catch(e){ console.warn('[worldmap] flight',e); }
       }
@@ -18867,6 +18868,7 @@ function _worldMapTexture(m,pal){
   const D=ATMO_DEG_PER_UNIT, cell=(180/Hh)/D;   // map cell size in world units
   const sm=(a,b,v)=>{ const t=Math.min(1,Math.max(0,(v-a)/(b-a))); return t*t*(3-2*t); };
   const c=new THREE.Color();
+  const gm=!!(m.body&&m.body.habitable&&m.body.name!=='Earth'&&window.DMTerrainLod&&typeof surfaceBiomeColor==='function'), gmSeed=gm?_worldSeed(m.body):0, lonM0=x=>(x+0.5)/W*360-180;
   const styleAt=(lat,lon)=>window.DMWorldStyle&&m.body?DMWorldStyle.styleFor(m.body,pal,{lat,lon}):'lush';
   for(let y=0;y<Hh;y++){
     const lat=90-(y+0.5)/Hh*180, la=Math.abs(lat), cw=Math.max(0.15,Math.cos(lat*Math.PI/180));
@@ -18876,6 +18878,15 @@ function _worldMapTexture(m,pal){
       const slope=Math.min(1,Math.hypot(hx/(2*cell*cw),hz/(2*cell))*1.5);
       const ws=styleAt(lat,(x+0.5)/W*360-180);
       const lonM=(x+0.5)/W*360-180;
+      if(gm){
+        // (terrain-lod) home world: colour the map with the ground's OWN biome function and slope definition (ui/dm-terrain-lod.js groundSlope = the sky-ground's (1-ny)*1.6 at this cell),
+        // sea tinted linearly over 40 m like the coarse ground tiles, bytes sRGB-encoded — so the globe, the high atmosphere and the landing are one colouring.
+        if(pal.water&&h<0) c.copy(wShal).lerp(wDeep,DMTerrainLod.seaT(h));
+        else c.copy(surfaceBiomeColor(lonM0(x)/D,-lat/D,h,DMTerrainLod.groundSlope(hx,hz,cell),pal,gmSeed,{siteLat:lat,style:ws,flat:true}));
+        c.convertLinearToSRGB();
+        d[i*4]=Math.min(255,c.r*255); d[i*4+1]=Math.min(255,c.g*255); d[i*4+2]=Math.min(255,c.b*255); d[i*4+3]=255;
+        continue;
+      }
       const dW=(m.body&&m.body.name==='Earth'&&window.DMWorldStyle&&DMWorldStyle.earthDesertW)?DMWorldStyle.earthDesertW(lat,lonM):-1;
       const isEarthMap=!!(m.body&&m.body.name==='Earth');
       if(isEarthMap&&h>=0&&window.DMEarthPaint){
@@ -25332,9 +25343,11 @@ function surfaceBiomeColor(x,z,h,slope,pal,seed,opts){
   // palette colours are converted once per palette (not ~15 new Colours per vertex: that was the ground build's GC churn)
   const K=_sbcPal(pal), c1=K.c1, c2=K.c2, cr=K.cr, sand=K.sand, dirt=K.dirt, snow=K.snow, ice=K.ice, T=_SBC_T||(_SBC_T=[0,1,2,3,4].map(()=>new THREE.Color()));
   const hRel=h-siteBias;
-  const n=(_fbm(x*0.08+seed,z*0.08+seed,seed+81,3)-0.5);
-  const n2=(_fbm(x*0.21+seed,z*0.21+seed,seed+91,2)-0.5);
-  const nFine=_fbm(x*0.55+seed,z*0.55+seed,seed+101,2);
+  // opts.flat (the globe map of a home world): the mean of the noise terms, since a map pixel is ~60 m wide and would only alias them into speckle; every threshold is the ground's own
+  const flat=!!opts.flat;
+  const n=flat?0:(_fbm(x*0.08+seed,z*0.08+seed,seed+81,3)-0.5);
+  const n2=flat?0:(_fbm(x*0.21+seed,z*0.21+seed,seed+91,2)-0.5);
+  const nFine=flat?0.5:_fbm(x*0.55+seed,z*0.55+seed,seed+101,2);
   const smooth=(e0,e1,v)=>{const u=Math.min(1,Math.max(0,(v-e0)/(e1-e0)));return u*u*(3-2*u);};
   if(_sbcIsEarth()&&window.DMEarthPaint){
     // (v132) Earth: the one Earth paint at this point's own lat/lon (MODIS land cover + glacier mask), the same the
