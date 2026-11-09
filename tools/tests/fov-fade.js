@@ -163,7 +163,10 @@ for (const S of scen) {
   ok(!/new [A-Z]|\bnew\b|=>|\[\s*\]|\{\s*\}/.test(hot.replace(/\/\/[^\n]*/g, '')), 'far canopy tick / write / fill: no allocation, no closure');
   ok(/_rng32\(_chunkSeed\(i,j,\(TERRAIN\.seed\|\|1\)\)\^0x2f6b1c3d\)/.test(tk) && !/_hmChunkScatter/.test(tk), 'far canopy draws from its own seed stream (the near scatter, and so every existing world, is unchanged)');
   const gen = cut('function* _hmChunkScatterG(i,j){', 'function _disposeProps(g){'), gen0 = require('child_process').execSync('git show 78d0e81:index.html', { cwd: root, maxBuffer: 1 << 26 }).toString();
-  ok(gen0.indexOf(gen) >= 0, 'the near chunk scatter is byte-identical to 78d0e81');
+  // (Wave 1 t1472) the ground-projector circles are deleted: the chunk-prop group no longer opts in as a projector receiver. The baseline is compared
+  // with exactly that tag (and its comment) taken out; every placement / seed / instance line must still be byte-identical.
+  const gen0n = gen0.replace("g.name='JOTS_ChunkProps'; g.userData.groundMark=true;", "g.name='JOTS_ChunkProps';").replace('   // node materials (what the renderer would convert these to anyway) so the laser projectors can light them', '   // node materials (what the renderer would convert these to anyway)');
+  ok(gen0n.indexOf(gen) >= 0, 'the near chunk scatter is byte-identical to 78d0e81 (minus the deleted ground-mark receiver tag)');
   // run it: stub THREE math, the real tick on Solenne, mobile class
   const tierM = (ini.match(/R=\(\{low:(\d+),mobile:(\d+),desktop:(\d+)\}\)/) || []).slice(1).map(Number), tierK = (ini.match(/K=\(\{low:(\d+),mobile:(\d+),desktop:(\d+)\}\)/) || []).slice(1).map(Number);
   class M4 { constructor() { this.s = [1, 1, 1]; this.p = [0, 0, 0]; } compose(p, q, s) { this.p = [p.x, p.y, p.z]; this.s = [s.x, s.y, s.z]; return this; } makeScale(x, y, z) { this.s = [x, y, z]; return this; } }
