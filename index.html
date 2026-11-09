@@ -19695,7 +19695,7 @@ function _pwWorldTick(dt){
   // tiles live out there (one 33x33 grid each, a few dozen more) and everything past the camera's horizon is already culled whole (SkyGround._measure), so the
   // cost is small and bounded; the haze opens to where that ground starts to dissolve (_skyFillFog, below).  Props keep the old haze (their cost, PW._propFog).
   const groundR=(scene.fog&&!space)?_skyGroundR(viewR,_skyHorizonReach(R,alt),skyR):viewR;
-  const G=PW.ground; G.viewR=groundR;
+  const G=PW.ground; G.viewR=groundR; PW._groundR=groundR;
   // the sky dome thins to space as you climb (airless worlds: open space all the way down)
   const pal=PW.pal, dome=pal.atmos?1-_smooth01((alt-400)/1400):0;
   PW.skyK=dome;
@@ -19724,6 +19724,7 @@ function _pwWorldTick(dt){
   try{ if(window.DMWater&&DMWater.active) DMWater.tick(dt,{camera:cam,scene,x:px,z:pz,y:f.y,H,Hw:TERRAIN.Hw||null,mode:PW.mode}); }catch(e){ if(!window._dmwWarn){ window._dmwWarn=1; console.warn('[water] tick',e); } }
   try{ if(window.DMLight&&DMLight.on) DMLight.tick(dt,{x:px,y:f.y,z:pz,H,sunDir:TERRAIN.sky?TERRAIN.sky.sunDir:null,day:TERRAIN.sky?TERRAIN.sky.day:1,scene,renderer:flightRenderer,walk:mode!=='space'}); }catch(e){ if(!window._dmlWarn){ window._dmlWarn=1; console.warn('[light] tick',e); } }   // (ui/dm-light.js) time-sliced probe + height-cache update, amortised <= ~1-2 ms
   _pwPropsTick(px,pz,space?1e9:(fly?agl:0));
+  if((PW._lqF=(PW._lqF||0)+1)%6===3) _lodQTick();   // (fov-fill 2) the quality fade chain's distances -> uniforms, a few times a second (no allocation)
   try{ if(window.DMPlaces) DMPlaces.tick(dt,_plEnv()); if(window.DMCreatures) DMCreatures.tick(dt,_plEnv()); }catch(e){ if(!window._plWarn){ window._plWarn=1; console.warn('[places]',e); } }
   // marching cubes + the refined patch: always on foot; in the sky only low and slow
   // (the approach), so they're built round the touchdown point before she lands
@@ -19803,7 +19804,7 @@ function _pwPropsTick(px,pz,agl){
     // (far-range 3) PRE-ROLL: chunks stream in RINGS of the distance table (ui/dm-lod.js propRing: ceil(draw cut x 1.06 / 300 m), capped 1 / 2 / 3 by device class and by the
     // ladder's props stage), so a chunk is built while it is still beyond the draw cut (hidden, see below) and is never built inside the drawn range.  The keep set is one ring
     // wider than the load set: walking back and forth over a chunk border no longer drops and rebuilds the chunk behind you.
-    const _pf=PW._propF=(PW._propF||0)+1, _L=(window.DMLod&&DMLod.on)?DMLod:null, _fogF=PW._propFog||(PW.scene&&PW.scene.fog?PW.scene.fog.far:900), _R=_L?_L.propRing(_fogF,agl,PW.camera&&PW.camera.fov,PW.renderer&&PW.renderer.domElement&&PW.renderer.domElement.height):1, _KR=_R+1;
+    const _pf=PW._propF=(PW._propF||0)+1, _L=(window.DMLod&&DMLod.on)?DMLod:null, _fogF=PW._propFog||(PW.scene&&PW.scene.fog?PW.scene.fog.far:900), _R=_L?_L.propRing(_fogF,agl,PW.camera&&PW.camera.fov,PW.renderer&&PW.renderer.domElement&&PW.renderer.domElement.height):1, _KR=_R+1; PW._propRingN=_R;
     for(let di=-_KR;di<=_KR;di++) for(let dj=-_KR;dj<=_KR;dj++) want.add((pi+di)+'_'+(pj+dj));
     // (v256) one chunk at a time, built over several frames (generator, ~2.5 ms a frame on a phone / 4 ms otherwise); a job whose chunk is no longer wanted is dropped
     let job=PW._propJob; if(job&&(job.gen!==PW.gen||M.has(job.k)||!want.has(job.k))){ job=PW._propJob=null; }
@@ -19837,6 +19838,7 @@ function _pwPropsTick(px,pz,agl){
     if(g&&g.userData._colWait&&Math.max(Math.abs(g.userData.cx/C-pi),Math.abs(g.userData.cz/C-pj))<=1.01){ g.userData._colWait=false; if(window.DMCollide) DMCollide.regChunk('chunk#'+k,g); }
   }
   _propsLod(px,pz,agl);
+  _farCanopyTick(px,pz,agl);
 }
 function _propAdopt(k,g,ci,cj,pi,pj){
   const M=PW.props; g.visible=false; PW._plodF=5; PW.propsGroup.add(g); M.set(k,g);   /* hidden until _propsLod shows it inside the draw cut (next frame) */
@@ -19878,6 +19880,7 @@ function _propsCull(px,pz){
   }
 }
 function _propFadeTick(now){
+  if(_propShared&&((PW._pdS=(PW._pdS||0)+1)%30===0)) _propDistMask();
   const L=(window.DMLod&&DMLod.on)?DMLod:null; if(!L||!L.fadeOn) return;
   if(!PW._propFadeOK&&((PW._pfS=(PW._pfS||0)+1)%30===0)&&PW.propsGroup&&PW.propsGroup.children.length) PW._propFadeOK=L.fadeMask(PW.propsGroup)>0;
   const F=PW._propFades; if(!F||!F.length) return;
@@ -19897,6 +19900,7 @@ function _propsLod(px,pz,agl){
   const fog=PW._propFog||(PW.scene&&PW.scene.fog?PW.scene.fog.far:900), _L=(window.DMLod&&DMLod.on)?DMLod:null;   // (fov-fill) the haze without the horizon fill
   // (far-range 1) the distances come from the shared table (ui/dm-lod.js, per device class; same numbers as before on desktop / phone, the ladder's props stage scales them)
   const farD=_L?_L.propCut(fog,agl,PW.camera&&PW.camera.fov,PW.renderer&&PW.renderer.domElement&&PW.renderer.domElement.height):Math.max(260,Math.min(fog*1.05,agl>60?Math.max(260,fog*0.85):1400))*k, shD=(_L?_L.get('prop.shadow'):(GFX.isMobile?110:170))*k, half=SURF_CHUNK*0.71, _ag=(agl>0&&isFinite(agl))?agl:0;   // (v290) 3-D chunk distance: altitude counts, so props 20 km below you are not drawn
+  PW._propCutD=farD;   // (fov-fill 2) the near chunks' draw cut: their per-pixel fade ends inside it (_lodQTick), the far canopy takes over from there
   for(const g of M.values()){
     if(!g||g.userData.cx===undefined) continue;
     const d=Math.hypot(Math.max(0,Math.hypot(px-g.userData.cx,pz-g.userData.cz)-half),_ag), lv=g.userData._lv===true, vis=lv?d<farD*1.06:d<farD, cast=d<shD;   // (6% hysteresis: no flicker at the cut)
@@ -19904,6 +19908,117 @@ function _propsLod(px,pz,agl){
     if(g.userData._cast===cast) continue; g.userData._cast=cast;
     const ch=g.children; for(let q=0;q<ch.length;q++){ const o=ch[q]; if(!o.isInstancedMesh) continue; if(o.userData._cs0===undefined) o.userData._cs0=!!o.castShadow; o.castShadow=cast&&o.userData._cs0; }
   }
+}
+// ── (fov-fill 2) the QUALITY FADE CHAIN to the horizon (ui/dm-lod.js qualityBands; tools/tests/fov-fade.js) ──────────────────────────────────────────────
+// 78d0e81 opened the haze to 0.82 x groundR (~2.4 km from the HOME deck) but every quality layer still stopped where it did under the old 420 u haze: the props
+// and their shadows at PW._propFog (a hard line in clear air), the close-up texture at 22-40 u, the probe lighting at ~170 m, the sun shadow map at its box.
+// Now each layer hands over to a cheaper one across a smoothstep band, and the last one ends with the ground's own dissolve:
+//   props   near chunks (cost unchanged: same ring, same cut) dissolve per pixel over [0.72 c, c] -> the far canopy (below) takes exactly those pixels and
+//           lasts to the haze end;  texture  close-up field -> mid grain -> far macro tint (_terrainDetailMat);  light / shadow  shadow map (eased out inside
+//           its box) -> height-field march near / far / horizon field -> far AO (ui/dm-light.js).  Uniform writes only; nothing allocates.
+function _lodQTick(){
+  const U=_lodQU(), L=(window.DMLod&&DMLod.on)?DMLod:null; if(!U||!L||!L.core.qualityBands) return;
+  const gR=PW._groundR||1200, fog=PW.scene&&PW.scene.fog?PW.scene.fog.far:gR*_SKY_FADE0, o=_LODQ.o;
+  o.fogEnd=Math.max(60,Math.min(fog,gR*_SKY_FADE0)); o.groundR=gR; o.ring=PW._propRingN||1; o.propCut=PW._propCutD||420;
+  const sun=TERRAIN.sun; o.shadowHalf=(sun&&sun.shadow&&sun.shadow.camera&&sun.shadow.camera.right>0)?sun.shadow.camera.right:70;
+  o.horHalf=(window.DMLight&&DMLight.horReach)?DMLight.horReach():0;
+  const B=_LODQ.B=L.bands(o,_LODQ.B);
+  U.far.value.set(gR*_SKY_FADE0,gR);   // the texture tint lasts exactly as long as the drawn ground (it dissolves over the same band)
+  U.pn.value.set(B.props.near[0],B.props.near[1]); U.pf.value.set(B.props.far[0],B.props.far[1]);
+  try{ if(window.DMLight&&DMLight.setBands) DMLight.setBands(B.shadow.map[0],B.shadow.map[1],B.light.far[0],B.light.far[1]); }catch(e){}
+}
+// near prop chunks: AND a per-pixel distance dither into the three shared prop materials once they carry the planet mask (keep the pixel while the screen noise
+// is below 1 - smoothstep(pn): the chunk boundary at the draw cut is never seen, the chunk is already fully dissolved there)
+const _PROP_MK=['rock','trunk','crown'];
+function _propDistMask(){
+  const U=_lodQU(), W=window, K=_propShared; if(!U||!K||K._distN===3||typeof W.interleavedGradientNoise!=='function'||!W.positionView) return;
+  let done=0;
+  for(let q=0;q<3;q++){
+    const m=K[_PROP_MK[q]]; if(m&&m.userData._dmDist){ done++; continue; }
+    if(!m||!m.userData._pwf||!m.maskNode) continue; done++;
+    try{ const wN=W.float(1).sub(W.smoothstep(U.pn.x,U.pn.y,W.length(W.positionView))); m.maskNode=m.maskNode.and(W.interleavedGradientNoise(W.screenCoordinate.xy).lessThan(wN)); m.userData._dmDist=true; m.needsUpdate=true; }catch(e){ m.userData._dmDist=true; console.warn('[props] dist mask',e&&e.message); }
+  }
+  K._distN=done;
+}
+// FAR CANOPY: past the near chunks the green worlds were treeless to the horizon.  One InstancedMesh (one draw call, crown cones only, no trunk / rock / collider
+// / shadow) over a toroidal grid of 300 u chunks round her out to the haze end: slot (i mod n, j mod n) holds chunk (i, j)'s K crowns.  A chunk is filled from
+// its OWN seed (the near scatter's RNG is untouched: existing seeds give the same near world) with the near trees' rules (land above the swash, below 40 u,
+// the same position hash, the same density), one height sample a crown, nearest chunk first, inside a time slice; crowns past ~900 u are drawn a little
+// larger (x1.5 / x2.2 bands, re-written from the slot's cached positions when a chunk changes band) so a tree is a couple of pixels, not a shimmering speck.
+// Its pixels are exactly the near chunks' complement (noise >= wN) up to the haze end (noise < wF): one layer hands its trees to the other, no gap, no double.
+const _FC={on:!/[?&]farcanopy=0\b/.test(location.search),mesh:null,gen:-1,n:0,K:0,R:0,Rw:0,ci:1e9,cj:1e9,si:null,sj:null,sc:null,pos:null,q:null,qn:0,qi:0,dirty:false,M:null,P:null,Q:null,S:null,C:null,upT:0};
+function _farCanopyInit(){
+  const W=window, U=_lodQU(); if(!U||!_pwfReady()||typeof W.interleavedGradientNoise!=='function'||!W.positionView) return false;
+  const tier=(window.DMLod&&DMLod.on)?DMLod.tier:(GFX.isMobile?'mobile':'desktop'), R=({low:7,mobile:8,desktop:10})[tier]||8, K=({low:10,mobile:16,desktop:28})[tier]||16, n=2*R+1;
+  const SM=THREE.MeshStandardNodeMaterial||THREE.MeshStandardMaterial, mat=new SM({color:0xffffff,roughness:1});
+  const ign=W.interleavedGradientNoise(W.screenCoordinate.xy), d=W.length(W.positionView);
+  const wN=W.float(1).sub(W.smoothstep(U.pn.x,U.pn.y,d)), wF=W.float(1).sub(W.smoothstep(U.pf.x,U.pf.y,d));
+  mat.maskNode=_pwfMask().and(ign.greaterThanEqual(wN)).and(ign.lessThan(wF));   // set before the planet tag (it keeps an existing mask)
+  const geo=new THREE.ConeGeometry(1,1,5,1,true), im=new THREE.InstancedMesh(geo,mat,n*n*K);
+  im.name='JOTS_FarCanopy'; im.castShadow=false; im.receiveShadow=false; im.frustumCulled=false;
+  const Z=new THREE.Matrix4().makeScale(0,0,0), c0=new THREE.Color(0x1f5520); for(let k=0;k<n*n*K;k++){ im.setMatrixAt(k,Z); im.setColorAt(k,c0); }
+  im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true;
+  _FC.mesh=im; _FC.gen=PW.gen; _FC.n=n; _FC.K=K; _FC.R=R; _FC.ci=_FC.cj=1e9; _FC.si=new Int32Array(n*n).fill(_FC_EMPTY); _FC.sj=new Int32Array(n*n).fill(_FC_EMPTY);
+  _FC.sc=new Uint8Array(n*n); _FC.pos=new Float32Array(n*n*K*5); _FC.q=new Int32Array(n*n*2); _FC.qn=0; _FC.qi=0; _FC.dirty=false;
+  _FC.M=new THREE.Matrix4(); _FC.P=new THREE.Vector3(); _FC.Q=new THREE.Quaternion(); _FC.S=new THREE.Vector3(); _FC.C=new THREE.Color();
+  TERRAIN.group.add(im); _pwMapTag(im); return true;
+}
+// the size band of a crown at chunk distance d (u): 1 near, x1.5 past 900 u, x2.2 past 1600 u (index 0 / 1 / 2)
+function _farCanopyBand(d){ return d>1600?2:(d>900?1:0); }
+const _FC_SCALE=[1,1.5,2.2], _FC_EMPTY=0x7ffffffe;
+function _farCanopyWrite(s){
+  const K=_FC.K, M=_FC.M, P=_FC.P, Q=_FC.Q, S=_FC.S, C=_FC.C, im=_FC.mesh, A=_FC.pos, b=_FC_SCALE[_FC.sc[s]];
+  for(let k=0;k<K;k++){
+    const o=(s*K+k)*5, cr=A[o+3];
+    if(cr>0){ P.set(A[o],A[o+1],A[o+2]); M.compose(P,Q,S.set(cr*b,A[o+4]*b,cr*b)); C.setHex(0x1f5520); C.offsetHSL(0,0,((k*0.61803)%1-0.5)*0.12); im.setColorAt(s*K+k,C); }
+    else M.makeScale(0,0,0);
+    im.setMatrixAt(s*K+k,M);
+  }
+  _FC.dirty=true;
+}
+function _farCanopyFill(s,i,j){
+  const H=TERRAIN.Hg||TERRAIN.H, pal=TERRAIN.pal, C=SURF_CHUNK, K=_FC.K, A=_FC.pos;
+  const WL=pal.water?((window.DMLod&&DMLod.on)?DMLod.get('water.minH'):4.0):-1e9;
+  const per=Math.round((Math.min(300,({low:60,med:140,high:240,ultra:300})[STATE.settings.particles]||140))*(C*C)/(560*560));
+  const rnd=_rng32(_chunkSeed(i,j,(TERRAIN.seed||1))^0x2f6b1c3d);   // the far canopy's own stream (the near scatter's is never drawn from)
+  let k=0;
+  for(let t=0;t<per&&k<K;t++){
+    const x=i*C+(rnd()-0.5)*C, z=j*C+(rnd()-0.5)*C, cr=0.9+rnd()*0.7, ch=2.5+rnd()*2, th=2.5+rnd()*1.5;
+    if(!((((x*12.9898+z*78.233)%1)+1)%1>0.6)) continue;   // the near trees' own position test (the same share of the samples)
+    const h=H(x,z); if(!(h>WL+1&&h<40)) continue;
+    const o=(s*K+k)*5; A[o]=x; A[o+1]=h+th+ch*0.35; A[o+2]=z; A[o+3]=cr; A[o+4]=ch; k++;
+  }
+  for(;k<K;k++) A[(s*K+k)*5+3]=0;
+}
+function _farCanopyTick(px,pz,agl){
+  if(!_FC.on||!PW.scene||!TERRAIN.group||!TERRAIN.pal) return;
+  if(TERRAIN.pal.ground!==0x3a7d34){ if(_FC.mesh) _FC.mesh.visible=false; return; }   // trees only on the green worlds (as the near scatter)
+  if(_FC.mesh&&(_FC.gen!==PW.gen||_FC.mesh.parent!==TERRAIN.group)) _FC.mesh=null;     // a new world: the old mesh went with the old scene
+  if(!_FC.mesh){ let r=false; try{ r=_farCanopyInit(); }catch(e){ _FC.on=false; _FC.mesh=null; console.warn('[props] far canopy off',e&&e.message); } if(!r) return; }   // a build error turns it off once (never a per-frame throw)
+  const im=_FC.mesh; im.visible=agl<220;   // as the near props (they are dropped above 220 u)
+  if(!im.visible) return;
+  const C=SURF_CHUNK, n=_FC.n, R=_FC.R, ci=Math.floor((px+C/2)/C), cj=Math.floor((pz+C/2)/C);
+  const fe=_LODQ.B?_LODQ.B.fogEnd:(PW._groundR||1200)*_SKY_FADE0, Rw=Math.min(R,Math.ceil(fe/C+0.5));   // only out to the haze end
+  if(ci!==_FC.ci||cj!==_FC.cj||_FC.Rw!==Rw){
+    // the centre moved a chunk: every slot is re-checked once (n x n, a few hundred), nearest first; slots outside the circle are emptied
+    _FC.ci=ci; _FC.cj=cj; _FC.Rw=Rw; _FC.qn=0; _FC.qi=0;
+    for(let r=0;r<=R;r++) for(let di=-r;di<=r;di++) for(let dj=-r;dj<=r;dj++){
+      if(Math.max(Math.abs(di),Math.abs(dj))!==r) continue;
+      const i=ci+di, j=cj+dj, s=(((i%n)+n)%n)+(((j%n)+n)%n)*n, inC=di*di+dj*dj<=(Rw+0.5)*(Rw+0.5);
+      const band=_farCanopyBand(Math.hypot(di,dj)*C);
+      if(!inC){ if(_FC.si[s]!==_FC_EMPTY){ for(let k=0;k<_FC.K;k++) _FC.pos[(s*_FC.K+k)*5+3]=0; _farCanopyWrite(s); _FC.si[s]=_FC_EMPTY; _FC.sj[s]=_FC_EMPTY; } continue; }   // (each window chunk owns exactly one slot)
+      if(_FC.si[s]!==i||_FC.sj[s]!==j||_FC.sc[s]!==band){ _FC.q[_FC.qn*2]=i; _FC.q[_FC.qn*2+1]=j; _FC.qn++; }
+    }
+  }
+  const t0=performance.now(), budget=GFX.isMobile?0.6:1.0;
+  while(_FC.qi<_FC.qn&&performance.now()-t0<budget){
+    const i=_FC.q[_FC.qi*2], j=_FC.q[_FC.qi*2+1]; _FC.qi++;
+    const s=(((i%n)+n)%n)+(((j%n)+n)%n)*n, band=_farCanopyBand(Math.hypot(i-ci,j-cj)*C);
+    if(_FC.si[s]!==i||_FC.sj[s]!==j) _farCanopyFill(s,i,j);   // a band change alone re-writes the cached crowns (no height samples)
+    _FC.si[s]=i; _FC.sj[s]=j; _FC.sc[s]=band; _farCanopyWrite(s);
+  }
+  const now=performance.now();
+  if(_FC.dirty&&(now-_FC.upT>250||_FC.qi>=_FC.qn)){ _FC.dirty=false; _FC.upT=now; im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true; }
 }
 // Leave the world (to open space, a journey load, the menu): instant — the
 // one loop draws open space on the very next frame (or the view that
@@ -19934,7 +20049,7 @@ function _pwClose(opts){
   try{ if(window.DMCrumb){ ['mc#','tess#','chunk#'].forEach(k=>DMCrumb.gpuClear(k)); DMCrumb.live('chunks',0); DMCrumb.live('mcPatches',0); } }catch(e){}
   try{ _applyCamOffset(); }catch(e){}
   try{ if(window.DMCollide) DMCollide.closeWorld(); }catch(e){}   // every collider, body, actor and the debug / particle objects go with the world
-  PW.renderer=PW.scene=PW.camera=PW.board=PW.ground=null; PW.props=new Map(); PW.propsGroup=null; PW.seaSpan=0;
+  PW.renderer=PW.scene=PW.camera=PW.board=PW.ground=null; PW.props=new Map(); PW.propsGroup=null; PW.seaSpan=0; _FC.mesh=null;   // (fov-fill 2) the far canopy went with the scene
   surfRenderer=atmoRenderer=null; surfScene=atmoScene=null; surfCamera=atmoCamera=null;
   surfPlayer=null; surfBoard=null; atmoBoard=null; atmoState=null; _atmoSky=null; _atmoHeight=null; _atmoPal=null;
   surfTerrainMesh=null; surfWater=null; surfCausticCtx=null; surfCausticTex=null;
@@ -25859,6 +25974,14 @@ function _cpuMcTick(px,pz){
    much is layered: Low = grit + cracks, Medium + pebbles, High/Ultra +
    finer pebbles and a wider reach.
    ══════════════════════════════════════════════════════════════ */
+// (fov-fill 2) the quality fade chain's live distances (ui/dm-lod.js DMLod.bands), shared by every ground / prop material: uniforms only (no recompile),
+// written by _lodQTick a few times a second.  far = the far texture tint's end band (the ground's dissolve), pn = the near prop chunks' fade, pf = the far canopy's.
+const _LODQ={u:null,B:null,o:{reach:30,fogEnd:420,groundR:1200,shadowHalf:70,propCut:441,ring:2,horHalf:0},t:0};
+function _lodQU(){
+  if(_LODQ.u) return _LODQ.u; const W=window; if(typeof W.uniform!=='function'||typeof THREE==='undefined') return null;
+  try{ _LODQ.u={far:W.uniform(new THREE.Vector2(984,1200)),pn:W.uniform(new THREE.Vector2(300,420)),pf:W.uniform(new THREE.Vector2(1e9,2e9)),pi:W.uniform(new THREE.Vector2(300,420))}; }catch(e){ _LODQ.u=null; }
+  return _LODQ.u;
+}
 function _terrainDetailMat(opts){
   opts=opts||{};
   const tier=(typeof resolvePreset==='function')?resolvePreset():'medium';
@@ -25908,6 +26031,15 @@ function _terrainDetailMat(opts){
       return {h,crack,peb};
     };
     const xz=W.vec3(p.x,W.float(0),p.z);
+    // (fov-fill 2) MID and FAR texture bands (ui/dm-lod.js qualityBands): past `reach` the ground used to be bare vertex colour for most of the view (the
+    // coarse tiles' 33x33 colours, 9-35 u apart).  The close-up field above is NOT stretched (worley pebbles / grit / its bump stay inside `reach`); instead
+    // two cheaper layers carry on: MID (5..16 reach, walkable ground) one 2-octave value field as colour + roughness grain, no worley, no normal; FAR (every
+    // land pixel, out to the ground's own dissolve, shared uniform _LODQ.u.far) two single value-noise octaves (60 u and 260 u patches) as a macro tint.
+    // Each is evaluated once, inside a real branch on its weight (the gate below); the sea paint of the far tiles is left alone (water only from the contours).
+    const _LQ=_lodQU(), _dryM=opts.dry!=null?!!opts.dry:!(TERRAIN.pal&&TERRAIN.pal.water);
+    const midW=lvl>=2?W.float(1).sub(W.smoothstep(W.float(reach*5),W.float(reach*16),dist)).mul(flat):W.float(0);
+    const farW=(_LQ?W.float(1).sub(W.smoothstep(_LQ.far.x,_LQ.far.y,dist)):W.float(1)).mul(_dryM?W.float(1):W.smoothstep(W.float(-0.6),W.float(0.4),p.y));
+    const _n1=(q)=>typeof W.mx_noise_float==='function'?W.mx_noise_float(q):W.mx_fractal_noise_float(q,1,2.0,0.5);
     // (fps) Every term of the ground detail is multiplied by a distance / walkable / steepness weight that is exactly 0 for most of the screen
     // (past `reach`, on flat far ground, on a cliff-free pixel). TSL writes a node expression out once per place it is used, so the old graph
     // carried 13 worley and 19 fractal-noise evaluations in EVERY ground pixel (counted on the generated WGSL), the same field several times over,
@@ -25921,6 +26053,10 @@ function _terrainDetailMat(opts){
     // the renderer builds the normal and the colour in separate passes over the graph, so each gets exactly the terms it uses, once.
     const DETC=_gate(fade.greaterThan(0.0),[0,0,0,0],()=>{ const f0=field(xz); return W.vec4(f0.crack,f0.peb,0,0); });
     const F0={crack:DETC.x,peb:DETC.y};
+    const _gt=(c,b)=>_gate(c,[0,0,0,0],b);
+    const MIDF=lvl>=2?_gt(midW.greaterThan(0.0),()=>W.vec4(W.mx_fractal_noise_float(xz.mul(0.35).add(W.vec3(23,0,11)),2,2.0,0.5),0,0,0)).x:W.float(0);
+    const FARF=_gt(farW.greaterThan(0.0),()=>W.vec4(_n1(xz.mul(1/60).add(W.vec3(7,0,29))),lvl>=2?_n1(xz.mul(1/260).add(W.vec3(51,0,3))):W.float(0),0,0));
+    const lodTint=W.float(1).add(MIDF.mul(0.09).mul(midW)).add(FARF.x.mul(0.08).add(FARF.y.mul(0.07)).mul(farW));
     // ── steep faces: sediment strata, slate fracture, grit (cliffs, mesa walls, crater rims)
     // Bedding runs along the height of the face, gently warped so it isn't ruler-straight;
     // every layer is a step (a ledge at its foot), takes its own tint of the planet's rock,
@@ -25982,8 +26118,8 @@ function _terrainDetailMat(opts){
     // cracks shade darker, pebbles a touch lighter and glossier (Low: the colour only);
     // cliff layers each take their own tint, split lines darker, ledges catch a little light
     const cliffTint=CLT.x;
-    m.colorNode=W.vertexColor().mul(W.float(1).sub(F0.crack.mul(TERRAIN.style==='mesa'?0.16:0.32).mul(fade)).add(F0.peb.mul(0.06).mul(fade))).mul(cliffTint).mul(basinTint);
-    m.roughnessNode=sandy?W.float(0.98):W.float(0.95).sub(F0.peb.mul(0.28).mul(fade));
+    m.colorNode=W.vertexColor().mul(W.float(1).sub(F0.crack.mul(TERRAIN.style==='mesa'?0.16:0.32).mul(fade)).add(F0.peb.mul(0.06).mul(fade))).mul(cliffTint).mul(basinTint).mul(lodTint);
+    m.roughnessNode=sandy?W.float(0.98):W.float(0.95).sub(F0.peb.mul(0.28).mul(fade)).sub(MIDF.abs().mul(0.05).mul(midW));
     // (v140) layered rock (ui/dm-rockmat.js) on the walkable MC ground's cliffs — zones, varnish, oxide, slate, grain. ?mat=0 = off
     if(opts.side===THREE.DoubleSide&&W.DMRock&&W.DMRock.on){ try{ m.colorNode=W.DMRock.patchColor(m.colorNode,p,nFlat,(typeof _surfBody!=='undefined'&&_surfBody)?_surfBody.name:'',0); }catch(e){} }
     // (ui/dm-groundlib.js) the multi-material ground: 12 pattern/deformation types baked once per world into an atlas, chosen per region, height-blended (moss, puddles in the crevices), baked bump + parallax relief; no per-pixel noise

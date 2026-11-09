@@ -286,13 +286,20 @@
   // 0.26 u under the deck over a dark ah_dark basin (-0.5 / -1.1 / -1.6), and read as a cyan reference tile on the deck.  Its two triangles are dropped from
   // the shared index when the GLB arrives (every clone and the impostor bake see the same geometry); the lower sea-terrace pool (y -18.46, re-lit by poolLook)
   // stays.  Pure: P = position attribute (getY) or a flat xyz array, idx = index array or null.  Returns the kept index (a plain array) or null to keep all.
+  // (fov-fill 2, Watcher NAY c) narrowed: a triangle is dropped only when ALL three corners lie inside the deck quad's own GLB box (x 46.8..76.7, z -31.2..-7.8,
+  // +-0.5 u) AND above y -5 — not every ah_pool triangle above -5.  Measured on both mansion GLBs (tools/tests/fov-fill.js): ah_pool is exactly two quads, this
+  // one and the sea-terrace pool (x -31.2..26, z -46.8..-26, y -18.46); the pool-room tub is NOT ah_pool (int_water in the interior GLBs, GLB x 40..64,
+  // z 20..34, y 2.15, the landward east wing) and poolTrim never sees it.  A future pool above -5 anywhere else stays.
   F.POOL_DECK_Y = -5;
+  F.POOL_DECK_BOX = { x0: 46.3, x1: 77.2, z0: -31.7, z1: -7.3 };
   F.poolTrim = function (P, idx) {
     if (!P) return null; const n = P.count != null ? P.count : (P.length / 3) | 0, y = i => (P.getY ? P.getY(i) : P[i * 3 + 1]);
+    const x = i => (P.getX ? P.getX(i) : P[i * 3]), z = i => (P.getZ ? P.getZ(i) : P[i * 3 + 2]), Bx = F.POOL_DECK_BOX;
+    const deck = i => y(i) > F.POOL_DECK_Y && x(i) >= Bx.x0 && x(i) <= Bx.x1 && z(i) >= Bx.z0 && z(i) <= Bx.z1;
     const m = idx ? idx.length : n, out = []; let drop = 0;
     for (let t = 0; t + 2 < m; t += 3) {
       const a = idx ? idx[t] : t, b = idx ? idx[t + 1] : t + 1, c = idx ? idx[t + 2] : t + 2;
-      if (y(a) > F.POOL_DECK_Y && y(b) > F.POOL_DECK_Y && y(c) > F.POOL_DECK_Y) { drop++; continue; }
+      if (deck(a) && deck(b) && deck(c)) { drop++; continue; }
       out.push(a, b, c);
     }
     return drop ? out : null;

@@ -159,13 +159,15 @@
   /* ───── tiers: every number the ladder moves is a plain parameter (uniform write / cadence); nothing here changes a shader graph ───── */
   const TIERS = {   // rays per probe update, cascades updated, probe ms budget per frame, march steps (rays), HF sun steps (shader), HF cells, cascade probes (P x P x L), compute allowed,
     // far-shadow steps (long-range soft shadows from the coarse 8 m field, 1 km window) and its cell count
-    off:   { rays: 0,  casc: 0, ms: 0,   mSteps: 0,  sunSteps: 0,  hfN: 0,   P: 0,  L: 0, cs: false, farSteps: 0, farN: 0 },
-    low:   { rays: 4,  casc: 1, ms: 0.5, mSteps: 6,  sunSteps: 0,  hfN: 64,  P: 16, L: 3, cs: false, farSteps: 0, farN: 0 },   // (v297) no per-pixel sun march on Low / weak devices: probes (AO + bounce) only
-    med:   { rays: 8,  casc: 2, ms: 1.0, mSteps: 8,  sunSteps: 8,  hfN: 128, P: 24, L: 4, cs: false, farSteps: 4, farN: 64 },
-    high:  { rays: 16, casc: 2, ms: 1.5, mSteps: 10, sunSteps: 12, hfN: 128, P: 32, L: 4, cs: false, farSteps: 6, farN: 128 },
-    ultra: { rays: 16, casc: 2, ms: 2.0, mSteps: 12, sunSteps: 12, hfN: 256, P: 32, L: 4, cs: true,  farSteps: 8, farN: 128 },
+    // (fov-fill 2) horSteps / horN: the HORIZON field (48 m cells, +-3 km window) that carries the terrain's sun shadow and a coarse cavity AO from where the 8 m field
+    // ends out to the haze (so far ground is not flat-lit); only pixels past ~300 m pay for it (a real branch), Low never builds it (probes + a normal-only far AO)
+    off:   { rays: 0,  casc: 0, ms: 0,   mSteps: 0,  sunSteps: 0,  hfN: 0,   P: 0,  L: 0, cs: false, farSteps: 0, farN: 0, horSteps: 0, horN: 0 },
+    low:   { rays: 4,  casc: 1, ms: 0.5, mSteps: 6,  sunSteps: 0,  hfN: 64,  P: 16, L: 3, cs: false, farSteps: 0, farN: 0, horSteps: 0, horN: 0 },   // (v297) no per-pixel sun march on Low / weak devices: probes (AO + bounce) only
+    med:   { rays: 8,  casc: 2, ms: 1.0, mSteps: 8,  sunSteps: 8,  hfN: 128, P: 24, L: 4, cs: false, farSteps: 4, farN: 64, horSteps: 3, horN: 128 },
+    high:  { rays: 16, casc: 2, ms: 1.5, mSteps: 10, sunSteps: 12, hfN: 128, P: 32, L: 4, cs: false, farSteps: 6, farN: 128, horSteps: 4, horN: 128 },
+    ultra: { rays: 16, casc: 2, ms: 2.0, mSteps: 12, sunSteps: 12, hfN: 256, P: 32, L: 4, cs: true,  farSteps: 8, farN: 128, horSteps: 5, horN: 128 },
   };
-  const FAR_CELL = 8, NEAR_MAX = 64, FAR_MAX = 720;
+  const FAR_CELL = 8, NEAR_MAX = 64, FAR_MAX = 720, HOR_CELL = 48, HOR_T0 = 60, HOR_MAX = 1600;   // (fov-fill 2) horizon field cell, its march from 60 m to 1.6 km
   const IDLE_AGL = 250;   // (v297) metres above the ground under the focus beyond which probe tracing idles (the lit window is a small patch below; atmosphere flight pays nothing)
   const TIER_ORDER = ['off', 'low', 'med', 'high', 'ultra'];
   // ladder level (ui/dm-budget.js stage 'light', 0..3) -> effective parameters.  L1 halves rays/steps and closes the compute path, L2 = 4 rays, one cascade
@@ -176,10 +178,10 @@
     const b = TIERS[tier] || TIERS.off, e = Object.assign(out || {}, b); lvl = lvl | 0; e.idle = false;
     if (!b.rays) { e.tier = tier; e.lvl = lvl; e.cs = false; e.freeze = true; return e; }
     e.cs = !!(b.cs && lvl === 0 && headroom); e.freeze = false;
-    e.farSteps = b.farSteps; const ss = b.sunSteps;
-    if (lvl >= 1) { e.farSteps = b.farSteps >> 1; e.rays = Math.max(4, b.rays >> 1); e.mSteps = Math.max(5, b.mSteps >> 1); e.sunSteps = ss ? Math.max(5, (ss * 2 / 3) | 0) : 0; }
-    if (lvl >= 2) { e.rays = 4; e.casc = Math.max(1, b.casc - 1); e.ms = b.ms * 0.5; e.mSteps = 5; e.sunSteps = ss ? Math.max(5, ss >> 1) : 0; e.farSteps = b.farSteps >> 2; }
-    if (lvl >= 3) { e.freeze = true; e.ms = 0; e.sunSteps = Math.min(ss, 5); e.farSteps = Math.min(e.farSteps, 1); }
+    e.farSteps = b.farSteps; e.horSteps = b.horSteps || 0; const ss = b.sunSteps;
+    if (lvl >= 1) { e.horSteps = Math.min(e.horSteps, 2); e.farSteps = b.farSteps >> 1; e.rays = Math.max(4, b.rays >> 1); e.mSteps = Math.max(5, b.mSteps >> 1); e.sunSteps = ss ? Math.max(5, (ss * 2 / 3) | 0) : 0; }
+    if (lvl >= 2) { e.rays = 4; e.casc = Math.max(1, b.casc - 1); e.ms = b.ms * 0.5; e.mSteps = 5; e.sunSteps = ss ? Math.max(5, ss >> 1) : 0; e.farSteps = b.farSteps >> 2; e.horSteps = Math.min(e.horSteps, 1); }
+    if (lvl >= 3) { e.freeze = true; e.ms = 0; e.sunSteps = Math.min(ss, 5); e.farSteps = Math.min(e.farSteps, 1); e.horSteps = 0; }
     if (agl > IDLE_AGL) { e.freeze = true; e.ms = 0; e.cs = false; e.idle = true; }
     e.tier = tier; e.lvl = lvl; return e;
   }
@@ -187,7 +189,7 @@
   // terrain to base-500 and every 32 m of climb re-converted the whole field).  Returns the new base (unchanged inside +-40 m).
   function rebase(base, g) { return Math.abs(g - base) <= 40 ? base : (Math.round(g / 32) * 32 || 0); }
   // relative per-second cost (CPU rays + shader fetches) used by the monotonicity test and the status line
-  function cost(e) { return e.ms * 100 + e.sunSteps * 2 + (e.farSteps || 0) * 2 + (e.cs ? 400 : 0) + e.casc * 4; }
+  function cost(e) { return e.ms * 100 + e.sunSteps * 2 + (e.farSteps || 0) * 2 + (e.horSteps || 0) * 2 + (e.cs ? 400 : 0) + e.casc * 4; }
   // (v297) the graphics preset caps the tier (30 fps on every preset; an effect that cannot hold it stays off there).  Phones / tablets never go above 'med'
   // (the 12-step march + far shadows are unproven on Mali / A-series); Medium on a phone gets no per-pixel march.  'custom' / unresolved -> no cap.
   const PRESET_CAP = { desk: { low: 'low', medium: 'med', high: 'high', ultra: 'ultra' }, mob: { low: 'low', medium: 'low', high: 'med', ultra: 'med' } };
@@ -293,15 +295,17 @@
   }
 
   // far cascade spacing that keeps its window inside the near height window (P * sp <= hfN * cell); 12 m when it fits
+  // (fov-fill 2) the usable radius of a toroidal field window (its masked edge, as winEdge in the glue): the horizon field's reach
+  function horEdge(n, cell) { return n * cell * 0.5 - 3 * cell; }
   function farSpacing(hfN, cell, P) { return Math.max(3, Math.min(12, Math.floor(hfN * cell / P))); }
   // CPU / GPU bytes of a tier's caches (status().MB; the stamp + dirty arrays were not counted before)
   function tierBytes(t) {
     const e = TIERS[t]; if (!e || !e.rays) return { cpu: 0, gpu: 0 };
     const cellB = 4 + 4 + 4 + 1 + 4, probes = e.P * e.P * e.L, cascCpu = probes * (64 + 1 + 4) + e.P * e.P * (4 + 4 + 4 + 1);
-    const cpu = e.hfN * e.hfN * cellB + e.farN * e.farN * cellB + e.casc * cascCpu, gpu = e.hfN * e.hfN * 2 + e.farN * e.farN * 2 + e.casc * probes * 32 + (e.cs ? probes * 64 : 0);
+    const hn = e.horN || 0, cpu = e.hfN * e.hfN * cellB + e.farN * e.farN * cellB + hn * hn * cellB + e.casc * cascCpu, gpu = e.hfN * e.hfN * 2 + e.farN * e.farN * 2 + hn * hn * 2 + e.casc * probes * 32 + (e.cs ? probes * 64 : 0);
     return { cpu, gpu };
   }
-  const core = { presetCap, rebase, IDLE_AGL, farSpacing, tierBytes, markProbe, resetCascade, capTier, FAR_CELL, NEAR_MAX, FAR_MAX, sunVisLong, rasterizeOverlay, hash1, csRayDirs, stepDownTier, bootTier, Y0, Y1, shProject, shEval, bentNormal, rng, rayDirs, createHF, overlayAt, march, marchBrute, sunVis, sunVisBrute, TIERS, TIER_ORDER, effective, cost, pickTier, createHeadroom, createCascade, neutralProbe, traceProbe, updateCascade, sampleCascade };
+  const core = { presetCap, rebase, IDLE_AGL, farSpacing, tierBytes, markProbe, resetCascade, capTier, FAR_CELL, NEAR_MAX, FAR_MAX, HOR_CELL, HOR_T0, HOR_MAX, horEdge, sunVisLong, rasterizeOverlay, hash1, csRayDirs, stepDownTier, bootTier, Y0, Y1, shProject, shEval, bentNormal, rng, rayDirs, createHF, overlayAt, march, marchBrute, sunVis, sunVisBrute, TIERS, TIER_ORDER, effective, cost, pickTier, createHeadroom, createCascade, neutralProbe, traceProbe, updateCascade, sampleCascade };
   if (typeof module !== 'undefined' && module.exports) module.exports = core;
   if (typeof window === 'undefined') return;
 
@@ -321,7 +325,7 @@
   W.DMLight = D;
   const Rn = rng(12345);
   const sunV = [0.4, 0.8, 0.45], sunI = [0, 0, 0, 0], skyI = [0.5, 0.55, 0.65], albedo = [0.34, 0.30, 0.25];
-  let hf = null, hf2 = null, casc = [], U = null, tex = null, CS = null, THREE_ = null, baseY = 0, baseSet = false, hemiCache = null, lastFarC = [1e9, 1e9], farUpT = 0;
+  let hf = null, hf2 = null, hf3 = null, casc = [], U = null, tex = null, CS = null, THREE_ = null, baseY = 0, baseSet = false, hemiCache = null, lastFarC = [1e9, 1e9], farUpT = 0, lastHorC = [1e9, 1e9], horUpT = 0;
   const resolved = () => { try { return typeof W.resolvePreset === 'function' ? W.resolvePreset() : null; } catch (e) { return null; } };
 
   function pickNow() {
@@ -346,9 +350,10 @@
     const e = TIERS[D.tier]; if (!e || !e.rays) return false;
     hf = createHF(e.hfN, e.hfN >= 256 ? 1.5 : 2); casc = [];
     if (e.farN) hf2 = createHF(e.farN, FAR_CELL);
+    if (e.horN) hf3 = createHF(e.horN, HOR_CELL);   // (fov-fill 2) the horizon field
     // (v297) the far cascade stays inside the near height window (med/high: 12 m x 32 probes = +-192 m over a +-128 m field put its outer ring on unfilled cells)
     const sp = [3, farSpacing(e.hfN, hf.cell, e.P)], ly = [2.5, 6]; for (let c = 0; c < e.casc; c++) casc.push(createCascade(e.P, e.L, sp[c], ly[c]));
-    if (D._pend) { for (const o of D._pend) { hf.addOverlay(o); if (hf2) hf2.addOverlay(o); } D._pend = null; }
+    if (D._pend) { for (const o of D._pend) { hf.addOverlay(o); if (hf2) hf2.addOverlay(o); if (hf3) hf3.addOverlay(o); } D._pend = null; }
     const tb = tierBytes(D.tier); D.cpuBytes = tb.cpu; D.gpuBytes = tb.gpu; D.bytes = tb.cpu + tb.gpu;
     D.built = { tier: D.tier, hfN: e.hfN, cell: hf.cell, farN: e.farN, casc: casc.map(c => ({ P: c.P, L: c.L, sp: c.sp, ly: c.ly })) };
     return true;
@@ -360,18 +365,20 @@
     if (!Tt.Data3DTexture || !Tt.DataTexture || !T.texture3D || !T.uniform) return false;
     // userData.dmKeep: the world-close texture sweep (index.html disposeObject3D -> DMMem.collectTextures) leaves these alone: they are shared by the character and the next world
     const e = TIERS[D.tier], mk2 = (n) => { const t = new Tt.DataTexture(new Uint16Array(n * n), n, n, Tt.RedFormat, Tt.HalfFloatType); t.wrapS = t.wrapT = Tt.RepeatWrapping; t.minFilter = t.magFilter = Tt.LinearFilter; t.generateMipmaps = false; t.userData.dmKeep = true; t.needsUpdate = true; return t; };
-    const hft = mk2(hf.N), hft2 = hf2 ? mk2(hf2.N) : null;
+    const hft = mk2(hf.N), hft2 = hf2 ? mk2(hf2.N) : null, hft3 = hf3 ? mk2(hf3.N) : null;
     const vols = casc.map(c => [0, 1, 2, 3].map(() => { const t = new Tt.Data3DTexture(new Uint16Array(c.P * c.P * c.L * 4), c.P, c.P, c.L); t.format = Tt.RGBAFormat; t.type = Tt.HalfFloatType; t.wrapS = t.wrapT = Tt.RepeatWrapping; t.wrapR = Tt.ClampToEdgeWrapping; t.minFilter = t.magFilter = Tt.LinearFilter; t.generateMipmaps = false; t.unpackAlignment = 1; t.userData.dmKeep = true; t.needsUpdate = true; return t; }));
-    tex = { hft, hft2, vols };
+    tex = { hft, hft2, hft3, vols };
     U = {
       k: T.uniform(0), base: T.uniform(0), cam: T.uniform(new Tt.Vector2(0, 0)), sun: T.uniform(new Tt.Vector3(0.4, 0.8, 0.45)), hfSteps: T.uniform(e.sunSteps), farSteps: T.uniform(e.farSteps), hfK: T.uniform(0.5), gain: T.uniform(gainQ * 0.9),
       pen: T.uniform(0.05), penF: T.uniform(0.09), csK: T.uniform(0), lowSun: T.uniform(0),
       hc: T.uniform(new Tt.Vector2(0, 0)), fc: T.uniform(new Tt.Vector2(0, 0)),   // (v297) centres of the near / far height windows (the shader masks reads outside them)
+      // (fov-fill 2) horizon field centre + steps; the sun shadow map's own fade band (inside its box; far off = no change) and the far-lighting band (index.html, DMLod.bands)
+      h3: T.uniform(new Tt.Vector2(0, 0)), horSteps: T.uniform(e.horSteps || 0), sm: T.uniform(new Tt.Vector2(1e9, 2e9)), lf: T.uniform(new Tt.Vector2(1e9, 2e9)),
     };
     // compute tier resources: storage volumes for cascade 0 (A = current, sampled by the materials; B = scratch), built only on tiers that allow it
     try { const rr = getRenderer(); if (e.cs && csQ !== '0' && rr && rr.backend && rr.backend.isWebGPUBackend && Tt.Storage3DTexture && T.textureStore && T.instancedArray && !(lsGet(LSC) && Date.now() - lsGet(LSC).t < 7 * 864e5)) CS = makeCsResources(Tt, T); } catch (err) { CS = null; csFail('resources: ' + (err && err.message || err)); }
     for (let c = 0; c < casc.length; c++) upload(c, true);
-    uploadHF(true); if (hf2) uploadHF2(true);
+    uploadHF(true); if (hf2) uploadHF2(true); if (hf3) uploadHF3(true);
     return true;
   }
   const H16 = (v) => (THREE_.DataUtils ? THREE_.DataUtils.toHalfFloat(v) : 0);
@@ -385,6 +392,7 @@
     t.needsUpdate = true; D.uploads++; return n;
   }
   function uploadHF(force) { if (!tex) return 0; U.base.value = baseY; const n = uploadField(hf, tex.hft, -300, 500, force); D.hfVer = hf.ver; return n; }
+  function uploadHF3(force) { if (!tex || !tex.hft3) return 0; const n = uploadField(hf3, tex.hft3, -1500, 2000, force); D.hf3Ver = hf3.ver; return n; }
   function uploadHF2(force) { if (!tex || !tex.hft2) return 0; const n = uploadField(hf2, tex.hft2, -1500, 2000, force); D.hf2Ver = hf2.ver; return n; }
   // probes: CPU order is (column, layer); the 3D texture is layer-major (z slices of P x P).  Only the probes traced / reset since the last upload.
   function probeTex(c, s, dv, dr, dg, db, p) { const L = c.L, col = (p / L) | 0, l = p - col * L, o = p * 16, q = (l * c.P * c.P + col) * 4; for (let k = 0; k < 4; k++) { dv[q + k] = H16(s[o + k]); dr[q + k] = H16(s[o + 4 + k]); dg[q + k] = H16(s[o + 8 + k]); db[q + k] = H16(s[o + 12 + k]); } }
@@ -488,9 +496,9 @@
   // a new world (PW.gen bumps on every open / close) or a new height function: every cache restarts (the toroidal stamps are world coordinates, so the
   // last planet's heights / probes would otherwise stay valid here).  GPU resources are kept (materials hold them); overlays belong to dm-lamps (it clears its own).
   function resetCaches() {
-    for (const h of [hf, hf2]) if (h) h.invalidate();
+    for (const h of [hf, hf2, hf3]) if (h) h.invalidate();
     for (const c of casc) resetCascade(c);
-    lastFarC[0] = lastFarC[1] = 1e9; baseSet = false; hemiCache = null; if (CS) CS.first = true; D.resets++;
+    lastFarC[0] = lastFarC[1] = 1e9; lastHorC[0] = lastHorC[1] = 1e9; baseSet = false; hemiCache = null; if (CS) CS.first = true; D.resets++;
   }
   D.reset = function () { if (D.ready) resetCaches(); };
   // live tier: the built tier capped by the CURRENT preset (the player can change it in the menu); uniforms only, never a recompile
@@ -524,6 +532,10 @@
       hf2.sampler = o.H; if (Math.abs(o.x - lastFarC[0]) > FAR_CELL * 4 || Math.abs(o.z - lastFarC[1]) > FAR_CELL * 4) { hf2.setCenter(o.x, o.z); lastFarC[0] = o.x; lastFarC[1] = o.z; hf2.cursor = 0; }
       hf2.fill(hf2.N * hf2.N, 2048, 0.3);
     }
+    if (hf3 && e.horSteps > 0) {   // (fov-fill 2) horizon field: re-centred when the focus moved >= 4 cells (192 m), filled in 0.25 ms slices (16 k cells: ~30-60 s on a 13 fps tablet from cold; an unfilled cell reads as open air, so far shadows arrive late but never wrong)
+      hf3.sampler = o.H; if (Math.abs(o.x - lastHorC[0]) > HOR_CELL * 4 || Math.abs(o.z - lastHorC[1]) > HOR_CELL * 4) { hf3.setCenter(o.x, o.z); lastHorC[0] = o.x; lastHorC[1] = o.z; hf3.cursor = 0; }
+      hf3.fill(hf3.N * hf3.N, 1024, 0.25);
+    }
     const sd = o.sunDir; if (sd) { sunV[0] = sd.x; sunV[1] = sd.y; sunV[2] = sd.z; }
     lightParams(); const day = o.day == null ? 1 : o.day;
     const hm = sceneLights(o.scene || (W.PW && W.PW.scene)).hemi; if (hm && hm.color) { const k = hm.intensity == null ? 1 : hm.intensity; skyI[0] = hm.color.r * k; skyI[1] = hm.color.g * k; skyI[2] = hm.color.b * k; }
@@ -546,27 +558,32 @@
     let csTarget = 0;
     if (D.cs && U && casc[0]) { if (csDispatch(o.renderer || getRenderer(), e, o)) csTarget = D.csOk ? 0.55 : 0; }
     if (U) {
-      const marchOn = e.sunSteps > 0 || e.farSteps > 0;
-      U.cam.value.set(o.x, o.z); U.sun.value.set(sunV[0], sunV[1], sunV[2]); U.hfSteps.value = e.sunSteps; U.farSteps.value = e.farSteps;
-      U.hc.value.set(hf.ci * hf.cell, hf.cj * hf.cell); if (hf2) U.fc.value.set(hf2.ci * FAR_CELL, hf2.cj * FAR_CELL);
+      const marchOn = e.sunSteps > 0 || e.farSteps > 0 || (e.horSteps || 0) > 0;
+      U.cam.value.set(o.x, o.z); U.sun.value.set(sunV[0], sunV[1], sunV[2]); U.hfSteps.value = e.sunSteps; U.farSteps.value = e.farSteps; U.horSteps.value = e.horSteps || 0;
+      U.hc.value.set(hf.ci * hf.cell, hf.cj * hf.cell); if (hf2) U.fc.value.set(hf2.ci * FAR_CELL, hf2.cj * FAR_CELL); if (hf3) U.h3.value.set(hf3.ci * HOR_CELL, hf3.cj * HOR_CELL);
       const cad = bon ? B.shadowEvery() : 1; U.hfK.value = (cad >= 30 ? 0.95 : cad > 1 ? 0.8 : 0.5) * (day > 0.05 ? 1 : 0) * (marchOn ? 1 : 0);
       U.lowSun.value = 1 - Math.min(1, Math.max(0, sunV[1] * 2.2));
       U.k.value += (1 - U.k.value) * Math.min(1, dt * 2); U.csK.value += (csTarget - U.csK.value) * Math.min(1, dt * (csTarget > U.csK.value ? 0.8 : 3));
       const tu = now(); let nc = 0;
       const nb = Number.isFinite(gC) ? rebase(baseY, gC) : baseY, baseMoved = !baseSet || nb !== baseY; if (baseMoved) { baseY = nb; baseSet = true; }
-      if (baseMoved) { nc += uploadHF(true); if (hf2) { nc += uploadHF2(true); farUpT = tu; } }   // the fp16 fields are stored relative to the base: both rewritten in the same frame
+      if (baseMoved) { nc += uploadHF(true); if (hf2) { nc += uploadHF2(true); farUpT = tu; } if (hf3) { nc += uploadHF3(true); horUpT = tu; } }   // the fp16 fields are stored relative to the base: both rewritten in the same frame
       else if (tu - D.upT > 160) { D.upT = tu; for (let c = 0; c < casc.length; c++) nc += upload(c, false); if (hf.ver !== D.hfVer || hf.dn) nc += uploadHF(false); }
       if (!baseMoved && hf2 && tu - farUpT > 1200 && (hf2.ver !== D.hf2Ver || hf2.dn)) { farUpT = tu; nc += uploadHF2(false); }
+      if (!baseMoved && hf3 && tu - horUpT > 2000 && (hf3.ver !== D.hf3Ver || hf3.dn)) { horUpT = tu; nc += uploadHF3(false); }
       if (nc) { D.upCells += nc; D.upMs += (now() - tu - D.upMs) * 0.1; }
     }
     const ms = now() - t0; D.msEma += (ms - D.msEma) * 0.05;   // (v297) includes the uploads
   };
 
+  // (fov-fill 2) the quality fade chain (ui/dm-lod.js qualityBands, set by index.html a few times a second; uniforms only): the sun shadow map eases out over
+  // sm = [a, b] metres from her (inside its own box, so its square edge is never seen), the far lighting term lasts to lf = [a, b] (the ground's dissolve)
+  D.setBands = function (sm0, sm1, lf0, lf1) { if (!U) return; U.sm.value.set(sm0, sm1); U.lf.value.set(lf0, lf1); };
+  D.horReach = function () { return hf3 ? horEdge(hf3.N, HOR_CELL) : 0; };   // the horizon field's usable radius (0 = none on this tier)
   // lamps: flat array [x,y,z, r,g,b, radius] * n (world frame); level 0..1 (dusk fade * on/off), eased by the caller
   D.setLamps = function (arr) { D.lamps = arr instanceof Float32Array ? arr : new Float32Array(arr); D.lampN = (D.lamps.length / 7) | 0; };
   D.setLampLevel = function (k) { D.lampK = k < 0 ? 0 : k > 1 ? 1 : k; };
-  D.addOverlay = function (o) { D.overlays++; if (hf) { hf.addOverlay(o); if (hf2) hf2.addOverlay(o); } else (D._pend || (D._pend = [])).push(o); };
-  D.clearOverlays = function () { D._pend = null; D.overlays = 0; for (const h of [hf, hf2]) if (h && h.overlays.length) { h.overlays.length = 0; h.invalidate(); } };
+  D.addOverlay = function (o) { D.overlays++; if (hf) { hf.addOverlay(o); if (hf2) hf2.addOverlay(o); if (hf3) hf3.addOverlay(o); } else (D._pend || (D._pend = [])).push(o); };
+  D.clearOverlays = function () { D._pend = null; D.overlays = 0; for (const h of [hf, hf2, hf3]) if (h && h.overlays.length) { h.overlays.length = 0; h.invalidate(); } };
   // stamp a rotated local height grid (the mansion collision grid) into the caches: o {g, nx, ny, x0, y0, cell, fwd, inv, floor, wcell}
   D.stampGrid = function (o) {
     try { const ov = rasterizeOverlay(o.g, o.nx, o.ny, o.x0, o.y0, o.cell, o.fwd, o.inv, o.wcell || 2, o.floor == null ? 0 : o.floor); D.addOverlay(ov); return ov.nx * ov.nz; } catch (e) { return 0; }
@@ -602,11 +619,27 @@
         If(U.farSteps.greaterThan(i - 0.5), () => { const q = p.add(L.mul(t)), dh = q.y.sub(hF(q.x, q.z)).add(0.5).add(outF(q)); vs.assign(min(vs, clamp(dh.div(U.penF.mul(t).add(1e-3)).mul(0.5).add(0.5), 0.0, 1.0))); });
       }
     }
+    // (fov-fill 2) the HORIZON march: past ~300 m from her the near and far fields are out of their windows (open air), so far ground had no terrain shadow at all;
+    // here those pixels march the 48 m field along the sun (HOR_T0 .. HOR_MAX), softer penumbra, eased in over 300..450 m and out at the field's own edge.
+    // A real branch: the near ground (most of the pixels at your feet) never runs it.  Medium+ only (Low builds no field).
+    if (tex.hft3 && (e.horSteps || 0) > 0) {
+      const N3 = hf3.N, hZ = (x, z) => texture(tex.hft3, vec2(x, z).div(HOR_CELL).add(0.5).div(N3)).level(0).r.add(U.base);
+      const w3 = winEdge(N3, HOR_CELL), out3 = (q) => smoothstep(w3[0], w3[1], max(abs(q.x.sub(U.h3.x)), abs(q.z.sub(U.h3.y)))).mul(1000.0);
+      const dC = T.length(vec2(p.x.sub(U.cam.x), p.z.sub(U.cam.y))), wH = smoothstep(300.0, 450.0, dC).mul(float(1).sub(smoothstep(w3[1] * 0.75, w3[1] * 0.92, dC)));
+      const vh = float(1).toVar();
+      If(wH.greaterThan(0.0), () => {
+        for (let i = 1; i <= e.horSteps; i++) {
+          const f = i / e.horSteps, t = HOR_T0 + (HOR_MAX - HOR_T0) * f * f;
+          If(U.horSteps.greaterThan(i - 0.5), () => { const q = p.add(L.mul(t)), dh = q.y.sub(hZ(q.x, q.z)).add(2.0).add(out3(q)); vh.assign(min(vh, clamp(dh.div(U.penF.mul(t).mul(2.0).add(1e-3)).mul(0.5).add(0.5), 0.0, 1.0))); });
+        }
+      });
+      vs.assign(min(vs, T.mix(float(1), vh, wH)));
+    }
     return vs;
     })();
     return { vs: vsN, hH };
   }
-  const hasMarch = () => { const e = TIERS[D.tier]; return !!e && (e.sunSteps > 0 || (!!hf2 && e.farSteps > 0)); };   // Low: no march node is ever compiled
+  const hasMarch = () => { const e = TIERS[D.tier]; return !!e && (e.sunSteps > 0 || (!!hf2 && e.farSteps > 0) || (!!hf3 && (e.horSteps || 0) > 0)); };   // Low: no march node is ever compiled
   // node for other shaders (the sea): sun visibility 0..1 at a world position, blended by the same strength uniforms; null when DMLight cannot serve it
   D.sunVisNode = function (p) {
     try {
@@ -637,14 +670,32 @@
           const cv = texture3D(CS.A[0], uvw, 0), cr = texture3D(CS.A[1], uvw, 0), cg = texture3D(CS.A[2], uvw, 0), cb = texture3D(CS.A[3], uvw, 0);
           vis = mix(vis, ev(cv), U.csK); bounce = mix(bounce, vec3(ev(cr), ev(cg), ev(cb)), U.csK);
         }
-        const half = cc.P * cc.sp * 0.5, dxz = max(abs(p.x.sub(U.cam.x)), abs(p.z.sub(U.cam.y))), wC = float(1).sub(smoothstep(half * 0.55, half * 0.92, dxz));
+        const half = cc.P * cc.sp * 0.5, dxz = T.length(vec2(p.x.sub(U.cam.x), p.z.sub(U.cam.y))), wC = float(1).sub(smoothstep(half * 0.55, half * 0.92, dxz));
         lookups.push({ w: wC, vis, bounce });
       }
       let vis = lookups[0].vis, bounce = lookups[0].bounce;
       if (lookups.length > 1) { const w = lookups[0].w; vis = mix(lookups[1].vis, vis, w); bounce = mix(lookups[1].bounce, bounce, w); }
       { // (v297) past the outermost cascade window the probes are the wrapped ones of the opposite edge: fade to neutral (open sky, no bounce)
-        const cl = casc[casc.length - 1], hl = cl.P * cl.sp * 0.5, dxz = max(abs(p.x.sub(U.cam.x)), abs(p.z.sub(U.cam.y))), wOut = smoothstep(hl * 0.72, hl * 0.9, dxz);
-        vis = mix(vis, float(1), wOut); bounce = mix(bounce, vec3(0, 0, 0), wOut);
+        const cl = casc[casc.length - 1], hl = cl.P * cl.sp * 0.5, dxz = T.length(vec2(p.x.sub(U.cam.x), p.z.sub(U.cam.y))), wOut = smoothstep(hl * 0.72, hl * 0.9, dxz);
+        // (fov-fill 2) both hand-offs use the true distance (a circle inside the square window: its corners were a visible square ring of probe light), and
+        // the outermost one fades to the FAR term instead of plain open sky: the far ground was flat-lit (no AO at all) from ~170 m to the horizon.  Sky visibility from the
+        // shading normal (a slope sees less sky: 0.78 + 0.22 n.y) and, where the horizon field exists, its cavity (the ground 96 m round sits higher: a valley / gully
+        // floor sees less sky), held to the ground's dissolve (U.lf) and only built where wOut > 0 (a branch: the near ground keeps the probes).
+        const farVis = T.Fn ? T.Fn(() => {
+          const v = float(1).toVar();
+          If(wOut.greaterThan(0.0), () => {
+            let fv = float(0.78).add(clamp(n.y, 0.0, 1.0).mul(0.22));
+            if (tex.hft3) {
+              const N3 = hf3.N, hZ = (x, z) => texture(tex.hft3, vec2(x, z).div(HOR_CELL).add(0.5).div(N3)).level(0).r.add(U.base), r3 = HOR_CELL * 2;
+              const ring = hZ(p.x.add(r3), p.z).add(hZ(p.x.sub(r3), p.z)).add(hZ(p.x, p.z.add(r3))).add(hZ(p.x, p.z.sub(r3))).mul(0.25);
+              const w3 = winEdge(N3, HOR_CELL), in3 = float(1).sub(smoothstep(w3[0], w3[1], max(abs(p.x.sub(U.h3.x)), abs(p.z.sub(U.h3.y)))));
+              fv = fv.mul(float(1).sub(clamp(ring.sub(p.y).div(60.0), 0.0, 1.0).mul(0.3).mul(in3)));
+            }
+            v.assign(mix(fv, float(1), smoothstep(U.lf.x, U.lf.y, T.length(vec2(p.x.sub(U.cam.x), p.z.sub(U.cam.y))))));
+          });
+          return v;
+        })() : float(1);
+        vis = mix(vis, farVis, wOut); bounce = mix(bounce, vec3(0, 0, 0), wOut);
       }
       const skyVis = clamp(vis, 0.0, 1.0), hRel = o.h || m.userData.dmReliefH || null;
       // crevices: the relief height (parallax / ground atlas) darkens the sky term further, weighted by how closed the sky is
@@ -656,7 +707,9 @@
         // relief-aware: with the sun low the crevices (low relief height) sit in the shadow of their own rims
         const rel = hRel ? mix(float(1), smoothstep(0.05, 0.6, clamp(hRel, 0.0, 1.0)), U.lowSun.mul(0.6)) : float(1);
         const hfVis = mix(float(1), sn.vs.mul(rel), U.hfK.mul(U.k)), prev = m.receivedShadowNode;
-        m.receivedShadowNode = prev ? ((s) => prev(s).mul(hfVis)) : ((s) => s.mul(hfVis));
+        // (fov-fill 2) the sun shadow map eases out inside its own box (U.sm, a circle round her): tight, crisp shadows near, the height-field march beyond — no square edge
+        const wMap = float(1).sub(smoothstep(U.sm.x, U.sm.y, T.length(vec2(p.x.sub(U.cam.x), p.z.sub(U.cam.y)))));
+        m.receivedShadowNode = prev ? ((s) => mix(float(1), prev(s), wMap).mul(hfVis)) : ((s) => mix(float(1), s, wMap).mul(hfVis));
       }
       m.userData.dmLight = true; m.needsUpdate = true; D.mats++;
       return true;
@@ -672,5 +725,5 @@
   };
 
   D.status = function () { return { on: D.on, tier: D.tier, live: D.live, cap: D.cap, flag, lvl: D.lvl, eff: D.eff, ready: D.ready, ms: +D.msEma.toFixed(2), upMs: +D.upMs.toFixed(2), upCells: D.upCells, agl: Math.round(D.agl), idle: !!(D.eff && D.eff.idle), resets: D.resets, probesPerSec: Math.round(D.probesPerSec), headroom: D.hr.on, cs: D.cs, csOk: D.csOk, csBad: D.csBad, csFrames: D.csFrames, csK: U ? +U.csK.value.toFixed(2) : 0, mats: D.mats, overlays: D.overlays, uploads: D.uploads, MB: +(D.bytes / 1048576).toFixed(2), cpuMB: +(D.cpuBytes / 1048576).toFixed(2), gpuMB: +(D.gpuBytes / 1048576).toFixed(2), built: D.built, failed: D.failed, hfFilled: hf ? hf.filled : 0, boot: D.boot }; };
-  D.dispose = function () { try { if (tex) { tex.hft.dispose(); if (tex.hft2) tex.hft2.dispose(); for (const v of tex.vols) for (const t of v) t.dispose(); } if (CS) { for (const t of CS.A.concat(CS.B)) t.dispose(); } } catch (e) { } tex = null; U = null; CS = null; D.ready = false; D.tier = 'off'; D.ticks = 0; hf = null; hf2 = null; casc = []; hemiCache = null; D._S = null; D._wkey = null; D._wgen = -1; baseSet = false; };
+  D.dispose = function () { try { if (tex) { tex.hft.dispose(); if (tex.hft2) tex.hft2.dispose(); if (tex.hft3) tex.hft3.dispose(); for (const v of tex.vols) for (const t of v) t.dispose(); } if (CS) { for (const t of CS.A.concat(CS.B)) t.dispose(); } } catch (e) { } tex = null; U = null; CS = null; D.ready = false; D.tier = 'off'; D.ticks = 0; hf = null; hf2 = null; hf3 = null; casc = []; hemiCache = null; D._S = null; D._wkey = null; D._wgen = -1; baseSet = false; };
 })(typeof window !== 'undefined' ? window : globalThis);
