@@ -1,7 +1,7 @@
 <!doctype html>
 <!-- DMLight shader harness (v297): builds + renders the real DMLight material hooks (applyMaterial / sunVisNode) on a displaced terrain with a wall, so a TSL graph
      error or a GPU compile error shows up without the whole game.  Software GL / SwiftShader is enough (no fps meaning).  Query: ?gl=1 (WebGL2 backend),
-     ?light=off|low|med|high|ultra, ?far=1 (camera high above a 2 km plane: the window masking is what keeps far terrain free of phantom shadows).
+     ?light=off|low|med|high|ultra, ?far=1 (camera high above a 2 km plane: the window masking is what keeps far terrain free of phantom shadows), ?bands=1 (fov-fill 2: DMLight.setBands, no square shadow-box edge).
      Result: window.__done = { ok, status, err[] } ; the canvas is the picture. -->
 <html><head><meta charset="utf-8"><style>body{margin:0;background:#000}</style>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js","three/webgpu":"https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js","three/tsl":"https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.tsl.js"}}</script>
@@ -29,6 +29,7 @@ try {
   const o = { x: 0, y: H(0, 0) + 2, z: 0, H, sunDir, day: 1, scene, renderer: r, walk: true };
   for (let f = 0; f < 3; f++) DMLight.tick(1 / 60, o);
   const applied = DMLight.applyMaterial(mat, { p: T.positionWorld });
+  if (Q.get('bands') === '1' && DMLight.setBands) DMLight.setBands(36, 55, 1600, 2000);   // (fov-fill 2) ?bands=1: the shadow map eased out inside its 60 u box + the far lighting band
   // a second, water-like material through sunVisNode (the sea hook)
   const sv = DMLight.sunVisNode(T.positionWorld), wm = new THREE.MeshBasicNodeMaterial(); wm.colorNode = sv ? T.vec3(0.1, 0.3, 0.5).mul(sv) : T.vec3(0.1, 0.3, 0.5);
   const sea = new THREE.Mesh(new THREE.PlaneGeometry(30, 30).rotateX(-Math.PI / 2), wm); sea.position.set(-25, -1, -20); scene.add(sea);

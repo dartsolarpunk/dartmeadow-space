@@ -405,6 +405,16 @@
     if (tileIdx) { tiles = []; for (const t of tileIdx.values()) { const c = c0 * Math.pow(2, t.l); t.start = idx.length; t.count = t.v.length; for (let k = 0; k < t.v.length; k++) idx.push(t.v[k]); t.x0 = (t.ti * T - H) * c; t.x1 = (t.ti * T + T - H) * c; t.z0 = (t.tj * T - H) * c; t.z1 = (t.tj * T + T - H) * c; t.q = 2 * c; delete t.v; tiles.push(t); } }
     return { tiles, pos: new Float32Array(pos), lvl: new Float32Array(lvl), morph: new Float32Array(morph), index: pos.length / 2 > 65535 ? new Uint32Array(idx) : new Uint16Array(idx), levels, n, c0, half: n * c0 * Math.pow(2, levels - 1) / 2 };
   }
+  // (lod-hide) the sheet's OUTER edge is a circle, not the clip-map's square: the largest circle that stays inside the outermost level's square whatever
+  // its snap (inscribed radius half, less one snap step q = 2 x the outer cell), dissolving across its rim (Radical Circumference / ArcEdge, Justin Craig
+  // Venable, https://dartedge.com/radicaledge: outer edge R, inner edge R - 1/8 of the diameter, measured to the rim's centre).  The sky-ground tiles take
+  // the sea over across the same band (index.html SkyGround._seaRim), so the far sea has no square anywhere.  out = { inner, outer, centre } (reused).
+  const RC = (typeof root !== 'undefined' && root.DMRadCirc) || (typeof require === 'function' ? (() => { try { return require('./dm-radical-circ.js'); } catch (e) { return null; } })() : null);
+  function sheetRim(half, outerCell, out) {
+    const o = out || { inner: 0, outer: 0, centre: 0 }, R = Math.max(1, half - 2 * outerCell);
+    if (RC) RC.rim(R, o); else { o.outer = R; o.inner = R - 2 * R * 0.125; o.centre = (o.inner + o.outer) * 0.5; }
+    return o;
+  }
   function levelsFor(n, c0, want) { let l = 1; while (n * c0 * Math.pow(2, l - 1) < want) l++; return l; }
 
   /* ───────────────────────────── 7. shore field (depth, wave travel time, gradient) ───────────────────────────── */
@@ -744,7 +754,7 @@
   const API = {
     VERSION: 1, UNIT_M, G0, TIERS, TIER_ORDER, tierFor, tierBytes, windFor, identityFor, LIQUIDS, boilK,
     bandPlan, buildSpectrum, bakeBand, bakeBandSync, bakeDetail, bakeCaustics, LAYERS, layerUV, heightAt, slopeAt, bilin,
-    clipmap, levelsFor, eikonal, coverJob, coverBoxWet, coverAlpha, tilesWet, COVER_LAND, COVER_FADE, sanitizeDepth, landFade, farFade, shoal, swashProfile, wetStep, Ripples, Wake, Spray,
+    clipmap, levelsFor, sheetRim, eikonal, coverJob, coverBoxWet, coverAlpha, tilesWet, COVER_LAND, COVER_FADE, sanitizeDepth, landFade, farFade, shoal, swashProfile, wetStep, Ripples, Wake, Spray,
     iceLook, bakeCells, worleyId, CURL_NC, CURL_PT, curlCounts, curlShape, curlLUT, curlAmount, curlFronts, curlScratch, curlDetail, gridSample,
     util: { clamp, sstep, mix, hashStr, rng, ndtri, fbm, worley, h2 }
   };

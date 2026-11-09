@@ -14,6 +14,8 @@ Use: **code** = code or tables included (licence terms apply) · **technique** =
   <https://youtu.be/rSKMYc1CQHE> · <https://github.com/SebLague/Fluid-Sim>
 - **Unified Spray, Foam and Bubbles for Particle-Based Fluids** — M. Ihmsen, N. Akinci, G. Akinci, M. Teschner (2012). *Published paper* (technique). Foam, spray and bubble particles thrown up by churned water.
   <https://cg.informatik.uni-freiburg.de/publications/2012_CGI_sprayFoamBubbles.pdf>
+- **Radical Circumference · ArcEdge** — Justin Craig Venable. *DART Meadow project* (original). Circle and sphere measures without pi (circumference = √(diameter × 3)², area, sphere volume and surface), rim measured centre-to-centre, the half-radius division and the 1/8 opposite balance: the radii of the ground’s level-of-detail discs and the sea’s circular rim (`ui/dm-radical-circ.js`).
+  <https://dartedge.com/radicaledge>
 - **ArcLake · SPH Ocean** — DART-Skyboard · Radical Deepscale. *DART Meadow project* (technique). The project’s own browser SPH ocean; the reference for bringing Fluid-Sim into the game.
   <https://radicaldeepscale.com/ArcLakeFluidSim.html>
 - **Procedural Planets (cube-sphere)** — Sebastian Lague. *MIT* (technique). Cube-to-sphere planet patches used by the sandbox’s quadtree LOD planet.
