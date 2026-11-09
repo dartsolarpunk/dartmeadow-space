@@ -11,7 +11,8 @@
 //      wF); its fill on the real Solenne field, mobile class: every chunk inside the circle filled, nothing outside it, the near trees' rules and density,
 //      its own seed (the near scatter is untouched), no per-frame allocation, and the 13 fps fill time.
 //  (5) tessellation: the geometric disc still eases to flat at 0.75 half and the bump carries on past it on every preset (no cliff after the disc).
-//  (6) Watcher NAY (c): poolTrim is narrowed to the deck quad's GLB box; measured on every mansion GLB, the terrace pool and the pool-room tub both stay.
+//  (6) the designed deck infinity pool stays (poolLook takes the teal); poolTrim is a no-op; measured on every mansion GLB, both ah_pool quads and the pool-room tub stay.
+//  (7) cache tags: dm-lod.js and dm-light.js are ?v=300 (they changed in 7c002d0); dm-facilities.js is ?v=300b (the pool restore); CACHE_NAME stays v300.
 'use strict';
 const fs = require('fs'), path = require('path');
 const root = path.join(__dirname, '..', '..');
@@ -219,12 +220,12 @@ for (const S of scen) {
     ok(cover > flat, p + (lowG ? ' (low Mali)' : '') + ': relief eases flat at ' + flat + ' u (disc ' + tt[p].half + '), surface detail at full weight to ' + cover + ' u (' + (lvl >= 2 ? 'mid grain' : 'bump') + '), far tint to the haze end');
   }
 }
-// ── (6) Watcher NAY (c): the pools ──
+// ── (6) the designed deck infinity pool stays; poolLook takes the teal ──
 {
   const fac = fs.readFileSync(path.join(root, 'ui', 'dm-facilities.js'), 'utf8'), Fm = {};
   new Function('F', fac.slice(fac.indexOf('  F.POOL_LOOK ='), fac.indexOf('  function mansionInstance(T) {')))(Fm);
-  ok(Fm.poolTrim([60, 1, -20, 61, 1, -20, 60, 1, -19], null) !== null, 'a triangle inside the deck box above -5 is dropped');
-  ok(Fm.poolTrim([-10, 1, 20, -9, 1, 20, -10, 1, 21], null) === null && Fm.poolTrim([45, 1, -20, 47, 1, -20, 46, 1, -19], null) === null, 'above -5 but outside the deck quad\'s box: kept (narrowed, Watcher NAY c)');
+  ok(Fm.poolTrim([60, 1, -20, 61, 1, -20, 60, 1, -19], null) === null, 'a triangle inside the deck box is kept (the designed infinity pool stays)');
+  ok(Fm.poolTrim([-10, 1, 20, -9, 1, 20, -10, 1, 21], null) === null && Fm.poolTrim([45, 1, -20, 47, 1, -20, 46, 1, -19], null) === null, 'triangles outside the deck box stay');
   const glb = f => { const b = fs.readFileSync(f), jl = b.readUInt32LE(12), J = JSON.parse(b.slice(20, 20 + jl).toString()), bin = b.slice(20 + jl + 8); return { J, bin }; };
   const rd = (G, ai) => { const J = G.J, a = J.accessors[ai], bv = J.bufferViews[a.bufferView], off = (bv.byteOffset || 0) + (a.byteOffset || 0), sz = { 5126: 4, 5125: 4, 5123: 2, 5121: 1 }[a.componentType], c = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4 }[a.type], st = bv.byteStride || sz * c, out = [];
     for (let i = 0; i < a.count; i++) for (let k = 0; k < c; k++) { const o = off + i * st + k * sz; out.push(a.componentType === 5126 ? G.bin.readFloatLE(o) : a.componentType === 5125 ? G.bin.readUInt32LE(o) : a.componentType === 5123 ? G.bin.readUInt16LE(o) : G.bin.readUInt8(o)); } return out; };
@@ -236,14 +237,23 @@ for (const S of scen) {
       const P = rd(G, p.attributes.POSITION), I = p.indices != null ? rd(G, p.indices) : null, keep = Fm.poolTrim(P, I), all = I || [...Array(P.length / 3).keys()];
       const kept = keep || all; let terrace = 0, deck = 0;
       for (let t = 0; t < kept.length; t += 3) { const v = [0, 1, 2].map(k => kept[t + k]); if (v.every(i => P[i * 3 + 1] < -18)) terrace++; if (v.every(i => P[i * 3 + 1] > -5 && P[i * 3] > 46 && P[i * 3] < 77 && P[i * 3 + 2] > -32 && P[i * 3 + 2] < -7)) deck++; }
-      if (mn === 'ah_pool') ok(terrace === 2 && deck === 0 && kept.length === all.length - 6, g + ' ' + me.name + ': deck quad dropped (2 tris), sea-terrace pool kept (' + terrace + ')');
-      else { // the pool-room tub: interior GLB, int_water, above -5 — poolTrim must keep every triangle even if it were ever run on it
+      if (mn === 'ah_pool') ok(keep === null && terrace === 2 && deck === 2 && kept.length === all.length, g + ' ' + me.name + ': deck infinity pool kept (' + deck + ') and sea-terrace pool kept (' + terrace + ')');
+      else { // the pool-room tub: interior GLB, int_water — poolTrim must keep every triangle even if it were ever run on it
         const xs = [], zs = [], ys = []; for (let i = 0; i < P.length; i += 3) { xs.push(P[i]); ys.push(P[i + 1]); zs.push(P[i + 2]); }
-        ok(keep === null, g + ' ' + mn + ' (pool-room tub, y ' + Math.min(...ys).toFixed(2) + '..' + Math.max(...ys).toFixed(2) + ', x ' + Math.min(...xs) + '..' + Math.max(...xs) + ', z ' + Math.min(...zs) + '..' + Math.max(...zs) + '): above -5, outside the deck box: nothing trimmed');
+        ok(keep === null, g + ' ' + mn + ' (pool-room tub, y ' + Math.min(...ys).toFixed(2) + '..' + Math.max(...ys).toFixed(2) + ', x ' + Math.min(...xs) + '..' + Math.max(...xs) + ', z ' + Math.min(...zs) + '..' + Math.max(...zs) + '): nothing trimmed');
       }
     }));
   }
-  ok((fac.match(/F\.poolTrim\(/g) || []).length === 1 && /o\.material\.name === 'ah_pool' && o\.geometry\) \{ const g = o\.geometry, k = F\.poolTrim\(/.test(fac), 'poolTrim only ever runs on the exterior GLB\'s ah_pool (the interior tub is a different GLB and material)');
+  ok(/ah_pool'\) F\.poolLook\(o\.material\)/.test(fac) && !/g\.setIndex\(k\)/.test(fac), 'loadMansion re-lights ah_pool and does not trim it');
 }
+// ── (7) cache tags: a v300 load cannot keep the 7c002d0 lod/light/facilities scripts ──
+{
+  const sw = fs.readFileSync(path.join(root, 'sw.js'), 'utf8');
+  ok(/const CACHE_NAME = 'dartmeadow-engine-v300';/.test(sw), 'CACHE_NAME stays dartmeadow-engine-v300');
+  ok(/<script src="ui\/dm-lod\.js\?v=300"><\/script>/.test(html), 'dm-lod.js cache tag is v300 (changed in 7c002d0)');
+  ok(/<script src="ui\/dm-light\.js\?v=300"><\/script>/.test(html), 'dm-light.js cache tag is v300 (changed in 7c002d0)');
+  ok(/<script src="ui\/dm-facilities\.js\?v=300b" defer><\/script>/.test(html), 'dm-facilities.js cache tag is v300b (pool restore; v300 was already cached on this PR)');
+}
+
 console.log(fails ? fails + ' FAILED of ' + n : 'fov-fade OK (' + n + ' checks)');
 process.exit(fails ? 1 : 0);

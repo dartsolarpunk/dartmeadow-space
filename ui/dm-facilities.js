@@ -266,13 +266,13 @@
       for (let i = 0; i < n; i++) { const v = bin.charCodeAt(i * 2) | (bin.charCodeAt(i * 2 + 1) << 8); a[i] = v > 32767 ? v - 65536 : v; }
       col.h = a; MAN.col = col; MAN.glb = gl; MAN.loading = false;
       try { gl.scene.traverse(o => { if (o.isMesh && o.material && o.material.name === 'ah_pool') F.poolLook(o.material); }); } catch (e) { console.warn('[ariel-home] pool look', e); }
-      try { gl.scene.traverse(o => { if (o.isMesh && o.material && o.material.name === 'ah_pool' && o.geometry) { const g = o.geometry, k = F.poolTrim(g.attributes.position, g.index ? g.index.array : null); if (k) g.setIndex(k); } }); } catch (e) { console.warn('[ariel-home] pool trim', e); }
     }).catch(e => { MAN.failed = true; MAN.loading = false; console.warn('[ariel-home] load failed', e); });
   }
-  // (lod-hide) the two pool surfaces of the GLB (ah_pool: one quad under the pool-room roof, one 57 x 21 u quad on the lower sea terrace) shipped with a
-  // full-strength cyan EMISSIVE (0.09, 0.63, 0.72) and no lighting response: at night the terrace pool was a flat, saturated teal rectangle by the shore,
-  // the brightest thing on screen, read as an LOD "reference tile".  Water is lit, not lit-up: a deep, dark, glossy surface that takes the sky / lamp light
-  // like the sea does, with only a trace of its own glow.  Shared by every clone (one material), set once when the GLB arrives.  Pure: node-tested.
+  // (lod-hide) the two pool surfaces of the GLB share one ah_pool material: the designed infinity pool on the east cantilever deck (a 30 x 23 u sheet at
+  // y -0.26, GLB x 46.8..76.7, z -31.2..-7.8, over a 1.6-deep ah_dark basin under the wing canopy) and the 57 x 21 u quad on the lower sea terrace
+  // (y -18.46).  They shipped with a full-strength cyan EMISSIVE (0.09, 0.63, 0.72) and no lighting response, so in daylight and at night they read as
+  // flat teal "reference tiles".  Water is lit, not lit-up: a deep, dark, glossy surface that takes the sky / lamp light like the sea does, with only a
+  // trace of its own glow.  Shared by every clone (one material), set once when the GLB arrives.  Pure: node-tested.
   F.POOL_LOOK = { color: [0.012, 0.05, 0.062], emissive: [0.0, 0.006, 0.008], roughness: 0.06, metalness: 0.3 };
   F.poolLook = function (m) {
     if (!m) return m; const L = F.POOL_LOOK;
@@ -281,29 +281,14 @@
     m.emissiveIntensity = 1; m.roughness = L.roughness; m.metalness = L.metalness; m.userData = m.userData || {}; m.userData.dmPoolLook = true; m.needsUpdate = true;
     return m;
   };
-  // (fov-fill) the DECK-level ah_pool quad (GLB local x 46.8..76.7, z -7.8..-31.2, y -0.26: a 30 x 23 u sheet flush with the HOME deck, by the seaward rail)
-  // was the bright teal polygon on the walkway in daylight (base 0.08/0.50/0.58 + the shipped emissive, sunlit).  It is not a pool anyone swims in: it sits
-  // 0.26 u under the deck over a dark ah_dark basin (-0.5 / -1.1 / -1.6), and read as a cyan reference tile on the deck.  Its two triangles are dropped from
-  // the shared index when the GLB arrives (every clone and the impostor bake see the same geometry); the lower sea-terrace pool (y -18.46, re-lit by poolLook)
-  // stays.  Pure: P = position attribute (getY) or a flat xyz array, idx = index array or null.  Returns the kept index (a plain array) or null to keep all.
-  // (fov-fill 2, Watcher NAY c) narrowed: a triangle is dropped only when ALL three corners lie inside the deck quad's own GLB box (x 46.8..76.7, z -31.2..-7.8,
-  // +-0.5 u) AND above y -5 — not every ah_pool triangle above -5.  Measured on both mansion GLBs (tools/tests/fov-fill.js): ah_pool is exactly two quads, this
-  // one and the sea-terrace pool (x -31.2..26, z -46.8..-26, y -18.46); the pool-room tub is NOT ah_pool (int_water in the interior GLBs, GLB x 40..64,
-  // z 20..34, y 2.15, the landward east wing) and poolTrim never sees it.  A future pool above -5 anywhere else stays.
+  // (fov-fill 3) the deck quad is that designed infinity pool, not a stray marker.  78d0e81 / 7c002d0 dropped it to hide the walkway teal, which left the
+  // basin empty and dark.  The teal was the shipped emissive, already restyled by poolLook on the shared material, so the geometry stays (every clone and
+  // the impostor bake see both quads).  poolTrim is a no-op (returns null = keep all) so a stale caller cannot drop the deck again.  POOL_DECK_BOX is the
+  // measured deck-pool quad (tests).  The sea-terrace pool (x -31.2..26, z -46.8..-26, y -18.46) also stays.  The pool-room tub is NOT ah_pool (int_water
+  // in the interior GLBs, GLB x 40..64, z 20..34, y 2.15) and is never seen here.
   F.POOL_DECK_Y = -5;
   F.POOL_DECK_BOX = { x0: 46.3, x1: 77.2, z0: -31.7, z1: -7.3 };
-  F.poolTrim = function (P, idx) {
-    if (!P) return null; const n = P.count != null ? P.count : (P.length / 3) | 0, y = i => (P.getY ? P.getY(i) : P[i * 3 + 1]);
-    const x = i => (P.getX ? P.getX(i) : P[i * 3]), z = i => (P.getZ ? P.getZ(i) : P[i * 3 + 2]), Bx = F.POOL_DECK_BOX;
-    const deck = i => y(i) > F.POOL_DECK_Y && x(i) >= Bx.x0 && x(i) <= Bx.x1 && z(i) >= Bx.z0 && z(i) <= Bx.z1;
-    const m = idx ? idx.length : n, out = []; let drop = 0;
-    for (let t = 0; t + 2 < m; t += 3) {
-      const a = idx ? idx[t] : t, b = idx ? idx[t + 1] : t + 1, c = idx ? idx[t + 2] : t + 2;
-      if (deck(a) && deck(b) && deck(c)) { drop++; continue; }
-      out.push(a, b, c);
-    }
-    return drop ? out : null;
-  };
+  F.poolTrim = function (P, idx) { return null; };
   function mansionInstance(T) {
     const root = new T.Group(); root.name = 'JOTS_ArielMansion';
     const sc = MAN.glb.scene.clone(true);      // materials stay shared with the loaded scene on purpose (one set of textures)

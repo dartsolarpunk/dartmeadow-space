@@ -8,8 +8,9 @@
 //      field of view, to the horizon — and the far ring adds only a few dozen coarse tiles over the old vantage radius.
 //  (5) SETTLE: standing still with tiles waiting, the per-frame budget is _SKY_SETTLE.k x the normal one (still a time budget: no build starts past it but the
 //      one emergency); the queue drains in fewer frames; moving drops it back at once; update() still allocates nothing per frame.
-//  (6) the walkway teal polygon: the deck-level ah_pool quad (y -0.26, x 46.8..76.7, z -31.2..-7.8) of both mansion GLBs is dropped by DMFac.poolTrim when the GLB
-//      loads; the sea-terrace pool stays; ah_pool is the only cyan material in every mansion GLB, so nothing teal is left on the deck.
+//  (6) the walkway teal was the shipped ah_pool emissive, not the geometry.  Both ah_pool quads stay (the designed east-deck infinity pool at y -0.26,
+//      x 46.8..76.7, z -31.2..-7.8, and the sea-terrace pool); DMFac.poolLook restyles the shared material so they read as water, not a teal tile.
+//      poolTrim is a no-op.  ah_pool is the only cyan material in every mansion GLB.
 'use strict';
 const fs = require('fs'), path = require('path');
 const root = path.join(__dirname, '..', '..');
@@ -152,12 +153,13 @@ function coverage(G, rMax) {
   ok(!/new\s+(Set|Map|Array|THREE)/.test(up) && !/=>/.test(up), 'update(): still no per-frame allocation or closure');
   ok(/this\._anc=new THREE\.Vector3\(/.test(cut('function SkyGround(scene,F,pal,o){', 'const _SKY_FADE0')), 'the settle anchor is allocated once, in the constructor');
 }
-// ── (6) the walkway teal polygon ──
+// ── (6) the designed deck infinity pool stays; poolLook takes the teal ──
 {
   const fac = fs.readFileSync(path.join(root, 'ui', 'dm-facilities.js'), 'utf8');
   const Fm = {}; new Function('F', fac.slice(fac.indexOf('  F.POOL_LOOK ='), fac.indexOf('  function mansionInstance(T) {')))(Fm);
-  ok(typeof Fm.poolTrim === 'function', 'DMFac.poolTrim exists');
-  ok(/F\.poolLook\(o\.material\)[^\n]*\n[^\n]*ah_pool' && o\.geometry\)[^\n]*F\.poolTrim\(g\.attributes\.position, g\.index \? g\.index\.array : null\); if \(k\) g\.setIndex\(k\)/.test(fac), 'loadMansion trims every ah_pool geometry as the GLB arrives (before any clone / impostor)');
+  ok(typeof Fm.poolLook === 'function' && typeof Fm.poolTrim === 'function', 'DMFac.poolLook and poolTrim exist');
+  ok(/ah_pool'\) F\.poolLook\(o\.material\)/.test(fac), 'loadMansion re-lights every ah_pool material as the GLB arrives (before any clone / impostor)');
+  ok(!/g\.setIndex\(k\)/.test(fac) && Fm.poolTrim([60, -0.26, -20, 61, -0.26, -20, 60, -0.26, -19], null) === null, 'poolTrim is a no-op: the deck infinity pool is not dropped');
   const glb = f => { const b = fs.readFileSync(f), jl = b.readUInt32LE(12), J = JSON.parse(b.slice(20, 20 + jl).toString()), bin = b.slice(20 + jl + 8); return { J, bin }; };
   const rd = (G, ai) => { const J = G.J, a = J.accessors[ai], bv = J.bufferViews[a.bufferView], off = (bv.byteOffset || 0) + (a.byteOffset || 0), sz = { 5126: 4, 5125: 4, 5123: 2, 5121: 1 }[a.componentType], c = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4 }[a.type], st = bv.byteStride || sz * c, out = [];
     for (let i = 0; i < a.count; i++) for (let k = 0; k < c; k++) { const o = off + i * st + k * sz; out.push(a.componentType === 5126 ? G.bin.readFloatLE(o) : a.componentType === 5125 ? G.bin.readUInt32LE(o) : a.componentType === 5123 ? G.bin.readUInt16LE(o) : G.bin.readUInt8(o)); } return out; };
@@ -166,21 +168,17 @@ function coverage(G, rMax) {
     const G = glb(path.join(dir, g));
     G.J.materials.forEach(m => { const p = m.pbrMetallicRoughness || {}, c = p.baseColorFactor || [1, 1, 1, 1], e = m.emissiveFactor || [0, 0, 0];
       const cyan = (c[1] > 0.3 && c[2] > 0.3 && c[0] < c[1] * 0.6) || (e[1] > 0.2 && e[2] > 0.2 && e[0] < e[1] * 0.6);
-      ok(!cyan || m.name === 'ah_pool', g + ': ' + m.name + ' is not a cyan material (only ah_pool is, and it is trimmed / re-lit)'); });
+      ok(!cyan || m.name === 'ah_pool', g + ': ' + m.name + ' is not a cyan material (only ah_pool is, and it is re-lit by poolLook)'); });
     let pools = 0;
     G.J.meshes.forEach(me => me.primitives.forEach(p => { if (!G.J.materials[p.material] || G.J.materials[p.material].name !== 'ah_pool') return; pools++;
-      const P = rd(G, p.attributes.POSITION), I = p.indices != null ? rd(G, p.indices) : null, keep = Fm.poolTrim(P, I);
-      ok(Array.isArray(keep) && keep.length === (I ? I.length : P.length / 3) - 6, g + ' ' + me.name + ': poolTrim drops exactly the deck quad (2 triangles)');
-      let deck = 0, sea = 0; for (let t = 0; t < keep.length; t += 3) { const ys = [0, 1, 2].map(k => P[keep[t + k] * 3 + 1]); if (ys.every(y => y > -5)) deck++; if (ys.every(y => y < -18)) sea++; }
-      ok(deck === 0 && sea === 2, g + ' ' + me.name + ': no deck-level pool triangle left, the sea-terrace pool kept (' + sea + ')');
-      const dropped = []; const ks = new Set(); for (let t = 0; t < keep.length; t += 3) ks.add(keep.slice(t, t + 3).join(','));
-      const all = I || P.map((_, i) => i).filter(i => i < P.length / 3);
-      for (let t = 0; t < all.length; t += 3) if (!ks.has([all[t], all[t + 1], all[t + 2]].join(','))) for (let k = 0; k < 3; k++) dropped.push(all[t + k]);
-      const xs = dropped.map(i => P[i * 3]), zs = dropped.map(i => P[i * 3 + 2]);
-      ok(Math.min(...xs) > 46 && Math.max(...xs) < 77 && Math.min(...zs) > -32 && Math.max(...zs) < -7, g + ': the dropped quad is the one by the seaward rail of the HOME deck (x 46.8..76.7, z -31.2..-7.8)'); }));
+      const P = rd(G, p.attributes.POSITION), I = p.indices != null ? rd(G, p.indices) : null, keep = Fm.poolTrim(P, I), all = I || [...Array((P.length / 3) | 0).keys()];
+      ok(keep === null, g + ' ' + me.name + ': poolTrim keeps every ah_pool triangle');
+      let deck = 0, sea = 0; for (let t = 0; t < all.length; t += 3) { const v = [0, 1, 2].map(k => all[t + k]); if (v.every(i => P[i * 3 + 1] > -5 && P[i * 3] > 46 && P[i * 3] < 77 && P[i * 3 + 2] > -32 && P[i * 3 + 2] < -7)) deck++; if (v.every(i => P[i * 3 + 1] < -18)) sea++; }
+      ok(deck === 2 && sea === 2, g + ' ' + me.name + ': deck infinity pool kept (' + deck + ') and sea-terrace pool kept (' + sea + ')'); }));
     if (G.J.materials.some(m => m.name === 'ah_pool')) ok(pools === 2, g + ': ah_pool in both LODs (' + pools + ')');
   }
-  ok(Fm.poolTrim(null, null) === null && Fm.poolTrim([0, -20, 0, 1, -20, 0, 0, -20, 1], null) === null, 'nothing to drop: geometry left as it is');
+  ok(Fm.poolTrim(null, null) === null, 'poolTrim(null) keeps geometry as it is');
 }
+
 console.log(fails ? fails + ' FAILED of ' + n : 'fov-fill OK (' + n + ' checks)');
 process.exit(fails ? 1 : 0);
