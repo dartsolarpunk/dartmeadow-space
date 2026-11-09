@@ -1,5 +1,51 @@
 # JOTS Cliffs (sw v298): cliffside mansion rock + terrain cliffs round the site
 
+## Shard-rock pass (still sw v298 on this branch; the cache bump to v300 comes with the rebase after Worlds #250)
+Direction (Justin): the cliffs around the mansion are a rock structure of **straight angular shards**. Real-world habit only: geode / cave crystal-shard clusters,
+dogtooth spar, columnar basalt (Giant's Causeway, Devils Tower), cleaved slate / granite joint faces, rebuilt as **opaque weathered rock, not crystal** (no
+transmission, no gem colour, no emissive, roughness >= 0.6). Exodus *Liberating the Kay* is a quality bar only (lighting, facet language, groove shadow density,
+read at character scale): no geometry, texture, layout or asset was copied, and no Exodus or live screenshot is committed.
+
+| | main fb70e22 | #249 head bcf5f27 (v298 sweep) | **shard pass** |
+|---|---|---|---|
+| LOD0 rock tris desktop (`ariel-home.glb`) | 75.4k (LOD0 90.6k) | 233.1k (LOD0 248.3k) | **211.4k** (LOD0 226.6k) |
+| LOD0 rock verts desktop (split normals on shard edges) | 42.8k | 127.9k | 137.6k |
+| LOD0 rock tris phone (`ariel-home-512.glb`) | 30.9k | 69.7k | 68.6k |
+| LOD1 rock tris (impostor source) | 4.2k | 9.9k | 9.9k (same grid, full macro shard layer) |
+| desktop GLB / phone GLB | 5.79 / 3.93 MB | 11.13 / 5.25 MB | **10.74 / 5.64 MB** |
+| hi face spacing median rows / cols (core upper wall) | | 0.67 / 0.80 (0.53 / 0.65) u | 0.65 / 0.78 (0.49 / 0.60) u |
+
+- `tools/ariel-home/cliff_mesh.py`: the organic fabric (wavy beds, buttress ribs, gullies, shelves, exfoliation domes, fbm roughness) is replaced by two
+  piecewise-planar shard layers. **Macro shards** (every tier, so LOD1 / the runtime impostor stay angular): vertical slots 4.5-15 u, stacked into 5-18 u tiles by
+  straight sloped cleavage cuts (linear 1.2-3 u chamfers); every tile is a **world plane** anchored on the sweep (yawed / pitched, -1.8..+2 u proud), often a prism
+  (two planes on a vertical ridge), V-grooves on some seams. **Fine splinters** (hi, mob at 60 %, not LOD1): 0.9-3.4 u vertical splinters, 8-30 u long, stepped
+  +-0.55 u. **Talus**: angular planar blocks over planar scree cones. Slot seams are vertical lines in x, the grid columns are too, so every seam / ridge / groove
+  sits on a column: crisp at any tier, no zig-zag. Only the rows are [1 2 1]-filtered (not across columns); fold-over guard now ignores the shard side faces
+  (60-85 deg by design) and only fixes real flips (686 -> 0 hi, 113 -> 0 mob, 8 -> 0 lod1; the sweep's own 96 degenerate carve-wall quads are untouched).
+  Lip guard: within z > -6 nothing rises above the plateau and recesses are capped at 0.8 u at the lip. UV u = world x (straight vertical grain), v = macro arclength.
+  Tiers: hi rows 226 -> 196, core_ds 0.5 -> 0.58, far 5 -> 8 (plateau / sea floor), far_x 6 -> 3.2 (the shoreline flanks seen from the decks now carry whole
+  shards); mob rows 132 -> 124, ds 1.1 -> 1.15, core_ds 0.9 -> 0.95, far 7 -> 9, far_x 8 -> 5, fine 0.5 -> 0.6.
+- `tools/ariel-home/build_mansion.py`: face profile (d > 0 only) loses the sawtooth "strata steps" below the first band and 70 % of the ridged jag away from the
+  lip; the lip band keeps the v298 profile, clamped so it never rises above the rounded plateau lip (that rim bump varied per column and sheared the rows: the
+  chevron band at x ~ +100..115 is gone). Plateau, carves, sea floor, `edge_y` unchanged; the lamp plan (`plan_lamps.js` on the new collision) is byte-identical.
+  Rock shading: smooth inside a facet, sharp edges > 28 deg (`set_sharp_from_angle`), so seam side faces do not shade as rounded bevels.
+- `tools/ariel-home/gen_cliff_textures.py`: set names / material slots unchanged, content rebuilt in the shard language: `strata` = cleaved slab faces (straight
+  vertical slabs at offset depths, tilted planar facets, sloped cleavage cuts with chamfers, 130 tight straight vertical grooves, pale chipped proud edges),
+  `columnar` = angular prism shards (two facets on a ridge, deep V seams), `sheet` = joint-face pavement (planar plates on straight joints) for the plateau /
+  benches, `talus` = angular blocks. Domain warp cut from 10-30 px to 1.5-3 px so lines stay straight. Still 3 m tiles, 512 / 1K / 2K, no 4K, same phone gates.
+- `index.html` terrain `cliff()`: cleavage beds are near-planar dipping slabs (fixed dip + 25 % of the warp) instead of wandering graded lines; caps get a crisp
+  chamfered foot, recessed beds one planar slope (no laminae); joints are tall worley prisms (crisp seam on each straight cell border + a linear facet rise).
+  Same noise evaluations per call; no W.pow; boulder scatter untouched.
+- Rebuilt with `rebuild_all.sh` (Blender 4.2.9): both GLBs, collision (same 2 u top-down grid, reproducible byte-for-byte across two builds), interior GLBs
+  (COLOR_0 only), lamps + nav unchanged, GI re-baked (573 s, gain 1.5176, mean irradiance 0.15501).
+- Renders (Cycles CPU, 16 spp, `cliffs-v298-shard-before-after.jpg`: base / #249 head / shard pass; `cliffs-v298-shard-clay-lod1.jpg`: untextured geometry + LOD1;
+  `cliffs-v298-shard-textures.jpg`: the four sets). Nothing measured on a GPU or in a browser; no fps claims.
+- Risks: the terrain `cliff()` change is syntax-checked only (no GPU here). A few cliff-edge collision cells at the far flanks / x ~ +110..136 now hit the face
+  0.5-1 cell further out (edge cells, not paths); the inland embankment (y ~ -90) is ~0.4 u lower (shards there too). Phone GLB +0.39 MB from split normals.
+  Overhangs are still not solid. Residual soft spots: where a tile's plane leaves the sweep by > 3.4 u it falls back to a relative facet (2 % of the face).
+
+## v298 sweep (the first #249 pass, kept for reference)
+
 Scope: Ariel's mansion cliff (GLB LOD0 / phone LOD0 / LOD1, the runtime impostor built from LOD1), its collision grid and the interior GI that uses the exterior
 as occluder, the cliff PBR sets, and the procedural terrain cliff shader (index.html `cliff()`) so the planet cliffs round the site match the mansion rock.
 Units: mansion / scene units (1.78 u = 1 m, `ariel-home-lamps.json` upm). References: Zion / Dolomites / Yosemite / Giant's Causeway (real formations only;

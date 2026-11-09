@@ -4,12 +4,12 @@
 Four tileable 3 m x 3 m rock sets, each with diffuse/albedo, tangent normal (OpenGL, +Y up the cliff), ORM (R=AO G=roughness B=metal)
 and a height map (white = proud, black = deep) for the parallax-occlusion shader (ui/dm-parallax.js reads cliff-materials.json):
 
-  strata    stratified sandstone / limestone ledges: variable bed thickness, hard caps + soft recessed beds, offset vertical joint
-            sets (block fabric), iron-oxide bands, desert varnish streaks   (ref: Antelope Canyon / Zion Navajo Sandstone / Dolomites)
-  columnar  columnar basalt: 0.3-0.6 m prismatic columns, rounded faces, chisel cross-joints, rust in the joints
-            (ref: Giant's Causeway, Fingal's Cave, Devils Postpile, Svartifoss)
-  sheet     granite exfoliation sheeting: smooth sheets, a few long curved sheet joints, crystalline speckle, black water streaks,
-            lichen crusts   (ref: Half Dome / El Capitan, Yosemite; Sugarloaf)
+  (shard pass; set names kept so the runtime / GLB material slots are unchanged)
+  strata    cleaved shard-rock slab faces (main wall): straight vertical slabs at offset depths, planar tilted facets, sloped cleavage cuts with chamfers,
+            tight straight vertical grooves, chipped pale proud edges   (ref: cleaved slate / greywacke joint faces; geode / cave shard habit read as rock)
+  columnar  angular prism shards: narrow prisms, two planar facets on a ridge, deep V seams, straight sloped cross-joints
+            (ref: columnar basalt - Giant's Causeway, Devils Tower; dogtooth spar habit, as dull basalt-grey stone)
+  sheet     joint-face rock pavement (plateau / benches): tight planar plates on straight joints, two long straight joint sets
   talus     talus / scree apron: angular blocks over gravel infill, dust fill   (ref: Zion canyon base aprons, Dolomites scree)
 
 Texel density (tile = 3 m): 2K = 683 px/m, 1K = 341 px/m, 512 = 171 px/m.
@@ -108,144 +108,129 @@ def finish(rng, col, H, rough, warp_px=14, fbm=0.10, chip=0.10, mott=0.28, chip_
     H = H + 0.02 * ((fnoise(rng, 0.8) - 0.5) * 2)
     return col, H, rough
 
+# (shard pass) the visible mansion cliff is a structure of straight angular SHARD ROCK (see cliff_mesh.py), so the wall sets are rebuilt in the same language:
+# planar facets at offset depths, straight seams, sloped cleavage cuts, tight straight vertical grooves, chipped (paler) proud edges, rock-rough.  Opaque weathered
+# stone only: no transmission, no gem colour, no emissive, roughness >= 0.6 everywhere.  Analogs (structure only): cleaved slate / greywacke joint faces,
+# dogtooth-spar / geode shard clusters and columnar basalt, re-read as dull fractured rock.  Nothing is taken from any game.
+def _slabs(rng, n, wlo=0.6, whi=1.4):
+    w = rng.uniform(wlo, whi, n); w = w / w.sum(); e = np.concatenate([[0], np.cumsum(w)]) + rng.random() * 0.0
+    xc = (np.arange(N, dtype=F32) + 0.5) / N
+    k = np.clip(np.searchsorted(e, xc, side='right') - 1, 0, n - 1)
+    return e, k, xc
+
+def _tiles(rng, H, e, k, xc, cuts_lo, cuts_hi, off_sd, gx_sd, gy_sd, ridge_p, ridge_k, slope_sd, bev_px, seam_px, seam_d):
+    """planar tiles: every slab (straight vertical strip) is cut by straight sloped cleavage lines (periodic in y), every tile a tilted plane, some ridged"""
+    n = len(e) - 1; tid = np.zeros((N, N), np.int32); tone = np.zeros((N, N), F32)
+    v = yy[:, 0]
+    for s_ in range(n):
+        cols = np.nonzero(k == s_)[0]
+        if not len(cols): continue
+        xm = 0.5 * (e[s_] + e[s_ + 1]); wd = e[s_ + 1] - e[s_]; xs_ = xc[cols] - xm
+        nc = int(rng.integers(cuts_lo, cuts_hi + 1)); cz = np.sort(rng.random(nc)); sl = rng.normal(0, slope_sd, nc)
+        # y of each cut along this slab's columns (periodic): cut c at v = cz[c] + sl[c] * x
+        Yc = (cz[None, :] + sl[None, :] * xs_[:, None]) % 1.0                                   # (cols, nc)
+        vv = v[:, None, None]                                                                     # (N, 1, 1)
+        dv = (vv - Yc[None]) % 1.0                                                               # distance below each cut, (N, cols, nc)
+        above = np.argmin(dv, -1)                                                                # the nearest cut above = this tile's top cut
+        dtop = np.take_along_axis(dv, above[..., None], -1)[..., 0]
+        dbot = np.min((Yc[None] - vv) % 1.0, -1)
+        o = rng.normal(0, off_sd, nc); gx = rng.normal(0, gx_sd, nc); gy = rng.normal(0, gy_sd, nc)
+        rk = np.where(rng.random(nc) < ridge_p, rng.uniform(*ridge_k, nc), 0.0); rx = rng.uniform(-0.3, 0.3, nc) * wd
+        tt = rng.random(nc)
+        plane = o[above] + gx[above] * xs_[None, :] + gy[above] * (dtop - 0.5 * (dtop + dbot)) - rk[above] * np.abs(xs_[None, :] - rx[above])
+        # cleavage cut: a short planar chamfer under the tile above (the tile below sits proud or recessed by its own offset) + a dark hairline
+        bev = bev_px / N
+        cut_on = (rng.random(nc) < 0.6).astype(F32)                                              # 40 % of the cuts are only a tone / offset change, no chamfer
+        plane = plane - cut_on[above] * (0.22 * np.clip(1 - dtop / bev, 0, 1)) - cut_on[np.argmin((Yc[None] - vv) % 1.0, -1)] * 0.12 * np.clip(1 - dbot / (bev * 0.6), 0, 1)
+        H[:, cols] += plane
+        tid[:, cols] = s_ * 64 + above; tone[:, cols] = tt[above]
+    de = np.minimum(np.abs(xc[:, None] - e[None, :]).min(1), 1.0)                                # distance to the nearest straight seam
+    seam = -seam_d * np.clip(1 - de / (seam_px / N), 0, 1) ** 1.0                                # V-groove: linear walls = two planar faces
+    H += seam[None, :]
+    return H, tid, tone, de
+
+def _grooves(rng, H, n, depth=(0.02, 0.09), wpx=(0.8, 2.6), lmin=0.15):
+    """tight straight vertical grooves (cleavage / fluting): partial-length, periodic in y"""
+    v = yy[:, 0]; G = np.zeros((N, N), F32)
+    for _ in range(n):
+        x0 = rng.random() * N; w = rng.uniform(*wpx); dep = rng.uniform(*depth); y0 = rng.random(); L = rng.uniform(lmin, 1.0)
+        c0 = int(x0 - 3 * w) - 1; c1 = int(x0 + 3 * w) + 2; cols = np.arange(c0, c1) % N
+        prof = np.clip(1 - np.abs(np.arange(c0, c1) + 0.5 - x0) / (w * 1.5), 0, 1)               # a V (two planar walls), not a gaussian
+        ym = ((v - y0) % 1.0) < L
+        tap = np.clip(np.minimum((v - y0) % 1.0, L - (v - y0) % 1.0) / 0.02, 0, 1) * ym        # groove ends taper out over 6 cm
+        G[:, cols] -= dep * tap[:, None] * prof[None, :]
+    return G
+
+def _edgewear(H, r=3.0):
+    cvx = np.clip(H - blur(H, r), 0, None); return np.clip(cvx / (np.percentile(cvx, 99.5) + 1e-6), 0, 1)
+
 def set_strata(rng):
-    nb = 7
-    th = rng.lognormal(0, 0.75, nb); th = th / th.sum()
-    cuts = np.concatenate([[0], np.cumsum(th)])[:-1] + rng.random() * 0.0
-    cuts = np.sort(cuts)
-    hard = rng.random(nb) < 0.5
-    recess = np.where(hard, 0.0, -0.22) + rng.normal(0, 0.08, nb)
-    tone = rng.random(nb)
-    ox = (rng.random(nb) < 0.28).astype(F32) * rng.uniform(0.4, 1.0, nb)
-    # bed boundaries wander slightly along the wall (pinch-outs, cross-bedding) but stay near-horizontal
-    wob = (noise1d(rng, beta=1.8, k0=2) - 0.5) * 0.030
-    wob += (noise1d(rng, beta=1.2, k0=6) - 0.5) * 0.008
-    vv = (yy + wob[None, :]) % 1.0
-    bed = np.clip(np.searchsorted(cuts, vv.ravel(), side='right') - 1, 0, nb - 1).reshape(N, N)
-    top = np.concatenate([cuts[1:], [1.0]])[bed]; bot = cuts[bed]
-    t = ((vv - bot) / np.maximum(top - bot, 1e-4)).astype(F32)        # 0 at the bed's upper boundary, 1 at its lower boundary
-    thick_m = (top - bot) * TILE_M
-    H = np.zeros((N, N), F32); blockid = np.zeros((N, N), np.int32)
-    xc = np.arange(N, dtype=F32) / N
-    for i in range(nb):
-        rows = np.nonzero((bed == i).any(1))[0]
-        sp = rng.uniform(0.16, 0.55)
-        js = np.sort((np.arange(int(1 / sp) + 1) * sp + rng.random()) % 1.0)
-        js = np.concatenate([js, js[:1] + 1.0])
-        k = np.clip(np.searchsorted(js, xc, side='right') - 1, 0, len(js) - 2)
-        off = rng.normal(0, 0.025 if hard[i] else 0.015, len(js) - 1)
-        d = np.minimum(np.abs(xc - js[k]), np.abs(js[k + 1] - xc))
-        d = np.minimum(d, np.abs(xc + 1 - js[k + 1]))
-        wj = 0.0035 if hard[i] else 0.006
-        crack = -0.30 * np.exp(-(d / (wj*1.6)) ** 2) * (rng.random(len(js) - 1)[k] < 0.55)
-        lat = (noise1d(rng, beta=1.5, k0=3) - 0.5) * 0.14
-        H[rows] += (off[k] + crack + lat)[None, :]
-        blockid[rows] = (i * 64 + k)[None, :]
-    m = np.zeros((N, N), F32)
-    ph = hard[bed]
-    # hard beds: flat face, chamfered lower edge; soft beds: recessed rubble ramp that deepens toward the overhanging bed above
-    prof_hard = -0.08 * sm(0.85, 1.0, t) - 0.03 * sm(0, 0.04, 1 - t)
-    prof_soft = -0.30 * (1 - t) ** 1.2 * 0.55 - 0.1 * t
-    prof = np.where(ph, prof_hard, prof_soft)
-    H += recess[bed] + prof
-    H -= 0.28 * np.exp(-(t / 0.012) ** 2)                               # dark parting plane at each bed top
-    lam = fnoise(rng, 2.0, sx=1.0, sy=0.05)                            # thin laminations: stretched along x
-    gr = fnoise(rng, 1.0)
-    flake = sm(0.74, 0.9, fnoise(rng, 2.4, sx=1.0, sy=0.12)) * sm(0.45, 0.8, fnoise(rng, 1.8))
-    H += 0.05 * lam + 0.018 * gr - 0.10 * flake
-    # block-to-block colour/height offsets from the joint fabric
-    bt = ((blockid * 0.6180339) % 1).astype(F32)
-    # colour
-    pal = np.array([[0.26, 0.23, 0.20], [0.31, 0.22, 0.14], [0.15, 0.145, 0.145], [0.34, 0.29, 0.22], [0.20, 0.17, 0.155]], F32)
-    pi = (tone * len(pal)).astype(int) % len(pal)
-    pm = pal.mean(0); pal = pm + (pal - pm) * 0.40            # (v2) the old 13-band orange/grey stripes read as painted contour lines: bed colour contrast cut to 40 %, the mesh carries the bed tone
-    col = pal[pi][bed] * (0.80 + 0.45 * lam[..., None]) * (0.94 + 0.12 * bt[..., None])
-    rust = np.array([0.30, 0.13, 0.07], F32)
-    oxm = (ox[bed] * (0.4 + 0.6 * sm(0.3, 0.75, fnoise(rng, 2.0, sx=1.0, sy=0.2)))).astype(F32)
-    col = mix(col, rust * (0.8 + 0.4 * gr[..., None]), np.clip(oxm * 0.5, 0, 0.5))
-    varn = sm(0.66, 0.84, fnoise(rng, 2.3, sx=0.035, sy=1.0)) * sm(0.35, 0.7, fnoise(rng, 2.0))   # desert varnish: long vertical streaks
-    col = mix(col, np.array([0.12, 0.105, 0.095], F32), varn * 0.22)   # (v2) was a 0.8 black stripe: one dark column per 3 m tile = the most visible repetition
-    lich = sm(0.7, 0.85, fnoise(rng, 2.6)) * sm(0.55, 0.8, gr) * (1 - varn)
-    col = mix(col, np.array([0.22, 0.25, 0.14], F32), lich * 0.45)
-    rough = 0.80 + 0.1 * gr - 0.08 * ph + 0.06 * (1 - ph) - 0.22 * varn
-    return col, H, rough, dict(depth_m=0.16, name='Stratified sandstone / limestone ledges')
+    """cleaved slab faces (main wall): straight vertical slabs at offset depths, sloped cleavage cuts, tight vertical grooves"""
+    e, k, xc = _slabs(rng, 7)
+    H = np.zeros((N, N), F32)
+    H, tid, tone, de = _tiles(rng, H, e, k, xc, 1, 2, off_sd=0.10, gx_sd=0.9, gy_sd=0.25, ridge_p=0.35, ridge_k=(0.6, 1.8), slope_sd=0.22, bev_px=10, seam_px=7, seam_d=0.5)
+    H += _grooves(rng, H, 130, depth=(0.03, 0.13))
+    gr = fnoise(rng, 1.0); mid = fnoise(rng, 2.2)
+    H += 0.012 * gr + 0.02 * mid
+    wear = _edgewear(H)
+    pal = np.array([[0.215, 0.205, 0.195], [0.19, 0.185, 0.18], [0.235, 0.215, 0.19], [0.17, 0.17, 0.175], [0.205, 0.19, 0.17]], F32)
+    col = pal[(tone * len(pal)).astype(int) % len(pal)] * (0.88 + 0.16 * mid[..., None]) * (0.94 + 0.10 * gr[..., None])
+    col = mix(col, np.array([0.34, 0.325, 0.30], F32), wear * 0.55)                                   # chipped proud edges: paler fresh stone
+    deep = np.clip(-(H - blur(H, 6)) * 6, 0, 1)
+    col = mix(col, np.array([0.09, 0.085, 0.08], F32), deep * 0.5)                                    # grime in seams / grooves
+    varn = sm(0.66, 0.84, fnoise(rng, 2.3, sx=0.035, sy=1.0)) * sm(0.35, 0.7, fnoise(rng, 2.0))       # vertical run-off streaks
+    col = mix(col, np.array([0.12, 0.11, 0.10], F32), varn * 0.20)
+    lich = sm(0.74, 0.88, fnoise(rng, 2.6)) * sm(0.55, 0.8, gr) * (1 - varn)
+    col = mix(col, np.array([0.24, 0.26, 0.17], F32), lich * 0.30)
+    rough = 0.80 + 0.06 * gr + 0.08 * deep + 0.05 * wear - 0.06 * (1 - deep) * sm(0.6, 1, mid)
+    return col, H, rough, dict(depth_m=0.16, name='Cleaved shard-rock slab faces')
 
 def set_columnar(rng):
-    ncol = 7
-    w = rng.uniform(0.7, 1.3, ncol); w = w / w.sum()
-    edges = np.concatenate([[0], np.cumsum(w)])
-    xc = (np.arange(N, dtype=F32) + 0.5) / N
-    cid = np.clip(np.searchsorted(edges, xc, side='right') - 1, 0, ncol - 1)
-    left = edges[cid]; right = edges[cid + 1]
-    # columns are not perfectly straight: edges meander a little with height
-    meander = (fnoise(rng, 2.4, sx=0.1, sy=0.3) - 0.5) * 0.02
-    X = np.broadcast_to(xc[None, :], (N, N)) + meander
-    cidm = np.clip(np.searchsorted(edges, X.ravel() % 1.0, side='right') - 1, 0, ncol - 1).reshape(N, N)
-    L = edges[cidm]; R = edges[cidm + 1]
-    tt = ((X % 1.0 - L) / (R - L)).astype(F32)
-    dedge = np.minimum(tt, 1 - tt) * (R - L)                           # tile units to nearest column edge
-    tilt = rng.normal(0, 0.10, ncol)[cidm]; push = rng.normal(0, 0.05, ncol)[cidm]
-    face = 0.30 * np.sqrt(np.clip(1 - (2 * tt - 1) ** 2, 0, 1)) + tilt * (tt - 0.5)
-    H = face + push - 0.75 * np.exp(-(dedge / 0.006) ** 2) - 0.25 * sm(0.0, 0.03, 0.03 - dedge)
-    # chisel cross-joints: each column breaks into segments at its own heights
-    seg = np.zeros((N, N), F32); xseg = np.zeros((N, N), np.int32)
-    for k in range(ncol):
-        n_seg = int(rng.integers(3, 8)); cuts = np.sort(rng.random(n_seg)); cuts = np.concatenate([cuts, cuts[:1] + 1.0])
-        v = yy[:, 0]
-        j = np.clip(np.searchsorted(cuts, v, side='right') - 1, 0, n_seg - 1)
-        j = np.where(v < cuts[0], n_seg - 1, j)
-        vv = np.where(v < cuts[0], v + 1.0, v)
-        t = (vv - cuts[j]) / np.maximum(cuts[j + 1] - cuts[j], 1e-4)
-        dv = np.minimum(t, 1 - t) * (cuts[j + 1] - cuts[j])
-        prof = -0.5 * np.exp(-(dv / 0.0045) ** 2) + 0.10 * np.sin(np.pi * np.clip(t, 0, 1)) - 0.05 * (1 - t)
-        off = rng.normal(0, 0.05, n_seg)[j]
-        m = (cidm == k)
-        H = np.where(m, H + (prof + off)[:, None], H)
-        xseg = np.where(m, (k * 32 + j[:, None]), xseg)
+    """angular prism shards: narrow straight prisms, each two planar facets on a ridge, straight sloped cross-joints"""
+    e, k, xc = _slabs(rng, 6, 0.7, 1.3)
+    H = np.zeros((N, N), F32)
+    H, tid, tone, de = _tiles(rng, H, e, k, xc, 1, 2, off_sd=0.08, gx_sd=0.5, gy_sd=0.15, ridge_p=0.85, ridge_k=(1.2, 2.6), slope_sd=0.35, bev_px=12, seam_px=9, seam_d=0.7)
+    H += _grooves(rng, H, 60, depth=(0.02, 0.07))
     gr = fnoise(rng, 1.2); mid = fnoise(rng, 2.2)
-    flake = sm(0.68, 0.88, fnoise(rng, 2.2, sx=1.0, sy=0.5))
-    H += 0.025 * gr + 0.05 * mid - 0.08 * flake
-    st = ((xseg * 0.7548776) % 1).astype(F32)
-    base = 0.12 + 0.07 * st + 0.05 * mid + 0.03 * gr
-    col = np.stack([base * 1.02, base * 1.0, base * 1.05], -1)
-    bloom = sm(0.55, 0.85, fnoise(rng, 2.6)) * sm(0.2, 0.7, mid)      # pale weathering bloom
-    col = mix(col, np.array([0.34, 0.33, 0.31], F32), bloom * 0.6)
-    jnt = np.clip(np.exp(-(dedge / 0.02) ** 2) * 0.9 + (H < -0.25) * 0.4, 0, 1)
-    col = mix(col, np.array([0.20, 0.10, 0.06], F32), jnt * sm(0.4, 0.8, fnoise(rng, 2.0)) * 0.6)   # rust staining in the joints
-    lich = sm(0.72, 0.88, fnoise(rng, 2.8)) * sm(0.5, 0.8, gr)
-    col = mix(col, np.array([0.30, 0.32, 0.12], F32), lich * 0.5)
-    rough = 0.68 + 0.18 * gr + 0.1 * bloom - 0.15 * (1 - bloom) * sm(0.6, 1, mid)
-    return col, H, rough, dict(depth_m=0.14, name='Columnar basalt')
+    H += 0.012 * gr + 0.02 * mid
+    wear = _edgewear(H)
+    st = ((tid * 0.7548776) % 1).astype(F32)
+    base = 0.135 + 0.05 * st + 0.035 * mid + 0.02 * gr
+    col = np.stack([base * 1.0, base * 0.99, base * 1.03], -1)
+    col = mix(col, np.array([0.30, 0.295, 0.285], F32), wear * 0.55)
+    deep = np.clip(-(H - blur(H, 6)) * 6, 0, 1)
+    col = mix(col, np.array([0.17, 0.10, 0.07], F32), deep * sm(0.4, 0.8, fnoise(rng, 2.0)) * 0.45)    # rust in the joints
+    bloom = sm(0.58, 0.85, fnoise(rng, 2.6)) * sm(0.2, 0.7, mid)
+    col = mix(col, np.array([0.30, 0.29, 0.27], F32), bloom * 0.35)
+    lich = sm(0.75, 0.9, fnoise(rng, 2.8)) * sm(0.5, 0.8, gr)
+    col = mix(col, np.array([0.26, 0.28, 0.14], F32), lich * 0.35)
+    rough = 0.74 + 0.12 * gr + 0.08 * bloom + 0.06 * deep
+    return col, H, rough, dict(depth_m=0.14, name='Angular prism shard rock')
 
 def set_sheet(rng):
-    # (v298) Half Dome / El Capitan sheeting: 4-5 thin exfoliation shells, each edge a short crisp riser (domain-warped so it wanders and chips), instead of two broad
-    # steps whose 0.47 isoline drew a single thin contour line across every 3 m tile
-    sheets = fnoise(rng, 3.0); sw_ = (fnoise(rng, 1.7) - 0.5) * 0.05; sv_ = sheets + sw_
-    lvls = np.sort(rng.uniform(0.30, 0.75, 3)); lvl = np.zeros_like(sheets); sheetedge = np.zeros_like(sheets); shell = np.zeros_like(sheets)
-    for k_, lv_ in enumerate(lvls):
-        on_ = sm(0.40, 0.62, fnoise(rng, 1.9))                                                 # the riser is only cut where the shell has spalled
-        lvl += (0.10 + 0.06 * rng.random()) * sm(lv_ - 0.02, lv_ + 0.012, sv_) * on_
-        sheetedge += np.exp(-((sv_ - lv_) / 0.012) ** 2) * on_; shell += sm(lv_ - 0.02, lv_ + 0.012, sv_) * on_ * (rng.random() - 0.5)
-    cr = fnoise(rng, 2.6)
-    crack = np.exp(-((cr - 0.5) / 0.0035) ** 2) * sm(0.4, 0.6, fnoise(rng, 2.2)) + 0.7 * np.exp(-((fnoise(rng, 2.8) - 0.5) / 0.003) ** 2) * sm(0.45, 0.65, fnoise(rng, 2.0))
-    spk = fnoise(rng, 0.0); spk2 = blur(rng.random((N, N)).astype(F32), 1.1); spk2 = (spk2 - spk2.min()) / (spk2.max() - spk2.min())
-    H = 0.30 * fnoise(rng, 3.4) + lvl * 0.9 - 0.16 * crack - 0.04 * sheetedge + 0.03 * spk2 + 0.03 * fnoise(rng, 1.6)
-    flake = sm(0.78, 0.93, fnoise(rng, 2.4)) * sm(0.45, 0.8, fnoise(rng, 1.6))
-    H -= 0.12 * flake
-    quartz = np.array([0.46, 0.45, 0.43], F32); feld = np.array([0.42, 0.36, 0.32], F32); bio = np.array([0.07, 0.07, 0.075], F32)
-    mflt = sm(0.4, 0.7, fnoise(rng, 2.0))
-    base = mix(np.broadcast_to(quartz, (N, N, 3)).copy(), np.broadcast_to(feld, (N, N, 3)).copy(), mflt * 0.55)
-    bmask = sm(0.62, 0.7, spk2); kq_ = blur(rng.random((N, N)).astype(F32), 3.0); kq_ = (kq_ - kq_.min()) / (kq_.max() - kq_.min() + 1e-9); kspar = sm(0.70, 0.80, kq_) * 0.6   # biotite flecks + pink K-feldspar phenocrysts
-    col = mix(base, np.broadcast_to(bio, (N, N, 3)).copy(), bmask * 0.42) * (0.9 + 0.2 * fnoise(rng, 2.6)[..., None])
-    col = mix(col, np.broadcast_to(np.array([0.50, 0.40, 0.36], F32), (N, N, 3)).copy(), kspar * 0.35)
-    col = col * (1 + 0.16 * (shell[..., None] - shell.mean()))                     # each shell weathered to its own tone (fresh spall scars paler)
-    streak = sm(0.60, 0.80, fnoise(rng, 2.4, sx=0.03, sy=1.0)) * sm(0.25, 0.7, fnoise(rng, 2.0, sx=0.3, sy=0.6))   # long black water streaks
-    streak = np.clip(streak * 0.5 + 0.25 * crack, 0, 1)
-    col = mix(col, np.array([0.12, 0.12, 0.12], F32), streak * 0.6)
-    lich = sm(0.74, 0.9, fnoise(rng, 2.8)) * sm(0.5, 0.75, spk2) * (1 - streak)
-    col = mix(col, np.array([0.40, 0.42, 0.18], F32), lich * 0.6)
-    rough = 0.72 + 0.12 * spk2 - 0.2 * streak
-    return col * 0.88, H, rough, dict(depth_m=0.07, name='Granite exfoliation sheets')
+    """joint-face pavement (plateau / benches): tight-fitted planar plates on straight joints (Voronoi bisectors) + two long straight joint sets"""
+    f1, f2, cid, cen = voronoi(rng, 70, aniso=(1.0, 1.0), relax=2)
+    n1 = cid.max() + 1; g1 = rng.normal(0, 0.35, (n1, 2)); lvl = rng.normal(0, 0.05, n1)
+    dx = (xx - cen[..., 0] + 0.5) % 1 - 0.5; dy = (yy - cen[..., 1] + 0.5) % 1 - 0.5
+    edge = f2 - f1
+    H = lvl[cid] + g1[cid, 0] * dx + g1[cid, 1] * dy - 0.35 * np.clip(1 - edge / 0.006, 0, 1)
+    for (a_, b_), dep in (((1, 2), 0.25), ((2, -1), 0.18)):                                        # straight joints that wrap the torus (integer directions)
+        ph = rng.random(); t_ = (a_ * xx + b_ * yy + ph) % 1.0; dj = np.minimum(t_, 1 - t_) / np.hypot(a_, b_)
+        H -= dep * np.clip(1 - dj / 0.004, 0, 1)
+    gr = fnoise(rng, 1.0); H += 0.015 * gr + 0.02 * fnoise(rng, 2.2)
+    wear = _edgewear(H)
+    tone = rng.random(n1)[cid]
+    base = 0.17 + 0.07 * tone + 0.03 * gr
+    col = np.stack([base, base * 0.97, base * 0.93], -1)
+    col = mix(col, np.array([0.33, 0.32, 0.30], F32), wear * 0.45)
+    deep = np.clip(-(H - blur(H, 6)) * 6, 0, 1)
+    col = mix(col, np.array([0.10, 0.095, 0.085], F32), deep * 0.5)
+    lich = sm(0.72, 0.88, fnoise(rng, 2.8)) * (1 - deep)
+    col = mix(col, np.array([0.30, 0.32, 0.17], F32), lich * 0.35)
+    dust = sm(0.5, 0.8, fnoise(rng, 2.2)) * 0.35
+    col = mix(col, np.array([0.36, 0.33, 0.28], F32), dust * deep)
+    rough = 0.82 + 0.08 * gr + 0.06 * deep
+    return col, H, rough, dict(depth_m=0.07, name='Joint-face rock pavement')
 
 def set_talus(rng):
     f1, f2, cid, cen = voronoi(rng, 120, aniso=(1.0, 0.75), relax=0)
@@ -276,9 +261,10 @@ def set_talus(rng):
     return col, H, rough, dict(depth_m=0.20, name='Talus / scree')
 
 BUILD = dict(strata=set_strata, columnar=set_columnar, sheet=set_sheet, talus=set_talus)
-FIN = dict(strata=dict(warp_px=30, fbm=0.22, chip=0.035, mott=0.38, chip_n=350), columnar=dict(warp_px=10, fbm=0.12, chip=0.03, mott=0.34, chip_n=400),
-           sheet=dict(warp_px=14, fbm=0.10, chip=0.025, mott=0.26, chip_n=300), talus=dict(warp_px=26, fbm=0.16, chip=0.05, mott=0.5, chip_n=1200))
-SEED = dict(strata=4101, columnar=4202, sheet=4303, talus=4404)
+# (shard pass) domain warp cut to 1.5-3 px so seams / cuts / grooves stay STRAIGHT (the v298 10-30 px warp bent every line into a wave); fbm relief small (planar faces)
+FIN = dict(strata=dict(warp_px=2.0, fbm=0.035, chip=0.03, mott=0.30, chip_n=500), columnar=dict(warp_px=1.5, fbm=0.03, chip=0.03, mott=0.28, chip_n=450),
+           sheet=dict(warp_px=2.0, fbm=0.03, chip=0.025, mott=0.24, chip_n=300), talus=dict(warp_px=3.0, fbm=0.06, chip=0.05, mott=0.45, chip_n=1200))
+SEED = dict(strata=5101, columnar=5202, sheet=5303, talus=4404)
 
 # ───────────────────────── derived maps + export ─────────────────────────
 MICRO = dict(strata=0.0035, columnar=0.0025, sheet=0.0030, talus=0.0030)    # metres of grain relief in the DETAIL normal layer (normal map only)
@@ -344,6 +330,6 @@ if set(SETS) == set(BUILD):
                      'orm': 'linear: R ambient occlusion, G roughness, B metalness (0)', 'height': '8-bit gray, linear, 1 = proud, 0 = deepest; for parallax occlusion: depth = (1 - h) * depthM below the surface plane'},
         'parallax': {'steps': {'near': 24, 'far': 8}, 'fadeStartM': 14, 'fadeEndM': 40, 'note': 'use heightmap tier of the loaded albedo tier; skip POM on the 512 tier / mobile if the frame budget is tight'},
         'sets': {k: {'material': MATNAME[k], 'name': meta[k]['name'], 'depthM': meta[k]['depth_m'], 'bytes': meta[k]['bytes']} for k in BUILD},
-        'use': {'strata': 'ledged beds on the main wall', 'columnar': 'basalt band (z -18..-40 m, flank windows)', 'sheet': 'granite sheeting on the flanks + plateau pavement', 'talus': 'aprons / rubble at the base'},
+        'use': {'strata': 'cleaved shard slabs on the main wall', 'columnar': 'prism-shard slots (~38 % of the macro shard slots)', 'sheet': 'plateau / bench pavement', 'talus': 'angular block aprons at the base'},
     }
     json.dump(J, open(f'{OUT}/cliff-materials.json', 'w'), indent=1)
