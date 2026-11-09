@@ -14,7 +14,20 @@
  *
  * Units: shE(n) = E(n)/pi (diffuse out = albedo * shE).  Bounce radiance of a hit = albedo * (sunI*cos*vis + skyI*skyVis) / pi.
  * Frame: x east, y up, z south (the surface scene's flat frame, H(x,z) = terrain height).
- * Public: DMLight.{core, on, tick, applyMaterial, setLamps, setLampLevel, addOverlay, status, tier}; pure core is also module.exports for node (tools/tests/light-unit.js).
+ * Public: DMLight.{core, on, tick, applyMaterial, setLamps, setLampLevel, addOverlay, status, tier, reset}; pure core is also module.exports for node (tools/tests/light-unit.js).
+ *
+ * (v297 fold, Cosmos) correctness + hitch/memory pass, no new system:
+ *   • the sun-visibility march is built inside TSL Fn(): applyMaterial used to throw at If() outside a function builder, so on v296 and earlier no material
+ *     ever got the height-field sun shadow (AO + bounce were wired before the throw) and the sea hook returned null.  Verified to compile + render in
+ *     tools/tests/light-harness.html (SwiftShader WebGL2; no fps meaning).
+ *   • uploads convert only the probes / height cells that changed (dirty lists): the old full fp16 conversion of every cascade + the whole height field every 160 ms
+ *     was a ~2-3 ms desktop / ~8-12 ms phone spike outside the tick's own ms budget.  The tick's ms EMA now includes the uploads.
+ *   • the GPU reads of the toroidal caches are masked to their windows (RepeatWrapping used to hand far terrain the heights / probes of the opposite edge:
+ *     random shadow bands and dark AO rings past ~128 m), and the far cascade is sized to stay inside the height window (its outer ring used to place probes at -1e9).
+ *   • a new world (PW.gen / height function) invalidates every cache (no shadows from the last planet), freeze (ladder L3) still rolls the probe window (neutral, no trace),
+ *     high above the ground (agl > IDLE_AGL) the probe work idles, no per-frame allocation in the tick (effective() reuses its object, budget read without stats()).
+ *   • tiers follow the graphics preset for the 30 fps rule: Low (and weak phones) never arm the per-pixel sun march; phones/tablets stop at 'med'; a preset change
+ *     at run time caps the live parameters through uniforms (no recompile).
  */
 (function (root) {
   'use strict';
@@ -42,18 +55,27 @@
     const M = N - 1, hf = {
       N, M, cell, data: new Float32Array(N * N), si: new Int32Array(N * N).fill(0x7fffffff), sj: new Int32Array(N * N).fill(0x7fffffff),
       ci: 0, cj: 0, cursor: 0, ver: 0, sampler: null, overlays: [], filled: 0,
+      // dirty slots since the last GPU upload (each listed once) / full = the next upload rewrites everything / idle = the whole window is filled, fill() is a no-op
+      dirty: new Uint8Array(N * N), dlist: new Int32Array(N * N), dn: 0, full: true, idle: false, cleanRun: 0,
     };
-    hf.setCenter = function (x, z) { hf.ci = Math.round(x / cell); hf.cj = Math.round(z / cell); };
-    hf.cellH = function (i, j) { const x = i * cell, z = j * cell; let h = hf.sampler ? hf.sampler(x, z) : 0; for (const o of hf.overlays) { const v = overlayAt(o, x, z); if (v > h) h = v; } return h; };
+    hf.setCenter = function (x, z) { const ci = Math.round(x / cell), cj = Math.round(z / cell); if (ci !== hf.ci || cj !== hf.cj) { hf.ci = ci; hf.cj = cj; hf.idle = false; hf.cleanRun = 0; } };
+    hf.cellH = function (i, j) { const x = i * cell, z = j * cell, ov = hf.overlays; let h = hf.sampler ? hf.sampler(x, z) : 0; for (let q = 0; q < ov.length; q++) { const v = overlayAt(ov[q], x, z); if (v > h) h = v; } return h; };
+    hf.mark = function (idx) { if (!hf.dirty[idx]) { hf.dirty[idx] = 1; hf.dlist[hf.dn++] = idx; } };
+    hf.invalidate = function () { hf.si.fill(0x7fffffff); hf.sj.fill(0x7fffffff); hf.dirty.fill(0); hf.dn = 0; hf.cursor = 0; hf.ver++; hf.full = true; hf.idle = false; hf.cleanRun = 0; };
     // fills up to maxFill stale cells (checks at most maxCheck slots); returns the number filled.  ms > 0 bounds the time too.
+    // (v297) the clock is read every 8 fills (was 32: 32 calls of an expensive terrain H on a phone could overrun the slice by > 1 ms); a window that is
+    // complete goes idle (no 4096-slot stamp scan every frame) until the centre moves or an overlay re-stales slots.
     hf.fill = function (maxFill, maxCheck, ms) {
+      if (hf.idle) return 0;
       const i0 = hf.ci - (N >> 1), j0 = hf.cj - (N >> 1), tot = N * N; let nf = 0, nc = 0, k = hf.cursor; const t0 = ms > 0 ? now() : 0;
       while (nc < maxCheck && nf < maxFill) {
         const i = i0 + (k % N), j = j0 + ((k / N) | 0), idx = (i & M) + (j & M) * N;
-        if (hf.si[idx] !== i || hf.sj[idx] !== j) { hf.data[idx] = hf.cellH(i, j); hf.si[idx] = i; hf.sj[idx] = j; nf++; if (ms > 0 && (nf & 31) === 0 && now() - t0 > ms) { k = (k + 1) % tot; break; } }
         k = (k + 1) % tot; nc++;
+        if (hf.si[idx] !== i || hf.sj[idx] !== j) { hf.data[idx] = hf.cellH(i, j); hf.si[idx] = i; hf.sj[idx] = j; hf.mark(idx); nf++; if (ms > 0 && (nf & 7) === 0 && now() - t0 > ms) break; }
       }
-      hf.cursor = k; if (nf) { hf.ver++; hf.filled += nf; } return nf;
+      hf.cursor = k;
+      if (nf) { hf.ver++; hf.filled += nf; hf.cleanRun = 0; } else { hf.cleanRun += nc; if (hf.cleanRun >= tot) hf.idle = true; }
+      return nf;
     };
     hf.valid = function (i, j) { const idx = (i & M) + (j & M) * N; return hf.si[idx] === i && hf.sj[idx] === j; };
     hf.get = function (i, j) { const idx = (i & M) + (j & M) * N; return hf.si[idx] === i && hf.sj[idx] === j ? hf.data[idx] : -1e9; };   // not-yet-filled = open air
@@ -63,11 +85,13 @@
       if (a < -1e8 || b < -1e8 || c < -1e8 || d < -1e8) return Math.max(a, b, c, d);
       return (a * (1 - tx) + b * tx) * (1 - tz) + (c * (1 - tx) + d * tx) * tz;
     };
+    // ground height for placing probes: the cache where it is filled, else the sampler (an unfilled / out-of-window cell used to give -1e9: probes at -1e9 m)
+    hf.ground = function (x, z) { const v = hf.h(x, z); return v > -1e8 ? v : (hf.sampler ? hf.sampler(x, z) : 0); };
     hf.normal = function (x, z, out) { const e = cell, hx = hf.h(x + e, z) - hf.h(x - e, z), hz = hf.h(x, z + e) - hf.h(x, z - e), l = Math.hypot(hx, 2 * e, hz); out[0] = -hx / l; out[1] = 2 * e / l; out[2] = -hz / l; return out; };
     hf.addOverlay = function (o) {   // o: {x0,z0,cell,nx,nz,h(Float32Array metres), floor}; heights <= floor are ignored.  Stale-marks the covered slots.
       hf.overlays.push(o); const i0 = Math.floor(o.x0 / cell), i1 = Math.ceil((o.x0 + o.nx * o.cell) / cell), j0 = Math.floor(o.z0 / cell), j1 = Math.ceil((o.z0 + o.nz * o.cell) / cell);
       for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) { const idx = (i & M) + (j & M) * N; if (hf.si[idx] === i && hf.sj[idx] === j) hf.si[idx] = 0x7fffffff; }
-      hf.ver++;
+      hf.ver++; hf.idle = false; hf.cleanRun = 0;
     };
     return hf;
   }
@@ -136,33 +160,46 @@
   const TIERS = {   // rays per probe update, cascades updated, probe ms budget per frame, march steps (rays), HF sun steps (shader), HF cells, cascade probes (P x P x L), compute allowed,
     // far-shadow steps (long-range soft shadows from the coarse 8 m field, 1 km window) and its cell count
     off:   { rays: 0,  casc: 0, ms: 0,   mSteps: 0,  sunSteps: 0,  hfN: 0,   P: 0,  L: 0, cs: false, farSteps: 0, farN: 0 },
-    low:   { rays: 4,  casc: 1, ms: 0.6, mSteps: 6,  sunSteps: 6,  hfN: 64,  P: 16, L: 3, cs: false, farSteps: 0, farN: 0 },
+    low:   { rays: 4,  casc: 1, ms: 0.5, mSteps: 6,  sunSteps: 0,  hfN: 64,  P: 16, L: 3, cs: false, farSteps: 0, farN: 0 },   // (v297) no per-pixel sun march on Low / weak devices: probes (AO + bounce) only
     med:   { rays: 8,  casc: 2, ms: 1.0, mSteps: 8,  sunSteps: 8,  hfN: 128, P: 24, L: 4, cs: false, farSteps: 4, farN: 64 },
     high:  { rays: 16, casc: 2, ms: 1.5, mSteps: 10, sunSteps: 12, hfN: 128, P: 32, L: 4, cs: false, farSteps: 6, farN: 128 },
     ultra: { rays: 16, casc: 2, ms: 2.0, mSteps: 12, sunSteps: 12, hfN: 256, P: 32, L: 4, cs: true,  farSteps: 8, farN: 128 },
   };
   const FAR_CELL = 8, NEAR_MAX = 64, FAR_MAX = 720;
+  const IDLE_AGL = 250;   // (v297) metres above the ground under the focus beyond which probe tracing idles (the lit window is a small patch below; atmosphere flight pays nothing)
   const TIER_ORDER = ['off', 'low', 'med', 'high', 'ultra'];
   // ladder level (ui/dm-budget.js stage 'light', 0..3) -> effective parameters.  L1 halves rays/steps and closes the compute path, L2 = 4 rays, one cascade
   // fewer updates and half the update budget, L3 = the cache is frozen (held, still read) and the shader march is short.
-  function effective(tier, lvl, headroom) {
-    const b = TIERS[tier] || TIERS.off, e = Object.assign({}, b); lvl = lvl | 0;
-    if (!b.rays) return Object.assign(e, { tier, lvl, cs: false, freeze: true });
+  // out (optional): reused result object (the per-frame call allocates nothing).  agl (optional): height above the ground; > IDLE_AGL freezes the probe work.
+  // A tier without a sun march (sunSteps 0) never gains one from a ladder level.
+  function effective(tier, lvl, headroom, out, agl) {
+    const b = TIERS[tier] || TIERS.off, e = Object.assign(out || {}, b); lvl = lvl | 0; e.idle = false;
+    if (!b.rays) { e.tier = tier; e.lvl = lvl; e.cs = false; e.freeze = true; return e; }
     e.cs = !!(b.cs && lvl === 0 && headroom); e.freeze = false;
-    e.farSteps = b.farSteps;
-    if (lvl >= 1) { e.farSteps = b.farSteps >> 1; e.rays = Math.max(4, b.rays >> 1); e.mSteps = Math.max(5, b.mSteps >> 1); e.sunSteps = Math.max(5, (b.sunSteps * 2 / 3) | 0); }
-    if (lvl >= 2) { e.rays = 4; e.casc = Math.max(1, b.casc - 1); e.ms = b.ms * 0.5; e.mSteps = 5; e.sunSteps = Math.max(5, b.sunSteps >> 1); e.farSteps = b.farSteps >> 2; }
-    if (lvl >= 3) { e.freeze = true; e.ms = 0; e.sunSteps = 5; e.farSteps = Math.min(e.farSteps, 1); }
+    e.farSteps = b.farSteps; const ss = b.sunSteps;
+    if (lvl >= 1) { e.farSteps = b.farSteps >> 1; e.rays = Math.max(4, b.rays >> 1); e.mSteps = Math.max(5, b.mSteps >> 1); e.sunSteps = ss ? Math.max(5, (ss * 2 / 3) | 0) : 0; }
+    if (lvl >= 2) { e.rays = 4; e.casc = Math.max(1, b.casc - 1); e.ms = b.ms * 0.5; e.mSteps = 5; e.sunSteps = ss ? Math.max(5, ss >> 1) : 0; e.farSteps = b.farSteps >> 2; }
+    if (lvl >= 3) { e.freeze = true; e.ms = 0; e.sunSteps = Math.min(ss, 5); e.farSteps = Math.min(e.farSteps, 1); }
+    if (agl > IDLE_AGL) { e.freeze = true; e.ms = 0; e.cs = false; e.idle = true; }
     e.tier = tier; e.lvl = lvl; return e;
   }
+  // height base of the fp16 height textures: the ground under the focus, in 32 m bands with hysteresis (was the player's y: flying 500 m up clamped the
+  // terrain to base-500 and every 32 m of climb re-converted the whole field).  Returns the new base (unchanged inside +-40 m).
+  function rebase(base, g) { return Math.abs(g - base) <= 40 ? base : (Math.round(g / 32) * 32 || 0); }
   // relative per-second cost (CPU rays + shader fetches) used by the monotonicity test and the status line
   function cost(e) { return e.ms * 100 + e.sunSteps * 2 + (e.farSteps || 0) * 2 + (e.cs ? 400 : 0) + e.casc * 4; }
-  // tier from the device description (GFX in index.html); flag overrides
+  // (v297) the graphics preset caps the tier (30 fps on every preset; an effect that cannot hold it stays off there).  Phones / tablets never go above 'med'
+  // (the 12-step march + far shadows are unproven on Mali / A-series); Medium on a phone gets no per-pixel march.  'custom' / unresolved -> no cap.
+  const PRESET_CAP = { desk: { low: 'low', medium: 'med', high: 'high', ultra: 'ultra' }, mob: { low: 'low', medium: 'low', high: 'med', ultra: 'med' } };
+  function presetCap(preset, mobile) { return (mobile ? PRESET_CAP.mob : PRESET_CAP.desk)[preset] || null; }
+  // tier from the device description (GFX in index.html; g.resolved = resolvePreset() when the preset is 'auto'); flag overrides
   function pickTier(g, flag) {
     if (flag && TIERS[flag]) return flag; g = g || {};
-    if (g.preset === 'low') return 'low';
-    if (g.isMobile) { const weak = g.gpuClass === 'low' || (g.score != null && g.score < 55) || (g.deviceMem > 0 && g.deviceMem <= 3); return weak ? 'low' : (g.gpuClass === 'high' ? 'high' : 'med'); }
-    if (g.gpuClass === 'high') return 'ultra'; if (g.gpuClass === 'mid' || g.gpuClass === 'unknown' || g.gpuClass == null) return 'high'; return 'med';
+    const pr = g.resolved || g.preset, legacy = g.deviceMem > 0 && g.deviceMem <= 3; let t;
+    if (g.isMobile) { const weak = g.gpuClass === 'low' || (g.score != null && g.score < 55) || legacy; t = weak ? 'low' : 'med'; }
+    else if (legacy || g.gpuClass === 'low') t = 'low';
+    else t = g.gpuClass === 'high' ? 'ultra' : 'high';   // mid / unknown
+    return capTier(t, presetCap(pr, !!g.isMobile));
   }
   // compute-path gate: headroom = pressure 0 and a calm frame for `hold` seconds.  Pure state machine so it can be tested with a fake clock.
   function createHeadroom(o) {
@@ -179,7 +216,13 @@
 
   /* ───── probe cascade ───── */
   function createCascade(P, L, sp, ly) {
-    return { P, L, sp, ly, M: P - 1, data: new Float32Array(P * P * L * 16), si: new Int32Array(P * P).fill(0x7fffffff), sj: new Int32Array(P * P).fill(0x7fffffff), ci: 0, cj: 0, cursor: 0, ver: 0, fresh: [], updates: 0 };
+    // stack / pend: columns that entered the window and still need their first trace (each listed once, fixed size: no growth while frozen and moving);
+    // dirty / dlist: probes changed since the last GPU upload; wi / wj: the window centre the last column scan saw (no scan while it holds)
+    return { P, L, sp, ly, M: P - 1, data: new Float32Array(P * P * L * 16), si: new Int32Array(P * P).fill(0x7fffffff), sj: new Int32Array(P * P).fill(0x7fffffff), ci: 0, cj: 0, cursor: 0, ver: 0, updates: 0,
+      stack: new Int32Array(P * P), sn: 0, pend: new Uint8Array(P * P), dirty: new Uint8Array(P * P * L), dlist: new Int32Array(P * P * L), dn: 0, full: true, wi: NaN, wj: NaN };
+  }
+  function markProbe(c, p) { if (!c.dirty[p]) { c.dirty[p] = 1; c.dlist[c.dn++] = p; } }
+  function resetCascade(c) { c.si.fill(0x7fffffff); c.sj.fill(0x7fffffff); c.pend.fill(0); c.sn = 0; c.dirty.fill(0); c.dn = 0; c.full = true; c.wi = c.wj = NaN; c.cursor = 0; c.ver++;
   }
   function neutralProbe(d, o) { d.fill(0, o, o + 16); d[o] = 1 / Y0; }   // open sky: V = 1 everywhere -> c0 = 1/Y0 ... (sqrt(4 pi) = 1/Y0), bounce 0
   // Trace one probe: rays dirs, hits -> bounce radiance, escapes -> visibility.  S: {hf, sun:[x,y,z], sunI:[r,g,b], skyI:[r,g,b], albedo:[r,g,b], maxD, mSteps, sunSteps, lamps, lampK}
@@ -210,30 +253,36 @@
   }
   function marchHit(hf, ox, oy, oz, dx, dy, dz, maxD) { return march(hf, ox, oy, oz, dx, dy, dz, maxD * 0.97, 6, hf.cell * 0.7) >= 0; }
 
-  // window of a cascade follows the camera; slots whose stamp is stale are reset and queued first.  Returns the number of probes traced within the ms budget.
+  // window of a cascade follows the camera; slots whose stamp is stale are reset (neutral) and queued first.  Returns the number of probes traced within the ms budget.
+  // maxProbes 0 (ladder freeze / idle): the window still rolls (entering columns go neutral instead of keeping the wrapped probes of the opposite edge), nothing is traced.
   function updateCascade(c, hf, camx, camz, S, nRays, msBudget, maxProbes, R) {
     const ci = Math.round(camx / c.sp), cj = Math.round(camz / c.sp), h = c.P >> 1, i0 = ci - h, j0 = cj - h, P = c.P, M = c.M;
-    c.ci = ci; c.cj = cj; const L = c.L, tot = P * P * L, t0 = now(); let n = 0, k = c.cursor, scanned = 0;
-    // 1) columns that entered the window: reset to neutral, trace once at full rate
-    for (let jj = 0; jj < P; jj++) for (let ii = 0; ii < P; ii++) {
-      const i = i0 + ii, j = j0 + jj, col = (i & M) + (j & M) * P;
-      if (c.si[col] !== i || c.sj[col] !== j) { c.si[col] = i; c.sj[col] = j; for (let l = 0; l < L; l++) neutralProbe(c.data, (col * L + l) * 16); c.fresh.push(col); }
+    c.ci = ci; c.cj = cj; const L = c.L, tot = P * P * L; let n = 0, k = c.cursor, scanned = 0;
+    // 1) columns that entered the window: reset to neutral, queue once (only scanned when the window moved)
+    if (ci !== c.wi || cj !== c.wj) {
+      c.wi = ci; c.wj = cj;
+      for (let jj = 0; jj < P; jj++) for (let ii = 0; ii < P; ii++) {
+        const i = i0 + ii, j = j0 + jj, col = (i & M) + (j & M) * P;
+        if (c.si[col] !== i || c.sj[col] !== j) { c.si[col] = i; c.sj[col] = j; for (let l = 0; l < L; l++) { neutralProbe(c.data, (col * L + l) * 16); markProbe(c, col * L + l); } if (!c.pend[col]) { c.pend[col] = 1; c.stack[c.sn++] = col; } }
+      }
     }
-    while (c.fresh.length && n < maxProbes) {   // fresh columns first: ALL layers, so the camera never sits in an unlit hole
-      const col = c.fresh[c.fresh.length - 1]; const i = c.si[col], j = c.sj[col];
-      for (let l = 0; l < L; l++) { const o = (col * L + l) * 16; traceProbe(c, o, i * c.sp, hf.h(i * c.sp, j * c.sp) + (l + 0.5) * c.ly, j * c.sp, Math.max(nRays, 8), S, R); n++; }
-      c.fresh.pop(); if (now() - t0 > msBudget * 1.5) break;
+    if (!(maxProbes > 0)) return 0;
+    const t0 = now();
+    while (c.sn && n < maxProbes) {   // fresh columns first: ALL layers, so the camera never sits in an unlit hole
+      const col = c.stack[c.sn - 1], i = c.si[col], j = c.sj[col], gy = hf.ground(i * c.sp, j * c.sp);
+      for (let l = 0; l < L; l++) { const o = (col * L + l) * 16; traceProbe(c, o, i * c.sp, gy + (l + 0.5) * c.ly, j * c.sp, Math.max(nRays, 8), S, R); markProbe(c, col * L + l); n++; }
+      c.sn--; c.pend[col] = 0; if (now() - t0 > msBudget * 1.5) break;
     }
     while (n < maxProbes && scanned < tot) {
       const l = k % L, col0 = (k / L) | 0, ii = col0 % P, jj = (col0 / P) | 0, i = i0 + ii, j = j0 + jj, col = (i & M) + (j & M) * P;
-      const o = (col * L + l) * 16; traceProbe(c, o, i * c.sp, hf.h(i * c.sp, j * c.sp) + (l + 0.5) * c.ly, j * c.sp, nRays, S, R);
+      const o = (col * L + l) * 16; traceProbe(c, o, i * c.sp, hf.ground(i * c.sp, j * c.sp) + (l + 0.5) * c.ly, j * c.sp, nRays, S, R); markProbe(c, col * L + l);
       n++; scanned++; k = (k + 1) % tot; if ((n & 3) === 0 && now() - t0 > msBudget) break;
     }
     c.cursor = k; if (n) { c.ver++; c.updates += n; } return n;
   }
   // read one probe-volume value at world (x,y,z): trilinear over the 8 probes (same math the shader does with hardware filtering)
   function sampleCascade(c, hf, x, y, z, outE, nx, ny, nz) {
-    const fx = x / c.sp, fz = z / c.sp, i = Math.floor(fx), j = Math.floor(fz), tx = fx - i, tz = fz - j, g = hf.h(x, z), fl = (y - g) / c.ly - 0.5, l0 = Math.max(0, Math.min(c.L - 1, Math.floor(fl))), l1 = Math.min(c.L - 1, l0 + 1), tl = Math.max(0, Math.min(1, fl - l0)), M = c.M, L = c.L;
+    const fx = x / c.sp, fz = z / c.sp, i = Math.floor(fx), j = Math.floor(fz), tx = fx - i, tz = fz - j, g = hf.ground(x, z), fl = (y - g) / c.ly - 0.5, l0 = Math.max(0, Math.min(c.L - 1, Math.floor(fl))), l1 = Math.min(c.L - 1, l0 + 1), tl = Math.max(0, Math.min(1, fl - l0)), M = c.M, L = c.L;
     outE[0] = outE[1] = outE[2] = outE[3] = 0;
     for (let a = 0; a < 8; a++) {
       const di = a & 1, dj = (a >> 1) & 1, dl = (a >> 2) & 1, w = (di ? tx : 1 - tx) * (dj ? tz : 1 - tz) * (dl ? tl : 1 - tl); if (w <= 0) continue;
@@ -243,7 +292,16 @@
     return outE;   // [bounce r, g, b, sky visibility]
   }
 
-  const core = { capTier, FAR_CELL, NEAR_MAX, FAR_MAX, sunVisLong, rasterizeOverlay, hash1, csRayDirs, stepDownTier, bootTier, Y0, Y1, shProject, shEval, bentNormal, rng, rayDirs, createHF, overlayAt, march, marchBrute, sunVis, sunVisBrute, TIERS, TIER_ORDER, effective, cost, pickTier, createHeadroom, createCascade, neutralProbe, traceProbe, updateCascade, sampleCascade };
+  // far cascade spacing that keeps its window inside the near height window (P * sp <= hfN * cell); 12 m when it fits
+  function farSpacing(hfN, cell, P) { return Math.max(3, Math.min(12, Math.floor(hfN * cell / P))); }
+  // CPU / GPU bytes of a tier's caches (status().MB; the stamp + dirty arrays were not counted before)
+  function tierBytes(t) {
+    const e = TIERS[t]; if (!e || !e.rays) return { cpu: 0, gpu: 0 };
+    const cellB = 4 + 4 + 4 + 1 + 4, probes = e.P * e.P * e.L, cascCpu = probes * (64 + 1 + 4) + e.P * e.P * (4 + 4 + 4 + 1);
+    const cpu = e.hfN * e.hfN * cellB + e.farN * e.farN * cellB + e.casc * cascCpu, gpu = e.hfN * e.hfN * 2 + e.farN * e.farN * 2 + e.casc * probes * 32 + (e.cs ? probes * 64 : 0);
+    return { cpu, gpu };
+  }
+  const core = { presetCap, rebase, IDLE_AGL, farSpacing, tierBytes, markProbe, resetCascade, capTier, FAR_CELL, NEAR_MAX, FAR_MAX, sunVisLong, rasterizeOverlay, hash1, csRayDirs, stepDownTier, bootTier, Y0, Y1, shProject, shEval, bentNormal, rng, rayDirs, createHF, overlayAt, march, marchBrute, sunVis, sunVisBrute, TIERS, TIER_ORDER, effective, cost, pickTier, createHeadroom, createCascade, neutralProbe, traceProbe, updateCascade, sampleCascade };
   if (typeof module !== 'undefined' && module.exports) module.exports = core;
   if (typeof window === 'undefined') return;
 
@@ -258,14 +316,16 @@
   const D = {
     on: flag !== 'off', core, tier: 'off', flag, lvl: 0, eff: effective('off', 0, false), ready: false, failed: '', built: null, ticks: 0, probesPerSec: 0,
     msEma: 0, lamps: new Float32Array(0), lampK: 0, lampN: 0, hr: createHeadroom({ hold: 8 }), cs: false, csOk: null, csBad: '', csFrames: 0, upT: 0, uploads: 0, bytes: 0, mats: 0, overlays: 0, boot: null,
+    upMs: 0, upCells: 0, cap: null, live: 'off', resets: 0, agl: 0, cpuBytes: 0, gpuBytes: 0, _eff: {}, _wkey: null, _wgen: -1,
   };
   W.DMLight = D;
   const Rn = rng(12345);
   const sunV = [0.4, 0.8, 0.45], sunI = [0, 0, 0, 0], skyI = [0.5, 0.55, 0.65], albedo = [0.34, 0.30, 0.25];
-  let hf = null, hf2 = null, casc = [], U = null, tex = null, CS = null, THREE_ = null, baseY = 0, lastH = null, hemiCache = null, lastFarC = [1e9, 1e9], farUpT = 0;
+  let hf = null, hf2 = null, casc = [], U = null, tex = null, CS = null, THREE_ = null, baseY = 0, baseSet = false, hemiCache = null, lastFarC = [1e9, 1e9], farUpT = 0;
+  const resolved = () => { try { return typeof W.resolvePreset === 'function' ? W.resolvePreset() : null; } catch (e) { return null; } };
 
   function pickNow() {
-    const g = W.GFX || {}; let t = pickTier(g, flag === 'auto' ? null : flag);
+    const g = Object.assign({}, W.GFX || {}, { resolved: resolved() }); let t = pickTier(g, flag === 'auto' ? null : flag);   // (once per boot)
     const mark = lsGet(LSK) || {}; D.boot = { mark, want: t };
     if (flag === 'auto') {   // a boot that died during compile caps the tier (10 healthy boots lift the cap)
       if (mark.pend) { mark.cap = stepDownTier(mark.tier || t); mark.ok = 0; }
@@ -286,9 +346,10 @@
     const e = TIERS[D.tier]; if (!e || !e.rays) return false;
     hf = createHF(e.hfN, e.hfN >= 256 ? 1.5 : 2); casc = [];
     if (e.farN) hf2 = createHF(e.farN, FAR_CELL);
-    const sp = [3, 12], ly = [2.5, 6]; for (let c = 0; c < e.casc; c++) casc.push(createCascade(e.P, e.L, sp[c], ly[c]));
+    // (v297) the far cascade stays inside the near height window (med/high: 12 m x 32 probes = +-192 m over a +-128 m field put its outer ring on unfilled cells)
+    const sp = [3, farSpacing(e.hfN, hf.cell, e.P)], ly = [2.5, 6]; for (let c = 0; c < e.casc; c++) casc.push(createCascade(e.P, e.L, sp[c], ly[c]));
     if (D._pend) { for (const o of D._pend) { hf.addOverlay(o); if (hf2) hf2.addOverlay(o); } D._pend = null; }
-    D.bytes = hf.data.byteLength + (hf2 ? hf2.data.byteLength : 0) + casc.reduce((s, c) => s + c.data.byteLength, 0) + e.hfN * e.hfN * 2 + (e.farN ? e.farN * e.farN * 2 : 0) + casc.length * e.P * e.P * e.L * 8 * 4 + (e.cs ? e.P * e.P * e.L * 8 * 8 : 0);
+    const tb = tierBytes(D.tier); D.cpuBytes = tb.cpu; D.gpuBytes = tb.gpu; D.bytes = tb.cpu + tb.gpu;
     D.built = { tier: D.tier, hfN: e.hfN, cell: hf.cell, farN: e.farN, casc: casc.map(c => ({ P: c.P, L: c.L, sp: c.sp, ly: c.ly })) };
     return true;
   }
@@ -297,44 +358,49 @@
   function initGpu(THREE, T) {
     if (U) return true; if (!hf) return false; THREE_ = THREE; const Tt = THREE;
     if (!Tt.Data3DTexture || !Tt.DataTexture || !T.texture3D || !T.uniform) return false;
-    const e = TIERS[D.tier], mk2 = (n) => { const t = new Tt.DataTexture(new Uint16Array(n * n), n, n, Tt.RedFormat, Tt.HalfFloatType); t.wrapS = t.wrapT = Tt.RepeatWrapping; t.minFilter = t.magFilter = Tt.LinearFilter; t.generateMipmaps = false; t.needsUpdate = true; return t; };
+    // userData.dmKeep: the world-close texture sweep (index.html disposeObject3D -> DMMem.collectTextures) leaves these alone: they are shared by the character and the next world
+    const e = TIERS[D.tier], mk2 = (n) => { const t = new Tt.DataTexture(new Uint16Array(n * n), n, n, Tt.RedFormat, Tt.HalfFloatType); t.wrapS = t.wrapT = Tt.RepeatWrapping; t.minFilter = t.magFilter = Tt.LinearFilter; t.generateMipmaps = false; t.userData.dmKeep = true; t.needsUpdate = true; return t; };
     const hft = mk2(hf.N), hft2 = hf2 ? mk2(hf2.N) : null;
-    const vols = casc.map(c => [0, 1, 2, 3].map(() => { const t = new Tt.Data3DTexture(new Uint16Array(c.P * c.P * c.L * 4), c.P, c.P, c.L); t.format = Tt.RGBAFormat; t.type = Tt.HalfFloatType; t.wrapS = t.wrapT = Tt.RepeatWrapping; t.wrapR = Tt.ClampToEdgeWrapping; t.minFilter = t.magFilter = Tt.LinearFilter; t.generateMipmaps = false; t.unpackAlignment = 1; t.needsUpdate = true; return t; }));
+    const vols = casc.map(c => [0, 1, 2, 3].map(() => { const t = new Tt.Data3DTexture(new Uint16Array(c.P * c.P * c.L * 4), c.P, c.P, c.L); t.format = Tt.RGBAFormat; t.type = Tt.HalfFloatType; t.wrapS = t.wrapT = Tt.RepeatWrapping; t.wrapR = Tt.ClampToEdgeWrapping; t.minFilter = t.magFilter = Tt.LinearFilter; t.generateMipmaps = false; t.unpackAlignment = 1; t.userData.dmKeep = true; t.needsUpdate = true; return t; }));
     tex = { hft, hft2, vols };
     U = {
       k: T.uniform(0), base: T.uniform(0), cam: T.uniform(new Tt.Vector2(0, 0)), sun: T.uniform(new Tt.Vector3(0.4, 0.8, 0.45)), hfSteps: T.uniform(e.sunSteps), farSteps: T.uniform(e.farSteps), hfK: T.uniform(0.5), gain: T.uniform(gainQ * 0.9),
       pen: T.uniform(0.05), penF: T.uniform(0.09), csK: T.uniform(0), lowSun: T.uniform(0),
+      hc: T.uniform(new Tt.Vector2(0, 0)), fc: T.uniform(new Tt.Vector2(0, 0)),   // (v297) centres of the near / far height windows (the shader masks reads outside them)
     };
     // compute tier resources: storage volumes for cascade 0 (A = current, sampled by the materials; B = scratch), built only on tiers that allow it
     try { const rr = getRenderer(); if (e.cs && csQ !== '0' && rr && rr.backend && rr.backend.isWebGPUBackend && Tt.Storage3DTexture && T.textureStore && T.instancedArray && !(lsGet(LSC) && Date.now() - lsGet(LSC).t < 7 * 864e5)) CS = makeCsResources(Tt, T); } catch (err) { CS = null; csFail('resources: ' + (err && err.message || err)); }
     for (let c = 0; c < casc.length; c++) upload(c, true);
-    uploadHF(true); if (hf2) uploadHF2();
+    uploadHF(true); if (hf2) uploadHF2(true);
     return true;
   }
   const H16 = (v) => (THREE_.DataUtils ? THREE_.DataUtils.toHalfFloat(v) : 0);
-  function uploadHF(force) {
-    if (!tex) return; const N = hf.N, d = tex.hft.image.data; baseY = Math.round(lastH == null ? 0 : lastH / 32) * 32; U.base.value = baseY;
-    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) { const idx = j * N + i, v = hf.si[idx] === 0x7fffffff ? -300 : hf.data[idx] - baseY; d[idx] = H16(v < -500 ? -500 : v > 500 ? 500 : v); }
-    tex.hft.needsUpdate = true; D.uploads++; D.hfVer = hf.ver;   // slot (i&M, j&M) IS texel (i&M, j&M): toroidal layout = RepeatWrapping with uv = (x/cell + 0.5)/N
+  // (v297) height fields: full conversion only when forced / the base moved / the cache was invalidated; otherwise just the cells filled since the last upload.
+  // slot (i&M, j&M) IS texel (i&M, j&M): toroidal layout = RepeatWrapping with uv = (x/cell + 0.5)/N
+  function hfCell(h, d, idx, stale, lim) { const v = h.si[idx] === 0x7fffffff ? stale : h.data[idx] - baseY; d[idx] = H16(v < -lim ? -lim : v > lim ? lim : v); }
+  function uploadField(h, t, stale, lim, force) {
+    if (!t) return 0; const d = t.image.data; let n = 0;
+    if (force || h.full) { const NN = h.N * h.N; for (let idx = 0; idx < NN; idx++) hfCell(h, d, idx, stale, lim); h.full = false; h.dirty.fill(0); h.dn = 0; n = NN; }
+    else { n = h.dn; if (!n) return 0; const dl = h.dlist, dt = h.dirty; for (let q = 0; q < n; q++) { const idx = dl[q]; dt[idx] = 0; hfCell(h, d, idx, stale, lim); } h.dn = 0; }
+    t.needsUpdate = true; D.uploads++; return n;
   }
-  function uploadHF2() {
-    if (!tex || !tex.hft2) return; const N = hf2.N, d = tex.hft2.image.data;
-    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) { const idx = j * N + i, v = hf2.si[idx] === 0x7fffffff ? -1500 : hf2.data[idx] - baseY; d[idx] = H16(v < -2000 ? -2000 : v > 2000 ? 2000 : v); }
-    tex.hft2.needsUpdate = true; D.uploads++; D.hf2Ver = hf2.ver;
-  }
+  function uploadHF(force) { if (!tex) return 0; U.base.value = baseY; const n = uploadField(hf, tex.hft, -300, 500, force); D.hfVer = hf.ver; return n; }
+  function uploadHF2(force) { if (!tex || !tex.hft2) return 0; const n = uploadField(hf2, tex.hft2, -1500, 2000, force); D.hf2Ver = hf2.ver; return n; }
+  // probes: CPU order is (column, layer); the 3D texture is layer-major (z slices of P x P).  Only the probes traced / reset since the last upload.
+  function probeTex(c, s, dv, dr, dg, db, p) { const L = c.L, col = (p / L) | 0, l = p - col * L, o = p * 16, q = (l * c.P * c.P + col) * 4; for (let k = 0; k < 4; k++) { dv[q + k] = H16(s[o + k]); dr[q + k] = H16(s[o + 4 + k]); dg[q + k] = H16(s[o + 8 + k]); db[q + k] = H16(s[o + 12 + k]); } }
   function upload(ci, force) {
-    const c = casc[ci], vols = tex.vols[ci], n = c.P * c.P * c.L; if (!force && c.upVer === c.ver) return; c.upVer = c.ver;
-    const dv = vols[0].image.data, dr = vols[1].image.data, dg = vols[2].image.data, db = vols[3].image.data, s = c.data;
-    const P2 = c.P * c.P, L = c.L;   // CPU order is (column, layer); the 3D texture is layer-major (z slices of P x P)
-    for (let p = 0; p < n; p++) { const col = (p / L) | 0, l = p - col * L, o = p * 16, q = (l * P2 + col) * 4; for (let k = 0; k < 4; k++) { dv[q + k] = H16(s[o + k]); dr[q + k] = H16(s[o + 4 + k]); dg[q + k] = H16(s[o + 8 + k]); db[q + k] = H16(s[o + 12 + k]); } }
-    for (const t of vols) t.needsUpdate = true; D.uploads++;
+    const c = casc[ci], vols = tex.vols[ci]; if (!force && !c.full && !c.dn) return 0;
+    const dv = vols[0].image.data, dr = vols[1].image.data, dg = vols[2].image.data, db = vols[3].image.data, s = c.data; let n;
+    if (force || c.full) { n = c.P * c.P * c.L; for (let p = 0; p < n; p++) probeTex(c, s, dv, dr, dg, db, p); c.full = false; c.dirty.fill(0); c.dn = 0; }
+    else { n = c.dn; const dl = c.dlist, dt = c.dirty; for (let q = 0; q < n; q++) { const p = dl[q]; dt[p] = 0; probeTex(c, s, dv, dr, dg, db, p); } c.dn = 0; }
+    for (let k = 0; k < 4; k++) vols[k].needsUpdate = true; D.uploads++; return n;
   }
 
   /* ───── compute ray-march tier (WebGPU): few rays per probe per frame, accumulated into persistent storage volumes (cascade 0), blended with the CPU cache.  Any failure
      (no storage 3D textures, compile / dispatch error, a canary read-back that is not finite) disables ONLY this tier: csK eases to 0, dispatch stops, materials keep the CPU cache. ───── */
   function csFail(why) { D.csBad = why; D.csOk = false; D.cs = false; try { console.warn('[light] compute tier off:', why); } catch (e) { } lsSet(LSC, { t: Date.now(), why: String(why).slice(0, 120) }); try { if (W.DMCrumb && W.DMCrumb.mark) W.DMCrumb.mark('lightcs', 'off'); } catch (e) { } }
   function makeCsResources(THREE, T) {
-    const c0 = casc[0], P = c0.P, L = c0.L, mkS = () => { const t = new THREE.Storage3DTexture(P, P, L); t.format = THREE.RGBAFormat; t.type = THREE.HalfFloatType; t.minFilter = t.magFilter = THREE.LinearFilter; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.wrapR = THREE.ClampToEdgeWrapping; t.generateMipmaps = false; return t; };
+    const c0 = casc[0], P = c0.P, L = c0.L, mkS = () => { const t = new THREE.Storage3DTexture(P, P, L); t.format = THREE.RGBAFormat; t.type = THREE.HalfFloatType; t.minFilter = t.magFilter = THREE.LinearFilter; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.wrapR = THREE.ClampToEdgeWrapping; t.generateMipmaps = false; t.userData.dmKeep = true; return t; };
     const A = [mkS(), mkS(), mkS(), mkS()], B = [mkS(), mkS(), mkS(), mkS()], canary = T.instancedArray(4, 'float');
     const C = { A, B, canary, P, L, ok: false, kStep: null, kCopy: null, i0p: 0, j0p: 0, first: true, frame: 0, checkT: 0, tries: 0, U: null };
     return C;
@@ -419,22 +485,41 @@
     if (sun && sun.color) { const k = sun.intensity == null ? 1 : sun.intensity; sunI[0] = sun.color.r * k; sunI[1] = sun.color.g * k; sunI[2] = sun.color.b * k; sunI[3] = 1; } else { sunI[0] = sunI[1] = sunI[2] = 0; sunI[3] = 0; }
   }
 
-  // per-frame: called from the surface tick.  o: {x,y,z, H (height fn), sunDir (Vector3), day (0..1), scene, renderer, walk}
+  // a new world (PW.gen bumps on every open / close) or a new height function: every cache restarts (the toroidal stamps are world coordinates, so the
+  // last planet's heights / probes would otherwise stay valid here).  GPU resources are kept (materials hold them); overlays belong to dm-lamps (it clears its own).
+  function resetCaches() {
+    for (const h of [hf, hf2]) if (h) h.invalidate();
+    for (const c of casc) resetCascade(c);
+    lastFarC[0] = lastFarC[1] = 1e9; baseSet = false; hemiCache = null; if (CS) CS.first = true; D.resets++;
+  }
+  D.reset = function () { if (D.ready) resetCaches(); };
+  // live tier: the built tier capped by the CURRENT preset (the player can change it in the menu); uniforms only, never a recompile
+  function liveTier() {
+    if (flag !== 'auto') return D.tier;
+    if ((D.ticks & 63) === 1 || D.cap === undefined) { const g = W.GFX || {}; D.cap = presetCap(resolved() || g.preset, !!g.isMobile); }
+    return capTier(D.tier, D.cap);
+  }
+
+  // per-frame: called from the surface tick.  o: {x,y,z, H (height fn), sunDir (Vector3), day (0..1), scene, renderer, walk}.  Allocates nothing.
   D.tick = function (dt, o) {
     if (!D.on || !o || o.walk === false) return; D.ticks++;
-    const B = W.DMBudget, lvl = B && B.on ? B.lvl('light') : 0;
+    const B = W.DMBudget, bon = !!(B && B.on), lvl = bon ? B.lvl('light') : 0;
     if (D.tier === 'off' && D.ticks === 1) {
       D.tier = pickNow(); if (!TIERS[D.tier].rays) { D.on = false; return; }
       if (!build()) { D.on = false; return; } D.ready = true;
     }
     if (!D.ready) return;
     if (D.ticks === 240) bootHealthy();
-    const st = B && B.on ? B.stats() : null; D.hr.step(dt, B && B.on ? (B.p | 0) : 0, st ? st.emaMs : 0, 50);
-    const e = D.eff = effective(D.tier, lvl, D.hr.on); D.lvl = lvl;
-    D.cs = !!(e.cs && CS && !D.csBad && csQ !== '0' && (D.csOk !== false));
-    lastH = o.y; hf.sampler = o.H; hf.setCenter(o.x, o.z);
+    const gen = W.PW && W.PW.gen != null ? W.PW.gen : 0;
+    if (D._wkey !== o.H || D._wgen !== gen) { if (D._wkey !== null) resetCaches(); D._wkey = o.H; D._wgen = gen; }
+    const emaB = !bon ? 0 : B.emaMs ? B.emaMs() : ((B.stats && B.stats()) || {}).emaMs || 0, budB = bon && B.budgetMs ? B.budgetMs() : 36;   // (accessors: no stats() object per frame)
+    D.hr.step(dt, bon ? (B.p | 0) : 0, emaB, budB);
     const t0 = now();
+    hf.sampler = o.H; hf.setCenter(o.x, o.z);
     const hfMs = D.tier === 'low' ? 0.3 : 0.5; hf.fill(hf.N * hf.N, 4096, hfMs);
+    const gC = hf.ground(o.x, o.z); D.agl = o.y - gC;
+    const lt = D.live = liveTier(), e = D.eff = effective(lt, lvl, D.hr.on, D._eff, D.agl); D.lvl = lvl;
+    D.cs = !!(e.cs && CS && !D.csBad && csQ !== '0' && (D.csOk !== false));
     if (hf2 && (e.farSteps > 0)) {   // coarse field: only when the window moved by >= 4 cells or is still filling
       hf2.sampler = o.H; if (Math.abs(o.x - lastFarC[0]) > FAR_CELL * 4 || Math.abs(o.z - lastFarC[1]) > FAR_CELL * 4) { hf2.setCenter(o.x, o.z); lastFarC[0] = o.x; lastFarC[1] = o.z; hf2.cursor = 0; }
       hf2.fill(hf2.N * hf2.N, 2048, 0.3);
@@ -442,36 +527,46 @@
     const sd = o.sunDir; if (sd) { sunV[0] = sd.x; sunV[1] = sd.y; sunV[2] = sd.z; }
     lightParams(); const day = o.day == null ? 1 : o.day;
     const hm = sceneLights(o.scene || (W.PW && W.PW.scene)).hemi; if (hm && hm.color) { const k = hm.intensity == null ? 1 : hm.intensity; skyI[0] = hm.color.r * k; skyI[1] = hm.color.g * k; skyI[2] = hm.color.b * k; }
+    const Sx = D._S || (D._S = { hf, sun: sunV, sunI, skyI, albedo, maxD: 40, mSteps: 8, sunSteps: 8, lamps: null, lampK: 0 });
     if (!e.freeze && e.ms > 0) {
-      const Sx = D._S || (D._S = { hf, sun: sunV, sunI, skyI, albedo, maxD: 40, mSteps: 8, sunSteps: 8, lamps: null, lampK: 0 });
       Sx.hf = hf; Sx.mSteps = e.mSteps; Sx.sunSteps = e.sunSteps; Sx.lamps = D.lampN ? D.lamps : null; Sx.lampK = D.lampK;
       let n = 0;
       for (let c = 0; c < casc.length && c < e.casc; c++) {
-        const cc = casc[c]; if (c > 0 && (D.ticks & 3) !== 0) continue;
-        Sx.maxD = cc.sp * 12; const left = e.ms - (now() - t0); if (left <= 0.05) break;
+        const cc = casc[c]; if (c > 0 && (D.ticks & 3) !== 0) { updateCascade(cc, hf, o.x, o.z, Sx, 0, 0, 0, Rn); continue; }
+        Sx.maxD = cc.sp * 12; const left = e.ms - (now() - t0); if (left <= 0.05) { updateCascade(cc, hf, o.x, o.z, Sx, 0, 0, 0, Rn); continue; }
         n += updateCascade(cc, hf, o.x, o.z, Sx, e.rays, left * (c === 0 ? 0.8 : 1), c === 0 ? 160 : 60, Rn);
       }
+      for (let c = e.casc; c < casc.length; c++) updateCascade(casc[c], hf, o.x, o.z, Sx, 0, 0, 0, Rn);   // (a level that idles a cascade still rolls its window)
       D.probesPerSec += (n / Math.max(dt, 1e-3) - D.probesPerSec) * 0.05;
+    } else {   // frozen (ladder L3) / idle high up: the windows still roll, entering columns go neutral (no trace)
+      for (let c = 0; c < casc.length; c++) updateCascade(casc[c], hf, o.x, o.z, Sx, 0, 0, 0, Rn);
+      D.probesPerSec += (0 - D.probesPerSec) * 0.05;
     }
     // compute tier: 1 dispatch per frame while it is open (headroom, level 0, verified); eased in / out through csK
     let csTarget = 0;
     if (D.cs && U && casc[0]) { if (csDispatch(o.renderer || getRenderer(), e, o)) csTarget = D.csOk ? 0.55 : 0; }
-    const ms = now() - t0; D.msEma += (ms - D.msEma) * 0.05;
     if (U) {
+      const marchOn = e.sunSteps > 0 || e.farSteps > 0;
       U.cam.value.set(o.x, o.z); U.sun.value.set(sunV[0], sunV[1], sunV[2]); U.hfSteps.value = e.sunSteps; U.farSteps.value = e.farSteps;
-      const cad = W.DMBudget && W.DMBudget.on ? W.DMBudget.shadowEvery() : 1; U.hfK.value = (cad > 1 ? 0.8 : 0.5) * (day > 0.05 ? 1 : 0);
+      U.hc.value.set(hf.ci * hf.cell, hf.cj * hf.cell); if (hf2) U.fc.value.set(hf2.ci * FAR_CELL, hf2.cj * FAR_CELL);
+      const cad = bon ? B.shadowEvery() : 1; U.hfK.value = (cad >= 30 ? 0.95 : cad > 1 ? 0.8 : 0.5) * (day > 0.05 ? 1 : 0) * (marchOn ? 1 : 0);
       U.lowSun.value = 1 - Math.min(1, Math.max(0, sunV[1] * 2.2));
       U.k.value += (1 - U.k.value) * Math.min(1, dt * 2); U.csK.value += (csTarget - U.csK.value) * Math.min(1, dt * (csTarget > U.csK.value ? 0.8 : 3));
-      const t = now(); if (t - D.upT > 160) { D.upT = t; for (let c = 0; c < casc.length; c++) upload(c, false); if (hf.ver !== D.hfVer) uploadHF(false); }
-      if (hf2 && t - farUpT > 1200 && hf2.ver !== D.hf2Ver) { farUpT = t; uploadHF2(); }
+      const tu = now(); let nc = 0;
+      const nb = Number.isFinite(gC) ? rebase(baseY, gC) : baseY, baseMoved = !baseSet || nb !== baseY; if (baseMoved) { baseY = nb; baseSet = true; }
+      if (baseMoved) { nc += uploadHF(true); if (hf2) { nc += uploadHF2(true); farUpT = tu; } }   // the fp16 fields are stored relative to the base: both rewritten in the same frame
+      else if (tu - D.upT > 160) { D.upT = tu; for (let c = 0; c < casc.length; c++) nc += upload(c, false); if (hf.ver !== D.hfVer || hf.dn) nc += uploadHF(false); }
+      if (!baseMoved && hf2 && tu - farUpT > 1200 && (hf2.ver !== D.hf2Ver || hf2.dn)) { farUpT = tu; nc += uploadHF2(false); }
+      if (nc) { D.upCells += nc; D.upMs += (now() - tu - D.upMs) * 0.1; }
     }
+    const ms = now() - t0; D.msEma += (ms - D.msEma) * 0.05;   // (v297) includes the uploads
   };
 
   // lamps: flat array [x,y,z, r,g,b, radius] * n (world frame); level 0..1 (dusk fade * on/off), eased by the caller
   D.setLamps = function (arr) { D.lamps = arr instanceof Float32Array ? arr : new Float32Array(arr); D.lampN = (D.lamps.length / 7) | 0; };
   D.setLampLevel = function (k) { D.lampK = k < 0 ? 0 : k > 1 ? 1 : k; };
   D.addOverlay = function (o) { D.overlays++; if (hf) { hf.addOverlay(o); if (hf2) hf2.addOverlay(o); } else (D._pend || (D._pend = [])).push(o); };
-  D.clearOverlays = function () { D._pend = null; D.overlays = 0; for (const h of [hf, hf2]) if (h && h.overlays.length) { h.overlays.length = 0; h.si.fill(0x7fffffff); h.cursor = 0; h.ver++; } };
+  D.clearOverlays = function () { D._pend = null; D.overlays = 0; for (const h of [hf, hf2]) if (h && h.overlays.length) { h.overlays.length = 0; h.invalidate(); } };
   // stamp a rotated local height grid (the mansion collision grid) into the caches: o {g, nx, ny, x0, y0, cell, fwd, inv, floor, wcell}
   D.stampGrid = function (o) {
     try { const ov = rasterizeOverlay(o.g, o.nx, o.ny, o.x0, o.y0, o.cell, o.fwd, o.inv, o.wcell || 2, o.floor == null ? 0 : o.floor); D.addOverlay(ov); return ov.nx * ov.nz; } catch (e) { return 0; }
@@ -483,27 +578,39 @@
     return D.ready;
   }
   // ── TSL helpers shared by materials / water ──
+  // (v297) a sample outside its cache window reads the wrapped texel of the opposite edge (RepeatWrapping on a toroidal cache): it is pushed to open air
+  // (+1 km) over the last few cells before the window edge, so far terrain / long sun rays never pick up phantom occluders.
+  function winEdge(n, cell) { const end = n * cell * 0.5 - 3 * cell; return [end * 0.88, end]; }
   function sunVisNodes(T, p) {   // contact-hardening near march + coarse long-range march of the height caches -> float node (1 = lit); p: world position node
-    const { float, vec2, texture, min, clamp, mix, If } = T, N = hf.N, cell = hf.cell, e = TIERS[D.tier];
+    // (v297) the march is built inside Fn(): TSL If() needs a function-builder stack.  Called from plain material code (index.html terrain hook, the character)
+    // it threw "Cannot read properties of null (reading 'If')" on every material (main up to v296: AO + bounce were wired, the sun-visibility hook never was).
+    const { Fn, float, vec2, texture, min, max, abs, smoothstep, clamp, If } = T, N = hf.N, cell = hf.cell, e = TIERS[D.tier];
     const hH = (x, z) => texture(tex.hft, vec2(x, z).div(cell).add(0.5).div(N)).level(0).r.add(U.base);
-    const vs = float(1).toVar(), L = U.sun, t0 = cell * 0.6;
+    const wN = winEdge(N, cell), outN = (q) => smoothstep(wN[0], wN[1], max(abs(q.x.sub(U.hc.x)), abs(q.z.sub(U.hc.y)))).mul(1000.0);
+    const L = U.sun, t0 = cell * 0.6;
+    const vsN = Fn(() => {
+    const vs = float(1).toVar();
     for (let i = 1; i <= e.sunSteps; i++) {
       const f = i / e.sunSteps, t = t0 + (NEAR_MAX - t0) * f * f;
-      If(U.hfSteps.greaterThan(i - 0.5), () => { const q = p.add(L.mul(t)), dh = q.y.sub(hH(q.x, q.z)).add(0.15); vs.assign(min(vs, clamp(dh.div(U.pen.mul(t).add(1e-3)).mul(0.5).add(0.5), 0.0, 1.0))); });
+      If(U.hfSteps.greaterThan(i - 0.5), () => { const q = p.add(L.mul(t)), dh = q.y.sub(hH(q.x, q.z)).add(0.15).add(outN(q)); vs.assign(min(vs, clamp(dh.div(U.pen.mul(t).add(1e-3)).mul(0.5).add(0.5), 0.0, 1.0))); });
     }
     if (tex.hft2 && e.farSteps > 0) {
       const N2 = hf2.N, hF = (x, z) => texture(tex.hft2, vec2(x, z).div(FAR_CELL).add(0.5).div(N2)).level(0).r.add(U.base);
+      const wF = winEdge(N2, FAR_CELL), outF = (q) => smoothstep(wF[0], wF[1], max(abs(q.x.sub(U.fc.x)), abs(q.z.sub(U.fc.y)))).mul(1000.0);
       for (let i = 1; i <= e.farSteps; i++) {
         const f = i / e.farSteps, t = NEAR_MAX + (FAR_MAX - NEAR_MAX) * Math.pow(f, 1.5);
-        If(U.farSteps.greaterThan(i - 0.5), () => { const q = p.add(L.mul(t)), dh = q.y.sub(hF(q.x, q.z)).add(0.5); vs.assign(min(vs, clamp(dh.div(U.penF.mul(t).add(1e-3)).mul(0.5).add(0.5), 0.0, 1.0))); });
+        If(U.farSteps.greaterThan(i - 0.5), () => { const q = p.add(L.mul(t)), dh = q.y.sub(hF(q.x, q.z)).add(0.5).add(outF(q)); vs.assign(min(vs, clamp(dh.div(U.penF.mul(t).add(1e-3)).mul(0.5).add(0.5), 0.0, 1.0))); });
       }
     }
-    return { vs, hH };
+    return vs;
+    })();
+    return { vs: vsN, hH };
   }
+  const hasMarch = () => { const e = TIERS[D.tier]; return !!e && (e.sunSteps > 0 || (!!hf2 && e.farSteps > 0)); };   // Low: no march node is ever compiled
   // node for other shaders (the sea): sun visibility 0..1 at a world position, blended by the same strength uniforms; null when DMLight cannot serve it
   D.sunVisNode = function (p) {
     try {
-      if (!D.on || !ensure()) return null; const THREE = W.THREE, T = THREE && THREE.TSL; if (!THREE || !T || !initGpu(THREE, T)) return null;
+      if (!D.on || !ensure() || !hasMarch()) return null; const THREE = W.THREE, T = THREE && THREE.TSL; if (!THREE || !T || !initGpu(THREE, T)) return null;
       const { mix, float } = T, sn = sunVisNodes(T, p); return mix(float(1), sn.vs, U.hfK.mul(U.k));
     } catch (err) { D.failed = String(err && err.message || err); return null; }
   };
@@ -535,12 +642,16 @@
       }
       let vis = lookups[0].vis, bounce = lookups[0].bounce;
       if (lookups.length > 1) { const w = lookups[0].w; vis = mix(lookups[1].vis, vis, w); bounce = mix(lookups[1].bounce, bounce, w); }
+      { // (v297) past the outermost cascade window the probes are the wrapped ones of the opposite edge: fade to neutral (open sky, no bounce)
+        const cl = casc[casc.length - 1], hl = cl.P * cl.sp * 0.5, dxz = max(abs(p.x.sub(U.cam.x)), abs(p.z.sub(U.cam.y))), wOut = smoothstep(hl * 0.72, hl * 0.9, dxz);
+        vis = mix(vis, float(1), wOut); bounce = mix(bounce, vec3(0, 0, 0), wOut);
+      }
       const skyVis = clamp(vis, 0.0, 1.0), hRel = o.h || m.userData.dmReliefH || null;
       // crevices: the relief height (parallax / ground atlas) darkens the sky term further, weighted by how closed the sky is
       const cav = hRel ? mix(float(1), float(0.6).add(clamp(hRel, 0.0, 1.0).mul(0.4)), float(1).sub(skyVis).mul(0.6).add(0.4)) : float(1);
       if (o.ao !== false) { const aoK = mix(float(1), skyVis.mul(cav), U.k); m.aoNode = m.aoNode ? m.aoNode.mul(aoK) : aoK; }
       if (o.bounce !== false) { const alb = T.diffuseColor ? T.diffuseColor.rgb : vec3(1, 1, 1); m.emissiveNode = (m.emissiveNode || vec3(0, 0, 0)).add(alb.mul(max(bounce, vec3(0, 0, 0))).mul(cav).mul(U.gain).mul(U.k)); }
-      if (o.shadow !== false) {
+      if (o.shadow !== false && hasMarch()) {
         const sn = sunVisNodes(T, p);
         // relief-aware: with the sun low the crevices (low relief height) sit in the shadow of their own rims
         const rel = hRel ? mix(float(1), smoothstep(0.05, 0.6, clamp(hRel, 0.0, 1.0)), U.lowSun.mul(0.6)) : float(1);
@@ -560,6 +671,6 @@
     } catch (e) { try { console.warn('[light] applyTree', e); } catch (_) { } } return n;
   };
 
-  D.status = function () { return { on: D.on, tier: D.tier, flag, lvl: D.lvl, eff: D.eff, ready: D.ready, ms: +D.msEma.toFixed(2), probesPerSec: Math.round(D.probesPerSec), headroom: D.hr.on, cs: D.cs, csOk: D.csOk, csBad: D.csBad, csFrames: D.csFrames, csK: U ? +U.csK.value.toFixed(2) : 0, mats: D.mats, overlays: D.overlays, uploads: D.uploads, MB: +(D.bytes / 1048576).toFixed(2), built: D.built, failed: D.failed, hfFilled: hf ? hf.filled : 0, boot: D.boot }; };
-  D.dispose = function () { try { if (tex) { tex.hft.dispose(); if (tex.hft2) tex.hft2.dispose(); for (const v of tex.vols) for (const t of v) t.dispose(); } if (CS) { for (const t of CS.A.concat(CS.B)) t.dispose(); } } catch (e) { } tex = null; U = null; CS = null; D.ready = false; D.tier = 'off'; D.ticks = 0; hf = null; hf2 = null; casc = []; hemiCache = null; D._S = null; };
+  D.status = function () { return { on: D.on, tier: D.tier, live: D.live, cap: D.cap, flag, lvl: D.lvl, eff: D.eff, ready: D.ready, ms: +D.msEma.toFixed(2), upMs: +D.upMs.toFixed(2), upCells: D.upCells, agl: Math.round(D.agl), idle: !!(D.eff && D.eff.idle), resets: D.resets, probesPerSec: Math.round(D.probesPerSec), headroom: D.hr.on, cs: D.cs, csOk: D.csOk, csBad: D.csBad, csFrames: D.csFrames, csK: U ? +U.csK.value.toFixed(2) : 0, mats: D.mats, overlays: D.overlays, uploads: D.uploads, MB: +(D.bytes / 1048576).toFixed(2), cpuMB: +(D.cpuBytes / 1048576).toFixed(2), gpuMB: +(D.gpuBytes / 1048576).toFixed(2), built: D.built, failed: D.failed, hfFilled: hf ? hf.filled : 0, boot: D.boot }; };
+  D.dispose = function () { try { if (tex) { tex.hft.dispose(); if (tex.hft2) tex.hft2.dispose(); for (const v of tex.vols) for (const t of v) t.dispose(); } if (CS) { for (const t of CS.A.concat(CS.B)) t.dispose(); } } catch (e) { } tex = null; U = null; CS = null; D.ready = false; D.tier = 'off'; D.ticks = 0; hf = null; hf2 = null; casc = []; hemiCache = null; D._S = null; D._wkey = null; D._wgen = -1; baseSet = false; };
 })(typeof window !== 'undefined' ? window : globalThis);
