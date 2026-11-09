@@ -1043,6 +1043,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-projector.js?v=224" defer></script>
 <script src="ui/dm-groundmark.js?v=291" defer></script>
 <script src="ui/dm-charm.js?v=234" defer></script>
+<script src="ui/dm-flash.js?v=302" defer></script>
 <script src="ui/dm-menuscene.js?v=245" defer></script>
 <script src="ui/dm-starbubble.js?v=4" defer></script>
 <script src="ui/dm-hazardbubble.js?v=215" defer></script>
@@ -7089,6 +7090,7 @@ function _startFlightLoop(){
     DMPerf.b('_dynRes'); try{ _dynRes(flightRenderer); }catch(e){} DMPerf.e();
     try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){_animLoopWarn('charMixer',e);}
     try{ _charmTick(dt); }catch(e){_animLoopWarn('charm',e);}
+    try{ if(window.DMFlash) DMFlash.tick('space'); }catch(e){_animLoopWarn('flash',e);}   // glasses flashlight: beam follows her glasses, button docks by the left stick
     try{ applySkyboardHeadOverride(); }catch(e){_animLoopWarn('headOverride',e);}   // (fades with the stance)
     DMPerf.b('updateBirdTemple'); try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);} DMPerf.e();
     DMPerf.b('_shipWalkCarry'); try{ if(SHIP_WALK.active) _shipWalkCarry(); else if(SHIP_LIFT.on) _shipLiftCarry(); }catch(e){_animLoopWarn('shipCarry',e);} DMPerf.e();
@@ -19351,6 +19353,7 @@ function _pwFrame(dt){
   try{ if(window.DM_HAZ) DM_HAZ.tick(dt); }catch(e){ _animLoopWarn('hazard',e); }   // habitability orb + underwater look (ui/dm-hazardbubble.js)
   { const _fw=performance.now(); try{ if(window.DMFluidWorld) DMFluidWorld.tick(dt); }catch(e){ _animLoopWarn('fluidVfx',e); } DMFT.add('fluidWorld',performance.now()-_fw); }   // APIC sea + PBF spray (ui/dm-fluid-world.js)
   try{ _dynRes(flightRenderer); }catch(e){}
+  try{ if(window.DMFlash) DMFlash.tick(PW.mode); }catch(e){ _animLoopWarn('flash',e); }   // glasses flashlight (ui/dm-flash.js): walk / fly / space HUDs
   { const _t1=performance.now(); DMFT.add('worldLogic',_t1-now); _pwRender(); { const _d=performance.now()-_t1; DMFT.add('worldRender',_d); DMFT.add(TERRAIN._shRef?'worldRenderShadowFrame':'worldRenderNoShadowFrame',_d); } DMFT.frame(); }
   if(PW.mode==='space'){
     const _h0=performance.now();
@@ -21459,6 +21462,7 @@ async function loadCharacterAssets(){
   CHAR.restPose={}; Object.keys(CHAR.bones).forEach(n=>{ const b=CHAR.bones[n]; CHAR.restPose[n]={p:b.position.clone(),q:b.quaternion.clone(),s:b.scale.clone()}; });
   try{ if(window.DMLight&&DMLight.on&&!/[?&]lightchar=0\b/.test(location.search)) DMLight.applyTree(CHAR.root,{}); }catch(e){ console.warn('[light] char',e); }   // (ui/dm-light.js) her materials read the radiance cache + height-cache sun shadow (node twins when needed)
   try{ if(window.DMCharm) DMCharm.attach(CHAR); }catch(e){ console.warn('[charm]',e); }   // necklace + kite charm on the chest bone (ui/dm-charm.js)
+  try{ if(window.DMFlash) DMFlash.attach(CHAR); }catch(e){ console.warn('[flash]',e); }   // AR-glasses LED bar on the Head bone + its (lazy, shadowless) beam (ui/dm-flash.js)
   const boneCount = Object.keys(CHAR.bones).length;
   if(boneCount===0){
     console.error('Character load: mesh loaded but ZERO bones were found in the traversal — the procedural skyboard stance and animations will silently do nothing. Check that the GLB actually contains a skeleton, not just a static mesh.');
