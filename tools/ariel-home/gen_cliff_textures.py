@@ -218,20 +218,27 @@ def set_columnar(rng):
     return col, H, rough, dict(depth_m=0.14, name='Columnar basalt')
 
 def set_sheet(rng):
-    sheets = fnoise(rng, 3.2)
-    lvl = 0.42 * sm(0.44, 0.50, sheets) + 0.38 * sm(0.62, 0.68, sheets)           # two broad exfoliation steps
+    # (v296) Half Dome / El Capitan sheeting: 4-5 thin exfoliation shells, each edge a short crisp riser (domain-warped so it wanders and chips), instead of two broad
+    # steps whose 0.47 isoline drew a single thin contour line across every 3 m tile
+    sheets = fnoise(rng, 3.0); sw_ = (fnoise(rng, 1.7) - 0.5) * 0.05; sv_ = sheets + sw_
+    lvls = np.sort(rng.uniform(0.30, 0.75, 3)); lvl = np.zeros_like(sheets); sheetedge = np.zeros_like(sheets); shell = np.zeros_like(sheets)
+    for k_, lv_ in enumerate(lvls):
+        on_ = sm(0.40, 0.62, fnoise(rng, 1.9))                                                 # the riser is only cut where the shell has spalled
+        lvl += (0.10 + 0.06 * rng.random()) * sm(lv_ - 0.02, lv_ + 0.012, sv_) * on_
+        sheetedge += np.exp(-((sv_ - lv_) / 0.012) ** 2) * on_; shell += sm(lv_ - 0.02, lv_ + 0.012, sv_) * on_ * (rng.random() - 0.5)
     cr = fnoise(rng, 2.6)
-    crack = np.exp(-((cr - 0.5) / 0.0035) ** 2) + 0.7 * np.exp(-((fnoise(rng, 2.8) - 0.5) / 0.003) ** 2)
-    sheetedge = np.exp(-((sheets - 0.47) / 0.012) ** 2) + np.exp(-((sheets - 0.65) / 0.012) ** 2)
+    crack = np.exp(-((cr - 0.5) / 0.0035) ** 2) * sm(0.4, 0.6, fnoise(rng, 2.2)) + 0.7 * np.exp(-((fnoise(rng, 2.8) - 0.5) / 0.003) ** 2) * sm(0.45, 0.65, fnoise(rng, 2.0))
     spk = fnoise(rng, 0.0); spk2 = blur(rng.random((N, N)).astype(F32), 1.1); spk2 = (spk2 - spk2.min()) / (spk2.max() - spk2.min())
-    H = 0.35 * fnoise(rng, 3.4) + lvl * 0.7 - 0.22 * crack - 0.12 * sheetedge + 0.015 * spk2 + 0.03 * fnoise(rng, 1.6)
+    H = 0.30 * fnoise(rng, 3.4) + lvl * 0.9 - 0.16 * crack - 0.04 * sheetedge + 0.03 * spk2 + 0.03 * fnoise(rng, 1.6)
     flake = sm(0.78, 0.93, fnoise(rng, 2.4)) * sm(0.45, 0.8, fnoise(rng, 1.6))
     H -= 0.12 * flake
     quartz = np.array([0.46, 0.45, 0.43], F32); feld = np.array([0.42, 0.36, 0.32], F32); bio = np.array([0.07, 0.07, 0.075], F32)
     mflt = sm(0.4, 0.7, fnoise(rng, 2.0))
     base = mix(np.broadcast_to(quartz, (N, N, 3)).copy(), np.broadcast_to(feld, (N, N, 3)).copy(), mflt * 0.55)
-    bmask = sm(0.62, 0.7, spk2)
-    col = mix(base, np.broadcast_to(bio, (N, N, 3)).copy(), bmask * 0.28) * (0.9 + 0.2 * fnoise(rng, 2.6)[..., None])
+    bmask = sm(0.62, 0.7, spk2); kq_ = blur(rng.random((N, N)).astype(F32), 3.0); kq_ = (kq_ - kq_.min()) / (kq_.max() - kq_.min() + 1e-9); kspar = sm(0.70, 0.80, kq_) * 0.6   # biotite flecks + pink K-feldspar phenocrysts
+    col = mix(base, np.broadcast_to(bio, (N, N, 3)).copy(), bmask * 0.42) * (0.9 + 0.2 * fnoise(rng, 2.6)[..., None])
+    col = mix(col, np.broadcast_to(np.array([0.50, 0.40, 0.36], F32), (N, N, 3)).copy(), kspar * 0.35)
+    col = col * (1 + 0.16 * (shell[..., None] - shell.mean()))                     # each shell weathered to its own tone (fresh spall scars paler)
     streak = sm(0.60, 0.80, fnoise(rng, 2.4, sx=0.03, sy=1.0)) * sm(0.25, 0.7, fnoise(rng, 2.0, sx=0.3, sy=0.6))   # long black water streaks
     streak = np.clip(streak * 0.5 + 0.25 * crack, 0, 1)
     col = mix(col, np.array([0.12, 0.12, 0.12], F32), streak * 0.6)
@@ -274,9 +281,17 @@ FIN = dict(strata=dict(warp_px=30, fbm=0.22, chip=0.035, mott=0.38, chip_n=350),
 SEED = dict(strata=4101, columnar=4202, sheet=4303, talus=4404)
 
 # ───────────────────────── derived maps + export ─────────────────────────
-def derive(col, H, rough, depth_m):
+MICRO = dict(strata=0.0035, columnar=0.0025, sheet=0.0030, talus=0.0030)    # metres of grain relief in the DETAIL normal layer (normal map only)
+
+def derive(col, H, rough, depth_m, micro=0.0, rng=None):
     H = (H - np.percentile(H, 0.05)) / (np.percentile(H, 99.95) - np.percentile(H, 0.05) + 1e-9); H = np.clip(H, 0, 1).astype(F32)
     Hm = H * depth_m; px = TILE_M / N
+    if micro > 0 and rng is not None:
+        # (v296) DETAIL-NORMAL layer: crystal / sand-grain relief at 1.5-6 mm (2-8 px at 2K) folded into the normal map only.  The height map (POM) stays the
+        # macro relief so the march is unchanged; up close the 2K normal now carries grain instead of a smooth plastic sheen.  The 1K / 512 tiers average it
+        # away by construction (Lanczos downscale), so they are not noisier.
+        g_ = (fnoise(rng, 0.6) - 0.5) * 0.7 + (blur(rng.random((N, N)).astype(F32), 0.9) - 0.5) * 1.6
+        Hm = Hm + micro * g_ * (0.6 + 0.4 * H)
     gx = (np.roll(Hm, -1, 1) - np.roll(Hm, 1, 1)) / (2 * px)                 # dh/dx (right)
     gu = (np.roll(Hm, 1, 0) - np.roll(Hm, -1, 0)) / (2 * px)                 # dh/dup (image rows increase downward)
     nx, ny, nz = -gx * 1.25, -gu * 1.25, np.ones_like(gx)
@@ -307,7 +322,7 @@ for s in SETS:
     rng = np.random.default_rng(SEED[s])
     col, H, rough, info = BUILD[s](rng)
     col, H, rough = finish(rng, col, H, rough, **FIN[s])
-    col, nrm, orm, Hn = derive(col, H, rough, info['depth_m'])
+    col, nrm, orm, Hn = derive(col, H, rough, info['depth_m'], MICRO.get(s, 0.0), rng)
     sz = save_tiers(s, col, nrm, orm, Hn)
     info['bytes'] = sz; meta[s] = info
     if PREV:

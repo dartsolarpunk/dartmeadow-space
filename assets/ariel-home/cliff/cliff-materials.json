@@ -49,18 +49,18 @@
    "name": "Stratified sandstone / limestone ledges",
    "depthM": 0.16,
    "bytes": {
-    "color-2k": 307174,
-    "nrm-2k": 2664486,
-    "orm-2k": 260036,
-    "height-2k": 176270,
-    "color-1k": 63728,
-    "nrm-1k": 579510,
-    "orm-1k": 73612,
-    "height-1k": 62176,
-    "color-512": 16328,
-    "nrm-512": 116176,
-    "orm-512": 23264,
-    "height-512": 22712
+    "color-2k": 399480,
+    "nrm-2k": 2741104,
+    "orm-2k": 217072,
+    "height-2k": 138478,
+    "color-1k": 77476,
+    "nrm-1k": 593872,
+    "orm-1k": 57864,
+    "height-1k": 47480,
+    "color-512": 16220,
+    "nrm-512": 114736,
+    "orm-512": 15752,
+    "height-512": 17206
    }
   },
   "columnar": {
@@ -69,15 +69,15 @@
    "depthM": 0.14,
    "bytes": {
     "color-2k": 309190,
-    "nrm-2k": 1925140,
+    "nrm-2k": 2164364,
     "orm-2k": 113888,
     "height-2k": 66570,
     "color-1k": 59022,
-    "nrm-1k": 402136,
+    "nrm-1k": 469836,
     "orm-1k": 36692,
     "height-1k": 22234,
     "color-512": 13476,
-    "nrm-512": 68730,
+    "nrm-512": 83174,
     "orm-512": 13286,
     "height-512": 8676
    }
@@ -87,18 +87,18 @@
    "name": "Granite exfoliation sheets",
    "depthM": 0.07,
    "bytes": {
-    "color-2k": 901270,
-    "nrm-2k": 2017444,
-    "orm-2k": 196774,
-    "height-2k": 106628,
-    "color-1k": 208358,
-    "nrm-1k": 422650,
-    "orm-1k": 45536,
-    "height-1k": 33198,
-    "color-512": 43168,
-    "nrm-512": 71670,
-    "orm-512": 10214,
-    "height-512": 11554
+    "color-2k": 969230,
+    "nrm-2k": 2537352,
+    "orm-2k": 332594,
+    "height-2k": 224180,
+    "color-1k": 221974,
+    "nrm-1k": 547596,
+    "orm-1k": 71662,
+    "height-1k": 62562,
+    "color-512": 46950,
+    "nrm-512": 102236,
+    "orm-512": 9876,
+    "height-512": 16932
    }
   },
   "talus": {
@@ -106,18 +106,18 @@
    "name": "Talus / scree",
    "depthM": 0.2,
    "bytes": {
-    "color-2k": 460404,
-    "nrm-2k": 2630290,
-    "orm-2k": 308372,
-    "height-2k": 229146,
-    "color-1k": 99550,
-    "nrm-1k": 581002,
-    "orm-1k": 103994,
-    "height-1k": 92054,
-    "color-512": 27586,
-    "nrm-512": 119432,
-    "orm-512": 39010,
-    "height-512": 38300
+    "color-2k": 478750,
+    "nrm-2k": 2703884,
+    "orm-2k": 400826,
+    "height-2k": 295894,
+    "color-1k": 105598,
+    "nrm-1k": 619472,
+    "orm-1k": 137854,
+    "height-1k": 119500,
+    "color-512": 30718,
+    "nrm-512": 135986,
+    "orm-512": 49814,
+    "height-512": 49956
    }
   }
  },

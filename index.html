@@ -1066,7 +1066,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-mansion-rooms.js?v=250" defer></script>
 <script src="ui/dm-mansion-look.js?v=251" defer></script>
 <script src="ui/dm-mansion-interior.js?v=262" defer></script>
-<script src="ui/dm-facilities.js?v=295" defer></script>
+<script src="ui/dm-facilities.js?v=296" defer></script>
 <script src="ui/dm-lamps.js?v=293" defer></script>
 <script src="ui/dm-mansion-collide.js?v=283" defer></script>
 <script src="ui/dm-holo.js?v=283" defer></script>
@@ -25735,13 +25735,23 @@ function _terrainDetailMat(opts){
     const fadeC=W.float(1).sub(W.smoothstep(W.float(reach*2.5),W.float(reach*9),dist));
     const fadeBand=W.float(1).sub(W.smoothstep(W.float(reach*8),W.float(reach*40),dist));
     const warpOf=(q)=>W.mx_fractal_noise_float(W.vec3(q.x.mul(0.035),W.float(0),q.z.mul(0.035)),2,2.0,0.5).mul(3.0);
+    // (v296 JOTS Cliffs) the same geology as the mansion cliff (tools/ariel-home/cliff_mesh.py): beds are not one even rhythm of identical ledges any more (that read
+    // as "wavy graded lines" round the site) — each ~2.6 u bed is either a HARD cap (proud, flat face, chamfered foot) or a SOFT bed (recessed ramp under the cap
+    // above, faint laminae), chosen per bed by a hash, so runs of soft beds make deep recesses and caps stand out singly or stacked (Zion / Dolomites).  The
+    // fracture term is now the vertical JOINT network (borders of tall, narrow cells: F2 - F1 of a y-squashed worley) instead of dots at the cell centres (the
+    // "little spots").  Same number of noise evaluations per call as before (one worley, the warp, grit at High+).
+    const _wv2=typeof W.mx_worley_noise_vec2==='function';
     const cliff=(q)=>{
-      const bed=q.y.mul(0.42).add(warpOf(q)), layer=W.fract(bed);
-      const ledge=W.smoothstep(W.float(0.0),W.float(0.12),layer).mul(W.float(1).sub(W.smoothstep(W.float(0.8),W.float(1.0),layer)));
-      const fr=W.mx_worley_noise_float(W.vec3(q.x.mul(0.55),q.y.mul(1.4),q.z.mul(0.55)),1.0,0);
-      const split=W.float(1).sub(W.smoothstep(W.float(0.03),W.float(0.12),fr));
+      const bed=q.y.mul(0.38).add(warpOf(q)), layer=W.fract(bed), id=W.floor(bed);
+      const hb=W.fract(W.sin(id.mul(78.233)).mul(43758.5453)), hard=W.smoothstep(W.float(0.42),W.float(0.58),hb);
+      const capH=W.float(1).sub(W.smoothstep(W.float(0.80),W.float(0.97),layer)).mul(W.smoothstep(W.float(0.0),W.float(0.05),layer));
+      const softH=W.float(0.55).sub(W.float(1).sub(layer).mul(W.float(1).sub(layer)).mul(0.55)).add(W.fract(bed.mul(3.0)).mul(0.08));
+      const ledge=W.mix(softH,capH,hard);
+      const jq=W.vec3(q.x.mul(0.30),q.y.mul(0.11),q.z.mul(0.30));
+      const split=_wv2?(()=>{ const c=W.mx_worley_noise_vec2(jq,1.0,0); return W.float(1).sub(W.smoothstep(W.float(0.015),W.float(0.07),c.y.sub(c.x))).mul(hard.mul(0.6).add(0.4)); })()
+                      :W.smoothstep(W.float(0.62),W.float(0.82),W.mx_worley_noise_float(jq,1.0,0)).mul(0.6);
       const grit=lvl>=3?W.mx_fractal_noise_float(q.mul(2.2),2,2.0,0.5):W.float(0);
-      return {h:ledge.mul(0.35).sub(split.mul(0.25)).add(grit.mul(0.06)), id:W.floor(bed), ledge, split};
+      return {h:ledge.mul(0.38).sub(split.mul(0.25)).add(grit.mul(0.06)), id, ledge, split};
     };
     // (fps) cliff strata tint: only where the face is steep AND inside the band distance (flat ground and the far plain skip all of it)
     const CLT=_gate(steep.mul(fadeBand).greaterThan(0.0),[1,0,0,0],()=>{

@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  const F = window.DMFac = { ctx: null, sites: new Map(), solids: [], scene: null, ver: '292' };
+  const F = window.DMFac = { ctx: null, sites: new Map(), solids: [], scene: null, ver: '296' };   // (v296) asset cache key: cliff / mansion GLBs, collision, cliff maps, GI re-baked (JOTS Cliffs)
   const DM = window.DM_FAC = window.DM_FAC || {};
   DM.bay = DM.bay || { inside: false, membrane: 0 };
   F.bind = c => { F.ctx = c; };
