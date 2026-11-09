@@ -14,10 +14,34 @@
  *   2. TARGET cells to light: for a small level its cliff edges, facade edges and a few cells round its middle; for the big court only the strips along the facade and along
  *      the walking paths between the doors (A* over walkable cells with steps <= 0.6) and the landing disc.
  *   3. greedy cover: repeatedly drop the lamp that lights the most uncovered target cells (radius 12 units ~ 6.7 m), never closer than 14 units (~ 7.9 m) to another lamp,
- *      standing on a flat cell that is not on a lip. Ties break by cell order, so the output is identical on every run. */
+ *      standing on a flat cell that is not on a lip. Ties break by cell order, so the output is identical on every run.
+ *   4. HOME landing keep-out (Wave 1 fix): no lamp stands within HOME_KEEP units (18 u ~ 10.1 m) of the HOME touchdown on the arrowhead deck (HOME_PAD, mansion-local
+ *      x -68 / y 22, ui/dm-facilities.js teleport()). The pad stays a path point (the deck is still lit), but a solid pole + plinth can never be planned inside the
+ *      board + rider landing footprint again. tools/tests/home-landing-real.js lands on the real pad against the real lamps + mansion shell.
+ *   5. (Wave 1, Justin's plan change) NO solid street lamp on the HOME arrowhead deck at all: the old pole at [-74, 22] (3.4 m from the pad) is deleted, and so is the
+ *      [-86, 22] pole the keep-out alone produced (the greedy cover simply re-planted it on the keep-out ring). Every cell of the arrowhead deck level is dropped from the
+ *      solid-lamp candidates; the keep-out ring stays for every other level. The deck is lit instead by small NON-SOLID LEDs at the bottom corners of the balcony railing's
+ *      glass panes ("windows"): RAIL_CORNERS = the pane edges of the glass railing measured from assets/ariel-home/ariel-home.glb LOD0 (material ah_glass, z 0 .. 1.5,
+ *      13 corner verticals along the chevron (-33.8,15.6) -> (-67.6,39) -> (-98.8,18.2); tools/tests/home-leds.js re-measures them from the GLB), each LED set LED_INSET units
+ *      in from the glass toward the deck and facing the deck. LEDs go to the JSON `leds` array ([x, y, z, yaw]); ui/dm-lamps.js draws them as emissive studs + a small
+ *      light pool and never registers them in DMCollide. Deck target cells within LED_R of an LED count as lit (LED_R == the LED pool radius in ui/dm-lamps.js). */
 const fs = require('fs'), path = require('path');
 const root = path.join(__dirname, '..', '..');
 const UPM = 1.78, RC = 18, MINSEP = 32, CAP = 18;
+const HOME_PAD = [-68, 22], HOME_KEEP = 18;   // HOME touchdown (nav frame) + lamp keep-out radius in units (18 / 1.78 ~ 10.1 m)
+const RAIL_CORNERS = [[-33.8, 15.6], [-39.43, 19.5], [-45.07, 23.4], [-50.7, 27.3], [-56.33, 31.2], [-61.97, 35.1], [-67.6, 39], [-73.84, 34.84], [-80.08, 30.68], [-86.32, 26.52], [-92.56, 22.36], [-98.8, 18.2]];
+const RAIL_Z = 0, LED_INSET = 0.6, LED_R = 8;   // glass bottom (deck level) in the GLB; LED 0.6 u (~34 cm) in from the glass; LED pool radius 8 u (~4.5 m)
+// LEDs at the bottom corners of every railing pane: the shared pane edges get one LED per side of the edge (one on each pane's corner), the two ends one each
+function railLeds() {
+  const out = [], n = RAIL_CORNERS.length, P = RAIL_CORNERS, cx = HOME_PAD[0], cy = HOME_PAD[1];
+  for (let i = 0; i < n - 1; i++) {   // pane i spans corner i .. i+1
+    const a = P[i], b = P[i + 1], dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy), ux = dx / L, uy = dy / L;
+    let nx = -uy, ny = ux; if (nx * (cx - (a[0] + b[0]) / 2) + ny * (cy - (a[1] + b[1]) / 2) < 0) { nx = -nx; ny = -ny; }   // inward = toward the deck (the HOME pad side)
+    const yaw = +Math.atan2(ny, nx).toFixed(3), e = 0.35;   // 0.35 u (~20 cm) along the pane from its corner post
+    for (const [p, s] of [[a, 1], [b, -1]]) out.push([+(p[0] + ux * e * s + nx * LED_INSET).toFixed(2), +(p[1] + uy * e * s + ny * LED_INSET).toFixed(2), RAIL_Z, yaw]);
+  }
+  return out;
+}
 
 function load(file) { return JSON.parse(fs.readFileSync(path.join(root, file), 'utf8')); }
 function decode(col) {
@@ -104,7 +128,7 @@ function plan(col, nav) {
   const poi = [];
   for (const p of pa) poi.push(snap((p[1] + p[3]) / 2, p[4] + 2));
   if (disc) poi.push(snap(X(disc.cells[0] % nx) + 0, Y(Math.floor(disc.cells[Math.floor(disc.cells.length / 2)] / nx))));
-  if (deck) poi.push(snap(-68, 22));
+  if (deck) poi.push(snap(HOME_PAD[0], HOME_PAD[1]));   // the HOME pad is a path end (lit), never a lamp spot (keep-out in the greedy cover below)
   if (terrace) poi.push(snap((terrace[1] + terrace[3]) / 2, (terrace[2] + terrace[4]) / 2 + 6));
   poi.push(snap(-88, -12), snap(86, -12));   // the court's west and east rims by the cliff lips (the court does not connect down to the west deck: it is a drop)
   const legs = [[0, 1], [1, 2], [0, 5], [2, 6], [3, 4]].filter(([a, b]) => poi[a] >= 0 && poi[b] >= 0 && poi[a] !== undefined && poi[b] !== undefined);
@@ -119,14 +143,17 @@ function plan(col, nav) {
   const cand = [];
   for (let j = 1; j < ny - 1; j++) for (let i = 1; i < nx - 1; i++) {
     const k = id(i, j); if (!flat[k] || levelOf[k] < 0 || inRoom(X(i), Y(j), 1.5)) continue;
+    if (Math.hypot(X(i) - HOME_PAD[0], Y(j) - HOME_PAD[1]) < HOME_KEEP) continue;   // HOME landing keep-out
+    if (deck && levelOf[k] === levels.indexOf(deck)) continue;   // the HOME arrowhead deck: no solid pole anywhere on it (lit by the railing LEDs)
     let ok = true, lip = 0; for (let dj = -1; dj <= 1 && ok; dj++) for (let di = -1; di <= 1; di++) { const q = id(i + di, j + dj); if (!land[q] || Math.abs(g[q] - g[k]) > 0.12) { ok = false; break; } }
     if (!ok) continue;
     for (let dj = -2; dj <= 2; dj++) for (let di = -2; di <= 2; di++) { if (!inb(i + di, j + dj)) continue; const q = id(i + di, j + dj); if (edgeKind[q]) lip = Math.max(lip, edgeKind[q]); }
     cand.push({ k, i, j, x: X(i), y: Y(j), edge: lip });
   }
   const tcells = []; for (let k = 0; k < target.length; k++) if (target[k]) tcells.push(k);
-  const covered = new Uint8Array(nx * ny), lamps = [], rr = Math.ceil(RC / c);
-  let left = tcells.length;
+  const covered = new Uint8Array(nx * ny), lamps = [], rr = Math.ceil(RC / c), leds = railLeds();
+  let left = tcells.length, ledLit = 0;
+  if (deck) { const dn = levels.indexOf(deck); for (const k of tcells) { if (levelOf[k] !== dn) continue; const x = X(k % nx), y = Y(Math.floor(k / nx)); if (leds.some(l => Math.hypot(l[0] - x, l[1] - y) <= LED_R)) { covered[k] = 1; left--; ledLit++; } } }
   while (left > 0 && lamps.length < CAP) {
     let best = null, bg = 0;
     for (const cd of cand) {
@@ -140,16 +167,16 @@ function plan(col, nav) {
     const L = levels[levelOf[best.k]]; let mx = 0, my = 0; for (const k of L.cells) { mx += X(k % nx); my += Y(Math.floor(k / nx)); } mx /= L.cells.length; my /= L.cells.length;
     lamps.push([best.x, best.y, +g[best.k].toFixed(2), best.edge === 1 ? 1 : best.edge === 2 ? 2 : 0, +Math.atan2(my - best.y, mx - best.x).toFixed(3)]);   // arm yaw: toward the middle of the level
   }
-  return { lamps, uncovered: left, targets: tcells.length, levels: levels.map(L => ({ h: +L.h.toFixed(1), area: L.area, w: L.w * c, d: L.d * c })) };
+  return { lamps, leds, ledLit, uncovered: left, targets: tcells.length, levels: levels.map(L => ({ h: +L.h.toFixed(1), area: L.area, w: L.w * c, d: L.d * c })) };
 }
 
 function build() {
   const col = load('assets/ariel-home/ariel-home-collide.json'), nav = load('assets/ariel-home/ariel-home-interior-nav.json'), p = plan(col, nav);
-  return { json: JSON.stringify({ v: 1, upm: UPM, frame: 'mansion nav frame: x east, y seaward, z up (units; 1.78 = 1 m)', kinds: ['path', 'edge', 'facade'], lamps: p.lamps }) + '\n', plan: p };
+  return { json: JSON.stringify({ v: 1, upm: UPM, frame: 'mansion nav frame: x east, y seaward, z up (units; 1.78 = 1 m)', kinds: ['path', 'edge', 'facade'], lamps: p.lamps, ledNote: 'leds: [x, y, z, yaw] non-solid railing-pane corner LEDs (HOME deck)', leds: p.leds }) + '\n', plan: p };
 }
-module.exports = { plan, decode, build, UPM, RC, MINSEP };
+module.exports = { plan, decode, build, railLeds, UPM, RC, MINSEP, HOME_PAD, HOME_KEEP, RAIL_CORNERS, RAIL_Z, LED_INSET, LED_R };
 if (require.main === module) {
   const out = path.join(root, 'assets/ariel-home/ariel-home-lamps.json'), r = build();
-  if (process.argv.includes('--check')) { const cur = fs.existsSync(out) ? fs.readFileSync(out, 'utf8') : ''; if (cur !== r.json) { console.error('ariel-home-lamps.json is out of date: run node tools/ariel-home/plan_lamps.js'); process.exit(1); } console.log('ok', r.plan.lamps.length, 'lamps'); }
-  else { fs.writeFileSync(out, r.json); console.log('wrote', out, r.plan.lamps.length, 'lamps; uncovered targets', r.plan.uncovered, '/', r.plan.targets, JSON.stringify(r.plan.levels)); }
+  if (process.argv.includes('--check')) { const cur = fs.existsSync(out) ? fs.readFileSync(out, 'utf8') : ''; if (cur !== r.json) { console.error('ariel-home-lamps.json is out of date: run node tools/ariel-home/plan_lamps.js'); process.exit(1); } console.log('ok', r.plan.lamps.length, 'lamps,', r.plan.leds.length, 'leds'); }
+  else { fs.writeFileSync(out, r.json); console.log('wrote', out, r.plan.lamps.length, 'lamps,', r.plan.leds.length, 'leds (LED-lit deck targets ' + r.plan.ledLit + '); uncovered targets', r.plan.uncovered, '/', r.plan.targets, JSON.stringify(r.plan.levels)); }
 }
