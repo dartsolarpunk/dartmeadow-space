@@ -24908,12 +24908,29 @@ function SkyGround(scene,F,pal,o){
   const lc=pal.liquidColor!==undefined?pal.liquidColor:0x1a5a8a;
   this.wDeep=new THREE.Color(lc).multiplyScalar(0.6); this.wShal=new THREE.Color(lc).lerp(new THREE.Color(0x3f8fb0),0.4);
   this._fr=new THREE.Frustum(); this._m4=new THREE.Matrix4(); this._v=new THREE.Vector3(); this._c=new THREE.Vector3(); this._cc=new THREE.Vector3(); this._sph=new THREE.Sphere();
+  // (Wave 1) reused every frame: the kept root keys, the lat/lon domain, the focus point, last frame's build counts
+  this._keep=new Set(); this._dm={x0:0,z0:0,W:0}; this._fx=0; this._fz=0; this._cpos=null; this._sb=null;
+  this.stat={built:0,focus:0,emerg:0,skipped:0,left:0};
 }
+// (Wave 1) may the tile at the head of the queue be built now?  Pure (tools/tests/skyground-budget.js drives it).
+//   el   ms already spent building this frame       B    the frame's budget (ms)
+//   foc  the tile is on the chain under her feet    nf   focus tiles built so far this frame
+//   cap  focus builds allowed this frame (2 handheld / 4 desktop; Infinity for a caller's one-off bulk prime)
+//   bare nothing on the chain under her can draw yet (she would stand over black)   em  this frame's one emergency build is spent
+// -> 1 build, 2 build as the frame's single emergency (over budget or over cap, ground under her still bare),
+//    3 skip this focus tile (cap reached, budget left for the rest of the queue), 0 stop for this frame.
+function _skyGroundGate(el,B,foc,nf,cap,bare,em){
+  if(foc&&bare&&!em&&(el>=B||nf>=cap)) return 2;
+  if(el>=B) return 0;
+  if(foc&&nf>=cap) return 3;
+  return 1;
+}
+const _SKY_SITE0={lat:0,lon:0};
 SkyGround.prototype._node=function(x0,z0,size,parent){ return {x0,z0,size,parent,kids:null,mesh:null,minH:parent?parent.minH:-60,maxH:parent?parent.maxH:260}; };
 // the lat/lon domain in this site's flat frame
 SkyGround.prototype._domain=function(){
-  const s=PW.site&&typeof PW.site.lat==='number'?PW.site:{lat:0,lon:0}, D=ATMO_DEG_PER_UNIT;
-  return {x0:(-180-s.lon)/D, z0:(s.lat-90)/D, W:360/D};
+  const s=PW.site&&typeof PW.site.lat==='number'?PW.site:_SKY_SITE0, D=ATMO_DEG_PER_UNIT, o=this._dm;
+  o.x0=(-180-s.lon)/D; o.z0=(s.lat-90)/D; o.W=360/D; return o;
 };
 // distance (3-D, drawn frame) from the camera to the tile, and whether it can be seen
 SkyGround.prototype._measure=function(n,c){
@@ -24938,31 +24955,59 @@ SkyGround.prototype.update=function(cam,budgetMs){
   // the camera's view (drawn frame) for culling and build order
   this._frOn=!!(cam.projectionMatrix&&cam.matrixWorldInverse);
   if(this._frOn){ cam.updateMatrixWorld(); this._m4.multiplyMatrices(cam.projectionMatrix,cam.matrixWorldInverse); this._fr.setFromProjectionMatrix(this._m4); }
-  // root columns follow the focus round the world (wrapping copies), rows run pole to pole
-  const cf=Math.floor((PWF.fx-dm.x0)/T), keep=new Set();
+  // root columns follow the focus round the world (wrapping copies), rows run pole to pole.  (Wave 1) numeric keys i*4+j
+  // (j is 0..3) into a reused Set: no strings, no fresh Set per frame.
+  const cf=Math.floor((PWF.fx-dm.x0)/T), keep=this._keep; keep.clear();
   for(let j=0;j<4;j++) for(let i=cf-4;i<=cf+3;i++){
-    const k=i+'_'+j; keep.add(k);
+    const k=i*4+j; keep.add(k);
     if(!this.roots.has(k)) this.roots.set(k,this._node(dm.x0+i*T,dm.z0+j*T,T,null));
   }
-  for(const [k,n] of this.roots) if(!keep.has(k)){ this._drop([n]); this.roots.delete(k); }
+  this.roots.forEach(this._rootKeep,this);
   this.queue.length=0; this._rk=(window.DMLod&&DMLod.on)?DMLod.reliefK():0;
-  for(const n of this.roots.values()) this._visit(n,c,0);
+  this._cpos=c; this.roots.forEach(this._visitRoot,this); this._cpos=null;
   // (v151) the ground under whoever is driving comes first: every tile on the chain from the root down to her feet (and its
-  // siblings, which a level needs before it can take over from its parent) jumps the queue and is built this frame, whatever
-  // the budget — a few dozen small tiles at most, once per visit, then one or two as she crosses a tile edge. Before, the
-  // queue was ordered by view first, so a slow frame (a phone compiling shaders, ~1 tile a frame) left her standing on a
-  // kilometres-wide coarse tile for minutes, with its surface metres above the camera: culled from below, a black screen.
-  const fx=PWF.fx, fz=PWF.fz, has=(n)=>!n||(fx>=n.x0&&fx<n.x0+n.size&&fz>=n.z0&&fz<n.z0+n.size);
-  for(const n of this.queue) n._foc=has(n.parent)&&(!!n.parent||has(n));
-  // in view before out of view, nearest (for its size) first, coarse before fine
-  this.queue.sort((a,b)=>((b._foc?1:0)-(a._foc?1:0))||((b._inView?1:0)-(a._inView?1:0))||(Math.floor(a._d/a.size*4)-Math.floor(b._d/b.size*4))||(b.size-a.size)||(a._d-b._d));
-  const t0=performance.now(), B=budgetMs!=null?budgetMs:this.budget;
-  let nf=0;
-  for(let q=0;q<this.queue.length;q++){ const n=this.queue[q], tb=performance.now(); this._build(n); if(n._foc) nf++; this.buildMs=(this.buildMs||0)*0.9+(performance.now()-tb)*0.1; if(!(n._foc&&nf<(GFX.isMobile?16:48))&&performance.now()-t0>B) break; }
-  for(const n of this.roots.values()) this._show(n);
+  // siblings, which a level needs before it can take over from its parent) jumps the queue.  Before, the queue was ordered by
+  // view first, so a slow frame (a phone compiling shaders, ~1 tile a frame) left her standing on a kilometres-wide coarse tile
+  // for minutes, with its surface metres above the camera: culled from below, a black screen.
+  // (Wave 1) ...but it no longer ignores the budget (it was up to 16 / 48 builds a frame, each ~1,200 colour calls + an upload:
+  // the hitch when crossing a tile edge).  Every build, focus or not, starts only inside the budget; focus builds are capped at
+  // 2 a frame on handhelds, 4 on desktop; and only while nothing on the chain under her can draw yet, ONE more focus tile per
+  // frame may be built past the budget / cap, so she never stands over black.  A caller's explicit one-off bulk budget (>= 50 ms:
+  // the world-open prime, the jump after a cruise skip) keeps the budget but drops the cap.  _skyGroundGate is the policy.
+  this._fx=PWF.fx; this._fz=PWF.fz;
+  const Q=this.queue;
+  for(let q=0;q<Q.length;q++){ const n=Q[q]; n._foc=this._under(n.parent)&&(!!n.parent||this._under(n)); }
+  // focus first, then in view before out of view, nearest (for its size) first, coarse before fine
+  Q.sort(SkyGround.prototype._qcmp);
+  const t0=performance.now(), B=budgetMs!=null?budgetMs:this.budget, cap=(budgetMs!=null&&budgetMs>=50)?Infinity:(GFX.isMobile?2:4);
+  let nf=0, built=0, em=false, skipped=0, bare=this._bareUnder();
+  for(let q=0;q<Q.length;q++){
+    const n=Q[q], g=_skyGroundGate(performance.now()-t0,B,!!n._foc,nf,cap,bare,em);
+    if(g===0) break;
+    if(g===3){ skipped++; continue; }
+    if(g===2) em=true;
+    const tb=performance.now(); this._build(n); built++;
+    this.buildMs=(this.buildMs||0)*0.9+(performance.now()-tb)*0.1;
+    if(n._foc){ nf++; if(bare) bare=this._bareUnder(); }
+  }
+  const st=this.stat; st.built=built; st.focus=nf; st.emerg=em?1:0; st.skipped=skipped; st.left=Q.length-built;
+  this.roots.forEach(this._show,this);
   const now=performance.now(), dt=this._lastT?Math.min(0.1,(now-this._lastT)/1000):0; this._lastT=now;
   this._morphTick(dt);
   return this.queue.length;
+};
+// (Wave 1) update's per-frame helpers live on the prototype, so a frame makes no closures
+SkyGround.prototype._rootKeep=function(n,k,roots){ if(!this._keep.has(k)){ this._drop([n]); roots.delete(k); } };
+SkyGround.prototype._visitRoot=function(n){ this._visit(n,this._cpos,0); };
+SkyGround.prototype._under=function(n){ return !n||(this._fx>=n.x0&&this._fx<n.x0+n.size&&this._fz>=n.z0&&this._fz<n.z0+n.size); };
+SkyGround.prototype._qcmp=function(a,b){ return ((b._foc?1:0)-(a._foc?1:0))||((b._inView?1:0)-(a._inView?1:0))||(Math.floor(a._d/a.size*4)-Math.floor(b._d/b.size*4))||(b.size-a.size)||(a._d-b._d); };
+// true while no tile on the chain from the root down to the focus point has a mesh (nothing could draw under her)
+SkyGround.prototype._bareUnder=function(){
+  const T=this.TOP, dm=this._dm, fx=this._fx, fz=this._fz;
+  const j=Math.max(0,Math.min(3,Math.floor((fz-dm.z0)/T)));
+  let n=this.roots.get(Math.floor((fx-dm.x0)/T)*4+j);
+  while(n){ if(n.mesh) return false; if(!n.kids) return true; const h=n.size/2; n=n.kids[(fx>=n.x0+h?1:0)+(fz>=n.z0+h?2:0)]; }
+  return true;
 };
 SkyGround.prototype._visit=function(n,c,depth){
   this._measure(n,c);
@@ -24983,9 +25028,10 @@ SkyGround.prototype._visit=function(n,c,depth){
   }
 };
 // a tile can stand in for its area once it (or every one of its children) can draw
-SkyGround.prototype._ready=function(n){ return n._hidden||!!n.mesh||(!!n.kids&&n.kids.every(k=>this._ready(k))); };
+SkyGround.prototype._ready=function(n){ return n._hidden||!!n.mesh||this._kidsReady(n); };
+SkyGround.prototype._kidsReady=function(n){ const K=n.kids; if(!K) return false; for(let i=0;i<K.length;i++) if(!this._ready(K[i])) return false; return true; };
 SkyGround.prototype._show=function(n){
-  const useKids=n.kids&&n.kids.every(k=>this._ready(k));
+  const useKids=this._kidsReady(n);
   if(n.mesh){ n.mesh.visible=!useKids&&!n._hidden&&n._vis!==false&&n._inView!==false; if(n.mesh.visible&&n.morph&&n.morph.t<0){ n.morph.t=0; (this.morphing||(this.morphing=new Set())).add(n); } }
   if(n.kids) for(const k of n.kids){ if(useKids) this._show(k); else this._hide(k); }
 };
@@ -24995,27 +25041,36 @@ SkyGround.prototype._drop=function(list){
 };
 // height and colour at a ground point for a tile of this step: coarse tiles draw the sea flat, in its own colour
 SkyGround.prototype._sea=function(h,step){ return this.pal.water&&step>=this.COARSE&&h<0; };
+// (Wave 1) _build's scratch, made once per ground: the height grids, the parent-shape temporaries, the skirt ring and the index
+// (fixed by SEG, the same for every tile), one colour and one colour-options object.  Only what a tile keeps is new per build.
+SkyGround.prototype._scratch=function(){
+  if(this._sb) return this._sb;
+  const seg=this.SEG, S1=seg+1, G=seg+3, V=S1*S1, rl=seg*4, ring=new Uint16Array(rl); let m=0;
+  for(let q=0;q<seg;q++) ring[m++]=q; for(let r=0;r<seg;r++) ring[m++]=r*S1+seg; for(let q=seg;q>0;q--) ring[m++]=seg*S1+q; for(let r=seg;r>0;r--) ring[m++]=r*S1;
+  const idx=new Uint16Array(seg*seg*6+rl*12); let w=0;
+  for(let r=0;r<seg;r++) for(let q=0;q<seg;q++){ const a=r*S1+q, b=a+1, c2=a+S1, d=c2+1; idx[w++]=a; idx[w++]=c2; idx[w++]=b; idx[w++]=b; idx[w++]=c2; idx[w++]=d; }
+  for(let i=0;i<rl;i++){ const a=ring[i], b=ring[(i+1)%rl], sa=V+i, sb=V+(i+1)%rl; idx[w++]=a; idx[w++]=b; idx[w++]=sa; idx[w++]=b; idx[w++]=sb; idx[w++]=sa; idx[w++]=a; idx[w++]=sa; idx[w++]=b; idx[w++]=b; idx[w++]=sa; idx[w++]=sb; }
+  return (this._sb={hb:new Float32Array(G*G),raw:new Float32Array(G*G),pY:new Float32Array(V),pN:new Float32Array(V*3),pC:new Float32Array(V*3),ring,idx,tc:new THREE.Color(),copt:{}});
+};
+// the colour of a ground point: the sea flat in its own colour on coarse tiles, else the biome
+SkyGround.prototype._colourAt=function(x,z,h,ny,sea,copt){
+  if(sea){ const tc=this._sb.tc; tc.copy(this.wShal).lerp(this.wDeep,Math.min(1,Math.max(0,-h/40))); return tc; }
+  const F=this.F; return surfaceBiomeColor(x+F.sw.x,z+F.sw.z,h,Math.min(1,Math.max(0,1-ny)*1.6),this.pal,F.seed,copt);
+};
 SkyGround.prototype._build=function(n){
-  const F=this.F, H=F.H, seg=this.SEG, step=n.size/seg, S1=seg+1, G=seg+3, pal=this.pal;
-  const D=ATMO_DEG_PER_UNIT, site=PW.site&&typeof PW.site.lat==='number'?PW.site:{lat:0,lon:0};
-  const hb=new Float32Array(G*G), raw=new Float32Array(G*G); let mn=1e9, mx=-1e9;
+  const F=this.F, H=F.H, seg=this.SEG, step=n.size/seg, S1=seg+1, G=seg+3, V=S1*S1, sb=this._scratch();
+  const D=ATMO_DEG_PER_UNIT, site=PW.site&&typeof PW.site.lat==='number'?PW.site:_SKY_SITE0;
+  const hb=sb.hb, raw=sb.raw, ring=sb.ring, rl=ring.length; let mn=1e9, mx=-1e9;
   for(let r=0;r<G;r++) for(let q=0;q<G;q++){ let h=H(n.x0+(q-1)*step,n.z0+(r-1)*step); if(!isFinite(h)) h=0; raw[r*G+q]=h; hb[r*G+q]=this._sea(h,step)?-2:h; }
-  const ring=[]; for(let q=0;q<seg;q++) ring.push(q); for(let r=0;r<seg;r++) ring.push(r*S1+seg); for(let q=seg;q>0;q--) ring.push(seg*S1+q); for(let r=seg;r>0;r--) ring.push(r*S1);
-  const vc=S1*S1+ring.length, pos=new Float32Array(vc*3), nor=new Float32Array(vc*3), col=new Float32Array(vc*3);
-  const copt=Object.assign({},this.copt,{siteLat:site.lat-(n.z0+n.size/2)*D});
-  const tc=new THREE.Color();
-  const colourAt=(x,z,h,ny,sea)=>{
-    if(sea){ tc.copy(this.wShal).lerp(this.wDeep,Math.min(1,Math.max(0,-h/40)));
-      return tc; }
-    return surfaceBiomeColor(x+F.sw.x,z+F.sw.z,h,Math.min(1,Math.max(0,1-ny)*1.6),pal,F.seed,copt);
-  };
+  const vc=V+rl, pos=new Float32Array(vc*3), nor=new Float32Array(vc*3), col=new Float32Array(vc*3);
+  const copt=Object.assign(sb.copt,this.copt); copt.siteLat=site.lat-(n.z0+n.size/2)*D;
   for(let r=0;r<S1;r++) for(let q=0;q<S1;q++){
     const k=r*S1+q, b=(r+1)*G+q+1, h=hb[b], sea=this._sea(raw[b],step);
     if(h<mn) mn=h; if(h>mx) mx=h;
     let nx=hb[b-1]-hb[b+1], ny=2*step, nz=hb[b-G]-hb[b+G]; if(sea){ nx=0; nz=0; } const L=Math.hypot(nx,ny,nz)||1; nx/=L; ny/=L; nz/=L;
     pos[k*3]=q*step; pos[k*3+1]=h; pos[k*3+2]=r*step;
     nor[k*3]=nx; nor[k*3+1]=ny; nor[k*3+2]=nz;
-    const cc=colourAt(n.x0+q*step,n.z0+r*step,sea?raw[b]:h,ny,sea);
+    const cc=this._colourAt(n.x0+q*step,n.z0+r*step,sea?raw[b]:h,ny,sea,copt);
     col[k*3]=cc.r; col[k*3+1]=cc.g; col[k*3+2]=cc.b;
   }
   const drop=Math.max(4,step*2);
@@ -25027,31 +25082,28 @@ SkyGround.prototype._build=function(n){
   let morph=null;
   if(n.parent){
     const pstep=step*2, pSea=this.pal.water&&pstep>=this.COARSE&&step<this.COARSE;
-    const pY=new Float32Array(S1*S1), pN=nor.slice(0,S1*S1*3), pC=col.slice(0,S1*S1*3);
+    const pY=sb.pY, pN=sb.pN, pC=sb.pC;
+    for(let k=0;k<V*3;k++){ pN[k]=nor[k]; pC[k]=col[k]; }
     for(let r=0;r<S1;r++) for(let q=0;q<S1;q++){
       const k=r*S1+q, b=(r+1)*G+q+1; pY[k]=pos[k*3+1];
-      if(pSea&&raw[b]<0){ pY[k]=-2; pN[k*3]=0; pN[k*3+1]=1; pN[k*3+2]=0; const c2=colourAt(0,0,raw[b],1,true); pC[k*3]=c2.r; pC[k*3+1]=c2.g; pC[k*3+2]=c2.b; }
+      if(pSea&&raw[b]<0){ pY[k]=-2; pN[k*3]=0; pN[k*3+1]=1; pN[k*3+2]=0; const c2=this._colourAt(0,0,raw[b],1,true,copt); pC[k*3]=c2.r; pC[k*3+1]=c2.g; pC[k*3+2]=c2.b; }
     }
-    const cY=new Float32Array(S1*S1), cN=new Float32Array(S1*S1*3), cC=new Float32Array(S1*S1*3);
-    const lerpV=(dst,src,w,k,a,b,c,d)=>{ for(let e=0;e<w;e++) dst[k*w+e]=(src[a*w+e]+src[b*w+e]+src[c*w+e]+src[d*w+e])*0.25; };
+    const cY=new Float32Array(V), cN=new Float32Array(V*3), cC=new Float32Array(V*3);
     for(let r=0;r<S1;r++) for(let q=0;q<S1;q++){
       const k=r*S1+q, q0=q&~1, r0=r&~1, q1=Math.min(seg,q0+((q&1)?2:0)), r1=Math.min(seg,r0+((r&1)?2:0));
       const a=r0*S1+q0, b=r0*S1+q1, c=r1*S1+q0, d=r1*S1+q1;
       cY[k]=(pY[a]+pY[b]+pY[c]+pY[d])*0.25;
-      lerpV(cN,pN,3,k,a,b,c,d); lerpV(cC,pC,3,k,a,b,c,d);
+      for(let e=0;e<3;e++){ cN[k*3+e]=(pN[a*3+e]+pN[b*3+e]+pN[c*3+e]+pN[d*3+e])*0.25; cC[k*3+e]=(pC[a*3+e]+pC[b*3+e]+pC[c*3+e]+pC[d*3+e])*0.25; }
     }
-    morph={cY,cN,cC,fY:new Float32Array(S1*S1),fN:nor.slice(0,S1*S1*3),fC:col.slice(0,S1*S1*3),S1,ring,drop,t:-1};
-    for(let k=0;k<S1*S1;k++) morph.fY[k]=pos[k*3+1];
+    morph={cY,cN,cC,fY:new Float32Array(V),fN:nor.slice(0,V*3),fC:col.slice(0,V*3),S1,ring,drop,t:-1};
+    for(let k=0;k<V;k++) morph.fY[k]=pos[k*3+1];
   }
-  ring.forEach((k,m)=>{ const d=S1*S1+m; for(let a=0;a<3;a++){ pos[d*3+a]=pos[k*3+a]; nor[d*3+a]=nor[k*3+a]; col[d*3+a]=col[k*3+a]; } pos[d*3+1]-=drop; });
-  const idx=[];
-  for(let r=0;r<seg;r++) for(let q=0;q<seg;q++){ const a=r*S1+q, b=a+1, c2=a+S1, d=c2+1; idx.push(a,c2,b, b,c2,d); }
-  for(let m=0;m<ring.length;m++){ const a=ring[m], b=ring[(m+1)%ring.length], sa=S1*S1+m, sb=S1*S1+(m+1)%ring.length; idx.push(a,b,sa, b,sb,sa, a,sa,b, b,sa,sb); }
+  for(let m=0;m<rl;m++){ const k=ring[m], d=V+m; for(let a=0;a<3;a++){ pos[d*3+a]=pos[k*3+a]; nor[d*3+a]=nor[k*3+a]; col[d*3+a]=col[k*3+a]; } pos[d*3+1]-=drop; }
   const geo=new THREE.BufferGeometry();
   geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
   geo.setAttribute('normal',new THREE.BufferAttribute(nor,3));
   geo.setAttribute('color',new THREE.BufferAttribute(col,3));
-  geo.setIndex(new THREE.Uint16BufferAttribute(idx,1));
+  geo.setIndex(new THREE.BufferAttribute(new Uint16Array(sb.idx),1));   // a tile's own copy of the shared index
   geo.computeBoundingSphere();
   const m=new THREE.Mesh(geo,this.mat); m.position.set(n.x0,0,n.z0); m.visible=false; m.userData.skyTile=n.size; m.frustumCulled=false;   // culled here, on the sphere
   if(GFX.shadows) m.receiveShadow=true;
@@ -25065,7 +25117,7 @@ SkyGround.prototype._applyMorph=function(n,w){
     P[k*3+1]=M.cY[k]+(M.fY[k]-M.cY[k])*w;
     for(let a=0;a<3;a++){ const i=k*3+a; Nn[i]=M.cN[i]+(M.fN[i]-M.cN[i])*w; C[i]=M.cC[i]+(M.fC[i]-M.cC[i])*w; }
   }
-  M.ring.forEach((k,m)=>{ const d=V+m; P[d*3+1]=P[k*3+1]-M.drop; for(let a=0;a<3;a++){ Nn[d*3+a]=Nn[k*3+a]; C[d*3+a]=C[k*3+a]; } });
+  const R=M.ring; for(let m=0;m<R.length;m++){ const k=R[m], d=V+m; P[d*3+1]=P[k*3+1]-M.drop; for(let a=0;a<3;a++){ Nn[d*3+a]=Nn[k*3+a]; C[d*3+a]=C[k*3+a]; } }
   g.attributes.position.needsUpdate=true; g.attributes.normal.needsUpdate=true; g.attributes.color.needsUpdate=true;
 };
 SkyGround.prototype._morphTick=function(dt){
