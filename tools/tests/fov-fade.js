@@ -12,7 +12,7 @@
 //      its own seed (the near scatter is untouched), no per-frame allocation, and the 13 fps fill time.
 //  (5) tessellation: the geometric disc still eases to flat at 0.75 half and the bump carries on past it on every preset (no cliff after the disc).
 //  (6) the designed deck infinity pool stays (poolLook takes the teal); poolTrim is a no-op; measured on every mansion GLB, both ah_pool quads and the pool-room tub stay.
-//  (7) cache tags: dm-lod.js and dm-light.js are ?v=300 (they changed in 7c002d0); dm-facilities.js is ?v=300b (the pool restore); CACHE_NAME stays v300.
+//  (7) cache tags: dm-lod.js and dm-light.js are ?v=300 (they changed in 7c002d0); dm-facilities.js is ?v=301 (past the v300b pool restore); CACHE_NAME v301 (#249).
 'use strict';
 const fs = require('fs'), path = require('path');
 const root = path.join(__dirname, '..', '..');
@@ -249,10 +249,10 @@ for (const S of scen) {
 // ── (7) cache tags: a v300 load cannot keep the 7c002d0 lod/light/facilities scripts ──
 {
   const sw = fs.readFileSync(path.join(root, 'sw.js'), 'utf8');
-  ok(/const CACHE_NAME = 'dartmeadow-engine-v300';/.test(sw), 'CACHE_NAME stays dartmeadow-engine-v300');
+  ok(/const CACHE_NAME = 'dartmeadow-engine-v301';/.test(sw), 'CACHE_NAME is dartmeadow-engine-v301 (main v300 + 1, JOTS Cliffs #249)');
   ok(/<script src="ui\/dm-lod\.js\?v=300"><\/script>/.test(html), 'dm-lod.js cache tag is v300 (changed in 7c002d0)');
   ok(/<script src="ui\/dm-light\.js\?v=300"><\/script>/.test(html), 'dm-light.js cache tag is v300 (changed in 7c002d0)');
-  ok(/<script src="ui\/dm-facilities\.js\?v=300b" defer><\/script>/.test(html), 'dm-facilities.js cache tag is v300b (pool restore; v300 was already cached on this PR)');
+  ok(/<script src="ui\/dm-facilities\.js\?v=301" defer><\/script>/.test(html), 'dm-facilities.js cache tag is v301 (past the v300b pool restore; JOTS Cliffs #249)');
 }
 
 console.log(fails ? fails + ' FAILED of ' + n : 'fov-fade OK (' + n + ' checks)');
