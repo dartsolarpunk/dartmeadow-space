@@ -171,6 +171,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-impostor.js?v=280"></script>   <!-- far-range LOD: vertex-clustering impostor (mansion LOD2, colours baked) -->   <!-- far-range LOD: the ONE distance table per device class (props, mansion, landmarks, vantage reach); ?lod=off|low|mobile|desktop -->
 <script src="ui/dm-light.js?v=297"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
 <script src="ui/dm-atmo-shell.js?v=297"></script>   <!-- (v297) DMAtmoShell.radii/worldR/ratio: the faded atmosphere perimeter of a body (Solenne 1.18 R) for the space -> world hand-off (Worlds) -->
+<script src="ui/dm-pw-handoff.js?v=299"></script>   <!-- (v299) the space -> surface hand-off policy: pre-build hidden from PWS_OPEN, show the world + minimap globe at the DMAtmoShell perimeter (Worlds) -->
 <script>/* (v136) no-op stub so the flight loop can never throw if dm-perf.js failed to load */
 window.DMPerf=window.DMPerf||{on:false,b(){},e(){},mark(){},measure(n,f){return f();},frame(){},stats(){return {fps:0,avgMs:0,p95Ms:0,worstMs:0,minFps:0,cpu:{},gpu:null,sparse:null};},show(){},hide(){}};</script>
 <script>/* (v236) always-on frame-phase clock for the perf log: EMA of the main-thread ms spent in each phase of a frame (logic / world tick / scene render / atmosphere pass / HUD …),
@@ -13189,7 +13190,7 @@ function updateBodies(dt){
   // an arm-cell star still offers TAP TO ENTER in the middle of the screen.
   const ld=$('land-prompt');
   const _nearB=_approachBestBody;
-  try{ if(window.DMGlobe) DMGlobe.near(_nearB&&!_nearB.isSystemEnter?_nearB:null); }catch(e){}
+  try{ if(window.DMGlobe) DMGlobe.near(_nearB&&!_nearB.isSystemEnter?_pwGlobeNear(_nearB):null); }catch(e){}   // (v299) gated at the atmosphere shell
   if(ld){
     if(_nearB&&_nearB.isSystemEnter){
       // Only touch the DOM when the target actually CHANGES
@@ -19070,8 +19071,8 @@ function resumeFlightLoop(){ _startFlightLoop(); }   // one loop for space, the 
 //  The air is flown exactly like vacuum: the open-space control model
 //  (_boardControls — same sticks, keys, speeds, drag, no gravity), the board's
 //  full 6-DOF attitude carried straight across the top of the air in both
-//  directions (PWS_UP / PWS_DOWN only decide which frame the ground's near
-//  detail is built in). The Mach bubbles and the throttle set the autopilots'
+//  directions (the hand-off's downAlt / upAlt, falling back to PWS_DOWN / PWS_UP,
+//  only decide which frame the ground's near detail is built in). The Mach bubbles and the throttle set the autopilots'
 //  cruise speed (FLY THERE, TO SPACE). The world only closes once you are well
 //  out in space (PWS_CLOSE radii).
 // ════════════════════════════════════════════════════════════════════
@@ -20164,7 +20165,17 @@ function updateAtmoFlight(dt){
   { const want=(landing||s.touchdown)?1:ATMO_BOARD_SCALE, bs=atmoBoard.scale.x;
     if(Math.abs(want-bs)>1e-3) atmoBoard.scale.setScalar(bs+(want-bs)*Math.min(1,dt*1.6)); }
   // over the top of the air: open space carries on with the same model, attitude and speed
-  if(!landing && s.pos.y>PWS_UP){ _pwFlyToSpace(); return; }
+  // (v299) sky→space is tied to the surface hand-off. Past downAlt, drive PWF.reveal and the flight
+  // sphere from the policy so the dissolve plays in reverse while still in the sky; then switch at upAlt
+  // with no jump on the first space frame. (Was a fixed PWS_UP 2750 u, and later a switch that left reveal at 1.)
+  // Reveal and the sphere are driven while landing too: LAND mid-climb fades the ground back to 1 and hides the sphere
+  // as she settles through downAlt. Only the switch to space is held off while landing.
+  if(PW.body&&window.DMPwHandoff){
+    const ho=_pwHandoff(PW.body,1+s.pos.y/_planetR()), b=PW.body;
+    if(s.pos.y>ho.downAlt){ _pwfReveal(ho.reveal); if(b.mesh) b.mesh.visible=PWF.reveal<0.999; }
+    else { _pwfReveal(1); if(b.mesh) b.mesh.visible=false; }
+    if(!landing&&s.pos.y>ho.upAlt){ _pwFlyToSpace(); return; }
+  }else if(!landing&&s.pos.y>PWS_UP){ _pwFlyToSpace(); return; }
   // the world's edge (the poles): the sky map ends there
   { const zc=_atmoSiteRef().lat/ATMO_DEG_PER_UNIT; s.pos.z=Math.max(zc-89.5/ATMO_DEG_PER_UNIT,Math.min(zc+89.5/ATMO_DEG_PER_UNIT,s.pos.z)); }
   // ── Place the board and orient it exactly as open space does (updateBoardTransform)
@@ -20491,10 +20502,12 @@ function _atmoTouchdown(){
 // is carried round with the planet (co-rotating — the ground stays still
 // under you unless you fly), and below a few radii the speed, the board's
 // size and the camera's distance ease from open-space scale to the sky's
-// with height. Under the top of the air (PWS_DOWN) the board carries on in
-// the ground's frame with the same control model, attitude, motion and
-// camera (_pwSpaceToFly); over PWS_UP it carries on back out here. Past
-// PWS_CLOSE radii the world closes and space carries on with the same board.
+// with height. Under the hand-off's downAlt (the dissolve-complete height, never
+// above PWS_DOWN) the board carries on in the ground's frame with the same
+// control model, attitude, motion and camera (_pwSpaceToFly); over upAlt
+// (just above downAlt, inside the shell; falls back to PWS_UP) it carries on
+// back out here so the dissolve can play in reverse. Past PWS_CLOSE radii the
+// world closes and space carries on with the same board.
 function _pwSpaceWatch(){
   if(PW.active||PW.opening||PW._resumeHold||window.DM_FLAT_WORLD) return;
   if(typeof flightInited==='undefined'||!flightInited||STATE.screen!=='flight'||SHIP_WALK.active||!boardFlight||!STATE.flight||!STATE.flight.pos) return;
@@ -20586,14 +20599,15 @@ function _pwSpaceStep(dt,first){
   S.alt=la.alt; S.t=sc.t; S.f=sc.f; S.fc=sc.fc;
   S.camAlt=_pwsLatLonAlt(b,flightCamera.position).alt;
   PW.board.scale.setScalar(FLIGHT_BOARD_WORLD_SCALE*sc.f*sc.Sx);
-  // the orbit globe dissolves into the ground's own globe far out (and back on the way out)
-  const dr=la.dist/_bodyR(b);
-  _pwfReveal(_smooth01((PWS_OPEN-0.4-dr)/1.6));
+  // (v299) the orbit globe dissolves into the ground's own globe at the faded atmosphere perimeter (DMAtmoShell), not at PWS_OPEN:
+  // from PWS_OPEN in the world is built and kept hidden (reveal 0); the flight body (sphere + map + clouds) is the planet until the shell
+  const dr=la.dist/_bodyR(b), ho=_pwHandoff(b,dr);
+  _pwfReveal(ho.reveal);
   b.mesh.visible=PWF.reveal<0.999;
   // 4. away from the world; or under the top of the air, where the ground's
-  //    near detail takes over — the same flight carries on (_pwSpaceToFly)
+  //    near detail takes over — the same flight carries on (_pwSpaceToFly; inside the shell, once the dissolve is complete)
   if(dr>PWS_CLOSE){ _pwSpaceClose(); return; }
-  if(la.alt<PWS_DOWN&&!S.out) _pwSpaceToFly();
+  if(la.alt<ho.downAlt&&!S.out) _pwSpaceToFly();
 }
 // TO SPACE / LIFTOFF: keep climbing out (away from the ground and on along the heading) until the world closes
 function _pwSpaceOutTick(sp,b,sc,dt){
@@ -20658,7 +20672,9 @@ function _pwFlyToSpace(){
 }
 // far enough out: the world closes, open space carries on with the same board
 function _pwSpaceClose(){
+  const b=PW.body;
   _pwClose({instant:true});
+  _pwHandoffReset(b);
   _pwRestoreSpace(true);
   PW._spaceCool=performance.now()+1500;
 }
@@ -20683,6 +20699,23 @@ function atmoExitToSpace(){
   toast('🚀 Climbing out to open space',1800);
 }
 function _pwfReveal(v){ PWF.reveal=v; if(PWF.u) PWF.u.reveal.value=v; }
+// (v299) space -> surface hand-off (ui/dm-pw-handoff.js): one state object, rewritten in place every frame (no allocation)
+const _pwHO={body:null,prebuild:false,close:false,visible:false,reveal:0,shell:1,showR:1,downR:1,hideR:1,downAlt:PWS_DOWN,upAlt:PWS_UP,showAlt:PWS_DOWN,openR:PWS_OPEN,closeR:PWS_CLOSE};
+function _pwHandoff(b,dr){
+  const H=window.DMPwHandoff, A=window.DMAtmoShell, st=_pwHO;
+  if(st.body!==b){ st.body=b; st.visible=false; }
+  if(!H){ st.reveal=_smooth01((PWS_OPEN-0.4-dr)/1.6); st.visible=st.reveal>0; st.downAlt=PWS_DOWN; st.upAlt=PWS_UP; st.showAlt=PWS_DOWN; return st; }   // module missing: the old hand-off
+  H.step(st,dr,A?A.radii(b,1):1.1,_planetR());
+  return st;
+}
+function _pwHandoffReset(b){ _pwHO.body=null; _pwHO.visible=false; _pwHO.reveal=0; try{ if(b&&window.DMAtmoShell) DMAtmoShell.forget(b); }catch(e){} }
+// the space minimap globe follows the same visible gate: a world the surface hand-off owns brings it up only at its shell
+function _pwGlobeNear(b){
+  if(!b||b.isSystemEnter||!window.DMPwHandoff||window.DM_FLAT_WORLD||b.isAsteroid||b.type==='Comet') return b;
+  if(PW.opening) return null;                    // its world is building (hidden)
+  if(!PW.active||PW.body!==b) return b;          // no hand-off running for it: as before
+  return (PW.mode!=='space'||(_pwHO.body===b&&_pwHO.visible))?b:null;
+}
 
 /* ══════════════════════════════════════════════════════════════
    LANDING — the landing globe (ui/dm-globe.js) plots a destination
