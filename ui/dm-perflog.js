@@ -18,10 +18,26 @@
  *   • Guests (not signed in) keep the last session on this device only.
  *     The newest local session goes up when the vault becomes ready.
  *   • Every step fails silently.
+ *
+ * (v298, Wave 1 "60 s hitch") The full log is OPT-IN. By default only the cheap crash forensics run (5 s heartbeat, 1 s breadcrumb flush,
+ * reload reasons, the riderFix / event ring) and ONE report is built + saved + uploaded when the tab is hidden or closed (off the play path).
+ * The periodic 60 s snapshot (scene census, 2-min memory scan, ~80 KB JSON, localStorage, vault upload), the 10 s memory sample and the
+ * WebGPU timestamp queries (index.html _gpuTimeWanted reads DMPerfLogActive) run only with:
+ *     ?perf=1      (also the dm-perf.js HUD)       ?perflog=1   (log only; remembered on this device, ?perflog=0 forgets it)
+ * and even then every heavy step runs in requestIdleCallback slices (census | build | local write | upload, one per idle period with
+ * >= 10 ms left, forced after its timeout), never inside a movement frame / timer tick.
  */
 (function () {
   'use strict';
-  window.DMPerfLogActive = true;   // (v105) GPU pass timing runs only while this log runs
+  // (v298) opt-in (see header). GPU pass timing (index.html _gpuTimeWanted) runs only while the FULL log runs, so it is off by default too.
+  const Q = (() => { try { return location.search || ''; } catch (e) { return ''; } })(), OKEY = 'dm_perflog_on';
+  let ON = false;
+  try { if (/[?&]perflog=1\b/.test(Q)) localStorage.setItem(OKEY, '1'); else if (/[?&]perflog=0\b/.test(Q)) localStorage.removeItem(OKEY); } catch (e) {}
+  try { ON = /[?&]perf=1\b/.test(Q) || /[?&]perflog=1\b/.test(Q) || localStorage.getItem(OKEY) === '1'; } catch (e) { ON = /[?&]perf(log)?=1\b/.test(Q); }
+  if (ON) window.DMPerfLogActive = true;   // (v105) GPU pass timing runs only while this log runs
+  // idle slices: the callback gets the IdleDeadline (null in the fallback: one task after the next frame, outside rAF)
+  const ric = (f, ms) => { try { if (window.requestIdleCallback) return window.requestIdleCallback(f, { timeout: ms }); } catch (e) {} try { requestAnimationFrame(() => setTimeout(() => f(null), 0)); } catch (e) { setTimeout(() => f(null), 0); } return 0; };
+  const roomy = (dl) => !dl || dl.didTimeout || dl.timeRemaining() >= 10;
   const SNAP_MS = 60000, MODE_MS = 5000, CAP = 80 * 1024, LKEY = 'dm_perf_session_v1';
   const rid = () => { try { return Array.from(crypto.getRandomValues(new Uint8Array(4))).map((b) => b.toString(16).padStart(2, '0')).join(''); } catch (e) { return Math.random().toString(16).slice(2, 10); } };
   const read = (k) => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { return null; } };
@@ -225,20 +241,38 @@
     while (s.length > CAP && doc.windows.length) { doc.windows.splice(0, Math.ceil(doc.windows.length / 4) || 1); doc.trimmed = windows.length - doc.windows.length; s = JSON.stringify(doc); }
     while (s.length > CAP && doc.mem.length > 12) { doc.mem.splice(0, Math.ceil(doc.mem.length / 4)); s = JSON.stringify(doc); }
     while (s.length > CAP && doc.hitches.length > 10) { doc.hitches.splice(0, 10); s = JSON.stringify(doc); }
+    lastJson = s; lastJsonDoc = doc;   // (v298) the local copy reuses this string instead of a second JSON.stringify of the same ~80 KB doc
     return doc;
   }
   function vault() { try { const V = window.JOTS && window.JOTS.vault; return V && V.ready ? V : null; } catch (e) { return null; } }
+  let lastJson = null, lastJsonDoc = null;
+  function saveLocal(doc) { try { localStorage.setItem(LKEY, lastJsonDoc === doc && lastJson ? lastJson : JSON.stringify(doc)); } catch (e) {} lastJson = null; lastJsonDoc = null; }
+  function upload(doc, final) {
+    const sig = JSON.stringify([windows.length, hitches.length, modes, final, window._dmTransitions ? window._dmTransitions.length : 0]);
+    const V = vault(); if (!V || writing) return;
+    if (!final && sig === lastSig && !dirty) return;
+    writing = true; lastSig = sig; dirty = false;
+    Promise.resolve().then(() => V.putJSON('perf/' + sessionId + '.json', doc, 'jots: perf ' + sessionId + (final ? ' (end)' : '')))
+      .catch(() => { dirty = true; }).then(() => { writing = false; });
+  }
+  // synchronous: only where the player is not playing (tab hidden / pagehide) or on an explicit dmPerfLog.snapshot()
   function snapshot(final) {
+    try { const doc = build(final); saveLocal(doc); upload(doc, final); } catch (e) { writing = false; }
+  }
+  // (v298) the periodic snapshot (opt-in log only), one stage per idle period: 1 census (scene walk + the 2-min memory scan) | 2 build + JSON |
+  // 3 localStorage | 4 vault upload. A stage waits for an idle period with >= 10 ms left (up to its 8 s timeout, then it runs anyway).
+  let snapStage = 0, snapDoc = null;
+  function idleSnapshot() { if (snapStage || ended || document.hidden || quiet()) return; snapStage = 1; ric(snapStep, 8000); }
+  function snapStep(dl) {
     try {
-      const doc = build(final);
-      const sig = JSON.stringify([windows.length, hitches.length, modes, final, window._dmTransitions ? window._dmTransitions.length : 0]);
-      try { localStorage.setItem(LKEY, JSON.stringify(doc)); } catch (e) {}
-      const V = vault(); if (!V || writing) return;
-      if (!final && sig === lastSig && !dirty) return;
-      writing = true; lastSig = sig; dirty = false;
-      Promise.resolve().then(() => V.putJSON('perf/' + sessionId + '.json', doc, 'jots: perf ' + sessionId + (final ? ' (end)' : '')))
-        .catch(() => { dirty = true; }).then(() => { writing = false; });
-    } catch (e) { writing = false; }
+      if (ended || document.hidden) { snapStage = 0; snapDoc = null; return; }   // the hide / pagehide snapshot takes over
+      if (!roomy(dl)) { ric(snapStep, 8000); return; }
+      if (snapStage === 1) { census(); snapStage = 2; }
+      else if (snapStage === 2) { snapDoc = build(false); snapStage = 3; }
+      else if (snapStage === 3) { saveLocal(snapDoc); snapStage = 4; }
+      else { const d = snapDoc; snapDoc = null; snapStage = 0; upload(d, false); return; }
+      ric(snapStep, 8000);
+    } catch (e) { snapStage = 0; snapDoc = null; writing = false; }
   }
   // the previous session's last local copy (in case its final write never landed)
   let carried = false;
@@ -255,12 +289,13 @@
   try {
     setInterval(sampleMode, MODE_MS);
     beat(false); setInterval(() => { beat(false); }, 5000);
-    setInterval(() => { if (!document.hidden && !quiet()) snapshot(false); }, SNAP_MS);   // (menu-perf) not mid-transition (JSON of the whole log + vault upload); the next tick takes it
-    window.addEventListener('jots:vault', () => { carryOver(); setTimeout(() => snapshot(false), 3000); });
-    document.addEventListener('visibilitychange', () => { if (document.hidden) snapshot(false); });
+    // (v298) periodic snapshot + memory sample only with the opt-in log, and then in idle slices (never on the timer tick itself)
+    if (ON) setInterval(() => { if (!document.hidden && !quiet()) idleSnapshot(); }, SNAP_MS);   // (menu-perf) not mid-transition; the next tick takes it
+    window.addEventListener('jots:vault', () => { ric(carryOver, 8000); if (ON) setTimeout(idleSnapshot, 3000); });
+    document.addEventListener('visibilitychange', () => { if (document.hidden) snapshot(false); });   // not playing: the one full report (every player)
     window.addEventListener('pagehide', (ev) => { if (ended) return; ended = true; endNote = 'pagehide' + (ev && ev.persisted ? ' (bfcache)' : ''); beat(true); sampleMem(); snapshot(true); });
-    setInterval(sampleMem, MEM_MS);
-    setTimeout(carryOver, 8000);
+    if (ON) setInterval(() => { ric((dl) => { if (roomy(dl)) sampleMem(); else ric(sampleMem, 4000); }, 4000); }, MEM_MS);
+    setTimeout(() => ric(carryOver, 8000), 8000);
   } catch (e) {}
-  const evs = []; window.dmPerfLog = { sessionId, event: (n, d) => { try { evs.push({ at: new Date().toISOString(), n: String(n).slice(0, 24), d: d == null ? null : JSON.parse(JSON.stringify(d)) }); if (evs.length > 40) evs.shift(); dirty = true; } catch (e) {} }, touch: () => { dirty = true; }, snapshot: () => snapshot(false), build: () => build(false), mem: () => mem.slice() };
+  const evs = []; window.dmPerfLog = { sessionId, event: (n, d) => { try { evs.push({ at: new Date().toISOString(), n: String(n).slice(0, 24), d: d == null ? null : JSON.parse(JSON.stringify(d)) }); if (evs.length > 40) evs.shift(); dirty = true; } catch (e) {} }, touch: () => { dirty = true; }, snapshot: () => snapshot(false), build: () => build(false), mem: () => mem.slice(), full: ON };
 })();
