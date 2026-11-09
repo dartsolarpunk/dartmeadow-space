@@ -80,15 +80,53 @@ ok(tA.upAlt > tA.downAlt && tA.upAlt < tA.showAlt, 'airless: sky→space switch 
   }
   ok(mid > 10, 'fly-out fade plays through mid values (' + mid + ' samples)');
   H.step(st, upR, sS, R); ok(st.reveal > 0 && st.reveal < 1, 'at the sky→space switch, fade is in progress (not already 0)');
-  H.step(st, tS.showR, sS, R); ok(near(st.reveal, 0), 'at the shell, dissolve is done');
-  // first space frame after the switch must match the last sky-frame reveal at the same height (no jump at the mode change)
-  const sky = H.make(); H.step(sky, upR, sS, R);
-  const space = H.make(); H.step(space, upR, sS, R);
-  ok(near(sky.reveal, space.reveal), 'reveal at upAlt is the same in sky and space (no jump on the mode change)'); }
-// index.html wiring: the sky tick uses the hand-off upAlt, not a bare PWS_UP; leftover atmo-shell comment is off the new script tag
+  H.step(st, tS.showR, sS, R); ok(near(st.reveal, 0), 'at the shell, dissolve is done'); }
+// Walk the real updateAtmoFlight hand-off, then the first _pwSpaceStep frame, on Solenne / Mars / Titan.
+// After fly-in, the sky holds reveal at 1 and hides the flight sphere. Past downAlt it must drive both
+// from the policy (1 + alt/_planetR()) so the first space frame continues from that value (jump <= 0.02).
+function atmoFlightHandoff(alt, shell) {
+  const st = H.make();
+  H.step(st, 1 + alt / R, shell, R);
+  const reveal = alt > st.downAlt ? st.reveal : 1;
+  return { reveal: reveal, sphere: reveal < 0.999, toSpace: alt > st.upAlt, downAlt: st.downAlt, upAlt: st.upAlt };
+}
+function spaceStepHandoff(alt, shell) {
+  const st = H.make();
+  H.step(st, 1 + alt / R, shell, R);
+  return { reveal: st.reveal, sphere: st.reveal < 0.999 };
+}
+for (const [name, shell] of [['Solenne', sS], ['Mars', sM], ['Titan', sT]]) {
+  const t = H.thresholds(shell, R, {});
+  // a held-at-1 sky (the 21b4559 bug) would snap on the first space frame — this is the jump we must not ship
+  const snapped = Math.abs(1 - spaceStepHandoff(t.upAlt + 1e-6, shell).reveal);
+  ok(snapped > 0.02, name + ': a sky that left reveal at 1 would jump ' + snapped.toFixed(3) + ' at the switch (the case this test is for)');
+  let prev = 1;
+  const y0 = t.downAlt - 20, y1 = t.upAlt + 8, step = 1;
+  let sawSwitch = false;
+  for (let y = y0; y <= y1; y += step) {
+    const sky = atmoFlightHandoff(y, shell);
+    if (y > t.downAlt + 0.5 && y <= t.upAlt) ok(sky.reveal < 1 - 1e-9 || y - t.downAlt < 2, name + ' sky fades once past downAlt at ' + Math.round(y) + ' u');
+    if (sky.toSpace) {
+      const space = spaceStepHandoff(y, shell);
+      const jump = Math.abs(space.reveal - sky.reveal);
+      ok(jump <= 0.02, name + ' first space frame jump ' + sky.reveal.toFixed(3) + ' -> ' + space.reveal.toFixed(3) + ' = ' + jump.toFixed(3) + ' at ' + Math.round(y) + ' u');
+      ok(space.sphere === sky.sphere, name + ' flight-sphere visibility matches on the first space frame');
+      ok(sky.reveal < 0.999, name + ' flight sphere is already on before the switch (reveal ' + sky.reveal.toFixed(3) + ')');
+      sawSwitch = true;
+      break;
+    }
+    prev = sky.reveal;
+  }
+  ok(sawSwitch, name + ' walk reached the sky→space switch');
+}
+// index.html wiring: updateAtmoFlight must drive reveal + the flight sphere, then switch at upAlt
 { const fs = require('fs'), idx = fs.readFileSync(path.join(__dirname, '../../index.html'), 'utf8');
+  const atmo = idx.slice(idx.indexOf('function updateAtmoFlight'), idx.indexOf('function _pwSpaceWatch'));
+  ok(atmo.indexOf('function updateAtmoFlight') === 0 && atmo.length > 100, 'index: found updateAtmoFlight');
+  ok(/s\.pos\.y>ho\.downAlt\)\{\s*_pwfReveal\(ho\.reveal\)/.test(atmo), 'index: updateAtmoFlight drives _pwfReveal from the hand-off past downAlt');
+  ok(/b\.mesh\.visible=PWF\.reveal<0\.999/.test(atmo), 'index: updateAtmoFlight shows the flight sphere once reveal drops below 0.999');
+  ok(/s\.pos\.y>ho\.upAlt\)\{\s*_pwFlyToSpace\(\)/.test(atmo), 'index: sky→space switch is at the hand-off upAlt');
   ok(!/if\(!landing && s\.pos\.y>PWS_UP\)\{\s*_pwFlyToSpace\(\)/.test(idx), 'index: the old bare PWS_UP sky→space test is gone');
-  ok(/_pwHandoff\(PW\.body,1\+s\.pos\.y\/_planetR\(\)\)\.upAlt/.test(idx) && /s\.pos\.y>up\)\{\s*_pwFlyToSpace\(\)/.test(idx), 'index: sky tick uses the hand-off upAlt before _pwFlyToSpace');
   ok(!/<script src="ui\/dm-pw-handoff\.js\?v=\d+"><\/script>[^\n]*v297/.test(idx), 'index: dm-pw-handoff script tag does not carry the leftover dm-atmo-shell comment');
   ok(/<script src="ui\/dm-atmo-shell\.js\?v=297"><\/script>[^\n]*DMAtmoShell/.test(idx), 'index: dm-atmo-shell comment lives on its own tag'); }
 console.log('pw-handoff OK (' + n + ' checks; Solenne show ' + tS.showR.toFixed(3) + ' R, dissolve done ' + tS.downR.toFixed(3) + ' R (' + Math.round(tS.downAlt) + ' u), hide ' + tS.hideR.toFixed(3) + ' R, up ' + Math.round(tS.upAlt) + ' u; Mars show ' + tM.showR.toFixed(3) + ' R; pre-build 9 R, close 11 R)');
