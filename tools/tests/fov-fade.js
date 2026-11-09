@@ -5,14 +5,16 @@
 //  (2) texture: the close-up field (worley pebbles / grit / cracks + their bump) is still gated on `fade` (0 past reach = 22-40 u): never evaluated at horizon
 //      distances; the MID (5..16 reach) and FAR (to groundR) bands are cheap value noise only (no worley), each inside its own branch, and leave the sea alone.
 //  (3) lighting / shadows (ui/dm-light.js): the horizon field (48 m cells, 128^2) carries the terrain sun shadow and a far AO from where the 8 m field ends to
-//      the haze end from the deck; Low builds nothing new; the ladder sheds it; the sun shadow map eases out inside its box (no square edge); the probe
-//      hand-offs are radial.  On Solenne's real height field (the coastal cliff of fov-fill.js) a low sun puts far ground in terrain shadow that had none.
+//      the haze end from the deck on Med+; Low / mobile Medium (PRESET_CAP.mob.medium = 'low') build no march, but the shipped 512 shadow map still eases out
+//      over U.sm (shadow-map-only wrapper; no square edge). The ladder sheds the horizon field; the probe hand-offs are radial.  On Solenne's real height
+//      field (the coastal cliff of fov-fill.js) a low sun puts far ground in terrain shadow that had none.
 //  (4) props: near chunks dissolve per pixel (shared materials, one mask) and the far canopy takes exactly their pixels (noise >= wN) to the haze end (noise <
 //      wF); its fill on the real Solenne field, mobile class: every chunk inside the circle filled, nothing outside it, the near trees' rules and density,
 //      its own seed (the near scatter is untouched), no per-frame allocation, and the 13 fps fill time.
 //  (5) tessellation: the geometric disc still eases to flat at 0.75 half and the bump carries on past it on every preset (no cliff after the disc).
 //  (6) the designed deck infinity pool stays (poolLook takes the teal); poolTrim is a no-op; measured on every mansion GLB, both ah_pool quads and the pool-room tub stay.
-//  (7) cache tags: dm-lod.js and dm-light.js are ?v=300 (they changed in 7c002d0); dm-facilities.js is ?v=300b (the pool restore); CACHE_NAME stays v300.
+//  (7) cache tags: CACHE_NAME is v301 (post-merge follow-up after live v300). dm-light.js is ?v=301 (the Low shadow-map wrapper); dm-lod.js stays ?v=300;
+//      dm-facilities.js stays ?v=300b.
 'use strict';
 const fs = require('fs'), path = require('path');
 const root = path.join(__dirname, '..', '..');
@@ -128,6 +130,11 @@ for (const S of scen) {
   ok(!/dxz = max\(abs\(p\.x\.sub\(U\.cam\.x\)\)/.test(am), 'probe hand-offs are radial (no square window ring)');
   ok(/vis = mix\(vis, farVis, wOut\)/.test(am) && /If\(wOut\.greaterThan\(0\.0\)/.test(am), 'past the probes the far AO term (branch on wOut), not flat open sky');
   ok(/const wMap = float\(1\)\.sub\(smoothstep\(U\.sm\.x, U\.sm\.y/.test(am) && /mix\(float\(1\), s, wMap\)\.mul\(hfVis\)/.test(am), 'the shadow map eases out over U.sm, the height-field march carries on');
+  // Low / mobile Medium: hasMarch() is false (no sun/far/horizon march), but Low still ships shadows:true at a 512 map. The wMap wrapper must still install.
+  ok(T.low.sunSteps === 0 && T.low.farSteps === 0 && T.low.farN === 0 && T.low.horSteps === 0 && T.low.horN === 0, 'Low: hasMarch() is false (sunSteps / farN / horN all 0)');
+  ok(/mob: \{ low: 'low', medium: 'low'/.test(src), "mobile Medium is capped to the Low light stage (PRESET_CAP.mob.medium = 'low')");
+  ok(/if \(o\.shadow !== false\) \{/.test(am) && !/if \(o\.shadow !== false && hasMarch\(\)\)/.test(am), 'the shadow-map fade is not gated on hasMarch()');
+  ok(/if \(hasMarch\(\)\) \{[\s\S]*mix\(float\(1\), s, wMap\)\.mul\(hfVis\)[\s\S]*\} else \{[\s\S]*m\.receivedShadowNode = prev \? \(\(s\) => mix\(float\(1\), prev\(s\), wMap\)\) : \(\(s\) => mix\(float\(1\), s, wMap\)\);/.test(am), 'Low: shadow-map-only wMap wrapper (no height-field march)');
   ok(/If\(wH\.greaterThan\(0\.0\)/.test(src) && /smoothstep\(300\.0, 450\.0, dC\)/.test(src), 'the horizon march only runs past ~300 m (a real branch: the near ground never pays)');
   const tb = LT.tierBytes('ultra'); ok((tb.cpu + tb.gpu) / 1048576 < 4, 'ultra caches < 4 MB with the horizon field (' + ((tb.cpu + tb.gpu) / 1048576).toFixed(2) + ')');
   // CPU replica of the shader's horizon march over the 48 m field on Solenne, low sun from the west: far ground that the old chain left fully lit
@@ -246,13 +253,13 @@ for (const S of scen) {
   }
   ok(/ah_pool'\) F\.poolLook\(o\.material\)/.test(fac) && !/g\.setIndex\(k\)/.test(fac), 'loadMansion re-lights ah_pool and does not trim it');
 }
-// ── (7) cache tags: a v300 load cannot keep the 7c002d0 lod/light/facilities scripts ──
+// ── (7) cache tags: a v301 load cannot keep the merged v300 light script ──
 {
   const sw = fs.readFileSync(path.join(root, 'sw.js'), 'utf8');
-  ok(/const CACHE_NAME = 'dartmeadow-engine-v300';/.test(sw), 'CACHE_NAME stays dartmeadow-engine-v300');
-  ok(/<script src="ui\/dm-lod\.js\?v=300"><\/script>/.test(html), 'dm-lod.js cache tag is v300 (changed in 7c002d0)');
-  ok(/<script src="ui\/dm-light\.js\?v=300"><\/script>/.test(html), 'dm-light.js cache tag is v300 (changed in 7c002d0)');
-  ok(/<script src="ui\/dm-facilities\.js\?v=300b" defer><\/script>/.test(html), 'dm-facilities.js cache tag is v300b (pool restore; v300 was already cached on this PR)');
+  ok(/const CACHE_NAME = 'dartmeadow-engine-v301';/.test(sw), 'CACHE_NAME is dartmeadow-engine-v301');
+  ok(/<script src="ui\/dm-lod\.js\?v=300"><\/script>/.test(html), 'dm-lod.js cache tag stays v300 (unchanged in this follow-up)');
+  ok(/<script src="ui\/dm-light\.js\?v=301"><\/script>/.test(html), 'dm-light.js cache tag is v301 (Low shadow-map wrapper)');
+  ok(/<script src="ui\/dm-facilities\.js\?v=300b" defer><\/script>/.test(html), 'dm-facilities.js cache tag stays v300b (unchanged in this follow-up)');
 }
 
 console.log(fails ? fails + ' FAILED of ' + n : 'fov-fade OK (' + n + ' checks)');
