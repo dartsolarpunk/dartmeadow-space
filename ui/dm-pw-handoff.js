@@ -10,13 +10,15 @@
  *   showR   = max(shell, floorR + minBand)  — the visible switch: the dissolve starts here (0 outside).  floorR = 1 + floor/R (airless worlds).
  *   downR   = clamp(showR - bandK*(showR-1), floorR, 1 + downMax/R) — dissolve complete; the board moves into the ground's frame here.
  *   hideR   = showR + max(hystMin, hystK*(showR-1)) — on the way out the visible latch (minimap globe) drops only past this.
+ *   upAlt   = min(upMax, downAlt + (upMax-downMax)), clamped inside the dissolve band (below showAlt) so the sky→space
+ *            switch happens just above downAlt and the dissolve can play in reverse. upMax/downMax = PWS_UP/PWS_DOWN (2750/2600).
  *   reveal  = smoothstep((showR - dr) / (showR - downR)), 0 at/outside showR, 1 at downR.
- * step() writes into the state object it is given (no allocation): {prebuild, close, visible, reveal, showR, downR, hideR, downAlt, shell}.
+ * step() writes into the state object it is given (no allocation): {prebuild, close, visible, reveal, showR, downR, hideR, downAlt, upAlt, showAlt, shell}.
  * window.DMPwHandoff in the page; module.exports for node (tools/tests/pw-handoff.js).
  */
 (function (root) {
   'use strict';
-  const DEF = { open: 9, close: 11, downMax: 2600, floor: 300, bandK: 0.4, minBand: 0.01, hystK: 0.25, hystMin: 0.01 };
+  const DEF = { open: 9, close: 11, downMax: 2600, upMax: 2750, floor: 300, bandK: 0.4, minBand: 0.01, hystK: 0.25, hystMin: 0.01 };
   const sm = (x) => { const t = x < 0 ? 0 : x > 1 ? 1 : x; return t * t * (3 - 2 * t); };
   // thresholds for a shell (planet radii) on a world of flat radius R (_planetR(), world units); writes into `o`
   function thresholds(shell, R, o, cfg) {
@@ -29,7 +31,11 @@
     if (downR > maxDownR) downR = maxDownR;
     if (downR > showR - c.minBand * 0.5) downR = showR - c.minBand * 0.5;
     o.shell = s; o.showR = showR; o.downR = downR; o.hideR = showR + Math.max(c.hystMin, c.hystK * (showR - 1));
-    o.downAlt = (downR - 1) * Rr; o.openR = c.open; o.closeR = c.close;
+    o.downAlt = (downR - 1) * Rr; o.showAlt = (showR - 1) * Rr; o.openR = c.open; o.closeR = c.close;
+    // sky→space: the old PWS_UP−PWS_DOWN gap (150 u), but never at or past showAlt — otherwise the first space frame would already have reveal 0
+    let upAlt = Math.min(c.upMax, o.downAlt + (c.upMax - c.downMax));
+    if (upAlt >= o.showAlt) upAlt = o.downAlt + Math.max(0, (o.showAlt - o.downAlt) * 0.5);
+    o.upAlt = upAlt;
     return o;
   }
   // one frame of the policy at distance dr (planet radii); the visible latch uses showR going in and hideR going out
@@ -41,7 +47,7 @@
     st.visible = st.visible ? dr <= st.hideR : dr <= st.showR;
     return st;
   }
-  function make() { return { prebuild: false, close: false, visible: false, reveal: 0, shell: 1, showR: 1, downR: 1, hideR: 1, downAlt: 0, openR: DEF.open, closeR: DEF.close }; }
+  function make() { return { prebuild: false, close: false, visible: false, reveal: 0, shell: 1, showR: 1, downR: 1, hideR: 1, downAlt: 0, upAlt: 0, showAlt: 0, openR: DEF.open, closeR: DEF.close }; }
   function reset(st) { st.visible = false; st.reveal = 0; st.prebuild = false; st.close = false; return st; }
   const H = { DEF, thresholds, step, make, reset, smooth: sm };
   if (typeof module !== 'undefined' && module.exports) module.exports = H;

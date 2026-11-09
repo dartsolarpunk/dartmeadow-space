@@ -170,8 +170,8 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-terrain-lod.js?v=294"></script>   <!-- one terrain across every altitude band: shared slope / skirt / sea-tint contract between the globe map and the sky ground -->
 <script src="ui/dm-impostor.js?v=280"></script>   <!-- far-range LOD: vertex-clustering impostor (mansion LOD2, colours baked) -->   <!-- far-range LOD: the ONE distance table per device class (props, mansion, landmarks, vantage reach); ?lod=off|low|mobile|desktop -->
 <script src="ui/dm-light.js?v=297"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
-<script src="ui/dm-atmo-shell.js?v=297"></script>
-<script src="ui/dm-pw-handoff.js?v=299"></script>   <!-- (v299) the space -> surface hand-off policy: pre-build hidden from PWS_OPEN, show the world + minimap globe at the DMAtmoShell perimeter (Worlds) -->   <!-- (v297) DMAtmoShell.radii/worldR/ratio: the faded atmosphere perimeter of a body (Solenne 1.18 R) for the space -> world hand-off (Worlds) -->
+<script src="ui/dm-atmo-shell.js?v=297"></script>   <!-- (v297) DMAtmoShell.radii/worldR/ratio: the faded atmosphere perimeter of a body (Solenne 1.18 R) for the space -> world hand-off (Worlds) -->
+<script src="ui/dm-pw-handoff.js?v=299"></script>   <!-- (v299) the space -> surface hand-off policy: pre-build hidden from PWS_OPEN, show the world + minimap globe at the DMAtmoShell perimeter (Worlds) -->
 <script>/* (v136) no-op stub so the flight loop can never throw if dm-perf.js failed to load */
 window.DMPerf=window.DMPerf||{on:false,b(){},e(){},mark(){},measure(n,f){return f();},frame(){},stats(){return {fps:0,avgMs:0,p95Ms:0,worstMs:0,minFps:0,cpu:{},gpu:null,sparse:null};},show(){},hide(){}};</script>
 <script>/* (v236) always-on frame-phase clock for the perf log: EMA of the main-thread ms spent in each phase of a frame (logic / world tick / scene render / atmosphere pass / HUD …),
@@ -19071,8 +19071,8 @@ function resumeFlightLoop(){ _startFlightLoop(); }   // one loop for space, the 
 //  The air is flown exactly like vacuum: the open-space control model
 //  (_boardControls — same sticks, keys, speeds, drag, no gravity), the board's
 //  full 6-DOF attitude carried straight across the top of the air in both
-//  directions (PWS_UP / PWS_DOWN only decide which frame the ground's near
-//  detail is built in). The Mach bubbles and the throttle set the autopilots'
+//  directions (the hand-off's downAlt / upAlt, falling back to PWS_DOWN / PWS_UP,
+//  only decide which frame the ground's near detail is built in). The Mach bubbles and the throttle set the autopilots'
 //  cruise speed (FLY THERE, TO SPACE). The world only closes once you are well
 //  out in space (PWS_CLOSE radii).
 // ════════════════════════════════════════════════════════════════════
@@ -20165,7 +20165,11 @@ function updateAtmoFlight(dt){
   { const want=(landing||s.touchdown)?1:ATMO_BOARD_SCALE, bs=atmoBoard.scale.x;
     if(Math.abs(want-bs)>1e-3) atmoBoard.scale.setScalar(bs+(want-bs)*Math.min(1,dt*1.6)); }
   // over the top of the air: open space carries on with the same model, attitude and speed
-  if(!landing && s.pos.y>PWS_UP){ _pwFlyToSpace(); return; }
+  // (v299) sky→space is tied to the surface hand-off (just above downAlt, inside the shell) so the dissolve plays in reverse; was a fixed PWS_UP 2750 u, outside the shell
+  if(!landing){
+    const up=(PW.body&&window.DMPwHandoff)?_pwHandoff(PW.body,1+s.pos.y/_planetR()).upAlt:PWS_UP;
+    if(s.pos.y>up){ _pwFlyToSpace(); return; }
+  }
   // the world's edge (the poles): the sky map ends there
   { const zc=_atmoSiteRef().lat/ATMO_DEG_PER_UNIT; s.pos.z=Math.max(zc-89.5/ATMO_DEG_PER_UNIT,Math.min(zc+89.5/ATMO_DEG_PER_UNIT,s.pos.z)); }
   // ── Place the board and orient it exactly as open space does (updateBoardTransform)
@@ -20492,10 +20496,12 @@ function _atmoTouchdown(){
 // is carried round with the planet (co-rotating — the ground stays still
 // under you unless you fly), and below a few radii the speed, the board's
 // size and the camera's distance ease from open-space scale to the sky's
-// with height. Under the top of the air (PWS_DOWN) the board carries on in
-// the ground's frame with the same control model, attitude, motion and
-// camera (_pwSpaceToFly); over PWS_UP it carries on back out here. Past
-// PWS_CLOSE radii the world closes and space carries on with the same board.
+// with height. Under the hand-off's downAlt (the dissolve-complete height, never
+// above PWS_DOWN) the board carries on in the ground's frame with the same
+// control model, attitude, motion and camera (_pwSpaceToFly); over upAlt
+// (just above downAlt, inside the shell; falls back to PWS_UP) it carries on
+// back out here so the dissolve can play in reverse. Past PWS_CLOSE radii the
+// world closes and space carries on with the same board.
 function _pwSpaceWatch(){
   if(PW.active||PW.opening||PW._resumeHold||window.DM_FLAT_WORLD) return;
   if(typeof flightInited==='undefined'||!flightInited||STATE.screen!=='flight'||SHIP_WALK.active||!boardFlight||!STATE.flight||!STATE.flight.pos) return;
@@ -20688,11 +20694,11 @@ function atmoExitToSpace(){
 }
 function _pwfReveal(v){ PWF.reveal=v; if(PWF.u) PWF.u.reveal.value=v; }
 // (v299) space -> surface hand-off (ui/dm-pw-handoff.js): one state object, rewritten in place every frame (no allocation)
-const _pwHO={body:null,prebuild:false,close:false,visible:false,reveal:0,shell:1,showR:1,downR:1,hideR:1,downAlt:PWS_DOWN,openR:PWS_OPEN,closeR:PWS_CLOSE};
+const _pwHO={body:null,prebuild:false,close:false,visible:false,reveal:0,shell:1,showR:1,downR:1,hideR:1,downAlt:PWS_DOWN,upAlt:PWS_UP,showAlt:PWS_DOWN,openR:PWS_OPEN,closeR:PWS_CLOSE};
 function _pwHandoff(b,dr){
   const H=window.DMPwHandoff, A=window.DMAtmoShell, st=_pwHO;
   if(st.body!==b){ st.body=b; st.visible=false; }
-  if(!H){ st.reveal=_smooth01((PWS_OPEN-0.4-dr)/1.6); st.visible=st.reveal>0; st.downAlt=PWS_DOWN; return st; }   // module missing: the old hand-off
+  if(!H){ st.reveal=_smooth01((PWS_OPEN-0.4-dr)/1.6); st.visible=st.reveal>0; st.downAlt=PWS_DOWN; st.upAlt=PWS_UP; st.showAlt=PWS_DOWN; return st; }   // module missing: the old hand-off
   H.step(st,dr,A?A.radii(b,1):1.1,_planetR());
   return st;
 }

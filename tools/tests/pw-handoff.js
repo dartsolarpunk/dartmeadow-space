@@ -61,4 +61,34 @@ const globe = (st, b, PW) => { if (PW.opening) return null; if (!PW.active || PW
   ok(globe(st, solenne, { opening: true }) === null, 'globe hidden while the world builds');
   ok(globe(st, mars, PW) === mars, 'other body (no hand-off running for it): as before');
   ok(globe(st, solenne, { active: true, mode: 'fly', body: solenne }) === solenne, 'in the sky: atmo globe unaffected'); }
-console.log('pw-handoff OK (' + n + ' checks; Solenne show ' + tS.showR.toFixed(3) + ' R, dissolve done ' + tS.downR.toFixed(3) + ' R (' + Math.round(tS.downAlt) + ' u), hide ' + tS.hideR.toFixed(3) + ' R; Mars show ' + tM.showR.toFixed(3) + ' R; pre-build 9 R, close 11 R)');
+// sky→space switch (upAlt) and a fly-out through it: reveal must change smoothly, no snap
+ok(tS.upAlt > tS.downAlt && tS.upAlt < tS.showAlt && tS.upAlt <= 2750, 'Solenne: sky→space switch just above the frame hand-off, inside the shell');
+ok(near(tS.upAlt, tS.downAlt + (2750 - 2600)), 'Solenne: upAlt = downAlt + (PWS_UP - PWS_DOWN)');
+ok(tM.upAlt > tM.downAlt && tM.upAlt < tM.showAlt, 'Mars: sky→space switch stays inside the shell (fade band narrower than PWS_UP-PWS_DOWN)');
+ok(tA.upAlt > tA.downAlt && tA.upAlt < tA.showAlt, 'airless: sky→space switch stays inside the dissolve band');
+{ const st = H.make(); const upR = 1 + tS.upAlt / R;
+  H.step(st, tS.downR, sS, R); ok(near(st.reveal, 1), 'at downR (fly-in switch): reveal is 1');
+  let prev = st.reveal, mid = 0, maxStep = 0;
+  for (let dr = tS.downR; dr <= tS.showR + 1e-9; dr += 0.0005) {
+    H.step(st, dr, sS, R);
+    const d = prev - st.reveal;
+    if (d > maxStep) maxStep = d;
+    ok(st.reveal <= prev + 1e-12, 'fly-out reveal never jumps up at ' + dr.toFixed(4) + ' R');
+    ok(d < 0.02, 'fly-out reveal has no snap at ' + dr.toFixed(4) + ' R (step ' + d.toFixed(4) + ')');
+    if (st.reveal > 0 && st.reveal < 1) mid++;
+    prev = st.reveal;
+  }
+  ok(mid > 10, 'fly-out fade plays through mid values (' + mid + ' samples)');
+  H.step(st, upR, sS, R); ok(st.reveal > 0 && st.reveal < 1, 'at the sky→space switch, fade is in progress (not already 0)');
+  H.step(st, tS.showR, sS, R); ok(near(st.reveal, 0), 'at the shell, dissolve is done');
+  // first space frame after the switch must match the last sky-frame reveal at the same height (no jump at the mode change)
+  const sky = H.make(); H.step(sky, upR, sS, R);
+  const space = H.make(); H.step(space, upR, sS, R);
+  ok(near(sky.reveal, space.reveal), 'reveal at upAlt is the same in sky and space (no jump on the mode change)'); }
+// index.html wiring: the sky tick uses the hand-off upAlt, not a bare PWS_UP; leftover atmo-shell comment is off the new script tag
+{ const fs = require('fs'), idx = fs.readFileSync(path.join(__dirname, '../../index.html'), 'utf8');
+  ok(!/if\(!landing && s\.pos\.y>PWS_UP\)\{\s*_pwFlyToSpace\(\)/.test(idx), 'index: the old bare PWS_UP sky→space test is gone');
+  ok(/_pwHandoff\(PW\.body,1\+s\.pos\.y\/_planetR\(\)\)\.upAlt/.test(idx) && /s\.pos\.y>up\)\{\s*_pwFlyToSpace\(\)/.test(idx), 'index: sky tick uses the hand-off upAlt before _pwFlyToSpace');
+  ok(!/<script src="ui\/dm-pw-handoff\.js\?v=\d+"><\/script>[^\n]*v297/.test(idx), 'index: dm-pw-handoff script tag does not carry the leftover dm-atmo-shell comment');
+  ok(/<script src="ui\/dm-atmo-shell\.js\?v=297"><\/script>[^\n]*DMAtmoShell/.test(idx), 'index: dm-atmo-shell comment lives on its own tag'); }
+console.log('pw-handoff OK (' + n + ' checks; Solenne show ' + tS.showR.toFixed(3) + ' R, dissolve done ' + tS.downR.toFixed(3) + ' R (' + Math.round(tS.downAlt) + ' u), hide ' + tS.hideR.toFixed(3) + ' R, up ' + Math.round(tS.upAlt) + ' u; Mars show ' + tM.showR.toFixed(3) + ' R; pre-build 9 R, close 11 R)');
