@@ -10438,18 +10438,33 @@ function _btPlayChime(){
 }
 // Quick-travel to wherever the Bird Temple currently is (it wanders, so this
 // reads its LIVE position each time rather than a fixed spot).
+// (v298) QUICK TRAVEL camera fix: the old jump set sp.pos to temple +(8,2,8), a fixed world offset that could sit inside the hull of a
+// large / rotated temple, kept the old heading (the temple was often behind her or off screen), left FOCUS / autopilot steering to the
+// old target, the follow cam trailing from the old spot and the hull sweep remembering where she was. Now: arrive OUTSIDE the hull
+// (>= 1.6x its radius), off the stern quarter and above the deck in the temple's own frame, nose aimed at the temple, assists off,
+// panel closed, follow cam re-seated, hull sweep reset. Refused while the temple is not spawned yet. (The temple GLB, its wander,
+// anchoring, fly-in and saves are untouched.)
+const _BT_QT_DIR=[0,0.42,1];   // temple-local arrival direction: astern (+Z) and up (+Y, above the deck plane)
 function travelToBirdTemple(){
-  const sp=STATE.flight;if(!sp||!BIRD_TEMPLE.group){toast('Bird Temple is still loading…',1500);return;}
-  const p=BIRD_TEMPLE.group.position;
-  sp.pos.set(p.x+8,p.y+2,p.z+8); // scaled down to match the corrected ship size
-  sp.vel.set(0,0,0);
-  // Honest messaging: this only moves the (currently frozen) open-space
-  // flight position — if triggered from surface/atmosphere, that won't be
-  // visible until actually returning to space, so say so rather than
-  // imply an immediate arrival that isn't happening on screen.
+  const sp=STATE.flight, bt=BIRD_TEMPLE, g=bt.group;
+  if(!sp||!sp.pos||!g||!bt.spawned){toast('Bird Temple is still loading…',1500);return;}
+  if(typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active){toast('🕊 You are aboard the Bird Temple',1600);return;}
+  g.updateMatrixWorld(true);
+  const R=Math.max(bt._R0||0,_btHullR()||0,1), D=1.6*R;
+  const c=new THREE.Vector3().setFromMatrixPosition(g.matrixWorld), gq=g.getWorldQuaternion(new THREE.Quaternion());
+  const off=new THREE.Vector3(_BT_QT_DIR[0],_BT_QT_DIR[1],_BT_QT_DIR[2]).normalize().applyQuaternion(gq).multiplyScalar(D);
+  sp.pos.copy(c).add(off);
+  if(sp.vel) sp.vel.set(0,0,0);
+  const q=spAimQuat(sp,c,new THREE.Quaternion()); if(q){ spQuat(sp).copy(q); spSyncLegacy(sp); }
+  if(boardFlight) boardFlight.position.copy(sp.pos);
+  try{ disengageAssist(); }catch(e){}                       // FOCUS / ORBIT / travel autopilot / IDLE: hand the stick back
+  try{ takeMouseLook(); }catch(e){}                         // drop queued mouse motion so the aim holds
+  _followInit=false;                                        // the follow cam re-seats behind the board on the next frame
+  _bfcPrevW=null; _bfcPrevL=null;                           // hull sweep: no sweep from the old spot to the new one
+  try{ closeTempleHub(); }catch(e){}
+  // Honest messaging: from surface / atmosphere this only moves the (frozen) open-space position.
   if(surfaceActive||atmoActive)toast('🕊 Position set near the Bird Temple — you\'ll arrive there when you head back to space',2600);
-  else toast('🕊 Arrived near the Bird Temple',2000);
-  drawTempleHubMap();
+  else toast('🕊 Arrived at the Bird Temple',2000);
 }
 function openTempleHub(){
   const bt=BIRD_TEMPLE;
