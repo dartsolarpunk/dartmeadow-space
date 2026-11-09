@@ -702,14 +702,20 @@
       const cav = hRel ? mix(float(1), float(0.6).add(clamp(hRel, 0.0, 1.0).mul(0.4)), float(1).sub(skyVis).mul(0.6).add(0.4)) : float(1);
       if (o.ao !== false) { const aoK = mix(float(1), skyVis.mul(cav), U.k); m.aoNode = m.aoNode ? m.aoNode.mul(aoK) : aoK; }
       if (o.bounce !== false) { const alb = T.diffuseColor ? T.diffuseColor.rgb : vec3(1, 1, 1); m.emissiveNode = (m.emissiveNode || vec3(0, 0, 0)).add(alb.mul(max(bounce, vec3(0, 0, 0))).mul(cav).mul(U.gain).mul(U.k)); }
-      if (o.shadow !== false && hasMarch()) {
-        const sn = sunVisNodes(T, p);
-        // relief-aware: with the sun low the crevices (low relief height) sit in the shadow of their own rims
-        const rel = hRel ? mix(float(1), smoothstep(0.05, 0.6, clamp(hRel, 0.0, 1.0)), U.lowSun.mul(0.6)) : float(1);
-        const hfVis = mix(float(1), sn.vs.mul(rel), U.hfK.mul(U.k)), prev = m.receivedShadowNode;
-        // (fov-fill 2) the sun shadow map eases out inside its own box (U.sm, a circle round her): tight, crisp shadows near, the height-field march beyond — no square edge
+      if (o.shadow !== false) {
+        // (fov-fill 2 / v301) the sun shadow map eases out inside its own box (U.sm, a circle round her) on every shipped preset, including Low (no march): tight, crisp shadows near, then nothing past the box — no square edge. Med+ still hands off to the height-field march.
+        const prev = m.receivedShadowNode;
         const wMap = float(1).sub(smoothstep(U.sm.x, U.sm.y, T.length(vec2(p.x.sub(U.cam.x), p.z.sub(U.cam.y)))));
-        m.receivedShadowNode = prev ? ((s) => mix(float(1), prev(s), wMap).mul(hfVis)) : ((s) => mix(float(1), s, wMap).mul(hfVis));
+        if (hasMarch()) {
+          const sn = sunVisNodes(T, p);
+          // relief-aware: with the sun low the crevices (low relief height) sit in the shadow of their own rims
+          const rel = hRel ? mix(float(1), smoothstep(0.05, 0.6, clamp(hRel, 0.0, 1.0)), U.lowSun.mul(0.6)) : float(1);
+          const hfVis = mix(float(1), sn.vs.mul(rel), U.hfK.mul(U.k));
+          m.receivedShadowNode = prev ? ((s) => mix(float(1), prev(s), wMap).mul(hfVis)) : ((s) => mix(float(1), s, wMap).mul(hfVis));
+        } else {
+          // Low / mobile Medium: no height-field march node is compiled. Wrap the map only.
+          m.receivedShadowNode = prev ? ((s) => mix(float(1), prev(s), wMap)) : ((s) => mix(float(1), s, wMap));
+        }
       }
       m.userData.dmLight = true; m.needsUpdate = true; D.mats++;
       return true;
