@@ -1040,8 +1040,6 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-collide.js?v=287" defer></script>
 <script src="ui/dm-collide-game.js?v=281" defer></script>
 <script src="ui/dm-cgroup.js?v=281" defer></script>
-<script src="ui/dm-projector.js?v=224" defer></script>
-<script src="ui/dm-groundmark.js?v=291" defer></script>
 <script src="ui/dm-charm.js?v=234" defer></script>
 <script src="ui/dm-flash.js?v=302" defer></script>
 <script src="ui/dm-menuscene.js?v=245" defer></script>
@@ -6211,7 +6209,7 @@ function _fac(){
       curSysName:()=>_ttCurSysName()||'', skyDay:()=>{ const k=TERRAIN&&TERRAIN.sky; return k&&typeof k.day==='number'?k.day:1; }, shadows:()=>!!GFX.shadows, isMobile:()=>!!GFX.isMobile,
       tier:()=>({low:0,medium:1,high:2,ultra:3})[(GFX.preset==='auto'||!GFX.preset)?autoPreset():GFX.preset]|0,
       loadGLB:u=>new Promise((ok,no)=>{ const L=_getGLBLoader(); if(!L) return no(new Error('no GLTFLoader')); L.load(u,ok,undefined,no); }),
-      afterTeleport:(land)=>{ try{ if(PW) PW._jump=true; }catch(e){} if(land){ try{ atmoThrottle=0; atmoMach=0; try{ $('atmo-throttle').value=0; }catch(e){} if(atmoState){ atmoState.landing=true; atmoState.takeoff=0; atmoState.auto=null; } }catch(e){} } } });
+      afterTeleport:(land)=>{ try{ if(PW) PW._jump=true; }catch(e){} if(land){ try{ atmoThrottle=0; atmoMach=0; try{ $('atmo-throttle').value=0; }catch(e){} if(atmoState){ atmoState.landing=true; atmoState.takeoff=0; atmoState.auto=null; atmoState.landT0=performance.now(); atmoState.landT=null; atmoState.landTt=0; atmoState.landWarn=false; } }catch(e){} } } });   // (t1472) a fresh landing clock + no stale steer target: the 16 s watchdog must not fire on an old flight's landT0 the moment HOME sets her over the deck
   }
   return DMFac;
 }
@@ -19312,6 +19310,7 @@ function _pwSetMode(mode){
   [so,ao].forEach(o=>{ o.style.opacity=''; o.style.pointerEvents=''; o.style.transition=''; });
   document.body.classList.toggle('pw-hud',!space);   // the flight HUD hides under the sky / ground HUD
   surfaceActive=walk; atmoActive=fly;
+  try{ if(setupSurfaceJoysticks.release) setupSurfaceJoysticks.release(); }catch(e){}   // (t1472) no stick stays latched across a HUD change (landing, HOME, liftoff)
   if(!fly&&PW.camera) PW.camera.up.set(0,1,0);   // the sky's camera rolls with the board; the ground's never does
   if(boardFlight) boardFlight.visible=false;   // she rides the world's board now
   const body=PW.body;
@@ -19375,7 +19374,6 @@ function _pwFrame(dt){
     let _btGo=true; try{ if(mode!=='space'&&!SHIP_WALK.active&&!SHIP_LAND&&!(SHIP_LIFT&&SHIP_LIFT.on)&&_pwSkyHidden()&&_pwBtAcc<0.1) _btGo=false; }catch(e){}
     if(_btGo){ const _bt=performance.now(); try{ updateBirdTemple(_pwBtAcc); }catch(e){ _animLoopWarn('birdTemple',e); } _pwBtAcc=0; DMFT.add('updateBirdTemple',performance.now()-_bt); } }   // the ship keeps wandering + the shard keeps following, even off-screen
   { const _wt=performance.now(); try{ _pwWorldTick(dt); }catch(e){ _animLoopWarn('world',e); } DMFT.add('pwWorldTick',performance.now()-_wt); }
-  try{ if(window.DMGroundMark) DMGroundMark.tick(dt,(PW.mode==='walk'&&surfaceActive&&CHAR.root&&!CHAR._transitioning&&!CHAR.mounted)?surfPlayer:null,surfBoard,PW.gen,window._surfHeight,_pwfMap,CHAR.root?_cgWorldH():0,BOARD_CALL); }catch(e){ _animLoopWarn('groundmark',e); }   // red/blue laser ground marks (ui/dm-groundmark.js); fades out on liftoff
   try{ if(window.DM_HAZ) DM_HAZ.tick(dt); }catch(e){ _animLoopWarn('hazard',e); }   // habitability orb + underwater look (ui/dm-hazardbubble.js)
   { const _fw=performance.now(); try{ if(window.DMFluidWorld) DMFluidWorld.tick(dt); }catch(e){ _animLoopWarn('fluidVfx',e); } DMFT.add('fluidWorld',performance.now()-_fw); }   // APIC sea + PBF spray (ui/dm-fluid-world.js)
   try{ _dynRes(flightRenderer); }catch(e){}
@@ -23741,21 +23739,19 @@ function _pwfRotN(wp,nf){
 // globe hands over to it, far out in space; 1 = solid)
 function _pwfMask(){ const W=window; return W.interleavedGradientNoise(W.screenCoordinate.xy).lessThan(PWF.u.reveal); }
 // give every material under `root` the planet frame (skips the sky, the board, her and anything marked noBend)
-function _pwMapTag(root,gm){
+function _pwMapTag(root){
   if(!root||!_pwfReady()||root.userData.noBend||root.isLight||root.isCamera||(typeof CHAR!=='undefined'&&root===CHAR.root)) return;
-  if(root.userData.groundMark===true) gm=true;
   if(root.material&&!root.isSprite&&!root.isLine){
     const mats=Array.isArray(root.material)?root.material:[root.material];
     for(const m of mats){
       if(!m||m.userData._pwf||m.isShaderMaterial||m.isRawShaderMaterial) continue;
       m.userData._pwf=true; m.positionNode=_pwfNodeFor(m.positionNode||null);
       if(!m.maskNode) m.maskNode=_pwfMask();
-      if(gm&&window.DMGroundMark){ try{ DMGroundMark.tagMaterial(m); }catch(e){} }   // opted-in static meshes (userData.groundMark) receive the laser projectors
       m.needsUpdate=true;
     }
     if(root.isMesh||root.isInstancedMesh) root.frustumCulled=false;   // three culls by the flat bounds; what's drawn is elsewhere
   }
-  for(const c of root.children) _pwMapTag(c,gm);
+  for(const c of root.children) _pwMapTag(c);
 }
 // ── open space ↔ the planet frame ──
 // body frame (the planet's own, as its mesh turns): lon = atan2(-z, x), lat = asin(y)
@@ -25847,7 +25843,7 @@ const _chunkSeed=(i,j,s)=>((i*73856093)^(j*19349663)^(s*83492791))|0;
 // meant a node build + pipeline compile (and its shadow variant) every time a chunk streamed in — the flight hitch
 let _propShared=null;
 function _propKit(){ if(!_propShared){ const sh=(m)=>{ m.userData.shared=true; return m; };
-  const SM=THREE.MeshStandardNodeMaterial||THREE.MeshStandardMaterial;   // node materials (what the renderer would convert these to anyway) so the laser projectors can light them
+  const SM=THREE.MeshStandardNodeMaterial||THREE.MeshStandardMaterial;   // node materials (what the renderer would convert these to anyway)
   _propShared={rock:sh(new SM({color:0xffffff,roughness:0.92})), trunk:sh(new SM({color:0x4a3220,roughness:1})), crown:sh(new SM({color:0xffffff,roughness:1})),
     tGeo:new THREE.CylinderGeometry(0.7,1,1,6), cGeo:new THREE.ConeGeometry(1,1,7)}; _propShared.tGeo.userData.shared=_propShared.cGeo.userData.shared=true; }
   return _propShared; }
@@ -25869,7 +25865,7 @@ function _hmChunkScatter(i,j){ const it=_hmChunkScatterG(i,j); let r; do{ r=it.n
 function* _hmChunkScatterG(i,j){
   const H=TERRAIN.Hg||TERRAIN.H, pal=TERRAIN.pal, C=SURF_CHUNK, rnd=_rng32(_chunkSeed(i,j,TERRAIN.seed||1));
   const R=(a,b)=>a+(b-a)*rnd();
-  const g=new THREE.Group(); g.name='JOTS_ChunkProps'; g.userData.groundMark=true;
+  const g=new THREE.Group(); g.name='JOTS_ChunkProps';
   const per=Math.round((Math.min(300,({low:60,med:140,high:240,ultra:300})[STATE.settings.particles]||140))*(C*C)/(560*560));
   const base={h:0,s:0,l:0}; new THREE.Color(pal.rock||0x777777).getHSL(base);
   const rocks=[];
@@ -26183,7 +26179,6 @@ function _terrainDetailMat(opts){
     console.warn('[ground detail] plain material:',e);
     m=new THREE.MeshStandardMaterial({vertexColors:true,roughness:0.95,metalness:0.0,side:opts.side||THREE.FrontSide});
   }
-  try{ if(window.DMGroundMark) DMGroundMark.receive(m); }catch(e){ console.warn('[groundmark]',e); }   // laser-projector receiver (ui/dm-projector.js): zero cost while its fade is 0
   return m;
 }
 
@@ -27359,6 +27354,7 @@ function _footContact(dt, airborne, sc, ground, unit){
 function setupSurfaceJoysticks(){
   if(setupSurfaceJoysticks.bound) return; setupSurfaceJoysticks.bound=true;   // the zones live in the page: bind once
   // reuse the surface-specific joystick zones
+  const rel=[]; setupSurfaceJoysticks.release=()=>{ for(const f of rel) f(); surfJoyMove.x=surfJoyMove.y=0; surfLookJoy.x=surfLookJoy.y=0; };
   const mk=(zoneId,knobId,out,invY)=>{
     const zone=$(zoneId),knob=$(knobId);if(!zone)return;
     let active=false,tid=null,ox=0,oy=0;const R=50;
@@ -27368,6 +27364,11 @@ function setupSurfaceJoysticks(){
     zone.addEventListener('touchstart',e=>{e.preventDefault();if(active)return;const t=e.changedTouches[0];tid=t.identifier;start(t.clientX,t.clientY);},{passive:false});
     window.addEventListener('touchmove',e=>{if(!active||tid===null)return;for(const t of e.changedTouches)if(t.identifier===tid){mv(t.clientX,t.clientY);break;}},{passive:true});
     window.addEventListener('touchend',e=>{if(!active||tid===null)return;for(const t of e.changedTouches)if(t.identifier===tid){end();break;}});
+    // (t1472 "after HOME landing I still cannot move") a CANCELLED touch (iOS: system gesture, the HUD swapping under the finger, a sheet / alert)
+    // never fired touchend, so `active` stayed latched and every later touchstart was ignored: the stick was dead for the rest of the session.
+    // touchcancel releases it exactly like touchend (the space + sky sticks always did), and every HUD change releases both (_pwSetMode).
+    window.addEventListener('touchcancel',e=>{if(!active||tid===null)return;for(const t of e.changedTouches)if(t.identifier===tid){end();break;}});
+    rel.push(end);
     zone.addEventListener('mousedown',e=>{start(e.clientX,e.clientY);const m=ev=>mv(ev.clientX,ev.clientY),u=()=>{end();document.removeEventListener('mousemove',m);document.removeEventListener('mouseup',u);};document.addEventListener('mousemove',m);document.addEventListener('mouseup',u);});
   };
   mk('surf-move-zone','surf-move-knob',surfLookJoy,false);   // LEFT zone → LOOK

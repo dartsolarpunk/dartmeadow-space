@@ -43,6 +43,15 @@ const MACH = src.match(/atmoMach=THREE\.MathUtils\.lerp\(atmoMach,landing\?0:atm
 if (!MACH) throw new Error('landing brake line moved');
 const CONST = ['CHAR_TERRAIN_BOARD_SIDE', 'CHAR_TERRAIN_HEIGHT'].map(k => { const m = src.match(new RegExp('const ' + k + ' = ([0-9.]+);')); if (!m) throw new Error(k); return 'const ' + k + '=' + m[1] + ';'; }).join('');
 
+// the walking frame of updateSurface, verbatim: stick / WASD -> DMCollide.surfWalk sweep -> DMMansionInt.walk (mansion walls / props / glass) -> gravity + ground
+// (interior floor via DMMansionInt.ground, DMCollide.supportFor) ; then _surfGuard (stuck-in-a-collider recovery)
+const WALK = block('  let mf=0,ms=0;', '  if(surfJumpPressed && p.onGround)').replace(/  if\(surfJumpPressed && p\.onGround\)$/, '');
+// facilities host hook (index.html DMFac.bind): afterTeleport(land) — HOME sets her over the deck and starts the landing
+const AFTER = (src.match(/afterTeleport:(\(land\)=>\{[^\n]*?\} \} \})/) || [])[1]; if (!AFTER) throw new Error('afterTeleport moved');
+const SURF_SPD = src.match(/const SURF_WALK_SPEED = ([0-9.]+), SURF_RUN_SPEED = ([0-9.]+);/); if (!SURF_SPD) throw new Error('SURF_WALK_SPEED moved');
+const sbM = { window: null, performance: { now: () => 1 }, atob: s => Buffer.from(s, 'base64').toString('binary'), console, Math, Float64Array, Uint8Array, Set, Promise, fetch: () => Promise.reject(new Error('no net')) }; sbM.window = sbM; sbM.globalThis = sbM;
+vm.runInNewContext(fs.readFileSync(path.join(root, 'ui/dm-mansion-interior.js'), 'utf8'), sbM, { filename: 'dm-mansion-interior.js' });
+const MI = sbM.DMMansionInt; MI._test.parse(NAV);
 class V3 { constructor(x = 0, y = 0, z = 0) { this.x = x; this.y = y; this.z = z; } set(x, y, z) { this.x = x; this.y = y; this.z = z; return this; } copy(o) { return this.set(o.x, o.y, o.z); } clone() { return new V3(this.x, this.y, this.z); } }
 const mkObj = () => ({ parent: null, visible: true, userData: {}, position: new V3(), scale: { x: 1, setScalar(a) { this.x = a; }, set(a) { this.x = a; } }, rotation: { x: 0, y: 0, z: 0, set(a, b, c) { this.x = a; this.y = b; this.z = c; } } });
 
@@ -85,8 +94,12 @@ function scenario(TH, boardHalf, boardHalfW, fps) {
   // ui/dm-facilities.js teleport(): HOME = local (-68, lz -22) = nav (-68, 22), board 8 units over the deck origin, facing the mansion; afterTeleport(land): landing, throttle 0
   const [tx, tz] = toW(HOME[0], HOME[1]), fx = PX - tx, fz = PZ - tz, yaw = Math.atan2(-fx, -fz);
   ctx.__init = { tx, ty: Y0 + 8, tz, yaw };
-  run('atmoState={pos:new THREE.Vector3(__init.tx,__init.ty,__init.tz),vel:new THREE.Vector3(),yaw:__init.yaw,pitch:-0.08,landing:true,takeoff:0,auto:null,touchdown:false}; atmoMach=0;');
+  // the sky state HOME finds: an earlier flight's landing left its clock / steer target / warning behind (an aborted LAND 30 s ago, far away);
+  // teleport() moves it over the deck, then the REAL afterTeleport(land) from index.html (t1472: must restart the landing clock)
+  run('atmoState={pos:new THREE.Vector3(),vel:new THREE.Vector3(),yaw:0,pitch:0,landing:false,takeoff:0,auto:null,touchdown:false,landT0:' + (clock - 30000) + ',landT:{x:__init.tx+400,z:__init.tz},landTt:' + (clock - 100) + ',landWarn:true}; atmoMach=0.4; atmoThrottle=0.5;' +
+    'atmoState.pos.set(__init.tx,__init.ty,__init.tz); atmoState.yaw=__init.yaw; atmoState.pitch=-0.08; (' + AFTER + ')(true);');
   const tag = 'yaw ' + TH.toFixed(1) + ' board ' + boardHalf + 'x' + boardHalfW + ' @' + fps + 'fps: ';
+  ok(run('atmoState.landing&&atmoMach===0&&atmoThrottle===0&&atmoState.landT===null'), tag + 'afterTeleport(land): landing, throttle 0, stale steer target dropped');
   // the pad as-is: clear for her capsule + the board footprint, no steering needed
   const r0 = run('_landSafe(' + tx + ',' + tz + ',' + yaw + ')');
   ok(r0.ok && !r0.moved, tag + 'the HOME pad itself is clear (' + nb + ' shell boxes, ' + W.groupCount('lamps') + ' lamp solids)');
@@ -121,6 +134,35 @@ function scenario(TH, boardHalf, boardHalfW, fps) {
   // a hand-flown LAND anywhere round the pad (rider + board footprint ring, any heading) also sets down without a detour
   let moved = 0, tried = 0; for (let a = 0; a < 8; a++) for (const rr of [0, 2, 4]) for (let hy = 0; hy < 4; hy++) { tried++; const [x, z] = toW(HOME[0] + rr * Math.cos(a * Math.PI / 4), HOME[1] + rr * Math.sin(a * Math.PI / 4)); const r = run('_landSafe(' + x + ',' + z + ',' + (hy * Math.PI / 2) + ')'); if (!r.ok || r.moved) moved++; }
   ok(moved === 0, tag + 'LAND within 4 units (2.2 m) of the pad, 4 headings: ' + (tried - moved) + '/' + tried + ' clear in place');
+  for (const ms of [2, 0]) walkAfter(tag + (ms === 2 ? '' : '(interior not loaded yet) '), hx, hz, gH, yaw, fps, ground, PX, PZ, Y0, TH, ms);
+}
+
+// ── after the HOME landing: stick input actually walks her (Justin: "after HOME landing I still cannot move"). The real updateSurface move block, the real
+// DMCollide sweep against the real shell + lamps, the real mansion interior walker (walls, props, the glass railings) in the mansion frame, _surfGuard.
+function walkAfter(tag, hx, hz, gH, yaw, fps, ground, PX, PZ, Y0, TH, miState) {
+  MI._test.setFrame(PX, PZ, Y0, TH); MI._test.S.rec = {}; MI._test.S.have = false; MI._test.S.state = miState;   // 2 = interior meshes in, 0 = still loading (the glass doorway gate holds)
+  let clock = 5000; const ev = [];
+  const ctx = { Math, isFinite, console: { warn() { } }, performance: { now: () => clock }, DMCrumb: { mark: (a, b) => ev.push(b) }, window: { DMCollide: W, DMMansionInt: MI, JOTS_WATER: null },
+    DMCollide: W, DMMansionInt: MI, THREE: { Vector3: V3 }, surfKeys: {}, surfJoyMove: { x: 0, y: 0 }, surfRunToggle: false, _surfHeight: (x, z) => { const h = MI._test.ovr(x, z); return h === h ? h : ground(x, z); } };
+  ctx.window.DMCrumb = ctx.DMCrumb;
+  vm.createContext(ctx);
+  vm.runInContext('const SURF_WALK_SPEED=' + SURF_SPD[1] + ', SURF_RUN_SPEED=' + SURF_SPD[2] + ';' + ['_surfEvent', '_fin3', '_surfRestore', '_surfGuard'].map(fn).join('\n') +
+    '\nfunction __walk(dt){ const p=surfPlayer;\n' + WALK + '\n _surfGuard(p,mf,ms,dt); }\nvar surfPlayer=null;', ctx);
+  const dt = 1 / fps, SPD = +SURF_SPD[1], T = 1.2, free = SPD * T; let stuck = 0, far = 0, minD = 1e9; const res = [];
+  for (let a = 0; a < 8; a++) {
+    ctx.__s = { x: hx, y: gH + 3.0, z: hz, yaw };
+    vm.runInContext('surfPlayer={pos:new THREE.Vector3(__s.x,__s.y,__s.z),vel:new THREE.Vector3(),yaw:__s.yaw,pitch:0,grav:1,onGround:true,jumpActive:false};', ctx);
+    MI._test.S.have = false; MI.walk(ctx.surfPlayer.pos);   // _pwBeginWalk: the first walk() call only records where she is
+    const ang = a * Math.PI / 4; ctx.surfJoyMove.x = Math.sin(ang); ctx.surfJoyMove.y = -Math.cos(ang);   // push the move stick (up = forward)
+    let lvl = 0;
+    for (let t = 0; t < T; t += dt) { clock += dt * 1000; vm.runInContext('__walk(' + dt + ')', ctx); lvl = Math.max(lvl, Math.abs(ctx.surfPlayer.pos.y - 3 - gH)); }
+    const p = ctx.surfPlayer.pos, d = Math.hypot(p.x - hx, p.z - hz); minD = Math.min(minD, d); if (d < 1.0) stuck++; if (d > free * 0.7) far++;
+    res.push(d.toFixed(1) + (lvl > 0.35 ? '^' + lvl.toFixed(1) : ''));
+  }
+  ctx.surfJoyMove.x = ctx.surfJoyMove.y = 0;
+  ok(stuck === 0, tag + 'after landing the move stick walks her in all 8 directions (moved ' + res.join(' / ') + ' units in ' + T + ' s; free ' + free.toFixed(1) + ')');
+  ok(far >= 5, tag + 'most directions are unobstructed walking (' + far + '/8 >= 70 % of free distance)');
+  ok(!ev.some(e => e && /overlap-stuck|nonfinite/.test(e.why)), tag + 'no stuck-in-collider / non-finite recovery fired');
 }
 
 console.log('== landing on the HOME pad (real shell + lamps + pads + grid)');
