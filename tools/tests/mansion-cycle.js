@@ -16,7 +16,7 @@ const sb = { console, Math, Float64Array, Uint8Array, Int16Array, Set, Map, Prom
   navigator: { userAgent: 'Mozilla/5.0 (Linux; Android 14) Mobile', platform: 'Linux', maxTouchPoints: 5 }, document: { hidden: false }, requestAnimationFrame: f => setTimeout(f, 4), CustomEvent: function () { },
   fetch: async (u) => ({ ok: true, json: async () => (/nav/.test(u) ? NAVJ : { base: 'assets/ariel-home/cliff/', uv: [0, 0], tileM: 3, heightTierFor: {}, sets: { a: { material: 'ah_rock_a', depthM: .1 }, b: { material: 'ah_rock_b', depthM: .1 }, c: { material: 'ah_rock_c', depthM: .1 }, d: { material: 'ah_rock_d', depthM: .1 } } }) }),
   addEventListener() { }, dispatchEvent() { } };
-sb.location = { search: '', href: 'http://localhost/' };   // (v296) upgradeCliff reads ?cliff= / ?cliffpx= since the memory-lane gate; the sandbox had no location (test threw on main)
+sb.location = { search: '', href: 'http://localhost/' };   // (v298) upgradeCliff reads ?cliff= / ?cliffpx= since the memory-lane gate; the sandbox had no location (test threw on main)
 sb.window = sb; sb.globalThis = sb;
 const crumbs = []; sb.DMCrumb = { begin: (n) => crumbs.push('b:' + n), end: (n) => crumbs.push('e:' + n), mark: () => { }, live: () => { }, gpu: () => { } };
 vm.runInNewContext(fs.readFileSync(path.join(root, 'ui/dm-facilities.js'), 'utf8'), sb, { filename: 'dm-facilities.js' });

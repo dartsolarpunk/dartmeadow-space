@@ -1,4 +1,4 @@
-# JOTS Cliffs (sw v296): cliffside mansion rock + terrain cliffs round the site
+# JOTS Cliffs (sw v298): cliffside mansion rock + terrain cliffs round the site
 
 Scope: Ariel's mansion cliff (GLB LOD0 / phone LOD0 / LOD1, the runtime impostor built from LOD1), its collision grid and the interior GI that uses the exterior
 as occluder, the cliff PBR sets, and the procedural terrain cliff shader (index.html `cliff()`) so the planet cliffs round the site match the mansion rock.
@@ -6,7 +6,7 @@ Units: mansion / scene units (1.78 u = 1 m, `ariel-home-lamps.json` upm). Refere
 nothing was copied from any game, Exodus is a quality bar only). All geometry and textures are procedural (Blender 4.2.9 LTS headless + numpy).
 
 ## Measured (tools/ariel-home/measure_density.py, cliff_mesh dumps)
-| | main 29456d8 | v296 |
+| | main 29456d8 | v298 |
 |---|---|---|
 | hi face spacing, median rows / cols | 0.98 / 1.54 u | 0.67 / 0.80 u |
 | hi core upper wall (x -95..105, z > -22: decks, landing, facility) | 1.03 / 1.20 u | **0.53 / 0.65 u** |
@@ -34,7 +34,7 @@ and match the mansion, so no 4K: the gaps were mesh density, macro relief and 3 
 - `index.html` terrain `cliff()`: hard / soft beds per bed hash (caps proud with chamfered foot, soft beds recessed with laminae) instead of one even ledge rhythm,
   and the fracture term is a vertical joint network (F2-F1 borders of tall worley cells) instead of dots at the cell centres. Same noise count per call.
   The boulder scatter (index.html ~25494) is untouched (it would change prop RNG streams).
-- `ui/dm-facilities.js` F.ver 292 -> 296 (asset cache key), `index.html` dm-facilities.js?v=296, `sw.js` dartmeadow-engine-v296.
+- `ui/dm-facilities.js` F.ver 292 -> 298 (asset cache key), `index.html` dm-facilities.js?v=298, `sw.js` dartmeadow-engine-v298.
 - `tools/tests/mansion-cycle.js`: sandbox `location` stub (the test threw on main before any check).
 
 ## Not done / risks
@@ -43,5 +43,5 @@ and match the mansion, so no 4K: the gaps were mesh density, macro relief and 3 
 - KTX2 / BC for phones deferred; phones keep the existing gates (512 maps unless deviceMemory >= 8 etc.).
 - The impostor is still the runtime vertex-cluster built from the new LOD1; `tools/lod-chain/bake.mjs` is not consumed.
 - Residual zig-zag at a few lips / one flank band (x ~ +105..120) where the macro profile itself is sheared by the deck carves (also on main, finer now).
-- Nothing was run on a GPU or in a browser: Cycles CPU renders only (`cliffs-v296-before-after.jpg`, mesh final, textures pre-regeneration; `cliffs-v296-textures.jpg`).
+- Nothing was run on a GPU or in a browser: Cycles CPU renders only (`cliffs-v298-before-after.jpg`, mesh final, textures pre-regeneration; `cliffs-v298-textures.jpg`).
   No fps measured.

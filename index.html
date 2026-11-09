@@ -1066,7 +1066,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-mansion-rooms.js?v=250" defer></script>
 <script src="ui/dm-mansion-look.js?v=251" defer></script>
 <script src="ui/dm-mansion-interior.js?v=262" defer></script>
-<script src="ui/dm-facilities.js?v=296" defer></script>
+<script src="ui/dm-facilities.js?v=298" defer></script>
 <script src="ui/dm-lamps.js?v=293" defer></script>
 <script src="ui/dm-mansion-collide.js?v=283" defer></script>
 <script src="ui/dm-holo.js?v=283" defer></script>
@@ -25735,7 +25735,7 @@ function _terrainDetailMat(opts){
     const fadeC=W.float(1).sub(W.smoothstep(W.float(reach*2.5),W.float(reach*9),dist));
     const fadeBand=W.float(1).sub(W.smoothstep(W.float(reach*8),W.float(reach*40),dist));
     const warpOf=(q)=>W.mx_fractal_noise_float(W.vec3(q.x.mul(0.035),W.float(0),q.z.mul(0.035)),2,2.0,0.5).mul(3.0);
-    // (v296 JOTS Cliffs) the same geology as the mansion cliff (tools/ariel-home/cliff_mesh.py): beds are not one even rhythm of identical ledges any more (that read
+    // (v298 JOTS Cliffs) the same geology as the mansion cliff (tools/ariel-home/cliff_mesh.py): beds are not one even rhythm of identical ledges any more (that read
     // as "wavy graded lines" round the site) — each ~2.6 u bed is either a HARD cap (proud, flat face, chamfered foot) or a SOFT bed (recessed ramp under the cap
     // above, faint laminae), chosen per bed by a hash, so runs of soft beds make deep recesses and caps stand out singly or stacked (Zion / Dolomites).  The
     // fracture term is now the vertical JOINT network (borders of tall, narrow cells: F2 - F1 of a y-squashed worley) instead of dots at the cell centres (the

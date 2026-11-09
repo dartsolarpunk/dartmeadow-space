@@ -218,7 +218,7 @@ def set_columnar(rng):
     return col, H, rough, dict(depth_m=0.14, name='Columnar basalt')
 
 def set_sheet(rng):
-    # (v296) Half Dome / El Capitan sheeting: 4-5 thin exfoliation shells, each edge a short crisp riser (domain-warped so it wanders and chips), instead of two broad
+    # (v298) Half Dome / El Capitan sheeting: 4-5 thin exfoliation shells, each edge a short crisp riser (domain-warped so it wanders and chips), instead of two broad
     # steps whose 0.47 isoline drew a single thin contour line across every 3 m tile
     sheets = fnoise(rng, 3.0); sw_ = (fnoise(rng, 1.7) - 0.5) * 0.05; sv_ = sheets + sw_
     lvls = np.sort(rng.uniform(0.30, 0.75, 3)); lvl = np.zeros_like(sheets); sheetedge = np.zeros_like(sheets); shell = np.zeros_like(sheets)
@@ -287,7 +287,7 @@ def derive(col, H, rough, depth_m, micro=0.0, rng=None):
     H = (H - np.percentile(H, 0.05)) / (np.percentile(H, 99.95) - np.percentile(H, 0.05) + 1e-9); H = np.clip(H, 0, 1).astype(F32)
     Hm = H * depth_m; px = TILE_M / N
     if micro > 0 and rng is not None:
-        # (v296) DETAIL-NORMAL layer: crystal / sand-grain relief at 1.5-6 mm (2-8 px at 2K) folded into the normal map only.  The height map (POM) stays the
+        # (v298) DETAIL-NORMAL layer: crystal / sand-grain relief at 1.5-6 mm (2-8 px at 2K) folded into the normal map only.  The height map (POM) stays the
         # macro relief so the march is unchanged; up close the 2K normal now carries grain instead of a smooth plastic sheen.  The 1K / 512 tiers average it
         # away by construction (Lanczos downscale), so they are not noisier.
         g_ = (fnoise(rng, 0.6) - 0.5) * 0.7 + (blur(rng.random((N, N)).astype(F32), 0.9) - 0.5) * 1.6

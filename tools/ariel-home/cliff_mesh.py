@@ -38,7 +38,7 @@ def fbm(x, y, seed, oct=4, lac=2.0, gain=0.5):
         s = s + a * vnoise(x, y, seed + o * 17); tot += a; x = x * lac + 31.7; y = y * lac - 17.3; a *= gain
     return s / tot
 
-# (v296 JOTS Cliffs) density in proportion to the ground the rider stands on: the refined ground tessellation next to her is 0.40-0.45 u (TESS_TIER high/ultra in
+# (v298 JOTS Cliffs) density in proportion to the ground the rider stands on: the refined ground tessellation next to her is 0.40-0.45 u (TESS_TIER high/ultra in
 # index.html: 72 u / 160, 80 u / 200; 1.78 u = 1 m), so the cliff face beside the house (core: x -105..115, the deck / landing / facility frontage) and the upper wall the decks
 # look down (z > core_z) are swept at ~0.5 u; the rest of the face keeps ~0.85-1 u and the plateau / sea floor / far flanks stay coarse.  The grid is one structured sweep
 # (rows are a per-column count), so the fine z band costs rows on every column: core_ds only applies in z > core_z.  mob gets the same layout one step coarser; lod1 keeps the
@@ -99,7 +99,7 @@ def build_cliff(rock_h, edge_y, tier='hi', house_bvh=None, sea=-62.0, seed=1234,
     fw = 1.0 - sstep(0.30, 0.88, nz)                        # 1 on walls, 0 on flat plateau / sea floor
     amp = cfg['disp']
 
-    # (v296) ANTI-ALIASED fabric: the bedding / joint / jog / terrace terms are step functions (a bed boundary, a joint block offset).  Point-sampled on a 1 u grid
+    # (v298) ANTI-ALIASED fabric: the bedding / joint / jog / terrace terms are step functions (a bed boundary, a joint block offset).  Point-sampled on a 1 u grid
     # and [1 2 1]-filtered they read as soft ledges; on the 0.5 u grid the same steps stair-step along their wavy boundary lines into rows of chevrons / teeth.  So the
     # fabric is evaluated as a function of (x, z) and box-filtered over each vertex cell (centre + 4 sub-samples at +-1/4 cell) before it is applied.
     def _fabric(X, z):
@@ -133,14 +133,14 @@ def build_cliff(rock_h, edge_y, tier='hi', house_bvh=None, sea=-62.0, seed=1234,
         for k_ in range(len(gx)):
             xc = gx[k_] + 3.5 * (vnoise(z / 14.0, k_ * 3.1, seed + 71) - 0.5) * 2
             gul -= gd[k_] * np.exp(-((X - xc) / (gwid[k_] * (1.0 + 0.5 * sstep(-30, -55, z)))) ** 2) * sstep(-1.0, -6.0, z)
-        M = gul * 1.05                                        # (v296) MACRO relief: kept at full strength in every tier (lod1 / impostor silhouettes)
+        M = gul * 1.05                                        # (v298) MACRO relief: kept at full strength in every tier (lod1 / impostor silhouettes)
         shelf = np.zeros_like(D); sr_ = np.random.default_rng(seed + 72)
         for k_ in range(14):
-            zc = sr_.uniform(-50, -4); xc = sr_.uniform(-170, 170); wl = sr_.uniform(10, 34); th_ = sr_.uniform(0.8, 1.9) * 1.35; ht = sr_.uniform(0.9, 2.2)   # (v296) thicker caps, deeper undercuts
+            zc = sr_.uniform(-50, -4); xc = sr_.uniform(-170, 170); wl = sr_.uniform(10, 34); th_ = sr_.uniform(0.8, 1.9) * 1.35; ht = sr_.uniform(0.9, 2.2)   # (v298) thicker caps, deeper undercuts
             shelf += th_ * sstep(wl, wl * 0.55, np.abs(X - xc)) * np.where(z > zc - 0.0, 0, 1) * np.exp(-((z - zc) / ht) ** 2) * 1.0
             shelf -= 0.8 * th_ * sstep(wl, wl * 0.55, np.abs(X - xc)) * np.exp(-((z - (zc - ht * 1.5)) / (ht * 0.8)) ** 2)   # undercut below the shelf
         M += shelf
-        # (v296) buttresses + alcoves: the wall is not a ruler-straight front.  Zion / Yosemite walls are broken into rounded ribs between joint-guided recesses 8-25 m wide,
+        # (v298) buttresses + alcoves: the wall is not a ruler-straight front.  Zion / Yosemite walls are broken into rounded ribs between joint-guided recesses 8-25 m wide,
         # standing 1.5-3.5 m proud, fading out toward the talus.  Bedding / joints / shelves ride on top, so each rib still carries its ledges.
         br_ = np.random.default_rng(seed + 73); bx = np.sort(br_.uniform(-195, 195, 22)); bw = br_.uniform(4.0, 12.0, 22); bh = br_.uniform(1.5, 3.4, 22) * np.where(br_.random(22) < 0.7, 1.0, -0.8)
         zt = br_.uniform(-6.0, -1.0, 22); zb_ = br_.uniform(-58.0, -36.0, 22)
@@ -164,7 +164,7 @@ def build_cliff(rock_h, edge_y, tier='hi', house_bvh=None, sea=-62.0, seed=1234,
         # granite exfoliation domes on the flanks
         sh = sstep(88, 112, np.abs(X)) * fw
         dome = (fbm(X / 26.0, z / 17.0, seed + 20, 2) - 0.5) * 3.2
-        # (v296) exfoliation terraces as CONTINUOUS steps (a sheet edge is a short ramp): the old floor() jump of 0.35 u followed the meandering fbm isoline, which a 1 u grid
+        # (v298) exfoliation terraces as CONTINUOUS steps (a sheet edge is a short ramp): the old floor() jump of 0.35 u followed the meandering fbm isoline, which a 1 u grid
         # blurred but the 0.5 u grid resolved into rows of chevrons
         tl_ = fbm(X / 40.0, z / 30.0, seed + 21, 2) * 4.0; lvl = (np.floor(tl_) + sstep(0.72, 1.0, tl_ % 1.0)) * 0.35 + sstep(0, 1, tl_ % 1.0) * 0.06
         D = D * (1 - 0.55 * sh) + (dome + lvl) * sh          # flanks keep 45% of the bedding/joint fabric under the granite domes
@@ -188,7 +188,7 @@ def build_cliff(rock_h, edge_y, tier='hi', house_bvh=None, sea=-62.0, seed=1234,
         F_ = _fabric(X + sx_ * hx_, z + sz_ * hz_); Dacc += F_['D']; Macc += F_['M']
     D = Dacc / 6.0; M = Macc / 6.0
     tal, colw, sh, bi, box, lat, hard = FB['tal'], FB['colw'], FB['sh'], FB['bi'], FB['box'], FB['lat'], FB['hard']
-    # (v296) fine fabric under 1 m (fracture facets + grain): only resolvable at the 0.5 u core spacing; the [1 2 1] filter below removes what a coarser tier cannot carry
+    # (v298) fine fabric under 1 m (fracture facets + grain): only resolvable at the 0.5 u core spacing; the [1 2 1] filter below removes what a coarser tier cannot carry
     #   planar fracture facets: jittered ~1.6 x 1.3 u blocks, each a tilted plane with its own offset (a granite / sandstone face breaks into flat facets and small steps,
     #   it does not wrinkle like cloth), plus a weak smooth octave
     wxf = X / 1.6 + 0.6 * (vnoise(X / 3.1, z / 2.7, seed + 34) - 0.5); wzf = z / 1.3 + 0.6 * (vnoise(X / 2.9, z / 3.3, seed + 35) - 0.5)
@@ -199,7 +199,7 @@ def build_cliff(rock_h, edge_y, tier='hi', house_bvh=None, sea=-62.0, seed=1234,
     D = D * (fw * 0.92 + 0.08 * (1 - fw) * 0.0)
     # lip: soften the first metre so the rounded macro lip survives
     D *= sstep(-1.5, 1.0, d + 2.5) * 1.0 + 0.0
-    # (v296) SHEAR-AWARE smoothing.  Rows are equal weighted-arclength steps from the inland edge, so where a deck carve / the jagged macro profile differs between
+    # (v298) SHEAR-AWARE smoothing.  Rows are equal weighted-arclength steps from the inland edge, so where a deck carve / the jagged macro profile differs between
     # neighbouring columns, row j sits several row spacings higher in one column than the next (p90 ~2.5 spacings on the face).  A horizontal ledge then crosses those
     # sheared quads on their long diagonal and renders as a zig-zag of teeth / stacked chevrons once the fabric is resolved at 0.5 u.  Where the shear is large the
     # fabric is blurred across columns (the grid cannot carry a ledge there anyway); well-aligned quads keep every detail.
@@ -224,12 +224,12 @@ def build_cliff(rock_h, edge_y, tier='hi', house_bvh=None, sea=-62.0, seed=1234,
         D = Df.reshape(D.shape)
     # soft clamp: keep every vertex a sane distance from the macro surface (limits fold-over)
     D = np.clip(D, -3.2, 3.6)
-    # (v296) displacement DIRECTION: along the macro normal with its vertical part mostly removed on walls.  Rock fabric (bed recesses, joints, ribs) is carved
+    # (v298) displacement DIRECTION: along the macro normal with its vertical part mostly removed on walls.  Rock fabric (bed recesses, joints, ribs) is carved
     # horizontally into a face; pushing it along a leaning wall's normal also moves the vertex up / down by D x nz, and a 1 u deep joint then drags its 0.5 u rows
     # over each other (stacked chevrons, fold-over).  Plateau / sea floor (fw = 0) keep the true normal.
     ddir = nrm.copy(); ddir[..., 2] *= (1.0 - 0.85 * fw); ddir /= np.maximum(np.linalg.norm(ddir, axis=-1, keepdims=True), 1e-9)
     P = P0 + ddir * D[..., None]
-    # (v296) fold-over guard: with 0.5 u faces the steep fabric (columnar joints, rib flanks, shelf undercuts) can flip a quad against the macro surface (a row of
+    # (v298) fold-over guard: with 0.5 u faces the steep fabric (columnar joints, rib flanks, shelf undercuts) can flip a quad against the macro surface (a row of
     # 'teeth' in a render).  Where a displaced quad's normal turns more than ~80 deg from the macro normal, blend its corners' displacement toward a local average
     # (a few passes); nothing else moves.
     for it_ in range(10):
@@ -252,7 +252,7 @@ def build_cliff(rock_h, edge_y, tier='hi', house_bvh=None, sea=-62.0, seed=1234,
     print('[cliff_mesh] zone shares', {n: round(float((zone == i).mean()), 3) for i, n in enumerate(mat_names)})
     # ── UV in metres along the true displaced surface; v negative = down the wall (Blender v up) ──
     # u = x (no shear); v = arclength down the *displaced* profile, anchored so v == world z on the vertical wall (first row below z=-3)
-    # (v296) arclength of the MACRO profile (P0 + the macro relief only), not of the fully displaced one: with 0.5 u rows the fabric's zig-zag adds a different extra
+    # (v298) arclength of the MACRO profile (P0 + the macro relief only), not of the fully displaced one: with 0.5 u rows the fabric's zig-zag adds a different extra
     # length in every column, so v drifted column to column down the wall and the strata maps sheared into stacked chevrons.
     Pm_ = P0 + ddir * np.clip(M * cfg.get('macro', 1.0) * fw, -3.2, 3.6)[..., None]
     sv = np.concatenate([np.zeros((nx, 1)), np.cumsum(np.linalg.norm(np.diff(Pm_, axis=1), axis=-1), axis=1)], 1)
