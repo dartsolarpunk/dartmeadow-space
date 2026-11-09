@@ -20168,14 +20168,14 @@ function updateAtmoFlight(dt){
   // (v299) sky→space is tied to the surface hand-off. Past downAlt, drive PWF.reveal and the flight
   // sphere from the policy so the dissolve plays in reverse while still in the sky; then switch at upAlt
   // with no jump on the first space frame. (Was a fixed PWS_UP 2750 u, and later a switch that left reveal at 1.)
-  if(!landing){
-    if(PW.body&&window.DMPwHandoff){
-      const ho=_pwHandoff(PW.body,1+s.pos.y/_planetR()), b=PW.body;
-      if(s.pos.y>ho.downAlt){ _pwfReveal(ho.reveal); if(b.mesh) b.mesh.visible=PWF.reveal<0.999; }
-      else { _pwfReveal(1); if(b.mesh) b.mesh.visible=false; }
-      if(s.pos.y>ho.upAlt){ _pwFlyToSpace(); return; }
-    }else if(s.pos.y>PWS_UP){ _pwFlyToSpace(); return; }
-  }
+  // Reveal and the sphere are driven while landing too: LAND mid-climb fades the ground back to 1 and hides the sphere
+  // as she settles through downAlt. Only the switch to space is held off while landing.
+  if(PW.body&&window.DMPwHandoff){
+    const ho=_pwHandoff(PW.body,1+s.pos.y/_planetR()), b=PW.body;
+    if(s.pos.y>ho.downAlt){ _pwfReveal(ho.reveal); if(b.mesh) b.mesh.visible=PWF.reveal<0.999; }
+    else { _pwfReveal(1); if(b.mesh) b.mesh.visible=false; }
+    if(!landing&&s.pos.y>ho.upAlt){ _pwFlyToSpace(); return; }
+  }else if(!landing&&s.pos.y>PWS_UP){ _pwFlyToSpace(); return; }
   // the world's edge (the poles): the sky map ends there
   { const zc=_atmoSiteRef().lat/ATMO_DEG_PER_UNIT; s.pos.z=Math.max(zc-89.5/ATMO_DEG_PER_UNIT,Math.min(zc+89.5/ATMO_DEG_PER_UNIT,s.pos.z)); }
   // ── Place the board and orient it exactly as open space does (updateBoardTransform)

@@ -3,7 +3,7 @@
 const assert = require('assert'), path = require('path');
 const H = require('../../ui/dm-pw-handoff.js');
 const R = 360 / 0.008 / (2 * Math.PI);   // _planetR() with ATMO_DEG_PER_UNIT 0.008
-let n = 0; const ok = (c, m) => { assert(c, m); n++; };
+let n = 0, nf = 0; const ok = (c, m) => { if (process.env.PW_SOFT && !c) { nf++; console.log('FAIL: ' + m); return; } assert(c, m); n++; };   // PW_SOFT=1: list every failure
 const near = (a, b, e) => Math.abs(a - b) < (e || 1e-9);
 // Solenne via the real DMAtmoShell glue (mesh userData 1.18 R)
 globalThis.window = globalThis; globalThis._ATMO_LOOK = { earth: { mul: 1.18 }, mars: { mul: 1.06 }, other: { mul: 1.10 }, titan: { mul: 1.22 } };
@@ -81,52 +81,120 @@ ok(tA.upAlt > tA.downAlt && tA.upAlt < tA.showAlt, 'airless: sky→space switch 
   ok(mid > 10, 'fly-out fade plays through mid values (' + mid + ' samples)');
   H.step(st, upR, sS, R); ok(st.reveal > 0 && st.reveal < 1, 'at the sky→space switch, fade is in progress (not already 0)');
   H.step(st, tS.showR, sS, R); ok(near(st.reveal, 0), 'at the shell, dissolve is done'); }
-// Walk the real updateAtmoFlight hand-off, then the first _pwSpaceStep frame, on Solenne / Mars / Titan.
-// After fly-in, the sky holds reveal at 1 and hides the flight sphere. Past downAlt it must drive both
-// from the policy (1 + alt/_planetR()) so the first space frame continues from that value (jump <= 0.02).
-function atmoFlightHandoff(alt, shell) {
-  const st = H.make();
-  H.step(st, 1 + alt / R, shell, R);
-  const reveal = alt > st.downAlt ? st.reveal : 1;
-  return { reveal: reveal, sphere: reveal < 0.999, toSpace: alt > st.upAlt, downAlt: st.downAlt, upAlt: st.upAlt };
+// ── The real index.html sky tick and first space frame, run in a node vm (no copy of the rule in this file) ──
+// INDEX_HTML can point the harness at another index.html (used to prove the checks fail on 21b45591 / b89a9fd).
+const fs = require('fs'), vm = require('vm');
+const IDX = fs.readFileSync(process.env.INDEX_HTML || path.join(__dirname, '../../index.html'), 'utf8');
+const UI = (f) => fs.readFileSync(path.join(__dirname, '../../ui', f), 'utf8');
+function fnSrc(src, name) {   // the whole `function name(...){...}` from index.html, by brace matching
+  const i = src.indexOf('function ' + name + '('); assert(i >= 0, 'index: function ' + name + ' not found');
+  let j = src.indexOf('{', i), d = 0;
+  for (let k = j; k < src.length; k++) { const c = src[k]; if (c === '{') d++; else if (c === '}' && --d === 0) return src.slice(i, k + 1); }
+  throw new Error('unbalanced ' + name);
 }
-function spaceStepHandoff(alt, shell) {
-  const st = H.make();
-  H.step(st, 1 + alt / R, shell, R);
-  return { reveal: st.reveal, sphere: st.reveal < 0.999 };
+function lineSrc(src, re) { const m = src.match(re); assert(m, 'index: ' + re + ' not found'); return m[0]; }
+function between(s, a, b) { const i = s.indexOf(a), j = s.indexOf(b, i + 1); assert(i >= 0 && j > i, 'index: slice ' + JSON.stringify(a) + ' .. ' + JSON.stringify(b)); return s.slice(i, j); }
+const ATMO_SRC = fnSrc(IDX, 'updateAtmoFlight'), SPACE_SRC = fnSrc(IDX, '_pwSpaceStep');
+// sky: from the terrain floor (landing settle, floor clamp, touchdown, board scale, the hand-off and the sky→space switch) to the world's edge
+const SKY_TAIL = between(ATMO_SRC, 'const groundH=', "// the world's edge");
+// space: section 3 to the end (lat/lon/alt of the board, the hand-off, reveal, the flight sphere, close / space→sky)
+const SPACE_TAIL = SPACE_SRC.slice(SPACE_SRC.indexOf("// 3. into the world's frame"), SPACE_SRC.lastIndexOf('}'));
+ok(/_pwHandoff\(/.test(SKY_TAIL) && /_pwFlyToSpace\(\)/.test(SKY_TAIL), 'index: sky slice carries the hand-off and the sky→space switch');
+ok(/_pwfReveal\(ho\.reveal\)/.test(SPACE_TAIL) && SPACE_SRC.indexOf("// 3. into the world's frame") > 0, 'index: space slice carries the first-frame reveal');
+const VM_SRC = [
+  lineSrc(IDX, /const PLANET_VIS_SCALE\s*=\s*[^;]*;/), lineSrc(IDX, /const ATMO_BOARD_SCALE=[^;]*;/), lineSrc(IDX, /const PWS_OPEN=[^;]*;/),
+  lineSrc(IDX, /const ATMO_DEG_PER_UNIT=[^;]*;/), lineSrc(IDX, /const _smooth01=v=>\{[^\n]*?\};/), lineSrc(IDX, /const _PWS=\{[^\n]*?\};/),
+  fnSrc(IDX, '_pwsReady'), fnSrc(IDX, '_planetR'), fnSrc(IDX, '_bodyR'), fnSrc(IDX, '_pwfReveal'),
+  lineSrc(IDX, /const _pwHO=\{[^\n]*?\};/), fnSrc(IDX, '_pwHandoff'), fnSrc(IDX, '_pwsLatLonAlt'),
+  'function __sky(s,dt){ const landing=!!s.landing;\n' + SKY_TAIL + '\n}',
+  'function __space(b,S,sp,sc){ let la;\n' + SPACE_TAIL + '\n}',
+  'this.__sky=__sky; this.__space=__space; this.__R=_planetR(); this.__bodyR=_bodyR;',
+].join('\n');
+class V3 { constructor(x, y, z) { this.x = x || 0; this.y = y || 0; this.z = z || 0; }
+  set(x, y, z) { this.x = x; this.y = y; this.z = z; return this; } copy(o) { return this.set(o.x, o.y, o.z); } clone() { return new V3(this.x, this.y, this.z); }
+  sub(o) { this.x -= o.x; this.y -= o.y; this.z -= o.z; return this; } add(o) { this.x += o.x; this.y += o.y; this.z += o.z; return this; }
+  applyQuaternion() { return this; } length() { return Math.hypot(this.x, this.y, this.z); } distanceTo(o) { return Math.hypot(this.x - o.x, this.y - o.y, this.z - o.z); }
+  setScalar(v) { return this.set(v, v, v); } }
+class Q4 { invert() { return this; } }
+function bodyOf(kind) {   // fresh body objects per run (DMAtmoShell caches on the body)
+  const mesh = { position: new V3(), visible: false, updateMatrixWorld() { }, getWorldPosition(v) { return v.copy(this.position); }, getWorldQuaternion(q) { return q; }, traverse() { } };
+  if (kind === 'Solenne') { mesh.traverse = (f) => f({ userData: { jotsAtmo: true, planetR: 500, atmoTop: 90 } }); return { type: 'Habitable', name: 'Solenne', collisionRadius: 6, mesh }; }
+  if (kind === 'Mars') return { name: 'Mars', collisionRadius: 3.4, mesh };
+  if (kind === 'Titan') return { name: 'Titan', collisionRadius: 2.6, mesh };
+  return { type: 'Moon', name: 'airless', hasAtmosphere: false, collisionRadius: 1.7, mesh };
 }
-for (const [name, shell] of [['Solenne', sS], ['Mars', sM], ['Titan', sT]]) {
-  const t = H.thresholds(shell, R, {});
-  // a held-at-1 sky (the 21b4559 bug) would snap on the first space frame — this is the jump we must not ship
-  const snapped = Math.abs(1 - spaceStepHandoff(t.upAlt + 1e-6, shell).reveal);
-  ok(snapped > 0.02, name + ': a sky that left reveal at 1 would jump ' + snapped.toFixed(3) + ' at the switch (the case this test is for)');
-  let prev = 1;
-  const y0 = t.downAlt - 20, y1 = t.upAlt + 8, step = 1;
-  let sawSwitch = false;
-  for (let y = y0; y <= y1; y += step) {
-    const sky = atmoFlightHandoff(y, shell);
-    if (y > t.downAlt + 0.5 && y <= t.upAlt) ok(sky.reveal < 1 - 1e-9 || y - t.downAlt < 2, name + ' sky fades once past downAlt at ' + Math.round(y) + ' u');
-    if (sky.toSpace) {
-      const space = spaceStepHandoff(y, shell);
-      const jump = Math.abs(space.reveal - sky.reveal);
-      ok(jump <= 0.02, name + ' first space frame jump ' + sky.reveal.toFixed(3) + ' -> ' + space.reveal.toFixed(3) + ' = ' + jump.toFixed(3) + ' at ' + Math.round(y) + ' u');
-      ok(space.sphere === sky.sphere, name + ' flight-sphere visibility matches on the first space frame');
-      ok(sky.reveal < 0.999, name + ' flight sphere is already on before the switch (reveal ' + sky.reveal.toFixed(3) + ')');
-      sawSwitch = true;
-      break;
+function world(kind) {
+  const b = bodyOf(kind), C = { Math, console, THREE: { Vector3: V3, Quaternion: Q4 }, _ATMO_LOOK: globalThis._ATMO_LOOK,
+    PW: { body: b, board: { scale: new V3() } }, PWF: { reveal: 1, u: null }, atmoMach: 0, atmoBoard: { scale: new V3(1, 1, 1) },
+    flightCamera: { position: new V3() }, FLIGHT_BOARD_WORLD_SCALE: 1, _atmoHeight: () => 0, _landSteer() { }, _atmoTouchdown() { },
+    setTimeout() { }, _atmoXZ: () => ({ x: 0, z: 0 }), flyOuts: 0, toFly: 0, closes: 0 };
+  C.window = C; C.globalThis = C;
+  C._pwFlyToSpace = () => { C.flyOuts++; }; C._pwSpaceToFly = () => { C.toFly++; }; C._pwSpaceClose = () => { C.closes++; };
+  vm.createContext(C);
+  vm.runInContext(UI('dm-atmo-shell.js'), C); vm.runInContext(UI('dm-pw-handoff.js'), C); vm.runInContext(VM_SRC, C);
+  C.H = C.DMPwHandoff.thresholds(C.DMAtmoShell.radii(b, 1), C.__R, {});
+  // fly-in state: the sky took over at downAlt with reveal 1 and the flight sphere hidden (_pwSpaceToFly)
+  C.flyIn = () => { C.PWF.reveal = 1; b.mesh.visible = false; };
+  C.s = (y) => ({ pos: new V3(0, y, 0), vel: new V3(), landing: false, touchdown: false });
+  C.sky = (s) => { C.__sky(s, 1 / 60); return { reveal: C.PWF.reveal, sphere: b.mesh.visible }; };
+  // first space frame at the same height: the board at |p| = bodyR * (1 + alt/R) from the body centre (the space frame's own units)
+  C.space = (y) => { const sp = { pos: new V3(C.__bodyR(b) * (1 + y / C.__R), 0, 0) }, S = { flat: new V3(), out: false };
+    C.__space(b, S, sp, { t: 1, f: 1, fc: 1 }); return { reveal: C.PWF.reveal, sphere: b.mesh.visible }; };
+  C.b = b; return C;
+}
+// 1. fly-out: walk the real sky tick up through downAlt to the switch, then the real first space frame (jump <= 0.02)
+for (const name of ['Solenne', 'Mars', 'Titan']) {
+  { const W = world(name), sp = W.space(W.H.upAlt + 1e-6), snapped = Math.abs(1 - sp.reveal);   // a held-at-1 sky (the 21b45591 bug) would snap
+    ok(snapped > 0.02, name + ': a sky that left reveal at 1 would jump ' + snapped.toFixed(3) + ' on the first space frame (the case this test is for)'); }
+  const W = world(name), t = W.H; W.flyIn();
+  const s = W.s(t.downAlt - 20); let prev = W.sky(s), sawSwitch = false, maxSky = 0;
+  ok(prev.reveal === 1 && !prev.sphere, name + ' below downAlt (real sky tick): reveal 1, flight sphere hidden');
+  for (let y = t.downAlt - 19; y <= t.upAlt + 20; y += 1) {
+    s.pos.y = y; const sky = W.sky(s), d = Math.abs(sky.reveal - prev.reveal); if (d > maxSky) maxSky = d;
+    ok(d <= 0.02, name + ' real sky tick has no snap at ' + Math.round(y) + ' u (' + prev.reveal.toFixed(3) + ' -> ' + sky.reveal.toFixed(3) + ')');
+    if (W.flyOuts) {
+      const space = W.space(s.pos.y), jump = Math.abs(space.reveal - sky.reveal);
+      ok(jump <= 0.02, name + ' real last sky frame -> real first space frame: ' + sky.reveal.toFixed(3) + ' -> ' + space.reveal.toFixed(3) + ' (jump ' + jump.toFixed(3) + ', max 0.02) at ' + Math.round(y) + ' u');
+      ok(sky.sphere && space.sphere, name + ' flight sphere already on in the last sky frame and stays on (sky ' + sky.sphere + ', space ' + space.sphere + ')');
+      ok(W.toFly === 0 && W.closes === 0, name + ' first space frame neither drops back to the sky nor closes');
+      sawSwitch = true; break;
     }
-    prev = sky.reveal;
+    prev = sky;
   }
-  ok(sawSwitch, name + ' walk reached the sky→space switch');
+  ok(sawSwitch, name + ' real sky tick reached the sky→space switch');
 }
-// index.html wiring: updateAtmoFlight must drive reveal + the flight sphere, then switch at upAlt
-{ const fs = require('fs'), idx = fs.readFileSync(path.join(__dirname, '../../index.html'), 'utf8');
-  const atmo = idx.slice(idx.indexOf('function updateAtmoFlight'), idx.indexOf('function _pwSpaceWatch'));
+// 2. LAND while climbing out: climb past downAlt, LAND mid-band, the real landing settle carries her down: reveal back to 1, sphere off, at and below downAlt
+for (const name of ['Solenne', 'Mars', 'Titan', 'airless']) {
+  const W = world(name), t = W.H; W.flyIn();
+  const s = W.s(t.downAlt - 10);
+  for (let y = t.downAlt - 10; y <= (t.downAlt + t.upAlt) / 2; y += 1) { s.pos.y = y; W.sky(s); }
+  const mid = { reveal: W.PWF.reveal, sphere: W.b.mesh.visible };
+  ok(mid.reveal < 0.999 && mid.sphere && W.flyOuts === 0, name + ' mid-band climb: fading (' + mid.reveal.toFixed(3) + '), sphere on, still in the sky');
+  s.landing = true;
+  let bad = 0, firstBad = '', ticks = 0;
+  for (; ticks < 4000 && s.pos.y > 4.001; ticks++) {
+    const r = W.sky(s);
+    if (s.pos.y <= t.downAlt && (r.reveal !== 1 || r.sphere)) { if (!bad) firstBad = 'y ' + s.pos.y.toFixed(1) + ' reveal ' + r.reveal.toFixed(3) + ' sphere ' + r.sphere; bad++; }
+  }
+  const end = { reveal: W.PWF.reveal, sphere: W.b.mesh.visible };
+  ok(s.pos.y <= 4.01, name + ' landing settle reached hover height (y ' + s.pos.y.toFixed(2) + ' after ' + ticks + ' ticks)');
+  ok(bad === 0, name + ' LAND mid-climb: reveal 1 and sphere hidden at every tick at or below downAlt' + (bad ? ' (' + bad + ' bad, first ' + firstBad + ')' : ''));
+  ok(end.reveal === 1 && !end.sphere, name + ' LAND mid-climb: touches down with reveal ' + end.reveal.toFixed(3) + ', sphere ' + (end.sphere ? 'on' : 'off'));
+  ok(W.flyOuts === 0, name + ' LAND mid-climb never switches to space');
+  // LAND just above upAlt: the switch stays guarded (she settles instead of flying out)
+  const W2 = world(name); W2.flyIn(); const s2 = W2.s(W2.H.upAlt + 5); s2.landing = true; W2.sky(s2);
+  ok(W2.flyOuts === 0, name + ' landing above upAlt: no sky→space switch');
+}
+// index.html wiring: updateAtmoFlight drives reveal + the flight sphere outside the landing guard; only the sky→space switch is guarded
+{ const idx = IDX, atmo = ATMO_SRC;
   ok(atmo.indexOf('function updateAtmoFlight') === 0 && atmo.length > 100, 'index: found updateAtmoFlight');
   ok(/s\.pos\.y>ho\.downAlt\)\{\s*_pwfReveal\(ho\.reveal\)/.test(atmo), 'index: updateAtmoFlight drives _pwfReveal from the hand-off past downAlt');
   ok(/b\.mesh\.visible=PWF\.reveal<0\.999/.test(atmo), 'index: updateAtmoFlight shows the flight sphere once reveal drops below 0.999');
-  ok(/s\.pos\.y>ho\.upAlt\)\{\s*_pwFlyToSpace\(\)/.test(atmo), 'index: sky→space switch is at the hand-off upAlt');
-  ok(!/if\(!landing && s\.pos\.y>PWS_UP\)\{\s*_pwFlyToSpace\(\)/.test(idx), 'index: the old bare PWS_UP sky→space test is gone');
+  ok(/if\(!landing&&s\.pos\.y>ho\.upAlt\)\{\s*_pwFlyToSpace\(\)/.test(atmo), 'index: sky→space switch is at the hand-off upAlt and is the only landing-guarded step');
+  const ho = SKY_TAIL.slice(SKY_TAIL.indexOf('// over the top of the air'));
+  ok(!/if\(!landing\)\s*\{/.test(ho), 'index: no if(!landing){ block wraps the hand-off reveal / sphere writes');
+  ok(!/^\s*if\(!landing\s*&&\s*s\.pos\.y>PWS_UP\)/m.test(idx) && /\}else if\(!landing&&s\.pos\.y>PWS_UP\)\{\s*_pwFlyToSpace\(\)/.test(atmo), 'index: the bare PWS_UP switch is only the module-missing fallback');
   ok(!/<script src="ui\/dm-pw-handoff\.js\?v=\d+"><\/script>[^\n]*v297/.test(idx), 'index: dm-pw-handoff script tag does not carry the leftover dm-atmo-shell comment');
   ok(/<script src="ui\/dm-atmo-shell\.js\?v=297"><\/script>[^\n]*DMAtmoShell/.test(idx), 'index: dm-atmo-shell comment lives on its own tag'); }
+if (nf) { console.log('pw-handoff FAILED (' + nf + ' failing, ' + n + ' passing)'); process.exit(1); }
 console.log('pw-handoff OK (' + n + ' checks; Solenne show ' + tS.showR.toFixed(3) + ' R, dissolve done ' + tS.downR.toFixed(3) + ' R (' + Math.round(tS.downAlt) + ' u), hide ' + tS.hideR.toFixed(3) + ' R, up ' + Math.round(tS.upAlt) + ' u; Mars show ' + tM.showR.toFixed(3) + ' R; pre-build 9 R, close 11 R)');
