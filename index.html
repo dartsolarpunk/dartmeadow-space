@@ -1000,7 +1000,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 .save-slot-name{font-family:var(--font-hud);font-size:0.65rem;flex:1;color:var(--text);}
 .save-slot-info{font-family:var(--font-mono);font-size:0.55rem;color:var(--text-dim);}
 .save-slot-btns{display:flex;gap:0.3rem;}
-/* Toast: retired (v240) — every system message goes through window.dmSys() (ui/dm-sys.js, bottom-right strip) */
+/* Toast: retired (v240) — every system message goes through window.dmSys() (ui/dm-sys.js, the centred bottom bar since v298) */
 /* Upload file input hidden */
 #file-upload{display:none;}
 
@@ -1073,7 +1073,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-lamps.js?v=302" defer></script>
 <script src="ui/dm-mansion-collide.js?v=283" defer></script>
 <script src="ui/dm-holo.js?v=283" defer></script>
-<script src="ui/dm-sys.js?v=241"></script>
+<script src="ui/dm-sys.js?v=298"></script>
 </head>
 <body>
 <!-- LOADING -->
@@ -1312,6 +1312,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
         <div class="mm-st-row"><span>LOCATION</span><b id="mm-st-loc">Sol · Milky Way</b></div>
         <div class="mm-st-row"><span>LAST SAVE</span><b id="mm-st-save">—</b></div>
       </div>
+      <div id="mm-music" class="mm-music" aria-label="Soundtrack"></div>   <!-- (v298 HUD) the CLINICAL BLOOM soundtrack control docks here while the menu is up (_dockFloatMusic) -->
     </div>
   </div>
   <div id="mm-bottom" class="mm-panel mm-hinge-bottom">
@@ -2035,7 +2036,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 //  DART MEADOW v3  —  DART Energy Ring Systems
 // ══════════════════════════════════════════════════════════════
 function $(id){return document.getElementById(id);}
-// (v240) toast() is a shim: every in-game message goes through the single bottom-right strip (ui/dm-sys.js). Call shapes kept:
+// (v240) toast() is a shim: every in-game message goes through the single centred system bar (ui/dm-sys.js). Call shapes kept:
 // toast(m) · toast(m,ms) · toast(m,'warn'|'err') · toast(m,'warn',ms) · toast(m,'',ms)
 function toast(msg,dur,cls){
   try{ if(window.dmSys) window.dmSys(msg,dur,cls); else console.log('[sys]',msg); }catch(e){}
@@ -2946,6 +2947,7 @@ function goScreen(name){
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   const _prevScreen=STATE.screen;
   STATE.screen=name;
+  try{ _dockFloatMusic(); }catch(e){}
   // (memory lane, ui/dm-mem.js) phones/tablets: the menu's start-button turntable is a SECOND WebGPU device holding a 2.4 M-vertex model (~110 MB GPU + the same again on
   // the CPU); it goes once the game is under way and comes back (lazily) with the menu.  The builder's MSAA drawing buffer is handed back while the screen is not shown.
   try{
@@ -3021,6 +3023,14 @@ function _idleBoardPrep(M){
   if(_idleStop) _idleStop();
   _idleStop=window.DMLaunch.drive(sl,{canRun:()=>live(),calmMs:24});
   return true;
+}
+// (v298 HUD) The CLINICAL BLOOM soundtrack control (#float-music) lives ON the main menu's right instrument panel, under the status rows (#mm-music in
+// #mm-right), instead of the bottom centre (which belongs to the system message bar, ui/dm-sys.js). On every other pre-flight screen (builder) it goes
+// back to its own fixed spot under the top-right HUD, as before; in game it stays hidden (hideFloatingMusicInGame). Event-driven (goScreen), no per-frame work.
+function _dockFloatMusic(){
+  const fm=$('float-music'), slot=$('mm-music'); if(!fm||!slot) return;
+  if(STATE.screen==='menu'){ if(fm.parentNode!==slot) slot.appendChild(fm); }
+  else if(fm.parentNode===slot){ const app=$('app'); document.body.insertBefore(fm,app&&app.parentNode===document.body?app:null); }
 }
 // Show floating music control on pre-flight screens (if music isn't stopped)
 function showFloatingMusic(){
@@ -28303,7 +28313,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 <link rel="stylesheet" href="ui/dm-safety.css?v=1">
 <link rel="stylesheet" href="ui/dm-spectator.css?v=1">
 <link rel="stylesheet" href="ui/dm-globe.css?v=3">
-<link rel="stylesheet" href="ui/dm-menu.css?v=80">
+<link rel="stylesheet" href="ui/dm-menu.css?v=298">
 <link rel="stylesheet" href="ui/dm-journal.css?v=97">
 <link rel="stylesheet" href="ui/dm-landmap.css?v=88">
 <link rel="stylesheet" href="ui/dm-type.css?v=89">
