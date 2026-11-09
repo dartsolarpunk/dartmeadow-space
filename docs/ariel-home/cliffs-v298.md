@@ -1,11 +1,11 @@
-# JOTS Cliffs (sw v301): cliffside mansion rock + terrain cliffs round the site
+# JOTS Cliffs (sw v302): cliffside mansion rock + terrain cliffs round the site
 
-Cache versions: `sw.js` dartmeadow-engine-v301, `index.html` dm-facilities.js?v=301, `ui/dm-facilities.js` F.ver 301 (main 34d6f7b, Worlds #253, is sw v300;
-this branch merges that main, no rebase). The file keeps its v298 name to avoid churn; v298 below refers to the first #249 sweep only.
+Cache versions: `sw.js` dartmeadow-engine-v302, `index.html` dm-facilities.js?v=302, `ui/dm-facilities.js` F.ver 302 (main 69a9ff4, Worlds #254, is sw v301;
+this branch merges main through #253 and #254 with normal merges, no rebase or force-push; the cache key is main + 1 at push time). The file keeps its v298 name to avoid churn; v298 below refers to the first #249 sweep only.
 Worlds #253 is kept intact: FOV-to-horizon fill, square shore/sea markers hidden, deck infinity-pool restyle, `F.poolTrim` a no-op, `lodTint` / mid-grain in
 `_terrainDetailMat` (colorNode multiplies cliffTint * basinTint * lodTint).
 
-## Shard-rock pass (ships as sw v301, merged onto main 34d6f7b / Worlds #253 sw v300)
+## Shard-rock pass (ships as sw v302, merged with main 69a9ff4 / Worlds #254 sw v301)
 Direction (Justin): the cliffs around the mansion are a rock structure of **straight angular shards**. Real-world habit only: geode / cave crystal-shard clusters,
 dogtooth spar, columnar basalt (Giant's Causeway, Devils Tower), cleaved slate / granite joint faces, rebuilt as **opaque weathered rock, not crystal** (no
 transmission, no gem colour, no emissive, roughness >= 0.6). Exodus *Liberating the Kay* is a quality bar only (lighting, facet language, groove shadow density,
@@ -85,7 +85,7 @@ and match the mansion, so no 4K: the gaps were mesh density, macro relief and 3 
 - `index.html` terrain `cliff()`: hard / soft beds per bed hash (caps proud with chamfered foot, soft beds recessed with laminae) instead of one even ledge rhythm,
   and the fracture term is a vertical joint network (F2-F1 borders of tall worley cells) instead of dots at the cell centres. Same noise count per call.
   The boulder scatter (index.html ~25494) is untouched (it would change prop RNG streams).
-- `ui/dm-facilities.js` F.ver 292 -> 298 (asset cache key), `index.html` dm-facilities.js?v=298, `sw.js` dartmeadow-engine-v298 at the time; now superseded by v301 (see top).
+- `ui/dm-facilities.js` F.ver 292 -> 298 (asset cache key), `index.html` dm-facilities.js?v=298, `sw.js` dartmeadow-engine-v298 at the time; now superseded by v302 (see top).
 - `tools/tests/mansion-cycle.js`: sandbox `location` stub (the test threw on main before any check).
 
 ## Not done / risks

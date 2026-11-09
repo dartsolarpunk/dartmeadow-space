@@ -13,8 +13,8 @@
 //      its own seed (the near scatter is untouched), no per-frame allocation, and the 13 fps fill time.
 //  (5) tessellation: the geometric disc still eases to flat at 0.75 half and the bump carries on past it on every preset (no cliff after the disc).
 //  (6) the designed deck infinity pool stays (poolLook takes the teal); poolTrim is a no-op; measured on every mansion GLB, both ah_pool quads and the pool-room tub stay.
-//  (7) cache tags: CACHE_NAME v301 (#249 after merging main #253/#254). dm-light.js is ?v=301 (the Low shadow-map wrapper, #254); dm-lod.js stays ?v=300;
-//      dm-facilities.js is ?v=301 (past the v300b pool restore; JOTS Cliffs #249).
+//  (7) cache tags: CACHE_NAME v302 (#249: main 69a9ff4 / #254 is v301, +1). dm-light.js is ?v=301 (the Low shadow-map wrapper, #254); dm-lod.js stays ?v=300;
+//      dm-facilities.js is ?v=302 (past the v300b pool restore; JOTS Cliffs #249).
 'use strict';
 const fs = require('fs'), path = require('path');
 const root = path.join(__dirname, '..', '..');
@@ -253,13 +253,13 @@ for (const S of scen) {
   }
   ok(/ah_pool'\) F\.poolLook\(o\.material\)/.test(fac) && !/g\.setIndex\(k\)/.test(fac), 'loadMansion re-lights ah_pool and does not trim it');
 }
-// ── (7) cache tags: a v301 load cannot keep the merged v300 light script ──
+// ── (7) cache tags: a v302 load cannot keep the v301 cliff / facilities scripts ──
 {
   const sw = fs.readFileSync(path.join(root, 'sw.js'), 'utf8');
-  ok(/const CACHE_NAME = 'dartmeadow-engine-v301';/.test(sw), 'CACHE_NAME is dartmeadow-engine-v301 (JOTS Cliffs #249)');
+  ok(/const CACHE_NAME = 'dartmeadow-engine-v302';/.test(sw), 'CACHE_NAME is dartmeadow-engine-v302 (main v301 + 1, JOTS Cliffs #249)');
   ok(/<script src="ui\/dm-lod\.js\?v=300"><\/script>/.test(html), 'dm-lod.js cache tag stays v300');
   ok(/<script src="ui\/dm-light\.js\?v=301"><\/script>/.test(html), 'dm-light.js cache tag is v301 (Low shadow-map wrapper, #254)');
-  ok(/<script src="ui\/dm-facilities\.js\?v=301" defer><\/script>/.test(html), 'dm-facilities.js cache tag is v301 (past the v300b pool restore; JOTS Cliffs #249)');
+  ok(/<script src="ui\/dm-facilities\.js\?v=302" defer><\/script>/.test(html), 'dm-facilities.js cache tag is v302 (past the v300b pool restore; JOTS Cliffs #249)');
 }
 
 console.log(fails ? fails + ' FAILED of ' + n : 'fov-fade OK (' + n + ' checks)');
