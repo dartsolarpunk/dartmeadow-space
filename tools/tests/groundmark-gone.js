@@ -14,7 +14,9 @@ const RX = /DMGroundMark|DMProjector|dm-groundmark|dm-projector|groundmark|groun
 ok(!RX.test(html), 'index.html: no DMGroundMark / DMProjector / groundMark hook, script tag or ?groundmark switch');
 const scan = d => fs.readdirSync(path.join(root, d)).filter(f => /\.(js|css|html|py|json)$/.test(f)).map(f => d + '/' + f);
 const files = scan('ui').concat(scan('tools/tests').filter(f => !/groundmark-gone\.js$/.test(f)), ['sw.js']).filter(ex);
-const hits = files.filter(f => RX.test(rd(f))); ok(!hits.length, 'no reference left in ui/, tools/tests/, sw.js (' + hits.join(', ') + ')');
+// fov-fade.js compares the chunk scatter to the 78d0e81 baseline with the deleted receiver tag stripped: that baseline-normalising line is the one
+// allowed mention (it removes the tag, it does not use it)
+const hits = files.filter(f => RX.test(rd(f).split('\n').filter(l => !(f.endsWith('fov-fade.js') && /gen0\.replace\(/.test(l))).join('\n'))); ok(!hits.length, 'no reference left in ui/, tools/tests/, sw.js (' + hits.join(', ') + ')');
 ok(!/function _pwMapTag\(root,gm\)/.test(html) && /function _pwMapTag\(root\)\{/.test(html), '_pwMapTag lost its ground-mark opt-in parameter');
 ok(!/userData\.groundMark/.test(html), 'no mesh is tagged as a projector receiver any more');
 console.log('== kept');
