@@ -153,7 +153,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-earth.js?v=292"></script>
 <script src="ui/dm-earth-paint.js?v=290"></script>
 <script src="ui/dm-theme.js?v=81"></script>
-<script src="ui/dm-sparsevox.js?v=2"></script>
+<script src="ui/dm-sparsevox.js?v=298"></script>
 <script src="ui/dm-rockmat.js?v=145"></script>
 <script src="ui/dm-parallax.js?v=280"></script>
 <script src="ui/dm-groundlib.js?v=280"></script>
@@ -7815,25 +7815,29 @@ async function _svMeasureRelief(terrainRadiusAt,radius,key){
 // ── (v136 crunch-1) Per-brick LOD planet mesh ────────────────────────────────────────────────────
 // One mesh, one draw call, a fixed pool of brick slots (ui/dm-sparsevox.js LodStream). Each slot holds one
 // B³-cell brick at any octree level (DMSparseVox.lodSelect: finer near the camera), plus skirts on its six
-// faces (each boundary face-cell's marching-squares segment extruded one cell toward the centre, both
-// windings) that cover the cracks where a brick meets a coarser or finer neighbour. Streaming is
+// faces (each boundary face-cell's marching-squares segment extruded one cell toward the centre) that cover
+// the cracks where a brick meets a coarser or finer neighbour. (Wave 2a) ONE winding, facing OUT of the brick:
+// across any face the neighbour's own skirt faces the other way, so a crack is still covered from either side,
+// but a brick's skirt no longer shows from inside its own cell (the double-sided walls read as nested squares),
+// and a pool slot is 1,536 vertices instead of 2,112 (-27 % pool memory). Streaming is
 // incremental: the controller re-selects when the camera has moved, and each update builds only the
 // bricks that changed, in batches sized to a per-frame ms budget; replaced bricks are cleared only after
 // their replacements are in, so there is never a hole. No whole-world rebuild.
 // (v137) fixed brick-pool size per preset (not a runtime cut): low/medium 1 resident LOD body × 256 bricks, high/ultra 2 × 512
 const SV_LOD_PRESET={low:{bodies:1,cap:256},medium:{bodies:1,cap:256},high:{bodies:2,cap:512},ultra:{bodies:2,cap:512}};
 // (memory lane) one resident brick pool costs cap x 2112 verts x 96 B (position + normal + colour, vec3 padded to vec4, on the GPU AND in the CPU array three keeps) = 104 MB at cap 512.
+// (Wave 2a) one-winding skirts: 1536 verts a slot = 75 MB at cap 512, 38 MB at 256.
 // Phones/tablets (DMMem.lean) keep ONE resident body at High, with the same cap: the nearest world keeps every brick it had, the second-nearest falls back to its static mesh.
 function _svLodPreset(){ let p='medium'; try{ p=resolvePreset(); }catch(e){} const r=SV_LOD_PRESET[p]||SV_LOD_PRESET.medium; try{ if(r.bodies>1&&window.DMMem&&DMMem.lean()) return {bodies:1,cap:r.cap}; }catch(e){} return r; }
 // resident GPU MB of every live LOD brick pool (shown in ?perf=1)
-window._svLodResident=function(){ let mb=0,n=0,br=0; try{ celestialBodies.forEach(b=>{ if(b._svLod){ n++; mb+=b._svLod.poolMB||0; br+=b._svLod.resident||0; } }); }catch(e){} const p=_svLodPreset(); return {bodies:n,maxBodies:p.bodies,cap:p.cap,bricks:br,mb}; };
+window._svLodResident=function(){ let mb=0,n=0,br=0; try{ celestialBodies.forEach(b=>{ const l=b._svLod||b._svDrain; if(l){ n++; mb+=l.poolMB||0; br+=l.resident||0; } }); }catch(e){} const p=_svLodPreset(); return {bodies:n,maxBodies:p.bodies,cap:p.cap,bricks:br,mb}; };
 const SV_LOD={B:4,DMAX:64,K:2.5,budgetMs:3,get maxBodies(){ return _svLodPreset().bodies; },on:!/[?&]lod=0\b/.test(location.search)};
 async function _svLodPlanetMesh(o){
   const SV=window.DMSparseVox, B=SV_LOD.B, BP=B+1, P3=BP*BP*BP, C3=B*B*B, FC=6*B*B, DMAX=SV_LOD.DMAX;
   const radius=o.radius, HALF=o.HALF;
   const Nf=Math.max(32,(o.res||32)*4), Lr=Math.round(Math.log2(Nf/B)), coarsest=Math.max(0,Lr-2), BASE=HALF*2/(B*(1<<Lr));
   const CAP=o.cap||_svLodPreset().cap;
-  const VPS=C3*15+FC*12, maxVerts=CAP*VPS;
+  const VPS=C3*15+FC*6, maxVerts=CAP*VPS;   // (Wave 2a) 6 skirt verts a face cell (one winding), was 12
   const rMin=radius+o.relief.min, rMax=radius+o.relief.max;
   const jobArr=new Uint32Array(DMAX*4), jobSlotArr=new Uint32Array(DMAX).fill(CAP);
   const jobAttr=new THREE.StorageBufferAttribute(jobArr,4), jobNode=storage(jobAttr,'uvec4',DMAX);
@@ -7883,8 +7887,8 @@ async function _svLodPlanetMesh(o){
   const skK=Fn(()=>{
     const j=instanceIndex.div(uint(FC)), r=instanceIndex.mod(uint(FC)), slot=jsNode.element(j), jb=jobNode.element(j);
     If(slot.lessThan(uint(CAP)),()=>{
-      const ob=slot.mul(uint(VPS)).add(uint(C3*15)).add(r.mul(uint(12)));
-      Loop(12,({i})=>{ vertexNode.element(ob.add(uint(i))).assign(vec3(0,0,0)); normalNode.element(ob.add(uint(i))).assign(vec3(0,1,0)); colorNode.element(ob.add(uint(i))).assign(vec3(0,0,0)); });
+      const ob=slot.mul(uint(VPS)).add(uint(C3*15)).add(r.mul(uint(6)));
+      Loop(6,({i})=>{ vertexNode.element(ob.add(uint(i))).assign(vec3(0,0,0)); normalNode.element(ob.add(uint(i))).assign(vec3(0,1,0)); colorNode.element(ob.add(uint(i))).assign(vec3(0,0,0)); });
       If(jb.w.greaterThan(uint(0)),()=>{
         const f=r.div(uint(B*B)), uv=r.mod(uint(B*B)), u=uv.mod(uint(B)), v=uv.div(uint(B)), ax=f.shiftRight(uint(1)), sB=f.bitAnd(uint(1)).mul(uint(B));
         const q=[[0,0],[1,0],[1,1],[0,1]].map(([du,dv])=>{
@@ -7905,7 +7909,12 @@ async function _svLodPlanetMesh(o){
           const sk=jb.w.toFloat().mul(BASE*1.25);
           const na=pa.normalize(), nb=pb.normalize(), pa2=pa.sub(na.mul(sk)), pb2=pb.sub(nb.mul(sk));
           const col=o.colorAt(pa,na);
-          const tri=[pa,pb,pb2, pa,pb2,pa2, pa,pb2,pb, pa,pa2,pb2];
+          // (Wave 2a) the one winding whose face looks OUT of the brick through this face (-axis on face 0/2/4, +axis on 1/3/5)
+          const sgn=select(f.bitAnd(uint(1)).equal(uint(1)),float(1),float(-1));
+          const outD=vec3(select(ax.equal(uint(0)),sgn,float(0)),select(ax.equal(uint(1)),sgn,float(0)),select(ax.equal(uint(2)),sgn,float(0)));
+          const flip=pb.sub(pa).cross(pb2.sub(pa)).dot(outD).lessThan(0.0);
+          const triA=[pa,pb,pb2, pa,pb2,pa2], triB=[pa,pb2,pb, pa,pa2,pb2];
+          const tri=triA.map((P,k)=>select(flip,triB[k],P));
           tri.forEach((P,k)=>{ vertexNode.element(ob.add(uint(k))).assign(P); normalNode.element(ob.add(uint(k))).assign(P.normalize()); colorNode.element(ob.add(uint(k))).assign(col); });
         });
       });
@@ -7974,6 +7983,28 @@ async function _svLodPlanetMesh(o){
         }
       }catch(e){ console.warn('[sparse LOD] update',e&&e.message); }
       finally{ this.busy=false; try{ window.DMPerf&&DMPerf.mark('sparseLOD',performance.now()-t0); }catch(e){} }
+    },
+    // (Wave 2a) still has queued / stale / fading work (a world that started loading is not done until this is false)
+    unsettled(){ return !!(this.pending||stream.todo.length||stream.stale.length||deadSlots.length||fadeIn.size||fadeOut.size); },
+    // (Wave 2a) a body that lost its pool slot (handhelds keep one) FINISHES what it queued — no re-select, the camera is ignored —
+    // so it is never left half-built or mid-fade (see-through) while the static mesh that replaces it is made.  Returns true when done.
+    async drain(budgetMs){
+      const t0=performance.now();
+      this.fadeTick(t0);
+      if(this.busy) return false;
+      if(!this.pending&&!stream.todo.length&&!stream.stale.length&&!deadSlots.length){ this.drained=!fadeIn.size&&!fadeOut.size; return this.drained; }
+      this.busy=true;
+      try{ const n=Math.max(2,Math.min(DMAX,Math.floor((budgetMs||SV_LOD.budgetMs)/Math.max(0.02,this.msPerBrick)))); await this.batch(n); }
+      catch(e){ console.warn('[sparse LOD] drain',e&&e.message); }
+      finally{ this.busy=false; }
+      return false;
+    },
+    // (Wave 2a) last resort if a drain cannot finish: every fade lands where it was going (in -> solid, out -> hidden with the dither
+    // kept on, so a faded-out brick still draws nothing), so the frozen pool is complete and never see-through
+    settle(){
+      for(const sl of fadeIn.keys()) fadeArr[sl]=1; fadeIn.clear();
+      for(const sl of fadeOut.keys()){ fadeArr[sl]=0; deadSlots.push(sl); } fadeOut.clear();
+      fadeAttr.needsUpdate=true; this.hash(deadSlots.length>0);
     },
   };
   const t0=performance.now();
@@ -13410,17 +13441,44 @@ function _svLodTick(){
     let budget=SV_LOD.budgetMs;
     // Auto preset only: shrink the streaming budget when frames run long (never touches fixed presets)
     try{ if(GFX&&GFX.preset==='auto'&&window.DMPerf&&DMPerf.on){ const st=DMPerf.stats(); if(st.avgMs>40) budget=1; } }catch(e){}
-    for(const b of celestialBodies){ if(!b._svLod||!b._svLodMesh) continue; const c=_svCamLocal(b); if(c) b._svLod.update(c,budget); }
+    for(const b of celestialBodies){
+      if(b._svDrain) _svLodDrainTick(b,budget);   // (Wave 2a) an evicted pool finishes its queue first
+      if(!b._svLod||!b._svLodMesh) continue; const c=_svCamLocal(b); if(c) b._svLod.update(c,budget);
+    }
   }catch(e){}
 }
-function _svLodWants(b){ const lod=celestialBodies.filter(x=>x._svLod&&x!==b); if(lod.length<SV_LOD.maxBodies) return true; const d=b.mesh.position.distanceTo(STATE.flight.pos); return lod.some(x=>x.mesh.position.distanceTo(STATE.flight.pos)>d); }
+// (Wave 2a) ~10 s of frames at most, then settle() what is left (never a half-faded, see-through world)
+function _svLodDrainTick(b,budget){
+  const d=b._svDrain; d._dn=(d._dn||0)+1;
+  if(d.drained){ b._svDrain=null; return; }
+  if(d._dn>600){ if(!d.busy){ try{ d.settle(); }catch(e){} b._svDrain=null; } return; }
+  d.drain(budget);
+}
+// (Wave 2a) true: take a pool (evicting the farthest if full); false: stay static; 'wait': a farther pool is still loading — it may not be
+// evicted half-built, so ask again next frame (at most ~8 s, then it is evicted and FINISHES its queue via _svDrain).  15 % hysteresis
+// so two worlds at about the same distance (Saturn / Titan) do not trade the one handheld pool back and forth.
+// No allocation: it is asked every frame while a 'high' world waits.
+function _svLodWants(b){
+  const P=STATE.flight.pos, d=b.mesh.position.distanceTo(P); let n=0, far=0, idle=0;
+  for(let i=0;i<celestialBodies.length;i++){ const x=celestialBodies[i]; if(!x._svLod||x===b) continue; n++;
+    if(x.mesh.position.distanceTo(P)>d*1.15){ far++; if(!x._svLod.unsettled()) idle++; } }
+  if(n<SV_LOD.maxBodies) return true;
+  if(!far){ b._svWaitT=0; return false; }
+  if(idle){ b._svWaitT=0; return true; }
+  const now=performance.now(); if(!b._svWaitT) b._svWaitT=now;
+  if(now-b._svWaitT>8000){ b._svWaitT=0; return true; }
+  return 'wait';
+}
 // at most SV_LOD.maxBodies worlds hold a brick pool; the farthest extra one drops back to a static 'med' mesh
 function _svLodEvict(keep){
   const lod=celestialBodies.filter(b=>b._svLod);
   if(lod.length<=SV_LOD.maxBodies) return;
   lod.sort((a,b)=>b.mesh.position.distanceTo(STATE.flight.pos)-a.mesh.position.distanceTo(STATE.flight.pos));
   const far=lod.find(b=>b!==keep); if(!far) return;
-  far._svLod=null; far._svLodMesh=null; far.mcTier='med'; far._mcLodT=0;   // the normal tier pass rebuilds it (static) at its distance's tier
+  // (Wave 2a) the evicted pool keeps streaming until its queue is done (_svDrain), and the body is marked so the tier pass DOES rebuild it
+  // static (before, mcTier='med' plus the monotonic rule meant a body farther than 'high' range was never rebuilt: it kept a frozen,
+  // possibly half-built pool forever — Titan / moons missing or unfinished)
+  far._svDrain=far._svLod; far._svLod=null; far._svLodMesh=null; far.mcTier='med'; far._mcLodT=0; far._svEvicted=true;
 }
 async function upgradePlanetLOD(dt){
   _lodFadeTick();           // (v193) running cross-fades advance every frame
@@ -13439,16 +13497,19 @@ async function upgradePlanetLOD(dt){
   for(let i=0;i<celestialBodies.length;i++){
     const b=celestialBodies[i];
     if(!b.isProcedural||!b.mesh)continue;
-    if(b._svLod)continue;
+    if(b._svLod||b._svDrain)continue;   // (Wave 2a) streaming, or still finishing an evicted pool's queue
     if(_MC_TIER_RANK[b.mcTier]>=2)continue; // already at 'high' — never rebuilds again for this body
     const dist=b.mesh.position.distanceTo(STATE.flight.pos);
-    const tier=_mcTierFor(dist,b.mcRadius);
+    const ev=!!b._svEvicted;
+    let tier=_mcTierFor(dist,b.mcRadius);
+    if(ev&&_MC_TIER_RANK[tier]<1) tier='med';   // (Wave 2a) an evicted pool is always replaced by a static mesh, whatever its distance
+    if(tier==='high'&&_svLodAllowed()&&_svLodWants(b)==='wait') continue;   // (Wave 2a) a farther pool is still loading
     // Monotonic: only rebuild when moving UP a tier. A body that drifts
     // back out of range simply keeps its current mesh instead of
     // rebuilding down and potentially back up again later — bounds every
     // body to at most 2 rebuilds for its entire lifetime (low->med,
     // med->high), not an unbounded number over a long session.
-    if(_MC_TIER_RANK[tier]<=_MC_TIER_RANK[b.mcTier])continue;
+    if(!ev&&_MC_TIER_RANK[tier]<=_MC_TIER_RANK[b.mcTier])continue;
     if(b._mcLodT&&performance.now()-b._mcLodT<1500)continue; // per-body cooldown, same pattern as the sphere LOD above
     // Closest body whose tier actually needs to change wins this frame —
     // sequential, one at a time, same reasoning as the initial build loop.
@@ -13461,7 +13522,7 @@ async function upgradePlanetLOD(dt){
   try{
     // (v136) the 'high' step goes onto per-brick LOD (ui/dm-sparsevox.js) when allowed: from then on the world streams
     // its bricks around the camera instead of ever being rebuilt whole
-    const _lod=newTier==='high'&&_svLodAllowed()&&_svLodWants(b);
+    const _lod=newTier==='high'&&_svLodAllowed()&&_svLodWants(b)===true;
     const newGroup=await buildProceduralPlanetMesh(b.mcRadius,b.mcSeed,b.mcColor,b.mcHasAtm,newRes,b.mcKind,_lod?{lod:true,res:newRes,cam:_svCamLocal(b)}:null);
     // compile the new detail level hidden, beside the old one, so the swap never stalls the frame
     _lodFadePrep(newGroup);
@@ -13478,7 +13539,7 @@ async function upgradePlanetLOD(dt){
     extras.forEach(c=>newGroup.add(c));
     b.mesh=newGroup;   // (v193) the body now moves the new level; the fading old one rides along with it
     await _lodCrossFade(oldGroup,newGroup,oldGroup===b._cheapG);
-    b.mcRes=newRes;b.mcTier=newTier;
+    b.mcRes=newRes;b.mcTier=newTier; b._svEvicted=false;
     { let lm=null; newGroup.traverse(m=>{ if(m.userData&&m.userData.svLod) lm=m; }); b._svLod=lm?lm.userData.svLod:null; b._svLodMesh=lm; }
     if(b._wm) _applyWorldMapToFlightBody(b,b._wm);   // keep wearing its map
     if(b.name==='Earth')earthMesh=newGroup;
@@ -24905,14 +24966,34 @@ function SkyGround(scene,F,pal,o){
   this.roots=new Map(); this.queue=[]; this.viewR=4000;
   const prevStyle=TERRAIN.style; TERRAIN.style=F.ws; this.mat=_terrainDetailMat({dry:!pal.water,planet:true}); TERRAIN.style=prevStyle;
   this.copt={siteBias:F.siteBias,siteLat:F.siteLat,style:F.ws};
-  this.COARSE=80;                        // tiles this coarse draw the sea as the sea
+  // (Wave 2a) tiles this coarse (step >= 16: 703-unit tiles and up, drawn from ~1.3 km out) paint the sea as the sea.  Was 80 (2.8 km
+  // tiles, ~5 km out), but the sea sheet only reaches ~2-2.3 km (DMWater clip-map, 4096 span): the 1.4 km tiles in between drew bare
+  // seabed sand with no water over it, a ring bounded by a square.  Finer tiles (step 11, always < 1.9 km) sit under the sheet.
+  this.COARSE=16;
   const lc=pal.liquidColor!==undefined?pal.liquidColor:0x1a5a8a;
   this.wDeep=new THREE.Color(lc).multiplyScalar(0.6); this.wShal=new THREE.Color(lc).lerp(new THREE.Color(0x3f8fb0),0.4);
   this._fr=new THREE.Frustum(); this._m4=new THREE.Matrix4(); this._v=new THREE.Vector3(); this._c=new THREE.Vector3(); this._cc=new THREE.Vector3(); this._sph=new THREE.Sphere();
   // (Wave 1) reused every frame: the kept root keys, the lat/lon domain, the focus point, last frame's build counts
   this._keep=new Set(); this._dm={x0:0,z0:0,W:0}; this._fx=0; this._fz=0; this._cpos=null; this._sb=null;
   this.stat={built:0,focus:0,emerg:0,skipped:0,left:0};
+  this._fadeU=null; this._radialFade();
 }
+// (Wave 2a) RADIAL horizon: tiles past viewR are let go whole, so the edge of the drawn ground was the stair-stepped outline of the
+// quadtree (a square).  Every ground pixel now dissolves (screen-door dither, the same noise the planet reveal uses — no new discard,
+// no blending) between _SKY_FADE0 x viewR and viewR by its true distance from the camera, so the edge is a circle.  Nothing inside the
+// circle can be uncovered: a tile is only let go when its nearest point is past viewR (tools/tests/skyground-radial.js).
+const _SKY_FADE0=0.82;
+function _skyGroundFade(d,viewR){ const a=viewR*_SKY_FADE0, t=Math.min(1,Math.max(0,(d-a)/Math.max(1e-6,viewR-a))); return 1-t*t*(3-2*t); }
+SkyGround.prototype._radialFade=function(){
+  const W=window, m=this.mat;
+  if(!m||typeof W.uniform!=='function'||!W.positionView||!W.interleavedGradientNoise||!W.screenCoordinate||!W.smoothstep) return;
+  try{
+    const U=this._fadeU={a:W.uniform(this.viewR*_SKY_FADE0),b:W.uniform(this.viewR)};
+    const k=W.float(1).sub(W.smoothstep(U.a,U.b,W.length(W.positionView)));
+    const keep=W.interleavedGradientNoise(W.screenCoordinate.xy).lessThan(k);
+    m.maskNode=m.maskNode?m.maskNode.and(keep):keep;
+  }catch(e){ this._fadeU=null; console.warn('[sky ground] radial fade',e&&e.message); }
+};
 // (Wave 1) may the tile at the head of the queue be built now?  Pure (tools/tests/skyground-budget.js drives it).
 //   el   ms already spent building this frame       B    the frame's budget (ms)
 //   foc  the tile is on the chain under her feet    nf   focus tiles built so far this frame
@@ -24992,6 +25073,7 @@ SkyGround.prototype.update=function(cam,budgetMs){
     if(n._foc){ nf++; if(bare) bare=this._bareUnder(); }
   }
   const st=this.stat; st.built=built; st.focus=nf; st.emerg=em?1:0; st.skipped=skipped; st.left=Q.length-built;
+  if(this._fadeU){ this._fadeU.a.value=this.viewR*_SKY_FADE0; this._fadeU.b.value=this.viewR; }   // (Wave 2a) the circle follows the drawn radius
   this.roots.forEach(this._show,this);
   const now=performance.now(), dt=this._lastT?Math.min(0.1,(now-this._lastT)/1000):0; this._lastT=now;
   this._morphTick(dt);
@@ -25024,7 +25106,9 @@ SkyGround.prototype._visit=function(n,c,depth){
     if(!n.mesh) this.queue.push(n);   // every level gets its own tiles, so detail sharpens a level at a time (coarse first)
     for(const k of n.kids) this._visit(k,c,depth+1);
   } else {
-    if(n.kids){ this._drop(n.kids); n.kids=null; }
+    // (Wave 2a) merging back: the children stay up (unvisited, still drawn) until this tile has its own mesh to stand in for them —
+    // before, they were dropped at once, and a tile whose mesh had been invalidated left a hole until it was rebuilt
+    if(n.kids&&(n.mesh||n._hidden)){ this._drop(n.kids); n.kids=null; }
     if(!n.mesh&&!n._hidden) this.queue.push(n);
   }
 };
@@ -25042,6 +25126,18 @@ SkyGround.prototype._drop=function(list){
 };
 // height and colour at a ground point for a tile of this step: coarse tiles draw the sea flat, in its own colour
 SkyGround.prototype._sea=function(h,step){ return this.pal.water&&step>=this.COARSE&&h<0; };
+// (Wave 2a) is the NATURAL ground (the water system's own field: TERRAIN.Hw = F.H0, no mansion-box carve) below the sea here?  The
+// drawn ground is lowered to ~y0-128 inside the mansion's box, which the coarse tiles used to paint as sea; the water never shows
+// there.  Only the box needs the second sample (TERRAIN.exBox is a cheap bounds test), so the usual cost is nil.
+SkyGround.prototype._wet=function(x,z,h){
+  if(!(h<0)) return false;
+  const F=this.F, ex=(typeof TERRAIN!=='undefined')&&TERRAIN.exBox;
+  if(F.H0&&ex&&ex(x,z)){ const h0=F.H0(x,z); return h0<0; }
+  return true;
+};
+// (Wave 2a) a painted-sea vertex sits at the sea floor, clamped to 40 m deep (was a flat -2): the sea sheet over the nearer painted
+// tiles then reads open water (not a 2 m shoal: no false shore foam), and the depth tint (DMTerrainLod.seaT, 0..40 m) is the real one
+const _SKY_SEA_FLOOR=-40;
 // (Wave 1) _build's scratch, made once per ground: the height grids, the parent-shape temporaries, the skirt ring and the index
 // (fixed by SEG, the same for every tile), one colour and one colour-options object.  Only what a tile keeps is new per build.
 SkyGround.prototype._scratch=function(){
@@ -25051,7 +25147,7 @@ SkyGround.prototype._scratch=function(){
   const idx=new Uint16Array(seg*seg*6+rl*12); let w=0;
   for(let r=0;r<seg;r++) for(let q=0;q<seg;q++){ const a=r*S1+q, b=a+1, c2=a+S1, d=c2+1; idx[w++]=a; idx[w++]=c2; idx[w++]=b; idx[w++]=b; idx[w++]=c2; idx[w++]=d; }
   for(let i=0;i<rl;i++){ const a=ring[i], b=ring[(i+1)%rl], sa=V+i, sb=V+(i+1)%rl; idx[w++]=a; idx[w++]=b; idx[w++]=sa; idx[w++]=b; idx[w++]=sb; idx[w++]=sa; idx[w++]=a; idx[w++]=sa; idx[w++]=b; idx[w++]=b; idx[w++]=sa; idx[w++]=sb; }
-  return (this._sb={hb:new Float32Array(G*G),raw:new Float32Array(G*G),pY:new Float32Array(V),pN:new Float32Array(V*3),pC:new Float32Array(V*3),ring,idx,tc:new THREE.Color(),copt:{}});
+  return (this._sb={hb:new Float32Array(G*G),raw:new Float32Array(G*G),wet:new Uint8Array(G*G),pY:new Float32Array(V),pN:new Float32Array(V*3),pC:new Float32Array(V*3),ring,idx,tc:new THREE.Color(),copt:{}});
 };
 // the colour of a ground point: the sea flat in its own colour on coarse tiles, else the biome
 SkyGround.prototype._colourAt=function(x,z,h,ny,sea,copt){
@@ -25062,11 +25158,13 @@ SkyGround.prototype._build=function(n){
   const F=this.F, H=F.H, seg=this.SEG, step=n.size/seg, S1=seg+1, G=seg+3, V=S1*S1, sb=this._scratch();
   const D=ATMO_DEG_PER_UNIT, site=PW.site&&typeof PW.site.lat==='number'?PW.site:_SKY_SITE0;
   const hb=sb.hb, raw=sb.raw, ring=sb.ring, rl=ring.length; let mn=1e9, mx=-1e9;
-  for(let r=0;r<G;r++) for(let q=0;q<G;q++){ let h=H(n.x0+(q-1)*step,n.z0+(r-1)*step); if(!isFinite(h)) h=0; raw[r*G+q]=h; hb[r*G+q]=this._sea(h,step)?-2:h; }
+  // (Wave 2a) wet[] = natural ground below the sea at that point (only asked where this tile or its parent paints the sea)
+  const wet=sb.wet, askWet=!!this.pal.water&&step*2>=this.COARSE, tSea=!!this.pal.water&&step>=this.COARSE;
+  for(let r=0;r<G;r++) for(let q=0;q<G;q++){ const x=n.x0+(q-1)*step, z=n.z0+(r-1)*step; let h=H(x,z); if(!isFinite(h)) h=0; const i=r*G+q; raw[i]=h; wet[i]=askWet&&this._wet(x,z,h)?1:0; hb[i]=tSea&&wet[i]?Math.max(h,_SKY_SEA_FLOOR):h; }
   const vc=V+rl, pos=new Float32Array(vc*3), nor=new Float32Array(vc*3), col=new Float32Array(vc*3);
   const copt=Object.assign(sb.copt,this.copt); copt.siteLat=site.lat-(n.z0+n.size/2)*D;
   for(let r=0;r<S1;r++) for(let q=0;q<S1;q++){
-    const k=r*S1+q, b=(r+1)*G+q+1, h=hb[b], sea=this._sea(raw[b],step);
+    const k=r*S1+q, b=(r+1)*G+q+1, h=hb[b], sea=tSea&&wet[b]===1;
     if(h<mn) mn=h; if(h>mx) mx=h;
     let nx=hb[b-1]-hb[b+1], ny=2*step, nz=hb[b-G]-hb[b+G]; if(sea){ nx=0; nz=0; } const L=Math.hypot(nx,ny,nz)||1; nx/=L; ny/=L; nz/=L;
     pos[k*3]=q*step; pos[k*3+1]=h; pos[k*3+2]=r*step;
@@ -25082,12 +25180,12 @@ SkyGround.prototype._build=function(n){
   // shape and colour and eases into its full detail, so nothing pops.
   let morph=null;
   if(n.parent){
-    const pstep=step*2, pSea=this.pal.water&&pstep>=this.COARSE&&step<this.COARSE;
+    const pSea=askWet&&!tSea;   // the parent painted the sea, this tile does not
     const pY=sb.pY, pN=sb.pN, pC=sb.pC;
     for(let k=0;k<V*3;k++){ pN[k]=nor[k]; pC[k]=col[k]; }
     for(let r=0;r<S1;r++) for(let q=0;q<S1;q++){
       const k=r*S1+q, b=(r+1)*G+q+1; pY[k]=pos[k*3+1];
-      if(pSea&&raw[b]<0){ pY[k]=-2; pN[k*3]=0; pN[k*3+1]=1; pN[k*3+2]=0; const c2=this._colourAt(0,0,raw[b],1,true,copt); pC[k*3]=c2.r; pC[k*3+1]=c2.g; pC[k*3+2]=c2.b; }
+      if(pSea&&wet[b]===1){ pY[k]=Math.max(raw[b],_SKY_SEA_FLOOR); pN[k*3]=0; pN[k*3+1]=1; pN[k*3+2]=0; const c2=this._colourAt(0,0,raw[b],1,true,copt); pC[k*3]=c2.r; pC[k*3+1]=c2.g; pC[k*3+2]=c2.b; }
     }
     const cY=new Float32Array(V), cN=new Float32Array(V*3), cC=new Float32Array(V*3);
     for(let r=0;r<S1;r++) for(let q=0;q<S1;q++){
