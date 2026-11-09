@@ -157,9 +157,10 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-rockmat.js?v=145"></script>
 <script src="ui/dm-parallax.js?v=280"></script>
 <script src="ui/dm-groundlib.js?v=280"></script>
-<script src="ui/dm-water-core.js?v=292"></script>
-<script src="ui/dm-water.js?v=292"></script>
-<script src="ui/dm-water-sea.js?v=292"></script>
+<script src="ui/dm-radical-circ.js?v=300"></script>   <!-- (lod-hide) Radical Circumference / ArcEdge radius maths (Justin Craig Venable, dartedge.com/radicaledge): the LOD discs and rims (tess patch, sea-sheet rim) -->
+<script src="ui/dm-water-core.js?v=300"></script>
+<script src="ui/dm-water.js?v=300"></script>
+<script src="ui/dm-water-sea.js?v=300"></script>
 <script src="ui/dm-water-curl.js?v=292"></script>   <!-- water: the breaking-wave curl (glassy turquoise barrel along the shore-parallel wave fronts; Medium+; created by dm-water-fx) -->
 <script src="ui/dm-water-fx.js?v=292"></script>   <!-- water: spray / splash / mist sprites, wake, footstep ripples, shore-break spray, underwater fog + shafts (?waterfx=0 off) -->   <!-- water: baked sea, shore, ground hook (?water=0 = the previous sea) -->
 <script src="ui/dm-perf.js?v=160"></script>
@@ -1067,7 +1068,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-mansion-rooms.js?v=250" defer></script>
 <script src="ui/dm-mansion-look.js?v=251" defer></script>
 <script src="ui/dm-mansion-interior.js?v=262" defer></script>
-<script src="ui/dm-facilities.js?v=295" defer></script>
+<script src="ui/dm-facilities.js?v=300" defer></script>
 <script src="ui/dm-lamps.js?v=293" defer></script>
 <script src="ui/dm-mansion-collide.js?v=283" defer></script>
 <script src="ui/dm-holo.js?v=283" defer></script>
@@ -15583,6 +15584,9 @@ const CREDITS=[
  {t:'Unified Spray, Foam and Bubbles for Particle-Based Fluids',a:'M. Ihmsen, N. Akinci, G. Akinci, M. Teschner (2012)',l:'Published paper',use:'technique',
   u:['https://cg.informatik.uni-freiburg.de/publications/2012_CGI_sprayFoamBubbles.pdf'],
   w:'Foam, spray and bubble particles thrown up by churned water.'},
+ {t:'Radical Circumference · ArcEdge',a:'Justin Craig Venable',l:'DART Meadow project',use:'original',
+  u:['https://dartedge.com/radicaledge'],
+  w:'Circle and sphere measures without pi (circumference = √(diameter × 3)², area, sphere volume and surface), rim measured centre-to-centre, the half-radius division and the 1/8 opposite balance: the radii of the ground’s level-of-detail discs and the sea’s circular rim (ui/dm-radical-circ.js).'},
  {t:'ArcLake · SPH Ocean',a:'DART-Skyboard · Radical Deepscale',l:'DART Meadow project',use:'technique',
   u:['https://radicaldeepscale.com/ArcLakeFluidSim.html'],
   w:'The project’s own browser SPH ocean; the reference for bringing Fluid-Sim into the game.'},
@@ -25010,6 +25014,7 @@ function SkyGround(scene,F,pal,o){
   this._keep=new Set(); this._dm={x0:0,z0:0,W:0}; this._fx=0; this._fz=0; this._cpos=null; this._sb=null;
   this.stat={built:0,focus:0,emerg:0,skipped:0,left:0};
   this._fadeU=null; this._radialFade();
+  this._seaU=null; this._seaRimInit();
 }
 // (Wave 2a) RADIAL horizon: tiles past viewR are let go whole, so the edge of the drawn ground was the stair-stepped outline of the
 // quadtree (a square).  Every ground pixel now dissolves (screen-door dither, the same noise the planet reveal uses — no new discard,
@@ -25026,6 +25031,33 @@ SkyGround.prototype._radialFade=function(){
     const keep=W.interleavedGradientNoise(W.screenCoordinate.xy).lessThan(k);
     m.maskNode=m.maskNode?m.maskNode.and(keep):keep;
   }catch(e){ this._fadeU=null; console.warn('[sky ground] radial fade',e&&e.message); }
+};
+// (lod-hide) the far sea has no square.  The sea sheet (ui/dm-water.js clip-map) used to end on its outermost level's square ~2 km out, and past it the
+// finer tiles showed their bare seabed (or the coarse tiles their flat sea paint) along a square edge that followed her round: "square patches out on the
+// ocean".  The sheet now ends on a circle (DMWaterCore.sheetRim: the inscribed radius less one snap step) and dissolves across its rim; across the SAME
+// band every sky-ground pixel below the sea takes the sea's own flat colour (the coarse tiles' paint, DMTerrainLod depth tint over 40 m), so open sea
+// reads as one sea out to the horizon.  The rim follows Justin Craig Venable's Radical Circumference / ArcEdge rule (https://dartedge.com/radicaledge,
+// ui/dm-radical-circ.js): measured from the centre to the rim's centre, outer edge R, inner edge R less one eighth of the diameter.  No pi, no box.
+// Two uniforms, set in update() from DMWater.seaRim() (no allocation); far off (1e9) when there is no sheet, so nothing changes.
+function _skySeaTake(dist,y,rim){ if(!rim||!(y<-0.1)) return 0; const a=rim.inner, b=rim.outer; if(dist<=a) return 0; if(dist>=b) return 1; const t=(dist-a)/(b-a); return t*t*(3-2*t); }
+SkyGround.prototype._seaRimInit=function(){
+  const W=window, m=this.mat;
+  if(!this.pal.water||!m||typeof W.uniform!=='function'||!W.modelWorldMatrix||!W.positionGeometry||!W.smoothstep||!W.mix||!W.varying) return;
+  try{
+    const U=this._seaU={c:W.uniform(new THREE.Vector2(0,0)),r:W.uniform(new THREE.Vector2(1e9,2e9)),sh:W.uniform(this.wShal.clone()),dp:W.uniform(this.wDeep.clone())};
+    const p=W.varying(W.modelWorldMatrix.mul(W.vec4(W.positionGeometry,1.0)).xyz);   // the flat world point (the planet frame bends positionNode, not this)
+    const below=W.float(1).sub(W.smoothstep(W.float(-0.6),W.float(-0.1),p.y));
+    const k=W.smoothstep(U.r.x,U.r.y,W.distance(W.vec2(p.x,p.z),U.c)).mul(below);
+    const sea=W.mix(U.sh,U.dp,W.clamp(p.y.negate().div(40.0),0.0,1.0));
+    const base=m.colorNode||W.vertexColor();
+    m.colorNode=W.vec4(W.mix(W.vec3(base),sea,k),W.vec4(base).w);
+  }catch(e){ this._seaU=null; console.warn('[sky ground] sea rim',e&&e.message); }
+};
+SkyGround.prototype._seaRimTick=function(){
+  const U=this._seaU; if(!U) return;
+  const DW=window.DMWater, rim=DW&&DW.seaRim?DW.seaRim():null;
+  if(rim&&DW.S&&DW.S.focus){ U.c.value.set(DW.S.focus[0],DW.S.focus[1]); U.r.value.set(rim.inner,rim.outer); }
+  else U.r.value.set(1e9,2e9);
 };
 // (Wave 1) may the tile at the head of the queue be built now?  Pure (tools/tests/skyground-budget.js drives it).
 //   el   ms already spent building this frame       B    the frame's budget (ms)
@@ -25107,6 +25139,7 @@ SkyGround.prototype.update=function(cam,budgetMs){
   }
   const st=this.stat; st.built=built; st.focus=nf; st.emerg=em?1:0; st.skipped=skipped; st.left=Q.length-built;
   if(this._fadeU){ this._fadeU.a.value=this.viewR*_SKY_FADE0; this._fadeU.b.value=this.viewR; }   // (Wave 2a) the circle follows the drawn radius
+  this._seaRimTick();   // (lod-hide) the sea's circular rim follows the sheet
   this.roots.forEach(this._show,this);
   const now=performance.now(), dt=this._lastT?Math.min(0.1,(now-this._lastT)/1000):0; this._lastT=now;
   this._morphTick(dt);
@@ -25426,6 +25459,9 @@ function _pwBuildGround(pal,fx,fz,mode){
     const vol=new THREE.Mesh(new THREE.BoxGeometry(SZ,depth,SZ,Math.round(SZ/35),1,Math.round(SZ/35)),new THREE.MeshBasicMaterial({color:liqColor,transparent:true,opacity:0.08,depthWrite:false,side:THREE.DoubleSide}));
     vol.position.set(fx,WATER_SURFACE_Y-depth*0.5,fz);
     vol.name='JOTS_WaterVolume'; vol.userData.isWaterVolume=true; vol.userData.waterVolume=true;   // Stabilizer Swim_Forward trigger
+    // (lod-hide) a trigger volume, never drawn: its 8 % tinted box (rootSize square, 36 deep) showed on the open sea as a square patch that jumped after her in
+    // 100 m steps.  The swim test reads userData.bounds / _surfWaterAt (and a raycast ignores material.visible), so nothing that uses it changes.
+    vol.material.visible=false;
     vol.userData.liquidName=pal.liquidName||'water'; vol.userData.waterSurfaceY=WATER_SURFACE_Y; vol.userData.waterFloorY=WATER_FLOOR_Y;
     vol.userData.bounds={minX:fx-SZ/2,maxX:fx+SZ/2,minY:WATER_FLOOR_Y,maxY:WATER_SURFACE_Y,minZ:fz-SZ/2,maxZ:fz+SZ/2};
     PW.scene.add(vol); TERRAIN.waterVolume=vol; TERRAIN.waterFollow=[vol];
@@ -26002,9 +26038,27 @@ function _tessDeform(x,z){
   }
   return d*amp;
 }
+// (lod-hide) the refined patch is a DISC round her, not a square: its grid is square, but the deformation is radial (true distance from the centre, not
+// the box metric max(|dx|,|dz|) whose square edge followed her across the sand) and the patch is only drawn out to its rim's centre (_tessKeepMask).
+// Radii by Justin Craig Venable's Radical Circumference / ArcEdge (https://dartedge.com/radicaledge, ui/dm-radical-circ.js), no pi: the disc is the
+// square's inscribed circle (radius-square and circle are equivalent at the diameter, d = 2 half); full relief inside the half-radius circle; eased to
+// flat across to the rim's inner edge (half less one eighth of the diameter = 0.75 half); drawn to the rim's centre (0.875 half), which lies outside the
+// coarse ground's hole (0.8 half) and inside the grid, so nothing is uncovered and where the two overlap the patch is the plain height field.
+const _TESS_RIM=(function(){ const RC=window.DMRadCirc; const half=1, r=RC?RC.rim(half):{outer:1,inner:0.75,centre:0.875}; return {full:RC?RC.halfRadius(half):0.5,flat:r.inner,keep:r.centre}; })();
 function _tessW(x,z,T){
-  const dx=Math.abs(x-T.cx)/T.half, dz=Math.abs(z-T.cz)/T.half, e=Math.max(dx,dz);
-  const u=Math.min(1,Math.max(0,(e-0.62)/0.33)); return 1-u*u*(3-2*u);
+  const e=Math.hypot(x-T.cx,z-T.cz)/T.half, R=_TESS_RIM;
+  const u=Math.min(1,Math.max(0,(e-R.full)/(R.flat-R.full))); return 1-u*u*(3-2*u);
+}
+// the disc mask of the refined patch (AND-ed into its material's maskNode once): a pixel is drawn only within _TESS_RIM.keep x half of a slot centre
+// (TESS_HOLE.r is 0.8 x half, so keep = r x keep/0.8); empty slots have r = 0 and keep nothing
+function _tessKeepMask(m){
+  const W=window; if(!m||!TESS_HOLE.slots.length||typeof W.distance!=='function'||!W.modelWorldMatrix||!W.positionGeometry||!W.varying) return false;
+  try{
+    const p=W.varying(W.modelWorldMatrix.mul(W.vec4(W.positionGeometry,1.0)).xyz), k=_TESS_RIM.keep/0.8;
+    let keep=null;
+    TESS_HOLE.slots.forEach(h=>{ const inS=W.distance(W.vec2(p.x,p.z),h.c).lessThan(h.r.mul(k)); keep=keep?keep.or(inS):inS; });
+    m.maskNode=m.maskNode?m.maskNode.and(keep):keep; m.needsUpdate=true; return true;
+  }catch(e){ console.warn('[tess] disc mask',e&&e.message); return false; }
 }
 // one refined area, built a few rows at a time
 let _tessSeq=0;
@@ -26047,7 +26101,7 @@ function* _tessJob(cx,cz,half,slot){
   geo.setAttribute('color',new THREE.BufferAttribute(col,3));
   geo.setIndex(new THREE.BufferAttribute(idx,1));
   geo.computeBoundingSphere();
-  if(!TERRAIN.tessMat){ TERRAIN.tessMat=_terrainDetailMat({noHole:true}); TERRAIN.tessMat.polygonOffset=true; TERRAIN.tessMat.polygonOffsetFactor=-2; TERRAIN.tessMat.polygonOffsetUnits=-4; }
+  if(!TERRAIN.tessMat){ TERRAIN.tessMat=_terrainDetailMat({noHole:true}); TERRAIN.tessMat.polygonOffset=true; TERRAIN.tessMat.polygonOffsetFactor=-2; TERRAIN.tessMat.polygonOffsetUnits=-4; _tessKeepMask(TERRAIN.tessMat); }   // (lod-hide) drawn as a disc
   const m=new THREE.Mesh(geo,TERRAIN.tessMat);
   m.name='JOTS_TessPatch'; m.userData.climbable=true;
   { const key='tess#'+slot+'#'+(++_tessSeq); m.userData.crumbKey=key; _crG(key,pos.byteLength+nor.byteLength+col.byteLength+idx.byteLength); }

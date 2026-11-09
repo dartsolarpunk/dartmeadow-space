@@ -158,7 +158,10 @@
     const cUV = xz.sub(vec2(U.coverC.x, U.coverC.y)).div(U.coverC.z).add(0.5), cIn = step(0.0, cUV.x).mul(step(cUV.x, 1.0)).mul(step(0.0, cUV.y)).mul(step(cUV.y, 1.0)).mul(U.coverOn);
     const coarseCover = mix(F(1.0), float(1.0).sub(smoothstep(COVER_LAND - 4, COVER_LAND + COVER_FADE - 4, texture(tex.cover, cUV).x)), cIn);
     const nearCover = hasShore ? mix(F(1.0), smoothstep(-3.5, -2.5, sh.raw), sh.win) : F(1.0);
-    const cover = min(coarseCover, nearCover);
+    // (lod-hide) the sheet's outer edge is a circle round the focus (DMWaterCore.sheetRim, Radical Circumference rim): it dissolves across the rim and the
+    // sky-ground tiles paint the sea over the same band, so the clip-map's square never shows on the far sea
+    const rimK = float(1.0).sub(smoothstep(U.seaRim.x, U.seaRim.y, length(xz.sub(U.focus))));
+    const cover = min(min(coarseCover, nearCover), rimK);
     let slope = se.sl.add(sw.sl), hgt = se.h.add(sw.h), foamLaceMix = null, foamLaceRaw = null, foamPatch = null, lavaHeat = null;
     // detail tile first (the foam, the capillary ripples and the ice read it): lace foam, pearl cells, micro slope
     const uvA = xz.mul(0.17).add(U.drift);

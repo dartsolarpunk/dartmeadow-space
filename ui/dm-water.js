@@ -76,7 +76,7 @@
       sunDir: uniform(new THREE.Vector3(0.3, 0.8, 0.3).normalize()), sunCol: uniform(new THREE.Color(1, 0.96, 0.88)), skyTop: uniform(Cc(P.colors.skyTop)), skyHor: uniform(Cc(P.colors.skyHor)),
       deep: uniform(Cc(P.colors.deep)), shallow: uniform(Cc(P.colors.shallow)), scatter: uniform(Cc(P.colors.scatter)), foamCol: uniform(Cc(P.colors.foam)), absorb: uniform(Raw(P.absorb)),
       glowCol: uniform(Cc(P.glowCol)), glowCol2: uniform(Cc(P.glowCol2)), glow: uniform(P.glow), pulse: uniform(1), ice: uniform(P.ice), steam: uniform(P.steam),
-      under: uniform(0), curlOn: uniform(0), layerFar: uniform(260), hexFar: uniform(90), time: uniform(0), nRip: uniform(0, 'int'), shoreOn: uniform(0), coverOn: uniform(0), coverC: uniform(V3()), shoreC: uniform(V3()), shoreP: uniform(V3()), wetTop: uniform(0), swashA: uniform(P.swash), swashT: uniform(0),
+      seaRim: uniform(new THREE.Vector2(1e9, 2e9)), under: uniform(0), curlOn: uniform(0), layerFar: uniform(260), hexFar: uniform(90), time: uniform(0), nRip: uniform(0, 'int'), shoreOn: uniform(0), coverOn: uniform(0), coverC: uniform(V3()), shoreC: uniform(V3()), shoreP: uniform(V3()), wetTop: uniform(0), swashA: uniform(P.swash), swashT: uniform(0),
       bandAmt: [], bm: [], bg: [], boff: [], bhw: []
     };
     spec.bands.forEach((b, i) => {
@@ -310,9 +310,13 @@
     geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), cm.half * 1.5); geo.boundingBox = new THREE.Box3(new THREE.Vector3(-cm.half, -10, -cm.half), new THREE.Vector3(cm.half, 10, cm.half));
     if (mesh.geometry) mesh.geometry.dispose(); mesh.geometry = geo; mesh.rotation.set(0, 0, 0); mesh.position.set(0, mesh.position.y, 0); mesh.frustumCulled = false; mesh.userData.dmWater = true;
     S.mesh = mesh; S.seaSpan = want; S.levels = levels; crumb('live', 'waterVerts', cm.pos.length / 2);
+    // (lod-hide) the sheet ends on a circle (DMWaterCore.sheetRim): its rim is read by the sea shader and by the sky ground (DMWater.seaRim)
+    S.rim = core.sheetRim(cm.half, g.c0 * Math.pow(2, levels - 1), S.rim || null); if (S.U && S.U.seaRim) S.U.seaRim.value.set(S.rim.inner, S.rim.outer);
     log('sea mesh', levels, 'levels', cm.pos.length / 2, 'verts', cm.index.length / 3, 'tris', 'half', cm.half);
     return true;
   }
+  // (lod-hide) the sea sheet's circular rim round the focus, or null before a sheet is attached (the same object every call: no allocation)
+  function seaRim() { return S.active && S.mesh && S.rim ? S.rim : null; }
   function follow(x, z) { S.focus[0] = x; S.focus[1] = z; if (S.U) S.U.focus.value.set(x, z); }
 
   /* ───────────────────────── end ───────────────────────── */
@@ -327,7 +331,7 @@
   }
 
   W.DMWater = {
-    S, enabled, begin, end, tick, follow, attachSea, bakeNow, pump, heightAt, slopeAt, ripple,
+    S, enabled, begin, end, tick, follow, seaRim, attachSea, bakeNow, pump, heightAt, slopeAt, ripple,
     get active() { return S.active; }, get tier() { return S.tier; }, get identity() { return S.P; }, get ready() { return S.ready; },
     status: () => ({ cover: S.cover && S.cmTiles ? { has: S.cover.has, wet: S.cover.wetFrac, tiles: S.cmTiles.keptTiles + '/' + S.cmTiles.tiles.length, idx: S.cmTiles.drawn + '/' + S.cmTiles.full.length } : null, active: S.active, tier: S.tier && S.tier.name, ready: S.ready, bands: S.spec && S.spec.bands.length, jobMs: +S.jobMs.toFixed(0), wallMs: +S.bakeWall.toFixed(0), lvl: S.lvl, bytes: S.tex ? Math.round(S.tex.bytes) : 0, kind: S.P && S.P.kind, sig: S.P && S.P.sig, mats: S.mats, curl: S.fx && S.fx.curl ? S.fx.curl.status() : null, cells: !!(S.tex && S.tex.cells), shore: S.shore ? { has: S.shore.has, minD: S.shore.minD, ver: S.shore.ver } : null }),
     _crumb: crumb, _log: log

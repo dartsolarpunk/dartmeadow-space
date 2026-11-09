@@ -265,8 +265,21 @@
       const bin = atob(col.data), n = bin.length >> 1, a = new Int16Array(n);
       for (let i = 0; i < n; i++) { const v = bin.charCodeAt(i * 2) | (bin.charCodeAt(i * 2 + 1) << 8); a[i] = v > 32767 ? v - 65536 : v; }
       col.h = a; MAN.col = col; MAN.glb = gl; MAN.loading = false;
+      try { gl.scene.traverse(o => { if (o.isMesh && o.material && o.material.name === 'ah_pool') F.poolLook(o.material); }); } catch (e) { console.warn('[ariel-home] pool look', e); }
     }).catch(e => { MAN.failed = true; MAN.loading = false; console.warn('[ariel-home] load failed', e); });
   }
+  // (lod-hide) the two pool surfaces of the GLB (ah_pool: one quad under the pool-room roof, one 57 x 21 u quad on the lower sea terrace) shipped with a
+  // full-strength cyan EMISSIVE (0.09, 0.63, 0.72) and no lighting response: at night the terrace pool was a flat, saturated teal rectangle by the shore,
+  // the brightest thing on screen, read as an LOD "reference tile".  Water is lit, not lit-up: a deep, dark, glossy surface that takes the sky / lamp light
+  // like the sea does, with only a trace of its own glow.  Shared by every clone (one material), set once when the GLB arrives.  Pure: node-tested.
+  F.POOL_LOOK = { color: [0.012, 0.05, 0.062], emissive: [0.0, 0.006, 0.008], roughness: 0.06, metalness: 0.3 };
+  F.poolLook = function (m) {
+    if (!m) return m; const L = F.POOL_LOOK;
+    if (m.color && m.color.setRGB) m.color.setRGB(L.color[0], L.color[1], L.color[2]);
+    if (m.emissive && m.emissive.setRGB) m.emissive.setRGB(L.emissive[0], L.emissive[1], L.emissive[2]);
+    m.emissiveIntensity = 1; m.roughness = L.roughness; m.metalness = L.metalness; m.userData = m.userData || {}; m.userData.dmPoolLook = true; m.needsUpdate = true;
+    return m;
+  };
   function mansionInstance(T) {
     const root = new T.Group(); root.name = 'JOTS_ArielMansion';
     const sc = MAN.glb.scene.clone(true);      // materials stay shared with the loaded scene on purpose (one set of textures)
