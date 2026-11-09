@@ -1,12 +1,15 @@
-# Manual GitHub Pages publish with a 30-minute deploy timeout.
-# The default "pages build and deployment" workflow cancels after 10 minutes,
-# which has been aborting still-running publishes. Do not start this while
-# that default workflow is deploying; a timeout there cancels the Pages
-# deployment itself.
+# Start a GitHub Pages deploy and do not cancel it.
+# actions/deploy-pages caps its wait at 10 minutes and then cancels a
+# still-running sync, which has been aborting publishes of this site.
 name: Deploy Pages (long timeout)
 
 on:
   workflow_dispatch:
+    inputs:
+      artifact_run_id:
+        description: Optional Actions run that already uploaded a github-pages artifact
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -19,6 +22,7 @@ concurrency:
 
 jobs:
   build:
+    if: ${{ inputs.artifact_run_id == '' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -33,15 +37,43 @@ jobs:
           path: .
 
   deploy:
-    needs: build
+    needs: [build]
+    if: ${{ always() && (needs.build.result == 'success' || (needs.build.result == 'skipped' && inputs.artifact_run_id != '')) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 15
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: https://dartmeadow.space/
     steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v5
-        with:
-          timeout: 1800000
+      - name: Start Pages deployment without canceling it
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARTIFACT_RUN_ID: ${{ inputs.artifact_run_id || github.run_id }}
+        run: |
+          set -euo pipefail
+          ARTIFACT_ID=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${ARTIFACT_RUN_ID}/artifacts" \
+            --jq '.artifacts[] | select(.name=="github-pages") | .id' | head -n 1)
+          if [ -z "${ARTIFACT_ID}" ]; then
+            echo "No github-pages artifact on run ${ARTIFACT_RUN_ID}" >&2
+            exit 1
+          fi
+          echo "Using github-pages artifact ${ARTIFACT_ID} from run ${ARTIFACT_RUN_ID}"
+          ID_TOKEN=$(curl -fsSL \
+            -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            -H "Accept: application/json; api-version=2.0" \
+            -H "Content-Type: application/json" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}" | jq -r '.value')
+          if [ -z "${ID_TOKEN}" ] || [ "${ID_TOKEN}" = "null" ]; then
+            echo "Failed to get an OIDC token" >&2
+            exit 1
+          fi
+          jq -n \
+            --argjson artifact_id "${ARTIFACT_ID}" \
+            --arg pages_build_version "${GITHUB_SHA}" \
+            --arg oidc_token "${ID_TOKEN}" \
+            '{artifact_id:$artifact_id, pages_build_version:$pages_build_version, oidc_token:$oidc_token}' \
+            > /tmp/pages-deploy.json
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/pages/deployments" --input /tmp/pages-deploy.json \
+            | tee /tmp/pages-deploy-result.json
+          rm -f /tmp/pages-deploy.json
+          echo "Started Pages deployment and left it running (will not cancel on a 10-minute wait)."

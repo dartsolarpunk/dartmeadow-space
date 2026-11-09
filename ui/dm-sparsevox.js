@@ -127,9 +127,13 @@
       const dmin = Math.hypot(cx, cy, cz), dmax = Math.hypot(Math.max(-x0, x1), Math.max(-y0, y1), Math.max(-z0, z1));
       return dmax >= o.rMin - pad && dmin <= o.rMax + pad;
     };
+    // (Wave 2a) RADIAL: Euclidean distance from the camera to the node's CENTRE, less half the node's edge. The old metric was the
+    // distance to the node's axis-aligned box, so a level's reach ran k node-sizes out along an axis but k + 0.87 node-sizes out along a
+    // diagonal: every LOD shell was a (rounded) cube, read on the planet as squares nested in squares. Now a shell is a sphere round the
+    // camera (to within the octree's own grid); along an axis the reach is the same as before (k + 0.5 node-sizes from the centre).
     const dist = (x0, y0, z0, w) => {
-      const dx = Math.max(x0 - cam[0], 0, cam[0] - x0 - w), dy = Math.max(y0 - cam[1], 0, cam[1] - y0 - w), dz = Math.max(z0 - cam[2], 0, cam[2] - z0 - w);
-      return Math.hypot(dx, dy, dz);
+      const h = w * 0.5, d = Math.hypot(x0 + h - cam[0], y0 + h - cam[1], z0 + h - cam[2]) - h;
+      return d > 0 ? d : 0;
     };
     // node: [L, ox, oy, oz] in base cells; frontier refined nearest-first while the budget allows
     let open = [[Lr, 0, 0, 0]], count = 1;
@@ -171,13 +175,19 @@
     this.stale = Array.from(this.resident.keys()).filter((k) => !this.want.has(k));
     return this.todo.length;
   };
+  // (Wave 2a) QUEUE, never drop. When the pool is full and no stale brick is left to recycle (handhelds: one 256 / 512 pool; or every
+  // free slot is still held off the free list while it fades out), the todo list used to be thrown away (todo.length = 0), so the world
+  // stopped part-built until the camera moved far enough to re-select: missing bodies, terrain that never finished. Now the pending
+  // bricks stay queued, in order, and are built as soon as slots come back (a fade-out ends, a stale brick goes, the body is released).
+  // A stale brick recycled for a new one is NOT also cleared: the build rewrites every vertex of the slot, and a clear job on the same
+  // slot in the same dispatch raced it (the new brick could come out blank).
   LodStream.prototype.step = function (n) {
     const build = [], clear = [];
-    // free slots for new bricks: use the free list, else (pool full) release stale bricks early
+    // free slots for new bricks: use the free list, else (pool full) recycle stale bricks early
     while (build.length < n && this.todo.length) {
       if (this.pool.free.length === 0 && this.pool.next >= this.cap) {
-        const k = this.stale.pop(); if (k == null) { this.todo.length = 0; break; }
-        clear.push(this.resident.get(k).slot); this.resident.delete(k); this.pool.release(k); continue;
+        const k = this.stale.pop(); if (k == null) { this.blocked = (this.blocked || 0) + 1; break; }   // full: keep the queue, wait for slots
+        this.resident.delete(k); this.pool.release(k); this.recycled = (this.recycled || 0) + 1; continue;
       }
       const l = this.todo.shift(), slot = this.pool.alloc(l.key);
       this.resident.set(l.key, { slot, l }); build.push(Object.assign({ slot }, l));

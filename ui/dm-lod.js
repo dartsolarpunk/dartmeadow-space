@@ -185,6 +185,41 @@
   /* Extra texture LOD for a detail band: 0 at / inside `a`, `bias` at / beyond `b`, smooth between. */
   function mipBias(d, a, b, bias) { return (1 - fade(d, a, b)) * bias; }
 
+  /* ── (fov-fill 2) QUALITY FADE CHAIN TO THE HORIZON ──
+     Every layer that has a "near, high quality" version also has a cheaper one that carries on past it, and each hand-off is a smoothstep band, never a cut,
+     so the view is filled out to where the ground itself dissolves (index.html: the haze ends at fogEnd = 0.82 x groundR on foot, the ground is gone at groundR).
+     Pure: index.html / ui/dm-light.js read the same numbers (uniforms, set a few times a second, no recompile); tools/tests/fov-fade.js checks the chain.
+       tex     near  [0.45 r, r]          the close-up field (worley pebbles / grit / cracks + their bump): unchanged, never past r
+               mid   [5 r, 16 r]          one 2-octave value field, colour + roughness only (no worley, no normal): the ground keeps a grain past the pebbles
+               far   [fogEnd, groundR]    one low-octave macro tint (patches of 60 u and 260 u) on every ground pixel, gone with the ground's own dissolve
+       light   probes (SH cascades) out to their window, then a cheap far term (sky visibility from the coarse ground's normal + the horizon height field's
+               cavity) that lasts to groundR; sun visibility: near march, far 8 m field, then the horizon field (48 m cells) to `hor`
+       shadow  map   [0.6 h, 0.92 h]      the sun's shadow map (crisp, props + her) eased out inside its own box (h = box half), not a square cut
+               terrain                    height-field march (near / far / horizon) beyond it, coarser with distance, to the horizon field's edge
+       props   near  [0.72 c, c]          full prop chunks (trees, rocks; colliders near), c = min(draw cut, ring x 300): per-pixel dither, no chunk line
+               far   in = 1 - near, out [0.8 fogEnd, fogEnd]   the far canopy (one instanced draw, crown cones only) from where the near trees thin to the haze end
+     o: { reach, fogEnd, groundR, shadowHalf, propCut, ring, horHalf }.  Returns arrays [a, b] (1 inside a, 0 beyond b; props.farIn is the far canopy's rising edge = the near layer's falling one).
+     res (optional): an object of the same shape to fill in place (the per-tick callers pass one: no allocation). */
+  function S2(a, x, y) { a[0] = x; a[1] = y; }
+  function qualityBands(tier, o, res) {
+    o = o || {};
+    const fe = Math.max(60, o.fogEnd || 420), gR = Math.max(fe * 1.0001, o.groundR || fe / 0.82), r = Math.max(4, o.reach || 30);
+    const h = Math.max(8, o.shadowHalf || 70), ring = Math.max(1, o.ring || get(tier, 'prop.ring')), cut = Math.max(get(tier, 'prop.cutMin'), o.propCut || get(tier, 'prop.cutMax'));
+    const c = Math.min(cut, ring * CHUNK), hor = Math.max(fe, o.horHalf || 2900);
+    const B = res || { tex: { near: [0, 0], mid: [0, 0], far: [0, 0] }, light: { far: [0, 0], hor: [0, 0] }, shadow: { map: [0, 0], hor: [0, 0] }, props: { near: [0, 0], far: [0, 0], farIn: [0, 0] }, fogEnd: 0, groundR: 0 };
+    S2(B.tex.near, r * 0.45, r); S2(B.tex.mid, r * 5, r * 16); S2(B.tex.far, fe, gR);
+    S2(B.light.far, fe, gR); S2(B.light.hor, hor * 0.75, hor * 0.92);
+    S2(B.shadow.map, h * 0.6, h * 0.92); S2(B.shadow.hor, hor * 0.75, hor * 0.92);
+    S2(B.props.near, c * 0.72, c); S2(B.props.far, fe * 0.8, fe); S2(B.props.farIn, c * 0.72, c);
+    B.fogEnd = fe; B.groundR = gR;
+    return B;
+  }
+  /* weight of a band at distance d (1 inside, 0 outside, smoothstep across) — the same curve the shaders use */
+  function bandW(d, ab) { return fade(d, ab[0], ab[1]); }
+  /* screen coverage of the two prop layers at distance d: the near chunks keep a pixel whose noise is < wN, the far canopy one whose noise is in [wN, wF) — so
+     where both exist the coverage is max(wN, wF) (one layer hands its pixels to the other), never a gap and never a double layer. */
+  function propCover(d, B) { const wN = bandW(d, B.props.near), wF = bandW(d, B.props.far); return Math.max(wN, wF); }
+
   /* Table validation (also run by the node test): every row has 3 numbers; classes never get a LONGER reach than a stronger class; enter < leave < far; shadow < cut. */
   function validate() {
     const bad = [];
@@ -208,7 +243,7 @@
     return bad;
   }
 
-  const core = { TIERS: TIERS, TABLE: TABLE, WALK_R: WALK_R, CHUNK: CHUNK, get: get, sw: sw, fade: fade, propCutErr: propCutErr, reliefBoost: reliefBoost, projErrPx: projErrPx, errDist: errDist, lod2Dist: lod2Dist, sizeFade: sizeFade, levelByError: levelByError, billboardViews: billboardViews, chunkCulled: chunkCulled, billboardPx: billboardPx, createXfade: createXfade, mipBias: mipBias, propCut: propCut, propRing: propRing, vantageReach: vantageReach, vantageFog: vantageFog, validate: validate, tierIndex: tierIndex };
+  const core = { TIERS: TIERS, TABLE: TABLE, WALK_R: WALK_R, CHUNK: CHUNK, get: get, sw: sw, fade: fade, propCutErr: propCutErr, reliefBoost: reliefBoost, projErrPx: projErrPx, errDist: errDist, lod2Dist: lod2Dist, sizeFade: sizeFade, levelByError: levelByError, billboardViews: billboardViews, chunkCulled: chunkCulled, billboardPx: billboardPx, createXfade: createXfade, mipBias: mipBias, qualityBands: qualityBands, bandW: bandW, propCover: propCover, propCut: propCut, propRing: propRing, vantageReach: vantageReach, vantageFog: vantageFog, validate: validate, tierIndex: tierIndex };
   if (typeof module !== 'undefined' && module.exports) module.exports = core;
   if (typeof window === 'undefined') return;
 
@@ -239,6 +274,7 @@
   out.sizeFade = sizeFade; out.billboardPx = billboardPx;
   out.sw = sw; out.fade = fade; out.createXfade = createXfade;
   out.lod2Dist = function (errM, fovDeg, viewH) { return lod2Dist(out.tier, errM, fovDeg, viewH, bud('propsK', 1)); };
+  out.bands = function (o, res) { return qualityBands(out.tier, o, res); };
   out.mipBias = function () { return out.on ? out.get('mip.bias') : 0; };
 
   /* ── SCREEN-DOOR CROSS-FADE (no per-object materials) ──
