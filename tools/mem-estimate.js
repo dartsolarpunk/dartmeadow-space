@@ -62,9 +62,9 @@ function lodPreset(preset) {
 }
 function lodGeometry() {
   const B = +grab('index.html', /const SV_LOD=\{B:(\d+),DMAX:(\d+)/, 'SV_LOD')[1];
-  grab('index.html', /const VPS=C3\*15\+FC\*12/, 'VPS = C3*15+FC*12'); grab('index.html', /FC=6\*B\*B/, 'FC');
+  grab('index.html', /const VPS=C3\*15\+FC\*6/, 'VPS = C3*15+FC*6'); grab('index.html', /FC=6\*B\*B/, 'FC');
   const C3 = B * B * B, FC = 6 * B * B, BP = B + 1;
-  return { B, VPS: C3 * 15 + FC * 12, P3: BP * BP * BP };
+  return { B, VPS: C3 * 15 + FC * 6, P3: BP * BP * BP };
 }
 function pxMp(preset) { const m = grab('index.html', /const _PX_MP=\{([^}]+)\}/, '_PX_MP')[1]; const mm = m.match(new RegExp(preset + ':([\\d.]+)')); return mm ? +mm[1] : 3.6; }
 function shadowCap(isMobile) { grab('index.html', /if\(GFX\.isMobile&&GFX\.shadowSize>2048\)GFX\.shadowSize=2048/, 'mobile shadow cap'); return isMobile ? 2048 : 4096; }
