@@ -19689,7 +19689,13 @@ function _pwWorldTick(dt){
   // The quadtree draws that far ring as coarse tiles (geomorphed, skirted), so it costs tiles, not detail.  Eased by _vtK, so no switch.
   if(scene.fog&&!space&&PW._vtK>0.001&&window.DMLod&&DMLod.on) walkR=Math.max(walkR,Math.min(skyR,DMLod.vantage(PW._vtK,walkR)));
   const viewR=walkR+(skyR-walkR)*k;
-  const G=PW.ground; G.viewR=viewR;
+  // (fov-fill) on foot and from a vantage (the HOME deck, a cliff top) the ground is drawn out to the horizon reach (_skyHorizonReach: the sea horizon plus the
+  // horizon of the tallest land past it), not stopped at the walk radius (1.2 km) / the device's vantage radius (1.8 / 2.8 / 4.5 km, x0.6 on a struggling tablet)
+  // under a 420-unit haze: from the deck the far coast and the land standing above the horizon were erased by the haze, then simply missing.  Only coarse
+  // tiles live out there (one 33x33 grid each, a few dozen more) and everything past the camera's horizon is already culled whole (SkyGround._measure), so the
+  // cost is small and bounded; the haze opens to where that ground starts to dissolve (_skyFillFog, below).  Props keep the old haze (their cost, PW._propFog).
+  const groundR=(scene.fog&&!space)?_skyGroundR(viewR,_skyHorizonReach(R,alt),skyR):viewR;
+  const G=PW.ground; G.viewR=groundR;
   // the sky dome thins to space as you climb (airless worlds: open space all the way down)
   const pal=PW.pal, dome=pal.atmos?1-_smooth01((alt-400)/1400):0;
   PW.skyK=dome;
@@ -19707,12 +19713,14 @@ function _pwWorldTick(dt){
   let far=dd.fogFar*(1+1.1*vtK)+(skyFar-dd.fogFar)*k, near=40*(1+vtK)+(Math.min(skyFar*0.2,300+calt*0.6)-40)*k;
   if(vtK>0&&window.DMLod&&DMLod.on) far=Math.max(far,DMLod.vantageFog(vtK,dd.fogFar,walkR)+(skyFar-dd.fogFar)*k);   // (far-range 2) the haze opens toward 0.62 x the vantage reach: a cliff 2-3 km off is fogged, not erased
   if(vtK>0&&far>walkR*0.9) far=Math.max(dd.fogFar,walkR*0.9);
+  const fillF=(scene.fog&&!space)?_skyFillFog(far,groundR,1-k)-far:0;   // (fov-fill) the far ground reads through the haze; its dissolving edge stays in full haze
   if(dome<1){ const thin=1-dome; far+=thin*thin*2e6; near+=thin*thin*1e6; }   // the haze lifts with the dome
-  if(scene.fog){ scene.fog.far=far; scene.fog.near=near; }
-  const farClip=space||dome<1?Math.max(4000,c.distanceTo(C)+R*1.2):Math.max(1200,viewR*1.15);
+  PW._propFog=far;   // (fov-fill) the props' reach / ring follow the haze as it was without the fill (their cost does not grow with the clearer air)
+  if(scene.fog){ scene.fog.far=far+fillF; scene.fog.near=near; }
+  const farClip=space||dome<1?Math.max(4000,c.distanceTo(C)+R*1.2):Math.max(1200,groundR*1.15);
   const nearClip=space?Math.max(0.1,Math.min(50,(PW.sp.fc||1)*20)):0.1+(Math.max(0.5,Math.min(6,calt*0.01))-0.1)*k;
   if(Math.abs(cam.far-farClip)>farClip*0.05||Math.abs(cam.near-nearClip)>nearClip*0.05){ cam.far=farClip; cam.near=nearClip; cam.updateProjectionMatrix(); }
-  _pwSeaFollow(px,pz,Math.min(viewR,16384));
+  _pwSeaFollow(px,pz,Math.min(groundR,16384));
   try{ if(window.DMWater&&DMWater.active) DMWater.tick(dt,{camera:cam,scene,x:px,z:pz,y:f.y,H,Hw:TERRAIN.Hw||null,mode:PW.mode}); }catch(e){ if(!window._dmwWarn){ window._dmwWarn=1; console.warn('[water] tick',e); } }
   try{ if(window.DMLight&&DMLight.on) DMLight.tick(dt,{x:px,y:f.y,z:pz,H,sunDir:TERRAIN.sky?TERRAIN.sky.sunDir:null,day:TERRAIN.sky?TERRAIN.sky.day:1,scene,renderer:flightRenderer,walk:mode!=='space'}); }catch(e){ if(!window._dmlWarn){ window._dmlWarn=1; console.warn('[light] tick',e); } }   // (ui/dm-light.js) time-sliced probe + height-cache update, amortised <= ~1-2 ms
   _pwPropsTick(px,pz,space?1e9:(fly?agl:0));
@@ -19795,7 +19803,7 @@ function _pwPropsTick(px,pz,agl){
     // (far-range 3) PRE-ROLL: chunks stream in RINGS of the distance table (ui/dm-lod.js propRing: ceil(draw cut x 1.06 / 300 m), capped 1 / 2 / 3 by device class and by the
     // ladder's props stage), so a chunk is built while it is still beyond the draw cut (hidden, see below) and is never built inside the drawn range.  The keep set is one ring
     // wider than the load set: walking back and forth over a chunk border no longer drops and rebuilds the chunk behind you.
-    const _pf=PW._propF=(PW._propF||0)+1, _L=(window.DMLod&&DMLod.on)?DMLod:null, _fogF=PW.scene&&PW.scene.fog?PW.scene.fog.far:900, _R=_L?_L.propRing(_fogF,agl,PW.camera&&PW.camera.fov,PW.renderer&&PW.renderer.domElement&&PW.renderer.domElement.height):1, _KR=_R+1;
+    const _pf=PW._propF=(PW._propF||0)+1, _L=(window.DMLod&&DMLod.on)?DMLod:null, _fogF=PW._propFog||(PW.scene&&PW.scene.fog?PW.scene.fog.far:900), _R=_L?_L.propRing(_fogF,agl,PW.camera&&PW.camera.fov,PW.renderer&&PW.renderer.domElement&&PW.renderer.domElement.height):1, _KR=_R+1;
     for(let di=-_KR;di<=_KR;di++) for(let dj=-_KR;dj<=_KR;dj++) want.add((pi+di)+'_'+(pj+dj));
     // (v256) one chunk at a time, built over several frames (generator, ~2.5 ms a frame on a phone / 4 ms otherwise); a job whose chunk is no longer wanted is dropped
     let job=PW._propJob; if(job&&(job.gen!==PW.gen||M.has(job.k)||!want.has(job.k))){ job=PW._propJob=null; }
@@ -19886,7 +19894,7 @@ function _propsLod(px,pz,agl){
   const M=PW.props; if(!M||!M.size) return;
   if((PW._plodF=(PW._plodF||0)+1)%6!==0) return;
   let k=1; try{ if(window.DMBudget&&DMBudget.on&&DMBudget.propsK) k=DMBudget.propsK(); }catch(e){}
-  const fog=PW.scene&&PW.scene.fog?PW.scene.fog.far:900, _L=(window.DMLod&&DMLod.on)?DMLod:null;
+  const fog=PW._propFog||(PW.scene&&PW.scene.fog?PW.scene.fog.far:900), _L=(window.DMLod&&DMLod.on)?DMLod:null;   // (fov-fill) the haze without the horizon fill
   // (far-range 1) the distances come from the shared table (ui/dm-lod.js, per device class; same numbers as before on desktop / phone, the ladder's props stage scales them)
   const farD=_L?_L.propCut(fog,agl,PW.camera&&PW.camera.fov,PW.renderer&&PW.renderer.domElement&&PW.renderer.domElement.height):Math.max(260,Math.min(fog*1.05,agl>60?Math.max(260,fog*0.85):1400))*k, shD=(_L?_L.get('prop.shadow'):(GFX.isMobile?110:170))*k, half=SURF_CHUNK*0.71, _ag=(agl>0&&isFinite(agl))?agl:0;   // (v290) 3-D chunk distance: altitude counts, so props 20 km below you are not drawn
   for(const g of M.values()){
@@ -25012,7 +25020,8 @@ function SkyGround(scene,F,pal,o){
   this._fr=new THREE.Frustum(); this._m4=new THREE.Matrix4(); this._v=new THREE.Vector3(); this._c=new THREE.Vector3(); this._cc=new THREE.Vector3(); this._sph=new THREE.Sphere();
   // (Wave 1) reused every frame: the kept root keys, the lat/lon domain, the focus point, last frame's build counts
   this._keep=new Set(); this._dm={x0:0,z0:0,W:0}; this._fx=0; this._fz=0; this._cpos=null; this._sb=null;
-  this.stat={built:0,focus:0,emerg:0,skipped:0,left:0};
+  this.stat={built:0,focus:0,emerg:0,skipped:0,left:0,settle:0};
+  this._anc=new THREE.Vector3(1e9,1e9,1e9); this._movedAt=0;   // (fov-fill) where the camera last settled, and when it last moved off it
   this._fadeU=null; this._radialFade();
   this._seaU=null; this._seaRimInit();
 }
@@ -25059,6 +25068,21 @@ SkyGround.prototype._seaRimTick=function(){
   if(rim&&DW.S&&DW.S.focus){ U.c.value.set(DW.S.focus[0],DW.S.focus[1]); U.r.value.set(rim.inner,rim.outer); }
   else U.r.value.set(1e9,2e9);
 };
+// (fov-fill) SETTLE: standing still (the camera within _SKY_SETTLE.anchor units of where it stopped for _SKY_SETTLE.after ms) with tiles still waiting, the
+// per-frame build budget is _SKY_SETTLE.k x the normal one, so the field of view finishes filling while she waits instead of at 1 tile a frame (a 13 fps
+// tablet: ~38 s for the ~330 tiles from the HOME deck, ~20 s settled).  Still a TIME budget (the gate is unchanged; the focus cap is unchanged); it drops
+// back the frame she moves and costs nothing once the queue is empty.  Pure (tools/tests/fov-fill.js).
+const _SKY_SETTLE={after:600,anchor:2,k:1.75};
+function _skySettleBudget(B,still,left){ return still&&left>0?B*_SKY_SETTLE.k:B; }
+// (fov-fill) HORIZON REACH: how far ground can still be seen from `alt` above the sea of a sphere of radius R — the camera's own horizon plus the horizon of
+// land `relief` high standing beyond it (a peak past the sea horizon still shows its top).  Pythagoras on the sphere (d = sqrt(h (2R + h))): no pi, no box.
+const _SKY_RELIEF=260;   // the tallest ground a tile assumes before it is measured (SkyGround._node maxH)
+function _skyHorizonReach(R,alt,relief){ const h=Math.max(0,alt), r=Math.max(0,relief==null?_SKY_RELIEF:relief); return Math.sqrt(h*(2*R+h))+Math.sqrt(r*(2*R+r)); }
+// the ground's drawn radius on a world with haze: the walk / vantage / sky radius, opened to the horizon reach, never past the sky's radius, never below viewR
+function _skyGroundR(viewR,horizon,skyR){ return horizon>viewR?Math.max(viewR,Math.min(skyR,horizon)):viewR; }
+// the haze far distance that lets that ground read: on foot (w = 1) exactly where the ground starts to dissolve (_SKY_FADE0 x groundR), so the drawn ground's
+// dissolving edge always lies in full haze (never a visible rim or dither) and nothing short of it is erased; w eases to 0 high in the sky, where the flight haze rules
+function _skyFillFog(far,groundR,w){ const v=Math.max(0,Math.min(1,w)); return far+(groundR*_SKY_FADE0-far)*v; }
 // (Wave 1) may the tile at the head of the queue be built now?  Pure (tools/tests/skyground-budget.js drives it).
 //   el   ms already spent building this frame       B    the frame's budget (ms)
 //   foc  the tile is on the chain under her feet    nf   focus tiles built so far this frame
@@ -25126,7 +25150,10 @@ SkyGround.prototype.update=function(cam,budgetMs){
   for(let q=0;q<Q.length;q++){ const n=Q[q]; n._foc=this._under(n.parent)&&(!!n.parent||this._under(n)); }
   // focus first, then in view before out of view, nearest (for its size) first, coarse before fine
   Q.sort(SkyGround.prototype._qcmp);
-  const t0=performance.now(), B=budgetMs!=null?budgetMs:this.budget, cap=(budgetMs!=null&&budgetMs>=50)?Infinity:(GFX.isMobile?2:4);
+  const t0=performance.now(), A=this._anc;
+  if(Math.abs(c.x-A.x)+Math.abs(c.y-A.y)+Math.abs(c.z-A.z)>_SKY_SETTLE.anchor){ A.copy(c); this._movedAt=t0; }   // (fov-fill) moved: re-anchor (no allocation)
+  const still=budgetMs==null&&t0-this._movedAt>=_SKY_SETTLE.after;
+  const B=budgetMs!=null?budgetMs:_skySettleBudget(this.budget,still,Q.length), cap=(budgetMs!=null&&budgetMs>=50)?Infinity:(GFX.isMobile?2:4);
   let nf=0, built=0, em=false, skipped=0, bare=this._bareUnder();
   for(let q=0;q<Q.length;q++){
     const n=Q[q], g=_skyGroundGate(performance.now()-t0,B,!!n._foc,nf,cap,bare,em);
@@ -25137,7 +25164,7 @@ SkyGround.prototype.update=function(cam,budgetMs){
     this.buildMs=(this.buildMs||0)*0.9+(performance.now()-tb)*0.1;
     if(n._foc){ nf++; if(bare) bare=this._bareUnder(); }
   }
-  const st=this.stat; st.built=built; st.focus=nf; st.emerg=em?1:0; st.skipped=skipped; st.left=Q.length-built;
+  const st=this.stat; st.built=built; st.focus=nf; st.emerg=em?1:0; st.skipped=skipped; st.left=Q.length-built; st.settle=B>this.budget&&budgetMs==null?1:0;
   if(this._fadeU){ this._fadeU.a.value=this.viewR*_SKY_FADE0; this._fadeU.b.value=this.viewR; }   // (Wave 2a) the circle follows the drawn radius
   this._seaRimTick();   // (lod-hide) the sea's circular rim follows the sheet
   this.roots.forEach(this._show,this);

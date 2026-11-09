@@ -266,6 +266,7 @@
       for (let i = 0; i < n; i++) { const v = bin.charCodeAt(i * 2) | (bin.charCodeAt(i * 2 + 1) << 8); a[i] = v > 32767 ? v - 65536 : v; }
       col.h = a; MAN.col = col; MAN.glb = gl; MAN.loading = false;
       try { gl.scene.traverse(o => { if (o.isMesh && o.material && o.material.name === 'ah_pool') F.poolLook(o.material); }); } catch (e) { console.warn('[ariel-home] pool look', e); }
+      try { gl.scene.traverse(o => { if (o.isMesh && o.material && o.material.name === 'ah_pool' && o.geometry) { const g = o.geometry, k = F.poolTrim(g.attributes.position, g.index ? g.index.array : null); if (k) g.setIndex(k); } }); } catch (e) { console.warn('[ariel-home] pool trim', e); }
     }).catch(e => { MAN.failed = true; MAN.loading = false; console.warn('[ariel-home] load failed', e); });
   }
   // (lod-hide) the two pool surfaces of the GLB (ah_pool: one quad under the pool-room roof, one 57 x 21 u quad on the lower sea terrace) shipped with a
@@ -279,6 +280,22 @@
     if (m.emissive && m.emissive.setRGB) m.emissive.setRGB(L.emissive[0], L.emissive[1], L.emissive[2]);
     m.emissiveIntensity = 1; m.roughness = L.roughness; m.metalness = L.metalness; m.userData = m.userData || {}; m.userData.dmPoolLook = true; m.needsUpdate = true;
     return m;
+  };
+  // (fov-fill) the DECK-level ah_pool quad (GLB local x 46.8..76.7, z -7.8..-31.2, y -0.26: a 30 x 23 u sheet flush with the HOME deck, by the seaward rail)
+  // was the bright teal polygon on the walkway in daylight (base 0.08/0.50/0.58 + the shipped emissive, sunlit).  It is not a pool anyone swims in: it sits
+  // 0.26 u under the deck over a dark ah_dark basin (-0.5 / -1.1 / -1.6), and read as a cyan reference tile on the deck.  Its two triangles are dropped from
+  // the shared index when the GLB arrives (every clone and the impostor bake see the same geometry); the lower sea-terrace pool (y -18.46, re-lit by poolLook)
+  // stays.  Pure: P = position attribute (getY) or a flat xyz array, idx = index array or null.  Returns the kept index (a plain array) or null to keep all.
+  F.POOL_DECK_Y = -5;
+  F.poolTrim = function (P, idx) {
+    if (!P) return null; const n = P.count != null ? P.count : (P.length / 3) | 0, y = i => (P.getY ? P.getY(i) : P[i * 3 + 1]);
+    const m = idx ? idx.length : n, out = []; let drop = 0;
+    for (let t = 0; t + 2 < m; t += 3) {
+      const a = idx ? idx[t] : t, b = idx ? idx[t + 1] : t + 1, c = idx ? idx[t + 2] : t + 2;
+      if (y(a) > F.POOL_DECK_Y && y(b) > F.POOL_DECK_Y && y(c) > F.POOL_DECK_Y) { drop++; continue; }
+      out.push(a, b, c);
+    }
+    return drop ? out : null;
   };
   function mansionInstance(T) {
     const root = new T.Group(); root.name = 'JOTS_ArielMansion';
