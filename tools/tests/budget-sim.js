@@ -81,3 +81,16 @@ console.log('budget-sim memory floor OK');
 { // a lone 3 s hitch followed by 16 ms frames never moves anything; a hitch followed by a few slow-ish frames costs at most the normal single step
   let n = 0; const r = sim({ durMs: 60000, frame: () => { n++; return n % 120 === 0 ? 3000 : 16; } }); assert.strictEqual(r.maxP, 0); }
 console.log('budget-sim slideshow OK');
+// (v297) 30 fps rule: budget 36 ms (legacy <= 3 GB: 68 ms, the 15 fps floor); a device locked to every 2nd vsync (33.3 ms +- jitter, a rare 3-vsync miss) HOLDS;
+// a sustained 25 fps sheds until it is back under budget; a 60 fps device with headroom recovers to 0
+{ assert.strictEqual(B.budgetFor({ isMobile: true, deviceMem: 8 }), B.TARGET_MS); assert.strictEqual(B.budgetFor({ deviceMem: 3 }), B.LEGACY_MS); assert.strictEqual(B.budgetFor({}), 36); assert.strictEqual(B.budgetFor(null), 36);
+  assert.strictEqual(createController({}).budget, 36, 'default budget is the 30 fps one');
+  let held = 0, worst = 0, last = null;
+  for (let seed = 0; seed < 20; seed++) { let k = seed * 7919 + 1; const R = () => { k = (k * 1103515245 + 12345) & 0x7fffffff; return k / 0x7fffffff; };
+    last = sim({ budget: B.TARGET_MS, seed: 6, durMs: 300000, frame: () => (R() < 0.03 ? 50 : 33.3 + (R() - 0.5) * 2) }); if (last.maxP === 6) held++; worst = Math.max(worst, last.maxP); }
+  assert(held >= 18 && worst <= 7, 'a 30-fps-locked device (3 % missed vsyncs) holds: ' + held + '/20 never shed, worst p ' + worst); const lock30 = last;
+  const slow = sim({ budget: B.TARGET_MS, durMs: 120000, frame: (t, p) => 40 * Math.pow(0.95, p) });
+  assert(40 * Math.pow(0.95, slow.c.p) <= 36 && slow.c.p <= Math.ceil(Math.log(36 / 40) / Math.log(0.95)) + 1, '25 fps sheds just enough: p=' + slow.c.p); assert(slow.flips <= 2);
+  const fast = sim({ budget: B.TARGET_MS, seed: 8, durMs: 120000, frame: () => 16.7 }); assert.strictEqual(fast.c.p, 0, 'headroom recovers');
+  const legacy = sim({ budget: B.LEGACY_MS, durMs: 60000, frame: () => 50 }); assert.strictEqual(legacy.maxP, 0, 'legacy at 20 fps keeps its quality (15 fps floor)');
+  console.log('30 fps target: locked-30 holds p=' + lock30.c.p + ', 25 fps scene settles p=' + slow.c.p + ', legacy floor ok'); }

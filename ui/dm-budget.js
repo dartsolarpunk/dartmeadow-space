@@ -21,7 +21,7 @@
  * CONTROL LAW (pure, deterministic, unit-tested by tools/tests/budget-sim.js with fake clocks):
  *  - input: real frame time of every rendered frame (own rAF probe; one subtraction).  EMA (tau 1 s) + p95 of the last ~90 frames; a frame is
  *    clipped to 250 ms and a gap > 1.5 s is a tab-sleep / shader-compile hitch and is not a sample.  Warm-up, intro, hidden tab, AR: no decisions.
- *  - ESCALATE (shed one step; two when the frame is > 2.2x over budget) when the EMA is over the budget (50 ms = below 20 fps) or the p95 is
+ *  - ESCALATE (shed one step; two when the frame is > 2.2x over budget) when the EMA is over the budget (v297: 36 ms = below ~27.8 fps; see TARGET) or the p95 is
  *    spiky (> 2.2x budget) while the EMA is within 25% of it, and has stayed so for a dwell of 0.6 s (> 2x over) / 1.0 s (> 1.4x) / 1.6 s.
  *    After every change the window is cleared: the next decision judges only frames drawn at the new setting.
  *  - RECOVER one step after 4 s of calm (EMA < 0.72 x budget and p95 < 1.5 x budget), never while that step is LOCKED.  A step that is undone
@@ -29,13 +29,17 @@
  *    step settles below it.  A recovery that held 40 s halves its lock again.
  *  - SEED: the first seconds are not a slideshow: start at max(device-class base, the settled pressure of the last session on this device);
  *    the last session died (no pagehide) -> +1, died on a surface/atmosphere screen -> +2.  Persisted in localStorage (dm_budget_v1).
- *  - Target: sustained >= ~15 fps by shedding in order until the floor.  If everything is shed and the frame is still slow it is CPU-bound beyond
- *    this controller's reach: stats().exhausted says so.
+ *  - TARGET (v297, Justin's rule): a steady 30 fps on every preset and device.  The budget is 36 ms, not 33.3: a device locked to every 2nd vsync reports
+ *    33.3 ms +- jitter and must HOLD there, not shed its whole ladder chasing a coin flip; a sustained average under ~27.8 fps sheds (35 ms still
+ *    shed a 30-locked device with 3 % missed vsyncs in the sim).  The calm line (0.72 x) is ~26 ms, so a 30-fps-locked device holds its level and a device with real headroom recovers.  LEGACY class only (deviceMemory <= 3 GB) keeps the
+ *    15 fps floor: 68 ms (sheds under ~14.7 fps).  Light / shadow / atmo stages therefore shed at 30 fps on surface, atmosphere and the mansion (budgetFor()).
+ *    If everything is shed and the frame is still slow it is CPU-bound beyond this controller's reach: stats().exhausted says so.
  *
  * Flags: ?gov=off  controller off (every level 0; the older per-feature governors run exactly as before) · ?gov=N  force pressure N (testing) ·
- *        ?govhud=1  corner readout · ?govbudget=ms  override the 50 ms budget.
- * Public: DMBudget.lvl(stage) (0..), .stats(), .force(p), .on, .ver (bumps on every change), typed accessors (.parallax() .shadowEvery() .atmoPeriod() .resCap() ...)
- *   (pure core: DMBudget.core = { createController, LADDER, STAGES, levelsAt, MAX } — also module.exports for node.)
+ *        ?govhud=1  corner readout · ?govbudget=ms  override the 36 ms (legacy 68 ms) budget.
+ * Public: DMBudget.lvl(stage) (0..), .stats(), .force(p), .on, .ver (bumps on every change), typed accessors (.parallax() .shadowEvery() .atmoPeriod() .resCap() ...),
+ *   allocation-free per-frame reads .emaMs() .budgetMs() (stats() builds an object: not for a per-frame path)
+ *   (pure core: DMBudget.core = { createController, LADDER, STAGES, levelsAt, MAX, budgetFor, TARGET_MS, LEGACY_MS } — also module.exports for node.)
  */
 (function (root) {
   'use strict';
@@ -58,11 +62,16 @@
     return out;
   }
 
+  // (v297) frame budget for the 30 fps rule; legacy class (<= 3 GB device memory) keeps the 15 fps floor.  g: GFX ({deviceMem}).
+  const TARGET_MS = 36, LEGACY_MS = 68;
+  function isLegacy(g) { return !!(g && g.deviceMem > 0 && g.deviceMem <= 3); }
+  function budgetFor(g) { return isLegacy(g) ? LEGACY_MS : TARGET_MS; }
+
   function createController(o) {
     o = o || {};
     const N = 96, sorted = new Float32Array(N);
     const C = {
-      budget: o.budgetMs || 50, p: 0, base: 0, max: MAX,
+      budget: o.budgetMs || TARGET_MS, p: 0, base: 0, max: MAX,
       ring: new Float32Array(N), head: 0, count: 0, ema: 0, prevMs: 0, min2: 0, lastHitch: 0, emaOK: false, t: 0,
       nextEval: 0, over: 0, calm: 0, lastChange: -1e9, lastRecover: -1e9, lastEval: 0, settleUntil: 0,
       lock: new Float64Array(MAX + 2), hold: new Float64Array(MAX + 2),
@@ -154,7 +163,7 @@
     return C;
   }
 
-  const core = { createController: createController, LADDER: LADDER, STAGES: STAGES, levelsAt: levelsAt, MAX: MAX, pOf: pOf };
+  const core = { createController: createController, LADDER: LADDER, STAGES: STAGES, levelsAt: levelsAt, MAX: MAX, pOf: pOf, budgetFor: budgetFor, isLegacy: isLegacy, TARGET_MS: TARGET_MS, LEGACY_MS: LEGACY_MS };
   if (typeof module !== 'undefined' && module.exports) module.exports = core;
   if (typeof window === 'undefined') return;
 
@@ -229,7 +238,7 @@
   }
   function start() {
     if (S.started || !out.on) return; S.started = true;
-    const c = S.C = createController({ budgetMs: budgetOv || 50, onChange: applied });
+    const c = S.C = createController({ budgetMs: budgetOv || budgetFor(W.GFX), onChange: applied });   // (v297) 30 fps target, 15 fps legacy floor
     S.seed = seedP(); let p0 = S.seed.p;
     if (forceP != null) { p0 = +forceP; S.seed.why = 'forced'; }
     c.seed(p0, now()); hudClass(c.lv.hudfx >= 1); out.lv = c.lv; out.ver = c.ver + 1; out.p = c.p; out.seedWhy = S.seed.why;
@@ -265,12 +274,14 @@
   function hud() {
     const d = W.document.createElement('div'); d.style.cssText = 'position:fixed;left:6px;bottom:6px;z-index:99999;font:10px/1.25 monospace;color:#9fe;background:rgba(0,0,0,.55);padding:3px 6px;pointer-events:none;white-space:pre';
     W.document.body.appendChild(d);
-    setInterval(() => { const s = out.stats(); if (!s) return; const l = s.lv; d.textContent = 'BUD p' + s.p + '/' + s.max + '  ' + s.emaMs + 'ms p95 ' + s.p95Ms + '\npx' + l.parallax + ' pxs' + l.pxshadow + ' gnd' + l.ground + ' wat' + l.water + ' shd' + l.shadow + ' atm' + l.atmo + ' res' + l.res + (s.exhausted ? ' EXHAUSTED' : ''); }, 500);
+    setInterval(() => { const s = out.stats(); if (!s) return; const l = s.lv; d.textContent = 'BUD p' + s.p + '/' + s.max + '  ' + s.emaMs + '/' + s.budgetMs + 'ms p95 ' + s.p95Ms + '\npx' + l.parallax + ' pxs' + l.pxshadow + ' gnd' + l.ground + ' wat' + l.water + ' shd' + l.shadow + ' atm' + l.atmo + ' res' + l.res + (s.exhausted ? ' EXHAUSTED' : ''); }, 500);
   }
 
   out.stats = function () { const c = S.C; if (!c) return null; const s = c.stats(); s.seed = out.seedWhy; s.dev = devKey(); s.memMB = S.memMB; s.floorP = c.floorP; s.screens = S.perScreen; s.enf = S.enf | 0; return s; };
   out.force = function (p) { if (S.C) S.C.set(p, now(), 'force'); };
   out.lvl = function (n) { return out.lv[n] | 0; };
+  out.emaMs = function () { return S.C ? S.C.ema : 0; };            // (v297) per-frame readers (no object): ui/dm-light.js headroom gate
+  out.budgetMs = function () { return S.C ? S.C.budget : TARGET_MS; };
   // typed accessors for the feature hooks; each returns the neutral value while the controller is off or at level 0
   out.parallax = function () { const l = out.lvl('parallax'); return { lvl: l, steps: [1, 0.6, 0.4, 0][l], stepsMax: l === 2 ? 4 : 99, reach: [1, 0.8, 0.6, 0.6][l], depth: [1, 0.9, 0.75, 0.75][l], off: l >= 3, shadow: out.lvl('pxshadow') ? 0 : 1 }; };
   out.groundReach = function () { return [1, 0.8, 0.6][out.lvl('ground')] || 1; };

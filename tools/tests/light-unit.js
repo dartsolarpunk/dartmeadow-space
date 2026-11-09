@@ -74,7 +74,7 @@ function mkHF(N, cell, cx, cz, f) { const hf = createHF(N, cell); hf.sampler = f
   // time slicing: the budget bounds work
   const t0 = process.hrtime.bigint(); const n = updateCascade(cc, hf, 0, 0, S, 16, 1.0, 100000, R); const ms = Number(process.hrtime.bigint() - t0) / 1e6; assert(ms < 6, 'ms budget respected: ' + ms.toFixed(2) + ' ms for ' + n + ' probes'); console.log('cascade: wall shade ' + near[3].toFixed(2) + ' vs open ' + open[3].toFixed(2) + ', 1.0 ms slice = ' + n + ' probes (' + ms.toFixed(2) + ' ms)');
   // camera moves: the entering columns come in neutral-then-traced, fresh queue drained within the budget
-  const c0 = cc.fresh.length; updateCascade(cc, hf, 30, 0, S, 16, 50, 4000, R); assert(cc.fresh.length === 0 && c0 === 0); }
+  const c0 = cc.sn; updateCascade(cc, hf, 30, 0, S, 16, 50, 4000, R); assert(cc.sn === 0 && c0 === 0); }
 
 // 9. tier table: every parameter is monotone non-decreasing off < low < med < high < ultra; the ladder only ever reduces cost; compute path needs ultra + level 0 + headroom
 { const keys = ['rays', 'casc', 'ms', 'mSteps', 'sunSteps', 'hfN', 'P', 'L', 'farSteps', 'farN']; for (const k of keys) for (let i = 1; i < TIER_ORDER.length; i++) assert(TIERS[TIER_ORDER[i]][k] >= TIERS[TIER_ORDER[i - 1]][k], k + ' monotone over tiers');
@@ -87,7 +87,7 @@ function mkHF(N, cell, cx, cz, f) { const hf = createHF(N, cell); hf.sampler = f
   // memory: caches of the biggest tier stay far below the 64 MB iPhone cap
   const T = TIERS.ultra, mb = (T.hfN * T.hfN * (4 + 2) + 2 * T.P * T.P * T.L * (64 + 32)) / 1048576; assert(mb < 8, 'cache MB ' + mb); console.log('tiers monotone; ultra caches ' + mb.toFixed(2) + ' MB'); }
 // 10. device -> tier, headroom gate
-{ assert.strictEqual(pickTier({ isMobile: true, gpuClass: 'low' }), 'low'); assert.strictEqual(pickTier({ isMobile: true, gpuClass: 'mid', score: 70 }), 'med'); assert.strictEqual(pickTier({ gpuClass: 'high' }), 'ultra'); assert.strictEqual(pickTier({ gpuClass: 'mid' }), 'high'); assert.strictEqual(pickTier({ gpuClass: 'low' }), 'med'); assert.strictEqual(pickTier({ preset: 'low', gpuClass: 'high' }), 'low'); assert.strictEqual(pickTier({ gpuClass: 'high' }, 'med'), 'med');
+{ assert.strictEqual(pickTier({ isMobile: true, gpuClass: 'low' }), 'low'); assert.strictEqual(pickTier({ isMobile: true, gpuClass: 'mid', score: 70 }), 'med'); assert.strictEqual(pickTier({ gpuClass: 'high' }), 'ultra'); assert.strictEqual(pickTier({ gpuClass: 'mid' }), 'high'); assert.strictEqual(pickTier({ gpuClass: 'low' }), 'low'); assert.strictEqual(pickTier({ preset: 'low', gpuClass: 'high' }), 'low'); assert.strictEqual(pickTier({ gpuClass: 'high' }, 'med'), 'med');
   const h = createHeadroom({ hold: 8 }); let t = 0; for (; t < 7.9; t += 0.1) assert(!h.step(0.1, 0, 14, 50)); assert(h.step(0.1, 0, 14, 50), 'opens after 8 s calm'); assert(h.step(0.1, 0, 14, 50)); assert(!h.step(0.1, 1, 14, 50), 'pressure closes it at once'); for (let i = 0; i < 70; i++) assert(!h.step(0.1, 0, 14, 50) || i >= 79, 'needs a fresh calm period'); console.log('device tiers + headroom gate ok'); }
 // 11. budget ladder carries the light stage in order, monotone, and its steps sit between existing stages
 { assert(B.STAGES.includes('light')); const order = B.LADDER.map(x => x[0]); const li = order.map((s, i) => s === 'light' ? i : -1).filter(i => i >= 0); assert.strictEqual(li.length, 3); for (let i = 0; i < 3; i++) assert.strictEqual(B.LADDER[li[i]][1], i + 1); assert(li[0] < order.indexOf('atmo') && li[2] < order.indexOf('res'), 'light sheds before resolution'); assert(li[0] > order.indexOf('ground'), 'after the cheap parallax/ground sheds'); console.log('ladder light steps at p=' + li.map(i => i + 1)); }
@@ -125,4 +125,48 @@ function mkHF(N, cell, cx, cz, f) { const hf = createHF(N, cell); hf.sampler = f
   console.log('csRayDirs unit / stratified / unbiased'); }
 // 15. boot fallback: a boot that died while compiling steps down one tier; a clean boot keeps it
 { assert.strictEqual(stepDownTier('ultra'), 'high'); assert.strictEqual(stepDownTier('high'), 'med'); assert.strictEqual(stepDownTier('med'), 'low'); assert.strictEqual(stepDownTier('low'), 'off'); assert.strictEqual(bootTier('ultra', null), 'ultra'); assert.strictEqual(bootTier('ultra', { pend: true, tier: 'ultra' }), 'high'); assert.strictEqual(bootTier('ultra', { pend: true, tier: 'high' }), 'med'); assert.strictEqual(bootTier('high', { pend: false, tier: 'high' }), 'high'); assert.strictEqual(capTier('ultra', 'med'), 'med'); assert.strictEqual(capTier('low', 'med'), 'low'); assert.strictEqual(capTier('high', null), 'high'); console.log('boot fallback ladder ok'); }
+// 16. (v297) presets cap the tier for the 30 fps rule: phones never above 'med', Low / phone-Medium never arm the per-pixel march, desktop follows the preset
+{ assert.strictEqual(pickTier({ isMobile: true, gpuClass: 'high', score: 80 }), 'med', 'phones stop at med');
+  assert.strictEqual(pickTier({ isMobile: true, gpuClass: 'high', score: 80, resolved: 'medium' }), 'low', 'phone Medium: no march');
+  assert.strictEqual(pickTier({ isMobile: true, gpuClass: 'mid', score: 70, preset: 'auto', resolved: 'high' }), 'med');
+  assert.strictEqual(pickTier({ isMobile: true, gpuClass: 'mid', score: 70, deviceMem: 3 }), 'low', 'legacy phone');
+  assert.strictEqual(pickTier({ gpuClass: 'high', resolved: 'medium' }), 'med'); assert.strictEqual(pickTier({ gpuClass: 'high', resolved: 'high' }), 'high'); assert.strictEqual(pickTier({ gpuClass: 'high', preset: 'custom' }), 'ultra');
+  assert.strictEqual(pickTier({ gpuClass: 'high', resolved: 'low' }), 'low'); assert.strictEqual(pickTier({ gpuClass: 'mid', deviceMem: 2 }), 'low', 'legacy desktop');
+  for (const t of TIER_ORDER) for (let l = 0; l <= 3; l++) for (const agl of [0, 1000]) { const e = effective(t, l, true, null, agl); if (!TIERS[t].sunSteps) assert.strictEqual(e.sunSteps, 0, t + ' lvl ' + l + ' gained a march'); assert(e.sunSteps <= TIERS[t].sunSteps && e.farSteps <= TIERS[t].farSteps, t + ' never above its tier'); }
+  assert.strictEqual(TIERS.low.sunSteps + TIERS.low.farSteps, 0, 'Low arms no march');
+  console.log('preset caps ok'); }
+// 17. (v297) effective() reuses its result object (no per-frame allocation) and idles probe work high above the ground
+{ const out = {}; const a = effective('high', 0, true, out, 10); const b = effective('high', 2, false, out, 10); assert(a === out && b === out, 'same object'); assert.strictEqual(out.rays, 4); assert.strictEqual(out.freeze, false);
+  const c = effective('high', 0, true, out, L.IDLE_AGL + 1); assert(c.freeze && c.idle && c.ms === 0 && !c.cs && c.sunSteps === TIERS.high.sunSteps, 'idle: probes off, shader march kept');
+  const d = effective('high', 0, true, out, 5); assert(!d.freeze && !d.idle && d.ms === TIERS.high.ms, 'leaves idle when low again'); console.log('effective reuse + idle ok'); }
+// 18. (v297) height base: hysteresis bands (no re-conversion every 32 m of climb), finite
+{ const rb = L.rebase; assert.strictEqual(rb(0, 30), 0); assert.strictEqual(rb(0, 41), 32); assert.strictEqual(rb(32, 0), 32); assert.strictEqual(rb(32, -9), 0); assert.strictEqual(rb(0, 1000), 992);
+  let b = 0, ch = 0; for (let g = 0; g < 200; g += 0.5) { const nb = rb(b, g + 6 * Math.sin(g)); if (nb !== b) ch++; b = nb; } assert(ch <= 6, 'few rebases on a 200 m wobbly climb: ' + ch); console.log('rebase ok (' + ch + ' rebases over 200 m)'); }
+// 19. (v297) height cache: dirty list (each filled slot once), idle once complete, a move un-idles and dirties only the entering cells, invalidate restarts everything
+{ const hf = createHF(64, 2); hf.sampler = Hf; hf.setCenter(0, 0); hf.fill(1e9, 1e9, 0); assert.strictEqual(hf.dn, 64 * 64); assert(hf.dlist.subarray(0, hf.dn).every((v, i, a) => i === 0 || v !== a[i - 1]));
+  hf.dn = 0; hf.dirty.fill(0); hf.fill(1e9, 64 * 64, 0); assert(hf.idle, 'idle after a clean full pass'); assert.strictEqual(hf.fill(1e9, 1e9, 0), 0);
+  hf.setCenter(8, 0); assert(!hf.idle); const n = hf.fill(1e9, 1e9, 0); assert.strictEqual(n, 256); assert.strictEqual(hf.dn, 256, 'only entering cells are dirty');
+  hf.invalidate(); assert(hf.full && !hf.valid(4, 0) && hf.dn === 0); hf.fill(1e9, 1e9, 0); assert(hf.valid(4, 0));
+  const g = createHF(32, 2); g.sampler = () => 7; g.setCenter(0, 0); assert.strictEqual(g.ground(500, 500), 7, 'ground falls back to the sampler outside the window'); assert(g.h(500, 500) < -1e8);
+  console.log('HF dirty / idle / invalidate ok'); }
+// 20. (v297) the far cascade stays inside the height window on every tier, and its outer ring is no longer dark (probes used to sit at -1e9 there)
+{ for (const t of ['low', 'med', 'high', 'ultra']) { const e = TIERS[t], cell = e.hfN >= 256 ? 1.5 : 2, sp = L.farSpacing(e.hfN, cell, e.P); if (e.casc > 1) assert(e.P * sp <= e.hfN * cell, t + ' far cascade ' + e.P * sp + ' m > field ' + e.hfN * cell + ' m'); }
+  const gentle = (x, z) => 3 * Math.sin(x * 0.05) * Math.cos(z * 0.04), hf = mkHF(128, 2, 0, 0, gentle), sp = L.farSpacing(128, 2, 32), cc = createCascade(32, 4, sp, 6), R = rng(31);
+  const S = { hf, sun: [0.4, 0.8, 0.45], sunI: [1, 1, 1, 1], skyI: [0.5, 0.5, 0.6], albedo: [0.3, 0.3, 0.3], maxD: sp * 12, mSteps: 10, sunSteps: 12, lamps: null, lampK: 0 };
+  for (let it = 0; it < 6; it++) updateCascade(cc, hf, 0, 0, S, 16, 1e9, 1e9, R);
+  let worst = 9; for (let col = 0; col < 32 * 32; col++) { const o = (col * 4 + 3) * 16; worst = Math.min(worst, shEval(cc.data, o, 0, 1, 0)); } assert(worst > 0.8, 'top-layer probes see the sky everywhere: ' + worst);
+  // ground fallback while the field is still empty: probes go to the terrain, not to -1e9
+  const empty = createHF(128, 2); empty.sampler = gentle; empty.setCenter(0, 0); const c2 = createCascade(8, 2, 3, 2.5); updateCascade(c2, empty, 0, 0, Object.assign({}, S, { hf: empty, maxD: 36 }), 8, 1e9, 1e9, R);
+  for (let p = 0; p < 8 * 8 * 2; p++) assert(Number.isFinite(c2.data[p * 16]) && shEval(c2.data, p * 16, 0, 1, 0) > 0.8);
+  console.log('far cascade inside the field (worst top skyVis ' + worst.toFixed(2) + ')'); }
+// 21. (v297) frozen / idle: the window still rolls (entering columns neutral, nothing traced); the fresh queue is bounded (no growth while frozen and moving); dirty lists bounded
+{ const hf = mkHF(64, 2, 0, 0), cc = createCascade(16, 3, 3, 2.5), R = rng(5), S = { hf, sun: [0.3, 0.9, 0.3], sunI: [1, 1, 1, 1], skyI: [0.6, 0.7, 0.9], albedo: [0.4, 0.35, 0.3], maxD: 36, mSteps: 8, sunSteps: 6, lamps: null, lampK: 0 };
+  updateCascade(cc, hf, 0, 0, S, 16, 1e9, 1e9, R); const up0 = cc.updates;
+  for (let i = 0; i < 400; i++) { const n = updateCascade(cc, hf, i * 2.3, Math.sin(i) * 40, S, 0, 0, 0, R); assert.strictEqual(n, 0); assert(cc.sn <= 16 * 16 && cc.dn <= 16 * 16 * 3); }
+  assert.strictEqual(cc.updates, up0, 'nothing traced while frozen'); const ci = cc.ci, cj = cc.cj; let bad = 0;
+  for (let jj = 0; jj < 16; jj++) for (let ii = 0; ii < 16; ii++) { const i = ci - 8 + ii, j = cj - 8 + jj, col = (i & 15) + (j & 15) * 16; if (cc.si[col] !== i || cc.sj[col] !== j) bad++; } assert.strictEqual(bad, 0, 'window rolled while frozen');
+  const before = cc.dn; updateCascade(cc, hf, ci * 3, cj * 3, S, 0, 0, 0, R); assert.strictEqual(cc.dn, before, 'no scan when the window did not move');
+  L.resetCascade(cc); assert(cc.full && cc.sn === 0 && cc.dn === 0); console.log('freeze rolls the window, queues bounded'); }
+// 22. (v297) memory per tier (CPU + GPU, stamps and dirty lists included) stays small; the biggest tier < 4 MB
+{ let s = ''; for (const t of TIER_ORDER) { const b = L.tierBytes(t); s += t + ' ' + ((b.cpu + b.gpu) / 1048576).toFixed(2) + ' '; if (t === 'ultra') assert((b.cpu + b.gpu) / 1048576 < 4, 'ultra MB'); } console.log('tier MB: ' + s); }
 console.log('light-unit OK');

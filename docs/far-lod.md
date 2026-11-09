@@ -1,6 +1,6 @@
 # Far-range level of detail (sw v280)
 
-Goal: the highest detail near you, a graceful decay with distance, no pop-in, no missing faces; from the mansion deck a far cliff still reads, and up close it has the fine texture. Frame rate first (>= 15 fps on the Galaxy Tab and the iPhone 16e); `ui/dm-budget.js` and `ui/dm-governor.js` stay the authority.
+Goal: the highest detail near you, a graceful decay with distance, no pop-in, no missing faces; from the mansion deck a far cliff still reads, and up close it has the fine texture. Frame rate first: a steady 30 fps on every preset and device (v297: `ui/dm-budget.js` sheds under ~27.8 fps, 36 ms; legacy devices with <= 3 GB memory keep the 15 fps floor, 68 ms); `ui/dm-budget.js` and `ui/dm-governor.js` stay the authority.
 
 ## One table: `ui/dm-lod.js`
 Device class (same test as the budget's `classBase`): `low` (low GPU / score < 55 / <= 3 GB), `mobile`, `desktop`. `?lod=low|mobile|desktop` forces one, `?lod=off` returns every caller to its old constant. Pure core (`DMLod.core`, node-tested) plus a thin glue that applies the ladder: prop distances x `DMBudget.propsK()`, the vantage extension x `DMBudget.groundReach()`.

@@ -9,7 +9,7 @@ function boot(opts) {
   globalThis.window = globalThis; globalThis.location = { search: opts.q || '' }; globalThis.GFX = opts.gfx || { isMobile: false, gpuClass: 'high' };
   globalThis.localStorage = { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: (k) => { delete store[k]; } };
   globalThis.addEventListener = (n, f) => { (globalThis.__ev = globalThis.__ev || {})[n] = f; }; globalThis.TERRAIN = { sun: { color: { r: 1, g: 0.95, b: 0.85 }, intensity: 1.2 } };
-  let lvl = 0, pr = 0; globalThis.DMBudget = { on: true, lvl: (s) => (s === 'light' ? lvl : 0), p: 0, stats: () => ({ emaMs: 12 }), shadowEvery: () => 1 }; Object.defineProperty(globalThis.DMBudget, 'p', { get: () => pr });
+  let lvl = 0, pr = 0; globalThis.DMBudget = { on: true, lvl: (s) => (s === 'light' ? lvl : 0), p: 0, stats: () => ({ emaMs: 12 }), emaMs: () => 12, budgetMs: () => 36, shadowEvery: () => 1 }; Object.defineProperty(globalThis.DMBudget, 'p', { get: () => pr });
   require(FILE); return { D: globalThis.DMLight, store, setLvl: (l) => { lvl = l; }, setP: (p) => { pr = p; } };
 }
 const H = (x, z) => 3 * Math.sin(x * 0.05) * Math.cos(z * 0.04) + (x > 15 && x < 22 ? 9 : 0);
