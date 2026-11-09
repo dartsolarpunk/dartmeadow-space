@@ -67,6 +67,7 @@ const CENSUS = [
   { file: 'index.html', pat: /InstancedMesh\(geo,_propKit\(\)\.rock/, id: 'scatter rocks / boulders', status: 'collider', proof: /col=\{kind:'ellipsoid',mat:'rock'/ },
   { file: 'index.html', pat: /InstancedMesh\(K\.tGeo/, id: 'scatter tree trunks', status: 'collider', proof: /col=\{kind:'cyl',mat:'wood'/ },
   { file: 'index.html', pat: /InstancedMesh\(K\.cGeo/, id: 'scatter tree crowns (soft)', status: 'collider', proof: /kind:'ellipsoid',mat:'foliage'/ },
+  { file: 'index.html', pat: /InstancedMesh\(geo,mat,n\*n\*K\)/, id: 'far canopy crowns (horizon stand-in)', status: 'exempt', why: 'far visual stand-in, no colliders' },
   { file: 'ui/dm-places.js', pat: /InstancedMesh\(o\.geometry/, id: 'settlement props', status: 'collider', proof: /kind:'bbox'/ },
   { file: 'index.html', pat: /InstancedMesh\(rockGeo,rockMat,count\)/, id: 'space asteroids / boulders (flight scene)', status: 'own', proof: /Bounding-sphere collision against celestial bodies/ },
   { file: 'ui/dm-facilities.js', pat: /InstancedMesh\(new T\.ConeGeometry\(1\.4/, id: 'Ariel island trees (mansion area)', status: 'collider', proof: /col: 'cyl', x: ps\.x/ },
