@@ -449,6 +449,10 @@ body.mk-picking #atmo-canvas{cursor:crosshair;}
 body.ship-walk #ship-view-btn{display:block !important;}
 /* v176: park / summon / step-off float over the kite as a flat layer (placed by _kbPlace in index.html) */
 .kite-board.kb-float{position:fixed;z-index:26;touch-action:manipulation;-webkit-tap-highlight-color:transparent;}
+/* v298: the walk overlay (#surface-overlay, z 3500) and the sky overlay (#atmo-overlay, z 3450) are full-screen layers with their own canvas, so at z 26 the
+   park / summon / step-off floats sat UNDER them (invisible, untappable once landed). Lift the world floats just above both overlays and below the
+   globe (3550), land picker (3600), maps and every modal. The ship-deck float (kb-ship, no overlay there) keeps z 26. */
+.kite-board.kb-float:not(.kb-ship){z-index:3510;}
 .kite-board.kb-ship .kb-btn{width:30px;height:30px;}
 .kite-board.kb-ship .kb-btn svg{width:22px;height:22px;}
 @media (pointer:coarse){

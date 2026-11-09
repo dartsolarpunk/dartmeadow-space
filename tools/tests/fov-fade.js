@@ -13,8 +13,8 @@
 //      its own seed (the near scatter is untouched), no per-frame allocation, and the 13 fps fill time.
 //  (5) tessellation: the geometric disc still eases to flat at 0.75 half and the bump carries on past it on every preset (no cliff after the disc).
 //  (6) the designed deck infinity pool stays (poolLook takes the teal); poolTrim is a no-op; measured on every mansion GLB, both ah_pool quads and the pool-room tub stay.
-//  (7) cache tags: CACHE_NAME is v301 (post-merge follow-up after live v300). dm-light.js is ?v=301 (the Low shadow-map wrapper); dm-lod.js stays ?v=300;
-//      dm-facilities.js stays ?v=300b.
+//  (7) cache tags: CACHE_NAME v302 (#249: main 69a9ff4 / #254 is v301, +1). dm-light.js is ?v=301 (the Low shadow-map wrapper, #254); dm-lod.js stays ?v=300;
+//      dm-facilities.js is ?v=302 (past the v300b pool restore; JOTS Cliffs #249).
 'use strict';
 const fs = require('fs'), path = require('path');
 const root = path.join(__dirname, '..', '..');
@@ -163,7 +163,10 @@ for (const S of scen) {
   ok(!/new [A-Z]|\bnew\b|=>|\[\s*\]|\{\s*\}/.test(hot.replace(/\/\/[^\n]*/g, '')), 'far canopy tick / write / fill: no allocation, no closure');
   ok(/_rng32\(_chunkSeed\(i,j,\(TERRAIN\.seed\|\|1\)\)\^0x2f6b1c3d\)/.test(tk) && !/_hmChunkScatter/.test(tk), 'far canopy draws from its own seed stream (the near scatter, and so every existing world, is unchanged)');
   const gen = cut('function* _hmChunkScatterG(i,j){', 'function _disposeProps(g){'), gen0 = require('child_process').execSync('git show 78d0e81:index.html', { cwd: root, maxBuffer: 1 << 26 }).toString();
-  ok(gen0.indexOf(gen) >= 0, 'the near chunk scatter is byte-identical to 78d0e81');
+  // (Wave 1 t1472) the ground-projector circles are deleted: the chunk-prop group no longer opts in as a projector receiver. The baseline is compared
+  // with exactly that tag (and its comment) taken out; every placement / seed / instance line must still be byte-identical.
+  const gen0n = gen0.replace("g.name='JOTS_ChunkProps'; g.userData.groundMark=true;", "g.name='JOTS_ChunkProps';").replace('   // node materials (what the renderer would convert these to anyway) so the laser projectors can light them', '   // node materials (what the renderer would convert these to anyway)');
+  ok(gen0n.indexOf(gen) >= 0, 'the near chunk scatter is byte-identical to 78d0e81 (minus the deleted ground-mark receiver tag)');
   // run it: stub THREE math, the real tick on Solenne, mobile class
   const tierM = (ini.match(/R=\(\{low:(\d+),mobile:(\d+),desktop:(\d+)\}\)/) || []).slice(1).map(Number), tierK = (ini.match(/K=\(\{low:(\d+),mobile:(\d+),desktop:(\d+)\}\)/) || []).slice(1).map(Number);
   class M4 { constructor() { this.s = [1, 1, 1]; this.p = [0, 0, 0]; } compose(p, q, s) { this.p = [p.x, p.y, p.z]; this.s = [s.x, s.y, s.z]; return this; } makeScale(x, y, z) { this.s = [x, y, z]; return this; } }
@@ -253,13 +256,13 @@ for (const S of scen) {
   }
   ok(/ah_pool'\) F\.poolLook\(o\.material\)/.test(fac) && !/g\.setIndex\(k\)/.test(fac), 'loadMansion re-lights ah_pool and does not trim it');
 }
-// ── (7) cache tags: a v301 load cannot keep the merged v300 light script ──
+// ── (7) cache tags: a v302 load cannot keep the v301 cliff / facilities scripts ──
 {
   const sw = fs.readFileSync(path.join(root, 'sw.js'), 'utf8');
-  ok(/const CACHE_NAME = 'dartmeadow-engine-v301';/.test(sw), 'CACHE_NAME is dartmeadow-engine-v301');
-  ok(/<script src="ui\/dm-lod\.js\?v=300"><\/script>/.test(html), 'dm-lod.js cache tag stays v300 (unchanged in this follow-up)');
-  ok(/<script src="ui\/dm-light\.js\?v=301"><\/script>/.test(html), 'dm-light.js cache tag is v301 (Low shadow-map wrapper)');
-  ok(/<script src="ui\/dm-facilities\.js\?v=300b" defer><\/script>/.test(html), 'dm-facilities.js cache tag stays v300b (unchanged in this follow-up)');
+  ok(/const CACHE_NAME = 'dartmeadow-engine-v302';/.test(sw), 'CACHE_NAME is dartmeadow-engine-v302 (main v301 + 1, JOTS Cliffs #249)');
+  ok(/<script src="ui\/dm-lod\.js\?v=300"><\/script>/.test(html), 'dm-lod.js cache tag stays v300');
+  ok(/<script src="ui\/dm-light\.js\?v=301"><\/script>/.test(html), 'dm-light.js cache tag is v301 (Low shadow-map wrapper, #254)');
+  ok(/<script src="ui\/dm-facilities\.js\?v=302" defer><\/script>/.test(html), 'dm-facilities.js cache tag is v302 (past the v300b pool restore; JOTS Cliffs #249)');
 }
 
 console.log(fails ? fails + ' FAILED of ' + n : 'fov-fade OK (' + n + ' checks)');

@@ -46,59 +46,59 @@
  "sets": {
   "strata": {
    "material": "ah_rock",
-   "name": "Stratified sandstone / limestone ledges",
+   "name": "Cleaved shard-rock slab faces",
    "depthM": 0.16,
    "bytes": {
-    "color-2k": 307174,
-    "nrm-2k": 2664486,
-    "orm-2k": 260036,
-    "height-2k": 176270,
-    "color-1k": 63728,
-    "nrm-1k": 579510,
-    "orm-1k": 73612,
-    "height-1k": 62176,
-    "color-512": 16328,
-    "nrm-512": 116176,
-    "orm-512": 23264,
-    "height-512": 22712
+    "color-2k": 312950,
+    "nrm-2k": 2743944,
+    "orm-2k": 167664,
+    "height-2k": 152158,
+    "color-1k": 62548,
+    "nrm-1k": 594414,
+    "orm-1k": 40390,
+    "height-1k": 42020,
+    "color-512": 14112,
+    "nrm-512": 114728,
+    "orm-512": 10684,
+    "height-512": 13608
    }
   },
   "columnar": {
    "material": "ah_rockc",
-   "name": "Columnar basalt",
+   "name": "Angular prism shard rock",
    "depthM": 0.14,
    "bytes": {
-    "color-2k": 309190,
-    "nrm-2k": 1925140,
-    "orm-2k": 113888,
-    "height-2k": 66570,
-    "color-1k": 59022,
-    "nrm-1k": 402136,
-    "orm-1k": 36692,
-    "height-1k": 22234,
-    "color-512": 13476,
-    "nrm-512": 68730,
-    "orm-512": 13286,
-    "height-512": 8676
+    "color-2k": 267138,
+    "nrm-2k": 2615772,
+    "orm-2k": 133230,
+    "height-2k": 110478,
+    "color-1k": 49556,
+    "nrm-1k": 561538,
+    "orm-1k": 34040,
+    "height-1k": 33116,
+    "color-512": 10676,
+    "nrm-512": 104512,
+    "orm-512": 9886,
+    "height-512": 10248
    }
   },
   "sheet": {
    "material": "ah_rocks",
-   "name": "Granite exfoliation sheets",
+   "name": "Joint-face rock pavement",
    "depthM": 0.07,
    "bytes": {
-    "color-2k": 901270,
-    "nrm-2k": 2017444,
-    "orm-2k": 196774,
-    "height-2k": 106628,
-    "color-1k": 208358,
-    "nrm-1k": 422650,
-    "orm-1k": 45536,
-    "height-1k": 33198,
-    "color-512": 43168,
-    "nrm-512": 71670,
-    "orm-512": 10214,
-    "height-512": 11554
+    "color-2k": 377604,
+    "nrm-2k": 2538174,
+    "orm-2k": 349746,
+    "height-2k": 331396,
+    "color-1k": 78010,
+    "nrm-1k": 562318,
+    "orm-1k": 90982,
+    "height-1k": 89746,
+    "color-512": 22268,
+    "nrm-512": 112792,
+    "orm-512": 31488,
+    "height-512": 34032
    }
   },
   "talus": {
@@ -106,25 +106,25 @@
    "name": "Talus / scree",
    "depthM": 0.2,
    "bytes": {
-    "color-2k": 460404,
-    "nrm-2k": 2630290,
-    "orm-2k": 308372,
-    "height-2k": 229146,
-    "color-1k": 99550,
-    "nrm-1k": 581002,
-    "orm-1k": 103994,
-    "height-1k": 92054,
-    "color-512": 27586,
-    "nrm-512": 119432,
-    "orm-512": 39010,
-    "height-512": 38300
+    "color-2k": 473814,
+    "nrm-2k": 2700716,
+    "orm-2k": 396466,
+    "height-2k": 290550,
+    "color-1k": 104716,
+    "nrm-1k": 618406,
+    "orm-1k": 137616,
+    "height-1k": 120484,
+    "color-512": 30390,
+    "nrm-512": 135698,
+    "orm-512": 50236,
+    "height-512": 50562
    }
   }
  },
  "use": {
-  "strata": "ledged beds on the main wall",
-  "columnar": "basalt band (z -18..-40 m, flank windows)",
-  "sheet": "granite sheeting on the flanks + plateau pavement",
-  "talus": "aprons / rubble at the base"
+  "strata": "cleaved shard slabs on the main wall",
+  "columnar": "prism-shard slots (~38 % of the macro shard slots)",
+  "sheet": "plateau / bench pavement",
+  "talus": "angular block aprons at the base"
  }
 }

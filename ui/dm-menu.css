@@ -64,7 +64,7 @@
 #screen-menu .mm-stack .mm-exit .mb-ico{color:#ff8a9c;}
 
 /* ── right: instrument panel; its ring holds the 3D start button ───── */
-#mm-right{right:clamp(12px,3vw,48px);top:clamp(80px,17vh,170px);width:clamp(180px,19vw,260px);}
+#mm-right{right:clamp(12px,3vw,48px);top:clamp(80px,17vh,170px);width:clamp(210px,20vw,270px);}   /* (v298) a little wider: room for the soundtrack chip under the status rows */
 #screen-menu .mm-inst{padding:clamp(10px,1.8vh,16px);display:flex;flex-direction:column;gap:clamp(8px,1.4vh,12px);}
 #screen-menu .mm-dial{position:relative;aspect-ratio:1;display:flex;align-items:center;justify-content:center;}
 #screen-menu .mm-rings{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible;}
@@ -100,8 +100,13 @@
 #screen-menu .mm-round.mm-support{border-color:rgba(var(--hi-rgb),.65);color:var(--gold);box-shadow:0 0 12px rgba(var(--hi-rgb),.3);}
 #screen-menu .menu-version{position:absolute;z-index:3;right:clamp(12px,3vw,48px);bottom:clamp(14px,3vh,28px);margin:0;font-size:.48rem;color:rgba(var(--acc-rgb),.5);}
 
-/* soundtrack chip: bottom centre while the menu is up */
-body:has(#screen-menu.active) #float-music{top:auto !important;bottom:clamp(14px,3vh,28px) !important;right:auto !important;left:50% !important;transform:translateX(-50%);}
+/* (v298 HUD) soundtrack chip (CLINICAL BLOOM): docked on the right instrument panel under the status rows (index.html _dockFloatMusic moves #float-music
+   into #mm-music while the menu is up). The bottom centre is the system message bar's (ui/dm-sys.js), so nothing pins the chip there any more. */
+#screen-menu .mm-music{display:flex;justify-content:center;min-width:0;}
+#screen-menu .mm-music:has(> #float-music){border-top:1px solid rgba(var(--acc-rgb),.25);padding-top:8px;}
+#screen-menu .mm-music > #float-music{position:static !important;top:auto !important;right:auto !important;bottom:auto !important;left:auto !important;transform:none !important;
+  z-index:auto !important;max-width:100%;box-sizing:border-box;justify-content:center;margin:0;}
+#screen-menu .mm-music > #float-music > span:nth-child(2){min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 
 /* ── phones in portrait: one tidy column ───────────────────────────── */
 @media (max-width:700px) and (orientation:portrait){
@@ -115,12 +120,12 @@ body:has(#screen-menu.active) #float-music{top:auto !important;bottom:clamp(14px
   #screen-menu .mm-portrait{height:150px;}
   #mm-bottom{order:4;margin-top:16px;justify-content:center;}
   #screen-menu .menu-version{position:relative;order:5;right:auto;bottom:auto;margin-top:10px;text-align:center;}
-  body:has(#screen-menu.active) #float-music{bottom:10px !important;}
+  #screen-menu .mm-music{grid-column:1 / -1;}   /* the soundtrack chip spans the panel under the dial + status (two-column grid here) */
 }
 /* phones in landscape: shorter portrait, smaller dial */
 @media (max-height:480px) and (orientation:landscape){
   #mm-left{top:62px;max-height:calc(100% - 62px - 70px);}
-  #mm-right{top:62px;width:clamp(160px,22vw,210px);}
+  #mm-right{top:62px;width:clamp(196px,24vw,230px);}
   #screen-menu .mm-portrait{display:none;}
   #screen-menu .mm-sub{display:none;}
   #screen-menu .menu-logo{font-size:1.25rem;}

@@ -1,5 +1,5 @@
 // Node harness for the mansion property lamps + room switches (no deps):  node tools/tests/mansion-lamps.js
-//   placement : committed assets/ariel-home/ariel-home-lamps.json == what tools/ariel-home/plan_lamps.js plans now; lamps on flat land at their ground height, outside the
+//   placement : committed assets/ariel-home/ariel-home-lamps.json (lamps + rail LEDs) == what tools/ariel-home/plan_lamps.js plans now; lamps on flat land at their ground height, outside the
 //               interior footprints, >= 14 units (~7.9 m) apart, every level lit, >= 94 % of the target cells inside a lamp's 12-unit radius, <= 96 lamps
 //   switches  : every room has one, inside its own room, on its floor, not inside furniture / walls (the interior walker's own blocked() test)
 //   state     : toggle / auto / fade (0.25 s) / save round trip / lamp dusk curve
@@ -19,7 +19,7 @@ ok(file === built.json, 'committed lamp JSON matches the planner output (run nod
 ok(P.build().json === built.json, 'planner is deterministic');
 const J = JSON.parse(file), L = J.lamps, g = P.decode(COL);
 const gh = (x, y) => g[Math.round((y - COL.y0) / COL.cell) * COL.nx + Math.round((x - COL.x0) / COL.cell)];
-ok(L.length >= 10 && L.length <= 40, 'lamp count ' + L.length + ' within 10..40');
+ok(L.length >= 9 && L.length <= 40, 'lamp count ' + L.length + ' within 9..40');   // 9 (was >= 10): the HOME deck pole is deleted, the deck is lit by rail LEDs (checked below)
 let minSep = 1e9, maxNn = 0;
 L.forEach((a, i) => {
   ok(gh(a[0], a[1]) > COL.sea + 0.6, 'lamp ' + i + ' stands on land');
@@ -30,9 +30,14 @@ L.forEach((a, i) => {
 });
 ok(minSep >= P.MINSEP - 1e-9, 'min spacing ' + minSep.toFixed(1) + ' units (' + (minSep / P.UPM).toFixed(1) + ' m) >= ' + P.MINSEP);
 ok(maxNn <= 110, 'no lamp isolated by more than 110 units (' + maxNn.toFixed(1) + ')');
+// 0.26 (unchanged from main): the HOME arrowhead deck has no street lamp any more (plan_lamps.js step 5); its target cells count as lit only where they are within
+// LED_R of a rail LED, the same radius the LED light pools are drawn with in ui/dm-lamps.js. Coverage 74.8 % (main 75.8 %; the interim [-86,22] pole plan 72.2 %).
 ok(built.plan.uncovered / built.plan.targets <= 0.26, 'target coverage ' + (100 - 100 * built.plan.uncovered / built.plan.targets).toFixed(1) + ' %');
 for (const lv of built.plan.levels) { const n = L.filter(a => Math.abs(a[2] - lv.h) < 0.6).length; ok(n >= 1, 'level h=' + lv.h + ' (' + lv.area + ' cells) has a lamp'); }
-ok(L.some(a => a[2] < -15), 'the cliff terraces (h -18) are lit'); ok(L.some(a => a[1] > 8 && a[2] > -1), 'the landing deck / terrace is lit'); ok(L.some(a => a[1] < -60), 'the arrival court is lit');
+ok(L.every(a => Math.hypot(a[0] - P.HOME_PAD[0], a[1] - P.HOME_PAD[1]) >= P.HOME_KEEP), 'no lamp inside the HOME landing keep-out (' + (P.HOME_KEEP / P.UPM).toFixed(1) + ' m round the HOME pad)');
+const LEDS = J.leds || []; ok(LEDS.length >= 12, 'the HOME deck has its rail LEDs (' + LEDS.length + ')'); ok(built.plan.ledLit > 0, 'rail LEDs light ' + built.plan.ledLit + ' deck target cells');
+ok(L.every(a => !(Math.abs(a[2]) < 0.3 && a[0] < -30 && a[1] > 8 && a[1] < 42)), 'no solid street lamp on the HOME arrowhead deck');
+ok(L.some(a => a[2] < -15), 'the cliff terraces (h -18) are lit'); ok(L.concat(J.leds || []).some(a => a[1] > 8 && a[2] > -1), 'the landing deck / terrace is lit (rail LEDs count: the deck has no pole)'); ok(L.some(a => a[1] < -60), 'the arrival court is lit');
 
 console.log('== switches');
 const sb = { window: null, performance: { now: () => 1 }, atob: s => Buffer.from(s, 'base64').toString('binary'), console, Math, Float64Array, Uint8Array, Set, Promise, fetch: () => Promise.reject(new Error('no net')) }; sb.window = sb; sb.globalThis = sb;

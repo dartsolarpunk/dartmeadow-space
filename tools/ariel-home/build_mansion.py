@@ -31,7 +31,7 @@ SC = 1.3
 
 # ───────────────────────── mesh builder ─────────────────────────
 MATS = ['slate', 'concrete', 'wood', 'rock', 'glass', 'warm', 'pool', 'neon', 'dark', 'glow', 'leaf', 'rockc', 'rocks', 'rockt']
-# rock material sets (see gen_cliff_textures.py): rock = stratified sandstone/limestone, rockc = columnar basalt, rocks = granite sheeting / pavement, rockt = talus
+# rock material sets (see gen_cliff_textures.py; shard pass): rock = cleaved slab faces (set 'strata'), rockc = angular prism shards ('columnar'), rocks = joint-face pavement ('sheet'), rockt = talus blocks
 ROCKS = ('rock', 'rockc', 'rocks', 'rockt'); ROCKSET = {'rock': 'strata', 'rockc': 'columnar', 'rocks': 'sheet', 'rockt': 'talus'}
 TILE = {'slate': 4.0, 'concrete': 4.0, 'wood': 3.0, 'rock': 3.0, 'rockc': 3.0, 'rocks': 3.0, 'rockt': 3.0, 'dark': 2.0, 'leaf': 1.5}
 MATS_BPY = []
@@ -251,9 +251,14 @@ def rock_raw(x, y):
     t = min(1.0, d / 34.0)
     face = -(SEA * -1.0) * (1 - (1 - t) ** 2.6)          # 0 -> -62, steep first
     jag = 15.0 * (ridge ** 2) * t * (1 - t) * 4 + 6.0 * n2 * t * (1 - t) * 4
-    h = face - jag * 0.9 + 1.8 * n1
-    # layered strata steps
-    h -= 1.6 * ((h / 5.5) % 1.0)
+    # (shard pass) the face carries no organic macro wobble of its own any more: the v298 sawtooth 'strata steps' (h % 5.5 along the noisy contours = the wavy
+    # graded lines on live) are gone below the first band and the ridged-noise jag is cut to 30 % away from the lip, so the straight shard planes of
+    # cliff_mesh.py define the wall.  The lip keeps the v298 profile (full jag in the first ~2 u, the first 5.5 u band of the sawtooth) so the plateau-edge cells
+    # of the collision grid (walkable levels -> the lamp plan) are unchanged, but clamped so the face never starts ABOVE the rounded plateau lip: that rim bump
+    # came and went with n1 from column to column and sheared the rows of the sweep (the chevron band at x ~ +100..115).  Plateau (d < 0), the deck / wing
+    # carves and the sea floor are unchanged.
+    h = face - jag * 0.9 * (1.0 - 0.7 * sstep(0.0, 5.0, d)) + 1.8 * n1
+    if h > -5.5: h = min(h - 1.6 * ((h / 5.5) % 1.0), 0.25 * n1 - 2.2)      # v298 lip band, but never a rim above the rounded plateau lip (row shear)
     if d > 34:
         h = SEA - 3 - 0.18 * (d - 34) + 4 * n1                # sea floor falling away
     bx = max(0, abs(x) - 150) / 80.0
@@ -676,6 +681,10 @@ def make_obj(name, b, mats):
     bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.002); bm.to_mesh(me); bm.free()
     sm = {MATS.index(r) for r in ROCKS} | {MATS.index('leaf')}      # smooth rock/foliage -> shared vertices (GLB size) and softer shading
     for pi, pgn in enumerate(me.polygons): pgn.use_smooth = int(b.m[pi]) in sm
+    # (shard pass) the rock is smooth-shaded across each planar facet but SHARP on shard seams / ridges / cleavage creases (> 28 deg): split normals there, so
+    # a 0.5 u side face does not shade as a rounded bevel.  Flat-shaded house faces are unaffected.
+    try: me.set_sharp_from_angle(angle=math.radians(28.0))
+    except Exception as e: print('[make_obj] set_sharp_from_angle unavailable', e)
     return ob
 
 def house_scaled(detail):

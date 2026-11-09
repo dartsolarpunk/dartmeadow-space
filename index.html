@@ -1000,7 +1000,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 .save-slot-name{font-family:var(--font-hud);font-size:0.65rem;flex:1;color:var(--text);}
 .save-slot-info{font-family:var(--font-mono);font-size:0.55rem;color:var(--text-dim);}
 .save-slot-btns{display:flex;gap:0.3rem;}
-/* Toast: retired (v240) — every system message goes through window.dmSys() (ui/dm-sys.js, bottom-right strip) */
+/* Toast: retired (v240) — every system message goes through window.dmSys() (ui/dm-sys.js, the centred bottom bar since v298) */
 /* Upload file input hidden */
 #file-upload{display:none;}
 
@@ -1024,7 +1024,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-safety.js?v=1" defer></script>
 <script src="jots/jots-link.js?v=217" defer></script>
 <script src="ui/dm-friends.js?v=217" defer></script>
-<script src="ui/dm-perflog.js?v=292" defer></script>
+<script src="ui/dm-perflog.js?v=302" defer></script>
 <script src="ui/dm-webkit.js?v=210" defer></script>
 <script src="ui/dm-spectator.js?v=1" defer></script>
 <script src="ui/dm-stack.js?v=1" defer></script>
@@ -1040,9 +1040,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-collide.js?v=287" defer></script>
 <script src="ui/dm-collide-game.js?v=281" defer></script>
 <script src="ui/dm-cgroup.js?v=281" defer></script>
-<script src="ui/dm-projector.js?v=224" defer></script>
-<script src="ui/dm-groundmark.js?v=291" defer></script>
 <script src="ui/dm-charm.js?v=234" defer></script>
+<script src="ui/dm-flash.js?v=302" defer></script>
 <script src="ui/dm-menuscene.js?v=245" defer></script>
 <script src="ui/dm-starbubble.js?v=4" defer></script>
 <script src="ui/dm-hazardbubble.js?v=215" defer></script>
@@ -1068,11 +1067,11 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-mansion-rooms.js?v=250" defer></script>
 <script src="ui/dm-mansion-look.js?v=251" defer></script>
 <script src="ui/dm-mansion-interior.js?v=262" defer></script>
-<script src="ui/dm-facilities.js?v=300b" defer></script>
-<script src="ui/dm-lamps.js?v=293" defer></script>
+<script src="ui/dm-facilities.js?v=302" defer></script>
+<script src="ui/dm-lamps.js?v=302" defer></script>
 <script src="ui/dm-mansion-collide.js?v=283" defer></script>
 <script src="ui/dm-holo.js?v=283" defer></script>
-<script src="ui/dm-sys.js?v=241"></script>
+<script src="ui/dm-sys.js?v=302"></script>
 </head>
 <body>
 <!-- LOADING -->
@@ -1311,6 +1310,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
         <div class="mm-st-row"><span>LOCATION</span><b id="mm-st-loc">Sol · Milky Way</b></div>
         <div class="mm-st-row"><span>LAST SAVE</span><b id="mm-st-save">—</b></div>
       </div>
+      <div id="mm-music" class="mm-music" aria-label="Soundtrack"></div>   <!-- (v298 HUD) the CLINICAL BLOOM soundtrack control docks here while the menu is up (_dockFloatMusic) -->
     </div>
   </div>
   <div id="mm-bottom" class="mm-panel mm-hinge-bottom">
@@ -2034,7 +2034,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 //  DART MEADOW v3  —  DART Energy Ring Systems
 // ══════════════════════════════════════════════════════════════
 function $(id){return document.getElementById(id);}
-// (v240) toast() is a shim: every in-game message goes through the single bottom-right strip (ui/dm-sys.js). Call shapes kept:
+// (v240) toast() is a shim: every in-game message goes through the single centred system bar (ui/dm-sys.js). Call shapes kept:
 // toast(m) · toast(m,ms) · toast(m,'warn'|'err') · toast(m,'warn',ms) · toast(m,'',ms)
 function toast(msg,dur,cls){
   try{ if(window.dmSys) window.dmSys(msg,dur,cls); else console.log('[sys]',msg); }catch(e){}
@@ -2945,6 +2945,7 @@ function goScreen(name){
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   const _prevScreen=STATE.screen;
   STATE.screen=name;
+  try{ _dockFloatMusic(); }catch(e){}
   // (memory lane, ui/dm-mem.js) phones/tablets: the menu's start-button turntable is a SECOND WebGPU device holding a 2.4 M-vertex model (~110 MB GPU + the same again on
   // the CPU); it goes once the game is under way and comes back (lazily) with the menu.  The builder's MSAA drawing buffer is handed back while the screen is not shown.
   try{
@@ -3020,6 +3021,14 @@ function _idleBoardPrep(M){
   if(_idleStop) _idleStop();
   _idleStop=window.DMLaunch.drive(sl,{canRun:()=>live(),calmMs:24});
   return true;
+}
+// (v298 HUD) The CLINICAL BLOOM soundtrack control (#float-music) lives ON the main menu's right instrument panel, under the status rows (#mm-music in
+// #mm-right), instead of the bottom centre (which belongs to the system message bar, ui/dm-sys.js). On every other pre-flight screen (builder) it goes
+// back to its own fixed spot under the top-right HUD, as before; in game it stays hidden (hideFloatingMusicInGame). Event-driven (goScreen), no per-frame work.
+function _dockFloatMusic(){
+  const fm=$('float-music'), slot=$('mm-music'); if(!fm||!slot) return;
+  if(STATE.screen==='menu'){ if(fm.parentNode!==slot) slot.appendChild(fm); }
+  else if(fm.parentNode===slot){ const app=$('app'); document.body.insertBefore(fm,app&&app.parentNode===document.body?app:null); }
 }
 // Show floating music control on pre-flight screens (if music isn't stopped)
 function showFloatingMusic(){
@@ -6200,7 +6209,7 @@ function _fac(){
       curSysName:()=>_ttCurSysName()||'', skyDay:()=>{ const k=TERRAIN&&TERRAIN.sky; return k&&typeof k.day==='number'?k.day:1; }, shadows:()=>!!GFX.shadows, isMobile:()=>!!GFX.isMobile,
       tier:()=>({low:0,medium:1,high:2,ultra:3})[(GFX.preset==='auto'||!GFX.preset)?autoPreset():GFX.preset]|0,
       loadGLB:u=>new Promise((ok,no)=>{ const L=_getGLBLoader(); if(!L) return no(new Error('no GLTFLoader')); L.load(u,ok,undefined,no); }),
-      afterTeleport:(land)=>{ try{ if(PW) PW._jump=true; }catch(e){} if(land){ try{ atmoThrottle=0; atmoMach=0; try{ $('atmo-throttle').value=0; }catch(e){} if(atmoState){ atmoState.landing=true; atmoState.takeoff=0; atmoState.auto=null; } }catch(e){} } } });
+      afterTeleport:(land)=>{ try{ if(PW) PW._jump=true; }catch(e){} if(land){ try{ atmoThrottle=0; atmoMach=0; try{ $('atmo-throttle').value=0; }catch(e){} if(atmoState){ atmoState.landing=true; atmoState.takeoff=0; atmoState.auto=null; atmoState.landT0=performance.now(); atmoState.landT=null; atmoState.landTt=0; atmoState.landWarn=false; } }catch(e){} } } });   // (t1472) a fresh landing clock + no stale steer target: the 16 s watchdog must not fire on an old flight's landT0 the moment HOME sets her over the deck
   }
   return DMFac;
 }
@@ -7089,6 +7098,7 @@ function _startFlightLoop(){
     DMPerf.b('_dynRes'); try{ _dynRes(flightRenderer); }catch(e){} DMPerf.e();
     try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){_animLoopWarn('charMixer',e);}
     try{ _charmTick(dt); }catch(e){_animLoopWarn('charm',e);}
+    try{ if(window.DMFlash) DMFlash.tick('space'); }catch(e){_animLoopWarn('flash',e);}   // glasses flashlight: beam follows her glasses, button docks by the left stick
     try{ applySkyboardHeadOverride(); }catch(e){_animLoopWarn('headOverride',e);}   // (fades with the stance)
     DMPerf.b('updateBirdTemple'); try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);} DMPerf.e();
     DMPerf.b('_shipWalkCarry'); try{ if(SHIP_WALK.active) _shipWalkCarry(); else if(SHIP_LIFT.on) _shipLiftCarry(); }catch(e){_animLoopWarn('shipCarry',e);} DMPerf.e();
@@ -10436,18 +10446,33 @@ function _btPlayChime(){
 }
 // Quick-travel to wherever the Bird Temple currently is (it wanders, so this
 // reads its LIVE position each time rather than a fixed spot).
+// (v298) QUICK TRAVEL camera fix: the old jump set sp.pos to temple +(8,2,8), a fixed world offset that could sit inside the hull of a
+// large / rotated temple, kept the old heading (the temple was often behind her or off screen), left FOCUS / autopilot steering to the
+// old target, the follow cam trailing from the old spot and the hull sweep remembering where she was. Now: arrive OUTSIDE the hull
+// (>= 1.6x its radius), off the stern quarter and above the deck in the temple's own frame, nose aimed at the temple, assists off,
+// panel closed, follow cam re-seated, hull sweep reset. Refused while the temple is not spawned yet. (The temple GLB, its wander,
+// anchoring, fly-in and saves are untouched.)
+const _BT_QT_DIR=[0,0.42,1];   // temple-local arrival direction: astern (+Z) and up (+Y, above the deck plane)
 function travelToBirdTemple(){
-  const sp=STATE.flight;if(!sp||!BIRD_TEMPLE.group){toast('Bird Temple is still loading…',1500);return;}
-  const p=BIRD_TEMPLE.group.position;
-  sp.pos.set(p.x+8,p.y+2,p.z+8); // scaled down to match the corrected ship size
-  sp.vel.set(0,0,0);
-  // Honest messaging: this only moves the (currently frozen) open-space
-  // flight position — if triggered from surface/atmosphere, that won't be
-  // visible until actually returning to space, so say so rather than
-  // imply an immediate arrival that isn't happening on screen.
+  const sp=STATE.flight, bt=BIRD_TEMPLE, g=bt.group;
+  if(!sp||!sp.pos||!g||!bt.spawned){toast('Bird Temple is still loading…',1500);return;}
+  if(typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active){toast('🕊 You are aboard the Bird Temple',1600);return;}
+  g.updateMatrixWorld(true);
+  const R=Math.max(bt._R0||0,_btHullR()||0,1), D=1.6*R;
+  const c=new THREE.Vector3().setFromMatrixPosition(g.matrixWorld), gq=g.getWorldQuaternion(new THREE.Quaternion());
+  const off=new THREE.Vector3(_BT_QT_DIR[0],_BT_QT_DIR[1],_BT_QT_DIR[2]).normalize().applyQuaternion(gq).multiplyScalar(D);
+  sp.pos.copy(c).add(off);
+  if(sp.vel) sp.vel.set(0,0,0);
+  const q=spAimQuat(sp,c,new THREE.Quaternion()); if(q){ spQuat(sp).copy(q); spSyncLegacy(sp); }
+  if(boardFlight) boardFlight.position.copy(sp.pos);
+  try{ disengageAssist(); }catch(e){}                       // FOCUS / ORBIT / travel autopilot / IDLE: hand the stick back
+  try{ takeMouseLook(); }catch(e){}                         // drop queued mouse motion so the aim holds
+  _followInit=false;                                        // the follow cam re-seats behind the board on the next frame
+  _bfcPrevW=null; _bfcPrevL=null;                           // hull sweep: no sweep from the old spot to the new one
+  try{ closeTempleHub(); }catch(e){}
+  // Honest messaging: from surface / atmosphere this only moves the (frozen) open-space position.
   if(surfaceActive||atmoActive)toast('🕊 Position set near the Bird Temple — you\'ll arrive there when you head back to space',2600);
-  else toast('🕊 Arrived near the Bird Temple',2000);
-  drawTempleHubMap();
+  else toast('🕊 Arrived at the Bird Temple',2000);
 }
 function openTempleHub(){
   const bt=BIRD_TEMPLE;
@@ -18435,7 +18460,8 @@ function _lcApplyObj(root){
 function _lcApplyNew(){ try{ const n=_LC.node; for(const b of (celestialBodies||[])){ if(!b||!b.mesh||b.type==='Star'||b.name==='Sun'||b.mesh.userData._lcN===n) continue; b.mesh.userData._lcN=n; _lcApplyObj(b.mesh); } }catch(e){} }
 function _lcApplyWorlds(){ try{ for(const b of (celestialBodies||[])){ if(b&&b.mesh&&b.type!=='Star'&&b.name!=='Sun') _lcApplyObj(b.mesh); } }catch(e){} }
 // GPU timing only while the perf log runs (ui/dm-perflog.js sets DMPerfLogActive); Safari's WebGPU only with ?gputime=1;
-// ?gputime=0 turns it off anywhere.
+// ?gputime=0 turns it off anywhere. (v298) DMPerfLogActive is now OPT-IN (?perf=1 / ?perflog=1), so timestamp queries + the render/compute
+// wrappers are OFF for every player by default (they were on for every non-Safari player).
 function _gpuTimeWanted(){ try{ const q=location.search; if(/[?&]gputime=0\b/.test(q)) return false; if(!window.DMPerfLogActive) return false;
   const ua=navigator.userAgent||'', safari=/Safari\//.test(ua)&&!/Chrome\/|Chromium\/|CriOS\/|EdgiOS\/|FxiOS\//.test(ua);
   if(safari&&!/[?&]gputime=1\b/.test(q)) return false; return true; }catch(e){ return false; } }
@@ -19284,6 +19310,7 @@ function _pwSetMode(mode){
   [so,ao].forEach(o=>{ o.style.opacity=''; o.style.pointerEvents=''; o.style.transition=''; });
   document.body.classList.toggle('pw-hud',!space);   // the flight HUD hides under the sky / ground HUD
   surfaceActive=walk; atmoActive=fly;
+  try{ if(setupSurfaceJoysticks.release) setupSurfaceJoysticks.release(); }catch(e){}   // (t1472) no stick stays latched across a HUD change (landing, HOME, liftoff)
   if(!fly&&PW.camera) PW.camera.up.set(0,1,0);   // the sky's camera rolls with the board; the ground's never does
   if(boardFlight) boardFlight.visible=false;   // she rides the world's board now
   const body=PW.body;
@@ -19347,10 +19374,10 @@ function _pwFrame(dt){
     let _btGo=true; try{ if(mode!=='space'&&!SHIP_WALK.active&&!SHIP_LAND&&!(SHIP_LIFT&&SHIP_LIFT.on)&&_pwSkyHidden()&&_pwBtAcc<0.1) _btGo=false; }catch(e){}
     if(_btGo){ const _bt=performance.now(); try{ updateBirdTemple(_pwBtAcc); }catch(e){ _animLoopWarn('birdTemple',e); } _pwBtAcc=0; DMFT.add('updateBirdTemple',performance.now()-_bt); } }   // the ship keeps wandering + the shard keeps following, even off-screen
   { const _wt=performance.now(); try{ _pwWorldTick(dt); }catch(e){ _animLoopWarn('world',e); } DMFT.add('pwWorldTick',performance.now()-_wt); }
-  try{ if(window.DMGroundMark) DMGroundMark.tick(dt,(PW.mode==='walk'&&surfaceActive&&CHAR.root&&!CHAR._transitioning&&!CHAR.mounted)?surfPlayer:null,surfBoard,PW.gen,window._surfHeight,_pwfMap,CHAR.root?_cgWorldH():0,BOARD_CALL); }catch(e){ _animLoopWarn('groundmark',e); }   // red/blue laser ground marks (ui/dm-groundmark.js); fades out on liftoff
   try{ if(window.DM_HAZ) DM_HAZ.tick(dt); }catch(e){ _animLoopWarn('hazard',e); }   // habitability orb + underwater look (ui/dm-hazardbubble.js)
   { const _fw=performance.now(); try{ if(window.DMFluidWorld) DMFluidWorld.tick(dt); }catch(e){ _animLoopWarn('fluidVfx',e); } DMFT.add('fluidWorld',performance.now()-_fw); }   // APIC sea + PBF spray (ui/dm-fluid-world.js)
   try{ _dynRes(flightRenderer); }catch(e){}
+  try{ if(window.DMFlash) DMFlash.tick(PW.mode); }catch(e){ _animLoopWarn('flash',e); }   // glasses flashlight (ui/dm-flash.js): walk / fly / space HUDs
   { const _t1=performance.now(); DMFT.add('worldLogic',_t1-now); _pwRender(); { const _d=performance.now()-_t1; DMFT.add('worldRender',_d); DMFT.add(TERRAIN._shRef?'worldRenderShadowFrame':'worldRenderNoShadowFrame',_d); } DMFT.frame(); }
   if(PW.mode==='space'){
     const _h0=performance.now();
@@ -21459,6 +21486,7 @@ async function loadCharacterAssets(){
   CHAR.restPose={}; Object.keys(CHAR.bones).forEach(n=>{ const b=CHAR.bones[n]; CHAR.restPose[n]={p:b.position.clone(),q:b.quaternion.clone(),s:b.scale.clone()}; });
   try{ if(window.DMLight&&DMLight.on&&!/[?&]lightchar=0\b/.test(location.search)) DMLight.applyTree(CHAR.root,{}); }catch(e){ console.warn('[light] char',e); }   // (ui/dm-light.js) her materials read the radiance cache + height-cache sun shadow (node twins when needed)
   try{ if(window.DMCharm) DMCharm.attach(CHAR); }catch(e){ console.warn('[charm]',e); }   // necklace + kite charm on the chest bone (ui/dm-charm.js)
+  try{ if(window.DMFlash) DMFlash.attach(CHAR); }catch(e){ console.warn('[flash]',e); }   // AR-glasses LED bar on the Head bone + its (lazy, shadowless) beam (ui/dm-flash.js)
   const boneCount = Object.keys(CHAR.bones).length;
   if(boneCount===0){
     console.error('Character load: mesh loaded but ZERO bones were found in the traversal — the procedural skyboard stance and animations will silently do nothing. Check that the GLB actually contains a skeleton, not just a static mesh.');
@@ -23711,21 +23739,19 @@ function _pwfRotN(wp,nf){
 // globe hands over to it, far out in space; 1 = solid)
 function _pwfMask(){ const W=window; return W.interleavedGradientNoise(W.screenCoordinate.xy).lessThan(PWF.u.reveal); }
 // give every material under `root` the planet frame (skips the sky, the board, her and anything marked noBend)
-function _pwMapTag(root,gm){
+function _pwMapTag(root){
   if(!root||!_pwfReady()||root.userData.noBend||root.isLight||root.isCamera||(typeof CHAR!=='undefined'&&root===CHAR.root)) return;
-  if(root.userData.groundMark===true) gm=true;
   if(root.material&&!root.isSprite&&!root.isLine){
     const mats=Array.isArray(root.material)?root.material:[root.material];
     for(const m of mats){
       if(!m||m.userData._pwf||m.isShaderMaterial||m.isRawShaderMaterial) continue;
       m.userData._pwf=true; m.positionNode=_pwfNodeFor(m.positionNode||null);
       if(!m.maskNode) m.maskNode=_pwfMask();
-      if(gm&&window.DMGroundMark){ try{ DMGroundMark.tagMaterial(m); }catch(e){} }   // opted-in static meshes (userData.groundMark) receive the laser projectors
       m.needsUpdate=true;
     }
     if(root.isMesh||root.isInstancedMesh) root.frustumCulled=false;   // three culls by the flat bounds; what's drawn is elsewhere
   }
-  for(const c of root.children) _pwMapTag(c,gm);
+  for(const c of root.children) _pwMapTag(c);
 }
 // ── open space ↔ the planet frame ──
 // body frame (the planet's own, as its mesh turns): lon = atan2(-z, x), lat = asin(y)
@@ -25817,7 +25843,7 @@ const _chunkSeed=(i,j,s)=>((i*73856093)^(j*19349663)^(s*83492791))|0;
 // meant a node build + pipeline compile (and its shadow variant) every time a chunk streamed in — the flight hitch
 let _propShared=null;
 function _propKit(){ if(!_propShared){ const sh=(m)=>{ m.userData.shared=true; return m; };
-  const SM=THREE.MeshStandardNodeMaterial||THREE.MeshStandardMaterial;   // node materials (what the renderer would convert these to anyway) so the laser projectors can light them
+  const SM=THREE.MeshStandardNodeMaterial||THREE.MeshStandardMaterial;   // node materials (what the renderer would convert these to anyway)
   _propShared={rock:sh(new SM({color:0xffffff,roughness:0.92})), trunk:sh(new SM({color:0x4a3220,roughness:1})), crown:sh(new SM({color:0xffffff,roughness:1})),
     tGeo:new THREE.CylinderGeometry(0.7,1,1,6), cGeo:new THREE.ConeGeometry(1,1,7)}; _propShared.tGeo.userData.shared=_propShared.cGeo.userData.shared=true; }
   return _propShared; }
@@ -25839,7 +25865,7 @@ function _hmChunkScatter(i,j){ const it=_hmChunkScatterG(i,j); let r; do{ r=it.n
 function* _hmChunkScatterG(i,j){
   const H=TERRAIN.Hg||TERRAIN.H, pal=TERRAIN.pal, C=SURF_CHUNK, rnd=_rng32(_chunkSeed(i,j,TERRAIN.seed||1));
   const R=(a,b)=>a+(b-a)*rnd();
-  const g=new THREE.Group(); g.name='JOTS_ChunkProps'; g.userData.groundMark=true;
+  const g=new THREE.Group(); g.name='JOTS_ChunkProps';
   const per=Math.round((Math.min(300,({low:60,med:140,high:240,ultra:300})[STATE.settings.particles]||140))*(C*C)/(560*560));
   const base={h:0,s:0,l:0}; new THREE.Color(pal.rock||0x777777).getHSL(base);
   const rocks=[];
@@ -26065,13 +26091,26 @@ function _terrainDetailMat(opts){
     const fadeC=W.float(1).sub(W.smoothstep(W.float(reach*2.5),W.float(reach*9),dist));
     const fadeBand=W.float(1).sub(W.smoothstep(W.float(reach*8),W.float(reach*40),dist));
     const warpOf=(q)=>W.mx_fractal_noise_float(W.vec3(q.x.mul(0.035),W.float(0),q.z.mul(0.035)),2,2.0,0.5).mul(3.0);
+    // (JOTS Cliffs, shard pass) the same rock as the mansion cliff (tools/ariel-home/cliff_mesh.py): straight angular SHARD rock, not wavy beds.  Cleavage beds are
+    // near-PLANAR dipping slabs (a fixed dip in x / z plus only a quarter of the old warp, so the bed lines run straight across a face instead of wandering as graded
+    // contour lines); each ~3.3 u slab is a hard cap (flat face, crisp chamfer at its foot) or a recessed bed (one planar slope, no laminae), chosen per slab by a hash.
+    // The joint network is tall prisms (F2 - F1 of a y-stretched worley): a narrow crisp seam on every straight cell border plus a linear rise away from it, so each
+    // cell reads as a faceted prism with straight edges (no worley dots).  Same noise evaluations per call as before (one worley, the warp, grit at High+).
+    const _wv2=typeof W.mx_worley_noise_vec2==='function';
     const cliff=(q)=>{
-      const bed=q.y.mul(0.42).add(warpOf(q)), layer=W.fract(bed);
-      const ledge=W.smoothstep(W.float(0.0),W.float(0.12),layer).mul(W.float(1).sub(W.smoothstep(W.float(0.8),W.float(1.0),layer)));
-      const fr=W.mx_worley_noise_float(W.vec3(q.x.mul(0.55),q.y.mul(1.4),q.z.mul(0.55)),1.0,0);
-      const split=W.float(1).sub(W.smoothstep(W.float(0.03),W.float(0.12),fr));
+      const bed=q.y.mul(0.30).add(q.x.mul(0.045)).add(q.z.mul(0.03)).add(warpOf(q).mul(0.25)), layer=W.fract(bed), id=W.floor(bed);
+      const hb=W.fract(W.sin(id.mul(78.233)).mul(43758.5453)), hard=W.smoothstep(W.float(0.40),W.float(0.60),hb);
+      const capH=W.float(1).sub(W.smoothstep(W.float(0.86),W.float(0.94),layer));
+      const softH=W.float(0.18).add(layer.mul(0.42));
+      const ledge=W.mix(softH,capH,hard);
+      const jq=W.vec3(q.x.mul(0.30),q.y.mul(0.06),q.z.mul(0.30));
+      let split, prism;
+      if(_wv2){ const c=W.mx_worley_noise_vec2(jq,1.0,0), e=c.y.sub(c.x);
+        split=W.float(1).sub(W.smoothstep(W.float(0.008),W.float(0.035),e)).mul(hard.mul(0.5).add(0.5));
+        prism=W.smoothstep(W.float(0.0),W.float(0.30),e); }
+      else { split=W.smoothstep(W.float(0.62),W.float(0.80),W.mx_worley_noise_float(jq,1.0,0)).mul(0.6); prism=W.float(0.5); }
       const grit=lvl>=3?W.mx_fractal_noise_float(q.mul(2.2),2,2.0,0.5):W.float(0);
-      return {h:ledge.mul(0.35).sub(split.mul(0.25)).add(grit.mul(0.06)), id:W.floor(bed), ledge, split};
+      return {h:ledge.mul(0.30).add(prism.mul(0.22)).sub(split.mul(0.28)).add(grit.mul(0.05)), id, ledge, split};
     };
     // (fps) cliff strata tint: only where the face is steep AND inside the band distance (flat ground and the far plain skip all of it)
     const CLT=_gate(steep.mul(fadeBand).greaterThan(0.0),[1,0,0,0],()=>{
@@ -26140,7 +26179,6 @@ function _terrainDetailMat(opts){
     console.warn('[ground detail] plain material:',e);
     m=new THREE.MeshStandardMaterial({vertexColors:true,roughness:0.95,metalness:0.0,side:opts.side||THREE.FrontSide});
   }
-  try{ if(window.DMGroundMark) DMGroundMark.receive(m); }catch(e){ console.warn('[groundmark]',e); }   // laser-projector receiver (ui/dm-projector.js): zero cost while its fade is 0
   return m;
 }
 
@@ -27316,6 +27354,7 @@ function _footContact(dt, airborne, sc, ground, unit){
 function setupSurfaceJoysticks(){
   if(setupSurfaceJoysticks.bound) return; setupSurfaceJoysticks.bound=true;   // the zones live in the page: bind once
   // reuse the surface-specific joystick zones
+  const rel=[]; setupSurfaceJoysticks.release=()=>{ for(const f of rel) f(); surfJoyMove.x=surfJoyMove.y=0; surfLookJoy.x=surfLookJoy.y=0; };
   const mk=(zoneId,knobId,out,invY)=>{
     const zone=$(zoneId),knob=$(knobId);if(!zone)return;
     let active=false,tid=null,ox=0,oy=0;const R=50;
@@ -27325,6 +27364,11 @@ function setupSurfaceJoysticks(){
     zone.addEventListener('touchstart',e=>{e.preventDefault();if(active)return;const t=e.changedTouches[0];tid=t.identifier;start(t.clientX,t.clientY);},{passive:false});
     window.addEventListener('touchmove',e=>{if(!active||tid===null)return;for(const t of e.changedTouches)if(t.identifier===tid){mv(t.clientX,t.clientY);break;}},{passive:true});
     window.addEventListener('touchend',e=>{if(!active||tid===null)return;for(const t of e.changedTouches)if(t.identifier===tid){end();break;}});
+    // (t1472 "after HOME landing I still cannot move") a CANCELLED touch (iOS: system gesture, the HUD swapping under the finger, a sheet / alert)
+    // never fired touchend, so `active` stayed latched and every later touchstart was ignored: the stick was dead for the rest of the session.
+    // touchcancel releases it exactly like touchend (the space + sky sticks always did), and every HUD change releases both (_pwSetMode).
+    window.addEventListener('touchcancel',e=>{if(!active||tid===null)return;for(const t of e.changedTouches)if(t.identifier===tid){end();break;}});
+    rel.push(end);
     zone.addEventListener('mousedown',e=>{start(e.clientX,e.clientY);const m=ev=>mv(ev.clientX,ev.clientY),u=()=>{end();document.removeEventListener('mousemove',m);document.removeEventListener('mouseup',u);};document.addEventListener('mousemove',m);document.addEventListener('mouseup',u);});
   };
   mk('surf-move-zone','surf-move-knob',surfLookJoy,false);   // LEFT zone → LOOK
@@ -27934,23 +27978,41 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
       return d;
     }catch(e){ return null; }
   }
-  function autosaveHere(){ if(saveLocal(true)) vaultAutosave(); }
+  function autosaveHere(){ if(saveLocal(true)) _saveIdle(vaultAutosave); }
+  // (v298, Wave 1 "60 s hitch") the timed saves (1-min checkpoint, 5-min backup + upload, milestones) no longer serialize on their timer tick: each is queued
+  // here and runs in an idle period (>= 12 ms left, not mid landing / board transition), one job per idle callback; forced after ~20 s so a save is never
+  // dropped. WHAT is saved (buildSaveData('auto'), keys dm_autosave / slots / vault) is unchanged; hide / pagehide saves stay synchronous below.
+  const _SAVE_Q=[]; let _saveIdleOn=false, _saveIdleT0=0;
+  const _saveRic=f=>{ try{ if(window.requestIdleCallback) return requestIdleCallback(f,{timeout:4000}); }catch(e){} try{ requestAnimationFrame(()=>setTimeout(()=>f(null),0)); }catch(e){ setTimeout(()=>f(null),0); } return 0; };
+  function _saveBusy(){ try{ return (typeof CHAR!=='undefined'&&CHAR&&CHAR._transitioning)||(typeof atmoState!=='undefined'&&atmoState&&(atmoState.landing||atmoState.touchdown)&&typeof atmoActive!=='undefined'&&atmoActive); }catch(e){ return false; } }
+  function _saveIdleRun(dl){
+    if(!_SAVE_Q.length){ _saveIdleOn=false; return; }
+    const forced=performance.now()-_saveIdleT0>20000;
+    if(!forced&&((dl&&!dl.didTimeout&&dl.timeRemaining()<12)||_saveBusy())){ _saveRic(_saveIdleRun); return; }
+    const f=_SAVE_Q.shift(); try{ f(); }catch(e){ console.warn('[JOTS] idle save:',e); }
+    if(_SAVE_Q.length){ _saveIdleT0=performance.now(); _saveRic(_saveIdleRun); } else _saveIdleOn=false;
+  }
+  function _saveIdle(f){ if(_SAVE_Q.indexOf(f)<0) _SAVE_Q.push(f); if(!_saveIdleOn){ _saveIdleOn=true; _saveIdleT0=performance.now(); _saveRic(_saveIdleRun); } }
+  function _autosaveCheckpoint(){ if(document.hidden||typeof STATE==='undefined'||typeof buildSaveData!=='function') return; if(STATE.screen!=='flight'&&STATE.screen!=='surface'&&STATE.screen!=='atmo') return; if(window.__JOTS_INTRO||(typeof PW!=='undefined'&&PW._resumeHold)) return; try{ localStorage.setItem('dm_autosave',JSON.stringify(buildSaveData('auto'))); }catch(e){} }
+  function _autosaveBackup(){ if(!document.hidden) autosaveHere(); }
   let _lastMilestone=0;
   function milestone(label){
     setTimeout(()=>{                                  // after the arrival settles
-      const now=Date.now();
-      const d=saveLocal(now-_lastMilestone>=60000); if(!d) return;
-      if(now-_lastMilestone<60000) return;
-      _lastMilestone=now;
-      vaultAutosave();
-      toast('⟐ Progress initialized — '+label,2200);
+      _saveIdle(function _milestoneSave(){            // (v298) in an idle period, not on the timer tick
+        const now=Date.now();
+        const d=saveLocal(now-_lastMilestone>=60000); if(!d) return;
+        if(now-_lastMilestone<60000) return;
+        _lastMilestone=now;
+        _saveIdle(vaultAutosave);
+        toast('⟐ Progress initialized — '+label,2200);
+      });
     },6000);
   }
   window.jotsMilestone=milestone;
-  setInterval(()=>{ if(!document.hidden) autosaveHere(); },AUTO_BACKUP_MS);
+  setInterval(()=>{ if(!document.hidden) _saveIdle(_autosaveBackup); },AUTO_BACKUP_MS);
   // (webkit-polish) iOS can kill a foreground tab for memory with no pagehide/visibilitychange at all, so also drop a
   // cheap checkpoint of just dm_autosave (no slot rewrite, no upload, no vault) every minute; the 5-min cadence above stays for the backup/upload.
-  setInterval(()=>{ if(document.hidden||typeof STATE==='undefined'||typeof buildSaveData!=='function') return; if(STATE.screen!=='flight'&&STATE.screen!=='surface'&&STATE.screen!=='atmo') return; if(window.__JOTS_INTRO||(typeof PW!=='undefined'&&PW._resumeHold)) return; try{ localStorage.setItem('dm_autosave',JSON.stringify(buildSaveData('auto'))); }catch(e){} },60000);
+  setInterval(()=>{ if(!document.hidden) _saveIdle(_autosaveCheckpoint); },60000);
   let _hideUp=0;
   const _toBackground=()=>{ const up=Date.now()-_hideUp>60000; if(up) _hideUp=Date.now(); saveLocal(up); };
   document.addEventListener('visibilitychange',()=>{ if(document.hidden) _toBackground(); });
@@ -28247,12 +28309,12 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 
 <!-- ?v= stamps: bump on every UI change so browsers never mix a new page with cached old styles -->
 <link rel="stylesheet" href="ui/dm-ui.css?v=206">
-<link rel="stylesheet" href="ui/dm-hud.css?v=293">
+<link rel="stylesheet" href="ui/dm-hud.css?v=302">
 <link rel="stylesheet" href="ui/dm-friends.css?v=1">
 <link rel="stylesheet" href="ui/dm-safety.css?v=1">
 <link rel="stylesheet" href="ui/dm-spectator.css?v=1">
 <link rel="stylesheet" href="ui/dm-globe.css?v=3">
-<link rel="stylesheet" href="ui/dm-menu.css?v=80">
+<link rel="stylesheet" href="ui/dm-menu.css?v=302">
 <link rel="stylesheet" href="ui/dm-journal.css?v=97">
 <link rel="stylesheet" href="ui/dm-landmap.css?v=88">
 <link rel="stylesheet" href="ui/dm-type.css?v=89">
