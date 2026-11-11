@@ -26,7 +26,7 @@
   // tens of units away, she is tiny): the same cone, a far longer reach and a flatter fall-off so a passing planet or ship is lit.
   const PROF = { ground: { angle: 0.55, penumbra: 0.7, distance: 320, decay: 1.5, gain: 1 }, space: { angle: 0.45, penumbra: 0.6, distance: 1500, decay: 1.15, gain: 0.6 } };
   const R = { width: 0.153, top: 1.6689, front: -0.0133, band: 0.027 };   // GLB-measured fallback (metres, bind pose)
-  const S = { on: false, step: 2, built: false, led: null, casing: null, strip: null, light: null, target: null, dims: null, mode: '', prof: 'ground', pairs: [], ui: null, dirty: true, wait: 0, err: null };
+  const S = { on: false, step: 2, built: false, led: null, casing: null, strip: null, light: null, target: null, dims: null, mode: '', rc: 0, tries: 0, placed: false, prof: 'ground', pairs: [], ui: null, dirty: true, wait: 0, err: null };
   const F = { STEPS, S, R, LM_K, PROF };
   root.DMFlash = F;
   let T = null; const _p = { x: 0, y: 0, z: 0 }; let _v = null, _d = null;
@@ -114,6 +114,7 @@
   F.tick = function (mode) {
     mode = mode || '';
     if (mode !== S.mode) { S.mode = mode; S.dirty = true; S.wait = 0; }
+    if (++S.rc > 120) { S.rc = 0; S.dirty = true; S.wait = 0; S.tries = 0; }   // ~2 s: re-place if a HUD control moved into its slot
     if (S.dirty) { if (S.wait > 0) S.wait--; else dock(); }   // a HUD that is not laid out yet is re-measured every ~15 frames, not every frame (getBoundingClientRect allocates)
     if (!S.on || !S.led) { if (!S.on && S.light && S.light.intensity !== 0) S.light.intensity = 0; return; }   // off: never leaves a lit beam behind, whatever the mode
     let top = S.led; while (top.parent) top = top.parent;
@@ -137,8 +138,9 @@
   const ICON = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M8.2 3.5h7.6l-1.3 4.2H9.5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>' +
     '<path d="M9.5 7.7h5v11.6a1.2 1.2 0 0 1-1.2 1.2h-2.6a1.2 1.2 0 0 1-1.2-1.2z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>' +
     '<rect x="11.2" y="11" width="1.6" height="3.4" rx=".8" fill="currentColor"/><path class="fl-ray" d="M5.2 2.6l1.6 1.4M18.8 2.6l-1.6 1.4M12 .6v1.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
-  const CSS = '#dm-flash{position:fixed;left:0;bottom:0;z-index:3505;display:none;pointer-events:none;}' +
-    'body:has(#screen-flight.active) #dm-flash[data-m]:not([data-m=""]){display:block;}' +
+  const CSS = '#dm-flash{position:fixed;left:0;bottom:0;z-index:3555;display:none;pointer-events:none;}' +
+    '#dm-flash[data-m]:not([data-m=""]){display:block;}' +   // (t1480) shown by data-m alone: the old `body:has(#screen-flight.active)` gate made the whole rule INVALID on a WebView without :has
+    'body:has(#screen-menu.active) #dm-flash,body:has(#screen-builder.active) #dm-flash{display:none !important;}' +
     '#dm-flash .fl-btn{position:absolute;left:0;bottom:0;width:34px;height:34px;border-radius:50%;padding:0;margin:0;display:flex;align-items:center;justify-content:center;' +
     'background:rgba(6,14,28,.55);border:1px solid rgba(160,210,255,.45);color:#9fc8ee;pointer-events:auto;touch-action:manipulation;-webkit-tap-highlight-color:transparent;cursor:pointer;}' +
     '#dm-flash .fl-btn .fl-ray{opacity:0;}' +
@@ -170,22 +172,52 @@
     for (let i = 0; i < u.segs.length; i++) { u.segs[i].classList.toggle('lit', i <= S.step); u.segs[i].setAttribute('aria-checked', i === S.step ? 'true' : 'false'); }
   }
   const STICK = { space: 'jL', fly: 'atmo-steer-zone', walk: 'surf-move-zone' }, NEXT = ['level-stack'];
-  F.STICK = STICK;
-  function dock() {   // the button sits just right of the left stick, bottom-aligned; the bar spans the stick's height beside it
-    const u = build(); if (!u) return; S.dirty = false;
-    const id = STICK[S.mode], z = id && document.getElementById(id);
-    if (!z) { u.w.setAttribute('data-m', ''); return; }
-    const r = z.getBoundingClientRect();
-    if (r.width < 2) { u.w.setAttribute('data-m', ''); S.dirty = true; S.wait = 15; return; }   // its HUD is not laid out yet: try again in ~15 frames
-    u.w.setAttribute('data-m', S.mode);
-    // the side pads that share the stick row (space: #level-stack sits right of the stick in landscape) push it one slot further right
-    let x = r.right + 6;
-    for (let i = 0; i < NEXT.length; i++) {
-      const e = document.getElementById(NEXT[i]); if (!e || !e.offsetParent) continue; const q = e.getBoundingClientRect();
-      if (q.width > 1 && q.left < x + 60 && q.right > x - 2 && q.top < r.bottom && q.bottom > r.top) x = q.right + 6;
+  const STICK2 = { space: 'jR', fly: 'atmo-climb-zone', walk: 'surf-look-zone' };   // the right-hand stick of each HUD (second-choice side)
+  F.STICK = STICK; F.STICK2 = STICK2;
+  // (t1480) ALWAYS available: the button is shown in EVERY game mode (on foot, mansion / interior, sky, space), day or night. It prefers the slot right of
+  // the left stick; if a HUD control sits there it tries the next free slot; if no stick can be found / laid out it still shows in a fixed bottom-left
+  // slot (never hidden because a measurement failed). Re-checked every ~2 s so a control that opens later (globe, pads) cannot bury it.
+  const OBST = '#surface-overlay button,#atmo-overlay button,#screen-flight button,#surf-move-zone,#surf-look-zone,#atmo-steer-zone,#atmo-climb-zone,#jL,#jR,#level-stack,' +
+    '#atmo-overlay .side-pad,#dm-globe .dg-globe,#dm-globe .dg-b,.kite-board.kb-float,.kb-float';
+  const SZ = 34, GAP = 6;
+  function vis(e) { if (!e || (e.closest && e.closest('#dm-flash'))) return null; const q = e.getBoundingClientRect(); if (q.width < 2 || q.height < 2) return null; const c = root.getComputedStyle(e); if (c.visibility === 'hidden' || c.display === 'none' || +c.opacity < 0.05) return null; return q; }
+  function free(x, b, obs, W, H) {   // a SZ square at left x / bottom-offset b: on screen and clear of every obstacle
+    const l = x, t = H - b - SZ; if (l < 2 || l + SZ > W - 2 || t < 2 || t + SZ > H - 2) return false;
+    for (let i = 0; i < obs.length; i++) { const q = obs[i]; if (q.left < l + SZ && q.right > l && q.top < t + SZ && q.bottom > t) return false; }
+    return true;
+  }
+  F._free = free;
+  function dock() {
+    const u = build(); if (!u) return; S.dirty = false; S.rc = 0;
+    const d = root.document, sf = d.getElementById('screen-flight');
+    if (!S.mode || (sf && !sf.classList.contains('active'))) { u.w.setAttribute('data-m', ''); return; }   // not in a game screen (menu / builder / between worlds)
+    const W = root.innerWidth, H = root.innerHeight;
+    const z = d.getElementById(STICK[S.mode]), z2 = d.getElementById(STICK2[S.mode]);
+    const r = z && z.getBoundingClientRect(), r2 = z2 && z2.getBoundingClientRect();
+    const okR = r && r.width >= 2, okR2 = r2 && r2.width >= 2;
+    if (!okR && S.tries < 3) { S.tries++; S.dirty = true; S.wait = 15; if (!S.placed) return; }   // (after 3 tries it settles on the fallback slot; the ~2 s recheck resets the count)   // its HUD is not laid out yet: retry in ~15 frames (a few times), then fall back
+    if (okR) S.tries = 0;
+    const obs = []; const nl = d.querySelectorAll(OBST); for (let i = 0; i < nl.length; i++) { const q = vis(nl[i]); if (q) obs.push(q); }
+    const sb = (function () { try { return parseFloat(root.getComputedStyle(d.documentElement).getPropertyValue('--safe-bot')) || 0; } catch (e) { return 0; } })();
+    const cand = [];   // [x, bottom-offset]
+    if (okR) {
+      let x = r.right + GAP;   // the side pads that share the stick row (space: #level-stack right of the stick in landscape) push it one slot further right
+      for (let i = 0; i < NEXT.length; i++) {
+        const e = d.getElementById(NEXT[i]); if (!e || !e.offsetParent) continue; const q = e.getBoundingClientRect();
+        if (q.width > 1 && q.left < x + 60 && q.right > x - 2 && q.top < r.bottom && q.bottom > r.top) x = q.right + GAP;
+      }
+      cand.push([x, H - r.bottom]);                                  // right of the left stick, bottom aligned (preferred)
+      cand.push([r.right + GAP, H - r.bottom + SZ + GAP]);           // ... one slot up
+      cand.push([r.left, H - r.top + GAP]);                          // above the stick
     }
-    u.w.style.left = Math.round(x) + 'px'; u.w.style.bottom = Math.round(root.innerHeight - r.bottom) + 'px';
-    u.bar.style.height = Math.round(Math.max(84, Math.min(110, r.height))) + 'px';
+    if (okR2) { cand.push([r2.left - GAP - SZ, H - r2.bottom]); cand.push([r2.left - GAP - SZ, H - r2.bottom + SZ + GAP]); }   // left of the right stick
+    cand.push([Math.round(W / 2 - SZ - 40), Math.max(12, sb + 12)]);  // bottom centre-left, clear of the stick row on a phone
+    let pick = null; for (let i = 0; i < cand.length && !pick; i++) if (free(cand[i][0], cand[i][1], obs, W, H)) pick = cand[i];
+    if (!pick) pick = cand.length > 1 && okR ? cand[0] : [12, Math.max(150, sb + 150)];   // nothing free (or no sticks at all): the stick slot / a fixed bottom-left slot — still visible, on top
+    S.placed = true;
+    u.w.setAttribute('data-m', S.mode);
+    u.w.style.left = Math.round(Math.max(2, Math.min(W - SZ - 2, pick[0]))) + 'px'; u.w.style.bottom = Math.round(Math.max(2, pick[1])) + 'px';
+    u.bar.style.height = Math.round(Math.max(84, Math.min(110, okR ? r.height : 100))) + 'px';
   }
   F._dock = dock;
   if (root.document) { if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => ui()); else ui(); }

@@ -101,11 +101,17 @@ let fails = 0, n = 0; const ok = (c, m) => { n++; if (!c) { fails++; console.log
   rootG.removeFromParent(); F.toggle(true); F.tick('space'); ok(true, 'tick with no scene does not throw'); F.toggle(false);
   // index.html hooks
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-  ok(/<script src="ui\/dm-flash\.js\?v=303" defer><\/script>/.test(html), 'script tag (?v=303)'); ok(/const CACHE_NAME = 'dartmeadow-engine-v303';/.test(fs.readFileSync(path.join(root, 'sw.js'), 'utf8')), 'sw cache bumped together (v303)');
+  const sv = (html.match(/<script src="ui\/dm-flash\.js\?v=(\d+)" defer><\/script>/) || [])[1]; ok(!!sv, 'script tag (?v=' + sv + ')'); const cv = (fs.readFileSync(path.join(root, 'sw.js'), 'utf8').match(/const CACHE_NAME = 'dartmeadow-engine-v(\d+)';/) || [])[1]; ok(!!cv && +cv >= +sv, 'sw cache (v' + cv + ') is at / past the script ?v=' + sv + ' (bumped together)');
   ok(/flightScene=new THREE\.Scene\(\);\s*try\{ if\(window\.DMFlash\) DMFlash\.adoptScene\(flightScene\)/.test(html) && /DMFlash\.adoptScene\(scene\)/.test(html), 'beam made with the fixed light set in flightScene and in every world scene');
   ok(html.indexOf('DMFlash.attach(CHAR)') > html.indexOf('DMCharm.attach(CHAR)') && html.indexOf('DMFlash.attach(CHAR)') > 0, 'attached right after the charm on character load');
   ok(/DMFlash\.tick\('space'\)/.test(html) && /DMFlash\.tick\(PW\.mode\)/.test(html), 'ticked in open space and in the world (walk / fly / space)');
   ok(F.STICK.space === 'jL' && F.STICK.fly === 'atmo-steer-zone' && F.STICK.walk === 'surf-move-zone', 'docks by the LEFT stick of each HUD');
+  // (t1480) the button is available in EVERY mode: shown by data-m alone (no :has() gate), above the globe / floating pads, fixed fallback slot
+  const css = src.slice(src.indexOf('const CSS'), src.indexOf('function build'));
+  ok(!/body:has\(#screen-flight\.active\)\s*#dm-flash\[data-m\]/.test(css) && /#dm-flash\[data-m\]:not\(\[data-m=""\]\)\{display:block;\}/.test(css), 'shown by data-m alone (no :has() in the show rule: an unsupported :has would invalidate it)');
+  ok(/z-index:35[5-9]\d/.test(css), 'z-index above the globe (3550) and the floating pads (3510)');
+  ok(F.STICK2.walk === 'surf-look-zone' && /fixed bottom-left slot/.test(src) && /OBST/.test(src), 'second-choice slots + fixed fallback + obstacle test in dock()');
+  ok(['space', 'fly', 'walk'].every(m => F.STICK[m]), 'a stick (dock reference) for each of space / fly / walk (on foot, mansion, sky, space)');
   ok(!/>[^<]*[A-Za-z]{3,}[^<]*<\/button>/.test(src.slice(src.indexOf('const ICON'), src.indexOf('const CSS'))), 'icon only (custom SVG, no text label)');
   console.log(fails ? 'glasses-flash: FAILED ' + fails + '/' + n : 'glasses-flash: all ' + n + ' checks passed'); process.exit(fails ? 1 : 0);
 })().catch(e => { console.log('glasses-flash: ERROR', e); process.exit(1); });
