@@ -689,7 +689,7 @@
         const inR = rec.inRange === undefined ? d1 < farM : (rec.inRange ? d1 <= farM * 1.04 : d1 < farM); rec.inRange = inR;   // 4 % hysteresis at the cull
         const near = rec.lodNear, far = !inR;
         lodBands(rec, u, near, far, d1, dt, T);
-        if (MAN.glb && !MAN.lod2Tried && window.DMImpostor && window.DMLod && DMLod.on) kickLod2(T);
+        if (MAN.glb && !MAN.lod2Tried && window.DMImpostor && window.DMLod && DMLod.on && DMLod.get('lod2.on')) kickLod2(T);   // impostor level: ?lodfar=1 only
         if (MAN.lod2 && !rec.lod2) attachLod2(rec, T);
         if (d3sq < 1100 * 1100) { upgrade2K(T); mansionPx(T); upgradeCliff(T); }
         if (window.DMMansionInt) DMMansionInt.tick(rec, d3sq, now, DM.arriveAt === rec.def.id);

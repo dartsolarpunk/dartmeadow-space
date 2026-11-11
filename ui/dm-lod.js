@@ -34,44 +34,59 @@
  *   terrain.reliefK relief-aware ground tile split                  0.4    0.7    1.0
  *   mip.bias        extra mip level at the far end of a detail band   1.0    0.8    0.5
  *
+ * (v309) CLASSIC BASE.  The default table is the one that shipped before the Nov 5 far-range work (props 1400 m cut / 3x3 chunks, shadows 110 / 170, mansion 300-360 / 400-470, cull 5200 / 6000,
+ *   no vantage extension, no mip bias, no relief-split, no error-driven cut, no chunk fade-in, no mansion impostor).  The Nov 5 additions are kept as the FAR table, off unless ?lodfar=1
+ *   (DMLod.far); pure efficiency wins (chunk wedge cull, SkyGround budget / allocation work, queue-not-drop) are not behind it.  Rows marked [far] differ between the two tables.
+ *
  * Public: DMLod.tier · .on · .get(key) (tier value) · .propCut(fog, agl) · .propRing(fog, agl) · .vantage(vt) · .mansion() · .sw(state, d, enter, leave) · .core
  */
 (function (root) {
   'use strict';
 
   const TIERS = ['low', 'mobile', 'desktop'];
+  // CLASSIC (default): the numbers the game used before 4ef7b2d.  Rows tagged [far] are the Nov 5 values, in FAR below.
   const TABLE = {
-    'prop.cutMax':   [700, 1000, 1400],
+    'prop.cutMax':   [1400, 1400, 1400],     // [far 700 / 1000 / 1400] the old formula: min(fog x 1.05, agl > 60 ? fog x .85 : 1400)
     'prop.cutMin':   [260, 260, 260],
-    'prop.shadow':   [90, 110, 170],
-    'prop.ring':     [1, 2, 3],
+    'prop.shadow':   [110, 110, 170],        // [far 90 / 110 / 170]
+    'prop.ring':     [1, 1, 1],              // [far 1 / 2 / 3] the 3x3 chunks around you, as before
     'prop.hyst':     [1.06, 1.06, 1.06],
     'prop.colRing':  [1, 1, 1],
     'mansion.in':    [300, 300, 400],
     'mansion.out':   [360, 360, 470],
-    'mansion.far':   [4200, 5200, 5200],
-    'facility.cull': [4800, 6000, 6000],
-    'vantage.reach': [1800, 2800, 4500],
+    'mansion.far':   [5200, 5200, 5200],     // [far 4200 / 5200 / 5200]
+    'facility.cull': [6000, 6000, 6000],     // [far 4800 / 6000 / 6000]
+    'vantage.on':    [0, 0, 0],              // [far 1] 0 = the walking draw radius is never extended from a high vantage
+    'vantage.reach': [1800, 2800, 4500],     // used only when vantage.on
     'vantage.fog':   [0.6, 0.62, 0.62],
     'water.minH':    [4, 4, 4],
-    'mansion.lod2In':  [1300, 1500, 2200],   // LOD1 -> impostor (LOD2) enter distance; leave = x0.92
-    'xfade.s':       [0.35, 0.45, 0.6],      // cross-fade seconds for the mansion LOD swaps
-    'prop.fadeS':    [0.4, 0.5, 0.6],        // newly shown prop chunk: screen-door fade-in seconds
+    'lod2.on':       [0, 0, 0],              // [far 1] mansion LOD1 -> impostor level
+    'mansion.lod2In':  [1300, 1500, 2200],   // LOD1 -> impostor (LOD2) enter distance; leave = x0.92 (far only)
+    'xfade.s':       [0.35, 0.45, 0.6],      // cross-fade seconds for the mansion LOD swaps (far only; the fade mask is not installed in classic)
+    'prop.fadeS':    [0.4, 0.5, 0.6],        // newly shown prop chunk fade-in seconds (far only)
     'impostor.tris': [1600, 2600, 4200],     // impostor triangle target (vertex clustering)
     'lod.tauPx':     [6, 4.5, 3],            // error-driven LOD: a level is used while its geometric error projects to <= this many pixels
-    'billboard.px':  [30, 24, 18],           // on-screen size (px) below which an instanced prop may be drawn as a view billboard (groundwork)
+    'billboard.px':  [30, 24, 18],           // on-screen size (px) below which an instanced prop may be drawn as a view billboard (groundwork; also the mansion size fade's projection)
+    'prop.errOn':    [0, 0, 0],              // [far 1] error-driven prop chunk cut
     'prop.errM':     [1.0, 1.2, 1.4],        // typical prop size (m) whose projected size sets the chunk draw cut (a boulder / tree crown)
     'prop.tauPx':    [2.2, 1.8, 1.4],        // ... drawn while that size projects to >= this many pixels
-    'terrain.reliefK': [0.4, 0.7, 1.0],      // how much more finely the far ground tiles split where they hold relief (cliffs, coast scarps)
+    'terrain.reliefK': [0, 0, 0],            // [far 0.4 / 0.7 / 1.0] how much more finely the far ground tiles split where they hold relief
     'mansion.goneDiam': [56, 48, 40],        // (v289) mansion + cliff is invisible when its bounding sphere projects to <= this many px across (altitude / distance fade)
     'mansion.fullDiam': [96, 84, 70],        // ... and fully drawn at >= this many px (smoothstep between): it cannot be seen from near-space
-    'mip.bias':      [1.0, 0.8, 0.5],        // extra texture LOD (mips) at the far end of a detail band: far surfaces average instead of shimmering
+    'mip.bias':      [0, 0, 0],              // [far 1.0 / 0.8 / 0.5] extra texture LOD (mips) at the far end of a detail band
   };
+  // the Nov 5 far-range values (rows not listed are identical in both tables)
+  const FAR = Object.assign({}, TABLE, {
+    'prop.cutMax': [700, 1000, 1400], 'prop.shadow': [90, 110, 170], 'prop.ring': [1, 2, 3], 'mansion.far': [4200, 5200, 5200], 'facility.cull': [4800, 6000, 6000],
+    'vantage.on': [1, 1, 1], 'lod2.on': [1, 1, 1], 'prop.errOn': [1, 1, 1], 'terrain.reliefK': [0.4, 0.7, 1.0], 'mip.bias': [1.0, 0.8, 0.5],
+  });
+  let ACTIVE = TABLE;
   const WALK_R = 1200;     // the on-foot draw radius floor in index.html (walkR = max(1200, fogFar x 2.5)); a vantage extends it, never shrinks it
   const CHUNK = 300;       // SURF_CHUNK in index.html
 
   function tierIndex(name) { const i = TIERS.indexOf(name); return i < 0 ? 1 : i; }
-  function get(tier, key) { const row = TABLE[key]; return row ? row[tierIndex(tier)] : undefined; }
+  function get(tier, key) { const row = ACTIVE[key]; return row ? row[tierIndex(tier)] : undefined; }
+  function setFar(on) { ACTIVE = on ? FAR : TABLE; return ACTIVE; }
 
   /* hysteresis switch: `state` is the previous answer (true = near / on).  Enter below `enter`, leave above `leave` (enter <= leave) — in between nothing changes. */
   function sw(state, d, enter, leave) { return state ? !(d > leave) : d < enter; }
@@ -93,11 +108,13 @@
   /* View radius from a high vantage.  vt 0..1 (how far above the land around: index.html _vtK).  walk = the normal on-foot radius, gk = ladder ground reach 1 / .8 / .6.
      The extension (reach - walk) is what the ladder scales; the result is never below `walk`, monotone in vt and in gk. */
   function vantageReach(tier, vt, walk, gk) {
+    if (!get(tier, 'vantage.on')) return walk == null ? WALK_R : walk;   // classic: no extension
     const r = get(tier, 'vantage.reach'), w = walk == null ? WALK_R : walk, ext = Math.max(0, r - w) * (gk == null ? 1 : gk);
     return w + ext * Math.max(0, Math.min(1, vt));
   }
   /* Haze far distance from a vantage: blends the low-ground fog distance toward vantage.fog x reach, never past 0.92 x the drawn radius. */
   function vantageFog(tier, vt, fogFar, drawR) {
+    if (!get(tier, 'vantage.on')) return fogFar;   // classic: the haze stays where the low-ground tier put it
     const target = Math.max(fogFar, get(tier, 'vantage.fog') * get(tier, 'vantage.reach'));
     const v = fogFar + (target - fogFar) * Math.max(0, Math.min(1, vt));
     return Math.max(fogFar, Math.min(v, drawR * 0.92));
@@ -140,7 +157,7 @@
      drawing buffer (render scale, a phone) or a narrower view draws fewer / nearer chunks by itself.  Never below prop.cutMin; k = ladder scale (applied last). */
   function propCutErr(tier, fog, agl, k, fovDeg, viewH) {
     const raw = propCut(tier, fog, agl, 1), cutMin = get(tier, 'prop.cutMin');
-    if (!(fovDeg > 1) || !(viewH > 0)) return raw * (k == null ? 1 : k);
+    if (!get(tier, 'prop.errOn') || !(fovDeg > 1) || !(viewH > 0)) return raw * (k == null ? 1 : k);
     const e = errDist(get(tier, 'prop.errM'), get(tier, 'prop.tauPx'), fovDeg, viewH);
     return Math.max(cutMin, Math.min(raw, e)) * (k == null ? 1 : k);
   }
@@ -222,9 +239,13 @@
 
   /* Table validation (also run by the node test): every row has 3 numbers; classes never get a LONGER reach than a stronger class; enter < leave < far; shadow < cut. */
   function validate() {
-    const bad = [];
-    for (const k in TABLE) { const r = TABLE[k]; if (r.length !== 3 || r.some(x => !(x >= 0) || !isFinite(x))) bad.push(k + ': malformed'); }
-    ['prop.cutMax', 'prop.shadow', 'prop.ring', 'mansion.far', 'facility.cull', 'vantage.reach', 'mansion.lod2In', 'impostor.tris'].forEach(k => { const r = TABLE[k]; if (!(r[0] <= r[1] && r[1] <= r[2])) bad.push(k + ': not monotone across classes'); });
+    const bad = [], keep = ACTIVE, res = [];
+    [false, true].forEach(f => { setFar(f); validateOne(res); });
+    ACTIVE = keep; return res;
+  }
+  function validateOne(bad) {
+    for (const k in ACTIVE) { const r = ACTIVE[k]; if (r.length !== 3 || r.some(x => !(x >= 0) || !isFinite(x))) bad.push(k + ': malformed'); }
+    ['prop.cutMax', 'prop.shadow', 'prop.ring', 'mansion.far', 'facility.cull', 'vantage.reach', 'mansion.lod2In', 'impostor.tris'].forEach(k => { const r = ACTIVE[k]; if (!(r[0] <= r[1] && r[1] <= r[2])) bad.push(k + ': not monotone across classes'); });
     TIERS.forEach((t, i) => {
       if (!(get(t, 'mansion.in') < get(t, 'mansion.out'))) bad.push(t + ': mansion.in >= out');
       if (!(get(t, 'mansion.out') < get(t, 'mansion.far'))) bad.push(t + ': mansion.out >= far');
@@ -243,14 +264,16 @@
     return bad;
   }
 
-  const core = { TIERS: TIERS, TABLE: TABLE, WALK_R: WALK_R, CHUNK: CHUNK, get: get, sw: sw, fade: fade, propCutErr: propCutErr, reliefBoost: reliefBoost, projErrPx: projErrPx, errDist: errDist, lod2Dist: lod2Dist, sizeFade: sizeFade, levelByError: levelByError, billboardViews: billboardViews, chunkCulled: chunkCulled, billboardPx: billboardPx, createXfade: createXfade, mipBias: mipBias, qualityBands: qualityBands, bandW: bandW, propCover: propCover, propCut: propCut, propRing: propRing, vantageReach: vantageReach, vantageFog: vantageFog, validate: validate, tierIndex: tierIndex };
+  const core = { TIERS: TIERS, TABLE: TABLE, FAR: FAR, setFar: setFar, WALK_R: WALK_R, CHUNK: CHUNK, get: get, sw: sw, fade: fade, propCutErr: propCutErr, reliefBoost: reliefBoost, projErrPx: projErrPx, errDist: errDist, lod2Dist: lod2Dist, sizeFade: sizeFade, levelByError: levelByError, billboardViews: billboardViews, chunkCulled: chunkCulled, billboardPx: billboardPx, createXfade: createXfade, mipBias: mipBias, qualityBands: qualityBands, bandW: bandW, propCover: propCover, propCut: propCut, propRing: propRing, vantageReach: vantageReach, vantageFog: vantageFog, validate: validate, tierIndex: tierIndex };
   if (typeof module !== 'undefined' && module.exports) module.exports = core;
   if (typeof window === 'undefined') return;
 
   /* ───────────────────────── browser glue ───────────────────────── */
   const W = root, Q = (W.location && W.location.search) || '';
   const off = /[?&]lod=off\b/.test(Q), forced = (Q.match(/[?&]lod=(low|mobile|desktop)\b/) || [])[1];
-  const out = { on: !off, core: core, tier: forced || 'desktop', ver: 0 };
+  const farOn = !off && /[?&]lodfar=1\b/.test(Q);   // the Nov 5 far-range table + features (vantage extension, outer prop rings + fade-in, mansion impostor, relief split, mips); default = classic
+  core.setFar(farOn);
+  const out = { on: !off, far: farOn, core: core, tier: forced || 'desktop', ver: 0 };
   W.DMLod = out;
 
   function classify() {   // same test as ui/dm-budget.js classBase()

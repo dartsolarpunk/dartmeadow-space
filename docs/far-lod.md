@@ -1,3 +1,28 @@
+# Far-range level of detail
+
+## CURRENT DEFAULT (sw v309): the classic LOD
+The Nov 5 far-range work (sw v277-v289) read worse than the LOD before it: a drawn radius that opened and closed from a vantage, outer prop rings that streamed in late, a chunk fade-in, relief-driven tile splits (more tile builds), a mip bias that softened the distance, a mansion impostor level.  The default is now the table that shipped **before** it; the Nov 5 set stays in the code as a second table, off unless `?lodfar=1`.
+
+| | classic (default) | `?lodfar=1` (Nov 5) |
+|---|---|---|
+| prop draw cut | old formula: min(fog x 1.05, agl > 60 ? fog x .85 : 1400) x ladder | 700 / 1000 / 1400 cap, error-driven (px size of a 1.0-1.4 m prop) |
+| prop streaming | the 3x3 chunks round you, keep set = load set | rings 1 / 2 / 3 (pre-roll on the heavy gate), keep set one wider |
+| prop chunk appearance | shown by `_propsLod` | screen-door fade-in (`prop.fadeS`) |
+| prop shadows | 110 (phones) / 170 | 90 / 110 / 170 |
+| mansion cull / landmarks | 5200 / 6000 all classes | 4200 / 5200, 4800 / 6000 |
+| vantage draw radius + haze | none (walking radius only) | 1.8 / 2.8 / 4.5 km eased by `_vtK` |
+| ground tile split | distance only (`K` x size) | + relief boost up to x1.7 |
+| texture mip bias at the far end of a band | 0 | 1.0 / 0.8 / 0.5 |
+| mansion impostor (LOD2) | not built | built on the heavy gate, error-driven switch |
+
+Kept in both (not behind the flag): the SkyGround budget gate / settle / allocation work, queue-not-drop in sparsevox, the radial `_skyGroundFade` horizon dissolve (`?skyfade=0` turns it off), the radial sparsevox node metric (`?svmetric=box` is the old box metric), the conservative prop-chunk wedge cull (`?lodcull=0` off; fewer draw calls, no visual change), the mansion screen-size fade and LOD0/LOD1 cross-fade, the fov-fill quality chain (its prop band uses the loaded 3x3's reach in classic).  The SkyGround quadtree measures from the tile centre (`_measure`), so its shells are already circles; there are no tile/box debug overlays in the LOD code (the square shore/sea markers were removed in #253).
+
+`?farbump=1` (default off, shader only): a **directed degradation** tier for the ground - past the bump's reach the far macro field (the 60 u / 260 u noises the far tint already evaluates) also tilts the shading normal by its screen-space gradient (Mikkelsen bump from `dFdx/dFdy`, the pattern of the board material), so a coarse far tile keeps a lit relief instead of going flat.  No geometry, no extra noise taps.  Unverified on a GPU, hence the flag.
+
+From nanite-webgpu (MIT) only efficiency ideas are used: per-instance conservative frustum culling (the chunk wedge cull) and screen-space-error selection (far set only).  Its software rasterizer / meshlet visuals are not used.
+
+---
+
 # Far-range level of detail (sw v280)
 
 Goal: the highest detail near you, a graceful decay with distance, no pop-in, no missing faces; from the mansion deck a far cliff still reads, and up close it has the fine texture. Frame rate first: a steady 30 fps on every preset and device (v297: `ui/dm-budget.js` sheds under ~27.8 fps, 36 ms; legacy devices with <= 3 GB memory keep the 15 fps floor, 68 ms); `ui/dm-budget.js` and `ui/dm-governor.js` stay the authority.

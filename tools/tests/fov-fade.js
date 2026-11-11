@@ -260,7 +260,7 @@ for (const S of scen) {
 {
   const sw = fs.readFileSync(path.join(root, 'sw.js'), 'utf8');
   ok(/const CACHE_NAME = 'dartmeadow-engine-v30[2-9]';/.test(sw), 'CACHE_NAME is dartmeadow-engine-v302 (main v301 + 1, JOTS Cliffs #249)');
-  ok(/<script src="ui\/dm-lod\.js\?v=300"><\/script>/.test(html), 'dm-lod.js cache tag stays v300');
+  ok(/<script src="ui\/dm-lod\.js\?v=(300|309)"><\/script>/.test(html), 'dm-lod.js cache tag is stamped (v300, or v309 with the classic base)');
   ok(/<script src="ui\/dm-light\.js\?v=301"><\/script>/.test(html), 'dm-light.js cache tag is v301 (Low shadow-map wrapper, #254)');
   ok(/<script src="ui\/dm-facilities\.js\?v=30[2-9]" defer><\/script>/.test(html), 'dm-facilities.js cache tag is v302 (past the v300b pool restore; JOTS Cliffs #249)');
 }

@@ -3,6 +3,8 @@
 const assert = require('assert'), path = require('path'), vm = require('vm'), fs = require('fs');
 const L = require(path.join(__dirname, '../../ui/dm-lod.js'));
 let n = 0; const ok = (c, m) => { n++; assert(c, m); };
+// sections 1-18 exercise the FAR table (the Nov 5 numbers / features, ?lodfar=1); section 19 at the end pins the CLASSIC default (the pre-Nov-5 behaviour)
+L.setFar(true);
 
 // 1. table invariants
 ok(L.validate().length === 0, 'table invalid: ' + L.validate().join('; '));
@@ -63,7 +65,7 @@ function glue(q, GFX, bud) {
   ok(glue('', { isMobile: true, deviceMem: 3 }).tier === 'low', 'tiny mem');
   ok(glue('?lod=low', { isMobile: false }).tier === 'low', 'override');
   ok(glue('?lod=off', { isMobile: false }).on === false, 'off flag');
-  const g = glue('?lod=desktop', {}, { on: true, propsK: () => 0.45, groundReach: () => 0.6 });
+  const g = glue('?lod=desktop&lodfar=1', {}, { on: true, propsK: () => 0.45, groundReach: () => 0.6 });
   ok(Math.abs(g.propCut(420, 0) - L.propCut('desktop', 420, 0, 1) * 0.45) < 1e-9, 'budget props scale');
   ok(g.propRing(420, 0) === 1, 'ring shrinks with the ladder (cut 198 -> 1 ring)');
   ok(Math.abs(g.vantage(1, 1200) - (1200 + (4500 - 1200) * 0.6)) < 1e-9, 'budget ground scale');
@@ -222,6 +224,33 @@ function glue(q, GFX, bud) {
   ok(!fs.existsSync(path.join(root, 'ui', 'dm-earth-ice.js')), 'dm-earth-ice.js is gone');
   const txt = ['index.html', 'ui/dm-earth-paint.js', 'ui/dm-planet.js'].map(f => fs.readFileSync(path.join(root, f), 'utf8')).join('\n');
   for (const re of [/DMEarthIce\.(at|seaIce)/, /snowDrop/, /Math\.abs\(lat\)>78/, /\.seaIce\b/, /marsIce/]) ok(!re.test(txt), 'no ' + re);
+}
+
+// 19. CLASSIC default (v308): the table and behaviour the game had before the Nov 5 far-range work; the Nov 5 features only with ?lodfar=1
+{
+  L.setFar(false);
+  ok(L.validate().length === 0, 'both tables valid: ' + L.validate().join('; '));
+  const legacyShadow = { low: 110, mobile: 110, desktop: 170 };
+  for (const t of L.TIERS) {
+    for (const fog of [40, 120, 280, 420, 820, 1500, 3000, 2e6]) for (const agl of [0, 30, 60, 61, 400]) {
+      ok(Math.abs(L.propCut(t, fog, agl, 1) - legacy(fog, agl)) < 1e-9, t + ' classic cut == the old formula');
+      ok(L.propCutErr(t, fog, agl, 1, 60, 480) === L.propCut(t, fog, agl, 1) && L.propCutErr(t, fog, agl, 0.7, 90, 720) === L.propCut(t, fog, agl, 0.7), t + ' classic: no error-driven cut');
+    }
+    for (let cut = 100; cut <= 3000; cut += 50) ok(L.propRing(t, cut) === 1, t + ' classic: the 3x3 chunks, never an outer ring');
+    ok(L.get(t, 'prop.shadow') === legacyShadow[t], t + ' shadow distance');
+    ok(L.get(t, 'mansion.far') === 5200 && L.get(t, 'facility.cull') === 6000, t + ' cull distances');
+    ok(L.get(t, 'mansion.in') === (t === 'desktop' ? 400 : 300) && L.get(t, 'mansion.out') === (t === 'desktop' ? 470 : 360), t + ' mansion hysteresis');
+    for (let vt = 0; vt <= 1.0001; vt += 0.1) { ok(L.vantageReach(t, vt, 1200, 1) === 1200 && L.vantageReach(t, vt, 2500, 1) === 2500, t + ' classic: no vantage extension'); ok(L.vantageFog(t, vt, 420, 1200) === 420, t + ' classic: haze not opened'); }
+    ok(L.get(t, 'terrain.reliefK') === 0 && L.get(t, 'mip.bias') === 0 && L.get(t, 'lod2.on') === 0, t + ' classic: no relief split / mip bias / impostor');
+  }
+  // glue: default is classic, ?lodfar=1 is the Nov 5 set, ?lod=off is untouched
+  const c0 = glue('?lod=desktop', {}), c1 = glue('?lod=desktop&lodfar=1', {}), c2 = glue('?lod=off&lodfar=1', {});
+  ok(c0.far === false && c1.far === true && c2.far === false, 'lodfar flag');
+  ok(c0.get('prop.ring') === 1 && c1.get('prop.ring') === 3, 'glue table follows the flag');
+  ok(c0.vantage(1, 1200) === 1200 && c0.reliefK() === 0 && c0.mipBias() === 0, 'classic glue: no vantage / relief / mip');
+  ok(c1.vantage(1, 1200) === 4500 && c1.reliefK() === 1 && c1.mipBias() === 0.5, 'far glue');
+  ok(c0.propRing(2000, 0, 60, 1080) === 1 && c0.propCut(2000, 0, 60, 1080) === 1400, 'classic glue: cut 1400, one ring');
+  L.setFar(true);
 }
 
 console.log('lod-unit OK (' + n + ' checks)');

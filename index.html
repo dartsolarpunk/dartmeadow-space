@@ -167,7 +167,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-governor.js?v=264"></script>
 <script src="ui/dm-budget.js?v=297"></script>
 <script src="ui/dm-mem.js?v=292"></script>
-<script src="ui/dm-lod.js?v=300"></script>
+<script src="ui/dm-lod.js?v=309"></script>
 <script src="ui/dm-terrain-lod.js?v=294"></script>   <!-- one terrain across every altitude band: shared slope / skirt / sea-tint contract between the globe map and the sky ground -->
 <script src="ui/dm-impostor.js?v=280"></script>   <!-- far-range LOD: vertex-clustering impostor (mansion LOD2, colours baked) -->   <!-- far-range LOD: the ONE distance table per device class (props, mansion, landmarks, vantage reach); ?lod=off|low|mobile|desktop -->
 <script src="ui/dm-light.js?v=301"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
@@ -1068,7 +1068,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-mansion-rooms.js?v=250" defer></script>
 <script src="ui/dm-mansion-look.js?v=251" defer></script>
 <script src="ui/dm-mansion-interior.js?v=262" defer></script>
-<script src="ui/dm-facilities.js?v=303" defer></script>
+<script src="ui/dm-facilities.js?v=309" defer></script>
 <script src="ui/dm-lamps.js?v=303" defer></script>
 <script src="ui/dm-mansion-collide.js?v=283" defer></script>
 <script src="ui/dm-holo.js?v=283" defer></script>
@@ -19875,7 +19875,7 @@ function _pwPropsTick(px,pz,agl){
     // (far-range 3) PRE-ROLL: chunks stream in RINGS of the distance table (ui/dm-lod.js propRing: ceil(draw cut x 1.06 / 300 m), capped 1 / 2 / 3 by device class and by the
     // ladder's props stage), so a chunk is built while it is still beyond the draw cut (hidden, see below) and is never built inside the drawn range.  The keep set is one ring
     // wider than the load set: walking back and forth over a chunk border no longer drops and rebuilds the chunk behind you.
-    const _pf=PW._propF=(PW._propF||0)+1, _L=(window.DMLod&&DMLod.on)?DMLod:null, _fogF=PW._propFog||(PW.scene&&PW.scene.fog?PW.scene.fog.far:900), _R=_L?_L.propRing(_fogF,agl,PW.camera&&PW.camera.fov,PW.renderer&&PW.renderer.domElement&&PW.renderer.domElement.height):1, _KR=_R+1; PW._propRingN=_R;
+    const _pf=PW._propF=(PW._propF||0)+1, _L=(window.DMLod&&DMLod.on)?DMLod:null, _fogF=PW._propFog||(PW.scene&&PW.scene.fog?PW.scene.fog.far:900), _R=_L?_L.propRing(_fogF,agl,PW.camera&&PW.camera.fov,PW.renderer&&PW.renderer.domElement&&PW.renderer.domElement.height):1, _KR=_R+((_L&&_L.far)?1:0); PW._propRingN=_R;   // keep set = load set (the old 3x3) unless ?lodfar=1
     for(let di=-_KR;di<=_KR;di++) for(let dj=-_KR;dj<=_KR;dj++) want.add((pi+di)+'_'+(pj+dj));
     // (v256) one chunk at a time, built over several frames (generator, ~2.5 ms a frame on a phone / 4 ms otherwise); a job whose chunk is no longer wanted is dropped
     let job=PW._propJob; if(job&&(job.gen!==PW.gen||M.has(job.k)||!want.has(job.k))){ job=PW._propJob=null; }
@@ -19952,7 +19952,7 @@ function _propsCull(px,pz){
 }
 function _propFadeTick(now){
   if(_propShared&&((PW._pdS=(PW._pdS||0)+1)%30===0)) _propDistMask();
-  const L=(window.DMLod&&DMLod.on)?DMLod:null; if(!L||!L.fadeOn) return;
+  const L=(window.DMLod&&DMLod.on)?DMLod:null; if(!L||!L.fadeOn||!L.far) return;   // chunk fade-in is part of the ?lodfar=1 set
   if(!PW._propFadeOK&&((PW._pfS=(PW._pfS||0)+1)%30===0)&&PW.propsGroup&&PW.propsGroup.children.length) PW._propFadeOK=L.fadeMask(PW.propsGroup)>0;
   const F=PW._propFades; if(!F||!F.length) return;
   const dur=L.get('prop.fadeS')*1000;
@@ -19990,7 +19990,7 @@ function _propsLod(px,pz,agl){
 function _lodQTick(){
   const U=_lodQU(), L=(window.DMLod&&DMLod.on)?DMLod:null; if(!U||!L||!L.core.qualityBands) return;
   const gR=PW._groundR||1200, fog=PW.scene&&PW.scene.fog?PW.scene.fog.far:gR*_SKY_FADE0, o=_LODQ.o;
-  o.fogEnd=Math.max(60,Math.min(fog,gR*_SKY_FADE0)); o.groundR=gR; o.ring=PW._propRingN||1; o.propCut=PW._propCutD||420;
+  o.fogEnd=Math.max(60,Math.min(fog,gR*_SKY_FADE0)); o.groundR=gR; o.ring=(PW._propRingN||1)+(L.far?0:0.5);   /* classic: the loaded 3x3 reaches 1.5 chunks, not 1 */ o.propCut=PW._propCutD||420;
   const sun=TERRAIN.sun; o.shadowHalf=(sun&&sun.shadow&&sun.shadow.camera&&sun.shadow.camera.right>0)?sun.shadow.camera.right:70;
   o.horHalf=(window.DMLight&&DMLight.horReach)?DMLight.horReach():0;
   const B=_LODQ.B=L.bands(o,_LODQ.B);
