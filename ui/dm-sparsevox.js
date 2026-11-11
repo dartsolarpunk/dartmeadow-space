@@ -131,7 +131,12 @@
     // distance to the node's axis-aligned box, so a level's reach ran k node-sizes out along an axis but k + 0.87 node-sizes out along a
     // diagonal: every LOD shell was a (rounded) cube, read on the planet as squares nested in squares. Now a shell is a sphere round the
     // camera (to within the octree's own grid); along an axis the reach is the same as before (k + 0.5 node-sizes from the centre).
-    const dist = (x0, y0, z0, w) => {
+    // ?svmetric=box restores the earlier axis-aligned-box metric (A/B switch for the radial one)
+    const boxMetric = (() => { try { return /[?&]svmetric=box\b/.test(root.location.search); } catch (e) { return false; } })();
+    const dist = boxMetric ? (x0, y0, z0, w) => {
+      const dx = Math.max(x0 - cam[0], 0, cam[0] - x0 - w), dy = Math.max(y0 - cam[1], 0, cam[1] - y0 - w), dz = Math.max(z0 - cam[2], 0, cam[2] - z0 - w);
+      return Math.hypot(dx, dy, dz);
+    } : (x0, y0, z0, w) => {
       const h = w * 0.5, d = Math.hypot(x0 + h - cam[0], y0 + h - cam[1], z0 + h - cam[2]) - h;
       return d > 0 ? d : 0;
     };
