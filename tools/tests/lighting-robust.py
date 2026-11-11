@@ -22,7 +22,7 @@ srv = socketserver.ThreadingTCPServer(('127.0.0.1', 0), H); port = srv.server_ad
 threading.Thread(target=srv.serve_forever, daemon=True).start()
 CHROME = next((c for c in ['/opt/google/chrome/chrome', '/usr/bin/google-chrome'] if os.path.exists(c)), None)
 ARGS = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--use-gl=angle', '--enable-webgl', '--js-flags=--expose-gc']
-runs = [('webgl2 default', '?gl=1&cycles=%d' % a.cycles), ('webgl2 ?vlights=0', '?gl=1&vlights=0'), ('webgl2 ?vlights=low', '?gl=1&vlights=low&cycles=6'), ('webgl2 ?vlights=high', '?gl=1&vlights=high&cycles=4')]
+runs = [('webgl2 default', '?gl=1&cycles=%d' % a.cycles), ('webgl2 ?vlights=0', '?gl=1&vlights=0'), ('webgl2 ?vlights=low', '?gl=1&vlights=low&cycles=6'), ('webgl2 ?vlights=high', '?gl=1&vlights=high&cycles=4'), ('webgl2 ?flashlight=0', '?gl=1&flashlight=0&cycles=2'), ('webgl2 ?flashshadow=0', '?gl=1&flashshadow=0&cycles=2')]
 if a.gpu: runs.append(('webgpu default', '?cycles=6'))
 fails = 0
 with sync_playwright() as p:
@@ -35,7 +35,7 @@ with sync_playwright() as p:
         d = pg.evaluate('window.__done'); print('== %s (%s)' % (name, d.get('backend')))
         if d.get('fatal'): print('FAIL fatal', d['fatal'][:300]); fails += 1
         for r in d['results']:
-            print(('ok   ' if r['ok'] else 'FAIL ') + r['name'], r['info'][:240] if (not r['ok'] or 'flat' in r['name']) else '')
+            print(('ok   ' if r['ok'] else 'FAIL ') + r['name'], r['info'][:240] if (not r['ok'] or 'flat' in r['name'] or 'flash:' in r['name']) else '')
             if not r['ok']: fails += 1
         pg.close()
     br.close()

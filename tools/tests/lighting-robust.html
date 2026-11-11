@@ -8,6 +8,7 @@
 <script type="importmap">{"imports":{"three":"/three/build/three.webgpu.js","three/webgpu":"/three/build/three.webgpu.js","three/tsl":"/three/build/three.tsl.js"}}</script>
 <script>window.__err = []; addEventListener('error', e => __err.push('onerror ' + String(e.message))); addEventListener('unhandledrejection', e => __err.push('unhandled ' + String(e.reason && e.reason.message || e.reason)));</script>
 <script src="/ui/dm-vlight.js"></script>
+<script src="/ui/dm-flash.js"></script>
 </head><body>
 <script type="module">
 import * as THREE from 'three';
@@ -16,6 +17,7 @@ const _ce = console.error; console.error = (...a) => { __err.push('console.error
 const _cw = console.warn; console.warn = (...a) => { __err.push('console.warn ' + a.map(String).join(' ').slice(0, 200)); _cw(...a); };
 const rec = (name, ok, info) => R.push({ name, ok: !!ok, info: info == null ? '' : (typeof info === 'string' ? info : JSON.stringify(info)) });
 const tick = (ms) => new Promise(r => setTimeout(r, ms || 0));
+const REALFLASH = window.DMFlash;
 const vlOff = /^(0|off|false|no)$/.test((Q.get('vlights') || '').toLowerCase());
 try {
   const r = new THREE.WebGPURenderer({ antialias: false, forceWebGL: Q.get('gl') === '1' }); r.setSize(320, 200); document.body.appendChild(r.domElement); await r.init();
@@ -65,12 +67,12 @@ try {
     // 4. open / close cycles: resource counts flat, scene released
     const cyc = +(Q.get('cycles') || 12), counts = [], refs = [];
     for (let i = 0; i < cyc; i++) {
-      const w = makeWorld(); window.DMFlash = { S: { light: w.sl, target: w.sl.target } };
+      const w = makeWorld(); window.DMFlash = { S: { light: w.sl, target: w.sl.target }, tick() {} };
       const ok = DMVLight.install(w.scene, { THREE, tier: Q.get('vlights') || 'med' });
       DMVLight.setPoints('lamps', new Float32Array([8, 5, -12, 380, 235, 114, 22, -9, 5, -18, 380, 235, 114, 22]), { level: 1, gain: 1 });
       step(w, 6); await tick(0);
       counts.push(mem()); refs.push(new WeakRef(w.scene));
-      DMVLight.clear('lamps'); closeWorld(w); window.DMFlash = null;
+      DMVLight.clear('lamps'); closeWorld(w); window.DMFlash = REALFLASH;
       if (!ok) { rec('cycle ' + i + ' install', false, 'install returned false'); break; }
     }
     const a = counts[2] || counts[0], b = counts[counts.length - 1];
@@ -88,6 +90,22 @@ try {
     { const w = makeWorld(); DMVLight.install(w.scene, { THREE }); step(w, 2); w.scene.fog = null; let t = null; try { step(w, 3); } catch (e) { t = String(e); } rec('fog removed at run time: fogNode cleared, no throw', !t && !w.scene.fogNode, { t }); closeWorld(w); }
     // 8. fade out: walk=false (space) ramps k to 0, uniform branch is skipped
     { const w = makeWorld(); DMVLight.install(w.scene, { THREE }); step(w, 30); for (let f = 0; f < 120; f++) { DMVLight.tick(1 / 60, { camera: cam, scene: w.scene, day: 0, walk: false }); } rec('walk=false (space): effect fades fully off', DMVLight.status().k === 0, DMVLight.status().k); closeWorld(w); }
+  }
+  // 10. DMFlash: flags, one spot per adopted scene, shadow flag, world scenes released after close
+  if (window.DMFlash && DMFlash.adoptScene) {
+    const flOff = Q.get('flashlight') === '0', fsOff = /^(0|off)$/.test(Q.get('flashshadow') || ''), frefs = [];
+    let t = null; let adopted = 0;
+    try {
+      for (let i = 0; i < 6; i++) { const w = makeWorld(); w.scene.remove(w.sl); w.scene.remove(w.sl.target); const okA = DMFlash.adoptScene(w.scene); adopted += okA ? 1 : 0; for (let f = 0; f < 3; f++) { DMFlash.tick && DMFlash.tick('walk'); r.render(w.scene, cam); }
+        const L = DMFlash.sceneLight(w.scene);
+        if (i === 0) { const sp = []; w.scene.traverse(o => { if (o.isSpotLight) sp.push(o); }); rec('flash: exactly ' + (flOff ? 0 : 1) + ' spot light per adopted scene', sp.length === (flOff ? 0 : 1), { n: sp.length });
+          if (!flOff) rec('flash: ' + (fsOff ? '?flashshadow=0 -> spot casts no shadow' : 'spot casts a shadow by default') + ', status consistent', !!L && L.castShadow === !fsOff, { castShadow: L && L.castShadow, tier: DMFlash.status().tier, size: DMFlash.status().shadowSize }); }
+        frefs.push(new WeakRef(w.scene)); closeWorld(w); }
+    } catch (e) { t = String(e && e.stack || e); }
+    rec('flash: adopt / tick / render / close x6 without throwing', !t, t);
+    r.render(blank, cam); await tick(50);
+    if (typeof gc === 'function') { for (let k = 0; k < 4; k++) { gc(); await tick(30); } const alive = frefs.filter(x => x.deref()).length;
+      rec('flash: closed world scenes are released (alive <= renderer control + 0)', alive <= Math.max(ctlAlive, 0), { aliveOf: frefs.length, alive, controlAlive: ctlAlive, pairsHeld: DMFlash.S.pairs ? DMFlash.S.pairs.length : '?' }); }
   }
   // 9. DMFlash (if present in this build): flag + degrade checks are done in lighting-robust.py (node vm) -- here only record presence
   rec('no uncaught errors / console.error / warn during the run', __err.length === 0, __err.slice(0, 6));
