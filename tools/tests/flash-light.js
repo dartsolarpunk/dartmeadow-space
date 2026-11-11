@@ -104,6 +104,7 @@ const src = fs.readFileSync(path.join(root, 'ui/dm-flash.js'), 'utf8');
   location.search = '?flashshadow=1024&flashtier=low'; { const Z = mk(); F.adoptScene(Z.sc); const LZ = F.sceneLight(Z.sc); ok(LZ.shadow.mapSize.x === 1024 && S.tierName === 'low', '?flashshadow=1024 overrides the tier size'); }
   location.search = '';
 
+  { const Z = mk(); F.adoptScene(Z.sc); const LZ = F.sceneLight(Z.sc), n0 = S.pairs.length; ok(F.releaseScene(Z.sc) === true && F.sceneLight(Z.sc) === null && S.pairs.length === n0 - 1 && LZ.parent === null && F.releaseScene(Z.sc) === false, 'releaseScene: the closed scene\'s pair is dropped (light removed, no reference kept)'); }
   // ── no allocation in the per-frame helpers
   const body = nm => { const i = src.indexOf('function ' + nm + '('); let d = 0, j = src.indexOf('{', i); const st = j; for (; j < src.length; j++) { if (src[j] === '{') d++; else if (src[j] === '}') { d--; if (!d) break; } } return src.slice(st, j + 1).replace(/\/\/.*$/gm, ''); };
   for (const nm of ['governor', 'shadowStep', 'beamStep', 'darkAll', 'applyProf', 'intensityNow']) { const b = body(nm); ok(b.length > 20 && !/\bnew\s|\[\s*\]|\{\s*\}/.test(b.replace(/catch \(e\) \{ \}/g, '')), nm + '(): no new / array / object literal'); }

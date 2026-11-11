@@ -199,9 +199,19 @@
   // one beam per scene she can be in (flightScene in open space, the world scene on a planet): made BEFORE the first compile of that scene
   // (F.adoptScene from the scene builders) so switching on never changes a light set / recompiles; intensity 0 while off. Only one is ever lit.
   function dropPair(P) {
-    try { if (P.beam) { P.beam.removeFromParent(); } P.L.removeFromParent(); P.t.removeFromParent(); if (P.L.shadow && P.L.shadow.dispose) P.L.shadow.dispose(); if (P.L.dispose) P.L.dispose(); } catch (e) { }
-    if (S.pair === P) { S.pair = null; S.light = null; S.target = null; }
+    try {
+      if (P.beam) { P.beam.removeFromParent(); P.beam = null; }   // the beam geometry / material are shared by all pairs: not disposed here
+      const sh = P.L.shadow; if (sh) { if (sh.shadowNode && sh.shadowNode.dispose) sh.shadowNode.dispose(); sh.shadowNode = undefined; if (sh.map && sh.map.dispose) sh.map.dispose(); sh.map = null; if (sh.dispose) sh.dispose(); }
+      P.L.removeFromParent(); P.t.removeFromParent(); if (P.L.dispose) P.L.dispose();
+    } catch (e) { }
+    if (S.pair === P || S.light === P.L) { S.pair = null; S.light = null; S.target = null; }
+    P.scene = null;
   }
+  // a closed world scene: release its spot, shadow map and beam mesh now (index.html _pwClose); flightScene is never released
+  F.releaseScene = function (scene) {
+    for (let i = 0; i < S.pairs.length; i++) if (S.pairs[i].scene === scene) { const P = S.pairs[i]; S.pairs.splice(i, 1); dropPair(P); return true; }
+    return false;
+  };
   function pairFor(scene) {
     for (let i = 0; i < S.pairs.length; i++) if (S.pairs[i].scene === scene) return S.pairs[i];
     if (!T || !scene || !S.flags || !S.flags.light) return null;
