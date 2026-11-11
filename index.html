@@ -19319,13 +19319,25 @@ function _pwWarmExtrasStart(gen){
 // running (no frozen frame, no black); resolves true when it can take over.
 async function _pwOpen(body,site,mode,focus){
   _crB('pw:open',{b:body&&body.name,mode});
-  const gen=_pwBuild(body,site,mode,focus);
+  let gen;
+  // (v307) a throw inside the build used to leave PW.active=true with no mode and a half-made scene: _pwSpaceWatch (which returns while PW.active)
+  // then never opened ANY world again, so no body's terrain loaded for the rest of the session. Tear the half world down and say so.
+  try{ gen=_pwBuild(body,site,mode,focus); }
+  catch(e){
+    console.error('[pw] build failed for',body&&body.name,e);
+    try{ if(body) body._pwFails=(body._pwFails|0)+1; }catch(_){}
+    try{ _pwClose({instant:true}); }catch(_){}
+    try{ toast('⚠ '+(body&&body.name||'World')+' could not build its ground',2600); }catch(_){}
+    return false;
+  }
   _crM('pw:built');
   try{
     const c=PW.camera, gh=(_surfHeight&&_surfHeight(focus.x,focus.z))||0;
     c.position.set(focus.x,gh+(mode==='walk'?3:60),focus.z+8); c.lookAt(focus.x,gh,focus.z);
     if(PW.atmo){ PW.atmo.mesh.visible=true; }
-    if(flightRenderer.compileAsync) await _pwCompileStaged(gen);
+    // (v307) a compile that never settles (lost device, a pipeline that never resolves) must not hold PW.opening for good: it blocks every later
+    // world open and hides the space globe. Take over after 60 s; the compile carries on in the background.
+    if(flightRenderer.compileAsync) await Promise.race([_pwCompileStaged(gen),new Promise(res=>setTimeout(res,60000))]);
   }catch(e){ console.warn('[pw] precompile',e); }
   _crE('pw:open');
   return gen===PW.gen&&PW.active;
@@ -20357,7 +20369,7 @@ function updateAtmoFlight(dt){
   // as she settles through downAlt. Only the switch to space is held off while landing.
   if(PW.body&&window.DMPwHandoff){
     const ho=_pwHandoff(PW.body,1+s.pos.y/_planetR()), b=PW.body;
-    if(s.pos.y>ho.downAlt){ _pwfReveal(ho.reveal); if(b.mesh) b.mesh.visible=PWF.reveal<0.999; }
+    if(s.pos.y>ho.downAlt){ _pwfReveal(_pwGroundReady()?ho.reveal:0); if(b.mesh) b.mesh.visible=PWF.reveal<0.999; }
     else { _pwfReveal(1); if(b.mesh) b.mesh.visible=false; }
     if(!landing&&s.pos.y>ho.upAlt){ _pwFlyToSpace(); return; }
   }else if(!landing&&s.pos.y>PWS_UP){ _pwFlyToSpace(); return; }
@@ -20534,10 +20546,13 @@ function _landSafe(x,z,yaw,o){
   const rx=Math.cos(yaw), rz=-Math.sin(yaw), fx=-Math.sin(yaw), fz=-Math.cos(yaw);
   const bx=o.her?x+rx*sd:x, bz=o.her?z+rz*sd:z;
   let r; try{ r=W.findClear(bx,bz,{ground:gf,r:0.9,h:3.1,margin:0.4,step:0.6,slopeTan:0.7,waterMargin:0.4,bl,bw,ux:fx,uz:fz,side:[-rx*sd,-rz*sd],maxR:o.maxR||70,maxProbes:o.maxProbes||450}); }catch(e){ return R; }
+  // (v307) nothing clear within the usual 70 u: the mansion's cliff terraces, shard rock and plateau can fill that whole disc. Look much wider (200 u) before giving up, so a
+  // touchdown anywhere round the mansion (not only the HOME deck) settles on the nearest clear footprint instead of hanging on a solid and tripping the landing watchdog.
+  if(!r.ok&&!o.noWiden){ try{ r=W.findClear(bx,bz,{ground:gf,r:0.9,h:3.1,margin:0.4,step:0.6,slopeTan:0.7,waterMargin:0.4,bl,bw,ux:fx,uz:fz,side:[-rx*sd,-rz*sd],maxR:Math.max(o.maxR||70,200),maxProbes:900,ring:2.4}); }catch(e){} }
   R.ok=!!r.ok; R.moved=!!r.moved; R.dist=r.dist; R.tried=r.tried;
   if(r.ok){ R.x=r.x; R.z=r.z; } else { R.x=bx; R.z=bz; }
   // blocked here and the mansion's planned landing pads (decks, patios, courts, terraces) are near: prefer a free pad over a random clear patch
-  try{ const Z=window.DMLandZones; if(Z&&Z.count()&&(!r.ok||r.moved)){ const skip=[]; for(let t=0;t<4;t++){ const zn=Z.nearest(bx,bz,o.zoneD||90,skip); if(!zn) break; skip.push(zn.i);
+  try{ const Z=window.DMLandZones; if(Z&&Z.count()&&(!r.ok||r.moved)){ const skip=[]; for(let t=0;t<4;t++){ const zn=Z.nearest(bx,bz,o.zoneD||(r.ok?90:320),skip); if(!zn) break; skip.push(zn.i);
         const co={ground:gf,r:0.9,h:3.1,margin:0.4,step:0.6,slopeTan:0.7,waterMargin:0.4,bl,bw,ux:fx,uz:fz,side:[-rx*sd,-rz*sd]};
         if(W.clearAt(zn.pad.x,zn.pad.z,co)&&(!r.ok||zn.dist<=r.dist+30)){ R.ok=true; R.moved=true; R.x=zn.pad.x; R.z=zn.pad.z; R.dist=zn.dist; R.zone=zn.pad.kind; break; } } } }catch(e){}
   R.hx=R.x-rx*sd; R.hz=R.z-rz*sd;
@@ -20700,6 +20715,7 @@ function _pwSpaceWatch(){
   let best=null,bd=Infinity;
   for(const b of (celestialBodies||[])){
     if(!b||!b.mesh||b.isAsteroid||b.type==='Comet'||!isProximityLandEligible(b)) continue;
+    if((b._pwFails|0)>=3) continue;   // (v307) its ground failed to build three times: stop retrying it
     const d=b.mesh.position.distanceTo(STATE.flight.pos)/_bodyR(b); if(d<bd){ bd=d; best=b; }
   }
   if(best&&bd<PWS_OPEN) _pwSpaceOpen(best);
@@ -20708,9 +20724,9 @@ async function _pwSpaceOpen(b){
   const sp=STATE.flight, la=_pwsLatLonAlt(b,sp.pos);
   const site={lat:Math.round(la.lat*100)/100,lon:Math.round(la.lon*100)/100};
   PW.opening=true; let ok=false;
-  try{ ok=await _pwOpen(b,site,'space',{x:0,z:0}); }catch(e){ console.warn('[pw] open from space',e); }
+  try{ ok=await _pwOpen(b,site,'space',{x:0,z:0}); }catch(e){ console.warn('[pw] open from space',e); try{ b._pwFails=(b._pwFails|0)+1; if(PW.active&&!PW.mode) _pwClose({instant:true}); }catch(_){} }
   finally{ PW.opening=false; }
-  if(!ok) return;
+  if(!ok){ PW._spaceCool=performance.now()+6000; return; }
   // still close? (it could have flown off while the shaders compiled)
   if(b.mesh.position.distanceTo(sp.pos)/_bodyR(b)>PWS_CLOSE||STATE.screen!=='flight'){ _pwClose({instant:true}); PW._spaceCool=performance.now()+1500; return; }
   _pwBeginSpace();
@@ -20787,7 +20803,9 @@ function _pwSpaceStep(dt,first){
   // (v299) the orbit globe dissolves into the ground's own globe at the faded atmosphere perimeter (DMAtmoShell), not at PWS_OPEN:
   // from PWS_OPEN in the world is built and kept hidden (reveal 0); the flight body (sphere + map + clouds) is the planet until the shell
   const dr=la.dist/_bodyR(b), ho=_pwHandoff(b,dr);
-  _pwfReveal(ho.reveal);
+  // (v307) never hide the orbit globe before the ground has a tile under the focus: with the switch at the atmosphere shell (airless worlds: ~300 u up) a
+  // slow build used to leave the planet blank / dark. Until a tile can draw, the globe stays the planet.
+  _pwfReveal(_pwGroundReady()?ho.reveal:0);
   b.mesh.visible=PWF.reveal<0.999;
   // 4. away from the world; or under the top of the air, where the ground's
   //    near detail takes over — the same flight carries on (_pwSpaceToFly; inside the shell, once the dissolve is complete)
@@ -20883,6 +20901,7 @@ function atmoExitToSpace(){
   ATMO_AP.on=false; try{ $('ap-btn-atmo').classList.remove('active'); }catch(e){}
   toast('🚀 Climbing out to open space',1800);
 }
+function _pwGroundReady(){ try{ const G=PW.ground; return !!G&&G._dm!=null&&G.roots.size>0&&!G._bareUnder(); }catch(e){ return true; } }   // a tile on the chain under the focus can draw
 function _pwfReveal(v){ PWF.reveal=v; if(PWF.u) PWF.u.reveal.value=v; }
 // (v299) space -> surface hand-off (ui/dm-pw-handoff.js): one state object, rewritten in place every frame (no allocation)
 const _pwHO={body:null,prebuild:false,close:false,visible:false,reveal:0,shell:1,showR:1,downR:1,hideR:1,downAlt:PWS_DOWN,upAlt:PWS_UP,showAlt:PWS_DOWN,openR:PWS_OPEN,closeR:PWS_CLOSE};

@@ -100,11 +100,11 @@ const SKY_TAIL = between(ATMO_SRC, 'const groundH=', "// the world's edge");
 // space: section 3 to the end (lat/lon/alt of the board, the hand-off, reveal, the flight sphere, close / space→sky)
 const SPACE_TAIL = SPACE_SRC.slice(SPACE_SRC.indexOf("// 3. into the world's frame"), SPACE_SRC.lastIndexOf('}'));
 ok(/_pwHandoff\(/.test(SKY_TAIL) && /_pwFlyToSpace\(\)/.test(SKY_TAIL), 'index: sky slice carries the hand-off and the sky→space switch');
-ok(/_pwfReveal\(ho\.reveal\)/.test(SPACE_TAIL) && SPACE_SRC.indexOf("// 3. into the world's frame") > 0, 'index: space slice carries the first-frame reveal');
+ok(/_pwfReveal\(_pwGroundReady\(\)\?ho\.reveal:0\)/.test(SPACE_TAIL) && SPACE_SRC.indexOf("// 3. into the world's frame") > 0, 'index: space slice carries the first-frame reveal');
 const VM_SRC = [
   lineSrc(IDX, /const PLANET_VIS_SCALE\s*=\s*[^;]*;/), lineSrc(IDX, /const ATMO_BOARD_SCALE=[^;]*;/), lineSrc(IDX, /const PWS_OPEN=[^;]*;/),
   lineSrc(IDX, /const ATMO_DEG_PER_UNIT=[^;]*;/), lineSrc(IDX, /const _smooth01=v=>\{[^\n]*?\};/), lineSrc(IDX, /const _PWS=\{[^\n]*?\};/),
-  fnSrc(IDX, '_pwsReady'), fnSrc(IDX, '_planetR'), fnSrc(IDX, '_bodyR'), fnSrc(IDX, '_pwfReveal'),
+  fnSrc(IDX, '_pwsReady'), fnSrc(IDX, '_planetR'), fnSrc(IDX, '_bodyR'), fnSrc(IDX, '_pwfReveal'), fnSrc(IDX, '_pwGroundReady'),
   lineSrc(IDX, /const _pwHO=\{[^\n]*?\};/), fnSrc(IDX, '_pwHandoff'), fnSrc(IDX, '_pwsLatLonAlt'),
   'function __sky(s,dt){ const landing=!!s.landing;\n' + SKY_TAIL + '\n}',
   'function __space(b,S,sp,sc){ let la;\n' + SPACE_TAIL + '\n}',
@@ -125,7 +125,7 @@ function bodyOf(kind) {   // fresh body objects per run (DMAtmoShell caches on t
 }
 function world(kind) {
   const b = bodyOf(kind), C = { Math, console, THREE: { Vector3: V3, Quaternion: Q4 }, _ATMO_LOOK: globalThis._ATMO_LOOK,
-    PW: { body: b, board: { scale: new V3() } }, PWF: { reveal: 1, u: null }, atmoMach: 0, atmoBoard: { scale: new V3(1, 1, 1) },
+    PW: { body: b, board: { scale: new V3() }, ground: { _dm: {}, roots: new Map([[0, 1]]), _bareUnder: () => false } }, PWF: { reveal: 1, u: null }, atmoMach: 0, atmoBoard: { scale: new V3(1, 1, 1) },
     flightCamera: { position: new V3() }, FLIGHT_BOARD_WORLD_SCALE: 1, _atmoHeight: () => 0, _landSteer() { }, _atmoTouchdown() { },
     setTimeout() { }, _atmoXZ: () => ({ x: 0, z: 0 }), flyOuts: 0, toFly: 0, closes: 0 };
   C.window = C; C.globalThis = C;
@@ -188,7 +188,7 @@ for (const name of ['Solenne', 'Mars', 'Titan', 'airless']) {
 // index.html wiring: updateAtmoFlight drives reveal + the flight sphere outside the landing guard; only the sky→space switch is guarded
 { const idx = IDX, atmo = ATMO_SRC;
   ok(atmo.indexOf('function updateAtmoFlight') === 0 && atmo.length > 100, 'index: found updateAtmoFlight');
-  ok(/s\.pos\.y>ho\.downAlt\)\{\s*_pwfReveal\(ho\.reveal\)/.test(atmo), 'index: updateAtmoFlight drives _pwfReveal from the hand-off past downAlt');
+  ok(/s\.pos\.y>ho\.downAlt\)\{\s*_pwfReveal\(_pwGroundReady\(\)\?ho\.reveal:0\)/.test(atmo), 'index: updateAtmoFlight drives _pwfReveal from the hand-off past downAlt');
   ok(/b\.mesh\.visible=PWF\.reveal<0\.999/.test(atmo), 'index: updateAtmoFlight shows the flight sphere once reveal drops below 0.999');
   ok(/if\(!landing&&s\.pos\.y>ho\.upAlt\)\{\s*_pwFlyToSpace\(\)/.test(atmo), 'index: sky→space switch is at the hand-off upAlt and is the only landing-guarded step');
   const ho = SKY_TAIL.slice(SKY_TAIL.indexOf('// over the top of the air'));
