@@ -727,10 +727,10 @@
           // relief-aware: with the sun low the crevices (low relief height) sit in the shadow of their own rims
           const rel = hRel ? mix(float(1), smoothstep(0.05, 0.6, clamp(hRel, 0.0, 1.0)), U.lowSun.mul(0.6)) : float(1);
           const hfVis = mix(float(1), sn.vs.mul(rel), U.hfK.mul(U.k));
-          m.receivedShadowNode = prev ? ((s) => mix(float(1), prev(s), wMap).mul(hfVis)) : ((s) => mix(float(1), s, wMap).mul(hfVis));
+          m.receivedShadowNode = prev ? ((s) => s && s.dmFlashShadow ? s : mix(float(1), prev(s), wMap).mul(hfVis)) : ((s) => s && s.dmFlashShadow ? s : mix(float(1), s, wMap).mul(hfVis));   // (flashlight) the glasses spot's shadow (ui/dm-flash.js, tagged dmFlashShadow) is not the sun: no sun-box fade, no sun height-field visibility
         } else {
           // Low / mobile Medium: no height-field march node is compiled. Wrap the map only.
-          m.receivedShadowNode = prev ? ((s) => mix(float(1), prev(s), wMap)) : ((s) => mix(float(1), s, wMap));
+          m.receivedShadowNode = prev ? ((s) => s && s.dmFlashShadow ? s : mix(float(1), prev(s), wMap)) : ((s) => s && s.dmFlashShadow ? s : mix(float(1), s, wMap));
         }
       }
       m.userData.dmLight = true; m.needsUpdate = true; D.mats++;

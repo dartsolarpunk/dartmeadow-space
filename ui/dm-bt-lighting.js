@@ -64,6 +64,7 @@
     if (sol) ext.push(sol); if (star) { ext.push(star); int.push(star); }
     try { if (window._NAT && _NAT.moon) ext.push(_NAT.moon); } catch (e) {}   // #165's moonlight fill (fixed, unshadowed) on the hull too
     ext.push(altar, cubeGlow); int.push(fills[0], fills[1]); if (bounce) int.push(bounce);
+    try { const fl = window.DMFlash && DMFlash.sceneLight && DMFlash.sceneLight(flightScene); if (fl) { ext.push(fl); int.push(fl); } } catch (e) { }   // the glasses flashlight (ui/dm-flash.js) lights the hull and the interior
     return { ext, int, sig: [sol, star].concat(amb) };
   }
   function nodes() {

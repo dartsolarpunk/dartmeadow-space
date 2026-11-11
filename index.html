@@ -6673,7 +6673,7 @@ async function initFlightScene(){
   flightRenderer.shadowMap.type=THREE.PCFSoftShadowMap;
 
   flightScene=new THREE.Scene();
-  try{ if(window.DMFlash) DMFlash.adoptScene(flightScene); }catch(e){}   // the glasses flashlight's beam (intensity 0), in the fixed light set before the first compile: switching it on never recompiles
+  try{ if(window.DMFlash){ DMFlash.hooks.gfx=()=>GFX; DMFlash.hooks.depthOK=_viewportDepthOK; DMFlash.hooks.logDepth=()=>!!(flightRenderer&&flightRenderer.logarithmicDepthBuffer); DMFlash.adoptScene(flightScene); } }catch(e){}   // the glasses flashlight's beam (intensity 0), in the fixed light set before the first compile: switching it on never recompiles
 
   // Near plane 0.1 (the skyboard sits ~0.5u from the lens, so it must stay
   // under that) paired with the logarithmic depth buffer above — that combo

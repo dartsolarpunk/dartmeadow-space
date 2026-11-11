@@ -87,9 +87,9 @@
   }
   // ambient + hemisphere lights of the planet-world scene (stable singletons). null = none found → keep the scene's default light list (never an EMPTY list:
   // an empty lightsNode skips lighting altogether and would draw the raw albedo).
-  function lightList(ctx) {
+  function lightList(ctx, withFlash) {
     const PW = ctx.PW && ctx.PW(); const sc = PW && PW.scene; if (!sc) return null; const a = [];
-    sc.traverse(o => { if ((o.isAmbientLight || o.isHemisphereLight) && !(o.userData && (o.userData.btStandIn || o.userData.bti))) a.push(o); });
+    sc.traverse(o => { if ((o.isAmbientLight || o.isHemisphereLight || (withFlash && o.isSpotLight && o.userData && o.userData.dmFlash)) && !(o.userData && (o.userData.btStandIn || o.userData.bti))) a.push(o); });   // withFlash: the glasses flashlight (ui/dm-flash.js) joins the atlas's private light list (never the probe-scaled list)
     return a.length ? a : null;
   }
 
@@ -249,7 +249,7 @@
       applyMode();
       for (const t of prev) if (S.tex.indexOf(t) < 0) freeTex(t);
       // light list: ambient + hemisphere only, once per world (null → default list)
-      if (S.U.node) { const L = lightList(ctx); const want = L && ctx.THREE.TSL.lights(L); if (S.atlasLights === undefined || (L && !S.atlasLights)) { A.lightsNode = want || null; S.atlasLights = want || null; } }
+      if (S.U.node) { const L = lightList(ctx, true); const want = L && ctx.THREE.TSL.lights(L); if (S.atlasLights === undefined || (L && !S.atlasLights)) { A.lightsNode = want || null; S.atlasLights = want || null; } }
       A.needsUpdate = true;   // textures/low-path changed: one program lookup (same key as last visit → pipeline cache hit, no new compile)
       for (const m of old) { try { m.dispose(); } catch (e) { } }   // the GLB's own copies (textures now belong to the shared material)
       if (S.U.rk && G.DMMansionRooms) API.setRoomLevels(G.DMMansionRooms.S.lvl, G.DMMansionRooms.N);   // a fresh visit starts at the rooms' current levels
