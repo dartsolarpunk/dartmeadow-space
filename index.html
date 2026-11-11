@@ -1070,7 +1070,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-padbind.js?v=293" defer></script>
 <script src="ui/dm-globe.js?v=9" defer></script>
 <script src="ui/dm-star.js?v=191" defer></script>
-<script src="ui/dm-mist.js?v=7" defer></script>
+<script src="ui/dm-mist.js?v=8" defer></script>
 <script src="ui/dm-atmo.js?v=212" defer></script>
 <script src="ui/dm-localcollide.js?v=188" defer></script>
 <script src="ui/dm-collide.js?v=287" defer></script>
@@ -6935,7 +6935,6 @@ async function _flightWarmup(){
     ['world',()=>{ const rec=window._flightCompile={ groups:[], ms:0, capped:false, single:false }; return _compileStaged(flightScene,flightCamera,{rec,cap:GFX.isMobile?13000:22000,step:GFX.isMobile?6000:9000,onGroup:(gi,n)=>{ try{ dmSys.load('warm','Preparing world 1/'+steps.length+' · '+Math.round((gi/Math.max(1,n))/steps.length*100)+'%'); }catch(e){} }}); },GFX.isMobile?15000:25000],   // (v256) in small groups, one cap for the whole step
     ['sun and flares',()=>window.DMStar&&DMStar.warm&&DMStar.warm(flightCamera)],
     ['star dive',()=>window.DMStarBubble&&DMStarBubble.warm&&DMStarBubble.warm(flightCamera,flightScene)],   // lens/bubble/interior: compiled before the first pass through the Sun
-    ['planet mist',()=>window.DMMist&&DMMist.warm&&DMMist.warm(flightCamera)],
     ['galaxy',()=>galSky&&galSky.ready&&_gsPrecompile()],
     ['atmosphere',()=>_taWarm(flightRenderer,flightScene,flightCamera)],   // the scene as drawn through the true-atmosphere pass: its own shader variants
     ['planet maps',()=>_wmWarmAll()],
@@ -8400,15 +8399,7 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
     _registerJotsAtmoFog({mesh:atmoMesh, sunDirU, planetCenterU});
     if(!window.__DISABLE_ATMO_MESH__) group.add(atmoMesh);
   }
-  // Volumetric cloud / mist layer (ui/dm-mist.js): each world's own air — Earth's water cloud, Venus' sulphur deck,
-  // Mars' dust wisps, Titan's haze — ray-marched, wind-scrolled, lit and self-shadowed by the star
-  try{
-    if(window.DMMist&&hasAtmosphere){
-      const _lowMist=(typeof _jotsAtmoSampleBudgets==='function')?(_jotsAtmoSampleBudgets().view<4):false;
-      const _cl=DMMist.planetClouds(radius,kind,{low:_lowMist,seed:seedVal,lite:(typeof GFX!=='undefined'&&GFX.preset==='auto')});
-      if(_cl){ group.add(_cl.group); _registerJotsAtmoFog(_cl); }
-    }
-  }catch(e){ console.warn('[mist] clouds',e); }
+  // (planet cloud shell removed: the white swirling layer over the terrain. The volumetric atmosphere above is unchanged.)
   // Near-side visibility: local fill + tiny emissive (no scene Hemisphere wash)
   try{ _attachJotsNearFill(group, radius, colorHex||0x6688aa); }catch(e){}
   return group;
@@ -15896,7 +15887,7 @@ window.dmSceneText=function(){
   L.push(' MSAA samples per pixel : '+msaa+(GFX.isMobile?'  (off on phones/tablets by design)':''));
   try{ const k=(r&&r._dr&&r._dr.k)||1, pr=effectivePixelRatio()*k, cv=r&&r.domElement; L.push(' render scale         : '+(k*100).toFixed(0)+'% of '+effectivePixelRatio().toFixed(2)+'x  → '+(cv?cv.width+'x'+cv.height:'?')+' px ('+(cv?(cv.width*cv.height/1e6).toFixed(2):'?')+' MP)  resolution changes so far: '+(window._dmResChanges||0)); }catch(e){}
   try{ const b=_jotsAtmoSampleBudgets(); L.push(' atmosphere ray-march   : '+b.view+' view samples, '+b.sun+' sun samples per pixel (fixed budget by preset, capped at 6)'); }catch(e){}
-  L.push(' planet clouds          : 6 steps (5 on low), fixed;  Sun corona up to 6 (3 on phones)');
+  L.push(' Sun corona up to 6 steps (3 on phones)');
   L.push(' resolution             : adaptive (dynamic resolution balance), floor '+(GFX.preset==='auto'?'60':'72')+'%');
   try{ L.push(' backend : '+(r&&r.backend&&r.backend.isWebGPUBackend?'WebGPU':'WebGL2 fallback')+'   preset '+GFX.preset); }catch(e){}
   return L.join('\n');
@@ -15971,7 +15962,7 @@ window.dmSceneText=function(){
       ['_propAdopt','_propsCull','_propsLod','_propFadeTick','_hmChunkScatterG','_propHeavy','_disposeProps'].forEach(wrapFn);
       try{ if(typeof SkyGround==='function') wrapObj(SkyGround.prototype,'Ground',['update']); }catch(e){}
       wrapObj(window.DMLight,'DMLight',['tick','applyMaterial']); wrapObj(window.DMCollide,'DMCollide',['regChunk','dropChunk','tick']); wrapObj(window.DMWater,'DMWater',['tick','follow']); wrapObj(window.DMFac,'DMFac',['tick']);
-      wrapObj(window.DMStar,'DMStar',['frame','build']); wrapObj(window.DMMist,'DMMist',['frame','planetClouds','beltDust']);
+      wrapObj(window.DMStar,'DMStar',['frame','build']); wrapObj(window.DMMist,'DMMist',['frame','beltDust']);
     },4000);
     // name every pipeline the GPU had to build in the middle of a frame (slow ones only): that is the 0.5–2 s freeze
     let pipeWrapped=false;

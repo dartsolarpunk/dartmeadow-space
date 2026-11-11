@@ -1,5 +1,7 @@
 # Far-range level of detail
 
+> **Planet cloud shell removed (sw v315).** The white, swirling, visibly repeating layer over every world's terrain (and the white glaze from orbit) was `DMMist.planetClouds` (`ui/dm-mist.js`): a ray-marched noise-cloud sphere at 1.004-1.024 R added to every atmosphere-bearing world (Earth/Venus/Mars/Titan looks, the white one being Earth's). It is deleted with its materials, per-frame update and precompile/warm step. Terrain, its LOD, the volumetric atmosphere (`ui/dm-atmo.js`), foliage and asteroid fumes are untouched.
+
 ## CURRENT DEFAULT (sw v309): the classic LOD
 The Nov 5 far-range work (sw v277-v289) read worse than the LOD before it: a drawn radius that opened and closed from a vantage, outer prop rings that streamed in late, a chunk fade-in, relief-driven tile splits (more tile builds), a mip bias that softened the distance, a mansion impostor level.  The default is now the table that shipped **before** it; the Nov 5 set stays in the code as a second table, off unless `?lodfar=1`.
 
