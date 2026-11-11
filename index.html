@@ -26053,6 +26053,7 @@ function _lodQU(){
   try{ _LODQ.u={far:W.uniform(new THREE.Vector2(984,1200)),pn:W.uniform(new THREE.Vector2(300,420)),pf:W.uniform(new THREE.Vector2(1e9,2e9)),pi:W.uniform(new THREE.Vector2(300,420))}; }catch(e){ _LODQ.u=null; }
   return _LODQ.u;
 }
+const _FARBUMP=/[?&]farbump=1\b/.test(location.search);   // far shading-only relief tier (see _terrainDetailMat); off unless asked
 function _terrainDetailMat(opts){
   opts=opts||{};
   const tier=(typeof resolvePreset==='function')?resolvePreset():'medium';
@@ -26197,7 +26198,20 @@ function _terrainDetailMat(opts){
           return v;
         })();
       } else nOut=nWof(slopeOf(),reliefOf());
-      m.normalNode=toView(nOut);
+      let nView=toView(nOut);
+      // (far-range, directed degradation; ?farbump=1, default OFF: shader-only, unverified on a GPU) Parallax-node lineage: detail is not dropped in one step, it is handed down
+      // parallax relief (near, ground lib) -> normal-shaded bump (this file's near field) -> THIS tier -> flat.  Past the bump's reach the far macro field (the same two 60 u / 260 u
+      // noises the far tint already evaluates, 0 extra noise taps) also tilts the shading normal by its screen-space gradient (Mikkelsen bump from dFdx / dFdy, as the board
+      // material does), so a coarse far tile keeps a lit relief instead of going flat; weight = farW (gone with the ground's own dissolve), only ~0.15 of tilt, not a geometry change.
+      if(_FARBUMP&&mapped&&typeof FARF!=='undefined'){
+        try{
+          const sX=W.positionView.dFdx(), sY=W.positionView.dFdy(), R1=W.cross(sY,nView), R2=W.cross(nView,sX), det=W.dot(sX,R1);
+          const Hh=FARF.x.mul(3.0).add(FARF.y.mul(12.0)).mul(farW).mul(W.float(1).sub(fade));
+          const grad=W.sign(det).mul(R1.mul(Hh.dFdx()).add(R2.mul(Hh.dFdy())));
+          nView=W.normalize(W.abs(det).mul(nView).sub(grad));
+        }catch(e){ console.warn('[ground] far bump',e&&e.message); }
+      }
+      m.normalNode=nView;
     }
     // cracks shade darker, pebbles a touch lighter and glossier (Low: the colour only);
     // cliff layers each take their own tint, split lines darker, ledges catch a little light
