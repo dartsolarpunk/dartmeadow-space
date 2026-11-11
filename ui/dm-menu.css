@@ -132,12 +132,14 @@
 @media (max-height:480px) and (orientation:landscape){
   #mm-left{top:62px;max-height:calc(100% - 62px - 58px);}
   #mm-right{top:62px;width:clamp(196px,24vw,230px);}
-  /* (v312) the profile glass panel (pilot portrait + account chip) used to be display:none here, so landscape had no profile panel at all.  It now stays as a
-     compact card in the left column, under the button list and above the round buttons: that strip is free (the list ends ~y=190, the round buttons start ~y=340
-     at 390px tall), it is left of the centre character and clear of the right START panel.  Its height follows the viewport; the button list scrolls instead. */
-  #screen-menu .mm-portrait{display:flex;flex:0 1 auto;order:2;height:clamp(64px,calc(100vh - 62px - 58px - 137px),128px);min-height:64px;}
-  #screen-menu .mm-stack{order:1;}
-  #screen-menu #account-chip{margin:0 0 6px;}
+  /* (v313) landscape left column, top to bottom: profile card (short, decorative), then the five-button list, then the round buttons (#mm-bottom).
+     The list is the flexible part: it shrinks and scrolls inside the column if a short phone cannot fit all five, and RESUME GAME stays on one line (ellipsis). */
+  #mm-left{gap:6px;}
+  #screen-menu .mm-portrait{display:flex;flex:0 0 auto;order:1;height:clamp(56px,13vh,76px);min-height:56px;}
+  #screen-menu .mm-stack{order:2;flex:1 1 auto;gap:4px;padding:7px 8px;-webkit-overflow-scrolling:touch;}
+  #screen-menu .mm-stack .menu-btn{flex:0 0 auto;min-height:30px;padding:.3rem .7rem;font-size:.5rem;letter-spacing:.1em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;line-height:1.35;}
+  #screen-menu .mm-stack .menu-btn .mb-ico{margin-right:8px;}
+  #screen-menu #account-chip{margin:0 0 4px;}
   #mm-bottom{bottom:10px;}
   #screen-menu .mm-sub{display:none;}
   #screen-menu .menu-logo{font-size:1.25rem;}
