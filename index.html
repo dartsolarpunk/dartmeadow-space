@@ -167,7 +167,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-governor.js?v=264"></script>
 <script src="ui/dm-budget.js?v=297"></script>
 <script src="ui/dm-mem.js?v=292"></script>
-<script src="ui/dm-lod.js?v=309"></script>
+<script src="ui/dm-lod.js?v=310"></script>
 <script src="ui/dm-terrain-lod.js?v=294"></script>   <!-- one terrain across every altitude band: shared slope / skirt / sea-tint contract between the globe map and the sky ground -->
 <script src="ui/dm-impostor.js?v=280"></script>   <!-- far-range LOD: vertex-clustering impostor (mansion LOD2, colours baked) -->   <!-- far-range LOD: the ONE distance table per device class (props, mansion, landmarks, vantage reach); ?lod=off|low|mobile|desktop -->
 <script src="ui/dm-light.js?v=301"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
@@ -1068,11 +1068,11 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-mansion-rooms.js?v=250" defer></script>
 <script src="ui/dm-mansion-look.js?v=251" defer></script>
 <script src="ui/dm-mansion-interior.js?v=262" defer></script>
-<script src="ui/dm-facilities.js?v=309" defer></script>
+<script src="ui/dm-facilities.js?v=310" defer></script>
 <script src="ui/dm-lamps.js?v=303" defer></script>
 <script src="ui/dm-mansion-collide.js?v=283" defer></script>
 <script src="ui/dm-holo.js?v=283" defer></script>
-<script src="ui/dm-sys.js?v=309"></script>
+<script src="ui/dm-sys.js?v=310"></script>
 </head>
 <body>
 <!-- LOADING -->
@@ -1248,14 +1248,6 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <audio id="game-audio" loop preload="auto"></audio>
 <input type="file" id="music-file-input" accept="audio/*,.mp3,.wav,.ogg,.m4a,.flac" multiple style="display:none;">
 
-<!-- Floating music control — hidden through loading/intro; shown only once the menu UI is up (startMenuMusic/showFloatingMusic) -->
-<div id="float-music" style="display:none;position:fixed;top:134px;right:14px;z-index:9600;align-items:center;gap:6px;background:rgba(4,10,22,0.82);border:1px solid rgba(var(--acc-rgb),0.25);border-radius:20px;padding:5px 8px 5px 12px;backdrop-filter:blur(10px);">
-  <span id="float-music-icon" style="font-size:0.7rem;">♫</span>
-  <span style="font-family:var(--font-mono);font-size:0.52rem;color:rgba(var(--acc-rgb),0.7);letter-spacing:0.06em;">CLINICAL BLOOM</span>
-  <button onclick="audioToggle()" id="float-music-toggle" title="Play / Pause" style="background:rgba(var(--acc-rgb),0.1);border:1px solid rgba(var(--acc-rgb),0.3);color:var(--cyan);width:22px;height:22px;border-radius:50%;cursor:pointer;font-size:0.6rem;display:flex;align-items:center;justify-content:center;">⏸</button>
-  <button onclick="audioStop()" title="Stop music" style="background:rgba(255,80,100,0.1);border:1px solid rgba(255,80,100,0.4);color:#ff6478;width:22px;height:22px;border-radius:50%;cursor:pointer;font-size:0.55rem;display:flex;align-items:center;justify-content:center;">■</button>
-</div>
-
 <!-- ⛶ FULLSCREEN exit button — top-left, only while in fullscreen -->
 <button id="fs-exit" onclick="exitFullscreen()" title="Exit fullscreen (Esc or F)" style="display:none;position:fixed;top:47px;left:10px;z-index:9700;width:34px;height:34px;border-radius:8px;background:rgba(4,10,22,0.55);border:1px solid rgba(var(--acc-rgb),0.3);color:rgba(var(--acc-rgb),0.8);font-size:0.85rem;cursor:pointer;backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;transition:opacity .2s;">⤢</button>
 
@@ -1311,7 +1303,12 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
         <div class="mm-st-row"><span>LOCATION</span><b id="mm-st-loc">Sol · Milky Way</b></div>
         <div class="mm-st-row"><span>LAST SAVE</span><b id="mm-st-save">—</b></div>
       </div>
-      <div id="mm-music" class="mm-music" aria-label="Soundtrack"></div>   <!-- (v298 HUD) the CLINICAL BLOOM soundtrack control docks here while the menu is up (_dockFloatMusic) -->
+      <div id="mm-music" class="mm-music" role="group" aria-label="Soundtrack">   <!-- the ONE soundtrack control (v309): lives in the menu panel only, so it exists only once the menu is shown -->
+        <span class="mm-mus-ico" id="mm-mus-ico" aria-hidden="true">♫</span>
+        <span class="mm-mus-name" id="mm-mus-name">CLINICAL BLOOM</span>
+        <button type="button" class="mm-mus-btn" id="mm-mus-toggle" onclick="audioToggle()" title="Play / Pause" aria-label="Play or pause music">⏸</button>
+        <button type="button" class="mm-mus-btn mm-mus-stop" id="mm-mus-stop" onclick="audioStop()" title="Stop music" aria-label="Stop music">■</button>
+      </div>
     </div>
   </div>
   <div id="mm-bottom" class="mm-panel mm-hinge-bottom">
@@ -2951,7 +2948,6 @@ function goScreen(name){
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   const _prevScreen=STATE.screen;
   STATE.screen=name;
-  try{ _dockFloatMusic(); }catch(e){}
   // (memory lane, ui/dm-mem.js) phones/tablets: the menu's start-button turntable is a SECOND WebGPU device holding a 2.4 M-vertex model (~110 MB GPU + the same again on
   // the CPU); it goes once the game is under way and comes back (lazily) with the menu.  The builder's MSAA drawing buffer is handed back while the screen is not shown.
   try{
@@ -3028,19 +3024,10 @@ function _idleBoardPrep(M){
   _idleStop=window.DMLaunch.drive(sl,{canRun:()=>live(),calmMs:24});
   return true;
 }
-// (v298 HUD) The CLINICAL BLOOM soundtrack control (#float-music) lives ON the main menu's right instrument panel, under the status rows (#mm-music in
-// #mm-right), instead of the bottom centre (which belongs to the system message bar, ui/dm-sys.js). On every other pre-flight screen (builder) it goes
-// back to its own fixed spot under the top-right HUD, as before; in game it stays hidden (hideFloatingMusicInGame). Event-driven (goScreen), no per-frame work.
-function _dockFloatMusic(){
-  const fm=$('float-music'), slot=$('mm-music'); if(!fm||!slot) return;
-  if(STATE.screen==='menu'){ if(fm.parentNode!==slot) slot.appendChild(fm); }
-  else if(fm.parentNode===slot){ const app=$('app'); document.body.insertBefore(fm,app&&app.parentNode===document.body?app:null); }
-}
-// Show floating music control on pre-flight screens (if music isn't stopped)
-function showFloatingMusic(){
-  if(AUDIO&&AUDIO.stopped)return;
-  const fm=$('float-music');if(fm)fm.style.display='flex';
-}
+// (v309) There is exactly ONE soundtrack control: #mm-music inside the main-menu panel (right panel in landscape, the top/instrument panel in portrait).
+// The old floating pill (#float-music) is gone; these stay as no-ops so existing goScreen call sites keep working.
+function _dockFloatMusic(){}
+function showFloatingMusic(){}
 // "START GAME" — skips the builder entirely and flies with whatever board
 // config is currently active (factory defaults for a first-time player,
 // their own last customization for a returning one). Players can still go
@@ -3392,6 +3379,8 @@ let _gameInProgress=false;
 function enterApp(){
   // This runs inside the LAUNCH button click — the legal moment to go fullscreen.
   try{ requestFullscreenNow(); }catch(e){console.warn('fs:',e);}
+  // Loading is done (LAUNCH is only enabled then): the soundtrack may start now, inside this gesture (iOS needs that).
+  try{ AUDIO.canStart=true; if(!AUDIO.stopped&&!AUDIO.started) audioPlay(); }catch(e){}
   // First launch → show graphics setup; returning users skip straight in.
   let shown=false;
   try{ shown=showGfxScreen(false); }catch(e){console.warn('gfx screen:',e);}
@@ -3610,6 +3599,7 @@ function initAudio(){
   AUDIO.playlist=_shuffledBundled();
   AUDIO.index=0;
   AUDIO.el.src=AUDIO.playlist[0].src;
+  updateTrackName(AUDIO.playlist[0].name);
   AUDIO.el.loop=false; // we handle next-track on end
   AUDIO.el.addEventListener('ended',()=>{ audioNext(); });
   AUDIO.el.addEventListener('play',()=>syncAudioUI(true));
@@ -3632,6 +3622,7 @@ function initAudio(){
   const _kickEv=['pointerdown','pointerup','touchend','click','keydown'];
   const kick=()=>{
     AUDIO.userInteracted=true;
+    if(!AUDIO.canStart) return;   // nothing plays while the game is still loading (enterApp / the menu flips canStart)
     if(!AUDIO.started&&!AUDIO.stopped)audioPlay();
   };
   _kickEv.forEach(t=>window.addEventListener(t,kick,{capture:true,passive:true}));
@@ -3647,10 +3638,9 @@ function initAudio(){
 
 // Start music when entering the main menu (if not stopped by user)
 function startMenuMusic(){
+  AUDIO.canStart=true;   // the menu UI is up = loading is finished: from here a tap may start the soundtrack
   if(AUDIO.stopped||AUDIO.started)return;
   audioPlay();
-  // show the floating control while in menus/settings
-  const fm=$('float-music');if(fm)fm.style.display='flex';
 }
 
 function audioPlay(){
@@ -3668,8 +3658,6 @@ function audioStop(){
   if(!AUDIO.el)return;
   AUDIO.el.pause();AUDIO.el.currentTime=0;AUDIO.stopped=true;
   syncAudioUI(false);
-  // hide the floating control once stopped from menu
-  const fm=$('float-music');if(fm)fm.style.display='none';
   toast('♫ Music stopped');
 }
 function audioPrev(){
@@ -3783,19 +3771,17 @@ function syncAudioUI(playing){
   document.querySelectorAll('.wm-pp').forEach(b=>{ b.textContent=playing?'⏸':'▶'; b.classList.toggle('playing',playing); });
   const a=$('aud-playpause');if(a)a.textContent=playing?'⏸':'▶';
   if(a)a.classList.toggle('playing',playing);
-  const ft=$('float-music-toggle');if(ft)ft.textContent=playing?'⏸':'▶';
-  const fi=$('float-music-icon');if(fi)fi.style.opacity=playing?'1':'0.5';
+  const ft=$('mm-mus-toggle');if(ft){ ft.textContent=playing?'⏸':'▶'; ft.setAttribute('aria-label',playing?'Pause music':'Play music'); }
+  const mm=$('mm-music');
+  if(mm){ const st=playing?'playing':((AUDIO&&AUDIO.stopped)?'stopped':'paused'); if(mm.dataset.state!==st) mm.dataset.state=st; }
 }
 function updateTrackName(name){
   // update both the floating label and (if present) any in-game label
-  const fm=$('float-music');
-  if(fm){const span=fm.querySelector('span:nth-child(2)');if(span)span.textContent=(name||'').toUpperCase().slice(0,18);}
+  const mn=$('mm-mus-name');
+  if(mn){ mn.textContent=(name||'').toUpperCase().slice(0,28); mn.title=name||''; }
   document.querySelectorAll('.world-music .wm-name').forEach(n=>n.textContent=(name||'').toUpperCase().slice(0,22));
 }
-// Hide the floating control once the player is actually in the flight screen
-function hideFloatingMusicInGame(){
-  const fm=$('float-music');if(fm)fm.style.display='none';
-}
+function hideFloatingMusicInGame(){}   // (v309) nothing floats any more; the control is part of the menu panel
 
 
 // ── Menu BG ───────────────────────────────────────────────────
@@ -28373,7 +28359,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 <link rel="stylesheet" href="ui/dm-safety.css?v=1">
 <link rel="stylesheet" href="ui/dm-spectator.css?v=1">
 <link rel="stylesheet" href="ui/dm-globe.css?v=3">
-<link rel="stylesheet" href="ui/dm-menu.css?v=308">
+<link rel="stylesheet" href="ui/dm-menu.css?v=310">
 <link rel="stylesheet" href="ui/dm-journal.css?v=97">
 <link rel="stylesheet" href="ui/dm-landmap.css?v=88">
 <link rel="stylesheet" href="ui/dm-type.css?v=89">

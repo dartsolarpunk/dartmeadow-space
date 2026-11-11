@@ -542,7 +542,7 @@
       const onPtr = (e) => { const p = e.touches ? e.touches[0] : e; if (!p) return; par.tx = (p.clientX / window.innerWidth - 0.5); par.ty = (p.clientY / window.innerHeight - 0.5); };
       window.addEventListener('pointermove', onPtr, { passive: true });
       const startFocus = () => { if (IN.on || window.__JOTS_INTRO) return; if (FOC.phase === 1 || FOC.phase === 2) { if (FOC.phase === 2) FOC.t0 = t; return; } FOC.from = FOC.w; FOC.phase = 1; FOC.t0 = t; };
-      const okTarget = (el) => !(el && el.closest && el.closest('.mm-panel,button,a,input,select,textarea,.modal,.modal-box,#account-chip,#float-music,[onclick]'));
+      const okTarget = (el) => !(el && el.closest && el.closest('.mm-panel,button,a,input,select,textarea,.modal,.modal-box,#account-chip,[onclick]'));
       let gx = 0, gy = 0, gOk = false, gDone = false;
       const onDown = (e) => { const p = e.touches ? e.touches[0] : e; gx = p.clientX; gy = p.clientY; gOk = okTarget(e.target); gDone = false; };
       const onMove = (e) => { if (!gOk || gDone) return; const p = e.touches ? e.touches[0] : e; if (!p) return; if (Math.hypot(p.clientX - gx, p.clientY - gy) > 22 && (e.buttons || e.touches)) { gDone = true; startFocus(); } };

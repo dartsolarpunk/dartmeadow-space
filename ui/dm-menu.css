@@ -100,13 +100,19 @@
 #screen-menu .mm-round.mm-support{border-color:rgba(var(--hi-rgb),.65);color:var(--gold);box-shadow:0 0 12px rgba(var(--hi-rgb),.3);}
 #screen-menu .menu-version{position:absolute;z-index:3;right:clamp(12px,3vw,48px);bottom:clamp(14px,3vh,28px);margin:0;font-size:.48rem;color:rgba(var(--acc-rgb),.5);}
 
-/* (v298 HUD) soundtrack chip (CLINICAL BLOOM): docked on the right instrument panel under the status rows (index.html _dockFloatMusic moves #float-music
-   into #mm-music while the menu is up). The bottom centre is the system message bar's (ui/dm-sys.js), so nothing pins the chip there any more. */
-#screen-menu .mm-music{display:flex;justify-content:center;min-width:0;}
-#screen-menu .mm-music:has(> #float-music){border-top:1px solid rgba(var(--acc-rgb),.25);padding-top:8px;}
-#screen-menu .mm-music > #float-music{position:static !important;top:auto !important;right:auto !important;bottom:auto !important;left:auto !important;transform:none !important;
-  z-index:auto !important;max-width:100%;box-sizing:border-box;justify-content:center;margin:0;}
-#screen-menu .mm-music > #float-music > span:nth-child(2){min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* (v309) the ONE soundtrack control: #mm-music lives inside the menu's instrument panel (right panel in landscape; the top/instrument panel in portrait), under the
+   pilot / location / last-save rows.  Styled like the LOAD / SAVE / GRAPHICS mini buttons (same border, glass, cyan accent, HUD caption face).  No floating pill exists. */
+#screen-menu .mm-music{display:flex;align-items:center;gap:6px;min-width:0;box-sizing:border-box;padding:5px 6px 5px 8px;
+  border:1px solid rgba(var(--acc-rgb),.45);border-radius:4px;background:rgba(var(--acc-rgb),.06);backdrop-filter:blur(6px);}
+#screen-menu .mm-mus-ico{flex:0 0 auto;font-size:.8rem;line-height:1;color:var(--cyan);transition:opacity .2s;}
+#screen-menu .mm-mus-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-hud);font-size:.42rem;letter-spacing:.12em;color:var(--text);}
+#screen-menu .mm-mus-btn{flex:0 0 auto;width:28px;height:28px;padding:0;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:.62rem;line-height:1;
+  border:1px solid rgba(var(--acc-rgb),.5);background:rgba(var(--acc-rgb),.1);color:var(--cyan);touch-action:manipulation;-webkit-tap-highlight-color:transparent;}
+#screen-menu .mm-mus-btn:hover{background:rgba(var(--acc-rgb),.25);border-color:var(--cyan);}
+#screen-menu .mm-mus-stop{border-color:rgba(255,80,100,.4);background:rgba(255,80,100,.1);color:#ff6478;font-size:.55rem;}
+#screen-menu .mm-music[data-state="paused"] .mm-mus-ico{opacity:.55;}
+#screen-menu .mm-music[data-state="stopped"] .mm-mus-ico,#screen-menu .mm-music[data-state="stopped"] .mm-mus-name{opacity:.45;}
+#screen-menu .mm-music[data-state="stopped"] .mm-mus-stop{opacity:.4;pointer-events:none;}
 
 /* ── phones in portrait: one tidy column ───────────────────────────── */
 @media (max-width:700px) and (orientation:portrait){
@@ -120,7 +126,7 @@
   #screen-menu .mm-portrait{height:150px;}
   #mm-bottom{order:4;margin-top:16px;justify-content:center;}
   #screen-menu .menu-version{position:relative;order:5;right:auto;bottom:auto;margin-top:10px;text-align:center;}
-  #screen-menu .mm-music{grid-column:1 / -1;}   /* the soundtrack chip spans the panel under the dial + status (two-column grid here) */
+  #screen-menu .mm-music{grid-column:1 / -1;}   /* the soundtrack control spans the bottom of the panel under the dial + status (two-column grid here) */
 }
 /* phones in landscape: shorter portrait, smaller dial */
 @media (max-height:480px) and (orientation:landscape){
@@ -171,5 +177,4 @@
   #screen-builder #builder-footer .launch-btn.gold{flex:1;}
 }
 
-/* (v308) no soundtrack chip while the boot loader or the launch-intro veil is up: it appears only once the menu UI is showing */
-body:has(#loading-screen:not(.out)) #float-music,body:has(#intro-veil) #float-music{display:none !important;}
+

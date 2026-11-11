@@ -60,9 +60,6 @@
   #dm-journal .jn-panel{max-height:calc(100vh - 16px) !important;}
 }
 
-/* ── Any orientation: panels and the music pill never sit on each other ── */
-body:has(#settings-modal.open) #float-music,
-body:has(#profile-modal.open) #float-music{opacity:0 !important;pointer-events:none !important;}
 @media (orientation:landscape) and (max-height:520px){
   /* main menu: the fullscreen toggle tucks into the corner, clear of the menu panel */
   body:has(#screen-menu.active) #fs-exit,

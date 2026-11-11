@@ -1,5 +1,4 @@
-// node tools/tests/hud-layout.js — v298 HUD (no browser): the CLINICAL BLOOM soundtrack chip lives on the menu's right instrument panel, not the bottom
-// centre; the system message bar (ui/dm-sys.js) is centred with a two-sided fade, pointer-events none, lifted above the sticks in play; toast() is a dmSys shim.
+// node tools/tests/hud-layout.js — v298 HUD (no browser): the ONE soundtrack control lives in the menu's instrument panel (no floating pill); the system message bar (ui/dm-sys.js) is centred with a two-sided fade, pointer-events none, lifted above the sticks in play; toast() is a dmSys shim.
 // The full layout (real rects at desktop / phone landscape / phone portrait) is tools/tests/sys-strip.py (Playwright + Chromium).
 'use strict';
 const fs = require('fs'), vm = require('vm'), path = require('path');
@@ -9,31 +8,34 @@ const html = rd('index.html'), menuCss = rd('ui/dm-menu.css'), compactCss = rd('
 // css rules (flat; @media blocks are flattened, their inner rules kept)
 function rules(css) { css = css.replace(/\/\*[\s\S]*?\*\//g, ''); const out = []; const re = /([^{}]+)\{([^{}]*)\}/g; let m; while ((m = re.exec(css))) out.push({ sel: m[1].trim().replace(/^@media[^{]*$/, ''), body: m[2] }); return out; }
 
-console.log('== soundtrack chip (#float-music) on the right menu panel');
-const fmRules = rules(menuCss).concat(rules(compactCss)).filter(r => /#float-music/.test(r.sel));
-ok(fmRules.length > 0, 'menu css still styles the chip');
-ok(!fmRules.some(r => /left\s*:\s*50%/.test(r.body) || /bottom\s*:/.test(r.body) && !/bottom\s*:\s*auto/.test(r.body)), 'no menu rule pins #float-music to the bottom / horizontal centre (incl. the portrait-phone override)');
-ok(!/body:has\(#screen-menu\.active\)\s*#float-music/.test(menuCss.replace(/\/\*[\s\S]*?\*\//g, '')), 'the old body:has(#screen-menu.active) #float-music bottom-centre rule is gone');
-const dock = fmRules.find(r => /\.mm-music\s*>\s*#float-music/.test(r.sel)); ok(dock && /position\s*:\s*static\s*!important/.test(dock.body) && /transform\s*:\s*none\s*!important/.test(dock.body), 'docked chip is static inside the panel (no fixed / translate)');
+console.log('== soundtrack control: exactly one, inside the menu panel');
+const strip = t => t.replace(/\/\*[\s\S]*?\*\//g, '');
+ok(!/id="float-music"/.test(html), 'the floating #float-music pill is gone from index.html');
+ok(!/#float-music/.test(strip(menuCss)) && !/#float-music/.test(strip(compactCss)) && !/float-music/.test(rd('ui/dm-menuscene.js')), 'no css/js rule references #float-music any more');
+ok((html.match(/id="mm-mus-toggle"/g) || []).length === 1, 'one toggle button in the page');
 const iR = html.indexOf('<div id="mm-right"'), iB = html.indexOf('<div id="mm-bottom"', iR), right = html.slice(iR, iB);
 ok(iR > 0 && iB > iR, '#mm-right block found');
-ok(right.indexOf('id="mm-music"') > right.indexOf('class="mm-status"') && right.indexOf('class="mm-status"') > 0, '#mm-music slot is inside #mm-right, under the status rows');
-const fmTag = html.slice(html.indexOf('<div id="float-music"'), html.indexOf('</div>', html.indexOf('<div id="float-music"')));
-ok(/CLINICAL BLOOM/.test(fmTag) && !/CLASSICAL/.test(fmTag), 'label is CLINICAL BLOOM'); ok(/onclick="audioToggle\(\)"/.test(fmTag) && /onclick="audioStop\(\)"/.test(fmTag), 'play/pause + stop buttons kept');
-const rw = (menuCss.match(/#mm-right\{[^}]*width:clamp\((\d+)px/) || [])[1]; ok(+rw >= 200, 'right panel widened for the chip (min ' + rw + ' px, was 180)');
-ok(/#screen-menu \.mm-music\{grid-column:1 \/ -1;\}/.test(menuCss), 'portrait phones: the chip spans the panel grid');
-// _dockFloatMusic: the real function against a tiny DOM
-{ const src = html.slice(html.indexOf('function _dockFloatMusic('), html.indexOf('\n}\n', html.indexOf('function _dockFloatMusic(')) + 2);
-  const mk = id => ({ id, parentNode: null, children: [], appendChild(c) { if (c.parentNode) c.parentNode.children.splice(c.parentNode.children.indexOf(c), 1); c.parentNode = this; this.children.push(c); return c; },
-    insertBefore(c, ref) { this.appendChild(c); return c; } });
-  const body = mk('body'), app = mk('app'), slot = mk('mm-music'), fm = mk('float-music'); body.appendChild(fm); body.appendChild(app);
-  const ctx = { STATE: { screen: 'menu' }, document: { body }, $: id => ({ 'float-music': fm, 'mm-music': slot, app })[id] }; vm.createContext(ctx); vm.runInContext(src, ctx);
-  ctx.STATE.screen = 'menu'; vm.runInContext('_dockFloatMusic()', ctx); ok(fm.parentNode === slot, 'menu: chip docks into #mm-music');
-  ctx.STATE.screen = 'builder'; vm.runInContext('_dockFloatMusic()', ctx); ok(fm.parentNode === body, 'builder: chip back on its fixed spot (body)');
-  ctx.STATE.screen = 'flight'; vm.runInContext('_dockFloatMusic()', ctx); ok(fm.parentNode === body, 'flight: chip stays out of the panel (hidden in game as before)'); }
-const gs = html.slice(html.indexOf('function goScreen(name){'), html.indexOf('\n}\n', html.indexOf('function goScreen(name){')));
-ok(/STATE\.screen=name;\s*\n\s*try\{ _dockFloatMusic\(\); \}catch\(e\)\{\}/.test(gs), 'goScreen docks / undocks the chip (event-driven, no per-frame work)');
-ok(/hideFloatingMusicInGame\(\)/.test(gs) && /showFloatingMusic\(\)/.test(gs), 'show on pre-flight screens / hide in game unchanged');
+ok(right.indexOf('id="mm-music"') > right.indexOf('class="mm-status"') && right.indexOf('class="mm-status"') > 0, '#mm-music is inside #mm-right, below the status rows');
+ok(right.indexOf('id="mm-music"') > right.indexOf('class="mm-sub"'), 'and below the LOAD / SAVE / GRAPHICS mini buttons');
+const mus = right.slice(right.indexOf('id="mm-music"'), right.indexOf('</div>', right.indexOf('id="mm-music"')));
+ok(/onclick="audioToggle\(\)"/.test(mus) && /onclick="audioStop\(\)"/.test(mus) && /id="mm-mus-name"/.test(mus), 'name + play/pause + stop wired to audioToggle / audioStop');
+const mr = rules(menuCss).filter(r => /\.mm-music\b/.test(r.sel));
+ok(mr.some(r => /border\s*:\s*1px solid rgba\(var\(--acc-rgb\),\.45\)/.test(r.body) && /border-radius\s*:\s*4px/.test(r.body)), 'same border/radius as the .mm-mini buttons');
+ok(!mr.some(r => /position\s*:\s*(fixed|absolute)/.test(r.body)), 'in flow (no fixed / absolute positioning)');
+ok(/\.mm-mus-name\{[^}]*text-overflow:ellipsis/.test(menuCss) && /\.mm-mus-name\{[^}]*min-width:0/.test(menuCss), 'long track names ellipsize (no overflow on phones)');
+ok(/#screen-menu \.mm-music\{grid-column:1 \/ -1;\}/.test(menuCss), 'portrait phones: spans the bottom of the top panel grid');
+// state sync, using the real functions
+{ const grab = n => html.slice(html.indexOf('function ' + n + '('), html.indexOf('\n}\n', html.indexOf('function ' + n + '(')) + 2);
+  const mk = () => ({ textContent: '', dataset: {}, attrs: {}, setAttribute(k, v) { this.attrs[k] = v; }, classList: { toggle() { } } });
+  const tog = mk(), mm = mk(), nm = mk();
+  const ctx = { AUDIO: { stopped: false, canStart: false }, $: id => ({ 'mm-mus-toggle': tog, 'mm-music': mm, 'mm-mus-name': nm })[id] || null, document: { querySelectorAll: () => [] } };
+  vm.createContext(ctx); vm.runInContext(grab('syncAudioUI') + grab('updateTrackName'), ctx);
+  vm.runInContext('syncAudioUI(true)', ctx); ok(tog.textContent === '⏸' && mm.dataset.state === 'playing', 'playing -> pause glyph, state=playing');
+  vm.runInContext('syncAudioUI(false)', ctx); ok(tog.textContent === '▶' && mm.dataset.state === 'paused', 'paused -> play glyph, state=paused');
+  ctx.AUDIO.stopped = true; vm.runInContext('syncAudioUI(false)', ctx); ok(mm.dataset.state === 'stopped', 'stopped -> state=stopped');
+  vm.runInContext("updateTrackName('Arc Lake')", ctx); ok(nm.textContent === 'ARC LAKE', 'track name follows the playlist'); }
+ok(/if\(!AUDIO\.canStart\) return;/.test(html), 'the first-tap kick does nothing until loading is finished (AUDIO.canStart)');
+ok(/function enterApp\(\)\{[\s\S]{0,400}AUDIO\.canStart=true/.test(html) && /function startMenuMusic\(\)\{\s*\n\s*AUDIO\.canStart=true/.test(html), 'canStart is set only by LAUNCH (enterApp) / the menu showing (startMenuMusic)');
 
 console.log('== system message bar (#dm-sys)');
 let css = ''; const el = { setAttribute() { }, isConnected: true, textContent: '', className: '' };
