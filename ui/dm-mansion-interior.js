@@ -109,6 +109,20 @@
   // updateSurface asks for her ground height through this: ground(_surfHeight, x, z). fn is the wrapped height path (TERRAIN.H -> F.wrapH), so F.ovr is
   // consulted for this one call and nothing else (no allocation; the flag is cleared even if fn throws).
   function ground(fn, x, z) { _q = true; try { return fn(x, z); } finally { _q = false; } }
+  // ray(ox,oy,oz,dx,dy,dz,maxD): distance (world units) to the first interior wall cell or the roof underside along a world-space ray, or -1. Only live while she is inside
+  // the mansion's reach (walk() running). Used by the ORBIT camera clamp (ui/dm-orbit-clamp.js): furniture and thin walls are DMCollide's, the room shell and ceiling are ours.
+  function ray(ox, oy, oz, dx, dy, dz, maxD) {
+    if (NAV === null || !S.live || S.state !== 2) return -1;
+    if (S.feet >= soffAt(S.lx, S.ly) - 0.3) return -1;     // she is on the roof: the exterior is open to her
+    const b = NAV.bbox, ns = Math.min(160, Math.ceil(maxD / 0.3));
+    for (let i = 1; i <= ns; i++) {
+      const d = i * maxD / ns, wx = ox + dx * d - S.px, wz = oz + dz * d - S.pz, lx = wx * S.ct - wz * S.st, ly = -(wx * S.st + wz * S.ct), hz = oy + dy * d - S.y0;
+      if (lx < b[0] || lx > b[2] || ly < b[1] || ly > b[3]) continue;
+      const so = soffAt(lx, ly); if (so !== Infinity && hz > so) return d;     // under the roof, through it
+      surf(lx, ly, S.feet); if (_wall && hz > S.feet) return d;                  // a room cell with no floor patch = wall
+    }
+    return -1;
+  }
   // updateSurface calls this right after it moves p.pos in x/z (feet = pos.y - 3). Walls/props stop the move; she slides along them.
   function walk(pos) {
     if (NAV === null || S.rec === null) return;
@@ -198,7 +212,7 @@
       } else if (d2 > DROP_D * DROP_D) { if (!S.farAt) S.farAt = now; if (now - S.farAt > 3000) { unload(); S.nearAt = S.farAt = 0; } } else S.farAt = 0;
     },
     detach() { unload(); if (S.F && S.F.ovr === ovr) S.F.ovr = null; if (G.DMMansionLook) { try { G.DMMansionLook.destroy(); } catch (e) { } } S.rec = null; S.F = null; },
-    walk, ground,
+    walk, ground, ray,
     status() { return { state: S.state, live: S.live, loaded: !!S.root, feet: S.feet, lx: S.lx, ly: S.ly }; },
     spawn() { return NAV ? NAV.spawn : null; },
     _test: { parse: j => { NAV = parseNav(j); }, surf, blocked, setFrame(px, pz, y0, th) { S.px = px; S.pz = pz; S.y0 = y0; S.ct = Math.cos(th); S.st = Math.sin(th); S.state = 2; S.F = { ovr: null }; }, ovr, S },
