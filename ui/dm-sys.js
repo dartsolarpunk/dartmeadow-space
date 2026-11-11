@@ -32,7 +32,7 @@
     '#dm-sys.warn{color:#ffd37a;text-shadow:0 0 6px rgba(255,190,70,.5);}' +
     '#dm-sys.err{color:#ff9b9b;text-shadow:0 0 6px rgba(255,90,90,.5);}' +
     '#dm-sys.ld{color:#9fd8ff;}';
-  var el = null, loads = {}, order = [], msg = null, msgUntil = 0, timer = 0, seq = 0, held = null;
+  var el = null, loads = {}, order = [], msg = null, msgUntil = 0, timer = 0, seq = 0, held = null, hint = '';
 
   function ensure() {
     if (el && el.isConnected) return el;
@@ -59,6 +59,7 @@
       var k = order.length ? order[order.length - 1] : null;
       if (k) { text = loads[k]; cls = 'ld'; }
     }
+    if (hint) { if (text && cls === 'ld') text += '  \u00b7  ' + hint; else if (!text) { text = hint; cls = 'ld'; } }   // 'Tap to skip' shares the one slot: appended to the loading line, alone when nothing else is up
     var e = ensure(); if (!e) { document.addEventListener('DOMContentLoaded', render, { once: true }); return; }
     if (text) {
       if (e.textContent !== text) e.textContent = text;
@@ -89,12 +90,14 @@
     if (!(key in loads)) order.push(key); else { var i = order.indexOf(key); if (i >= 0 && i !== order.length - 1) { order.splice(i, 1); order.push(key); } }
     loads[key] = String(text); render();
   };
+  dmSys.hint = function (text) { hint = text ? String(text) : ''; render(); };   // a persistent suffix (e.g. 'Tap to skip'); '' / null clears it
   dmSys.done = function (key) {
+    if (key === 'intro' && hint) { hint = ''; if (!(key in loads)) { render(); return; } }
     if (!(key in loads)) return;
     delete loads[key]; var i = order.indexOf(key); if (i >= 0) order.splice(i, 1);
     render();
   };
-  dmSys.loading = function () { return order.length > 0; };
+  dmSys.loading = function () { return order.length > 0 || !!hint; };
   dmSys.clear = function () { msg = null; held = null; render(); };
   dmSys.text = function () { return el ? el.textContent : ''; };
   window.dmSys = dmSys;

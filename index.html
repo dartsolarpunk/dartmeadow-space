@@ -514,6 +514,7 @@ html,body{width:100%;height:var(--app-h);overflow:hidden;overscroll-behavior:non
 @keyframes tpulse{0%,100%{text-shadow:0 0 30px var(--cyan),0 0 80px rgba(var(--acc-rgb),0.3);}50%{text-shadow:0 0 60px var(--cyan),0 0 140px rgba(var(--acc-rgb),0.6);}}
 #ls-bar-wrap{width:min(136px,32vw);height:2px;background:rgba(var(--acc-rgb),0.12);border-radius:2px;overflow:hidden;position:relative;z-index:2;}
 #ls-bar{height:100%;background:linear-gradient(90deg,var(--cyan),var(--purple));width:0;transition:width 0.25s ease;border-radius:2px;box-shadow:0 0 8px var(--cyan);}
+#ls-status,#intro-status,#mini-loader-status,#mini-loader-pct{display:none !important;}   /* every loader message lives in the one bottom-centre slot (ui/dm-sys.js) */
 #ls-status{font-family:var(--font-mono);font-size:0.4rem;color:rgba(var(--acc-rgb),0.45);margin-top:0.32rem;letter-spacing:0.1em;position:relative;z-index:2;text-align:center;}
 #ls-enter{margin-top:0.8rem;padding:0.34rem 1.2rem;background:rgba(255,255,255,0.08);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.2);color:var(--cyan);font-family:var(--font-hud);font-size:0.45rem;letter-spacing:0.2em;cursor:pointer;text-transform:uppercase;transition:var(--trans);display:none;position:relative;z-index:2;border-radius:2px;box-shadow:0 0 6px -2px currentColor;}
 #ls-enter:hover{background:var(--dim-cyan);box-shadow:var(--glow-md);}
@@ -1071,7 +1072,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-lamps.js?v=303" defer></script>
 <script src="ui/dm-mansion-collide.js?v=283" defer></script>
 <script src="ui/dm-holo.js?v=283" defer></script>
-<script src="ui/dm-sys.js?v=303"></script>
+<script src="ui/dm-sys.js?v=308"></script>
 </head>
 <body>
 <!-- LOADING -->
@@ -1247,8 +1248,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <audio id="game-audio" loop preload="auto"></audio>
 <input type="file" id="music-file-input" accept="audio/*,.mp3,.wav,.ogg,.m4a,.flac" multiple style="display:none;">
 
-<!-- Floating music control — visible across menus/settings until in-game -->
-<div id="float-music" style="display:none;position:fixed;top:134px;right:14px;z-index:9600;display:flex;align-items:center;gap:6px;background:rgba(4,10,22,0.82);border:1px solid rgba(var(--acc-rgb),0.25);border-radius:20px;padding:5px 8px 5px 12px;backdrop-filter:blur(10px);">
+<!-- Floating music control — hidden through loading/intro; shown only once the menu UI is up (startMenuMusic/showFloatingMusic) -->
+<div id="float-music" style="display:none;position:fixed;top:134px;right:14px;z-index:9600;align-items:center;gap:6px;background:rgba(4,10,22,0.82);border:1px solid rgba(var(--acc-rgb),0.25);border-radius:20px;padding:5px 8px 5px 12px;backdrop-filter:blur(10px);">
   <span id="float-music-icon" style="font-size:0.7rem;">♫</span>
   <span style="font-family:var(--font-mono);font-size:0.52rem;color:rgba(var(--acc-rgb),0.7);letter-spacing:0.06em;">CLINICAL BLOOM</span>
   <button onclick="audioToggle()" id="float-music-toggle" title="Play / Pause" style="background:rgba(var(--acc-rgb),0.1);border:1px solid rgba(var(--acc-rgb),0.3);color:var(--cyan);width:22px;height:22px;border-radius:50%;cursor:pointer;font-size:0.6rem;display:flex;align-items:center;justify-content:center;">⏸</button>
@@ -3185,7 +3186,7 @@ function _introPlay(why){
   try{ _trPhase('play',why||''); }catch(e){}
   try{ const M0=window.DM_MENUSCENE; if(M0) M0.skipN=1; }catch(e){}
   clearInterval(INTRO.iv);
-  INTRO.phase='play'; document.body.classList.remove('intro-hold'); document.body.classList.add('intro-play'); INTRO.veil.classList.add('iv-go'); try{ dmSys.load('intro','Tap to skip'); }catch(e){}
+  INTRO.phase='play'; document.body.classList.remove('intro-hold'); document.body.classList.add('intro-play'); INTRO.veil.classList.add('iv-go'); try{ dmSys.hint('Tap to skip'); }catch(e){}
   const M=window.DM_MENUSCENE;
   if(INTRO.skip||!M||!M._ctx){ _introFlown('noflyout'); return; }
   let p=false;
@@ -28367,7 +28368,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 <link rel="stylesheet" href="ui/dm-safety.css?v=1">
 <link rel="stylesheet" href="ui/dm-spectator.css?v=1">
 <link rel="stylesheet" href="ui/dm-globe.css?v=3">
-<link rel="stylesheet" href="ui/dm-menu.css?v=303">
+<link rel="stylesheet" href="ui/dm-menu.css?v=308">
 <link rel="stylesheet" href="ui/dm-journal.css?v=97">
 <link rel="stylesheet" href="ui/dm-landmap.css?v=88">
 <link rel="stylesheet" href="ui/dm-type.css?v=89">

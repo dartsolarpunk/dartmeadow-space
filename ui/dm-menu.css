@@ -170,3 +170,6 @@
   #screen-builder #builder-footer{left:12px;right:12px;justify-content:space-between;}
   #screen-builder #builder-footer .launch-btn.gold{flex:1;}
 }
+
+/* (v308) no soundtrack chip while the boot loader or the launch-intro veil is up: it appears only once the menu UI is showing */
+body:has(#loading-screen:not(.out)) #float-music,body:has(#intro-veil) #float-music{display:none !important;}
