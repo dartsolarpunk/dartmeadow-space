@@ -1098,6 +1098,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-marine.js?v=216" defer></script>
 <script src="ui/dm-bt-roomlights.js?v=144" defer></script>
 <script src="ui/dm-bt-hull.js?v=144" defer></script>
+<script src="ui/dm-viewgate.js?v=317"></script>
 <script src="ui/dm-edgewarm.js?v=235" defer></script>
 <script src="ui/dm-arielhome.js?v=231" defer></script>
 <script src="ui/dm-mansion-rooms.js?v=250" defer></script>
@@ -15988,13 +15989,13 @@ window.dmSceneText=function(){
       if(!pipeWrapped) wrapPipes();
       let dh=0; try{ const pm=performance.memory; if(pm){ const h=pm.usedJSHeapSize/1048576; dh=_heap0?h-_heap0:0; _heap0=h; } }catch(e){}   // a heap DROP between frames = a garbage collection
       if(last&&!document.hidden){ const d=t-last;
-        if(d>70&&d<4000){ const top=cur.slice().sort((a,b)=>b[1]-a[1]).slice(0,6).map(x=>x[0]+' '+x[1]+'ms').join(', ');
+        if(d>60&&d<4000){ let top=cur.slice().sort((a,b)=>b[1]-a[1]).slice(0,6).map(x=>x[0]+' '+x[1]+'ms').join(', '); try{ if(window.DMView){ const ed=DMView.EdgeLog.recent(performance.now(),1500); if(ed.length) top+=(top?' | ':'')+'EDGE '+ed.join(' '); } }catch(e){}
           const tn=t/1000, gap=_lastHitchT?+(tn-_lastHitchT).toFixed(2):0; _lastHitchT=tn;
           hl.push({at:new Date().toISOString().slice(11,19),t:+tn.toFixed(2),gap:gap,dh:+dh.toFixed(1),gc:dh<-3?1:0,screen:(typeof STATE!=='undefined'&&STATE.screen)||'?',ms:Math.round(d),top:top||'(no timed call — GPU/driver: shader compile or buffer upload; gc='+(dh<-3?'YES '+dh.toFixed(1)+'MB':'no')+')'});
           if(hl.length>40) hl.shift(); _hlSave(); } }
       last=t; cur=[]; requestAnimationFrame(tick); }
     requestAnimationFrame(tick);
-    const t0=window.dmPerfText; if(typeof t0==='function') window.dmPerfText=function(){ return t0()+'\n\nSHADER WARM-UP '+(window._warmupMs!=null?window._warmupMs+' ms':'not run')+'\n\nHITCHES (frames >70 ms, newest last)\n'+(hl.length?hl.map(e=>e.at+' '+e.screen+' '+e.ms+'ms  '+e.top).join('\n'):'none recorded'); };
+    const t0=window.dmPerfText; if(typeof t0==='function') window.dmPerfText=function(){ return t0()+'\n\nSHADER WARM-UP '+(window._warmupMs!=null?window._warmupMs+' ms':'not run')+'\n\nHITCHES (frames >60 ms, newest last; EDGE = body enter/leave view in the last 1.5 s)\n'+(hl.length?hl.map(e=>e.at+' '+e.screen+' '+e.ms+'ms  '+e.top).join('\n'):'none recorded'); };
     const c0=window.dmPerfClear; window.dmPerfClear=function(){ hl=[]; try{ localStorage.removeItem(KEY); }catch(e){} if(typeof c0==='function') c0(); };
   })();
 })();
@@ -17103,11 +17104,63 @@ function _setSolFullSysVisible(vis){
   }catch(e){}
 }
 
+function _solBodyNear(cam){
+  try{
+    const B=(typeof celestialBodies!=='undefined')&&celestialBodies; if(!B) return false;
+    for(let i=0;i<B.length;i++){ const b=B[i]; if(!b||!b.mesh||b.type==='Star'&&!b.mcRadius) continue;
+      const R=_bodyVisRadius(b), lim=Math.max(3000,R*60), p=b.mesh.position;
+      const dx=cam.x-p.x, dy=cam.y-p.y, dz=cam.z-p.z; if(dx*dx+dy*dy+dz*dz<lim*lim) return true; }
+  }catch(e){}
+  return false;
+}
+// (v314) Stateless backstop + edge breadcrumbs.  The hide/show above runs on CHANGE only, so one missed or foreign write left a world hidden for good.
+// Every 0.25 s (flight screen, no world open, no AR) this re-asserts the rule for every body: not hidden by the Sol speck -> its mesh is visible and in
+// the flight scene (a body's mesh that fell out of the scene is put back).  It also samples each body against the camera with enter/exit hysteresis
+// (ui/dm-viewgate.js) and writes enter/leave breadcrumbs that ride on the >60 ms hitch record, and repairs a culling sphere that is missing / NaN / far
+// smaller than the world (that mesh then draws unculled - a handful of planets, GPU-clipped).  Nothing here builds or disposes anything.
+let _beT=0,_beLastN=0;
+function _bodyEdgeTick(far){
+  const now=performance.now(); if(now-_beT<250) return; _beT=now;
+  if(typeof STATE==='undefined'||STATE.screen!=='flight'||!flightScene||!flightCamera) return;
+  if(typeof PW!=='undefined'&&PW&&(PW.active||PW.opening)) return;
+  if(window.DMAR&&DMAR.active) return;
+  const V=window.DMView, B=celestialBodies; if(!B) return;
+  const cam=flightCamera, pe=cam.projectionMatrix.elements, ok=V&&pe[0]>0&&pe[5]>0;
+  let me=null,tx=0,ty=0; if(ok){ cam.updateMatrixWorld(); me=cam.matrixWorldInverse.elements; tx=1/pe[0]; ty=1/pe[5]; }
+  const cc=_beC||(_beC=[0,0,0]);
+  for(let i=0;i<B.length;i++){
+    const b=B[i]; if(!b||!b.mesh) continue; const m=b.mesh;
+    if(!far&&m.visible===false&&!_lodFades.some(F=>F.newG===m||F.oldG===m)){ m.visible=true; try{ V&&V.EdgeLog.add('reshow',b.name||'?',now); }catch(e){} }
+    if(!m.parent&&!far){ try{ flightScene.add(m); V&&V.EdgeLog.add('readd',b.name||'?',now); }catch(e){} }
+    if(!ok) continue;
+    const R=_bodyVisRadius(b)*1.3; m.getWorldPosition(_beV||(_beV=new THREE.Vector3())); cc[0]=_beV.x; cc[1]=_beV.y; cc[2]=_beV.z;
+    const g=b._vg||(b._vg=new V.Gate(1500)), was=g.active;
+    g.update(now,V.inView(me,tx,ty,0,cc,R,0,1),V.inView(me,tx,ty,0,cc,R,0.12,1.4));
+    if(g.active!==was){ V.EdgeLog.add(g.active?'in':'out',b.name||'?',now);
+      if(g.active) _bodyFixCull(m,R/1.3,now); }
+  }
+}
+let _beC=null,_beV=null;
+function _bodyFixCull(root,R,now){   // a culling sphere that is NaN / missing / much smaller than the world would cull it while it is still on screen
+  root.traverse(o=>{ if(!o.isMesh||!o.frustumCulled||!o.geometry) return; const g=o.geometry;
+    let bs=g.boundingSphere; if(!bs){ if(g.attributes&&g.attributes.position&&g.attributes.position.count>0&&g.attributes.position.count<400000){ try{ g.computeBoundingSphere(); }catch(e){} bs=g.boundingSphere; } }
+    const sc=o.matrixWorld.getMaxScaleOnAxis()||1;
+    const bad=!bs||!isFinite(bs.radius)||bs.radius<=0||(o===root||o.parent===root)&&o.userData&&(o.userData.jotsGpuMc||o.userData.svLod)&&bs.radius*sc<R*0.5;
+    if(bad){ o.frustumCulled=false; try{ window.DMView.EdgeLog.add('uncull',(o.name||root.name||'mesh'),now); }catch(e){} } });
+}
 function updateSolGalLod(){
   if(!flightCamera)return;
+  try{ if(typeof PW!=='undefined'&&PW&&(PW.active||PW.opening)) return; }catch(e){}   // (v314) an open world hides its orbit globe on purpose: do not re-show bodies under it; re-evaluated on exit
   const cam=flightCamera.position;
   const dist=Math.hypot(cam.x,cam.y,cam.z); // Sol at world origin
-  const far=dist>GAL_SOL_SPECK_DIST;
+  // (v314) ROOT CAUSE of "the planet never comes back": this hid EVERY body in celestialBodies once the camera was 14000 u (28 AU) from the world origin, and
+  // restored them only when the camera came back inside 14000 of the ORIGIN.  Three ways to lose a world you are looking at: Neptune (30 AU) and Pluto sit
+  // beyond that radius even in Sol; every procedural system (Veyra, Vera's galaxy ...) is built AT the origin, so its outer planets and moons were hidden as
+  // if they were Sol's and the "Sol" speck drawn instead; and a body rebuilt while hidden got .visible=true from the LOD swap while its siblings stayed hidden.
+  // Now: it only applies to Sol (no current system), never while a body is within reach of the camera, and it re-shows everything on leaving Sol.
+  let far=dist>GAL_SOL_SPECK_DIST;
+  if(!far&&window._solFullSysHidden===true&&dist>GAL_SOL_SPECK_DIST*0.93) far=true;   // hysteresis: shown again a little inside the hide radius
+  if(far&&(window._curSystem||_solBodyNear(cam))) far=false;
   if(far!==!!window._solFullSysHidden){
     window._solFullSysHidden=far;
     _setSolFullSysVisible(!far);
@@ -17115,6 +17168,7 @@ function updateSolGalLod(){
   }else if(window._solArmDot&&window._solArmDot.visible!==far){
     window._solArmDot.visible=far;
   }
+  try{ _bodyEdgeTick(far); }catch(e){}
   // Fade/hide local Orion sheath at same GAL distance (fixes flat orange band + empty far)
   try{
     const la=window._flightLocalArm;
@@ -19564,7 +19618,14 @@ function _taPrebakeEarth(){
 try{ window.addEventListener('dm:earth-ready',()=>setTimeout(_taPrebakeEarth,0)); setTimeout(_taPrebakeEarth,3000); }catch(e){}
 function _taMaxSteps(){ return (typeof GFX!=='undefined'&&GFX.isMobile)?20:0; }   // mobile: cap the volumetric ray steps (jitter + temporal blend carry the rest)
 function _taQ(){ return (typeof GFX!=='undefined'&&GFX.preset)||'medium'; }
-function _taPrune(prefix,keep){ for(const [k,A] of _TA.pipes){ if(k.startsWith(prefix)&&k!==keep){ try{ A.dispose(); }catch(e){} _TA.pipes.delete(k); } } }
+// (v314) space passes keep the most recently used OTHER world's pass too (desktop; phones keep one): swinging between two planets used to dispose and
+// rebuild a pass (node graph, targets, shader) every time the nearest one changed
+function _taPrune(prefix,keep){
+  let spare=0; try{ spare=(prefix==='sp|'&&!(typeof GFX!=='undefined'&&GFX.isMobile))?1:0; }catch(e){}
+  const old=[]; for(const [k,A] of _TA.pipes){ if(k.startsWith(prefix)&&k!==keep) old.push([k,A]); }
+  old.sort((a,b)=>(b[1]._used||0)-(a[1]._used||0));
+  for(let i=spare;i<old.length;i++){ try{ old[i][1].dispose(); }catch(e){} _TA.pipes.delete(old[i][0]); }
+}
 function _taFail(e){ _TA.failed=true; _animLoopWarn('true-atmo',e); try{ console.warn('[true-atmo] falling back to the classic shells',e); }catch(_){} }
 // Earth's real relief (ETOPO5, ui/dm-earth.js) on the planet's own sphere frame (lon = atan2(-z,x), as the map is laid)
 function _taEarthHeight(R,HS){
@@ -19639,14 +19700,32 @@ function _trueAtmoRender(r,scene,cam){
     if(!best||bd>60) return false;
     // (v105) nothing the gas touches is on screen: camera outside the world's air (conservative 1.3 R) and that sphere
     // outside the view frustum -> the full-screen march would only copy the scene through; draw the scene directly.
+    // (v314) The gate is a TIGHT-enter / WIDE-exit hysteresis (ui/dm-viewgate.js), not a bare frustum test: a planet hovering at the screen edge used to flip
+    // this pass on and off (full-screen scene-through-RT <-> plain draw, a different render context for every object) and each flip, plus the per-planet
+    // pass built lazily on first entry, landed inside the frame the planet slid in (the edge freeze).  The pass is also created while the planet is merely
+    // NEAR the view (wide test), before it is on screen.
+    let _pre=false;
     { best.mesh.getWorldPosition(c); const Rt=best.mesh.userData.planetR*1.3;
-      if(c.distanceTo(cam.position)>Rt){ const F=_TA._fr||(_TA._fr=new THREE.Frustum()), M=_TA._fm||(_TA._fm=new THREE.Matrix4()), S=_TA._fs||(_TA._fs=new THREE.Sphere());
-        cam.updateMatrixWorld(); M.multiplyMatrices(cam.projectionMatrix,cam.matrixWorldInverse); F.setFromProjectionMatrix(M,cam.coordinateSystem); S.center.copy(c); S.radius=Rt;
-        if(!F.intersectsSphere(S)) return false; } }
+      if(c.distanceTo(cam.position)>Rt){
+        const V=window.DMView, pe=cam.projectionMatrix.elements;
+        if(V&&V.Gate&&cam.isPerspectiveCamera!==false&&pe[0]>0&&pe[5]>0){
+          cam.updateMatrixWorld(); const me=cam.matrixWorldInverse.elements, tx=1/pe[0], ty=1/pe[5], cc=_TA._cc||(_TA._cc=[0,0,0]); cc[0]=c.x; cc[1]=c.y; cc[2]=c.z;
+          const g=best._vg||(best._vg=new V.Gate(2000)), now=performance.now();
+          const tight=V.inView(me,tx,ty,0,cc,Rt,0.03,1), wide=V.inView(me,tx,ty,0,cc,Rt,0.22,1.5), was=g.active;
+          g.update(now,tight,wide);
+          if(g.active!==was){ try{ V.EdgeLog.add(g.active?'atmo+':'atmo-',(best.mesh.name||'planet'),now); }catch(e){} }
+          if(!g.active){ _pre=wide; if(!_pre) return false; }
+        } else {
+          const F=_TA._fr||(_TA._fr=new THREE.Frustum()), M=_TA._fm||(_TA._fm=new THREE.Matrix4()), S=_TA._fs||(_TA._fs=new THREE.Sphere());
+          cam.updateMatrixWorld(); M.multiplyMatrices(cam.projectionMatrix,cam.matrixWorldInverse); F.setFromProjectionMatrix(M,cam.coordinateSystem); S.center.copy(c); S.radius=Rt;
+          if(!F.intersectsSphere(S)) return false;
+        } } }
     const ud=best.mesh.userData, E=window.DMEarth;
     const key='sp|'+best.mesh.uuid+'|'+_taQ()+'|'+(E&&E.ready?1:0);
     let A=_TA.pipes.get(key);
     if(!A){ _taPrune('sp|',key); A=DMAtmo.create(THREE,THREE.TSL,{renderer:r,scene,camera:cam,planet:_taParamsFor(ud),quality:_taQ(),maxSteps:_taMaxSteps(),logarithmicDepth:!!r.logarithmicDepthBuffer,halfRes:_taHalf()}); _TA.pipes.set(key,A); }
+    A._used=performance.now();
+    if(_pre) return false;   // built while the planet is near the view; not drawn through until it is on screen
     best.mesh.getWorldPosition(c); A.setCenter(c);
     best.mesh.getWorldQuaternion(q); A.setRotation(q);
     if(best.sunDirU&&best.sunDirU.value) A.setSun(best.sunDirU.value);
