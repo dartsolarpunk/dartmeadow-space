@@ -14,19 +14,21 @@ let fails = 0, n = 0; const ok = (c, m) => { n++; if (!c) { fails++; console.log
 const src = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 function fn(name) { const i = src.indexOf('function ' + name + '('); if (i < 0) throw new Error(name); let d = 0, j = src.indexOf('{', i); for (let k = j; k < src.length; k++) { if (src[k] === '{') d++; else if (src[k] === '}') { d--; if (!d) return src.slice(i, k + 1); } } throw new Error('unbalanced ' + name); }
 const line = re => { const m = src.match(re); if (!m) throw new Error('missing ' + re); return m[0]; };
+function sp0(sp, c) { return sp.pos.distanceTo(c); }
 (async () => {
   const THREE = await import(url.pathToFileURL(tp).href);
   const rnd = (s => () => (s = (s * 16807) % 2147483647) / 2147483647)(7);
   for (let trial = 0; trial < 24; trial++) {
     const toasts = [], closed = [];
     const ctx = { THREE, Math, isFinite, console, toast: (m) => toasts.push(m), closeTempleHub: () => closed.push(1), updateAssistButtons() { }, takeMouseLook: () => ({ x: 0, y: 0 }),
-      surfaceActive: false, atmoActive: false, SHIP_WALK: { active: false }, boardFlight: { position: new THREE.Vector3() } };
+      surfaceActive: false, atmoActive: false, SHIP_WALK: { active: false }, boardFlight: { position: new THREE.Vector3() },
+      flightInited: true, exits: [], pend: [], setTimeout: (f) => ctx.pend.push(f), atmoExitToSpace() { ctx.exits.push('sky'); }, exitSurface() { ctx.exits.push('ground'); } };
     vm.createContext(ctx);
-    vm.runInContext(['spQuat', 'spForward', 'spUp', 'spRight', 'spAimQuat', 'spSyncLegacy', 'disengageAssist', '_btHullR', 'travelToBirdTemple'].map(fn).join('\n') + '\n' + line(/const _BT_QT_DIR=\[[^\]]+\];/) +
-      '\nconst _clamp=(v,a,b)=>Math.max(a,Math.min(b,v)); let _sV0=new THREE.Vector3(),_sV1=new THREE.Vector3(),_sV2=new THREE.Vector3(),_sV3=new THREE.Vector3(),_sV4=new THREE.Vector3(),_sM1=new THREE.Matrix4(),_sQ1=new THREE.Quaternion(),_sQ2=new THREE.Quaternion(),_sQ3=new THREE.Quaternion();' +
+    vm.runInContext(['spQuat', 'spForward', 'spUp', 'spRight', 'spAimQuat', 'spSyncLegacy', 'disengageAssist', '_btHullR', '_btQtJump', 'travelToBirdTemple'].map(fn).join('\n') + '\n' + line(/const _BT_QT_DIR=\[[^\]]+\];/) +
+      '\nlet _btQtBusy=false;\nconst _clamp=(v,a,b)=>Math.max(a,Math.min(b,v)); let _sV0=new THREE.Vector3(),_sV1=new THREE.Vector3(),_sV2=new THREE.Vector3(),_sV3=new THREE.Vector3(),_sV4=new THREE.Vector3(),_sM1=new THREE.Matrix4(),_sQ1=new THREE.Quaternion(),_sQ2=new THREE.Quaternion(),_sQ3=new THREE.Quaternion();' +
       '\nlet _followInit=true,_bfcPrevW=new THREE.Vector3(1,2,3),_bfcPrevL=new THREE.Vector3(4,5,6);' +
       '\nconst ASSIST={mode:"focus",target:{name:"Mars"},orbitOffset:null,homeOffset:null,lockOffset:new THREE.Vector3(),_homeAfterArrive:false};' +
-      '\nconst STATE={flight:{pos:new THREE.Vector3(5e4,-3e3,2e4),vel:new THREE.Vector3(9,9,9),quat:new THREE.Quaternion()}};' +
+      '\nconst STATE={screen:"flight",flight:{pos:new THREE.Vector3(5e4,-3e3,2e4),vel:new THREE.Vector3(9,9,9),quat:new THREE.Quaternion()}};' +
       '\nconst BIRD_TEMPLE={group:null,spawned:false,_R0:0};', ctx);
     const run = c => vm.runInContext(c, ctx);
     // a temple: random pose / scale, a hull ~ a box of half-size h (local); its world bounding radius is what _btHullR measures
@@ -54,6 +56,16 @@ const line = re => { const m = src.match(re); if (!m) throw new Error('missing '
     ok(closed.length === 1, 't' + trial + ': temple panel closed');
     ok(run('_followInit') === false && run('_bfcPrevW') === null && run('_bfcPrevL') === null, 't' + trial + ': follow cam re-seats, hull sweep reset');
     ok(/Arrived at the Bird Temple/.test(toasts[toasts.length - 1] || ''), 't' + trial + ': toast');
+    // on a world's ground / in its sky: leave the world first (HOME-style), then jump — never a silent "arrive later"
+    for (const mode of ['surfaceActive', 'atmoActive']) {
+      run('STATE.flight.pos.set(5e4,-3e3,2e4)'); const pw = run('STATE.flight.pos.clone()'); ctx.exits.length = 0; ctx.pend.length = 0; toasts.length = 0; ctx[mode] = true;
+      run('ASSIST.mode="focus"'); run('travelToBirdTemple()');
+      ok(run('STATE.flight.pos').equals(pw) && ctx.exits.length === 1 && ctx.exits[0] === (mode === 'surfaceActive' ? 'ground' : 'sky'), 't' + trial + ': ' + mode + ': exits the world, does not jump yet');
+      run('travelToBirdTemple()'); ok(ctx.exits.length === 1, 't' + trial + ': ' + mode + ': a second press does not re-exit');
+      ctx.pend.shift()(); ok(run('STATE.flight.pos').equals(pw) && ctx.pend.length === 1, 't' + trial + ': ' + mode + ': keeps waiting while still in the world');
+      ctx[mode] = false; ctx.pend.shift()();
+      ok(!run('STATE.flight.pos').equals(pw) && sp0(run('STATE.flight'), c) >= 1.6 * R0 - 1e-6 && /Arrived at the Bird Temple/.test(toasts[toasts.length - 1] || ''), 't' + trial + ': ' + mode + ': jumps once back in space');
+    }
     // aboard: refused
     run('SHIP_WALK.active=true'); const p1 = run('STATE.flight.pos.clone()'); run('STATE.flight.pos.x+=1'); const p2 = run('STATE.flight.pos.clone()'); run('travelToBirdTemple()');
     ok(run('STATE.flight.pos').equals(p2) && !p1.equals(p2), 't' + trial + ': refused while walking aboard');

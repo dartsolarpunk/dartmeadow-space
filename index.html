@@ -10456,11 +10456,16 @@ function _btPlayChime(){
 // panel closed, follow cam re-seated, hull sweep reset. Refused while the temple is not spawned yet. (The temple GLB, its wander,
 // anchoring, fly-in and saves are untouched.)
 const _BT_QT_DIR=[0,0.42,1];   // temple-local arrival direction: astern (+Z) and up (+Y, above the deck plane)
-function travelToBirdTemple(){
+// (v304) Quick Travel only ever moved STATE.flight.pos — the open-space position. That is the whole story in open space, but on a world's ground
+// ('walk') or in its sky ('fly') the frozen open-space position is not what is drawn (the planet world has its own scene + camera; the real sky only
+// shows what is above it), so the jump did nothing visible and the Temple "never appeared" ("you'll arrive there when you head back to space").
+// Like HOME: leave the world first (the same exits as TO SPACE / LIFTOFF), then jump. In PW 'space' mode the jump is fine as is (the world closes
+// itself once the board is past PWS_CLOSE radii).
+let _btQtBusy=false;
+function _btQtJump(){
   const sp=STATE.flight, bt=BIRD_TEMPLE, g=bt.group;
   if(!sp||!sp.pos||!g||!bt.spawned){toast('Bird Temple is still loading…',1500);return;}
-  if(typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active){toast('🕊 You are aboard the Bird Temple',1600);return;}
-  g.updateMatrixWorld(true);
+  g.visible=true; g.updateMatrixWorld(true);
   const R=Math.max(bt._R0||0,_btHullR()||0,1), D=1.6*R;
   const c=new THREE.Vector3().setFromMatrixPosition(g.matrixWorld), gq=g.getWorldQuaternion(new THREE.Quaternion());
   const off=new THREE.Vector3(_BT_QT_DIR[0],_BT_QT_DIR[1],_BT_QT_DIR[2]).normalize().applyQuaternion(gq).multiplyScalar(D);
@@ -10469,13 +10474,32 @@ function travelToBirdTemple(){
   const q=spAimQuat(sp,c,new THREE.Quaternion()); if(q){ spQuat(sp).copy(q); spSyncLegacy(sp); }
   if(boardFlight) boardFlight.position.copy(sp.pos);
   try{ disengageAssist(); }catch(e){}                       // FOCUS / ORBIT / travel autopilot / IDLE: hand the stick back
+  try{ if(typeof PW!=='undefined'&&PW&&PW.sp) PW.sp.out=false; }catch(e){}   // a TO SPACE climb-out would keep nudging the board away from the jump
   try{ takeMouseLook(); }catch(e){}                         // drop queued mouse motion so the aim holds
   _followInit=false;                                        // the follow cam re-seats behind the board on the next frame
   _bfcPrevW=null; _bfcPrevL=null;                           // hull sweep: no sweep from the old spot to the new one
   try{ closeTempleHub(); }catch(e){}
-  // Honest messaging: from surface / atmosphere this only moves the (frozen) open-space position.
-  if(surfaceActive||atmoActive)toast('🕊 Position set near the Bird Temple — you\'ll arrive there when you head back to space',2600);
-  else toast('🕊 Arrived at the Bird Temple',2000);
+  toast('🕊 Arrived at the Bird Temple',2000);
+}
+function travelToBirdTemple(){
+  const sp=STATE.flight, bt=BIRD_TEMPLE, g=bt.group;
+  if(!sp||!sp.pos||!g||!bt.spawned){toast('Bird Temple is still loading…',1500);return;}
+  if(typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active){toast('🕊 You are aboard the Bird Temple',1600);return;}
+  if(_btQtBusy) return;
+  if(surfaceActive||atmoActive){
+    _btQtBusy=true; try{ closeTempleHub(); }catch(e){}
+    toast('🕊 Leaving this world, then Quick Travel to the Bird Temple…',2600);
+    try{ atmoActive?atmoExitToSpace():exitSurface(); }catch(e){}
+    let n=0;
+    (function wait(){
+      const st=STATE&&STATE.screen;
+      if(!atmoActive&&!surfaceActive&&st==='flight'&&flightInited){ _btQtBusy=false; _btQtJump(); return; }
+      if(++n>240){ _btQtBusy=false; toast('Could not leave the world — press TO SPACE / LIFTOFF, then try again',3000); return; }
+      setTimeout(wait,500);
+    })();
+    return;
+  }
+  _btQtJump();
 }
 function openTempleHub(){
   const bt=BIRD_TEMPLE;
