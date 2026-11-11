@@ -125,7 +125,7 @@
   const FLAG = (q.get('vlights') || '').toLowerCase();
   const V = { core, on: !/^(0|off|false|no)$/.test(FLAG) };
   root.DMVLight = V;
-  const S = { tier: null, cfg: null, U: null, node: null, scene: null, installed: false, failed: null, groups: [], spots: [], byKey: {}, flashAuto: null, k: 0, want: 0,
+  const S = { tier: null, cfg: null, U: null, node: null, installed: false, failed: null, groups: [], spots: [], byKey: {}, flashAuto: null, k: 0, want: 0,
     plan: { n: 0, sun: false }, fade: null, pick: null, slots: null, tgt: null, buf: null, m: new Float32Array(16), medium: { density: 0.02, mist: 1, mistH: 7, haze: 0.18, patchy: 0.3, gain: 0.5 }, time: 0, nLive: 0 };
   V.S = S;
   const gain0 = parseFloat(q.get('vlgain')), dens0 = parseFloat(q.get('vldens'));
@@ -237,16 +237,19 @@
         S.installed = true;
       }
       const fg = scene.fog, U = S.U; U.fogCol.value.copy(fg.color); U.near.value = fg.near; U.far.value = fg.far;
-      scene.fogNode = S.node; S.scene = scene; return true;
+      scene.fogNode = S.node; return true;   // (no scene reference kept: a closed world must stay garbage-collectable)
     } catch (e) { S.failed = String(e && e.message || e); try { console.warn('[vlight] install', e); } catch (x) { } return false; }
   };
+
+  // world teardown: drop our fog node from the scene and fade out; no scene is retained either way
+  V.release = function (scene) { try { if (scene && scene.fogNode === S.node) scene.fogNode = null; } catch (e) { } S.k = 0; S.nLive = 0; if (S.U) S.U.k.value = 0; if (S.slots) { S.slots.id.fill(-1); S.slots.w.fill(0); } V.clear('flash'); S.flashAuto = null; };
 
   // ── per frame
   const _col = [0, 0, 0];
   V.tick = function (dt, o) {
     if (!S.installed || !o || !o.camera || !o.scene) return;
     dt = dt > 0.1 ? 0.1 : dt < 0 ? 0 : dt || 0.016; const U = S.U, cfg = S.cfg, scene = o.scene;
-    if (scene.fog) { if (scene.fogNode !== S.node && (scene === S.scene || !scene.fogNode)) scene.fogNode = S.node; } else if (scene.fogNode === S.node) { scene.fogNode = null; return; }
+    if (scene.fog) { if (scene.fogNode !== S.node && !scene.fogNode) scene.fogNode = S.node; } else if (scene.fogNode === S.node) { scene.fogNode = null; return; }
     if (scene.fogNode !== S.node) return;
     // budget
     let lvl = 0, ema = 0; try { const B = root.DMBudget; if (B && B.on) { lvl = B.lvl('light') | 0; const st = B.stats && B.stats(); ema = st && st.emaMs || 0; } } catch (e) { }

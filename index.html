@@ -20252,6 +20252,7 @@ function _pwClose(opts){
   _crM('pw:close');
   try{ if(window.DMPlaces) DMPlaces.onWorldClose(); }catch(e){}   // our group + caches go before the scene is disposed
   const scene=PW.scene, body=PW.body; ++PW.gen;
+  try{ if(window.DMVLight) DMVLight.release(scene); }catch(e){}   // (ui/dm-vlight.js) drop the fog node, keep no scene reference
   PW.active=false; PW.opening=false;
   surfaceActive=false; atmoActive=false; PW.mode=null; PW.blend=null; PW.sp=null; PW._camFlat=null; PW.atmo=null;
   window.removeEventListener('keydown',_surfKeyDown); window.removeEventListener('keyup',_surfKeyUp);
