@@ -56,6 +56,8 @@
   let reloadWhy = null; try { reloadWhy = JSON.parse(sessionStorage.getItem(RKEY) || 'null'); sessionStorage.removeItem(RKEY); } catch (e) {}
   window._dmPrevAlive = prevAlive;
   window.dmReloadWhy = (why) => { try { sessionStorage.setItem(RKEY, JSON.stringify({ why: String(why).slice(0, 80), at: Date.now(), screen: curMode() })); } catch (e) {} };
+  // (v314) context for the restart breadcrumb (index.html dmBreadcrumb): screen/mode, the DMCrumb trail and what was in flight when the entry was written
+  window.dmBcCtx = () => { try { return { mode: curMode(), trail: CR.trail.slice(-4), active: Array.from(CR.active.keys()).slice(0, 4) }; } catch (e) { return null; } };
   function beat(clean) {
     try { localStorage.setItem(AKEY, JSON.stringify({ sid: sessionId, t: Date.now(), up: Math.round((Date.now() - start.getTime()) / 1000), screen: curMode(), phase: window._dmWarmPhase || null, warming: !!window._dmWarming, hidden: !!document.hidden, clean: !!clean })); } catch (e) {}
   }
@@ -231,7 +233,7 @@
       build: env && env.build, swCache: (env && env.swCache) || window._dmSwCache || null,
       backend: env && env.backend, gpu: env && env.gpu, preset: env && env.preset, hair: env && env.hair,
       warmupMs: window._warmupMs != null ? window._warmupMs : null,
-      reloadWhy, prevAlive: prevAlive ? { sid: prevAlive.sid, clean: prevAlive.clean, upSec: prevAlive.up, screen: prevAlive.screen, phase: prevAlive.phase, warming: prevAlive.warming, hidden: prevAlive.hidden, deadAfterSec: prevAlive.t ? Math.round((start.getTime() - prevAlive.t) / 1000) : null, crumb: (prevCrumb && prevAlive.sid === prevCrumb.sid) ? prevCrumb : null } : null,
+      reloadWhy, prevBreadcrumb: (window._dmPrevBreadcrumbs && window._dmPrevBreadcrumbs.length) ? window._dmPrevBreadcrumbs.slice(-6) : null, prevAlive: prevAlive ? { sid: prevAlive.sid, clean: prevAlive.clean, upSec: prevAlive.up, screen: prevAlive.screen, phase: prevAlive.phase, warming: prevAlive.warming, hidden: prevAlive.hidden, deadAfterSec: prevAlive.t ? Math.round((start.getTime() - prevAlive.t) / 1000) : null, crumb: (prevCrumb && prevAlive.sid === prevCrumb.sid) ? prevCrumb : null } : null,
       warmSteps: window._warmSteps || null, pwCompile: window._pwCompile || null, flightCompile: window._flightCompile || null, recovery: !!window._dmRecoveryUsed,
       transitions: window._dmTransitions && window._dmTransitions.length ? window._dmTransitions.slice() : null,   // (menu-perf) launch fly-out markers: per phase frames / max gap / gaps > 50, 100 ms
       navType, prevUnclean, prevSessionId: prevLocal && prevLocal.sessionId || null, endNote: final ? endNote : null,

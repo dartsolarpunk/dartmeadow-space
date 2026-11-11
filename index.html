@@ -132,18 +132,52 @@ if(location.search.indexOf('debug')!==-1){
     window.visualViewport.addEventListener('resize',_queueSetH);
     window.visualViewport.addEventListener('scroll',_queueSetH);
   }
+  // (v314) RESTART BREADCRUMB. A page that comes back at the menu mid-play is either (a) our own reload, (b) the GPU/device lost handler, or (c) the OS killing the tab (iOS jetsam: no event, no JS error).
+  // Every programmatic reload goes through dmReload(why) / dmBreadcrumb('reload',why) and every pagehide / hidden / context-lost / device-lost / error writes a short entry to
+  // localStorage 'dm_bc_v1' (last 8 events: kind, why, time, screen, uptime, last actions, memory) BEFORE anything else happens. The next boot prints the previous session's entries to the console
+  // and hands them to the perf log (ui/dm-perflog.js: report.prevBreadcrumb) and window.dmBreadcrumbs() / the PROFILE > logs. 'last action' = window.dmAction(name,info) (travel, load, camera, world open/close).
+  (function(){
+    var K='dm_bc_v1', T0=Date.now(), acts=[], MAXE=8;
+    function rd(){ try{ var a=JSON.parse(localStorage.getItem(K)||'null'); return a&&a.length!=null?a:[]; }catch(e){ return []; } }
+    var prev=rd(); window._dmPrevBreadcrumbs=prev;
+    try{ if(prev.length){ console.info('[restart] previous session breadcrumbs:',JSON.stringify(prev.slice(-4))); } }catch(e){}
+    window.dmAction=function(a,info){ try{ acts.push([Date.now()-T0,String(a).slice(0,28),info==null?undefined:String(info).slice(0,40)]); if(acts.length>6) acts.shift(); if(window.DMCrumb) DMCrumb.mark(a,info); }catch(e){} };
+    function ctx(){ var o={}; try{ o.screen=(typeof STATE!=='undefined'&&STATE.screen)||null; }catch(e){}
+      try{ var f=window.dmBcCtx&&window.dmBcCtx(); if(f){ o.mode=f.mode; o.trail=f.trail; o.active=f.active; } }catch(e){}
+      try{ var pm=performance.memory; if(pm) o.heapMB=Math.round(pm.usedJSHeapSize/1048576); }catch(e){}
+      try{ var r=window.flightRenderer||(typeof flightRenderer!=='undefined'?flightRenderer:null); if(r&&r.info&&r.info.memory) o.gpuMB=Math.round((r.info.memory.total||0)/1048576); }catch(e){}
+      return o; }
+    var _lastErr=0;
+    window.dmBreadcrumb=function(kind,why){
+      if(kind==='error'||kind==='reject'){ var n=Date.now(); if(n-_lastErr<5000) return; _lastErr=n; }   // an error in a loop must not become a localStorage write per frame
+      try{ var c=ctx(), e={k:String(kind).slice(0,16),w:String(why==null?'':why).slice(0,100),at:new Date().toISOString(),up:Math.round((Date.now()-T0)/1000),hid:!!document.hidden,scr:c.screen,mode:c.mode,gpuMB:c.gpuMB,heapMB:c.heapMB,last:acts.slice(-4),trail:c.trail&&c.trail.slice(-4),act:c.active};
+        var a=rd(); a.push(e); while(a.length>MAXE) a.shift(); localStorage.setItem(K,JSON.stringify(a)); window._dmLastBreadcrumb=e; }catch(e){}
+    };
+    window.dmBreadcrumbs=function(){ return {previous:prev,thisSession:rd().filter(function(e){ return !prev.some(function(p){ return p.at===e.at&&p.k===e.k; }); })}; };
+    // the ONE way to reload from script: breadcrumb first (also sessionStorage reason for the perf log), then reload
+    window.dmReload=function(why,url){ try{ window.dmBreadcrumb('reload',why); }catch(e){} try{ window.dmReloadWhy&&window.dmReloadWhy(why); }catch(e){} if(url){ try{ location.replace(url); return; }catch(e){} } try{ location.reload(); }catch(e){} };
+    window.addEventListener('pagehide',function(ev){ window.dmBreadcrumb('pagehide',ev&&ev.persisted?'bfcache':'unload'); },true);
+    document.addEventListener('visibilitychange',function(){ window.dmBreadcrumb(document.hidden?'hidden':'visible',''); });
+    window.addEventListener('pageshow',function(ev){ if(ev&&ev.persisted) window.dmBreadcrumb('pageshow','bfcache restore'); });
+    window.addEventListener('webglcontextlost',function(){ window.dmBreadcrumb('ctxlost','webgl context lost'); },true);
+    window.addEventListener('webglcontextrestored',function(){ window.dmBreadcrumb('ctxrestored',''); },true);
+    window.addEventListener('error',function(ev){ window.dmBreadcrumb('error',(ev&&ev.message||'')+' @'+(ev&&ev.filename?String(ev.filename).split('/').pop():'')+':'+(ev&&ev.lineno||'')); });
+    window.addEventListener('unhandledrejection',function(ev){ var r=ev&&ev.reason; window.dmBreadcrumb('reject',r&&r.message?r.message:String(r)); });
+    window.dmBreadcrumb('boot',prev.length?('after '+prev[prev.length-1].k+(prev[prev.length-1].w?': '+prev[prev.length-1].w:'')):'first');
+  })();
   // Register service worker — required by Chrome for a real "Install app"
   // prompt; without one it silently falls back to a plain shortcut.
   if('serviceWorker' in navigator){
     window.addEventListener('load',function(){
       navigator.serviceWorker.register('/sw.js').catch(function(){});
-      // (v117) a new service worker that takes over in the first seconds of a load (an update just landed) reloads the page
-      // once, so nothing from the previous build's cache is mixed into this session. Never later than 10 s (no mid-play reload).
-      try{ var _had=!!navigator.serviceWorker.controller, _t0=Date.now();
+      // (v314) A new service worker taking over (we bump the cache constantly; sw.js skipWaiting + clients.claim) used to reload the page when it landed in the first 10 s of a load.
+      // That is a restart-to-menu in the middle of whatever the player had just started. It never reloads now: the page already in memory keeps running (its files are in memory;
+      // anything not loaded yet comes from the network when the old cache is gone) and the new build applies on the NEXT load. The player gets a small, non-blocking message.
+      try{ var _had=!!navigator.serviceWorker.controller, _told=false;
         navigator.serviceWorker.addEventListener('controllerchange',function(){
-          if(!_had||Date.now()-_t0>10000) return; try{ if(sessionStorage.getItem('dm_swReload')) return; sessionStorage.setItem('dm_swReload','1'); }catch(e){ return; }
-          try{ window.dmReloadWhy&&window.dmReloadWhy('swUpdate'); }catch(e){}
-          location.reload(); }); }catch(e){}
+          try{ window.dmBreadcrumb&&window.dmBreadcrumb('sw','controllerchange (no reload)'); }catch(e){}
+          if(!_had||_told) return; _told=true;
+          setTimeout(function(){ try{ if(window.dmSys) dmSys('Update ready — it applies the next time the game opens',{dur:5000}); }catch(e){} },1500); }); }catch(e){}
     });
   }
   // PWA manifest: /manifest.webmanifest (linked in <head>; dark launch screen on Android)
@@ -172,6 +206,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-impostor.js?v=280"></script>   <!-- far-range LOD: vertex-clustering impostor (mansion LOD2, colours baked) -->   <!-- far-range LOD: the ONE distance table per device class (props, mansion, landmarks, vantage reach); ?lod=off|low|mobile|desktop -->
 <script src="ui/dm-light.js?v=301"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
 <script src="ui/dm-atmo-shell.js?v=297"></script>   <!-- (v297) DMAtmoShell.radii/worldR/ratio: the faded atmosphere perimeter of a body (Solenne 1.18 R) for the space -> world hand-off (Worlds) -->
+<script src="ui/dm-spawn.js?v=314"></script>   <!-- (v314) DMSpawn: new-game spawn in interstellar space near Sol + the arrival push-out from every world's hand-off radius -->
 <script src="ui/dm-pw-handoff.js?v=299"></script>   <!-- (v299) the space -> surface hand-off policy: pre-build hidden from PWS_OPEN, show the world + minimap globe at the DMAtmoShell perimeter (Worlds) -->
 <script>/* (v136) no-op stub so the flight loop can never throw if dm-perf.js failed to load */
 window.DMPerf=window.DMPerf||{on:false,b(){},e(){},mark(){},measure(n,f){return f();},frame(){},stats(){return {fps:0,avgMs:0,p95Ms:0,worstMs:0,minFps:0,cpu:{},gpu:null,sparse:null};},show(){},hide(){}};</script>
@@ -1025,7 +1060,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-safety.js?v=1" defer></script>
 <script src="jots/jots-link.js?v=217" defer></script>
 <script src="ui/dm-friends.js?v=217" defer></script>
-<script src="ui/dm-perflog.js?v=303" defer></script>
+<script src="ui/dm-perflog.js?v=314" defer></script>
 <script src="ui/dm-webkit.js?v=210" defer></script>
 <script src="ui/dm-spectator.js?v=1" defer></script>
 <script src="ui/dm-stack.js?v=1" defer></script>
@@ -1165,7 +1200,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
           try{ toast('⚠ 3D engine unavailable — try refresh', 4500, 'warn'); }catch(e){}
         }
       }catch(e){
-        try{ location.reload(); }catch(_){}
+        try{ var _bn=+(sessionStorage.getItem('dm_bootCatchN')||0); if(_bn<1){ sessionStorage.setItem('dm_bootCatchN',String(_bn+1)); window.dmReload?window.dmReload('bootCatch'):location.reload(); } else if(window.dmBreadcrumb) window.dmBreadcrumb('bootCatch','not reloading again'); }catch(_){}
       }
     };
   }
@@ -2361,6 +2396,7 @@ function _journeyRefreshResume(){
   try{ _checkAutosaveResume(); refreshMenuStatus(); }catch(e){}
 }
 async function journeyLoad(entry){
+  try{ window.dmAction&&dmAction('journeyLoad',entry&&entry.slotName); }catch(e){} 
   let d=null;
   if(entry.remote){
     try{ const t=await window.JOTS.vault.get('saves/slots/'+entry.id+'.json'); d=t?JSON.parse(t):null; }catch(e){}
@@ -2516,6 +2552,7 @@ function _systemFromRef(gal,ref){
 // in today's world (planets have moved on with the real date; you arrive
 // beside the same one, at the same offset, facing the same way).
 function resumeJourney(data){
+  try{ window.dmAction&&dmAction('resume',data&&data.slotName); }catch(e){} 
   if(!data||!loadSaveData(data)) return;
   const w=data.where;
   // While a resume is putting her back, the near-world watcher must not open
@@ -5423,7 +5460,7 @@ window.worldSeconds = worldSeconds;
     const b=document.createElement('button'); b.id='dm-update-bar'; b.type='button';
     b.textContent='⟳ A NEW VERSION OF DART MEADOW IS READY — TAP TO UPDATE';
     b.style.cssText='position:fixed;left:50%;top:calc(8px + env(safe-area-inset-top,0px));transform:translateX(-50%);z-index:99999;padding:9px 16px;border:1px solid rgba(var(--acc-rgb),.7);background:rgba(4,10,22,.88);color:#fff;font-family:var(--font-hud);font-size:.55rem;letter-spacing:.14em;border-radius:3px;cursor:pointer;backdrop-filter:blur(8px);box-shadow:0 0 16px rgba(var(--acc-rgb),.45);max-width:92vw;';
-    b.onclick=()=>{ try{ if(typeof quickSave==='function'&&typeof STATE!=='undefined'&&STATE.screen==='flight') quickSave(); }catch(e){} try{ window.dmReloadWhy&&window.dmReloadWhy('updateBar'); }catch(e){} setTimeout(()=>location.reload(),300); };
+    b.onclick=()=>{ try{ if(typeof quickSave==='function'&&typeof STATE!=='undefined'&&STATE.screen==='flight') quickSave(); }catch(e){} setTimeout(()=>{ window.dmReload?window.dmReload('updateBar'):location.reload(); },300); };
     document.body.appendChild(b);
   }
   setTimeout(check,4000);
@@ -6486,7 +6523,7 @@ function travelToDiscovery(d){
   const approach=off.clone().add(off.clone().normalize().multiplyScalar(-(d.type==='Rogue Planet'?60:24)));
   const sameGal=d.gal===_qtCurGalaxy(), curSys=(window._curSystem&&window._curSystem.name)||'Sol';
   if(sameGal&&d.sysName===curSys){
-    STATE.flight.pos.copy(approach);if(boardFlight)boardFlight.position.copy(approach);
+    STATE.flight.pos.copy(approach);_dmClearOfWorlds(STATE.flight.pos);if(boardFlight)boardFlight.position.copy(STATE.flight.pos);
     toast('✦ Arrived at '+d.name,2400);return;
   }
   window._ftArrivePos=approach;
@@ -6597,6 +6634,7 @@ async function initFlightScene(){
   const _gpuLost=(why)=>{
     if(window._dmGpuLost) return; window._dmGpuLost=true;
     console.warn('[gpu] lost:',why);
+    try{ window.dmBreadcrumb&&window.dmBreadcrumb('gpulost',why); }catch(e){}
     try{ localStorage.setItem('dm_lastGpuLost',JSON.stringify({at:new Date().toISOString(),why:String(why).slice(0,200),screen:STATE&&STATE.screen,aboard:!!((typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active)||(window.BTI&&(BTI.cur||BTI._depth>0))),build:window._dmSwCache||null})); }catch(e){}   // (v104) the next session's perf report carries why the last one died
     // (webkit-polish) silent save on every in-world screen (flight / surface / atmo), not only flight; and a reload-loop guard:
     // iOS can drop the context again right after a reload under memory pressure, which used to bounce the page forever.
@@ -6606,7 +6644,7 @@ async function initFlightScene(){
     if(_loop){ try{ toast('⚠ The graphics keep resetting — close other tabs and apps, then reload the page to continue',60000); }catch(e){} window._dmGpuLostHold=true; return; }
     try{ toast('⚠ Graphics reset by the device — restoring…',2400); }catch(e){}
     // a backgrounded page reloads when it comes back (a reload while hidden is often cut off by the OS anyway)
-    const _go=()=>{ try{ window.dmReloadWhy&&window.dmReloadWhy('gpuLost: '+why); }catch(e){} try{ location.reload(); }catch(e){} };
+    const _go=()=>{ try{ window.dmReload?window.dmReload('gpuLost: '+why):location.reload(); }catch(e){} };
     if(document.hidden){ const f=()=>{ if(!document.hidden){ document.removeEventListener('visibilitychange',f); setTimeout(_go,300); } }; document.addEventListener('visibilitychange',f); }
     else setTimeout(_go,1200);
   };
@@ -10068,6 +10106,7 @@ function _shipLandTick(dt){
   if(k>=1){ SHIP_LAND=null; enterShipWalk(); }
 }
 function enterShipWalk(){
+  try{ window.dmAction&&dmAction('enterShipWalk'); }catch(e){} 
   const bt=BIRD_TEMPLE,sp=STATE.flight;
   if(!bt.group||!sp)return;
   $('ship-land-prompt').style.display='none';
@@ -10124,6 +10163,7 @@ function _wireShipJumpButton(){
 }
 document.addEventListener('DOMContentLoaded',_wireShipJumpButton);
 function exitShipWalk(){
+  try{ window.dmAction&&dmAction('exitShipWalk'); }catch(e){} 
   const bt=BIRD_TEMPLE,sp=STATE.flight;
   const world=bt.group.localToWorld(SHIP_WALK.localPos.clone());
   const stepOn=!!(SHIP_WALK.charOn&&boardFlight&&CHAR.loaded&&CHAR.root&&!CHAR.mounted&&!CHAR._transitioning&&CHAR.actions&&CHAR.actions.skyboard);
@@ -11925,7 +11965,7 @@ function buildFlightBoard(){
 
   // Camera starts in LEO — ~LEO_ALT_FRAC·R above Earth's limb (≈200 mi eq.).
   // Earth is at a deep-future orbital angle, not at +X AU.
-  const leo=placeSolLeoOffset();
+  const leo=placeSolSpawn();   // (v314) was placeSolLeoOffset(): LEO is inside Earth's world hand-off
   flightCamera.position.copy(leo);
   flightCamera.rotation.order='YXZ';
   flightCamera.rotation.set(0,0,0);
@@ -11936,6 +11976,7 @@ function buildFlightBoard(){
   STATE.flight.camYaw=0;
   STATE.flight.camPitch=0;
   STATE.flight.quat=null;   // 6-DOF orientation rebuilds from the zeroed angles
+  _dmApplySpawnAim();       // (v314) ...except the default spawn, which faces Sol
   _camUp.set(0,1,0);        // camera roll resets with it
   if(boardFlight)boardFlight.position.copy(STATE.flight.pos);
   _followInit=false; // camera snaps to follow position on first frame
@@ -12091,6 +12132,7 @@ const CAM_OFFSETS=[
 ];
 let camMode=0;
 function cycleCamMode(){
+  try{ window.dmAction&&dmAction('camMode',camMode+1); }catch(e){} 
   camMode=(camMode+1)%3;
   _applyCamOffset();
   const btn=$('cam-btn');if(btn)btn.textContent='CAM '+(camMode+1);
@@ -13008,7 +13050,19 @@ function _trackSystemExtra(obj){
   if(obj){ _flightSystemExtras.push(obj); }
   return obj;
 }
+// (v314) _disposeObject3D frees geometries and materials but not textures, and three r185's WebGPU info keeps a strong Map of every uploaded texture: each system swap (quick
+// travel, Sol home, resume into another system) left the old planets' / stars' canvas + data textures resident for the whole session, a ratchet towards iOS's tab kill.
+// Textures that something still in the scene uses (the board, Autumn, shared noise) stay; a texture marked userData.dmKeep stays.
+function _disposeSystemTextures(gone){
+  try{
+    if(!window.DMMem||!gone||!gone.length) return;
+    const keep=flightScene?DMMem.collectTextures(flightScene):new Set(); let n=0;
+    for(const o of gone){ for(const t of DMMem.collectTextures(o)){ if(keep.has(t)||(t.userData&&t.userData.dmKeep)) continue; try{ t.dispose(); n++; }catch(e){} } }
+    if(n&&window.DMCrumb) DMCrumb.mark('sysTexFree',n);
+  }catch(e){ console.warn('[sys] texture free',e); }
+}
 function _clearFlightSystemScene(){
+  const _sysGone=[];
   try{ if(window.DMArielHome) DMArielHome.stop(); }catch(e){}   // Veyra's second star rides on trackExtra; just drop the references
   // Remove prior Sol/procedural bodies + orbit rings / belts / oort / comets
   // tagged via _trackSystemExtra — prevents dual stacks on system swap.
@@ -13017,6 +13071,7 @@ function _clearFlightSystemScene(){
     if(b&&b.mesh){
       try{ if(b.mesh.parent)b.mesh.parent.remove(b.mesh); }catch(e){}
       try{ if(typeof _disposeObject3D==='function')_disposeObject3D(b.mesh); }catch(e){}
+      _sysGone.push(b.mesh);
     }
   }
   celestialBodies=[];
@@ -13027,9 +13082,11 @@ function _clearFlightSystemScene(){
     if(!o)continue;
     try{ if(o.parent)o.parent.remove(o); }catch(e){}
     try{ if(typeof _disposeObject3D==='function')_disposeObject3D(o); }catch(e){}
+    _sysGone.push(o);
   }
   _flightSystemExtras=[];
   try{ if(typeof flightFlybys!=='undefined')flightFlybys.length=0; }catch(e){}
+  _disposeSystemTextures(_sysGone);
 }
 function onLandPromptTap(){
   if(!_landTargetBody)return;
@@ -13260,6 +13317,30 @@ function updateBodies(dt){
 
 
 
+// (v314) DEFAULT SPAWN: interstellar space just outside the planets' orbits (45 AU, 20° above the ecliptic), looking back at Sol. The old LEO spawn sat 1.05 R from Earth,
+// inside the world hand-off (opens at PWS_OPEN = 9 R, shows at the 1.18 R atmosphere shell), so a new game could not leave Earth's LOD / atmosphere and built a planet world
+// on top of the start-up warm-up. window._dmSpawnAim = camera angles that face Sol. Falls back to LEO if DMSpawn failed to load.
+function placeSolSpawn(){
+  try{
+    const D=window.DMSpawn; if(!D) return placeSolLeoOffset();
+    const s=D.defaultSpawn(AU_UNITS); window._dmSpawnAim={yaw:s.camYaw,pitch:s.camPitch};
+    return new THREE.Vector3(s.pos.x,s.pos.y,s.pos.z);
+  }catch(e){ return placeSolLeoOffset(); }
+}
+// (v314) Arrivals (Sol home, quick travel, discovery return) never land inside a landable world's hand-off radius: clearR (11.5) planet radii, past PWS_OPEN (9) and PWS_CLOSE (11).
+// A world inside that radius builds + compiles on top of the system rebuild that just ran (the phone's memory spike) and swallows the player. `v` is moved in place.
+function _dmClearOfWorlds(v){
+  try{
+    const D=window.DMSpawn; if(!D||!v||!celestialBodies) return v;
+    const bs=[]; for(const b of celestialBodies){ if(!b||!b.mesh||b.isAsteroid||b.type==='Comet'||!isProximityLandEligible(b)) continue; const p=b.mesh.position; bs.push({x:p.x,y:p.y,z:p.z,r:_bodyR(b)}); }
+    const o={x:v.x,y:v.y,z:v.z};
+    if(D.pushClear(o,bs,D.DEF.clearR)){ v.set(o.x,o.y,o.z); try{ if(window.DMCrumb) DMCrumb.mark('arrivePush',[Math.round(o.x),Math.round(o.y),Math.round(o.z)]); }catch(e){} }
+  }catch(e){}
+  return v;
+}
+function _dmApplySpawnAim(){
+  try{ const a=window._dmSpawnAim; if(!a) return; STATE.flight.camYaw=a.yaw; STATE.flight.camPitch=a.pitch; STATE.flight.quat=null; window._dmSpawnAim=null; }catch(e){}
+}
 // Place board in LEO (~LEO_ALT_FRAC·R ≈ 200 mi eq.) along sun→Earth radial.
 function placeSolLeoOffset(clearance){
   const earthBody = (typeof celestialBodies!=='undefined') && celestialBodies
@@ -14892,6 +14973,7 @@ function flyToStar(starPos,sys){
 }
 
 function fastTravelToSystem(system,galaxyName){
+  try{ window.dmAction&&dmAction('travel',(system?system.name:'Sol')); }catch(e){} 
   closeFastTravel();closeGalaxyMap();
   try{ _clearLandPrompt(); }catch(e){}
   $('warp-overlay').classList.add('active');
@@ -14962,9 +15044,10 @@ async function _rebuildFlightForSystem(system){
       if(STATE.settings.textures&&typeof applyProceduralTextures==='function')applyProceduralTextures();
     }
     buildDestinations();buildDestinationUI();
-    const leo=placeSolLeoOffset();
-    STATE.flight.pos.copy(leo);if(boardFlight)boardFlight.position.copy(STATE.flight.pos);
-    if(window._ftArrivePos){STATE.flight.pos.copy(window._ftArrivePos);if(boardFlight)boardFlight.position.copy(STATE.flight.pos);window._ftArrivePos=null;}
+    const leo=placeSolSpawn();   // (v314) Sol home = the interstellar default spawn, not Earth's LEO (inside its world hand-off)
+    STATE.flight.pos.copy(leo);_dmApplySpawnAim();
+    if(window._ftArrivePos){STATE.flight.pos.copy(window._ftArrivePos);window._ftArrivePos=null;}
+    _dmClearOfWorlds(STATE.flight.pos);if(boardFlight)boardFlight.position.copy(STATE.flight.pos);
     return;
   }
   _clearFlightSystemScene();
@@ -15065,8 +15148,10 @@ async function _rebuildFlightForSystem(system){
       landable:bd.landable});
   });
   buildDestinationUI();
-  { const _a=system.ariel?_ah():null; if(!(_a&&_a.arrive())){ STATE.flight.pos.set(AU*1.2,3,4);if(boardFlight)boardFlight.position.copy(STATE.flight.pos); } }   // Veyra: arrive in the lee of Solenne, not inside a star
-  if(window._ftArrivePos){STATE.flight.pos.copy(window._ftArrivePos);if(boardFlight)boardFlight.position.copy(STATE.flight.pos);window._ftArrivePos=null;}
+  let _arrHome=false;   // (v314) Return Home deliberately arrives 5.5 R above Solenne (the landing follows): the one arrival NOT pushed out of the hand-off radius
+  { const _a=system.ariel?_ah():null; if(_a&&_a.arrive()) _arrHome=true; else { STATE.flight.pos.set(AU*1.2,3,4);if(boardFlight)boardFlight.position.copy(STATE.flight.pos); } }   // Veyra: arrive in the lee of Solenne, not inside a star
+  let _arrOv=false; if(window._ftArrivePos){STATE.flight.pos.copy(window._ftArrivePos);window._ftArrivePos=null;_arrOv=true;}
+  if(!_arrHome||_arrOv){ _dmClearOfWorlds(STATE.flight.pos); } if(boardFlight)boardFlight.position.copy(STATE.flight.pos);   // (v314) never arrive inside a world's hand-off radius
   try{ _clearLandPrompt(); }catch(e){}
   // (v228) not over an open world: she is on that world's board (the space board is hidden while it is up); _pwRestoreSpace puts her back on leaving
   try{ if(CHAR.loaded && CHAR.root && boardFlight && !(PW.active||PW.opening)) remountSkyboard(boardFlight); }catch(e){}
@@ -15268,7 +15353,7 @@ async function adminClearCacheReload(){
   try{ if(typeof quickSave==='function'&&typeof STATE!=='undefined'&&(STATE.screen==='flight')) quickSave(); }catch(e){}
   try{ if(navigator.serviceWorker){ const regs=await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map(r=>r.unregister())); } }catch(e){}
   try{ if(window.caches){ const ks=await caches.keys(); await Promise.all(ks.map(k=>caches.delete(k))); } }catch(e){}
-  setTimeout(()=>{ try{ const u=new URL(location.href); u.searchParams.set('fresh',Date.now().toString(36)); location.replace(u.toString()); }catch(e){ location.reload(); } },600);
+  setTimeout(()=>{ try{ const u=new URL(location.href); u.searchParams.set('fresh',Date.now().toString(36)); window.dmReload?window.dmReload('adminClearCache',u.toString()):location.replace(u.toString()); }catch(e){ location.reload(); } },600);
 }
 function _pfEnsure(){
   if($('profile-modal')) return;
@@ -19310,6 +19395,7 @@ function _pwWarmExtrasStart(gen){
 // Build, then compile the world's shaders while the view you came from keeps
 // running (no frozen frame, no black); resolves true when it can take over.
 async function _pwOpen(body,site,mode,focus){
+  try{ window.dmAction&&dmAction('pwOpen',(body&&body.name)+'/'+mode); }catch(e){} 
   _crB('pw:open',{b:body&&body.name,mode});
   let gen;
   // (v307) a throw inside the build used to leave PW.active=true with no mode and a half-made scene: _pwSpaceWatch (which returns while PW.active)
@@ -20086,6 +20172,7 @@ function _farCanopyTick(px,pz,agl){
 // one loop draws open space on the very next frame (or the view that
 // replaces it), so nothing fades and nothing goes black.
 function _pwClose(opts){
+  try{ window.dmAction&&dmAction('pwClose'); }catch(e){} 
   if(!PW.active&&!PW.opening) return;
   _crM('pw:close');
   try{ if(window.DMPlaces) DMPlaces.onWorldClose(); }catch(e){}   // our group + caches go before the scene is disposed
