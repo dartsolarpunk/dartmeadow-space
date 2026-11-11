@@ -10,6 +10,8 @@
  */
 (function () {
   'use strict';
+  // ?sunshadow=0|1 (shared, read once): 0 = the daytime shadow changes of the lighting overhaul are OFF (old contact blob 0.52, mansion shadow as before = off on phones); 1 = mansion also casts on phones; absent = overhaul defaults
+  window.DM_SUNSHADOW = (function () { try { const m = location.search.match(/[?&]sunshadow=(0|1)\b/); return m ? +m[1] : undefined; } catch (e) { return undefined; } })();
   const P = window.DMPolish = { version: 1, on: !/[?&]nopolish\b/.test(location.search) };
   const sm = (a, b, v) => { const t = Math.max(0, Math.min(1, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
 
@@ -107,7 +109,7 @@
     if (sd && sd.y > 0.05) { const f = 1 / Math.max(0.3, Math.hypot(sd.x, sd.z)); ox = -sd.x * f * r * 0.12; oz = -sd.z * f * r * 0.12; }   // leans away from the sun
     m.position.set(x + ox, y + 0.05 + r * 0.04, z + oz);
     m.scale.set(r * 2.2, 1, r * 2.2);
-    m.material.opacity = 0.72 * k;   // (lighting overhaul) was 0.52: the contact blob is the cheap shadow on phones where the sun map is cadenced / the mansion casts none
+    m.material.opacity = (window.DM_SUNSHADOW === 0 ? 0.52 : 0.72) * k;   // (lighting overhaul) was 0.52: the contact blob is the cheap shadow on phones where the sun map is cadenced / the mansion casts none
     m.visible = true;
   };
 

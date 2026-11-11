@@ -8,7 +8,7 @@ Fix: `softBounce` (soft threshold, `U.bb`=0.02) + `bounceDayScale` (`U.bk`, ease
 
 **Lamp pools (ui/dm-lamps.js):** pool mesh nodes bordering uncovered cells (drops, water, lattice end) now fade to alpha 0 and the radial alpha is smoothstep^2 - no hard cut at ledges.
 
-**Sun shadow:** already texel-snapped, follows the player (DMPolish.fitSun, TERRAIN.sun, PCFSoft, tier map sizes 512-4096, cadence 1-3 frames). Mansion cast shadow is OFF on phones by default (59k-tri pass, ui/dm-facilities.js): flag `?sunshadow=1` enables it on phones, `?sunshadow=0` disables it everywhere. The cheap contact blob (DMPolish.contact) is stronger (opacity 0.52 -> 0.72) as the phone fallback. Interior (ui/dm-mansion-interior.js) is baked/unlit by design: no real-time shadow indoors.
+**Sun shadow:** already texel-snapped, follows the player (DMPolish.fitSun, TERRAIN.sun, PCFSoft, tier map sizes 512-4096, cadence 1-3 frames). Mansion cast shadow is OFF on phones by default (59k-tri pass, ui/dm-facilities.js): flag `?sunshadow=1` enables it on phones. `?sunshadow=0` (read once as `window.DM_SUNSHADOW` in ui/dm-polish.js) restores the old behaviour for the changes made here: contact blob opacity back to 0.52, mansion phone default. It does not touch TERRAIN.sun / fitSun (unchanged old code; `?nopolish` disables fitSun+blob) nor the bounce fix (`?lightbounce`). The cheap contact blob (DMPolish.contact) is stronger (opacity 0.52 -> 0.72) as the phone fallback. Interior (ui/dm-mansion-interior.js) is baked/unlit by design: no real-time shadow indoors.
 
 **Flags:** `?light=off|low|med|high|ultra` (exists), `?lightbounce=0..`, `?sunshadow=0|1`, `?nopolish` (exists; disables fitSun/contact).
 
