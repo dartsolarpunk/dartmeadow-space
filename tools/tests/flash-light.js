@@ -27,6 +27,7 @@ const src = fs.readFileSync(path.join(root, 'ui/dm-flash.js'), 'utf8');
   ok(F.readFlags('?flashshadow=0').shadow === false && F.readFlags('?x=1&flashshadow=off').shadow === false, '?flashshadow=0 / off disables the shadow');
   ok(F.readFlags('?flashshadow=1024').size === 1024 && F.readFlags('?flashshadow=99999').size === 4096 && F.readFlags('?flashshadow=1').size === 0, '?flashshadow=<size> sets / clamps the map');
   ok(F.readFlags('?flashbeam=0').beam === 0 && F.readFlags('?flashbeam=2.5').beam === 2.5 && F.readFlags('?flashbeam=99').beam === 8, '?flashbeam=0 / k');
+  ok(F.readFlags('').beamForce === false && F.readFlags('?flashbeam=auto').beamForce === false && F.readFlags('?flashbeam=1.5').beamForce === true, '?flashbeam: auto (yield to DMVLight) unless a number forces it');
   ok(F.readFlags('?flashlight=0').light === false, '?flashlight=0 turns the feature off');
   ok(F.readFlags('?flashtier=phone').tier === 'phone' && F.readFlags('?flashtier=bogus').tier === '', '?flashtier=low|phone|desktop');
   ok(F.readFlags('?flashbias=-0.001').bias === -0.001, '?flashbias=');
@@ -140,6 +141,11 @@ const src = fs.readFileSync(path.join(root, 'ui/dm-flash.js'), 'utf8');
       ok(bw.length > 1000 && new RegExp('i < ' + F.TIERS[F.S.tierName].steps + ';').test(bw), 'beam WGSL compiles with ' + F.TIERS[F.S.tierName].steps + ' samples');
       F.toggle(false); F.tick('walk'); ok(!P.beam.visible && F.U.shOn.value === 0 && F.U.k.value === 0, 'off: beam hidden, shadow branch closed');
     }
+    { hooks.isMobile = false; F.hooks.depthOK = () => true; const sc = new T2.Scene(); sc.fog = new T2.Fog(0x888888, 40, 900); F.adoptScene(sc); const led = new T2.Object3D(); sc.add(led); sc.updateMatrixWorld(true); S.led = led; S.beam = undefined;
+      F.toggle(true); F.tick('walk'); const P = S.pairs[S.pairs.length - 1]; ok(P.beam && P.beam.visible, 'fogged scene without DMVLight: own cone beam');
+      globalThis.DMVLight = { on: true }; sc.fogNode = {}; F.tick('walk'); ok(!P.beam.visible, 'DMVLight installed on the scene (scene.fogNode): the cone yields, no double beam');
+      F.tick('space'); ok(P.beam.visible, 'open space: DMVLight is off there, the cone is the beam'); F.tick('walk');
+      location.search = '?flashbeam=1'; F.refreshTier(); F.tick('walk'); ok(P.beam.visible, '?flashbeam=1 forces the cone on top of DMVLight'); location.search = ''; F.refreshTier(); delete globalThis.DMVLight; F.toggle(false); }
     // vacuum: no beam; the depth hook missing: no beam at all
     { hooks.isMobile = false; const sc = new T2.Scene(); F.adoptScene(sc); const led = new T2.Object3D(); sc.add(led); sc.updateMatrixWorld(true); S.led = led; S.beam = undefined; F.toggle(true); F.tick('space'); const P = S.pairs[S.pairs.length - 1]; ok(S.dens < 0.001, 'open space (vacuum): only a trace of dust (density ' + S.dens + ')'); F.toggle(false);
       const sc2 = new T2.Scene(); F.adoptScene(sc2); const led2 = new T2.Object3D(); sc2.add(led2); sc2.updateMatrixWorld(true); S.led = led2; S.beam = undefined; F.hooks.depthOK = () => false; F.toggle(true); F.tick('walk'); const P2 = S.pairs[S.pairs.length - 1]; ok(!P2.beam, 'no scene-depth read (multisampled WebGPU): no beam mesh (it would pour through the ground)'); F.toggle(false); }

@@ -17,9 +17,11 @@
    BEAM      the visible light shaft: ONE additive back-face cone mesh per scene (made on first switch-on, hidden while off) whose shader marches 6-14 samples
              through the cone analytically (position / axis / angle / penumbra / length uniforms), clamped by the scene depth, weighted by an air-density
              term (fog-aware, near zero in vacuum) with a forward-scatter phase and dust noise on the desktop tier. Not shadowed by objects inside the cone
-             (approximation). ?flashbeam=0 turns it off, ?flashbeam=<n> scales it.
+             (approximation). It YIELDS to DMVLight (ui/dm-vlight.js, which scatters the flashlight in scene.fogNode) while that is installed on a fogged
+             scene on foot / in the air, so the shaft is never counted twice; it is the beam in open space and in fog-less scenes. ?flashbeam=0 off,
+             ?flashbeam=<n> forces it on at gain n (on top of DMVLight), ?flashbeam=auto default.
    CONE      long-press the button (or the small cone key in the brightness bar) cycles wide 35 deg / medium 23 deg / spot 12 deg half-angle (uniform changes only).
-   FLAGS     ?flashlight=0 (feature off) ?flashshadow=0|512|1024|2048 ?flashbeam=0|k ?flashtier=low|phone|desktop ?flashbias=-0.0004.  Session only: no save keys.
+   FLAGS     ?flashlight=0 (feature off) ?flashshadow=0|512|1024|2048 ?flashbeam=auto|0|k ?flashtier=low|phone|desktop ?flashbias=-0.0004.  Session only: no save keys.
    INTERFACE DMFlash.cone() -> {on, pos, dir, angle, cosOuter, cosInner, range, intensity, lumens, shadow{on,map,matrix,near,far,bias,size,every}, mode} (preallocated, valid
              after tick), DMFlash.U (TSL uniform nodes of the beam, null until built), DMFlash.medium {mul, add} (density hooks for the fog / mist / atmosphere passes),
              DMFlash.sceneLight(scene), DMFlash.hooks {gfx, depthOK, logDepth}.
@@ -61,7 +63,7 @@
     const num = (v, d) => { const x = parseFloat(v); return isFinite(x) ? x : d; };
     const fs = q('flashshadow'), size = fs !== null && /^\d+$/.test(fs) && +fs > 1 ? Math.max(256, Math.min(4096, +fs | 0)) : 0;
     const fb = q('flashbeam');
-    return { light: q('flashlight') !== '0', shadow: fs !== '0' && fs !== 'off', size, beam: fb === '0' || fb === 'off' ? 0 : (fb === null ? 1 : Math.max(0, Math.min(8, num(fb, 1)))),
+    return { light: q('flashlight') !== '0', shadow: fs !== '0' && fs !== 'off', size, beam: fb === '0' || fb === 'off' ? 0 : (fb === null || fb === 'auto' ? 1 : Math.max(0, Math.min(8, num(fb, 1)))), beamForce: fb !== null && fb !== 'auto' && fb !== '0' && fb !== 'off',
       tier: /^(low|phone|desktop)$/.test(q('flashtier') || '') ? q('flashtier') : '', bias: q('flashbias') !== null ? num(q('flashbias'), -0.0004) : -0.0004 };
   };
   F.pickTier = function (gfx, ua, over) {   // gfx = the game's GFX (may be null), ua = navigator.userAgent, over = ?flashtier
@@ -326,7 +328,10 @@
   }
   function beamStep(P, L, top, mode, pn) {
     const U = S.U || ensureU(); const B = S.flags.beam;
-    let m = null; if (B > 0 && U) m = beamFor(P);
+    const VL = root.DMVLight;   // DMVLight (ui/dm-vlight.js) already scatters the flashlight in the scene's fog (scene.fogNode): this cone then yields (no double beam) unless ?flashbeam=<k> forces it; it still covers vacuum / fog-less scenes
+    const yielded = !S.flags.beamForce && mode !== 'space' && VL && VL.on && top.fogNode;
+    let m = null; if (B > 0 && U && !yielded) m = beamFor(P);
+    if (yielded && P.beam && P.beam.visible) P.beam.visible = false;
     if (!m) { S.beamOn = false; return; }
     const fog = top.fog; S.dens = F.densityFor(mode, fog && fog.far ? fog.far : 0, F.medium.mul, F.medium.add);
     const k = B * Math.pow(STEPS[S.step] / 2000, 0.7) * Math.sqrt(CONES[S.cone].gain) * (pn === 'space' ? 0.6 : 1);
