@@ -26545,7 +26545,7 @@ function _surfWatch(){
   if(probs.length) _surfEvent('watch',{p:probs.slice(0,5)});
 }
 setInterval(()=>{ try{ if(document.hidden||typeof surfaceActive==='undefined'||!surfaceActive||window._dmWarming) return; _surfWatch(); }catch(e){} },1000);
-const _surfGN=new THREE.Vector3(), _surfCN=new THREE.Vector3();   // (v259) scratch for the held ground / climb normals (updateSurface)
+let _surfGN=null, _surfCN=null;   // (v259) scratch for the held ground / climb normals (updateSurface); made lazily: THREE does not exist yet when this classic script is parsed (a top-level `new THREE.Vector3` threw here and aborted everything below, incl. the park / summon buttons)
 function updateSurface(dt){
   const p=surfPlayer;if(!p)return;
   let _m0=performance.now(), _m1;   // (perf) sub-step clock for the perf log: us.wind / us.move / us.board / us.cam / us.char / us.cg / us.foot
@@ -26821,7 +26821,7 @@ function updateSurface(dt){
     // (v259) the stencil (4 ground-height lookups, each a tessellation / density / mesh query) and the climb probe (7 density samples + 3 ground queries) are only
     // re-evaluated after 80 ms or 0.12 m of travel: a decision about "is this a wall" does not change in a frame, and the answer is held in between.
     const _gm=CHAR._gnMemo, _gmOk=!!_gm&&_sl0-_gm.t<80&&Math.abs(_gm.x-p.pos.x)+Math.abs(_gm.z-p.pos.z)<0.12&&Math.abs(_gm.y-p.pos.y)<0.25&&_gm.gen===PW.gen;
-    if(_gmOk){ groundNormal=_surfGN.copy(_gm.n); }
+    if(_gmOk){ groundNormal=(_surfGN||(_surfGN=new THREE.Vector3())).copy(_gm.n); }
     else if(typeof _surfHeight==='function'){
       const e=1.2, X=p.pos.x, Z=p.pos.z, Hs=_surfHeight;
       groundNormal=new THREE.Vector3(-(Hs(X+e,Z)-Hs(X-e,Z)),2*e,-(Hs(X,Z+e)-Hs(X,Z-e)));
@@ -26829,7 +26829,7 @@ function updateSurface(dt){
       groundNormal.normalize();
     } else groundNormal=new THREE.Vector3(0,1,0);
     const _sl1=performance.now(); DMFT.add('us.s.height',_sl1-_sl0);
-    const climbN = _gmOk ? (_gm.c?_surfCN.copy(_gm.c):null) : ((typeof window._surfClimbNormal==='function') ? window._surfClimbNormal(p.pos.x, p.pos.y, p.pos.z) : null);
+    const climbN = _gmOk ? (_gm.c?(_surfCN||(_surfCN=new THREE.Vector3())).copy(_gm.c):null) : ((typeof window._surfClimbNormal==='function') ? window._surfClimbNormal(p.pos.x, p.pos.y, p.pos.z) : null);
     if(!_gmOk){ const m=CHAR._gnMemo||(CHAR._gnMemo={n:new THREE.Vector3(),c:null}); m.t=_sl0; m.x=p.pos.x; m.y=p.pos.y; m.z=p.pos.z; m.gen=PW.gen; m.n.copy(groundNormal); m.c=climbN?(m.c||new THREE.Vector3()).copy(climbN):null; }
     if(climbN) groundNormal = climbN;
     const _sl2=performance.now(); DMFT.add('us.s.climb',_sl2-_sl1);
