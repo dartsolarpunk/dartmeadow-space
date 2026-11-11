@@ -39,6 +39,8 @@ ok(/onDeviceLost=\(info\)=>_gpuLost/.test(html) && /dmBreadcrumb&&window\.dmBrea
 ok(/window\.dmReload=function\(why,url\)\{ try\{ window\.dmBreadcrumb\('reload',why\)/.test(html), 'dmReload writes the breadcrumb BEFORE reloading');
 ok(/prevBreadcrumb/.test(fs.readFileSync(path.join(root, 'ui/dm-perflog.js'), 'utf8')), 'perf log report carries prevBreadcrumb');
 ok(/dmAction\(/.test(html) && ['fastTravelToSystem', 'journeyLoad', 'resumeJourney', 'cycleCamMode', '_pwOpen'].every((f) => new RegExp('function ' + f + '\\([^)]*\\)\\{\\s*try\\{ window\\.dmAction').test(html)), 'travel / load / camera / world-open record dmAction');
+// the 'Render hitch' toast path is only a toast + breadcrumb
+{ const i = html.indexOf('function _animLoopWarn'), body = html.slice(i, html.indexOf('\n}', i)); ok(!/reload|location\./.test(body.replace(/\/\/.*$/gm, '').replace(/'[^']*'/g, "''")), '_animLoopWarn (Render hitch toast) never reloads'); ok(/dmBreadcrumb\('hitch'/.test(body), '_animLoopWarn leaves a breadcrumb'); }
 // 4. service worker
 const sw = fs.readFileSync(path.join(root, 'sw.js'), 'utf8');
 ok(!/\.navigate\(|postMessage|reload/.test(sw.replace(/\/\/.*$/gm, '')), 'sw.js never navigates / reloads clients');

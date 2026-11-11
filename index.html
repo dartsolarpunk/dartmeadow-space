@@ -7023,6 +7023,7 @@ function _animLoopWarn(tag,e){
   _animLoopErrAt=t;
   console.error('[animate:'+tag+']', e&&(e.message||e), e);
   try{ const H=window.DMHitch||(window.DMHitch=[]); H.push({t:Math.round(t),tag,msg:String(e&&(e.message||e)).slice(0,200),stack:String(e&&e.stack||'').slice(0,1200)}); if(H.length>12) H.shift(); }catch(_){}   // (v193) inspectable on iPhone: DMHitch
+  try{ window.dmBreadcrumb&&window.dmBreadcrumb('hitch',tag+': '+String(e&&(e.message||e)).slice(0,80)); }catch(_){}   // (v315) the toast is only a toast (this catch never reloads); the reason now survives into the next boot's breadcrumbs
   try{ if(tag==='render'||tag==='surf-render') toast('⚠ Render hitch — check console',2500); }catch(_){}
 }
 // Debounced resize handling for the flight canvas. Previously the loop read
