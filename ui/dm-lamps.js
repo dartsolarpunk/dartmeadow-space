@@ -54,11 +54,18 @@
     const nx = col.nx, c = col.cell, P = [], A = [], I = [], PR = led ? LED_POOL_R : POOL_R, gain = led ? LED_GAIN : 1;
     for (const l of lamps) {
       const hp = led ? l : headPos(l), cx = hp[0], cy = hp[1], r = Math.ceil(PR / c), i0 = Math.round((cx - col.x0) / c), j0 = Math.round((cy - col.y0) / c), W = 2 * r + 1, id = new Int32Array(W * W).fill(-1), base = P.length / 3;   // base = first vertex of this lamp's pool
+      // (lighting overhaul) a node that borders a cell the pool cannot cover (a drop, water, the lattice end) fades to 0 instead of keeping its radial alpha: the pool used to end in a hard cut at every ledge / rail
+      const okN = new Uint8Array(W * W);
       for (let dj = -r; dj <= r; dj++) for (let di = -r; di <= r; di++) {
         const i = i0 + di, j = j0 + dj; if (i < 0 || j < 0 || i >= nx || j >= col.ny) continue;
+        const h = g[j * nx + i], d = Math.hypot(col.x0 + i * c - cx, col.y0 + j * c - cy);
+        if (h <= col.sea + 0.6 || Math.abs(h - l[2]) > 0.35 || d > PR) continue; okN[(dj + r) * W + di + r] = 1;
+      }
+      for (let dj = -r; dj <= r; dj++) for (let di = -r; di <= r; di++) {
+        const q = (dj + r) * W + di + r; if (!okN[q]) continue; const i = i0 + di, j = j0 + dj;
         const h = g[j * nx + i], x = col.x0 + i * c, y = col.y0 + j * c, d = Math.hypot(x - cx, y - cy);
-        if (h <= col.sea + 0.6 || Math.abs(h - l[2]) > 0.35 || d > PR) continue;
-        const t = 1 - d / PR; id[(dj + r) * W + di + r] = P.length / 3 - base; P.push(x, h + POOL_Y, -y); A.push(t * t * gain);
+        let edge = 1; for (let b = 0; b < 4; b++) { const ni = di + (b === 0 ? 1 : b === 1 ? -1 : 0), nj = dj + (b === 2 ? 1 : b === 3 ? -1 : 0); if (ni < -r || nj < -r || ni > r || nj > r || !okN[(nj + r) * W + ni + r]) { if (d > c * 1.5) edge = 0; } }   // keep the node under the lamp itself even on a 1-cell island
+        const t = 1 - d / PR, f = t * t * (3 - 2 * t); id[q] = P.length / 3 - base; P.push(x, h + POOL_Y, -y); A.push(f * f * gain * edge);
       }
       for (let dj = 0; dj < 2 * r; dj++) for (let di = 0; di < 2 * r; di++) {
         const a = id[dj * W + di], b = id[dj * W + di + 1], d2 = id[(dj + 1) * W + di + 1], e = id[(dj + 1) * W + di]; if (a < 0 || b < 0 || d2 < 0 || e < 0) continue;

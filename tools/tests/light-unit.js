@@ -169,4 +169,16 @@ function mkHF(N, cell, cx, cz, f) { const hf = createHF(N, cell); hf.sampler = f
   L.resetCascade(cc); assert(cc.full && cc.sn === 0 && cc.dn === 0); console.log('freeze rolls the window, queues bounded'); }
 // 22. (v297) memory per tier (CPU + GPU, stamps and dirty lists included) stays small; the biggest tier < 4 MB
 { let s = ''; for (const t of TIER_ORDER) { const b = L.tierBytes(t); s += t + ' ' + ((b.cpu + b.gpu) / 1048576).toFixed(2) + ' '; if (t === 'ultra') assert((b.cpu + b.gpu) / 1048576 < 4, 'ultra MB'); } console.log('tier MB: ' + s); }
+// 23. (lighting overhaul) smooth falloffs: lampFalloff / softBounce / bounceDayScale are monotonic and continuous (no step > tiny per tiny input change), pinned at the ends
+{ const { lampFalloff, softBounce, bounceDayScale, smooth01, hyst } = L; let prev = 2, maxStep = 0;
+  for (let i = 0; i <= 2000; i++) { const d = i / 2000 * 12, v = lampFalloff(d, 10); assert(v <= prev + 1e-12, 'lampFalloff monotonic'); if (i) maxStep = Math.max(maxStep, prev - v); prev = v; }
+  assert(lampFalloff(0, 10) === 1 && lampFalloff(10, 10) === 0 && lampFalloff(99, 10) === 0 && lampFalloff(1, 0) === 0); assert(maxStep < 0.003, 'lampFalloff continuous ' + maxStep);
+  prev = -1; maxStep = 0; for (let i = 0; i <= 4000; i++) { const b = i / 4000 * 0.3, v = softBounce(b, 0.02); assert(v >= prev - 1e-12, 'softBounce monotonic'); if (i) maxStep = Math.max(maxStep, v - prev); prev = v; }
+  assert(softBounce(0.0, 0.02) === 0 && softBounce(0.02, 0.02) === 0 && softBounce(-1, 0.02) === 0 && softBounce(0.5, 0) === 0.5 && Math.abs(softBounce(1, 0.02) - 0.97) < 1e-9); assert(maxStep < 0.0001, 'softBounce continuous ' + maxStep);
+  { const R = rng(5); let a = 0, b = 0; for (let i = 0; i < 20000; i++) { const n = (R() - 0.5) * 0.04; a += Math.max(n, 0); b += softBounce(n, 0.02); } assert(a / 20000 > 0.004 && b / 20000 < 0.0005, 'noise rectification ' + a / 20000 + ' ' + b / 20000); }
+  assert(bounceDayScale(-0.3, 1, 0.22) === 1 && bounceDayScale(0.9, 0, 0.22) === 1 && Math.abs(bounceDayScale(0.9, 1, 0.22) - 0.22) < 1e-9);
+  prev = 2; for (let i = 0; i <= 200; i++) { const v = bounceDayScale(i / 200, 1, 0.22); assert(v <= prev + 1e-12, 'day scale monotonic'); prev = v; }
+  assert(smooth01(0, 1, 0.5) === 0.5 && smooth01(1, 1, 0.5) === 0);
+  let st = false, flips = 0; for (let i = 0; i < 1000; i++) { const v = 0.5 + 0.04 * Math.sin(i * 0.7), n = hyst(st, v, 0.55, 0.45); if (n !== st) flips++; st = n; } assert(flips === 0, 'hysteresis holds');
+  console.log('lighting overhaul: lampFalloff / softBounce / bounceDayScale / hyst continuous + monotonic'); }
 console.log('light-unit OK');

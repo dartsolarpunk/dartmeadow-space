@@ -294,7 +294,7 @@
     const sc = MAN.glb.scene.clone(true);      // materials stay shared with the loaded scene on purpose (one set of textures)
     const lod0 = sc.getObjectByName('Mansion_LOD0'), lod1 = sc.getObjectByName('Mansion_LOD1');
     root.add(sc); root.userData.lod0 = lod0; root.userData.lod1 = lod1;
-    const sh = F.ctx.shadows() && !F.ctx.isMobile();   // (v223) the mansion casts no shadows on phones/tablets: saves a 59k-triangle shadow pass
+    const sq = (typeof location !== 'undefined' && (location.search.match(/[?&]sunshadow=(0|1)\b/) || [])[1]), sh = sq === '0' ? false : F.ctx.shadows() && (!F.ctx.isMobile() || sq === '1');   // ?sunshadow=1 lets the mansion cast on phones (off by default: the 59k-triangle pass), =0 turns its shadow off   // (v223) the mansion casts no shadows on phones/tablets: saves a 59k-triangle shadow pass
     sc.traverse(o => { if (o.isMesh) { o.frustumCulled = false; const n = o.material && o.material.name; if (sh && lod0 && o.parent === lod0 || sh && lod0 && lod0.getObjectById(o.id)) { o.castShadow = !/^ah_rock/.test(n) && n !== 'ah_glass'; o.receiveShadow = true; } } });
     return root;
   }

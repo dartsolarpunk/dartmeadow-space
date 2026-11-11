@@ -74,7 +74,7 @@
   function makeBlob() {
     const T = THREE, N = 96, cv = document.createElement('canvas'); cv.width = cv.height = N;
     const g = cv.getContext('2d'), r = g.createRadialGradient(N / 2, N / 2, 0, N / 2, N / 2, N / 2);
-    r.addColorStop(0, 'rgba(0,0,0,0.85)'); r.addColorStop(0.35, 'rgba(0,0,0,0.5)'); r.addColorStop(0.7, 'rgba(0,0,0,0.14)'); r.addColorStop(1, 'rgba(0,0,0,0)');
+    r.addColorStop(0, 'rgba(0,0,0,0.9)'); r.addColorStop(0.3, 'rgba(0,0,0,0.62)'); r.addColorStop(0.62, 'rgba(0,0,0,0.22)'); r.addColorStop(0.85, 'rgba(0,0,0,0.05)'); r.addColorStop(1, 'rgba(0,0,0,0)');
     g.fillStyle = r; g.fillRect(0, 0, N, N);
     const tex = new T.CanvasTexture(cv); tex.colorSpace = T.SRGBColorSpace;
     const geo = new T.PlaneGeometry(1, 1); geo.rotateX(-Math.PI / 2);
@@ -107,7 +107,7 @@
     if (sd && sd.y > 0.05) { const f = 1 / Math.max(0.3, Math.hypot(sd.x, sd.z)); ox = -sd.x * f * r * 0.12; oz = -sd.z * f * r * 0.12; }   // leans away from the sun
     m.position.set(x + ox, y + 0.05 + r * 0.04, z + oz);
     m.scale.set(r * 2.2, 1, r * 2.2);
-    m.material.opacity = 0.52 * k;
+    m.material.opacity = 0.72 * k;   // (lighting overhaul) was 0.52: the contact blob is the cheap shadow on phones where the sun map is cadenced / the mansion casts none
     m.visible = true;
   };
 
