@@ -62,8 +62,8 @@ let fails = 0, n = 0; const ok = (c, m) => { n++; if (!c) { fails++; console.log
   ok(!F.S.on && F.S.light === null, 'starts off, no light yet (nothing added to any scene)');
   ok(JSON.stringify(F.STEPS) === '[750,1250,2000,3000,4000]', 'lumen steps 750 / 1250 / 2000 / 3000 / 4000');
   ok(F.toggle() === true && F.S.light && F.S.light.isSpotLight, 'tap: on -> one SpotLight');
-  const L = F.S.light; ok(L.castShadow === false, 'no shadow (any tier)'); ok(L.angle < 0.3 && L.angle > 0.1 && L.penumbra > 0, 'narrow beam (' + (L.angle * 180 / Math.PI).toFixed(0) + ' deg half-angle, soft edge)');
-  ok(F.lumens() === 2000 && Math.abs(L.intensity - 2000 * F.LM_K) < 1e-9, 'default 2000 lm');
+  const L = F.S.light; ok(L.castShadow === false, 'no shadow (any tier)'); ok(L.angle > 0.4 && L.angle < 0.8 && L.penumbra >= 0.5, 'wide, soft cone (' + (L.angle * 180 / Math.PI).toFixed(0) + ' deg half-angle, penumbra ' + L.penumbra + ')'); ok(L.distance >= 200, 'reaches many metres (range ' + L.distance + ')');
+  ok(F.lumens() === 2000 && Math.abs(L.intensity - 2000 * F.LM_K) < 1e-9, 'default 2000 lm'); ok(2000 * F.LM_K >= 500, 'strong output (>= 500 cd at the default step)');
   const seen = []; for (let i = 0; i < 5; i++) { F.setStep(i); seen.push([F.lumens(), L.intensity]); }
   ok(seen.map(s => s[0]).join() === '750,1250,2000,3000,4000' && seen.every((s, i) => !i || s[1] > seen[i - 1][1]), 'every step sets its lumens, brighter each step');
   ok(Math.abs(seen[0][1] / seen[4][1] - 750 / 4000) < 1e-9, 'intensity proportional to lumens (750 : 4000)');
@@ -82,9 +82,27 @@ let fails = 0, n = 0; const ok = (c, m) => { n++; if (!c) { fails++; console.log
   ok(!/new\s|\[\s*\]|\{\s*\}|=>/.test(tb.replace(/\/\/.*$/gm, '')), 'tick(): no new / array / object / closure (no per-frame allocation)');
   ok(!/localStorage|sessionStorage|indexedDB|dm_save|SAVE_KEY|setItem/.test(code), 'session only: no storage, no save keys');
   F.toggle(false); F.tick('walk'); ok(L.intensity === 0, 'off: tick leaves it dark');
+  // profiles + scene hand-over: pre-adopted scenes get a beam at intensity 0 (no light-set change on toggle), only one lit at a time, space reaches further
+  const sc2 = new THREE.Scene(); ok(F.adoptScene(sc2) === true && F.adoptScene(sc2) === true, 'adoptScene: idempotent');
+  const lightsIn = sc => { let n = 0; sc.traverse(o => { if (o.isSpotLight) n++; }); return n; };
+  ok(lightsIn(sc2) === 1 && lightsIn(scene) === 1, 'one spot per scene, never more (adopted + lazily made)');
+  const sc2L = (() => { let l; sc2.traverse(o => { if (o.isSpotLight) l = o; }); return l; })(); ok(sc2L.intensity === 0 && sc2L !== L, 'adopted beam starts dark');
+  const n0 = lightsIn(scene) + lightsIn(sc2);
+  F.toggle(true); F.setStep(4); F.tick('walk'); ok(L.intensity === 4000 * F.LM_K && L.angle === F.PROF.ground.angle, 'ground profile in walk');
+  F.tick('fly'); ok(L.distance === F.PROF.ground.distance, 'fly keeps the ground profile');
+  F.tick('space'); ok(L.distance === F.PROF.space.distance && L.distance > 3 * F.PROF.ground.distance && L.decay < F.PROF.ground.decay && L.intensity > 0, 'space profile: far reach, flatter fall-off (a passing planet is lit)');
+  F.tick('walk'); ok(L.distance === F.PROF.ground.distance, 'back on foot: ground profile again (uniform change only)');
+  // she moves into the other scene (a world closes / opens): the beam follows, the old one goes dark, light counts unchanged
+  scene.remove(rootG); sc2.add(rootG); sc2.updateMatrixWorld(true); F.tick('walk');
+  ok(F.S.light === sc2L && sc2L.intensity > 0 && L.intensity === 0 && sc2L.parent === sc2, 'scene hand-over: new scene lit, old dark');
+  ok(lightsIn(scene) + lightsIn(sc2) === n0, 'no light added or removed on the hand-over (no recompile)');
+  F.toggle(false); F.tick('space'); ok(sc2L.intensity === 0 && L.intensity === 0, 'off in any mode: nothing left lit (no stuck state)');
+  F.toggle(); F.toggle(); ok(F.S.on === false && F.status().intensity === 0, 'two taps = off, dark');
+  rootG.removeFromParent(); F.toggle(true); F.tick('space'); ok(true, 'tick with no scene does not throw'); F.toggle(false);
   // index.html hooks
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-  ok(/<script src="ui\/dm-flash\.js\?v=302" defer><\/script>/.test(html), 'script tag (?v=302, the JOTS Cliffs #249 tree)');
+  ok(/<script src="ui\/dm-flash\.js\?v=303" defer><\/script>/.test(html), 'script tag (?v=303)'); ok(/const CACHE_NAME = 'dartmeadow-engine-v303';/.test(fs.readFileSync(path.join(root, 'sw.js'), 'utf8')), 'sw cache bumped together (v303)');
+  ok(/flightScene=new THREE\.Scene\(\);\s*try\{ if\(window\.DMFlash\) DMFlash\.adoptScene\(flightScene\)/.test(html) && /DMFlash\.adoptScene\(scene\)/.test(html), 'beam made with the fixed light set in flightScene and in every world scene');
   ok(html.indexOf('DMFlash.attach(CHAR)') > html.indexOf('DMCharm.attach(CHAR)') && html.indexOf('DMFlash.attach(CHAR)') > 0, 'attached right after the charm on character load');
   ok(/DMFlash\.tick\('space'\)/.test(html) && /DMFlash\.tick\(PW\.mode\)/.test(html), 'ticked in open space and in the world (walk / fly / space)');
   ok(F.STICK.space === 'jL' && F.STICK.fly === 'atmo-steer-zone' && F.STICK.walk === 'surf-move-zone', 'docks by the LEFT stick of each HUD');

@@ -20,10 +20,14 @@
   'use strict';
   if (root.DMFlash) return;
   const STEPS = [750, 1250, 2000, 3000, 4000];
-  const LM_K = 0.15, ANGLE = 0.21, PENUMBRA = 0.35, RANGE = 140, DECAY = 2, COLOR = 0xfff4e6;
+  const LM_K = 0.35, COLOR = 0xfff4e6;
+  // beam profiles (set on the light only when the mode's profile changes: angle / distance / decay / intensity are uniforms, never a recompile).
+  // ground = on foot + board in the sky (metre scale): a wide ~31 deg cone that carries ~100 m.  space = open space / near a world (1 unit ~ 4 m, planets
+  // tens of units away, she is tiny): the same cone, a far longer reach and a flatter fall-off so a passing planet or ship is lit.
+  const PROF = { ground: { angle: 0.55, penumbra: 0.7, distance: 320, decay: 1.5, gain: 1 }, space: { angle: 0.45, penumbra: 0.6, distance: 1500, decay: 1.15, gain: 0.6 } };
   const R = { width: 0.153, top: 1.6689, front: -0.0133, band: 0.027 };   // GLB-measured fallback (metres, bind pose)
-  const S = { on: false, step: 2, built: false, led: null, casing: null, strip: null, light: null, target: null, dims: null, mode: '', ui: null, dirty: true, wait: 0, err: null };
-  const F = { STEPS, S, R, LM_K };
+  const S = { on: false, step: 2, built: false, led: null, casing: null, strip: null, light: null, target: null, dims: null, mode: '', prof: 'ground', pairs: [], ui: null, dirty: true, wait: 0, err: null };
+  const F = { STEPS, S, R, LM_K, PROF };
   root.DMFlash = F;
   let T = null; const _p = { x: 0, y: 0, z: 0 }; let _v = null, _d = null;
   F.lumens = () => STEPS[S.step];
@@ -73,16 +77,33 @@
     sync();
     return true;
   };
+  // one beam per scene she can be in (flightScene in open space, the world scene on a planet): made BEFORE the first compile of that scene
+  // (F.adoptScene from the scene builders) so switching on never changes a light set / recompiles; intensity 0 while off. Only one is ever lit.
+  function pairFor(scene) {
+    for (let i = 0; i < S.pairs.length; i++) if (S.pairs[i].scene === scene) return S.pairs[i];
+    if (!T || !scene) return null;
+    const L = new T.SpotLight(COLOR, 0, PROF.ground.distance, PROF.ground.angle, PROF.ground.penumbra, PROF.ground.decay); L.name = 'jots_glasses_flashlight'; L.castShadow = false;
+    const t = new T.Object3D(); t.name = 'jots_glasses_flashlight_target'; L.target = t; L.userData.noCollide = true;
+    scene.add(L); scene.add(t);
+    const P = { scene, L, t, prof: 'ground' }; S.pairs.push(P); if (S.pairs.length > 3) S.pairs.shift();   // closed world scenes fall off the back
+    return P;
+  }
+  F.adoptScene = function (scene) { T = T || root.THREE; return !!pairFor(scene); };
   function ensureLight() {
     if (S.light || !T) return;
-    const L = new T.SpotLight(COLOR, 0, RANGE, ANGLE, PENUMBRA, DECAY); L.name = 'jots_glasses_flashlight'; L.castShadow = false;
-    const t = new T.Object3D(); t.name = 'jots_glasses_flashlight_target'; L.target = t;
-    S.light = L; S.target = t;
+    let top = S.led || null; while (top && top.parent) top = top.parent;
+    const P = pairFor(top && top.isScene ? top : (S.pairs[0] ? S.pairs[0].scene : null)) || null;
+    if (P) { S.light = P.L; S.target = P.t; return; }
+    const L = new T.SpotLight(COLOR, 0, PROF.ground.distance, PROF.ground.angle, PROF.ground.penumbra, PROF.ground.decay); L.name = 'jots_glasses_flashlight'; L.castShadow = false;
+    const t = new T.Object3D(); t.name = 'jots_glasses_flashlight_target'; L.target = t; S.light = L; S.target = t;   // no scene known yet: tick() parents it
+  }
+  function applyProf(P, name) {   // uniform-only changes
+    const q = PROF[name]; P.prof = name; const L = P.L; L.angle = q.angle; L.penumbra = q.penumbra; L.distance = q.distance; L.decay = q.decay;
   }
   function sync() {   // state -> LED glow / light intensity (no allocation)
     if (S.strip) S.strip.material.color.setScalar(S.on ? 1 : 0.18);
     if (S.on && S.built) ensureLight();
-    if (S.light) S.light.intensity = S.on ? F.intensityFor(STEPS[S.step]) : 0;
+    if (S.light) S.light.intensity = S.on ? F.intensityFor(STEPS[S.step]) * PROF[S.prof].gain : 0;
     ui();
   }
   F.toggle = function (on) { S.on = typeof on === 'boolean' ? on : !S.on; sync(); return S.on; };
@@ -94,13 +115,22 @@
     mode = mode || '';
     if (mode !== S.mode) { S.mode = mode; S.dirty = true; S.wait = 0; }
     if (S.dirty) { if (S.wait > 0) S.wait--; else dock(); }   // a HUD that is not laid out yet is re-measured every ~15 frames, not every frame (getBoundingClientRect allocates)
-    const L = S.light; if (!S.on || !L || !S.led) return;
+    if (!S.on || !S.led) { if (!S.on && S.light && S.light.intensity !== 0) S.light.intensity = 0; return; }   // off: never leaves a lit beam behind, whatever the mode
     let top = S.led; while (top.parent) top = top.parent;
-    if (L.parent !== top) { top.add(L); top.add(S.target); }
+    if (!top.isScene) return;   // not in any scene (between worlds): nothing to light
+    let P = null; for (let i = 0; i < S.pairs.length; i++) if (S.pairs[i].scene === top) { P = S.pairs[i]; break; }
+    if (!P) P = pairFor(top);   // a scene nobody adopted: one-off lazy beam (recompiles that scene once)
+    if (!P) return;
+    const L = P.L;
+    if (S.light !== L) { if (S.light) S.light.intensity = 0; S.light = L; S.target = P.t; }   // she moved scenes: the other beam goes dark
+    const pn = mode === 'space' ? 'space' : 'ground';
+    if (pn !== S.prof || P.prof !== pn) { S.prof = pn; applyProf(P, pn); }
+    const I = F.intensityFor(STEPS[S.step]) * PROF[pn].gain; if (L.intensity !== I) L.intensity = I;
+    if (L.parent !== top) { top.add(L); top.add(P.t); }
     const e = S.led.matrixWorld.elements;
     _v.set(e[12], e[13], e[14]); _d.set(e[8], e[9], e[10]).normalize();   // the bar's +Z = the glasses' forward (mirrored with her while riding)
-    L.position.copy(_v); S.target.position.set(_v.x + _d.x * 20, _v.y + _d.y * 20, _v.z + _d.z * 20);
-    L.updateMatrixWorld(); S.target.updateMatrixWorld();
+    L.position.copy(_v); P.t.position.set(_v.x + _d.x * 20, _v.y + _d.y * 20, _v.z + _d.z * 20);
+    L.updateMatrixWorld(); P.t.updateMatrixWorld();
   };
 
   // ── UI

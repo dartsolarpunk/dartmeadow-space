@@ -1024,7 +1024,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-safety.js?v=1" defer></script>
 <script src="jots/jots-link.js?v=217" defer></script>
 <script src="ui/dm-friends.js?v=217" defer></script>
-<script src="ui/dm-perflog.js?v=302" defer></script>
+<script src="ui/dm-perflog.js?v=303" defer></script>
 <script src="ui/dm-webkit.js?v=210" defer></script>
 <script src="ui/dm-spectator.js?v=1" defer></script>
 <script src="ui/dm-stack.js?v=1" defer></script>
@@ -1041,7 +1041,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-collide-game.js?v=281" defer></script>
 <script src="ui/dm-cgroup.js?v=281" defer></script>
 <script src="ui/dm-charm.js?v=234" defer></script>
-<script src="ui/dm-flash.js?v=302" defer></script>
+<script src="ui/dm-flash.js?v=303" defer></script>
 <script src="ui/dm-menuscene.js?v=245" defer></script>
 <script src="ui/dm-starbubble.js?v=4" defer></script>
 <script src="ui/dm-hazardbubble.js?v=215" defer></script>
@@ -1067,11 +1067,11 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-mansion-rooms.js?v=250" defer></script>
 <script src="ui/dm-mansion-look.js?v=251" defer></script>
 <script src="ui/dm-mansion-interior.js?v=262" defer></script>
-<script src="ui/dm-facilities.js?v=302" defer></script>
-<script src="ui/dm-lamps.js?v=302" defer></script>
+<script src="ui/dm-facilities.js?v=303" defer></script>
+<script src="ui/dm-lamps.js?v=303" defer></script>
 <script src="ui/dm-mansion-collide.js?v=283" defer></script>
 <script src="ui/dm-holo.js?v=283" defer></script>
-<script src="ui/dm-sys.js?v=302"></script>
+<script src="ui/dm-sys.js?v=303"></script>
 </head>
 <body>
 <!-- LOADING -->
@@ -6640,6 +6640,7 @@ async function initFlightScene(){
   flightRenderer.shadowMap.type=THREE.PCFSoftShadowMap;
 
   flightScene=new THREE.Scene();
+  try{ if(window.DMFlash) DMFlash.adoptScene(flightScene); }catch(e){}   // the glasses flashlight's beam (intensity 0), in the fixed light set before the first compile: switching it on never recompiles
 
   // Near plane 0.1 (the skyboard sits ~0.5u from the lens, so it must stay
   // under that) paired with the logarithmic depth buffer above — that combo
@@ -6899,7 +6900,7 @@ async function _flightWarmup(){
   try{ _distLightT=1; updateDistantSystems(0); }catch(e){}   // the two distant-star lights exist before compiling
   try{ _lcApplyWorlds(); }catch(e){}   // (v105) worlds' own light lists, before anything compiles
   const steps=[
-    ['world',()=>{ const rec=window._flightCompile={ groups:[], ms:0, capped:false, single:false }; return _compileStaged(flightScene,flightCamera,{rec,cap:GFX.isMobile?13000:22000,step:GFX.isMobile?6000:9000}); },GFX.isMobile?15000:25000],   // (v256) in small groups, one cap for the whole step
+    ['world',()=>{ const rec=window._flightCompile={ groups:[], ms:0, capped:false, single:false }; return _compileStaged(flightScene,flightCamera,{rec,cap:GFX.isMobile?13000:22000,step:GFX.isMobile?6000:9000,onGroup:(gi,n)=>{ try{ dmSys.load('warm','Preparing world 1/'+steps.length+' · '+Math.round((gi/Math.max(1,n))/steps.length*100)+'%'); }catch(e){} }}); },GFX.isMobile?15000:25000],   // (v256) in small groups, one cap for the whole step
     ['sun and flares',()=>window.DMStar&&DMStar.warm&&DMStar.warm(flightCamera)],
     ['star dive',()=>window.DMStarBubble&&DMStarBubble.warm&&DMStarBubble.warm(flightCamera,flightScene)],   // lens/bubble/interior: compiled before the first pass through the Sun
     ['planet mist',()=>window.DMMist&&DMMist.warm&&DMMist.warm(flightCamera)],
@@ -7888,9 +7889,11 @@ async function _svLodPlanetMesh(o){
               EdgeVertexIndices.forEach(([va,vb],k)=>{ const m=edge.equal(int(k)); pa=select(m,corners[va].pos,pa); pb=select(m,corners[vb].pos,pb); da=select(m,corners[va].density,da); db=select(m,corners[vb].density,db); });
               return pa.add(pb.sub(pa).mul(da.div(da.sub(db).add(1e-6)))); };
             const v0=interp(e0), v1=interp(e1), v2=interp(e2), nrm=v1.sub(v0).cross(v2.sub(v0)).normalize();
-            const col=o.colorAt(v0,nrm).add(o.colorAt(v1,nrm)).add(o.colorAt(v2,nrm)).div(3.0);
+            // (lod repair) colour PER VERTEX (the same three colorAt calls as before, no longer averaged into one flat colour a triangle): the average made every
+            // triangle a flat tile whose size changes with the brick's level, i.e. the blocky terrain-colour patches and visible level steps seen from orbit.
+            const cols=[o.colorAt(v0,nrm),o.colorAt(v1,nrm),o.colorAt(v2,nrm)];
             const ob=outBase.add(uint(i.mul(3)));
-            [v0,v1,v2].forEach((v,q)=>{ vertexNode.element(ob.add(q)).assign(v); normalNode.element(ob.add(q)).assign(v.normalize().add(nrm.mul(0.35)).normalize()); colorNode.element(ob.add(q)).assign(col); });
+            [v0,v1,v2].forEach((v,q)=>{ vertexNode.element(ob.add(q)).assign(v); normalNode.element(ob.add(q)).assign(v.normalize().add(nrm.mul(0.35)).normalize()); colorNode.element(ob.add(q)).assign(cols[q]); });
           });
         });
       });
@@ -19184,6 +19187,7 @@ function _pwBuild(body,site,mode,focus){
   //  JOTS_NatPool — 2 short-range point lights, intensity 0 until something natural (a campfire…) asks via DMNatLights.
   { const m=new THREE.DirectionalLight(0xc8d4ff,0); m.name='JOTS_MoonFillPW'; m.castShadow=false; scene.add(m); scene.add(m.target); TERRAIN.moon=m;
     TERRAIN.natPool=[]; for(let k=0;k<2;k++){ const l=new THREE.PointLight(0xffa860,0,1,2); l.name='JOTS_NatPool'; l.castShadow=false; scene.add(l); TERRAIN.natPool.push(l); } }
+  try{ if(window.DMFlash) DMFlash.adoptScene(scene); }catch(e){}   // same for the world scene (walk / fly / near-world space)
   TERRAIN.starDome=null;   // airless worlds see the real sky (open space draws behind the ground)
   // ── the planet frame, centred where we start (so the first tiles are the right ones)
   _pwfSet(focus.x,focus.z,mode==='space'?1e6:0,site);
@@ -19242,11 +19246,12 @@ async function _compileStaged(scene,cam,o){
     if(n>=14){ groups.push({k:[c],n,name:c.name||c.type}); cur=null; continue; }
     if(!cur||cur.n>=10||cur.k.length>=8){ cur={k:[],n:0,name:'misc'}; groups.push(cur); } cur.k.push(c); cur.n+=n; }
   const total=groups.length; let prev=null;
+  try{
   for(let gi=0;gi<total;gi++){
-    if(!alive()) return;
+    if(!alive()) break;   // (loader fix) was `return`: the loader line ('Preparing the world 4/4') was never closed when the world closed mid-compile and stayed on screen in orbit
     if(performance.now()-t00>CAP){ rec.capped=true; break; }
     const g=groups[gi], keep=new Set(g.k), hid=[];
-    try{ if(o.label) dmSys.load(o.label,(o.text||'Preparing')+' '+(gi+1)+'/'+total); }catch(e){}
+    try{ if(o.label) dmSys.load(o.label,(o.text||'Preparing')+' '+(gi+1)+'/'+total); if(o.onGroup) o.onGroup(gi,total); }catch(e){}
     for(const c of kids){ if(!keep.has(c)){ c.visible=false; hid.push(c); } }
     const t=performance.now(); let p=null;
     try{ p=r.compileAsync(scene,cam); } catch(e){ p=null; } finally{ for(const c of hid) c.visible=true; }   // the projection is synchronous: visibility is back before anything else runs
@@ -19255,9 +19260,11 @@ async function _compileStaged(scene,cam,o){
     rec.groups.push([g.name,g.n,Math.round(performance.now()-t)]);
     await new Promise(res=>setTimeout(res,0));   // let the page breathe (progress text, input) between groups
   }
-  if(prev){ try{ await Promise.race([prev,new Promise(res=>setTimeout(res,STEP))]); }catch(e){} }
-  try{ if(o.label) dmSys.done(o.label); }catch(e){}
-  rec.ms=Math.round(performance.now()-t00);
+  if(prev&&alive()){ try{ await Promise.race([prev,new Promise(res=>setTimeout(res,STEP))]); }catch(e){} }
+  }finally{
+    try{ if(o.label) dmSys.done(o.label); }catch(e){}
+    rec.ms=Math.round(performance.now()-t00);
+  }
 }
 async function _pwCompileStaged(gen){
   const rec=window._pwCompile={ groups:[], ms:0, capped:false, single:false };
@@ -25174,7 +25181,7 @@ const _SKY_FADE0=0.82;
 function _skyGroundFade(d,viewR){ const a=viewR*_SKY_FADE0, t=Math.min(1,Math.max(0,(d-a)/Math.max(1e-6,viewR-a))); return 1-t*t*(3-2*t); }
 SkyGround.prototype._radialFade=function(){
   const W=window, m=this.mat;
-  if(!m||typeof W.uniform!=='function'||!W.positionView||!W.interleavedGradientNoise||!W.screenCoordinate||!W.smoothstep) return;
+  if(!m||typeof W.uniform!=='function'||!W.positionView||!W.interleavedGradientNoise||!W.screenCoordinate||!W.smoothstep||/[?&]skyfade=0\b/.test(location.search)) return;   // ?skyfade=0: no radial dissolve (A/B)
   try{
     const U=this._fadeU={a:W.uniform(this.viewR*_SKY_FADE0),b:W.uniform(this.viewR)};
     const k=W.float(1).sub(W.smoothstep(U.a,U.b,W.length(W.positionView)));
@@ -25381,12 +25388,12 @@ SkyGround.prototype._scratch=function(){
   const idx=new Uint16Array(seg*seg*6+rl*12); let w=0;
   for(let r=0;r<seg;r++) for(let q=0;q<seg;q++){ const a=r*S1+q, b=a+1, c2=a+S1, d=c2+1; idx[w++]=a; idx[w++]=c2; idx[w++]=b; idx[w++]=b; idx[w++]=c2; idx[w++]=d; }
   for(let i=0;i<rl;i++){ const a=ring[i], b=ring[(i+1)%rl], sa=V+i, sb=V+(i+1)%rl; idx[w++]=a; idx[w++]=b; idx[w++]=sa; idx[w++]=b; idx[w++]=sb; idx[w++]=sa; idx[w++]=a; idx[w++]=sa; idx[w++]=b; idx[w++]=b; idx[w++]=sa; idx[w++]=sb; }
-  return (this._sb={hb:new Float32Array(G*G),raw:new Float32Array(G*G),wet:new Uint8Array(G*G),pY:new Float32Array(V),pN:new Float32Array(V*3),pC:new Float32Array(V*3),ring,idx,tc:new THREE.Color(),copt:{}});
+  return (this._sb={hb:new Float32Array(G*G),raw:new Float32Array(G*G),wet:new Uint8Array(G*G),pY:new Float32Array(V),pN:new Float32Array(V*3),pC:new Float32Array(V*3),ring,idx,tc:new THREE.Color(),oc:new THREE.Color(),copt:{}});
 };
 // the colour of a ground point: the sea flat in its own colour on coarse tiles, else the biome
 SkyGround.prototype._colourAt=function(x,z,h,ny,sea,copt){
   if(sea){ const tc=this._sb.tc; tc.copy(this.wShal).lerp(this.wDeep,Math.min(1,Math.max(0,-h/40))); return tc; }
-  const F=this.F; return surfaceBiomeColor(x+F.sw.x,z+F.sw.z,h,Math.min(1,Math.max(0,1-ny)*1.6),this.pal,F.seed,copt);
+  const F=this.F; copt.out=this._sb.oc; return surfaceBiomeColor(x+F.sw.x,z+F.sw.z,h,Math.min(1,Math.max(0,1-ny)*1.6),this.pal,F.seed,copt);
 };
 SkyGround.prototype._build=function(n){
   const F=this.F, H=F.H, seg=this.SEG, step=n.size/seg, S1=seg+1, G=seg+3, V=S1*S1, sb=this._scratch();
@@ -25454,7 +25461,10 @@ SkyGround.prototype._applyMorph=function(n,w){
   g.attributes.position.needsUpdate=true; g.attributes.normal.needsUpdate=true; g.attributes.color.needsUpdate=true;
 };
 SkyGround.prototype._morphTick=function(dt){
-  if(!this.morphing||!this.morphing.size) return;
+  if(!this.morphing||!this.morphing.size){ this._mAcc=0; return; }
+  // (hitch) every morphing tile re-uploads position + normal + colour (~45 KB) each time it steps; after a build burst dozens morph at once.  Step them ~22x a second
+  // (the 0.7 s ease is still 15 steps), the elapsed time is carried so the ease keeps its length.
+  this._mAcc=(this._mAcc||0)+dt; if(this._mAcc<0.045) return; dt=this._mAcc; this._mAcc=0;
   const MT=0.7;
   for(const n of this.morphing){
     if(!n.mesh||!n.morph){ this.morphing.delete(n); continue; }
@@ -25822,7 +25832,7 @@ function surfaceBiomeColor(x,z,h,slope,pal,seed,opts){
   snowCol.lerp(rockCol,rockSpeck*0.5);
   const iceCol=T[3].copy(ice).lerp(snow,0.2+n2*0.2);
   const dirtCol=T[4].copy(dirt).lerp(sand,0.2+Math.max(0,n)*0.25);
-  const c=new THREE.Color(0,0,0);
+  const c=opts.out||new THREE.Color(0,0,0);   // opts.out: a caller that reads r/g/b at once (SkyGround) hands in its scratch, no Colour a vertex
   c.r=grassCol.r*wGrass+rockCol.r*wRock+sand.r*wSand+dirtCol.r*wDirt+snowCol.r*wSnow+iceCol.r*wIce;
   c.g=grassCol.g*wGrass+rockCol.g*wRock+sand.g*wSand+dirtCol.g*wDirt+snowCol.g*wSnow+iceCol.g*wIce;
   c.b=grassCol.b*wGrass+rockCol.b*wRock+sand.b*wSand+dirtCol.b*wDirt+snowCol.b*wSnow+iceCol.b*wIce;
@@ -28309,12 +28319,12 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 
 <!-- ?v= stamps: bump on every UI change so browsers never mix a new page with cached old styles -->
 <link rel="stylesheet" href="ui/dm-ui.css?v=206">
-<link rel="stylesheet" href="ui/dm-hud.css?v=302">
+<link rel="stylesheet" href="ui/dm-hud.css?v=303">
 <link rel="stylesheet" href="ui/dm-friends.css?v=1">
 <link rel="stylesheet" href="ui/dm-safety.css?v=1">
 <link rel="stylesheet" href="ui/dm-spectator.css?v=1">
 <link rel="stylesheet" href="ui/dm-globe.css?v=3">
-<link rel="stylesheet" href="ui/dm-menu.css?v=302">
+<link rel="stylesheet" href="ui/dm-menu.css?v=303">
 <link rel="stylesheet" href="ui/dm-journal.css?v=97">
 <link rel="stylesheet" href="ui/dm-landmap.css?v=88">
 <link rel="stylesheet" href="ui/dm-type.css?v=89">
