@@ -1,4 +1,4 @@
-/* dm-bt-terminal.js — v122: the engineering-office desk terminal (beside Madison) becomes a holographic glass panel.
+/* dm-bt-terminal.js — v122: the engineering-office desk terminal (beside Madison) becomes a holographic glass panel (v129: live engine-room console drawn by DMHolo.drawEngine, same style as the mansion panels).
  *
  *  In-world: the old monitor body / neck / neon strip (felt + glow triangles around the screen) are dropped from the
  *  merged FX_BTE_Office draw meshes at runtime (index-buffer filter, nothing else touched; the foot stays as the
@@ -17,7 +17,7 @@
     url: 'https://leatr.xyz/?embed=jots', video: 'assets/bt-engineering/autumn-bg.mp4',
     shot: 'assets/bt-engineering/autumn-terminal.webp',   // screenshot of the guest edition (leatr.xyz/?embed=jots), 1024x640
     nearR: 14, zoneM: 1.8, aimM: 0.55, alpha: 0.7, gain: 1.35,
-    accent: '#ff0073', bg1: '#6f00ff', bg2: '#00ff73',      // Justin's Autumn palette "Data Ariel"
+    accent: '#4fe8ff', bg1: '#0a5a7a', bg2: '#00ff73', period: 0.2,   // cyan HUD palette; engine console redraw period (s)
     // terminal cut box, relative to the screen centre in the office glTF frame (Blender x, z, -y)
     cut: { x: 0.8, y0: -0.8, y1: 0.55, z0: -0.2, z1: 0.2 },
   };
@@ -154,10 +154,21 @@
     sc.traverse(o => { if (!scr && o.isMesh && o.material && o.material.name === 'BTE_Screen') scr = o; });
     if (!scr) { console.warn('[BTT] no terminal screen'); return; }
     try { cutMonitor(sc, scr); } catch (e) { console.warn('[BTT] monitor cut', e); }
-    tex = new THREE.TextureLoader().load(cfg.shot, () => { G.u.uReady.value = 1; });
-    tex.colorSpace = THREE.SRGBColorSpace; tex.flipY = false; tex.anisotropy = 4;
+    // (v129) the glass shows the same holographic console language as the mansion's panels (DMHolo.drawEngine, ui/dm-holo.js): one 512x320
+    // canvas texture redrawn at ~5 Hz while near/on screen.  Fallback (no DMHolo): the shipped Autumn screenshot.
+    const H = window.DMHolo;
+    if (H && H.drawEngine && document.createElement) {
+      const cv = document.createElement('canvas'); cv.width = 512; cv.height = 320; const cx2 = cv.getContext('2d');
+      if (cx2) {
+        BTT.cv = cx2; H.drawEngine(cx2, 0);
+        tex = new THREE.CanvasTexture(cv); tex.generateMipmaps = false; tex.minFilter = THREE.LinearFilter; tex.magFilter = THREE.LinearFilter;
+      }
+    }
+    if (!tex) { tex = new THREE.TextureLoader().load(cfg.shot, () => { G.u.uReady.value = 1; }); tex.anisotropy = 4; }
+    tex.colorSpace = THREE.SRGBColorSpace; tex.flipY = false;
     const G = glassMaterial(tex), mat = G.mat, uni = G.u;
     mat.name = 'FX_BTT_Glass';
+    if (BTT.cv) uni.uReady.value = 1;
     scr.material = mat; scr.renderOrder = 5; BTT.mat = mat; BTT.mesh = scr; BTT.uni = uni;
     // interactable (temple frame) at the panel centre
     const g = BIRD_TEMPLE.group; g.updateMatrixWorld(true); if (!scr.geometry.boundingSphere) scr.geometry.computeBoundingSphere();
@@ -172,6 +183,10 @@
         BTT.cur = BTI.cur === ix;
         if (BTT.open || !visibleNow()) return;   // frozen (and nearly free) while off screen or while the overlay is open
         const u = BTT.uni; u.uTime.value = performance.now() / 1000;
+        if (BTT.cv && !document.hidden) {          // ~5 Hz canvas redraw (slower under the frame-budget governor)
+          BTT.acc = (BTT.acc || 0) + dt; let k = 1; try { const B = window.DMBudget; if (B && B.lvl) k += (B.lvl('hudfx') | 0); } catch (e) { }
+          if (BTT.acc >= cfg.period * k) { BTT.acc = 0; window.DMHolo.drawEngine(BTT.cv, u.uTime.value % 3600); tex.needsUpdate = true; }
+        }
         u.uHot.value += ((BTT.cur ? 1 : 0) - u.uHot.value) * Math.min(1, dt * 6 || .1);
       } catch (e) { if (!BTT._err) { BTT._err = 1; console.warn('[BTT] update', e); } }
     };

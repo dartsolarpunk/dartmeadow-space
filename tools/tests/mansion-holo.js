@@ -37,7 +37,7 @@ function mock(w, h) {
   c.save = () => { c.depth++; c.clips[c.depth] = false; c.maxDepth = Math.max(c.maxDepth, c.depth); }; c.restore = () => { c.clips[c.depth] = false; c.depth--; };
   return c;
 }
-for (const [nm, fn, w, h] of [['A', P.drawA, 512, 288], ['B', P.drawB, 320, 200]]) {
+for (const [nm, fn, w, h] of [['A', P.drawA, 512, 288], ['B', P.drawB, 320, 200], ['Engine', P.drawEngine, 512, 320]]) {
   const sigs = []; let maxOps = 0;
   for (let k = 0; k < 40; k++) { const t = k * 0.7; const c = mock(w, h); fn(c, t, null); const c2 = mock(w, h); fn(c2, t, null); ok(c.sig === c2.sig && c.ops === c2.ops, 'draw' + nm + ' deterministic at t=' + t.toFixed(1)); ok(c.depth === 0, 'draw' + nm + ' save/restore balanced at t=' + t.toFixed(1) + ' (' + c.depth + ')'); ok(c.oob === 0, 'draw' + nm + ' keeps every primitive inside its canvas at t=' + t.toFixed(1) + ' (' + c.oob + ' outside)'); sigs.push(c.sig); maxOps = Math.max(maxOps, c.ops); }
   ok(new Set(sigs).size > 30, 'draw' + nm + ' is animated (' + new Set(sigs).size + ' distinct frames of 40)');

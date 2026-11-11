@@ -151,6 +151,66 @@
     c.clearRect(0, 0, 512, 288);
     drawComputer(c, t, 4, 4, 322, 280); drawNews(c, t, 332, 4, 176, 136); drawMovie(c, t, 332, 146, 176, 138, video);
   }
+  // (v285) Bird Temple engine-room console 512x320 — the same glass/cyan language as panel A, with ship-engine readouts.
+  // Used by ui/dm-bt-terminal.js (one canvas texture, ~5 Hz).  Pure function of t; no state, no allocation beyond short strings.
+  const SYS = ['LEATR CORE', 'DRIVE LATTICE', 'LIFE SUPPORT', 'NAV / STAR MAP', 'GRAV PLATING', 'DOCK CLAMPS'];
+  function gauge(c, gx, gy, r, v, col, label) {
+    c.strokeStyle = 'rgba(120,220,255,0.35)'; c.lineWidth = 4; c.beginPath(); c.arc(gx, gy, r, -2.4, 2.4); c.stroke();
+    c.strokeStyle = col; c.beginPath(); c.arc(gx, gy, r, -2.4, -2.4 + v * 4.8); c.stroke();
+    c.fillStyle = '#cff'; c.font = '10px monospace'; c.textBaseline = 'top'; c.fillText('' + (v * 100 | 0), gx - 8, gy - 5); c.fillStyle = 'rgba(140,230,255,0.8)'; c.fillText(label, gx - label.length * 3, gy + r + 2);
+  }
+  function drawEngine(c, t) {
+    const W = 512, H = 320, S = Math.sin;
+    c.clearRect(0, 0, W, H);
+    c.fillStyle = 'rgba(8,24,40,0.9)'; c.fillRect(0, 0, W, H); box(c, 0, 0, W, H, 'rgba(120,220,255,0.9)', 2);
+    c.fillStyle = 'rgba(80,190,255,0.35)'; c.fillRect(3, 3, W - 6, 20);
+    c.fillStyle = '#bff'; c.font = 'bold 13px monospace'; c.textBaseline = 'top'; c.fillText('BIRD TEMPLE // ENGINE CORE', 10, 6);
+    const s = (t | 0) % 86400, hh = (s / 3600 | 0) % 24, mm = (s / 60 | 0) % 60, ss = s % 60;
+    c.fillText((hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm + ':' + (ss < 10 ? '0' : '') + ss, W - 76, 6);
+    // reactor: tumbling wireframe in a pulsing ring
+    const cx = 76, cy = 92, ay = t * 0.9, ax = t * 0.55, sy = S(ay), cy_ = Math.cos(ay), sx = S(ax), cx_ = Math.cos(ax);
+    for (let k = 0; k < 2; k++) {
+      const R = k ? 18 : 32, P = [];
+      for (let i = 0; i < 8; i++) { const v = CUBE[i]; const x = v[0] * R, y = v[1] * R, z = v[2] * R; const x1 = x * cy_ + z * sy, z1 = -x * sy + z * cy_; const y1 = y * cx_ - z1 * sx, z2 = y * sx + z1 * cx_; const f = 150 / (150 + z2); P.push(cx + x1 * f, cy + y1 * f); }
+      c.strokeStyle = k ? 'rgba(255,200,120,0.9)' : 'rgba(120,230,255,0.95)'; c.lineWidth = 1.5; c.beginPath();
+      for (let e = 0; e < 12; e++) { c.moveTo(P[EDGES[e][0] * 2], P[EDGES[e][0] * 2 + 1]); c.lineTo(P[EDGES[e][1] * 2], P[EDGES[e][1] * 2 + 1]); }
+      c.stroke();
+    }
+    c.strokeStyle = 'rgba(120,230,255,0.4)'; c.lineWidth = 1; c.beginPath(); c.arc(cx, cy, 54 + S(t * 2) * 2.5, 0, 6.2832); c.stroke();
+    const out = 4.6 + S(t * 0.7) * 0.25 + S(t * 2.3) * 0.05;
+    c.fillStyle = '#cff'; c.font = '10px monospace'; c.fillText('REACTOR CORE', 12, 154); c.fillText('OUT ' + out.toFixed(2) + ' TW', 12, 167);
+    // coherence / energy traces
+    const gx = 156, gy = 32, gw = 196, gh = 96;
+    box(c, gx, gy, gw, gh, 'rgba(120,220,255,0.5)', 1);
+    for (let s2 = 0; s2 < 2; s2++) {
+      c.strokeStyle = s2 ? 'rgba(255,170,90,0.95)' : 'rgba(110,255,200,0.95)'; c.lineWidth = 1.5; c.beginPath();
+      for (let i = 0; i <= 44; i++) { const u = i / 44, yy = gy + gh * (s2 ? 0.62 : 0.4) + S(u * 8 + t * (1.4 + s2 * 0.8)) * gh * 0.2 * S(u * 3 + t * 0.6 + s2) + S(u * 29 - t * 5) * (s2 ? 4 : 2); if (i) c.lineTo(gx + gw * u, yy); else c.moveTo(gx + gw * u, yy); }
+      c.stroke();
+    }
+    c.fillStyle = 'rgba(120,230,255,0.15)'; for (let i = 1; i < 7; i++) c.fillRect(gx + gw * i / 7, gy, 1, gh);
+    c.fillStyle = 'rgba(110,255,200,0.95)'; c.font = '9px monospace'; c.fillText('COHERENCE', gx + 4, gy + 3); c.fillStyle = 'rgba(255,170,90,0.95)'; c.fillText('ENERGY', gx + gw - 44, gy + 3);
+    // gauges: reactor / drive / thrust
+    gauge(c, 190, 176, 20, S(t * 0.8) * 0.06 + 0.9, 'rgba(120,255,210,0.95)', 'PWR');
+    gauge(c, 254, 176, 20, S(t * 0.5 + 1) * 0.12 + 0.72, 'rgba(255,190,100,0.95)', 'DRIVE');
+    gauge(c, 318, 176, 20, S(t * 0.35 + 2) * 0.3 + 0.5, 'rgba(120,255,210,0.95)', 'THRUST');
+    // ship systems
+    box(c, 364, 30, 144, 140, 'rgba(120,220,255,0.45)', 1);
+    c.font = '10px monospace';
+    for (let i = 0; i < SYS.length; i++) {
+      const y = 38 + i * 22, warn = i === 3 && ((t * 0.4) | 0) % 5 === 0, blink = ((t * 2 + i) | 0) % 2 === 0;
+      c.fillStyle = warn ? 'rgba(255,190,100,0.95)' : 'rgba(110,255,200,0.95)'; c.beginPath(); c.arc(375, y + 5, blink ? 3.5 : 2.5, 0, 6.2832); c.fill();
+      c.fillStyle = 'rgba(190,245,255,0.95)'; c.fillText(SYS[i], 386, y); c.fillStyle = warn ? 'rgba(255,190,100,0.9)' : 'rgba(110,255,200,0.7)'; c.fillText(warn ? 'SYNC' : 'OK', 386, y + 10);
+    }
+    // hex stream + bus bars + numeric block
+    const q = (t * 2.5) | 0; c.fillStyle = 'rgba(140,230,255,0.9)';
+    for (let r = 0; r < 4; r++) { let line = ''; for (let k = 0; k < 6; k++) line += HEX[(hash(q * 7 + r * 13 + k) * 16) | 0] + HEX[(hash(q * 3 + r * 5 + k * 11) * 16) | 0] + ' '; c.fillText(line, 12, 238 + r * 14); }
+    const BUS = ['BUS A', 'BUS B', 'AUX', 'DRIVE'];
+    for (let r = 0; r < 4; r++) { const w = (S(t * (0.5 + r * 0.3) + r) * 0.5 + 0.5) * 100; c.fillStyle = 'rgba(140,230,255,0.8)'; c.fillText(BUS[r], 184, 236 + r * 17); c.fillStyle = 'rgba(80,200,255,0.25)'; c.fillRect(230, 238 + r * 17, 100, 7); c.fillStyle = r === 3 ? 'rgba(255,170,90,0.95)' : 'rgba(110,255,200,0.95)'; c.fillRect(230, 238 + r * 17, w, 7); }
+    box(c, 372, 196, 132, 116, 'rgba(120,220,255,0.45)', 1);
+    c.fillStyle = '#cff'; c.fillText('THR ' + (38 + S(t * 0.35 + 2) * 9).toFixed(1) + ' kN', 380, 206); c.fillText('TEMP ' + (612 + S(t * 0.9) * 8 | 0) + ' K', 380, 224);
+    c.fillText('COH ' + (0.962 + S(t * 1.3) * 0.012).toFixed(3), 380, 242); c.fillText('DRIVE ' + (((t * 0.2) | 0) % 2 ? 'SPOOL' : 'READY'), 380, 260);
+    c.fillStyle = 'rgba(110,255,200,0.95)'; c.fillText('ALL SYSTEMS NOMINAL', 380, 290);
+  }
   // game: auto-played runner, 3.2 s of obstacle pattern looping.  Everything a closed-form function of t.
   const PATTERN = [0, 34, 12, 52, 22];
   function drawB(c, t, video) {
@@ -260,7 +320,7 @@
     S.vid[which] = makeVideo(url);
   }
   const API = {
-    config: CFG, setVideo,
+    config: CFG, setVideo, drawEngine,
     attach(F, rec) { if (S.built) destroy(); S.F = F; S.rec = rec; },
     detach() { destroy(); S.rec = null; S.F = null; },
     tick(rec, d2, now, dt) {
@@ -280,7 +340,7 @@
       }
     },
     status() { return { built: S.built, on: S.on, t: +S.t.toFixed(1), lvl: +S.lvl.toFixed(2), cadence: cadence(), movie: !!S.vid.movie, game: !!S.vid.game }; },
-    _pure: { PANELS, RELAY, RELAY_R, RING_R, ROOM, panelQuad, inRoom, glassClear, UPM, drawA, drawB, hash },
+    _pure: { drawEngine, PANELS, RELAY, RELAY_R, RING_R, ROOM, panelQuad, inRoom, glassClear, UPM, drawA, drawB, hash },
   };
   G.DMHolo = API;
   if (typeof module !== 'undefined' && module.exports) module.exports = API;
