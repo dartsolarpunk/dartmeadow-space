@@ -62,11 +62,11 @@ for (const f of files) { FULL[f] = rd(f); const a = haveDiff ? addedLines(f) : n
   const c = { spot: 0, point: 0, dir: 0, hemi: 0, spotShadow: 0 }, per = {};
   for (const f of files) {
     const s = CODE[f], n = {
-      spot: (s.match(/new\s+(?:THREE\.)?SpotLight\s*\(/g) || []).length, point: (s.match(/new\s+(?:THREE\.)?PointLight\s*\(/g) || []).length,
+      spot: (s.match(/new\s+[\w.$]*SpotLight\s*\(/g) || []).length, point: (s.match(/new\s+(?:THREE\.)?PointLight\s*\(/g) || []).length,
       dir: (s.match(/new\s+(?:THREE\.)?DirectionalLight\s*\(/g) || []).length, hemi: (s.match(/new\s+(?:THREE\.)?HemisphereLight\s*\(/g) || []).length };
     if (n.spot + n.point + n.dir + n.hemi) per[f] = n;
     for (const k of Object.keys(n)) c[k] += n[k];
-    const vars = []; s.replace(/([\w.$]+)\s*=\s*new\s+(?:THREE\.)?SpotLight\s*\(/g, (m, v) => { vars.push(v); return m; });
+    const vars = []; s.replace(/([\w.$]+)\s*=\s*new\s+[\w.$]*SpotLight\s*\(/g, (m, v) => { vars.push(v); return m; });
     for (const v of vars) {
       const base = v.replace(/^this\./, '').replace(/^[\w$]+\./, '');
       const re = new RegExp('(?:^|[^\\w$])(?:[\\w$.]*\\.)?' + base.replace(/\$/g, '\\$') + '\\.castShadow\\s*=\\s*([^;\\n]+)', 'g');
@@ -81,16 +81,22 @@ for (const f of files) { FULL[f] = rd(f); const a = haveDiff ? addedLines(f) : n
 
 // 2. shadow maps
 {
-  let spotBytes = 0; const maps = [];
+  let spotBytes = 0; const maps = [], tiered = new Set(files.filter((f) => /TIERS\s*=\s*\{[^;]*map:\s*\d+/.test(CODE[f] || '')));
   for (const f of files) {
-    let m; const re = /([\w.$]*)shadow\.mapSize\.set\(\s*([^,)]+?)\s*,\s*([^)]+?)\s*\)/g;
+    let m; const re = /([\w.$]*?)(?:shadow|sh)?\.?mapSize\.set\(\s*([^,)]+?)\s*,\s*([^)]+?)\s*\)/g;
     while ((m = re.exec(CODE[f]))) {
       const w = Number(m[2]), h = Number(m[3]), lit = Number.isFinite(w) && Number.isFinite(h);
       const isSpot = /fl|spot|torch|beam/i.test(m[1]) || /flash/i.test(f);
       maps.push({ file: f, owner: m[1] || '?', w: lit ? w : m[2], h: lit ? h : m[3], spot: isSpot });
       if (isSpot && lit) { spotBytes += w * h * 4; if (w > B.MAX_SPOT_SHADOW_PX || h > B.MAX_SPOT_SHADOW_PX) FAIL(f + ': spot shadow map ' + w + 'x' + h + ' > ' + B.MAX_SPOT_SHADOW_PX + ' on phones'); }
+      else if (isSpot && tiered.has(f)) { /* size comes from the file's TIERS table, checked below */ }
       else if (isSpot) { spotBytes += 1024 * 1024 * 4; WARN(f + ': spot shadow mapSize not a literal (' + m[2] + '); counted as 1024^2; verify it is clamped <= ' + B.MAX_SPOT_SHADOW_PX + ' on phones'); }
     }
+  }
+  // tier tables  TIERS = { low: { map: N, .. }, phone: { map: N, ..}, desktop: {..} }  (flashlight shadow map per device class)
+  for (const f of files) {
+    const m = /TIERS\s*=\s*\{([^;]*)\};/.exec(CODE[f] || ''); if (!m) continue; const t = {}; m[1].replace(/(\w+):\s*\{[^}]*?map:\s*(\d+)/g, (x, k, v) => { t[k] = +v; return x; });
+    if (Object.keys(t).length) { out.numbers.tierMaps = t; INFO(f + ' shadow-map tiers: ' + JSON.stringify(t) + ' (phone MiB ' + ((t.phone || 0) ** 2 * 4 / 1048576).toFixed(1) + ')'); spotBytes += (t.phone || 1024) ** 2 * 4; for (const k of ['low', 'phone']) if (t[k] > B.MAX_SPOT_SHADOW_PX) FAIL(f + ': tier ' + k + ' spot shadow map ' + t[k] + ' > ' + B.MAX_SPOT_SHADOW_PX); }
   }
   const idx = rd('index.html') || '', pre = {};
   idx.replace(/^\s*(low|medium|high|ultra):\s*\{[^}]*?shadowSize:\s*(\d+)/gm, (m, k, v) => { pre[k] = +v; return m; });
