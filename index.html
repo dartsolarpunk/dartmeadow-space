@@ -204,8 +204,8 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-lod.js?v=310"></script>
 <script src="ui/dm-terrain-lod.js?v=294"></script>   <!-- one terrain across every altitude band: shared slope / skirt / sea-tint contract between the globe map and the sky ground -->
 <script src="ui/dm-impostor.js?v=280"></script>   <!-- far-range LOD: vertex-clustering impostor (mansion LOD2, colours baked) -->   <!-- far-range LOD: the ONE distance table per device class (props, mansion, landmarks, vantage reach); ?lod=off|low|mobile|desktop -->
-<script src="ui/dm-light.js?v=301"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
-<script src="ui/dm-vlight.js?v=1"></script>   <!-- lighting overhaul: lamps / LEDs / flashlight / low sun light the volumetric fog (scene.fogNode, light list, equi-angular in-scatter); ?vlights=0|low|med|high -->
+<script src="ui/dm-light.js?v=319"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
+<script src="ui/dm-vlight.js?v=319"></script>   <!-- lighting overhaul: lamps / LEDs / flashlight / low sun light the volumetric fog (scene.fogNode, light list, equi-angular in-scatter); ?vlights=0|low|med|high -->
 <script src="ui/dm-atmo-shell.js?v=297"></script>   <!-- (v297) DMAtmoShell.radii/worldR/ratio: the faded atmosphere perimeter of a body (Solenne 1.18 R) for the space -> world hand-off (Worlds) -->
 <script src="ui/dm-spawn.js?v=314"></script>   <!-- (v314) DMSpawn: new-game spawn in interstellar space near Sol + the arrival push-out from every world's hand-off radius -->
 <script src="ui/dm-pw-handoff.js?v=299"></script>   <!-- (v299) the space -> surface hand-off policy: pre-build hidden from PWS_OPEN, show the world + minimap globe at the DMAtmoShell perimeter (Worlds) -->
@@ -229,7 +229,7 @@ window.DMFT=window.DMFT||(function(){ const E=Object.create(null), X=Object.crea
 <script src="ui/dm-fluid.js?v=80"></script>
 <script src="ui/dm-journal.js?v=98"></script>
 <script src="ui/dm-worldstyle.js?v=94"></script>
-<script src="ui/dm-polish.js?v=209"></script>
+<script src="ui/dm-polish.js?v=319"></script>
 <script src="ui/dm-sky.js?v=209"></script>
 <script src="ui/dm-dust.js?v=191"></script>
 <!-- crunch1 true-fluid VFX (WebGPU only; WebGL keeps the current ocean/dust/fumes) -->
@@ -1078,7 +1078,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-collide-game.js?v=281" defer></script>
 <script src="ui/dm-cgroup.js?v=281" defer></script>
 <script src="ui/dm-charm.js?v=234" defer></script>
-<script src="ui/dm-flash.js?v=311" defer></script>
+<script src="ui/dm-flash.js?v=319" defer></script>
 <script src="ui/dm-menuscene.js?v=245" defer></script>
 <script src="ui/dm-starbubble.js?v=4" defer></script>
 <script src="ui/dm-hazardbubble.js?v=215" defer></script>
@@ -1087,7 +1087,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-bt-madison.js?v=5" defer></script>
 <script src="ui/dm-bt-nova.js?v=1" defer></script>
 <script src="ui/dm-bt-terminal.js?v=3" defer></script>
-<script src="ui/dm-bt-lighting.js?v=144" defer></script>
+<script src="ui/dm-bt-lighting.js?v=319" defer></script>
 <script src="ui/dm-bt-cargocam.js?v=1" defer></script>
 <script src="ui/dm-bt-interior.js?v=124" defer></script>
 <script src="ui/dm-bt-pbr.js?v=292" defer></script>
@@ -1103,11 +1103,11 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-edgewarm.js?v=235" defer></script>
 <script src="ui/dm-arielhome.js?v=231" defer></script>
 <script src="ui/dm-mansion-rooms.js?v=250" defer></script>
-<script src="ui/dm-mansion-look.js?v=251" defer></script>
+<script src="ui/dm-mansion-look.js?v=319" defer></script>
 <script src="ui/dm-mansion-interior.js?v=263" defer></script>
 <script src="ui/dm-orbit-clamp.js?v=1" defer></script>
-<script src="ui/dm-facilities.js?v=310" defer></script>
-<script src="ui/dm-lamps.js?v=303" defer></script>
+<script src="ui/dm-facilities.js?v=319" defer></script>
+<script src="ui/dm-lamps.js?v=319" defer></script>
 <script src="ui/dm-mansion-collide.js?v=283" defer></script>
 <script src="ui/dm-holo.js?v=284" defer></script>
 <script src="ui/dm-sys.js?v=310"></script>
