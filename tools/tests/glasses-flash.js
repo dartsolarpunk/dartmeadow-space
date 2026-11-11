@@ -3,7 +3,7 @@
 // characterassests/Meshy_AI_Autumn_biped_Character_output.glb (not edited). Asserts: the LED bar is a runtime mesh parented to the Head bone, sits on
 // the top rim of the glasses over the bridge, ~1/3 of the frame width and only a few mm tall (black casing + white LED strip); it is NOT a collision
 // solid (DMCollide count unchanged, raycast ignores it); toggle on/off; discrete lumen steps 750 / 1250 / 2000 / 3000 / 4000 with clamping; the beam
-// is a shadowless spot created once (kept at intensity 0 when off), carried in her top-level scene along the glasses' forward axis; tick allocates
+// is a shadow-casting spot created once (kept at intensity 0 when off; the shadow details are tools/tests/flash-light.js), carried in her top-level scene along the glasses' forward axis; tick allocates
 // nothing; session only (no storage). UI placement is tools/tests/sys-strip.py (Chromium).
 // three.js: THREE_CORE=/path/to/three.core.js, else /workspace/three185/three.core.js or node_modules/three; SKIP (exit 0) if none.
 'use strict';
@@ -62,7 +62,7 @@ let fails = 0, n = 0; const ok = (c, m) => { n++; if (!c) { fails++; console.log
   ok(!F.S.on && F.S.light === null, 'starts off, no light yet (nothing added to any scene)');
   ok(JSON.stringify(F.STEPS) === '[750,1250,2000,3000,4000]', 'lumen steps 750 / 1250 / 2000 / 3000 / 4000');
   ok(F.toggle() === true && F.S.light && F.S.light.isSpotLight, 'tap: on -> one SpotLight');
-  const L = F.S.light; ok(L.castShadow === false, 'no shadow (any tier)'); ok(L.angle > 0.4 && L.angle < 0.8 && L.penumbra >= 0.5, 'wide, soft cone (' + (L.angle * 180 / Math.PI).toFixed(0) + ' deg half-angle, penumbra ' + L.penumbra + ')'); ok(L.distance >= 200, 'reaches many metres (range ' + L.distance + ')');
+  const L = F.S.light; ok(L.castShadow === true && L.shadow.autoUpdate === false && !L.shadow.needsUpdate, 'real shadow-casting spot, map only updated on request (zero cost while off)'); ok(Math.abs(L.angle - 35 * Math.PI / 180) < 0.03 && L.penumbra >= 0.5, 'wide, soft cone (' + (L.angle * 180 / Math.PI).toFixed(0) + ' deg half-angle, penumbra ' + L.penumbra + ')'); ok(L.distance >= 150 && L.distance <= 300, 'reaches 150-300 m on the ground (range ' + L.distance + ')');
   ok(F.lumens() === 2000 && Math.abs(L.intensity - 2000 * F.LM_K) < 1e-9, 'default 2000 lm'); ok(2000 * F.LM_K >= 500, 'strong output (>= 500 cd at the default step)');
   const seen = []; for (let i = 0; i < 5; i++) { F.setStep(i); seen.push([F.lumens(), L.intensity]); }
   ok(seen.map(s => s[0]).join() === '750,1250,2000,3000,4000' && seen.every((s, i) => !i || s[1] > seen[i - 1][1]), 'every step sets its lumens, brighter each step');
@@ -102,7 +102,7 @@ let fails = 0, n = 0; const ok = (c, m) => { n++; if (!c) { fails++; console.log
   // index.html hooks
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const sv = (html.match(/<script src="ui\/dm-flash\.js\?v=(\d+)" defer><\/script>/) || [])[1]; ok(!!sv, 'script tag (?v=' + sv + ')'); const cv = (fs.readFileSync(path.join(root, 'sw.js'), 'utf8').match(/const CACHE_NAME = 'dartmeadow-engine-v(\d+)';/) || [])[1]; ok(!!cv && +cv >= +sv, 'sw cache (v' + cv + ') is at / past the script ?v=' + sv + ' (bumped together)');
-  ok(/flightScene=new THREE\.Scene\(\);\s*try\{ if\(window\.DMFlash\) DMFlash\.adoptScene\(flightScene\)/.test(html) && /DMFlash\.adoptScene\(scene\)/.test(html), 'beam made with the fixed light set in flightScene and in every world scene');
+  ok(/flightScene=new THREE\.Scene\(\);\s*try\{ if\(window\.DMFlash\)\{[^\n]*DMFlash\.adoptScene\(flightScene\)/.test(html) && /DMFlash\.adoptScene\(scene\)/.test(html), 'beam made with the fixed light set in flightScene and in every world scene');
   ok(html.indexOf('DMFlash.attach(CHAR)') > html.indexOf('DMCharm.attach(CHAR)') && html.indexOf('DMFlash.attach(CHAR)') > 0, 'attached right after the charm on character load');
   ok(/DMFlash\.tick\('space'\)/.test(html) && /DMFlash\.tick\(PW\.mode\)/.test(html), 'ticked in open space and in the world (walk / fly / space)');
   ok(F.STICK.space === 'jL' && F.STICK.fly === 'atmo-steer-zone' && F.STICK.walk === 'surf-move-zone', 'docks by the LEFT stick of each HUD');

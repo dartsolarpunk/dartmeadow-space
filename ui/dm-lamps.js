@@ -54,11 +54,18 @@
     const nx = col.nx, c = col.cell, P = [], A = [], I = [], PR = led ? LED_POOL_R : POOL_R, gain = led ? LED_GAIN : 1;
     for (const l of lamps) {
       const hp = led ? l : headPos(l), cx = hp[0], cy = hp[1], r = Math.ceil(PR / c), i0 = Math.round((cx - col.x0) / c), j0 = Math.round((cy - col.y0) / c), W = 2 * r + 1, id = new Int32Array(W * W).fill(-1), base = P.length / 3;   // base = first vertex of this lamp's pool
+      // (lighting overhaul) a node that borders a cell the pool cannot cover (a drop, water, the lattice end) fades to 0 instead of keeping its radial alpha: the pool used to end in a hard cut at every ledge / rail
+      const okN = new Uint8Array(W * W);
       for (let dj = -r; dj <= r; dj++) for (let di = -r; di <= r; di++) {
         const i = i0 + di, j = j0 + dj; if (i < 0 || j < 0 || i >= nx || j >= col.ny) continue;
+        const h = g[j * nx + i], d = Math.hypot(col.x0 + i * c - cx, col.y0 + j * c - cy);
+        if (h <= col.sea + 0.6 || Math.abs(h - l[2]) > 0.35 || d > PR) continue; okN[(dj + r) * W + di + r] = 1;
+      }
+      for (let dj = -r; dj <= r; dj++) for (let di = -r; di <= r; di++) {
+        const q = (dj + r) * W + di + r; if (!okN[q]) continue; const i = i0 + di, j = j0 + dj;
         const h = g[j * nx + i], x = col.x0 + i * c, y = col.y0 + j * c, d = Math.hypot(x - cx, y - cy);
-        if (h <= col.sea + 0.6 || Math.abs(h - l[2]) > 0.35 || d > PR) continue;
-        const t = 1 - d / PR; id[(dj + r) * W + di + r] = P.length / 3 - base; P.push(x, h + POOL_Y, -y); A.push(t * t * gain);
+        let edge = 1; for (let b = 0; b < 4; b++) { const ni = di + (b === 0 ? 1 : b === 1 ? -1 : 0), nj = dj + (b === 2 ? 1 : b === 3 ? -1 : 0); if (ni < -r || nj < -r || ni > r || nj > r || !okN[(nj + r) * W + ni + r]) { if (d > c * 1.5) edge = 0; } }   // keep the node under the lamp itself even on a 1-cell island
+        const t = 1 - d / PR, f = t * t * (3 - 2 * t); id[q] = P.length / 3 - base; P.push(x, h + POOL_Y, -y); A.push(f * f * gain * edge);
       }
       for (let dj = 0; dj < 2 * r; dj++) for (let di = 0; di < 2 * r; di++) {
         const a = id[dj * W + di], b = id[dj * W + di + 1], d2 = id[(dj + 1) * W + di + 1], e = id[(dj + 1) * W + di]; if (a < 0 || b < 0 || d2 < 0 || e < 0) continue;
@@ -135,6 +142,12 @@
     try { const Z = G.DMLandZones; if (Z && G.fetch) fetch('assets/ariel-home/ariel-home-interior-nav.json?v=' + F.ver).then(r => r.json()).then(nav => {
       if (S.grp !== grp) return; const pads = Z.build(nav, lamps).concat(Z.buildGrid(nav, lamps, g, col)), me = grp.matrixWorld.elements, sc = Math.hypot(me[0], me[1], me[2]) || 1, wp = new THREE.Vector3();
       grp.updateMatrixWorld(true); Z.set(pads, (lx, ly, lz, o) => { wp.set(lx, lz, -ly); grp.localToWorld(wp); o[0] = wp.x; o[1] = wp.y; o[2] = wp.z; }, sc); }).catch(() => { }); } catch (e) { }
+    try {   // (ui/dm-vlight.js) the lamps + rail LEDs light the volumetric fog / mist: world-space point lights, candela-like colour (warm sodium / cooler LED), level = the dusk fade below
+      const VL = G.DMVLight; if (VL && VL.on) { grp.updateMatrixWorld(true); const V3 = new THREE.Vector3(), la = new Float32Array(n * 7), ea = new Float32Array(nL * 7);
+        for (let i = 0; i < n; i++) { const h = headPos(lamps[i]); grp.localToWorld(V3.set(h[0], h[2] - 0.06 * UPM, -h[1])); la.set([V3.x, V3.y, V3.z, 380, 235, 114, 22], i * 7); }
+        for (let i = 0; i < nL; i++) { const l = leds[i]; grp.localToWorld(V3.set(l[0], l[2] + 0.04 * UPM, -l[1])); ea.set([V3.x, V3.y, V3.z, 70, 58, 42, 7], i * 7); }
+        VL.setPoints('lamps', la, { level: 0, gain: 1 }); VL.setPoints('leds', ea, { level: 0, gain: 1 }); }
+    } catch (e) { }
     try {   // lamp heads in the world frame -> the radiance cache ([x,y,z, r,g,b, radius] each; warm sodium colour, 16 m reach)
       if (G.DMLight && G.DMLight.on) { grp.updateMatrixWorld(true); const V3 = new THREE.Vector3(), a = new Float32Array(n * 7); for (let i = 0; i < n; i++) { const h = headPos(lamps[i]); grp.localToWorld(V3.set(h[0], h[2] - 0.06 * UPM, -h[1])); a.set([V3.x, V3.y, V3.z, 14, 8.7, 4.2, 16], i * 7); } G.DMLight.setLamps(a);
         // the collision grid (terraces, decks, walls) into the height cache: sun shadows and probe rays see the property.  nav (x east, y seaward, z up) -> group local (x, z, -y) -> world
@@ -150,7 +163,7 @@
     try { if (G.DMCollide && G.DMCollide.clearGroup) G.DMCollide.clearGroup('lamps'); if (G.DMLandZones) G.DMLandZones.clear(); } catch (e) { }
     try { if (S.grp && S.grp.parent) S.grp.parent.remove(S.grp); for (const g of S.geos) g.dispose(); for (const m of S.mats) m.dispose(); if (S.plates && S.plates.dispose) S.plates.dispose(); } catch (e) { }
     for (const L of S.lights) { try { if (L.parent) L.parent.remove(L); L.dispose && L.dispose(); } catch (e) { } }
-    S.lights.length = 0; S.geos.length = 0; S.mats.length = 0; S.grp = null; S.built = false; try { if (G.DMLight) { G.DMLight.setLamps([]); G.DMLight.setLampLevel(0); G.DMLight.clearOverlays(); } } catch (e) { } S.sg = null; S.plates = null; S.U = null; S.on = 0; hideHud();
+    S.lights.length = 0; S.geos.length = 0; S.mats.length = 0; S.grp = null; S.built = false; try { if (G.DMVLight) { G.DMVLight.clear('lamps'); G.DMVLight.clear('leds'); } } catch (e) { } try { if (G.DMLight) { G.DMLight.setLamps([]); G.DMLight.setLampLevel(0); G.DMLight.clearOverlays(); } } catch (e) { } S.sg = null; S.plates = null; S.U = null; S.on = 0; hideHud();
   }
 
   // ── the USE bubble (same look as the Bird Temple's F bubble) ─────────────────────────────────────────────
@@ -216,7 +229,7 @@
       }
       // dusk fade, eased (~1.2 s) so a sunset never pops
       const tgt = R.lampLevel(day), k = Math.min(1, dt / 0.9); S.on += (tgt - S.on) * k; if (Math.abs(tgt - S.on) < 0.002) S.on = tgt;
-      S.U.on.value = S.on; try { if (G.DMLight && G.DMLight.on) G.DMLight.setLampLevel(S.on); } catch (e) { }   // (ui/dm-light.js) the radiance cache lights its probes from the lamps at the same eased level
+      S.U.on.value = S.on; try { if (G.DMLight && G.DMLight.on) G.DMLight.setLampLevel(S.on); } catch (e) { }   try { if (G.DMVLight && G.DMVLight.on) { G.DMVLight.setLevel('lamps', S.on); G.DMVLight.setLevel('leds', S.on); } } catch (e) { }   // (ui/dm-vlight.js) fog shafts follow the same dusk fade   // (ui/dm-light.js) the radiance cache lights its probes from the lamps at the same eased level
       const near = d2 < DRAW_D2;
       S.grp.visible = near && (S.on > 0.004 || d2 < SW_D2);   // by day only the switches (near) stay
       // lamps (poles + heads + glow + pools) hide by day; the switch group is its own child

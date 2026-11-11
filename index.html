@@ -204,7 +204,8 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-lod.js?v=310"></script>
 <script src="ui/dm-terrain-lod.js?v=294"></script>   <!-- one terrain across every altitude band: shared slope / skirt / sea-tint contract between the globe map and the sky ground -->
 <script src="ui/dm-impostor.js?v=280"></script>   <!-- far-range LOD: vertex-clustering impostor (mansion LOD2, colours baked) -->   <!-- far-range LOD: the ONE distance table per device class (props, mansion, landmarks, vantage reach); ?lod=off|low|mobile|desktop -->
-<script src="ui/dm-light.js?v=301"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
+<script src="ui/dm-light.js?v=319"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
+<script src="ui/dm-vlight.js?v=319"></script>   <!-- lighting overhaul: lamps / LEDs / flashlight / low sun light the volumetric fog (scene.fogNode, light list, equi-angular in-scatter); ?vlights=0|low|med|high -->
 <script src="ui/dm-atmo-shell.js?v=297"></script>   <!-- (v297) DMAtmoShell.radii/worldR/ratio: the faded atmosphere perimeter of a body (Solenne 1.18 R) for the space -> world hand-off (Worlds) -->
 <script src="ui/dm-spawn.js?v=314"></script>   <!-- (v314) DMSpawn: new-game spawn in interstellar space near Sol + the arrival push-out from every world's hand-off radius -->
 <script src="ui/dm-pw-handoff.js?v=299"></script>   <!-- (v299) the space -> surface hand-off policy: pre-build hidden from PWS_OPEN, show the world + minimap globe at the DMAtmoShell perimeter (Worlds) -->
@@ -228,7 +229,7 @@ window.DMFT=window.DMFT||(function(){ const E=Object.create(null), X=Object.crea
 <script src="ui/dm-fluid.js?v=80"></script>
 <script src="ui/dm-journal.js?v=98"></script>
 <script src="ui/dm-worldstyle.js?v=94"></script>
-<script src="ui/dm-polish.js?v=209"></script>
+<script src="ui/dm-polish.js?v=319"></script>
 <script src="ui/dm-sky.js?v=209"></script>
 <script src="ui/dm-dust.js?v=191"></script>
 <!-- crunch1 true-fluid VFX (WebGPU only; WebGL keeps the current ocean/dust/fumes) -->
@@ -1077,7 +1078,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-collide-game.js?v=281" defer></script>
 <script src="ui/dm-cgroup.js?v=281" defer></script>
 <script src="ui/dm-charm.js?v=234" defer></script>
-<script src="ui/dm-flash.js?v=311" defer></script>
+<script src="ui/dm-flash.js?v=319" defer></script>
 <script src="ui/dm-menuscene.js?v=245" defer></script>
 <script src="ui/dm-starbubble.js?v=4" defer></script>
 <script src="ui/dm-hazardbubble.js?v=215" defer></script>
@@ -1086,7 +1087,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-bt-madison.js?v=5" defer></script>
 <script src="ui/dm-bt-nova.js?v=1" defer></script>
 <script src="ui/dm-bt-terminal.js?v=3" defer></script>
-<script src="ui/dm-bt-lighting.js?v=144" defer></script>
+<script src="ui/dm-bt-lighting.js?v=319" defer></script>
 <script src="ui/dm-bt-cargocam.js?v=1" defer></script>
 <script src="ui/dm-bt-interior.js?v=124" defer></script>
 <script src="ui/dm-bt-pbr.js?v=292" defer></script>
@@ -1102,11 +1103,11 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-edgewarm.js?v=235" defer></script>
 <script src="ui/dm-arielhome.js?v=231" defer></script>
 <script src="ui/dm-mansion-rooms.js?v=250" defer></script>
-<script src="ui/dm-mansion-look.js?v=251" defer></script>
+<script src="ui/dm-mansion-look.js?v=319" defer></script>
 <script src="ui/dm-mansion-interior.js?v=263" defer></script>
 <script src="ui/dm-orbit-clamp.js?v=1" defer></script>
-<script src="ui/dm-facilities.js?v=310" defer></script>
-<script src="ui/dm-lamps.js?v=303" defer></script>
+<script src="ui/dm-facilities.js?v=319" defer></script>
+<script src="ui/dm-lamps.js?v=319" defer></script>
 <script src="ui/dm-mansion-collide.js?v=283" defer></script>
 <script src="ui/dm-holo.js?v=284" defer></script>
 <script src="ui/dm-sys.js?v=310"></script>
@@ -6672,7 +6673,7 @@ async function initFlightScene(){
   flightRenderer.shadowMap.type=THREE.PCFSoftShadowMap;
 
   flightScene=new THREE.Scene();
-  try{ if(window.DMFlash) DMFlash.adoptScene(flightScene); }catch(e){}   // the glasses flashlight's beam (intensity 0), in the fixed light set before the first compile: switching it on never recompiles
+  try{ if(window.DMFlash){ DMFlash.hooks.gfx=()=>GFX; DMFlash.hooks.depthOK=_viewportDepthOK; DMFlash.hooks.logDepth=()=>!!(flightRenderer&&flightRenderer.logarithmicDepthBuffer); DMFlash.adoptScene(flightScene); } }catch(e){}   // the glasses flashlight's beam (intensity 0), in the fixed light set before the first compile: switching it on never recompiles
 
   // Near plane 0.1 (the skyboard sits ~0.5u from the lens, so it must stay
   // under that) paired with the logarithmic depth buffer above — that combo
@@ -19316,6 +19317,7 @@ function _pwBuild(body,site,mode,focus){
   const scene=new THREE.Scene();
   PW.bg=new THREE.Color(pal.sky?pal.sky[1]:0x223344); scene.background=PW.bg;
   if(pal.atmos) scene.fog=new THREE.Fog(pal.fog||0x334455,40,drawDistanceTier().fogFar);
+  try{ if(scene.fog&&window.DMVLight) DMVLight.install(scene,{THREE}); }catch(e){}   // (ui/dm-vlight.js) lights light the volumetric fog (scene.fogNode); ?vlights=0 off
   const cam=new THREE.PerspectiveCamera(72,W/H,0.1,4000); cam.rotation.order='YXZ';
   PW.renderer=r; PW.scene=scene; PW.camera=cam; PW.skyK=1; PW.blend=null; PW._camFlat=null;
   surfRenderer=atmoRenderer=r; surfScene=atmoScene=scene; surfCamera=atmoCamera=cam;
@@ -19943,6 +19945,7 @@ function _pwWorldTick(dt){
   _pwSeaFollow(px,pz,Math.min(groundR,16384));
   try{ if(window.DMWater&&DMWater.active) DMWater.tick(dt,{camera:cam,scene,x:px,z:pz,y:f.y,H,Hw:TERRAIN.Hw||null,mode:PW.mode}); }catch(e){ if(!window._dmwWarn){ window._dmwWarn=1; console.warn('[water] tick',e); } }
   try{ if(window.DMLight&&DMLight.on) DMLight.tick(dt,{x:px,y:f.y,z:pz,H,sunDir:TERRAIN.sky?TERRAIN.sky.sunDir:null,day:TERRAIN.sky?TERRAIN.sky.day:1,scene,renderer:flightRenderer,walk:mode!=='space'}); }catch(e){ if(!window._dmlWarn){ window._dmlWarn=1; console.warn('[light] tick',e); } }   // (ui/dm-light.js) time-sliced probe + height-cache update, amortised <= ~1-2 ms
+  try{ if(window.DMVLight&&DMVLight.on) DMVLight.tick(dt,{camera:cam,scene,sunDir:TERRAIN.sky?TERRAIN.sky.sunDir:null,day:TERRAIN.sky?TERRAIN.sky.day:1,groundY:gH,walk:mode!=='space'}); }catch(e){ if(!window._dmvlWarn){ window._dmvlWarn=1; console.warn('[vlight] tick',e); } }   // (ui/dm-vlight.js) light list -> fog in-scatter uniforms
   _pwPropsTick(px,pz,space?1e9:(fly?agl:0));
   if((PW._lqF=(PW._lqF||0)+1)%6===3) _lodQTick();   // (fov-fill 2) the quality fade chain's distances -> uniforms, a few times a second (no allocation)
   try{ if(window.DMPlaces) DMPlaces.tick(dt,_plEnv()); if(window.DMCreatures) DMCreatures.tick(dt,_plEnv()); }catch(e){ if(!window._plWarn){ window._plWarn=1; console.warn('[places]',e); } }
@@ -20249,6 +20252,8 @@ function _pwClose(opts){
   _crM('pw:close');
   try{ if(window.DMPlaces) DMPlaces.onWorldClose(); }catch(e){}   // our group + caches go before the scene is disposed
   const scene=PW.scene, body=PW.body; ++PW.gen;
+  try{ if(window.DMVLight) DMVLight.release(scene); }catch(e){}
+  try{ if(window.DMFlash&&scene!==flightScene) DMFlash.releaseScene(scene); }catch(e){}   // (ui/dm-flash.js) the closed world's spot + shadow map + beam mesh are freed now   // (ui/dm-vlight.js) drop the fog node, keep no scene reference
   PW.active=false; PW.opening=false;
   surfaceActive=false; atmoActive=false; PW.mode=null; PW.blend=null; PW.sp=null; PW._camFlat=null; PW.atmo=null;
   window.removeEventListener('keydown',_surfKeyDown); window.removeEventListener('keyup',_surfKeyUp);

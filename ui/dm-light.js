@@ -101,6 +101,17 @@
     if (a <= fl && b <= fl && c <= fl && d <= fl) return -1e9;
     return (a * (1 - tx) + b * tx) * (1 - tz) + (c * (1 - tx) + d * tx) * tz;
   }
+  // (lighting overhaul) smooth fades shared by the CPU probes, the shader mirrors and the tests.  All C1 (zero slope at both ends), monotonic: no disc edge, no pop.
+  function smooth01(a, b, v) { if (b === a) return v < a ? 0 : 1; const t = (v - a) / (b - a), u = t < 0 ? 0 : t > 1 ? 1 : t; return u * u * (3 - 2 * u); }
+  // lamp light vs distance: 1 at the lamp, 0 at the radius r, smoothstep between (the old (1-d/r)^2 had a kink at the lamp and a visible rim in the pools)
+  function lampFalloff(d, r) { return r > 0 ? 1 - smooth01(0, r, d) : 0; }
+  // soft threshold for the bounce term: noise on a flat-lit ground is zero-mean but max(.,0) rectified it into a positive pale wash that follows the camera.
+  // Values under `bias` vanish, the knee (2 x bias) is quadratic so the curve stays C1.  Monotonic, 0 at 0.
+  function softBounce(b, bias) { if (!(bias > 0)) return b > 0 ? b : 0; if (b <= bias) return 0; const x = b - bias; return x >= bias ? x - bias * 0.5 : x * x / (2 * bias); }
+  // daylight scale of the bounce (it is emissive: shadows cannot mask it, so in full sun it lifts the shadows and pales the ground round the camera).  1 at night, `lo` at noon.
+  function bounceDayScale(sunY, day, lo) { const k = smooth01(0.0, 0.45, sunY) * (day < 0 ? 0 : day > 1 ? 1 : day); return 1 - (1 - lo) * k; }
+  // hysteresis switch: on above `on`, off below `off` (off < on); returns the new state
+  function hyst(state, v, on, off) { return state ? v > off : v > on; }
   const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
   // Ray march (quadratic step spacing: dense near the origin).  Returns hit distance or -1.  Refined by linear interpolation of the last two samples.
@@ -245,8 +256,8 @@
     if (S.lamps && S.lampK > 0.001) {   // lamps: analytic point sources, occluded by the same field
       const ls = S.lamps; for (let l = 0; l < ls.length; l += 7) {
         const dx = ls[l] - px, dy = ls[l + 1] - py, dz = ls[l + 2] - pz, d2 = dx * dx + dy * dy + dz * dz, r = ls[l + 6]; if (d2 > r * r) continue;
-        const d = Math.sqrt(d2), inv = 1 / d; if (sunVis(hf, px, py + 0.2, pz, dx * inv, dy * inv, dz * inv, 5, d, 0.04, 0) < 0.3 && marchHit(hf, px, py, pz, dx * inv, dy * inv, dz * inv, d)) continue;
-        const e = S.lampK * (1 - d / r) * (1 - d / r) / (d2 + 1) * 1.33;
+        const d = Math.sqrt(d2), inv = 1 / d; let occ = 1; { const sv = sunVis(hf, px, py + 0.2, pz, dx * inv, dy * inv, dz * inv, 5, d, 0.04, 0); if (sv < 0.3 && marchHit(hf, px, py, pz, dx * inv, dy * inv, dz * inv, d)) occ = smooth01(0, 0.3, sv) * 0.5; }   // soft: a lamp edging behind a corner fades instead of switching off
+        const e = S.lampK * lampFalloff(d, r) * occ / (d2 + 1) * 1.33;
         for (let ch = 0; ch < 3; ch++) shProject(est, 4 + ch * 4, dx * inv, dy * inv, dz * inv, ls[l + 3 + ch] * e, 1);
       }
     }
@@ -305,7 +316,7 @@
     const hn = e.horN || 0, cpu = e.hfN * e.hfN * cellB + e.farN * e.farN * cellB + hn * hn * cellB + e.casc * cascCpu, gpu = e.hfN * e.hfN * 2 + e.farN * e.farN * 2 + hn * hn * 2 + e.casc * probes * 32 + (e.cs ? probes * 64 : 0);
     return { cpu, gpu };
   }
-  const core = { presetCap, rebase, IDLE_AGL, farSpacing, tierBytes, markProbe, resetCascade, capTier, FAR_CELL, NEAR_MAX, FAR_MAX, HOR_CELL, HOR_T0, HOR_MAX, horEdge, sunVisLong, rasterizeOverlay, hash1, csRayDirs, stepDownTier, bootTier, Y0, Y1, shProject, shEval, bentNormal, rng, rayDirs, createHF, overlayAt, march, marchBrute, sunVis, sunVisBrute, TIERS, TIER_ORDER, effective, cost, pickTier, createHeadroom, createCascade, neutralProbe, traceProbe, updateCascade, sampleCascade };
+  const core = { smooth01, lampFalloff, softBounce, bounceDayScale, hyst, presetCap, rebase, IDLE_AGL, farSpacing, tierBytes, markProbe, resetCascade, capTier, FAR_CELL, NEAR_MAX, FAR_MAX, HOR_CELL, HOR_T0, HOR_MAX, horEdge, sunVisLong, rasterizeOverlay, hash1, csRayDirs, stepDownTier, bootTier, Y0, Y1, shProject, shEval, bentNormal, rng, rayDirs, createHF, overlayAt, march, marchBrute, sunVis, sunVisBrute, TIERS, TIER_ORDER, effective, cost, pickTier, createHeadroom, createCascade, neutralProbe, traceProbe, updateCascade, sampleCascade };
   if (typeof module !== 'undefined' && module.exports) module.exports = core;
   if (typeof window === 'undefined') return;
 
@@ -313,6 +324,8 @@
   const W = root, Q = (W.location && W.location.search) || '';
   const flag = ((Q.match(/[?&]light=(off|low|med|high|ultra|auto)\b/) || [])[1]) || 'auto';
   const csQ = (Q.match(/[?&]lightcs=(0|1)\b/) || [])[1];   // 0 = never, 1 = force (still needs ultra tier), default = automatic on ultra with headroom
+  const bounceQ = +((Q.match(/[?&]lightbounce=([\d.]+)/) || [])[1] ?? 1);   // ?lightbounce=0 turns the bounce term off (A/B for a pale wash), 1 = default, >1 stronger
+  const BOUNCE_NOON = 0.22;   // bounce strength at full daylight (it is emissive, so it fills shadows; at night it is the whole point)
   const gainQ = +((Q.match(/[?&]lightgain=([\d.]+)/) || [])[1] || 1);
   const LSK = 'dm_light_boot', LSC = 'dm_light_cs_bad';
   const lsGet = (k) => { try { return JSON.parse(W.localStorage.getItem(k) || 'null'); } catch (e) { return null; } };
@@ -369,7 +382,7 @@
     const vols = casc.map(c => [0, 1, 2, 3].map(() => { const t = new Tt.Data3DTexture(new Uint16Array(c.P * c.P * c.L * 4), c.P, c.P, c.L); t.format = Tt.RGBAFormat; t.type = Tt.HalfFloatType; t.wrapS = t.wrapT = Tt.RepeatWrapping; t.wrapR = Tt.ClampToEdgeWrapping; t.minFilter = t.magFilter = Tt.LinearFilter; t.generateMipmaps = false; t.unpackAlignment = 1; t.userData.dmKeep = true; t.needsUpdate = true; return t; }));
     tex = { hft, hft2, hft3, vols };
     U = {
-      k: T.uniform(0), base: T.uniform(0), cam: T.uniform(new Tt.Vector2(0, 0)), sun: T.uniform(new Tt.Vector3(0.4, 0.8, 0.45)), hfSteps: T.uniform(e.sunSteps), farSteps: T.uniform(e.farSteps), hfK: T.uniform(0.5), gain: T.uniform(gainQ * 0.9),
+      k: T.uniform(0), base: T.uniform(0), cam: T.uniform(new Tt.Vector2(0, 0)), sun: T.uniform(new Tt.Vector3(0.4, 0.8, 0.45)), hfSteps: T.uniform(e.sunSteps), farSteps: T.uniform(e.farSteps), hfK: T.uniform(0.5), gain: T.uniform(gainQ * 0.9), bk: T.uniform(1), bb: T.uniform(0.02),
       pen: T.uniform(0.05), penF: T.uniform(0.09), csK: T.uniform(0), lowSun: T.uniform(0),
       hc: T.uniform(new Tt.Vector2(0, 0)), fc: T.uniform(new Tt.Vector2(0, 0)),   // (v297) centres of the near / far height windows (the shader masks reads outside them)
       // (fov-fill 2) horizon field centre + steps; the sun shadow map's own fade band (inside its box; far off = no change) and the far-lighting band (index.html, DMLod.bands)
@@ -563,6 +576,7 @@
       U.hc.value.set(hf.ci * hf.cell, hf.cj * hf.cell); if (hf2) U.fc.value.set(hf2.ci * FAR_CELL, hf2.cj * FAR_CELL); if (hf3) U.h3.value.set(hf3.ci * HOR_CELL, hf3.cj * HOR_CELL);
       const cad = bon ? B.shadowEvery() : 1; U.hfK.value = (cad >= 30 ? 0.95 : cad > 1 ? 0.8 : 0.5) * (day > 0.05 ? 1 : 0) * (marchOn ? 1 : 0);
       U.lowSun.value = 1 - Math.min(1, Math.max(0, sunV[1] * 2.2));
+      { const bt = bounceQ >= 0 ? bounceQ * bounceDayScale(sunV[1], day, BOUNCE_NOON) : 0; U.bk.value += (bt - U.bk.value) * Math.min(1, dt * 1.5); }   // eased: dusk / dawn never pops
       U.k.value += (1 - U.k.value) * Math.min(1, dt * 2); U.csK.value += (csTarget - U.csK.value) * Math.min(1, dt * (csTarget > U.csK.value ? 0.8 : 3));
       const tu = now(); let nc = 0;
       const nb = Number.isFinite(gC) ? rebase(baseY, gC) : baseY, baseMoved = !baseSet || nb !== baseY; if (baseMoved) { baseY = nb; baseSet = true; }
@@ -648,6 +662,8 @@
     } catch (err) { D.failed = String(err && err.message || err); return null; }
   };
 
+  // shader mirror of softBounce(): per channel, (b - bias) knee-compressed; bias U.bb (~0.02 of a sun-lit albedo bounce), zero at/below it
+  function sbounce(T, b) { const { vec3, max } = T, bias = U.bb, x = max(b.sub(bias), vec3(0, 0, 0)), y = max(x.sub(bias), vec3(0, 0, 0)); return x.mul(x).sub(y.mul(y)).div(bias.mul(2).add(1e-5)); }   // = softBounce per channel
   // material hook.  o: { p (world position node), n (world normal node), h (0..1 relief height node, 1 = proud), bounce, ao, shadow (all default true) }
   D.applyMaterial = function (m, o) {
     try {
@@ -701,7 +717,7 @@
       // crevices: the relief height (parallax / ground atlas) darkens the sky term further, weighted by how closed the sky is
       const cav = hRel ? mix(float(1), float(0.6).add(clamp(hRel, 0.0, 1.0).mul(0.4)), float(1).sub(skyVis).mul(0.6).add(0.4)) : float(1);
       if (o.ao !== false) { const aoK = mix(float(1), skyVis.mul(cav), U.k); m.aoNode = m.aoNode ? m.aoNode.mul(aoK) : aoK; }
-      if (o.bounce !== false) { const alb = T.diffuseColor ? T.diffuseColor.rgb : vec3(1, 1, 1); m.emissiveNode = (m.emissiveNode || vec3(0, 0, 0)).add(alb.mul(max(bounce, vec3(0, 0, 0))).mul(cav).mul(U.gain).mul(U.k)); }
+      if (o.bounce !== false) { const alb = T.diffuseColor ? T.diffuseColor.rgb : vec3(1, 1, 1); m.emissiveNode = (m.emissiveNode || vec3(0, 0, 0)).add(alb.mul(sbounce(T, bounce)).mul(cav).mul(U.gain).mul(U.bk).mul(U.k)); }
       if (o.shadow !== false) {
         // (fov-fill 2 / v301) the sun shadow map eases out inside its own box (U.sm, a circle round her) on every shipped preset, including Low (no march): tight, crisp shadows near, then nothing past the box — no square edge. Med+ still hands off to the height-field march.
         const prev = m.receivedShadowNode;
@@ -711,10 +727,10 @@
           // relief-aware: with the sun low the crevices (low relief height) sit in the shadow of their own rims
           const rel = hRel ? mix(float(1), smoothstep(0.05, 0.6, clamp(hRel, 0.0, 1.0)), U.lowSun.mul(0.6)) : float(1);
           const hfVis = mix(float(1), sn.vs.mul(rel), U.hfK.mul(U.k));
-          m.receivedShadowNode = prev ? ((s) => mix(float(1), prev(s), wMap).mul(hfVis)) : ((s) => mix(float(1), s, wMap).mul(hfVis));
+          m.receivedShadowNode = prev ? ((s) => s && s.dmFlashShadow ? s : mix(float(1), prev(s), wMap).mul(hfVis)) : ((s) => s && s.dmFlashShadow ? s : mix(float(1), s, wMap).mul(hfVis));   // (flashlight) the glasses spot's shadow (ui/dm-flash.js, tagged dmFlashShadow) is not the sun: no sun-box fade, no sun height-field visibility
         } else {
           // Low / mobile Medium: no height-field march node is compiled. Wrap the map only.
-          m.receivedShadowNode = prev ? ((s) => mix(float(1), prev(s), wMap)) : ((s) => mix(float(1), s, wMap));
+          m.receivedShadowNode = prev ? ((s) => s && s.dmFlashShadow ? s : mix(float(1), prev(s), wMap)) : ((s) => s && s.dmFlashShadow ? s : mix(float(1), s, wMap));
         }
       }
       m.userData.dmLight = true; m.needsUpdate = true; D.mats++;
