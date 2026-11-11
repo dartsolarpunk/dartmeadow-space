@@ -1102,7 +1102,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-arielhome.js?v=231" defer></script>
 <script src="ui/dm-mansion-rooms.js?v=250" defer></script>
 <script src="ui/dm-mansion-look.js?v=251" defer></script>
-<script src="ui/dm-mansion-interior.js?v=262" defer></script>
+<script src="ui/dm-mansion-interior.js?v=263" defer></script>
+<script src="ui/dm-orbit-clamp.js?v=1" defer></script>
 <script src="ui/dm-facilities.js?v=310" defer></script>
 <script src="ui/dm-lamps.js?v=303" defer></script>
 <script src="ui/dm-mansion-collide.js?v=283" defer></script>
@@ -23477,6 +23478,7 @@ function _charOrbitPlace(cam,target,k,head){
     const g=_surfHCam(cam.position.x,cam.position.z);
     if(typeof g==='number'&&isFinite(g)&&cam.position.y<g+SURF_CAM_CLEAR) cam.position.y=g+SURF_CAM_CLEAR;
   }
+  if(surfaceActive) try{ _charOrbitClamp(cam,target,false); }catch(e){}   // enclosed (ceiling overhead): cut back to the first wall / ceiling; open sky: no-op
   cam.lookAt(target);
 }
 
@@ -23537,6 +23539,23 @@ function _bindCharOrbitListenersOnce(){
   },{passive:false});
 }
 
+// ORBIT in small spaces (ui/dm-orbit-clamp.js): the camera must not pass through walls / ceilings / roofs. One probe over DMCollide (props, furniture, thin walls, terrain tiles) and the mansion shell + roof (DMMansionInt.ray).
+let _orbClampSt=null, _orbHead=null;   // created lazily: ui/dm-orbit-clamp.js is a deferred script, this inline block runs first
+function _orbClampGet(){ if(!_orbClampSt&&window.DMOrbitClamp){ _orbClampSt=DMOrbitClamp.create(); _orbHead=new THREE.Vector3(); } return _orbClampSt; }
+function _orbitProbe(ox,oy,oz,dx,dy,dz,maxD,r){
+  let best=-1; const W=window.DMCollide, M=window.DMMansionInt;
+  try{ if(W&&W.enabled&&W.count()){ const d=W.raycast(ox,oy,oz,dx,dy,dz,maxD,r); if(d>=0) best=d; } }catch(e){}
+  try{ if(M&&M.ray){ const d=M.ray(ox,oy,oz,dx,dy,dz,maxD); if(d>=0&&(best<0||d<best)) best=d; } }catch(e){}
+  return best;
+}
+let _orbLastT=0;
+function _charOrbitClamp(cam,target,force){   // on foot only; open ground leaves cam.position exactly as _charOrbitPlace set it
+  const st=_orbClampGet(); if(!st||!surfaceActive||cam!==surfCamera||!CHAR.root) return;
+  const now=performance.now(), dt=Math.min(0.1,Math.max(0.001,(now-_orbLastT)/1000)); _orbLastT=now;
+  if(CHAR.bones&&CHAR.bones.Head) CHAR.bones.Head.getWorldPosition(_orbHead); else { CHAR.root.getWorldPosition(_orbHead); _orbHead.y+=2.6; }
+  const r=DMOrbitClamp.update(st,_orbHead,cam.position,dt,_orbitProbe,{unit:1.77,near:cam.near,force:force});   // 1.77 world units per metre (she is ~3.1 tall)
+  if(r.clamped){ cam.position.set(r.x,r.y,r.z); }
+}
 function toggleCharOrbit(){
   const cam = surfaceActive ? surfCamera : (atmoActive ? atmoCamera : flightCamera);
   const hasTarget = surfaceActive ? (CHAR.loaded && CHAR.root) : (CHAR.mounted || boardFlight || atmoBoard);
@@ -23550,7 +23569,7 @@ function toggleCharOrbit(){
   });
   if(charOrbitActive){
     _bindCharOrbitListenersOnce();
-    charOrbitYaw=0; charOrbitPitch=0.25; _charOrbitPan.set(0,0,0);
+    charOrbitYaw=0; charOrbitPitch=0.25; _charOrbitPan.set(0,0,0); { const st=_orbClampGet(); if(st){ DMOrbitClamp.reset(st); } _orbLastT=performance.now(); }   // re-evaluate the nearest structure afresh
     // start pulled back so the whole rider + board is in view: at least where the
     // flight camera already sits, and never closer than a comfortable default
     let _d0=14; if(!_charOrbitPWSpace()) try{ const _t=new THREE.Vector3();
@@ -23559,7 +23578,7 @@ function toggleCharOrbit(){
     charOrbitDist=Math.min(_charOrbitMax()*0.9,_d0);
     try{toast('🔄 Orbit view — drag to orbit · pinch to dolly · two-finger drag to pan (double-tap/click recentres) · tap ORBIT to exit',3200);}catch(e){}
   } else {
-    _charOrbitDrag=null; _charOrbitPinch=null;
+    _charOrbitDrag=null; _charOrbitPinch=null; { const st=_orbClampGet(); if(st) DMOrbitClamp.reset(st); }
     try{ if(cam.near!==0.1){cam.near=0.1;cam.updateProjectionMatrix();} }catch(e){}
   }
 }
