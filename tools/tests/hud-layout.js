@@ -58,5 +58,5 @@ ok(play.every(r => /max-width:min\((\d+)vw/.test(r.body) && +r.body.match(/max-w
 ok(play.every(r => !/left|right:|transform/.test(r.body.replace(/padding-[a-z]+/g, ''))), 'gameplay: still the same centred element (only lift / width change)');
 ok(/function toast\(/.test(html) && /dmSys\(/.test(html.slice(html.indexOf('function toast('), html.indexOf('function toast(') + 600)), 'toast() is still a dmSys shim');
 ok(!/id="toast"/.test(html), 'no #toast element (retired v240)');
-ok(/ui\/dm-sys\.js\?v=30[2-9]/.test(html) && /ui\/dm-menu\.css\?v=30[2-9]/.test(html), 'edited files restamped (?v=302 = sw dartmeadow-engine-v302)');
+ok(/ui\/dm-sys\.js\?v=(?:30[2-9]|3[1-9]\d)/.test(html) && /ui\/dm-menu\.css\?v=(?:30[2-9]|3[1-9]\d)/.test(html), 'edited files restamped (?v=302 = sw dartmeadow-engine-v302)');
 console.log(fails ? 'hud-layout: FAILED ' + fails + '/' + n : 'hud-layout: all ' + n + ' checks passed'); process.exit(fails ? 1 : 0);
