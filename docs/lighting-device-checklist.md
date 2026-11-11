@@ -17,9 +17,13 @@ the in-game perf HUD or `sw.js`, `dartmeadow-engine-vNNN`, matches what was merg
 
 | Flag | Effect | Use it to |
 |---|---|---|
-| `?flashshadow=0` | flashlight stays a plain (non-shadow) spot light | see if the flashlight shadow map costs the frames |
-| `?sunshadow=0` | daytime sun shadow map / follower blob off (old behaviour) | see if the sun shadow change costs the frames |
-| `?vlights=0` | volumetric light shafts off (no in-scatter pass) | see if the shafts cost the frames |
+| `?flashshadow=0` | flashlight stays a plain (non-shadow) spot light (once the flashlight worker's change lands: check this row) | see if the flashlight shadow map costs the frames |
+| `?sunshadow=0` | old contact-blob strength (0.52 instead of 0.72) and no mansion cast shadow on phones. It does NOT turn off the sun shadow map itself (that is old code: use `?nopolish` to drop the sun-fit and the blob) | A/B the blob |
+| `?sunshadow=1` | lets the mansion cast sun shadows on phones (a 59k-triangle shadow pass: expect a frame-time cost) | test the cost of that pass |
+| `?lightbounce=0` | DMLight bounce term off (cause of the pale disc around the player; 1 = default, >1 stronger) | check the white patch is gone / still there |
+| `?vlgain=0.5` `?vldens=0.02` | volumetric light strength / fog density; `?vlights=low|med|high` forces a tier | tune the shafts |
+| `?nopolish` | drops the sun-fit and the contact blob | find out if a shadow problem is in the polish module |
+| `?vlights=0` | volumetric light shafts off (nothing installed on the fog) | see if the shafts cost the frames |
 | `?light=off` | DMLight (baked light cache + smooth falloff) off. Also `low` / `med` / `high` to force a tier | see if the light cache costs the frames |
 | `?perf=1` | debug HUD plus perf log | always |
 | `?vlights=0&flashshadow=0&sunshadow=0&light=off` | everything new off: this is your baseline | compare against |
@@ -28,19 +32,20 @@ Combine freely, for example `?perf=1&vlights=0`. A flag that is spelled wrong is
 
 ## A. Baseline (one minute)
 
-Open `?perf=1&vlights=0&flashshadow=0&sunshadow=0&light=off`, land on a planet, walk 30 s in daylight. Write down FPS (avg) and p95 ms.
+Open `?perf=1&vlights=0&flashshadow=0&sunshadow=0&light=off&lightbounce=0`, land on a planet, walk 30 s in daylight. Write down FPS (avg) and p95 ms.
 Everything below is judged against this number on the same spot.
 
 ## B. Daytime on a planet (sun shadows, follower blob, DMLight falloff)
 
 Open `?perf=1`.
 
-- [ ] Walk in full daylight. Ariel's shadow is a real sun shadow (follows the sun direction), no extra white/grey disc under her feet
-      except the soft follower blob, and the blob does **not** pop on and off or lag behind her when running.
+- [ ] Walk in full daylight. NO pale/white disc or wash following her (this was the bug: the DMLight bounce term). If one remains, retry with
+      `?lightbounce=0`, then `?light=off`, then `?nopolish`, and report which one removes it. Her dark contact blob under the feet is expected
+      and does not pop or lag when running.
 - [ ] Tree / rock / building shadows are stable while you turn the camera. No shimmering or crawling edges, no light leaking under walls.
 - [ ] Walk toward and away from a lamp or lit window: the light falls off smoothly with distance. No visible ring, step or hard cut-off edge.
 - [ ] Fly up out of the atmosphere and back down: no flash of black or white ground, no shadow popping at the transition.
-- [ ] FPS avg >= 30, p95 <= 40 ms. Compare against baseline: the sun shadow change should cost under about 2 ms.
+- [ ] FPS avg >= 30, p95 <= 40 ms. Compare against baseline: the bounce/blob changes should cost nothing measurable.
 
 ## C. Flashlight (real spot light with shadow)
 

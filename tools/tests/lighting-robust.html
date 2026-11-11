@@ -30,13 +30,18 @@ try {
     const sl = new THREE.SpotLight(0xfff4e6, 1400, 70, 0.55, 0.7, 1.5); sl.position.set(0.1, 1.75, -0.1); sl.target.position.set(0, 1.0, -20); scene.add(sl); scene.add(sl.target);
     return { scene, sl, ground, wall };
   }
+  const blank = new THREE.Scene();
   function closeWorld(w) {
+    try { if (window.DMVLight && DMVLight.release) DMVLight.release(w.scene); } catch (e) { __err.push('release threw ' + e); }   // what _pwClose does
     w.scene.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.dispose()); if (o.shadow && o.shadow.map) o.shadow.map.dispose(); });
     w.scene.clear();
   }
   const step = (w, n) => { for (let f = 0; f < n; f++) { DMVLight.tick(1 / 60, { camera: cam, scene: w.scene, sunDir: null, day: 0, groundY: 0, walk: true }); r.render(w.scene, cam); } };
   const mem = () => { const i = r.info; return { geo: i.memory.geometries, tex: i.memory.textures, prog: (i.programs && i.programs.length) || (i.compute && 0) || 0 }; };
 
+  // control: the same open/close with NO lighting module involved -> what the renderer / harness itself retains (so a module leak is measured against it)
+  let ctlAlive = -1;
+  if (typeof gc === 'function') { const cr = []; for (let i = 0; i < 4; i++) { const w = makeWorld(); for (let f = 0; f < 3; f++) r.render(w.scene, cam); cr.push(new WeakRef(w.scene)); closeWorld(w); } r.render(blank, cam); await tick(50); for (let k = 0; k < 4; k++) { gc(); await tick(30); } ctlAlive = cr.filter(x => x.deref()).length; }
   if (!vlOff) {
     // 0. TSL without uniformArray / fog helpers (older three / unsupported build): install fails soft
     {
@@ -75,9 +80,9 @@ try {
     { const A = makeWorld(), Bw = makeWorld(); let t = null; try { DMVLight.install(A.scene, { THREE }); step(A, 2); DMVLight.install(Bw.scene, { THREE }); step(Bw, 2); DMVLight.tick(1 / 60, { camera: cam, scene: A.scene, day: 0, walk: true }); r.render(Bw.scene, cam); } catch (e) { t = String(e); }
       rec('scene swap: no throw, only the live scene keeps fogNode', !t && Bw.scene.fogNode === DMVLight.S.node, { t }); closeWorld(A); closeWorld(Bw); }
     // 6. retention: after the last world closes, no module may still hold its scene (needs --js-flags=--expose-gc)
-    DMVLight.clear('lamps'); await tick(50);
+    DMVLight.clear('lamps'); r.render(blank, cam); await tick(50);   // the renderer itself keeps the last rendered scene until another one is drawn
     if (typeof gc === 'function') { for (let k = 0; k < 4; k++) { gc(); await tick(30); } const alive = refs.filter(x => x.deref()).length; const holder = DMVLight.S.scene ? 'DMVLight.S.scene' : '';
-      rec('closed worlds are garbage-collectable (no module retains the scene)', alive === 0, { aliveOf: refs.length, alive, holder }); }
+      rec('closed worlds are garbage-collectable (module retains no more than the bare renderer does)', alive <= Math.max(ctlAlive, 0), { aliveOf: refs.length, alive, controlAlive: ctlAlive, holder }); }
     else rec('closed worlds are garbage-collectable (skipped: no gc())', true, 'run with --js-flags=--expose-gc');
     // 7. scene switch to a fog-less scene (space / mansion): tick must switch the effect off, without throw
     { const w = makeWorld(); DMVLight.install(w.scene, { THREE }); step(w, 2); w.scene.fog = null; let t = null; try { step(w, 3); } catch (e) { t = String(e); } rec('fog removed at run time: fogNode cleared, no throw', !t && !w.scene.fogNode, { t }); closeWorld(w); }
