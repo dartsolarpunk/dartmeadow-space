@@ -92,10 +92,10 @@
 #screen-menu .mm-st-row b{font-family:var(--font-mono);font-weight:400;letter-spacing:.03em;font-size:.56rem;color:var(--text);text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 
 /* ── bottom left: round buttons ────────────────────────────────────── */
-#mm-bottom{left:clamp(12px,3vw,48px);bottom:clamp(14px,3vh,28px);display:flex;gap:clamp(8px,1.2vw,14px);}
-#screen-menu .mm-round{width:clamp(42px,5.2vh,54px);height:clamp(42px,5.2vh,54px);border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;
+#mm-bottom{left:clamp(12px,3vw,48px);bottom:clamp(14px,3vh,28px);display:flex;gap:8px;}
+#screen-menu .mm-round{width:40px;height:40px;flex:0 0 auto;padding:0;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;
   border:1.5px solid rgba(var(--acc-rgb),.6);background:radial-gradient(circle,rgba(var(--panel-rgb),.55) 0 60%,rgba(var(--acc-rgb),.14));
-  backdrop-filter:blur(6px);box-shadow:0 0 12px rgba(var(--acc-rgb),.3);color:var(--cyan);font-size:1rem;transition:transform .15s,box-shadow .15s;}
+  backdrop-filter:blur(6px);box-shadow:0 0 12px rgba(var(--acc-rgb),.3);color:var(--cyan);font-size:.86rem;transition:transform .15s,box-shadow .15s;}
 #screen-menu .mm-round:hover{transform:scale(1.08);box-shadow:0 0 20px rgba(var(--acc-rgb),.6);}
 #screen-menu .mm-round.mm-support{border-color:rgba(var(--hi-rgb),.65);color:var(--gold);box-shadow:0 0 12px rgba(var(--hi-rgb),.3);}
 #screen-menu .menu-version{position:absolute;z-index:3;right:clamp(12px,3vw,48px);bottom:clamp(14px,3vh,28px);margin:0;font-size:.48rem;color:rgba(var(--acc-rgb),.5);}
@@ -116,7 +116,7 @@
 
 /* ── phones in portrait: one tidy column ───────────────────────────── */
 @media (max-width:700px) and (orientation:portrait){
-  #screen-menu{overflow-y:auto !important;flex-direction:column !important;align-items:center !important;justify-content:flex-start !important;padding:0 14px 90px !important;}
+  #screen-menu{overflow-y:auto !important;flex-direction:column !important;align-items:center !important;justify-content:flex-start !important;padding:0 14px 66px !important;}
   #screen-menu .mm-panel{position:relative;left:auto !important;right:auto !important;top:auto !important;bottom:auto !important;margin:0 auto;max-height:none;}
   #mm-title{margin:22px auto 18px;}
   #mm-left{order:3;width:min(340px,100%);margin-top:14px;}
@@ -130,9 +130,15 @@
 }
 /* phones in landscape: shorter portrait, smaller dial */
 @media (max-height:480px) and (orientation:landscape){
-  #mm-left{top:62px;max-height:calc(100% - 62px - 70px);}
+  #mm-left{top:62px;max-height:calc(100% - 62px - 58px);}
   #mm-right{top:62px;width:clamp(196px,24vw,230px);}
-  #screen-menu .mm-portrait{display:none;}
+  /* (v312) the profile glass panel (pilot portrait + account chip) used to be display:none here, so landscape had no profile panel at all.  It now stays as a
+     compact card in the left column, under the button list and above the round buttons: that strip is free (the list ends ~y=190, the round buttons start ~y=340
+     at 390px tall), it is left of the centre character and clear of the right START panel.  Its height follows the viewport; the button list scrolls instead. */
+  #screen-menu .mm-portrait{display:flex;flex:0 1 auto;order:2;height:clamp(64px,calc(100vh - 62px - 58px - 137px),128px);min-height:64px;}
+  #screen-menu .mm-stack{order:1;}
+  #screen-menu #account-chip{margin:0 0 6px;}
+  #mm-bottom{bottom:10px;}
   #screen-menu .mm-sub{display:none;}
   #screen-menu .menu-logo{font-size:1.25rem;}
 }
