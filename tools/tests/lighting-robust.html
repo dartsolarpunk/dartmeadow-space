@@ -35,6 +35,7 @@ try {
   const blank = new THREE.Scene();
   function closeWorld(w) {
     try { if (window.DMVLight && DMVLight.release) DMVLight.release(w.scene); } catch (e) { __err.push('release threw ' + e); }   // what _pwClose does
+    try { if (window.DMFlash && DMFlash.releaseScene) DMFlash.releaseScene(w.scene); } catch (e) { __err.push('releaseScene threw ' + e); }
     w.scene.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.dispose()); if (o.shadow && o.shadow.map) o.shadow.map.dispose(); });
     w.scene.clear();
   }
