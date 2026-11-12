@@ -47,7 +47,7 @@
   const TIERS = { low: { map: 512, every: 2, far: 60, steps: 6, noise: false }, phone: { map: 1024, every: 2, far: 100, steps: 8, noise: false }, desktop: { map: 2048, every: 1, far: 180, steps: 14, noise: true } };
   const R = { width: 0.153, top: 1.6689, front: -0.0133, band: 0.027 };   // GLB-measured fallback (metres, bind pose)
   const S = { on: false, step: 2, cone: 0, built: false, led: null, casing: null, strip: null, light: null, target: null, dims: null, mode: '', rc: 0, tries: 0, placed: false, prof: 'ground', pairs: [], ui: null, dirty: true, wait: 0, err: null,
-    flags: null, tier: null, tierName: '', mapSize: 2048, shadowOn: false, shFrame: 0, shEvery: 1, shNear: 0.25, shFar: 180, bias: -0.0004, normalBias: 0.06, fresh: 0, shUpdates: 0,
+    flags: null, tier: null, tierName: '', mapSize: 2048, shadowOn: false, shFrame: 0, shEvery: 1, shNear: 0.25, shFar: 180, bias: -0.0004, normalBias: 0.06, biasK: 0.012, biasM: 0.03, tilt: 0.17, shadowFloor: 0.9, fresh: 0, shUpdates: 0,
     t: 0, dtEma: 16, slow: 0, fast: 0, autoOff: 0, retry: 0, beamOn: false, dens: 0.01, beamK: 1, wasOn: false, shadowUser: true, pair: null, U: null, beam: undefined };
   const F = { STEPS, S, R, LM_K, PROF, CONES, TIERS };
   root.DMFlash = F;
@@ -64,7 +64,8 @@
     const fs = q('flashshadow'), size = fs !== null && /^\d+$/.test(fs) && +fs > 1 ? Math.max(256, Math.min(4096, +fs | 0)) : 0;
     const fb = q('flashbeam');
     return { light: q('flashlight') !== '0', shadow: fs !== '0' && fs !== 'off', size, beam: fb === '0' || fb === 'off' ? 0 : (fb === null || fb === 'auto' ? 1 : Math.max(0, Math.min(8, num(fb, 1)))), beamForce: fb !== null && fb !== 'auto' && fb !== '0' && fb !== 'off',
-      tier: /^(low|phone|desktop)$/.test(q('flashtier') || '') ? q('flashtier') : '', bias: q('flashbias') !== null ? num(q('flashbias'), -0.0004) : -0.0004 };
+      tier: /^(low|phone|desktop)$/.test(q('flashtier') || '') ? q('flashtier') : '', bias: q('flashbias') !== null ? num(q('flashbias'), -0.0004) : -0.0004,
+      biasK: q('flashbiask') !== null ? Math.max(0, Math.min(0.2, num(q('flashbiask'), 0.012))) : 0.012, tilt: q('flashtilt') !== null ? Math.max(0, Math.min(0.6, num(q('flashtilt'), 10) * Math.PI / 180)) : 0.17, debug: /^(1|on|true|yes)$/i.test(q('flashdebug') || '') };
   };
   F.pickTier = function (gfx, ua, over) {   // gfx = the game's GFX (may be null), ua = navigator.userAgent, over = ?flashtier
     if (over && TIERS[over]) return over;
@@ -78,7 +79,7 @@
     S.flags = F.readFlags(root.location && root.location.search || '');
     S.tierName = F.pickTier(gfx, root.navigator && root.navigator.userAgent || '', S.flags.tier); S.tier = TIERS[S.tierName];
     let sz = S.flags.size || S.tier.map; if (!S.flags.size && gfx && gfx.shadowSize) sz = Math.min(sz, Math.max(512, gfx.shadowSize));
-    S.mapSize = sz; S.shFar = S.tier.far; S.bias = S.flags.bias; S.shEvery = S.tier.every;
+    S.mapSize = sz; S.shFar = S.tier.far; S.bias = S.flags.bias; S.biasK = S.flags.biasK; S.tilt = S.flags.tilt; S.shEvery = S.tier.every;
     return S.tierName;
   };
   F.refreshTier();
@@ -169,19 +170,44 @@
   function shadowNodeFor(L) {
     const TS = T && T.TSL; if (!TS || !T.ShadowNode || typeof TS.If !== 'function' || typeof TS.float !== 'function') return null;
     const U = ensureU(); if (!U) return null;
+    const logOK = typeof TS.viewZToLogarithmicDepth === 'function' && typeof TS.reference === 'function' && !!TS.renderGroup && typeof TS.max === 'function' && typeof TS.pow === 'function' && typeof TS.smoothstep === 'function' && typeof TS.mix === 'function';
     class FlashShadowNode extends T.ShadowNode {
       setupShadow(builder) { const o = super.setupShadow(builder); try { o.dmFlashShadow = true; } catch (e) { } return o; }
+      // (flashlight v320) a DISTANCE-PROPORTIONAL depth bias.  three's bias is a constant in log-depth units and normalBias a constant in metres, but the spot sits at head height and
+      // lights the ground at grazing angles: a shadow texel covers ~0.14 % of the distance across and ~10x that along the ground, so a fixed bias leaves the whole ground in
+      // self-shadow (acne = dark) beyond ~10-15 m while only the unshadowed band behind the shadow far plane stays lit.  Here the receiver is pulled toward the light by
+      // S.biasK x distance + S.biasM metres before the log-depth conversion (same maths as three's log branch otherwise: xy / w, z from the view depth, + bias).
+      setupShadowCoord(builder, shadowPosition) {
+        const R = builder.renderer;
+        if (!logOK || R.logarithmicDepthBuffer !== true || this.shadow.camera.isOrthographicCamera) return super.setupShadowCoord(builder, shadowPosition);
+        const sh = this.shadow, bias = TS.reference('bias', 'float', sh).setGroup(TS.renderGroup), nr = TS.reference('near', 'float', sh.camera).setGroup(TS.renderGroup), fr = TS.reference('far', 'float', sh.camera).setGroup(TS.renderGroup);
+        const w = shadowPosition.w, xy = shadowPosition.xy.div(w), wb = TS.max(w.mul(1 - S.biasK).sub(S.biasM), nr.mul(1.001));
+        const z = TS.viewZToLogarithmicDepth(wb.negate(), nr, fr);
+        return TS.vec3(xy.x, xy.y.oneMinus(), R.reversedDepthBuffer ? z.sub(bias) : z.add(bias));
+      }
+      // The branch MUST be an expression (an Fn call node), not statements: this node's output is built ONCE (ShadowNode caches `_node`) and then reused by every material's builder.
+      // `If` / `toVar` written straight into setupShadowFilter record their statements on the stack of the FIRST material that compiled; every later material then got `out = 1`
+      // and no shadow lookup at all (found with the real WGSL: only the first lit mesh carried the filter).
       setupShadowFilter(builder, inputs) {
-        const out = TS.float(1).toVar();
-        TS.If(U.shOn.greaterThan(0.5), () => { out.assign(super.setupShadowFilter(builder, inputs)); });
-        return out;
+        return TS.Fn(() => {
+          const out = TS.float(1).toVar();
+          TS.If(U.shOn.greaterThan(0.5), () => {
+            const f = super.setupShadowFilter(builder, inputs);
+            // the map ends at the shadow far plane: ease the shadow out over the last 45 % of its reach (log-depth z -> linear distance) instead of a hard lit / shadowed ARC
+            if (logOK && builder.renderer.logarithmicDepthBuffer === true) {
+              const fr = TS.reference('far', 'float', this.shadow.camera).setGroup(TS.renderGroup), d = TS.pow(fr.add(1.0), TS.max(inputs.shadowCoord.z, 0.0)).sub(1.0);
+              out.assign(TS.mix(f, TS.float(1), TS.smoothstep(fr.mul(0.55), fr, d)));
+            } else out.assign(f);
+          });
+          return out;
+        })();
       }
     }
     return new FlashShadowNode(L, L.shadow);
   }
   function configShadow(L) {   // tier-sized map, tight depth range, PCF soft, only updated when asked
     const sh = L.shadow; if (!sh) return;
-    sh.mapSize.set(S.mapSize, S.mapSize); sh.autoUpdate = false; sh.needsUpdate = false; sh.bias = S.bias; sh.normalBias = S.normalBias; sh.camera.near = PROF.ground.shNear; sh.camera.far = Math.min(S.shFar, PROF.ground.distance);
+    sh.mapSize.set(S.mapSize, S.mapSize); sh.autoUpdate = false; sh.needsUpdate = false; sh.bias = S.bias; sh.normalBias = S.normalBias; sh.intensity = S.shadowFloor;   // intensity < 1: a shadowed pixel keeps (1 - intensity) of the light, so a shadow failure can never black a surface out sh.camera.near = PROF.ground.shNear; sh.camera.far = Math.min(S.shFar, PROF.ground.distance);
     sh.camera.updateProjectionMatrix();
     const spotUM = Object.getPrototypeOf(sh).updateMatrices;
     if (typeof spotUM === 'function') {   // SpotLightShadow takes its far plane from light.distance: the shadow reach is shorter than the light's (tier + mode)
@@ -250,13 +276,59 @@
     if (S.U) { S.U.shOn.value = 0; S.U.k.value = 0; }
     C.on = false; C.shadow.on = false; S.shadowOn = false; S.shFrame = 0;
   }
-  F.toggle = function (on) { const was = S.on; S.on = typeof on === 'boolean' ? on : !S.on; if (S.on && !was) { S.fresh = 2; S.shFrame = 99; S.slow = 0; S.t = 0; } sync(); return S.on; };
+  F.toggle = function (on) { const was = S.on; if (on !== false && !was) { S.dbgT = 0; S.dbgN = 0; } S.on = typeof on === 'boolean' ? on : !S.on; if (S.on && !was) { S.fresh = 2; S.shFrame = 99; S.slow = 0; S.t = 0; } sync(); return S.on; };
   F.setStep = function (i) { i = Math.max(0, Math.min(STEPS.length - 1, i | 0)); S.step = i; sync(); return STEPS[i]; };
   F.setCone = function (i) { i = Math.max(0, Math.min(CONES.length - 1, i | 0)); S.cone = i; if (S.light && S.on) { for (let k = 0; k < S.pairs.length; k++) if (S.pairs[k].L === S.light) applyProf(S.pairs[k], S.prof); } sync(); return CONES[i].name; };
   F.setShadows = function (on) { S.shadowUser = !!on; if (on) { S.autoOff = 0; S.slow = 0; S.fresh = 2; } return S.shadowUser; };
   S.shadowUser = true;
   F.status = () => ({ on: S.on, lumens: STEPS[S.step], step: S.step, cone: CONES[S.cone].name, built: S.built, light: !!S.light, intensity: S.light ? S.light.intensity : 0, shadow: !!(S.light && S.light.castShadow), shadowOn: S.shadowOn,
     shadowUpdates: S.shUpdates, shadowSize: S.mapSize, shadowFar: S.shFar, shadowEvery: S.shEvery, autoOff: S.autoOff, tier: S.tierName, beam: S.beamOn, dens: S.dens, dtEma: S.dtEma, mode: S.mode, dims: S.dims, err: S.err, flags: S.flags });
+
+  // ── ?flashdebug=1 / DMFlash.audit(scene): WHICH MATERIAL FAMILIES RECEIVE THE SPOT.  A lit material gets the flashlight only if (a) it has no private light list and the spot is a child of the
+  // scene that is drawn, or (b) its private light list (material.lightsNode) contains THIS scene's spot.  Unlit types (MeshBasic*, ShaderMaterial, Points, Line, Sprite) and materials with
+  // lights === false never do.  Families = material type + material name (index suffixes dropped), counted over the scene.  Pure on the scene graph; no GPU.
+  const UNLIT = ['isMeshBasicMaterial', 'isMeshBasicNodeMaterial', 'isShaderMaterial', 'isRawShaderMaterial', 'isPointsMaterial', 'isPointsNodeMaterial', 'isLineBasicMaterial', 'isLineBasicNodeMaterial', 'isLineDashedMaterial', 'isSpriteMaterial', 'isSpriteNodeMaterial', 'isMeshDepthMaterial', 'isMeshDistanceMaterial', 'isShadowMaterial'];
+  function lightListOf(ln) { try { if (!ln) return null; if (typeof ln.getLights === 'function') return ln.getLights(); return ln._lights || null; } catch (e) { return null; } }
+  F.receives = function (m, L, scene) {   // -> { ok, why }
+    if (!m) return { ok: false, why: 'no material' };
+    for (let i = 0; i < UNLIT.length; i++) if (m[UNLIT[i]]) return { ok: false, why: 'unlit type (' + m.type + ')' };
+    if (m.lights === false) return { ok: false, why: 'material.lights === false' };
+    if (m.isShaderMaterial || m.isRawShaderMaterial) return { ok: false, why: 'raw shader' };
+    if (!L) return { ok: false, why: 'no spot light in this scene' };
+    if (m.lightsNode) {
+      const a = lightListOf(m.lightsNode);
+      if (!a) return { ok: true, why: 'custom lightsNode (list not readable: assumed to include the spot)' };
+      if (a.indexOf(L) < 0) return { ok: false, why: 'private light list (' + a.length + ' lights) WITHOUT this scene\'s flashlight' + (a.some(l => l && l.userData && l.userData.dmFlash) ? ' (it holds ANOTHER scene\'s flashlight)' : '') };
+      return { ok: true, why: 'private light list includes the flashlight' };
+    }
+    if (L.parent !== scene) return { ok: false, why: 'the spot is not a child of the drawn scene' };
+    return { ok: true, why: 'scene light list' };
+  };
+  F.audit = function (scene) {
+    scene = scene || (S.pair && S.pair.scene) || (S.pairs[0] && S.pairs[0].scene) || null; if (!scene) return null;
+    const L = F.sceneLight(scene), fam = new Map(), rep = { scene: scene.name || scene.type, spot: !!L, spotOn: !!(L && L.intensity > 0), intensity: L ? L.intensity : 0, castShadow: !!(L && L.castShadow), families: [], blind: 0, lit: 0, meshes: 0 };
+    scene.traverse(o => {
+      if (!(o.isMesh || o.isPoints || o.isLine || o.isSprite) || !o.material || (o.userData && o.userData.dmFlash)) return;
+      const ms = Array.isArray(o.material) ? o.material : [o.material];
+      for (const m of ms) {
+        if (!m) continue; rep.meshes++;
+        const key = (m.type || 'Material') + ' "' + String(m.name || o.name || '?').replace(/[._-]?\d+$/, '').slice(0, 40) + '"';
+        let f = fam.get(key); if (!f) { const r = F.receives(m, L, scene); f = { family: key, n: 0, ok: r.ok, why: r.why, receiveShadow: 0, dmLight: !!(m.userData && m.userData.dmLight) }; fam.set(key, f); }
+        f.n++; if (o.receiveShadow) f.receiveShadow++;
+        if (!f.ok) rep.blind++; else rep.lit++;
+      }
+    });
+    rep.families = Array.from(fam.values()).sort((a, b) => (a.ok - b.ok) || b.n - a.n);
+    F.lastAudit = rep; return rep;
+  };
+  F.auditLog = function (scene, tag) {   // console report: BLIND families first
+    const r = F.audit(scene); if (!r) return null;
+    try {
+      console.info('[flashdebug]' + (tag ? ' ' + tag : '') + ' scene=' + r.scene + ' spot=' + r.spot + ' on=' + r.spotOn + ' I=' + Math.round(r.intensity) + ' shadow=' + r.castShadow + ' | material slots: ' + r.lit + ' receive the flashlight, ' + r.blind + ' do NOT');
+      for (const f of r.families) (f.ok ? console.info : console.warn)('[flashdebug]   ' + (f.ok ? 'LIT  ' : 'BLIND') + ' x' + f.n + ' ' + f.family + ' - ' + f.why + (f.receiveShadow ? ' (receiveShadow x' + f.receiveShadow + ')' : '') + (f.dmLight ? ' [dmLight]' : ''));
+    } catch (e) { }
+    return r;
+  };
 
   // ── the visible beam (volumetric shaft): one additive back-face cone, an analytic ray/cone interval + a handful of samples per pixel (see header)
   function makeBeamAsset() {
@@ -375,10 +447,15 @@
     if (L.parent !== top) { top.add(L); top.add(P.t); }
     const e = S.led.matrixWorld.elements;
     _v.set(e[12], e[13], e[14]); _d.set(e[8], e[9], e[10]).normalize();   // the bar's +Z = the glasses' forward (mirrored with her while riding)
+    if (pn === 'ground' && S.tilt > 0) {   // (v320) a hand-held torch is aimed a little DOWN: a horizontal axis at head height (1.6 m) lights the ground only beyond ~2.3 m, at a grazing angle, as a thin wedge
+      const hz = Math.sqrt(_d.x * _d.x + _d.z * _d.z);
+      if (hz > 0.05) { const ph = Math.max(-1.35, Math.atan2(_d.y, hz) - S.tilt), ch = Math.cos(ph), k = ch / hz; _d.set(_d.x * k, Math.sin(ph), _d.z * k); }
+    }
     L.position.copy(_v); P.t.position.set(_v.x + _d.x * 20, _v.y + _d.y * 20, _v.z + _d.z * 20);
     L.updateMatrixWorld(); P.t.updateMatrixWorld();
     C.on = true; C.mode = mode; C.pos.x = _v.x; C.pos.y = _v.y; C.pos.z = _v.z; C.dir.x = _d.x; C.dir.y = _d.y; C.dir.z = _d.z;
     C.angle = L.angle; C.penumbra = L.penumbra; C.cosOuter = Math.cos(L.angle); C.cosInner = Math.cos(L.angle * (1 - L.penumbra)); C.range = L.distance; C.intensity = I; C.lumens = STEPS[S.step]; C.cone = S.cone; C.coneName = CONES[S.cone].name;
+    if (S.flags.debug) { const nw = root.performance && root.performance.now ? root.performance.now() : Date.now(); if (!S.dbgT || nw - S.dbgT > (S.dbgN < 2 ? 2500 : 15000)) { S.dbgT = nw; S.dbgN = (S.dbgN || 0) + 1; F.auditLog(top, 'on foot/in flight, mode=' + mode + ' tier=' + S.tierName + ' map=' + S.mapSize + ' shadowOn=' + S.shadowOn + ' biasK=' + S.biasK); } }   // ?flashdebug=1: which material families receive the spot (console)
     governor();
     shadowStep(P, L, pn);
     beamStep(P, L, top, mode, pn);

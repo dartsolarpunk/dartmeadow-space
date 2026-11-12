@@ -134,7 +134,7 @@ for (const S of scen) {
   ok(T.low.sunSteps === 0 && T.low.farSteps === 0 && T.low.farN === 0 && T.low.horSteps === 0 && T.low.horN === 0, 'Low: hasMarch() is false (sunSteps / farN / horN all 0)');
   ok(/mob: \{ low: 'low', medium: 'low'/.test(src), "mobile Medium is capped to the Low light stage (PRESET_CAP.mob.medium = 'low')");
   ok(/if \(o\.shadow !== false\) \{/.test(am) && !/if \(o\.shadow !== false && hasMarch\(\)\)/.test(am), 'the shadow-map fade is not gated on hasMarch()');
-  ok(/if \(hasMarch\(\)\) \{[\s\S]*mix\(float\(1\), s, wMap\)\.mul\(hfVis\)[\s\S]*\} else \{[\s\S]*m\.receivedShadowNode = prev \? \(\(s\) => mix\(float\(1\), prev\(s\), wMap\)\) : \(\(s\) => mix\(float\(1\), s, wMap\)\);/.test(am), 'Low: shadow-map-only wMap wrapper (no height-field march)');
+  ok(/if \(hasMarch\(\)\) \{[\s\S]*mix\(float\(1\), s, wMap\)\.mul\(hfVis\)[\s\S]*\} else \{[\s\S]*m\.receivedShadowNode = prev \? \(\(s\) => (?:s && s\.dmFlashShadow \? s : )?mix\(float\(1\), prev\(s\), wMap\)\) : \(\(s\) => (?:s && s\.dmFlashShadow \? s : )?mix\(float\(1\), s, wMap\)\);/.test(am), 'Low: shadow-map-only wMap wrapper (no height-field march)');
   ok(/If\(wH\.greaterThan\(0\.0\)/.test(src) && /smoothstep\(300\.0, 450\.0, dC\)/.test(src), 'the horizon march only runs past ~300 m (a real branch: the near ground never pays)');
   const tb = LT.tierBytes('ultra'); ok((tb.cpu + tb.gpu) / 1048576 < 4, 'ultra caches < 4 MB with the horizon field (' + ((tb.cpu + tb.gpu) / 1048576).toFixed(2) + ')');
   // CPU replica of the shader's horizon march over the 48 m field on Solenne, low sun from the west: far ground that the old chain left fully lit

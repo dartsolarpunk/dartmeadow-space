@@ -1,0 +1,43 @@
+<!doctype html>
+<!-- Flashlight RENDER harness (headless Chromium + SwiftShader, WebGL2 backend of WebGPURenderer): the REAL ui/dm-flash.js spot, shadows on, log depth, ACES like the game.
+     Scene = dusk ground + wall + column + a custom-node material (stand-in for the atlas / terrain shaders).  Query: ?shadow=0 ?tier=phone ?wrap=1 (DMLight-style receivedShadowNode wrapper)
+     ?cone=0|1|2  ?lm=0..4  ?off=1 (flashlight off baseline).  Result: window.__done = { ok, px:{region:[r,g,b,lum]}, err[] } and the canvas is the screenshot. -->
+<html><head><meta charset="utf-8"><style>body{margin:0;background:#000}canvas{display:block}</style>
+<script type="importmap">{"imports":{"three":"/three/build/three.webgpu.js","three/webgpu":"/three/build/three.webgpu.js","three/tsl":"/three/build/three.tsl.js"}}</script>
+<script>window.__err=[];addEventListener('error',e=>__err.push('onerror '+e.message));</script>
+<script src="/ui/dm-flash.js"></script>
+</head><body>
+<script type="module">
+import * as THREE from 'three';
+import * as TSL from 'three/tsl';
+const T3 = Object.assign({}, THREE, { TSL }); window.THREE = T3; const Q = new URLSearchParams(location.search);
+const W = 640, H = 400;
+try {
+  const r = new THREE.WebGPURenderer({ antialias: false, forceWebGL: true, logarithmicDepthBuffer: true });
+  r.setSize(W, H); document.body.appendChild(r.domElement); await r.init();
+  r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFSoftShadowMap; r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 1.0;
+  const scene = new THREE.Scene(); scene.background = new THREE.Color(0x03050a); scene.fog = new THREE.Fog(0x0a1018, 40, 520);
+  const cam = new THREE.PerspectiveCamera(72, W / H, 0.1, 4000); cam.position.set(0, 1.7, 0); cam.lookAt(0, 1.2, -20);
+  DMFlash.hooks.gfx = () => ({ isMobile: Q.get('tier') !== 'desktop', preset: 'medium', shadowSize: 1024 }); DMFlash.hooks.logDepth = () => true; DMFlash.hooks.depthOK = () => true;
+  const lit = (c, o) => new THREE.MeshStandardNodeMaterial(Object.assign({ color: c, roughness: 0.95, metalness: 0 }, o));
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(600, 600, 8, 8).rotateX(-Math.PI / 2), lit(0x4a4a3c)); ground.receiveShadow = true; scene.add(ground);
+  const wall = new THREE.Mesh(new THREE.BoxGeometry(30, 10, 1), lit(0x777777)); wall.position.set(0, 5, -26); wall.castShadow = wall.receiveShadow = true; scene.add(wall);
+  const col = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 6, 16), lit(0x666666)); col.position.set(-5, 3, -14); col.castShadow = col.receiveShadow = true; scene.add(col);
+  const col2 = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 6, 16), lit(0x666666)); col2.position.set(5, 3, -14); col2.castShadow = col2.receiveShadow = true; scene.add(col2);
+  // a node material with a custom colour graph + a DMLight-like shadow wrapper
+  const cm = lit(0x555555); cm.colorNode = TSL.mix(TSL.vec3(0.3, 0.32, 0.28), TSL.vec3(0.5, 0.45, 0.4), TSL.sin(TSL.positionWorld.x.mul(0.7)).mul(0.5).add(0.5));
+  const cub = new THREE.Mesh(new THREE.BoxGeometry(3, 3, 3), cm); cub.position.set(0, 1.5, -10); cub.castShadow = cub.receiveShadow = true; scene.add(cub);
+  if (Q.get('wrap') === '1') for (const m of [ground.material, wall.material, col.material, col2.material, cm]) { const prev = m.receivedShadowNode; m.receivedShadowNode = prev ? (s => s && s.dmFlashShadow ? s : TSL.mix(TSL.float(1), prev(s), TSL.float(0.7))) : (s => s && s.dmFlashShadow ? s : TSL.mix(TSL.float(1), s, TSL.float(0.7))); }
+  scene.add(new THREE.HemisphereLight(0x223355, 0x111111, 0.35)); scene.add(new THREE.AmbientLight(0x222233, 0.3));
+  if (Q.get('sun') === '1') { const sun = new THREE.DirectionalLight(0xfff2e0, 0.3); sun.position.set(80, 120, 40); scene.add(sun); }
+  DMFlash.adoptScene(scene);
+  const led = new THREE.Object3D(); led.position.set(+(Q.get('ox') || 0), 1.62, -0.05); led.rotation.y = Math.PI; scene.add(led); scene.updateMatrixWorld(true);
+  DMFlash.S.led = led; DMFlash.S.built = true;
+  if (Q.get('cone')) DMFlash.setCone(+Q.get('cone')); DMFlash.setStep(Q.get('lm') ? +Q.get('lm') : 4);
+  if (Q.get('off') !== '1') DMFlash.toggle(true);
+  for (let f = 0; f < 8; f++) { DMFlash.tick('walk'); r.render(scene, cam); await new Promise(z => setTimeout(z, 20)); }
+  DMFlash.tick('walk'); r.render(scene, cam);
+  const px = null;
+  window.__done = { ok: true, px, status: DMFlash.status(), err: __err };
+} catch (e) { window.__done = { ok: false, fatal: String(e && e.stack || e), err: __err }; }
+</script></body></html>

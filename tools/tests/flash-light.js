@@ -110,10 +110,36 @@ const src = fs.readFileSync(path.join(root, 'ui/dm-flash.js'), 'utf8');
   for (const nm of ['governor', 'shadowStep', 'beamStep', 'darkAll', 'applyProf', 'intensityNow']) { const b = body(nm); ok(b.length > 20 && !/\bnew\s|\[\s*\]|\{\s*\}/.test(b.replace(/catch \(e\) \{ \}/g, '')), nm + '(): no new / array / object literal'); }
   ok(!/localStorage|sessionStorage|indexedDB/.test(src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')), 'session only: no storage');
 
+  // ── (v320) aim, shadow floor, debug flag, the material audit (which families RECEIVE the spot)
+  { hooks.isMobile = false; hooks.preset = 'high'; hooks.shadowSize = 2048; location.search = ''; F.refreshTier(); const Z = mk(); F.adoptScene(Z.sc); const LZ = F.sceneLight(Z.sc); S.led = Z.led; Z.led.rotation.y = Math.PI; Z.sc.updateMatrixWorld(true); F.toggle(true); S.t = 0; F.tick('walk');
+    const c = F.cone(); ok(c.dir.y < -0.12 && c.dir.y > -0.22 && Math.abs(Math.hypot(c.dir.x, c.dir.y, c.dir.z) - 1) < 1e-9 && c.dir.z < -0.9, 'on foot the beam is aimed ~10 deg DOWN from the glasses axis (dir.y ' + c.dir.y.toFixed(3) + '): a horizontal axis at head height lights the ground only as a thin wedge');
+    F.tick('space'); ok(Math.abs(F.cone().dir.y) < 1e-9, 'open space: no tilt (axis = glasses forward)'); F.tick('walk');
+    ok(LZ.shadow.intensity > 0.5 && LZ.shadow.intensity < 1, 'shadow intensity < 1 (' + LZ.shadow.intensity + '): a shadowed pixel keeps some light, a shadow failure can never black a surface out');
+    ok(S.biasK > 0 && S.biasK < 0.05 && S.biasM > 0, 'distance-proportional shadow bias (' + S.biasK + ' x d + ' + S.biasM + ' m)');
+    ok(F.readFlags('?flashdebug=1').debug === true && F.readFlags('').debug === false && F.readFlags('?flashtilt=0').tilt === 0 && Math.abs(F.readFlags('?flashtilt=20').tilt - 20 * Math.PI / 180) < 1e-9 && F.readFlags('?flashbiask=0.03').biasK === 0.03, '?flashdebug=1 / ?flashtilt=deg / ?flashbiask=k flags');
+    // audit: a lit material reaches the spot through the scene list, a private list only when it holds THIS scene's spot; unlit types never
+    const sc = Z.sc, mkm = (M, n) => { const m = new M(); m.name = n; return m; }, add = (m, n, rs) => { const o = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), m); o.name = n || ''; o.receiveShadow = !!rs; sc.add(o); return o; };
+    const lit = mkm(THREE.MeshStandardMaterial, 'terrain'), basic = mkm(THREE.MeshBasicMaterial, 'sky'), priv = mkm(THREE.MeshStandardMaterial, 'atlas'), stale = mkm(THREE.MeshStandardMaterial, 'oldatlas'), good = mkm(THREE.MeshStandardMaterial, 'goodatlas'), off = mkm(THREE.MeshStandardMaterial, 'nolights');
+    const otherScene = mk(); F.adoptScene(otherScene.sc); const LO = F.sceneLight(otherScene.sc);
+    priv.lightsNode = { getLights: () => [new THREE.AmbientLight(0xffffff, 1)] }; stale.lightsNode = { getLights: () => [LO] }; good.lightsNode = { getLights: () => [new THREE.AmbientLight(0xffffff, 1), LZ] }; off.lights = false;
+    add(lit, 'a', true); add(lit, 'b', true); add(basic, 'c'); add(priv, 'd'); add(stale, 'e'); add(good, 'f'); add(off, 'g'); add(new THREE.SpriteMaterial(), 'h'); sc.add(new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial()));
+    const R = F.audit(sc), by = {}; for (const f of R.families) by[f.family] = f;
+    ok(R.spot && R.spotOn && by['MeshStandardMaterial "terrain"'] && by['MeshStandardMaterial "terrain"'].ok && by['MeshStandardMaterial "terrain"'].n === 2 && by['MeshStandardMaterial "terrain"'].receiveShadow === 2, 'audit: scene-list material receives the spot (family counted x2)');
+    ok(by['MeshBasicMaterial "sky"'] && !by['MeshBasicMaterial "sky"'].ok && /unlit/.test(by['MeshBasicMaterial "sky"'].why), 'audit: MeshBasic is BLIND (unlit)');
+    ok(!by['MeshStandardMaterial "atlas"'].ok && /WITHOUT/.test(by['MeshStandardMaterial "atlas"'].why), 'audit: a private list without the spot is BLIND');
+    ok(!by['MeshStandardMaterial "oldatlas"'].ok && /ANOTHER scene/.test(by['MeshStandardMaterial "oldatlas"'].why), 'audit: a private list holding ANOTHER scene\'s spot (the stale mansion atlas bug) is BLIND and says so');
+    ok(by['MeshStandardMaterial "goodatlas"'].ok && /includes the flashlight/.test(by['MeshStandardMaterial "goodatlas"'].why), 'audit: a private list that holds this scene\'s spot is LIT');
+    ok(!by['MeshStandardMaterial "nolights"'].ok && !by['SpriteMaterial "h"'].ok && !by['PointsMaterial "?"'].ok, 'audit: lights=false / sprite / points are BLIND');
+    ok(R.blind === 6 && R.lit === 3 && R.families[0].ok === false, 'audit: totals + BLIND families sorted first (' + R.lit + ' lit, ' + R.blind + ' blind)');
+    const logs = []; const ci = console.info, cw = console.warn; console.info = (...a) => logs.push('I ' + a.join(' ')); console.warn = (...a) => logs.push('W ' + a.join(' ')); F.auditLog(sc, 'test'); console.info = ci; console.warn = cw;
+    ok(logs.length === R.families.length + 1 && /\[flashdebug\]/.test(logs[0]) && logs.filter(l => /^W .*BLIND/.test(l)).length === R.families.filter(f => !f.ok).length, '?flashdebug console report: header + one line per family, BLIND ones as warnings');
+    ok(F.audit(new THREE.Scene()) && F.audit(new THREE.Scene()).spot === false && !F.receives(lit, null, sc).ok, 'audit: a scene without a spot reports spot=false, nothing lit');
+    F.toggle(false); F.tick('walk'); F.releaseScene(otherScene.sc); }
   // ── hooks in the shared files
   const rd = p => fs.readFileSync(path.join(root, p), 'utf8');
   ok(/s && s\.dmFlashShadow \? s :/.test(rd('ui/dm-light.js')) && (rd('ui/dm-light.js').match(/dmFlashShadow/g) || []).length >= 4, 'dm-light.js: the sun-visibility shadow wrapper skips the flashlight shadow (all 4 branches)');
   ok(/withFlash && o\.isSpotLight && o\.userData && o\.userData\.dmFlash/.test(rd('ui/dm-mansion-look.js')) && /lightList\(ctx, true\)/.test(rd('ui/dm-mansion-look.js')), 'dm-mansion-look.js: the atlas light list includes the flashlight (not the probe-scaled list)');
+  ok(/S\.atlasLightArr/.test(rd('ui/dm-mansion-look.js')) && /l === S\.atlasLightArr\[i\]/.test(rd('ui/dm-mansion-look.js')), 'dm-mansion-look.js: the shared atlas rebuilds its light list when the world scene (and so its spot) changes');
   ok(/DMFlash\.sceneLight\(flightScene\)/.test(rd('ui/dm-bt-lighting.js')), 'dm-bt-lighting.js: Bird Temple hull + interior lists include the flashlight');
   ok(/DMFlash\.hooks\.gfx=\(\)=>GFX/.test(rd('index.html')) && /DMFlash\.hooks\.depthOK=_viewportDepthOK/.test(rd('index.html')), 'index.html: GFX / depth / log-depth hooks before the first adoptScene');
   // the TSL shadow node class stays tagged + branch-gated in source
@@ -141,6 +167,46 @@ const src = fs.readFileSync(path.join(root, 'ui/dm-flash.js'), 'utf8');
       let bw = ''; try { bw = wgsl(P.beam, sc, cam, [Ls]); } catch (e) { console.log('   ' + e.message); }
       ok(bw.length > 1000 && new RegExp('i < ' + F.TIERS[F.S.tierName].steps + ';').test(bw), 'beam WGSL compiles with ' + F.TIERS[F.S.tierName].steps + ' samples');
       F.toggle(false); F.tick('walk'); ok(!P.beam.visible && F.U.shOn.value === 0 && F.U.k.value === 0, 'off: beam hidden, shadow branch closed');
+    }
+    // ── (v320) EVERY material family gets the spot term in its real WGSL, within the 16-sampled-textures-per-stage limit.  Built with the same TSL the game uses (stub renderer, no GPU).
+    //    "spot term" = the SpotLightNode cone smoothstep(coneCos, penumbraCos, .) (a point / ambient / hemisphere list never has it); negative control: a private list WITHOUT the spot.
+    {
+      hooks.isMobile = true; hooks.preset = 'medium'; hooks.shadowSize = 1024; location.search = ''; F.refreshTier(); F.hooks.depthOK = () => true; F.hooks.logDepth = () => true;
+      const sc = new T2.Scene(); sc.fog = new T2.Fog(0x888888, 40, 900); F.adoptScene(sc); const led = new T2.Object3D(); sc.add(led); sc.updateMatrixWorld(true); S.led = led; S.built = true; F.toggle(true); F.tick('walk'); F.tick('walk');
+      const Ls = F.sceneLight(sc), cam = new T2.PerspectiveCamera(60, 1, 0.1, 5000), TS = NS.TSL, amb = new T2.AmbientLight(0x6688aa, 0.5), hemi = new T2.HemisphereLight(0x88bbff, 0x222222, 0.4); sc.add(amb, hemi);
+      const spotRe = /smoothstep\( render\.nodeUniform\d+, render\.nodeUniform\d+, /, texCount = w => (w.match(/var nodeUniform\d+ : texture_/g) || []).length, sampCount = w => (w.match(/var nodeUniform\d+_sampler : sampler/g) || []).length;
+      const dmWrap = m => { const prev = m.receivedShadowNode; m.receivedShadowNode = prev ? (s => s && s.dmFlashShadow ? s : TS.mix(TS.float(1), prev(s), TS.float(0.7))) : (s => s && s.dmFlashShadow ? s : TS.mix(TS.float(1), s, TS.float(0.7))); return m; };
+      const fam = {
+        'MeshStandardNodeMaterial (terrain / props / character / board)': () => new T2.MeshStandardNodeMaterial({ roughness: 0.9 }),
+        'custom colorNode (ground / brick / voxel atlases)': () => { const m = new T2.MeshStandardNodeMaterial(); m.colorNode = TS.mix(TS.vec3(0.3, 0.3, 0.2), TS.vec3(0.6, 0.5, 0.4), TS.sin(TS.positionWorld.x).mul(0.5).add(0.5)); m.normalNode = TS.normalView; return m; },
+        'DMLight-wrapped (receivedShadowNode + emissive bounce + aoNode)': () => { const m = dmWrap(new T2.MeshStandardNodeMaterial()); m.emissiveNode = TS.vec3(0.01, 0.01, 0.012); m.aoNode = TS.float(0.8); return m; },
+        'MeshPhysicalNodeMaterial (glass / water / hull)': () => new T2.MeshPhysicalNodeMaterial({ roughness: 0.2, metalness: 0.5, clearcoat: 0.5 }),
+        'MeshLambertNodeMaterial (rings / holo)': () => new T2.MeshLambertNodeMaterial(),
+        'alpha-blended double-sided (foliage cards)': () => new T2.MeshStandardNodeMaterial({ transparent: true, side: T2.DoubleSide, opacity: 0.8 }),
+        'emissive-only atlas (mansion shell) with the PRIVATE list [ambient, hemi, spot]': () => { const m = new T2.MeshStandardNodeMaterial({ color: 0x000000 }); m.emissiveNode = TS.vec3(0.2, 0.2, 0.2); m.lightsNode = TS.lights([amb, hemi, Ls]); return m; },
+        'Bird Temple hull / interior private list [..., spot]': () => { const m = new T2.MeshStandardNodeMaterial(); m.lightsNode = TS.lights([amb, hemi, Ls]); return m; },
+      };
+      for (const name of Object.keys(fam)) for (const rs of [true, false]) {
+        const mesh = new T2.Mesh(new T2.PlaneGeometry(10, 10), fam[name]()); mesh.receiveShadow = rs; sc.add(mesh); sc.updateMatrixWorld(true);
+        const own = !!mesh.material.lightsNode; let w = '', ww = ''; const lightsFor = own ? [] : [amb, hemi, Ls];
+        try { w = wgsl(mesh, sc, cam, lightsFor.length ? lightsFor : [Ls]); } catch (e) { console.log('   ' + name + ': ' + e.message); }
+        ok(w.length > 1000 && spotRe.test(w), 'WGSL "' + name + '" (receiveShadow ' + rs + '): carries the spot term');
+        ok(!rs || /textureGatherCompare/.test(w), 'WGSL "' + name + '": spot shadow lookup present when it receives shadows');
+        ok(texCount(w) <= 16 && sampCount(w) <= 16, 'WGSL "' + name + '" (receiveShadow ' + rs + '): ' + texCount(w) + ' sampled textures / ' + sampCount(w) + ' samplers <= 16 (WebGPU limit per stage)');
+        const r = F.receives(mesh.material, Ls, sc); ok(r.ok, 'audit agrees "' + name + '": ' + r.why);
+        sc.remove(mesh);
+      }
+      { const m = new T2.MeshStandardNodeMaterial(); m.lightsNode = TS.lights([amb, hemi]); const mesh = new T2.Mesh(new T2.PlaneGeometry(10, 10), m); mesh.receiveShadow = true; sc.add(mesh); sc.updateMatrixWorld(true);
+        let w = ''; try { w = wgsl(mesh, sc, cam, [amb, hemi]); } catch (e) { console.log('   ' + e.message); }
+        ok(w.length > 500 && !spotRe.test(w) && !/textureGatherCompare/.test(w), 'negative control: a private list WITHOUT the spot has no spot term in its WGSL ...'); ok(!F.receives(m, Ls, sc).ok, '... and the audit flags it BLIND'); sc.remove(mesh); }
+      { const m = new T2.MeshBasicNodeMaterial({ color: 0x888888 }); const mesh = new T2.Mesh(new T2.PlaneGeometry(10, 10), m); sc.add(mesh); sc.updateMatrixWorld(true);
+        let w = ''; try { w = wgsl(mesh, sc, cam, [Ls]); } catch (e) { console.log('   ' + e.message); }
+        ok(w.length > 300 && !spotRe.test(w) && !F.receives(m, Ls, sc).ok, 'MeshBasicNodeMaterial never receives the spot (unlit: sky / water FX / glows by design) and the audit says so'); sc.remove(mesh); }
+      // the distance-proportional bias + far fade are in the shadow lookup of the real shader (log-depth path)
+      { const mesh = new T2.Mesh(new T2.PlaneGeometry(10, 10), new T2.MeshStandardNodeMaterial()); mesh.receiveShadow = true; sc.add(mesh); sc.updateMatrixWorld(true); let w = ''; try { w = wgsl(mesh, sc, cam, [Ls]); } catch (e) { console.log('   ' + e.message); }
+        ok(/smoothstep\( \( render\.nodeUniform\d+ \* 0\.55 \), render\.nodeUniform\d+, \( pow\( \( render\.nodeUniform\d+ \+ 1\.0 \), max\(/.test(w), 'shadow lookup eases out over the last 45 % of the shadow reach (no hard lit / shadowed arc at the far plane)');
+        ok(/max\( \( \w+ \* 0\.988 \) - 0\.03/.test(w) || /0\.988/.test(w), 'shadow lookup uses the distance-proportional bias (1.2 % of the distance + 3 cm)'); sc.remove(mesh); }
+      F.toggle(false); F.tick('walk');
     }
     { hooks.isMobile = false; F.hooks.depthOK = () => true; const sc = new T2.Scene(); sc.fog = new T2.Fog(0x888888, 40, 900); F.adoptScene(sc); const led = new T2.Object3D(); sc.add(led); sc.updateMatrixWorld(true); S.led = led; S.beam = undefined;
       F.toggle(true); F.tick('walk'); const P = S.pairs[S.pairs.length - 1]; ok(P.beam && P.beam.visible, 'fogged scene without DMVLight: own cone beam');
