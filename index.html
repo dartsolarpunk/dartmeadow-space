@@ -199,13 +199,13 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-water-fx.js?v=292"></script>   <!-- water: spray / splash / mist sprites, wake, footstep ripples, shore-break spray, underwater fog + shafts (?waterfx=0 off) -->   <!-- water: baked sea, shore, ground hook (?water=0 = the previous sea) -->
 <script src="ui/dm-perf.js?v=160"></script>
 <script src="ui/dm-governor.js?v=264"></script>
-<script src="ui/dm-budget.js?v=324"></script>
+<script src="ui/dm-budget.js?v=325"></script>
 <script src="ui/dm-mem.js?v=292"></script>
 <script src="ui/dm-lod.js?v=310"></script>
 <script src="ui/dm-terrain-lod.js?v=294"></script>   <!-- one terrain across every altitude band: shared slope / skirt / sea-tint contract between the globe map and the sky ground -->
 <script src="ui/dm-impostor.js?v=280"></script>   <!-- far-range LOD: vertex-clustering impostor (mansion LOD2, colours baked) -->   <!-- far-range LOD: the ONE distance table per device class (props, mansion, landmarks, vantage reach); ?lod=off|low|mobile|desktop -->
 <script src="ui/dm-light.js?v=323"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
-<script src="ui/dm-vlight.js?v=324"></script>   <!-- lighting overhaul: lamps / LEDs / flashlight / low sun light the volumetric fog (scene.fogNode, light list, equi-angular in-scatter); ?vlights=0|low|med|high -->
+<script src="ui/dm-vlight.js?v=325"></script>   <!-- lighting overhaul: lamps / LEDs / flashlight / low sun light the volumetric fog (scene.fogNode, light list, equi-angular in-scatter); ?vlights=0|low|med|high -->
 <script src="ui/dm-atmo-shell.js?v=297"></script>   <!-- (v297) DMAtmoShell.radii/worldR/ratio: the faded atmosphere perimeter of a body (Solenne 1.18 R) for the space -> world hand-off (Worlds) -->
 <script src="ui/dm-spawn.js?v=314"></script>   <!-- (v314) DMSpawn: new-game spawn in interstellar space near Sol + the arrival push-out from every world's hand-off radius -->
 <script src="ui/dm-pw-handoff.js?v=299"></script>   <!-- (v299) the space -> surface hand-off policy: pre-build hidden from PWS_OPEN, show the world + minimap globe at the DMAtmoShell perimeter (Worlds) -->
@@ -229,7 +229,7 @@ window.DMFT=window.DMFT||(function(){ const E=Object.create(null), X=Object.crea
 <script src="ui/dm-fluid.js?v=80"></script>
 <script src="ui/dm-journal.js?v=98"></script>
 <script src="ui/dm-worldstyle.js?v=94"></script>
-<script src="ui/dm-polish.js?v=324"></script>
+<script src="ui/dm-polish.js?v=325"></script>
 <script src="ui/dm-sky.js?v=209"></script>
 <script src="ui/dm-dust.js?v=191"></script>
 <!-- crunch1 true-fluid VFX (WebGPU only; WebGL keeps the current ocean/dust/fumes) -->
@@ -1078,7 +1078,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-collide-game.js?v=281" defer></script>
 <script src="ui/dm-cgroup.js?v=281" defer></script>
 <script src="ui/dm-charm.js?v=234" defer></script>
-<script src="ui/dm-flash.js?v=324" defer></script>
+<script src="ui/dm-flash.js?v=325" defer></script>
 <script src="ui/dm-menuscene.js?v=245" defer></script>
 <script src="ui/dm-starbubble.js?v=4" defer></script>
 <script src="ui/dm-hazardbubble.js?v=215" defer></script>
@@ -1087,7 +1087,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-bt-madison.js?v=5" defer></script>
 <script src="ui/dm-bt-nova.js?v=1" defer></script>
 <script src="ui/dm-bt-terminal.js?v=3" defer></script>
-<script src="ui/dm-bt-lighting.js?v=321" defer></script>
+<script src="ui/dm-charshadow.js?v=325" defer></script>   <!-- lamp shadows: analytic soft capsule / ellipsoid shadow of her + the board from every nearby lamp (no depth texture); ?charshadow=0 -->
+<script src="ui/dm-bt-lighting.js?v=325" defer></script>
 <script src="ui/dm-bt-cargocam.js?v=1" defer></script>
 <script src="ui/dm-bt-interior.js?v=124" defer></script>
 <script src="ui/dm-bt-pbr.js?v=292" defer></script>
@@ -1103,11 +1104,11 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-edgewarm.js?v=235" defer></script>
 <script src="ui/dm-arielhome.js?v=231" defer></script>
 <script src="ui/dm-mansion-rooms.js?v=321" defer></script>
-<script src="ui/dm-mansion-look.js?v=323" defer></script>
-<script src="ui/dm-mansion-interior.js?v=263" defer></script>
+<script src="ui/dm-mansion-look.js?v=325" defer></script>
+<script src="ui/dm-mansion-interior.js?v=325" defer></script>
 <script src="ui/dm-orbit-clamp.js?v=1" defer></script>
 <script src="ui/dm-facilities.js?v=321" defer></script>
-<script src="ui/dm-lamps.js?v=323" defer></script>
+<script src="ui/dm-lamps.js?v=325" defer></script>
 <script src="ui/dm-mansion-collide.js?v=283" defer></script>
 <script src="ui/dm-holo.js?v=284" defer></script>
 <script src="ui/dm-sys.js?v=310"></script>
@@ -18812,7 +18813,8 @@ function renderWithPostFX(){
   try{ if(galSky.ready) updateGalSky(); }catch(e){}
   try{ if(window.DMStarBubble) { const n=performance.now(), d=_sbT?(n-_sbT)/1000:1/60; _sbT=n; if(window.DMStar) DMStar.frame(flightCamera,d); if(window.DMMist) DMMist.frame(flightCamera,d); if(window.DMFluidWorld) DMFluidWorld.frame(flightCamera,d); DMStarBubble.frame(flightCamera,flightScene,d); } }catch(e){ console.warn('[starbubble] '+(e&&e.stack||e)); }
   try{ if(window.DMBtInterior&&DMBtInterior.pre) DMBtInterior.pre(flightCamera); }catch(e){}   // (v116) sealed? decided before the temple lighting (the glass probe waits while no glass is in view)
-  try{ if(window.BTL&&BTL.preRender) BTL.preRender(flightRenderer,flightScene,flightCamera); }catch(e){ if(window.BTL) BTL._err=String(e&&e.stack||e).slice(0,300); }   // v110 temple lights/shadow cache/glass probe
+  try{ if(window.BTL&&BTL.preRender) BTL.preRender(flightRenderer,flightScene,flightCamera); }catch(e){ if(window.BTL) BTL._err=String(e&&e.stack||e).slice(0,300); }
+  try{ if(window.DMCharShadow&&DMCharShadow.S.handles.length) DMCharShadow.tick(CHAR,(typeof PW!=='undefined'&&PW&&PW.active&&PW.board)?PW.board:(typeof boardFlight!=='undefined'?boardFlight:null)); }catch(e){ if(!window._dmcsWarn){ window._dmcsWarn=1; console.warn('[charshadow] tick',e); } }   // (lamp shadows 3) her bones + the board OBB -> the analytic lamp shadow uniforms (ui/dm-charshadow.js; no allocation, nothing while no lamp light is attached)   // v110 temple lights/shadow cache/glass probe
   // (v116) below deck with no opening in view: the outside world is hidden for this render and the atmosphere pass skipped (ui/dm-bt-interior.js)
   let _seal=false, _btib=false; try{ if(window.DMBtBake) DMBtBake.tick(); }catch(e){} try{ if(window.DMBtHull) DMBtHull.tick(); }catch(e){} try{ if(window.DMBtPbr) DMBtPbr.tick(); }catch(e){} try{ if(window.DMBtInterior){ DMBtInterior.tick(); _btib=true; _seal=DMBtInterior.begin(flightScene,flightCamera); } }catch(e){ _seal=false; }
   try{ const _hs=_taHideShells(); try{ DMGpuProf.push('atmo'); let _ta=false; try{ if(!_seal){ const _a0=performance.now(); try{ _ta=_trueAtmoRender(flightRenderer,flightScene,flightCamera); } finally{ DMFT.add('atmoPass',performance.now()-_a0); } } } finally{ DMGpuProf.pop(); } if(!_ta){ const _s0=performance.now(); flightRenderer.render(flightScene,flightCamera); DMFT.add('sceneRender',performance.now()-_s0); } } finally{ _taShowShells(_hs); } _shotGrab(flightRenderer); try{ DMGpuProf.tick&&DMGpuProf.tick(); }catch(e){} }

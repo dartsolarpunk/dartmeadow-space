@@ -163,3 +163,23 @@ Changes made (all uniform writes / cadences, no recompile on toggle; the spot an
 1. Brightness / look in the real dusk scene (calibration is from a synthetic scene: `?flashgain=` scales it, `?flashhalo=0` shows the hot core alone).
 2. The patched `getSpotAttenuation` compiling on the real WebGPU backend (the WGSL builds and renders on WebGL2 / SwiftShader; part-2 tests check the exp terms in the WGSL). `DMFlash.status().patched` must be true; if false the plain cone is used (no breakage).
 3. fps: every figure above is an estimate. Compare `?flashlight=0`, `?vlights=0`, `?flashshadow=0`, `?govhud=1` (shows `BUD` + the fast level via stats().fast).
+
+## Lamp shadows 3 (v325): real room lights + analytic shadow of the player
+
+### How it works
+- **One pool of PointLights** (ui/dm-lamps.js) now serves street lamps, rail LEDs AND the mansion's room lamps. Candidates (street lamps, LED strips, the 45 room lights of `assets/ariel-home/ariel-home-roomlights.json`, planned by `tools/ariel-home/plan_room_lights.js` from the interior GLB emissive quads, max 6 per room) are scored 3x a second as `gate x I / (d^2+16)`. Indoors only the room she is in competes; outdoors only street lamps / LEDs. A per-slot `slotGate` (smooth box of the room, margin 0.9) keeps room light inside its room and outdoor lamps out of rooms (no hard edge).
+- **Atlas** (ui/dm-mansion-look.js): the private light list now includes pool lights tagged `userData.dmLamp` (`refreshLights(ctx)` after the pool is built). The baked emissive fill steps back by up to 0.35 while real lights are on (`setRealLights`, `?roomfill=<max>`).
+- **Shadow maps** (v323 lamp cube maps, reused): only the nearest N by tier cast, refreshed when she moved or every ~0.9 s. PCF taps sit behind a per-slot `sh` uniform branch. Static interior mesh casts into lamp maps only on ultra (`DMLamps.interiorCasts()`, `?lampstatic=1|0`); interior meshes always receive.
+- **Player shadow, no depth texture** (ui/dm-charshadow.js): each pool light's `colorNode` is multiplied by an analytic soft occlusion: capsule chain (two legs, torso, head, built from bone matrices, radii 0.085/0.125/0.085 of body height) plus the board as an oriented ellipsoid. Penumbra grows with distance behind the occluder; self-exclusion by the hull and normal; strength fades with D/range (0.45..1) so there is no hard edge; max darkness 0.85. Early-outs per pixel (she must be within range+4+H of the lamp). Applies in every receiver that uses the light loop (terrain, props, mansion atlas, Bird Temple fills/altar/cube glow via ui/dm-bt-lighting.js). Max 8 handles, zero allocation per tick.
+
+### Tiers (`?lamptier`, unchanged table)
+low/off: no real lights (sun shadow only). med: 2 lights, 1 shadow map, 512. high: 3 / 2 / 512. ultra: 4 / 3 / 1024 and the interior casts. The analytic term runs on every tier that has lights; DMBudget sheds it only at the harshest stage (bl>=3 or bs>=4); lights stay (no recompile).
+
+### Flags
+`?lampshadow=0` no lamp shadow maps. `?charshadow=0` no analytic player shadow (`=0.5` max darkness). `?lamptier=`, `?lampstatic=`, `?roomk=<gain>` (room light gain), `?roomfill=<k>` (baked fill step-back).
+
+### Texture slots (for the flashlight worker)
+The analytic term uses NO texture. Lamp shadows are cube `textureSampleCompare` per casting slot (r185 does not use an atlas for point lights): med 1, high 2, ultra 3 slots, on top of sun + flashlight spot. A WGSL build test asserts <=16 textures in the mansion atlas.
+
+### Unverified on device
+Real WebGPU WGSL validation (built and rendered only on WebGL2/SwiftShader); fps on iPad (no profile); intensity tuning (ROOM_I 45, LED_I 26, `?roomk`, `?roomfill`); atlas receive cost; Bird Temple attach in the real game; bone names/scale of the real character. Only the Ariel property has room lamps; other worlds get street/LED lights and the sun shadow; props are not part of the analytic term (they shadow only via maps if they cast).
