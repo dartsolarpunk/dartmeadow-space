@@ -38,6 +38,7 @@
   const S = { right: [0, 0, 0], up: [0, 0, 0], half: 0, mode: 1 };
   P.fitSun = function (sun, dir, tx, ty, tz, tight) {
     if (!P.on || !sun || !sun.shadow || !dir) return false;
+    P._sunReal = (typeof performance !== 'undefined' ? performance.now() : Date.now());   // (v324) a real sun shadow map is being fitted: the contact blob steps aside
     const sh = sun.shadow, cam = sh.camera, size = (sh.mapSize && sh.mapSize.x) || 1024;
     // wanted half-extent, eased (so a mode change swims instead of popping); `wide` = the tier's own box (_sunShadowFit)
     const wide = ({ 512: 45, 1024: 70, 2048: 110, 4096: 150 })[size] || 90;
@@ -71,7 +72,9 @@
   /* ── soft contact shadow ──
      One pre-built flat blob under the character group (the map's PCF edge is ~10 cm and leaves her feet
      floating; the blob is the ambient-occlusion a real foot has). Sits on the ground normal, shifts a little away
-     from the sun, thins out with height (jumps) and with the light (night, overcast), and is gone in water. */
+     from the sun, thins out with height (jumps) and with the light (night, overcast), and is gone in water.
+     (v324) ONLY a fallback for when there is no real shadow map: it is hidden while the sun shadow is fitted (P._sunReal, set by fitSun) or the flashlight's shadow map is live
+     (DMFlash.S.shadowOn).  Always a flat, neutral-black radial falloff (no colour, no ring, no animation: pinned by the ground-mark removal test). */
   let _up = null, _q = null, _n = null;
   function makeBlob() {
     const T = THREE, N = 96, cv = document.createElement('canvas'); cv.width = cv.height = N;
@@ -94,6 +97,8 @@
       catch (e) { scene.userData._dmContact = null; return; }
     }
     if (!m) return;
+    const nowT = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    if (nowT - (P._sunReal || -1e9) < 1500 || (window.DMFlash && window.DMFlash.S && window.DMFlash.S.shadowOn)) { m.visible = false; return; }   // real shadows work: no blob
     const day = sky && sky.day != null ? sky.day : 1;
     // fades with height above the ground (a jump) and with the sun (night: the moon throws almost none)
     const k = vis ? Math.max(0, 1 - air / (height * 0.5)) * (0.18 + 0.82 * day) : 0;
@@ -109,7 +114,7 @@
     if (sd && sd.y > 0.05) { const f = 1 / Math.max(0.3, Math.hypot(sd.x, sd.z)); ox = -sd.x * f * r * 0.12; oz = -sd.z * f * r * 0.12; }   // leans away from the sun
     m.position.set(x + ox, y + 0.05 + r * 0.04, z + oz);
     m.scale.set(r * 2.2, 1, r * 2.2);
-    m.material.opacity = (window.DM_SUNSHADOW === 0 ? 0.52 : 0.72) * k;   // (lighting overhaul) was 0.52: the contact blob is the cheap shadow on phones where the sun map is cadenced / the mansion casts none
+    m.material.opacity = (window.DM_SUNSHADOW === 0 ? 0.52 : 0.4) * k;   // (lighting overhaul) was 0.52: the contact blob is the cheap shadow on phones where the sun map is cadenced / the mansion casts none
     m.visible = true;
   };
 
