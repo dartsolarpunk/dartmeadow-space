@@ -48,3 +48,15 @@ Run long scenarios as a background job and poll a log file (a flight boot takes 
 * Timing-dependent behaviour (anything that needs real frame pacing, LOD hysteresis over seconds) is not representative; state checks are.
 * Not covered: Safari/iPad specifics (memory limits, 32 MB GLB decode pressure, GPU process loss), the service worker, touch input, audio.
 * WebGL2 backend != WGSL: a WGSL compile error will only show with `webgpu=True`.
+
+## Bird Temple findings (v326)
+* `python3 tools/dev/bird-temple-repro.py [--webgpu]` boots, waits for the temple, calls `travelToBirdTemple()`, dumps scene/visibility/draw state and exits 1 on failure.
+  `tools/dev/session.py --flight` keeps one booted game alive and evaluates JS dropped into `/tmp/dm-session/in/` (see its docstring).
+* **Reproduced NOT.** On the real game (v325) in headless Chromium, WebGL2/SwiftShader, normal and `?lean=1` (the handheld memory path): the 32 MB GLB loads
+  (HTTP 200, real glTF, not an LFS pointer, `Content-Length` 31896836 on https://dartmeadow.space/), the temple spawns, `travelToBirdTemple()` puts the board 27 units
+  from it and it is in `flightScene`, visible, 400 meshes visible, drawn. So the load path, ordering, scene graph, culling, LOD and PW handling are not the cause on that backend.
+* **Not verifiable here:** real WebGPU (WGSL). `--webgpu` works (navigator.gpu on SwiftShader) but the full boot stalls/errors in the planet shader build
+  (`createBuffer ... mappedAtCreation` RangeErrors), so the temple's WGSL pipelines were never exercised. The remaining suspect is therefore a WebGPU pipeline/validation
+  failure on the temple's materials (three skips such a mesh silently; its `onBeforeRender` still fires, which is why the v320 "was it drawn" check never complained).
+  v326 adds detection + a fallback + a visible message for exactly that (see index.html `_btGpuWatch`, `_btSafeMaterials`, `window.btDiag()`).
+* Harness gotcha fixed: `enterApp()` sends the game back to the menu 850 ms later; calling `launchFlight()` before that left `STATE.screen==='menu'` and the temple never spawned.

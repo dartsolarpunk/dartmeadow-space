@@ -8930,7 +8930,7 @@ function _btLoadModel(){
   // Space in filename must be percent-encoded — unencoded 'Bird Temple.glb'
   // fails fetch on Safari/iOS (and many HTTP clients), leaving group null forever.
   const _gl0=_getGLBLoader(); if(!_gl0) throw new Error('GLTFLoader not ready');
-  _gl0.load(encodeURI('Bird Temple Interior.glb')+'?v=177', gltf=>{
+  _gl0.load(BT_MODEL_URL, gltf=>{
     if(gen!==BIRD_TEMPLE._loadGen||BIRD_TEMPLE.group){ console.warn('[Bird Temple] stale load result dropped'); return; }   // (v320) a timed-out attempt finishing late must not make a second ship   // original model + hatch, three decks (ui/dm-birdtemple.js)
     const t=gltf.scene;
     // (v114) light budget / fixed light key: any light that ships inside the GLB (KHR_lights_punctual or a stray lamp) is
@@ -9484,12 +9484,58 @@ function _btCrumb(a,info){
   try{ if(/fail|giveup|repair|notdrawn|rebuild/i.test(a)&&window.dmBreadcrumb) dmBreadcrumb('bt',(a+(info?':'+info:'')).slice(0,60)); }catch(e){}
 }
 function _btSay(msg,cls){ try{ if(window.dmSys) dmSys(msg,{cls:cls||'warn',dur:4200}); else if(typeof toast==='function') toast(msg,4200); }catch(e){} }
+// (v326) CONCRETE FAILURE REPORTING.  The previous guard only said "failed to load - retrying" and only when the fetch/parse failed; a temple that builds fine but
+// draws nothing (a WebGPU pipeline / WGSL validation error on its materials, which three logs and skips: the mesh's onBeforeRender still fires, so "drawn" lied)
+// said nothing at all.  Now: (1) a failed load probes the URL and says the HTTP status ("model HTTP 404"), (2) the WebGPU device's uncaptured errors are recorded and
+// shown ("GPU error: ..."), (3) arrival compiles the ship under a validation error scope and, if any material is rejected, swaps exactly those for plain safe
+// materials so the ship is visible, and says so.  window.btDiag() returns everything for the debug console / a bug report.
+const BT_MODEL_URL=encodeURI('Bird Temple Interior.glb')+'?v=177';
+function _btNote(kind,msg){ const bt=BIRD_TEMPLE; (bt._notes||(bt._notes=[])).push({t:Math.round(performance.now()),kind,msg:String(msg).slice(0,240)}); if(bt._notes.length>30) bt._notes.shift(); try{ console.warn('[Bird Temple]',kind,msg); }catch(e){} }
+function _btProbeUrl(){   // what does the host actually answer for the model?  (HEAD: no 32 MB download)
+  return fetch(BT_MODEL_URL,{method:'HEAD',cache:'no-store'}).then(r=>'HTTP '+r.status+(r.headers.get('content-length')?' ('+Math.round(r.headers.get('content-length')/1048576)+' MB)':'')).catch(e=>'network: '+((e&&e.message)||e));
+}
+function _btGpuWatch(){
+  const bt=BIRD_TEMPLE; if(bt._gpuWatch) return; let dev=null;
+  try{ dev=flightRenderer&&flightRenderer.backend&&flightRenderer.backend.device; }catch(e){}
+  if(!dev||!dev.addEventListener) return; bt._gpuWatch=1;
+  dev.addEventListener('uncapturederror',ev=>{ try{
+    const m=String((ev&&ev.error&&ev.error.message)||ev); (bt._gpuErrs||(bt._gpuErrs=[])).push(m.slice(0,240)); if(bt._gpuErrs.length>12) bt._gpuErrs.shift();
+    _btNote('gpu',m); const now=performance.now();
+    if(bt.group&&bt.spawned&&now-(bt._gpuSayAt||0)>6000&&_btDist()<BT_KEEP_R){ bt._gpuSayAt=now; _btSay('Bird Temple GPU error: '+m.replace(/\s+/g,' ').slice(0,110),'err'); }
+  }catch(e){} });
+}
+// compile every unique temple material under a validation scope; replace the rejected ones with plain materials (keeps map / colour / emissive)
+function _btSafeMaterials(why){
+  const bt=BIRD_TEMPLE, g=bt.group, r=(typeof flightRenderer!=='undefined')&&flightRenderer, dev=r&&r.backend&&r.backend.device;
+  if(!g||!r||!dev||!dev.pushErrorScope||bt._safeRunning||bt._safeDone) return Promise.resolve(0);
+  bt._safeRunning=true; const seen=new Map(); g.traverse(o=>{ if(!o.isMesh) return; const ms=Array.isArray(o.material)?o.material:[o.material]; for(const m of ms){ if(m&&!seen.has(m)) seen.set(m,o); } });
+  const list=[...seen.entries()]; let bad=0, i=0, firstMsg='';
+  const next=()=>{
+    if(i>=list.length||i>600){ bt._safeRunning=false; bt._safeDone=true; if(bad){ _btNote('safe','replaced '+bad+' of '+list.length+' materials: '+firstMsg); _btSay('Bird Temple: '+bad+' materials were rejected by the GPU ('+firstMsg.replace(/\s+/g,' ').slice(0,70)+') - drawing them simply','err'); } return Promise.resolve(bad); }
+    const [m,mesh]=list[i++]; if(m.userData&&m.userData.btSafe) return next();
+    dev.pushErrorScope('validation');
+    let p; try{ const keep=mesh.visible; p=r.compileAsync(mesh,flightCamera,flightScene); }catch(e){ p=Promise.resolve(); }
+    return Promise.resolve(p).catch(()=>{}).then(()=>dev.popErrorScope()).then(err=>{
+      if(err){ bad++; if(!firstMsg) firstMsg=err.message||'validation error'; _btSwapSafe(g,m); }
+    }).catch(()=>{}).then(()=>new Promise(res=>setTimeout(res,0))).then(next);
+  };
+  return next();
+}
+function _btSwapSafe(root,m){
+  const safe=new THREE.MeshStandardNodeMaterial({color:(m.color&&m.color.clone())||new THREE.Color(0x888888),roughness:0.7,metalness:0.2,side:m.side,transparent:!!m.transparent,opacity:m.opacity!=null?m.opacity:1});
+  if(m.map) safe.map=m.map; if(m.emissive){ safe.emissive=m.emissive.clone(); if(m.emissiveMap) safe.emissiveMap=m.emissiveMap; }
+  safe.userData.btSafe=1; safe.name=(m.name||'')+'_safe';
+  root.traverse(o=>{ if(!o.isMesh) return; if(Array.isArray(o.material)) o.material=o.material.map(x=>x===m?safe:x); else if(o.material===m) o.material=safe; });
+}
+window.btDiag=function(){ const bt=BIRD_TEMPLE,g=bt.group; const o={url:BT_MODEL_URL,hasGroup:!!g,spawned:!!bt.spawned,loading:!!bt._loading,tries:bt._tries|0,gaveUp:!!bt._gaveUp,rebuilds:bt._rebuilds|0,gpuErrs:bt._gpuErrs||[],notes:bt._notes||[]};
+  try{ if(g){ let r=g; while(r.parent) r=r.parent; o.inScene=(r===flightScene); o.visible=g.visible; o.dist=_btDist(); o.meshes=_btMeshCount(g); o.drawnAgoMs=bt._drawnAt?Math.round(performance.now()-bt._drawnAt):null; } }catch(e){} return o; };
 function _btLoadFailed(why){
-  const bt=BIRD_TEMPLE; bt._loading=false; bt._loadT0=0;
+  const bt=BIRD_TEMPLE; bt._loading=false; bt._loadT0=0; _btNote('load',why);
+  _btProbeUrl().then(h=>{ _btNote('url',h); if(!/^HTTP 2/.test(h)) _btSay('Bird Temple model '+h,'err'); });
   try{ const w=bt._pending; if(w&&w.parent) w.parent.remove(w); bt._pending=null; }catch(e){}
   bt._tries=(bt._tries|0)+1; _btCrumb('btLoadFail',String(why).slice(0,32)+' #'+bt._tries);
-  if(bt._tries>BT_RETRY_MAX){ bt._gaveUp=true; _btCrumb('btGiveUp'); _btSay('Bird Temple could not be loaded - press TEMPLE again to retry','err'); return; }
-  _btSay('Bird Temple failed to load - retrying ('+bt._tries+'/'+BT_RETRY_MAX+')');
+  if(bt._tries>BT_RETRY_MAX){ bt._gaveUp=true; _btCrumb('btGiveUp'); _btSay('Bird Temple could not be loaded ('+String(why).replace(/\s+/g,' ').slice(0,60)+') - press TEMPLE again to retry','err'); return; }
+  _btSay('Bird Temple failed to load ('+String(why).replace(/\s+/g,' ').slice(0,70)+') - retrying '+bt._tries+'/'+BT_RETRY_MAX);
   clearTimeout(bt._retryT); bt._retryT=setTimeout(()=>{ bt._retryT=0; try{ _btEnsure('retry'); }catch(e){} },BT_RETRY_MS[Math.min(bt._tries-1,BT_RETRY_MS.length-1)]);
 }
 function _btEnsure(reason){
@@ -9549,22 +9595,24 @@ function _btGuard(){
     _btEnsure('guard'); return;
   }
   if(!bt.spawned) return;
+  try{ _btGpuWatch(); }catch(e){}
   const d=_btDist();
   if(d<BT_KEEP_R||bt._arriveUntil>now||(typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active)) _btVerify('guard',false);
 }
 // Quick Travel landed: check at once and again as the first frames draw; escalate repair -> recompile -> reload
 function _btArrive(){
   const bt=BIRD_TEMPLE; bt._arriveUntil=performance.now()+12000; const t0=performance.now(); bt._drawnAt=0; bt._arriveGen=(bt._arriveGen|0)+1; const gen=bt._arriveGen;
-  _btCrumb('btArrive');
+  _btCrumb('btArrive'); try{ _btGpuWatch(); }catch(e){}
   const step=(i)=>{
     if(gen!==bt._arriveGen) return;
     const v=_btVerify('arrive',true), g=bt.group;
     if(!g){ _btEnsure('arrive'); return; }
     if(v.meshes===0){ _btCrumb('btRebuild','no meshes'); _btRebuild('no meshes'); return; }
+    if(i===1){ try{ if(_isRealWebGPU(flightRenderer)) _btSafeMaterials('arrive'); }catch(e){ _btNote('safe-err',(e&&e.message)||e); } }   // a rejected material never throws and still fires onBeforeRender: ask the GPU
     const drawn=bt._drawnAt>t0, st=(typeof STATE!=='undefined'&&STATE.screen)||'';
     if(drawn||st!=='flight') return;
     if(i===2){ _btCrumb('btNotDrawn','recompile'); try{ _dmCompileObject(g); }catch(e){} }
-    if(i===3){ _btCrumb('btNotDrawn','reload'); _btSay('Bird Temple failed to load - retrying'); _btRebuild('never drawn'); }
+    if(i===3){ _btCrumb('btNotDrawn','reload'); _btNote('never-drawn','no frame drew the ship'); _btSay('Bird Temple built but never drawn'+((bt._gpuErrs&&bt._gpuErrs.length)?' (GPU: '+bt._gpuErrs[bt._gpuErrs.length-1].replace(/\s+/g,' ').slice(0,70)+')':'')+' - rebuilding','err'); _btRebuild('never drawn'); }
   };
   [0,400,1500,4000].forEach((ms,i)=>setTimeout(()=>{ try{ step(i); }catch(e){ console.warn('[Bird Temple] arrive check:',e); } },ms));
 }
