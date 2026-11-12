@@ -24,7 +24,7 @@
   'use strict';
   const G = typeof window !== 'undefined' ? window : globalThis;
   const UPM = 1.78, POLE_H = 4.4 * UPM, ARM = 1.15 * UPM, LS = 'dm_mansion_rooms';
-  const DRAW_D2 = 700 * 700, SW_D2 = 320 * 320, REACH = 5.0, POOL_R = 11, POOL_Y = 0.08;
+  const DRAW_D2 = 700 * 700, SW_D2 = 320 * 320, REACH = 5.0, POOL_R = 11, POOL_Y = 0.08, EDGE_CELLS = 3;
   const LED_POOL_R = 8, LED_GAIN = 0.55, LED_GLOW = 1.1 * UPM;   // rail LEDs: pool radius (== plan_lamps.js LED_R), pool strength vs a street lamp, glow sprite size
 
   // ── pure geometry (also run by tools/tests/mansion-lamps.js) ─────────────────────────────────────────────
@@ -63,10 +63,19 @@
         const h = g[j * nx + i], d = Math.hypot(col.x0 + i * c - cx, col.y0 + j * c - cy);
         if (h <= col.sea + 0.6 || Math.abs(h - l[2]) > 0.35 || d > PR) continue; okN[(dj + r) * W + di + r] = 1;
       }
+      // (follower fix 2) the fade at a border is now a smoothstep over EDGE_CELLS cells of distance from the border (was: the border node alone = one cell): a pool that ends at a rail / ledge / water edge no longer reads as a hard-edged lit shape
+      const bd = new Int16Array(W * W).fill(99), qd = [];
+      for (let dj = -r; dj <= r; dj++) for (let di = -r; di <= r; di++) {
+        const q = (dj + r) * W + di + r; if (!okN[q]) continue;
+        let bdr = false; for (let b = 0; b < 4; b++) { const ni = di + (b === 0 ? 1 : b === 1 ? -1 : 0), nj = dj + (b === 2 ? 1 : b === 3 ? -1 : 0); if (ni < -r || nj < -r || ni > r || nj > r || !okN[(nj + r) * W + ni + r]) bdr = true; }
+        if (bdr) { bd[q] = 0; qd.push(q); } }
+      for (let h = 0; h < qd.length; h++) { const q = qd[h], x = q % W, y = (q / W) | 0, v = bd[q] + 1; if (v > EDGE_CELLS) continue;   // multi-source BFS: distance (cells) to the nearest border node, only needed up to EDGE_CELLS
+        if (x + 1 < W && okN[q + 1] && bd[q + 1] > v) { bd[q + 1] = v; qd.push(q + 1); } if (x > 0 && okN[q - 1] && bd[q - 1] > v) { bd[q - 1] = v; qd.push(q - 1); }
+        if (y + 1 < W && okN[q + W] && bd[q + W] > v) { bd[q + W] = v; qd.push(q + W); } if (y > 0 && okN[q - W] && bd[q - W] > v) { bd[q - W] = v; qd.push(q - W); } }
       for (let dj = -r; dj <= r; dj++) for (let di = -r; di <= r; di++) {
         const q = (dj + r) * W + di + r; if (!okN[q]) continue; const i = i0 + di, j = j0 + dj;
         const h = g[j * nx + i], x = col.x0 + i * c, y = col.y0 + j * c, d = Math.hypot(x - cx, y - cy);
-        let edge = 1; for (let b = 0; b < 4; b++) { const ni = di + (b === 0 ? 1 : b === 1 ? -1 : 0), nj = dj + (b === 2 ? 1 : b === 3 ? -1 : 0); if (ni < -r || nj < -r || ni > r || nj > r || !okN[(nj + r) * W + ni + r]) { if (d > c * 1.5) edge = 0; } }   // keep the node under the lamp itself even on a 1-cell island
+        let edge = 1; if (bd[q] < EDGE_CELLS && d > c * 1.5) { const u = bd[q] / EDGE_CELLS; edge = u * u * (3 - 2 * u); }   // keep the node under the lamp itself even on a 1-cell island
         const t = 1 - d / PR, f = t * t * (3 - 2 * t); id[q] = P.length / 3 - base; P.push(x, h + POOL_Y, -y); A.push(f * f * gain * edge);
       }
       for (let dj = 0; dj < 2 * r; dj++) for (let di = 0; di < 2 * r; di++) {

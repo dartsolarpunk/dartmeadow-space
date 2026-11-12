@@ -32,6 +32,7 @@
 
   /* ───────────────────────── pure core ───────────────────────── */
   const PI = Math.PI, EPS = 0.35, STRIDE = 12;
+  const SUN_NEAR0 = 30, SUN_NEAR1 = 110;   // metres of view distance: the low-sun scatter term is 0 inside SUN_NEAR0 and full beyond SUN_NEAR1 (smoothstep^2)
   const TIERS = { low: { n: 3, k: 2, sun: 1 }, med: { n: 5, k: 3, sun: 1 }, high: { n: 8, k: 4, sun: 2 } };
   const clamp = (x, a, b) => x < a ? a : x > b ? b : x;
   const smooth01 = t => { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); };
@@ -115,7 +116,8 @@
     if (lvl === 1) return { n: Math.max(1, Math.ceil(maxN / 2)), sun: true };
     return { n: maxN, sun: true };
   }
-  const core = { EPS, STRIDE, TIERS, rangeWindow, coneFactor, hg, lightScatter, lightScatterBrute, packLight, clearSlot, createPicker, pickReset, pickPush, lightScore, createSlots, stepSlots, budgetPlan, smooth01 };
+  function sunNearK(L) { const t = smooth01((L - SUN_NEAR0) / (SUN_NEAR1 - SUN_NEAR0)); return t * t; }   // CPU mirror of the shader's near fade of the low-sun term (tested)
+  const core = { sunNearK, SUN_NEAR0, SUN_NEAR1, EPS, STRIDE, TIERS, rangeWindow, coneFactor, hg, lightScatter, lightScatterBrute, packLight, clearSlot, createPicker, pickReset, pickPush, lightScore, createSlots, stepSlots, budgetPlan, smooth01 };
 
   if (typeof module !== 'undefined' && module.exports) { module.exports = core; if (typeof window === 'undefined') return; }
 
@@ -166,7 +168,7 @@
 
   // ── shader
   function build(T, cfg, U) {
-    const { Fn, float, vec3, vec4, Loop, If, select, positionView, positionWorld, cameraPosition, normalize, length, dot, max, min, clamp: clampN, exp, atan, tan, sqrt, sin, pow, mix, fog, rangeFogFactor, interleavedGradientNoise, screenCoordinate } = T;
+    const { Fn, float, vec3, vec4, Loop, If, select, positionView, positionWorld, cameraPosition, normalize, length, dot, max, min, clamp: clampN, exp, atan, tan, sqrt, sin, pow, mix, smoothstep, fog, rangeFogFactor, interleavedGradientNoise, screenCoordinate } = T;
     const K = cfg.k, G = 0.45, G2 = G * G, HG = (c, g2, g) => float(1 - g2).div(float(4 * PI).mul(pow(max(float(1 + g2).sub(c.mul(2 * g)), 1e-4), 1.5)));
     const sigmaAt = (dW, Leff) => {   // local fog / mist density at the ray midpoint
       const mid = cameraPosition.add(dW.mul(Leff.mul(0.5))), hgt = max(mid.y.sub(U.groundY), 0.0);
@@ -204,7 +206,11 @@
           const L = root.DMLight, p1 = cameraPosition.add(dW.mul(Ls.mul(0.4))), v1 = L && L.sunVisNode ? L.sunVisNode(p1) : null;
           if (v1) { vis = v1; if (cfg.sun > 1) { const v2 = L.sunVisNode(cameraPosition.add(dW.mul(Ls.mul(0.8)))); if (v2) vis = v1.add(v2).mul(0.5); } }
         } catch (e) { }
-        out.assign(U.sunCol.mul(ph.mul(float(1).sub(exp(sigma.mul(Ls).negate()))).mul(vis).mul(U.sunOn)));
+        // (follower fix) the forward-scattered sun is a sky-sized glow round the sun's direction: on the ground a few metres from the camera it shows up as a pale, hard-edged disc (the HG lobe's edge,
+        // cut by the occluders' straight edges through `vis`) that follows the view - "a lamp following me" on the balcony at dusk.  It belongs to DISTANT air (aerial perspective), so it is
+        // faded in between SUN_NEAR0 and SUN_NEAR1 metres of view distance: nothing within ~SUN_NEAR0 m of the player, full strength only on far terrain.
+        const nearK = smoothstep(SUN_NEAR0, SUN_NEAR1, Lraw);
+        out.assign(U.sunCol.mul(ph.mul(float(1).sub(exp(sigma.mul(Ls).negate()))).mul(vis).mul(U.sunOn).mul(nearK.mul(nearK))));
       });
       return out;
     };

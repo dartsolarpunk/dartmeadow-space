@@ -746,6 +746,7 @@
     } catch (e) { try { console.warn('[light] applyTree', e); } catch (_) { } } return n;
   };
 
+  D.uniforms = function () { return U; };   // tests / debugging: the shared TSL uniforms (tools/tests/follow-harness.html toggles bk / k / gain per suspect)
   D.status = function () { return { on: D.on, tier: D.tier, live: D.live, cap: D.cap, flag, lvl: D.lvl, eff: D.eff, ready: D.ready, ms: +D.msEma.toFixed(2), upMs: +D.upMs.toFixed(2), upCells: D.upCells, agl: Math.round(D.agl), idle: !!(D.eff && D.eff.idle), resets: D.resets, probesPerSec: Math.round(D.probesPerSec), headroom: D.hr.on, cs: D.cs, csOk: D.csOk, csBad: D.csBad, csFrames: D.csFrames, csK: U ? +U.csK.value.toFixed(2) : 0, mats: D.mats, overlays: D.overlays, uploads: D.uploads, MB: +(D.bytes / 1048576).toFixed(2), cpuMB: +(D.cpuBytes / 1048576).toFixed(2), gpuMB: +(D.gpuBytes / 1048576).toFixed(2), built: D.built, failed: D.failed, hfFilled: hf ? hf.filled : 0, boot: D.boot }; };
   D.dispose = function () { try { if (tex) { tex.hft.dispose(); if (tex.hft2) tex.hft2.dispose(); if (tex.hft3) tex.hft3.dispose(); for (const v of tex.vols) for (const t of v) t.dispose(); } if (CS) { for (const t of CS.A.concat(CS.B)) t.dispose(); } } catch (e) { } tex = null; U = null; CS = null; D.ready = false; D.tier = 'off'; D.ticks = 0; hf = null; hf2 = null; hf3 = null; casc = []; hemiCache = null; D._S = null; D._wkey = null; D._wgen = -1; baseSet = false; };
 })(typeof window !== 'undefined' ? window : globalThis);

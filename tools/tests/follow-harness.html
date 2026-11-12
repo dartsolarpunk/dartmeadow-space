@@ -1,0 +1,47 @@
+<!doctype html>
+<!-- "Something follows me": does ANY part of the DMLight material hook depend on where the player stands?  Fixed camera + fixed world; only the focus given to DMLight.tick (the
+     player) changes between two renders; every pixel difference is therefore attached to the player.  Then the suspects are switched off one by one (uniform writes) to see which one
+     removes it.  Scene: gently rolling ground, a 24 x 16 m deck 6 m up with a railing wall, a mansion-sized block, a low sun (8 deg), dusk.  WebGL2 / SwiftShader, correctness only.
+     Query: ?gl=1  ?light=low|med|high  ?sun=<deg>.   Result: window.ok, window.extra = { diffs:{name:{mean,max,frac,box:[x0,y0,x1,y1]}} } -->
+<html><head><meta charset="utf-8"><style>body{margin:0;background:#000}</style>
+<script type="importmap">{"imports":{"three":"/three/build/three.webgpu.js","three/webgpu":"/three/build/three.webgpu.js","three/tsl":"/three/build/three.tsl.js"}}</script>
+<script>window.__err = []; addEventListener('error', e => __err.push(String(e.message))); window.GFX = { isMobile: false, gpuClass: 'high', preset: 'ultra' }; window.PW = { gen: 1, scene: null }; window.TERRAIN = {};</script>
+<script src="/ui/dm-light.js"></script>
+</head><body>
+<script type="module">
+import * as THREE from 'three';
+window.THREE = THREE; const T = THREE.TSL, Q = new URLSearchParams(location.search); const extra = { diffs: {} };
+const _ce = console.error; console.error = (...a) => { __err.push(a.map(String).join(' ').slice(0, 300)); _ce(...a); };
+try {
+  const W = 320, Hh = 200, r = new THREE.WebGPURenderer({ antialias: false, forceWebGL: Q.get('gl') === '1' }); r.setSize(W, Hh); r.shadowMap.enabled = true; document.body.appendChild(r.domElement); await r.init(); window.flightRenderer = r;
+  const smooth = (a, b, v) => { const t = Math.max(0, Math.min(1, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
+  const H = (x, z) => 1.5 * Math.sin(x * 0.03) * Math.cos(z * 0.035) + 6 * (1 - smooth(10, 16, Math.max(Math.abs(x) - 0, 0) > 12 ? Math.abs(x) : 0)) * 0 + 6 * (smooth(-18, -12, x) * (1 - smooth(12, 18, x)) * smooth(-14, -8, z) * (1 - smooth(8, 14, z))) + (x > 24 && x < 36 && z > -10 && z < 12 ? 11 : 0);
+  const scene = new THREE.Scene(); scene.background = new THREE.Color(0x6b86b0); PW.scene = scene;
+  const cam = new THREE.PerspectiveCamera(65, W / Hh, 0.3, 3000); cam.position.set(-34, 14, 24); cam.lookAt(0, 5, 0);
+  const S = 220, seg = 220, g = new THREE.PlaneGeometry(S, S, seg, seg); g.rotateX(-Math.PI / 2); const pa = g.attributes.position; for (let i = 0; i < pa.count; i++) pa.setY(i, H(pa.getX(i), pa.getZ(i))); g.computeVertexNormals();
+  const mat = new THREE.MeshStandardNodeMaterial({ color: 0xa89a82, roughness: 0.95 }); const ground = new THREE.Mesh(g, mat); ground.receiveShadow = true; ground.castShadow = true; scene.add(ground);
+  scene.add(new THREE.HemisphereLight(0xbfd8ff, 0x403020, 0.5));
+  const e = (+Q.get('sun') || 8) * Math.PI / 180, sunDir = new THREE.Vector3(Math.cos(e) * 0.8, Math.sin(e), Math.cos(e) * 0.6).normalize(), day = Math.max(0, Math.min(1, (sunDir.y + 0.1) / 0.25));
+  const sun = new THREE.DirectionalLight(0xffd9b0, 2.0 * (0.08 + 0.92 * day)); sun.position.copy(sunDir).multiplyScalar(160); sun.castShadow = true; sun.shadow.mapSize.set(1024, 1024); Object.assign(sun.shadow.camera, { left: -45, right: 45, top: 45, bottom: -45, far: 400 }); scene.add(sun, sun.target); TERRAIN.sun = sun;
+  const o = { x: -6, y: H(-6, 3) + 1.7, z: 3, H, sunDir, day, scene, renderer: r, walk: true };
+  for (let f = 0; f < 3; f++) DMLight.tick(1 / 60, o);
+  DMLight.applyMaterial(mat, { p: T.positionWorld }); DMLight.setBands && DMLight.setBands(26, 40, 1600, 2000);
+  const U = DMLight.uniforms();
+  // lamps on (as at dusk), static world positions on the deck
+  DMLight.setLamps([-8, 9, -6, 14, 8.7, 4.2, 16, 4, 9, 6, 14, 8.7, 4.2, 16]); DMLight.setLampLevel(+Q.get('lamps') || 0);
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = Hh; const g2 = cv.getContext('2d', { willReadFrequently: true });
+  const shot = async (px, pz, frames) => { o.x = px; o.z = pz; o.y = H(px, pz) + 1.7; for (let f = 0; f < frames; f++) { DMLight.tick(1 / 60, o); r.render(scene, cam); if (f % 12 === 0) await new Promise(res => setTimeout(res, 0)); } r.render(scene, cam); g2.drawImage(r.domElement, 0, 0); return g2.getImageData(0, 0, W, Hh).data.slice(); };
+  const diff = (a, b) => { let sum = 0, mx = 0, n = 0, x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1; for (let i = 0; i < a.length; i += 4) { const d = (Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2])) / 3; sum += d; if (d > mx) mx = d; if (d > 6) { n++; const p = i / 4, x = p % W, y = (p / W) | 0; x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); } } return { mean: +(sum / (a.length / 4)).toFixed(3), max: Math.round(mx), frac: +(n / (a.length / 4)).toFixed(4), box: [x0, y0, x1, y1] }; };
+  const P1 = [-6, 3], P2 = [9, -3], FR = +Q.get('frames') || 150;
+  const run = async (name) => { const a = await shot(P1[0], P1[1], FR), b = await shot(P2[0], P2[1], FR), c = await shot(P1[0], P1[1], 40); extra.diffs[name] = { p1p2: diff(a, b), back: diff(a, c) }; if (name === 'default') window.__img = b; };
+  await run('default');
+  const save = { bk: U.bk.value, k: U.k.value, gain: U.gain.value, hfK: U.hfK.value, csK: U.csK.value };
+  U.bk.value = 0; await run('bounce off (bk=0)');
+  U.k.value = 0; await run('all DMLight off (k=0)'); U.k.value = save.k;   // everything of the hook is blended out: whatever still differs is NOT DMLight
+  U.bk.value = save.bk; U.hfK.value = 0; await run('height-field sun visibility off (hfK=0)'); U.hfK.value = save.hfK;
+  U.gain.value = 0; await run('gain=0 (no bounce)'); U.gain.value = save.gain;
+  U.sm.value.set(1e9, 2e9); await run('sun-map fade disabled (sm far)');
+  extra.status = DMLight.status(); extra.k = save.k;
+} catch (e) { __err.push('harness: ' + (e && e.stack || e)); }
+window.extra = extra; window.ok = !__err.length && Object.keys(extra.diffs).length >= 5; window.status = JSON.stringify({ err: __err, extra }).slice(0, 3000); window.done = true;
+</script></body></html>

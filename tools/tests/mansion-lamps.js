@@ -64,6 +64,10 @@ console.log('== render data (ui/dm-lamps.js pure part)');
   let bad = 0; for (let v = 0; v < pl.P.length / 3; v++) { const x = pl.P[v * 3], y = -pl.P[v * 3 + 2], h = pl.P[v * 3 + 1]; if (!(gh(x, y) > COL.sea + 0.6)) bad++; if (!lamps.some(l => Math.abs(l[2] - (h - 0.08)) < 0.36 && Math.hypot(PU.headPos(l)[0] - x, PU.headPos(l)[1] - y) <= PU.POOL_R + 1e-6)) bad++; }
   ok(bad === 0, 'every pool vertex is land, at its lamp\'s own height (never over a drop) and inside the pool radius');
   ok(pl.A.every(a => a >= 0 && a <= 1), 'pool alpha 0..1');
+  { const stepAway = (PLx, hp) => { let mj = 0; const near = k => { const x = PLx.P[k * 3], y = -PLx.P[k * 3 + 2]; return hp.some(h => Math.hypot(h[0] - x, h[1] - y) < 3.2); };
+      for (let t = 0; t < PLx.I.length; t += 3) for (let e = 0; e < 3; e++) { const a = PLx.I[t + e], b = PLx.I[t + (e + 1) % 3]; if (near(a) || near(b)) continue; mj = Math.max(mj, Math.abs(PLx.A[a] - PLx.A[b])); } return mj; };
+    const ple = PU.pools(COL, J.leds || [], g, true), mj = stepAway(pl, lamps.map(PU.headPos)), mjLed = stepAway(ple, J.leds || []);   // was 0.541 / 0.223 with the one-cell border fade
+    ok(mj < 0.5 && mjLed < 0.15, 'pool alpha steps between neighbouring nodes away from the lamp are smaller (border fade over 3 cells): lamps ' + mj.toFixed(3) + ' (was 0.541), rail LEDs ' + mjLed.toFixed(3) + ' (was 0.223)'); }
   const pa = PU.poleArrays(), ys = pa.P.filter((_, i) => i % 3 === 1); ok(Math.abs(Math.max(...ys) - (PU.POLE_H + 0.17 * PU.UPM)) < 1e-6 && PU.POLE_H / PU.UPM > 4 && PU.POLE_H / PU.UPM < 5, 'pole is ~4.4 m on the 1.78 units/m scale (Ariel 1.7 m)');
   ok(pa.P.length / 3 < 200 && fs.statSync(path.join(root, 'assets/ariel-home/ariel-home-lamps.json')).size < 4000, 'lamp mesh < 200 verts, data < 4 KB (no GLB at all)');
 }

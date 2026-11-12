@@ -92,4 +92,10 @@ const rel = (a, b, tol, msg) => assert(Math.abs(a - b) <= tol * Math.max(Math.ab
 { let prev = 99; for (const [l, e] of [[0, 10], [1, 10], [2, 10], [3, 10]]) { const p = budgetPlan(8, l, e); assert(p.n <= prev); prev = p.n; } assert.strictEqual(budgetPlan(8, 3, 0).n, 0); assert.strictEqual(budgetPlan(8, 0, 70).n, 0); assert.strictEqual(budgetPlan(8, 0, 50).n, 2); assert.strictEqual(budgetPlan(8, 0, 50).sun, false); assert.strictEqual(budgetPlan(8, 1, 0).n, 4);
   assert(TIERS.low.n < TIERS.med.n && TIERS.med.n < TIERS.high.n && TIERS.low.k <= TIERS.med.k); console.log('budget plan + tier table OK'); }
 
+// (follower fix) the low-sun scatter is a view-attached glow: it must be exactly 0 near the player and only reach full strength on far air
+{ const { sunNearK, SUN_NEAR0, SUN_NEAR1 } = V; assert(SUN_NEAR0 >= 20 && SUN_NEAR1 > SUN_NEAR0 + 40);
+  assert.strictEqual(sunNearK(0), 0); assert.strictEqual(sunNearK(SUN_NEAR0), 0); assert.strictEqual(sunNearK(8), 0); assert.strictEqual(sunNearK(SUN_NEAR1), 1); assert.strictEqual(sunNearK(500), 1);
+  let prev = -1; for (let L = 0; L < 200; L += 0.5) { const k = sunNearK(L); assert(k >= prev - 1e-12 && k >= 0 && k <= 1); prev = k; }
+  assert(sunNearK(SUN_NEAR0 + 5) < 0.01, 'no visible haze just past the player-near limit'); console.log('sun scatter near fade OK (0 inside ' + SUN_NEAR0 + ' m, full beyond ' + SUN_NEAR1 + ' m)'); }
+
 console.log('vlight-unit: all passed');
