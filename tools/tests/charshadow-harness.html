@@ -1,0 +1,56 @@
+<!doctype html>
+<!-- The analytic character shadow (ui/dm-charshadow.js), rendered by the engine's own three r185 on WebGL2/SwiftShader (headless; correctness only, NO fps meaning).
+     A white floor lit by ONE PointLight whose colour node carries the occlusion (DMCharShadow.attach), a fake skeleton (bone matrices) + a board OBB feed tick().
+     Each probe pixel's lamp-lit brightness is compared with the JS reference (visibility()) : rendered(on) / rendered(off) must equal the reference visibility.
+     Run: python3 tools/tests/px-render.py . <three-dir> out.png 'tools/tests/charshadow-harness.html?gl=1'    Result: window.ok, window.status, window.extra -->
+<html><head><meta charset="utf-8"><style>body{margin:0;background:#000}</style>
+<script type="importmap">{"imports":{"three":"/three/build/three.webgpu.js","three/webgpu":"/three/build/three.webgpu.js","three/tsl":"/three/build/three.tsl.js"}}</script>
+<script src="/ui/dm-charshadow.js"></script>
+</head><body>
+<script type="module">
+import * as THREE from 'three';
+window.THREE = THREE; const Q = new URLSearchParams(location.search), out = { checks: [], err: [] };
+const _ce = console.error; console.error = (...a) => { out.err.push(a.map(String).join(' ').slice(0, 240)); _ce(...a); };
+const chk = (n, ok, info) => out.checks.push({ n, ok: !!ok, info: info == null ? '' : String(info) });
+try {
+  const W = 320, H = 200, r = new THREE.WebGPURenderer({ antialias: false, forceWebGL: Q.get('gl') === '1' }); r.setSize(W, H); r.toneMapping = THREE.NoToneMapping; document.body.appendChild(r.domElement); await r.init();
+  const CS = window.DMCharShadow, scene = new THREE.Scene(); scene.background = new THREE.Color(0x000000);
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(40, 40).rotateX(-Math.PI / 2), new THREE.MeshStandardNodeMaterial({ color: 0xffffff, roughness: 1, metalness: 0 })); scene.add(floor);
+  const wall = new THREE.Mesh(new THREE.PlaneGeometry(40, 20), new THREE.MeshStandardNodeMaterial({ color: 0xffffff, roughness: 1, metalness: 0 })); wall.position.set(0, 10, -3); scene.add(wall);   // a wall behind her, normal +z
+  const LP = new THREE.Vector3(-3, 5, 4), L = new THREE.PointLight(0xffffff, 28, 30, 1.5); L.position.copy(LP); scene.add(L);
+  const h = CS.attach(L, { THREE, range: 30, radius: 0.8 }); if (!h) throw new Error('attach failed ' + JSON.stringify(CS.status()));
+  // fake body: hips 1.7, neck 2.8, head 3.1, legs, standing at (0,0,0); the board lies at y = 0.15 across x
+  const bone = (x, y, z) => ({ matrixWorld: { elements: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, y, z, 1] } });
+  const CHAR = { loaded: true, root: { visible: true }, bones: { Hips: bone(0, 1.7, 0), neck: bone(0, 2.8, 0), Head: bone(0, 3.1, 0), LeftUpLeg: bone(-0.2, 1.6, 0), LeftFoot: bone(-0.2, 0.3, 0), RightUpLeg: bone(0.2, 1.6, 0), RightFoot: bone(0.2, 0.3, 0) } };
+  const board = new THREE.Group(); const bm = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.12, 0.9), new THREE.MeshBasicMaterial()); board.add(bm); board.position.set(3, 0.5, 1); board.rotation.y = 0.5; board.updateMatrixWorld(true);
+  const cam = new THREE.PerspectiveCamera(50, W / H, 0.1, 200); cam.position.set(2, 17, 9); cam.lookAt(1, 0, 0); cam.updateMatrixWorld(true);
+  const shot = async () => { for (let i = 0; i < 3; i++) { r.render(scene, cam); await new Promise(rr => setTimeout(rr, 30)); } r.render(scene, cam);
+    const c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d', { willReadFrequently: true }); g.drawImage(r.domElement, 0, 0); return (x, y) => { const d = g.getImageData(x | 0, y | 0, 1, 1).data; return d[0]; }; };
+  const lin = v => { const c = v / 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+  // (debug) the visibility node alone as a colour: no lighting, exact value per pixel
+  { const dbgF = new THREE.Mesh(new THREE.PlaneGeometry(40, 40).rotateX(-Math.PI / 2), new THREE.MeshBasicNodeMaterial()); const TS = THREE.TSL; dbgF.position.y = 0.001; dbgF.material.colorNode = TS.vec3(CS._visNode(h.pos, h.range, h.en, TS.float(0.8))); dbgF.name = 'dbg'; window.__dbg = dbgF; }
+  CS.tick(CHAR, board, 0.016); h.en.value = 0; CS.S.U.k.value = 0; const OFF = await shot();   // no occlusion
+  CS.tick(CHAR, board, 0.016); const ON = await shot();
+  scene.remove(floor); scene.remove(wall); scene.add(window.__dbg); CS.tick(CHAR, board, 0.016); const DBG = await shot(); scene.remove(window.__dbg); scene.add(floor); scene.add(wall);
+  const refN = (x, y, z, nrm, lp, bd) => { let lo = 9, hi = -9; for (const [ox, oz] of [[0, 0], [0.07, 0], [-0.07, 0], [0, 0.07], [0, -0.07]]) { const v = CS.core.visibility(nrm[1] === 1 ? [x + ox, y, z + oz] : [x + ox, y + oz, z], nrm, lp, 30, bd); lo = Math.min(lo, v); hi = Math.max(hi, v); } return [lo, hi]; };
+  const body = { cap: CS.BODY.cap, board: CS.BODY.board, lr: 0.8 }; let dbgBad = [], worstD = 0, worst = 0, n = 0, dark = 0, lit = 0, errs = []; const P = new THREE.Vector3();
+  for (let wz = -2.8; wz <= 7; wz += 0.55) for (let wx = -7; wx <= 9; wx += 0.55) {
+    P.set(wx, 0, wz).project(cam); if (Math.abs(P.x) > 0.97 || Math.abs(P.y) > 0.97) continue; const px = (P.x * 0.5 + 0.5) * W, py = (-P.y * 0.5 + 0.5) * H, a = lin(OFF(px, py)), b = lin(ON(px, py)), dv = lin(DBG(px, py));
+    if (a < 0.02) continue; const ref = CS.core.visibility([wx, 0, wz], [0, 1, 0], [LP.x, LP.y, LP.z], 30, body), got = b / a, rr = refN(wx, 0, wz, [0, 1, 0], [LP.x, LP.y, LP.z], body), d = Math.max(0, rr[0] - got, got - rr[1]); const dD = Math.max(0, rr[0] - dv, dv - rr[1]); if (dD > worstD) worstD = dD; if (dD > 0.04 && dbgBad.length < 40) dbgBad.push([wx.toFixed(1), wz.toFixed(1), ref.toFixed(2), dv.toFixed(2)].join('/')); n++; if (d > worst) worst = d; if (ref < 0.5) dark++; else lit++; if (d > 0.1 && errs.length < 60) errs.push([wx, wz, ref.toFixed(3), got.toFixed(3)].join('/'));
+  }
+  chk('rendered occlusion matches the JS reference on the floor (' + n + ' probes)', n > 150 && worst < 0.07, 'worst |render - reference| = ' + worst.toFixed(3) + ' bad=' + errs.join(' '));
+  chk('the visibility node alone (no lighting) equals the reference', worstD < 0.03, 'worst = ' + worstD.toFixed(3) + ' bad=' + dbgBad.join(' '));
+  chk('the probes cover shadowed (' + dark + ') and lit (' + lit + ') floor', dark >= 8 && lit >= 100);
+  // the wall behind her: the shadow of the standing figure falls on it (lamp at z=+4 in front, x=-3 => shadow shifted to +x on the wall)
+  let wn = 0, wworst = 0, wdark = 0; const Wp = new THREE.Vector3();
+  for (let wy = 0.2; wy <= 6; wy += 0.25) for (let wx = -8; wx <= 10; wx += 0.5) {
+    Wp.set(wx, wy, -3).project(cam); if (Math.abs(Wp.x) > 0.97 || Math.abs(Wp.y) > 0.97) continue; const px = (Wp.x * 0.5 + 0.5) * W, py = (-Wp.y * 0.5 + 0.5) * H, a = lin(OFF(px, py)), b = lin(ON(px, py)); if (a < 0.02) continue;
+    const ref = CS.core.visibility([wx, wy, -3], [0, 0, 1], [LP.x, LP.y, LP.z], 30, body), got = b / a; wn++; wworst = Math.max(wworst, Math.abs(ref - got)); if (ref < 0.5) wdark++;
+  }
+  chk('the wall behind her matches the reference too (' + wn + ' probes, ' + wdark + ' shadowed)', wn > 80 && wdark >= 4 && wworst < 0.08, 'worst = ' + wworst.toFixed(3));
+  // switching off: en = 0 -> pixel identical to the OFF render
+  h.light.intensity = 0; CS.tick(CHAR, board, 0.016); chk('lamp at intensity 0 -> en 0', h.en.value === 0);
+  window.extra = { backend: r.backend && (r.backend.isWebGPUBackend ? 'webgpu' : 'webgl2'), n, worst, dark, lit, wn, wworst, wdark };
+} catch (e) { out.err.push('threw ' + (e && e.stack || e)); }
+window.ok = out.checks.length >= 3 && out.checks.every(c => c.ok) && out.err.filter(e => !/deprecat/i.test(e)).length === 0; window.status = JSON.stringify(out).slice(0, 2500); window.done = true;
+</script></body></html>
