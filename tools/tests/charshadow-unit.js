@@ -103,7 +103,14 @@ const CS = require('../../ui/dm-charshadow.js'), C = CS.core;
   console.log('== files / flags');
   {
     const src = fs.readFileSync(path.join(root, 'ui/dm-charshadow.js'), 'utf8');
-    ok(/charshadow/.test(src) && /ON = !\(flag === '0'/.test(src), '?charshadow=0 disables');
+    ok(/charshadow/.test(src) && /ON = !\(flag === '0'/.test(src), '?charshadow=0 disables the analytic term');
+    { globalThis.location = { search: '?charshadow=0' }; delete require.cache[require.resolve('../../ui/dm-charshadow.js')]; const off = require('../../ui/dm-charshadow.js'); ok(off.on === false && off.status().flag === false, '?charshadow=0: flag read');
+      const fake0 = { Vector4: class { set() { return this; } }, Vector3: class { set() { return this; } }, Color: class { setRGB() { return this; } } }; const un = () => ({ value: new fake0.Vector4(), setGroup() { return this; } });
+      off.S.U = { cA: [un(), un(), un(), un()], cB: [un(), un(), un(), un()], bC: un(), bX: un(), bY: un(), bZ: un(), k: { value: 0.5 }, lr: un(), dark: un() };
+      const bn = (x, y, z) => ({ matrixWorld: { elements: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, y, z, 1] } });
+      off.tick({ loaded: true, root: { visible: true }, bones: { Hips: bn(0, 1, 0), neck: bn(0, 2, 0), Head: bn(0, 2.4, 0), LeftUpLeg: bn(0, 1, 0), LeftFoot: bn(0, 0, 0), RightUpLeg: bn(0, 1, 0), RightFoot: bn(0, 0, 0) } }, null, 0.016);
+      ok(off.S.U.k.value === 0 && off.status().body === false, '?charshadow=0: the body is never switched on (the occlusion branch stays closed)'); off.S.U = null;
+      globalThis.location = { search: '' }; delete require.cache[require.resolve('../../ui/dm-charshadow.js')]; require('../../ui/dm-charshadow.js'); }
     const tickBody = src.slice(src.indexOf('function tick('), src.indexOf('function status('));
     ok(!/\bnew \w/.test(tickBody) && !/\[\s*[^\]]*\]\s*\.map|\.slice\(/.test(tickBody), 'tick() allocates nothing (no new / map / slice)');
   }
@@ -144,6 +151,27 @@ const CS = require('../../ui/dm-charshadow.js'), C = CS.core;
     { const L3 = new T2.PointLight(0xffc27a, 80, 32, 1.5); L3.castShadow = true; L3.position.set(2, 6, 0); sc.add(L3); CS.attach(L3, { THREE: T2, range: 32 }); const m = new T2.Mesh(new T2.PlaneGeometry(10, 10), new T2.MeshStandardNodeMaterial()); m.receiveShadow = true; sc.add(m); sc.updateMatrixWorld(true);
       let w = ''; try { w = wgsl(m, sc, cam, [amb, L3]); } catch (e) { console.log('   ' + e.message.split('\n')[0]); } ok(w.length > 2000 && texCount(w) <= 16, 'shadow-casting lamp + analytic term: ' + texCount(w) + ' textures'); }
     ok(CS.status().lights === 3, 'status lists the attached lights');
+    // ── the real lamp pool node graph (ui/dm-lamps.js): gate + analytic shadow + a shadow lookup in a uniform branch, on every receiver family incl. a private-list atlas
+    {
+      require('../../ui/dm-mansion-rooms.js'); delete require.cache[require.resolve('../../ui/dm-lamps.js')]; delete globalThis.DMLamps; require('../../ui/dm-lamps.js'); const LP = globalThis.DMLamps._pure, RM = globalThis.DMMansionRooms;
+      const invM = TS.uniform(new T2.Matrix4()), mkSu = () => ({ mode: TS.uniform(0), lo: TS.uniform(new T2.Vector3()), hi: TS.uniform(new T2.Vector3()), sh: TS.uniform(0) });
+      const mkLamp = (cast) => { const L = new T2.PointLight(0xffc27a, 60, 32, 1.5); L.position.set(1, 5, 1); const su = mkSu();
+        if (cast) { L.castShadow = true; L.shadow.mapSize.set(512, 512); const sn = LP.lampShadowNode(L, T2, su.sh); L.shadow.shadowNode = sn; }
+        CS.attach(L, { THREE: T2, range: 32, radius: 0.9, gate: LP.slotGate(TS, T2, invM, su, RM.ROOMS.map(r => r.box)) }); sc.add(L); return { L, su }; };
+      const a = mkLamp(true), b = mkLamp(true), c = mkLamp(false); sc.updateMatrixWorld(true);
+      const famsL = { 'Standard receiver (world)': () => new T2.MeshStandardNodeMaterial({ roughness: 0.8 }), 'mansion atlas (private list + emissive fill + baked-like maps)': () => { const m = new T2.MeshStandardNodeMaterial({ roughness: 1, metalness: 1 }); m.emissiveNode = TS.diffuseColor.rgb.mul(0.4); m.lightsNode = TS.lights([amb, a.L, b.L, c.L]); return m; } };
+      for (const nm of Object.keys(famsL)) {
+        const mesh = new T2.Mesh(new T2.PlaneGeometry(10, 10), famsL[nm]()); mesh.receiveShadow = true; sc.add(mesh); sc.updateMatrixWorld(true); let w = ''; try { w = wgsl(mesh, sc, cam, mesh.material.lightsNode ? [] : [amb, a.L, b.L, c.L]); } catch (e) { console.log('   ' + nm + ': ' + e.message.split('\n')[0]); }
+        ok(w.length > 3000, 'WGSL builds with the gated lamp pool: ' + nm); ok(texCount(w) <= 16, nm + ': ' + texCount(w) + ' sampled textures with 2 shadow-casting + 1 unshadowed lamp (gate / analytic add none)');
+        ok((w.match(/textureGatherCompare|textureSampleCompare/g) || []).length >= 2, nm + ': both shadow lookups present'); ok(/if \( \( render\.nodeUniform\d+ > 0\.5 \) \)/.test(w) || /if \( \( object\.nodeUniform\d+ > 0\.5 \) \)/.test(w), nm + ': a uniform branch (the unlit-slot shadow gate / en early-out) is in the shader');
+        sc.remove(mesh);
+      }
+      // the shadow lookups sit INSIDE a uniform branch: count the compare taps that are not under any `if`
+      { const mesh = new T2.Mesh(new T2.PlaneGeometry(10, 10), new T2.MeshStandardNodeMaterial()); mesh.receiveShadow = true; sc.add(mesh); sc.updateMatrixWorld(true); const w = wgsl(mesh, sc, cam, [amb, a.L]);
+        const iTap = w.search(/textureSampleCompare|textureGatherCompare/); let before = w.slice(0, iTap), depth = 0; const fi = Math.max(before.lastIndexOf('\nfn '), before.lastIndexOf('fn main')); for (const ch of before.slice(fi)) { if (ch === '{') depth++; else if (ch === '}') depth--; }
+        ok(iTap > 0 && depth >= 3, 'the lamp shadow tap is nested (depth ' + depth + ') inside a branch of its function (the shOn gate), not at its top level'); sc.remove(mesh); }
+      ok(LP.slotGate(TS, T2, invM, mkSu(), RM.ROOMS.map(r => r.box)).isNode, 'slotGate returns a node');
+    }
   }
   console.log(fails ? ('charshadow-unit: ' + fails + ' FAILED of ' + n) : ('charshadow-unit: all ' + n + ' checks passed'));
   process.exit(fails ? 1 : 0);

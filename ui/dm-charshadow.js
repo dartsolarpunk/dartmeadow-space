@@ -11,7 +11,7 @@
 // her, the board, the mansion atlas (private list), the Bird Temple hull - gets it with one line: DMCharShadow.attach(light, { range, radius, gate }). Must be called before the light is first
 // compiled (the light node reads colorNode once). Cost per lit pixel and light: one range test (early out), then 4 capsule + 1 ellipsoid evaluations (~120 flops).
 // Per frame (tick): ~14 vec4 uniform writes from bone matrices, no allocation. `en` (per light) is 0 when she is farther than range + 4 from the lamp.
-// Flags: ?charshadow=0 off (attach returns false and sets nothing). ?charshadow=<0..1> strength (default 0.85 max darkness). Pure maths exported in `core` (tools/tests/charshadow-unit.js).
+// Flags: ?charshadow=0 switches the analytic term off (the colour node stays for the optional `gate`, the occlusion branch is never entered: en = 0). ?charshadow=<0..1> strength (default 0.85 max darkness). Pure maths exported in `core` (tools/tests/charshadow-unit.js).
 (function () {
   'use strict';
   const G = typeof window !== 'undefined' ? window : globalThis;
@@ -89,10 +89,10 @@
   }
 
   // ── TSL ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  const S = { THREE: null, TS: null, U: null, fn: null, handles: [], frame: 0, body: false, board: false, dbg: { lit: 0 } };
+  const S = { THREE: null, TS: null, U: null, fn: null, handles: [], frame: 0, body: false, board: false, enabled: true, dbg: { lit: 0 } };
   function ensure(THREE) {
     if (S.U) return S.U;
-    const TS = THREE && THREE.TSL; if (!ON || !TS || typeof TS.uniform !== 'function' || typeof TS.Fn !== 'function' || typeof TS.If !== 'function' || !TS.positionWorld || !TS.normalWorld || typeof TS.select !== 'function') return null;
+    const TS = THREE && THREE.TSL; if (!TS || typeof TS.uniform !== 'function' || typeof TS.Fn !== 'function' || typeof TS.If !== 'function' || !TS.positionWorld || !TS.normalWorld || typeof TS.select !== 'function') return null;
     S.THREE = THREE; S.TS = TS; const V4 = () => new THREE.Vector4(), u4 = () => { const n = TS.uniform(V4()); if (TS.renderGroup && n.setGroup) n.setGroup(TS.renderGroup); return n; };
     const U = { cA: [], cB: [], bC: u4(), bX: u4(), bY: u4(), bZ: u4(), k: TS.uniform(0), lr: TS.uniform(0.8), dark: TS.uniform(MAX_DARK) };
     for (let i = 0; i < NC; i++) { U.cA.push(u4()); U.cB.push(u4()); }
@@ -170,7 +170,7 @@
   // CHAR = the game's character record (bones, root); board = THREE.Object3D or null. Writes the uniforms. Returns true when the body is active.
   function setBody(CHAR, board) {
     const U = S.U; if (!U) return false;
-    let ok = !!(CHAR && CHAR.loaded && CHAR.root && CHAR.root.visible && CHAR.bones);
+    let ok = ON && S.enabled && !!(CHAR && CHAR.loaded && CHAR.root && CHAR.root.visible && CHAR.bones);
     if (ok) {
       _P.hips = boneP(CHAR.bones, 'Hips'); _P.neck = boneP(CHAR.bones, 'neck') || boneP(CHAR.bones, 'Head'); _P.head = boneP(CHAR.bones, 'Head');
       _P.lu = boneP(CHAR.bones, 'LeftUpLeg'); _P.lf = boneP(CHAR.bones, 'LeftFoot'); _P.ru = boneP(CHAR.bones, 'RightUpLeg'); _P.rf = boneP(CHAR.bones, 'RightFoot');
@@ -180,12 +180,12 @@
       bodyFromBones(_P, BODY);
       for (let i = 0; i < NC; i++) { const c = BODY.cap[i]; U.cA[i].value.set(c[0][0], c[0][1], c[0][2], c[2]); U.cB[i].value.set(c[1][0], c[1][1], c[1][2], 0); }
     }
-    S.body = ok;
+    S.body = ok && ON;
     let bd = false;
     if (ok && board && board.visible !== false && board.matrixWorld) bd = boardOBB(board, _B);
     if (bd) { U.bC.value.set(_B.c[0], _B.c[1], _B.c[2], _B.mean); U.bX.value.set(_B.X[0], _B.X[1], _B.X[2], 1); U.bY.value.set(_B.Y[0], _B.Y[1], _B.Y[2], 0); U.bZ.value.set(_B.Z[0], _B.Z[1], _B.Z[2], 0); BODY.board = _B; }
     else { U.bX.value.w = 0; BODY.board = null; }
-    S.board = bd; U.k.value = ok ? 1 : 0; return ok;
+    S.board = bd; U.k.value = ok && ON ? 1 : 0; return ok && ON;
   }
   // board OBB from its world matrix + a cached local box (first call measures the meshes once). Semi axes are inflated by 8 % so the ellipsoid covers most of the box.
   function boardOBB(board, out) {
@@ -218,9 +218,11 @@
       h.en.value = near;
     }
   }
-  function status() { return { on: !!S.U, flag: ON, body: S.body, board: S.board, lights: S.handles.length, active: S.handles.filter(h => h.en.value > 0.5).length, maxDark: MAX_DARK }; }
+  // DMBudget shedding (ui/dm-lamps.js lampPlan.ch): off = no body, no per-pixel work at all (the colour nodes stay, `en` = 0), no recompile
+  function setEnabled(v) { S.enabled = !!v; }
+  function status() { return { on: !!S.U, flag: ON, enabled: S.enabled, body: S.body, board: S.board, lights: S.handles.length, active: S.handles.filter(h => h.en.value > 0.5).length, maxDark: MAX_DARK }; }
 
-  const API = { on: ON, ensure, attach, detach, tick, setBody, status, maxDark: MAX_DARK, S, BODY, _visNode: visNode,
+  const API = { on: ON, ensure, attach, detach, tick, setBody, setEnabled, status, maxDark: MAX_DARK, S, BODY, _visNode: visNode,
     core: { segSeg, capsuleOcc, ellipsoidOcc, visibility, bruteVisibility, bodyFromBones, boardOBB, sstep, NC, MAX_DARK } };
   G.DMCharShadow = API;
   if (typeof module !== 'undefined' && module.exports) module.exports = API;
