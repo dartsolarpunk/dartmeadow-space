@@ -22,6 +22,10 @@
 //   materials multiply their colour by ONE vertex-stage lookup in a 12-float uniform array (colorNode = materialColor x levels[room]): the diffuse colour drives the baked
 //   lightmap, the ambient fill and the lamp tint alike, so a room switch / dusk fade is 10 float writes (setRoomLevels), no light is added or removed, nothing recompiles.
 //   The bulbs / screens (int_emit) dim with their room too. Rooms are -1 (= level 1) when ui/dm-mansion-rooms.js is missing.
+// Real lamp lights (lamp shadows 3): the property's pool of PointLights (ui/dm-lamps.js, tagged userData.dmLamp: street lamps outside, the room's own ceiling lamps / pendants / LED strips inside) is part
+//   of the atlas's private list too (lightList withFlash). Each carries a GATE in its colour node (a room lamp lights only the inside of its room box, a street lamp nothing inside a room: nothing bleeds
+//   through a wall) and the analytic shadow of her (ui/dm-charshadow.js). DMLamps calls refreshLights(ctx) once after it created the pool (one program lookup, like the flashlight spot). While real room
+//   lights are on, the baked emissive fill steps back (setRealLights(f): fill x (1 - 0.35 f)) so the real light, and its shadows, actually read. ?roomfill=<0..1> sets that maximum dimming (default 0.35).
 // Light modes (flat-DOM-free API, same set as the Bird Temple room lights, ui/dm-bt-roomlights.js): DMMansionLook.set('auto'|'bright'|'warm'|'cool'|'night'|'off'),
 // .cycle(), .get(). Persisted in localStorage 'dm_mansion_light'; ?minlight=warm overrides for a session. A mode change only writes two uniforms.
 (function () {
@@ -70,14 +74,14 @@
     if (!S.U) {
       const node = !!(THREE.MeshStandardNodeMaterial && T && T.uniform && T.diffuseColor && T.lights);
       const rk = node && T.uniformArray && T.attribute && T.varying ? T.uniformArray(new Array(RK_N).fill(1), 'float') : null;
-      S.U = { node, rk, fill: node ? T.uniform(1) : { value: 1 }, eg: node ? T.uniform(1) : { value: 1 }, tint: node ? T.uniform(new THREE.Color(1, 1, 1)) : { value: new THREE.Color(1, 1, 1) } };
+      S.U = { node, rk, rl: node ? T.uniform(1) : { value: 1 }, fill: node ? T.uniform(1) : { value: 1 }, eg: node ? T.uniform(1) : { value: 1 }, tint: node ? T.uniform(new THREE.Color(1, 1, 1)) : { value: new THREE.Color(1, 1, 1) } };
     }
     if (!S.atlas) {
       const T2 = THREE.TSL, U = S.U;
       if (U.node) {
         const m = new THREE.MeshStandardNodeMaterial({ roughness: 1, metalness: 1 });
         m.vertexColors = true; m.name = 'int_atlas';
-        m.emissiveNode = T2.diffuseColor.rgb.mul(U.tint).mul(U.fill).mul(U.eg).mul(T2.materialAO || 1);   // materialAO = 1 unless the baked aoMap is on
+        m.emissiveNode = T2.diffuseColor.rgb.mul(U.tint).mul(U.fill).mul(U.eg).mul(U.rl).mul(T2.materialAO || 1);   // materialAO = 1 unless the baked aoMap is on
         if (U.rk) m.colorNode = T2.materialColor.mul(roomK(T2));   // room light level (see the header)
         S.atlas = m;
       } else { const m = new THREE.MeshStandardMaterial({ roughness: 1, metalness: 1 }); m.vertexColors = true; m.name = 'int_atlas'; m.emissive = new THREE.Color(0.3, 0.3, 0.3); S.atlas = m; }
@@ -89,9 +93,20 @@
   // an empty lightsNode skips lighting altogether and would draw the raw albedo).
   function lightList(ctx, withFlash) {
     const PW = ctx.PW && ctx.PW(); const sc = PW && PW.scene; if (!sc) return null; const a = [];
-    sc.traverse(o => { if ((o.isAmbientLight || o.isHemisphereLight || (withFlash && o.isSpotLight && o.userData && o.userData.dmFlash)) && !(o.userData && (o.userData.btStandIn || o.userData.bti))) a.push(o); });   // withFlash: the glasses flashlight (ui/dm-flash.js) joins the atlas's private light list (never the probe-scaled list)
+    sc.traverse(o => { if ((o.isAmbientLight || o.isHemisphereLight || (withFlash && o.isSpotLight && o.userData && o.userData.dmFlash) || (withFlash && o.isPointLight && o.userData && o.userData.dmLamp)) && !(o.userData && (o.userData.btStandIn || o.userData.bti))) a.push(o); });   // withFlash: the glasses flashlight (ui/dm-flash.js) joins the atlas's private light list (never the probe-scaled list)
     return a.length ? a : null;
   }
+
+  // the atlas's private light list: ambient + hemisphere + the glasses flashlight + the lamp pool. Rebuilt only when the set of light objects differs (identity). true = changed.
+  function refreshLights(ctx, quiet) {
+    const A = S.atlas; if (!A || !S.U || !S.U.node) return false;
+    const L = lightList(ctx, true), same = !!(L && S.atlasLightArr && S.atlasLightArr.length === L.length && L.every((l, i) => l === S.atlasLightArr[i]));
+    if (S.atlasLights === undefined || (L && !same) || (!L && S.atlasLights)) { const want = L && ctx.THREE.TSL.lights(L); A.lightsNode = want || null; S.atlasLights = want || null; S.atlasLightArr = L ? L.slice() : null; if (!quiet) A.needsUpdate = true; return true; }
+    return false;
+  }
+  const RF_MAX = (() => { try { const v = +(new URLSearchParams(G.location.search)).get('roomfill'); return v > 0 && v <= 1 ? v : 0.35; } catch (e) { return 0.35; } })();
+  // f = 0..1: how much real room light is on (ui/dm-lamps.js) -> the baked emissive fill steps back by up to RF_MAX
+  function setRealLights(f) { const U = S.U; if (!U || !U.rl) return; const v = 1 - RF_MAX * (f < 0 ? 0 : f > 1 ? 1 : f); if (Math.abs(U.rl.value - v) > 0.004) U.rl.value = v; }
 
   // ── baked GI: lazy fetch + decode (never inlined, never per frame) ──────────────────────────────────────────
   const GI_DIR = 'assets/ariel-home/gi/';   // ctx.giBase overrides (the standalone harness serves from tools/ariel-home/)
@@ -253,8 +268,7 @@
         // (flashlight v322) the atlas is ONE shared material but every planet world is a NEW scene with its own ambient / hemisphere lights and its own flashlight spot: the list used to be
         // built once per session, so from the second visit on the atlas lit itself with the CLOSED world's lights (spot dropped, intensity 0): the mansion never got the flashlight.
         // Rebuilt whenever the set of light objects differs (identity), at the same moment as the programs are re-looked-up anyway (A.needsUpdate below).
-        const L = lightList(ctx, true), same = !!(L && S.atlasLightArr && S.atlasLightArr.length === L.length && L.every((l, i) => l === S.atlasLightArr[i]));
-        if (S.atlasLights === undefined || (L && !same) || (!L && S.atlasLights)) { const want = L && ctx.THREE.TSL.lights(L); A.lightsNode = want || null; S.atlasLights = want || null; S.atlasLightArr = L ? L.slice() : null; }
+        refreshLights(ctx, true);
       }
       A.needsUpdate = true;   // textures/low-path changed: one program lookup (same key as last visit → pipeline cache hit, no new compile)
       for (const m of old) { try { m.dispose(); } catch (e) { } }   // the GLB's own copies (textures now belong to the shared material)
@@ -268,7 +282,7 @@
     release() { probeRelease(); S.gi = null; for (const t of S.tex) freeTex(t); S.tex.length = 0; S.lastMem = 0; if (S.atlas) { S.atlas.lightMap = null; S.atlas.aoMap = null; S.atlas.color.setRGB(1, 1, 1); S.atlas.map = null; S.atlas.emissiveMap = null; S.atlas.normalMap = null; S.atlas.metalnessMap = null; S.atlas.roughnessMap = null; } },
     // the home world is gone: drop everything
     destroy() { API.release(); if (S.atlas) { try { S.atlas.dispose(); } catch (e) { } S.atlas = null; } if (S.emit) { try { S.emit.dispose(); } catch (e) { } S.emit = null; } S.atlasLights = undefined; },
-    prefetch, discard, probeTick,
+    prefetch, discard, probeTick, refreshLights, setRealLights,
     // room light levels 0..1 (ui/dm-mansion-rooms.js order); uniform writes only
     setRoomLevels(a, n) { const rk = S.U && S.U.rk; if (!rk) return false; const arr = rk.array; for (let i = 0; i < n && i < RK_N - 2; i++) arr[i] = a[i]; return true; },
     // baked probe irradiance (lightmap units x meta.gain = irradiance) at a nav-frame point, for moving objects that want their own tint; writes out[0..2] (mean). false = no probes loaded

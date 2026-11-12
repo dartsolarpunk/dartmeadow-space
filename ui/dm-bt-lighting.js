@@ -44,6 +44,8 @@
     altar = mk(new THREE.PointLight(0xfff2cc, 0, 5, 2), 'BT_AltarLight');
     cubeGlow = mk(new THREE.PointLight(0x8fd8ff, 0, 3.5, 2), 'BT_CubeGlow');
     key = fills[0];
+    // (lamp shadows 3) her shadow from the reading lights / altar / cube glow: analytic capsule + board shadow in each light's colour node (ui/dm-charshadow.js; before the first compile; no depth texture)
+    try { const CS = window.DMCharShadow; if (CS && CS.on) for (const L of [fills[0], fills[1], altar, cubeGlow]) CS.attach(L, { THREE, range: L.distance, radius: L.distance * 0.03 }); } catch (e) { }
     // (v118) bounce: one LightProbe (SH, no shadow, fixed in the light key) standing in for the star light bouncing off the
     // sun-lit hull/deck/floors into the interior. Its SH is rebuilt on demand (star direction or ship attitude moved).
     bounce = mk(new THREE.LightProbe(), 'BT_Bounce'); bounce.intensity = 0;

@@ -37,8 +37,8 @@ const B = {
   STORAGE_BUF_PER_STAGE: 8,       // WebGPU default maxStorageBuffersPerShaderStage
   MEM_BUDGET_MIB: 24,             // new GPU memory the job may add (spot shadow map + shaft targets + data textures)
 };
-const FIXED = ['ui/dm-flash.js', 'ui/dm-vlight.js', 'ui/dm-light.js', 'ui/dm-atmo.js', 'ui/dm-mist.js', 'ui/dm-lamps.js', 'ui/dm-polish.js', 'index.html', 'sw.js'];
-const FLAGS = [['flashshadow', 'flashlight shadow'], ['sunshadow', 'daytime sun shadow'], ['vlights', 'volumetric light shafts'], ['light', 'DMLight (off tier)'], ['lamplights', 'real lamp lights'], ['lampshadow', 'lamp light shadows'], ['lamptier', 'lamp tier override'], ['dusk', 'lamp dusk start']];
+const FIXED = ['ui/dm-flash.js', 'ui/dm-vlight.js', 'ui/dm-light.js', 'ui/dm-atmo.js', 'ui/dm-mist.js', 'ui/dm-lamps.js', 'ui/dm-charshadow.js', 'ui/dm-mansion-look.js', 'ui/dm-polish.js', 'index.html', 'sw.js'];
+const FLAGS = [['flashshadow', 'flashlight shadow'], ['sunshadow', 'daytime sun shadow'], ['vlights', 'volumetric light shafts'], ['light', 'DMLight (off tier)'], ['lamplights', 'real lamp lights'], ['lampshadow', 'lamp light shadows'], ['lamptier', 'lamp tier override'], ['dusk', 'lamp dusk start'], ['charshadow', 'analytic capsule shadow of her from the lamps'], ['roomk', 'interior room light gain'], ['roomfill', 'baked fill step-back'], ['lamptier', 'lamp light tier override']];
 
 const out = { fail: [], warn: [], info: [], numbers: {} };
 const FAIL = (m) => out.fail.push(m), WARN = (m) => out.warn.push(m), INFO = (m) => out.info.push(m);
@@ -235,6 +235,32 @@ for (const f of files) { FULL[f] = rd(f); const a = haveDiff ? addedLines(f) : n
     if (!/L\.castShadow\s*=\s*i\s*<\s*plan\.sh\s*&&/.test(s)) FAIL(f + ': lamp lights must take castShadow from the tier plan (i < plan.sh && shadows enabled)');
     if (!/autoUpdate\s*=\s*false/.test(s)) FAIL(f + ': lamp shadow maps must not auto-update every frame (cadence)');
     if (/\bL\.castShadow\s*=\s*(?:true\b|!?\s*DMBudget)/.test(s.replace(/\/\/[^\n]*/g, ''))) WARN(f + ': a castShadow toggle at runtime would recompile every lit material');
+  }
+}
+
+// 11. analytic character shadow (ui/dm-charshadow.js): no depth texture, early-out, bounded
+{
+  const f = 'ui/dm-charshadow.js', s = rd(f), lamps = rd('ui/dm-lamps.js'), html = rd('index.html'), look = rd('ui/dm-mansion-look.js');
+  if (!s) FAIL(f + ' missing');
+  else {
+    const code = strip(s);
+    if (/\b(?:texture|cubeTexture|textureLoad|depthTexture)\s*\(|\.depth\b|RenderTarget/.test(code)) FAIL(f + ': the analytic shadow must not sample or create any texture (it exists to spare the 16-texture budget)');
+    const nc = /const NC = (\d+)/.exec(code), hmax = /handles\.length >= (\d+)/.exec(code);
+    if (!nc || +nc[1] > 6) FAIL(f + ': occluder count NC missing or > 6 (per-pixel cost)'); if (!hmax || +hmax[1] > 8) FAIL(f + ': attached light cap missing or > 8');
+    if (!/If\(en\.greaterThan\(0\.5\)/.test(code) || !/D\.lessThan\(range\.mul\(1\.02\)\)/.test(code)) FAIL(f + ': the per-pixel work must sit behind the `en` (she is near this lamp) and range early-outs');
+    if (!/charshadow/.test(s)) FAIL(f + ': ?charshadow flag not parsed');
+    const tk = code.slice(code.indexOf('function tick('), code.indexOf('function status('));
+    if (/\bnew\s+\w/.test(tk) || /\.(?:map|filter|slice)\(/.test(tk)) FAIL(f + ': tick() allocates');
+    out.numbers.charShadow = { occluders: nc ? +nc[1] + ' capsules + 1 board ellipsoid' : '?', textures: 0, perPixelFlops: '~' + (nc ? +nc[1] : 4) * 55 + ' + 60 per lamp in reach (early-out when out of range / she is far)' };
+    INFO('analytic character shadow: 0 textures, ' + (nc ? nc[1] : '?') + ' capsules + 1 ellipsoid per lit pixel and lamp inside its reach, ' + (hmax ? hmax[1] : '?') + ' lights max, per-frame cost = ~14 vec4 writes');
+    if (lamps) {
+      if (!/shOn\.greaterThan\(0\.5\)/.test(lamps)) FAIL('ui/dm-lamps.js: the lamp shadow-map lookup must sit behind a uniform branch (an unlit / throttled slot must not sample its map)');
+      if (!/CSH\.attach\(L, \{[^}]*gate/.test(lamps)) FAIL('ui/dm-lamps.js: every pool light must be attached to DMCharShadow with its gate before it enters the scene');
+      if (/\.castShadow\s*=\s*(?:true|false|!)\s*;?\s*[^;]*\bsl\b/.test(lamps.replace(/\/\/[^\n]*/g, ''))) WARN('ui/dm-lamps.js: castShadow toggled per slot at run time would recompile');
+      INFO('pool lights carry gate + analytic shadow; shadow lookup in a uniform branch; texture slots per receiver unchanged (' + Object.keys(out.numbers.lampLevels || {}).map((k) => k + ' +' + out.numbers.lampLevels[k].sh).join(', ') + ')');
+    }
+    if (html) { const iC = html.indexOf('ui/dm-charshadow.js'), iL = html.indexOf('ui/dm-lamps.js'), iB = html.indexOf('ui/dm-bt-lighting.js'); if (iC < 0 || iC > iL || iC > iB) FAIL('index.html: ui/dm-charshadow.js must load before dm-lamps.js and dm-bt-lighting.js'); if (!/DMCharShadow\.tick\(CHAR/.test(html)) FAIL('index.html: DMCharShadow.tick(CHAR, board) is not called per frame'); }
+    if (look && !/refreshLights/.test(look)) FAIL('ui/dm-mansion-look.js: refreshLights hook missing (the atlas would never see the pool)');
   }
 }
 

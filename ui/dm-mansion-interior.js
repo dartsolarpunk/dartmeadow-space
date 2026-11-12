@@ -183,7 +183,8 @@
       if (gen !== S.gen || !S.rec || !S.rec.group) { disposeObj(gl.scene); if (LK && LK.discard) LK.discard(gi); fin(); return; }
       if (NAV === null) { disposeObj(gl.scene); if (LK && LK.discard) LK.discard(gi); throw new Error('no nav'); }
       const root = gl.scene; root.name = 'ArielInterior';
-      root.traverse(n => { if (n.isMesh) { n.castShadow = false; n.receiveShadow = false; n.matrixAutoUpdate = false; } });
+      const lampCast = !!(G.DMLamps && G.DMLamps.interiorCasts && G.DMLamps.interiorCasts());   // (lamp shadows 3) receive: the lamp maps + the flashlight map land on the walls / floors (the lamp's shadow lookup sits in a uniform branch, off while the slot is unlit); cast: ultra only (33k tris x 6 faces)
+      root.traverse(n => { if (n.isMesh) { n.castShadow = lampCast && n.material && n.material.name !== 'int_water'; n.receiveShadow = !(n.material && (n.material.name === 'int_emit' || n.material.name === 'int_water')); n.matrixAutoUpdate = false; } });
       if (G.DMMansionLook) { try { G.DMMansionLook.apply(root, c, gi); } catch (e) { console.warn('[mansion-interior] look', e); } }   // shared materials + cheap fake-light (ui/dm-mansion-look.js)
       S.rec.group.add(root); S.root = root; root.updateMatrixWorld(true);
       // same order as the mansion itself (#239): tag FIRST, compile SECOND, once.
