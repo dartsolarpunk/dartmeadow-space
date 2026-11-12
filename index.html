@@ -204,8 +204,8 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-lod.js?v=310"></script>
 <script src="ui/dm-terrain-lod.js?v=294"></script>   <!-- one terrain across every altitude band: shared slope / skirt / sea-tint contract between the globe map and the sky ground -->
 <script src="ui/dm-impostor.js?v=280"></script>   <!-- far-range LOD: vertex-clustering impostor (mansion LOD2, colours baked) -->   <!-- far-range LOD: the ONE distance table per device class (props, mansion, landmarks, vantage reach); ?lod=off|low|mobile|desktop -->
-<script src="ui/dm-light.js?v=319"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
-<script src="ui/dm-vlight.js?v=319"></script>   <!-- lighting overhaul: lamps / LEDs / flashlight / low sun light the volumetric fog (scene.fogNode, light list, equi-angular in-scatter); ?vlights=0|low|med|high -->
+<script src="ui/dm-light.js?v=320"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
+<script src="ui/dm-vlight.js?v=320"></script>   <!-- lighting overhaul: lamps / LEDs / flashlight / low sun light the volumetric fog (scene.fogNode, light list, equi-angular in-scatter); ?vlights=0|low|med|high -->
 <script src="ui/dm-atmo-shell.js?v=297"></script>   <!-- (v297) DMAtmoShell.radii/worldR/ratio: the faded atmosphere perimeter of a body (Solenne 1.18 R) for the space -> world hand-off (Worlds) -->
 <script src="ui/dm-spawn.js?v=314"></script>   <!-- (v314) DMSpawn: new-game spawn in interstellar space near Sol + the arrival push-out from every world's hand-off radius -->
 <script src="ui/dm-pw-handoff.js?v=299"></script>   <!-- (v299) the space -> surface hand-off policy: pre-build hidden from PWS_OPEN, show the world + minimap globe at the DMAtmoShell perimeter (Worlds) -->
@@ -229,7 +229,7 @@ window.DMFT=window.DMFT||(function(){ const E=Object.create(null), X=Object.crea
 <script src="ui/dm-fluid.js?v=80"></script>
 <script src="ui/dm-journal.js?v=98"></script>
 <script src="ui/dm-worldstyle.js?v=94"></script>
-<script src="ui/dm-polish.js?v=319"></script>
+<script src="ui/dm-polish.js?v=320"></script>
 <script src="ui/dm-sky.js?v=209"></script>
 <script src="ui/dm-dust.js?v=191"></script>
 <!-- crunch1 true-fluid VFX (WebGPU only; WebGL keeps the current ocean/dust/fumes) -->
@@ -1078,7 +1078,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-collide-game.js?v=281" defer></script>
 <script src="ui/dm-cgroup.js?v=281" defer></script>
 <script src="ui/dm-charm.js?v=234" defer></script>
-<script src="ui/dm-flash.js?v=319" defer></script>
+<script src="ui/dm-flash.js?v=320" defer></script>
 <script src="ui/dm-menuscene.js?v=245" defer></script>
 <script src="ui/dm-starbubble.js?v=4" defer></script>
 <script src="ui/dm-hazardbubble.js?v=215" defer></script>
@@ -1087,7 +1087,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-bt-madison.js?v=5" defer></script>
 <script src="ui/dm-bt-nova.js?v=1" defer></script>
 <script src="ui/dm-bt-terminal.js?v=3" defer></script>
-<script src="ui/dm-bt-lighting.js?v=319" defer></script>
+<script src="ui/dm-bt-lighting.js?v=320" defer></script>
 <script src="ui/dm-bt-cargocam.js?v=1" defer></script>
 <script src="ui/dm-bt-interior.js?v=124" defer></script>
 <script src="ui/dm-bt-pbr.js?v=292" defer></script>
@@ -1103,11 +1103,11 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-edgewarm.js?v=235" defer></script>
 <script src="ui/dm-arielhome.js?v=231" defer></script>
 <script src="ui/dm-mansion-rooms.js?v=250" defer></script>
-<script src="ui/dm-mansion-look.js?v=319" defer></script>
+<script src="ui/dm-mansion-look.js?v=320" defer></script>
 <script src="ui/dm-mansion-interior.js?v=263" defer></script>
 <script src="ui/dm-orbit-clamp.js?v=1" defer></script>
-<script src="ui/dm-facilities.js?v=319" defer></script>
-<script src="ui/dm-lamps.js?v=319" defer></script>
+<script src="ui/dm-facilities.js?v=320" defer></script>
+<script src="ui/dm-lamps.js?v=320" defer></script>
 <script src="ui/dm-mansion-collide.js?v=283" defer></script>
 <script src="ui/dm-holo.js?v=284" defer></script>
 <script src="ui/dm-sys.js?v=310"></script>
@@ -6698,6 +6698,7 @@ async function initFlightScene(){
   const _solarT0 = performance.now();
   console.log('[TIMING] buildSolarSystem starting at', _solarT0.toFixed(0), 'ms');
   try{await buildSolarSystem();}catch(e){console.warn('solar:',e);try{toast('⚠ Solar system failed to build: '+(e.message||e),5000);}catch(_){}}
+  try{ _btEnsure('init'); }catch(e){ console.warn('[Bird Temple] ensure:',e); }   // (v320) the ship is requested even when buildSolarSystem threw before its own request
   console.log('[TIMING] buildSolarSystem finished after', (performance.now()-_solarT0).toFixed(0), 'ms');
   try{applyProceduralTextures();}catch(e){console.warn('tex:',e);}
   try{buildFlightBoard();}catch(e){console.warn('board:',e);try{toast('⚠ Skyboard failed to build: '+(e.message||e),5000);}catch(_){}}
@@ -8915,11 +8916,21 @@ async function buildSolarSystem(){
   // belt, etc., further below) still needs to run every time this
   // function is called, including on a rebuild-from-procedural-system
   // return.
-  if(!BIRD_TEMPLE.group&&!BIRD_TEMPLE._loading){
-  BIRD_TEMPLE._loading=true;
+  try{ _btLoadModel(); }catch(e){ console.warn('[Bird Temple] load:',e); }   // (v320) also started from _btEnsure() when this function throws before reaching here
+}
+// (v320) Bird Temple model load: top level and re-entrant. It used to sit at the END of buildSolarSystem(): any exception earlier in that function (belt,
+// comets, Oort cloud ...) meant the ship was never requested at all, and a failed fetch / parse only logged, leaving BIRD_TEMPLE.group null for the whole
+// session ("Bird Temple is still loading..." forever). _btEnsure() now starts it from the flight init, the per-frame guard and Quick Travel; a watchdog
+// and 3 retries with backoff cover a stalled or failed fetch / parse; a visible status line says so (see _btGuard / _btLoadFailed below).
+function _btLoadModel(){
+  const bt=BIRD_TEMPLE; if(bt.group||bt._loading) return;
+  bt._loading=true; bt._loadT0=performance.now(); const gen=bt._loadGen=(bt._loadGen|0)+1;
+  try{
   // Space in filename must be percent-encoded — unencoded 'Bird Temple.glb'
   // fails fetch on Safari/iOS (and many HTTP clients), leaving group null forever.
-  _getGLBLoader().load(encodeURI('Bird Temple Interior.glb')+'?v=177', gltf=>{   // original model + hatch, three decks (ui/dm-birdtemple.js)
+  const _gl0=_getGLBLoader(); if(!_gl0) throw new Error('GLTFLoader not ready');
+  _gl0.load(encodeURI('Bird Temple Interior.glb')+'?v=177', gltf=>{
+    if(gen!==BIRD_TEMPLE._loadGen||BIRD_TEMPLE.group){ console.warn('[Bird Temple] stale load result dropped'); return; }   // (v320) a timed-out attempt finishing late must not make a second ship   // original model + hatch, three decks (ui/dm-birdtemple.js)
     const t=gltf.scene;
     // (v114) light budget / fixed light key: any light that ships inside the GLB (KHR_lights_punctual or a stray lamp) is
     // removed here, before the warm-up and before _btAdoptLights, so nothing can add a light to the scene after compile.
@@ -9094,10 +9105,10 @@ async function buildSolarSystem(){
     wrapper.add(t);
     wrapper.scale.setScalar(SHIP_SCALE);
     wrapper.visible=false; // hidden until it has a real, randomized, safe spawn point
-    flightScene.add(wrapper);
+    flightScene.add(wrapper); BIRD_TEMPLE._pending=wrapper;
     try{ _btAdoptLights(wrapper); }catch(e){ console.warn('[Bird Temple] light stand-ins:',e); }
-    BIRD_TEMPLE.group=wrapper; BIRD_TEMPLE._glb=t;   // (v120) the GLB root: baked lightmap data is in its space (ui/dm-bt-bake.js)
-    try{btCubesInit(wrapper,SHIP_SCALE);}catch(e){console.warn('[Bird Temple] session cubes:',e);}
+    BIRD_TEMPLE.group=wrapper; BIRD_TEMPLE._glb=t; BIRD_TEMPLE._pending=null; BIRD_TEMPLE._loading=false; BIRD_TEMPLE._tries=0; _btCrumb('btLoaded');   // (v120) the GLB root: baked lightmap data is in its space (ui/dm-bt-bake.js)
+    try{ if(BT_CUBES.root&&BT_CUBES.root.parent!==wrapper) wrapper.add(BT_CUBES.root); else btCubesInit(wrapper,SHIP_SCALE); }catch(e){console.warn('[Bird Temple] session cubes:',e);}
     // v91: the temple is added hidden and was never precompiled, so its (new interior) pipelines compiled lazily
     // the first frame it showed up (multi-second hitch on Safari WebGPU). Compile it off to the side once the
     // interior script has set up its materials; nothing about the model / interactions changes.
@@ -9123,7 +9134,8 @@ async function buildSolarSystem(){
         if(typeof flightCamera==='undefined'||!flightCamera) return;
         const aboard=(typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active)||(window.BTI&&(BTI.cur||BTI._depth>0));
         const R=R0*(wrapper.scale.x/SHIP_SCALE||1), d=flightCamera.getWorldPosition(_p).distanceTo(wrapper.getWorldPosition(new THREE.Vector3()));
-        const f=!aboard&&d>R*4;
+        if(BIRD_TEMPLE.spawned&&!wrapper.visible&&d<BT_KEEP_R){ wrapper.visible=true; _btCrumb('btRepair','lod-visible'); }   // (v320) never hidden near her
+        const f=!aboard&&!(BIRD_TEMPLE._arriveUntil>performance.now())&&d>R*4;   // (v320) the interior stays on while she arrives
         if(f===far) return; far=f;
         for(const it of inner){ if(f){ it.v=it.o.visible; it.o.visible=false; } else it.o.visible=it.v; }
         // (v193) hull shadow casting is no longer a distance tier: toggling it re-stepped the hull's self-shadow (and rebuilt
@@ -9141,9 +9153,10 @@ async function buildSolarSystem(){
     // to be called here.
   }, undefined, err=>{
     console.warn('Bird Temple (Bird Temple.glb) failed to load:',err);
-    BIRD_TEMPLE._loading=false; // allow a later rebuild to retry
+    if(gen!==BIRD_TEMPLE._loadGen) return;
+    _btLoadFailed('glb: '+((err&&err.message)||err||'error'));   // (v320) retry with backoff (max 3) + a visible status line, not a silent null group forever
   });
-  }
+  }catch(e){ console.warn('[Bird Temple] load start:',e); if(gen===bt._loadGen) _btLoadFailed('start: '+((e&&e.message)||e)); }
 }
 // ════════════════════════════════════════════════════════════════════
 //  LIVE SESSION CUBES OVER THE BIRD TEMPLE
@@ -9453,6 +9466,118 @@ window.__whenThreeReady(function(){
   BIRD_TEMPLE.basePos = new THREE.Vector3(BIRD_TEMPLE.basePos.x, BIRD_TEMPLE.basePos.y, BIRD_TEMPLE.basePos.z);
   BIRD_TEMPLE.target = new THREE.Vector3(BIRD_TEMPLE.target.x, BIRD_TEMPLE.target.y, BIRD_TEMPLE.target.z);
 });
+// ════════════════════════════════════════════════════════════════════
+//  (v320) BIRD TEMPLE LOAD / VISIBILITY GUARD
+//  Quick Travel moved the board next to the ship, but nothing ever checked that the ship was really THERE to be seen: the model request lived at the end of
+//  buildSolarSystem() (an earlier throw there = never requested), a failed or stalled fetch left BIRD_TEMPLE.group null for the session with no retry and no
+//  message, and once built nothing re-asserted that it was in the scene, visible, unculled or ever drawn.  Everything below is a net under that:
+//    _btEnsure()    start / restart the model load (flight init, per-frame guard, Quick Travel)
+//    _btLoadFailed() 3 retries with backoff + a visible status line + breadcrumbs (dmAction / dmBreadcrumb)
+//    _btVerify()    in the scene graph? visible? finite position? culling spheres sane? inside the draw distance? (repairs what it can)
+//    _btArrive()    Quick Travel's checks at +0 / 0.4 / 1.5 / 4 s: repairs, recompiles, and finally reloads the model if it was never drawn
+//  Inside BT_KEEP_R (generous) or while arriving / aboard the ship is never hidden, never frustum-culled by a bad bounding sphere.
+// ════════════════════════════════════════════════════════════════════
+const BT_KEEP_R=20000, BT_RETRY_MAX=3, BT_RETRY_MS=[1500,4000,9000], BT_LOAD_TIMEOUT_MS=120000;
+function _btCrumb(a,info){
+  try{ window.dmAction&&dmAction(a,info); }catch(e){}
+  try{ if(/fail|giveup|repair|notdrawn|rebuild/i.test(a)&&window.dmBreadcrumb) dmBreadcrumb('bt',(a+(info?':'+info:'')).slice(0,60)); }catch(e){}
+}
+function _btSay(msg,cls){ try{ if(window.dmSys) dmSys(msg,{cls:cls||'warn',dur:4200}); else if(typeof toast==='function') toast(msg,4200); }catch(e){} }
+function _btLoadFailed(why){
+  const bt=BIRD_TEMPLE; bt._loading=false; bt._loadT0=0;
+  try{ const w=bt._pending; if(w&&w.parent) w.parent.remove(w); bt._pending=null; }catch(e){}
+  bt._tries=(bt._tries|0)+1; _btCrumb('btLoadFail',String(why).slice(0,32)+' #'+bt._tries);
+  if(bt._tries>BT_RETRY_MAX){ bt._gaveUp=true; _btCrumb('btGiveUp'); _btSay('Bird Temple could not be loaded - press TEMPLE again to retry','err'); return; }
+  _btSay('Bird Temple failed to load - retrying ('+bt._tries+'/'+BT_RETRY_MAX+')');
+  clearTimeout(bt._retryT); bt._retryT=setTimeout(()=>{ bt._retryT=0; try{ _btEnsure('retry'); }catch(e){} },BT_RETRY_MS[Math.min(bt._tries-1,BT_RETRY_MS.length-1)]);
+}
+function _btEnsure(reason){
+  const bt=BIRD_TEMPLE; if(bt.group||bt._loading) return false;
+  if(reason==='user'){ bt._gaveUp=false; bt._tries=0; clearTimeout(bt._retryT); bt._retryT=0; }   // a deliberate press restarts the budget
+  if(bt._gaveUp||bt._retryT) return false;
+  _btCrumb('btEnsure',reason);
+  try{ _btLoadModel(); }catch(e){ _btLoadFailed('ensure: '+((e&&e.message)||e)); }
+  return true;
+}
+// a culling sphere that is missing / NaN / zero (or a skinned / instanced mesh whose bind-pose sphere is stale) would cull the ship while it is on screen
+function _btFixCull(g){
+  let n=0;
+  g.traverse(o=>{ if(!(o.isMesh||o.isPoints||o.isLine)||!o.frustumCulled) return;
+    if(o.isSkinnedMesh||o.isInstancedMesh){ o.frustumCulled=false; n++; return; }
+    const geo=o.geometry; if(!geo) return; let bs=geo.boundingSphere;
+    if(!bs){ try{ if(geo.attributes&&geo.attributes.position&&geo.attributes.position.count<400000) geo.computeBoundingSphere(); }catch(e){} bs=geo.boundingSphere; }
+    if(!bs||!isFinite(bs.radius)||bs.radius<=0||!isFinite(bs.center.x+bs.center.y+bs.center.z)){ o.frustumCulled=false; n++; } });
+  return n;
+}
+function _btMeshCount(g){ let n=0; g.traverse(o=>{ if(o.isMesh&&o.geometry) n++; }); return n; }
+// "was it ever drawn?": the biggest hull meshes stamp the time from onBeforeRender (called by the renderer per drawn object)
+function _btProbe(g){
+  const bt=BIRD_TEMPLE; if(bt._probed) return; bt._probed=true;
+  const ms=[]; g.traverse(o=>{ if(o.isMesh&&o.geometry&&o.geometry.attributes&&o.geometry.attributes.position){ const m=Array.isArray(o.material)?o.material[0]:o.material; if(!(m&&/^BTI_/.test(m.name||''))) ms.push(o); } });
+  ms.sort((a,b)=>b.geometry.attributes.position.count-a.geometry.attributes.position.count);
+  for(const o of ms.slice(0,6)){ const prev=o.onBeforeRender; o.onBeforeRender=function(){ bt._drawnAt=performance.now(); if(prev) return prev.apply(this,arguments); }; }
+}
+function _btDist(){ try{ const cam=flightCamera, g=BIRD_TEMPLE.group; if(!cam||!g) return Infinity; return cam.position.distanceTo(g.position); }catch(e){ return Infinity; } }
+// returns {fixed:[...], meshes:n}; never throws
+function _btVerify(reason,deep){
+  const bt=BIRD_TEMPLE, g=bt.group, fixed=[]; let meshes=-1;
+  try{
+    if(!g||!bt.spawned||typeof flightScene==='undefined'||!flightScene) return {fixed,meshes};
+    let r=g; while(r.parent) r=r.parent;
+    if(r!==flightScene){ flightScene.add(g); fixed.push('scene'); }
+    const p=g.position;
+    if(!(isFinite(p.x)&&isFinite(p.y)&&isFinite(p.z))){ bt._restorePos=null; bt.spawned=false; fixed.push('pos'); return {fixed,meshes}; }
+    if(!g.visible){ g.visible=true; fixed.push('visible'); }
+    if(g.matrixAutoUpdate===false){ g.matrixAutoUpdate=true; fixed.push('matrix'); }
+    _btProbe(g);
+    const d=_btDist();
+    if(deep||d<BT_KEEP_R){ if(deep||!bt._culled||d<(bt._cullD||1e9)*0.5){ const n=_btFixCull(g); bt._culled=1; bt._cullD=d; if(n) fixed.push('cull'+n); } }
+    const cam=(typeof flightCamera!=='undefined')&&flightCamera;
+    if(cam&&isFinite(d)&&d<BT_KEEP_R&&d>cam.far*0.9){ cam.far=Math.max(cam.far,d*1.3); cam.updateProjectionMatrix(); fixed.push('far'); }
+    if(deep){ meshes=_btMeshCount(g); }
+    if(fixed.length) _btCrumb('btRepair',reason+':'+fixed.join(','));
+  }catch(e){ console.warn('[Bird Temple] verify:',e); }
+  return {fixed,meshes};
+}
+// per-frame (throttled): keeps the load alive and the ship asserted while she is anywhere near it
+function _btGuard(){
+  const bt=BIRD_TEMPLE, now=performance.now();
+  if(now<(bt._guardAt||0)) return; bt._guardAt=now+500;
+  if(!bt.group){
+    if(bt._loading){ if(now-bt._loadT0>BT_LOAD_TIMEOUT_MS){ bt._loadGen=(bt._loadGen|0)+1; _btLoadFailed('timeout'); } return; }
+    _btEnsure('guard'); return;
+  }
+  if(!bt.spawned) return;
+  const d=_btDist();
+  if(d<BT_KEEP_R||bt._arriveUntil>now||(typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active)) _btVerify('guard',false);
+}
+// Quick Travel landed: check at once and again as the first frames draw; escalate repair -> recompile -> reload
+function _btArrive(){
+  const bt=BIRD_TEMPLE; bt._arriveUntil=performance.now()+12000; const t0=performance.now(); bt._drawnAt=0; bt._arriveGen=(bt._arriveGen|0)+1; const gen=bt._arriveGen;
+  _btCrumb('btArrive');
+  const step=(i)=>{
+    if(gen!==bt._arriveGen) return;
+    const v=_btVerify('arrive',true), g=bt.group;
+    if(!g){ _btEnsure('arrive'); return; }
+    if(v.meshes===0){ _btCrumb('btRebuild','no meshes'); _btRebuild('no meshes'); return; }
+    const drawn=bt._drawnAt>t0, st=(typeof STATE!=='undefined'&&STATE.screen)||'';
+    if(drawn||st!=='flight') return;
+    if(i===2){ _btCrumb('btNotDrawn','recompile'); try{ _dmCompileObject(g); }catch(e){} }
+    if(i===3){ _btCrumb('btNotDrawn','reload'); _btSay('Bird Temple failed to load - retrying'); _btRebuild('never drawn'); }
+  };
+  [0,400,1500,4000].forEach((ms,i)=>setTimeout(()=>{ try{ step(i); }catch(e){ console.warn('[Bird Temple] arrive check:',e); } },ms));
+}
+// throw away the built ship and request the model again, keeping its place (counts against the retry budget)
+function _btRebuild(why){
+  const bt=BIRD_TEMPLE, g=bt.group; if(!g||bt._rebuilds>=BT_RETRY_MAX) { if(g&&bt._rebuilds>=BT_RETRY_MAX) _btSay('Bird Temple failed to draw - leave and re-enter space','err'); return; }
+  bt._rebuilds=(bt._rebuilds|0)+1;
+  try{ bt._restorePos=g.position.clone(); bt._restoreRotY=g.rotation.y; }catch(e){}
+  try{ clearInterval(bt._lod); }catch(e){}
+  try{ if(typeof BT_CUBES!=='undefined'&&BT_CUBES.root&&BT_CUBES.root.parent) BT_CUBES.root.parent.remove(BT_CUBES.root); }catch(e){}   // the live cubes are re-parented to the new ship
+  try{ if(g.parent) g.parent.remove(g); if(typeof _disposeObject3D==='function') _disposeObject3D(g); }catch(e){}
+  bt.group=null; bt._glb=null; bt.spawned=false; bt._probed=false; bt._culled=0; bt._loading=false; bt._gaveUp=false; bt._tries=0;
+  try{ _btEnsure('rebuild:'+why); }catch(e){}
+}
 function _btPickWanderTarget(){
   // Prefer near a random celestial body sometimes, otherwise open space —
   // real autonomous movement around the currently-loaded system. Full
@@ -9475,6 +9600,7 @@ function updateBirdTemple(dt){
   // v92: whatever ended the walk (liftoff, travel, load, respawn, a mode switch) the deck's close near plane goes back to 0.1
   if(SHIP_WALK._nearSet&&!SHIP_WALK.active&&typeof flightCamera!=='undefined'&&flightCamera){ flightCamera.near=0.1; flightCamera.updateProjectionMatrix(); SHIP_WALK._nearSet=false; }
   try{btCubesUpdate(dt);}catch(e){if(!bt._cubeErr){bt._cubeErr=1;console.warn('[Bird Temple] session cubes:',e);}}
+  try{ _btGuard(); }catch(e){ if(!bt._gdErr){ bt._gdErr=1; console.warn('[Bird Temple] guard:',e); } }   // (v320) keeps the model load alive and the ship in the scene, visible, unculled near her
   if(!bt.group)return;
 
   // ── One-time initial spawn — never fixed, never near the player ──
@@ -9510,6 +9636,7 @@ function updateBirdTemple(dt){
     if(!pos){ // fallback if every random draw happened to land too close (unlikely)
       pos=sp.pos.clone().add(new THREE.Vector3(MIN_DIST,0,MIN_DIST));
     }
+    if(bt._restorePos){ pos=bt._restorePos; bt._restorePos=null; if(bt._restoreRotY!=null) bt.group.rotation.y=bt._restoreRotY; }   // (v320) a rebuilt ship comes back where it was
     bt.group.position.copy(pos);
     bt.group.visible=true;
     bt.spawned=true;
@@ -10489,9 +10616,24 @@ const _BT_QT_DIR=[0,0.42,1];   // temple-local arrival direction: astern (+Z) an
 // Like HOME: leave the world first (the same exits as TO SPACE / LIFTOFF), then jump. In PW 'space' mode the jump is fine as is (the world closes
 // itself once the board is past PWS_CLOSE radii).
 let _btQtBusy=false;
+// (v320) pressed before the ship exists: restart the load if it died, and go as soon as it is built (instead of a dead-end toast)
+let _btQtWait=0;
+function _btQtWaitForTemple(){
+  if(_btQtWait) return; _btQtWait=1; const bt=BIRD_TEMPLE;
+  try{ _btEnsure('user'); }catch(e){}
+  toast('Bird Temple is still loading… you will be taken there when it is ready',2600);
+  let n=0;
+  (function w(){
+    if(bt.group&&bt.spawned){ _btQtWait=0; travelToBirdTemple(); return; }
+    if(++n>240||bt._gaveUp){ _btQtWait=0; toast(bt._gaveUp?'Bird Temple could not be loaded - press TEMPLE again to retry':'Bird Temple is taking too long to load',3000); return; }
+    if(!bt.group&&!bt._loading&&!bt._retryT) try{ _btEnsure('wait'); }catch(e){}
+    setTimeout(w,500);
+  })();
+}
 function _btQtJump(){
   const sp=STATE.flight, bt=BIRD_TEMPLE, g=bt.group;
-  if(!sp||!sp.pos||!g||!bt.spawned){toast('Bird Temple is still loading…',1500);return;}
+  if(!sp||!sp.pos||!g||!bt.spawned){ _btQtWaitForTemple(); return; }
+  try{ _btVerify('jump',true); }catch(e){}
   g.visible=true; g.updateMatrixWorld(true);
   const R=Math.max(bt._R0||0,_btHullR()||0,1), D=1.6*R;
   const c=new THREE.Vector3().setFromMatrixPosition(g.matrixWorld), gq=g.getWorldQuaternion(new THREE.Quaternion());
@@ -10507,10 +10649,11 @@ function _btQtJump(){
   _bfcPrevW=null; _bfcPrevL=null;                           // hull sweep: no sweep from the old spot to the new one
   try{ closeTempleHub(); }catch(e){}
   toast('🕊 Arrived at the Bird Temple',2000);
+  try{ _btArrive(); }catch(e){ console.warn('[Bird Temple] arrive:',e); }   // (v320) in the scene? visible? drawn? repair / recompile / reload
 }
 function travelToBirdTemple(){
   const sp=STATE.flight, bt=BIRD_TEMPLE, g=bt.group;
-  if(!sp||!sp.pos||!g||!bt.spawned){toast('Bird Temple is still loading…',1500);return;}
+  if(!sp||!sp.pos||!g||!bt.spawned){ _btQtWaitForTemple(); return; }
   if(typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active){toast('🕊 You are aboard the Bird Temple',1600);return;}
   if(_btQtBusy) return;
   if(surfaceActive||atmoActive){

@@ -22,14 +22,15 @@ function sp0(sp, c) { return sp.pos.distanceTo(c); }
     const toasts = [], closed = [];
     const ctx = { THREE, Math, isFinite, console, toast: (m) => toasts.push(m), closeTempleHub: () => closed.push(1), updateAssistButtons() { }, takeMouseLook: () => ({ x: 0, y: 0 }),
       surfaceActive: false, atmoActive: false, SHIP_WALK: { active: false }, boardFlight: { position: new THREE.Vector3() },
-      flightInited: true, exits: [], pend: [], setTimeout: (f) => ctx.pend.push(f), atmoExitToSpace() { ctx.exits.push('sky'); }, exitSurface() { ctx.exits.push('ground'); } };
+      flightInited: true, exits: [], pend: [], ensured: [], crumbs: [], performance, clearTimeout() { }, clearInterval() { }, flightScene: new THREE.Scene(), flightCamera: new THREE.PerspectiveCamera(60, 1, 0.1, 3e5),
+      _btEnsure: (r) => { ctx.ensured.push(r); return true; }, _btLoadModel() { }, _btCrumb: (a) => ctx.crumbs.push(a), _btSay() { }, _dmCompileObject() { }, _disposeObject3D() { }, dmAction() { }, setTimeout: (f) => ctx.pend.push(f), atmoExitToSpace() { ctx.exits.push('sky'); }, exitSurface() { ctx.exits.push('ground'); } };
     vm.createContext(ctx);
-    vm.runInContext(['spQuat', 'spForward', 'spUp', 'spRight', 'spAimQuat', 'spSyncLegacy', 'disengageAssist', '_btHullR', '_btQtJump', 'travelToBirdTemple'].map(fn).join('\n') + '\n' + line(/const _BT_QT_DIR=\[[^\]]+\];/) +
-      '\nlet _btQtBusy=false;\nconst _clamp=(v,a,b)=>Math.max(a,Math.min(b,v)); let _sV0=new THREE.Vector3(),_sV1=new THREE.Vector3(),_sV2=new THREE.Vector3(),_sV3=new THREE.Vector3(),_sV4=new THREE.Vector3(),_sM1=new THREE.Matrix4(),_sQ1=new THREE.Quaternion(),_sQ2=new THREE.Quaternion(),_sQ3=new THREE.Quaternion();' +
+    vm.runInContext(['_btFixCull', '_btMeshCount', '_btProbe', '_btDist', '_btVerify', '_btArrive', '_btRebuild', '_btQtWaitForTemple', 'spQuat', 'spForward', 'spUp', 'spRight', 'spAimQuat', 'spSyncLegacy', 'disengageAssist', '_btHullR', '_btQtJump', 'travelToBirdTemple'].map(fn).join('\n') + '\n' + line(/const _BT_QT_DIR=\[[^\]]+\];/) + '\nconst BT_KEEP_R=20000, BT_RETRY_MAX=3;' +
+      '\nlet _btQtBusy=false, _btQtWait=0;\nconst _clamp=(v,a,b)=>Math.max(a,Math.min(b,v)); let _sV0=new THREE.Vector3(),_sV1=new THREE.Vector3(),_sV2=new THREE.Vector3(),_sV3=new THREE.Vector3(),_sV4=new THREE.Vector3(),_sM1=new THREE.Matrix4(),_sQ1=new THREE.Quaternion(),_sQ2=new THREE.Quaternion(),_sQ3=new THREE.Quaternion();' +
       '\nlet _followInit=true,_bfcPrevW=new THREE.Vector3(1,2,3),_bfcPrevL=new THREE.Vector3(4,5,6);' +
       '\nconst ASSIST={mode:"focus",target:{name:"Mars"},orbitOffset:null,homeOffset:null,lockOffset:new THREE.Vector3(),_homeAfterArrive:false};' +
       '\nconst STATE={screen:"flight",flight:{pos:new THREE.Vector3(5e4,-3e3,2e4),vel:new THREE.Vector3(9,9,9),quat:new THREE.Quaternion()}};' +
-      '\nconst BIRD_TEMPLE={group:null,spawned:false,_R0:0};', ctx);
+      '\nconst BIRD_TEMPLE={group:null,spawned:false,_R0:0,_gaveUp:false,_loading:false,_retryT:0};', ctx);
     const run = c => vm.runInContext(c, ctx);
     // a temple: random pose / scale, a hull ~ a box of half-size h (local); its world bounding radius is what _btHullR measures
     const g = new THREE.Group(), h = 8 + rnd() * 30, sc = 0.5 + rnd() * 3;
@@ -40,6 +41,9 @@ function sp0(sp, c) { return sp.pos.distanceTo(c); }
     const p0 = run('STATE.flight.pos.clone()');
     run('BIRD_TEMPLE.group=null'); run('travelToBirdTemple()'); run('BIRD_TEMPLE.group=__g; BIRD_TEMPLE.spawned=false'); run('travelToBirdTemple()');
     ok(run('STATE.flight.pos').equals(p0) && run('ASSIST.mode') === 'focus' && closed.length === 0, 't' + trial + ': refused while not spawned (nothing moved)');
+    // pressed while the ship does not exist yet: the load is (re)started, and she is taken there once it is spawned (no dead-end toast)
+    ok(ctx.ensured.includes('user') && /still loading/.test(toasts[toasts.length - 1] || ''), 't' + trial + ': pressed before the ship exists -> load restarted with a visible message');
+    ok(ctx.pend.length >= 1, 't' + trial + ': a poll is scheduled for the spawn'); ctx.pend.length = 0; run('_btQtWait=0');
     const R0 = new THREE.Box3().setFromObject(g).getBoundingSphere(new THREE.Sphere()).radius * (0.8 + rnd() * 0.4);
     run('BIRD_TEMPLE.spawned=true; BIRD_TEMPLE._R0=' + R0 + '; BIRD_TEMPLE._bsR=0;');
     run('travelToBirdTemple()');
