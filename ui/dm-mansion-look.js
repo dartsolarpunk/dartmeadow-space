@@ -249,7 +249,13 @@
       applyMode();
       for (const t of prev) if (S.tex.indexOf(t) < 0) freeTex(t);
       // light list: ambient + hemisphere only, once per world (null → default list)
-      if (S.U.node) { const L = lightList(ctx, true); const want = L && ctx.THREE.TSL.lights(L); if (S.atlasLights === undefined || (L && !S.atlasLights)) { A.lightsNode = want || null; S.atlasLights = want || null; } }
+      if (S.U.node) {
+        // (flashlight v320) the atlas is ONE shared material but every planet world is a NEW scene with its own ambient / hemisphere lights and its own flashlight spot: the list used to be
+        // built once per session, so from the second visit on the atlas lit itself with the CLOSED world's lights (spot dropped, intensity 0): the mansion never got the flashlight.
+        // Rebuilt whenever the set of light objects differs (identity), at the same moment as the programs are re-looked-up anyway (A.needsUpdate below).
+        const L = lightList(ctx, true), same = !!(L && S.atlasLightArr && S.atlasLightArr.length === L.length && L.every((l, i) => l === S.atlasLightArr[i]));
+        if (S.atlasLights === undefined || (L && !same) || (!L && S.atlasLights)) { const want = L && ctx.THREE.TSL.lights(L); A.lightsNode = want || null; S.atlasLights = want || null; S.atlasLightArr = L ? L.slice() : null; }
+      }
       A.needsUpdate = true;   // textures/low-path changed: one program lookup (same key as last visit → pipeline cache hit, no new compile)
       for (const m of old) { try { m.dispose(); } catch (e) { } }   // the GLB's own copies (textures now belong to the shared material)
       if (S.U.rk && G.DMMansionRooms) API.setRoomLevels(G.DMMansionRooms.S.lvl, G.DMMansionRooms.N);   // a fresh visit starts at the rooms' current levels
