@@ -75,7 +75,7 @@ let fails = 0, n = 0; const ok = (c, m) => { n++; if (!c) { fails++; console.log
   F.tick('walk'); ok(L.parent === scene && F.S.target.parent === scene, 'beam lives in her top-level scene (first person hides her body, not the beam)');
   g.getWorldPosition(wp); ok(L.position.distanceTo(wp) < 1e-6, 'beam origin = the LED bar');
   const fwd = new THREE.Vector3(0, 0, 1).transformDirection(g.matrixWorld), dir = F.S.target.position.clone().sub(L.position).normalize();
-  { const pit = v => Math.atan2(v.y, Math.hypot(v.x, v.z)), brg = v => Math.atan2(v.x, v.z), tilt = F.S.tilt;   // (v320) on foot the axis is the glasses' forward tilted DOWN by S.tilt (same bearing); S.tilt = 0 -> exactly the forward axis
+  { const pit = v => Math.atan2(v.y, Math.hypot(v.x, v.z)), brg = v => Math.atan2(v.x, v.z), tilt = F.S.tilt;   // (v322) on foot the axis is the glasses' forward tilted DOWN by S.tilt (same bearing); S.tilt = 0 -> exactly the forward axis
     ok(Math.abs(brg(dir) - brg(fwd)) < 1e-6 && Math.abs(pit(dir) - (pit(fwd) - tilt)) < 1e-6 && tilt > 0.1, 'aimed along the glasses forward axis, tilted ' + (tilt * 180 / Math.PI).toFixed(0) + ' deg down (follows the head bone)'); }
   ok(fwd.dot(new THREE.Vector3(0, 0, 1).applyQuaternion(rootG.quaternion)) > 0.8, 'forward = the way her face points');
   // tick allocates nothing (counted constructions while ticking)

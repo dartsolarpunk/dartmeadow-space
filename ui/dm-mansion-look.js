@@ -250,7 +250,7 @@
       for (const t of prev) if (S.tex.indexOf(t) < 0) freeTex(t);
       // light list: ambient + hemisphere only, once per world (null → default list)
       if (S.U.node) {
-        // (flashlight v320) the atlas is ONE shared material but every planet world is a NEW scene with its own ambient / hemisphere lights and its own flashlight spot: the list used to be
+        // (flashlight v322) the atlas is ONE shared material but every planet world is a NEW scene with its own ambient / hemisphere lights and its own flashlight spot: the list used to be
         // built once per session, so from the second visit on the atlas lit itself with the CLOSED world's lights (spot dropped, intensity 0): the mansion never got the flashlight.
         // Rebuilt whenever the set of light objects differs (identity), at the same moment as the programs are re-looked-up anyway (A.needsUpdate below).
         const L = lightList(ctx, true), same = !!(L && S.atlasLightArr && S.atlasLightArr.length === L.length && L.every((l, i) => l === S.atlasLightArr[i]));

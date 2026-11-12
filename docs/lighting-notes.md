@@ -97,7 +97,7 @@ Flags: `?lamplights=0` (none) / `=N` (count), `?lampshadow=0` (unshadowed lights
 ### Her shadow outside (index.html fitSun call, ui/dm-facilities.js)
 Two causes found by code reading: (1) the mansion's EXTERIOR meshes got `receiveShadow` only together with `castShadow`, i.e. never on phones/tablets, so the sun's / lamps' shadow of her could not land on the balcony, decks or floors at all. Cast and receive are now decoupled (receive on whenever shadows are on, `?sunshadow=0` restores the old all-or-nothing). (2) The sun's shadow direction fell back to a fixed high light (80,120,40) as soon as the sun was below ~3 deg, i.e. through all of dusk; it now follows the sun down to -4.6 deg clamped to 3.4 deg elevation. The soft contact blob (DMPolish.contact) is unchanged and remains the phone fallback. The interior is baked/unlit (no real-time shadow indoors, by design).
 
-## Flashlight v320: "the flashlight still does not light the scene" (ui/dm-flash.js) - flashlight worker
+## Flashlight v322: "the flashlight still does not light the scene" (ui/dm-flash.js) - flashlight worker
 
 What was reported (tablet, Solenne mansion balcony, dusk): flashlight ON at max, ground in front dark except a pale fan-shaped patch with hard straight edges and an arc edge, walls / columns not lit. NOT verified on a device. Everything below was checked with (a) node tests on the real TSL/WGSL (tools/tests/flash-light.js, 164 checks) and (b) a real render of the real `ui/dm-flash.js` spot on three 0.185 WebGPURenderer's WebGL2 backend in headless Chromium/SwiftShader (tools/tests/flash-render.py: log depth, ACES, PCF-soft shadows; ground / wall / columns / custom colorNode material are lit, column shadows fall on the wall).
 

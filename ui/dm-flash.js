@@ -173,7 +173,7 @@
     const logOK = typeof TS.viewZToLogarithmicDepth === 'function' && typeof TS.reference === 'function' && !!TS.renderGroup && typeof TS.max === 'function' && typeof TS.pow === 'function' && typeof TS.smoothstep === 'function' && typeof TS.mix === 'function';
     class FlashShadowNode extends T.ShadowNode {
       setupShadow(builder) { const o = super.setupShadow(builder); try { o.dmFlashShadow = true; } catch (e) { } return o; }
-      // (flashlight v320) a DISTANCE-PROPORTIONAL depth bias.  three's bias is a constant in log-depth units and normalBias a constant in metres, but the spot sits at head height and
+      // (flashlight v322) a DISTANCE-PROPORTIONAL depth bias.  three's bias is a constant in log-depth units and normalBias a constant in metres, but the spot sits at head height and
       // lights the ground at grazing angles: a shadow texel covers ~0.14 % of the distance across and ~10x that along the ground, so a fixed bias leaves the whole ground in
       // self-shadow (acne = dark) beyond ~10-15 m while only the unshadowed band behind the shadow far plane stays lit.  Here the receiver is pulled toward the light by
       // S.biasK x distance + S.biasM metres before the log-depth conversion (same maths as three's log branch otherwise: xy / w, z from the view depth, + bias).
@@ -447,7 +447,7 @@
     if (L.parent !== top) { top.add(L); top.add(P.t); }
     const e = S.led.matrixWorld.elements;
     _v.set(e[12], e[13], e[14]); _d.set(e[8], e[9], e[10]).normalize();   // the bar's +Z = the glasses' forward (mirrored with her while riding)
-    if (pn === 'ground' && S.tilt > 0) {   // (v320) a hand-held torch is aimed a little DOWN: a horizontal axis at head height (1.6 m) lights the ground only beyond ~2.3 m, at a grazing angle, as a thin wedge
+    if (pn === 'ground' && S.tilt > 0) {   // (v322) a hand-held torch is aimed a little DOWN: a horizontal axis at head height (1.6 m) lights the ground only beyond ~2.3 m, at a grazing angle, as a thin wedge
       const hz = Math.sqrt(_d.x * _d.x + _d.z * _d.z);
       if (hz > 0.05) { const ph = Math.max(-1.35, Math.atan2(_d.y, hz) - S.tilt), ch = Math.cos(ph), k = ch / hz; _d.set(_d.x * k, Math.sin(ph), _d.z * k); }
     }

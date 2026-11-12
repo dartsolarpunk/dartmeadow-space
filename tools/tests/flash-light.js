@@ -110,7 +110,7 @@ const src = fs.readFileSync(path.join(root, 'ui/dm-flash.js'), 'utf8');
   for (const nm of ['governor', 'shadowStep', 'beamStep', 'darkAll', 'applyProf', 'intensityNow']) { const b = body(nm); ok(b.length > 20 && !/\bnew\s|\[\s*\]|\{\s*\}/.test(b.replace(/catch \(e\) \{ \}/g, '')), nm + '(): no new / array / object literal'); }
   ok(!/localStorage|sessionStorage|indexedDB/.test(src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')), 'session only: no storage');
 
-  // ── (v320) aim, shadow floor, debug flag, the material audit (which families RECEIVE the spot)
+  // ── (v322) aim, shadow floor, debug flag, the material audit (which families RECEIVE the spot)
   { hooks.isMobile = false; hooks.preset = 'high'; hooks.shadowSize = 2048; location.search = ''; F.refreshTier(); const Z = mk(); F.adoptScene(Z.sc); const LZ = F.sceneLight(Z.sc); S.led = Z.led; Z.led.rotation.y = Math.PI; Z.sc.updateMatrixWorld(true); F.toggle(true); S.t = 0; F.tick('walk');
     const c = F.cone(); ok(c.dir.y < -0.12 && c.dir.y > -0.22 && Math.abs(Math.hypot(c.dir.x, c.dir.y, c.dir.z) - 1) < 1e-9 && c.dir.z < -0.9, 'on foot the beam is aimed ~10 deg DOWN from the glasses axis (dir.y ' + c.dir.y.toFixed(3) + '): a horizontal axis at head height lights the ground only as a thin wedge');
     F.tick('space'); ok(Math.abs(F.cone().dir.y) < 1e-9, 'open space: no tilt (axis = glasses forward)'); F.tick('walk');
@@ -168,7 +168,7 @@ const src = fs.readFileSync(path.join(root, 'ui/dm-flash.js'), 'utf8');
       ok(bw.length > 1000 && new RegExp('i < ' + F.TIERS[F.S.tierName].steps + ';').test(bw), 'beam WGSL compiles with ' + F.TIERS[F.S.tierName].steps + ' samples');
       F.toggle(false); F.tick('walk'); ok(!P.beam.visible && F.U.shOn.value === 0 && F.U.k.value === 0, 'off: beam hidden, shadow branch closed');
     }
-    // ── (v320) EVERY material family gets the spot term in its real WGSL, within the 16-sampled-textures-per-stage limit.  Built with the same TSL the game uses (stub renderer, no GPU).
+    // ── (v322) EVERY material family gets the spot term in its real WGSL, within the 16-sampled-textures-per-stage limit.  Built with the same TSL the game uses (stub renderer, no GPU).
     //    "spot term" = the SpotLightNode cone smoothstep(coneCos, penumbraCos, .) (a point / ambient / hemisphere list never has it); negative control: a private list WITHOUT the spot.
     {
       hooks.isMobile = true; hooks.preset = 'medium'; hooks.shadowSize = 1024; location.search = ''; F.refreshTier(); F.hooks.depthOK = () => true; F.hooks.logDepth = () => true;
