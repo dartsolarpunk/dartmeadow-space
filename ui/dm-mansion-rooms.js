@@ -40,11 +40,25 @@
   // dusk fade shared by lamps and rooms: world day (0..1, ui/dm-sky.js) -> lamp intensity 0..1. Fully off in daylight, fully on after sunset.
   function lampLevel(day) { const d = day < 0 ? 0 : day > 1 ? 1 : day, a = (0.62 - d) / 0.5, t = a < 0 ? 0 : a > 1 ? 1 : a; return t * t * (3 - 2 * t); }
 
+  // (dusk 2) the outdoor lights (street lamps, rail LEDs, DMLight lamp level, DMVLight fog lights) follow the SUN ELEVATION, not the saturating `day` value (that is 1 from ~8.6 deg up, so it
+  // cannot tell 14 deg from 40 deg): start fading in at DUSK_START deg above the horizon (well before dark), fully on at DUSK_END deg, smoothstep between.  `?dusk=<start deg>` tunes it.
+  // Hysteresis: the elevation the ramp sees only moves once the real elevation has left a +-DUSK_BAND deg dead band round it, so a jittering sun (clouds, a body's wobble, a time scrub) never flickers a lamp.
+  const DUSK_START = 14, DUSK_END = 0, DUSK_BAND = 0.35;
+  const smooth01 = (a, b, v) => { const t = (v - a) / (b - a), u = t < 0 ? 0 : t > 1 ? 1 : t; return u * u * (3 - 2 * u); };
+  function elevDeg(sunY) { const y = sunY < -1 ? -1 : sunY > 1 ? 1 : sunY; return Math.asin(y) * 180 / Math.PI; }
+  function duskLevel(sunY, start) { const s0 = start > 0.5 ? start : DUSK_START; return smooth01(s0, DUSK_END, elevDeg(sunY)); }   // pure: 0 above `start` deg, 1 at/below 0 deg
+  function duskElevFromDay(day) { const d = day < 0 ? 0 : day > 1 ? 1 : day; return (d * 0.25 - 0.1) * 57.2958 * 1.0; }   // fallback when only `day` is known (saturates at 8.6 deg: no early start)
+  function duskState() { return { e: NaN }; }
+  function duskStep(st, sunY, start) {   // stateful (hysteresis): returns the target lamp level 0..1
+    const e = elevDeg(sunY); if (!(st.e === st.e)) st.e = e; else if (e > st.e + DUSK_BAND) st.e = e - DUSK_BAND; else if (e < st.e - DUSK_BAND) st.e = e + DUSK_BAND;
+    return smooth01(start > 0.5 ? start : DUSK_START, DUSK_END, st.e);
+  }
+
   const S = { mode: new Array(N).fill('auto'), lvl: new Float32Array(N).fill(1), tgt: new Float32Array(N).fill(1), seeded: false };
   const idx = id => { for (let i = 0; i < N; i++) if (ROOMS[i].id === id) return i; return -1; };
   const State = {
     ROOMS, N, OFF, FADE, S,
-    idx, classify, autoLevel, level, lit, lampLevel,
+    idx, classify, autoLevel, level, lit, lampLevel, duskLevel, duskStep, duskState, duskElevFromDay, DUSK_START, DUSK_END, DUSK_BAND,
     mode(i) { return S.mode[i]; },
     // flip a room: what is lit now goes dark and the other way round (explicit, remembered); mode 'auto' puts it back on the world's clock
     toggle(i, day) { S.mode[i] = lit(i, S.mode[i], day) ? 'off' : 'on'; return S.mode[i]; },

@@ -71,3 +71,28 @@ Also: map side capped by `GFX.shadowSize`; `DMBudget.shadowEvery()` / `shadowHal
 - Sampled-texture budget: each shadow-RECEIVING material now binds one more depth texture (+ sampler). If a material is already at WebGPU's 16 sampled textures per stage (terrain with DMLight cascades + sun shadow + atlases is the suspect) its pipeline will fail to create. Unverified. Kill switch: `?flashshadow=0`. Suspect to check first on a device: terrain/ground atlas materials with `userData.dmLight`.
 - Shadow bias/normalBias (-0.0004 / 0.06 m) are first guesses for a log-depth 1024-2048 map; tune with `?flashbias=`.
 - Tests: `node tools/tests/glasses-flash.js`, `node tools/tests/flash-light.js` (set THREE_CORE, optionally THREE_WEBGPU).
+
+## Lamps / dusk / her shadow / real lamp lights (worker: lamps + shadows) - NOT verified on a device or WebGPU
+
+Nothing here ran on a phone or on the WebGPU backend. Ran: node tests (mansion-lamps.js, home-leds.js, lighting-budget.js, light-unit.js) and one WebGL2/SwiftShader render (tools/tests/lamp-shadow-harness.html: a tagged point shadow lights a floor through a DMLight-style wrapper and the box shadows it).
+
+### Dusk ramp (ui/dm-mansion-rooms.js `duskLevel/duskStep`, wired in ui/dm-lamps.js tick, ctx `skySunY` in index.html)
+The lamps used `day = clamp((sunY+0.1)/0.25)`, which is already 1 from 8.6 deg up, so nothing could start before ~3 deg. Now the SUN ELEVATION drives one level `S.on`: 0 at/above 14 deg, smoothstep, 1 at/below 0 deg (`?dusk=<deg>` moves the start). Hysteresis: the elevation the ramp sees only moves once the sun has left a +-0.35 deg dead band (a jittering sun cannot flicker a lamp; a noisy sunset never dims a lamp that came on; tested). `S.on` (eased 0.9 s) feeds EVERYTHING: pole heads + glow + pools, rail LEDs, `DMLight.setLampLevel`, `DMVLight.setLevel('lamps'|'leds')` and the real lamp lights below. Room switches / interior AUTO levels still use `day` (unchanged).
+
+### Real lamp lights, restored (ui/dm-lamps.js `lampPlan`, `lampLights`)
+History (git log -S): there never were shadowed real lamp lights in this repo. The only real lights were `?lamplights=1..4` (since 4b4a0ce): UNshadowed PointLights, OFF by default because adding a light recompiles every lit material. They are now ON by DMLight tier, still created ONCE (at lamp build) and never added/removed afterwards:
+| DMLight tier | lights | shadow-casting | face | refresh | memory |
+|---|---|---|---|---|---|
+| off / low | 0 (probe lighting from the radiance cache only) | 0 | - | - | 0 |
+| med (the phone ceiling, `PRESET_CAP.mob`) | 2 | 1 | 512 | every 3rd frame | 8 MiB |
+| high | 3 | 2 | 512 | every 2nd | 16 MiB |
+| ultra | 4 | 3 | 1024 | every frame | 96 MiB (desktop) |
+A point light's depth atlas is 4 x 2 faces, so "512" = 2048 x 1024 x 4 B. Softness = `shadow.radius` 1.5 / 2 / 3 on the renderer's PCF type. Casters: her (skinned mesh casts), lamp poles (`castShadow` only when a lamp casts), props that already cast; the mansion still casts nothing on phones (59k tris x 6 faces) - `?sunshadow=1` makes it cast for the sun AND the lamps.
+Slots: a slot keeps its lamp until that lamp leaves the nearest set, then fades out (0.3 s), then moves (no pops); re-aimed 3x a second from the mansion frame; by day / > 150 m from the property nothing is assigned, intensity 0, no map refreshed. Maps are `autoUpdate=false`, refreshed on the cadence and only for slots with light.
+DMBudget (no new ladder stage, no recompile): `shadow` L1 -> cadence >= 2, L2 (or `light` L2) -> ONE shadowed lamp, L3 (or `light` L3) -> maps frozen and at most 2 lamps lit, L4 -> frozen. `castShadow` is NEVER toggled at runtime (that recompiles).
+The point shadow node is a tagged subclass (`lampShadowNode`: `PointShadowNode.setupShadow` -> `dmFlashShadow = true`) so DMLight's `receivedShadowNode` wrapper (sun-box fade x SUN height-field visibility) does not multiply a lamp's shadow by the sun's visibility (it would be ~0 at night). Verified on WebGL2: an untagged light IS zeroed by such a wrapper, the tagged one is not.
+Flags: `?lamplights=0` (none) / `=N` (count), `?lampshadow=0` (unshadowed lights) / `=<face px>`, `?lamptier=low|med|high|ultra` (override), `?lampk=<gain>` (intensity, default 1 = 80 cd, decay 1.5, 32 m), `?dusk=<deg>`.
+**Texture slots (flashlight worker: read this).** Each shadow-casting lamp adds one depth texture (+ comparison sampler) to every shadow-RECEIVING lit material in the world scene, on top of the sun map and the flashlight map. At med that is sun + flash + 1 lamp. The terrain ground material (DMLight cascades + atlases) is the suspect for the 16-per-stage limit; if terrain / props go black or pink on a device, `?lampshadow=0` is the kill switch (keeps the lights, drops their maps), then `?lamplights=0`. tools/tests/lighting-budget.js check 10 prints the slots per tier and fails if the phone ceiling (med) has > 1 shadowed lamp.
+
+### Her shadow outside (index.html fitSun call, ui/dm-facilities.js)
+Two causes found by code reading: (1) the mansion's EXTERIOR meshes got `receiveShadow` only together with `castShadow`, i.e. never on phones/tablets, so the sun's / lamps' shadow of her could not land on the balcony, decks or floors at all. Cast and receive are now decoupled (receive on whenever shadows are on, `?sunshadow=0` restores the old all-or-nothing). (2) The sun's shadow direction fell back to a fixed high light (80,120,40) as soon as the sun was below ~3 deg, i.e. through all of dusk; it now follows the sun down to -4.6 deg clamped to 3.4 deg elevation. The soft contact blob (DMPolish.contact) is unchanged and remains the phone fallback. The interior is baked/unlit (no real-time shadow indoors, by design).

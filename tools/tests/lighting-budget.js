@@ -37,8 +37,8 @@ const B = {
   STORAGE_BUF_PER_STAGE: 8,       // WebGPU default maxStorageBuffersPerShaderStage
   MEM_BUDGET_MIB: 24,             // new GPU memory the job may add (spot shadow map + shaft targets + data textures)
 };
-const FIXED = ['ui/dm-flash.js', 'ui/dm-vlight.js', 'ui/dm-light.js', 'ui/dm-atmo.js', 'ui/dm-mist.js', 'ui/dm-lamps.js', 'index.html', 'sw.js'];
-const FLAGS = [['flashshadow', 'flashlight shadow'], ['sunshadow', 'daytime sun shadow'], ['vlights', 'volumetric light shafts'], ['light', 'DMLight (off tier)']];
+const FIXED = ['ui/dm-flash.js', 'ui/dm-vlight.js', 'ui/dm-light.js', 'ui/dm-atmo.js', 'ui/dm-mist.js', 'ui/dm-lamps.js', 'ui/dm-polish.js', 'index.html', 'sw.js'];
+const FLAGS = [['flashshadow', 'flashlight shadow'], ['sunshadow', 'daytime sun shadow'], ['vlights', 'volumetric light shafts'], ['light', 'DMLight (off tier)'], ['lamplights', 'real lamp lights'], ['lampshadow', 'lamp light shadows'], ['lamptier', 'lamp tier override'], ['dusk', 'lamp dusk start']];
 
 const out = { fail: [], warn: [], info: [], numbers: {} };
 const FAIL = (m) => out.fail.push(m), WARN = (m) => out.warn.push(m), INFO = (m) => out.info.push(m);
@@ -207,6 +207,34 @@ for (const f of files) { FULL[f] = rd(f); const a = haveDiff ? addedLines(f) : n
     if (f === 'index.html' || f === 'sw.js') continue;
     const s = CODE[f];
     if (/renderer|getContext|requestAdapter|\.limits\b|compileAsync|NodeMaterial/.test(s) && !/\btry\s*\{/.test(s)) WARN(f + ': touches renderer / node materials but has no try block');
+  }
+}
+
+// 10. real lamp lights (ui/dm-lamps.js LAMP_LEVELS: n lights, sh shadow-casting, map = side of ONE face; a point light's depth atlas is 4 x 2 faces)
+{
+  const f = 'ui/dm-lamps.js', s = rd(f);
+  const m = s && /LAMP_LEVELS\s*=\s*\{([^;]*)\};/.exec(s);
+  if (!m) FAIL(f + ': LAMP_LEVELS table not found');
+  else {
+    const T = {}; m[1].replace(/(\w+):\s*\{\s*n:\s*(\d+),\s*sh:\s*(\d+),\s*map:\s*(\d+),\s*every:\s*(\d+)/g, (x, k, n, sh, map, every) => { T[k] = { n: +n, sh: +sh, map: +map, every: +every }; return x; });
+    out.numbers.lampLevels = T;
+    const mib = (t) => t.sh * (t.map * 4) * (t.map * 2) * 4 / 1048576;
+    for (const k of Object.keys(T)) { const t = T[k]; t.MiB = +mib(t).toFixed(1); t.texSlots = t.sh;   // each shadow-casting lamp = +1 depth texture (+ sampler) in every shadow-RECEIVING lit material
+      if (t.sh > t.n) FAIL('lamp tier ' + k + ': ' + t.sh + ' shadow-casting of only ' + t.n + ' lights');
+      if (t.sh && (t.map < 256 || t.map > 1024)) FAIL('lamp tier ' + k + ': shadow face ' + t.map + ' px outside 256..1024 (atlas ' + t.map * 4 + 'x' + t.map * 2 + ', limit 8192)'); }
+    // phones/tablets never go above DMLight tier 'med' (ui/dm-light.js PRESET_CAP.mob): that is the tier a phone can reach
+    if (T.med) { if (T.med.sh > 1) FAIL('lamp tier med (the phone ceiling) has ' + T.med.sh + ' shadow-casting lamps (budget 1)'); if (T.med.MiB > 8.5) FAIL('lamp tier med (phone) shadow memory ' + T.med.MiB + ' MiB > 8.5'); if (T.med.every < 2) FAIL('lamp tier med refreshes its shadow every frame (phones: >= every 2nd)'); }
+    for (const k of ['low', 'off']) if (T[k] && (T[k].n || T[k].sh)) FAIL('lamp tier ' + k + ' has real lights (low/off = probe lighting only)');
+    if (T.high && T.med && (T.high.sh < T.med.sh || T.high.n < T.med.n)) FAIL('lamp tiers are not monotone med -> high');
+    if (T.ultra && T.high && (T.ultra.sh < T.high.sh || T.ultra.map < T.high.map)) FAIL('lamp tiers are not monotone high -> ultra');
+    // texture slots: the sun map + the flashlight map are already bound by every shadow receiver; lamps come on top
+    const worst = Math.max.apply(null, Object.keys(T).map((k) => T[k].sh)) + 2;
+    if (worst > 6) WARN('shadow depth textures on a fully-loaded receiver: sun + flash + ' + (worst - 2) + ' lamps = ' + worst + ' of ' + B.SAMPLED_TEX_PER_STAGE + ' sampled textures per stage; the terrain ground material is the one at risk (kill switch ?lampshadow=0)');
+    INFO('lamp lights per tier: ' + Object.keys(T).map((k) => k + ' ' + T[k].n + '/' + T[k].sh + 'sh@' + T[k].map + ' ' + T[k].MiB + 'MiB').join(', ') + '; sun + flash + lamp shadow textures on a receiver: ' + Object.keys(T).map((k) => k + ' ' + (2 + T[k].sh)).join(', '));
+    // never any castShadow outside the tier plan / without a cast gate
+    if (!/L\.castShadow\s*=\s*i\s*<\s*plan\.sh\s*&&/.test(s)) FAIL(f + ': lamp lights must take castShadow from the tier plan (i < plan.sh && shadows enabled)');
+    if (!/autoUpdate\s*=\s*false/.test(s)) FAIL(f + ': lamp shadow maps must not auto-update every frame (cadence)');
+    if (/\bL\.castShadow\s*=\s*(?:true\b|!?\s*DMBudget)/.test(s.replace(/\/\/[^\n]*/g, ''))) WARN(f + ': a castShadow toggle at runtime would recompile every lit material');
   }
 }
 

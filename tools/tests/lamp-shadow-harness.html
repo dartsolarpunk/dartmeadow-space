@@ -1,0 +1,41 @@
+<!doctype html>
+<!-- Real lamp light + real point shadow, rendered by the engine's own three r185 on WebGL2/SwiftShader (headless; correctness only, NO fps meaning).
+     Checks the pieces ui/dm-lamps.js depends on: (1) a PointLight with castShadow and the tagged LampShadowNode compiles and renders; (2) a material whose receivedShadowNode is
+     the DMLight wrapper (zeroes the shadow term of any untagged light, like the sun-visibility wrapper at night) still gets the lamp's light because the node is tagged dmFlashShadow;
+     (3) the caster really shadows the floor (pixels behind it are darker than beside it); (4) a second, untagged control light IS zeroed by that wrapper (proves the wrapper is live).
+     Run: python3 tools/tests/px-render.py . <three-dir> out.png 'tools/tests/lamp-shadow-harness.html?gl=1'   (<three-dir> = npm three@0.185.0)   Result: window.ok, window.status, window.extra -->
+<html><head><meta charset="utf-8"><style>body{margin:0;background:#000}</style>
+<script type="importmap">{"imports":{"three":"/three/build/three.webgpu.js","three/webgpu":"/three/build/three.webgpu.js","three/tsl":"/three/build/three.tsl.js"}}</script>
+<script src="/ui/dm-mansion-rooms.js"></script><script src="/ui/dm-lamps.js"></script>
+</head><body>
+<script type="module">
+import * as THREE from 'three';
+window.THREE = THREE; const Q = new URLSearchParams(location.search), out = { checks: [], err: [] };
+const _ce = console.error; console.error = (...a) => { out.err.push(a.map(String).join(' ').slice(0, 240)); _ce(...a); };
+const chk = (n, ok, info) => out.checks.push({ n, ok: !!ok, info: info == null ? '' : String(info) });
+try {
+  const r = new THREE.WebGPURenderer({ antialias: false, forceWebGL: Q.get('gl') === '1' }); r.setSize(320, 200); r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFSoftShadowMap; document.body.appendChild(r.domElement); await r.init();
+  const mk = (tagged, wrap) => {
+    const scene = new THREE.Scene(); scene.background = new THREE.Color(0x000000);
+    const mat = new THREE.MeshStandardNodeMaterial({ color: 0xcccccc, roughness: 1 });
+    if (wrap) mat.receivedShadowNode = (s) => (s && s.dmFlashShadow ? s : s.mul(0.0));   // the DMLight wrapper's effect on an untagged light at night
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(40, 40).rotateX(-Math.PI / 2), mat); floor.receiveShadow = true; scene.add(floor);
+    const box = new THREE.Mesh(new THREE.BoxGeometry(3, 3, 3), new THREE.MeshStandardNodeMaterial({ color: 0x888888 })); box.position.set(0, 1.5, 0); box.castShadow = true; scene.add(box);
+    const L = new THREE.PointLight(0xffffff, 55, 60, 1.5); L.position.set(-5, 8, 0); L.castShadow = true; L.shadow.mapSize.set(512, 512); L.shadow.camera.near = 0.3; L.shadow.bias = -0.003; L.shadow.normalBias = 0.04; L.shadow.radius = 1.5; scene.add(L);
+    if (tagged) { const sn = window.DMLamps._pure.lampShadowNode(L, THREE); if (!sn) throw new Error('lampShadowNode returned null'); L.shadow.shadowNode = sn; }
+    return scene;
+  };
+  const cam = new THREE.PerspectiveCamera(60, 320 / 200, 0.1, 200); cam.position.set(2, 22, 14); cam.lookAt(2, 0, 0);
+  const px = async (scene) => { for (let i = 0; i < 3; i++) { r.render(scene, cam); await new Promise(rr => setTimeout(rr, 30)); } r.render(scene, cam); const c = document.createElement('canvas'); c.width = 320; c.height = 200; const g = c.getContext('2d', { willReadFrequently: true }); g.drawImage(r.domElement, 0, 0); const at = (x, y) => { const d = g.getImageData(x, y, 1, 1).data; return (d[0] + d[1] + d[2]) / 3; }; return at; };
+  // the camera looks straight down on x=2: the light is at x=-5, so the shadow of the box falls to +x of it
+  const A = await px(mk(true, true));
+  const lit = A(100, 100), shade = A(168, 100);
+  chk('tagged lamp light renders through the DMLight-style wrapper (lit floor)', lit > 25, 'lit=' + lit);
+  chk('the box shadows the floor behind it (shade < lit)', shade < lit * 0.6, 'lit=' + lit + ' shade=' + shade);
+  const B = await px(mk(false, true)); const litB = B(100, 100);
+  chk('control: an UNtagged light is zeroed by the wrapper (the wrapper is live)', litB < lit * 0.5, 'litB=' + litB);
+  const C = await px(mk(false, false)); chk('control: no wrapper, default shadow node: lit floor and a shadow', C(100, 100) > 25 && C(168, 100) < C(100, 100) * 0.6, 'lit=' + C(100, 100) + ' shade=' + C(168, 100));
+  window.extra = { backend: r.backend && (r.backend.isWebGPUBackend ? 'webgpu' : 'webgl2'), px: { lit, shade, litB } };
+} catch (e) { out.err.push('threw ' + (e && e.stack || e)); }
+window.ok = out.checks.length >= 4 && out.checks.every(c => c.ok) && out.err.filter(e => !/deprecat/i.test(e)).length === 0; window.status = JSON.stringify(out).slice(0, 2000); window.done = true;
+</script></body></html>

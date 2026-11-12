@@ -9,8 +9,10 @@
 //       pools   ONE merged mesh of light pools: a lattice per lamp, drawn only on the cells at the lamp's own ground height (so no pool ever floats over a drop), vertex
 //               alpha = falloff, additive, no depth write. The "baked" pool of an exterior lamp (the GI lightmap only covers the interior).
 //     Everything is driven by ONE intensity uniform (dusk fade of the world's sun, ui/dm-sky.js `day`), eased; at full daylight the group is hidden (zero cost).
-//   • Optional real light pool (OFF by default: adding a light recompiles every lit world material): ?lamplights=1..4 keeps that many un-shadowed PointLights on the lamps
-//     nearest the camera (re-aimed 3x a second, never added or removed after setup, no allocation).
+//   • (lamp lights 2) REAL lamp lights, by DMLight tier (lampPlan): a small pool of PointLights kept on the lamps nearest her, with real shadow maps on the first few. low = none
+//     (the radiance cache already lights the probes from the lamps); med = 2 lights, 1 shadowed (512, every 3rd frame); high = 3 / 2 (512, every 2nd); ultra = 4 / 3 (1024, every frame).
+//     Never added or removed after setup (adding one recompiles every lit material, so it happens once, when the lamps are built), intensity-faded per slot, re-aimed 3x a second with
+//     hysteresis, shadow maps refreshed on a cadence and shed by DMBudget (docs/lighting-notes.md). `?lamplights=0` off, `?lamplights=N` count, `?lampshadow=0|px`, `?lamptier=`, `?lampk=`.
 //   • Room switches: a slim post with a lit plate just inside each room's door (ui/dm-mansion-rooms.js). Walk up (within 2.8 m): a USE bubble (tap it, or F) flips the room;
 //     hold it for AUTO again; or tap the post in the 3D view. The room's level is eased over 0.25 s and written into the interior material's uniform array
 //     (DMMansionLook.setRoomLevels). Rooms start on AUTO: on at night, a touch dimmer by day. Modes persist in the save (`mansionLights`) and localStorage `dm_mansion_rooms`.
@@ -74,12 +76,37 @@
     }
     return { P, A, I };
   }
+  // ── real lamp lights: tier plan + nearest pick (pure, tested by tools/tests/mansion-lamps.js) ─────────────────────────────
+  // n = lights kept, sh = how many of them cast a shadow map, map = side of ONE face (a point light's atlas is 4 x 2 faces: 512 -> 2048 x 1024 x 4 B = 8 MB), every = shadow refresh cadence (frames),
+  // rad = PCF softness (shadow.radius).  low/off: no real lights (probe lighting only).
+  const LAMP_LEVELS = { off: { n: 0, sh: 0, map: 0, every: 0, rad: 0 }, low: { n: 0, sh: 0, map: 0, every: 0, rad: 0 }, med: { n: 2, sh: 1, map: 512, every: 3, rad: 1.5 }, high: { n: 3, sh: 2, map: 512, every: 2, rad: 2 }, ultra: { n: 4, sh: 3, map: 1024, every: 1, rad: 3 } };
+  // o: { n (flag, null = tier), shadow (flag: null = tier, 0 = none, px = force map side), bud: { shadow, light, every } (DMBudget levels) }.  Returns the allocation (n, sh, map, rad) and what is ACTIVE now (nOn, active, every; every 0 = frozen).
+  function lampPlan(tier, o) {
+    o = o || {}; const t = LAMP_LEVELS[tier] || LAMP_LEVELS.low, b = o.bud || {}; let n = t.n, sh = t.sh, map = t.map, every = t.every, rad = t.rad;
+    if (o.n != null) { n = Math.max(0, Math.min(6, o.n | 0)); sh = Math.min(sh, n); }
+    if (o.shadow === 0) sh = 0; else if (o.shadow > 0 && n > 0) { map = Math.max(128, Math.min(2048, o.shadow | 0)); sh = Math.max(sh, Math.min(n, 1)); if (!every) every = 3; if (!rad) rad = 1.5; }
+    if (!sh) { map = 0; every = 0; }
+    let active = sh, nOn = n, ev = every;
+    const bs = b.shadow | 0, bl = b.light | 0;
+    if (bs >= 2 || bl >= 2) active = Math.min(active, 1);          // the ladder is shedding: one shadowed lamp
+    if (bs >= 3 || bl >= 3) { active = 0; nOn = Math.min(nOn, 2); } // ... then none (the lights stay, their maps freeze)
+    if (b.every > ev) ev = b.every; if (bs >= 4 || ev >= 30) ev = 0;
+    return { tier, n, sh, map, rad, every, nOn, active, ev: active ? ev : 0 };
+  }
+  // the `n` nearest of `lamps` ([x, y, z, ...], nav frame) to (x, y, z); z counts 1.5x (another terrace is farther than it looks). out: Int16Array(n) of indices, nearest first, -1 padded. No allocation but the scratch.
+  const _pd = new Float64Array(128);
+  function pickNearest(lamps, x, y, z, n, out) {
+    const m = Math.min(lamps.length, 128); for (let i = 0; i < m; i++) { const l = lamps[i], dx = l[0] - x, dy = l[1] - y, dz = (l[2] - z) * 1.5; _pd[i] = dx * dx + dy * dy + dz * dz; }
+    for (let a = 0; a < n; a++) { let bi = -1, bd = 1e18; for (let i = 0; i < m; i++) { if (_pd[i] < bd) { let dup = false; for (let b = 0; b < a; b++) if (out[b] === i) { dup = true; break; } if (!dup) { bd = _pd[i]; bi = i; } } } out[a] = bi; }
+    return out;
+  }
   const withYaw = lamps => lamps.map(l => l.length > 4 ? l : [l[0], l[1], l[2], l[3], 0]);   // the planner stores the arm yaw (toward the middle of the lamp's level)
 
   // ── runtime ────────────────────────────────────────────────────────────────────────────────────────────────
   const S = { F: null, rec: null, built: false, building: false, J: null, jp: null, grp: null, on: 0, day: 1, ct: 1, st: 0, px: 0, pz: 0, y0: 0, th: 0, sw: -1, swHold: 0, hud: null, last: 0,
-    U: null, lights: [], nl: 0, lt: 0, tap: null, mats: [], geos: [], pending: false, pool: 0 };
+    U: null, lights: [], slots: [], plan: null, casting: 0, lampK: 1, shN: 0, frame: 0, near: new Int16Array(8), nl: 0, lt: 0, tap: null, mats: [], geos: [], pending: false, pool: 0 };
   const q = (() => { try { return new URLSearchParams(G.location.search); } catch (e) { return new URLSearchParams(''); } })();
+  S.duskStart = +(q.get('dusk') || 0) || 0;   // ?dusk=<deg>: elevation the lamps start fading in (default 14)
   const ST = () => G.DMMansionRooms;
   try { const j = JSON.parse(G.localStorage.getItem(LS) || 'null'); if (j && ST()) ST().set(j); } catch (e) { }
   function persist() { try { G.localStorage.setItem(LS, JSON.stringify(ST().get())); } catch (e) { } }
@@ -134,9 +161,17 @@
       for (const l of lamps) solid(l[0], l[2], -l[1]);
       for (const r of R.ROOMS) if (r.sw) { wp.set(r.sw[0], r.sw[2], -r.sw[1]); grp.localToWorld(wp); W.addCylinder('lamps', wp.x, wp.y, wp.y + 1.05 * UPM * sc, wp.z, 0.2 * UPM * sc, 'metal'); nc++; }
       S.nCol = nc; } } catch (e) { }
-    // optional real lights
-    const nl = Math.min(4, +(q.get('lamplights') || 0) | 0); S.nl = nl;
-    if (nl > 0) { const PW = c.PW(); for (let i = 0; i < nl; i++) { const L = new THREE.PointLight(0xffc27a, 0, 55, 1.5); L.castShadow = false; L.userData.dmLamp = true; PW.scene.add(L); S.lights.push(L); } }
+    // real lamp lights (see lampPlan): created ONCE here (a new light recompiles every lit material), intensity 0 until dusk; kept in the world scene so terrain, props, the mansion and her all light up
+    { const plan = planNow(true); S.plan = plan; S.nl = plan.n;
+      if (plan.n > 0) { const PW = c.PW(); const I0 = S.lampK * 80;
+        for (let i = 0; i < plan.n; i++) {
+          const L = new THREE.PointLight(0xffc27a, 0, 32, 1.5); L.userData.dmLamp = true; L.userData.noCollide = true; L.name = 'JOTS_LampLight' + i; L.matrixAutoUpdate = true;
+          L.castShadow = i < plan.sh && !!(c.shadows && c.shadows());
+          if (L.castShadow) { try { const sh = L.shadow; sh.mapSize.set(plan.map, plan.map); sh.camera.near = 0.3; sh.bias = -0.003; sh.normalBias = 0.04; sh.radius = plan.rad; sh.autoUpdate = false; sh.needsUpdate = true; const sn = lampShadowNode(L, THREE); if (sn) sh.shadowNode = sn; } catch (e) { L.castShadow = false; } }
+          PW.scene.add(L); S.lights.push(L); S.slots.push({ idx: -1, cur: 0, want: 0, sh: L.castShadow, I0 });
+        }
+        S.casting = S.lights.filter(l => l.castShadow).length; if (S.casting) poles.castShadow = true;   // the poles shade each other / her
+      } }
     S.lamps = lamps; S.leds = leds; S.built = true;
     // landing pads (patios, decks, courts, terraces) from the mansion plan: ui/dm-landzones.js; the lamps are part of the plan, so no pad has a lamp or planter in it
     try { const Z = G.DMLandZones; if (Z && G.fetch) fetch('assets/ariel-home/ariel-home-interior-nav.json?v=' + F.ver).then(r => r.json()).then(nav => {
@@ -163,7 +198,43 @@
     try { if (G.DMCollide && G.DMCollide.clearGroup) G.DMCollide.clearGroup('lamps'); if (G.DMLandZones) G.DMLandZones.clear(); } catch (e) { }
     try { if (S.grp && S.grp.parent) S.grp.parent.remove(S.grp); for (const g of S.geos) g.dispose(); for (const m of S.mats) m.dispose(); if (S.plates && S.plates.dispose) S.plates.dispose(); } catch (e) { }
     for (const L of S.lights) { try { if (L.parent) L.parent.remove(L); L.dispose && L.dispose(); } catch (e) { } }
-    S.lights.length = 0; S.geos.length = 0; S.mats.length = 0; S.grp = null; S.built = false; try { if (G.DMVLight) { G.DMVLight.clear('lamps'); G.DMVLight.clear('leds'); } } catch (e) { } try { if (G.DMLight) { G.DMLight.setLamps([]); G.DMLight.setLampLevel(0); G.DMLight.clearOverlays(); } } catch (e) { } S.sg = null; S.plates = null; S.U = null; S.on = 0; hideHud();
+    S.lights.length = 0; S.slots.length = 0; S.casting = 0; S.shN = 0; S.plan = null; S.dk = null; S.geos.length = 0; S.mats.length = 0; S.grp = null; S.built = false; try { if (G.DMVLight) { G.DMVLight.clear('lamps'); G.DMVLight.clear('leds'); } } catch (e) { } try { if (G.DMLight) { G.DMLight.setLamps([]); G.DMLight.setLampLevel(0); G.DMLight.clearOverlays(); } } catch (e) { } S.sg = null; S.plates = null; S.U = null; S.on = 0; hideHud();
+  }
+
+  // ── real lamp lights: runtime ───────────────────────────────────────────────────────────────────────────────
+  function planNow(alloc) {
+    const nf = q.get('lamplights'), sf = q.get('lampshadow'), B = G.DMBudget && G.DMBudget.on ? G.DMBudget : null, DL = G.DMLight;
+    const tier = q.get('lamptier') || (DL && DL.on ? DL.tier : 'low');
+    S.lampK = +(q.get('lampk') || 1) || 1;
+    return lampPlan(tier, { n: nf == null || nf === '' ? null : (+nf | 0), shadow: sf == null || sf === '' ? null : (+sf | 0),
+      bud: alloc || !B ? null : { shadow: B.lvl('shadow'), light: B.lvl('light'), every: B.shadowEvery ? B.shadowEvery() : 1 } });
+  }
+  // DMLight wraps EVERY light's shadow node in receivedShadowNode (sun-box fade + the SUN's height-field visibility); a lamp is not the sun, so its point-shadow node is tagged dmFlashShadow
+  // (the same tag the flashlight spot uses, checked by the 4 wrapper branches in ui/dm-light.js) and comes through untouched: without it a lamp's shadow would be multiplied by the sun's visibility (black at night).
+  function lampShadowNode(L, THREE) {
+    const PSN = THREE && THREE.PointShadowNode; if (typeof PSN !== 'function') return null;
+    class LampShadowNode extends PSN { setupShadow(builder) { const o = super.setupShadow(builder); try { o.dmFlashShadow = true; } catch (e) { } return o; } }
+    return new LampShadowNode(L, L.shadow);
+  }
+  function lampLights(c, now, dt, mode, near2) {
+    const slots = S.slots, N = slots.length, lamps = S.lamps; S.frame++;
+    if (S.on < 0.004 || !near2) { for (let k = 0; k < N; k++) { const sl = slots[k]; sl.want = 0; sl.cur = 0; sl.idx = -1; S.lights[k].intensity = 0; } S.shN = 0; return; }   // by day / away from the property: nothing assigned, nothing lit, no map refreshed
+    if (now - S.lt > 330) {   // re-plan under the budget + re-assign
+      S.lt = now; const pl = planNow(false); S.plan = pl; const near = S.near, want = Math.min(N, pl.nOn);
+      pickNearest(lamps, S.lx, S.ly, S.feet, want, near);
+      for (let k = 0; k < N; k++) { const sl = slots[k]; sl.want = 0; if (sl.idx >= 0) { let kept = false; for (let a = 0; a < want; a++) if (near[a] === sl.idx) { sl.want = 1; near[a] = -2; kept = true; break; } if (!kept && sl.cur <= 0.01) sl.idx = -1; } }   // keep the slots whose lamp is still near
+      for (let a = 0; a < want; a++) { if (near[a] < 0) continue;   // a lamp with no slot: a free (faded-out) slot, shadow slots first
+        for (let k = 0; k < N; k++) { const sl = slots[k]; if (sl.idx < 0 && sl.want === 0) {
+          const h = headPos(lamps[near[a]]), T3 = S.tmpV || (S.tmpV = new c.THREE.Vector3()); T3.set(h[0], h[2] - 0.2 * UPM, -h[1]); S.grp.localToWorld(T3); S.lights[k].position.copy(T3); S.lights[k].updateMatrixWorld();
+          sl.idx = near[a]; sl.want = 1; if (sl.sh) S.lights[k].shadow.needsUpdate = true; break; } } }
+    }
+    const e = Math.min(1, dt / 0.3); let shDue = S.plan && S.plan.ev > 0 && (S.frame % S.plan.ev) === 0, act = S.plan ? S.plan.active : 0, shOn = 0;
+    for (let k = 0; k < N; k++) {
+      const sl = slots[k], L = S.lights[k], tgt = (mode === 'space' ? 0 : sl.want) * S.on; sl.cur += (tgt - sl.cur) * e; if (Math.abs(tgt - sl.cur) < 0.003) sl.cur = tgt;
+      L.intensity = sl.I0 * sl.cur;
+      if (sl.sh) { if (sl.idx >= 0 && sl.cur > 0.02 && shOn < act) { shOn++; if (shDue) L.shadow.needsUpdate = true; } }
+    }
+    S.shN = shOn;
   }
 
   // ── the USE bubble (same look as the Bird Temple's F bubble) ─────────────────────────────────────────────
@@ -228,7 +299,8 @@
         S.tapV = new c.THREE.Vector3(); bindTap();
       }
       // dusk fade, eased (~1.2 s) so a sunset never pops
-      const tgt = R.lampLevel(day), k = Math.min(1, dt / 0.9); S.on += (tgt - S.on) * k; if (Math.abs(tgt - S.on) < 0.002) S.on = tgt;
+      const sy = c.skySunY ? c.skySunY() : null, tgt = (sy != null && R.duskStep) ? R.duskStep(S.dk || (S.dk = R.duskState()), sy, S.duskStart) : R.lampLevel(day), k = Math.min(1, dt / 0.9);   // (dusk 2) by sun ELEVATION: fade-in from ~14 deg, full at 0 deg, hysteresis (ui/dm-mansion-rooms.js)
+      S.sunY = sy; S.on += (tgt - S.on) * k; if (Math.abs(tgt - S.on) < 0.002) S.on = tgt;
       S.U.on.value = S.on; try { if (G.DMLight && G.DMLight.on) G.DMLight.setLampLevel(S.on); } catch (e) { }   try { if (G.DMVLight && G.DMVLight.on) { G.DMVLight.setLevel('lamps', S.on); G.DMVLight.setLevel('leds', S.on); } } catch (e) { }   // (ui/dm-vlight.js) fog shafts follow the same dusk fade   // (ui/dm-light.js) the radiance cache lights its probes from the lamps at the same eased level
       const near = d2 < DRAW_D2;
       S.grp.visible = near && (S.on > 0.004 || d2 < SW_D2);   // by day only the switches (near) stay
@@ -244,16 +316,12 @@
       if (S.sw >= 0 && S.hud) { const i = S.sw, lb = R.ROOMS[i].label.toUpperCase() + ': ' + (R.lit(i, R.mode(i), day) ? 'LIGHTS OFF' : 'LIGHTS ON') + (R.mode(i) === 'auto' ? '' : ' · hold = AUTO'); if (lb !== S.lastLbl) { S.lastLbl = lb; const t = S.hud.querySelector('#dm-sw-t'); if (t) t.textContent = lb; } }
       // plate colours follow the room state (instance colour, written only when it changed)
       if (S.plates && S.sg.visible && now - S.last > 120) { S.last = now; const Cc = S.plateC || (S.plateC = new c.THREE.Color()); let ch = false; for (let i = 0; i < R.N; i++) { const lv = R.S.lvl[i], key = Math.round(lv * 20) + (R.mode(i) === 'auto' ? 0 : 100); if (S.pk === undefined) S.pk = new Int16Array(R.N).fill(-1); if (S.pk[i] === key) continue; S.pk[i] = key; Cc.setRGB(0.12 + 0.88 * lv, 0.1 + 0.62 * lv, 0.08 + 0.34 * lv); if (R.mode(i) !== 'auto') Cc.b += 0.25; S.plates.setColorAt(i, Cc); ch = true; } if (ch && S.plates.instanceColor) S.plates.instanceColor.needsUpdate = true; }
-      // optional real lights: the nearest lamps to the camera, re-aimed 3x a second
-      if (S.nl && S.lights.length && now - S.lt > 330) {
-        S.lt = now; const lamps = S.lamps, nL = S.lights.length, T3 = S.tmpV || (S.tmpV = new c.THREE.Vector3()); const used = S.used || (S.used = new Int16Array(nL));
-        for (let a = 0; a < nL; a++) { let bi = -1, bdd = 1e9; for (let i = 0; i < lamps.length; i++) { let dup = false; for (let b = 0; b < a; b++) if (used[b] === i) dup = true; if (dup) continue; const h = headPos(lamps[i]), d = (h[0] - S.lx) * (h[0] - S.lx) + (h[1] - S.ly) * (h[1] - S.ly); if (d < bdd) { bdd = d; bi = i; } }
-          used[a] = bi; const L = S.lights[a]; if (bi < 0 || mode === 'space') { L.intensity = 0; continue; } const h = headPos(lamps[bi]); T3.set(h[0], h[2] - 0.2 * UPM, -h[1]); S.grp.localToWorld(T3); L.position.copy(T3); L.intensity = 90 * S.on; }
-      }
+      // real lamp lights (lampPlan): nearest lamps to her, re-aimed 3x a second with hysteresis (a slot keeps its lamp until that lamp leaves the nearest set, fades out, then moves)
+      if (S.slots.length) lampLights(c, now, dt, mode, d2 < 150 * 150);
     },
     get() { return ST() ? ST().get() : null; }, set(d) { if (ST()) { ST().set(d); persist(); S.dirty = true; } },
-    status() { return { built: S.built, on: +S.on.toFixed(3), lamps: S.lamps ? S.lamps.length : 0, leds: S.leds ? S.leds.length : 0, poolVerts: S.pool, near: S.sw, lights: S.lights.length }; },
-    _pure: { headPos, pools, poleArrays, headArrays, switchArrays, plateArrays, ledArrays, withYaw, UPM, POLE_H, POOL_R, LED_POOL_R },
+    status() { return { built: S.built, on: +S.on.toFixed(3), sunY: S.sunY == null ? null : +S.sunY.toFixed(3), lamps: S.lamps ? S.lamps.length : 0, leds: S.leds ? S.leds.length : 0, poolVerts: S.pool, near: S.sw, lights: S.lights.length, casting: S.casting, shadowsActive: S.shN, plan: S.plan, slots: S.slots.map(x => [x.idx, +x.cur.toFixed(2)]) }; },
+    _pure: { lampShadowNode, lampPlan, pickNearest, LAMP_LEVELS, headPos, pools, poleArrays, headArrays, switchArrays, plateArrays, ledArrays, withYaw, UPM, POLE_H, POOL_R, LED_POOL_R },
     _build: build,   // tools/tests/home-leds.js runs the real build against stubbed three + DMCollide
   };
   G.DMLamps = API;

@@ -295,7 +295,9 @@
     const lod0 = sc.getObjectByName('Mansion_LOD0'), lod1 = sc.getObjectByName('Mansion_LOD1');
     root.add(sc); root.userData.lod0 = lod0; root.userData.lod1 = lod1;
     const sq = (typeof location !== 'undefined' && (location.search.match(/[?&]sunshadow=(0|1)\b/) || [])[1]), sh = F.ctx.shadows() && (!F.ctx.isMobile() || sq === '1');   // ?sunshadow=1 lets the mansion cast on phones (off by default: the 59k-triangle pass); =0 = old behaviour   // (v223) the mansion casts no shadows on phones/tablets: saves a 59k-triangle shadow pass
-    sc.traverse(o => { if (o.isMesh) { o.frustumCulled = false; const n = o.material && o.material.name; if (sh && lod0 && o.parent === lod0 || sh && lod0 && lod0.getObjectById(o.id)) { o.castShadow = !/^ah_rock/.test(n) && n !== 'ah_glass'; o.receiveShadow = true; } } });
+    // (shadow 2) CAST and RECEIVE are decoupled: on phones/tablets the mansion still casts nothing (the 59k-triangle pass) but it now RECEIVES, so the sun's / lamps' shadow of her and the board lands on the decks and floors (it used to be neither, so she had no shadow on the balcony); ?sunshadow=0 restores the old all-or-nothing
+    const rx = F.ctx.shadows() && !(typeof location !== 'undefined' && (location.search.match(/[?&]sunshadow=(0|1)\b/) || [])[1] === '0');
+    sc.traverse(o => { if (o.isMesh) { o.frustumCulled = false; const n = o.material && o.material.name, inL0 = lod0 && (o.parent === lod0 || lod0.getObjectById(o.id)); if (sh && inL0) { o.castShadow = !/^ah_rock/.test(n) && n !== 'ah_glass'; o.receiveShadow = true; } else if (rx && inL0 && n !== 'ah_glass' && !/^ah_water|^ah_pool/.test(n || '')) o.receiveShadow = true; } });
     return root;
   }
   // ── far-range LOD (ui/dm-lod.js, ui/dm-impostor.js): three levels with a screen-door cross-fade ──────────────────────────────────────────────────────────────────

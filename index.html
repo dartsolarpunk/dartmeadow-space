@@ -6238,7 +6238,7 @@ function _fac(){
   if(!window.DMFac) return null;
   if(!_facBound){ _facBound=true;
     DMFac.bind({ THREE, PW:()=>PW, TERRAIN:()=>TERRAIN, atmoState:()=>atmoState, atmoXZ:(la,lo)=>_atmoXZ(la,lo), mapTag:_pwMapTag,
-      curSysName:()=>_ttCurSysName()||'', skyDay:()=>{ const k=TERRAIN&&TERRAIN.sky; return k&&typeof k.day==='number'?k.day:1; }, shadows:()=>!!GFX.shadows, isMobile:()=>!!GFX.isMobile,
+      curSysName:()=>_ttCurSysName()||'', skyDay:()=>{ const k=TERRAIN&&TERRAIN.sky; return k&&typeof k.day==='number'?k.day:1; }, skySunY:()=>{ const k=TERRAIN&&TERRAIN.sky, d=k&&k.sunDir; return d&&typeof d.y==='number'?d.y:null; }, shadows:()=>!!GFX.shadows, isMobile:()=>!!GFX.isMobile,
       tier:()=>({low:0,medium:1,high:2,ultra:3})[(GFX.preset==='auto'||!GFX.preset)?autoPreset():GFX.preset]|0,
       loadGLB:u=>new Promise((ok,no)=>{ const L=_getGLBLoader(); if(!L) return no(new Error('no GLTFLoader')); L.load(u,ok,undefined,no); }),
       afterTeleport:(land)=>{ try{ if(PW) PW._jump=true; }catch(e){} if(land){ try{ atmoThrottle=0; atmoMach=0; try{ $('atmo-throttle').value=0; }catch(e){} if(atmoState){ atmoState.landing=true; atmoState.takeoff=0; atmoState.auto=null; atmoState.landT0=performance.now(); atmoState.landT=null; atmoState.landTt=0; atmoState.landWarn=false; } }catch(e){} } } });   // (t1472) a fresh landing clock + no stale steer target: the 16 s watchdog must not fire on an old flight's landT0 the moment HOME sets her over the deck
@@ -20140,7 +20140,9 @@ function _pwWorldTick(dt){
   // the sun's shadow box stays centred on her / the board, lit from where the sun is now
   const sun=TERRAIN.sun;
   if(sun){
-    const d=sky?sky.sunDir:null, up=d&&d.y>0.05?d:null, fy=f.y||0;
+    // (shadow 2) the shadow direction follows the sun down to ~3 deg and a little below (clamped to 3.4 deg): it used to switch to a fixed high fallback light once the sun was under ~3 deg, i.e. through all of dusk her shadow pointed the wrong way / was short and faint
+    let d=sky?sky.sunDir:null, up=null; const fy=f.y||0;
+    if(d&&d.y>-0.08){ if(d.y>0.05) up=d; else { const sv=TERRAIN._shDir||(TERRAIN._shDir=new THREE.Vector3()); const hl=Math.hypot(d.x,d.z)||1, k=Math.sqrt(1-0.06*0.06)/hl; sv.set(d.x*k,0.06,d.z*k); up=sv; } }
     if(!(up&&window.DMPolish&&sun.castShadow&&DMPolish.fitSun(sun,up,px,fy,pz,mode==='walk'))){   // texel-snapped, tightened on foot (ui/dm-polish.js)
       if(up) sun.position.set(px+up.x*160,fy+up.y*160,pz+up.z*160); else sun.position.set(px+80,fy+120,pz+40);
       sun.target.position.set(px,fy,pz); sun.target.updateMatrixWorld();

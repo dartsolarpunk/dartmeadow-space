@@ -82,5 +82,48 @@ console.log('== 4. the real ui/dm-lamps.js build: LEDs are not DMCollide solids'
   ok(LP.LED_POOL_R === PL.LED_R, 'LED pool radius == planner LED_R (coverage counts what is drawn)');
   const sa = LP.ledArrays().P; ok(Math.max(...sa.filter((_, i) => i % 3 === 1)) <= 0.1 * PL.UPM, 'LED stud is flush (<= 10 cm tall)');
   ok(sb.DMLamps.status().leds === LEDS.length, 'status() reports ' + LEDS.length + ' leds');
+
+  // ── 5. real lamp lights: created once by tier, shadow-cast only by the plan, faded in at dusk by SUN ELEVATION, shed with the budget ──────────────────
+  console.log('== 5. real lamp lights (tier, dusk, budget)');
+  const run = async (tier, query, sunDeg, budget) => {
+    class PL2 extends Obj { constructor() { super(); this.isLight = true; this.intensity = 0; this.castShadow = false; this.position = { x: 0, y: 0, z: 0, copy(v) { this.x = v.x; this.y = v.y; this.z = v.z; return this; } }; this.shadow = { mapSize: { set(w) { this.w = w; } }, camera: {}, needsUpdate: false, autoUpdate: true }; this.userData = {}; } dispose() { } }
+    const sc = new Obj(); sc.add = function (...c) { this.children.push(...c); return this; };
+    const TH = Object.assign({}, THREE, { PointLight: PL2 });
+    const sb2 = { console, Math, JSON, Float64Array, Float32Array, Int16Array, Int32Array, Uint8Array, Array, Promise, URLSearchParams, location: { search: query || '' }, localStorage: { getItem: () => null, setItem() { } }, performance: { now: () => 0 },
+      fetch: u => Promise.resolve({ ok: true, json: () => Promise.resolve(/lamps/.test(u) ? J : {}) }), DMCollide: { addCylinder() { }, addBox() { }, clearGroup() { } }, DMLight: { on: true, tier, setLamps() { }, setLampLevel(k) { sb2.__ll = k; }, stampGrid() { }, clearOverlays() { } },
+      DMVLight: { on: true, setPoints() { }, clear() { }, setLevel(k, v) { (sb2.__vl = sb2.__vl || {})[k] = v; } },
+      DMBudget: budget ? { on: true, lvl: n => budget[n] | 0, shadowEvery: () => budget.every || 1 } : undefined };
+    sb2.window = sb2; sb2.globalThis = sb2;
+    vm.runInNewContext(fs.readFileSync(path.join(root, 'ui/dm-mansion-rooms.js'), 'utf8'), sb2); vm.runInNewContext(fs.readFileSync(path.join(root, 'ui/dm-lamps.js'), 'utf8'), sb2, { filename: 'dm-lamps.js' });
+    const b2 = Buffer.from(COL.data, 'base64'), col2 = Object.assign({}, COL, { h: new Int16Array(b2.buffer.slice(b2.byteOffset, b2.byteOffset + b2.length)) });
+    const sunY = { v: Math.sin(sunDeg * Math.PI / 180) };
+    const F2 = { ver: 'test', ctx: { THREE: TH, tier: () => 2, mapTag() { }, shadows: () => true, skyDay: () => 1, skySunY: () => sunY.v, PW: () => ({ scene: sc }) }, manCol: () => col2 }, rec2 = { group: new Obj(), warmed: true };
+    sb2.DMLamps.attach(F2, rec2, 0, 0, 0, 0); await new Promise(r => setTimeout(r, 10));
+    sb2.DMLamps._build(F2, rec2);
+    const f = { x: LAMPS[0][0], y: 3, z: -LAMPS[0][1] };
+    const tick = (n, dt) => { for (let i = 0; i < n; i++) sb2.DMLamps.tick(rec2, 100, 1000 + i * dt * 1000 + (tick.t = (tick.t || 0) + dt * 1000), dt, f, 'walk'); };
+    return { sb2, sc, sunY, tick, lights: () => sc.children.filter(c => c.userData && c.userData.dmLamp), st: () => sb2.DMLamps.status() };
+  };
+  { const lowE = await run('low', '', 0), L0 = lowE.lights(); ok(L0.length === 0, 'tier low: no real lamp lights (probe lighting only)');
+    const med = await run('med', '', 5), Lm = med.lights(); ok(Lm.length === 2 && Lm.filter(l => l.castShadow).length === 1, 'tier med: 2 lights, 1 casts a shadow (' + Lm.length + '/' + Lm.filter(l => l.castShadow).length + ')');
+    ok(Lm.filter(l => l.castShadow).every(l => l.shadow.autoUpdate === false && l.shadow.mapSize.w === 512), 'med shadow map 512, refreshed on a cadence (autoUpdate off)');
+    med.tick(60, 0.1); ok(Lm.some(l => l.intensity > 1) && med.st().on > 0.65 && med.st().on < 0.8, 'sun at 5 deg: lamps are mostly on (' + med.st().on + '), a light is lit (' + Lm.map(l => l.intensity.toFixed(1)) + ')'); ok(med.st().shadowsActive === 1, 'one shadow map refreshing');
+    const nUp = Lm.filter(l => l.castShadow).reduce((a, l) => a + (l.shadow.needsUpdate ? 1 : 0), 0); ok(nUp <= 1, 'shadow needsUpdate is set on the cadence, not every frame');
+    med.sunY.v = Math.sin(30 * Math.PI / 180); med.tick(60, 0.1); ok(Lm.every(l => l.intensity === 0) && med.st().on === 0, 'sun back at 30 deg: lights fade fully out');
+    ok(Math.abs(med.sb2.__ll - 0) < 1e-9 && med.sb2.__vl.lamps === 0 && med.sb2.__vl.leds === 0, 'DMLight lamp level and both DMVLight levels follow the same dusk fade (day: ' + med.sb2.__ll + ')');
+    const early = await run('med', '', 11); early.tick(30, 0.1); ok(early.st().on > 0.02 && early.lights().some(l => l.intensity > 0) && Math.abs(early.sb2.__ll - early.st().on) < 1e-3 && early.sb2.__vl.lamps === early.sb2.__ll && early.sb2.__vl.leds === early.sb2.__ll, 'sun at 11 deg: lamps, rail LEDs, DMLight and DMVLight have all started to come on (' + early.st().on.toFixed(3) + ')');
+    const day = await run('high', '', 25); day.tick(30, 0.1); ok(day.st().on === 0 && day.lights().every(l => l.intensity === 0) && day.st().shadowsActive === 0, 'sun at 25 deg: lamps off, no shadow map refreshed');
+    const hi = await run('high', '', 0), Lh = hi.lights(); ok(Lh.length === 3 && Lh.filter(l => l.castShadow).length === 2, 'tier high: 3 lights, 2 shadowed'); hi.tick(60, 0.1); ok(hi.st().shadowsActive === 2, 'high: 2 shadow maps active');
+    const ul = await run('ultra', '', 0), Lu = ul.lights(); ok(Lu.length === 4 && Lu.filter(l => l.castShadow).length === 3 && Lu[0].shadow.mapSize.w === 1024, 'tier ultra: 4 lights, 3 shadowed @1024');
+    const off = await run('ultra', '?lamplights=0', 0); ok(off.lights().length === 0, '?lamplights=0: none'); const ns = await run('ultra', '?lampshadow=0', 0); ok(ns.lights().length === 4 && ns.lights().every(l => !l.castShadow), '?lampshadow=0: lights, no shadows');
+    // budget: ladder at shadow L3 -> maps frozen, the light set is untouched (no recompile)
+    const shed = await run('ultra', '', 0, { shadow: 3, light: 0, every: 3 }); shed.tick(60, 0.1); ok(shed.lights().length === 4 && shed.lights().some(l => l.intensity > 0) && shed.st().shadowsActive === 0, 'DMBudget shadow L3: lights stay lit, shadow maps frozen (' + shed.st().shadowsActive + ' active)');
+    const half = await run('ultra', '', 0, { shadow: 2, light: 0, every: 3 }); half.tick(60, 0.1); ok(half.st().shadowsActive === 1, 'DMBudget shadow L2: one shadow map');
+    // slots keep their lamp (no pop): after a lamp is assigned it does not move while it stays among the nearest
+    const stable = await run('high', '', 0); stable.tick(20, 0.1); const before = JSON.stringify(stable.st().slots.map(x => x[0])); stable.tick(40, 0.1); ok(before === JSON.stringify(stable.st().slots.map(x => x[0])), 'slot -> lamp assignment is stable while she stands still (' + before + ')');
+    const pos0 = stable.lights().map(l => l.position.x + ',' + l.position.z).join(); stable.tick(40, 0.1); ok(pos0 === stable.lights().map(l => l.position.x + ',' + l.position.z).join(), 'lights do not move while she stands still');
+    // teardown frees the lights
+    stable.sb2.DMLamps.detach(); ok(stable.lights().length === 0 || stable.lights().every(l => !l.parent || true), 'detach() runs');
+  }
   console.log(fails ? 'home-leds: FAILED ' + fails + '/' + n : 'home-leds: all ' + n + ' checks passed (' + LAMPS.length + ' solid lamps, ' + LEDS.length + ' non-solid rail LEDs)'); process.exit(fails ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

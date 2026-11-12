@@ -80,5 +80,50 @@ R.set({ m: { nope: 'on', kitchen: 'bogus' } }); ok(R.mode(1) === 'auto', 'garbag
 ok(R.toggle(1, 1) === 'off' || true, 'toggle by day works');   // by day AUTO is 0.8 (lit): toggle -> off
 R.resetAll(); ok(R.level(1, 'auto', 1) > 0.5 && R.level(1, 'auto', 0) >= R.level(1, 'auto', 1), 'AUTO is at least as bright at night as by day');
 const lvA = R.S.lvl.slice(); R.step(0.016, 0.5); R.step(0.016, 0.5); ok(R.S.lvl.every((v, i) => isFinite(v) && v >= 0 && v <= 1.0001), 'levels stay in 0..1');
+
+console.log('== dusk ramp (sun elevation, not the saturating day value)');
+{
+  const sy = deg => Math.sin(deg * Math.PI / 180), lv = deg => R.duskLevel(sy(deg));
+  ok(R.DUSK_START >= 12 && R.DUSK_START <= 15 && R.DUSK_END === 0, 'ramp spans ~12-15 deg down to 0 deg (' + R.DUSK_START + ' -> ' + R.DUSK_END + ')');
+  ok(lv(40) === 0 && lv(20) === 0 && lv(R.DUSK_START) === 0, 'off while the sun is high (>= ' + R.DUSK_START + ' deg)');
+  ok(lv(12) > 0.01 && lv(12) < 0.15, 'starts fading in by 12 deg (' + lv(12).toFixed(3) + ')'); ok(lv(7) > 0.35 && lv(7) < 0.65, 'about half on at 7 deg (' + lv(7).toFixed(2) + ')');
+  ok(lv(0) === 1 && lv(-3) === 1 && lv(-30) === 1, 'fully on at the horizon and below');
+  let mono = true, prev = -1; for (let d = 30; d >= -10; d -= 0.1) { const v = lv(d); if (v < prev - 1e-12) mono = false; prev = v; } ok(mono, 'monotone through the whole sunset');
+  let smooth = true, pv = lv(30); for (let d = 29.9; d >= -10; d -= 0.1) { const v = lv(d); if (Math.abs(v - pv) > 0.02) smooth = false; pv = v; } ok(smooth, 'no step bigger than 0.02 per 0.1 deg (smooth)');
+  // against the old curve (day = clamp((sunY + 0.1) / 0.25)): at 8 deg the old lamps were still fully off (day saturates at 8.6 deg), at 3 deg the old ramp had barely started
+  const day = deg => Math.max(0, Math.min(1, (sy(deg) + 0.1) / 0.25));
+  ok(R.lampLevel(day(10)) === 0 && lv(10) > 0.1, 'earlier than the old day-based ramp at 10 deg (old ' + R.lampLevel(day(10)) + ', new ' + lv(10).toFixed(2) + ')');
+  ok(R.lampLevel(day(3)) < 0.1 && lv(3) > 0.7, 'and fuller at 3 deg (old ' + R.lampLevel(day(3)).toFixed(2) + ', new ' + lv(3).toFixed(2) + ')');
+  ok(R.duskLevel(sy(8), 20) > R.duskLevel(sy(8), 10), '?dusk=<deg> moves the start (20 deg starts earlier than 10)');
+  ok(isFinite(R.duskLevel(NaN)) || true, 'NaN does not throw');
+  // hysteresis: a sun jittering +-0.25 deg round 7 deg holds the lamp level still; a sunset with +-0.3 deg noise is monotone (no flicker)
+  { const st = R.duskState(); let lo = 9, hi = -9; R.duskStep(st, sy(7)); for (let i = 0; i < 400; i++) { const v = R.duskStep(st, sy(7 + 0.25 * Math.sin(i * 1.7))); lo = Math.min(lo, v); hi = Math.max(hi, v); } ok(hi - lo < 1e-9, 'jitter inside the dead band changes nothing (' + (hi - lo).toExponential(1) + ')'); }
+  { const st = R.duskState(); let seed = 7, rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296, prevv = 0, back = 0, maxStep = 0;
+    for (let i = 0; i <= 3000; i++) { const e = 20 - 30 * i / 3000 + (rnd() - 0.5) * 0.6, v = R.duskStep(st, sy(e)); if (v < prevv - 1e-12) back++; maxStep = Math.max(maxStep, Math.abs(v - prevv)); prevv = v; }
+    ok(back === 0, 'noisy sunset (+-0.3 deg) never dims a lamp that came on (' + back + ' reversals)'); ok(maxStep < 0.03, 'noisy sunset: no jump bigger than ' + maxStep.toFixed(3)); ok(prevv === 1, 'noisy sunset ends fully on'); }
+  { const st = R.duskState(); let seed = 3, rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296, nsw = 0, pv2 = -1; for (let i = 0; i <= 2000; i++) { const e = -10 + 30 * i / 2000 + (rnd() - 0.5) * 0.6, v = R.duskStep(st, sy(e)); if (pv2 >= 0 && v > pv2 + 1e-12) nsw++; pv2 = v; } ok(nsw === 0, 'noisy sunrise never brightens a lamp on the way off (' + nsw + ')'); }
+  ok(R.duskElevFromDay(1) > 8 && R.duskElevFromDay(0) < -5, 'duskElevFromDay fallback range');
+}
+console.log('== real lamp lights (lampPlan / pickNearest)');
+{ const PU2 = (() => { const sb3 = { window: null, console, Math, Float64Array, Int32Array, Int16Array, Uint8Array, Promise, URLSearchParams, fetch: () => Promise.reject(new Error('no net')), location: { search: '' } }; sb3.window = sb3; sb3.globalThis = sb3;
+    vm.runInNewContext(fs.readFileSync(path.join(root, 'ui/dm-mansion-rooms.js'), 'utf8'), sb3); vm.runInNewContext(fs.readFileSync(path.join(root, 'ui/dm-lamps.js'), 'utf8'), sb3, { filename: 'dm-lamps.js' }); return sb3.DMLamps._pure; })();
+  const P0 = PU2.lampPlan; const none = { bud: null };
+  const lo = P0('low'), off = P0('off'), md = P0('med'), hi = P0('high'), ul = P0('ultra');
+  ok(lo.n === 0 && lo.sh === 0 && off.n === 0, 'low / off: no real lamp lights (probe lighting only)');
+  ok(md.n >= 1 && md.sh === 1 && md.map === 512, 'med: 1 shadowed lamp, 512 face (' + md.n + ' lights)'); ok(hi.n >= md.n && hi.sh >= 2 && hi.map >= 512, 'high: more shadowed lamps'); ok(ul.n >= hi.n && ul.sh >= hi.sh && ul.map >= hi.map, 'ultra: most + larger maps');
+  ok(md.every >= 2 && hi.every <= md.every && ul.every === 1, 'shadow refresh cadence tightens with the tier (' + md.every + '/' + hi.every + '/' + ul.every + ')');
+  ok(P0('bogus').n === 0, 'unknown tier = none'); ok(P0('med', { n: 0 }).n === 0 && P0('med', { n: 0 }).sh === 0, '?lamplights=0 turns them off'); ok(P0('med', { n: 1 }).sh === 1 && P0('high', { n: 1 }).sh === 1, '?lamplights=1 caps the shadow count too');
+  ok(P0('high', { shadow: 0 }).sh === 0 && P0('high', { shadow: 0 }).ev === 0, '?lampshadow=0: unshadowed lights, no refresh'); ok(P0('med', { shadow: 1024 }).map === 1024, '?lampshadow=1024 forces the map side'); ok(P0('low', { shadow: 512 }).n === 0, 'a map flag cannot make a low tier grow lights');
+  // budget shedding: never exceeds the allocation, only goes down, lights stay (no recompile) while maps freeze
+  const bud = (shadow, light, every) => ({ bud: { shadow, light, every } });
+  ok(P0('ultra', bud(0, 0, 1)).active === 3, 'budget calm: all shadowed lamps active'); ok(P0('ultra', bud(2, 0, 3)).active === 1 && P0('ultra', bud(0, 2, 1)).active === 1, 'ladder shadow L2 / light L2: one shadowed lamp');
+  ok(P0('ultra', bud(3, 0, 3)).active === 0 && P0('ultra', bud(0, 3, 1)).active === 0 && P0('ultra', bud(0, 3, 1)).ev === 0, 'shadow L3 / light L3: maps frozen');
+  ok(P0('ultra', bud(0, 3, 1)).nOn <= 2 && P0('ultra', bud(0, 3, 1)).n === 4, 'light L3: at most 2 lamps lit, allocation unchanged'); ok(P0('high', bud(1, 0, 2)).ev >= 2 && P0('med', bud(1, 0, 2)).ev >= 3, 'the budget cadence only slows the refresh down');
+  let monoB = true; for (const tier of ['med', 'high', 'ultra']) { let pa = 99, pe = 0; for (let s = 0; s <= 4; s++) { const p = P0(tier, { bud: { shadow: s, light: s, every: [1, 2, 3, 3, 30][s] } }); if (p.active > pa || p.sh > P0(tier).sh || p.n !== P0(tier).n) monoB = false; pa = p.active; } } ok(monoB, 'shedding is monotone and never grows the allocation');
+  // pickNearest
+  const lamps = [[0, 0, 0], [10, 0, 0], [3, 4, 0], [-8, 0, 0], [0, 0, 20]], out = new Int16Array(8).fill(-9);
+  PU2.pickNearest(lamps, 0.5, 0.5, 0, 3, out); ok(out[0] === 0 && out[1] === 2 && out[2] === 3, 'nearest three, nearest first (' + Array.from(out.slice(0, 3)) + ')'); PU2.pickNearest(lamps, 0, 0, 0, 5, out); ok(out[4] === 4, 'another terrace (z +20) is last'); PU2.pickNearest(lamps, 0, 0, 0, 7, out); ok(out[5] === -1 && out[6] === -1, 'padded with -1 when asked for more than exist');
+  ok(new Set(Array.from(out.slice(0, 5))).size === 5, 'no lamp picked twice');
+}
 console.log(fails ? 'FAILED ' + fails + '/' + checks : 'OK ' + checks + '/' + checks + ' checks (' + L.length + ' lamps, min spacing ' + (minSep / P.UPM).toFixed(1) + ' m)');
 process.exit(fails ? 1 : 0);
