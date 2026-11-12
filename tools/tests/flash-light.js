@@ -34,8 +34,8 @@ const src = fs.readFileSync(path.join(root, 'ui/dm-flash.js'), 'utf8');
   // ── tiers
   ok(F.pickTier({ preset: 'low', isMobile: false }, '', '') === 'low' && F.pickTier({ preset: 'medium', isMobile: true, shadowSize: 1024 }, '', '') === 'phone' && F.pickTier({ preset: 'high', isMobile: false, shadowSize: 2048 }, '', '') === 'desktop', 'tier from the graphics preset / device');
   ok(F.pickTier(null, 'Mozilla/5.0 (Linux; Android 14; SM-X) Mobile', '') === 'phone' && F.pickTier(null, 'Mozilla/5.0 (X11; Linux x86_64)', '') === 'desktop' && F.pickTier({ isMobile: false }, 'iPhone', 'low') === 'low', 'tier from the UA when no GFX; ?flashtier wins');
-  const T3 = F.TIERS; ok(T3.low.map === 512 && T3.phone.map === 1024 && T3.desktop.map === 2048, 'shadow maps: 512 low / 1024 phones / 2048 desktop');
-  ok(T3.phone.every === 2 && T3.low.every === 2 && T3.desktop.every === 1, 'phones refresh the shadow at half rate');
+  const T3 = F.TIERS; ok(T3.low.map === 512 && T3.phone.map === 512 && T3.desktop.map === 2048, 'shadow maps: 512 low / 512 phones + tablets (v324) / 2048 desktop');
+  ok(T3.phone.every === 2 && T3.low.every === 3 && T3.desktop.every === 1, 'phones refresh the shadow at half rate, the low preset every 3rd frame');
   ok(T3.phone.far <= 100 && T3.low.far <= T3.phone.far && T3.desktop.far <= 200, 'casters distance-limited per tier (' + [T3.low.far, T3.phone.far, T3.desktop.far] + ' m)');
   ok(T3.phone.steps <= 8 && T3.phone.noise === false && T3.desktop.noise === true, 'beam: <= 8 samples and no noise on phones');
   // ── cone maths (the shader mirrors coneInterval)
@@ -66,7 +66,7 @@ const src = fs.readFileSync(path.join(root, 'ui/dm-flash.js'), 'utf8');
   ok(L.shadow.bias < 0 && L.shadow.bias > -0.01 && L.shadow.normalBias > 0, 'bias tuned against acne (bias ' + L.shadow.bias + ', normalBias ' + L.shadow.normalBias + ')');
   ok(L.shadow.camera.near >= 0.2 && L.shadow.camera.near <= 1, 'shadow near plane tight (' + L.shadow.camera.near + ' m)');
   { L.shadow.updateMatrices(L); const cam = L.shadow.camera; ok(Math.abs(cam.far - Math.min(F.TIERS.desktop.far, F.PROF.ground.distance)) < 1e-9 && L.distance === F.PROF.ground.distance, 'shadow far = tier reach (' + cam.far + ' m) while the light keeps its own range (' + L.distance + ' m)');
-    ok(Math.abs(cam.fov - 2 * L.angle * 180 / Math.PI) < 1e-6, 'shadow frustum = the cone'); }
+    ok(Math.abs(cam.fov - 2 * L.angle * L.shadow.focus * 180 / Math.PI) < 1e-6 && L.shadow.focus < 1, 'shadow frustum = the cone x focus (the unshadowed outer halo is the cheap part)'); }
   // off: zero work
   F.toggle(false); for (let i = 0; i < 30; i++) F.tick('walk'); ok(L.shadow.needsUpdate === false && S.shUpdates === 0 && F.cone().on === false && L.intensity === 0, 'off: no shadow update, no light (zero cost)');
   // on: desktop updates every frame
@@ -76,11 +76,11 @@ const src = fs.readFileSync(path.join(root, 'ui/dm-flash.js'), 'utf8');
   // phone tier: half rate, 1024, 100 m
   hooks.isMobile = true; hooks.preset = 'medium'; hooks.shadowSize = 1024; F.toggle(false); F.tick('walk');
   let B = mk(); F.adoptScene(B.sc); const LB = F.sceneLight(B.sc); S.led = B.led;
-  ok(S.tierName === 'phone' && LB.shadow.mapSize.x === 1024, 'phone tier: 1024 map');
+  ok(S.tierName === 'phone' && LB.shadow.mapSize.x === 512, 'phone tier: 512 map');
   S.t = 0; F.toggle(true); { const u1 = S.shUpdates; for (let i = 0; i < 60; i++) { F.tick('walk'); LB.shadow.needsUpdate = false; } const d = S.shUpdates - u1; ok(d >= 30 && d <= 32, 'phone: shadow at half rate (' + d + '/60 frames)'); }
-  LB.shadow.updateMatrices(LB); ok(LB.shadow.camera.far === 100, 'phone: casters limited to 100 m');
+  LB.shadow.updateMatrices(LB); ok(LB.shadow.camera.far === 80, 'phone: casters limited to 80 m');
   F.tick('space'); ok(LB.distance === F.PROF.space.distance && S.shFar <= F.PROF.space.shFar && LB.shadow.camera.near === F.PROF.space.shNear, 'space profile: far light reach, short shadow range (' + S.shFar + ')');
-  F.tick('walk'); ok(LB.distance === F.PROF.ground.distance && S.shFar === 100, 'back to the ground profile');
+  F.tick('walk'); ok(LB.distance === F.PROF.ground.distance && S.shFar === 80, 'back to the ground profile');
   // DMBudget can slow it down further
   globalThis.DMBudget = { on: true, shadowHalf: () => true, shadowEvery: () => 3 }; { const u2 = S.shUpdates; for (let i = 0; i < 60; i++) { F.tick('walk'); LB.shadow.needsUpdate = false; } const d = S.shUpdates - u2; ok(d >= 19 && d <= 22 && LB.shadow.mapSize.x === 512, 'DMBudget: every 3rd frame (' + d + '/60) and the map halves (512)'); } delete globalThis.DMBudget;
   // frame-time governor: slow frames -> cadence, then shadows off (cone only), then back
@@ -91,9 +91,9 @@ const src = fs.readFileSync(path.join(root, 'ui/dm-flash.js'), 'utf8');
   F.setShadows(false); F.tick('walk'); ok(F.status().shadowOn === false, 'setShadows(false)'); F.setShadows(true); S.dtEma = 16;
   // cone presets
   F.toggle(true); S.cone = 0; F.setCone(0); F.tick('walk'); const deg = x => x * 180 / Math.PI; const i0 = LB.intensity;
-  ok(Math.abs(deg(LB.angle) - 35) < 0.5 && LB.penumbra >= 0.7, 'wide: 35 deg half-angle, soft penumbra');
-  F.setCone(1); F.tick('walk'); ok(Math.abs(deg(LB.angle) - 23.1) < 0.7 && LB.intensity > i0, 'medium ~23 deg, brighter on axis');
-  F.setCone(2); F.tick('walk'); ok(Math.abs(deg(LB.angle) - 12) < 0.7 && LB.intensity > i0 * 1.5, 'spot ~12 deg'); LB.shadow.updateMatrices(LB); ok(Math.abs(LB.shadow.camera.fov - 2 * deg(LB.angle)) < 1e-6, 'the shadow frustum follows the cone preset');
+  ok(Math.abs(deg(LB.angle) - 54) < 0.5 && LB.penumbra >= 0.4 && LB.decay === 0 && (!F.U || F.U.sp.value === 1), 'wide: 54 deg halo window, shaped profile (decay 0, sp 1)');
+  F.setCone(1); F.tick('walk'); ok(Math.abs(deg(LB.angle) - 35.6) < 0.7 && LB.intensity > i0, 'medium ~36 deg window, brighter on axis');
+  F.setCone(2); F.tick('walk'); ok(Math.abs(deg(LB.angle) - 21.6) < 0.7 && LB.intensity > i0 * 1.5, 'spot ~22 deg window'); LB.shadow.updateMatrices(LB); ok(Math.abs(LB.shadow.camera.fov - 2 * deg(LB.angle) * LB.shadow.focus) < 1e-6, 'the shadow frustum follows the cone preset');
   ok(F.setCone(99) === 'spot' && F.setCone(-1) === 'wide', 'cone index clamps'); F.setCone(0);
   // scene hand-over leaves nothing lit / shadowed
   S.led = A.led; F.tick('walk'); ok(F.sceneLight(A.sc).intensity > 0 && LB.intensity === 0, 'hand-over: the other scene goes dark');
@@ -112,7 +112,7 @@ const src = fs.readFileSync(path.join(root, 'ui/dm-flash.js'), 'utf8');
 
   // ── (v322) aim, shadow floor, debug flag, the material audit (which families RECEIVE the spot)
   { hooks.isMobile = false; hooks.preset = 'high'; hooks.shadowSize = 2048; location.search = ''; F.refreshTier(); const Z = mk(); F.adoptScene(Z.sc); const LZ = F.sceneLight(Z.sc); S.led = Z.led; Z.led.rotation.y = Math.PI; Z.sc.updateMatrixWorld(true); F.toggle(true); S.t = 0; F.tick('walk');
-    const c = F.cone(); ok(c.dir.y < -0.12 && c.dir.y > -0.22 && Math.abs(Math.hypot(c.dir.x, c.dir.y, c.dir.z) - 1) < 1e-9 && c.dir.z < -0.9, 'on foot the beam is aimed ~10 deg DOWN from the glasses axis (dir.y ' + c.dir.y.toFixed(3) + '): a horizontal axis at head height lights the ground only as a thin wedge');
+    const c = F.cone(); ok(c.dir.y < -0.04 && c.dir.y > -0.10 && Math.abs(Math.hypot(c.dir.x, c.dir.y, c.dir.z) - 1) < 1e-9 && c.dir.z < -0.9, 'on foot the beam is aimed ~4 deg DOWN from the glasses axis (near level: walls and distant surfaces, not only the floor) (dir.y ' + c.dir.y.toFixed(3) + '): a horizontal axis at head height lights the ground only as a thin wedge');
     F.tick('space'); ok(Math.abs(F.cone().dir.y) < 1e-9, 'open space: no tilt (axis = glasses forward)'); F.tick('walk');
     ok(LZ.shadow.intensity > 0.5 && LZ.shadow.intensity < 1, 'shadow intensity < 1 (' + LZ.shadow.intensity + '): a shadowed pixel keeps some light, a shadow failure can never black a surface out');
     ok(S.biasK > 0 && S.biasK < 0.05 && S.biasM > 0, 'distance-proportional shadow bias (' + S.biasK + ' x d + ' + S.biasM + ' m)');
@@ -145,6 +145,43 @@ const src = fs.readFileSync(path.join(root, 'ui/dm-flash.js'), 'utf8');
   // the TSL shadow node class stays tagged + branch-gated in source
   ok(/o\.dmFlashShadow = true/.test(src) && /TS\.If\(U\.shOn\.greaterThan\(0\.5\)/.test(src), 'dm-flash.js: shadow node tagged and its filter gated by the shOn uniform');
 
+  // ── (v324) the beam profile: hot core + wide soft halo + long distance law, no perimeter (pure mirror of the TSL term), flags, fast guard
+  {
+    const D = x => x * Math.PI / 180, P1 = F.beamParams(1, 1, 1), cosO = Math.cos(F.PROF.ground.angle), cosI = Math.cos(F.PROF.ground.angle * (1 - F.PROF.ground.penumbra));
+    const fa = (deg, d, p) => F.spotFactor(Math.cos(D(deg)), d, p || P1, cosO, cosI), peak = fa(0, 10);
+    // smooth across the whole cone: no step between 0.25 deg samples bigger than 3 % of the peak (a visible perimeter would be one)
+    let maxStep = 0, mono = true, prev = fa(0, 10); for (let a = 0.25; a <= 60; a += 0.25) { const v = fa(a, 10); maxStep = Math.max(maxStep, Math.abs(v - prev)); if (v > prev + 1e-12) mono = false; prev = v; }
+    ok(mono && maxStep < 0.03 * peak, 'profile: monotonic and smooth over the cone (max step ' + (100 * maxStep / peak).toFixed(2) + ' % of the peak)');
+    ok(fa(54, 10) < 1e-3 * peak && fa(70, 10) === 0, 'profile: zero at the cone edge, no hard perimeter (edge ' + (1e3 * fa(54, 10) / peak).toFixed(2) + ' per mille of the peak)');
+    ok(fa(35, 10) / peak > 0.08 && fa(35, 10) / peak < 0.4 && fa(25, 10) / peak > 0.15, 'profile: a wide halo carries the surround (35 deg = ' + (100 * fa(35, 10) / peak).toFixed(0) + ' %, 25 deg = ' + (100 * fa(25, 10) / peak).toFixed(0) + ' % of the hot core)');
+    ok(fa(11, 10) / peak < 0.75 && fa(11, 10) / peak > 0.3, 'profile: the hot core is a core (11 deg = ' + (100 * fa(11, 10) / peak).toFixed(0) + ' %)');
+    const E = d => 700 * fa(0, d) * 1;   // lux on a perpendicular surface at 700 cd (the old default step)
+    ok(E(1) / E(4) < 1.35 && E(40) / E(10) > 0.04 && E(40) / E(10) < 0.2 && E(60) < E(40) && E(60) > 0.2 * E(40), 'profile: flat near, long reach (E 1 m / 4 m = ' + (E(1) / E(4)).toFixed(2) + ', 40 m / 10 m = ' + (E(40) / E(10)).toFixed(3) + ')');
+    const lux = (d, lm) => lm * F.LM_K * fa(0, d);
+    ok(lux(10, 3000) > 4 && lux(10, 3000) < 30, 'calibration: default step lights a surface at 10 m with ' + lux(10, 3000).toFixed(1) + ' lux (bright, ACES exposure 1, not a fixed-white blob)');
+    ok(lux(40, 3000) > 0.8 && lux(60, 3000) > 0.4, 'calibration: walls / columns 40-60 m away still get ' + lux(40, 3000).toFixed(2) + ' / ' + lux(60, 3000).toFixed(2) + ' lux');
+    ok(F.spotFactor(Math.cos(D(5)), 20, F.beamParams(1, 0, 1), cosO, cosI) < F.spotFactor(Math.cos(D(5)), 20, P1, cosO, cosI) && F.beamParams(0.4, 1, 1).kh > P1.kh && F.beamParams(0.4, 1, 1).kw > P1.kw, 'profile: ?flashhalo=0 drops the halo; the spot preset narrows both lobes');
+    ok(F.beamParams(1, 1, 2).cal === 2 * P1.cal, 'profile: ?flashgain scales the calibration');
+    ok(F.readFlags('').tilt > 0.05 && F.readFlags('').tilt < 0.09 && Math.abs(F.readFlags('?flashtilt=10').tilt - 10 * D(1)) < 1e-9 && F.readFlags('').halo === 1 && F.readFlags('?flashhalo=0').halo === 0 && F.readFlags('?flashgain=2').gain === 2 && F.readFlags('?flashdebug=1').debug === true, 'flags: ?flashtilt (default 4 deg) ?flashhalo ?flashgain ?flashdebug');
+    // DMBudget fast guard (pure): < 20 fps for 2 s steps the light stack down, > 30 fps for 6 s steps it back
+    const BC = require('../../ui/dm-budget.js'), fg = BC.createFast(); let t = 0, first = -1, l3 = -1; for (let i = 0; i < 400; i++) { fg.sample(66); t += 66; if (first < 0 && fg.lvl === 1) first = t; if (l3 < 0 && fg.lvl === 3) l3 = t; }
+    ok(first > 1500 && first < 3200 && l3 > 5000 && l3 < 9000 && fg.lvl === 3, 'fast guard: 15 fps -> level 1 after ' + (first / 1000).toFixed(1) + ' s, level 3 after ' + (l3 / 1000).toFixed(1) + ' s, capped at 3');
+    for (let i = 0; i < 1500; i++) fg.sample(16); ok(fg.lvl === 0, 'fast guard: recovers at 60 fps in ~6 s per level (level ' + fg.lvl + ')');
+    const fs2 = BC.createFast(); for (let i = 0; i < 600; i++) fs2.sample(i % 2 ? 40 : 28); ok(fs2.lvl === 0, 'fast guard: a 30 fps-locked device (28 / 40 ms frames) never sheds');
+    const fs3 = BC.createFast(); for (let i = 0; i < 300; i++) fs3.sample(i % 40 === 0 ? 2500 : 16); ok(fs3.lvl === 0, 'fast guard: hitches (> 1.5 s) are not samples');
+    // DMFlash honours it (phone tier): L1 map 512 + every 3rd frame, L2 shadows off
+    hooks.isMobile = true; hooks.preset = 'high'; hooks.shadowSize = 2048; location.search = ''; F.refreshTier(); F.toggle(false); F.tick('walk');
+    const Q1 = mk(); F.adoptScene(Q1.sc); const LQ = F.sceneLight(Q1.sc); S.led = Q1.led; S.built = true; S.dtEma = 16; S.t = 0; F.toggle(true);
+    globalThis.DMBudget = { on: true, fast: () => 1 }; { const u = S.shUpdates; for (let i = 0; i < 60; i++) { F.tick('walk'); LQ.shadow.needsUpdate = false; } const d = S.shUpdates - u; ok(d >= 19 && d <= 22 && LQ.shadow.mapSize.x === 512, 'DMBudget.fast 1: flashlight shadow every 3rd frame at 512 (' + d + '/60)'); }
+    globalThis.DMBudget = { on: true, fast: () => 2 }; F.tick('walk'); { const u = S.shUpdates; for (let i = 0; i < 20; i++) F.tick('walk'); ok(S.shUpdates === u && F.status().shadowOn === false && LQ.intensity > 0 && F.status().fast === 2, 'DMBudget.fast 2: shadows off, the light stays on'); }
+    globalThis.DMBudget = { on: true, fast: () => 0 }; S.t = 0; for (let i = 0; i < 5; i++) F.tick('walk'); ok(F.status().shadowOn === true, 'DMBudget.fast 0: shadows back');
+    delete globalThis.DMBudget; F.toggle(false); F.tick('walk'); F.releaseScene(Q1.sc);
+  }
+  // the beam profile + guard are wired in the shared files
+  { const rd2 = p => fs.readFileSync(path.join(root, p), 'utf8'), vl = rd2('ui/dm-vlight.js'), bd = rd2('ui/dm-budget.js');
+    ok(/B\.fast\) lvl = Math\.max\(lvl, B\.fast\(\) \| 0\)/.test(vl) && /F\.S\.vlCone/.test(vl) && /want = can && \(P\.size > 0 \|\| sunOn > 0\)/.test(vl), 'dm-vlight.js: shafts only while a light or the low sun is in reach, DMBudget.fast sheds them, the flashlight scatter uses the hot-core cone');
+    ok(/createFast/.test(bd) && /out\.fast = function/.test(bd) && /S\.F\.sample\(d\)/.test(bd), 'dm-budget.js: the fast light-stack guard samples every frame'); }
+
   // ── part 2: real WGSL with a stub renderer (no GPU)
   if (wp) {
     const NS = await import(wp); const T2 = Object.assign({}, NS); T2.TSL = NS.TSL; globalThis.THREE = T2;
@@ -163,6 +200,8 @@ const src = fs.readFileSync(path.join(root, 'ui/dm-flash.js'), 'utf8');
       const sun = new T2.DirectionalLight(0xffffff, 1); sun.castShadow = true; sc.add(sun); sc.updateMatrixWorld(true);
       let w = ''; try { w = wgsl(ground, sc, cam, [Ls, sun]); } catch (e) { console.log('   ' + e.message); }
       ok(w.length > 1000 && /if \( \( object\.nodeUniform\d+ > 0\.5 \) \)/.test(w) && /textureGatherCompare/.test(w), (ph ? 'phone' : 'desktop') + ': lit mesh WGSL has the spot shadow filter inside a uniform branch');
+      { const plain = new T2.SpotLight(0xffffff, 1, 260, 0.94, 0.45, 0); sc.add(plain); plain.castShadow = false; sc.updateMatrixWorld(true); let w0 = ''; try { w0 = wgsl(ground, sc, cam, [plain, sun]); } catch (e) { console.log('   ' + e.message); }
+        const ne = x => (x.match(/\bexp\(/g) || []).length; ok(w0.length > 1000 && ne(w) >= ne(w0) + 2 && F.S.patched === true, (ph ? 'phone' : 'desktop') + ': the dmFlash spot carries the hot + halo terms in WGSL (exp x' + ne(w) + ' vs ' + ne(w0) + ' on a plain spot), a plain spot is untouched'); sc.remove(plain); }
       ok(P.beam && P.beam.visible && P.beam.material.side === T2.BackSide && P.beam.material.depthTest === false && P.beam.material.blending === T2.AdditiveBlending, 'beam cone mesh made, additive, back-face, no depth test');
       let bw = ''; try { bw = wgsl(P.beam, sc, cam, [Ls]); } catch (e) { console.log('   ' + e.message); }
       ok(bw.length > 1000 && new RegExp('i < ' + F.TIERS[F.S.tierName].steps + ';').test(bw), 'beam WGSL compiles with ' + F.TIERS[F.S.tierName].steps + ' samples');

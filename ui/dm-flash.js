@@ -14,6 +14,10 @@
              uniform branch (zero ALU/texture cost while off). Cadence + size + reach follow the tier (phones: half rate, 100 m of casters), DMBudget and the
              measured frame time (auto-degrades to a cone without shadows if the frame stays > ~70 ms). ?flashshadow=0 never creates a shadow at all.
              The sun-visibility wrapper of DMLight (receivedShadowNode) is NOT applied to this light's shadow (tagged dmFlashShadow).
+   PROFILE   (v324) the spot is NOT three's plain cone any more: ONE extra analytic term inside the same SpotLightNode path (no 2nd light, no 2nd shadow map): a hot
+             Gaussian core (sigma ~11 deg) + a wide soft halo (sigma ~30 deg, ~35 % weight, window to 54 deg) with NO visible perimeter, and a long distance law
+             1/(1+(d/10)^2)^0.9 (flat near, ~d^-1.8 beyond: walls / columns 30-60 m away still read).  Calibrated so the default step is bright but not clipped
+             (ACES, exposure 1).  Uniform-only: DMFlash.U.{kh,kw,wh,id0,dp,cal,sp}; `sp` = 0 in space (legacy cone + decay).  F.spotFactor() is the pure mirror (tested).
    BEAM      the visible light shaft: ONE additive back-face cone mesh per scene (made on first switch-on, hidden while off) whose shader marches 6-14 samples
              through the cone analytically (position / axis / angle / penumbra / length uniforms), clamped by the scene depth, weighted by an air-density
              term (fog-aware, near zero in vacuum) with a forward-scatter phase and dust noise on the desktop tier. Not shadowed by objects inside the cone
@@ -21,7 +25,7 @@
              scene on foot / in the air, so the shaft is never counted twice; it is the beam in open space and in fog-less scenes. ?flashbeam=0 off,
              ?flashbeam=<n> forces it on at gain n (on top of DMVLight), ?flashbeam=auto default.
    CONE      long-press the button (or the small cone key in the brightness bar) cycles wide 35 deg / medium 23 deg / spot 12 deg half-angle (uniform changes only).
-   FLAGS     ?flashlight=0 (feature off) ?flashshadow=0|512|1024|2048 ?flashbeam=auto|0|k ?flashtier=low|phone|desktop ?flashbias=-0.0004.  Session only: no save keys.
+   FLAGS     ?flashlight=0 (feature off) ?flashshadow=0|512|1024|2048 ?flashbeam=auto|0|k ?flashtier=low|phone|desktop ?flashbias=-0.0004 ?flashhalo=<w, 0 = hot core only> ?flashgain=<k> ?flashtilt=<deg, default 4> ?flashdebug=1.  Session only: no save keys.
    INTERFACE DMFlash.cone() -> {on, pos, dir, angle, cosOuter, cosInner, range, intensity, lumens, shadow{on,map,matrix,near,far,bias,size,every}, mode} (preallocated, valid
              after tick), DMFlash.U (TSL uniform nodes of the beam, null until built), DMFlash.medium {mul, add} (density hooks for the fog / mist / atmosphere passes),
              DMFlash.sceneLight(scene), DMFlash.hooks {gfx, depthOK, logDepth}.
@@ -39,17 +43,20 @@
   // ground = on foot + board in the sky (metre scale): a wide 35 deg half-angle cone with a soft penumbra that carries 260 m (surface light; the visible shaft and
   // the shadow map are shorter, see TIERS).  space = open space / near a world (1 unit ~ 4 m, planets tens of units away, she is tiny): a far longer reach
   // and a flatter fall-off so a passing planet or ship is lit.  shNear / shFar = the shadow camera's depth range for that mode (shFar is capped by the tier).
-  const PROF = { ground: { angle: 0.61, penumbra: 0.8, distance: 260, decay: 1.5, gain: 1, shNear: 0.25, shFar: 1e9 }, space: { angle: 0.5, penumbra: 0.7, distance: 1500, decay: 1.15, gain: 0.6, shNear: 0.6, shFar: 140 } };
+  // (v324) ground: outer angle 54 deg (the halo's window), penumbra 0.45 (window starts at ~30 deg), decay 0 (the shaped distance law lives in the attenuation term, sp = 1); space keeps the legacy cone (sp = 0).
+  const PROF = { ground: { angle: 0.94, penumbra: 0.45, distance: 260, decay: 0, gain: 1, shNear: 0.25, shFar: 1e9, sp: 1 }, space: { angle: 0.5, penumbra: 0.7, distance: 1500, decay: 1.15, gain: 0.6, shNear: 0.6, shFar: 140, sp: 0 } };
+  const BEAM = { hotSig: 11, haloSig: 34, haloW: 0.55, d0: 12, dp: 0.85, cal: 0.013, minHot: 3.2, minHalo: 8 };   // degrees / metres; see F.beamParams
   // cone presets: factor on the profile's half-angle (wide 35 deg / medium 23 deg / spot 12 deg) and the intensity compensation (a narrower cone concentrates the same lumens)
-  const CONES = [{ name: 'wide', k: 1, gain: 1 }, { name: 'medium', k: 0.66, gain: 1.35 }, { name: 'spot', k: 0.34, gain: 2.1 }];
+  const CONES = [{ name: 'wide', k: 1, gain: 1 }, { name: 'medium', k: 0.66, gain: 1.35 }, { name: 'spot', k: 0.4, gain: 2.1 }];
   // quality tiers.  map = shadow map side, every = shadow refresh cadence (frames), far = shadow reach (m; casters beyond are never drawn into the map), steps = beam samples,
   // noise = dust texture in the beam (phones never pay for it).  low = the Low graphics preset / weak GPU, phone = handhelds, desktop = the rest.
-  const TIERS = { low: { map: 512, every: 2, far: 60, steps: 6, noise: false }, phone: { map: 1024, every: 2, far: 100, steps: 8, noise: false }, desktop: { map: 2048, every: 1, far: 180, steps: 14, noise: true } };
+  // (v324) tablets / phones: 512 map at every 2nd frame (the 1024 / 100 m map was ~4x the caster fill for a soft shadow that 512 shows just as well on a 54 deg halo), 80 m reach, 6 beam samples.
+  const TIERS = { low: { map: 512, every: 3, far: 45, steps: 5, noise: false }, phone: { map: 512, every: 2, far: 80, steps: 6, noise: false }, desktop: { map: 2048, every: 1, far: 180, steps: 14, noise: true } };
   const R = { width: 0.153, top: 1.6689, front: -0.0133, band: 0.027 };   // GLB-measured fallback (metres, bind pose)
-  const S = { on: false, step: 2, cone: 0, built: false, led: null, casing: null, strip: null, light: null, target: null, dims: null, mode: '', rc: 0, tries: 0, placed: false, prof: 'ground', pairs: [], ui: null, dirty: true, wait: 0, err: null,
-    flags: null, tier: null, tierName: '', mapSize: 2048, shadowOn: false, shFrame: 0, shEvery: 1, shNear: 0.25, shFar: 180, bias: -0.0004, normalBias: 0.06, biasK: 0.012, biasM: 0.03, tilt: 0.17, shadowFloor: 0.9, fresh: 0, shUpdates: 0,
+  const S = { on: false, step: 3, cone: 0, built: false, led: null, casing: null, strip: null, light: null, target: null, dims: null, mode: '', rc: 0, tries: 0, placed: false, prof: 'ground', pairs: [], ui: null, dirty: true, wait: 0, err: null,
+    flags: null, tier: null, tierName: '', mapSize: 2048, shadowOn: false, shFrame: 0, shEvery: 1, shNear: 0.25, shFar: 180, bias: -0.0004, normalBias: 0.06, biasK: 0.012, biasM: 0.03, tilt: 0.07, halo: 1, gain: 1, fl: 0, vlCone: { angle: 0.6, penumbra: 0.7 }, shadowFloor: 0.9, fresh: 0, shUpdates: 0,
     t: 0, dtEma: 16, slow: 0, fast: 0, autoOff: 0, retry: 0, beamOn: false, dens: 0.01, beamK: 1, wasOn: false, shadowUser: true, pair: null, U: null, beam: undefined };
-  const F = { STEPS, S, R, LM_K, PROF, CONES, TIERS };
+  const F = { STEPS, S, R, LM_K, PROF, CONES, TIERS, BEAM };
   root.DMFlash = F;
   let T = null; const _p = { x: 0, y: 0, z: 0 }; let _v = null, _d = null, _q = null, _z = null;
   F.hooks = { gfx: null, depthOK: null, logDepth: null };   // set by index.html: gfx() -> GFX, depthOK() -> may a shader read the scene depth, logDepth() -> logarithmic depth buffer
@@ -65,7 +72,8 @@
     const fb = q('flashbeam');
     return { light: q('flashlight') !== '0', shadow: fs !== '0' && fs !== 'off', size, beam: fb === '0' || fb === 'off' ? 0 : (fb === null || fb === 'auto' ? 1 : Math.max(0, Math.min(8, num(fb, 1)))), beamForce: fb !== null && fb !== 'auto' && fb !== '0' && fb !== 'off',
       tier: /^(low|phone|desktop)$/.test(q('flashtier') || '') ? q('flashtier') : '', bias: q('flashbias') !== null ? num(q('flashbias'), -0.0004) : -0.0004,
-      biasK: q('flashbiask') !== null ? Math.max(0, Math.min(0.2, num(q('flashbiask'), 0.012))) : 0.012, tilt: q('flashtilt') !== null ? Math.max(0, Math.min(0.6, num(q('flashtilt'), 10) * Math.PI / 180)) : 0.17, debug: /^(1|on|true|yes)$/i.test(q('flashdebug') || '') };
+      biasK: q('flashbiask') !== null ? Math.max(0, Math.min(0.2, num(q('flashbiask'), 0.012))) : 0.012, tilt: q('flashtilt') !== null ? Math.max(0, Math.min(0.6, num(q('flashtilt'), 4) * Math.PI / 180)) : 0.07,
+      halo: q('flashhalo') !== null ? Math.max(0, Math.min(2, num(q('flashhalo'), 1))) : 1, gain: q('flashgain') !== null ? Math.max(0.05, Math.min(8, num(q('flashgain'), 1))) : 1, debug: /^(1|on|true|yes)$/i.test(q('flashdebug') || '') };
   };
   F.pickTier = function (gfx, ua, over) {   // gfx = the game's GFX (may be null), ua = navigator.userAgent, over = ?flashtier
     if (over && TIERS[over]) return over;
@@ -79,7 +87,7 @@
     S.flags = F.readFlags(root.location && root.location.search || '');
     S.tierName = F.pickTier(gfx, root.navigator && root.navigator.userAgent || '', S.flags.tier); S.tier = TIERS[S.tierName];
     let sz = S.flags.size || S.tier.map; if (!S.flags.size && gfx && gfx.shadowSize) sz = Math.min(sz, Math.max(512, gfx.shadowSize));
-    S.mapSize = sz; S.shFar = S.tier.far; S.bias = S.flags.bias; S.biasK = S.flags.biasK; S.tilt = S.flags.tilt; S.shEvery = S.tier.every;
+    S.mapSize = sz; S.shFar = S.tier.far; S.bias = S.flags.bias; S.biasK = S.flags.biasK; S.tilt = S.flags.tilt; S.halo = S.flags.halo; S.gain = S.flags.gain; S.shEvery = S.tier.every;
     return S.tierName;
   };
   F.refreshTier();
@@ -103,6 +111,25 @@
     if (!(hi > lo)) return null;
     out = out || [0, 0]; out[0] = lo; out[1] = hi; return out;
   };
+  // ── (v324) beam profile (pure; the TSL term in patchSpotNode mirrors it one to one).  coneK = the cone preset's angle factor (wide 1).
+  F.beamParams = function (coneK, halo, gain) {
+    const r = Math.PI / 180, hs = Math.max(BEAM.minHot, BEAM.hotSig * coneK) * r, ws = Math.max(BEAM.minHalo, BEAM.haloSig * coneK) * r;
+    return { kh: 1 / (1 - Math.cos(hs)), kw: 1 / (1 - Math.cos(ws)), wh: BEAM.haloW * (halo == null ? 1 : halo), id0: 1 / BEAM.d0, dp: BEAM.dp, cal: BEAM.cal * (gain == null ? 1 : gain) };
+  };
+  const sm01 = (a, b, v) => { const t = Math.max(0, Math.min(1, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
+  // factor applied to the light colour (candela) for a fragment at angle cosine cosA (to the axis) and distance d: window(three's smoothstep cone) x (hot + wh x halo) x distance law x cal
+  F.spotFactor = function (cosA, d, p, cosO, cosI) {
+    const omc = Math.max(0, 1 - cosA), q = d * p.id0;
+    return sm01(cosO, cosI, cosA) * (Math.exp(-omc * p.kh) + p.wh * Math.exp(-omc * p.kw)) * Math.pow(1 + q * q, -p.dp) * p.cal;
+  };
+  // ?flashdebug=1: one line of what the profile delivers (lux on a surface facing her) at the current step / cone, and which cost levers are active
+  F.profileReport = function () {
+    const q = PROF[S.prof] || PROF.ground, cn = CONES[S.cone], p = F.beamParams(cn.k, S.halo, S.gain), I = F.intensityFor(STEPS[S.step]) * q.gain * cn.gain, cO = Math.cos(q.angle * cn.k), cI = Math.cos(q.angle * cn.k * (1 - q.penumbra));
+    const lux = (d, a) => q.sp ? I * F.spotFactor(Math.cos(a * Math.PI / 180), d, p, cO, cI) : I / Math.pow(Math.max(d, 0.1), q.decay);
+    return 'profile=' + (q.sp ? 'hot+halo' : 'legacy cone') + ' cone=' + cn.name + ' step=' + STEPS[S.step] + 'lm lux(core 3/10/40/60 m)=' + [3, 10, 40, 60].map(d => lux(d, 0).toFixed(1)).join('/') + ' lux(halo 30deg 10 m)=' + lux(10, 30).toFixed(2) +
+      ' | patched=' + !!S.patched + ' halo=' + S.halo + ' gain=' + S.gain + ' tilt=' + (S.tilt * 180 / Math.PI).toFixed(1) + 'deg | cost: tier=' + S.tierName + ' map=' + S.mapSize + ' every=' + S.shEvery + ' shadowReach=' + S.shFar + 'm shadowOn=' + S.shadowOn + ' beam=' + S.beamOn + ' fast=' + S.fl + ' frame=' + S.dtEma.toFixed(0) + 'ms autoOff=' + S.autoOff;
+  };
+  F.debugProfile = function () { try { console.info('[flashdebug] ' + F.profileReport()); } catch (e) { } };
   F.phase = function (c, g) { g = g == null ? 0.35 : g; return (1 - g * g) / Math.pow(Math.max(1e-4, 1 + g * g - 2 * g * c), 1.5); };   // Henyey-Greenstein, isotropic = 1 (x4 pi)
   F.coneGain = (i) => CONES[Math.max(0, Math.min(CONES.length - 1, i | 0))].gain;
   F.densityFor = function (mode, fogFar, mul, add) {   // air density (scatter per metre): thin dust in clear air, thicker with haze, ~nothing in vacuum
@@ -161,9 +188,27 @@
   function ensureU() {
     if (S.U) return S.U;
     const TS = T && T.TSL; if (!TS || typeof TS.uniform !== 'function') return null;
-    S.U = F.U = { A: TS.uniform(new T.Vector3()), a: TS.uniform(new T.Vector3(0, 0, 1)), cosO: TS.uniform(0.8), cosI: TS.uniform(0.9), len: TS.uniform(60), k: TS.uniform(0), dens: TS.uniform(0.01), col: TS.uniform(new T.Color(COLOR)), shOn: TS.uniform(0) };
+    S.U = F.U = { A: TS.uniform(new T.Vector3()), a: TS.uniform(new T.Vector3(0, 0, 1)), cosO: TS.uniform(0.8), cosI: TS.uniform(0.9), len: TS.uniform(60), k: TS.uniform(0), dens: TS.uniform(0.01), col: TS.uniform(new T.Color(COLOR)), shOn: TS.uniform(0),
+      kh: TS.uniform(60), kw: TS.uniform(7), wh: TS.uniform(0.35), id0: TS.uniform(0.1), dp: TS.uniform(0.9), cal: TS.uniform(0.0145), sp: TS.uniform(1) };
     return S.U;
   }
+  // ── (v324) the beam profile, inside three's own SpotLightNode (every lit material's light loop already calls getSpotAttenuation once for this light): hot core + wide halo + long
+  // distance law, selected per light by userData.dmFlash and blended by U.sp (0 = three's plain cone + decay, used in space).  Installed once, before the first compile (adoptScene / attach).
+  function patchSpotNode() {
+    const TS = T && T.TSL, SN = T && T.SpotLightNode;
+    if (!TS || !SN || !SN.prototype || SN.prototype.__dmFlashPatched || typeof SN.prototype.getSpotAttenuation !== 'function' || typeof TS.exp !== 'function' || typeof TS.pow !== 'function' || typeof TS.mix !== 'function' || typeof TS.max !== 'function' || typeof TS.float !== 'function') return !!(SN && SN.prototype && SN.prototype.__dmFlashPatched);
+    const U = ensureU(); if (!U) return false;
+    const orig = SN.prototype.getSpotAttenuation;
+    SN.prototype.getSpotAttenuation = function (builder, angleCosine) {
+      const base = orig.call(this, builder, angleCosine), L = this.light;
+      if (!L || !L.userData || !L.userData.dmFlash) return base;
+      const omc = TS.max(TS.float(1).sub(angleCosine), 0), q = this.getLightVector(builder).length().mul(U.id0);
+      const ang = TS.exp(omc.mul(U.kh).negate()).add(U.wh.mul(TS.exp(omc.mul(U.kw).negate()))), fd = TS.pow(q.mul(q).add(1), U.dp.negate());
+      return TS.mix(base, base.mul(ang).mul(fd).mul(U.cal), U.sp);
+    };
+    SN.prototype.__dmFlashPatched = true; S.patched = true; return true;
+  }
+  F.patch = patchSpotNode;
   // the spot's own shadow node: (1) the shadow filter (the PCF taps) sits in a uniform branch — while the flashlight is off, or its shadows are throttled off, the pixel
   // shader neither samples the map nor pays for the filter; (2) the node it produces is tagged dmFlashShadow so DMLight's receivedShadowNode wrapper (sun height-field
   // visibility, sun-box fade) leaves it alone: the flashlight is not the sun.
@@ -207,7 +252,7 @@
   }
   function configShadow(L) {   // tier-sized map, tight depth range, PCF soft, only updated when asked
     const sh = L.shadow; if (!sh) return;
-    sh.mapSize.set(S.mapSize, S.mapSize); sh.autoUpdate = false; sh.needsUpdate = false; sh.bias = S.bias; sh.normalBias = S.normalBias; sh.intensity = S.shadowFloor;   // intensity < 1: a shadowed pixel keeps (1 - intensity) of the light, so a shadow failure can never black a surface out sh.camera.near = PROF.ground.shNear; sh.camera.far = Math.min(S.shFar, PROF.ground.distance);
+    sh.mapSize.set(S.mapSize, S.mapSize); sh.focus = 0.78; sh.autoUpdate = false; sh.needsUpdate = false; sh.bias = S.bias; sh.normalBias = S.normalBias; sh.intensity = S.shadowFloor;   // intensity < 1: a shadowed pixel keeps (1 - intensity) of the light, so a shadow failure can never black a surface out sh.camera.near = PROF.ground.shNear; sh.camera.far = Math.min(S.shFar, PROF.ground.distance);
     sh.camera.updateProjectionMatrix();
     const spotUM = Object.getPrototypeOf(sh).updateMatrices;
     if (typeof spotUM === 'function') {   // SpotLightShadow takes its far plane from light.distance: the shadow reach is shorter than the light's (tier + mode)
@@ -241,12 +286,13 @@
   function pairFor(scene) {
     for (let i = 0; i < S.pairs.length; i++) if (S.pairs[i].scene === scene) return S.pairs[i];
     if (!T || !scene || !S.flags || !S.flags.light) return null;
+    try { patchSpotNode(); } catch (e) { S.err = 'patch: ' + (e && e.message || e); }   // (v324) the beam profile must exist before this scene's first compile
     const s = makeSpot(), L = s.L, t = s.t;
     scene.add(L); scene.add(t);
     const P = { scene, L, t, prof: 'ground', cone: 0, beam: null }; S.pairs.push(P); if (S.pairs.length > 3) dropPair(S.pairs.shift());   // closed world scenes fall off the back
     return P;
   }
-  F.adoptScene = function (scene) { T = T || root.THREE; F.refreshTier(); initPre(); return !!pairFor(scene); };
+  F.adoptScene = function (scene) { T = T || root.THREE; F.refreshTier(); initPre(); try { patchSpotNode(); } catch (e) { S.err = 'patch: ' + (e && e.message || e); } return !!pairFor(scene); };
   F.sceneLight = function (scene) { for (let i = 0; i < S.pairs.length; i++) if (S.pairs[i].scene === scene) return S.pairs[i].L; return null; };
   function ensureLight() {
     if (S.light || !T || !S.flags || !S.flags.light) return;
@@ -261,6 +307,12 @@
   function applyProf(P, name) {   // uniform-only changes (profile of the mode x cone preset)
     const q = PROF[name], cn = CONES[S.cone]; P.prof = name; P.cone = S.cone; const L = P.L;
     L.angle = q.angle * cn.k; L.penumbra = q.penumbra; L.distance = q.distance; L.decay = q.decay;
+    S.vlCone.angle = name === 'space' ? L.angle : Math.max(0.2, 0.6 * cn.k); S.vlCone.penumbra = name === 'space' ? Math.max(L.penumbra, 0.6) : 0.7;   // the cone DMVLight scatters (the hot core, not the whole halo)
+    setProfileUniforms(name);
+  }
+  function setProfileUniforms(name) {   // uniform writes only: the hot / halo widths of the cone preset, the distance law, space = legacy
+    const U = S.U; if (!U) return; const b = F.beamParams(CONES[S.cone].k, S.halo, S.gain);
+    U.kh.value = b.kh; U.kw.value = b.kw; U.wh.value = b.wh; U.id0.value = b.id0; U.dp.value = b.dp; U.cal.value = b.cal; U.sp.value = PROF[name].sp; S.uKey = (name === 'space' ? 100 : 0) + S.cone;
   }
   function intensityNow(pn) { return F.intensityFor(STEPS[S.step]) * PROF[pn].gain * CONES[S.cone].gain; }
   function sync() {   // state -> LED glow / light intensity (no allocation)
@@ -282,7 +334,7 @@
   F.setShadows = function (on) { S.shadowUser = !!on; if (on) { S.autoOff = 0; S.slow = 0; S.fresh = 2; } return S.shadowUser; };
   S.shadowUser = true;
   F.status = () => ({ on: S.on, lumens: STEPS[S.step], step: S.step, cone: CONES[S.cone].name, built: S.built, light: !!S.light, intensity: S.light ? S.light.intensity : 0, shadow: !!(S.light && S.light.castShadow), shadowOn: S.shadowOn,
-    shadowUpdates: S.shUpdates, shadowSize: S.mapSize, shadowFar: S.shFar, shadowEvery: S.shEvery, autoOff: S.autoOff, tier: S.tierName, beam: S.beamOn, dens: S.dens, dtEma: S.dtEma, mode: S.mode, dims: S.dims, err: S.err, flags: S.flags });
+    shadowUpdates: S.shUpdates, shadowSize: S.mapSize, shadowFar: S.shFar, shadowEvery: S.shEvery, autoOff: S.autoOff, tier: S.tierName, beam: S.beamOn, dens: S.dens, dtEma: S.dtEma, mode: S.mode, dims: S.dims, err: S.err, flags: S.flags, fast: S.fl | 0, profile: F.beamParams(CONES[S.cone].k, S.halo, S.gain), patched: !!S.patched });
 
   // ── ?flashdebug=1 / DMFlash.audit(scene): WHICH MATERIAL FAMILIES RECEIVE THE SPOT.  A lit material gets the flashlight only if (a) it has no private light list and the spot is a child of the
   // scene that is drawn, or (b) its private light list (material.lightsNode) contains THIS scene's spot.  Unlit types (MeshBasic*, ShaderMaterial, Points, Line, Sprite) and materials with
@@ -394,12 +446,15 @@
     if (S.autoOff === 0) { if (S.dtEma > 72) S.slow++; else S.slow = 0; if (S.slow > 90) { S.autoOff = 1; S.fast = 0; } }
     else if (S.autoOff === 1) { if (S.dtEma < 42) S.fast++; else S.fast = 0; if (S.fast > 600) { if (S.retry < 2) { S.retry++; S.autoOff = 0; S.slow = 0; S.fresh = 2; } else S.autoOff = 2; } }   // 2 = off for the rest of the session
   }
+  function fastLvl() { const B = root.DMBudget; let l = 0; try { if (B && B.on && B.fast) l = B.fast() | 0; } catch (e) { } S.fl = l; return l; }
   function shadowStep(P, L, pn) {
     const sh = L.shadow, U = S.U, q = PROF[pn];
-    if (!L.castShadow || !sh || !S.flags.shadow || !S.shadowUser || S.autoOff !== 0) { if (U) U.shOn.value = 0; sh && (sh.needsUpdate = false); S.shadowOn = false; C.shadow.on = false; return; }
+    const fl = fastLvl();   // (v324) DMBudget.fast(): < 20 fps for 2 s -> L1 map 512 + every 3rd frame, L2 shadows off, L3 shaft cone off as well
+    if (!L.castShadow || !sh || !S.flags.shadow || !S.shadowUser || S.autoOff !== 0 || fl >= 2) { if (U) U.shOn.value = 0; sh && (sh.needsUpdate = false); S.shadowOn = false; C.shadow.on = false; return; }
     let size = S.mapSize, every = S.shEvery;
     const B = root.DMBudget;
     if (B && B.on) { try { if (B.shadowHalf && B.shadowHalf()) size = Math.max(512, size >> 1); if (B.shadowEvery) { const be = B.shadowEvery(); if (be > every) every = be; } } catch (e) { } }
+    if (fl >= 1) { if (size > 512) size = 512; if (every < 3) every = 3; }
     if (S.dtEma > 55) { if (every < 3) every = 3; } else if (S.dtEma > 38) { if (every < 2) every = 2; }
     if (sh.mapSize.x !== size) sh.mapSize.set(size, size);
     const far = Math.min(S.tier.far, q.shFar, q.distance);
@@ -412,8 +467,8 @@
     const U = S.U || ensureU(); const B = S.flags.beam;
     const VL = root.DMVLight;   // DMVLight (ui/dm-vlight.js) already scatters the flashlight in the scene's fog (scene.fogNode): this cone then yields (no double beam) unless ?flashbeam=<k> forces it; it still covers vacuum / fog-less scenes
     const yielded = !S.flags.beamForce && mode !== 'space' && VL && VL.on && top.fogNode;
-    let m = null; if (B > 0 && U && !yielded) m = beamFor(P);
-    if (yielded && P.beam && P.beam.visible) P.beam.visible = false;
+    let m = null; if (B > 0 && U && !yielded && S.fl < 3) m = beamFor(P);
+    if ((yielded || S.fl >= 3) && P.beam && P.beam.visible) P.beam.visible = false;
     if (!m) { S.beamOn = false; return; }
     const fog = top.fog; S.dens = F.densityFor(mode, fog && fog.far ? fog.far : 0, F.medium.mul, F.medium.add);
     const k = B * Math.pow(STEPS[S.step] / 2000, 0.7) * Math.sqrt(CONES[S.cone].gain) * (pn === 'space' ? 0.6 : 1);
@@ -455,7 +510,8 @@
     L.updateMatrixWorld(); P.t.updateMatrixWorld();
     C.on = true; C.mode = mode; C.pos.x = _v.x; C.pos.y = _v.y; C.pos.z = _v.z; C.dir.x = _d.x; C.dir.y = _d.y; C.dir.z = _d.z;
     C.angle = L.angle; C.penumbra = L.penumbra; C.cosOuter = Math.cos(L.angle); C.cosInner = Math.cos(L.angle * (1 - L.penumbra)); C.range = L.distance; C.intensity = I; C.lumens = STEPS[S.step]; C.cone = S.cone; C.coneName = CONES[S.cone].name;
-    if (S.flags.debug) { const nw = root.performance && root.performance.now ? root.performance.now() : Date.now(); if (!S.dbgT || nw - S.dbgT > (S.dbgN < 2 ? 2500 : 15000)) { S.dbgT = nw; S.dbgN = (S.dbgN || 0) + 1; F.auditLog(top, 'on foot/in flight, mode=' + mode + ' tier=' + S.tierName + ' map=' + S.mapSize + ' shadowOn=' + S.shadowOn + ' biasK=' + S.biasK); } }   // ?flashdebug=1: which material families receive the spot (console)
+    if (S.flags.debug) { const nw = root.performance && root.performance.now ? root.performance.now() : Date.now(); if (!S.dbgT || nw - S.dbgT > (S.dbgN < 2 ? 2500 : 15000)) { S.dbgT = nw; S.dbgN = (S.dbgN || 0) + 1; F.auditLog(top, 'on foot/in flight, mode=' + mode + ' tier=' + S.tierName + ' map=' + S.mapSize + ' shadowOn=' + S.shadowOn + ' biasK=' + S.biasK); F.debugProfile(); } }   // ?flashdebug=1: which material families receive the spot (console)
+    if (S.uKey !== (pn === 'space' ? 100 : 0) + S.cone) setProfileUniforms(pn);
     governor();
     shadowStep(P, L, pn);
     beamStep(P, L, top, mode, pn);

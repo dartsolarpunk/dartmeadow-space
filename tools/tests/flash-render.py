@@ -19,11 +19,17 @@ ARGS = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-
 VARIANTS = [('off', '?off=1'), ('default', ''), ('wrap', '?wrap=1'), ('noshadow', '?flashshadow=0'), ('desktop', '?tier=desktop&wrap=1'), ('spot', '?cone=2&wrap=1'), ('beamoff', '?flashbeam=0'), ('side', '?ox=4&wrap=1'), ('sidens', '?ox=4&flashshadow=0')]
 only = os.environ.get('ONLY'); VARIANTS = [v for v in VARIANTS if not only or v[0] in only.split(',')]
 W, H_ = 640, 400
-REG = {'groundNear': (.4, .88, .6, .98), 'groundMid': (.42, .7, .58, .78), 'groundFar': (.44, .6, .56, .64), 'wall': (.44, .4, .56, .5), 'cube': (.47, .52, .53, .56), 'colL': (.27, .45, .3, .55), 'sideGround': (.05, .88, .2, .98), 'shadowWall': (.585, .36, .605, .5)}
+REG = {'groundNear': (.4, .88, .6, .98), 'groundMid': (.42, .7, .58, .78), 'groundFar': (.44, .6, .56, .64), 'wall': (.44, .4, .56, .5), 'cube': (.47, .52, .53, .56), 'colL': (.27, .45, .3, .55), 'sideGround': (.05, .88, .2, .98), 'shadowWall': (.585, .36, .605, .5), 'surround': (.26, .3, .32, .4)}
 def lum(im, box):
     x0, y0, x1, y1 = [int(v * (W if i % 2 == 0 else H_)) for i, v in enumerate(box)]
     c = im.crop((x0, y0, x1, y1)).convert('RGB'); n = c.width * c.height; px = c.getdata()
     return round(sum(0.2126 * r + 0.7152 * g + 0.0722 * b for r, g, b in px) / n, 1)
+def scan(im):   # (v324) NO PERIMETER: the largest luminance step between neighbouring 8-px windows along a horizontal band over the ground (the old cone / saturation edge was a ~60-level step)
+    g = im.convert('L'); w, h = g.size; worst = 0
+    for y0 in (int(h * .78), int(h * .88)):
+        row = [sum(g.crop((x, y0, x + 8, y0 + 4)).getdata()) / 32.0 for x in range(0, w - 8, 8)]
+        worst = max(worst, max(abs(a - b) for a, b in zip(row, row[1:])))
+    return round(worst, 1)
 res = {}; fails = 0
 with sync_playwright() as p:
     br = p.chromium.launch(executable_path='/usr/bin/google-chrome', args=ARGS, headless=True)
@@ -39,16 +45,21 @@ with sync_playwright() as p:
         png = pg.screenshot(); im = Image.open(io.BytesIO(png))
         if out: os.makedirs(out, exist_ok=True); open(os.path.join(out, name + '.png'), 'wb').write(png)
         res[name] = {k: lum(im, b) for k, b in REG.items()}
+        res[name]['maxStep'] = scan(im)
         print('%-9s' % name, ' '.join('%s=%s' % kv for kv in res[name].items()), 'shadowUpdates=%s err=%s' % (d['status'].get('shadowUpdates'), (errs + d.get('err', []))[:2]), flush=True)
         pg.close()
     br.close()
 srv.shutdown()
-MUST = {'default': ('groundNear', 'groundMid', 'wall', 'cube'), 'wrap': ('groundNear', 'groundMid', 'wall', 'cube'), 'noshadow': ('groundNear', 'groundMid', 'wall', 'cube'), 'desktop': ('groundNear', 'groundMid', 'wall', 'cube'),
+MUST = {'default': ('groundNear', 'groundMid', 'wall', 'cube', 'surround'), 'wrap': ('groundNear', 'groundMid', 'wall', 'cube'), 'noshadow': ('groundNear', 'groundMid', 'wall', 'cube'), 'desktop': ('groundNear', 'groundMid', 'wall', 'cube'),
         'beamoff': ('groundNear', 'groundMid', 'wall', 'cube'), 'spot': ('wall', 'cube'), 'side': ('wall', 'cube', 'groundFar'), 'sidens': ('wall', 'cube', 'groundFar')}
 if 'off' in res:
     for name in res:
         for k in MUST.get(name, ()):
             if res[name][k] < res['off'][k] + 8: print('FAIL %s: %s not lit (%s vs off %s)' % (name, k, res[name][k], res['off'][k])); fails += 1
+for name in ('default', 'desktop'):
+    if name in res:
+        if res[name]['maxStep'] > 14: print('FAIL %s: a visible perimeter - the largest step between neighbouring ground windows is %s levels (> 14)' % (name, res[name]['maxStep'])); fails += 1
+        else: print('ok   %s: no perimeter (largest ground step %s levels)' % (name, res[name]['maxStep']))
 if 'side' in res and 'sidens' in res:
     if not res['side']['shadowWall'] < res['sidens']['shadowWall'] - 15: print('FAIL shadows: the column shadow on the wall is not darker with the shadow map on (%s vs %s without)' % (res['side']['shadowWall'], res['sidens']['shadowWall'])); fails += 1
     else: print('ok   shadow map darkens the column shadow on the wall (%s vs %s)' % (res['side']['shadowWall'], res['sidens']['shadowWall']))

@@ -28,12 +28,13 @@ try {
   const cm = lit(0x555555); cm.colorNode = TSL.mix(TSL.vec3(0.3, 0.32, 0.28), TSL.vec3(0.5, 0.45, 0.4), TSL.sin(TSL.positionWorld.x.mul(0.7)).mul(0.5).add(0.5));
   const cub = new THREE.Mesh(new THREE.BoxGeometry(3, 3, 3), cm); cub.position.set(0, 1.5, -10); cub.castShadow = cub.receiveShadow = true; scene.add(cub);
   if (Q.get('wrap') === '1') for (const m of [ground.material, wall.material, col.material, col2.material, cm]) { const prev = m.receivedShadowNode; m.receivedShadowNode = prev ? (s => s && s.dmFlashShadow ? s : TSL.mix(TSL.float(1), prev(s), TSL.float(0.7))) : (s => s && s.dmFlashShadow ? s : TSL.mix(TSL.float(1), s, TSL.float(0.7))); }
+  if (Q.get('far') === '1') { const fw = new THREE.Mesh(new THREE.BoxGeometry(90, 12, 1), lit(0x777777)); fw.position.set(0, 6, -58); fw.castShadow = fw.receiveShadow = true; scene.add(fw); const fc = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.8, 10, 16), lit(0x666666)); fc.position.set(-30, 5, -45); fc.castShadow = fc.receiveShadow = true; scene.add(fc); }   // ?far=1: walls / columns 45-58 m away
   scene.add(new THREE.HemisphereLight(0x223355, 0x111111, 0.35)); scene.add(new THREE.AmbientLight(0x222233, 0.3));
   if (Q.get('sun') === '1') { const sun = new THREE.DirectionalLight(0xfff2e0, 0.3); sun.position.set(80, 120, 40); scene.add(sun); }
   DMFlash.adoptScene(scene);
   const led = new THREE.Object3D(); led.position.set(+(Q.get('ox') || 0), 1.62, -0.05); led.rotation.y = Math.PI; scene.add(led); scene.updateMatrixWorld(true);
   DMFlash.S.led = led; DMFlash.S.built = true;
-  if (Q.get('cone')) DMFlash.setCone(+Q.get('cone')); DMFlash.setStep(Q.get('lm') ? +Q.get('lm') : 4);
+  if (Q.get('cone')) DMFlash.setCone(+Q.get('cone')); DMFlash.setStep(Q.get('lm') ? +Q.get('lm') : 3);
   if (Q.get('off') !== '1') DMFlash.toggle(true);
   for (let f = 0; f < 8; f++) { DMFlash.tick('walk'); r.render(scene, cam); await new Promise(z => setTimeout(z, 20)); }
   DMFlash.tick('walk'); r.render(scene, cam);

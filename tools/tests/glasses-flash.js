@@ -62,8 +62,8 @@ let fails = 0, n = 0; const ok = (c, m) => { n++; if (!c) { fails++; console.log
   ok(!F.S.on && F.S.light === null, 'starts off, no light yet (nothing added to any scene)');
   ok(JSON.stringify(F.STEPS) === '[750,1250,2000,3000,4000]', 'lumen steps 750 / 1250 / 2000 / 3000 / 4000');
   ok(F.toggle() === true && F.S.light && F.S.light.isSpotLight, 'tap: on -> one SpotLight');
-  const L = F.S.light; ok(L.castShadow === true && L.shadow.autoUpdate === false && !L.shadow.needsUpdate, 'real shadow-casting spot, map only updated on request (zero cost while off)'); ok(Math.abs(L.angle - 35 * Math.PI / 180) < 0.03 && L.penumbra >= 0.5, 'wide, soft cone (' + (L.angle * 180 / Math.PI).toFixed(0) + ' deg half-angle, penumbra ' + L.penumbra + ')'); ok(L.distance >= 150 && L.distance <= 300, 'reaches 150-300 m on the ground (range ' + L.distance + ')');
-  ok(F.lumens() === 2000 && Math.abs(L.intensity - 2000 * F.LM_K) < 1e-9, 'default 2000 lm'); ok(2000 * F.LM_K >= 500, 'strong output (>= 500 cd at the default step)');
+  const L = F.S.light; ok(L.castShadow === true && L.shadow.autoUpdate === false && !L.shadow.needsUpdate, 'real shadow-casting spot, map only updated on request (zero cost while off)'); ok(Math.abs(L.angle - 54 * Math.PI / 180) < 0.03 && L.penumbra >= 0.4, 'wide, soft cone (54 deg halo window, ' + (L.angle * 180 / Math.PI).toFixed(0) + ' deg half-angle, penumbra ' + L.penumbra + ')'); ok(L.distance >= 150 && L.distance <= 300, 'reaches 150-300 m on the ground (range ' + L.distance + ')');
+  ok(F.lumens() === 3000 && Math.abs(L.intensity - 3000 * F.LM_K) < 1e-9, 'default 3000 lm (v324: brighter default)'); ok(3000 * F.LM_K >= 500, 'strong output (>= 500 cd at the default step)');
   const seen = []; for (let i = 0; i < 5; i++) { F.setStep(i); seen.push([F.lumens(), L.intensity]); }
   ok(seen.map(s => s[0]).join() === '750,1250,2000,3000,4000' && seen.every((s, i) => !i || s[1] > seen[i - 1][1]), 'every step sets its lumens, brighter each step');
   ok(Math.abs(seen[0][1] / seen[4][1] - 750 / 4000) < 1e-9, 'intensity proportional to lumens (750 : 4000)');
@@ -76,7 +76,7 @@ let fails = 0, n = 0; const ok = (c, m) => { n++; if (!c) { fails++; console.log
   g.getWorldPosition(wp); ok(L.position.distanceTo(wp) < 1e-6, 'beam origin = the LED bar');
   const fwd = new THREE.Vector3(0, 0, 1).transformDirection(g.matrixWorld), dir = F.S.target.position.clone().sub(L.position).normalize();
   { const pit = v => Math.atan2(v.y, Math.hypot(v.x, v.z)), brg = v => Math.atan2(v.x, v.z), tilt = F.S.tilt;   // (v322) on foot the axis is the glasses' forward tilted DOWN by S.tilt (same bearing); S.tilt = 0 -> exactly the forward axis
-    ok(Math.abs(brg(dir) - brg(fwd)) < 1e-6 && Math.abs(pit(dir) - (pit(fwd) - tilt)) < 1e-6 && tilt > 0.1, 'aimed along the glasses forward axis, tilted ' + (tilt * 180 / Math.PI).toFixed(0) + ' deg down (follows the head bone)'); }
+    ok(Math.abs(brg(dir) - brg(fwd)) < 1e-6 && Math.abs(pit(dir) - (pit(fwd) - tilt)) < 1e-6 && tilt > 0.05 && tilt < 0.1, 'aimed along the glasses forward axis, tilted ' + (tilt * 180 / Math.PI).toFixed(0) + ' deg down (follows the head bone)'); }
   ok(fwd.dot(new THREE.Vector3(0, 0, 1).applyQuaternion(rootG.quaternion)) > 0.8, 'forward = the way her face points');
   // tick allocates nothing (counted constructions while ticking)
   const src = fs.readFileSync(path.join(root, 'ui/dm-flash.js'), 'utf8'), tb = src.slice(src.indexOf('F.tick = function'), src.indexOf('// ── UI'));
@@ -91,7 +91,7 @@ let fails = 0, n = 0; const ok = (c, m) => { n++; if (!c) { fails++; console.log
   const n0 = lightsIn(scene) + lightsIn(sc2);
   F.toggle(true); F.setStep(4); F.tick('walk'); ok(L.intensity === 4000 * F.LM_K && L.angle === F.PROF.ground.angle, 'ground profile in walk');
   F.tick('fly'); ok(L.distance === F.PROF.ground.distance, 'fly keeps the ground profile');
-  F.tick('space'); ok(L.distance === F.PROF.space.distance && L.distance > 3 * F.PROF.ground.distance && L.decay < F.PROF.ground.decay && L.intensity > 0, 'space profile: far reach, flatter fall-off (a passing planet is lit)');
+  F.tick('space'); ok(L.distance === F.PROF.space.distance && L.distance > 3 * F.PROF.ground.distance && (!F.U || F.U.sp.value === 0) && L.decay > 1 && L.intensity > 0, 'space profile: far reach, flatter fall-off (a passing planet is lit)');
   F.tick('walk'); ok(L.distance === F.PROF.ground.distance, 'back on foot: ground profile again (uniform change only)');
   // she moves into the other scene (a world closes / opens): the beam follows, the old one goes dark, light counts unchanged
   scene.remove(rootG); sc2.add(rootG); sc2.updateMatrixWorld(true); F.tick('walk');
