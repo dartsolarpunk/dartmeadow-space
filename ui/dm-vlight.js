@@ -124,7 +124,7 @@
   /* ───────────────────────── runtime ───────────────────────── */
   if (root.DMVLight) return;
   const q = (() => { try { return new URLSearchParams(root.location.search); } catch (e) { return new URLSearchParams(''); } })();
-  const FLAG = (q.get('vlights') || '').toLowerCase();
+  const FLAG = (q.get('vlights') || '').toLowerCase(), SUN_LOW = q.get('vlsun') === '1';
   const V = { core, on: !/^(0|off|false|no)$/.test(FLAG) };
   root.DMVLight = V;
   const S = { tier: null, cfg: null, U: null, node: null, installed: false, failed: null, groups: [], spots: [], byKey: {}, flashAuto: null, k: 0, want: 0,
@@ -163,7 +163,7 @@
     const a = S.flashAuto || (S.flashAuto = group('flash')); if (a.kind !== 'spot') a.kind = 'spot';
     const c = L.color, I = L.intensity;
     V.setSpot('flash', { x: L.position.x, y: L.position.y, z: L.position.z, dx: T.position.x - L.position.x, dy: T.position.y - L.position.y, dz: T.position.z - L.position.z,
-      angle: L.angle, penumbra: Math.max(L.penumbra, 0.6), r: c.r * I, g: c.g * I, b: c.b * I, range: Math.min(L.distance || 60, 70), gain: 1 });
+      angle: F.S.vlCone ? F.S.vlCone.angle : L.angle, penumbra: F.S.vlCone ? F.S.vlCone.penumbra : Math.max(L.penumbra, 0.6), r: c.r * I, g: c.g * I, b: c.b * I, range: Math.min(L.distance || 60, 70), gain: 1 });
   }
 
   // ── shader
@@ -258,14 +258,12 @@
     if (scene.fog) { if (scene.fogNode !== S.node && !scene.fogNode) scene.fogNode = S.node; } else if (scene.fogNode === S.node) { scene.fogNode = null; return; }
     if (scene.fogNode !== S.node) return;
     // budget
-    let lvl = 0, ema = 0; try { const B = root.DMBudget; if (B && B.on) { lvl = B.lvl('light') | 0; const st = B.stats && B.stats(); ema = st && st.emaMs || 0; } } catch (e) { }
-    const plan = S.plan = budgetPlan(cfg.n, lvl, ema), want = V.on && o.walk !== false && plan.n > 0 && S.medium.gain > 0 ? 1 : 0;
-    S.k += clamp(want - S.k, -dt * 1.5, dt * 1.5); U.k.value = S.k < 0.002 ? 0 : S.k * S.k * (3 - 2 * S.k);
+    let lvl = 0, ema = 0; try { const B = root.DMBudget; if (B && B.on) { lvl = B.lvl('light') | 0; if (B.fast) lvl = Math.max(lvl, B.fast() | 0); const st = B.stats && B.stats(); ema = st && st.emaMs || 0; } } catch (e) { }
+    const plan = S.plan = budgetPlan(cfg.n, lvl, ema), can = V.on && o.walk !== false && plan.n > 0 && S.medium.gain > 0;
+    if (plan.sun && cfg.name === 'low' && !SUN_LOW) plan.sun = false;   // (v324) phones / tablets: no low-sun in-scatter (a 1-2 sunVis shadow taps per fogged pixel; also the dusk 'follower' patch); ?vlsun=1 brings it back
     const fg = scene.fog; U.fogCol.value.copy(fg.color); U.near.value = fg.near; U.far.value = fg.far;   // the stock fog is ours now: always follow scene.fog
-    if (U.k.value === 0 && !want) { S.nLive = 0; return; }
-    // medium
+    // (v324) the shafts are paid for ONLY when something lights them: gather first, then decide.  Day, no flashlight, no lamp in reach, sun high => the fog node's uniform branch is off (free).
     const m = S.medium, day = o.day == null ? 0 : o.day;
-    S.time += dt; U.time.value = S.time; U.gain.value = m.gain * (1 - 0.55 * clamp(day, 0, 1)); U.sigma.value = m.density; U.mist.value = m.mist; U.mistH.value = m.mistH; U.haze.value = m.haze; U.patchy.value = m.patchy; U.groundY.value = o.groundY || 0;
     // view matrix from the live camera (not last frame's matrixWorldInverse)
     const cam = o.camera; cam.updateMatrixWorld(); const mw = cam.matrixWorld.elements, M = S.m;   // invert a rigid transform: R^T, -R^T t
     M[0] = mw[0]; M[1] = mw[4]; M[2] = mw[8]; M[3] = 0; M[4] = mw[1]; M[5] = mw[5]; M[6] = mw[9]; M[7] = 0; M[8] = mw[2]; M[9] = mw[6]; M[10] = mw[10]; M[11] = 0;
@@ -276,7 +274,6 @@
     if (sd && plan.sun && day > 0.02) { const il = 1 / (Math.hypot(sd.x, sd.y, sd.z) || 1), sx = sd.x * il, sy = sd.y * il, sz = sd.z * il;
       sunOn = (1 - smooth01((sy - 0.05) / 0.5)) * smooth01((sy + 0.12) / 0.14) * clamp(day * 1.6, 0, 1);
       if (sunOn > 0) { U.sunV.value.set(M[0] * sx + M[4] * sy + M[8] * sz, M[1] * sx + M[5] * sy + M[9] * sz, M[2] * sx + M[6] * sy + M[10] * sz); } }
-    U.sunOn.value = sunOn * 0.6;
     // gather the lights
     autoFlash(scene);
     const P = S.pick; pickReset(P);
@@ -287,6 +284,11 @@
       for (let i = 0; i < g.n; i++) { const o7 = i * 7, dx = d[o7] - cx, dy = d[o7 + 1] - cy, dz = d[o7 + 2] - cz, dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
         const sc = lightScore(d[o7 + 3] + d[o7 + 4] + d[o7 + 5], g.level * g.gain, dist, d[o7 + 6], 60); if (sc > 0) pickPush(P, (gi << 16) | i, sc); }
     }
+    const want = can && (P.size > 0 || sunOn > 0) ? 1 : 0; S.want = want;
+    S.k += clamp(want - S.k, -dt * 1.5, dt * 1.5); U.k.value = S.k < 0.002 ? 0 : S.k * S.k * (3 - 2 * S.k);
+    if (U.k.value === 0 && !want) { S.nLive = 0; return; }
+    S.time += dt; U.time.value = S.time; U.gain.value = m.gain * (1 - 0.55 * clamp(day, 0, 1)); U.sigma.value = m.density; U.mist.value = m.mist; U.mistH.value = m.mistH; U.haze.value = m.haze; U.patchy.value = m.patchy; U.groundY.value = o.groundY || 0;
+    U.sunOn.value = sunOn * 0.6;
     const nT = Math.min(P.size, plan.n); for (let j = 0; j < nT; j++) S.tgt[j] = P.id[j];
     stepSlots(S.slots, S.tgt, nT, dt, 4);
     const buf = S.buf; let live = 0;

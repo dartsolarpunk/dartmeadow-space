@@ -35,6 +35,10 @@
  *    15 fps floor: 68 ms (sheds under ~14.7 fps).  Light / shadow / atmo stages therefore shed at 30 fps on surface, atmosphere and the mansion (budgetFor()).
  *    If everything is shed and the frame is still slow it is CPU-bound beyond this controller's reach: stats().exhausted says so.
  *
+ * FAST LIGHT-STACK GUARD (v324): the ladder above sheds the lighting stack LAST (light 1 at p8, flashlight / lamp shadow cadence at p14+), one step per >= 1 s dwell, so a tablet at 5-12 fps stayed
+ *    there for 15-30 s.  A second, independent integer `fast` (0..3) watches the same frame times: EMA below 20 fps (50 ms) for 2 s -> fast + 1 (again every further 2 s), EMA above 30 fps for 6 s -> fast - 1.
+ *    Consumers (all uniform writes / cadences, no recompile): DMFlash (L1 shadow map 512 + every 3rd frame, L2 shadows off, L3 shaft cone off), DMVLight (fast = at least that 'light' level:
+ *    1 half the lights, 2 two lights + no sun, 3 off), anything else via DMBudget.fast().  ?govfast=0 turns it off.
  * Flags: ?gov=off  controller off (every level 0; the older per-feature governors run exactly as before) · ?gov=N  force pressure N (testing) ·
  *        ?govhud=1  corner readout · ?govbudget=ms  override the 36 ms (legacy 68 ms) budget.
  * Public: DMBudget.lvl(stage) (0..), .stats(), .force(p), .on, .ver (bumps on every change), typed accessors (.parallax() .shadowEvery() .atmoPeriod() .resCap() ...),
@@ -66,6 +70,23 @@
   const TARGET_MS = 36, LEGACY_MS = 68;
   function isLegacy(g) { return !!(g && g.deviceMem > 0 && g.deviceMem <= 3); }
   function budgetFor(g) { return isLegacy(g) ? LEGACY_MS : TARGET_MS; }
+
+  // (v324) fast light-stack guard (pure): lvl 0..max.  sample(ms, now) -> true when lvl changed.  Hitch frames (> 1.5 s: tab sleep / shader compile) are not samples.
+  function createFast(o) {
+    o = o || {};
+    const F = { lvl: 0, max: o.max || 3, badMs: o.badMs || 50, goodMs: o.goodMs || 33.4, hold: o.holdMs || 2000, rec: o.recMs || 6000, ema: 0, ok: false, low: 0, calm: 0, changes: 0 };
+    F.reset = function () { F.ok = false; F.low = 0; F.calm = 0; };
+    F.sample = function (ms) {
+      if (!(ms > 0) || ms > 1500) { if (ms > 1500) F.reset(); return false; }
+      const f = ms > 250 ? 250 : ms;
+      if (!F.ok) { F.ema = f; F.ok = true; } else F.ema += (f - F.ema) * (1 - Math.exp(-f / 400));
+      if (F.ema > F.badMs) { F.low = Math.min(F.hold, F.low + f); F.calm = 0; } else { F.low = Math.max(0, F.low - f); F.calm = F.ema < F.goodMs ? F.calm + f : 0; }
+      if (F.low >= F.hold && F.lvl < F.max) { F.lvl++; F.low = 0; F.calm = 0; F.changes++; return true; }
+      if (F.calm >= F.rec && F.lvl > 0) { F.lvl--; F.calm = 0; F.changes++; return true; }
+      return false;
+    };
+    return F;
+  }
 
   function createController(o) {
     o = o || {};
@@ -163,7 +184,7 @@
     return C;
   }
 
-  const core = { createController: createController, LADDER: LADDER, STAGES: STAGES, levelsAt: levelsAt, MAX: MAX, pOf: pOf, budgetFor: budgetFor, isLegacy: isLegacy, TARGET_MS: TARGET_MS, LEGACY_MS: LEGACY_MS };
+  const core = { createFast: createFast, createController: createController, LADDER: LADDER, STAGES: STAGES, levelsAt: levelsAt, MAX: MAX, pOf: pOf, budgetFor: budgetFor, isLegacy: isLegacy, TARGET_MS: TARGET_MS, LEGACY_MS: LEGACY_MS };
   if (typeof module !== 'undefined' && module.exports) module.exports = core;
   if (typeof window === 'undefined') return;
 
@@ -171,6 +192,7 @@
   const W = root, Q = (W.location && W.location.search) || '';
   const offFlag = /[?&]gov=off\b/.test(Q), forceP = ((Q.match(/[?&]gov=(\d+)\b/) || [])[1]);
   const KEY = 'dm_budget_v1';
+  const fastOff = /[?&]govfast=0\b/.test(Q);
   const budgetOv = +((Q.match(/[?&]govbudget=(\d+)\b/) || [])[1] || 0);
   const now = () => (W.performance && W.performance.now ? W.performance.now() : Date.now());
 
@@ -193,7 +215,7 @@
     return { p: Math.min(MAX, p), why: why };
   }
 
-  const S = { C: null, started: false, saveT: 0, savedP: -1, screen: '', perScreen: {}, seed: null };
+  const S = { C: null, F: null, started: false, saveT: 0, savedP: -1, screen: '', perScreen: {}, seed: null };
   const out = { on: !offFlag, ver: 0, p: 0, lv: levelsAt(0), core: core, seedWhy: '' };
   W.DMBudget = out;
 
@@ -241,14 +263,16 @@
     const c = S.C = createController({ budgetMs: budgetOv || budgetFor(W.GFX), onChange: applied });   // (v297) 30 fps target, 15 fps legacy floor
     S.seed = seedP(); let p0 = S.seed.p;
     if (forceP != null) { p0 = +forceP; S.seed.why = 'forced'; }
+    S.F = createFast();
     c.seed(p0, now()); hudClass(c.lv.hudfx >= 1); out.lv = c.lv; out.ver = c.ver + 1; out.p = c.p; out.seedWhy = S.seed.why;
     let last = 0, tickN = 0;
     const fr = (t) => {
       W.requestAnimationFrame(fr);
-      if (paused()) { last = 0; c.reset(); return; }
+      if (paused()) { last = 0; c.reset(); if (S.F) S.F.reset(); return; }
       if (last) {
         const d = t - last;
         if (forceP == null) c.sample(d, t);
+        if (S.F && !fastOff) S.F.sample(d);
         const sc = S.screen;   // per-screen frame stats for the perf log (EMA only, no allocation)
         if (sc && d > 0 && d < 1500) { let r = S.perScreen[sc]; if (!r) r = S.perScreen[sc] = { n: 0, ema: 0, max: 0, over: 0, h: [0, 0, 0, 0, 0, 0, 0, 0] }; const f = d > 250 ? 250 : d; r.n++; r.ema += (f - r.ema) * 0.02; if (f > r.max) r.max = f; if (f > 66.7) r.over++; r.h[f <= 17.5 ? 0 : f <= 25 ? 1 : f <= 33.4 ? 2 : f <= 50 ? 3 : f <= 66.7 ? 4 : f <= 100 ? 5 : f <= 200 ? 6 : 7]++; }   // bins: <=17.5 <=25 <=33 <=50 <=67 <=100 <=200 >200 ms (p95 per screen = read off the cumulative counts)
       }
@@ -277,8 +301,9 @@
     setInterval(() => { const s = out.stats(); if (!s) return; const l = s.lv; d.textContent = 'BUD p' + s.p + '/' + s.max + '  ' + s.emaMs + '/' + s.budgetMs + 'ms p95 ' + s.p95Ms + '\npx' + l.parallax + ' pxs' + l.pxshadow + ' gnd' + l.ground + ' wat' + l.water + ' shd' + l.shadow + ' atm' + l.atmo + ' res' + l.res + (s.exhausted ? ' EXHAUSTED' : ''); }, 500);
   }
 
-  out.stats = function () { const c = S.C; if (!c) return null; const s = c.stats(); s.seed = out.seedWhy; s.dev = devKey(); s.memMB = S.memMB; s.floorP = c.floorP; s.screens = S.perScreen; s.enf = S.enf | 0; return s; };
+  out.stats = function () { const c = S.C; if (!c) return null; const s = c.stats(); s.seed = out.seedWhy; s.dev = devKey(); s.memMB = S.memMB; s.floorP = c.floorP; s.screens = S.perScreen; s.enf = S.enf | 0; s.fast = out.fast(); return s; };
   out.force = function (p) { if (S.C) S.C.set(p, now(), 'force'); };
+  out.fast = function () { return S.F && !fastOff && out.on ? S.F.lvl : 0; };   // (v324) fast light-stack guard level 0..3 (see header)
   out.lvl = function (n) { return out.lv[n] | 0; };
   out.emaMs = function () { return S.C ? S.C.ema : 0; };            // (v297) per-frame readers (no object): ui/dm-light.js headroom gate
   out.budgetMs = function () { return S.C ? S.C.budget : TARGET_MS; };
