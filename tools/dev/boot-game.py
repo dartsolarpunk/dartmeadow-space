@@ -23,6 +23,9 @@ def ensure_three():
         subprocess.check_call(['npm', 'install', 'three@' + THREE_VER, '--no-audit', '--no-fund'], cwd=NODE)
     return NODE / 'node_modules' / 'three'
 
+# set before any page script: graphics already chosen (else the GRAPHICS SETUP screen blocks the menu), privacy consent given (else a modal covers the game)
+DEFAULT_SAVE = {'dm_gfx_v2': json.dumps({'chosen': True, 'aaV': 2, 'preset': 'low'}), 'jots_consent_v1': json.dumps({'agreed': True})}
+
 class QuietHandler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *a): pass
     def end_headers(self):
@@ -51,6 +54,7 @@ class Game:
             kw['executable_path'] = find_chrome()
         self.browser = self.pw.chromium.launch(headless=headless, args=args, **kw)
         self.ctx = self.browser.new_context(viewport={'width': viewport[0], 'height': viewport[1]}, service_workers='block')
+        save = dict(DEFAULT_SAVE, **(save or {}))
         if save:   # dict of localStorage key -> string, set before any page script runs
             self.ctx.add_init_script('(()=>{try{const s=%s;for(const k in s)localStorage.setItem(k,s[k]);}catch(e){}})()' % json.dumps(save))
         if lite:   # stub the menu scene (Ariel + hair + shadows): it eats all the CPU under SwiftShader and is irrelevant to flight tests
@@ -102,7 +106,9 @@ class Game:
     def start_flight(self, timeout=600):
         """Skip the menu: enterApp() + launchFlight() (what NEW GAME does, minus the consent/mode dialogs) and wait for the flight scene."""
         self.wait_for("window.__THREE_READY__ && typeof enterApp==='function'", 180)
-        self.js("enterApp()"); self.js("launchFlight()")
+        self.js("enterApp()")
+        self.wait_for("STATE.screen==='menu'&&document.getElementById('loading-screen').style.display==='none'", 120)   # enterApp() sends the game to the menu after 850 ms: wait for that or it yanks us back out of flight
+        self.js("launchFlight()")
         return self.wait_for("typeof flightInited!=='undefined'&&flightInited&&STATE.screen==='flight'", timeout, poll=2)
     def shot(self, path):
         self.page.screenshot(path=str(path), timeout=120000); return path
