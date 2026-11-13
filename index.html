@@ -206,7 +206,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-impostor.js?v=280"></script>   <!-- far-range LOD: vertex-clustering impostor (mansion LOD2, colours baked) -->   <!-- far-range LOD: the ONE distance table per device class (props, mansion, landmarks, vantage reach); ?lod=off|low|mobile|desktop -->
 <script src="ui/dm-light.js?v=323"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
 <script src="ui/dm-vlight.js?v=325"></script>   <!-- lighting overhaul: lamps / LEDs / flashlight / low sun light the volumetric fog (scene.fogNode, light list, equi-angular in-scatter); ?vlights=0|low|med|high -->
-<script src="ui/dm-feedback.js?v=327"></script>
+<script src="ui/dm-feedback.js?v=328"></script>
 <script src="ui/dm-atmo-shell.js?v=297"></script>   <!-- (v297) DMAtmoShell.radii/worldR/ratio: the faded atmosphere perimeter of a body (Solenne 1.18 R) for the space -> world hand-off (Worlds) -->
 <script src="ui/dm-spawn.js?v=314"></script>   <!-- (v314) DMSpawn: new-game spawn in interstellar space near Sol + the arrival push-out from every world's hand-off radius -->
 <script src="ui/dm-pw-handoff.js?v=299"></script>   <!-- (v299) the space -> surface hand-off policy: pre-build hidden from PWS_OPEN, show the world + minimap globe at the DMAtmoShell perimeter (Worlds) -->
@@ -15827,7 +15827,7 @@ document.addEventListener('DOMContentLoaded',()=>{
 function _fbMailtoFallback(entry){
   const m=(window.DMFeedback&&DMFeedback.mailto)?DMFeedback.mailto(entry):{url:'mailto:'+FEEDBACK_MAILTO+'?subject='+encodeURIComponent('DART Meadow feedback: '+entry.cat)+'&body='+encodeURIComponent(entry.raw||entry.msg)};
   try{ if(window.DMFeedback) DMFeedback.queueRemove(entry.id); }catch(e){}   // the player is sending it by email: do not also retry it at next boot
-  window.location.href=m.url;
+  window.location.href=m.url;   // mailto: feedback link (allow-listed in no-reload-paths)
   $('fb-status').textContent='✉ Opening your email app…';
   $('fb-submit-btn').disabled=false;
   setTimeout(closeFeedback,1200);
