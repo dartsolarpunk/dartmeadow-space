@@ -206,6 +206,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-impostor.js?v=280"></script>   <!-- far-range LOD: vertex-clustering impostor (mansion LOD2, colours baked) -->   <!-- far-range LOD: the ONE distance table per device class (props, mansion, landmarks, vantage reach); ?lod=off|low|mobile|desktop -->
 <script src="ui/dm-light.js?v=323"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
 <script src="ui/dm-vlight.js?v=325"></script>   <!-- lighting overhaul: lamps / LEDs / flashlight / low sun light the volumetric fog (scene.fogNode, light list, equi-angular in-scatter); ?vlights=0|low|med|high -->
+<script src="ui/dm-feedback.js?v=327"></script>
 <script src="ui/dm-atmo-shell.js?v=297"></script>   <!-- (v297) DMAtmoShell.radii/worldR/ratio: the faded atmosphere perimeter of a body (Solenne 1.18 R) for the space -> world hand-off (Worlds) -->
 <script src="ui/dm-spawn.js?v=314"></script>   <!-- (v314) DMSpawn: new-game spawn in interstellar space near Sol + the arrival push-out from every world's hand-off radius -->
 <script src="ui/dm-pw-handoff.js?v=299"></script>   <!-- (v299) the space -> surface hand-off policy: pre-build hidden from PWS_OPEN, show the world + minimap globe at the DMAtmoShell perimeter (Worlds) -->
@@ -15476,7 +15477,7 @@ window.addEventListener('resize',()=>{clearTimeout(_menuBgResizeT);_menuBgResize
 //  below and the direct-write path activates automatically.
 // ══════════════════════════════════════════════════════════════
 const FEEDBACK_GAS_URL='https://script.google.com/macros/s/AKfycbyzkQxLR5miUXP6oDw-1AR1GIjgpzlw9iLw0gO_ZTeLfL849LWbNX7WVz_kf7yLWBKA_w/exec'; // Autumn's existing GAS proxy — needs an 'action=feedback' handler added server-side (see chat) before this succeeds; falls back to mailto until then
-const FEEDBACK_MAILTO='radicaldeepscale@gmail.com';
+const FEEDBACK_MAILTO='Justin@dartmeadow.com';   // (v327) email fallback; transport + queue live in ui/dm-feedback.js (DMFeedback)
 let _fbCat='BUG REPORT';
 
 // ── PROFILE MENU ─────────────────────────────────────────────────────
@@ -15824,9 +15825,9 @@ document.addEventListener('DOMContentLoaded',()=>{
 });
 
 function _fbMailtoFallback(entry){
-  const subject=encodeURIComponent('DART Meadow feedback — '+entry.cat);
-  const body=encodeURIComponent((entry.raw||entry.msg)+'\n\n—\ncategory: '+entry.cat+'\nfrom: '+entry.user+'\nts: '+entry.ts+(entry.perf?'\n\n'+entry.perf.split('\n').slice(0,40).join('\n').slice(0,1800):''));
-  window.location.href='mailto:'+FEEDBACK_MAILTO+'?subject='+subject+'&body='+body;
+  const m=(window.DMFeedback&&DMFeedback.mailto)?DMFeedback.mailto(entry):{url:'mailto:'+FEEDBACK_MAILTO+'?subject='+encodeURIComponent('DART Meadow feedback: '+entry.cat)+'&body='+encodeURIComponent(entry.raw||entry.msg)};
+  try{ if(window.DMFeedback) DMFeedback.queueRemove(entry.id); }catch(e){}   // the player is sending it by email: do not also retry it at next boot
+  window.location.href=m.url;
   $('fb-status').textContent='✉ Opening your email app…';
   $('fb-submit-btn').disabled=false;
   setTimeout(closeFeedback,1200);
@@ -15845,32 +15846,38 @@ function submitFeedback(){
   $('fb-status').textContent='';
   _fbChoose(entry);
 }
-// After SUBMIT: choose where it goes — the DART Network (the same admin console Autumn / ArcLake feed) or an email to Radical Deepscale.
+// After SUBMIT: choose where it goes — the DART Network (the same admin console Autumn / ArcLake feed) or an email to DART Meadow.
+// Transport, retry-once, queue and the mailto text are in ui/dm-feedback.js (DMFeedback).
 function _fbChoose(entry){
   const old=document.getElementById('fb-choose'); if(old) old.remove();
   const w=document.createElement('div'); w.id='fb-choose';
   w.style.cssText='position:fixed;inset:0;z-index:2147483600;background:rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center;padding:16px';
   const box=document.createElement('div'); box.style.cssText='background:rgba(4,10,20,.98);border:1px solid rgba(0,229,255,.4);border-radius:10px;padding:18px;width:min(420px,94vw);display:flex;flex-direction:column;gap:10px;color:#cfeaff;font:600 12px/1.5 sans-serif;letter-spacing:.06em;text-align:center';
   const t=document.createElement('div'); t.style.cssText='color:#0ef;font-size:13px;letter-spacing:.14em'; t.textContent='WHERE SHOULD THIS GO?';
-  const st=document.createElement('div'); st.style.cssText='min-height:18px;color:#0ef';
-  const mk=(txt,fn,main)=>{ const b=document.createElement('button'); b.textContent=txt; b.style.cssText='padding:12px;border-radius:6px;cursor:pointer;font:700 12px sans-serif;letter-spacing:.1em;border:1px solid #0ef;'+(main?'background:#0ef;color:#10081a':'background:transparent;color:#0ef'); b.onclick=fn; return b; };
-  const net=mk('SEND TO DART NETWORK',()=>{ [net,em,bk].forEach(x=>x.disabled=true); st.textContent='SENDING…'; _fbSendNetwork(entry).then(()=>{ st.textContent='✓ SENT TO DART NETWORK — THANK YOU'; $('fb-status').textContent='✓ FEEDBACK SUBMITTED — THANK YOU'; setTimeout(()=>{ w.remove(); closeFeedback(); },1500); }).catch(e=>{ st.style.color='#ff9a80'; st.textContent='⚠ Could not reach the network ('+((e&&e.message)||'error')+'). Try again or use email.'; [net,em,bk].forEach(x=>x.disabled=false); }); },true);
-  const em=mk('EMAIL RADICAL DEEPSCALE',()=>{ w.remove(); _fbMailtoFallback(entry); });
+  const st=document.createElement('div'); st.style.cssText='min-height:18px;color:#0ef;white-space:pre-line';
+  const sty=(b,main)=>{ b.style.background=main?'#0ef':'transparent'; b.style.color=main?'#10081a':'#0ef'; };
+  const mk=(txt,fn,main)=>{ const b=document.createElement('button'); b.textContent=txt; b.style.cssText='padding:12px;border-radius:6px;cursor:pointer;font:700 12px sans-serif;letter-spacing:.1em;border:1px solid #0ef;'; sty(b,main); b.onclick=fn; return b; };
+  const net=mk('SEND TO DART NETWORK',()=>{
+    [net,em,bk].forEach(x=>x.disabled=true); st.style.color='#0ef'; st.textContent='SENDING…';
+    DMFeedback.send(entry).then(()=>{
+      try{ DMFeedback.queueRemove(entry.id); }catch(e){}
+      st.textContent='✓ SENT TO DART NETWORK — THANK YOU'; $('fb-status').textContent='✓ FEEDBACK SUBMITTED — THANK YOU';
+      setTimeout(()=>{ w.remove(); closeFeedback(); },1500);
+    }).catch(e=>{
+      let saved=false; try{ saved=DMFeedback.queueAdd(entry); }catch(_){}
+      st.style.color='#ff9a80';
+      st.textContent='⚠ Could not send to the DART Network ('+DMFeedback.describe(e)+(e&&e.attempts>1?'; retried once':'')+').\n'+(saved?'Saved on this device and retried next launch. ':'')+'You can send it by email now.';
+      [net,em,bk].forEach(x=>x.disabled=false);
+      sty(net,false); sty(em,true); net.textContent='TRY AGAIN'; try{ em.focus(); }catch(_){}
+    });
+  },true);
+  const em=mk('EMAIL DART MEADOW',()=>{ w.remove(); _fbMailtoFallback(entry); });
   const bk=mk('BACK',()=>w.remove());
-  const sub=document.createElement('div'); sub.style.cssText='opacity:.6;font-size:10px'; sub.textContent='The DART Network goes straight to the Radical Deepscale admin console, same as Autumn and ArcLake.';
+  const sub=document.createElement('div'); sub.style.cssText='opacity:.6;font-size:10px'; sub.textContent='The DART Network goes straight to the admin console, same as Autumn and ArcLake. Email goes to DART Meadow.';
   box.append(t,sub,net,em,bk,st); w.appendChild(box); document.body.appendChild(w);
 }
-// Same path Autumn uses: the shared Apps Script proxy's 'ashwrite' action appends to DART-Skyboard/leatr-ash feedback/inbox.json
-// (no secret in this client). Content-Type text/plain avoids a CORS preflight.
-function _fbSendNetwork(entry){
-  if(!FEEDBACK_GAS_URL) return Promise.reject(new Error('not configured'));
-  const ctrl=(typeof AbortController!=='undefined')?new AbortController():null; const tm=setTimeout(()=>{ try{ ctrl&&ctrl.abort(); }catch(e){} },15000);
-  const uid=(window._ghAuth&&window._ghAuth.username)||(window.JOTS&&JOTS.identity&&JOTS.identity.name)||'guest';
-  const clean={id:entry.id,ts:entry.ts,cat:entry.cat,msg:entry.msg,user:entry.user,source:entry.source,platform:entry.platform};
-  return fetch(FEEDBACK_GAS_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'ashwrite',path:'feedback/inbox.json',uid:uid,append:true,payload:[clean]}),signal:ctrl?ctrl.signal:undefined})
-    .then(r=>r.text().then(txt=>{ clearTimeout(tm); let d=null; try{ d=JSON.parse(txt); }catch(e){} if(d&&d.ok) return d; throw new Error((d&&(d.error||d.message))||('server '+r.status)); }))
-    .catch(e=>{ clearTimeout(tm); throw e; });
-}
+// Re-send anything that could not be delivered earlier (stored by DMFeedback, max 5, PII stripped).
+setTimeout(()=>{ try{ if(window.DMFeedback) DMFeedback.flushQueue().catch(()=>{}); }catch(e){} },8000);
 
 // ══════════════════════════════════════════════════════════════
 //  EXIT SYSTEM
