@@ -206,7 +206,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-impostor.js?v=280"></script>   <!-- far-range LOD: vertex-clustering impostor (mansion LOD2, colours baked) -->   <!-- far-range LOD: the ONE distance table per device class (props, mansion, landmarks, vantage reach); ?lod=off|low|mobile|desktop -->
 <script src="ui/dm-light.js?v=323"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
 <script src="ui/dm-vlight.js?v=325"></script>   <!-- lighting overhaul: lamps / LEDs / flashlight / low sun light the volumetric fog (scene.fogNode, light list, equi-angular in-scatter); ?vlights=0|low|med|high -->
-<script src="ui/dm-feedback.js?v=328"></script>
+<script src="ui/dm-feedback.js?v=329"></script>
 <script src="ui/dm-atmo-shell.js?v=297"></script>   <!-- (v297) DMAtmoShell.radii/worldR/ratio: the faded atmosphere perimeter of a body (Solenne 1.18 R) for the space -> world hand-off (Worlds) -->
 <script src="ui/dm-spawn.js?v=314"></script>   <!-- (v314) DMSpawn: new-game spawn in interstellar space near Sol + the arrival push-out from every world's hand-off radius -->
 <script src="ui/dm-pw-handoff.js?v=299"></script>   <!-- (v299) the space -> surface hand-off policy: pre-build hidden from PWS_OPEN, show the world + minimap globe at the DMAtmoShell perimeter (Worlds) -->
@@ -9129,7 +9129,7 @@ function _btLoadModel(){
       // (v104) lighting/shadow setup only: every temple surface (hull, deck, cargo bay, interior decks) RECEIVES the
       // star's shadow, so the hull shades the deck and the decks below it the way the skyboard and the ground do.
       // Casting is unchanged (hull casters as authored, toggled by the LOD below). Geometry/collision untouched.
-      try{ BIRD_TEMPLE._R0=R0; if(GFX.shadows) wrapper.traverse(o=>{ if(o.isMesh) o.receiveShadow=true; }); }catch(e){}
+      try{ BIRD_TEMPLE._R0=R0; BIRD_TEMPLE._s0=wrapper.scale.x; if(GFX.shadows) wrapper.traverse(o=>{ if(o.isMesh) o.receiveShadow=true; }); }catch(e){}
       let _csOn=null;   // (v193) hull casters follow GFX.shadows (set only when the setting changes: no per-tick writes)
       BIRD_TEMPLE._lod=setInterval(()=>{ try{
         { const on=!!(GFX&&GFX.shadows); if(on!==_csOn){ _csOn=on; for(const o of casters) o.castShadow=on; } }
@@ -9528,8 +9528,19 @@ function _btSwapSafe(root,m){
   safe.userData.btSafe=1; safe.name=(m.name||'')+'_safe';
   root.traverse(o=>{ if(!o.isMesh) return; if(Array.isArray(o.material)) o.material=o.material.map(x=>x===m?safe:x); else if(o.material===m) o.material=safe; });
 }
-window.btDiag=function(){ const bt=BIRD_TEMPLE,g=bt.group; const o={url:BT_MODEL_URL,hasGroup:!!g,spawned:!!bt.spawned,loading:!!bt._loading,tries:bt._tries|0,gaveUp:!!bt._gaveUp,rebuilds:bt._rebuilds|0,gpuErrs:bt._gpuErrs||[],notes:bt._notes||[]};
-  try{ if(g){ let r=g; while(r.parent) r=r.parent; o.inScene=(r===flightScene); o.visible=g.visible; o.dist=_btDist(); o.meshes=_btMeshCount(g); o.drawnAgoMs=bt._drawnAt?Math.round(performance.now()-bt._drawnAt):null; } }catch(e){} return o; };
+window.btDiag=function(){ const bt=BIRD_TEMPLE,g=bt.group; const o={ver:'v329',url:BT_MODEL_URL,hasGroup:!!g,spawned:!!bt.spawned,loading:!!bt._loading,tries:bt._tries|0,gaveUp:!!bt._gaveUp,rebuilds:bt._rebuilds|0,gpuErrs:bt._gpuErrs||[],notes:bt._notes||[]};
+  try{ if(g){ let r=g; while(r.parent) r=r.parent; o.inScene=(r===flightScene); o.visible=g.visible; o.dist=_btDist(); o.meshes=_btMeshCount(g); o.drawnAgoMs=bt._drawnAt?Math.round(performance.now()-bt._drawnAt):null; } }catch(e){}
+  // (v329) travel diagnostics: where the ship is, where she is, how far, which frame / scene, and what each arrival attempt saw
+  try{ const t={frame:'one world frame: flightScene, Sol at the origin, 1 AU = '+AU_UNITS+' u, ALT readout = |pos| x 400 km',R0:bt._R0||null,hullCached:bt._bsR||null,hullFresh:null,groupScale:g?g.scale.x:null};
+    if(g){ const c=g.getWorldPosition(new THREE.Vector3()), sp=STATE.flight; t.target=c.toArray().map(v=>+v.toFixed(1)); t.targetFromOrigin=+c.length().toFixed(1);
+      if(sp&&sp.pos){ t.player=sp.pos.toArray().map(v=>+v.toFixed(1)); t.playerFromOrigin=+sp.pos.length().toFixed(1); t.distance=+sp.pos.distanceTo(c).toFixed(1); t.altKm=Math.round(sp.pos.length()*400); }
+      const cam=(typeof flightCamera!=='undefined')&&flightCamera; if(cam){ t.camera=cam.position.toArray().map(v=>+v.toFixed(1)); t.camToTarget=+cam.position.distanceTo(c).toFixed(1); t.camNear=cam.near; t.camFar=cam.far; }
+      try{ const keep=bt._bsR; t.hullFresh=+_btHullR(true).toFixed(2); bt._bsR=keep; }catch(e){}
+      const chk=_btArrivalCheck(); t.checkOk=chk.ok; t.checkFails=chk.fails; t.check=chk.info; }
+    try{ t.pw=(typeof PW!=='undefined'&&PW)?{active:!!PW.active,opening:!!PW.opening,mode:PW.mode||null,skyK:PW.skyK}:null; t.surfaceActive=!!surfaceActive; t.atmoActive=!!atmoActive; t.shipWalk=!!(typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active); }catch(e){}
+    t.attempts=bt._travel||[]; o.travel=t; }catch(e){ o.travelErr=String((e&&e.message)||e); }
+  try{ console.log('[btDiag] '+JSON.stringify(o)); }catch(e){}   // one line in the console: copy it into the bug report
+  return o; };
 function _btLoadFailed(why){
   const bt=BIRD_TEMPLE; bt._loading=false; bt._loadT0=0; _btNote('load',why);
   _btProbeUrl().then(h=>{ _btNote('url',h); if(!/^HTTP 2/.test(h)) _btSay('Bird Temple model '+h,'err'); });
@@ -9625,7 +9636,7 @@ function _btRebuild(why){
   try{ clearInterval(bt._lod); }catch(e){}
   try{ if(typeof BT_CUBES!=='undefined'&&BT_CUBES.root&&BT_CUBES.root.parent) BT_CUBES.root.parent.remove(BT_CUBES.root); }catch(e){}   // the live cubes are re-parented to the new ship
   try{ if(g.parent) g.parent.remove(g); if(typeof _disposeObject3D==='function') _disposeObject3D(g); }catch(e){}
-  bt.group=null; bt._glb=null; bt.spawned=false; bt._probed=false; bt._culled=0; bt._loading=false; bt._gaveUp=false; bt._tries=0;
+  bt.group=null; bt._glb=null; bt.spawned=false; bt._probed=false; bt._culled=0; bt._bsR=0; bt._loading=false; bt._gaveUp=false; bt._tries=0;
   try{ _btEnsure('rebuild:'+why); }catch(e){}
 }
 function _btPickWanderTarget(){
@@ -9689,6 +9700,7 @@ function updateBirdTemple(dt){
     if(bt._restorePos){ pos=bt._restorePos; bt._restorePos=null; if(bt._restoreRotY!=null) bt.group.rotation.y=bt._restoreRotY; }   // (v320) a rebuilt ship comes back where it was
     bt.group.position.copy(pos);
     bt.group.visible=true;
+    try{ bt.group.updateMatrixWorld(true); bt._bsR=0; }catch(e){}   // (v329) children must not keep their pre-move world matrices (a stale hull radius was cached from here)
     bt.spawned=true;
     bt.target.copy(_btPickWanderTarget());
     bt.wanderIdleUntil=bt.t+4+Math.random()*6;
@@ -10181,9 +10193,23 @@ let SHIP_LAND=null;
 // the frame's travel (the old v-early collider blocked approach from far off).
 const SHIP_LAND_ABOVE=3.0;          // world units above the deck the LAND prompt shows
 const BT_BOARD_R=0.32;              // the board's collision radius in flight (world units)
-function _btHullR(){
+function _btHullR(fresh){
+  // (v329) measured with FRESH matrices (the first call used to land on the spawn frame, before the renderer refreshed the children: a "hull" the size of the ship's
+  // distance from the origin was cached for the whole session) and checked against the model's own radius measured at load (R0): a result several times larger is
+  // an artefact (a stray / far-off child), never the hull.
   const bt=BIRD_TEMPLE; if(!bt.group) return 0;
-  if(!bt._bsR){ try{ const bs=new THREE.Box3().setFromObject(bt.group).getBoundingSphere(new THREE.Sphere()); if(isFinite(bs.radius)&&bs.radius>0) bt._bsR=bs.radius; }catch(e){} }
+  if(fresh) bt._bsR=0;
+  if(!bt._bsR){
+    try{
+      const g=bt.group; g.updateMatrixWorld(true);
+      let r=new THREE.Box3().setFromObject(g).getBoundingSphere(new THREE.Sphere()).radius;
+      const r0=(bt._R0||0)*((bt._s0&&g.scale.x)?g.scale.x/bt._s0:1);
+      if(isFinite(r)&&r>0){
+        if(r0>0&&r>r0*3){ try{ _btNote('hull','measured '+r.toFixed(1)+' vs model '+r0.toFixed(1)+' - using the model radius'); }catch(e){} r=r0; }
+        bt._bsR=r;
+      }
+    }catch(e){}
+  }
   return bt._bsR||20;
 }
 let _bfcPrevW=null,_bfcPrevL=null,_bfcV=null,_bfcN=null;
@@ -10680,12 +10706,17 @@ function _btQtWaitForTemple(){
     setTimeout(w,500);
   })();
 }
-function _btQtJump(){
+// (v329) ARRIVAL = place -> VERIFY -> announce.  Root cause of "Arrived at the Bird Temple" with nothing there (v328, iPad): the arrival distance was 1.6 x _btHullR(),
+// and _btHullR() / _nearBirdTemple() cached Box3.setFromObject(group) on the FIRST call - which is the spawn frame, right after updateBirdTemple moved the group
+// thousands of units from the origin and BEFORE the renderer refreshed matrixWorld of its children (the BTE_Engineering office is matrixAutoUpdate=false):
+// those meshes were still measured at the origin, so the "hull" was a sphere from the origin to the ship (R ~ half the ship's distance from the Sun: 310 u at
+// 612 u out, 3754 u at 7500 u out, vs the ship's real 15 u).  Quick Travel then parked her 1.6 x that far away: a ~50 px speck, in an empty star field, with a success toast.
+// Now: the radius is measured with fresh matrices and checked against the model's own radius, arrival is 2.4 R, and the toast is only shown once the checks pass.
+const BT_ARRIVE_K=2.4, BT_ARRIVE_RETRY_K=3.2, BT_ARRIVE_MAX_K=8;
+function _btArrivalPlace(K){
   const sp=STATE.flight, bt=BIRD_TEMPLE, g=bt.group;
-  if(!sp||!sp.pos||!g||!bt.spawned){ _btQtWaitForTemple(); return; }
-  try{ _btVerify('jump',true); }catch(e){}
   g.visible=true; g.updateMatrixWorld(true);
-  const R=Math.max(bt._R0||0,_btHullR()||0,1), D=1.6*R;
+  const R=Math.max(bt._R0||0,_btHullR(true)||0,1), D=K*R;
   const c=new THREE.Vector3().setFromMatrixPosition(g.matrixWorld), gq=g.getWorldQuaternion(new THREE.Quaternion());
   const off=new THREE.Vector3(_BT_QT_DIR[0],_BT_QT_DIR[1],_BT_QT_DIR[2]).normalize().applyQuaternion(gq).multiplyScalar(D);
   sp.pos.copy(c).add(off);
@@ -10697,8 +10728,48 @@ function _btQtJump(){
   try{ takeMouseLook(); }catch(e){}                         // drop queued mouse motion so the aim holds
   _followInit=false;                                        // the follow cam re-seats behind the board on the next frame
   _bfcPrevW=null; _bfcPrevL=null;                           // hull sweep: no sweep from the old spot to the new one
+  return {c,R,D};
+}
+// Is the ship really there to be seen?  Pure reads (no repairs): {ok, fails:[short text naming each failing check], info:{...numbers for btDiag}}
+function _btArrivalCheck(){
+  const bt=BIRD_TEMPLE, g=bt.group, sp=STATE.flight, fails=[], info={};
+  try{
+    if(!g||!bt.spawned){ fails.push('build: the ship is not built'); return {ok:false,fails,info}; }
+    g.updateMatrixWorld(true);
+    let r=g; while(r.parent) r=r.parent; info.inScene=(r===flightScene); if(!info.inScene) fails.push('scene: not in the active scene');
+    let vis=true; for(let n=g;n;n=n.parent) if(n.visible===false) vis=false; info.visible=vis; if(!vis) fails.push('visible: hidden (view gate / LOD)');
+    const c=new THREE.Vector3().setFromMatrixPosition(g.matrixWorld); info.target=[c.x,c.y,c.z].map(v=>+v.toFixed(1));
+    const ws=g.getWorldScale(new THREE.Vector3()).x; info.scale=ws; if(!(isFinite(ws)&&ws>1e-4)) fails.push('scale: the ship has no size');
+    if(!(isFinite(c.x+c.y+c.z))) fails.push('position: not a number');
+    const R=_btHullR(); info.R=+R.toFixed(2); info.R0=bt._R0?+bt._R0.toFixed(2):null;
+    const d=sp.pos.distanceTo(c); info.player=[sp.pos.x,sp.pos.y,sp.pos.z].map(v=>+v.toFixed(1)); info.dist=+d.toFixed(1);
+    if(!(d<=BT_ARRIVE_MAX_K*R)) fails.push('distance: too far ('+Math.round(d)+' u, ship radius '+Math.round(R)+' u)');
+    const far=(typeof flightCamera!=='undefined'&&flightCamera&&flightCamera.far)||3e5; info.camFar=far; if(!(d<far*0.9)) fails.push('range: beyond the camera far plane');
+    const fwd=spForward(sp), to=c.clone().sub(sp.pos); if(to.lengthSq()>1e-12){ to.normalize(); info.facingDot=+fwd.dot(to).toFixed(3); if(fwd.dot(to)<0.5) fails.push('view: the ship is not in front of her'); }
+    try{ if(typeof PW!=='undefined'&&PW&&PW.active){ info.pw=PW.mode||'?'; info.skyK=PW.skyK; if(PW.mode!=='space'||PW.skyK>=0.999) fails.push('world: a planet world is open and draws only its own scene'); } }catch(e){}
+    info.meshes=_btMeshCount(g); if(!info.meshes) fails.push('build: the ship has no meshes');
+  }catch(e){ fails.push('check: '+((e&&e.message)||e)); }
+  return {ok:!fails.length,fails,info};
+}
+function _btTravelNote(rec){ try{ const bt=BIRD_TEMPLE; rec.t=Math.round(performance.now()); (bt._travel||(bt._travel=[])).push(rec); if(bt._travel.length>6) bt._travel.shift(); }catch(e){} }
+function _btQtJump(){
+  const sp=STATE.flight, bt=BIRD_TEMPLE, g=bt.group;
+  if(!sp||!sp.pos||!g||!bt.spawned){ _btQtWaitForTemple(); return; }
+  try{ _btVerify('jump',true); }catch(e){}
+  let P=_btArrivalPlace(BT_ARRIVE_K), v=_btArrivalCheck(); _btTravelNote({try:1,ok:v.ok,fails:v.fails,info:v.info,K:BT_ARRIVE_K});
+  if(!v.ok){   // retry once: repair, leave any open world, fresh radius, and a roomier safe point outside the hull, facing it
+    _btCrumb('btRepair','arrive-check:'+v.fails.map(f=>f.split(':')[0]).join(','));
+    try{ _btNote('arrive-check',v.fails.join(' | ')); }catch(e){}
+    try{ _btVerify('jump-retry',true); }catch(e){}
+    try{ if(typeof PW!=='undefined'&&PW&&(PW.active||PW.opening)&&typeof _pwCloseToSpace==='function'){ _pwCloseToSpace(); PW._spaceCool=performance.now()+4000; } }catch(e){}
+    P=_btArrivalPlace(BT_ARRIVE_RETRY_K); v=_btArrivalCheck(); _btTravelNote({try:2,ok:v.ok,fails:v.fails,info:v.info,K:BT_ARRIVE_RETRY_K});
+  }
   try{ closeTempleHub(); }catch(e){}
-  toast('🕊 Arrived at the Bird Temple',2000);
+  if(v.ok) toast('🕊 Arrived at the Bird Temple',2000);
+  else{
+    const msg='Could not reach the Bird Temple - '+v.fails.map(f=>f.replace(/^\w+:\s*/,'')).join('; ')+' (run btDiag() for details)';
+    toast('🕊 '+msg,5200); try{ _btSay(msg,'err'); }catch(e){}
+  }
   try{ _btArrive(); }catch(e){ console.warn('[Bird Temple] arrive:',e); }   // (v320) in the scene? visible? drawn? repair / recompile / reload
 }
 function travelToBirdTemple(){
@@ -10719,6 +10790,9 @@ function travelToBirdTemple(){
     })();
     return;
   }
+  // (v329) a world open in its 'space' mode (within 9 radii of a landable planet) is neither walk nor fly: close it cleanly before jumping, so the jump never
+  // happens under a hand-off that carries the board round the planet; it re-opens by itself (after a short cool-down) if the ship is parked beside one.
+  try{ if(typeof PW!=='undefined'&&PW&&PW.active&&typeof _pwCloseToSpace==='function'){ _pwCloseToSpace(); PW._spaceCool=performance.now()+3000; } }catch(e){ console.warn('[Bird Temple] close world:',e); }
   _btQtJump();
 }
 function openTempleHub(){
@@ -12544,8 +12618,7 @@ function _nearBirdTemple(){
   if(SHIP_WALK.active||SHIP_LAND) return true;
   const sp=STATE.flight; if(!sp||!sp.pos) return false;
   try{
-    if(!bt._bsR){ const bs=new THREE.Box3().setFromObject(bt.group).getBoundingSphere(new THREE.Sphere()); if(isFinite(bs.radius)&&bs.radius>0) bt._bsR=bs.radius; }
-    const r=bt._bsR||0; if(!r) return false;
+    const r=_btHullR(); if(!r) return false;   // (v329) one measurement for everyone: fresh matrices, sanity-checked against R0
     return sp.pos.distanceTo(bt.group.position)<r*3;
   }catch(e){ return false; }
 }
