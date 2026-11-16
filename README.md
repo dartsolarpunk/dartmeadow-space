@@ -1,4 +1,5 @@
-<img width="1796" height="1123" alt="921" src="https://github.com/user-attachments/assets/33ded48f-7cfc-4498-9ea4-423f75f7db3e" />
+<img width="256" height="256" alt="IMG_2145" src="https://github.com/user-attachments/assets/bc8bd94a-a506-48c1-a404-5047dc663140" />
+
 
 ---
 
@@ -6,9 +7,16 @@
 
 ---
 
-<img width="1920" height="1200" alt="924" src="https://github.com/user-attachments/assets/23db941f-4c0e-4156-9785-8145d9cc1cad" />
+<img width="1920" height="1200" alt="Screenshot_20261115_233329_Chrome_Original" src="https://github.com/user-attachments/assets/22f6dd66-a682-461b-9e60-be240e692751" />
+
 ---
-<img width="1920" height="1200" alt="1048" src="https://github.com/user-attachments/assets/5dbab7a6-f695-4241-8e79-98405a407f8a" />
+<img width="1920" height="1200" alt="Screenshot_20261115_234456_Chrome_Original" src="https://github.com/user-attachments/assets/8b3969ae-6028-451c-83d4-f10d82ac5dad" />
+
+——-
+<img width="1920" height="1200" alt="Screenshot_20261111_062701_Chrome_Original" src="https://github.com/user-attachments/assets/3d16234d-c5aa-4c58-aa87-c18bcdcae25a" />
+
+——- 
+
 ---
 ---
 Personal sculpt and  mockup of Ariel as a more permanent main Characterwhich which is now in the works.
