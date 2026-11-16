@@ -16,6 +16,7 @@
 <img width="1920" height="1200" alt="Screenshot_20261111_062701_Chrome_Original" src="https://github.com/user-attachments/assets/3d16234d-c5aa-4c58-aa87-c18bcdcae25a" />
 
 ——- 
+<img width="1920" height="1200" alt="Screenshot_20261111_062348_Chrome" src="https://github.com/user-attachments/assets/48bb9054-a98b-465a-9143-723363203d0e" />
 
 ---
 ---
