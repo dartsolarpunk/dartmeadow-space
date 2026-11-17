@@ -49,6 +49,36 @@
        HAIR.stats                  // {ms, simMs, strands, drawn, guides, sdf}
    ========================================================================== */
 
+/* ============================================================================
+   PER-CHARACTER CONFIG  (data-driven clusters; see docs/hair-new-character.md)
+   A groom file stores a cluster id per strand (`group`, uint8, names in meta.groups). Everything cluster-specific is read from a config:
+       meta.config (inside the .bin's JSON header)  <  opts.config (host / per-character override)
+   {
+     name:      'Emma'                          mesh name = name + 'HairStrands'  (default 'Ariel')
+     character: true                            allow a character without an Ariel/Scalp mesh
+     clusters:  [ { name, stiffBoost, bendBoost, widthScale, color:[r,g,b], colorJitter:[lo,hi], gradient:{root,tip,tipStart,streak,streakFrac,streakStart},
+                    clearance:{min,max,scale} } , ... ]      index = group id; missing ids / fields use the defaults below (1, 1, 1, meta.color ...)
+     params:    { gravity, damping, shapeStiffness, bendRoot, widthRoot ... }   merged into the solver params (opts.params still wins)
+     body:      [ [bone, childBone|null, radius], ... ]    body capsules the strands collide with (replaces the default torso/arm list)
+   }
+   With no config at all the built-in table below applies: Ariel's four layers, behaviour unchanged.
+   Cost: tables are filled once at load; the per-frame cost is one multiply per ribbon vertex (width) and nothing in the solver.
+   Limits: one point count K per file (the groom builder resamples every cluster to K points; a short cluster simply has shorter segments),
+   the solver params that are not per-point (gravity, damping, wind ...) stay per character, not per cluster.
+   ========================================================================== */
+export const HAIR_DEFAULT_CONFIG = {
+  name: 'Ariel',
+  // Ariel: back / bangs / sideburns / top. Bangs and sideburns are short: they hold their shape harder.
+  clusters: [{ name: 'back' }, { name: 'bangs', stiffBoost: 1.6 }, { name: 'sideburns', stiffBoost: 1.8 }, { name: 'top' }],
+};
+function hairConfig(meta, opts) {
+  const m = meta.config || {}, o = opts.config || {};
+  const C = Object.assign({}, HAIR_DEFAULT_CONFIG, m, o);
+  C.clusters = o.clusters || m.clusters || meta.clusters || HAIR_DEFAULT_CONFIG.clusters;
+  C.params = Object.assign({}, m.params, o.params);
+  return C;
+}
+
 export async function attachHairStrands(CHAR, THREE, opts = {}) {
   if (!CHAR || !CHAR.root) throw new Error('[hair] no character root');
   if (CHAR._hair) return CHAR._hair;
@@ -70,6 +100,8 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   const jl = dv.getUint32(4, true);
   const meta = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 12, jl)));
   const dataStart = 12 + jl;
+  const CFG = hairConfig(meta, opts);
+  const clusterOf = (g) => CFG.clusters[g] || {};
   let off = dataStart;
   const N = meta.count, K = meta.points, G = meta.guides;
   const rest = new Float32Array(buf, off, N * K * 3); off += N * K * 12;
@@ -95,7 +127,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     if (/^Ariel/i.test(o.name)) isAriel = true;
   });
   // opts.character: explicit opt-in for another groomed character (e.g. the Madison doll, ui/dm-bt-engineering.js)
-  if (!isAriel && !opts.character) throw new Error('[hair] character is not Ariel (no Scalp/Ariel mesh, different character file) - strands not attached');
+  if (!isAriel && !opts.character && !CFG.character) throw new Error('[hair] character is not Ariel (no Scalp/Ariel mesh, different character file) - strands not attached');
 
   /* ---------------- bones + colliders ---------------- */
   const root = CHAR.root;
@@ -111,7 +143,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     if (b) cols.push({ bone: b, a: new THREE.Vector3(...c.a), b: new THREE.Vector3(...c.b), r: c.r,
                        wa: new THREE.Vector3(), wb: new THREE.Vector3() });
   }
-  const BODY = [
+  const BODY = CFG.body || [
     ['Spine01', 'Spine', 0.125], ['Spine', 'neck', 0.125], ['Spine02', 'Spine01', 0.125],
     ['LeftShoulder', 'LeftArm', 0.06], ['RightShoulder', 'RightArm', 0.06],
     ['LeftArm', 'LeftForeArm', 0.052], ['RightArm', 'RightForeArm', 0.052],
@@ -146,6 +178,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     minGravityScale: 0.0, interleave: 1, autoQuality: true, strandFraction: 1, scalpSheenOff: true,
     deferToRender: true,   // hooked mode: simulate in the strands' onBeforeRender, after every pose layer (see hook below)
     widthRoot: 0.0046, widthTip: 0.0022,
+    ...CFG.params,
     ...(opts.params || {})
   };
   if (opts.strandFraction != null) P.strandFraction = opts.strandFraction;
@@ -178,7 +211,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   const clrC = new Float32Array(N * K), slkC = new Float32Array(N * K);
   const clrOf = (x, y, z, i) => {
     if (!SDF) return 0;
-    const d = sdf(x, y, z), c = Math.min(P.maxClear, Math.max(P.minClear, d * 0.7));
+    const cc_ = clusterOf(group[(i / K) | 0]).clearance, d = sdf(x, y, z), c = cc_ ? Math.min(cc_.max ?? P.maxClear, Math.max(cc_.min ?? P.minClear, d * (cc_.scale ?? 0.7))) : Math.min(P.maxClear, Math.max(P.minClear, d * 0.7));
     const sl = d >= FAR ? 1 : Math.max(0, d - c); slkC[i] = sl * sl; return c;
   };
   const kMaxC = new Uint8Array(N);   // last point of each strand that can reach the head (groom within P.reach of it)
@@ -202,11 +235,11 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   function buildStiffness() {
     for (let g = 0; g < G; g++) {
       const s = guideStrand[g];
-      const gr = group[s], boost = gr === 1 ? 1.6 : gr === 2 ? 1.8 : 1.0;   // bangs / sideburns are short: hold shape harder
+      const cl = clusterOf(group[s]), boost = cl.stiffBoost ?? 1.0, bboost = cl.bendBoost ?? boost;   // e.g. Ariel's bangs / sideburns are short: hold shape harder
       for (let k = 0; k < K; k++) {
         const t = k / (K - 1), u = 1 - t;
         gStiff[g * K + k] = Math.min(0.9, (P.tipStiffness + (P.shapeStiffness - P.tipStiffness) * u * u * u * u) * boost);
-        gBend[g * K + k] = Math.min(0.9, (P.bendTip + (P.bendRoot - P.bendTip) * u * u) * boost);
+        gBend[g * K + k] = Math.min(0.9, (P.bendTip + (P.bendRoot - P.bendTip) * u * u) * bboost);
       }
     }
   }
@@ -255,9 +288,12 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   const col = new Float32Array(VERTS * 3);
   const base = meta.color || [0.005, 0.005, 0.006];
   let seed = 12345; const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
-  const GR = meta.gradient;   // optional root→tip colour (+ streak strands), e.g. Madison's blue→violet yarn
+  const GR0 = meta.gradient, GR = GR0;   // optional root→tip colour (+ streak strands), e.g. Madison's blue→violet yarn
+  const wScale = new Float32Array(N); let anyW = false;
   for (let s = 0; s < N; s++) {
-    const v = 0.75 + rnd() * 0.9;
+    const CL = clusterOf(group[s]), jit = CL.colorJitter || [0.75, 1.65], GR = CL.gradient || GR0, bs = CL.color || base;
+    const v = jit[0] + rnd() * (jit[1] - jit[0]);
+    wScale[s] = CL.widthScale ?? 1; if (wScale[s] !== 1) anyW = true;
     if (GR) {
       const streak = rnd() < (GR.streakFrac || 0), tip = streak && GR.streak ? GR.streak : GR.tip, t0 = streak ? (GR.streakStart ?? 0.3) : (GR.tipStart ?? 0.45);
       const vv = 0.85 + (v - 0.75) * 0.35;
@@ -267,7 +303,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       }
       continue;
     }
-    for (let k = 0; k < K * 2; k++) { const o = (s * K * 2 + k) * 3; col[o] = base[0] * v; col[o + 1] = base[1] * v; col[o + 2] = base[2] * v; }
+    for (let k = 0; k < K * 2; k++) { const o = (s * K * 2 + k) * 3; col[o] = bs[0] * v; col[o + 1] = bs[1] * v; col[o + 2] = bs[2] * v; }
   }
   const geo = new THREE.BufferGeometry();
   const aPos = new THREE.BufferAttribute(pos, 3); aPos.setUsage(THREE.DynamicDrawUsage);
@@ -287,7 +323,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   if (FZ && FZ.glow && GR && mat.emissive) { mat.emissive.setRGB((GR.root[0] + GR.tip[0]) / 2, (GR.root[1] + GR.tip[1]) / 2, (GR.root[2] + GR.tip[2]) / 2); mat.emissiveIntensity = FZ.glow; }
   if (FZ && 'sheen' in mat) { mat.sheen = FZ.sheen ?? 0.8; mat.sheenRoughness = FZ.sheenRoughness ?? 0.5; if (FZ.sheenColor) mat.sheenColor.setRGB(...FZ.sheenColor); }
   const mesh = new THREE.Mesh(geo, mat);
-  mesh.name = 'ArielHairStrands';
+  mesh.name = (CFG.name || 'Ariel') + 'HairStrands';
   mesh.frustumCulled = false; mesh.castShadow = false; mesh.receiveShadow = false;
   const camPos = new THREE.Vector3();
   let haveCam = false;
@@ -391,7 +427,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
         const p0 = point(s, k0, g, kmc), p1 = point(s, k1, g, kmc), pk = point(s, k, g, kmc), pr = point(s, int(0), g, kmc);
         const tg = p1.sub(p0), v = U.cam.sub(pk);
         const w = tg.cross(v);
-        const wd = U.wR.add(U.wT.sub(U.wR).mul(float(kF).div(K - 1))).mul(0.5).div(w.length().max(1e-9));
+        const wBase = U.wR.add(U.wT.sub(U.wR).mul(float(kF).div(K - 1))), wd = (anyW ? wBase.mul(attribute('hsW', 'float')) : wBase).mul(0.5).div(w.length().max(1e-9));   // anyW: per-cluster width scale (Ariel: graph unchanged)
         const sv = U.cam.sub(pr); const svn = sv.div(sv.length().max(1e-9));
         const rad = textureLoad(tRad, ivec2(k, s)).xyz;
         const n = svn.mul(0.55).add(U.M.mul(vec4(rad, 0)).xyz.mul(0.45));
@@ -417,6 +453,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       // swap the geometry to static ids: no dynamic position / normal buffers at all
       geo.setAttribute('hsId', new THREE.BufferAttribute(ids, 3));
       geo.setAttribute('hsGk', new THREE.BufferAttribute(gk, 2));
+      if (anyW) { const wv = new Float32Array(VERTS); for (let st = 0; st < N; st++) for (let q = 0; q < K * 2; q++) wv[st * K * 2 + q] = wScale[st]; geo.setAttribute('hsW', new THREE.BufferAttribute(wv, 1)); }
       geo.setAttribute('position', new THREE.BufferAttribute(ids, 3));
       geo.deleteAttribute('normal');
       gmat.colorWrite = mat.colorWrite; gmat.depthWrite = mat.depthWrite;
@@ -924,7 +961,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     // left from the last frame would hang off the old scalp, so those frames refresh them all
     const il = headMoved || gpu ? 1 : (P.interleave | 0 || 1);
     for (let s = frame % il; s < NR; s += il) {
-      const g = guideOf[s];
+      const g = guideOf[s], wS = wScale[s];
       const rb = s * K * 3, gb = g * K * 3, cb = s * K, kmc = kMaxC[s];
       for (let k = 0; k < K; k++) {
         const o = rb + k * 3, x = rest[o], y = rest[o + 1], z = rest[o + 2];
@@ -945,7 +982,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
         const px = SP[k * 3], py = SP[k * 3 + 1], pz = SP[k * 3 + 2];
         const vx = camL.x - px, vy = camL.y - py, vz = camL.z - pz;
         let wx = ty * vz - tz * vy, wy = tz * vx - tx * vz, wz = tx * vy - ty * vx;
-        const wd = (wR + (wT - wR) * (k / (K - 1))) * 0.5 / (Math.sqrt(wx * wx + wy * wy + wz * wz) || 1e-9);
+        const wd = (wR + (wT - wR) * (k / (K - 1))) * wS * 0.5 / (Math.sqrt(wx * wx + wy * wy + wz * wz) || 1e-9);
         wx *= wd; wy *= wd; wz *= wd;
         const ro = rb + k * 3, rx0 = radial[ro], ry0 = radial[ro + 1], rz0 = radial[ro + 2];
         const nx = sx0 * 0.55 + (me[0] * rx0 + me[4] * ry0 + me[8] * rz0) * 0.45;
