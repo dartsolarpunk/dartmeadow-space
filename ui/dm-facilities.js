@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  const F = window.DMFac = { ctx: null, sites: new Map(), solids: [], scene: null, ver: '302', shardVer: '334' };   // (v302) asset cache key: cliff / mansion GLBs, collision, cliff maps, GI re-baked (JOTS Cliffs) - unchanged in t1516, so the 10 MB GLB is not re-fetched; shardVer: the t1516 shard layer
+  const F = window.DMFac = { ctx: null, sites: new Map(), solids: [], scene: null, ver: '302', shardVer: '338' };   // (v302) asset cache key: cliff / mansion GLBs, collision, cliff maps, GI re-baked (JOTS Cliffs) - unchanged in t1516, so the 10 MB GLB is not re-fetched; shardVer: the t1516 shard layer
   const DM = window.DM_FAC = window.DM_FAC || {};
   DM.bay = DM.bay || { inside: false, membrane: 0 };
   F.bind = c => { F.ctx = c; };

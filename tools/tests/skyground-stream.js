@@ -189,5 +189,6 @@ ok(A.bareAfter1 === 0 && B.bareAfter1 === 0 && S.bareAfter1 === 0, 'the ground u
   ok(/then\(ok=>/.test(mc) && /return true;/.test(cut('async function upgradeSurfaceMcLOD(', '// (v330 streaming)')), 'MC ladder: a finished step asks for the next (low -> med -> high)');
   { const v = +((fs.readFileSync(path.join(root, 'sw.js'), 'utf8').match(/dartmeadow-engine-v(\d+)/) || [])[1] || 0); ok(v >= 330, 'sw v330 or later (v' + v + ')'); }   // (t1516) a later branch bumps past v330
   ok(/const ATMO_DEFAULT_AGL\s*=\s*46\b/.test(html), 'ATMO_DEFAULT_AGL stays 46');
+  ok(/if\(!_isRealWebGPU\(surfRenderer\)\)\{ TERRAIN\.mcUpgradeLocked=true; return; \}/.test(cut('async function upgradeSurfaceMcLOD(', '// (v330 streaming)')), '(v337, #256 review) no real WebGPU: the MC ladder locks, so the never-give-up loop stops');
 }
 console.log(fails ? 'skyground-stream FAILED ' + fails + '/' + n : 'skyground-stream OK (' + n + ' checks)'); process.exit(fails ? 1 : 0);
