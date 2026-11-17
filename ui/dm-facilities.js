@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  const F = window.DMFac = { ctx: null, sites: new Map(), solids: [], scene: null, ver: '302' };   // (v302) asset cache key: cliff / mansion GLBs, collision, cliff maps, GI re-baked (JOTS Cliffs)
+  const F = window.DMFac = { ctx: null, sites: new Map(), solids: [], scene: null, ver: '302', shardVer: '333' };   // (v302) asset cache key: cliff / mansion GLBs, collision, cliff maps, GI re-baked (JOTS Cliffs) - unchanged in t1516, so the 10 MB GLB is not re-fetched; shardVer: the t1516 shard layer
   const DM = window.DM_FAC = window.DM_FAC || {};
   DM.bay = DM.bay || { inside: false, membrane: 0 };
   F.bind = c => { F.ctx = c; };
@@ -333,17 +333,22 @@
   F.heavy = function (name, fn, stale) { HQ.q.push({ name, fn, stale, epoch: HQ.epoch }); crumb('live', 'facQueue', HQ.q.length); hqPump(); };
 
   // ── Ariel's mansion (GLB + collision grid) ───────────────────────────────────────────────────────────────
-  const MAN = { glb: null, col: null, loading: false, failed: false };
+  const MAN = { glb: null, col: null, loading: false, failed: false, shards: null };   // shards: null = not asked, undefined = loading, false = none, else the layer
   F.manCol = () => MAN.col;   // the exterior collision grid (ui/dm-lamps.js plans light pools on it)
   function loadMansion() {
     if (MAN.glb || MAN.loading || MAN.failed) return;
     MAN.loading = true; const c = F.ctx;
+    // (t1516) the macro shard-rock layer (assets/ariel-home/cliff/shards.json, tools/ariel-home/plan_shards.js): optional, a failure only means the GLB's own cliff
+    if (MAN.shards === null) { MAN.shards = undefined; fetch('assets/ariel-home/cliff/shards.json?v=' + F.shardVer).then(r => r.json()).then(J => { MAN.shards = J && J.shards ? J : false; }, e => { MAN.shards = false; console.warn('[ariel-home] shards', e); }); }
     // (v223) phones/tablets load the half-size-map mansion (≈75 MB less graphics memory)
     Promise.all([c.loadGLB('assets/ariel-home/' + (c.isMobile() ? 'ariel-home-512.glb' : 'ariel-home.glb') + '?v=' + F.ver + (c.isMobile() ? 'm292' : '')), fetch('assets/ariel-home/ariel-home-collide.json?v=' + F.ver).then(r => r.json())]).then(([gl, col]) => {
       const bin = atob(col.data), n = bin.length >> 1, a = new Int16Array(n);
       for (let i = 0; i < n; i++) { const v = bin.charCodeAt(i * 2) | (bin.charCodeAt(i * 2 + 1) << 8); a[i] = v > 32767 ? v - 65536 : v; }
       col.h = a; MAN.col = col; MAN.glb = gl; MAN.loading = false;
       try { gl.scene.traverse(o => { if (o.isMesh && o.material && o.material.name === 'ah_pool') F.poolLook(o.material); }); } catch (e) { console.warn('[ariel-home] pool look', e); }
+      // (t1516) rock is a dielectric: the ORM blue channel is 0 by design but the lossy webp carries up to 0.19 of 'metal' noise; with metalness 1 x B that read as dull sheen
+      // patches. metalness 0 on the four cliff sets (and their parallax twins, which copy it): opaque weathered stone, roughness from the ORM (>= 0.68).
+      try { gl.scene.traverse(o => { if (o.isMesh && o.material && /^ah_rock/.test(o.material.name)) { o.material.metalness = 0; o.material.emissiveIntensity = 0; } }); } catch (e) { }
     }).catch(e => { MAN.failed = true; MAN.loading = false; console.warn('[ariel-home] load failed', e); });
   }
   // (lod-hide) the two pool surfaces of the GLB share one ah_pool material: the designed infinity pool on the east cantilever deck (a 30 x 23 u sheet at
@@ -377,6 +382,72 @@
     const rx = F.ctx.shadows() && !(typeof location !== 'undefined' && (location.search.match(/[?&]sunshadow=(0|1)\b/) || [])[1] === '0');
     sc.traverse(o => { if (o.isMesh) { o.frustumCulled = false; const n = o.material && o.material.name, inL0 = lod0 && (o.parent === lod0 || lod0.getObjectById(o.id)); if (sh && inL0) { o.castShadow = !/^ah_rock/.test(n) && n !== 'ah_glass'; o.receiveShadow = true; } else if (rx && inL0 && n !== 'ah_glass' && !/^ah_water|^ah_pool/.test(n || '')) o.receiveShadow = true; } });
     return root;
+  }
+  // ── (t1516) the macro SHARD-ROCK layer ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+  // Straight, angular prisms of the cliff's own rock (ah_rockc columnar / ah_rockt talus PBR sets: opaque, roughness from the ORM >= 0.68, metalness 0, no emissive),
+  // flat-shaded so every facet is a plane and every edge is crisp at any distance.  Built ONCE per placement (no per-frame work), one geometry per material, drawn
+  // by a mesh under Mansion_LOD0 and one under Mansion_LOD1 (shared geometry), so the cliff's level bands, cross-fade and size fade carry them.  ~3.3k triangles,
+  // 2 draw calls per visible level.  Pure array builder (F.shardBuild) is node-tested (tools/tests/solenne-cliff.js).
+  //   q = [bx, by, base, height, radius, sides, rot, leanX, leanY, apexK, apexX, apexY, mat, tone, ground]   (mansion frame; glTF x = bx, y = rel. height, z = -by)
+  const shardHash = (a, b) => { const v = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return v - Math.floor(v); };
+  F.shardBuild = function (J, groundRel, gridRel) {
+    const L = J.shards, tile = J.tileM || 3, out = [];
+    const nT = [0, 0]; for (const q of L) nT[q[12] ? 1 : 0] += q[5] * 3;
+    for (let m = 0; m < 2; m++) { const n = nT[m] * 3; out.push({ pos: new Float32Array(n * 3), nrm: new Float32Array(n * 3), uv: new Float32Array(n * 2), col: new Float32Array(n * 3), v: 0, tris: nT[m], cyl: [] }); }
+    const bot = new Float32Array(24), top = new Float32Array(24);
+    for (const q of L) {
+      const o = out[q[12] ? 1 : 0], bx = q[0], by = q[1], n = q[5], r = q[4];
+      let base = q[2], h = q[3];
+      if (q[14]) {   // flank outcrop: from under the lower of (GLB, generated ground) to h above the higher one
+        const gG = gridRel ? gridRel(Math.max(-198, Math.min(198, bx)), by) : 0, gT = groundRel ? groundRel(bx, by) : gG, lo = Math.min(gG, gT), hi = Math.max(gG, gT);
+        base = lo + q[2]; h = (hi - base) + q[3];
+      }
+      const yT = base + h * (1 - q[9]), yA = base + h, sc = 0.82, lx = q[7], lz = -q[8];
+      for (let k = 0; k < n; k++) {
+        const a = q[6] + k * 6.2832 / n + (shardHash(bx + k, by) - 0.5) * 0.5, rk = r * (0.78 + 0.22 * shardHash(by + k, bx));
+        const cx = Math.cos(a) * rk, cz = -Math.sin(a) * rk;
+        bot[k * 3] = bx + cx; bot[k * 3 + 1] = base; bot[k * 3 + 2] = -by + cz;
+        top[k * 3] = bx + cx * sc + lx; top[k * 3 + 1] = yT; top[k * 3 + 2] = -by + cz * sc + lz;
+      }
+      const axX = bx + lx + q[10] * r * 0.6, axY = yA, axZ = -by + lz - q[11] * r * 0.6, cX = bx + lx * 0.5, cZ = -by + lz * 0.5;
+      const tone = q[13], wet = 0.68;
+      const tri = (ax, ay, az, au, av, bx2, by2, bz, bu, bv, cx2, cy2, cz2, cu, cv, ta, tb, tc) => {
+        let ux = bx2 - ax, uy = by2 - ay, uz = bz - az, vx = cx2 - ax, vy = cy2 - ay, vz = cz2 - az;
+        let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+        const mx = (ax + bx2 + cx2) / 3 - cX, mz = (az + bz + cz2) / 3 - cZ, my = (ay + by2 + cy2) / 3 - (base + h * 0.5);
+        let flip = nx * mx + ny * my * 0.25 + nz * mz < 0; const l = Math.hypot(nx, ny, nz) || 1; nx /= l; ny /= l; nz /= l; if (flip) { nx = -nx; ny = -ny; nz = -nz; }
+        const P = flip ? [[ax, ay, az, au, av, ta], [cx2, cy2, cz2, cu, cv, tc], [bx2, by2, bz, bu, bv, tb]] : [[ax, ay, az, au, av, ta], [bx2, by2, bz, bu, bv, tb], [cx2, cy2, cz2, cu, cv, tc]];
+        for (const p of P) { const i = o.v++; o.pos[i * 3] = p[0]; o.pos[i * 3 + 1] = p[1]; o.pos[i * 3 + 2] = p[2]; o.nrm[i * 3] = nx; o.nrm[i * 3 + 1] = ny; o.nrm[i * 3 + 2] = nz; o.uv[i * 2] = p[3]; o.uv[i * 2 + 1] = p[4]; const t = tone * p[5]; o.col[i * 3] = t; o.col[i * 3 + 1] = t * 0.985; o.col[i * 3 + 2] = t * 0.955; }
+      };
+      let per = 0;
+      for (let k = 0; k < n; k++) {
+        const k2 = (k + 1) % n, b0 = k * 3, b1 = k2 * 3, w = Math.hypot(bot[b1] - bot[b0], bot[b1 + 2] - bot[b0 + 2]), u0 = per / tile, u1 = (per + w) / tile; per += w;
+        const vb = -base / tile, vt = -yT / tile;
+        tri(bot[b0], bot[b0 + 1], bot[b0 + 2], u0, vb, bot[b1], bot[b1 + 1], bot[b1 + 2], u1, vb, top[b1], top[b1 + 1], top[b1 + 2], u1, vt, wet, wet, 1);
+        tri(bot[b0], bot[b0 + 1], bot[b0 + 2], u0, vb, top[b1], top[b1 + 1], top[b1 + 2], u1, vt, top[b0], top[b0 + 1], top[b0 + 2], u0, vt, wet, 1, 1);
+        tri(top[b0], top[b0 + 1], top[b0 + 2], u0, vt, top[b1], top[b1 + 1], top[b1 + 2], u1, vt, axX, axY, axZ, (u0 + u1) * 0.5, -yA / tile, 1, 1, 1.06);
+      }
+      if (r >= 2.5) o.cyl.push([bx + lx * 0.5, by - lz * 0.5, base, base + h * (1 - q[9] * 0.5), r * 0.8]);
+    }
+    return out;
+  };
+  function attachShards(T, root, J, groundRel, px, pz, ct, st, y0) {
+    if (!J || !J.shards || !J.shards.length) return null;
+    const u = root.userData, col = MAN.col, mats = {};
+    root.traverse(o => { if (o.isMesh && o.material && (o.material.name === 'ah_rockc' || o.material.name === 'ah_rockt') && !mats[o.material.name]) mats[o.material.name] = o; });
+    const gridRel = col ? (bx, by) => { const i = Math.max(0, Math.min(col.nx - 1, Math.round((bx - col.x0) / col.cell))), j = Math.max(0, Math.min(col.ny - 1, Math.round((by - col.y0) / col.cell))); return col.h[j * col.nx + i] / col.scale; } : null;
+    const B = F.shardBuild(J, groundRel, gridRel), geos = [];
+    for (let m = 0; m < 2; m++) {
+      const src = mats[J.materials[m]], o = B[m]; if (!src || !o.v) continue;
+      const g = new T.BufferGeometry();
+      g.setAttribute('position', new T.BufferAttribute(o.pos, 3)); g.setAttribute('normal', new T.BufferAttribute(o.nrm, 3)); g.setAttribute('uv', new T.BufferAttribute(o.uv, 2)); g.setAttribute('color', new T.BufferAttribute(o.col, 3));
+      geos.push(g);
+      for (const lv of [u.lod0, u.lod1]) { if (!lv) continue; const me = new T.Mesh(g, src.material); me.name = 'Mansion_Shards_' + J.materials[m]; me.frustumCulled = false; me.castShadow = false; me.receiveShadow = src.receiveShadow; me.userData.dmShards = true; lv.add(me); }
+      // colliders: one upright cylinder per prism (r >= 2.5), group 'facility' (cleared in teardown)
+      try { const D = window.DMCollide; if (D && D.addCylinder) for (const c of o.cyl) { const wx = px + c[0] * ct - c[1] * st, wz = pz - c[0] * st - c[1] * ct; D.addCylinder('facility', wx, y0 + c[2], y0 + c[3], wz, c[4], 'stone'); } } catch (e) { }
+    }
+    u.shardTris = B[0].tris + B[1].tris;
+    return geos;
   }
   // ── far-range LOD (ui/dm-lod.js, ui/dm-impostor.js): three levels with a screen-door cross-fade ──────────────────────────────────────────────────────────────────
   // LOD0 (interior-grade) < nIn/nOut < LOD1 (15k tris) < lod2In < IMPOSTOR (one draw call, ~2.6k tris, colours baked) < far cull.  A level change no longer swaps: the levels trade
@@ -481,6 +552,8 @@
   // The GLB embeds the 512 tier (low preset stays on it); tier >= 1 desktop gets 1K, tier >= 2 desktop 2K (683 px/m), phones/tablets 1K from tier 2. Sets stream in one at a time
   // (spreads the GPU uploads), old 512 maps are disposed. mat.userData.dmCliff carries the height-map URL + tile/depth for the parallax-occlusion helper (ui/dm-parallax.js).
   let cliffTried = false;
+  // the cliff rock tier: null = keep the 512 maps the GLB embeds. Pure (tools/tests/solenne-cliff.js covers the table).
+  function cliffRes(t, mob, ios, mem8, cq, killed) { return mob ? ((t >= 2 && !killed && (!ios || t >= 3) && (mem8 || (ios && t >= 3) || cq === '1k') && cq !== '512') ? '1k' : null) : (t >= 2 ? '2k' : t >= 1 ? '1k' : null); }
   function upgradeCliff(T) {
     const c = F.ctx; if (cliffTried || !MAN.glb) return; cliffTried = true;
     // (stability) phones: 1K at most, and only when the last session was not killed; iPhone/iPad (no deviceMemory to ask, the tab limit is tight) 1K only from tier 3. Otherwise
@@ -488,7 +561,9 @@
     // (memory lane) the 1K rock sets are 4 sets x (colour + normal + ORM + height) = 16 mipped RGBA8 maps = ~90 MB against ~22 MB for the embedded 512 ones; phones/tablets only take them when the browser
     // reports >= 8 GB (Chrome caps navigator.deviceMemory at 8) and has not killed the tab lately.  ?cliff=1k forces them, ?cliff=512 forbids them.
     const _cq = (location.search.match(/[?&]cliff=(1k|512)\b/) || [])[1], _mem8 = (navigator.deviceMemory || 0) >= 8;
-    const t = c.tier(), mob = c.isMobile(), res = mob ? ((t >= 2 && !recentKill() && (!isIOS || t >= 3) && (_mem8 || _cq === '1k') && _cq !== '512') ? '1k' : null) : (t >= 2 ? '2k' : t >= 1 ? '1k' : null);
+    // (t1516) iPhone / iPad report no deviceMemory, so the old `_mem8` term kept them on 512 even at Ultra, against the comment above: iOS now takes 1K from tier 3 (Ultra),
+    // still only when the last session was not killed.
+    const t = c.tier(), mob = c.isMobile(), res = cliffRes(t, mob, isIOS, _mem8, _cq, recentKill());
     crumb('mark', 'cliffRes', res || '512');
     const byName = {}; MAN.glb.scene.traverse(o => { if (o.isMesh && o.material && /^ah_rock/.test(o.material.name)) byName[o.material.name] = o.material; });
     fetch('assets/ariel-home/cliff/cliff-materials.json?v=' + F.ver).then(r => r.json()).then(J => {
@@ -507,7 +582,7 @@
           try {
             const ht = await load(J.base + id + '-height-' + hp + '.webp?v=' + F.ver); ht.flipY = false; ht.wrapS = ht.wrapT = T.RepeatWrapping; ht.anisotropy = 1; ht.colorSpace = T.NoColorSpace;
             if (!alive()) { ht.dispose(); return; }
-            if (!DMParallax.structure(mat, { tex: { map: mat.map, nrm: mat.normalMap, orm: mat.roughnessMap }, height: ht, hSize: ht.image && ht.image.width, tileM: J.tileM, depthM: S.depthM, rot: 'flip', macro: 0.3, stain: 0.5, lichen: 0.35, near: (J.parallax && J.parallax.fadeStartM) || 14, far: (J.parallax && J.parallax.fadeEndM) || 40 })) ht.dispose();
+            if (!DMParallax.structure(mat, { tex: { map: mat.map, nrm: mat.normalMap, orm: mat.roughnessMap }, height: ht, hSize: ht.image && ht.image.width, tileM: J.tileM, depthM: S.depthM, rot: 'flip', macro: 0.3, stain: 0.5, lichen: 0.1, near: (J.parallax && J.parallax.fadeStartM) || 14, far: (J.parallax && J.parallax.fadeEndM) || 40 })) ht.dispose();
           } catch (e) { console.warn('[ariel-home] cliff parallax 512', id, e); }
         }, () => { cliffTried = false; }));
         return;
@@ -527,7 +602,7 @@
           try {
             const ht = await load(J.base + id + '-height-' + hp + '.webp?v=' + F.ver); ht.flipY = false; ht.wrapS = ht.wrapT = T.RepeatWrapping; ht.anisotropy = 2; ht.colorSpace = T.NoColorSpace;
             if (!alive()) { ht.dispose(); return; }
-            if (!DMParallax.structure(mat, { tex: { map: a, nrm: b, orm: o }, height: ht, hSize: ht.image && ht.image.width, tileM: J.tileM, depthM: S.depthM, rot: 'flip', macro: 0.3, stain: 0.5, lichen: 0.35, near: (J.parallax && J.parallax.fadeStartM) || 14, far: (J.parallax && J.parallax.fadeEndM) || 40 })) ht.dispose();
+            if (!DMParallax.structure(mat, { tex: { map: a, nrm: b, orm: o }, height: ht, hSize: ht.image && ht.image.width, tileM: J.tileM, depthM: S.depthM, rot: 'flip', macro: 0.3, stain: 0.5, lichen: 0.1, near: (J.parallax && J.parallax.fadeStartM) || 14, far: (J.parallax && J.parallax.fadeEndM) || 40 })) ht.dispose();
           } catch (e) { console.warn('[ariel-home] cliff parallax', id, e); }
         }
       }, () => { cliffTried = false; }));
@@ -616,12 +691,59 @@
     const t = Math.min(1, d / BOX.feather), w = t * t * (3 - 2 * t), deep = F.car.y0 - BOX.deep;
     return h > deep ? h + (deep - h) * w : h;
   };
-  F.carveField = function (Fd) { if (Fd.H0) return; const H0 = Fd.H; Fd.H0 = H0; Fd.H = (x, z) => { const h = H0(x, z); return F.car === null ? h : F.carve(x, z, h); }; };
-  function carveActivate(px, pz, ct, st, y0) {
-    F.car = { px, pz, ct, st, y0 };
-    try { if (window._dmGroundDirty) window._dmGroundDirty(px - 340, pz - 340, px + 340, pz + 340); } catch (e) { console.warn('[facilities] ground dirty', e); }
+  // ── (t1516 Solenne shard cliff) THE SEA AT THE CLIFF FOOT ─────────────────────────────────────────────────────────────────────────────────────
+  // Root cause of "I can't see the new shard-rock cliff" (measured on Solenne, seed 475, site x -80 z -1340 y0 68.3; tools/tests/solenne-cliff.js): the GLB is built for open
+  // sea at its foot (its own sea floor y0-62..-82 out to the box edge, y +121), but the generated planet ground in front of it is LAND, 13-24 m above the sea for 130-250 m.
+  // So (1) at the seaward box edge the drawn ground jumped from the GLB's sea floor (~-6) straight up to +23: a 29 m bank 50 m in front of the face that hid its lower half
+  // from every low / seaward view; (2) the water system reads the NATURAL ground (TERRAIN.Hw), which is land there, so no sea was drawn over the GLB's sea floor: the
+  // cliff stood in a dry trench; (3) walking used the natural ground too: an invisible floor 20-40 m over the GLB's sea floor.
+  // F.seaCut lowers the natural ground in the APRON in front of the face (box edge -> APRON.hold of APRON.len held at the GLB's own edge floor, then a smoothstep back to the
+  // generated ground; APRON.lat m side fade past the box ends) and, inside the box, under every cell of the GLB that is sea (collision grid <= its waterline). Applied to the
+  // drawn ground (carveField), the walking ground (wrapH base) and the water's field (F.seaField -> TERRAIN.Hw), so the three agree. Pure arithmetic, no allocation.
+  // The interface JOTS Worlds' generator can blend into: F.footprint() (world-space box corners, apron polygon, base-height ring, colours), docs in the PR.
+  const APRON = { len: 170, hold: 0.4, lat: 60, reach: 470 };
+  const EDGE = { f: null, x0: 0, cell: 2, n: 0 };     // the GLB's own floor along its seaward edge (rel. y0), per grid column, smoothed; made once per placement
+  function edgeBuild() {
+    const col = MAN.col; if (!col) { EDGE.f = null; return; }
+    const nx = col.nx, j = col.ny - 1, inv = 1 / col.scale, raw = new Float32Array(nx), f = new Float32Array(nx);
+    for (let i = 0; i < nx; i++) { const v = col.h[j * nx + i] * inv; raw[i] = Math.min(v, col.sea - 4); }
+    for (let i = 0; i < nx; i++) { let a = 0, n = 0; for (let k = -4; k <= 4; k++) { const q = i + k; if (q >= 0 && q < nx) { a += raw[q]; n++; } } f[i] = a / n; }
+    EDGE.f = f; EDGE.x0 = col.x0; EDGE.cell = col.cell; EDGE.n = nx;
   }
-  F.wrapH = function (H) { F.baseH = H; return (x, z) => { const o = F.ovr; if (o !== null) { const v = o(x, z); if (v === v) return v; } const h = H(x, z); if (!F.solids.length) return h; const s = F.heightAt(x, z); return s > h ? s : h; }; };
+  function edgeAt(bx) { const f = EDGE.f; if (!f) return -70; let i = Math.round((bx - EDGE.x0) / EDGE.cell); i = i < 0 ? 0 : (i >= EDGE.n ? EDGE.n - 1 : i); return f[i]; }
+  F.seaCut = function (x, z, h) {
+    const c = F.car; if (c === null) return h;
+    const dx = x - c.px, dz = z - c.pz; if (dx > APRON.reach || dx < -APRON.reach || dz > APRON.reach || dz < -APRON.reach) return h;
+    const bx = dx * c.ct - dz * c.st, by = -(dx * c.st + dz * c.ct);
+    if (by > BOX.y1) {          // the apron in front of the face
+      const ax = bx < 0 ? -bx : bx; if (ax >= BOX.x1 + APRON.lat || by >= BOX.y1 + APRON.len) return h;
+      const tgt = c.y0 + edgeAt(bx); if (!(h > tgt)) return h;
+      let s = (by - BOX.y1) / APRON.len; s = s <= APRON.hold ? 0 : (s - APRON.hold) / (1 - APRON.hold); const ws = 1 - s * s * (3 - 2 * s);
+      let l = ax <= BOX.x1 ? 0 : (ax - BOX.x1) / APRON.lat; const wl = 1 - l * l * (3 - 2 * l);
+      return h + (tgt - h) * ws * wl;
+    }
+    const col = MAN.col; if (!col || bx < BOX.x0 || bx > BOX.x1 || by < BOX.y0) return h;      // inside the box: only under the GLB's sea cells
+    const i = Math.round((bx - col.x0) / col.cell), j = Math.round((by - col.y0) / col.cell); if (i < 0 || j < 0 || i >= col.nx || j >= col.ny) return h;
+    const v = col.h[j * col.nx + i] / col.scale; if (v > col.sea + 0.6) return h;
+    const f = c.y0 + v; return h > f ? f : h;
+  };
+  F.seaField = function (H0) { return (x, z) => { const h = H0(x, z); return F.car === null ? h : F.seaCut(x, z, h); }; };
+  F.carveField = function (Fd) { if (Fd.H0) return; const H0 = Fd.H; Fd.H0 = H0; Fd.H = (x, z) => { const h = H0(x, z); return F.car === null ? h : F.carve(x, z, F.seaCut(x, z, h)); }; };
+  // the blend interface for JOTS Worlds (world space; null until the mansion is placed): the GLB box, the apron, and the cliff's base-height ring + rock colours
+  F.footprint = function () {
+    const c = F.car; if (!c) return null;
+    const W = (bx, by) => { const lx = bx, lz = -by; return [c.px + lx * c.ct + lz * c.st, c.pz - lx * c.st + lz * c.ct]; };
+    const ring = []; for (let bx = BOX.x0; bx <= BOX.x1 + 1e-6; bx += 28) ring.push({ bx, xz: W(bx, BOX.y1), y: c.y0 + edgeAt(bx) });
+    return { box: [W(BOX.x0, BOX.y0), W(BOX.x1, BOX.y0), W(BOX.x1, BOX.y1), W(BOX.x0, BOX.y1)], apron: [W(BOX.x0 - APRON.lat, BOX.y1), W(BOX.x1 + APRON.lat, BOX.y1), W(BOX.x1 + APRON.lat, BOX.y1 + APRON.len), W(BOX.x0 - APRON.lat, BOX.y1 + APRON.len)],
+      y0: c.y0, seaRel: MAN.col ? MAN.col.sea : -62, baseRing: ring, feather: BOX.feather, apronLen: APRON.len, apronHold: APRON.hold, apronLat: APRON.lat, seaward: W(0, 1).map((v, k) => v - W(0, 0)[k]),
+      rock: { albedo: [0.26, 0.25, 0.23], roughness: 0.83, tileM: 3, sets: ['strata', 'columnar', 'sheet', 'talus'] } };
+  };
+  function carveActivate(px, pz, ct, st, y0) {
+    F.car = { px, pz, ct, st, y0 }; edgeBuild();
+    const R = APRON.reach;   // the box + the apron in front of it
+    try { if (window._dmGroundDirty) window._dmGroundDirty(px - R, pz - R, px + R, pz + R); } catch (e) { console.warn('[facilities] ground dirty', e); }
+  }
+  F.wrapH = function (H) { F.baseH = H; return (x, z) => { const o = F.ovr; if (o !== null) { const v = o(x, z); if (v === v) return v; } let h = H(x, z); if (F.car !== null) h = F.seaCut(x, z, h); if (!F.solids.length) return h; const s = F.heightAt(x, z); return s > h ? s : h; }; };
   // world-space solids from a landmark's local ones (rotation θ about Y at (px,pz), local y0 offset)
   function addSolids(list, px, pz, th, y0, flip) {
     const ct = Math.cos(th), st = Math.sin(th);
@@ -645,7 +767,7 @@
     if (window.DMHolo) { try { DMHolo.detach(); } catch (e) { } }
     if (window.DMLamps) { try { DMLamps.detach(); } catch (e) { } }
     if (window.DMMansionInt) { try { DMMansionInt.detach(); } catch (e) { } }
-    for (const r of F.sites.values()) { if (r.group && r.group.parent) r.group.parent.remove(r.group); if (r.group && !r.mansion) dispose(r.group); }
+    for (const r of F.sites.values()) { if (r.group && r.group.parent) r.group.parent.remove(r.group); if (r.group && !r.mansion) dispose(r.group); if (r.shardGeos) { r.shardGeos.forEach(g => g.dispose()); r.shardGeos = null; } }
     try { if (window.DMCollide && DMCollide.clearGroup) DMCollide.clearGroup('facility'); } catch (e) { }
     F.car = null; F.sites.clear(); F.solids.length = 0; F.bay = null; DM.bay.inside = false; DM.bay.membrane = 0;
     crumb('end', 'fac:teardown');
@@ -660,11 +782,12 @@
       addSolids(built.solids, b.x, b.z, 0, 0); rec.solidN = built.solids.length; rec.ready = true; rec.x = b.x; rec.z = b.z; rec.y = 0; rec.th = 0; return;
     }
     if (site.kind === 'mansion') {
-      if (!MAN.glb) return;     // wait for the asset
+      if (!MAN.glb || MAN.shards === undefined) return;     // wait for the asset (and the shard layer's tiny JSON, which never blocks on failure)
       const th = Math.atan2(-d[0], -d[1]), px = b.x, pz = b.z, ct = Math.cos(th), st = Math.sin(th);
       let y0 = H(px, pz); for (const [lx, lz] of [[0, 40], [-30, 40], [30, 40], [0, 80], [-60, 0], [60, 0]]) { y0 = Math.max(y0, H(px + lx * ct + lz * st, pz - lx * st + lz * ct)); }   // local +Z is inland
       y0 += 0.3;
       const root = mansionInstance(T); root.position.set(px, y0, pz); root.rotation.y = th; root.updateMatrixWorld(true);
+      try { rec.shardGeos = attachShards(T, root, MAN.shards, (bx, by) => H(px + bx * ct - by * st, pz - bx * st - by * ct) - y0, px, pz, ct, st, y0); } catch (e) { console.warn('[ariel-home] shards', e); rec.shardGeos = null; }
       PW.scene.add(root);
       // (v227) Tag FIRST, compile SECOND. mapTag gives every material its planet-frame positionNode/maskNode and flips needsUpdate, so compiling
       // before it (the v224 order) built pipelines that the first real draw threw away and rebuilt, a second compile storm in the arrival frame.
@@ -802,5 +925,5 @@
       }
     } else if (DM.bay.inside || DM.bay.membrane) { DM.bay.inside = false; DM.bay.membrane = 0; if (lastIn || lastM > 0) { lastIn = false; lastM = 0; try { window.dispatchEvent(new CustomEvent('dm:bay', { detail: { id: 'titan', inside: false, membrane: 0 } })); } catch (e) { } } }
   };
-  F._t = { get upgradeCliff() { return upgradeCliff; }, get upgrade2K() { return upgrade2K; }, MAN, HQ };   // test hooks (tools/tests/mansion-cycle.js)
+  F._t = { get upgradeCliff() { return upgradeCliff; }, get upgrade2K() { return upgrade2K; }, MAN, HQ, cliffRes, place, BOX, APRON };   // test hooks (tools/tests/mansion-cycle.js)
 })();

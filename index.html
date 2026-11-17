@@ -1063,7 +1063,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-safety.js?v=1" defer></script>
 <script src="jots/jots-link.js?v=217" defer></script>
 <script src="ui/dm-friends.js?v=217" defer></script>
-<script src="ui/dm-perflog.js?v=314" defer></script>
+<script src="ui/dm-perflog.js?v=337" defer></script>
 <script src="ui/dm-webkit.js?v=210" defer></script>
 <script src="ui/dm-spectator.js?v=1" defer></script>
 <script src="ui/dm-stack.js?v=1" defer></script>
@@ -4837,6 +4837,7 @@ const GFX = {
   scanned:false,
   // ── active quality knobs (set by applyPreset) ──
   preset:'auto',         // 'low'|'medium'|'high'|'ultra'|'custom'|'auto'
+  runtimeTier:null,      // (v337) this session's eased tier under an explicit pick (see _presetGovTick); never saved: GFX.preset stays the player's choice
   resScale:1.0,
   shadows:false, shadowSize:1024,
   envReflections:true,
@@ -4982,8 +4983,42 @@ function resolvePreset(){
 }
 
 // Apply a named preset, CLAMPED to what the hardware can actually do.
+// (v337 perf log) A Mali-G615 tablet (gpuClass low, score 37 -> Auto picks LOW there) ran ULTRA: that was the player's own saved pick (dm_gfx_v2 preset
+// 'ultra'; Auto can never return ultra on a mobile device, there is no URL preset).  The budget ladder (ui/dm-budget.js) sheds its stages under any preset,
+// but the preset's own knobs (resolution scale, 4K->2K shadow map, SSAO, reflections, refraction, budgets) never stepped down: 26.9 fps average, 8 min.
+// Policy now: an explicit pick is respected and stays saved as picked, but while the frame misses the 30 fps budget for a sustained spell the runtime
+// tier eases down ONE step at a time (never below what Auto would pick for this device), for this session only.  Picking a preset again restores it.
+var _PRESET_RANK={low:0,medium:1,high:2,ultra:3}, _PRESET_BY_RANK=['low','medium','high','ultra'];
+function _presetStepDown(cur,cls){   // pure: the next lower tier, or null when cur is already at (or below) the device-class tier / not a named tier
+  const r=_PRESET_RANK[cur], f=_PRESET_RANK[cls]; if(r===undefined||f===undefined||r<=f) return null;
+  return _PRESET_BY_RANK[r-1];
+}
+var _PG={over:0,cool:0,applying:false,toasted:false};   // module state, no per-tick allocation
+var _PG_TICK_MS=2000, _PG_MISS_TICKS=6, _PG_COOL_TICKS=15;   // 12 s of sustained miss -> one step; then 30 s before the next look
+function _presetGovTick(){
+  try{
+    const p=GFX.preset; if(_PRESET_RANK[p]===undefined) return;   // auto (already class-based + live balanced) and custom: untouched
+    if(_PG.cool>0){ _PG.cool--; return; }
+    const B=window.DMBudget; if(!B||!B.on||typeof B.emaMs!=='function') return;
+    const sc=(typeof STATE!=='undefined'&&STATE&&STATE.screen)||'';
+    if(document.hidden||window._dmWarming||window.__JOTS_INTRO||(sc!=='flight'&&sc!=='atmo'&&sc!=='surface')){ _PG.over=0; return; }
+    const ema=B.emaMs(), bud=B.budgetMs();
+    if(!(ema>bud*1.08)){ _PG.over=0; return; }
+    if(++_PG.over<_PG_MISS_TICKS) return;
+    _PG.over=0;
+    const next=_presetStepDown(GFX.runtimeTier||p, autoPreset()); if(!next) return;
+    GFX.runtimeTier=next; _PG.cool=_PG_COOL_TICKS;
+    _PG.applying=true; try{ applyPreset(next); }finally{ _PG.applying=false; }
+    try{ applyGraphicsLive(); }catch(e){}
+    try{ if(window.DMCrumb&&DMCrumb.mark) DMCrumb.mark('preset','ease '+p+'>'+next); }catch(e){}
+    try{ if(window.__dmRec) window.__dmRec('preset.ease.'+next,ema); }catch(e){}
+    if(!_PG.toasted){ _PG.toasted=true; try{ toast('Graphics eased to '+next.toUpperCase()+' to hold 30 fps (your '+String(p).toUpperCase()+' choice is kept)',3200); }catch(e){} }
+  }catch(e){}
+}
+setInterval(_presetGovTick,_PG_TICK_MS);
 function applyPreset(name){
   if(name==='custom'){ /* values already set individually */ clampToHardware(); return; }
+  if(!_PG.applying&&name===GFX.preset&&GFX.runtimeTier&&_PRESET_RANK[name]!==undefined) name=GFX.runtimeTier;   // a re-apply of the same pick keeps this session's eased tier
   const t=(name&&name!=='auto')?name:autoPreset();
   const p=PRESETS[t]||PRESETS.medium;
   Object.assign(GFX,{
@@ -5274,6 +5309,7 @@ function readCustomPanel(){
 
 // APPLY button on the preset screen
 function applyGfxScreen(){
+  GFX.runtimeTier=null;   // (v337) an explicit pick restores the full tier
   if(_gfxScreenPick==='custom'){ readCustomPanel(); GFX.preset='custom'; }
   else if(_gfxScreenPick==='auto'){ GFX.preset='auto'; applyPreset('auto'); }
   else { GFX.preset=_gfxScreenPick; applyPreset(_gfxScreenPick); }
@@ -15464,7 +15500,7 @@ function applySettings(){
   if(flightCamera){flightCamera.far=Math.max(STATE.settings.fov, AU_UNITS*72, STATE.settings.galaxyband?200000:50000);flightCamera.updateProjectionMatrix();}
   // ── Graphics quality / lighting effects ──
   let needsRebuild=false;
-  if($('set-quality')){const q=$('set-quality').value;if(GFX.preset!==q){GFX.preset=q;if(q!=='custom')applyPreset(q);needsRebuild=true;}}
+  if($('set-quality')){const q=$('set-quality').value;if(GFX.preset!==q){GFX.preset=q;GFX.runtimeTier=null;if(q!=='custom')applyPreset(q);needsRebuild=true;}}
   if($('set-autobal')&&GFX.preset!=='auto'){ GFX.dynamicRes=$('set-autobal').checked?true:false; try{ if(flightRenderer) flightRenderer._dr=null; }catch(e){} }
   if($('set-resscale')){
     const rs=parseFloat($('set-resscale').value);
@@ -25165,7 +25201,8 @@ async function _buildGpuSurfacePatch0(surfRenderer, opts, mcId){
 
 /** One-way LOD upgrade for the walk patch (mirrors upgradePlanetLOD lock). */
 async function upgradeSurfaceMcLOD(surfRenderer, pal, seed, siteLandBias){
-  if(!_isRealWebGPU(surfRenderer) || TERRAIN.mcUpgradeLocked) return;
+  if(TERRAIN.mcUpgradeLocked) return;
+  if(!_isRealWebGPU(surfRenderer)){ TERRAIN.mcUpgradeLocked=true; return; }   // (v337, #256 review) no real WebGPU = no upgrade ever: lock it, so the walk-patch _go loop stops instead of retrying every <=15 s
   if(!surfaceActive || !TERRAIN.group) return;
   const rank={low:0,med:1,high:2};
   const cur=TERRAIN.mcTier||'low';
@@ -25911,7 +25948,7 @@ SkyGround.prototype._sea=function(h,step){ return this.pal.water&&step>=this.COA
 SkyGround.prototype._wet=function(x,z,h){
   if(!(h<0)) return false;
   const F=this.F, ex=(typeof TERRAIN!=='undefined')&&TERRAIN.exBox;
-  if(F.H0&&ex&&ex(x,z)){ const h0=F.H0(x,z); return h0<0; }
+  if(F.H0&&ex&&ex(x,z)){ const h0=(TERRAIN.Hw||F.H0)(x,z); return h0<0; }   // (t1516) Hw = natural ground + the sea at the mansion cliff's foot
   return true;
 };
 // (Wave 2a) a painted-sea vertex sits at the sea floor, clamped to 40 m deep (was a flat -2): the sea sheet over the nearer painted
@@ -26088,7 +26125,7 @@ function _pwBuildGround(pal,fx,fz,mode){
   const F=_groundField(body,site,pal); try{ const _f0=_fac(); if(_f0&&_f0.carveField) _f0.carveField(F); }catch(e){} const H=F.H, seed=F.seed;   // (exclusion) F.H = the planet ground with the mansion's box carved out (ui/dm-facilities.js F.carve): every DRAWN-ground consumer below samples it
   TERRAIN.style=F.ws; TERRAIN.wx0=F.sw.x; TERRAIN.wz0=F.sw.z;
   const Hs=(()=>{ try{ const f=_fac(); return f?f.wrapH(F.H0||H):H; }catch(e){ return H; } })();   // decks, pads, island tops and the mansion stand on the ground (the drawn ground below keeps the plain H)
-  TERRAIN.pal=pal; TERRAIN.H=Hs; TERRAIN.Hg=H; TERRAIN.Hw=F.H0||H;   /* Hw: the natural ground (no decks / mansion solids, no mansion-box carve) = what the sea's shore field should read */ TERRAIN.exBox=(()=>{ try{ const f=_fac(); return f&&f.exBox?f.exBox:null; }catch(e){ return null; } })(); TERRAIN.seed=seed; TERRAIN.siteBias=F.siteBias; TERRAIN.siteLat=F.siteLat;
+  TERRAIN.pal=pal; TERRAIN.H=Hs; TERRAIN.Hg=H; TERRAIN.Hw=(()=>{ const h0=F.H0||H; try{ const f=_fac(); return f&&f.seaField?f.seaField(h0):h0; }catch(e){ return h0; } })();   /* Hw: the natural ground (no decks / mansion solids, no mansion-box carve) = what the sea's shore field should read; (t1516) plus the sea at the mansion cliff's foot (DMFac.seaField: the GLB's sea cells + the apron in front of the face) */ TERRAIN.exBox=(()=>{ try{ const f=_fac(); return f&&f.exBox?f.exBox:null; }catch(e){ return null; } })(); TERRAIN.seed=seed; TERRAIN.siteBias=F.siteBias; TERRAIN.siteLat=F.siteLat;
   try{ if(window.DMGround) DMGround.beginWorld({style:F.ws,seed,water:!!pal.water,lat:F.siteLat}); }catch(e){ console.warn('[ground lib] bake',e); }
   try{ if(window.DMWater) DMWater.begin({body,pal,seed,lat:F.siteLat}); }catch(e){ console.warn('[water] begin',e); }   // (ui/dm-water*.js) the sea's wave tiles / identity from this world's gravity, air and liquid, baked in 2-3 ms slices   // atlas + region map baked in 2-3 ms slices between frames (the materials start on a neutral atlas, so nothing waits)
   TERRAIN.mcY=null; TERRAIN.mcN=null; TERRAIN.cpuMc=null; TERRAIN.mcGpu=false; TERRAIN._mcBusy=false; TERRAIN._mcUpg=false;
@@ -27846,17 +27883,44 @@ const _KB_FLOAT=[];
 function _kbTap(el,fn){ let last=0; const go=e=>{ e.preventDefault(); e.stopPropagation(); const t=performance.now(); if(t-last<350) return; last=t; try{ fn(); }catch(err){ console.warn('[kite-board]',err); } };
   el.addEventListener('touchend',go,{passive:false}); el.addEventListener('click',go);
   el.addEventListener('touchstart',e=>e.stopPropagation(),{passive:true}); }
-function _kbPlace(){   // cheap: one rect read per host (display:none anywhere above -> 0x0 rect), no style walks; writes only on change
+// (v337 perf log) The placer ran every 250 ms and READ each host's rect (getBoundingClientRect + checkVisibility) from a timer, i.e. after the frame
+// had dirtied the HUD: each read forced a synchronous style + layout of the whole DOM (Mali-G615 log: 565 ms and 105 ms inside one 2.8 s freeze at the
+// Bird Temple).  Now nothing in the timer reads layout.  The rects come from an IntersectionObserver: re-observing a host makes the browser deliver its
+// boundingClientRect computed in its own rendering step (no forced layout), and the callback only WRITES styles (_kbApply, the same placement maths,
+// writes only on change).  Re-measured on the same 250 ms cadence, on resize / orientationchange, and when a host's box changes (ResizeObserver), so the
+// buttons track the kite exactly as before.  Without IntersectionObserver (very old browsers) the old synchronous read stays as the fallback.
+const _KB_GEO={io:null,ro:null,on:false,r:{left:0,top:0,width:0,height:0}};
+function _kbApply(F,r,sw){   // pure placement + style writes (no layout read): r = the host's client rect, sw = ship-walk on
+  let show=r.width>8&&r.height>8&&F.vis!==false;
+  if(show&&F.shipOnly) show=sw;
+  const x=(r.left+r.width*0.185)|0, y=(r.top+r.height*0.47)|0, key=show?x+','+y:'';
+  if(key===F.k) return false; F.k=key;
+  if(!show){ F.w.style.display='none'; return true; }
+  F.w.style.display='flex'; F.w.style.left=x+'px'; F.w.style.top=y+'px'; return true;
+}
+function _kbIO(entries){
   const sw=document.body.classList.contains('ship-walk');
-  for(const F of _KB_FLOAT){
-    const h=F.host, r=h.getBoundingClientRect();
-    let show=r.width>8&&r.height>8&&(!h.checkVisibility||h.checkVisibility({visibilityProperty:true}));
-    if(show&&F.shipOnly) show=sw;
-    const key=show?((r.left+r.width*0.185)|0)+','+((r.top+r.height*0.47)|0):'';
-    if(key===F.k) continue; F.k=key;
-    if(!show){ F.w.style.display='none'; continue; }
-    F.w.style.display='flex'; F.w.style.left=((r.left+r.width*0.185)|0)+'px'; F.w.style.top=((r.top+r.height*0.47)|0)+'px';
+  for(let i=0;i<entries.length;i++){ const e=entries[i], F=e.target&&e.target._kbF; if(!F) continue;
+    // visibility:hidden on a sized host: checked here, in the observer callback (after the browser's own layout, so it is a clean read)
+    F.vis=!e.target.checkVisibility||e.target.checkVisibility({visibilityProperty:true});
+    _kbApply(F,e.boundingClientRect,sw); }
+}
+function _kbGeoInit(){
+  if(_KB_GEO.on) return true;
+  if(typeof IntersectionObserver!=='function') return false;
+  try{
+    _KB_GEO.io=new IntersectionObserver(_kbIO,{threshold:[0,1]});
+    if(typeof ResizeObserver==='function') _KB_GEO.ro=new ResizeObserver(_kbPlace);
+    _KB_GEO.on=true; return true;
+  }catch(e){ _KB_GEO.io=null; _KB_GEO.ro=null; return false; }
+}
+function _kbPlace(){   // (v337) no layout read: asks the observer for fresh rects; the placement happens in _kbIO
+  if(_kbGeoInit()){
+    for(const F of _KB_FLOAT){ const h=F.host; if(!h._kbF){ h._kbF=F; if(_KB_GEO.ro) try{ _KB_GEO.ro.observe(h); }catch(e){} } _KB_GEO.io.unobserve(h); _KB_GEO.io.observe(h); }
+    return;
   }
+  const sw=document.body.classList.contains('ship-walk');   // fallback (no IntersectionObserver): the old synchronous read
+  for(const F of _KB_FLOAT){ const h=F.host; F.vis=!h.checkVisibility||h.checkVisibility({visibilityProperty:true}); _kbApply(F,h.getBoundingClientRect(),sw); }
 }
 function _installKiteBoardButtons(){
   const mk=(host,html,wire,shipOnly)=>{ if(!host||host.dataset.kbFloat) return; host.dataset.kbFloat='1';
@@ -27868,7 +27932,7 @@ function _installKiteBoardButtons(){
   mk(document.querySelector('#screen-flight .hud-c'),pc,wirePC,true);
   // in the sky: step off (when flying low) — she hops down and walks on, the board trailing her
   mk(document.querySelector('#atmo-overlay .mini-kite'),'<button type="button" class="kb-btn kb-step" aria-label="Step off and walk" title="Step off and walk (fly low first)">'+_KB_STEP+'</button>',w=>_kbTap(w.querySelector('.kb-step'),atmoStepOff),false);
-  if(!_installKiteBoardButtons.t){ _installKiteBoardButtons.t=setInterval(_kbPlace,250); addEventListener('resize',_kbPlace); }
+  if(!_installKiteBoardButtons.t){ _installKiteBoardButtons.t=setInterval(_kbPlace,250); addEventListener('resize',_kbPlace); addEventListener('orientationchange',_kbPlace); }
   _kbPlace();
   _bcButtons();
 }
