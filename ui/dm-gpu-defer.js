@@ -53,8 +53,9 @@
       be.delete(attribute);   // three forgets it now, as before; only the GPU-side destroy waits
     };
     function destroyList(list) { for (let i = 0; i < list.length; i++) { try { list[i].destroy(); st.destroyed++; } catch (e) {} } }
+    const now = () => (root && root.performance && root.performance.now ? root.performance.now() : Date.now());
     function tick() {
-      st.frame++;
+      st.frame++; st.last = now();
       if (st.inFlight || Q.size() === 0) return;
       if (Q.take(st.frame, batch) === 0) return;
       const list = batch.slice();   // only when something is due
@@ -63,8 +64,14 @@
       try { be.device.queue.onSubmittedWorkDone().then(fin, fin); } catch (e) { fin(); }
     }
     function flush() { const all = []; Q.drainAll(all); destroyList(all); }
-    function uninstall() { au.destroyAttribute = orig; delete au.__dmDefer; flush(); }
-    const api = { tick, flush, uninstall, stats: st, pending: () => Q.size() };
+    // (v334) idle flush: only the flight loop calls tick(); when no loop is ticking (menus, the ship / other render loops, a paused tab)
+    // parked buffers would wait forever.  Every 0.5 s, if nothing ticked for 0.45 s and buffers are waiting, tick once from here (the same
+    // frame counting + onSubmittedWorkDone fence, so it is exactly as safe).  No allocation while the queue is empty.
+    st.last = now(); st.idleTicks = 0;
+    const idle = (root && typeof root.setInterval === 'function') ? root.setInterval(() => { if (Q.size() > 0 && now() - st.last > 450) { st.idleTicks++; tick(); } }, 500) : null;
+    if (idle && typeof idle.unref === 'function') idle.unref();
+    function uninstall() { if (idle != null && root && root.clearInterval) root.clearInterval(idle); au.destroyAttribute = orig; delete au.__dmDefer; flush(); }
+    const api = { tick, flush, uninstall, stats: st, pending: () => Q.size(), idleTick: () => { if (Q.size() > 0) { st.idleTicks++; tick(); } } };
     au.__dmDefer = api;
     return api;
   }

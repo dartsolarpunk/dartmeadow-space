@@ -186,7 +186,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-time.js?v=97"></script>
 <script src="ui/dm-earth.js?v=292"></script>
 <script src="ui/dm-earth-paint.js?v=290"></script>
-<script src="ui/dm-theme.js?v=81"></script>
+<script src="ui/dm-theme.js?v=343"></script>
 <script src="ui/dm-sparsevox.js?v=304"></script>
 <script src="ui/dm-rockmat.js?v=145"></script>
 <script src="ui/dm-parallax.js?v=280"></script>
@@ -197,17 +197,17 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-water-sea.js?v=300"></script>
 <script src="ui/dm-water-curl.js?v=292"></script>   <!-- water: the breaking-wave curl (glassy turquoise barrel along the shore-parallel wave fronts; Medium+; created by dm-water-fx) -->
 <script src="ui/dm-water-fx.js?v=292"></script>   <!-- water: spray / splash / mist sprites, wake, footstep ripples, shore-break spray, underwater fog + shafts (?waterfx=0 off) -->   <!-- water: baked sea, shore, ground hook (?water=0 = the previous sea) -->
-<script src="ui/dm-perf.js?v=160"></script>
-<script src="ui/dm-governor.js?v=331"></script>
-<script src="ui/dm-budget.js?v=331"></script>
+<script src="ui/dm-perf.js?v=343"></script>
+<script src="ui/dm-governor.js?v=341"></script>
+<script src="ui/dm-budget.js?v=341"></script>
 <script src="ui/dm-mem.js?v=292"></script>
-<script src="ui/dm-lod.js?v=340"></script>
+<script src="ui/dm-lod.js?v=310"></script>
 <script src="ui/dm-terrain-lod.js?v=294"></script>   <!-- one terrain across every altitude band: shared slope / skirt / sea-tint contract between the globe map and the sky ground -->
 <script src="ui/dm-impostor.js?v=280"></script>   <!-- far-range LOD: vertex-clustering impostor (mansion LOD2, colours baked) -->   <!-- far-range LOD: the ONE distance table per device class (props, mansion, landmarks, vantage reach); ?lod=off|low|mobile|desktop -->
 <script src="ui/dm-light.js?v=323"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
 <script src="ui/dm-vlight.js?v=331"></script>   <!-- lighting overhaul: lamps / LEDs / flashlight / low sun light the volumetric fog (scene.fogNode, light list, equi-angular in-scatter); ?vlights=0|low|med|high -->
 <script src="ui/dm-feedback.js?v=329"></script>
-<script src="ui/dm-gpu-defer.js?v=332"></script>   <!-- (v332) DMGpuDefer: deferred destruction of disposed geometry's GPU buffers (the Bird Temple "used in submit while destroyed" banner) -->
+<script src="ui/dm-gpu-defer.js?v=340"></script>   <!-- (v332) DMGpuDefer: deferred destruction of disposed geometry's GPU buffers (the Bird Temple "used in submit while destroyed" banner) -->
 <script src="ui/dm-atmo-shell.js?v=332"></script>   <!-- (v297) DMAtmoShell.radii/worldR/ratio: the faded atmosphere perimeter of a body (Solenne 1.18 R) for the space -> world hand-off (Worlds) -->
 <script src="ui/dm-spawn.js?v=314"></script>   <!-- (v314) DMSpawn: new-game spawn in interstellar space near Sol + the arrival push-out from every world's hand-off radius -->
 <script src="ui/dm-pw-handoff.js?v=299"></script>   <!-- (v299) the space -> surface hand-off policy: pre-build hidden from PWS_OPEN, show the world + minimap globe at the DMAtmoShell perimeter (Worlds) -->
@@ -230,16 +230,17 @@ window.DMFT=window.DMFT||(function(){ const E=Object.create(null), X=Object.crea
 </script>
 <script src="ui/dm-fluid.js?v=80"></script>
 <script src="ui/dm-journal.js?v=98"></script>
-<script src="ui/dm-worldstyle.js?v=94"></script>
-<script src="ui/dm-polish.js?v=340"></script>
-<script src="ui/dm-sky.js?v=209"></script>
+<script src="ui/dm-worldstyle.js?v=343"></script>
+<script src="ui/dm-polish.js?v=339"></script>
+<script src="ui/dm-stars.js?v=344"></script>   <!-- (v334 Cosmos) DMStars: the system's real stars as seen from the world - per-star direction / colour / weight + the ONE key-light direction (keyDir) the sky, the air, the sun light and its shadows share -->
+<script src="ui/dm-sky.js?v=340"></script>
 <script src="ui/dm-dust.js?v=191"></script>
 <!-- crunch1 true-fluid VFX (WebGPU only; WebGL keeps the current ocean/dust/fumes) -->
 <script src="ui/dm-fluid-core.js?v=136"></script>
 <script src="ui/dm-fluid-apic.js?v=136"></script>
 <script src="ui/dm-fluid-spray.js?v=136"></script>
 <script src="ui/dm-fluid-smoke.js?v=136"></script>
-<script src="ui/dm-fluid-world.js?v=136"></script>
+<script src="ui/dm-fluid-world.js?v=343"></script>
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js",
@@ -1063,10 +1064,10 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-safety.js?v=1" defer></script>
 <script src="jots/jots-link.js?v=217" defer></script>
 <script src="ui/dm-friends.js?v=217" defer></script>
-<script src="ui/dm-perflog.js?v=337" defer></script>
+<script src="ui/dm-perflog.js?v=341" defer></script>
 <script src="ui/dm-webkit.js?v=210" defer></script>
 <script src="ui/dm-spectator.js?v=1" defer></script>
-<script src="ui/dm-stack.js?v=1" defer></script>
+<script src="ui/dm-stack.js?v=343" defer></script>
 <script src="ui/dm-level.js?v=286" defer></script>
 <script src="ui/dm-landmark.js?v=293" defer></script>
 <script src="ui/dm-landzones.js?v=293" defer></script>
@@ -1074,14 +1075,14 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-globe.js?v=339" defer></script>
 <script src="ui/dm-star.js?v=191" defer></script>
 <script src="ui/dm-mist.js?v=8" defer></script>
-<script src="ui/dm-atmo.js?v=332" defer></script>
+<script src="ui/dm-atmo.js?v=344" defer></script>
 <script src="ui/dm-localcollide.js?v=188" defer></script>
 <script src="ui/dm-collide.js?v=287" defer></script>
 <script src="ui/dm-collide-game.js?v=281" defer></script>
 <script src="ui/dm-cgroup.js?v=281" defer></script>
 <script src="ui/dm-charm.js?v=234" defer></script>
 <script src="ui/dm-flash.js?v=331" defer></script>
-<script src="ui/dm-menuscene.js?v=245" defer></script>
+<script src="ui/dm-menuscene.js?v=343" defer></script>
 <script src="ui/dm-starbubble.js?v=4" defer></script>
 <script src="ui/dm-hazardbubble.js?v=215" defer></script>
 <script src="ui/dm-birdtemple.js?v=122" defer></script>
@@ -1109,7 +1110,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-mansion-look.js?v=325" defer></script>
 <script src="ui/dm-mansion-interior.js?v=325" defer></script>
 <script src="ui/dm-orbit-clamp.js?v=1" defer></script>
-<script src="ui/dm-facilities.js?v=340" defer></script>
+<script src="ui/dm-facilities.js?v=339" defer></script>
 <script src="ui/dm-lamps.js?v=325" defer></script>
 <script src="ui/dm-mansion-collide.js?v=283" defer></script>
 <script src="ui/dm-holo.js?v=284" defer></script>
@@ -5002,6 +5003,9 @@ function _presetGovTick(){
     const B=window.DMBudget; if(!B||!B.on||typeof B.emaMs!=='function') return;
     const sc=(typeof STATE!=='undefined'&&STATE&&STATE.screen)||'';
     if(document.hidden||window._dmWarming||window.__JOTS_INTRO||(sc!=='flight'&&sc!=='atmo'&&sc!=='surface')){ _PG.over=0; return; }
+    // (v339, Watcher #261 review) the preset steps down only once the budget ladder (ui/dm-budget.js, ~28 shed steps) is EXHAUSTED: before that the ladder is still
+    // shedding cheaper stages and a preset drop on top was a double drop (seen at ladder step 7 of 28).  The 12 s miss window counts exhausted time only (reset otherwise).
+    if(typeof B.isExhausted!=='function'||!B.isExhausted()){ _PG.over=0; return; }
     const ema=B.emaMs(), bud=B.budgetMs();
     if(!(ema>bud*1.08)){ _PG.over=0; return; }
     if(++_PG.over<_PG_MISS_TICKS) return;
@@ -6980,10 +6984,10 @@ async function _flightWarmup(){
   try{ _distLightT=1; updateDistantSystems(0); }catch(e){}   // the two distant-star lights exist before compiling
   try{ _lcApplyWorlds(); }catch(e){}   // (v105) worlds' own light lists, before anything compiles
   const steps=[
-    ['world',()=>{ const rec=window._flightCompile={ groups:[], ms:0, capped:false, single:false }; return _compileStaged(flightScene,flightCamera,{rec,cap:GFX.isMobile?13000:22000,step:GFX.isMobile?6000:9000,onGroup:(gi,n)=>{ try{ dmSys.load('warm','Preparing world 1/'+steps.length+' · '+Math.round((gi/Math.max(1,n))/steps.length*100)+'%'); }catch(e){} }}); },GFX.isMobile?15000:25000],   // (v256) in small groups, one cap for the whole step
+    ['world',()=>{ const rec=window._flightCompile={ groups:[], ms:0, capped:false, single:false }; return _compileStaged(flightScene,flightCamera,{rec,cap:GFX.isMobile?13000:22000,step:GFX.isMobile?6000:9000,onCompile:_gsMarkWarm,onGroup:(gi,n)=>{ try{ dmSys.load('warm','Preparing world 1/'+steps.length+' · '+Math.round((gi/Math.max(1,n))/steps.length*100)+'%'); }catch(e){} }}); },GFX.isMobile?15000:25000,()=>{ const r=window._flightCompile; if(r&&r.abandon) r.abandon(); }],   // (v256) in small groups, one cap for the whole step; (v338) [3] = what to do when the step's cap gives up on it
     ['sun and flares',()=>window.DMStar&&DMStar.warm&&DMStar.warm(flightCamera)],
     ['star dive',()=>window.DMStarBubble&&DMStarBubble.warm&&DMStarBubble.warm(flightCamera,flightScene)],   // lens/bubble/interior: compiled before the first pass through the Sun
-    ['galaxy',()=>galSky&&galSky.ready&&_gsPrecompile()],
+    ['galaxy',()=>galSky&&galSky.ready&&_gsPrecompileRest()],   // (v338) the GalSky parts the world step did not compile (hidden LODs), GalSky subtree only
     ['atmosphere',()=>_taWarm(flightRenderer,flightScene,flightCamera)],   // the scene as drawn through the true-atmosphere pass: its own shader variants
     ['planet maps',()=>_wmWarmAll()],
     ['aboard occlusion',()=>_aoccWarm()],   // depth-tested twins of the far-field layers, for when the hull is in front of them   // the map-dressed planet material each world wears from up close: same program, compiled now
@@ -7009,7 +7013,12 @@ async function _flightWarmup(){
     if(_prevStep){ try{ await Promise.race([_prevStep,new Promise(r=>setTimeout(r,20000))]); }catch(e){} _prevStep=null; }
     window._dmWarmPhase=steps[i][0];
     const t=performance.now();
-    try{ const _p=Promise.resolve(steps[i][1]()); _prevStep=_p.catch(()=>{}); await Promise.race([_p,new Promise(r=>setTimeout(r,steps[i][2]||7000))]); }catch(e){ console.warn('[warmup]',steps[i][0],e); }
+    // (v338 perf log) a step that hits its cap and has an abandon hook ([3]: the staged world compile) is told to stop launching work and settle at once, so the
+    // next step's wait below does not sit on it.  Mali-G615 log: world gave up at 15.2 s, its compile ran on to 27.3 s, and 'sun and flares' waited those 12 s.
+    // The pipelines already handed to the GPU finish in the background exactly as before; only the queued groups are left to compile in-frame / later.
+    let _to=false;
+    try{ const _p=Promise.resolve(steps[i][1]()); _prevStep=_p.catch(()=>{}); await Promise.race([_p,new Promise(r=>setTimeout(()=>{ _to=true; r(); },steps[i][2]||7000))]); }catch(e){ console.warn('[warmup]',steps[i][0],e); }
+    if(_to&&typeof steps[i][3]==='function'){ try{ steps[i][3](); }catch(e){} }
     try{ window._warmSteps.push([steps[i][0],Math.round(performance.now()-t)]); }catch(e){}
     console.log('[warmup]',steps[i][0],(performance.now()-t).toFixed(0)+'ms');
     await new Promise(r=>setTimeout(r,16));   // let the page breathe between steps
@@ -8152,7 +8161,7 @@ async function _svLodPlanetMesh(o){
   if(window.DMRock) DMRock.applyPlanet(_lmat,o.kind,radius,o.seed);   // (v140) layered rock
   // (v193) per-brick dither fade, multiplied into whatever opacity the rock layer set (set at build: never recompiles)
   { const f=varying(fadeNode.element(uint(vertexIndex).div(uint(VPS))));
-    _lmat.opacityNode=(_lmat.opacityNode||materialOpacity).mul(f); _lmat.userData._lodOp=1; }
+    _lmat.opacityNode=(_lmat.opacityNode||materialOpacity).mul(f); _lmat.userData._lodOp=1; _lmat.userData._svFade=1; }   // (t1516) _svFade: the world map must keep this fade (_wmCarry)
   ctl.fading=_LOD_XFADE; ctl.mat=_lmat;
   const mesh=new THREE.Mesh(geo,_lmat);
   mesh.name='JOTS_GpuPlanetMC'; mesh.userData.jotsGpuMc=true; mesh.userData.svLod=ctl;
@@ -8653,6 +8662,7 @@ async function buildSolarSystem(){
   flightScene.add(sunGroup);
   sunMesh=sm;
   celestialBodies.push({mesh:sunGroup,name:'Sun',type:'Star',temp:'5778 K',orbitR:0,orbitSpd:0,angle:0,renderMesh:sm});
+  try{ if(window.DMStars) DMStars.setSources([{obj:sunGroup,radius:SOL_SUN_RADIUS,temp:5778,name:'Sun'}]); }catch(e){}   // (v334) the sky on every Sol world is lit by this body
 
   // Real AU distances: Mercury 0.387, Venus 0.723, Earth 1.0, Mars 1.524
   // Jupiter 5.203, Saturn 9.537, Uranus 19.191, Neptune 30.069
@@ -13350,6 +13360,7 @@ function _disposeSystemTextures(gone){
 function _clearFlightSystemScene(){
   const _sysGone=[];
   try{ if(window.DMArielHome) DMArielHome.stop(); }catch(e){}   // Veyra's second star rides on trackExtra; just drop the references
+  try{ if(window.DMStars) DMStars.setSources(null); }catch(e){}   // (v334) the old system's stars no longer light anything
   // Remove prior Sol/procedural bodies + orbit rings / belts / oort / comets
   // tagged via _trackSystemExtra — prevents dual stacks on system swap.
   for(let i=0;i<celestialBodies.length;i++){
@@ -15346,7 +15357,10 @@ async function _rebuildFlightForSystem(system){
   const starGroup=_star.group, starMesh=_star.mesh;
   starGroup.position.set(0,0,0);flightScene.add(starGroup);
   sunMesh=starMesh;
-  if(system.ariel){ const a=_ah(); if(a) a.buildStars(system,_star,starK); }   // the Veyra binary: scale A, build B, swing both about the barycentre
+  const _starSrc=[{obj:starGroup,radius:system.starR||SOL_SUN_RADIUS,temp:starK,name:system.name}];
+  if(system.ariel){ const a=_ah(); const sb=a?a.buildStars(system,_star,starK):null;   // the Veyra binary: scale A, build B, swing both about the barycentre
+    if(sb&&sb.group) _starSrc.push({obj:sb.group,radius:(system.binary&&system.binary.rB)||system.starR*0.66||60,temp:system.starK2||DMStar.tempFor(system.star2||'K orange'),name:system.name+' B'}); }
+  try{ if(window.DMStars) DMStars.setSources(_starSrc); }catch(e){}   // (v334) both of Veyra's stars light Solenne's sky (and every other world's)
   celestialBodies.push({mesh:starGroup,name:system.name,type:'Star',temp:Math.round(starK/100)*100+' K',orbitR:0,orbitSpd:0,angle:0,renderMesh:starMesh});
 
   const GIANT_FALLBACK=[0x8a5a3a,0xd9b280,0xf0e0c0,0xc47a52];
@@ -18226,7 +18240,18 @@ function buildGalSky(){
 // the frame they first appeared — right as the galaxy came into view.
 // compileAsync projects the scene synchronously before its first await, so
 // the hidden parts are shown only for that instant, never for a frame.
-function _gsPrecompile(){
+// (v338 perf log) GalSky was compiled twice in the warm-up: its visible LODs in the world step's staged compile (JOTS_GalSky group: 59 pipelines, 6.0 s on the Mali-G615),
+// then the galaxy step re-projected the WHOLE flight scene (culling off) with the hidden LODs shown: every already-built GalSky object went through the
+// node / pipeline path again, and so did the rest of the scene (late galaxy: 15.1 s, its cap).  Now each GalSky object is compiled once: the world step
+// records what it handed to the renderer (_gsMarkWarm, called just before that group's compileAsync), and the galaxy step compiles only the GalSky subtree
+// (compileAsync(galSkyRoot, camera, flightScene): the scene stays the cache / light reference, so the pipeline keys are the ones render() uses) with
+// those objects left out, i.e. just the hidden LODs.  Same materials, same passes, nothing about drawing changes: only who compiles what, and when.
+const _gsWarmed=new WeakSet();
+function _gsMarkWarm(kids){
+  if(!galSkyRoot||!kids||kids.indexOf(galSkyRoot)<0) return;
+  galSkyRoot.traverseVisible(o=>{ if(o.isMesh||o.isPoints||o.isLine||o.isSprite) _gsWarmed.add(o); });   // the warm-up runs with frustum culling off: visible = compiled
+}
+function _gsPrecompile(){   // at build time (boot / rebuild): unchanged - the whole flight scene with the hidden GalSky parts shown
   if(!galSkyRoot||typeof flightRenderer==='undefined'||!flightRenderer||!flightRenderer.compileAsync)return;
   const hidden=[];
   galSkyRoot.traverse(o=>{if(!o.visible){hidden.push(o);o.visible=true;}});
@@ -18234,6 +18259,19 @@ function _gsPrecompile(){
   try{pr=flightRenderer.compileAsync(flightScene,flightCamera);if(pr&&pr.catch)pr.catch(e=>console.warn('[galsky] precompile',e));}
   catch(e){console.warn('[galsky] precompile',e);}
   finally{for(const o of hidden)o.visible=false;}
+  return pr;
+}
+function _gsPrecompileRest(){   // (v338) the warm-up's galaxy step: only what the world step did not already compile
+  if(!galSkyRoot||typeof flightRenderer==='undefined'||!flightRenderer||!flightRenderer.compileAsync)return;
+  const hidden=[], skip=[];
+  galSkyRoot.traverse(o=>{if(!o.visible){hidden.push(o);o.visible=true;}});
+  // already compiled by the world step: leave them out of this projection (leaves only, so nothing under them is skipped)
+  galSkyRoot.traverse(o=>{ if(o.visible&&_gsWarmed.has(o)&&!o.children.length){ skip.push(o); o.visible=false; } });
+  let pr=null;
+  try{pr=flightRenderer.compileAsync(galSkyRoot,flightCamera,flightScene);if(pr&&pr.catch)pr.catch(e=>console.warn('[galsky] precompile',e));}
+  catch(e){console.warn('[galsky] precompile',e);}
+  finally{for(const o of skip)o.visible=true;for(const o of hidden)o.visible=false;}   // the projection is synchronous: visibility is back before anything else runs
+  try{ window._gsCompileStat={warmed:skip.length,compiled:hidden.length}; }catch(e){}
   return pr;
 }
 // Where the current system sits in the galaxy (ly, world axes, Sun = origin).
@@ -19355,7 +19393,7 @@ async function _wmWarmAll(){
       if(!b||!b.mesh||b.name==='Sun'||b.type==='Star'||b.isAsteroid||b.type==='Comet'||!isProximityLandEligible(b)) continue;
       const best=_wmBestMesh(b); if(!best) continue;
       let mat=best.userData._wmMat;
-      if(!mat){ mat=new THREE.MeshStandardNodeMaterial({roughness:0.92,metalness:0.02}); mat.userData._lodOp=1; mat.colorNode=_wmColorNode(_wmStandIn); mat._wmTexNode=mat.colorNode; try{ mat.lightsNode=_lcNode(); }catch(e){} best.userData._wmMat=mat; best.userData._wmPrev=best.material; }
+      if(!mat){ mat=new THREE.MeshStandardNodeMaterial({roughness:0.92,metalness:0.02}); mat.userData._lodOp=1; _wmCarry(best.material,mat); mat.colorNode=_wmColorNode(_wmStandIn); mat._wmTexNode=mat.colorNode; try{ mat.lightsNode=_lcNode(); }catch(e){} best.userData._wmMat=mat; best.userData._wmPrev=best.material; }
       if(best.material!==mat){ back.push([best,best.material]); best.material=mat; }
     }catch(e){}
   }
@@ -19370,6 +19408,28 @@ function _wmKickHome(){
   try{ for(const b of (celestialBodies||[])){ if(!b||b.name!=='Earth'||b._wmReq||!b.mesh) continue; b._wmReq=true;
     worldMapFor(b,m=>{ b._wm=m; _applyWorldMapToFlightBody(b,m); }); } }catch(e){ console.warn('[worldmap] home',e); }
 }
+// (t1516, live/local divergence) LIVE (real WebGPU) ONLY: the world map used to be put on a planet as a BRAND-NEW plain material.  On WebGL (the dev harness, local
+// WebGL serves) a planet is a canvas-textured sphere, so nothing was lost.  On real WebGPU the near world is the per-brick cluster LOD mesh (_svLodPlanetMesh,
+// 'nanite'-style bricks) and its material carries (1) the per-brick fade (opacityNode = fadeNode[slot]: a replaced brick dithers out, a new one dithers in, a
+// dead slot draws NOTHING until it is cleared) whose alphaHash the stream toggles on ctl.mat, and (2) the layered-rock relief + roughness (DMRock.applyPlanet:
+// the PBR / bump detail of Mars and every rocky world).  The plain map material dropped both: every LOD change drew the coarse AND fine bricks at full
+// opacity together (stacked / z-fighting shells, held dead slots solid, popping), and the rock relief went flat.  _wmCarry keeps them on the map material
+// (only the map's colour replaces the vertex / rock colour); _wmLodBind points the brick stream's fade switch at the material actually drawn.
+// Pure on its inputs (tools/tests/worldmap-lod-carry.js).
+function _wmCarry(prev,mat){
+  if(!prev||!mat||prev===mat) return 0; let n=0;
+  const u=prev.userData||{}; if(!u._svFade&&!u.dmRock) return 0;   // only the marching-cubes / brick planets; a parallax canvas planet's uv-space normal stays its own
+  if(prev.opacityNode){ mat.opacityNode=prev.opacityNode; n++; }
+  if(prev.normalNode){ mat.normalNode=prev.normalNode; n++; }
+  if(prev.roughnessNode){ mat.roughnessNode=prev.roughnessNode; n++; }
+  if(prev.alphaHash) mat.alphaHash=true;
+  if(prev.userData&&prev.userData.dmRock) mat.userData.dmRock=prev.userData.dmRock;
+  if(n) mat.needsUpdate=true; return n;
+}
+function _wmLodBind(mesh,mat){
+  const c=mesh&&mesh.userData&&mesh.userData.svLod; if(!c||!mat||c.mat===mat) return false;
+  const was=!!(c.mat&&c.mat.alphaHash); c.mat=mat; if(mat.alphaHash!==was){ mat.alphaHash=was; mat.needsUpdate=true; } return true;
+}
 function _applyWorldMapToFlightBody(b,m){
   const W=window;
   if(!m||!m.tex||!b||!b.mesh||typeof W.texture!=='function') return;
@@ -19377,11 +19437,11 @@ function _applyWorldMapToFlightBody(b,m){
   if(!best) return;
   try{
     let mat=best.userData._wmMat;
-    if(!mat){ mat=new THREE.MeshStandardNodeMaterial({roughness:0.92,metalness:0.02}); mat.userData._lodOp=1; best.userData._wmMat=mat; best.userData._wmPrev=best.material; }
+    if(!mat){ mat=new THREE.MeshStandardNodeMaterial({roughness:0.92,metalness:0.02}); mat.userData._lodOp=1; _wmCarry(best.material,mat); best.userData._wmMat=mat; best.userData._wmPrev=best.material; }
     // the texture is swapped on the existing node (no new node graph, no rebuild); a fresh node only the first time
     if(mat._wmTexNode&&mat._wmTexNode.value!==undefined){ mat._wmTexNode.value=m.tex; }
     else { mat.colorNode=_wmColorNode(m.tex); mat._wmTexNode=mat.colorNode; mat.needsUpdate=true; }
-    best.material=mat; try{ const n=_lcNode(); if((mat.lightsNode||null)!==n){ mat.lightsNode=n; mat.needsUpdate=true; } }catch(e){}
+    best.material=mat; _wmLodBind(best,mat); try{ const n=_lcNode(); if((mat.lightsNode||null)!==n){ mat.lightsNode=n; mat.needsUpdate=true; } }catch(e){}
   }catch(e){ console.warn('[worldmap] could not dress',b.name,e); }
 }
 // ── Whole-planet map (DART Engine) ───────────────────────────────────
@@ -19604,6 +19664,7 @@ window.PW=PW;
 const PWS_OPEN=9, PWS_CLOSE=11, PWS_DOWN=2600, PWS_UP=2750;   // planet radii out (open/close the world); heights where the board moves between the space and ground frames (same flight)
 // Build the world round `focus` (local x/z): light, ground, sky, air, board — on the flight renderer.
 function _pwBuild(body,site,mode,focus){
+  try{ if(window.dmPerfLog&&dmPerfLog.abortCensus) dmPerfLog.abortCensus('pw:build'); }catch(e){}   // (v339) a sliced memory scan of the previous world lets go of it
   const gen=++PW.gen;
   PW.active=true; PW.mode=null; PW.body=body; PW.site=site||null;
   _surfBody=_atmoBody=body; _surfSite=_atmoSite=site||null;
@@ -19694,21 +19755,24 @@ async function _compileStaged(scene,cam,o){
     if(n>=14){ groups.push({k:[c],n,name:c.name||c.type}); cur=null; continue; }
     if(!cur||cur.n>=10||cur.k.length>=8){ cur={k:[],n:0,name:'misc'}; groups.push(cur); } cur.k.push(c); cur.n+=n; }
   const total=groups.length; let prev=null;
+  // (v338) abandon: the caller's step cap gave up on this compile.  Stop starting groups, stop waiting (the in-flight group finishes on the GPU in the background).
+  let _abRes=null; const abortP=new Promise(res=>{ _abRes=res; }); rec.abandoned=false; rec.abandon=()=>{ if(rec.abandoned) return; rec.abandoned=true; rec.abandonedAt=Math.round(performance.now()-t00); _abRes(); };
   try{
   for(let gi=0;gi<total;gi++){
-    if(!alive()) break;   // (loader fix) was `return`: the loader line ('Preparing the world 4/4') was never closed when the world closed mid-compile and stayed on screen in orbit
+    if(!alive()||rec.abandoned) break;   // (loader fix) was `return`: the loader line ('Preparing the world 4/4') was never closed when the world closed mid-compile and stayed on screen in orbit
     if(performance.now()-t00>CAP){ rec.capped=true; break; }
     const g=groups[gi], keep=new Set(g.k), hid=[];
     try{ if(o.label) dmSys.load(o.label,(o.text||'Preparing')+' '+(gi+1)+'/'+total); if(o.onGroup) o.onGroup(gi,total); }catch(e){}
     for(const c of kids){ if(!keep.has(c)){ c.visible=false; hid.push(c); } }
+    try{ if(o.onCompile) o.onCompile(g.k); }catch(e){}   // (v338) e.g. the GalSky objects this group compiles, so the galaxy step does not compile them again
     const t=performance.now(); let p=null;
     try{ p=r.compileAsync(scene,cam); } catch(e){ p=null; } finally{ for(const c of hid) c.visible=true; }   // the projection is synchronous: visibility is back before anything else runs
     prev=p?Promise.resolve(p).catch(()=>{}):null;
-    try{ if(prev) await Promise.race([prev,new Promise(res=>setTimeout(res,STEP))]); }catch(e){}
+    try{ if(prev) await Promise.race([prev,abortP,new Promise(res=>setTimeout(res,STEP))]); }catch(e){}
     rec.groups.push([g.name,g.n,Math.round(performance.now()-t)]);
     await new Promise(res=>setTimeout(res,0));   // let the page breathe (progress text, input) between groups
   }
-  if(prev&&alive()){ try{ await Promise.race([prev,new Promise(res=>setTimeout(res,STEP))]); }catch(e){} }
+  if(prev&&alive()&&!rec.abandoned){ try{ await Promise.race([prev,abortP,new Promise(res=>setTimeout(res,STEP))]); }catch(e){} }
   }finally{
     try{ if(o.label) dmSys.done(o.label); }catch(e){}
     rec.ms=Math.round(performance.now()-t00);
@@ -19909,6 +19973,10 @@ function _taPrebakeEarth(){
 try{ window.addEventListener('dm:earth-ready',()=>setTimeout(_taPrebakeEarth,0)); setTimeout(_taPrebakeEarth,3000); }catch(e){}
 function _taMaxSteps(){ return (typeof GFX!=='undefined'&&GFX.isMobile)?20:0; }   // mobile: cap the volumetric ray steps (jitter + temporal blend carry the rest)
 function _taQ(){ return (typeof GFX!=='undefined'&&GFX.preset)||'medium'; }
+// (v334 Cosmos) how many real stars the ray-marched air scatters per step (the pass keys carry it, warm-up and frame alike). The Low preset and weak
+// phones (DMLod.tier 'low') and legacy devices (navigator.deviceMemory <= 3 GB) march the KEY star only (the others still show as the sky dome's analytic discs); else every star of the system, up to 3.
+function _taStarNFor(count,preset,tier,mem){ const n=Math.max(1,Math.min(3,count|0)); return (preset==='low'||tier==='low'||(mem>0&&mem<=3))?1:n; }
+function _taStarN(){ let tier=null,mem=0; try{ tier=window.DMLod?DMLod.tier:null; mem=+(navigator.deviceMemory||0); }catch(e){} return _taStarNFor(window.DMStars?DMStars.count:1,_taQ(),tier,mem); }
 // (v314) space passes keep the most recently used OTHER world's pass too (desktop; phones keep one): swinging between two planets used to dispose and
 // rebuild a pass (node graph, targets, shader) every time the nearest one changed
 function _taPrune(prefix,keep){
@@ -20015,14 +20083,18 @@ function _trueAtmoRender(r,scene,cam){
           if(!F.intersectsSphere(S)) return false;
         } } }
     const ud=best.mesh.userData, E=window.DMEarth;
-    const key='sp|'+best.mesh.uuid+'|'+_taQ()+'|'+(E&&E.ready?1:0);
+    const nSt=_taStarN();
+    const key='sp|'+best.mesh.uuid+'|'+_taQ()+'|'+(E&&E.ready?1:0)+(nSt>1?'|'+nSt:'');
     let A=_TA.pipes.get(key);
-    if(!A){ _taPrune('sp|',key); A=DMAtmo.create(THREE,THREE.TSL,{renderer:r,scene,camera:cam,planet:_taParamsFor(ud),quality:_taQ(),maxSteps:_taMaxSteps(),logarithmicDepth:!!r.logarithmicDepthBuffer,halfRes:_taHalf()}); _TA.pipes.set(key,A); }
+    if(!A){ _taPrune('sp|',key); A=DMAtmo.create(THREE,THREE.TSL,{renderer:r,scene,camera:cam,planet:_taParamsFor(ud),quality:_taQ(),maxSteps:_taMaxSteps(),logarithmicDepth:!!r.logarithmicDepthBuffer,halfRes:_taHalf(),stars:nSt}); _TA.pipes.set(key,A); }
     A._used=performance.now();
     if(_pre) return false;   // built while the planet is near the view; not drawn through until it is on screen
     best.mesh.getWorldPosition(c); A.setCenter(c);
     best.mesh.getWorldQuaternion(q); A.setRotation(q);
     if(best.sunDirU&&best.sunDirU.value) A.setSun(best.sunDirU.value);
+    if(nSt>1&&A.setStars){   // (v334) a binary lights the planet from both of its real stars (directions from this planet's centre)
+      const sd=_TA._sd||(_TA._sd=[new THREE.Vector3(),new THREE.Vector3(),new THREE.Vector3()]), sw=_TA._sw||(_TA._sw=new Float64Array(3));
+      A.setStars(DMStars,sd,sw,DMStars.fromPoint(c,sd,sw)); }
     A.setWeights(1,1);
     const m=best.mesh, was=m.visible; m.visible=false;
     try{ _taRun(A,r,cam); } finally { m.visible=was; }
@@ -20040,10 +20112,11 @@ async function _taWarm(r,scene,cam){
   for(let i=0;i<_jotsFogAtmoRegistry.length;i++){ const e=_jotsFogAtmoRegistry[i]; if(!e||!e.mesh||!e.mesh.parent||!e.mesh.userData.planetR) continue;
     e.mesh.getWorldPosition(c); const d=c.distanceTo(cam.position)/e.mesh.userData.planetR; if(d<bd){ bd=d; best=e; } }
   if(!best) return;
-  const ud=best.mesh.userData, E=window.DMEarth, key='sp|'+best.mesh.uuid+'|'+_taQ()+'|'+(E&&E.ready?1:0);
+  const nSt=_taStarN();   // (v334) the same key + star count as the frame's pass
+  const ud=best.mesh.userData, E=window.DMEarth, key='sp|'+best.mesh.uuid+'|'+_taQ()+'|'+(E&&E.ready?1:0)+(nSt>1?'|'+nSt:'');
   try{
     let A=_TA.pipes.get(key);
-    if(!A){ _taPrune('sp|',key); A=DMAtmo.create(THREE,THREE.TSL,{renderer:r,scene,camera:cam,planet:_taParamsFor(ud),quality:_taQ(),maxSteps:_taMaxSteps(),logarithmicDepth:!!r.logarithmicDepthBuffer,halfRes:_taHalf()}); _TA.pipes.set(key,A); }
+    if(!A){ _taPrune('sp|',key); A=DMAtmo.create(THREE,THREE.TSL,{renderer:r,scene,camera:cam,planet:_taParamsFor(ud),quality:_taQ(),maxSteps:_taMaxSteps(),logarithmicDepth:!!r.logarithmicDepthBuffer,halfRes:_taHalf(),stars:nSt}); _TA.pipes.set(key,A); }
     best.mesh.getWorldPosition(c); A.setCenter(c);
     if(A.renderAsync) await A.renderAsync(0,cam); else _taRun(A,r,cam);
     _TA.t=0;   // the warm-up frame is not a slow frame for the Auto perf watch
@@ -20055,7 +20128,8 @@ function _trueAtmoSurface0(r,scene,cam,layered){
   if(_TA.failed||!_trueAtmoOn()||_taPerfOff()||!PW.pal||!PW.pal.atmos||!PW.atmo) return false;
   try{
     const R=_planetR(), mars=!!(PW.body&&/mars/i.test(PW.body.name||''));
-    const key='sf|'+(layered?1:0)+'|'+_taQ()+'|'+PW.gen;
+    const nSt=_taStarN();
+    const key='sf|'+(layered?1:0)+'|'+_taQ()+'|'+PW.gen+'|'+nSt;
     let A=_TA.pipes.get(key);
     if(!A){
       _taPrune('sf|',key);
@@ -20066,12 +20140,13 @@ function _trueAtmoSurface0(r,scene,cam,layered){
       if(P.weather) Object.assign(P.weather,{alt:mars?250:1100,width:mars?300:260});
       P.layers=(P.layers||[]).map(l=>Object.assign({},l,{alt:mars?250:1700,width:mars?350:250}));
       A=DMAtmo.create(THREE,THREE.TSL,{renderer:r,scene,camera:cam,planet:P,quality:_taQ(),maxSteps:_taMaxSteps(),logarithmicDepth:!!r.logarithmicDepthBuffer,
-        skyScene:layered?flightScene:null,skyCamera:layered?flightCamera:null,localRes:128,halfRes:_taHalf()});
+        skyScene:layered?flightScene:null,skyCamera:layered?flightCamera:null,localRes:128,halfRes:_taHalf(),stars:nSt});
       _TA.pipes.set(key,A); _TA.loc.gen=-1;
     }
     const c=_TA._c||(_TA._c=new THREE.Vector3());
     _pwfCentre(c); A.setCenter(c); if(A.setAniso) A.setAniso(1/_pwfAnisoG());   // (v332) the air follows the E-W-stretched ground, not the bare sphere
     const sky=TERRAIN.sky; if(sky&&sky.sunDir) A.setSun(sky.sunDir);
+    { const S=_pwStarsLive(); if(S&&A.setStars) A.setStars(S); }   // (v334) every real star scatters through the air (key star first)
     // near LOD of the real ground (the world's own height field) round the focus; rebaked as it travels
     const L=_TA.loc, now=performance.now(), span=4096, H=TERRAIN.Hg||TERRAIN.H;
     // (v256) the first bake of a world is whole (behind the loader); every later re-bake is sliced over frames (ui/dm-atmo.js setLocalHeightSliced, 3.5 ms a frame on a phone)
@@ -20178,7 +20253,7 @@ function _pwWorldTick(dt){
   if(!space){ try{ const _f=_fac(); if(_f) _f.tick(dt,f,mode); }catch(e){ _animLoopWarn('fac',e); } }   // cliff facilities, ocean cities, Ariel's mansion
   // ── the planet frame at the focus; the camera into it
   if(space){
-    _pwfSet(px,pz,PW.sp.camAlt||f.y,PW.site); _pwsSync(PW.body,PW.site);
+    _pwfSet(px,pz,PW.sp.camAlt||f.y,PW.site); _pwsSync(PW.body,PW.site); _pwStarsTick(dt);
     // the board (and her on it) where the space board is
     _pwsToDrawn(boardFlight.position,PW.board.position); _pwsQToDrawn(boardFlight.quaternion,PW.board.quaternion);
     _pwsToDrawn(flightCamera.position,cam.position); _pwsQToDrawn(flightCamera.quaternion,cam.quaternion);
@@ -20186,7 +20261,7 @@ function _pwWorldTick(dt){
     if(Math.abs(cam.fov-flightCamera.fov)>1e-3){ cam.fov=flightCamera.fov; cam.updateProjectionMatrix(); }
   } else {
     const calt0=Math.max(1,cam.position.y-Math.max(0,H(cam.position.x,cam.position.z)));
-    _pwfSet(px,pz,cam.position.y,PW.site); _pwsSync(PW.body,PW.site);
+    _pwfSet(px,pz,cam.position.y,PW.site); _pwsSync(PW.body,PW.site); _pwStarsTick(dt);
     // flat camera → drawn (kept on the focus, which the frame leaves where it is)
     PW._camFlat={p:cam.position.clone(),q:cam.quaternion.clone()};
     if(PWF.on){
@@ -20245,8 +20320,8 @@ function _pwWorldTick(dt){
   if(Math.abs(cam.far-farClip)>farClip*0.05||Math.abs(cam.near-nearClip)>nearClip*0.05){ cam.far=farClip; cam.near=nearClip; cam.updateProjectionMatrix(); }
   _pwSeaFollow(px,pz,Math.min(groundR,16384));
   try{ if(window.DMWater&&DMWater.active) DMWater.tick(dt,{camera:cam,scene,x:px,z:pz,y:f.y,H,Hw:TERRAIN.Hw||null,mode:PW.mode}); }catch(e){ if(!window._dmwWarn){ window._dmwWarn=1; console.warn('[water] tick',e); } }
-  try{ if(window.DMLight&&DMLight.on) DMLight.tick(dt,{x:px,y:f.y,z:pz,H,sunDir:TERRAIN.sky?TERRAIN.sky.sunDir:null,day:TERRAIN.sky?TERRAIN.sky.day:1,scene,renderer:flightRenderer,walk:mode!=='space'}); }catch(e){ if(!window._dmlWarn){ window._dmlWarn=1; console.warn('[light] tick',e); } }   // (ui/dm-light.js) time-sliced probe + height-cache update, amortised <= ~1-2 ms
-  try{ if(window.DMVLight&&DMVLight.on) DMVLight.tick(dt,{camera:cam,scene,sunDir:TERRAIN.sky?TERRAIN.sky.sunDir:null,day:TERRAIN.sky?TERRAIN.sky.day:1,groundY:gH,walk:mode!=='space'}); }catch(e){ if(!window._dmvlWarn){ window._dmvlWarn=1; console.warn('[vlight] tick',e); } }   // (ui/dm-vlight.js) light list -> fog in-scatter uniforms
+  try{ if(window.DMLight&&DMLight.on) DMLight.tick(dt,{x:px,y:f.y,z:pz,H,sunDir:_pwKeyDir(),day:TERRAIN.sky?TERRAIN.sky.day:1,scene,renderer:flightRenderer,walk:mode!=='space'}); }catch(e){ if(!window._dmlWarn){ window._dmlWarn=1; console.warn('[light] tick',e); } }   // (ui/dm-light.js) time-sliced probe + height-cache update, amortised <= ~1-2 ms
+  try{ if(window.DMVLight&&DMVLight.on) DMVLight.tick(dt,{camera:cam,scene,sunDir:_pwKeyDir(),day:TERRAIN.sky?TERRAIN.sky.day:1,groundY:gH,walk:mode!=='space'}); }catch(e){ if(!window._dmvlWarn){ window._dmvlWarn=1; console.warn('[vlight] tick',e); } }   // (ui/dm-vlight.js) light list -> fog in-scatter uniforms
   _pwPropsTick(px,pz,space?1e9:(fly?agl:0));
   if((PW._lqF=(PW._lqF||0)+1)%6===3) _lodQTick();   // (fov-fill 2) the quality fade chain's distances -> uniforms, a few times a second (no allocation)
   try{ if(window.DMPlaces) DMPlaces.tick(dt,_plEnv()); if(window.DMCreatures) DMCreatures.tick(dt,_plEnv()); }catch(e){ if(!window._plWarn){ window._plWarn=1; console.warn('[places]',e); } }
@@ -20274,7 +20349,7 @@ function _pwWorldTick(dt){
   }
   // the living sky: time of day here, stars, comets, meteors (ui/dm-sky.js) — fading to open space with height
   const sky=TERRAIN.sky, ll=_skyLatLon(PW.site,px,pz);
-  if(sky){ try{ _natSurfaceTick(sky,cam); }catch(e){} if(sky.setFade) sky.setFade(dome); sky.update(cam,dt,ll.lat,ll.lon); if(mode==='walk') _localClock('surface-grav',null,ll.lon); }
+  if(sky){ try{ _natSurfaceTick(sky,cam); }catch(e){} if(sky.setFade) sky.setFade(dome); sky.update(cam,dt,ll.lat,ll.lon,_pwStarsLive()); if(mode==='walk') _localClock('surface-grav',null,ll.lon); }
   else if(scene.userData.skyDome) scene.userData.skyDome.position.copy(c);
   PW._atmoK=(1-dome)*(PWF.reveal);
   if(PW.atmo) PW.atmo.update(PW._atmoK,sky?sky.sunDir:null);
@@ -20299,7 +20374,7 @@ function _pwWorldTick(dt){
   const sun=TERRAIN.sun;
   if(sun){
     // (shadow 2) the shadow direction follows the sun down to ~3 deg and a little below (clamped to 3.4 deg): it used to switch to a fixed high fallback light once the sun was under ~3 deg, i.e. through all of dusk her shadow pointed the wrong way / was short and faint
-    let d=sky?sky.sunDir:null, up=null; const fy=f.y||0;
+    let d=_pwKeyDir(), up=null; const fy=f.y||0;   // (v334) the key star: the same direction as the sky, the air and DMLight
     if(d&&d.y>-0.08){ if(d.y>0.05) up=d; else { const sv=TERRAIN._shDir||(TERRAIN._shDir=new THREE.Vector3()); const hl=Math.hypot(d.x,d.z)||1, k=Math.sqrt(1-0.06*0.06)/hl; sv.set(d.x*k,0.06,d.z*k); up=sv; } }
     if(!(up&&window.DMPolish&&sun.castShadow&&DMPolish.fitSun(sun,up,px,fy,pz,mode==='walk'))){   // texel-snapped, tightened on foot (ui/dm-polish.js)
       if(up) sun.position.set(px+up.x*160,fy+up.y*160,pz+up.z*160); else sun.position.set(px+80,fy+120,pz+40);
@@ -20573,6 +20648,7 @@ function _pwClose(opts){
   _crM('pw:close:fac');
   try{ const _f=_fac(); if(_f&&_f.close) _f.close(); }catch(e){ console.warn('[pw] fac close',e); }   // (stability) the mansion's interior + its queued texture steps go BEFORE the scene is freed
   _crM('pw:close:dispose');
+  try{ if(window.dmPerfLog&&dmPerfLog.abortCensus) dmPerfLog.abortCensus('pw:close'); }catch(e){}   // (v339) the in-progress sliced memory scan drops the closing world before it is disposed (no stale scene kept alive)
   try{ if(window.DMWater) DMWater.end(); }catch(e){}   // wave tiles / shore field / uniforms go before the scene
   try{ if(scene) disposeObject3D(scene); }catch(e){}
   try{ if(window.DMCrumb){ ['mc#','tess#','chunk#'].forEach(k=>DMCrumb.gpuClear(k)); DMCrumb.live('chunks',0); DMCrumb.live('mcPatches',0); } }catch(e){}
@@ -25720,6 +25796,36 @@ SkyGround.prototype._radialFade=function(){
     const keep=W.interleavedGradientNoise(W.screenCoordinate.xy).lessThan(k);
     m.maskNode=m.maskNode?m.maskNode.and(keep):keep;
   }catch(e){ this._fadeU=null; console.warn('[sky ground] radial fade',e&&e.message); }
+  this._hazeInit();
+};
+// (t1516) RADIAL LOD BLEND TO THE HORIZON.  The dissolve above alone left a CIRCLE of fully lit, textured, shadowed ground whose last 18 % dithered
+// straight onto the sky: from the board (where the haze is thin, _skyFillFog w -> 0) that read as a hard-edged disc of terrain.  Now, before any pixel
+// dissolves, the FINAL lit colour of the ground (albedo, ground-library textures, sun + DMLight lighting, terrain / sun-map shadows and the scene fog:
+// three's `output`, i.e. everything) is blended into the horizon haze colour by its true distance from the camera, so texture, lighting and shadow all
+// fade together and the dissolving pixels are already the colour of the sky behind them: no ring, no tile squares (pure distance, no tile / axis term).
+// Band radii by Justin Craig Venable's Radical Circumference / ArcEdge rule (https://dartedge.com/radicaledge, ui/dm-radical-circ.js), scoped to this LOD
+// radius only: the drawn radius R is the outer edge, the rim is measured centre-to-centre, inner edge = R less one eighth of the diameter (0.75 R),
+// rim centre 0.875 R.  The blend runs inner edge -> rim centre (smoothstep), so it is complete inside the dissolve's own band (0.82 R -> R).
+// Worlds without haze (no fog: airless) keep the dissolve only (weight 0): there R is the geometric horizon.  Uniform values only (no recompile,
+// no allocation per frame: _hazeTick writes into the uniforms' own Color / Vector2).  Pure mirror: _skyHazeW (tools/tests/radial-lod-blend.js).
+const _SKY_HAZE_RIM={outer:0,inner:0,centre:0};
+function _skyHazeBand(R,out){ const RC=window.DMRadCirc, o=out||{outer:0,inner:0,centre:0}; if(RC&&RC.rim) return RC.rim(R,o); o.outer=R; o.inner=R-R*0.25; o.centre=(o.inner+R)*0.5; return o; }
+function _skyHazeW(d,inner,centre){ if(d<=inner) return 0; if(d>=centre) return 1; const t=(d-inner)/Math.max(1e-6,centre-inner); return t*t*(3-2*t); }
+SkyGround.prototype._hazeInit=function(){
+  const W=window, m=this.mat; this._hazeU=null;
+  if(!m||!this._fadeU||typeof W.uniform!=='function'||!W.output||!W.mix||!W.vec4||/[?&]skyhaze=0\b/.test(location.search)) return;   // ?skyhaze=0: dissolve only (A/B)
+  try{
+    const b=_skyHazeBand(this.viewR,_SKY_HAZE_RIM);
+    const U=this._hazeU={c:W.uniform(new THREE.Color(this.pal&&this.pal.fog!=null?this.pal.fog:0x8899aa)),r:W.uniform(new THREE.Vector2(b.inner,b.centre)),on:W.uniform(0)};
+    const w=W.smoothstep(U.r.x,U.r.y,W.length(W.positionView)).mul(U.on);
+    m.outputNode=W.vec4(W.mix(W.output.rgb,U.c,w),W.output.a);
+  }catch(e){ this._hazeU=null; console.warn('[sky ground] horizon haze',e&&e.message); }
+};
+SkyGround.prototype._hazeTick=function(){
+  const U=this._hazeU; if(!U) return;
+  const b=_skyHazeBand(this.viewR,_SKY_HAZE_RIM); U.r.value.set(b.inner,b.centre);
+  const sc=this.group.parent, fog=sc&&sc.fog;
+  if(fog&&fog.color){ U.c.value.copy(fog.color); U.on.value=1; } else U.on.value=0;
 };
 // (lod-hide) the far sea has no square.  The sea sheet (ui/dm-water.js clip-map) used to end on its outermost level's square ~2 km out, and past it the
 // finer tiles showed their bare seabed (or the coarse tiles their flat sea paint) along a square edge that followed her round: "square patches out on the
@@ -25861,7 +25967,7 @@ SkyGround.prototype.update=function(cam,budgetMs){
   }
   const st=this.stat; st.built=built; st.focus=nf; st.emerg=em?1:0; st.skipped=skipped; st.left=Q.length-built; st.settle=B>this.budget&&budgetMs==null?1:0;
   if(st.left>0) this._idleKick();   // (v330 streaming) what is left fills in after this frame, outside it
-  if(this._fadeU){ this._fadeU.a.value=this.viewR*_SKY_FADE0; this._fadeU.b.value=this.viewR; }   // (Wave 2a) the circle follows the drawn radius
+  if(this._fadeU){ this._fadeU.a.value=this.viewR*_SKY_FADE0; this._fadeU.b.value=this.viewR; this._hazeTick(); }   // (Wave 2a) the circle follows the drawn radius; (t1516) so does the haze band
   this._seaRimTick();   // (lod-hide) the sea's circular rim follows the sheet
   this.roots.forEach(this._show,this);
   const now=performance.now(), dt=this._lastT?Math.min(0.1,(now-this._lastT)/1000):0; this._lastT=now;
@@ -26061,13 +26167,16 @@ SkyGround.prototype.dispose=function(){ this._dead=true; this.queue.length=0; th
 // units up) and gives the view back to it on the way down: one continuous
 // sky from the ground to space and back. Additive, over everything drawn.
 function _pwAtmoShell(pal,sky){
+  const NSs=_taStarN();   // (v334) stars marched per step: the key only on Low / weak phones (fixed for this world's shell)
   const W=window; if(!pal.atmos||!THREE.MeshBasicNodeMaterial||typeof W.Loop!=='function') return null;
   const R=_planetR(), TOP=2000, HS=350, SIG=4.5e-4, N=10, Ra=R+TOP;
   const sk=window.DMWorldStyle?DMWorldStyle.skyFor((window.DMWorldStyle&&PW.body)?DMWorldStyle.styleFor(PW.body,pal,PW.site):'lush',pal):{top:0x3a6ea5,bottom:0x88bbff};
   // (v332) ax: the drawn ground is stretched east-west by PWF.g near the surface (_pwfMap: 1/cos(lat) below 1500 u, easing to 1 by 6000 u),
   // so it is NOT the sphere round _pwfCentre: at 60 deg latitude it stood ~430 u above that sphere 3 km east or west of her. The air is
   // marched in the same squeezed frame (x / g), so its floor and density follow the ground she sees in every direction.
+  // (v334 Cosmos) st[i]/sw[i]: the system's real stars (ui/dm-stars.js DMStars) - direction and colour x sky weight; one white star = the old shell
   const U={C:W.uniform(new THREE.Vector3()),sun:W.uniform(new THREE.Vector3(0,1,0)),k:W.uniform(0),ax:W.uniform(1),
+    st:[0,1,2].map(()=>W.uniform(new THREE.Vector3(0,1,0))),sw:[0,1,2].map((i)=>W.uniform(new THREE.Vector3(i?0:1,i?0:1,i?0:1))),
     col:W.uniform(new THREE.Color(sk.bottom!=null?sk.bottom:0x88bbff).lerp(new THREE.Color(sk.top!=null?sk.top:0x3a6ea5),0.35)),
     warm:W.uniform(new THREE.Color(0xff9a5a))};
   const {Fn,float,vec3,vec4,normalize,dot,sqrt,max,min,exp,smoothstep,mix,pow,Loop,cameraPosition,positionWorld,cameraViewMatrix,cameraNear,cameraFar,viewportDepthTexture,screenUV}=W;
@@ -26091,16 +26200,20 @@ function _pwAtmoShell(pal,sky){
       const up=ro.add(rd.mul(t0.add(dt.mul(float(i).add(0.5))))), r=up.length();
       const rho=exp(r.sub(R).max(0.0).div(-HS));
       tau.addAssign(rho.mul(dtW));
-      const mu=dot(up.div(r),U.sun);
-      const lit=smoothstep(-0.12,0.18,mu), dusk=smoothstep(0.35,0.0,mu).mul(lit);
-      acc.addAssign(mix(U.col,U.warm,dusk.mul(0.7)).mul(rho.mul(lit).mul(dtW).mul(exp(tau.mul(-SIG)))));
+      const nU=up.div(r), wt=rho.mul(dtW).mul(exp(tau.mul(-SIG)));
+      for(let k=0;k<NSs;k++){   // each real star lights the air along this ray (its colour x weight; unused slots weigh 0)
+        const mu=dot(nU,U.st[k]);
+        const lit=smoothstep(-0.12,0.18,mu), dusk=smoothstep(0.35,0.0,mu).mul(lit);
+        const ph=dot(rdW,U.st[k]).pow(2.0).mul(0.35).add(0.9);   // Rayleigh phase (3/4(1+mu^2), mean 1): no fake sun glare lobe (v334 removed the pow(.,8) glare)
+        acc.addAssign(mix(U.col,U.warm,dusk.mul(0.7)).mul(U.sw[k]).mul(lit.mul(wt).mul(ph)));
+      }
     });
-    const fwd=pow(max(dot(rdW,U.sun),0.0),8.0).mul(0.6).add(1.0);
-    return acc.mul(SIG*2.2).mul(fwd).mul(U.k);
+    return acc.mul(SIG*2.2).mul(U.k);
   })();
   const m=new THREE.Mesh(new THREE.SphereGeometry(Ra,96,48),mat);
   m.name='JOTS_AtmoShell'; m.frustumCulled=false; m.renderOrder=50; m.userData.noBend=true; m.raycast=()=>{}; m.visible=false;
   // the mesh is only coverage (frustumCulled off, BackSide, no depth test): it is stretched with the ground so its edge is never inside the air
+  const stV=U.st.map(u=>u.value), swV=U.sw.map(u=>u.value);   // (v343) slot uniform values, built once
   return {mesh:m,U,
     update(k,sunDir){
       U.k.value=k; m.visible=k>0.002;
@@ -26108,10 +26221,29 @@ function _pwAtmoShell(pal,sky){
       _pwfCentre(m.position); U.C.value.copy(m.position);
       const g=_pwfAnisoG(); U.ax.value=1/g; m.scale.set(g,1,1);
       if(sunDir) U.sun.value.copy(sunDir).normalize();
+      const S=_pwStarsLive();
+      if(S){ const n=S.airSlots(NSs,stV,swV);   // (v343) key star first, eased with the key light on a swap (DMStars.airSlots), then the others while slots last
+        for(let k=n;k<3;k++) U.sw[k].value.set(0,0,0); }
+      else { U.st[0].value.copy(U.sun.value); U.sw[0].value.set(1,1,1); U.sw[1].value.set(0,0,0); U.sw[2].value.set(0,0,0); }
     }};
 }
 // (v332) the east-west stretch the ground is drawn with right now (_pwfSet: PWF.g; 1 when the planet frame is off)
 function _pwfAnisoG(){ return (PWF.on&&PWF.g>0)?PWF.g:1; }
+// (v334 Cosmos) the system's real stars seen from the world (ui/dm-stars.js).  Once per world tick, after _pwsSync: the star bodies' directions
+// from the board's open-space position, turned into the drawn frame by the SAME rotation the camera and the layered open-space sky use
+// (_pwsQToDrawn = Mi * Qi), so each star's disc in the sky sits exactly on its body in space and the climb out of the air never jumps.
+const _pwStQ={q:null,gen:-1,o:{atmos:true,ext:null,dt:0}};
+function _pwStarsTick(dt){
+  const S=window.DMStars; if(!S||!S.count||!_PWS.ok||!STATE.flight||!STATE.flight.pos){ _pwStQ.gen=-1; return; }
+  const q=_pwStQ.q||(_pwStQ.q=new THREE.Quaternion());
+  q.copy(_PWS.Mi).multiply(_PWS.Qi);
+  const sky=TERRAIN.sky, pal=PW.pal, o=_pwStQ.o; o.dt=dt; o.atmos=!!(pal&&pal.atmos); o.ext=sky&&sky.ext?sky.ext:null;
+  S.update(STATE.flight.pos,q,o);
+  _pwStQ.gen=S.valid?PW.gen:-1;
+}
+function _pwStarsLive(){ const S=window.DMStars; return (S&&S.valid&&_pwStQ.gen===PW.gen&&PW.active)?S:null; }
+// the ONE key-light direction on a world: the key star (DMStars.keyDir), or the analytic sky sun before the stars are known
+function _pwKeyDir(){ const S=_pwStarsLive(); if(S) return S.keyDir; const sky=TERRAIN.sky; return sky?sky.sunDir:null; }
 
 // ── The world's ground (built once per visit, shared by the sky and on foot) ──
 // One level-of-detail quadtree (SkyGround) over the world's height field is
@@ -26637,6 +26769,9 @@ function _terrainDetailMat(opts){
       const crk=W.float(1).sub(W.abs(W.mx_fractal_noise_float(xz.mul(0.55).add(W.vec3(17,0,3)),3,2.0,0.5)));
       const crack=W.smoothstep(W.float(0.95),W.float(0.995),crk);
       let h=crack.mul(TERRAIN.style==='mesa'?-0.12:-0.6), peb=W.float(0);   // Mars: windswept regolith, only faint hairline cracks
+      // (t1516) Mars / mesa worlds: the older Mars look had wind-ripple sand drifted over the regolith; the ripples come back as SHADING detail only (the same
+      // ripple the dune worlds use, a third of its height, along the same wind), so heights, collision, seeds and every visited place are unchanged
+      if(TERRAIN.style==='mesa'){ const mw=W.mx_fractal_noise_float(xz.mul(0.09),2,2.0,0.5).mul(3.0); h=h.add(W.sin(xz.x.mul(0.82).add(xz.z.mul(0.57)).mul(3.1).add(mw)).mul(0.03)); }
       if(lvl>=2){
         const patch=W.smoothstep(W.float(0.42),W.float(0.68),W.mx_fractal_noise_float(xz.mul(0.18).add(W.vec3(41,0,7)),2,2.0,0.5).mul(0.5).add(0.5));
         const f1=W.mx_worley_noise_float(xz.mul(4.8),1.0,0);   // (scale) cell 0.21 u: pebbles about half her shoe (shoe = 0.48 u; 1 u = 0.56 m)

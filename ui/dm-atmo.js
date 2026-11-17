@@ -142,8 +142,13 @@
       locC: uniform(new THREE.Vector3(0, 0, 1)), locOn: uniform(0), // local LOD height map: centre x,z (world) + span
       histK: uniform(0), skyW: uniform(1), aerialW: uniform(1), gasTexel: uniform(new THREE.Vector2(1 / 960, 1 / 540)),  // weights: rays that reach empty sky / that hit geometry
       pixA: uniform(0.001),                                       // (v123) radians per pixel (sea wave-layer footprint)
-      wavePh: [uniform(new THREE.Vector4()), uniform(new THREE.Vector4()), uniform(new THREE.Vector4())]
+      wavePh: [uniform(new THREE.Vector4()), uniform(new THREE.Vector4()), uniform(new THREE.Vector4())],
+      // (v334 Cosmos) the system's real stars (ui/dm-stars.js): direction + colour x sky weight per star, NS of them (fixed at build;
+      // star 0 = the key star = U.sun).  One star with weight (1,1,1) is exactly the old single-sun march.
+      st: [0, 1, 2].map((i) => uniform(new THREE.Vector3(1, 0.3, 0.2).normalize())),
+      sc: [0, 1, 2].map((i) => uniform(new THREE.Vector3(i ? 0 : 1, i ? 0 : 1, i ? 0 : 1)))
     };
+    const NS = Math.max(1, Math.min(3, opt.stars | 0 || 1));
     // (v123) ocean wave layers: wavelength (m) 600 m swell down to 1 m ripples, real deep-water dispersion (w = sqrt(g k)),
     // equal slope per octave (k^-3 sea spectrum); directions spread on the sphere (golden spiral), so no global tiling.
     const MPU = opt.metersPerUnit || (6371000 / Math.max(P.radius, 1e-6));
@@ -272,6 +277,8 @@
       const Rsea = U.R0.add(U.sea), Rtop = U.R0.add(U.top);
       const sun = normalize(U.sun);
       const mu = dot(rdW, sun);
+      const sunK = [], muK = [];
+      for (let k = 0; k < NS; k++) { const d = k ? normalize(U.st[k]) : sun; sunK.push(d); muK.push(k ? dot(rdW, d) : mu); }
       const tEnd = sceneDist.toVar();
 
       // ── ocean body: sea-level equipotential, a collision boundary for gas ──
@@ -365,8 +372,9 @@
         const px = uv.mul(vec2(1920.0, 1080.0));
         const jit = fract(fract(dot(px.add(U.frame.mul(5.588238)), vec2(0.06711056, 0.00583715))).mul(52.9829189));
         const g = U.mieG;
-        const phR = mu.mul(mu).add(1.0).mul(3.0 / (16.0 * Math.PI));
-        const phM = float(1.0).sub(g.mul(g)).div(pow(g.mul(g).add(1.0).sub(g.mul(mu).mul(2.0)), 1.5)).mul(1.0 / (4.0 * Math.PI));
+        // phase per star (each star scatters along its own angle to the ray)
+        const phRK = muK.map((m) => m.mul(m).add(1.0).mul(3.0 / (16.0 * Math.PI)));
+        const phMK = muK.map((m) => float(1.0).sub(g.mul(g)).div(pow(g.mul(g).add(1.0).sub(g.mul(m).mul(2.0)), 1.5)).mul(1.0 / (4.0 * Math.PI)));
         const inv = U.exposureScale; // coefficients are per unit "top"
         Loop(steps, ({ i }) => {
           const t = t0.add(ds.mul(float(i).add(jit)));
@@ -384,7 +392,8 @@
             // (v103) accumulated in vars so the cloud/weather/layer terms can be skipped where their altitude band is
             // nil (gaussian < 1e-4: below what 8-bit output can show) — no 3-D texture reads for most samples
             const ext = U.betaR.mul(rhoR).add(vec3(U.mie).mul(rhoM).mul(n.mul(1.2).add(0.4))).toVar();
-            const scat = U.betaR.mul(rhoR).mul(phR).add(vec3(U.mie).mul(rhoM).mul(phM).mul(n.mul(1.2).add(0.4))).toVar();
+            // (v334) scattering split by phase: scat(star k) = sR * phR_k + sM * phM_k + sI  (one star: the old sum exactly)
+            const sR = U.betaR.mul(rhoR).toVar(), sM = vec3(U.mie).mul(rhoM).mul(n.mul(1.2).add(0.4)).toVar(), sI = vec3(0.0).toVar();
             // clouds / coloured gas layers: gaussian in altitude × noise, thickness = extinction coefficient
             const C = P.cloud;
             if (C) {
@@ -393,7 +402,7 @@
               If(band.greaterThan(1e-4), () => {
                 const cd = smoothstep(float(1.0 - C.amount * 0.6), float(1.0 - C.amount * 0.6 + 0.25), nc).mul(band).mul(fadeTop);
                 ext.addAssign(vec3(C.ext).mul(cd));
-                scat.addAssign(vec3(C.ext * 0.9).mul(cd).mul(phM.mul(0.5).add(0.06)));
+                const ec = vec3(C.ext * 0.9).mul(cd); sM.addAssign(ec.mul(0.5)); sI.addAssign(ec.mul(0.06));
               });
             }
             const Wx = P.weather;
@@ -407,7 +416,7 @@
               const wd2 = mask.mul(band).mul(gasNoiseW(wd0, hSea, 4.0).mul(1.5).add(0.25)).mul(fadeTop);
               const e3 = vec3(Wx.ext).mul(wd2);
               ext.addAssign(e3);
-              scat.addAssign(e3.mul(vec3(...Wx.albedo)).mul(phM.mul(0.4).add(0.05)));
+              const ew = e3.mul(vec3(...Wx.albedo)); sM.addAssign(ew.mul(0.4)); sI.addAssign(ew.mul(0.05));
               });
             }
             for (const Ly of (P.layers || [])) {
@@ -424,18 +433,25 @@
               const e3 = (Array.isArray(Ly.ext) ? vec3(...Ly.ext) : vec3(Ly.ext)).mul(m).mul(8.0);
               const alb = Array.isArray(Ly.albedo) ? vec3(...Ly.albedo) : vec3(Ly.albedo);
               ext.addAssign(e3);
-              scat.addAssign(e3.mul(alb).mul(phM.mul(0.3).add(1.0 / (4 * Math.PI))));
+              const el = e3.mul(alb); sM.addAssign(el.mul(0.3)); sI.addAssign(el.mul(1.0 / (4 * Math.PI)));
               });
             }
             // sun visibility: planet shadow + airmass-scaled extinction toward the sun (no secondary march)
-            const muS = dot(up, sun);
+            // sun visibility per star: planet shadow + airmass-scaled extinction toward it (no secondary march)
             const muH = sqrt(max(float(1.0).sub(Rsea.mul(Rsea).div(r.mul(r))), 0.0)).negate();
-            const vis = smoothstep(muH.sub(0.015), muH.add(0.02), muS);
-            const am = float(1.0).div(max(muS.sub(muH), 0.0).add(sqrt(U.H.div(r)).mul(0.45)));
-            const sunT = exp(ext.mul(inv).mul(U.H).mul(am).mul(1.6).negate()).mul(vis);
+            const amK = sqrt(U.H.div(r)).mul(0.45), tauS = ext.mul(inv).mul(U.H).mul(1.6);
+            const lit = vec3(0.0).toVar();
+            for (let k = 0; k < NS; k++) {
+              const muS = dot(up, sunK[k]);
+              const vis = smoothstep(muH.sub(0.015), muH.add(0.02), muS);
+              const am = float(1.0).div(max(muS.sub(muH), 0.0).add(amK));
+              const sunT = exp(tauS.mul(am).negate()).mul(vis);
+              const sc = sR.mul(phRK[k]).add(sM.mul(phMK[k])).add(sI);
+              lit.addAssign(sc.mul(sunT).mul(U.sc[k]));
+            }
             const e = ext.mul(inv), sd = e.mul(ds.div(Ls));
             const a = exp(sd.negate());
-            Ltot.addAssign(Tr.mul(scat.mul(inv)).mul(sunT).mul(vec3(1.0).sub(a)).div(max(e, vec3(1e-6))));
+            Ltot.addAssign(Tr.mul(lit.mul(inv)).mul(vec3(1.0).sub(a)).div(max(e, vec3(1e-6))));
             Tr.mulAssign(a);
           });
           // (v103) opaque already: nothing further along the ray can show (< 1/1024 of it gets through)
@@ -516,9 +532,28 @@
       try { const de = renderer.domElement; if (de) U.gasTexel.value.set(2 / Math.max(de.width, 2), 2 / Math.max(de.height, 2)); } catch (e) {}
       if (hasSea) updateWaves();
     }
+    const stV = U.st.map((u) => u.value), scV = U.sc.map((u) => u.value);   // (v343) the slot uniforms' values (built once)
     return {
       uniforms: U, params: P, isWebGPU, usesCompute: !!computeNode, steps,
-      setSun(v) { U.sun.value.copy(v).normalize(); },
+      stars: NS,
+      setSun(v) { U.sun.value.copy(v).normalize(); U.st[0].value.copy(U.sun.value); },
+      // (v334) the system's stars (ui/dm-stars.js DMStars, or anything with the same fields): key star first, then the others in source
+      // order, each scattered with its colour x sky weight.  dirs in this pass's frame: S.dir (the surface world's drawn frame) by default,
+      // or `dirs` + `ws` + `key` (an orbit pass: DMStars.fromPoint(planet centre, dirs, ws) returns the key).  No allocation.
+      setStars(S, dirs, ws, key) {
+        if (!S || !(S.count > 0)) return;
+        if (!dirs && S.airSlots) {   // (v343) the world's stars: slots eased with the key light (DMStars.airSlots), written straight into the uniforms
+          const n = S.airSlots(NS, stV, scV); U.sun.value.copy(stV[0]);
+          for (let j = n; j < NS; j++) U.sc[j].value.set(0, 0, 0);
+          return;
+        }
+        const D = dirs || S.dir, Wt = ws || S.w, K = key == null ? S.keyIdx : key; let j = 1;
+        U.sun.value.copy(D[K]).normalize(); U.st[0].value.copy(U.sun.value);
+        const ck = S.col[K], wk = Wt[K]; U.sc[0].value.set(ck.r * wk, ck.g * wk, ck.b * wk);
+        for (let i = 0; i < S.count && j < NS; i++) { if (i === K) continue;
+          const c = S.col[i], w = Wt[i]; U.st[j].value.copy(D[i]).normalize(); U.sc[j].value.set(c.r * w, c.g * w, c.b * w); j++; }
+        for (; j < NS; j++) U.sc[j].value.set(0, 0, 0);
+      },
       setCenter(v) { U.center.value.copy(v); },
       setAniso(ax) { U.ax.value = ax > 0 ? ax : 1; },   // (v332) 1 / east-west ground stretch (planet surface frame)
       setWeights(sky, aerial) { U.skyW.value = sky; U.aerialW.value = aerial == null ? 1 : aerial; },
@@ -560,5 +595,5 @@
     };
   }
 
-  root.DMAtmo = { create, prebakeHeight, presetEarth, presetDesert, presetGasGiant, STEPS, version: 'v103' };
+  root.DMAtmo = { create, prebakeHeight, presetEarth, presetDesert, presetGasGiant, STEPS, version: 'v334' };
 })(typeof window !== 'undefined' ? window : globalThis);
