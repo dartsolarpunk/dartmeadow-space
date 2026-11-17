@@ -5002,6 +5002,9 @@ function _presetGovTick(){
     const B=window.DMBudget; if(!B||!B.on||typeof B.emaMs!=='function') return;
     const sc=(typeof STATE!=='undefined'&&STATE&&STATE.screen)||'';
     if(document.hidden||window._dmWarming||window.__JOTS_INTRO||(sc!=='flight'&&sc!=='atmo'&&sc!=='surface')){ _PG.over=0; return; }
+    // (v339, Watcher #261 review) the preset steps down only once the budget ladder (ui/dm-budget.js, ~28 shed steps) is EXHAUSTED: before that the ladder is still
+    // shedding cheaper stages and a preset drop on top was a double drop (seen at ladder step 7 of 28).  The 12 s miss window counts exhausted time only (reset otherwise).
+    if(typeof B.isExhausted!=='function'||!B.isExhausted()){ _PG.over=0; return; }
     const ema=B.emaMs(), bud=B.budgetMs();
     if(!(ema>bud*1.08)){ _PG.over=0; return; }
     if(++_PG.over<_PG_MISS_TICKS) return;
@@ -19604,6 +19607,7 @@ window.PW=PW;
 const PWS_OPEN=9, PWS_CLOSE=11, PWS_DOWN=2600, PWS_UP=2750;   // planet radii out (open/close the world); heights where the board moves between the space and ground frames (same flight)
 // Build the world round `focus` (local x/z): light, ground, sky, air, board — on the flight renderer.
 function _pwBuild(body,site,mode,focus){
+  try{ if(window.dmPerfLog&&dmPerfLog.abortCensus) dmPerfLog.abortCensus('pw:build'); }catch(e){}   // (v339) a sliced memory scan of the previous world lets go of it
   const gen=++PW.gen;
   PW.active=true; PW.mode=null; PW.body=body; PW.site=site||null;
   _surfBody=_atmoBody=body; _surfSite=_atmoSite=site||null;
@@ -20573,6 +20577,7 @@ function _pwClose(opts){
   _crM('pw:close:fac');
   try{ const _f=_fac(); if(_f&&_f.close) _f.close(); }catch(e){ console.warn('[pw] fac close',e); }   // (stability) the mansion's interior + its queued texture steps go BEFORE the scene is freed
   _crM('pw:close:dispose');
+  try{ if(window.dmPerfLog&&dmPerfLog.abortCensus) dmPerfLog.abortCensus('pw:close'); }catch(e){}   // (v339) the in-progress sliced memory scan drops the closing world before it is disposed (no stale scene kept alive)
   try{ if(window.DMWater) DMWater.end(); }catch(e){}   // wave tiles / shore field / uniforms go before the scene
   try{ if(scene) disposeObject3D(scene); }catch(e){}
   try{ if(window.DMCrumb){ ['mc#','tess#','chunk#'].forEach(k=>DMCrumb.gpuClear(k)); DMCrumb.live('chunks',0); DMCrumb.live('mcPatches',0); } }catch(e){}
