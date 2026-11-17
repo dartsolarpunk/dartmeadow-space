@@ -76,46 +76,11 @@
      (v324) ONLY a fallback for when there is no real shadow map: it is hidden while the sun shadow is fitted (P._sunReal, set by fitSun) or the flashlight's shadow map is live
      (DMFlash.S.shadowOn).  Always a flat, neutral-black radial falloff (no colour, no ring, no animation: pinned by the ground-mark removal test). */
   let _up = null, _q = null, _n = null;
-  function makeBlob() {
-    const T = THREE, N = 96, cv = document.createElement('canvas'); cv.width = cv.height = N;
-    const g = cv.getContext('2d'), r = g.createRadialGradient(N / 2, N / 2, 0, N / 2, N / 2, N / 2);
-    r.addColorStop(0, 'rgba(0,0,0,0.9)'); r.addColorStop(0.3, 'rgba(0,0,0,0.62)'); r.addColorStop(0.62, 'rgba(0,0,0,0.22)'); r.addColorStop(0.85, 'rgba(0,0,0,0.05)'); r.addColorStop(1, 'rgba(0,0,0,0)');
-    g.fillStyle = r; g.fillRect(0, 0, N, N);
-    const tex = new T.CanvasTexture(cv); tex.colorSpace = T.SRGBColorSpace;
-    const geo = new T.PlaneGeometry(1, 1); geo.rotateX(-Math.PI / 2);
-    const mat = new T.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, opacity: 0.5, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
-    const m = new T.Mesh(geo, mat);
-    m.name = 'DMContactShadow'; m.frustumCulled = false; m.renderOrder = 3; m.visible = false;
-    m.userData.noBend = true; m.userData._gfxShadow = true; m.raycast = () => {};   // drawn flat, like her (no planet bend)
-    return m;
-  }
-  P.contact = function (scene, x, y, z, n, height, air, vis, sky) {
-    if (!P.on || !scene || !window.THREE) return;
-    let m = scene.userData._dmContact;
-    if (m === undefined) {
-      try { m = scene.userData._dmContact = makeBlob(); scene.add(m); _up = new THREE.Vector3(0, 1, 0); _q = new THREE.Quaternion(); _n = new THREE.Vector3(); }
-      catch (e) { scene.userData._dmContact = null; return; }
-    }
-    if (!m) return;
-    const nowT = typeof performance !== 'undefined' ? performance.now() : Date.now();
-    if (nowT - (P._sunReal || -1e9) < 1500 || (window.DMFlash && window.DMFlash.S && window.DMFlash.S.shadowOn)) { m.visible = false; return; }   // real shadows work: no blob
-    const day = sky && sky.day != null ? sky.day : 1;
-    // fades with height above the ground (a jump) and with the sun (night: the moon throws almost none)
-    const k = vis ? Math.max(0, 1 - air / (height * 0.5)) * (0.18 + 0.82 * day) : 0;
-    if (k < 0.01) { m.visible = false; return; }
-    const r = height * 0.2 * (1 + Math.min(1, air / height) * 0.6);   // wider and fainter as she leaves the ground
-    let nx = 0, ny = 1, nz = 0;
-    if (n && isFinite(n.x + n.y + n.z)) { nx = n.x; ny = n.y; nz = n.z; }
-    if (ny < 0.35) { m.visible = false; return; }                     // a wall / climb, not a floor
-    _n.set(nx, ny, nz); _q.setFromUnitVectors(_up, _n);
-    m.quaternion.copy(_q);
-    let ox = 0, oz = 0;
-    const sd = sky && sky.sunDir;
-    if (sd && sd.y > 0.05) { const f = 1 / Math.max(0.3, Math.hypot(sd.x, sd.z)); ox = -sd.x * f * r * 0.12; oz = -sd.z * f * r * 0.12; }   // leans away from the sun
-    m.position.set(x + ox, y + 0.05 + r * 0.04, z + oz);
-    m.scale.set(r * 2.2, 1, r * 2.2);
-    m.material.opacity = (window.DM_SUNSHADOW === 0 ? 0.52 : 0.4) * k;   // (lighting overhaul) was 0.52: the contact blob is the cheap shadow on phones where the sun map is cadenced / the mansion casts none
-    m.visible = true;
+  // (t1536) the contact blob is GONE (Justin: no disc / circle under her or the board on any map, "as if never added"). The hook stays as a no-op so the game's call
+  // sites keep working; a blob left in a scene by an older build (scene.userData._dmContact) is taken out and freed the first time it is seen.
+  P.contact = function (scene) {
+    const m = scene && scene.userData ? scene.userData._dmContact : null;
+    if (m) { try { if (m.parent) m.parent.remove(m); if (m.geometry) m.geometry.dispose(); if (m.material) { if (m.material.map) m.material.map.dispose(); m.material.dispose(); } } catch (e) { } scene.userData._dmContact = null; }
   };
 
   /* ── aerial perspective: the haze goes amber on the sun's side at dawn / dusk, the way the dome's horizon does
