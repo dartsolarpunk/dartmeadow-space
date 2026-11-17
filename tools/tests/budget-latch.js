@@ -31,4 +31,26 @@ function run(frameMs, seed, base, dur) {
 { const c = run(200, 0, 0, 60000); ok(c.p === MAX, 'slideshow reaches the floor'); }
 // reset() contract lives in the glue; the pure part: floors under the ladder are respected by the meets path
 { const c = createController({ budgetMs: 36, okFloor: 0 }); c.seed(10, 0); c.floorP = 10; let t = 0; while (t < 300000) { t += 30; c.sample(30, t); } ok(c.p >= 10, 'memory floor respected, p=' + c.p); }
+
+// ── browser glue under a fake window: the exact tablet case (low-GPU tablet, class base 4, remembered p=22, previous session died on the world)
+function boot(opts) {
+  const store = Object.assign({}, opts.store || {}); const G = globalThis; let raf = null, nowT = 0;
+  for (const k of ['DMBudget', 'GFX', '_dmPrevAlive', '_dmWarming', '__JOTS_INTRO', 'DM_BUILD']) delete G[k];
+  G.window = G; G.location = { search: '' }; G.document = { hidden: false }; G.devicePixelRatio = 1.5; G.innerWidth = 1280;
+  G.performance = { now: () => nowT }; G.requestAnimationFrame = (cb) => { raf = cb; return 1; }; G.addEventListener = () => {}; G.dispatchEvent = () => {}; G.CustomEvent = function () {};
+  G.localStorage = { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: (k) => { delete store[k]; } };
+  G.GFX = { isMobile: true, gpuClass: 'low', score: 37, deviceMem: 8 }; if (opts.build) G.DM_BUILD = opts.build; if (opts.prev) G._dmPrevAlive = opts.prev;
+  const realST = G.setTimeout; G.setTimeout = () => 0; G.setInterval = () => 1;
+  delete require.cache[require.resolve('../../ui/dm-budget.js')]; require('../../ui/dm-budget.js'); G.setTimeout = realST; G.DMBudget.start();
+  return { B: G.DMBudget, store, frame: (ms) => { nowT += ms; raf(nowT); } };
+}
+const key = 'm|low|15|6', dead = { clean: false, screen: 'flight:multiplayer@Mars/surf', hidden: false };
+{ const t = boot({ store: { dm_budget_v1: JSON.stringify({ key, p: 22, t: Date.now() }) }, prev: dead });   // old code: min(22, 23) + 2 = 24 (render-scale steps, ground L2, props L2 ...)
+  ok(t.B.p === 4 + SEED_ABOVE_BASE, 'tablet seed with p=22 history + died on world starts at ' + t.B.p + ' (was 24)'); ok(t.B.degraded().above === SEED_ABOVE_BASE, 'degraded() reports it');
+  ok(t.B.lv.res === 0, 'no render-scale step inherited'); }
+{ const t = boot({ build: 'v353', store: { dm_budget_v1: JSON.stringify({ key, p: 22, t: Date.now(), b: 'v352' }) }, prev: dead }); ok(t.B.p === 4, 'a new build starts from the class base'); ok(/new build/.test(t.B.seedWhy), 'and says why: ' + t.B.seedWhy); }
+{ const t = boot({ store: { dm_budget_v1: JSON.stringify({ key, p: 22, t: Date.now() }) }, prev: dead }); ok(t.B.reset() === true, 'reset() works'); ok(t.B.p === 4 && !t.store.dm_budget_v1, 'reset: class base, remembered record forgotten');
+  // 30 fps-locked frames (33.3 ms) for 5 minutes: the live controller walks back to the class base (and never below it on the meets path)
+  for (let i = 0; i < 9000; i++) t.frame(33.3); ok(t.B.p === 4, 'live glue holds the class base at 33 ms, p=' + t.B.p); }
+{ const t = boot({ store: { dm_budget_v1: JSON.stringify({ key, p: 22, t: Date.now() }) }, prev: dead }); for (let i = 0; i < 20000; i++) t.frame(33.3); ok(t.B.p === 4, 'seeded at 12, a 30 fps-locked tablet is back at the class base after ~11 min, p=' + t.B.p); }
 console.log('budget-latch OK (' + n + ' checks)');
