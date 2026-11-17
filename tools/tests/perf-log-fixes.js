@@ -126,7 +126,7 @@ console.log('== 4. #256 review: no real WebGPU -> MC ladder locked');
 
 console.log('== stamps');
 {
-  ok(/const CACHE_NAME = 'dartmeadow-engine-v337';/.test(fs.readFileSync(path.join(root, 'sw.js'), 'utf8')), 'sw dartmeadow-engine-v337');
+  { const v = +((fs.readFileSync(path.join(root, 'sw.js'), 'utf8').match(/const CACHE_NAME = 'dartmeadow-engine-v(\d+)';/) || [])[1] || 0); ok(v >= 337, 'sw dartmeadow-engine-v337 or later (v' + v + ')'); }   // (t1516) >= check: a later branch's bump passes
   ok(/ui\/dm-perflog\.js\?v=337/.test(IDX), 'ui/dm-perflog.js?v=337');
   ok(/const ATMO_DEFAULT_AGL\s*=\s*46\b/.test(IDX), 'ATMO_DEFAULT_AGL stays 46');
 }
