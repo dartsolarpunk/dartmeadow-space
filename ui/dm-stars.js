@@ -23,12 +23,13 @@
  *     I[i]     physical relative flux (R/d)^2 (T/5778)^4, sum 1          w[i]  perceptual sky weight ~ sqrt(I), sum 1
  *     tr[i]    {r,g,b} transmission through the air toward it (airmass extinction + horizon), 1 on airless worlds
  *     day[i]   0 night .. 1 day for that star                            day   sky daylight (sum w[i] day[i], 0..1)
- *     keyIdx, keyDir, keyCol, keyI   the key light: the brightest APPARENT star (I x transmission luminance), with hysteresis
+ *     keyIdx, keyDir, keyCol (= keyColor), keyI (= keyIntensity)   the key light: the brightest APPARENT star (I x transmission luminance), with hysteresis
  *                                    (a new key must out-shine the current one by KEY_HYST); at night the primary keeps the key.
+ *                                    On a swap keyDir / keyCol ease to the new star over SWAP_S (1.5 s; o.dt = frame time).
  */
 (function (root) {
   'use strict';
-  const MAX = 3, T_REF = 5778, ANG_MIN = 0.0045, ANG_MAX = 0.075, KEY_HYST = 1.25;
+  const MAX = 3, T_REF = 5778, ANG_MIN = 0.0045, ANG_MAX = 0.075, KEY_HYST = 1.25, SWAP_S = 1.5;
 
   // Black-body colour (Tanner Helland fit, sRGB-ish), normalised so 5778 K is exactly white and scaled to luminance 1.
   function rawRGB(T, o) {
@@ -51,7 +52,7 @@
   const sm = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
   const S = {
-    MAX, T_REF, ANG_MIN, ANG_MAX, KEY_HYST, kelvinRGB, airmass,
+    MAX, T_REF, ANG_MIN, ANG_MAX, KEY_HYST, SWAP_S, kelvinRGB, airmass, swapT: 1,
     count: 0, valid: false, frame: 0, day: 1, keyIdx: 0, keyI: 1,
     dir: null, dirS: null, col: null, tr: null, temp: new Float64Array(MAX), radius: new Float64Array(MAX), angR: new Float64Array(MAX),
     I: new Float64Array(MAX), w: new Float64Array(MAX), dayK: new Float64Array(MAX), keyDir: null, keyCol: null, src: []
@@ -62,7 +63,7 @@
     if (S.dir && (!(root && root.THREE) || S.dir[0].isVector3)) return;
     S.dir = []; S.dirS = []; S.col = []; S.tr = [];
     for (let i = 0; i < MAX; i++) { S.dir.push(mkV()); S.dirS.push(mkV()); S.col.push(mkC()); S.tr.push(mkC()); }
-    S.keyDir = mkV(); S.keyCol = mkC();
+    S.keyDir = mkV(); S.keyCol = mkC(); S._fromDir = mkV(); S._fromCol = mkC();
   }
   ensure();
 
@@ -132,10 +133,24 @@
     const t0 = S.tr[key], curA = S.I[key] * (0.2126 * t0.r + 0.7152 * t0.g + 0.0722 * t0.b);
     if (bestA <= 1e-6) { let m = 0; for (let i = 1; i < S.count; i++) if (S.I[i] > S.I[m]) m = i; key = m; }   // night: the primary keeps the key
     else if (best !== key && bestA > curA * KEY_HYST) key = best;
+    // (v341) a key swap (A sets, B takes over) eases the key light's direction + colour over SWAP_S seconds from where it was, so the sun light
+    // and its shadows turn instead of snapping (the discs and the per-star scattering stay exact; only the one shared key light eases)
+    if (key !== S.keyIdx && S.valid) { S._fromDir.set(S.keyDir.x, S.keyDir.y, S.keyDir.z); S._fromCol.set(S.keyCol.r, S.keyCol.g, S.keyCol.b); S.swapT = 0; }
     S.keyIdx = key; S.keyI = S.I[key];
-    const kd = S.dir[key], kc = S.col[key]; S.keyDir.set(kd.x, kd.y, kd.z); S.keyCol.set(kc.r, kc.g, kc.b);
+    const kd = S.dir[key], kc = S.col[key];
+    if (S.swapT < 1) {
+      const dt = o && o.dt > 0 ? Math.min(0.1, o.dt) : 1 / 60; S.swapT = Math.min(1, S.swapT + dt / SWAP_S);
+      const e = S.swapT * S.swapT * (3 - 2 * S.swapT), f = S._fromDir, c0 = S._fromCol;
+      let x = f.x + (kd.x - f.x) * e, y = f.y + (kd.y - f.y) * e, z = f.z + (kd.z - f.z) * e; const L = Math.hypot(x, y, z);
+      if (L > 1e-6) { x /= L; y /= L; z /= L; } else { x = kd.x; y = kd.y; z = kd.z; }
+      S.keyDir.set(x, y, z); S.keyCol.set(c0.r + (kc.r - c0.r) * e, c0.g + (kc.g - c0.g) * e, c0.b + (kc.b - c0.b) * e);
+    } else { S.keyDir.set(kd.x, kd.y, kd.z); S.keyCol.set(kc.r, kc.g, kc.b); }
     S.valid = true; return S;
   };
+
+  // aliases JOTS Lighting reads (the same objects / values; no copies)
+  Object.defineProperty(S, 'keyColor', { get() { return S.keyCol; }, enumerable: true });
+  Object.defineProperty(S, 'keyIntensity', { get() { return S.keyI; }, enumerable: true });
 
   if (typeof module !== 'undefined' && module.exports) module.exports = S;
   if (root) root.DMStars = S;
