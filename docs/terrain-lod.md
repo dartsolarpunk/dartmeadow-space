@@ -43,11 +43,15 @@ edge (0.75 R) and its centre (0.875 R) of the drawn radius R (Justin Craig Venab
 pixels that are already sky-coloured. `?skyhaze=0` = dissolve only. Airless worlds: dissolve only. Test: `tools/tests/radial-lod-blend.js`.
 
 ## Cliff placement contract (t1516)
-What the terrain side assumes about the mansion cliffs (Solenne). Pinned by `tools/tests/cliff-contract.js`:
-- **Anchor**: the mansion site (px, pz) chosen by `ui/dm-facilities.js` `place()`; heading th = atan2(-dx, -dz) (local +Z inland, local -Z / Blender +y seaward).
-- **Height**: y0 = max of the NATURAL ground (F.baseH) at the centre and the probes (0,40) (-30,40) (30,40) (0,80) (-60,0) (60,0), + 0.3 m. Seeds and the natural field are not changed by terrain work.
-- **Footprint**: box x in [-196, 196] along the wall, y in [-121, 121] seaward (Blender frame), GLB cliff sweep x +-200, y +-125. Inside the box the DRAWN ground
-  (SkyGround, tessellation, MC patch, props) is lowered to y0 - 128 with a 14 m smoothstep feather from the box edge, so the GLB's own shard-rock cliff/plateau is
-  what shows; WALKING inside the box = collision grid (R 230 m) / interior floor. Outside the box drawn = walking = natural ground.
-- Cliffs owns the cliff mesh, textures, strata and `_terrainDetailMat` cliff shading. If the cliff needs the natural ground outside the box lower / flatter (an apron),
-  that is a change to this contract (and to walking heights), to be agreed before either side ships it.
+Published by JOTS Cliffs (#260) as `DMFac.footprint()` in `ui/dm-facilities.js`; the world engine's assumptions are pinned by `tools/tests/cliff-contract.js`
+(it runs the real module, places a mansion and reads `footprint()`):
+- **Anchor**: the mansion site (px, pz) chosen by `place()`; heading th = atan2(-dx, -dz) (local +Z inland, Blender +y / local -Z seaward; `footprint().seaward`).
+- **Height**: `footprint().y0` = max of the natural ground at the centre and the probes (0,40) (-30,40) (30,40) (0,80) (-60,0) (60,0), + 0.3 m. Seeds unchanged
+  (Solenne @ Veyra seed 475, lush).
+- **Footprint**: `box` = x [-196, 196] along the wall, y [-121, 121] seaward (392 x 242 m); `apron` = in front of the face, 170 m deep (`apronLen`), box width + `apronLat`
+  (60 m) each side; `seaRel` -62 (the GLB's waterline rel. y0); `baseRing` = 15 base heights along the seaward edge (every 28 m); `feather` 14.
+- **Fields** (all three agree): DRAWN ground = `carveField` = carve(seaCut(natural)) (inside the box lowered to y0 - 128 with the 14 m feather; the apron sea-cut to
+  the GLB's edge floor); WALKING = `TERRAIN.H` = `wrapH` (seaCut + collision grid / interior floor); WATER / shore = `TERRAIN.Hw` = `F.seaField(natural)`.
+  Worlds code (map carry, LOD bind, horizon haze, Mars ripples) samples no terrain height itself.
+- Cliffs owns the cliff mesh, textures, strata, shard layer, `_terrainDetailMat` cliff shading and these fields. Follow-up (after #260, not in #259): tint the drawn
+  ground's rock toward `footprint().rock` along `baseRing`.
