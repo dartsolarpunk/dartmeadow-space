@@ -29,7 +29,12 @@ let geoLive = 0;
 class Geo { constructor() { this.attributes = {}; geoLive++; this.dead = false; } setAttribute(k, a) { this.attributes[k] = a; } dispose() { if (!this.dead) { this.dead = true; geoLive--; } } }
 class Attr { constructor(a, s) { this.array = a; this.itemSize = s; } }
 const THREE = { Group: Grp, Mesh, BufferGeometry: Geo, BufferAttribute: Attr };
-const mat = (name) => ({ name, metalness: 1, roughness: 1, emissiveIntensity: 1, userData: {} });
+const mat = (name) => {
+  const m = { name, metalness: 1, roughness: 1, roughnessMap: null, metalnessMap: null, map: null, normalMap: null, emissiveIntensity: 1, emissive: { r: 1, g: 1, b: 1, set() { this.r = this.g = this.b = 0; }, setRGB() { this.r = this.g = this.b = 0; } }, userData: {}, vertexColors: false, needsUpdate: false };
+  m.clone = function () { const c = mat(this.name); c.metalness = this.metalness; c.roughness = this.roughness; c.roughnessMap = this.roughnessMap; c.metalnessMap = this.metalnessMap; c.map = this.map; c.normalMap = this.normalMap; c.emissiveIntensity = this.emissiveIntensity; c.vertexColors = this.vertexColors; return c; };
+  m.dispose = function () {};
+  return m;
+};
 function fakeGLB() {
   const sc = new Grp(); sc.name = 'Scene';
   for (const L of ['Mansion_LOD0', 'Mansion_LOD1']) { const g = new Grp(); g.name = L; for (const m of ['ah_slate', 'ah_rock', 'ah_rockc', 'ah_rocks', 'ah_rockt', 'ah_pool']) { const me = new Mesh(new Geo(), MATS[m]); me.name = L + '_' + m; g.add(me); } sc.add(g); }
@@ -67,16 +72,37 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   for (const L of ['lod0', 'lod1']) {
     const sh = u[L].children.filter(c => c.userData.dmShards);
     ok(sh.length === 2, L + ': 2 shard meshes (columnar + talus) under Mansion_' + L.toUpperCase());
-    ok(sh.every(c => c.material === MATS[c.name.replace('Mansion_Shards_', '')]), L + ': the shard meshes share the GLB\'s own ah_rockc / ah_rockt materials (the 1K/2K + parallax upgrades reach them)');
+    ok(sh.every(c => { const src = MATS[c.name.replace('Mansion_Shards_', '')], m = c.material; return m && m !== src && m.vertexColors === true && m.metalness === 0 && m.roughness >= 0.6 && m.emissiveIntensity === 0 && m.name === src.name; }), L + ': shard meshes use a cloned ah_rockc / ah_rockt material with vertexColors, metalness 0, roughness >= 0.6, no emissive');
+    ok(sh.every(c => c.material.roughness === 0.85), L + ': shard roughness is 0.85 (matte weathered rock)');
   }
-  ok(u.shardTris > 2500 && u.shardTris <= 4500, 'shard layer budget ' + u.shardTris + ' triangles (2.5k..4.5k)');
+  ok(J.count <= 100 && J.count >= 50 && u.shardTris === J.tris && u.shardTris <= 1654 && u.shardTris < 3309, 'shard count ' + J.count + ' (half or fewer of the previous 205) and tri budget ' + u.shardTris + ' (was 3309, cap 1654)');
   ok(u.lod0.children.filter(c => c.userData.dmShards)[0].geometry === u.lod1.children.filter(c => c.userData.dmShards)[0].geometry, 'LOD0 and LOD1 share one shard geometry (no extra memory)');
   let bad = 0, unit = 0, maxTop = -1e9;
   for (const gm of rec.shardGeos) { const P = gm.attributes.position.array, N = gm.attributes.normal.array; for (let i = 0; i < P.length; i++) if (!isFinite(P[i])) bad++; for (let i = 0; i < N.length; i += 3) if (Math.abs(Math.hypot(N[i], N[i + 1], N[i + 2]) - 1) > 1e-4) unit++; }
   for (const q of J.shards) if (!q[14]) maxTop = Math.max(maxTop, q[2] + q[3]);
   ok(bad === 0 && unit === 0, 'every shard vertex finite, every facet normal unit (flat-shaded planes)');
   ok(maxTop <= -4, 'every sea / face shard top stays >= 4 u under the plateau (max ' + maxTop.toFixed(1) + '): nothing on a deck or the HOME pad');
-  ok(cyl.length > 60, cyl.length + ' shard colliders registered (group facility)');
+  ok(cyl.length > 40 && cyl.length <= J.count, cyl.length + ' shard colliders registered (group facility)');
+  // ── rock, not crystal: cleaved / stepped tops, no lone spires, warm dark tone, slenderness cap ──
+  const fam = q => q[0] < -180 ? -1 : q[0] > 180 ? 1 : 0;
+  let lone = 0, slender = 0, pointy = 0, cool = 0, bright = 0, nCol = 0, sumR = 0, sumG = 0, sumB = 0;
+  for (const q of J.shards) {
+    if (q[3] / (2 * q[4]) > 3.25 + 1e-6) slender++;
+    if (!J.shards.some(p => p !== q && fam(p) === fam(q) && Math.hypot(p[0] - q[0], p[1] - q[1]) <= p[4] + q[4] + 0.05)) lone++;
+    const one = Object.assign({}, J, { shards: [q] }), b = F.shardBuild(one, null, null), o = b[q[12] ? 1 : 0];
+    const uniq = new Map();
+    for (let i = 0; i < o.v; i++) { const y = o.pos[i * 3 + 1], key = o.pos[i * 3].toFixed(2) + ',' + o.pos[i * 3 + 2].toFixed(2); if (!uniq.has(key) || y > uniq.get(key)) uniq.set(key, y); }
+    const uys = [...uniq.values()].sort((a, b) => b - a), peakGap = uys[0] - (uys[1] || uys[0]);
+    const topYs = uys.slice(0, q[5] + 1);   // cap = the n ring verts + the cap centre, not the base
+    const cap = topYs[0] - topYs[topYs.length - 1];
+    if (peakGap > 0.35 * q[4] || cap > 1.55 * q[4]) pointy++;
+    for (let i = 0; i < o.v; i++) { const r = o.col[i * 3], g = o.col[i * 3 + 1], b2 = o.col[i * 3 + 2]; nCol++; sumR += r; sumG += g; sumB += b2; if (!(r > g + 1e-6 && g > b2 + 1e-6)) cool++; if (r > 1 + 1e-6 || g > 1 + 1e-6 || b2 > 1 + 1e-6 || r < 0.2) bright++; }
+  }
+  ok(lone === 0, 'no isolated shards (every prism touches a neighbour in its massif, isolated ' + lone + ')');
+  ok(slender === 0, 'no needle-like prisms (h/(2r) <= 3.25, slender ' + slender + ')');
+  ok(pointy === 0, 'cleaved or stepped tops, no pointed crystal tips (pointy ' + pointy + ')');
+  ok(cool === 0 && bright === 0 && sumR / nCol > sumG / nCol && sumG / nCol > sumB / nCol, 'vertex colours are warm grey-brown multipliers (mean ' + [sumR, sumG, sumB].map(s => (s / nCol).toFixed(3)).join('/') + ', cool ' + cool + ', out-of-range ' + bright + ')');
+  ok(J.shards.every(q => q[13] >= 0.84 && q[13] <= 1.08), 'per-shard tone is a small variation around 1 (0.84..1.08)');
   // the shard flat normals face outward (a facet's normal points away from its prism axis)
   // ── the sea at the cliff foot (before: main v329 = seaCut bypassed) ──
   const c = F.car, W = (bx, by) => [c.px + bx * c.ct - by * c.st, c.pz - bx * c.st - by * c.ct];
