@@ -23,3 +23,36 @@ Test: `node tools/tests/terrain-lod.js` (runs the real `_terrainCore`, `_groundF
 - The orbit sphere's own geometric relief is generic 3-D noise, not `_terrainCore`; it only shapes light/silhouette (1.2 % R). Displacing it from the map heights (like Earth's ETOPO texture) needs a mesh rebuild after the map arrives; not done.
 - Mansion GLB cliff box edge vs natural ground (carve feather 14 m) belongs to the mansion lane; relief-aware split and ladder are the far-LOD worker's (`docs/far-lod.md` Part 3) and were not duplicated.
 - "Dimension-map area" was read as the mansion/generated patch; no tile or height discontinuity outside it exists in code.
+
+# t1516: live/local divergence, radial horizon blend, Mars ripples, cliff contract
+
+## Live vs local divergence (root cause)
+Every file served by dartmeadow.space is byte-identical to `main` (all 96 page scripts and 148 referenced assets compared with `curl`, all HTTP 200, exact case),
+so it is not a path, case, MIME or missing-file problem. The difference is the **backend**: the dev harness and local WebGL serves draw planets as canvas-textured
+spheres (`buildWebGLRichPlanetGroup`), while live devices on **real WebGPU** draw the near world as the per-brick cluster LOD mesh (`_svLodPlanetMesh`, the
+"nanite"-style bricks, `_svLodAllowed()` needs real WebGPU). When the world map ("world engine": `_terrainCore` -> `worldMapFor`) arrived,
+`_applyWorldMapToFlightBody` put it on that mesh as a **new plain material**. That threw away (1) the per-brick fade (`opacityNode` from `fadeNode[slot]`, and the
+stream's `alphaHash` switch on `ctl.mat`), so on every LOD change the coarse and the fine bricks drew together at full opacity (stacked shells, z-fight, dead slots
+held solid, pop-in), and (2) the DMRock layered-rock bump + roughness (Mars' PBR relief from the air). Fix: `_wmCarry` keeps those nodes on the map material,
+`_wmLodBind` points the stream at the drawn material (`tools/tests/worldmap-lod-carry.js`). Also: seven scripts had changed since their `?v=` tag was set
+(dm-atmo, dm-fluid-world, dm-menuscene, dm-perf, dm-stack, dm-theme, dm-worldstyle): retagged to the branch's sw version so the service worker's cache-first rule cannot serve a stale copy.
+
+## Radial horizon blend
+`SkyGround._hazeInit`: the ground's final lit output (textures, lighting, shadows, fog) blends to the scene haze colour between the Radical Circumference rim's inner
+edge (0.75 R) and its centre (0.875 R) of the drawn radius R (Justin Craig Venable, `ui/dm-radical-circ.js`), then the existing dither dissolve (0.82 R -> R) removes
+pixels that are already sky-coloured. `?skyhaze=0` = dissolve only. Airless worlds: dissolve only. Test: `tools/tests/radial-lod-blend.js`.
+
+## Cliff placement contract (t1516)
+Published by JOTS Cliffs (#260) as `DMFac.footprint()` in `ui/dm-facilities.js`; the world engine's assumptions are pinned by `tools/tests/cliff-contract.js`
+(it runs the real module, places a mansion and reads `footprint()`):
+- **Anchor**: the mansion site (px, pz) chosen by `place()`; heading th = atan2(-dx, -dz) (local +Z inland, Blender +y / local -Z seaward; `footprint().seaward`).
+- **Height**: `footprint().y0` = max of the natural ground at the centre and the probes (0,40) (-30,40) (30,40) (0,80) (-60,0) (60,0), + 0.3 m. Seeds unchanged
+  (Solenne @ Veyra seed 475, lush).
+- **Footprint**: `box` = x [-196, 196] along the wall, y [-121, 121] seaward (392 x 242 m); `apron` = in front of the face, 170 m deep (`apronLen`), box width + `apronLat`
+  (60 m) each side; `seaRel` -62 (the GLB's waterline rel. y0); `baseRing` = 15 base heights along the seaward edge (every 28 m); `feather` 14.
+- **Fields** (all three agree): DRAWN ground = `carveField` = carve(seaCut(natural)) (inside the box lowered to y0 - 128 with the 14 m feather; the apron sea-cut to
+  the GLB's edge floor). WALKING (`TERRAIN.H` = `wrapH`) and the SEA / shore (`TERRAIN.Hw` = `F.seaField`) now follow the NATURAL field plus the sea-cut apron
+  (`F.seaCut`), walking additionally plus the solids (mansion collision grid R 230 m / interior floor, decks, pads).
+  Worlds code (map carry, LOD bind, horizon haze, Mars ripples) samples no terrain height itself.
+- Cliffs owns the cliff mesh, textures, strata, shard layer, `_terrainDetailMat` cliff shading and these fields. Follow-up (after #260, not in #259): tint the drawn
+  ground's rock toward `footprint().rock` along `baseRing`.

@@ -186,7 +186,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-time.js?v=97"></script>
 <script src="ui/dm-earth.js?v=292"></script>
 <script src="ui/dm-earth-paint.js?v=290"></script>
-<script src="ui/dm-theme.js?v=81"></script>
+<script src="ui/dm-theme.js?v=343"></script>
 <script src="ui/dm-sparsevox.js?v=304"></script>
 <script src="ui/dm-rockmat.js?v=145"></script>
 <script src="ui/dm-parallax.js?v=280"></script>
@@ -197,7 +197,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-water-sea.js?v=300"></script>
 <script src="ui/dm-water-curl.js?v=292"></script>   <!-- water: the breaking-wave curl (glassy turquoise barrel along the shore-parallel wave fronts; Medium+; created by dm-water-fx) -->
 <script src="ui/dm-water-fx.js?v=292"></script>   <!-- water: spray / splash / mist sprites, wake, footstep ripples, shore-break spray, underwater fog + shafts (?waterfx=0 off) -->   <!-- water: baked sea, shore, ground hook (?water=0 = the previous sea) -->
-<script src="ui/dm-perf.js?v=160"></script>
+<script src="ui/dm-perf.js?v=343"></script>
 <script src="ui/dm-governor.js?v=341"></script>
 <script src="ui/dm-budget.js?v=341"></script>
 <script src="ui/dm-mem.js?v=292"></script>
@@ -230,7 +230,7 @@ window.DMFT=window.DMFT||(function(){ const E=Object.create(null), X=Object.crea
 </script>
 <script src="ui/dm-fluid.js?v=80"></script>
 <script src="ui/dm-journal.js?v=98"></script>
-<script src="ui/dm-worldstyle.js?v=94"></script>
+<script src="ui/dm-worldstyle.js?v=343"></script>
 <script src="ui/dm-polish.js?v=339"></script>
 <script src="ui/dm-stars.js?v=342"></script>   <!-- (v334 Cosmos) DMStars: the system's real stars as seen from the world - per-star direction / colour / weight + the ONE key-light direction (keyDir) the sky, the air, the sun light and its shadows share -->
 <script src="ui/dm-sky.js?v=340"></script>
@@ -240,7 +240,7 @@ window.DMFT=window.DMFT||(function(){ const E=Object.create(null), X=Object.crea
 <script src="ui/dm-fluid-apic.js?v=136"></script>
 <script src="ui/dm-fluid-spray.js?v=136"></script>
 <script src="ui/dm-fluid-smoke.js?v=136"></script>
-<script src="ui/dm-fluid-world.js?v=136"></script>
+<script src="ui/dm-fluid-world.js?v=343"></script>
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js",
@@ -1067,7 +1067,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-perflog.js?v=341" defer></script>
 <script src="ui/dm-webkit.js?v=210" defer></script>
 <script src="ui/dm-spectator.js?v=1" defer></script>
-<script src="ui/dm-stack.js?v=1" defer></script>
+<script src="ui/dm-stack.js?v=343" defer></script>
 <script src="ui/dm-level.js?v=286" defer></script>
 <script src="ui/dm-landmark.js?v=293" defer></script>
 <script src="ui/dm-landzones.js?v=293" defer></script>
@@ -1075,14 +1075,14 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-globe.js?v=339" defer></script>
 <script src="ui/dm-star.js?v=191" defer></script>
 <script src="ui/dm-mist.js?v=8" defer></script>
-<script src="ui/dm-atmo.js?v=340" defer></script>
+<script src="ui/dm-atmo.js?v=343" defer></script>
 <script src="ui/dm-localcollide.js?v=188" defer></script>
 <script src="ui/dm-collide.js?v=287" defer></script>
 <script src="ui/dm-collide-game.js?v=281" defer></script>
 <script src="ui/dm-cgroup.js?v=281" defer></script>
 <script src="ui/dm-charm.js?v=234" defer></script>
 <script src="ui/dm-flash.js?v=331" defer></script>
-<script src="ui/dm-menuscene.js?v=245" defer></script>
+<script src="ui/dm-menuscene.js?v=343" defer></script>
 <script src="ui/dm-starbubble.js?v=4" defer></script>
 <script src="ui/dm-hazardbubble.js?v=215" defer></script>
 <script src="ui/dm-birdtemple.js?v=122" defer></script>
@@ -8161,7 +8161,7 @@ async function _svLodPlanetMesh(o){
   if(window.DMRock) DMRock.applyPlanet(_lmat,o.kind,radius,o.seed);   // (v140) layered rock
   // (v193) per-brick dither fade, multiplied into whatever opacity the rock layer set (set at build: never recompiles)
   { const f=varying(fadeNode.element(uint(vertexIndex).div(uint(VPS))));
-    _lmat.opacityNode=(_lmat.opacityNode||materialOpacity).mul(f); _lmat.userData._lodOp=1; }
+    _lmat.opacityNode=(_lmat.opacityNode||materialOpacity).mul(f); _lmat.userData._lodOp=1; _lmat.userData._svFade=1; }   // (t1516) _svFade: the world map must keep this fade (_wmCarry)
   ctl.fading=_LOD_XFADE; ctl.mat=_lmat;
   const mesh=new THREE.Mesh(geo,_lmat);
   mesh.name='JOTS_GpuPlanetMC'; mesh.userData.jotsGpuMc=true; mesh.userData.svLod=ctl;
@@ -19393,7 +19393,7 @@ async function _wmWarmAll(){
       if(!b||!b.mesh||b.name==='Sun'||b.type==='Star'||b.isAsteroid||b.type==='Comet'||!isProximityLandEligible(b)) continue;
       const best=_wmBestMesh(b); if(!best) continue;
       let mat=best.userData._wmMat;
-      if(!mat){ mat=new THREE.MeshStandardNodeMaterial({roughness:0.92,metalness:0.02}); mat.userData._lodOp=1; mat.colorNode=_wmColorNode(_wmStandIn); mat._wmTexNode=mat.colorNode; try{ mat.lightsNode=_lcNode(); }catch(e){} best.userData._wmMat=mat; best.userData._wmPrev=best.material; }
+      if(!mat){ mat=new THREE.MeshStandardNodeMaterial({roughness:0.92,metalness:0.02}); mat.userData._lodOp=1; _wmCarry(best.material,mat); mat.colorNode=_wmColorNode(_wmStandIn); mat._wmTexNode=mat.colorNode; try{ mat.lightsNode=_lcNode(); }catch(e){} best.userData._wmMat=mat; best.userData._wmPrev=best.material; }
       if(best.material!==mat){ back.push([best,best.material]); best.material=mat; }
     }catch(e){}
   }
@@ -19408,6 +19408,28 @@ function _wmKickHome(){
   try{ for(const b of (celestialBodies||[])){ if(!b||b.name!=='Earth'||b._wmReq||!b.mesh) continue; b._wmReq=true;
     worldMapFor(b,m=>{ b._wm=m; _applyWorldMapToFlightBody(b,m); }); } }catch(e){ console.warn('[worldmap] home',e); }
 }
+// (t1516, live/local divergence) LIVE (real WebGPU) ONLY: the world map used to be put on a planet as a BRAND-NEW plain material.  On WebGL (the dev harness, local
+// WebGL serves) a planet is a canvas-textured sphere, so nothing was lost.  On real WebGPU the near world is the per-brick cluster LOD mesh (_svLodPlanetMesh,
+// 'nanite'-style bricks) and its material carries (1) the per-brick fade (opacityNode = fadeNode[slot]: a replaced brick dithers out, a new one dithers in, a
+// dead slot draws NOTHING until it is cleared) whose alphaHash the stream toggles on ctl.mat, and (2) the layered-rock relief + roughness (DMRock.applyPlanet:
+// the PBR / bump detail of Mars and every rocky world).  The plain map material dropped both: every LOD change drew the coarse AND fine bricks at full
+// opacity together (stacked / z-fighting shells, held dead slots solid, popping), and the rock relief went flat.  _wmCarry keeps them on the map material
+// (only the map's colour replaces the vertex / rock colour); _wmLodBind points the brick stream's fade switch at the material actually drawn.
+// Pure on its inputs (tools/tests/worldmap-lod-carry.js).
+function _wmCarry(prev,mat){
+  if(!prev||!mat||prev===mat) return 0; let n=0;
+  const u=prev.userData||{}; if(!u._svFade&&!u.dmRock) return 0;   // only the marching-cubes / brick planets; a parallax canvas planet's uv-space normal stays its own
+  if(prev.opacityNode){ mat.opacityNode=prev.opacityNode; n++; }
+  if(prev.normalNode){ mat.normalNode=prev.normalNode; n++; }
+  if(prev.roughnessNode){ mat.roughnessNode=prev.roughnessNode; n++; }
+  if(prev.alphaHash) mat.alphaHash=true;
+  if(prev.userData&&prev.userData.dmRock) mat.userData.dmRock=prev.userData.dmRock;
+  if(n) mat.needsUpdate=true; return n;
+}
+function _wmLodBind(mesh,mat){
+  const c=mesh&&mesh.userData&&mesh.userData.svLod; if(!c||!mat||c.mat===mat) return false;
+  const was=!!(c.mat&&c.mat.alphaHash); c.mat=mat; if(mat.alphaHash!==was){ mat.alphaHash=was; mat.needsUpdate=true; } return true;
+}
 function _applyWorldMapToFlightBody(b,m){
   const W=window;
   if(!m||!m.tex||!b||!b.mesh||typeof W.texture!=='function') return;
@@ -19415,11 +19437,11 @@ function _applyWorldMapToFlightBody(b,m){
   if(!best) return;
   try{
     let mat=best.userData._wmMat;
-    if(!mat){ mat=new THREE.MeshStandardNodeMaterial({roughness:0.92,metalness:0.02}); mat.userData._lodOp=1; best.userData._wmMat=mat; best.userData._wmPrev=best.material; }
+    if(!mat){ mat=new THREE.MeshStandardNodeMaterial({roughness:0.92,metalness:0.02}); mat.userData._lodOp=1; _wmCarry(best.material,mat); best.userData._wmMat=mat; best.userData._wmPrev=best.material; }
     // the texture is swapped on the existing node (no new node graph, no rebuild); a fresh node only the first time
     if(mat._wmTexNode&&mat._wmTexNode.value!==undefined){ mat._wmTexNode.value=m.tex; }
     else { mat.colorNode=_wmColorNode(m.tex); mat._wmTexNode=mat.colorNode; mat.needsUpdate=true; }
-    best.material=mat; try{ const n=_lcNode(); if((mat.lightsNode||null)!==n){ mat.lightsNode=n; mat.needsUpdate=true; } }catch(e){}
+    best.material=mat; _wmLodBind(best,mat); try{ const n=_lcNode(); if((mat.lightsNode||null)!==n){ mat.lightsNode=n; mat.needsUpdate=true; } }catch(e){}
   }catch(e){ console.warn('[worldmap] could not dress',b.name,e); }
 }
 // ── Whole-planet map (DART Engine) ───────────────────────────────────
@@ -25774,6 +25796,36 @@ SkyGround.prototype._radialFade=function(){
     const keep=W.interleavedGradientNoise(W.screenCoordinate.xy).lessThan(k);
     m.maskNode=m.maskNode?m.maskNode.and(keep):keep;
   }catch(e){ this._fadeU=null; console.warn('[sky ground] radial fade',e&&e.message); }
+  this._hazeInit();
+};
+// (t1516) RADIAL LOD BLEND TO THE HORIZON.  The dissolve above alone left a CIRCLE of fully lit, textured, shadowed ground whose last 18 % dithered
+// straight onto the sky: from the board (where the haze is thin, _skyFillFog w -> 0) that read as a hard-edged disc of terrain.  Now, before any pixel
+// dissolves, the FINAL lit colour of the ground (albedo, ground-library textures, sun + DMLight lighting, terrain / sun-map shadows and the scene fog:
+// three's `output`, i.e. everything) is blended into the horizon haze colour by its true distance from the camera, so texture, lighting and shadow all
+// fade together and the dissolving pixels are already the colour of the sky behind them: no ring, no tile squares (pure distance, no tile / axis term).
+// Band radii by Justin Craig Venable's Radical Circumference / ArcEdge rule (https://dartedge.com/radicaledge, ui/dm-radical-circ.js), scoped to this LOD
+// radius only: the drawn radius R is the outer edge, the rim is measured centre-to-centre, inner edge = R less one eighth of the diameter (0.75 R),
+// rim centre 0.875 R.  The blend runs inner edge -> rim centre (smoothstep), so it is complete inside the dissolve's own band (0.82 R -> R).
+// Worlds without haze (no fog: airless) keep the dissolve only (weight 0): there R is the geometric horizon.  Uniform values only (no recompile,
+// no allocation per frame: _hazeTick writes into the uniforms' own Color / Vector2).  Pure mirror: _skyHazeW (tools/tests/radial-lod-blend.js).
+const _SKY_HAZE_RIM={outer:0,inner:0,centre:0};
+function _skyHazeBand(R,out){ const RC=window.DMRadCirc, o=out||{outer:0,inner:0,centre:0}; if(RC&&RC.rim) return RC.rim(R,o); o.outer=R; o.inner=R-R*0.25; o.centre=(o.inner+R)*0.5; return o; }
+function _skyHazeW(d,inner,centre){ if(d<=inner) return 0; if(d>=centre) return 1; const t=(d-inner)/Math.max(1e-6,centre-inner); return t*t*(3-2*t); }
+SkyGround.prototype._hazeInit=function(){
+  const W=window, m=this.mat; this._hazeU=null;
+  if(!m||!this._fadeU||typeof W.uniform!=='function'||!W.output||!W.mix||!W.vec4||/[?&]skyhaze=0\b/.test(location.search)) return;   // ?skyhaze=0: dissolve only (A/B)
+  try{
+    const b=_skyHazeBand(this.viewR,_SKY_HAZE_RIM);
+    const U=this._hazeU={c:W.uniform(new THREE.Color(this.pal&&this.pal.fog!=null?this.pal.fog:0x8899aa)),r:W.uniform(new THREE.Vector2(b.inner,b.centre)),on:W.uniform(0)};
+    const w=W.smoothstep(U.r.x,U.r.y,W.length(W.positionView)).mul(U.on);
+    m.outputNode=W.vec4(W.mix(W.output.rgb,U.c,w),W.output.a);
+  }catch(e){ this._hazeU=null; console.warn('[sky ground] horizon haze',e&&e.message); }
+};
+SkyGround.prototype._hazeTick=function(){
+  const U=this._hazeU; if(!U) return;
+  const b=_skyHazeBand(this.viewR,_SKY_HAZE_RIM); U.r.value.set(b.inner,b.centre);
+  const sc=this.group.parent, fog=sc&&sc.fog;
+  if(fog&&fog.color){ U.c.value.copy(fog.color); U.on.value=1; } else U.on.value=0;
 };
 // (lod-hide) the far sea has no square.  The sea sheet (ui/dm-water.js clip-map) used to end on its outermost level's square ~2 km out, and past it the
 // finer tiles showed their bare seabed (or the coarse tiles their flat sea paint) along a square edge that followed her round: "square patches out on the
@@ -25915,7 +25967,7 @@ SkyGround.prototype.update=function(cam,budgetMs){
   }
   const st=this.stat; st.built=built; st.focus=nf; st.emerg=em?1:0; st.skipped=skipped; st.left=Q.length-built; st.settle=B>this.budget&&budgetMs==null?1:0;
   if(st.left>0) this._idleKick();   // (v330 streaming) what is left fills in after this frame, outside it
-  if(this._fadeU){ this._fadeU.a.value=this.viewR*_SKY_FADE0; this._fadeU.b.value=this.viewR; }   // (Wave 2a) the circle follows the drawn radius
+  if(this._fadeU){ this._fadeU.a.value=this.viewR*_SKY_FADE0; this._fadeU.b.value=this.viewR; this._hazeTick(); }   // (Wave 2a) the circle follows the drawn radius; (t1516) so does the haze band
   this._seaRimTick();   // (lod-hide) the sea's circular rim follows the sheet
   this.roots.forEach(this._show,this);
   const now=performance.now(), dt=this._lastT?Math.min(0.1,(now-this._lastT)/1000):0; this._lastT=now;
@@ -26717,6 +26769,9 @@ function _terrainDetailMat(opts){
       const crk=W.float(1).sub(W.abs(W.mx_fractal_noise_float(xz.mul(0.55).add(W.vec3(17,0,3)),3,2.0,0.5)));
       const crack=W.smoothstep(W.float(0.95),W.float(0.995),crk);
       let h=crack.mul(TERRAIN.style==='mesa'?-0.12:-0.6), peb=W.float(0);   // Mars: windswept regolith, only faint hairline cracks
+      // (t1516) Mars / mesa worlds: the older Mars look had wind-ripple sand drifted over the regolith; the ripples come back as SHADING detail only (the same
+      // ripple the dune worlds use, a third of its height, along the same wind), so heights, collision, seeds and every visited place are unchanged
+      if(TERRAIN.style==='mesa'){ const mw=W.mx_fractal_noise_float(xz.mul(0.09),2,2.0,0.5).mul(3.0); h=h.add(W.sin(xz.x.mul(0.82).add(xz.z.mul(0.57)).mul(3.1).add(mw)).mul(0.03)); }
       if(lvl>=2){
         const patch=W.smoothstep(W.float(0.42),W.float(0.68),W.mx_fractal_noise_float(xz.mul(0.18).add(W.vec3(41,0,7)),2,2.0,0.5).mul(0.5).add(0.5));
         const f1=W.mx_worley_noise_float(xz.mul(4.8),1.0,0);   // (scale) cell 0.21 u: pebbles about half her shoe (shoe = 0.48 u; 1 u = 0.56 m)
