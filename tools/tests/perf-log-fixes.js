@@ -6,11 +6,16 @@
 //   3. preset: an explicit pick above the device class is kept (saved as picked) but the runtime tier eases down one step per sustained 30 fps miss,
 //      never below what Auto picks for the device; Auto / custom untouched; a fresh pick restores it.
 //   4. (#256 review) upgradeSurfaceMcLOD locks the MC ladder when the renderer is not real WebGPU (the walk-patch loop stops).
+// (v339, Watcher's #261 deep review)
+//   5. no double drop: the preset steps down only while DMBudget.isExhausted() (ladder fully shed, still over budget), counting exhausted time only.
+//   6. memCensus: a world build / close aborts the sliced scan (generator ended, idle callback cancelled, no scene refs kept); it also self-aborts on a world change.
+//   7. dm-governor never persists the session-eased scale under the player's pick (GFX.runtimeTier set).
 'use strict';
 const fs = require('fs'), vm = require('vm'), path = require('path');
 const root = path.join(__dirname, '..', '..');
 let fails = 0, n = 0; const ok = (c, m) => { n++; if (!c) { fails++; console.log('  FAIL ' + m); } else if (process.env.VERBOSE) console.log('  ok   ' + m); };
 const IDX = fs.readFileSync(path.join(root, 'index.html'), 'utf8'), PL = fs.readFileSync(path.join(root, 'ui/dm-perflog.js'), 'utf8');
+const SW = fs.readFileSync(path.join(root, 'sw.js'), 'utf8'), SWV = +((SW.match(/CACHE_NAME = 'dartmeadow-engine-v(\d+)'/) || [])[1] || 0);   // the expected stamp follows sw.js (CE renumbers at merge)
 const cut = (s, a, b) => { const i = s.indexOf(a); if (i < 0) throw new Error('missing ' + a); const j = s.indexOf(b, i + a.length); if (j < 0) throw new Error('missing ' + b); return s.slice(i, j); };
 
 console.log('== 1. kite-board buttons: no layout read in _kbPlace, same placement');
@@ -93,7 +98,7 @@ console.log('== 3. preset: explicit pick eases down under a sustained miss, neve
   const applied = [], toasts = []; let live = 0;
   const ctx = { GFX: { preset: 'ultra', runtimeTier: null }, STATE: { screen: 'flight' }, document: { hidden: false }, console, String,
     window: {}, applyPreset: (t) => applied.push(t), applyGraphicsLive: () => live++, autoPreset: () => 'low', toast: (m) => toasts.push(m), setInterval: () => 0 };
-  ctx.window = Object.assign(ctx.window, { DMBudget: { on: true, emaMs: () => ctx.ema, budgetMs: () => 36 } }); ctx.ema = 37;
+  ctx.window = Object.assign(ctx.window, { DMBudget: { on: true, emaMs: () => ctx.ema, budgetMs: () => 36, isExhausted: () => ctx.ex } }); ctx.ema = 37; ctx.ex = true;   // (v339) section 3 runs with the ladder exhausted; section 5 covers the gate
   vm.createContext(ctx); vm.runInContext(src + ';this.tick=_presetGovTick;this.step=_presetStepDown;', ctx);
   ok(ctx.step('ultra', 'low') === 'high' && ctx.step('high', 'low') === 'medium' && ctx.step('medium', 'low') === 'low' && ctx.step('low', 'low') === null && ctx.step('high', 'high') === null && ctx.step('auto', 'low') === null, '_presetStepDown: one step, floor = the Auto tier');
   for (let i = 0; i < 20; i++) ctx.tick(); ok(applied.length === 0, 'within budget (37 vs 36 ms, < 8 % over): no change');
@@ -124,11 +129,107 @@ console.log('== 4. #256 review: no real WebGPU -> MC ladder locked');
   ok(/TERRAIN\.mcUpgradeLocked\) return;/.test(go) && /!TERRAIN\.mcUpgradeLocked\) setTimeout/.test(go), 'the walk-patch _go loop stops once it is locked');
 }
 
+console.log('== 5. (v339) no double drop: preset steps down only once DMBudget is exhausted');
+{
+  const BUD = fs.readFileSync(path.join(root, 'ui/dm-budget.js'), 'utf8');
+  ok(/out\.isExhausted = function \(\) \{ return !!\(out\.on && S\.C && S\.C\.exhausted\); \};/.test(BUD), 'DMBudget.isExhausted(): allocation-free read of the controller flag (stats() builds an object)');
+  const src = cut(IDX, 'var _PRESET_RANK=', 'function applyPreset(name){');
+  const tick = cut(src, 'function _presetGovTick(){', 'const next=');   // the every-2-s check path (up to the rare step itself)
+  ok(/B\.isExhausted\(\)/.test(tick) && !/stats\(\)|\{\s*\}|\[\s*\]|new |=>|function\s*\(/.test(tick.replace('function _presetGovTick(){', '')), 'the 2 s check reads isExhausted() and allocates nothing (no stats(), no literals / closures)');
+  const applied = []; let p = 0, steps = 28;
+  const ctx = { GFX: { preset: 'ultra', runtimeTier: null }, STATE: { screen: 'flight' }, document: { hidden: false }, console, String,
+    window: {}, applyPreset: (t) => applied.push(t), applyGraphicsLive: () => {}, autoPreset: () => 'low', toast: () => {}, setInterval: () => 0 };
+  ctx.window.DMBudget = { on: true, emaMs: () => 60, budgetMs: () => 36, isExhausted: () => p >= steps };
+  vm.createContext(ctx); vm.runInContext(src + ';this.tick=_presetGovTick;', ctx);
+  // Watcher's case: 12 s+ of misses while the ladder is at step 7 of 28 and still shedding (one step per tick)
+  p = 7; for (let i = 0; i < 21; i++) { ctx.tick(); if (p < steps) p++; }
+  ok(applied.length === 0 && p === steps, 'missing 30 fps for 42 s while the ladder sheds steps 7..27: NO preset step-down (the old code stepped at 12 s)');
+  // ladder now exhausted: the 12 s window starts here (time before did not count)
+  for (let i = 0; i < 5; i++) ctx.tick(); ok(applied.length === 0, 'exhausted for 10 s: not yet (the miss window counts exhausted time only)');
+  ctx.tick(); ok(applied.join() === 'high', 'exhausted + still missing for 12 s: one step ULTRA -> HIGH');
+  // the ladder recovers a step mid-window -> the window resets
+  ctx.GFX.runtimeTier = null; applied.length = 0; vm.runInContext('_PG.cool=0;_PG.over=0;', ctx);
+  for (let i = 0; i < 5; i++) ctx.tick(); p = steps - 1; ctx.tick(); p = steps; for (let i = 0; i < 5; i++) ctx.tick();
+  ok(applied.length === 0, 'a tick with the ladder not exhausted resets the window (5 + 5 exhausted ticks: no step)');
+  ctx.tick(); ok(applied.join() === 'high', '... and 6 consecutive exhausted ticks then step');
+  // no accessor (older dm-budget.js) -> never steps
+  ctx.GFX.runtimeTier = null; applied.length = 0; vm.runInContext('_PG.cool=0;_PG.over=0;', ctx); delete ctx.window.DMBudget.isExhausted;
+  for (let i = 0; i < 30; i++) ctx.tick(); ok(applied.length === 0, 'no isExhausted accessor: no step-down (fails safe)');
+}
+
+console.log('== 6. (v339) memCensus aborts on a world change and lets the old scene go');
+{
+  const job = cut(PL, 'const MEM_SLICE_MS', 'function census() {');
+  let clock = 0, ricId = 0; const ricQ = new Map(), cancelled = [];
+  const ctx = { performance: { now: () => clock }, document: { hidden: false }, Date, Math, Set, Map, Array, Object, String, console, JSON, PW: { active: true, gen: 1 },
+    window: { cancelIdleCallback: (id) => { cancelled.push(id); ricQ.delete(id); } }, ric: (f) => { ricQ.set(++ricId, f); return ricId; } };
+  const recs = []; ctx.window.__dmRec = (k) => recs.push(k);
+  vm.createContext(ctx);
+  vm.runInContext('let _memCache=null,_memAt=0,_memForce=false,_census=null,ended=false;' + job + ';this.memKick=memKick;this.memAbort=memAbort;this.memFinish=memFinish;this.get=()=>({c:_memCache,j:memJob,on:memSliceOn,rid:memRic});', ctx);
+  // a world scene whose objects we can watch: a WeakRef-able root, scanned through a generator that holds it
+  const mkScene = (nObj) => { const sc = { name: 'world', children: [] }; for (let i = 0; i < nObj; i++) { const o = { parent: sc, children: [], geometry: null }; Object.defineProperty(o, 'material', { get() { clock += 0.01; return null; }, enumerable: true }); sc.children.push(o); } return sc; };
+  let scene = mkScene(2000);
+  ctx.memKick([['world', scene]]);
+  // two slices in, then the world closes (index.html _pwClose -> dmPerfLog.abortCensus)
+  for (let k = 0; k < 2; k++) { const [id, f] = ricQ.entries().next().value; ricQ.delete(id); f({ didTimeout: false, timeRemaining: () => 12 }); }
+  ok(!!ctx.get().j && ricQ.size === 1, 'scan in progress after 2 slices (one idle slice pending)');
+  const pendingId = ctx.get().rid, jobRef = ctx.get().j;
+  ok(ctx.memAbort('pw:close') === true, 'abortCensus(): the in-progress job is aborted');
+  ok(ctx.get().j === null && ctx.get().on === false && ctx.get().rid === 0, 'job forgotten, no slice marked pending');
+  ok(cancelled.includes(pendingId) && ricQ.size === 0, 'the pending idle callback is cancelled');
+  ok(jobRef.it === null, 'the generator is ended and dropped (its roots / stacks / seen-sets are released)');
+  ok(ctx.get().c === null && !recs.includes('perflog.memCensus'), 'no half-finished result is reported as a census');
+  ok(recs.includes('perflog.memAbort'), 'the abort is logged (perflog.memAbort)');
+  // GC proof: with the job aborted nothing in the perflog module references the scene
+  global.__oldScene = new WeakRef(scene); scene = null;   // checked after this job ends (a WeakRef keeps its target alive until then); needs node --expose-gc
+  // self-abort: the world changed while a slice was pending and nobody called abortCensus
+  const sc2 = mkScene(2000); ctx.memKick([['world', sc2]]);
+  { const [id, f] = ricQ.entries().next().value; ricQ.delete(id); f({ didTimeout: false, timeRemaining: () => 12 }); }
+  ok(!!ctx.get().j, 'a second scan is running');
+  ctx.PW.gen = 2;   // a new world was built
+  { const [id, f] = ricQ.entries().next().value; ricQ.delete(id); f({ didTimeout: false, timeRemaining: () => 12 }); }
+  ok(ctx.get().j === null && ricQ.size === 0 && ctx.get().c === null, 'the next slice sees the world changed and aborts by itself (no further slices)');
+  ctx.PW.active = false; const sc3 = mkScene(50); ctx.memKick([['flight', sc3]]); while (ricQ.size) { const [id, f] = ricQ.entries().next().value; ricQ.delete(id); f({ didTimeout: false, timeRemaining: () => 12 }); }
+  ok(!!ctx.get().c && ctx.get().c.objects === 51, 'a scan with no world change still finishes normally');
+  ok(/try\{ if\(window\.dmPerfLog&&dmPerfLog\.abortCensus\) dmPerfLog\.abortCensus\('pw:close'\); \}catch\(e\)\{\}/.test(cut(IDX, 'function _pwClose(opts){', 'disposeObject3D(scene)')), '_pwClose aborts the census before the world scene is disposed');
+  ok(/dmPerfLog\.abortCensus\('pw:build'\)/.test(cut(IDX, 'function _pwBuild(body,site,mode,focus){', 'const gen=++PW.gen;')), '_pwBuild aborts any census of the previous world first');
+  ok(/abortCensus: \(why\) => memAbort\(why\)/.test(PL), 'window.dmPerfLog.abortCensus exported');
+}
+
+console.log('== 7. (v339) dm-governor never saves the session-eased scale under the pick');
+{
+  const GV = fs.readFileSync(path.join(root, 'ui/dm-governor.js'), 'utf8');
+  const runGov = (runtimeTier) => {
+    let clock = 0; const writes = [];
+    const store = { getItem: () => null, setItem: (k, v) => writes.push([k, v]) };
+    const win = { localStorage: store, devicePixelRatio: 2, innerWidth: 1200, document: { hidden: false } };
+    const ctx = { window: win, performance: { now: () => clock }, Math, JSON, Date, Float32Array, console };
+    vm.createContext(ctx); vm.runInContext(GV, ctx);
+    const gfx = { preset: 'ultra', runtimeTier, isMobile: true };
+    const r = { setPixelRatio: () => {} };
+    // 40 s of slow frames (50 ms: the governor steps the scale down), then 60 s calm (12 ms) so a settled scale would be remembered
+    const run = (ms, dur) => { const end = clock + dur; while (clock < end) { clock += ms; win.DMGov.frame(r, gfx, 2); } };
+    run(50, 40000); run(12, 60000);
+    return { writes, k: r._dr.k };
+  };
+  const base = runGov(null);
+  ok(base.writes.length > 0 && base.writes.some(([, v]) => JSON.parse(v).key.startsWith('ultra|')), 'control: no eased tier -> the settled scale is remembered under the pick (' + base.writes.length + ' writes, k ' + base.k + ')');
+  const eased = runGov('high');
+  ok(eased.writes.length === 0, 'GFX.runtimeTier set (session eased below ULTRA): NOTHING written to storage (' + eased.writes.length + ' writes)');
+  const same = runGov('ultra');
+  ok(same.writes.length === base.writes.length, 'runtimeTier equal to the pick is not "eased": saves as before');
+  ok(/function save\(gfx, k\) \{ if \(eased\(gfx\)\) return;/.test(GV), 'save() itself refuses an eased session (belt and braces for every call site)');
+}
+
 console.log('== stamps');
 {
-  { const m = fs.readFileSync(path.join(root, 'sw.js'), 'utf8').match(/const CACHE_NAME = 'dartmeadow-engine-v(\d+)';/); ok(m && +m[1] >= 337, 'sw dartmeadow-engine >= v337 (later pushes bump it; was pinned to exactly v337)'); }
-  ok(/ui\/dm-perflog\.js\?v=337/.test(IDX), 'ui/dm-perflog.js?v=337');
+  ok(SWV >= 337, 'sw dartmeadow-engine-v' + SWV + ' (read from sw.js; CE assigns the number at merge)');
+  ok(new RegExp('ui/dm-perflog\\.js\\?v=(\\d+)').test(IDX) && +IDX.match(/ui\/dm-perflog\.js\?v=(\d+)/)[1] >= 337 && +IDX.match(/ui\/dm-perflog\.js\?v=(\d+)/)[1] <= SWV, 'ui/dm-perflog.js?v= within 337..v' + SWV);
   ok(/const ATMO_DEFAULT_AGL\s*=\s*46\b/.test(IDX), 'ATMO_DEFAULT_AGL stays 46');
 }
-console.log(fails ? 'perf-log-fixes: ' + fails + ' of ' + n + ' checks FAILED' : 'perf-log-fixes: all ' + n + ' checks passed');
-process.exit(fails ? 1 : 0);
+setTimeout(() => {
+  if (typeof global.gc === 'function') { for (let i = 0; i < 4; i++) global.gc(); ok(global.__oldScene.deref() === undefined, '6. the aborted scan\'s old world scene is garbage-collected (node --expose-gc)'); }
+  else console.log('  (run with node --expose-gc to also prove the old scene is collected)');
+  console.log(fails ? 'perf-log-fixes: ' + fails + ' of ' + n + ' checks FAILED' : 'perf-log-fixes: all ' + n + ' checks passed');
+  process.exit(fails ? 1 : 0);
+}, 0);

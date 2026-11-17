@@ -38,7 +38,10 @@
     try { const j = JSON.parse(root.localStorage.getItem(KEY) || 'null'); if (j && j.key === devKey(gfx) && Date.now() - j.t < 14 * 864e5 && j.k > 0.3 && j.k <= 1) return j.k; } catch (e) {}
     return 1;
   }
-  function save(gfx, k) { try { root.localStorage.setItem(KEY, JSON.stringify({ key: devKey(gfx), k: k, t: Date.now() })); } catch (e) {} }
+  // (v339, Watcher #261 review) while index.html's preset governor has eased this session below the player's pick (gfx.runtimeTier), the scale settled at the
+  // eased tier is NOT the pick's settled scale: it was being written under the pick's key ('ultra|...') and the next launch started Ultra pre-shrunk.  Never persisted.
+  function eased(gfx) { return !!(gfx && gfx.runtimeTier && gfx.runtimeTier !== gfx.preset); }
+  function save(gfx, k) { if (eased(gfx)) return; try { root.localStorage.setItem(KEY, JSON.stringify({ key: devKey(gfx), k: k, t: Date.now() })); } catch (e) {} }
 
   function make(gfx) {
     return {
@@ -166,6 +169,7 @@
     } else if (!calm) d.calm = Math.max(0, d.calm - 250);
     // persist a settled scale (stable for a while, not mid-probe)
     if (bcap() < 1) { /* capped by the frame-budget ladder: not the device's own settled scale */ }
+    else if (eased(gfx)) { /* (v339) session-eased preset tier: nothing is remembered under the player's pick */ }
     else if (!d.probe && since > 20000 && now - d.saveT > 30000 && Math.abs(d.k - d.saved) >= 0.02 && !(bcap() < 1 && Math.abs(d.k - bcap()) < 0.011)) { d.saved = d.k; d.saveT = now; save(gfx, d.k); }   // (t1516) a scale forced by the budget ladder's cap is not this device's settled scale: never remembered for the next launch
     else if (!d.probe && d.k >= 1 && d.saved < 1 && since > 20000) { d.saved = 1; d.saveT = now; save(gfx, 1); }
   }
