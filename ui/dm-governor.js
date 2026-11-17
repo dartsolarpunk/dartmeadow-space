@@ -166,7 +166,7 @@
     } else if (!calm) d.calm = Math.max(0, d.calm - 250);
     // persist a settled scale (stable for a while, not mid-probe)
     if (bcap() < 1) { /* capped by the frame-budget ladder: not the device's own settled scale */ }
-    else if (!d.probe && since > 20000 && now - d.saveT > 30000 && Math.abs(d.k - d.saved) >= 0.02) { d.saved = d.k; d.saveT = now; save(gfx, d.k); }
+    else if (!d.probe && since > 20000 && now - d.saveT > 30000 && Math.abs(d.k - d.saved) >= 0.02 && !(bcap() < 1 && Math.abs(d.k - bcap()) < 0.011)) { d.saved = d.k; d.saveT = now; save(gfx, d.k); }   // (t1516) a scale forced by the budget ladder's cap is not this device's settled scale: never remembered for the next launch
     else if (!d.probe && d.k >= 1 && d.saved < 1 && since > 20000) { d.saved = 1; d.saveT = now; save(gfx, 1); }
   }
 

@@ -62,7 +62,7 @@ let fails = 0, n = 0; const ok = (c, m) => { n++; if (!c) { fails++; console.log
   ok(!F.S.on && F.S.light === null, 'starts off, no light yet (nothing added to any scene)');
   ok(JSON.stringify(F.STEPS) === '[750,1250,2000,3000,4000]', 'lumen steps 750 / 1250 / 2000 / 3000 / 4000');
   ok(F.toggle() === true && F.S.light && F.S.light.isSpotLight, 'tap: on -> one SpotLight');
-  const L = F.S.light; ok(L.castShadow === true && L.shadow.autoUpdate === false && !L.shadow.needsUpdate, 'real shadow-casting spot, map only updated on request (zero cost while off)'); ok(Math.abs(L.angle - 54 * Math.PI / 180) < 0.03 && L.penumbra >= 0.4, 'wide, soft cone (54 deg halo window, ' + (L.angle * 180 / Math.PI).toFixed(0) + ' deg half-angle, penumbra ' + L.penumbra + ')'); ok(L.distance >= 150 && L.distance <= 300, 'reaches 150-300 m on the ground (range ' + L.distance + ')');
+  const L = F.S.light; ok(L.castShadow === true && L.shadow.autoUpdate === false && !L.shadow.needsUpdate, 'real shadow-casting spot, map only updated on request (zero cost while off)'); ok(Math.abs(L.angle - 40 * Math.PI / 180) < 0.03 && L.penumbra >= 0.3 && L.penumbra <= 0.45, '(t1516) tight LED cone (40 deg window (was 54), ' + (L.angle * 180 / Math.PI).toFixed(0) + ' deg half-angle, penumbra ' + L.penumbra + ')'); ok(L.distance >= 150 && L.distance <= 300, 'reaches 150-300 m on the ground (range ' + L.distance + ')');
   ok(F.lumens() === 3000 && Math.abs(L.intensity - 3000 * F.LM_K) < 1e-9, 'default 3000 lm (v324: brighter default)'); ok(3000 * F.LM_K >= 500, 'strong output (>= 500 cd at the default step)');
   const seen = []; for (let i = 0; i < 5; i++) { F.setStep(i); seen.push([F.lumens(), L.intensity]); }
   ok(seen.map(s => s[0]).join() === '750,1250,2000,3000,4000' && seen.every((s, i) => !i || s[1] > seen[i - 1][1]), 'every step sets its lumens, brighter each step');
@@ -73,11 +73,35 @@ let fails = 0, n = 0; const ok = (c, m) => { n++; if (!c) { fails++; console.log
   // tick: the beam rides in her top-level scene along the glasses' forward axis
   rootG.rotation.y = 0.9; head.rotation.x += 0.2; scene.updateMatrixWorld(true);
   F.tick('walk'); ok(L.parent === scene && F.S.target.parent === scene, 'beam lives in her top-level scene (first person hides her body, not the beam)');
-  g.getWorldPosition(wp); ok(L.position.distanceTo(wp) < 1e-6, 'beam origin = the LED bar');
+  const face = new THREE.Vector3(0, 0, D.dep * 0.5 + 0.0002).applyMatrix4(g.matrixWorld);   // (t1516) the centre of the bar's FRONT face, world
+  ok(L.position.distanceTo(face) < 1e-6, 'beam origin = the FRONT face of the LED bar (' + (L.position.distanceTo(g.getWorldPosition(wp)) * 1000).toFixed(1) + ' mm ahead of the bar centre)');
   const fwd = new THREE.Vector3(0, 0, 1).transformDirection(g.matrixWorld), dir = F.S.target.position.clone().sub(L.position).normalize();
   { const pit = v => Math.atan2(v.y, Math.hypot(v.x, v.z)), brg = v => Math.atan2(v.x, v.z), tilt = F.S.tilt;   // (v322) on foot the axis is the glasses' forward tilted DOWN by S.tilt (same bearing); S.tilt = 0 -> exactly the forward axis
     ok(Math.abs(brg(dir) - brg(fwd)) < 1e-6 && Math.abs(pit(dir) - (pit(fwd) - tilt)) < 1e-6 && tilt > 0.05 && tilt < 0.1, 'aimed along the glasses forward axis, tilted ' + (tilt * 180 / Math.PI).toFixed(0) + ' deg down (follows the head bone)'); }
   ok(fwd.dot(new THREE.Vector3(0, 0, 1).applyQuaternion(rootG.quaternion)) > 0.8, 'forward = the way her face points');
+  ok(F.S.aimHow === 'head', 'no camera hook: the glasses-forward aim (fallback / ?flashaim=head)');
+  // (t1516) LOOK aim: with the camera hook the beam follows the CAMERA's view direction (the look stick), not her body / head.  Bird Temple case: her body faces the
+  // MOVEMENT heading (rootG yaw 0.9) while the look stick has turned the camera to yaw -1.2 and pitched it 0.25 rad down; third person (camera behind and above her).
+  { const cam = new THREE.PerspectiveCamera(60, 1, 0.01, 100); cam.rotation.order = 'YXZ'; cam.rotation.set(-0.25, -1.2, 0); cam.position.set(2, 3, 1); scene.add(cam); scene.updateMatrixWorld(true);
+    F.hooks.cam = () => cam; F.tick('walk');
+    const cf = new THREE.Vector3(); cam.getWorldDirection(cf); const d2 = F.S.target.position.clone().sub(L.position).normalize();
+    ok(d2.distanceTo(cf) < 1e-6 && F.S.aimHow === 'camera', 'aim = the camera look direction (' + d2.toArray().map(v => v.toFixed(3)) + '), not the glasses / body forward (' + fwd.toArray().map(v => v.toFixed(3)) + ')');
+    ok(d2.dot(fwd) < 0.9, 'the case that broke on the Bird Temple: body (movement) and look differ, the beam takes the look');
+    ok(L.position.distanceTo(face) < 1e-6, 'origin stays on the bar front face with the camera aim');
+    const c = F.cone(); ok(Math.abs(c.dir.x - cf.x) + Math.abs(c.dir.y - cf.y) + Math.abs(c.dir.z - cf.z) < 1e-6, 'DMFlash.cone().dir (fog shafts, DMVLight) = the camera look');
+    // first person: the camera at her eyes, looking up 0.3 rad: the beam pitches with the look
+    cam.position.copy(face); cam.rotation.set(0.3, 0.4, 0); cam.updateMatrixWorld(true); F.tick('walk'); cam.getWorldDirection(cf);
+    ok(F.S.target.position.clone().sub(L.position).normalize().distanceTo(cf) < 1e-6, 'first person: follows the eyes (look up = beam up, no tilt added)');
+    F.tick('space'); cam.getWorldDirection(cf); ok(F.S.target.position.clone().sub(L.position).normalize().distanceTo(cf) < 1e-6, 'vacuum / space profile: same look aim');
+    F.tick('fly'); ok(F.S.target.position.clone().sub(L.position).normalize().distanceTo(cf) < 1e-6, 'atmosphere (fly): same look aim');
+    // the beam never lights her own head: the near cutoff (scaled by her size) is zero inside ~0.14 m of the bar and full from ~0.5 m; a forward profile with no 360 glow
+    const sc = Math.hypot(...g.matrixWorld.elements.slice(0, 3)), nc = [F.NEAR.lit[0] * sc, F.NEAR.lit[1] * sc];
+    ok(F.nearK(0.05 * sc, nc) === 0 && F.nearK(0.12 * sc, nc) === 0 && F.nearK(0.6 * sc, nc) === 1, 'near cutoff: hair / brow / nose (< 0.14 m) get nothing, 0.6 m on gets everything');
+    if (F.U) ok(Math.abs(F.U.nc.value.x - nc[0]) < 1e-9 && Math.abs(F.U.nb.value.y - F.NEAR.shaft[1] * sc) < 1e-9, 'near-cutoff uniforms follow her scale');
+    const P = F.beamParams(1, 1, 1), cO = Math.cos(F.PROF.ground.angle), cI = Math.cos(F.PROF.ground.angle * (1 - F.PROF.ground.penumbra));
+    ok(F.spotFactor(Math.cos(Math.PI / 2), 0.1, P, cO, cI, nc) === 0 && F.spotFactor(Math.cos(Math.PI * 0.8), 2, P, cO, cI, nc) === 0 && F.spotFactor(Math.cos(0.7), 5, P, cO, cI, nc) === 0, 'nothing beside or behind the bar (no spill back over her head, no 360 bloom)');
+    ok(F.spotFactor(1, 5, P, cO, cI, nc) > 0 && F.spotFactor(Math.cos(0.3), 5, P, cO, cI, nc) > 0, 'lights ahead along the look');
+    F.hooks.cam = null; scene.remove(cam); }
   // tick allocates nothing (counted constructions while ticking)
   const src = fs.readFileSync(path.join(root, 'ui/dm-flash.js'), 'utf8'), tb = src.slice(src.indexOf('F.tick = function'), src.indexOf('// ── UI'));
   ok(!/new\s|\[\s*\]|\{\s*\}|=>/.test(tb.replace(/\/\/.*$/gm, '')), 'tick(): no new / array / object / closure (no per-frame allocation)');

@@ -34,6 +34,14 @@ try {
   DMFlash.adoptScene(scene);
   const led = new THREE.Object3D(); led.position.set(+(Q.get('ox') || 0), 1.62, -0.05); led.rotation.y = Math.PI; scene.add(led); scene.updateMatrixWorld(true);
   DMFlash.S.led = led; DMFlash.S.built = true;
+  // (t1516) ?tp=1: third person - her head (a lit sphere + a hair cap just behind the bar) seen from behind / above; ?look=<deg>: the beam follows the CAMERA (hooks.cam), the
+  // camera turned <deg> off her face (Bird Temple: the body faces the movement heading, the look stick turns the camera).  Checks: no light on her head, the beam ahead.
+  if (Q.get('tp') === '1') {
+    const hd = new THREE.Mesh(new THREE.SphereGeometry(0.11, 24, 16), lit(0xc89c7c)); hd.position.set(+(Q.get('ox') || 0), 1.6, 0.07); hd.castShadow = hd.receiveShadow = true; hd.name = 'head'; scene.add(hd);
+    const hair = new THREE.Mesh(new THREE.SphereGeometry(0.125, 24, 12, 0, Math.PI * 2, 0, Math.PI * 0.55), lit(0x3a2418)); hair.position.copy(hd.position).add(new THREE.Vector3(0, 0.015, 0.005)); hair.castShadow = hair.receiveShadow = true; scene.add(hair);
+    const yaw = (+(Q.get('look') || 0)) * Math.PI / 180; cam.position.set(1.6 * Math.sin(yaw), 2.25, 1.6 * Math.cos(yaw)); cam.lookAt(-6 * Math.sin(yaw), 1.2, -6 * Math.cos(yaw)); cam.updateMatrixWorld(true);
+    if (Q.get('look') !== null) DMFlash.hooks.cam = () => cam;
+  }
   if (Q.get('cone')) DMFlash.setCone(+Q.get('cone')); DMFlash.setStep(Q.get('lm') ? +Q.get('lm') : 3);
   if (Q.get('off') !== '1') DMFlash.toggle(true);
   for (let f = 0; f < 8; f++) { DMFlash.tick('walk'); r.render(scene, cam); await new Promise(z => setTimeout(z, 20)); }

@@ -98,4 +98,18 @@ const rel = (a, b, tol, msg) => assert(Math.abs(a - b) <= tol * Math.max(Math.ab
   let prev = -1; for (let L = 0; L < 200; L += 0.5) { const k = sunNearK(L); assert(k >= prev - 1e-12 && k >= 0 && k <= 1); prev = k; }
   assert(sunNearK(SUN_NEAR0 + 5) < 0.01, 'no visible haze just past the player-near limit'); console.log('sun scatter near fade OK (0 inside ' + SUN_NEAR0 + ' m, full beyond ' + SUN_NEAR1 + ' m)'); }
 
+// (t1516) the flashlight's shaft leaves her glasses as a beam, not a glow ball round her head: a third-person view ray that grazes the apex (0.1 m beside it, beam pointing
+// away from the camera) gets almost nothing from the first metre; the same ray 6 m down the beam still sees the shaft.  Point lights keep their full near term.
+{ const a = 0.45, pen = 0.5, co = Math.cos(a), ci = Math.cos(a * (1 - pen)), inv = 1 / (ci - co);
+  assert(V.spotNear(0.1) === 0 && V.spotNear(V.SPOT_NEAR1 + 0.01) === 1 && V.spotNear(0.9) > 0 && V.spotNear(0.9) < 1, 'spot near ramp');
+  const d = [1, 0, 0], sigma = 0.03;   // camera at the origin, ray along +x
+  const apex = { x: 2, y: 0.1, z: 0, dx: 0, dy: 0, dz: -1, range: 60, cosOuter: co, invR: inv };   // the beam runs away from the camera (-z), its apex 0.1 m off the ray
+  const nearOnly = V.lightScatterBrute(apex, d, 4, sigma, 0.45, 40000);
+  const far = { x: 2, y: 0.1, z: 6, dx: 0, dy: 0, dz: -1, range: 60, cosOuter: co, invR: inv };   // the ray crosses the beam 6 m from its apex
+  const down = V.lightScatterBrute(far, d, 4, sigma, 0.45, 40000);
+  const pt = { x: 2, y: 0.1, z: 0, dx: 0, dy: 0, dz: 0, range: 60, cosOuter: -1, invR: 1 };
+  const ball = V.lightScatterBrute(pt, d, 4, sigma, 0.45, 40000);
+  assert(nearOnly < ball * 0.01, 'no glow ball at the apex: ' + nearOnly.toExponential(2) + ' vs point ' + ball.toExponential(2));
+  assert(down > nearOnly * 5, 'the shaft is down the beam: ' + down.toExponential(2));
+  console.log('spot near ramp OK (apex graze ' + (100 * nearOnly / ball).toFixed(2) + ' % of a point lamp; shaft 6 m out ' + (down / Math.max(nearOnly, 1e-12)).toFixed(0) + 'x the apex)'); }
 console.log('vlight-unit: all passed');
