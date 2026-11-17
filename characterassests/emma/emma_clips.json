@@ -1,0 +1,273 @@
+{
+ "rig": "Emma (Ariel bone names)",
+ "rootMotionScale": 0.9815857638320404,
+ "source": "Ariel/Autumn merged animations retargeted by tools/retarget.py",
+ "clips": {
+  "Wall_Support_Jump_to_Ground": {
+   "duration": 1.6667
+  },
+  "Walking_Woman": {
+   "duration": 0.9667
+  },
+  "Walking": {
+   "duration": 1.0333
+  },
+  "Swing_on_Rope_to_Ground": {
+   "duration": 4.3667
+  },
+  "Swim_Forward": {
+   "duration": 4.5333
+  },
+  "Step_Right_for_Exercise": {
+   "duration": 2.5
+  },
+  "Running": {
+   "duration": 0.6333
+  },
+  "Run_03": {
+   "duration": 0.8
+  },
+  "Regular_Jump": {
+   "duration": 1.8
+  },
+  "Quad_Climb_Right": {
+   "duration": 1.6667
+  },
+  "Ladder_Climb_Finish": {
+   "duration": 4.0
+  },
+  "Grab_Bar_and_Swing_Forward": {
+   "duration": 2.4667
+  },
+  "Fast_Stair_Climb": {
+   "duration": 0.7667
+  },
+  "Crouch_Walk_Right_with_Torch_inplace": {
+   "duration": 1.1333
+  },
+  "Crawl_Backward_inplace": {
+   "duration": 0.9667
+  },
+  "climbing_up_wall": {
+   "duration": 2.0
+  },
+  "Back_Jump": {
+   "duration": 0.9333
+  },
+  "Idle_Breathe_Blink": {
+   "duration": 3.0
+  },
+  "Acting_Wave_Happy": {
+   "duration": 4.0
+  },
+  "Acting_Surprised": {
+   "duration": 3.0
+  },
+  "Acting_Angry": {
+   "duration": 3.0
+  },
+  "Acting_Thinking": {
+   "duration": 4.0
+  },
+  "Acting_Talk": {
+   "duration": 4.0
+  },
+  "Acting_Sad": {
+   "duration": 4.0
+  },
+  "Grip_Fingers_Toes": {
+   "duration": 4.0
+  },
+  "Mount_Step": {
+   "duration": 1.15
+  },
+  "Dismount_Step": {
+   "duration": 1.05
+  },
+  "Emma_Idle": {
+   "duration": 4.9667
+  },
+  "Emma_Jump_Start": {
+   "duration": 0.62
+  },
+  "Emma_Jump_Loop": {
+   "duration": 0.6333
+  },
+  "Emma_Fall": {
+   "duration": 0.3
+  },
+  "Emma_Land": {
+   "duration": 0.78
+  },
+  "Emma_Climb_Hang": {
+   "duration": 0.7667
+  },
+  "Emma_Swim_InPlace": {
+   "duration": 4.5333
+  },
+  "Emma_Turn_L": {
+   "duration": 0.8
+  },
+  "Emma_Turn_R": {
+   "duration": 0.8
+  }
+ },
+ "presets": [
+  {
+   "id": "idle",
+   "clip": "Emma_Idle",
+   "loop": "repeat",
+   "label": "Idle (breathing + blink)"
+  },
+  {
+   "id": "walk",
+   "clip": "Walking",
+   "loop": "repeat",
+   "label": "Walk"
+  },
+  {
+   "id": "run",
+   "clip": "Running",
+   "loop": "repeat",
+   "label": "Run"
+  },
+  {
+   "id": "jump",
+   "clip": "Regular_Jump",
+   "loop": "once",
+   "label": "Jump (full arc)"
+  },
+  {
+   "id": "jump_start",
+   "clip": "Emma_Jump_Start",
+   "loop": "once",
+   "label": "Jump: start"
+  },
+  {
+   "id": "jump_loop",
+   "clip": "Emma_Jump_Loop",
+   "loop": "repeat",
+   "label": "Jump: air loop"
+  },
+  {
+   "id": "fall",
+   "clip": "Emma_Fall",
+   "loop": "repeat",
+   "label": "Fall"
+  },
+  {
+   "id": "land",
+   "clip": "Emma_Land",
+   "loop": "once",
+   "label": "Land"
+  },
+  {
+   "id": "climb",
+   "clip": "climbing_up_wall",
+   "loop": "once",
+   "label": "Climb up"
+  },
+  {
+   "id": "climb_hang",
+   "clip": "Emma_Climb_Hang",
+   "loop": "repeat",
+   "label": "Climb: hang"
+  },
+  {
+   "id": "climb_side",
+   "clip": "Quad_Climb_Right",
+   "loop": "once",
+   "label": "Climb: traverse right"
+  },
+  {
+   "id": "ladder",
+   "clip": "Ladder_Climb_Finish",
+   "loop": "once",
+   "label": "Ladder"
+  },
+  {
+   "id": "swim",
+   "clip": "Swim_Forward",
+   "loop": "repeat",
+   "label": "Swim"
+  },
+  {
+   "id": "swim_idle",
+   "clip": "Emma_Swim_InPlace",
+   "loop": "repeat",
+   "label": "Swim (in place)"
+  },
+  {
+   "id": "swing",
+   "clip": "Swing_on_Rope_to_Ground",
+   "loop": "once",
+   "label": "Swing on rope"
+  },
+  {
+   "id": "swing_bar",
+   "clip": "Grab_Bar_and_Swing_Forward",
+   "loop": "once",
+   "label": "Grab bar and swing"
+  },
+  {
+   "id": "crouch",
+   "clip": "Crouch_Walk_Right_with_Torch_inplace",
+   "loop": "repeat",
+   "label": "Crouch walk"
+  },
+  {
+   "id": "prone",
+   "clip": "Crawl_Backward_inplace",
+   "loop": "repeat",
+   "label": "Crawl"
+  },
+  {
+   "id": "turn_left",
+   "clip": "Emma_Turn_L",
+   "loop": "once",
+   "label": "Turn left (pivot)"
+  },
+  {
+   "id": "turn_right",
+   "clip": "Emma_Turn_R",
+   "loop": "once",
+   "label": "Turn right (pivot)"
+  },
+  {
+   "id": "talk",
+   "clip": "Acting_Talk",
+   "loop": "repeat",
+   "label": "Talk"
+  },
+  {
+   "id": "wave",
+   "clip": "Acting_Wave_Happy",
+   "loop": "once",
+   "label": "Wave"
+  },
+  {
+   "id": "think",
+   "clip": "Acting_Thinking",
+   "loop": "repeat",
+   "label": "Think"
+  },
+  {
+   "id": "surprised",
+   "clip": "Acting_Surprised",
+   "loop": "once",
+   "label": "Surprised"
+  },
+  {
+   "id": "mount",
+   "clip": "Mount_Step",
+   "loop": "once",
+   "label": "Board: step on"
+  },
+  {
+   "id": "dismount",
+   "clip": "Dismount_Step",
+   "loop": "once",
+   "label": "Board: step off"
+  }
+ ]
+}
