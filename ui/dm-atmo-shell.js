@@ -18,6 +18,8 @@
 (function (root) {
   'use strict';
   const LOOK_FALLBACK = { earth: 1.18, habitable: 1.18, mars: 1.06, venus: 1.16, titan: 1.22, other: 1.10 };
+  // (v332) the same procedural-type aliases index.html's _atmoLookKey uses (desert air is Mars dust, methane Titan haze, ...)
+  const ALIAS = { habitable: 'earth', ocean: 'earth', desert: 'mars', methane: 'titan', volcanic: 'venus' };
   // pure: shell radius in planet radii from a mesh's userData (null when it carries none)
   function shellFromUserData(ud) {
     if (!ud || !ud.jotsAtmo) return null;
@@ -29,8 +31,8 @@
   // pure: perimeter radii with a fade in [0, 1] (1 = outer edge of the shell, 0 = the surface)
   function withFade(shell, fade) { const f = fade == null ? 1 : fade < 0 ? 0 : fade > 1 ? 1 : fade; return 1 + (shell - 1) * f; }
   function lookMul(kind, look) {
-    const k = String(kind || '').toLowerCase(), L = look || null;
-    const e = L && (L[k] || (k === 'habitable' ? L.earth : null) || L.other);
+    const k0 = String(kind || '').toLowerCase(), L = look || null, k = (L ? L[k0] : LOOK_FALLBACK[k0]) ? k0 : (ALIAS[k0] || k0);
+    const e = L && (L[k] || L.other);
     if (e && e.mul > 0) return e.mul;
     return LOOK_FALLBACK[k] || LOOK_FALLBACK.other;
   }
