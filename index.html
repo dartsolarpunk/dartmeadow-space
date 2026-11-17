@@ -25189,13 +25189,21 @@ async function upgradeSurfaceMcLOD(surfRenderer, pal, seed, siteLandBias){
         tier:next,halfExtent:90,cx:Math.round(px),cz:Math.round(pz),yMin:gh-60,yMax:gh+130
       }));
     }finally{ TERRAIN._mcBusy=false; }
-    if(!built) return;
-    if(!surfaceActive || !TERRAIN.group){ _discardMcBuild(built); return; }
+    if(!built) return false;
+    if(!surfaceActive || !TERRAIN.group){ _discardMcBuild(built); return false; }
     _applyMcBuild(built);
     TERRAIN.mcTier=next;
     if(next==='high') TERRAIN.mcUpgradeLocked=true;
-  }catch(e){ console.warn('[GPU-MC] upgrade failed:', e); }
+    return true;
+  }catch(e){ console.warn('[GPU-MC] upgrade failed:', e); return false; }
 }
+// (v330 streaming) the walk patch's detail ladder after landing.  It used to try ONE step (low 16^3 -> med 22^3) and give up for good after 20 checks
+// (60 s) unless the smoothed frame was <= 50 ms the whole time, so on a 19-20 fps device the ground at her feet stayed on its first, coarsest build
+// ("about as much as it loaded"), and 'high' was never asked for at all.  Now: low -> med while the frame is <= 50 ms (as before), med -> high only
+// while it is inside the 30 fps budget (<= 36 ms, ui/dm-budget.js TARGET), re-checked on a timer that backs off to 15 s but never gives up while she
+// is on this surface (a new world / leaving stops it: gen check).  Pure: tools/tests/skyground-stream.js.
+function _mcUpHealthy(next,shDt){ const d=shDt||0; return next==='high'?d<=0.036:d<=0.05; }
+function _mcUpDelay(n){ return Math.min(15000,3000+n*1000); }
 
 
 // Corner offsets for the 8 vertices of a unit cube, in the standard
@@ -25660,8 +25668,11 @@ function SkyGround(scene,F,pal,o){
   this._fr=new THREE.Frustum(); this._m4=new THREE.Matrix4(); this._v=new THREE.Vector3(); this._c=new THREE.Vector3(); this._cc=new THREE.Vector3(); this._sph=new THREE.Sphere();
   // (Wave 1) reused every frame: the kept root keys, the lat/lon domain, the focus point, last frame's build counts
   this._keep=new Set(); this._dm={x0:0,z0:0,W:0}; this._fx=0; this._fz=0; this._cpos=null; this._sb=null;
-  this.stat={built:0,focus:0,emerg:0,skipped:0,left:0,settle:0};
+  this.stat={built:0,focus:0,emerg:0,skipped:0,left:0,settle:0,idle:0,idleN:0};
   this._anc=new THREE.Vector3(1e9,1e9,1e9); this._movedAt=0;   // (fov-fill) where the camera last settled, and when it last moved off it
+  // (v330 streaming) idle fill: the callbacks and the timer slice's deadline are made once here (no closure / object per frame)
+  this._idleOn=false; this._dead=false; this._idleFn=this._idleRun.bind(this); this._sliceFn=this._sliceRun.bind(this);
+  const dl=this._dl={t1:0,didTimeout:false,timeRemaining:null}; dl.timeRemaining=function(){ return Math.max(0,dl.t1-performance.now()); };
   this._fadeU=null; this._radialFade();
   this._seaU=null; this._seaRimInit();
 }
@@ -25712,8 +25723,23 @@ SkyGround.prototype._seaRimTick=function(){
 // per-frame build budget is _SKY_SETTLE.k x the normal one, so the field of view finishes filling while she waits instead of at 1 tile a frame (a 13 fps
 // tablet: ~38 s for the ~330 tiles from the HOME deck, ~20 s settled).  Still a TIME budget (the gate is unchanged; the focus cap is unchanged); it drops
 // back the frame she moves and costs nothing once the queue is empty.  Pure (tools/tests/fov-fill.js).
-const _SKY_SETTLE={after:600,anchor:2,k:1.75};
+// (v330 streaming) the settle starts 300 ms after she stops (was 600 ms): after touchdown / stepping off the boost no longer waits most of a second.
+const _SKY_SETTLE={after:300,anchor:2,k:1.75};
 function _skySettleBudget(B,still,left){ return still&&left>0?B*_SKY_SETTLE.k:B; }
+// (v330 streaming) IDLE FILL.  After landing the ground COVERED the view in ~20 frames but every nearby tile took ~270 frames (~21 s at 13 fps,
+// ~525 builds for ~330 drawn tiles) to reach full detail, because tiles were only ever built inside the frame's 4 / 7 ms budget.  The tiles still
+// waiting after that budget are now also built OUTSIDE the interactive frame, in the frame's own queue order (focus under her, in view, nearest for
+// its size, coarse first):
+//   * requestIdleCallback (Chrome / Android / Firefox): a build starts only while the idle period has room for it (_skyIdleRoom: >= min ms and
+//     >= 1.5 x the measured build time + a margin, so it ends before the next frame is due), at most `max` builds per idle period;
+//   * no requestIdleCallback (Safari / iOS): ONE timer slice after the frame (setTimeout 0, `slice` ms phone / `sliceD` desktop), and only while the
+//     frame-budget controller (ui/dm-budget.js) reports headroom (EMA <= `head` x its budget), so a device near its 30 fps line never pays it.
+// Not in the quiet window (intro / 2.5 s arrival settle; the next frame asks again, so nothing starves), not while hidden, never once disposed.
+// The in-frame gate (_skyGroundGate) is unchanged.  Pure gates + timing: tools/tests/skyground-stream.js.
+const _SKY_NEAR=600;   // (v330 streaming) "nearby" for the build order: ~340 m round the camera (1 u = 0.561 m)
+const _SKY_IDLE={min:4,margin:1.5,max:8,slice:3,sliceD:4,head:0.8};
+function _skyIdleRoom(left,buildMs){ return left>=Math.max(_SKY_IDLE.min,(buildMs||0)*1.5+_SKY_IDLE.margin); }
+function _skySliceOk(ema,budget){ return ema>0&&budget>0&&ema<=budget*_SKY_IDLE.head; }
 // (fov-fill) HORIZON REACH: how far ground can still be seen from `alt` above the sea of a sphere of radius R — the camera's own horizon plus the horizon of
 // land `relief` high standing beyond it (a peak past the sea horizon still shows its top).  Pythagoras on the sphere (d = sqrt(h (2R + h))): no pi, no box.
 const _SKY_RELIEF=260;   // the tallest ground a tile assumes before it is measured (SkyGround._node maxH)
@@ -25805,6 +25831,7 @@ SkyGround.prototype.update=function(cam,budgetMs){
     if(n._foc){ nf++; if(bare) bare=this._bareUnder(); }
   }
   const st=this.stat; st.built=built; st.focus=nf; st.emerg=em?1:0; st.skipped=skipped; st.left=Q.length-built; st.settle=B>this.budget&&budgetMs==null?1:0;
+  if(st.left>0) this._idleKick();   // (v330 streaming) what is left fills in after this frame, outside it
   if(this._fadeU){ this._fadeU.a.value=this.viewR*_SKY_FADE0; this._fadeU.b.value=this.viewR; }   // (Wave 2a) the circle follows the drawn radius
   this._seaRimTick();   // (lod-hide) the sea's circular rim follows the sheet
   this.roots.forEach(this._show,this);
@@ -25816,7 +25843,10 @@ SkyGround.prototype.update=function(cam,budgetMs){
 SkyGround.prototype._rootKeep=function(n,k,roots){ if(!this._keep.has(k)){ this._drop([n]); roots.delete(k); } };
 SkyGround.prototype._visitRoot=function(n){ this._visit(n,this._cpos,0); };
 SkyGround.prototype._under=function(n){ return !n||(this._fx>=n.x0&&this._fx<n.x0+n.size&&this._fz>=n.z0&&this._fz<n.z0+n.size); };
-SkyGround.prototype._qcmp=function(a,b){ return ((b._foc?1:0)-(a._foc?1:0))||((b._inView?1:0)-(a._inView?1:0))||(Math.floor(a._d/a.size*4)-Math.floor(b._d/b.size*4))||(b.size-a.size)||(a._d-b._d); };
+// (v330 streaming) build order: focus (the chain under her) | in view | UNCOVERED (no drawn ancestor: a hole, so the view still fills first) | NEARBY
+// (nearest point within _SKY_NEAR of the camera) | then as before: nearest for its size, coarse before fine.  Before, the nearby tiles that had
+// reached the smallest size (MIN) ranked by d/size behind every coarse far tile, so the ground around her was the LAST to finish (~250 of ~270 frames).
+SkyGround.prototype._qcmp=function(a,b){ return ((b._foc?1:0)-(a._foc?1:0))||((b._inView?1:0)-(a._inView?1:0))||((b._unc?1:0)-(a._unc?1:0))||((a._d<_SKY_NEAR?0:1)-(b._d<_SKY_NEAR?0:1))||(Math.floor(a._d/a.size*4)-Math.floor(b._d/b.size*4))||(b.size-a.size)||(a._d-b._d); };
 // true while no tile on the chain from the root down to the focus point has a mesh (nothing could draw under her)
 SkyGround.prototype._bareUnder=function(){
   const T=this.TOP, dm=this._dm, fx=this._fx, fz=this._fz;
@@ -25825,8 +25855,31 @@ SkyGround.prototype._bareUnder=function(){
   while(n){ if(n.mesh) return false; if(!n.kids) return true; const h=n.size/2; n=n.kids[(fx>=n.x0+h?1:0)+(fz>=n.z0+h?2:0)]; }
   return true;
 };
-SkyGround.prototype._visit=function(n,c,depth){
-  this._measure(n,c);
+// (v330 streaming) idle fill (see _SKY_IDLE): one pending callback at most while tiles wait; it builds from the frame's queue
+SkyGround.prototype._idleKick=function(){
+  if(this._idleOn||this._dead) return;
+  const W=window;
+  if(typeof W.requestIdleCallback==='function'){ this._idleOn=true; try{ W.requestIdleCallback(this._idleFn); }catch(e){ this._idleOn=false; } return; }
+  const B=W.DMBudget; if(!B||!B.on||typeof B.emaMs!=='function'||!_skySliceOk(B.emaMs(),B.budgetMs())||typeof W.setTimeout!=='function') return;
+  this._idleOn=true; try{ W.setTimeout(this._sliceFn,0); }catch(e){ this._idleOn=false; }
+};
+SkyGround.prototype._sliceRun=function(){ this._dl.t1=performance.now()+(GFX.isMobile?_SKY_IDLE.slice:_SKY_IDLE.sliceD); this._idleRun(this._dl); };
+SkyGround.prototype._idleRun=function(dl){
+  this._idleOn=false;
+  if(this._dead||!dl||typeof dl.timeRemaining!=='function') return;
+  const W=window; if(W.document&&W.document.hidden) return;
+  try{ if(W._dmQuiet&&W._dmQuiet()) return; }catch(e){}   // the next frame's update asks again
+  const Q=this.queue; let b=0;
+  for(let q=0;q<Q.length&&b<_SKY_IDLE.max;q++){
+    const n=Q[q]; if(n.mesh||n._hidden) continue;   // built this frame / let go
+    if(dl===this._dl?dl.timeRemaining()<=0:!_skyIdleRoom(dl.timeRemaining(),this.buildMs)) break;   // timer slice: a time budget like the frame's (no build starts past it)
+    const tb=performance.now(); this._build(n); b++;
+    this.buildMs=(this.buildMs||0)*0.9+(performance.now()-tb)*0.1;
+  }
+  this.stat.idle=b; this.stat.idleN=(this.stat.idleN||0)+b;
+};
+SkyGround.prototype._visit=function(n,c,cov){
+  this._measure(n,c); n._unc=!cov;   // (v330 streaming) cov: an ancestor already draws here
   const far=(n._d>this.viewR||!n._vis)&&n.parent;   // beyond what can be seen: let it go
   n._hidden=!!far;
   // (far-range 8) relief-aware split: a tile that holds a cliff / scarp splits farther out (DMLod.reliefBoost), so the drop keeps its edge at range instead of a 50 m ramp.  The relief is the
@@ -25837,7 +25890,7 @@ SkyGround.prototype._visit=function(n,c,depth){
   if(split){
     if(!n.kids){ const h=n.size/2; n.kids=[this._node(n.x0,n.z0,h,n),this._node(n.x0+h,n.z0,h,n),this._node(n.x0,n.z0+h,h,n),this._node(n.x0+h,n.z0+h,h,n)]; }
     if(!n.mesh) this.queue.push(n);   // every level gets its own tiles, so detail sharpens a level at a time (coarse first)
-    for(const k of n.kids) this._visit(k,c,depth+1);
+    for(const k of n.kids) this._visit(k,c,cov||(n.mesh?1:0));
   } else {
     // (Wave 2a) merging back: the children stay up (unvisited, still drawn) until this tile has its own mesh to stand in for them —
     // before, they were dropped at once, and a tile whose mesh had been invalidated left a hole until it was rebuilt
@@ -25966,7 +26019,7 @@ SkyGround.prototype._morphTick=function(dt){
     if(u>=1){ n.morph=null; this.morphing.delete(n); }   // done: drop the spare copies
   }
 };
-SkyGround.prototype.dispose=function(){ this._drop([...this.roots.values()]); this.roots.clear(); if(this.group.parent) this.group.parent.remove(this.group); };
+SkyGround.prototype.dispose=function(){ this._dead=true; this.queue.length=0; this._drop([...this.roots.values()]); this.roots.clear(); if(this.group.parent) this.group.parent.remove(this.group); };
 
 // ── The air seen from outside (DART Engine) ─────────────────────────────
 // A shell round the whole planet that scatters the sun through the
@@ -26243,10 +26296,11 @@ function _pwMcRebuildAt(px,pz){
       _applyMcBuild(built);
       if(PW.ground) PW.ground.group.position.y=-0.35;   // the LOD ground becomes the underlay
       // staged detail upgrade once she's on foot (one-way lock, never during her load)
-      if(!TERRAIN._mcUpg&&surfaceActive){ TERRAIN._mcUpg=true; const _go=(n)=>{ if(gen!==PW.gen||!surfaceActive) return; const pa=window._dmPrevAlive, killed=!!(pa&&pa.clean===false&&/surf/.test(pa.screen||'')&&Date.now()-pa.t<600000);
+      if(!TERRAIN._mcUpg&&surfaceActive){ TERRAIN._mcUpg=true; const _go=(n)=>{ if(gen!==PW.gen||!surfaceActive||TERRAIN.mcUpgradeLocked) return; const pa=window._dmPrevAlive, killed=!!(pa&&pa.clean===false&&/surf/.test(pa.screen||'')&&Date.now()-pa.t<600000);
         if(killed){ _crM('mcUpgrade:skip','prev kill on surf'); return; }   // (stability) the last session died on this surface: stay on the first (cheaper) tier
-        if(CHAR.loading||TERRAIN._mcBusy||(TERRAIN._shDt||0)>0.05){ if(n<20) setTimeout(()=>_go(n+1),3000); return; }   // wait for a quiet, healthy moment (re-check every 3 s)
-        upgradeSurfaceMcLOD(PW.renderer,PW.pal,TERRAIN.seed,TERRAIN.siteBias).catch(()=>{}); };
+        const next=(TERRAIN.mcTier||'low')==='low'?'med':'high';
+        if(CHAR.loading||TERRAIN._mcBusy||!_mcUpHealthy(next,TERRAIN._shDt)){ setTimeout(()=>_go(n+1),_mcUpDelay(n)); return; }   // (v330) wait for a quiet, healthy moment; never gives up while she is here
+        upgradeSurfaceMcLOD(PW.renderer,PW.pal,TERRAIN.seed,TERRAIN.siteBias).then(ok=>{ if(gen===PW.gen&&surfaceActive&&!TERRAIN.mcUpgradeLocked) setTimeout(()=>_go(ok?0:n+1),ok?4000:_mcUpDelay(n)); }).catch(()=>{}); };   // (v330) and on to the next step
         setTimeout(()=>_go(0),6000); }
     })
     .catch(e=>{ console.warn('[GPU-MC] patch failed, keeping the LOD ground:',e); if(gen===PW.gen) TERRAIN.mcGpu=false; })
