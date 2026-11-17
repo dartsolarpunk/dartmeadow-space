@@ -35,6 +35,14 @@
  *    15 fps floor: 68 ms (sheds under ~14.7 fps).  Light / shadow / atmo stages therefore shed at 30 fps on surface, atmosphere and the mansion (budgetFor()).
  *    If everything is shed and the frame is still slow it is CPU-bound beyond this controller's reach: stats().exhausted says so.
  *
+ * NO ONE-WAY LATCH (v353, Justin's tablet + iPhone showed the camouflage-blob terrain at 4-18 fps for a whole session): the old seed re-read the LAST session's settled pressure (up to the render-scale
+ *    steps) and added +1/+2 for EVERY session that ended without a pagehide (a swiped-away tab, an iOS memory kill, a crash during a test), for 21 days, and the only way back down needed the frame under
+ *    26 ms (38 fps) for 4 s - which a 30 fps-locked tablet or a phone at 33 ms can never show.  Each unclean exit therefore ratcheted the next launch deeper into the ladder (ground reach x0.6, parallax and
+ *    props shed, render scale 0.42) and nothing undid it.  Now: (1) the remembered pressure is a HINT: it is capped at base + SEED_ABOVE_BASE (8) incl. the death penalty, expires after 4 days and is
+ *    thrown away when the build (window.DM_BUILD) changes, so every release re-measures; (2) 'MEETS-TARGET RECOVERY': while above the device-class base, a frame that meets the 30 fps budget with margin
+ *    (EMA < 0.95 x budget, p95 < 1.7 x) for 12 s gives one step back, through the same lock / back-off as any recovery (a step that fails is locked 20 s .. 5 min), so a device that can afford the
+ *    quality earns it back without oscillating; (3) DMBudget.degraded() / .reset() let the UI say so and let the player clear it (index.html: toast + 'RESET QUALITY').
+ *
  * FAST LIGHT-STACK GUARD (v324): the ladder above sheds the lighting stack LAST (light 1 at p8, flashlight / lamp shadow cadence at p14+), one step per >= 1 s dwell, so a tablet at 5-12 fps stayed
  *    there for 15-30 s.  A second, independent integer `fast` (0..3) watches the same frame times: EMA below 20 fps (50 ms) for 2 s -> fast + 1 (again every further 2 s), EMA above 30 fps for 6 s -> fast - 1.
  *    Consumers (all uniform writes / cadences, no recompile): DMFlash (L1 shadow map 512 + every 3rd frame, L2 shadows off, L3 shaft cone off), DMVLight (fast = at least that 'light' level:
@@ -70,6 +78,19 @@
   const TARGET_MS = 36, LEGACY_MS = 68;
   // (t1516) the render-scale steps (the last five, 0.85 .. 0.42) must save at least this fraction of the frame time, or they are handed back (C.evaluate)
   const RES_GAIN = 0.08, RES0 = pOf('res', 1);
+  // (v353) how far above the device-class base a REMEMBERED pressure (+ the unclean-exit penalty) may start a session, how long it is believed, and the meets-target recovery timing
+  const SEED_ABOVE_BASE = 8, SEED_MAX_AGE_MS = 4 * 864e5, OK_EMA = 0.95, OK_P95 = 1.7, OK_HOLD_MS = 20000;
+  // pure: the starting pressure.  o = { base, hist:{p,t,b}|null, build, now, prev:{clean,hidden,screen}|null }
+  function seedFor(o) {
+    const base = Math.max(0, Math.min(MAX, o.base | 0)), h = o.hist; let p = base, why = 'class ' + base;
+    if (h && Number.isFinite(h.p) && Number.isFinite(h.t) && o.now - h.t < SEED_MAX_AGE_MS && o.now - h.t > -864e5 && String(h.b || '') === String(o.build || '')) {
+      const cap = Math.min(base + SEED_ABOVE_BASE, RES0 - 1);   // (t1516) a remembered render-scale cut is re-earned this session (gain check), never inherited blind
+      p = Math.max(base, Math.min(h.p | 0, cap)); why = 'last p=' + (h.p | 0) + (h.p > cap ? ' (capped ' + cap + ')' : '');
+      const pa = o.prev;   // (ui/dm-perflog.js) did the previous session end without a pagehide, and where?
+      if (pa && pa.clean === false && !pa.hidden) { const surf = /surf|atmo/.test(pa.screen || ''); p = Math.min(p + (surf ? 2 : 1), cap); why += surf ? ' +2 died on world' : ' +1 died'; }
+    } else if (h) why += ' (history dropped: ' + (String(h.b || '') !== String(o.build || '') ? 'new build' : 'stale') + ')';
+    return { p: Math.min(MAX, p), why: why };
+  }
   function isLegacy(g) { return !!(g && g.deviceMem > 0 && g.deviceMem <= 3); }
   function budgetFor(g) { return isLegacy(g) ? LEGACY_MS : TARGET_MS; }
 
@@ -99,11 +120,11 @@
       nextEval: 0, over: 0, calm: 0, lastChange: -1e9, lastRecover: -1e9, lastEval: 0, settleUntil: 0,
       lock: new Float64Array(MAX + 2), hold: new Float64Array(MAX + 2),
       changes: 0, esc: 0, rec: 0, fails: 0, history: [], lv: levelsAt(0), ver: 0, exhausted: false, p95: 0, settledP: 0, settledSince: 0, recTo: -1, floorP: 0, onChange: o.onChange || null,
-      rgPre: 0, rgFrom: -1, rgTo: -1, resCeil: MAX, resCeilUntil: 0, resNoGain: 0,   // (t1516) render-scale gain check, see RES_GAIN
+      okFloor: o.okFloor | 0, ok: 0, okRec: 0, okHold: OK_HOLD_MS, lastOkRec: -1e9, rgPre: 0, rgFrom: -1, rgTo: -1, resCeil: MAX, resCeilUntil: 0, resNoGain: 0,   // (t1516) render-scale gain check, see RES_GAIN
     };
     for (let i = 0; i < C.hold.length; i++) C.hold[i] = 20000;
 
-    C.reset = function () { C.head = 0; C.count = 0; C.emaOK = false; C.over = 0; C.calm = 0; C.ema = 0; };
+    C.reset = function () { C.head = 0; C.count = 0; C.emaOK = false; C.over = 0; C.calm = 0; C.ok = 0; C.ema = 0; };
     C.set = function (p, now, why) {
       p = Math.max(0, Math.min(MAX, p | 0)); if (p === C.p) return false;
       const from = C.p; C.p = p; C.lastChange = now; C.changes++; C.ver++; levelsAt(p, C.lv);
@@ -165,8 +186,9 @@
       }
       const bad = e > B || (p95 > B * 2.2 && e > B * 0.75);
       const calm = e < B * 0.72 && p95 < B * 1.5;
-      if (bad) { C.over += dtE; C.calm = 0; } else { C.over = Math.max(0, C.over - dtE * 0.5); C.calm = calm ? C.calm + dtE : Math.max(0, C.calm - dtE * 0.5); }
-      if (C.recTo >= 0 && C.p === C.recTo && now - C.lastRecover > 40000) { const k = C.recTo + 1; C.hold[k] = Math.max(20000, C.hold[k] / 2); C.recTo = -1; }   // a recovery that held 40 s relaxes its back-off
+      const meets = !bad && e < B * OK_EMA && p95 < B * OK_P95;   // (v353) meets the 30 fps budget with margin (a 30-fps-locked device: 33.3 ms) - enough to give a step back, never to go below the class base
+      if (bad) { C.over += dtE; C.calm = 0; C.ok = 0; } else { C.over = Math.max(0, C.over - dtE * 0.5); C.calm = calm ? C.calm + dtE : Math.max(0, C.calm - dtE * 0.5); C.ok = meets ? C.ok + dtE : Math.max(0, C.ok - dtE); }
+      if (C.recTo >= 0 && C.p === C.recTo && now - C.lastRecover > 40000) { const k = C.recTo + 1; C.hold[k] = Math.max(20000, C.hold[k] / 2); C.okHold = Math.max(OK_HOLD_MS, C.okHold / 2); C.recTo = -1; }   // a recovery that held 40 s relaxes its back-off
       if (C.settledP !== C.p) { C.settledP = C.p; C.settledSince = now; }
       if (bad) {
         const dwell = sev2 > 4 ? 0 : sev > 2 ? 600 : sev > 1.4 ? 1000 : 1600;
@@ -176,6 +198,7 @@
           // how far to jump: a slideshow (frames > 4x the budget) sheds in big strides - the render scale at the end of the ladder is what usually buys most - then settles
           let step = sev2 > 16 ? 9 : sev2 > 8 ? 6 : sev2 > 4 ? 4 : sev > 2.2 ? 2 : 1; if (C.p + step > top) step = top - C.p; if (step < 1) step = 1;
           if (C.lastRecover > 0 && now - C.lastRecover < 12000) {   // an undone recovery: the level we just left is locked (exponential back-off)
+            if (now - C.lastOkRec < 12000) C.okHold = Math.min(600000, Math.max(120000, C.okHold * 3));   // (v353) a meets-target probe that failed: the next one waits much longer
             const lv = Math.min(MAX, C.p + 1); C.fails++; C.hold[lv] = Math.min(300000, C.hold[lv] * 2); C.lock[lv] = now + C.hold[lv];   // lock[k]: do not leave pressure k downwards
           }
           const np = C.p + step, rf = Math.max(C.p, RES0 - 1, C.floorP);
@@ -185,9 +208,11 @@
         }
         return false;
       }
-      if (calm && C.p > C.floorP && C.calm >= 4000 && now - C.lastChange >= 4000) {
+      const okRec = !calm && meets && C.p > Math.max(C.floorP, C.okFloor) && C.ok >= C.okHold && now - C.lastChange >= C.okHold;
+      if (((calm && C.calm >= 4000 && now - C.lastChange >= 4000) || okRec) && C.p > C.floorP) {
         const target = C.p - 1;
         if (now < C.lock[C.p]) return false;
+        if (okRec) { C.okRec++; C.lastOkRec = now; }
         C.rec++; C.exhausted = false; C.lastRecover = now; C.recTo = target; C.set(target, now, 'rec ' + Math.round(e) + 'ms');
         return true;
       }
@@ -195,12 +220,12 @@
       return false;
     };
     C.stats = function () {
-      return { resNoGain: C.resNoGain, resCeil: C.resCeilUntil > C.t ? C.resCeil : MAX, min2: +C.min2.toFixed(0), p: C.p, max: MAX, base: C.base, lv: C.lv, emaMs: +C.ema.toFixed(1), p95Ms: +C.p95.toFixed(1), budgetMs: C.budget, changes: C.changes, esc: C.esc, rec: C.rec, locks: C.fails, exhausted: C.exhausted, hist: C.history.slice(-12) };
+      return { okRec: C.okRec, okFloor: C.okFloor, resNoGain: C.resNoGain, resCeil: C.resCeilUntil > C.t ? C.resCeil : MAX, min2: +C.min2.toFixed(0), p: C.p, max: MAX, base: C.base, lv: C.lv, emaMs: +C.ema.toFixed(1), p95Ms: +C.p95.toFixed(1), budgetMs: C.budget, changes: C.changes, esc: C.esc, rec: C.rec, locks: C.fails, exhausted: C.exhausted, hist: C.history.slice(-12) };
     };
     return C;
   }
 
-  const core = { RES_GAIN: RES_GAIN, RES0: RES0, createFast: createFast, createController: createController, LADDER: LADDER, STAGES: STAGES, levelsAt: levelsAt, MAX: MAX, pOf: pOf, budgetFor: budgetFor, isLegacy: isLegacy, TARGET_MS: TARGET_MS, LEGACY_MS: LEGACY_MS };
+  const core = { seedFor: seedFor, SEED_ABOVE_BASE: SEED_ABOVE_BASE, SEED_MAX_AGE_MS: SEED_MAX_AGE_MS, OK_HOLD_MS: OK_HOLD_MS, RES_GAIN: RES_GAIN, RES0: RES0, createFast: createFast, createController: createController, LADDER: LADDER, STAGES: STAGES, levelsAt: levelsAt, MAX: MAX, pOf: pOf, budgetFor: budgetFor, isLegacy: isLegacy, TARGET_MS: TARGET_MS, LEGACY_MS: LEGACY_MS };
   if (typeof module !== 'undefined' && module.exports) module.exports = core;
   if (typeof window === 'undefined') return;
 
@@ -220,16 +245,8 @@
     const lowGpu = g.gpuClass === 'low' || (g.score != null && g.score < 55), tiny = g.deviceMem > 0 && g.deviceMem <= 3;
     return lowGpu || tiny ? 4 : 2;
   }
-  function loadHist() { try { const j = JSON.parse(W.localStorage.getItem(KEY) || 'null'); if (j && j.key === devKey() && Date.now() - j.t < 21 * 864e5) return j; } catch (e) { } return null; }
-  function seedP() {
-    const base = classBase(), h = loadHist(); let p = base, why = 'class ' + base;
-    if (h) {
-      p = Math.max(base, Math.min(h.p | 0, RES0 - 1)); why = 'last p=' + (h.p | 0) + (h.p > RES0 - 1 ? ' (res steps re-measured)' : '');   // (t1516) a remembered render-scale cut is re-earned this session (gain check), never inherited blind
-      const pa = W._dmPrevAlive;   // (ui/dm-perflog.js) did the previous session end without a pagehide, and where?
-      if (pa && pa.clean === false && !pa.hidden) { const surf = /surf|atmo/.test(pa.screen || ''); p += surf ? 2 : 1; why += surf ? ' +2 died on world' : ' +1 died'; }
-    }
-    return { p: Math.min(MAX, p), why: why };
-  }
+  function loadHist() { try { const j = JSON.parse(W.localStorage.getItem(KEY) || 'null'); if (j && j.key === devKey()) return j; } catch (e) { } return null; }   // (v353) age + build are judged by core.seedFor
+  function seedP() { return seedFor({ base: classBase(), hist: loadHist(), build: W.DM_BUILD, now: Date.now(), prev: W._dmPrevAlive }); }
 
   const S = { C: null, F: null, started: false, saveT: 0, savedP: -1, screen: '', perScreen: {}, seed: null };
   const out = { on: !offFlag, ver: 0, p: 0, lv: levelsAt(0), core: core, seedWhy: '' };
@@ -250,7 +267,7 @@
     const hp = (t - c.settledSince >= 15000) ? c.p : (S.savedP >= 0 ? S.savedP : c.p);
     if (hp === S.savedP) return;
     S.saveT = t; S.savedP = hp;
-    try { W.localStorage.setItem(KEY, JSON.stringify({ key: devKey(), p: hp, t: Date.now(), max: c.p })); } catch (e) { }
+    try { W.localStorage.setItem(KEY, JSON.stringify({ key: devKey(), p: hp, t: Date.now(), max: c.p, b: W.DM_BUILD || '' })); } catch (e) { }
   }
   function hudClass(on) { try { const d = W.document && W.document.documentElement; if (d) d.classList.toggle('dm-hudlite', !!on); } catch (e) { } }   // ui/dm-hud.css: no filter / shadow / animation / transition on the HUD
   function applied(c) {
@@ -280,7 +297,7 @@
   }
   function start() {
     if (S.started || !out.on) return; S.started = true;
-    const c = S.C = createController({ budgetMs: budgetOv || budgetFor(W.GFX), onChange: applied });   // (v297) 30 fps target, 15 fps legacy floor
+    const c = S.C = createController({ budgetMs: budgetOv || budgetFor(W.GFX), onChange: applied, okFloor: classBase() });   // (v297) 30 fps target, 15 fps legacy floor
     S.seed = seedP(); let p0 = S.seed.p;
     if (forceP != null) { p0 = +forceP; S.seed.why = 'forced'; }
     S.F = createFast();
@@ -322,6 +339,15 @@
   }
 
   out.stats = function () { const c = S.C; if (!c) return null; const s = c.stats(); s.seed = out.seedWhy; s.dev = devKey(); s.memMB = S.memMB; s.floorP = c.floorP; s.screens = S.perScreen; s.enf = S.enf | 0; s.fast = out.fast(); return s; };
+  // (v353) the player can see and clear a degraded tier: degraded() = pressure above the device-class base for this session (null while the controller is off / not started);
+  // reset() forgets the remembered pressure, locks and back-offs and starts again from the class base (the controller re-measures from there).
+  out.degraded = function () { const c = S.C; if (!c || !out.on) return null; return { p: c.p, base: classBase(), above: c.p - classBase(), res: c.lv.res | 0, ground: c.lv.ground | 0, exhausted: !!c.exhausted }; };
+  out.reset = function () {
+    const c = S.C; try { W.localStorage.removeItem(KEY); W.localStorage.removeItem('dm_gov_v1'); W.localStorage.removeItem('dm_px_q1'); } catch (e) { }
+    if (!c) return false; c.lock.fill(0); c.hold.fill(20000); c.fails = 0; c.resCeilUntil = 0; c.resNoGain = 0; c.lastRecover = -1e9; c.settledSince = now(); S.savedP = -1;
+    const r = W.flightRenderer || (typeof flightRenderer !== 'undefined' ? flightRenderer : null); try { if (r && r._dr) { r._dr.k = 1; r._dr.since = now(); } } catch (e) { }
+    c.set(Math.max(c.floorP, classBase()), now(), 'reset'); return true;
+  };
   out.force = function (p) { if (S.C) S.C.set(p, now(), 'force'); };
   out.fast = function () { return S.F && !fastOff && out.on ? S.F.lvl : 0; };   // (v324) fast light-stack guard level 0..3 (see header)
   out.lvl = function (n) { return out.lv[n] | 0; };

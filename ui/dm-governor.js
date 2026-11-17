@@ -35,13 +35,13 @@
     return (gfx.preset || '?') + '|' + (gfx.isMobile ? 'm' : 'd') + '|' + Math.round((root.devicePixelRatio || 1) * 10) + '|' + Math.round((root.innerWidth || 0) / 100);
   }
   function loadSaved(gfx) {
-    try { const j = JSON.parse(root.localStorage.getItem(KEY) || 'null'); if (j && j.key === devKey(gfx) && Date.now() - j.t < 14 * 864e5 && j.k > 0.3 && j.k <= 1) return j.k; } catch (e) {}
+    try { const j = JSON.parse(root.localStorage.getItem(KEY) || 'null'); if (j && j.key === devKey(gfx) && Date.now() - j.t < 4 * 864e5 && String(j.b || '') === String(root.DM_BUILD || '') && j.k > 0.3 && j.k <= 1) return j.k; } catch (e) {}
     return 1;
   }
   // (v339, Watcher #261 review) while index.html's preset governor has eased this session below the player's pick (gfx.runtimeTier), the scale settled at the
   // eased tier is NOT the pick's settled scale: it was being written under the pick's key ('ultra|...') and the next launch started Ultra pre-shrunk.  Never persisted.
   function eased(gfx) { return !!(gfx && gfx.runtimeTier && gfx.runtimeTier !== gfx.preset); }
-  function save(gfx, k) { if (eased(gfx)) return; try { root.localStorage.setItem(KEY, JSON.stringify({ key: devKey(gfx), k: k, t: Date.now() })); } catch (e) {} }
+  function save(gfx, k) { if (eased(gfx)) return; try { root.localStorage.setItem(KEY, JSON.stringify({ key: devKey(gfx), k: k, t: Date.now(), b: root.DM_BUILD || '' })); } catch (e) {} }
 
   function make(gfx) {
     return {

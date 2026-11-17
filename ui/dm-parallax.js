@@ -252,10 +252,10 @@
   const GOV_KEY = 'dm_px_q1';
   function govDevKey() { return S.klass + '|' + S.tier + '|' + Math.round(((G.devicePixelRatio) || 1) * 10) + '|' + Math.round(((G.innerWidth) || 0) / 100); }
   function govLoad() {
-    try { const j = JSON.parse(G.localStorage.getItem(GOV_KEY) || 'null'); if (j && j.key === govDevKey() && Date.now() - j.t < 14 * 864e5 && j.q >= 0.05 && j.q <= 1) return j.q; } catch (e) { }
+    try { const j = JSON.parse(G.localStorage.getItem(GOV_KEY) || 'null'); if (j && j.key === govDevKey() && Date.now() - j.t < 4 * 864e5 && String(j.b || '') === String(G.DM_BUILD || '') && j.q >= 0.05 && j.q <= 1) return j.q; } catch (e) { }
     return S.klass === 'mobile' ? 0.6 : 1;
   }
-  function govSave(now) { const g = S.gov; if (now - g.saveT < 20000) return; g.saveT = now; try { G.localStorage.setItem(GOV_KEY, JSON.stringify({ key: govDevKey(), q: +g.q.toFixed(2), t: Date.now() })); } catch (e) { } }
+  function govSave(now) { const g = S.gov; if (now - g.saveT < 20000) return; g.saveT = now; try { G.localStorage.setItem(GOV_KEY, JSON.stringify({ key: govDevKey(), q: +g.q.toFixed(2), t: Date.now(), b: G.DM_BUILD || '' })); } catch (e) { } }
   function govBudget() { const mobile = S.klass === 'mobile'; return { budget: mobile ? 22 : 18, promote: mobile ? 19 : 14.5 }; }
   function govTick() {
     const g = S.gov;

@@ -54,8 +54,11 @@ self.addEventListener('fetch', (event) => {
     return;
   }
   // immutable: device first
+  // (v353) the cache name changes with every release, so a miss here is the first load of this build: a same-origin file is fetched with cache:'no-cache' (skips Safari's HTTP
+  // cache, which could hand back a copy from before the release under an unchanged ?v= tag - new index.html, old script).  Pinned CDN builds / fonts keep the normal path.
   if (IMMUTABLE.test(url)) {
-    event.respondWith(caches.match(req).then((c) => c || fetch(req).then((r) => put(req, r))));
+    const own = new URL(url).origin === self.location.origin;
+    event.respondWith(caches.match(req).then((c) => c || fetch(own ? new Request(req, { cache: 'no-cache' }) : req).then((r) => put(req, r))));
     return;
   }
   // (v117) the game's own unversioned assets (the temple GLBs, their textures, unversioned scripts): network first with

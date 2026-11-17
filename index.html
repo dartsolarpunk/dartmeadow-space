@@ -169,7 +169,7 @@ if(location.search.indexOf('debug')!==-1){
   // prompt; without one it silently falls back to a plain shortcut.
   if('serviceWorker' in navigator){
     window.addEventListener('load',function(){
-      navigator.serviceWorker.register('/sw.js').catch(function(){});
+      navigator.serviceWorker.register('/sw.js').then(function(r){ try{ r.update(); }catch(e){} }).catch(function(){});   /* (v353) ask for the newest worker at once (Safari otherwise checks lazily) */
       // (v314) A new service worker taking over (we bump the cache constantly; sw.js skipWaiting + clients.claim) used to reload the page when it landed in the first 10 s of a load.
       // That is a restart-to-menu in the middle of whatever the player had just started. It never reloads now: the page already in memory keeps running (its files are in memory;
       // anything not loaded yet comes from the network when the old cache is gone) and the new build applies on the NEXT load. The player gets a small, non-blocking message.
@@ -183,6 +183,7 @@ if(location.search.indexOf('debug')!==-1){
   // PWA manifest: /manifest.webmanifest (linked in <head>; dark launch screen on Android)
 })();</script>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<script>/* (v353) build tag: bump together with CACHE_NAME in sw.js (tools/tests/build-tag.js).  Persisted quality records (ui/dm-budget.js, dm-governor.js) are dropped when it changes. */window.DM_BUILD='v353';try{console.log('[DM build] '+window.DM_BUILD);}catch(e){}</script>
 <script src="ui/dm-time.js?v=97"></script>
 <script src="ui/dm-earth.js?v=292"></script>
 <script src="ui/dm-earth-paint.js?v=290"></script>
@@ -1362,7 +1363,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     <button class="mm-round" onclick="openFeedback()" title="Send feedback"><span>✉</span></button>
     <button class="mm-round mm-support" onclick="openSupport()" title="Support DART Meadow development"><span>❤</span></button>
   </div>
-  <div class="menu-version">DART MEADOW v3 · DART ENERGY RING SYSTEMS</div>
+  <div class="menu-version">DART MEADOW v3 · DART ENERGY RING SYSTEMS · <span id="menu-build" role="button" tabindex="0" title="Build, game files, quality" style="cursor:pointer;text-decoration:underline dotted" onclick="dmBuildInfo()">build v353</span></div>
 </div>
 
 <!-- SUPPORT MODAL -->
@@ -15698,6 +15699,23 @@ async function adminClearCacheReload(){
   try{ if(window.caches){ const ks=await caches.keys(); await Promise.all(ks.map(k=>caches.delete(k))); } }catch(e){}
   setTimeout(()=>{ try{ const u=new URL(location.href); u.searchParams.set('fresh',Date.now().toString(36)); window.dmReload?window.dmReload('adminClearCache',u.toString()):location.replace(u.toString()); }catch(e){ location.reload(); } },600);
 }
+// (v353) build tag + quality status.  The build tag (menu footer, profile > admin) shows what is RUNNING; tapping it explains and offers the safe refresh (the player-tapped
+// adminClearCacheReload above; nothing here reloads by itself).  _dmQualityStatus describes a DEGRADED quality tier in words; dmQualityReset forgets the remembered pressure.
+function _dmQualityLine(){
+  try{ const B=window.DMBudget, d=B&&B.degraded&&B.degraded(); if(!d) return 'Quality: automatic ('+(B&&B.on===false?'off':'starting')+')';
+    if(d.above>=4||d.res>=1) return 'Quality is reduced to hold 30 fps (level '+d.p+' of '+B.core.MAX+', device normal '+d.base+')'+(d.res>=1?' - render scale lowered':'')+(d.ground>=1?' - terrain detail reach lowered':'')+'. It recovers by itself when the frame rate allows; RESET QUALITY re-measures now.';
+    return 'Quality: full for this device (level '+d.p+', normal '+d.base+')'; }catch(e){ return ''; }
+}
+function _dmQualityStatus(){ try{ const e=document.getElementById('pf-q-status'); if(e) e.textContent='Build '+window.DM_BUILD+' - '+_dmQualityLine(); }catch(e){} }
+function dmQualityReset(){ try{ const ok=window.DMBudget&&DMBudget.reset&&DMBudget.reset(); toast(ok?'Quality reset - re-measuring from the device default':'Quality controller not running',2600); }catch(e){} setTimeout(_dmQualityStatus,300); }
+function dmBuildInfo(){
+  let sw=window._dmSwCache||'?'; const msg='DART Meadow '+window.DM_BUILD+'\nfiles cache: '+sw+'\n'+_dmQualityLine()+'\n\nRefresh game files now? (clears this device\'s file cache and reloads; saves stay)';
+  try{ if(window.confirm(msg)) adminClearCacheReload(); }catch(e){}
+}
+// one plain-words notice per session when the quality ladder has been pushed well below this device's normal (terrain detail / render scale)
+(function(){ let told=false; window.addEventListener('dm:budget',function(){ try{ if(told) return; const B=window.DMBudget, d=B&&B.degraded&&B.degraded(); if(!d||!(d.above>=6||d.res>=1)) return;
+  const sc=(typeof STATE!=='undefined'&&STATE&&STATE.screen)||''; if(sc!=='flight'&&sc!=='atmo'&&sc!=='surface') return; told=true;
+  toast('Quality lowered to hold your frame rate (terrain detail eases back by itself). Profile > Admin > RESET QUALITY re-measures.',5200); }catch(e){} }); })();
 function _pfEnsure(){
   if($('profile-modal')) return;
   const m=document.createElement('div'); m.id='profile-modal';
@@ -15740,7 +15758,8 @@ function _pfEnsure(){
     '<div class="pf-sec">ADMINISTRATION NOTES</div>'+
     '<div class="pf-row-d" style="margin:2px 0 8px;">Notices and update news from the DART Meadow team.</div>'+
     '<div id="pf-admin-list" class="pf-admin-list"></div>'+
-    '<div class="pf-btns"><button class="pf-btn" id="pf-admin-clear">↻ CLEAR GAME CACHE &amp; RELOAD</button></div>'+
+    '<div class="pf-row-d" id="pf-q-status" style="margin:6px 0"></div>'+
+    '<div class="pf-btns"><button class="pf-btn" id="pf-q-reset">⟲ RESET QUALITY (re-measure)</button><button class="pf-btn" id="pf-admin-clear">↻ REFRESH GAME FILES (CLEAR CACHE &amp; RELOAD)</button></div>'+
     '</div>'+
     '<div class="pf-btns"><button class="pf-btn" id="pf-close">CLOSE</button></div>'+
   '</div>';
@@ -15749,7 +15768,7 @@ function _pfEnsure(){
   $('pf-close').onclick=closeProfileMenu;
   const tab=(k)=>{ ['profile','journeys','admin'].forEach(n=>{ $('pf-tab-'+n).style.display=n===k?'':'none'; const b=$('pf-tab-btn-'+n); b.classList.toggle('on',n===k); b.setAttribute('aria-selected',String(n===k)); }); if(k==='journeys') _pfRenderJourneys(); if(k==='admin') _pfRenderAdmin(true); };
   $('pf-tab-btn-profile').onclick=()=>tab('profile'); $('pf-tab-btn-journeys').onclick=()=>tab('journeys'); $('pf-tab-btn-admin').onclick=()=>tab('admin');
-  $('pf-admin-clear').onclick=adminClearCacheReload;
+  $('pf-admin-clear').onclick=adminClearCacheReload; $('pf-q-reset').onclick=dmQualityReset; _dmQualityStatus();
   _pfRenderAdmin(false);
   $('pf-jn-new').onclick=()=>{ const d=buildSaveData('slot'); journeySaveNew(d,true); _pfRenderJourneys(); };
   $('pf-jn-import').onclick=()=>$('pf-jn-file').click();
