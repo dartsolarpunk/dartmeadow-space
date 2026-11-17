@@ -195,6 +195,6 @@ for (const name of ['Solenne', 'Mars', 'Titan', 'airless']) {
   ok(!/if\(!landing\)\s*\{/.test(ho), 'index: no if(!landing){ block wraps the hand-off reveal / sphere writes');
   ok(!/^\s*if\(!landing\s*&&\s*s\.pos\.y>PWS_UP\)/m.test(idx) && /\}else if\(!landing&&s\.pos\.y>PWS_UP\)\{\s*_pwFlyToSpace\(\)/.test(atmo), 'index: the bare PWS_UP switch is only the module-missing fallback');
   ok(!/<script src="ui\/dm-pw-handoff\.js\?v=\d+"><\/script>[^\n]*v297/.test(idx), 'index: dm-pw-handoff script tag does not carry the leftover dm-atmo-shell comment');
-  ok(/<script src="ui\/dm-atmo-shell\.js\?v=297"><\/script>[^\n]*DMAtmoShell/.test(idx), 'index: dm-atmo-shell comment lives on its own tag'); }
+  ok(/<script src="ui\/dm-atmo-shell\.js\?v=\d+"><\/script>[^\n]*DMAtmoShell/.test(idx), 'index: dm-atmo-shell comment lives on its own tag'); }
 if (nf) { console.log('pw-handoff FAILED (' + nf + ' failing, ' + n + ' passing)'); process.exit(1); }
 console.log('pw-handoff OK (' + n + ' checks; Solenne show ' + tS.showR.toFixed(3) + ' R, dissolve done ' + tS.downR.toFixed(3) + ' R (' + Math.round(tS.downAlt) + ' u), hide ' + tS.hideR.toFixed(3) + ' R, up ' + Math.round(tS.upAlt) + ' u; Mars show ' + tM.showR.toFixed(3) + ' R; pre-build 9 R, close 11 R)');
