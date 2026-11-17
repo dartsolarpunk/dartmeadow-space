@@ -7139,7 +7139,7 @@ if(window.visualViewport) window.visualViewport.addEventListener('resize',_queue
 //  * SIM_H_MAX 0.1 s is safe for her walk: DMCollide.walk sweeps in <= 0.35 m sub-steps (capsule r 0.7: the thinnest 0.11 m box needs a 0.755 m jump to
 //    tunnel), the mansion interior in <= 0.5 m segments, prop tops are stood on from last step's feet; run 30 u/s x 0.1 s = 3 u = 9 sub-steps.
 //  * cost budget: only the controller step repeats (camera, HUD/DOM, wind, board follow, foot IK run once, on the last step, with the frame's dt). After
-//    the first step, if the steps so far plus the smoothed per-step cost would pass SIM_BUDGET_MS, or the last frame's steps did, the rest of the frame is
+//    the first step, if the sim-only steps so far plus their smoothed (EMA) cost would pass SIM_BUDGET_MS, or the last frame's did, the rest of the frame is
 //    ONE final step (<= SIM_H_MAX) and the remainder is dropped: under load at most 2 steps, never a spiral. Scalars only, no allocation.
 const SIM_H_MAX=0.1, SIM_FRAME_MAX=0.4, SIM_STALL=1.0, SIM_BUDGET_MS=4;
 const _SIM={t:1/60,n:1,h:1/60,fdt:1/60,done:1/60,stepping:false,last:true,ema:0,prevMs:0,ran:1};
@@ -7157,7 +7157,8 @@ function _simRun(fn,mode){
       if(k>0&&(cost+S.ema>SIM_BUDGET_MS||S.prevMs>SIM_BUDGET_MS)){ h=left<SIM_H_MAX?left:SIM_H_MAX; left=h; }   // over budget: one last step, drop the rest
       S.last=left-h<=1e-7; S.fdt=S.t;
       const t0=performance.now(); fn(h); const c=performance.now()-t0;
-      cost+=c; k++; done+=h; left-=h; S.ema=S.ema>0?S.ema*0.8+c*0.2:c;
+      k++; done+=h; left-=h;
+      if(!S.last){ cost+=c; S.ema=S.ema>0?S.ema*0.8+c*0.2:c; }   // the budget counts the repeated (sim-only) steps; the last step also carries the once-per-frame visuals
       if(mode?PW.mode!==mode:(PW.active&&PW.mode)) break;
     }
   } finally { S.stepping=false; S.last=true; S.prevMs=cost; S.ran=k; S.done=done; }

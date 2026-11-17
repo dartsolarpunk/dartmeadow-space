@@ -29,7 +29,7 @@ const sb = { PW: { mode: 'walk', active: true }, clock: 0, cost: 0, dist: 0, ste
 sb.performance = { now: () => sb.clock };
 vm.createContext(sb);
 vm.runInContext(CONSTS.replace(/const /, 'var ') + SIMDEF.replace('const _SIM', 'var _SIM') + fn('_simSteps') + fn('_simRun') + fn('_simVis') + fn('_simVdt') + ';', sb);
-vm.runInContext('var stepFn=function(h){ dist+=SPEED*h; nStep++; if(h>maxH) maxH=h; clock+=cost; };', sb);
+vm.runInContext('var lastCost=0; var stepFn=function(h){ dist+=SPEED*h; nStep++; if(h>maxH) maxH=h; clock+=cost+(_SIM.last?lastCost:0); };', sb);
 function run(fps, secs, costMs, speed) {
   sb.SPEED = speed || WALK; sb.dist = 0; sb.nStep = 0; sb.maxH = 0; sb.cost = costMs; sb._SIM.ema = 0; sb._SIM.prevMs = 0; let maxPer = 0, frames = 0, perSum = 0;
   const raw = 1 / fps; for (let t = 0; t < secs - 1e-9; t += raw) { vm.runInContext('_simSteps(' + raw + ',_SIM); _simRun(stepFn,"walk");', sb); maxPer = Math.max(maxPer, sb._SIM.ran); perSum += sb._SIM.ran; frames++; }
@@ -45,6 +45,7 @@ for (const fps of [3, 5, 10]) { const r = run(fps, 10, 6), k = r.perSec / ref.pe
   ok(r.maxPer <= 2 && r.maxH <= 0.1 + 1e-9, fps + ' fps @ 6 ms/step: ' + r.maxPer + ' steps/frame max (avg ' + r.avgPer.toFixed(2) + '), max step ' + r.maxH.toFixed(3) + ' s, ' + (k * 100).toFixed(1) + ' % speed (gives time up, no spiral)'); }
 { const r = run(3, 10, 1.5), k = r.perSec / ref.perSec; ok(r.maxPer <= 4 && r.maxH <= 0.1 + 1e-9, '3 fps @ 1.5 ms/step: ' + r.maxPer + ' steps/frame max, ' + (k * 100).toFixed(1) + ' % speed'); }
 { const r = run(3, 10, 2.5), k = r.perSec / ref.perSec; ok(r.maxPer <= 3, '3 fps @ 2.5 ms/step: ' + r.maxPer + ' steps/frame max (budget 4 ms), ' + (k * 100).toFixed(1) + ' % speed'); }
+{ sb.lastCost = 8; const r = run(3, 10, 0.1), k = r.perSec / ref.perSec; sb.lastCost = 0; ok(r.maxPer === 4 && Math.abs(k - 1) <= 0.10, '3 fps, sim step 0.1 ms + 8 ms visuals on the last step (headless walk profile): ' + r.maxPer + ' steps/frame, ' + (k * 100).toFixed(1) + ' % speed (visual cost is once per frame, not budgeted)'); }
 console.log('== stall / mode change / allocation');
 { const o = sb._SIM; vm.runInContext('_simSteps(5,_SIM)', sb); ok(o.n === 1 && Math.abs(o.t - 1 / 60) < 1e-9, 'a 5 s gap (tab switch) is a stall: one 1/60 s step');
   vm.runInContext('_simSteps(NaN,_SIM)', sb); ok(o.n === 1 && o.t > 0, 'non-finite gap: one 1/60 s step');
