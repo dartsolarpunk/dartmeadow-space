@@ -205,8 +205,9 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-terrain-lod.js?v=294"></script>   <!-- one terrain across every altitude band: shared slope / skirt / sea-tint contract between the globe map and the sky ground -->
 <script src="ui/dm-impostor.js?v=280"></script>   <!-- far-range LOD: vertex-clustering impostor (mansion LOD2, colours baked) -->   <!-- far-range LOD: the ONE distance table per device class (props, mansion, landmarks, vantage reach); ?lod=off|low|mobile|desktop -->
 <script src="ui/dm-light.js?v=347"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
-<script src="ui/dm-sunfar.js?v=347"></script>   <!-- (t1537) the key light's wide, slow shadow layer past the near map (DMLight wrapper), into the haze; ?sunfar=0 off -->
+<script src="ui/dm-sunfar.js?v=349"></script>   <!-- (t1537) the key light's wide, slow shadow layer past the near map (DMLight wrapper), into the haze; ?sunfar=0 off -->
 <script src="ui/dm-vlight.js?v=347"></script>   <!-- lighting overhaul: lamps / LEDs / flashlight / low sun light the volumetric fog (scene.fogNode, light list, equi-angular in-scatter); ?vlights=0|low|med|high -->
+<script src="ui/dm-spaceshafts.js?v=349"></script>   <!-- (t1537) the key star's glare + dust scatter + the nearest world's shadow through it, in open space (Med+; off on Low); ?spaceshafts=0 off -->
 <script src="ui/dm-feedback.js?v=329"></script>
 <script src="ui/dm-gpu-defer.js?v=340"></script>   <!-- (v332) DMGpuDefer: deferred destruction of disposed geometry's GPU buffers (the Bird Temple "used in submit while destroyed" banner) -->
 <script src="ui/dm-atmo-shell.js?v=332"></script>   <!-- (v297) DMAtmoShell.radii/worldR/ratio: the faded atmosphere perimeter of a body (Solenne 1.18 R) for the space -> world hand-off (Worlds) -->
@@ -6726,6 +6727,7 @@ async function initFlightScene(){
   flightScene=new THREE.Scene();
   try{ if(window.DMFlash){ DMFlash.hooks.gfx=()=>GFX; DMFlash.hooks.depthOK=_viewportDepthOK; DMFlash.hooks.logDepth=()=>!!(flightRenderer&&flightRenderer.logarithmicDepthBuffer); DMFlash.hooks.cam=()=>(PW.active&&PW.mode&&PW.camera)?PW.camera:flightCamera; DMFlash.adoptScene(flightScene); } }catch(e){}   // the glasses flashlight's beam (intensity 0), in the fixed light set before the first compile: switching it on never recompiles
   try{ if(window.DMSunFar) DMSunFar.hooks.skip=(a)=>(typeof CHAR!=='undefined'&&CHAR&&a===CHAR.root)||(typeof PW!=='undefined'&&PW&&a===PW.board); }catch(e){}   // (t1537) moving casters stay out of the slow far layer
+  try{ if(window.DMSunFar) DMSunFar.hooks.bend=()=>{ try{ return PWF; }catch(e){ return null; } }; }catch(e){}   // (t1537b) the planet frame (focus, 1/R): far-map receivers are put back in the pass's frame
 
   // Near plane 0.1 (the skyboard sits ~0.5u from the lens, so it must stay
   // under that) paired with the logarithmic depth buffer above — that combo
@@ -19028,7 +19030,7 @@ function _gpuProfInstall(r){
     }catch(e){} finally{ this.busy=false; }
   };
 }
-let _sbT=0;
+let _sbT=0, _ssT=0, _ssO=null;
 function renderWithPostFX(){
   // One plain render: the old bloom/motion-blur chain (raw ShaderMaterial +
   // WebGLRenderTarget) cannot run under WebGPURenderer's node pipeline and
@@ -19038,6 +19040,7 @@ function renderWithPostFX(){
   flightRenderer.setRenderTarget(null);
   const _spec=window.DMSpec&&DMSpec.on; if(_spec) try{ DMSpec.pre(flightCamera); }catch(e){}
   try{ if(galSky.ready) updateGalSky(); }catch(e){}
+  try{ if(window.DMSpaceShafts&&DMSpaceShafts.on){ const _ss=_ssO||(_ssO={reg:null,pw:false,atmos:false,keyDir:null,dt:0}), _pa=(typeof PW!=='undefined'&&PW&&PW.active); _ss.reg=_jotsFogAtmoRegistry; _ss.pw=!!_pa; _ss.atmos=!!(_pa&&PW.pal&&PW.pal.atmos); _ss.keyDir=_pa?_pwKeyDir():null; const _sn=performance.now(); _ss.dt=_ssT?(_sn-_ssT)/1000:1/60; _ssT=_sn; DMSpaceShafts.tick(THREE,flightScene,flightCamera,_ss); } }catch(e){ if(window.DMSpaceShafts) DMSpaceShafts.S.err='tick: '+(e&&e.message||e); }   // (t1537) space glare / dust scatter (ui/dm-spaceshafts.js)
   try{ if(window.DMStarBubble) { const n=performance.now(), d=_sbT?(n-_sbT)/1000:1/60; _sbT=n; if(window.DMStar) DMStar.frame(flightCamera,d); if(window.DMMist) DMMist.frame(flightCamera,d); if(window.DMFluidWorld) DMFluidWorld.frame(flightCamera,d); DMStarBubble.frame(flightCamera,flightScene,d); } }catch(e){ console.warn('[starbubble] '+(e&&e.stack||e)); }
   try{ if(window.DMBtInterior&&DMBtInterior.pre) DMBtInterior.pre(flightCamera); }catch(e){}   // (v116) sealed? decided before the temple lighting (the glass probe waits while no glass is in view)
   try{ if(window.BTL&&BTL.preRender) BTL.preRender(flightRenderer,flightScene,flightCamera); }catch(e){ if(window.BTL) BTL._err=String(e&&e.stack||e).slice(0,300); }
