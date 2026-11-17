@@ -172,6 +172,52 @@
   // visible draw count, triangles (instances included) and how many of those triangles also draw in the shadow pass.
   // Perf logs said "2.4 M triangles a frame" but not whose; this names them. Recomputed at most every 25 s.
   let _census = null, _censusAt = 0, _memCache = null, _memAt = 0, _memForce = false;
+  // (v337) the memory scan as a resumable job: one object (its geometry + materials) per step, MEM_SLICE_MS per idle slice
+  const MEM_SLICE_MS = 4;
+  let memJob = null, memSliceOn = false;
+  function* memScan(roots, st) {
+    const seenT = new Set(), seenG = new Set(), texRows = [], geoRows = []; let texB = 0, geoB = 0;
+    const texBytes = (t) => { if (t.userData && t.userData.dmBytes) return t.userData.dmBytes; const im = t.image || (t.source && t.source.data); const w = (im && (im.width || im.videoWidth)) || 0, h = (im && (im.height || im.videoHeight)) || 0; const d = (im && im.depth) || 1; return w * h * d * (t.type === 1016 || t.type === 1015 ? (t.type === 1015 ? 16 : 8) : 4) * (t.generateMipmaps === false || t.isDataTexture || t.isRenderTargetTexture ? 1 : 1.33); };
+    const addTex = (t, who) => { if (!t || !t.isTexture || seenT.has(t)) return; seenT.add(t); const b = texBytes(t); if (!(b > 0)) return; texB += b; texRows.push([b, (t.name || who || '?') + ' ' + ((t.image && t.image.width) || '?') + 'x' + ((t.image && t.image.height) || '?')]); };
+    const scanMat = (m, who) => { if (!m) return; for (const k in m) { let v; try { v = m[k]; } catch (e) { continue; } if (!v || typeof v !== 'object') continue; if (v.isTexture) addTex(v, who); else if (v.isNode || v.isTextureNode) { let n = 0; const walk = (nd, dep) => { if (!nd || dep > 5 || n > 400) return; n++; if (nd.value && nd.value.isTexture) addTex(nd.value, who); const ch = nd._cacheKey === undefined && !nd.getChildren ? null : (nd.getChildren ? nd.getChildren() : null); if (ch) for (const c of ch) walk(c, dep + 1); }; try { walk(v, 0); } catch (e) { } } } };
+    for (const [rn, root] of roots) {
+      const per = new Map(), stack = [root];
+      while (stack.length) {
+        const o = stack.pop(); if (!o) continue;
+        if (o.children) for (let i = o.children.length - 1; i >= 0; i--) stack.push(o.children[i]);
+        let top = o; while (top.parent && top.parent !== root) top = top.parent; const who = top.name || top.type;
+        const g = o.geometry; if (g && !seenG.has(g)) { seenG.add(g); let b = 0; const at = g.attributes; if (at) for (const k in at) { const a = at[k]; if (a && a.array) b += a.array.byteLength; } if (g.index && g.index.array) b += g.index.array.byteLength; geoB += b; per.set(who, (per.get(who) || 0) + b); }
+        const ms = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : []; for (const m of ms) scanMat(m, who);
+        st.n++; yield;
+      }
+      for (const [k, b] of per) geoRows.push([b, rn + ':' + k]);
+    }
+    texRows.sort((a, b) => b[0] - a[0]); geoRows.sort((a, b) => b[0] - a[0]);
+    let rinfo = null; try { const r = window.flightRenderer || (typeof flightRenderer !== 'undefined' ? flightRenderer : null), m = r && r.info && r.info.memory; if (m) rinfo = { totalMB: Math.round(m.total / 1048576), texMB: Math.round((m.texturesSize || 0) / 1048576), geoMB: Math.round(((m.attributesSize || 0) + (m.indexAttributesSize || 0)) / 1048576), storageMB: Math.round(((m.storageAttributesSize || 0) + (m.indirectStorageAttributesSize || 0)) / 1048576), nTex: m.textures, nGeo: m.geometries }; } catch (e) { }   // (memory lane) the renderer's own split
+    return { info: rinfo, dmmem: (window.DMMem && DMMem.stats) ? DMMem.stats() : null, ms: 0, slices: 0, objects: st.n, texMB: Math.round(texB / 1048576), geoMB: Math.round(geoB / 1048576), nTex: seenT.size, texTop: texRows.slice(0, 10).map((r) => Math.round(r[0] / 1048576 * 10) / 10 + 'MB ' + r[1]), geoTop: geoRows.slice(0, 8).map((r) => Math.round(r[0] / 1048576 * 10) / 10 + 'MB ' + r[1]) };
+  }
+  function memStart(roots) { if (!memJob) { const st = { n: 0 }; memJob = { it: memScan(roots, st), st, ms: 0, slices: 0 }; } }
+  // run the job for up to budget ms (Infinity: to the end); true when it finished (the result is in _memCache)
+  function memStep(budget) {
+    const J = memJob; if (!J) return true;
+    const t0 = performance.now(); let r = null;
+    try { do { r = J.it.next(); } while (!r.done && performance.now() - t0 < budget); } catch (e) { memJob = null; return true; }
+    J.ms += performance.now() - t0; J.slices++;
+    if (!r.done) return false;
+    memJob = null; const m = r.value; m.ms = +J.ms.toFixed(1); m.slices = J.slices;
+    _memCache = m; _memAt = Date.now(); _memForce = false; _census = null;   // the next report picks it up
+    try { if (window.__dmRec) window.__dmRec('perflog.memCensus', m.ms); } catch (e) { }
+    return true;
+  }
+  function memSlice(dl) {
+    memSliceOn = false; if (!memJob) return;
+    if (document.hidden || ended) return;   // the hide / pagehide report finishes it synchronously
+    const left = dl && !dl.didTimeout && typeof dl.timeRemaining === 'function' ? dl.timeRemaining() : MEM_SLICE_MS;
+    if (left < 2) { memSliceOn = true; ric(memSlice, 4000); return; }   // too short an idle gap: wait for a roomier one
+    if (!memStep(Math.min(MEM_SLICE_MS, left - 1))) { memSliceOn = true; ric(memSlice, 4000); }
+  }
+  function memKick(roots) { memStart(roots); if (!memSliceOn) { memSliceOn = true; ric(memSlice, 4000); } }
+  function memFinish(roots) { memStart(roots); memStep(Infinity); }
   function census() {
     const now = Date.now(); if (_census && now - _censusAt < 25000) return _census;
     const out = {};
@@ -197,26 +243,13 @@
         rows.sort((a, b) => b.tris - a.tris);
         out[rn] = { total: Math.round(rows.reduce((a, r) => a + r.tris, 0)), shadowTotal: Math.round(rows.reduce((a, r) => a + r.shadowTris, 0)), nVisible: rows.length, nHidden: off.length, hidden: off, top: rows.slice(0, 22) };
       }
-      // where the memory sits (the OS kills the tab on bytes, not on fps): unique textures (width x height x 4 B x 1.33 for mips) and geometry buffers, biggest first, per top-level child
-      if (_memCache && Date.now() - _memAt < 120000 && !_memForce) { out.mem = _memCache; throw 0; }   // the scan walks every object and node graph: at most every 2 min (and it reports its own cost)
-      const _mt0 = performance.now();
-      const seenT = new Set(), seenG = new Set(), texRows = [], geoRows = []; let texB = 0, geoB = 0;
-      const texBytes = (t) => { if (t.userData && t.userData.dmBytes) return t.userData.dmBytes; const im = t.image || (t.source && t.source.data); const w = (im && (im.width || im.videoWidth)) || 0, h = (im && (im.height || im.videoHeight)) || 0; const d = (im && im.depth) || 1; return w * h * d * (t.type === 1016 || t.type === 1015 ? (t.type === 1015 ? 16 : 8) : 4) * (t.generateMipmaps === false || t.isDataTexture || t.isRenderTargetTexture ? 1 : 1.33); };
-      const addTex = (t, who) => { if (!t || !t.isTexture || seenT.has(t)) return; seenT.add(t); const b = texBytes(t); if (!(b > 0)) return; texB += b; texRows.push([b, (t.name || who || '?') + ' ' + ((t.image && t.image.width) || '?') + 'x' + ((t.image && t.image.height) || '?')]); };
-      const scanMat = (m, who) => { if (!m) return; for (const k in m) { let v; try { v = m[k]; } catch (e) { continue; } if (!v || typeof v !== 'object') continue; if (v.isTexture) addTex(v, who); else if (v.isNode || v.isTextureNode) { let n = 0; const walk = (nd, dep) => { if (!nd || dep > 5 || n > 400) return; n++; if (nd.value && nd.value.isTexture) addTex(nd.value, who); const ch = nd._cacheKey === undefined && !nd.getChildren ? null : (nd.getChildren ? nd.getChildren() : null); if (ch) for (const c of ch) walk(c, dep + 1); }; try { walk(v, 0); } catch (e) { } } } };
-      for (const [rn, root] of roots) {
-        const per = new Map();
-        root.traverse((o) => {
-          let top = o; while (top.parent && top.parent !== root) top = top.parent; const who = top.name || top.type;
-          const g = o.geometry; if (g && !seenG.has(g)) { seenG.add(g); let b = 0; const at = g.attributes; if (at) for (const k in at) { const a = at[k]; if (a && a.array) b += a.array.byteLength; } if (g.index && g.index.array) b += g.index.array.byteLength; geoB += b; per.set(who, (per.get(who) || 0) + b); }
-          const ms = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : []; for (const m of ms) scanMat(m, who);
-        });
-        for (const [k, b] of per) geoRows.push([b, rn + ':' + k]);
-      }
-      texRows.sort((a, b) => b[0] - a[0]); geoRows.sort((a, b) => b[0] - a[0]);
-      let rinfo = null; try { const r = window.flightRenderer || (typeof flightRenderer !== 'undefined' ? flightRenderer : null), m = r && r.info && r.info.memory; if (m) rinfo = { totalMB: Math.round(m.total / 1048576), texMB: Math.round((m.texturesSize || 0) / 1048576), geoMB: Math.round(((m.attributesSize || 0) + (m.indexAttributesSize || 0)) / 1048576), storageMB: Math.round(((m.storageAttributesSize || 0) + (m.indirectStorageAttributesSize || 0)) / 1048576), nTex: m.textures, nGeo: m.geometries }; } catch (e) { }   // (memory lane) the renderer's own split
-      out.mem = _memCache = { info: rinfo, dmmem: (window.DMMem && DMMem.stats) ? DMMem.stats() : null, ms: +(performance.now() - _mt0).toFixed(1), texMB: Math.round(texB / 1048576), geoMB: Math.round(geoB / 1048576), nTex: seenT.size, texTop: texRows.slice(0, 10).map((r) => Math.round(r[0] / 1048576 * 10) / 10 + 'MB ' + r[1]), geoTop: geoRows.slice(0, 8).map((r) => Math.round(r[0] / 1048576 * 10) / 10 + 'MB ' + r[1]) };
-      _memAt = Date.now(); try { if (window.__dmRec) window.__dmRec('perflog.memCensus', out.mem.ms); } catch (e) { }
+      // where the memory sits (the OS kills the tab on bytes, not on fps): unique textures (width x height x 4 B x 1.33 for mips) and geometry buffers, biggest first, per top-level child.
+      // (v337 perf log) The scan walks every object and node graph: it ran in ONE go (Mali-G615 log: perflog.memCensus 335 ms, inside a 2.8 s freeze at the Bird Temple).
+      // It is now a resumable job (memJob) stepped in idle slices of <= MEM_SLICE_MS (requestIdleCallback; Safari: a timer after the next frame, the same small
+      // budget), so the report carries the last finished scan and the next one is started here when it is older than 2 min.  Only where nobody is playing
+      // (tab hidden / pagehide: the final report) is it finished synchronously.  `ms` is still its own total CPU cost, `slices` how many pieces it took.
+      if (roots.length && (!_memCache || Date.now() - _memAt >= 120000 || _memForce)) { if (document.hidden || ended) memFinish(roots); else memKick(roots); }
+      if (_memCache) out.mem = _memCache;
     } catch (e) { if (e !== 0) out.err = String(e && e.message || e).slice(0, 120); }
     _census = out; _censusAt = now; return out;
   }
