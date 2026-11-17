@@ -14,7 +14,7 @@
 //   • audio/video streams (range requests) pass straight through.
 // It also keeps the app installable and playable offline once visited.
 
-const CACHE_NAME = 'dartmeadow-engine-v332';
+const CACHE_NAME = 'dartmeadow-engine-v333';
 const SHELL_ASSETS = ['/', '/index.html'];
 
 self.addEventListener('install', (event) => {
