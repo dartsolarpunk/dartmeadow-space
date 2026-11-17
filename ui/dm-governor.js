@@ -55,7 +55,8 @@
   function init(r, gfx, basePR, now) {
     const d = r._dr = make(gfx); d.t = now; d.since = now; d.nextEval = now + 2500;
     const sk = loadSaved(gfx); d.saved = sk; d.loaded = true;
-    if (sk < 1) { d.k = sk; d.hold = 5000; try { r.setPixelRatio(basePR * sk); } catch (e) {} }
+    // (t1590, Perf guard #275 F1) a remembered scale from before the tablet floor (v349 slide-shows saved 0.42) never applies below it at boot
+    if (sk < 1) { const k0 = Math.max(sk, tabletFloor(gfx)); if (k0 < 1) { d.k = k0; d.hold = 5000; try { r.setPixelRatio(basePR * k0); } catch (e) {} } }
     return d;
   }
   // Warm-up step: apply the remembered scale now, so the drawing-buffer reallocation (and the first render at that size) happens

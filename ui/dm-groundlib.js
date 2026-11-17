@@ -418,9 +418,24 @@
     if (S.done) S.U.ready.value = 1;
     setInterval(pollSky, 600);   // uniform writes only
   }
+  // (t1590, Perf guard #275 F3) TABLET SHED: a tablet holds its 0.75 render-scale floor (ui/dm-governor.js), so once it sits AT the floor with the frame-budget ladder exhausted
+  // (DMBudget.isExhausted), resolution is no longer a lever: the terrain detail reach steps down instead (U.reachK, a uniform: no recompile, no allocation), and back up once
+  // the pressure is gone.  Steps on the 600 ms poll below.  Phones / desktops never shed here (tabletFloor 0).  Pure step: tabShedStep(k, press).
+  const TAB_SHED = { min: 0.5, down: 0.1, up: 0.05 };
+  function tabShedStep(k, press) { return press ? Math.max(TAB_SHED.min, k - TAB_SHED.down) : Math.min(1, k + TAB_SHED.up); }
+  function tabPress() {
+    try {
+      const tf = G._dmTabletFloor, gx = (typeof GFX !== 'undefined') ? GFX : G.GFX, f = tf ? tf(gx) : 0; if (!(f > 0)) return false;
+      const B = G.DMBudget; if (!(B && B.isExhausted && B.isExhausted())) return false;
+      const r = G.flightRenderer, d = r && r._dr; return !!(d && d.k <= f + 0.011);
+    } catch (e) { return false; }
+  }
+  // the shared reach uniform (index.html's crack/bump fade multiplies its own distances by it); null before TSL is up
+  function reachU() { if (!S.U) { if (!(G.THREE && G.THREE.TSL)) return null; initUniforms(); } return S.U.reachK; }
   // sun height + sky / water / moss colours from the surface state (TERRAIN is a classic-script const in index.html, so reach it through typeof)
   function pollSky() {
-    try { const B = G.DMBudget; if (S.U && B && B.on && B.groundReach) { S.U.reachK.value = B.groundReach(); S.U.dual.value = B.groundDual(); } else if (S.U) { S.U.reachK.value = 1; S.U.dual.value = 1; } } catch (e) { }
+    try { S.tabK = tabShedStep(S.tabK == null ? 1 : S.tabK, tabPress()); } catch (e) { S.tabK = 1; }
+    try { const B = G.DMBudget; if (S.U && B && B.on && B.groundReach) { S.U.reachK.value = B.groundReach() * S.tabK; S.U.dual.value = B.groundDual(); } else if (S.U) { S.U.reachK.value = S.tabK; S.U.dual.value = 1; } } catch (e) { }
     try {
       const TR = (typeof TERRAIN !== 'undefined') ? TERRAIN : null; if (!TR || !S.U) return;
       const sun = TR.sun; let el = 0.6;
@@ -579,7 +594,7 @@
   G.DMGround = {
     wetAt,
     TYPES, BIOMES, profile, bake, bakeSync, bakeTile, packTile, allocAtlas, newTileBuf, layout, REG, REG_UNITS, COLS, ROWS, PAD, GS,
-    beginWorld, pump, apply, skyTick,
+    beginWorld, pump, apply, skyTick, reachU, tabShedStep, TAB_SHED, _pollSky: () => pollSky(),
     ref: { h2, vn, fbm, wor },
     status: () => ({ world: S.world && S.world.names, done: S.done, bakes: S.bakes, jobMs: +S.jobMs.toFixed(0), wallMs: +S.bakeMsTotal.toFixed(0), mats: S.mats, T: S.T }),
     _S: S,

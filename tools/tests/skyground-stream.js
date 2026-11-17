@@ -170,7 +170,7 @@ const S2 = run({ cost: 6, frameMs: 33, slice: true, ema: 33, budget: 36, max: 30
   ok(T5.left === 0 && T5.G.stat.converged === 1 && T5.sliceBad === 0, 't1590: 5 fps tablet, no idle callback: converges in ' + T5.fr + ' frames (' + s13(T5.fr, 200) + '), stat.converged = 1');
   ok(T5.fr < N5.fr, 't1590: the slow slice drains it sooner than the frame budget alone (' + T5.fr + ' vs ' + N5.fr + ' frames)');
   ok(N5.left === 0 && N5.G.stat.converged === 1, 't1590: even with no slice at all the queue converges (' + N5.fr + ' frames): it is never starved'); }
-ok(E._skySlowSlice(1000, 700) && !E._skySlowSlice(1000, 800) && E._skySlowSlice(1000, 0), 't1590: _skySlowSlice is time-based (>= ' + E._SKY_IDLE.slowMs + ' ms apart)');
+ok(E._SKY_IDLE.slowMs >= 100 && E._SKY_IDLE.slowMs <= 150 && E._skySlowSlice(1000, 1000 - E._SKY_IDLE.slowMs) && !E._skySlowSlice(1000, 1001 - E._SKY_IDLE.slowMs) && E._skySlowSlice(1000, 0), 't1590: _skySlowSlice is time-based (>= ' + E._SKY_IDLE.slowMs + ' ms apart)');
 // ── (5) quiet / hidden / disposed / no starvation ──
 const Q = run({ cost: 6, frameMs: 33, idle: 12, quietUntil: 1000 + 2500 });
 ok(Q.left === 0 && Q.idleBad === 0 && Q.fr < A30.fr, 'arrival quiet window (2.5 s): no idle build inside it, the fill resumes after (' + Q.fr + ' frames)');

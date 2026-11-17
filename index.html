@@ -25867,10 +25867,11 @@ const _SKY_HAZE_RIM={outer:0,inner:0,centre:0};
 // darker red band on Mars (?skyhaze=1 brings it back for an A/B).  Pure: tools/tests/radial-falloff.js.
 function _skyFalloff(R,out){ return _skyHazeBand(R,out); }
 // the near ground detail's fade: fully on inside the half-radius circle of its rim's inner edge, gone at the rim's outer edge Ro = 1.5 x reach (was 0.45 -> 1.0 reach: a ~7-12 m
-// edge that read as a sharp disc, 82e25cd / 2610063).  out = [start, end], reused.
+// edge that read as a sharp disc, 82e25cd / 2610063).  out = [start, end], reused.  endK (Perf guard #275 F2): Mali-class tablets end at 1.25 x reach, not 1.5.
 const _SKY_DET=[0,0];
-function _skyDetailFall(reach,out){ const o=out||_SKY_DET, RC=window.DMRadCirc, Ro=reach*1.5; o[1]=Ro; o[0]=RC&&RC.halfRadius&&RC.rim?RC.halfRadius(RC.rim(Ro,_SKY_DET_RIM).inner):Ro*0.375; return o; }
+function _skyDetailFall(reach,out,endK){ const o=out||_SKY_DET, RC=window.DMRadCirc, Ro=reach*(endK>0?endK:1.5); o[1]=Ro; o[0]=RC&&RC.halfRadius&&RC.rim?RC.halfRadius(RC.rim(Ro,_SKY_DET_RIM).inner):Ro*0.375; return o; }
 const _SKY_DET_RIM={outer:0,inner:0,centre:0};
+const _SKY_DET_END_LOWG=1.25;   // (Perf guard #275 F2) Mali-class tablets: the detail fade ends at 1.25 x reach (1.5 was 3.5x v349's detail area there)
 // the dissolve is a screen-door dither: below 0.8 of the chosen resolution each dither cell is several screen pixels (blocks / holes, t1590), so it steps aside (the edge is in full haze)
 const _SKY_DITHER_MIN=0.8;
 function _skyDitherOk(resScale){ return !(resScale<_SKY_DITHER_MIN); }
@@ -25940,7 +25941,7 @@ function _skySettleBudget(B,still,left){ return still&&left>0?B*_SKY_SETTLE.k:B;
 // Not in the quiet window (intro / 2.5 s arrival settle; the next frame asks again, so nothing starves), not while hidden, never once disposed.
 // The in-frame gate (_skyGroundGate) is unchanged.  Pure gates + timing: tools/tests/skyground-stream.js.
 const _SKY_NEAR=600;   // (v330 streaming) "nearby" for the build order: ~340 m round the camera (1 u = 0.561 m)
-const _SKY_IDLE={min:4,margin:1.5,max:8,slice:3,sliceD:4,head:0.8,slowMs:250};
+const _SKY_IDLE={min:4,margin:1.5,max:8,slice:3,sliceD:4,head:0.8,slowMs:125};   // (Perf guard #275 F4) slow slice every 125 ms (was 250): <= ~6 % of the time, faster convergence at 3-5 fps
 function _skySlowSlice(now,last){ return now-(last||0)>=_SKY_IDLE.slowMs; }
 function _skyIdleRoom(left,buildMs){ return left>=Math.max(_SKY_IDLE.min,(buildMs||0)*1.5+_SKY_IDLE.margin); }
 function _skySliceOk(ema,budget){ return ema>0&&budget>0&&ema<=budget*_SKY_IDLE.head; }
@@ -26070,7 +26071,7 @@ SkyGround.prototype._idleKick=function(){
   if(typeof W.setTimeout!=='function') return;
   const B=W.DMBudget, now=performance.now();
   // (t1590) with frame headroom: a slice after every frame, as before.  WITHOUT it (a slow tablet, EMA > 0.8 x budget, where the old gate never opened and the fill froze):
-  // still one bounded slice, at most every _SKY_IDLE.slowMs (time-based, ~3 ms every 250 ms = ~1 % of the time), so the queue always drains.  _skySlowSlice is pure.
+  // still one bounded slice, at most every _SKY_IDLE.slowMs (time-based, ~3 ms every 125 ms = ~2-6 % of the time), so the queue always drains.  _skySlowSlice is pure.
   const head=!!(B&&B.on&&typeof B.emaMs==='function'&&_skySliceOk(B.emaMs(),B.budgetMs()));
   if(!head){ if(!_skySlowSlice(now,this._slowT)) return; this._slowT=now; this.stat.slow=(this.stat.slow|0)+1; }
   this._idleOn=true; try{ W.setTimeout(this._sliceFn,0); }catch(e){ this._idleOn=false; }
@@ -26817,7 +26818,7 @@ function _terrainDetailMat(opts){
   const _lowG=!!(GFX.isMobile&&(GFX.gpuClass==='low'||(GFX.score!=null&&GFX.score<55)));   // (v259) Mali-class tablets: one detail level less (no second worley / grit octave), 20 % shorter reach
   const lvl=Math.min(_lowG?2:3,({low:1,medium:2,high:3,ultra:3,custom:2})[tier]||2);
   const reach=opts.reach||({1:22,2:30,3:40})[lvl];   // (an exporter can ask for the detail everywhere)  (t1590) no x0.8 on Mali-class tablets (2610063): it shrank the detail disc to ~13 m
-  const _df=_skyDetailFall(reach,[0,0]);   // (t1590) the detail's own rim (Radical Circumference / ArcEdge, Justin Craig Venable): soft from ~0.56 reach to 1.5 reach
+  const _df=_skyDetailFall(reach,[0,0],_lowG?_SKY_DET_END_LOWG:0);   // (t1590) the detail's own rim (Radical Circumference / ArcEdge, Justin Craig Venable): soft from ~0.56 reach to 1.5 reach
   let m;
   try{
     m=new THREE.MeshStandardNodeMaterial({vertexColors:true,roughness:0.94,metalness:0.0,side:opts.side||THREE.FrontSide});
@@ -26832,7 +26833,9 @@ function _terrainDetailMat(opts){
     const dist=W.length(W.positionView);
     // fades with distance, and stays on walkable ground (cliff faces keep their strata)
     const flat=W.smoothstep(W.float(0.6),W.float(0.88),nFlat.y);
-    const fade=W.float(1).sub(W.smoothstep(W.float(_df[0]),W.float(_df[1]),dist)).mul(flat);
+    // (#275 follow-up, CE/Watcher) the crack/bump fade honours the ground library's shared U.reachK (ui/dm-budget.js ladder and the tablet shed, ui/dm-groundlib.js), so a reach shrink shrinks this too
+    const _rk=(window.DMGround&&DMGround.reachU)?DMGround.reachU():null;
+    const fade=W.float(1).sub(W.smoothstep(_rk?W.float(_df[0]).mul(_rk):W.float(_df[0]),_rk?W.float(_df[1]).mul(_rk):W.float(_df[1]),dist)).mul(flat);
     // the detail height at a ground point (x,z); returns {h, crack, peb}
     const sandy=TERRAIN.style==='dunes';
     const field=(xz)=>{
