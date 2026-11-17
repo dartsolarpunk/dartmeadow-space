@@ -27,7 +27,7 @@ ok(F.footprint() === null, 'footprint is null until the mansion is placed');
 for (const th of [0, 0.7, 2.4, -1.9]) {
   const px = -80, pz = -1340, y0 = 68.306; F.car = { px, pz, ct: Math.cos(th), st: Math.sin(th), y0 };
   const fp = F.footprint();
-  ok(fp && fp.y0 === y0 && fp.seaRel === -62 && fp.feather === 14 && fp.apronLen === 170, 'footprint: y0, seaRel -62, feather 14, apronLen 170 (th ' + th + ')');
+  ok(fp && fp.y0 === y0 && fp.seaRel === -62 && fp.feather === 14 && fp.apronLen === 170 && fp.apronHold === 0.4 && fp.apronLat === 60, 'footprint: y0, seaRel -62, feather 14, apronLen 170, apronHold 0.4, apronLat 60 (th ' + th + ')');
   const d = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
   ok(fp.box.length === 4 && near(d(fp.box[0], fp.box[1]), 392, 1e-6) && near(d(fp.box[1], fp.box[2]), 242, 1e-6), 'box 392 x 242 m (x +-196 along the wall, y +-121 seaward)');
   const cx = (fp.box[0][0] + fp.box[2][0]) / 2, cz = (fp.box[0][1] + fp.box[2][1]) / 2; ok(near(cx, px, 1e-6) && near(cz, pz, 1e-6), 'box centred on the anchor');
