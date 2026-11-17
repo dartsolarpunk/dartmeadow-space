@@ -207,7 +207,8 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-light.js?v=323"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
 <script src="ui/dm-vlight.js?v=331"></script>   <!-- lighting overhaul: lamps / LEDs / flashlight / low sun light the volumetric fog (scene.fogNode, light list, equi-angular in-scatter); ?vlights=0|low|med|high -->
 <script src="ui/dm-feedback.js?v=329"></script>
-<script src="ui/dm-atmo-shell.js?v=297"></script>   <!-- (v297) DMAtmoShell.radii/worldR/ratio: the faded atmosphere perimeter of a body (Solenne 1.18 R) for the space -> world hand-off (Worlds) -->
+<script src="ui/dm-gpu-defer.js?v=332"></script>   <!-- (v332) DMGpuDefer: deferred destruction of disposed geometry's GPU buffers (the Bird Temple "used in submit while destroyed" banner) -->
+<script src="ui/dm-atmo-shell.js?v=332"></script>   <!-- (v297) DMAtmoShell.radii/worldR/ratio: the faded atmosphere perimeter of a body (Solenne 1.18 R) for the space -> world hand-off (Worlds) -->
 <script src="ui/dm-spawn.js?v=314"></script>   <!-- (v314) DMSpawn: new-game spawn in interstellar space near Sol + the arrival push-out from every world's hand-off radius -->
 <script src="ui/dm-pw-handoff.js?v=299"></script>   <!-- (v299) the space -> surface hand-off policy: pre-build hidden from PWS_OPEN, show the world + minimap globe at the DMAtmoShell perimeter (Worlds) -->
 <script>/* (v136) no-op stub so the flight loop can never throw if dm-perf.js failed to load */
@@ -1073,7 +1074,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-globe.js?v=9" defer></script>
 <script src="ui/dm-star.js?v=191" defer></script>
 <script src="ui/dm-mist.js?v=8" defer></script>
-<script src="ui/dm-atmo.js?v=212" defer></script>
+<script src="ui/dm-atmo.js?v=332" defer></script>
 <script src="ui/dm-localcollide.js?v=188" defer></script>
 <script src="ui/dm-collide.js?v=287" defer></script>
 <script src="ui/dm-collide-game.js?v=281" defer></script>
@@ -6633,6 +6634,9 @@ async function initFlightScene(){
     return;
   }
   try{ _gpuProfInstall(flightRenderer); }catch(e){ console.warn('[gpuprof]',e); }
+  // (v332) vertex / storage buffers of disposed geometry are destroyed a few frames late, after the GPU finished the work that
+  // named them (ui/dm-gpu-defer.js) — the "[Buffer (unlabeled)] used in submit while destroyed" banner. ?gpudefer=0 turns it off.
+  try{ if(window.DMGpuDefer&&!/[?&]gpudefer=0\b/.test(location.search)&&_isRealWebGPU(flightRenderer)) window._dmGpuDefer=DMGpuDefer.install(flightRenderer,{minFrames:3}); }catch(e){ console.warn('[gpudefer]',e); }
   // The GPU can drop the page (a phone reclaiming memory in the background, a
   // driver reset). Three.js can't bring a lost device back, so save where she
   // is and reload into it rather than sit on a black screen.
@@ -7087,6 +7091,7 @@ function _startFlightLoop(){
   (function loop(){
     flightAnimId=requestAnimationFrame(loop);
     const now=performance.now(); DMPerf.frame();
+    if(window._dmGpuDefer) window._dmGpuDefer.tick();   // (v332) released GPU buffers due for destruction (no allocation when none are)
     // (v162) after a stall (tab switch, a GC or a late shader build) advance one normal frame, not the 50 ms cap:
     // held sticks/keys then pick up where they were instead of lurching forward by the whole cap.
     const _rawDt=(now-_flightLoopLast)/1000, dt=_rawDt>0.25?1/60:Math.min(_rawDt,0.05);
@@ -7562,78 +7567,17 @@ function _buildJotsDustyAtmoShell(radius, opts){
   const ATMO_R=R*atmoMul;
   const scatterMul=opts.scatterMul!=null?opts.scatterMul:1.6;
   const tint=new THREE.Color(opts.tint!=null?opts.tint:0x6688cc);
-  const samples=_jotsAtmoSampleBudgets();
-  const VIEW_SAMPLES=samples.view;
-  const SUN_SAMPLES=samples.sun;
   const useNode=typeof _isRealWebGPU==='function'&&typeof flightRenderer!=='undefined'&&_isRealWebGPU(flightRenderer)
     &&!!(THREE&&THREE.MeshBasicNodeMaterial)&&typeof Fn==='function';
   if(useNode){
     try{
       const atmoMat=new THREE.MeshBasicNodeMaterial({transparent:true,side:THREE.BackSide,depthWrite:false,depthTest:true,blending:THREE.AdditiveBlending});   // (v133) depth-tested: nearer geometry (Bird Temple walls, moons, the ship) occludes it; the side flips per frame (_jotsShellSide)
-      const scatterCoeffs=uniform(new THREE.Vector3(Math.pow(400/700,4),Math.pow(400/530,4),Math.pow(400/440,4)).multiplyScalar(scatterMul));
       const sunDirU=uniform(new THREE.Vector3(1,0.3,0.2).normalize());
-      const planetCenterU=uniform(new THREE.Vector3(0,0,0));
+      const planetCenterU=uniform(new THREE.Vector3(0,0,0));   // (v332) kept for the registry / true-atmosphere pass; the shell itself centres on its own world matrix
       const densityFalloff=opts.densityFalloff!=null?opts.densityFalloff:5.5;
-      const raySphere=Fn(([center,rad,ro,rd])=>{
-        const offset=ro.sub(center);
-        const b=offset.dot(rd).mul(2.0);
-        const c=offset.dot(offset).sub(rad.mul(rad));
-        const disc=b.mul(b).sub(c.mul(4.0));
-        const result=vec3(0,0,0).toVar();
-        If(disc.greaterThanEqual(0.0), ()=>{
-          const s=disc.sqrt();
-          const near=b.negate().sub(s).div(2.0);
-          const far=b.negate().add(s).div(2.0);
-          If(far.greaterThanEqual(0.0), ()=>{
-            const dToSphere=near.max(0.0);
-            result.assign(vec3(dToSphere,far.sub(dToSphere),1.0));
-          });
-        });
-        return result;
-      });
-      const densityAtPoint=Fn(([sp])=>{
-        const h=sp.sub(planetCenterU).length().sub(R);
-        const h01=h.div(ATMO_R-R).clamp(0.0,1.0);
-        return exp(h01.negate().mul(densityFalloff)).mul(float(1.0).sub(h01));
-      });
-      const opticalDepth=Fn(([ro,rd,rl])=>{
-        const stepSize=rl.div(SUN_SAMPLES);
-        const p=ro.toVar();
-        const total=float(0).toVar();
-        Loop(SUN_SAMPLES, ()=>{ total.addAssign(densityAtPoint(p).mul(stepSize)); p.addAssign(rd.mul(stepSize)); });
-        return total;
-      });
-      const atmoFn=Fn(()=>{
-        const ro=cameraPosition;
-        const rd=positionWorld.sub(cameraPosition).normalize();
-        const center=planetCenterU;
-        const hit=raySphere(center,float(ATMO_R),ro,rd);
-        // Depth-style surface clamp without a full RT pre-pass: stop at solid limb
-        const surf=raySphere(center,float(R),ro,rd);
-        const marchStart=hit.x;
-        const toSurf=surf.x.sub(marchStart);
-        const clampedLen=select(surf.z.greaterThan(0.5), hit.y.min(toSurf.max(0.0)), hit.y);
-        const marchLen=clampedLen;
-        const inScatter=vec3(0,0,0).toVar();
-        If(hit.z.greaterThan(0.5), ()=>{
-          const stepSize=marchLen.div(VIEW_SAMPLES);
-          const p=ro.add(rd.mul(marchStart)).toVar();
-          const viewOD=float(0).toVar();
-          Loop(VIEW_SAMPLES, ()=>{
-            const localDensity=densityAtPoint(p);
-            viewOD.addAssign(localDensity.mul(stepSize));
-            const sunHit=raySphere(center,float(ATMO_R),p,sunDirU);
-            const sunOD=opticalDepth(p,sunDirU,sunHit.y);
-            const transmittance=exp(scatterCoeffs.negate().mul(sunOD.add(viewOD)));
-            inScatter.addAssign(localDensity.mul(transmittance).mul(scatterCoeffs).mul(stepSize));
-            p.addAssign(rd.mul(stepSize));
-          });
-        });
-        // Tint dusty shells (giants) slightly toward palette
-        const tintV=vec3(tint.r,tint.g,tint.b);
-        return inScatter.mul(float(0.65).add(tintV.mul(0.35)));
-      });
-      const inS=atmoFn();
+      // (v332) a named air (mars / venus / titan) scatters its own albedo; giants and Rayleigh worlds lean toward their palette tint
+      const _lk=opts.kind&&_ATMO_LOOK[_atmoLookKey(opts.kind)], co=_atmoCoeffs(_lk&&_lk.albedo?_lk:{},scatterMul,[tint.r,tint.g,tint.b]);
+      const inS=_jotsShellAtmoColor(R,ATMO_R,co,sunDirU,densityFalloff);
       atmoMat.colorNode=inS;
       atmoMat.opacityNode=clamp(inS.r.add(inS.g).add(inS.b).mul(opts.opacityScale!=null?opts.opacityScale:0.55),0.0,1.0);
       const atmoMesh=new THREE.Mesh(new THREE.SphereGeometry(ATMO_R,32,24),atmoMat);
@@ -7718,16 +7662,105 @@ function _buildJotsDustyRingGroup(planetR, opts){
 }
 
 // How each world's air looks from space, by kind (the body name, or the
-// catalog's atm name): shell size (× the build half-extent), scattering
-// strength, optional colour coefficients (Titan's orange haze instead of
-// Rayleigh blue), opacity; gl = the WebGL2 fallback shell.
+// catalog's atm name): shell size mul (x the planet RADIUS: the shell hugs the
+// body, 1.18 R for Earth/Solenne as DMAtmoShell documents), scattering
+// strength, opacity; gl = the WebGL2 fallback shell.
+// (v332) colour: a world is either Rayleigh air (earth, other: blue limb,
+// (400/lambda)^4) or dusty/hazy air with its own ALBEDO (the colour the haze
+// scatters) and a near-grey EXTINCTION (how fast light dies, slightly faster
+// in blue so the haze reddens toward the horizon/terminator). Mars was drawn
+// with Earth's Rayleigh blue, which a long horizontal path saturated into a
+// teal-green ring round the view in atmospheric flight; dust can never go green.
 const _ATMO_LOOK={
   earth:{mul:1.18,scatter:3.8,op:0.85,gl:{tint:0x3366ff,mul:1.16,scatter:3.4,fb:0.18,op:0.72}},
-  mars: {mul:1.06,scatter:1.55,op:0.6,gl:{tint:0xc07040,mul:1.06,scatter:1.4,fb:0.10,op:0.55}},
-  venus:{mul:1.16,scatter:2.6,op:0.6},
-  titan:{mul:1.22,scatter:2.4,op:0.75,coeff:[0.9,0.5,0.14],gl:{tint:0xd08a3a,mul:1.14,scatter:2.0,fb:0.2,op:0.7}},
+  mars: {mul:1.06,scatter:1.55,op:0.6,albedo:[0.80,0.56,0.34],ext:[0.90,1.0,1.15],gl:{tint:0xc07040,mul:1.06,scatter:1.4,fb:0.10,op:0.55}},
+  venus:{mul:1.16,scatter:2.6,op:0.6,albedo:[0.95,0.86,0.60],ext:[0.95,1.0,1.06],gl:{tint:0xd8b060,mul:1.14,scatter:2.2,fb:0.16,op:0.6}},
+  titan:{mul:1.22,scatter:2.4,op:0.75,albedo:[0.90,0.55,0.20],ext:[0.90,1.0,1.20],gl:{tint:0xd08a3a,mul:1.14,scatter:2.0,fb:0.2,op:0.7}},
   other:{mul:1.10,scatter:2.2,op:0.6,gl:{tint:0x6688cc,mul:1.09,scatter:1.8,fb:0.14,op:0.55}},
 };
+// procedural world types map onto the nearest real air: desert -> Mars dust, methane -> Titan haze, volcanic -> Venus sulphur haze
+const _ATMO_KIND_ALIAS={habitable:'earth',ocean:'earth',desert:'mars',methane:'titan',volcanic:'venus'};
+function _atmoLookKey(kind){ const k=String(kind||'').toLowerCase(); return _ATMO_LOOK[k]?k:(_ATMO_KIND_ALIAS[k]||'other'); }
+function _atmoLook(kind){ return _ATMO_LOOK[_atmoLookKey(kind)]; }
+const _ATMO_KN=0.7;   // (v332) coefficients are per shell THICKNESS (scale-free: a 3-unit Mars and a 66-unit Jupiter saturate alike)
+const _ATMO_RAYLEIGH=[Math.pow(400/700,4),Math.pow(400/530,4),Math.pow(400/440,4)];
+// scatter / extinction rgb (per shell thickness) for a look; tint (giants) leans a Rayleigh shell toward its palette
+function _atmoCoeffs(look,scatter,tint){
+  const k=(scatter!=null?scatter:look.scatter)*_ATMO_KN;
+  let sc, ex;
+  if(look&&look.albedo){ sc=look.albedo.map(a=>a*k); ex=(look.ext||[1,1,1]).map(e=>e*k); }
+  else { ex=_ATMO_RAYLEIGH.map(r=>r*k); sc=ex.map((v,i)=>v*(tint?(0.65+0.35*tint[i]):1)); }
+  return {sc,ex};
+}
+// (v332) ONE ray-march for every classic atmosphere shell (JOTS_PlanetAtmo + the dusty shells). Source: Sebastian Lague,
+// "Coding Adventure: Atmosphere" (MIT; see CREDITS), single scattering. What changed and why:
+//  - centre / size come from the shell's OWN world matrix, read per object per pass on the GPU: the glow is centred on the
+//    body in every view (orbit, the layered sky over a world, a LOD cross-fade, a moon riding its parent), never a
+//    CPU-copied centre uniform from another moment;
+//  - optical depth is in shell thicknesses, and each step adds the energy-conserving (1 - e^-dTau) instead of a linear
+//    sigma*dTau (which, with 4 samples over a long horizontal chord, peaked in the middle channel: green);
+//  - a dusty world scatters its own albedo with near-grey extinction, so its hue cannot drift with path length;
+//  - no green glow: G is capped at max(R, B) (no world in the game has green air).
+function _jotsShellAtmoColor(Rl, ARl, co, sunDirU, falloff){
+  const VS=_jotsAtmoSampleBudgets(), VIEW=VS.view, SUN=VS.sun;
+  const ex=co.ex.map(v=>Math.max(1e-4,v)), ratio=co.sc.map((v,i)=>v/ex[i]);
+  const EX=vec3(ex[0],ex[1],ex[2]), RATIO=vec3(ratio[0],ratio[1],ratio[2]);
+  const ctr=modelWorldMatrix.mul(vec4(0,0,0,1)).xyz;
+  const ws=modelWorldMatrix.mul(vec4(1,0,0,0)).xyz.length();
+  const Rw=float(Rl).mul(ws), ARw=float(ARl).mul(ws), iH=float(1/Math.max(1e-6,ARl-Rl)).div(ws);
+  const raySphere=Fn(([rad,ro,rd])=>{
+    const offset=ro.sub(ctr);
+    const b=offset.dot(rd).mul(2.0);
+    const c=offset.dot(offset).sub(rad.mul(rad));
+    const disc=b.mul(b).sub(c.mul(4.0));
+    const result=vec3(0,0,0).toVar();
+    If(disc.greaterThanEqual(0.0), ()=>{
+      const s=disc.sqrt();
+      const near=b.negate().sub(s).div(2.0);
+      const far=b.negate().add(s).div(2.0);
+      If(far.greaterThanEqual(0.0), ()=>{
+        const dToSphere=near.max(0.0);
+        result.assign(vec3(dToSphere,far.sub(dToSphere),1.0));
+      });
+    });
+    return result;
+  });
+  const densityAtPoint=Fn(([sp])=>{
+    const h01=sp.sub(ctr).length().sub(Rw).mul(iH).clamp(0.0,1.0);
+    return exp(h01.negate().mul(falloff)).mul(float(1.0).sub(h01));
+  });
+  const opticalDepth=Fn(([ro,rd,rl])=>{
+    const stepSize=rl.div(SUN);
+    const p=ro.toVar();
+    const total=float(0).toVar();
+    Loop(SUN, ()=>{ total.addAssign(densityAtPoint(p).mul(stepSize)); p.addAssign(rd.mul(stepSize)); });
+    return total;
+  });
+  return Fn(()=>{
+    const ro=cameraPosition;
+    const rd=positionWorld.sub(cameraPosition).normalize();
+    const hit=raySphere(ARw,ro,rd);
+    const surf=raySphere(Rw,ro,rd);   // stop at the solid limb (sandbox depth pre-pass analog)
+    const marchStart=hit.x;
+    const marchLen=select(surf.z.greaterThan(0.5), hit.y.min(surf.x.sub(marchStart).max(0.0)), hit.y);
+    const acc=vec3(0,0,0).toVar();
+    If(hit.z.greaterThan(0.5), ()=>{
+      const stepSize=marchLen.div(VIEW);
+      const p=ro.add(rd.mul(marchStart)).toVar();
+      const tauV=float(0).toVar();
+      Loop(VIEW, ()=>{
+        const dTau=densityAtPoint(p).mul(stepSize).mul(iH);
+        const sunHit=raySphere(ARw,p,sunDirU);
+        const tauS=opticalDepth(p,sunDirU,sunHit.y).mul(iH);
+        const T=exp(EX.negate().mul(tauV.add(tauS)));
+        acc.addAssign(float(1.0).sub(exp(EX.negate().mul(dTau))).mul(RATIO).mul(T));
+        tauV.addAssign(dTau);
+        p.addAssign(rd.mul(stepSize));
+      });
+    });
+    return vec3(acc.x, min(acc.y, max(acc.x, acc.z)), acc.z);
+  })();
+}
 function buildWebGLRichPlanetGroup(radius, seedVal, colorHex, hasAtmosphere, kind, bodyName){
   // Every world: a canvas albedo until its whole-planet map is ready, then the
   // map itself (_applyWorldMapToFlightBody) — the same map the globe widget,
@@ -7761,7 +7794,7 @@ function buildWebGLRichPlanetGroup(radius, seedVal, colorHex, hasAtmosphere, kin
   // lights by the world clock and the ground is laid out in
   group.add(mesh);
   if(hasAtmosphere){
-    const gl=(_ATMO_LOOK[isEarth?'earth':isMars?'mars':k]||_ATMO_LOOK.other).gl||_ATMO_LOOK.other.gl;
+    const gl=_atmoLook(isEarth?'earth':isMars?'mars':k).gl||_ATMO_LOOK.other.gl;
     const tint=gl.tint, atmoMul=gl.mul;
     try{
       const dusty=_buildJotsDustyAtmoShell(radius, {
@@ -7994,7 +8027,13 @@ async function _svLodPlanetMesh(o){
       fadeAttr.needsUpdate=true;
       this.hash(fadeIn.size>0||fadeOut.size>0||deadSlots.length>0);
     },
+    // (v332) dead: the mesh's geometry was disposed (LOD swap / cross-fade / system clear). Its storage attributes ARE the kernels'
+    // buffers, so a batch dispatched after that ran the compute bind groups on destroyed buffers ("[Buffer (unlabeled)] used in submit
+    // while destroyed" — the GPU error banner by the Bird Temple). update/drain are not awaited by the loop, so a batch could also
+    // resume after its await into a disposed world; every entry and the post-await tail now stop instead.
+    dead:false,
     async batch(n){
+      if(this.dead) return 0;
       const st=stream.step(n), now=performance.now();
       if(this.fading){
         for(const b of st.build){ fadeIn.set(b.slot,now); fadeArr[b.slot]=0; fadeOut.delete(b.slot); }
@@ -8013,6 +8052,7 @@ async function _svLodPlanetMesh(o){
       jobAttr.needsUpdate=true; jsAttr.needsUpdate=true;
       const t0=performance.now();
       flightRenderer.compute(densK); flightRenderer.compute(mcK); await flightRenderer.computeAsync(skK);
+      if(this.dead) return 0;
       if(dead){ for(let i=st.clear.length-dead;i<st.clear.length;i++){ const sl=st.clear[i]; fadeArr[sl]=1; stream.pool.free.push(sl); } fadeAttr.needsUpdate=true; }
       const ms=performance.now()-t0; this.lastMs=ms; this.msPerBrick=this.msPerBrick*0.7+(ms/Math.max(1,k))*0.3;
       if(this.geo) this.geo.setDrawRange(0,Math.max(1,stream.pool.next)*VPS);   // (v149) draw only up to the pool's high-water slot, not all CAP×VPS vertices
@@ -8023,6 +8063,7 @@ async function _svLodPlanetMesh(o){
     // then build one budgeted batch
     async update(cam,budgetMs){
       const t0=performance.now();
+      if(this.dead) return;
       this.fadeTick(t0);
       if(this.busy) return; this.busy=true;
       try{
@@ -8041,6 +8082,7 @@ async function _svLodPlanetMesh(o){
     // so it is never left half-built or mid-fade (see-through) while the static mesh that replaces it is made.  Returns true when done.
     async drain(budgetMs){
       const t0=performance.now();
+      if(this.dead) return true;
       this.fadeTick(t0);
       if(this.busy) return false;
       if(!this.pending&&!stream.todo.length&&!stream.stale.length&&!deadSlots.length){ this.drained=!fadeIn.size&&!fadeOut.size; return this.drained; }
@@ -8065,6 +8107,7 @@ async function _svLodPlanetMesh(o){
   geo.setAttribute('position',vertexBuf); geo.setAttribute('normal',normalBuf); geo.setAttribute('color',colorBuf);
   geo.boundingSphere=new THREE.Sphere(new THREE.Vector3(0,0,0),HALF*1.5);
   ctl.geo=geo; geo.setDrawRange(0,Math.max(1,stream.pool.next)*VPS);
+  geo.addEventListener('dispose',()=>{ ctl.dead=true; });   // (v332) see ctl.dead
   const _lmat=new THREE.MeshStandardNodeMaterial({vertexColors:true,roughness:0.92,metalness:0.02});
   if(window.DMRock) DMRock.applyPlanet(_lmat,o.kind,radius,o.seed);   // (v140) layered rock
   // (v193) per-brick dither fade, multiplied into whatever opacity the rock layer set (set at build: never recompiles)
@@ -8325,73 +8368,15 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
     // Rayleigh — Sol-wired sunDir + world planetCenter; budgeted VIEW/SUN samples;
     // surface-radius clamp (sandbox depth cue without full RT pre-pass).
     const atmoMat=new THREE.MeshBasicNodeMaterial({transparent:true,side:THREE.BackSide,depthWrite:false,depthTest:false,blending:THREE.AdditiveBlending});
-    // Earth: deepen Rayleigh toward sandbox (soft blue limb glow). No Sol corona.
-    const look=_ATMO_LOOK[kind]||_ATMO_LOOK.other;
+    // (v332) the shell hugs the planet: radius x look.mul (was the marching-cubes grid half-extent HALF = 1.3 R x mul, so every
+    // WebGPU world wore a glow 30% too big — Earth/Solenne 1.53 R, Mars 1.38 R — lit only on its day side, which read as an
+    // atmosphere sliding off the planet; the WebGL shells and DMAtmoShell's documented 1.18 R used the radius all along)
+    const look=_atmoLook(kind);
     const atmoMul=look.mul, scatterMul=look.scatter;
-    const sc=look.coeff||[Math.pow(400/700,4),Math.pow(400/530,4),Math.pow(400/440,4)];   // Rayleigh (400/λ)⁴ unless the air is coloured otherwise
-    const scatterCoeffs=uniform(new THREE.Vector3(sc[0],sc[1],sc[2]).multiplyScalar(scatterMul));
     const sunDirU=uniform(new THREE.Vector3(1,0.3,0.2).normalize());
-    const planetCenterU=uniform(new THREE.Vector3(0,0,0));
-    const ATMO_R=HALF*atmoMul;
-    const _atmoSamp=(typeof _jotsAtmoSampleBudgets==='function')?_jotsAtmoSampleBudgets():{view:4,sun:3};
-    const VIEW_SAMPLES=_atmoSamp.view, SUN_SAMPLES=_atmoSamp.sun;   // same budget for every world
-    const raySphere=Fn(([center,rad,ro,rd])=>{
-      const offset=ro.sub(center);
-      const b=offset.dot(rd).mul(2.0);
-      const c=offset.dot(offset).sub(rad.mul(rad));
-      const disc=b.mul(b).sub(c.mul(4.0));
-      const result=vec3(0,0,0).toVar();
-      If(disc.greaterThanEqual(0.0), ()=>{
-        const s=disc.sqrt();
-        const near=b.negate().sub(s).div(2.0);
-        const far=b.negate().add(s).div(2.0);
-        If(far.greaterThanEqual(0.0), ()=>{
-          const dToSphere=near.max(0.0);
-          result.assign(vec3(dToSphere,far.sub(dToSphere),1.0));
-        });
-      });
-      return result;
-    });
-    const densityAtPoint=Fn(([sp])=>{
-      const h=sp.sub(planetCenterU).length().sub(radius);
-      const h01=h.div(ATMO_R-radius).clamp(0.0,1.0);
-      return exp(h01.negate().mul(5.5)).mul(float(1.0).sub(h01));
-    });
-    const opticalDepth=Fn(([ro,rd,rl])=>{
-      const stepSize=rl.div(SUN_SAMPLES);
-      const p=ro.toVar();
-      const total=float(0).toVar();
-      Loop(SUN_SAMPLES, ()=>{ total.addAssign(densityAtPoint(p).mul(stepSize)); p.addAssign(rd.mul(stepSize)); });
-      return total;
-    });
-    const atmoFn=Fn(()=>{
-      const ro=cameraPosition;
-      const rd=positionWorld.sub(cameraPosition).normalize();
-      const center=planetCenterU;
-      const hit=raySphere(center,float(ATMO_R),ro,rd);
-      // Surface clamp (sandbox depth pre-pass analog — ray vs terrain sphere)
-      const surf=raySphere(center,float(radius),ro,rd);
-      const marchStart=hit.x;
-      const toSurf=surf.x.sub(marchStart);
-      const marchLen=select(surf.z.greaterThan(0.5), hit.y.min(toSurf.max(0.0)), hit.y);
-      const inScatter=vec3(0,0,0).toVar();
-      If(hit.z.greaterThan(0.5), ()=>{
-        const stepSize=marchLen.div(VIEW_SAMPLES);
-        const p=ro.add(rd.mul(marchStart)).toVar();
-        const viewOD=float(0).toVar();
-        Loop(VIEW_SAMPLES, ()=>{
-          const localDensity=densityAtPoint(p);
-          viewOD.addAssign(localDensity.mul(stepSize));
-          const sunHit=raySphere(center,float(ATMO_R),p,sunDirU);
-          const sunOD=opticalDepth(p,sunDirU,sunHit.y);
-          const transmittance=exp(scatterCoeffs.negate().mul(sunOD.add(viewOD)));
-          inScatter.addAssign(localDensity.mul(transmittance).mul(scatterCoeffs).mul(stepSize));
-          p.addAssign(rd.mul(stepSize));
-        });
-      });
-      return inScatter;
-    });
-    const inS=atmoFn();
+    const planetCenterU=uniform(new THREE.Vector3(0,0,0));   // registry / true-atmosphere pass only (the shell centres on its own world matrix)
+    const ATMO_R=radius*atmoMul;
+    const inS=_jotsShellAtmoColor(radius,ATMO_R,_atmoCoeffs(look),sunDirU,5.5);
     atmoMat.colorNode=inS;
     const atmoOpScale=look.op;
     atmoMat.opacityNode=clamp(inS.r.add(inS.g).add(inS.b).mul(atmoOpScale),0.0,1.0);
@@ -8399,7 +8384,7 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
     atmoMesh.name='JOTS_PlanetAtmo';
     atmoMesh.renderOrder=2;
     atmoMesh.userData.jotsAtmo=true;
-    atmoMesh.userData.planetR=radius; atmoMesh.userData.atmoTop=ATMO_R-radius; atmoMesh.userData.atmoScatter=(look&&look.scatter)||2.2; atmoMesh.userData.atmoEarth=(kind==='earth'); atmoMesh.userData.atmoKind=kind;
+    atmoMesh.userData.planetR=radius; atmoMesh.userData.atmoTop=ATMO_R-radius; atmoMesh.userData.atmoScatter=(look&&look.scatter)||2.2; atmoMesh.userData.atmoEarth=(_atmoLookKey(kind)==='earth'); atmoMesh.userData.atmoKind=kind; atmoMesh.userData.shellR=ATMO_R;
     _registerJotsAtmoFog({mesh:atmoMesh, sunDirU, planetCenterU});
     if(!window.__DISABLE_ATMO_MESH__) group.add(atmoMesh);
   }
@@ -9130,12 +9115,13 @@ function _btLoadModel(){
       // star's shadow, so the hull shades the deck and the decks below it the way the skyboard and the ground do.
       // Casting is unchanged (hull casters as authored, toggled by the LOD below). Geometry/collision untouched.
       try{ BIRD_TEMPLE._R0=R0; BIRD_TEMPLE._s0=wrapper.scale.x; if(GFX.shadows) wrapper.traverse(o=>{ if(o.isMesh) o.receiveShadow=true; }); }catch(e){}
+      const _wp=new THREE.Vector3();   // (v332) scratch: the LOD tick allocated a Vector3 every 250 ms
       let _csOn=null;   // (v193) hull casters follow GFX.shadows (set only when the setting changes: no per-tick writes)
       BIRD_TEMPLE._lod=setInterval(()=>{ try{
         { const on=!!(GFX&&GFX.shadows); if(on!==_csOn){ _csOn=on; for(const o of casters) o.castShadow=on; } }
         if(typeof flightCamera==='undefined'||!flightCamera) return;
         const aboard=(typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active)||(window.BTI&&(BTI.cur||BTI._depth>0));
-        const R=R0*(wrapper.scale.x/SHIP_SCALE||1), d=flightCamera.getWorldPosition(_p).distanceTo(wrapper.getWorldPosition(new THREE.Vector3()));
+        const R=R0*(wrapper.scale.x/SHIP_SCALE||1), d=flightCamera.getWorldPosition(_p).distanceTo(wrapper.getWorldPosition(_wp));
         if(BIRD_TEMPLE.spawned&&!wrapper.visible&&d<BT_KEEP_R){ wrapper.visible=true; _btCrumb('btRepair','lod-visible'); }   // (v320) never hidden near her
         const f=!aboard&&!(BIRD_TEMPLE._arriveUntil>performance.now())&&d>R*4;   // (v320) the interior stays on while she arrives
         if(f===far) return; far=f;
@@ -9528,7 +9514,7 @@ function _btSwapSafe(root,m){
   safe.userData.btSafe=1; safe.name=(m.name||'')+'_safe';
   root.traverse(o=>{ if(!o.isMesh) return; if(Array.isArray(o.material)) o.material=o.material.map(x=>x===m?safe:x); else if(o.material===m) o.material=safe; });
 }
-window.btDiag=function(){ const bt=BIRD_TEMPLE,g=bt.group; const o={ver:'v329',url:BT_MODEL_URL,hasGroup:!!g,spawned:!!bt.spawned,loading:!!bt._loading,tries:bt._tries|0,gaveUp:!!bt._gaveUp,rebuilds:bt._rebuilds|0,gpuErrs:bt._gpuErrs||[],notes:bt._notes||[]};
+window.btDiag=function(){ const bt=BIRD_TEMPLE,g=bt.group; const o={ver:'v332',gpuDefer:window._dmGpuDefer?Object.assign({pending:window._dmGpuDefer.pending()},window._dmGpuDefer.stats):null,url:BT_MODEL_URL,hasGroup:!!g,spawned:!!bt.spawned,loading:!!bt._loading,tries:bt._tries|0,gaveUp:!!bt._gaveUp,rebuilds:bt._rebuilds|0,gpuErrs:bt._gpuErrs||[],notes:bt._notes||[]};
   try{ if(g){ let r=g; while(r.parent) r=r.parent; o.inScene=(r===flightScene); o.visible=g.visible; o.dist=_btDist(); o.meshes=_btMeshCount(g); o.drawnAgoMs=bt._drawnAt?Math.round(performance.now()-bt._drawnAt):null; } }catch(e){}
   // (v329) travel diagnostics: where the ship is, where she is, how far, which frame / scene, and what each arrival attempt saw
   try{ const t={frame:'one world frame: flightScene, Sol at the origin, 1 AU = '+AU_UNITS+' u, ALT readout = |pos| x 400 km',R0:bt._R0||null,hullCached:bt._bsR||null,hullFresh:null,groupScale:g?g.scale.x:null};
@@ -19918,16 +19904,19 @@ function _taGiantLook(P,name){
   return P;
 }
 function _taParamsFor(ud){
-  const R=ud.planetR, k=String(ud.atmoKind||'').toLowerCase(), top=Math.max(R*0.02, Math.min(R*0.25, ud.atmoTop||R*0.1));
+  const R=ud.planetR, k0=String(ud.atmoKind||'').toLowerCase(), k=k0==='giant'?k0:_atmoLookKey(k0), top=Math.max(R*0.02, Math.min(R*0.25, ud.atmoTop||R*0.1));
   let P;
-  if(k==='earth'||k==='habitable') P=DMAtmo.presetEarth(R);
-  else if(k==='mars'||k==='desert') P=DMAtmo.presetDesert(R);
+  if(k0==='earth'||k0==='habitable') P=DMAtmo.presetEarth(R);
+  else if(k==='mars') P=DMAtmo.presetDesert(R);
+  else if(k==='titan'||k==='venus'){   // (v332) hazy worlds: the desert preset with their own haze colour, not Earth's blue Rayleigh
+    P=DMAtmo.presetDesert(R); const L=_ATMO_LOOK[k];
+    P.rayleigh=L.albedo.map(a=>a*0.6); P.layers=P.layers.map(l=>Object.assign({},l,{albedo:L.albedo.slice()})); if(P.weather) P.weather=Object.assign({},P.weather,{albedo:L.albedo.slice()}); }
   else if(k==='giant'){ P=DMAtmo.presetGasGiant(R); P.radius=R; P.layers.forEach(l=>{ l.amount*=0.3; }); _taGiantLook(P,ud.giantName); }   // the giant's own banded map shows through
   else { P=DMAtmo.presetEarth(R); P.cloud=null; P.weather=null; P.layers=[]; }
-  if(k!=='giant'&&k!=='mars'){ const sc=(ud.atmoScatter||2.2)/3.8*1.25; P.rayleigh=[Math.pow(400/700,4)*sc,Math.pow(400/530,4)*sc,Math.pow(400/440,4)*sc]; }
+  if(k==='earth'||k==='other'){ const sc=(ud.atmoScatter||2.2)/3.8*1.25; P.rayleigh=[Math.pow(400/700,4)*sc,Math.pow(400/530,4)*sc,Math.pow(400/440,4)*sc]; }
   const sh=P.scaleHeight/P.top; P.top=top; P.scaleHeight=top*sh;
   P.heightFn=null; P.seaLevel=null; P.water=P.water||null;
-  if(k==='earth'){
+  if(k0==='earth'){   // (only the world built as 'earth' wears Earth's relief; an ocean / habitable world gets the air, not the map)
     const HS=R*0.004, hf=_taEarthHeight(R,HS);
     if(hf){ P.heightFn=hf; P.heightScale=HS; P.heightKey='earth-etopo'; P.seaLevel=R*2e-4; }      // sea body just above the globe mesh: the water wins the depth test
     else P.water=null;
@@ -20042,7 +20031,7 @@ function _trueAtmoSurface0(r,scene,cam,layered){
       _TA.pipes.set(key,A); _TA.loc.gen=-1;
     }
     const c=_TA._c||(_TA._c=new THREE.Vector3());
-    _pwfCentre(c); A.setCenter(c);
+    _pwfCentre(c); A.setCenter(c); if(A.setAniso) A.setAniso(1/_pwfAnisoG());   // (v332) the air follows the E-W-stretched ground, not the bare sphere
     const sky=TERRAIN.sky; if(sky&&sky.sunDir) A.setSun(sky.sunDir);
     // near LOD of the real ground (the world's own height field) round the focus; rebaked as it travels
     const L=_TA.loc, now=performance.now(), span=4096, H=TERRAIN.Hg||TERRAIN.H;
@@ -26035,46 +26024,54 @@ function _pwAtmoShell(pal,sky){
   const W=window; if(!pal.atmos||!THREE.MeshBasicNodeMaterial||typeof W.Loop!=='function') return null;
   const R=_planetR(), TOP=2000, HS=350, SIG=4.5e-4, N=10, Ra=R+TOP;
   const sk=window.DMWorldStyle?DMWorldStyle.skyFor((window.DMWorldStyle&&PW.body)?DMWorldStyle.styleFor(PW.body,pal,PW.site):'lush',pal):{top:0x3a6ea5,bottom:0x88bbff};
-  const U={C:W.uniform(new THREE.Vector3()),sun:W.uniform(new THREE.Vector3(0,1,0)),k:W.uniform(0),
+  // (v332) ax: the drawn ground is stretched east-west by PWF.g near the surface (_pwfMap: 1/cos(lat) below 1500 u, easing to 1 by 6000 u),
+  // so it is NOT the sphere round _pwfCentre: at 60 deg latitude it stood ~430 u above that sphere 3 km east or west of her. The air is
+  // marched in the same squeezed frame (x / g), so its floor and density follow the ground she sees in every direction.
+  const U={C:W.uniform(new THREE.Vector3()),sun:W.uniform(new THREE.Vector3(0,1,0)),k:W.uniform(0),ax:W.uniform(1),
     col:W.uniform(new THREE.Color(sk.bottom!=null?sk.bottom:0x88bbff).lerp(new THREE.Color(sk.top!=null?sk.top:0x3a6ea5),0.35)),
     warm:W.uniform(new THREE.Color(0xff9a5a))};
   const {Fn,float,vec3,vec4,normalize,dot,sqrt,max,min,exp,smoothstep,mix,pow,Loop,cameraPosition,positionWorld,cameraViewMatrix,cameraNear,cameraFar,viewportDepthTexture,screenUV}=W;
   const mat=new THREE.MeshBasicNodeMaterial({side:THREE.BackSide,transparent:true,depthWrite:false,depthTest:false,blending:THREE.AdditiveBlending});
   mat.fog=false;
-  const sphere=(ro,rd,C,r)=>{ const oc=ro.sub(C), b=dot(oc,rd), c=dot(oc,oc).sub(r*r), h=b.mul(b).sub(c); return {b,h}; };
+  const sphere=(ro,rd,r)=>{ const b=dot(ro,rd), c=dot(ro,ro).sub(r*r), h=b.mul(b).sub(c); return {b,h}; };   // centred at the origin of the squeezed frame
   mat.colorNode=Fn(()=>{
-    const ro=cameraPosition, rd=normalize(positionWorld.sub(ro)), C=U.C;
-    const S=sphere(ro,rd,C,Ra), sh=sqrt(max(S.h,0.0));
-    const t0=max(S.b.negate().sub(sh),0.0), t1=S.b.negate().add(sh);
+    const rdW=normalize(positionWorld.sub(cameraPosition)), S=vec3(U.ax,1.0,1.0);
+    const rdS=rdW.mul(S), Ls=rdS.length(), rd=rdS.div(Ls), ro=cameraPosition.sub(U.C).mul(S);   // squeezed frame: t' = t * Ls
+    const Sa=sphere(ro,rd,Ra), sh=sqrt(max(Sa.h,0.0));
+    const t0=max(Sa.b.negate().sub(sh),0.0), t1=Sa.b.negate().add(sh);
     // the ground (the sea-level sphere) and whatever the scene drew in front
-    const G=sphere(ro,rd,C,R), tg=W.select(G.h.greaterThan(0.0).and(G.b.lessThan(0.0)),G.b.negate().sub(sqrt(max(G.h,0.0))),float(1e9));
+    const G=sphere(ro,rd,R), tg=W.select(G.h.greaterThan(0.0).and(G.b.lessThan(0.0)),G.b.negate().sub(sqrt(max(G.h,0.0))),float(1e9));
     // (no scene-depth read on multisampled WebGPU: see _viewportDepthOK — the shell then stops at the ground sphere only)
     const ts=_viewportDepthOK()?(()=>{ const vz=W.logarithmicDepthToViewZ(viewportDepthTexture(screenUV).r,cameraNear,cameraFar);
-      const vd=cameraViewMatrix.mul(vec4(rd,0.0)).xyz;
-      return W.select(vz.negate().lessThan(cameraFar.mul(0.98)),vz.div(min(vd.z,-1e-4)),float(1e9)); })():float(1e9);
-    const t2=min(min(t1,tg),ts), len=max(t2.sub(t0),0.0), dt=len.div(N);
+      const vd=cameraViewMatrix.mul(vec4(rdW,0.0)).xyz;
+      return W.select(vz.negate().lessThan(cameraFar.mul(0.98)),vz.div(min(vd.z,-1e-4)).mul(Ls),float(1e9)); })():float(1e9);
+    const t2=min(min(t1,tg),ts), len=max(t2.sub(t0),0.0), dt=len.div(N), dtW=dt.div(Ls);
     const tau=float(0).toVar(), acc=vec3(0).toVar();
     Loop(N,({i})=>{
-      const p=ro.add(rd.mul(t0.add(dt.mul(float(i).add(0.5))))), up=p.sub(C), r=up.length();
+      const up=ro.add(rd.mul(t0.add(dt.mul(float(i).add(0.5))))), r=up.length();
       const rho=exp(r.sub(R).max(0.0).div(-HS));
-      tau.addAssign(rho.mul(dt));
+      tau.addAssign(rho.mul(dtW));
       const mu=dot(up.div(r),U.sun);
       const lit=smoothstep(-0.12,0.18,mu), dusk=smoothstep(0.35,0.0,mu).mul(lit);
-      acc.addAssign(mix(U.col,U.warm,dusk.mul(0.7)).mul(rho.mul(lit).mul(dt).mul(exp(tau.mul(-SIG)))));
+      acc.addAssign(mix(U.col,U.warm,dusk.mul(0.7)).mul(rho.mul(lit).mul(dtW).mul(exp(tau.mul(-SIG)))));
     });
-    const fwd=pow(max(dot(rd,U.sun),0.0),8.0).mul(0.6).add(1.0);
+    const fwd=pow(max(dot(rdW,U.sun),0.0),8.0).mul(0.6).add(1.0);
     return acc.mul(SIG*2.2).mul(fwd).mul(U.k);
   })();
   const m=new THREE.Mesh(new THREE.SphereGeometry(Ra,96,48),mat);
   m.name='JOTS_AtmoShell'; m.frustumCulled=false; m.renderOrder=50; m.userData.noBend=true; m.raycast=()=>{}; m.visible=false;
+  // the mesh is only coverage (frustumCulled off, BackSide, no depth test): it is stretched with the ground so its edge is never inside the air
   return {mesh:m,U,
     update(k,sunDir){
       U.k.value=k; m.visible=k>0.002;
       if(!m.visible) return;
       _pwfCentre(m.position); U.C.value.copy(m.position);
+      const g=_pwfAnisoG(); U.ax.value=1/g; m.scale.set(g,1,1);
       if(sunDir) U.sun.value.copy(sunDir).normalize();
     }};
 }
+// (v332) the east-west stretch the ground is drawn with right now (_pwfSet: PWF.g; 1 when the planet frame is off)
+function _pwfAnisoG(){ return (PWF.on&&PWF.g>0)?PWF.g:1; }
 
 // ── The world's ground (built once per visit, shared by the sky and on foot) ──
 // One level-of-detail quadtree (SkyGround) over the world's height field is

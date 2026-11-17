@@ -129,6 +129,7 @@
 
     const U = {
       center: uniform(new THREE.Vector3().copy(P.center || new THREE.Vector3())),
+      ax: uniform(1),   // (v332) east-west squeeze of the march frame (1 / the ground's E-W stretch; 1 = plain sphere)
       camPos: uniform(new THREE.Vector3()), invProj: uniform(new THREE.Matrix4()), camWorld: uniform(new THREE.Matrix4()),
       near: uniform(0.1), far: uniform(1000), sun: uniform(new THREE.Vector3(1, 0.3, 0.2).normalize()),
       time: uniform(0), frame: uniform(0), planetRot: uniform(0),
@@ -212,7 +213,7 @@
     const globalH = (d) => texture(heightTex, dirUV(toLocal(d))).r.mul(U.hScale);
     // ground height above the reference radius at relative point p (dir up): local LOD map where it covers, global map elsewhere
     const groundAt = (p, up) => {
-      const wxz = vec2(p.x.add(U.center.x), p.z.add(U.center.z));
+      const wxz = vec2(p.x.div(U.ax).add(U.center.x), p.z.add(U.center.z));   // back to world x for the local map
       const luv = wxz.sub(U.locC.xy).div(U.locC.z).add(0.5);
       const edge = min(min(luv.x, luv.y), min(float(1.0).sub(luv.x), float(1.0).sub(luv.y)));
       const w = smoothstep(0.0, 0.08, edge).mul(U.locOn);
@@ -256,17 +257,21 @@
       const ndc = vec2(uv.x.mul(2.0).sub(1.0), opt.flipY ? uv.y.mul(2.0).sub(1.0) : uv.y.mul(-2.0).add(1.0));
       const vdh = U.invProj.mul(vec4(ndc, 1.0, 1.0));
       const vdir = normalize(vdh.xyz.div(vdh.w));
-      const rd = normalize(U.camWorld.mul(vec4(vdir, 0.0)).xyz);
-      const ro = U.camPos.sub(U.center);
+      // (v332) marched in a frame squeezed east-west by U.ax so the air's sphere is the ground the planet frame draws
+      // (its E-W stretch makes the drawn ground an ellipsoid about the centre); distances along rd scale by Ls
+      const rdW = normalize(U.camWorld.mul(vec4(vdir, 0.0)).xyz);
+      const AX = vec3(U.ax, 1.0, 1.0), rdS = rdW.mul(AX), Ls = length(rdS);
+      const rd = rdS.div(Ls);
+      const ro = U.camPos.sub(U.center).mul(AX);
       const dRaw = sceneDepth.sample(uv).r;
       const vz = logDepth ? logarithmicDepthToViewZ(dRaw, U.near, U.far) : perspectiveDepthToViewZ(dRaw, U.near, U.far);
-      const sceneDist = dRaw.greaterThanEqual(0.99999).select(float(1e20), vz.div(vdir.z)).toVar();
+      const sceneDist = dRaw.greaterThanEqual(0.99999).select(float(1e20), vz.div(vdir.z).mul(Ls)).toVar();
       const wc = sceneColor.sample(uv);
       const base = (skyColor ? mix(skyColor.sample(uv).rgb, wc.rgb, clamp(wc.a, 0.0, 1.0)) : wc.rgb).toVar();
 
       const Rsea = U.R0.add(U.sea), Rtop = U.R0.add(U.top);
       const sun = normalize(U.sun);
-      const mu = dot(rd, sun);
+      const mu = dot(rdW, sun);
       const tEnd = sceneDist.toVar();
 
       // ── ocean body: sea-level equipotential, a collision boundary for gas ──
@@ -428,7 +433,7 @@
             const vis = smoothstep(muH.sub(0.015), muH.add(0.02), muS);
             const am = float(1.0).div(max(muS.sub(muH), 0.0).add(sqrt(U.H.div(r)).mul(0.45)));
             const sunT = exp(ext.mul(inv).mul(U.H).mul(am).mul(1.6).negate()).mul(vis);
-            const e = ext.mul(inv), sd = e.mul(ds);
+            const e = ext.mul(inv), sd = e.mul(ds.div(Ls));
             const a = exp(sd.negate());
             Ltot.addAssign(Tr.mul(scat.mul(inv)).mul(sunT).mul(vec3(1.0).sub(a)).div(max(e, vec3(1e-6))));
             Tr.mulAssign(a);
@@ -515,6 +520,7 @@
       uniforms: U, params: P, isWebGPU, usesCompute: !!computeNode, steps,
       setSun(v) { U.sun.value.copy(v).normalize(); },
       setCenter(v) { U.center.value.copy(v); },
+      setAniso(ax) { U.ax.value = ax > 0 ? ax : 1; },   // (v332) 1 / east-west ground stretch (planet surface frame)
       setWeights(sky, aerial) { U.skyW.value = sky; U.aerialW.value = aerial == null ? 1 : aerial; },
       // planet orientation (quaternion of the planet group in world space)
       setRotation(q) { U.rot.value.makeRotationFromQuaternion(q).invert(); },
