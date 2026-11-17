@@ -1104,12 +1104,12 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-bt-hull.js?v=144" defer></script>
 <script src="ui/dm-viewgate.js?v=317"></script>
 <script src="ui/dm-edgewarm.js?v=235" defer></script>
-<script src="ui/dm-arielhome.js?v=231" defer></script>
+<script src="ui/dm-arielhome.js?v=336" defer></script>
 <script src="ui/dm-mansion-rooms.js?v=321" defer></script>
 <script src="ui/dm-mansion-look.js?v=325" defer></script>
 <script src="ui/dm-mansion-interior.js?v=325" defer></script>
 <script src="ui/dm-orbit-clamp.js?v=1" defer></script>
-<script src="ui/dm-facilities.js?v=321" defer></script>
+<script src="ui/dm-facilities.js?v=336" defer></script>
 <script src="ui/dm-lamps.js?v=325" defer></script>
 <script src="ui/dm-mansion-collide.js?v=283" defer></script>
 <script src="ui/dm-holo.js?v=284" defer></script>
@@ -2053,17 +2053,20 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     <span>☉ SOLAR SYSTEM</span><span>✦ STELLAR NEIGHBORHOOD</span><span style="color:rgba(176,96,255,0.45);">🌌 MILKY WAY</span><span style="color:rgba(var(--hi-rgb),0.4);">◈ INTERGALACTIC</span>
   </div>
   <div id="gm-info">DRAG / 1-FINGER ROTATE · PINCH OR 2-FINGER DRAG TO ZOOM · SCROLL TO ZOOM TIERS · TAP DESTINATION TO PLOT COURSE</div>
-  <!-- Fast-travel confirmation (non-obstructing, bottom-anchored) -->
-  <div id="ft-dialog" style="display:none;position:absolute;bottom:3.4rem;left:50%;transform:translateX(-50%);z-index:60;background:rgba(4,10,22,0.94);border:1px solid var(--cyan);border-radius:6px;padding:0.9rem 1.2rem;backdrop-filter:blur(12px);box-shadow:0 0 30px rgba(var(--acc-rgb),0.25);min-width:300px;max-width:90vw;text-align:center;">
-    <div id="ft-title" style="font-family:var(--font-hud);font-size:0.72rem;letter-spacing:0.14em;color:var(--cyan);text-shadow:0 0 12px rgba(var(--acc-rgb),0.5);"></div>
-    <div id="ft-sub" style="font-family:var(--font-mono);font-size:0.56rem;color:var(--text-dim);margin:0.4rem 0 0.8rem;line-height:1.5;"></div>
-    <div style="display:flex;gap:0.6rem;justify-content:center;">
-      <button id="ft-go" style="padding:0.55rem 1.8rem;background:var(--dim-cyan);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:0.62rem;font-weight:700;letter-spacing:0.14em;cursor:pointer;border-radius:3px;">⚡ FAST TRAVEL</button>
-      <button onclick="closeFastTravel()" style="padding:0.55rem 1.3rem;background:none;border:1px solid var(--border);color:var(--text-dim);font-family:var(--font-hud);font-size:0.58rem;letter-spacing:0.1em;cursor:pointer;border-radius:3px;">CANCEL</button>
-    </div>
-  </div>
 </div>
 
+
+  <!-- Fast-travel confirmation (non-obstructing, bottom-anchored). (v336) a top-level sibling of #galaxy-map, not its child: inside the
+   map it was display:none whenever the map was closed, so every Travel-tree LAND / FAST TRAVEL confirm (Valles Rim, other systems,
+   black holes, discoveries, Places) opened invisible and GO could never be tapped. Fixed + above every HUD overlay (3450-4000). -->
+<div id="ft-dialog" style="display:none;position:fixed;bottom:calc(3.4rem + env(safe-area-inset-bottom,0px));left:50%;transform:translateX(-50%);z-index:4200;background:rgba(4,10,22,0.94);border:1px solid var(--cyan);border-radius:6px;padding:0.9rem 1.2rem;backdrop-filter:blur(12px);box-shadow:0 0 30px rgba(var(--acc-rgb),0.25);min-width:300px;max-width:90vw;text-align:center;">
+  <div id="ft-title" style="font-family:var(--font-hud);font-size:0.72rem;letter-spacing:0.14em;color:var(--cyan);text-shadow:0 0 12px rgba(var(--acc-rgb),0.5);"></div>
+  <div id="ft-sub" style="font-family:var(--font-mono);font-size:0.56rem;color:var(--text-dim);margin:0.4rem 0 0.8rem;line-height:1.5;"></div>
+  <div style="display:flex;gap:0.6rem;justify-content:center;">
+    <button id="ft-go" style="padding:0.55rem 1.8rem;background:var(--dim-cyan);border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-hud);font-size:0.62rem;font-weight:700;letter-spacing:0.14em;cursor:pointer;border-radius:3px;">⚡ FAST TRAVEL</button>
+    <button onclick="closeFastTravel()" style="padding:0.55rem 1.3rem;background:none;border:1px solid var(--border);color:var(--text-dim);font-family:var(--font-hud);font-size:0.58rem;letter-spacing:0.1em;cursor:pointer;border-radius:3px;">CANCEL</button>
+  </div>
+</div>
 <div id="warp-overlay"><div id="warp-status">DART DRIVE INITIATING...</div></div>
 <script>(function(){ // warp text goes to the one bottom-centre bar (dmSys), not the mid-screen line
   var o=document.getElementById('warp-overlay'),s=document.getElementById('warp-status'); if(!o||!s||!window.MutationObserver) return;
@@ -6233,6 +6236,7 @@ function _ah(){
       lowRes:()=>(typeof _mcTierResTable==='function'?_mcTierResTable().low:10), get STATE(){return STATE;}, get boardFlight(){return boardFlight;},
       closeQuickTravel, openFastTravel, fastTravelToSystem, enterAtmosphericFlight, GALAXY_DB, curGalaxy:()=>_qtCurGalaxy(),
       toast, atmoExitToSpace, exitSurface, get atmoActive(){return atmoActive;}, get surfaceActive(){return surfaceActive;},
+      shipWalk:()=>!!(typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active), exitShipWalk:()=>{ try{ if(SHIP_WALK.active) exitShipWalk(); }catch(e){} }, closeWorld:()=>_pwCloseToSpace(),   // (v336) LAND leaves the deck / a space-mode world first
       curSysName:()=>_ttCurSysName()||'', get flightInited(){return flightInited;}, get PW(){return PW;}, get sysBusy(){return _sysRebuildBusy>0;} });
   }
   return DMArielHome;
