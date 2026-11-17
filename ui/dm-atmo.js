@@ -532,6 +532,7 @@
       try { const de = renderer.domElement; if (de) U.gasTexel.value.set(2 / Math.max(de.width, 2), 2 / Math.max(de.height, 2)); } catch (e) {}
       if (hasSea) updateWaves();
     }
+    const stV = U.st.map((u) => u.value), scV = U.sc.map((u) => u.value);   // (v343) the slot uniforms' values (built once)
     return {
       uniforms: U, params: P, isWebGPU, usesCompute: !!computeNode, steps,
       stars: NS,
@@ -541,6 +542,11 @@
       // or `dirs` + `ws` + `key` (an orbit pass: DMStars.fromPoint(planet centre, dirs, ws) returns the key).  No allocation.
       setStars(S, dirs, ws, key) {
         if (!S || !(S.count > 0)) return;
+        if (!dirs && S.airSlots) {   // (v343) the world's stars: slots eased with the key light (DMStars.airSlots), written straight into the uniforms
+          const n = S.airSlots(NS, stV, scV); U.sun.value.copy(stV[0]);
+          for (let j = n; j < NS; j++) U.sc[j].value.set(0, 0, 0);
+          return;
+        }
         const D = dirs || S.dir, Wt = ws || S.w, K = key == null ? S.keyIdx : key; let j = 1;
         U.sun.value.copy(D[K]).normalize(); U.st[0].value.copy(U.sun.value);
         const ck = S.col[K], wk = Wt[K]; U.sc[0].value.set(ck.r * wk, ck.g * wk, ck.b * wk);
