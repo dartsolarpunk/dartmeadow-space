@@ -10,16 +10,18 @@
                streams are never touched, so every existing seed builds the
                identical world. An explicit body.habitable boolean wins.
    green orb   Ariel's group (character + board; hair and cloth ride the
-               character root) inside a non-breathable atmosphere: a soft
-               translucent green sphere fades in, mist swirling inside, a
-               fresnel rim. Airless worlds get a fainter one. Dissolves in the
+               character root) inside a non-breathable atmosphere: a thin,
+               screen-blended (soft additive, premultiplied) green glow fades in:
+               fresnel rim, faint swirl, highlight waves and mellow sparkles
+               (Med+). First person (camera inside): clear in the middle of the
+               view, the glow only toward the edges of vision (t1590). Airless worlds get a fainter one. Dissolves in the
                pressurised Titan bay (event 'dm:bay' / DM_FAC.bay).
    blue orb    Riding the board below JOTS_WATER's surface: a blue mist orb,
                the same controls with water drag/damping (waterDrag), a
                bubble trail, and fog + a caustic tint outside the orb.
                Off the board, swimming is untouched (this never runs in it).
-   Cost: 2 sphere draws (≈ 200 tris), one 3-5 sample chord march per pixel
-   (mobile: 3, and no tint caustics), one full-screen tint only while
+   Cost: 2 sphere draws (≈ 200 tris), one 2-4 sample chord march per pixel
+   (Low / mobile: 2, no sparkles, no tint caustics), one full-screen tint only while
    diving, 28 instanced bubbles. Nothing is created per frame.
    ═══════════════════════════════════════════════════════════════════ */
 (function(){
@@ -55,6 +57,23 @@
   const sm=(a,b,x)=>{ x=(x-a)/(b-a); x=x<0?0:x>1?1:x; return x*x*(3-2*x); };
   const ease=(cur,tgt,rate,dt)=>cur+(tgt-cur)*(1-Math.exp(-rate*dt));
   function lowTier(){ try{ return !!(GFX&&(GFX.preset==='low'||(GFX.isMobile&&GFX.preset!=='high'&&GFX.preset!=='ultra'))); }catch(e){ return false; } }
+  // (t1590) orb look constants (shader + the pure core below share them; tools/tests/hazard-bubble-look.js)
+  //   rim/rimPow  fresnel rim gain / exponent       body / bodyBlue  the faint fill everywhere (green / blue underwater orb)
+  //   mist/mistIn swirl gain outside / inside       wave/wavePow    highlight waves sweeping the skin       spk / spkCells / spkKeep  sparkles (Med+)
+  //   clear       first-person clear zone: screen radius (1 = top edge) where the glow starts / is full;  clearFloor = what's left in the middle
+  //   inside      camera distance / R where the view counts as inside (first person) -> outside;  max  intensity ceiling (screen blend: never a fill)
+  const K={rim:0.5,rimPow:3.2,body:0.018,bodyBlue:0.09,mist:0.07,mistIn:0.32,wave:0.16,wavePow:9.0,spk:0.55,spkCells:9.0,spkKeep:0.86,
+           clear:[0.38,1.05],clearFloor:0.03,inside:[0.84,1.0],max:0.62};
+  // intensity of one pixel (JS twin of the shader, for the tests): fr fresnel 0..1, mist 0..1, wv/spk 0..1 terms, sr screen radius, dc = camera distance / R
+  function look(fr,mist,wv,spk,sr,dc,blue){
+    const ins=1-sm(K.inside[0],K.inside[1],dc), vig=sm(K.clear[0],K.clear[1],sr)*(1-K.clearFloor)+K.clearFloor, view=1+(vig-1)*ins;
+    const body=K.body+(K.bodyBlue-K.body)*(blue||0), mk=K.mist+(K.mistIn-K.mist)*ins;
+    const I=Math.min(K.max,Math.pow(fr,1)*K.rim+mist*mk+wv*K.wave*(fr*0.6+0.4)+spk*K.spk+body);
+    return I*view;
+  }
+  // screen blend (what the orb's blending does per channel): dst + src x (1 - dst), never past 1, a dark scene barely tinted
+  function screen(dst,src){ return dst+src*(1-dst); }
+  H.core={K,look,screen,sm};
   let evBay=0;
   window.addEventListener('dm:bay',e=>{ const d=e&&e.detail; evBay=d?(d.inside?1:Math.min(1,Math.max(0,+d.membrane||0))):0; });
   function bayLevel(){
@@ -70,14 +89,20 @@
   function build(){
     const T=window.THREE&&THREE.TSL; if(!T||!THREE.MeshBasicNodeMaterial){ H.failed=true; return false; }
     const {float,vec2,vec3,vec4,sin,cos,dot,normalize,mix,smoothstep,positionWorld,normalWorld,cameraPosition,positionLocal,uniform}=T;
-    const low=lowTier(), NS=low?3:5;
-    const u={c:uniform(new THREE.Vector3()),R:uniform(1),a:uniform(0),dis:uniform(0),ph:uniform(0),k:uniform(1),blue:uniform(0)};
+    const low=lowTier(), NS=low?2:4;   // (t1590) the mist is a minor term now (edges / rim): 2 samples on Low, 4 above
+    const u={c:uniform(new THREE.Vector3()),R:uniform(1),a:uniform(0),dis:uniform(0),ph:uniform(0),k:uniform(1),blue:uniform(0),asp:uniform(1)};
     S.u=u;
     const gA=new THREE.Color(0x3dff8a), gB=new THREE.Color(0xc8ffb0), bA=new THREE.Color(0x2f8fff), bB=new THREE.Color(0xa6e6ff);
     const colA=mix(vec3(gA.r,gA.g,gA.b),vec3(bA.r,bA.g,bA.b),u.blue), colB=mix(vec3(gB.r,gB.g,gB.b),vec3(bB.r,bB.g,bB.b),u.blue);
+    // (t1590) the look: a soft SCREEN-blended glow (premultiplied: out = col x I; dst x (1 - col)), color-dodge-ish on the terrain, never an opaque fill.
+    //   outside (third person): a thin shell = fresnel rim + a faint body, slow highlight waves, mellow sparkles (not on Low)
+    //   inside (first person):  the same light, but cleared out of the middle of the view (screen-radius vignette): the swirl lives at the edge of vision
+    const asp=u.asp, Kc=K;
     function orbMat(side){
       const m=new THREE.MeshBasicNodeMaterial({transparent:true,depthTest:true,depthWrite:false,side});
-      m.fog=false; m.toneMapped=false;
+      m.fog=false; m.toneMapped=false; m.premultipliedAlpha=true;
+      m.blending=THREE.CustomBlending; m.blendEquation=THREE.AddEquation; m.blendSrc=THREE.OneFactor; m.blendDst=THREE.OneMinusSrcColorFactor;
+      m.blendEquationAlpha=THREE.AddEquation; m.blendSrcAlpha=THREE.OneFactor; m.blendDstAlpha=THREE.OneMinusSrcAlphaFactor;
       // analytic chord of this pixel's ray through the sphere (the camera may be inside it)
       const D=normalize(positionWorld.sub(cameraPosition)), L=u.c.sub(cameraPosition), tca=dot(L,D);
       const d2=dot(L,L).sub(tca.mul(tca)), h=u.R.mul(u.R).sub(d2).max(0.0).sqrt();
@@ -94,12 +119,28 @@
       }
       const mist=acc.div(NS).mul(chord.div(u.R.mul(2.0)).min(1.0).mul(0.75).add(0.25));
       // fresnel rim: |N·V| of the sphere (abs: back faces flip)
-      const V=normalize(cameraPosition.sub(positionWorld)), fr=float(1).sub(dot(normalize(normalWorld),V).abs()).pow(2.6);
+      const V=normalize(cameraPosition.sub(positionWorld)), fr=float(1).sub(dot(normalize(normalWorld),V).abs()).pow(Kc.rimPow);
+      // the shell point on the unit sphere (waves + sparkles ride the skin, turning slowly)
+      const s=positionWorld.sub(u.c).div(u.R);
+      const wv=sin(s.x.mul(5.0).add(s.y.mul(3.0)).sub(u.ph.mul(1.1)).add(sin(s.z.mul(4.0).add(u.ph.mul(0.35))).mul(1.6))).mul(0.5).add(0.5).pow(Kc.wavePow).mul(Kc.wave);
+      let spk=float(0);
+      if(!low){   // sparkles: one hashed cell per ~1/9 of the radius, a few lit at a time, twinkling (Med+ only)
+        const p=s.mul(Kc.spkCells).add(vec3(u.ph.mul(0.05),u.ph.mul(-0.03),0.0)), cell=T.floor(p), lc=T.fract(p).sub(0.5);
+        const hs=T.fract(sin(dot(cell,vec3(12.9898,78.233,37.719))).mul(43758.5453));
+        const tw=sin(u.ph.mul(2.3).add(hs.mul(40.0))).mul(0.5).add(0.5).pow(10.0);
+        spk=smoothstep(0.24,0.0,lc.length()).mul(tw).mul(T.step(Kc.spkKeep,hs)).mul(Kc.spk);
+      }
+      // first person: clear in the middle of the view (screen radius, 1 = the top edge), the glow only toward the edges
+      const sr=T.screenUV.sub(0.5).mul(vec2(asp,1.0)).length().mul(2.0);
+      const vig=smoothstep(Kc.clear[0],Kc.clear[1],sr).mul(1-Kc.clearFloor).add(Kc.clearFloor);
+      const ins=float(1).sub(smoothstep(Kc.inside[0],Kc.inside[1],cameraPosition.sub(u.c).length().div(u.R)));
+      const view=mix(float(1),vig,ins);
       // noise-eroded dissolve (the pressurised bay): holes open where the noise is low, then it's gone
       const th=u.dis.mul(1.2), mask=smoothstep(th.sub(0.15),th,n0.add(fr.mul(0.1)));
-      const a=mist.mul(0.30).add(fr.mul(0.36)).add(0.02).min(0.55).mul(u.a).mul(mask).mul(u.k);
-      const col=mix(colA,colB,fr.mul(0.75).add(mist.mul(0.3))).mul(float(1).add(mist.mul(0.35)));
-      m.colorNode=col; m.opacityNode=a;
+      const body=mix(float(Kc.body),float(Kc.bodyBlue),u.blue), mistK=mix(float(Kc.mist),float(Kc.mistIn),ins);
+      const I=fr.mul(Kc.rim).add(mist.mul(mistK)).add(wv.mul(fr.mul(0.6).add(0.4))).add(spk).add(body).min(Kc.max).mul(view).mul(u.a).mul(mask).mul(u.k);
+      const col=mix(colA,colB,fr.mul(0.7).add(mist.mul(0.3)).add(wv)).add(vec3(spk.mul(0.8)));
+      m.colorNode=col; m.opacityNode=I;   // premultipliedAlpha: the output is col x I, then the screen blend
       return m;
     }
     S.geo=new THREE.SphereGeometry(1,low?20:28,low?14:20);
@@ -255,7 +296,7 @@
     H.R=H.R>0&&H.a>0.02?ease(H.R,g.R,10,dt):g.R;
     tPh+=dt*(0.55+0.45*H.inten);
     const u=S.u; u.c.value.set(g.x,g.y,g.z); u.R.value=H.R; u.ph.value=tPh;
-    u.a.value=Math.min(0.85,H.a)*(0.8+0.2*H.blue); u.dis.value=H.dis; u.blue.value=H.blue; u.k.value=0.88+0.12*H.inten;
+    u.a.value=Math.min(0.85,H.a)*(0.8+0.2*H.blue); u.dis.value=H.dis; u.asp.value=(window.innerWidth||1)/Math.max(1,window.innerHeight||1); u.blue.value=H.blue; u.k.value=0.88+0.12*H.inten;
     const vis=H.a>0.01; S.front.visible=S.back.visible=vis;
     if(vis){ S.front.position.set(g.x,g.y,g.z); S.back.position.copy(S.front.position); S.front.scale.setScalar(H.R); S.back.scale.setScalar(H.R); }
     // underwater look outside the orb: fog + tint + caustics
