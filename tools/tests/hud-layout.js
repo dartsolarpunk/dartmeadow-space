@@ -59,4 +59,57 @@ ok(play.every(r => !/left|right:|transform/.test(r.body.replace(/padding-[a-z]+/
 ok(/function toast\(/.test(html) && /dmSys\(/.test(html.slice(html.indexOf('function toast('), html.indexOf('function toast(') + 600)), 'toast() is still a dmSys shim');
 ok(!/id="toast"/.test(html), 'no #toast element (retired v240)');
 ok(/ui\/dm-sys\.js\?v=(?:30[2-9]|3[1-9]\d)/.test(html) && /ui\/dm-menu\.css\?v=(?:30[2-9]|3[1-9]\d)/.test(html), 'edited files restamped (?v=302 = sw dartmeadow-engine-v302)');
+
+console.log('== SHIELD left-stick button (t1611u)');
+const shSrc = rd('ui/dm-shield.js'), flSrc = rd('ui/dm-flash.js');
+ok(/ui\/dm-shield\.js\?v=\d+/.test(html), 'index.html loads ui/dm-shield.js (stamped)');
+ok(/id = 'dm-shield'/.test(shSrc) && /id = 'dm-shield-btn'/.test(shSrc) && /className = 'fl-btn'/.test(shSrc), 'wrapper #dm-shield + button #dm-shield-btn.fl-btn (same class as the flashlight)');
+ok(/#dm-shield\{[^}]*display:none/.test(shSrc) && /#dm-shield\[data-show="1"\]\{[^}]*display:block/.test(shSrc), 'hidden by default; shown only with data-show=1');
+ok(/title = 'SHIELD'/.test(shSrc) && /aria-label', 'SHIELD'/.test(shSrc), 'labelled SHIELD');
+ok(/#dm-shield\.on \.fl-btn\{/.test(shSrc) && /#dm-flash\.on \.fl-btn\{/.test(flSrc), 'lit state uses the same .on class as the flashlight');
+{ const grab = (src, sel) => { const i = src.indexOf(sel); if (i < 0) return ''; const a = src.indexOf('{', i), b = src.indexOf('}', a); return src.slice(a + 1, b); };
+  const fb = grab(flSrc, '#dm-flash .fl-btn{'), sb = grab(shSrc, '#dm-shield .fl-btn{');
+  const fon = grab(flSrc, '#dm-flash.on .fl-btn{'), son = grab(shSrc, '#dm-shield.on .fl-btn{');
+  ok(fb && fb === sb, 'flashlight and shield .fl-btn chrome CSS match exactly');
+  ok(fon && fon === son, 'flashlight and shield lit (.on .fl-btn) CSS match exactly'); }
+ok(/const SZ = 34, GAP = 6/.test(shSrc) && /getElementById\('dm-flash'\)/.test(shSrc) && /bot \+ SZ \+ GAP/.test(shSrc), 'docks next to #dm-flash (same 34 px button, 6 px gap, above the flashlight so the lumen bar stays free)');
+ok(/addEventListener\('dmshield'/.test(shSrc), 'listens for the dmshield window event');
+ok(/if \(root\.DMShield\) DMShield\.toggle\(\)/.test(shSrc), 'a tap calls window.DMShield && DMShield.toggle()');
+ok(/touchstart/.test(shSrc) && /pointerdown/.test(shSrc) && /mousedown/.test(shSrc) && /stopPropagation/.test(shSrc), 'same pointer/touch stop as the flashlight (tap does not leak into the stick)');
+ok(!/requestAnimationFrame\s*\(/.test(shSrc) && !/setInterval\s*\(/.test(shSrc), 'no rAF loop or setInterval');
+ok(!/(?:window|root)\.DMShield\s*=/.test(shSrc), 'does not stub or assign window.DMShield (Lighting owns the hook in dm-hazardbubble.js)');
+ok(!/dm-hazardbubble\.js/.test(shSrc) || /does not create or own/.test(shSrc), 'HUD file only; does not edit dm-hazardbubble.js');
+// behaviour: hidden without DMShield; event shows it, lights .on, sits above the flashlight
+{ const el = (tag) => {
+    const o = { tagName: tag, id: '', className: '', style: {}, attrs: {}, children: [], listeners: {},
+      setAttribute(k, v) { this.attrs[k] = String(v); }, getAttribute(k) { return Object.prototype.hasOwnProperty.call(this.attrs, k) ? this.attrs[k] : null; },
+      appendChild(c) { this.children.push(c); return c; },
+      addEventListener(type, fn) { this.listeners[type] = fn; },
+      classList: { _s: new Set(), contains(n) { return this._s.has(n); }, toggle(n, on) { if (on) this._s.add(n); else this._s.delete(n); o.className = [...this._s].join(' '); } } };
+    Object.defineProperty(o, 'innerHTML', { set() { }, get() { return ''; } });
+    return o;
+  };
+  const body = el('body'), head = el('head'), nodes = {};
+  const flash = el('div'); flash.id = 'dm-flash'; flash.attrs['data-m'] = 'walk'; flash.style.left = '120px'; flash.style.bottom = '40px';
+  const flight = el('div'); flight.id = 'screen-flight'; flight.className = 'screen active'; flight.classList._s.add('active');
+  const doc = { body, head, documentElement: {}, readyState: 'complete',
+    getElementById: id => id === 'dm-flash' ? flash : id === 'screen-flight' ? flight : id === 'dm-shield' ? nodes.w : id === 'dm-shield-btn' ? nodes.b : id === 'dm-shield-css' ? nodes.css : null,
+    createElement: tag => { const n = el(tag); if (tag === 'style') nodes.css = n; if (tag === 'div') nodes.w = n; if (tag === 'button') nodes.b = n; return n; },
+    addEventListener() { } };
+  body.appendChild = c => { body.children.push(c); return c; };
+  const evs = {}, ctx = { document: doc, MutationObserver: function () { this.observe = function () { }; this.disconnect = function () { }; } };
+  ctx.window = ctx; ctx.globalThis = ctx; ctx.addEventListener = (t, fn) => { evs[t] = fn; };
+  vm.createContext(ctx); vm.runInContext(shSrc, ctx);
+  ok(nodes.w && nodes.w.id === 'dm-shield' && nodes.b && nodes.b.id === 'dm-shield-btn' && nodes.b.className === 'fl-btn', 'widget built as #dm-shield > #dm-shield-btn.fl-btn');
+  ok(nodes.w.getAttribute('data-show') !== '1' && !nodes.w.classList.contains('on'), 'stays hidden when DMShield is missing');
+  evs.dmshield({ type: 'dmshield', detail: { available: true, on: true } });
+  ok(nodes.w.getAttribute('data-show') === '1', 'shown on dmshield when available');
+  ok(nodes.w.classList.contains('on') && nodes.b.getAttribute('aria-pressed') === 'true', 'lit .on state follows detail.on');
+  ok(nodes.w.style.left === '120px' && nodes.w.style.bottom === '80px', 'sits next to the flashlight (same left, 34+6 px above)');
+  let toggled = 0; ctx.DMShield = { available: true, on: true, toggle() { toggled++; } };
+  nodes.b.listeners.click({ stopPropagation() { } });
+  ok(toggled === 1, 'click calls DMShield.toggle()');
+  evs.dmshield({ type: 'dmshield', detail: { available: false, on: false } });
+  ok(nodes.w.getAttribute('data-show') === '' && !nodes.w.classList.contains('on'), 'hides again when available is false'); }
+
 console.log(fails ? 'hud-layout: FAILED ' + fails + '/' + n : 'hud-layout: all ' + n + ' checks passed'); process.exit(fails ? 1 : 0);
