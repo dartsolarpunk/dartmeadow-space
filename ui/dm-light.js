@@ -697,7 +697,9 @@
         // the outermost one fades to the FAR term instead of plain open sky: the far ground was flat-lit (no AO at all) from ~170 m to the horizon.  Sky visibility from the
         // shading normal (a slope sees less sky: 0.78 + 0.22 n.y) and, where the horizon field exists, its cavity (the ground 96 m round sits higher: a valley / gully
         // floor sees less sky), held to the ground's dissolve (U.lf) and only built where wOut > 0 (a branch: the near ground keeps the probes).
-        const farVis = T.Fn ? T.Fn(() => {
+        // (t1590) open TERRAIN (o.terrain: the ground material, index.html _terrainDetailMat) fades to plain open sky past the probes, as before fov-fill 2: the 0.78 + 0.22 n.y
+        // slope term read as darker rings of far ground on Mars (Justin wants full brightness to the horizon).  Architecture / props keep the far term.
+        const farVis = o.terrain ? float(1) : T.Fn ? T.Fn(() => {
           const v = float(1).toVar();
           If(wOut.greaterThan(0.0), () => {
             let fv = float(0.78).add(clamp(n.y, 0.0, 1.0).mul(0.22));
@@ -724,7 +726,9 @@
         const wMap = float(1).sub(smoothstep(U.sm.x, U.sm.y, T.length(vec2(p.x.sub(U.cam.x), p.z.sub(U.cam.y)))));
         // (t1537) past the near band the sun shadow comes from DMSunFar's wide, slow layer (ui/dm-sunfar.js) instead of nothing: a roofed floor / overhang stays shaded
         // out to the haze (the old mix(1, s, wMap) lit everything past U.sm: a lit ring round her).  No far layer (off / no shadows / tier off) = exactly the old 1.
-        const farV = (W.DMSunFar && W.DMSunFar.node) ? (W.DMSunFar.node(T, p, n, wMap, D.tier) || float(1)) : float(1);
+        // (t1590) open terrain never takes the far layer: past the near box it is lit (#269 full near box + its 0.82-0.97 fade, the near map's own shadows), as at the 7bdcb1f anchor.
+        // Covered floors / overhangs (architecture) keep it where the tier receives (High / Ultra desktop, ui/dm-sunfar.js MODE).
+        const farV = (!o.terrain && W.DMSunFar && W.DMSunFar.node) ? (W.DMSunFar.node(T, p, n, wMap, D.tier) || float(1)) : float(1);
         if (hasMarch()) {
           const sn = sunVisNodes(T, p);
           // relief-aware: with the sun low the crevices (low relief height) sit in the shadow of their own rims

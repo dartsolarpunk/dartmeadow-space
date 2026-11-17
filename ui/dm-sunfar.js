@@ -37,7 +37,13 @@
   const COVER = 0.42;                 // covers() while the focus is within 0.42 half of the map centre (the near box + its band always inside)
 
   // ── pure core (tools/tests/sun-far.js) ──
-  function tierCfg(t) { const c = TIERS[t]; if (!c) return null; const o = { size: c.size, half: c.half, minS: c.minS, taps: c.taps }; if (fq && +fq >= 512) o.size = +fq; return o; }
+  // (t1590) what each tier does with the layer.  0 = off (no pass), 1 = the pass for the volumetric sun shafts only (ui/dm-vlight.js visAt) with NO receivers, 2 = the pass plus
+  // receivers on ARCHITECTURE / overhangs (decks, roofs, the mansion: #271's covered-floor shadows).  Open terrain never receives it on any tier (ui/dm-light.js o.terrain): its
+  // slope-biased 4-5 tap compare on faceted far tiles shadowed most of the ground and lit the crests (the dark-red / beige blocks and rings of Justin's v348 Mars shots, t1590).
+  // Phones / tablets: off (Perf t1590: one depth pass + taps per pixel on the worst devices).  ?sunfar=1 forces mode 2 on every tier / device (A/B).
+  const MODE = { low: 0, med: 1, high: 2, ultra: 2 };
+  function mode(t, mobile) { if (!TIERS[t]) return 0; if (fq === '1') return 2; return mobile ? 0 : (MODE[t] | 0); }
+  function tierCfg(t, mobile) { const c = TIERS[t]; if (!c) return null; const md = mode(t, !!mobile); if (!md) return null; const o = { size: c.size, half: c.half, minS: c.minS, taps: c.taps, recv: md >= 2 }; if (fq && +fq >= 512) o.size = +fq; return o; }
   function snap(v, step) { return Math.round(v / step) * step; }
   // st: { valid, cx, cz, dx, dy, dz, t }  -> 0 none, 1 = needed and allowed now, 2 = needed but held back by the cadence
   function need(st, half, minMs, fx, fz, dx, dy, dz, now) {
@@ -60,7 +66,7 @@
   const SLOPE = 0.6, TAN_MAX = 4;
   function slopeK(half, size, range) { return SLOPE * (2 * half / size) / range; }
   function slopeBias(bias, ndl, k) { const c = Math.max(0.2, Math.min(1, Math.abs(ndl))), t = Math.min(TAN_MAX, Math.sqrt(1 - c * c) / c); return bias + k * t; }
-  const core = { TIERS, FADE, SNAP, TURN_COS, MAX_AGE, COVER, LAYER, SLOPE, TAN_MAX, slopeK, tierCfg, snap, need, coversAt, memBytes, bendDy, shapeLost, slopeBias };
+  const core = { TIERS, MODE, mode, FADE, SNAP, TURN_COS, MAX_AGE, COVER, LAYER, SLOPE, TAN_MAX, slopeK, tierCfg, snap, need, coversAt, memBytes, bendDy, shapeLost, slopeBias };
 
   const S = { on: fq !== '0' && fq !== 'off', tier: '', cfg: null, U: null, rt: null, cam: null, mat: null, dt: null, built: false, valid: false,
     cx: 0, cy: 0, cz: 0, dx: 0, dy: 1, dz: 0, t: -1e9, passes: 0, held: 0, ms: 0, msMax: 0, casters: 0, err: '', fx: 0, fz: 0, ok: false };
@@ -69,7 +75,7 @@
   // the shared uniforms + target, made once at the first material that asks (DMLight passes its tier)
   function ensure(THREE, T, tier) {
     if (S.built) return !!S.U;
-    const c = tierCfg(tier); if (!c) return false;   // tier not known yet / off: ask again later (nothing latched)
+    const c = tierCfg(tier, !!(W.GFX && W.GFX.isMobile)); if (!c) return false;   // tier not known yet / off: ask again later (nothing latched)
     S.built = true;
     try {
       if (!S.on || !THREE || !T || !THREE.DepthTexture || !THREE.OrthographicCamera) return false;
@@ -98,6 +104,7 @@
   // receiver node: 1 = lit by the key light, 0 = in the far layer's shadow. p world position, n world normal, wMap the near map's weight (skip where 1).
   D.node = function (T, p, n, wMap, tier) {
     const THREE = W.THREE; if (!ensure(THREE, T, tier) || !T.Fn || !T.If) return null;
+    if (!S.cfg || !S.cfg.recv) return null;   // (t1590) shafts-only tier (Medium): no receivers
     try {
       const U = S.U, { Fn, float, vec2, vec3, vec4, texture, step, smoothstep, length, mix, dot, abs, clamp, sqrt, min } = T, tex = S.dt, taps = S.cfg.taps;
       return Fn(() => {
@@ -184,9 +191,9 @@
     S.ok = S.valid; return S.valid;
   };
   // the far layer covers the ground round the focus right now (DMPolish tightens the near box only then)
-  D.covers = function () { return !!S.U && S.ok && coversAt(S, S.cfg.half, S.fx, S.fz); };
+  D.covers = function () { return !!S.U && S.ok && !!S.cfg.recv && coversAt(S, S.cfg.half, S.fx, S.fz); };   // (t1590) only where it RECEIVES: a shafts-only pass keeps #269's full near box (DMPolish TIGHT_K)
   D.reset = function () { S.valid = false; S.ok = false; if (S.U) S.U.on.value = 0; };
-  D.status = function () { const c = S.cfg; return { on: S.on, tier: S.tier, size: c ? c.size : 0, half: c ? c.half : 0, live: S.valid, covers: D.covers(), passes: S.passes, held: S.held, ms: +S.ms.toFixed(2), msMax: +S.msMax.toFixed(2), casters: S.casters, MB: c ? +(memBytes(c.size, S.r8) / 1048576).toFixed(1) : 0, r8: !!S.r8, bend: S.U ? +S.U.iR.value.toExponential(2) : 0, err: S.err }; };
+  D.status = function () { const c = S.cfg; return { on: S.on, tier: S.tier, recv: !!(c && c.recv), size: c ? c.size : 0, half: c ? c.half : 0, live: S.valid, covers: D.covers(), passes: S.passes, held: S.held, ms: +S.ms.toFixed(2), msMax: +S.msMax.toFixed(2), casters: S.casters, MB: c ? +(memBytes(c.size, S.r8) / 1048576).toFixed(1) : 0, r8: !!S.r8, bend: S.U ? +S.U.iR.value.toExponential(2) : 0, err: S.err }; };
   D.dispose = function () { try { if (S.rt) S.rt.dispose(); if (S.dt) S.dt.dispose(); if (S.mat) S.mat.dispose(); } catch (e) { } };
   if (typeof module !== 'undefined' && module.exports) module.exports = D;
 })();

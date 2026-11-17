@@ -47,7 +47,7 @@ ok(/!shapeLost\(o\.material\)/.test(rd('ui/dm-sunfar.js')), 'tag() checks it');
   }
   ok(raw > 0.5 && worst < raw * 0.2 && worst < 0.35, 'focus moved 47 u since the pass, receiver 300 u out: ' + raw.toFixed(2) + ' u drift -> ' + worst.toFixed(2) + ' u after the correction');
 }
-{ const c = FC.tierCfg('low'), range = c.half * 4.4 - 1, k = FC.slopeK(c.half, c.size, range), b0 = 0.0009, w = x => (x * range).toFixed(2);
+{ const c = FC.TIERS.low   /* (t1590) Low runs no far pass now; the slope-bias maths of its map size */ , range = c.half * 4.4 - 1, k = FC.slopeK(c.half, c.size, range), b0 = 0.0009, w = x => (x * range).toFixed(2);
   ok(FC.slopeBias(b0, 1, k) === b0 && FC.slopeBias(b0, 0.5, k) > b0 && FC.slopeBias(b0, 0, k) <= b0 + k * FC.TAN_MAX + 1e-12 && (FC.slopeBias(b0, 0.5, k) - b0) * range < 0.25,
     'slope-scaled bias (Low): flat ' + w(b0) + ' u, 60 deg ' + w(FC.slopeBias(b0, 0.5, k)) + ' u, clamped at ' + w(b0 + k * FC.TAN_MAX) + ' u'); }
 ok(FC.memBytes(1024) === 5 * 1048576 && FC.memBytes(1024, false) === 8 * 1048576, 'real memory: 1024^2 = 5 MB (R8 colour + 32-bit depth), 8 MB on the RGBA8 fallback');
