@@ -162,8 +162,86 @@
     }
     // glass fins on every variant (a tinted canopy over the landing side)
     G.box(T, g, m.glass, 0.5, 6, 30, X(-27), 2.7, 12, 0); G.box(T, g, m.glass, 0.5, 6, 30, X(27), 2.7, 12, 0);
+    if (mars) marsValles(T, g, sol);   // (v336) Valles Rim only: PBR panels, pad lights, roof surface, collision bodies
     return { group: g, solids: sol, bay };
   }
+
+  // ── (v336) VALLES RIM (mars-valles, variant 'mars') ────────────────────────────────────────────────────────────────────────────
+  // Everything here is Mars-only and built once per placement (no per-frame work): the flat compMars / deck colours become PBR panel
+  // sets (albedo + roughness + normal from one procedural panel height field, drawn once, cached), the landing pad and facade get lit
+  // lamp strips (emissive, so they cost no light slots), the block's roof becomes a standing surface, and the architecture gets real
+  // DMCollide bodies (group 'facility', freed by teardown's clearGroup) so she cannot walk through walls, fins or the mast.
+  let MV = null;
+  function mvMaps(THREE) {
+    const S = F.ctx && F.ctx.isMobile && F.ctx.isMobile() ? 256 : 512, P = S / 4;   // 4x4 panels per tile
+    let sd = 0x5a11e5; const rnd = () => { sd = (Math.imul(sd, 1664525) + 1013904223) >>> 0; return sd / 4294967296; };
+    const hgt = new Float32Array(S * S), tint = new Float32Array(16);
+    for (let i = 0; i < 16; i++) tint[i] = rnd();
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+      const px = x % P, py = y % P, e = Math.min(px, py, P - 1 - px, P - 1 - py);
+      hgt[y * S + x] = e < 2 ? 0 : (e < 4 ? 0.6 : 1) - (((x * 7 + y * 13) % 29) === 0 ? 0.3 : 0);   // seams, bevels, rivet dots
+    }
+    const mk = () => { const cv = document.createElement('canvas'); cv.width = cv.height = S; return cv; };
+    const cA = mk(), cR = mk(), cN = mk(), cD = mk();
+    const gA = cA.getContext('2d'), gR = cR.getContext('2d'), gN = cN.getContext('2d'), gD = cD.getContext('2d');
+    const iA = gA.createImageData(S, S), iR = gR.createImageData(S, S), iN = gN.createImageData(S, S), iD = gD.createImageData(S, S);
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+      const k = y * S + x, o = k * 4, h = hgt[k], t = tint[((y / P) | 0) * 4 + ((x / P) | 0)];
+      const dust = Math.max(0, Math.min(1, 0.25 + 0.55 * (y / S) + (rnd() - 0.5) * 0.35)) * (h < 0.5 ? 1.4 : 1);   // regolith settles low + in seams
+      const r0 = 46 + t * 18, g0 = 36 + t * 12, b0 = 32 + t * 10;   // dark composite, per-panel variation
+      iA.data[o] = Math.min(255, r0 * (1 - dust * 0.6) + 168 * dust * 0.6); iA.data[o + 1] = Math.min(255, g0 * (1 - dust * 0.6) + 92 * dust * 0.6); iA.data[o + 2] = Math.min(255, b0 * (1 - dust * 0.6) + 58 * dust * 0.6); iA.data[o + 3] = 255;
+      const dd = dust * 0.8 + (h < 0.5 ? 0.2 : 0);   // deck: darker plates, heavier dust
+      iD.data[o] = Math.min(255, 26 * (1 - dd) + 150 * dd); iD.data[o + 1] = Math.min(255, 24 * (1 - dd) + 84 * dd); iD.data[o + 2] = Math.min(255, 26 * (1 - dd) + 54 * dd); iD.data[o + 3] = 255;
+      const ro = Math.round(255 * Math.min(1, 0.42 + dust * 0.45 + (h < 0.5 ? 0.15 : 0)));
+      iR.data[o] = ro; iR.data[o + 1] = ro; iR.data[o + 2] = ro; iR.data[o + 3] = 255;
+      const hx = hgt[y * S + ((x + 1) % S)] - hgt[y * S + ((x + S - 1) % S)], hy = hgt[((y + 1) % S) * S + x] - hgt[((y + S - 1) % S) * S + x];
+      const nx = -hx * 1.6, ny = -hy * 1.6, nl = 1 / Math.hypot(nx, ny, 1);
+      iN.data[o] = (nx * nl * 0.5 + 0.5) * 255; iN.data[o + 1] = (ny * nl * 0.5 + 0.5) * 255; iN.data[o + 2] = (nl * 0.5 + 0.5) * 255; iN.data[o + 3] = 255;
+    }
+    gA.putImageData(iA, 0, 0); gR.putImageData(iR, 0, 0); gN.putImageData(iN, 0, 0); gD.putImageData(iD, 0, 0);
+    const tx = (cv, srgb, rep) => { const t = new THREE.CanvasTexture(cv); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(rep[0], rep[1]); if (srgb) t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t; };
+    return { hullA: tx(cA, 1, [3, 2]), hullR: tx(cR, 0, [3, 2]), hullN: tx(cN, 0, [3, 2]), deckA: tx(cD, 1, [6, 6]), deckR: tx(cR, 0, [6, 6]), deckN: tx(cN, 0, [6, 6]) };
+  }
+  function mvMats(THREE) {
+    if (MV) return MV;
+    const t = mvMaps(THREE), std = (o) => new THREE.MeshStandardMaterial(o);
+    MV = {
+      hull: std({ color: 0xffffff, map: t.hullA, roughnessMap: t.hullR, normalMap: t.hullN, normalScale: new THREE.Vector2(0.9, 0.9), metalness: 0.55, roughness: 1 }),
+      deck: std({ color: 0xffffff, map: t.deckA, roughnessMap: t.deckR, normalMap: t.deckN, normalScale: new THREE.Vector2(0.6, 0.6), metalness: 0.35, roughness: 1 }),
+      warm: new THREE.MeshBasicMaterial({ color: 0xffd9a0, toneMapped: false }),
+      red: new THREE.MeshBasicMaterial({ color: 0xff3a2a, toneMapped: false })
+    };
+    return MV;
+  }
+  // collision bodies, local frame (mars mir = 1): [lx, ly, lz, hx, hy, hz, ry, mat]
+  const MV_COL = [
+    [0, 4.5, -21, 28, 4.5, 15, 0, 'metal'],          // main block
+    [0, 12, -24, 28, 3, 12, 0, 'metal'],             // sloped roof (box under the wedge)
+    [-14, 15.5, -24, 7, 6.5, 8, 0.35, 'metal'],      // upper blade
+    [19, 17, -30, 0.5, 8, 0.5, 0, 'metal'],          // mast
+    [-27, 2.7, 12, 0.25, 3, 15, 0, 'glass'],         // glass fins along the deck
+    [27, 2.7, 12, 0.25, 3, 15, 0, 'glass']
+  ];
+  function marsValles(T, g, sol) {
+    const m = mats(T), v = mvMats(T);
+    g.traverse(o => { if (!o.isMesh) return; if (o.material === m.compMars) o.material = v.hull; else if (o.material === m.deck) o.material = v.deck; });
+    // landing-pad lights: eight warm studs round the ring, red beacons on the mast and blade, a facade flood strip over the glass band
+    for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4; G.box(T, g, v.warm, 0.6, 0.18, 0.6, Math.cos(a) * 10.5, 0.1, 28 + Math.sin(a) * 10.5); }
+    G.box(T, g, v.red, 1.2, 0.9, 1.2, 19, 25.6, -30); G.box(T, g, v.red, 0.9, 0.7, 0.9, -14, 22.4, -24);
+    G.box(T, g, v.warm, 46, 0.2, 0.4, 0, 8.6, -5.6);
+    for (const sx of [-20, -10, 10, 20]) G.box(T, g, v.warm, 0.5, 0.12, 6, sx, 0.08, 4);   // walk-in guide lights deck -> door
+    sol.push({ rect: [-28, -36, 28, -6], y: 9 });       // the block's roof is a surface she can stand on (never inside the building)
+  }
+  function marsCollide(px, pz, th, y0) {
+    const D = window.DMCollide; if (!D || !D.addBox) return 0;
+    const ct = Math.cos(th), st = Math.sin(th); let n = 0;
+    for (const b of MV_COL) {
+      const wx = px + b[0] * ct + b[2] * st, wz = pz - b[0] * st + b[2] * ct;
+      try { if (D.addBox('facility', wx, y0 + b[1], wz, b[3], b[4], b[5], -(th + b[6]), b[7]) >= 0) n++; } catch (e) { }   // DMCollide yaw = -(three rotation.y)
+    }
+    return n;
+  }
+  F._mv = { MV_COL, marsCollide, get MV() { return MV; } };   // test hooks (tools/tests/valles-unit.js)
 
   // ── ocean city ───────────────────────────────────────────────────────────────────────────────────────────
   function buildCity(T, seed) {
@@ -746,6 +824,7 @@
     const built = buildFacility(T, site.variant); rec.group = built.group; rec.group.position.set(px, y0, pz); rec.group.rotation.y = th;
     PW.scene.add(rec.group); F.ctx.mapTag(rec.group); rec.x = px; rec.z = pz; rec.y = y0; rec.th = th; rec.ready = true; rec.bay = built.bay;
     addSolids(built.solids, px, pz, th, y0);
+    if (site.variant === 'mars') rec.colN = marsCollide(px, pz, th, y0);   // (v336) Valles Rim walls / fins / mast
     if (built.bay) { F.bay = rec; }
   }
   function teleport(rec) {
@@ -758,6 +837,10 @@
       tx = rec.x + lx * ct + lz * sn; tz = rec.z - lx * sn + lz * ct; ty = rec.y + 8; fx = rec.x - tx; fz = rec.z - tz; land = true;
     }
     else if (rec.mansion) { const sd = [rec.best.dx, rec.best.dz]; tx = rec.x + sd[0] * 260; tz = rec.z + sd[1] * 260; ty = Math.max(SEA, rec.y - 62) + 55; fx = rec.x - tx; fz = rec.z - tz; }
+    else if (rec.def.variant === 'mars') {   // (v336) Valles Rim: set her down on the landing pad (ring at local 0, 28), facing the hangar
+      const ct = Math.cos(rec.th), sn = Math.sin(rec.th), lx = 0, lz = 30;
+      tx = rec.x + lx * ct + lz * sn; tz = rec.z - lx * sn + lz * ct; ty = rec.y + 8; fx = rec.x - tx; fz = rec.z - tz; land = true;
+    }
     else { const sd = [rec.best.dx, rec.best.dz]; tx = rec.x + sd[0] * 120; tz = rec.z + sd[1] * 120; ty = rec.y + 22; fx = rec.x - tx; fz = rec.z - tz; }
     st.pos.set(tx, ty, tz); st.vel.set(0, 0, 0); st.yaw = Math.atan2(-fx, -fz); st.pitch = -0.08;
     DM.homeDeck = false;
