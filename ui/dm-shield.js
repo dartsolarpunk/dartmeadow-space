@@ -10,7 +10,11 @@
      window event `dmshield` with detail {on, available, status, state} on each change
      (t1612) with the orb OFF the button wears the board group's protection colour (data-st: protected green / warn amber / exposed red, the same as the
      staff crown + LED); orb ON: the plain lit button
-   The button is hidden by default and stays hidden if DMShield is missing. A tap
+   The button is hidden by default and stays hidden if DMShield is missing.
+   (t1612) DORMANT on safe maps: at load this file only registers two window listeners (`dmshield`, `dmhazard`); the button, its style, the resize /
+   orientation listeners and the MutationObservers are created when DMShield first reports `available` and are removed again when it stops being available
+   (no DOM, no observers, no layout work on a healthy planet). A near hazard source (`dmhazard`, window.DMHazard) shows a small prompt 'Hazard detected -
+   initialize protection shield?' [ACCEPT] [DISMISS]: ACCEPT = DMShield.arm(true); DISMISS = DMHazard.dismiss() (2 min cooldown); never while armed / protected. A tap
    calls DMShield.toggle(). No per-frame polling or allocations (no rAF loop, no
    setInterval): it listens for `dmshield`, reads DMShield once on init, and
    re-docks from resize / orientationchange plus a MutationObserver on #dm-flash
@@ -28,9 +32,18 @@
     '#dm-shield.on .fl-btn{background:rgba(255,248,230,.16);border-color:#fff6e0;color:#fffaf0;box-shadow:0 0 10px rgba(255,244,214,.45);}' +
     '#dm-shield[data-st="protected"] .fl-btn{border-color:#35ff7e;color:#a8ffc8;box-shadow:0 0 9px rgba(53,255,126,.5);}' +
     '#dm-shield[data-st="warn"] .fl-btn{border-color:#ffc233;color:#ffe29a;box-shadow:0 0 9px rgba(255,194,51,.55);}' +
-    '#dm-shield[data-st="exposed"] .fl-btn{border-color:#ff3b30;color:#ffb3ad;box-shadow:0 0 9px rgba(255,59,48,.6);}';
+    '#dm-shield[data-st="exposed"] .fl-btn{border-color:#ff3b30;color:#ffb3ad;box-shadow:0 0 9px rgba(255,59,48,.6);}' +
+    '#dm-shield[data-st="alert"] .fl-btn{border-color:#ffc233;color:#ffe29a;box-shadow:0 0 9px rgba(255,194,51,.55);animation:dmShAlert 1.1s ease-in-out infinite;}' +
+    '@keyframes dmShAlert{50%{box-shadow:0 0 16px rgba(255,194,51,.95);}}';
 
-  let ui = null, avail = false, on = false, st = '', flashObs = null, flightObs = null;
+  let ui = null, avail = false, on = false, lit = false, st = '', flashObs = null, flightObs = null, active = false, pr = null, prShown = false;
+  const PCSS = '#dm-shield-prompt{position:fixed;left:50%;top:58px;transform:translateX(-50%);z-index:3560;display:none;max-width:min(92vw,420px);padding:8px 10px;border-radius:8px;' +
+    'background:rgba(8,14,26,.88);border:1px solid #ffc233;color:#ffe9b8;font:600 12px/1.3 system-ui,sans-serif;box-shadow:0 0 14px rgba(255,194,51,.35);pointer-events:auto;}' +
+    '#dm-shield-prompt[data-show="1"]{display:block;}#dm-shield-prompt .sp-row{display:flex;gap:8px;margin-top:6px;}' +
+    '#dm-shield-prompt button{flex:1;padding:6px 8px;border-radius:6px;border:1px solid rgba(255,194,51,.7);background:rgba(255,194,51,.14);color:#fff1cf;font:700 11px system-ui,sans-serif;touch-action:manipulation;}' +
+    '#dm-shield-prompt button.sp-no{border-color:rgba(160,210,255,.4);background:transparent;color:#bcd6ee;}' +
+    'body:has(#screen-menu.active) #dm-shield-prompt{display:none !important;}';
+  const stop = e => { e.stopPropagation(); };
 
   function build() {
     if (ui || !root.document || !document.body) return ui;
@@ -38,7 +51,6 @@
     const w = document.createElement('div'); w.id = 'dm-shield';
     const b = document.createElement('button'); b.id = 'dm-shield-btn'; b.className = 'fl-btn'; b.type = 'button';
     b.setAttribute('aria-label', 'SHIELD'); b.title = 'SHIELD'; b.setAttribute('aria-pressed', 'false'); b.innerHTML = ICON;
-    const stop = e => { e.stopPropagation(); };
     b.addEventListener('click', e => { stop(e); if (root.DMShield) DMShield.toggle(); });
     b.addEventListener('touchstart', stop, { passive: true });
     b.addEventListener('mousedown', stop);
@@ -50,22 +62,24 @@
 
   function read(ev) {
     const d = ev && ev.detail, api = root.DMShield;
-    if (d && typeof d === 'object') { avail = !!d.available; on = !!d.on; st = d.status || ''; }
-    else if (api) { avail = !!api.available; on = !!api.on; st = api.status || ''; }
+    let state = '';
+    if (d && typeof d === 'object') { avail = !!d.available; on = !!d.on; st = d.status || ''; state = d.state || ''; }
+    else if (api) { avail = !!api.available; on = !!api.on; st = api.status || ''; state = api.state || ''; }
     else { avail = false; on = false; st = ''; }
-    if (on || !avail || (st !== 'protected' && st !== 'warn' && st !== 'exposed')) st = '';
+    lit = state ? state === 'orb' : on;          // lit = the orb is up (state 'alert' / 'board': the status colour instead)
+    if (!avail || lit || (st !== 'protected' && st !== 'warn' && st !== 'exposed' && st !== 'alert')) st = '';
   }
 
   function paint() {
-    const u = build(); if (!u) return;
-    u.w.classList.toggle('on', on);
-    if (st) u.w.setAttribute('data-st', st); else u.w.removeAttribute('data-st');
-    u.b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    if (!ui) return;
+    ui.w.classList.toggle('on', lit);
+    if (st) ui.w.setAttribute('data-st', st); else ui.w.removeAttribute('data-st');
+    ui.b.setAttribute('aria-pressed', lit ? 'true' : 'false');
   }
 
   function dock() {
-    const u = build(); if (!u) return;
-    const d = root.document, flash = d.getElementById('dm-flash');
+    if (!ui) return;
+    const u = ui, d = root.document, flash = d.getElementById('dm-flash');
     const sf = d.getElementById('screen-flight');
     const inGame = !!(sf && sf.classList.contains('active'));
     const flashOn = !!(flash && flash.getAttribute('data-m'));
@@ -75,8 +89,6 @@
     u.w.style.left = flash.style.left;
     u.w.style.bottom = Math.round(Math.max(2, bot + SZ + GAP)) + 'px';
   }
-
-  function sync(ev) { read(ev); paint(); dock(); }
 
   function watch() {
     const d = root.document; if (!d) return;
@@ -92,20 +104,61 @@
     }
   }
 
-  function start() {
+  // wake: the button + observers + layout listeners exist only while the shield is available (hostile air, armed, or a hazard source alert)
+  function activate() {
+    if (active) return; active = true;
     build(); watch();
-    root.addEventListener('dmshield', sync);
     root.addEventListener('resize', dock);
     root.addEventListener('orientationchange', dock);
-    if (document.body && !flashObs) {
-      const mo = new MutationObserver(function () {
-        watch();
-        if (flashObs) { try { mo.disconnect(); } catch (e) { } }
-        dock();
-      });
-      mo.observe(document.body, { childList: true });
+  }
+  function deactivate() {
+    if (!active) return; active = false;
+    if (ui) { ui.w.setAttribute('data-show', ''); ui.w.classList.toggle('on', false); ui.w.removeAttribute('data-st'); try { if (ui.w.remove) ui.w.remove(); } catch (e) { } }
+    ui = null;
+    try { if (flashObs) flashObs.disconnect(); if (flightObs) flightObs.disconnect(); } catch (e) { }
+    flashObs = flightObs = null;
+    root.removeEventListener && root.removeEventListener('resize', dock);
+    root.removeEventListener && root.removeEventListener('orientationchange', dock);
+  }
+
+  function sync(ev) {
+    read(ev);
+    if (avail) { activate(); paint(); dock(); } else deactivate();
+    if (pr && prShown && (!avail || (root.DMShield && DMShield.armed))) hidePrompt();
+  }
+
+  // ── the hazard prompt ──
+  function hidePrompt() { if (pr) pr.setAttribute('data-show', ''); prShown = false; }
+  function showPrompt(d) {
+    if (!root.document || !document.body) return;
+    if (!pr) {
+      if (!document.getElementById('dm-shield-pcss')) { const c = document.createElement('style'); c.id = 'dm-shield-pcss'; c.textContent = PCSS; document.head.appendChild(c); }
+      pr = document.createElement('div'); pr.id = 'dm-shield-prompt'; pr.setAttribute('role', 'alertdialog');
+      const t = document.createElement('div'); t.className = 'sp-txt'; pr.appendChild(t);
+      const row = document.createElement('div'); row.className = 'sp-row';
+      const yes = document.createElement('button'); yes.type = 'button'; yes.className = 'sp-yes'; yes.textContent = 'ACCEPT';
+      const no = document.createElement('button'); no.type = 'button'; no.className = 'sp-no'; no.textContent = 'DISMISS';
+      yes.addEventListener('click', e => { stop(e); if (root.DMShield) DMShield.arm(true); hidePrompt(); });
+      no.addEventListener('click', e => { stop(e); if (root.DMHazard) DMHazard.dismiss(); hidePrompt(); });
+      for (const b of [yes, no]) { b.addEventListener('touchstart', stop, { passive: true }); b.addEventListener('pointerdown', stop); b.addEventListener('mousedown', stop); }
+      row.appendChild(yes); row.appendChild(no); pr.appendChild(row); document.body.appendChild(pr);
     }
-    sync();
+    const kind = d && (d.gas || d.type) ? ' (' + String(d.gas || d.type).replace(/[<>&]/g, '') + ')' : '';
+    pr.firstChild.textContent = 'Hazard detected' + kind + ' - initialize protection shield?';
+    pr.setAttribute('data-show', '1'); prShown = true;
+  }
+  function onHaz(ev) {
+    const d = ev && ev.detail;
+    if (!d || !d.near) { hidePrompt(); return; }
+    const sh = root.DMShield, hz = root.DMHazard;
+    if (prShown || (sh && (sh.armed || sh.state === 'orb' || sh.state === 'board')) || (hz && hz.cooling)) return;
+    showPrompt(d);
+  }
+
+  function start() {
+    root.addEventListener('dmshield', sync);
+    root.addEventListener('dmhazard', onHaz);
+    if (root.DMShield && root.DMShield.available) sync();
   }
 
   if (root.document) {
