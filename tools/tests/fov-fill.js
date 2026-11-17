@@ -86,7 +86,7 @@ const R = 360 / 0.008 / (2 * Math.PI);
 // ── (3) wiring ──
 {
   const tick = cut('function _pwWorldTick(dt){', 'function _pwSeaFollow(');
-  ok(/const groundR=\(scene\.fog&&!space\)\?_skyGroundR\(viewR,_skyHorizonReach\(R,alt\),skyR\):viewR;\s*\n\s*const G=PW\.ground; G\.viewR=groundR;/.test(tick), 'SkyGround draws to groundR (horizon reach on a world with haze)');
+  ok(/const groundR=\(scene\.fog&&!space\)\?_skyGroundOpen\(viewR,_skyGroundR\(viewR,_skyHorizonReach\(R,alt\),skyR\),k,PW\._vtK\|\|0\):viewR;\s*\n\s*const G=PW\.ground; G\.viewR=groundR;/.test(tick), 'SkyGround draws to groundR (t1590: horizon reach opened by the climb / a vantage, the walk radius on open ground)');
   ok(/Math\.max\(1200,groundR\*1\.15\)/.test(tick) && /_pwSeaFollow\(px,pz,Math\.min\(groundR,16384\)\)/.test(tick), 'far clip and the fallback sea follow groundR');
   ok(/fillF=\(scene\.fog&&!space\)\?_skyFillFog\(far,groundR,1-k\)-far:0/.test(tick) && /scene\.fog\.far=far\+fillF;/.test(tick), 'the haze gets the fill (eased out with the flight blend k)');
   ok(/PW\._propFog=far;[^\n]*\n\s*if\(scene\.fog\)\{ scene\.fog\.far=far\+fillF/.test(tick), 'props see the haze without the fill');

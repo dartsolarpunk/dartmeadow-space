@@ -267,7 +267,8 @@
     try {
       if (!out.on || W.__JOTS_INTRO || (W.DMAR && W.DMAR.active) || typeof W.effectivePixelRatio !== 'function') return;
       const r = W.flightRenderer || (typeof flightRenderer !== 'undefined' ? flightRenderer : null); if (!r || !r.getPixelRatio || !r.setPixelRatio) return;
-      const cap = out.resCap(), cur = r.getPixelRatio(), base = W.effectivePixelRatio(), d = r._dr && r._dr.ring ? r._dr : null;
+      let cap = out.resCap(); const cur = r.getPixelRatio(), base = W.effectivePixelRatio(), d = r._dr && r._dr.ring ? r._dr : null;
+      { const tf = W._dmTabletFloor ? W._dmTabletFloor(W.GFX) : 0; if (cap < tf) cap = tf; }   // (t1590) tablets: render scale floor 0.75 (ui/dm-governor.js)
       const want = base * Math.min(cap, d ? d.k : 1);
       if (cap < 1 && cur > want * 1.03) { if (!r._dmEnf) S.enfFrom = d ? d.k : 1; r.setPixelRatio(base * cap); if (d) { d.k = Math.min(d.k, cap); d.since = now(); } r._dmEnf = cap; S.enf = (S.enf | 0) + 1; }
       // (t1516) the cap LIFTED (a recovery, or a render-scale step that bought nothing was handed back): give the governor back the scale it had before this enforcer cut it.

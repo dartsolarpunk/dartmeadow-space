@@ -190,7 +190,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-sparsevox.js?v=304"></script>
 <script src="ui/dm-rockmat.js?v=145"></script>
 <script src="ui/dm-parallax.js?v=280"></script>
-<script src="ui/dm-groundlib.js?v=280"></script>
+<script src="ui/dm-groundlib.js?v=351"></script>
 <script src="ui/dm-radical-circ.js?v=300"></script>   <!-- (lod-hide) Radical Circumference / ArcEdge radius maths (Justin Craig Venable, dartedge.com/radicaledge): the LOD discs and rims (tess patch, sea-sheet rim) -->
 <script src="ui/dm-water-core.js?v=300"></script>
 <script src="ui/dm-water.js?v=300"></script>
@@ -198,14 +198,14 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-water-curl.js?v=292"></script>   <!-- water: the breaking-wave curl (glassy turquoise barrel along the shore-parallel wave fronts; Medium+; created by dm-water-fx) -->
 <script src="ui/dm-water-fx.js?v=292"></script>   <!-- water: spray / splash / mist sprites, wake, footstep ripples, shore-break spray, underwater fog + shafts (?waterfx=0 off) -->   <!-- water: baked sea, shore, ground hook (?water=0 = the previous sea) -->
 <script src="ui/dm-perf.js?v=343"></script>
-<script src="ui/dm-governor.js?v=341"></script>
-<script src="ui/dm-budget.js?v=341"></script>
+<script src="ui/dm-governor.js?v=351"></script>
+<script src="ui/dm-budget.js?v=351"></script>
 <script src="ui/dm-mem.js?v=292"></script>
 <script src="ui/dm-lod.js?v=345"></script>
 <script src="ui/dm-terrain-lod.js?v=294"></script>   <!-- one terrain across every altitude band: shared slope / skirt / sea-tint contract between the globe map and the sky ground -->
 <script src="ui/dm-impostor.js?v=280"></script>   <!-- far-range LOD: vertex-clustering impostor (mansion LOD2, colours baked) -->   <!-- far-range LOD: the ONE distance table per device class (props, mansion, landmarks, vantage reach); ?lod=off|low|mobile|desktop -->
-<script src="ui/dm-light.js?v=347"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
-<script src="ui/dm-sunfar.js?v=349"></script>   <!-- (t1537) the key light's wide, slow shadow layer past the near map (DMLight wrapper), into the haze; ?sunfar=0 off -->
+<script src="ui/dm-light.js?v=351"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
+<script src="ui/dm-sunfar.js?v=351"></script>   <!-- (t1537) the key light's wide, slow shadow layer past the near map (DMLight wrapper), into the haze; ?sunfar=0 off -->
 <script src="ui/dm-vlight.js?v=347"></script>   <!-- lighting overhaul: lamps / LEDs / flashlight / low sun light the volumetric fog (scene.fogNode, light list, equi-angular in-scatter); ?vlights=0|low|med|high -->
 <script src="ui/dm-spaceshafts.js?v=349"></script>   <!-- (t1537) the key star's glare + dust scatter + the nearest world's shadow through it, in open space (Med+; off on Low); ?spaceshafts=0 off -->
 <script src="ui/dm-feedback.js?v=329"></script>
@@ -14000,7 +14000,11 @@ async function upgradePlanetLOD(dt){
     const extras=oldGroup.children.filter(c=>c.isPlanetExtra);
     extras.forEach(c=>newGroup.add(c));
     b.mesh=newGroup;   // (v193) the body now moves the new level; the fading old one rides along with it
+    // (t1590) the world she is IN (PW.body) keeps its orbit globe hidden while the ground draws (the hand-off hides it only while it runs: the sky does every frame, walking does not):
+    // a rebuild that finished on foot used to show the new level (_lodCrossFade sets it visible), the map-coloured globe / brick shell cutting through the ground.
+    const _pwHid=!!(typeof PW!=='undefined'&&PW.active&&PW.body===b&&oldGroup&&oldGroup.visible===false);
     await _lodCrossFade(oldGroup,newGroup,oldGroup===b._cheapG);
+    if(_pwHid&&PW.active&&PW.body===b&&b.mesh===newGroup) newGroup.visible=false;
     b.mcRes=newRes;b.mcTier=newTier; b._svEvicted=false;
     { let lm=null; newGroup.traverse(m=>{ if(m.userData&&m.userData.svLod) lm=m; }); b._svLod=lm?lm.userData.svLod:null; b._svLodMesh=lm; }
     if(b._wm) _applyWorldMapToFlightBody(b,b._wm);   // keep wearing its map
@@ -20330,7 +20334,10 @@ function _pwWorldTick(dt){
   // under a 420-unit haze: from the deck the far coast and the land standing above the horizon were erased by the haze, then simply missing.  Only coarse
   // tiles live out there (one 33x33 grid each, a few dozen more) and everything past the camera's horizon is already culled whole (SkyGround._measure), so the
   // cost is small and bounded; the haze opens to where that ground starts to dissolve (_skyFillFog, below).  Props keep the old haze (their cost, PW._propFog).
-  const groundR=(scene.fog&&!space)?_skyGroundR(viewR,_skyHorizonReach(R,alt),skyR):viewR;
+  // (t1590) ON FOOT the drawn radius is the old walk radius again (max(1200, fogFar x 2.5), the anchor's rule, 816b02c / 7bdcb1f), with the haze at full density by
+  // _SKY_FADE0 x R (_skyFillFog below), so the edge is never seen.  The horizon reach (34d6f7b) now opens only with the board's climb (k) or a vantage (PW._vtK, the
+  // HOME deck / a cliff top): it put ~3x the ground area on screen on foot, fully shaded to the horizon (Perf t1590: 3-11 fps on the tablet).  _skyGroundOpen is pure.
+  const groundR=(scene.fog&&!space)?_skyGroundOpen(viewR,_skyGroundR(viewR,_skyHorizonReach(R,alt),skyR),k,PW._vtK||0):viewR;
   const G=PW.ground; G.viewR=groundR; PW._groundR=groundR;
   // the sky dome thins to space as you climb (airless worlds: open space all the way down)
   const pal=PW.pal, dome=pal.atmos?1-_smooth01((alt-400)/1400):0;
@@ -25816,7 +25823,8 @@ function SkyGround(scene,F,pal,o){
   this._fr=new THREE.Frustum(); this._m4=new THREE.Matrix4(); this._v=new THREE.Vector3(); this._c=new THREE.Vector3(); this._cc=new THREE.Vector3(); this._sph=new THREE.Sphere();
   // (Wave 1) reused every frame: the kept root keys, the lat/lon domain, the focus point, last frame's build counts
   this._keep=new Set(); this._dm={x0:0,z0:0,W:0}; this._fx=0; this._fz=0; this._cpos=null; this._sb=null;
-  this.stat={built:0,focus:0,emerg:0,skipped:0,left:0,settle:0,idle:0,idleN:0};
+  this.stat={built:0,focus:0,emerg:0,skipped:0,left:0,settle:0,idle:0,idleN:0,converged:0,convT:0,slow:0};
+  this._slowT=0;   // (t1590) last slow-frame slice (Safari / no requestIdleCallback)
   this._anc=new THREE.Vector3(1e9,1e9,1e9); this._movedAt=0;   // (fov-fill) where the camera last settled, and when it last moved off it
   // (v330 streaming) idle fill: the callbacks and the timer slice's deadline are made once here (no closure / object per frame)
   this._idleOn=false; this._dead=false; this._idleFn=this._idleRun.bind(this); this._sliceFn=this._sliceRun.bind(this);
@@ -25852,11 +25860,26 @@ SkyGround.prototype._radialFade=function(){
 // Worlds without haze (no fog: airless) keep the dissolve only (weight 0): there R is the geometric horizon.  Uniform values only (no recompile,
 // no allocation per frame: _hazeTick writes into the uniforms' own Color / Vector2).  Pure mirror: _skyHazeW (tools/tests/radial-lod-blend.js).
 const _SKY_HAZE_RIM={outer:0,inner:0,centre:0};
+// (t1590) ONE RADIAL FALLOFF.  Every distance fade of the ground hangs off the same rim of the drawn radius R, by Justin Craig Venable's Radical Circumference / ArcEdge rule
+// (https://dartedge.com/radicaledge, ui/dm-radical-circ.js DMRadCirc.rim): outer edge R, inner edge R less one eighth of the diameter (0.75 R), rim centre 0.875 R.  The scene haze is
+// at full density by _SKY_FADE0 x R (inside the rim), the dissolve runs _SKY_FADE0 x R -> R behind it, the near detail ends on its own rim (_skyDetailFall), so no band starts in
+// open view.  The extra horizon-haze colour mix (#259, below) is OFF by default: the scene fog already does that tint with the same curve, and the mix toward the fog colour read as a
+// darker red band on Mars (?skyhaze=1 brings it back for an A/B).  Pure: tools/tests/radial-falloff.js.
+function _skyFalloff(R,out){ return _skyHazeBand(R,out); }
+// the near ground detail's fade: fully on inside the half-radius circle of its rim's inner edge, gone at the rim's outer edge Ro = 1.5 x reach (was 0.45 -> 1.0 reach: a ~7-12 m
+// edge that read as a sharp disc, 82e25cd / 2610063).  out = [start, end], reused.  endK (Perf guard #275 F2): Mali-class tablets end at 1.25 x reach, not 1.5.
+const _SKY_DET=[0,0];
+function _skyDetailFall(reach,out,endK){ const o=out||_SKY_DET, RC=window.DMRadCirc, Ro=reach*(endK>0?endK:1.5); o[1]=Ro; o[0]=RC&&RC.halfRadius&&RC.rim?RC.halfRadius(RC.rim(Ro,_SKY_DET_RIM).inner):Ro*0.375; return o; }
+const _SKY_DET_RIM={outer:0,inner:0,centre:0};
+const _SKY_DET_END_LOWG=1.25;   // (Perf guard #275 F2) Mali-class tablets: the detail fade ends at 1.25 x reach (1.5 was 3.5x v349's detail area there)
+// the dissolve is a screen-door dither: below 0.8 of the chosen resolution each dither cell is several screen pixels (blocks / holes, t1590), so it steps aside (the edge is in full haze)
+const _SKY_DITHER_MIN=0.8;
+function _skyDitherOk(resScale){ return !(resScale<_SKY_DITHER_MIN); }
 function _skyHazeBand(R,out){ const RC=window.DMRadCirc, o=out||{outer:0,inner:0,centre:0}; if(RC&&RC.rim) return RC.rim(R,o); o.outer=R; o.inner=R-R*0.25; o.centre=(o.inner+R)*0.5; return o; }
 function _skyHazeW(d,inner,centre){ if(d<=inner) return 0; if(d>=centre) return 1; const t=(d-inner)/Math.max(1e-6,centre-inner); return t*t*(3-2*t); }
 SkyGround.prototype._hazeInit=function(){
   const W=window, m=this.mat; this._hazeU=null;
-  if(!m||!this._fadeU||typeof W.uniform!=='function'||!W.output||!W.mix||!W.vec4||/[?&]skyhaze=0\b/.test(location.search)) return;   // ?skyhaze=0: dissolve only (A/B)
+  if(!m||!this._fadeU||typeof W.uniform!=='function'||!W.output||!W.mix||!W.vec4||!/[?&]skyhaze=1\b/.test(location.search)) return;   // (t1590) off by default; ?skyhaze=1: the #259 colour mix (A/B)
   try{
     const b=_skyHazeBand(this.viewR,_SKY_HAZE_RIM);
     const U=this._hazeU={c:W.uniform(new THREE.Color(this.pal&&this.pal.fog!=null?this.pal.fog:0x8899aa)),r:W.uniform(new THREE.Vector2(b.inner,b.centre)),on:W.uniform(0)};
@@ -25902,7 +25925,10 @@ SkyGround.prototype._seaRimTick=function(){
 // tablet: ~38 s for the ~330 tiles from the HOME deck, ~20 s settled).  Still a TIME budget (the gate is unchanged; the focus cap is unchanged); it drops
 // back the frame she moves and costs nothing once the queue is empty.  Pure (tools/tests/fov-fill.js).
 // (v330 streaming) the settle starts 300 ms after she stops (was 600 ms): after touchdown / stepping off the boost no longer waits most of a second.
-const _SKY_SETTLE={after:300,anchor:2,k:1.75};
+const _SKY_SETTLE={after:300,anchor:6,k:1.75};   // (t1590) anchor 2 -> 6 u: walking keeps the settle boost (Perf t1590)
+// (t1590) render scale now / chosen (1 = full), read from the renderer a few times a second (no allocation)
+let _skyRS=1, _skyRSF=0;
+function _skyResScale(){ if((++_skyRSF&15)===1){ try{ const r=flightRenderer, b=effectivePixelRatio(); _skyRS=(r&&b>0)?r.getPixelRatio()/b:1; }catch(e){ _skyRS=1; } } return _skyRS; }
 function _skySettleBudget(B,still,left){ return still&&left>0?B*_SKY_SETTLE.k:B; }
 // (v330 streaming) IDLE FILL.  After landing the ground COVERED the view in ~20 frames but every nearby tile took ~270 frames (~21 s at 13 fps,
 // ~525 builds for ~330 drawn tiles) to reach full detail, because tiles were only ever built inside the frame's 4 / 7 ms budget.  The tiles still
@@ -25915,7 +25941,8 @@ function _skySettleBudget(B,still,left){ return still&&left>0?B*_SKY_SETTLE.k:B;
 // Not in the quiet window (intro / 2.5 s arrival settle; the next frame asks again, so nothing starves), not while hidden, never once disposed.
 // The in-frame gate (_skyGroundGate) is unchanged.  Pure gates + timing: tools/tests/skyground-stream.js.
 const _SKY_NEAR=600;   // (v330 streaming) "nearby" for the build order: ~340 m round the camera (1 u = 0.561 m)
-const _SKY_IDLE={min:4,margin:1.5,max:8,slice:3,sliceD:4,head:0.8};
+const _SKY_IDLE={min:4,margin:1.5,max:8,slice:3,sliceD:4,head:0.8,slowMs:125};   // (Perf guard #275 F4) slow slice every 125 ms (was 250): <= ~6 % of the time, faster convergence at 3-5 fps
+function _skySlowSlice(now,last){ return now-(last||0)>=_SKY_IDLE.slowMs; }
 function _skyIdleRoom(left,buildMs){ return left>=Math.max(_SKY_IDLE.min,(buildMs||0)*1.5+_SKY_IDLE.margin); }
 function _skySliceOk(ema,budget){ return ema>0&&budget>0&&ema<=budget*_SKY_IDLE.head; }
 // (fov-fill) HORIZON REACH: how far ground can still be seen from `alt` above the sea of a sphere of radius R — the camera's own horizon plus the horizon of
@@ -25924,6 +25951,8 @@ const _SKY_RELIEF=260;   // the tallest ground a tile assumes before it is measu
 function _skyHorizonReach(R,alt,relief){ const h=Math.max(0,alt), r=Math.max(0,relief==null?_SKY_RELIEF:relief); return Math.sqrt(h*(2*R+h))+Math.sqrt(r*(2*R+r)); }
 // the ground's drawn radius on a world with haze: the walk / vantage / sky radius, opened to the horizon reach, never past the sky's radius, never below viewR
 function _skyGroundR(viewR,horizon,skyR){ return horizon>viewR?Math.max(viewR,Math.min(skyR,horizon)):viewR; }
+// (t1590) how far that horizon reach is opened: 0 on foot on open ground (the walk radius), all of it in the sky (k = 1) or from a full vantage (vt = 1), eased between (no switch)
+function _skyGroundOpen(viewR,open,k,vt){ const w=Math.max(0,Math.min(1,Math.max(k||0,vt||0))); return viewR+(Math.max(viewR,open)-viewR)*w; }
 // the haze far distance that lets that ground read: on foot (w = 1) exactly where the ground starts to dissolve (_SKY_FADE0 x groundR), so the drawn ground's
 // dissolving edge always lies in full haze (never a visible rim or dither) and nothing short of it is erased; w eases to 0 high in the sky, where the flight haze rules
 function _skyFillFog(far,groundR,w){ const v=Math.max(0,Math.min(1,w)); return far+(groundR*_SKY_FADE0-far)*v; }
@@ -25997,7 +26026,7 @@ SkyGround.prototype.update=function(cam,budgetMs){
   const t0=performance.now(), A=this._anc;
   if(Math.abs(c.x-A.x)+Math.abs(c.y-A.y)+Math.abs(c.z-A.z)>_SKY_SETTLE.anchor){ A.copy(c); this._movedAt=t0; }   // (fov-fill) moved: re-anchor (no allocation)
   const still=budgetMs==null&&t0-this._movedAt>=_SKY_SETTLE.after;
-  const B=budgetMs!=null?budgetMs:_skySettleBudget(this.budget,still,Q.length), cap=(budgetMs!=null&&budgetMs>=50)?Infinity:(GFX.isMobile?2:4);
+  const B=budgetMs!=null?budgetMs:_skySettleBudget(this.budget,still,Q.length), cap=(budgetMs!=null&&budgetMs>=50)?Infinity:(GFX.isMobile?2:4)*(still?2:1);   // (t1590) still: twice the focus cap (f225bcc's 2 / 4 a frame starved a slow tablet)
   let nf=0, built=0, em=false, skipped=0, bare=this._bareUnder();
   for(let q=0;q<Q.length;q++){
     const n=Q[q], g=_skyGroundGate(performance.now()-t0,B,!!n._foc,nf,cap,bare,em);
@@ -26009,8 +26038,9 @@ SkyGround.prototype.update=function(cam,budgetMs){
     if(n._foc){ nf++; if(bare) bare=this._bareUnder(); }
   }
   const st=this.stat; st.built=built; st.focus=nf; st.emerg=em?1:0; st.skipped=skipped; st.left=Q.length-built; st.settle=B>this.budget&&budgetMs==null?1:0;
+  if(st.left>0){ st.converged=0; st.convT=0; } else if(!st.converged){ st.converged=1; st.convT=t0; }   // (t1590) 'converged': nothing left to build for this view (?perf=1 / SkyGround.stat)
   if(st.left>0) this._idleKick();   // (v330 streaming) what is left fills in after this frame, outside it
-  if(this._fadeU){ this._fadeU.a.value=this.viewR*_SKY_FADE0; this._fadeU.b.value=this.viewR; this._hazeTick(); }   // (Wave 2a) the circle follows the drawn radius; (t1516) so does the haze band
+  if(this._fadeU){ const dz=_skyDitherOk(_skyResScale()); this._fadeU.a.value=dz?this.viewR*_SKY_FADE0:1e9; this._fadeU.b.value=dz?this.viewR:2e9; this._hazeTick(); }   // (Wave 2a) the circle follows the drawn radius; (t1516) so does the haze band; (t1590) no dither below 0.8 resolution
   this._seaRimTick();   // (lod-hide) the sea's circular rim follows the sheet
   this.roots.forEach(this._show,this);
   const now=performance.now(), dt=this._lastT?Math.min(0.1,(now-this._lastT)/1000):0; this._lastT=now;
@@ -26038,7 +26068,12 @@ SkyGround.prototype._idleKick=function(){
   if(this._idleOn||this._dead) return;
   const W=window;
   if(typeof W.requestIdleCallback==='function'){ this._idleOn=true; try{ W.requestIdleCallback(this._idleFn); }catch(e){ this._idleOn=false; } return; }
-  const B=W.DMBudget; if(!B||!B.on||typeof B.emaMs!=='function'||!_skySliceOk(B.emaMs(),B.budgetMs())||typeof W.setTimeout!=='function') return;
+  if(typeof W.setTimeout!=='function') return;
+  const B=W.DMBudget, now=performance.now();
+  // (t1590) with frame headroom: a slice after every frame, as before.  WITHOUT it (a slow tablet, EMA > 0.8 x budget, where the old gate never opened and the fill froze):
+  // still one bounded slice, at most every _SKY_IDLE.slowMs (time-based, ~3 ms every 125 ms = ~2-6 % of the time), so the queue always drains.  _skySlowSlice is pure.
+  const head=!!(B&&B.on&&typeof B.emaMs==='function'&&_skySliceOk(B.emaMs(),B.budgetMs()));
+  if(!head){ if(!_skySlowSlice(now,this._slowT)) return; this._slowT=now; this.stat.slow=(this.stat.slow|0)+1; }
   this._idleOn=true; try{ W.setTimeout(this._sliceFn,0); }catch(e){ this._idleOn=false; }
 };
 SkyGround.prototype._sliceRun=function(){ this._dl.t1=performance.now()+(GFX.isMobile?_SKY_IDLE.slice:_SKY_IDLE.sliceD); this._idleRun(this._dl); };
@@ -26782,7 +26817,8 @@ function _terrainDetailMat(opts){
   const tier=(typeof resolvePreset==='function')?resolvePreset():'medium';
   const _lowG=!!(GFX.isMobile&&(GFX.gpuClass==='low'||(GFX.score!=null&&GFX.score<55)));   // (v259) Mali-class tablets: one detail level less (no second worley / grit octave), 20 % shorter reach
   const lvl=Math.min(_lowG?2:3,({low:1,medium:2,high:3,ultra:3,custom:2})[tier]||2);
-  const reach=opts.reach||({1:22,2:30,3:40})[lvl]*(_lowG?0.8:1);   // (an exporter can ask for the detail everywhere)
+  const reach=opts.reach||({1:22,2:30,3:40})[lvl];   // (an exporter can ask for the detail everywhere)  (t1590) no x0.8 on Mali-class tablets (2610063): it shrank the detail disc to ~13 m
+  const _df=_skyDetailFall(reach,[0,0],_lowG?_SKY_DET_END_LOWG:0);   // (t1590) the detail's own rim (Radical Circumference / ArcEdge, Justin Craig Venable): soft from ~0.56 reach to 1.5 reach
   let m;
   try{
     m=new THREE.MeshStandardNodeMaterial({vertexColors:true,roughness:0.94,metalness:0.0,side:opts.side||THREE.FrontSide});
@@ -26797,7 +26833,9 @@ function _terrainDetailMat(opts){
     const dist=W.length(W.positionView);
     // fades with distance, and stays on walkable ground (cliff faces keep their strata)
     const flat=W.smoothstep(W.float(0.6),W.float(0.88),nFlat.y);
-    const fade=W.float(1).sub(W.smoothstep(W.float(reach*0.45),W.float(reach),dist)).mul(flat);
+    // (#275 follow-up, CE/Watcher) the crack/bump fade honours the ground library's shared U.reachK (ui/dm-budget.js ladder and the tablet shed, ui/dm-groundlib.js), so a reach shrink shrinks this too
+    const _rk=(window.DMGround&&DMGround.reachU)?DMGround.reachU():null;
+    const fade=W.float(1).sub(W.smoothstep(_rk?W.float(_df[0]).mul(_rk):W.float(_df[0]),_rk?W.float(_df[1]).mul(_rk):W.float(_df[1]),dist)).mul(flat);
     // the detail height at a ground point (x,z); returns {h, crack, peb}
     const sandy=TERRAIN.style==='dunes';
     const field=(xz)=>{
@@ -26948,10 +26986,10 @@ function _terrainDetailMat(opts){
     if(opts.side===THREE.DoubleSide&&W.DMRock&&W.DMRock.on){ try{ m.colorNode=W.DMRock.patchColor(m.colorNode,p,nFlat,(typeof _surfBody!=='undefined'&&_surfBody)?_surfBody.name:'',0); }catch(e){} }
     // (ui/dm-groundlib.js) the multi-material ground: 12 pattern/deformation types baked once per world into an atlas, chosen per region, height-blended (moss, puddles in the crevices), baked bump + parallax relief; no per-pixel noise
     let _gl=false;
-    try{ if(window.DMGround&&window.DMParallax&&m.userData&&!m.userData.noParallax&&opts.parallax!==false&&!/[?&]ground=0\b/.test(location.search)) _gl=DMGround.apply(m,{p,flat,nFlat,lvl,reach,near:reach*0.16,far:reach*0.34,strength:1}); }catch(e){ console.warn('[ground lib]',e); }
+    try{ if(window.DMGround&&window.DMParallax&&m.userData&&!m.userData.noParallax&&opts.parallax!==false&&!/[?&]ground=0\b/.test(location.search)) _gl=DMGround.apply(m,{p,flat,nFlat,lvl,reach,fall:_df,near:reach*0.16,far:reach*0.34,strength:1}); }catch(e){ console.warn('[ground lib]',e); }
     if(!_gl) try{ if(window.DMParallax&&m.userData&&!m.userData.noParallax&&opts.parallax!==false) DMParallax.applyGround(m,{p,flat,lvl,N:null,kind:'cobble',near:reach*0.13,far:reach*0.3,seed:TERRAIN.style==='mesa'?11:7}); }catch(e){}   // (ui/dm-parallax.js) real depth in the pebbles/plates close to her: marched only inside ~0.3 reach, every tier (Low = 2-3 steps, short reach, small relief; the per-tier table lives in the parallax module)
     m.userData.dmDetail=lvl;
-    try{ if(window.DMLight&&DMLight.on&&opts.side!==THREE.DoubleSide&&!(m.userData&&m.userData.noLight)) DMLight.applyMaterial(m,{p,h:m.userData.dmReliefH||null}); }catch(e){}   // (ui/dm-light.js) walkable ground: indirect bounce + sky-visibility AO + height-cache sun shadow
+    try{ if(window.DMLight&&DMLight.on&&opts.side!==THREE.DoubleSide&&!(m.userData&&m.userData.noLight)) DMLight.applyMaterial(m,{p,h:m.userData.dmReliefH||null,terrain:!opts.noTerrainLight}); }catch(e){}   // (t1590) terrain: no far sun layer, neutral far sky (ui/dm-light.js o.terrain)  (ui/dm-light.js) walkable ground: indirect bounce + sky-visibility AO + height-cache sun shadow
     try{ if(window.DMWater&&DMWater.active&&DMWater.receiveShore&&TERRAIN.pal&&TERRAIN.pal.water&&opts.shore!==false) DMWater.receiveShore(m,{p}); }catch(e){ console.warn('[water] shore hook',e); }   // wet sand that outlives the wave + the swash film (only below the run-up height)
     // the coarse ground is cut away where the tessellated patch round her takes over
     if(!opts.noHole&&TESS_HOLE.slots.length){

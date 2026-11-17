@@ -8,7 +8,12 @@ const F = require(path.join(root, 'ui/dm-sunfar.js')), C = F.core;
 
 console.log('== far layer: tiers, cadence, coverage (pure)');
 ok(C.tierCfg('off') === null && C.tierCfg('bogus') === null, 'no layer for the off tier');
-for (const t of ['low', 'med', 'high', 'ultra']) {
+// (t1590) tiers: Low and every phone / tablet run no pass; Medium desktop runs it for the shafts only (no receivers); High / Ultra desktop receive on architecture
+ok(C.tierCfg('low') === null && C.tierCfg('low', true) === null, 't1590: Low has no far layer');
+for (const t of ['low', 'med', 'high', 'ultra']) ok(C.tierCfg(t, true) === null, 't1590: ' + t + ' on a phone / tablet: no far pass');
+ok(C.tierCfg('med').recv === false, 't1590: Medium desktop: pass for the shafts only, no receivers');
+ok(C.tierCfg('high').recv === true && C.tierCfg('ultra').recv === true, 't1590: High / Ultra desktop receive (architecture / overhangs)');
+for (const t of ['med', 'high', 'ultra']) {
   const c = C.tierCfg(t); ok(c && c.size >= 1024 && c.half >= 100, t + ': map ' + c.size + ', half ' + c.half);
   ok(C.memBytes(c.size) <= 32 * 1048576, t + ': <= 32 MB (' + (C.memBytes(c.size) / 1048576).toFixed(0) + ' MB)');
   ok(c.minS >= 0.5, t + ': at most 2 passes a second (minS ' + c.minS + ')');
@@ -38,7 +43,10 @@ ok(!/new THREE\.(Directional|Spot|Point|Hemisphere|Ambient)Light/.test(sf), 'dm-
 ok(/scene\.overrideMaterial = S\.mat/.test(sf) && /cam\.layers\.set\(LAYER\)/.test(sf), 'one depth-only pass of the castShadow layer');
 ok(/o\.isSkinnedMesh/.test(sf) && /dmFarSkip/.test(sf) && /DMSunFar\.hooks\.skip=\(a\)=>/.test(html), 'moving casters (her, the board) are kept out of the slow layer');
 { const tick = sf.slice(sf.indexOf('D.tick = function'), sf.indexOf('D.covers')); ok(!/new [A-Z]|\[\s*\]|=\s*\{\s*\}|=>/.test(tick.replace(/\/\/.*$/gm, '')), 'D.tick allocates nothing (no new / [] / {} / closures)'); }
-ok(/const farV = \(W\.DMSunFar && W\.DMSunFar\.node\)/.test(lt) && (lt.match(/mix\(farV, /g) || []).length === 4, 'dm-light: all four sun-wrapper branches hand off to the far layer, not to 1');
+ok(/const farV = \(!o\.terrain && W\.DMSunFar && W\.DMSunFar\.node\)/.test(lt) && (lt.match(/mix\(farV, /g) || []).length === 4, 'dm-light: all four sun-wrapper branches hand off to the far layer, except on open terrain (t1590: lit past the near box)');
+ok(/const farVis = o\.terrain \? float\(1\)/.test(lt), 'dm-light (t1590): open terrain fades to plain open sky past the probes (no 0.78 slope darkening)');
+ok(/terrain:!opts\.noTerrainLight/.test(html), 'index.html (t1590): the ground material is marked terrain for DMLight');
+ok(/!!S\.cfg\.recv && coversAt/.test(sf) && /if \(!S\.cfg \|\| !S\.cfg\.recv\) return null;/.test(sf), 'dm-sunfar (t1590): covers() / receivers only on a receiving tier (TIGHT_FAR follows it)');
 ok(/DMSunFar\.tick\(flightRenderer,scene,up,px,fy,pz\)/.test(html), 'index.html: the far layer is fitted with the same key direction `up` as the near box (_pwKeyDir)');
 ok(/let d=_pwKeyDir\(\), up=null/.test(html), 'index.html: `up` still comes from _pwKeyDir()');
 ok(/P\.TIGHT_FAR = 0\.62/.test(pol) && /DMSunFar\.covers\(\)/.test(pol) && /P\.TIGHT_K = 1/.test(pol), 'dm-polish: tight near box only while the far layer covers her, #269 full box otherwise');

@@ -56,7 +56,7 @@ const E = new Function('THREE', 'window', 'DMTerrainLod', 'performance', `
     PWF.fx=fx; PWF.fz=fz; PWF.lat=lat; PWF.sl=Math.sin(lat); PWF.cl=Math.cos(lat); PWF.g=1+(gMax-1)*w; PWF.on=1; PWF.R=360/ATMO_DEG_PER_UNIT/(2*Math.PI); }
   const opt = name => { try { return eval(name); } catch (e) { return undefined; } };
   return { _groundField, SkyGround, PWF, GFX, pwfOn, _skyHorizonReach, _skyGroundR, _SKY_SETTLE, _skyGroundGate,
-    _skyIdleRoom: opt('_skyIdleRoom'), _skySliceOk: opt('_skySliceOk'), _SKY_IDLE: opt('_SKY_IDLE'), _mcUpHealthy: opt('_mcUpHealthy'), _mcUpDelay: opt('_mcUpDelay'),
+    _skyIdleRoom: opt('_skyIdleRoom'), _skySliceOk: opt('_skySliceOk'), _SKY_IDLE: opt('_SKY_IDLE'), _skySlowSlice: opt('_skySlowSlice'), _mcUpHealthy: opt('_mcUpHealthy'), _mcUpDelay: opt('_mcUpDelay'),
     setSite: s => { PW.site = s; } };
 `)(THREE, W, TL, performance);
 const MEASURE = !!process.env.MEASURE, NEW = typeof E._skyIdleRoom === 'function';
@@ -162,7 +162,15 @@ ok(B.frameBad === 0, 'idle fill leaves the frame\'s own budget unchanged');
 // ── (4) Safari timer slice ──
 ok(S.left === 0 && S.idleStarts > 0 && S.sliceBad === 0 && S.fr < A30.fr, 'timer slice with headroom: ' + S.fr + ' frames (was ' + A30.fr + '), no build starts past the slice');
 const S2 = run({ cost: 6, frameMs: 33, slice: true, ema: 33, budget: 36, max: 3000 });
-ok(S2.idleStarts === 0 && S2.left === 0, 'timer slice near the 30 fps line (EMA 33 / 36): never runs, the frame budget alone drains (' + S2.fr + ' frames)');
+// (t1590) near / below the line the headroom slice stays shut, but ONE bounded slice still runs at most every _SKY_IDLE.slowMs (time-based), so the fill never freezes
+{ const bound = Math.ceil(S2.fr * 33 / E._SKY_IDLE.slowMs) + 1;
+  ok(S2.left === 0 && S2.sliceBad === 0 && S2.idleStarts > 0 && S2.G.stat.slow <= bound && S2.fr <= A30.fr, 't1590: near the 30 fps line (EMA 33 / 36) the slow slice runs ' + S2.G.stat.slow + ' times (<= ' + bound + ', one per ' + E._SKY_IDLE.slowMs + ' ms), drains in ' + S2.fr + ' frames (no slice ' + A30.fr + ')'); }
+// (t1590) a 5 fps tablet without requestIdleCallback (Justin's v348 Mars: 3-11 fps): the fill CONVERGES, faster than the frame budget alone, and says so (stat.converged)
+{ const T5 = run({ cost: 6, frameMs: 200, slice: true, ema: 200, budget: 36, max: 3000 }), N5 = run({ cost: 6, frameMs: 200, max: 3000 });
+  ok(T5.left === 0 && T5.G.stat.converged === 1 && T5.sliceBad === 0, 't1590: 5 fps tablet, no idle callback: converges in ' + T5.fr + ' frames (' + s13(T5.fr, 200) + '), stat.converged = 1');
+  ok(T5.fr < N5.fr, 't1590: the slow slice drains it sooner than the frame budget alone (' + T5.fr + ' vs ' + N5.fr + ' frames)');
+  ok(N5.left === 0 && N5.G.stat.converged === 1, 't1590: even with no slice at all the queue converges (' + N5.fr + ' frames): it is never starved'); }
+ok(E._SKY_IDLE.slowMs >= 100 && E._SKY_IDLE.slowMs <= 150 && E._skySlowSlice(1000, 1000 - E._SKY_IDLE.slowMs) && !E._skySlowSlice(1000, 1001 - E._SKY_IDLE.slowMs) && E._skySlowSlice(1000, 0), 't1590: _skySlowSlice is time-based (>= ' + E._SKY_IDLE.slowMs + ' ms apart)');
 // ── (5) quiet / hidden / disposed / no starvation ──
 const Q = run({ cost: 6, frameMs: 33, idle: 12, quietUntil: 1000 + 2500 });
 ok(Q.left === 0 && Q.idleBad === 0 && Q.fr < A30.fr, 'arrival quiet window (2.5 s): no idle build inside it, the fill resumes after (' + Q.fr + ' frames)');

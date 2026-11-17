@@ -104,8 +104,8 @@ for (const S of scen) {
 // ── (2) texture: the close-up field stays close ──
 {
   const M = cut('function _terrainDetailMat(opts){', '\n    // cracks shade darker');
-  ok(/const reach=opts\.reach\|\|\(\{1:22,2:30,3:40\}\)\[lvl\]\*\(_lowG\?0\.8:1\);/.test(M), 'close-up reach unchanged: 22 / 30 / 40 u (x0.8 on a low Mali)');
-  ok(/const fade=W\.float\(1\)\.sub\(W\.smoothstep\(W\.float\(reach\*0\.45\),W\.float\(reach\),dist\)\)\.mul\(flat\);/.test(M), 'the close-up weight is 0 past reach');
+  ok(/const reach=opts\.reach\|\|\(\{1:22,2:30,3:40\}\)\[lvl\];/.test(M), 'close-up reach 22 / 30 / 40 u (t1590: no x0.8 on a low Mali)');
+  ok(/const fade=W\.float\(1\)\.sub\(W\.smoothstep\(W\.float\(_df\[0\]\),W\.float\(_df\[1\]\),dist\)\)\.mul\(flat\);/.test(M) && /const _df=_skyDetailFall\(reach,\[0,0\]\);/.test(M), 'the close-up weight is 0 past its rim (t1590: _skyDetailFall, 1.5 x reach)');
   ok(/const DETC=_gate\(fade\.greaterThan\(0\.0\)/.test(M) && /W\.If\(fade\.greaterThan\(0\.0\),\(\)=>\{ dd\.assign\(slopeOf\(\)\); \}\);/.test(M), 'the worley / grit field (colour + bump) is built only where fade > 0: never at horizon distances');
   const mid = M.slice(M.indexOf('const MIDF='), M.indexOf('const lodTint='));
   ok(mid.length > 50 && !/worley/.test(mid) && (mid.match(/mx_fractal_noise_float\(/g) || []).length === 1 && /,2,2\.0,0\.5\)/.test(mid) && (mid.match(/_n1\(/g) || []).length === 2, 'mid / far bands: one 2-octave value field + two single octaves, no worley');

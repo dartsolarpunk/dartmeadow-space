@@ -418,9 +418,24 @@
     if (S.done) S.U.ready.value = 1;
     setInterval(pollSky, 600);   // uniform writes only
   }
+  // (t1590, Perf guard #275 F3) TABLET SHED: a tablet holds its 0.75 render-scale floor (ui/dm-governor.js), so once it sits AT the floor with the frame-budget ladder exhausted
+  // (DMBudget.isExhausted), resolution is no longer a lever: the terrain detail reach steps down instead (U.reachK, a uniform: no recompile, no allocation), and back up once
+  // the pressure is gone.  Steps on the 600 ms poll below.  Phones / desktops never shed here (tabletFloor 0).  Pure step: tabShedStep(k, press).
+  const TAB_SHED = { min: 0.5, down: 0.1, up: 0.05 };
+  function tabShedStep(k, press) { return press ? Math.max(TAB_SHED.min, k - TAB_SHED.down) : Math.min(1, k + TAB_SHED.up); }
+  function tabPress() {
+    try {
+      const tf = G._dmTabletFloor, gx = (typeof GFX !== 'undefined') ? GFX : G.GFX, f = tf ? tf(gx) : 0; if (!(f > 0)) return false;
+      const B = G.DMBudget; if (!(B && B.isExhausted && B.isExhausted())) return false;
+      const r = G.flightRenderer, d = r && r._dr; return !!(d && d.k <= f + 0.011);
+    } catch (e) { return false; }
+  }
+  // the shared reach uniform (index.html's crack/bump fade multiplies its own distances by it); null before TSL is up
+  function reachU() { if (!S.U) { if (!(G.THREE && G.THREE.TSL)) return null; initUniforms(); } return S.U.reachK; }
   // sun height + sky / water / moss colours from the surface state (TERRAIN is a classic-script const in index.html, so reach it through typeof)
   function pollSky() {
-    try { const B = G.DMBudget; if (S.U && B && B.on && B.groundReach) { S.U.reachK.value = B.groundReach(); S.U.dual.value = B.groundDual(); } else if (S.U) { S.U.reachK.value = 1; S.U.dual.value = 1; } } catch (e) { }
+    try { S.tabK = tabShedStep(S.tabK == null ? 1 : S.tabK, tabPress()); } catch (e) { S.tabK = 1; }
+    try { const B = G.DMBudget; if (S.U && B && B.on && B.groundReach) { S.U.reachK.value = B.groundReach() * S.tabK; S.U.dual.value = B.groundDual(); } else if (S.U) { S.U.reachK.value = S.tabK; S.U.dual.value = 1; } } catch (e) { }
     try {
       const TR = (typeof TERRAIN !== 'undefined') ? TERRAIN : null; if (!TR || !S.U) return;
       const sun = TR.sun; let el = 0.6;
@@ -456,9 +471,11 @@
       const uv0 = uvRaw.add(warp);
       const macroN = vnz(vec2(p.x, p.z).mul(0.045).add(vec2(17.3, 4.1))).mul(0.6).add(vnz(vec2(p.x, p.z).mul(0.16).add(vec2(1.9, 23.7))).mul(0.4));   // 0..1, ~6-25 m patches   // U.reachK / U.dual: ui/dm-budget.js ladder (uniforms; 1 = full)
       const dist = length(positionView);
+      // (t1590) ctx.fall = [start, end]: the ground's one radial falloff for the near detail (index.html _skyDetailFall, Radical Circumference / ArcEdge rim by Justin Craig Venable),
+      // soft over ~0.56 .. 1.5 reach instead of the 0.5 .. 1.0 reach edge that read as a sharp disc (82e25cd)
       // weights: the tile detail (colour / roughness / baked bump) runs to `reach`; the parallax march only close in (ctx.near .. ctx.far)
       const nY = ctx.nFlat.y;
-      const fadeF = float(1).sub(smoothstep(reach.mul(0.5), reach, dist)).mul(smoothstep(float(0.5), float(0.7), nY)).toVar();   // walkable-ish slopes only: the planar uv would streak on a cliff, which keeps its strata
+      const fadeF = float(1).sub(ctx.fall ? smoothstep(float(ctx.fall[0]).mul(U.reachK), float(ctx.fall[1]).mul(U.reachK), dist) : smoothstep(reach.mul(0.5), reach, dist)).mul(smoothstep(float(0.5), float(0.7), nY)).toVar();   // walkable-ish slopes only: the planar uv would streak on a cliff, which keeps its strata
       const steepW = smoothstep(float(0.14), float(0.34), float(1).sub(nY));   // slope steeper than ~30 deg -> rock plates
       const cellPx = float(Lc.cell), TT = float(Lc.T), atlasW = float(Lc.W), atlasH = float(Lc.H), pad = float(PAD);
       const tileUV = (uvw, idx) => {   // atlas coordinate of tile-space uvw (wrapping) inside slot idx; the gutter makes bilinear + mip <= 2 seamless
@@ -577,7 +594,7 @@
   G.DMGround = {
     wetAt,
     TYPES, BIOMES, profile, bake, bakeSync, bakeTile, packTile, allocAtlas, newTileBuf, layout, REG, REG_UNITS, COLS, ROWS, PAD, GS,
-    beginWorld, pump, apply, skyTick,
+    beginWorld, pump, apply, skyTick, reachU, tabShedStep, TAB_SHED, _pollSky: () => pollSky(),
     ref: { h2, vn, fbm, wor },
     status: () => ({ world: S.world && S.world.names, done: S.done, bakes: S.bakes, jobMs: +S.jobMs.toFixed(0), wallMs: +S.bakeMsTotal.toFixed(0), mats: S.mats, T: S.T }),
     _S: S,

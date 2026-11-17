@@ -48,6 +48,19 @@ for (const tier of L.TIERS) for (const h of [45, 70, 110, 150]) {
 // before the fix: 0.62 x 45 = 28 -> [16.8, 25.8]: the ring sat between her and the camera
 { const h = 45 * 0.62, a = 0.6 * h, b = 0.92 * h; ok(1 - sm(a, b, CAM3P) < 0.01, 'sanity: the old numbers put the camera outside the shadow (' + a.toFixed(1) + '-' + b.toFixed(1) + ' u)'); }
 
+// ── (5) (t1590) wherever the far layer does not RECEIVE (Low, Medium's shafts-only pass, every phone / tablet), covers() is false, so the on-foot box stays #269's full
+// tier box with its 0.82-0.97 ease-out: the mansion deck / overhangs never go lit past a tight box (the t1537 lit-floor ring)
+{ const SF = require(path.join(root, 'ui/dm-sunfar.js')).core;
+  for (const t of ['low', 'med', 'high', 'ultra']) for (const mob of [false, true]) {
+    const c = SF.tierCfg(t, mob), recv = !!(c && c.recv);
+    ok(recv === (!mob && (t === 'high' || t === 'ultra')), t + (mob ? ' handheld' : ' desktop') + ': far layer ' + (c ? (recv ? 'receives' : 'shafts only') : 'off'));
+    if (!recv) { win.DMSunFar = { covers: () => recv }; for (const size of [512, 1024]) { P._S.half = 0; const sun = mkSun(size); for (let i = 0; i < 400; i++) P.fitSun(sun, dir, 10, 5, -3, true);
+      ok(Math.abs(sun.shadow.camera.right - WIDE[size]) <= 0.5, t + (mob ? ' handheld' : ' desktop') + ' ' + size + ': full near box ' + sun.shadow.camera.right + ' (no tight box without far receivers)'); } }
+  }
+  ok(/!!S\.cfg\.recv && coversAt/.test(rd('ui/dm-sunfar.js')), 'dm-sunfar: covers() needs a receiving tier');
+  delete win.DMSunFar;
+}
+
 // ── (4) source pins ──
 const lt = rd('ui/dm-light.js');
 ok(/const wMap = float\(1\)\.sub\(smoothstep\(U\.sm\.x, U\.sm\.y/.test(lt), 'dm-light: the sun-map wrapper still reads U.sm (the band this test pins)');
