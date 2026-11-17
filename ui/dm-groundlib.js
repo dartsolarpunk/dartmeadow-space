@@ -456,9 +456,11 @@
       const uv0 = uvRaw.add(warp);
       const macroN = vnz(vec2(p.x, p.z).mul(0.045).add(vec2(17.3, 4.1))).mul(0.6).add(vnz(vec2(p.x, p.z).mul(0.16).add(vec2(1.9, 23.7))).mul(0.4));   // 0..1, ~6-25 m patches   // U.reachK / U.dual: ui/dm-budget.js ladder (uniforms; 1 = full)
       const dist = length(positionView);
+      // (t1590) ctx.fall = [start, end]: the ground's one radial falloff for the near detail (index.html _skyDetailFall, Radical Circumference / ArcEdge rim by Justin Craig Venable),
+      // soft over ~0.56 .. 1.5 reach instead of the 0.5 .. 1.0 reach edge that read as a sharp disc (82e25cd)
       // weights: the tile detail (colour / roughness / baked bump) runs to `reach`; the parallax march only close in (ctx.near .. ctx.far)
       const nY = ctx.nFlat.y;
-      const fadeF = float(1).sub(smoothstep(reach.mul(0.5), reach, dist)).mul(smoothstep(float(0.5), float(0.7), nY)).toVar();   // walkable-ish slopes only: the planar uv would streak on a cliff, which keeps its strata
+      const fadeF = float(1).sub(ctx.fall ? smoothstep(float(ctx.fall[0]).mul(U.reachK), float(ctx.fall[1]).mul(U.reachK), dist) : smoothstep(reach.mul(0.5), reach, dist)).mul(smoothstep(float(0.5), float(0.7), nY)).toVar();   // walkable-ish slopes only: the planar uv would streak on a cliff, which keeps its strata
       const steepW = smoothstep(float(0.14), float(0.34), float(1).sub(nY));   // slope steeper than ~30 deg -> rock plates
       const cellPx = float(Lc.cell), TT = float(Lc.T), atlasW = float(Lc.W), atlasH = float(Lc.H), pad = float(PAD);
       const tileUV = (uvw, idx) => {   // atlas coordinate of tile-space uvw (wrapping) inside slot idx; the gutter makes bilinear + mip <= 2 seamless

@@ -170,7 +170,7 @@ function covered(tiles, x, z) { let k = 0; for (const t of tiles) if (x >= t.x0 
   ok(/m\.maskNode=m\.maskNode\?m\.maskNode\.and\(keep\):keep;/.test(sky), 'the dissolve is AND-ed into the ground material\'s existing mask (planet reveal kept)');
   ok(/W\.interleavedGradientNoise\(W\.screenCoordinate\.xy\)\.lessThan\(k\)/.test(sky), 'screen-door dither (no blending, no new discard path)');
   const up = sky.slice(sky.indexOf('SkyGround.prototype.update=function'), sky.indexOf('SkyGround.prototype._rootKeep='));
-  ok(/this\._fadeU\.a\.value=this\.viewR\*_SKY_FADE0; this\._fadeU\.b\.value=this\.viewR;/.test(up), 'update() moves the circle with viewR by writing uniform values');
+  ok(/this\._fadeU\.a\.value=dz\?this\.viewR\*_SKY_FADE0:1e9; this\._fadeU\.b\.value=dz\?this\.viewR:2e9;/.test(up), 'update() moves the circle with viewR by writing uniform values');
   ok(!/new [A-Z]|\[\]|\{\}|=>/.test(up.replace(/\/\/[^\n]*/g, '')), 'update() still allocates nothing per frame');
   ok(!/TERRAIN\.exBox=/.test(sky), 'SkyGround only reads TERRAIN.exBox');
   ok(!/snowDrop|dm-earth-ice|DMEarthIce\./.test(sky), 'no polar ice back in the sky ground');
