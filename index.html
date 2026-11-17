@@ -1109,7 +1109,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-mansion-look.js?v=325" defer></script>
 <script src="ui/dm-mansion-interior.js?v=325" defer></script>
 <script src="ui/dm-orbit-clamp.js?v=1" defer></script>
-<script src="ui/dm-facilities.js?v=321" defer></script>
+<script src="ui/dm-facilities.js?v=333" defer></script>
 <script src="ui/dm-lamps.js?v=325" defer></script>
 <script src="ui/dm-mansion-collide.js?v=283" defer></script>
 <script src="ui/dm-holo.js?v=284" defer></script>
@@ -25959,7 +25959,7 @@ SkyGround.prototype._sea=function(h,step){ return this.pal.water&&step>=this.COA
 SkyGround.prototype._wet=function(x,z,h){
   if(!(h<0)) return false;
   const F=this.F, ex=(typeof TERRAIN!=='undefined')&&TERRAIN.exBox;
-  if(F.H0&&ex&&ex(x,z)){ const h0=F.H0(x,z); return h0<0; }
+  if(F.H0&&ex&&ex(x,z)){ const h0=(TERRAIN.Hw||F.H0)(x,z); return h0<0; }   // (t1516) Hw = natural ground + the sea at the mansion cliff's foot
   return true;
 };
 // (Wave 2a) a painted-sea vertex sits at the sea floor, clamped to 40 m deep (was a flat -2): the sea sheet over the nearer painted
@@ -26136,7 +26136,7 @@ function _pwBuildGround(pal,fx,fz,mode){
   const F=_groundField(body,site,pal); try{ const _f0=_fac(); if(_f0&&_f0.carveField) _f0.carveField(F); }catch(e){} const H=F.H, seed=F.seed;   // (exclusion) F.H = the planet ground with the mansion's box carved out (ui/dm-facilities.js F.carve): every DRAWN-ground consumer below samples it
   TERRAIN.style=F.ws; TERRAIN.wx0=F.sw.x; TERRAIN.wz0=F.sw.z;
   const Hs=(()=>{ try{ const f=_fac(); return f?f.wrapH(F.H0||H):H; }catch(e){ return H; } })();   // decks, pads, island tops and the mansion stand on the ground (the drawn ground below keeps the plain H)
-  TERRAIN.pal=pal; TERRAIN.H=Hs; TERRAIN.Hg=H; TERRAIN.Hw=F.H0||H;   /* Hw: the natural ground (no decks / mansion solids, no mansion-box carve) = what the sea's shore field should read */ TERRAIN.exBox=(()=>{ try{ const f=_fac(); return f&&f.exBox?f.exBox:null; }catch(e){ return null; } })(); TERRAIN.seed=seed; TERRAIN.siteBias=F.siteBias; TERRAIN.siteLat=F.siteLat;
+  TERRAIN.pal=pal; TERRAIN.H=Hs; TERRAIN.Hg=H; TERRAIN.Hw=(()=>{ const h0=F.H0||H; try{ const f=_fac(); return f&&f.seaField?f.seaField(h0):h0; }catch(e){ return h0; } })();   /* Hw: the natural ground (no decks / mansion solids, no mansion-box carve) = what the sea's shore field should read; (t1516) plus the sea at the mansion cliff's foot (DMFac.seaField: the GLB's sea cells + the apron in front of the face) */ TERRAIN.exBox=(()=>{ try{ const f=_fac(); return f&&f.exBox?f.exBox:null; }catch(e){ return null; } })(); TERRAIN.seed=seed; TERRAIN.siteBias=F.siteBias; TERRAIN.siteLat=F.siteLat;
   try{ if(window.DMGround) DMGround.beginWorld({style:F.ws,seed,water:!!pal.water,lat:F.siteLat}); }catch(e){ console.warn('[ground lib] bake',e); }
   try{ if(window.DMWater) DMWater.begin({body,pal,seed,lat:F.siteLat}); }catch(e){ console.warn('[water] begin',e); }   // (ui/dm-water*.js) the sea's wave tiles / identity from this world's gravity, air and liquid, baked in 2-3 ms slices   // atlas + region map baked in 2-3 ms slices between frames (the materials start on a neutral atlas, so nothing waits)
   TERRAIN.mcY=null; TERRAIN.mcN=null; TERRAIN.cpuMc=null; TERRAIN.mcGpu=false; TERRAIN._mcBusy=false; TERRAIN._mcUpg=false;
