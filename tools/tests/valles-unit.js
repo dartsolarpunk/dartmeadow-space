@@ -25,7 +25,8 @@ const timers = []; const fakeTimeout = (f, ms) => { timers.push(f); return timer
 const flush = (n = 400) => { for (let i = 0; i < n && timers.length; i++) timers.shift()(); };
 const boxes = []; let cleared = 0;
 let fakeNow = 1000; const perf = { now: () => fakeNow };
-const sb = { console, Math, Float64Array, Float32Array, Uint8Array, Uint8ClampedArray, Int16Array, Set, Map, Promise, JSON, Date, performance: perf, setTimeout: fakeTimeout, clearTimeout() { },
+let fakeDate = 5e12; const FDate = { now: () => fakeDate };
+const sb = { console, Math, Float64Array, Float32Array, Uint8Array, Uint8ClampedArray, Int16Array, Set, Map, Promise, JSON, Date: FDate, performance: perf, setTimeout: fakeTimeout, clearTimeout() { },
   navigator: { userAgent: 'node' }, document: { hidden: false, createElement: canvas }, location: { search: '' }, CustomEvent: function () { }, addEventListener() { }, dispatchEvent() { },
   DMCrumb: { begin() { }, end() { }, mark() { }, live() { }, gpu() { } },
   DMCollide: { addBox: (g, x, y, z, hx, hy, hz, yaw, m) => { boxes.push({ g, x, y, z, hx, hy, hz, yaw, m }); return boxes.length - 1; }, addCylinder: () => 0, clearGroup: (g) => { if (g === 'facility') { cleared++; boxes.length = 0; } } } };
@@ -65,6 +66,23 @@ for (const [name, st, must] of cases) {
   ok(en === 'enter:Mars:mars-valles', name + ': enterAtmosphericFlight(Mars) with arriveAt still set (' + log.join(',') + ')');
   ok(!log.includes('SILENT'), name + ': not the silent other-sky return');
   if (must.length === 0) ok(!log.includes('atmoExit') && !log.includes('closeWorld'), name + ': did not leave its own sky');
+}
+
+// a stalled exit (the sky never closes) must not block a second LAND for long, and an exit that throws frees the flag at once
+{
+  const st = { gal: 'lumenreach', sys: 'Veyra', atmo: true, surf: false, deck: false, pw: { active: true, body: { name: 'Solenne' } } };
+  const log = world(st); A.bind(Object.assign(A.ctx, { atmoExitToSpace: () => log.push('atmoExit') }));   // stalls: atmoActive stays true
+  timers.length = 0;
+  A.visit('mars-valles'); st.go(); const n1 = log.filter(l => l === 'atmoExit').length;
+  fakeDate += 3000; A.visit('mars-valles'); st.go(); const n2 = log.filter(l => l === 'atmoExit').length;
+  fakeDate += 8000; A.visit('mars-valles'); st.go(); const n3 = log.filter(l => l === 'atmoExit').length;
+  ok(n1 === 1 && n2 === 1, 'a second LAND within 10 s of a running exit is ignored (' + n1 + ',' + n2 + ')');
+  ok(n3 === 2, 'after ~10 s a stalled exit no longer blocks a new LAND (' + n3 + ')');
+  timers.length = 0;
+  A.bind(Object.assign(A.ctx, { atmoExitToSpace: () => { log.push('throw'); throw new Error('x'); } }));
+  fakeDate += 20000; A.visit('mars-valles'); st.go(); A.visit('mars-valles'); st.go();
+  ok(log.filter(l => l === 'throw').length === 2, 'an exit that throws clears the flag (the next tap tries again)');
+  timers.length = 0;
 }
 
 // ── 2. the facility ──

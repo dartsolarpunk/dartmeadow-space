@@ -169,21 +169,27 @@
   // (v336) LAND leaves whatever she is in first (another world's sky or ground, the Bird Temple deck), like HOME does, then travels.
   // enterAtmosphericFlight returns without doing anything while ANOTHER world's sky is open, so a LAND from there never started.
   // Already in THIS landmark's own sky: stay (the existing fly-there + set-down path).
-  let leaving = false;
+  let leaving = 0, leaveGen = 0;   // (v338) time the current leave started; a stalled exit stops blocking a new LAND tap after LEAVE_HOLD_MS
+  const LEAVE_HOLD_MS = 10000;
   function sameSky(s) { const c = C(); return !!(c.atmoActive && c.PW && c.PW.active && c.PW.body && c.PW.body.name === s.body && c.curSysName() === (s.sys || 'Sol') && c.curGalaxy() === s.gal); }
   function leaveThen(s, go) {
     const c = C();
     const deck = !!(c.shipWalk && c.shipWalk());
     if (sameSky(s) || (!c.atmoActive && !c.surfaceActive && !deck)) { go(); return; }
-    if (leaving) return; leaving = true;
+    const now = Date.now();
+    if (leaving && now - leaving < LEAVE_HOLD_MS) return;   // a second tap while the first exit is still running
+    leaving = now; const gen = ++leaveGen;                  // a newer LAND supersedes an older (stalled) wait loop
     c.toast('🛰️ ' + s.label + ' — leaving here first…', 2400);
-    try { if (deck && c.exitShipWalk) c.exitShipWalk(); } catch (e) { }
-    try { if (c.atmoActive) c.atmoExitToSpace(); else if (c.surfaceActive) c.exitSurface(); } catch (e) { }
+    let failed = false;
+    try { if (deck && c.exitShipWalk) c.exitShipWalk(); } catch (e) { failed = true; }
+    try { if (c.atmoActive) c.atmoExitToSpace(); else if (c.surfaceActive) c.exitSurface(); } catch (e) { failed = true; }
+    if (failed) { leaving = 0; giveUp(s); return; }          // the exit itself threw: do not hold the flag
     let n = 0;
     (function wait() {
+      if (gen !== leaveGen) return;
       const st = c.STATE && c.STATE.screen, dk = !!(c.shipWalk && c.shipWalk());
-      if (!c.atmoActive && !c.surfaceActive && !dk && st === 'flight' && c.flightInited) { leaving = false; go(); return; }
-      if (++n > 240) { leaving = false; giveUp(s); return; }
+      if (!c.atmoActive && !c.surfaceActive && !dk && st === 'flight' && c.flightInited) { leaving = 0; go(); return; }
+      if (++n > 240) { leaving = 0; giveUp(s); return; }
       setTimeout(wait, 500);
     })();
   }
