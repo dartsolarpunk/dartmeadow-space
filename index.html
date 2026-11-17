@@ -231,7 +231,7 @@ window.DMFT=window.DMFT||(function(){ const E=Object.create(null), X=Object.crea
 <script src="ui/dm-fluid.js?v=80"></script>
 <script src="ui/dm-journal.js?v=98"></script>
 <script src="ui/dm-worldstyle.js?v=94"></script>
-<script src="ui/dm-polish.js?v=325"></script>
+<script src="ui/dm-polish.js?v=339"></script>
 <script src="ui/dm-stars.js?v=333"></script>   <!-- (v334 Cosmos) DMStars: the system's real stars as seen from the world - per-star direction / colour / weight + the ONE key-light direction (keyDir) the sky, the air, the sun light and its shadows share -->
 <script src="ui/dm-sky.js?v=209"></script>
 <script src="ui/dm-dust.js?v=191"></script>
@@ -1072,7 +1072,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-landmark.js?v=293" defer></script>
 <script src="ui/dm-landzones.js?v=293" defer></script>
 <script src="ui/dm-padbind.js?v=293" defer></script>
-<script src="ui/dm-globe.js?v=9" defer></script>
+<script src="ui/dm-globe.js?v=339" defer></script>
 <script src="ui/dm-star.js?v=191" defer></script>
 <script src="ui/dm-mist.js?v=8" defer></script>
 <script src="ui/dm-atmo.js?v=332" defer></script>
@@ -1110,7 +1110,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-mansion-look.js?v=325" defer></script>
 <script src="ui/dm-mansion-interior.js?v=325" defer></script>
 <script src="ui/dm-orbit-clamp.js?v=1" defer></script>
-<script src="ui/dm-facilities.js?v=338" defer></script>
+<script src="ui/dm-facilities.js?v=339" defer></script>
 <script src="ui/dm-lamps.js?v=325" defer></script>
 <script src="ui/dm-mansion-collide.js?v=283" defer></script>
 <script src="ui/dm-holo.js?v=284" defer></script>
@@ -12074,12 +12074,11 @@ function _buildArielBoard(){
   const swoosh=new THREE.Mesh(new THREE.TubeGeometry(sw,120,0.0045,6,false),glowMat); swoosh.name='swoosh'; grp.add(swoosh);
   // twin energy rings, flush with the deck
   const ringMat=new THREE.MeshStandardMaterial({color:light,emissive:light,emissiveIntensity:2.2,metalness:0.8,roughness:0.15,transparent:true,opacity:0.92});
-  const coreMat=new THREE.MeshBasicMaterial({color:light,transparent:true,opacity:0.32,depthWrite:false,toneMapped:false});
   [0.72,-0.82].forEach((x,i)=>{
     const g=new THREE.Group(); g.position.set(x,0.006,0); g.name='energy ring '+(i+1);
     const t=new THREE.Mesh(new THREE.TorusGeometry(0.104,0.0085,8,40),ringMat); t.rotation.x=Math.PI/2; g.add(t);
     const t2=new THREE.Mesh(new THREE.TorusGeometry(0.062,0.0045,6,32),ringMat); t2.rotation.x=Math.PI/2; g.add(t2);
-    const d=new THREE.Mesh(new THREE.CircleGeometry(0.1,32),coreMat); d.rotation.x=-Math.PI/2; d.position.y=0.001; g.add(d);
+    // (t1536) no translucent core disc inside the rings: a glowing disc under her feet read as the old projector circle
     grp.add(g);
   });
   // amber crystal arrowhead at the nose
@@ -27610,7 +27609,7 @@ function _bcCtx(){
       faceYaw:()=>{ const y=SHIP_WALK.faceYaw; return {x:Math.sin(y),z:Math.cos(y)}; }};
   return null;
 }
-function _bcButtons(){ document.querySelectorAll('.kb-park').forEach(b=>{ b.classList.toggle('on',BOARD_CALL.parked); b.title=BOARD_CALL.parked?'Skyboard parked — tap to have it follow you again':'Park the skyboard here'; b.setAttribute('aria-pressed',String(BOARD_CALL.parked)); }); }
+function _bcButtons(){ document.querySelectorAll('.kb-park').forEach(b=>{ b.classList.toggle('on',BOARD_CALL.parked); b.title=BOARD_CALL.parked?'Skyboard parked — tap to have it follow you again':'Park the skyboard here'; b.setAttribute('aria-pressed',String(BOARD_CALL.parked)); }); try{ window.DMGlobe&&DMGlobe.sync&&DMGlobe.sync(); }catch(e){} }
 function _bcShipAnchored(){ return !!(typeof ANCHOR_STATE!=='undefined'&&ANCHOR_STATE.active&&ANCHOR_STATE.target&&ANCHOR_STATE.target.isBirdTemple&&BIRD_TEMPLE.group&&BIRD_TEMPLE.spawned); }
 function _bcReparkOnShip(){
   const T=BOARD_CALL, g=BIRD_TEMPLE.group; if(!g||!T.parked||T.parkLocal||!boardFlight) return;
@@ -27621,7 +27620,7 @@ function _bcReparkOnShip(){
 }
 function _bcParkedWorld(){ return BOARD_CALL.parked&&BOARD_CALL.parkPos&&!BOARD_CALL.parkLocal; }
 function parkSkyboard(){
-  const c=_bcCtx(); if(!c) return;
+  const c=_bcCtx(); if(!c){ try{ toast('🛹 Park / summon works while you walk — land or step off first',1800); }catch(e){} return; }
   if(BOARD_CALL.parked){ BOARD_CALL.parked=false; BOARD_CALL.rejoin=performance.now(); toast('🛹 Skyboard follows you again',1600); }
   else{
     BOARD_CALL.parked=true; BC_COL.y=null; BC_COL.hv=false; BOARD_CALL.summon=null; BOARD_CALL.parkPos=c.b.position.clone(); BOARD_CALL.parkQuat=c.b.quaternion.clone(); BOARD_CALL.parkLocal=null;
@@ -27649,7 +27648,7 @@ function _charmTick(dt){
   C.tick(dt,r);
 }
 function summonSkyboard(){
-  const c=_bcCtx(); if(!c) return;
+  const c=_bcCtx(); if(!c){ try{ toast('🛹 Park / summon works while you walk — land or step off first',1800); }catch(e){} return; }
   if(!_bcV1){ _bcV1=new THREE.Vector3(); _bcV2=new THREE.Vector3(); _bcV3=new THREE.Vector3(); }
   const b=c.b, her=c.her, ft=c.unit;
   let from=b.position.clone();
