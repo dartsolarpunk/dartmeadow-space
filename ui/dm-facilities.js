@@ -109,8 +109,7 @@
     G.slab(T, g, m.deck, deckPoly, -1.5, 1.5);
     G.edge(T, g, m.neonP, deckPoly, 0.08, 0.34);
     G.edge(T, g, m.neonB, deckPoly.map(p => [p[0] * 0.98, p[1] * 0.98]), -1.55, 0.5);
-    const ring = new T.Mesh(new T.RingGeometry(8.2, 8.9, 48), m.neonB); ring.rotation.x = -Math.PI / 2; ring.position.set(0, 0.05, 28); g.add(ring);
-    const ring2 = new T.Mesh(new T.RingGeometry(3.4, 3.8, 32), m.neonP); ring2.rotation.x = -Math.PI / 2; ring2.position.set(0, 0.05, 28); g.add(ring2);
+    // (t1536) the blue + violet neon pad rings at the deck centre are gone: she lands on that pad, and from the follow camera they read as the old projector disc under her
     sol.push({ poly: deckPoly, y: 0 });
     // foundation block + raked struts into the cliff
     G.box(T, g, hull, 56, 80, 36, 0, -41, -22);
@@ -178,7 +177,7 @@
       const ce = new T.Mesh(new T.CylinderGeometry(o.r + 4, o.r + 9, 46, 36, 1, true), m.cliff); ce.position.set(o.x, -20, o.z); g.add(ce);
       const beach = new T.Mesh(new T.CylinderGeometry(o.r + 4, o.r + 4, 1.4, 36), m.sand); beach.position.set(o.x, 2.3, o.z); g.add(beach);
       const top = new T.Mesh(new T.CylinderGeometry(o.r, o.r + 1, 1.2, 36), m.island); top.position.set(o.x, 2.9, o.z); g.add(top);
-      const pave = new T.Mesh(new T.RingGeometry(o.r * 0.28, o.r * 0.34, 36), m.paving); pave.rotation.x = -Math.PI / 2; pave.position.set(o.x, 3.55, o.z); g.add(pave);
+      // (t1536) no paving ring at the island centre (a landing spot): no ring under her on any map
       sol.push({ circle: [o.x, o.z, o.r + 3], y: 3.5 });
       const nT = k === 0 ? 3 : (k % 2 ? 2 : 1);
       for (let t = 0; t < nT; t++) {
