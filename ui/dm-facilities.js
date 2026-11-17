@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  const F = window.DMFac = { ctx: null, sites: new Map(), solids: [], scene: null, ver: '302', shardVer: '345' };   // (v302) asset cache key: cliff / mansion GLBs, collision, cliff maps, GI re-baked (JOTS Cliffs) - unchanged in t1516, so the 10 MB GLB is not re-fetched; shardVer: the t1516 shard layer
+  const F = window.DMFac = { ctx: null, sites: new Map(), solids: [], scene: null, ver: '302', shardVer: '348' };   // (v302) asset cache key: cliff / mansion GLBs, collision, cliff maps, GI re-baked (JOTS Cliffs) - unchanged in t1516, so the 10 MB GLB is not re-fetched; shardVer: the t1516 shard layer
   const DM = window.DM_FAC = window.DM_FAC || {};
   DM.bay = DM.bay || { inside: false, membrane: 0 };
   F.bind = c => { F.ctx = c; };
@@ -383,11 +383,13 @@
     return root;
   }
   // ── (t1516) the macro SHARD-ROCK layer ───────────────────────────────────────────────────────────────────────────────────────────────────────────
-  // Straight, angular prisms of the cliff's own rock (ah_rockc columnar / ah_rockt talus PBR sets: opaque, roughness from the ORM >= 0.68, metalness 0, no emissive),
-  // flat-shaded so every facet is a plane and every edge is crisp at any distance.  Built ONCE per placement (no per-frame work), one geometry per material, drawn
-  // by a mesh under Mansion_LOD0 and one under Mansion_LOD1 (shared geometry), so the cliff's level bands, cross-fade and size fade carry them.  ~3.3k triangles,
-  // 2 draw calls per visible level.  Pure array builder (F.shardBuild) is node-tested (tools/tests/solenne-cliff.js).
+  // Angular prisms of the cliff's own rock (ah_rockc / ah_rockt: opaque, roughness ~0.85, metalness 0, no emissive), flat-shaded so every
+  // facet is a plane.  Tops are cleaved tilted planes or stepped ledges, not pointed pyramids; the layer is half or fewer of the original
+  // 205 shards / 3309 tris, one continuous weathered massif, no lone spires.  Built ONCE per placement (no per-frame work), one geometry
+  // per material, drawn under Mansion_LOD0 and Mansion_LOD1 (shared geometry), 2 draw calls per visible level.  Pure array builder
+  // (F.shardBuild) is node-tested (tools/tests/solenne-cliff.js).
   //   q = [bx, by, base, height, radius, sides, rot, leanX, leanY, apexK, apexX, apexY, mat, tone, ground]   (mansion frame; glTF x = bx, y = rel. height, z = -by)
+  //   apexK < 0.35: cleaved plane (tilt = apexK * r); apexK >= 0.35: stepped ledge. apexX/Y = tilt direction.
   const shardHash = (a, b) => { const v = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return v - Math.floor(v); };
   F.shardBuild = function (J, groundRel, gridRel) {
     const L = J.shards, tile = J.tileM || 3, out = [];
@@ -401,32 +403,42 @@
         const gG = gridRel ? gridRel(Math.max(-198, Math.min(198, bx)), by) : 0, gT = groundRel ? groundRel(bx, by) : gG, lo = Math.min(gG, gT), hi = Math.max(gG, gT);
         base = lo + q[2]; h = (hi - base) + q[3];
       }
-      const yT = base + h * (1 - q[9]), yA = base + h, sc = 0.82, lx = q[7], lz = -q[8];
+      const yC = base + h, lx = q[7], lz = -q[8];
+      const stepped = q[9] >= 0.35, tiltAmp = (stepped ? q[9] - 0.35 : q[9]) * r;
+      const tLen = Math.hypot(q[10], q[11]) || 1, tX = q[10] / tLen, tZ = q[11] / tLen;
+      const sc = 0.90 + 0.06 * shardHash(bx - 2, by);
       for (let k = 0; k < n; k++) {
         const a = q[6] + k * 6.2832 / n + (shardHash(bx + k, by) - 0.5) * 0.5, rk = r * (0.78 + 0.22 * shardHash(by + k, bx));
         const cx = Math.cos(a) * rk, cz = -Math.sin(a) * rk;
         bot[k * 3] = bx + cx; bot[k * 3 + 1] = base; bot[k * 3 + 2] = -by + cz;
-        top[k * 3] = bx + cx * sc + lx; top[k * 3 + 1] = yT; top[k * 3 + 2] = -by + cz * sc + lz;
+        let yTop = yC + (cx * tX + cz * tZ) / r * tiltAmp;
+        if (stepped && k >= n / 2) yTop -= (0.16 + 0.18 * shardHash(k, bx)) * r;
+        top[k * 3] = bx + cx * sc + lx; top[k * 3 + 1] = yTop; top[k * 3 + 2] = -by + cz * sc + lz;
       }
-      const axX = bx + lx + q[10] * r * 0.6, axY = yA, axZ = -by + lz - q[11] * r * 0.6, cX = bx + lx * 0.5, cZ = -by + lz * 0.5;
-      const tone = q[13], wet = 0.68;
+      const axX = bx + lx, axZ = -by + lz, axY = yC - (stepped ? 0.08 * r : 0), cX = bx + lx * 0.5, cZ = -by + lz * 0.5;
+      const tone = q[13], wet = 0.72;
       const tri = (ax, ay, az, au, av, bx2, by2, bz, bu, bv, cx2, cy2, cz2, cu, cv, ta, tb, tc) => {
         let ux = bx2 - ax, uy = by2 - ay, uz = bz - az, vx = cx2 - ax, vy = cy2 - ay, vz = cz2 - az;
         let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
         const mx = (ax + bx2 + cx2) / 3 - cX, mz = (az + bz + cz2) / 3 - cZ, my = (ay + by2 + cy2) / 3 - (base + h * 0.5);
         let flip = nx * mx + ny * my * 0.25 + nz * mz < 0; const l = Math.hypot(nx, ny, nz) || 1; nx /= l; ny /= l; nz /= l; if (flip) { nx = -nx; ny = -ny; nz = -nz; }
         const P = flip ? [[ax, ay, az, au, av, ta], [cx2, cy2, cz2, cu, cv, tc], [bx2, by2, bz, bu, bv, tb]] : [[ax, ay, az, au, av, ta], [bx2, by2, bz, bu, bv, tb], [cx2, cy2, cz2, cu, cv, tc]];
-        for (const p of P) { const i = o.v++; o.pos[i * 3] = p[0]; o.pos[i * 3 + 1] = p[1]; o.pos[i * 3 + 2] = p[2]; o.nrm[i * 3] = nx; o.nrm[i * 3 + 1] = ny; o.nrm[i * 3 + 2] = nz; o.uv[i * 2] = p[3]; o.uv[i * 2 + 1] = p[4]; const t = tone * p[5]; o.col[i * 3] = t; o.col[i * 3 + 1] = t * 0.985; o.col[i * 3 + 2] = t * 0.955; }
+        for (const p of P) {
+          const i = o.v++; o.pos[i * 3] = p[0]; o.pos[i * 3 + 1] = p[1]; o.pos[i * 3 + 2] = p[2]; o.nrm[i * 3] = nx; o.nrm[i * 3 + 1] = ny; o.nrm[i * 3 + 2] = nz; o.uv[i * 2] = p[3]; o.uv[i * 2 + 1] = p[4];
+          // Warm grey-brown multipliers: texture mean ~0.25 * (0.80, 0.68, 0.56) ≈ sRGB 0.20/0.17/0.14, plus darker iron/umber streaks
+          const streak = shardHash(p[0] * 0.37 + bx, p[2] * 0.37 + by), umber = streak < 0.22 ? 0.62 + 0.25 * streak / 0.22 : 1, tv = tone * p[5] * umber;
+          o.col[i * 3] = tv * 0.80; o.col[i * 3 + 1] = tv * 0.68; o.col[i * 3 + 2] = tv * 0.56;
+        }
       };
       let per = 0;
       for (let k = 0; k < n; k++) {
         const k2 = (k + 1) % n, b0 = k * 3, b1 = k2 * 3, w = Math.hypot(bot[b1] - bot[b0], bot[b1 + 2] - bot[b0 + 2]), u0 = per / tile, u1 = (per + w) / tile; per += w;
-        const vb = -base / tile, vt = -yT / tile;
-        tri(bot[b0], bot[b0 + 1], bot[b0 + 2], u0, vb, bot[b1], bot[b1 + 1], bot[b1 + 2], u1, vb, top[b1], top[b1 + 1], top[b1 + 2], u1, vt, wet, wet, 1);
-        tri(bot[b0], bot[b0 + 1], bot[b0 + 2], u0, vb, top[b1], top[b1 + 1], top[b1 + 2], u1, vt, top[b0], top[b0 + 1], top[b0 + 2], u0, vt, wet, 1, 1);
-        tri(top[b0], top[b0 + 1], top[b0 + 2], u0, vt, top[b1], top[b1 + 1], top[b1 + 2], u1, vt, axX, axY, axZ, (u0 + u1) * 0.5, -yA / tile, 1, 1, 1.06);
+        const vb = -base / tile, vt0 = -top[b0 + 1] / tile, vt1 = -top[b1 + 1] / tile;
+        tri(bot[b0], bot[b0 + 1], bot[b0 + 2], u0, vb, bot[b1], bot[b1 + 1], bot[b1 + 2], u1, vb, top[b1], top[b1 + 1], top[b1 + 2], u1, vt1, wet, wet, 1);
+        tri(bot[b0], bot[b0 + 1], bot[b0 + 2], u0, vb, top[b1], top[b1 + 1], top[b1 + 2], u1, vt1, top[b0], top[b0 + 1], top[b0 + 2], u0, vt0, wet, 1, 1);
+        tri(top[b0], top[b0 + 1], top[b0 + 2], u0, vt0, top[b1], top[b1 + 1], top[b1 + 2], u1, vt1, axX, axY, axZ, (u0 + u1) * 0.5, -axY / tile, 1, 1, 1);
       }
-      if (r >= 2.5) o.cyl.push([bx + lx * 0.5, by - lz * 0.5, base, base + h * (1 - q[9] * 0.5), r * 0.8]);
+      if (r >= 2.5) o.cyl.push([bx + lx * 0.5, by - lz * 0.5, base, base + h * 0.85, r * 0.8]);
     }
     return out;
   };
@@ -441,7 +453,14 @@
       const g = new T.BufferGeometry();
       g.setAttribute('position', new T.BufferAttribute(o.pos, 3)); g.setAttribute('normal', new T.BufferAttribute(o.nrm, 3)); g.setAttribute('uv', new T.BufferAttribute(o.uv, 2)); g.setAttribute('color', new T.BufferAttribute(o.col, 3));
       geos.push(g);
-      for (const lv of [u.lod0, u.lod1]) { if (!lv) continue; const me = new T.Mesh(g, src.material); me.name = 'Mansion_Shards_' + J.materials[m]; me.frustumCulled = false; me.castShadow = false; me.receiveShadow = src.receiveShadow; me.userData.dmShards = true; lv.add(me); }
+      // Clone so vertexColors / a matte roughness / metalness 0 apply to the shards without changing the GLB cliff.
+      // Albedo and normal maps stay shared (upgradeCliff copies new 1K/2K maps onto these clones).
+      const sm = src.material.clone();
+      sm.vertexColors = true; sm.metalness = 0; sm.metalnessMap = null; sm.roughness = 0.85; sm.roughnessMap = null; sm.emissiveIntensity = 0;
+      if (sm.emissive && sm.emissive.setRGB) sm.emissive.setRGB(0, 0, 0); else if (sm.emissive && sm.emissive.set) sm.emissive.set(0, 0, 0);
+      sm.userData = sm.userData || {}; sm.userData.dmShardMat = true; sm.needsUpdate = true;
+      (u.shardMats || (u.shardMats = [])).push(sm);
+      for (const lv of [u.lod0, u.lod1]) { if (!lv) continue; const me = new T.Mesh(g, sm); me.name = 'Mansion_Shards_' + J.materials[m]; me.frustumCulled = false; me.castShadow = false; me.receiveShadow = src.receiveShadow; me.userData.dmShards = true; lv.add(me); }
       // colliders: one upright cylinder per prism (r >= 2.5), group 'facility' (cleared in teardown)
       try { const D = window.DMCollide; if (D && D.addCylinder) for (const c of o.cyl) { const wx = px + c[0] * ct - c[1] * st, wz = pz - c[0] * st - c[1] * ct; D.addCylinder('facility', wx, y0 + c[2], y0 + c[3], wz, c[4], 'stone'); } } catch (e) { }
     }
@@ -596,6 +615,7 @@
         a.colorSpace = T.SRGBColorSpace;
         const old = [mat.map, mat.normalMap, mat.roughnessMap];
         mat.map = a; mat.normalMap = b; mat.roughnessMap = o; mat.metalnessMap = o; mat.needsUpdate = true;
+        for (const rec of F.sites.values()) { const mats = rec.group && rec.group.userData && rec.group.userData.shardMats; if (!mats) continue; for (const sm of mats) if (sm.name === mat.name) { sm.map = a; sm.normalMap = b; sm.needsUpdate = true; } }
         old.forEach(x => { if (x && x.dispose && x !== a && x !== b && x !== o) x.dispose(); });   // the embedded 512 maps go as soon as the new ones are on the material
         if (pxOn && mat.isNodeMaterial) {   // (parallax) the set's height map (8-bit, 1 = proud), marched in the 14..40 m fade band from cliff-materials.json
           try {
@@ -766,7 +786,7 @@
     if (window.DMHolo) { try { DMHolo.detach(); } catch (e) { } }
     if (window.DMLamps) { try { DMLamps.detach(); } catch (e) { } }
     if (window.DMMansionInt) { try { DMMansionInt.detach(); } catch (e) { } }
-    for (const r of F.sites.values()) { if (r.group && r.group.parent) r.group.parent.remove(r.group); if (r.group && !r.mansion) dispose(r.group); if (r.shardGeos) { r.shardGeos.forEach(g => g.dispose()); r.shardGeos = null; } }
+    for (const r of F.sites.values()) { if (r.group && r.group.parent) r.group.parent.remove(r.group); if (r.group && !r.mansion) dispose(r.group); if (r.shardGeos) { r.shardGeos.forEach(g => g.dispose()); r.shardGeos = null; } if (r.group && r.group.userData && r.group.userData.shardMats) { r.group.userData.shardMats.forEach(m => { try { m.dispose(); } catch (e) { } }); r.group.userData.shardMats = null; } }
     try { if (window.DMCollide && DMCollide.clearGroup) DMCollide.clearGroup('facility'); } catch (e) { }
     F.car = null; F.sites.clear(); F.solids.length = 0; F.bay = null; DM.bay.inside = false; DM.bay.membrane = 0;
     crumb('end', 'fac:teardown');
