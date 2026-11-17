@@ -117,13 +117,18 @@
   // after a jump: poll until the system's bodies are built, then land at the landmark
   let pend = null;
   A.landPending = () => !!pend;   // (v228) a landing is queued: the system warm-up waits for it
+  function giveUp(s) { const c = C(); try { c.toast('⚠ Could not reach ' + (s.label || s.body) + ' — try LAND again from Travel', 3200); } catch (e) { } }   // (v336) never a silent drop
   function pollLand() {
     const c = C(); if (!pend) return;
     const s = pend, sysOk = (s.sys || 'Sol') === c.curSysName() && c.curGalaxy() === s.gal;
     const b = sysOk && c.celestialBodies.find(x => x.name === s.body && x.mesh);
-    if (b && !c.PW.opening && !c.sysBusy) { pend = null; try { window.DM_FAC = window.DM_FAC || {}; window.DM_FAC.arriveAt = s.id; window.DM_FAC.homeDeck = !!s.deck; c.enterAtmosphericFlight(b, { lat: s.lat, lon: s.lon }); } catch (e) { console.warn('[home] land', e); } return; }
+    if (b && !c.PW.opening && !c.sysBusy) { pend = null; try {
+      // (v336) a world open in SPACE mode (the hand-off near a planet) is closed HERE, before arriveAt is set: enterAtmosphericFlight would close it
+      // itself, and _pwRestoreSpace clears DM_FAC.arriveAt, so the landmark was built but she was never set down at it.
+      if (s.leave && c.PW.active && !c.atmoActive && !c.surfaceActive && c.closeWorld) { try { c.closeWorld(); } catch (e) { } }
+      window.DM_FAC = window.DM_FAC || {}; window.DM_FAC.arriveAt = s.id; window.DM_FAC.homeDeck = !!s.deck; c.enterAtmosphericFlight(b, { lat: s.lat, lon: s.lon }); } catch (e) { console.warn('[home] land', e); } return; }
     // (v231) a slow phone's system rebuild can take minutes: while it runs the landing is waiting, not failing (bounded at 6 min)
-    if (c.sysBusy) { if (++s.busy > 600) { pend = null; return; } } else if (++s.tries > 80) { pend = null; return; }
+    if (c.sysBusy) { if (++s.busy > 600) { pend = null; if (s.leave) giveUp(s); return; } } else if (++s.tries > 80) { pend = null; if (s.leave) giveUp(s); return; }
     setTimeout(pollLand, 600);
   }
   // HOME button: Quick Travel straight to Ariel's mansion deck, from space, the sky or the ground (no confirm — the button IS the intent)
@@ -161,12 +166,42 @@
     const here = c.curGalaxy() === s.gal && c.curSysName() === (s.sys || 'Sol') && c.flightInited;
     openLand(s, here);
   };
+  // (v336) LAND leaves whatever she is in first (another world's sky or ground, the Bird Temple deck), like HOME does, then travels.
+  // enterAtmosphericFlight returns without doing anything while ANOTHER world's sky is open, so a LAND from there never started.
+  // Already in THIS landmark's own sky: stay (the existing fly-there + set-down path).
+  let leaving = 0, leaveGen = 0;   // (v338) time the current leave started; a stalled exit stops blocking a new LAND tap after LEAVE_HOLD_MS
+  const LEAVE_HOLD_MS = 10000;
+  function sameSky(s) { const c = C(); return !!(c.atmoActive && c.PW && c.PW.active && c.PW.body && c.PW.body.name === s.body && c.curSysName() === (s.sys || 'Sol') && c.curGalaxy() === s.gal); }
+  function leaveThen(s, go) {
+    const c = C();
+    const deck = !!(c.shipWalk && c.shipWalk());
+    if (sameSky(s) || (!c.atmoActive && !c.surfaceActive && !deck)) { go(); return; }
+    const now = Date.now();
+    if (leaving && now - leaving < LEAVE_HOLD_MS) return;   // a second tap while the first exit is still running
+    leaving = now; const gen = ++leaveGen;                  // a newer LAND supersedes an older (stalled) wait loop
+    c.toast('🛰️ ' + s.label + ' — leaving here first…', 2400);
+    let failed = false;
+    try { if (deck && c.exitShipWalk) c.exitShipWalk(); } catch (e) { failed = true; }
+    try { if (c.atmoActive) c.atmoExitToSpace(); else if (c.surfaceActive) c.exitSurface(); } catch (e) { failed = true; }
+    if (failed) { leaving = 0; giveUp(s); return; }          // the exit itself threw: do not hold the flag
+    let n = 0;
+    (function wait() {
+      if (gen !== leaveGen) return;
+      const st = c.STATE && c.STATE.screen, dk = !!(c.shipWalk && c.shipWalk());
+      if (!c.atmoActive && !c.surfaceActive && !dk && st === 'flight' && c.flightInited) { leaving = 0; go(); return; }
+      if (++n > 240) { leaving = 0; giveUp(s); return; }
+      setTimeout(wait, 500);
+    })();
+  }
   function openLand(s, here) {
     const c = C();
     c.openFastTravel('LAND — ' + s.label.toUpperCase(), (here ? 'Descend to ' : 'Jump to ' + (s.sys || 'Sol') + ' and descend to ') + s.label + ' on ' + s.body + '?', () => {
-      pend = { id: s.id, body: s.body, sys: s.sys, gal: s.gal, lat: s.lat, lon: s.lon, tries: 0, busy: 0 };
-      if (!here) { c.GALAXY_DB.current = s.gal; c.fastTravelToSystem(s.sys ? A.system : null, s.gal); }
-      setTimeout(pollLand, here ? 100 : 2200);
+      leaveThen(s, () => {
+        const h = c.curGalaxy() === s.gal && c.curSysName() === (s.sys || 'Sol') && c.flightInited;
+        pend = { id: s.id, body: s.body, sys: s.sys, gal: s.gal, lat: s.lat, lon: s.lon, label: s.label, tries: 0, busy: 0, leave: true };
+        if (!h) { c.GALAXY_DB.current = s.gal; c.fastTravelToSystem(s.sys ? A.system : null, s.gal); }
+        setTimeout(pollLand, h ? 100 : 2200);
+      });
     });
   }
   const siteNode = s => ({ id: 'site:' + s.id, icon: s.icon, label: s.label, meta: s.meta, go: () => A.visit(s.id), kids: null });
