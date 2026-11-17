@@ -288,7 +288,7 @@
   const kick=()=>{ if(!G.raf) G.raf=requestAnimationFrame(frame); };
 
   // ── the bubbles ────────────────────────────────────────────────────────
-  const ICON={land:'⬇',sky:'🛹',mark:'✦',info:'ⓘ',reset:'⟲',spin:'❚❚',fly:'⇢',me:'⌖',clear:'✕',list:'☰',pick:'◎',cancel:'✕',idle:'⏸',mach:'≋'};
+  const ICON={park:'P',call:'⤹',land:'⬇',sky:'🛹',mark:'✦',info:'ⓘ',reset:'⟲',spin:'❚❚',fly:'⇢',me:'⌖',clear:'✕',list:'☰',pick:'◎',cancel:'✕',idle:'⏸',mach:'≋'};
   function machName(){ try{ return MACH_PRESETS[atmoPreset].name; }catch(e){ return 'M1'; } }
   // over the top in every mode (fixed angles: straight up, then up and left)
   const A_RESET=-90, A_SPIN=-126;
@@ -310,6 +310,9 @@
       {k:'sky',t:'SKY',tip:'Board the skyboard and lift off from here',on:()=>{ try{ surfRemountSkyboard(); }catch(e){} }},
       {k:'mark',t:'MARK',tip:'Drop a Journal marker right here',on:()=>markHere()},
       {k:'me',t:'ME',tip:'Centre the globe on you',on:()=>centreMe()},
+      // (t1536) PARK / CALL the skyboard from the map on every world and level (the same functions as the kite's two buttons: index.html parkSkyboard / summonSkyboard)
+      {k:'park',t:(()=>{ try{ return BOARD_CALL.parked?'FREE':'PARK'; }catch(e){ return 'PARK'; } })(),lit:()=>{ try{ return !!BOARD_CALL.parked; }catch(e){ return false; } },tip:'Park the skyboard here (tap again: it follows you)',on:()=>{ try{ parkSkyboard(); }catch(e){} }},
+      {k:'call',t:'CALL',tip:'Summon the skyboard to your side',on:()=>{ try{ summonSkyboard(); }catch(e){} }},
       {k:'clear',t:'CLEAR',tip:'Clear the landing marker',need:true,on:()=>{ G.target=null; sync(); }}];
     if(G.mode==='atmo'){
       let auto=false, landing=false; try{ auto=!!(atmoState&&atmoState.auto); landing=!!(atmoState&&atmoState.landing); }catch(e){}
