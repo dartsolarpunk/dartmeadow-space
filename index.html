@@ -232,7 +232,7 @@ window.DMFT=window.DMFT||(function(){ const E=Object.create(null), X=Object.crea
 <script src="ui/dm-journal.js?v=98"></script>
 <script src="ui/dm-worldstyle.js?v=94"></script>
 <script src="ui/dm-polish.js?v=339"></script>
-<script src="ui/dm-stars.js?v=340"></script>   <!-- (v334 Cosmos) DMStars: the system's real stars as seen from the world - per-star direction / colour / weight + the ONE key-light direction (keyDir) the sky, the air, the sun light and its shadows share -->
+<script src="ui/dm-stars.js?v=342"></script>   <!-- (v334 Cosmos) DMStars: the system's real stars as seen from the world - per-star direction / colour / weight + the ONE key-light direction (keyDir) the sky, the air, the sun light and its shadows share -->
 <script src="ui/dm-sky.js?v=340"></script>
 <script src="ui/dm-dust.js?v=191"></script>
 <!-- crunch1 true-fluid VFX (WebGPU only; WebGL keeps the current ocean/dust/fumes) -->
@@ -19951,6 +19951,10 @@ function _taPrebakeEarth(){
 try{ window.addEventListener('dm:earth-ready',()=>setTimeout(_taPrebakeEarth,0)); setTimeout(_taPrebakeEarth,3000); }catch(e){}
 function _taMaxSteps(){ return (typeof GFX!=='undefined'&&GFX.isMobile)?20:0; }   // mobile: cap the volumetric ray steps (jitter + temporal blend carry the rest)
 function _taQ(){ return (typeof GFX!=='undefined'&&GFX.preset)||'medium'; }
+// (v334 Cosmos) how many real stars the ray-marched air scatters per step (the pass keys carry it, warm-up and frame alike). The Low preset and weak
+// phones (DMLod.tier 'low') and legacy devices (navigator.deviceMemory <= 3 GB) march the KEY star only (the others still show as the sky dome's analytic discs); else every star of the system, up to 3.
+function _taStarNFor(count,preset,tier,mem){ const n=Math.max(1,Math.min(3,count|0)); return (preset==='low'||tier==='low'||(mem>0&&mem<=3))?1:n; }
+function _taStarN(){ let tier=null,mem=0; try{ tier=window.DMLod?DMLod.tier:null; mem=+(navigator.deviceMemory||0); }catch(e){} return _taStarNFor(window.DMStars?DMStars.count:1,_taQ(),tier,mem); }
 // (v314) space passes keep the most recently used OTHER world's pass too (desktop; phones keep one): swinging between two planets used to dispose and
 // rebuild a pass (node graph, targets, shader) every time the nearest one changed
 function _taPrune(prefix,keep){
@@ -20057,7 +20061,7 @@ function _trueAtmoRender(r,scene,cam){
           if(!F.intersectsSphere(S)) return false;
         } } }
     const ud=best.mesh.userData, E=window.DMEarth;
-    const nSt=Math.max(1,Math.min(3,(window.DMStars&&DMStars.count)|0));
+    const nSt=_taStarN();
     const key='sp|'+best.mesh.uuid+'|'+_taQ()+'|'+(E&&E.ready?1:0)+(nSt>1?'|'+nSt:'');
     let A=_TA.pipes.get(key);
     if(!A){ _taPrune('sp|',key); A=DMAtmo.create(THREE,THREE.TSL,{renderer:r,scene,camera:cam,planet:_taParamsFor(ud),quality:_taQ(),maxSteps:_taMaxSteps(),logarithmicDepth:!!r.logarithmicDepthBuffer,halfRes:_taHalf(),stars:nSt}); _TA.pipes.set(key,A); }
@@ -20086,7 +20090,7 @@ async function _taWarm(r,scene,cam){
   for(let i=0;i<_jotsFogAtmoRegistry.length;i++){ const e=_jotsFogAtmoRegistry[i]; if(!e||!e.mesh||!e.mesh.parent||!e.mesh.userData.planetR) continue;
     e.mesh.getWorldPosition(c); const d=c.distanceTo(cam.position)/e.mesh.userData.planetR; if(d<bd){ bd=d; best=e; } }
   if(!best) return;
-  const nSt=Math.max(1,Math.min(3,(window.DMStars&&DMStars.count)|0));   // (v334) the same key + star count as the frame's pass
+  const nSt=_taStarN();   // (v334) the same key + star count as the frame's pass
   const ud=best.mesh.userData, E=window.DMEarth, key='sp|'+best.mesh.uuid+'|'+_taQ()+'|'+(E&&E.ready?1:0)+(nSt>1?'|'+nSt:'');
   try{
     let A=_TA.pipes.get(key);
@@ -20102,7 +20106,7 @@ function _trueAtmoSurface0(r,scene,cam,layered){
   if(_TA.failed||!_trueAtmoOn()||_taPerfOff()||!PW.pal||!PW.pal.atmos||!PW.atmo) return false;
   try{
     const R=_planetR(), mars=!!(PW.body&&/mars/i.test(PW.body.name||''));
-    const nSt=Math.max(1,Math.min(3,(window.DMStars&&DMStars.count)|0));
+    const nSt=_taStarN();
     const key='sf|'+(layered?1:0)+'|'+_taQ()+'|'+PW.gen+'|'+nSt;
     let A=_TA.pipes.get(key);
     if(!A){
@@ -20227,7 +20231,7 @@ function _pwWorldTick(dt){
   if(!space){ try{ const _f=_fac(); if(_f) _f.tick(dt,f,mode); }catch(e){ _animLoopWarn('fac',e); } }   // cliff facilities, ocean cities, Ariel's mansion
   // ── the planet frame at the focus; the camera into it
   if(space){
-    _pwfSet(px,pz,PW.sp.camAlt||f.y,PW.site); _pwsSync(PW.body,PW.site); _pwStarsTick();
+    _pwfSet(px,pz,PW.sp.camAlt||f.y,PW.site); _pwsSync(PW.body,PW.site); _pwStarsTick(dt);
     // the board (and her on it) where the space board is
     _pwsToDrawn(boardFlight.position,PW.board.position); _pwsQToDrawn(boardFlight.quaternion,PW.board.quaternion);
     _pwsToDrawn(flightCamera.position,cam.position); _pwsQToDrawn(flightCamera.quaternion,cam.quaternion);
@@ -20235,7 +20239,7 @@ function _pwWorldTick(dt){
     if(Math.abs(cam.fov-flightCamera.fov)>1e-3){ cam.fov=flightCamera.fov; cam.updateProjectionMatrix(); }
   } else {
     const calt0=Math.max(1,cam.position.y-Math.max(0,H(cam.position.x,cam.position.z)));
-    _pwfSet(px,pz,cam.position.y,PW.site); _pwsSync(PW.body,PW.site); _pwStarsTick();
+    _pwfSet(px,pz,cam.position.y,PW.site); _pwsSync(PW.body,PW.site); _pwStarsTick(dt);
     // flat camera → drawn (kept on the focus, which the frame leaves where it is)
     PW._camFlat={p:cam.position.clone(),q:cam.quaternion.clone()};
     if(PWF.on){
@@ -26111,6 +26115,7 @@ SkyGround.prototype.dispose=function(){ this._dead=true; this.queue.length=0; th
 // units up) and gives the view back to it on the way down: one continuous
 // sky from the ground to space and back. Additive, over everything drawn.
 function _pwAtmoShell(pal,sky){
+  const NSs=_taStarN();   // (v334) stars marched per step: the key only on Low / weak phones (fixed for this world's shell)
   const W=window; if(!pal.atmos||!THREE.MeshBasicNodeMaterial||typeof W.Loop!=='function') return null;
   const R=_planetR(), TOP=2000, HS=350, SIG=4.5e-4, N=10, Ra=R+TOP;
   const sk=window.DMWorldStyle?DMWorldStyle.skyFor((window.DMWorldStyle&&PW.body)?DMWorldStyle.styleFor(PW.body,pal,PW.site):'lush',pal):{top:0x3a6ea5,bottom:0x88bbff};
@@ -26144,7 +26149,7 @@ function _pwAtmoShell(pal,sky){
       const rho=exp(r.sub(R).max(0.0).div(-HS));
       tau.addAssign(rho.mul(dtW));
       const nU=up.div(r), wt=rho.mul(dtW).mul(exp(tau.mul(-SIG)));
-      for(let k=0;k<3;k++){   // each real star lights the air along this ray (its colour x weight; unused slots weigh 0)
+      for(let k=0;k<NSs;k++){   // each real star lights the air along this ray (its colour x weight; unused slots weigh 0)
         const mu=dot(nU,U.st[k]);
         const lit=smoothstep(-0.12,0.18,mu), dusk=smoothstep(0.35,0.0,mu).mul(lit);
         const ph=dot(rdW,U.st[k]).pow(2.0).mul(0.35).add(0.9);   // Rayleigh phase (3/4(1+mu^2), mean 1): no fake sun glare lobe (v334 removed the pow(.,8) glare)
@@ -26164,7 +26169,8 @@ function _pwAtmoShell(pal,sky){
       const g=_pwfAnisoG(); U.ax.value=1/g; m.scale.set(g,1,1);
       if(sunDir) U.sun.value.copy(sunDir).normalize();
       const S=_pwStarsLive();
-      if(S){ for(let i=0;i<3;i++){ if(i<S.count){ const c=S.col[i], w=S.w[i]; U.st[i].value.copy(S.dir[i]); U.sw[i].value.set(c.r*w,c.g*w,c.b*w); } else U.sw[i].value.set(0,0,0); } }
+      if(S){ for(let i=0,j=1;i<S.count;i++){ const c=S.col[i], w=S.w[i], k=i===S.keyIdx?0:j++; if(k>=NSs) continue; U.st[k].value.copy(S.dir[i]); U.sw[k].value.set(c.r*w,c.g*w,c.b*w); }   // key star first, then the others while slots last
+        for(let k=Math.min(S.count,NSs);k<3;k++) U.sw[k].value.set(0,0,0); }
       else { U.st[0].value.copy(U.sun.value); U.sw[0].value.set(1,1,1); U.sw[1].value.set(0,0,0); U.sw[2].value.set(0,0,0); }
     }};
 }
@@ -26173,12 +26179,12 @@ function _pwfAnisoG(){ return (PWF.on&&PWF.g>0)?PWF.g:1; }
 // (v334 Cosmos) the system's real stars seen from the world (ui/dm-stars.js).  Once per world tick, after _pwsSync: the star bodies' directions
 // from the board's open-space position, turned into the drawn frame by the SAME rotation the camera and the layered open-space sky use
 // (_pwsQToDrawn = Mi * Qi), so each star's disc in the sky sits exactly on its body in space and the climb out of the air never jumps.
-const _pwStQ={q:null,gen:-1,o:{atmos:true,ext:null}};
-function _pwStarsTick(){
+const _pwStQ={q:null,gen:-1,o:{atmos:true,ext:null,dt:0}};
+function _pwStarsTick(dt){
   const S=window.DMStars; if(!S||!S.count||!_PWS.ok||!STATE.flight||!STATE.flight.pos){ _pwStQ.gen=-1; return; }
   const q=_pwStQ.q||(_pwStQ.q=new THREE.Quaternion());
   q.copy(_PWS.Mi).multiply(_PWS.Qi);
-  const sky=TERRAIN.sky, pal=PW.pal, o=_pwStQ.o; o.atmos=!!(pal&&pal.atmos); o.ext=sky&&sky.ext?sky.ext:null;
+  const sky=TERRAIN.sky, pal=PW.pal, o=_pwStQ.o; o.dt=dt; o.atmos=!!(pal&&pal.atmos); o.ext=sky&&sky.ext?sky.ext:null;
   S.update(STATE.flight.pos,q,o);
   _pwStQ.gen=S.valid?PW.gen:-1;
 }
