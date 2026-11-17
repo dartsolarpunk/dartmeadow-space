@@ -207,7 +207,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-light.js?v=323"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
 <script src="ui/dm-vlight.js?v=331"></script>   <!-- lighting overhaul: lamps / LEDs / flashlight / low sun light the volumetric fog (scene.fogNode, light list, equi-angular in-scatter); ?vlights=0|low|med|high -->
 <script src="ui/dm-feedback.js?v=329"></script>
-<script src="ui/dm-gpu-defer.js?v=332"></script>   <!-- (v332) DMGpuDefer: deferred destruction of disposed geometry's GPU buffers (the Bird Temple "used in submit while destroyed" banner) -->
+<script src="ui/dm-gpu-defer.js?v=339"></script>   <!-- (v332) DMGpuDefer: deferred destruction of disposed geometry's GPU buffers (the Bird Temple "used in submit while destroyed" banner) -->
 <script src="ui/dm-atmo-shell.js?v=332"></script>   <!-- (v297) DMAtmoShell.radii/worldR/ratio: the faded atmosphere perimeter of a body (Solenne 1.18 R) for the space -> world hand-off (Worlds) -->
 <script src="ui/dm-spawn.js?v=314"></script>   <!-- (v314) DMSpawn: new-game spawn in interstellar space near Sol + the arrival push-out from every world's hand-off radius -->
 <script src="ui/dm-pw-handoff.js?v=299"></script>   <!-- (v299) the space -> surface hand-off policy: pre-build hidden from PWS_OPEN, show the world + minimap globe at the DMAtmoShell perimeter (Worlds) -->
@@ -232,8 +232,8 @@ window.DMFT=window.DMFT||(function(){ const E=Object.create(null), X=Object.crea
 <script src="ui/dm-journal.js?v=98"></script>
 <script src="ui/dm-worldstyle.js?v=94"></script>
 <script src="ui/dm-polish.js?v=325"></script>
-<script src="ui/dm-stars.js?v=333"></script>   <!-- (v334 Cosmos) DMStars: the system's real stars as seen from the world - per-star direction / colour / weight + the ONE key-light direction (keyDir) the sky, the air, the sun light and its shadows share -->
-<script src="ui/dm-sky.js?v=209"></script>
+<script src="ui/dm-stars.js?v=339"></script>   <!-- (v334 Cosmos) DMStars: the system's real stars as seen from the world - per-star direction / colour / weight + the ONE key-light direction (keyDir) the sky, the air, the sun light and its shadows share -->
+<script src="ui/dm-sky.js?v=339"></script>
 <script src="ui/dm-dust.js?v=191"></script>
 <!-- crunch1 true-fluid VFX (WebGPU only; WebGL keeps the current ocean/dust/fumes) -->
 <script src="ui/dm-fluid-core.js?v=136"></script>
@@ -1075,7 +1075,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-globe.js?v=9" defer></script>
 <script src="ui/dm-star.js?v=191" defer></script>
 <script src="ui/dm-mist.js?v=8" defer></script>
-<script src="ui/dm-atmo.js?v=332" defer></script>
+<script src="ui/dm-atmo.js?v=339" defer></script>
 <script src="ui/dm-localcollide.js?v=188" defer></script>
 <script src="ui/dm-collide.js?v=287" defer></script>
 <script src="ui/dm-collide-game.js?v=281" defer></script>
