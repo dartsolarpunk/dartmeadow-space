@@ -12,7 +12,7 @@ const cut = (s, a, b) => { const i = s.indexOf(a); if (i < 0) throw new Error('m
 
 const frame = cut(IDX, 'function _trueAtmoRender(r,scene,cam){', 'async function _taWarm(');
 const warm = cut(IDX, 'async function _taWarm(r,scene,cam){', 'function _trueAtmoSurface(');
-const nStRe = /const nSt=(Math\.max\(1,Math\.min\(3,\(window\.DMStars&&DMStars\.count\)\|0\)\));/;
+const nStRe = /const nSt=(_taStarN\(\)|Math\.max\(1,Math\.min\(3,\(window\.DMStars&&DMStars\.count\)\|0\)\));/;   // #267: Low/weak devices march only the key star via _taStarN()
 const spKey = (src) => { const m = src.match(/key='sp\|'\+(best\.mesh\.uuid[^;\n]*?)(?=;|\n|$)/); return m && m[1].replace(/\s+$/, ''); };
 const fN = (frame.match(nStRe) || [])[1], wN = (warm.match(nStRe) || [])[1], fK = spKey(frame), wK = spKey(warm);
 ok(!!fN && fN === wN, 'sp: _taWarm counts the stars exactly like the frame (' + wN + ')');
@@ -20,6 +20,7 @@ ok(!!fK && fK === wK, 'sp: _taWarm key expression === _trueAtmoRender key expres
 ok(/\(nSt>1\?'\|'\+nSt:''\)$/.test(fK || '') && /\(nSt>1\?'\|'\+nSt:''\)$/.test(wK || ''), 'sp: both keep the #265 star-count suffix (nSt>1?\'|\'+nSt:\'\')');
 // evaluate both expressions: single star / binary / triple / no DMStars -> identical strings, suffix only for > 1 star
 const ev = (nExpr, kExpr, stars) => { const ctx = { window: stars == null ? {} : { DMStars: { count: stars } }, best: { mesh: { uuid: 'U1' } }, _taQ: () => 'high', E: { ready: true }, Math };
+  ctx._taStarN = () => Math.max(1, Math.min(3, (ctx.window.DMStars && ctx.window.DMStars.count) | 0));   // the high-preset path of index.html's _taStarN (Low = 1 is covered by system-stars-unit)
   ctx.DMStars = ctx.window.DMStars; vm.createContext(ctx); return vm.runInContext('(()=>{ const nSt=' + nExpr + '; return \'sp|\'+' + kExpr + '; })()', ctx); };
 for (const s of [null, 1, 2, 3, 5]) {
   const a = ev(fN, fK, s), b = ev(wN, wK, s);

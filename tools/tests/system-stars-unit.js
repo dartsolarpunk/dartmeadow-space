@@ -86,6 +86,14 @@ function upTo(up) { const u = up.clone().normalize(), ax = new V3(-u.z, 0, u.x),
   ok(keys.length > 40 && keys[0] === 1 && keys[keys.length - 1] === 0, 'A below the horizon: B is the key; A risen: A takes it back (' + keys.join('') + ')');
   let flips = 0; for (let i = 1; i < keys.length; i++) if (keys[i] !== keys[i - 1]) flips++;
   ok(flips === 1, 'one clean key hand-over (hysteresis, no flicker)');
+  { // the key light eases across the swap: per-frame keyDir step stays small, and it lands exactly on the new key star after SWAP_S
+    S.keyIdx = 0; S.swapT = 1; let prev = null, worst = 0, landed = false;
+    for (let k = 0; k <= 240; k++) { const tilt = 0.05 - k / 240 * 0.25, aa = ang - Math.PI / 2 + tilt;
+      const u = toB.clone().multiplyScalar(Math.cos(aa)).addScaledVector(side, Math.sin(aa)); S.update(P.clone(), upTo(u), { atmos: true, ext: EXT, dt: 1 / 60 });
+      const kd = S.keyDir.clone(); if (prev) worst = Math.max(worst, Math.acos(Math.min(1, kd.dot(prev)))); prev = kd;
+      if (S.keyIdx === 1 && S.swapT >= 1) landed = Math.abs(kd.dot(S.dir[1]) - 1) < 1e-9; }
+    ok(worst < 0.01, 'A -> B key swap eases the key light (max step ' + (worst * 180 / Math.PI).toFixed(3) + ' deg/frame, the stars are ' + (ang * 180 / Math.PI).toFixed(1) + ' deg apart)');
+    ok(landed, 'after the ease the key light is exactly the new key star'); }
   { const u = toA.clone().add(toB).normalize().negate(); S.update(P.clone(), upTo(u), { atmos: true, ext: EXT }); ok(S.keyIdx === 0 && S.day === 0, 'both down (night): the primary keeps the key, no daylight'); }
   let jump = 0; for (let i = 1; i < days.length; i++) jump = Math.max(jump, Math.abs(days[i] - days[i - 1])); ok(jump < 0.1, 'daylight blends continuously through A\'s sunrise (max step ' + jump.toFixed(3) + ')');
   ok(Math.min(...days) > 0.05, 'with A down, B alone still lights a dim red day (' + Math.min(...days).toFixed(3) + ')');
@@ -107,8 +115,8 @@ function upTo(up) { const u = up.clone().normalize(), ax = new V3(-u.z, 0, u.x),
   ok(a > 0 && b > a, '_PWS block found');
   const PWF = { fx: 0, fz: 0, lat: 0, R: 0 }, ATMO_DEG_PER_UNIT = 0.008, PLANET_VIS_SCALE = 6, _planetR = () => 360 / ATMO_DEG_PER_UNIT / (2 * Math.PI);
   const F = new Function('THREE', 'PWF', 'ATMO_DEG_PER_UNIT', 'PLANET_VIS_SCALE', '_planetR', html.slice(a, b) + '\nreturn {_PWS,_pwsSync,_pwsQToDrawn,_pwsQFromDrawn,_pwsToDrawn,_pwsFromDrawn};')(THREE, PWF, ATMO_DEG_PER_UNIT, PLANET_VIS_SCALE, _planetR);
-  ok(/q\.copy\(_PWS\.Mi\)\.multiply\(_PWS\.Qi\)/.test(html) && /_pwsSync\(PW\.body,PW\.site\); _pwStarsTick\(\);/.test(html), 'the world tick turns the stars with Mi * Qi right after _pwsSync (both modes)');
-  ok((html.match(/_pwsSync\(PW\.body,PW\.site\); _pwStarsTick\(\);/g) || []).length === 2, 'space and fly/walk branches both tick the stars');
+  ok(/q\.copy\(_PWS\.Mi\)\.multiply\(_PWS\.Qi\)/.test(html) && /_pwsSync\(PW\.body,PW\.site\); _pwStarsTick\(dt\);/.test(html), 'the world tick turns the stars with Mi * Qi right after _pwsSync (both modes)');
+  ok((html.match(/_pwsSync\(PW\.body,PW\.site\); _pwStarsTick\(dt\);/g) || []).length === 2, 'space and fly/walk branches both tick the stars');
   // planet in space: tilted + spun; a star far off; the board just above the air at some lat/lon
   const Pp = new V3(1200, 30, -900), Qp = new Q().setFromAxisAngle(new V3(0.3, 1, 0.2).normalize(), 1.1);
   const mesh = { position: Pp, quaternion: Qp, updateMatrixWorld() {}, getWorldPosition(o) { return o.copy(Pp); }, getWorldQuaternion(o) { return o.copy(Qp); } };
@@ -154,6 +162,18 @@ ok(/sky\.update\(cam,dt,ll\.lat,ll\.lon,_pwStarsLive\(\)\)/.test(html), 'the sky
 ok(/DMStars\.setSources\(\[\{obj:sunGroup/.test(html) && /_starSrc\.push\(\{obj:sb\.group/.test(html) && /DMStars\.setSources\(null\)/.test(html), 'sources: Sol\'s Sun, a system\'s star + Veyra B; cleared with the system');
 // one legacy star (no DMStars) = the old split-scatter sum, algebraically (cloud / weather / layer terms)
 { const phM = 0.37, ext = 2.3, cd = 0.4, alb = 0.7; ok(Math.abs(ext * 0.9 * cd * (phM * 0.5 + 0.06) - (ext * 0.9 * cd * 0.5 * phM + ext * 0.9 * cd * 0.06)) < 1e-15 && Math.abs(ext * alb * (phM * 0.4 + 0.05) - (ext * alb * 0.4 * phM + ext * alb * 0.05)) < 1e-15, 'single star: the split scattering equals the old sum'); }
+// ── 5b. phones: Low preset / weak device march the key star only; the pass keys carry the count (warm-up = frame) ──
+{ const a = html.indexOf('function _taStarNFor('), b = html.indexOf('\n', a); ok(a > 0, '_taStarNFor found');
+  const f = new Function(html.slice(a, b) + '\nreturn _taStarNFor;')();
+  ok(f(2, 'low', 'desktop') === 1 && f(2, 'medium', 'low') === 1 && f(3, 'low', 'low') === 1, 'Low preset / weak phone (DMLod tier low): one star in the march loop');
+  ok(f(2, 'high', 'desktop', 3) === 1 && f(2, 'high', 'desktop', 2) === 1 && f(2, 'high', 'desktop', 4) === 2 && f(2, 'high', 'desktop', 0) === 2, 'legacy (deviceMemory <= 3 GB): one star; unknown memory (0) = all');
+  ok(f(2, 'medium', 'mobile') === 2 && f(2, 'high', 'desktop') === 2 && f(5, 'ultra', null) === 3 && f(0, 'high', null) === 1 && f(1, 'ultra', 'desktop') === 1, 'otherwise every star (1..3)');
+  ok((html.match(/const nSt=_taStarN\(\);/g) || []).length === 3, 'orbit frame, orbit warm-up and surface passes all size by _taStarN()');
+  ok(/key='sp\|'\+best\.mesh\.uuid\+'\|'\+_taQ\(\)\+'\|'\+\(E&&E\.ready\?1:0\)\+\(nSt>1\?'\|'\+nSt:''\)/.test(html) && (html.match(/\(nSt>1\?'\|'\+nSt:''\)/g) || []).length === 2, 'warm-up and frame orbit keys carry the same |nSt suffix');
+  const sh = html.slice(html.indexOf('function _pwAtmoShell'), html.indexOf('function _pwfAnisoG'));
+  ok(/const NSs=_taStarN\(\);/.test(sh) && /for\(let k=0;k<NSs;k\+\+\)/.test(sh), 'classic surface shell: star loop sized by _taStarN (key only on Low)');
+  ok(/for \(let k = 0; k < NS; k\+\+\)/.test(atmo), 'volumetric air: per-step star loop is NS (1 on Low)');
+  ok(S.keyColor === S.keyCol && S.keyIntensity === S.keyI, 'Lighting aliases keyColor / keyIntensity'); }
 // ── 6. no per-frame allocation in DMStars.update ──
 { place(0.5); S.setSources([{ obj: A, radius: BIN.rA, temp: 8200 }, { obj: B, radius: BIN.rB, temp: 3000 }]);
   const P = new V3(1600, 0, 0), q = new Q(); for (let i = 0; i < 2000; i++) S.update(P, q, { atmos: true, ext: EXT });
