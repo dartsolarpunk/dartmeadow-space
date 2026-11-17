@@ -211,13 +211,17 @@
                far   [fogEnd, groundR]    one low-octave macro tint (patches of 60 u and 260 u) on every ground pixel, gone with the ground's own dissolve
        light   probes (SH cascades) out to their window, then a cheap far term (sky visibility from the coarse ground's normal + the horizon height field's
                cavity) that lasts to groundR; sun visibility: near march, far 8 m field, then the horizon field (48 m cells) to `hor`
-       shadow  map   [0.6 h, 0.92 h]      the sun's shadow map (crisp, props + her) eased out inside its own box (h = box half), not a square cut
+       shadow  map   [0.82 h, 0.97 h]     the sun's shadow map (crisp, props + her) eased out at the edge of its own box (h = box half), not a square cut (t1537: was [0.6 h, 0.92 h] of a 0.62x box = a lit ring round her)
                terrain                    height-field march (near / far / horizon) beyond it, coarser with distance, to the horizon field's edge
        props   near  [0.72 c, c]          full prop chunks (trees, rocks; colliders near), c = min(draw cut, ring x 300): per-pixel dither, no chunk line
                far   in = 1 - near, out [0.8 fogEnd, fogEnd]   the far canopy (one instanced draw, crown cones only) from where the near trees thin to the haze end
      o: { reach, fogEnd, groundR, shadowHalf, propCut, ring, horHalf }.  Returns arrays [a, b] (1 inside a, 0 beyond b; props.farIn is the far canopy's rising edge = the near layer's falling one).
      res (optional): an object of the same shape to fill in place (the per-tick callers pass one: no allocation). */
   function S2(a, x, y) { a[0] = x; a[1] = y; }
+  // (t1537) the sun shadow map's ease-out, as fractions of its box half h: was [0.6, 0.92] (with the 0.62x on-foot box that was 17-26 u on Low). Past the band nothing casts
+  // the sun shadow, so a roofed floor (the mansion decks, any overhang) turned sunlit on a ring round her. Now the map holds to 0.82 h and is gone by 0.97 h (still inside the
+  // inscribed circle of the square box: no square edge), i.e. 37-44 u on a 512 map, 57-68 u on 1024, 90-107 u on 2048 - past the third-person camera (~26 u behind her).
+  const SHADOW_FADE = [0.82, 0.97];
   function qualityBands(tier, o, res) {
     o = o || {};
     const fe = Math.max(60, o.fogEnd || 420), gR = Math.max(fe * 1.0001, o.groundR || fe / 0.82), r = Math.max(4, o.reach || 30);
@@ -226,7 +230,7 @@
     const B = res || { tex: { near: [0, 0], mid: [0, 0], far: [0, 0] }, light: { far: [0, 0], hor: [0, 0] }, shadow: { map: [0, 0], hor: [0, 0] }, props: { near: [0, 0], far: [0, 0], farIn: [0, 0] }, fogEnd: 0, groundR: 0 };
     S2(B.tex.near, r * 0.45, r); S2(B.tex.mid, r * 5, r * 16); S2(B.tex.far, fe, gR);
     S2(B.light.far, fe, gR); S2(B.light.hor, hor * 0.75, hor * 0.92);
-    S2(B.shadow.map, h * 0.6, h * 0.92); S2(B.shadow.hor, hor * 0.75, hor * 0.92);
+    S2(B.shadow.map, h * SHADOW_FADE[0], h * SHADOW_FADE[1]); S2(B.shadow.hor, hor * 0.75, hor * 0.92);
     S2(B.props.near, c * 0.72, c); S2(B.props.far, fe * 0.8, fe); S2(B.props.farIn, c * 0.72, c);
     B.fogEnd = fe; B.groundR = gR;
     return B;
@@ -298,6 +302,7 @@
   out.sw = sw; out.fade = fade; out.createXfade = createXfade;
   out.lod2Dist = function (errM, fovDeg, viewH) { return lod2Dist(out.tier, errM, fovDeg, viewH, bud('propsK', 1)); };
   out.bands = function (o, res) { return qualityBands(out.tier, o, res); };
+  out.SHADOW_FADE = SHADOW_FADE;   // (t1537) read-only: the sun shadow ease-out fractions
   out.mipBias = function () { return out.on ? out.get('mip.bias') : 0; };
 
   /* ── SCREEN-DOOR CROSS-FADE (no per-object materials) ──
