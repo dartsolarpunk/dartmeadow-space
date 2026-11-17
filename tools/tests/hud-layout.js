@@ -82,7 +82,7 @@ ok(!/dm-hazardbubble\.js/.test(shSrc) || /does not create or own/.test(shSrc), '
 // behaviour: hidden without DMShield; event shows it, lights .on, sits above the flashlight
 { const el = (tag) => {
     const o = { tagName: tag, id: '', className: '', style: {}, attrs: {}, children: [], listeners: {},
-      setAttribute(k, v) { this.attrs[k] = String(v); }, getAttribute(k) { return Object.prototype.hasOwnProperty.call(this.attrs, k) ? this.attrs[k] : null; },
+      setAttribute(k, v) { this.attrs[k] = String(v); }, removeAttribute(k) { delete this.attrs[k]; }, getAttribute(k) { return Object.prototype.hasOwnProperty.call(this.attrs, k) ? this.attrs[k] : null; },
       appendChild(c) { this.children.push(c); return c; },
       addEventListener(type, fn) { this.listeners[type] = fn; },
       classList: { _s: new Set(), contains(n) { return this._s.has(n); }, toggle(n, on) { if (on) this._s.add(n); else this._s.delete(n); o.className = [...this._s].join(' '); } } };
@@ -109,6 +109,14 @@ ok(!/dm-hazardbubble\.js/.test(shSrc) || /does not create or own/.test(shSrc), '
   let toggled = 0; ctx.DMShield = { available: true, on: true, toggle() { toggled++; } };
   nodes.b.listeners.click({ stopPropagation() { } });
   ok(toggled === 1, 'click calls DMShield.toggle()');
+  // (t1612) orb OFF: the button wears the board group's protection colour; orb ON: plain lit button
+  evs.dmshield({ type: 'dmshield', detail: { available: true, on: false, status: 'protected' } });
+  ok(nodes.w.getAttribute('data-st') === 'protected' && !nodes.w.classList.contains('on'), 'orb off: button wears the protected (green) status');
+  evs.dmshield({ type: 'dmshield', detail: { available: true, on: false, status: 'exposed' } });
+  ok(nodes.w.getAttribute('data-st') === 'exposed', 'orb off, outside the field: exposed (red) status');
+  evs.dmshield({ type: 'dmshield', detail: { available: true, on: true, status: 'exposed' } });
+  ok(nodes.w.getAttribute('data-st') === null && nodes.w.classList.contains('on'), 'orb on: no status colour, plain lit button');
+  ok(/#dm-shield\[data-st="protected"\] \.fl-btn\{/.test(shSrc) && /data-st="warn"/.test(shSrc) && /data-st="exposed"/.test(shSrc), 'status CSS for green / amber / red');
   evs.dmshield({ type: 'dmshield', detail: { available: false, on: false } });
   ok(nodes.w.getAttribute('data-show') === '' && !nodes.w.classList.contains('on'), 'hides again when available is false'); }
 

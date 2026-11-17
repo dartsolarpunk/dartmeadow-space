@@ -7,7 +7,9 @@
      window.DMShield.available  — true only on toxic-atmosphere worlds
      window.DMShield.on         — current bubble state
      DMShield.toggle() / .set(bool)
-     window event `dmshield` with detail {on, available} on each change
+     window event `dmshield` with detail {on, available, status, state} on each change
+     (t1612) with the orb OFF the button wears the board group's protection colour (data-st: protected green / warn amber / exposed red, the same as the
+     staff crown + LED); orb ON: the plain lit button
    The button is hidden by default and stays hidden if DMShield is missing. A tap
    calls DMShield.toggle(). No per-frame polling or allocations (no rAF loop, no
    setInterval): it listens for `dmshield`, reads DMShield once on init, and
@@ -23,9 +25,12 @@
     'body:has(#screen-menu.active) #dm-shield,body:has(#screen-builder.active) #dm-shield{display:none !important;}' +
     '#dm-shield .fl-btn{position:absolute;left:0;bottom:0;width:34px;height:34px;border-radius:50%;padding:0;margin:0;display:flex;align-items:center;justify-content:center;' +
     'background:rgba(6,14,28,.55);border:1px solid rgba(160,210,255,.45);color:#9fc8ee;pointer-events:auto;touch-action:manipulation;-webkit-tap-highlight-color:transparent;cursor:pointer;}' +
-    '#dm-shield.on .fl-btn{background:rgba(255,248,230,.16);border-color:#fff6e0;color:#fffaf0;box-shadow:0 0 10px rgba(255,244,214,.45);}';
+    '#dm-shield.on .fl-btn{background:rgba(255,248,230,.16);border-color:#fff6e0;color:#fffaf0;box-shadow:0 0 10px rgba(255,244,214,.45);}' +
+    '#dm-shield[data-st="protected"] .fl-btn{border-color:#35ff7e;color:#a8ffc8;box-shadow:0 0 9px rgba(53,255,126,.5);}' +
+    '#dm-shield[data-st="warn"] .fl-btn{border-color:#ffc233;color:#ffe29a;box-shadow:0 0 9px rgba(255,194,51,.55);}' +
+    '#dm-shield[data-st="exposed"] .fl-btn{border-color:#ff3b30;color:#ffb3ad;box-shadow:0 0 9px rgba(255,59,48,.6);}';
 
-  let ui = null, avail = false, on = false, flashObs = null, flightObs = null;
+  let ui = null, avail = false, on = false, st = '', flashObs = null, flightObs = null;
 
   function build() {
     if (ui || !root.document || !document.body) return ui;
@@ -45,14 +50,16 @@
 
   function read(ev) {
     const d = ev && ev.detail, api = root.DMShield;
-    if (d && typeof d === 'object') { avail = !!d.available; on = !!d.on; }
-    else if (api) { avail = !!api.available; on = !!api.on; }
-    else { avail = false; on = false; }
+    if (d && typeof d === 'object') { avail = !!d.available; on = !!d.on; st = d.status || ''; }
+    else if (api) { avail = !!api.available; on = !!api.on; st = api.status || ''; }
+    else { avail = false; on = false; st = ''; }
+    if (on || !avail || (st !== 'protected' && st !== 'warn' && st !== 'exposed')) st = '';
   }
 
   function paint() {
     const u = build(); if (!u) return;
     u.w.classList.toggle('on', on);
+    if (st) u.w.setAttribute('data-st', st); else u.w.removeAttribute('data-st');
     u.b.setAttribute('aria-pressed', on ? 'true' : 'false');
   }
 
