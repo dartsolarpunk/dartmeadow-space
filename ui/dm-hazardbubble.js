@@ -201,7 +201,7 @@
   H.close=function(scene){
     try{ restoreFog(); for(const m of [S.back,S.front,S.tint,S.bub]) if(m&&m.parent) m.parent.remove(m); }catch(e){}
     S.scene=null; S.r=null; H.a=0; H.wet=0; H.dis=0; H.blue=0; H.underwater=false; S.fogSaved=false; S.boost=0;
-    try{ H.shieldRelease(); }catch(e){}   // the shield's crown glow / LED leave the scene with the orb
+    try{ H.shieldRelease(); DMHazard.clear(); _gb=_gp=null; _gid=_zid=0; H.hostile=false; H.awake=false; }catch(e){}   // the shield's crown glow / LED leave the scene with the orb; every hazard source of the world goes
   };
   // out of the air (space) or switched off: hide, keep everything attached and compiled
   H.hide=function(){
@@ -249,6 +249,63 @@
   }
 
   /* ═══════════════════════════════════════════════════════════════════
+     DMHAZARD — hazard sources + a low-rate proximity sensor (foundation; real volcano / cave / facility hazards register here later).
+       register(src)  src = { type:'atmosphere'|'plume'|'vent'|'cave'|'facility'|'space'|..., gas:'toxic'|'sulfur'|..., sev:0..1 (default 1),
+                              shape:'sphere' {x,y,z,r} | 'column' {x,z,r,y0,y1} | 'global', warn: extra metres-ish margin where the warning starts (default 0.8 r),
+                              id? }  -> id.   World space of the open world (PW.scene frame). unregister(id) · clear() (world close) · count().
+       A world with no source registers nothing: no timer, no state, nothing ticks. The toxic atmosphere is one 'global' source (registered once per world open
+       by the gate in DM_HAZ.tick, unregistered at close); a global source needs no sensor (always inside).
+       SENSOR: ONE setInterval (~3 Hz), created when the first LOCAL (non-global) source is registered, cleared when the last one goes: reads her world position,
+       the nearest signed distance to each source (d <= 0 inside, d <= warn near) -> state 'clear' | 'near' | 'inside'. Event `dmhazard` {state, near, type, gas, sev,
+       dist} on change only. HZ.near is the single boolean the per-frame code reads (DM_HAZ.tick sleeps while nothing is near / armed).
+       Glasses hook: DMHazard.glasses = {level 0..1, r, g, b} refreshed at the sensor rate (the AR-glasses atmosphere sensor / LED can read it; nothing drives their
+       material here). Prompt cooldown: dismiss(ms) (default 120 s).
+       Flags: `?hazardzone=plume` registers a test plume column ~6 heights ahead of her at world open (radius 4 heights) - the only test source besides ?hazard=toxic.
+     ═══════════════════════════════════════════════════════════════════ */
+  const HZ={src:[],nextId:1,near:false,state:'clear',type:'',gas:'',sev:0,dist:1e9,glob:0,timer:0,hz:3,coolUntil:0,clearSince:0,glasses:{level:0,r:1,g:0.72,b:0.1},ticks:0,onClear:null};
+  function hazardDist(s,px,py,pz){   // signed distance to the source's edge (negative inside): pure
+    if(s.shape==='global') return -1;
+    if(s.shape==='column'){ const dx=px-s.x, dz=pz-s.z, h=Math.hypot(dx,dz)-s.r; const dy=py<s.y0?s.y0-py:py>s.y1?py-s.y1:0; return dy>0?Math.hypot(Math.max(h,0),dy):h; }
+    return Math.hypot(px-s.x,py-s.y,pz-s.z)-s.r;
+  }
+  function hazardStep(d,warn){ return d<=0?'inside':d<=warn?'near':'clear'; }
+  function hzSense(){
+    HZ.ticks++;
+    const root=window.CHAR&&CHAR.root; if(!root||typeof PW==='undefined'||!PW.active){ hzSet('clear',null,1e9); return; }
+    const e=root.matrixWorld.elements, px=e[12], py=e[13]+0.9, pz=e[14];
+    let best=null,bd=1e9,bst='clear',hh=1; try{ hh=(CHAR.rawHeight||1)*(Math.hypot(e[0],e[1],e[2])||1); }catch(x){}
+    for(let i=0;i<HZ.src.length;i++){ const s=HZ.src[i]; if(s.shape==='global') continue;
+      const d=hazardDist(s,px,py,pz), st=hazardStep(d,s.warn!=null?s.warn:s.r*0.8+hh*1.5);
+      if(st!=='clear'&&(!best||d<bd)){ best=s; bd=d; bst=st; } }
+    hzSet(best?bst:'clear',best,bd);
+    // a locally armed shield drops again after 8 s clear of every source
+    if(!best&&SH.armed&&!HZ.glob){ if(!HZ.clearSince) HZ.clearSince=performance.now(); else if(performance.now()-HZ.clearSince>8000){ HZ.clearSince=0; DMShield.arm(false); } } else HZ.clearSince=0;
+  }
+  function hzSet(st,s,d){
+    HZ.dist=d; const g=HZ.glasses; g.level=st==='inside'?1:st==='near'?0.55:0;
+    if(st===HZ.state&&(!s||s.type===HZ.type)) return;
+    HZ.state=st; HZ.near=st!=='clear'; HZ.type=s?s.type:''; HZ.gas=s?s.gas||'':''; HZ.sev=s?(s.sev==null?1:s.sev):0;
+    try{ window.dispatchEvent(new CustomEvent('dmhazard',{detail:{state:st,near:HZ.near,type:HZ.type,gas:HZ.gas,sev:HZ.sev,dist:d}})); }catch(e){}
+  }
+  function hzTimer(){
+    let local=0; for(let i=0;i<HZ.src.length;i++) if(HZ.src[i].shape!=='global') local++;
+    if(local&&!HZ.timer){ HZ.timer=setInterval(hzSense,Math.round(1000/HZ.hz)); }
+    else if(!local&&HZ.timer){ clearInterval(HZ.timer); HZ.timer=0; hzSet('clear',null,1e9); }
+  }
+  const DMHazard={
+    register(src){ if(!src||typeof src!=='object') return 0; const s=Object.assign({shape:'sphere',sev:1,r:1,x:0,y:0,z:0,type:'hazard',gas:''},src); s.id=s.id||('hz'+(HZ.nextId++));
+      for(let i=0;i<HZ.src.length;i++) if(HZ.src[i].id===s.id) HZ.src.splice(i--,1);
+      HZ.src.push(s); if(s.shape==='global') HZ.glob++; hzTimer(); return s.id; },
+    unregister(id){ for(let i=0;i<HZ.src.length;i++) if(HZ.src[i].id===id){ if(HZ.src[i].shape==='global') HZ.glob--; HZ.src.splice(i,1); hzTimer(); return true; } return false; },
+    clear(){ if(!HZ.src.length&&!HZ.timer) return; HZ.src.length=0; HZ.glob=0; hzTimer(); },
+    count(){ return HZ.src.length; }, get near(){ return HZ.near; }, get state(){ return HZ.state; }, get type(){ return HZ.type; }, get gas(){ return HZ.gas; }, get severity(){ return HZ.sev; },
+    get distance(){ return HZ.dist; }, get glasses(){ return HZ.glasses; }, get sensorOn(){ return !!HZ.timer; }, get ticks(){ return HZ.ticks; }, rateHz:HZ.hz,
+    dismiss(ms){ HZ.coolUntil=performance.now()+(ms>0?ms:120000); }, get cooling(){ return performance.now()<HZ.coolUntil; },
+    sense:hzSense, core:{hazardDist,hazardStep}
+  };
+  window.DMHazard=DMHazard; H.hazard=DMHazard;
+
+  /* ═══════════════════════════════════════════════════════════════════
      DMSHIELD — the shield toggle (HUD button ui/dm-shield.js), the board-group protection field and the staff-crown status glow.
        orb ON   (default; the t1590 breathing orb, unchanged): the orb is drawn round her (+ the board when she rides it) in toxic / airless air.
        orb OFF  no orb is drawn at all (meshes hidden: zero draw, zero blend). Her protection comes from the BOARD GROUP (skyboard + the staff that
@@ -274,7 +331,7 @@
     if(d>R) return 'exposed';
     return d>R*(prev==='protected'?WARN_IN:WARN_BACK)?'warn':'protected';
   }
-  const SH_COL={protected:[0.16,1.0,0.46],warn:[1.0,0.76,0.18],exposed:[1.0,0.18,0.14]};
+  const SH_COL={protected:[0.16,1.0,0.46],warn:[1.0,0.76,0.18],exposed:[1.0,0.18,0.14],alert:[1.0,0.68,0.08]};   // alert = a hazard source is near and the shield is not armed: the LED only
   // what the crown glow may cost: tier ('low' = cheapest) x DMBudget 'light' level -> hull shells (0-2), the fake point light, the LED
   function shieldPlan(low,lvl){
     lvl=lvl|0; const hulls=lvl>=3?0:(low||lvl>=2)?1:2;
@@ -288,21 +345,27 @@
     if(!arielBoard&&pick(/ornament|arrowhead/)) return idx;
     pick(/^staff$/); return idx;
   }
-  const SH={on:true,avail:false,status:'protected',dist:0,R:1,a:0,pulse:0,ph:0,u:null,mats:null,hulls:[],led:null,ledGeo:null,scene:null,board:null,ledLoc:null,ledR:0.02,kT:0.05,
-            vl:null,vlOn:false,warm:0,sig:'',fd:null,crownN:0,lastEmit:'',busy:false,col:[0.16,1,0.46],ready:false};
+  const SH={on:true,armed:false,prot:false,alert:false,frames:0,avail:false,status:'protected',dist:0,R:1,a:0,pulse:0,ph:0,u:null,mats:null,hulls:null,led:null,ledGeo:null,scene:null,board:null,ledLoc:null,ledR:0.02,kT:0.05,
+            vl:null,vlOn:false,warm:0,sig:'',fd:null,crownN:0,lastEmit:'',busy:false,col:null,ready:false};
   try{ if(!SH_OFF&&window.localStorage&&window.localStorage.getItem('dm_shield_orb')==='0') SH.on=false; }catch(e){}
   if(SH_OFF) SH.on=true;
   const SHD={RADIUS_MUL,WARN_IN,WARN_BACK,REJOIN,stepStatus,shieldPlan,pickCrown,COL:SH_COL};
   function shEmit(){
-    const sig=(SH.avail?1:0)+''+(SH.on?1:0)+SH.status; if(sig===SH.lastEmit) return; SH.lastEmit=sig;
-    try{ window.dispatchEvent(new CustomEvent('dmshield',{detail:{on:SH.on,available:SH.avail,status:SH.status,state:SH.avail?(SH.on?'orb':'board'):'off'}})); }catch(e){}
+    const sig=(SH.avail?1:0)+''+(SH.on?1:0)+(SH.prot?1:0)+(SH.armed?1:0)+SH.status; if(sig===SH.lastEmit) return; SH.lastEmit=sig;
+    try{ window.dispatchEvent(new CustomEvent('dmshield',{detail:{on:SH.on,available:SH.avail,armed:SH.armed,status:DMShield.status,state:DMShield.state}})); }catch(e){}
   }
   const DMShield={
-    get available(){ return SH.avail&&!SH_OFF; }, get on(){ return SH.on; }, get status(){ return SH.avail&&!SH.on?SH.status:SH.avail?'orb':'off'; },
-    get protected(){ return SH.avail?(SH.on||SH.status!=='exposed'):true; }, get distance(){ return SH.dist; },
-    get state(){ return SH.avail?(SH.on?'orb':'board'):'off'; }, radius(){ return SH.R; }, RADIUS_MUL, core:SHD,
+    get available(){ return SH.avail&&!SH_OFF; }, get on(){ return SH.on; }, get armed(){ return SH.armed; },
+    get state(){ return SH.avail?(SH.prot?(SH.on?'orb':'board'):'alert'):'off'; },
+    get status(){ return !SH.avail?'off':!SH.prot?'alert':SH.on?'orb':SH.status; },
+    get protected(){ return SH.avail?(SH.prot?(SH.on||SH.status!=='exposed'):false):true; }, get distance(){ return SH.dist; },
+    radius(){ return SH.R; }, RADIUS_MUL, core:SHD,
+    get stats(){ return {frames:SH.frames,built:!!SH.hulls,gpu:!!SH.mats,awake:H.awake===true}; },
     set(v){ v=!!v; if(SH_OFF) v=true; if(v===SH.on) return SH.on; SH.on=v; try{ window.localStorage&&window.localStorage.setItem('dm_shield_orb',v?'1':'0'); }catch(e){} shEmit(); return SH.on; },
-    toggle(){ return DMShield.set(!SH.on); },
+    // arm: switch the protection on although the planet's air is fine (a local hazard source: plume, vent, cave, facility; the prompt's ACCEPT / the HUD button)
+    arm(v){ v=!!v&&!SH_OFF; if(v===SH.armed) return SH.armed; SH.armed=v; if(!v&&!H.hostile) SH.prot=false; shEmit(); return SH.armed; },
+    // the HUD button: while only an alert is showing it ARMS the shield, otherwise it toggles the orb (orb <-> the board group's field + crown glow)
+    toggle(){ if(SH.avail&&!SH.prot) return DMShield.arm(true); return DMShield.set(!SH.on); },
     overrideDistance(d){ SH.fd=(typeof d==='number'&&d>=0)?d:null; }   // tests / screenshots only
   };
   window.DMShield=DMShield; H.shield=DMShield;
@@ -317,13 +380,12 @@
     SH.u=u; SH.mats={in:hull(1,0.9),out:hull(2.6,0.26),led,dark}; return true;
   }
   function shTear(){   // remove our meshes from the scene (the board's own objects are never touched; the crown geometry is the board's, never disposed here)
-    for(const h of SH.hulls){ if(h.parent) h.parent.remove(h); }
-    SH.hulls.length=0; if(SH.led&&SH.led.parent) SH.led.parent.remove(SH.led);
+    if(SH.hulls){ for(const h of SH.hulls){ if(h.parent) h.parent.remove(h); } SH.hulls.length=0; } if(SH.led&&SH.led.parent) SH.led.parent.remove(SH.led);
     SH.board=null; SH.sig=''; SH.crownN=0; SH.warm=0;
     if(SH.vlOn){ try{ window.DMVLight&&DMVLight.clear('shield'); }catch(e){} SH.vlOn=false; }
   }
   function shBuild(board,scene){
-    shTear(); if(!shGpu()) return false;
+    shTear(); if(!shGpu()) return false; SH.hulls=[]; SH.col=SH.col||[1,0.68,0.08];
     const items=[],ms=[]; board.traverse(o=>{ if(o.isMesh&&o.geometry&&!(o.userData&&o.userData.dmShield)){ ms.push(o); items.push({name:o.name,base:o.userData&&o.userData.basePart}); } });
     const ix=pickCrown(items,!!(board.userData&&board.userData.arielBoard));
     board.updateWorldMatrix(true,true);
@@ -353,30 +415,35 @@
     try{ r.compileAsync(scene,PW.camera).then(done,done); }catch(e){ done(); }
   }
   let _M=null,_V=null,_vl=null; const _vo={level:1,gain:1};
-  function shFrame(dt,kind,mode,g,tier){
-    if(!_M){ _M=new THREE.Matrix4(); _V=new THREE.Vector3(); _vl=new Float32Array(7); }
+  function shFrame(dt,kind,mode,g){
+    SH.frames++;
     const board=PW.board, bay=bayLevel();
-    const avail=!SH_OFF&&kind!=='breathable'&&bay<0.5&&!!board&&(mode==='fly'||mode==='walk');
-    if(avail!==SH.avail){ SH.avail=avail; shEmit(); }
+    // protect = the air is hostile (global source) or she armed it (local source); alert = a local source is near and nothing is armed (LED only)
+    const prot=!SH_OFF&&(kind!=='breathable'||SH.armed), alert=!SH_OFF&&!prot&&HZ.near;
+    const avail=(prot||alert)&&bay<0.5&&!!board&&(mode==='fly'||mode==='walk');
+    if(avail!==SH.avail||prot!==SH.prot){ SH.avail=avail; SH.prot=avail&&prot; shEmit(); }
+    SH.alert=avail&&alert;
     if(!avail){ shOff(dt); return; }
+    if(!_M){ _M=new THREE.Matrix4(); _V=new THREE.Vector3(); _vl=new Float32Array(7); }
     // her height (world units) -> the field radius; her and the board's world positions
     SH.R=g.h*RADIUS_MUL;
     board.updateWorldMatrix(true,false); const be=board.matrixWorld.elements;
-    const d=SH.fd!=null?SH.fd*SH.R:Math.hypot(be[12]-g.px,be[13]-g.py,be[14]-g.pz); SH.dist=d;
-    const st=stepStatus(SH.status,d,SH.R); if(st!==SH.status){ SH.status=st; shEmit(); }
-    // built (and its pipelines compiled, off screen) as soon as the air is hostile: a toggle never hitches
+    if(prot){ const d=SH.fd!=null?SH.fd*SH.R:Math.hypot(be[12]-g.px,be[13]-g.py,be[14]-g.pz); SH.dist=d;
+      const st=stepStatus(SH.status,d,SH.R); if(st!==SH.status){ SH.status=st; shEmit(); } }
+    // built (and its pipelines compiled, off screen) as soon as it is needed: a toggle never hitches
     if(SH.board!==board||SH.scene!==PW.scene){ if(!shBuild(board,PW.scene)) return; shWarm(PW.scene); }
     if(SH.warm){ if(performance.now()-SH.warmAt<4000) return; SH.warm=0; for(const h of SH.hulls) h.visible=false; if(SH.led) SH.led.visible=false; }   // a compile that never answers must not keep the crown off
-    const want=!SH.on&&board.visible!==false;
+    const hullOn=prot&&!SH.on&&board.visible!==false, want=hullOn||alert;
     SH.a+=((want?1:0)-SH.a)*(1-Math.exp(-(want?4:7)*dt));
     if(SH.a<0.01&&!want){ SH.a=0; shOff(dt); return; }
     const low=lowTier(), B=window.DMBudget&&DMBudget.on?DMBudget:null, plan=shieldPlan(low,B?B.lvl('light'):0);
-    SH.ph+=dt; const c=SH_COL[SH.status], k=1-Math.exp(-6*dt); for(let i=0;i<3;i++) SH.col[i]+=(c[i]-SH.col[i])*k;
-    const fast=SH.status==='protected'?2.2:SH.status==='warn'?5.5:8;
-    const pulse=plan.pulse?(SH.status==='protected'?0.86+0.14*Math.sin(SH.ph*fast):0.7+0.3*Math.sin(SH.ph*fast)):1;
+    const stN=alert?'alert':SH.status;
+    SH.ph+=dt; const c=SH_COL[stN], k=1-Math.exp(-6*dt); for(let i=0;i<3;i++) SH.col[i]+=(c[i]-SH.col[i])*k;
+    const fast=stN==='protected'?2.2:stN==='warn'?5.5:stN==='alert'?4:8;
+    const pulse=plan.pulse?(stN==='protected'?0.86+0.14*Math.sin(SH.ph*fast):0.7+0.3*Math.sin(SH.ph*fast)):1;
     const u=SH.u; u.col.value.setRGB(SH.col[0],SH.col[1],SH.col[2]); u.a.value=SH.a*pulse;
     const bs=Math.hypot(be[0],be[1],be[2])||1; u.t.value=SH.kT*bs;
-    for(const h of SH.hulls){ const src=h.userData.src, vis=!!src&&plan.hulls>(h.userData.out?1:0)&&src.visible!==false;
+    for(const h of SH.hulls){ const src=h.userData.src, vis=hullOn&&!!src&&plan.hulls>(h.userData.out?1:0)&&src.visible!==false;
       h.visible=vis; if(vis){ src.updateWorldMatrix(true,false); h.matrix.copy(src.matrixWorld); h.matrixWorldNeedsUpdate=true; } }
     const L=SH.led; L.visible=plan.led; if(plan.led){ _M.makeTranslation(SH.ledLoc.x,SH.ledLoc.y,SH.ledLoc.z); L.matrix.multiplyMatrices(board.matrixWorld,_M); L.matrixWorldNeedsUpdate=true; }
     // the fake point light (fog / mist in-scatter, ui/dm-vlight.js): the LED's colour at the LED, shed by tier and DMBudget
@@ -386,15 +453,15 @@
     else if(SH.vlOn){ try{ VL.clear('shield'); }catch(e){} SH.vlOn=false; }
   }
   function shOff(dt){   // nothing of the shield is drawn (hidden = not in any render list); the meshes stay built for the next time
-    if(SH.warm) return;
+    if(SH.warm||!SH.hulls) return;
     if(SH.a!==0) SH.a=0;
     for(const h of SH.hulls) if(h.visible) h.visible=false;
     if(SH.led&&SH.led.visible) SH.led.visible=false;
     if(SH.vlOn){ try{ window.DMVLight&&DMVLight.clear('shield'); }catch(e){} SH.vlOn=false; }
   }
-  H.shieldHide=function(){ if(SH.avail){ SH.avail=false; shEmit(); } shOff(); };
-  H.shieldRelease=function(){ shTear(); SH.scene=null; SH.a=0; if(SH.avail){ SH.avail=false; shEmit(); } };
-  H.shieldDispose=function(){ shTear(); try{ if(SH.mats) for(const k in SH.mats) SH.mats[k].dispose(); if(SH.ledGeo){ SH.ledGeo.cas.dispose(); SH.ledGeo.dome.dispose(); } }catch(e){} SH.mats=null; SH.ledGeo=null; SH.u=null; };
+  H.shieldHide=function(){ if(SH.avail){ SH.avail=false; SH.prot=false; shEmit(); } shOff(); };
+  H.shieldRelease=function(){ if(SH.hulls||SH.led) shTear(); SH.scene=null; SH.a=0; SH.armed=false; SH.alert=false; SH.hulls=null; if(SH.avail){ SH.avail=false; SH.prot=false; shEmit(); } };
+  H.shieldDispose=function(){ if(SH.hulls||SH.led) shTear(); try{ if(SH.mats) for(const k in SH.mats) SH.mats[k].dispose(); if(SH.ledGeo){ SH.ledGeo.cas.dispose(); SH.ledGeo.dome.dispose(); } }catch(e){} SH.mats=null; SH.ledGeo=null; SH.u=null; };
 
   /* ── per-frame ─────────────────────────────────────────────────── */
   const _c={x:0,y:0,z:0,R:1,len:1,ok:false,px:0,py:0,pz:0,h:1};
@@ -421,15 +488,38 @@
     _c.x=mx; _c.y=my; _c.z=mz; _c.R=R; _c.len=len; _c.ok=true; return _c;
   }
   let hx=0,hz=1,lastX=0,lastY=0,lastZ=0,haveLast=false,spd=0,tPh=0,tPh2=0,boostT=0;
+  // ── the world gate: evaluated ONCE per world open / atmosphere change (the body or its palette object changes), never per frame ──
+  let _gb=null,_gp=null,_gk='breathable',_gid=0,_zid=0;
+  H.hostile=false; H.awake=false;
+  function gateWorld(){
+    _gb=PW.body; _gp=PW.pal; _gk=H.kind(_gb,_gp); H.hostile=_gk!=='breathable';
+    if(_gid){ DMHazard.unregister(_gid); _gid=0; }
+    if(_zid){ DMHazard.unregister(_zid); _zid=0; }
+    if(H.hostile) _gid=DMHazard.register({id:'atmosphere',type:'atmosphere',gas:_gk,sev:_gk==='toxic'?1:0.5,shape:'global'});   // the toxic atmosphere is simply a global source
+    if(ZONE_FLAG&&PW.active) _zid=zoneTest();
+  }
+  // ?hazardzone=plume: one test plume column ahead of her (radius 4 heights, 6 heights away along +X of the world)
+  const ZONE_FLAG=(()=>{ try{ return new URLSearchParams(window.location.search).get('hazardzone')||''; }catch(e){ return ''; } })();
+  function zoneTest(){
+    const root=window.CHAR&&CHAR.root; if(!root||!CHAR.rawHeight) return 0; root.updateWorldMatrix(true,false); const e=root.matrixWorld.elements, h=CHAR.rawHeight*(Math.hypot(e[0],e[1],e[2])||1);
+    return DMHazard.register({id:'test-plume',type:'plume',gas:'volcanic',sev:0.8,shape:'column',x:e[12]+6*h,z:e[14],r:4*h,y0:e[13]-8*h,y1:e[13]+40*h});
+  }
+  H.gate=gateWorld;
   H.tick=function(dt){
-    if(H.off||typeof PW==='undefined'||!PW.active||!PW.scene||!PW.camera) { H.shieldHide(); if(H.a>0||H.wet>0||S.fogSaved) H.hide(); return; }
-    const mode=PW.mode; dt=Math.min(0.1,Math.max(0.001,dt||1/60));
-    if(mode!=='fly'&&mode!=='walk'){ H.shieldHide(); if(H.a>0||H.wet>0||S.fogSaved||S.front&&S.front.visible) H.hide(); haveLast=false; return; }
-    const kind=H.kind(PW.body,PW.pal), cam=PW.camera, W=window.JOTS_WATER, g=groupSphere(mode,cam,kind==='toxic');
+    if(H.off||typeof PW==='undefined'||!PW.active||!PW.scene||!PW.camera) { if(H.awake){ H.awake=false; H.shieldHide(); } if(H.a>0||H.wet>0||S.fogSaved) H.hide(); return; }
+    if(PW.body!==_gb||PW.pal!==_gp) gateWorld();
+    if(ZONE_FLAG&&!_zid) _zid=zoneTest();   // (test flag only) retried until she exists in the world
+    const mode=PW.mode, kind=_gk, W=window.JOTS_WATER;
+    if(mode!=='fly'&&mode!=='walk'){ if(H.awake){ H.awake=false; H.shieldHide(); } if(H.a>0||H.wet>0||S.fogSaved||S.front&&S.front.visible) H.hide(); haveLast=false; return; }
+    // SAFE MAP, nothing near, no dive: this whole feature sleeps here (one boolean test per frame; no groupSphere, no shield, no mesh, no material, no light)
+    const wake=H.hostile||SH.armed||HZ.near, dive=!!(W&&mode==='fly'&&PW.board&&PW.board.position.y<(W.surfaceY||0)+40)||H.a>0.01||H.wet>0.01||S.fogSaved;
+    if(!wake&&!dive){ if(H.awake){ H.awake=false; H.shieldHide(); if(S.scene&&S.front&&S.front.visible) H.hide(); haveLast=false; } return; }
+    H.awake=true; dt=Math.min(0.1,Math.max(0.001,dt||1/60));
+    const cam=PW.camera, g=groupSphere(mode,cam,kind==='toxic');
     // the shield (toggle, board-group field, crown glow + LED): independent of the orb's own compile state
-    if(g.ok){ try{ shFrame(dt,kind,mode,g); }catch(e){ if(!SH.busy){ SH.busy=true; console.warn('[shield]',e&&e.stack||e); } shOff(); } } else shOff();
-    // the orb's GPU objects are built / attached only where an orb can ever show: toxic or airless air, or a dive on the board (safe dry worlds, the Ariel mansion: nothing is attached, nothing drawn)
-    if(!S.scene&&kind==='breathable'&&!(W&&mode==='fly')){ if(H.a>0||H.wet>0) H.hide(); haveLast=false; return; }
+    if(wake){ if(g.ok){ try{ shFrame(dt,kind,mode,g); }catch(e){ if(!SH.busy){ SH.busy=true; console.warn('[shield]',e&&e.stack||e); } shOff(); } } else shOff(); }
+    // the orb's GPU objects are built / attached only where an orb can ever show: toxic or airless air, an armed shield, or a dive on the board
+    if(!S.scene&&kind==='breathable'&&!SH.armed&&!(W&&mode==='fly')){ if(H.a>0||H.wet>0) H.hide(); haveLast=false; return; }
     if(!attach(PW.scene,PW.renderer||(typeof flightRenderer!=='undefined'?flightRenderer:null))) return;
     if(!S.ready){ return; }
     if(!g.ok){ haveLast=false; H.a=ease(H.a,0,3,dt); S.front.visible=S.back.visible=H.a>0.01; S.tint.visible=false; return; }
@@ -443,7 +533,7 @@
     const camWet=W&&mode==='fly'?sm(0,1.5,surfY-cam.position.y):0;
     // hazard target
     let tgt=0;
-    if(kind==='toxic') tgt=1; else if(kind==='airless') tgt=0.42;
+    if(kind==='toxic') tgt=1; else if(kind==='airless') tgt=0.42; else if(SH.armed) tgt=1;   // (an armed shield on a healthy planet: a local hazard)
     if(!SH.on) tgt=0;                          // (DMShield) orb toggled off: the board group protects her instead (crown glow), no orb is drawn
     const bay=bayLevel(); H.dis=ease(H.dis,bay,4,dt);
     const wantBlue=H.wet>0.5?1:0;

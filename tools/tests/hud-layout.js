@@ -97,12 +97,16 @@ ok(!/dm-hazardbubble\.js/.test(shSrc) || /does not create or own/.test(shSrc), '
     createElement: tag => { const n = el(tag); if (tag === 'style') nodes.css = n; if (tag === 'div') nodes.w = n; if (tag === 'button') nodes.b = n; return n; },
     addEventListener() { } };
   body.appendChild = c => { body.children.push(c); return c; };
-  const evs = {}, ctx = { document: doc, MutationObserver: function () { this.observe = function () { }; this.disconnect = function () { }; } };
-  ctx.window = ctx; ctx.globalThis = ctx; ctx.addEventListener = (t, fn) => { evs[t] = fn; };
+  let moCount = 0; const evs = {}, ctx = { document: doc, MutationObserver: function () { moCount++; this.observe = function () { }; this.disconnect = function () { }; } };
+  ctx.window = ctx; ctx.globalThis = ctx; ctx.addEventListener = (t, fn) => { evs[t] = fn; }; ctx.removeEventListener = (t, fn) => { if (evs[t] === fn) delete evs[t]; };
   vm.createContext(ctx); vm.runInContext(shSrc, ctx);
-  ok(nodes.w && nodes.w.id === 'dm-shield' && nodes.b && nodes.b.id === 'dm-shield-btn' && nodes.b.className === 'fl-btn', 'widget built as #dm-shield > #dm-shield-btn.fl-btn');
-  ok(nodes.w.getAttribute('data-show') !== '1' && !nodes.w.classList.contains('on'), 'stays hidden when DMShield is missing');
+  // (t1612) dormant on a safe map: no DOM, no style, no observers, only the two event listeners
+  ok(!nodes.w && !nodes.b && !nodes.css, 'safe map: no button / style created at load');
+  ok(Object.keys(evs).sort().join() === 'dmhazard,dmshield', 'safe map: only the dmshield + dmhazard listeners at load (no resize / orientation / observers)');
+  ok(moCount === 0, 'safe map: no MutationObserver created');
   evs.dmshield({ type: 'dmshield', detail: { available: true, on: true } });
+  ok(nodes.w && nodes.w.id === 'dm-shield' && nodes.b && nodes.b.id === 'dm-shield-btn' && nodes.b.className === 'fl-btn', 'widget built (on first available) as #dm-shield > #dm-shield-btn.fl-btn');
+  ok(evs.resize && evs.orientationchange && moCount >= 1, 'layout listeners + observers exist only while available');
   ok(nodes.w.getAttribute('data-show') === '1', 'shown on dmshield when available');
   ok(nodes.w.classList.contains('on') && nodes.b.getAttribute('aria-pressed') === 'true', 'lit .on state follows detail.on');
   ok(nodes.w.style.left === '120px' && nodes.w.style.bottom === '80px', 'sits next to the flashlight (same left, 34+6 px above)');
@@ -118,6 +122,7 @@ ok(!/dm-hazardbubble\.js/.test(shSrc) || /does not create or own/.test(shSrc), '
   ok(nodes.w.getAttribute('data-st') === null && nodes.w.classList.contains('on'), 'orb on: no status colour, plain lit button');
   ok(/#dm-shield\[data-st="protected"\] \.fl-btn\{/.test(shSrc) && /data-st="warn"/.test(shSrc) && /data-st="exposed"/.test(shSrc), 'status CSS for green / amber / red');
   evs.dmshield({ type: 'dmshield', detail: { available: false, on: false } });
-  ok(nodes.w.getAttribute('data-show') === '' && !nodes.w.classList.contains('on'), 'hides again when available is false'); }
+  ok(nodes.w.getAttribute('data-show') === '' && !nodes.w.classList.contains('on'), 'hides again when available is false');
+  ok(!evs.resize && !evs.orientationchange, 'unavailable again: layout listeners removed'); }
 
 console.log(fails ? 'hud-layout: FAILED ' + fails + '/' + n : 'hud-layout: all ' + n + ' checks passed'); process.exit(fails ? 1 : 0);
