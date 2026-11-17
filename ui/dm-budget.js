@@ -326,6 +326,7 @@
   out.lvl = function (n) { return out.lv[n] | 0; };
   out.emaMs = function () { return S.C ? S.C.ema : 0; };            // (v297) per-frame readers (no object): ui/dm-light.js headroom gate
   out.budgetMs = function () { return S.C ? S.C.budget : TARGET_MS; };
+  out.isExhausted = function () { return !!(out.on && S.C && S.C.exhausted); };   // (v339) allocation-free stats().exhausted: every stage the ladder may shed is shed and the frame is still over budget (index.html _presetGovTick)
   // typed accessors for the feature hooks; each returns the neutral value while the controller is off or at level 0
   out.parallax = function () { const l = out.lvl('parallax'); return { lvl: l, steps: [1, 0.6, 0.4, 0][l], stepsMax: l === 2 ? 4 : 99, reach: [1, 0.8, 0.6, 0.6][l], depth: [1, 0.9, 0.75, 0.75][l], off: l >= 3, shadow: out.lvl('pxshadow') ? 0 : 1 }; };
   out.groundReach = function () { return [1, 0.8, 0.6][out.lvl('ground')] || 1; };

@@ -174,7 +174,19 @@
   let _census = null, _censusAt = 0, _memCache = null, _memAt = 0, _memForce = false;
   // (v337) the memory scan as a resumable job: one object (its geometry + materials) per step, MEM_SLICE_MS per idle slice
   const MEM_SLICE_MS = 4;
-  let memJob = null, memSliceOn = false;
+  let memJob = null, memSliceOn = false, memRic = 0;
+  // (v339, Watcher #261 review) the job's generator holds the scene roots it walks: a world switch / close / dispose mid-scan kept the old scene alive until the
+  // scan ran out.  memAbort() ends the generator (its locals - roots, stacks, seen-sets - are released), cancels the pending idle slice and forgets the job; the
+  // last FINISHED result (_memCache: numbers and strings only, no object refs) stays in the report.  memSlice also aborts by itself when the world changed under it.
+  function curWorld() { try { return (typeof PW !== 'undefined' && PW && PW.active) ? (PW.gen | 0) : -1; } catch (e) { return -1; } }
+  function memAbort(why) {
+    const J = memJob; memJob = null; memSliceOn = false;
+    if (memRic) { try { if (window.cancelIdleCallback) window.cancelIdleCallback(memRic); } catch (e) { } memRic = 0; }
+    if (!J) return false;
+    try { J.it.return(); } catch (e) { } J.it = null;
+    try { if (window.__dmRec) window.__dmRec('perflog.memAbort', J.ms); } catch (e) { }
+    return true;
+  }
   function* memScan(roots, st) {
     const seenT = new Set(), seenG = new Set(), texRows = [], geoRows = []; let texB = 0, geoB = 0;
     const texBytes = (t) => { if (t.userData && t.userData.dmBytes) return t.userData.dmBytes; const im = t.image || (t.source && t.source.data); const w = (im && (im.width || im.videoWidth)) || 0, h = (im && (im.height || im.videoHeight)) || 0; const d = (im && im.depth) || 1; return w * h * d * (t.type === 1016 || t.type === 1015 ? (t.type === 1015 ? 16 : 8) : 4) * (t.generateMipmaps === false || t.isDataTexture || t.isRenderTargetTexture ? 1 : 1.33); };
@@ -196,7 +208,7 @@
     let rinfo = null; try { const r = window.flightRenderer || (typeof flightRenderer !== 'undefined' ? flightRenderer : null), m = r && r.info && r.info.memory; if (m) rinfo = { totalMB: Math.round(m.total / 1048576), texMB: Math.round((m.texturesSize || 0) / 1048576), geoMB: Math.round(((m.attributesSize || 0) + (m.indexAttributesSize || 0)) / 1048576), storageMB: Math.round(((m.storageAttributesSize || 0) + (m.indirectStorageAttributesSize || 0)) / 1048576), nTex: m.textures, nGeo: m.geometries }; } catch (e) { }   // (memory lane) the renderer's own split
     return { info: rinfo, dmmem: (window.DMMem && DMMem.stats) ? DMMem.stats() : null, ms: 0, slices: 0, objects: st.n, texMB: Math.round(texB / 1048576), geoMB: Math.round(geoB / 1048576), nTex: seenT.size, texTop: texRows.slice(0, 10).map((r) => Math.round(r[0] / 1048576 * 10) / 10 + 'MB ' + r[1]), geoTop: geoRows.slice(0, 8).map((r) => Math.round(r[0] / 1048576 * 10) / 10 + 'MB ' + r[1]) };
   }
-  function memStart(roots) { if (!memJob) { const st = { n: 0 }; memJob = { it: memScan(roots, st), st, ms: 0, slices: 0 }; } }
+  function memStart(roots) { if (!memJob) { const st = { n: 0 }; memJob = { it: memScan(roots, st), st, ms: 0, slices: 0, world: curWorld() }; } }
   // run the job for up to budget ms (Infinity: to the end); true when it finished (the result is in _memCache)
   function memStep(budget) {
     const J = memJob; if (!J) return true;
@@ -210,14 +222,15 @@
     return true;
   }
   function memSlice(dl) {
-    memSliceOn = false; if (!memJob) return;
+    memSliceOn = false; memRic = 0; if (!memJob) return;
+    if (memJob.world !== curWorld()) { memAbort('world'); return; }   // the world changed under the scan: let the old one go
     if (document.hidden || ended) return;   // the hide / pagehide report finishes it synchronously
     const left = dl && !dl.didTimeout && typeof dl.timeRemaining === 'function' ? dl.timeRemaining() : MEM_SLICE_MS;
-    if (left < 2) { memSliceOn = true; ric(memSlice, 4000); return; }   // too short an idle gap: wait for a roomier one
-    if (!memStep(Math.min(MEM_SLICE_MS, left - 1))) { memSliceOn = true; ric(memSlice, 4000); }
+    if (left < 2) { memSliceOn = true; memRic = ric(memSlice, 4000); return; }   // too short an idle gap: wait for a roomier one
+    if (!memStep(Math.min(MEM_SLICE_MS, left - 1))) { memSliceOn = true; memRic = ric(memSlice, 4000); }
   }
-  function memKick(roots) { memStart(roots); if (!memSliceOn) { memSliceOn = true; ric(memSlice, 4000); } }
-  function memFinish(roots) { memStart(roots); memStep(Infinity); }
+  function memKick(roots) { memStart(roots); if (!memSliceOn) { memSliceOn = true; memRic = ric(memSlice, 4000); } }
+  function memFinish(roots) { if (memJob && memJob.world !== curWorld()) memAbort('world'); memStart(roots); memStep(Infinity); }
   function census() {
     const now = Date.now(); if (_census && now - _censusAt < 25000) return _census;
     const out = {};
@@ -332,5 +345,5 @@
     if (ON) setInterval(() => { ric((dl) => { if (roomy(dl)) sampleMem(); else ric(sampleMem, 4000); }, 4000); }, MEM_MS);
     setTimeout(() => ric(carryOver, 8000), 8000);
   } catch (e) {}
-  const evs = []; window.dmPerfLog = { sessionId, event: (n, d) => { try { evs.push({ at: new Date().toISOString(), n: String(n).slice(0, 24), d: d == null ? null : JSON.parse(JSON.stringify(d)) }); if (evs.length > 40) evs.shift(); dirty = true; } catch (e) {} }, touch: () => { dirty = true; }, snapshot: () => snapshot(false), build: () => build(false), mem: () => mem.slice(), full: ON };
+  const evs = []; window.dmPerfLog = { sessionId, event: (n, d) => { try { evs.push({ at: new Date().toISOString(), n: String(n).slice(0, 24), d: d == null ? null : JSON.parse(JSON.stringify(d)) }); if (evs.length > 40) evs.shift(); dirty = true; } catch (e) {} }, touch: () => { dirty = true; }, snapshot: () => snapshot(false), build: () => build(false), mem: () => mem.slice(), full: ON, abortCensus: (why) => memAbort(why), censusJob: () => !!memJob };
 })();

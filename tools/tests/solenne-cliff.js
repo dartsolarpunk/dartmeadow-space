@@ -126,7 +126,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const sw = fs.readFileSync(path.join(root, 'sw.js'), 'utf8');
   const swV = +((sw.match(/CACHE_NAME = 'dartmeadow-engine-v(\d+)'/) || [])[1] || 0), facV = +((html.match(/ui\/dm-facilities\.js\?v=(\d+)/) || [])[1] || 0);
   ok(swV >= 333, 'sw CACHE_NAME is past main v332 (v' + swV + '; CE assigns the final number at merge)');
-  { const sv = +F.shardVer; ok(facV >= 333 && facV <= swV && sv >= 333 && sv <= facV && String(sv) === F.shardVer, 'dm-facilities.js?v= is v333 or later and never past CACHE_NAME; the shards.json key (F.shardVer) is v333 or later and never past it (v' + facV + ', ' + F.shardVer + ', sw v' + swV + ')'); }   // (t1516) >= checks: a later sw / facilities bump does not have to re-key unchanged shards
+  ok(facV >= 333 && facV <= swV && F.shardVer === String(facV), 'dm-facilities.js?v= (v333..CACHE_NAME) and the shards.json key (F.shardVer) move together (v' + facV + ', ' + F.shardVer + ', sw v' + swV + ')');   // (v339) other lanes bump CACHE_NAME without touching dm-facilities.js
   ok(F.ver === '302', 'the unchanged mansion GLB / cliff maps keep F.ver 302 (no 10 MB re-download)');
   ok(/const ATMO_DEFAULT_AGL\s*=\s*46\b/.test(html), 'ATMO_DEFAULT_AGL stays 46');
   ok(/TERRAIN\.Hw=\(\(\)=>\{ const h0=F\.H0\|\|H; try\{ const f=_fac\(\); return f&&f\.seaField\?f\.seaField\(h0\):h0;/.test(html), 'index.html: TERRAIN.Hw = DMFac.seaField(natural ground)');

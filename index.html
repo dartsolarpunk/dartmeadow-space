@@ -198,8 +198,8 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-water-curl.js?v=292"></script>   <!-- water: the breaking-wave curl (glassy turquoise barrel along the shore-parallel wave fronts; Medium+; created by dm-water-fx) -->
 <script src="ui/dm-water-fx.js?v=292"></script>   <!-- water: spray / splash / mist sprites, wake, footstep ripples, shore-break spray, underwater fog + shafts (?waterfx=0 off) -->   <!-- water: baked sea, shore, ground hook (?water=0 = the previous sea) -->
 <script src="ui/dm-perf.js?v=334"></script>
-<script src="ui/dm-governor.js?v=331"></script>
-<script src="ui/dm-budget.js?v=331"></script>
+<script src="ui/dm-governor.js?v=341"></script>
+<script src="ui/dm-budget.js?v=341"></script>
 <script src="ui/dm-mem.js?v=292"></script>
 <script src="ui/dm-lod.js?v=310"></script>
 <script src="ui/dm-terrain-lod.js?v=294"></script>   <!-- one terrain across every altitude band: shared slope / skirt / sea-tint contract between the globe map and the sky ground -->
@@ -1064,7 +1064,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-safety.js?v=1" defer></script>
 <script src="jots/jots-link.js?v=217" defer></script>
 <script src="ui/dm-friends.js?v=217" defer></script>
-<script src="ui/dm-perflog.js?v=337" defer></script>
+<script src="ui/dm-perflog.js?v=341" defer></script>
 <script src="ui/dm-webkit.js?v=210" defer></script>
 <script src="ui/dm-spectator.js?v=1" defer></script>
 <script src="ui/dm-stack.js?v=334" defer></script>
@@ -5003,6 +5003,9 @@ function _presetGovTick(){
     const B=window.DMBudget; if(!B||!B.on||typeof B.emaMs!=='function') return;
     const sc=(typeof STATE!=='undefined'&&STATE&&STATE.screen)||'';
     if(document.hidden||window._dmWarming||window.__JOTS_INTRO||(sc!=='flight'&&sc!=='atmo'&&sc!=='surface')){ _PG.over=0; return; }
+    // (v339, Watcher #261 review) the preset steps down only once the budget ladder (ui/dm-budget.js, ~28 shed steps) is EXHAUSTED: before that the ladder is still
+    // shedding cheaper stages and a preset drop on top was a double drop (seen at ladder step 7 of 28).  The 12 s miss window counts exhausted time only (reset otherwise).
+    if(typeof B.isExhausted!=='function'||!B.isExhausted()){ _PG.over=0; return; }
     const ema=B.emaMs(), bud=B.budgetMs();
     if(!(ema>bud*1.08)){ _PG.over=0; return; }
     if(++_PG.over<_PG_MISS_TICKS) return;
@@ -6981,10 +6984,10 @@ async function _flightWarmup(){
   try{ _distLightT=1; updateDistantSystems(0); }catch(e){}   // the two distant-star lights exist before compiling
   try{ _lcApplyWorlds(); }catch(e){}   // (v105) worlds' own light lists, before anything compiles
   const steps=[
-    ['world',()=>{ const rec=window._flightCompile={ groups:[], ms:0, capped:false, single:false }; return _compileStaged(flightScene,flightCamera,{rec,cap:GFX.isMobile?13000:22000,step:GFX.isMobile?6000:9000,onGroup:(gi,n)=>{ try{ dmSys.load('warm','Preparing world 1/'+steps.length+' · '+Math.round((gi/Math.max(1,n))/steps.length*100)+'%'); }catch(e){} }}); },GFX.isMobile?15000:25000],   // (v256) in small groups, one cap for the whole step
+    ['world',()=>{ const rec=window._flightCompile={ groups:[], ms:0, capped:false, single:false }; return _compileStaged(flightScene,flightCamera,{rec,cap:GFX.isMobile?13000:22000,step:GFX.isMobile?6000:9000,onCompile:_gsMarkWarm,onGroup:(gi,n)=>{ try{ dmSys.load('warm','Preparing world 1/'+steps.length+' · '+Math.round((gi/Math.max(1,n))/steps.length*100)+'%'); }catch(e){} }}); },GFX.isMobile?15000:25000,()=>{ const r=window._flightCompile; if(r&&r.abandon) r.abandon(); }],   // (v256) in small groups, one cap for the whole step; (v338) [3] = what to do when the step's cap gives up on it
     ['sun and flares',()=>window.DMStar&&DMStar.warm&&DMStar.warm(flightCamera)],
     ['star dive',()=>window.DMStarBubble&&DMStarBubble.warm&&DMStarBubble.warm(flightCamera,flightScene)],   // lens/bubble/interior: compiled before the first pass through the Sun
-    ['galaxy',()=>galSky&&galSky.ready&&_gsPrecompile()],
+    ['galaxy',()=>galSky&&galSky.ready&&_gsPrecompileRest()],   // (v338) the GalSky parts the world step did not compile (hidden LODs), GalSky subtree only
     ['atmosphere',()=>_taWarm(flightRenderer,flightScene,flightCamera)],   // the scene as drawn through the true-atmosphere pass: its own shader variants
     ['planet maps',()=>_wmWarmAll()],
     ['aboard occlusion',()=>_aoccWarm()],   // depth-tested twins of the far-field layers, for when the hull is in front of them   // the map-dressed planet material each world wears from up close: same program, compiled now
@@ -7010,7 +7013,12 @@ async function _flightWarmup(){
     if(_prevStep){ try{ await Promise.race([_prevStep,new Promise(r=>setTimeout(r,20000))]); }catch(e){} _prevStep=null; }
     window._dmWarmPhase=steps[i][0];
     const t=performance.now();
-    try{ const _p=Promise.resolve(steps[i][1]()); _prevStep=_p.catch(()=>{}); await Promise.race([_p,new Promise(r=>setTimeout(r,steps[i][2]||7000))]); }catch(e){ console.warn('[warmup]',steps[i][0],e); }
+    // (v338 perf log) a step that hits its cap and has an abandon hook ([3]: the staged world compile) is told to stop launching work and settle at once, so the
+    // next step's wait below does not sit on it.  Mali-G615 log: world gave up at 15.2 s, its compile ran on to 27.3 s, and 'sun and flares' waited those 12 s.
+    // The pipelines already handed to the GPU finish in the background exactly as before; only the queued groups are left to compile in-frame / later.
+    let _to=false;
+    try{ const _p=Promise.resolve(steps[i][1]()); _prevStep=_p.catch(()=>{}); await Promise.race([_p,new Promise(r=>setTimeout(()=>{ _to=true; r(); },steps[i][2]||7000))]); }catch(e){ console.warn('[warmup]',steps[i][0],e); }
+    if(_to&&typeof steps[i][3]==='function'){ try{ steps[i][3](); }catch(e){} }
     try{ window._warmSteps.push([steps[i][0],Math.round(performance.now()-t)]); }catch(e){}
     console.log('[warmup]',steps[i][0],(performance.now()-t).toFixed(0)+'ms');
     await new Promise(r=>setTimeout(r,16));   // let the page breathe between steps
@@ -18232,7 +18240,18 @@ function buildGalSky(){
 // the frame they first appeared — right as the galaxy came into view.
 // compileAsync projects the scene synchronously before its first await, so
 // the hidden parts are shown only for that instant, never for a frame.
-function _gsPrecompile(){
+// (v338 perf log) GalSky was compiled twice in the warm-up: its visible LODs in the world step's staged compile (JOTS_GalSky group: 59 pipelines, 6.0 s on the Mali-G615),
+// then the galaxy step re-projected the WHOLE flight scene (culling off) with the hidden LODs shown: every already-built GalSky object went through the
+// node / pipeline path again, and so did the rest of the scene (late galaxy: 15.1 s, its cap).  Now each GalSky object is compiled once: the world step
+// records what it handed to the renderer (_gsMarkWarm, called just before that group's compileAsync), and the galaxy step compiles only the GalSky subtree
+// (compileAsync(galSkyRoot, camera, flightScene): the scene stays the cache / light reference, so the pipeline keys are the ones render() uses) with
+// those objects left out, i.e. just the hidden LODs.  Same materials, same passes, nothing about drawing changes: only who compiles what, and when.
+const _gsWarmed=new WeakSet();
+function _gsMarkWarm(kids){
+  if(!galSkyRoot||!kids||kids.indexOf(galSkyRoot)<0) return;
+  galSkyRoot.traverseVisible(o=>{ if(o.isMesh||o.isPoints||o.isLine||o.isSprite) _gsWarmed.add(o); });   // the warm-up runs with frustum culling off: visible = compiled
+}
+function _gsPrecompile(){   // at build time (boot / rebuild): unchanged - the whole flight scene with the hidden GalSky parts shown
   if(!galSkyRoot||typeof flightRenderer==='undefined'||!flightRenderer||!flightRenderer.compileAsync)return;
   const hidden=[];
   galSkyRoot.traverse(o=>{if(!o.visible){hidden.push(o);o.visible=true;}});
@@ -18240,6 +18259,19 @@ function _gsPrecompile(){
   try{pr=flightRenderer.compileAsync(flightScene,flightCamera);if(pr&&pr.catch)pr.catch(e=>console.warn('[galsky] precompile',e));}
   catch(e){console.warn('[galsky] precompile',e);}
   finally{for(const o of hidden)o.visible=false;}
+  return pr;
+}
+function _gsPrecompileRest(){   // (v338) the warm-up's galaxy step: only what the world step did not already compile
+  if(!galSkyRoot||typeof flightRenderer==='undefined'||!flightRenderer||!flightRenderer.compileAsync)return;
+  const hidden=[], skip=[];
+  galSkyRoot.traverse(o=>{if(!o.visible){hidden.push(o);o.visible=true;}});
+  // already compiled by the world step: leave them out of this projection (leaves only, so nothing under them is skipped)
+  galSkyRoot.traverse(o=>{ if(o.visible&&_gsWarmed.has(o)&&!o.children.length){ skip.push(o); o.visible=false; } });
+  let pr=null;
+  try{pr=flightRenderer.compileAsync(galSkyRoot,flightCamera,flightScene);if(pr&&pr.catch)pr.catch(e=>console.warn('[galsky] precompile',e));}
+  catch(e){console.warn('[galsky] precompile',e);}
+  finally{for(const o of skip)o.visible=true;for(const o of hidden)o.visible=false;}   // the projection is synchronous: visibility is back before anything else runs
+  try{ window._gsCompileStat={warmed:skip.length,compiled:hidden.length}; }catch(e){}
   return pr;
 }
 // Where the current system sits in the galaxy (ly, world axes, Sun = origin).
@@ -19632,6 +19664,7 @@ window.PW=PW;
 const PWS_OPEN=9, PWS_CLOSE=11, PWS_DOWN=2600, PWS_UP=2750;   // planet radii out (open/close the world); heights where the board moves between the space and ground frames (same flight)
 // Build the world round `focus` (local x/z): light, ground, sky, air, board — on the flight renderer.
 function _pwBuild(body,site,mode,focus){
+  try{ if(window.dmPerfLog&&dmPerfLog.abortCensus) dmPerfLog.abortCensus('pw:build'); }catch(e){}   // (v339) a sliced memory scan of the previous world lets go of it
   const gen=++PW.gen;
   PW.active=true; PW.mode=null; PW.body=body; PW.site=site||null;
   _surfBody=_atmoBody=body; _surfSite=_atmoSite=site||null;
@@ -19722,21 +19755,24 @@ async function _compileStaged(scene,cam,o){
     if(n>=14){ groups.push({k:[c],n,name:c.name||c.type}); cur=null; continue; }
     if(!cur||cur.n>=10||cur.k.length>=8){ cur={k:[],n:0,name:'misc'}; groups.push(cur); } cur.k.push(c); cur.n+=n; }
   const total=groups.length; let prev=null;
+  // (v338) abandon: the caller's step cap gave up on this compile.  Stop starting groups, stop waiting (the in-flight group finishes on the GPU in the background).
+  let _abRes=null; const abortP=new Promise(res=>{ _abRes=res; }); rec.abandoned=false; rec.abandon=()=>{ if(rec.abandoned) return; rec.abandoned=true; rec.abandonedAt=Math.round(performance.now()-t00); _abRes(); };
   try{
   for(let gi=0;gi<total;gi++){
-    if(!alive()) break;   // (loader fix) was `return`: the loader line ('Preparing the world 4/4') was never closed when the world closed mid-compile and stayed on screen in orbit
+    if(!alive()||rec.abandoned) break;   // (loader fix) was `return`: the loader line ('Preparing the world 4/4') was never closed when the world closed mid-compile and stayed on screen in orbit
     if(performance.now()-t00>CAP){ rec.capped=true; break; }
     const g=groups[gi], keep=new Set(g.k), hid=[];
     try{ if(o.label) dmSys.load(o.label,(o.text||'Preparing')+' '+(gi+1)+'/'+total); if(o.onGroup) o.onGroup(gi,total); }catch(e){}
     for(const c of kids){ if(!keep.has(c)){ c.visible=false; hid.push(c); } }
+    try{ if(o.onCompile) o.onCompile(g.k); }catch(e){}   // (v338) e.g. the GalSky objects this group compiles, so the galaxy step does not compile them again
     const t=performance.now(); let p=null;
     try{ p=r.compileAsync(scene,cam); } catch(e){ p=null; } finally{ for(const c of hid) c.visible=true; }   // the projection is synchronous: visibility is back before anything else runs
     prev=p?Promise.resolve(p).catch(()=>{}):null;
-    try{ if(prev) await Promise.race([prev,new Promise(res=>setTimeout(res,STEP))]); }catch(e){}
+    try{ if(prev) await Promise.race([prev,abortP,new Promise(res=>setTimeout(res,STEP))]); }catch(e){}
     rec.groups.push([g.name,g.n,Math.round(performance.now()-t)]);
     await new Promise(res=>setTimeout(res,0));   // let the page breathe (progress text, input) between groups
   }
-  if(prev&&alive()){ try{ await Promise.race([prev,new Promise(res=>setTimeout(res,STEP))]); }catch(e){} }
+  if(prev&&alive()&&!rec.abandoned){ try{ await Promise.race([prev,abortP,new Promise(res=>setTimeout(res,STEP))]); }catch(e){} }
   }finally{
     try{ if(o.label) dmSys.done(o.label); }catch(e){}
     rec.ms=Math.round(performance.now()-t00);
@@ -20608,6 +20644,7 @@ function _pwClose(opts){
   _crM('pw:close:fac');
   try{ const _f=_fac(); if(_f&&_f.close) _f.close(); }catch(e){ console.warn('[pw] fac close',e); }   // (stability) the mansion's interior + its queued texture steps go BEFORE the scene is freed
   _crM('pw:close:dispose');
+  try{ if(window.dmPerfLog&&dmPerfLog.abortCensus) dmPerfLog.abortCensus('pw:close'); }catch(e){}   // (v339) the in-progress sliced memory scan drops the closing world before it is disposed (no stale scene kept alive)
   try{ if(window.DMWater) DMWater.end(); }catch(e){}   // wave tiles / shore field / uniforms go before the scene
   try{ if(scene) disposeObject3D(scene); }catch(e){}
   try{ if(window.DMCrumb){ ['mc#','tess#','chunk#'].forEach(k=>DMCrumb.gpuClear(k)); DMCrumb.live('chunks',0); DMCrumb.live('mcPatches',0); } }catch(e){}
