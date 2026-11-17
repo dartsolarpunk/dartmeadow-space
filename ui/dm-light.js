@@ -722,15 +722,18 @@
         // (fov-fill 2 / v301) the sun shadow map eases out inside its own box (U.sm, a circle round her) on every shipped preset, including Low (no march): tight, crisp shadows near, then nothing past the box — no square edge. Med+ still hands off to the height-field march.
         const prev = m.receivedShadowNode;
         const wMap = float(1).sub(smoothstep(U.sm.x, U.sm.y, T.length(vec2(p.x.sub(U.cam.x), p.z.sub(U.cam.y)))));
+        // (t1537) past the near band the sun shadow comes from DMSunFar's wide, slow layer (ui/dm-sunfar.js) instead of nothing: a roofed floor / overhang stays shaded
+        // out to the haze (the old mix(1, s, wMap) lit everything past U.sm: a lit ring round her).  No far layer (off / no shadows / tier off) = exactly the old 1.
+        const farV = (W.DMSunFar && W.DMSunFar.node) ? (W.DMSunFar.node(T, p, n, wMap, D.tier) || float(1)) : float(1);
         if (hasMarch()) {
           const sn = sunVisNodes(T, p);
           // relief-aware: with the sun low the crevices (low relief height) sit in the shadow of their own rims
           const rel = hRel ? mix(float(1), smoothstep(0.05, 0.6, clamp(hRel, 0.0, 1.0)), U.lowSun.mul(0.6)) : float(1);
           const hfVis = mix(float(1), sn.vs.mul(rel), U.hfK.mul(U.k));
-          m.receivedShadowNode = prev ? ((s) => s && s.dmFlashShadow ? s : mix(float(1), prev(s), wMap).mul(hfVis)) : ((s) => s && s.dmFlashShadow ? s : mix(float(1), s, wMap).mul(hfVis));   // (flashlight) the glasses spot's shadow (ui/dm-flash.js, tagged dmFlashShadow) is not the sun: no sun-box fade, no sun height-field visibility
+          m.receivedShadowNode = prev ? ((s) => s && s.dmFlashShadow ? s : mix(farV, prev(s), wMap).mul(hfVis)) : ((s) => s && s.dmFlashShadow ? s : mix(farV, s, wMap).mul(hfVis));   // (flashlight) the glasses spot's shadow (ui/dm-flash.js, tagged dmFlashShadow) is not the sun: no sun-box fade, no sun height-field visibility
         } else {
           // Low / mobile Medium: no height-field march node is compiled. Wrap the map only.
-          m.receivedShadowNode = prev ? ((s) => s && s.dmFlashShadow ? s : mix(float(1), prev(s), wMap)) : ((s) => s && s.dmFlashShadow ? s : mix(float(1), s, wMap));
+          m.receivedShadowNode = prev ? ((s) => s && s.dmFlashShadow ? s : mix(farV, prev(s), wMap)) : ((s) => s && s.dmFlashShadow ? s : mix(farV, s, wMap));
         }
       }
       m.userData.dmLight = true; m.needsUpdate = true; D.mats++;

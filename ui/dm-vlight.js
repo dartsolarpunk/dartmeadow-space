@@ -129,6 +129,8 @@
   if (root.DMVLight) return;
   const q = (() => { try { return new URLSearchParams(root.location.search); } catch (e) { return new URLSearchParams(''); } })();
   const FLAG = (q.get('vlights') || '').toLowerCase(), SUN_LOW = q.get('vlsun') === '1';
+  // (t1537 item 3) volumetric sun shafts from DMSunFar (Medium+ only); ?shafts=0 off, ?shafts=<k> strength (default SHAFT_K)
+  const SHQ = q.get('shafts'), SHAFTS = !(SHQ === '0' || SHQ === 'off'), SHAFT_K = SHQ && +SHQ > 0 && +SHQ <= 1 ? +SHQ : 0.35;
   const V = { core, on: !/^(0|off|false|no)$/.test(FLAG) };
   root.DMVLight = V;
   const S = { tier: null, cfg: null, U: null, node: null, installed: false, failed: null, groups: [], spots: [], byKey: {}, flashAuto: null, k: 0, want: 0,
@@ -205,11 +207,27 @@
       const out = vec3(0).toVar();
       If(U.sunOn.greaterThan(0.002), () => {
         const Ls = min(Lraw, U.sunMaxD), sigma = sigmaAt(dW, Ls), ph = HG(dot(U.sunV, d), 0.49, 0.7);
-        let vis = float(1);
-        try {
-          const L = root.DMLight, p1 = cameraPosition.add(dW.mul(Ls.mul(0.4))), v1 = L && L.sunVisNode ? L.sunVisNode(p1) : null;
-          if (v1) { vis = v1; if (cfg.sun > 1) { const v2 = L.sunVisNode(cameraPosition.add(dW.mul(Ls.mul(0.8)))); if (v2) vis = v1.add(v2).mul(0.5); } }
-        } catch (e) { }
+        const vis = float(1).toVar();
+        // the terrain height-cache march (DMLight): low sun only (U.hfOn), it is the costly part (a full march per sample)
+        If(U.hfOn.greaterThan(0.5), () => {
+          try {
+            const L = root.DMLight, p1 = cameraPosition.add(dW.mul(Ls.mul(0.4))), v1 = L && L.sunVisNode ? L.sunVisNode(p1) : null;
+            if (v1) { let vv = v1; if (cfg.sun > 1) { const v2 = L.sunVisNode(cameraPosition.add(dW.mul(Ls.mul(0.8)))); if (v2) vv = v1.add(v2).mul(0.5); } vis.assign(vv); }
+          } catch (e) { }
+        });
+        // (t1537 item 3) sun shafts: 3-4 jittered hard taps of DMSunFar's wide key-light depth map along the ray, so rocks, architecture, canopies (and not glass:
+        // transparent meshes cast nothing) cut beams out of the in-scatter. One uniform branch; no far map live = 1. Low DMVLight tier never builds it (no sun term on phones).
+        if (SHAFTS && cfg.name !== 'low') {
+          const F = root.DMSunFar, NS = cfg.sun > 1 ? 4 : 3;
+          try {
+            const t0 = F && F.visAt ? F.visAt(T, cameraPosition, null) : null;
+            if (t0) {
+              const sv = float(0).toVar(), j = interleavedGradientNoise(screenCoordinate.xy);
+              for (let i = 0; i < NS; i++) { const f = j.add(i).div(NS), qW = cameraPosition.add(dW.mul(Ls.mul(f.mul(f).mul(0.85).add(0.06)))); sv.addAssign(F.visAt(T, qW, null)); }
+              vis.mulAssign(sv.div(NS));
+            }
+          } catch (e) { }
+        }
         // (follower fix) the forward-scattered sun is a sky-sized glow round the sun's direction: on the ground a few metres from the camera it shows up as a pale, hard-edged disc (the HG lobe's edge,
         // cut by the occluders' straight edges through `vis`) that follows the view - "a lamp following me" on the balcony at dusk.  It belongs to DISTANT air (aerial perspective), so it is
         // faded in between SUN_NEAR0 and SUN_NEAR1 metres of view distance: nothing within ~SUN_NEAR0 m of the player, full strength only on far terrain.
@@ -240,7 +258,7 @@
         const u = T.uniform, V4 = () => { const a = []; for (let i = 0; i < cfg.n; i++) a.push(new THREE.Vector4()); return a; };
         const U = S.U = { A: T.uniformArray(V4(), 'vec4'), B: T.uniformArray(V4(), 'vec4'), C: T.uniformArray(V4(), 'vec4'),
           fogCol: u(new THREE.Color(0x334455)), near: u(40), far: u(900), k: u(0), gain: u(0.5), sigma: u(0.02), mist: u(1), mistH: u(7), haze: u(0.18), patchy: u(0.3), groundY: u(0), time: u(0), maxD: u(120),
-          sunOn: u(0), sunV: u(new THREE.Vector3(0, 1, 0)), sunCol: u(new THREE.Color(1.0, 0.82, 0.55)), sunMaxD: u(260) };
+          sunOn: u(0), hfOn: u(0), sunV: u(new THREE.Vector3(0, 1, 0)), sunCol: u(new THREE.Color(1.0, 0.82, 0.55)), sunMaxD: u(260) };
         S.vec = { A: U.A.array || U.A.value, B: U.B.array || U.B.value, C: U.C.array || U.C.value };
         S.node = build(T, cfg, U);
         S.buf = new Float32Array(cfg.n * STRIDE); S.pick = createPicker(cfg.n); S.slots = createSlots(cfg.n); S.tgt = new Int32Array(cfg.n);
@@ -275,8 +293,12 @@
     const cx = mw[12], cy = mw[13], cz = mw[14];
     // sun: low only
     const sd = o.sunDir; let sunOn = 0;
+    S.hfOn = 0;
     if (sd && plan.sun && day > 0.02) { const il = 1 / (Math.hypot(sd.x, sd.y, sd.z) || 1), sx = sd.x * il, sy = sd.y * il, sz = sd.z * il;
       sunOn = (1 - smooth01((sy - 0.05) / 0.5)) * smooth01((sy + 0.12) / 0.14) * clamp(day * 1.6, 0, 1);
+      S.hfOn = sunOn > 0.002 ? 1 : 0;   // the terrain march only where the low-sun term was already paid for
+      // (t1537 item 3) shafts at any sun height while DMSunFar's map is live (Medium+ DMVLight tiers): a subtle SHAFT_K of the in-scatter, beams from the far layer
+      const F = root.DMSunFar; if (SHAFTS && cfg.name !== 'low' && F && F.S && F.S.ok && sy > 0.04) sunOn = Math.max(sunOn, SHAFT_K * clamp(day * 1.6, 0, 1));
       if (sunOn > 0) { U.sunV.value.set(M[0] * sx + M[4] * sy + M[8] * sz, M[1] * sx + M[5] * sy + M[9] * sz, M[2] * sx + M[6] * sy + M[10] * sz); } }
     // gather the lights
     autoFlash(scene);
@@ -292,7 +314,7 @@
     S.k += clamp(want - S.k, -dt * 1.5, dt * 1.5); U.k.value = S.k < 0.002 ? 0 : S.k * S.k * (3 - 2 * S.k);
     if (U.k.value === 0 && !want) { S.nLive = 0; return; }
     S.time += dt; U.time.value = S.time; U.gain.value = m.gain * (1 - 0.55 * clamp(day, 0, 1)); U.sigma.value = m.density; U.mist.value = m.mist; U.mistH.value = m.mistH; U.haze.value = m.haze; U.patchy.value = m.patchy; U.groundY.value = o.groundY || 0;
-    U.sunOn.value = sunOn * 0.6;
+    U.sunOn.value = sunOn * 0.6; U.hfOn.value = sd && plan.sun ? (S.hfOn || 0) : 0;
     const nT = Math.min(P.size, plan.n); for (let j = 0; j < nT; j++) S.tgt[j] = P.id[j];
     stepSlots(S.slots, S.tgt, nT, dt, 4);
     const buf = S.buf; let live = 0;

@@ -17,6 +17,9 @@
  */
 (function () {
   'use strict';
+  const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+  // (t1537) daytime share of the hemisphere / ambient fill outdoors in an atmosphere (the key light leads); ?dayfill=<0..1>
+  const FILL_DAY = (() => { try { const m = (location.search || '').match(/[?&]dayfill=([0-9.]+)/); if (m) return Math.max(0, Math.min(1, +m[1])); } catch (e) { } return 0.45; })();
   const T = () => window;               // the TSL functions live on window
   const DAY_WALL_SEC = 24 * 60;         // one game day = 24 minutes on the shared clock
   const BODY_DAY = { Earth: 1, Mars: 1.03, Moon: 2.5, Mercury: 3, Venus: 4 };
@@ -317,7 +320,11 @@ function _dmDisc(){ if(window.dmSoftDiscTex) return window.dmSoftDiscTex(); if(w
         // fill (sky light): full by day; at night only what the night sky gives — galaxy/star skylight plus moonlight,
         // set from the game each frame (ctl.nightFill, a fraction of the day fill; 0.35 when nothing sets it)
         const nf = ctl.nightFill == null ? 0.35 : ctl.nightFill;
-        (o.fill || []).forEach((l) => { if (l.userData._base == null) l.userData._base = l.intensity; l.intensity = l.userData._base * (nf + (1 - nf) * day); });
+        // (t1537) outdoors in an atmosphere the key light leads by day: the flat hemisphere / ambient fill steps down to FILL_DAY of itself at full day (it used to stay
+        // at full strength and washed the sun's shadows out). ctl.outdoor (0..1, eased by the game: 0 inside the mansion, whose rooms read these lights) scales the dip.
+        // Night is untouched (nf), airless worlds are untouched. ?dayfill=<0..1> overrides FILL_DAY (1 = the old fill).
+        const dd = atmos ? 1 - (1 - FILL_DAY) * clamp01(day) * (ctl.outdoor == null ? 1 : clamp01(ctl.outdoor)) : 1;
+        (o.fill || []).forEach((l) => { if (l.userData._base == null) l.userData._base = l.intensity; l.intensity = l.userData._base * (nf + (1 - nf) * day) * dd; });
         if (scene.fog && atmos) { if (!ctl._fogDay) ctl._fogDay = scene.fog.color.clone(); scene.fog.color.copy(ctl._fogDay); if (window.DMPolish) DMPolish.warmFog(scene.fog.color, camera, sunDir, day); scene.fog.color.multiplyScalar(0.12 + 0.88 * day); }
         if (scene.background && scene.background.isColor && atmos) { if (!ctl._bgDay) ctl._bgDay = scene.background.clone(); scene.background.copy(ctl._bgDay).multiplyScalar(0.05 + 0.95 * day); }
       },
