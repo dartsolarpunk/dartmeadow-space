@@ -26161,6 +26161,7 @@ function _pwAtmoShell(pal,sky){
   const m=new THREE.Mesh(new THREE.SphereGeometry(Ra,96,48),mat);
   m.name='JOTS_AtmoShell'; m.frustumCulled=false; m.renderOrder=50; m.userData.noBend=true; m.raycast=()=>{}; m.visible=false;
   // the mesh is only coverage (frustumCulled off, BackSide, no depth test): it is stretched with the ground so its edge is never inside the air
+  const stV=U.st.map(u=>u.value), swV=U.sw.map(u=>u.value);   // (v343) slot uniform values, built once
   return {mesh:m,U,
     update(k,sunDir){
       U.k.value=k; m.visible=k>0.002;
@@ -26169,8 +26170,8 @@ function _pwAtmoShell(pal,sky){
       const g=_pwfAnisoG(); U.ax.value=1/g; m.scale.set(g,1,1);
       if(sunDir) U.sun.value.copy(sunDir).normalize();
       const S=_pwStarsLive();
-      if(S){ for(let i=0,j=1;i<S.count;i++){ const c=S.col[i], w=S.w[i], k=i===S.keyIdx?0:j++; if(k>=NSs) continue; U.st[k].value.copy(S.dir[i]); U.sw[k].value.set(c.r*w,c.g*w,c.b*w); }   // key star first, then the others while slots last
-        for(let k=Math.min(S.count,NSs);k<3;k++) U.sw[k].value.set(0,0,0); }
+      if(S){ const n=S.airSlots(NSs,stV,swV);   // (v343) key star first, eased with the key light on a swap (DMStars.airSlots), then the others while slots last
+        for(let k=n;k<3;k++) U.sw[k].value.set(0,0,0); }
       else { U.st[0].value.copy(U.sun.value); U.sw[0].value.set(1,1,1); U.sw[1].value.set(0,0,0); U.sw[2].value.set(0,0,0); }
     }};
 }

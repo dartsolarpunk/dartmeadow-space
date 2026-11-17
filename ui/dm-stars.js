@@ -12,6 +12,7 @@
  *                                                          radius in flight units; temp in K).  null / [] clears.  Up to MAX (3).
  *   DMStars.update(viewer, q, o)                           once per frame: viewer {x,y,z} (open space), q {x,y,z,w} space -> local
  *                                                          rotation, o {atmos (bool), ext [r,g,b] zenith optical depth}.
+ *   DMStars.airSlots(n, dirs, colw, ws?) -> filled        the air passes' n star slots, key first, cross-faded with the eased key swap.
  *   DMStars.spaceDirFrom(pos, i, out)                      star i's unit direction from any open-space point.
  *   DMStars.fromPoint(pos, dirs, ws) -> key                every star's direction + sky weight from a point (an orbit pass), into
  *                                                          caller-owned arrays; the world state is left alone.
@@ -25,11 +26,12 @@
  *     day[i]   0 night .. 1 day for that star                            day   sky daylight (sum w[i] day[i], 0..1)
  *     keyIdx, keyDir, keyCol (= keyColor), keyI (= keyIntensity)   the key light: the brightest APPARENT star (I x transmission luminance), with hysteresis
  *                                    (a new key must out-shine the current one by KEY_HYST); at night the primary keeps the key.
- *                                    On a swap keyDir / keyCol ease to the new star over SWAP_S (1.5 s; o.dt = frame time).
+ *                                    On a swap keyDir / keyCol ease to the new star over >= SWAP_S (1.5 s), longer for a wide pair so the
+ *                                    light never turns faster than SWAP_RATE (15 deg/s); o.dt = frame time.
  */
 (function (root) {
   'use strict';
-  const MAX = 3, T_REF = 5778, ANG_MIN = 0.0045, ANG_MAX = 0.075, KEY_HYST = 1.25, SWAP_S = 1.5;
+  const MAX = 3, T_REF = 5778, ANG_MIN = 0.0045, ANG_MAX = 0.075, KEY_HYST = 1.25, SWAP_S = 1.5, SWAP_RATE = 15 * Math.PI / 180;   // a swap's ease: >= 1.5 s, and its peak turn <= 15 deg/s (0.25 deg / 60 Hz frame)
 
   // Black-body colour (Tanner Helland fit, sRGB-ish), normalised so 5778 K is exactly white and scaled to luminance 1.
   function rawRGB(T, o) {
@@ -52,7 +54,7 @@
   const sm = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
   const S = {
-    MAX, T_REF, ANG_MIN, ANG_MAX, KEY_HYST, SWAP_S, kelvinRGB, airmass, swapT: 1,
+    MAX, T_REF, ANG_MIN, ANG_MAX, KEY_HYST, SWAP_S, kelvinRGB, airmass, swapT: 1, swapE: 1, _fromKey: 0, _swapDur: 1.5,
     count: 0, valid: false, frame: 0, day: 1, keyIdx: 0, keyI: 1,
     dir: null, dirS: null, col: null, tr: null, temp: new Float64Array(MAX), radius: new Float64Array(MAX), angR: new Float64Array(MAX),
     I: new Float64Array(MAX), w: new Float64Array(MAX), dayK: new Float64Array(MAX), keyDir: null, keyCol: null, src: []
@@ -96,6 +98,28 @@
     for (let i = 0; i < S.count; i++) ws[i] /= sumW || 1;
     return key;
   };
+  // (v343) the air passes' star slots, eased with the key light: slot 0 = the key (its direction IS keyDir, eased on a swap), slots 1.. = the other
+  // stars in source order.  During a swap (swapE < 1, old key a -> new key b) every slot cross-fades from what it held before the swap to what it
+  // holds after (slot 0: a -> b, a non-key slot: the j-th non-key star of the old order -> of the new order), colour x weight blended linearly,
+  // so the total colour x weight is exactly preserved (no double count) and nothing steps.  dirs[k] / colw[k] are caller-owned (uniform values:
+  // anything with set()), ws (optional) gets each slot's scalar weight.  Returns the slots filled (min(n, count)).  No allocation.
+  const nth = (key, m) => (m < key ? m : m + 1);   // the m-th star index that is not `key`
+  S.airSlots = function (n, dirs, colw, ws) {
+    const N = Math.min(n | 0, S.count); if (!(N > 0)) return 0;
+    const e = S.swapE < 1 ? S.swapE : 1, a = S._fromKey < S.count ? S._fromKey : S.keyIdx, b = S.keyIdx;
+    for (let k = 0; k < N; k++) {
+      const i1 = k ? nth(b, k - 1) : b, i0 = e < 1 ? (k ? nth(a, k - 1) : a) : i1;
+      const c0 = S.col[i0], c1 = S.col[i1], w0 = S.w[i0], w1 = S.w[i1];
+      colw[k].set(c0.r * w0 + (c1.r * w1 - c0.r * w0) * e, c0.g * w0 + (c1.g * w1 - c0.g * w0) * e, c0.b * w0 + (c1.b * w1 - c0.b * w0) * e);
+      if (ws) ws[k] = w0 + (w1 - w0) * e;
+      if (!k) { dirs[0].set(S.keyDir.x, S.keyDir.y, S.keyDir.z); continue; }
+      const d0 = S.dir[i0], d1 = S.dir[i1];
+      let x = d0.x + (d1.x - d0.x) * e, y = d0.y + (d1.y - d0.y) * e, z = d0.z + (d1.z - d0.z) * e; const L = Math.hypot(x, y, z);
+      if (L > 1e-6) { x /= L; y /= L; z /= L; } else { x = d1.x; y = d1.y; z = d1.z; }
+      dirs[k].set(x, y, z);
+    }
+    return N;
+  };
   // v' = q v q*  (no allocation)
   function rot(q, x, y, z, out) {
     const qx = q.x, qy = q.y, qz = q.z, qw = q.w;
@@ -135,16 +159,17 @@
     else if (best !== key && bestA > curA * KEY_HYST) key = best;
     // (v341) a key swap (A sets, B takes over) eases the key light's direction + colour over SWAP_S seconds from where it was, so the sun light
     // and its shadows turn instead of snapping (the discs and the per-star scattering stay exact; only the one shared key light eases)
-    if (key !== S.keyIdx && S.valid) { S._fromDir.set(S.keyDir.x, S.keyDir.y, S.keyDir.z); S._fromCol.set(S.keyCol.r, S.keyCol.g, S.keyCol.b); S.swapT = 0; }
+    if (key !== S.keyIdx && S.valid) { S._fromDir.set(S.keyDir.x, S.keyDir.y, S.keyDir.z); S._fromCol.set(S.keyCol.r, S.keyCol.g, S.keyCol.b); S._fromKey = S.keyIdx; S.swapT = 0; S.swapE = 0;
+      const nd = S.dir[key], ca = Math.max(-1, Math.min(1, nd.x * S.keyDir.x + nd.y * S.keyDir.y + nd.z * S.keyDir.z)); S._swapDur = Math.max(SWAP_S, 1.5 * Math.acos(ca) / SWAP_RATE); }
     S.keyIdx = key; S.keyI = S.I[key];
     const kd = S.dir[key], kc = S.col[key];
     if (S.swapT < 1) {
-      const dt = o && o.dt > 0 ? Math.min(0.1, o.dt) : 1 / 60; S.swapT = Math.min(1, S.swapT + dt / SWAP_S);
-      const e = S.swapT * S.swapT * (3 - 2 * S.swapT), f = S._fromDir, c0 = S._fromCol;
+      const dt = o && o.dt > 0 ? Math.min(0.1, o.dt) : 1 / 60; S.swapT = Math.min(1, S.swapT + dt / (S._swapDur || SWAP_S));
+      const e = S.swapT * S.swapT * (3 - 2 * S.swapT), f = S._fromDir, c0 = S._fromCol; S.swapE = e;
       let x = f.x + (kd.x - f.x) * e, y = f.y + (kd.y - f.y) * e, z = f.z + (kd.z - f.z) * e; const L = Math.hypot(x, y, z);
       if (L > 1e-6) { x /= L; y /= L; z /= L; } else { x = kd.x; y = kd.y; z = kd.z; }
       S.keyDir.set(x, y, z); S.keyCol.set(c0.r + (kc.r - c0.r) * e, c0.g + (kc.g - c0.g) * e, c0.b + (kc.b - c0.b) * e);
-    } else { S.keyDir.set(kd.x, kd.y, kd.z); S.keyCol.set(kc.r, kc.g, kc.b); }
+    } else { S.keyDir.set(kd.x, kd.y, kd.z); S.keyCol.set(kc.r, kc.g, kc.b); S.swapE = 1; }
     S.valid = true; return S;
   };
 

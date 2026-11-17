@@ -94,6 +94,33 @@ function upTo(up) { const u = up.clone().normalize(), ax = new V3(-u.z, 0, u.x),
       if (S.keyIdx === 1 && S.swapT >= 1) landed = Math.abs(kd.dot(S.dir[1]) - 1) < 1e-9; }
     ok(worst < 0.01, 'A -> B key swap eases the key light (max step ' + (worst * 180 / Math.PI).toFixed(3) + ' deg/frame, the stars are ' + (ang * 180 / Math.PI).toFixed(1) + ' deg apart)');
     ok(landed, 'after the ease the key light is exactly the new key star'); }
+  { // (v343) the air passes follow the eased key: slot 0 = keyDir every frame, every slot continuous, colour x weight preserved (no double count)
+    for (const NSL of [1, 2]) {
+      S.keyIdx = 0; S.swapT = 1; S.swapE = 1;
+      const dv = [new V3(), new V3(), new V3()], cw = [new V3(), new V3(), new V3()], ws = new Float64Array(3), prev = [null, null];
+      let worst = 0, eq = 0, sumErr = 0, swapped = false, mid = false, endOk = false;
+      for (let k = 0; k <= 1200; k++) { const tilt = 0.05 - k / 1200 * 0.25, aa = ang - Math.PI / 2 + tilt;   // the sky turns ~0.01 deg/frame (real: ~0.004)
+        const u = toB.clone().multiplyScalar(Math.cos(aa)).addScaledVector(side, Math.sin(aa)); S.update(P.clone(), upTo(u), { atmos: true, ext: EXT, dt: 1 / 60 });
+        const n = S.airSlots(NSL, dv, cw, ws);
+        eq = Math.max(eq, Math.acos(Math.min(1, dv[0].dot(S.keyDir))));
+        for (let j = 0; j < n; j++) { if (prev[j]) worst = Math.max(worst, Math.acos(Math.min(1, dv[j].dot(prev[j])))); prev[j] = dv[j].clone(); }
+        if (S.keyIdx === 1) swapped = true; if (S.swapE > 0.2 && S.swapE < 0.8) mid = true;
+        if (NSL === 2) { let tw = 0, tr = 0, tb = 0, er = 0, eb = 0; for (let j = 0; j < n; j++) { tw += ws[j]; tr += cw[j].x; tb += cw[j].z; }
+          for (let i = 0; i < S.count; i++) { er += S.col[i].r * S.w[i]; eb += S.col[i].b * S.w[i]; }
+          sumErr = Math.max(sumErr, Math.abs(tw - 1), Math.abs(tr - er), Math.abs(tb - eb)); }
+        if (S.keyIdx === 1 && S.swapT >= 1) endOk = Math.abs(dv[0].dot(S.dir[1]) - 1) < 1e-9 && Math.abs(cw[0].x - S.col[1].r * S.w[1]) < 1e-12 && (NSL === 1 || Math.abs(dv[1].dot(S.dir[0]) - 1) < 1e-9);
+      }
+      ok(swapped && mid, NSL + ' marched star(s): the sweep goes through an A -> B swap');
+      ok(eq < 1e-6, NSL + ' marched star(s): the air key slot IS the eased keyDir every frame (worst ' + eq.toExponential(1) + ' rad)');
+      ok(worst < 0.3 * Math.PI / 180, NSL + ' marched star(s): air slots continuous (max step ' + (worst * 180 / Math.PI).toFixed(3) + ' deg/frame)');
+      if (NSL === 2) ok(sumErr < 1e-12, 'Med+: total weight and colour x weight preserved through the cross-fade (err ' + sumErr.toExponential(1) + ')');
+      ok(endOk, NSL + ' marched star(s): after the ease slot 0 = B exactly' + (NSL > 1 ? ', slot 1 = A' : ''));
+    }
+    // no allocation in airSlots, mid-swap
+    S.swapT = 0.3; S.swapE = 0.2; const dv = [new V3(), new V3(), new V3()], cw = [new V3(), new V3(), new V3()], ws = new Float64Array(3);
+    if (global.gc) { global.gc(); const h0 = process.memoryUsage().heapUsed; for (let i = 0; i < 200000; i++) S.airSlots(2, dv, cw, ws); global.gc(); const dh = process.memoryUsage().heapUsed - h0; ok(dh < 64 * 1024, 'airSlots x 200k retains < 64 KB (' + dh + ' B)'); }
+    ok(!/new |\[\]|\{\s*[a-z]+\s*:/.test(S.airSlots.toString()), 'airSlots() source has no new / [] / object literal');
+    S.swapT = 1; S.swapE = 1; }
   { const u = toA.clone().add(toB).normalize().negate(); S.update(P.clone(), upTo(u), { atmos: true, ext: EXT }); ok(S.keyIdx === 0 && S.day === 0, 'both down (night): the primary keeps the key, no daylight'); }
   let jump = 0; for (let i = 1; i < days.length; i++) jump = Math.max(jump, Math.abs(days[i] - days[i - 1])); ok(jump < 0.1, 'daylight blends continuously through A\'s sunrise (max step ' + jump.toFixed(3) + ')');
   ok(Math.min(...days) > 0.05, 'with A down, B alone still lights a dim red day (' + Math.min(...days).toFixed(3) + ')');
@@ -174,6 +201,8 @@ ok(/DMStars\.setSources\(\[\{obj:sunGroup/.test(html) && /_starSrc\.push\(\{obj:
   ok(/const NSs=_taStarN\(\);/.test(sh) && /for\(let k=0;k<NSs;k\+\+\)/.test(sh), 'classic surface shell: star loop sized by _taStarN (key only on Low)');
   ok(/for \(let k = 0; k < NS; k\+\+\)/.test(atmo), 'volumetric air: per-step star loop is NS (1 on Low)');
   ok(S.keyColor === S.keyCol && S.keyIntensity === S.keyI, 'Lighting aliases keyColor / keyIntensity'); }
+ok(/const n = S\.airSlots\(NS, stV, scV\); U\.sun\.value\.copy\(stV\[0\]\);/.test(atmo), 'volumetric air: world stars go through DMStars.airSlots (eased key slot)');
+{ const sh = html.slice(html.indexOf('function _pwAtmoShell'), html.indexOf('function _pwfAnisoG')); ok(/const n=S\.airSlots\(NSs,stV,swV\);/.test(sh) && /const stV=U\.st\.map\(u=>u\.value\), swV=U\.sw\.map\(u=>u\.value\);/.test(sh), 'classic surface shell: slots from DMStars.airSlots (values cached once, no rebuild)'); }
 // ── 6. no per-frame allocation in DMStars.update ──
 { place(0.5); S.setSources([{ obj: A, radius: BIN.rA, temp: 8200 }, { obj: B, radius: BIN.rB, temp: 3000 }]);
   const P = new V3(1600, 0, 0), q = new Q(); for (let i = 0; i < 2000; i++) S.update(P, q, { atmos: true, ext: EXT });
