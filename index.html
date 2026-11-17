@@ -7133,6 +7133,13 @@ function _queueViewsResize(){ clearTimeout(_viewsResizeT); _viewsResizeT=setTime
 window.addEventListener('resize',_queueViewsResize);
 window.addEventListener('orientationchange',()=>{ _queueViewsResize(); _queueFlightResize(); [450,1000].forEach(t=>setTimeout(()=>{ _resizeAllViews(); _queueFlightResize(); },t)); });   // iOS settles its viewport late after a turn
 if(window.visualViewport) window.visualViewport.addEventListener('resize',_queueViewsResize);
+// (t1536b) how one rendered frame's wall time is fed to the simulation: fixed steps of at most 0.1 s, real time up to 0.4 s per frame; a gap over 1 s is a stall
+// (tab switch / long GC / compile) and advances a single 1/60 s step so held sticks do not lurch. Pure, writes into `o`, no allocation.
+const _SIM={n:1,h:1/60};
+function _simSteps(raw,o){
+  if(!(raw>0)||raw>1.0){ o.n=1; o.h=1/60; return o; }
+  const t=Math.min(raw,0.4), n=Math.max(1,Math.ceil(t/0.1-1e-9)); o.n=n; o.h=t/n; return o;
+}
 function _startFlightLoop(){
   if(flightAnimId)return; // already running
   const cv=_flightLoopCv;
@@ -7141,17 +7148,18 @@ function _startFlightLoop(){
     flightAnimId=requestAnimationFrame(loop);
     const now=performance.now(); DMPerf.frame();
     if(window._dmGpuDefer) window._dmGpuDefer.tick();   // (v332) released GPU buffers due for destruction (no allocation when none are)
-    // (v162) after a stall (tab switch, a GC or a late shader build) advance one normal frame, not the 50 ms cap:
-    // held sticks/keys then pick up where they were instead of lurching forward by the whole cap.
-    const _rawDt=(now-_flightLoopLast)/1000, dt=_rawDt>0.25?1/60:Math.min(_rawDt,0.05);
+    // (t1536b) real-time on slow frames. v162 treated EVERY frame over 250 ms as a stall and advanced it by 1/60 s, so at 2-4 fps (a slow tablet after landing, a
+    // cold shader build) she walked / flew at 4-7 % speed. Now only a true stall (> 1 s: tab switch, long GC / compile) is reset to one 1/60 s step; a slow frame is
+    // simulated in real time as _SIM.n fixed steps of _SIM.h <= 0.1 s (up to 0.4 s of wall time per frame), see _simSteps. dt below = one step.
+    const _rawDt=(now-_flightLoopLast)/1000; _simSteps(_rawDt,_SIM); const dt=_SIM.h;
     if(_rawDt>0.25) window._dmLongFrameAt=now;
-    _flightLoopLast=now;flightTime+=dt;
+    _flightLoopLast=now;flightTime+=dt*_SIM.n;
 
     _applyFlightResizeIfPending();
     // near a world (or in its sky, or on its ground) the planet world runs the frame — same loop, same canvas
     if(PW.active&&PW.mode){ DMPerf.b('world'); try{ _pwFrame(dt); }catch(e){ _animLoopWarn('world',e); } DMPerf.e(); return; }
 
-    DMPerf.b('updateFlight'); try{updateFlight(dt);}catch(e){_animLoopWarn('updateFlight',e);} DMPerf.e();
+    DMPerf.b('updateFlight'); try{ for(let _k=0;_k<_SIM.n;_k++){ updateFlight(dt); if(PW.active&&PW.mode) break; } }catch(e){_animLoopWarn('updateFlight',e);} DMPerf.e();   // (t1536b) fixed steps, stops if a world took over
     try{
       if(_charShadowLight && boardFlight){
         // (v104) at the Bird Temple (aboard, or riding within a few ship-lengths) the star's shadow map is fitted to the
@@ -7177,7 +7185,7 @@ function _startFlightLoop(){
         _charShadowLight.target.updateMatrixWorld();
       }
     }catch(e){_animLoopWarn('charShadow',e);}
-    DMPerf.b('updateBodies'); try{updateBodies(dt);}catch(e){_animLoopWarn('updateBodies',e);} DMPerf.e();
+    DMPerf.b('updateBodies'); try{updateBodies(dt*_SIM.n);}catch(e){_animLoopWarn('updateBodies',e);} DMPerf.e();
     // (menu-perf) housekeeping that builds geometry (a world's ground for the way down, planet LOD meshes) waits out the launch fly-out, the
     // dissolve and a 2.5 s settle; the simulation above keeps running, so nothing is lost, it is only built a moment later (behind the veil
     // during 'hold' it still runs: nobody is watching the game then)
@@ -7187,7 +7195,7 @@ function _startFlightLoop(){
     DMPerf.b('applySkyboardStance'); try{ if(CHAR.mounted) applySkyboardStance(flightTime); }catch(e){_animLoopWarn('skyboardStance',e);} DMPerf.e();
     DMPerf.b('updateCharOrbitCamera'); try{ updateCharOrbitCamera(); }catch(e){_animLoopWarn('charOrbit',e);} DMPerf.e();
     DMPerf.b('_dynRes'); try{ _dynRes(flightRenderer); }catch(e){} DMPerf.e();
-    try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){_animLoopWarn('charMixer',e);}
+    try{ CHAR.mixer && CHAR.mixer.update(dt*_SIM.n); _updateCharDebugHUD(); }catch(e){_animLoopWarn('charMixer',e);}
     try{ _charmTick(dt); }catch(e){_animLoopWarn('charm',e);}
     try{ applySkyboardHeadOverride(); }catch(e){_animLoopWarn('headOverride',e);}   // (fades with the stance)
     DMPerf.b('updateBirdTemple'); try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);} DMPerf.e();
@@ -19872,20 +19880,19 @@ function _pwSetMode(mode){
 let _pwBodyAcc=0,_pwBtAcc=0;
 function _pwSkyHidden(){ try{ return !(PW.skyK<0.999&&_PWS.ok); }catch(e){ return false; } }
 function _pwFrame(dt){
-  const mode=PW.mode, now=performance.now();
+  const mode=PW.mode, now=performance.now(), reps=(dt>0&&dt===_SIM.h)?_SIM.n:1;   // (t1536b) called from the loop: the frame's fixed steps (hand-over calls pass 0: one)
   if(mode==='space'){
-    _pwSpaceStep(dt);
+    for(let _k=0;_k<reps&&PW.mode==='space';_k++) _pwSpaceStep(dt);
     if(PW.mode&&PW.mode!=='space'){ _pwFrame(0); return; }   // handed over to the sky this frame: its camera draws it
   } else {
-    _pwBodyAcc+=dt;
+    _pwBodyAcc+=dt*reps;
     if(!_pwSkyHidden()||_pwBodyAcc>=0.1){ const _ub=performance.now(); try{ updateBodies(_pwBodyAcc); }catch(e){ _animLoopWarn('updateBodies',e); } _pwBodyAcc=0; DMFT.add('updateBodies',performance.now()-_ub); }   // the planets keep turning on the world clock (the sky above is the real one)
     if(mode==='fly'){
-      try{ updateAtmoFlight(dt); }catch(e){ _animLoopWarn('atmoFlight',e); }
+      try{ for(let _k=0;_k<reps&&PW.mode==='fly';_k++) updateAtmoFlight(dt); }catch(e){ _animLoopWarn('atmoFlight',e); }
       if(PW.mode!=='fly'){ _pwFrame(0); return; }   // handed over to open space this frame
       try{ if(atmoBoard&&atmoState){ const s=atmoState; updateBoardWake(atmoBoard,PW.scene,dt,Math.min(1.2,atmoMach/0.6),new THREE.Vector3(-Math.sin(s.yaw)*Math.cos(s.pitch),Math.sin(s.pitch),-Math.cos(s.yaw)*Math.cos(s.pitch))); } }catch(e){ _animLoopWarn('boardWake',e); }
     } else {
-      surfTime+=dt;
-      const _us=performance.now(); try{ updateSurface(dt); }catch(e){ _animLoopWarn('updateSurface',e); } DMFT.add('updateSurface',performance.now()-_us);
+      const _us=performance.now(); try{ for(let _k=0;_k<reps&&PW.mode==='walk';_k++){ surfTime+=dt; updateSurface(dt); } }catch(e){ _animLoopWarn('updateSurface',e); } DMFT.add('updateSurface',performance.now()-_us);
     }
     try{ updateCharOrbitCamera(); }catch(e){ _animLoopWarn('charOrbit',e); }
     _pwCamBlend(dt);   // (in the flat world, near the focus where the frame leaves things be)
@@ -19893,7 +19900,7 @@ function _pwFrame(dt){
   if(!PW.active||!PW.mode) return;
   try{ if(CHAR.mounted) applySkyboardStance(now/1000); }catch(e){}
   if(PW.mode!=='walk'){
-    try{ CHAR.mixer&&CHAR.mixer.update(dt); }catch(e){ _animLoopWarn('charMixer',e); }
+    try{ CHAR.mixer&&CHAR.mixer.update(dt*reps); }catch(e){ _animLoopWarn('charMixer',e); }
     try{ _charmTick(dt); }catch(e){ _animLoopWarn('charm',e); }
     try{ applySkyboardHeadOverride(); }catch(e){ _animLoopWarn('headOverride',e); }   // (fades with the stance)
   } else {
@@ -19902,7 +19909,7 @@ function _pwFrame(dt){
     try{ _surfFpBody(); }catch(e){}
   }
   try{ _updateCharDebugHUD(); }catch(e){}
-  { _pwBtAcc+=dt;
+  { _pwBtAcc+=dt*reps;
     let _btGo=true; try{ if(mode!=='space'&&!SHIP_WALK.active&&!SHIP_LAND&&!(SHIP_LIFT&&SHIP_LIFT.on)&&_pwSkyHidden()&&_pwBtAcc<0.1) _btGo=false; }catch(e){}
     if(_btGo){ const _bt=performance.now(); try{ updateBirdTemple(_pwBtAcc); }catch(e){ _animLoopWarn('birdTemple',e); } _pwBtAcc=0; DMFT.add('updateBirdTemple',performance.now()-_bt); } }   // the ship keeps wandering + the shard keeps following, even off-screen
   { const _wt=performance.now(); try{ _pwWorldTick(dt); }catch(e){ _animLoopWarn('world',e); } DMFT.add('pwWorldTick',performance.now()-_wt); }
