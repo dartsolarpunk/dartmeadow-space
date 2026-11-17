@@ -254,7 +254,7 @@ const stats = (mdl, t, N) => { let s = 0, s2 = 0; for (let i = 0; i < N; i++) { 
   ok(!/lessThan\(U\.layerFar\)|lessThan\(U\.hexFar\)/.test(sea), 'no hard layerFar / hexFar branch in the sea shader');
   ok(/depthTrust/.test(sea) && /smoothstep\(-2\.5, -0\.6, tx\.x\)/.test(sea), 'scene-depth terms fade with distance and land has no shore terms');
   ok(!/S\.lvl >= 0\.\d+ \? 1 : 0/.test(rt), 'governor level switches are ramps, not steps');
-  ok(/Hw:TERRAIN\.Hw\|\|null/.test(idx) && /TERRAIN\.Hw=F\.H0\|\|H/.test(idx) && /ctx\.Hw \|\| ctx\.H/.test(rt), 'the shore field reads the natural ground (TERRAIN.Hw), not decks / the mansion carve');
+  ok(/Hw:TERRAIN\.Hw\|\|null/.test(idx) && /TERRAIN\.Hw=\(\(\)=>\{ const h0=F\.H0\|\|H;[^\n]*seaField\(h0\):h0;/.test(idx) && /ctx\.Hw \|\| ctx\.H/.test(rt), 'the shore field reads the natural ground (TERRAIN.Hw), not decks / the mansion carve');
 }
 
 /* ── water coverage: tiles / fragments over high ground carry no water ── */
