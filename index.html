@@ -198,14 +198,14 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-water-curl.js?v=292"></script>   <!-- water: the breaking-wave curl (glassy turquoise barrel along the shore-parallel wave fronts; Medium+; created by dm-water-fx) -->
 <script src="ui/dm-water-fx.js?v=292"></script>   <!-- water: spray / splash / mist sprites, wake, footstep ripples, shore-break spray, underwater fog + shafts (?waterfx=0 off) -->   <!-- water: baked sea, shore, ground hook (?water=0 = the previous sea) -->
 <script src="ui/dm-perf.js?v=160"></script>
-<script src="ui/dm-governor.js?v=264"></script>
-<script src="ui/dm-budget.js?v=325"></script>
+<script src="ui/dm-governor.js?v=330"></script>
+<script src="ui/dm-budget.js?v=330"></script>
 <script src="ui/dm-mem.js?v=292"></script>
 <script src="ui/dm-lod.js?v=310"></script>
 <script src="ui/dm-terrain-lod.js?v=294"></script>   <!-- one terrain across every altitude band: shared slope / skirt / sea-tint contract between the globe map and the sky ground -->
 <script src="ui/dm-impostor.js?v=280"></script>   <!-- far-range LOD: vertex-clustering impostor (mansion LOD2, colours baked) -->   <!-- far-range LOD: the ONE distance table per device class (props, mansion, landmarks, vantage reach); ?lod=off|low|mobile|desktop -->
 <script src="ui/dm-light.js?v=323"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
-<script src="ui/dm-vlight.js?v=325"></script>   <!-- lighting overhaul: lamps / LEDs / flashlight / low sun light the volumetric fog (scene.fogNode, light list, equi-angular in-scatter); ?vlights=0|low|med|high -->
+<script src="ui/dm-vlight.js?v=330"></script>   <!-- lighting overhaul: lamps / LEDs / flashlight / low sun light the volumetric fog (scene.fogNode, light list, equi-angular in-scatter); ?vlights=0|low|med|high -->
 <script src="ui/dm-feedback.js?v=329"></script>
 <script src="ui/dm-atmo-shell.js?v=297"></script>   <!-- (v297) DMAtmoShell.radii/worldR/ratio: the faded atmosphere perimeter of a body (Solenne 1.18 R) for the space -> world hand-off (Worlds) -->
 <script src="ui/dm-spawn.js?v=314"></script>   <!-- (v314) DMSpawn: new-game spawn in interstellar space near Sol + the arrival push-out from every world's hand-off radius -->
@@ -1079,7 +1079,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-collide-game.js?v=281" defer></script>
 <script src="ui/dm-cgroup.js?v=281" defer></script>
 <script src="ui/dm-charm.js?v=234" defer></script>
-<script src="ui/dm-flash.js?v=325" defer></script>
+<script src="ui/dm-flash.js?v=330" defer></script>
 <script src="ui/dm-menuscene.js?v=245" defer></script>
 <script src="ui/dm-starbubble.js?v=4" defer></script>
 <script src="ui/dm-hazardbubble.js?v=215" defer></script>
@@ -6675,7 +6675,7 @@ async function initFlightScene(){
   flightRenderer.shadowMap.type=THREE.PCFSoftShadowMap;
 
   flightScene=new THREE.Scene();
-  try{ if(window.DMFlash){ DMFlash.hooks.gfx=()=>GFX; DMFlash.hooks.depthOK=_viewportDepthOK; DMFlash.hooks.logDepth=()=>!!(flightRenderer&&flightRenderer.logarithmicDepthBuffer); DMFlash.adoptScene(flightScene); } }catch(e){}   // the glasses flashlight's beam (intensity 0), in the fixed light set before the first compile: switching it on never recompiles
+  try{ if(window.DMFlash){ DMFlash.hooks.gfx=()=>GFX; DMFlash.hooks.depthOK=_viewportDepthOK; DMFlash.hooks.logDepth=()=>!!(flightRenderer&&flightRenderer.logarithmicDepthBuffer); DMFlash.hooks.cam=()=>(PW.active&&PW.mode&&PW.camera)?PW.camera:flightCamera; DMFlash.adoptScene(flightScene); } }catch(e){}   // the glasses flashlight's beam (intensity 0), in the fixed light set before the first compile: switching it on never recompiles
 
   // Near plane 0.1 (the skyboard sits ~0.5u from the lens, so it must stay
   // under that) paired with the logarithmic depth buffer above — that combo
@@ -7135,12 +7135,12 @@ function _startFlightLoop(){
     DMPerf.b('_dynRes'); try{ _dynRes(flightRenderer); }catch(e){} DMPerf.e();
     try{ CHAR.mixer && CHAR.mixer.update(dt); _updateCharDebugHUD(); }catch(e){_animLoopWarn('charMixer',e);}
     try{ _charmTick(dt); }catch(e){_animLoopWarn('charm',e);}
-    try{ if(window.DMFlash) DMFlash.tick('space'); }catch(e){_animLoopWarn('flash',e);}   // glasses flashlight: beam follows her glasses, button docks by the left stick
     try{ applySkyboardHeadOverride(); }catch(e){_animLoopWarn('headOverride',e);}   // (fades with the stance)
     DMPerf.b('updateBirdTemple'); try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);} DMPerf.e();
     DMPerf.b('_shipWalkCarry'); try{ if(SHIP_WALK.active) _shipWalkCarry(); else if(SHIP_LIFT.on) _shipLiftCarry(); }catch(e){_animLoopWarn('shipCarry',e);} DMPerf.e();
     DMPerf.b('_shipLandTick'); try{ if(SHIP_LAND) _shipLandTick(dt); }catch(e){ SHIP_LAND=null; _animLoopWarn('shipLand',e); } DMPerf.e();
     DMPerf.b('_anchorPostUpdate'); try{_anchorPostUpdate();}catch(e){_animLoopWarn('anchor',e);} DMPerf.e();
+    try{ if(window.DMFlash) DMFlash.tick('space'); }catch(e){_animLoopWarn('flash',e);}   // glasses flashlight: beam from her glasses along the camera look (t1516: after the head override, the ship walk camera and carry), button docks by the left stick
     DMPerf.b('updateDistantSystems'); try{updateDistantSystems(dt);}catch(e){_animLoopWarn('distantSystems',e);} DMPerf.e();
     DMPerf.b('updateVolumetricDust'); try{updateVolumetricDust(dt);}catch(e){_animLoopWarn('volumetricDust',e);} DMPerf.e();
     // (menu-perf) HUD text / crosshair label / minimap canvas are DOM + 2D-canvas work under an opaque veil during 'play': skipped there (they redraw on the next frame)

@@ -91,9 +91,9 @@ const src = fs.readFileSync(path.join(root, 'ui/dm-flash.js'), 'utf8');
   F.setShadows(false); F.tick('walk'); ok(F.status().shadowOn === false, 'setShadows(false)'); F.setShadows(true); S.dtEma = 16;
   // cone presets
   F.toggle(true); S.cone = 0; F.setCone(0); F.tick('walk'); const deg = x => x * 180 / Math.PI; const i0 = LB.intensity;
-  ok(Math.abs(deg(LB.angle) - 54) < 0.5 && LB.penumbra >= 0.4 && LB.decay === 0 && (!F.U || F.U.sp.value === 1), 'wide: 54 deg halo window, shaped profile (decay 0, sp 1)');
-  F.setCone(1); F.tick('walk'); ok(Math.abs(deg(LB.angle) - 35.6) < 0.7 && LB.intensity > i0, 'medium ~36 deg window, brighter on axis');
-  F.setCone(2); F.tick('walk'); ok(Math.abs(deg(LB.angle) - 21.6) < 0.7 && LB.intensity > i0 * 1.5, 'spot ~22 deg window'); LB.shadow.updateMatrices(LB); ok(Math.abs(LB.shadow.camera.fov - 2 * deg(LB.angle) * LB.shadow.focus) < 1e-6, 'the shadow frustum follows the cone preset');
+  ok(Math.abs(deg(LB.angle) - 40.1) < 0.5 && LB.penumbra >= 0.3 && LB.decay === 0 && (!F.U || F.U.sp.value === 1), '(t1516) wide: 40 deg LED window (was 54), shaped profile (decay 0, sp 1)');
+  F.setCone(1); F.tick('walk'); ok(Math.abs(deg(LB.angle) - 26.5) < 0.7 && LB.intensity > i0, 'medium ~26 deg window, brighter on axis');
+  F.setCone(2); F.tick('walk'); ok(Math.abs(deg(LB.angle) - 16.0) < 0.7 && LB.intensity > i0 * 1.5, 'spot ~16 deg window'); LB.shadow.updateMatrices(LB); ok(Math.abs(LB.shadow.camera.fov - 2 * deg(LB.angle) * LB.shadow.focus) < 1e-6, 'the shadow frustum follows the cone preset');
   ok(F.setCone(99) === 'spot' && F.setCone(-1) === 'wide', 'cone index clamps'); F.setCone(0);
   // scene hand-over leaves nothing lit / shadowed
   S.led = A.led; F.tick('walk'); ok(F.sceneLight(A.sc).intensity > 0 && LB.intensity === 0, 'hand-over: the other scene goes dark');
@@ -152,8 +152,8 @@ const src = fs.readFileSync(path.join(root, 'ui/dm-flash.js'), 'utf8');
     // smooth across the whole cone: no step between 0.25 deg samples bigger than 3 % of the peak (a visible perimeter would be one)
     let maxStep = 0, mono = true, prev = fa(0, 10); for (let a = 0.25; a <= 60; a += 0.25) { const v = fa(a, 10); maxStep = Math.max(maxStep, Math.abs(v - prev)); if (v > prev + 1e-12) mono = false; prev = v; }
     ok(mono && maxStep < 0.03 * peak, 'profile: monotonic and smooth over the cone (max step ' + (100 * maxStep / peak).toFixed(2) + ' % of the peak)');
-    ok(fa(54, 10) < 1e-3 * peak && fa(70, 10) === 0, 'profile: zero at the cone edge, no hard perimeter (edge ' + (1e3 * fa(54, 10) / peak).toFixed(2) + ' per mille of the peak)');
-    ok(fa(35, 10) / peak > 0.08 && fa(35, 10) / peak < 0.4 && fa(25, 10) / peak > 0.15, 'profile: a wide halo carries the surround (35 deg = ' + (100 * fa(35, 10) / peak).toFixed(0) + ' %, 25 deg = ' + (100 * fa(25, 10) / peak).toFixed(0) + ' % of the hot core)');
+    ok(fa(40, 10) < 1e-3 * peak && fa(41, 10) === 0 && fa(54, 10) === 0, 'profile: zero at the 40 deg cone edge, no hard perimeter (edge ' + (1e3 * fa(40, 10) / peak).toFixed(2) + ' per mille of the peak); nothing past it (no 360 glow)');
+    ok(fa(30, 10) / peak < 0.05 && fa(20, 10) / peak > 0.06 && fa(20, 10) / peak < 0.4, '(t1516) a directional LED: a short soft surround, not a lantern (30 deg = ' + (100 * fa(30, 10) / peak).toFixed(1) + ' %, 20 deg = ' + (100 * fa(20, 10) / peak).toFixed(0) + ' % of the hot core)');
     ok(fa(11, 10) / peak < 0.75 && fa(11, 10) / peak > 0.3, 'profile: the hot core is a core (11 deg = ' + (100 * fa(11, 10) / peak).toFixed(0) + ' %)');
     const E = d => 700 * fa(0, d) * 1;   // lux on a perpendicular surface at 700 cd (the old default step)
     ok(E(1) / E(4) < 1.35 && E(40) / E(10) > 0.04 && E(40) / E(10) < 0.2 && E(60) < E(40) && E(60) > 0.2 * E(40), 'profile: flat near, long reach (E 1 m / 4 m = ' + (E(1) / E(4)).toFixed(2) + ', 40 m / 10 m = ' + (E(40) / E(10)).toFixed(3) + ')');

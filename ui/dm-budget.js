@@ -68,6 +68,8 @@
 
   // (v297) frame budget for the 30 fps rule; legacy class (<= 3 GB device memory) keeps the 15 fps floor.  g: GFX ({deviceMem}).
   const TARGET_MS = 36, LEGACY_MS = 68;
+  // (t1516) the render-scale steps (the last five, 0.85 .. 0.42) must save at least this fraction of the frame time, or they are handed back (C.evaluate)
+  const RES_GAIN = 0.08, RES0 = pOf('res', 1);
   function isLegacy(g) { return !!(g && g.deviceMem > 0 && g.deviceMem <= 3); }
   function budgetFor(g) { return isLegacy(g) ? LEGACY_MS : TARGET_MS; }
 
@@ -97,6 +99,7 @@
       nextEval: 0, over: 0, calm: 0, lastChange: -1e9, lastRecover: -1e9, lastEval: 0, settleUntil: 0,
       lock: new Float64Array(MAX + 2), hold: new Float64Array(MAX + 2),
       changes: 0, esc: 0, rec: 0, fails: 0, history: [], lv: levelsAt(0), ver: 0, exhausted: false, p95: 0, settledP: 0, settledSince: 0, recTo: -1, floorP: 0, onChange: o.onChange || null,
+      rgPre: 0, rgFrom: -1, rgTo: -1, resCeil: MAX, resCeilUntil: 0, resNoGain: 0,   // (t1516) render-scale gain check, see RES_GAIN
     };
     for (let i = 0; i < C.hold.length; i++) C.hold[i] = 20000;
 
@@ -150,6 +153,16 @@
       const B = C.budget, p95 = pct95(); C.p95 = p95;
       const e = slowNow ? Math.max(C.ema, Math.min(C.min2, 1000) * 0.5) : C.ema;   // a sustained slideshow: the EMA lags (tau 1 s, 250 ms clip) - use the faster of the two
       const sev = e / B, sev2 = C.min2 / B;      // sev2: the smaller of the last two frames (a lone hitch cannot raise it)
+      // (t1516) the render-scale steps must BUY frame time.  A CPU-bound frame (terrain / prop LOD builds, physics, skinning) is not faster at a 0.42 render scale,
+      // it is only more jagged (AA is off by default).  The first judgement on frames drawn at the new scale: less than RES_GAIN saved -> back to the pressure
+      // before the res steps, and the res steps stay closed for 90 s (x the number of times this happened, up to 10 min).  A GPU-bound frame keeps its cut.
+      if (C.rgTo >= 0 && !slowNow) {
+        const pre = C.rgPre, from = C.rgFrom, to = C.rgTo; C.rgTo = -1; C.rgPre = 0; C.rgFrom = -1;
+        if (to === C.p && pre > 0 && e > pre * (1 - RES_GAIN) && from < C.p) {
+          C.resNoGain++; C.resCeil = from; C.resCeilUntil = now + Math.min(600000, 90000 * C.resNoGain);
+          C.set(from, now, 'res no gain ' + Math.round(pre) + '>' + Math.round(e) + 'ms'); return true;
+        }
+      }
       const bad = e > B || (p95 > B * 2.2 && e > B * 0.75);
       const calm = e < B * 0.72 && p95 < B * 1.5;
       if (bad) { C.over += dtE; C.calm = 0; } else { C.over = Math.max(0, C.over - dtE * 0.5); C.calm = calm ? C.calm + dtE : Math.max(0, C.calm - dtE * 0.5); }
@@ -158,13 +171,16 @@
       if (bad) {
         const dwell = sev2 > 4 ? 0 : sev > 2 ? 600 : sev > 1.4 ? 1000 : 1600;
         if (C.over >= dwell && now - C.lastChange >= (sev2 > 4 ? 300 : 900)) {
-          if (C.p >= MAX) { C.exhausted = true; return true; }
+          const top = now < C.resCeilUntil ? Math.max(C.floorP, C.resCeil) : MAX;   // (t1516) res steps closed after a no-gain judgement
+          if (C.p >= top) { C.exhausted = true; return true; }
           // how far to jump: a slideshow (frames > 4x the budget) sheds in big strides - the render scale at the end of the ladder is what usually buys most - then settles
-          let step = sev2 > 16 ? 9 : sev2 > 8 ? 6 : sev2 > 4 ? 4 : sev > 2.2 ? 2 : 1; if (C.p + step > MAX) step = MAX - C.p; if (step < 1) step = 1;
+          let step = sev2 > 16 ? 9 : sev2 > 8 ? 6 : sev2 > 4 ? 4 : sev > 2.2 ? 2 : 1; if (C.p + step > top) step = top - C.p; if (step < 1) step = 1;
           if (C.lastRecover > 0 && now - C.lastRecover < 12000) {   // an undone recovery: the level we just left is locked (exponential back-off)
             const lv = Math.min(MAX, C.p + 1); C.fails++; C.hold[lv] = Math.min(300000, C.hold[lv] * 2); C.lock[lv] = now + C.hold[lv];   // lock[k]: do not leave pressure k downwards
           }
-          C.esc++; C.exhausted = false; C.set(C.p + step, now, 'esc ' + Math.round(e) + 'ms');
+          const np = C.p + step, rf = Math.max(C.p, RES0 - 1, C.floorP);
+          if (np >= RES0 && np > rf && C.rgTo < 0) { C.rgPre = e; C.rgFrom = rf; C.rgTo = np; } else if (C.rgTo >= 0) C.rgTo = np;   // (t1516) judge what the render scale bought
+          C.esc++; C.exhausted = false; C.set(np, now, 'esc ' + Math.round(e) + 'ms');
           return true;
         }
         return false;
@@ -179,12 +195,12 @@
       return false;
     };
     C.stats = function () {
-      return { min2: +C.min2.toFixed(0), p: C.p, max: MAX, base: C.base, lv: C.lv, emaMs: +C.ema.toFixed(1), p95Ms: +C.p95.toFixed(1), budgetMs: C.budget, changes: C.changes, esc: C.esc, rec: C.rec, locks: C.fails, exhausted: C.exhausted, hist: C.history.slice(-12) };
+      return { resNoGain: C.resNoGain, resCeil: C.resCeilUntil > C.t ? C.resCeil : MAX, min2: +C.min2.toFixed(0), p: C.p, max: MAX, base: C.base, lv: C.lv, emaMs: +C.ema.toFixed(1), p95Ms: +C.p95.toFixed(1), budgetMs: C.budget, changes: C.changes, esc: C.esc, rec: C.rec, locks: C.fails, exhausted: C.exhausted, hist: C.history.slice(-12) };
     };
     return C;
   }
 
-  const core = { createFast: createFast, createController: createController, LADDER: LADDER, STAGES: STAGES, levelsAt: levelsAt, MAX: MAX, pOf: pOf, budgetFor: budgetFor, isLegacy: isLegacy, TARGET_MS: TARGET_MS, LEGACY_MS: LEGACY_MS };
+  const core = { RES_GAIN: RES_GAIN, RES0: RES0, createFast: createFast, createController: createController, LADDER: LADDER, STAGES: STAGES, levelsAt: levelsAt, MAX: MAX, pOf: pOf, budgetFor: budgetFor, isLegacy: isLegacy, TARGET_MS: TARGET_MS, LEGACY_MS: LEGACY_MS };
   if (typeof module !== 'undefined' && module.exports) module.exports = core;
   if (typeof window === 'undefined') return;
 
@@ -208,7 +224,7 @@
   function seedP() {
     const base = classBase(), h = loadHist(); let p = base, why = 'class ' + base;
     if (h) {
-      p = Math.max(base, h.p | 0); why = 'last p=' + (h.p | 0);
+      p = Math.max(base, Math.min(h.p | 0, RES0 - 1)); why = 'last p=' + (h.p | 0) + (h.p > RES0 - 1 ? ' (res steps re-measured)' : '');   // (t1516) a remembered render-scale cut is re-earned this session (gain check), never inherited blind
       const pa = W._dmPrevAlive;   // (ui/dm-perflog.js) did the previous session end without a pagehide, and where?
       if (pa && pa.clean === false && !pa.hidden) { const surf = /surf|atmo/.test(pa.screen || ''); p += surf ? 2 : 1; why += surf ? ' +2 died on world' : ' +1 died'; }
     }
@@ -253,7 +269,10 @@
       const r = W.flightRenderer || (typeof flightRenderer !== 'undefined' ? flightRenderer : null); if (!r || !r.getPixelRatio || !r.setPixelRatio) return;
       const cap = out.resCap(), cur = r.getPixelRatio(), base = W.effectivePixelRatio(), d = r._dr && r._dr.ring ? r._dr : null;
       const want = base * Math.min(cap, d ? d.k : 1);
-      if (cap < 1 && cur > want * 1.03) { r.setPixelRatio(base * cap); if (d) { d.k = Math.min(d.k, cap); d.since = now(); } r._dmEnf = cap; S.enf = (S.enf | 0) + 1; }
+      if (cap < 1 && cur > want * 1.03) { if (!r._dmEnf) S.enfFrom = d ? d.k : 1; r.setPixelRatio(base * cap); if (d) { d.k = Math.min(d.k, cap); d.since = now(); } r._dmEnf = cap; S.enf = (S.enf | 0) + 1; }
+      // (t1516) the cap LIFTED (a recovery, or a render-scale step that bought nothing was handed back): give the governor back the scale it had before this enforcer cut it.
+      // Before, d.k stayed at the forced 0.42 and the governor only probes up after a calm spell, which a 20-30 fps device never has: the game stayed at the low scale.
+      else if (r._dmEnf && cap > r._dmEnf + 0.005 && d) { const k = Math.min(cap, S.enfFrom || 1); if (d.k < k) { d.k = k; d.since = now(); r.setPixelRatio(base * k); } r._dmEnf = cap < 1 ? cap : 0; S.enf = (S.enf | 0) + 1; }
       else if (cap >= 1 && r._dmEnf && !d && cur < base * 0.98) { r.setPixelRatio(base); r._dmEnf = 0; S.enf = (S.enf | 0) + 1; }   // no governor to hand it back: restore it here
       else if (cap >= 1 && r._dmEnf) r._dmEnf = 0;
     } catch (e) { }

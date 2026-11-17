@@ -5,7 +5,10 @@
              band height); the bar is ~1/3 of the frame width (the marked white line in the reference), ~1/8 of the rim band tall. Fallback: the
              measured r-values below (GLB metres: frame 0.153 wide, top rim y 1.6689, front z -0.0133, rim band 0.027).
              Never a collider: not registered with DMCollide, raycast disabled, userData.noCollide.
-   LIGHT     one SHADOW-CASTING SpotLight per scene she can be in (flightScene, each world scene), along the glasses' forward axis, its target ahead of her.
+   AIM       (t1516) from the centre of the bar's FRONT face along the CAMERA's view direction (the look stick / mouse / first-person eyes; F.hooks.cam), on every
+             map and mode; the glasses' +Z only as the fallback (no camera, ?flashaim=head).  A near cutoff (NEAR, x her scale) keeps her own head unlit and starts the
+             visible shaft ~0.2-1.4 m out, so there is no spill over her head and no glow ball / 360 bloom round her face.
+   LIGHT     one SHADOW-CASTING SpotLight per scene she can be in (flightScene, each world scene), from the bar's front face, its target ahead along the aim.
              Created by adoptScene BEFORE the first compile of that scene and kept with intensity 0 while off (adding / removing a light changes every lit
              material's light hash and recompiles them: never on a tap). Real lighting: every lit material (terrain, mansion, props, character, board, foliage)
              receives it through three's own light loop; materials that carry a private light list (the mansion atlas, the Bird Temple hull / interior) get it
@@ -15,7 +18,7 @@
              measured frame time (auto-degrades to a cone without shadows if the frame stays > ~70 ms). ?flashshadow=0 never creates a shadow at all.
              The sun-visibility wrapper of DMLight (receivedShadowNode) is NOT applied to this light's shadow (tagged dmFlashShadow).
    PROFILE   (v324) the spot is NOT three's plain cone any more: ONE extra analytic term inside the same SpotLightNode path (no 2nd light, no 2nd shadow map): a hot
-             Gaussian core (sigma ~11 deg) + a wide soft halo (sigma ~30 deg, ~35 % weight, window to 54 deg) with NO visible perimeter, and a long distance law
+             Gaussian core (sigma ~9 deg) + a short soft halo (t1516: sigma ~24 deg, 35 % weight, window to 40 deg; was 11 / 34 / 54) with NO visible perimeter, and a long distance law
              1/(1+(d/10)^2)^0.9 (flat near, ~d^-1.8 beyond: walls / columns 30-60 m away still read).  Calibrated so the default step is bright but not clipped
              (ACES, exposure 1).  Uniform-only: DMFlash.U.{kh,kw,wh,id0,dp,cal,sp}; `sp` = 0 in space (legacy cone + decay).  F.spotFactor() is the pure mirror (tested).
    BEAM      the visible light shaft: ONE additive back-face cone mesh per scene (made on first switch-on, hidden while off) whose shader marches 6-14 samples
@@ -24,7 +27,7 @@
              (approximation). It YIELDS to DMVLight (ui/dm-vlight.js, which scatters the flashlight in scene.fogNode) while that is installed on a fogged
              scene on foot / in the air, so the shaft is never counted twice; it is the beam in open space and in fog-less scenes. ?flashbeam=0 off,
              ?flashbeam=<n> forces it on at gain n (on top of DMVLight), ?flashbeam=auto default.
-   CONE      long-press the button (or the small cone key in the brightness bar) cycles wide 35 deg / medium 23 deg / spot 12 deg half-angle (uniform changes only).
+   CONE      long-press the button (or the small cone key in the brightness bar) cycles wide 40 deg / medium 26 deg / spot 16 deg window (t1516; uniform changes only).
    FLAGS     ?flashlight=0 (feature off) ?flashshadow=0|512|1024|2048 ?flashbeam=auto|0|k ?flashtier=low|phone|desktop ?flashbias=-0.0004 ?flashhalo=<w, 0 = hot core only> ?flashgain=<k> ?flashtilt=<deg, default 4> ?flashdebug=1.  Session only: no save keys.
    INTERFACE DMFlash.cone() -> {on, pos, dir, angle, cosOuter, cosInner, range, intensity, lumens, shadow{on,map,matrix,near,far,bias,size,every}, mode} (preallocated, valid
              after tick), DMFlash.U (TSL uniform nodes of the beam, null until built), DMFlash.medium {mul, add} (density hooks for the fog / mist / atmosphere passes),
@@ -44,8 +47,12 @@
   // the shadow map are shorter, see TIERS).  space = open space / near a world (1 unit ~ 4 m, planets tens of units away, she is tiny): a far longer reach
   // and a flatter fall-off so a passing planet or ship is lit.  shNear / shFar = the shadow camera's depth range for that mode (shFar is capped by the tier).
   // (v324) ground: outer angle 54 deg (the halo's window), penumbra 0.45 (window starts at ~30 deg), decay 0 (the shaped distance law lives in the attenuation term, sp = 1); space keeps the legacy cone (sp = 0).
-  const PROF = { ground: { angle: 0.94, penumbra: 0.45, distance: 260, decay: 0, gain: 1, shNear: 0.25, shFar: 1e9, sp: 1 }, space: { angle: 0.5, penumbra: 0.7, distance: 1500, decay: 1.15, gain: 0.6, shNear: 0.6, shFar: 140, sp: 0 } };
-  const BEAM = { hotSig: 11, haloSig: 34, haloW: 0.55, d0: 12, dp: 0.85, cal: 0.013, minHot: 3.2, minHalo: 8 };   // degrees / metres; see F.beamParams
+  // (t1516) a directional LED, not a lantern: ground outer window 40 deg (was 54), penumbra 0.4, halo sigma 24 deg at 35 % (was 34 deg at 55 %); space 26 deg / 0.4 (was 29 / 0.7).
+  //   nc = the NEAR CUTOFF (GLB metres, x her world scale): nothing closer than nc[0] to the bar's front face is lit, full light from nc[1] on - her own hair, brow and
+  //   nose sit inside ~0.25 m of the bar, the ground and walls never do, so the beam no longer spills back over her head whatever the camera does.
+  const PROF = { ground: { angle: 0.70, penumbra: 0.4, distance: 260, decay: 0, gain: 1, shNear: 0.25, shFar: 1e9, sp: 1 }, space: { angle: 0.45, penumbra: 0.4, distance: 1500, decay: 1.15, gain: 0.6, shNear: 0.6, shFar: 140, sp: 0 } };
+  const NEAR = { lit: [0.14, 0.5], shaft: [0.2, 1.4] };   // GLB metres from the bar's front face: surface light ramps in over lit[], the visible shaft over shaft[] (no glow ball at her face)
+  const BEAM = { hotSig: 9, haloSig: 24, haloW: 0.35, d0: 12, dp: 0.85, cal: 0.013, minHot: 3.2, minHalo: 6 };   // degrees / metres; see F.beamParams
   // cone presets: factor on the profile's half-angle (wide 35 deg / medium 23 deg / spot 12 deg) and the intensity compensation (a narrower cone concentrates the same lumens)
   const CONES = [{ name: 'wide', k: 1, gain: 1 }, { name: 'medium', k: 0.66, gain: 1.35 }, { name: 'spot', k: 0.4, gain: 2.1 }];
   // quality tiers.  map = shadow map side, every = shadow refresh cadence (frames), far = shadow reach (m; casters beyond are never drawn into the map), steps = beam samples,
@@ -56,10 +63,10 @@
   const S = { on: false, step: 3, cone: 0, built: false, led: null, casing: null, strip: null, light: null, target: null, dims: null, mode: '', rc: 0, tries: 0, placed: false, prof: 'ground', pairs: [], ui: null, dirty: true, wait: 0, err: null,
     flags: null, tier: null, tierName: '', mapSize: 2048, shadowOn: false, shFrame: 0, shEvery: 1, shNear: 0.25, shFar: 180, bias: -0.0004, normalBias: 0.06, biasK: 0.012, biasM: 0.03, tilt: 0.07, halo: 1, gain: 1, fl: 0, vlCone: { angle: 0.6, penumbra: 0.7 }, shadowFloor: 0.9, fresh: 0, shUpdates: 0,
     t: 0, dtEma: 16, slow: 0, fast: 0, autoOff: 0, retry: 0, beamOn: false, dens: 0.01, beamK: 1, wasOn: false, shadowUser: true, pair: null, U: null, beam: undefined };
-  const F = { STEPS, S, R, LM_K, PROF, CONES, TIERS, BEAM };
+  const F = { STEPS, S, R, LM_K, PROF, CONES, TIERS, BEAM, NEAR };
   root.DMFlash = F;
-  let T = null; const _p = { x: 0, y: 0, z: 0 }; let _v = null, _d = null, _q = null, _z = null;
-  F.hooks = { gfx: null, depthOK: null, logDepth: null };   // set by index.html: gfx() -> GFX, depthOK() -> may a shader read the scene depth, logDepth() -> logarithmic depth buffer
+  let T = null; const _p = { x: 0, y: 0, z: 0 }; let _v = null, _d = null, _q = null, _z = null, _f = null;
+  F.hooks = { gfx: null, depthOK: null, logDepth: null, cam: null };   // (t1516) cam() -> the camera that draws this frame (index.html: PW.camera in a world, flightCamera in space / on the Bird Temple)   // set by index.html: gfx() -> GFX, depthOK() -> may a shader read the scene depth, logDepth() -> logarithmic depth buffer
   F.medium = { mul: 1, add: 0 };                              // density hooks for the fog / mist / atmosphere passes: dens = base * mul + add (per metre)
   F.lumens = () => STEPS[S.step];
   F.intensityFor = lm => lm * LM_K;
@@ -73,7 +80,8 @@
     return { light: q('flashlight') !== '0', shadow: fs !== '0' && fs !== 'off', size, beam: fb === '0' || fb === 'off' ? 0 : (fb === null || fb === 'auto' ? 1 : Math.max(0, Math.min(8, num(fb, 1)))), beamForce: fb !== null && fb !== 'auto' && fb !== '0' && fb !== 'off',
       tier: /^(low|phone|desktop)$/.test(q('flashtier') || '') ? q('flashtier') : '', bias: q('flashbias') !== null ? num(q('flashbias'), -0.0004) : -0.0004,
       biasK: q('flashbiask') !== null ? Math.max(0, Math.min(0.2, num(q('flashbiask'), 0.012))) : 0.012, tilt: q('flashtilt') !== null ? Math.max(0, Math.min(0.6, num(q('flashtilt'), 4) * Math.PI / 180)) : 0.07,
-      halo: q('flashhalo') !== null ? Math.max(0, Math.min(2, num(q('flashhalo'), 1))) : 1, gain: q('flashgain') !== null ? Math.max(0.05, Math.min(8, num(q('flashgain'), 1))) : 1, debug: /^(1|on|true|yes)$/i.test(q('flashdebug') || '') };
+      halo: q('flashhalo') !== null ? Math.max(0, Math.min(2, num(q('flashhalo'), 1))) : 1, gain: q('flashgain') !== null ? Math.max(0.05, Math.min(8, num(q('flashgain'), 1))) : 1, debug: /^(1|on|true|yes)$/i.test(q('flashdebug') || ''),
+      aim: q('flashaim') === 'head' ? 'head' : 'camera' };   // (t1516) ?flashaim=head = the old glasses-forward aim (A/B)
   };
   F.pickTier = function (gfx, ua, over) {   // gfx = the game's GFX (may be null), ua = navigator.userAgent, over = ?flashtier
     if (over && TIERS[over]) return over;
@@ -118,10 +126,20 @@
   };
   const sm01 = (a, b, v) => { const t = Math.max(0, Math.min(1, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
   // factor applied to the light colour (candela) for a fragment at angle cosine cosA (to the axis) and distance d: window(three's smoothstep cone) x (hot + wh x halo) x distance law x cal
-  F.spotFactor = function (cosA, d, p, cosO, cosI) {
+  F.spotFactor = function (cosA, d, p, cosO, cosI, nc) {   // nc = [near0, near1] (world units) or omitted (no cutoff)
     const omc = Math.max(0, 1 - cosA), q = d * p.id0;
-    return sm01(cosO, cosI, cosA) * (Math.exp(-omc * p.kh) + p.wh * Math.exp(-omc * p.kw)) * Math.pow(1 + q * q, -p.dp) * p.cal;
+    return sm01(cosO, cosI, cosA) * (Math.exp(-omc * p.kh) + p.wh * Math.exp(-omc * p.kw)) * Math.pow(1 + q * q, -p.dp) * p.cal * (nc ? sm01(nc[0], nc[1], d) : 1);
   };
+  F.nearK = (d, nc) => sm01(nc[0], nc[1], d);
+  // (t1516) the aim: the camera's view direction (-Z of its world matrix) - the LOOK stick / mouse / first-person eyes - on every map and mode.  Before, the beam ran
+  // along the glasses' +Z (the Head bone), and on the Bird Temple deck her body turns to the MOVEMENT heading (updateShipWalk: faceYaw = atan2(worldDir)) while the
+  // look stick turns only the camera, so the light followed the move stick there.  Pure on plain matrices (tested): out = unit vector, false if degenerate.
+  F.aimFrom = function (camE, ledE, mode, out) {
+    if (mode !== 'head' && camE) { const x = -camE[8], y = -camE[9], z = -camE[10], l = Math.hypot(x, y, z); if (l > 1e-8) { out.x = x / l; out.y = y / l; out.z = z / l; return 'camera'; } }
+    const x = ledE[8], y = ledE[9], z = ledE[10], l = Math.hypot(x, y, z); if (!(l > 1e-8)) return false; out.x = x / l; out.y = y / l; out.z = z / l; return 'head';
+  };
+  // the light's origin: the centre of the FRONT face of the LED bar (bar-local z = +dep/2), in world space (the bar's matrix carries her scale)
+  F.originFrom = function (ledE, dims, out) { const fz = dims ? dims.dep * 0.5 + 0.0002 : 0; out.x = ledE[12] + ledE[8] * fz; out.y = ledE[13] + ledE[9] * fz; out.z = ledE[14] + ledE[10] * fz; return out; };
   // ?flashdebug=1: one line of what the profile delivers (lux on a surface facing her) at the current step / cone, and which cost levers are active
   F.profileReport = function () {
     const q = PROF[S.prof] || PROF.ground, cn = CONES[S.cone], p = F.beamParams(cn.k, S.halo, S.gain), I = F.intensityFor(STEPS[S.step]) * q.gain * cn.gain, cO = Math.cos(q.angle * cn.k), cI = Math.cos(q.angle * cn.k * (1 - q.penumbra));
@@ -138,7 +156,7 @@
     return Math.max(0, d * (mul == null ? 1 : mul) + (add || 0));
   };
 
-  function initPre() { if (!_v && T) { _v = new T.Vector3(); _d = new T.Vector3(); _q = new T.Vector3(0, 0, 1); _z = new T.Vector3(); } }
+  function initPre() { if (!_v && T) { _v = new T.Vector3(); _d = new T.Vector3(); _q = new T.Vector3(0, 0, 1); _z = new T.Vector3(); _f = new T.Vector3(); } }
   // ── the LED bar on the glasses
   function glassesMesh(rootObj) {
     let best = null;
@@ -189,7 +207,8 @@
     if (S.U) return S.U;
     const TS = T && T.TSL; if (!TS || typeof TS.uniform !== 'function') return null;
     S.U = F.U = { A: TS.uniform(new T.Vector3()), a: TS.uniform(new T.Vector3(0, 0, 1)), cosO: TS.uniform(0.8), cosI: TS.uniform(0.9), len: TS.uniform(60), k: TS.uniform(0), dens: TS.uniform(0.01), col: TS.uniform(new T.Color(COLOR)), shOn: TS.uniform(0),
-      kh: TS.uniform(60), kw: TS.uniform(7), wh: TS.uniform(0.35), id0: TS.uniform(0.1), dp: TS.uniform(0.9), cal: TS.uniform(0.0145), sp: TS.uniform(1) };
+      kh: TS.uniform(60), kw: TS.uniform(7), wh: TS.uniform(0.35), id0: TS.uniform(0.1), dp: TS.uniform(0.9), cal: TS.uniform(0.0145), sp: TS.uniform(1),
+      nc: TS.uniform(new T.Vector2(NEAR.lit[0], NEAR.lit[1])), nb: TS.uniform(new T.Vector2(NEAR.shaft[0], NEAR.shaft[1])) };   // (t1516) near cutoffs (world units), written by tick()
     return S.U;
   }
   // ── (v324) the beam profile, inside three's own SpotLightNode (every lit material's light loop already calls getSpotAttenuation once for this light): hot core + wide halo + long
@@ -202,9 +221,10 @@
     SN.prototype.getSpotAttenuation = function (builder, angleCosine) {
       const base = orig.call(this, builder, angleCosine), L = this.light;
       if (!L || !L.userData || !L.userData.dmFlash) return base;
-      const omc = TS.max(TS.float(1).sub(angleCosine), 0), q = this.getLightVector(builder).length().mul(U.id0);
+      const dl = this.getLightVector(builder).length(), omc = TS.max(TS.float(1).sub(angleCosine), 0), q = dl.mul(U.id0);
       const ang = TS.exp(omc.mul(U.kh).negate()).add(U.wh.mul(TS.exp(omc.mul(U.kw).negate()))), fd = TS.pow(q.mul(q).add(1), U.dp.negate());
-      return TS.mix(base, base.mul(ang).mul(fd).mul(U.cal), U.sp);
+      const nearK = TS.smoothstep(U.nc.x, U.nc.y, dl);   // (t1516) near cutoff: her own head (inside ~0.25 m of the bar) is never lit by her flashlight
+      return TS.mix(base, base.mul(ang).mul(fd).mul(U.cal), U.sp).mul(nearK);
     };
     SN.prototype.__dmFlashPatched = true; S.patched = true; return true;
   }
@@ -307,7 +327,7 @@
   function applyProf(P, name) {   // uniform-only changes (profile of the mode x cone preset)
     const q = PROF[name], cn = CONES[S.cone]; P.prof = name; P.cone = S.cone; const L = P.L;
     L.angle = q.angle * cn.k; L.penumbra = q.penumbra; L.distance = q.distance; L.decay = q.decay;
-    S.vlCone.angle = name === 'space' ? L.angle : Math.max(0.2, 0.6 * cn.k); S.vlCone.penumbra = name === 'space' ? Math.max(L.penumbra, 0.6) : 0.7;   // the cone DMVLight scatters (the hot core, not the whole halo)
+    S.vlCone.angle = name === 'space' ? L.angle : Math.max(0.18, 0.45 * cn.k); S.vlCone.penumbra = name === 'space' ? Math.max(L.penumbra, 0.5) : 0.5;   // (t1516) the shaft is the hot core: 26 deg wide preset (was 34 deg / 0.7)   // the cone DMVLight scatters (the hot core, not the whole halo)
     setProfileUniforms(name);
   }
   function setProfileUniforms(name) {   // uniform writes only: the hot / halo widths of the cone preset, the distance law, space = legacy
@@ -418,7 +438,7 @@
       const acc = float(0).toVar();
       Loop(N, ({ i }) => {
         const t = lo.add(dt.mul(float(i).add(jit))), p = ro.add(rd.mul(t)), d = p.sub(A), s = dot(d, a), r = max(d.length(), 0.05);
-        const cone = smoothstep(U.cosO, U.cosI, s.div(r)), lf = float(1.0).sub(smoothstep(U.len.mul(0.55), U.len, s));
+        const cone = smoothstep(U.cosO, U.cosI, s.div(r)).mul(smoothstep(U.nb.x, U.nb.y, s)), lf = float(1.0).sub(smoothstep(U.len.mul(0.55), U.len, s));   // (t1516) no glow ball at the apex
         const nr = float(1.0).add(r.mul(0.08)), near = float(1.0).div(nr.mul(sqrt(nr)));
         let rho = U.dens;
         if (noise) rho = rho.mul(float(0.55).add(TS.mx_noise_float(p.mul(0.11).add(vec3(0.0, TS.time.mul(0.04), 0.0))).mul(0.5).add(0.5).mul(0.9)));
@@ -500,9 +520,14 @@
     if (pn !== S.prof || P.prof !== pn || P.cone !== S.cone) { S.prof = pn; applyProf(P, pn); S.fresh = 1; }
     const I = intensityNow(pn); if (L.intensity !== I) L.intensity = I;
     if (L.parent !== top) { top.add(L); top.add(P.t); }
+    S.led.updateWorldMatrix(true, false);   // this frame's head pose (the mixer / ship carry ran after the last render); parents only, no allocation
     const e = S.led.matrixWorld.elements;
-    _v.set(e[12], e[13], e[14]); _d.set(e[8], e[9], e[10]).normalize();   // the bar's +Z = the glasses' forward (mirrored with her while riding)
-    if (pn === 'ground' && S.tilt > 0) {   // (v322) a hand-held torch is aimed a little DOWN: a horizontal axis at head height (1.6 m) lights the ground only beyond ~2.3 m, at a grazing angle, as a thin wedge
+    let cam = null; if (S.flags.aim !== 'head' && F.hooks.cam) { try { cam = F.hooks.cam(); } catch (x) { cam = null; } }
+    if (cam && cam.isCamera) cam.updateWorldMatrix(true, false); else cam = null;
+    F.originFrom(e, S.dims, _p); _v.set(_p.x, _p.y, _p.z);   // origin: the front face of the white LED bar
+    const how = F.aimFrom(cam ? cam.matrixWorld.elements : null, e, S.flags.aim, _p); if (!how) return; _d.set(_p.x, _p.y, _p.z); S.aimHow = how;
+    { const sc = Math.hypot(e[0], e[1], e[2]) || 1, U = S.U; if (U && U.nc && S.ncS !== sc) { S.ncS = sc; U.nc.value.set(NEAR.lit[0] * sc, NEAR.lit[1] * sc); U.nb.value.set(NEAR.shaft[0] * sc, NEAR.shaft[1] * sc); } }   // near cutoffs follow her scale (metres on a world, ~0.27 on the Bird Temple)
+    if (how === 'head' && pn === 'ground' && S.tilt > 0) {   // (the camera aim needs no tilt: the look stick / view pitch IS the aim)   // (v322) a hand-held torch is aimed a little DOWN: a horizontal axis at head height (1.6 m) lights the ground only beyond ~2.3 m, at a grazing angle, as a thin wedge
       const hz = Math.sqrt(_d.x * _d.x + _d.z * _d.z);
       if (hz > 0.05) { const ph = Math.max(-1.35, Math.atan2(_d.y, hz) - S.tilt), ch = Math.cos(ph), k = ch / hz; _d.set(_d.x * k, Math.sin(ph), _d.z * k); }
     }

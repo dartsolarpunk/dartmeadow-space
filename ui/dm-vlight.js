@@ -32,6 +32,10 @@
 
   /* ───────────────────────── pure core ───────────────────────── */
   const PI = Math.PI, EPS = 0.35, STRIDE = 12;
+  // (t1516) a SPOT's scatter starts in front of the lamp: smooth 0 -> 1 between SPOT_NEAR0 and SPOT_NEAR1 metres from the apex.  The equi-angular samples crowd the apex
+  // (1/r^2), so the flashlight's shaft used to read as a bright ball round her head (a 360 glow, also behind her) instead of a beam leaving her glasses.  Point lights unchanged.
+  const SPOT_NEAR0 = 0.25, SPOT_NEAR1 = 1.6, EPS_SPOT = 0.8;   // a spot's kernel softening (1/(r^2 + EPS_SPOT^2)): the near ramp removed the apex peak, so the equi-angular samples spread over the beam, not the apex
+  function spotNear(r) { return smooth01((r - SPOT_NEAR0) / (SPOT_NEAR1 - SPOT_NEAR0)); }
   const SUN_NEAR0 = 30, SUN_NEAR1 = 110;   // metres of view distance: the low-sun scatter term is 0 inside SUN_NEAR0 and full beyond SUN_NEAR1 (smoothstep^2)
   const TIERS = { low: { n: 3, k: 2, sun: 1 }, med: { n: 5, k: 3, sun: 1 }, high: { n: 8, k: 4, sun: 2 } };
   const clamp = (x, a, b) => x < a ? a : x > b ? b : x;
@@ -49,12 +53,12 @@
     const wx = li.x, wy = li.y, wz = li.z, tc = wx * d[0] + wy * d[1] + wz * d[2], h2 = Math.max(wx * wx + wy * wy + wz * wz - tc * tc, 0), R2 = li.range * li.range - h2;
     if (!(R2 > 0)) return 0;
     const R = Math.sqrt(R2), s0 = Math.max(tc - R, 0), s1 = Math.min(tc + R, L); if (!(s1 > s0)) return 0;
-    const H = Math.sqrt(h2 + EPS * EPS), a0 = Math.atan((s0 - tc) / H), a1 = Math.atan((s1 - tc) / H), da = a1 - a0, spot = li.dx * li.dx + li.dy * li.dy + li.dz * li.dz > 0.25;
+    const spot = li.dx * li.dx + li.dy * li.dy + li.dz * li.dz > 0.25, E = spot ? EPS_SPOT : EPS, H = Math.sqrt(h2 + E * E), a0 = Math.atan((s0 - tc) / H), a1 = Math.atan((s1 - tc) / H), da = a1 - a0;
     let acc = 0;
     for (let k = 0; k < K; k++) {
       const u = (k + 0.5) / K + ((jit ? jit(k) : 0.5) - 0.5) / K, ang = a0 + da * u, s = tc + H * Math.tan(ang);
       const lx = d[0] * s - wx, ly = d[1] * s - wy, lz = d[2] * s - wz, r2 = lx * lx + ly * ly + lz * lz, r = Math.sqrt(r2), ir = 1 / Math.max(r, 1e-4);
-      const wnd = rangeWindow(r, li.range), cone = spot ? coneFactor((lx * li.dx + ly * li.dy + lz * li.dz) * ir, li.cosOuter, li.invR) : 1;
+      const wnd = rangeWindow(r, li.range), cone = spot ? coneFactor((lx * li.dx + ly * li.dy + lz * li.dz) * ir, li.cosOuter, li.invR) * spotNear(r) : 1;
       const ph = hg(-(lx * d[0] + ly * d[1] + lz * d[2]) * ir, g), tr = Math.exp(-sigma * (s + r));
       acc += wnd * cone * ph * tr;
     }
@@ -65,8 +69,8 @@
     const spot = li.dx * li.dx + li.dy * li.dy + li.dz * li.dz > 0.25; let acc = 0; const ds = L / n;
     for (let i = 0; i < n; i++) {
       const s = (i + 0.5) * ds, lx = d[0] * s - li.x, ly = d[1] * s - li.y, lz = d[2] * s - li.z, r2 = lx * lx + ly * ly + lz * lz, r = Math.sqrt(r2), ir = 1 / Math.max(r, 1e-4);
-      const cone = spot ? coneFactor((lx * li.dx + ly * li.dy + lz * li.dz) * ir, li.cosOuter, li.invR) : 1;
-      acc += rangeWindow(r, li.range) * cone * hg(-(lx * d[0] + ly * d[1] + lz * d[2]) * ir, g) * Math.exp(-sigma * (s + r)) / (r2 + EPS * EPS) * ds;
+      const cone = spot ? coneFactor((lx * li.dx + ly * li.dy + lz * li.dz) * ir, li.cosOuter, li.invR) * spotNear(r) : 1;
+      acc += rangeWindow(r, li.range) * cone * hg(-(lx * d[0] + ly * d[1] + lz * d[2]) * ir, g) * Math.exp(-sigma * (s + r)) / (r2 + (spot ? EPS_SPOT * EPS_SPOT : EPS * EPS)) * ds;
     }
     return acc * sigma;
   }
@@ -117,7 +121,7 @@
     return { n: maxN, sun: true };
   }
   function sunNearK(L) { const t = smooth01((L - SUN_NEAR0) / (SUN_NEAR1 - SUN_NEAR0)); return t * t; }   // CPU mirror of the shader's near fade of the low-sun term (tested)
-  const core = { sunNearK, SUN_NEAR0, SUN_NEAR1, EPS, STRIDE, TIERS, rangeWindow, coneFactor, hg, lightScatter, lightScatterBrute, packLight, clearSlot, createPicker, pickReset, pickPush, lightScore, createSlots, stepSlots, budgetPlan, smooth01 };
+  const core = { spotNear, SPOT_NEAR0, SPOT_NEAR1, EPS_SPOT, sunNearK, SUN_NEAR0, SUN_NEAR1, EPS, STRIDE, TIERS, rangeWindow, coneFactor, hg, lightScatter, lightScatterBrute, packLight, clearSlot, createPicker, pickReset, pickPush, lightScore, createSlots, stepSlots, budgetPlan, smooth01 };
 
   if (typeof module !== 'undefined' && module.exports) { module.exports = core; if (typeof window === 'undefined') return; }
 
@@ -183,11 +187,11 @@
         If(R2.greaterThan(0.0).and(B.x.add(B.y).add(B.z).greaterThan(1e-4)), () => {
           const R = sqrt(max(R2, 0.0)), s0 = max(tc.sub(R), 0.0), s1 = min(tc.add(R), Leff);
           If(s1.greaterThan(s0), () => {
-            const H = sqrt(h2.add(EPS * EPS)), a0 = atan(s0.sub(tc).div(H)), a1 = atan(s1.sub(tc).div(H)), da = a1.sub(a0), spot = dot(ax, ax).greaterThan(0.25), ls = float(0).toVar();
+            const spot = dot(ax, ax).greaterThan(0.25), H = sqrt(h2.add(select(spot, float(EPS_SPOT * EPS_SPOT), float(EPS * EPS)))), a0 = atan(s0.sub(tc).div(H)), a1 = atan(s1.sub(tc).div(H)), da = a1.sub(a0), ls = float(0).toVar();
             for (let k = 0; k < K; k++) {
               const jt = jit0.add(k * 0.618034).fract(), u = float((k + 0.5) / K).add(jt.sub(0.5).mul(0.6 / K)), s = tc.add(H.mul(tan(a0.add(da.mul(u))))), lv = d.mul(s).sub(wv);
               const r2 = dot(lv, lv), r = sqrt(max(r2, 1e-8)), q1 = clampN(float(1).sub(r2.div(range.mul(range))), 0.0, 1.0), wnd = q1.mul(q1);
-              const t = clampN(dot(lv, ax).div(r).sub(B.w).mul(C.w), 0.0, 1.0), cone = select(spot, t.mul(t).mul(float(3).sub(t.mul(2))), float(1));
+              const t = clampN(dot(lv, ax).div(r).sub(B.w).mul(C.w), 0.0, 1.0), cone = select(spot, t.mul(t).mul(float(3).sub(t.mul(2))).mul(smoothstep(SPOT_NEAR0, SPOT_NEAR1, r)), float(1));   // (t1516) spotNear
               const ph = HG(dot(lv, d).div(r).negate(), G2, G), tr = exp(sigma.mul(s.add(r)).negate());
               ls.addAssign(wnd.mul(cone).mul(ph).mul(tr));
             }
