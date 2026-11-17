@@ -73,7 +73,7 @@
   }
   // screen blend (what the orb's blending does per channel): dst + src x (1 - dst), never past 1, a dark scene barely tinted
   function screen(dst,src){ return dst+src*(1-dst); }
-  H.core={K,look,screen,sm};
+  H.core={K,look,screen,sm,present:(root,mode,toxic)=>present(root,mode,toxic)};
   let evBay=0;
   window.addEventListener('dm:bay',e=>{ const d=e&&e.detail; evBay=d?(d.inside?1:Math.min(1,Math.max(0,+d.membrane||0))):0; });
   function bayLevel(){
@@ -245,8 +245,12 @@
 
   /* ── per-frame ─────────────────────────────────────────────────── */
   const _c={x:0,y:0,z:0,R:1,len:1,ok:false};
-  function groupSphere(mode,cam,a){
-    const root=CHAR&&CHAR.root; _c.ok=false; if(!root||root.visible===false) return _c;
+  // (t1590) on foot in first person the game hides her body (index.html _surfFpBody: _surfFpHidden); in toxic air the orb stays with her then
+  // (her eyes are inside it: the first-person edge glow). Only that hide, only toxic: airless / underwater / any other hidden body unchanged.
+  function fpHidden(){ try{ return typeof _surfFpHidden!=='undefined'&&_surfFpHidden===true; }catch(e){ return false; } }
+  function present(root,mode,toxic){ return root.visible!==false||(toxic===true&&mode==='walk'&&fpHidden()); }
+  function groupSphere(mode,cam,toxic){
+    const root=CHAR&&CHAR.root; _c.ok=false; if(!root||!present(root,mode,toxic)) return _c;
     root.updateWorldMatrix(true,false); const e=root.matrixWorld.elements;
     const sc=Math.hypot(e[0],e[1],e[2])||1, h=(CHAR.rawHeight||1)*sc;      // her real height in world units
     let mx=e[12], my=e[13]+h*0.5, mz=e[14], R=h*0.62, len=h*1.3;
@@ -270,7 +274,7 @@
     if(mode!=='fly'&&mode!=='walk'){ if(H.a>0||H.wet>0||S.fogSaved||S.front&&S.front.visible) H.hide(); haveLast=false; return; }
     if(!attach(PW.scene,PW.renderer||(typeof flightRenderer!=='undefined'?flightRenderer:null))) return;
     if(!S.ready){ return; }
-    const cam=PW.camera, W=window.JOTS_WATER, g=groupSphere(mode,cam);
+    const kind=H.kind(PW.body,PW.pal), cam=PW.camera, W=window.JOTS_WATER, g=groupSphere(mode,cam,kind==='toxic');
     if(!g.ok){ haveLast=false; H.a=ease(H.a,0,3,dt); S.front.visible=S.back.visible=H.a>0.01; S.tint.visible=false; return; }
     // her speed (world units/s) — local stand-in for the physics-intensity scalar
     if(haveLast){ const dx=g.x-lastX, dy=g.y-lastY, dz=g.z-lastZ, dl=Math.sqrt(dx*dx+dy*dy+dz*dz); spd=ease(spd,dl/dt,6,dt); if(dl>1e-5){ hx=ease(hx,dx/dl,8,dt); hz=ease(hz,dz/dl,8,dt); } }
@@ -281,7 +285,7 @@
     H.wet=ease(H.wet,wet,8,dt); H.underwater=H.wet>0.05;
     const camWet=W&&mode==='fly'?sm(0,1.5,surfY-cam.position.y):0;
     // hazard target
-    let tgt=0; const kind=H.kind(PW.body,PW.pal);
+    let tgt=0;
     if(kind==='toxic') tgt=1; else if(kind==='airless') tgt=0.42;
     const bay=bayLevel(); H.dis=ease(H.dis,bay,4,dt);
     const wantBlue=H.wet>0.5?1:0;

@@ -18,6 +18,18 @@ const outC = C.look(0.0, 0.3, 0, 0, 0, 3, 0), outRim = C.look(1.0, 0.3, 0, 0, 0,
 ok(outC < 0.06, 'thin: low centre intensity from outside (' + outC.toFixed(3) + ')');
 ok(outRim > 0.45 && outRim <= K.max, 'clear fresnel rim (' + outRim.toFixed(3) + ', ceiling ' + K.max + ')');
 ok(C.look(1, 1, 1, 1, 0, 3, 0) <= K.max + 1e-9, 'never past the ceiling');
+console.log('== first person on foot: the orb stays, her body stays hidden');
+{ const P = C.present, hid = { visible: false }, vis = { visible: true };
+  ctx._surfFpHidden = true; vm.runInContext('var _surfFpHidden = true;', ctx);
+  ok(P(hid, 'walk', true) === true, 'toxic air, on foot, first person (body hidden by _surfFpBody): the orb stays');
+  ok(P(hid, 'walk', false) === false, 'airless / breathable: unchanged (fades with the hidden body)');
+  ok(P(hid, 'fly', true) === false, 'board flight: unchanged');
+  ok(P(vis, 'walk', false) === true && P(vis, 'fly', true) === true, 'visible body: always present (as before)');
+  vm.runInContext('_surfFpHidden = false;', ctx);
+  ok(P(hid, 'walk', true) === false, 'body hidden for any other reason (not first person): unchanged');
+  ok(!/root\.visible\s*=(?!=)/.test(src) && !/_surfFpHidden\s*=(?!=)/.test(src), 'the orb never shows her body or touches the first-person hide (body stays hidden)');
+  ok(/g=groupSphere\(mode,cam,kind==='toxic'\)/.test(src), 'tick passes "toxic" to the presence test');
+}
 console.log('== blend: screen (soft additive), never an opaque fill');
 ok(C.screen(0.5, 0) === 0.5 && C.screen(1, 0.6) === 1 && Math.abs(C.screen(0.2, K.max) - (0.2 + K.max * 0.8)) < 1e-12, 'screen: dst + src (1 - dst), saturates at 1');
 ok(/m\.blending=THREE\.CustomBlending/.test(src) && /m\.blendSrc=THREE\.OneFactor/.test(src) && /m\.blendDst=THREE\.OneMinusSrcColorFactor/.test(src), 'orb blend One / OneMinusSrcColor (screen)');
