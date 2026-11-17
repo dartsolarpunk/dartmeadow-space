@@ -24,6 +24,8 @@
     const c = String(starType || 'G').trim().toUpperCase()[0];
     return ({ O: 0x9db4ff, B: 0xaabfff, A: 0xcad7ff, F: 0xf8f7ff, G: 0xfff1d8, K: 0xffd2a1, M: 0xffb27a })[c] || 0xfff1d8;
   }
+  // zenith optical depth per channel (Rayleigh-ish air reddens the sun at the horizon; Mars dust dims it nearly grey, a touch warm)
+  const EXT_AIR = [0.11, 0.24, 0.52], EXT_DUST = [0.30, 0.33, 0.38];
   const rnd = (s) => () => { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; };
 
   function create(scene, o) {
@@ -37,6 +39,12 @@
       top: W.uniform(new THREE.Color(sk.top)), bot: W.uniform(new THREE.Color(sk.bottom)), haze: W.uniform(new THREE.Color(sk.haze != null ? sk.haze : sk.bottom)),
       glow: W.uniform(new THREE.Color(sk.glow != null ? sk.glow : 0xffe0b0)), sun: W.uniform(sunCol.clone()),
       dir: W.uniform(sunDir.clone()), day: W.uniform(1), atm: W.uniform(atmos ? 1 : 0),
+      // (v334 Cosmos) the system's real stars (ui/dm-stars.js): per star xyz = direction, w = cos(angular radius); rgb = colour x disc
+      // brightness, a = sky weight x its daylight (the forward-scatter aureole); tint = the stars' blended daylight colour; ext = the air's
+      // zenith optical depth per channel (the discs redden and dim toward the horizon by airmass)
+      sd: [0, 1, 2].map(() => W.uniform(new THREE.Vector4(0, 1, 0, 0.9997))), sc: [0, 1, 2].map(() => W.uniform(new THREE.Vector4(0, 0, 0, 0))),
+      tint: W.uniform(new THREE.Vector3(1, 1, 1)),
+      ext: W.uniform(new THREE.Vector3(...(/desert|dust|mars/i.test(String(o.style || '') + ' ' + String((o.body && o.body.name) || '')) ? EXT_DUST : EXT_AIR))),
     };
     // ── the dome ──
     const mat = new THREE.MeshBasicNodeMaterial({ side: THREE.BackSide });
@@ -55,12 +63,26 @@
       // night: almost clear — a deep blue that fades to black overhead
       const night = W.mix(U.haze.mul(0.06), W.vec3(0.004, 0.008, 0.02), W.smoothstep(W.float(0), W.float(0.5), h));
       let c = W.mix(night, day, U.day).mul(U.atm).add(W.vec3(0, 0, 0));
-      // the sun: halo through the air, and its disc (the disc shows on airless worlds too)
-      const sd = W.dot(d, U.dir).max(0);
-      const halo = W.pow(sd, W.float(48)).mul(0.55).add(W.pow(sd, W.float(6)).mul(0.22)).mul(U.atm).mul(W.smoothstep(W.float(-0.1), W.float(0.05), sunUp));
-      c = c.add(U.glow.mul(halo));
-      const disc = W.smoothstep(W.float(0.99935), W.float(0.9997), sd).mul(W.smoothstep(W.float(-0.02), W.float(0.01), h));
-      c = c.add(U.sun.mul(disc.mul(2.5)));
+      // (v334) the system's real stars, each at its true direction and angular size, coloured by its temperature, dimmed and reddened by the
+      // air's optical depth along the line of sight (airmass at that elevation), with its own forward-scatter aureole (Henyey-Greenstein,
+      // in its colour and weight).  This replaces the old single fixed glare (a pow(sd,48)+pow(sd,6) halo + one 1.4 deg disc).
+      c = c.mul(W.mix(W.vec3(1.0), U.tint, U.atm));
+      const hp = h.max(0), X = W.float(1.0).div(hp.add(W.exp(hp.mul(-11)).mul(0.025))).sub(1.0);
+      const trS = W.mix(W.vec3(1.0), W.exp(U.ext.mul(X).negate()), U.atm).mul(W.smoothstep(W.float(-0.02), W.float(0.01), h));
+      const g = 0.8, g2 = g * g;
+      for (let k = 0; k < 3; k++) {
+        const S4 = U.sd[k], C4 = U.sc[k];
+        const mu = W.dot(d, S4.xyz);
+        const x = W.float(1.0).sub(mu).div(W.float(1.0).sub(S4.w).max(1e-7));          // (angle / angular radius)^2
+        const limb = W.sqrt(W.float(1.0).sub(x).max(0)).mul(0.6).add(0.4);               // limb darkening
+        const cov = W.smoothstep(W.float(1.12), W.float(0.88), x).mul(W.smoothstep(W.float(-0.02), W.float(0.01), h));
+        // the disc: star radiance x the air's transmission, hue-preserving clamp (max channel 1.2) so a reddened low sun stays a bright red disc
+        // and Veyra B stays orange instead of washing to white; it covers the sky behind it (a star is opaque), plus a little sky in front
+        const dc = C4.xyz.mul(trS), dm = W.max(W.max(dc.x, dc.y), W.max(dc.z, W.float(1e-4)));
+        const disc = dc.mul(W.min(W.float(1.0), W.float(1.2).div(dm))).mul(limb).mul(cov);
+        const ph = W.float((1 - g2) / (4 * Math.PI)).div(W.pow(W.float(1 + g2).sub(mu.mul(2 * g)), W.float(1.5)));
+        c = c.mul(W.float(1.0).sub(cov.mul(0.7))).add(disc).add(C4.xyz.mul(trS).mul(ph.mul(C4.w).mul(0.05 / 30).mul(U.atm)));   // aureole: 0.05 x the star (disc radiance ~30)
+      }
       // below the horizon
       return W.mix(c, U.haze.mul(U.day.mul(0.8).add(0.05)).mul(U.atm), W.smoothstep(W.float(0), W.float(-0.25), h));
     })();
@@ -183,14 +205,35 @@ function _dmDisc(){ if(window.dmSoftDiscTex) return window.dmSoftDiscTex(); if(w
       }
       A.needsUpdate = true;
     };
+    // per-star uniforms (no allocation): one legacy star = the old disc size in the world's sun colour
+    const LEG_COS = Math.cos(0.0245), _tc = { r: 1, g: 1, b: 1 };
+    function setStarUniforms(S, day) {
+      let tr = 0, tg = 0, tb = 0, tw = 0;
+      for (let k = 0; k < 3; k++) {
+        const sd = U.sd[k].value, sc = U.sc[k].value;
+        if (S && k < S.count) {
+          const d = S.dir[k], c = S.col[k], br = 30 * Math.max(0.3, Math.min(3, Math.pow(S.temp[k] / 5778, 2))), dk = S.dayK[k] * S.w[k];
+          sd.set(d.x, d.y, d.z, Math.cos(S.angR[k])); sc.set(c.r * br, c.g * br, c.b * br, dk);
+          tr += c.r * dk; tg += c.g * dk; tb += c.b * dk; tw += dk;
+        } else if (!S && k === 0) {
+          const day0 = Math.max(0, Math.min(1, (sunDir.y + 0.1) / 0.25));
+          sd.set(sunDir.x, sunDir.y, sunDir.z, LEG_COS); sc.set(sunCol.r * 30, sunCol.g * 30, sunCol.b * 30, day0);
+        } else sc.set(0, 0, 0, 0);
+      }
+      // the daylight colour: the stars' colours by their share of the light (Sol alone = white = the old sky)
+      if (tw > 1e-6) { _tc.r = tr / tw; _tc.g = tg / tw; _tc.b = tb / tw; } else { _tc.r = _tc.g = _tc.b = 1; }
+      U.tint.value.set(_tc.r, _tc.g, _tc.b);
+      ctl.tint = _tc;
+    }
     const ctl = {
-      dome, stars, sunDir, day: 1, sunLight: o.sunLight || null, fade: 1,
+      dome, stars, sunDir, tint: _tc, starsLive: false, ext: U.ext.value.toArray(),   // ext: the air's zenith optical depth (DMStars' transmission uses the same) day: 1, sunLight: o.sunLight || null, fade: 1,
       // a: 1 = under the sky, 0 = above it (the air's own glow from outside takes over)
       setFade(a) {
         a = Math.max(0, Math.min(1, a)); ctl.fade = a;
         mat.opacity = a; dome.visible = a > 0.003;
       },
-      update(camera, dt, lat, lon) {
+      // (v334) S = window.DMStars after its update for this world (index.html _pwStarsTick); null = the old analytic DMTime sun
+      update(camera, dt, lat, lon, S) {
         if (!camera) return;
         dt = Math.min(0.1, dt || 0.016);
         // local time of day on the shared world clock (same for everyone)
@@ -208,9 +251,12 @@ function _dmDisc(){ if(window.dmSoftDiscTex) return window.dmSoftDiscTex(); if(w
           // sun on a simple equatorial path, seen from this latitude (east = +x, north = -z)
           sunDir.set(-Math.sin(H), Math.cos(H) * Math.cos(phi), Math.cos(H) * Math.sin(phi)).normalize();
         }
+        const useS = !!(S && S.valid && S.count > 0);
+        if (useS) sunDir.set(S.keyDir.x, S.keyDir.y, S.keyDir.z);   // the key light IS the key star (the same direction the shadows use)
         if (sunDir.y < -0.999) sunDir.y = -0.999;
-        const day = Math.max(0, Math.min(1, (sunDir.y + 0.1) / 0.25));
+        const day = useS ? S.day : Math.max(0, Math.min(1, (sunDir.y + 0.1) / 0.25));
         ctl.day = day; U.day.value = day; U.dir.value.copy(sunDir);
+        ctl.starsLive = useS; setStarUniforms(useS ? S : null, day);
         dome.position.copy(camera.position); stars.position.copy(camera.position); fx.position.copy(camera.position);
         // the real night sky for this hour and season: the star sphere turns about the celestial pole (which stands
         // at the site's latitude above the north horizon) by the local sidereal angle — the sun's hour angle plus its
@@ -265,6 +311,8 @@ function _dmDisc(){ if(window.dmSoftDiscTex) return window.dmSoftDiscTex(); if(w
           const under = atmos ? (0.08 + 0.92 * day) : (sunDir.y > -0.05 ? 1 : 0.06);
           o.sunLight.intensity = (o.sunBase || 2) * (under * ctl.fade + (1 - ctl.fade));   // above the air: full sun
           o.sunLight.color.copy(sunCol).lerp(SUNSET, atmos ? (1 - day) * Math.max(0, 1 - Math.abs(sunDir.y) * 6) * 0.7 : 0);
+          // (v334) a binary's key light takes the key star's colour relative to the primary (one star / primary key: unchanged)
+          if (ctl.starsLive && S && S.keyIdx > 0) { const a = S.col[S.keyIdx], p = S.col[0]; o.sunLight.color.r *= a.r / p.r; o.sunLight.color.g *= a.g / p.g; o.sunLight.color.b *= a.b / p.b; }
         }
         // fill (sky light): full by day; at night only what the night sky gives — galaxy/star skylight plus moonlight,
         // set from the game each frame (ctl.nightFill, a fraction of the day fill; 0.35 when nothing sets it)
