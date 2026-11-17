@@ -24,7 +24,7 @@ Test: `node tools/tests/terrain-lod.js` (runs the real `_terrainCore`, `_groundF
 - Mansion GLB cliff box edge vs natural ground (carve feather 14 m) belongs to the mansion lane; relief-aware split and ladder are the far-LOD worker's (`docs/far-lod.md` Part 3) and were not duplicated.
 - "Dimension-map area" was read as the mansion/generated patch; no tile or height discontinuity outside it exists in code.
 
-# t1516 (sw v332): live/local divergence, radial horizon blend, Mars ripples, cliff contract
+# t1516: live/local divergence, radial horizon blend, Mars ripples, cliff contract
 
 ## Live vs local divergence (root cause)
 Every file served by dartmeadow.space is byte-identical to `main` (all 96 page scripts and 148 referenced assets compared with `curl`, all HTTP 200, exact case),
@@ -35,7 +35,7 @@ spheres (`buildWebGLRichPlanetGroup`), while live devices on **real WebGPU** dra
 stream's `alphaHash` switch on `ctl.mat`), so on every LOD change the coarse and the fine bricks drew together at full opacity (stacked shells, z-fight, dead slots
 held solid, pop-in), and (2) the DMRock layered-rock bump + roughness (Mars' PBR relief from the air). Fix: `_wmCarry` keeps those nodes on the map material,
 `_wmLodBind` points the stream at the drawn material (`tools/tests/worldmap-lod-carry.js`). Also: seven scripts had changed since their `?v=` tag was set
-(dm-atmo, dm-fluid-world, dm-menuscene, dm-perf, dm-stack, dm-theme, dm-worldstyle): retagged `?v=332` so the service worker's cache-first rule cannot serve a stale copy.
+(dm-atmo, dm-fluid-world, dm-menuscene, dm-perf, dm-stack, dm-theme, dm-worldstyle): retagged to the branch's sw version so the service worker's cache-first rule cannot serve a stale copy.
 
 ## Radial horizon blend
 `SkyGround._hazeInit`: the ground's final lit output (textures, lighting, shadows, fog) blends to the scene haze colour between the Radical Circumference rim's inner
