@@ -129,12 +129,12 @@ for (const S of scen) {
   const src = fs.readFileSync(path.join(root, 'ui', 'dm-light.js'), 'utf8'), am = src.slice(src.indexOf('D.applyMaterial = function'), src.indexOf('D.applyTree = function'));
   ok(!/dxz = max\(abs\(p\.x\.sub\(U\.cam\.x\)\)/.test(am), 'probe hand-offs are radial (no square window ring)');
   ok(/vis = mix\(vis, farVis, wOut\)/.test(am) && /If\(wOut\.greaterThan\(0\.0\)/.test(am), 'past the probes the far AO term (branch on wOut), not flat open sky');
-  ok(/const wMap = float\(1\)\.sub\(smoothstep\(U\.sm\.x, U\.sm\.y/.test(am) && /mix\(float\(1\), s, wMap\)\.mul\(hfVis\)/.test(am), 'the shadow map eases out over U.sm, the height-field march carries on');
+  ok(/const wMap = float\(1\)\.sub\(smoothstep\(U\.sm\.x, U\.sm\.y/.test(am) && /mix\((?:float\(1\)|farV), s, wMap\)\.mul\(hfVis\)/.test(am), 'the shadow map eases out over U.sm (to the far layer, t1537), the height-field march carries on');
   // Low / mobile Medium: hasMarch() is false (no sun/far/horizon march), but Low still ships shadows:true at a 512 map. The wMap wrapper must still install.
   ok(T.low.sunSteps === 0 && T.low.farSteps === 0 && T.low.farN === 0 && T.low.horSteps === 0 && T.low.horN === 0, 'Low: hasMarch() is false (sunSteps / farN / horN all 0)');
   ok(/mob: \{ low: 'low', medium: 'low'/.test(src), "mobile Medium is capped to the Low light stage (PRESET_CAP.mob.medium = 'low')");
   ok(/if \(o\.shadow !== false\) \{/.test(am) && !/if \(o\.shadow !== false && hasMarch\(\)\)/.test(am), 'the shadow-map fade is not gated on hasMarch()');
-  ok(/if \(hasMarch\(\)\) \{[\s\S]*mix\(float\(1\), s, wMap\)\.mul\(hfVis\)[\s\S]*\} else \{[\s\S]*m\.receivedShadowNode = prev \? \(\(s\) => (?:s && s\.dmFlashShadow \? s : )?mix\(float\(1\), prev\(s\), wMap\)\) : \(\(s\) => (?:s && s\.dmFlashShadow \? s : )?mix\(float\(1\), s, wMap\)\);/.test(am), 'Low: shadow-map-only wMap wrapper (no height-field march)');
+  ok(/if \(hasMarch\(\)\) \{[\s\S]*mix\((?:float\(1\)|farV), s, wMap\)\.mul\(hfVis\)[\s\S]*\} else \{[\s\S]*m\.receivedShadowNode = prev \? \(\(s\) => (?:s && s\.dmFlashShadow \? s : )?mix\((?:float\(1\)|farV), prev\(s\), wMap\)\) : \(\(s\) => (?:s && s\.dmFlashShadow \? s : )?mix\((?:float\(1\)|farV), s, wMap\)\);/.test(am), 'Low: shadow-map-only wMap wrapper (no height-field march)');
   ok(/If\(wH\.greaterThan\(0\.0\)/.test(src) && /smoothstep\(300\.0, 450\.0, dC\)/.test(src), 'the horizon march only runs past ~300 m (a real branch: the near ground never pays)');
   const tb = LT.tierBytes('ultra'); ok((tb.cpu + tb.gpu) / 1048576 < 4, 'ultra caches < 4 MB with the horizon field (' + ((tb.cpu + tb.gpu) / 1048576).toFixed(2) + ')');
   // CPU replica of the shader's horizon march over the 48 m field on Solenne, low sun from the west: far ground that the old chain left fully lit

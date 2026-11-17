@@ -37,6 +37,7 @@
      draw cost — the near cascade of a two-cascade setup without a second shadow pass. Flying keeps the wide box.  */
   const S = { right: [0, 0, 0], up: [0, 0, 0], half: 0, mode: 1 };
   P.TIGHT_K = 1;   // (t1537) on-foot box factor (was 0.62)
+  P.TIGHT_FAR = 0.62;   // (t1537 sun-shafts) on-foot box factor while DMSunFar covers her
   P._S = S;
   P.fitSun = function (sun, dir, tx, ty, tz, tight) {
     if (!P.on || !sun || !sun.shadow || !dir) return false;
@@ -46,7 +47,10 @@
     const wide = ({ 512: 45, 1024: 70, 2048: 110, 4096: 150 })[size] || 90;
     // (t1537) on foot the box is NOT tightened any more (was 0.62x: a 28 u box on a 512 map). The map eases out inside its own box (DMLight U.sm), and past that
     // nothing shadows a roofed floor, so the tight box drew a lit ring ~17-26 u round her: the "bright circle that follows her" (deck-wide.jpg). Full box = TIGHT_K 1.
-    const want = wide * (tight ? P.TIGHT_K : 1);
+    // (t1537 sun-shafts) with DMSunFar's wide layer live round her (ui/dm-sunfar.js: it carries the sun shadow past the near band) the on-foot box is tight
+    // again (TIGHT_FAR): the near texels she looks at are ~1.6x denser (Low's 512 map: 0.11 u instead of 0.18 u) and there is still no lit ring. No far layer = TIGHT_K (#269).
+    const far = !!(tight && window.DMSunFar && window.DMSunFar.covers && window.DMSunFar.covers());
+    const want = wide * (tight ? (far ? P.TIGHT_FAR : P.TIGHT_K) : 1);
     if (!(S.half > 0) || Math.abs(S.half - want) > wide) S.half = want;
     S.half += (want - S.half) * 0.04;
     const hq = Math.round(S.half * 2) / 2;                       // half-metre steps: a re-fit only when it changed visibly
