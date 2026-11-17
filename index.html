@@ -7135,6 +7135,40 @@ function _queueViewsResize(){ clearTimeout(_viewsResizeT); _viewsResizeT=setTime
 window.addEventListener('resize',_queueViewsResize);
 window.addEventListener('orientationchange',()=>{ _queueViewsResize(); _queueFlightResize(); [450,1000].forEach(t=>setTimeout(()=>{ _resizeAllViews(); _queueFlightResize(); },t)); });   // iOS settles its viewport late after a turn
 if(window.visualViewport) window.visualViewport.addEventListener('resize',_queueViewsResize);
+// (t1536b) how one rendered frame's wall time is fed to the simulation.
+//  * real time up to SIM_FRAME_MAX per frame, cut into equal fixed steps of at most SIM_H_MAX; a gap over SIM_STALL is a stall (tab switch / long GC /
+//    compile) and advances one 1/60 s step so held sticks do not lurch.
+//  * SIM_H_MAX 0.1 s is safe for her walk: DMCollide.walk sweeps in <= 0.35 m sub-steps (capsule r 0.7: the thinnest 0.11 m box needs a 0.755 m jump to
+//    tunnel), the mansion interior in <= 0.5 m segments, prop tops are stood on from last step's feet; run 30 u/s x 0.1 s = 3 u = 9 sub-steps.
+//  * cost budget: only the controller step repeats (camera, HUD/DOM, wind, board follow, foot IK run once, on the last step, with the frame's dt). After
+//    the first step, if the sim-only steps so far plus their smoothed (EMA) cost would pass SIM_BUDGET_MS, or the last frame's did, the rest of the frame is
+//    ONE final step (<= SIM_H_MAX) and the remainder is dropped: under load at most 2 steps, never a spiral. Scalars only, no allocation.
+const SIM_H_MAX=0.1, SIM_FRAME_MAX=0.4, SIM_STALL=1.0, SIM_BUDGET_MS=4;
+const _SIM={t:1/60,n:1,h:1/60,fdt:1/60,done:1/60,stepping:false,last:true,ema:0,prevMs:0,ran:1};
+function _simSteps(raw,o){   // plan: o.t = time to simulate this frame as o.n equal steps of o.h
+  if(!(raw>0)||raw>SIM_STALL){ o.t=1/60; o.n=1; o.h=1/60; return o; }
+  const t=Math.min(raw,SIM_FRAME_MAX), n=Math.max(1,Math.ceil(t/SIM_H_MAX-1e-9)); o.t=t; o.n=n; o.h=t/n; return o;
+}
+// run fn(h) for the frame's steps; stops when PW.mode leaves `mode` ('' = open space: stops when a world takes over). Returns the time simulated.
+function _simRun(fn,mode){
+  const S=_SIM; let left=S.t, done=0, cost=0, k=0;
+  S.stepping=true;
+  try{
+    while(left>1e-7){
+      let h=S.h<left?S.h:left;
+      if(k>0&&(cost+S.ema>SIM_BUDGET_MS||S.prevMs>SIM_BUDGET_MS)){ h=left<SIM_H_MAX?left:SIM_H_MAX; left=h; }   // over budget: one last step, drop the rest
+      S.last=left-h<=1e-7; S.fdt=S.t;
+      const t0=performance.now(); fn(h); const c=performance.now()-t0;
+      k++; done+=h; left-=h;
+      if(!S.last){ cost+=c; S.ema=S.ema>0?S.ema*0.8+c*0.2:c; }   // the budget counts the repeated (sim-only) steps; the last step also carries the once-per-frame visuals
+      if(mode?PW.mode!==mode:(PW.active&&PW.mode)) break;
+    }
+  } finally { S.stepping=false; S.last=true; S.prevMs=cost; S.ran=k; S.done=done; }
+  return done;
+}
+function _simVis(){ return !_SIM.stepping||_SIM.last; }       // visual-only work: once per frame (on the last step)
+function _simVdt(dt){ return _SIM.stepping?_SIM.fdt:dt; }     // ... with the frame's dt, so the camera keeps up with her at low fps
+function _simWalk(h){ surfTime+=h; updateSurface(h); }
 function _startFlightLoop(){
   if(flightAnimId)return; // already running
   const cv=_flightLoopCv;
@@ -7143,9 +7177,10 @@ function _startFlightLoop(){
     flightAnimId=requestAnimationFrame(loop);
     const now=performance.now(); DMPerf.frame();
     if(window._dmGpuDefer) window._dmGpuDefer.tick();   // (v332) released GPU buffers due for destruction (no allocation when none are)
-    // (v162) after a stall (tab switch, a GC or a late shader build) advance one normal frame, not the 50 ms cap:
-    // held sticks/keys then pick up where they were instead of lurching forward by the whole cap.
-    const _rawDt=(now-_flightLoopLast)/1000, dt=_rawDt>0.25?1/60:Math.min(_rawDt,0.05);
+    // (t1536b) real-time on slow frames. v162 treated EVERY frame over 250 ms as a stall and advanced it by 1/60 s, so at 2-4 fps (a slow tablet after landing, a
+    // cold shader build) she walked / flew at 4-7 % speed. Now only a true stall (> 1 s: tab switch, long GC / compile) is reset to one 1/60 s step; a slow frame is
+    // simulated in real time as fixed steps of <= 0.1 s (up to 0.4 s of wall time per frame) under a cost budget, see _simSteps / _simRun.
+    const _rawDt=(now-_flightLoopLast)/1000; _simSteps(_rawDt,_SIM); const dt=_SIM.t;   // dt = the frame's simulated time (visual / clock work); controllers step via _simRun
     if(_rawDt>0.25) window._dmLongFrameAt=now;
     _flightLoopLast=now;flightTime+=dt;
 
@@ -7153,7 +7188,7 @@ function _startFlightLoop(){
     // near a world (or in its sky, or on its ground) the planet world runs the frame — same loop, same canvas
     if(PW.active&&PW.mode){ DMPerf.b('world'); try{ _pwFrame(dt); }catch(e){ _animLoopWarn('world',e); } DMPerf.e(); return; }
 
-    DMPerf.b('updateFlight'); try{updateFlight(dt);}catch(e){_animLoopWarn('updateFlight',e);} DMPerf.e();
+    DMPerf.b('updateFlight'); try{ _simRun(updateFlight,''); }catch(e){_animLoopWarn('updateFlight',e);} DMPerf.e();   // (t1536b) fixed steps, stops if a world took over
     try{
       if(_charShadowLight && boardFlight){
         // (v104) at the Bird Temple (aboard, or riding within a few ship-lengths) the star's shadow map is fitted to the
@@ -7194,7 +7229,7 @@ function _startFlightLoop(){
     try{ applySkyboardHeadOverride(); }catch(e){_animLoopWarn('headOverride',e);}   // (fades with the stance)
     DMPerf.b('updateBirdTemple'); try{updateBirdTemple(dt);}catch(e){_animLoopWarn('birdTemple',e);} DMPerf.e();
     DMPerf.b('_shipWalkCarry'); try{ if(SHIP_WALK.active) _shipWalkCarry(); else if(SHIP_LIFT.on) _shipLiftCarry(); }catch(e){_animLoopWarn('shipCarry',e);} DMPerf.e();
-    DMPerf.b('_shipLandTick'); try{ if(SHIP_LAND) _shipLandTick(dt); }catch(e){ SHIP_LAND=null; _animLoopWarn('shipLand',e); } DMPerf.e();
+    DMPerf.b('_shipLandTick'); try{ if(SHIP_LAND) _shipLandTick(Math.min(dt,SIM_H_MAX)); }catch(e){ SHIP_LAND=null; _animLoopWarn('shipLand',e); } DMPerf.e();
     DMPerf.b('_anchorPostUpdate'); try{_anchorPostUpdate();}catch(e){_animLoopWarn('anchor',e);} DMPerf.e();
     try{ if(window.DMFlash) DMFlash.tick('space'); }catch(e){_animLoopWarn('flash',e);}   // glasses flashlight: beam from her glasses along the camera look (t1516: after the head override, the ship walk camera and carry), button docks by the left stick
     DMPerf.b('updateDistantSystems'); try{updateDistantSystems(dt);}catch(e){_animLoopWarn('distantSystems',e);} DMPerf.e();
@@ -13171,8 +13206,7 @@ function updateFlight(dt){
     // ANCHOR is carried after the bodies move (see _anchorPostUpdate).
     sp.speed=sp.vel.length();
     takeMouseLook(); // FOCUS/ORBIT own the view — don't let queued mouse motion jump it afterwards
-    updateBoardTransform(0,0);
-    updateFollowCam(dt);
+    if(_simVis()){ updateBoardTransform(0,0); updateFollowCam(_simVdt(dt)); }   // (t1536b) once per frame
     recordBodyPositions();
     return;
   }
@@ -13204,9 +13238,8 @@ function updateFlight(dt){
 
   // ── Place the board in the world at sp.pos, oriented to its heading, with a
   //    little banking lean into turns and a gentle hover bob ───────────────
-  updateBoardTransform(tf,ts);
   // ── Trail the camera behind+above the board, looking over it (follow cam) ─
-  updateFollowCam(dt);
+  if(_simVis()){ updateBoardTransform(tf,ts); updateFollowCam(_simVdt(dt)); }   // (t1536b) visual: once per frame, the frame's dt
 
   // Energy drain in DART modes
   if(dartSpeedMode>0) sp.energy=_clamp(sp.energy-dartSpeedMode*2*dt,0,100);
@@ -19875,20 +19908,19 @@ function _pwSetMode(mode){
 let _pwBodyAcc=0,_pwBtAcc=0;
 function _pwSkyHidden(){ try{ return !(PW.skyK<0.999&&_PWS.ok); }catch(e){ return false; } }
 function _pwFrame(dt){
-  const mode=PW.mode, now=performance.now();
+  const mode=PW.mode, now=performance.now(), fl=dt>0&&dt===_SIM.t;   // (t1536b) from the loop: controllers run the frame's fixed steps (_simRun); hand-over calls pass 0
   if(mode==='space'){
-    _pwSpaceStep(dt);
+    if(fl) _simRun(_pwSpaceStep,'space'); else _pwSpaceStep(dt);
     if(PW.mode&&PW.mode!=='space'){ _pwFrame(0); return; }   // handed over to the sky this frame: its camera draws it
   } else {
     _pwBodyAcc+=dt;
     if(!_pwSkyHidden()||_pwBodyAcc>=0.1){ const _ub=performance.now(); try{ updateBodies(_pwBodyAcc); }catch(e){ _animLoopWarn('updateBodies',e); } _pwBodyAcc=0; DMFT.add('updateBodies',performance.now()-_ub); }   // the planets keep turning on the world clock (the sky above is the real one)
     if(mode==='fly'){
-      try{ updateAtmoFlight(dt); }catch(e){ _animLoopWarn('atmoFlight',e); }
+      try{ if(fl) _simRun(updateAtmoFlight,'fly'); else updateAtmoFlight(dt); }catch(e){ _animLoopWarn('atmoFlight',e); }
       if(PW.mode!=='fly'){ _pwFrame(0); return; }   // handed over to open space this frame
       try{ if(atmoBoard&&atmoState){ const s=atmoState; updateBoardWake(atmoBoard,PW.scene,dt,Math.min(1.2,atmoMach/0.6),new THREE.Vector3(-Math.sin(s.yaw)*Math.cos(s.pitch),Math.sin(s.pitch),-Math.cos(s.yaw)*Math.cos(s.pitch))); } }catch(e){ _animLoopWarn('boardWake',e); }
     } else {
-      surfTime+=dt;
-      const _us=performance.now(); try{ updateSurface(dt); }catch(e){ _animLoopWarn('updateSurface',e); } DMFT.add('updateSurface',performance.now()-_us);
+      const _us=performance.now(); try{ if(fl) _simRun(_simWalk,'walk'); else _simWalk(dt); }catch(e){ _animLoopWarn('updateSurface',e); } DMFT.add('updateSurface',performance.now()-_us);
     }
     try{ updateCharOrbitCamera(); }catch(e){ _animLoopWarn('charOrbit',e); }
     _pwCamBlend(dt);   // (in the flat world, near the focus where the frame leaves things be)
@@ -20916,6 +20948,7 @@ function updateAtmoFlight(dt){
   // the world's edge (the poles): the sky map ends there
   { const zc=_atmoSiteRef().lat/ATMO_DEG_PER_UNIT; s.pos.z=Math.max(zc-89.5/ATMO_DEG_PER_UNIT,Math.min(zc+89.5/ATMO_DEG_PER_UNIT,s.pos.z)); }
   // ── Place the board and orient it exactly as open space does (updateBoardTransform)
+  if(_SIM.stepping){ if(!_SIM.last) return; dt=_SIM.fdt; }   // (t1536b) board pose, camera, HUD text: once per frame, the frame's dt
   if(!s.touchdown){ // after touchdown the step-off animation owns the board
     atmoBoard.position.copy(s.pos);
     atmoBoard.position.y+=Math.sin(flightTime*.9)*.05; // hover bob
@@ -21315,6 +21348,7 @@ function _pwSpaceStep(dt,first){
   // the autopilot out to space (TO SPACE)
   if(S.out) _pwSpaceOutTick(sp,b,sc,dt);
   S.speed=(sp.pos.distanceTo(p0))*sc.Sx/Math.max(1e-3,dt||1/60);
+  if(_simVis()){   // (t1536b) board pose + camera: once per frame
   try{ updateBoardTransform(0,0); }catch(e){}
   // the hover bob is a fixed 0.03 in open-space units; near the top of the air the
   // camera sits only ~0.015 behind her (offsets × sc.fc), so the unscaled bob threw
@@ -21333,7 +21367,8 @@ function _pwSpaceStep(dt,first){
     flightCamera.up.copy(fup); flightCamera.lookAt(_pwVec(1).copy(flightCamera.position).add(fwd));
   }
   if(charOrbitActive) try{ _charOrbitPlace(flightCamera,_pwVec(2).copy(sp.pos),sc.fc,false); }catch(e){ _animLoopWarn('charOrbit',e); }   // ORBIT view: round her, at this approach's scale
-  const fovT=flightFP?FLIGHT_FP_FOV:(o.fov||62); if(Math.abs(flightCamera.fov-fovT)>0.01){ flightCamera.fov+=(fovT-flightCamera.fov)*Math.min(1,(dt||0)*1.5); flightCamera.updateProjectionMatrix(); }
+  const fovT=flightFP?FLIGHT_FP_FOV:(o.fov||62); if(Math.abs(flightCamera.fov-fovT)>0.01){ flightCamera.fov+=(fovT-flightCamera.fov)*Math.min(1,(_simVdt(dt)||0)*1.5); flightCamera.updateProjectionMatrix(); }
+  }
   // 3. into the world's frame: the focus is the point under the board
   la=_pwsLatLonAlt(b,sp.pos);
   const xz=_atmoXZ(la.lat,la.lon); S.flat.set(xz.x,la.alt,xz.z);
@@ -27263,8 +27298,8 @@ function updateSurface(dt){
   const p=surfPlayer;if(!p)return;
   let _m0=performance.now(), _m1;   // (perf) sub-step clock for the perf log: us.wind / us.move / us.board / us.cam / us.char / us.cg / us.foot
   // Subtle Earth wind drift (Points) — cheap CPU update of positions only
-  if(TERRAIN.windPoints && TERRAIN.windPoints.geometry){
-    const pos=TERRAIN.windPoints.geometry.attributes.position.array;
+  if(_simVis() && TERRAIN.windPoints && TERRAIN.windPoints.geometry){   // (t1536b) visual: once per frame
+    const pos=TERRAIN.windPoints.geometry.attributes.position.array, _wdt=_simVdt(dt);
     const vel=TERRAIN.windPoints.userData.windVel;
     const n=pos.length/3;
     // (perf) each particle keeps the ground height it last looked up and only asks again after drifting 0.25 units in x or z: the world
@@ -27272,9 +27307,9 @@ function updateSurface(dt){
     // ceiling they are clamped to is the same height to within a hand's width. Slots: wg[3i]=ground+1.2, wg[3i+1]=x, wg[3i+2]=z asked at.
     const WU=TERRAIN.windPoints.userData, wg=WU.wg||(WU.wg=new Float32Array(n*3)), HH=TERRAIN.H;
     for(let i=0;i<n;i++){
-      pos[i*3]+=vel[i*3]*dt;
-      pos[i*3+1]+=vel[i*3+1]*dt;
-      pos[i*3+2]+=vel[i*3+2]*dt;
+      pos[i*3]+=vel[i*3]*_wdt;
+      pos[i*3+1]+=vel[i*3+1]*_wdt;
+      pos[i*3+2]+=vel[i*3+2]*_wdt;
       // the breeze wraps round her, wherever she walks
       if(pos[i*3]>p.pos.x+240||pos[i*3]<p.pos.x-260||Math.abs(pos[i*3+2]-p.pos.z)>240){ pos[i*3]=p.pos.x-240; pos[i*3+2]=p.pos.z+rnd(-220,220); }
       // Soft vertical wrap near ground
@@ -27339,6 +27374,7 @@ function updateSurface(dt){
   try{ _surfGuard(p,mf,ms,dt); }catch(e){ console.warn('[surfGuard]',e); }   // (v274) non-finite / stuck-in-a-collider recovery
   _m1=performance.now(); DMFT.add('us.move',_m1-_m0); _m0=_m1;
   surfJumpPressed=false; // consume the press — it's an edge-triggered action, not a held state
+  if(_SIM.stepping){ if(!_SIM.last) return; dt=_SIM.fdt; }   // (t1536b) the rest (board follow, call, camera, character sync, foot IK) is visual: once per frame, the frame's dt
   // stream terrain LOD around the player (subdivide nearby, coarsen far)
   // ── Hovering companion board: trails beside & slightly behind the player,
   //    hovering a few feet off the ground. It rises over obstacles/walls (its
