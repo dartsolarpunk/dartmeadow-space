@@ -2,7 +2,8 @@
    HAZARD — per-body habitability, the DMHazard source registry + sensor, the exposure clock, and the protection state shown on her
    Skyboard set (staff-crown contour glow + lighthouse LED) and on her (a small chest LED; a faint head light in first person).
    (This file replaces ui/dm-hazardbubble.js.  The green "toxic air" orb, the blue underwater mist orb, the HUD SHIELD toggle and the orb's
-   look code are GONE: nothing here draws a sphere round her.  The atmosphere / sky are not in this file and are untouched.)
+   look code are GONE: nothing here draws a sphere round her.  v357: the DMVLight 'shield' point light (a 2.6-height fog in-scatter ball round the LED, which cut the
+   ground in a circle) is gone too.  The atmosphere / sky are not in this file and are untouched.)
 
    habitable   DM_HAZ.habitable(body) -> bool, cached on body.habitable.  Earth + Ariel's home planet (Solenne) true; Mars, Titan, Moon, Mercury,
                Venus, Pluto and every other Sol body false; seeded planets are chosen from their OWN derived stream (hash('hab:'+mcSeed),
@@ -12,6 +13,9 @@
    exposure    DM_HAZ.exposure: while a hazard is sensed at her, a reserve (1 -> 0) drains at intensity / HAZARD_TABLE[type].safeSec per second and
                refills at 1 / recoverSec when she is clear.  Pure maths in DM_HAZ.core (tools/tests/shield-unit.js).  Nothing happens at zero except the
                warning state ('exposed': red LED / crown, HUD "OVEREXPOSED") and one `dmhazardzero` event (no damage, no game-over).
+   shield      (v357) a state flag, nothing is drawn round her.  DM_HAZ.toggleShield() / setShield(bool) (the diamond sub-button of the left stick cluster, ui/dm-flash.js), kept for the
+               session (sessionStorage 'dm_shield_on').  ON = protected: the exposure clock stops draining and refills; the staff crown glows BLUE; the LED is half green (hazard) / half
+               blue (shield) - with no hazard only the blue half; the glasses strip LED_Top_Strip_L / _R (her GLB, by name) does the same.  Works with or without a hazard.
    protection  DMShield (below): ACTIVE whenever a hazard is sensed at her, whether or not the Skyboard is parked: LED on the lighthouse housing,
                contour glow on the staff crown, and a small LED on her chest.  First person: her body and the board are hidden, so a faint short-range
                light at her head (one of the world's FIXED pooled natural lights, no shadow) is the glow.  Status colour: green protected (reserve above
@@ -272,8 +276,9 @@
   function secondsLeft(res,I,row){ return I>0?res*row.safeSec/I:Infinity; }
   function secondsToFull(res,near,row){ return (1-res)*row.recoverSec*(near?2:1); }
   // pure: the colour state of the LED / crown / HUD.  prev for the amber hysteresis (leaves amber 0.08 above the warn fraction)
-  function stateOf(prev,sensed,inside,res,warn){
+  function stateOf(prev,sensed,inside,res,warn,shield){
     if(!sensed) return 'off';
+    if(shield) return 'shielded';   // the player's Shield toggle is on: protected, whatever the clock says (the clock refills)
     if(!inside) return 'alert';
     if(res<=0) return 'exposed';
     if(res<warn) return 'warn';
@@ -282,7 +287,7 @@
   }
   function fmtClock(sec){ if(!isFinite(sec)) return '--:--'; sec=Math.max(0,Math.round(sec)); const m=Math.floor(sec/60), s=sec%60; return (m<10?'0':'')+m+':'+(s<10?'0':'')+s; }
   // the live exposure record (one object, written in place)
-  const EX={shelter:false,on:false,sensed:false,inside:false,near:false,I:0,marker:0,reserve:1,sec:Infinity,state:'off',key:'default',label:'',hue:'#ffc233',zero:false,warn:0.35,lastEmit:'',emitT:0,row:HAZARD_TABLE.default};
+  const EX={shelter:false,shield:false,on:false,sensed:false,inside:false,near:false,I:0,marker:0,reserve:1,sec:Infinity,state:'off',key:'default',label:'',hue:'#ffc233',zero:false,warn:0.35,lastEmit:'',emitT:0,row:HAZARD_TABLE.default};
   // read the sensors into EX (no allocation): the strongest of the world's own air and the nearest local source
   function exposureRead(){
     let I=0,marker=0,inside=false,near=false,gas='',type='',isG=false;
@@ -299,10 +304,13 @@
   function exposureStep(dt){
     exposureRead();
     const row=EX.row, was=EX.reserve;
-    EX.reserve=reserveStep(EX.reserve,EX.inside?EX.I:0,EX.near,dt,row);
-    EX.sec=EX.inside?secondsLeft(EX.reserve,EX.I,row):Infinity;
-    EX.state=stateOf(EX.state,EX.sensed,EX.inside,EX.reserve,EX.warn);
-    const nz=EX.inside&&EX.reserve<=0; if(nz&&!EX.zero){ try{ window.dispatchEvent(new CustomEvent('dmhazardzero',{detail:{type:EX.key,label:EX.label}})); }catch(e){} } EX.zero=nz;
+    EX.shield=SHIELD_ON;
+    // SHIELD ON: the air does not drain the reserve (it refills at the full recover rate even inside the zone), the countdown is gone, zero cannot be reached
+    const drain=EX.inside&&!EX.shield?EX.I:0;
+    EX.reserve=reserveStep(EX.reserve,drain,EX.near&&!EX.shield,dt,row);
+    EX.sec=drain>0?secondsLeft(EX.reserve,drain,row):Infinity;
+    EX.state=stateOf(EX.state,EX.sensed,EX.inside,EX.reserve,EX.warn,EX.shield);
+    const nz=EX.inside&&!EX.shield&&EX.reserve<=0; if(nz&&!EX.zero){ try{ window.dispatchEvent(new CustomEvent('dmhazardzero',{detail:{type:EX.key,label:EX.label}})); }catch(e){} } EX.zero=nz;
     if(!EX.sensed&&EX.reserve>=0.999) EX.reserve=1;   // refilled: snap, so the clock and the HUD end together
     EX.on=EX.sensed||EX.reserve<0.999;
     return was;
@@ -312,15 +320,24 @@
   function emitHud(force){
     if(!FLAG_HUD) return;
     const now=(typeof performance!=='undefined')?performance.now():0;
-    const sig=(EX.on?1:0)+'|'+EX.state+'|'+EX.key+'|'+Math.round(EX.marker*40)+'|'+Math.round(EX.reserve*100)+'|'+(isFinite(EX.sec)?Math.round(EX.sec):'i');
+    const sig=(EX.on?1:0)+(EX.shield?'S':'')+'|'+EX.state+'|'+EX.key+'|'+Math.round(EX.marker*40)+'|'+Math.round(EX.reserve*100)+'|'+(isFinite(EX.sec)?Math.round(EX.sec):'i');
     if(!force&&(sig===EX.lastEmit||now-EX.emitT<250)) return;
     EX.lastEmit=sig; EX.emitT=now;
     try{ window.dispatchEvent(new CustomEvent('dmhazardhud',{detail:{on:EX.on,sensed:EX.sensed,state:EX.state,type:EX.key,label:EX.label,hue:EX.hue,marker:EX.marker,reserve:EX.reserve,
-      intensity:EX.I,sec:EX.sec,refill:EX.sensed?0:secondsToFull(EX.reserve,false,EX.row),zero:EX.zero,warn:EX.warn}})); }catch(e){}
+      intensity:EX.I,sec:EX.sec,refill:(EX.sensed&&!EX.shield)?0:secondsToFull(EX.reserve,false,EX.row),shield:EX.shield,zero:EX.zero,warn:EX.warn}})); }catch(e){}
   }
   H.exposure=EX; H.table=HAZARD_TABLE;
   const FLAG_HUD=!/[?&]hazardhud=0\b/.test((window.location&&window.location.search)||'');
   H.core={HAZARD_TABLE,rowFor,intensityOf,markerOf,reserveStep,secondsLeft,secondsToFull,stateOf,fmtClock,sm};
+  // ── the SHIELD toggle (a state flag, nothing is drawn round her): on = she is protected.  Kept for the page session (sessionStorage), survives world changes.
+  //    Used by the sub-button of the left stick cluster (ui/dm-flash.js dock), `DM_HAZ.toggleShield()`, and the exposure clock above.
+  let SHIELD_ON=false; try{ SHIELD_ON=!!(window.sessionStorage&&window.sessionStorage.getItem('dm_shield_on')==='1'); }catch(e){}
+  H.shieldIsOn=function(){ return SHIELD_ON; };
+  H.setShield=function(v){ v=!!v; if(v===SHIELD_ON) return SHIELD_ON; SHIELD_ON=v;
+    try{ if(window.sessionStorage){ if(v) window.sessionStorage.setItem('dm_shield_on','1'); else window.sessionStorage.removeItem('dm_shield_on'); } }catch(e){}
+    try{ window.dispatchEvent(new CustomEvent('dmshieldtoggle',{detail:{on:v}})); }catch(e){}
+    return SHIELD_ON; };
+  H.toggleShield=function(){ return H.setShield(!SHIELD_ON); };
 
   /* ═══════════════════════════════════════════════════════════════════
      DMSHIELD — the protection state on her Skyboard set and on her (no orb, no toggle, no button: it is automatic).
@@ -341,11 +358,26 @@
   const SH_OFF=!!(SHQ&&SHQ.get('shield')==='0');
   const FP_GAIN=(()=>{ const v=SHQ?parseFloat(SHQ.get('ledfp')):NaN; return v>=0&&v<20?v:1; })();
   try{ if(window.localStorage) window.localStorage.removeItem('dm_shield_orb'); }catch(e){}   // the old orb toggle's remembered choice: gone with the orb
-  const SH_COL={protected:[0.16,1.0,0.46],warn:[1.0,0.76,0.18],exposed:[1.0,0.18,0.14],alert:[1.0,0.68,0.08]};
-  // what the glow may cost: tier ('low' = cheapest) x DMBudget 'light' level -> hull shells (0-2), the fake point light, the LED
+  const SH_COL={protected:[0.16,1.0,0.46],warn:[1.0,0.76,0.18],exposed:[1.0,0.18,0.14],alert:[1.0,0.68,0.08],shielded:[0.2,0.5,1.0]};
+  const GREEN=SH_COL.protected, BLUE=SH_COL.shielded, DARK=[0,0,0];
+  // what the glow may cost: tier ('low' = cheapest) x DMBudget 'light' level -> hull shells (0-2), the LED.  (No fog point light: a lit sphere round the LED
+  // cut the ground in a circle - that was the "orb" still seen on v356 - so there is none.)
   function shieldPlan(low,lvl){
     lvl=lvl|0; const hulls=lvl>=3?0:(low||lvl>=2)?1:2;
-    return {hulls,point:!low&&lvl<2,led:true,pulse:lvl<3};
+    return {hulls,led:true,pulse:lvl<3};
+  }
+  // pure: the colours of the LED's two halves (left = x < 0, right = x > 0 in the LED's own frame; also the glasses strips LED_Top_Strip_L / _R) and of the crown glow.
+  //   hazard sensed, shield OFF : the whole LED in the status colour (green / amber / red);  strips: both green
+  //   hazard sensed, shield ON  : left green, right BLUE;  crown BLUE
+  //   shield ON, no hazard      : left dark, right BLUE (the blue half only);  crown BLUE
+  //   nothing                   : all dark
+  function ledColours(sensed,shield,st){
+    const sc=SH_COL[st]||GREEN;
+    return {
+      ledL:sensed?(shield?GREEN:sc):DARK, ledR:shield?BLUE:(sensed?sc:DARK),
+      stripL:sensed?GREEN:DARK, stripR:shield?BLUE:(sensed?GREEN:DARK),
+      crown:shield?BLUE:sc
+    };
   }
   // which meshes are the staff crown: 'staff head*' pieces first (template C), then the arrowhead / ornament shards (A / B, 'ornament' base part;
   // not the Ariel board, whose arrowhead is the nose), then the staff itself. items: [{name, base}] -> indices
@@ -359,26 +391,26 @@
   const FP_I=0.05, FP_R=0.9;
   function fpLightParams(h,level,gain){ const g=gain==null?1:gain; return {range:h*FP_R,intensity:Math.max(0,FP_I*h*h*Math.min(1,level)*g)}; }
   const SH={state:'off',a:0,frames:0,ph:0,u:null,mats:null,hulls:null,led:null,ledGeo:null,scene:null,board:null,ledLoc:null,ledR:0.02,kT:0.05,
-            vlOn:false,warm:0,warmAt:0,sig:'',crownN:0,lastEmit:'',busy:false,col:null,body:null,bodyRig:null,bodyH:0,fpLid:null,fpState:'',fpV:null};
-  const SHD={shieldPlan,pickCrown,fpLightParams,COL:SH_COL,FP_I,FP_R};
+            warm:0,warmAt:0,sig:'',crownN:0,lastEmit:'',busy:false,col:null,body:null,bodyRig:null,bodyH:0,fpLid:null,fpState:'',fpV:null};
+  const SHD={shieldPlan,pickCrown,fpLightParams,ledColours,uniforms:()=>SH.u,COL:SH_COL,FP_I,FP_R};
   function shEmit(){
     const sig=SH.state; if(sig===SH.lastEmit) return; SH.lastEmit=sig;
     try{ window.dispatchEvent(new CustomEvent('dmshield',{detail:{available:SH.state!=='off',state:SH.state,status:SH.state}})); }catch(e){}
   }
   const DMShield={
-    get available(){ return SH.state!=='off'&&!SH_OFF; }, get active(){ return SH.state==='protected'||SH.state==='warn'||SH.state==='exposed'; },
-    get state(){ return SH.state; }, get status(){ return SH.state; }, get protected(){ return SH.state==='protected'||SH.state==='warn'; },
+    get available(){ return SH.state!=='off'&&!SH_OFF; }, get active(){ return SH.state==='protected'||SH.state==='warn'||SH.state==='exposed'||SH.state==='shielded'; },
+    get state(){ return SH.state; }, get status(){ return SH.state; }, get protected(){ return SH.state==='protected'||SH.state==='warn'||SH.state==='shielded'; }, get shield(){ return SHIELD_ON; },
     get exposure(){ return EX; }, core:SHD,
-    get stats(){ return {frames:SH.frames,built:!!SH.hulls,gpu:!!SH.mats,awake:H.awake===true,body:!!SH.body,fpLight:SH.fpLid!=null}; }
+    get stats(){ return {frames:SH.frames,built:!!SH.hulls,gpu:!!SH.mats,awake:H.awake===true,body:!!SH.body,fpLight:SH.fpLid!=null,strips:ST.L.length+ST.R.length}; }
   };
   window.DMShield=DMShield; H.shield=DMShield;
   function shGpu(){
     if(SH.mats) return true; const T=window.THREE&&THREE.TSL; if(!T||!THREE.MeshBasicNodeMaterial) return false;
-    const {uniform,positionLocal,normalLocal,modelScale}=T;
-    const u={col:uniform(new THREE.Color(0x29ff75)),a:uniform(0),t:uniform(0.01)};
+    const {uniform,positionLocal,normalLocal,modelScale,mix,step}=T;
+    const u={col:uniform(new THREE.Color(0x29ff75)),a:uniform(0),t:uniform(0.01),cl:uniform(new THREE.Color(0x29ff75)),cr:uniform(new THREE.Color(0x29ff75))};
     const hull=(f,op)=>{ const m=new THREE.MeshBasicNodeMaterial({transparent:true,depthWrite:false,depthTest:true,side:THREE.BackSide}); m.fog=false; m.toneMapped=false; m.blending=THREE.AdditiveBlending;
       m.positionNode=positionLocal.add(normalLocal.mul(u.t.mul(f).div(modelScale.x.max(1e-4)))); m.colorNode=u.col; m.opacityNode=u.a.mul(op); return m; };
-    const led=new THREE.MeshBasicNodeMaterial({transparent:false}); led.fog=false; led.toneMapped=false; led.colorNode=u.col.mul(u.a.mul(1.6).add(0.18));
+    const led=new THREE.MeshBasicNodeMaterial({transparent:false}); led.fog=false; led.toneMapped=false; led.colorNode=mix(u.cl,u.cr,step(0.0,positionLocal.x)).mul(u.a.mul(1.6).add(0.18));   // two halves in the LED's own x: left cl, right cr
     const dark=new THREE.MeshBasicNodeMaterial({color:0x1d2128}); dark.fog=false;
     SH.u=u; SH.mats={in:hull(1,0.9),out:hull(2.6,0.26),led,dark}; return true;
   }
@@ -387,8 +419,7 @@
   function shTear(){   // remove our meshes from the scene (the board's own objects are never touched; the crown geometry is the board's, never disposed here)
     if(SH.hulls){ for(const h of SH.hulls){ if(h.parent) h.parent.remove(h); } SH.hulls.length=0; } if(SH.led&&SH.led.parent) SH.led.parent.remove(SH.led);
     SH.board=null; SH.sig=''; SH.crownN=0; SH.warm=0; SH.led=null;
-    bodyTear(); fpOff();
-    if(SH.vlOn){ try{ window.DMVLight&&DMVLight.clear('shield'); }catch(e){} SH.vlOn=false; }
+    bodyTear(); fpOff(); stripRestore();
   }
   function shBuild(board,scene){
     shTear(); if(!shGpu()) return false; SH.hulls=[]; SH.col=SH.col||[1,0.68,0.08];
@@ -429,6 +460,44 @@
     if(SH.fpLid==null){ const c=SH_COL[st]||SH_COL.protected; SH.fpLid=NL.request(SH.fpV,new THREE.Color(c[0],c[1],c[2]),p.intensity,p.range); SH.fpState=st; }
     else NL.set(SH.fpLid,SH.fpV,p.intensity);
   }
+  /* ── the glasses LED strip (her GLB): two separately addressable halves named LED_Top_Strip_L / LED_Top_Strip_R (each its own material), on top of the glasses casing, facing up.
+        Looked up BY NAME on her model, cached per model; until the GLB that carries them is in, the search just finds nothing (retried every 4 s, only while the protection is awake)
+        and the board LED + chest LED carry the state (no error, no warning).  Left half: green whenever a hazard is sensed.  Right half: BLUE with the shield on, else green.
+        Driven through the material's own emissive (a colour write: no recompile); the originals are restored when the protection goes quiet.  Each strip gets ONE private clone
+        of its material the first time (same shader program, so nothing new compiles). */
+  const ST={root:null,L:[],R:[],t:0,on:false,pl:[0,0,0],pr:[0,0,0]};
+  const STRIP_L=/^LED_Top_Strip_L(?![A-Za-z])/i, STRIP_R=/^LED_Top_Strip_R(?![A-Za-z])/i;
+  function stripCollect(o,out){ o.traverse(m=>{ if(m.isMesh&&m.material&&!m.userData.dmShield&&out.indexOf(m)<0) out.push(m); }); }
+  function stripPrep(m){
+    let mat=Array.isArray(m.material)?m.material[0]:m.material; if(!mat) return null;
+    if(!(mat.userData&&mat.userData.dmLedOwned)){ mat=mat.clone(); mat.userData=Object.assign({},mat.userData,{dmLedOwned:true}); m.material=mat; }
+    const u=m.userData.dmLed={mat,e:mat.emissive?mat.emissive.clone():null,ei:mat.emissiveIntensity,c:mat.color?mat.color.clone():null,r:-1,g:-1,b:-1};
+    return u;
+  }
+  function stripFind(){
+    const root=typeof CHAR!=='undefined'&&CHAR?CHAR.root:null; if(!root) return false;
+    if(ST.root===root&&(ST.L.length||ST.R.length)) return true;
+    const now=performance.now(); if(ST.root===root&&now-ST.t<4000) return false;
+    ST.t=now; ST.root=root; ST.L.length=0; ST.R.length=0;
+    try{ root.traverse(o=>{ const n=o.name; if(!n||n.length<15) return; if(STRIP_L.test(n)) stripCollect(o,ST.L); else if(STRIP_R.test(n)) stripCollect(o,ST.R); }); }catch(e){}
+    for(const m of ST.L.concat(ST.R)) if(!m.userData.dmLed) stripPrep(m);
+    return ST.L.length>0||ST.R.length>0;
+  }
+  function stripPaint(list,rgb,a){
+    for(const m of list){ const u=m.userData.dmLed; if(!u) continue;
+      const r=rgb[0]*a, g=rgb[1]*a, b=rgb[2]*a; if(Math.abs(r-u.r)+Math.abs(g-u.g)+Math.abs(b-u.b)<0.004) continue; u.r=r; u.g=g; u.b=b;
+      const mat=u.mat; if(mat.emissive){ mat.emissive.setRGB(r,g,b); mat.emissiveIntensity=2.2; if(mat.color) mat.color.setRGB(0.03,0.03,0.03); } else if(mat.color) mat.color.setRGB(r,g,b); }
+  }
+  function stripFrame(lc,a,k){
+    if(!stripFind()) return;
+    for(let i=0;i<3;i++){ ST.pl[i]+=(lc.stripL[i]-ST.pl[i])*k; ST.pr[i]+=(lc.stripR[i]-ST.pr[i])*k; }
+    stripPaint(ST.L,ST.pl,a); stripPaint(ST.R,ST.pr,a); ST.on=true;
+  }
+  function stripRestore(){
+    if(!ST.on) return; ST.on=false; ST.pl[0]=ST.pl[1]=ST.pl[2]=ST.pr[0]=ST.pr[1]=ST.pr[2]=0;
+    for(const m of ST.L.concat(ST.R)){ const u=m.userData.dmLed; if(!u) continue; const mat=u.mat; if(mat.emissive&&u.e) mat.emissive.copy(u.e); mat.emissiveIntensity=u.ei; if(mat.color&&u.c) mat.color.copy(u.c); u.r=u.g=u.b=-1; }
+  }
+  SHD.strip={names:[STRIP_L,STRIP_R],find:stripFind,state:ST};
   // compile the crown / LED pipelines (forced visible a long way under the world, alpha 0): a promise that always resolves (capped)
   function shWarm(scene){
     return new Promise(res=>{
@@ -441,46 +510,45 @@
       setTimeout(done,6000);
     });
   }
-  let _M=null,_V=null,_vl=null; const _vo={level:1,gain:1};
+  let _M=null;
   function fpHidden(){ try{ return typeof _surfFpHidden!=='undefined'&&_surfFpHidden===true; }catch(e){ return false; } }
   function shFrame(dt,g,mode){
     SH.frames++;
     const board=PW.board, bay=bayLevel();
-    const st=(!SH_OFF&&EX.sensed&&bay<0.5&&(mode==='fly'||mode==='walk'))?EX.state:'off';
+    const okMode=!SH_OFF&&(mode==='fly'||mode==='walk');
+    const sensed=okMode&&EX.sensed&&bay<0.5, shd=okMode&&SHIELD_ON;
+    const st=sensed?EX.state:(shd?'shielded':'off');   // (EX.state is 'shielded' while a hazard is sensed and the toggle is on)
     if(st!==SH.state){ SH.state=st; shEmit(); }
-    const want=st!=='off';
+    const want=sensed||shd;
     SH.a+=((want?1:0)-SH.a)*(1-Math.exp(-(want?4:7)*dt));
     if(SH.a<0.01&&!want){ SH.a=0; shOff(); return; }
-    if(!_M){ _M=new THREE.Matrix4(); _V=new THREE.Vector3(); _vl=new Float32Array(7); }
+    if(!_M) _M=new THREE.Matrix4();
     const low=lowTier(), B=window.DMBudget&&DMBudget.on?DMBudget:null, plan=shieldPlan(low,B?B.lvl('light'):0);
-    SH.ph+=dt; const c=SH_COL[st==='off'?'protected':st], k=1-Math.exp(-6*dt);
-    if(!SH.col) SH.col=[1,0.68,0.08]; for(let i=0;i<3;i++) SH.col[i]+=(c[i]-SH.col[i])*k;
-    const fast=st==='protected'?2.2:st==='warn'?5.5:st==='alert'?4:8;
-    const pulse=plan.pulse?(st==='protected'?0.86+0.14*Math.sin(SH.ph*fast):0.7+0.3*Math.sin(SH.ph*fast)):1;
-    if(!shGpu()) return; { const u=SH.u; u.col.value.setRGB(SH.col[0],SH.col[1],SH.col[2]); u.a.value=SH.a*pulse; }
+    SH.ph+=dt; const lc=ledColours(sensed,shd,st==='off'||st==='shielded'?'protected':st), k=1-Math.exp(-6*dt);
+    if(!SH.col) SH.col=[1,0.68,0.08]; if(!SH.cl){ SH.cl=[0,0,0]; SH.cr=[0,0,0]; }
+    for(let i=0;i<3;i++){ SH.col[i]+=(lc.crown[i]-SH.col[i])*k; SH.cl[i]+=(lc.ledL[i]-SH.cl[i])*k; SH.cr[i]+=(lc.ledR[i]-SH.cr[i])*k; }
+    const fast=(st==='protected'||st==='shielded')?2.2:st==='warn'?5.5:st==='alert'?4:8;
+    const pulse=plan.pulse?((st==='protected'||st==='shielded')?0.86+0.14*Math.sin(SH.ph*fast):0.7+0.3*Math.sin(SH.ph*fast)):1;
+    if(!shGpu()) return; { const u=SH.u; u.col.value.setRGB(SH.col[0],SH.col[1],SH.col[2]); u.cl.value.setRGB(SH.cl[0],SH.cl[1],SH.cl[2]); u.cr.value.setRGB(SH.cr[0],SH.cr[1],SH.cr[2]); u.a.value=SH.a*pulse; }
+    stripFrame(lc,SH.a*pulse,k);
     // ── the board's crown glow + LED (built and compiled at world load; this is only the lazy fallback)
     let ledVis=false;
     if(board){
       if(SH.board!==board||SH.scene!==PW.scene){ if(!shBuild(board,PW.scene)) return; shWarm(PW.scene); }
       if(SH.warm&&performance.now()-SH.warmAt>=4000) SH.warm=0;
       if(!SH.warm){
-        const be=(board.updateWorldMatrix(true,false),board.matrixWorld.elements), bs=Math.hypot(be[0],be[1],be[2])||1, hullOn=st!=='alert'&&board.visible!==false;
+        const be=(board.updateWorldMatrix(true,false),board.matrixWorld.elements), bs=Math.hypot(be[0],be[1],be[2])||1, hullOn=(shd||st!=='alert')&&board.visible!==false;
         SH.u.t.value=SH.kT*bs;
         for(const h of SH.hulls){ const src=h.userData.src, vis=hullOn&&!!src&&plan.hulls>(h.userData.out?1:0)&&src.visible!==false;
           h.visible=vis; if(vis){ src.updateWorldMatrix(true,false); h.matrix.copy(src.matrixWorld); h.matrixWorldNeedsUpdate=true; } }
         const L=SH.led; ledVis=plan.led&&board.visible!==false; L.visible=ledVis; if(ledVis){ _M.makeTranslation(SH.ledLoc.x,SH.ledLoc.y,SH.ledLoc.z); L.matrix.multiplyMatrices(board.matrixWorld,_M); L.matrixWorldNeedsUpdate=true; }
-        // the fake point light (fog / mist in-scatter, ui/dm-vlight.js): the LED's colour at the LED, shed by tier and DMBudget
-        const VL=window.DMVLight;
-        if(ledVis&&VL&&VL.on&&plan.point){ _V.copy(SH.ledLoc).applyMatrix4(board.matrixWorld); const rg=g.h*2.6, I=46*SH.a*pulse;
-          _vl[0]=_V.x; _vl[1]=_V.y; _vl[2]=_V.z; _vl[3]=SH.col[0]*I; _vl[4]=SH.col[1]*I; _vl[5]=SH.col[2]*I; _vl[6]=rg; VL.setPoints('shield',_vl,_vo); SH.vlOn=true; }
-        else if(SH.vlOn){ try{ VL.clear('shield'); }catch(e){} SH.vlOn=false; }
       }
     }
     // ── her chest LED (third person / orbit camera; hidden with her body in first person) and the first-person head light
     const fp=fpHidden(), root=typeof CHAR!=='undefined'&&CHAR?CHAR.root:null;
     if(!fp&&root&&root.visible!==false&&bodyBuild(g.h))SH.body.visible=true;
     else if(SH.body) SH.body.visible=false;
-    fpLight(fp&&want,g,st,SH.a*pulse);
+    fpLight(fp&&want,g,shd?'shielded':st,SH.a*pulse);
   }
   function shOff(){   // nothing of the protection is drawn (hidden = not in any render list); the meshes stay built for the next time
     if(SH.warm||!SH.hulls) { fpOff(); return; }
@@ -488,8 +556,7 @@
     for(const h of SH.hulls) if(h.visible) h.visible=false;
     if(SH.led&&SH.led.visible) SH.led.visible=false;
     if(SH.body&&SH.body.visible) SH.body.visible=false;
-    fpOff();
-    if(SH.vlOn){ try{ window.DMVLight&&DMVLight.clear('shield'); }catch(e){} SH.vlOn=false; }
+    fpOff(); stripRestore();
   }
   H.shieldHide=function(){ if(SH.state!=='off'){ SH.state='off'; shEmit(); } shOff(); };
   H.shieldRelease=function(){ if(SH.hulls||SH.led||SH.body) shTear(); SH.scene=null; SH.a=0; SH.hulls=null; if(SH.state!=='off'){ SH.state='off'; shEmit(); } };
@@ -545,7 +612,7 @@
     const mode=PW.mode, W=window.JOTS_WATER;
     if(mode!=='fly'&&mode!=='walk'){ if(H.awake){ H.awake=false; H.shieldHide(); } if(H.wet>0||S.fogSaved||(S.tint&&S.tint.visible)) H.hide(); haveLast=false; return; }
     // SAFE MAP, nothing near, nothing left to recover, no dive: this whole feature sleeps here (one boolean test per frame; no exposure, no mesh, no material, no light)
-    const wake=H.hostile||HZ.near||EX.on, dive=!!(W&&mode==='fly'&&PW.board&&PW.board.position.y<(W.surfaceY||0)+40)||H.wet>0.01||S.fogSaved;
+    const wake=H.hostile||HZ.near||EX.on||SHIELD_ON||SH.a>0.01, dive=!!(W&&mode==='fly'&&PW.board&&PW.board.position.y<(W.surfaceY||0)+40)||H.wet>0.01||S.fogSaved;
     if(!wake&&!dive){ if(H.awake){ H.awake=false; H.shieldHide(); if(S.scene&&S.tint&&S.tint.visible) H.hide(); haveLast=false; emitHud(true); } return; }
     H.awake=true; dt=Math.min(0.1,Math.max(0.001,dt||1/60));
     const g=groupSphere(mode);

@@ -9,6 +9,7 @@ const src = fs.readFileSync(path.join(root, 'ui', 'dm-hazard.js'), 'utf8');
 let bad = 0, n = 0; const ok = (c, m) => { n++; if (!c) { bad++; console.log('  FAIL ' + m); } else if (process.env.VERBOSE) console.log('  ok   ' + m); };
 
 function mkWin(extra) { const evs = []; const win = Object.assign({ addEventListener() {}, dispatchEvent(e) { evs.push(e); return true; }, CustomEvent: class { constructor(t, o) { this.type = t; this.detail = o && o.detail; } },
+  sessionStorage: (() => { const m = {}; return { getItem: k => (k in m ? m[k] : null), setItem: (k, v) => { m[k] = String(v); }, removeItem: k => { delete m[k]; }, _m: m }; })(),
   localStorage: (() => { const m = { dm_shield_orb: '0' }; return { getItem: k => (k in m ? m[k] : null), setItem: (k, v) => { m[k] = String(v); }, removeItem: k => { delete m[k]; }, _m: m }; })(), location: { search: '' } }, extra || {}); win.window = win; return { win, evs }; }
 function load(extra) { const { win, evs } = mkWin(extra); const timers = [], clock = { t: 1000 };
   const ctx = Object.assign({ console, Math, performance: { now: () => clock.t }, URLSearchParams, CustomEvent: win.CustomEvent,
@@ -24,7 +25,7 @@ console.log('== the orb is gone');
   const { S, H, ctx } = load();
   ok(['set', 'toggle', 'arm', 'radius', 'overrideDistance'].every(k => S[k] === undefined) && S.on === undefined && S.armed === undefined, 'DMShield has no orb toggle / arm / field radius');
   ok(ctx.localStorage.getItem('dm_shield_orb') === null, 'the old dm_shield_orb choice is cleared');
-  ok(!/setItem/.test(src), 'nothing is written to localStorage any more');
+  ok(!/localStorage\.setItem/.test(src) && /sessionStorage\.setItem\('dm_shield_on'/.test(src), 'nothing is written to localStorage; only the Shield toggle\'s session flag (sessionStorage dm_shield_on) is stored');
   ok(H.a === undefined && H.R === undefined, 'DM_HAZ carries no orb state'); }
 
 console.log('== exposure maths (pure)');
@@ -46,9 +47,9 @@ console.log('== exposure maths (pure)');
 
 console.log('== pure protection helpers');
 { const { S } = load(), C = S.core;
-  ok(JSON.stringify(C.shieldPlan(false, 0)) === '{"hulls":2,"point":true,"led":true,"pulse":true}', 'plan: Med+ = 2 shells + fake point light + LED');
-  ok(C.shieldPlan(true, 0).hulls === 1 && C.shieldPlan(true, 0).point === false, 'plan: Low = 1 shell, NO extra light');
-  ok(C.shieldPlan(false, 2).hulls === 1 && !C.shieldPlan(false, 2).point, 'plan: DMBudget light >= 2 sheds the outer shell + the point light');
+  ok(JSON.stringify(C.shieldPlan(false, 0)) === '{"hulls":2,"led":true,"pulse":true}', 'plan: Med+ = 2 shells + LED (no fog point light any more)');
+  ok(C.shieldPlan(true, 0).hulls === 1 && C.shieldPlan(true, 0).point === undefined, 'plan: Low = 1 shell, no extra light');
+  ok(C.shieldPlan(false, 2).hulls === 1, 'plan: DMBudget light >= 2 sheds the outer shell');
   ok(C.shieldPlan(false, 3).hulls === 0 && C.shieldPlan(false, 3).led && !C.shieldPlan(false, 3).pulse, 'plan: DMBudget light 3 = LED only');
   const names = a => a.map(x => ({ name: x, base: '' }));
   ok(JSON.stringify(C.pickCrown(names(['hull', 'staff', 'staff head 1', 'staff head 2', 'tail shard 1']), false)) === '[2,3]', 'crown: template C "staff head" pieces');
@@ -69,7 +70,7 @@ console.log('== source contracts (per-frame cost, dormancy)');
   ok(/side:THREE\.BackSide/.test(src) && /modelScale/.test(src) && /AdditiveBlending/.test(src) && /depthWrite:false/.test(src), 'crown glow = additive inverted hull, depthWrite off, scale-independent thickness');
   ok(/raycast=\(\)=>\{\}/.test(src) && /userData\.dmShield=true/.test(src), 'crown / LED meshes are never colliders or pick targets');
   ok(!/new THREE\.(Point|Spot|Directional)Light/.test(src) && /DMNatLights/.test(src) && /NL\.request/.test(src), 'no real THREE light is created: the first-person glow borrows the FIXED pooled natural light (no recompile, no shadow)');
-  ok(/VL\.setPoints\('shield'/.test(src) && /plan\.point/.test(src), 'the LED fog light is a DMVLight point');
+  ok(!/DMVLight|setPoints|plan\.point|SH\.vlOn/.test(src.replace(/\/\*[\s\S]*?\*\//g, '')), 'NO fog point light (DMVLight) round the LED: the lit ball cut the ground in a circle');
   ok(/dmhazardzero/.test(src) && !/gameOver|game over|die\(|damage/i.test(src.replace(/no damage, no game-over|NO damage, NO game-over/gi, '')), 'zero = a warning state + one event; no damage / game-over code'); }
 
 // ---------------------------------------------------------------- part 2: the real tick on a stub world
@@ -125,8 +126,8 @@ const tp = cands.find(p => fs.existsSync(p));
       H.close(w.sc); ok(crown(w).length === 0 && !led(w) && !bodyLed(w) && w.sc.children.filter(o => /^dm-/.test(o.name || '')).length === 0 && EX.reserve === 1 && !EX.on, 'world close: crown, LEDs removed; the clock is reset'); H.dispose(); ok(true, 'dispose ran'); }
     function ctx_tiers(L, w) { L.ctx.GFX.preset = 'low'; L.ctx.DMBudget = { on: true, lvl: () => 0 }; w.tick(60); ok(crown(w).filter(m => m.visible).length === 2, 'Low tier: one shell only');
       L.ctx.GFX.preset = 'high'; L.ctx.DMBudget = { on: true, lvl: () => 3 }; w.tick(5); ok(crown(w).filter(m => m.visible).length === 0 && led(w).visible, 'DMBudget light 3: LED only'); L.ctx.DMBudget = null;
-      const calls = []; L.ctx.DMVLight = { on: true, setPoints: (k, a) => calls.push([k, a.slice()]), clear: k => calls.push(['clear', k]) }; w.tick(30);
-      ok(calls.some(c => c[0] === 'shield' && c[1][6] > 0), 'Med+: a DMVLight point at the LED'); L.ctx.GFX.preset = 'low'; calls.length = 0; w.tick(10); ok(!calls.some(c => c[0] === 'shield'), 'Low tier: no extra light'); L.ctx.GFX.preset = 'high'; }
+  const calls = []; L.ctx.DMVLight = { on: true, setPoints: (k, a) => calls.push([k, a.slice()]), clear: k => calls.push(['clear', k]) }; w.tick(30);
+      ok(calls.length === 0, 'Med+: nothing is ever handed to DMVLight (no fog light round the LED)'); L.ctx.GFX.preset = 'high'; }
 
     // --- the loader warm-up: everything built before the world is shown
     { const L = load(), w = mkWorld('Mars', L, { pal: { atmos: true } }); L.ctx.PW.mode = null;
@@ -179,6 +180,52 @@ const tp = cands.find(p => fs.existsSync(p));
       w.h.position.set(35, 0, 0); sense(); w.tick(600); ok(EX.inside && S.state === 'protected' && EX.label === 'VOLCANIC PLUME' && EX.reserve < 1 && Math.abs(EX.I - 0.8 * (0.6 + 0.4 * 0.5)) < 0.05, 'inside the plume: protected, VOLCANIC PLUME, intensity ' + EX.I.toFixed(2) + ', clock running');
       const rIn = EX.reserve; w.h.position.set(300, 0, 0); sense(); w.tick(120); ok(Z.state === 'clear' && !EX.sensed && S.state === 'off' && EX.reserve > rIn && EX.on, 'walked away: LED off, the reserve RECOVERS, the HUD stays up until it is full');
       for (let i = 0; i < 60 * 80 && EX.on; i++) w.tick(1); w.tick(3); ok(EX.reserve === 1 && !EX.on && !L.H.awake, 'fully recovered: exposure off, the whole feature asleep again'); }
+    console.log('== the Shield toggle (a state flag + gear visuals; no orb)');
+    { const L = load(), H = L.H, C = H.shield.core; const G = C.COL.protected, B = C.COL.shielded, K = [0, 0, 0], same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+      ok(H.core.stateOf('off', true, true, 1, 0.35, true) === 'shielded' && H.core.stateOf('off', false, false, 1, 0.35, true) === 'off' && H.core.stateOf('off', true, false, 0, 0.35, true) === 'shielded', 'state: shielded whenever a hazard is sensed and the toggle is on (clock value irrelevant)');
+      let c = C.ledColours(true, false, 'protected'); ok(c.ledL === G && c.ledR === G && c.stripL === G && c.stripR === G && c.crown === G, 'hazard sensed, shield OFF: whole LED + both strip halves green, crown in the status colour');
+      c = C.ledColours(true, false, 'warn'); ok(c.ledL === C.COL.warn && c.ledR === C.COL.warn && c.stripL === G && c.stripR === G, 'status colours (amber / red) drive the LED mesh; the glasses strips stay green (hazard sensed = green)');
+      c = C.ledColours(true, true, 'protected'); ok(c.ledL === G && c.ledR === B && c.stripL === G && c.stripR === B && c.crown === B, 'hazard + shield ON: left half green, right half BLUE, crown BLUE');
+      c = C.ledColours(false, true, 'off'); ok(same(c.ledL, K) && c.ledR === B && same(c.stripL, K) && c.stripR === B && c.crown === B, 'shield ON, no hazard: only the blue half (left dark), crown BLUE');
+      c = C.ledColours(false, false, 'off'); ok(same(c.ledL, K) && same(c.ledR, K) && same(c.stripL, K) && same(c.stripR, K), 'nothing: all dark'); }
+    { const store = {}, ss = { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: k => { delete store[k]; } };
+      const L = load({ sessionStorage: ss }), H = L.H; ok(H.shieldIsOn() === false, 'shield starts OFF');
+      ok(H.toggleShield() === true && H.shieldIsOn() && store.dm_shield_on === '1' && L.evs.some(e => e.type === 'dmshieldtoggle' && e.detail.on === true), 'toggle ON: flag set, persisted for the session, dmshieldtoggle event');
+      const L2 = load({ sessionStorage: ss }); ok(L2.H.shieldIsOn() === true, 'a reload within the session keeps it ON');
+      ok(H.setShield(false) === false && !('dm_shield_on' in store), 'toggle OFF clears the session flag'); const n = L.evs.length; H.setShield(false); ok(L.evs.length === n, 'no event when nothing changed'); }
+    { const L = load(), w = mkWorld('Mars', L, { pal: { atmos: true } }), S = L.S, H = L.H, EX = H.exposure, U = () => S.core.uniforms();
+      const lmesh = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.02, 0.1), new THREE.MeshStandardMaterial({ color: 0xffffff })), rmesh = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.02, 0.1), new THREE.MeshStandardMaterial({ color: 0xffffff }));
+      lmesh.name = 'LED_Top_Strip_L'; rmesh.name = 'LED_Top_Strip_R'; const e0 = rmesh.material.emissive.clone();
+      w.h.position.set(3, 0, 0); w.tick(240);   // no strips on her yet (the GLB has not landed): everything still works, no error
+      ok(S.state === 'protected' && U().cl.value.g > 0.8 && U().cr.value.g > 0.8 && U().cr.value.b < 0.5, 'shield OFF, toxic air, no glasses strips yet: the LED is WHOLE green (both halves), no error');
+      ok(S.stats.strips === 0, 'strip lookup: nothing found, nothing thrown');
+      w.h.add(lmesh); w.h.add(rmesh); L.clock.t += 5000; w.tick(240);
+      ok(S.stats.strips === 2, 'the strips appear (her GLB landed): found by name, no restart needed');
+      ok(lmesh.material !== undefined && rmesh.material.emissive.g > 0.5 && rmesh.material.emissive.b < 0.4 && lmesh.material.emissive.g > 0.5, 'shield OFF: BOTH strip halves green');
+      ok(lmesh.material !== lmesh.userData.dmLed.mat ? false : true, 'each strip drives its own private material');
+      H.setShield(true); const r0 = EX.reserve; EX.reserve = 0.5; w.tick(120);
+      ok(S.state === 'shielded' && S.protected && EX.shield && EX.state === 'shielded', 'shield ON in the toxic air: state SHIELDED');
+      ok(EX.reserve > 0.5 && EX.sec === Infinity, 'shield ON: the SAFE TIME countdown stops draining and the reserve recovers (' + EX.reserve.toFixed(2) + '), board parked or not');
+      for (let i = 0; i < 60 * 60 && EX.reserve < 1; i++) w.tick(1); w.tick(5); ok(EX.reserve === 1 && !EX.zero, 'recovered to full inside the zone while shielded');
+      let cc = colOf(w); ok(cc.b > 0.8 && cc.b > cc.r && cc.b > cc.g, 'the staff crown glows BLUE with the shield on');
+      ok(U().cl.value.g > 0.8 && U().cl.value.b < 0.5 && U().cr.value.b > 0.8 && U().cr.value.g < 0.7, 'LED: left half green, right half blue');
+      ok(lmesh.material.emissive.g > 0.5 && lmesh.material.emissive.b < 0.4 && rmesh.material.emissive.b > 0.5 && rmesh.material.emissive.g < 0.7, 'strips: LED_Top_Strip_L green, LED_Top_Strip_R blue');
+      const hud = L.evs.filter(e => e.type === 'dmhazardhud').pop(); ok(hud && hud.detail.shield === true && hud.detail.state === 'shielded', 'the HUD event carries shield + state');
+      // exhaust the clock without the shield: zero; with the shield on again it climbs back out and the zero state clears
+      H.setShield(false); for (let i = 0; i < 60 * 130 && !EX.zero; i++) w.tick(1); ok(EX.zero && S.state === 'exposed', 'shield OFF again: the clock drains to zero (control)');
+      H.setShield(true); w.tick(180); ok(!EX.zero && S.state === 'shielded' && EX.reserve > 0, 'shield ON at zero: out of OVEREXPOSED at once, recovering');
+      H.setShield(false); w.tick(240); ok(rmesh.material.emissive.g > 0.25 && rmesh.material.emissive.b < rmesh.material.emissive.g * 0.7 && rmesh.material.emissive.r < rmesh.material.emissive.g, 'shield OFF: the right strip is green again');
+      H.close(w.sc); ok(rmesh.material.emissive.r === e0.r && rmesh.material.emissive.g === e0.g, 'world close: the strips get their original emissive back'); H.dispose(); }
+    { // safe world: the toggle works with no hazard at all, and costs nothing when off
+      const L = load(), w = mkWorld('Solenne', L), S = L.S, H = L.H, U = () => S.core.uniforms(); w.h.position.set(2, 0, 0); w.tick(120);
+      ok(S.stats.frames === 0 && !H.awake && w.sc.children.length === 2, 'safe world, shield OFF: fully dormant (no frames, not awake, nothing added)');
+      H.setShield(true); w.tick(240);
+      ok(H.awake && S.state === 'shielded' && S.available && crown(w).length === 4 && crown(w).every(m => m.visible) && led(w).visible, 'safe world, shield ON: crown + LED appear (built lazily on the toggle)');
+      let cc = colOf(w); ok(cc.b > 0.8 && cc.b > cc.g && cc.b > cc.r, 'crown BLUE');
+      ok(U().cl.value.r + U().cl.value.g + U().cl.value.b < 0.2 && U().cr.value.b > 0.8, 'no hazard: only the BLUE half of the LED (the left half dark)');
+      ok(!H.exposure.on && L.H.exposure.reserve === 1, 'no hazard: no exposure clock, no HUD card');
+      H.setShield(false); w.tick(300); ok(S.state === 'off' && !H.awake && crown(w).every(m => !m.visible) && !led(w).visible, 'shield OFF: fades out and the feature sleeps again');
+      const f = S.stats.frames; w.tick(120); ok(S.stats.frames === f, 'asleep again: zero per-frame work'); H.close(w.sc); H.dispose(); }
     { const L = load({ location: { search: '?hazardzone=plume' } }), w = mkWorld('Solenne', L); w.tick(5);
       ok(L.Z.count() === 1 && L.Z.sensorOn, '?hazardzone=plume: one test plume source registered at world open'); L.H.close(w.sc); ok(L.Z.count() === 0 && !L.Z.sensorOn, 'world close unregisters it (and stops the sensor)'); }
     { const L = load({ location: { search: '?hazard=toxic' } }), w = mkWorld('Solenne', L); w.tick(5); ok(L.Z.count() === 1 && L.Z.sensorOn === false, '?hazard=toxic = one GLOBAL source (no timer)'); w.tick(100); ok(L.S.state === 'protected' && L.H.exposure.label === 'TOXIC ATMOSPHERE', '?hazard=toxic forces protection on a safe world'); }
