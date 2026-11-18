@@ -1,7 +1,11 @@
 /* ═══════════════════════════════════════════════════════════════════════════
-   ARIEL'S KITE CHARM — a thin necklace around her neck with a tiny kite-shaped charm resting on
-   her chest. Everything hangs off ONE bone (Spine02, the chest; the neck sits on it) so it follows
-   every animation, the board stance and the root scale. Procedural geometry only, no assets.
+   ARIEL'S KITE CHARM + NECKLACE - a thin chain round the BASE OF HER NECK (resting on the shoulder yoke, above the shirt's neckline) with a tiny kite-shaped charm
+   hanging from its front, lying on her upper chest.  Both are a small VERLET simulation (ui/dm-necklace-sim.js, ~16 links + the charm, a few capsule colliders for the
+   neck / shoulders / chest / back, all in the local space of 'ArielNeckRig' = a child of the upper-spine bone 'Spine'), so they follow every animation, the board stance
+   and the root scale, swing a little when she moves and can never pass through her neck, chest or shirt.  Chain, charm and body collide with each other.
+   Nodes: ArielNeckRig > ArielNecklace > { ArielNecklaceChain (tube, rewritten each frame), ArielKiteCharm > { bail ring, ArielCharmGlow } }.
+   ArielCharmRig (a child of Spine02, the old chest anchor) is kept exactly where it was: ui/dm-hazard.js parents her chest LED to DMCharm.rig.
+   Kill switches: ?charm=0 (everything), ?neckphys=0 (static rest pose, no solver).  Without ui/dm-necklace-sim.js it falls back to the same shape, static.
 
    The charm carries a pulsing blue additive glow (a child of the charm mesh, so it can never
    drift off it) that hugs the kite's own 3D contour: 3 inflated shells of the charm geometry
@@ -9,16 +13,17 @@
    material if TSL is missing) + a few small shards lying along the kite edges. depthWrite false. The glow is OFF (hidden, zero cost) normally and
    runs ONLY while the skyboard is on its way back to her:  DMCharm.setReturning(true|false)
    (index.html also drives it from _charmTick: summon, park-off rejoin, fall-catch rescue).
-   Fades in ~0.25 s, out ~0.6 s. Kill switch ?charm=0. Nothing is allocated per frame.
-   ═══════════════════════════════════════════════════════════════════════════ */
+   Fades in ~0.25 s, out ~0.6 s. Nothing is allocated per frame.
+   ═══ */
 (function(){
   'use strict';
-  const G={off:/[?&]charm=0\b/.test(location.search),built:false,manual:false,g:0,t:0,last:-1,
+  const G={off:/[?&]charm=0\b/.test(location.search),nophys:/[?&]neckphys=0\b/.test(location.search),built:false,manual:false,g:0,t:0,last:-1,
     rig:null,kite:null,glow:null,shells:null,shards:null,kmat:null,
     FADE_IN:0.25,FADE_OUT:0.6,lid:null,wp:null,lastI:0,LIGHT_I:0.02,LIGHT_MAX:0.03,LIGHT_R:1.2};
   window.DMCharm=G;
   G.setReturning=function(on){ G.manual=!!on; };
-  G.stats=function(){ return G.built?{glow:+G.g.toFixed(3),manual:G.manual,visible:!!(G.glow&&G.glow.visible),light:G.lid!=null,lightI:+G.lastI.toFixed(4)}:null; };
+  G.stats=function(){ const S=G.sim; return G.built?{glow:+G.g.toFixed(3),manual:G.manual,visible:!!(G.glow&&G.glow.visible),light:G.lid!=null,lightI:+G.lastI.toFixed(4),
+    neck:S?{steps:G.phys.steps,ms:+G.phys.ms.toFixed(3),resets:S.resets,linkErr:+S.maxLinkError().toFixed(3),pen:+(S.penetration(G.caps,G.nCaps)/G.u*1000).toFixed(2),asleep:G.sleep}:null}:null; };
 
   function canvasTex(size,draw){
     const c=document.createElement('canvas'); c.width=c.height=size; draw(c.getContext('2d'),size);
@@ -35,6 +40,9 @@
     if(!bone||!neck||!head) return false;
     const T=THREE;
     CHAR.root.updateMatrixWorld(true);
+    // the GLB still carries its ORIGINAL baked necklace (a thin chain 'Tube.021' round the neck base + the kite 'Charm.001' on the upper chest, (three strips the dots from node names: 'Charm001' / 'Tube021') both bone-skinned, so they never moved and the
+    // charm tip pokes through the shirt).  This simulated necklace replaces them: hide the baked pieces (same body part, no GLB edit).
+    CHAR.root.traverse(o=>{ if(o.isMesh&&/^(Charm|Tube0*21$|Tube0*4$)/.test(o.name||'')) o.visible=false; });
     const box=new T.Box3().setFromObject(CHAR.root), H=box.max.y-box.min.y; if(!(H>0.01)) return false;
     const nw=neck.getWorldPosition(new T.Vector3()), hw=head.getWorldPosition(new T.Vector3());
     // facing: the way her toes point (feet are level in the bind pose), flattened; falls back to head → headfront
@@ -69,29 +77,95 @@
     rig.matrix.copy(new T.Matrix4().copy(bone.matrixWorld).invert().multiply(bw)); rig.matrix.decompose(rig.position,rig.quaternion,rig.scale);
     rig.name='ArielCharmRig';
 
-    // ── necklace: a thin loop round her neck dipping to the chest at the front
-    const yRel=yN-C.y, cx=(nx0+nx1)/2;
-    const axisZ=-(zF+0.003*H);                                              // neck axis z, relative to C
-    const rz=(nz1-nz0)/2+0.004*H, rx=(nx1-nx0)/2+0.004*H, mz=(nz0+nz1)/2+axisZ;
-    const pts=[], N=20;
-    for(let i=0;i<N;i++){
-      const a=i/N*Math.PI*2, c=Math.cos(a), s=Math.sin(a), w=Math.pow(Math.max(0,c),3);
-      const y=yRel*(1-w)+0.006*H*w;
-      const zr=mz+rz*c, z=zr*(1-w)+0.003*H*w;
-      pts.push(new T.Vector3(cx+rx*s*(1-0.25*w),y,z));
+    // ── necklace + charm: a verlet chain round the BASE OF HER NECK (ui/dm-necklace-sim.js) with the kite hanging from its front, in a rig on the UPPER SPINE bone.
+    //    (G.rig above = the old chest anchor on Spine02, kept untouched: ui/dm-hazard.js parents her chest LED to it.)
+    const u=H/1.7;                                                         // the colliders below are measured on the Ariel GLB (1.7 m tall): u scales them to any size
+    const spineB=CHAR.bones.Spine||CHAR.bones.Spine01||bone;
+    const nrig=new T.Object3D(); nrig.name='ArielNeckRig'; spineB.add(nrig);
+    const nbw=new T.Matrix4().makeBasis(right,up,fwd).setPosition(nw);     // origin = the neck bone's head (the base of the neck), axes right / up / forward
+    spineB.updateWorldMatrix(true,false);
+    nrig.matrix.copy(new T.Matrix4().copy(spineB.matrixWorld).invert().multiply(nbw)); nrig.matrix.decompose(nrig.position,nrig.quaternion,nrig.scale);
+    nrig.updateWorldMatrix(false,false);
+    const kt=0.050*H, kw=0.016*H;                                          // kite height / half width (as before)
+    const chainR=0.0020*u, charmLen=kt+0.0026*H;                          // chain radius, bail centre -> tip
+    G.u=u; G.nrig=nrig; G.nbw=nbw; G.spine=spineB;
+    // body colliders: the table lives in ui/dm-necklace-sim.js (DMNecklaceSim.ARIEL.colliders: round cones in the rig frame, metres on a 1.7 m body, each END with a bone -> weight table taken from
+    // the GLB's own skin weights - the neck / collar of this rig follows 'Head' by 25-55 %, not only 'Spine' - so every end is skinned like the mesh around it and the colliders move where her
+    // skin and shirt move).  +x = her left (LeftShoulder).
+    G.v3=new T.Vector3(); G.v4=new T.Vector3();
+    const SIM=window.DMNecklaceSim, COL=SIM?SIM.ARIEL.colliders:[];
+    const NC=COL.length, caps=new Float64Array(Math.max(1,NC)*9), cb=[], bl=[];         // caps: per frame, in rig-local space; bl = the distinct bones used
+    const tv3=new T.Vector3();
+    for(let c=0;c<NC;c++){
+      const d=COL[c], ends=[];
+      for(let e=0;e<2;e++){
+        const W=e?d.wb:d.wa, P0=e?d.b:d.a, list=[]; let ws=0; for(const k in W) if(CHAR.bones[k]) ws+=W[k];
+        tv3.set(P0[0],P0[1],P0[2]).multiplyScalar(u).applyMatrix4(nbw);                 // bind pose, world
+        for(const k in W){ const bn=CHAR.bones[k]; if(!bn) continue; bn.updateWorldMatrix(true,false); let bi=bl.indexOf(bn); if(bi<0){ bi=bl.length; bl.push(bn); }
+          const loc=bn.worldToLocal(tv3.clone()); list.push([bi,loc.x,loc.y,loc.z,W[k]/(ws||1)]); }
+        if(!list.length){ const bn=spineB; let bi=bl.indexOf(bn); if(bi<0){ bi=bl.length; bl.push(bn); } const loc=bn.worldToLocal(tv3.clone()); list.push([bi,loc.x,loc.y,loc.z,1]); }
+        ends.push(list);
+      }
+      cb.push(ends); const o=c*9; caps[o+6]=d.ra*u; caps[o+7]=d.rb*u; caps[o+8]=d.kx;
     }
+    G.caps=caps; G.capBones=cb; G.bl=bl; G.nCaps=NC; G.mCs=bl.map(()=>new T.Matrix4());
+    const sim=SIM?SIM.createAriel(u):null;
+    const NN=sim?sim.N:16, rest=new Float64Array((NN+1)*3);
+    // rest pose: bind-pose body colliders in rig space -> pre-roll the loop until it hangs still, then mirror it (a necklace hangs symmetrically) and let it settle once more
+    function bindCaps(){ const inv=new T.Matrix4().copy(nrig.matrixWorld).invert(); for(let i=0;i<bl.length;i++){ bl[i].updateWorldMatrix(true,false); G.mCs[i].multiplyMatrices(inv,bl[i].matrixWorld); } G.skinCaps(); }
+    G.skinCaps=function(){ const v=G.v3, w=G.v4; for(let c=0;c<NC;c++) for(let e=0;e<2;e++){ const L=cb[c][e]; let x=0,y=0,z=0;
+        for(let k=0;k<L.length;k++){ const q=L[k]; v.set(q[1],q[2],q[3]).applyMatrix4(G.mCs[q[0]]); x+=v.x*q[4]; y+=v.y*q[4]; z+=v.z*q[4]; }
+        const o=c*9+e*3; caps[o]=x; caps[o+1]=y; caps[o+2]=z; } };
+    bindCaps();
+    const gdir=new T.Vector3(), gl=[0,0,0];
+    function gravityLocal(){ gdir.set(0,-1,0).transformDirection(new T.Matrix4().copy(nrig.matrixWorld).invert()); /* transformDirection normalises */ const g=9.81*u; gl[0]=gdir.x*g; gl[1]=gdir.y*g; gl[2]=gdir.z*g; }
+    gravityLocal();
+    if(sim){ SIM.settle(sim,caps,NC,gl,u); for(let i=0;i<rest.length;i++) rest[i]=sim.rest[i]; }   // pre-roll on the bind-pose colliders, mirror, settle: that is the rest pose (soft tether on)
+    else {                                                                  // no solver file: a static loop (rest = analytic ring + the kite hanging), nothing moves
+      for(let i=0;i<NN;i++){ const a=i/NN*Math.PI*2; rest[i*3]=0.06*u*Math.sin(a); rest[i*3+1]=(0.045-0.012*Math.max(0,Math.cos(a)))*u; rest[i*3+2]=0.058*u*Math.cos(a); }
+      rest[NN*3]=0; rest[NN*3+1]=rest[1]-charmLen; rest[NN*3+2]=rest[2]+0.004*u;
+    }
+    const necklace=new T.Group(); necklace.name='ArielNecklace'; nrig.add(necklace);   // the chain AND the charm live under this one node
+    // chain tube: closed loop, 2 rings per link (4-point subdivision), 5 sides; positions rewritten every frame
+    const RR=5, NR=NN*2, rc=0.0020*u, tubeP=new Float32Array(NR*RR*3), tubeN=new Float32Array(NR*RR*3), idx=[];
+    for(let i=0;i<NR;i++){ const j=(i+1)%NR; for(let k=0;k<RR;k++){ const k2=(k+1)%RR; idx.push(i*RR+k,j*RR+k,j*RR+k2, i*RR+k,j*RR+k2,i*RR+k2); } }
+    const tg=new T.BufferGeometry(); tg.setAttribute('position',new T.BufferAttribute(tubeP,3).setUsage(T.DynamicDrawUsage)); tg.setAttribute('normal',new T.BufferAttribute(tubeN,3).setUsage(T.DynamicDrawUsage)); tg.setIndex(idx);
     const chainMat=new T.MeshStandardMaterial({color:0xd8e4f2,metalness:0.9,roughness:0.28,emissive:0x0a1830,emissiveIntensity:0.6});
-    const chain=new T.Mesh(new T.TubeGeometry(new T.CatmullRomCurve3(pts,true,'catmullrom',0.5),64,0.0022*H,5,true),chainMat);
-    chain.name='ArielNecklace'; rig.add(chain);
+    const chain=new T.Mesh(tg,chainMat); chain.name='ArielNecklaceChain'; chain.frustumCulled=false; chain.castShadow=false; necklace.add(chain);
+    const pt=new Float64Array(NR*3);
+    function buildTube(X){                                                       // X = sim positions (chain nodes first)
+      for(let i=0;i<NN;i++){ const i3=i*3, j3=((i+1)%NN)*3, h3=((i+NN-1)%NN)*3, k3=((i+2)%NN)*3;
+        for(let c=0;c<3;c++){ pt[(i*2)*3+c]=X[i3+c]; pt[(i*2+1)*3+c]=(9*(X[i3+c]+X[j3+c])-(X[h3+c]+X[k3+c]))/16; } }
+      for(let i=0;i<NR;i++){
+        const p3=i*3, a3=((i+NR-1)%NR)*3, b3=((i+1)%NR)*3; let tx=pt[b3]-pt[a3], ty=pt[b3+1]-pt[a3+1], tz=pt[b3+2]-pt[a3+2]; const tl=Math.hypot(tx,ty,tz)||1; tx/=tl; ty/=tl; tz/=tl;
+        let nx=-tz, ny=0, nz=tx, nl=Math.hypot(nx,ny,nz);                          // n = t x up(0,1,0) if(nl<1e-6){ nx=1; ny=0; nz=0; nl=1; } nx/=nl; ny/=nl; nz/=nl;
+        const mx=ty*nz-tz*ny, my=tz*nx-tx*nz, mz=tx*ny-ty*nx;                      // t x n
+        for(let k=0;k<RR;k++){ const an=k/RR*Math.PI*2, cs=Math.cos(an), sn=Math.sin(an), vx=nx*cs+mx*sn, vy=ny*cs+my*sn, vz=nz*cs+mz*sn, o=(i*RR+k)*3;
+          tubeP[o]=pt[p3]+vx*rc; tubeP[o+1]=pt[p3+1]+vy*rc; tubeP[o+2]=pt[p3+2]+vz*rc; tubeN[o]=vx; tubeN[o+1]=vy; tubeN[o+2]=vz; } }
+      tg.attributes.position.needsUpdate=true; tg.attributes.normal.needsUpdate=true;
+    }
+    buildTube(rest);
 
-    // ── the kite charm (hangs from the chain's low point), flat diamond with a little bail ring
-    const kw=0.016*H, kt=0.050*H, ks=new T.Shape();
-    ks.moveTo(0,0.2*kt); ks.lineTo(kw,0); ks.lineTo(0,-0.8*kt); ks.lineTo(-kw,0); ks.closePath();
+    // ── the kite charm: flat diamond with a little bail ring; its bail hangs on chain node 0, its tip is the sim's charm particle
+    const ks=new T.Shape(); ks.moveTo(0,0.2*kt); ks.lineTo(kw,0); ks.lineTo(0,-0.8*kt); ks.lineTo(-kw,0); ks.closePath();
     const kg=new T.ExtrudeGeometry(ks,{depth:0.0035*H,bevelEnabled:true,bevelThickness:0.0012*H,bevelSize:0.0012*H,bevelSegments:1});
     kg.translate(0,0,-0.00175*H);
     const kmat=new T.MeshStandardMaterial({color:0x0d0f14,metalness:0.85,roughness:0.3,emissive:0x1b5cff,emissiveIntensity:0});   // a small BLACK kite; its blue only comes with the glow
-    const kite=new T.Mesh(kg,kmat); kite.name='ArielKiteCharm'; kite.position.set(0,-0.0035*H,0.0025*H); kite.rotation.x=-0.18; rig.add(kite);
+    const kite=new T.Mesh(kg,kmat); kite.name='ArielKiteCharm'; kite.matrixAutoUpdate=true; necklace.add(kite);
     const bail=new T.Mesh(new T.TorusGeometry(0.0036*H,0.0011*H,4,10),chainMat); bail.position.set(0,0.2*kt+0.0026*H,0); kite.add(bail);
+    const kq=new T.Quaternion(), kq2=new T.Quaternion(), kb=new T.Matrix4(), kx=new T.Vector3(), ky=new T.Vector3(), kz=new T.Vector3(), kn=new T.Vector3(0,0.15,1).normalize();
+    function placeKite(X,nrm,dt){                                               // X: chain node 0 = bail centre, X[N] = tip; nrm = the way the chest faces there (rig space)
+      const N=NN, t0=0, tb=N*3;
+      ky.set(X[t0]-X[tb],X[t0+1]-X[tb+1],X[t0+2]-X[tb+2]); const yl=ky.length(); if(yl<1e-9) return; ky.multiplyScalar(1/yl);
+      if(nrm){ const l=Math.hypot(nrm[0],nrm[1],nrm[2]); if(l>1e-6) { const a=Math.min(1,dt*14); kn.x+=(nrm[0]/l-kn.x)*a; kn.y+=(nrm[1]/l-kn.y)*a; kn.z+=(nrm[2]/l-kn.z)*a; kn.normalize(); } }
+      kz.copy(kn).addScaledVector(ky,-kn.dot(ky)); if(kz.lengthSq()<1e-8) kz.set(0,0,1); kz.normalize(); kx.crossVectors(ky,kz);
+      kb.makeBasis(kx,ky,kz); kq2.setFromRotationMatrix(kb);
+      kite.quaternion.copy(kq2);
+      kite.position.set(X[tb]+ky.x*0.8*kt,X[tb+1]+ky.y*0.8*kt,X[tb+2]+ky.z*0.8*kt);            // kite origin sits 0.8 kt above the tip (its shape runs +0.2 kt .. -0.8 kt)
+    }
+    placeKite(rest,[0,0.35,1],1);
+    G.sim=sim; G.simRest=rest; G.chainMesh=chain; G.necklace=necklace; G.buildTube=buildTube; G.placeKite=placeKite; G.gl=gl; G.gravityLocal=gravityLocal; G.bindCaps=bindCaps;
+    G.mRoot=new T.Matrix4(); G.mRel=new T.Matrix4(); G.mPrev=new T.Matrix4().copy(G.mRoot.copy(CHAR.root.matrixWorld).invert().multiply(nrig.matrixWorld)); G.mInv=new T.Matrix4(); G.mD=new T.Matrix4(); G.mC=new T.Matrix4(); G.sleep=false; G.root=CHAR.root; G.phys={ms:0,steps:0};
 
     // ── glow: a few inflated shells of the kite's OWN geometry (smoothed normals, pushed outward by a hair), additive
     //    with a fresnel rim, plus small shards hugging the kite edges. All children of the charm mesh.
@@ -132,14 +206,35 @@
       me.scale.set(0.0042*H,el*0.42,0.0030*H); me.renderOrder=14; me.frustumCulled=false; me.userData={ph:i*1.9,sp:0.7+0.25*(i%3),l0:el*0.42}; glow.add(me); G.shards.push(me); }
     G.shardSet=sgm.set;
     G.H=H; G.rig=rig; G.kite=kite; G.glow=glow; G.kmat=kmat; G.built=true;
+    if(sim){ sim.setRest(rest); }
     return true;
   };
 
   /* per frame: ret = skyboard is on its way back to her (OR-ed with setReturning) */
+  // ── necklace physics (one verlet step per frame, in the neck rig's local space; see ui/dm-necklace-sim.js).  Hidden body (first person) = asleep, snaps home on return.
+  function vis(o){ while(o){ if(o.visible===false) return false; o=o.parent; } return true; }
+  function physics(dt){
+    const sim=G.sim; if(!sim||G.nophys) return; const T=THREE, t0=performance.now();
+    if(!vis(G.nrig)){ G.sleep=true; return; }
+    G.spine.updateWorldMatrix(true,false); G.nrig.updateWorldMatrix(false,false);
+    const mw=G.nrig.matrixWorld;
+    // the frame's motion RELATIVE TO HER ROOT: walking / turning / the riding mirror / the root scale are not inertia for a chain on her neck, only her own bone motion is
+    G.mInv.copy(mw).invert(); G.mRoot.copy(G.root.matrixWorld).invert(); G.mRel.multiplyMatrices(G.mRoot,mw);
+    if(G.sleep){ G.sleep=false; sim.snapToRest(); G.mPrev.copy(G.mRel); }
+    G.mD.copy(G.mRel).invert().multiply(G.mPrev); G.mPrev.copy(G.mRel);                       // D = inv(rel now) * rel before
+    let D=G.mD.elements; if(G.mD.determinant()<0.5){ sim.snapToRest(); D=null; }
+    const v=G.v3, bl=G.bl; for(let i=0;i<bl.length;i++){ bl[i].updateWorldMatrix(true,false); G.mCs[i].multiplyMatrices(G.mInv,bl[i].matrixWorld); }
+    G.skinCaps();
+    v.set(0,-1,0).transformDirection(G.mInv); const g=9.81*G.u, gl=G.gl; gl[0]=v.x*g; gl[1]=v.y*g; gl[2]=v.z*g;
+    sim.step(dt,gl,D,G.caps,G.nCaps);
+    G.buildTube(sim.x); G.placeKite(sim.x,sim.cnN?sim.cn:null,dt);
+    G.phys.steps++; G.phys.ms+=(performance.now()-t0-G.phys.ms)*0.05;                       // smoothed cost
+  }
   G.tick=function(dt,ret){
     if(!G.built) return;
     const now=performance.now()*0.001; if(now-G.last<0.002) return; G.last=now;   // both frame loops call this
     dt=dt>0?Math.min(dt,0.1):0.016;
+    physics(dt);
     const want=(ret||G.manual)?1:0;
     G.g+= want?dt/G.FADE_IN:-dt/G.FADE_OUT; if(G.g<0)G.g=0; if(G.g>1)G.g=1;
     if(G.g<=0.002){ if(G.glow.visible){ G.glow.visible=false; G.kmat.emissiveIntensity=0; light(0,0); } return; }

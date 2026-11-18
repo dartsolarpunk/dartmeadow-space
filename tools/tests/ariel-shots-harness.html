@@ -1,0 +1,54 @@
+<!doctype html><meta charset=utf8><body style="margin:0;background:#000"><canvas id=c width=720 height=720></canvas>
+<script type="importmap">{"imports":{"three":"/three/build/three.webgpu.js","three/webgpu":"/three/build/three.webgpu.js","three/tsl":"/three/build/three.tsl.js"}}</script>
+<script type="module">
+// Headless stills of Ariel (WebGL2 fallback under SwiftShader; look only, NOT frame times).  Driver: tools/tests/ariel-shots.py
+//   ?glb=<repo path>&hide=<name,name>&led=<L hex>,<R hex>&flash=1&necklace=1&pose=<clip>@<seconds>&views=front,top,q3
+import * as TH from 'three/webgpu'; import * as TSL from 'three/tsl'; import {GLTFLoader} from '/three/examples/jsm/loaders/GLTFLoader.js';
+const Q=new URLSearchParams(location.search), THREE=Object.assign({},TH); THREE.TSL=TSL; window.THREE=THREE;
+window.DMNatLights={request(){return 1;},set(){},release(){}};
+const r=new TH.WebGPURenderer({canvas:document.getElementById('c'),forceWebGL:true,antialias:true,preserveDrawingBuffer:true}); await r.init();
+const sc=new TH.Scene(); sc.background=new TH.Color(0x3a4252);
+sc.add(new TH.HemisphereLight(0xdfe8ff,0x605848,1.5)); const sun=new TH.DirectionalLight(0xfff2e0,2.6); sun.position.set(1.5,3,3); sc.add(sun);
+const fill=new TH.DirectionalLight(0xaac0ff,0.8); fill.position.set(-2,1,-1); sc.add(fill);
+const g=await new GLTFLoader().loadAsync(Q.get('glb')); const CHAR={root:g.scene,bones:{}}; sc.add(CHAR.root);
+const hide=(Q.get('hide')||'').split(',').filter(Boolean), hideSet=new Set(hide);
+CHAR.root.traverse(o=>{ if(o.isBone) CHAR.bones[o.name]=o; if(o.isSkinnedMesh) CHAR.skinnedMesh=o; if(hideSet.has(o.name)) o.visible=false; });
+CHAR.root.updateMatrixWorld(true);
+const names=[]; CHAR.root.traverse(o=>{ if(o.isMesh) names.push(o.name+(o.material?'|'+o.material.name:'')); });
+window.meshNames=names;
+if(Q.get('led')){ const [l,rr]=Q.get('led').split(','); const set=(n,hex)=>{ const m=CHAR.root.getObjectByName(n); if(!m) return; m.material.emissive.set(parseInt(hex,16)); m.material.emissiveIntensity=hex==='000000'?0:3; m.material.needsUpdate=true; }; set('LED_Top_Strip_L',l); set('LED_Top_Strip_R',rr); }
+if(Q.get('flash')==='1'){ await import('/ui/dm-flash.js'); try{ window.flashOK=DMFlash.attach(CHAR); }catch(e){ window.flashErr=String(e); } }
+if(Q.get('necklace')==='1'){ try{ await import('/ui/dm-necklace-sim.js'); }catch(e){ window.simErr=String(e); } await import('/ui/dm-charm.js'); window.attached=DMCharm.attach(CHAR); window.charmStats=DMCharm.stats&&DMCharm.stats(); }
+if(Q.get('rootscale')){ const k=+Q.get('rootscale'); CHAR.root.scale.set(k,k,Q.get('mirror')==='1'?-k:k); CHAR.root.position.set(+Q.get('rx')||0,0,0); CHAR.root.rotation.y=+Q.get('ry')||0; CHAR.root.updateMatrixWorld(true); }   // the game scales / mirrors / turns her root AFTER attach
+if(Q.get('glow')==='1'&&window.DMCharm&&DMCharm.built){ DMCharm.setReturning(true); for(let i=0;i<40;i++){ DMCharm.last=-1; DMCharm.tick(0.03,false); } }
+window.CHAR=CHAR; window.sc=sc;
+const cam=new TH.PerspectiveCamera(25,1,0.005,50);
+const V={ // target, direction (from target to camera), distance, fov  (glTF space: y up, she faces +z)
+ front:[[0,1.665,-0.015],[0,0.12,1],0.36,25], top:[[0,1.67,-0.015],[0,1,0.18],0.34,25], q3:[[0,1.66,-0.015],[0.75,0.45,0.8],0.32,25], side:[[0,1.66,-0.05],[1,0.15,0.0],0.4,25],
+ nfront:[[0,1.40,-0.04],[0,0.05,1],0.42,28], nq3:[[0,1.40,-0.04],[0.7,0.25,0.7],0.42,28], nside:[[0,1.40,-0.05],[1,0.1,0.1],0.42,28], nback:[[0,1.40,-0.05],[0,0.2,-1],0.42,28], ntop:[[0,1.42,-0.04],[0,1,0.35],0.4,28], chest:[[0,1.30,-0.05],[0,0.05,1],0.9,28], chestq:[[0,1.30,-0.05],[0.8,0.2,0.6],0.9,28] };
+window.shots={}; window.poseStats=null;
+// ?anim=<clip name in the merged-animations GLB>&times=0.5,1.0  : run the mixer at 60 fps, tick DMCharm every frame, shoot at the given times (views follow her neck)
+let mixer=null, clipTimes=[];
+if(Q.get('anim')){
+  const ag=await new GLTFLoader().loadAsync('/characterassests/Meshy_AI_Autumn_biped_Meshy_AI_Meshy_Merged_Animations.glb');
+  const clip=ag.animations.find(c=>c.name===Q.get('anim')); window.clipNames=ag.animations.map(c=>c.name+':'+c.duration.toFixed(2)); window.clipOK=!!clip;
+  if(clip){ mixer=new TH.AnimationMixer(CHAR.root); mixer.clipAction(clip).play(); clipTimes=(Q.get('times')||'1').split(',').map(Number); }
+}
+const neckW=new TH.Vector3(), fwdW=new TH.Vector3();
+async function shoot(v,follow){ const [t,d,dist,fov]=V[v]; const D=new TH.Vector3(...d).normalize(); cam.fov=fov;
+  if(follow&&CHAR.bones.neck){ CHAR.bones.neck.getWorldPosition(neckW); cam.position.copy(neckW).add(new TH.Vector3(0,-0.02,0)).addScaledVector(D,dist); cam.lookAt(neckW.x,neckW.y-0.02,neckW.z); }
+  else { cam.position.set(...t).addScaledVector(D,dist); cam.lookAt(...t); }
+  cam.updateProjectionMatrix(); await r.render(sc,cam); await new Promise(z=>setTimeout(z,150)); r.render(sc,cam); window.shots[v+(follow?'_t'+follow:'')]=document.getElementById('c').toDataURL('image/png'); }
+if(mixer){
+  let tcur=0, warm=0, st={maxLink:0,maxPen:0,maxDev:0,frames:0,ms:0,resets0:0}; const C=window.DMCharm;
+  for(const tt of clipTimes){
+    while(tcur<tt-1e-6){ mixer.update(1/60); tcur+=1/60; CHAR.root.updateMatrixWorld(true); if(C&&C.sim){ C.last=-1; C.tick(1/60,false);
+        const S=C.sim; warm++; if(warm===15) st.resets0=S.resets; if(warm<15){ continue; } st.maxLink=Math.max(st.maxLink,S.maxLinkError()); st.maxPen=Math.max(st.maxPen,S.penetration(C.caps,C.nCaps)/C.u*1000); let dv=0; for(let i=0;i<S.M;i++){ dv=Math.max(dv,Math.hypot(S.x[i*3]-S.rest[i*3],S.x[i*3+1]-S.rest[i*3+1],S.x[i*3+2]-S.rest[i*3+2])); } st.maxDev=Math.max(st.maxDev,dv/C.u*1000); st.frames++; st.resets=S.resets-st.resets0; (window.trace=window.trace||[]).push([st.frames,+S.maxLinkError().toFixed(3),+(dv/C.u*1000).toFixed(1),+(S.penetration(C.caps,C.nCaps)/C.u*1000).toFixed(2)]); } }
+    CHAR.root.updateMatrixWorld(true);
+    for(const v of (Q.get('views')||'nfront').split(',')) await shoot(v,tt);
+  }
+  st.maxLink=+st.maxLink.toFixed(3); st.maxPen=+st.maxPen.toFixed(2); st.maxDev=+st.maxDev.toFixed(1); window.poseStats=st;
+  window.done=true;
+} else
+{ for(const v of (Q.get('views')||'front').split(',')) await shoot(v,0); window.done=true; }
+</script>
