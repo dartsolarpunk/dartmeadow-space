@@ -7,6 +7,7 @@ import sys, os, json
 sys.path.insert(0, os.path.dirname(__file__))
 from retarget import *
 from derive import *
+from postfx import *
 
 # preset button -> (clip, loop)   loop: 'repeat' | 'once' | 'pingpong'
 PRESETS = [
@@ -25,6 +26,11 @@ PRESETS = [
  ('swim',        'Swim_Forward',       'repeat', 'Swim'),
  ('swim_idle',   'Emma_Swim_InPlace',  'repeat', 'Swim (in place)'),
  ('swing',       'Swing_on_Rope_to_Ground','once','Swing on rope'),
+ ('swing_loop',  'Emma_Swing_Loop',    'repeat', 'Swing on rope (loop)'),
+ ('climb_loop',  'Emma_Climb_Loop',    'repeat', 'Climb up (loop)'),
+ ('climb_side_loop','Emma_Climb_Side_Loop','repeat','Climb traverse (loop)'),
+ ('ladder_loop', 'Emma_Ladder_Loop',   'repeat', 'Ladder (loop)'),
+ ('swing_bar_loop','Emma_GrabBar_Loop','repeat', 'Grab bar and swing (loop)'),
  ('swing_bar',   'Grab_Bar_and_Swing_Forward','once','Grab bar and swing'),
  ('crouch',      'Crouch_Walk_Right_with_Torch_inplace','repeat','Crouch walk'),
  ('prone',       'Crawl_Backward_inplace','repeat','Crawl'),
@@ -53,6 +59,13 @@ def main(src, dst, outdir, ref_char=None, with_derived=True):
          'Emma_Turn_L': pivot_turn(base, SB, up, +90), 'Emma_Turn_R': pivot_turn(base, SB, up, -90),
         }
         out.update(d)
+        # seamless loop variants (net root travel removed, last 0.5 s crossfaded into the first pose); the originals stay untouched for the game's state machine
+        for nm, src_c, bl in [('Emma_Swing_Loop','Swing_on_Rope_to_Ground',0.6),('Emma_Climb_Loop','climbing_up_wall',0.5),('Emma_Climb_Side_Loop','Quad_Climb_Right',0.4),
+                              ('Emma_Ladder_Loop','Ladder_Climb_Finish',0.5),('Emma_GrabBar_Loop','Grab_Bar_and_Swing_Forward',0.5)]:
+            out[nm] = loopify(out[src_c], SB, up, bl)
+        for c_, bl in [('Acting_Talk',0.5),('Acting_Thinking',0.5),('Emma_Swim_InPlace',0.5)]:
+            out[c_] = loopify(out[c_], SB, up, bl)       # these 'repeat' presets had 40-50 deg pops at the loop point
+    apply_relaxed_hand(out, SB)                           # natural curled fingers where the hand hangs; grabbing clips excluded by name
     p = os.path.join(outdir, 'Emma_Merged_Animations.glb')
     st = write_animation_glb(out, SB, dst, p)
     man = {'rig': 'Emma (Ariel bone names)', 'rootMotionScale': k, 'source': 'Ariel/Autumn merged animations retargeted by tools/retarget.py',
