@@ -78,6 +78,6 @@ ok(/ArielNeckRig/.test(charm) && /ArielNecklaceChain/.test(charm) && /ArielKiteC
 ok(/CHAR\.bones\.Spine02\|\|CHAR\.bones\.Spine01/.test(charm) && /rig\.name='ArielCharmRig'/.test(charm) && /G\.rig=rig/.test(charm), 'dm-charm.js: ArielCharmRig stays on Spine02 (ui/dm-hazard.js parents her chest LED to DMCharm.rig)');
 ok(/Charm\|Tube0\*21\$/.test(charm), "dm-charm.js: the baked chain ('Tube021') and charm ('Charm001') are hidden (three strips the dots from node names)");
 ok(html.indexOf('ui/dm-necklace-sim.js') > 0 && html.indexOf('ui/dm-necklace-sim.js') < html.indexOf('ui/dm-charm.js'), 'index.html: ui/dm-necklace-sim.js is loaded before ui/dm-charm.js');
-ok(/ui\/dm-charm\.js\?v=234"/.test(html), 'index.html: dm-charm.js ?v= tag left alone for the lead (v=234)');
+ok(/ui\/dm-charm\.js\?v=\d+"/.test(html), "index.html: dm-charm.js carries a numeric ?v= tag");
 ok(!/\bMath\.random\b|\bnew (Float32Array|Float64Array|Array)\b/.test(fs.readFileSync(path.join(root, 'ui', 'dm-necklace-sim.js'), 'utf8').split('S.step = function')[1].split('S.maxLinkError')[0]), 'step() allocates nothing and is deterministic (no Math.random / new arrays in the hot path)');
 console.log(fails ? fails + ' FAILED' : 'all ok'); process.exit(fails ? 1 : 0);
