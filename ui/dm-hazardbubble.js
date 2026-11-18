@@ -271,7 +271,7 @@
   function hazardStep(d,warn){ return d<=0?'inside':d<=warn?'near':'clear'; }
   function hzSense(){
     HZ.ticks++;
-    const root=window.CHAR&&CHAR.root; if(!root||typeof PW==='undefined'||!PW.active){ hzSet('clear',null,1e9); return; }
+    const root=typeof CHAR!=='undefined'&&CHAR?CHAR.root:null; if(!root||typeof PW==='undefined'||!PW.active){ hzSet('clear',null,1e9); return; }   // (CHAR is a script-scope binding, not a window property)
     const e=root.matrixWorld.elements, px=e[12], py=e[13]+0.9, pz=e[14];
     let best=null,bd=1e9,bst='clear',hh=1; try{ hh=(CHAR.rawHeight||1)*(Math.hypot(e[0],e[1],e[2])||1); }catch(x){}
     for(let i=0;i<HZ.src.length;i++){ const s=HZ.src[i]; if(s.shape==='global') continue;
@@ -501,7 +501,7 @@
   // ?hazardzone=plume: one test plume column ahead of her (radius 4 heights, 6 heights away along +X of the world)
   const ZONE_FLAG=(()=>{ try{ return new URLSearchParams(window.location.search).get('hazardzone')||''; }catch(e){ return ''; } })();
   function zoneTest(){
-    const root=window.CHAR&&CHAR.root; if(!root||!CHAR.rawHeight) return 0; root.updateWorldMatrix(true,false); const e=root.matrixWorld.elements, h=CHAR.rawHeight*(Math.hypot(e[0],e[1],e[2])||1);
+    const root=typeof CHAR!=='undefined'&&CHAR?CHAR.root:null; if(!root||!CHAR.rawHeight) return 0; root.updateWorldMatrix(true,false); const e=root.matrixWorld.elements, h=CHAR.rawHeight*(Math.hypot(e[0],e[1],e[2])||1);
     return DMHazard.register({id:'test-plume',type:'plume',gas:'volcanic',sev:0.8,shape:'column',x:e[12]+6*h,z:e[14],r:4*h,y0:e[13]-8*h,y1:e[13]+40*h});
   }
   H.gate=gateWorld;
