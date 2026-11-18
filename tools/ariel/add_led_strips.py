@@ -5,7 +5,7 @@
 
 Why a direct patch and not a Blender re-export: every existing byte of the file (skeleton, skin weights, materials + their
 KHR extensions, textures, node names / order, all accessors) stays exactly as it was; the patch only APPENDS 2 meshes, 2
-materials, 2 nodes, 11 accessors/bufferViews and splices the 2 nodes into the armature's child list (after 'Mesh.003', so the
+materials, 2 nodes, 12 accessors/bufferViews and splices the 2 nodes into the armature's child list (after 'Mesh.003', so the
 last skinned mesh the game sees - CHAR.skinnedMesh - is unchanged).  Re-running on an already patched file is a no-op error.
 
 Geometry: measured from the glasses frame ('Mesh 1', skinned 100 % to Head) the same way ui/dm-flash.js measures it for its

@@ -26,7 +26,7 @@ with sync_playwright() as p:
     pg.goto('http://127.0.0.1:%d/tools/tests/ariel-shots-harness.html?%s' % (port, a.query))
     try: pg.wait_for_function('window.done===true', timeout=a.wait * 1000)
     except Exception as e: errs.append('timeout ' + str(e)[:100])
-    info = pg.evaluate('({flash:window.flashOK,flashErr:window.flashErr,attached:window.attached,stats:window.charmStats||null,names:(window.meshNames||[]).length})')
+    info = pg.evaluate('({flash:window.flashOK,flashErr:window.flashErr,attached:window.attached,stats:window.charmStats||null,names:(window.meshNames||[]).length,pose:window.poseStats||null,clips:window.clipNames||null,simErr:window.simErr||null,trace:(window.trace||[]).filter((x,i)=>i%3==0).slice(0,40),dm:(window.DMCharm&&DMCharm.stats&&DMCharm.stats())||null})')
     for k, v in (pg.evaluate('window.shots||{}')).items():
         open('%s_%s.png' % (a.out, k), 'wb').write(base64.b64decode(v.split(',')[1]))
     info['errors'] = errs[:6]; print(json.dumps(info)); br.close()
