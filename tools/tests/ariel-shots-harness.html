@@ -1,0 +1,31 @@
+<!doctype html><meta charset=utf8><body style="margin:0;background:#000"><canvas id=c width=720 height=720></canvas>
+<script type="importmap">{"imports":{"three":"/three/build/three.webgpu.js","three/webgpu":"/three/build/three.webgpu.js","three/tsl":"/three/build/three.tsl.js"}}</script>
+<script type="module">
+// Headless stills of Ariel (WebGL2 fallback under SwiftShader; look only, NOT frame times).  Driver: tools/tests/ariel-shots.py
+//   ?glb=<repo path>&hide=<name,name>&led=<L hex>,<R hex>&flash=1&necklace=1&pose=<clip>@<seconds>&views=front,top,q3
+import * as TH from 'three/webgpu'; import * as TSL from 'three/tsl'; import {GLTFLoader} from '/three/examples/jsm/loaders/GLTFLoader.js';
+const Q=new URLSearchParams(location.search), THREE=Object.assign({},TH); THREE.TSL=TSL; window.THREE=THREE;
+window.DMNatLights={request(){return 1;},set(){},release(){}};
+const r=new TH.WebGPURenderer({canvas:document.getElementById('c'),forceWebGL:true,antialias:true,preserveDrawingBuffer:true}); await r.init();
+const sc=new TH.Scene(); sc.background=new TH.Color(0x3a4252);
+sc.add(new TH.HemisphereLight(0xdfe8ff,0x605848,1.5)); const sun=new TH.DirectionalLight(0xfff2e0,2.6); sun.position.set(1.5,3,3); sc.add(sun);
+const fill=new TH.DirectionalLight(0xaac0ff,0.8); fill.position.set(-2,1,-1); sc.add(fill);
+const g=await new GLTFLoader().loadAsync(Q.get('glb')); const CHAR={root:g.scene,bones:{}}; sc.add(CHAR.root);
+const hide=(Q.get('hide')||'').split(',').filter(Boolean), hideSet=new Set(hide);
+CHAR.root.traverse(o=>{ if(o.isBone) CHAR.bones[o.name]=o; if(o.isSkinnedMesh) CHAR.skinnedMesh=o; if(hideSet.has(o.name)) o.visible=false; });
+CHAR.root.updateMatrixWorld(true);
+const names=[]; CHAR.root.traverse(o=>{ if(o.isMesh) names.push(o.name+(o.material?'|'+o.material.name:'')); });
+window.meshNames=names;
+if(Q.get('led')){ const [l,rr]=Q.get('led').split(','); const set=(n,hex)=>{ const m=CHAR.root.getObjectByName(n); if(!m) return; m.material.emissive.set(parseInt(hex,16)); m.material.emissiveIntensity=hex==='000000'?0:3; m.material.needsUpdate=true; }; set('LED_Top_Strip_L',l); set('LED_Top_Strip_R',rr); }
+if(Q.get('flash')==='1'){ await import('/ui/dm-flash.js'); try{ window.flashOK=DMFlash.attach(CHAR); }catch(e){ window.flashErr=String(e); } }
+if(Q.get('necklace')==='1'){ await import('/ui/dm-necklace-sim.js'); await import('/ui/dm-charm.js'); window.attached=DMCharm.attach(CHAR); window.charmStats=DMCharm.stats&&DMCharm.stats(); }
+window.CHAR=CHAR; window.sc=sc;
+const cam=new TH.PerspectiveCamera(25,1,0.005,50);
+const V={ // target, direction (from target to camera), distance, fov  (glTF space: y up, she faces +z)
+ front:[[0,1.665,-0.015],[0,0.12,1],0.36,25], top:[[0,1.67,-0.015],[0,1,0.18],0.34,25], q3:[[0,1.66,-0.015],[0.75,0.45,0.8],0.32,25], side:[[0,1.66,-0.05],[1,0.15,0.0],0.4,25],
+ nfront:[[0,1.40,-0.04],[0,0.05,1],0.42,28], nq3:[[0,1.40,-0.04],[0.7,0.25,0.7],0.42,28], nside:[[0,1.40,-0.05],[1,0.1,0.1],0.42,28], nback:[[0,1.40,-0.05],[0,0.2,-1],0.42,28], ntop:[[0,1.42,-0.04],[0,1,0.35],0.4,28] };
+window.shots={};
+for(const v of (Q.get('views')||'front').split(',')){ const [t,d,dist,fov]=V[v]; const D=new TH.Vector3(...d).normalize(); cam.fov=fov; cam.position.set(...t).addScaledVector(D,dist); cam.lookAt(...t); cam.updateProjectionMatrix();
+  await r.render(sc,cam); await new Promise(z=>setTimeout(z,150)); r.render(sc,cam); window.shots[v]=document.getElementById('c').toDataURL('image/png'); }
+window.done=true;
+</script>
