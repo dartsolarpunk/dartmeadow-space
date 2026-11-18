@@ -1,0 +1,17 @@
+{
+  "name": "Emma",
+  "character": true,
+  "clusters": [
+    { "name": "back" },
+    { "name": "bangs", "stiffBoost": 1.6 },
+    { "name": "sideburns", "stiffBoost": 1.8 },
+    { "name": "top" },
+    { "name": "underlayer", "stiffBoost": 1.2 }
+  ],
+  "clumps": {
+    "fringe_wisp_L": { "tint": [1.2, 1.15, 1.1], "widthScale": 0.8 },
+    "fringe_wisp_C": { "tint": [1.2, 1.15, 1.1], "widthScale": 0.8 },
+    "underlayer":    { "tint": [0.8, 0.8, 0.8] }
+  },
+  "params": { "widthRoot": 0.0056, "widthTip": 0.0027 }
+}

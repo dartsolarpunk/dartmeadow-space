@@ -58,6 +58,7 @@
      character: true                            allow a character without an Ariel/Scalp mesh
      clusters:  [ { name, stiffBoost, bendBoost, widthScale, color:[r,g,b], colorJitter:[lo,hi], gradient:{root,tip,tipStart,streak,streakFrac,streakStart},
                     clearance:{min,max,scale} } , ... ]      index = group id; missing ids / fields use the defaults below (1, 1, 1, meta.color ...)
+     clumps:    { clumpName: { tint:[r,g,b] (multiplies the strand colour), widthScale } }   per-clump look, keyed by meta.clusters[] names (file section `cluster`)
      params:    { gravity, damping, shapeStiffness, bendRoot, widthRoot ... }   merged into the solver params (opts.params still wins)
      body:      [ [bone, childBone|null, radius], ... ]    body capsules the strands collide with (replaces the default torso/arm list)
    }
@@ -74,7 +75,9 @@ export const HAIR_DEFAULT_CONFIG = {
 function hairConfig(meta, opts) {
   const m = meta.config || {}, o = opts.config || {};
   const C = Object.assign({}, HAIR_DEFAULT_CONFIG, m, o);
-  C.clusters = o.clusters || m.clusters || meta.clusters || HAIR_DEFAULT_CONFIG.clusters;
+  const objs = (a) => Array.isArray(a) && a.length && typeof a[0] === 'object' ? a : null;
+  C.clusters = objs(o.clusters) || objs(m.clusters) || objs(meta.clusters) || HAIR_DEFAULT_CONFIG.clusters;
+  C.clumps = Object.assign({}, m.clumps, o.clumps);
   C.params = Object.assign({}, m.params, o.params);
   return C;
 }
@@ -108,6 +111,9 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   const group = new Uint8Array(buf, off, N); off += (N + 3) & ~3;
   const guideOf = new Uint32Array(buf, off, N); off += N * 4;
   const guideStrand = new Uint32Array(buf, off, G);
+  // optional per-strand clump index (uint8[N] -> meta.clusters names), for CFG.clumps tint / width
+  let clumpOf = null;
+  if (meta.layout && meta.layout.clusterByteOffsetFromData != null && Array.isArray(meta.clusters) && dataStart + meta.layout.clusterByteOffsetFromData + N <= buf.byteLength) clumpOf = new Uint8Array(buf, dataStart + meta.layout.clusterByteOffsetFromData, N);
   // head signed-distance field (v2)
   let SDF = null;
   if (meta.sdf && meta.sdf.byteOffsetFromData != null) {
@@ -124,6 +130,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     if (!(o.isMesh || o.isSkinnedMesh)) return;
     if (/Ariel.?Hair(?!Strands)/i.test(o.name)) cardMeshes.push(o);
     if (/^Scalp/i.test(o.name)) { scalpMesh = scalpMesh || o; isAriel = true; }
+    else if (/^[A-Za-z]+_Scalp$/.test(o.name)) scalpMesh = scalpMesh || o;   // e.g. Emma_Scalp (attaches only with character:true)
     if (/^Ariel/i.test(o.name)) isAriel = true;
   });
   // opts.character: explicit opt-in for another groomed character (e.g. the Madison doll, ui/dm-bt-engineering.js)
@@ -178,6 +185,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     minGravityScale: 0.0, interleave: 1, autoQuality: true, strandFraction: 1, scalpSheenOff: true,
     deferToRender: true,   // hooked mode: simulate in the strands' onBeforeRender, after every pose layer (see hook below)
     widthRoot: 0.0046, widthTip: 0.0022,
+    ...(meta.widthRoot ? { widthRoot: meta.widthRoot } : {}), ...(meta.widthTip ? { widthTip: meta.widthTip } : {}),   // groom-file width hints (Ariel's file has none: her params unchanged)
     ...CFG.params,
     ...(opts.params || {})
   };
@@ -293,17 +301,19 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   for (let s = 0; s < N; s++) {
     const CL = clusterOf(group[s]), jit = CL.colorJitter || [0.75, 1.65], GR = CL.gradient || GR0, bs = CL.color || base;
     const v = jit[0] + rnd() * (jit[1] - jit[0]);
-    wScale[s] = CL.widthScale ?? 1; if (wScale[s] !== 1) anyW = true;
+    const KC = clumpOf && CFG.clumps ? CFG.clumps[meta.clusters[clumpOf[s]]] : null;
+    const tn = (KC && KC.tint) || [1, 1, 1];
+    wScale[s] = (CL.widthScale ?? 1) * ((KC && KC.widthScale) ?? 1); if (wScale[s] !== 1) anyW = true;
     if (GR) {
       const streak = rnd() < (GR.streakFrac || 0), tip = streak && GR.streak ? GR.streak : GR.tip, t0 = streak ? (GR.streakStart ?? 0.3) : (GR.tipStart ?? 0.45);
       const vv = 0.85 + (v - 0.75) * 0.35;
       for (let k = 0; k < K * 2; k++) {
         const t = Math.max(0, Math.min(1, ((k >> 1) / (K - 1) - t0) / (1 - t0))), w = t * t * (3 - 2 * t), o = (s * K * 2 + k) * 3;
-        for (let c = 0; c < 3; c++) col[o + c] = (GR.root[c] * (1 - w) + tip[c] * w) * vv;
+        for (let c = 0; c < 3; c++) col[o + c] = (GR.root[c] * (1 - w) + tip[c] * w) * vv * tn[c];
       }
       continue;
     }
-    for (let k = 0; k < K * 2; k++) { const o = (s * K * 2 + k) * 3; col[o] = bs[0] * v; col[o + 1] = bs[1] * v; col[o + 2] = bs[2] * v; }
+    for (let k = 0; k < K * 2; k++) { const o = (s * K * 2 + k) * 3; col[o] = bs[0] * v * tn[0]; col[o + 1] = bs[1] * v * tn[1]; col[o + 2] = bs[2] * v * tn[2]; }
   }
   const geo = new THREE.BufferGeometry();
   const aPos = new THREE.BufferAttribute(pos, 3); aPos.setUsage(THREE.DynamicDrawUsage);

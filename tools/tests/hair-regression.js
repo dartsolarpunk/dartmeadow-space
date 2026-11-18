@@ -53,5 +53,15 @@ async function run(modPath, THREE, binBuf, opts, scalpName) {
     ok(t.col !== a1.col && JSON.stringify(t.h90) !== JSON.stringify(a1.h90), 'config changes colours / widths / stiffness (not silently ignored)');
     ok(t.H.params.gravity === 5, 'config.params reaches the solver params');
   } catch (e) { fails++; console.log('FAIL config load', e && e.stack || e); }
+  // Emma's real groom + config (if present): 6000 strands x 16 points, file width hints, clump tint, Emma_Scalp
+  const ed = path.join(ROOT, 'characterassests', 'emma');
+  if (fs.existsSync(path.join(ed, 'emma_hair_strands.bin'))) try {
+    const eb = (b => b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength))(fs.readFileSync(path.join(ed, 'emma_hair_strands.bin'))), ec = JSON.parse(fs.readFileSync(path.join(ed, 'emma_hair_config.json')));
+    const e1 = await run(path.join(ROOT, 'hair_strands.js'), THREE, eb, { config: ec }, 'Emma_Scalp'), nc = Object.assign({}, ec); delete nc.clumps; const e0 = await run(path.join(ROOT, 'hair_strands.js'), THREE, eb, { config: nc }, 'Emma_Scalp');
+    ok(e1.finite && e1.stats.strands === 6000 && e1.stats.guides === 1500, 'Emma groom: ' + e1.stats.strands + ' strands, ' + e1.stats.guides + ' guides, finite');
+    ok(e1.H.mesh.name === 'EmmaHairStrands' && e1.H.params.widthRoot === 0.0056 && e1.H.params.widthTip === 0.0027, 'Emma mesh name + widths from the file / config');
+    ok(e1.col !== e0.col, 'per-clump tint changes Emma colours');
+    const e2 = await run(path.join(ROOT, 'hair_strands.js'), THREE, eb, {}, 'Emma_Scalp').catch(e => e); ok(e2 instanceof Error || e2.finite, 'Emma bin without config still loads or refuses cleanly');
+  } catch (e) { fails++; console.log('FAIL emma hair', e && e.stack || e); }
   console.log(fails ? fails + ' FAILED' : 'ALL OK'); process.exit(fails ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(2); });

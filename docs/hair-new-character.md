@@ -33,3 +33,10 @@ Not per cluster (kept per character to keep the solver light on phones): gravity
 ## 3. Wire it
 Game: `attachHairStrands(CHAR, THREE, { url, character: true, ...hostGetters })`. Rig Viewer: drop `<char>_hair_strands.bin` (+ optional config in its header) next to the model.
 Check: `node tools/tests/hair-regression.js` (Ariel unchanged, multi-cluster config loads and stays finite).
+
+## Clumps, tint and width hints (added with Emma)
+
+- `config.clumps`: map of clump name to `{tint:[r,g,b], widthScale}`. Clump names come from the groom file's `meta.clusters` (a list of strings) indexed by the per-strand byte array at `meta.layout.clusterByteOffsetFromData`. `tint` multiplies the strand colour; `widthScale` multiplies ribbon width. Unlisted clumps use tint 1 and scale 1.
+- `meta.widthRoot` / `meta.widthTip` in the groom file are used as default width params; `config.params` overrides them.
+- A scalp mesh named `<Name>_Scalp` is accepted in addition to `Scalp*`/`Ariel*`.
+- `meta.clusters` as a list of strings is a clump list; only an array of objects is treated as cluster configs.
