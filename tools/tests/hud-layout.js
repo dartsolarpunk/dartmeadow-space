@@ -65,12 +65,16 @@ console.log('== hazard indicator HUD (ui/dm-hazardhud.js)');
   ok(/ui\/dm-hazardhud\.js\?v=\d+/.test(html) && !/dm-shield\.js|dm-hazardbubble/.test(html), 'index.html loads ui/dm-hazardhud.js; the old SHIELD button file and the orb file are not referenced');
   ok(!fs.existsSync(path.join(root, 'ui', 'dm-shield.js')) && !/dm-shield-btn|DMShield\.toggle/.test(hSrc), 'no SHIELD toggle button any more');
   const cssTxt = (hSrc.match(/const CSS = ([\s\S]*?);\n  let el/) || [])[1] || '';
-  ok(/#dm-hazhud\{[^}]*position:fixed/.test(cssTxt) && /left:50%/.test(cssTxt) && /pointer-events:none/.test(cssTxt), 'a fixed, centred, non-interactive card (never eats a touch)');
-  const top = +((cssTxt.match(/top:calc\((\d+)px/) || [])[1] || 0);
-  ok(top >= 120, 'sits under the mini-kite strip (top 6 px + 112 px tall): top ' + top + ' px');
-  ok(/display:none/.test(cssTxt) && /#screen-flight\.active\) #dm-hazhud\[data-show="1"\]\{display:block/.test(cssTxt), 'hidden by default; shown only in the flight screen while data-show=1');
+  const root0 = (cssTxt.match(/#dm-hazhud\{[^}]*\}/) || [''])[0]; ok(/position:fixed/.test(root0) && !/left:50%/.test(root0) && /pointer-events:none/.test(root0), 'a fixed, non-interactive tab on the LEFT, no longer centred on the screen (never eats a touch)');
+  const topPx = +((cssTxt.match(/#dm-hazhud\{[^}]*top:(\d+)px/) || [])[1] || 0), leftPx = +((cssTxt.match(/#dm-hazhud\{[^}]*left:(\d+)px/) || [])[1] || 0);
+  ok(topPx > 0 && topPx <= 60 && leftPx >= 34, 'default slot hangs right under the top-left header strip (top ' + topPx + ' px) and clears the fullscreen-exit button at the left edge (left ' + leftPx + ' px)');
+  const w0 = +((cssTxt.match(/#dm-hazhud\{[^}]*width:(\d+)px/) || [])[1] || 999), mh = +((cssTxt.match(/\[data-show="1"\]\{max-height:(\d+)px/) || [])[1] || 999);
+  ok(w0 <= 140 && mh <= 72, 'narrow (' + w0 + ' px) and short (<= ' + mh + ' px): a small tab, not a card');
+  ok(/overflow:hidden;max-height:0;visibility:hidden/.test(cssTxt) && /transition:max-height/.test(cssTxt) && /data-show="1"\]\{max-height/.test(cssTxt), 'drop-down: retracted (max-height 0, hidden) until a hazard is sensed, then it extends with a max-height transition');
+  ok(/\.hh-card\{[^}]*border-radius:0 0 \d+px \d+px[^}]*border-top:0/.test(cssTxt), 'cut-out tab look: square top edge flush with the header, rounded bottom corners');
   ok(/#screen-menu\.active\) #dm-hazhud/.test(cssTxt) && /#screen-builder\.active\) #dm-hazhud/.test(cssTxt), 'never over the menu / builder');
-  const wMax = +((cssTxt.match(/width:min\((\d+)vw,(\d+)px\)/) || [])[2] || 999); ok(wMax <= 240 && /min\(86vw/.test(cssTxt), 'narrow (<= 240 px, <= 86 vw): clears the world rail (top right) and fits a phone portrait');
+  ok(/#screen-menu\.active\) #dm-hazhud/.test(cssTxt) && /#screen-builder\.active\) #dm-hazhud/.test(cssTxt) && /display:none !important/.test(cssTxt), 'never over the menu / builder');
+  ok(/function place\(\)/.test(hSrc) && /world-music/.test(hSrc) && /#fs-exit/.test(hSrc) && /mini-kite/.test(hSrc), 'placed from the live DOM: under the soundtrack strip, right of the fullscreen-exit button, left of the mini-kite (read when it opens / on resize, never per frame)');
   ok(!/(setInterval|requestAnimationFrame)\(/.test(hSrc.replace(/\/\*[\s\S]*?\*\//, '')) && /addEventListener\('dmhazardhud'/.test(hSrc), 'no timer / rAF: it only listens for dmhazardhud');
   ok(/band|hh-band/.test(hSrc) && /hh-mark/.test(hSrc) && /transition:left/.test(hSrc), 'band meter + marker that eases');
   // behaviour: the pure view() the card is rendered from
@@ -81,15 +85,19 @@ console.log('== hazard indicator HUD (ui/dm-hazardhud.js)');
   v = V({ on: true, sensed: true, state: 'alert', label: 'VOLCANIC PLUME', marker: 0.3, reserve: 1, sec: Infinity }); ok(/NEAR/.test(v.time) && v.st === 'alert' && v.marker === 0.3, 'near: no countdown, marker on the left half');
   v = V({ on: true, sensed: true, state: 'exposed', label: 'TOXIC ATMOSPHERE', marker: 1, reserve: 0, sec: 0, zero: true }); ok(/OVEREXPOSED/.test(v.time) && v.st === 'exposed', 'zero: the clear warning state');
   v = V({ on: true, sensed: false, state: 'off', label: 'VOLCANIC PLUME', marker: 0, reserve: 0.6, refill: 12 }); ok(/RECOVERING 00:12/.test(v.time) && v.marker === 0, 'after she leaves: marker back at 0, RECOVERING with the refill time');
+  v = V({ on: true, sensed: true, shield: true, state: 'shielded', label: 'TOXIC ATMOSPHERE', marker: 1, reserve: 1, sec: Infinity, refill: 0 }); ok(v.st === 'shielded' && /SHIELD ON/.test(v.time) && !/SAFE TIME/.test(v.time), 'shield ON, reserve full: no countdown, SHIELD ON');
+  v = V({ on: true, sensed: true, shield: true, state: 'shielded', marker: 1, reserve: 0.4, sec: Infinity, refill: 27 }); ok(v.st === 'shielded' && v.time === 'RECOVERING 00:27', 'shield ON, reserve not full: RECOVERING mm:ss (the clock refills)');
+  ok(V({ on: true, sensed: true, state: 'exposed', zero: true, marker: 1, reserve: 0 }).time.length <= 14 && V({ on: true, sensed: true, state: 'alert', marker: .2, reserve: 1 }).time.length <= 14, 'the long warnings are short enough for the narrow tab');
   ok(V({ on: true, sensed: true, state: 'protected', marker: 7, reserve: 3, sec: 1 }).marker === 1 && V({ on: true, sensed: true, state: 'protected', marker: -2, reserve: -1, sec: 1 }).reserve === 0, 'marker / reserve are clamped to 0..1');
   // dormant: one listener at load; the DOM exists only after the first sensed event
-  const evs = {}, nodes = []; const mkEl = () => { const e = { style: { setProperty() { }, left: '', transform: '' }, attrs: {}, setAttribute(k, x) { this.attrs[k] = x; }, appendChild() { }, querySelector: () => mkEl(), textContent: '', set innerHTML(x) { } }; return e; };
-  const dctx = { console, setInterval() { throw new Error('timer'); }, requestAnimationFrame() { throw new Error('raf'); }, addEventListener: (k, f) => { evs[k] = f; }, document: { head: { appendChild() { } }, body: { appendChild(e) { nodes.push(e); } }, getElementById: () => null, createElement: () => mkEl() } };
+  const evs = {}, nodes = []; const mkEl = () => { const e = { style: { setProperty() { }, left: '', top: '', width: '', transform: '' }, attrs: {}, setAttribute(k, x) { this.attrs[k] = x; }, getAttribute(k) { return this.attrs[k] === undefined ? null : this.attrs[k]; }, appendChild() { }, querySelector: () => mkEl(), textContent: '', set innerHTML(x) { } }; return e; };
+  const dctx = { console, setInterval() { throw new Error('timer'); }, requestAnimationFrame() { throw new Error('raf'); }, addEventListener: (k, f) => { evs[k] = f; }, innerWidth: 800, document: { head: { appendChild() { } }, body: { appendChild(e) { nodes.push(e); } }, getElementById: () => null, createElement: () => mkEl(), querySelector: sel => (/world-music/.test(sel) ? { getBoundingClientRect: () => ({ left: 8, top: 9, right: 213, bottom: 33, width: 205, height: 24 }) } : /fs-exit/.test(sel) ? { getBoundingClientRect: () => ({ left: 0, top: 56, right: 34, bottom: 90, width: 34, height: 34 }) } : /mini-kite/.test(sel) ? { getBoundingClientRect: () => ({ left: 232, top: 6, right: 408, bottom: 87, width: 176, height: 81 }) } : null) } };
   dctx.window = dctx; vm.createContext(dctx); vm.runInContext(hSrc, dctx);
   ok(Object.keys(evs).join() === 'dmhazardhud' && nodes.length === 0, 'safe map: exactly one window listener, no DOM, no style');
   evs.dmhazardhud({ detail: { on: false } }); ok(nodes.length === 0, 'an "off" event builds nothing');
   evs.dmhazardhud({ detail: { on: true, sensed: true, state: 'protected', marker: 1, reserve: 1, sec: 90, label: 'X' } }); ok(nodes.length === 1 && nodes[0].attrs['data-show'] === '1', 'first sensed event: card built + shown');
-  evs.dmhazardhud({ detail: { on: false } }); ok(nodes[0].attrs['data-show'] === '', 'hazard gone: card hidden');
+  { const q = nodes[0].style; ok(+q.top.replace('px', '') >= 33 && +q.top.replace('px', '') <= 40 && +q.left.replace('px', '') >= 34 && +q.width.replace('px', '') >= 96 && +q.width.replace('px', '') <= 138 && (+q.left.replace('px', '') + +q.width.replace('px', '')) <= 232, 'placed at 800 x 450: top ' + q.top + ' left ' + q.left + ' width ' + q.width + ': under the soundtrack strip (bottom 33), right of the exit button (right 34), left of the mini-kite (left 232): no overlap'); }
+  evs.dmhazardhud({ detail: { on: false } }); ok(nodes[0].attrs['data-show'] === '', 'hazard gone: card hidden (retracts)');
   // the hazard module emits it at <= ~4 Hz, on change
   ok(/function emitHud\(force\)/.test(hzSrc) && /now-EX\.emitT<250/.test(hzSrc), 'ui/dm-hazard.js emits dmhazardhud on change, at most every 250 ms'); }
 
