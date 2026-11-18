@@ -546,6 +546,9 @@
   const ICON = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M8.2 3.5h7.6l-1.3 4.2H9.5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>' +
     '<path d="M9.5 7.7h5v11.6a1.2 1.2 0 0 1-1.2 1.2h-2.6a1.2 1.2 0 0 1-1.2-1.2z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>' +
     '<rect x="11.2" y="11" width="1.6" height="3.4" rx=".8" fill="currentColor"/><path class="fl-ray" d="M5.2 2.6l1.6 1.4M18.8 2.6l-1.6 1.4M12 .6v1.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
+  // the SHIELD icon: an inline vector DIAMOND (outline + inner facet), cheap; filled blue when the shield is on
+  const SH_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.6l7.6 9.4-7.6 9.4-7.6-9.4z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>' +
+    '<path class="sh-in" d="M12 7.2l3.8 4.8-3.8 4.8-3.8-4.8z" fill="currentColor"/></svg>';
   const CSS = '#dm-flash{position:fixed;left:0;bottom:0;z-index:3555;display:none;pointer-events:none;}' +
     '#dm-flash[data-m]:not([data-m=""]){display:block;}' +   // (t1480) shown by data-m alone: the old `body:has(#screen-flight.active)` gate made the whole rule INVALID on a WebView without :has
     'body:has(#screen-menu.active) #dm-flash,body:has(#screen-builder.active) #dm-flash{display:none !important;}' +
@@ -553,6 +556,11 @@
     'background:rgba(6,14,28,.55);border:1px solid rgba(160,210,255,.45);color:#9fc8ee;pointer-events:auto;touch-action:manipulation;-webkit-tap-highlight-color:transparent;cursor:pointer;}' +
     '#dm-flash .fl-btn .fl-ray{opacity:0;}' +
     '#dm-flash.on .fl-btn{background:rgba(255,248,230,.16);border-color:#fff6e0;color:#fffaf0;box-shadow:0 0 10px rgba(255,244,214,.45);}#dm-flash.on .fl-btn .fl-ray{opacity:1;}' +
+    '#dm-flash .sh-btn{position:absolute;left:0;bottom:40px;width:34px;height:34px;border-radius:50%;padding:0;margin:0;display:flex;align-items:center;justify-content:center;' +   // the SHIELD sub-button: stacked on the flashlight button (same slot logic, same look)
+    'background:rgba(6,14,28,.55);border:1px solid rgba(160,210,255,.45);color:#9fc8ee;pointer-events:auto;touch-action:manipulation;-webkit-tap-highlight-color:transparent;cursor:pointer;}' +
+    '#dm-flash .sh-btn svg{width:20px;height:20px;display:block;}#dm-flash .sh-btn .sh-in{opacity:.35;}' +
+    '#dm-flash .sh-btn.on{background:rgba(60,110,255,.22);border-color:#7fb0ff;color:#cfe0ff;box-shadow:0 0 10px rgba(90,150,255,.6);}#dm-flash .sh-btn.on .sh-in{opacity:1;}' +
+    '#dm-flash[data-m="space"] .sh-btn{display:none;}' +   // protection only matters in a world (walk / fly)
     '#dm-flash .fl-bar{position:absolute;left:37px;bottom:0;width:20px;display:none;flex-direction:column-reverse;gap:3px;padding:3px;box-sizing:border-box;border-radius:7px;' +
     'background:rgba(6,14,28,.6);border:1px solid rgba(160,210,255,.35);pointer-events:auto;touch-action:manipulation;}' +
     '#dm-flash.on .fl-bar{display:flex;}' +
@@ -571,20 +579,25 @@
     STEPS.forEach((lm, i) => { const s = document.createElement('button'); s.type = 'button'; s.className = 'fl-seg'; s.setAttribute('data-i', i); s.setAttribute('aria-label', lm + ' lumens'); s.title = lm + ' lm'; bar.appendChild(s); });
     bar.appendChild(ck);   // column-reverse: the last child is the TOP of the bar
     const stop = e => { e.stopPropagation(); };
+    // SHIELD sub-button (DM_HAZ.toggleShield, ui/dm-hazard.js): toggles the protection flag at any time, hazard or not; persists for the session
+    const sb = document.createElement('button'); sb.className = 'sh-btn'; sb.type = 'button'; sb.setAttribute('aria-label', 'Shield'); sb.title = 'Shield (protection on / off)'; sb.innerHTML = SH_ICON;
+    sb.addEventListener('click', e => { stop(e); try { if (root.DM_HAZ && root.DM_HAZ.toggleShield) root.DM_HAZ.toggleShield(); } catch (x) { } shSync(); });
     let lp = 0, lpDone = false;   // long-press the light button: beam width wide -> medium -> spot (the cone key in the bar does the same)
     b.addEventListener('click', e => { stop(e); if (lpDone) { lpDone = false; return; } F.toggle(); });
     b.addEventListener('pointerdown', () => { lpDone = false; clearTimeout(lp); lp = setTimeout(() => { lpDone = true; F.setCone((S.cone + 1) % CONES.length); }, 520); });
     for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) b.addEventListener(ev, () => clearTimeout(lp));
     ck.addEventListener('click', e => { stop(e); F.setCone((S.cone + 1) % CONES.length); });
     bar.addEventListener('click', e => { stop(e); const t = e.target && e.target.closest && e.target.closest('.fl-seg'); if (t) F.setStep(+t.getAttribute('data-i')); });
-    for (const el of [b, bar]) { el.addEventListener('touchstart', stop, { passive: true }); el.addEventListener('mousedown', stop); el.addEventListener('pointerdown', stop); }
-    w.appendChild(b); w.appendChild(bar); document.body.appendChild(w);
-    S.ui = { w, b, bar, ck, segs: bar.getElementsByClassName('fl-seg') };
+    for (const el of [b, bar, sb]) { el.addEventListener('touchstart', stop, { passive: true }); el.addEventListener('mousedown', stop); el.addEventListener('pointerdown', stop); }
+    w.appendChild(b); w.appendChild(sb); w.appendChild(bar); document.body.appendChild(w);
+    S.ui = { w, b, sb, bar, ck, segs: bar.getElementsByClassName('fl-seg') };
+    root.addEventListener('dmshieldtoggle', () => shSync());
     root.addEventListener('resize', () => { S.dirty = true; S.wait = 0; }); root.addEventListener('orientationchange', () => { S.dirty = true; S.wait = 0; });
     return S.ui;
   }
+  function shSync() { const u = S.ui; if (!u || !u.sb) return; let on = false; try { on = !!(root.DM_HAZ && root.DM_HAZ.shieldIsOn && root.DM_HAZ.shieldIsOn()); } catch (e) { } u.sb.classList.toggle('on', on); u.sb.setAttribute('aria-pressed', on ? 'true' : 'false'); }
   function ui() {
-    const u = build(); if (!u) return;
+    const u = build(); if (!u) return; shSync();
     u.w.classList.toggle('on', S.on); u.b.setAttribute('aria-pressed', S.on ? 'true' : 'false'); u.w.setAttribute('data-k', S.cone); u.ck.title = 'Beam width: ' + CONES[S.cone].name;
     for (let i = 0; i < u.segs.length; i++) { u.segs[i].classList.toggle('lit', i <= S.step); u.segs[i].setAttribute('aria-checked', i === S.step ? 'true' : 'false'); }
   }
@@ -598,9 +611,9 @@
     '#atmo-overlay .side-pad,#dm-globe .dg-globe,#dm-globe .dg-b,.kite-board.kb-float,.kb-float';
   const SZ = 34, GAP = 6;
   function vis(e) { if (!e || (e.closest && e.closest('#dm-flash'))) return null; const q = e.getBoundingClientRect(); if (q.width < 2 || q.height < 2) return null; const c = root.getComputedStyle(e); if (c.visibility === 'hidden' || c.display === 'none' || +c.opacity < 0.05) return null; return q; }
-  function free(x, b, obs, W, H) {   // a SZ square at left x / bottom-offset b: on screen and clear of every obstacle
-    const l = x, t = H - b - SZ; if (l < 2 || l + SZ > W - 2 || t < 2 || t + SZ > H - 2) return false;
-    for (let i = 0; i < obs.length; i++) { const q = obs[i]; if (q.left < l + SZ && q.right > l && q.top < t + SZ && q.bottom > t) return false; }
+  function free(x, b, obs, W, H, th) {   // a SZ wide, th tall (default SZ: the flashlight alone; the cluster with the shield button is 2 SZ + GAP) box at left x / bottom-offset b: on screen and clear of every obstacle
+    th = th > SZ ? th : SZ; const l = x, t = H - b - th; if (l < 2 || l + SZ > W - 2 || t < 2 || t + th > H - 2) return false;
+    for (let i = 0; i < obs.length; i++) { const q = obs[i]; if (q.left < l + SZ && q.right > l && q.top < t + th && q.bottom > t) return false; }
     return true;
   }
   F._free = free;
@@ -629,7 +642,8 @@
     }
     if (okR2) { cand.push([r2.left - GAP - SZ, H - r2.bottom]); cand.push([r2.left - GAP - SZ, H - r2.bottom + SZ + GAP]); }   // left of the right stick
     cand.push([Math.round(W / 2 - SZ - 40), Math.max(12, sb + 12)]);  // bottom centre-left, clear of the stick row on a phone
-    let pick = null; for (let i = 0; i < cand.length && !pick; i++) if (free(cand[i][0], cand[i][1], obs, W, H)) pick = cand[i];
+    const TH = S.mode === 'space' ? SZ : SZ * 2 + GAP;   // the cluster: flashlight + the shield sub-button above it (not in space)
+    let pick = null; for (let i = 0; i < cand.length && !pick; i++) if (free(cand[i][0], cand[i][1], obs, W, H, TH)) pick = cand[i];
     if (!pick) pick = cand.length > 1 && okR ? cand[0] : [12, Math.max(150, sb + 150)];   // nothing free (or no sticks at all): the stick slot / a fixed bottom-left slot — still visible, on top
     S.placed = true;
     u.w.setAttribute('data-m', S.mode);
