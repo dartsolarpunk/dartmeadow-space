@@ -268,7 +268,22 @@
     return bad;
   }
 
-  const core = { TIERS: TIERS, TABLE: TABLE, FAR: FAR, setFar: setFar, WALK_R: WALK_R, CHUNK: CHUNK, get: get, sw: sw, fade: fade, propCutErr: propCutErr, reliefBoost: reliefBoost, projErrPx: projErrPx, errDist: errDist, lod2Dist: lod2Dist, sizeFade: sizeFade, levelByError: levelByError, billboardViews: billboardViews, chunkCulled: chunkCulled, billboardPx: billboardPx, createXfade: createXfade, mipBias: mipBias, qualityBands: qualityBands, bandW: bandW, propCover: propCover, propCut: propCut, propRing: propRing, vantageReach: vantageReach, vantageFog: vantageFog, validate: validate, tierIndex: tierIndex };
+  /* THE LOD CENTRE (bubble-lod).  One rule for every world and every view (orbit camera, third person, first person, spectator): the LOD set (prop chunks, the far canopy, the sea sheet,
+     the vantage height) is centred on the CAMERA's ground point - the camera's x / z in the world's flat frame, with height measured above the ground UNDER the camera (the playable
+     ground level of that map: H(x, z), y = 0 on a flat map) - not on the player / board / spectator focus.  The ground tiles, the parallax march, the fade masks and the sparse-voxel
+     bricks were already distance-from-camera; this makes the rest agree.  Gameplay streaming that must follow HER (colliders, the marching-cubes patch, the sun shadow box, light
+     probes) keeps the driver: the driver is passed through unchanged (drv).  No camera (space / not placed yet) -> the driver is the centre.
+     cam = [x, y, z] flat camera (or null), gc = ground height under the camera, drv = [x, z, agl].  out = {x, z, y, agl, g, camera, off} (written in place, returned). */
+  function lodCentre(cam, gc, drv, out) {
+    const o = out || {};
+    if (cam && isFinite(cam[0]) && isFinite(cam[1]) && isFinite(cam[2])) {
+      const g = isFinite(gc) ? gc : 0;
+      o.x = cam[0]; o.z = cam[2]; o.y = cam[1]; o.g = g; o.agl = Math.max(0, cam[1] - g); o.camera = true;
+      o.off = drv ? Math.hypot(cam[0] - drv[0], cam[2] - drv[1]) : 0;
+    } else { o.x = drv[0]; o.z = drv[1]; o.y = 0; o.g = 0; o.agl = drv[2] || 0; o.camera = false; o.off = 0; }
+    return o;
+  }
+  const core = { lodCentre: lodCentre, TIERS: TIERS, TABLE: TABLE, FAR: FAR, setFar: setFar, WALK_R: WALK_R, CHUNK: CHUNK, get: get, sw: sw, fade: fade, propCutErr: propCutErr, reliefBoost: reliefBoost, projErrPx: projErrPx, errDist: errDist, lod2Dist: lod2Dist, sizeFade: sizeFade, levelByError: levelByError, billboardViews: billboardViews, chunkCulled: chunkCulled, billboardPx: billboardPx, createXfade: createXfade, mipBias: mipBias, qualityBands: qualityBands, bandW: bandW, propCover: propCover, propCut: propCut, propRing: propRing, vantageReach: vantageReach, vantageFog: vantageFog, validate: validate, tierIndex: tierIndex };
   if (typeof module !== 'undefined' && module.exports) module.exports = core;
   if (typeof window === 'undefined') return;
 
@@ -298,7 +313,7 @@
   out.vantageFog = function (vt, fogFar, drawR) { return vantageFog(out.tier, vt, fogFar, drawR); };
   out.mansion = function () { return { nIn: out.get('mansion.in'), nOut: out.get('mansion.out'), far: out.get('mansion.far') }; };
   out.mansionSize = function () { return { gone: out.get('mansion.goneDiam'), full: out.get('mansion.fullDiam') }; };
-  out.sizeFade = sizeFade; out.billboardPx = billboardPx;
+  out.centre = lodCentre; out.sizeFade = sizeFade; out.billboardPx = billboardPx;
   out.sw = sw; out.fade = fade; out.createXfade = createXfade;
   out.lod2Dist = function (errM, fovDeg, viewH) { return lod2Dist(out.tier, errM, fovDeg, viewH, bud('propsK', 1)); };
   out.bands = function (o, res) { return qualityBands(out.tier, o, res); };
