@@ -20343,7 +20343,7 @@ function _pwCamBlend(dt){
   if(b.t>=1) PW.blend=null;
 }
 const _pwV=[0,0,0,0,0].map(()=>null);
-const _LCT={x:0,z:0,y:0,g:0,agl:0,camera:false,off:0}, _LCT_CAM=[0,0,0], _LCT_DRV=[0,0,0], _VG={x:0,z:0,g:0,hit:false,off:0,eye:3,horizon:0}, _VG_FWD=[0,0,-1], _VGF=new THREE.Vector3();   // (shield-lod) + the view-centre ground point record   // (bubble-lod) the LOD centre record, written in place
+const _LCT={x:0,z:0,y:0,g:0,agl:0,camera:false,off:0}, _LCT_CAM=[0,0,0], _LCT_DRV=[0,0,0], _VG={x:0,z:0,g:0,hit:false,off:0,eye:3,horizon:0}, _VG_FWD=[0,0,-1], _VGF={x:0,y:0,z:0};   // (shield-lod) + the view-centre ground point record   // (bubble-lod) the LOD centre record, written in place
 function _pwVec(i){ return _pwV[i]||(_pwV[i]=new THREE.Vector3()); }
 // Per frame: the planet frame re-centres on whoever is driving, the camera
 // goes into it, the ground's level of detail follows the camera (its true
@@ -20398,7 +20398,7 @@ function _pwWorldTick(dt){
   let _vgOn=false;
   if(!space&&_cf&&window.DMLod&&DMLod.on&&DMLod.viewGround&&PW._camFlat.q){
     try{
-      _VGF.set(0,0,-1).applyQuaternion(PW._camFlat.q); _VG_FWD[0]=_VGF.x; _VG_FWD[1]=_VGF.y; _VG_FWD[2]=_VGF.z;
+      {const q=PW._camFlat.q,qx=q.x,qy=q.y,qz=q.z,qw=q.w, vx=0,vy=0,vz=-1, tx=2*(qy*vz-qz*vy), ty=2*(qz*vx-qx*vz), tz=2*(qx*vy-qy*vx); _VGF.x=vx+qw*tx+(qy*tz-qz*ty); _VGF.y=vy+qw*ty+(qz*tx-qx*tz); _VGF.z=vz+qw*tz+(qx*ty-qy*tx);} _VG_FWD[0]=_VGF.x; _VG_FWD[1]=_VGF.y; _VG_FWD[2]=_VGF.z;
       const vg=DMLod.viewGround(_LCT_CAM,_VG_FWD,H,_planetR(),3.0,Math.min(2000,Math.max(_SKY_RELIEF,(PW.ground&&PW.ground.reliefSeen)||0)),_VG);
       lc.x=vg.x; lc.z=vg.z; if(isFinite(vg.g)) lc.g=vg.g; _vgOn=true;
     }catch(e){ if(!PW._vgWarn){ PW._vgWarn=1; console.warn('[lod] viewGround',e); } }
