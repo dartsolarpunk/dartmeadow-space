@@ -1,8 +1,8 @@
 // node tools/tests/hazard-determinism.js
-// ui/dm-hazardbubble.js: the habitable/toxic flag comes from its OWN stream (hash('hab:'+seed)); it must be
+// ui/dm-hazard.js: the habitable/toxic flag comes from its OWN stream (hash('hab:'+seed)); it must be
 // deterministic per seed, must not consume or perturb Math.random / any shared RNG, and Sol bodies are fixed.
 const fs=require('fs'), vm=require('vm');
-const src=fs.readFileSync(__dirname+'/../../ui/dm-hazardbubble.js','utf8');
+const src=fs.readFileSync(__dirname+'/../../ui/dm-hazard.js','utf8');
 const win={addEventListener(){}}; const ctx={window:win,console,Math:Object.create(Math)};
 let randCalls=0; ctx.Math.random=()=>{ randCalls++; return 0.5; };
 vm.createContext(ctx); vm.runInContext(src,ctx);

@@ -253,4 +253,18 @@ function glue(q, GFX, bud) {
   L.setFar(true);
 }
 
+
+// THE LOD CENTRE (bubble-lod): the camera's ground point, same rule everywhere
+{
+  const C = L.lodCentre, o = {};
+  C([100, 30, -40], 12, [90, -35, 0], o);
+  ok(o.camera === true && o.x === 100 && o.z === -40 && o.y === 30 && o.g === 12 && o.agl === 18, 'centre = the camera x / z, height above the ground UNDER the camera (' + JSON.stringify(o) + ')');
+  ok(Math.abs(o.off - Math.hypot(10, 5)) < 1e-9, 'off = how far the driver is from the centre');
+  C([0, 2, 0], 5, [50, 50, 0], o); ok(o.agl === 0, 'a camera below the ground sample never gives a negative height');
+  C(null, 0, [7, 9, 33], o); ok(o.camera === false && o.x === 7 && o.z === 9 && o.agl === 33, 'no camera (space / not placed): the driver is the centre');
+  C([NaN, 1, 1], 0, [7, 9, 33], o); ok(o.camera === false, 'a bad camera falls back to the driver');
+  const r1 = C([1, 2, 3], 0, [0, 0, 0], o); ok(r1 === o, 'written in place (no allocation per frame)');
+  // same rule for every view: third person (camera 3 m behind), first person (at the eyes), orbit (30 m out, 10 m up), spectator (far): the centre is always the camera
+  for (const [nm, cam] of [['third', [3, 2, 0]], ['first', [0, 1.7, 0]], ['orbit', [30, 11, 0]], ['spectator', [400, 80, -300]]]) { C(cam, 0, [0, 0, 1.7], o); ok(o.x === cam[0] && o.z === cam[2] && o.agl === cam[1], nm + ': centred on the camera'); }
+}
 console.log('lod-unit OK (' + n + ' checks)');

@@ -1,7 +1,7 @@
 // node tools/tests/atmo-warm-keys.js - (v341) the warm-up must build its pipelines under EXACTLY the keys the frame pass looks up, or the
 // frame compiles them again mid-flight (the multi-second freeze the warm-up exists to prevent).
 //   sp| (space true-atmosphere pass): _taWarm and _trueAtmoRender each compute the key: same expression, incl. the #265 star-count suffix (nSt>1?'|'+nSt:'')
-//   sf| (surface pass): built in ONE place only (_trueAtmoSurface0, key ...|PW.gen|nSt), so any warm render of it goes through the frame's own key
+//   sf| (surface pass): built in ONE place only (_taSurfPass, key ...|PW.gen|nSt; the frame's _trueAtmoSurface0 and the world-load warm-up _taWarmSurface both call it), so a warm render goes through the frame's own key
 //   GalSky single compile (#264 / v338): the galaxy step compiles the GalSky subtree against flightScene + flightCamera, the scene / camera render() uses
 'use strict';
 const fs = require('fs'), path = require('path'), vm = require('vm');
@@ -30,7 +30,10 @@ for (const s of [null, 1, 2, 3, 5]) {
 // sf: one constructor only, with |nSt, so a warm render uses the frame's own key
 const sfMakers = IDX.match(/key='sf\|'[^;]*;/g) || [];
 ok(sfMakers.length === 1 && /\+'\|'\+nSt;$/.test(sfMakers[0]), 'sf: the key is built in one place, ending |nSt (' + sfMakers.join(' ') + ')');
-ok(sfMakers.length === 1 && cut(IDX, 'function _trueAtmoSurface0(', '_taPrune(\'sf|\'').includes(sfMakers[0]) && nStRe.test(cut(IDX, 'function _trueAtmoSurface0(', '_taPrune(\'sf|\'')), 'sf: that place is _trueAtmoSurface0, with the same star count');
+ok(sfMakers.length === 1 && cut(IDX, 'function _taSurfPass(', '_taPrune(\'sf|\'').includes(sfMakers[0]) && nStRe.test(cut(IDX, 'function _taSurfPass(', '_taPrune(\'sf|\'')), 'sf: that place is _taSurfPass, with the same star count');
+const swarm = cut(IDX, 'async function _taWarmSurface(', '\n}\n');
+ok(/_taSurfPass\(r,scene,cam,layered\)/.test(cut(IDX, 'function _trueAtmoSurface0(', '\n}\n')) && /_taSurfPass\(r,scene,cam,layered\)/.test(swarm) && !/key='sf\|'/.test(swarm) && /layered=PW\.skyK<0\.999&&_PWS\.ok/.test(swarm), 'sf: the world-load warm-up (_taWarmSurface) gets the pass from _taSurfPass with the frame\'s own layered expression: same key, no second pipeline');
+ok(/_taWarmSurface\(gen\)/.test(cut(IDX, 'async function _pwOpen(', '\n}\n')) , 'sf: _pwOpen runs the surface warm-up behind the loader');
 ok(!/key='sf\|'/.test(warm), 'sf: _taWarm builds no surface pipeline of its own (no second key to drift)');
 // GalSky single compile: same scene / camera as render(), so the pipeline cache keys are the frame's
 const rest = cut(IDX, 'function _gsPrecompileRest(){', '\n}');

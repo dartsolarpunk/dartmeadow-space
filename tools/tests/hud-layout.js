@@ -60,69 +60,37 @@ ok(/function toast\(/.test(html) && /dmSys\(/.test(html.slice(html.indexOf('func
 ok(!/id="toast"/.test(html), 'no #toast element (retired v240)');
 ok(/ui\/dm-sys\.js\?v=(?:30[2-9]|3[1-9]\d)/.test(html) && /ui\/dm-menu\.css\?v=(?:30[2-9]|3[1-9]\d)/.test(html), 'edited files restamped (?v=302 = sw dartmeadow-engine-v302)');
 
-console.log('== SHIELD left-stick button (t1611u)');
-const shSrc = rd('ui/dm-shield.js'), flSrc = rd('ui/dm-flash.js');
-ok(/ui\/dm-shield\.js\?v=\d+/.test(html), 'index.html loads ui/dm-shield.js (stamped)');
-ok(/id = 'dm-shield'/.test(shSrc) && /id = 'dm-shield-btn'/.test(shSrc) && /className = 'fl-btn'/.test(shSrc), 'wrapper #dm-shield + button #dm-shield-btn.fl-btn (same class as the flashlight)');
-ok(/#dm-shield\{[^}]*display:none/.test(shSrc) && /#dm-shield\[data-show="1"\]\{[^}]*display:block/.test(shSrc), 'hidden by default; shown only with data-show=1');
-ok(/title = 'SHIELD'/.test(shSrc) && /aria-label', 'SHIELD'/.test(shSrc), 'labelled SHIELD');
-ok(/#dm-shield\.on \.fl-btn\{/.test(shSrc) && /#dm-flash\.on \.fl-btn\{/.test(flSrc), 'lit state uses the same .on class as the flashlight');
-{ const grab = (src, sel) => { const i = src.indexOf(sel); if (i < 0) return ''; const a = src.indexOf('{', i), b = src.indexOf('}', a); return src.slice(a + 1, b); };
-  const fb = grab(flSrc, '#dm-flash .fl-btn{'), sb = grab(shSrc, '#dm-shield .fl-btn{');
-  const fon = grab(flSrc, '#dm-flash.on .fl-btn{'), son = grab(shSrc, '#dm-shield.on .fl-btn{');
-  ok(fb && fb === sb, 'flashlight and shield .fl-btn chrome CSS match exactly');
-  ok(fon && fon === son, 'flashlight and shield lit (.on .fl-btn) CSS match exactly'); }
-ok(/const SZ = 34, GAP = 6/.test(shSrc) && /getElementById\('dm-flash'\)/.test(shSrc) && /bot \+ SZ \+ GAP/.test(shSrc), 'docks next to #dm-flash (same 34 px button, 6 px gap, above the flashlight so the lumen bar stays free)');
-ok(/addEventListener\('dmshield'/.test(shSrc), 'listens for the dmshield window event');
-ok(/if \(root\.DMShield\) DMShield\.toggle\(\)/.test(shSrc), 'a tap calls window.DMShield && DMShield.toggle()');
-ok(/touchstart/.test(shSrc) && /pointerdown/.test(shSrc) && /mousedown/.test(shSrc) && /stopPropagation/.test(shSrc), 'same pointer/touch stop as the flashlight (tap does not leak into the stick)');
-ok(!/requestAnimationFrame\s*\(/.test(shSrc) && !/setInterval\s*\(/.test(shSrc), 'no rAF loop or setInterval');
-ok(!/(?:window|root)\.DMShield\s*=/.test(shSrc), 'does not stub or assign window.DMShield (Lighting owns the hook in dm-hazardbubble.js)');
-ok(!/dm-hazardbubble\.js/.test(shSrc) || /does not create or own/.test(shSrc), 'HUD file only; does not edit dm-hazardbubble.js');
-// behaviour: hidden without DMShield; event shows it, lights .on, sits above the flashlight
-{ const el = (tag) => {
-    const o = { tagName: tag, id: '', className: '', style: {}, attrs: {}, children: [], listeners: {},
-      setAttribute(k, v) { this.attrs[k] = String(v); }, removeAttribute(k) { delete this.attrs[k]; }, getAttribute(k) { return Object.prototype.hasOwnProperty.call(this.attrs, k) ? this.attrs[k] : null; },
-      appendChild(c) { this.children.push(c); return c; },
-      addEventListener(type, fn) { this.listeners[type] = fn; },
-      classList: { _s: new Set(), contains(n) { return this._s.has(n); }, toggle(n, on) { if (on) this._s.add(n); else this._s.delete(n); o.className = [...this._s].join(' '); } } };
-    Object.defineProperty(o, 'innerHTML', { set() { }, get() { return ''; } });
-    return o;
-  };
-  const body = el('body'), head = el('head'), nodes = {};
-  const flash = el('div'); flash.id = 'dm-flash'; flash.attrs['data-m'] = 'walk'; flash.style.left = '120px'; flash.style.bottom = '40px';
-  const flight = el('div'); flight.id = 'screen-flight'; flight.className = 'screen active'; flight.classList._s.add('active');
-  const doc = { body, head, documentElement: {}, readyState: 'complete',
-    getElementById: id => id === 'dm-flash' ? flash : id === 'screen-flight' ? flight : id === 'dm-shield' ? nodes.w : id === 'dm-shield-btn' ? nodes.b : id === 'dm-shield-css' ? nodes.css : null,
-    createElement: tag => { const n = el(tag); if (tag === 'style') nodes.css = n; if (tag === 'div') nodes.w = n; if (tag === 'button') nodes.b = n; return n; },
-    addEventListener() { } };
-  body.appendChild = c => { body.children.push(c); return c; };
-  let moCount = 0; const evs = {}, ctx = { document: doc, MutationObserver: function () { moCount++; this.observe = function () { }; this.disconnect = function () { }; } };
-  ctx.window = ctx; ctx.globalThis = ctx; ctx.addEventListener = (t, fn) => { evs[t] = fn; }; ctx.removeEventListener = (t, fn) => { if (evs[t] === fn) delete evs[t]; };
-  vm.createContext(ctx); vm.runInContext(shSrc, ctx);
-  // (t1612) dormant on a safe map: no DOM, no style, no observers, only the two event listeners
-  ok(!nodes.w && !nodes.b && !nodes.css, 'safe map: no button / style created at load');
-  ok(Object.keys(evs).sort().join() === 'dmhazard,dmshield', 'safe map: only the dmshield + dmhazard listeners at load (no resize / orientation / observers)');
-  ok(moCount === 0, 'safe map: no MutationObserver created');
-  evs.dmshield({ type: 'dmshield', detail: { available: true, on: true } });
-  ok(nodes.w && nodes.w.id === 'dm-shield' && nodes.b && nodes.b.id === 'dm-shield-btn' && nodes.b.className === 'fl-btn', 'widget built (on first available) as #dm-shield > #dm-shield-btn.fl-btn');
-  ok(evs.resize && evs.orientationchange && moCount >= 1, 'layout listeners + observers exist only while available');
-  ok(nodes.w.getAttribute('data-show') === '1', 'shown on dmshield when available');
-  ok(nodes.w.classList.contains('on') && nodes.b.getAttribute('aria-pressed') === 'true', 'lit .on state follows detail.on');
-  ok(nodes.w.style.left === '120px' && nodes.w.style.bottom === '80px', 'sits next to the flashlight (same left, 34+6 px above)');
-  let toggled = 0; ctx.DMShield = { available: true, on: true, toggle() { toggled++; } };
-  nodes.b.listeners.click({ stopPropagation() { } });
-  ok(toggled === 1, 'click calls DMShield.toggle()');
-  // (t1612) orb OFF: the button wears the board group's protection colour; orb ON: plain lit button
-  evs.dmshield({ type: 'dmshield', detail: { available: true, on: false, status: 'protected' } });
-  ok(nodes.w.getAttribute('data-st') === 'protected' && !nodes.w.classList.contains('on'), 'orb off: button wears the protected (green) status');
-  evs.dmshield({ type: 'dmshield', detail: { available: true, on: false, status: 'exposed' } });
-  ok(nodes.w.getAttribute('data-st') === 'exposed', 'orb off, outside the field: exposed (red) status');
-  evs.dmshield({ type: 'dmshield', detail: { available: true, on: true, status: 'exposed' } });
-  ok(nodes.w.getAttribute('data-st') === null && nodes.w.classList.contains('on'), 'orb on: no status colour, plain lit button');
-  ok(/#dm-shield\[data-st="protected"\] \.fl-btn\{/.test(shSrc) && /data-st="warn"/.test(shSrc) && /data-st="exposed"/.test(shSrc), 'status CSS for green / amber / red');
-  evs.dmshield({ type: 'dmshield', detail: { available: false, on: false } });
-  ok(nodes.w.getAttribute('data-show') === '' && !nodes.w.classList.contains('on'), 'hides again when available is false');
-  ok(!evs.resize && !evs.orientationchange, 'unavailable again: layout listeners removed'); }
+console.log('== hazard indicator HUD (ui/dm-hazardhud.js)');
+{ const hSrc = rd('ui/dm-hazardhud.js'), hzSrc = rd('ui/dm-hazard.js');
+  ok(/ui\/dm-hazardhud\.js\?v=\d+/.test(html) && !/dm-shield\.js|dm-hazardbubble/.test(html), 'index.html loads ui/dm-hazardhud.js; the old SHIELD button file and the orb file are not referenced');
+  ok(!fs.existsSync(path.join(root, 'ui', 'dm-shield.js')) && !/dm-shield-btn|DMShield\.toggle/.test(hSrc), 'no SHIELD toggle button any more');
+  const cssTxt = (hSrc.match(/const CSS = ([\s\S]*?);\n  let el/) || [])[1] || '';
+  ok(/#dm-hazhud\{[^}]*position:fixed/.test(cssTxt) && /left:50%/.test(cssTxt) && /pointer-events:none/.test(cssTxt), 'a fixed, centred, non-interactive card (never eats a touch)');
+  const top = +((cssTxt.match(/top:calc\((\d+)px/) || [])[1] || 0);
+  ok(top >= 120, 'sits under the mini-kite strip (top 6 px + 112 px tall): top ' + top + ' px');
+  ok(/display:none/.test(cssTxt) && /#screen-flight\.active\) #dm-hazhud\[data-show="1"\]\{display:block/.test(cssTxt), 'hidden by default; shown only in the flight screen while data-show=1');
+  ok(/#screen-menu\.active\) #dm-hazhud/.test(cssTxt) && /#screen-builder\.active\) #dm-hazhud/.test(cssTxt), 'never over the menu / builder');
+  const wMax = +((cssTxt.match(/width:min\((\d+)vw,(\d+)px\)/) || [])[2] || 999); ok(wMax <= 240 && /min\(86vw/.test(cssTxt), 'narrow (<= 240 px, <= 86 vw): clears the world rail (top right) and fits a phone portrait');
+  ok(!/(setInterval|requestAnimationFrame)\(/.test(hSrc.replace(/\/\*[\s\S]*?\*\//, '')) && /addEventListener\('dmhazardhud'/.test(hSrc), 'no timer / rAF: it only listens for dmhazardhud');
+  ok(/band|hh-band/.test(hSrc) && /hh-mark/.test(hSrc) && /transition:left/.test(hSrc), 'band meter + marker that eases');
+  // behaviour: the pure view() the card is rendered from
+  const ctx = { window: null, document: null, console }; ctx.window = ctx; vm.createContext(ctx); vm.runInContext(hSrc, ctx); const V = ctx.DMHazardHud.view;
+  ok(V(null).show === false && V({ on: false }).show === false, 'no hazard: hidden');
+  let v = V({ on: true, sensed: true, state: 'protected', label: 'TOXIC ATMOSPHERE', hue: '#35ff7e', marker: 1, reserve: 0.5, sec: 45, zero: false });
+  ok(v.show && v.type === 'TOXIC ATMOSPHERE' && v.time === 'SAFE TIME 00:45' && v.marker === 1 && v.st === 'protected', 'inside: type + SAFE TIME countdown + marker at the right end');
+  v = V({ on: true, sensed: true, state: 'alert', label: 'VOLCANIC PLUME', marker: 0.3, reserve: 1, sec: Infinity }); ok(/NEAR/.test(v.time) && v.st === 'alert' && v.marker === 0.3, 'near: no countdown, marker on the left half');
+  v = V({ on: true, sensed: true, state: 'exposed', label: 'TOXIC ATMOSPHERE', marker: 1, reserve: 0, sec: 0, zero: true }); ok(/OVEREXPOSED/.test(v.time) && v.st === 'exposed', 'zero: the clear warning state');
+  v = V({ on: true, sensed: false, state: 'off', label: 'VOLCANIC PLUME', marker: 0, reserve: 0.6, refill: 12 }); ok(/RECOVERING 00:12/.test(v.time) && v.marker === 0, 'after she leaves: marker back at 0, RECOVERING with the refill time');
+  ok(V({ on: true, sensed: true, state: 'protected', marker: 7, reserve: 3, sec: 1 }).marker === 1 && V({ on: true, sensed: true, state: 'protected', marker: -2, reserve: -1, sec: 1 }).reserve === 0, 'marker / reserve are clamped to 0..1');
+  // dormant: one listener at load; the DOM exists only after the first sensed event
+  const evs = {}, nodes = []; const mkEl = () => { const e = { style: { setProperty() { }, left: '', transform: '' }, attrs: {}, setAttribute(k, x) { this.attrs[k] = x; }, appendChild() { }, querySelector: () => mkEl(), textContent: '', set innerHTML(x) { } }; return e; };
+  const dctx = { console, setInterval() { throw new Error('timer'); }, requestAnimationFrame() { throw new Error('raf'); }, addEventListener: (k, f) => { evs[k] = f; }, document: { head: { appendChild() { } }, body: { appendChild(e) { nodes.push(e); } }, getElementById: () => null, createElement: () => mkEl() } };
+  dctx.window = dctx; vm.createContext(dctx); vm.runInContext(hSrc, dctx);
+  ok(Object.keys(evs).join() === 'dmhazardhud' && nodes.length === 0, 'safe map: exactly one window listener, no DOM, no style');
+  evs.dmhazardhud({ detail: { on: false } }); ok(nodes.length === 0, 'an "off" event builds nothing');
+  evs.dmhazardhud({ detail: { on: true, sensed: true, state: 'protected', marker: 1, reserve: 1, sec: 90, label: 'X' } }); ok(nodes.length === 1 && nodes[0].attrs['data-show'] === '1', 'first sensed event: card built + shown');
+  evs.dmhazardhud({ detail: { on: false } }); ok(nodes[0].attrs['data-show'] === '', 'hazard gone: card hidden');
+  // the hazard module emits it at <= ~4 Hz, on change
+  ok(/function emitHud\(force\)/.test(hzSrc) && /now-EX\.emitT<250/.test(hzSrc), 'ui/dm-hazard.js emits dmhazardhud on change, at most every 250 ms'); }
 
 console.log(fails ? 'hud-layout: FAILED ' + fails + '/' + n : 'hud-layout: all ' + n + ' checks passed'); process.exit(fails ? 1 : 0);

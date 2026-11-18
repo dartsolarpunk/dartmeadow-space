@@ -75,7 +75,7 @@ const CENSUS = [
   { file: 'ui/dm-lamps.js', pat: /const mk = \(arr, mat, count, name\)/, id: 'Ariel street-lamp poles and heads (mansion area)', status: 'collider', proof: /W\.addCylinder\('lamps'/ },
   { file: 'ui/dm-marine.js', pat: /InstancedMesh\(geo,mat,cap\)/, id: 'marine life (fish)', status: 'exempt', why: 'swim-through ambient life in the water volume' },
   { file: 'ui/dm-fluid.js', pat: /JOTS_FluidDrops|JOTS_FluidFoam/, id: 'fluid drops / foam', status: 'exempt', why: 'effect particles (they collide with the fluid solver itself)' },
-  { file: 'ui/dm-hazardbubble.js', pat: /S\.bub=new THREE\.InstancedMesh/, id: 'hazard bubble', status: 'exempt', why: 'effect volume' },
+  { file: 'ui/dm-hazard.js', pat: /S\.bub=new THREE\.InstancedMesh/, id: 'underwater bubble trail', status: 'exempt', why: 'effect particles' },
   { file: 'ui/dm-mist.js', pat: /InstancedMesh\(new THREE\.PlaneGeometry/, id: 'mist sprites', status: 'exempt', why: 'effect sprites' },
   { file: 'ui/dm-star.js', pat: /InstancedMesh\(new THREE\.PlaneGeometry/, id: 'star sprites', status: 'exempt', why: 'sky' },
   { file: 'ui/dm-menuscene.js', pat: /InstancedMesh\(geos\[k\]|InstancedMesh\(pg,/, id: 'menu scene rocks / particles', status: 'exempt', why: 'menu scene, no player body' },

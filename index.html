@@ -1087,8 +1087,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-flash.js?v=331" defer></script>
 <script src="ui/dm-menuscene.js?v=343" defer></script>
 <script src="ui/dm-starbubble.js?v=4" defer></script>
-<script src="ui/dm-hazardbubble.js?v=353" defer></script>
-<script src="ui/dm-shield.js?v=353" defer></script>
+<script src="ui/dm-hazard.js?v=353" defer></script>   <!-- hazard registry + exposure clock + protection LED / crown glow (the protective orb is gone) -->
+<script src="ui/dm-hazardhud.js?v=353" defer></script>   <!-- the hazard band / type / safe-time HUD (only while a hazard is sensed) -->
 <script src="ui/dm-birdtemple.js?v=122" defer></script>
 <script src="ui/dm-bt-engineering.js?v=5" defer></script>
 <script src="ui/dm-bt-madison.js?v=5" defer></script>
@@ -19890,6 +19890,9 @@ async function _pwOpen(body,site,mode,focus){
     // (v307) a compile that never settles (lost device, a pipeline that never resolves) must not hold PW.opening for good: it blocks every later
     // world open and hides the space globe. Take over after 60 s; the compile carries on in the background.
     if(flightRenderer.compileAsync) await Promise.race([_pwCompileStaged(gen),new Promise(res=>setTimeout(res,60000))]);
+    // (bubble-lod) the world's air + the hazard / protection set, built and compiled behind the loader: the world is shown complete or not at all (no half-state)
+    if(gen===PW.gen&&PW.active){ try{ await Promise.race([_taWarmSurface(gen),new Promise(res=>setTimeout(res,20000))]); }catch(e){} }
+    if(gen===PW.gen&&PW.active){ try{ if(window.DM_HAZ&&DM_HAZ.prewarm) await Promise.race([DM_HAZ.prewarm(gen),new Promise(res=>setTimeout(res,8000))]); }catch(e){} }
   }catch(e){ console.warn('[pw] precompile',e); }
   _crE('pw:open');
   return gen===PW.gen&&PW.active;
@@ -19968,7 +19971,7 @@ function _pwFrame(dt){
     let _btGo=true; try{ if(mode!=='space'&&!SHIP_WALK.active&&!SHIP_LAND&&!(SHIP_LIFT&&SHIP_LIFT.on)&&_pwSkyHidden()&&_pwBtAcc<0.1) _btGo=false; }catch(e){}
     if(_btGo){ const _bt=performance.now(); try{ updateBirdTemple(_pwBtAcc); }catch(e){ _animLoopWarn('birdTemple',e); } _pwBtAcc=0; DMFT.add('updateBirdTemple',performance.now()-_bt); } }   // the ship keeps wandering + the shard keeps following, even off-screen
   { const _wt=performance.now(); try{ _pwWorldTick(dt); }catch(e){ _animLoopWarn('world',e); } DMFT.add('pwWorldTick',performance.now()-_wt); }
-  try{ if(window.DM_HAZ) DM_HAZ.tick(dt); }catch(e){ _animLoopWarn('hazard',e); }   // habitability orb + underwater look (ui/dm-hazardbubble.js)
+  try{ if(window.DM_HAZ) DM_HAZ.tick(dt); }catch(e){ _animLoopWarn('hazard',e); }   // exposure clock + protection LED / crown glow + underwater look (ui/dm-hazard.js)
   { const _fw=performance.now(); try{ if(window.DMFluidWorld) DMFluidWorld.tick(dt); }catch(e){ _animLoopWarn('fluidVfx',e); } DMFT.add('fluidWorld',performance.now()-_fw); }   // APIC sea + PBF spray (ui/dm-fluid-world.js)
   try{ _dynRes(flightRenderer); }catch(e){}
   try{ if(window.DMFlash) DMFlash.tick(PW.mode); }catch(e){ _animLoopWarn('flash',e); }   // glasses flashlight (ui/dm-flash.js): walk / fly / space HUDs
@@ -20186,44 +20189,72 @@ async function _taWarm(r,scene,cam){
 }
 // on the world (walk / low flight): the world scene, its sky composited behind, the gas over both by depth
 function _trueAtmoSurface(r,scene,cam,layered){ const _a0=performance.now(); try{ return _trueAtmoSurface0(r,scene,cam,layered); } finally{ DMFT.add('atmoPass',performance.now()-_a0); } }
+// (bubble-lod) the surface air pass of this world (the one the frame draws, same key): created here, not lazily inside the first frame.
+function _taSurfPass(r,scene,cam,layered){
+  const R=_planetR(), mars=!!(PW.body&&/mars/i.test(PW.body.name||''));
+  const nSt=_taStarN();
+  const key='sf|'+(layered?1:0)+'|'+_taQ()+'|'+PW.gen+'|'+nSt;
+  let A=_TA.pipes.get(key);
+  if(!A){
+    _taPrune('sf|',key);
+    const P=mars?DMAtmo.presetDesert(R):DMAtmo.presetEarth(R);
+    // the same air as the classic shell here (top 2 km, scale height 350), bound to the real ground below
+    Object.assign(P,{top:2000,scaleHeight:350,heightScale:0,heightFn:null,water:null,seaLevel:PW.pal.water?0:null,hazeHeight:60,hazeAmount:mars?0.08:0.04});
+    if(P.cloud) Object.assign(P.cloud,{height:1150,width:180});
+    if(P.weather) Object.assign(P.weather,{alt:mars?250:1100,width:mars?300:260});
+    P.layers=(P.layers||[]).map(l=>Object.assign({},l,{alt:mars?250:1700,width:mars?350:250}));
+    A=DMAtmo.create(THREE,THREE.TSL,{renderer:r,scene,camera:cam,planet:P,quality:_taQ(),maxSteps:_taMaxSteps(),logarithmicDepth:!!r.logarithmicDepthBuffer,
+      skyScene:layered?flightScene:null,skyCamera:layered?flightCamera:null,localRes:128,halfRes:_taHalf(),stars:nSt});
+    _TA.pipes.set(key,A); _TA.loc.gen=-1;
+  }
+  return A;
+}
+// near LOD of the real ground (the world's own height field) round the focus; rebaked as it travels
+function _taSurfBake(A){
+  const L=_TA.loc, now=performance.now(), span=4096, H=TERRAIN.Hg||TERRAIN.H;
+  // (v256) the first bake of a world is whole (behind the loader); every later re-bake is sliced over frames (ui/dm-atmo.js setLocalHeightSliced, 3.5 ms a frame on a phone)
+  // instead of one 128x128 H() sweep in a single frame (300-400 ms on the Galaxy Tab), and waits longer under frame-budget pressure.
+  const _bakeGap=(window.DMBudget&&DMBudget.on&&DMBudget.atmoBakeGap)?DMBudget.atmoBakeGap():500;
+  if(typeof H==='function'&&!A.localBusy&&(L.gen!==PW.gen||((Math.abs(PWF.fx-L.x)>span/8||Math.abs(PWF.fz-L.z)>span/8)&&now-L.t>_bakeGap))){
+    const uy=_pwUnderlayY(), first=L.gen!==PW.gen||!A.setLocalHeightSliced;
+    _crB('heightBake'); try{ if(first) A.setLocalHeight(PWF.fx,PWF.fz,span,(x,z)=>H(x,z)+uy); else A.setLocalHeightSliced(PWF.fx,PWF.fz,span,(x,z)=>H(x,z)+uy); } finally{ _crE('heightBake'); } L.x=PWF.fx; L.z=PWF.fz; L.t=now; L.gen=PW.gen;
+  }
+}
+function _taSurfFeed(A,layered){
+  const c=_TA._c||(_TA._c=new THREE.Vector3());
+  _pwfCentre(c); A.setCenter(c); if(A.setAniso) A.setAniso(1/_pwfAnisoG());   // (v332) the air follows the E-W-stretched ground, not the bare sphere
+  const sky=TERRAIN.sky; if(sky&&sky.sunDir) A.setSun(sky.sunDir);
+  { const S=_pwStarsLive(); if(S&&A.setStars) A.setStars(S); }   // (v334) every real star scatters through the air (key star first)
+  // empty-sky pixels: the classic dome owns the sky low down; the gas takes it over with height (same weight as the old shell)
+  A.setWeights(layered?1:Math.max(0,Math.min(1,PW._atmoK!=null?PW._atmoK:0)),1);
+}
 function _trueAtmoSurface0(r,scene,cam,layered){
   if(_TA.failed||!_trueAtmoOn()||_taPerfOff()||!PW.pal||!PW.pal.atmos||!PW.atmo) return false;
   try{
-    const R=_planetR(), mars=!!(PW.body&&/mars/i.test(PW.body.name||''));
-    const nSt=_taStarN();
-    const key='sf|'+(layered?1:0)+'|'+_taQ()+'|'+PW.gen+'|'+nSt;
-    let A=_TA.pipes.get(key);
-    if(!A){
-      _taPrune('sf|',key);
-      const P=mars?DMAtmo.presetDesert(R):DMAtmo.presetEarth(R);
-      // the same air as the classic shell here (top 2 km, scale height 350), bound to the real ground below
-      Object.assign(P,{top:2000,scaleHeight:350,heightScale:0,heightFn:null,water:null,seaLevel:PW.pal.water?0:null,hazeHeight:60,hazeAmount:mars?0.08:0.04});
-      if(P.cloud) Object.assign(P.cloud,{height:1150,width:180});
-      if(P.weather) Object.assign(P.weather,{alt:mars?250:1100,width:mars?300:260});
-      P.layers=(P.layers||[]).map(l=>Object.assign({},l,{alt:mars?250:1700,width:mars?350:250}));
-      A=DMAtmo.create(THREE,THREE.TSL,{renderer:r,scene,camera:cam,planet:P,quality:_taQ(),maxSteps:_taMaxSteps(),logarithmicDepth:!!r.logarithmicDepthBuffer,
-        skyScene:layered?flightScene:null,skyCamera:layered?flightCamera:null,localRes:128,halfRes:_taHalf(),stars:nSt});
-      _TA.pipes.set(key,A); _TA.loc.gen=-1;
-    }
-    const c=_TA._c||(_TA._c=new THREE.Vector3());
-    _pwfCentre(c); A.setCenter(c); if(A.setAniso) A.setAniso(1/_pwfAnisoG());   // (v332) the air follows the E-W-stretched ground, not the bare sphere
-    const sky=TERRAIN.sky; if(sky&&sky.sunDir) A.setSun(sky.sunDir);
-    { const S=_pwStarsLive(); if(S&&A.setStars) A.setStars(S); }   // (v334) every real star scatters through the air (key star first)
-    // near LOD of the real ground (the world's own height field) round the focus; rebaked as it travels
-    const L=_TA.loc, now=performance.now(), span=4096, H=TERRAIN.Hg||TERRAIN.H;
-    // (v256) the first bake of a world is whole (behind the loader); every later re-bake is sliced over frames (ui/dm-atmo.js setLocalHeightSliced, 3.5 ms a frame on a phone)
-    // instead of one 128x128 H() sweep in a single frame (300-400 ms on the Galaxy Tab), and waits longer under frame-budget pressure.
-    const _bakeGap=(window.DMBudget&&DMBudget.on&&DMBudget.atmoBakeGap)?DMBudget.atmoBakeGap():500;
-    if(typeof H==='function'&&!A.localBusy&&(L.gen!==PW.gen||((Math.abs(PWF.fx-L.x)>span/8||Math.abs(PWF.fz-L.z)>span/8)&&now-L.t>_bakeGap))){
-      const uy=_pwUnderlayY(), first=L.gen!==PW.gen||!A.setLocalHeightSliced;
-      _crB('heightBake'); try{ if(first) A.setLocalHeight(PWF.fx,PWF.fz,span,(x,z)=>H(x,z)+uy); else A.setLocalHeightSliced(PWF.fx,PWF.fz,span,(x,z)=>H(x,z)+uy); } finally{ _crE('heightBake'); } L.x=PWF.fx; L.z=PWF.fz; L.t=now; L.gen=PW.gen;
-    }
-    // empty-sky pixels: the classic dome owns the sky low down; the gas takes it over with height (same weight as the old shell)
-    A.setWeights(layered?1:Math.max(0,Math.min(1,PW._atmoK!=null?PW._atmoK:0)),1);
+    const A=_taSurfPass(r,scene,cam,layered);
+    _taSurfFeed(A,layered); _taSurfBake(A);
     const m=PW.atmo.mesh, was=m.visible; m.visible=false;
     try{ _taRun(A,r,cam); } finally { m.visible=was; }
     return true;
   }catch(e){ _taFail(e); return false; }
+}
+// (bubble-lod) WORLD LOAD WARM-UP of the surface air.  Measured headless on Mars (v355, WebGL2 / SwiftShader, so absolute ms are inflated, the ORDER is what counts): the staged
+// compile took 8.4 s behind the loader, and then the FIRST _trueAtmoSurface call took 7.8 s in ONE frame, after the loader had closed: it creates the pass (node graph, targets) and
+// renders the whole world through it for the first time (a second shader variant of every material: the scene-to-target output stage) and does the 128x128 height bake.  This runs that
+// work inside _pwOpen (behind the loader), the way _taWarm does for space, so the air is complete before the world is shown and nothing partial appears.  ?atmowarm=0 = the old lazy path.
+async function _taWarmSurface(gen){
+  if(/[?&]atmowarm=0\b/.test(location.search)||_TA.failed||!_trueAtmoOn()||_taPerfOff()||!PW.pal||!PW.pal.atmos||!PW.atmo||!flightRenderer||!PW.scene||!PW.camera) return;
+  const t0=performance.now();
+  try{
+    const r=flightRenderer, scene=PW.scene, cam=PW.camera, layered=PW.skyK<0.999&&_PWS.ok;
+    const A=_taSurfPass(r,scene,cam,layered);
+    _taSurfFeed(A,layered); _taSurfBake(A);
+    if(gen!==PW.gen||!PW.active) return;
+    const m=PW.atmo.mesh, was=m.visible; m.visible=false;
+    try{ if(A.renderAsync) await A.renderAsync(0,cam); else _taRun(A,r,cam); } finally{ m.visible=was; }
+    _TA.t=0;   // the warm-up frame is not a slow frame for the Auto perf watch
+  }catch(e){ console.warn('[warmup] surface atmosphere',e&&e.message); }
+  finally{ if(window._pwCompile) window._pwCompile.atmoWarmMs=Math.round(performance.now()-t0); }
 }
 if(/[?&]dmtest=1\b/.test(location.search)) window.__dmTest={get PW(){ return PW; },get TA(){ return _TA; },get STATE(){ return STATE; },pwOpen:(...a)=>_pwOpen(...a),trueAtmoOn:()=>_trueAtmoOn(),launchFlight:()=>launchFlight(),enterSurface:(...a)=>enterSurface(...a),enterAtmosphericFlight:(...a)=>enterAtmosphericFlight(...a),get bodies(){ return celestialBodies; },get renderer(){ return flightRenderer; }};
 // Draw: open space behind (when the sky lets it through), the world over it.
@@ -20295,6 +20326,7 @@ function _pwCamBlend(dt){
   if(b.t>=1) PW.blend=null;
 }
 const _pwV=[0,0,0,0,0].map(()=>null);
+const _LCT={x:0,z:0,y:0,g:0,agl:0,camera:false,off:0}, _LCT_CAM=[0,0,0], _LCT_DRV=[0,0,0];   // (bubble-lod) the LOD centre record, written in place
 function _pwVec(i){ return _pwV[i]||(_pwV[i]=new THREE.Vector3()); }
 // Per frame: the planet frame re-centres on whoever is driving, the camera
 // goes into it, the ground's level of detail follows the camera (its true
@@ -20337,6 +20369,13 @@ function _pwWorldTick(dt){
     // where the board is in open space (leaving the world puts you back right there)
     try{ const bp=fly?atmoState.pos:surfPlayer.pos; _pwsFromDrawn(_pwVec(3).set(px,bp.y,pz),STATE.flight.pos); if(boardFlight) boardFlight.position.copy(STATE.flight.pos); }catch(e){}
   }
+  // (bubble-lod) THE LOD CENTRE: the camera's ground point (flat frame), height above the ground under the camera - same rule in orbit / third / first person / spectator, on every world
+  // (ui/dm-lod.js lodCentre).  Props, the far canopy, the sea sheet and the vantage height use it; colliders, the MC patch, the sun shadow box and light probes keep the driver.
+  _LCT_DRV[0]=px; _LCT_DRV[1]=pz; _LCT_DRV[2]=space?1e9:agl;
+  const _cf=(!space&&PW._camFlat)?PW._camFlat.p:null;
+  if(_cf){ _LCT_CAM[0]=_cf.x; _LCT_CAM[1]=_cf.y; _LCT_CAM[2]=_cf.z; }
+  const _gcam=_cf?H(_cf.x,_cf.z):0, lc=(window.DMLod&&DMLod.centre)?DMLod.centre(_cf?_LCT_CAM:null,isFinite(_gcam)?_gcam:gH,_LCT_DRV,_LCT):(_LCT.x=px,_LCT.z=pz,_LCT.y=f.y,_LCT.g=gH,_LCT.agl=space?1e9:agl,_LCT.camera=false,_LCT);
+  PW._lc=lc;
   const c=cam.position, C=_pwfCentre(_pwVec(4));
   const calt=Math.max(1,c.distanceTo(C)-PWF.R-(PWF.on?Math.max(0,gH):0)), alt=c.distanceTo(C)-PWF.R;
   // how far you can see: to the horizon of a world this size, and past the haze
@@ -20369,7 +20408,7 @@ function _pwWorldTick(dt){
   // aerial perspective from a vantage point: standing well above the land around you (the mansion deck, a cliff top) the haze thins, so the far coast and cliffs read
   // instead of vanishing at the low-ground fog distance. Sampled on a ring (8 analytic heights every ~24 frames), smoothed, capped inside the drawn ground reach.
   if(!space&&scene.fog){
-    if((PW._vtF=(PW._vtF||0)+1)%24===1){ let s8=0; const rr=450; for(let q=0;q<8;q++){ const a8=q*0.7854; const hh=H(px+Math.cos(a8)*rr,pz+Math.sin(a8)*rr); s8+=isFinite(hh)?hh:gH; } PW._vtT=Math.max(0,Math.min(1,(f.y-s8/8-25)/90)); }
+    if((PW._vtF=(PW._vtF||0)+1)%24===1){ let s8=0; const rr=450, vx=lc.x, vz=lc.z, vy=lc.camera?lc.y:f.y; for(let q=0;q<8;q++){ const a8=q*0.7854; const hh=H(vx+Math.cos(a8)*rr,vz+Math.sin(a8)*rr); s8+=isFinite(hh)?hh:gH; } PW._vtT=Math.max(0,Math.min(1,(vy-s8/8-25)/90)); }   // (bubble-lod) the vantage is the CAMERA's height over the land round the camera
     PW._vtK=(PW._vtK||0)+((PW._vtT||0)-(PW._vtK||0))*Math.min(1,dt*0.8);
   }
   const vtK=(!space&&PW._vtK)||0;
@@ -20383,11 +20422,11 @@ function _pwWorldTick(dt){
   const farClip=space||dome<1?Math.max(4000,c.distanceTo(C)+R*1.2):Math.max(1200,groundR*1.15);
   const nearClip=space?Math.max(0.1,Math.min(50,(PW.sp.fc||1)*20)):0.1+(Math.max(0.5,Math.min(6,calt*0.01))-0.1)*k;
   if(Math.abs(cam.far-farClip)>farClip*0.05||Math.abs(cam.near-nearClip)>nearClip*0.05){ cam.far=farClip; cam.near=nearClip; cam.updateProjectionMatrix(); }
-  _pwSeaFollow(px,pz,Math.min(groundR,16384));
+  _pwSeaFollow(lc.x,lc.z,Math.min(groundR,16384));   // (bubble-lod) the sea sheet follows the camera's ground point
   try{ if(window.DMWater&&DMWater.active) DMWater.tick(dt,{camera:cam,scene,x:px,z:pz,y:f.y,H,Hw:TERRAIN.Hw||null,mode:PW.mode}); }catch(e){ if(!window._dmwWarn){ window._dmwWarn=1; console.warn('[water] tick',e); } }
   try{ if(window.DMLight&&DMLight.on) DMLight.tick(dt,{x:px,y:f.y,z:pz,H,sunDir:_pwKeyDir(),day:TERRAIN.sky?TERRAIN.sky.day:1,scene,renderer:flightRenderer,walk:mode!=='space'}); }catch(e){ if(!window._dmlWarn){ window._dmlWarn=1; console.warn('[light] tick',e); } }   // (ui/dm-light.js) time-sliced probe + height-cache update, amortised <= ~1-2 ms
   try{ if(window.DMVLight&&DMVLight.on) DMVLight.tick(dt,{camera:cam,scene,sunDir:_pwKeyDir(),day:TERRAIN.sky?TERRAIN.sky.day:1,groundY:gH,walk:mode!=='space'}); }catch(e){ if(!window._dmvlWarn){ window._dmvlWarn=1; console.warn('[vlight] tick',e); } }   // (ui/dm-vlight.js) light list -> fog in-scatter uniforms
-  _pwPropsTick(px,pz,space?1e9:(fly?agl:0));
+  _pwPropsTick(lc.x,lc.z,space?1e9:(fly?lc.agl:0),px,pz);   // (bubble-lod) chunks / far canopy centred on the camera's ground point; colliders stay with the driver (px, pz)
   if((PW._lqF=(PW._lqF||0)+1)%6===3) _lodQTick();   // (fov-fill 2) the quality fade chain's distances -> uniforms, a few times a second (no allocation)
   try{ if(window.DMPlaces) DMPlaces.tick(dt,_plEnv()); if(window.DMCreatures) DMCreatures.tick(dt,_plEnv()); }catch(e){ if(!window._plWarn){ window._plWarn=1; console.warn('[places]',e); } }
   // marching cubes + the refined patch: always on foot; in the sky only low and slow
@@ -20462,8 +20501,9 @@ function _pwSeaFollow(x,z,span){
   const cell=PW.seaCell; wm.position.x=Math.round(x/cell)*cell; wm.position.z=Math.round(z/cell)*cell;
 }
 // rocks and trees: the walking ground's own scatter, round her — and round the board when it's low
-function _pwPropsTick(px,pz,agl){
-  const C=SURF_CHUNK, pi=Math.floor((px+C/2)/C), pj=Math.floor((pz+C/2)/C), want=new Set(), M=PW.props;
+function _pwPropsTick(px,pz,agl,dx,dz){
+  if(dx===undefined){ dx=px; dz=pz; }   // (bubble-lod) px / pz = the LOD centre (the camera's ground point); dx / dz = the driver, whose chunk gets the colliders
+  const C=SURF_CHUNK, pi=Math.floor((px+C/2)/C), pj=Math.floor((pz+C/2)/C), di0=Math.floor((dx+C/2)/C), dj0=Math.floor((dz+C/2)/C), want=new Set(), M=PW.props;
   if(!PW.propsGroup){ PW.propsGroup=new THREE.Group(); PW.propsGroup.name='JOTS_ChunkPropsAll'; TERRAIN.group.add(PW.propsGroup); }
   if(agl<220){
     // (stability) nearest chunk first (it used to be row order), at most one per 3 frames, and never in the frame of / during an MC patch build: the first
@@ -20491,18 +20531,18 @@ function _pwPropsTick(px,pz,agl){
       if(err){ M.set(k,null); PW._propJob=null; }
       else if(r.done){
         PW._propJob=null; PW._propNext=_pf+3;
-        try{ _propAdopt(k,r.value,job.i,job.j,pi,pj); }catch(e){ M.set(k,null); }
+        try{ _propAdopt(k,r.value,job.i,job.j,di0,dj0); }catch(e){ M.set(k,null); }
         _crM('chunkScatter:end',JSON.stringify({n:M.size})); _crL('chunks',M.size);
       }
     }
   }
   // outer-ring chunks finished on the heavy gate join the scene here (one a frame, on the main loop), then the shown-chunk fade-in runs
-  if(PW._propDone&&PW._propDone.length){ const d=PW._propDone.shift(); try{ if(d.gen===PW.gen&&M.has(d.k)&&M.get(d.k)===null&&want.has(d.k)) _propAdopt(d.k,d.g,d.i,d.j,pi,pj); else _disposeProps(d.g); }catch(e){ M.set(d.k,null); } }
+  if(PW._propDone&&PW._propDone.length){ const d=PW._propDone.shift(); try{ if(d.gen===PW.gen&&M.has(d.k)&&M.get(d.k)===null&&want.has(d.k)) _propAdopt(d.k,d.g,d.i,d.j,di0,dj0); else _disposeProps(d.g); }catch(e){ M.set(d.k,null); } }
   _propFadeTick(performance.now());
   _propsCull(px,pz);
   for(const [k,g] of M){
     if(!want.has(k)){ if(g){ PW.propsGroup.remove(g); _disposeProps(g); _crG('chunk#'+k,0); } if(window.DMCollide) DMCollide.dropChunk('chunk#'+k); M.delete(k); continue; }
-    if(g&&g.userData._colWait&&Math.max(Math.abs(g.userData.cx/C-pi),Math.abs(g.userData.cz/C-pj))<=1.01){ g.userData._colWait=false; if(window.DMCollide) DMCollide.regChunk('chunk#'+k,g); }
+    if(g&&g.userData._colWait&&Math.max(Math.abs(g.userData.cx/C-di0),Math.abs(g.userData.cz/C-dj0))<=1.01){ g.userData._colWait=false; if(window.DMCollide) DMCollide.regChunk('chunk#'+k,g); }
   }
   _propsLod(px,pz,agl);
   _farCanopyTick(px,pz,agl);
@@ -20710,7 +20750,7 @@ function _pwClose(opts){
   document.body.classList.remove('pw-hud');
   if(body&&body.mesh) body.mesh.visible=true;   // the orbit globe is the planet again
   _pwfOff(); _pwfReveal(1);
-  try{ if(window.DM_HAZ) DM_HAZ.close(scene); }catch(e){}   // detach the orb before the world's scene is disposed
+  try{ if(window.DM_HAZ) DM_HAZ.close(scene); }catch(e){}   // detach the hazard / protection / underwater objects before the world's scene is disposed
   _crM('pw:close:fac');
   try{ const _f=_fac(); if(_f&&_f.close) _f.close(); }catch(e){ console.warn('[pw] fac close',e); }   // (stability) the mansion's interior + its queued texture steps go BEFORE the scene is freed
   _crM('pw:close:dispose');
@@ -20916,7 +20956,7 @@ function updateAtmoFlight(dt){
     const c=_boardControls(s,dt,(look,thr)=>ATMO_AP.on&&!_atmoLvl&&_atmoApTick(s,dt,look,thr,K));
     tf=c.tf; ts=c.ts;
     if(_atmoLvl) _atmoLevelStep(s,dt);
-    if(window.DM_HAZ) DM_HAZ.waterDrag(s,dt);   // below the sea surface: same controls, water damping (ui/dm-hazardbubble.js)
+    if(window.DM_HAZ) DM_HAZ.waterDrag(s,dt);   // below the sea surface: same controls, water damping (ui/dm-hazard.js)
     const J=_atmoJ(s.pos.y);
     s.pos.x+=s.vel.x*K/J.jx; s.pos.y+=s.vel.y*K; s.pos.z+=s.vel.z*K/J.jz;
     _atmoYP(s);
