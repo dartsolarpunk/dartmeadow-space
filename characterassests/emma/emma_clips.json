@@ -110,6 +110,21 @@
   },
   "Emma_Turn_R": {
    "duration": 0.8
+  },
+  "Emma_Swing_Loop": {
+   "duration": 4.3667
+  },
+  "Emma_Climb_Loop": {
+   "duration": 2.0
+  },
+  "Emma_Climb_Side_Loop": {
+   "duration": 1.6667
+  },
+  "Emma_Ladder_Loop": {
+   "duration": 4.0
+  },
+  "Emma_GrabBar_Loop": {
+   "duration": 2.4667
   }
  },
  "presets": [
@@ -202,6 +217,36 @@
    "clip": "Swing_on_Rope_to_Ground",
    "loop": "once",
    "label": "Swing on rope"
+  },
+  {
+   "id": "swing_loop",
+   "clip": "Emma_Swing_Loop",
+   "loop": "repeat",
+   "label": "Swing on rope (loop)"
+  },
+  {
+   "id": "climb_loop",
+   "clip": "Emma_Climb_Loop",
+   "loop": "repeat",
+   "label": "Climb up (loop)"
+  },
+  {
+   "id": "climb_side_loop",
+   "clip": "Emma_Climb_Side_Loop",
+   "loop": "repeat",
+   "label": "Climb traverse (loop)"
+  },
+  {
+   "id": "ladder_loop",
+   "clip": "Emma_Ladder_Loop",
+   "loop": "repeat",
+   "label": "Ladder (loop)"
+  },
+  {
+   "id": "swing_bar_loop",
+   "clip": "Emma_GrabBar_Loop",
+   "loop": "repeat",
+   "label": "Grab bar and swing (loop)"
   },
   {
    "id": "swing_bar",

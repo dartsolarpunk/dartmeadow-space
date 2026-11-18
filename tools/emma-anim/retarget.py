@@ -101,7 +101,11 @@ def reduce_track(times, vals, tol, quat):
         if err[k] > tol: m = a+1+k; keep[m] = True; stack += [(a,m),(m,b)]
     return times[keep], vals[keep]
 
-def retarget(src_glb, dst_glb, clips=None, ref_char=None, fps=30, rot_tol_deg=0.05, pos_tol=1e-4, ground_lock=True, align_dirs=True, verbose=True):
+CLAV_KEEP = 0.15   # fraction of the source clavicle/shoulder-girdle motion kept (rest-delta of Ariel's clavicle is NOT valid on a different rest pose); arm chain keeps its full world swing
+CLAVICLES = ('LeftShoulder','RightShoulder')
+
+def retarget(src_glb, dst_glb, clips=None, ref_char=None, fps=30, rot_tol_deg=0.05, pos_tol=1e-4, ground_lock=True, align_dirs=True, verbose=True, clav_keep=None):
+    ck = CLAV_KEEP if clav_keep is None else clav_keep
     A = GLB(src_glb); B = GLB(dst_glb)
     SA = Skel(A); SB = Skel(B)   # source skeleton = the animation file's own (translations in its tracks == its node rest: that is what plays)
     common = [n for n in SB.names if n in SA.name_set() and SB.idx[n] in SB.order]
@@ -178,6 +182,12 @@ def retarget(src_glb, dst_glb, clips=None, ref_char=None, fps=30, rot_tol_deg=0.
                 if i in SB.par and SB.par[i] in Wb: W = qmul(Wb[SB.par[i]], lq)
                 else: W = np.tile(qb0[n] if n in qb0 else SB.wrot(i),(T,1))
             Wb[i] = qnorm(W)
+            if n in CLAVICLES and i in SB.par and SB.par[i] in Wb:
+                # keep the shoulder girdle at its rest position: only a fraction `ck` of the retargeted motion survives. The arm's own world rotation
+                # (computed above independently of the clavicle) is unchanged, so only the arm's local rotation absorbs the difference.
+                Lc = qfix(qnorm(qmul(qinv(Wb[SB.par[i]]), Wb[i]))); Lr = np.tile(SB.trs[i][1], (T,1))
+                Lr = Lr*np.where((Lr*Lc).sum(1,keepdims=True)<0,-1,1)
+                Wb[i] = qnorm(qmul(Wb[SB.par[i]], qslerp(Lr, Lc, np.full((T,1), ck))))
             if i in SB.par and SB.par[i] in Wb: L = qmul(qinv(Wb[SB.par[i]]), Wb[i])
             else:
                 pw = mat_to_quat(SB.W[SB.par[i]][:3,:3]/np.linalg.norm(SB.W[SB.par[i]][:3,:3],axis=0)) if i in SB.par else np.array([0,0,0,1.])
