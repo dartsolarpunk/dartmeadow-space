@@ -86,10 +86,10 @@ const R = 360 / 0.008 / (2 * Math.PI);
 // ── (3) wiring ──
 {
   const tick = cut('function _pwWorldTick(dt){', 'function _pwSeaFollow(');
-  ok(/const groundR=\(scene\.fog&&!space\)\?_skyGroundOpen\(viewR,_skyGroundR\(viewR,_skyHorizonReach\(R,alt\),skyR\),k,PW\._vtK\|\|0\):viewR;\s*\n\s*const G=PW\.ground; G\.viewR=groundR;/.test(tick), 'SkyGround draws to groundR (t1590: horizon reach opened by the climb / a vantage, the walk radius on open ground)');
+  ok(/const groundR0=\(scene\.fog&&!space\)\?_skyGroundOpen\(viewR,_skyGroundR\(viewR,_skyHorizonReach\(R,alt\),skyR\),k,PW\._vtK\|\|0\):viewR;/.test(tick) && /let groundR=groundR0;\s*\n\s*if\(HZW>0&&HZD>groundR0\) groundR=groundR0\+\(HZD-groundR0\)\*HZW\*\(1-k\);/.test(tick) && /const G=PW\.ground; G\.viewR=groundR;/.test(tick), 'SkyGround draws to groundR (t1590: the horizon reach opened by the climb / a vantage; shield-lod: on foot opened toward the level horizon at the view centre by DMLod.horizonW, weight 0 = the walk radius as before)');
   ok(/Math\.max\(1200,groundR\*1\.15\)/.test(tick) && /_pwSeaFollow\(lc\.x,lc\.z,Math\.min\(groundR,16384\)\)/.test(tick), 'far clip and the fallback sea follow groundR');
-  ok(/fillF=\(scene\.fog&&!space\)\?_skyFillFog\(far,groundR,1-k\)-far:0/.test(tick) && /scene\.fog\.far=far\+fillF;/.test(tick), 'the haze gets the fill (eased out with the flight blend k)');
-  ok(/PW\._propFog=far;[^\n]*\n\s*if\(scene\.fog\)\{ scene\.fog\.far=far\+fillF/.test(tick), 'props see the haze without the fill');
+  ok(/fillF=\(scene\.fog&&!space\)\?_skyFillFog\(far,groundR0,1-k\)-far:0/.test(tick) && /let fogEnd=far\+fillF;/.test(tick) && /scene\.fog\.far=fogEnd;/.test(tick), 'the haze gets the fill of the previous radius (eased out with the flight blend k); shield-lod then only ever opens it further (max with DMLod.horizonFog), never closes it');
+  ok(/PW\._propFog=far;[^\n]*\n\s*let fogEnd=far\+fillF;/.test(tick), 'props see the haze without the fill (and without the horizon opening)');
   ok((html.match(/PW\._propFog\|\|\(PW\.scene&&PW\.scene\.fog\?PW\.scene\.fog\.far:900\)/g) || []).length === 2, 'both prop paths (ring + cut) read PW._propFog: the prop cost does not grow with the clearer air');
   ok(/const ATMO_DEFAULT_AGL\s*=\s*46\b/.test(html), 'ATMO_DEFAULT_AGL stays 46');
 }

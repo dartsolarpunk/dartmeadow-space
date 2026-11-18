@@ -267,4 +267,41 @@ function glue(q, GFX, bud) {
   // same rule for every view: third person (camera 3 m behind), first person (at the eyes), orbit (30 m out, 10 m up), spectator (far): the centre is always the camera
   for (const [nm, cam] of [['third', [3, 2, 0]], ['first', [0, 1.7, 0]], ['orbit', [30, 11, 0]], ['spectator', [400, 80, -300]]]) { C(cam, 0, [0, 0, 1.7], o); ok(o.x === cam[0] && o.z === cam[2] && o.agl === cam[1], nm + ': centred on the camera'); }
 }
+
+// ── (shield-lod) VIEW-CENTRE GROUND POINT + HORIZON (viewGround / horizonDist / horizonW / horizonFog)
+{ const V = L.viewGround, o = {}, R = 6.0e6, flat = () => 0, eps = 1e-6, near = (a, b, e) => Math.abs(a - b) <= (e == null ? 1e-6 : e);
+  ok(typeof V === 'function' && typeof L.horizonDist === 'function' && typeof L.horizonW === 'function' && typeof L.horizonFog === 'function', 'viewGround / horizonDist / horizonW / horizonFog exported');
+  // looking 45 deg down from head height: the centre of the view meets the ground 1 eye-height ahead
+  V([10, 3, 20], [0, -Math.SQRT1_2, -Math.SQRT1_2], flat, R, 3, 260, o); ok(o.hit && near(o.x, 10) && near(o.z, 17, 1e-6) && near(o.g, 0), 'camera 3 up looking 45 deg down: view centre on the ground 3 ahead (' + JSON.stringify(o) + ')');
+  // straight down: directly under the camera
+  V([5, 40, -5], [0, -1, 0], flat, R, 3, 260, o); ok(o.hit && near(o.x, 5) && near(o.z, -5) && o.off < 1e-9, 'looking straight down: the point under the camera');
+  // level / up: the camera's own ground point (no hit)
+  V([5, 3, -5], [0, 0, -1], flat, R, 3, 260, o); ok(!o.hit && o.x === 5 && o.z === -5 && o.off === 0, 'looking level: the camera\'s own ground point');
+  V([5, 3, -5], [0, 0.6, -0.8], flat, R, 3, 260, o); ok(!o.hit && o.x === 5 && o.z === -5, 'looking up: the camera\'s own ground point');
+  // the horizon is that of a camera STANDING on the ground at that point: eye height, not the camera's own height
+  const h3 = L.horizonDist(R, 3, 0); V([0, 300, 0], [0, -Math.SQRT1_2, -Math.SQRT1_2], flat, R, 3, 0, o); ok(o.hit && near(o.horizon, h3, 1e-6) && near(o.eye, 3), 'a camera 300 up looking down: the horizon of a level eye 3 high at the view centre (' + o.horizon.toFixed(0) + ' = ' + h3.toFixed(0) + ')');
+  V([0, 1.2, 0], [0, -1, 0], flat, R, 3, 0, o); ok(near(o.eye, 1.2, 1e-9), 'a camera lower than a standing eye: its own height');
+  // terrain heights: the ray meets a sloping hill, not the sea-level plane
+  const hill = (x, z) => 0.5 * x; V([0, 10, 0], [Math.SQRT1_2, -Math.SQRT1_2, 0], hill, R, 3, 260, o); ok(o.hit && near(o.g, hill(o.x, o.z), 1e-6) && near(10 + (-1) * (o.x), o.g, 1e-3), 'the centre ray is refined against the terrain heights (hits the hill at x ' + o.x.toFixed(3) + ', g ' + o.g.toFixed(3) + ')');
+  // a very shallow downward ray never throws the centre past the camera's own horizon
+  V([0, 3, 0], [0, -0.0201, -0.9998], flat, R, 3, 260, o); ok(o.hit && o.off <= L.horizonDist(R, 3, 0) + 1e-6, 'a grazing ray is clamped to the camera\'s own horizon (off ' + o.off.toFixed(0) + ')');
+  // bad terrain samples never produce NaN
+  V([1, 5, 1], [0, -1, 0], () => NaN, R, 3, 260, o); ok(isFinite(o.x + o.z + o.g + o.horizon), 'NaN terrain: finite result');
+  // horizon: geometry only (any radius), grows with the eye and with a peak beyond the geometric horizon (terrain heights count)
+  ok(near(L.horizonDist(1000, 0, 0), 0) && near(L.horizonDist(1000, 2, 0), Math.sqrt(2 * 1000 * 2 + 4), 1e-9) && L.horizonDist(R, 3, 260) > L.horizonDist(R, 3, 0) && L.horizonDist(R, 3, 2000) > L.horizonDist(R, 3, 260), 'horizon = sqrt(h(2R+h)) + the horizon of the tallest relief: grows with both');
+  for (const Rw of [3.4e6, 6.0e6, 1.2e7]) ok(L.horizonDist(Rw, 3, 260) > 2000, 'every world radius reaches a few km at least (' + Rw + ' -> ' + L.horizonDist(Rw, 3, 260).toFixed(0) + ')');
+  // weight: tier default x budget ladder; flags
+  ok(L.horizonW('desktop', undefined, 1) === 1 && L.horizonW('mobile', undefined, 1) === 0.35 && L.horizonW('low', undefined, 1) === 0.2, 'tier default weights: desktop 1, mobile 0.35, low 0.2');
+  ok(near(L.horizonW('desktop', undefined, 0.8), 0.6) && near(L.horizonW('desktop', undefined, 0.6), 0.2) && L.horizonW('desktop', undefined, 0.5) === 0 && L.horizonW('desktop', undefined, 0.2) === 0, 'the budget ladder\'s ground stage scales it (1 / .8 / .6 -> 1 / .6 / .2, 0 below .5)');
+  ok(L.horizonW('mobile', 'off', 1) === 0 && L.horizonW('mobile', 0, 1) === 0 && L.horizonW('mobile', 'on', 1) === 1 && L.horizonW('low', 0.5, 1) === 0.5 && L.horizonW('desktop', 7, 1) === 1, 'flags: off / 0 = the previous radius exactly; on = 1 on every tier; a number = that weight (clamped)');
+  // haze: monotone in the weight, never below the old haze, never past 0.92 x the ground radius
+  let prev = 0, mono = true; for (let w = 0; w <= 1.0001; w += 0.1) { const f = L.horizonFog(420, 60000, w, 80000); if (f < prev - 1e-9) mono = false; prev = f; }
+  ok(mono && L.horizonFog(420, 60000, 0, 80000) === 420 && near(L.horizonFog(420, 60000, 1, 80000), 0.62 * 60000, 1e-6) && L.horizonFog(420, 60000, 1, 20000) === 0.92 * 20000 && L.horizonFog(900, 100, 1, 50000) === 900, 'haze: 0 weight = unchanged; 1 = 0.62 x horizon; capped at 0.92 x the drawn radius; never below the old one');
+  // the browser glue + the call site
+  const glue = fs.readFileSync(path.join(__dirname, '../../ui/dm-lod.js'), 'utf8'), idx = fs.readFileSync(path.join(__dirname, '../../index.html'), 'utf8');
+  ok(/lodhorizon=/.test(glue) && /out\.horizonW = function/.test(glue) && /out\.viewGround = viewGround/.test(glue), 'DMLod.horizonW() / viewGround exposed; ?lodhorizon=off|on|<weight>');
+  ok(/DMLod\.viewGround\(_LCT_CAM,_VG_FWD,H,_planetR\(\)/.test(idx) && /lc\.x=vg\.x; lc\.z=vg\.z/.test(idx), 'index.html: the LOD centre (props / far canopy / sea / vantage ring) is the view-centre ground point');
+  ok(/const HZW=\(scene\.fog&&!space&&_vgOn\)\?DMLod\.horizonW\(\):0/.test(idx) && /groundR=groundR0\+\(HZD-groundR0\)\*HZW\*\(1-k\)/.test(idx) && /DMLod\.horizonFog\(fogEnd,HZD,HZW,groundR\)/.test(idx), 'index.html: ground radius + haze open toward the horizon of a level camera at that point, weighted; weight 0 = the previous values');
+  ok(/PW\._propFog=far;/.test(idx), 'props keep their own haze distance (their cost does not grow with the clearer air)');
+}
 console.log('lod-unit OK (' + n + ' checks)');

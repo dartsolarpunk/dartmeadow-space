@@ -20343,7 +20343,7 @@ function _pwCamBlend(dt){
   if(b.t>=1) PW.blend=null;
 }
 const _pwV=[0,0,0,0,0].map(()=>null);
-const _LCT={x:0,z:0,y:0,g:0,agl:0,camera:false,off:0}, _LCT_CAM=[0,0,0], _LCT_DRV=[0,0,0];   // (bubble-lod) the LOD centre record, written in place
+const _LCT={x:0,z:0,y:0,g:0,agl:0,camera:false,off:0}, _LCT_CAM=[0,0,0], _LCT_DRV=[0,0,0], _VG={x:0,z:0,g:0,hit:false,off:0,eye:3,horizon:0}, _VG_FWD=[0,0,-1], _VGF=new THREE.Vector3();   // (shield-lod) + the view-centre ground point record   // (bubble-lod) the LOD centre record, written in place
 function _pwVec(i){ return _pwV[i]||(_pwV[i]=new THREE.Vector3()); }
 // Per frame: the planet frame re-centres on whoever is driving, the camera
 // goes into it, the ground's level of detail follows the camera (its true
@@ -20392,6 +20392,17 @@ function _pwWorldTick(dt){
   const _cf=(!space&&PW._camFlat)?PW._camFlat.p:null;
   if(_cf){ _LCT_CAM[0]=_cf.x; _LCT_CAM[1]=_cf.y; _LCT_CAM[2]=_cf.z; }
   const _gcam=_cf?H(_cf.x,_cf.z):0, lc=(window.DMLod&&DMLod.centre)?DMLod.centre(_cf?_LCT_CAM:null,isFinite(_gcam)?_gcam:gH,_LCT_DRV,_LCT):(_LCT.x=px,_LCT.z=pz,_LCT.y=f.y,_LCT.g=gH,_LCT.agl=space?1e9:agl,_LCT.camera=false,_LCT);
+  // (shield-lod) THE VIEW-CENTRE RULE (ui/dm-lod.js viewGround): when the camera looks DOWN at the ground (the orbit camera, a head-height camera looking at her face, third person over the
+  // shoulder) the LOD centre is the ground point at the centre of the view (the forward ray against the plane, refined on the terrain heights), and the horizon / reach are those of a camera
+  // standing LEVEL on the ground at that point (her eye height), not of the camera's own height.  A camera looking level / up keeps its own ground point (no change).  Any world: it is pure geometry.
+  let _vgOn=false;
+  if(!space&&_cf&&window.DMLod&&DMLod.on&&DMLod.viewGround&&PW._camFlat.q){
+    try{
+      _VGF.set(0,0,-1).applyQuaternion(PW._camFlat.q); _VG_FWD[0]=_VGF.x; _VG_FWD[1]=_VGF.y; _VG_FWD[2]=_VGF.z;
+      const vg=DMLod.viewGround(_LCT_CAM,_VG_FWD,H,_planetR(),3.0,Math.min(2000,Math.max(_SKY_RELIEF,(PW.ground&&PW.ground.reliefSeen)||0)),_VG);
+      lc.x=vg.x; lc.z=vg.z; if(isFinite(vg.g)) lc.g=vg.g; _vgOn=true;
+    }catch(e){ if(!PW._vgWarn){ PW._vgWarn=1; console.warn('[lod] viewGround',e); } }
+  }
   PW._lc=lc;
   const c=cam.position, C=_pwfCentre(_pwVec(4));
   const calt=Math.max(1,c.distanceTo(C)-PWF.R-(PWF.on?Math.max(0,gH):0)), alt=c.distanceTo(C)-PWF.R;
@@ -20413,7 +20424,13 @@ function _pwWorldTick(dt){
   // (t1590) ON FOOT the drawn radius is the old walk radius again (max(1200, fogFar x 2.5), the anchor's rule, 816b02c / 7bdcb1f), with the haze at full density by
   // _SKY_FADE0 x R (_skyFillFog below), so the edge is never seen.  The horizon reach (34d6f7b) now opens only with the board's climb (k) or a vantage (PW._vtK, the
   // HOME deck / a cliff top): it put ~3x the ground area on screen on foot, fully shaded to the horizon (Perf t1590: 3-11 fps on the tablet).  _skyGroundOpen is pure.
-  const groundR=(scene.fog&&!space)?_skyGroundOpen(viewR,_skyGroundR(viewR,_skyHorizonReach(R,alt),skyR),k,PW._vtK||0):viewR;
+  const groundR0=(scene.fog&&!space)?_skyGroundOpen(viewR,_skyGroundR(viewR,_skyHorizonReach(R,alt),skyR),k,PW._vtK||0):viewR;
+  // (shield-lod) the ground opens to the horizon of a camera standing level at the view-centre point (terrain heights beyond the geometric horizon count: the relief term), weighted by tier / budget
+  // ladder (DMLod.horizonW; ?lodhorizon=off restores the previous radius exactly).  Only on foot / low (in the sky k = 1 already opens it).
+  const HZW=(scene.fog&&!space&&_vgOn)?DMLod.horizonW():0, HZD=_vgOn?_VG.horizon:0;
+  let groundR=groundR0;
+  if(HZW>0&&HZD>groundR0) groundR=groundR0+(HZD-groundR0)*HZW*(1-k);
+  PW._hzW=HZW; PW._hzD=HZD;
   const G=PW.ground; G.viewR=groundR; PW._groundR=groundR;
   // the sky dome thins to space as you climb (airless worlds: open space all the way down)
   const pal=PW.pal, dome=pal.atmos?1-_smooth01((alt-400)/1400):0;
@@ -20432,10 +20449,12 @@ function _pwWorldTick(dt){
   let far=dd.fogFar*(1+1.1*vtK)+(skyFar-dd.fogFar)*k, near=40*(1+vtK)+(Math.min(skyFar*0.2,300+calt*0.6)-40)*k;
   if(vtK>0&&window.DMLod&&DMLod.on) far=Math.max(far,DMLod.vantageFog(vtK,dd.fogFar,walkR)+(skyFar-dd.fogFar)*k);   // (far-range 2) the haze opens toward 0.62 x the vantage reach: a cliff 2-3 km off is fogged, not erased
   if(vtK>0&&far>walkR*0.9) far=Math.max(dd.fogFar,walkR*0.9);
-  const fillF=(scene.fog&&!space)?_skyFillFog(far,groundR,1-k)-far:0;   // (fov-fill) the far ground reads through the haze; its dissolving edge stays in full haze
+  const fillF=(scene.fog&&!space)?_skyFillFog(far,groundR0,1-k)-far:0;   // (fov-fill) the far ground reads through the haze; its dissolving edge stays in full haze
   if(dome<1){ const thin=1-dome; far+=thin*thin*2e6; near+=thin*thin*1e6; }   // the haze lifts with the dome
   PW._propFog=far;   // (fov-fill) the props' reach / ring follow the haze as it was without the fill (their cost does not grow with the clearer air)
-  if(scene.fog){ scene.fog.far=far+fillF; scene.fog.near=near; }
+  let fogEnd=far+fillF;
+  if(HZW>0&&k<0.999) fogEnd=Math.max(fogEnd,DMLod.horizonFog(fogEnd,HZD,HZW,groundR));   // (shield-lod) the haze opens toward 0.62 x that horizon on foot (weighted), so the far ground / peaks read instead of ending in fog at the walk radius; props keep PW._propFog above
+  if(scene.fog){ scene.fog.far=fogEnd; scene.fog.near=near; }
   const farClip=space||dome<1?Math.max(4000,c.distanceTo(C)+R*1.2):Math.max(1200,groundR*1.15);
   const nearClip=space?Math.max(0.1,Math.min(50,(PW.sp.fc||1)*20)):0.1+(Math.max(0.5,Math.min(6,calt*0.01))-0.1)*k;
   if(Math.abs(cam.far-farClip)>farClip*0.05||Math.abs(cam.near-nearClip)>nearClip*0.05){ cam.far=farClip; cam.near=nearClip; cam.updateProjectionMatrix(); }
@@ -26085,6 +26104,7 @@ SkyGround.prototype.update=function(cam,budgetMs){
   }
   this.roots.forEach(this._rootKeep,this);
   this.queue.length=0; this._rk=(window.DMLod&&DMLod.on)?DMLod.reliefK():0;
+  this.reliefSeen=this._mxH||0; this._mxH=0;   // (shield-lod) the tallest tile height seen in the last visit: the horizon reach adds that peak's own horizon
   this._cpos=c; this.roots.forEach(this._visitRoot,this); this._cpos=null;
   // (v151) the ground under whoever is driving comes first: every tile on the chain from the root down to her feet (and its
   // siblings, which a level needs before it can take over from its parent) jumps the queue.  Before, the queue was ordered by
@@ -26170,6 +26190,7 @@ SkyGround.prototype._idleRun=function(dl){
 };
 SkyGround.prototype._visit=function(n,c,cov){
   this._measure(n,c); n._unc=!cov;   // (v330 streaming) cov: an ancestor already draws here
+  if(n.maxH>this._mxH&&n._vis!==false) this._mxH=n.maxH;   // (shield-lod) relief seen (a visible tile's measured top)
   const far=(n._d>this.viewR||!n._vis)&&n.parent;   // beyond what can be seen: let it go
   n._hidden=!!far;
   // (far-range 8) relief-aware split: a tile that holds a cliff / scarp splits farther out (DMLod.reliefBoost), so the drop keeps its edge at range instead of a 50 m ramp.  The relief is the

@@ -283,7 +283,51 @@
     } else { o.x = drv[0]; o.z = drv[1]; o.y = 0; o.g = 0; o.agl = drv[2] || 0; o.camera = false; o.off = 0; }
     return o;
   }
-  const core = { lodCentre: lodCentre, TIERS: TIERS, TABLE: TABLE, FAR: FAR, setFar: setFar, WALK_R: WALK_R, CHUNK: CHUNK, get: get, sw: sw, fade: fade, propCutErr: propCutErr, reliefBoost: reliefBoost, projErrPx: projErrPx, errDist: errDist, lod2Dist: lod2Dist, sizeFade: sizeFade, levelByError: levelByError, billboardViews: billboardViews, chunkCulled: chunkCulled, billboardPx: billboardPx, createXfade: createXfade, mipBias: mipBias, qualityBands: qualityBands, bandW: bandW, propCover: propCover, propCut: propCut, propRing: propRing, vantageReach: vantageReach, vantageFog: vantageFog, validate: validate, tierIndex: tierIndex };
+
+  /* ── VIEW-CENTRE GROUND POINT + HORIZON (shield-lod) ──
+     The LOD centre is not "where the camera is" when the camera is tilted down (the orbit camera over her shoulder, third person looking at the ground at her feet, a head-height camera
+     looking down at her face): it is the ground point at the CENTRE OF THE VIEW (the camera's forward ray meeting the playable ground, refined against the terrain height, not only the
+     plane), and the horizon / reach are those of a camera STANDING LEVEL ON THE GROUND AT THAT POINT (eye height `eye`, never the camera's own height above it).  A camera that looks
+     level or up (the ray never meets the ground) keeps its own ground point.  Pure.
+       cam = [x, y, z] flat camera, fwd = [x, y, z] its forward unit vector, groundAt(x, z) -> terrain height, R = planet radius (world units, the same radius the sky uses),
+       eye = standing eye height above the ground (world units), relief = tallest ground that may stand beyond the horizon (terrain heights count: a peak past the geometric horizon shows
+       its top: horizonDist adds that peak's own horizon).  out (optional, written in place) = { x, z, g, hit, off, eye, horizon }.
+     The horizon is geometry only (Pythagoras on the sphere), so it is the same rule on every world: no per-world radius, no constant that cuts it short. */
+  function horizonDist(R, eye, relief) { const h = Math.max(0, eye || 0), r = Math.max(0, relief || 0), RR = Math.max(1, R || 1); return Math.sqrt(h * (2 * RR + h)) + Math.sqrt(r * (2 * RR + r)); }
+  function viewGround(cam, fwd, groundAt, R, eye, relief, out) {
+    const o = out || {}, cx = cam[0], cy = cam[1], cz = cam[2], fx = fwd[0], fy = fwd[1], fz = fwd[2];
+    const g0 = groundAt(cx, cz), gc = isFinite(g0) ? g0 : 0, agl = Math.max(0, cy - gc);
+    let x = cx, z = cz, g = gc, hit = false;
+    if (fy < -0.02) {   // looking down enough for the centre ray to meet the ground: plane first, then refined against the height field (3 steps)
+      // plane first, then a secant refine of f(t) = ray height - terrain height along the ray (exact on a planar slope, a few steps on noise); t stays in [0, 3 x plane + 50]
+      const F = t => { const gh = groundAt(cx + fx * t, cz + fz * t); return cy + fy * t - (isFinite(gh) ? gh : gc); };
+      const tp = agl / -fy, tmax = tp * 3 + 50; let t0 = tp, f0 = F(t0), t1 = tp * 0.8 + 1e-3, f1 = F(t1);
+      for (let i = 0; i < 4; i++) { const den = f1 - f0; if (!(Math.abs(den) > 1e-9)) break; let t2 = t1 - f1 * (t1 - t0) / den; if (!isFinite(t2)) break; t2 = Math.max(0, Math.min(tmax, t2)); t0 = t1; f0 = f1; t1 = t2; f1 = F(t1); if (Math.abs(f1) < 1e-4) break; }
+      let t = t1, hx = cx + fx * t, hz = cz + fz * t;
+      const hd = Math.hypot(hx - cx, hz - cz), lim = Math.max(1, horizonDist(R, agl, 0));   // never past what this camera could see level
+      if (hd > lim) { const k = lim / hd; hx = cx + (hx - cx) * k; hz = cz + (hz - cz) * k; }
+      if (isFinite(hx + hz)) { x = hx; z = hz; const gh = groundAt(x, z); g = isFinite(gh) ? gh : g; hit = true; }
+    }
+    const e = Math.max(0.3, Math.min(agl > 0 ? Math.max(agl, 0.3) : eye, eye));   // standing level: her eye height (lower when the camera is lower)
+    o.x = x; o.z = z; o.g = g; o.hit = hit; o.off = Math.hypot(x - cx, z - cz); o.eye = e; o.horizon = horizonDist(R, e, relief);
+    return o;
+  }
+  /* How far the on-foot ground / haze open toward that horizon, 0..1 (the same smooth weight family as the vantage k).  flag: 'off' | 'on' (all tiers) | number | undefined (= tier default).
+     Tier defaults: desktop 1, mobile 0.35, low 0.2 - a weak tablet opens only part of the way - then the budget ladder's ground stage (gk 1 / .8 / .6, DMBudget.groundReach) scales it:
+     full at gk 1, 0.6 at .8, 0.2 at .6, 0 below .5.  Weight 0 = exactly the previous on-foot radius. */
+  const HZ_TIER = { low: 0.2, mobile: 0.35, desktop: 1 };
+  function horizonW(tier, flag, gk) {
+    if (flag === 'off' || flag === 0) return 0;
+    const base = typeof flag === 'number' ? Math.max(0, Math.min(1, flag)) : flag === 'on' ? 1 : (HZ_TIER[tier] == null ? 0.35 : HZ_TIER[tier]);
+    const k = gk == null ? 1 : Math.max(0, Math.min(1, (gk - 0.5) / 0.5));
+    return base * k;
+  }
+  /* The haze far distance with the horizon opened: lerp(fogFar, 0.62 x horizon, w), never past 0.92 x the drawn ground radius, never below fogFar (0.62 is vantage.fog's ratio). */
+  function horizonFog(fogFar, horizon, w, drawR) {
+    const v = fogFar + (Math.max(fogFar, 0.62 * horizon) - fogFar) * Math.max(0, Math.min(1, w));
+    return Math.max(fogFar, Math.min(v, Math.max(fogFar, drawR * 0.92)));
+  }
+  const core = { viewGround: viewGround, horizonDist: horizonDist, horizonW: horizonW, horizonFog: horizonFog, lodCentre: lodCentre, TIERS: TIERS, TABLE: TABLE, FAR: FAR, setFar: setFar, WALK_R: WALK_R, CHUNK: CHUNK, get: get, sw: sw, fade: fade, propCutErr: propCutErr, reliefBoost: reliefBoost, projErrPx: projErrPx, errDist: errDist, lod2Dist: lod2Dist, sizeFade: sizeFade, levelByError: levelByError, billboardViews: billboardViews, chunkCulled: chunkCulled, billboardPx: billboardPx, createXfade: createXfade, mipBias: mipBias, qualityBands: qualityBands, bandW: bandW, propCover: propCover, propCut: propCut, propRing: propRing, vantageReach: vantageReach, vantageFog: vantageFog, validate: validate, tierIndex: tierIndex };
   if (typeof module !== 'undefined' && module.exports) module.exports = core;
   if (typeof window === 'undefined') return;
 
@@ -313,6 +357,9 @@
   out.vantageFog = function (vt, fogFar, drawR) { return vantageFog(out.tier, vt, fogFar, drawR); };
   out.mansion = function () { return { nIn: out.get('mansion.in'), nOut: out.get('mansion.out'), far: out.get('mansion.far') }; };
   out.mansionSize = function () { return { gone: out.get('mansion.goneDiam'), full: out.get('mansion.fullDiam') }; };
+  const hzFlag = (function () { const m = Q.match(/[?&]lodhorizon=([0-9.]+|on|off)\b/); if (!m) return undefined; return m[1] === 'on' ? 'on' : m[1] === 'off' ? 'off' : (m[1] === '1' ? 'on' : parseFloat(m[1])); })();
+  out.horizonW = function () { return out.on ? horizonW(out.tier, hzFlag, bud('groundReach', 1)) : 0; };   // ?lodhorizon=off|0 disables, =on|1 full on every tier, =0.5 a weight
+  out.viewGround = viewGround; out.horizonDist = horizonDist; out.horizonFog = horizonFog;
   out.centre = lodCentre; out.sizeFade = sizeFade; out.billboardPx = billboardPx;
   out.sw = sw; out.fade = fade; out.createXfade = createXfade;
   out.lod2Dist = function (errM, fovDeg, viewH) { return lod2Dist(out.tier, errM, fovDeg, viewH, bud('propsK', 1)); };
