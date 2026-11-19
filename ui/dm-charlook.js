@@ -343,6 +343,16 @@
     writeEnv(E); strengths(E); ensureMatcap(E, true); return rig;
   }
 
+  // the menu world (ui/dm-menuworld.js) re-aims / re-colours the studio's key + rim to its own sun after the rig is built: the studio env follows those two lights (call once after it)
+  function syncStudio(X) {
+    try {
+      if (!X || !X.key || !S.envs.studio) return; const E = S.envs.studio, c = (l) => [l.color.r * l.intensity, l.color.g * l.intensity, l.color.b * l.intensity], dn = (l) => normalize3([l.position.x, l.position.y, l.position.z]);
+      const kc = c(X.key), kd = dn(X.key); E.cur.dirA = kd; E.cur.L = kd; E.cur.colA = mul3(kc, 0.22); E.cur.key = mul3(kc, 0.8);
+      if (X.rim) { const rc = c(X.rim); E.cur.dirB = dn(X.rim); E.cur.colB = mul3(rc, 0.28); E.cur.rim = mul3(rc, 0.5); }
+      E.tgt = E.cur; writeEnv(E);
+    } catch (e) { }
+  }
+
   // per-frame: at 4 Hz read the scene's own lights, derive the env, ease towards it (uniform writes only).  ctx: { scene, dt, sunDir?:Vector3 (toward the sun), day?, sunLight?:PointLight (flight), pos?:Vector3 (the character) }
   function tick(dt, ctx) {
     try {
@@ -377,7 +387,7 @@
   }
   const status = () => ({ tier: tier(), envKind: envKind(), stored: lsGet(LS), roots: S.roots.size, ...S.stats });
 
-  const api = { tier, setTier, envKind, apply, refresh, forget, rigStudio, tick, status, S, envFor,
+  const api = { tier, setTier, envKind, apply, refresh, forget, rigStudio, syncStudio, tick, status, S, envFor,
     pickTier, pickEnvKind, norm, smoothNormals, seamStats, deriveEnv, classify, kindParams, matcapPixel, matcapBytes, matcapPalette, MATCAP_SCALE, STUDIO, ANISO, TIERS };
   api.core = { pickTier, pickEnvKind, norm, smoothNormals, seamStats, deriveEnv, classify, kindParams, matcapPixel, matcapBytes, matcapPalette, MATCAP_SCALE, STUDIO, ANISO, TIERS };
   return { api };

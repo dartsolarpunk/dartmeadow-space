@@ -1,0 +1,36 @@
+<!doctype html><meta charset=utf8><body style="margin:0;background:#000"><div id=host style="position:relative;width:100vw;height:100vh"></div>
+<script type="importmap">{"imports":{"three":"/three/build/three.webgpu.js","three/webgpu":"/three/build/three.webgpu.js","three/tsl":"/three/build/three.tsl.js"}}</script>
+<script type="module">
+// headless look-check for ui/dm-menuworld.js: ?scene=studio|cards &w=&h= &views=pitch:yaw,...  &menuscene=low  &glb=<path>
+import * as TH from 'three/webgpu'; import * as TSL from 'three/tsl'; import {GLTFLoader} from '/three/examples/jsm/loaders/GLTFLoader.js';
+const THREE=Object.assign({},TH); THREE.TSL=TSL; window.THREE=THREE; window.shots={}; window.errs=[];
+addEventListener('error',e=>errs.push(String(e.message).slice(0,300)));
+const q=new URLSearchParams(location.search), sceneKind=q.get('scene')||'studio', w=+(q.get('w')||640), h=+(q.get('h')||400);
+await new Promise(r=>{const s=document.createElement('script'); s.src='/ui/dm-menuworld.js'; s.onload=r; s.onerror=()=>{errs.push('script load failed'); window.done=true;}; document.head.appendChild(s);});
+const MW=window.DMMenuWorld; window.tier=MW.tier().name;
+const host=document.getElementById('host'), cv=document.createElement('canvas'); host.appendChild(cv); host.style.width=w+'px'; host.style.height=h+'px';
+const r=new TH.WebGPURenderer({canvas:cv,forceWebGL:true,antialias:false,alpha:true}); await r.init(); r.toneMapping=TH.ACESFilmicToneMapping; r.toneMappingExposure=1.05; r.setClearColor(0,0); r.setPixelRatio(1); r.setSize(w,h,false);
+const shot=(k)=>{window.shots[k]=cv.toDataURL('image/png');};
+const t0=performance.now(); const L=(m)=>{console.log('[h] '+m+' '+Math.round(performance.now()-t0));}; L('renderer ok');
+if(sceneKind==='cards'){
+  const cw=MW.cardWorld({THREE,renderer:r,host,wheel:null,busy:()=>false}); window.cw=!!cw;
+  cw.renderOnce(3000); cw.renderOnce(3100); await new Promise(res=>setTimeout(res,100)); cw.renderOnce(3200);
+  shot('cards'); window.frames=cw.frames+0; cw.dispose();
+}else{
+  const S=new TH.Scene(); const hemi=new TH.HemisphereLight(0x9aa6d8,0x3a1c14,0.9); S.add(hemi);
+  const key=new TH.DirectionalLight(0xffd7a8,2.6); key.position.set(1.6,2.6,2.4); S.add(key); const rim=new TH.DirectionalLight(0x6a8cff,1.9); rim.position.set(-2.2,1.6,-2.0); S.add(rim);
+  const pad=new TH.Mesh(new TH.CircleGeometry(1.35,24),new TH.MeshStandardMaterial({color:0x4a2418})); pad.rotation.x=-Math.PI/2; pad.userData.dmSet=1; S.add(pad);
+  const X={scene:S,key,rim,items:[]};
+  let root=null; try{ const g=await new GLTFLoader().loadAsync(q.get('glb')||'/characterassests/Meshy_AI_Autumn_biped_Character_output.glb'); root=g.scene; S.add(root); root.updateMatrixWorld(true); const b=new TH.Box3().setFromObject(root); root.position.y=-b.min.y; root.updateMatrixWorld(true); window.H=b.max.y-b.min.y;
+    root.traverse(o=>{ if(o.isMesh&&o.material&&o.material.metalness>0.9){o.material.metalness=0.08;o.material.roughness=0.55;} }); }catch(e){ errs.push('glb '+e.message); window.H=1.7; }
+  L('glb'); const H=window.H||1.7, world=MW.attachStudio(THREE,X,{aspect:w/h}); window.world=!!world;
+  L('world '+!!world); for(const hd of (q.get('hide')||'').split(',')){ if(hd==='sun') world.sky.sunQ.visible=false; if(hd==='planet') world.sky.planetGroup.visible=false; if(hd==='stars') world.sky.layers.forEach(l=>l.grp.visible=false); if(hd==='dome') world.group.children[0].visible=false; if(hd==='struct') world.group.children.slice(4).forEach(c=>c.visible=false); } const cam=new TH.PerspectiveCamera(30,w/h,0.05,60); world&&world.prepCamera(cam);
+  const th=Math.tan(15*Math.PI/180), dist=Math.max(H*0.62/th,(0.62/(w/h))/th), tgt=new TH.Vector3();
+  const views=(q.get('views')||'0:0.35').split(',');
+  for(const v of views){ const [pd,yd,zm]=v.split(':').map(Number); const pitch=pd*Math.PI/180; if(root) root.rotation.y=yd||0;
+    const o=MW.orbitRig(pitch,H,dist,zm||1,0,{floorY:0}); cam.position.set(0,o.camY,o.camR); tgt.set(0,o.ty,0); cam.lookAt(tgt); cam.updateMatrixWorld(true);
+    world&&world.update(5000,0.03,cam,yd||0,tgt,false); L('render1'); r.render(S,cam); L('rendered'); await new Promise(res=>setTimeout(res,150)); world&&world.update(5000,0.03,cam,yd||0,tgt,false); r.render(S,cam); shot('p'+pd+'_y'+yd+(zm?'_z'+zm:'')); }
+  if(world){ const b=r.info.render; window.calls=b.calls; window.tris=b.triangles; world.dispose(); }
+}
+window.ms=Math.round(performance.now()-t0); window.done=true;
+</script>
