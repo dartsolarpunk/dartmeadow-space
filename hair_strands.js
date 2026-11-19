@@ -694,7 +694,11 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       if (!scalpOrigMat) {
         const m0 = scalpMesh.material;
         if (!m0 || Array.isArray(m0) || !m0.clone) return;
-        scalpOrigMat = m0; scalpMat = m0.clone();
+        scalpOrigMat = m0;
+        // Material.clone() JSON-copies userData; the parallax pass stores circular links there (dmPxFrom/dmPxTwin), so hide them during the clone
+        const ud = m0.userData || {}, hid = {};
+        for (const k of ['dmPxFrom', 'dmPxTwin']) if (k in ud) { hid[k] = ud[k]; delete ud[k]; }
+        try { scalpMat = m0.clone(); } finally { Object.assign(ud, hid); }
         if ('sheen' in scalpMat) scalpMat.sheen = 0;           // body material carries a skin-tone sheen
         if ('roughness' in scalpMat) scalpMat.roughness = Math.max(scalpMat.roughness || 0, meta.roughness ?? 0.8);
         scalpMat.needsUpdate = true;
