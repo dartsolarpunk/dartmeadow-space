@@ -77,6 +77,11 @@ C.resetLook('ariel'); ok(C.isDefaultLook(C.look('ariel')), 'reset clears decals 
       let fz = 0, bz = 0; for (let i = 0; i < I.nrm.length; i += 3) { if (I.nrm[i + 2] > 0.3) fz++; else if (I.nrm[i + 2] < -0.3) bz++; }
       ok(fz > 0 && bz > 0, d.id + '.' + id + ' has front and back facing normals (' + fz + '/' + bz + ')');
       const unit = P._impl.unitOf(S.root, THREE); ok(unit > 0.5 && unit < 3, d.id + ' unit ' + unit.toFixed(2));
+      { // the placement pad's garment outline (real mesh): every view has triangles, all inside 0..1, and the front outline is wider than the sleeve view's share of the box
+        const O = P._impl.itemOutline(S.root, it, THREE, !!d.decalFlip); ok(O && O.unit === unit, d.id + '.' + id + ' itemOutline returns the box + unit');
+        for (const k of Object.keys(it.spots)) { const t = O.views[k]; let mn = 9, mx = -9; for (const v of t) { mn = Math.min(mn, v); mx = Math.max(mx, v); }
+          ok(t.length >= 60 && t.length / 6 <= 6500 && mn >= -1e-4 && mx <= 1 + 1e-4, d.id + '.' + id + '.' + k + ' outline has ' + t.length / 6 + ' triangles inside the pad frame'); }
+      }
       let infos, mbox = P.emptyBox();
       if (it.decals === 'planar') {
         const pl = P._impl.planarize(S.root, ms[0], box, THREE, !!d.decalFlip), uv = pl.geo.attributes.uv.array; infos = [pl.info]; ok(!pl.geo.index && pl.geo.attributes.position.count === uv.length / 2, d.id + '.' + id + ' planar geometry is unwelded with a uv per vertex');

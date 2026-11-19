@@ -73,8 +73,8 @@
     });
   }
   // the player's colours (+ logos in Phase 3) on a model: the same ui/dm-charpaint.js the game runs after its own load
-  function applyLook(M, def) {
-    if (!M || !M.root || !W.DMCharPaint || !W.DMChars) return; const L = W.DMChars.look(def.id);
+  function applyLook(M, def, look) {   // look: the stored look unless a preview look (stored + a pending logo) is passed
+    if (!M || !M.root || !W.DMCharPaint || !W.DMChars) return; const L = look || W.DMChars.look(def.id);
     try { W.DMCharPaint.apply(M.root, def, L, W.THREE); } catch (e) { log('paint', e && e.message); }
     try { if (M.hair) W.DMCharPaint.applyHair(M.hair, def, L); } catch (e) { log('hair look', e && e.message); }
   }
@@ -245,7 +245,7 @@
   const S = { M: null, X: null, cam: null, F: null, raf: 0, yaw: 0, vyaw: 0, dragging: false, pointers: new Map(), pinch0: 0, zoom: 1, pitch: 0, last: 0, accum: 0, nextExtra: 0, look: 0, lookT: 0, def: null, token: 0, leased: false };
   async function openStudio(id, fromEl) {
     const def = W.DMChars.get(id); if (!def || CS.studioOpen) return;
-    CS.studioOpen = true; thumbAbort = true; const token = ++S.token; S.def = def;
+    CS.studioOpen = true; thumbAbort = true; const token = ++S.token; S.def = def; try { CS._resetFlow && CS._resetFlow(); } catch (e) { }
     const root = $('cs-studio'), stage = $('cs-stage');
     $('cs-pname').textContent = def.name.toUpperCase(); $('cs-ptag').textContent = def.tag || '';
     $('cs-load').textContent = 'LOADING ' + def.name.toUpperCase() + '…'; $('cs-load').style.display = ''; $('cs-turn').classList.remove('gone');
@@ -279,7 +279,7 @@
   }
   function closeStudio(opts) {
     if (!CS.studioOpen) return; opts = opts || {}; const token = ++S.token; void token;
-    stopLoop();
+    stopLoop(); try { CS._discardPending && CS._discardPending(S.def); } catch (e) { }   // a logo still pending is dropped (and not in the card still)
     // refresh the card's still from the live model (colours / logos show on the card), then let everything go
     let refreshed = false;
     try { if (S.M && S.M.root && R.r && opts.thumb !== false && S.F) refreshed = grabThumbFromStudio(); } catch (e) { log('thumb refresh', e && e.message); }
@@ -388,12 +388,13 @@
     const cur = (W.DMChars.look(def.id).colors || {})[region.id] || null;
     const pal = region.kind === 'hair' ? W.DMChars.PALETTE_HAIR : W.DMChars.PALETTE_CLOTH;
     const mk = (cls, label) => { const b = D.createElement('button'); b.type = 'button'; b.className = 'cs-sw ' + cls; b.setAttribute('aria-label', label); b.title = label; return b; };
-    const pick = (hex) => { W.DMChars.setColor(def.id, region.id, hex); applyLook(S.M, def); noteGame(def); rerender(); };
-    const d0 = mk('def' + (cur ? '' : ' on'), region.label + ' default'); d0.textContent = 'DEF'; d0.addEventListener('click', () => pick(null)); grid.appendChild(d0);
+    const pick = (hex) => { W.DMChars.setColor(def.id, region.id, hex); applyStudio(def); noteGame(def); rerender(); };
+    // an item with a shipped texture offers DEFAULT TEXTURE (one tap back to the baked look); a colour swatch overrides the texture with a flat colour
+    const d0 = mk('def' + (region.texture ? ' tex wide' : '') + (cur ? '' : ' on'), region.label + (region.texture ? ' default texture' : ' default')); d0.textContent = region.texture ? 'DEFAULT TEXTURE' : 'DEF'; d0.addEventListener('click', () => pick(null)); grid.appendChild(d0);
     pal.forEach((hex) => { const b = mk(cur === hex ? 'on' : '', region.label + ' ' + hex); b.style.background = hex; b.addEventListener('click', () => pick(hex)); grid.appendChild(b); });
     const lb = D.createElement('label'); lb.className = 'cs-sw custom' + (cur && !pal.includes(cur) ? ' on' : ''); lb.title = region.label + ' custom colour'; lb.setAttribute('aria-label', region.label + ' custom colour');
     const inp = D.createElement('input'); inp.type = 'color'; inp.value = cur || region.defaultColor || '#808080'; lb.appendChild(inp); lb.insertAdjacentHTML('beforeend', '<span>+</span>');
-    let tm = 0; inp.addEventListener('input', () => { clearTimeout(tm); tm = setTimeout(() => { W.DMChars.setColor(def.id, region.id, inp.value); applyLook(S.M, def); noteGame(def); }, 220); });
+    let tm = 0; inp.addEventListener('input', () => { clearTimeout(tm); tm = setTimeout(() => { W.DMChars.setColor(def.id, region.id, inp.value); applyStudio(def); noteGame(def); }, 220); });
     inp.addEventListener('change', () => { clearTimeout(tm); pick(inp.value); });
     grid.appendChild(lb); return wrap;
   }
@@ -409,78 +410,179 @@
       regs.forEach((r) => { const b = D.createElement('button'); b.type = 'button'; b.className = 'cs-chip' + (r.id === activeRegion ? ' on' : '') + ((L.colors || {})[r.id] ? ' set' : ''); b.textContent = r.label.toUpperCase();
         b.addEventListener('click', () => { activeRegion = r.id; ctx.rerender(); }); chips.appendChild(b); });
       el.appendChild(swatchGrid(regs.find((r) => r.id === activeRegion), def, ctx.rerender));
-      const p = D.createElement('p'); p.textContent = 'DEF keeps her original look.'; el.appendChild(p);
+      const ar = regs.find((r) => r.id === activeRegion), p = D.createElement('p'); p.textContent = ar.texture ? 'DEFAULT TEXTURE keeps the original printed ' + ar.label.toLowerCase() + '. A colour swatch replaces the texture with that flat colour; tap DEFAULT TEXTURE to bring it back.' : 'DEF keeps her original look.'; el.appendChild(p);
       const rb = D.createElement('button'); rb.type = 'button'; rb.className = 'cs-btn cs-reset'; rb.textContent = 'RESET TO DEFAULT'; rb.disabled = W.DMChars.isDefaultLook(L);
-      rb.addEventListener('click', () => { W.DMChars.resetLook(def.id); applyLook(S.M, def); ctx.rerender(); }); el.appendChild(rb);
+      rb.addEventListener('click', () => { W.DMChars.resetLook(def.id); CS._resetFlow && CS._resetFlow(); applyStudio(def); ctx.rerender(); }); el.appendChild(rb);
     },
   });
 
-  /* ───────────────────────── LOGOS panel (registry spots + DMChars decal model + DMCharPaint projection) ─────────────────────────
-     pick a logo, tap SHIRT / PANTS to drop it, then place it on a 2D pad of that garment (drag to move, snap dots, size / turn / colour).  Edits are committed on release:
-     one CPU bake into the garment's texture per change, no per-frame work.  Stage-tap placement is not offered (the pad is exact and cheaper). */
-  const PS = { logo: null, sel: -1, spot: null };
+  /* ───────────────────────── LOGOS panel (registry spots + DMChars decal model + DMDecalFlow staged logic + DMCharPaint projection) ─────────────────────────
+     1 pick a logo, 2 tap a garment: a PENDING decal shows on the character (preview, nothing saved), 3 place it on the pad (drag to move, corner handle = size, top knob = turn),
+     APPLY commits it.  Another logo picked while one is pending replaces the logo and keeps the placement.  RESET = default place / size / turn, CANCEL = drop it.
+     Applied logos are listed: tap to select, DELETE SELECTED / CLEAR ALL ON <garment>, EDIT loads one back into the pending slot.  The pure logic is ui/dm-decalflow.js.
+     Each change is one CPU bake into the garment's texture on release (debounced), no per-frame work. */
+  const FL = W.DMDecalFlow; let FS = FL ? FL.newState() : null, FLOW = null;
+  const flow = () => FLOW || (FLOW = FL.make(W.DMChars));
   const svgOf = (lg) => lg.text ? '<span class="cs-lgt">Aa</span>' : '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="' + lg.d + '"/></svg>';
-  const boxCache = new Map();
-  function itemInfo(def, item) {   // {W,H,unit} of each view for the pad; falls back to a 1:1.2 pad when the model is not there
+  const boxCache = new Map(), silCache = new Map();
+  function itemInfo(def, item) {   // {unit, views:{key:{W,H,tris}}} for the pad (garment outline); null when the model is not there (the pad falls back to a plain 1:1.2 card)
     const k = def.id + '|' + item; if (boxCache.has(k)) return boxCache.get(k); let r = null;
-    try { const ib = S.M && S.M.root && W.DMCharPaint && W.DMCharPaint._impl.itemBox(S.M.root, def.items[item], W.THREE, !!def.decalFlip); if (ib) { r = { unit: ib.unit, views: {} }; for (const key of Object.keys(def.items[item].spots)) { const R = W.DMCharPaint.planeRange(ib.box, key); r.views[key] = { W: R.W, H: R.H }; } } } catch (e) { }
+    try { const ib = S.M && S.M.root && W.DMCharPaint && W.DMCharPaint._impl.itemOutline(S.M.root, def.items[item], W.THREE, !!def.decalFlip);
+      if (ib) { r = { unit: ib.unit, views: {} }; for (const key of Object.keys(def.items[item].spots)) { const R = W.DMCharPaint.planeRange(ib.box, key); r.views[key] = { W: R.W, H: R.H, tris: ib.views[key] }; } } } catch (e) { log('outline', e && e.message); }
     if (r) boxCache.set(k, r); return r;
   }
-  function drawPad(cv, def, dec, live) {
-    const ctx = cv.getContext('2d'), w = cv.width, h = cv.height, DC = W.DMChars, it = def.items[dec.item], sp = it.spots[dec.spot];
-    ctx.clearRect(0, 0, w, h); ctx.fillStyle = 'rgba(255,255,255,.06)'; ctx.strokeStyle = 'rgba(120,220,255,.45)'; ctx.lineWidth = 2;
-    const r = 14; ctx.beginPath(); ctx.moveTo(r, 1); ctx.arcTo(w - 1, 1, w - 1, h - 1, r); ctx.arcTo(w - 1, h - 1, 1, h - 1, r); ctx.arcTo(1, h - 1, 1, 1, r); ctx.arcTo(1, 1, w - 1, 1, r); ctx.closePath(); ctx.fill(); ctx.stroke();
-    const near = DC.snapPoint(def, dec.item, dec.spot, live.x, live.y, DC.SNAP_R * 1.5);
-    sp.snaps.forEach((sn) => { ctx.beginPath(); ctx.arc(sn.x * w, sn.y * h, sn === near ? 9 : 5, 0, 6.2832); ctx.fillStyle = sn === near ? '#ffd24a' : 'rgba(255,210,74,.55)'; ctx.fill(); });
-    const info = itemInfo(def, dec.item), v = info && info.views[dec.spot], fw = v ? (sp.base * live.scale * info.unit) / v.W : 0.3, px = Math.max(10, fw * w), lg = DC.logoById.get(dec.id);
-    ctx.save(); ctx.translate(live.x * w, live.y * h); ctx.rotate(live.rotation * Math.PI / 180); ctx.fillStyle = dec.colour; ctx.globalAlpha = .95;
-    if (lg.text) { ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = '900 ' + px * 0.5 + 'px Arial, sans-serif'; ctx.fillText(dec.text || '', 0, 0, px); }
-    else { ctx.scale(px / 24, px / 24); ctx.translate(-12, -12); ctx.fill(new Path2D(lg.d), 'evenodd'); }
-    ctx.restore();
+  function silhouette(def, item, spot, w, h) {   // the garment outline of one view, drawn once into an offscreen canvas
+    const info = itemInfo(def, item), v = info && info.views[spot]; if (!v || !v.tris || !v.tris.length) return null;
+    const k = def.id + '|' + item + '|' + spot + '|' + w + 'x' + h; if (silCache.has(k)) return silCache.get(k);
+    const c = D.createElement('canvas'); c.width = w; c.height = h; const g = c.getContext('2d'), t = v.tris;
+    g.fillStyle = '#96c3ff'; g.strokeStyle = '#96c3ff'; g.lineWidth = 1.2; g.lineJoin = 'round';   // opaque here, faded when drawn onto the pad (no alpha build-up between triangles)
+    g.beginPath(); for (let i = 0; i < t.length; i += 6) { g.moveTo(t[i] * w, t[i + 1] * h); g.lineTo(t[i + 2] * w, t[i + 3] * h); g.lineTo(t[i + 4] * w, t[i + 5] * h); g.closePath(); } g.fill(); g.stroke();
+    silCache.set(k, c); return c;
   }
-  function commitLook(def) { applyLook(S.M, def); noteGame(def); W.DMChars.list().forEach((d) => { if (d.id === def.id) paintCard(d.id); }); }
+  const PAD_W = 270;
+  function padSize(def, item, spot) { const info = itemInfo(def, item), v = info && info.views[spot], asp = v ? Math.max(0.5, Math.min(2, v.H / v.W)) : 1.2; return [PAD_W, Math.round(PAD_W * asp)]; }
+  function drawLogo(ctx, lg, text, colour, px, outline) {
+    ctx.fillStyle = colour; if (lg.text) { ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = '900 ' + px * 0.5 + 'px Arial, sans-serif'; if (outline) { ctx.lineWidth = 2; ctx.strokeStyle = outline; ctx.strokeText(text || '', 0, 0, px); } ctx.fillText(text || '', 0, 0, px); return; }
+    ctx.save(); ctx.scale(px / 24, px / 24); ctx.translate(-12, -12); const p = new Path2D(lg.d); if (outline) { ctx.lineWidth = 2 * 24 / px; ctx.strokeStyle = outline; ctx.stroke(p); } ctx.fill(p, 'evenodd'); ctx.restore();
+  }
+  // the placement pad: garment outline, thirds grid, snap dots, the other applied logos on this view (faint), the pending logo with its box, SIZE handle (corner) and TURN knob
+  function drawPad(cv, def, FSt, live, mode) {
+    const ctx = cv.getContext('2d'), w = cv.width, h = cv.height, DC = W.DMChars, sp = def.items[FSt.item].spots[FSt.spot];
+    ctx.clearRect(0, 0, w, h); const r = 14, bg = ctx.createLinearGradient(0, 0, 0, h); bg.addColorStop(0, 'rgba(34,40,70,.95)'); bg.addColorStop(1, 'rgba(14,16,34,.95)');
+    ctx.beginPath(); ctx.moveTo(r, 1); ctx.arcTo(w - 1, 1, w - 1, h - 1, r); ctx.arcTo(w - 1, h - 1, 1, h - 1, r); ctx.arcTo(1, h - 1, 1, 1, r); ctx.arcTo(1, 1, w - 1, 1, r); ctx.closePath(); ctx.fillStyle = bg; ctx.fill();
+    ctx.save(); ctx.clip();
+    const sil = silhouette(def, FSt.item, FSt.spot, w, h); if (sil) { ctx.globalAlpha = 0.24; ctx.drawImage(sil, 0, 0); ctx.globalAlpha = 1; }
+    ctx.strokeStyle = 'rgba(255,255,255,.10)'; ctx.lineWidth = 1; ctx.setLineDash([4, 5]); ctx.beginPath();
+    for (let i = 1; i < 3; i++) { ctx.moveTo(w * i / 3, 0); ctx.lineTo(w * i / 3, h); ctx.moveTo(0, h * i / 3); ctx.lineTo(w, h * i / 3); } ctx.stroke(); ctx.setLineDash([]);
+    ctx.strokeStyle = 'rgba(255,255,255,.18)'; ctx.beginPath(); ctx.moveTo(w / 2, 0); ctx.lineTo(w / 2, h); ctx.stroke();
+    const info = itemInfo(def, FSt.item), v = info && info.views[FSt.spot], unit = info ? info.unit : 1;
+    // logos already applied on this view, for context
+    DC.look(def.id).decals.forEach((d, i) => { if (d.item !== FSt.item || d.spot !== FSt.spot || i === FSt.editIndex) return; const g0 = FL.padGeom(v, sp, unit, d, w, h), lg0 = DC.logoById.get(d.id);
+      ctx.save(); ctx.globalAlpha = 0.4; ctx.translate(g0.cx, g0.cy); ctx.rotate(g0.th); drawLogo(ctx, lg0, d.text, d.colour, g0.px, 'rgba(0,0,0,.5)'); ctx.restore(); });
+    const near = DC.snapPoint(def, FSt.item, FSt.spot, live.x, live.y, DC.SNAP_R * 1.5);
+    sp.snaps.forEach((sn) => { ctx.beginPath(); ctx.arc(sn.x * w, sn.y * h, sn === near ? 8 : 4, 0, 6.2832); ctx.fillStyle = sn === near ? '#ffd24a' : 'rgba(255,210,74,.5)'; ctx.fill(); if (sn === near) { ctx.font = '700 11px sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = '#ffd24a'; ctx.fillText(sn.label, Math.max(40, Math.min(w - 40, sn.x * w)), sn.y * h - 14); } });
+    const g = FL.padGeom(v, sp, unit, live, w, h), lg = DC.logoById.get(FSt.logo);
+    ctx.save(); ctx.translate(g.cx, g.cy); ctx.rotate(g.th); ctx.globalAlpha = 0.97; drawLogo(ctx, lg, FSt.text, FSt.colour, g.px, 'rgba(0,0,0,.55)'); ctx.restore();
+    // box + handles
+    ctx.strokeStyle = '#ffd24a'; ctx.lineWidth = 1.5; ctx.setLineDash([5, 4]); ctx.beginPath(); g.corners.forEach((c, i) => { if (i) ctx.lineTo(c[0], c[1]); else ctx.moveTo(c[0], c[1]); }); ctx.closePath(); ctx.stroke(); ctx.setLineDash([]);
+    ctx.beginPath(); ctx.moveTo(g.tip[0], g.tip[1]); ctx.lineTo(g.turn[0], g.turn[1]); ctx.stroke();
+    const knob = (p, on, glyph) => { ctx.beginPath(); ctx.arc(p[0], p[1], on ? 14 : 12, 0, 6.2832); ctx.fillStyle = on ? '#ffd24a' : 'rgba(18,16,30,.92)'; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = '#ffd24a'; ctx.stroke();
+      ctx.fillStyle = on ? '#1a1206' : '#ffd24a'; ctx.font = '700 15px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(glyph, p[0], p[1] + 1); };
+    knob(g.turn, mode === 'turn', '↻'); knob(g.size, mode === 'size', '⤢');
+    ctx.beginPath(); ctx.arc(g.cx, g.cy, 4, 0, 6.2832); ctx.fillStyle = '#ffd24a'; ctx.fill();
+    ctx.restore(); ctx.fillStyle = 'rgba(255,255,255,.55)'; ctx.font = '700 11px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    ctx.fillText(((sp.label || DC.SPOT_AXES[FSt.spot].label) + '').toUpperCase(), 12, 10); ctx.strokeStyle = 'rgba(255,210,74,.7)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(r, 1); ctx.arcTo(w - 1, 1, w - 1, h - 1, r); ctx.arcTo(w - 1, h - 1, 1, h - 1, r); ctx.arcTo(1, h - 1, 1, 1, r); ctx.arcTo(1, 1, w - 1, 1, r); ctx.closePath(); ctx.stroke();
+  }
+  // the studio model shows the stored look + the pending decal (never the stored look alone while something is pending)
+  let pvT = 0;
+  function applyStudio(def) {
+    clearTimeout(pvT); const DC = W.DMChars, L = DC.look(def.id); applyLook(S.M, def, FS && FS.pending && FLOW ? FLOW.previewLook(L, FS, def) : L);
+  }
+  const queuePreview = (def) => { clearTimeout(pvT); pvT = setTimeout(() => applyStudio(def), 90); };
+  function commitLook(def) { applyStudio(def); noteGame(def); W.DMChars.list().forEach((d) => { if (d.id === def.id) paintCard(d.id); }); }
+  function resetFlow() { clearTimeout(pvT); FS = FL ? FL.newState() : null; }
+  function discardPending(def) { if (FS && FS.pending) { FS.pending = false; FS.editIndex = -1; } clearTimeout(pvT); if (def && S.M) applyStudio(def); }
+  CS._resetFlow = resetFlow; CS._discardPending = discardPending; CS._flow = () => FS;
+
   CS.panels.push({
-    id: 'logos', label: 'LOGOS', when: (def) => Object.keys(def.items || {}).some((i) => def.items[i].spots),
+    id: 'logos', label: 'LOGOS', when: (def) => !!FL && Object.keys(def.items || {}).some((i) => def.items[i].spots),
     render(el, ctx) {
-      const def = ctx.def, DC = W.DMChars, L = DC.look(def.id), items = Object.keys(def.items).filter((i) => def.items[i].spots), mk = (tag, cls, txt) => { const e = D.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; };
-      if (PS.sel >= L.decals.length) PS.sel = L.decals.length - 1;
-      const h1 = mk('div', 'cs-reg-h', '1  PICK A LOGO'); el.appendChild(h1);
-      const grid = mk('div', 'cs-lgs'); DC.LOGOS.forEach((lg) => { const b = mk('button', 'cs-lg' + (PS.logo === lg.id ? ' on' : '')); b.type = 'button'; b.title = lg.label; b.setAttribute('aria-label', lg.label); b.innerHTML = svgOf(lg);
-        b.addEventListener('click', () => { PS.logo = lg.id; ctx.rerender(); }); grid.appendChild(b); }); el.appendChild(grid);
-      let txt = null; if (PS.logo && DC.logoById.get(PS.logo).text) { txt = mk('input', 'cs-txt'); txt.type = 'text'; txt.maxLength = 8; txt.placeholder = 'UP TO 8 LETTERS'; txt.value = PS._text || 'DART'; txt.setAttribute('aria-label', 'Logo text'); txt.addEventListener('input', () => { PS._text = DC.cleanText(txt.value) ; }); el.appendChild(txt); }
-      el.appendChild(mk('div', 'cs-reg-h', '2  TAP A GARMENT TO PUT IT ON'));
-      const chips = mk('div', 'cs-chips'); items.forEach((id) => { const n = DC.decalCount(def.id, id), b = mk('button', 'cs-chip', def.items[id].label.toUpperCase() + '  ' + n + '/' + DC.MAX_DECALS); b.type = 'button';
-        b.addEventListener('click', () => {
-          if (!PS.logo) { toast('Pick a logo first'); return; } if (n >= DC.MAX_DECALS) { toast(def.items[id].label + ' is full (' + DC.MAX_DECALS + ' logos) — remove one first'); return; }
-          const spot = Object.keys(def.items[id].spots)[0], i = DC.addDecal(def.id, id, spot, PS.logo, { text: PS._text || 'DART', colour: PS._colour || '#ecebe6' });
-          if (i >= 0) { PS.sel = i; commitLook(def); ctx.rerender(); } else toast('That logo cannot go there');
-        }); chips.appendChild(b); }); el.appendChild(chips);
-      if (!L.decals.length) { el.appendChild(mk('p', '', 'No logos yet. Your pilot keeps her original look until you add one.')); return; }
-      el.appendChild(mk('div', 'cs-reg-h', '3  PLACE IT'));
-      const placed = mk('div', 'cs-chips'); L.decals.forEach((d, i) => { const b = mk('button', 'cs-chip' + (i === PS.sel ? ' on' : ''), DC.logoById.get(d.id).label.toUpperCase() + ' · ' + def.items[d.item].label.toUpperCase()); b.type = 'button'; b.addEventListener('click', () => { PS.sel = i; ctx.rerender(); }); placed.appendChild(b); }); el.appendChild(placed);
-      if (PS.sel < 0) PS.sel = 0; const d = L.decals[PS.sel], it = def.items[d.item];
-      const spots = mk('div', 'cs-chips'); Object.keys(it.spots).forEach((k) => { const b = mk('button', 'cs-chip' + (k === d.spot ? ' on' : ''), (it.spots[k].label || DC.SPOT_AXES[k].label).toUpperCase()); b.type = 'button';
-        b.addEventListener('click', () => { const sn = it.spots[k].snaps[0]; DC.updateDecal(def.id, PS.sel, { spot: k, x: sn.x, y: sn.y }); commitLook(def); ctx.rerender(); }); spots.appendChild(b); }); el.appendChild(spots);
-      const info = itemInfo(def, d.item), v = info && info.views[d.spot], asp = v ? Math.max(0.5, Math.min(1.6, v.H / v.W)) : 1.2, cv = mk('canvas', 'cs-pad'); cv.width = 260; cv.height = Math.round(260 * asp); cv.setAttribute('aria-label', 'Logo placement pad'); el.appendChild(cv);
-      const live = { x: d.x, y: d.y, scale: d.scale, rotation: d.rotation }; drawPad(cv, def, d, live);
-      let drag = false; const at = (e) => { const r = cv.getBoundingClientRect(); live.x = Math.max(0.02, Math.min(0.98, (e.clientX - r.left) / r.width)); live.y = Math.max(0.02, Math.min(0.98, (e.clientY - r.top) / r.height)); drawPad(cv, def, d, live); };
-      cv.addEventListener('pointerdown', (e) => { drag = true; try { cv.setPointerCapture(e.pointerId); } catch (_) { } at(e); e.preventDefault(); });
-      cv.addEventListener('pointermove', (e) => { if (drag) at(e); });
-      const end = (e) => { if (!drag) return; drag = false; DC.updateDecal(def.id, PS.sel, { x: live.x, y: live.y, snap: true }); commitLook(def); ctx.rerender(); };
-      cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
-      const slider = (label, min, max, step, val, fmt, set) => { const row = mk('label', 'cs-row'); row.appendChild(mk('span', '', label)); const r = mk('input'); r.type = 'range'; r.min = min; r.max = max; r.step = step; r.value = val; r.setAttribute('aria-label', label);
-        const o = mk('output', '', fmt(val)); r.addEventListener('input', () => { o.textContent = fmt(+r.value); set(+r.value, true); }); r.addEventListener('change', () => { set(+r.value, false); }); row.appendChild(r); row.appendChild(o); el.appendChild(row); };
-      slider('SIZE', DC.SCALE_MIN || 0.4, 3, 0.05, d.scale, (x) => (+x).toFixed(2) + 'x', (x, liveOnly) => { live.scale = x; drawPad(cv, def, d, live); if (!liveOnly) { DC.updateDecal(def.id, PS.sel, { scale: x }); commitLook(def); } });
-      slider('TURN', -180, 180, 5, d.rotation, (x) => x + '°', (x, liveOnly) => { live.rotation = x; drawPad(cv, def, d, live); if (!liveOnly) { DC.updateDecal(def.id, PS.sel, { rotation: x }); commitLook(def); } });
-      if (DC.logoById.get(d.id).text) { const t2 = mk('input', 'cs-txt'); t2.type = 'text'; t2.maxLength = 8; t2.value = d.text || ''; t2.setAttribute('aria-label', 'Decal text'); t2.addEventListener('change', () => { if (DC.updateDecal(def.id, PS.sel, { text: t2.value })) commitLook(def); ctx.rerender(); }); el.appendChild(t2); }
-      el.appendChild(mk('div', 'cs-reg-h', 'LOGO COLOUR'));
-      const sw = mk('div', 'cs-sws'); DC.PALETTE_CLOTH.concat(['#ffffff']).forEach((hex) => { const b = mk('button', 'cs-sw' + (d.colour === hex ? ' on' : '')); b.type = 'button'; b.style.background = hex; b.setAttribute('aria-label', 'Logo colour ' + hex);
-        b.addEventListener('click', () => { PS._colour = hex; DC.updateDecal(def.id, PS.sel, { colour: hex }); commitLook(def); ctx.rerender(); }); sw.appendChild(b); });
-      const lb = mk('label', 'cs-sw custom'), inp = mk('input'); inp.type = 'color'; inp.value = d.colour; lb.appendChild(inp); lb.insertAdjacentHTML('beforeend', '<span>+</span>'); lb.setAttribute('aria-label', 'Custom logo colour');
-      inp.addEventListener('change', () => { PS._colour = inp.value; DC.updateDecal(def.id, PS.sel, { colour: inp.value }); commitLook(def); ctx.rerender(); }); sw.appendChild(lb); el.appendChild(sw);
-      const row = mk('div', 'cs-chips'); const del = mk('button', 'cs-btn cs-reset', 'REMOVE THIS LOGO'); del.type = 'button'; del.addEventListener('click', () => { DC.removeDecal(def.id, PS.sel); PS.sel = Math.max(0, PS.sel - 1); commitLook(def); ctx.rerender(); });
-      const clr = mk('button', 'cs-btn cs-reset', 'CLEAR ALL LOGOS'); clr.type = 'button'; clr.addEventListener('click', () => { DC.clearDecals(def.id); PS.sel = -1; commitLook(def); ctx.rerender(); });
-      el.appendChild(del); el.appendChild(clr);
+      const def = ctx.def, DC = W.DMChars, F = flow(), L = DC.look(def.id), items = Object.keys(def.items).filter((i) => def.items[i].spots), body = $('cs-pbody');
+      const mk = (tag, cls, txt) => { const e = D.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; };
+      const btn = (cls, txt, fn, label) => { const b = mk('button', cls, txt); b.type = 'button'; if (label) b.setAttribute('aria-label', label); b.addEventListener('click', fn); return b; };
+      const rr = () => { const t = body ? body.scrollTop : 0; ctx.rerender(); if (body) body.scrollTop = t; };   // structural change: rebuild, keep the scroll position
+      F.pruneSel(FS, L);
+      const lgName = (id) => DC.logoById.get(id).label, itName = (id) => def.items[id].label;
+      const cnt = (id) => F.count(def, L, id);
+
+      /* 1  pick a logo */
+      el.appendChild(mk('div', 'cs-reg-h', '1  PICK A LOGO'));
+      const grid = mk('div', 'cs-lgs');
+      DC.LOGOS.forEach((lg) => { const b = btn('cs-lg' + (FS.logo === lg.id ? ' on' : ''), '', () => {
+        const r = F.pickLogo(FS, lg.id); if (r === 'swapped') { applyStudio(def); toast('Logo swapped: same place, size and turn'); } rr(); }, lg.label); b.title = lg.label; b.innerHTML = svgOf(lg); grid.appendChild(b); });
+      el.appendChild(grid);
+      if (FS.logo && DC.logoById.get(FS.logo).text) {
+        const txt = mk('input', 'cs-txt'); txt.type = 'text'; txt.maxLength = 8; txt.placeholder = 'UP TO 8 LETTERS'; txt.value = FS.text; txt.setAttribute('aria-label', 'Logo text');
+        txt.addEventListener('input', () => { FS.text = DC.cleanText(txt.value); if (FS.pending) { drawNow(); queuePreview(def); } }); el.appendChild(txt);
+      }
+
+      /* 2  garment */
+      el.appendChild(mk('div', 'cs-reg-h', '2  TAP A GARMENT TO PREVIEW IT ON'));
+      const chips = mk('div', 'cs-chips');
+      items.forEach((id) => { const n = cnt(id), full = n >= DC.MAX_DECALS, on = FS.pending && FS.item === id;
+        const b = btn('cs-chip big' + (on ? ' on' : '') + (full ? ' full' : ''), itName(id).toUpperCase() + '  ' + n + '/' + DC.MAX_DECALS + (full ? '  FULL' : ''), () => {
+          const r = F.pickItem(FS, def, DC.look(def.id), id);
+          if (!r.ok) { toast(r.reason === 'logo' ? 'Pick a logo first' : r.reason === 'full' ? itName(id) + ' is full (' + DC.MAX_DECALS + ' logos). Delete one below first' : 'That logo cannot go there'); return; }
+          applyStudio(def); rr(); }, itName(id) + ', ' + n + ' of ' + DC.MAX_DECALS + ' logos'); chips.appendChild(b); });
+      el.appendChild(chips);
+
+      let cv = null, live = null, outs = {}, mode = '';
+      function drawNow() { if (cv && FS.pending) { live = { x: FS.x, y: FS.y, scale: FS.scale, rotation: FS.rotation }; drawPad(cv, def, FS, live, mode); sync(); } }
+      function sync() { if (outs.size) { outs.size.r.value = FS.scale; outs.size.o.textContent = FS.scale.toFixed(2) + 'x'; } if (outs.turn) { outs.turn.r.value = FS.rotation; outs.turn.o.textContent = FS.rotation + '°'; } if (outs.reset) outs.reset.disabled = F.isDefaultPlacement(FS, def); }
+
+      if (!FS.pending) {
+        const msg = mk('p', 'cs-hint', !FS.logo ? 'Pick a logo, then tap SHIRT or PANTS. It appears on the pilot as a preview; nothing is saved until you press APPLY.' :
+          FS.item ? 'Applied. Add another ' + lgName(FS.logo) + ' on the ' + itName(FS.item) + ' below, pick a different logo, or tap a garment.' : 'Now tap a garment to preview ' + lgName(FS.logo) + ' on it.'); el.appendChild(msg);
+        if (FS.logo && FS.item) { const full = cnt(FS.item) >= DC.MAX_DECALS; const b = btn('cs-btn gold cs-wide', full ? itName(FS.item).toUpperCase() + ' IS FULL' : '+ ADD ANOTHER ' + lgName(FS.logo).toUpperCase() + ' ON ' + itName(FS.item).toUpperCase(), () => { const r = F.addAnother(FS, def, DC.look(def.id)); if (r.ok) { applyStudio(def); rr(); } else toast('That garment is full. Delete one first'); }); b.disabled = full; el.appendChild(b); }
+      } else {
+        /* 3  place it */
+        const it = def.items[FS.item], editing = FS.editIndex >= 0;
+        el.appendChild(mk('div', 'cs-reg-h', '3  PLACE IT'));
+        el.appendChild(mk('div', 'cs-pending', editing ? 'EDITING AN APPLIED LOGO · not saved until you press SAVE' : 'PREVIEW · NOT APPLIED YET'));
+        const spots = mk('div', 'cs-chips'); Object.keys(it.spots).forEach((k) => spots.appendChild(btn('cs-chip' + (k === FS.spot ? ' on' : ''), (it.spots[k].label || DC.SPOT_AXES[k].label).toUpperCase(), () => { F.pickSpot(FS, def, k); applyStudio(def); rr(); })));
+        el.appendChild(spots);
+        const sz = padSize(def, FS.item, FS.spot); cv = mk('canvas', 'cs-pad'); cv.width = sz[0]; cv.height = sz[1]; cv.setAttribute('role', 'img'); cv.setAttribute('aria-label', 'Logo placement pad. Drag to move, corner handle to resize, top knob to turn'); el.appendChild(cv);
+        el.appendChild(mk('p', 'cs-pad-help', 'Drag the logo to move it · ⤢ corner = size · ↻ knob = turn · gold dots snap'));
+        live = { x: FS.x, y: FS.y, scale: FS.scale, rotation: FS.rotation }; drawPad(cv, def, FS, live, '');
+        const info = itemInfo(def, FS.item), v = info && info.views[FS.spot], unit = info ? info.unit : 1, sp = it.spots[FS.spot];
+        let off = [0, 0], held = false; const pt = (e) => { const r = cv.getBoundingClientRect(), k = cv.width / (r.width || cv.width); return [(e.clientX - r.left) * k, (e.clientY - r.top) * k, k]; };
+        const apply1 = (e) => { const p = pt(e), g = FL.padGeom(v, sp, unit, live, cv.width, cv.height), patch = FL.padDrag(mode, g, live, p[0], p[1], cv.width, cv.height, off, { scaleMin: DC.SCALE_MIN, scaleMax: DC.SCALE_MAX });
+          F.setPlacement(FS, def, patch); live = { x: FS.x, y: FS.y, scale: FS.scale, rotation: FS.rotation }; drawPad(cv, def, FS, live, mode); sync(); };
+        cv.addEventListener('pointerdown', (e) => { const p = pt(e), g = FL.padGeom(v, sp, unit, live, cv.width, cv.height); mode = FL.padHit(g, p[0], p[1], 24 * p[2]); held = true; try { cv.setPointerCapture(e.pointerId); } catch (_) { }
+          off = mode === 'move' && Math.hypot(p[0] - g.cx, p[1] - g.cy) <= g.half * 1.25 ? [p[0] - g.cx, p[1] - g.cy] : [0, 0]; apply1(e); e.preventDefault(); });
+        cv.addEventListener('pointermove', (e) => { if (held) apply1(e); });
+        const end = () => { if (!held) return; held = false; if (mode === 'move') F.setPlacement(FS, def, { snap: true }); mode = ''; drawNow(); queuePreview(def); };
+        cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
+        const stepper = (key, label, min, max, step, fmt, big, set) => { const row = mk('div', 'cs-row'); row.appendChild(mk('span', 'cs-rl', label));
+          const dn = btn('cs-step', '−', () => { set(Math.max(min, +r.value - big)); }, label + ' down'), up = btn('cs-step', '+', () => { set(Math.min(max, +r.value + big)); }, label + ' up');
+          const r = mk('input'); r.type = 'range'; r.min = min; r.max = max; r.step = step; r.value = FS[key]; r.setAttribute('aria-label', label); const o = mk('output', '', fmt(FS[key]));
+          r.addEventListener('input', () => { F.setPlacement(FS, def, { [key]: +r.value }); drawNow(); }); r.addEventListener('change', () => queuePreview(def));
+          row.appendChild(dn); row.appendChild(r); row.appendChild(up); row.appendChild(o); el.appendChild(row); outs[key === 'scale' ? 'size' : 'turn'] = { r, o }; };
+        stepper('scale', 'SIZE', DC.SCALE_MIN, DC.SCALE_MAX, 0.05, (x) => (+x).toFixed(2) + 'x', 0.1, (x) => { F.setPlacement(FS, def, { scale: x }); drawNow(); queuePreview(def); });
+        stepper('rotation', 'TURN', -180, 180, 5, (x) => x + '°', 15, (x) => { F.setPlacement(FS, def, { rotation: x }); drawNow(); queuePreview(def); });
+        el.appendChild(mk('div', 'cs-reg-h', 'LOGO COLOUR'));
+        const sw = mk('div', 'cs-sws'), setCol = (hex) => { F.setPlacement(FS, def, { colour: hex }); applyStudio(def); rr(); };
+        DC.PALETTE_CLOTH.concat(['#ffffff']).forEach((hex) => { const b = btn('cs-sw' + (FS.colour === hex ? ' on' : ''), '', () => setCol(hex), 'Logo colour ' + hex); b.style.background = hex; sw.appendChild(b); });
+        const lb = mk('label', 'cs-sw custom'), inp = mk('input'); inp.type = 'color'; inp.value = FS.colour; lb.appendChild(inp); lb.insertAdjacentHTML('beforeend', '<span>+</span>'); lb.setAttribute('aria-label', 'Custom logo colour');
+        inp.addEventListener('change', () => setCol(inp.value)); sw.appendChild(lb); el.appendChild(sw);
+        /* actions: always in reach (sticky) */
+        const bar = mk('div', 'cs-actbar'), chk = F.canApply(FS, def, L);
+        const rs = btn('cs-btn', 'RESET', () => { F.reset(FS, def); applyStudio(def); rr(); }, 'Reset position, size and turn to default'); rs.disabled = F.isDefaultPlacement(FS, def); outs.reset = rs;
+        const cn = btn('cs-btn', 'CANCEL', () => { F.cancel(FS); applyStudio(def); rr(); }, 'Cancel this logo');
+        const ap = btn('cs-btn gold cs-apply', editing ? 'SAVE ✓' : 'APPLY ✓', () => {
+          const idx = F.apply(FS, def); if (idx < 0) { const why = F.canApply(FS, def, DC.look(def.id)).reason; toast(why === 'text' ? 'Type some text first' : why === 'full' ? itName(FS.item) + ' is full. Delete one first' : 'Could not apply that logo'); return; }
+          commitLook(def); toast((editing ? 'Saved' : 'Applied') + ' · ' + itName(FS.item) + ' ' + cnt(FS.item) + '/' + DC.MAX_DECALS); rr(); }, editing ? 'Save changes' : 'Apply this logo');
+        ap.disabled = !chk.ok; bar.appendChild(rs); bar.appendChild(cn); bar.appendChild(ap); el.appendChild(bar);
+      }
+
+      /* applied logos: select -> delete, edit, clear a garment */
+      const total = L.decals.length;
+      el.appendChild(mk('div', 'cs-reg-h', 'APPLIED LOGOS  ' + total));
+      if (!total) el.appendChild(mk('p', '', 'No logos applied. Your pilot keeps her original look until you add one.'));
+      else {
+        const list = mk('div', 'cs-applied'); L.decals.forEach((d, i) => { const sel = FS.sel.includes(i), row = mk('div', 'cs-arow' + (sel ? ' sel' : '') + (FS.editIndex === i ? ' editing' : ''));
+          const pick = btn('cs-apick', '', () => { F.toggleSel(FS, i); rr(); }, (sel ? 'Deselect ' : 'Select ') + lgName(d.id) + ' on ' + itName(d.item)); pick.setAttribute('aria-pressed', sel ? 'true' : 'false');
+          const ic = mk('span', 'cs-aic'); ic.innerHTML = svgOf(DC.logoById.get(d.id)); ic.style.color = d.colour; pick.appendChild(ic);
+          const tx = mk('span', 'cs-atx'); tx.appendChild(mk('b', '', (d.text ? d.text : lgName(d.id)).toUpperCase())); tx.appendChild(mk('i', '', itName(d.item) + ' · ' + (def.items[d.item].spots[d.spot].label || DC.SPOT_AXES[d.spot].label))); pick.appendChild(tx);
+          const mark = mk('span', 'cs-achk', sel ? '✓' : ''); pick.appendChild(mark); row.appendChild(pick);
+          row.appendChild(btn('cs-aedit', 'EDIT', () => { F.edit(FS, def, DC.look(def.id), i); applyStudio(def); rr(); }, 'Edit ' + lgName(d.id) + ' on ' + itName(d.item))); list.appendChild(row); });
+        el.appendChild(list);
+        const acts = mk('div', 'cs-chips');
+        const del = btn('cs-btn cs-danger', 'DELETE SELECTED' + (FS.sel.length ? ' (' + FS.sel.length + ')' : ''), () => { const n = F.deleteSelected(FS, def); commitLook(def); toast(n + (n === 1 ? ' logo' : ' logos') + ' deleted'); rr(); }); del.disabled = !FS.sel.length; acts.appendChild(del);
+        const all = btn('cs-btn', FS.sel.length === total ? 'SELECT NONE' : 'SELECT ALL', () => { if (FS.sel.length === total) FS.sel = []; else F.selectAll(FS, DC.look(def.id)); rr(); }); acts.appendChild(all);
+        items.forEach((id) => { const n = cnt(id); if (!n) return; acts.appendChild(btn('cs-btn cs-danger', 'CLEAR ALL ON ' + itName(id).toUpperCase() + ' (' + n + ')', () => { const k = F.clearGarment(FS, def, id); commitLook(def); toast(k + (k === 1 ? ' logo' : ' logos') + ' cleared from ' + itName(id)); rr(); })); });
+        el.appendChild(acts);
+      }
     },
   });
 
@@ -497,7 +599,7 @@
   CS.openStudio = (id) => openStudio(id, D.querySelector('#cs-wheel .cs-card[data-id="' + id + '"]'));
   CS.closeStudio = closeStudio;
   CS.status = () => ({ studioOpen: CS.studioOpen, renderer: !!R.r, leases: R.leases, thumbs: Object.keys(thumbs), loop: !!S.raf, model: !!S.M });
-  CS.refreshLook = () => applyLook(S.M, S.def);   // re-apply the stored look to the open studio model (panels call it; tests / tools too)
+  CS.refreshLook = () => applyStudio(S.def);   // re-apply the stored look to the open studio model (panels call it; tests / tools too)
   CS._studio = S; CS._R = R; CS.paintCard = paintCard; CS.frame = frame; CS.layoutStudio = layoutStudio; CS.renderPanel = renderPanel;
 
   function init() {

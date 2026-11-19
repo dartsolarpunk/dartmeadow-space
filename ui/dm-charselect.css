@@ -98,7 +98,39 @@
 .cs-lg{min-width:44px;min-height:44px;border-radius:8px;border:1px solid var(--border);background:rgba(var(--panel-rgb),.6);color:var(--text);padding:8px;cursor:pointer;touch-action:manipulation;display:flex;align-items:center;justify-content:center;}
 .cs-lg svg{width:100%;height:100%;display:block;}.cs-lg.on{border-color:var(--gold);color:var(--gold);background:rgba(var(--hi-rgb),.14);}
 .cs-lgt{font-family:var(--font-hud);font-size:.8rem;font-weight:900;}
-.cs-pad{display:block;width:100%;max-width:260px;margin:0 auto 10px;touch-action:none;cursor:crosshair;border-radius:14px;}
+.cs-pad{display:block;width:100%;max-width:320px;margin:0 auto 6px;touch-action:none;cursor:crosshair;border-radius:14px;user-select:none;-webkit-user-select:none;}
 .cs-row{display:flex;align-items:center;gap:10px;min-height:44px;font-family:var(--font-hud);font-size:.55rem;letter-spacing:.14em;color:var(--text-dim);}
 .cs-row input[type=range]{flex:1;min-height:44px;accent-color:var(--cyan);}.cs-row output{min-width:44px;text-align:right;font-family:var(--font-mono);}
 .cs-txt{width:100%;min-height:44px;box-sizing:border-box;margin:0 0 10px;padding:0 12px;border-radius:8px;border:1px solid var(--border);background:rgba(0,0,0,.35);color:var(--text);font-family:var(--font-hud);letter-spacing:.2em;font-size:.8rem;text-transform:uppercase;}
+
+/* staged logo flow: preview badge, placement pad help, steppers, sticky APPLY / RESET / CANCEL bar, applied list (44 px targets) */
+.cs-sw.wide{grid-column:span 2;font-family:var(--font-hud);font-size:.5rem;letter-spacing:.1em;text-align:center;line-height:1.15;padding:0 6px;}
+.cs-sw.tex:not(.on){border-style:dashed;}
+.cs-chip.big{flex:1 1 40%;}
+.cs-chip.full{opacity:.55;border-style:dashed;}
+.cs-hint{font-size:.85rem;}
+.cs-wide{width:100%;margin:0 0 10px;}
+.cs-pending{display:inline-block;margin:0 0 8px;padding:5px 10px;border-radius:999px;border:1px solid var(--gold);background:rgba(var(--hi-rgb),.14);color:var(--gold);font-family:var(--font-hud);font-size:.5rem;letter-spacing:.16em;}
+.cs-pad-help{margin:0 0 8px!important;font-size:.72rem;text-align:center;font-family:var(--font-mono);letter-spacing:.04em;}
+.cs-row .cs-rl{min-width:38px;}
+.cs-step{flex:0 0 44px;min-width:44px;min-height:44px;border-radius:8px;border:1px solid var(--cyan);background:rgba(var(--acc-rgb),.12);color:var(--cyan);font-size:1.3rem;line-height:1;cursor:pointer;touch-action:manipulation;padding:0;}
+.cs-step:active{background:rgba(var(--acc-rgb),.35);}
+.cs-actbar{position:sticky;bottom:-10px;z-index:2;display:flex;gap:8px;margin:12px -14px 12px;padding:10px 14px;background:linear-gradient(180deg,rgba(var(--panel-rgb),.0),rgba(var(--panel-rgb),.97) 22%);border-top:1px solid var(--border2);}
+.cs-actbar .cs-btn{flex:1;padding:0 6px;}
+.cs-actbar .cs-apply{flex:1.6;font-size:.72rem;}
+.cs-danger{border-color:#e0554f;color:#ff8a84;background:linear-gradient(135deg,rgba(224,85,79,.16),rgba(224,85,79,.05));}
+.cs-danger:hover,.cs-danger:focus-visible{background:rgba(224,85,79,.3);box-shadow:0 0 14px rgba(224,85,79,.3);}
+.cs-applied{display:flex;flex-direction:column;gap:6px;margin:0 0 10px;}
+.cs-arow{display:flex;gap:6px;align-items:stretch;}
+.cs-apick{flex:1;min-height:48px;display:flex;align-items:center;gap:10px;padding:4px 10px;border-radius:8px;border:1px solid var(--border);background:rgba(var(--panel-rgb),.6);color:var(--text);cursor:pointer;text-align:left;touch-action:manipulation;font:inherit;}
+.cs-arow.sel .cs-apick{border-color:#e0554f;background:rgba(224,85,79,.14);}
+.cs-arow.editing .cs-apick{border-color:var(--gold);}
+.cs-aic{flex:0 0 30px;width:30px;height:30px;display:block;background:rgba(255,255,255,.06);border-radius:6px;padding:4px;box-sizing:border-box;}
+.cs-aic svg{width:100%;height:100%;display:block;}
+.cs-atx{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.15;}
+.cs-atx b{font-family:var(--font-hud);font-size:.58rem;letter-spacing:.14em;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.cs-atx i{font-style:normal;font-size:.72rem;color:var(--text-dim);}
+.cs-achk{flex:0 0 26px;width:26px;height:26px;border-radius:6px;border:2px solid var(--text-dim);display:flex;align-items:center;justify-content:center;font-size:.95rem;color:#fff;}
+.cs-arow.sel .cs-achk{background:#e0554f;border-color:#e0554f;}
+.cs-aedit{flex:0 0 58px;min-height:48px;border-radius:8px;border:1px solid var(--cyan);background:rgba(var(--acc-rgb),.12);color:var(--cyan);font-family:var(--font-hud);font-size:.52rem;letter-spacing:.12em;cursor:pointer;touch-action:manipulation;}
+.cs-chips .cs-btn{flex:1 1 auto;font-size:.55rem;}
