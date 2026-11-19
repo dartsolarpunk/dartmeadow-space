@@ -65,6 +65,7 @@ def main(src, dst, outdir, ref_char=None, with_derived=True):
             out[nm] = loopify(out[src_c], SB, up, bl)
         for c_, bl in [('Acting_Talk',0.5),('Acting_Thinking',0.5),('Emma_Swim_InPlace',0.5)]:
             out[c_] = loopify(out[c_], SB, up, bl)       # these 'repeat' presets had 40-50 deg pops at the loop point
+    fix_arms(out, SB)                                     # roll removal in walk/run/crouch, relaxed-jog arms for run
     apply_relaxed_hand(out, SB)                           # natural curled fingers where the hand hangs; grabbing clips excluded by name
     p = os.path.join(outdir, 'Emma_Merged_Animations.glb')
     st = write_animation_glb(out, SB, dst, p)
