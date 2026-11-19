@@ -377,7 +377,7 @@
     const def = S.def; if (!def) return;
     if (!def.ready) { toast(def.name + ' is not ready to fly yet'); return; }
     W.DMChars.setSelected(def.id); closeStudio();
-    try { if (typeof CHAR !== 'undefined' && CHAR.loaded && CHAR.charId && CHAR.charId !== def.id) toast(def.name + ' will fly from the next game start (this session already has ' + (W.DMChars.get(CHAR.charId) || { name: 'another pilot' }).name + ' loaded; reload to switch)', 4600); } catch (e) { } W.DMChars.list().forEach((d) => paintCard(d.id)); refreshFoot(); toast('Pilot: ' + def.name);
+    /* (bugfix-1119) a pilot that was already preloaded is dropped and the chosen one loads when the game starts (loadCharacterAssets -> _charReconcile): no reload needed */ W.DMChars.list().forEach((d) => paintCard(d.id)); refreshFoot(); toast('Pilot: ' + def.name);
   }
 
   /* ───────────────────────── COLOURS panel (registry regions: hair groups + clothing items) ───────────────────────── */

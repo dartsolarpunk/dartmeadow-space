@@ -1062,6 +1062,8 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 .exit-btn.cancel{background:var(--dim-cyan);border:1px solid var(--border);color:var(--text-dim);}
 .exit-btn.cancel:hover{border-color:var(--cyan);color:var(--cyan);}
 
+/* (bugfix-1119) body-level IN-GAME widgets (flashlight, hazard tab, globe, kite buttons, land pick) belong to the flight screen only: goScreen() stamps body[data-dm-screen]; menu / character / builder never show them (they live outside .screen, so no screen rule hid them) */
+body[data-dm-screen]:not([data-dm-screen="flight"]) #dm-flash,body[data-dm-screen]:not([data-dm-screen="flight"]) #dm-hazhud,body[data-dm-screen]:not([data-dm-screen="flight"]) #dm-globe,body[data-dm-screen]:not([data-dm-screen="flight"]) .kite-board.kb-float,body[data-dm-screen]:not([data-dm-screen="flight"]) #land-pick{display:none !important;}
 </style>
 
 <script src="ui/dm-safety.js?v=1" defer></script>
@@ -3026,6 +3028,7 @@ function goScreen(name){
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   const _prevScreen=STATE.screen;
   STATE.screen=name;
+  try{ document.body.setAttribute('data-dm-screen',name); if(name!=='flight'&&window.DMFlash&&DMFlash.hide) DMFlash.hide(); }catch(e){}   // (bugfix-1119) in-game widgets (flashlight...) are flight-only: CSS keys on this, the flashlight also un-docks
   // (memory lane, ui/dm-mem.js) phones/tablets: the menu's start-button turntable is a SECOND WebGPU device holding a 2.4 M-vertex model (~110 MB GPU + the same again on
   // the CPU); it goes once the game is under way and comes back (lazily) with the menu.  The builder's MSAA drawing buffer is handed back while the screen is not shown.
   try{
@@ -6674,7 +6677,7 @@ async function initFlightScene(){
   }catch(e){}
   // Kick GLB parse early (parallel with solar/MC) — strip-rebuild: don't leave
   // CHAR.loading stuck if a prior attempt died mid-flight.
-  if(!CHAR.loaded && !CHAR.loading){
+  if((!CHAR.loaded && !CHAR.loading)||_charStale()){   // (bugfix-1119) _charStale: a different pilot was preloaded in the menu than the one chosen since
     loadCharacterAssets().catch(e=>console.warn('early character load:',e));
   }
 
@@ -12301,7 +12304,7 @@ function buildFlightBoard(){
   // mounted.
   (async()=>{
     console.log('[TIMING] character-mount IIFE starting at', performance.now().toFixed(0), 'ms, CHAR.loaded:', CHAR.loaded, 'CHAR.loading:', CHAR.loading);
-    if(!CHAR.loaded){
+    if(!CHAR.loaded||_charStale()){
       try{ await loadCharacterAssets(); }catch(e){ console.error('Character load failed:',e); try{toast('⚠ Character failed to load: '+(e.message||e),4000);}catch(_){} }
     }
     console.log('[TIMING] character load attempt finished at', performance.now().toFixed(0), 'ms', _charStatus());
@@ -22228,7 +22231,53 @@ function _finalizeCharMeshReady(reason){
   }catch(e){}
 }
 
+// ── (bugfix-1119) the pilot chosen AFTER a character was preloaded ─────────────────────────────────────────────────────────────────────────────
+// The menu idle prep / early flight init / menu prefetch load the pilot that is selected AT THAT MOMENT (Ariel by default).  Choosing Emma on the
+// "Choose your pilot" screen afterwards only changed dm_char_v1: loadCharacterAssets() saw CHAR.loaded and handed back the already-loaded Ariel
+// ("will fly from the next game start" - it never did).  Now a load request first reconciles: when the resolved pilot differs from the one that is loaded
+// (or loading), the old one is dropped (_charUnload) and the chosen one loads through the normal path.  Pristine template = CHAR as declared.
+let _charGen=0;   // bumped on every unload: late async attachments (hair strands, garment cloth) of the dropped pilot check it and stand down
+const CHAR_PRISTINE=(function(){ const o={}; for(const k of Object.keys(CHAR)){ const v=CHAR[k]; o[k]=(v&&typeof v==='object')?(Array.isArray(v)?[]:{}):v; } return o; })();
+function _charDisposeTree(root){
+  const seen=new Set();
+  try{ root.traverse(o=>{
+    if(o.geometry&&o.geometry.dispose){ try{ o.geometry.dispose(); }catch(e){} }
+    const ms=o.material?(Array.isArray(o.material)?o.material:[o.material]):[];
+    for(const m of ms){ if(!m||seen.has(m)) continue; seen.add(m); for(const k in m){ const v=m[k]; if(v&&v.isTexture&&!(v.userData&&v.userData.dmKeep)){ try{ v.dispose(); }catch(e){} } } try{ m.dispose(); }catch(e){} }
+    if(o.isSkinnedMesh&&o.skeleton&&o.skeleton.dispose){ try{ o.skeleton.dispose(); }catch(e){} }
+  }); }catch(e){}
+}
+function _charUnload(why){
+  _charGen++;
+  const old=CHAR.root;
+  try{ if(CHAR._cloth&&CHAR._cloth.detach) CHAR._cloth.detach(); }catch(e){ console.warn('[char] cloth detach',e); }
+  try{ const h=CHAR._hair; if(h&&h.dispose) h.dispose(); if(window.DART_HAIR===h) window.DART_HAIR=null; }catch(e){ console.warn('[char] hair dispose',e); }
+  try{ if(window.DMCharm&&DMCharm.detach) DMCharm.detach(); }catch(e){ console.warn('[char] charm detach',e); }
+  try{ if(window.DMFlash&&DMFlash.detach) DMFlash.detach(); }catch(e){ console.warn('[char] flash detach',e); }
+  try{ if(CHAR.mixer){ CHAR.mixer.stopAllAction(); if(old) CHAR.mixer.uncacheRoot(old); } }catch(e){}
+  try{ if(old){ if(old.parent) old.parent.remove(old); _charDisposeTree(old); } }catch(e){}
+  for(const k of Object.keys(CHAR)) delete CHAR[k];
+  for(const k of Object.keys(CHAR_PRISTINE)){ const v=CHAR_PRISTINE[k]; CHAR[k]=(v&&typeof v==='object')?(Array.isArray(v)?[]:{}):v; }
+  _charSel=null;
+  try{ console.info('[char] dropped the preloaded pilot ('+why+')'); }catch(e){}
+}
+function _charStale(){ try{ if(!CHAR.charId||!(CHAR.loaded||CHAR.loading||CHAR._loadPromise)) return false; const r=_charResolve(true); return !!r&&r.id!==CHAR.charId; }catch(e){ return false; } }
+window._charStale=_charStale;
+async function _charReconcile(){
+  if(!(CHAR.loaded||CHAR.loading||CHAR._loadPromise||CHAR.root)||!CHAR.charId) return false;
+  let want=_charResolve(true); want=want?want.id:'ariel';
+  if(want===CHAR.charId) return false;
+  if(CHAR._loadPromise){ try{ await CHAR._loadPromise; }catch(e){} }   // an in-flight load of the other pilot cannot be cancelled: let it land, then drop it
+  if(!CHAR.charId) return false;                                       // another caller already reconciled while we waited
+  want=_charResolve(true); want=want?want.id:'ariel';
+  if(want===CHAR.charId) return false;
+  _charUnload(CHAR.charId+' -> '+want);
+  return true;
+}
+window._charReconcile=_charReconcile; window._charUnload=_charUnload;
+
 async function loadCharacterAssets(){
+  try{ await _charReconcile(); }catch(e){ console.warn('[char] reconcile',e); }
   // Prefer in-flight promise even after mesh-first flipped CHAR.loaded —
   // callers (ensureAutumnOnBoard) must await anims + final remount.
   if(CHAR._loadPromise) return CHAR._loadPromise;
@@ -22242,6 +22291,7 @@ async function loadCharacterAssets(){
   CHAR.loading = true;
   const _cd = _charResolve(true), _cdef = _cd?_cd.def:null, _cfiles = _charFiles();
   CHAR.charId = _cd?_cd.id:'ariel';
+  const _myGen=_charGen;   // (bugfix-1119) hair / cloth that attach late stand down when this pilot was dropped meanwhile
   if(_cd&&_cd.fellBack){ try{ const w=DMChars.get(_cd.wanted); toast('⚠ '+(w?w.name:'That pilot')+' is not ready to fly yet — flying as '+_cdef.name,4200); }catch(e){} }
   const gltfLoader = _getGLBLoader();
   if(!gltfLoader){
@@ -22480,13 +22530,13 @@ async function loadCharacterAssets(){
   function _hairStrandFraction(){ try{ const G=window.GFX; if(!G||G.preset!=='auto') return 1; const r=(typeof resolvePreset==='function')?resolvePreset():'medium'; return r==='low'?0.5:(r==='medium'||r==='balanced')?0.75:1; }catch(e){ return 1; } }
   // Real-time strand hair (hair_strands.js + characterassests/ariel_hair_strands.bin). Fails soft: if the
   // module/data is missing or the loaded character is a different file, she simply has no strand hair.
-  try{ (async()=>{ const m=await import(window.DM_HAIR_MODULE); let _hc; if(_hairCfgUrl){ const r=await fetch(_hairCfgUrl); if(r.ok) _hc=await r.json(); } return m.attachHairStrands(CHAR,THREE,{url:_hairUrl,config:_hc,character:!!_hc,getStrandFraction:_hairStrandFraction,getCollisionTier:()=>{ try{ const r=(typeof resolvePreset==='function')?resolvePreset():'medium'; return r==='low'?0:(r==='high'||r==='ultra')?2:1; }catch(e){ return 0; } },getCalm:()=>{ try{ return _hairCalm(); }catch(e){ return false; } },getFrameVel:o=>{ try{ return _hairFrameVel(o); }catch(e){ return o.set(0,0,0); } },getIntensity:()=>{ try{ return (window.DMCGroup&&surfaceActive)?Math.max(1,DMCGroup.intensity):1; }catch(e){ return 1; } },getGravityScale:()=>{try{if(surfaceActive)return 1;if(CHAR.mounted)return atmoActive?0.3:0.08;}catch(e){}return 1;}}); })().then(H=>{ try{ if(H&&window.DMCharPaint&&_cd&&!DMChars.isDefaultLook(_cd.look)) DMCharPaint.applyHair(H,_cdef,_cd.look); }catch(e){ console.warn('[char] hair look',e); } }).catch(e=>console.info('[hair] strands not attached:',e&&e.message)); }catch(e){}
+  try{ (async()=>{ const m=await import(window.DM_HAIR_MODULE); let _hc; if(_hairCfgUrl){ const r=await fetch(_hairCfgUrl); if(r.ok) _hc=await r.json(); } if(_myGen!==_charGen) return null; return m.attachHairStrands(CHAR,THREE,{isCurrent:()=>_myGen===_charGen,url:_hairUrl,config:_hc,character:!!_hc,getStrandFraction:_hairStrandFraction,getCollisionTier:()=>{ try{ const r=(typeof resolvePreset==='function')?resolvePreset():'medium'; return r==='low'?0:(r==='high'||r==='ultra')?2:1; }catch(e){ return 0; } },getCalm:()=>{ try{ return _hairCalm(); }catch(e){ return false; } },getFrameVel:o=>{ try{ return _hairFrameVel(o); }catch(e){ return o.set(0,0,0); } },getIntensity:()=>{ try{ return (window.DMCGroup&&surfaceActive)?Math.max(1,DMCGroup.intensity):1; }catch(e){ return 1; } },getGravityScale:()=>{try{if(surfaceActive)return 1;if(CHAR.mounted)return atmoActive?0.3:0.08;}catch(e){}return 1;}}); })().then(H=>{ try{ if(H&&window.DMCharPaint&&_cd&&!DMChars.isDefaultLook(_cd.look)) DMCharPaint.applyHair(H,_cdef,_cd.look); }catch(e){ console.warn('[char] hair look',e); } }).catch(e=>console.info('[hair] strands not attached:',e&&e.message)); }catch(e){}
   // (v206) Ariel's garment cloth (ui/dm-ariel-cloth.js, finished from draft #213). Automatic = ON only with the WebGPU compute path;
   // ?cloth=1 forces the CPU path, ?cloth=0 / dm_cloth_v1='0' turns it off. Post-skin offsets on her garments only (rig, stance, skyboard pose and
   // the hair solver untouched). Collision = the character group's patch (DMCGroup ground grid) + body/hair capsules + the skyboard; substeps scale
   // with DMCGroup.intensity; a frame-budget governor sheds work (GFX.isMobile: 1.5 ms total, else 3 ms). Fails soft.
   try{ if(!/[?&]cloth=0\b/.test(location.search)&&(!_cdef||!_cdef.accessories||_cdef.accessories.cloth!==false)) import('./ui/dm-ariel-cloth.js?v=214').then(async m=>{ if(CHAR._menuPrep){ for(let i=0;i<900&&!(typeof flightRenderer!=='undefined'&&flightRenderer&&flightRenderer.backend);i++) await new Promise(r=>setTimeout(r,100)); }   /* (menu-perf) loaded early from the menu: the cloth's GPU path needs the flight renderer, so it attaches once that exists (same attach, same options) */
-    return m.attachArielCloth(CHAR,THREE,{TSL:THREE.TSL||window.TSL,renderer:(typeof flightRenderer!=='undefined')?flightRenderer:null,
+    if(_myGen!==_charGen) return null; return m.attachArielCloth(CHAR,THREE,{TSL:THREE.TSL||window.TSL,renderer:(typeof flightRenderer!=='undefined')?flightRenderer:null,
     getGravityScale:()=>{try{if(surfaceActive)return 1;if(CHAR.mounted)return atmoActive?0.3:0.08;}catch(e){}return 1;},
     getBudgetMs:()=>(GFX&&GFX.isMobile)?1.5:3,
     groundAt:(x,z)=>{ try{ return (_cg.on&&surfaceActive)?DMCGroup.groundAt(x,z,NaN):NaN; }catch(e){ return NaN; } },

@@ -255,6 +255,17 @@
     G.shardSet(f*(0.5+1.6*sf));
     light(f,p);
   };
+  // (bugfix-1119) the pilot changed after a preload (the previous pilot's GLB is being dropped): take the necklace + charm off her, free what they
+  // built, and let attach() build again for the next pilot. Safe to call when nothing is built.
+  G.detach=function(){
+    if(!G.built) return false;
+    try{ const NL=window.DMNatLights; if(G.lid!=null&&NL&&NL.release) NL.release(G.lid); }catch(e){} G.lid=null;
+    const roots=[G.nrig,G.rig];
+    for(const r of roots){ if(!r) continue; try{ r.traverse(o=>{ if(o.geometry&&o.geometry.dispose) o.geometry.dispose(); const ms=o.material?(Array.isArray(o.material)?o.material:[o.material]):[]; for(const m of ms){ try{ if(m&&m.map&&m.map.dispose) m.map.dispose(); m&&m.dispose&&m.dispose(); }catch(e){} } }); if(r.parent) r.parent.remove(r); }catch(e){} }
+    G.built=false; G.manual=false; G.g=0; G.t=0; G.last=-1; G.sleep=false;
+    G.rig=G.kite=G.glow=G.shells=G.shards=G.kmat=G.nrig=G.necklace=G.chainMesh=G.sim=G.spine=G.caps=G.capBones=G.bl=G.mCs=G.chestLed=G.skinCaps=null;
+    return true;
+  };
   // a little blue light from the charm: borrows one of the world's FIXED pooled natural lights (DMNatLights, index.html) so the scene's light set never
   // changes (adding a light would recompile every lit material). Ground only (where the pool exists); bounded; no shadow; no per-frame allocation.
   function light(f,p){

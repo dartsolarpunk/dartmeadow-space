@@ -146,6 +146,8 @@ export async function attachHairStrands(CHAR, THREE, opts = {}) {
   const res = await fetch(url);
   if (!res.ok) throw new Error('[hair] fetch ' + url + ' -> ' + res.status);
   const buf = await res.arrayBuffer();
+  if (opts.isCurrent && !opts.isCurrent()) return null;   // (bugfix-1119) the character this was started for has been dropped (pilot changed): never build onto the next one
+  if (CHAR._hair) return CHAR._hair;
   const H = buildHair(CHAR, THREE, buf, opts);
   CHAR._hair = H;
   if (typeof window !== 'undefined') window.DART_HAIR = H;

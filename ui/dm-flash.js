@@ -202,6 +202,16 @@
     sync();
     return true;
   };
+  // (bugfix-1119) the pilot changed after a preload: take the LED bar off the old head and free its two boxes, so attach() can build on the next pilot
+  // (the beam's lights / shadow pairs belong to the scenes, not to her, and stay).
+  F.detach = function () {
+    if (!S.built) return false;
+    try { for (const o of [S.casing, S.strip]) { if (o) { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); } } if (S.led && S.led.parent) S.led.parent.remove(S.led); } catch (e) { }
+    S.led = S.casing = S.strip = null; S.dims = null; S.built = false; S.on = false; S.wasOn = false;
+    try { if (S.light) S.light.intensity = 0; } catch (e) { }
+    try { ui(); } catch (e) { }
+    return true;
+  };
   // ── the beam's shared uniforms (TSL nodes; null until TSL is there). Other passes (fog, mist, atmosphere, DMLight) may read these: cone axis / apex / angles / length / density.
   function ensureU() {
     if (S.U) return S.U;
@@ -506,6 +516,7 @@
   F.tick = function (mode) {
     mode = mode || '';
     if (mode !== S.mode) { S.mode = mode; S.dirty = true; S.wait = 0; }
+    else if (!S.docked && mode && !S.dirty) { S.dirty = true; S.wait = 0; }   // (bugfix-1119) un-docked by hide() (left the game) and the mode did not change on coming back: dock again on this tick, not after the ~2 s re-check
     if (++S.rc > 120) { S.rc = 0; S.dirty = true; S.wait = 0; S.tries = 0; }   // ~2 s: re-place if a HUD control moved into its slot
     if (S.dirty) { if (S.wait > 0) S.wait--; else dock(); }   // a HUD that is not laid out yet is re-measured every ~15 frames, not every frame (getBoundingClientRect allocates)
     if (!S.on || !S.led) { if (!S.on && S.wasOn) { S.wasOn = false; darkAll(); } if (!S.on && S.light && S.light.intensity !== 0) S.light.intensity = 0; return; }   // off: never leaves a lit beam behind, whatever the mode
@@ -552,6 +563,8 @@
   const CSS = '#dm-flash{position:fixed;left:0;bottom:0;z-index:3555;display:none;pointer-events:none;}' +
     '#dm-flash[data-m]:not([data-m=""]){display:block;}' +   // (t1480) shown by data-m alone: the old `body:has(#screen-flight.active)` gate made the whole rule INVALID on a WebView without :has
     'body:has(#screen-menu.active) #dm-flash,body:has(#screen-builder.active) #dm-flash{display:none !important;}' +
+    'body:has(#screen-character.active) #dm-flash{display:none !important;}' +
+    'body[data-dm-screen]:not([data-dm-screen="flight"]) #dm-flash{display:none !important;}' +   // (bugfix-1119) positive rule (goScreen stamps the attribute): menu / character select / studio / builder never show it, whatever data-m last was; no :has needed
     '#dm-flash .fl-btn{position:absolute;left:0;bottom:0;width:34px;height:34px;border-radius:50%;padding:0;margin:0;display:flex;align-items:center;justify-content:center;' +
     'background:rgba(6,14,28,.55);border:1px solid rgba(160,210,255,.45);color:#9fc8ee;pointer-events:auto;touch-action:manipulation;-webkit-tap-highlight-color:transparent;cursor:pointer;}' +
     '#dm-flash .fl-btn .fl-ray{opacity:0;}' +
@@ -620,7 +633,7 @@
   function dock() {
     const u = build(); if (!u) return; S.dirty = false; S.rc = 0;
     const d = root.document, sf = d.getElementById('screen-flight');
-    if (!S.mode || (sf && !sf.classList.contains('active'))) { u.w.setAttribute('data-m', ''); return; }   // not in a game screen (menu / builder / between worlds)
+    if (!S.mode || (sf && !sf.classList.contains('active'))) { u.w.setAttribute('data-m', ''); S.docked = false; return; }   // not in a game screen (menu / builder / between worlds)
     const W = root.innerWidth, H = root.innerHeight;
     const z = d.getElementById(STICK[S.mode]), z2 = d.getElementById(STICK2[S.mode]);
     const r = z && z.getBoundingClientRect(), r2 = z2 && z2.getBoundingClientRect();
@@ -646,10 +659,12 @@
     let pick = null; for (let i = 0; i < cand.length && !pick; i++) if (free(cand[i][0], cand[i][1], obs, W, H, TH)) pick = cand[i];
     if (!pick) pick = cand.length > 1 && okR ? cand[0] : [12, Math.max(150, sb + 150)];   // nothing free (or no sticks at all): the stick slot / a fixed bottom-left slot — still visible, on top
     S.placed = true;
-    u.w.setAttribute('data-m', S.mode);
+    u.w.setAttribute('data-m', S.mode); S.docked = true;
     u.w.style.left = Math.round(Math.max(2, Math.min(W - SZ - 2, pick[0]))) + 'px'; u.w.style.bottom = Math.round(Math.max(2, pick[1])) + 'px';
     u.bar.style.height = Math.round(Math.max(104, Math.min(124, okR ? r.height : 108))) + 'px';
   }
   F._dock = dock;
+  // (bugfix-1119) leaving the game: F.tick() stops with the flight loop, so data-m kept its last game mode and the button hung over the menu / pilot screens. Un-dock it; the next tick() in a game re-docks.
+  F.hide = function () { S.mode = ''; S.dirty = true; S.wait = 0; S.docked = false; if (S.ui && S.ui.w) S.ui.w.setAttribute('data-m', ''); };
   if (root.document) { if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => ui()); else ui(); }
 })(typeof window !== 'undefined' ? window : globalThis);
