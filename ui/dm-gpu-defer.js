@@ -43,8 +43,17 @@
     if (au.__dmDefer) return au.__dmDefer;
     const Q = createQueue(opts.minFrames || 3), batch = [];
     const orig = au.destroyAttribute;
-    const st = { frame: 0, inFlight: false, deferred: 0, destroyed: 0, batches: 0 };
+    const st = { frame: 0, inFlight: false, deferred: 0, destroyed: 0, batches: 0, rebound: 0 };
+    // (bugfix-1119) STORAGE attributes are also bound by compute nodes / render objects, and three keeps their GPUBindGroup. Disposing the attribute (a geometry.dispose(),
+    // a resized pool) makes three forget the buffer and create a NEW one on the next update, but the cached bind group still names the OLD buffer: Bindings._update only
+    // rebuilds a group when `binding.attribute` is a different OBJECT, never when the same object got a new GPUBuffer. Deferring the destroy only moved the failure a few
+    // frames later ("[Buffer (unlabeled)] used in submit while destroyed" once the parked buffer died). So: count the releases per attribute (gen), and when a group's storage
+    // binding was released since the group was built, rebuild that group once (backend.updateBindings with cacheIndex 0 = a fresh GPUBindGroup on the current buffers).
+    const gen = new WeakMap(); let epoch = 0;
+    const isStorage = (a) => !!a && (a.isStorageBufferAttribute || a.isStorageInstancedBufferAttribute || a.isIndirectStorageBufferAttribute);
+    const keyOf = (a) => { try { return au._getBufferAttribute ? au._getBufferAttribute(a) : a; } catch (e) { return a; } };
     au.destroyAttribute = function (attribute) {
+      if (isStorage(attribute)) { const k = keyOf(attribute); gen.set(k, (gen.get(k) || 0) + 1); epoch++; }
       let data = null;
       try { data = be.get(this._getBufferAttribute ? this._getBufferAttribute(attribute) : attribute); } catch (e) { data = null; }
       const dev = be.device;
@@ -52,6 +61,23 @@
       Q.push(data.buffer, st.frame); st.deferred++;
       be.delete(attribute);   // three forgets it now, as before; only the GPU-side destroy waits
     };
+    const B = renderer._bindings, origUpdate = B && B._update;
+    if (typeof origUpdate === 'function' && typeof be.updateBindings === 'function') {
+      B._update = function (bindGroup, bindings) {
+        origUpdate.call(this, bindGroup, bindings);
+        if (epoch === 0) return;                                   // nothing storage-backed was ever released: zero work per call
+        let gd = null; try { gd = be.get(bindGroup); } catch (e) { return; }
+        if (!gd || gd._dmEp === epoch) return;                    // verified since the last release
+        let stale = false; const bs = bindGroup.bindings;
+        for (let i = 0; i < bs.length; i++) {
+          const b = bs[i]; if (!b.isStorageBuffer || !b.attribute) continue;
+          const g = gen.get(keyOf(b.attribute)) || 0, bd = be.get(b);
+          if (g !== (bd._dmGen || 0)) { bd._dmGen = g; stale = true; }
+        }
+        gd._dmEp = epoch;
+        if (stale) { try { gd.groups = undefined; gd.versions = undefined; be.updateBindings(bindGroup, bindings, 0, 0); st.rebound++; } catch (e) { } }   // (groups / versions = three's per-texture-state group cache: it holds the old group too)
+      };
+    }
     function destroyList(list) { for (let i = 0; i < list.length; i++) { try { list[i].destroy(); st.destroyed++; } catch (e) {} } }
     const now = () => (root && root.performance && root.performance.now ? root.performance.now() : Date.now());
     function tick() {
@@ -70,7 +96,7 @@
     st.last = now(); st.idleTicks = 0;
     const idle = (root && typeof root.setInterval === 'function') ? root.setInterval(() => { if (Q.size() > 0 && now() - st.last > 450) { st.idleTicks++; tick(); } }, 500) : null;
     if (idle && typeof idle.unref === 'function') idle.unref();
-    function uninstall() { if (idle != null && root && root.clearInterval) root.clearInterval(idle); au.destroyAttribute = orig; delete au.__dmDefer; flush(); }
+    function uninstall() { if (idle != null && root && root.clearInterval) root.clearInterval(idle); au.destroyAttribute = orig; if (B && origUpdate) B._update = origUpdate; delete au.__dmDefer; flush(); }
     const api = { tick, flush, uninstall, stats: st, pending: () => Q.size(), idleTick: () => { if (Q.size() > 0) { st.idleTicks++; tick(); } } };
     au.__dmDefer = api;
     return api;
