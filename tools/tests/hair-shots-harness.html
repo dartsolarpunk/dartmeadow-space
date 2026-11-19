@@ -1,0 +1,33 @@
+<!doctype html><meta charset=utf8><body style="margin:0;background:#000"><canvas id=c width=640 height=640></canvas>
+<script type="importmap">{"imports":{"three":"/three/build/three.webgpu.js","three/webgpu":"/three/build/three.webgpu.js","three/tsl":"/three/build/three.tsl.js"}}</script>
+<script type="module">
+// Headless close-ups of a character's strand hair (WebGL2 backend of WebGPURenderer under SwiftShader: the game's TSL ribbon shader, NOT frame times).
+// Driver: tools/tests/hair-shots.py.   ?char=ariel|emma &clip=<clip name> &steps=150 &headturn=1 &views=front,side,back,q3 &tier=0..2 &hair=<js path> &out=<tag>
+import * as TH from 'three/webgpu'; import * as TSL from 'three/tsl'; import {GLTFLoader} from '/three/examples/jsm/loaders/GLTFLoader.js';
+const Q=new URLSearchParams(location.search), THREE=Object.assign({},TH); THREE.TSL=TSL; window.THREE=THREE;
+const CH={ariel:{glb:'characterassests/Meshy_AI_Autumn_biped_Character_output.glb',anim:'characterassests/Meshy_AI_Autumn_biped_Meshy_AI_Meshy_Merged_Animations.glb',bin:'characterassests/ariel_hair_strands.bin',idle:'Idle_Breathe_Blink'},
+  emma:{glb:'characterassests/emma/Emma_Character.glb',anim:'characterassests/emma/Emma_Merged_Animations.glb',bin:'characterassests/emma/emma_hair_strands.bin',cfg:'characterassests/emma/emma_hair_config.json',idle:'Emma_Idle'}}[Q.get('char')||'ariel'];
+const r=new TH.WebGPURenderer({canvas:document.getElementById('c'),forceWebGL:true,antialias:true,preserveDrawingBuffer:true}); await r.init();
+const sc=new TH.Scene(); sc.background=new TH.Color(0x3a4252);
+sc.add(new TH.HemisphereLight(0xdfe8ff,0x605848,1.5)); const sun=new TH.DirectionalLight(0xfff2e0,2.6); sun.position.set(1.5,3,3); sc.add(sun);
+const fill=new TH.DirectionalLight(0xaac0ff,0.8); fill.position.set(-2,1,-1); sc.add(fill);
+const g=await new GLTFLoader().loadAsync('/'+CH.glb), ag=await new GLTFLoader().loadAsync('/'+CH.anim);
+const CHAR={root:g.scene,bones:{}}; sc.add(CHAR.root); CHAR.root.traverse(o=>{ if(o.isBone) CHAR.bones[o.name]=o; });
+CHAR.mixer=new TH.AnimationMixer(CHAR.root); CHAR.root.updateMatrixWorld(true);
+const clipName=Q.get('clip')||CH.idle, clip=ag.animations.find(c=>c.name===clipName); if(!clip) throw new Error('no clip '+clipName); CHAR.mixer.clipAction(clip).play();
+const mod=await import(Q.get('hair')||'/hair_strands.js'); const buf=await (await fetch('/'+CH.bin)).arrayBuffer(); const cfg=CH.cfg?await (await fetch('/'+CH.cfg)).json():undefined;
+const params={deferToRender:false,autoQuality:false}; if(Q.get('tier')!=null) params.collisionTier=+Q.get('tier');
+const H=mod.buildHair(CHAR,THREE,buf,{manual:true,config:cfg,character:true,params}); window.H=H;
+const cam=new TH.PerspectiveCamera(25,1,0.005,50); const head=CHAR.bones.Head, hp=new TH.Vector3(), q=new TH.Quaternion(), fwd=new TH.Vector3();
+const steps=+(Q.get('steps')||150), turn=Q.get('headturn')==='1', turnA=+(Q.get('turn')||0.8);
+const V={front:[0,0.12,1],side:[1,0.1,0],sideL:[-1,0.1,0],back:[0,0.15,-1],q3:[0.75,0.3,0.8],top:[0,1,0.25]};
+const restQ=head.quaternion.clone(), eul=new TH.Euler(), offQ=new TH.Quaternion();
+async function frame(i){ if(turn) head.quaternion.copy(restQ); CHAR.mixer.update(1/60); if(turn){ const a=Math.min(1,i/40); eul.set(0.3*a*Math.sin(i/17),turnA*Math.sin(i/25)*a,0); head.quaternion.multiply(offQ.setFromEuler(eul)); } CHAR.root.updateMatrixWorld(true); H.update(1/60); }
+for(let i=0;i<steps;i++){ await frame(i); if(i>steps-8){ cam.position.set(0,1.6,2); cam.lookAt(0,1.6,0); await r.render(sc,cam); } }
+// shoot: the camera follows the head bone (so a head turn is seen from the body's front, not the head's)
+window.shots={}; const base=new TH.Vector3(), hq=new TH.Quaternion();
+for(const v of (Q.get('views')||'front,side,back').split(',')){
+  head.getWorldPosition(hp); const t=hp.clone().add(new TH.Vector3(0,+(Q.get('ty')||0.1),0)); const D=new TH.Vector3(...V[v]).normalize(); const dist=+(Q.get('dist')||0.55); cam.fov=+(Q.get('fov')||25);
+  cam.position.copy(t).addScaledVector(D,dist); cam.lookAt(t); cam.updateProjectionMatrix(); await r.render(sc,cam); await new Promise(z=>setTimeout(z,120)); await r.render(sc,cam); window.shots[v]=document.getElementById('c').toDataURL('image/png'); }
+window.hairStats={mode:H.stats.mode,gpu:H.stats.gpu,strands:H.stats.drawn,contacts:H.stats.contacts,simMs:+H.stats.simMs.toFixed(2)}; window.done=true;
+</script>
