@@ -191,12 +191,12 @@
       if (C.recTo >= 0 && C.p === C.recTo && now - C.lastRecover > 40000) { const k = C.recTo + 1; C.hold[k] = Math.max(20000, C.hold[k] / 2); C.okHold = Math.max(OK_HOLD_MS, C.okHold / 2); C.recTo = -1; }   // a recovery that held 40 s relaxes its back-off
       if (C.settledP !== C.p) { C.settledP = C.p; C.settledSince = now; }
       if (bad) {
-        const dwell = sev2 > 4 ? 0 : sev > 2 ? 600 : sev > 1.4 ? 1000 : 1600;
-        if (C.over >= dwell && now - C.lastChange >= (sev2 > 4 ? 300 : 900)) {
+        const dwell = sev2 > 3 ? 0 : sev > 2 ? 600 : sev > 1.4 ? 1000 : 1600;   // (perf-mars) 4 -> 3: a tablet at 7 fps (143 ms = 3.97x) took 12.6 s to reach shadow L4 because it fell just under the big-stride threshold
+        if (C.over >= dwell && now - C.lastChange >= (sev2 > 3 ? 300 : 900)) {
           const top = now < C.resCeilUntil ? Math.max(C.floorP, C.resCeil) : MAX;   // (t1516) res steps closed after a no-gain judgement
           if (C.p >= top) { C.exhausted = true; return true; }
           // how far to jump: a slideshow (frames > 4x the budget) sheds in big strides - the render scale at the end of the ladder is what usually buys most - then settles
-          let step = sev2 > 16 ? 9 : sev2 > 8 ? 6 : sev2 > 4 ? 4 : sev > 2.2 ? 2 : 1; if (C.p + step > top) step = top - C.p; if (step < 1) step = 1;
+          let step = sev2 > 16 ? 9 : sev2 > 8 ? 6 : sev2 > 3 ? 4 : sev > 2.2 ? 2 : 1; if (C.p + step > top) step = top - C.p; if (step < 1) step = 1;
           if (C.lastRecover > 0 && now - C.lastRecover < 12000) {   // an undone recovery: the level we just left is locked (exponential back-off)
             if (now - C.lastOkRec < 12000) C.okHold = Math.min(600000, Math.max(120000, C.okHold * 3));   // (v353) a meets-target probe that failed: the next one waits much longer
             const lv = Math.min(MAX, C.p + 1); C.fails++; C.hold[lv] = Math.min(300000, C.hold[lv] * 2); C.lock[lv] = now + C.hold[lv];   // lock[k]: do not leave pressure k downwards
