@@ -95,7 +95,7 @@ ok(/_arielMats=!_cdef\|\|_cdef\.materialFix==='meshy'/.test(html) && C.get('arie
 {
   const E = C.get('emma'), A = C.get('ariel'), R = (d, id) => C.regions(d).find((r) => r.id === id);
   ok(R(E, 'shirt').texture === true && R(E, 'pants').texture === true, 'Emma shirt + pants declare a shipped texture (DEFAULT TEXTURE swatch)');
-  ok(R(A, 'shirt').texture === false && R(A, 'pants').texture === false && R(E, 'hair.main').texture === undefined, 'Ariel garments are plain colours; hair has no texture mode');
+  ok(R(A, 'shirt').texture === true && R(A, 'pants').texture === true && R(E, 'hair.main').texture === undefined, 'Ariel_JOTS shirt + pants declare a shipped texture too (DEFAULT TEXTURE swatch); hair has no texture mode');
   ok(E.items.shirt.colourMode === 'solid' && E.items.pants.colourMode === 'solid', 'Emma colours replace the texture (solid)');
   const bad = JSON.parse(JSON.stringify(E)); bad.id = 'badmode'; bad.items.shirt.colourMode = 'glitter'; ok(C.problems(bad).includes('items.shirt'), 'an unknown colourMode fails registry validation');
   const bad2 = JSON.parse(JSON.stringify(A)); bad2.id = 'badtex'; bad2.items.shirt.texture = 'yes'; ok(C.problems(bad2).includes('items.shirt'), 'texture must be a boolean');
