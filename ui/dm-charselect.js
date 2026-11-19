@@ -107,6 +107,7 @@
       } catch (e) { log('hair not attached', e && e.message); }
     }
     applyLook(M, def);
+    try { if (W.DMCharLook) W.DMCharLook.apply(M.root, { THREE, env: 'studio' }); } catch (e) { log('charlook', e && e.message); }   // (ui/dm-charlook.js) smooth normals + soft sky / rim / matcap look, studio env; ?charlook=off|low|high
     return M;
   }
   function meshyMaterialFix(root) {   // mirrors loadCharacterAssets: a metalness-1 default made her near black without an env map; vertex-coloured skin gets a warm floor
@@ -133,10 +134,14 @@
   function buildSet(opaque) {
     const THREE = W.THREE, S = new THREE.Scene(); if (opaque) S.background = new THREE.Color(0x120c1c);
     const items = [];
-    S.add(new THREE.HemisphereLight(0x9aa6d8, 0x3a1c14, 0.9));
-    const key = new THREE.DirectionalLight(0xffd7a8, 2.6); key.position.set(1.6, 2.6, 2.4); S.add(key);
-    const rim = new THREE.DirectionalLight(0x6a8cff, 1.9); rim.position.set(-2.2, 1.6, -2.0); S.add(rim);
-    const fill = new THREE.DirectionalLight(0xff9a70, 0.5); fill.position.set(-1.5, 0.4, 1.8); S.add(fill);
+    let key, rim;
+    if (W.DMCharLook && W.DMCharLook.tier() !== 'off') { const rg = W.DMCharLook.rigStudio(S, THREE); key = rg.key; rim = rg.rim; }   // (ui/dm-charlook.js) warm key upper front-left, cool rim behind, warm bounce below + the matching studio env
+    else {
+      S.add(new THREE.HemisphereLight(0x9aa6d8, 0x3a1c14, 0.9));
+      key = new THREE.DirectionalLight(0xffd7a8, 2.6); key.position.set(1.6, 2.6, 2.4); S.add(key);
+      rim = new THREE.DirectionalLight(0x6a8cff, 1.9); rim.position.set(-2.2, 1.6, -2.0); S.add(rim);
+      const fill = new THREE.DirectionalLight(0xff9a70, 0.5); fill.position.set(-1.5, 0.4, 1.8); S.add(fill);
+    }
     const pad = new THREE.Mesh(new THREE.CircleGeometry(1.35, 40), new THREE.MeshStandardMaterial({ color: 0x4a2418, roughness: 0.96, metalness: 0 })); pad.rotation.x = -Math.PI / 2; S.add(pad); items.push(pad);
     const ring = new THREE.Mesh(new THREE.RingGeometry(1.27, 1.31, 64), new THREE.MeshBasicMaterial({ color: 0x5b7fff, transparent: true, opacity: 0.85, toneMapped: false })); ring.rotation.x = -Math.PI / 2; ring.position.y = 0.002; S.add(ring); items.push(ring);
     let sd = 7; const rnd = () => { sd = (sd * 1664525 + 1013904223) >>> 0; return sd / 4294967296; };

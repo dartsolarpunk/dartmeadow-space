@@ -154,6 +154,7 @@
       }
     }
     for (const key of Object.keys(atlasGroups)) { try { paintAtlas(rootObj, key, atlasGroups[key], THREE, S, opts); } catch (e) { try { console.warn('[charpaint] atlas', key, e); } catch (_) { } } }
+    try { if (W && W.DMCharLook && W.DMCharLook.refresh) W.DMCharLook.refresh(rootObj); } catch (e) { }   // (ui/dm-charlook.js) cloned / reverted materials get the character look back
     return S;
   }
 

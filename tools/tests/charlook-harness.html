@@ -1,0 +1,46 @@
+<!doctype html><meta charset=utf8><body style="margin:0;background:#000"><canvas id=c width=640 height=800></canvas>
+<script type="importmap">{"imports":{"three":"/three/build/three.webgpu.js","three/webgpu":"/three/build/three.webgpu.js","three/tsl":"/three/build/three.tsl.js"}}</script>
+<script type="module">
+// Headless stills of a character with / without the DMCharLook (WebGL2 fallback under SwiftShader: LOOK only, not frame times).  Driver: tools/tests/charlook-shots.py
+//   ?who=ariel|emma &look=off|low|high &env=analytic|matcap|both &scene=studio|game &views=front,q3,face &hair=1
+import * as TH from 'three/webgpu'; import * as TSL from 'three/tsl'; import {GLTFLoader} from '/three/examples/jsm/loaders/GLTFLoader.js';
+const Q=new URLSearchParams(location.search), THREE=Object.assign({},TH); THREE.TSL=TSL; window.THREE=THREE;
+const who=Q.get('who')||'ariel', look=Q.get('look')||'off', scn=Q.get('scene')||'studio';
+const F={ariel:{mesh:'/characterassests/Meshy_AI_Autumn_biped_Character_output.glb',anims:'/characterassests/Meshy_AI_Autumn_biped_Meshy_AI_Meshy_Merged_Animations.glb',idle:'Idle_Breathe_Blink',hair:'/characterassests/ariel_hair_strands.bin',hcfg:null,meshy:true},
+ emma:{mesh:'/characterassests/emma/Emma_Character.glb',anims:'/characterassests/emma/Emma_Merged_Animations.glb',idle:'Emma_Idle',hair:'/characterassests/emma/emma_hair_strands.bin',hcfg:'/characterassests/emma/emma_hair_config.json',meshy:false}}[who];
+const r=new TH.WebGPURenderer({canvas:document.getElementById('c'),forceWebGL:true,antialias:true,preserveDrawingBuffer:true,alpha:true}); await r.init();
+r.toneMapping=TH.ACESFilmicToneMapping; r.toneMappingExposure=scn==='studio'?1.05:1.0;
+const sc=new TH.Scene();
+const g=await new GLTFLoader().loadAsync(F.mesh); const root=g.scene; 
+if(F.meshy){ const seen=new Set(); root.traverse(o=>{ if(!o.isMesh) return; const vc=!!(o.geometry.attributes.color); (Array.isArray(o.material)?o.material:[o.material]).forEach(m=>{ if(!m||seen.has(m))return; seen.add(m); if(m.metalness>0.9){m.metalness=0.08;m.roughness=0.55;} if(vc&&m.emissive){m.emissive.setRGB(0.16,0.095,0.075);m.emissiveIntensity=1;} m.needsUpdate=true; }); }); }
+const bones={}; root.traverse(o=>{ if(o.isBone) bones[o.name]=o; if(o.isSkinnedMesh) o.frustumCulled=false; });
+const mixer=new TH.AnimationMixer(root); try{ const ag=await new GLTFLoader().loadAsync(F.anims); const c=ag.animations.find(a=>a.name===F.idle); if(c){ const a=mixer.clipAction(c); a.play(); mixer.update(0.8);} }catch(e){ console.error('anim',e); }
+sc.add(root); root.updateMatrixWorld(true);
+let hair=null; if(Q.get('hair')==='1'){ try{ const m=await import('/hair_strands.js'); let cfg; if(F.hcfg){ cfg=await (await fetch(F.hcfg)).json(); } const CH={root,bones,mixer}; hair=await m.attachHairStrands(CH,THREE,{url:F.hair,config:cfg,character:!!cfg,getStrandFraction:()=>0.6,getCollisionTier:()=>0,getCalm:()=>false,params:{autoQuality:false}}); }catch(e){ console.error('hair',e); } }
+// --- lights
+if(scn==='studio'){
+  sc.background=new TH.Color(0x120c1c);
+  if(look==='off'){ sc.add(new TH.HemisphereLight(0x9aa6d8,0x3a1c14,0.9)); const k=new TH.DirectionalLight(0xffd7a8,2.6); k.position.set(1.6,2.6,2.4); sc.add(k); const rm=new TH.DirectionalLight(0x6a8cff,1.9); rm.position.set(-2.2,1.6,-2.0); sc.add(rm); const f=new TH.DirectionalLight(0xff9a70,0.5); f.position.set(-1.5,0.4,1.8); sc.add(f); }
+} else {
+  sc.background=new TH.Color(0x8fb0d8);
+  const sun=new TH.DirectionalLight(0xfff2e0,2.0); sun.position.set(80,120,40); sun.userData.shadowKey=true; sc.add(sun); sc.add(sun.target);
+  sc.add(new TH.HemisphereLight(0x88bbff,new TH.Color(0x2a2a22),0.4)); sc.add(new TH.AmbientLight(0x6688aa,0.5));
+  const gr=new TH.Mesh(new TH.CircleGeometry(30,48),new TH.MeshStandardMaterial({color:0x6a4a38,roughness:0.95})); gr.rotation.x=-Math.PI/2; sc.add(gr);
+}
+const CL=await import('/ui/dm-charlook.js'); const DL=window.DMCharLook;
+window.t_apply=0;
+if(look!=='off'){
+  DL.setTier(look); 
+  if(scn==='studio'){ DL.rigStudio(sc,THREE); }
+  const t0=performance.now(); await DL.apply(root,{THREE,env:scn==='studio'?'studio':'game'}); window.t_apply=performance.now()-t0;
+  if(scn!=='studio'){ DL.tick(0.5,{scene:sc,dt:0.5,day:1}); for(let i=0;i<30;i++) DL.tick(0.1,{scene:sc,dt:0.1,day:1}); }
+}
+window.stat=DL.status();
+const cam=new TH.PerspectiveCamera(30,640/800,0.02,60);
+const box=new TH.Box3().setFromObject(root); const H=box.max.y-box.min.y, mid=(box.min.y+box.max.y)/2;
+const head=bones.Head?bones.Head.getWorldPosition(new TH.Vector3()):new TH.Vector3(0,box.min.y+H*0.9,0);
+const V={front:[[0,mid,0],[0,0.04,1],H*2.05],q3:[[0,mid,0],[0.7,0.18,0.7],H*2.05],face:[[0,head.y-0.03,0],[0.35,0.05,1],0.62],face3:[[0,head.y-0.03,0],[0.9,0.1,0.55],0.62],back:[[0,mid,0],[-0.6,0.2,-0.8],H*2.05]};
+window.shots={};
+for(const v of (Q.get('views')||'front,q3,face').split(',')){ const [t,d,dist]=V[v]; const D=new TH.Vector3(...d).normalize(); cam.position.set(...t).addScaledVector(D,dist); cam.lookAt(...t); cam.updateProjectionMatrix(); await r.render(sc,cam); await new Promise(z=>setTimeout(z,120)); r.render(sc,cam); window.shots[v]=document.getElementById('c').toDataURL('image/png'); }
+window.done=true;
+</script>
