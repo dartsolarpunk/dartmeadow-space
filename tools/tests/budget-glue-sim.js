@@ -39,7 +39,7 @@ assert.strictEqual(boot({ search: '?gov=7' }).B.p, 7);
 // 5. live: warm-up pause, escalation on slow frames, persistence only after 15 s at a pressure
 { const t = boot({ gfx: { isMobile: false, gpuClass: 'high' } }); const B = t.B; assert.strictEqual(B.p, 0);
   globalThis._dmWarming = true; t.run(200, 120); assert.strictEqual(B.p, 0, 'no decisions during the warm-up'); globalThis._dmWarming = false;
-  t.run(60, 120); assert(B.p >= 1, 'escalates on 8 fps frames, p=' + B.p);
+  t.run(6, 120); assert(B.p >= 1, 'escalates on 8 fps frames, p=' + B.p);
   const p1 = B.p; t.run(400, 120); assert(B.p > p1);
   t.run(300, 16.7); // calm again, saves happen on the 32-frame tick
   const j = JSON.parse(t.store.dm_budget_v1 || 'null'); console.log('stored', j && j.p, 'live p', B.p); }
