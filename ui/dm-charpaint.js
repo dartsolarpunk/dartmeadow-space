@@ -55,6 +55,7 @@
     }
   }
   // colour transfer for a baked island: replace the base colour, keep the baked detail.  rgb in 0..255 sRGB; refLum = the island's mean luminance (0..1).
+  function medianOf(a) { if (!a.length) return 0; const f = Float32Array.from(a).sort(); return f[f.length >> 1]; }
   function transfer(r, g, b, refLum, target, lo, hi) {
     const l = (0.299 * r + 0.587 * g + 0.114 * b) / 255, k = refLum > 1e-4 ? Math.max(lo == null ? 0.55 : lo, Math.min(hi == null ? 1.8 : hi, l / refLum)) : 1;
     return [Math.min(255, target[0] * k), Math.min(255, target[1] * k), Math.min(255, target[2] * k)];
@@ -258,9 +259,9 @@
         const geo = mesh.geometry, uv = geo.attributes.uv; if (!uv) continue; const arr = uv.array, idx = geo.index ? geo.index.array : null;
         raster(arr, idx, size, (t) => { texels.push(t); });
       }
-      let n = 0, sum = 0; const seen = new Uint8Array(size * size), list = [];
-      for (const t of texels) { if (seen[t]) continue; seen[t] = 1; list.push(t); sum += (0.299 * px[t * 4] + 0.587 * px[t * 4 + 1] + 0.114 * px[t * 4 + 2]) / 255; n++; }
-      if (!n) continue; const ref = sum / n, solid = colourModeOf(gi.it) === 'solid';   // 'solid': the baked texture is replaced by the colour; 'tint': the colour replaces the base hue and the baked light / dark detail stays
+      let n = 0; const seen = new Uint8Array(size * size), list = [], lums = [];
+      for (const t of texels) { if (seen[t]) continue; seen[t] = 1; list.push(t); lums.push((0.299 * px[t * 4] + 0.587 * px[t * 4 + 1] + 0.114 * px[t * 4 + 2]) / 255); n++; }
+      if (!n) continue; const ref = medianOf(lums), solid = colourModeOf(gi.it) === 'solid';   // MEDIAN, not mean: a baked print (Emma's logo) must not darken the plain fabric. 'solid': the baked texture is replaced by the colour; 'tint': the colour replaces the base hue and the baked light / dark detail stays
       for (const t of list) { const o = t * 4; if (solid) { px[o] = target[0]; px[o + 1] = target[1]; px[o + 2] = target[2]; continue; } const c = transfer(px[o], px[o + 1], px[o + 2], ref, target); px[o] = c[0]; px[o + 1] = c[1]; px[o + 2] = c[2]; }
     }
     for (const gi of group) {   // decals, after the colour: Emma's islands are used as they are

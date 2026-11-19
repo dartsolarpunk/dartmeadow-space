@@ -73,15 +73,15 @@
       studio: { idle: 'Emma_Idle', extras: ['Acting_Wave_Happy', 'Acting_Surprised', 'Acting_Thinking'] },
       hair: { url: 'characterassests/emma/emma_hair_strands.bin', configUrl: 'characterassests/emma/emma_hair_config.json',
         groups: [{ id: 'main', label: 'Hair', clusters: ['back', 'sideburns', 'top', 'underlayer'] }, { id: 'fringe', label: 'Fringe', clusters: ['bangs'] }] },
-      // shirt and pants share ONE baked cloth atlas: the item's UV islands are recoloured inside a canvas copy of it (detail kept)
+      // shirt (baked LEAD EDGE print, own 1024 map) and pants (flat 1024 map) each have their own baked atlas: the item's UV islands are recoloured inside a canvas copy of it (detail kept)
       items: {
         // decals are projected into the same atlas (her UV islands are used as they are)
-        shirt: { label: 'Shirt', mesh: '^Emma_Shirt$', mode: 'baked', atlas: 'cloth', colourMode: 'solid', defaultColor: '#212020', decals: 'uv', spots: {
+        shirt: { label: 'Shirt', mesh: '^Emma_Shirt$', mode: 'baked', atlas: 'shirt', colourMode: 'solid', defaultColor: '#212020', decals: 'uv', spots: {
           front: { base: 0.14, snaps: [{ id: 'chest', label: 'Chest', x: 0.5, y: 0.3 }, { id: 'chestL', label: 'Chest left', x: 0.7, y: 0.3 }, { id: 'chestR', label: 'Chest right', x: 0.3, y: 0.3 }, { id: 'belly', label: 'Belly', x: 0.5, y: 0.62 }] },
           back: { base: 0.18, snaps: [{ id: 'upper', label: 'Upper back', x: 0.5, y: 0.3 }, { id: 'centre', label: 'Centre', x: 0.5, y: 0.55 }] },
           left: { label: 'Left sleeve', base: 0.06, snaps: [{ id: 'sleeve', label: 'Sleeve', x: 0.4, y: 0.2 }] },
           right: { label: 'Right sleeve', base: 0.06, snaps: [{ id: 'sleeve', label: 'Sleeve', x: 0.4, y: 0.2 }] } } },
-        pants: { label: 'Pants', mesh: '^Emma_Pants$', mode: 'baked', atlas: 'cloth', colourMode: 'solid', defaultColor: '#212020', decals: 'uv', spots: {
+        pants: { label: 'Pants', mesh: '^Emma_Pants$', mode: 'baked', atlas: 'pants', colourMode: 'solid', defaultColor: '#212020', decals: 'uv', spots: {
           front: { base: 0.1, snaps: [{ id: 'thighL', label: 'Left thigh', x: 0.72, y: 0.3 }, { id: 'thighR', label: 'Right thigh', x: 0.28, y: 0.3 }, { id: 'shinL', label: 'Left shin', x: 0.72, y: 0.65 }, { id: 'shinR', label: 'Right shin', x: 0.28, y: 0.65 }] },
           back: { base: 0.12, snaps: [{ id: 'pocketL', label: 'Left pocket', x: 0.28, y: 0.14 }, { id: 'pocketR', label: 'Right pocket', x: 0.72, y: 0.14 }] },
           left: { label: 'Left side', base: 0.09, snaps: [{ id: 'thigh', label: 'Thigh', x: 0.5, y: 0.3 }, { id: 'shin', label: 'Shin', x: 0.5, y: 0.65 }] },
