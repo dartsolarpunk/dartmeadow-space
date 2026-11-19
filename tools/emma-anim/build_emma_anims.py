@@ -47,6 +47,15 @@ PRESETS = [
 def main(src, dst, outdir, ref_char=None, with_derived=True):
     os.makedirs(outdir, exist_ok=True)
     out, SB, k = retarget(src, dst, ref_char=ref_char)
+    # ---- clip clean-up on the retargeted source clips (derived clips below inherit it) ----
+    fix_arms(out, SB)                                     # forearm/wrist roll removal, relaxed-jog arms for run
+    fix_jump(out, SB)                                     # hip-yaw removal + neck/head low-pass in the jump
+    pre = load_preset('relaxed_hand'); grip = load_preset('grip_hand')
+    base_idle = out['Idle_Breathe_Blink']
+    for sd in ('Left', 'Right'):                          # idle fingers first, so the reference is idle's exact pose
+        for n, q in relaxed_hand_quats(SB, pre).items(): base_idle['rot'][n] = np.tile(q, (len(base_idle['t']), 1))
+    REF = idle_hand_reference(base_idle, SB, pre); GRIP = relaxed_hand_quats(SB, grip)
+    rep = {}; apply_hand_pose(out, SB, REF, GRIP, report=rep)
     Fb = frame_from_skel(SB); up = Fb[:,1]
     if with_derived:
         J = out['Regular_Jump']; C = out['climbing_up_wall']
@@ -65,8 +74,7 @@ def main(src, dst, outdir, ref_char=None, with_derived=True):
             out[nm] = loopify(out[src_c], SB, up, bl)
         for c_, bl in [('Acting_Talk',0.5),('Acting_Thinking',0.5),('Emma_Swim_InPlace',0.5)]:
             out[c_] = loopify(out[c_], SB, up, bl)       # these 'repeat' presets had 40-50 deg pops at the loop point
-    fix_arms(out, SB)                                     # roll removal in walk/run/crouch, relaxed-jog arms for run
-    apply_relaxed_hand(out, SB)                           # natural curled fingers where the hand hangs; grabbing clips excluded by name
+    apply_hand_pose(out, SB, REF, GRIP, report=rep)       # derived clips (loops, turns, ...) get the same fixed hand poses
     p = os.path.join(outdir, 'Emma_Merged_Animations.glb')
     st = write_animation_glb(out, SB, dst, p)
     man = {'rig': 'Emma (Ariel bone names)', 'rootMotionScale': k, 'source': 'Ariel/Autumn merged animations retargeted by tools/retarget.py',
