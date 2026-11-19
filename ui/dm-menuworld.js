@@ -302,9 +302,9 @@
     mesh(ledB, M.led([0.2, 0.7, 2.0], 3.1), true); mesh(ledA, M.led([2.0, 1.1, 0.2], 2.3), true);
     // turntable disc (turns with her), ring light, contact blob
     const { vec3, atan, positionLocal, length, step, fract, smoothstep, float, uv } = T;
-    const discMat = (() => { const m = new THREE.MeshStandardNodeMaterial({ roughness: 0.4, metalness: 0.35 }), ang = atan(positionLocal.x, positionLocal.z).div(6.2832).add(0.5), rr = length(positionLocal.xz);
+    const discMat = (() => { const m = new THREE.MeshStandardNodeMaterial({ roughness: 0.85, metalness: 0.0 }), ang = atan(positionLocal.x, positionLocal.z).div(6.2832).add(0.5), rr = length(positionLocal.xz);
       const tick = step(0.82, fract(ang.mul(36))).mul(step(1.05, rr)), ring = smoothstep(0.02, 0.0, rr.sub(1.0).abs());
-      m.colorNode = vec3(0.1, 0.11, 0.14).add(vec3(0.05, 0.06, 0.08).mul(step(0.5, fract(rr.mul(7.0))))); m.emissiveNode = vec3(0.15, 0.7, 1.6).mul(tick.add(ring.mul(0.7))); return m; })();
+      m.colorNode = vec3(0.045, 0.05, 0.065).add(vec3(0.025, 0.03, 0.04).mul(step(0.5, fract(rr.mul(7.0))))); m.emissiveNode = vec3(0.15, 0.7, 1.6).mul(tick.add(ring.mul(0.7))); return m; })();
     const disc = new THREE.Mesh(new THREE.CylinderGeometry(1.25, 1.28, 0.02, 56), discMat); disc.position.y = -0.002; disc.frustumCulled = false; own.push(disc); group.add(disc);
     const ringM = new THREE.Mesh(new THREE.RingGeometry(1.29, 1.34, 64), M.glow([0.2, 0.75, 1.9])); ringM.rotation.x = -Math.PI / 2; ringM.position.y = 0.012; ringM.frustumCulled = false; own.push(ringM); group.add(ringM);
     const blobMat = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, toneMapped: false }); blobMat.colorNode = vec3(0, 0, 0); blobMat.opacityNode = float(1).sub(smoothstep(0.0, 1.0, length(uv().sub(0.5)).mul(2.0))).mul(0.6);
