@@ -71,6 +71,61 @@ export const HAIR_DEFAULT_CONFIG = {
   name: 'Ariel',
   // Ariel: back / bangs / sideburns / top. Bangs and sideburns are short: they hold their shape harder.
   clusters: [{ name: 'back' }, { name: 'bangs', stiffBoost: 1.6 }, { name: 'sideburns', stiffBoost: 1.8 }, { name: 'top' }],
+  // Ariel collision data for tiers >= 1 (fitted to her skinned body / shirt / glasses / ears with tools/hair-fit-colliders.mjs; see docs/hair-collision-notes.md)
+  collision: {
+    fileColliders: false,
+    margin: {bundle: 1, cap: 0.012},
+    separation: {neighbours: 3, frac: 0.6},
+    capsules: {
+      1: [
+        { bone: 'Spine02', a: [0, -0.0019, 0.0306], b: [0, 0.1289, 0.0306], r: 0.1331 },
+        { bone: 'Spine01', a: [0, -0.0066, 0.0527], b: [0, 0.1209, 0.0527], r: 0.1331 },
+        { bone: 'Spine', a: [0, 0, 0.0093], b: [0, 0.0435, 0.0093], r: 0.1176 },
+        { bone: 'Spine', a: [-0.002, 0.021, -0.0009], b: [0.0771, 0.0106, 0.0509], r: 0.0931 },
+        { bone: 'LeftShoulder', a: [-0.0317, 0.0108, 0.0053], b: [-0.0317, 0.1319, 0.0053], r: 0.0835 },
+        { bone: 'LeftArm', a: [0, 0, 0], b: [0, 0.1574, 0], r: 0.058 },
+        { bone: 'LeftForeArm', a: [0, 0, 0], b: [0, 0.2221, -0.0378], r: 0.055 },
+        { bone: 'LeftHand', a: [0, 0, 0], b: [0, 0.0981, 0], r: 0.04 },
+        { bone: 'Spine', a: [0.002, 0.021, -0.0009], b: [-0.0771, 0.0106, 0.0509], r: 0.0931 },
+        { bone: 'RightShoulder', a: [0.0317, 0.0108, 0.0053], b: [0.0317, 0.1319, 0.0053], r: 0.0835 },
+        { bone: 'RightArm', a: [0, 0, 0], b: [0, 0.1542, 0], r: 0.058 },
+        { bone: 'RightForeArm', a: [0, 0, 0], b: [0, 0.2214, -0.0409], r: 0.055 },
+        { bone: 'RightHand', a: [0, 0, 0], b: [0, 0.0981, 0], r: 0.04 },
+        { bone: 'Hips', a: [0, 0, 0], b: [0, 0.1314, 0], r: 0.14 },
+        { bone: 'neck', a: [0, 0, 0], b: [0, 0.1068, 0], r: 0.055 }
+      ],
+      2: [
+        { bone: 'Spine02', a: [0, -0.0015, 0.0242], b: [0, 0.1292, 0.0242], r: 0.1257 },
+        { bone: 'Spine02', a: [0.0763, -0.0019, 0.0306], b: [0.0763, 0.1289, 0.0306], r: 0.1031 },
+        { bone: 'Spine02', a: [-0.0763, -0.0019, 0.0306], b: [-0.0763, 0.1289, 0.0306], r: 0.1031 },
+        { bone: 'Spine01', a: [0, -0.0038, 0.0305], b: [0, 0.1237, 0.0305], r: 0.1107 },
+        { bone: 'Spine01', a: [0.07, -0.0066, 0.0527], b: [0.07, 0.1209, 0.0527], r: 0.0949 },
+        { bone: 'Spine01', a: [-0.07, -0.0066, 0.0527], b: [-0.07, 0.1209, 0.0527], r: 0.0949 },
+        { bone: 'Spine', a: [0, 0, 0.0191], b: [0, 0.0435, 0.0191], r: 0.1009 },
+        { bone: 'Spine', a: [0.0724, 0, -0.0125], b: [0.0724, 0.0435, -0.0125], r: 0.0892 },
+        { bone: 'Spine', a: [-0.0724, 0, -0.0125], b: [-0.0724, 0.0435, -0.0125], r: 0.0892 },
+        { bone: 'Spine', a: [0, 0.0235, 0], b: [0.0771, 0.0237, 0.0178], r: 0.06 },
+        { bone: 'LeftShoulder', a: [-0.0044, 0.0015, 0.013], b: [-0.0044, 0.1226, 0.013], r: 0.0623 },
+        { bone: 'LeftArm', a: [0, 0, 0], b: [0, 0.1574, 0], r: 0.0607 },
+        { bone: 'LeftForeArm', a: [0, 0, 0], b: [0, 0.2221, -0.0378], r: 0.055 },
+        { bone: 'LeftHand', a: [0, 0, 0], b: [0, 0.0981, 0], r: 0.04 },
+        { bone: 'Spine', a: [0, 0.0235, 0], b: [-0.0771, 0.0237, 0.0178], r: 0.06 },
+        { bone: 'RightShoulder', a: [0.0044, 0.0015, 0.013], b: [0.0044, 0.1226, 0.013], r: 0.0623 },
+        { bone: 'RightArm', a: [0, 0, 0], b: [0, 0.1542, 0], r: 0.0607 },
+        { bone: 'RightForeArm', a: [0, 0, 0], b: [0, 0.2214, -0.0409], r: 0.055 },
+        { bone: 'RightHand', a: [0, 0, 0], b: [0, 0.0981, 0], r: 0.04 },
+        { bone: 'Hips', a: [0, 0, 0], b: [0, 0.1314, 0], r: 0.14 },
+        { bone: 'neck', a: [0, 0, 0], b: [0, 0.1068, 0], r: 0.055 }
+      ]
+    },
+    boxes: [
+      { name: 'lensL', c: [0.041, 0.15, 0.0407], h: [0.0311, 0.018, 0.0149], margin: 0.001 },
+      { name: 'lensR', c: [-0.041, 0.15, 0.0407], h: [0.0311, 0.018, 0.0149], margin: 0.001 },
+      { name: 'frameBar', c: [0, 0.163, 0.042], h: [0.052, 0.0096, 0.0018], margin: 0.001 },
+      { name: 'earL', c: [0.074, 0.088, -0.0135], h: [0.014, 0.035, 0.0425], margin: 0.001 },
+      { name: 'earR', c: [-0.074, 0.088, -0.0135], h: [0.014, 0.035, 0.0425], margin: 0.001 }
+    ]
+  },
 };
 function hairConfig(meta, opts) {
   const m = meta.config || {}, o = opts.config || {};
@@ -78,6 +133,8 @@ function hairConfig(meta, opts) {
   const objs = (a) => Array.isArray(a) && a.length && typeof a[0] === 'object' ? a : null;
   C.clusters = objs(o.clusters) || objs(m.clusters) || objs(meta.clusters) || HAIR_DEFAULT_CONFIG.clusters;
   C.clumps = Object.assign({}, m.clumps, o.clumps);
+  // per-character collider data for tiers >= 1; the built-in default (Ariel's numbers) only applies when the character brings no clusters / collision of its own
+  C.collision = o.collision || m.collision || ((objs(o.clusters) || objs(m.clusters) || objs(meta.clusters)) ? undefined : HAIR_DEFAULT_CONFIG.collision);
   C.params = Object.assign({}, m.params, o.params);
   return C;
 }
@@ -94,6 +151,8 @@ export async function attachHairStrands(CHAR, THREE, opts = {}) {
   if (typeof window !== 'undefined') window.DART_HAIR = H;
   return H;
 }
+
+const BOXS = 32;   // floats per keep-out box in the per-frame buffer: t(3) Ainv(9) A(9) h(3) margin(1) sphere(4) + pad
 
 export function buildHair(CHAR, THREE, buf, opts = {}) {
   /* ---------------- parse ---------------- */
@@ -141,13 +200,13 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   const findBone = (n) => (CHAR.bones && CHAR.bones[n]) || root.getObjectByName(n);
   const head = findBone(meta.headBone || 'Head');
   if (!head) throw new Error('[hair] Head bone not found');
-  const cols = [];
+  const fileCols = [];
   for (const c of meta.colliders || []) {
     // with the head SDF, the old single head sphere is replaced (it was smaller than the
     // skull at the back/crown and bulged past it above the ears)
     if (SDF && c.bone === (meta.headBone || 'Head')) continue;
     const b = findBone(c.bone);
-    if (b) cols.push({ bone: b, a: new THREE.Vector3(...c.a), b: new THREE.Vector3(...c.b), r: c.r,
+    if (b) fileCols.push({ bone: b, a: new THREE.Vector3(...c.a), b: new THREE.Vector3(...c.b), r: c.r,
                        wa: new THREE.Vector3(), wb: new THREE.Vector3() });
   }
   const BODY = CFG.body || [
@@ -158,20 +217,48 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     ['LeftHand', null, 0.05], ['RightHand', null, 0.05],
     ['Hips', 'Spine02', 0.14],
   ];
-  if (opts.params ? opts.params.bodyColliders !== false : true) {
+  // body capsule list -> colliders. Entry: [bone, childBone|null, radius]  (segment from the bone to its direct child, as always)
+  //                                    or {bone, a:[x,y,z], b:[x,y,z], r}   (free segment in the bone's own frame: neck / shoulder / chest fits)
+  const buildBody = (list) => {
+    const out = [];
+    if (!(opts.params ? opts.params.bodyColliders !== false : true)) return out;
     const skip = (opts.params && opts.params.bodyExclude) || [];
-    for (const [bn, cn, r] of BODY) {
+    for (const en of list) {
+      const obj = !Array.isArray(en), bn = obj ? en.bone : en[0];
       if (skip.includes(bn)) continue;
       const b = findBone(bn); if (!b) continue;
       const a = new THREE.Vector3(0, 0, 0), e = new THREE.Vector3(0, 0, 0);
-      if (cn) { const c = findBone(cn); if (!c) continue; e.copy(c.position); if (c.parent !== b) continue; }
-      cols.push({ bone: b, a, b: e, r, wa: new THREE.Vector3(), wb: new THREE.Vector3() });
+      if (obj) { if (en.a) a.fromArray(en.a); if (en.b) e.fromArray(en.b); }
+      else { const cn = en[1]; if (cn) { const c = findBone(cn); if (!c) continue; e.copy(c.position); if (c.parent !== b) continue; } }
+      out.push({ bone: b, a, b: e, r: obj ? en.r : en[2], wa: new THREE.Vector3(), wb: new THREE.Vector3() });
+    }
+    return out;
+  };
+  /* ---- collision quality tiers (docs/hair-collision-notes.md) ----
+     Tier 0 (Low) = the original solver, bit-identical: file colliders + BODY capsules, head SDF, capsules on the last iteration.
+     Tier 1 (Mid) and tier 2 (High) add, from CFG.collision (per character data): a refitted capsule list that follows the skinned bones,
+     keep-out boxes (glasses lenses / frame), a per-point margin for the child strands each guide carries (bundle radius, per cluster scale),
+     capsules + boxes on every iteration; tier 2 also tests segment midpoints (tessellation) and keeps neighbouring guides apart. */
+  const COLL = CFG.collision || {};
+  const sets = [];
+  const mkSet = (cols, boxes) => ({ cols, n: cols.length, buf: new Float32Array(cols.length * 7), sph: new Float32Array(cols.length * 8), hit: new Uint16Array(Math.max(1, cols.length)), gl: new Uint16Array(Math.max(1, cols.length)), bgl: new Uint16Array(Math.max(1, boxes.length)),
+    boxes, nb: boxes.length, bbuf: new Float32Array(Math.max(1, boxes.length) * BOXS), bhit: new Uint16Array(Math.max(1, boxes.length)) });
+  {
+    let list = BODY;
+    sets[0] = mkSet(fileCols.concat(buildBody(BODY)), []);
+    for (let t = 1; t <= 2; t++) {
+      const L = COLL.capsules && (COLL.capsules[t] || COLL.capsules[String(t)]); if (L) list = L;
+      const boxes = [];
+      for (const bx of COLL.boxes || []) {
+        if ((bx.tier ?? 1) > t) continue;
+        const b = findBone(bx.bone || meta.headBone || 'Head'); if (!b) continue;
+        boxes.push({ bone: b, c: new THREE.Vector3(...bx.c), h: bx.h.slice(), m: bx.margin || 0, name: bx.name || '' });
+      }
+      sets[t] = mkSet((COLL.fileColliders === false ? [] : fileCols).concat(buildBody(list)), boxes);   // collision.fileColliders:false = the tier's own capsule list replaces the groom file's neck / chest / shoulder capsules
     }
   }
-  const nCols = cols.length;
-  const colBuf = new Float32Array(nCols * 7);   // ax ay az bx by bz r (root-local), refreshed per frame
-  const colSph = new Float32Array(nCols * 8);   // bounding sphere cx cy cz R per capsule
-  const colHit = new Uint16Array(Math.max(1, nCols));
+  let CS = sets[0], cols = CS.cols, nCols = CS.n, colBuf = CS.buf, colSph = CS.sph, colHit = CS.hit;   // active collider set (tier), swapped in _update
+  const nCols0 = sets[0].n;   // the GPU guide solver only knows the tier-0 capsule set
 
   /* ---------------- params ---------------- */
   const P = {
@@ -265,6 +352,46 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     }
   }
   buildStiffness();
+  // child-bundle margin (tier >= 1): a child strand is its guide's point plus a constant head-frame offset, so a guide kept `bundle` further
+  // from a collider keeps all its children out of it too (children are not collided against capsules / boxes themselves).
+  // Per point: min(cap, widest child offset of the guide at that point x bundle scale x cluster.collisionMargin) + cluster.collisionExtra.
+  const mrgG = new Float32Array(GK); let mrgMax = 0;
+  {
+    const bun = new Float32Array(GK), mc = COLL.margin || {}, cap = mc.cap ?? 0.012, bsc = mc.bundle ?? 1;
+    for (let st = 0; st < N; st++) {
+      const g = guideOf[st];
+      for (let k = 2; k < K; k++) { const o = (st * K + k) * 3, q = (g * K + k) * 3, d = Math.hypot(rest[o] - gRest[q], rest[o + 1] - gRest[q + 1], rest[o + 2] - gRest[q + 2]); if (d > bun[g * K + k]) bun[g * K + k] = d; }
+    }
+    for (let g = 0; g < G; g++) {
+      const cl = clusterOf(group[guideStrand[g]]), cm = cl.collisionMargin ?? 1, ex = cl.collisionExtra ?? 0;
+      for (let k = 2; k < K; k++) { const m = Math.min(cap, bun[g * K + k] * bsc * cm) + ex; mrgG[g * K + k] = m; if (m > mrgMax) mrgMax = m; }
+    }
+  }
+  // neighbour guides (tier 2): per guide its 3 nearest guides of the same cluster (rest chain-middle distance) -> min-distance pairs. Built on first use.
+  let sepPairs = null;   // { n, a: Uint32Array, b: Uint32Array, min: Float32Array(n*K) }
+  function ensureSep() {
+    if (sepPairs) return sepPairs;
+    const NB = (COLL.separation && COLL.separation.neighbours) || 3, frac = (COLL.separation && COLL.separation.frac) ?? 0.6, kq = Math.min(K - 1, (K * 0.5) | 0);
+    const seen = new Set(), pa = [], pb = [];
+    const mid = new Float32Array(G * 3); for (let g = 0; g < G; g++) { const o = (g * K + kq) * 3; mid[g * 3] = gRest[o]; mid[g * 3 + 1] = gRest[o + 1]; mid[g * 3 + 2] = gRest[o + 2]; }
+    const gg = new Uint8Array(G); for (let g = 0; g < G; g++) gg[g] = group[guideStrand[g]];
+    const bd = new Float32Array(NB), bi = new Int32Array(NB);
+    for (let g = 0; g < G; g++) {
+      bd.fill(1e9); bi.fill(-1);
+      for (let h = 0; h < G; h++) {
+        if (h === g || gg[h] !== gg[g]) continue;
+        const d = (mid[g * 3] - mid[h * 3]) ** 2 + (mid[g * 3 + 1] - mid[h * 3 + 1]) ** 2 + (mid[g * 3 + 2] - mid[h * 3 + 2]) ** 2;
+        if (d < bd[NB - 1]) { let j = NB - 1; while (j > 0 && bd[j - 1] > d) { bd[j] = bd[j - 1]; bi[j] = bi[j - 1]; j--; } bd[j] = d; bi[j] = h; }
+      }
+      for (let j = 0; j < NB; j++) { const h = bi[j]; if (h < 0) continue; const key = g < h ? g * G + h : h * G + g; if (seen.has(key)) continue; seen.add(key); pa.push(g); pb.push(h); }
+    }
+    const n = pa.length, min = new Float32Array(n * K), hr2 = P.hairRadius;
+    for (let i = 0; i < n; i++) for (let k = 2; k < K; k++) {
+      const a = (pa[i] * K + k) * 3, b = (pb[i] * K + k) * 3, d = Math.hypot(gRest[a] - gRest[b], gRest[a + 1] - gRest[b + 1], gRest[a + 2] - gRest[b + 2]);
+      min[i * K + k] = d > hr2 * 0.8 ? Math.max(d * frac, hr2 * 0.6) : 0;   // strands that start closer than a hair radius are one clump: leave them
+    }
+    return (sepPairs = { n, a: Uint32Array.from(pa), b: Uint32Array.from(pb), min });
+  }
   const gLen = new Float32Array(G);   // chain length per guide (runaway bound for the blow-up guard)
   for (let g = 0; g < G; g++) { let l = 0; for (let k = 0; k < K - 1; k++) l += segLen[g * (K - 1) + k]; gLen[g] = l; }
   let stiffDirty = false;
@@ -501,7 +628,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   function initCompute(renderer) {
     const be = renderer && renderer.backend;
     if (!gpuOptIn() || !be || !be.isWebGPUBackend || !be.device || typeof GPUBufferUsage === 'undefined') return false;
-    if (nCols > HAIR_GPU_MAX_COLS) return false;
+    if (nCols0 > HAIR_GPU_MAX_COLS) return false;
     const dev = be.device, L = dev.limits || {};
     // the solver needs 7 storage buffers, a 64-wide workgroup and a ~1.4 KB uniform block
     if ((L.maxStorageBuffersPerShaderStage || 0) < 7 || (L.maxComputeWorkgroupSizeX || 0) < 64 || (L.maxComputeInvocationsPerWorkgroup || 0) < 64 ||
@@ -526,7 +653,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     } catch (e) { stats.gpuFail = 'init'; console.warn('[hair] GPU guide solve unavailable, CPU path', e); return false; }
   }
   const gF = { M: new Float32Array(16), Mi: new Float32Array(16), grav: new Float32Array(4), wind: new Float32Array(4), shift: new Float32Array(4),
-               trig: new Float32Array(4), hc: new Float32Array(4), p0: new Float32Array(4), ip: new Uint32Array(4), cols: colBuf, sph: colSph, nCols, ext: [] };
+               trig: new Float32Array(4), hc: new Float32Array(4), p0: new Float32Array(4), ip: new Uint32Array(4), cols: sets[0].buf, sph: sets[0].sph, nCols: nCols0, ext: [] };
 
   let NR = N;   // strands drawn
   function setStrandFraction(f) {
@@ -565,7 +692,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   gate(true);
 
   /* ---------------- scratch ---------------- */
-  const M = new THREE.Matrix4(), Mi = new THREE.Matrix4(), rootInv = new THREE.Matrix4(), tmpM = new THREE.Matrix4();
+  const M = new THREE.Matrix4(), Mi = new THREE.Matrix4(), rootInv = new THREE.Matrix4(), tmpM = new THREE.Matrix4(), tmpM2 = new THREE.Matrix4();
   const v3 = new THREE.Vector3(), v3b = new THREE.Vector3(), camL = new THREE.Vector3(), tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3();
   const lastRootW = new THREE.Vector3(); let haveLast = false;
   let lhx = 0, lhy = 0, lhz = 0, haveHL = false;
@@ -573,6 +700,8 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   const gravL = new THREE.Vector3(), windL = new THREE.Vector3(), windW = new THREE.Vector3(), velS = new THREE.Vector3();
   let gScale = 1;
   const extra = [];   // user colliders
+  let curTier = 0, tMrg = false, tMid = false, tSep = false;   // collision quality tier this frame (see resolveTier) and its features
+  const tmpP = new Float32Array(3);
   let curIts = 0;     // solver iterations this frame = P.iterations x physics intensity (ui/dm-cgroup.js); 0 = P.iterations
   let time = 0, frame = 0, ema = 2, cool = 0;
   const stats = { ms: 0, simMs: 0, strands: N, drawn: NR, guides: G, sdf: !!SDF, contacts: 0, intensity: 1, segLen: (() => { let s = 0, c = 0; for (let i = 0; i < segLen.length; i++) if (segLen[i] > 0) { s += segLen[i]; c++; } return c ? s / c : 0; })() };
@@ -625,6 +754,36 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     }
   }
 
+  // keep-out box (head / bone frame): push a point out along the axis of least penetration. bq = offset in CS.bbuf, mg = extra margin (child bundle). returns true on contact
+  function boxPush(o, bq, mg) {
+    const bb = CS.bbuf, dx = sp[o] - bb[bq], dy = sp[o + 1] - bb[bq + 1], dz = sp[o + 2] - bb[bq + 2];
+    const m = (bb[bq + 24] + P.hairRadius + mg) * bb[bq + 25];
+    const hx = bb[bq + 21] + m, hy = bb[bq + 22] + m, hz = bb[bq + 23] + m;
+    const lx = bb[bq + 3] * dx + bb[bq + 4] * dy + bb[bq + 5] * dz, ly = bb[bq + 6] * dx + bb[bq + 7] * dy + bb[bq + 8] * dz, lz = bb[bq + 9] * dx + bb[bq + 10] * dy + bb[bq + 11] * dz;
+    const ex = hx - Math.abs(lx), ey = hy - Math.abs(ly), ez = hz - Math.abs(lz);
+    if (ex <= 0 || ey <= 0 || ez <= 0) return false;
+    let ax = 0, d;
+    if (ex <= ey && ex <= ez) { ax = 12; d = lx < 0 ? -ex : ex; } else if (ey <= ez) { ax = 15; d = ly < 0 ? -ey : ey; } else { ax = 18; d = lz < 0 ? -ez : ez; }
+    const px = bb[bq + ax] * d, py = bb[bq + ax + 1] * d, pz = bb[bq + ax + 2] * d;
+    sp[o] += px; sp[o + 1] += py; sp[o + 2] += pz; sq[o] += px; sq[o + 1] += py; sq[o + 2] += pz;
+    return true;
+  }
+  // tier 2: neighbouring guides keep a minimum spacing (a fraction of their groom spacing) so clumps do not collapse into one strand when they swing
+  function separate() {
+    const S = ensureSep(), n = S.n, pa = S.a, pb = S.b, mn = S.min;
+    for (let i = 0; i < n; i++) {
+      const ga = pa[i] * K * 3, gb2 = pb[i] * K * 3, mb = i * K;
+      for (let k = 2; k < K; k++) {
+        const md = mn[mb + k]; if (!(md > 0)) continue;
+        const a = ga + k * 3, b = gb2 + k * 3, dx = sp[a] - sp[b], dy = sp[a + 1] - sp[b + 1], dz = sp[a + 2] - sp[b + 2], d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 >= md * md) continue;
+        const d = Math.sqrt(d2) || 1e-9, f = (md - d) * 0.5 / d, px = dx * f, py = dy * f, pz = dz * f;
+        sp[a] += px; sp[a + 1] += py; sp[a + 2] += pz; sq[a] += px; sq[a + 1] += py; sq[a + 2] += pz;
+        sp[b] -= px; sp[b + 1] -= py; sp[b + 2] -= pz; sq[b] -= px; sq[b + 1] -= py; sq[b + 2] -= pz;
+      }
+    }
+  }
+
   function step(h, simTime) {
     const hh = h * h;
     const damp = Math.pow(P.damping, h * 60);
@@ -649,10 +808,11 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       }
     }
     // 2. constraints
-    const its = Math.max(1, curIts || (P.iterations | 0)), wp = P.stretchBias, sdfEvery = Math.max(1, P.sdfEvery | 0), capsAll = !!P.capsuleEveryIteration;
+    const its = Math.max(1, curIts || (P.iterations | 0)), wp = P.stretchBias, sdfEvery = Math.max(1, P.sdfEvery | 0), capsAll = !!P.capsuleEveryIteration || (curTier >= 2 && !P.noCapsAll);
     for (let it = 0; it < its; it++) {
       const last = it === its - 1;
       const doSdf = SDF && (last || (it % sdfEvery) === sdfEvery - 1);
+      if (tSep && last) separate();
       for (let g = 0; g < G; g++) {
         const gb = g * K * 3, lb = g * (K - 1), sb = g * K;
         const km = kMaxG[g];
@@ -689,35 +849,59 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
           }
         }
         if (capsAll || last) {
-          // body capsules, broad phase per 4-point chunk (chunk AABB vs capsule bounding sphere)
-          const fr2 = 1 - P.friction, hr = P.hairRadius;
-          for (let k0 = 2; k0 < K; k0 += 4) {
+          // body capsules (+ keep-out boxes at tier >= 1), broad phase per 4-point chunk (chunk AABB vs capsule / box bounding sphere)
+          const fr2 = 1 - P.friction, hr = P.hairRadius, nb = P.noBoxes ? 0 : CS.nb, bb = CS.bbuf, bhit = CS.bhit, tmg = tMrg, gl = CS.gl, bgl = CS.bgl;
+          // guide-level broad phase first (one AABB over the whole chain): a guide that is nowhere near a capsule / box skips the per-chunk tests (pure pruning: same contacts)
+          let gx0 = 1e9, gy0 = 1e9, gz0 = 1e9, gx1 = -1e9, gy1 = -1e9, gz1 = -1e9;
+          for (let k = (tMid && last ? 1 : 2); k < K; k++) {
+            const o = gb + k * 3, x = sp[o], y = sp[o + 1], z = sp[o + 2];
+            if (x < gx0) gx0 = x; if (x > gx1) gx1 = x; if (y < gy0) gy0 = y; if (y > gy1) gy1 = y; if (z < gz0) gz0 = z; if (z > gz1) gz1 = z;
+          }
+          let ng = 0, gnb = 0;
+          for (let c = 0; c < nCols; c++) {
+            const q = c * 8, cx = colSph[q], cy = colSph[q + 1], cz = colSph[q + 2], R = colSph[q + 3];
+            const dx = cx < gx0 ? gx0 - cx : cx > gx1 ? cx - gx1 : 0, dy = cy < gy0 ? gy0 - cy : cy > gy1 ? cy - gy1 : 0, dz = cz < gz0 ? gz0 - cz : cz > gz1 ? cz - gz1 : 0;
+            if (!P.broadPhase || dx * dx + dy * dy + dz * dz <= R * R) gl[ng++] = c;
+          }
+          for (let c = 0; c < nb; c++) {
+            const q = c * BOXS + 26, cx = bb[q], cy = bb[q + 1], cz = bb[q + 2], R = bb[q + 3];
+            const dx = cx < gx0 ? gx0 - cx : cx > gx1 ? cx - gx1 : 0, dy = cy < gy0 ? gy0 - cy : cy > gy1 ? cy - gy1 : 0, dz = cz < gz0 ? gz0 - cz : cz > gz1 ? cz - gz1 : 0;
+            if (dx * dx + dy * dy + dz * dz <= R * R) bgl[gnb++] = c;
+          }
+          if (ng || gnb || extra.length) for (let k0 = 2; k0 < K; k0 += 4) {
             const k1 = Math.min(K, k0 + 4);
             let x0 = 1e9, y0 = 1e9, z0 = 1e9, x1 = -1e9, y1 = -1e9, z1 = -1e9;
-            for (let k = k0; k < k1; k++) {
+            for (let k = (tMid && last ? k0 - 1 : k0); k < k1; k++) {
               const o = gb + k * 3, x = sp[o], y = sp[o + 1], z = sp[o + 2];
               if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; if (z < z0) z0 = z; if (z > z1) z1 = z;
             }
             let nh = 0;
-            for (let c = 0; c < nCols; c++) {
-              const q = c * 8, cx = colSph[q], cy = colSph[q + 1], cz = colSph[q + 2], R = colSph[q + 3];
+            for (let j = 0; j < ng; j++) {
+              const c = gl[j], q = c * 8, cx = colSph[q], cy = colSph[q + 1], cz = colSph[q + 2], R = colSph[q + 3];
               const dx = cx < x0 ? x0 - cx : cx > x1 ? cx - x1 : 0, dy = cy < y0 ? y0 - cy : cy > y1 ? cy - y1 : 0, dz = cz < z0 ? z0 - cz : cz > z1 ? cz - z1 : 0;
               if (!P.broadPhase || dx * dx + dy * dy + dz * dz <= R * R) colHit[nh++] = c;
             }
-            if (!nh && !extra.length) continue;
+            let nbh = 0;
+            for (let j = 0; j < gnb; j++) {
+              const c = bgl[j], q = c * BOXS + 26, cx = bb[q], cy = bb[q + 1], cz = bb[q + 2], R = bb[q + 3];
+              const dx = cx < x0 ? x0 - cx : cx > x1 ? cx - x1 : 0, dy = cy < y0 ? y0 - cy : cy > y1 ? cy - y1 : 0, dz = cz < z0 ? z0 - cz : cz > z1 ? cz - z1 : 0;
+              if (dx * dx + dy * dy + dz * dz <= R * R) bhit[nbh++] = c;
+            }
+            if (!nh && !nbh && !extra.length) continue;
             for (let k = k0; k < k1; k++) {
-              const o = gb + k * 3;
+              const o = gb + k * 3, mg = tmg ? mrgG[sb + k] : 0;
               let hit = false;
               for (let h2 = 0; h2 < nh; h2++) {
-                const q = colHit[h2] * 7;
+                const c = colHit[h2], q = c * 7, q8 = c * 8;
+                const px = sp[o], py = sp[o + 1], pz = sp[o + 2];
+                { const ex = px - colSph[q8], ey = py - colSph[q8 + 1], ez = pz - colSph[q8 + 2], R = colSph[q8 + 3] + 1e-4; if (ex * ex + ey * ey + ez * ez > R * R) continue; }   // per-point sphere reject (pure pruning, same contacts)
                 const ax = colBuf[q], ay = colBuf[q + 1], az = colBuf[q + 2];
                 const abx = colBuf[q + 3] - ax, aby = colBuf[q + 4] - ay, abz = colBuf[q + 5] - az;
-                const px = sp[o], py = sp[o + 1], pz = sp[o + 2];
                 const ab2 = abx * abx + aby * aby + abz * abz;
                 let t = ab2 > 1e-12 ? ((px - ax) * abx + (py - ay) * aby + (pz - az) * abz) / ab2 : 0;
                 t = t < 0 ? 0 : t > 1 ? 1 : t;
                 const ccx = ax + abx * t, ccy = ay + aby * t, ccz = az + abz * t;
-                const dx = px - ccx, dy = py - ccy, dz = pz - ccz, d2 = dx * dx + dy * dy + dz * dz, rr = colBuf[q + 6] + hr;
+                const dx = px - ccx, dy = py - ccy, dz = pz - ccz, d2 = dx * dx + dy * dy + dz * dz, rr = colBuf[q + 6] + hr + mg;
                 if (d2 < rr * rr) {
                   const d = Math.sqrt(d2) || 1e-6, kk = rr / d;
                   const nx = ccx + dx * kk, ny = ccy + dy * kk, nz = ccz + dz * kk;
@@ -725,11 +909,39 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
                   sp[o] = nx; sp[o + 1] = ny; sp[o + 2] = nz; hit = true;
                 }
               }
+              for (let h2 = 0; h2 < nbh; h2++) if (boxPush(o, bhit[h2] * BOXS, mg)) hit = true;
               for (let c = 0; c < extra.length; c++) { const C = extra[c]; capsuleCollide(o, C.la.x, C.la.y, C.la.z, C.lb.x, C.lb.y, C.lb.z, C.lr); }
               if (hit) {   // friction: resting on a shoulder / arm settles instead of buzzing
                 sq[o] = sp[o] + (sq[o] - sp[o]) * fr2; sq[o + 1] = sp[o + 1] + (sq[o + 1] - sp[o + 1]) * fr2; sq[o + 2] = sp[o + 2] + (sq[o + 2] - sp[o + 2]) * fr2;
                 // capsules may have pushed a point back into the head: SDF wins (it is the closer surface)
                 if (SDF && k <= km && near(sp, o, sb + k)) headCollide(sp, o, clrG[sb + k]);
+              }
+            }
+            // tier 2 tessellation: the midpoint of every segment of the chunk against head SDF / capsules / boxes (a long segment can chord through an ear or a shoulder
+            // although both end points are clear); the push goes to both end points (point 1 is pinned: its partner takes it all)
+            if (tMid && last) {
+              for (let k = k0; k < k1; k++) {
+                const o = gb + k * 3, o0 = o - 3, free0 = k > 2;   // k-1 >= 2 is free; point 1 is pinned
+                const mx0 = (sp[o] + sp[o0]) * 0.5, my0 = (sp[o + 1] + sp[o0 + 1]) * 0.5, mz0 = (sp[o + 2] + sp[o0 + 2]) * 0.5, mg = tmg ? (mrgG[sb + k] + mrgG[sb + k - 1]) * 0.5 : 0;
+                tmpP[0] = mx0; tmpP[1] = my0; tmpP[2] = mz0;
+                let moved = false;
+                if (SDF && k <= km) {
+                  const rx = (restM[o] + restM[o0]) * 0.5 - mx0, ry = (restM[o + 1] + restM[o0 + 1]) * 0.5 - my0, rz = (restM[o + 2] + restM[o0 + 2]) * 0.5 - mz0, sl = Math.min(slkG[sb + k], slkG[sb + k - 1]);
+                  if (rx * rx + ry * ry + rz * rz > sl * hsc2 && headCollide(tmpP, 0, (clrG[sb + k] + clrG[sb + k - 1]) * 0.5)) moved = true;
+                }
+                for (let h2 = 0; h2 < nh; h2++) {
+                  const q = colHit[h2] * 7, ax = colBuf[q], ay = colBuf[q + 1], az = colBuf[q + 2], abx = colBuf[q + 3] - ax, aby = colBuf[q + 4] - ay, abz = colBuf[q + 5] - az;
+                  const px = tmpP[0], py = tmpP[1], pz = tmpP[2], ab2 = abx * abx + aby * aby + abz * abz;
+                  let t = ab2 > 1e-12 ? ((px - ax) * abx + (py - ay) * aby + (pz - az) * abz) / ab2 : 0; t = t < 0 ? 0 : t > 1 ? 1 : t;
+                  const ccx = ax + abx * t, ccy = ay + aby * t, ccz = az + abz * t, dx = px - ccx, dy = py - ccy, dz = pz - ccz, d2 = dx * dx + dy * dy + dz * dz, rr = colBuf[q + 6] + hr + mg;
+                  if (d2 < rr * rr) { const d = Math.sqrt(d2) || 1e-6, kk = rr / d; tmpP[0] = ccx + dx * kk; tmpP[1] = ccy + dy * kk; tmpP[2] = ccz + dz * kk; moved = true; }
+                }
+                if (moved) {
+                  const sc = free0 ? 1 : 2, ex = (tmpP[0] - mx0) * sc, ey = (tmpP[1] - my0) * sc, ez = (tmpP[2] - mz0) * sc;
+                  sp[o] += ex; sp[o + 1] += ey; sp[o + 2] += ez; sq[o] += ex; sq[o + 1] += ey; sq[o + 2] += ez;
+                  if (free0) { sp[o0] += ex; sp[o0 + 1] += ey; sp[o0 + 2] += ez; sq[o0] += ex; sq[o0 + 1] += ey; sq[o0 + 2] += ez; }
+                  contacts++;
+                }
               }
             }
           }
@@ -762,6 +974,14 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     }).catch((e) => { if (gc === c) gcFail('readback', e); });
   }
 
+  // collision quality tier: params.collisionTier (0 Low / 1 Mid / 2 High) > host opts.getCollisionTier() > 0. The frame-budget ladder (DMBudget 'hair' level >= 1) drops to Low.
+  function resolveTier() {
+    let t = P.collisionTier;
+    if (t == null || t === 'auto') { t = 0; if (opts.getCollisionTier) { try { t = +opts.getCollisionTier(); } catch (e) { t = 0; } } }
+    t = t > 0 ? Math.min(2, t | 0) : 0;
+    if (t > 0) { const B = (typeof window !== 'undefined') ? window.DMBudget : null; if (B && B.on && B.lvl && B.lvl('hair') >= 1) t = 0; }
+    return t;
+  }
   function update(dt) {
     _update(dt);
     if (!primed && P.enabled && root.visible && dt > 0 && renderSeen && gpu !== null && ++warm >= 4) prime();
@@ -816,6 +1036,11 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     if (haveHL && dt > 0 && dt < 0.25 && Math.hypot(me[12] - lhx, me[13] - lhy, me[14] - lhz) / dt > P.popSpeed) popped = true;
     lhx = me[12]; lhy = me[13]; lhz = me[14]; haveHL = true;
 
+    // collision tier -> active collider set
+    { const t = resolveTier();
+      if (t !== curTier || CS !== sets[t]) { curTier = t; CS = sets[t]; cols = CS.cols; nCols = CS.n; colBuf = CS.buf; colSph = CS.sph; colHit = CS.hit; }
+      tMrg = t >= 1 && !P.noMargin; tMid = t >= 2 && !P.noMid; tSep = t >= 2 && !P.noSep; stats.tier = t; stats.cols = nCols; stats.boxes = P.noBoxes ? 0 : CS.nb; }
+    const hrM = P.hairRadius + (tMrg ? mrgMax : 0), nbAct = P.noBoxes ? 0 : CS.nb;
     // colliders -> root-local capsules
     for (let c = 0; c < nCols; c++) {
       const C = cols[c], q = c * 7;
@@ -824,14 +1049,25 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       colBuf[q] = tmpA.x; colBuf[q + 1] = tmpA.y; colBuf[q + 2] = tmpA.z; colBuf[q + 3] = tmpB.x; colBuf[q + 4] = tmpB.y; colBuf[q + 5] = tmpB.z; colBuf[q + 6] = C.r;
       const p8 = c * 8;
       colSph[p8] = (tmpA.x + tmpB.x) / 2; colSph[p8 + 1] = (tmpA.y + tmpB.y) / 2; colSph[p8 + 2] = (tmpA.z + tmpB.z) / 2;
-      colSph[p8 + 3] = tmpA.distanceTo(tmpB) / 2 + C.r + P.hairRadius;
+      colSph[p8 + 3] = tmpA.distanceTo(tmpB) / 2 + C.r + hrM;
+    }
+    // keep-out boxes (tier >= 1) -> root-local frame: t, Ainv (3x3 rows), A (3 columns), half extents, margin, 1/scale, bounding sphere
+    for (let c = 0; c < nbAct; c++) {
+      const B = CS.boxes[c], o = c * BOXS, bb = CS.bbuf;
+      tmpM.multiplyMatrices(rootInv, B.bone.matrixWorld); const e = tmpM.elements, sc = Math.cbrt(Math.abs(tmpM.determinant())) || 1;
+      tmpA.copy(B.c).applyMatrix4(tmpM); bb[o] = tmpA.x; bb[o + 1] = tmpA.y; bb[o + 2] = tmpA.z;
+      tmpM2.copy(tmpM).invert(); const ie = tmpM2.elements;
+      bb[o + 3] = ie[0]; bb[o + 4] = ie[4]; bb[o + 5] = ie[8]; bb[o + 6] = ie[1]; bb[o + 7] = ie[5]; bb[o + 8] = ie[9]; bb[o + 9] = ie[2]; bb[o + 10] = ie[6]; bb[o + 11] = ie[10];
+      bb[o + 12] = e[0]; bb[o + 13] = e[1]; bb[o + 14] = e[2]; bb[o + 15] = e[4]; bb[o + 16] = e[5]; bb[o + 17] = e[6]; bb[o + 18] = e[8]; bb[o + 19] = e[9]; bb[o + 20] = e[10];
+      bb[o + 21] = B.h[0]; bb[o + 22] = B.h[1]; bb[o + 23] = B.h[2]; bb[o + 24] = B.m; bb[o + 25] = 1 / sc;
+      bb[o + 26] = tmpA.x; bb[o + 27] = tmpA.y; bb[o + 28] = tmpA.z; bb[o + 29] = Math.hypot(B.h[0], B.h[1], B.h[2]) * sc + B.m + hrM;
     }
     for (const C of extra) {
       C.la = (C.la || new THREE.Vector3()).copy(C.center).applyMatrix4(rootInv);
       C.lb = (C.lb || new THREE.Vector3()).copy(C.end || C.center).applyMatrix4(rootInv);
       C.lr = C.radius * Math.cbrt(Math.abs(rootInv.determinant()));
     }
-    const gcOk = !!(gc && !P.verifyRibbons && extra.length <= HAIR_GPU_MAX_EXTRA);
+    const gcOk = !!(gc && !P.verifyRibbons && extra.length <= HAIR_GPU_MAX_EXTRA && curTier === 0);   // the GPU guide solver is the tier-0 solver only
     const onGPU = gcOk && (gcVerified || (!gpu && !opts.probation));   // headless tests (no ribbons) skip probation unless asked
     const probe = gcOk && !onGPU;                 // CPU drives the ribbons, GPU solves alongside
     if (gc && gcResync && (onGPU || probe)) { gc.setState(sp, sq); gcResync = false; }
@@ -1040,6 +1276,13 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     // debug / parity: GPU guide state read back (null on the CPU path)
     async readGuides() { return gc ? gc.read() : null; },
     _dbg() { return { sp, sq, restM }; },
+    get tier() { return curTier; },
+    // test / tools: the active capsules (root-local a, b, r) and boxes (t, Ainv, A, h, margin, 1/scale), margin per guide point
+    _capsules() { const o = []; for (let c = 0; c < nCols; c++) { const q = c * 7; o.push({ a: [colBuf[q], colBuf[q + 1], colBuf[q + 2]], b: [colBuf[q + 3], colBuf[q + 4], colBuf[q + 5]], r: colBuf[q + 6], bone: cols[c].bone.name }); } return o; },
+    _boxes() { return CS.boxes.map((B, c) => ({ name: B.name, bone: B.bone.name, buf: Array.from(CS.bbuf.subarray(c * BOXS, (c + 1) * BOXS)) })); },
+    _margins() { return mrgG; },
+    groupOf(s) { return group[s]; },   // test / tools: cluster id of strand s
+    groupName(s) { const c = clusterOf(group[s]); return c.name || ('g' + group[s]); },
     get recovered() { return resanitized; },
     hitchNow() { hitch = true; },
     // test: points of a guide state inside the head (d < 0) / closer than 50 % of their clearance
