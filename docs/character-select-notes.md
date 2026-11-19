@@ -44,7 +44,8 @@ character's height / 1.7), per UV texel the normal must face the view (dot > 0.3
 * `decals:'uv'` (Emma): her UV islands are used as they are.
 * `decals:'planar'` (Ariel, no UVs): when the first decal exists the mesh is unwelded and given a generated 4-quadrant planar UV, colour is baked into the canvas and
   the material colour set to white. Reset / clearing logos restores the original geometry.
-Limits: a logo on a seam is cut where the view changes; very large logos wrap onto the next view only where the surface still faces the axis; the sleeve spots are
+Emma's rig turns her 180 deg from the rest pose, so her registry entry has `decalFlip:true` (views are projected in the displayed orientation). Logo colours on Emma
+read slightly tinted because her cloth material multiplies the map. Limits: a logo on a seam is cut where the view changes; very large logos wrap onto the next view only where the surface still faces the axis; the sleeve spots are
 small by design; wrinkles from the baked map are not applied over the logo.
 
 ## Adding things
