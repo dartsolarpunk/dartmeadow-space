@@ -26290,20 +26290,21 @@ SkyGround.prototype._build=function(n){
   }
   // (perf-mars, far-band smoothing) on a coarse tile (a vertex every 5.5-44 m) the biome colour is a threshold on height / slope: sampled that sparsely it aliases into hard stair-steps along the
   // grid ('voxel-like rows' near the horizon; Mars' escarpment / plateau colours).  Low-pass the colour grid (DMLod.blurRGB: 1-2 passes of [1 2 1]x[1 2 1]) over a one-cell border so the
-  // tile edges still agree with their neighbours; fine tiles (< 5.5 m) are untouched.  ?farsmooth=0 turns it off.  Geometry and normals are unchanged (no crack risk).
+  // tile edges still agree with their neighbours; fine tiles (< 5.5 m) are untouched.  ?farsmooth=0 turns it off.  Geometry is unchanged (no crack risk); normals are smoothed too.
   const bpass=(window.DMLod&&DMLod.blurPasses)?DMLod.blurPasses(step):0;
   if(bpass>0){
-    const GC=S1+2, ext=sb.ext||(sb.ext=new Float32Array(GC*GC*3)), etmp=sb.extT||(sb.extT=new Float32Array(GC*GC*3));
+    const GC=S1+2, ext=sb.ext||(sb.ext=new Float32Array(GC*GC*3)), etmp=sb.extT||(sb.extT=new Float32Array(GC*GC*3)), extN=sb.extN||(sb.extN=new Float32Array(GC*GC*3));
     for(let r=-1;r<=S1;r++) for(let q=-1;q<=S1;q++){
       const e=((r+1)*GC+(q+1))*3;
-      if(r>=0&&q>=0&&r<S1&&q<S1){ const k=(r*S1+q)*3; ext[e]=col[k]; ext[e+1]=col[k+1]; ext[e+2]=col[k+2]; continue; }
+      if(r>=0&&q>=0&&r<S1&&q<S1){ const k=(r*S1+q)*3; ext[e]=col[k]; ext[e+1]=col[k+1]; ext[e+2]=col[k+2]; extN[e]=nor[k]; extN[e+1]=nor[k+1]; extN[e+2]=nor[k+2]; continue; }
       const b=(r+1)*G+(q+1), h=hb[b], sea=tSea&&wet[b]===1;
       let nx=hb[(r+1)*G+Math.max(0,q)]-hb[(r+1)*G+Math.min(G-1,q+2)], nz=hb[Math.max(0,r)*G+q+1]-hb[Math.min(G-1,r+2)*G+q+1], ny=2*step; if(sea){ nx=0; nz=0; }
       const L=Math.hypot(nx,ny,nz)||1, cc=this._colourAt(n.x0+q*step,n.z0+r*step,sea?raw[b]:h,ny/L,sea,copt);
-      ext[e]=cc.r; ext[e+1]=cc.g; ext[e+2]=cc.b;
+      ext[e]=cc.r; ext[e+1]=cc.g; ext[e+2]=cc.b; extN[e]=nx/L; extN[e+1]=ny/L; extN[e+2]=nz/L;
     }
-    DMLod.core.blurRGB(ext,GC,bpass,etmp);
-    for(let r=0;r<S1;r++) for(let q=0;q<S1;q++){ const e=((r+1)*GC+(q+1))*3, k=(r*S1+q)*3; col[k]=ext[e]; col[k+1]=ext[e+1]; col[k+2]=ext[e+2]; }
+    DMLod.core.blurRGB(ext,GC,bpass,etmp); DMLod.core.blurRGB(extN,GC,bpass,etmp);   // normals too: the ground shader switches sand <-> rock on 1 - normal.y, so per-cell normal noise IS the stair-step edge
+    for(let r=0;r<S1;r++) for(let q=0;q<S1;q++){ const e=((r+1)*GC+(q+1))*3, k=(r*S1+q)*3; col[k]=ext[e]; col[k+1]=ext[e+1]; col[k+2]=ext[e+2];
+      const a=extN[e],b2=extN[e+1],c2=extN[e+2],L=Math.hypot(a,b2,c2)||1; nor[k]=a/L; nor[k+1]=b2/L; nor[k+2]=c2/L; }
   }
   const drop=Math.max(4,step*2);
   // Geomorph: what this tile looks like at its parent's resolution — the
