@@ -183,7 +183,7 @@ if(location.search.indexOf('debug')!==-1){
   // PWA manifest: /manifest.webmanifest (linked in <head>; dark launch screen on Android)
 })();</script>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-<script>/* (v353) build tag: bump together with CACHE_NAME in sw.js (tools/tests/build-tag.js).  Persisted quality records (ui/dm-budget.js, dm-governor.js) are dropped when it changes. */window.DM_BUILD='v364';try{console.log('[DM build] '+window.DM_BUILD);}catch(e){}</script>
+<script>/* (v353) build tag: bump together with CACHE_NAME in sw.js (tools/tests/build-tag.js).  Persisted quality records (ui/dm-budget.js, dm-governor.js) are dropped when it changes. */window.DM_BUILD='v365';try{console.log('[DM build] '+window.DM_BUILD);}catch(e){}</script>
 <script src="ui/dm-time.js?v=97"></script>
 <script src="ui/dm-earth.js?v=292"></script>
 <script src="ui/dm-earth-paint.js?v=290"></script>
@@ -210,7 +210,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-vlight.js?v=347"></script>   <!-- lighting overhaul: lamps / LEDs / flashlight / low sun light the volumetric fog (scene.fogNode, light list, equi-angular in-scatter); ?vlights=0|low|med|high -->
 <script src="ui/dm-spaceshafts.js?v=349"></script>   <!-- (t1537) the key star's glare + dust scatter + the nearest world's shadow through it, in open space (Med+; off on Low); ?spaceshafts=0 off -->
 <script src="ui/dm-feedback.js?v=329"></script>
-<script src="ui/dm-gpu-defer.js?v=340"></script>   <!-- (v332) DMGpuDefer: deferred destruction of disposed geometry's GPU buffers (the Bird Temple "used in submit while destroyed" banner) -->
+<script src="ui/dm-gpu-defer.js?v=365"></script>   <!-- (v332) DMGpuDefer: deferred destruction of disposed geometry's GPU buffers (the Bird Temple "used in submit while destroyed" banner) -->
 <script src="ui/dm-atmo-shell.js?v=332"></script>   <!-- (v297) DMAtmoShell.radii/worldR/ratio: the faded atmosphere perimeter of a body (Solenne 1.18 R) for the space -> world hand-off (Worlds) -->
 <script src="ui/dm-spawn.js?v=314"></script>   <!-- (v314) DMSpawn: new-game spawn in interstellar space near Sol + the arrival push-out from every world's hand-off radius -->
 <script src="ui/dm-pw-handoff.js?v=299"></script>   <!-- (v299) the space -> surface hand-off policy: pre-build hidden from PWS_OPEN, show the world + minimap globe at the DMAtmoShell perimeter (Worlds) -->
@@ -1086,12 +1086,12 @@ body[data-dm-screen]:not([data-dm-screen="flight"]) #dm-flash,body[data-dm-scree
 <script src="ui/dm-collide-game.js?v=281" defer></script>
 <script src="ui/dm-cgroup.js?v=281" defer></script>
 <script src="ui/dm-necklace-sim.js?v=357" defer></script>
-<script src="ui/dm-charm.js?v=359" defer></script>
-<script src="ui/dm-flash.js?v=357" defer></script>
+<script src="ui/dm-charm.js?v=365" defer></script>
+<script src="ui/dm-flash.js?v=365" defer></script>
 <script src="ui/dm-menuscene.js?v=343" defer></script>
 <script src="ui/dm-chars.js?v=363" defer></script>   <!-- character registry + profile (selection / colours / logos); pure data -->
 <script src="ui/dm-charpaint.js?v=363" defer></script>   <!-- applies the player's colours / logos to a loaded character (studio + game) -->
-<script src="ui/dm-charselect.js?v=363" defer></script>   <!-- character select cards + one-canvas studio -->
+<script src="ui/dm-charselect.js?v=365" defer></script>   <!-- character select cards + one-canvas studio -->
 <script src="ui/dm-starbubble.js?v=4" defer></script>
 <script src="ui/dm-hazard.js?v=359" defer></script>   <!-- hazard registry + exposure clock + protection LED / crown glow (the protective orb is gone) -->
 <script src="ui/dm-hazardhud.js?v=357" defer></script>   <!-- the hazard band / type / safe-time HUD (only while a hazard is sensed) -->
@@ -22526,7 +22526,7 @@ async function loadCharacterAssets(){
   // Strand count by graphics preset — ONLY on Auto (an explicit Low/Medium/High/Ultra pick keeps all
   // 5,665 strands). Guides (the physics) always simulate; this only thins the drawn children.
   const _hairUrl=(_cdef&&_cdef.hair&&_cdef.hair.url)||(CHAR_ASSET_BASE+'ariel_hair_strands.bin'), _hairCfgUrl=_cdef&&_cdef.hair?_cdef.hair.configUrl:null;
-  window.DM_HAIR_MODULE=window.DM_HAIR_MODULE||new URL('./hair_strands.js?v=364',document.baseURI).href;   // one URL for the game and the studio (ui/dm-charselect.js): a single module instance
+  window.DM_HAIR_MODULE=window.DM_HAIR_MODULE||new URL('./hair_strands.js?v=365',document.baseURI).href;   // one URL for the game and the studio (ui/dm-charselect.js): a single module instance
   function _hairStrandFraction(){ try{ const G=window.GFX; if(!G||G.preset!=='auto') return 1; const r=(typeof resolvePreset==='function')?resolvePreset():'medium'; return r==='low'?0.5:(r==='medium'||r==='balanced')?0.75:1; }catch(e){ return 1; } }
   // Real-time strand hair (hair_strands.js + characterassests/ariel_hair_strands.bin). Fails soft: if the
   // module/data is missing or the loaded character is a different file, she simply has no strand hair.
