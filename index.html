@@ -1087,6 +1087,9 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-charm.js?v=359" defer></script>
 <script src="ui/dm-flash.js?v=357" defer></script>
 <script src="ui/dm-menuscene.js?v=343" defer></script>
+<script src="ui/dm-chars.js?v=359" defer></script>   <!-- character registry + profile (selection / colours / logos); pure data -->
+<script src="ui/dm-charpaint.js?v=359" defer></script>   <!-- applies the player's colours / logos to a loaded character (studio + game) -->
+<script src="ui/dm-charselect.js?v=359" defer></script>   <!-- character select cards + one-canvas studio -->
 <script src="ui/dm-starbubble.js?v=4" defer></script>
 <script src="ui/dm-hazard.js?v=359" defer></script>   <!-- hazard registry + exposure clock + protection LED / crown glow (the protective orb is gone) -->
 <script src="ui/dm-hazardhud.js?v=357" defer></script>   <!-- the hazard band / type / safe-time HUD (only while a hazard is sensed) -->
@@ -1322,7 +1325,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     </div>
     <div class="mm-stack mm-frame">
       <button class="menu-btn gold" id="resume-btn" onclick="launchFlight()" style="display:none;">▶ RESUME GAME</button>
-      <button class="menu-btn" onclick="goScreen('builder')"><span class="mb-ico">⚡</span>BUILD SKYBOARD</button>
+      <button class="menu-btn" onclick="goScreen('character')"><span class="mb-ico">⚡</span>PILOT &amp; SKYBOARD</button>
       <button class="menu-btn" onclick="openSettings()"><span class="mb-ico">⚙</span>SETTINGS</button>
       <button class="menu-btn" onclick="openGalaxyMap()"><span class="mb-ico">⬡</span>GALAXY MAP</button>
       <button class="menu-btn mm-exit" onclick="promptExit()"><span class="mb-ico">⏻</span>EXIT GAME</button>
@@ -1406,6 +1409,26 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     </div>
 
     <button onclick="closeSupport()" style="margin-top:1.2rem;padding:0.6rem 2rem;background:none;border:1px solid var(--border);color:var(--text-dim);font-family:var(--font-hud);font-size:0.58rem;letter-spacing:0.12em;cursor:pointer;border-radius:2px;">CLOSE</button>
+  </div>
+</div>
+
+<!-- CHARACTER SELECT: main menu -> CHARACTER -> SKYBOARD BUILDER -> game. Cards + the one-canvas studio are filled by ui/dm-charselect.js from the DMChars registry. -->
+<div id="screen-character" class="screen" aria-label="Choose your pilot">
+  <div id="cs-head"><button id="cs-back" class="cs-btn" type="button">← MENU</button><div id="cs-title">CHOOSE YOUR PILOT</div></div>
+  <div id="cs-list">
+    <div id="cs-wheel" role="listbox" aria-label="Pilots" tabindex="0"></div>
+    <div id="cs-dots" aria-hidden="true"></div>
+    <div id="cs-hint">SWIPE TO BROWSE · TAP THE CENTRE CARD FOR HER STUDIO</div>
+  </div>
+  <div id="cs-foot"><button id="cs-open" class="cs-btn" type="button">VIEW</button><button id="cs-next" class="cs-btn gold" type="button">CONTINUE ⟶</button></div>
+  <div id="cs-studio">
+    <div id="cs-stage"><div id="cs-load"></div><div id="cs-turn">DRAG TO TURN · PINCH TO ZOOM</div></div>
+    <div id="cs-panel">
+      <div id="cs-ptitle"><span id="cs-pname"></span><span id="cs-ptag"></span></div>
+      <div id="cs-tabs"></div>
+      <div id="cs-pbody"></div>
+      <div id="cs-pfoot"><button id="cs-sback" class="cs-btn" type="button">← BACK</button><button id="cs-sselect" class="cs-btn gold" type="button">SELECT</button></div>
+    </div>
   </div>
 </div>
 
@@ -1612,6 +1635,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
     <div id="builder-hud"><div id="bh-fps">—</div><div id="bh-poly">—</div></div>
     <div id="builder-name-display">UNNAMED BOARD</div>
     <div id="builder-footer">
+      <button class="launch-btn" onclick="goScreen('character')" title="Back to the pilot select">← PILOT</button>
       <button class="launch-btn" onclick="goScreen('menu')">← MENU</button>
       <button class="launch-btn gold" onclick="launchFlight()">LAUNCH TO ORBIT ⟶</button>
     </div>
@@ -2156,7 +2180,8 @@ function buildSaveData(slot){
     // ...and so do your Journal waypoints.
     journal:(window.DMJournal?window.DMJournal.store.exportData():null),
     mansionLights:(window.DMMansionRooms?window.DMMansionRooms.get():null),   // optional: per-room light switch modes of Ariel's mansion (older saves lack it)
-    btLights:(window.DMBtRoomLights?window.DMBtRoomLights.get():null)   // (v139) optional: Bird Temple room light modes (older saves lack it)
+    btLights:(window.DMBtRoomLights?window.DMBtRoomLights.get():null),   // (v139) optional: Bird Temple room light modes (older saves lack it)
+    character:(window.DMChars?window.DMChars.exportForSave():null)   // the pilot pick (+ colours / logos): rides in every save, so the vault sync takes it along (ui/dm-chars.js; older saves lack it)
   };
 }
 // Where the player is: galaxy, system, position, facing, and the nearest
@@ -2277,6 +2302,7 @@ function loadSaveData(data){
   if(data.journal&&window.DMJournal){ try{ window.DMJournal.store.importData(data.journal,'save'); }catch(e){} }
   if(data.mansionLights&&window.DMLamps){ try{ window.DMLamps.set(data.mansionLights); }catch(e){} }
   if(data.btLights&&window.DMBtRoomLights){ try{ window.DMBtRoomLights.set(data.btLights); }catch(e){} }   // (v139)
+  if(data.character&&window.DMChars){ try{ window.DMChars.importFromSave(data.character); }catch(e){ console.warn('[char] save',e); } }   // newest pick wins (an old autosave never undoes a fresh choice); absent in older saves = no change
   if(Array.isArray(data.discoveries)&&data.discoveries.length){
     try{
       const have=loadDiscoveries(), ids=new Set(have.map(d=>d.id));
@@ -3011,7 +3037,9 @@ function goScreen(name){
     }
   }catch(e){}
   try{ const M=window.DM_MENUSCENE; if(M){ if(name==='menu'){ const mm=$('screen-menu'); if(mm&&mm.classList.contains('ms-pre')){ mm.classList.remove('ms-pre'); void mm.offsetWidth; } clearTimeout(M._dispT); M.resume(); M.start(); setTimeout(()=>M.menuOpen(),350); } else { M.pause(); clearTimeout(M._dispT); if(name==='flight') M._dispT=setTimeout(()=>{ if(STATE.screen!=='menu'&&!INTRO.on&&M.dispose&&M._ctx) M.dispose(); },15000); } } }catch(e){}
-  if(name==='builder'){$('screen-builder').classList.add('active');requestAnimationFrame(()=>requestAnimationFrame(initBuilderScene));showFloatingMusic();}
+  try{ if(_prevScreen==='character'&&name!=='character'&&window.DMCharSelect) DMCharSelect.leave(); }catch(e){ console.warn('[charselect] leave',e); }   // the studio's renderer + model go the moment the screen is left
+  if(name==='character'){$('screen-character').classList.add('active');try{ if(window.DMCharSelect) DMCharSelect.enter(); }catch(e){ console.warn('[charselect] enter',e); }}
+  else if(name==='builder'){$('screen-builder').classList.add('active');requestAnimationFrame(()=>requestAnimationFrame(initBuilderScene));showFloatingMusic();}
   else if(name==='flight'){$('screen-flight').classList.add('active');hideFloatingMusicInGame();}
   else{try{$('screen-menu').classList.remove('mm-leaving');}catch(e){}
     $('screen-menu').classList.add('active');initMenuBg();initStartBtnTurntable();startMenuMusic();
@@ -6642,8 +6670,7 @@ async function initFlightScene(){
   // generation compute load) was only ever the GPU-side cost; this at
   // least removes network latency from stacking on top of that.
   try{
-    fetch(CHAR_ASSET_BASE+CHAR_FILES.mesh).catch(()=>{});
-    fetch(CHAR_ASSET_BASE+CHAR_FILES.animSrc).catch(()=>{});
+    { const _cf=_charFiles(); fetch(_cf.mesh).catch(()=>{}); fetch(_cf.anims).catch(()=>{}); }   // the chosen pilot's files (Ariel's are the same URLs as before)
   }catch(e){}
   // Kick GLB parse early (parallel with solar/MC) — strip-rebuild: don't leave
   // CHAR.loading stuck if a prior attempt died mid-flight.
@@ -22077,6 +22104,19 @@ const CHAR_CLIP_NAMES = {
   cliff: 'Grab_Bar_and_Swing_Forward',
   // slide: intentionally unwired — no slide clip in Autumn merged anims
 };
+// ── which pilot this session loads (ui/dm-chars.js registry; the choice is made on the character-select screen, default Ariel) ──
+// Resolved once per load. A registered-but-not-ready pilot (entry ready:false) falls back to Ariel with a toast. Without the registry (script blocked) = Ariel, exactly as before.
+let _charSel=null;
+function _charResolve(fresh){
+  if(_charSel&&!fresh) return _charSel;
+  try{ if(window.DMChars){ const r=DMChars.resolveForGame(); if(r&&r.def){ _charSel=r; return r; } } }catch(e){ console.warn('[char] registry',e); }
+  return (_charSel=null);
+}
+function _charFiles(){
+  const r=_charResolve();
+  return r?{mesh:r.def.mesh,anims:r.def.anims}:{mesh:CHAR_ASSET_BASE+CHAR_FILES.mesh,anims:CHAR_ASSET_BASE+CHAR_FILES.animSrc};
+}
+window._charResolve=_charResolve;
 const CHAR = {
   loaded:false, loading:false,
   root:null,            // THREE.Group — the loaded character, parented into whichever scene is active
@@ -22200,6 +22240,9 @@ async function loadCharacterAssets(){
     CHAR.loading=false;
   }
   CHAR.loading = true;
+  const _cd = _charResolve(true), _cdef = _cd?_cd.def:null, _cfiles = _charFiles();
+  CHAR.charId = _cd?_cd.id:'ariel';
+  if(_cd&&_cd.fellBack){ try{ const w=DMChars.get(_cd.wanted); toast('⚠ '+(w?w.name:'That pilot')+' is not ready to fly yet — flying as '+_cdef.name,4200); }catch(e){} }
   const gltfLoader = _getGLBLoader();
   if(!gltfLoader){
     CHAR.loading=false;
@@ -22217,7 +22260,7 @@ async function loadCharacterAssets(){
   // from ever trying again. Wrapping in a timeout turns that into a
   // real, catchable rejection instead.
   const gltf = await Promise.race([
-    new Promise((res,rej)=>gltfLoader.load(CHAR_ASSET_BASE+CHAR_FILES.mesh, res,
+    new Promise((res,rej)=>gltfLoader.load(_cfiles.mesh, res,
       xhr=>{ if(xhr.lengthComputable) _loadStep('charMesh', xhr.loaded/xhr.total); }, rej)),
     new Promise((_,rej)=>setTimeout(()=>rej(new Error('Character GLB load timed out after 90s')), 90000))
   ]).catch(e=>{ CHAR.loading=false; CHAR._loadPromise=null; try{toast('⚠ Character mesh failed to load: '+(e&&e.message?e.message:e),4000);}catch(_){} throw e; });
@@ -22231,11 +22274,14 @@ async function loadCharacterAssets(){
     if(o.isBone || o.type==='Bone' || (_fbxBoneMap().includes(o.name) && o.isObject3D)) CHAR.bones[o.name]=o;
     if(o.isSkinnedMesh){ o.castShadow=true; o.receiveShadow=true; CHAR.skinnedMesh=o; }
   });
+  // the colours / logos the player chose on the character-select screen (ui/dm-charpaint.js). BEFORE the light pass below, so its node twins copy the painted maps. Default look = nothing touched.
+  try{ if(window.DMCharPaint&&window.DMChars&&_cd&&!DMChars.isDefaultLook(_cd.look)) DMCharPaint.apply(CHAR.root,_cdef,_cd.look,THREE); }catch(e){ console.warn('[char] look',e); }
   // her bound rest pose (the board stance is solved relative to it)
   CHAR.restPose={}; Object.keys(CHAR.bones).forEach(n=>{ const b=CHAR.bones[n]; CHAR.restPose[n]={p:b.position.clone(),q:b.quaternion.clone(),s:b.scale.clone()}; });
   try{ if(window.DMLight&&DMLight.on&&!/[?&]lightchar=0\b/.test(location.search)) DMLight.applyTree(CHAR.root,{}); }catch(e){ console.warn('[light] char',e); }   // (ui/dm-light.js) her materials read the radiance cache + height-cache sun shadow (node twins when needed)
-  try{ if(window.DMCharm) DMCharm.attach(CHAR); }catch(e){ console.warn('[charm]',e); }   // necklace + kite charm on the chest bone (ui/dm-charm.js)
-  try{ if(window.DMFlash) DMFlash.attach(CHAR); }catch(e){ console.warn('[flash]',e); }   // AR-glasses LED bar on the Head bone + its (lazy, shadowless) beam (ui/dm-flash.js)
+  const _acc=(_cdef&&_cdef.accessories)||{};   // registry: false = this pilot has no such accessory (Ariel-only pieces are skipped, never half-built)
+  try{ if(window.DMCharm&&_acc.necklace!==false) DMCharm.attach(CHAR); }catch(e){ console.warn('[charm]',e); }   // necklace + kite charm on the chest bone (ui/dm-charm.js)
+  try{ if(window.DMFlash&&_acc.glassesLed!==false) DMFlash.attach(CHAR); }catch(e){ console.warn('[flash]',e); }   // AR-glasses LED bar on the Head bone + its (lazy, shadowless) beam (ui/dm-flash.js)
   const boneCount = Object.keys(CHAR.bones).length;
   if(boneCount===0){
     console.error('Character load: mesh loaded but ZERO bones were found in the traversal — the procedural skyboard stance and animations will silently do nothing. Check that the GLB actually contains a skeleton, not just a static mesh.');
@@ -22261,7 +22307,8 @@ async function loadCharacterAssets(){
   // color where its colored rim lights happened to catch a specular
   // highlight). Fix: force the material to sane non-metal values so
   // her actual base-color/emissive texture reads as intended.
-  if(CHAR.skinnedMesh && CHAR.skinnedMesh.material){
+  const _arielMats=!_cdef||_cdef.materialFix==='meshy';   // her Meshy-export fixes; a pilot with proper PBR materials (Emma) keeps what her GLB carries
+  if(_arielMats && CHAR.skinnedMesh && CHAR.skinnedMesh.material){
     const mats = Array.isArray(CHAR.skinnedMesh.material) ? CHAR.skinnedMesh.material : [CHAR.skinnedMesh.material];
     mats.forEach(m=>{
       if(!m) return;
@@ -22277,7 +22324,7 @@ async function loadCharacterAssets(){
   // A small warm self-light keeps the tan visible in shadow; the sunlit side is unchanged (it simply adds a few percent).
   try{
     const _seen=new Set();
-    CHAR.root.traverse(o=>{
+    if(_arielMats) CHAR.root.traverse(o=>{
       if(!(o.isMesh||o.isSkinnedMesh)||!o.geometry||!o.geometry.attributes||!o.geometry.attributes.color) return;
       (Array.isArray(o.material)?o.material:[o.material]).forEach(m=>{
         if(!m||_seen.has(m)||!m.emissive) return; _seen.add(m);
@@ -22321,7 +22368,7 @@ async function loadCharacterAssets(){
   try{
     animGltf = await Promise.race([
       new Promise((res,rej)=>{
-        gltfLoader.load(CHAR_ASSET_BASE+CHAR_FILES.animSrc, res,
+        gltfLoader.load(_cfiles.anims, res,
           xhr=>{ if(xhr.lengthComputable) _loadStep('charAnims', xhr.loaded/xhr.total*0.9); }, rej);
       }),
       new Promise((_,rej)=>setTimeout(()=>rej(new Error('Character animation GLB load timed out after 90s')), 90000))
@@ -22336,11 +22383,12 @@ async function loadCharacterAssets(){
   }
   const findClip = n => animGltf.animations.find(a=>a.name===n) || null;
   // Load every mapped clip from CHAR_CLIP_NAMES (slide intentionally absent).
-  const mappedKeys = Object.keys(CHAR_CLIP_NAMES);
+  const _clipNames = (_cdef&&_cdef.clipMap)||CHAR_CLIP_NAMES;
+  const mappedKeys = Object.keys(_clipNames);
   const foundByKey = {};
   mappedKeys.forEach(k=>{
-    foundByKey[k] = findClip(CHAR_CLIP_NAMES[k]);
-    if(!foundByKey[k]) console.warn('Animation clip not found in merged GLB for state "'+k+'" (expected name "'+CHAR_CLIP_NAMES[k]+'") — check CHAR_CLIP_NAMES against the actual clip names in the file.');
+    foundByKey[k] = findClip(_clipNames[k]);
+    if(!foundByKey[k]) console.warn('Animation clip not found in merged GLB for state "'+k+'" (expected name "'+_clipNames[k]+'") — check CHAR_CLIP_NAMES against the actual clip names in the file.');
   });
   const walkClip = foundByKey.walk;
 
@@ -22389,7 +22437,7 @@ async function loadCharacterAssets(){
   console.log('Character actions loaded:', _loadedKeys.join(', ')||'(none)');
   try{
     const miss = mappedKeys.filter(k=>!CHAR.actions[k]);
-    if(miss.length) toast('⚠ Missing Autumn clips: '+miss.join(', '), 4000);
+    if(miss.length) toast('⚠ Missing '+(_cdef?_cdef.name:'Autumn')+' clips: '+miss.join(', '), 4000);
   }catch(_){}
   _loadStep('charAnims', 1);
 
@@ -22427,15 +22475,17 @@ async function loadCharacterAssets(){
   CHAR.loaded = true; CHAR.loading = false;
   // Strand count by graphics preset — ONLY on Auto (an explicit Low/Medium/High/Ultra pick keeps all
   // 5,665 strands). Guides (the physics) always simulate; this only thins the drawn children.
+  const _hairUrl=(_cdef&&_cdef.hair&&_cdef.hair.url)||(CHAR_ASSET_BASE+'ariel_hair_strands.bin'), _hairCfgUrl=_cdef&&_cdef.hair?_cdef.hair.configUrl:null;
+  window.DM_HAIR_MODULE=window.DM_HAIR_MODULE||new URL('./hair_strands.js?v=358',document.baseURI).href;   // one URL for the game and the studio (ui/dm-charselect.js): a single module instance
   function _hairStrandFraction(){ try{ const G=window.GFX; if(!G||G.preset!=='auto') return 1; const r=(typeof resolvePreset==='function')?resolvePreset():'medium'; return r==='low'?0.5:(r==='medium'||r==='balanced')?0.75:1; }catch(e){ return 1; } }
   // Real-time strand hair (hair_strands.js + characterassests/ariel_hair_strands.bin). Fails soft: if the
   // module/data is missing or the loaded character is a different file, she simply has no strand hair.
-  try{ import('./hair_strands.js?v=358').then(m=>m.attachHairStrands(CHAR,THREE,{url:CHAR_ASSET_BASE+'ariel_hair_strands.bin',getStrandFraction:_hairStrandFraction,getCollisionTier:()=>{ try{ const r=(typeof resolvePreset==='function')?resolvePreset():'medium'; return r==='low'?0:(r==='high'||r==='ultra')?2:1; }catch(e){ return 0; } },getCalm:()=>{ try{ return _hairCalm(); }catch(e){ return false; } },getFrameVel:o=>{ try{ return _hairFrameVel(o); }catch(e){ return o.set(0,0,0); } },getIntensity:()=>{ try{ return (window.DMCGroup&&surfaceActive)?Math.max(1,DMCGroup.intensity):1; }catch(e){ return 1; } },getGravityScale:()=>{try{if(surfaceActive)return 1;if(CHAR.mounted)return atmoActive?0.3:0.08;}catch(e){}return 1;}})).catch(e=>console.info('[hair] strands not attached:',e&&e.message)); }catch(e){}
+  try{ (async()=>{ const m=await import(window.DM_HAIR_MODULE); let _hc; if(_hairCfgUrl){ const r=await fetch(_hairCfgUrl); if(r.ok) _hc=await r.json(); } return m.attachHairStrands(CHAR,THREE,{url:_hairUrl,config:_hc,character:!!_hc,getStrandFraction:_hairStrandFraction,getCollisionTier:()=>{ try{ const r=(typeof resolvePreset==='function')?resolvePreset():'medium'; return r==='low'?0:(r==='high'||r==='ultra')?2:1; }catch(e){ return 0; } },getCalm:()=>{ try{ return _hairCalm(); }catch(e){ return false; } },getFrameVel:o=>{ try{ return _hairFrameVel(o); }catch(e){ return o.set(0,0,0); } },getIntensity:()=>{ try{ return (window.DMCGroup&&surfaceActive)?Math.max(1,DMCGroup.intensity):1; }catch(e){ return 1; } },getGravityScale:()=>{try{if(surfaceActive)return 1;if(CHAR.mounted)return atmoActive?0.3:0.08;}catch(e){}return 1;}}); })().then(H=>{ try{ if(H&&window.DMCharPaint&&_cd&&!DMChars.isDefaultLook(_cd.look)) DMCharPaint.applyHair(H,_cdef,_cd.look); }catch(e){ console.warn('[char] hair look',e); } }).catch(e=>console.info('[hair] strands not attached:',e&&e.message)); }catch(e){}
   // (v206) Ariel's garment cloth (ui/dm-ariel-cloth.js, finished from draft #213). Automatic = ON only with the WebGPU compute path;
   // ?cloth=1 forces the CPU path, ?cloth=0 / dm_cloth_v1='0' turns it off. Post-skin offsets on her garments only (rig, stance, skyboard pose and
   // the hair solver untouched). Collision = the character group's patch (DMCGroup ground grid) + body/hair capsules + the skyboard; substeps scale
   // with DMCGroup.intensity; a frame-budget governor sheds work (GFX.isMobile: 1.5 ms total, else 3 ms). Fails soft.
-  try{ if(!/[?&]cloth=0\b/.test(location.search)) import('./ui/dm-ariel-cloth.js?v=214').then(async m=>{ if(CHAR._menuPrep){ for(let i=0;i<900&&!(typeof flightRenderer!=='undefined'&&flightRenderer&&flightRenderer.backend);i++) await new Promise(r=>setTimeout(r,100)); }   /* (menu-perf) loaded early from the menu: the cloth's GPU path needs the flight renderer, so it attaches once that exists (same attach, same options) */
+  try{ if(!/[?&]cloth=0\b/.test(location.search)&&(!_cdef||!_cdef.accessories||_cdef.accessories.cloth!==false)) import('./ui/dm-ariel-cloth.js?v=214').then(async m=>{ if(CHAR._menuPrep){ for(let i=0;i<900&&!(typeof flightRenderer!=='undefined'&&flightRenderer&&flightRenderer.backend);i++) await new Promise(r=>setTimeout(r,100)); }   /* (menu-perf) loaded early from the menu: the cloth's GPU path needs the flight renderer, so it attaches once that exists (same attach, same options) */
     return m.attachArielCloth(CHAR,THREE,{TSL:THREE.TSL||window.TSL,renderer:(typeof flightRenderer!=='undefined')?flightRenderer:null,
     getGravityScale:()=>{try{if(surfaceActive)return 1;if(CHAR.mounted)return atmoActive?0.3:0.08;}catch(e){}return 1;},
     getBudgetMs:()=>(GFX&&GFX.isMobile)?1.5:3,
@@ -28817,7 +28867,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
     patchAccountModal(); refreshChip();
     // First visit: welcome + privacy as soon as the menu appears.
     const maybeWelcome=()=>{ if(!J().consent.get()&&typeof STATE!=='undefined'&&STATE.screen==='menu'&&document.getElementById('screen-menu').classList.contains('active')) showWelcome(); };
-    wrap('goScreen',null,(name)=>{ if(name!=='flight'&&name!=='builder') setTimeout(maybeWelcome,200); });
+    wrap('goScreen',null,(name)=>{ if(name!=='flight'&&name!=='builder'&&name!=='character') setTimeout(maybeWelcome,200); });
     setTimeout(maybeWelcome,500);
     const _start=window.startGame;
     if(typeof _start==='function'){
@@ -29301,6 +29351,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 <link rel="stylesheet" href="ui/dm-spectator.css?v=1">
 <link rel="stylesheet" href="ui/dm-globe.css?v=3">
 <link rel="stylesheet" href="ui/dm-menu.css?v=313">
+<link rel="stylesheet" href="ui/dm-charselect.css?v=359">
 <link rel="stylesheet" href="ui/dm-journal.css?v=97">
 <link rel="stylesheet" href="ui/dm-landmap.css?v=88">
 <link rel="stylesheet" href="ui/dm-type.css?v=89">

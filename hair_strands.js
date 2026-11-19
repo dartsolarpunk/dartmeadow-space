@@ -448,6 +448,27 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   geo.setAttribute('position', aPos);
   geo.setAttribute('normal', aNrm);
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  // Runtime recolour (character select / profile, ui/dm-charpaint.js): H.setTint({ clusterName: [r,g,b] linear } | null).  A tinted cluster's base colour is REPLACED by the
+  // given one; every strand keeps its own light/dark variation and root->tip gradient (its colour relative to the cluster mean).  null / unlisted = the groomed colours.
+  // One pass over the colour buffer + one upload, never per frame; the generated colours above are untouched (colBase), so Ariel's default is identical.
+  const colBase = new Float32Array(col), gMean = new Float32Array(256), gCnt = new Float32Array(256), colAttr = geo.getAttribute('color');
+  for (let s2 = 0; s2 < N; s2++) { const g = group[s2]; for (let k = 0; k < K * 2; k++) { const o = (s2 * K * 2 + k) * 3; gMean[g] += 0.2126 * colBase[o] + 0.7152 * colBase[o + 1] + 0.0722 * colBase[o + 2]; gCnt[g]++; } }
+  for (let g = 0; g < 256; g++) gMean[g] = gCnt[g] ? gMean[g] / gCnt[g] : 0;
+  const groupName = (g) => (CFG.clusters[g] && CFG.clusters[g].name) || (Array.isArray(meta.groups) && meta.groups[g]) || ('g' + g);
+  function setTint(map) {
+    const by = new Array(256).fill(null); let any = false;
+    if (map) for (let g = 0; g < 256; g++) { const t = map[groupName(g)]; if (t && t.length >= 3) { by[g] = t; any = true; } }
+    for (let s2 = 0; s2 < N; s2++) {
+      const t = by[group[s2]], m = gMean[group[s2]];
+      for (let k = 0; k < K * 2; k++) {
+        const o = (s2 * K * 2 + k) * 3;
+        if (!t || !(m > 1e-6)) { col[o] = colBase[o]; col[o + 1] = colBase[o + 1]; col[o + 2] = colBase[o + 2]; continue; }
+        const r = Math.max(0.35, Math.min(2.4, (0.2126 * colBase[o] + 0.7152 * colBase[o + 1] + 0.0722 * colBase[o + 2]) / m));
+        col[o] = t[0] * r; col[o + 1] = t[1] * r; col[o + 2] = t[2] * r;
+      }
+    }
+    colAttr.needsUpdate = true; return any;
+  }
   geo.setIndex(new THREE.BufferAttribute(idx, 1));
   // meta.fuzz (optional, e.g. Madison's yarn): sheen on the strands, and on the GPU path a soft alpha-hashed fringe
   // across each ribbon's width. Ariel's file has no fuzz block, so her material is unchanged.
@@ -1270,7 +1291,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   const H = {
     params: P, stats, mesh, update, meta, get gpu() { return gpu; }, ribbonArrays: { pos, nrm },
     setEnabled(v) { P.enabled = !!v; mesh.visible = !!v; if (v) { unprime(); needInit = true; } else { setCards(true); setScalp(false); primed = false; } },
-    setStrandFraction,
+    setStrandFraction, setTint, groupNames: () => { const a = []; for (let g = 0; g < 256 && gCnt[g]; g++) a.push(groupName(g)); return a; },
     rebuildStiffness() { buildStiffness(); stiffDirty = true; },
     get compute() { return gc || null; },
     // debug / parity: GPU guide state read back (null on the CPU path)
