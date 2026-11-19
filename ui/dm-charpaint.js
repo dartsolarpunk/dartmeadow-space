@@ -1,5 +1,5 @@
 /* ============================================================================
-   ui/dm-charpaint.js — applies a character LOOK (colours; Phase 3 adds logo decals) to a loaded character, in the studio and in the game.
+   ui/dm-charpaint.js — applies a character LOOK (colours + logo decals) to a loaded character, in the studio and in the game.
    Registry-driven (ui/dm-chars.js): only the regions a registry entry declares are touched, and nothing is touched unless the player changed it, so the
    default look (the baked / shipped materials) is byte for byte what it was.
 
@@ -10,7 +10,12 @@
      baked  an item painted into a shared baked colour map (Emma's cloth atlas holds shirt + pants): the item's UV islands are rasterised into a 1024 px canvas that
             starts as the baked image; inside the island the colour is REPLACED by the chosen one while the baked light / dark detail (wrinkles, wear) is kept
             (ratio of each texel's luminance to the island mean).  One CanvasTexture per atlas, written once per change, never per frame.
-   Pure parts (raster, luminance transfer, sRGB) are exported for node tests (tools/tests/charpaint-unit.js) as module.exports / DMCharPaint.core.
+      decals logos are baked into the same canvas, once per change.  Every decal is a PROJECTION: the garment's rest-pose vertices (root space) are projected along one of
+            four horizontal axes (front / back / left / right) into the garment's own bounding box; per UV texel the rest position and normal are interpolated, the
+            normal must face the axis (dot > 0.3) and the position is mapped into the decal's rotated square, which samples a 192 px logo mask.  The result is
+            alpha-composited over the colour.  'uv' items (Emma) use their own UV islands; 'planar' items (Ariel, no UVs) are unwelded and given a generated 4-view atlas
+            (front / back / left / right quadrants) first, only when a decal exists.  No extra draw call (the atlas is the material's map), no per-frame canvas work.
+  Pure parts (raster, luminance transfer, sRGB, plane maths, compositing) are exported for node tests (tools/tests/charpaint-unit.js) as module.exports / DMCharPaint.core.
    ========================================================================== */
 (function (root, factory) {
   const core = factory(root);
@@ -55,6 +60,50 @@
     return [Math.min(255, target[0] * k), Math.min(255, target[1] * k), Math.min(255, target[2] * k)];
   }
 
+
+  /* ───────── decal projection (pure) ───────── */
+  const FR = { front: { n: [0, 0, 1], r: [1, 0, 0] }, back: { n: [0, 0, -1], r: [-1, 0, 0] }, left: { n: [1, 0, 0], r: [0, 0, -1] }, right: { n: [-1, 0, 0], r: [0, 0, 1] } };
+  function emptyBox() { return { minx: 1e9, miny: 1e9, minz: 1e9, maxx: -1e9, maxy: -1e9, maxz: -1e9 }; }
+  function growBox(b, pos) { for (let i = 0; i < pos.length; i += 3) { const x = pos[i], y = pos[i + 1], z = pos[i + 2];
+    if (x < b.minx) b.minx = x; if (x > b.maxx) b.maxx = x; if (y < b.miny) b.miny = y; if (y > b.maxy) b.maxy = y; if (z < b.minz) b.minz = z; if (z > b.maxz) b.maxz = z; } return b; }
+  // the garment's box seen along `key`: u (0..1, left to right on screen), v (0..1, top to bottom)
+  function planeRange(b, key) {
+    const f = FR[key], useX = f.r[0] !== 0, sg = useX ? f.r[0] : f.r[2], lo = useX ? b.minx : b.minz, hi = useX ? b.maxx : b.maxz;
+    const a = sg * lo, c = sg * hi; return { useX, sg, u0: Math.min(a, c), W: Math.max(1e-6, Math.abs(hi - lo)), y1: b.maxy, H: Math.max(1e-6, b.maxy - b.miny) };
+  }
+  function planeUV(R, x, y, z) { return [((R.sg * (R.useX ? x : z)) - R.u0) / R.W, (R.y1 - y) / R.H]; }
+  // which of the four views a surface normal belongs to (the largest horizontal component)
+  function viewOf(nx, nz) { return Math.abs(nz) >= Math.abs(nx) ? (nz >= 0 ? 'front' : 'back') : (nx >= 0 ? 'left' : 'right'); }
+  // the decal's logo mask lookup for local coords s,t in 0..1 (bilinear on alpha)
+  function maskAlpha(M, s, t) {
+    const res = M.res, x = s * res - 0.5, y = t * res - 0.5, x0 = Math.floor(x), y0 = Math.floor(y), fx = x - x0, fy = y - y0, g = (i, j) => (i < 0 || j < 0 || i >= res || j >= res ? 0 : M.data[j * res + i]);
+    return ((g(x0, y0) * (1 - fx) + g(x0 + 1, y0) * fx) * (1 - fy) + (g(x0, y0 + 1) * (1 - fx) + g(x0 + 1, y0 + 1) * fx) * fy) / 255;
+  }
+  // composite decals into px (RGBA bytes, size x size).  infos: [{pos,nrm (root space, per vertex), uv, index}], item: registry item, box: union box of infos,
+  // unit: root-space units per metre, masks: [{res,data}] parallel to decals.  Returns the number of texels touched.
+  function composite(px, size, infos, decals, item, box, unit, masks) {
+    const nT = size * size, mesh = new Int16Array(nT).fill(-1), tri = new Int32Array(nT), w0a = new Float32Array(nT), w1a = new Float32Array(nT);
+    infos.forEach((I, mi) => raster(I.uv, I.index, size, (t, tr, w0, w1) => { mesh[t] = mi; tri[t] = tr; w0a[t] = w0; w1a[t] = w1; }));
+    const D = decals.map((d, i) => { const th = d.rotation * Math.PI / 180, sp = item.spots[d.spot], col = hexToRgb(d.colour) || [236, 235, 230];
+      return { d, f: FR[d.spot], R: planeRange(box, d.spot), c: Math.cos(th), s: Math.sin(th), size: Math.max(1e-6, sp.base * d.scale * unit), col, M: masks[i] }; });
+    let hit = 0;
+    for (let t = 0; t < nT; t++) {
+      const mi = mesh[t]; if (mi < 0) continue; const I = infos[mi], tr = tri[t], idx = I.index;
+      const a = idx ? idx[tr * 3] : tr * 3, b = idx ? idx[tr * 3 + 1] : tr * 3 + 1, c = idx ? idx[tr * 3 + 2] : tr * 3 + 2, w0 = w0a[t], w1 = w1a[t], w2 = 1 - w0 - w1, P = I.pos, N = I.nrm;
+      const x = P[a * 3] * w0 + P[b * 3] * w1 + P[c * 3] * w2, y = P[a * 3 + 1] * w0 + P[b * 3 + 1] * w1 + P[c * 3 + 1] * w2, z = P[a * 3 + 2] * w0 + P[b * 3 + 2] * w1 + P[c * 3 + 2] * w2;
+      const nx = N[a * 3] * w0 + N[b * 3] * w1 + N[c * 3] * w2, ny = N[a * 3 + 1] * w0 + N[b * 3 + 1] * w1 + N[c * 3 + 1] * w2, nz = N[a * 3 + 2] * w0 + N[b * 3 + 2] * w1 + N[c * 3 + 2] * w2;
+      const nl = Math.hypot(nx, ny, nz) || 1;
+      for (let k = 0; k < D.length; k++) {
+        const q = D[k]; if ((nx * q.f.n[0] + ny * q.f.n[1] + nz * q.f.n[2]) / nl < 0.3) continue;
+        const uv = planeUV(q.R, x, y, z), da = (uv[0] - q.d.x) * q.R.W, db = (uv[1] - q.d.y) * q.R.H;
+        const ra = da * q.c + db * q.s, rb = -da * q.s + db * q.c, ss = ra / q.size + 0.5, tt = rb / q.size + 0.5;
+        if (ss < 0 || ss > 1 || tt < 0 || tt > 1) continue; const al = maskAlpha(q.M, ss, tt); if (al <= 0.01) continue;
+        const o = t * 4; px[o] += (q.col[0] - px[o]) * al; px[o + 1] += (q.col[1] - px[o + 1]) * al; px[o + 2] += (q.col[2] - px[o + 2]) * al; hit++;
+      }
+    }
+    return hit;
+  }
+
   /* ───────── helpers shared with the browser part ───────── */
   const norm = (s) => String(s || '');
   const matchMesh = (re, name) => { try { return new RegExp(re, 'i').test(norm(name)); } catch (e) { return false; } };
@@ -65,39 +114,110 @@
 
   /* ───────── the look, applied ───────── */
   // state lives on root.userData.dmPaint so apply() is idempotent: it first returns everything to the shipped look, then paints what the look asks for
-  function stateOf(rootObj) { return rootObj.userData.dmPaint || (rootObj.userData.dmPaint = { flat: new Map(), atlases: new Map(), meshMats: new Map() }); }
+  function stateOf(rootObj) { return rootObj.userData.dmPaint || (rootObj.userData.dmPaint = { flat: new Map(), atlases: new Map(), meshMats: new Map(), geoSwap: new Map() }); }
   function revert(rootObj) {
     const S = rootObj.userData && rootObj.userData.dmPaint; if (!S) return;
     for (const [m, c] of S.flat) { try { m.color.copy(c); m.needsUpdate = true; } catch (e) { } }
     S.flat.clear();
     for (const [mesh, orig] of S.meshMats) { try { const cur = mesh.material; mesh.material = orig; if (cur && cur !== orig && cur.dispose) cur.dispose(); } catch (e) { } }
     S.meshMats.clear();
+    for (const [mesh, orig] of S.geoSwap) { try { const cur = mesh.geometry; mesh.geometry = orig; if (cur && cur !== orig) cur.dispose(); } catch (e) { } }
+    S.geoSwap.clear();
     for (const [, A] of S.atlases) { try { A.tex && A.tex.dispose(); } catch (e) { } }
     S.atlases.clear();
   }
   function lookColor(look, id) { const c = look && look.colors && look.colors[id]; return c && /^#[0-9a-f]{6}$/i.test(c) ? c : null; }
 
   function apply(rootObj, def, look, THREE, opts) {
-    opts = opts || {}; if (!rootObj || !def) return null; revert(rootObj); const S = stateOf(rootObj);
+    opts = Object.assign({}, opts || {}); if (!rootObj || !def) return null; if (def.decalFlip) opts.flip = true; revert(rootObj); const S = stateOf(rootObj);
     const items = def.items || {}, atlasGroups = {};
     for (const id of Object.keys(items)) {
       const it = items[id], hex = lookColor(look, id), meshes = itemMeshes(rootObj, it);
+      const decals = it.decals && look && Array.isArray(look.decals) ? look.decals.filter((d) => d.item === id && it.spots && it.spots[d.spot]) : [];
       if (!meshes.length) continue;
       if (it.mode === 'flat') {
+        if (decals.length && it.decals === 'planar') { try { paintPlanar(rootObj, id, it, meshes, decals, hex, THREE, S, opts); } catch (e) { try { console.warn('[charpaint] planar', id, e); } catch (_) { } } continue; }
         if (!hex) continue;
         const col = new THREE.Color(hex);   // sRGB hex -> the working colour space
         for (const mesh of meshes) for (const m of matsOf(mesh)) { if (!m.color) continue; if (!S.flat.has(m)) S.flat.set(m, m.color.clone()); m.color.copy(col); m.needsUpdate = true; }
       } else if (it.mode === 'baked') {
-        (atlasGroups[it.atlas || id] = atlasGroups[it.atlas || id] || []).push({ id, it, meshes, hex });
+        (atlasGroups[it.atlas || id] = atlasGroups[it.atlas || id] || []).push({ id, it, meshes, hex, decals });
       }
     }
     for (const key of Object.keys(atlasGroups)) { try { paintAtlas(rootObj, key, atlasGroups[key], THREE, S, opts); } catch (e) { try { console.warn('[charpaint] atlas', key, e); } catch (_) { } } }
     return S;
   }
 
+
+  /* ───────── decals, browser part ───────── */
+  const _tm = (THREE) => ({ v: new THREE.Vector3(), nm: new THREE.Matrix3() });
+  // root-space rest positions / normals of a mesh (geometry space -> root space through the node chain; independent of the current pose)
+  function restOf(rootObj, mesh, geo, THREE, flip) {
+    rootObj.updateMatrixWorld(true); mesh.updateMatrixWorld(true);
+    const M = new THREE.Matrix4().copy(rootObj.matrixWorld).invert().multiply(mesh.matrixWorld), NM = new THREE.Matrix3().getNormalMatrix(M), v = new THREE.Vector3();
+    const pa = geo.attributes.position, na = geo.attributes.normal, n = pa.count, pos = new Float32Array(n * 3), nrm = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) { v.fromBufferAttribute(pa, i).applyMatrix4(M); pos[i * 3] = v.x; pos[i * 3 + 1] = v.y; pos[i * 3 + 2] = v.z;
+      if (na) { v.fromBufferAttribute(na, i).applyMatrix3(NM).normalize(); nrm[i * 3] = v.x; nrm[i * 3 + 1] = v.y; nrm[i * 3 + 2] = v.z; } }
+    if (!na) { const idx = geo.index ? geo.index.array : null, nT = idx ? idx.length / 3 : n / 3; for (let t = 0; t < nT; t++) {
+      const a = idx ? idx[t * 3] : t * 3, b = idx ? idx[t * 3 + 1] : t * 3 + 1, c = idx ? idx[t * 3 + 2] : t * 3 + 2;
+      const ux = pos[b * 3] - pos[a * 3], uy = pos[b * 3 + 1] - pos[a * 3 + 1], uz = pos[b * 3 + 2] - pos[a * 3 + 2], wx = pos[c * 3] - pos[a * 3], wy = pos[c * 3 + 1] - pos[a * 3 + 1], wz = pos[c * 3 + 2] - pos[a * 3 + 2];
+      const fx = uy * wz - uz * wy, fy = uz * wx - ux * wz, fz = ux * wy - uy * wx, l = Math.hypot(fx, fy, fz) || 1; for (const q of [a, b, c]) { nrm[q * 3] += fx / l; nrm[q * 3 + 1] += fy / l; nrm[q * 3 + 2] += fz / l; } } }
+    if (flip) for (let i = 0; i < n; i++) { pos[i * 3] = -pos[i * 3]; pos[i * 3 + 2] = -pos[i * 3 + 2]; nrm[i * 3] = -nrm[i * 3]; nrm[i * 3 + 2] = -nrm[i * 3 + 2]; }   // def.decalFlip: the displayed front is the rest pose's -z (animation turns her 180 deg)
+    return { pos, nrm, uv: geo.attributes.uv ? geo.attributes.uv.array : null, index: geo.index ? geo.index.array : null };
+  }
+  // a mesh without a UV layout: unweld it and give every triangle the planar UV of its view (front / back / left / right quadrant of one atlas)
+  function planarize(rootObj, mesh, box, THREE, flip) {
+    const g = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone(), I = restOf(rootObj, mesh, g, THREE, flip), n = g.attributes.position.count, uv = new Float32Array(n * 2);
+    const Q = { front: [0, 0], back: [0.5, 0], left: [0, 0.5], right: [0.5, 0.5] };
+    for (let t = 0; t < n / 3; t++) {
+      let nx = 0, nz = 0; for (let k = 0; k < 3; k++) { nx += I.nrm[(t * 3 + k) * 3]; nz += I.nrm[(t * 3 + k) * 3 + 2]; }
+      const key = viewOf(nx, nz), R = planeRange(box, key), q = Q[key];
+      for (let k = 0; k < 3; k++) { const i = t * 3 + k, p = planeUV(R, I.pos[i * 3], I.pos[i * 3 + 1], I.pos[i * 3 + 2]);
+        uv[i * 2] = q[0] + 0.02 + 0.46 * Math.min(1, Math.max(0, p[0])); uv[i * 2 + 1] = q[1] + 0.02 + 0.46 * Math.min(1, Math.max(0, p[1])); }
+    }
+    g.setAttribute('uv', new THREE.BufferAttribute(uv, 2)); g.userData.dmPlanar = true; I.uv = uv; I.index = null; return { geo: g, info: I };
+  }
+  // logo masks: 192 px alpha grids (Path2D, even-odd), text drawn centred in a bold sans
+  function makeMasks(decals, doc, opts) {
+    const logos = opts.logos || (W.DMChars && W.DMChars.logoById), res = 192, cache = new Map();
+    return decals.map((d) => {
+      const key = d.id + '|' + (d.text || ''); if (cache.has(key)) return cache.get(key);
+      const cv = doc.createElement('canvas'); cv.width = cv.height = res; const g = cv.getContext('2d', { willReadFrequently: true }); g.fillStyle = '#fff';
+      const lg = logos && (logos.get ? logos.get(d.id) : logos[d.id]);
+      if (lg && lg.text) { g.textAlign = 'center'; g.textBaseline = 'middle'; let fs = res * 0.5; g.font = '900 ' + fs + 'px Arial, Helvetica, sans-serif'; const w = g.measureText(d.text).width; if (w > res * 0.94) { fs *= res * 0.94 / w; g.font = '900 ' + fs + 'px Arial, Helvetica, sans-serif'; } g.fillText(d.text, res / 2, res / 2); }
+      else if (lg && typeof Path2D !== 'undefined') { g.scale(res / 24, res / 24); g.fill(new Path2D(lg.d), 'evenodd'); }
+      const im = g.getImageData(0, 0, res, res).data, a = new Uint8Array(res * res); for (let i = 0; i < a.length; i++) a[i] = im[i * 4 + 3];
+      const M = { res, data: a }; cache.set(key, M); return M;
+    });
+  }
+  function unitOf(rootObj, THREE) { try { const b = new THREE.Box3().setFromObject(rootObj), h = b.max.y - b.min.y; return h > 0.2 && isFinite(h) ? h / 1.7 : 1; } catch (e) { return 1; } }
+  // the garment's root-space rest box and the unit (UI placement pad: aspect of each view, logo size as a fraction of the box)
+  function itemBox(rootObj, item, THREE, flip) { const box = emptyBox(); itemMeshes(rootObj, item).forEach((m) => growBox(box, restOf(rootObj, m, m.geometry, THREE, flip).pos)); return box.minx > box.maxx ? null : { box, unit: unitOf(rootObj, THREE) }; }
+  const sRGBTex = (THREE, cv, ref) => { const t = new THREE.CanvasTexture(cv); t.flipY = false; t.colorSpace = (ref && ref.colorSpace) || THREE.SRGBColorSpace; t.anisotropy = (ref && ref.anisotropy) || 4; t.channel = (ref && ref.channel) || 0; t.needsUpdate = true; return t; };
+
+  // a flat-colour item with no UVs: planar atlas = garment colour + logos
+  function paintPlanar(rootObj, id, it, meshes, decals, hex, THREE, S, opts) {
+    const flip = !!opts.flip;
+    const doc = opts.document || (typeof document !== 'undefined' ? document : null); if (!doc) return;
+    rootObj.updateMatrixWorld(true); const box = emptyBox(); meshes.forEach((m) => growBox(box, restOf(rootObj, m, m.geometry, THREE, flip).pos));
+    const size = ATLAS, cv = doc.createElement('canvas'); cv.width = cv.height = size; const g2 = cv.getContext('2d', { willReadFrequently: true });
+    g2.fillStyle = hex || it.defaultColor || '#808080'; g2.fillRect(0, 0, size, size); const data = g2.getImageData(0, 0, size, size);
+    const infos = [], swaps = [];
+    for (const m of meshes) { const P = planarize(rootObj, m, box, THREE, flip); infos.push(P.info); swaps.push([m, P.geo]); }
+    composite(data.data, size, infos, decals, it, box, unitOf(rootObj, THREE), makeMasks(decals, doc, opts)); g2.putImageData(data, 0, 0);
+    const tex = sRGBTex(THREE, cv, null), clones = new Map();
+    for (const [m, geo] of swaps) {
+      if (!S.geoSwap.has(m)) S.geoSwap.set(m, m.geometry); m.geometry = geo;
+      if (!S.meshMats.has(m)) S.meshMats.set(m, m.material);
+      const mm = matsOf(m).map((o) => { if (!clones.has(o)) { const c = o.clone(); c.map = tex; if (c.color) c.color.set(0xffffff); c.needsUpdate = true; clones.set(o, c); } return clones.get(o); });
+      m.material = Array.isArray(S.meshMats.get(m)) ? mm : mm[0];
+    }
+    S.atlases.set('planar:' + id, { tex, canvas: cv, mat: null });
+  }
+
   // one baked atlas (e.g. Emma's cloth map): all items that share it are rasterised into one canvas
   function paintAtlas(rootObj, key, group, THREE, S, opts) {
-    if (!group.some((g) => g.hex)) return;   // nothing chosen on this atlas: the shipped material stays, no canvas at all
+    if (!group.some((g) => g.hex || (g.decals && g.decals.length))) return;   // nothing chosen on this atlas: the shipped material stays, no canvas at all
     const doc = opts.document || (typeof document !== 'undefined' ? document : null); if (!doc) return;
     // the shared material: all the group's meshes must use ONE material with a colour map
     const mat0 = matsOf(group[0].meshes[0])[0]; if (!mat0 || !mat0.map || !mat0.map.image) return;
@@ -114,6 +234,11 @@
       for (const t of texels) { if (seen[t]) continue; seen[t] = 1; list.push(t); sum += (0.299 * px[t * 4] + 0.587 * px[t * 4 + 1] + 0.114 * px[t * 4 + 2]) / 255; n++; }
       if (!n) continue; const ref = sum / n;
       for (const t of list) { const o = t * 4, c = transfer(px[o], px[o + 1], px[o + 2], ref, target); px[o] = c[0]; px[o + 1] = c[1]; px[o + 2] = c[2]; }
+    }
+    for (const gi of group) {   // decals, after the colour: Emma's islands are used as they are
+      if (!gi.decals || !gi.decals.length) continue; const infos = []; const box = emptyBox();
+      for (const mesh of gi.meshes) { if (!mesh.geometry.attributes.uv) continue; const I = restOf(rootObj, mesh, mesh.geometry, THREE, !!opts.flip); infos.push(I); growBox(box, I.pos); }
+      if (infos.length) composite(px, size, infos, gi.decals, gi.it, box, unitOf(rootObj, THREE), makeMasks(gi.decals, doc, opts));
     }
     g2.putImageData(data, 0, 0);
     const tex = new THREE.CanvasTexture(cv); tex.flipY = false; tex.colorSpace = mat0.map.colorSpace || THREE.SRGBColorSpace; tex.wrapS = mat0.map.wrapS; tex.wrapT = mat0.map.wrapT;
@@ -136,6 +261,6 @@
     revert(rootObj); if (rootObj && rootObj.userData) delete rootObj.userData.dmPaint;
   }
 
-  const core = { s2l, l2s, hexToRgb, hexToLinear, lum709, raster, transfer, hairTints, ATLAS };
-  return { api: { apply, revert, dispose, applyHair, hairTints, core, ...core } };
+  const core = { FR, emptyBox, growBox, planeRange, planeUV, viewOf, maskAlpha, composite, s2l, l2s, hexToRgb, hexToLinear, lum709, raster, transfer, hairTints, ATLAS };
+  return { api: { apply, revert, dispose, applyHair, hairTints, core, ...core, _impl: { restOf, planarize, unitOf, itemBox } } };
 });

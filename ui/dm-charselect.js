@@ -415,6 +415,75 @@
     },
   });
 
+  /* ───────────────────────── LOGOS panel (registry spots + DMChars decal model + DMCharPaint projection) ─────────────────────────
+     pick a logo, tap SHIRT / PANTS to drop it, then place it on a 2D pad of that garment (drag to move, snap dots, size / turn / colour).  Edits are committed on release:
+     one CPU bake into the garment's texture per change, no per-frame work.  Stage-tap placement is not offered (the pad is exact and cheaper). */
+  const PS = { logo: null, sel: -1, spot: null };
+  const svgOf = (lg) => lg.text ? '<span class="cs-lgt">Aa</span>' : '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="' + lg.d + '"/></svg>';
+  const boxCache = new Map();
+  function itemInfo(def, item) {   // {W,H,unit} of each view for the pad; falls back to a 1:1.2 pad when the model is not there
+    const k = def.id + '|' + item; if (boxCache.has(k)) return boxCache.get(k); let r = null;
+    try { const ib = S.M && S.M.root && W.DMCharPaint && W.DMCharPaint._impl.itemBox(S.M.root, def.items[item], W.THREE, !!def.decalFlip); if (ib) { r = { unit: ib.unit, views: {} }; for (const key of Object.keys(def.items[item].spots)) { const R = W.DMCharPaint.planeRange(ib.box, key); r.views[key] = { W: R.W, H: R.H }; } } } catch (e) { }
+    if (r) boxCache.set(k, r); return r;
+  }
+  function drawPad(cv, def, dec, live) {
+    const ctx = cv.getContext('2d'), w = cv.width, h = cv.height, DC = W.DMChars, it = def.items[dec.item], sp = it.spots[dec.spot];
+    ctx.clearRect(0, 0, w, h); ctx.fillStyle = 'rgba(255,255,255,.06)'; ctx.strokeStyle = 'rgba(120,220,255,.45)'; ctx.lineWidth = 2;
+    const r = 14; ctx.beginPath(); ctx.moveTo(r, 1); ctx.arcTo(w - 1, 1, w - 1, h - 1, r); ctx.arcTo(w - 1, h - 1, 1, h - 1, r); ctx.arcTo(1, h - 1, 1, 1, r); ctx.arcTo(1, 1, w - 1, 1, r); ctx.closePath(); ctx.fill(); ctx.stroke();
+    const near = DC.snapPoint(def, dec.item, dec.spot, live.x, live.y, DC.SNAP_R * 1.5);
+    sp.snaps.forEach((sn) => { ctx.beginPath(); ctx.arc(sn.x * w, sn.y * h, sn === near ? 9 : 5, 0, 6.2832); ctx.fillStyle = sn === near ? '#ffd24a' : 'rgba(255,210,74,.55)'; ctx.fill(); });
+    const info = itemInfo(def, dec.item), v = info && info.views[dec.spot], fw = v ? (sp.base * live.scale * info.unit) / v.W : 0.3, px = Math.max(10, fw * w), lg = DC.logoById.get(dec.id);
+    ctx.save(); ctx.translate(live.x * w, live.y * h); ctx.rotate(live.rotation * Math.PI / 180); ctx.fillStyle = dec.colour; ctx.globalAlpha = .95;
+    if (lg.text) { ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = '900 ' + px * 0.5 + 'px Arial, sans-serif'; ctx.fillText(dec.text || '', 0, 0, px); }
+    else { ctx.scale(px / 24, px / 24); ctx.translate(-12, -12); ctx.fill(new Path2D(lg.d), 'evenodd'); }
+    ctx.restore();
+  }
+  function commitLook(def) { applyLook(S.M, def); noteGame(def); W.DMChars.list().forEach((d) => { if (d.id === def.id) paintCard(d.id); }); }
+  CS.panels.push({
+    id: 'logos', label: 'LOGOS', when: (def) => Object.keys(def.items || {}).some((i) => def.items[i].spots),
+    render(el, ctx) {
+      const def = ctx.def, DC = W.DMChars, L = DC.look(def.id), items = Object.keys(def.items).filter((i) => def.items[i].spots), mk = (tag, cls, txt) => { const e = D.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; };
+      if (PS.sel >= L.decals.length) PS.sel = L.decals.length - 1;
+      const h1 = mk('div', 'cs-reg-h', '1  PICK A LOGO'); el.appendChild(h1);
+      const grid = mk('div', 'cs-lgs'); DC.LOGOS.forEach((lg) => { const b = mk('button', 'cs-lg' + (PS.logo === lg.id ? ' on' : '')); b.type = 'button'; b.title = lg.label; b.setAttribute('aria-label', lg.label); b.innerHTML = svgOf(lg);
+        b.addEventListener('click', () => { PS.logo = lg.id; ctx.rerender(); }); grid.appendChild(b); }); el.appendChild(grid);
+      let txt = null; if (PS.logo && DC.logoById.get(PS.logo).text) { txt = mk('input', 'cs-txt'); txt.type = 'text'; txt.maxLength = 8; txt.placeholder = 'UP TO 8 LETTERS'; txt.value = PS._text || 'DART'; txt.setAttribute('aria-label', 'Logo text'); txt.addEventListener('input', () => { PS._text = DC.cleanText(txt.value) ; }); el.appendChild(txt); }
+      el.appendChild(mk('div', 'cs-reg-h', '2  TAP A GARMENT TO PUT IT ON'));
+      const chips = mk('div', 'cs-chips'); items.forEach((id) => { const n = DC.decalCount(def.id, id), b = mk('button', 'cs-chip', def.items[id].label.toUpperCase() + '  ' + n + '/' + DC.MAX_DECALS); b.type = 'button';
+        b.addEventListener('click', () => {
+          if (!PS.logo) { toast('Pick a logo first'); return; } if (n >= DC.MAX_DECALS) { toast(def.items[id].label + ' is full (' + DC.MAX_DECALS + ' logos) — remove one first'); return; }
+          const spot = Object.keys(def.items[id].spots)[0], i = DC.addDecal(def.id, id, spot, PS.logo, { text: PS._text || 'DART', colour: PS._colour || '#ecebe6' });
+          if (i >= 0) { PS.sel = i; commitLook(def); ctx.rerender(); } else toast('That logo cannot go there');
+        }); chips.appendChild(b); }); el.appendChild(chips);
+      if (!L.decals.length) { el.appendChild(mk('p', '', 'No logos yet. Your pilot keeps her original look until you add one.')); return; }
+      el.appendChild(mk('div', 'cs-reg-h', '3  PLACE IT'));
+      const placed = mk('div', 'cs-chips'); L.decals.forEach((d, i) => { const b = mk('button', 'cs-chip' + (i === PS.sel ? ' on' : ''), DC.logoById.get(d.id).label.toUpperCase() + ' · ' + def.items[d.item].label.toUpperCase()); b.type = 'button'; b.addEventListener('click', () => { PS.sel = i; ctx.rerender(); }); placed.appendChild(b); }); el.appendChild(placed);
+      if (PS.sel < 0) PS.sel = 0; const d = L.decals[PS.sel], it = def.items[d.item];
+      const spots = mk('div', 'cs-chips'); Object.keys(it.spots).forEach((k) => { const b = mk('button', 'cs-chip' + (k === d.spot ? ' on' : ''), (it.spots[k].label || DC.SPOT_AXES[k].label).toUpperCase()); b.type = 'button';
+        b.addEventListener('click', () => { const sn = it.spots[k].snaps[0]; DC.updateDecal(def.id, PS.sel, { spot: k, x: sn.x, y: sn.y }); commitLook(def); ctx.rerender(); }); spots.appendChild(b); }); el.appendChild(spots);
+      const info = itemInfo(def, d.item), v = info && info.views[d.spot], asp = v ? Math.max(0.5, Math.min(1.6, v.H / v.W)) : 1.2, cv = mk('canvas', 'cs-pad'); cv.width = 260; cv.height = Math.round(260 * asp); cv.setAttribute('aria-label', 'Logo placement pad'); el.appendChild(cv);
+      const live = { x: d.x, y: d.y, scale: d.scale, rotation: d.rotation }; drawPad(cv, def, d, live);
+      let drag = false; const at = (e) => { const r = cv.getBoundingClientRect(); live.x = Math.max(0.02, Math.min(0.98, (e.clientX - r.left) / r.width)); live.y = Math.max(0.02, Math.min(0.98, (e.clientY - r.top) / r.height)); drawPad(cv, def, d, live); };
+      cv.addEventListener('pointerdown', (e) => { drag = true; try { cv.setPointerCapture(e.pointerId); } catch (_) { } at(e); e.preventDefault(); });
+      cv.addEventListener('pointermove', (e) => { if (drag) at(e); });
+      const end = (e) => { if (!drag) return; drag = false; DC.updateDecal(def.id, PS.sel, { x: live.x, y: live.y, snap: true }); commitLook(def); ctx.rerender(); };
+      cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
+      const slider = (label, min, max, step, val, fmt, set) => { const row = mk('label', 'cs-row'); row.appendChild(mk('span', '', label)); const r = mk('input'); r.type = 'range'; r.min = min; r.max = max; r.step = step; r.value = val; r.setAttribute('aria-label', label);
+        const o = mk('output', '', fmt(val)); r.addEventListener('input', () => { o.textContent = fmt(+r.value); set(+r.value, true); }); r.addEventListener('change', () => { set(+r.value, false); }); row.appendChild(r); row.appendChild(o); el.appendChild(row); };
+      slider('SIZE', DC.SCALE_MIN || 0.4, 3, 0.05, d.scale, (x) => (+x).toFixed(2) + 'x', (x, liveOnly) => { live.scale = x; drawPad(cv, def, d, live); if (!liveOnly) { DC.updateDecal(def.id, PS.sel, { scale: x }); commitLook(def); } });
+      slider('TURN', -180, 180, 5, d.rotation, (x) => x + '°', (x, liveOnly) => { live.rotation = x; drawPad(cv, def, d, live); if (!liveOnly) { DC.updateDecal(def.id, PS.sel, { rotation: x }); commitLook(def); } });
+      if (DC.logoById.get(d.id).text) { const t2 = mk('input', 'cs-txt'); t2.type = 'text'; t2.maxLength = 8; t2.value = d.text || ''; t2.setAttribute('aria-label', 'Decal text'); t2.addEventListener('change', () => { if (DC.updateDecal(def.id, PS.sel, { text: t2.value })) commitLook(def); ctx.rerender(); }); el.appendChild(t2); }
+      el.appendChild(mk('div', 'cs-reg-h', 'LOGO COLOUR'));
+      const sw = mk('div', 'cs-sws'); DC.PALETTE_CLOTH.concat(['#ffffff']).forEach((hex) => { const b = mk('button', 'cs-sw' + (d.colour === hex ? ' on' : '')); b.type = 'button'; b.style.background = hex; b.setAttribute('aria-label', 'Logo colour ' + hex);
+        b.addEventListener('click', () => { PS._colour = hex; DC.updateDecal(def.id, PS.sel, { colour: hex }); commitLook(def); ctx.rerender(); }); sw.appendChild(b); });
+      const lb = mk('label', 'cs-sw custom'), inp = mk('input'); inp.type = 'color'; inp.value = d.colour; lb.appendChild(inp); lb.insertAdjacentHTML('beforeend', '<span>+</span>'); lb.setAttribute('aria-label', 'Custom logo colour');
+      inp.addEventListener('change', () => { PS._colour = inp.value; DC.updateDecal(def.id, PS.sel, { colour: inp.value }); commitLook(def); ctx.rerender(); }); sw.appendChild(lb); el.appendChild(sw);
+      const row = mk('div', 'cs-chips'); const del = mk('button', 'cs-btn cs-reset', 'REMOVE THIS LOGO'); del.type = 'button'; del.addEventListener('click', () => { DC.removeDecal(def.id, PS.sel); PS.sel = Math.max(0, PS.sel - 1); commitLook(def); ctx.rerender(); });
+      const clr = mk('button', 'cs-btn cs-reset', 'CLEAR ALL LOGOS'); clr.type = 'button'; clr.addEventListener('click', () => { DC.clearDecals(def.id); PS.sel = -1; commitLook(def); ctx.rerender(); });
+      el.appendChild(del); el.appendChild(clr);
+    },
+  });
+
   /* ───────────────────────── screen lifecycle ───────────────────────── */
   CS.enter = function () {
     if (!W.DMChars) return; CS.entered = true;
