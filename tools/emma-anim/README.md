@@ -14,3 +14,6 @@ Checks: `verify_fk.py`, `contact_sheet.py` (needs matplotlib), `node mixer_check
 - `write_animation_glb(explicit_all=True)`: every clip carries a rotation track for every skeleton bone.
 - `fix_jump`: Regular_Jump's ~40 deg hip yaw reduced to 20%, neck/head low-passed.
 - Test: `node tools/tests/emma-clip-switch.test.mjs [glb] [three-dir]` (A then B == B from rest, crossfade, explicit tracks).
+
+## Emma_JOTS sculpt (Nov 2026)
+`Emma_Character.glb` rebuilt from the Emma_JOTS_1 Nomad export (same rig, skin weights transferred from the previous build; skin = flat vertex colour, shirt = baked LEAD EDGE map on its own material `Emma_Shirt`, pants = flat 1024 map `Emma_Pants`, per-eye baked textures `Emma_Eye_L/R`, new `Emma_TeethUp_A/B` (Head) + `Emma_TeethLow_A/B` (Jaw), mouth cavity in `Emma_Body`). Animations unchanged (same skeleton, rebuilt byte-identical).

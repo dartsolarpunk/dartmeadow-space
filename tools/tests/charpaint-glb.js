@@ -1,6 +1,6 @@
 // node tools/tests/charpaint-glb.js — the look code against the REAL character GLBs and grooms (three@0.185 headless, no renderer):
 //  * every registry item resolves to exactly one skinned mesh by its mesh regex (Ariel: Shirt001 / Pants_Reach_Pose001; Emma: Emma_Shirt / Emma_Pants), flat items carry a colour
-//  * baked items have UVs and their UV islands are disjoint (shirt vs pants inside Emma's shared cloth atlas) so they recolour independently
+//  * baked items have UVs and their UV islands are disjoint (items that share one atlas key; Emma's shirt and pants each have their own atlas) so they recolour independently
 //  * H.setTint on the real grooms: tinted cluster -> chosen mean colour, others untouched, null restores the groomed colours bit for bit, per-strand variation survives
 // Skips (exit 0) when three@0.185 is not installed.
 'use strict';
@@ -23,7 +23,7 @@ const path = require('path'), { pathToFileURL } = require('url');
     const baked = Object.entries(d.items).filter(([, it]) => it.mode === 'baked');
     if (baked.length > 1) {
       const size = 512, sets = baked.map(([id, it]) => { const set = new Set(); S.root.traverse((o) => { if (o.isSkinnedMesh && new RegExp(it.mesh, 'i').test(o.name)) P.raster(o.geometry.attributes.uv.array, o.geometry.index.array, size, (t) => set.add(t), 0); }); return [id, set]; });
-      for (let i = 0; i < sets.length; i++) for (let j = i + 1; j < sets.length; j++) { let shared = 0; for (const t of sets[i][1]) if (sets[j][1].has(t)) shared++; ok(shared <= 0.002 * Math.min(sets[i][1].size, sets[j][1].size), d.id + ': ' + sets[i][0] + ' and ' + sets[j][0] + ' UV islands are disjoint (' + shared + ' shared of ' + sets[i][1].size + '/' + sets[j][1].size + ')'); ok(sets[i][1].size > 2000, d.id + '.' + sets[i][0] + ' island covers texels (' + sets[i][1].size + ')'); }
+      for (let i = 0; i < sets.length; i++) for (let j = i + 1; j < sets.length; j++) { let shared = 0; for (const t of sets[i][1]) if (sets[j][1].has(t)) shared++; if ((baked[i][1].atlas || baked[i][0]) === (baked[j][1].atlas || baked[j][0])) ok(shared <= 0.002 * Math.min(sets[i][1].size, sets[j][1].size), d.id + ': ' + sets[i][0] + ' and ' + sets[j][0] + ' UV islands are disjoint (' + shared + ' shared of ' + sets[i][1].size + '/' + sets[j][1].size + ')'); ok(sets[i][1].size > 2000, d.id + '.' + sets[i][0] + ' island covers texels (' + sets[i][1].size + ')'); }
     }
     // hair: setTint
     const H = S.H, col = H.mesh.geometry.getAttribute('color'), base = Float32Array.from(col.array), names = H.groupNames();
