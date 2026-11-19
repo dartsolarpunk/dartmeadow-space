@@ -19111,7 +19111,7 @@ function _sunShadowFit(l){
 function _budgetShadowSize(){ const sz=GFX.shadowSize||1024; try{ if(window.DMBudget&&DMBudget.on&&DMBudget.shadowHalf()) return Math.max(512,sz>>1); }catch(e){} return sz; }
 window.addEventListener('dm:budget',()=>{ try{
   const l=TERRAIN&&TERRAIN.sun; if(!l||!l.shadow) return; const sz=_budgetShadowSize();
-  if(l.shadow.mapSize.x!==sz){ l.shadow.mapSize.set(sz,sz); if(l.shadow.map){ try{ l.shadow.map.dispose(); }catch(e){} l.shadow.map=null; } }
+  if(l.shadow.mapSize.x!==sz){ l.shadow.mapSize.set(sz,sz); if(l.shadow.map){ try{ l.shadow.map.dispose(); }catch(e){} l.shadow.map=null; } l.shadow.needsUpdate=true; }   // (perf-mars) needsUpdate: with the cadence on the light a rebuilt map must be redrawn at once
 }catch(e){} });
 function _gfxApplyShadows(sc){
   const on=!!GFX.shadows, size=GFX.shadowSize;
@@ -20014,7 +20014,11 @@ function _taDt(){
 function _taAuto(){ try{ return typeof GFX!=='undefined'&&GFX.preset==='auto'; }catch(e){ return false; } }
 // automatic reductions are Auto-only: the low tier under Auto, or a sustained bad frame time, hands back to the classic shells
 function _taPerfOff(){ if(!_taAuto()||/[?&]trueatmo=1\b/.test(location.search)) return false; if(_TA.slow) return true; try{ return typeof resolvePreset==='function'&&resolvePreset()==='low'; }catch(e){ return false; } }
-function _taHalf(){ try{ return _taAuto()||(GFX.isMobile&&(GFX.preset==='high'||GFX.preset==='ultra')); }catch(e){ return false; } }   // (v150) phones/tablets on High/Ultra: half-res gas, depth-aware composite at full res (Low/Medium unchanged)   // (v130) half-res gas march under Auto on every device; manual presets stay full-res
+function _taHalf(){ try{
+  const q=location.search; if(/[?&]atmohalf=0\b/.test(q)) return false; if(/[?&]atmohalf=1\b/.test(q)) return true;
+  // (perf-mars) phones / tablets on EVERY preset: the gas march at half resolution, composite + water at full resolution (what High / Ultra on a phone already did).  MEASURED headless on Mars (SwiftShader, 640x400):
+  // the air pass (the 'Render Pipeline' draw) costs about as much as the whole scene pass, and Low / Medium ran it at full resolution.  ?atmohalf=0 restores full-res, =1 forces half-res.
+  return _taAuto()||!!GFX.isMobile; }catch(e){ return false; } }   // (v150) phones/tablets on High/Ultra: half-res gas, depth-aware composite at full res (Low/Medium unchanged)   // (v130) half-res gas march under Auto on every device; manual presets stay full-res
 // async WebGPU failure fallback: device loss, and validation/OOM errors raised by the pass itself in its first frames
 function _taGuardBegin(r){
   const dev=r&&r.backend&&r.backend.isWebGPUBackend?r.backend.device:null; if(!dev) return null;
@@ -20505,11 +20509,22 @@ function _pwWorldTick(dt){
     // a texel-snapped box, so it only trails a walking caster by <= 2 frames — and a slow frame no longer pays the whole caster set again
     // (Solenne's cliffside + ground put ~290 k triangles into every sun-shadow pass).
     const dtS=(dt>0&&dt<1)?dt:(1/60); TERRAIN._shDt=TERRAIN._shDt?TERRAIN._shDt*0.9+dtS*0.1:dtS;
-    let every=lowSh?3:(TERRAIN._shDt>0.05?3:(TERRAIN._shDt>0.025?2:1));
+    let every=lowSh?2:(TERRAIN._shDt>0.05?3:(TERRAIN._shDt>0.025?2:1));   // (perf-mars) lowSh 3 -> 2: this cadence now really runs (see below), 3 was written for a switch that never worked
     try{ if(window.DMBudget&&DMBudget.on){ const be=DMBudget.shadowEvery(); if(be>every) every=be; } }catch(e){}   // (v256) ui/dm-budget.js: the frame-budget ladder can ask for a slower shadow cadence on top of the measured one
     if(every===1){ r.shadowMap.autoUpdate=true; TERRAIN._shRef=true; }
     else { r.shadowMap.autoUpdate=false; TERRAIN._shF=((TERRAIN._shF||0)+1)%every; TERRAIN._shRef=TERRAIN._shF===0; if(TERRAIN._shRef) r.shadowMap.needsUpdate=true; }
     TERRAIN._shEvery=every;
+    // (perf-mars) MEASURED headless: three r185's WebGPURenderer has NO renderer.shadowMap.autoUpdate / needsUpdate (those are WebGLRenderer API; the game was setting two dead properties).
+    // ShadowNode.updateBefore reads the LIGHT's shadow.autoUpdate || shadow.needsUpdate, and that stayed true, so the sun's shadow pass (Mars: 42 draws, ~206 k triangles, her 186 k skinned
+    // triangles included) ran on EVERY frame whatever this cadence or the budget ladder's shadow stage asked for (L1 every 2nd .. L4 every 30th).  Drive the light itself, the way
+    // ui/dm-flash.js / dm-lamps.js already do.  ?shadowcad=0 restores the old (every frame) behaviour.
+    try{ const sl=TERRAIN.sun&&TERRAIN.sun.shadow; if(sl&&!/[?&]shadowcad=0\b/.test(location.search)){
+      if(every===1){ sl.autoUpdate=true; }
+      else { sl.autoUpdate=false; if(TERRAIN._shRef||!TERRAIN._shInit){ sl.needsUpdate=true; TERRAIN._shInit=1; } }
+    } }catch(e){}
+    // (perf-mars) which of her skinned pieces cast into that map (ui/dm-lod.js shadow.minExt: phones / tablets skip the small accessories - ~38 k of the ~206 k triangles; the ladder's shadow / skin stage or the
+    // fast guard also drops the scalp cap, ~85 k).  A flag flip: no pipeline rebuild.  ?shadowcast=all restores every caster.
+    try{ if(window.DMLod&&DMLod.applyCasters&&typeof CHAR!=='undefined'&&CHAR&&CHAR.root){ const B=window.DMBudget; DMLod.applyCasters(CHAR.root,(B&&B.on&&(B.lvl('shadow')>=1||B.lvl('skin')>=1||B.fast()>=1))?1:0); } }catch(e){}
   }
   // the sun's shadow box stays centred on her / the board, lit from where the sun is now
   const sun=TERRAIN.sun;
@@ -20517,7 +20532,9 @@ function _pwWorldTick(dt){
     // (shadow 2) the shadow direction follows the sun down to ~3 deg and a little below (clamped to 3.4 deg): it used to switch to a fixed high fallback light once the sun was under ~3 deg, i.e. through all of dusk her shadow pointed the wrong way / was short and faint
     let d=_pwKeyDir(), up=null; const fy=f.y||0;   // (v334) the key star: the same direction as the sky, the air and DMLight
     if(d&&d.y>-0.08){ if(d.y>0.05) up=d; else { const sv=TERRAIN._shDir||(TERRAIN._shDir=new THREE.Vector3()); const hl=Math.hypot(d.x,d.z)||1, k=Math.sqrt(1-0.06*0.06)/hl; sv.set(d.x*k,0.06,d.z*k); up=sv; } }
-    if(!(up&&window.DMPolish&&sun.castShadow&&DMPolish.fitSun(sun,up,px,fy,pz,mode==='walk'))){   // texel-snapped, tightened on foot (ui/dm-polish.js)
+    // (perf-mars) on a frame that keeps last frame's shadow map the box is NOT moved (a stale depth map sampled through a moved light camera slides every shadow by the box's step)
+    const _fitNow=!sun.castShadow||(TERRAIN._shEvery||1)<=1||TERRAIN._shRef||/[?&]shadowcad=0\b/.test(location.search);
+    if(_fitNow&&!(up&&window.DMPolish&&sun.castShadow&&DMPolish.fitSun(sun,up,px,fy,pz,mode==='walk'))){   // texel-snapped, tightened on foot (ui/dm-polish.js)
       if(up) sun.position.set(px+up.x*160,fy+up.y*160,pz+up.z*160); else sun.position.set(px+80,fy+120,pz+40);
       sun.target.position.set(px,fy,pz); sun.target.updateMatrixWorld();
     }
@@ -25904,7 +25921,7 @@ function _groundField(body,site,pal){
 // per-frame time budget.
 function SkyGround(scene,F,pal,o){
   o=o||{};
-  this.F=F; this.pal=pal; this.SEG=32; this.MIN=44; this.K=o.k||1.8;
+  this.F=F; this.pal=pal; this.SEG=32; this.MIN=44; this.K0=o.k||1.8; this.K=this.K0;
   this.TOP=180/4/ATMO_DEG_PER_UNIT;      // 45° tiles
   this.budget=o.budget||(GFX.isMobile?4:7);
   this.group=new THREE.Group(); this.group.name='JOTS_SkyGround'; scene.add(this.group);
@@ -26105,6 +26122,7 @@ SkyGround.prototype.update=function(cam,budgetMs){
   }
   this.roots.forEach(this._rootKeep,this);
   this.queue.length=0; this._rk=(window.DMLod&&DMLod.on)?DMLod.reliefK():0;
+  this.K=this.K0*((window.DMLod&&DMLod.on&&DMLod.splitK)?DMLod.splitK():1);   // (perf-mars) fewer, larger ground tiles on a phone / tablet (ui/dm-lod.js terrain.splitK x ladder ground reach): ~30 % fewer tiles = triangles + draw calls
   this.reliefSeen=this._mxH||0; this._mxH=0;   // (shield-lod) the tallest tile height seen in the last visit: the horizon reach adds that peak's own horizon
   this._cpos=c; this.roots.forEach(this._visitRoot,this); this._cpos=null;
   // (v151) the ground under whoever is driving comes first: every tile on the chain from the root down to her feet (and its
@@ -26269,6 +26287,23 @@ SkyGround.prototype._build=function(n){
     nor[k*3]=nx; nor[k*3+1]=ny; nor[k*3+2]=nz;
     const cc=this._colourAt(n.x0+q*step,n.z0+r*step,sea?raw[b]:h,ny,sea,copt);
     col[k*3]=cc.r; col[k*3+1]=cc.g; col[k*3+2]=cc.b;
+  }
+  // (perf-mars, far-band smoothing) on a coarse tile (a vertex every 5.5-44 m) the biome colour is a threshold on height / slope: sampled that sparsely it aliases into hard stair-steps along the
+  // grid ('voxel-like rows' near the horizon; Mars' escarpment / plateau colours).  Low-pass the colour grid (DMLod.blurRGB: 1-2 passes of [1 2 1]x[1 2 1]) over a one-cell border so the
+  // tile edges still agree with their neighbours; fine tiles (< 5.5 m) are untouched.  ?farsmooth=0 turns it off.  Geometry and normals are unchanged (no crack risk).
+  const bpass=(window.DMLod&&DMLod.blurPasses)?DMLod.blurPasses(step):0;
+  if(bpass>0){
+    const GC=S1+2, ext=sb.ext||(sb.ext=new Float32Array(GC*GC*3)), etmp=sb.extT||(sb.extT=new Float32Array(GC*GC*3));
+    for(let r=-1;r<=S1;r++) for(let q=-1;q<=S1;q++){
+      const e=((r+1)*GC+(q+1))*3;
+      if(r>=0&&q>=0&&r<S1&&q<S1){ const k=(r*S1+q)*3; ext[e]=col[k]; ext[e+1]=col[k+1]; ext[e+2]=col[k+2]; continue; }
+      const b=(r+1)*G+(q+1), h=hb[b], sea=tSea&&wet[b]===1;
+      let nx=hb[(r+1)*G+Math.max(0,q)]-hb[(r+1)*G+Math.min(G-1,q+2)], nz=hb[Math.max(0,r)*G+q+1]-hb[Math.min(G-1,r+2)*G+q+1], ny=2*step; if(sea){ nx=0; nz=0; }
+      const L=Math.hypot(nx,ny,nz)||1, cc=this._colourAt(n.x0+q*step,n.z0+r*step,sea?raw[b]:h,ny/L,sea,copt);
+      ext[e]=cc.r; ext[e+1]=cc.g; ext[e+2]=cc.b;
+    }
+    DMLod.core.blurRGB(ext,GC,bpass,etmp);
+    for(let r=0;r<S1;r++) for(let q=0;q<S1;q++){ const e=((r+1)*GC+(q+1))*3, k=(r*S1+q)*3; col[k]=ext[e]; col[k+1]=ext[e+1]; col[k+2]=ext[e+2]; }
   }
   const drop=Math.max(4,step*2);
   // Geomorph: what this tile looks like at its parent's resolution — the
