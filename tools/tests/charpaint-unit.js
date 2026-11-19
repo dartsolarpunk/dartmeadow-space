@@ -89,4 +89,40 @@ for (const d of C.list()) {
   ok(/if \(!t \|\| !\(m > 1e-6\)\) \{ col\[o\] = colBase\[o\]/.test(s), 'unlisted / null groups restore the groomed colour');
   ok(/colAttr\.needsUpdate = true/.test(s), 'one upload per change');
 }
+// ── shirt / pants: DEFAULT texture mode vs SOLID colour mode (fake three, no GPU): colour override replaces the texture, default restores it, revert is exact
+{
+  class Col { constructor(h) { this.v = h == null ? 0xffffff : +h; } set(h) { this.v = +h; return this; } copy(o) { this.v = o.v; return this; } clone() { return new Col(this.v); } }
+  const fakeTHREE = { Color: class extends Col { constructor(h) { super(typeof h === 'string' ? parseInt(h.slice(1), 16) : h); } }, CanvasTexture: class { constructor(c) { this.image = c; this.version = 0; } set needsUpdate(v) { } dispose() { this.disposed = true; } }, SRGBColorSpace: 'srgb' };
+  const doc = { createElement() { const cv = { width: 0, height: 0, _d: null, getContext() { return { drawImage(img) { cv._d = Uint8ClampedArray.from(img.data); }, getImageData() { return { data: cv._d || (cv._d = new Uint8ClampedArray(cv.width * cv.height * 4)) }; }, putImageData() { }, fillRect() { } }; } }; return cv; } };
+  const N = 16, img = { width: N, height: N, data: new Uint8Array(N * N * 4) };   // a "baked" texture: left half bright with a gradient (detail), right half dark
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) { const o = (y * N + x) * 4, v = x < 8 ? 120 + (y % 2) * 60 : 20; img.data[o] = v; img.data[o + 1] = v; img.data[o + 2] = v; img.data[o + 3] = 255; }
+  const mkMat = () => { const m = { map: { image: img, colorSpace: 'srgb', wrapS: 1, wrapT: 1, anisotropy: 1 }, color: new Col(0xffffff), clone() { const c = Object.assign({}, this); c.color = this.color.clone(); return c; } }; return m; };
+  const quad = (u0, u1) => ({ attributes: { uv: { array: new Float32Array([u0, 0, u1, 0, u0, 1, u1, 0, u1, 1, u0, 1]) } }, index: null });   // two triangles covering [u0,u1] x [0,1]
+  const mkRoot = (mat, flatItems) => { const meshes = [{ isMesh: true, name: 'Emma_Shirt', geometry: quad(0, 0.5), material: mat }, { isMesh: true, name: 'Emma_Pants', geometry: quad(0.5, 1), material: mat }]; return { userData: {}, traverse(cb) { meshes.forEach(cb); }, meshes }; };
+  const def = (mode) => ({ items: { shirt: { label: 'Shirt', mesh: '^Emma_Shirt$', mode: 'baked', atlas: 'cloth', colourMode: mode, defaultColor: '#212020' }, pants: { label: 'Pants', mesh: '^Emma_Pants$', mode: 'baked', atlas: 'cloth', colourMode: mode, defaultColor: '#212020' } } });
+  const pxOf = (R) => R.userData.dmPaint.atlases.get('cloth').canvas._d;
+  // default: nothing chosen -> the shipped material and texture are untouched, no canvas at all
+  { const mat = mkMat(), R = mkRoot(mat); P.apply(R, def('solid'), { colors: {}, decals: [] }, fakeTHREE, { document: doc }); ok(R.meshes[0].material === mat && R.meshes[1].material === mat && !R.userData.dmPaint.atlases.size, 'default texture mode: the shipped material + texture are untouched');
+    ok(P.hasDefaultTexture(def('solid').items.shirt) && !P.hasDefaultTexture({ mode: 'flat' }) && P.hasDefaultTexture({ mode: 'flat', texture: true }), 'hasDefaultTexture: baked or texture:true'); }
+  // solid: the colour replaces the texture inside the shirt's islands (no detail), the pants keep their baked texels
+  { const mat = mkMat(), R = mkRoot(mat); P.apply(R, def('solid'), { colors: { shirt: '#c0262d' }, decals: [] }, fakeTHREE, { document: doc }); const d = pxOf(R);
+    const at = (x, y) => { const o = (y * N + x) * 4; return [d[o], d[o + 1], d[o + 2]]; };
+    ok(R.meshes[0].material !== mat && R.meshes[0].material.map !== mat.map && R.meshes[0].material === R.meshes[1].material, 'a colour swaps in one cloned material carrying the new map; the shipped material is kept for revert');
+    ok([at(1, 0), at(2, 1), at(5, 0), at(6, 1)].every((c) => c[0] === 192 && c[1] === 38 && c[2] === 45), 'solid: every shirt texel is exactly the chosen colour (the baked pattern is replaced)');
+    ok(at(12, 0)[0] === 20 && at(14, 1)[0] === 20, 'the pants (not recoloured) keep the baked texture');
+    P.revert(R); ok(R.meshes[0].material === mat && R.meshes[1].material === mat && mat.map.image === img, 'DEFAULT (revert / no colour): the shipped material + texture come back exactly'); }
+  // tint: the colour replaces the hue and keeps the baked light / dark detail
+  { const mat = mkMat(), R = mkRoot(mat); P.apply(R, def('tint'), { colors: { shirt: '#c0262d' }, decals: [] }, fakeTHREE, { document: doc }); const d = pxOf(R), o1 = 0, o2 = (1 * N + 0) * 4;
+    ok(d[o1] !== d[o2] && d[o2] > d[o1], 'tint: the baked light / dark detail survives inside the island'); }
+  // the colour of one item does not touch the other; both can be set
+  { const mat = mkMat(), R = mkRoot(mat); P.apply(R, def('solid'), { colors: { shirt: '#c0262d', pants: '#3f8fd2' }, decals: [] }, fakeTHREE, { document: doc }); const d = pxOf(R), px = (x) => [d[x * 4], d[x * 4 + 1], d[x * 4 + 2]].join();
+    ok(px(1) === '192,38,45' && px(12) === '63,143,210', 'shirt and pants take their own colours independently'); }
+  // a flat item whose material carries a map (texture:true): colour nulls the map, DEFAULT restores it; without the flag nothing about the map changes
+  { const tex = { id: 'tex' }, mat = { color: new Col(0xffffff), map: tex }, mesh = { isMesh: true, name: 'Shirt', geometry: {}, material: mat }, R = { userData: {}, traverse(cb) { cb(mesh); } };
+    const d1 = { items: { shirt: { label: 'S', mesh: '^Shirt$', mode: 'flat', texture: true, defaultColor: '#292929' } } };
+    P.apply(R, d1, { colors: { shirt: '#c0262d' }, decals: [] }, fakeTHREE); ok(mat.map === null && mat.color.v === 0xc0262d, 'texture:true flat item: a colour replaces the texture');
+    P.apply(R, d1, { colors: {}, decals: [] }, fakeTHREE); ok(mat.map === tex && mat.color.v === 0xffffff, 'DEFAULT: the texture and the colour factor come back');
+    P.apply(R, d1, { colors: { shirt: '#c0262d' }, decals: [] }, fakeTHREE); P.dispose(R); ok(mat.map === tex && mat.color.v === 0xffffff, 'dispose restores the texture');
+    const d2 = { items: { shirt: { label: 'S', mesh: '^Shirt$', mode: 'flat', defaultColor: '#292929' } } }; P.apply(R, d2, { colors: { shirt: '#c0262d' }, decals: [] }, fakeTHREE); ok(mat.map === tex && mat.color.v === 0xc0262d, 'a flat item without texture:true only changes the colour factor (existing behaviour)'); P.dispose(R); }
+}
 console.log('charpaint-unit OK (' + n + ' checks)');

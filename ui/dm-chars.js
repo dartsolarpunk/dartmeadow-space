@@ -26,7 +26,9 @@
      decalFlip               true when the displayed front is the rest pose's -z (Emma); logo views are then mirrored in the rest pose
      items                   tintable clothing: { id:{label, mesh:'<regex on the mesh node name>', mode:'flat'|'baked', atlas:<shared-map key, baked only>, defaultColor,
                              decals:'planar'|'uv' (planar = the mesh has no UVs: a 4-view atlas is generated; uv = use its UV islands),
-                             spots:{ front|back|left|right:{label?, base:<logo size in metres>, snaps:[{id,label,x,y}]} } } }
+                             spots:{ front|back|left|right:{label?, base:<logo size in metres>, snaps:[{id,label,x,y}]} },
+                             texture:true = a flat item whose material carries a shipped map (baked items always have one): the DEFAULT swatch keeps / restores it, a colour overrides it,
+                             colourMode:'solid'|'tint' = how a colour meets the shipped texture: solid replaces it with a flat colour, tint keeps the baked light / dark detail (default tint) } }
      accessories             false = skip safely: necklace (DMCharm), glassesLed (DMFlash), cloth (Ariel's garment cloth solver)
      materialFix             'meshy' = apply the Meshy-export material fixes (metalness default, skin emissive floor); omit for proper PBR materials
    The logo editor (decals) is driven by items[*].spots and the LOGOS list below. */
@@ -74,12 +76,12 @@
       // shirt and pants share ONE baked cloth atlas: the item's UV islands are recoloured inside a canvas copy of it (detail kept)
       items: {
         // decals are projected into the same atlas (her UV islands are used as they are)
-        shirt: { label: 'Shirt', mesh: '^Emma_Shirt$', mode: 'baked', atlas: 'cloth', defaultColor: '#212020', decals: 'uv', spots: {
+        shirt: { label: 'Shirt', mesh: '^Emma_Shirt$', mode: 'baked', atlas: 'cloth', colourMode: 'solid', defaultColor: '#212020', decals: 'uv', spots: {
           front: { base: 0.14, snaps: [{ id: 'chest', label: 'Chest', x: 0.5, y: 0.3 }, { id: 'chestL', label: 'Chest left', x: 0.7, y: 0.3 }, { id: 'chestR', label: 'Chest right', x: 0.3, y: 0.3 }, { id: 'belly', label: 'Belly', x: 0.5, y: 0.62 }] },
           back: { base: 0.18, snaps: [{ id: 'upper', label: 'Upper back', x: 0.5, y: 0.3 }, { id: 'centre', label: 'Centre', x: 0.5, y: 0.55 }] },
           left: { label: 'Left sleeve', base: 0.06, snaps: [{ id: 'sleeve', label: 'Sleeve', x: 0.4, y: 0.2 }] },
           right: { label: 'Right sleeve', base: 0.06, snaps: [{ id: 'sleeve', label: 'Sleeve', x: 0.4, y: 0.2 }] } } },
-        pants: { label: 'Pants', mesh: '^Emma_Pants$', mode: 'baked', atlas: 'cloth', defaultColor: '#212020', decals: 'uv', spots: {
+        pants: { label: 'Pants', mesh: '^Emma_Pants$', mode: 'baked', atlas: 'cloth', colourMode: 'solid', defaultColor: '#212020', decals: 'uv', spots: {
           front: { base: 0.1, snaps: [{ id: 'thighL', label: 'Left thigh', x: 0.72, y: 0.3 }, { id: 'thighR', label: 'Right thigh', x: 0.28, y: 0.3 }, { id: 'shinL', label: 'Left shin', x: 0.72, y: 0.65 }, { id: 'shinR', label: 'Right shin', x: 0.28, y: 0.65 }] },
           back: { base: 0.12, snaps: [{ id: 'pocketL', label: 'Left pocket', x: 0.28, y: 0.14 }, { id: 'pocketR', label: 'Right pocket', x: 0.72, y: 0.14 }] },
           left: { label: 'Left side', base: 0.09, snaps: [{ id: 'thigh', label: 'Thigh', x: 0.5, y: 0.3 }, { id: 'shin', label: 'Shin', x: 0.5, y: 0.65 }] },
@@ -109,7 +111,7 @@
     if (!d.hair || !s(d.hair.url)) p.push('hair.url');
     if (!d.accessories || typeof d.accessories !== 'object') p.push('accessories');
     if (d.hair && d.hair.groups) { if (!Array.isArray(d.hair.groups) || d.hair.groups.some((g) => !g || !/^[a-z]\w*$/.test(g.id || '') || !g.label || !Array.isArray(g.clusters) || !g.clusters.length)) p.push('hair.groups'); }
-    if (d.items) for (const id of Object.keys(d.items)) { const it = d.items[id]; if (!/^[a-z]\w*$/.test(id) || !it || !it.label || typeof it.mesh !== 'string' || (it.mode !== 'flat' && it.mode !== 'baked') || !isHex(it.defaultColor) || (it.mode === 'baked' && !it.atlas) || (it.spots && !spotsValid(it))) p.push('items.' + id); else { try { new RegExp(it.mesh); } catch (e) { p.push('items.' + id + '.mesh'); } } }
+    if (d.items) for (const id of Object.keys(d.items)) { const it = d.items[id]; if (!/^[a-z]\w*$/.test(id) || !it || !it.label || typeof it.mesh !== 'string' || (it.mode !== 'flat' && it.mode !== 'baked') || !isHex(it.defaultColor) || (it.mode === 'baked' && !it.atlas) || (it.colourMode != null && it.colourMode !== 'solid' && it.colourMode !== 'tint') || (it.texture != null && typeof it.texture !== 'boolean') || (it.spots && !spotsValid(it))) p.push('items.' + id); else { try { new RegExp(it.mesh); } catch (e) { p.push('items.' + id + '.mesh'); } } }
     return p;
   };
   function register(def) {
@@ -141,7 +143,7 @@
   function regions(def) {
     const out = [];
     for (const g of (def && def.hair && def.hair.groups) || []) out.push({ id: 'hair.' + g.id, kind: 'hair', label: g.label, clusters: g.clusters });
-    for (const id of Object.keys((def && def.items) || {})) out.push({ id, kind: 'item', label: def.items[id].label, mode: def.items[id].mode, defaultColor: def.items[id].defaultColor });
+    for (const id of Object.keys((def && def.items) || {})) out.push({ id, kind: 'item', label: def.items[id].label, mode: def.items[id].mode, defaultColor: def.items[id].defaultColor, texture: def.items[id].mode === 'baked' || def.items[id].texture === true });
     return out;
   }
   const regionIds = (def) => regions(def).map((r) => r.id);

@@ -91,4 +91,18 @@ ok(/_cd&&_cd\.fellBack/.test(html), 'a not-ready pick falls back to Ariel with a
 ok(/_acc\.necklace!==false/.test(html) && /_acc\.glassesLed!==false/.test(html) && /_cdef\.accessories\.cloth!==false/.test(html), 'necklace / glasses LED / cloth are gated by the registry');
 ok(/_arielMats=!_cdef\|\|_cdef\.materialFix==='meshy'/.test(html) && C.get('ariel').materialFix === 'meshy' && !C.get('emma').materialFix, "Ariel's material fixes are Ariel-only");
 { const s = rd('ui/dm-charselect.js'); ok(!/['"]ariel['"]|['"]emma['"]/.test(s.replace(/\/\*[\s\S]*?\*\//g, '')), 'the select UI never names a character (registry-driven)'); }
+// ── default texture / solid colour model (shirt + pants)
+{
+  const E = C.get('emma'), A = C.get('ariel'), R = (d, id) => C.regions(d).find((r) => r.id === id);
+  ok(R(E, 'shirt').texture === true && R(E, 'pants').texture === true, 'Emma shirt + pants declare a shipped texture (DEFAULT TEXTURE swatch)');
+  ok(R(A, 'shirt').texture === false && R(A, 'pants').texture === false && R(E, 'hair.main').texture === undefined, 'Ariel garments are plain colours; hair has no texture mode');
+  ok(E.items.shirt.colourMode === 'solid' && E.items.pants.colourMode === 'solid', 'Emma colours replace the texture (solid)');
+  const bad = JSON.parse(JSON.stringify(E)); bad.id = 'badmode'; bad.items.shirt.colourMode = 'glitter'; ok(C.problems(bad).includes('items.shirt'), 'an unknown colourMode fails registry validation');
+  const bad2 = JSON.parse(JSON.stringify(A)); bad2.id = 'badtex'; bad2.items.shirt.texture = 'yes'; ok(C.problems(bad2).includes('items.shirt'), 'texture must be a boolean');
+  const good = JSON.parse(JSON.stringify(A)); good.id = 'goodtex'; good.items.shirt.texture = true; good.items.shirt.colourMode = 'tint'; ok(C.problems(good).length === 0 && C.regions(good).find((r) => r.id === 'shirt').texture, 'a flat item may declare texture:true + colourMode');
+  // DEFAULT = no colour stored (the swatch clears the colour), a colour = stored, both survive a save round trip
+  C._reset(mem2()); C.setColor('emma', 'shirt', '#c0262d'); ok(C.look('emma').colors.shirt === '#c0262d', 'a colour overrides the texture'); C.setColor('emma', 'shirt', null); ok(!('shirt' in C.look('emma').colors) && C.isDefaultLook(C.look('emma')), 'DEFAULT TEXTURE clears the colour (back to the shipped texture)');
+  function mem2() { const o = {}; return { getItem: (k) => (k in o ? o[k] : null), setItem: (k, v) => { o[k] = String(v); } }; }
+}
+ok(/<script src="ui\/dm-decalflow\.js\?v=\d+" defer><\/script>/.test(html) && html.indexOf('ui/dm-decalflow.js') < html.indexOf('ui/dm-charselect.js'), 'the staged-logo logic loads before the select UI');
 console.log('chars-unit OK (' + n + ' checks)');

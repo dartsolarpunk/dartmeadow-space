@@ -114,11 +114,13 @@
 
   /* ───────── the look, applied ───────── */
   // state lives on root.userData.dmPaint so apply() is idempotent: it first returns everything to the shipped look, then paints what the look asks for
-  function stateOf(rootObj) { return rootObj.userData.dmPaint || (rootObj.userData.dmPaint = { flat: new Map(), atlases: new Map(), meshMats: new Map(), geoSwap: new Map() }); }
+  function stateOf(rootObj) { return rootObj.userData.dmPaint || (rootObj.userData.dmPaint = { flat: new Map(), flatMap: new Map(), atlases: new Map(), meshMats: new Map(), geoSwap: new Map() }); }
   function revert(rootObj) {
     const S = rootObj.userData && rootObj.userData.dmPaint; if (!S) return;
     for (const [m, c] of S.flat) { try { m.color.copy(c); m.needsUpdate = true; } catch (e) { } }
     S.flat.clear();
+    for (const [m, t] of S.flatMap) { try { m.map = t; m.needsUpdate = true; } catch (e) { } }
+    S.flatMap.clear();
     for (const [mesh, orig] of S.meshMats) { try { const cur = mesh.material; mesh.material = orig; if (cur && cur !== orig && cur.dispose) cur.dispose(); } catch (e) { } }
     S.meshMats.clear();
     for (const [mesh, orig] of S.geoSwap) { try { const cur = mesh.geometry; mesh.geometry = orig; if (cur && cur !== orig) cur.dispose(); } catch (e) { } }
@@ -126,6 +128,10 @@
     for (const [, A] of S.atlases) { try { A.tex && A.tex.dispose(); } catch (e) { } }
     S.atlases.clear();
   }
+  // an item with a shipped texture (baked into a shared atlas, or a plain item whose material carries a map): the DEFAULT swatch brings the texture back, a colour swatch overrides it
+  const hasDefaultTexture = (it) => !!it && (it.mode === 'baked' || it.texture === true);
+  // how a chosen colour meets that texture: 'solid' = replaces it (flat colour), 'tint' = replaces the base hue and keeps the baked light / dark detail
+  const colourModeOf = (it) => (it && it.colourMode === 'tint' ? 'tint' : it && it.colourMode === 'solid' ? 'solid' : 'tint');
   function lookColor(look, id) { const c = look && look.colors && look.colors[id]; return c && /^#[0-9a-f]{6}$/i.test(c) ? c : null; }
 
   function apply(rootObj, def, look, THREE, opts) {
@@ -139,7 +145,9 @@
         if (decals.length && it.decals === 'planar') { try { paintPlanar(rootObj, id, it, meshes, decals, hex, THREE, S, opts); } catch (e) { try { console.warn('[charpaint] planar', id, e); } catch (_) { } } continue; }
         if (!hex) continue;
         const col = new THREE.Color(hex);   // sRGB hex -> the working colour space
-        for (const mesh of meshes) for (const m of matsOf(mesh)) { if (!m.color) continue; if (!S.flat.has(m)) S.flat.set(m, m.color.clone()); m.color.copy(col); m.needsUpdate = true; }
+        for (const mesh of meshes) for (const m of matsOf(mesh)) { if (!m.color) continue; if (!S.flat.has(m)) S.flat.set(m, m.color.clone()); m.color.copy(col);
+          if (hasDefaultTexture(it) && m.map) { if (!S.flatMap.has(m)) S.flatMap.set(m, m.map); m.map = null; }   // solid colour mode: the colour replaces the shipped texture (DEFAULT brings it back)
+          m.needsUpdate = true; }
       } else if (it.mode === 'baked') {
         (atlasGroups[it.atlas || id] = atlasGroups[it.atlas || id] || []).push({ id, it, meshes, hex, decals });
       }
@@ -195,6 +203,26 @@
   function itemBox(rootObj, item, THREE, flip) { const box = emptyBox(); itemMeshes(rootObj, item).forEach((m) => growBox(box, restOf(rootObj, m, m.geometry, THREE, flip).pos)); return box.minx > box.maxx ? null : { box, unit: unitOf(rootObj, THREE) }; }
   const sRGBTex = (THREE, cv, ref) => { const t = new THREE.CanvasTexture(cv); t.flipY = false; t.colorSpace = (ref && ref.colorSpace) || THREE.SRGBColorSpace; t.anisotropy = (ref && ref.anisotropy) || 4; t.channel = (ref && ref.channel) || 0; t.needsUpdate = true; return t; };
 
+  // the garment's outline in one view for the placement pad: triangles facing that view as u,v (0..1, same frame as a decal's x,y), at most `max` of them.
+  // I = {pos,nrm,index} from restOf, box = the garment's box.  Pure given the arrays.
+  function silhouetteTris(I, box, key, max) {
+    const R = planeRange(box, key), f = FR[key], idx = I.index, nT = idx ? idx.length / 3 : I.pos.length / 9, out = [], step = Math.max(1, Math.ceil(nT / (max || 6000)));
+    for (let t = 0; t < nT; t += step) {
+      const a = idx ? idx[t * 3] : t * 3, b = idx ? idx[t * 3 + 1] : t * 3 + 1, c = idx ? idx[t * 3 + 2] : t * 3 + 2;
+      const nx = I.nrm[a * 3] + I.nrm[b * 3] + I.nrm[c * 3], ny = I.nrm[a * 3 + 1] + I.nrm[b * 3 + 1] + I.nrm[c * 3 + 1], nz = I.nrm[a * 3 + 2] + I.nrm[b * 3 + 2] + I.nrm[c * 3 + 2], nl = Math.hypot(nx, ny, nz) || 1;
+      if ((nx * f.n[0] + ny * f.n[1] + nz * f.n[2]) / nl < 0.05) continue;
+      for (const q of [a, b, c]) { const uv = planeUV(R, I.pos[q * 3], I.pos[q * 3 + 1], I.pos[q * 3 + 2]); out.push(uv[0], uv[1]); }
+    }
+    return new Float32Array(out);
+  }
+  // the pad's outline for an item: {box, unit, views:{key:Float32Array(u,v ...)}}; one rest-pose read, cached by the caller
+  function itemOutline(rootObj, item, THREE, flip) {
+    const ms = itemMeshes(rootObj, item), infos = ms.map((m) => restOf(rootObj, m, m.geometry, THREE, flip)), box = emptyBox(); infos.forEach((I) => growBox(box, I.pos));
+    if (box.minx > box.maxx) return null; const views = {};
+    for (const key of Object.keys(item.spots || {})) { const parts = infos.map((I) => silhouetteTris(I, box, key, Math.ceil(6000 / infos.length))); const n = parts.reduce((a, p) => a + p.length, 0), all = new Float32Array(n); let o = 0; parts.forEach((p) => { all.set(p, o); o += p.length; }); views[key] = all; }
+    return { box, unit: unitOf(rootObj, THREE), views };
+  }
+
   // a flat-colour item with no UVs: planar atlas = garment colour + logos
   function paintPlanar(rootObj, id, it, meshes, decals, hex, THREE, S, opts) {
     const flip = !!opts.flip;
@@ -232,8 +260,8 @@
       }
       let n = 0, sum = 0; const seen = new Uint8Array(size * size), list = [];
       for (const t of texels) { if (seen[t]) continue; seen[t] = 1; list.push(t); sum += (0.299 * px[t * 4] + 0.587 * px[t * 4 + 1] + 0.114 * px[t * 4 + 2]) / 255; n++; }
-      if (!n) continue; const ref = sum / n;
-      for (const t of list) { const o = t * 4, c = transfer(px[o], px[o + 1], px[o + 2], ref, target); px[o] = c[0]; px[o + 1] = c[1]; px[o + 2] = c[2]; }
+      if (!n) continue; const ref = sum / n, solid = colourModeOf(gi.it) === 'solid';   // 'solid': the baked texture is replaced by the colour; 'tint': the colour replaces the base hue and the baked light / dark detail stays
+      for (const t of list) { const o = t * 4; if (solid) { px[o] = target[0]; px[o + 1] = target[1]; px[o + 2] = target[2]; continue; } const c = transfer(px[o], px[o + 1], px[o + 2], ref, target); px[o] = c[0]; px[o + 1] = c[1]; px[o + 2] = c[2]; }
     }
     for (const gi of group) {   // decals, after the colour: Emma's islands are used as they are
       if (!gi.decals || !gi.decals.length) continue; const infos = []; const box = emptyBox();
@@ -261,6 +289,6 @@
     revert(rootObj); if (rootObj && rootObj.userData) delete rootObj.userData.dmPaint;
   }
 
-  const core = { FR, emptyBox, growBox, planeRange, planeUV, viewOf, maskAlpha, composite, s2l, l2s, hexToRgb, hexToLinear, lum709, raster, transfer, hairTints, ATLAS };
-  return { api: { apply, revert, dispose, applyHair, hairTints, core, ...core, _impl: { restOf, planarize, unitOf, itemBox } } };
+  const core = { silhouetteTris, hasDefaultTexture, colourModeOf, FR, emptyBox, growBox, planeRange, planeUV, viewOf, maskAlpha, composite, s2l, l2s, hexToRgb, hexToLinear, lum709, raster, transfer, hairTints, ATLAS };
+  return { api: { apply, revert, dispose, applyHair, hairTints, core, ...core, _impl: { restOf, planarize, unitOf, itemBox, itemOutline } } };
 });
