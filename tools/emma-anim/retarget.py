@@ -243,7 +243,7 @@ def ground_fix(SA, SB, Wa, hips_a, rot_b, hips_b, wa, k, Fm, tg, pA, pB):
     d = ya - yb                                   # world-up correction
     return np.outer(d, np.linalg.inv(pB[:3,:3]) @ up_b)
 
-def write_animation_glb(out, SB, dst_glb, outpath, rot_tol_deg=0.05, pos_tol=1e-4, keep_mesh=False, extra_extras=None):
+def write_animation_glb(out, SB, dst_glb, outpath, rot_tol_deg=0.05, pos_tol=1e-4, keep_mesh=False, extra_extras=None, explicit_all=True):
     """skeleton (nodes + skin) copied from dst GLB, meshes dropped; animations written with reduced tracks"""
     B = GLB(dst_glb); j = B.j
     nodes = json.loads(json.dumps(j['nodes']))
@@ -269,13 +269,21 @@ def write_animation_glb(out, SB, dst_glb, outpath, rot_tol_deg=0.05, pos_tol=1e-
     if ibm is not None: skin['inverseBindMatrices'] = bb.add(ibm,'MAT4')
     gj['skins'] = [skin]
     nid = {nodes[o].get('name'): remap[o] for o in remap}
+    skin_names = {nodes[o].get('name') for o in sk['joints']}
     rtol = np.radians(rot_tol_deg); stats = {'keys':0}
     for cname, d in out.items():
         samplers=[]; chans=[]
-        for n, q in d['rot'].items():
+        rots = dict(d['rot'])
+        if explicit_all:      # every skeleton bone carries an explicit track (bones without one would keep the previous clip's pose in a viewer / be pulled to the rest pose)
+            for i in SB.order:
+                nm = SB.names[i]
+                if nm in nid and nm in skin_names and nm not in rots and nm != 'Hips': rots[nm] = np.tile(SB.trs[i][1], (len(d['t']), 1))
+        for n, q in rots.items():
+            if n not in skin_names: continue
             rest = SB.trs[SB.idx[n]][1]
-            if np.max(2*np.arccos(np.clip(np.abs(q @ rest),0,1))) < np.radians(0.02): continue   # constant == rest: omit (smaller file, no hair/finger noise)
+            if (not explicit_all) and np.max(2*np.arccos(np.clip(np.abs(q @ rest),0,1))) < np.radians(0.02): continue   # constant == rest: omit
             tr, qr = reduce_track(d['t'], q, rtol, True)
+            if len(tr) < 2: tr = np.array([d['t'][0], d['t'][-1]]); qr = np.stack([qr[0], qr[0]])
             ti = bb.add(tr.reshape(-1,1),'SCALAR',minmax=True); qi = bb.add(qr,'VEC4')
             samplers.append({'input':ti,'output':qi,'interpolation':'LINEAR'}); chans.append({'sampler':len(samplers)-1,'target':{'node':nid[n],'path':'rotation'}}); stats['keys'] += len(tr)
         tr, hp = reduce_track(d['t'], d['hips'], pos_tol, False)

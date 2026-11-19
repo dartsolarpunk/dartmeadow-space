@@ -1,0 +1,13 @@
+{
+ "name": "grip_hand",
+ "version": 1,
+ "doc": "Hand wrapped around a bar / rung / rope: fingers hooked, thumb closing against the index. Same schema as relaxed_hand.json (flex in degrees per joint, curl toward the palm). Constant pose used for the whole hand of every grabbing/climbing clip (no per-frame snapping).",
+ "restPalmDir": [0, -1, 0],
+ "fingers": {
+  "Index":  {"flex": [62, 78, 40], "spread": 0},
+  "Middle": {"flex": [66, 82, 42], "spread": 0},
+  "Ring":   {"flex": [70, 84, 44], "spread": 0},
+  "Pinky":  {"flex": [72, 84, 46], "spread": 0}
+ },
+ "thumb": {"flex": [20, 28, 24], "adduct": 18}
+}

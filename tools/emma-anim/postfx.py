@@ -103,6 +103,8 @@ ARM_FIX = {
     'Crouch_Walk_Right_with_Torch_inplace': {'twist_keep': 0.15, 'only_hanging': True},
     'Running': {'twist_keep': 0.15, 'jog': {'center_deg': -8, 'swing': 0.55, 'bend': 0.6}},
     'Run_03':  {'twist_keep': 0.15, 'jog': {'center_deg': -8, 'swing': 0.55, 'bend': 0.7}},
+    'climbing_up_wall': {'twist_keep': 0.4}, 'Quad_Climb_Right': {'twist_keep': 0.4}, 'Ladder_Climb_Finish': {'twist_keep': 0.4},
+    'Swing_on_Rope_to_Ground': {'twist_keep': 0.4}, 'Grab_Bar_and_Swing_Forward': {'twist_keep': 0.4},
 }
 FORCE_RELAXED_HAND = {'Walking', 'Walking_Woman', 'Running', 'Run_03'}    # fingers relaxed for the whole clip, not only while the wrist is low
 
@@ -135,3 +137,59 @@ def fix_arms(clips, SB, report=None):
             tk = cfg['twist_keep']
             df = qmul(np.tile(qinv(rest(fa)), (T, 1)), L(fa)); c['rot'][fa] = qfix(qnorm(qmul(np.tile(rest(fa), (T, 1)), _scaled(df, ax_f, jog['bend'] if jog else 1.0, tk))))
             dh = qmul(np.tile(qinv(rest(ha)), (T, 1)), L(ha)); c['rot'][ha] = qfix(qnorm(qmul(np.tile(rest(ha), (T, 1)), _scaled(dh, ax_h, 1.0, tk))))
+
+# ---------------------------------------------------------------------------------------------------------------------------------
+# fixed hand poses (wrist + 15 finger bones per hand) for the whole clip: idle's relaxed pose on free-hand clips, grip pose on grabbing clips
+HAND_BONES = ['Hand'] + [f'Hand{f}{j}' for f in ('Thumb', 'Index', 'Middle', 'Ring', 'Pinky') for j in (1, 2, 3)]
+GRAB_CLIPS = {'climbing_up_wall', 'Quad_Climb_Right', 'Ladder_Climb_Finish', 'Swing_on_Rope_to_Ground', 'Grab_Bar_and_Swing_Forward',
+              'Grip_Fingers_Toes', 'Wall_Support_Jump_to_Ground', 'Fast_Stair_Climb'}
+
+def idle_hand_reference(clip, SB, preset=None, t0=0.5, t1=3.0):
+    """{bone: local quaternion}: idle's wrist (mean over the settled part of the clip) + the relaxed finger pose"""
+    Q = relaxed_hand_quats(SB, preset); sel = (clip['t'] >= t0) & (clip['t'] <= t1)
+    for side in ('Left', 'Right'):
+        q = qfix(clip['rot'][side+'Hand'][sel]); ref = q[0]; q = q*np.where((q @ ref)[:, None] < 0, -1, 1)
+        Q[side+'Hand'] = qnorm(q.mean(0))
+    return Q
+
+def apply_hand_pose(clips, SB, REF, GRIP, grab=GRAB_CLIPS, report=None):
+    """set wrist + fingers to a constant pose for the whole clip (free-hand clips: REF = idle, grabbing clips: GRIP fingers + wrist cleaned)"""
+    for cname, c in clips.items():
+        T = len(c['t']); P = GRIP if (cname in grab or cname.startswith('Emma_Climb') or cname.endswith('_Loop') and any(k in cname for k in ('Swing', 'Ladder', 'GrabBar', 'Climb'))) else REF
+        for n, q in P.items(): c['rot'][n] = np.tile(q, (T, 1))
+        if report is not None: report[cname] = 'grip' if P is GRIP else 'idle'
+
+def grip_reference(clip_wrist_src, SB, preset):
+    """grip finger pose; wrist stays the clip's own (retargeted) rotation, so only fingers are constant here"""
+    return relaxed_hand_quats(SB, preset)
+
+def yaw_deg(SB, c):
+    Fb = frame_from_skel(SB); up, fwd, left = Fb[:, 1], Fb[:, 2], Fb[:, 0]; T = len(c['t'])
+    P, W = fk(SB, clip_anim(c), T, c['t']); Wr = SB.wrot(SB.idx['Hips'])
+    v = qrot(W['Hips'], np.tile(qrot(qinv(Wr), fwd), (T, 1)))
+    return np.degrees(np.unwrap(np.arctan2(v @ left, v @ fwd)))
+
+def _smooth_quats(q, sigma):
+    q = qfix(q); n = len(q); r = int(np.ceil(3*sigma)); k = np.exp(-0.5*(np.arange(-r, r+1)/sigma)**2); k /= k.sum()
+    pad = np.concatenate([q[r:0:-1], q, q[-2:-r-2:-1]], 0); pad = qfix(pad)
+    out = np.stack([np.convolve(pad[:, i], k, mode='valid') for i in range(4)], 1); return qnorm(out)
+
+def fix_jump(clips, SB, names=('Regular_Jump', 'Back_Jump'), yaw_keep=0.2, sigma=2.5, report=None):
+    """jump clips carry a ~50 deg Ariel hip yaw that reads as a violent torso twist on Emma: remove (1-yaw_keep) of the hip yaw (whole body follows,
+    locals untouched) and low-pass neck/head so the hair is not whipped"""
+    Fb = frame_from_skel(SB); up = Fb[:, 1]
+    pa = SB.W[SB.par[SB.idx['Hips']]]; pq = mat_to_quat(pa[:3, :3]/np.linalg.norm(pa[:3, :3], axis=0)) if SB.idx['Hips'] in SB.par else np.array([0, 0, 0, 1.])
+    for cname in names:
+        c = clips.get(cname)
+        if c is None: continue
+        T = len(c['t']); y = yaw_deg(SB, c); y0 = y.copy()
+        base = y[0] if cname == 'Regular_Jump' else 0.0                 # keep the clip's own lead-in direction continuous with idle (idle is yaw 0)
+        corr = -(1-yaw_keep)*np.radians(y)                              # rotate the body back toward yaw 0
+        hq = qfix(c['rot']['Hips'])
+        newh = np.zeros_like(hq)
+        for t in range(T):
+            R = qaxis_angle(up, corr[t]); newh[t] = qnorm(qmul(qinv(pq), qmul(R, qmul(pq, hq[t]))))
+        c['rot']['Hips'] = qfix(newh)
+        for b in ('neck', 'Head'):
+            if b in c['rot']: c['rot'][b] = _smooth_quats(c['rot'][b], sigma)
+        if report is not None: report[cname] = (float(y0.min()), float(y0.max()))
