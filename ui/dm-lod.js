@@ -33,6 +33,8 @@
  *   prop.errM/tauPx prop size (m) / px for the error-driven chunk cut 1.0/2.2 1.2/1.8 1.4/1.4
  *   terrain.reliefK relief-aware ground tile split                  0.4    0.7    1.0
  *   mip.bias        extra mip level at the far end of a detail band   1.0    0.8    0.5
+ *   terrain.splitK (perf-mars) SkyGround split distance scale        .78    .88    1.0   x (0.5 + 0.5 x ladder ground reach)
+ *   shadow.minExt   (perf-mars) skinned pieces under this fraction of her height do not cast into the sun shadow   .1   .1   0
  *
  * (v309) CLASSIC BASE.  The default table is the one that shipped before the Nov 5 far-range work (props 1400 m cut / 3x3 chunks, shadows 110 / 170, mansion 300-360 / 400-470, cull 5200 / 6000,
  *   no vantage extension, no mip bias, no relief-split, no error-driven cut, no chunk fade-in, no mansion impostor).  The Nov 5 additions are kept as the FAR table, off unless ?lodfar=1
@@ -71,6 +73,8 @@
     'prop.errM':     [1.0, 1.2, 1.4],        // typical prop size (m) whose projected size sets the chunk draw cut (a boulder / tree crown)
     'prop.tauPx':    [2.2, 1.8, 1.4],        // ... drawn while that size projects to >= this many pixels
     'terrain.reliefK': [0, 0, 0],            // [far 0.4 / 0.7 / 1.0] how much more finely the far ground tiles split where they hold relief
+    'terrain.splitK': [0.78, 0.88, 1],       // (perf-mars) scale of the SkyGround split distance factor K (1.8): fewer, larger ground tiles on a phone / tablet (tris AND draw calls); x (0.5 + 0.5 x ladder ground reach)
+    'shadow.minExt': [0.1, 0.1, 0],          // (perf-mars) sun-shadow casters: a skinned piece whose bind-pose extent is < this fraction of her height does not cast (accessories); 0 = everything casts (desktop)
     'mansion.goneDiam': [56, 48, 40],        // (v289) mansion + cliff is invisible when its bounding sphere projects to <= this many px across (altitude / distance fade)
     'mansion.fullDiam': [96, 84, 70],        // ... and fully drawn at >= this many px (smoothstep between): it cannot be seen from near-space
     'mip.bias':      [0, 0, 0],              // [far 1.0 / 0.8 / 0.5] extra texture LOD (mips) at the far end of a detail band
@@ -249,6 +253,7 @@
   }
   function validateOne(bad) {
     for (const k in ACTIVE) { const r = ACTIVE[k]; if (r.length !== 3 || r.some(x => !(x >= 0) || !isFinite(x))) bad.push(k + ': malformed'); }
+    ['terrain.splitK'].forEach(k => { const r = ACTIVE[k]; if (!(r[0] <= r[1] && r[1] <= r[2])) bad.push(k + ': not monotone across classes'); });
     ['prop.cutMax', 'prop.shadow', 'prop.ring', 'mansion.far', 'facility.cull', 'vantage.reach', 'mansion.lod2In', 'impostor.tris'].forEach(k => { const r = ACTIVE[k]; if (!(r[0] <= r[1] && r[1] <= r[2])) bad.push(k + ': not monotone across classes'); });
     TIERS.forEach((t, i) => {
       if (!(get(t, 'mansion.in') < get(t, 'mansion.out'))) bad.push(t + ': mansion.in >= out');
@@ -258,6 +263,7 @@
       if (!(get(t, 'mansion.lod2In') > get(t, 'mansion.out') && get(t, 'mansion.lod2In') < get(t, 'mansion.far'))) bad.push(t + ': lod2In outside (out, far)');
       if (!(get(t, 'prop.errM') > 0 && get(t, 'prop.tauPx') > 0 && get(t, 'terrain.reliefK') >= 0 && get(t, 'terrain.reliefK') <= 1)) bad.push(t + ': prop err / relief row');
       if (!(get(t, 'lod.tauPx') > 0 && get(t, 'billboard.px') > 0)) bad.push(t + ': tau / billboard row');
+      if (!(get(t, 'terrain.splitK') >= 0.5 && get(t, 'terrain.splitK') <= 1 && get(t, 'shadow.minExt') >= 0 && get(t, 'shadow.minExt') < 0.2)) bad.push(t + ': splitK / shadow.minExt row out of range');
       if (!(get(t, 'xfade.s') > 0 && get(t, 'prop.fadeS') > 0 && get(t, 'impostor.tris') >= 500 && get(t, 'mip.bias') >= 0 && get(t, 'mip.bias') <= 2)) bad.push(t + ': xfade / impostor / mip row out of range');
       if (!(get(t, 'mansion.goneDiam') > 0 && get(t, 'mansion.goneDiam') < get(t, 'mansion.fullDiam'))) bad.push(t + ': mansion size fade gone >= full');
       if (!(get(t, 'vantage.reach') > WALK_R)) bad.push(t + ': vantage does not extend the walk radius');
@@ -327,7 +333,32 @@
     const v = fogFar + (Math.max(fogFar, 0.62 * horizon) - fogFar) * Math.max(0, Math.min(1, w));
     return Math.max(fogFar, Math.min(v, Math.max(fogFar, drawR * 0.92)));
   }
-  const core = { viewGround: viewGround, horizonDist: horizonDist, horizonW: horizonW, horizonFog: horizonFog, lodCentre: lodCentre, TIERS: TIERS, TABLE: TABLE, FAR: FAR, setFar: setFar, WALK_R: WALK_R, CHUNK: CHUNK, get: get, sw: sw, fade: fade, propCutErr: propCutErr, reliefBoost: reliefBoost, projErrPx: projErrPx, errDist: errDist, lod2Dist: lod2Dist, sizeFade: sizeFade, levelByError: levelByError, billboardViews: billboardViews, chunkCulled: chunkCulled, billboardPx: billboardPx, createXfade: createXfade, mipBias: mipBias, qualityBands: qualityBands, bandW: bandW, propCover: propCover, propCut: propCut, propRing: propRing, vantageReach: vantageReach, vantageFog: vantageFog, validate: validate, tierIndex: tierIndex };
+
+  /* (perf-mars) SkyGround split factor for a class: K x table x (0.5 + 0.5 x ladder ground reach 1 / .8 / .6).  Pure; <= 1 always, so a tile never splits MORE than the old constant. */
+  function splitScale(tier, gk) { return get(tier, 'terrain.splitK') * (0.5 + 0.5 * Math.max(0, Math.min(1, gk == null ? 1 : gk))); }
+  /* (perf-mars) far-terrain colour smoothing.  The ground's vertex colours come from thresholds on height / slope (rock vs sand, strata): sampled every 11-44 m on a far tile they alias into
+     hard stair-steps along the grid.  A tent filter over the colour grid (passes of [1 2 1] x [1 2 1], clamp at the edge) turns them into soft gradients.  passes by sample spacing (m). */
+  function blurPasses(step) { return !(step >= 5) ? 0 : step < 11 ? 1 : 2; }
+  /* in place: a = Float32Array(n*n*3) (r,g,b per cell, row-major), tmp = same length scratch; returns a */
+  function blurRGB(a, n, passes, tmp) {
+    const t = tmp || new Float32Array(a.length), N3 = n * 3;
+    for (let p = 0; p < passes; p++) {
+      for (let r = 0; r < n; r++) for (let q = 0; q < n; q++) { const i = (r * n + q) * 3, l = (r * n + (q > 0 ? q - 1 : 0)) * 3, h = (r * n + (q < n - 1 ? q + 1 : n - 1)) * 3; for (let c = 0; c < 3; c++) t[i + c] = (a[l + c] + 2 * a[i + c] + a[h + c]) * 0.25; }
+      for (let r = 0; r < n; r++) { const rl = (r > 0 ? r - 1 : 0) * N3, rh = (r < n - 1 ? r + 1 : n - 1) * N3, ri = r * N3; for (let q = 0; q < N3; q++) a[ri + q] = (t[rl + q] + 2 * t[ri + q] + t[rh + q]) * 0.25; }
+    }
+    return a;
+  }
+  /* (perf-mars) which skinned pieces cast into the sun's shadow map.  ext[i] = bind-pose bounding extent of piece i; the cut is minFrac x the tallest piece (her height).  lvl >= 1 (ladder shadow / skin
+     stage or the fast guard) raises it to 0.13, which also drops the scalp cap.  Never returns an all-false set (the biggest piece always casts).  Pure. */
+  function casterSet(ext, minFrac, lvl) {
+    const n = ext.length, out = new Array(n); let mx = 0, bi = 0;
+    for (let i = 0; i < n; i++) if (ext[i] > mx) { mx = ext[i]; bi = i; }
+    const cut = minFrac > 0 ? mx * Math.max(minFrac, lvl >= 1 ? 0.13 : 0) : 0;
+    for (let i = 0; i < n; i++) out[i] = ext[i] >= cut;
+    if (n) out[bi] = true;
+    return out;
+  }
+  const core = { viewGround: viewGround, horizonDist: horizonDist, horizonW: horizonW, horizonFog: horizonFog, lodCentre: lodCentre, TIERS: TIERS, TABLE: TABLE, FAR: FAR, setFar: setFar, WALK_R: WALK_R, CHUNK: CHUNK, get: get, sw: sw, fade: fade, propCutErr: propCutErr, reliefBoost: reliefBoost, projErrPx: projErrPx, errDist: errDist, lod2Dist: lod2Dist, sizeFade: sizeFade, levelByError: levelByError, billboardViews: billboardViews, chunkCulled: chunkCulled, billboardPx: billboardPx, createXfade: createXfade, mipBias: mipBias, splitScale: splitScale, blurPasses: blurPasses, blurRGB: blurRGB, casterSet: casterSet, qualityBands: qualityBands, bandW: bandW, propCover: propCover, propCut: propCut, propRing: propRing, vantageReach: vantageReach, vantageFog: vantageFog, validate: validate, tierIndex: tierIndex };
   if (typeof module !== 'undefined' && module.exports) module.exports = core;
   if (typeof window === 'undefined') return;
 
@@ -352,11 +383,29 @@
   const bud = (fn, d) => { try { const B = W.DMBudget; if (B && B.on && B[fn]) return B[fn](); } catch (e) { } return d; };
   out.propCut = function (fog, agl, fov, viewH) { return propCutErr(out.tier, fog, agl, bud('propsK', 1), fov, viewH); };
   out.reliefK = function () { return get(out.tier, 'terrain.reliefK') * bud('groundReach', 1); };
+  out.splitK = function () { return out.on ? splitScale(out.tier, bud('groundReach', 1)) : 1; };   // (perf-mars) x SkyGround.K
+  out.blurPasses = function (step) { return out.on && !farSmoothOff ? blurPasses(step) : 0; };
+  /* (perf-mars) the sun-shadow caster policy on her skinned pieces.  Cached per model: [{m, ext, c0}]; castShadow is a plain flag (no pipeline rebuild).  Returns the number of casters. */
+  out.applyCasters = function (root, lvl) {
+    if (!root) return -1;
+    let L = root.userData._dmSc;
+    if (!L) {
+      L = root.userData._dmSc = { list: [], key: '' };
+      const T = W.THREE; root.traverse(o => { if (o.isSkinnedMesh && o.geometry && o.geometry.attributes && o.geometry.attributes.position) { const g = o.geometry; if (!g.boundingBox) g.computeBoundingBox(); const b = g.boundingBox; L.list.push({ m: o, ext: Math.max(b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z), c0: o.castShadow }); } });
+      void T;
+    }
+    const mf = out.on && !casterOff ? out.get('shadow.minExt') : 0, key = mf + '|' + (lvl >= 1 ? 1 : 0);
+    if (L.key === key) return L.n;
+    L.key = key; const set = casterSet(L.list.map(e => e.ext), mf, lvl); let n = 0;
+    for (let i = 0; i < L.list.length; i++) { const e = L.list[i], c = mf > 0 ? (e.c0 && set[i]) : e.c0; if (e.m.castShadow !== c) e.m.castShadow = c; if (c) n++; }
+    return (L.n = n);
+  };
   out.propRing = function (fog, agl, fov, viewH) { return propRing(out.tier, propCutErr(out.tier, fog, agl, bud('propsK', 1), fov, viewH)); };
   out.vantage = function (vt, walk) { return vantageReach(out.tier, vt, walk, bud('groundReach', 1)); };
   out.vantageFog = function (vt, fogFar, drawR) { return vantageFog(out.tier, vt, fogFar, drawR); };
   out.mansion = function () { return { nIn: out.get('mansion.in'), nOut: out.get('mansion.out'), far: out.get('mansion.far') }; };
   out.mansionSize = function () { return { gone: out.get('mansion.goneDiam'), full: out.get('mansion.fullDiam') }; };
+  const farSmoothOff = /[?&]farsmooth=0\b/.test(Q), casterOff = /[?&]shadowcast=all\b/.test(Q);   // (perf-mars) kill switches: ?farsmooth=0 (far colour smoothing) / ?shadowcast=all (every skinned piece casts)
   const hzFlag = (function () { const m = Q.match(/[?&]lodhorizon=([0-9.]+|on|off)\b/); if (!m) return undefined; return m[1] === 'on' ? 'on' : m[1] === 'off' ? 'off' : (m[1] === '1' ? 'on' : parseFloat(m[1])); })();
   out.horizonW = function () { return out.on ? horizonW(out.tier, hzFlag, bud('groundReach', 1)) : 0; };   // ?lodhorizon=off|0 disables, =on|1 full on every tier, =0.5 a weight
   out.viewGround = viewGround; out.horizonDist = horizonDist; out.horizonFog = horizonFog;

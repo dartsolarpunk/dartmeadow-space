@@ -164,6 +164,10 @@
       kite.position.set(X[tb]+ky.x*0.8*kt,X[tb+1]+ky.y*0.8*kt,X[tb+2]+ky.z*0.8*kt);            // kite origin sits 0.8 kt above the tip (its shape runs +0.2 kt .. -0.8 kt)
     }
     placeKite(rest,[0,0.35,1],1);
+    // (perf-mars) where her chest LED (ui/dm-hazard.js bodyBuild) sits: BESIDE the charm.  The LED is parented to the OLD chest anchor (G.rig, Spine02), whose origin is yC (9.5 % H below the
+    // neck base) and zF+3 mm in front of it; the verlet charm now rests on her upper chest, ~20 cm higher, so the old fixed offset left the LED below it.  chestLed = the charm's rest
+    // position, 5.5 % H to her left (the old 7.5 % sat on the arm edge at this height), expressed in G.rig's frame (both frames share the bind-pose right / up / forward axes: only the origins differ).
+    G.chestLed={x:kite.position.x-0.055*H, y:kite.position.y+0.095*H, z:kite.position.z-zF-0.003*H};
     G.sim=sim; G.simRest=rest; G.chainMesh=chain; G.necklace=necklace; G.buildTube=buildTube; G.placeKite=placeKite; G.gl=gl; G.gravityLocal=gravityLocal; G.bindCaps=bindCaps;
     G.mRoot=new T.Matrix4(); G.mRel=new T.Matrix4(); G.mPrev=new T.Matrix4().copy(G.mRoot.copy(CHAR.root.matrixWorld).invert().multiply(nrig.matrixWorld)); G.mInv=new T.Matrix4(); G.mD=new T.Matrix4(); G.mC=new T.Matrix4(); G.sleep=false; G.root=CHAR.root; G.phys={ms:0,steps:0};
 

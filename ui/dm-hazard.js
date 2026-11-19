@@ -448,7 +448,9 @@
     const cas=new THREE.Mesh(gg.cas,SH.mats.dark), dome=new THREE.Mesh(gg.dome,SH.mats.led);
     cas.rotation.x=Math.PI/2; cas.scale.set(r,r*0.7,r); cas.position.z=r*0.35; dome.scale.set(r*0.8,r*0.8,r*0.8); dome.position.z=r*0.9;
     for(const o of [cas,dome]){ o.frustumCulled=false; o.raycast=()=>{}; o.castShadow=false; o.receiveShadow=false; o.userData.dmShield=true; o.renderOrder=63; g.add(o); }
-    g.position.set(-0.075*h,0.012*h,0.006*h); rig.add(g); SH.body=g; SH.bodyRig=rig; SH.bodyH=h; return true;
+    { const a=cm.chestLed;   // (perf-mars) beside the charm wherever the necklace rests: DMCharm.chestLed is in the rig's own (root-local) units, so no scaling here; the old fixed offset when it is not known
+      if(a&&isFinite(a.x+a.y+a.z)) g.position.set(a.x,a.y,a.z+0.006*(cm.H>0?cm.H:h)); else g.position.set(-0.075*h,0.012*h,0.006*h); }
+    rig.add(g); SH.body=g; SH.bodyRig=rig; SH.bodyH=h; return true;
   }
   // first person: the pooled natural light (index.html DMNatLights) - released the moment it is not needed; colour follows the state (a request keeps its colour)
   function fpOff(){ if(SH.fpLid!=null){ try{ window.DMNatLights&&DMNatLights.release(SH.fpLid); }catch(e){} SH.fpLid=null; SH.fpState=''; } }
