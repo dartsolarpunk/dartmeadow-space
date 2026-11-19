@@ -269,6 +269,7 @@ def write_animation_glb(out, SB, dst_glb, outpath, rot_tol_deg=0.05, pos_tol=1e-
     if ibm is not None: skin['inverseBindMatrices'] = bb.add(ibm,'MAT4')
     gj['skins'] = [skin]
     nid = {nodes[o].get('name'): remap[o] for o in remap}
+    skin_names = {nodes[o].get('name') for o in sk['joints']}
     rtol = np.radians(rot_tol_deg); stats = {'keys':0}
     for cname, d in out.items():
         samplers=[]; chans=[]
@@ -276,8 +277,9 @@ def write_animation_glb(out, SB, dst_glb, outpath, rot_tol_deg=0.05, pos_tol=1e-
         if explicit_all:      # every skeleton bone carries an explicit track (bones without one would keep the previous clip's pose in a viewer / be pulled to the rest pose)
             for i in SB.order:
                 nm = SB.names[i]
-                if nm in nid and i in set(SB.joint_nodes) and nm not in rots and nm != 'Hips': rots[nm] = np.tile(SB.trs[i][1], (len(d['t']), 1))
+                if nm in nid and nm in skin_names and nm not in rots and nm != 'Hips': rots[nm] = np.tile(SB.trs[i][1], (len(d['t']), 1))
         for n, q in rots.items():
+            if n not in skin_names: continue
             rest = SB.trs[SB.idx[n]][1]
             if (not explicit_all) and np.max(2*np.arccos(np.clip(np.abs(q @ rest),0,1))) < np.radians(0.02): continue   # constant == rest: omit
             tr, qr = reduce_track(d['t'], q, rtol, True)
