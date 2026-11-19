@@ -62,3 +62,21 @@ small by design; wrinkles from the baked map are not applied over the logo.
 Menu rock scene and launch fly-out still show Ariel; a change made while a game is already loaded shows after the next start / reload (toast says so); no
 mid-session hot-swap; no stage-tap placement (the pad is used); Ariel's cloth sim with the unwelded shirt / pants is verified headless only; WebGPU/WGSL paths,
 performance on Mali-G615 / iPhone 16e and touch feel need a real device.
+
+## Menu world (3D backdrop) and orbit camera
+`ui/dm-menuworld.js` (+ `dm-menuworld.css`, scoped to `.mw-on`). Hooks in `dm-charselect.js` are small: `buildSet` tags the plain pad/rocks `userData.dmSet` (hidden when the world is on),
+`openStudio` calls `DMMenuWorld.attachStudio` (null when off / failed -> the old CSS-gradient studio), `studioFrame` calls `world.update`, `closeStudio` disposes it; the card wheel
+has `startCardWorld` / `stopCardWorld` (one lease on the shared renderer, canvas parked in `#cs-bg`, paused while the studio uses it, hidden while thumbnails render).
+* STUDIO: turntable on a hangar-mouth platform (plates, hazard lip, pylons, ribs, LEDs, blob contact shadow) over a procedural planet (TSL fbm continents / ocean + sun glint /
+  clouds / ice / terminator / atmosphere shell), sun glare quad, 3 star shells, dust motes. The sun is placed inside the frame for the stage's aspect (`sunDirFor`) and the rim
+  light follows it (`lightRig`). The rim/key/hemisphere lights are the studio's own lights (no extra lights, no shadow maps).
+* CARDS: observation deck (window frame, deck plates with guide lines, consoles, hologram ring) + the same sky; camera sways and pans with the wheel scroll; DOM cards get chamfered
+  HUD styling, a slow `translate` bob and a scan sweep (compositor only).
+* Parallax: real distances give none, so every sky layer sits on a rig (`position = -(cam - rest) * k`, `PARALLAX_K`).
+* Tiers (`tierFor`): `?menuscene=off` (flat gradient, no world, no extra GPU work), `?menuscene=low`, auto = high (desktop) / mid (mobile) dropping to low under DMBudget pressure
+  (>= 4 desktop mid, >= 5 mobile low, >= 8 low). Mobile: <= 600 stars, 4 planet octaves, 2 cloud octaves, 40-seg planet, no milky band, pixel ratio <= 1.25 (low: 1.0, 260 stars, 3 octaves).
+* Everything is generated (no fetches, no textures); `dispose()` frees every geometry and material; the card world is disposed on `leave()`.
+* Orbit camera (all tiers): drag X turns her 360 deg; drag Y swings the camera up and over her head (pitch up to +85 deg, target rises to head height) or down to her feet
+  (to -75 deg, target and distance ease to knee height / 0.5x, camera never below 0.14 m so it cannot enter the floor). Two-finger drag nudges the target height, pinch / wheel zoom
+  combine with it, inertia on yaw and pitch, double-tap eases back to the default view. `DMMenuWorld.orbitRig` is pure (`tools/tests/menuworld-unit.js`).
+* Look check: `python3 tools/tests/menuworld-shots.py <repo> <three-dir> <out> 'scene=studio&views=0:0.35,-75:0.35,85:2'` (SwiftShader WebGL2 fallback; not WGSL, not frame times).

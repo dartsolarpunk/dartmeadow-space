@@ -1087,6 +1087,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 <script src="ui/dm-charm.js?v=359" defer></script>
 <script src="ui/dm-flash.js?v=357" defer></script>
 <script src="ui/dm-menuscene.js?v=343" defer></script>
+<script src="ui/dm-menuworld.js?v=365" defer></script>   <!-- 3D world behind the character select + studio (hangar bay / observation deck, planet, stars); ?menuscene=off|low -->
 <script src="ui/dm-chars.js?v=363" defer></script>   <!-- character registry + profile (selection / colours / logos); pure data -->
 <script src="ui/dm-charpaint.js?v=363" defer></script>   <!-- applies the player's colours / logos to a loaded character (studio + game) -->
 <script src="ui/dm-charselect.js?v=363" defer></script>   <!-- character select cards + one-canvas studio -->
@@ -1414,6 +1415,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
 
 <!-- CHARACTER SELECT: main menu -> CHARACTER -> SKYBOARD BUILDER -> game. Cards + the one-canvas studio are filled by ui/dm-charselect.js from the DMChars registry. -->
 <div id="screen-character" class="screen" aria-label="Choose your pilot">
+  <div id="cs-bg" aria-hidden="true"></div><div id="cs-scan" aria-hidden="true"></div>
   <div id="cs-head"><button id="cs-back" class="cs-btn" type="button">← MENU</button><div id="cs-title">CHOOSE YOUR PILOT</div></div>
   <div id="cs-list">
     <div id="cs-wheel" role="listbox" aria-label="Pilots" tabindex="0"></div>
@@ -1422,7 +1424,7 @@ html.immersive #app,html.immersive #loading-screen{height:100dvh;}
   </div>
   <div id="cs-foot"><button id="cs-open" class="cs-btn" type="button">VIEW</button><button id="cs-next" class="cs-btn gold" type="button">CONTINUE ⟶</button></div>
   <div id="cs-studio">
-    <div id="cs-stage"><div id="cs-load"></div><div id="cs-turn">DRAG TO TURN · PINCH TO ZOOM</div></div>
+    <div id="cs-stage"><div id="cs-load"></div><div id="cs-turn">DRAG TO ORBIT · PINCH TO ZOOM · DOUBLE-TAP TO RESET</div></div>
     <div id="cs-panel">
       <div id="cs-ptitle"><span id="cs-pname"></span><span id="cs-ptag"></span></div>
       <div id="cs-tabs"></div>
@@ -29352,6 +29354,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
 <link rel="stylesheet" href="ui/dm-globe.css?v=3">
 <link rel="stylesheet" href="ui/dm-menu.css?v=313">
 <link rel="stylesheet" href="ui/dm-charselect.css?v=363">
+<link rel="stylesheet" href="ui/dm-menuworld.css?v=365">
 <link rel="stylesheet" href="ui/dm-journal.css?v=97">
 <link rel="stylesheet" href="ui/dm-landmap.css?v=88">
 <link rel="stylesheet" href="ui/dm-type.css?v=89">

@@ -137,13 +137,13 @@
     const key = new THREE.DirectionalLight(0xffd7a8, 2.6); key.position.set(1.6, 2.6, 2.4); S.add(key);
     const rim = new THREE.DirectionalLight(0x6a8cff, 1.9); rim.position.set(-2.2, 1.6, -2.0); S.add(rim);
     const fill = new THREE.DirectionalLight(0xff9a70, 0.5); fill.position.set(-1.5, 0.4, 1.8); S.add(fill);
-    const pad = new THREE.Mesh(new THREE.CircleGeometry(1.35, 40), new THREE.MeshStandardMaterial({ color: 0x4a2418, roughness: 0.96, metalness: 0 })); pad.rotation.x = -Math.PI / 2; S.add(pad); items.push(pad);
-    const ring = new THREE.Mesh(new THREE.RingGeometry(1.27, 1.31, 64), new THREE.MeshBasicMaterial({ color: 0x5b7fff, transparent: true, opacity: 0.85, toneMapped: false })); ring.rotation.x = -Math.PI / 2; ring.position.y = 0.002; S.add(ring); items.push(ring);
+    const pad = new THREE.Mesh(new THREE.CircleGeometry(1.35, 40), new THREE.MeshStandardMaterial({ color: 0x4a2418, roughness: 0.96, metalness: 0 })); pad.rotation.x = -Math.PI / 2; pad.userData.dmSet = 1; S.add(pad); items.push(pad);
+    const ring = new THREE.Mesh(new THREE.RingGeometry(1.27, 1.31, 64), new THREE.MeshBasicMaterial({ color: 0x5b7fff, transparent: true, opacity: 0.85, toneMapped: false })); ring.rotation.x = -Math.PI / 2; ring.position.y = 0.002; ring.userData.dmSet = 1; S.add(ring); items.push(ring);
     let sd = 7; const rnd = () => { sd = (sd * 1664525 + 1013904223) >>> 0; return sd / 4294967296; };
     const rm = new THREE.MeshStandardMaterial({ color: 0x5b2f20, roughness: 0.98, flatShading: true }); items.push(rm);
     for (let i = 0; i < 7; i++) {
       const a = 2.3 + i * 0.52 + rnd() * 0.25, d = 0.95 + rnd() * 0.3, r = 0.05 + rnd() * 0.11;
-      const g = new THREE.IcosahedronGeometry(r, 0), m = new THREE.Mesh(g, rm); m.position.set(Math.cos(a) * d, r * 0.45, -Math.sin(a) * d * 0.9 - 0.15); m.rotation.set(rnd() * 6, rnd() * 6, rnd() * 6); m.scale.set(1, 0.7, 1.1); S.add(m); items.push(g);
+      const g = new THREE.IcosahedronGeometry(r, 0), m = new THREE.Mesh(g, rm); m.position.set(Math.cos(a) * d, r * 0.45, -Math.sin(a) * d * 0.9 - 0.15); m.rotation.set(rnd() * 6, rnd() * 6, rnd() * 6); m.scale.set(1, 0.7, 1.1); m.userData.dmSet = 1; S.add(m); items.push(g);
     }
     return { scene: S, items, key, rim };
   }
@@ -184,7 +184,7 @@
     finally { try { disposeCharacter(M); disposeSet(X); } catch (e) { } if (leased) release(); }
   }
   async function runThumbs() {
-    if (thumbBusy) return; thumbBusy = true; thumbAbort = false;
+    if (thumbBusy) return; setThumbBusy(true); thumbAbort = false;
     try {
       for (const def of W.DMChars.list()) {
         if (thumbAbort || ST() !== 'character' || CS.studioOpen) break;
@@ -192,7 +192,7 @@
         setCardLoading(def.id, true); await captureThumb(def); setCardLoading(def.id, false); paintCard(def.id);
         await sleep(60);
       }
-    } finally { thumbBusy = false; }
+    } finally { setThumbBusy(false); }
   }
   function kickThumbs() { if (thumbBusy) return; setTimeout(() => { if (ST() === 'character' && !CS.studioOpen) runThumbs(); }, 250); }
 
@@ -245,7 +245,7 @@
   const S = { M: null, X: null, cam: null, F: null, raf: 0, yaw: 0, vyaw: 0, dragging: false, pointers: new Map(), pinch0: 0, zoom: 1, pitch: 0, last: 0, accum: 0, nextExtra: 0, look: 0, lookT: 0, def: null, token: 0, leased: false };
   async function openStudio(id, fromEl) {
     const def = W.DMChars.get(id); if (!def || CS.studioOpen) return;
-    CS.studioOpen = true; thumbAbort = true; const token = ++S.token; S.def = def;
+    CS.studioOpen = true; thumbAbort = true; const token = ++S.token; S.def = def; if (CW.w) CW.w.pause(true);
     const root = $('cs-studio'), stage = $('cs-stage');
     $('cs-pname').textContent = def.name.toUpperCase(); $('cs-ptag').textContent = def.tag || '';
     $('cs-load').textContent = 'LOADING ' + def.name.toUpperCase() + '…'; $('cs-load').style.display = ''; $('cs-turn').classList.remove('gone');
@@ -263,13 +263,17 @@
       while (thumbBusy) await sleep(40);   // the thumbnail job sees thumbAbort and lets go of the renderer within a frame or two
       if (token !== S.token) return;
       const r = await acquire(stage); S.leased = true;
+      if (R.canvas) R.canvas.style.visibility = '';
       if (token !== S.token) { release(); S.leased = false; return; }
-      S.X = buildSet(false);
+      S.X = buildSet(false); S.X.world = null;
+      try { if (W.DMMenuWorld && W.DMMenuWorld.attachStudio) S.X.world = W.DMMenuWorld.attachStudio(W.THREE, S.X, { aspect: stage.clientWidth / Math.max(1, stage.clientHeight) }); } catch (e) { log('menu world (studio) failed', e && e.message); S.X.world = null; }   // ui/dm-menuworld.js; ?menuscene=off -> null
+      $('cs-studio').classList.toggle('mw-on', !!S.X.world);
       const M = await buildCharacter(def, { anims: true, hair: true, strandFraction: 0.75, onProgress: (p) => { if (token === S.token) $('cs-load').textContent = 'LOADING ' + def.name.toUpperCase() + ' ' + Math.round(p * 100) + '%'; } });
       if (token !== S.token) { disposeCharacter(M); return; }
       S.M = M; S.X.scene.add(M.root); M.root.position.y = 0;
       M.root.updateMatrixWorld(true); const minY = new W.THREE.Box3().setFromObject(M.root).min.y; M.root.position.y = -minY; M.root.updateMatrixWorld(true);
-      S.cam = new W.THREE.PerspectiveCamera(30, 1, 0.05, 60); S.yaw = 0.35; S.vyaw = 0; S.zoom = 1; S.pitch = 0; S.F = null;
+      S.cam = new W.THREE.PerspectiveCamera(30, 1, 0.05, 60); S.yaw = 0.35; S.vyaw = 0; S.zoom = 1; S.pitch = 0; S.vpitch = 0; S.ty = 0; S.home = false; S.F = null;
+      if (S.X.world) S.X.world.prepCamera(S.cam);
       try { CS.onStudioModel && CS.onStudioModel(M, def); } catch (e) { log('onStudioModel', e); }
       $('cs-load').style.display = 'none'; S.last = 0; S.accum = 0; S.nextExtra = performance.now() + 2200; S.look = 0;
       layoutStudio(); startLoop();
@@ -284,10 +288,11 @@
     let refreshed = false;
     try { if (S.M && S.M.root && R.r && opts.thumb !== false && S.F) refreshed = grabThumbFromStudio(); } catch (e) { log('thumb refresh', e && e.message); }
     try { CS.onStudioClose && CS.onStudioClose(); } catch (e) { }
-    disposeCharacter(S.M); disposeSet(S.X); S.M = null; S.X = null; S.cam = null; S.F = null; S.pointers.clear();
+    disposeCharacter(S.M); if (S.X && S.X.world) { try { S.X.world.dispose(); } catch (e) { } S.X.world = null; } disposeSet(S.X); S.M = null; S.X = null; S.cam = null; S.F = null; S.pointers.clear();
     if (S.leased) { S.leased = false; release(); }
     const root = $('cs-studio'); root.classList.remove('open'); root.style.clipPath = ''; root.style.transition = '';
     CS.studioOpen = false; if (refreshed) paintCard(S.def.id);
+    if (CW.w) { backToBg(); CW.w.pause(false); if (R.r) { R.r._csW = 0; } }
     if (ST() === 'character') kickThumbs();
   }
   function grabThumbFromStudio() {   // one extra render at card size, bust framing, straight into the cache
@@ -301,9 +306,9 @@
   }
   function layoutStudio() {
     const stage = $('cs-stage'), r = R.r; if (!stage || !r || !S.cam) return;
-    const w = Math.max(10, stage.clientWidth), h = Math.max(10, stage.clientHeight), pr = Math.min(devicePixelRatio || 1, 1.5);
+    const w = Math.max(10, stage.clientWidth), h = Math.max(10, stage.clientHeight), pr = Math.min(devicePixelRatio || 1, (W.DMMenuWorld && S.X && S.X.world && W.DMMenuWorld.prCap()) || 1.5);
     if (r._csW !== w || r._csH !== h || r._csPR !== pr) { r._csW = w; r._csH = h; r._csPR = pr; r.setPixelRatio(pr); r.setSize(w, h, false); }
-    S.cam.aspect = w / h; S.cam.updateProjectionMatrix(); if (S.M) S.F = frame(S.M, w / h, 'full');
+    S.cam.aspect = w / h; S.cam.updateProjectionMatrix(); if (S.X && S.X.world) S.X.world.setAspect(w / h); if (S.M) S.F = frame(S.M, w / h, 'full');
   }
   function startLoop() { if (S.raf) return; S.last = 0; const tick = (t) => { S.raf = requestAnimationFrame(tick); studioFrame(t); }; S.raf = requestAnimationFrame(tick); }
   function stopLoop() { if (S.raf) cancelAnimationFrame(S.raf); S.raf = 0; }
@@ -334,9 +339,23 @@
       if (neck) { _q.n.setFromEuler(_q.e.set(0, S.look * 0.35, 0)); neck.quaternion.multiply(_q.n); }
     }
     // camera
+    // orbit camera: vertical drag swings the camera up over her head (top view) or down to her feet; target height + distance follow the pitch (DMMenuWorld.orbitRig, pure)
     const F = S.F; if (F) {
-      const d = F.dist * S.zoom, py = S.pitch; S.cam.position.set(0, F.camY + Math.sin(py) * d * 0.6, Math.cos(py) * d); S.cam.lookAt(F.target); S.cam.updateMatrixWorld(true);
+      if (!S.dragging) { S.pitch += (S.vpitch || 0) * dt; S.vpitch = (S.vpitch || 0) * Math.pow(0.02, dt); if (Math.abs(S.vpitch) < 0.02) S.vpitch = 0; }
+      const MWc = W.DMMenuWorld, lo = MWc ? MWc.PITCH_MIN : -1.3, hi = MWc ? MWc.PITCH_MAX : 1.48;
+      if (S.pitch < lo) { S.pitch = lo; S.vpitch = 0; } else if (S.pitch > hi) { S.pitch = hi; S.vpitch = 0; }
+      if (S.home) {   // double-tap: ease back to the default view (nearest turn of yaw)
+        const k = 1 - Math.exp(-dt * 8); S.pitch += (0 - S.pitch) * k; S.zoom += (1 - S.zoom) * k; S.ty += (0 - S.ty) * k; S.vpitch = 0; S.vyaw = 0;
+        const hy = MWc ? MWc.nearestYaw(S.yaw, 0.35) : 0.35; S.yaw += (hy - S.yaw) * k;
+        if (Math.abs(S.pitch) + Math.abs(S.zoom - 1) + Math.abs(S.ty) + Math.abs(S.yaw - hy) < 0.01) { S.pitch = 0; S.zoom = 1; S.ty = 0; S.yaw = hy; S.home = false; }
+      }
+      if (MWc) {
+        const o = MWc.orbitRig(S.pitch, F.H, F.dist, S.zoom, S.ty, { floorY: 0 });
+        S.cam.position.set(0, o.camY, o.camR); S.tgt = S.tgt || new THREE.Vector3(); S.tgt.set(0, o.ty, 0); S.cam.lookAt(S.tgt);
+      } else { const d = F.dist * S.zoom, py = Math.max(-0.22, Math.min(0.3, S.pitch)); S.cam.position.set(0, F.camY + Math.sin(py) * d * 0.6, Math.cos(py) * d); S.cam.lookAt(F.target); }
+      S.cam.updateMatrixWorld(true);
     }
+    if (S.X.world) { try { S.X.world.update(t, dt, S.cam, S.yaw, S.tgt, S.dragging); if (S.X.world.rescale) { S.X.world.rescale = false; layoutStudio(); } } catch (e) { log('menu world update', e && e.message); S.X.world.update = () => { }; } }
     R.r.render(S.X.scene, S.cam);
     CS.onStudioFrame && CS.onStudioFrame(dt);
   }
@@ -345,22 +364,26 @@
     st.addEventListener('pointerdown', (e) => {
       if (e.button > 0) return; try { st.setPointerCapture(e.pointerId); } catch (_) { }
       S.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, t0: performance.now() });
-      if (S.pointers.size === 1) { S.dragging = true; st.classList.add('drag'); S.vyaw = 0; $('cs-turn').classList.add('gone'); }
+      if (S.pointers.size === 1) { S.dragging = true; S.home = false; st.classList.add('drag'); S.vyaw = 0; S.vpitch = 0; $('cs-turn').classList.add('gone'); }
       if (S.pointers.size === 2) { const p = Array.from(S.pointers.values()); S.pinch0 = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y); S.zoom0 = S.zoom; }
     });
     st.addEventListener('pointermove', (e) => {
       const p = S.pointers.get(e.pointerId); if (!p) return; const dx = e.clientX - p.x, dy = e.clientY - p.y; p.x = e.clientX; p.y = e.clientY;
       const rc = st.getBoundingClientRect(); S.dragX = ((e.clientX - rc.left) / rc.width - 0.5) * 2;
-      if (S.pointers.size >= 2) { const a = Array.from(S.pointers.values()); const d = Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y); if (S.pinch0 > 8) S.zoom = Math.max(0.4, Math.min(1.25, S.zoom0 * S.pinch0 / Math.max(8, d))); return; }
-      S.yaw += dx * 0.011; S.vyaw = dx * 0.011 * 30 * 0.6 + S.vyaw * 0.4; S.pitch = Math.max(-0.22, Math.min(0.3, S.pitch + dy * 0.003));
+      if (S.pointers.size >= 2) { const a = Array.from(S.pointers.values()); const d = Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y); S.home = false; if (S.pinch0 > 8) S.zoom = Math.max(0.45, Math.min(1.25, S.zoom0 * S.pinch0 / Math.max(8, d))); S.ty = Math.max(-1, Math.min(1, (S.ty || 0) - dy * 0.5 * 0.004)); return; }   // two fingers: pinch zooms, a shared vertical drag nudges the target height
+      S.home = false; S.yaw += dx * 0.011; S.vyaw = dx * 0.011 * 30 * 0.6 + S.vyaw * 0.4;   // full 360 deg turntable
+      { const lo = W.DMMenuWorld ? W.DMMenuWorld.PITCH_MIN : -1.3, hi = W.DMMenuWorld ? W.DMMenuWorld.PITCH_MAX : 1.48; S.pitch = Math.max(lo, Math.min(hi, S.pitch - dy * 0.0075)); S.vpitch = -dy * 0.0075 * 30 * 0.5 + (S.vpitch || 0) * 0.5; }   // drag up = camera up and over
     });
     const up = (e) => {
       const p = S.pointers.get(e.pointerId); S.pointers.delete(e.pointerId);
+      if (p && Math.hypot(e.clientX - p.x0, e.clientY - p.y0) < 8 && performance.now() - p.t0 < 350 && S.pointers.size === 0) {   // double tap = back to the default view
+        const now = performance.now(); if (S.lastTap && now - S.lastTap < 320) { S.home = true; S.lastTap = 0; } else S.lastTap = now;
+      }
       if (p && CS.onStageTap && Math.hypot(e.clientX - p.x0, e.clientY - p.y0) < 8 && performance.now() - p.t0 < 450) { try { CS.onStageTap(e, st); } catch (er) { log('tap', er); } }
       if (S.pointers.size === 0) { S.dragging = false; S.dragX = null; st.classList.remove('drag'); }
     };
     st.addEventListener('pointerup', up); st.addEventListener('pointercancel', up);
-    st.addEventListener('wheel', (e) => { e.preventDefault(); S.zoom = Math.max(0.4, Math.min(1.25, S.zoom * (1 + Math.sign(e.deltaY) * 0.07))); }, { passive: false });
+    st.addEventListener('wheel', (e) => { e.preventDefault(); S.home = false; S.zoom = Math.max(0.45, Math.min(1.25, S.zoom * (1 + Math.sign(e.deltaY) * 0.07))); }, { passive: false });
   }
 
   /* ───────────────────────── studio panel (tabs are an extension point: colours, logos) ───────────────────────── */
@@ -484,21 +507,56 @@
     },
   });
 
+  /* ───────────────────────── card-wheel backdrop (ui/dm-menuworld.js: observation deck) ─────────────────────────
+     The screen holds one lease on the shared renderer while the wheel is up (the canvas lives in #cs-bg behind the cards); the studio borrows the same canvas and gives it back.
+     Off / failed -> the flat CSS gradient.  Nothing here touches the paint panel. */
+  const CW = { w: null, leased: false, token: 0 };
+  function bgHost() { return $('cs-bg'); }
+  function backToBg() { try { const h = bgHost(); if (h && R.canvas && R.canvas.parentNode !== h) h.appendChild(R.canvas); } catch (e) { } }
+  async function startCardWorld() {
+    const MW = W.DMMenuWorld; if (!MW || !MW.active() || CW.w || CW.leased) return; const token = ++CW.token, host = bgHost(); if (!host) return;
+    try {
+      CW.leased = true; const r = await acquire(host);
+      if (token !== CW.token || !CS.entered) { CW.leased = false; release(); return; }
+      if (CS.studioOpen) { backToBg(); }
+      R.canvas.style.visibility = thumbBusy ? 'hidden' : '';
+      CW.w = MW.cardWorld({ THREE: W.THREE, renderer: r, host, wheel: $('cs-wheel'), busy: () => thumbBusy });
+      if (!CW.w) { CW.leased = false; release(); return; }
+      $('screen-character').classList.add('mw-on'); CW.w.pause(CS.studioOpen); CW.w.start();
+    } catch (e) { log('card world failed', e && e.message); stopCardWorld(); }
+  }
+  function stopCardWorld() {
+    CW.token++; if (CW.w) { try { CW.w.dispose(); } catch (e) { } CW.w = null; }
+    const sc = $('screen-character'); if (sc) sc.classList.remove('mw-on'); if (R.canvas) R.canvas.style.visibility = ''; try { const h = bgHost(); if (h) h.style.backgroundImage = ''; } catch (e) { }
+    if (CW.leased) { CW.leased = false; release(); }
+  }
+  function setThumbBusy(b) {   // thumbnails resize + draw on the shared canvas: park a still of the deck behind the cards meanwhile (no flash of black)
+    thumbBusy = b;
+    try {
+      const host = bgHost(); if (!R.canvas || !CW.w || !host) return;
+      if (b) {
+        try { CW.w.renderOnce(performance.now()); const c = D.createElement('canvas'), k = Math.min(1, 640 / Math.max(1, R.canvas.width)); c.width = Math.max(2, Math.round(R.canvas.width * k)); c.height = Math.max(2, Math.round(R.canvas.height * k));
+          c.getContext('2d').drawImage(R.canvas, 0, 0, c.width, c.height); host.style.backgroundImage = 'url(' + c.toDataURL('image/jpeg', 0.7) + ')'; } catch (e) { }
+        R.canvas.style.visibility = 'hidden';
+      } else { R.canvas.style.visibility = ''; setTimeout(() => { if (!thumbBusy) host.style.backgroundImage = ''; }, 250); }
+    } catch (e) { }
+  }
+
   /* ───────────────────────── screen lifecycle ───────────────────────── */
   CS.enter = function () {
     if (!W.DMChars) return; CS.entered = true;
     buildCards(); requestAnimationFrame(() => { const i = Math.max(0, W.DMChars.list().findIndex((d) => d.id === W.DMChars.selectedId())); centreOn(i, false); layoutWheel(); });
-    bindStage(); refreshFoot(); kickThumbs();
+    bindStage(); refreshFoot(); startCardWorld(); kickThumbs();
   };
   CS.leave = function () {
-    CS.entered = false; thumbAbort = true; if (CS.studioOpen) closeStudio({ thumb: false });
+    CS.entered = false; thumbAbort = true; if (CS.studioOpen) closeStudio({ thumb: false }); stopCardWorld();
     clearTimeout(R.killT); if (R.leases === 0 && R.r) { try { R.r.dispose(); } catch (e) { } try { R.canvas && R.canvas.parentNode && R.canvas.parentNode.removeChild(R.canvas); } catch (e) { } R.r = null; R.canvas = null; }
   };
   CS.openStudio = (id) => openStudio(id, D.querySelector('#cs-wheel .cs-card[data-id="' + id + '"]'));
   CS.closeStudio = closeStudio;
   CS.status = () => ({ studioOpen: CS.studioOpen, renderer: !!R.r, leases: R.leases, thumbs: Object.keys(thumbs), loop: !!S.raf, model: !!S.M });
   CS.refreshLook = () => applyLook(S.M, S.def);   // re-apply the stored look to the open studio model (panels call it; tests / tools too)
-  CS._studio = S; CS._R = R; CS.paintCard = paintCard; CS.frame = frame; CS.layoutStudio = layoutStudio; CS.renderPanel = renderPanel;
+  CS._studio = S; CS._R = R; CS._CW = CW; CS.paintCard = paintCard; CS.frame = frame; CS.layoutStudio = layoutStudio; CS.renderPanel = renderPanel;
 
   function init() {
     const wheel = $('cs-wheel'); if (!wheel) return;
