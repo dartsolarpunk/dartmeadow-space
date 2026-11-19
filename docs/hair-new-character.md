@@ -40,3 +40,11 @@ Check: `node tools/tests/hair-regression.js` (Ariel unchanged, multi-cluster con
 - `meta.widthRoot` / `meta.widthTip` in the groom file are used as default width params; `config.params` overrides them.
 - A scalp mesh named `<Name>_Scalp` is accepted in addition to `Scalp*`/`Ariel*`.
 - `meta.clusters` as a list of strings is a clump list; only an array of objects is treated as cluster configs.
+
+## Collision tiers and per-character colliders (added with the collision work, see `docs/hair-collision-notes.md`)
+
+`config.collision` (optional; the Ariel default block is used only for a character without its own `clusters` config, so a multi-cluster config should carry its own `collision` block):
+`{ fileColliders:false, margin:{bundle:1, cap:0.012}, separation:{neighbours:3, frac:0.6}, capsules:{ "1":[{bone,a,b,r}...], "2":[...] }, boxes:[{name,c:[x,y,z],h:[hx,hy,hz],margin}] }`.
+Capsules are bone-local (metres, `a`/`b` end points); boxes are in the Head-bone frame (half extents `h`), use them for glasses lenses / frame, ears, a hat brim. Tier 1 (Mid) and 2 (High) use `capsules["1"]` / `["2"]`; tier 0 never reads this block.
+Per strand group (`clusters[]`): `collisionMargin` (multiplier) and `collisionExtra` (metres). Quality tier comes from the host (`getCollisionTier()`, preset low 0 / medium 1 / high 2) and drops to 0 when the DMBudget hair level is >= 1.
+Fit: `node tools/hair-fit-colliders.mjs <char>` (skinned meshes -> candidate block; check by eye with `tools/tests/hair-shots.py`), then `node tools/tests/hair-collision.js` (add the character to `CHARS` in `tools/tests/lib-hair-probe.mjs`).
