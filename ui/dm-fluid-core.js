@@ -61,6 +61,9 @@
   function ok(r) {
     r = r || renderer();
     if (/[?&]nofluid=1\b/.test(location.search)) return false;
+    // (t1644 Track 1) phones / tablets: no GPU fluid by default (a 3D storage texture + per-frame compute on a handheld's shared memory was a device-loss lane on Mali /
+    // iPhone).  ?gpufluid=1 opts a handheld in.
+    if (W.GFX && W.GFX.isMobile && !/[?&]gpufluid=1\b/.test(location.search)) return false;
     const T = W;   // TSL is spread onto window by the module loader
     return !!(r && r.backend && r.backend.isWebGPUBackend && r.backend.device && W.THREE && W.THREE.Storage3DTexture &&
       typeof T.Fn === 'function' && typeof T.instancedArray === 'function' && typeof T.atomicAdd === 'function' && typeof T.textureStore === 'function');

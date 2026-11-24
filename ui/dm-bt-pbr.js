@@ -80,7 +80,9 @@
       try { if (window.BTL && BTL.track) BTL.track(m); } catch (e) { }
     });
     // (memory lane) the replaced GLB maps (up to 28 images, ~64 MB GPU if they had been uploaded, ~53 MB of decoded bitmaps) are freed once no material under the temple uses them
-    try { if (oldTex.size && window.DMMem) { const f = DMMem.sweepUnused(oldTex, [root]); P.stats.swept = (P.stats.swept || 0) + f; } } catch (e) { }
+    // (t1644 Track 1) DEFERRED 3 s: disposing the old maps in the same frame as the swap destroyed GPU textures that bind groups built for the previous frame (shadow /
+    // depth passes, the warm-up compile) still referenced -> 'Invalid BindGroup' on WebGPU.  sweepUnused re-checks usage when it runs, so a map still in use is kept.
+    try { if (oldTex.size && window.DMMem) setTimeout(() => { try { const f = DMMem.sweepUnused(oldTex, [root]); P.stats.swept = (P.stats.swept || 0) + f; } catch (e) { } }, 3000); } catch (e) { }
     P.applied = true; P.stats.mats = (P.stats.mats || 0) + n; if (n) console.log('[bt-pbr] layered PBR on', n, 'exterior materials (' + P.stats.res + ')');
     return n;
   };

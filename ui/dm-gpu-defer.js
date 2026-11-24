@@ -78,10 +78,38 @@
         if (stale) { try { gd.groups = undefined; gd.versions = undefined; be.updateBindings(bindGroup, bindings, 0, 0); st.rebound++; } catch (e) { } }   // (groups / versions = three's per-texture-state group cache: it holds the old group too)
       };
     }
+    // (t1644 Track 1) createBuffer OOM guard.  A mappedAtCreation buffer that cannot be allocated THROWS (RangeError) inside three's attribute upload; three then keeps
+    // a half-built attribute whose bind group is invalid for the rest of the session ("Invalid BindGroup", then a device loss on iPhone / Mali).  Wrapped once per device:
+    //  1. on a throw, the parked buffers whose release frame is old enough are destroyed now (memory back), and the create is retried;
+    //  2. if a MAPPED create still throws, the buffer is created UNMAPPED (+ COPY_DST) and its getMappedRange() / unmap() are served from a CPU ArrayBuffer that unmap()
+    //     uploads with queue.writeBuffer - the caller's code path is unchanged and the buffer is valid.  Steady state: one extra call frame per createBuffer, no allocation.
+    function wrapDevice() {
+      const dev = be.device; if (!dev || dev.__dmCB || typeof dev.createBuffer !== 'function') return;
+      const origCB = dev.createBuffer; dev.__dmCB = origCB; st.oomRetry = 0; st.oomShadow = 0;
+      const COPY_DST = (root && root.GPUBufferUsage && root.GPUBufferUsage.COPY_DST) || 0x0008;
+      dev.createBuffer = function (desc) {
+        try { return origCB.call(this, desc); } catch (e1) {
+          if (!desc || !(e1 && (e1.name === 'RangeError' || /memory|alloc/i.test(String(e1.message || ''))))) throw e1;
+          st.oomRetry++;
+          try { const due = []; Q.take(st.frame, due); if (!st.inFlight) destroyList(due); else for (let i = 0; i < due.length; i++) Q.push(due[i], st.frame); } catch (e) { }
+          try { return origCB.call(this, desc); } catch (e2) {
+            if (!desc.mappedAtCreation) throw e2;
+            const d2 = Object.assign({}, desc, { mappedAtCreation: false, usage: (desc.usage | 0) | COPY_DST });
+            const buf = origCB.call(this, d2), q = this.queue, ranges = [];
+            buf.getMappedRange = function (off, size) { off = off | 0; const n = size == null ? desc.size - off : size; const ab = new ArrayBuffer(n); ranges.push(off, ab); return ab; };
+            buf.unmap = function () { for (let i = 0; i < ranges.length; i += 2) { try { q.writeBuffer(buf, ranges[i], ranges[i + 1]); } catch (e) { } } ranges.length = 0; };
+            st.oomShadow++;
+            return buf;
+          }
+        }
+      };
+    }
+    wrapDevice();
     function destroyList(list) { for (let i = 0; i < list.length; i++) { try { list[i].destroy(); st.destroyed++; } catch (e) {} } }
     const now = () => (root && root.performance && root.performance.now ? root.performance.now() : Date.now());
     function tick() {
       st.frame++; st.last = now();
+      if (be.device && !be.device.__dmCB) wrapDevice();
       if (st.inFlight || Q.size() === 0) return;
       if (Q.take(st.frame, batch) === 0) return;
       const list = batch.slice();   // only when something is due
@@ -96,7 +124,7 @@
     st.last = now(); st.idleTicks = 0;
     const idle = (root && typeof root.setInterval === 'function') ? root.setInterval(() => { if (Q.size() > 0 && now() - st.last > 450) { st.idleTicks++; tick(); } }, 500) : null;
     if (idle && typeof idle.unref === 'function') idle.unref();
-    function uninstall() { if (idle != null && root && root.clearInterval) root.clearInterval(idle); au.destroyAttribute = orig; if (B && origUpdate) B._update = origUpdate; delete au.__dmDefer; flush(); }
+    function uninstall() { if (idle != null && root && root.clearInterval) root.clearInterval(idle); au.destroyAttribute = orig; if (B && origUpdate) B._update = origUpdate; try { const dv = be.device; if (dv && dv.__dmCB) { dv.createBuffer = dv.__dmCB; delete dv.__dmCB; } } catch (e) { } delete au.__dmDefer; flush(); }
     const api = { tick, flush, uninstall, stats: st, pending: () => Q.size(), idleTick: () => { if (Q.size() > 0) { st.idleTicks++; tick(); } } };
     au.__dmDefer = api;
     return api;

@@ -103,8 +103,11 @@
       try { im.close(); S.closed++; S.closedBytes += b; } catch (e) { }
     }
   }
+  // (t1644 Track 1) a texture marked userData.dmKeepFull (the Bird Temple's, set in index.html _btLoadModel) is never closed or shrunk: a closed bitmap cannot be re-uploaded
+  // after a dispose / device restore, and three then binds an invalid texture ("Invalid BindGroup").  Full quality on every device (Justin's standing rule).
+  const keep = (t) => !!(t && t.userData && t.userData.dmKeepFull);
   function releaseBitmapAfterUpload(t) {
-    if (!t || !t.isTexture) return false;
+    if (!t || !t.isTexture || keep(t)) return false;
     const im = t.image;
     if (!(im && typeof im.close === 'function' && typeof ImageBitmap !== 'undefined' && im instanceof ImageBitmap)) return false;
     if (t.userData) { t.userData.dmBytes = bitmapBytes(im) * (t.generateMipmaps === false ? 1 : 4 / 3); t.userData.dmW = im.width; t.userData.dmH = im.height; }
@@ -123,7 +126,7 @@
   function fitSize(w, h, maxDim) { const m = Math.max(w, h); if (!(m > maxDim)) return null; const k = maxDim / m; return [Math.max(1, Math.round(w * k)), Math.max(1, Math.round(h * k))]; }
   function shrinkTexture(t, maxDim) {
     shrinkQ = shrinkQ.then(() => {
-      const im = t && t.image;
+      const im = t && t.image; if (keep(t)) return false;
       if (!(im && typeof ImageBitmap !== 'undefined' && im instanceof ImageBitmap && im.width > 0 && typeof W.createImageBitmap === 'function')) return false;
       const sz = fitSize(im.width, im.height, maxDim); if (!sz) return false;
       return W.createImageBitmap(im, { resizeWidth: sz[0], resizeHeight: sz[1], resizeQuality: 'medium', imageOrientation: 'none', premultiplyAlpha: 'none', colorSpaceConversion: 'none' }).then((nb) => {

@@ -2019,6 +2019,7 @@ body[data-dm-screen]:not([data-dm-screen="flight"]) #dm-flash,body[data-dm-scree
       <button type="button" class="btn" onclick="settingsAutoDetect()" style="padding:5px 12px;font-size:0.62rem;">DETECT NOW</button>
     </div>
     <div class="setting-row"><div><div class="setting-label">Auto balance</div><div class="setting-sub">Lowers resolution / detail only when frames get slow, restores it when there is room (always on in Auto)</div></div><label class="toggle-switch"><input type="checkbox" id="set-autobal"><span class="toggle-track"></span></label></div>
+    <div class="setting-row"><div><div class="setting-label">Native / Sharp</div><div class="setting-sub">Full device resolution (the October look): no pixel budget squeeze, auto balance never drops below 90% (85% on Low). Off = old savings mode</div></div><label class="toggle-switch"><input type="checkbox" id="set-sharp" checked><span class="toggle-track"></span></label></div>
     <div class="setting-row">
       <div><div class="setting-label">Resolution Scale</div><div class="setting-sub">Lower = faster framerate</div></div>
       <select id="set-resscale" style="background:rgba(var(--acc-rgb),0.06);border:1px solid var(--border);color:var(--text);padding:3px 7px;font-family:var(--font-body);font-size:0.7rem;border-radius:2px;outline:none;">
@@ -4892,6 +4893,7 @@ const GFX = {
   antialias:false,       // MSAA off by default (Settings → Custom → Anti-aliasing turns it on; applies on next launch)
   pathTraceAccents:false,// experimental WebGPU only
   maxPixelRatio:2,
+  sharp:true,            // (t1644 Track 1) NATIVE / SHARP: the PR #111 (Oct 2) resolution rule - device pixels x resolution scale, no megapixel cap, render-scale floor 0.9 (Low 0.85). Settings > Native / Sharp.
   // Dev/debug overlay (mounted/state/bones/parent/visible/localPos) added
   // during character-rig troubleshooting — off by default, toggleable in
   // Settings so it's there for future debugging without being on-screen
@@ -5050,9 +5052,12 @@ function _presetGovTick(){
     if(!(ema>bud*1.08)){ _PG.over=0; return; }
     if(++_PG.over<_PG_MISS_TICKS) return;
     _PG.over=0;
-    const next=_presetStepDown(GFX.runtimeTier||p, autoPreset()); if(!next) return;
+    // (t1644 Track 1) an explicit High / Ultra pick eases at most ONE tier (Ultra->High, High->Medium), never silently back to Low; and the render scale is not part of the ease
+    let _cls=autoPreset(); if(_PRESET_RANK[p]>=2&&_PRESET_RANK[_cls]<_PRESET_RANK[p]-1) _cls=_PRESET_BY_RANK[_PRESET_RANK[p]-1];
+    const next=_presetStepDown(GFX.runtimeTier||p, _cls); if(!next) return;
+    const _keepRS=GFX.resScale;
     GFX.runtimeTier=next; _PG.cool=_PG_COOL_TICKS;
-    _PG.applying=true; try{ applyPreset(next); }finally{ _PG.applying=false; }
+    _PG.applying=true; try{ applyPreset(next); }finally{ _PG.applying=false; GFX.resScale=_keepRS; try{ if(STATE&&STATE.settings) STATE.settings.resScale=_keepRS; }catch(e){} }
     try{ applyGraphicsLive(); }catch(e){}
     try{ if(window.DMCrumb&&DMCrumb.mark) DMCrumb.mark('preset','ease '+p+'>'+next); }catch(e){}
     try{ if(window.__dmRec) window.__dmRec('preset.ease.'+next,ema); }catch(e){}
@@ -5158,7 +5163,8 @@ function _dynRes(r){
   let k=d.k;
   // diving into a star (volumetric plasma + the bubble's lens fill the screen)
   // resolution may drop further and faster; back out, it snaps back to 60%
-  const starHot=!!(window.DMStarBubble&&(DMStarBubble.a>0.05||DMStarBubble.inStar)), floor=GFX.preset==='auto'?(starHot?0.42:0.6):(starHot?0.6:0.72);
+  const starHot=!!(window.DMStarBubble&&(DMStarBubble.a>0.05||DMStarBubble.inStar)); let floor=GFX.preset==='auto'?(starHot?0.42:0.6):(starHot?0.6:0.72);
+  { const mf=window.DMGov&&DMGov.minFloor?DMGov.minFloor(GFX):(GFX.sharp?0.9:0); if(floor<mf) floor=mf; }   // (t1644 Track 1) tablet / Native floor
   if(k<floor){ k=floor; }
   else if(d.ema>target*1.25&&k>floor){ k=Math.max(floor,Math.round((k-(starHot?0.14:0.14))*100)/100); }
   else if(d.ema<target*0.62&&k<1){ d.hold+=ms; if(d.hold>9000){ k=Math.min(1,Math.round((k+0.14)*100)/100); d.hold=0; } }
@@ -5168,18 +5174,28 @@ function _dynRes(r){
 // (v259) drawing-buffer BUDGET: a 1920x1200 window at devicePixelRatio 2 is a 9.2 MP canvas (3840x2400) - the fill cost alone is a slide show on most GPUs (the HUD read FPS 1-2).
 // The ratio is capped so the buffer never exceeds a per-preset pixel count (Ultra 12 MP, High 5.2 MP, Auto/Medium 3.6 MP, Low 2 MP); the player's own resolution scale multiplies on top.
 const _PX_MP={ultra:12,high:5.2,custom:5.2,auto:4.2,medium:3.6,low:2.0};
+// (t1644 Track 1, single resolution authority) THE one place the render resolution is decided.  Everything else (DMGov ui/dm-governor.js, the budget ladder's
+// advisory cap, AR) only multiplies a scale k <= 1 on top of this, never below the floor DMGov.minFloor() gives (tablets 0.85, Native / Sharp 0.9 / Low 0.85).
+//  - NATIVE / SHARP (GFX.sharp, default ON): PR #111's rule exactly - min(devicePixelRatio, 2) x resolution scale.  No megapixel cap.  On Low the scale is held at
+//    >= 0.85 (PR #111 Low ran 0.7: kept as 30 fps headroom only when Native / Sharp is OFF).  Custom keeps the player's own scale.
+//  - Native / Sharp OFF: the v259 megapixel budget still exists, but on DESKTOP only (a 4K / 5K monitor), never on a phone or tablet (it squeezed a 3K tablet on Low to 2 MP).
 function effectivePixelRatio(){
   let r=Math.min(GFX.dpr,GFX.maxPixelRatio);
-  try{
-    const w=window.innerWidth||0, h=window.innerHeight||0, mp=_PX_MP[GFX.preset]||3.6;
-    if(w>0&&h>0){ const cap=Math.sqrt(mp*1e6/(w*h)); if(cap<r) r=Math.max(0.75,cap); }
-  }catch(e){}
-  return r*GFX.resScale;
+  if(!GFX.sharp&&!GFX.isMobile){
+    try{
+      const w=window.innerWidth||0, h=window.innerHeight||0, mp=_PX_MP[GFX.preset]||3.6;
+      if(w>0&&h>0){ const cap=Math.sqrt(mp*1e6/(w*h)); if(cap<r) r=Math.max(0.75,cap); }
+    }catch(e){}
+  }
+  let rs=GFX.resScale;
+  if(GFX.sharp&&GFX.preset!=='custom'){ let lo=false; try{ lo=resolvePreset()==='low'; }catch(e){} rs=Math.max(rs,lo?0.85:1); }
+  return r*rs;
 }
+window.effectivePixelRatio=effectivePixelRatio;
 
 // ── Persistence ─────────────────────────────────────────────────
 const GFX_STORE_KEY='dm_gfx_v2';
-const GFX_KNOB_KEYS=['preset','resScale','shadows','shadowSize','envReflections','caustics','fakeGI','refraction','ssao','volumetricDust','dustDensity','aniso','antialias','pathTraceAccents','showCharDebug','dynamicRes'];
+const GFX_KNOB_KEYS=['preset','resScale','shadows','shadowSize','envReflections','caustics','fakeGI','refraction','ssao','volumetricDust','dustDensity','aniso','antialias','pathTraceAccents','showCharDebug','dynamicRes','sharp'];
 function saveGfxChoice(){
   try{
     const payload={chosen:true, aaV:2, resolved:resolvePreset(), ts:Date.now()};
@@ -6706,7 +6722,10 @@ async function initFlightScene(){
   try{ detectCapabilities(); loadGfxChoice(); applyQualityTier(); }catch(e){console.warn('cap init:',e);}
 
   // Renderer — compatibility-first across Safari/Chrome/Edge/Firefox on all OSes
-  flightRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:!!GFX.antialias,alpha:true,powerPreference:'high-performance',logarithmicDepthBuffer:true,trackTimestamp:_gpuTimeWanted(),forceWebGL:/[?&]gl=1\b/.test(location.search)});   // (v136) ?gl=1 forces the WebGL2 backend (headless A/B). (v105) GPU pass timings when timestamp-query / EXT_disjoint_timer_query exists (no-op otherwise)
+  // (t1644 Track 1) iOS Safari: after a WebGPU device loss the next launches use the WebGL2 backend (dm_forceGL, 3 days, cleared by ?gl=0 or a new build) so an iPhone stops crash-looping
+  function _dmForceGL(){ try{ const q=location.search; if(/[?&]gl=1\b/.test(q)) return true; if(/[?&]gl=0\b/.test(q)){ localStorage.removeItem('dm_forceGL'); return false; }
+    const j=JSON.parse(localStorage.getItem('dm_forceGL')||'null'); if(!j) return false; if(Date.now()-j.at>3*864e5||String(j.b||'')!==String(window.DM_BUILD||'')){ localStorage.removeItem('dm_forceGL'); return false; } return true; }catch(e){ return false; } }
+  flightRenderer=new THREE.WebGPURenderer({canvas:cv,antialias:!!GFX.antialias,alpha:true,powerPreference:'high-performance',logarithmicDepthBuffer:true,trackTimestamp:_gpuTimeWanted(),forceWebGL:_dmForceGL()});   // (v136) ?gl=1 forces the WebGL2 backend (headless A/B). (v105) GPU pass timings when timestamp-query / EXT_disjoint_timer_query exists (no-op otherwise)
   _guardRenderDepth(flightRenderer);
   try{
     await flightRenderer.init();
@@ -6726,6 +6745,7 @@ async function initFlightScene(){
   const _gpuLost=(why)=>{
     if(window._dmGpuLost) return; window._dmGpuLost=true;
     console.warn('[gpu] lost:',why);
+    try{ if(GFX.isIOS&&_isRealWebGPU(flightRenderer)&&!/[?&]gl=0\b/.test(location.search)){ localStorage.setItem('dm_forceGL',JSON.stringify({at:Date.now(),b:window.DM_BUILD||'',why:String(why).slice(0,120)})); console.warn('[gpu] iOS: next launch uses the WebGL2 backend (?gl=0 to retry WebGPU)'); } }catch(e){}   // (t1644 Track 1)
     try{ window.dmBreadcrumb&&window.dmBreadcrumb('gpulost',why); }catch(e){}
     try{ localStorage.setItem('dm_lastGpuLost',JSON.stringify({at:new Date().toISOString(),why:String(why).slice(0,200),screen:STATE&&STATE.screen,aboard:!!((typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active)||(window.BTI&&(BTI.cur||BTI._depth>0))),build:window._dmSwCache||null})); }catch(e){}   // (v104) the next session's perf report carries why the last one died
     // (webkit-polish) silent save on every in-world screen (flight / surface / atmo), not only flight; and a reload-loop guard:
@@ -8038,7 +8058,7 @@ const SV_LOD_PRESET={low:{bodies:1,cap:256},medium:{bodies:1,cap:256},high:{bodi
 function _svLodPreset(){ let p='medium'; try{ p=resolvePreset(); }catch(e){} const r=SV_LOD_PRESET[p]||SV_LOD_PRESET.medium; try{ if(r.bodies>1&&window.DMMem&&DMMem.lean()) return {bodies:1,cap:r.cap}; }catch(e){} return r; }
 // resident GPU MB of every live LOD brick pool (shown in ?perf=1)
 window._svLodResident=function(){ let mb=0,n=0,br=0; try{ celestialBodies.forEach(b=>{ const l=b._svLod||b._svDrain; if(l){ n++; mb+=l.poolMB||0; br+=l.resident||0; } }); }catch(e){} const p=_svLodPreset(); return {bodies:n,maxBodies:p.bodies,cap:p.cap,bricks:br,mb}; };
-const SV_LOD={B:4,DMAX:64,K:2.5,budgetMs:3,get maxBodies(){ return _svLodPreset().bodies; },on:!/[?&]lod=0\b/.test(location.search)};
+const SV_LOD={B:4,DMAX:64,K:2.5,budgetMs:3,get maxBodies(){ return _svLodPreset().bodies; },on:/[?&]lod=1\b/.test(location.search)};   // (t1644 Track 1) OFF by default: the per-brick "nanite-style" pool (38-75 MB of storage buffers, the brick-fade / stacked-shell breakage and the iPhone buffer churn) is opt-in with ?lod=1; every world draws the PR #111 planet mesh path
 async function _svLodPlanetMesh(o){
   const SV=window.DMSparseVox, B=SV_LOD.B, BP=B+1, P3=BP*BP*BP, C3=B*B*B, FC=6*B*B, DMAX=SV_LOD.DMAX;
   const radius=o.radius, HALF=o.HALF;
@@ -8843,9 +8863,9 @@ async function buildSolarSystem(){
     // y fixed). Without this rotation the ring rendered perpendicular to the
     // actual path the planet travels. Rotate -90° about X so the ring lies flat in XZ.
     // Tube scales with oR so Neptune ring stays readable on tablet at AU_UNITS
-    const orbitTube=Math.max(0.12, p.oR*0.0001);
-    const orbit=new THREE.Mesh(new THREE.TorusGeometry(p.oR,orbitTube,3,Math.max(64,Math.round(p.oR*0.35))),new THREE.MeshBasicMaterial({color:0x223344,transparent:true,opacity:.3}));
-    orbit.rotation.x=Math.PI/2;
+    // (t1644 Track 1) a crisp constant-width (1 device pixel) LINE LOOP in world XZ instead of the 3-sided torus tube (tens of thousands of AU-scale segments with a
+    // sub-pixel tube faceted / shimmered / broke up far out, e.g. past the Milky Way).  No rotation needed: the points are already in XZ.
+    const orbit=_orbitRingLine(p.oR,0x223344,0.3);
     flightScene.add(orbit);if(typeof _trackSystemExtra==='function')_trackSystemExtra(orbit);
 
     // Saturn-style rings — several stacked flat RingGeometry annuli (each
@@ -9053,7 +9073,10 @@ function _btLoadModel(){
     t.traverse(o=>{ if(o.isMesh){ o.castShadow=GFX.shadows; o.receiveShadow=GFX.shadows; }});
     // (memory lane) the GLB's 28 decoded images (~53 MB of ImageBitmaps; all of them the interior's signs / holos / floor) are closed as soon as the renderer has uploaded each one.
     // The temple lives for the whole session and nothing re-creates its textures, so a closed bitmap is never needed again.
-    try{ if(window.DMMem&&DMMem.lean()){ const _ts=DMMem.collectTextures(t); _ts.forEach(x=>DMMem.releaseBitmapAfterUpload(x)); DMMem.shrinkAll(_ts,512); } }catch(e){}   // (+ the 1024x640 sign / holo / floor images fit 512 px on a handheld: 64 -> 16 MB mipped)
+    // (t1644 Track 1) NO handheld shrink / bitmap close on the temple any more: shrinkTexture disposed the GPU copy under live materials and the closed ImageBitmap could
+    // never be re-uploaded (a disposed / device-restored texture then had no source -> invalid texture -> "Invalid BindGroup bindGroup_object").  The temple keeps full-quality
+    // textures on every device (Justin's standing rule).  ?btshrink=1 restores the old memory-lane path for A/B only.
+    try{ if(/[?&]btshrink=1\b/.test(location.search)&&window.DMMem&&DMMem.lean()){ const _ts=DMMem.collectTextures(t); _ts.forEach(x=>DMMem.releaseBitmapAfterUpload(x)); DMMem.shrinkAll(_ts,512); } }catch(e){} try{ if(!/[?&]btshrink=1\b/.test(location.search)&&window.DMMem&&DMMem.collectTextures) DMMem.collectTextures(t).forEach(x=>{ if(x&&x.userData) x.userData.dmKeepFull=true; }); }catch(e){}
     // Brightness fix, round 3 — the real bug behind 'light reaches Saturn/
     // my board from miles away' isn't the distance number on the lights.
     // Three.js lights illuminate EVERY object within range regardless of
@@ -11420,13 +11443,14 @@ function _natSurfaceTick(sky,cam){
 }
 // Natural point sources (campfires, lava vents, glowing fungi…): ask for a light; only the nearest few (the fixed pool) are lit.
 window.DMNatLights=(function(){
-  const req=new Map(); let id=0;
+  const req=new Map(); let id=0; const _NATOFF=/[?&]natlight=0\b/.test(location.search);
   return {
     request(pos,color,intensity,range){ const k=++id; req.set(k,{pos:pos.clone?pos.clone():new THREE.Vector3(pos.x,pos.y,pos.z),color:new THREE.Color(color),i:intensity||1,r:range||12}); return k; },
     set(k,pos,intensity){ const e=req.get(k); if(!e) return; e.pos.copy(pos); if(intensity!=null) e.i=intensity; },   // move / re-strength a live request in place (no allocation) — the kite-charm glow follows her
     release(k){ req.delete(k); }, clear(){ req.clear(); }, get count(){ return req.size; },
     _tick(cam){
       const pool=TERRAIN.natPool; if(!pool) return;
+      if(_NATOFF){ pool.forEach(l=>{ l.intensity=0; }); return; }   // (t1644 Track 1) ?natlight=0: no pooled point light at all (first-person head light, charm glow) - isolates the 'bubble' A/B
       const list=[...req.values()].map(e=>({e,d:e.pos.distanceTo(cam.position)})).filter(o=>o.d<o.e.r*4).sort((a,b)=>a.d-b.d);
       pool.forEach((l,i)=>{ const o=list[i]; if(o){ l.position.copy(o.e.pos); l.color.copy(o.e.color); l.distance=o.e.r; l.intensity=o.e.i*Math.min(1,(o.e.r*4-o.d)/(o.e.r*2)); } else l.intensity=0; });
     }
@@ -13444,6 +13468,15 @@ function updateFollowCam(dt){
 
 // ── Worlds: arm-cell → seeded system enter (no dual flat-planet stacks) ──
 let _flightSystemExtras=[];
+// (t1644 Track 1) orbit overlay: one closed line in world XZ, constant 1 device-pixel width at any distance (no tube to tessellate), 512 segments
+// (a 0.012 deg chord: smooth at any zoom a ring can fill the screen), no depth write so it never z-fights the planets it passes.
+function _orbitRingLine(r,color,opacity){
+  const N=512, pos=new Float32Array(N*3);
+  for(let i=0;i<N;i++){ const a=i/N*Math.PI*2; pos[i*3]=Math.cos(a)*r; pos[i*3+1]=0; pos[i*3+2]=Math.sin(a)*r; }
+  const g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.BufferAttribute(pos,3)); g.computeBoundingSphere();
+  const l=new THREE.LineLoop(g,new THREE.LineBasicMaterial({color,transparent:true,opacity,depthWrite:false}));
+  l.name='JOTS_OrbitRing'; l.userData.orbitRing=true; l.raycast=()=>{}; l.renderOrder=-1; return l;
+}
 function _trackSystemExtra(obj){
   if(obj){ _flightSystemExtras.push(obj); }
   return obj;
@@ -15518,11 +15551,7 @@ async function _rebuildFlightForSystem(system){
       ringGroup.isPlanetExtra=true;
       group.add(ringGroup);
     }
-    const orbit=new THREE.Mesh(
-      new THREE.TorusGeometry(oR,.035,3,Math.max(48,Math.round(oR*0.7))),
-      new THREE.MeshBasicMaterial({color:0x223344,transparent:true,opacity:.28})
-    );
-    orbit.rotation.x=Math.PI/2;
+    const orbit=_orbitRingLine(oR,0x223344,0.28);   // (t1644 Track 1) crisp line loop (see _orbitRingLine)
     flightScene.add(orbit);_trackSystemExtra(orbit);
 
     group.position.set(Math.cos(ang)*oR,0,Math.sin(ang)*oR);
@@ -15592,7 +15621,7 @@ function closeSupport(){const m=$('support-modal');if(m)m.style.display='none';}
 
 function openSettings(){try{releaseMouseLook();}catch(e){}
   // sync controls to live GFX + STATE.settings
-  try{ if($('set-quality'))$('set-quality').value=GFX.preset||'auto'; if($('set-autobal')){ $('set-autobal').checked=(GFX.preset==='auto')||GFX.dynamicRes!==false; $('set-autobal').disabled=(GFX.preset==='auto'); } }catch(e){}
+  try{ if($('set-quality'))$('set-quality').value=GFX.preset||'auto'; if($('set-autobal')){ $('set-autobal').checked=(GFX.preset==='auto')||GFX.dynamicRes!==false; $('set-autobal').disabled=(GFX.preset==='auto'); } if($('set-sharp')) $('set-sharp').checked=GFX.sharp!==false; }catch(e){}
   syncSettingsUIFromState();
   $('settings-modal').classList.add('open');
 }
@@ -15621,6 +15650,7 @@ function applySettings(){
   let needsRebuild=false;
   if($('set-quality')){const q=$('set-quality').value;if(GFX.preset!==q){GFX.preset=q;GFX.runtimeTier=null;if(q!=='custom')applyPreset(q);needsRebuild=true;}}
   if($('set-autobal')&&GFX.preset!=='auto'){ GFX.dynamicRes=$('set-autobal').checked?true:false; try{ if(flightRenderer) flightRenderer._dr=null; }catch(e){} }
+  if($('set-sharp')&&$('set-sharp').checked!==(GFX.sharp!==false)){ GFX.sharp=$('set-sharp').checked; try{ if(flightRenderer){ flightRenderer._dr=null; flightRenderer.setPixelRatio(effectivePixelRatio()); flightRenderer.setSize(window.innerWidth,window.innerHeight); } }catch(e){} }   // (t1644 Track 1) live, no rebuild
   if($('set-resscale')){
     const rs=parseFloat($('set-resscale').value);
     if(GFX.resScale!==rs){
@@ -20083,7 +20113,10 @@ function _taHalf(){ try{
   const q=location.search; if(/[?&]atmohalf=0\b/.test(q)) return false; if(/[?&]atmohalf=1\b/.test(q)) return true;
   // (perf-mars) phones / tablets on EVERY preset: the gas march at half resolution, composite + water at full resolution (what High / Ultra on a phone already did).  MEASURED headless on Mars (SwiftShader, 640x400):
   // the air pass (the 'Render Pipeline' draw) costs about as much as the whole scene pass, and Low / Medium ran it at full resolution.  ?atmohalf=0 restores full-res, =1 forces half-res.
-  return _taAuto()||!!GFX.isMobile; }catch(e){ return false; } }   // (v150) phones/tablets on High/Ultra: half-res gas, depth-aware composite at full res (Low/Medium unchanged)   // (v130) half-res gas march under Auto on every device; manual presets stay full-res
+  // (t1644 Track 1) full-resolution air on TABLETS and desktops (the half-res gas blurred every limb / haze edge on a 3K tablet); phones keep half-res (their small screen hides it),
+  // desktop Low keeps it as headroom.  ?atmohalf=1 / =0 still force either way.
+  if(GFX.isMobile){ let tab=false; try{ const sc=screen, m=Math.min(sc.width||0,sc.height||0); tab=m>=600; }catch(e){} return !tab; }
+  try{ return resolvePreset()==='low'; }catch(e){ return false; } }catch(e){ return false; } }   // (v150) phones/tablets on High/Ultra: half-res gas, depth-aware composite at full res (Low/Medium unchanged)   // (v130) half-res gas march under Auto on every device; manual presets stay full-res
 // async WebGPU failure fallback: device loss, and validation/OOM errors raised by the pass itself in its first frames
 function _taGuardBegin(r){
   const dev=r&&r.backend&&r.backend.isWebGPUBackend?r.backend.device:null; if(!dev) return null;

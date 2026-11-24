@@ -56,7 +56,7 @@
     const d = r._dr = make(gfx); d.t = now; d.since = now; d.nextEval = now + 2500;
     const sk = loadSaved(gfx); d.saved = sk; d.loaded = true;
     // (t1590, Perf guard #275 F1) a remembered scale from before the tablet floor (v349 slide-shows saved 0.42) never applies below it at boot
-    if (sk < 1) { const k0 = Math.max(sk, tabletFloor(gfx)); if (k0 < 1) { d.k = k0; d.hold = 5000; try { r.setPixelRatio(basePR * k0); } catch (e) {} } }
+    if (sk < 1) { const k0 = Math.max(sk, minFloor(gfx)); if (k0 < 1) { d.k = k0; d.hold = 5000; try { r.setPixelRatio(basePR * k0); } catch (e) {} } }
     return d;
   }
   // Warm-up step: apply the remembered scale now, so the drawing-buffer reallocation (and the first render at that size) happens
@@ -111,8 +111,8 @@
     const n = Math.min(d.count, 72);
     const p70 = pct(d, n, 0.70), p90 = pct(d, n, 0.90), med = pct(d, n, 0.5), p10 = pct(d, n, 0.10);
     if (p70 > 150) d.emUntil = now + 300000;                              // sticky: five minutes below the preset floor (no 0.42 <-> 0.6 flapping), refreshed while it stays a slide-show
-    if (now < (d.emUntil || 0)) { floor = Math.min(floor, 0.42); d.floor = floor; }
-    { const tf = tabletFloor(gfx); if (floor < tf) { floor = tf; d.floor = floor; } }   // (t1590) never below 0.75 on a tablet, even in a slide-show   // (v259) a slide-show (> 150 ms frames): resolution is the lever left, the preset floor yields (it climbs back up when calm)
+    if (now < (d.emUntil || 0) && !sharp(gfx)) { floor = Math.min(floor, 0.42); d.floor = floor; }   // (t1644 Track 1) no 0.42 slide-show floor under Native / Sharp
+    { const tf = minFloor(gfx); if (floor < tf) { floor = tf; d.floor = floor; } }   // (t1590) never below 0.75 on a tablet, even in a slide-show   // (v259) a slide-show (> 150 ms frames): resolution is the lever left, the preset floor yields (it climbs back up when calm)
     // display period: the fastest steady cadence seen (a 120 Hz iPad Pro gets 8.3, a 30 Hz low-power phone stays above 16.7)
     if (p10 < d.ref - 0.3 && p10 > 6.5) d.ref += (p10 - d.ref) * 0.25;
     else if (p10 > d.ref * 1.5 && d.count >= N) d.ref += (Math.min(16.7, p10) - d.ref) * 0.01;
@@ -180,13 +180,21 @@
   // decides everything below it, and a capped scale is never remembered as the device's settled scale (the budget controller seeds its own stage next launch).
   // (t1590) TABLETS keep at least 0.75 of their chosen render scale: below it the ground's dither cells and every edge read as blocks (Justin's v348 Mars shots, 3-11 fps at a
   // shed scale).  Terrain-quality sheds come first (ui/dm-budget.js ladder); resolution is not the lever left on a tablet.  Phones / desktops are unchanged.  Pure on its input.
-  const TABLET_FLOOR = 0.75;
+  // (t1644 Track 1) 0.75 -> 0.85: at 0.75 a 3K tablet still read soft next to PR #111 (audit t1644).  And NATIVE / SHARP (GFX.sharp, default ON, Settings): the scale
+  // never goes below 0.9 (0.85 on Low) on any device - the pre-v259 'native resolution' look; frame time is bought by the ladder's detail sheds instead.  Pure on its input.
+  const TABLET_FLOOR = 0.85, SHARP_FLOOR = 0.9, SHARP_FLOOR_LOW = 0.85;
   function tabletFloor(gfx) { try { const sc = root.screen, m = sc ? Math.min(sc.width || 0, sc.height || 0) : 0; return (gfx && gfx.isMobile && m >= 600) ? TABLET_FLOOR : 0; } catch (e) { return 0; } }
-  root._dmTabletFloor = tabletFloor;
+  function sharp(gfx) { return !!(gfx && gfx.sharp === true); }
+  function minFloor(gfx) {
+    let f = tabletFloor(gfx);
+    if (sharp(gfx)) { let lo = false; try { lo = (gfx.runtimeTier || (typeof root.resolvePreset === 'function' ? root.resolvePreset() : gfx.preset)) === 'low'; } catch (e) { } f = Math.max(f, lo ? SHARP_FLOOR_LOW : SHARP_FLOOR); }
+    return f;
+  }
+  root._dmTabletFloor = minFloor;   // (t1644) the budget ladder's advisory cap reads the same floor
   function bcap() { const B = root.DMBudget; return B && B.on && B.resCap ? B.resCap() : 1; }
   function setK(r, d, gfx, basePR, k, now) {
     k = snap(Math.min(1, Math.max(0.3, k))); const cp = bcap(); if (k > cp) k = snap(cp);
-    { const tf = tabletFloor(gfx); if (k < tf) k = tf; }   // (t1590) tablet floor, also under a budget cap
+    { const tf = minFloor(gfx); if (k < tf) k = tf; }   // (t1590) tablet floor (t1644: + Native / Sharp floor), also under a budget cap
     if (k === d.k) return;
     d.k = k; d.since = now; d.changes++; root._dmResChanges = (root._dmResChanges || 0) + 1;
     d.count = Math.min(d.count, 8); d.nextEval = now + 800;                 // judge the new scale on fresh frames only
@@ -197,5 +205,5 @@
     const r = root.flightRenderer, d = r && r._dr;
     return d && d.ring ? { k: d.k, floor: d.floor, ceil: d.ceil, ref: +d.ref.toFixed(1), changes: d.changes, hold: d.hold, probing: !!d.probe, noGain: d.noGain, saved: d.saved } : null;
   }
-  root.DMGov = { frame: frame, prime: prime, stats: stats, KEY: KEY };
+  root.DMGov = { frame: frame, prime: prime, stats: stats, KEY: KEY, minFloor: minFloor };
 })(window);
