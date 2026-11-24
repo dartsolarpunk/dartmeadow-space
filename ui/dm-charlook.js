@@ -308,12 +308,13 @@
   // time-sliced normal smoothing: one mesh per slice, yielding between meshes (a mesh above CAP_VERTS is skipped)
   async function smoothMeshes(rootObj, THREE, budgetMs) {
     if (/[?&]charsmooth=0\b/.test(search())) return;   // debug / A-B switch
-    const list = []; eachMesh(rootObj, (o) => { const g = o.geometry; if (!g.attributes.normal || !g.attributes.position || g.userData.dmSmoothed || (g.morphAttributes && g.morphAttributes.normal)) return; list.push(g); });
+    const list = []; eachMesh(rootObj, (o) => { const g = o.geometry; if (!g.attributes.normal || !g.attributes.position || g.userData.dmSmoothed || (g.morphAttributes && g.morphAttributes.normal)) return; list.push({ g, name: o.name || (o.material && o.material.name) || '' }); });
     const seen = new Set(); let t0 = (typeof performance !== 'undefined' ? performance.now() : 0);
-    for (const g of list) {
+    for (const item of list) {
+      const g = item.g, cloth = /pants|shirt|cloth|fabric|trouser|jean|shorts/i.test(item.name);
       if (seen.has(g)) continue; seen.add(g); g.userData.dmSmoothed = true;
       const pa = g.attributes.position, na = g.attributes.normal; if (!(pa.array instanceof Float32Array) || !(na.array instanceof Float32Array) || pa.itemSize !== 3 || na.itemSize !== 3 || pa.isInterleavedBufferAttribute || na.isInterleavedBufferAttribute || pa.count > CAP_VERTS) continue;
-      const a0 = performance.now(), r = smoothNormals(pa.array, na.array, {}); S.stats.smoothMs += performance.now() - a0;
+      const a0 = performance.now(), r = smoothNormals(pa.array, na.array, cloth ? { angleDeg: 89 } : {}); S.stats.smoothMs += performance.now() - a0;
       if (r.nrm) { g.setAttribute('normal', new THREE.BufferAttribute(r.nrm, 3)); S.stats.meshesSmoothed++; S.stats.vertsChanged += r.changed; }
       if (performance.now() - t0 > (budgetMs || 8)) { await new Promise((res) => setTimeout(res, 0)); t0 = performance.now(); }
     }

@@ -39,7 +39,7 @@
   const SPOT_AXES = { front: { label: 'Front', n: [0, 0, 1] }, back: { label: 'Back', n: [0, 0, -1] }, left: { label: 'Left side', n: [1, 0, 0] }, right: { label: 'Right side', n: [-1, 0, 0] } };
   const REGISTRY = [
     {
-      id: 'ariel', name: 'Ariel', tag: 'PILOT', ready: true,
+      id: 'ariel', name: 'Ariel', tag: 'ARTICREN', ready: true,
       mesh: 'characterassests/Meshy_AI_Autumn_biped_Character_output.glb',
       anims: 'characterassests/Meshy_AI_Autumn_biped_Meshy_AI_Meshy_Merged_Animations.glb',
       clipMap: { walk: 'Walking', run: 'Running', jump: 'Regular_Jump', climbLoop: 'climbing_up_wall', step: 'Mount_Step', stepOff: 'Dismount_Step', swim: 'Swim_Forward',

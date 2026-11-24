@@ -144,7 +144,7 @@
       rep = el('div', 'dms-ov'); rep.id = 'dms-report';
       rep.innerHTML = '<div class="dms-card" role="dialog" aria-modal="true" aria-labelledby="dms-rep-t">' +
         '<div class="dms-head"><span class="dms-t" id="dms-rep-t">⚑ REPORT</span><button class="dms-x" data-x>✕</button></div>' +
-        '<label class="dms-lab">Player<input id="dms-rep-name" maxlength="40" autocomplete="off" placeholder="Pilot name (optional)"></label>' +
+        '<label class="dms-lab">Player<input id="dms-rep-name" maxlength="40" autocomplete="off" placeholder="Articren name (optional)"></label>' +
         '<div class="dms-quote" id="dms-rep-quote"></div>' +
         '<div class="dms-lab">What’s wrong?</div><div class="dms-chips" id="dms-rep-why"></div>' +
         '<textarea id="dms-rep-det" maxlength="1000" placeholder="Anything that helps us look into it (optional)"></textarea>' +
@@ -305,7 +305,7 @@
     const items = [];
     if (k.github) items.push('Everything the game keeps in your private <b>' + esc(k.repo) + '</b> repository on GitHub: saves and journeys, friends list, journal markers, block list, themes, graphics settings, chat logs and screenshots.');
     items.push('Your friends list — friends who are online now are told to remove you; others drop you when they next see you’re gone.');
-    items.push('Everything stored on this device: saves, journal, settings, pilot name and sign-in.');
+    items.push('Everything stored on this device: saves, journal, settings, Articren name and sign-in.');
     if (k.apple) items.push('Your Sign in with Apple link to DART Meadow: the app asks iOS to revoke it.');
     body.innerHTML = '<div class="dms-p">This permanently deletes your DART Meadow account <b>' + esc(k.name) + '</b>:</div>' +
       '<ul class="dms-ul">' + items.map((i) => '<li>' + i + '</li>').join('') + '</ul>' +

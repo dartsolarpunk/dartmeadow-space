@@ -80,7 +80,7 @@ ok(/<button class="menu-btn" onclick="goScreen\('character'\)">/.test(html), 'ma
 ok(!/class="menu-btn" onclick="goScreen\('builder'\)"/.test(html), 'main menu no longer jumps straight to the builder');
 ok(/id="cs-next"/.test(html) && /W\.goScreen\('builder'\)/.test(rd('ui/dm-charselect.js')), 'character screen continues to the builder');
 ok(/id="cs-back"/.test(html) && /\$\('cs-back'\)\.addEventListener\('click', \(\) => W\.goScreen\('menu'\)\)/.test(rd('ui/dm-charselect.js')), 'character screen can go back to the main menu');
-ok(/goScreen\('character'\)" title="Back to the pilot select">/.test(html) && /<button class="launch-btn gold" onclick="launchFlight\(\)">/.test(html), 'builder: back to pilot, back to menu, launch');
+ok(/goScreen\('character'\)" title="Back to the Articren select">/.test(html) && /<button class="launch-btn gold" onclick="launchFlight\(\)">/.test(html), 'builder: back to Articren, back to menu, launch');
 ok(html.indexOf('id="screen-character"') < html.indexOf('id="screen-builder"') && html.indexOf('id="screen-character"') > html.indexOf('id="screen-menu"'), 'screen order: menu, character, builder');
 ok(/else if\(name==='builder'\)/.test(html) && /if\(name==='character'\)\{\$\('screen-character'\)\.classList\.add\('active'\)/.test(html), 'goScreen has the character branch');
 ok(/_prevScreen==='character'&&name!=='character'&&window\.DMCharSelect\) DMCharSelect\.leave\(\)/.test(html), 'leaving the screen disposes the studio');
