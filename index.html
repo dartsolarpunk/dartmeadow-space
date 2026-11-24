@@ -19274,7 +19274,8 @@ function _gfxApplyShadows(sc){
       if(o.isDirectionalLight) _sunShadowFit(o);
     } else if(on&&o.isMesh&&!o.userData._gfxShadow){
       const m=o.material;
-      if(m&&!Array.isArray(m)&&!m.transparent&&(m.isMeshStandardMaterial||m.isMeshPhysicalMaterial||m.isMeshLambertMaterial)&&!(o.isInstancedMesh&&o.count>3000)){
+      // (v382) include the board's MeshStandardNodeMaterial alloy (Oct-2 era shadows were standard materials only; node metals never got receiveShadow here)
+      if(m&&!Array.isArray(m)&&!m.transparent&&(m.isMeshStandardMaterial||m.isMeshPhysicalMaterial||m.isMeshLambertMaterial||m.isMeshStandardNodeMaterial||m.isMeshPhysicalNodeMaterial||(m.isNodeMaterial&&!m.isMeshBasicNodeMaterial))&&!(o.isInstancedMesh&&o.count>3000)){
         o.castShadow=true; o.receiveShadow=true; o.userData._gfxShadow=true; m.needsUpdate=true;
       }
     }

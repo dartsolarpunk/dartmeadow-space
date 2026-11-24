@@ -159,9 +159,18 @@
   function initPre() { if (!_v && T) { _v = new T.Vector3(); _d = new T.Vector3(); _q = new T.Vector3(0, 0, 1); _z = new T.Vector3(); _f = new T.Vector3(); } }
   // ── the LED bar on the glasses
   function glassesMesh(rootObj) {
-    let best = null;
-    rootObj.traverse(o => { if (best || !o.isSkinnedMesh || !o.skeleton) return; if (o.name === 'Mesh_1' || o.name === 'Mesh 1' || (o.material && /Material_1\.001/.test(o.material.name || '') && o.skeleton.bones.some(b => b.name === 'Head'))) best = o; });
-    return best;
+    let best = null, named = null;
+    rootObj.traverse(o => { if (!o.isSkinnedMesh || !o.skeleton) return; const n = o.name || '';
+      if (n === 'Mesh_1' || n === 'Mesh 1' || /Glasses_Frame|Glasses Frame/i.test(n)) { if (!best) best = o; }
+      else if (!named && o.material && /Material_1\.001/.test(o.material.name || '') && o.skeleton.bones.some(b => b.name === 'Head')) named = o;
+    });
+    return best || named;
+  }
+  function headBone(CHAR, skel) {
+    if (skel && skel.bones) { for (let i = 0; i < skel.bones.length; i++) if (skel.bones[i].name === 'Head') return { head: skel.bones[i], hi: i, skel }; }
+    if (CHAR && CHAR.bones && CHAR.bones.Head) return { head: CHAR.bones.Head, hi: -1, skel: null };
+    let head = null; if (CHAR && CHAR.root) CHAR.root.traverse(o => { if (!head && o.isBone && o.name === 'Head') head = o; });
+    return head ? { head, hi: -1, skel: null } : null;
   }
   // frame proportions from its own bind-pose vertices (mesh space): front face, top of the rim over the bridge, width, rim band
   function measure(m) {
@@ -183,12 +192,11 @@
   F.attach = function (CHAR) {
     T = root.THREE; if (S.built || !T || !CHAR || !CHAR.root) return false;
     F.refreshTier();
-    const m = glassesMesh(CHAR.root); if (!m) return false;
-    const bones = m.skeleton.bones; let hi = -1; for (let i = 0; i < bones.length; i++) if (bones[i].name === 'Head') { hi = i; break; }
-    if (hi < 0) return false;
-    const head = bones[hi], D = F.dimsFrom(measure(m) || R);
-    // mesh (bind) space -> head-bone local: inverseBind(Head) x bindMatrix
-    const M = new T.Matrix4().copy(m.skeleton.boneInverses[hi]).multiply(m.bindMatrix).multiply(new T.Matrix4().makeTranslation(D.x, D.y, D.z));
+    const m = glassesMesh(CHAR.root);
+    const hb = headBone(CHAR, m && m.skeleton); if (!hb) return false;
+    const head = hb.head, D = F.dimsFrom((m && measure(m)) || R);
+    // mesh (bind) space -> head-bone local: inverseBind(Head) x bindMatrix; no glasses mesh: Head-local default bar
+    const M = (m && hb.hi >= 0) ? new T.Matrix4().copy(m.skeleton.boneInverses[hb.hi]).multiply(m.bindMatrix).multiply(new T.Matrix4().makeTranslation(D.x, D.y, D.z)) : new T.Matrix4().makeTranslation(D.x, D.y, D.z);
     const g = new T.Group(); g.name = 'jots_glasses_led'; M.decompose(g.position, g.quaternion, g.scale);
     const cas = new T.Mesh(new T.BoxGeometry(D.len, D.h, D.dep), new T.MeshStandardMaterial({ color: 0x060607, roughness: 0.55, metalness: 0.2 }));
     cas.name = 'jots_glasses_led_casing';

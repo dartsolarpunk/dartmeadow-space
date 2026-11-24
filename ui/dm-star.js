@@ -53,11 +53,14 @@
     const mk=(c,w)=>{ const o=c.clone(); o.r*=1+(tint.r-1)*w; o.g*=1+(tint.g-1)*w; o.b*=1+(tint.b-1)*w; return o; };
     const lum=Math.max(0.35,Math.min(1.6,Math.pow(K/5778,0.35)));
     const P={deep:mk(gold(128,66,10),1).multiplyScalar(lum),mid:mk(gold(226,148,34),1).multiplyScalar(lum),hot:mk(gold(252,196,84),1).multiplyScalar(lum),core:mk(gold(255,246,206),0.6).multiplyScalar(lum)};
-    // hotter than the Sun: the same texture in the star's own blackbody blue-white
-    const w=Math.max(0,Math.min(1,(K-6200)/5500));
-    // (t1644 CE-7) white / A- and B-class stars (Vega-like): the blackbody target is normalised to its brightest channel and its luminance held <= 1, so with
-    // toneMapped=false the cells, veins and pores keep their contrast instead of every layer clipping to the same flat white ball (worst on Low / handhelds,
-    // where the far material is just mid -> hot).  A hot star now reads blue-white with a visible surface; Sun-like and cooler stars are unchanged (w = 0).
+    // hotter than the Sun: the same texture in the star's own blackbody blue-white.
+    // (v382) Veyra A is 8200 K. The previous ramp started at 6200 K, so that star was already ~36% of the way to a
+    // clipped white/grey ball and the far LOD (mid->hot only) read as flat with blocky patches. Keep the gold / tan
+    // granulation + golden corona through ~8500 K (F/G and Veyra A); only true A/B stars (9000 K+) tint blue-white, and
+    // the contrast clamp still stops those from flattening to one white.
+    const w=Math.max(0,Math.min(1,(K-8500)/5500));
+    // (t1644 CE-7 / v382) white / A- and B-class stars (Vega-like): the blackbody target is normalised to its brightest channel and its luminance held <= 1, so with
+    // toneMapped=false the cells, veins and pores keep their contrast instead of every layer clipping to the same flat white ball (worst on Low / handhelds).
     if(w>0){ const mx=Math.max(me.r,me.g,me.b,1e-3), bb=me.clone().multiplyScalar(1/mx), lh=Math.min(1,lum), f={deep:0.16,mid:0.42,hot:0.68,core:0.94};
       for(const k in P){ P[k].lerp(bb.clone().multiplyScalar(f[k]*lh),w); const m2=Math.max(P[k].r,P[k].g,P[k].b); if(m2>0.98) P[k].multiplyScalar(0.98/m2); } }
     return P;
@@ -135,7 +138,9 @@
     const ndv=T.normalWorld.dot(V).clamp(0.0,1.0);
     // limb darkening, redder toward the edge
     const limb=ndv.pow(0.3).mul(0.25).add(0.75);
-    const base=near?plasma(T,U,d,low?'low':true):T.mix(U.mid,U.hot,ndv.pow(1.5).mul(0.5));
+    // (v382) always the granulation field (low detail when far / on a phone): the old far path was a plain mid->hot
+    // limb gradient and read as a flat white/grey sphere with patchy LOD-like shading, which is what overwrote yesterday's fix.
+    const base=plasma(T,U,d,near?(low?'low':true):'low');
     const rim=T.float(1).sub(ndv).pow(3.0);   // the limb glows pale gold, as in the reference
     m.colorNode=base.mul(limb).add(U.core.mul(rim.mul(0.3)));
     m.toneMapped=false;
