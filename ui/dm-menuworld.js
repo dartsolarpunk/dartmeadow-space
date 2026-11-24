@@ -257,7 +257,7 @@
   MW.govern = (ms) => MW.gov.step(ms);
   MW.prCap = () => { const t = MW.tier(); return t.on ? t.prCap * MW.gov.scale : 0; };
   MW.stats = { worlds: 0, live: 0 };
-  MW.BAY_URL = '/assets/places/menu_cargobay.glb?v=378';   // isolated stamp: append ?v=N to match DM_BUILD (v378 stamp must set ?v=378)
+  MW.BAY_URL = '/assets/places/menu_cargobay.glb?v=380';   // isolated stamp: append ?v=N to match DM_BUILD (v380 stamp sets ?v=380: the GLB changed)
   MW.BAY_REF = BAY_REF;
   MW.placeBayTransform = placeBayTransform;
   // two-pass: space backdrop first, then clear depth and draw the hangar + character so a translucent

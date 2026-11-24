@@ -229,8 +229,8 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   // optional per-strand clump index (uint8[N] -> meta.clusters names), for CFG.clumps tint / width
   let clumpOf = null;
   if (meta.layout && meta.layout.clusterByteOffsetFromData != null && Array.isArray(meta.clusters) && dataStart + meta.layout.clusterByteOffsetFromData + N <= buf.byteLength) clumpOf = new Uint8Array(buf, dataStart + meta.layout.clusterByteOffsetFromData, N);
-  // head signed-distance field (v2)
-  let SDF = null;
+  // head signed-distance field (v2); BAND = the optional fine scalp layer (v380, below)
+  let SDF = null, BAND = null;
   if (meta.sdf && meta.sdf.byteOffsetFromData != null) {
     const s = meta.sdf, n = s.dims[0] * s.dims[1] * s.dims[2];
     if (dataStart + s.byteOffsetFromData + n * 2 <= buf.byteLength)
@@ -246,7 +246,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     let t0 = 0; try { const ct = opts.params && opts.params.collisionTier; t0 = (ct != null && ct !== 'auto') ? +ct : (opts.getCollisionTier ? +opts.getCollisionTier() : 0); } catch (e) { t0 = 0; }
     // (v379, approved by Justin 2026-11-24) tier 2 at load (game Medium / High / Ultra, menu desktop) refines x3 -> 1.7 mm cells (~9.4 MB for Ariel's 5 mm groom);
     // tier 1 (game Low, menu phones / tablets: 3-4 GB iPhone, Tab A11) x2 -> 2.5 mm (~2.8 MB); tier 0 the file's grid.  Emma's groom is baked at 2.5 mm, so the
-    // 1.6 mm clamp below keeps her at the native grid on every tier
+    // 1.6 mm clamp below keeps her at the native grid on every tier (v380: tier >= 1 adds her 1.25 mm scalp band, below)
     const fDef = t0 >= 2 ? 3 : t0 > 0 ? 2 : 1;
     let f = fDef; try { if (opts.sdfFine != null) f = typeof opts.sdfFine === 'function' ? +opts.sdfFine() : +opts.sdfFine; } catch (e) { f = fDef; }
     if (typeof location !== 'undefined') { const m = /[?&]hairsdf=(\d)/.exec(location.search || ''); if (m) f = +m[1]; }
@@ -254,6 +254,17 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     // a groom baked finer than 5 mm (Emma v379: native 2.5 mm) is refined only while the cells stay >= 1.6 mm (memory: same budget as a 5 mm file x3)
     { const cl = 1 / SDF.inv; while (f > 1 && cl / f < 0.0016) f--; }
     if (f > 1) { SDF = upsampleSDF(SDF, f); meta.sdfFine = f; }
+    // (v380) scalp band: a groom that carries meta.sdfBand (tools/hair/scalp-band.mjs; Emma: 1.25 mm bricks within 6 mm of Emma_Scalp) reads it
+    // wherever a brick exists on collision tier >= 1, so her scalp is collided at a finer grid than Ariel's tier-2 1.7 mm without refining the
+    // whole box (+~3 MB instead of ~22 MB).  Tier 0 / ?hairband=0 / a groom without a band (Ariel): BAND stays null, the field is unchanged.
+    const sb = meta.sdfBand;
+    if (sb && t0 >= 1 && sb.indexByteOffsetFromData != null && !(typeof location !== 'undefined' && /[?&]hairband=0\b/.test(location.search || ''))) {
+      const nb = sb.bdims[0] * sb.bdims[1] * sb.bdims[2], bv = sb.brick + 1;
+      if (dataStart + sb.byteOffsetFromData + sb.count * bv * bv * bv * 2 <= buf.byteLength)
+        BAND = { idx: new Int32Array(buf, dataStart + sb.indexByteOffsetFromData, nb), v: new Int16Array(buf, dataStart + sb.byteOffsetFromData, sb.count * bv * bv * bv),
+                 bx: sb.bdims[0], by: sb.bdims[1], bz: sb.bdims[2], br: sb.brick, bv, bv2: bv * bv, bv3: bv * bv * bv, ox: sb.origin[0], oy: sb.origin[1], oz: sb.origin[2], inv: 1 / sb.cell, unit: sb.unit || 1e-4 };
+      if (BAND) meta.sdfBandOn = true;
+    }
   }
 
   /* ---------------- guard: only attach to Ariel ---------------- */
@@ -369,6 +380,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   const sg = new Float32Array(3);
   const FAR = 1e9;
   function sdf(x, y, z) {
+    if (BAND !== null) { const d = bandSdf(x, y, z); if (d !== FAR) return d; }
     const S = SDF;
     const fx = (x - S.ox) * S.inv, fy = (y - S.oy) * S.inv, fz = (z - S.oz) * S.inv;
     if (fx < 0 || fy < 0 || fz < 0 || fx >= S.nx - 1 || fy >= S.ny - 1 || fz >= S.nz - 1) return FAR;
@@ -385,6 +397,27 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     const gl = Math.sqrt(gx * gx + gy * gy + gz * gz);
     if (gl > 1e-6) { sg[0] = gx / gl; sg[1] = gy / gl; sg[2] = gz / gl; } else { sg[0] = 0; sg[1] = 1; sg[2] = 0; }
     return (c0 * ux + c1 * tx) * S.unit;
+  }
+  // (v380) the scalp band: same trilinear value + gradient as sdf(), inside one 9^3 brick (bricks share their border values); FAR = no brick here
+  function bandSdf(x, y, z) {
+    const B = BAND, br = B.br;
+    const fx = (x - B.ox) * B.inv, fy = (y - B.oy) * B.inv, fz = (z - B.oz) * B.inv;
+    if (!(fx >= 0 && fy >= 0 && fz >= 0)) return FAR;
+    const bi = (fx / br) | 0, bj = (fy / br) | 0, bk = (fz / br) | 0;
+    if (bi >= B.bx || bj >= B.by || bk >= B.bz) return FAR;
+    const s = B.idx[(bi * B.by + bj) * B.bz + bk]; if (s < 0) return FAR;
+    const lx = fx - bi * br, ly = fy - bj * br, lz = fz - bk * br;
+    let i = lx | 0, j = ly | 0, k = lz | 0; if (i > br - 1) i = br - 1; if (j > br - 1) j = br - 1; if (k > br - 1) k = br - 1;
+    const tx = lx - i, ty = ly - j, tz = lz - k, nz = B.bv, nyz = B.bv2, v = B.v, b = s * B.bv3 + (i * B.bv + j) * nz + k;
+    const c000 = v[b], c001 = v[b + 1], c010 = v[b + nz], c011 = v[b + nz + 1];
+    const c100 = v[b + nyz], c101 = v[b + nyz + 1], c110 = v[b + nyz + nz], c111 = v[b + nyz + nz + 1];
+    const ux = 1 - tx, uy = 1 - ty, uz = 1 - tz;
+    const c00 = c000 * uz + c001 * tz, c01 = c010 * uz + c011 * tz, c10 = c100 * uz + c101 * tz, c11 = c110 * uz + c111 * tz;
+    const c0 = c00 * uy + c01 * ty, c1 = c10 * uy + c11 * ty;
+    const gx = c1 - c0, gy = (c01 - c00) * ux + (c11 - c10) * tx, gz = ((c001 - c000) * uy + (c011 - c010) * ty) * ux + ((c101 - c100) * uy + (c111 - c110) * ty) * tx;
+    const gl = Math.sqrt(gx * gx + gy * gy + gz * gz);
+    if (gl > 1e-6) { sg[0] = gx / gl; sg[1] = gy / gl; sg[2] = gz / gl; } else { sg[0] = 0; sg[1] = 1; sg[2] = 0; }
+    return (c0 * ux + c1 * tx) * B.unit;
   }
   // groom clearance per point (k >= 1): keep the layer offset the groom has, 2 mm .. 2 cm
   // clearance = 70 % of the groom's own distance (2 mm .. 2 cm); slack^2 = how far a point may be
@@ -709,6 +742,20 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
         const d = new Float32Array(SW * sdfRows); for (let i = 0; i < n; i++) d[i] = SDF.v[i];
         tSdf = mkTex(d, SW, sdfRows, THREE.RedFormat);
       } else tSdf = mkTex(new Float32Array(1), 1, 1, THREE.RedFormat);
+      // (v380) the skin-warp field and the scalp band in the ribbon shader too (they were CPU-only: on WebGPU hosts, i.e. the game and the menu, every child
+      // strand collided with the rigid head-frame 2.5 mm field, so Emma's children sank into her neck-weighted scalp / nape).  Only built for a groom
+      // that has them (Emma); Ariel's shader graph below is the v379 one, untouched.
+      let tWn = null, tWD = null, tBI = null, tBV = null;
+      if (SDF && WARP) {
+        const W = WARP, NN = W.nx * W.ny * W.nz, rows = Math.ceil(NN / SW), d = new Float32Array(SW * rows * 4);
+        for (let n = 0; n < NN; n++) { const a0 = W.sl[n * 2], a1 = W.sl[n * 2 + 1]; if (a0 !== 255) { d[n * 4] = a0; d[n * 4 + 1] = W.wt[n * 2]; } if (a1 !== 255) { d[n * 4 + 2] = a1; d[n * 4 + 3] = W.wt[n * 2 + 1]; } }
+        tWn = mkTex(d, SW, rows, THREE.RGBAFormat); tWD = mkTex(W.D, 3, W.slots.length, THREE.RGBAFormat);   // W.D: per slot 3 rows (A_j - I), rewritten by warpFrame()
+      }
+      if (SDF && BAND) {
+        const nb = BAND.idx.length, r0 = Math.ceil(nb / SW), bi = new Float32Array(SW * r0); for (let i = 0; i < nb; i++) bi[i] = BAND.idx[i];
+        const nv = BAND.v.length, r1 = Math.ceil(nv / SW), bv = new Float32Array(SW * r1); for (let i = 0; i < nv; i++) bv[i] = BAND.v[i];
+        tBI = mkTex(bi, SW, r0, THREE.RedFormat); tBV = mkTex(bv, SW, r1, THREE.RedFormat);
+      }
       // static per-vertex data: (strand, point, side), (guide, last collidable point)
       const ids = new Float32Array(VERTS * 3), gk = new Float32Array(VERTS * 2);
       for (let st = 0; st < N; st++) for (let k = 0; k < K; k++) for (let sd = 0; sd < 2; sd++) {
@@ -716,7 +763,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       }
       const U = {
         M: uniform(new THREE.Matrix4()), Mi: uniform(new THREE.Matrix4()), cam: uniform(new THREE.Vector3()),
-        hc: uniform(new THREE.Vector3()), hcR2: uniform(0), hsc2: uniform(1), wR: uniform(P.widthRoot), wT: uniform(P.widthTip), cc: uniform(0)
+        hc: uniform(new THREE.Vector3()), hcR2: uniform(0), hsc2: uniform(1), wR: uniform(P.widthRoot), wT: uniform(P.widthTip), cc: uniform(0), wOn: uniform(0)
       };
       const S0 = SDF || { ox: 0, oy: 0, oz: 0, inv: 1, nx: 2, ny: 2, nz: 2, unit: 1 };
       const sdfAt = (b) => textureLoad(tSdf, ivec2(b.mod(int(SW)), b.div(int(SW)))).x;
@@ -748,12 +795,76 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
         });
         return out;
       };
+      // (v380) trilinear value + gradient of 8 texels (same formula as sdf() / bandSdf()) -> vec4(gradient dir, distance)
+      const tri8 = (at, b, nz, nyz, t, u, unit) => {
+        const c000 = at(b), c001 = at(b.add(1)), c010 = at(b.add(nz)), c011 = at(b.add(nz).add(1));
+        const c100 = at(b.add(nyz)), c101 = at(b.add(nyz).add(1)), c110 = at(b.add(nyz).add(nz)), c111 = at(b.add(nyz).add(nz).add(1));
+        const c00 = c000.mul(u.z).add(c001.mul(t.z)), c01 = c010.mul(u.z).add(c011.mul(t.z));
+        const c10 = c100.mul(u.z).add(c101.mul(t.z)), c11 = c110.mul(u.z).add(c111.mul(t.z));
+        const c0 = c00.mul(u.y).add(c01.mul(t.y)), c1 = c10.mul(u.y).add(c11.mul(t.y));
+        const g = vec3(c1.sub(c0), c01.sub(c00).mul(u.x).add(c11.sub(c10).mul(t.x)),
+          c001.sub(c000).mul(u.y).add(c011.sub(c010).mul(t.y)).mul(u.x).add(c101.sub(c100).mul(u.y).add(c111.sub(c110).mul(t.y)).mul(t.x))).toVar();
+        const gl = g.length();
+        return vec4(select(gl.greaterThan(1e-6), g.div(gl), vec3(0, 1, 0)), c0.mul(u.x).add(c1.mul(t.x)).mul(unit));
+      };
+      const texAt = (tx) => (b) => textureLoad(tx, ivec2(b.mod(int(SW)), b.div(int(SW)))).x;
+      // (v380) port of headCollide() with the skin warp (warpNode / warpDisp) and the scalp band (bandSdf) -> sdf(): Emma only
+      const collideWB = (p, clr) => {
+        const out = p.toVar();
+        const e = p.sub(U.hc);
+        If(e.dot(e).lessThanEqual(U.hcR2), () => {
+          const h = U.Mi.mul(vec4(p, 1)).xyz.toVar(), q = h.toVar();
+          if (tWn) {
+            const W = WARP;
+            If(U.wOn.greaterThan(0.5), () => {
+              const f = h.sub(vec3(W.ox, W.oy, W.oz)).div(W.WC).add(0.5).floor().toVar();
+              If(f.x.greaterThanEqual(0).and(f.y.greaterThanEqual(0)).and(f.z.greaterThanEqual(0)).and(f.x.lessThan(W.nx)).and(f.y.lessThan(W.ny)).and(f.z.lessThan(W.nz)), () => {
+                const n = int(f.x).mul(int(W.ny)).add(int(f.y)).mul(int(W.nz)).add(int(f.z)).toVar();
+                const wn = textureLoad(tWn, ivec2(n.mod(int(SW)), n.div(int(SW)))).toVar(), hv = vec4(h, 1);
+                const s0 = int(wn.x), s1 = int(wn.z);
+                const d0 = vec3(textureLoad(tWD, ivec2(int(0), s0)).dot(hv), textureLoad(tWD, ivec2(int(1), s0)).dot(hv), textureLoad(tWD, ivec2(int(2), s0)).dot(hv)).mul(wn.y);
+                const d1 = vec3(textureLoad(tWD, ivec2(int(0), s1)).dot(hv), textureLoad(tWD, ivec2(int(1), s1)).dot(hv), textureLoad(tWD, ivec2(int(2), s1)).dot(hv)).mul(wn.w);
+                q.assign(h.sub(d0).sub(d1));
+              });
+            });
+          }
+          const r = vec4(0, 1, 0, 1e9).toVar();
+          if (tBI) {
+            const B = BAND;
+            const fb = q.sub(vec3(B.ox, B.oy, B.oz)).mul(B.inv).toVar();
+            If(fb.x.greaterThanEqual(0).and(fb.y.greaterThanEqual(0)).and(fb.z.greaterThanEqual(0)), () => {
+              const bc = fb.div(B.br).floor().toVar();
+              If(bc.x.lessThan(B.bx).and(bc.y.lessThan(B.by)).and(bc.z.lessThan(B.bz)), () => {
+                const bn = int(bc.x).mul(int(B.by)).add(int(bc.y)).mul(int(B.bz)).add(int(bc.z)).toVar();
+                const sI = int(textureLoad(tBI, ivec2(bn.mod(int(SW)), bn.div(int(SW)))).x).toVar();
+                If(sI.greaterThanEqual(0), () => {
+                  const l = fb.sub(bc.mul(B.br)), li = l.floor().min(vec3(B.br - 1)), t = l.sub(li), u = vec3(1).sub(t);
+                  const b = sI.mul(int(B.bv3)).add(int(li.x).mul(int(B.bv)).add(int(li.y)).mul(int(B.bv)).add(int(li.z))).toVar();
+                  r.assign(tri8(texAt(tBV), b, int(B.bv), int(B.bv2), t, u, B.unit));
+                });
+              });
+            });
+          }
+          If(r.w.greaterThan(1e8), () => {
+            const f = q.sub(vec3(S0.ox, S0.oy, S0.oz)).mul(S0.inv).toVar();
+            If(f.x.greaterThanEqual(0).and(f.y.greaterThanEqual(0)).and(f.z.greaterThanEqual(0))
+              .and(f.x.lessThan(S0.nx - 1)).and(f.y.lessThan(S0.ny - 1)).and(f.z.lessThan(S0.nz - 1)), () => {
+              const fi = f.floor(), t = f.sub(fi), u = vec3(1).sub(t);
+              const b = int(fi.x).mul(int(S0.ny)).add(int(fi.y)).mul(int(S0.nz)).add(int(fi.z)).toVar();
+              r.assign(tri8(sdfAt, b, int(S0.nz), int(S0.ny * S0.nz), t, u, S0.unit));
+            });
+          });
+          If(r.w.lessThan(clr), () => { out.assign(U.M.mul(vec4(h.add(r.xyz.mul(clr.sub(r.w))), 1)).xyz); });
+        });
+        return out;
+      };
+      const collideC = (tWn || tBI) ? collideWB : collide;
       // child point k of strand s (port of the CPU ribbon loop's SP[] fill)
       const point = (s, k, g, kmc) => {
         const r = textureLoad(tRest, ivec2(k, s)), dd = textureLoad(tDisp, ivec2(k, g)).xyz;
         const p = U.M.mul(vec4(r.xyz, 1)).xyz.add(dd).toVar();
         const slk = textureLoad(tRad, ivec2(k, s)).w;
-        If(U.cc.greaterThan(0.5).and(k.greaterThanEqual(2)).and(k.lessThanEqual(kmc)).and(dd.dot(dd).greaterThan(slk.mul(U.hsc2))), () => { p.assign(collide(p, r.w)); });
+        If(U.cc.greaterThan(0.5).and(k.greaterThanEqual(2)).and(k.lessThanEqual(kmc)).and(dd.dot(dd).greaterThan(slk.mul(U.hsc2))), () => { p.assign(collideC(p, r.w)); });
         return p;
       };
       const ribbon = (sF, kF, side, gF, kmF) => {
@@ -797,7 +908,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       gmat.colorWrite = mat.colorWrite; gmat.depthWrite = mat.depthWrite;
       mesh.material = gmat; mat.dispose();
       stats.gpu = true; stats.mode = 'gpu';
-      return { U, disp, tDisp, ribbon, mat: gmat, textures: [tRest, tRad, tDisp, tSdf] };
+      return { U, disp, tDisp, tWD, ribbon, mat: gmat, wasOn: false, textures: [tRest, tRad, tDisp, tSdf, tWn, tWD, tBI, tBV].filter(Boolean) };
     } catch (e) {
       console.warn('[hair] GPU ribbons unavailable, CPU path', e);
       return false;
@@ -918,7 +1029,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   }
   let curIts = 0;     // solver iterations this frame = P.iterations x physics intensity (ui/dm-cgroup.js); 0 = P.iterations
   let time = 0, frame = 0, ema = 2, cool = 0;
-  const stats = { ms: 0, simMs: 0, strands: N, drawn: NR, guides: G, sdf: !!SDF, skinWarp: WARP ? { slots: WARP.slots.length, nodes: WARP.nodes, verts: WARP.verts } : null, contacts: 0, intensity: 1, segLen: (() => { let s = 0, c = 0; for (let i = 0; i < segLen.length; i++) if (segLen[i] > 0) { s += segLen[i]; c++; } return c ? s / c : 0; })() };
+  const stats = { ms: 0, simMs: 0, strands: N, drawn: NR, guides: G, sdf: !!SDF, sdfBand: BAND ? { bricks: BAND.v.length / BAND.bv3, cell: 1 / BAND.inv } : null, skinWarp: WARP ? { slots: WARP.slots.length, nodes: WARP.nodes, verts: WARP.verts } : null, contacts: 0, intensity: 1, segLen: (() => { let s = 0, c = 0; for (let i = 0; i < segLen.length; i++) if (segLen[i] > 0) { s += segLen[i]; c++; } return c ? s / c : 0; })() };
   let me = M.elements, mi = Mi.elements;
   // SDF box bounding sphere (head-local centre / radius), moved to root-local each frame
   let hcx = 0, hcy = 0, hcz = 0, hcR2 = 0, hsc2 = 1;
@@ -1448,6 +1559,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       U.M.value.copy(M); U.Mi.value.copy(Mi); U.cam.value.copy(camL);
       U.hc.value.set(hcx, hcy, hcz); U.hcR2.value = hcR2; U.hsc2.value = hsc2;
       U.wR.value = wR; U.wT.value = wT; U.cc.value = cc ? 1 : 0;
+      if (gpu.tWD) { const on = !!WARP.on; U.wOn.value = on ? 1 : 0; if (on) gpu.tWD.needsUpdate = true; }   // (v380) the warp matrices warpFrame() wrote
       stats.ms = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0;
       stats.drawn = NR; stats.interleave = 1; stats.mode = 'gpu-compute';
       return;
@@ -1462,6 +1574,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       U.M.value.copy(M); U.Mi.value.copy(Mi); U.cam.value.copy(camL);
       U.hc.value.set(hcx, hcy, hcz); U.hcR2.value = hcR2; U.hsc2.value = hsc2;
       U.wR.value = wR; U.wT.value = wT; U.cc.value = cc ? 1 : 0;
+      if (gpu.tWD) { const on = !!WARP.on; U.wOn.value = on ? 1 : 0; if (on) gpu.tWD.needsUpdate = true; }   // (v380) the warp matrices warpFrame() wrote
       stats.ms = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0;
       stats.drawn = NR; stats.interleave = 1;
       if (!P.verifyRibbons) return;   // debug: also fill the CPU ribbon arrays (H.ribbonArrays) to diff against the shader

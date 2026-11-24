@@ -469,18 +469,9 @@ def build(tex):
     fr_b = box("FrameB", (0, 0.14, OPEN_Z + 0.02), (W - 0.9, 0.06, 0.12), M_AMBER)
     frame = [jamb_l, jamb_r, header, sill, fr_l, fr_r, fr_t, fr_b]
 
-    # structural pillars just inside the opening (4)
-    pillars = []
-    for i, x in enumerate((-5.4, -2.15, 2.15, 5.4)):
-        col = box(f"Pillar_{i}", (x, H * 0.5, OPEN_Z + 0.55), (0.48, H, 0.48), M_HULL)
-        cap = box(f"PillarCap_{i}", (x, H - 0.08, OPEN_Z + 0.55), (0.62, 0.16, 0.62), M_TRIM)
-        base = box(f"PillarBase_{i}", (x, 0.18, OPEN_Z + 0.55), (0.62, 0.36, 0.62), M_TRIM)
-        # LED strips on the inner face of each pillar
-        led = box(f"PillarLed_{i}", (x, H * 0.45, OPEN_Z + 0.30), (0.06, H * 0.82, 0.05), M_CYAN)
-        # amber marker at top / mid
-        mk = box(f"PillarMark_{i}", (x, H - 0.7, OPEN_Z + 0.28), (0.14, 0.10, 0.08), M_AMBER)
-        pillars += [col, cap, base, led, mk]
-    frame += pillars
+    # (v380) no structural pillars inside the opening: a cargo-bay door is a clear logistics opening for vehicles and crates once the
+    # leaves slide away (the four Pillar_* columns at x = +-2.15 / +-5.4 split it into panes and the riders flew through them).  An existing GLB is
+    # patched with tools/places/strip_bay_pillars.py.
     for o in frame:
         o.parent = root
 
@@ -558,11 +549,7 @@ def build(tex):
             mk = box(f"GantryLed_{sx}_{i}", (sx * 7.4, 0.75, OPEN_Z - 3 - i * 2.4), (0.18, 0.18, 0.18), M_CYAN)
             mk.parent = root
             gantries.append(mk)
-    # one mast
-    mast = box("Mast", (-7.4, 5.5, OPEN_Z - 9), (0.35, 9.0, 0.35), M_HULL)
-    mast_lit = box("MastLit", (-7.4, 10.2, OPEN_Z - 9), (0.28, 0.28, 0.28), M_AMBER)
-    mast.parent = root
-    mast_lit.parent = root
+    # (v380) no mast: it stood as a column in the view through the open doors
 
     # ── sliding blast doors (two armored leaves, authored closed) ──
     # Each leaf is a hook empty (Door_L / Door_R) the runtime translates on X.

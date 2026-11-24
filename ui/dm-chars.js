@@ -72,7 +72,7 @@
       clipMap: { walk: 'Walking', run: 'Running', jump: 'Regular_Jump', climbLoop: 'climbing_up_wall', step: 'Mount_Step', stepOff: 'Dismount_Step', swim: 'Swim_Forward',
         crouch: 'Crouch_Walk_Right_with_Torch_inplace', prone: 'Crawl_Backward_inplace', rope: 'Swing_on_Rope_to_Ground', cliff: 'Grab_Bar_and_Swing_Forward' },
       studio: { idle: 'Emma_Idle', extras: ['Acting_Wave_Happy', 'Acting_Surprised', 'Acting_Thinking'] },
-      hair: { url: 'characterassests/emma/emma_hair_strands.bin?v=379', configUrl: 'characterassests/emma/emma_hair_config.json?v=379',
+      hair: { url: 'characterassests/emma/emma_hair_strands.bin?v=380', configUrl: 'characterassests/emma/emma_hair_config.json?v=379',
         groups: [{ id: 'main', label: 'Hair', clusters: ['back', 'sideburns', 'top', 'underlayer'] }, { id: 'fringe', label: 'Fringe', clusters: ['bangs'] }] },
       // shirt (baked LEAD EDGE print, own 1024 map) and pants (flat 1024 map) each have their own baked atlas: the item's UV islands are recoloured inside a canvas copy of it (detail kept)
       items: {
