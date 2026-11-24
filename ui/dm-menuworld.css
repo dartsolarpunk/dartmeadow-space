@@ -34,9 +34,9 @@
 @keyframes mwSweep{from{transform:translateY(-110%)}to{transform:translateY(300%)}}
 /* studio side panel: typography only — .mm-frame owns the chrome */
 #cs-studio.mw-on #cs-panel{border-left:none;box-shadow:none;}
-#cs-studio.mw-on #cs-ptitle{background:linear-gradient(90deg,rgba(var(--acc-rgb),.2),transparent);border-bottom:1px solid rgba(var(--acc-rgb),.35);}
+#cs-studio.mw-on #cs-ptitle{background:none;border-bottom:1px solid rgba(var(--acc-rgb),.28);}
 #cs-studio.mw-on #cs-pname{text-shadow:0 0 10px rgba(var(--acc-rgb),.8);}
-#cs-studio.mw-on .cs-btn{border-radius:0;clip-path:polygon(9px 0,100% 0,100% calc(100% - 9px),calc(100% - 9px) 100%,0 100%,0 9px);}
+/* editor buttons share the menu-row chrome in dm-charselect.css */
 #cs-studio.mw-on #cs-stage::after{background:radial-gradient(ellipse 80% 80% at 50% 50%,transparent 60%,rgba(2,3,10,.5) 100%);}
 #cs-studio.mw-on #cs-load,#cs-studio.mw-on #cs-turn{text-shadow:0 0 8px #000;}
 @media (prefers-reduced-motion:reduce){#screen-character.mw-on .cs-card,#screen-character.mw-on .cs-card.on::after{animation:none;}}

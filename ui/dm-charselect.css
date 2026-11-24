@@ -49,7 +49,7 @@
 #cs-load{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-family:var(--font-mono);font-size:.7rem;letter-spacing:.2em;color:var(--cyan);text-align:center;pointer-events:none;z-index:2;}
 #cs-turn{position:absolute;left:0;right:0;bottom:10px;text-align:center;font-family:var(--font-mono);font-size:.58rem;letter-spacing:.2em;color:var(--text-dim);pointer-events:none;z-index:2;transition:opacity .6s;}
 #cs-turn.gone{opacity:0;}
-#cs-panel{flex:0 0 clamp(260px,34vw,340px);display:flex;flex-direction:column;min-height:0;background:linear-gradient(180deg,rgba(var(--panel-rgb),.9),rgba(var(--panel-rgb),.97));border-left:1px solid var(--border);z-index:3;}
+#cs-panel{flex:0 0 clamp(260px,34vw,340px);display:flex;flex-direction:column;min-height:0;z-index:3;}
 #cs-ptitle{padding:12px 14px 6px;display:flex;align-items:baseline;gap:10px;flex-shrink:0;}
 #cs-pname{font-family:var(--font-hud);font-size:1.05rem;letter-spacing:.24em;color:var(--text);}
 #cs-ptag{font-family:var(--font-mono);font-size:.62rem;letter-spacing:.2em;color:var(--text-dim);}
@@ -66,7 +66,7 @@
 @media (max-width:760px) and (orientation:portrait),(max-width:560px){
   #cs-studio{flex-direction:column;}
   #cs-stage{flex:1 1 52%;}
-  #cs-panel{flex:0 0 46%;border-left:0;border-top:1px solid var(--border);}
+  #cs-panel{flex:0 0 46%;}
   #cs-title{margin-right:80px;}
 }
 @media (max-height:430px) and (orientation:landscape){
@@ -153,12 +153,7 @@
 .cs-name{text-shadow:0 0 12px rgba(var(--acc-rgb),.45);}
 .cs-tag{color:var(--cyan);letter-spacing:.22em;}
 #cs-studio{background:radial-gradient(ellipse 80% 70% at 50% 55%,#101820 0%,#070a12 60%,#04060a 100%);}
-#cs-panel{
-  /* (v381) chrome is .mm-frame — do not set background here (transparent would kill the ring and fill). */
-  border-left:none;
-  box-shadow:none;
-  backdrop-filter:none;
-}
+/* (v381) #cs-panel chrome is .mm-frame — do not set background here. */
 #cs-ptitle{background:linear-gradient(90deg,rgba(var(--acc-rgb),.2),transparent);border-bottom:1px solid rgba(var(--acc-rgb),.3);padding:14px 16px 10px;}
 #cs-pname{text-shadow:0 0 12px rgba(var(--acc-rgb),.7);}
 #cs-ptag{color:var(--cyan);}
@@ -257,3 +252,61 @@
 @media (prefers-reduced-motion:reduce){
   #screen-character #cs-head,#screen-character .cs-card-slot,#screen-character #cs-continue,#cs-studio #cs-panel{animation:none !important;}
 }
+
+/* editor controls: same glass / hairline / glow language as .mm-stack .menu-btn */
+#cs-studio #cs-ptitle{background:none;border-bottom:1px solid rgba(var(--acc-rgb),.28);padding:12px 14px 10px;}
+#cs-studio #cs-pname{color:var(--cyan);text-shadow:0 0 12px rgba(var(--acc-rgb),.75),0 0 2px #fff;}
+#cs-studio #cs-ptag{color:var(--cyan);opacity:.85;text-shadow:0 0 8px rgba(var(--acc-rgb),.5);}
+#cs-studio #cs-tabs{gap:8px;padding:8px 12px 0;background:none;border-bottom:none;}
+#cs-studio #cs-tabs button{
+  flex:1;min-height:44px;margin:0;border-radius:4px;border:1px solid rgba(var(--acc-rgb),.55);border-bottom:1px solid rgba(var(--acc-rgb),.55);
+  background:rgba(var(--acc-rgb),.06);color:var(--text);letter-spacing:.16em;font-weight:600;
+  text-shadow:0 0 6px rgba(var(--acc-rgb),.45);box-shadow:inset 0 0 10px rgba(var(--acc-rgb),.1);
+}
+#cs-studio #cs-tabs button.on{
+  color:var(--cyan);background:rgba(var(--acc-rgb),.2);border-color:var(--cyan);
+  text-shadow:0 0 8px rgba(var(--acc-rgb),.8);box-shadow:0 0 12px rgba(var(--acc-rgb),.4),inset 0 0 12px rgba(var(--acc-rgb),.25);
+}
+#cs-studio #cs-pbody{padding:12px 14px;}
+#cs-studio #cs-pfoot{border-top:1px solid rgba(var(--acc-rgb),.28);padding:10px 12px calc(12px + var(--safe-bot));gap:8px;}
+#cs-studio .cs-reg-h{color:var(--cyan);text-shadow:0 0 8px rgba(var(--acc-rgb),.6);letter-spacing:.2em;}
+#cs-studio .cs-chip{
+  border-radius:4px;border:1px solid rgba(var(--acc-rgb),.55);clip-path:none;
+  background:rgba(var(--acc-rgb),.06);color:var(--text);font-weight:600;
+  text-shadow:0 0 6px rgba(var(--acc-rgb),.45);box-shadow:inset 0 0 10px rgba(var(--acc-rgb),.1);
+}
+#cs-studio .cs-chip.on{
+  color:var(--cyan);border-color:var(--cyan);background:rgba(var(--acc-rgb),.2);
+  box-shadow:0 0 12px rgba(var(--acc-rgb),.4),inset 0 0 12px rgba(var(--acc-rgb),.25);
+  text-shadow:0 0 8px rgba(var(--acc-rgb),.8);
+}
+#cs-studio .cs-sw,#cs-studio .cs-lg{
+  --cut:6px;--lc:rgba(var(--acc-rgb),.8);
+  border:none;border-radius:0;background-clip:padding-box;
+  clip-path:polygon(var(--cut) 0,calc(100% - var(--cut)) 0,100% var(--cut),100% calc(100% - var(--cut)),calc(100% - var(--cut)) 100%,var(--cut) 100%,0 calc(100% - var(--cut)),0 var(--cut));
+  box-shadow:inset 0 0 0 1.5px var(--lc),inset 0 0 10px rgba(var(--acc-rgb),.2);
+  filter:drop-shadow(0 0 5px rgba(var(--acc-rgb),.4));
+}
+#cs-studio .cs-sw.on,#cs-studio .cs-lg.on{
+  --lc:var(--cyan);
+  box-shadow:inset 0 0 0 2px var(--cyan),inset 0 0 12px rgba(var(--acc-rgb),.4);
+  filter:drop-shadow(0 0 8px rgba(var(--acc-rgb),.85));
+}
+#cs-studio .cs-sw.tex:not(.on){box-shadow:inset 0 0 0 1.5px rgba(var(--acc-rgb),.4),inset 0 0 8px rgba(var(--acc-rgb),.12);filter:drop-shadow(0 0 3px rgba(var(--acc-rgb),.25));}
+#cs-studio .cs-sw.custom{background:conic-gradient(#e0559a,#e8892a,#e2b33c,#3fae55,#1fb5a3,#3f8fd2,#7b3fc4,#e0559a);}
+#cs-studio .cs-sw.def{background:rgba(var(--acc-rgb),.08);color:var(--cyan);text-shadow:0 0 6px rgba(var(--acc-rgb),.5);}
+#cs-studio .cs-btn{
+  border-radius:4px;border:1px solid rgba(var(--acc-rgb),.55);
+  background:rgba(var(--acc-rgb),.06);color:var(--text);font-weight:600;
+  text-shadow:0 0 6px rgba(var(--acc-rgb),.45);box-shadow:inset 0 0 10px rgba(var(--acc-rgb),.1);
+}
+#cs-studio .cs-btn:hover,#cs-studio .cs-btn:focus-visible{
+  background:rgba(var(--acc-rgb),.2);border-color:var(--cyan);
+  box-shadow:0 0 12px rgba(var(--acc-rgb),.4),inset 0 0 12px rgba(var(--acc-rgb),.25);outline:none;
+}
+#cs-studio .cs-btn.gold{color:var(--gold);border-color:rgba(var(--hi-rgb),.65);background:rgba(var(--hi-rgb),.08);text-shadow:0 0 6px rgba(var(--hi-rgb),.45);}
+#cs-studio .cs-btn.gold:hover,#cs-studio .cs-btn.gold:focus-visible{
+  background:rgba(var(--hi-rgb),.2);border-color:var(--gold);
+  box-shadow:0 0 12px rgba(var(--hi-rgb),.4),inset 0 0 12px rgba(var(--hi-rgb),.25);
+}
+#cs-studio .cs-reset{margin-top:8px;}

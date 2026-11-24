@@ -75,6 +75,10 @@ function finishTests() {
 const mw = rd('ui/dm-menuworld.css');
 ok(/transform-style:\s*preserve-3d/.test(css), '3D carousel: .cs-card-slot keeps preserve-3d so rotateY reaches the wheel perspective');
 ok(!/#cs-panel\{[^}]*background:\s*transparent/.test(css), '#cs-panel does not set background:transparent (would kill the .mm-frame ring and fill)');
+ok(!/#cs-panel\{[^}]*background:/.test(css), '#cs-panel does not set a competing background (mm-frame owns the ring and fill)');
+ok(/#cs-studio \.cs-sw[\s\S]{0,320}clip-path:polygon\(var\(--cut\)/.test(css) && /#cs-studio \.cs-sw\.on[\s\S]{0,220}--lc:var\(--cyan\)/.test(css), 'editor swatches are chamfered framed buttons with a lit cyan selected state');
+ok(/#cs-studio #cs-tabs button\{[\s\S]{0,360}background:rgba\(var\(--acc-rgb\),\.06\)/.test(css) && /#cs-studio \.cs-btn\{[\s\S]{0,360}background:rgba\(var\(--acc-rgb\),\.06\)/.test(css), 'editor tabs and Back/Select reuse the menu-row glass');
+
 ok(!/#screen-character\.mw-on \.cs-card\{[^}]*clip-path:/.test(mw) && !/#screen-character\.mw-on \.cs-card\{[^}]*background:/.test(mw), 'mw-on .cs-card does not override mm-frame clip-path or background');
 ok(/\.cs-card-slot:nth-child\(2n\) \.cs-card\{animation-duration:7\.7s/.test(mw) && /\.cs-card-slot:nth-child\(3n\) \.cs-card\{animation-duration:8\.9s/.test(mw), 'mw-on bob stagger is keyed off .cs-card-slot:nth-child (the wheel children)');
 ok(/cur && cur\.ready/.test(js) && /W\.DMChars\.get\(W\.DMChars\.selectedId\(\)\)/.test(js), 'Continue names the centred card only when it is ready, otherwise the saved pick');
