@@ -423,7 +423,9 @@
   // (deepFill) so they can never read as a beach, and the number repaired is returned (the caller keeps the old field when too many were bad).
   // ── water coverage mask: a coarse N x N grid of the lowest natural ground height (above the sea, metres) round a centre. Drawn tiles / fragments over ground well above the sea
   // carry no water. Heights are sampled on a sub x sub lattice per cell and the MINIMUM kept (conservative: a cell with any low ground stays wet).
-  const COVER_LAND = 14, COVER_FADE = 8;      // a cell whose lowest ground is > 14 m above the sea cannot show water (swell + swash reach a few metres); the shader fades over 8 m more
+  // (t1644 CE-7) 6 m (was 14): the game's relief is compressed (Earth's Kansas plains sit ~13 m up), so 14 m kept the sea sheet under whole lowland continents;
+  // swell + swash still reach a few metres and the shore field (exact, near) does the beach itself.  The shader fades over 2 -> 6 m.
+  const COVER_LAND = 6, COVER_FADE = 4;      // a cell whose lowest ground is > COVER_LAND m above the sea cannot show water
   function* coverJob(H, cx, cz, N, cell, sub, seaY, out) {
     const x0 = cx - N * cell / 2, z0 = cz - N * cell / 2, st = cell / sub; let t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
     for (let j = 0; j < N; j++) {
@@ -435,17 +437,19 @@
     }
   }
   // can any water show in the box [x0,x1] x [z0,z1] (world)? Looks at every cell the box touches plus one more all round (a shoreline between two cell centres is never lost). Outside the grid = wet.
-  function coverBoxWet(mask, N, cell, cx, cz, x0, x1, z0, z1) {
+  // (t1644) far(x0, x1, z0, z1): optional answer for a box the grid does not cover (the world's contour basin map, ui/dm-water-basin.js); without it, outside = wet
+  function coverBoxWet(mask, N, cell, cx, cz, x0, x1, z0, z1, far) {
+    if (!mask) return far ? far(x0, x1, z0, z1) : true;
     const gx = cx - N * cell / 2, gz = cz - N * cell / 2, i0 = Math.floor((x0 - gx) / cell) - 1, i1 = Math.floor((x1 - gx) / cell) + 1, j0 = Math.floor((z0 - gz) / cell) - 1, j1 = Math.floor((z1 - gz) / cell) + 1;
-    if (i0 < 0 || j0 < 0 || i1 >= N || j1 >= N) return true;
+    if (i0 < 0 || j0 < 0 || i1 >= N || j1 >= N) return far ? far(x0, x1, z0, z1) : true;
     for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) if (mask[j * N + i] <= COVER_LAND) return true;
     return false;
   }
   // coverage fraction of the shader (mirror): 1 over water, 0 over high ground; v = bilinear mask value
   const coverAlpha = (v) => 1 - sstep(COVER_LAND - 4, COVER_LAND + COVER_FADE - 4, v);
   // which tiles of a tiled clip-map (clipmap(n, c0, levels, T)) are drawn for a focus: returns a Uint8Array flag per tile and the number kept
-  function tilesWet(tiles, focus, mask, N, cell, cx, cz, flags) {
-    let kept = 0; for (let k = 0; k < tiles.length; k++) { const t = tiles[k], sx = Math.floor(focus[0] / t.q) * t.q, sz = Math.floor(focus[1] / t.q) * t.q, w = coverBoxWet(mask, N, cell, cx, cz, sx + t.x0, sx + t.x1, sz + t.z0, sz + t.z1); flags[k] = w ? 1 : 0; kept += w ? 1 : 0; } return kept;
+  function tilesWet(tiles, focus, mask, N, cell, cx, cz, flags, far) {
+    let kept = 0; for (let k = 0; k < tiles.length; k++) { const t = tiles[k], sx = Math.floor(focus[0] / t.q) * t.q, sz = Math.floor(focus[1] / t.q) * t.q, w = coverBoxWet(mask, N, cell, cx, cz, sx + t.x0, sx + t.x1, sz + t.z0, sz + t.z1, far); flags[k] = w ? 1 : 0; kept += w ? 1 : 0; } return kept;
   }
   function sanitizeDepth(d, deepFill) {
     let bad = 0; for (let k = 0; k < d.length; k++) { const v = d[k]; if (!(v > -1e5 && v < 1e5)) { d[k] = deepFill; bad++; } } return bad;

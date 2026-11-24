@@ -55,7 +55,11 @@
     const P={deep:mk(gold(128,66,10),1).multiplyScalar(lum),mid:mk(gold(226,148,34),1).multiplyScalar(lum),hot:mk(gold(252,196,84),1).multiplyScalar(lum),core:mk(gold(255,246,206),0.6).multiplyScalar(lum)};
     // hotter than the Sun: the same texture in the star's own blackbody blue-white
     const w=Math.max(0,Math.min(1,(K-6200)/5500));
-    if(w>0){ const f={deep:0.12,mid:0.42,hot:0.7,core:1.0}; for(const k in P) P[k].lerp(me.clone().multiplyScalar(f[k]*lum),w); }
+    // (t1644 CE-7) white / A- and B-class stars (Vega-like): the blackbody target is normalised to its brightest channel and its luminance held <= 1, so with
+    // toneMapped=false the cells, veins and pores keep their contrast instead of every layer clipping to the same flat white ball (worst on Low / handhelds,
+    // where the far material is just mid -> hot).  A hot star now reads blue-white with a visible surface; Sun-like and cooler stars are unchanged (w = 0).
+    if(w>0){ const mx=Math.max(me.r,me.g,me.b,1e-3), bb=me.clone().multiplyScalar(1/mx), lh=Math.min(1,lum), f={deep:0.16,mid:0.42,hot:0.68,core:0.94};
+      for(const k in P){ P[k].lerp(bb.clone().multiplyScalar(f[k]*lh),w); const m2=Math.max(P[k].r,P[k].g,P[k].b); if(m2>0.98) P[k].multiplyScalar(0.98/m2); } }
     return P;
   }
 

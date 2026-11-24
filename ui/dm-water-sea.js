@@ -156,7 +156,10 @@
     // depth; both fade smoothly. Outside either grid (or before they are built) the water is simply drawn.
     const COVER_LAND = W.DMWaterCore.COVER_LAND, COVER_FADE = W.DMWaterCore.COVER_FADE;
     const cUV = xz.sub(vec2(U.coverC.x, U.coverC.y)).div(U.coverC.z).add(0.5), cIn = step(0.0, cUV.x).mul(step(cUV.x, 1.0)).mul(step(0.0, cUV.y)).mul(step(cUV.y, 1.0)).mul(U.coverOn);
-    const coarseCover = mix(F(1.0), float(1.0).sub(smoothstep(COVER_LAND - 4, COVER_LAND + COVER_FADE - 4, texture(tex.cover, cUV).x)), cIn);
+    // (t1644 CE-7) past the near grid: the world's contour basin window (ui/dm-water-basin.js via DMWater farTick), not "everything"
+    const fUV = xz.sub(vec2(U.coverFC.x, U.coverFC.y)).div(U.coverFC.z).add(0.5), fIn = step(0.0, fUV.x).mul(step(fUV.x, 1.0)).mul(step(0.0, fUV.y)).mul(step(fUV.y, 1.0)).mul(U.coverFOn);
+    const farCover = tex.coverFar ? mix(F(1.0), float(1.0).sub(smoothstep(COVER_LAND - 4, COVER_LAND + COVER_FADE - 4, texture(tex.coverFar, fUV).x)), fIn) : F(1.0);
+    const coarseCover = mix(farCover, float(1.0).sub(smoothstep(COVER_LAND - 4, COVER_LAND + COVER_FADE - 4, texture(tex.cover, cUV).x)), cIn);
     const nearCover = hasShore ? mix(F(1.0), smoothstep(-3.5, -2.5, sh.raw), sh.win) : F(1.0);
     // (lod-hide) the sheet's outer edge is a circle round the focus (DMWaterCore.sheetRim, Radical Circumference rim): it dissolves across the rim and the
     // sky-ground tiles paint the sea over the same band, so the clip-map's square never shows on the far sea

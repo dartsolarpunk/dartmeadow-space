@@ -65,7 +65,7 @@ for (const tier of L.TIERS) for (const h of [45, 70, 110, 150]) {
 const lt = rd('ui/dm-light.js');
 ok(/const wMap = float\(1\)\.sub\(smoothstep\(U\.sm\.x, U\.sm\.y/.test(lt), 'dm-light: the sun-map wrapper still reads U.sm (the band this test pins)');
 ok(/s && s\.dmFlashShadow \? s :/.test(lt), 'dm-light: the flashlight shadow passes the wrapper untouched');
-ok(/bounce = mix\(bounce, vec3\(0, 0, 0\), wOut\)/.test(lt), 'dm-light: the probe bounce fades to nothing past its window (never to a brighter value)');
+ok(/bounce = mix\(bounce, farB, wOut\)/.test(lt) && /const farB = FAR_AVG \? U\.bAvg\.mul\(clamp\(n\.y, 0\.0, 1\.0\)\.mul\(0\.65\)\.add\(0\.35\)\) : vec3\(0, 0, 0\);/.test(lt), 'dm-light (t1644): past its window the probe bounce fades to the window\'s own AVERAGE (never brighter than the window: no lit bubble edge); ?lightfar=0 = to nothing');
 const pol = rd('ui/dm-polish.js');
 ok(!/tight \? 0\.62/.test(pol), 'dm-polish: no 0.62x on-foot box left');
 const html = rd('index.html');
