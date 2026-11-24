@@ -38,7 +38,6 @@
         const THREE = W.THREE; if (!THREE || !THREE.WebGPURenderer) throw new Error('THREE not ready');
         const cv = D.createElement('canvas'); cv.id = 'cs-canvas';
         const r = new THREE.WebGPURenderer({ canvas: cv, antialias: true, alpha: true });
-        r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFSoftShadowMap;
         await r.init();
         r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 1.0; r.setClearColor(0x000000, 0);
         r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFSoftShadowMap;

@@ -26,7 +26,7 @@
   const TIERS = {
     off: { name: 'off', on: false },
     low: { name: 'low', on: true, stars: 260, motes: 24, planetSeg: 28, planetOct: 3, cloudOct: 2, prCap: 1.0, band: false, fps: 24 },
-    mid: { name: 'mid', on: true, stars: 600, motes: 50, planetSeg: 64, planetOct: 5, cloudOct: 3, prCap: 1.25, band: false, fps: 30 },
+    mid: { name: 'mid', on: true, stars: 600, motes: 50, planetSeg: 48, planetOct: 4, cloudOct: 2, prCap: 1.25, band: false, fps: 30 },
     high: { name: 'high', on: true, stars: 1500, motes: 90, planetSeg: 96, planetOct: 6, cloudOct: 4, prCap: 1.5, band: true, fps: 30 },
   };
   // o: { mode, isMobile, pressure }.  Mobile starts at 'mid'; the frame-budget pressure (DMBudget.p) or ?menuscene=low drops a tier.
@@ -104,8 +104,11 @@
   // circle, a cool rim from the planet/window (-Z), and a gentle hemi/fill lift so
   // PBR deck plating and inner pillar faces read clearly.  Ambient stays modest so
   // Ariel's black hair does not wash to grey (hair uses metalness 0.02 / env 0.15).
-  function bayStudioRig(kind) {
+  function bayStudioRig(kind, tierName) {
     const cards = kind === 'cards';
+    const tname = tierName || 'high';
+    const modest = tname === 'low' || tname === 'mid';   // 512 map, one shadow caster (the overhead lamp)
+    const map = modest ? 512 : 1024;
     // Editor: a dim overhead lamp (not a sun). Cards keep the slightly brighter but still moody selection bay.
     return {
       hemi: { sky: 0x8ea0c4, ground: 0x2a2424, intensity: cards ? 0.55 : 0.22 },
@@ -115,10 +118,10 @@
         target: cards ? [0, 0.15, -1.2] : [0, 0.04, 0.08],
         color: 0xffefd4, intensity: cards ? 64 : 22,
         angle: cards ? 0.7 : 0.62, penumbra: cards ? 0.58 : 0.74, distance: cards ? 28 : 11, decay: 2,
-        shadow: true, map: cards ? 1024 : 1024, bias: -0.00022, normalBias: 0.035, near: cards ? 1.2 : 0.55, far: cards ? 22 : 9.5
+        shadow: !modest, map: map, bias: -0.00022, normalBias: 0.035, near: cards ? 1.2 : 0.55, far: cards ? 22 : 9.5
       },
       // almost-vertical lamp directional: a visible puddle shadow under the Articren (spot shadows alone wash out under hemi/fill)
-      lamp: { dir: [0.16, 4.1, 0.28], color: 0xffefd4, intensity: cards ? 0.7 : 0.48, size: cards ? 5.5 : 3.2, near: 0.35, far: cards ? 16 : 9.5 },
+      lamp: { dir: [0.16, 4.1, 0.28], color: 0xffefd4, intensity: cards ? 0.7 : 0.48, size: cards ? 5.5 : 3.2, near: 0.35, far: cards ? 16 : 9.5, shadow: true, map: map },
       rim: { dir: cards ? [-2.2, 2.6, -6.5] : [-1.6, 1.6, -2.6], color: 0x8fb0ff, intensity: cards ? 0.7 : 0.36 },
       fill: { dir: cards ? [-5.0, 1.4, 3.2] : [-1.4, 0.35, 1.5], color: 0xffc8a0, intensity: cards ? 0.22 : 0.08 },
       kick: { dir: cards ? [0.2, 8, -1.5] : [0.1, 3.6, -0.4], color: 0xfff6e8, intensity: cards ? 0.18 : 0.06 },
@@ -171,8 +174,28 @@
     return { sx, sy, sz, x: 0, y: 0, z: openZ - ref.openZ * sz };
   }
 
+  // Push a world-space position (with half-extents hx/hy/hz) out of bay collider AABBs. Mutates pos, no allocations.
+  function separateBay(pos, hx, hy, hz, cols) {
+    if (!pos || !cols || !cols.length) return pos;
+    hx = hx || 0.3; hy = hy || 0.2; hz = hz || 0.3;
+    for (let i = 0; i < cols.length; i++) {
+      const c = cols[i], mn = c.min, mx = c.max; if (!mn || !mx) continue;
+      const x0 = pos.x - hx, x1 = pos.x + hx, y0 = pos.y - hy, y1 = pos.y + hy, z0 = pos.z - hz, z1 = pos.z + hz;
+      if (x1 <= mn[0] || x0 >= mx[0] || y1 <= mn[1] || y0 >= mx[1] || z1 <= mn[2] || z0 >= mx[2]) continue;
+      const pxL = x1 - mn[0], pxR = mx[0] - x0, pyD = y1 - mn[1], pyU = mx[1] - y0, pzB = z1 - mn[2], pzF = mx[2] - z0;
+      let ax = 'x', pen = pxL, sgn = -1;
+      if (pxR < pen) { pen = pxR; sgn = 1; }
+      if (pyD < pen) { ax = 'y'; pen = pyD; sgn = -1; }
+      if (pyU < pen) { ax = 'y'; pen = pyU; sgn = 1; }
+      if (pzB < pen) { ax = 'z'; pen = pzB; sgn = -1; }
+      if (pzF < pen) { ax = 'z'; pen = pzF; sgn = 1; }
+      pos[ax] += sgn * (pen + 0.01);
+    }
+    return pos;
+  }
+
   const STUDIO_CAM = { maxY: 3.55, maxR: 4.55, minY: 0.16 };   // stay inside the scaled studio bay (walls ±3.4, ceiling 4.25, aft ~5.45)
-  const core = { parseMode, tierFor, TIERS, rng, starfield, starQuads, mergeBoxes, sunDirFor, lightRig, swayAt, parallaxOffset, PARALLAX_K, orbitRig, PITCH_MIN, PITCH_MAX, nearestYaw, makeGovernor, clamp, ease, placeBayTransform, BAY_REF, bayStudioRig, STUDIO_CAM };
+  const core = { parseMode, tierFor, TIERS, rng, starfield, starQuads, mergeBoxes, sunDirFor, lightRig, swayAt, parallaxOffset, PARALLAX_K, orbitRig, PITCH_MIN, PITCH_MAX, nearestYaw, makeGovernor, clamp, ease, placeBayTransform, BAY_REF, bayStudioRig, separateBay, STUDIO_CAM };
   if (typeof module !== 'undefined' && module.exports) { module.exports = core; return; }
 
   /* ───────────────────────── browser: the world ───────────────────────── */
@@ -188,7 +211,7 @@
   MW.govern = (ms) => MW.gov.step(ms);
   MW.prCap = () => { const t = MW.tier(); return t.on ? t.prCap * MW.gov.scale : 0; };
   MW.stats = { worlds: 0, live: 0 };
-  MW.BAY_URL = '/assets/places/menu_cargobay.glb';
+  MW.BAY_URL = '/assets/places/menu_cargobay.glb';   // isolated stamp: append ?v=N to match DM_BUILD (v378 stamp must set ?v=378)
   MW.BAY_REF = BAY_REF;
   MW.placeBayTransform = placeBayTransform;
   // two-pass: space backdrop first, then clear depth and draw the hangar + character so a translucent
@@ -277,6 +300,8 @@
     return out;
   };
 
+  MW.separateBay = separateBay;
+
   // Hair-safe knobs on any strand mesh under a character root (studio, cards, game, menu). Idempotent, no allocs besides the walk.
   MW.protectHair = function (root) {
     if (!root) return 0; let n = 0;
@@ -301,7 +326,7 @@
   // when the caller already built a charlook studio, then adds a crisp key
   // spotlight, a window-side cool rim, and a gentle fill / kick.
   MW.applyBayStudioLights = function (THREE, scene, kind, existing) {
-    const R = bayStudioRig(kind), lights = [];
+    const R = bayStudioRig(kind, (MW.tier && MW.tier().name) || 'high'), lights = [];
     existing = existing || {};
     const addDir = (color, intensity, dir) => {
       const l = new THREE.DirectionalLight(color, intensity);
@@ -333,7 +358,7 @@
     if (R.lamp) {
       lamp = addDir(R.lamp.color, R.lamp.intensity, R.lamp.dir);
       lamp.castShadow = true; lamp.target.position.set(R.spot.target[0], R.spot.target[1], R.spot.target[2]);
-      const sh = lamp.shadow, half = R.lamp.size || 3.2, map = R.spot.map || 1024;
+      const sh = lamp.shadow, half = R.lamp.size || 3.2, map = R.lamp.map || R.spot.map || 1024;
       sh.mapSize.set(map, map); sh.bias = R.spot.bias; sh.normalBias = R.spot.normalBias;
       const cam = sh.camera; cam.near = R.lamp.near || 0.35; cam.far = R.lamp.far || 9.5;
       cam.left = -half; cam.right = half; cam.top = half; cam.bottom = -half; cam.updateProjectionMatrix();
@@ -341,7 +366,7 @@
     return { hemi, fill, kick, spot, lamp, lights, kind };
   };
   MW.attachBayFixtureLights = function (THREE, host, inst, kind) {
-    const R = bayStudioRig(kind), list = []; if (!inst || !host) return list;
+    const R = bayStudioRig(kind, (MW.tier && MW.tier().name) || 'high'), list = []; if (!inst || !host) return list;
     const wp = new THREE.Vector3(); inst.updateMatrixWorld(true); host.updateMatrixWorld(true);
     inst.traverse((o) => {
       if (!/^Light_\d+/.test(o.name)) return;
@@ -435,21 +460,25 @@
       const g = quadGeo(THREE, starQuads(starfield([d], 11 + i * 7, { hemi: !!o.hemi }))), grp = new THREE.Group(), me = mk(new THREE.Mesh(g, starsMat)); me.renderOrder = -10; grp.add(me); group.add(grp); return { grp, k: d.k };
     });
     // planet: continents / ocean / ice caps / clouds / sun glint / terminator / atmosphere rim, all in one fragment shader
-    const pc = o.planet, R = pc.r, planetMat = (() => {
+    const pc = o.planet, R = pc.r, crisp = (tier && tier.name === 'solenne') || !!(o && o.crisp);
+    const landF = crisp ? 4.6 : 2.4, cloudF = crisp ? 7.2 : 3.6, atmScale = crisp ? 1.085 : 1.11, atmW = crisp ? 0.036 : 0.055;
+    const planetMat = (() => {
       const m = new THREE.MeshBasicNodeMaterial({}), dl = normalize(positionLocal), N = normalize(normalWorld), L = normalize(U.sun), V = normalize(cameraPosition.sub(positionWorld));
       const cs = cos(U.cloud), sn = sin(U.cloud), dc = vec3(dl.x.mul(cs).sub(dl.z.mul(sn)), dl.y, dl.x.mul(sn).add(dl.z.mul(cs)));
-      const h = mx_fractal_noise_float(dl.mul(2.1).add(vec3(3.0, 1.0, 7.0)), tier.planetOct, 2.0, 0.5).mul(0.5).add(0.5), e = h.sub(0.52);
-      const land = smoothstep(0.0, 0.012, e), moist = mx_fractal_noise_float(dl.mul(3.1).add(vec3(9.0, 4.0, 2.0)), 2, 2.0, 0.5).mul(0.5).add(0.5);
+      const h = mx_fractal_noise_float(dl.mul(landF).add(vec3(3.0, 1.0, 7.0)), tier.planetOct, 2.0, 0.5).mul(0.5).add(0.5), e = h.sub(0.52);
+      const land = smoothstep(0.0, crisp ? 0.008 : 0.012, e), moist = mx_fractal_noise_float(dl.mul(crisp ? 5.2 : 3.1).add(vec3(9.0, 4.0, 2.0)), 2, 2.0, 0.5).mul(0.5).add(0.5);
       let ter = mix(vec3(0.14, 0.27, 0.1), vec3(0.45, 0.38, 0.2), smoothstep(0.35, 0.6, float(1).sub(moist).sub(abs(dl.y).mul(0.5))));
       ter = mix(ter, vec3(0.32, 0.29, 0.26), smoothstep(0.1, 0.22, e)); const ice = smoothstep(0.8, 0.9, abs(dl.y).add(h.sub(0.5).mul(0.14)));
       ter = mix(ter, vec3(0.9, 0.93, 0.97), ice);
       const ocean = mix(vec3(0.01, 0.06, 0.2), vec3(0.03, 0.3, 0.45), smoothstep(-0.07, 0.0, e)), surf = mix(ocean, ter, land);
-      const cl = smoothstep(0.5, 0.74, mx_fractal_noise_float(dc.mul(3.6).add(vec3(5.0, 8.0, 1.0)), tier.cloudOct, 2.0, 0.5).mul(0.5).add(0.5)).mul(0.92);
+      const clA = smoothstep(crisp ? 0.52 : 0.5, crisp ? 0.7 : 0.74, mx_fractal_noise_float(dc.mul(cloudF).add(vec3(5.0, 8.0, 1.0)), tier.cloudOct, 2.0, 0.5).mul(0.5).add(0.5));
+      const clB = crisp ? smoothstep(0.62, 0.82, mx_fractal_noise_float(dc.mul(cloudF * 1.7).add(vec3(1.0, 3.0, 9.0)), Math.max(2, tier.cloudOct - 1), 2.0, 0.5).mul(0.5).add(0.5)).mul(0.55) : float(0);
+      const cl = clA.add(clB).mul(crisp ? 0.95 : 0.92);
       const ndl = dot(N, L), lit = max(ndl, 0), day = smoothstep(-0.28, 0.2, ndl), Hh = normalize(L.add(V)), nh = max(dot(N, Hh), 0);
       const sp = pow(nh, 110.0).mul(2.4).add(pow(nh, 14.0).mul(0.18)), oceanMask = float(1).sub(land), sunC = vec3(1.0, 0.95, 0.86);
       let col = mix(surf, vec3(1.0, 1.0, 1.0), cl).mul(sunC).mul(lit.mul(1.25).mul(day)).add(mix(surf, vec3(0.8, 0.85, 0.9), cl).mul(vec3(0.05, 0.075, 0.14))).add(sunC.mul(sp).mul(oceanMask).mul(float(1).sub(cl)).mul(day));
       col = col.add(vec3(1.0, 0.42, 0.18).mul(exp(ndl.mul(ndl).mul(-22.0)).mul(0.22)).mul(float(1).sub(ice.mul(0.5))));
-      col = col.add(vec3(0.22, 0.5, 1.0).mul(pow(float(1).sub(max(dot(N, V), 0)), 3.0)).mul(day.mul(0.9).add(0.12)).mul(1.2));
+      col = col.add(vec3(0.35, 0.62, 1.0).mul(pow(float(1).sub(max(dot(N, V), 0)), crisp ? 2.4 : 3.0)).mul(day.mul(0.92).add(0.16)).mul(crisp ? 1.85 : 1.2));
       m.colorNode = col; return m;
     })();
     const planet = mk(new THREE.Mesh(new THREE.SphereGeometry(R, tier.planetSeg, Math.round(tier.planetSeg * 0.75)), planetMat)); planet.rotation.z = 0.35;
@@ -458,10 +487,10 @@
     const atmMat = (() => {
       const m = new THREE.MeshBasicNodeMaterial({ side: THREE.BackSide, transparent: true, depthWrite: false, depthTest: true, blending: THREE.AdditiveBlending, toneMapped: false });
       const cN = uniform(new THREE.Vector3()), rd = normalize(positionWorld.sub(cameraPosition)), t = dot(cN.sub(cameraPosition), rd), cp = cameraPosition.add(rd.mul(t)), b = length(cp.sub(cN)).div(R);
-      const a = pow(float(1).sub(tc(b.sub(1.0).div(0.055), 0, 1)), 2.2), dd = dot(normalize(cp.sub(cN)), normalize(U.sun)), day = smoothstep(-0.35, 0.5, dd);
-      m.colorNode = mix(vec3(1.0, 0.55, 0.28), vec3(0.22, 0.46, 0.95), smoothstep(-0.05, 0.45, dd)).mul(a).mul(day.mul(0.8).add(0.03)); m.opacityNode = float(1); parts.atmCenter = cN; return m;
+      const a = pow(float(1).sub(tc(b.sub(1.0).div(atmW), 0, 1)), crisp ? 1.6 : 2.2), dd = dot(normalize(cp.sub(cN)), normalize(U.sun)), day = smoothstep(-0.35, 0.5, dd);
+      m.colorNode = mix(vec3(1.0, 0.55, 0.28), vec3(0.28, 0.55, 1.0), smoothstep(-0.05, 0.45, dd)).mul(a).mul(day.mul(crisp ? 1.05 : 0.8).add(crisp ? 0.12 : 0.03)); m.opacityNode = float(1); parts.atmCenter = cN; return m;
     })();
-    const atm = mk(new THREE.Mesh(new THREE.SphereGeometry(R * 1.11, Math.max(24, tier.planetSeg), Math.round(tier.planetSeg * 0.75)), atmMat)); atm.renderOrder = -5; pg.add(atm);
+    const atm = mk(new THREE.Mesh(new THREE.SphereGeometry(R * atmScale, Math.max(24, tier.planetSeg), Math.round(tier.planetSeg * 0.75)), atmMat)); atm.renderOrder = -5; pg.add(atm);
     // sun with glare (additive, never depth-hidden: it is far behind everything)
     const sunQ = mk(new THREE.Mesh(new THREE.PlaneGeometry(1, 1), (() => {
       const m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, depthTest: true, blending: THREE.AdditiveBlending, toneMapped: false }), p = uv().sub(0.5).mul(2.0), r = length(p);
@@ -486,7 +515,9 @@
     const owned = o.own || [];
     const r = o.r || 90, pos = o.position || [-70, -80, o.z || -160];
     const sun = o.sun || [-0.55, 0.28, -0.78];
-    const tier = { name: 'solenne', stars: 0, planetSeg: o.seg || 128, planetOct: o.oct || 7, cloudOct: o.cloudOct || 4, band: true };
+    const host = (MW.tier && MW.tier()) || { name: 'high' };
+    const modestP = host.name === 'low' || host.name === 'mid';
+    const tier = { name: 'solenne', stars: 0, planetSeg: o.seg || (modestP ? 48 : 128), planetOct: o.oct || (modestP ? 4 : 7), cloudOct: o.cloudOct || (modestP ? 2 : 5), band: true };
     const sky = buildSky(THREE, group, tier, { sun: sun, planet: { x: pos[0], y: pos[1], z: pos[2], r: r }, starLayers: [], hemi: !!o.hemi }, owned);
     // drop the giant sky sphere / sun billboard if the caller only wants the planet (stars optional)
     if (!o.keepSky) {
@@ -506,7 +537,7 @@
     const own = [], dispose = trackDispose(own), T = THREE.TSL, M = mats(THREE), scene = X.scene, group = new THREE.Group(); group.name = 'menuworld-studio';
     const skyScene = new THREE.Scene(); skyScene.background = new THREE.Color(0x02030a);
     const fov = 30, sun0 = sunDirFor(o.aspect || 1.2, fov, -1, 9, 0.62);
-    const sky = buildSky(THREE, skyScene, tier, { sun: sun0, planet: { x: 140, y: -700, z: -1250, r: 760 } }, own); sky.syncAtm();
+    const sky = buildSky(THREE, skyScene, tier, { sun: sun0, planet: { x: 140, y: -700, z: -1250, r: 760 }, crisp: true }, own); sky.syncAtm();
     const proc = new THREE.Group(); proc.name = 'bay-proc'; group.add(proc);
     scene.traverse((ob) => { if (ob.userData && ob.userData.dmSet) ob.visible = false; });   // the plain pad / ring / rocks give way to the bay
     const studioL = MW.applyBayStudioLights(THREE, scene, 'studio', { key: X.key, rim: X.rim });
@@ -573,7 +604,7 @@
     const skyScene = new THREE.Scene(); skyScene.background = new THREE.Color(0x02030a);
     const fov = 50, cam = new THREE.PerspectiveCamera(fov, 1.6, 0.1, 6500), R = rng(9); let sun = sunDirFor(1.6, fov, 1, 13, 0.55), sunA = 1.6;
     const proc = new THREE.Group(); proc.name = 'bay-proc'; group.add(proc);
-    const sky = buildSky(THREE, skyScene, tier, { sun, hemi: true, planet: { x: -300, y: -1050, z: -1500, r: 1180 }, starLayers: [
+    const sky = buildSky(THREE, skyScene, tier, { sun, hemi: true, crisp: true, planet: { x: -300, y: -1050, z: -1500, r: 1180 }, starLayers: [
       { n: Math.round(tier.stars * 0.45), dist: 2600, ang: [0.0016, 0.0042], k: PARALLAX_K.starsFar }, { n: Math.round(tier.stars * 0.35), dist: 1500, ang: [0.0016, 0.0046], k: PARALLAX_K.starsMid }, { n: Math.round(tier.stars * 0.2), dist: 900, ang: [0.002, 0.0055], k: PARALLAX_K.starsNear }] }, own); sky.syncAtm();
     const studioL = MW.applyBayStudioLights(THREE, scene, 'cards', {});
     const steelB = [], strips = [], ledB = [], ledA = [], floorB = [{ c: [0, -0.3, -0.5], s: [24, 0.6, 17] }], hazB = [{ c: [0, 0.006, -8.7], s: [24, 0.014, 0.6] }];

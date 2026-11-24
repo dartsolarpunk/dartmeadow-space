@@ -43,6 +43,13 @@ ok(bc.spot.distance > br.spot.distance && bc.spot.intensity >= br.spot.intensity
 ok(br.fixture.intensity > 0 && bc.fixture.distance > br.fixture.distance, 'fixture point lights scale with the bay');
 ok(br.hemi.intensity < bc.hemi.intensity && br.spot.intensity < bc.spot.intensity && br.key.intensity < 0.5, 'editor lamp is dimmer than the selection bay and has no sun-like key');
 ok(br.spot.shadow && br.spot.pos[1] > 3 && Math.abs(br.spot.pos[0]) < 0.5 && br.spot.penumbra >= 0.7, 'editor key is a soft overhead lamp with a shadow map');
+const brMid = MW.bayStudioRig('studio', 'mid'), brLow = MW.bayStudioRig('studio', 'low');
+ok(brMid.spot.map === 512 && brLow.spot.map === 512 && !brMid.spot.shadow && !brLow.spot.shadow && brMid.lamp && br.spot.map === 1024 && br.spot.shadow, 'low/mid studio uses a 512 map and a single lamp shadow caster');
+ok(M.planetSeg <= 48 && M.planetOct <= 4 && M.planetSeg < H.planetSeg, 'mid-tier planet tessellation stays modest');
+const pUp = { x: 0, y: 0.5, z: 0 }; MW.separateBay(pUp, 0.5, 0.5, 0.5, [{ min: [-2, -0.2, -2], max: [2, 0.2, 2] }]);
+ok(pUp.y >= 0.7, 'separateBay pushes a volume up out of a floor collider');
+const pFree = { x: 10, y: 1, z: 10 }; MW.separateBay(pFree, 0.4, 0.2, 0.4, [{ min: [-1, 0, -1], max: [1, 2, 1] }]);
+ok(pFree.x === 10 && pFree.z === 10, 'separateBay leaves a volume that misses the boxes alone');
 ok(MW.STUDIO_CAM && MW.STUDIO_CAM.maxY < 4.25 && MW.STUDIO_CAM.maxR < 5.45 && MW.STUDIO_CAM.minY > 0, 'studio camera clamp stays inside the scaled bay');
 
 // parallax + sway

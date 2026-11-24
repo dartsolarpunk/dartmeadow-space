@@ -1,0 +1,32 @@
+<!doctype html><meta charset=utf8>
+<base href="/">
+<title>launch look-check</title>
+<style>
+html,body{margin:0;background:#05070c;overflow:hidden;width:100%;height:100%}
+#screen-menu{position:absolute;inset:0;width:100%;height:100%;background:#05070c}
+#menu-scene-canvas{position:absolute;inset:0;width:100%!important;height:100%!important;display:block}
+.ms-dissolve{position:absolute;inset:0;pointer-events:none;z-index:2}
+</style>
+<div id=screen-menu></div>
+<script type="importmap">{"imports":{"three":"/three/build/three.webgpu.js","three/webgpu":"/three/build/three.webgpu.js","three/tsl":"/three/build/three.tsl.js"}}</script>
+<script type="module">
+window.errs=[]; addEventListener('error',e=>errs.push(String(e.message||e).slice(0,300)));
+window.__MS_FORCE_GL=true; window.__MS_DEBUG=true;
+import * as TH from 'three/webgpu'; import * as TSL from 'three/tsl';
+import {GLTFLoader} from '/three/examples/jsm/loaders/GLTFLoader.js';
+const THREE=Object.assign({},TH); THREE.TSL=TSL; THREE.GLTFLoader=GLTFLoader; window.THREE=THREE;
+const load=(src)=>new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=()=>rej(new Error('load '+src)); document.head.appendChild(s); });
+try{
+  await load('/ui/dm-menuworld.js');
+  await load('/ui/dm-chars.js');
+  await load('/ui/dm-menuscene.js');
+  const MS=window.DM_MENUSCENE;
+  await MS.start();
+  const info=await MS.debugLaunch();
+  window.launchInfo=info;
+  window.seek=(t)=>MS.seek(t);
+  window.grabPng=()=>MS.debugGrab();
+  window.doneReady=true;
+  console.log('[launch-harness] ready '+JSON.stringify(info));
+}catch(e){ window.errs.push(String(e&&e.message||e).slice(0,300)); window.doneReady=true; window.launchInfo={ok:false,error:String(e&&e.message||e)}; console.error('[launch-harness]',e); }
+</script>

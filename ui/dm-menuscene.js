@@ -348,7 +348,9 @@
       let duoWide = DUO_WANT;   // frame the rock for two from the first frame (Emma mounts when her GLB lands); false again if she never does
 
       /* renderer */
-      const renderer = new THREE.WebGPURenderer({ canvas: cv, antialias: !lowTier, alpha: true, powerPreference: 'high-performance' });
+      const forceGL = qs('msgl', '') === '1' || !!window.__MS_FORCE_GL;
+      if (forceGL || window.__MS_DEBUG) { sc.pr = Math.min(sc.pr, 1); sc.shadow = Math.min(sc.shadow, 512); sc.hair = Math.min(sc.hair, 0.55); sc.hairTier = 0; }
+      const renderer = new THREE.WebGPURenderer({ canvas: cv, antialias: !lowTier && !forceGL, alpha: true, forceWebGL: forceGL, powerPreference: 'high-performance', preserveDrawingBuffer: !!(forceGL || window.__MS_DEBUG) });
       await renderer.init();
       renderer.setClearColor(0x000000, 0);
       renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -930,7 +932,8 @@
         try {
           const MW = window.DMMenuWorld;
           if (MW && MW.buildSolenne && THREE.TSL) {
-            solenne = MW.buildSolenne(THREE, { r: 96, position: [-70, -78, -Lz / 2 - 170], seg: lowTier ? 72 : 128, oct: lowTier ? 5 : 7, sun: [-0.52, 0.32, -0.78] });
+            const tName = (MW.tier && MW.tier().name) || (lowTier ? 'low' : 'high');
+            solenne = MW.buildSolenne(THREE, { r: 96, position: [-70, -78, -Lz / 2 - 170], seg: tName === 'low' ? 48 : tName === 'mid' ? 56 : 128, oct: tName === 'low' ? 4 : tName === 'mid' ? 5 : 7, cloudOct: tName === 'low' ? 2 : tName === 'mid' ? 3 : 5, sun: [-0.52, 0.32, -0.78] });
             if (solenne && solenne.group) { S.add(solenne.group); planet = solenne.sky && solenne.sky.planet; (solenne.owned || []).forEach(own); }
           }
         } catch (e) { info('solenne failed', e && e.message); }
@@ -1054,7 +1057,8 @@
         return Promise.resolve(pc).catch(() => {}).then(() => {
           if (!DU) return;
           boards.forEach(b => { b.visible = true; }); IN.on = true; clearAllSeatCols(); info('duo launch on (' + Math.round(performance.now() - now0) + ' ms)');
-          setTimeout(() => { if (!DU || DU.bay) return; try { DU.bay = buildBay(Math.max(A.du.Lb, B.du.Lb), Math.max(A.du.Wb, B.du.Wb)); DU.bay.cam.position.set(0, DU.bay.Hy * 0.5, DU.bay.Lz * 0.4); DU.bay.cam.lookAt(0, 1, 0); renderer.compileAsync(DU.bay.scene, DU.bay.cam).catch(() => {}); } catch (e) { info('bay build failed:', e && e.message); } }, 1200);
+          const buildBaySoon = () => { if (!DU || DU.bay) return; try { DU.bay = buildBay(Math.max(A.du.Lb, B.du.Lb), Math.max(A.du.Wb, B.du.Wb)); DU.bay.cam.position.set(0, DU.bay.Hy * 0.5, DU.bay.Lz * 0.4); DU.bay.cam.lookAt(0, 1, 0); if (renderer.compileAsync) renderer.compileAsync(DU.bay.scene, DU.bay.cam).catch(() => {}); } catch (e) { info('bay build failed:', e && e.message); } };
+          if (o.syncBay || window.__MS_DEBUG) buildBaySoon(); else setTimeout(buildBaySoon, 1200);
         });
       };
       // boards + holders for this frame (before the poses)
@@ -1164,6 +1168,13 @@
         const d = X.du, b = d.board, u = Math.min(1, Math.max(0, (tb - 0.7 - i * 0.25) / 4.0)), e = 1 - Math.pow(1 - u, 3);
         b.position.lerpVectors(d.bayIn, d.bayPark, e); b.position.y += Math.sin(Math.PI * e) * 0.6 + (u >= 1 ? 0.03 * Math.sin(tb * 2.4 + i) : 0);
         b.quaternion.copy(d.bayQ).premultiply(_dq.q.setFromAxisAngle(_dq.v.set(1, 0, 0), -0.18 * (1 - e))).premultiply(_dq.q2.setFromAxisAngle(_dq.v2.set(0, 0, 1), -d.side * 0.25 * Math.sin(Math.PI * e)));
+        // live door / wall / floor / ceiling collision (reused AABB list, no per-frame alloc)
+        const inst = DU.bay && DU.bay.glb && DU.bay.glb();
+        if (inst && window.DMMenuWorld && DMMenuWorld.bayColliders && DMMenuWorld.separateBay) {
+          if (!DU._cols) DU._cols = [];
+          DMMenuWorld.bayColliders(THREE, inst, DU._cols);
+          DMMenuWorld.separateBay(b.position, (d.Lb || 4) * 0.42, 0.22, (d.Wb || 0.8) * 0.42, DU._cols);
+        }
       };
       const duoReset = () => {
         const D = DU; DU = null; IN.duo = false; IN.on = false; IN.board = null; IN.flew = false;
@@ -1314,12 +1325,15 @@ IN.D.copy(IN.Dl); b.localToWorld(IN.D); IN.D.y += 0.03;
         // shadow work per second. Nothing is lowered in quality; a device that holds 60 never enters this.
         if (IN.on && MS.half) { MS._hk = !MS._hk; if (MS._hk) return; }
         if (MS.skipN > 1 && !IN.on) { MS._sk = ((MS._sk | 0) + 1) % MS.skipN; if (MS._sk) return; }
-        const dt = Math.min(0.05, (now - last) / 1000); last = now; t += dt;
-        // (menu-perf) while the world warms up the frame time is the compile's, not this scene's: neither measure it nor let it cut the
-        // resolution (the fly-out would then run soft until the slow recovery climbs back)
+        const dt = Math.min(0.05, (now - last) / 1000); last = now;
         if (window._dmWarming || MS.skipN > 1) { ema = 16; adj = 0; } else ema += (dt * 1000 - ema) * 0.04;
         if (++adj > 90) { adj = 0; if (ema > 36 && pr > sc.pr * 0.5) { pr = Math.max(0.5, pr - 0.15); fit(); } else if (ema < 20 && pr < sc.pr) { pr = Math.min(sc.pr, pr + 0.1); fit(); } }
         if (IN.on) { IN._n = (IN._n | 0) + 1; if (IN._n > 6 && IN._n <= 36) IN._s = (IN._s || 0) + dt; if (IN._n === 36) { const av = IN._s / 30 * 1000; MS.half = av > 20 && av < 36; } }
+        simFrame(dt);
+      };
+      const simFrame = (dt, draw) => {
+        dt = Math.min(0.05, dt);
+        t += dt;
         if (IN.on) { if (IN.duo) { if (DU) duoPre(dt); } else introPre(dt); }
         if (IN.on || tAlive) trailTick(dt);
         C.mixer.update(dt); if (B) B.C.mixer.update(dt);
@@ -1333,25 +1347,21 @@ IN.D.copy(IN.Dl); b.localToWorld(IN.D); IN.D.y += 0.03;
         if (hair) { wind.set(IN.on ? (0.35 + 0.25 * Math.sin(t * 0.37)) : (0.08 + 0.05 * Math.sin(t * 0.31)), 0.01, IN.on ? (0.15 + 0.2 * Math.sin(t * 0.53 + 1)) : (0.04 + 0.03 * Math.sin(t * 0.47))); hair.params.wind.copy(wind); }
         if (B && B.hair && B.hair.params) { wind.set(IN.on ? (0.35 + 0.25 * Math.sin(t * 0.37 + 0.6)) : (0.08 + 0.05 * Math.sin(t * 0.31 + 0.6)), 0.01, IN.on ? (0.15 + 0.2 * Math.sin(t * 0.53 + 1.7)) : (0.04 + 0.03 * Math.sin(t * 0.47 + 0.8))); B.hair.params.wind.copy(wind); }
         if (IN.on && !IN.duo) introPost();
-        // dust motes drift on the wind
         for (let i = 0; i < NM; i++) { const o = i * 3; mp[o] += mv[o] * dt; mp[o + 1] += mv[o + 1] * dt + Math.sin(t * 0.7 + i) * 0.0008; mp[o + 2] += mv[o + 2] * dt; if (mp[o] > 6) mp[o] = -6; if (mp[o + 1] > 3.6) mp[o + 1] = 0; if (mp[o + 1] < 0) mp[o + 1] = 3.6; }
         mg.attributes.position.needsUpdate = true;
-        // light life + menu glow ramp
         key.intensity = 5.2 * (1 + 0.012 * Math.sin(t * 1.3));
         if (menuT >= 0) { const k = Math.min(1, (t - menuT) / 1.6); const e = k * k * (3 - 2 * k); glowL.intensity = glowR.intensity = 14 * e; }
-        // camera: slow breathing orbit + pointer parallax
         par.x += (par.tx - par.x) * 0.04; par.y += (par.ty - par.y) * 0.04;
-        camera.position.set(camBase.x + par.x * 0.35 + Math.sin(t * 0.13) * 0.12, camBase.y - par.y * 0.18 + Math.sin(t * 0.17) * 0.04, camBase.z + Math.sin(t * 0.09) * 0.08);
-        // close-up reaction: ease in on her face, hold ~3 s while she looks up at the stars, ease back out
+        if (!IN.on || !IN.duo) camera.position.set(camBase.x + par.x * 0.35 + Math.sin(t * 0.13) * 0.12, camBase.y - par.y * 0.18 + Math.sin(t * 0.17) * 0.04, camBase.z + Math.sin(t * 0.09) * 0.08);
+        else camera.position.set(camBase.x, camBase.y, camBase.z);
         if (FOC.phase === 1) { const k = Math.min(1, (t - FOC.t0) / 1.15); FOC.w = FOC.from + (1 - FOC.from) * (k * k * (3 - 2 * k)); if (k >= 1) { FOC.phase = 2; FOC.t0 = t; fs.t0 = t - 0.2; fs.wk = true; fs.auto = t + 12; } }
         else if (FOC.phase === 2) { FOC.w = 1; if (t - FOC.t0 > 3.0) { FOC.phase = 3; FOC.t0 = t; } }
         else if (FOC.phase === 3) { const k = Math.min(1, (t - FOC.t0) / 1.5); FOC.w = 1 - (k * k * (3 - 2 * k)); if (k >= 1) { FOC.phase = 0; FOC.w = 0; } }
         if (FOC.w > 0.001) {
           bones.Head.getWorldPosition(headW); tgtW.copy(headW); tgtW.y += 0.02;
-          // swoop: lift up and sweep in from her right (screen-left), looking down across her eyes; the stars stay behind her
-          const dk = Math.max(1, Math.min(2.4, 1.0 / Math.max(0.3, camera.aspect)));   // tall phone screens: stand further back so her whole head fits
-          tmpA.copy(camBase).sub(headW).setY(0).normalize();            // out toward the viewer
-          tmpC.set(-tmpA.z, 0, tmpA.x);                                  // screen-left of that
+          const dk = Math.max(1, Math.min(2.4, 1.0 / Math.max(0.3, camera.aspect)));
+          tmpA.copy(camBase).sub(headW).setY(0).normalize();
+          tmpC.set(-tmpA.z, 0, tmpA.x);
           closeP.copy(headW).addScaledVector(tmpA, 1.35 * dk).addScaledVector(tmpC, 1.0 * dk); closeP.y = headW.y + 0.17 * dk;
           const e = FOC.w, arc = Math.sin(Math.PI * e);
           camera.position.lerp(closeP, e); camera.position.y += arc * 0.28; camera.position.addScaledVector(tmpC, arc * 0.18);
@@ -1360,20 +1370,63 @@ IN.D.copy(IN.Dl); b.localToWorld(IN.D); IN.D.y += 0.03;
         } else if (IN.on && IN.duo && DU) {
           duoCamera();
         } else if (IN.on) {
-          // intro: dolly back + pan left so her walk to the parked board and the step-on stay in frame
           const k = smooth(IN.T_WALK - 0.3, IN.T_STEP, IN.t);
           camera.position.x -= 2.2 * k; camera.position.y += 0.6 * k; camera.position.z += 3.4 * k;
           tmpA.set(TARGET.x - 2.3 * k, TARGET.y - 0.2 * k, TARGET.z - 1.2 * k);
-          if (IN.t > IN.T_LIFT - 0.5) { bones.Hips.getWorldPosition(tmpC); tmpA.lerp(tmpC, 0.92 * smooth(0, 4.5, IN.t - (IN.T_LIFT - 0.5))); }   // the look-at eases onto her over 4.5 s: no whip pan
+          if (IN.t > IN.T_LIFT - 0.5) { bones.Hips.getWorldPosition(tmpC); tmpA.lerp(tmpC, 0.92 * smooth(0, 4.5, IN.t - (IN.T_LIFT - 0.5))); }
           camera.lookAt(tmpA);
         } else camera.lookAt(TARGET);
         if (MS._dbg) { camera.position.copy(MS._dbg.pos); camera.lookAt(MS._dbg.target); }
         if (cv.clientWidth !== lw || cv.clientHeight !== lh) { lw = cv.clientWidth; lh = cv.clientHeight; if (lw > 1) { fit(); adj = -120; ema = 16; } }
-        if (DU && DU.inBay && DU.bay) renderer.render(DU.bay.scene, DU.bay.cam); else renderer.render(scene, camera);
+        if (draw !== false) { if (DU && DU.inBay && DU.bay) renderer.render(DU.bay.scene, DU.bay.cam); else renderer.render(scene, camera); }
         if (++framesSeen === 3 && !MS.ready) { MS.ready = true; cv.classList.add('ms-in'); document.dispatchEvent(new CustomEvent('menuscene-ready')); try { const mv = document.querySelector('.menu-version'); if (mv && !/scene b/.test(mv.textContent)) mv.textContent += ' · scene b7'; } catch (e) {} info('ready (' + (renderer.backend && renderer.backend.isWebGPUBackend ? 'WebGPU' : 'WebGL2') + ', pr ' + pr.toFixed(2) + ')'); }
       };
       raf = requestAnimationFrame(loop);
-      MS._ctx = { introStart, introReset, introPrecompile, intro: IN, duo: () => DU, pilots: () => [A, B], duoReady: () => { try { return DUO_READY(); } catch (e) { return false; } }, loadClips: () => Promise.all([loadClips(A), loadClips(B)]), focus: startFocus, FOC, renderer, scene, camera, hair: () => hair, pose, setMenuOpen: () => { menuT = t; }, cv, holder, root, boulder, ground, P, bones };
+      MS._debugGrab = function () {
+        try { if (DU && DU.inBay && DU.bay) renderer.render(DU.bay.scene, DU.bay.cam); else renderer.render(scene, camera); } catch (e) {}
+        return cv.toDataURL("image/png");
+      };
+      MS._seek = function (tAbs) {
+        if (!IN.on || !IN.duo || !DU) return { ok: false, reason: 'not-duo' };
+        MS.paused = true;
+        if (tAbs + 1e-4 < IN.t) return { ok: false, t: IN.t, reason: 'backward' };
+        if (DU && !DU.bay && tAbs >= (DU.tBay || 0) - 0.2) {
+          try { DU.bay = buildBay(Math.max(A.du.Lb, B.du.Lb), Math.max(A.du.Wb, B.du.Wb)); DU.bay.cam.position.set(0, DU.bay.Hy * 0.5, DU.bay.Lz * 0.4); DU.bay.cam.lookAt(0, 1, 0); } catch (e) { info('seek bay', e && e.message); }
+        }
+        const step = 1 / 20; let n = 0;
+        while (IN.t < tAbs - 1e-4 && n < 2400) {
+          const sl = Math.min(step, tAbs - IN.t);
+          const last = (IN.t + sl >= tAbs - 1e-4) || n >= 2399;
+          simFrame(sl, last);
+          n++;
+        }
+        const jets = !!(A && A.du && A.du.jets && A.du.jets.group && A.du.jets.group.visible);
+        return { ok: true, t: IN.t, tDep: DU.tDep, tBay: DU.tBay, tFly: DU.tFly, tL: A && A.du && A.du.tL, inBay: !!DU.inBay, doorK: DU.doorK || 0, dissolve: DU._wop || 0, jets: jets };
+      };
+      MS._debugLaunch = async function (opt) {
+        opt = opt || {};
+        window.__MS_DEBUG = true; MS.paused = false;
+        if (!MS.ready) {
+          await MS.start();
+          await new Promise((res) => { if (MS.ready) return res(); const to = setTimeout(res, 180000); document.addEventListener('menuscene-ready', () => { clearTimeout(to); res(); }, { once: true }); });
+        }
+        if (MS._ctx && MS._ctx.loadClips) await MS._ctx.loadClips();
+        const t0 = performance.now();
+        while (!(MS._ctx && MS._ctx.duoReady && MS._ctx.duoReady()) && performance.now() - t0 < 90000) await new Promise((r) => setTimeout(r, 200));
+        if (!(MS._ctx && MS._ctx.duoReady && MS._ctx.duoReady())) return { ok: false, reason: 'duo-not-ready' };
+        const mk = () => {
+          const g = new THREE.Group();
+          const deck = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.07, 1.0), new THREE.MeshStandardMaterial({ color: 0xc41e2e, roughness: 0.42, metalness: 0.25 }));
+          deck.castShadow = true; deck.receiveShadow = true; g.add(deck);
+          const stripe = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.02, 0.08), new THREE.MeshBasicMaterial({ color: 0x5ce8ff, toneMapped: false })); stripe.position.y = 0.05; g.add(stripe);
+          g.userData.procFallback = true; return g;
+        };
+        const started = MS.introStart({ board: mk(), board2: mk(), syncBay: true, sharedTex: false, sharedTex2: false, ratio: 37 / 6, onFlyOff: function () {} });
+        if (started && started.then) await started;
+        MS.paused = true;
+        return { ok: !!IN.on && !!IN.duo, tDep: DU && DU.tDep, tBay: DU && DU.tBay, tFly: DU && DU.tFly, tL: A && A.du && A.du.tL };
+      };
+      MS._ctx = { introStart, introReset, introPrecompile, intro: IN, duo: () => DU, pilots: () => [A, B], duoReady: () => { try { return DUO_READY(); } catch (e) { return false; } }, loadClips: () => Promise.all([loadClips(A), loadClips(B)]), focus: startFocus, FOC, renderer, scene, camera, hair: () => hair, pose, setMenuOpen: () => { menuT = t; }, cv, holder, root, boulder, ground, P, bones, seek: (...a) => MS._seek && MS._seek(...a), debugLaunch: (...a) => MS._debugLaunch && MS._debugLaunch(...a) };
       MS.dispose = function () {
         MS.disposed = true; MS.ready = false; cancelAnimationFrame(raf); window.removeEventListener('resize', onResize); window.removeEventListener('orientationchange', onResize); window.removeEventListener('pointermove', onPtr); window.removeEventListener('pointerdown', onDown); window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp);
         try { if (window.visualViewport) window.visualViewport.removeEventListener('resize', onResize); } catch (e) {}
@@ -1393,6 +1446,9 @@ IN.D.copy(IN.Dl); b.localToWorld(IN.D); IN.D.y += 0.03;
   };
   MS.menuOpen = function () { try { MS._ctx && MS._ctx.setMenuOpen(); } catch (e) { } MS._menuOpenWanted = true; };
   MS.introStart = function (o) { const c = MS._ctx; return c && c.introStart ? c.introStart(o) : false; };
+  MS.seek = function (tAbs) { return MS._seek ? MS._seek(tAbs) : { ok: false, reason: 'not-started' }; };
+  MS.debugGrab = function () { return MS._debugGrab ? MS._debugGrab() : null; };
+  MS.debugLaunch = async function (opt) { await MS.start(); if (MS._debugLaunch) return MS._debugLaunch(opt); return { ok: false, reason: 'no-hook' }; };
   MS.introPrecompile = function (b) { const c = MS._ctx; return c && c.introPrecompile ? c.introPrecompile(b) : Promise.resolve(false); };
   MS.introReset = function () { try { MS._ctx && MS._ctx.introReset(); } catch (e) { } };
   MS.pause = function () { MS.paused = true; };
