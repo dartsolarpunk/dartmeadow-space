@@ -98,7 +98,7 @@
     }
     if (o.hair !== false) {
       try {
-        const mod = await import(W.DM_HAIR_MODULE || new URL('hair_strands.js?v=379', D.baseURI).href);
+        const mod = await import(W.DM_HAIR_MODULE || new URL('hair_strands.js?v=380', D.baseURI).href);
         let cfg; if (def.hair.configUrl) { const r = await fetch(def.hair.configUrl); if (r.ok) cfg = await r.json(); }
         const CHAR = { root: M.root, bones: M.bones, mixer: M.mixer };
         M.charLike = CHAR;
