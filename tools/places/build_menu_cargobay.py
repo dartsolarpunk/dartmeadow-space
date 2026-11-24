@@ -564,12 +564,94 @@ def build(tex):
     mast.parent = root
     mast_lit.parent = root
 
+    # ── sliding blast doors (two armored leaves, authored closed) ──
+    # Each leaf is a hook empty (Door_L / Door_R) the runtime translates on X.
+    # Children stay out of the per-material bay join so they can animate.
+    def add_leaf(side):
+        name = "Door_L" if side < 0 else "Door_R"
+        leaf_w = HALF_W + 0.18
+        thick = 0.46
+        z = OPEN_Z - 0.28
+        cx = side * (leaf_w * 0.5 - 0.10)
+        hook = bpy.data.objects.new(name, None)
+        bpy.context.collection.objects.link(hook)
+        hook.empty_display_type = "CUBE"
+        hook.empty_display_size = 0.5
+        hook.location = (cx, 0.0, 0.0)
+        hook["slide"] = 8.25
+        hook["side"] = int(side)
+        hook["closedX"] = cx
+        hook["openX"] = cx + side * 8.25
+        hook.parent = root
+        parts = []
+        def loc(x, y, zz):
+            return (x - cx, y, zz)
+        slab = box(name + "_Slab", loc(cx, H * 0.5, z), (leaf_w, H - 0.12, thick), M_HULL)
+        parts.append(slab)
+        # face ribs + vertical stiffeners (trim)
+        for i in range(5):
+            y = 0.9 + i * ((H - 1.8) / 4)
+            parts.append(box(name + f"_Rib{i}", loc(cx, y, z - thick * 0.38), (leaf_w - 0.5, 0.14, 0.12), M_TRIM))
+        for k, fx in enumerate((-0.72, -0.28, 0.28, 0.72)):
+            vx = cx + fx * leaf_w * 0.42
+            parts.append(box(name + f"_Stile{k}", loc(vx, H * 0.5, z - thick * 0.38), (0.14, H - 0.55, 0.12), M_TRIM))
+        # meeting-edge amber lamp and an outer frame lip
+        meet = cx + side * (-leaf_w * 0.5 + 0.07)
+        parts.append(box(name + "_Edge", loc(meet, H * 0.5, z - thick * 0.22), (0.09, H - 0.35, 0.18), M_AMBER))
+        parts.append(box(name + "_Lip", loc(cx + side * (leaf_w * 0.5 - 0.1), H * 0.5, z + thick * 0.15), (0.16, H - 0.2, 0.14), M_TRIM))
+        # diagonal brace on the inner face
+        # (kept as axis-aligned boxes — a chevron pair)
+        midy = H * 0.5
+        parts.append(box(name + "_ChevA", loc(cx, midy + 1.6, z - thick * 0.40), (leaf_w * 0.55, 0.10, 0.08), M_TRIM))
+        parts.append(box(name + "_ChevB", loc(cx, midy - 1.6, z - thick * 0.40), (leaf_w * 0.55, 0.10, 0.08), M_TRIM))
+        for o in parts:
+            o.parent = hook
+        # per-leaf merge so each door is a handful of draw calls
+        from collections import defaultdict as _dd
+        buckets = _dd(list)
+        for o in list(hook.children):
+            if o.type != "MESH":
+                continue
+            mat = o.data.materials[0] if o.data.materials else None
+            buckets[mat.name if mat else "_none"].append(o)
+        for key, objs in buckets.items():
+            mat = objs[0].data.materials[0] if objs[0].data.materials else None
+            joined = join_named(name + "_" + key, objs, mat, uv_scale=0.32)
+            if joined is not None:
+                joined.parent = hook
+        # collision body follows the leaf (invisible mesh; runtime hides Collide_* )
+        col = box("Collide_" + name, (0.0, H * 0.5, z), (leaf_w, H - 0.12, thick), M_HULL)
+        col.parent = hook
+        col["collider"] = 1
+        return hook
+
+    add_leaf(-1)
+    add_leaf(1)
+
+    # Static collision bodies as meshes (hidden at runtime) so glTF keeps a reliable world AABB
+    def collide(name, loc, size):
+        o = box(name, loc, size, M_HULL)
+        o.parent = root
+        o["collider"] = 1
+        return o
+
+    collide("Collide_Floor", (0, -DECK_T * 0.5, (OPEN_Z + AFT_Z) * 0.5), (W, DECK_T, D))
+    collide("Collide_Ceiling", (0, H + WALL_T * 0.5, (OPEN_Z + AFT_Z) * 0.5), (W + WALL_T * 2, WALL_T, D))
+    collide("Collide_WallL", (-HALF_W - WALL_T * 0.5, H * 0.5, (OPEN_Z + AFT_Z) * 0.5), (WALL_T, H, D))
+    collide("Collide_WallR", (HALF_W + WALL_T * 0.5, H * 0.5, (OPEN_Z + AFT_Z) * 0.5), (WALL_T, H, D))
+    collide("Collide_Aft", (0, H * 0.5, AFT_Z + WALL_T * 0.5), (W, H, WALL_T))
+    collide("Collide_JambL", (-HALF_W + 0.22, H * 0.5, OPEN_Z + 0.12), (0.55, H, 0.55))
+    collide("Collide_JambR", (HALF_W - 0.22, H * 0.5, OPEN_Z + 0.12), (0.55, H, 0.55))
+    collide("Collide_Header", (0, H - 0.28, OPEN_Z + 0.12), (W, 0.55, 0.7))
+
     # Merge mesh primitives per material so one bay instance is ~8 draw calls, not 228.
-    # Light_* empties stay as placement hooks. join_named also applies box UVs.
+    # Light_* empties, Door_* hooks, and Collide_* bodies stay as placement / physics hooks.
     from collections import defaultdict
     buckets = defaultdict(list)
     for o in list(root.children):
         if o.type != "MESH":
+            continue
+        if o.name.startswith("Door_") or o.name.startswith("Collide_"):
             continue
         mat = o.data.materials[0] if o.data.materials else None
         buckets[mat.name if mat else "_none"].append(o)
@@ -611,6 +693,7 @@ def export_glb(path):
     # No Draco: the game's GLTFLoader has no DRACOLoader. Other place GLBs use
     # WebP + KHR_mesh_quantization via tools/places/compress_glbs.sh instead.
     kw["export_draco_mesh_compression_enable"] = False
+    kw["export_extras"] = True
     try:
         bpy.ops.export_scene.gltf(**kw)
     except TypeError:

@@ -38,8 +38,10 @@
         const THREE = W.THREE; if (!THREE || !THREE.WebGPURenderer) throw new Error('THREE not ready');
         const cv = D.createElement('canvas'); cv.id = 'cs-canvas';
         const r = new THREE.WebGPURenderer({ canvas: cv, antialias: true, alpha: true });
+        r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFSoftShadowMap;
         await r.init();
-        r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 1.05; r.setClearColor(0x000000, 0);
+        r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 1.0; r.setClearColor(0x000000, 0);
+        r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFSoftShadowMap;
         R.r = r; R.canvas = cv; return r;
       })().finally(() => { R.making = null; });
       try { await R.making; } catch (e) { R.leases--; throw e; }
@@ -112,6 +114,8 @@
     }
     applyLook(M, def);
     try { if (W.DMCharLook) W.DMCharLook.apply(M.root, { THREE, env: 'studio' }); } catch (e) { log('charlook', e && e.message); }   // (ui/dm-charlook.js) smooth normals + soft sky / rim / matcap look, studio env; ?charlook=off|low|high
+    try { if (W.DMMenuWorld && W.DMMenuWorld.protectHair) W.DMMenuWorld.protectHair(M.root); } catch (e) {}
+    M.root.traverse((n) => { if (n.isMesh || n.isSkinnedMesh) { n.castShadow = !/hair|strand/i.test(n.name || ''); n.receiveShadow = !/hair|strand/i.test(n.name || ''); n.frustumCulled = false; } });
     return M;
   }
   function hairStudioQ() {

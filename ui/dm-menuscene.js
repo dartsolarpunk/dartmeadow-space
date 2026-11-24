@@ -419,6 +419,56 @@
       const trail = new THREE.Points(tgeo, new THREE.PointsMaterial({ size: 0.16, vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
       trail.frustumCulled = false; trail.visible = false; scene.add(trail);
       let tHead = 0, tAcc = 0, tAlive = 0;
+      // luminous atmospheric jet-stream ribbons (teal / violet / silver / cyan) streaming off the board tail — same idea as in-flight wake, no per-frame allocs
+      const mkJets = () => {
+        const LANES = 4, SEG = 16, cols = [0x5ce8ff, 0x9b7dff, 0xeaf4ff, 0x3ad6b8];
+        const grp = new THREE.Group(); grp.name = 'board-jets';
+        const _o = new THREE.Vector3(), _x = new THREE.Vector3(), _y = new THREE.Vector3(), _z = new THREE.Vector3();
+        const lanes = cols.map((c) => {
+          const pos = new Float32Array(SEG * 2 * 3), hist = new Float32Array(SEG * 3);
+          const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+          const idx = []; for (let s = 0; s < SEG - 1; s++) { const a = s * 2, b = a + 1, c2 = (s + 1) * 2, d = c2 + 1; idx.push(a, b, c2, b, d, c2); }
+          geo.setIndex(idx);
+          const mat = new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, fog: false, toneMapped: false });
+          const mesh = new THREE.Mesh(geo, mat); mesh.frustumCulled = false; mesh.renderOrder = 5; grp.add(mesh);
+          return { pos, hist, geo, mat, mesh, filled: 0 };
+        });
+        const offs = [[-0.16, 0.05], [0.16, 0.05], [-0.16, -0.04], [0.16, -0.04]];
+        const tick = (board, speed, dt, Lb, Wb) => {
+          if (!board) return;
+          board.updateMatrixWorld(true);
+          const e = board.matrixWorld.elements;
+          _x.set(e[0], e[1], e[2]).normalize(); _y.set(e[4], e[5], e[6]).normalize(); _z.set(e[8], e[9], e[10]).normalize();
+          // nose is local -X after qFlip; the tail is +X
+          const half = (Lb || 4) * 0.48, wide = (Wb || 0.8) * 0.42;
+          const on = speed > 0.4; grp.visible = true;
+          for (let i = 0; i < LANES; i++) {
+            const L = lanes[i], ox = offs[i][0] * wide, oy = offs[i][1];
+            _o.set(e[12], e[13], e[14]).addScaledVector(_x, half).addScaledVector(_y, oy).addScaledVector(_z, ox);
+            if (on) {
+              // shift history toward the tail of the ribbon
+              for (let s = SEG - 1; s > 0; s--) { L.hist[s * 3] = L.hist[(s - 1) * 3]; L.hist[s * 3 + 1] = L.hist[(s - 1) * 3 + 1]; L.hist[s * 3 + 2] = L.hist[(s - 1) * 3 + 2]; }
+              L.hist[0] = _o.x; L.hist[1] = _o.y; L.hist[2] = _o.z; if (L.filled < SEG) L.filled++;
+            }
+            const n = Math.max(2, L.filled), span = Math.max(0.4, Math.min(2.6, speed * 0.18));
+            for (let s = 0; s < SEG; s++) {
+              const u = s / (SEG - 1), fade = 1 - u;
+              const hx = L.hist[s * 3], hy = L.hist[s * 3 + 1], hz = L.hist[s * 3 + 2];
+              const wx = 0.03 + (1 - fade) * 0.11;
+              // along -X (behind the tail) when history is still filling
+              const px = (L.filled > s) ? hx : _o.x + _x.x * (s * span / SEG), py = (L.filled > s) ? hy : _o.y + _x.y * (s * span / SEG), pz = (L.filled > s) ? hz : _o.z + _x.z * (s * span / SEG);
+              const i0 = s * 6;
+              L.pos[i0] = px + _z.x * wx; L.pos[i0 + 1] = py + _z.y * wx; L.pos[i0 + 2] = pz + _z.z * wx;
+              L.pos[i0 + 3] = px - _z.x * wx; L.pos[i0 + 4] = py - _z.y * wx; L.pos[i0 + 5] = pz - _z.z * wx;
+            }
+            L.geo.attributes.position.needsUpdate = true;
+            const target = on ? Math.min(0.85, 0.25 + speed * 0.04) : 0;
+            L.mat.opacity = L.mat.opacity + (target - L.mat.opacity) * Math.min(1, dt * 6);
+          }
+        };
+        const dispose = () => { try { if (grp.parent) grp.parent.remove(grp); } catch (e) {} lanes.forEach((L) => { try { L.geo.dispose(); L.mat.dispose(); } catch (e) {} }); };
+        return { group: grp, tick, dispose, lanes };
+      };
 
       /* Ariel */
       const holder = new THREE.Object3D(); scene.add(holder);
@@ -494,6 +544,7 @@
         const [mod, buf] = await Promise.all([import('../hair_strands.js'), fetch(HAIR_URL).then(r => { if (!r.ok) throw new Error('hair ' + r.status); return r.arrayBuffer(); })]);
         if (MS.disposed) return;
         hair = mod.buildHair({ root, bones, mixer: C.mixer }, THREE, buf, { getStrandFraction: () => sc.hair, getGravityScale: () => 1, getCollisionTier: () => sc.hairTier, params: { windGust: 0.15 } });
+        try { if (window.DMMenuWorld && DMMenuWorld.protectHair) DMMenuWorld.protectHair(root); } catch (e) {}
         if (A) { bindSeatCols(A, hair); A.hair = hair; } info('strand hair attached');
       } catch (e) { info('hair not attached:', e && e.message); } })();
 
@@ -622,6 +673,7 @@
             def.hair.configUrl ? fetch(def.hair.configUrl).then(rr => rr.ok ? rr.json() : null).catch(() => null) : Promise.resolve(null)]);
           if (MS.disposed || B !== X) return;
           X.hair = mod.buildHair({ root: r, bones: bn, mixer: Cb.mixer }, THREE, buf, { config: cfg || undefined, character: true, getStrandFraction: () => sc.hair, getGravityScale: () => 1, getCollisionTier: () => sc.hairTier, params: { windGust: 0.15 } });
+          try { if (window.DMMenuWorld && DMMenuWorld.protectHair) DMMenuWorld.protectHair(r); } catch (e) {}
           bindSeatCols(X, X.hair); info('second pilot hair attached');
         } catch (e) { info('second pilot hair not attached:', e && e.message); } })();
         return X;
@@ -865,8 +917,7 @@
         // door frame (amber) + force field
         const frameM = own(new THREE.MeshBasicMaterial({ color: new THREE.Color(1.0, 0.62, 0.2).multiplyScalar(1.6), fog: false }));
         [[-Wx / 2, Hy / 2, 0.25, Hy], [Wx / 2, Hy / 2, 0.25, Hy], [0, Hy, Wx, 0.25], [0, 0.02, Wx, 0.1]].forEach(([x, y, sx, sy]) => { const m = new THREE.Mesh(box, frameM); m.position.set(x, y, -Lz / 2); m.scale.set(sx, sy, 0.3); S.add(m); });
-        const fieldM = own(new THREE.MeshBasicMaterial({ color: 0x5aa8ff, transparent: true, opacity: 0.1, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, fog: false }));
-        const field = new THREE.Mesh(own(new THREE.PlaneGeometry(Wx, Hy)), fieldM); field.position.set(0, Hy / 2, -Lz / 2); S.add(field);
+        const field = null, fieldM = null;   // no 2D force-field / gradient plane over the opening
         // light shafts under the ceiling lamps (additive cones)
         const shaftM = own(new THREE.MeshBasicMaterial({ color: 0xbfe4ff, transparent: true, opacity: 0.028, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
         const cone = own(new THREE.ConeGeometry(Wx * 0.16, Hy * 0.95, 24, 1, true)); cone.translate(0, -Hy * 0.475, 0);
@@ -875,14 +926,24 @@
         const NS = lowTier ? 900 : 1800, sp = new Float32Array(NS * 3); for (let i = 0; i < NS; i++) { const u = Math.random() * 2 - 1, a = Math.random() * 6.283, r = 260, q = Math.sqrt(1 - u * u); sp[i * 3] = r * q * Math.cos(a); sp[i * 3 + 1] = r * u; sp[i * 3 + 2] = -Math.abs(r * q * Math.sin(a)) - Lz; }
         const sg = own(new THREE.BufferGeometry()); sg.setAttribute('position', new THREE.BufferAttribute(sp, 3));
         S.add(new THREE.Points(sg, own(new THREE.PointsMaterial({ size: 1.1, color: 0xdfe8ff, sizeAttenuation: true, fog: false, depthWrite: false }))));
-        const planet = new THREE.Mesh(own(new THREE.SphereGeometry(70, 48, 32)), own(new THREE.MeshStandardMaterial({ color: 0x3a6fb0, roughness: 0.8, metalness: 0, emissive: 0x0a1a33, emissiveIntensity: 0.6, fog: false })));
-        planet.position.set(-55, -62, -Lz / 2 - 150); S.add(planet);
+        let planet = null, solenne = null;
+        try {
+          const MW = window.DMMenuWorld;
+          if (MW && MW.buildSolenne && THREE.TSL) {
+            solenne = MW.buildSolenne(THREE, { r: 96, position: [-70, -78, -Lz / 2 - 170], seg: lowTier ? 72 : 128, oct: lowTier ? 5 : 7, sun: [-0.52, 0.32, -0.78] });
+            if (solenne && solenne.group) { S.add(solenne.group); planet = solenne.sky && solenne.sky.planet; (solenne.owned || []).forEach(own); }
+          }
+        } catch (e) { info('solenne failed', e && e.message); }
+        if (!planet) {
+          planet = new THREE.Mesh(own(new THREE.SphereGeometry(96, 96, 72)), own(new THREE.MeshStandardMaterial({ color: 0x2a6a4a, roughness: 0.86, metalness: 0, emissive: 0x041018, emissiveIntensity: 0.25, fog: false })));
+          planet.position.set(-70, -78, -Lz / 2 - 170); S.add(planet);
+        }
         // lights (same rig types as the rock scene)
-        const hemi2 = new THREE.HemisphereLight(0x8fb4ff, 0x20242c, 0.55); S.add(hemi2);
-        const spot2 = new THREE.SpotLight(0xffffff, 26, 0, 0.55, 0.7, 0); spot2.position.set(0, Hy - 0.4, -Lz * 0.06); spot2.target.position.set(0, 0, -Lz * 0.08);
+        const hemi2 = new THREE.HemisphereLight(0x8fb4ff, 0x20242c, 0.38); S.add(hemi2);
+        const spot2 = new THREE.SpotLight(0xfff2dc, 18, Hy * 3.2, 0.58, 0.75, 1.4); spot2.position.set(0, Hy - 0.4, -Lz * 0.06); spot2.target.position.set(0, 0, -Lz * 0.08);
         spot2.castShadow = true; spot2.shadow.mapSize.set(sc.shadow, sc.shadow); spot2.shadow.bias = -0.0004; spot2.shadow.normalBias = 0.025; spot2.shadow.camera.near = 1; spot2.shadow.camera.far = Hy * 3; S.add(spot2, spot2.target);
-        const sun2 = new THREE.DirectionalLight(0xfff0dc, 1.8); sun2.position.set(-30, 20, -80); S.add(sun2);
-        const fill2 = new THREE.DirectionalLight(0x9cc8ff, 0.7); fill2.position.set(4, 6, 20); S.add(fill2);
+        const sun2 = new THREE.DirectionalLight(0xfff0dc, 0.55); sun2.position.set(-30, 20, -80); S.add(sun2);
+        const fill2 = new THREE.DirectionalLight(0x9cc8ff, 0.28); fill2.position.set(4, 6, 20); S.add(fill2);
         const bnc2 = new THREE.DirectionalLight(0xffa860, 0.35); bnc2.position.set(0, -2, 4); S.add(bnc2);
         const pA = new THREE.PointLight(0x7fd0ff, 6, Lz * 0.5, 1.8), pB2 = new THREE.PointLight(0xffb070, 14, Lz * 0.5, 1.6);
         pA.position.set(0, Hy * 0.85, 0); pB2.position.set(0, 1.2, -Lz / 2 + 0.6); S.add(pA, pB2);
@@ -891,7 +952,7 @@
           try {
             const MW = window.DMMenuWorld; if (!MW || !MW.instanceBay || !MW._bayGltf) return null;
             const inst = MW.instanceBay(THREE, 'launch', { w: Wx, d: Lz, h: Hy, openZ: -Lz / 2 }); if (!inst) return null;
-            S.add(inst);
+            MW.setBayDoors(inst, 0); S.add(inst);
             [deck, ribs, strips, chev].forEach((o) => { if (o) o.visible = false; });
             S.traverse((o) => { if (o.isMesh && (o.material === wallM || o.material === metal || o.material === ribM || o.material === stripM)) o.visible = false; });
             const hooks = [], shafts = []; inst.updateMatrixWorld(true);
@@ -907,8 +968,8 @@
         }
         const cam = new THREE.PerspectiveCamera(42, camera.aspect, 0.1, 900);
         const deckY = 0;
-        return { scene: S, cam, Lz, Wx, Hy, deckY, field, chevM, fieldM, owned, planet,
-          tick(t) { fieldM.opacity = 0.08 + 0.04 * Math.sin(t * 3.1); const k = 0.6 + 0.4 * Math.max(0, Math.sin(t * 5.0)); chevM.color.setRGB(1.0 * k, 0.55 * k, 0.12 * k); planet.rotation.y += 0.0004; },
+        return { scene: S, cam, Lz, Wx, Hy, deckY, field, chevM, fieldM, owned, planet, solenne, glb: () => glbBay,
+          tick(t) { const k = 0.6 + 0.4 * Math.max(0, Math.sin(t * 5.0)); chevM.color.setRGB(1.0 * k, 0.55 * k, 0.12 * k); if (solenne && solenne.update) { solenne.update(t); if (solenne.sync) solenne.sync(); } else if (planet) planet.rotation.y += 0.0004; },
           dispose() { owned.forEach(o => { try { o.dispose(); } catch (e) {} }); try { ribs.dispose(); strips.dispose(); chev.dispose(); } catch (e) {} } };
       }
       const duoStart = (o) => {
@@ -942,7 +1003,7 @@
           b.position.z += (rb.min.z + 0.35) - pb.max.z; b.updateMatrixWorld(true); pb = new THREE.Box3().setFromObject(b);
           // keep the deck clearly above the rock / ground (the approach used to slide through the boulder)
           { const midX = (pb.min.x + pb.max.x) * 0.5, midZ = (pb.min.z + pb.max.z) * 0.5;
-            const yNeed = Math.max(surfY(midX, midZ, [boulder, ground]), surfY(pb.min.x, pb.min.z, [boulder, ground]), surfY(pb.max.x, pb.max.z, [boulder, ground]), IN.yClear || 0) + 0.55;
+            const yNeed = Math.max(surfY(midX, midZ, [boulder, ground]), surfY(pb.min.x, pb.min.z, [boulder, ground]), surfY(pb.max.x, pb.max.z, [boulder, ground]), gY) + 0.38;
             b.position.y += yNeed - pb.min.y; b.updateMatrixWorld(true); pb = new THREE.Box3().setFromObject(b); }
           d.H = b.position.clone(); d.Q = b.quaternion.clone();
           const a = b.userData.deckAnchor || { x: 0, y: 0, z: 0 }, ac = b.localToWorld(new THREE.Vector3(a.x, a.y, a.z));
@@ -961,10 +1022,11 @@
           d.tR0 = 3.0 + d.dl * 0.6; d.tR1 = d.tR0 + 1.4; d.tW0 = d.tR1 - 0.15; d.tW1 = d.tW0 + d.walkDur; d.tS0 = d.tW1; d.tL = d.tS0 + d.stepDur;
           // fly-in from behind the camera, past her side of the rock, decelerating into the hover
           const cw = camera.position;
-          const yClear = Math.max(IN.yClear || 0, rb.max.y) + 0.65;
-          d.P0 = new THREE.Vector3(cw.x + side * (Wb * 0.5 + 1.6), Math.max(cw.y + 0.8, yClear + 1.2), cw.z + Lb * 0.95 + 3.0);   // nose still well behind the lens on frame one, high enough to clear the rock
-          d.P1 = new THREE.Vector3(edge + side * (0.75 + Wb * 0.5 + 0.9), Math.max(gY + 2.4, yClear + 1.0), Math.max(1.2, cw.z * 0.35));
-          d.P2 = d.H.clone().add(new THREE.Vector3(0, 0.85, Lb * 0.35)); d.P2.y = Math.max(d.P2.y, yClear + 0.4); d.P3 = d.H.clone();
+          // hover just above boarding height (a short step up), not a metre above the rock top
+          const yClear = Math.max(gY + 0.42, (IN.yClear || rb.max.y) + 0.08);
+          d.P0 = new THREE.Vector3(cw.x + side * (Wb * 0.35 + 1.1), yClear + 0.35, Math.min(cw.z * 0.55, 2.2));   // visible beside the lens, at rock height
+          d.P1 = new THREE.Vector3(edge + side * (0.75 + Wb * 0.45 + 0.4), yClear + 0.45, Math.max(0.4, cw.z * 0.25));
+          d.P2 = d.H.clone().add(new THREE.Vector3(0, 0.15, Lb * 0.2)); d.P2.y = Math.max(d.P2.y, yClear); d.P3 = d.H.clone();
           d.yClear = yClear;
           d.seatPos = X.holder.position.clone(); d.seatQ = X.holder.quaternion.clone();
           d.walkQ0 = new THREE.Quaternion(); d.curve.getTangentAt(0.02, _dq.v); d.walkQ0.setFromAxisAngle(_dq.Y, Math.atan2(_dq.v.x, _dq.v.z));
@@ -976,13 +1038,14 @@
           d.lockM = null; d.lockW = new THREE.Matrix4(); d.lockS = new THREE.Vector3();
           d.side = side; d.wR = 0; d.board = b;
           b.position.copy(d.P0); b.visible = false; scene.add(b);
+          d.jets = mkJets(); d.jets.group.visible = false; scene.add(d.jets.group);
           X.du = d; DU.P.push(X);
         });
         DU.tDep = Math.max(A.du.tL, B.du.tL) + 1.3; DU.tBay = DU.tDep + 5.2; DU.tFly = DU.tBay + 5.0;
         DU.Hmid.copy(A.du.H).add(B.du.H).multiplyScalar(0.5);
         DU.dep = DU.P.map(() => ({ s: 0, v: 0 }));
-        // warp flash: one DOM layer over the canvas (pointer-events none: taps still reach index.html's skip)
-        try { const wv = document.createElement('div'); wv.className = 'ms-warp'; wv.style.cssText = 'position:absolute;inset:0;pointer-events:none;opacity:0;z-index:1;background:radial-gradient(ellipse 36% 14% at 50% 48%,rgba(210,235,255,.72) 0%,rgba(80,140,220,.28) 28%,rgba(10,18,36,0) 62%);mix-blend-mode:screen';
+        // clean dark cross-dissolve (full-frame, never a 2D white elliptical gradient)
+        try { const wv = document.createElement('div'); wv.className = 'ms-dissolve'; wv.style.cssText = 'position:absolute;inset:0;pointer-events:none;opacity:0;z-index:1;background:#05070c';
           (cv.parentNode || document.body).insertBefore(wv, cv.nextSibling); DU.warp = wv; } catch (e) { DU.warp = null; }
         IN.duo = true; IN.t = 0; IN.w = 0; IN.onFly = o.onFlyOff; IN.flew = false; IN.board = boards[0]; IN.sharedTex = true; IN.lift = false; IN.dep = null; IN.list = null; IN._n = 0; IN._s = 0; MS.half = false;
         // compile both boards (and, a moment later and off the critical path, the bay) before the first fly-in frame
@@ -997,9 +1060,13 @@
       // boards + holders for this frame (before the poses)
       const duoPre = (dt) => {
         IN.t += dt; DU.t = IN.t; const t = IN.t;
-        // warp flash around the scene switch
-        if (DU.warp) { const tb = t - DU.tBay, op = (tb < -0.4 ? 0 : tb < 0 ? smooth(-0.4, 0, tb) : 1 - smooth(0.04, 0.55, tb)) * 0.62; if (op !== DU._wop) { DU.warp.style.opacity = op.toFixed(3); DU._wop = op; } }
+        // dip-to-black dissolve around the scene switch (peak at tBay)
+        if (DU.warp) { const tb = t - DU.tBay, op = (tb < -0.55 ? 0 : tb < 0 ? smooth(-0.55, 0, tb) : 1 - smooth(0.05, 0.7, tb)); if (op !== DU._wop) { DU.warp.style.opacity = op.toFixed(3); DU._wop = op; } }
         if (!DU.inBay && t >= DU.tBay && DU.bay) duoEnterBay();
+        if (DU.inBay && DU.bay) {
+          DU.doorK = smooth(0, 1.6, t - DU.tBay);
+          try { const inst = DU.bay.glb && DU.bay.glb(); if (inst && window.DMMenuWorld) DMMenuWorld.setBayDoors(inst, DU.doorK); } catch (e) {}
+        }
         for (let i = 0; i < DU.P.length; i++) {
           const X = DU.P[i], d = X.du, b = d.board, h = X.holder;
           if (d.bScale && !b.scale.equals(d.bScale)) b.scale.copy(d.bScale);
@@ -1018,11 +1085,17 @@
               b.quaternion.copy(d.Q);
             }
           } else {                 // together toward the horizon: eased speed, a gentle climb, a little weave and bank
-            const D = DU.dep[i], ds = Math.min(dt, 0.05), tt = t - DU.tDep - i * 0.3; D.v = 16 * smooth(0, 2.6, tt); D.s += D.v * ds;
-            b.position.set(d.H.x + d.side * 0.6 * Math.sin(tt * 0.9) * smooth(0, 1.5, tt), d.H.y + 0.24 * D.s + 0.6 * smooth(0, 1.8, tt), d.H.z - D.s);
+            const D = DU.dep[i], ds = Math.min(dt, 0.05), tt = t - DU.tDep - i * 0.3; D.v = 12 * smooth(0, 2.2, tt); D.s += D.v * ds;
+            b.position.set(d.H.x + d.side * 0.55 * Math.sin(tt * 0.9) * smooth(0, 1.5, tt), d.H.y + 0.06 * D.s + 0.25 * smooth(0, 2.4, tt), d.H.z - D.s);
             b.quaternion.copy(d.Q).premultiply(_dq.q.setFromAxisAngle(_dq.v.set(1, 0, 0), 0.22 * smooth(0, 1.4, tt))).premultiply(_dq.q2.setFromAxisAngle(_dq.v2.set(0, 0, -1), d.side * 0.12 * Math.cos(tt * 0.9) * smooth(0, 1.5, tt)));
           }
           b.updateMatrixWorld(true);
+          if (d.jets) {
+            const spd = DU.inBay ? 8 * Math.max(0, 1 - (t - DU.tBay) / 4.2) : (t >= DU.tDep + i * 0.3 ? (DU.dep[i] && DU.dep[i].v) || 0 : 0);
+            if (spd > 0.3 && !d.jets.group.visible) d.jets.group.visible = true;
+            if (d.jets.group.parent !== b.parent && b.parent) { try { if (d.jets.group.parent) d.jets.group.parent.remove(d.jets.group); b.parent.add(d.jets.group); } catch (e) {} }
+            d.jets.tick(b, spd, dt, d.Lb, d.Wb);
+          }
           // her: seated -> rise -> walk round the rock -> step onto the deck -> ride (locked to the board)
           if (d.lockM) { d.lockW.multiplyMatrices(b.matrixWorld, d.lockM); d.lockW.decompose(h.position, h.quaternion, d.lockS); h.updateMatrixWorld(true); continue; }
           d.wR = smooth(d.tR0, d.tR1, t);
@@ -1068,16 +1141,18 @@
           DU.mid.copy(A.du.board.position).add(B.du.board.position).multiplyScalar(0.5); DU.mid.y += 0.8;
           DU.camLook.lerp(DU.mid, tb < 0.1 ? 1 : 0.06); c.lookAt(DU.camLook); bay.tick(tb); return;
         }
-        // dolly back + up so both walks and the step-ons stay in frame, then pan up after the boards as they leave
-        const k1 = smooth(2.4, Math.min(A.du.tW0, B.du.tW0) + 1.2, t), kd = smooth(DU.tDep, DU.tDep + 3.5, t);
-        camera.position.x += 0; camera.position.y += 1.35 * k1 + 1.6 * kd; camera.position.z += 3.0 * k1 - 0.8 * kd;
-        _dq.v.set(0, TARGET.y - 0.1 * k1, DU.Hmid.z * 0.55 * k1).lerp(TARGET, 1 - k1);
-        if (kd > 0) { DU.mid.copy(A.du.board.position).add(B.du.board.position).multiplyScalar(0.5); _dq.v.lerp(DU.mid, 0.9 * kd); }
+        // dolly back so walks and step-ons stay in frame; after lift-off follow from behind/above without pitching into empty sky
+        const k1 = smooth(2.4, Math.min(A.du.tW0, B.du.tW0) + 1.2, t), kd = smooth(DU.tDep, DU.tDep + 4.2, t);
+        camera.position.x += 0; camera.position.y += 0.55 * k1 + 0.85 * kd; camera.position.z += 2.6 * k1 + 1.4 * kd;
+        _dq.v.copy(TARGET); _dq.v.y += 0.15 * k1;
+        if (k1 > 0) { DU.mid.set(0, TARGET.y + 0.2, 0); _dq.v.lerp(DU.mid, 0.35 * k1); }
+        if (kd > 0) { DU.mid.copy(A.du.board.position).add(B.du.board.position).multiplyScalar(0.5); DU.mid.y += 0.35; _dq.v.lerp(DU.mid, 0.75 * kd); }
         DU.camLook.lerp(_dq.v, 0.12); camera.lookAt(DU.camLook);
       };
       // the switch to the cargo bay (at the warp flash's peak): pilots and boards move into the bay scene
       const duoEnterBay = () => {
-        DU.inBay = true; const bay = DU.bay;
+        DU.inBay = true; const bay = DU.bay; DU.doorK = 0;
+        try { const inst = bay.glb && bay.glb(); if (inst && window.DMMenuWorld) DMMenuWorld.setBayDoors(inst, 0); } catch (e) {}
         DU.P.forEach((X, i) => { const d = X.du; scene.remove(d.board); bay.scene.add(d.board); scene.remove(X.holder); bay.scene.add(X.holder);
           if (!d.lockM) { d.hp.copy(d.Dl); d.board.updateMatrixWorld(true); d.board.localToWorld(d.hp); X.holder.position.copy(d.hp); X.holder.quaternion.copy(d.rideQ); X.holder.updateMatrixWorld(true); d.lockM = new THREE.Matrix4().copy(d.board.matrixWorld).invert().multiply(X.holder.matrixWorld); }
           d.bayIn = new THREE.Vector3(d.side * (d.Wb * 0.5 + 1.6), bay.Hy * 0.55, -bay.Lz / 2 - d.Lb * 1.4); d.bayPark = new THREE.Vector3(d.side * (d.Wb * 0.5 + 0.9), bay.deckY + 0.6, -bay.Lz * 0.06);
@@ -1086,7 +1161,7 @@
         info('cargo bay arrival');
       };
       const duoBayBoard = (X, i, tb) => {
-        const d = X.du, b = d.board, u = Math.min(1, Math.max(0, (tb - i * 0.25) / 4.2)), e = 1 - Math.pow(1 - u, 3);
+        const d = X.du, b = d.board, u = Math.min(1, Math.max(0, (tb - 0.7 - i * 0.25) / 4.0)), e = 1 - Math.pow(1 - u, 3);
         b.position.lerpVectors(d.bayIn, d.bayPark, e); b.position.y += Math.sin(Math.PI * e) * 0.6 + (u >= 1 ? 0.03 * Math.sin(tb * 2.4 + i) : 0);
         b.quaternion.copy(d.bayQ).premultiply(_dq.q.setFromAxisAngle(_dq.v.set(1, 0, 0), -0.18 * (1 - e))).premultiply(_dq.q2.setFromAxisAngle(_dq.v2.set(0, 0, 1), -d.side * 0.25 * Math.sin(Math.PI * e)));
       };
@@ -1095,6 +1170,7 @@
         if (!D) return;
         try { if (D.warp) D.warp.remove(); } catch (e) {}
         D.P.forEach((X, i) => { const d = X.du; if (!d) return;
+          try { if (d.jets) d.jets.dispose(); } catch (e) {}
           try { if (d.board.parent) d.board.parent.remove(d.board); } catch (e) {}
           if (X.holder.parent !== scene) { try { if (X.holder.parent) X.holder.parent.remove(X.holder); scene.add(X.holder); } catch (e) {} }
           d.keep.forEach(([bn, p, q]) => { bn.position.copy(p); bn.quaternion.copy(q); });

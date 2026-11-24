@@ -41,6 +41,8 @@ ok(br.hemi.intensity <= 0.85 && br.fill.intensity <= 0.5 && bc.hemi.intensity <=
 ok(br.spot.intensity > 0 && br.spot.angle > 0 && br.spot.distance > 0 && br.spot.penumbra > 0, 'crisp key spotlight is present');
 ok(bc.spot.distance > br.spot.distance && bc.spot.intensity >= br.spot.intensity, 'cards rig covers the wider observation deck');
 ok(br.fixture.intensity > 0 && bc.fixture.distance > br.fixture.distance, 'fixture point lights scale with the bay');
+ok(br.hemi.intensity < bc.hemi.intensity && br.spot.intensity < bc.spot.intensity && br.key.intensity < 0.5, 'editor lamp is dimmer than the selection bay and has no sun-like key');
+ok(br.spot.shadow && br.spot.pos[1] > 3 && Math.abs(br.spot.pos[0]) < 0.5 && br.spot.penumbra >= 0.7, 'editor key is a soft overhead lamp with a shadow map');
 ok(MW.STUDIO_CAM && MW.STUDIO_CAM.maxY < 4.25 && MW.STUDIO_CAM.maxR < 5.45 && MW.STUDIO_CAM.minY > 0, 'studio camera clamp stays inside the scaled bay');
 
 // parallax + sway

@@ -558,9 +558,12 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   // across each ribbon's width. Ariel's file has no fuzz block, so her material is unchanged.
   const FZ = meta.fuzz || null;
   const mat = new (FZ && THREE.MeshPhysicalMaterial ? THREE.MeshPhysicalMaterial : THREE.MeshStandardMaterial)({
-    vertexColors: true, color: 0xffffff, roughness: meta.roughness ?? 0.74, metalness: meta.metalness ?? 0.02,
-    side: THREE.DoubleSide, envMapIntensity: 0.15
+    vertexColors: true, color: 0xffffff, roughness: meta.roughness ?? 0.86, metalness: meta.metalness ?? 0,
+    side: THREE.DoubleSide, envMapIntensity: 0
   });
+  if ('specularIntensity' in mat) mat.specularIntensity = 0.16;
+  if ('sheen' in mat && !FZ) { mat.sheen = 0; if (mat.sheenRoughness != null) mat.sheenRoughness = 1; }
+  mat.envMap = null;
   // fuzz.glow: a little self-light from the strand colour so dark yarn still reads in a dim room (no lights added)
   if (FZ && FZ.glow && GR && mat.emissive) { mat.emissive.setRGB((GR.root[0] + GR.tip[0]) / 2, (GR.root[1] + GR.tip[1]) / 2, (GR.root[2] + GR.tip[2]) / 2); mat.emissiveIntensity = FZ.glow; }
   if (FZ && 'sheen' in mat) { mat.sheen = FZ.sheen ?? 0.8; mat.sheenRoughness = FZ.sheenRoughness ?? 0.5; if (FZ.sheenColor) mat.sheenColor.setRGB(...FZ.sheenColor); }
@@ -677,7 +680,10 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       };
       const aId = attribute('hsId', 'vec3'), aGk = attribute('hsGk', 'vec2');
       const GM = FZ && THREE.MeshPhysicalNodeMaterial ? THREE.MeshPhysicalNodeMaterial : THREE.MeshStandardNodeMaterial;
-      const gmat = new GM({ vertexColors: true, color: 0xffffff, roughness: mat.roughness, metalness: mat.metalness, side: THREE.DoubleSide });
+      const gmat = new GM({ vertexColors: true, color: 0xffffff, roughness: mat.roughness, metalness: mat.metalness, side: THREE.DoubleSide, envMapIntensity: 0 });
+      if ('specularIntensity' in gmat) gmat.specularIntensity = ('specularIntensity' in mat ? mat.specularIntensity : 0.16);
+      if ('sheen' in gmat && !FZ) { gmat.sheen = 0; if (gmat.sheenRoughness != null) gmat.sheenRoughness = 1; }
+      gmat.envMap = null;
       if (FZ) {
         if ('sheen' in gmat) { gmat.sheen = mat.sheen; gmat.sheenRoughness = mat.sheenRoughness; if (mat.sheenColor) gmat.sheenColor.copy(mat.sheenColor); }
         if (FZ.glow && T.vertexColor) gmat.emissiveNode = T.vertexColor().mul(float(FZ.glow));
