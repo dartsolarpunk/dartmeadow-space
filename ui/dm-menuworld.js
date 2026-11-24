@@ -195,7 +195,50 @@
   }
 
   const STUDIO_CAM = { maxY: 3.55, maxR: 4.55, minY: 0.16 };   // stay inside the scaled studio bay (walls ±3.4, ceiling 4.25, aft ~5.45)
-  const core = { parseMode, tierFor, TIERS, rng, starfield, starQuads, mergeBoxes, sunDirFor, lightRig, swayAt, parallaxOffset, PARALLAX_K, orbitRig, PITCH_MIN, PITCH_MAX, nearestYaw, makeGovernor, clamp, ease, placeBayTransform, BAY_REF, bayStudioRig, separateBay, STUDIO_CAM };
+
+  // Gather Collide_* meshes once and preallocate AABB entries (Float32Array min/max/center/size).
+  // Subsequent bayColliders() calls reuse the same list and entry objects and write AABBs in place.
+  function cacheBayColliders(root) {
+    const list = [];
+    if (!root) return list;
+    const consider = (o) => {
+      const nm = o.name || '';
+      if (!o.isMesh || (!/^Collide_/i.test(nm) && !(o.userData && o.userData.collider))) return;
+      list.push({ name: nm, mesh: o, min: new Float32Array(3), max: new Float32Array(3), center: new Float32Array(3), size: new Float32Array(3) });
+    };
+    if (typeof root.traverse === 'function') root.traverse(consider);
+    if (!root.userData) root.userData = {};
+    root.userData._bayCols = list;
+    return list;
+  }
+  const _cb = { b: null };
+  function bayColliders(THREE, root) {
+    if (!root) return [];
+    let list = root.userData && root.userData._bayCols;
+    if (!list) list = cacheBayColliders(root);
+    if (THREE && THREE.Box3 && !_cb.b) _cb.b = new THREE.Box3();
+    if (typeof root.updateMatrixWorld === 'function') root.updateMatrixWorld(true);
+    const box = _cb.b;
+    for (let i = 0; i < list.length; i++) {
+      const e = list[i], o = e.mesh; if (!o) continue;
+      if (typeof o.updateWorldMatrix === 'function') o.updateWorldMatrix(true, false);
+      if (box && typeof box.setFromObject === 'function') {
+        box.setFromObject(o);
+        if ((typeof box.isEmpty === 'function' && box.isEmpty()) || !isFinite(box.min.x)) continue;
+        e.min[0] = box.min.x; e.min[1] = box.min.y; e.min[2] = box.min.z;
+        e.max[0] = box.max.x; e.max[1] = box.max.y; e.max[2] = box.max.z;
+      }
+      e.center[0] = (e.min[0] + e.max[0]) * 0.5;
+      e.center[1] = (e.min[1] + e.max[1]) * 0.5;
+      e.center[2] = (e.min[2] + e.max[2]) * 0.5;
+      e.size[0] = e.max[0] - e.min[0];
+      e.size[1] = e.max[1] - e.min[1];
+      e.size[2] = e.max[2] - e.min[2];
+    }
+    return list;
+  }
+
+  const core = { parseMode, tierFor, TIERS, rng, starfield, starQuads, mergeBoxes, sunDirFor, lightRig, swayAt, parallaxOffset, PARALLAX_K, orbitRig, PITCH_MIN, PITCH_MAX, nearestYaw, makeGovernor, clamp, ease, placeBayTransform, BAY_REF, bayStudioRig, separateBay, cacheBayColliders, bayColliders, STUDIO_CAM };
   if (typeof module !== 'undefined' && module.exports) { module.exports = core; return; }
 
   /* ───────────────────────── browser: the world ───────────────────────── */
@@ -259,6 +302,7 @@
       }
     });
     if (kind === 'studio' || kind === 'cards') MW.setBayDoors(root, 1);   // menus look out through an open portal; arrival starts closed
+    cacheBayColliders(root);
     return root;
   };
 
@@ -282,24 +326,10 @@
     return n;
   };
 
-  // World-space AABB colliders for walls / floor / ceiling / current door poses. out[] is reused (no per-frame alloc if the caller keeps it).
-  const _cb = { b: null };
-  MW.bayColliders = function (THREE, root, out) {
-    out = out || []; out.length = 0; if (!root || !THREE) return out;
-    if (!_cb.b) _cb.b = new THREE.Box3();
-    root.updateMatrixWorld(true);
-    root.traverse((o) => {
-      const nm = o.name || '';
-      if (!o.isMesh || (!/^Collide_/i.test(nm) && !(o.userData && o.userData.collider))) return;
-      o.updateWorldMatrix(true, false);
-      _cb.b.setFromObject(o);
-      if (!isFinite(_cb.b.min.x) || _cb.b.isEmpty()) return;
-      const min = _cb.b.min, max = _cb.b.max;
-      out.push({ name: nm, min: min.toArray(), max: max.toArray(), center: [(min.x + max.x) * 0.5, (min.y + max.y) * 0.5, (min.z + max.z) * 0.5], size: [max.x - min.x, max.y - min.y, max.z - min.z] });
-    });
-    return out;
-  };
-
+  // World-space AABB colliders for walls / floor / ceiling / current door poses.
+  // Meshes are gathered once (cacheBayColliders); each entry's Float32Arrays are updated in place. Same list + entry references every call.
+  MW.cacheBayColliders = cacheBayColliders;
+  MW.bayColliders = bayColliders;
   MW.separateBay = separateBay;
 
   // Hair-safe knobs on any strand mesh under a character root (studio, cards, game, menu). Idempotent, no allocs besides the walk.

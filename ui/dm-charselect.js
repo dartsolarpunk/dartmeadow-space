@@ -114,7 +114,7 @@
     applyLook(M, def);
     try { if (W.DMCharLook) W.DMCharLook.apply(M.root, { THREE, env: 'studio' }); } catch (e) { log('charlook', e && e.message); }   // (ui/dm-charlook.js) smooth normals + soft sky / rim / matcap look, studio env; ?charlook=off|low|high
     try { if (W.DMMenuWorld && W.DMMenuWorld.protectHair) W.DMMenuWorld.protectHair(M.root); } catch (e) {}
-    M.root.traverse((n) => { if (n.isMesh || n.isSkinnedMesh) { n.castShadow = !/hair|strand/i.test(n.name || ''); n.receiveShadow = !/hair|strand/i.test(n.name || ''); n.frustumCulled = false; } });
+    M.root.traverse((n) => { if (n.isMesh || n.isSkinnedMesh) { n.castShadow = !/hair|strand/i.test(n.name || ''); n.receiveShadow = !/hair|strand/i.test(n.name || ''); if (n.isSkinnedMesh) n.frustumCulled = false; } });
     return M;
   }
   function hairStudioQ() {

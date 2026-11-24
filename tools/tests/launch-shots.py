@@ -53,9 +53,10 @@ with sync_playwright() as p:
     tL = float(times.get('tL') or (tDep - 1.3))
     # 6 required beats + a peak-dissolve check
     beats = [
-        ('01_approach', max(1.2, tL - 2.15)),
+        ('01_approach', 2.45),
         ('02_boarding', max(0.4, tL - 0.35)),
-        ('03_jets', tDep + 1.7),
+        ('03_jets', tDep + 2.55),
+        ('03b_midflight', min(tBay - 0.8, tDep + 3.45)),
         ('04_dissolve', tBay - 0.22),
         ('05_doors', tBay + 0.75),
         ('06_arrival', tBay + 2.4),

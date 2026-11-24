@@ -50,6 +50,17 @@ const pUp = { x: 0, y: 0.5, z: 0 }; MW.separateBay(pUp, 0.5, 0.5, 0.5, [{ min: [
 ok(pUp.y >= 0.7, 'separateBay pushes a volume up out of a floor collider');
 const pFree = { x: 10, y: 1, z: 10 }; MW.separateBay(pFree, 0.4, 0.2, 0.4, [{ min: [-1, 0, -1], max: [1, 2, 1] }]);
 ok(pFree.x === 10 && pFree.z === 10, 'separateBay leaves a volume that misses the boxes alone');
+function _colMesh(name, min, max) { return { name, isMesh: true, userData: { collider: 1 }, _min: min, _max: max, updateWorldMatrix() {} }; }
+const _floor = _colMesh('Collide_Floor', [-2, -0.2, -2], [2, 0.2, 2]), _door = _colMesh('Collide_Door_L', [-4, 0, -1], [-3.5, 4, 1]);
+const _bayRoot = { userData: {}, isMesh: false, name: 'bay', updateMatrixWorld() {}, traverse(fn) { fn(this); fn(_floor); fn(_door); } };
+const _T3 = { Box3: function () { this.min = { x: 0, y: 0, z: 0 }; this.max = { x: 0, y: 0, z: 0 }; this.isEmpty = () => false; this.setFromObject = (o) => { this.min.x = o._min[0]; this.min.y = o._min[1]; this.min.z = o._min[2]; this.max.x = o._max[0]; this.max.y = o._max[1]; this.max.z = o._max[2]; return this; }; } };
+const colsA = MW.bayColliders(_T3, _bayRoot), colsB = MW.bayColliders(_T3, _bayRoot);
+ok(colsA === colsB && colsA.length === 2 && colsA[0] === colsB[0] && colsA[1] === colsB[1] && colsA[0].min === colsB[0].min && colsA[0].max === colsB[0].max, 'bayColliders returns identical list and entry references across calls');
+ok(colsA[0].min instanceof Float32Array && Math.abs(colsA[0].min[1] + 0.2) < 1e-6 && Math.abs(colsA[0].max[1] - 0.2) < 1e-6 && Math.abs(colsA[0].center[1]) < 1e-6, 'bayColliders writes AABB into preallocated Float32Arrays');
+_floor._min = [-2, 1, -2]; _floor._max = [2, 2, 2];
+const colsC = MW.bayColliders(_T3, _bayRoot);
+ok(colsC === colsA && colsC[0] === colsA[0] && colsC[0].min[1] === 1 && colsC[0].max[1] === 2, 'subsequent bayColliders calls update the same entry arrays in place');
+
 ok(MW.STUDIO_CAM && MW.STUDIO_CAM.maxY < 4.25 && MW.STUDIO_CAM.maxR < 5.45 && MW.STUDIO_CAM.minY > 0, 'studio camera clamp stays inside the scaled bay');
 
 // parallax + sway

@@ -392,9 +392,10 @@
       {
         const T = THREE.TSL, hm = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, fog: false, blending: THREE.AdditiveBlending });
         const y = T.uv().y;
-        hm.colorNode = T.mix(T.vec3(0.55, 0.14, 0.05), T.vec3(0.30, 0.06, 0.09), T.smoothstep(0.0, 0.6, y));
-        hm.opacityNode = T.pow(T.float(1).sub(T.smoothstep(0.0, 1.0, y)), T.float(2.2)).mul(0.62);
-        const haze = new THREE.Mesh(new THREE.PlaneGeometry(260, 34), hm); haze.position.set(0, 9, -88); haze.renderOrder = -5; scene.add(haze);
+        hm.colorNode = T.mix(T.vec3(0.55, 0.14, 0.05), T.vec3(0.30, 0.06, 0.09), T.smoothstep(0.0, 0.55, y));
+        // fade before the plane's top edge so it reads as a horizon glow, not a hard red bar / gradient banding across the upper sky
+        hm.opacityNode = T.pow(T.float(1).sub(T.smoothstep(0.0, 0.7, y)), T.float(2.6)).mul(0.45);
+        const haze = new THREE.Mesh(new THREE.PlaneGeometry(220, 22, 1, 24), hm); haze.position.set(0, 5.2, -88); haze.renderOrder = -5; scene.add(haze);
       }
 
       /* lights: warm low key (shadowed) + cool rim from the galaxy side + red bounce + panel glow */
@@ -423,9 +424,11 @@
       let tHead = 0, tAcc = 0, tAlive = 0;
       // luminous atmospheric jet-stream ribbons (teal / violet / silver / cyan) streaming off the board tail — same idea as in-flight wake, no per-frame allocs
       const mkJets = () => {
-        const LANES = 4, SEG = 16, cols = [0x5ce8ff, 0x9b7dff, 0xeaf4ff, 0x3ad6b8];
+        const LANES = 4, SEG = 48, SPACING = 0.12;
+        const cols = [0x5ce8ff, 0x9b7dff, 0xeaf4ff, 0x3ad6b8];   // teal / violet / silver / cyan, anchored at the tail
         const grp = new THREE.Group(); grp.name = 'board-jets';
         const _o = new THREE.Vector3(), _x = new THREE.Vector3(), _y = new THREE.Vector3(), _z = new THREE.Vector3();
+        const _side = new THREE.Vector3();
         const lanes = cols.map((c) => {
           const pos = new Float32Array(SEG * 2 * 3), hist = new Float32Array(SEG * 3);
           const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -433,40 +436,70 @@
           geo.setIndex(idx);
           const mat = new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, fog: false, toneMapped: false });
           const mesh = new THREE.Mesh(geo, mat); mesh.frustumCulled = false; mesh.renderOrder = 5; grp.add(mesh);
-          return { pos, hist, geo, mat, mesh, filled: 0 };
+          return { pos, hist, geo, mat, mesh, filled: 0, acc: 0 };
         });
-        const offs = [[-0.16, 0.05], [0.16, 0.05], [-0.16, -0.04], [0.16, -0.04]];
-        const tick = (board, speed, dt, Lb, Wb) => {
+        const offs = [[-0.46, -0.02], [0.46, -0.02], [-0.20, -0.06], [0.20, -0.06]];
+        const tick = (board, speed, dt) => {
           if (!board) return;
           board.updateMatrixWorld(true);
           const e = board.matrixWorld.elements;
           _x.set(e[0], e[1], e[2]).normalize(); _y.set(e[4], e[5], e[6]).normalize(); _z.set(e[8], e[9], e[10]).normalize();
-          // nose is local -X after qFlip; the tail is +X
-          const half = (Lb || 4) * 0.48, wide = (Wb || 0.8) * 0.42;
-          const on = speed > 0.4; grp.visible = true;
+          // nose is local -X after qFlip; the tail (rear thrusters) is +X
+          const Lb = board.userData._jetLb || 4, Wb = board.userData._jetWb || 0.8;
+          const half = Lb * 0.50, wide = Wb * 0.38;
+          const on = speed > 0.45;
           for (let i = 0; i < LANES; i++) {
             const L = lanes[i], ox = offs[i][0] * wide, oy = offs[i][1];
             _o.set(e[12], e[13], e[14]).addScaledVector(_x, half).addScaledVector(_y, oy).addScaledVector(_z, ox);
             if (on) {
-              // shift history toward the tail of the ribbon
-              for (let s = SEG - 1; s > 0; s--) { L.hist[s * 3] = L.hist[(s - 1) * 3]; L.hist[s * 3 + 1] = L.hist[(s - 1) * 3 + 1]; L.hist[s * 3 + 2] = L.hist[(s - 1) * 3 + 2]; }
-              L.hist[0] = _o.x; L.hist[1] = _o.y; L.hist[2] = _o.z; if (L.filled < SEG) L.filled++;
+              if (L.filled <= 0) {
+                for (let s = 0; s < SEG; s++) { L.hist[s * 3] = _o.x; L.hist[s * 3 + 1] = _o.y; L.hist[s * 3 + 2] = _o.z; }
+                L.filled = 1; L.acc = 0;
+              } else {
+                const dx = _o.x - L.hist[0], dy = _o.y - L.hist[1], dz = _o.z - L.hist[2];
+                L.acc += Math.sqrt(dx * dx + dy * dy + dz * dz);
+                if (L.acc >= SPACING || L.filled < 2) {
+                  L.acc = 0;
+                  for (let s = SEG - 1; s > 0; s--) { L.hist[s * 3] = L.hist[(s - 1) * 3]; L.hist[s * 3 + 1] = L.hist[(s - 1) * 3 + 1]; L.hist[s * 3 + 2] = L.hist[(s - 1) * 3 + 2]; }
+                  if (L.filled < SEG) L.filled++;
+                }
+                L.hist[0] = _o.x; L.hist[1] = _o.y; L.hist[2] = _o.z;
+              }
             }
-            const n = Math.max(2, L.filled), span = Math.max(0.4, Math.min(2.6, speed * 0.18));
+            const n = L.filled, use = n >= 2 && (on || L.mat.opacity > 0.02);
+            const maxLen = on ? Math.max(5.5, Math.min(11.5, speed * 1.2)) : 8;
+            let nDraw = n, accL = 0;
+            if (use) {
+              for (let s = 1; s < n; s++) {
+                const dx = L.hist[(s - 1) * 3] - L.hist[s * 3], dy = L.hist[(s - 1) * 3 + 1] - L.hist[s * 3 + 1], dz = L.hist[(s - 1) * 3 + 2] - L.hist[s * 3 + 2];
+                accL += Math.sqrt(dx * dx + dy * dy + dz * dz);
+                if (accL >= maxLen) { nDraw = s + 1; break; }
+              }
+            }
             for (let s = 0; s < SEG; s++) {
-              const u = s / (SEG - 1), fade = 1 - u;
-              const hx = L.hist[s * 3], hy = L.hist[s * 3 + 1], hz = L.hist[s * 3 + 2];
-              const wx = 0.03 + (1 - fade) * 0.11;
-              // along -X (behind the tail) when history is still filling
-              const px = (L.filled > s) ? hx : _o.x + _x.x * (s * span / SEG), py = (L.filled > s) ? hy : _o.y + _x.y * (s * span / SEG), pz = (L.filled > s) ? hz : _o.z + _x.z * (s * span / SEG);
               const i0 = s * 6;
-              L.pos[i0] = px + _z.x * wx; L.pos[i0 + 1] = py + _z.y * wx; L.pos[i0 + 2] = pz + _z.z * wx;
-              L.pos[i0 + 3] = px - _z.x * wx; L.pos[i0 + 4] = py - _z.y * wx; L.pos[i0 + 5] = pz - _z.z * wx;
+              if (!use || s >= nDraw) { L.pos[i0] = L.pos[i0 + 3] = _o.x; L.pos[i0 + 1] = L.pos[i0 + 4] = _o.y; L.pos[i0 + 2] = L.pos[i0 + 5] = _o.z; continue; }
+              const px = L.hist[s * 3], py = L.hist[s * 3 + 1], pz = L.hist[s * 3 + 2];
+              let tx, ty, tz;
+              if (s + 1 < n) { tx = px - L.hist[(s + 1) * 3]; ty = py - L.hist[(s + 1) * 3 + 1]; tz = pz - L.hist[(s + 1) * 3 + 2]; }
+              else if (s > 0) { tx = L.hist[(s - 1) * 3] - px; ty = L.hist[(s - 1) * 3 + 1] - py; tz = L.hist[(s - 1) * 3 + 2] - pz; }
+              else { tx = _x.x; ty = _x.y; tz = _x.z; }
+              const tl = Math.hypot(tx, ty, tz) || 1; tx /= tl; ty /= tl; tz /= tl;
+              _side.set(ty * _y.z - tz * _y.y, tz * _y.x - tx * _y.z, tx * _y.y - ty * _y.x);
+              if (_side.lengthSq() < 1e-8) _side.copy(_z);
+              _side.normalize();
+              const fade = nDraw > 1 ? 1 - s / (nDraw - 1) : 1, wx = 0.035 + fade * 0.13;
+              const qy = py - (1 - fade) * 0.06;
+              L.pos[i0] = px + _side.x * wx; L.pos[i0 + 1] = qy + _side.y * wx; L.pos[i0 + 2] = pz + _side.z * wx;
+              L.pos[i0 + 3] = px - _side.x * wx; L.pos[i0 + 4] = qy - _side.y * wx; L.pos[i0 + 5] = pz - _side.z * wx;
             }
             L.geo.attributes.position.needsUpdate = true;
-            const target = on ? Math.min(0.85, 0.25 + speed * 0.04) : 0;
-            L.mat.opacity = L.mat.opacity + (target - L.mat.opacity) * Math.min(1, dt * 6);
+            const target = on && nDraw >= 2 ? Math.min(0.7, 0.38 + speed * 0.02) : 0;
+            L.mat.opacity = L.mat.opacity + (target - L.mat.opacity) * Math.min(1, (dt || 0.05) * 6);
           }
+          let any = false; for (let i = 0; i < LANES; i++) if (lanes[i].mat.opacity > 0.02) any = true;
+          grp.visible = any;
+          if (!on && !any) for (let i = 0; i < LANES; i++) { lanes[i].filled = 0; lanes[i].acc = 0; }
         };
         const dispose = () => { try { if (grp.parent) grp.parent.remove(grp); } catch (e) {} lanes.forEach((L) => { try { L.geo.dispose(); L.mat.dispose(); } catch (e) {} }); };
         return { group: grp, tick, dispose, lanes };
@@ -1093,12 +1126,17 @@
             b.position.set(d.H.x + d.side * 0.55 * Math.sin(tt * 0.9) * smooth(0, 1.5, tt), d.H.y + 0.06 * D.s + 0.25 * smooth(0, 2.4, tt), d.H.z - D.s);
             b.quaternion.copy(d.Q).premultiply(_dq.q.setFromAxisAngle(_dq.v.set(1, 0, 0), 0.22 * smooth(0, 1.4, tt))).premultiply(_dq.q2.setFromAxisAngle(_dq.v2.set(0, 0, -1), d.side * 0.12 * Math.cos(tt * 0.9) * smooth(0, 1.5, tt)));
           }
+          if (!DU.inBay && d.yClear) {
+            if (!DU._bb) DU._bb = new THREE.Box3();
+            b.updateMatrixWorld(true); DU._bb.setFromObject(b);
+            const lift = d.yClear - DU._bb.min.y; if (lift > 0) b.position.y += lift;
+          }
           b.updateMatrixWorld(true);
           if (d.jets) {
             const spd = DU.inBay ? 8 * Math.max(0, 1 - (t - DU.tBay) / 4.2) : (t >= DU.tDep + i * 0.3 ? (DU.dep[i] && DU.dep[i].v) || 0 : 0);
-            if (spd > 0.3 && !d.jets.group.visible) d.jets.group.visible = true;
+            b.userData._jetLb = d.Lb; b.userData._jetWb = d.Wb;
             if (d.jets.group.parent !== b.parent && b.parent) { try { if (d.jets.group.parent) d.jets.group.parent.remove(d.jets.group); b.parent.add(d.jets.group); } catch (e) {} }
-            d.jets.tick(b, spd, dt, d.Lb, d.Wb);
+            d.jets.tick(b, spd, dt);
           }
           // her: seated -> rise -> walk round the rock -> step onto the deck -> ride (locked to the board)
           if (d.lockM) { d.lockW.multiplyMatrices(b.matrixWorld, d.lockM); d.lockW.decompose(h.position, h.quaternion, d.lockS); h.updateMatrixWorld(true); continue; }
@@ -1168,11 +1206,16 @@
         const d = X.du, b = d.board, u = Math.min(1, Math.max(0, (tb - 0.7 - i * 0.25) / 4.0)), e = 1 - Math.pow(1 - u, 3);
         b.position.lerpVectors(d.bayIn, d.bayPark, e); b.position.y += Math.sin(Math.PI * e) * 0.6 + (u >= 1 ? 0.03 * Math.sin(tb * 2.4 + i) : 0);
         b.quaternion.copy(d.bayQ).premultiply(_dq.q.setFromAxisAngle(_dq.v.set(1, 0, 0), -0.18 * (1 - e))).premultiply(_dq.q2.setFromAxisAngle(_dq.v2.set(0, 0, 1), -d.side * 0.25 * Math.sin(Math.PI * e)));
-        // live door / wall / floor / ceiling collision (reused AABB list, no per-frame alloc)
+        // live door / wall / floor / ceiling collision: meshes cached at bay load, AABBs updated in place once per frame when doorK changes
         const inst = DU.bay && DU.bay.glb && DU.bay.glb();
         if (inst && window.DMMenuWorld && DMMenuWorld.bayColliders && DMMenuWorld.separateBay) {
-          if (!DU._cols) DU._cols = [];
-          DMMenuWorld.bayColliders(THREE, inst, DU._cols);
+          if (DU._colRoot !== inst) {
+            DU._colRoot = inst;
+            DU._cols = DMMenuWorld.cacheBayColliders ? DMMenuWorld.cacheBayColliders(inst) : DMMenuWorld.bayColliders(THREE, inst);
+            DU._colDoorK = undefined;
+          }
+          const dk = DU.doorK || 0;
+          if (DU._colDoorK !== dk) { DMMenuWorld.bayColliders(THREE, inst); DU._colDoorK = dk; }
           DMMenuWorld.separateBay(b.position, (d.Lb || 4) * 0.42, 0.22, (d.Wb || 0.8) * 0.42, DU._cols);
         }
       };
@@ -1414,14 +1457,51 @@ IN.D.copy(IN.Dl); b.localToWorld(IN.D); IN.D.y += 0.03;
         const t0 = performance.now();
         while (!(MS._ctx && MS._ctx.duoReady && MS._ctx.duoReady()) && performance.now() - t0 < 90000) await new Promise((r) => setTimeout(r, 200));
         if (!(MS._ctx && MS._ctx.duoReady && MS._ctx.duoReady())) return { ok: false, reason: 'duo-not-ready' };
-        const mk = () => {
-          const g = new THREE.Group();
-          const deck = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.07, 1.0), new THREE.MeshStandardMaterial({ color: 0xc41e2e, roughness: 0.42, metalness: 0.25 }));
-          deck.castShadow = true; deck.receiveShadow = true; g.add(deck);
-          const stripe = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.02, 0.08), new THREE.MeshBasicMaterial({ color: 0x5ce8ff, toneMapped: false })); stripe.position.y = 0.05; g.add(stripe);
-          g.userData.procFallback = true; return g;
+        const normalizeMenuBoard = (root) => {
+          const drop = []; root.traverse((o) => { if (o.isLight || o.isCamera) drop.push(o); }); drop.forEach((o) => { if (o.parent) o.parent.remove(o); });
+          root.updateMatrixWorld(true);
+          root.traverse((o) => { if (o.isMesh && o.geometry) { o.geometry = o.geometry.clone(); o.geometry.applyMatrix4(o.matrixWorld); } });
+          root.traverse((o) => { o.position.set(0, 0, 0); o.rotation.set(0, 0, 0); o.scale.set(1, 1, 1); });
+          root.updateMatrixWorld(true);
+          const box = new THREE.Box3().setFromObject(root), size = box.getSize(new THREE.Vector3()), ctr = box.getCenter(new THREE.Vector3());
+          const bakeRot = new THREE.Matrix4();
+          if (size.y >= size.x && size.y >= size.z) bakeRot.makeRotationZ(Math.PI / 2);
+          else if (size.z >= size.x) bakeRot.makeRotationY(-Math.PI / 2);
+          const fullMat = bakeRot.multiply(new THREE.Matrix4().makeTranslation(-ctr.x, -ctr.y, -ctr.z));
+          root.traverse((o) => { if (o.isMesh && o.geometry) { o.geometry.applyMatrix4(fullMat); o.position.set(0, 0, 0); o.rotation.set(0, 0, 0); o.scale.set(1, 1, 1); } });
+          root.updateMatrixWorld(true);
+          const size2 = new THREE.Box3().setFromObject(root).getSize(new THREE.Vector3());
+          root.scale.setScalar(3.0 / Math.max(size2.x, size2.y, size2.z, 0.001));   // BOARD_FALLBACK_GAME_LEN; menu intro then scales by herH * 37/6 / len0
+          root.updateMatrixWorld(true);
+          const deck = new THREE.Box3().setFromObject(root);
+          root.userData.deckAnchor = { x: (deck.min.x + deck.max.x) / 2, y: deck.max.y, z: (deck.min.z + deck.max.z) / 2 };
+          root.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false; } });
+          return root;
         };
-        const started = MS.introStart({ board: mk(), board2: mk(), syncBay: true, sharedTex: false, sharedTex2: false, ratio: 37 / 6, onFlyOff: function () {} });
+        const cloneBoard = (src) => {
+          const c = src.clone(true);
+          c.traverse((o) => { if (!o.isMesh) return; try { if (o.geometry) o.geometry = o.geometry.clone(); } catch (e) {} try { if (Array.isArray(o.material)) o.material = o.material.map((m) => m && m.clone ? m.clone() : m); else if (o.material && o.material.clone) o.material = o.material.clone(); } catch (e) {} });
+          c.userData.deckAnchor = src.userData.deckAnchor ? Object.assign({}, src.userData.deckAnchor) : src.userData.deckAnchor;
+          return c;
+        };
+        const loadReal = async () => {
+          const url = (opt && opt.boardUrl) || '/skyboard_B.glb';
+          try {
+            const gltf = await new Promise((res, rej) => new THREE.GLTFLoader().load(url, res, undefined, rej));
+            return normalizeMenuBoard(gltf.scene);
+          } catch (e) { info('debugLaunch board', e && e.message); return null; }
+        };
+        const mkFallback = () => {
+          const g = new THREE.Group();
+          const deck = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.08, 0.62), new THREE.MeshStandardMaterial({ color: 0x9a1c24, roughness: 0.42, metalness: 0.25 }));
+          deck.castShadow = true; deck.receiveShadow = true; g.add(deck);
+          const nose = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.55, 5), new THREE.MeshBasicMaterial({ color: 0x5ce8ff, toneMapped: false })); nose.rotation.z = -Math.PI / 2; nose.position.x = 1.72; g.add(nose);
+          g.userData.procFallback = true; g.userData.deckAnchor = { x: 0, y: 0.04, z: 0 }; return g;
+        };
+        let real = opt && opt.board ? opt.board : await loadReal();
+        if (!real) real = mkFallback();
+        const boardA = real, boardB = cloneBoard(real);
+        const started = MS.introStart({ board: boardA, board2: boardB, syncBay: true, sharedTex: false, sharedTex2: false, ratio: 37 / 6, onFlyOff: function () {} });
         if (started && started.then) await started;
         MS.paused = true;
         return { ok: !!IN.on && !!IN.duo, tDep: DU && DU.tDep, tBay: DU && DU.tBay, tFly: DU && DU.tFly, tL: A && A.du && A.du.tL };
