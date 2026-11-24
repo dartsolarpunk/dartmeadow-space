@@ -339,7 +339,7 @@
       const G = (typeof GFX !== 'undefined' && GFX) ? GFX : {};
       const mobile = !!G.isMobile || /Android|iPhone|iPad/i.test(navigator.userAgent || '');
       const lowTier = G.preset === 'low' || (mobile && G.preset === 'auto');
-      const sc = { pr: Math.min(window.devicePixelRatio || 1, mobile ? 1.5 : 2) * (G.resScale && G.resScale < 1 ? G.resScale : 1), shadow: lowTier ? 1024 : (mobile ? 1536 : 2048), hair: lowTier ? 0.55 : (mobile ? 0.8 : 1), hairTier: (lowTier || mobile) ? 1 : 2 };   // (v379) menu hair collision: phones / tablets tier 1 (fitted capsules + keep-out boxes, 2.5 mm head field), desktop tier 2 (+ segment contacts, guide spacing, finer field); was 0 / 1. The frame-budget ladder still drops hair to tier 0 under load
+      const sc = { pr: Math.min(window.devicePixelRatio || 1, mobile ? 1.5 : 2) * (G.resScale && G.resScale < 1 ? G.resScale : 1), shadow: lowTier ? 1024 : (mobile ? 1536 : 2048), hair: lowTier ? 0.55 : (mobile ? 0.8 : 1), hairTier: (lowTier || mobile) ? 0 : 1 };   // (t1644u) desktop menu hair: collision tier 1 (fitted body / shirt capsules + keep-out boxes) for both riders; (v379) Emma's skin-following head field and re-baked scalp SDF apply at every tier
       const q = location.search || ''; const qs = (k, d) => { const m = q.match(new RegExp('[?&]' + k + '=([^&]*)')); return m ? decodeURIComponent(m[1]) : d; };
       if (qs('msq', '')) sc.pr = Math.min(sc.pr, parseFloat(qs('msq', '1')) || 1);
       // (t1644u) DUO: Ariel AND Emma sit on the rock together and both fly out on the launch (?intro=solo or ?menuduo=0 = the single-pilot scene / intro)

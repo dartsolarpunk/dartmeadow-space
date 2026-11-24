@@ -942,6 +942,28 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     return true;
   }
 
+  // (v379) hard exit for the closing pass: re-sample and re-project (<= 3 times) until the point is out of the warped head field, so a curved / thin
+  // part of the scalp cannot leave it just inside after one gradient step.  No soft cushion here: this is the floor, not the contact layer.
+  function headOut(a, o, c) {
+    let moved = false;
+    for (let r = 0; r < 4; r++) {
+      const x = a[o], y = a[o + 1], z = a[o + 2];
+      const ex = x - hcx, ey = y - hcy, ez = z - hcz;
+      if (ex * ex + ey * ey + ez * ez > hcR2) return moved;
+      const hx = mi[0] * x + mi[4] * y + mi[8] * z + mi[12], hy = mi[1] * x + mi[5] * y + mi[9] * z + mi[13], hz = mi[2] * x + mi[6] * y + mi[10] * z + mi[14];
+      const n = warpNode(hx, hy, hz); let d;
+      if (n >= 0) { warpDisp(n, hx, hy, hz); d = sdf(hx - wd[0], hy - wd[1], hz - wd[2]); } else d = sdf(hx, hy, hz);
+      if (d >= (r === 0 ? 0 : -1e-5)) return moved;
+      if (r === 3) {   // the field's gradient did not lead out (deep in a thin shell / fold): fall back to the groom point, which sits >= 3 mm clear
+        sq[o] += restM[o] - x; sq[o + 1] += restM[o + 1] - y; sq[o + 2] += restM[o + 2] - z; a[o] = restM[o]; a[o + 1] = restM[o + 1]; a[o + 2] = restM[o + 2]; return true;
+      }
+      const p = c - d, nx = hx + sg[0] * p, ny = hy + sg[1] * p, nz = hz + sg[2] * p;
+      const qx = me[0] * nx + me[4] * ny + me[8] * nz + me[12], qy = me[1] * nx + me[5] * ny + me[9] * nz + me[13], qz = me[2] * nx + me[6] * ny + me[10] * nz + me[14];
+      sq[o] += qx - x; sq[o + 1] += qy - y; sq[o + 2] += qz - z;   // no injected velocity
+      a[o] = qx; a[o + 1] = qy; a[o + 2] = qz; moved = true;
+    }
+    return moved;
+  }
   // guide point deflected far enough from its groom position that it might touch the head?
   function near(a, o, i) {
     const dx = a[o] - restM[o], dy = a[o + 1] - restM[o + 1], dz = a[o + 2] - restM[o + 2];
@@ -1172,7 +1194,8 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
           }
           // (v379) closing head pass: capsule / box / segment-sample pushes above can leave a point back inside the scalp; the head SDF is the
           // closest surface, so it gets the last word on the final iteration (same near() pruning, no allocation)
-          if (last && doSdf) for (let k = 2; k <= km && k < K; k++) { const o = gb + k * 3; if (headCollide(sp, o, clrG[sb + k])) contacts++; }
+          // only where the skin-following field is live (Emma: non-Head-weighted scalp); Ariel's solve stays bit-identical
+          if (last && doSdf && WARP && WARP.on) for (let k = 2; k <= km && k < K; k++) { if (headOut(sp, gb + k * 3, clrG[sb + k])) contacts++; }
         }
       }
     }
