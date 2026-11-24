@@ -15,6 +15,35 @@
   if (window.DMCharSelect) return;
   const W = window, D = document, $ = (id) => D.getElementById(id);
   const CS = W.DMCharSelect = { panels: [], studioOpen: false, entered: false };
+  /* card UI state machine: CSS hinges do the motion; this only flips classes (no per-frame work, no allocations in the studio loop).
+     modes: idle (off-screen) | select (wheel + continue pop-out) | editor (taller card) | leaving */
+  const UI = { mode: 'idle', pickedId: null };
+  function uiMachine(state, ev) {
+    const s = { mode: state.mode, pickedId: state.pickedId || null };
+    switch (ev && ev.type) {
+      case 'enter': s.mode = 'select'; s.pickedId = ev.pickedId || s.pickedId; break;
+      case 'pick': if (s.mode !== 'editor' && s.mode !== 'leaving') s.mode = 'select'; s.pickedId = ev.id || s.pickedId; break;
+      case 'edit': if (ev.id) s.pickedId = ev.id; s.mode = 'editor'; break;
+      case 'back': s.mode = 'select'; break;
+      case 'leave': s.mode = 'leaving'; break;
+      case 'idle': s.mode = 'idle'; break;
+    }
+    return s;
+  }
+  function uiApply(next) {
+    if (next) { UI.mode = next.mode; UI.pickedId = next.pickedId || null; }
+    const sc = $('screen-character'), cont = $('cs-continue');
+    if (sc) { sc.classList.toggle('cs-ui-select', UI.mode === 'select'); sc.classList.toggle('cs-ui-editor', UI.mode === 'editor'); }
+    if (cont) {
+      const show = UI.mode === 'select' && !!UI.pickedId;
+      if (cont.hidden === show) {
+        cont.hidden = !show;
+        if (show) { try { void cont.offsetWidth; } catch (e) { } cont.classList.add('cs-pop'); }
+        else cont.classList.remove('cs-pop');
+      }
+    }
+  }
+  CS.uiMachine = uiMachine; CS.uiState = () => ({ mode: UI.mode, pickedId: UI.pickedId });
   const THUMB_KEY = 'dm_char_thumb_v1', THUMB_VER = 1, TW = 200, TH = 250;
   const log = (...a) => { try { console.info('[charselect]', ...a); } catch (e) { } };
   const toast = (m, d) => { try { W.toast && W.toast(m, d || 2600); } catch (e) { } };
@@ -218,12 +247,13 @@
 
   /* ───────────────────────── the card wheel ───────────────────────── */
   let activeIdx = 0, scrollRaf = 0;
-  const cards = () => Array.from(D.querySelectorAll('#cs-wheel .cs-card'));
+  const cards = () => Array.from(D.querySelectorAll('#cs-wheel .cs-card-slot'));
+  const cardFace = (slot) => (slot && slot.querySelector) ? (slot.querySelector('.cs-card') || slot) : slot;
   function buildCards() {
     const wheel = $('cs-wheel'); if (!wheel) return; wheel.textContent = '';
     W.DMChars.list().forEach((def) => {
-      const b = D.createElement('button'); b.type = 'button'; b.className = 'cs-card'; b.dataset.id = def.id; b.setAttribute('role', 'option'); b.setAttribute('aria-label', def.name);
-      b.innerHTML = '<span class="cs-thumbwrap"><img class="cs-thumb empty" alt="" decoding="async"><span class="cs-spin">LOADING<br>PORTRAIT</span></span><span class="cs-meta"><span class="cs-name"></span><span class="cs-tag"></span></span><span class="cs-badge" hidden></span>';
+      const b = D.createElement('button'); b.type = 'button'; b.className = 'cs-card-slot mm-panel'; b.dataset.id = def.id; b.setAttribute('role', 'option'); b.setAttribute('aria-label', def.name);
+      b.innerHTML = '<span class="cs-card mm-frame"><span class="cs-thumbwrap"><img class="cs-thumb empty" alt="" decoding="async"><span class="cs-spin">LOADING<br>PORTRAIT</span></span><span class="cs-meta"><span class="cs-name"></span><span class="cs-tag"></span></span><span class="cs-badge" hidden></span></span>';
       b.querySelector('.cs-name').textContent = def.name.toUpperCase(); b.querySelector('.cs-tag').textContent = def.tag || '';
       b.addEventListener('click', () => onCardTap(def.id));
       wheel.appendChild(b);
@@ -232,53 +262,54 @@
     W.DMChars.list().forEach((d) => paintCard(d.id));
   }
   function paintCard(id) {
-    const def = W.DMChars.get(id), el = D.querySelector('#cs-wheel .cs-card[data-id="' + id + '"]'); if (!def || !el) return;
+    const def = W.DMChars.get(id), el = D.querySelector('#cs-wheel .cs-card-slot[data-id="' + id + '"]'); if (!def || !el) return;
     const url = thumbFor(def), img = el.querySelector('.cs-thumb'), sp = el.querySelector('.cs-spin');
     if (url) { if (img.getAttribute('src') !== url) img.src = url; img.classList.remove('empty'); sp.style.display = 'none'; } else { img.classList.add('empty'); sp.style.display = ''; }
-    const chosen = W.DMChars.selectedId() === id; el.classList.toggle('chosen', chosen && def.ready);
+    const chosen = W.DMChars.selectedId() === id; el.classList.toggle('chosen', chosen && def.ready); cardFace(el).classList.toggle('chosen', chosen && def.ready);
     const bd = el.querySelector('.cs-badge'); if (!def.ready) { bd.hidden = false; bd.textContent = 'SOON'; bd.className = 'cs-badge soon'; } else if (chosen) { bd.hidden = false; bd.textContent = '✓ CHOSEN'; bd.className = 'cs-badge'; } else bd.hidden = true;
   }
-  function setCardLoading(id, on) { const el = D.querySelector('#cs-wheel .cs-card[data-id="' + id + '"] .cs-spin'); if (el && !thumbFor(W.DMChars.get(id))) el.textContent = on ? 'RENDERING…' : 'LOADING…'; }
-  function layoutWheel() {   // scroll-driven transform: the centred card is full size, the others turn away and shrink.  Runs on scroll only.
+  function setCardLoading(id, on) { const el = D.querySelector('#cs-wheel .cs-card-slot[data-id="' + id + '"] .cs-spin'); if (el && !thumbFor(W.DMChars.get(id))) el.textContent = on ? 'RENDERING…' : 'LOADING…'; }
+  function layoutWheel() {   // scroll-driven transform: the centred card is full size, the others turn away and shrink.  Runs on scroll only.  Applied to the inner .cs-card so the slot can keep the enter/leave hinge.
     const wheel = $('cs-wheel'); if (!wheel) return; const mid = wheel.scrollLeft + wheel.clientWidth / 2; let best = 0, bd = 1e9; const cs = cards();
     cs.forEach((c, i) => {
       const cx = c.offsetLeft + c.offsetWidth / 2, d = (cx - mid) / (c.offsetWidth + 20), ad = Math.min(1.6, Math.abs(d));
-      c.style.transform = 'translateZ(' + (-ad * 90).toFixed(1) + 'px) rotateY(' + (Math.max(-1, Math.min(1, d)) * -26).toFixed(1) + 'deg) scale(' + (1 - ad * 0.1).toFixed(3) + ')'; c.style.opacity = String(Math.max(0.45, 1 - ad * 0.38));
+      const face = cardFace(c);
+      face.style.transform = 'translateZ(' + (-ad * 90).toFixed(1) + 'px) rotateY(' + (Math.max(-1, Math.min(1, d)) * -26).toFixed(1) + 'deg) scale(' + (1 - ad * 0.1).toFixed(3) + ')'; face.style.opacity = String(Math.max(0.45, 1 - ad * 0.38));
       if (Math.abs(cx - mid) < bd) { bd = Math.abs(cx - mid); best = i; }
     });
-    activeIdx = best; cs.forEach((c, i) => c.classList.toggle('on', i === best)); const dots = D.querySelectorAll('#cs-dots i'); dots.forEach((d, i) => d.classList.toggle('on', i === best));
+    activeIdx = best; cs.forEach((c, i) => { const on = i === best; c.classList.toggle('on', on); cardFace(c).classList.toggle('on', on); }); const dots = D.querySelectorAll('#cs-dots i'); dots.forEach((d, i) => d.classList.toggle('on', i === best));
     refreshFoot();
   }
   function centreOn(i, smooth) { const c = cards()[i]; const wheel = $('cs-wheel'); if (!c || !wheel) return; wheel.scrollTo({ left: c.offsetLeft + c.offsetWidth / 2 - wheel.clientWidth / 2, behavior: smooth ? 'smooth' : 'auto' }); }
   function onCardTap(id) {
     const i = W.DMChars.list().findIndex((d) => d.id === id);
     if (i !== activeIdx) { centreOn(i, true); return; }
-    openStudio(id, D.querySelector('#cs-wheel .cs-card[data-id="' + id + '"]'));
+    openStudio(id, cardFace(D.querySelector('#cs-wheel .cs-card-slot[data-id="' + id + '"]')));
   }
   function refreshFoot() {
-    const sel = W.DMChars.get(W.DMChars.selectedId()), nx = $('cs-next');
-    if (nx) nx.textContent = (sel ? 'CONTINUE AS ' + sel.name.toUpperCase() : 'CONTINUE') + ' ⟶';
-    const cur = W.DMChars.list()[activeIdx], cb = $('cs-open'); if (cb && cur) cb.textContent = (cur.ready ? 'VIEW ' : 'PREVIEW ') + cur.name.toUpperCase();
+    const cur = W.DMChars.list()[activeIdx];
+    uiApply(uiMachine(UI, { type: 'pick', id: cur ? cur.id : UI.pickedId }));
+    const nx = $('cs-next');
+    if (!nx) return;
+    const named = (cur && cur.ready) ? cur : (W.DMChars.get(W.DMChars.selectedId()) || null);
+    nx.textContent = (named ? 'CONTINUE AS ' + named.name.toUpperCase() : 'CONTINUE') + ' ⟶';
   }
 
   /* ───────────────────────── the studio ───────────────────────── */
   const S = { M: null, X: null, cam: null, F: null, raf: 0, yaw: 0, vyaw: 0, dragging: false, pointers: new Map(), pinch0: 0, zoom: 1, pitch: 0, last: 0, accum: 0, nextExtra: 0, look: 0, lookT: 0, def: null, token: 0, leased: false };
   async function openStudio(id, fromEl) {
     const def = W.DMChars.get(id); if (!def || CS.studioOpen) return;
+    clearTimeout(closeStudio._t); closeStudio._t = 0;   // a reopen inside the 550 ms close must not be hidden by finish()
     CS.studioOpen = true; thumbAbort = true; const token = ++S.token; S.def = def; if (CW.w) CW.w.pause(true); try { CS._resetFlow && CS._resetFlow(); } catch (e) { }
+    uiApply(uiMachine(UI, { type: 'edit', id: def.id }));
     const root = $('cs-studio'), stage = $('cs-stage');
     $('cs-pname').textContent = def.name.toUpperCase(); $('cs-ptag').textContent = def.tag || '';
     $('cs-load').textContent = 'LOADING ' + def.name.toUpperCase() + '…'; $('cs-load').style.display = ''; $('cs-turn').classList.remove('gone');
     renderPanel(); layoutStudio();
-    // expand from the card's rectangle
-    root.classList.add('open'); stage.classList.remove('drag');
-    try {
-      const r = fromEl && fromEl.getBoundingClientRect(), w = innerWidth, h = innerHeight;
-      if (r && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
-        root.style.transition = 'none'; root.style.clipPath = 'inset(' + r.top + 'px ' + (w - r.right) + 'px ' + (h - r.bottom) + 'px ' + r.left + 'px round 14px)'; void root.offsetWidth;
-        root.style.transition = 'clip-path .32s cubic-bezier(.2,.9,.25,1)'; root.style.clipPath = 'inset(0 0 0 0 round 0px)';
-      } else { root.style.transition = 'none'; root.style.clipPath = 'none'; }
-    } catch (e) { root.style.clipPath = 'none'; }
+    // the editor card hinges in like a main-menu panel (mmOpenR / mmOpenB); no clip-path expand
+    root.classList.remove('leaving'); root.classList.add('open'); stage.classList.remove('drag');
+    root.style.clipPath = 'none'; root.style.transition = 'none';
+    void fromEl;
     try {
       while (thumbBusy) await sleep(40);   // the thumbnail job sees thumbAbort and lets go of the renderer within a frame or two
       if (token !== S.token) return;
@@ -313,8 +344,19 @@
     try { CS.onStudioClose && CS.onStudioClose(); } catch (e) { }
     disposeCharacter(S.M); if (S.X && S.X.world) { try { S.X.world.dispose(); } catch (e) { } S.X.world = null; } disposeSet(S.X); S.M = null; S.X = null; S.cam = null; S.F = null; S.pointers.clear();
     if (S.leased) { S.leased = false; release(); }
-    const root = $('cs-studio'); root.classList.remove('open'); root.style.clipPath = ''; root.style.transition = '';
-    CS.studioOpen = false; if (refreshed) paintCard(S.def.id);
+    const root = $('cs-studio');
+    const hideChrome = opts.visual !== false;
+    const reduce = (function () { try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return true; } })();
+    const finish = () => { if (!root) return; root.classList.remove('open', 'leaving'); root.style.clipPath = ''; root.style.transition = ''; };
+    clearTimeout(closeStudio._t); closeStudio._t = 0;
+    if (hideChrome && root && root.classList.contains('open') && !reduce && !opts.immediate) {
+      root.classList.add('leaving');
+      closeStudio._t = setTimeout(finish, 550);
+    } else {
+      finish();   // always including !hideChrome (leave / goScreen) and opts.immediate, so .open cannot linger
+    }
+    CS.studioOpen = false; if (refreshed && S.def) paintCard(S.def.id);
+    if (hideChrome) uiApply(uiMachine(UI, { type: 'back' }));
     if (CW.w) { backToBg(); CW.w.pause(false); if (R.r) { R.r._csW = 0; } }
     if (ST() === 'character') kickThumbs();
   }
@@ -742,14 +784,21 @@
   /* ───────────────────────── screen lifecycle ───────────────────────── */
   CS.enter = function () {
     if (!W.DMChars) return; CS.entered = true;
+    const sc = $('screen-character'); if (sc) sc.classList.remove('cs-leaving');
+    const studio = $('cs-studio');
+    if (studio && !CS.studioOpen) { studio.classList.remove('open', 'leaving'); studio.style.clipPath = ''; studio.style.transition = ''; }
+    const pick = W.DMChars.selectedId();
+    uiApply(uiMachine(UI, { type: 'enter', pickedId: pick }));
     buildCards(); requestAnimationFrame(() => { const i = Math.max(0, W.DMChars.list().findIndex((d) => d.id === W.DMChars.selectedId())); centreOn(i, false); layoutWheel(); });
     bindStage(); refreshFoot(); startCardWorld(); kickThumbs();
   };
   CS.leave = function () {
-    CS.entered = false; thumbAbort = true; if (CS.studioOpen) closeStudio({ thumb: false }); stopCardWorld();
+    CS.entered = false; thumbAbort = true; uiApply(uiMachine(UI, { type: 'leave' }));
+    if (CS.studioOpen) closeStudio({ thumb: false, visual: false, immediate: true }); stopCardWorld();
     clearTimeout(R.killT); if (R.leases === 0 && R.r) { try { R.r.dispose(); } catch (e) { } try { R.canvas && R.canvas.parentNode && R.canvas.parentNode.removeChild(R.canvas); } catch (e) { } R.r = null; R.canvas = null; }
+    uiApply(uiMachine(UI, { type: 'idle' }));
   };
-  CS.openStudio = (id) => openStudio(id, D.querySelector('#cs-wheel .cs-card[data-id="' + id + '"]'));
+  CS.openStudio = (id) => openStudio(id, cardFace(D.querySelector('#cs-wheel .cs-card-slot[data-id="' + id + '"]')));
   CS.closeStudio = closeStudio;
   CS.status = () => ({ studioOpen: CS.studioOpen, renderer: !!R.r, leases: R.leases, thumbs: Object.keys(thumbs), loop: !!S.raf, model: !!S.M });
   CS.refreshLook = () => applyStudio(S.def);   // re-apply the stored look to the open studio model (panels call it; tests / tools too)
@@ -760,8 +809,7 @@
     let sT = 0; wheel.addEventListener('scroll', () => { if (!scrollRaf) scrollRaf = requestAnimationFrame(() => { scrollRaf = 0; layoutWheel(); }); clearTimeout(sT); }, { passive: true });
     wheel.addEventListener('keydown', (e) => { if (e.key === 'ArrowRight') { centreOn(Math.min(cards().length - 1, activeIdx + 1), true); e.preventDefault(); } else if (e.key === 'ArrowLeft') { centreOn(Math.max(0, activeIdx - 1), true); e.preventDefault(); } });
     $('cs-back').addEventListener('click', () => W.goScreen('menu'));
-    $('cs-next').addEventListener('click', () => { const r = W.DMChars.resolveForGame(); if (r.fellBack) toast(W.DMChars.get(r.wanted).name + ' is not flyable yet: flying as ' + r.def.name); W.goScreen('builder'); });
-    $('cs-open').addEventListener('click', () => { const d = W.DMChars.list()[activeIdx]; if (d) CS.openStudio(d.id); });
+    $('cs-next').addEventListener('click', () => { const cur = W.DMChars.list()[activeIdx]; if (cur && cur.ready) W.DMChars.setSelected(cur.id); const r = W.DMChars.resolveForGame(); if (r.fellBack) toast(W.DMChars.get(r.wanted).name + ' is not flyable yet: flying as ' + r.def.name); W.goScreen('builder'); });
     $('cs-sback').addEventListener('click', () => closeStudio());
     $('cs-sselect').addEventListener('click', choose);
     D.addEventListener('keydown', (e) => { if (e.key === 'Escape' && CS.studioOpen && ST() === 'character') closeStudio(); });

@@ -49,7 +49,7 @@
 #cs-load{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-family:var(--font-mono);font-size:.7rem;letter-spacing:.2em;color:var(--cyan);text-align:center;pointer-events:none;z-index:2;}
 #cs-turn{position:absolute;left:0;right:0;bottom:10px;text-align:center;font-family:var(--font-mono);font-size:.58rem;letter-spacing:.2em;color:var(--text-dim);pointer-events:none;z-index:2;transition:opacity .6s;}
 #cs-turn.gone{opacity:0;}
-#cs-panel{flex:0 0 clamp(260px,34vw,340px);display:flex;flex-direction:column;min-height:0;background:linear-gradient(180deg,rgba(var(--panel-rgb),.9),rgba(var(--panel-rgb),.97));border-left:1px solid var(--border);z-index:3;}
+#cs-panel{flex:0 0 clamp(260px,34vw,340px);display:flex;flex-direction:column;min-height:0;z-index:3;}
 #cs-ptitle{padding:12px 14px 6px;display:flex;align-items:baseline;gap:10px;flex-shrink:0;}
 #cs-pname{font-family:var(--font-hud);font-size:1.05rem;letter-spacing:.24em;color:var(--text);}
 #cs-ptag{font-family:var(--font-mono);font-size:.62rem;letter-spacing:.2em;color:var(--text-dim);}
@@ -66,7 +66,7 @@
 @media (max-width:760px) and (orientation:portrait),(max-width:560px){
   #cs-studio{flex-direction:column;}
   #cs-stage{flex:1 1 52%;}
-  #cs-panel{flex:0 0 46%;border-left:0;border-top:1px solid var(--border);}
+  #cs-panel{flex:0 0 46%;}
   #cs-title{margin-right:80px;}
 }
 @media (max-height:430px) and (orientation:landscape){
@@ -145,27 +145,15 @@
 }
 #cs-head{border-bottom:1px solid rgba(var(--acc-rgb),.22);background:linear-gradient(180deg,rgba(6,10,18,.72),rgba(6,10,18,.15));}
 #cs-title{letter-spacing:.34em;font-weight:700;}
-.cs-card{
-  background:
-    linear-gradient(180deg,rgba(10,16,28,.55),rgba(8,12,22,.88));
-  border:1px solid rgba(var(--acc-rgb),.4);
-  border-radius:0;
-  clip-path:polygon(12px 0,100% 0,100% calc(100% - 12px),calc(100% - 12px) 100%,0 100%,0 12px);
-  box-shadow:inset 0 0 0 1px rgba(255,255,255,.04),0 10px 28px rgba(0,0,0,.35);
-}
-.cs-card.on{border-color:var(--cyan);box-shadow:0 0 28px rgba(var(--acc-rgb),.4),inset 0 0 0 1px rgba(var(--acc-rgb),.35);}
+/* (v381) card chrome comes from .mm-frame (ui/dm-ui.css), same as the main menu. */
+.cs-card.on{--lc:var(--cyan);}
+.cs-card.chosen{--lc:rgba(var(--hi-rgb),.9);}
 .cs-thumb{aspect-ratio:3/5;object-fit:cover;object-position:50% 12%;}
 .cs-meta{background:linear-gradient(180deg,transparent,rgba(0,0,0,.45));padding:12px 10px 14px;}
 .cs-name{text-shadow:0 0 12px rgba(var(--acc-rgb),.45);}
 .cs-tag{color:var(--cyan);letter-spacing:.22em;}
 #cs-studio{background:radial-gradient(ellipse 80% 70% at 50% 55%,#101820 0%,#070a12 60%,#04060a 100%);}
-#cs-panel{
-  background:
-    linear-gradient(180deg,rgba(8,14,24,.78),rgba(6,10,18,.94));
-  border-left:1px solid rgba(var(--acc-rgb),.55);
-  box-shadow:-16px 0 40px rgba(0,0,0,.35),inset 1px 0 0 rgba(255,255,255,.05);
-  backdrop-filter:blur(10px);
-}
+/* (v381) #cs-panel chrome is .mm-frame — do not set background here. */
 #cs-ptitle{background:linear-gradient(90deg,rgba(var(--acc-rgb),.2),transparent);border-bottom:1px solid rgba(var(--acc-rgb),.3);padding:14px 16px 10px;}
 #cs-pname{text-shadow:0 0 12px rgba(var(--acc-rgb),.7);}
 #cs-ptag{color:var(--cyan);}
@@ -188,3 +176,151 @@
 .cs-pk-chip{flex:0 0 28px;width:28px;height:28px;border:1px solid rgba(255,255,255,.3);box-shadow:inset 0 0 0 1px #000;}
 .cs-pk-hex{flex:1;min-height:40px;background:rgba(0,0,0,.4);border:1px solid rgba(var(--acc-rgb),.35);color:var(--text);font-family:var(--font-mono);font-size:.85rem;letter-spacing:.08em;padding:0 10px;text-transform:uppercase;}
 .cs-pk-ok{min-height:40px;padding:0 14px;border:1px solid var(--cyan);background:rgba(var(--acc-rgb),.16);color:var(--cyan);font-family:var(--font-hud);font-size:.58rem;letter-spacing:.16em;cursor:pointer;}
+
+
+/* ── v381: Articren selector + editor reuse the main-menu card system
+   (.mm-frame hairline, .mm-panel hinges, mmOpen / mmClose keyframes in ui/dm-menu.css).
+   Motion is CSS on enter / leave only; the wheel still writes transforms on scroll,
+   never per frame, and never allocates. The editor card stays on screen; there is no dismiss control. */
+#cs-list{padding-bottom:calc(84px + var(--safe-bot));}
+#screen-character .cs-card-slot{
+  flex:0 0 var(--cs-cw);scroll-snap-align:center;margin:0 clamp(6px,2vw,16px);padding:0;border:0;background:none;
+  color:inherit;font:inherit;cursor:pointer;text-align:center;display:flex;flex-direction:column;align-items:stretch;
+  transform-origin:50% 60%;transform-style:preserve-3d;touch-action:manipulation;appearance:none;-webkit-appearance:none;
+}
+#screen-character .cs-card-slot:focus{outline:none;}
+#screen-character .cs-card-slot:focus-visible .cs-card{outline:2px solid var(--gold);outline-offset:3px;}
+#cs-wheel .cs-card{
+  flex:none;width:100%;margin:0;display:flex;flex-direction:column;align-items:stretch;gap:0;padding:8px 8px 0;
+  cursor:inherit;text-align:center;overflow:hidden;position:relative;transform-origin:50% 60%;will-change:transform;
+  border:none;border-radius:0;touch-action:manipulation;
+}
+#cs-head.mm-panel{position:relative;z-index:3;}
+
+/* enter / leave: same hinge language as #screen-menu */
+#screen-character.active #cs-head.mm-hinge-top{transform-origin:50% 0;animation:mmOpenT .7s cubic-bezier(.2,.9,.25,1) 0s both;}
+#screen-character.active .cs-card-slot{transform-origin:50% 100%;animation:mmOpenB .7s cubic-bezier(.2,.9,.25,1) both;}
+#screen-character.active .cs-card-slot:nth-child(1){animation-delay:.05s;}
+#screen-character.active .cs-card-slot:nth-child(2){animation-delay:.12s;}
+#screen-character.active .cs-card-slot:nth-child(3){animation-delay:.19s;}
+#screen-character.active #cs-continue.cs-pop{transform-origin:50% 100%;animation:mmOpenB .65s cubic-bezier(.2,.9,.25,1) .2s both;}
+#screen-character.cs-leaving{display:flex !important;z-index:60;pointer-events:none;}
+#screen-character.cs-leaving #cs-head.mm-hinge-top{transform-origin:50% 0;animation:mmCloseT .5s cubic-bezier(.6,0,.8,.4) both;}
+#screen-character.cs-leaving .cs-card-slot{transform-origin:50% 100%;animation:mmCloseB .5s cubic-bezier(.6,0,.8,.4) both;}
+#screen-character.cs-leaving #cs-continue{transform-origin:50% 100%;animation:mmCloseB .45s cubic-bezier(.6,0,.8,.4) both;}
+
+/* small continue pop-out (shown once a card is picked / centred) */
+#cs-continue-dock{
+  position:absolute;left:0;right:0;bottom:calc(14px + var(--safe-bot));z-index:4;
+  display:flex;justify-content:center;pointer-events:none;padding:0 14px;
+}
+#cs-continue{
+  position:relative;padding:12px 14px;min-width:min(340px,calc(100vw - 28px));max-width:420px;
+  display:flex;justify-content:center;box-sizing:border-box;pointer-events:auto;
+}
+#cs-continue[hidden]{display:none !important;}
+#cs-continue .cs-btn{width:100%;min-height:48px;max-width:none;}
+
+/* editor: one taller framed card over the stage, always visible while editing */
+#cs-studio.open{display:block;}
+#cs-studio #cs-stage{position:absolute;inset:0;flex:none;width:auto;min-width:0;min-height:0;}
+#cs-studio #cs-panel{
+  position:absolute;right:clamp(12px,3vw,40px);top:max(16px,calc(50% - 360px));bottom:auto;
+  width:clamp(280px,34vw,400px);height:min(720px,calc(var(--app-h) - 32px));
+  max-height:calc(var(--app-h) - 32px);
+  flex:none;display:flex;flex-direction:column;min-height:0;z-index:3;box-sizing:border-box;padding:8px 8px 10px;
+}
+#cs-studio.open #cs-panel.mm-hinge-right{transform-origin:100% 50%;animation:mmOpenR .8s cubic-bezier(.2,.9,.25,1) .05s both;}
+#cs-studio.leaving #cs-panel.mm-hinge-right{transform-origin:100% 50%;animation:mmCloseR .55s cubic-bezier(.6,0,.8,.4) both;}
+
+@media (max-width:760px) and (orientation:portrait),(max-width:560px){
+  #cs-studio{flex-direction:unset;}
+  #cs-stage{flex:none;}
+  #cs-studio #cs-panel{
+    left:12px;right:12px;width:auto;top:auto;bottom:calc(12px + var(--safe-bot));
+    height:min(54vh,520px);max-height:54vh;border-top:none;
+  }
+  #cs-turn{bottom:calc(min(54vh,520px) + 22px + var(--safe-bot));}
+  #cs-studio.open #cs-panel.mm-hinge-right{transform-origin:50% 100%;animation-name:mmOpenB;}
+  #cs-studio.leaving #cs-panel.mm-hinge-right{transform-origin:50% 100%;animation-name:mmCloseB;}
+}
+@media (max-height:430px) and (orientation:landscape){
+  #cs-list{padding-bottom:calc(64px + var(--safe-bot));}
+  #cs-continue{padding:8px 10px;min-width:min(300px,calc(100vw - 24px));}
+  #cs-studio #cs-panel{top:8px;bottom:8px;height:auto;width:min(320px,42vw);}
+}
+@media (prefers-reduced-motion:reduce){
+  #screen-character #cs-head,#screen-character .cs-card-slot,#screen-character #cs-continue,#cs-studio #cs-panel{animation:none !important;}
+}
+
+/* editor controls: same glass / hairline / glow language as .mm-stack .menu-btn */
+#cs-studio #cs-ptitle{background:none;border-bottom:1px solid rgba(var(--acc-rgb),.28);padding:12px 14px 10px;}
+#cs-studio #cs-pname{color:var(--cyan);text-shadow:0 0 12px rgba(var(--acc-rgb),.75),0 0 2px #fff;}
+#cs-studio #cs-ptag{color:var(--cyan);opacity:.85;text-shadow:0 0 8px rgba(var(--acc-rgb),.5);}
+#cs-studio #cs-tabs{gap:8px;padding:8px 12px 0;background:none;border-bottom:none;}
+#cs-studio #cs-tabs button{
+  flex:1;min-height:44px;margin:0;border-radius:4px;border:1px solid rgba(var(--acc-rgb),.55);border-bottom:1px solid rgba(var(--acc-rgb),.55);
+  background:rgba(var(--acc-rgb),.06);color:var(--text);letter-spacing:.16em;font-weight:600;
+  text-shadow:0 0 6px rgba(var(--acc-rgb),.45);box-shadow:inset 0 0 10px rgba(var(--acc-rgb),.1);
+}
+#cs-studio #cs-tabs button.on{
+  color:var(--cyan);background:rgba(var(--acc-rgb),.2);border-color:var(--cyan);
+  text-shadow:0 0 8px rgba(var(--acc-rgb),.8);box-shadow:0 0 12px rgba(var(--acc-rgb),.4),inset 0 0 12px rgba(var(--acc-rgb),.25);
+}
+#cs-studio #cs-pbody{padding:12px 14px;}
+#cs-studio #cs-pfoot{border-top:1px solid rgba(var(--acc-rgb),.28);padding:10px 12px calc(12px + var(--safe-bot));gap:8px;}
+#cs-studio .cs-reg-h{color:var(--cyan);text-shadow:0 0 8px rgba(var(--acc-rgb),.6);letter-spacing:.2em;}
+#cs-studio .cs-chip{
+  border-radius:4px;border:1px solid rgba(var(--acc-rgb),.55);clip-path:none;
+  background:rgba(var(--acc-rgb),.06);color:var(--text);font-weight:600;
+  text-shadow:0 0 6px rgba(var(--acc-rgb),.45);box-shadow:inset 0 0 10px rgba(var(--acc-rgb),.1);
+}
+#cs-studio .cs-chip.on{
+  color:var(--cyan);border-color:var(--cyan);background:rgba(var(--acc-rgb),.2);
+  box-shadow:0 0 12px rgba(var(--acc-rgb),.4),inset 0 0 12px rgba(var(--acc-rgb),.25);
+  text-shadow:0 0 8px rgba(var(--acc-rgb),.8);
+}
+/* Glow lives on the host (filter:drop-shadow). clip-path on the same box would clip it, so the chamfered face is a ::before. */
+#cs-studio .cs-sw,#cs-studio .cs-lg{
+  --cut:6px;--lc:rgba(var(--acc-rgb),.8);
+  position:relative;isolation:isolate;overflow:visible;
+  border:none;border-radius:0;
+  filter:drop-shadow(0 0 5px rgba(var(--acc-rgb),.4));
+}
+#cs-studio .cs-sw::before,#cs-studio .cs-lg::before{
+  content:'';position:absolute;inset:0;z-index:-1;pointer-events:none;
+  background-color:inherit;background-image:inherit;
+  clip-path:polygon(var(--cut) 0,calc(100% - var(--cut)) 0,100% var(--cut),100% calc(100% - var(--cut)),calc(100% - var(--cut)) 100%,var(--cut) 100%,0 calc(100% - var(--cut)),0 var(--cut));
+  box-shadow:inset 0 0 0 1.5px var(--lc),inset 0 0 10px rgba(var(--acc-rgb),.2);
+}
+#cs-studio .cs-sw:not(.def):not(.custom):not(.wide):not(.tex){
+  /* keep the inline swatch colour for inherit, but do not paint the unclipped rectangle */
+  -webkit-background-clip:text !important;background-clip:text !important;
+}
+#cs-studio .cs-sw.def,#cs-studio .cs-sw.custom,#cs-studio .cs-sw.wide,#cs-studio .cs-sw.tex,#cs-studio .cs-lg{
+  background-color:transparent !important;background-image:none !important;
+}
+#cs-studio .cs-sw.on,#cs-studio .cs-lg.on{--lc:var(--cyan);filter:drop-shadow(0 0 8px rgba(var(--acc-rgb),.85));}
+#cs-studio .cs-sw.on::before,#cs-studio .cs-lg.on::before{box-shadow:inset 0 0 0 2px var(--cyan),inset 0 0 12px rgba(var(--acc-rgb),.4);}
+#cs-studio .cs-sw.tex:not(.on)::before{box-shadow:inset 0 0 0 1.5px rgba(var(--acc-rgb),.4),inset 0 0 8px rgba(var(--acc-rgb),.12);}
+#cs-studio .cs-sw.tex:not(.on){filter:drop-shadow(0 0 3px rgba(var(--acc-rgb),.25));}
+#cs-studio .cs-sw.custom::before{background:conic-gradient(#e0559a,#e8892a,#e2b33c,#3fae55,#1fb5a3,#3f8fd2,#7b3fc4,#e0559a);}
+#cs-studio .cs-sw.def::before,#cs-studio .cs-sw.wide::before{background:rgba(var(--acc-rgb),.08);}
+#cs-studio .cs-sw.def{color:var(--cyan);text-shadow:0 0 6px rgba(var(--acc-rgb),.5);}
+#cs-studio .cs-lg::before{background:rgba(var(--acc-rgb),.08);}
+#cs-studio .cs-lg.on::before{background:rgba(var(--hi-rgb),.14);}
+#cs-studio .cs-btn{
+  border-radius:4px;border:1px solid rgba(var(--acc-rgb),.55);
+  background:rgba(var(--acc-rgb),.06);color:var(--text);font-weight:600;
+  text-shadow:0 0 6px rgba(var(--acc-rgb),.45);box-shadow:inset 0 0 10px rgba(var(--acc-rgb),.1);
+}
+#cs-studio .cs-btn:hover,#cs-studio .cs-btn:focus-visible{
+  background:rgba(var(--acc-rgb),.2);border-color:var(--cyan);
+  box-shadow:0 0 12px rgba(var(--acc-rgb),.4),inset 0 0 12px rgba(var(--acc-rgb),.25);outline:none;
+}
+#cs-studio .cs-btn.gold{color:var(--gold);border-color:rgba(var(--hi-rgb),.65);background:rgba(var(--hi-rgb),.08);text-shadow:0 0 6px rgba(var(--hi-rgb),.45);}
+#cs-studio .cs-btn.gold:hover,#cs-studio .cs-btn.gold:focus-visible{
+  background:rgba(var(--hi-rgb),.2);border-color:var(--gold);
+  box-shadow:0 0 12px rgba(var(--hi-rgb),.4),inset 0 0 12px rgba(var(--hi-rgb),.25);
+}
+#cs-studio .cs-reset{margin-top:8px;}
