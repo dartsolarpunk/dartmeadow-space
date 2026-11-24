@@ -13,7 +13,7 @@
  */
 (function () {
   'use strict';
-  const F = window.DMFac = { ctx: null, sites: new Map(), solids: [], scene: null, ver: '302', shardVer: '348' };   // (v302) asset cache key: cliff / mansion GLBs, collision, cliff maps, GI re-baked (JOTS Cliffs) - unchanged in t1516, so the 10 MB GLB is not re-fetched; shardVer: the t1516 shard layer
+  const F = window.DMFac = { ctx: null, sites: new Map(), solids: [], scene: null, ver: '302', shardVer: '348', manVer: 'uc1' };   // (v302) asset cache key: cliff / mansion GLBs, collision, cliff maps, GI re-baked (JOTS Cliffs) - unchanged in t1516, so the 10 MB GLB is not re-fetched; shardVer: the t1516 shard layer; manVer (Track 5): ariel-home.glb / -512.glb carry the undercliff bay + hatch cut (tools/ariel-home/undercliff/uc_package.py)
   const DM = window.DM_FAC = window.DM_FAC || {};
   DM.bay = DM.bay || { inside: false, membrane: 0 };
   F.bind = c => { F.ctx = c; };
@@ -316,7 +316,7 @@
   const recentKill = () => { try { const a = window._dmPrevAlive; return !!(a && a.clean === false && !a.hidden && Date.now() - a.t < 600000); } catch (e) { return false; } };
   // (t1644 Track 1) TABLETS (shortest screen side >= 600 css px) with the memory for it (deviceMemory >= 6, or an iPad) and no recent tab kill take the full-size mansion maps and
   // 1K cliff rock instead of the 512 set: on a 3K tablet the 512 maps were the 'soft' rock / walls next to PR #111.  Phones are unchanged.  ?cliff=512 still forbids it.
-  const tabletHi = () => { try { const m = Math.min(screen.width || 0, screen.height || 0); if (m < 600 || /[?&]cliff=512\b/.test(location.search)) return false; return ((navigator.deviceMemory || 0) >= 6 || isIOS) && !recentKill(); } catch (e) { return false; } };
+  const tabletHi = F.tabletHi = () => { try { const m = Math.min(screen.width || 0, screen.height || 0); if (m < 600 || /[?&]cliff=512\b/.test(location.search)) return false; return ((navigator.deviceMemory || 0) >= 6 || isIOS) && !recentKill(); } catch (e) { return false; } };
   function rafGap() { return new Promise(ok => { const t0 = performance.now(); requestAnimationFrame(() => { const t1 = performance.now(); requestAnimationFrame(() => ok(performance.now() - t1 + 0 * t0)); }); }); }
   function hqPump() {
     if (HQ.busy || !HQ.q.length) return;
@@ -344,7 +344,7 @@
     if (MAN.shards === null) { MAN.shards = undefined; fetch('assets/ariel-home/cliff/shards.json?v=' + F.shardVer).then(r => r.json()).then(J => { MAN.shards = J && J.shards ? J : false; }, e => { MAN.shards = false; console.warn('[ariel-home] shards', e); }); }
     // (v223) phones/tablets load the half-size-map mansion (≈75 MB less graphics memory)
     const _m512 = c.isMobile() && !tabletHi();   // (t1644 Track 1) capable tablets: full-size maps
-    Promise.all([c.loadGLB('assets/ariel-home/' + (_m512 ? 'ariel-home-512.glb' : 'ariel-home.glb') + '?v=' + F.ver + (_m512 ? 'm292' : '')), fetch('assets/ariel-home/ariel-home-collide.json?v=' + F.ver).then(r => r.json())]).then(([gl, col]) => {
+    Promise.all([c.loadGLB('assets/ariel-home/' + (_m512 ? 'ariel-home-512.glb' : 'ariel-home.glb') + '?v=' + F.ver + F.manVer + (_m512 ? 'm292' : '')), fetch('assets/ariel-home/ariel-home-collide.json?v=' + F.ver).then(r => r.json())]).then(([gl, col]) => {
       const bin = atob(col.data), n = bin.length >> 1, a = new Int16Array(n);
       for (let i = 0; i < n; i++) { const v = bin.charCodeAt(i * 2) | (bin.charCodeAt(i * 2 + 1) << 8); a[i] = v > 32767 ? v - 65536 : v; }
       col.h = a; MAN.col = col; MAN.glb = gl; MAN.loading = false;
@@ -792,6 +792,7 @@
     if (window.DMHolo) { try { DMHolo.detach(); } catch (e) { } }
     if (window.DMLamps) { try { DMLamps.detach(); } catch (e) { } }
     if (window.DMMansionInt) { try { DMMansionInt.detach(); } catch (e) { } }
+    if (window.DMUndercliff) { try { DMUndercliff.detach(); } catch (e) { } }   // (Track 5) the undercliff level: its GLB, nav, hatch button, pooled lights
     for (const r of F.sites.values()) { if (r.group && r.group.parent) r.group.parent.remove(r.group); if (r.group && !r.mansion) dispose(r.group); if (r.shardGeos) { r.shardGeos.forEach(g => g.dispose()); r.shardGeos = null; } if (r.group && r.group.userData && r.group.userData.shardMats) { r.group.userData.shardMats.forEach(m => { try { m.dispose(); } catch (e) { } }); r.group.userData.shardMats = null; } }
     try { if (window.DMCollide && DMCollide.clearGroup) DMCollide.clearGroup('facility'); } catch (e) { }
     F.car = null; F.sites.clear(); F.solids.length = 0; F.bay = null; DM.bay.inside = false; DM.bay.membrane = 0;
@@ -829,6 +830,7 @@
       carveActivate(px, pz, ct, st, y0);
       rec.group = root; rec.mansion = true; rec.x = px; rec.z = pz; rec.y = y0; rec.th = th; rec.ready = true;
       if (window.DMMansionInt) { try { DMMansionInt.attach(F, rec, px, pz, y0, th); } catch (e) { console.warn('[mansion-interior] attach', e); } }
+      if (window.DMUndercliff) { try { DMUndercliff.attach(F, rec, px, pz, y0, th); } catch (e) { console.warn('[undercliff] attach', e); } }   // (Track 5) cargo bay, rooms, hangar, hatch (ui/dm-undercliff.js)
       if (window.DMMansionCol) { try { DMMansionCol.attach(F, rec); } catch (e) { console.warn('[mansion-collide] attach', e); } }
       if (window.DMHolo) { try { DMHolo.attach(F, rec); } catch (e) { console.warn('[holo] attach', e); } }
       if (window.DMLamps) { try { DMLamps.attach(F, rec, px, pz, y0, th); } catch (e) { console.warn('[lamps] attach', e); } }
@@ -928,6 +930,7 @@
         if (window.DMMansionInt) DMMansionInt.tick(rec, d3sq, now, DM.arriveAt === rec.def.id);
         if (window.DMHolo) { try { DMHolo.tick(rec, d3sq, now, dt); } catch (e) { if (!rec.holoWarn) { rec.holoWarn = 1; console.warn('[holo] tick', e); } } }
         if (window.DMLamps) { try { DMLamps.tick(rec, d3sq, now, dt, f, mode); } catch (e) { if (!rec.lampWarn) { rec.lampWarn = 1; console.warn('[lamps] tick', e); } } }   // street lamps + room switches (a failure here must never stop the facility upkeep)
+        if (window.DMUndercliff) { try { DMUndercliff.tick(rec, d3sq, now, dt, f, mode, DM.arriveAt === rec.def.id); } catch (e) { if (!rec.ucWarn) { rec.ucWarn = 1; console.warn('[undercliff] tick', e); } } }   // (Track 5) stream in / out, hatch, lights
       } else { const fc = window.DMLod && DMLod.on ? DMLod.get('facility.cull') : 6000; const dyB = f.y - rec.y; rec.group.visible = d2 + (dyB === dyB && isFinite(dyB) ? dyB * dyB : 0) < fc * fc; }   // (v289) altitude counts here too
       if (rec.clouds) for (const p of rec.clouds) { const t = p.material.map; t.offset.x += p.userData.v * dt; t.offset.y += p.userData.v * 0.6 * dt; }
       if (rec.bay) {

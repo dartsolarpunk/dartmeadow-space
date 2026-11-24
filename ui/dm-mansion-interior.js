@@ -101,7 +101,9 @@
   // walk() is live, so the board, trees, camera probes, ground marks and every other TERRAIN.H lookup keep seeing the roof / exterior grid.
   let _q = false;
   function ovr(x, z) {
-    if (!_q || !S.live) return NaN;
+    if (!_q) return NaN;
+    const UC = G.DMUndercliff; if (UC && UC.isLive()) { const u = UC.ovr(x, z); if (u === u) return u; }   // (Track 5) the undercliff level answers first where it owns the space (ui/dm-undercliff.js)
+    if (!S.live) return NaN;
     const dx = x - S.px, dz = z - S.pz, lx = dx * S.ct - dz * S.st, ly = -(dx * S.st + dz * S.ct), b = NAV.bbox;
     if (lx < b[0] || lx > b[2] || ly < b[1] || ly > b[3]) return NaN;
     const h = surf(lx, ly, S.feet); return h === h ? S.y0 + h : NaN;
@@ -112,6 +114,7 @@
   // ray(ox,oy,oz,dx,dy,dz,maxD): distance (world units) to the first interior wall cell or the roof underside along a world-space ray, or -1. Only live while she is inside
   // the mansion's reach (walk() running). Used by the ORBIT camera clamp (ui/dm-orbit-clamp.js): furniture and thin walls are DMCollide's, the room shell and ceiling are ours.
   function ray(ox, oy, oz, dx, dy, dz, maxD) {
+    const UC = G.DMUndercliff; if (UC && UC.isInside()) return UC.ray(ox, oy, oz, dx, dy, dz, maxD);   // (Track 5) inside the undercliff its walls / ceilings / rock clamp the camera
     if (NAV === null || !S.live || S.state !== 2) return -1;
     if (S.feet >= soffAt(S.lx, S.ly) - 0.3) return -1;     // she is on the roof: the exterior is open to her
     const b = NAV.bbox, ns = Math.min(160, Math.ceil(maxD / 0.3));
@@ -125,6 +128,7 @@
   }
   // updateSurface calls this right after it moves p.pos in x/z (feet = pos.y - 3). Walls/props stop the move; she slides along them.
   function walk(pos) {
+    if (G.DMUndercliff && G.DMUndercliff.walk(pos)) { S.live = false; S.have = false; return; }   // (Track 5) she is in the undercliff (bay, rooms, stair, hangar, hatch): it swept the move
     if (NAV === null || S.rec === null) return;
     const dx = pos.x - S.px, dz = pos.z - S.pz;
     if (dx * dx + dz * dz > LIVE_R2) { S.live = false; S.have = false; if (G.DMMansionLook) G.DMMansionLook.probeTick(0, 0, 0, false); return; }

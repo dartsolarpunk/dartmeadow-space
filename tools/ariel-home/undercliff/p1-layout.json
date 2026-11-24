@@ -1,0 +1,508 @@
+{
+ "F": -18.2,
+ "Y0": -2.9,
+ "U": 1.78,
+ "L": {
+  "bay": {
+   "X": [
+    -32.6,
+    32.6
+   ],
+   "D": [
+    0,
+    14
+   ],
+   "H": [
+    0,
+    7.0
+   ],
+   "name": "CARGO BAY",
+   "kind": "bay"
+  },
+  "spine": {
+   "X": [
+    -2,
+    2
+   ],
+   "D": [
+    14,
+    52
+   ],
+   "H": [
+    0,
+    3.8
+   ],
+   "name": "SPINE CORRIDOR",
+   "kind": "corr"
+  },
+  "living": {
+   "X": [
+    2,
+    18
+   ],
+   "D": [
+    14,
+    28
+   ],
+   "H": [
+    0,
+    3.8
+   ],
+   "name": "LIVING",
+   "kind": "living"
+  },
+  "office": {
+   "X": [
+    2,
+    10
+   ],
+   "D": [
+    31,
+    38
+   ],
+   "H": [
+    0,
+    3.6
+   ],
+   "name": "OFFICE",
+   "kind": "office"
+  },
+  "game": {
+   "X": [
+    2,
+    16
+   ],
+   "D": [
+    40,
+    52
+   ],
+   "H": [
+    0,
+    3.8
+   ],
+   "name": "GAME ROOM",
+   "kind": "game"
+  },
+  "kitchen": {
+   "X": [
+    -16,
+    -2
+   ],
+   "D": [
+    14,
+    28
+   ],
+   "H": [
+    0,
+    3.8
+   ],
+   "name": "MASTER KITCHEN + DINING",
+   "kind": "kitchen"
+  },
+  "workshop": {
+   "X": [
+    -32.6,
+    -16
+   ],
+   "D": [
+    14,
+    28
+   ],
+   "H": [
+    0,
+    4.5
+   ],
+   "name": "WORKSHOP / GARAGE",
+   "kind": "workshop"
+  },
+  "gcorr": {
+   "X": [
+    -30,
+    -2
+   ],
+   "D": [
+    28,
+    31
+   ],
+   "H": [
+    0,
+    3.5
+   ],
+   "name": "GUEST CORRIDOR",
+   "kind": "corr"
+  },
+  "guest1": {
+   "X": [
+    -26,
+    -20
+   ],
+   "D": [
+    31,
+    37.5
+   ],
+   "H": [
+    0,
+    3.5
+   ],
+   "name": "GUEST 1",
+   "kind": "guest"
+  },
+  "guest2": {
+   "X": [
+    -20,
+    -14
+   ],
+   "D": [
+    31,
+    37.5
+   ],
+   "H": [
+    0,
+    3.5
+   ],
+   "name": "GUEST 2",
+   "kind": "guest"
+  },
+  "guest3": {
+   "X": [
+    -14,
+    -8
+   ],
+   "D": [
+    31,
+    37.5
+   ],
+   "H": [
+    0,
+    3.5
+   ],
+   "name": "GUEST 3",
+   "kind": "guest"
+  },
+  "guest4": {
+   "X": [
+    -8,
+    -2
+   ],
+   "D": [
+    31,
+    37.5
+   ],
+   "H": [
+    0,
+    3.5
+   ],
+   "name": "GUEST 4",
+   "kind": "guest"
+  }
+ },
+ "ST": {
+  "D": [
+   28,
+   31
+  ],
+  "x_top": -30.0,
+  "drop": 12.0,
+  "flights": 4,
+  "risers": 17,
+  "tread": 0.26,
+  "landing": 1.2,
+  "riser": 0.17647058823529413,
+  "run": 20.240000000000002,
+  "x_bot": -50.24
+ },
+ "HG": {
+  "X": [
+   -80.24000000000001,
+   -50.24
+  ],
+  "D": [
+   7,
+   47
+  ],
+  "H": [
+   -12.0,
+   6.0
+  ]
+ },
+ "HATCH": {
+  "X": [
+   -74.24000000000001,
+   -56.24000000000001
+  ],
+  "D": [
+   23,
+   45
+  ]
+ },
+ "SHAFT": {
+  "X": [
+   -74.24000000000001,
+   -56.24000000000001
+  ],
+  "D": [
+   23,
+   47
+  ]
+ },
+ "VTOL": {
+  "L": 15.0,
+  "W": 12.0,
+  "Ht": 5.0,
+  "X": -65.24000000000001,
+  "D": 34.0
+ },
+ "SC": {
+  "drop": 22.297290501969584,
+  "flights": 7,
+  "risers": 18,
+  "tread": 0.26,
+  "landing": 1.5,
+  "width": 1.4,
+  "riser": 0.17696262303150465,
+  "flen": 4.42
+ },
+ "GZ": 0.12917709350585938,
+ "GH": 10.297290501969583,
+ "landings": [
+  [
+   -34.16,
+   -3.0
+  ],
+  [
+   -39.52,
+   -6.0
+  ],
+  [
+   -44.88,
+   -9.0
+  ]
+ ],
+ "report": {
+  "bay": {
+   "rock_to_first_surface_m": {
+    "sea": null,
+    "back": 40.7,
+    "west": 68.7,
+    "east": 68.8
+   },
+   "mansion_tri_overlaps": 0,
+   "terrain_overlaps": 0,
+   "shard_overlaps": 0,
+   "mansion_faces_inside": 0,
+   "min_cover_above_m": 2.03
+  },
+  "spine": {
+   "rock_to_first_surface_m": {
+    "sea": null,
+    "back": 3.5,
+    "west": 101.0,
+    "east": 101.0
+   },
+   "mansion_tri_overlaps": 0,
+   "terrain_overlaps": 0,
+   "shard_overlaps": 0,
+   "mansion_faces_inside": 0,
+   "min_cover_above_m": 5.33
+  },
+  "living": {
+   "rock_to_first_surface_m": {
+    "sea": null,
+    "back": 27.5,
+    "west": 105.1,
+    "east": 85.0
+   },
+   "mansion_tri_overlaps": 0,
+   "terrain_overlaps": 0,
+   "shard_overlaps": 0,
+   "mansion_faces_inside": 0,
+   "min_cover_above_m": 6.41
+  },
+  "office": {
+   "rock_to_first_surface_m": {
+    "sea": null,
+    "back": 17.6,
+    "west": 105.1,
+    "east": 93.1
+   },
+   "mansion_tri_overlaps": 0,
+   "terrain_overlaps": 0,
+   "shard_overlaps": 0,
+   "mansion_faces_inside": 0,
+   "min_cover_above_m": 6.62
+  },
+  "game": {
+   "rock_to_first_surface_m": {
+    "sea": null,
+    "back": 3.5,
+    "west": 105.0,
+    "east": 87.0
+   },
+   "mansion_tri_overlaps": 0,
+   "terrain_overlaps": 0,
+   "shard_overlaps": 0,
+   "mansion_faces_inside": 0,
+   "min_cover_above_m": 4.25
+  },
+  "kitchen": {
+   "rock_to_first_surface_m": {
+    "sea": null,
+    "back": 27.5,
+    "west": 87.1,
+    "east": 105.0
+   },
+   "mansion_tri_overlaps": 0,
+   "terrain_overlaps": 0,
+   "shard_overlaps": 0,
+   "mansion_faces_inside": 0,
+   "min_cover_above_m": 6.36
+  },
+  "workshop": {
+   "rock_to_first_surface_m": {
+    "sea": null,
+    "back": 27.3,
+    "west": 70.1,
+    "east": 118.7
+   },
+   "mansion_tri_overlaps": 0,
+   "terrain_overlaps": 0,
+   "shard_overlaps": 0,
+   "mansion_faces_inside": 0,
+   "min_cover_above_m": 5.65
+  },
+  "gcorr": {
+   "rock_to_first_surface_m": {
+    "sea": null,
+    "back": 24.6,
+    "west": 73.2,
+    "east": 105.2
+   },
+   "mansion_tri_overlaps": 0,
+   "terrain_overlaps": 0,
+   "shard_overlaps": 0,
+   "mansion_faces_inside": 0,
+   "min_cover_above_m": 6.71
+  },
+  "guest1": {
+   "rock_to_first_surface_m": {
+    "sea": null,
+    "back": 18.0,
+    "west": 77.2,
+    "east": 123.2
+   },
+   "mansion_tri_overlaps": 0,
+   "terrain_overlaps": 0,
+   "shard_overlaps": 0,
+   "mansion_faces_inside": 0,
+   "min_cover_above_m": 6.67
+  },
+  "guest2": {
+   "rock_to_first_surface_m": {
+    "sea": null,
+    "back": 18.1,
+    "west": 83.2,
+    "east": 117.2
+   },
+   "mansion_tri_overlaps": 0,
+   "terrain_overlaps": 0,
+   "shard_overlaps": 0,
+   "mansion_faces_inside": 0,
+   "min_cover_above_m": 6.66
+  },
+  "guest3": {
+   "rock_to_first_surface_m": {
+    "sea": null,
+    "back": 18.1,
+    "west": 89.2,
+    "east": 111.2
+   },
+   "mansion_tri_overlaps": 0,
+   "terrain_overlaps": 0,
+   "shard_overlaps": 0,
+   "mansion_faces_inside": 0,
+   "min_cover_above_m": 6.66
+  },
+  "guest4": {
+   "rock_to_first_surface_m": {
+    "sea": 66.0,
+    "back": 18.1,
+    "west": 95.2,
+    "east": 105.2
+   },
+   "mansion_tri_overlaps": 0,
+   "terrain_overlaps": 0,
+   "shard_overlaps": 0,
+   "mansion_faces_inside": 0,
+   "min_cover_above_m": 6.67
+  },
+  "stairs": {
+   "rock_to_first_surface_m": {
+    "sea": 33.9,
+    "back": 27.3,
+    "west": 58.6,
+    "east": 138.8
+   },
+   "mansion_tri_overlaps": 0,
+   "terrain_overlaps": 0,
+   "shard_overlaps": 0,
+   "mansion_faces_inside": 0,
+   "min_cover_above_m": 7.22
+  },
+  "hangar": {
+   "rock_to_first_surface_m": {
+    "sea": 22.7,
+    "back": 10.7,
+    "west": 27.3,
+    "east": 157.8
+   },
+   "mansion_tri_overlaps": 0,
+   "terrain_overlaps": 0,
+   "shard_overlaps": 0,
+   "mansion_faces_inside": 0,
+   "min_cover_above_m": 4.15
+  },
+  "shaft": {
+   "rock_to_first_surface_m": {
+    "sea": 36.0,
+    "back": 4.1,
+    "west": 20.5,
+    "east": 151.0
+   },
+   "mansion_tri_overlaps": 0,
+   "terrain_overlaps": 0,
+   "shard_overlaps": 0,
+   "mansion_faces_inside": 0,
+   "min_cover_above_m": null
+  },
+  "hatch": {
+   "ground_z_samples_u": [
+    -0.08,
+    -0.07,
+    -0.43,
+    -0.03,
+    -0.01,
+    -0.26,
+    0.13,
+    0.07,
+    -0.21
+   ],
+   "ground_relief_m": 0.31,
+   "nearest_lamp_m": 3.43,
+   "rect_u": [
+    -132.1,
+    -100.1,
+    -86.6,
+    -43.8
+   ],
+   "gap_to_workshop_wing_m": 8.64
+  },
+  "bay_cut": {
+   "faces": 3633,
+   "by_material": {
+    "ah_rock": 2818,
+    "ah_rockc": 815
+   }
+  },
+  "hatch_hole_faces": 532
+ }
+}
