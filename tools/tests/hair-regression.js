@@ -49,7 +49,9 @@ async function run(modPath, THREE, binBuf, opts, scalpName) {
     // bit-identical to the golden, and the new default must differ (it is really on) and stay finite
     const leg = await run(path.join(ROOT, 'hair_strands.js'), THREE, binBuf, { sdfFine: 1, params: { softBand: 0 } }), l1 = { h0: leg.h0, h90: leg.h90, col: leg.col, stats: leg.stats };
     const g = JSON.parse(fs.readFileSync(gf)); ok(JSON.stringify(g) === JSON.stringify(l1), 'sdfFine 1 + softBand 0: identical to the golden recorded before the loader became data-driven'); if (JSON.stringify(g) !== JSON.stringify(l1)) console.log(' golden', g, '\n now   ', l1);
-    ok(JSON.stringify(g.h90) !== JSON.stringify(a1.h90) && cur.finite && cur.H.meta.sdfFine === 2, 'default (fine SDF x2 + soft contacts) is active, differs from the rigid path and stays finite');
+    const fine = await run(path.join(ROOT, 'hair_strands.js'), THREE, binBuf, { params: { collisionTier: 1 } });
+    ok(cur.H.meta.sdfFine == null, 'tier 0 / Low keeps the file SDF grid (1x, mobile RAM)');
+    ok(fine.H.meta.sdfFine === 2 && fine.finite && JSON.stringify(fine.h90) !== JSON.stringify(g.h90), 'tier >= 1: fine SDF x2 + soft contacts active, differs from the rigid path, finite');
   }
   // data-driven config: a 4-cluster character with its own widths/colours/stiffness (the strand file's groups are reused as cluster ids)
   try {

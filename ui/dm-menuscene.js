@@ -345,6 +345,7 @@
       // (t1644u) DUO: Ariel AND Emma sit on the rock together and both fly out on the launch (?intro=solo or ?menuduo=0 = the single-pilot scene / intro)
       const DUO_WANT = qs('intro', '') !== 'solo' && qs('menuduo', '1') !== '0' && !!(window.DMChars && DMChars.get && DMChars.get('emma') && DMChars.get('emma').ready);
       let B = null;   // the second pilot (built below when she loaded)
+      let duoWide = DUO_WANT;   // frame the rock for two from the first frame (Emma mounts when her GLB lands); false again if she never does
 
       /* renderer */
       const renderer = new THREE.WebGPURenderer({ canvas: cv, antialias: !lowTier, alpha: true, powerPreference: 'high-performance' });
@@ -367,7 +368,7 @@
       let camBase = new THREE.Vector3();
       function frame() {                             // keep boulder + her in frame whatever the aspect
         const asp = camera.aspect, tanH = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
-        const needH = 2.45, needW = B ? 4.3 : 3.5;   // (t1644u) two pilots on the rock: a little wider
+        const needH = 2.45, needW = (B || duoWide) ? 4.3 : 3.5;   // (t1644u) two pilots on the rock: a little wider
         const dist = Math.max(needH / (2 * tanH), needW / (2 * tanH * asp));
         camBase.set(0.55, 1.15, dist); camera.position.copy(camBase); camera.lookAt(TARGET);
       }
@@ -437,24 +438,29 @@
       P.fingers([22, 32, 17], { Index: 5, Middle: 0, Ring: -3, Pinky: -8 });
 
       /* seat: hips settle on the boulder; yaw her so she faces screen-left */
-      const gB = await pB; if (MS.disposed) return;
-      const YAW = gB ? -Math.PI * 0.14 : -Math.PI * 0.22;   // character +Z (forward) → world −X   (duo: Ariel on the left half of the rock, turned a little more to the camera)
-      holder.rotation.y = YAW;
+      // (t1644u) no wait for the second pilot: Ariel paints at once in the duo seat (left half of the rock) and Emma is mounted beside her the moment her
+      // GLB is in (pB below); if Emma never arrives (failed / 14 s timeout) Ariel moves back to the solo seat.
+      let duoSeat = !!pBdef;
       const ray = new THREE.Raycaster(), down = new THREE.Vector3(0, -1, 0);
       const surfY = (x, z, extra) => { ray.set(new THREE.Vector3(x, 6, z), down); const hits = ray.intersectObjects(extra || [boulder, ground], false); return hits.length ? hits[0].point.y : 0; };
-      const SEAT_X = gB ? -0.36 : 0.2;
+      let SEAT_X = 0.2;
       const hipsRoot = new THREE.Vector3(0, 0.80, -0.04);
       const place = () => { holder.updateMatrixWorld(true); const wp = holder.localToWorld(hipsRoot.clone()); holder.position.x += SEAT_X - wp.x; holder.position.z += 0 - wp.z;
         holder.position.y += (surfY(SEAT_X, 0, [boulder]) + 0.115) - wp.y; holder.updateMatrixWorld(true); };
-      place(); place();
       const toRoot = (wx, wz, lift) => { const y = Math.max(surfY(wx, wz, [boulder]), surfY(wx, wz, [ground]) ) + lift; return holder.worldToLocal(new THREE.Vector3(wx, y, wz)); };
       // foot targets (root space): near (her left) foot up on the boulder's front slope, far foot lower & further out
       const fwd = (f, s) => { const w = holder.localToWorld(new THREE.Vector3(s, 0, f)); return [w.x, w.z]; };
       // (duo) both feet stay ON the rock: the reach is shortened until the point is over the boulder (a target past its edge dropped the foot to the
       // ground and the shin ran through the rock)
       const onRock = (fw, f, sd, to, lift) => { let x = 0, z = 0; for (let ff = f; ff >= 0.22; ff -= 0.03) { [x, z] = fw(ff, sd); if (surfY(x, z, [boulder]) > surfY(x, z, [ground]) + 0.14) break; } return to(x, z, lift); };
-      const ankleL = gB ? onRock(fwd, 0.34, 0.14, toRoot, 0.105) : (() => { const [x, z] = fwd(0.34, 0.14); return toRoot(x, z, 0.105); })();
-      const ankleR = gB ? onRock(fwd, 0.62, -0.16, toRoot, 0.105) : (() => { const [x, z] = fwd(0.72, -0.16); return toRoot(x, z, 0.105); })();
+      const ankleL = new THREE.Vector3(), ankleR = new THREE.Vector3();
+      const seatA = (duo) => {   // character +Z (forward) -> world -X; duo: left half of the rock, turned a little more to the camera
+        duoSeat = duo; holder.position.set(0, 0, 0); holder.rotation.y = duo ? -Math.PI * 0.14 : -Math.PI * 0.22; SEAT_X = duo ? -0.36 : 0.2;
+        place(); place();
+        ankleL.copy(duo ? onRock(fwd, 0.34, 0.14, toRoot, 0.105) : (() => { const [x, z] = fwd(0.34, 0.14); return toRoot(x, z, 0.105); })());
+        ankleR.copy(duo ? onRock(fwd, 0.62, -0.16, toRoot, 0.105) : (() => { const [x, z] = fwd(0.72, -0.16); return toRoot(x, z, 0.105); })());
+      };
+      seatA(duoSeat);
 
       /* hair: build via buildHair directly so nothing leaks into window.DART_HAIR */
       let hair = null;
@@ -586,7 +592,6 @@
         } catch (e) { info('second pilot hair not attached:', e && e.message); } })();
         return X;
       }
-      if (gB) { try { B = buildCompanion(gB, pBdef); poseSeated(B, 7.3); B.root.updateMatrixWorld(true); info('second pilot on the rock:', pBdef.name); } catch (e) { info('second pilot failed:', e && e.message); B = null; } }
       A.def = (window.DMChars && DMChars.get && DMChars.get('ariel')) || null;
       // each pilot's own walk / Mount_Step / idle clips for the duo launch, fetched in idle time once the scene is up (the game loads the chosen pilot's
       // clips from the same URL, so one of the two is usually a cache hit).  Until both are in, a press plays the single-pilot intro.
@@ -604,7 +609,15 @@
         }).catch((e) => { info('clips for', X.id, 'failed:', e && e.message); });
         return X._clipP;
       };
-      if (B) setTimeout(() => { if (!MS.disposed) { loadClips(A); loadClips(B); } }, 2500);
+      // mount Emma whenever her GLB lands (never in the middle of a launch: then she is simply left out and the single-pilot intro plays)
+      pB.then((gB) => {
+        if (MS.disposed) return;
+        if (gB && !IN.on && !window.__JOTS_INTRO) {
+          try { B = buildCompanion(gB, pBdef); poseSeated(B, 7.3); B.root.updateMatrixWorld(true); info('second pilot on the rock:', pBdef.name); } catch (e) { info('second pilot failed:', e && e.message); B = null; }
+        }
+        if (!B) { if (duoSeat && !IN.on) { duoWide = false; seatA(false); pose(t); root.updateMatrixWorld(true); fit(); } return; }
+        setTimeout(() => { if (!MS.disposed) { loadClips(A); loadClips(B); } }, 2500);
+      });
       // a first look at the hip pose so shoulders sit sensibly even before the first frame
       /* camera + render loop */
       const clock = new THREE.Clock(); let t = 0, last = performance.now(), ema = 16, adj = 0, menuT = -1, framesSeen = 0;
@@ -1226,6 +1239,8 @@ IN.D.copy(IN.Dl); b.localToWorld(IN.D); IN.D.y += 0.03;
         MS.disposed = true; MS.ready = false; cancelAnimationFrame(raf); window.removeEventListener('resize', onResize); window.removeEventListener('orientationchange', onResize); window.removeEventListener('pointermove', onPtr); window.removeEventListener('pointerdown', onDown); window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp);
         try { if (window.visualViewport) window.visualViewport.removeEventListener('resize', onResize); } catch (e) {}
         try { hair && hair.dispose && hair.dispose(); } catch (e) {}
+        try { if (B && B.hair && B.hair.dispose) B.hair.dispose(); } catch (e) {}
+        try { if (DU) duoReset(); } catch (e) {}
         try { scene.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.dispose && m.dispose()); }); noiseTex.dispose(); renderer.dispose(); } catch (e) {}
         try { cv.remove(); } catch (e) {}
         MS._p = null; MS._ctx = null; MS.started = false;

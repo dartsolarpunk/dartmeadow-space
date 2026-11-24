@@ -3289,7 +3289,7 @@ function _introCompanionBoard(){
   catch(e){ console.warn('[intro] companion board',e); mesh=null; }
   finally{ STATE.boardConfig=keep; }
   if(!mesh) return null;
-  const t=cfg.template; return {mesh,shared:!!(t&&t!=='R'&&t!=='procedural')};
+  const t=cfg.template; return {mesh,shared:!!(t&&t!=='R'&&t!=='procedural'&&!(mesh.userData&&mesh.userData.procFallback))};   // a procedural stand-in (template still loading) owns its textures
 }
 // The fly-out starts here, on the press (or at the end of the bounded fallback hold). Nothing in this function waits for the world.
 function _introPlay(why){
@@ -22856,10 +22856,11 @@ const BOARD_STANCE = window.BOARD_STANCE = window.BOARD_STANCE || {
 // returns it from the blocks it runs); the stance plays no clip, so it is a plain 1.
 const SKYBOARD_ANIM_SPEED = 1;
 // (t1644u) per-pilot stance: DMChars registry `stance` overrides (Emma: her own hip / ankle heights, idle hands) layered over BOARD_STANCE.
-// _bsP() refreshes one preallocated object from BOARD_STANCE (still live-tunable) + the loaded pilot's overrides; no per-frame allocation.
+// _bsP() refreshes one preallocated object from BOARD_STANCE (still live-tunable) + the loaded pilot's overrides; no per-frame allocation. Keys only a
+// pilot's overrides add (Emma's handsFrom) are dropped first, so an Emma -> Ariel swap never carries them over.
 const _bsEff={};
 function _bsOv(){ try{ const d=window.DMChars&&CHAR.charId&&DMChars.get(CHAR.charId); return (d&&d.stance)||null; }catch(e){ return null; } }
-function _bsP(){ const o=_bsOv(); for(const k in BOARD_STANCE) _bsEff[k]=BOARD_STANCE[k]; if(o) for(const k in o) _bsEff[k]=o[k]; return _bsEff; }
+function _bsP(){ const o=_bsOv(); for(const k in _bsEff) if(!(k in BOARD_STANCE)) delete _bsEff[k]; for(const k in BOARD_STANCE) _bsEff[k]=BOARD_STANCE[k]; if(o) for(const k in o) _bsEff[k]=o[k]; return _bsEff; }
 const _BS_SOLVE=['Hips','Spine02','Spine01','Spine','neck','Head','LeftArm','LeftForeArm','RightArm','RightForeArm','LeftUpLeg','LeftLeg','LeftFoot','RightUpLeg','RightLeg','RightFoot'];
 let _bs=null;
 function _bsInit(){

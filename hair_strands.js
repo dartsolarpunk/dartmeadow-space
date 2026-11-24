@@ -238,11 +238,13 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
               ox: s.origin[0], oy: s.origin[1], oz: s.origin[2], inv: 1 / s.cell, unit: s.unit || 1e-4 };
   }
   // (t1645u) the collision surface is denser than anything that touches it: the groom's head SDF (5 mm cells) is refined ONCE here by `sdfFine`
-  // (default 2 -> 2.5 mm, below the finest strand segment: Emma 3.8 mm at the root, Ariel 9 mm; 3 -> 1.7 mm) with a separable Catmull-Rom (C1) resample, so
+  // (2 -> 2.5 mm on tier >= 1, below the finest strand segment: Emma 3.8 mm at the root, Ariel 9 mm; 3 -> 1.7 mm) with a separable Catmull-Rom (C1) resample, so
   // the trilinear field + gradient the solver reads changes direction every 2.5 mm instead of 5 and contacts slide over the scalp instead of stepping
   // cell to cell.  Load time only (~15-40 ms, ~2.8 MB per groom at x2); per frame it is the same one lookup.  ?hairsdf=1 / opts.sdfFine:1 = the file's grid.
   if (SDF) {
-    let f = 2; try { if (opts.sdfFine != null) f = typeof opts.sdfFine === 'function' ? +opts.sdfFine() : +opts.sdfFine; } catch (e) { f = 2; }
+    // x2 on Medium / High / Ultra and the Pilot Editor (collision tier >= 1 at load); tier 0 (Low: 3-4 GB iPhone / iPad Safari) keeps the file's grid
+    let t0 = 0; try { const ct = opts.params && opts.params.collisionTier; t0 = (ct != null && ct !== 'auto') ? +ct : (opts.getCollisionTier ? +opts.getCollisionTier() : 0); } catch (e) { t0 = 0; }
+    let f = t0 > 0 ? 2 : 1; try { if (opts.sdfFine != null) f = typeof opts.sdfFine === 'function' ? +opts.sdfFine() : +opts.sdfFine; } catch (e) { f = t0 > 0 ? 2 : 1; }
     if (typeof location !== 'undefined') { const m = /[?&]hairsdf=(\d)/.exec(location.search || ''); if (m) f = +m[1]; }
     f = Math.max(1, Math.min(3, f | 0));
     if (f > 1) { SDF = upsampleSDF(SDF, f); meta.sdfFine = f; }
