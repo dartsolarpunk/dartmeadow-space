@@ -1,0 +1,822 @@
+{
+ "game": {
+  "coll": "uc_game",
+  "tri": {
+   "game_floor": 2,
+   "game_walls": 258,
+   "game_ceil": 114,
+   "game_prop_pooltable": 498,
+   "game_props": 1410,
+   "game_prop_bar": 520,
+   "game_prop_cardtable": 368
+  },
+  "objs": [
+   "game_floor",
+   "game_walls",
+   "game_ceil",
+   "game_prop_pooltable",
+   "game_props",
+   "game_prop_bar",
+   "game_prop_cardtable"
+  ],
+  "S": {
+   "x0": 2.12,
+   "x1": 15.88,
+   "d0": 40.12,
+   "d1": 51.88,
+   "Hc": 3.8,
+   "Ht": 4.1
+  },
+  "O": [
+   9.0,
+   -46.0,
+   0.0
+  ],
+  "shell": 374,
+  "props": 2796,
+  "total": 3170,
+  "mats": [
+   "uc_concrete",
+   "uc_dark",
+   "uc_emit",
+   "uc_rock",
+   "uc_slate",
+   "uc_wood"
+  ],
+  "lights": [
+   [
+    "L_game_1",
+    "downlight",
+    5.0,
+    44.0,
+    3.79,
+    1.0
+   ],
+   [
+    "L_game_2",
+    "downlight",
+    5.0,
+    49.0,
+    3.79,
+    1.0
+   ],
+   [
+    "L_game_3",
+    "downlight",
+    11.5,
+    44.0,
+    3.79,
+    1.0
+   ],
+   [
+    "L_game_4",
+    "downlight",
+    11.5,
+    49.0,
+    3.79,
+    1.0
+   ],
+   [
+    "L_game_5",
+    "pendant",
+    6.0,
+    46.5,
+    2.53,
+    1.0
+   ],
+   [
+    "L_game_6",
+    "floorlamp",
+    10.3,
+    48.9,
+    1.6,
+    1.0
+   ],
+   [
+    "L_game_7",
+    "shelf_strip",
+    12.0,
+    40.32,
+    1.43,
+    0.55
+   ],
+   [
+    "L_game_8",
+    "arcade_screens",
+    12.4,
+    50.98,
+    1.35,
+    0.55
+   ],
+   [
+    "L_game_9",
+    "rock_wash",
+    9.0,
+    51.76,
+    0.1,
+    0.55
+   ],
+   [
+    "L_game_10",
+    "cove",
+    9.0,
+    40.42,
+    4.03,
+    0.55
+   ],
+   [
+    "L_game_11",
+    "cove",
+    9.0,
+    51.58,
+    4.03,
+    0.55
+   ],
+   [
+    "L_game_12",
+    "cove",
+    2.42,
+    46.0,
+    4.03,
+    0.55
+   ],
+   [
+    "L_game_13",
+    "cove",
+    15.58,
+    46.0,
+    4.03,
+    0.55
+   ]
+  ],
+  "door": [
+   "W",
+   42.0,
+   1.2,
+   2.6
+  ]
+ },
+ "office": {
+  "coll": "uc_office",
+  "tri": {
+   "office_floor": 2,
+   "office_walls": 162,
+   "office_ceil": 92,
+   "office_prop_desk": 72,
+   "office_props": 560,
+   "office_prop_shelves": 2578
+  },
+  "objs": [
+   "office_floor",
+   "office_walls",
+   "office_ceil",
+   "office_prop_desk",
+   "office_props",
+   "office_prop_shelves"
+  ],
+  "S": {
+   "x0": 2.12,
+   "x1": 9.88,
+   "d0": 31.12,
+   "d1": 37.88,
+   "Hc": 3.6,
+   "Ht": 3.9
+  },
+  "O": [
+   6.0,
+   -34.5,
+   0.0
+  ],
+  "shell": 256,
+  "props": 3210,
+  "total": 3466,
+  "mats": [
+   "uc_concrete",
+   "uc_dark",
+   "uc_emit",
+   "uc_rock",
+   "uc_slate",
+   "uc_wood"
+  ],
+  "lights": [
+   [
+    "L_office_1",
+    "downlight",
+    4.4,
+    33.4,
+    3.59,
+    1.0
+   ],
+   [
+    "L_office_2",
+    "downlight",
+    7.6,
+    33.4,
+    3.59,
+    1.0
+   ],
+   [
+    "L_office_3",
+    "downlight",
+    6.0,
+    36.2,
+    3.59,
+    1.0
+   ],
+   [
+    "L_office_4",
+    "desklamp",
+    5.25,
+    35.05,
+    1.12,
+    1.0
+   ],
+   [
+    "L_office_5",
+    "shelf_strip",
+    9.48,
+    34.6,
+    2.56,
+    0.55
+   ],
+   [
+    "L_office_6",
+    "rock_wash",
+    6.0,
+    37.76,
+    0.1,
+    0.55
+   ],
+   [
+    "L_office_7",
+    "cove",
+    6.0,
+    31.42,
+    3.83,
+    0.55
+   ],
+   [
+    "L_office_8",
+    "cove",
+    6.0,
+    37.58,
+    3.83,
+    0.55
+   ],
+   [
+    "L_office_9",
+    "cove",
+    2.42,
+    34.5,
+    3.83,
+    0.55
+   ],
+   [
+    "L_office_10",
+    "cove",
+    9.58,
+    34.5,
+    3.83,
+    0.55
+   ]
+  ],
+  "door": [
+   "W",
+   32.2,
+   1.2,
+   2.6
+  ]
+ },
+ "guest1": {
+  "coll": "uc_guest1",
+  "tri": {
+   "guest1_floor": 6,
+   "guest1_walls": 146,
+   "guest1_ceil": 70,
+   "guest1_props": 634,
+   "guest1_prop_bed": 140,
+   "guest1_prop_sidetables": 56,
+   "guest1_prop_wardrobe": 70
+  },
+  "objs": [
+   "guest1_floor",
+   "guest1_walls",
+   "guest1_ceil",
+   "guest1_props",
+   "guest1_prop_bed",
+   "guest1_prop_sidetables",
+   "guest1_prop_wardrobe"
+  ],
+  "S": {
+   "x0": -25.88,
+   "x1": -20.12,
+   "d0": 31.12,
+   "d1": 37.38,
+   "Hc": 3.5,
+   "Ht": 3.8
+  },
+  "O": [
+   -23.0,
+   -34.25,
+   0.0
+  ],
+  "shell": 222,
+  "props": 900,
+  "total": 1122,
+  "mats": [
+   "uc_concrete",
+   "uc_dark",
+   "uc_emit",
+   "uc_rock",
+   "uc_slate",
+   "uc_wood"
+  ],
+  "lights": [
+   [
+    "L_guest1_1",
+    "downlight",
+    -24.0,
+    32.6,
+    3.49,
+    1.0
+   ],
+   [
+    "L_guest1_2",
+    "downlight",
+    -23.0,
+    35.4,
+    3.49,
+    1.0
+   ],
+   [
+    "L_guest1_3",
+    "vanity",
+    -20.22,
+    32.82,
+    1.6,
+    0.55
+   ],
+   [
+    "L_guest1_4",
+    "bedside",
+    -24.63,
+    37.08,
+    0.85,
+    1.0
+   ],
+   [
+    "L_guest1_5",
+    "bedside",
+    -22.17,
+    37.08,
+    0.85,
+    1.0
+   ],
+   [
+    "L_guest1_6",
+    "rock_wash",
+    -23.0,
+    37.26,
+    0.1,
+    0.55
+   ],
+   [
+    "L_guest1_7",
+    "cove",
+    -23.0,
+    31.42,
+    3.73,
+    0.55
+   ],
+   [
+    "L_guest1_8",
+    "cove",
+    -23.0,
+    37.08,
+    3.73,
+    0.55
+   ],
+   [
+    "L_guest1_9",
+    "cove",
+    -25.58,
+    34.25,
+    3.73,
+    0.55
+   ],
+   [
+    "L_guest1_10",
+    "cove",
+    -20.42,
+    34.25,
+    3.73,
+    0.55
+   ]
+  ],
+  "door": [
+   "N",
+   -24.779999999999998,
+   1.2,
+   2.6
+  ]
+ },
+ "guest2": {
+  "coll": "uc_guest2",
+  "tri": {
+   "guest2_floor": 6,
+   "guest2_walls": 146,
+   "guest2_ceil": 70,
+   "guest2_props": 634,
+   "guest2_prop_bed": 140,
+   "guest2_prop_sidetables": 56,
+   "guest2_prop_wardrobe": 70
+  },
+  "objs": [
+   "guest2_floor",
+   "guest2_walls",
+   "guest2_ceil",
+   "guest2_props",
+   "guest2_prop_bed",
+   "guest2_prop_sidetables",
+   "guest2_prop_wardrobe"
+  ],
+  "S": {
+   "x0": -19.88,
+   "x1": -14.12,
+   "d0": 31.12,
+   "d1": 37.38,
+   "Hc": 3.5,
+   "Ht": 3.8
+  },
+  "O": [
+   -17.0,
+   -34.25,
+   0.0
+  ],
+  "shell": 222,
+  "props": 900,
+  "total": 1122,
+  "mats": [
+   "uc_concrete",
+   "uc_dark",
+   "uc_emit",
+   "uc_rock",
+   "uc_slate",
+   "uc_wood"
+  ],
+  "lights": [
+   [
+    "L_guest2_1",
+    "downlight",
+    -16.0,
+    32.6,
+    3.49,
+    1.0
+   ],
+   [
+    "L_guest2_2",
+    "downlight",
+    -17.0,
+    35.4,
+    3.49,
+    1.0
+   ],
+   [
+    "L_guest2_3",
+    "vanity",
+    -19.78,
+    32.82,
+    1.6,
+    0.55
+   ],
+   [
+    "L_guest2_4",
+    "bedside",
+    -17.83,
+    37.08,
+    0.85,
+    1.0
+   ],
+   [
+    "L_guest2_5",
+    "bedside",
+    -15.37,
+    37.08,
+    0.85,
+    1.0
+   ],
+   [
+    "L_guest2_6",
+    "rock_wash",
+    -17.0,
+    37.26,
+    0.1,
+    0.55
+   ],
+   [
+    "L_guest2_7",
+    "cove",
+    -17.0,
+    31.42,
+    3.73,
+    0.55
+   ],
+   [
+    "L_guest2_8",
+    "cove",
+    -17.0,
+    37.08,
+    3.73,
+    0.55
+   ],
+   [
+    "L_guest2_9",
+    "cove",
+    -19.58,
+    34.25,
+    3.73,
+    0.55
+   ],
+   [
+    "L_guest2_10",
+    "cove",
+    -14.42,
+    34.25,
+    3.73,
+    0.55
+   ]
+  ],
+  "door": [
+   "N",
+   -15.220000000000002,
+   1.2,
+   2.6
+  ]
+ },
+ "guest3": {
+  "coll": "uc_guest3",
+  "tri": {
+   "guest3_floor": 6,
+   "guest3_walls": 146,
+   "guest3_ceil": 70,
+   "guest3_props": 634,
+   "guest3_prop_bed": 140,
+   "guest3_prop_sidetables": 56,
+   "guest3_prop_wardrobe": 70
+  },
+  "objs": [
+   "guest3_floor",
+   "guest3_walls",
+   "guest3_ceil",
+   "guest3_props",
+   "guest3_prop_bed",
+   "guest3_prop_sidetables",
+   "guest3_prop_wardrobe"
+  ],
+  "S": {
+   "x0": -13.88,
+   "x1": -8.12,
+   "d0": 31.12,
+   "d1": 37.38,
+   "Hc": 3.5,
+   "Ht": 3.8
+  },
+  "O": [
+   -11.0,
+   -34.25,
+   0.0
+  ],
+  "shell": 222,
+  "props": 900,
+  "total": 1122,
+  "mats": [
+   "uc_concrete",
+   "uc_dark",
+   "uc_emit",
+   "uc_rock",
+   "uc_slate",
+   "uc_wood"
+  ],
+  "lights": [
+   [
+    "L_guest3_1",
+    "downlight",
+    -12.0,
+    32.6,
+    3.49,
+    1.0
+   ],
+   [
+    "L_guest3_2",
+    "downlight",
+    -11.0,
+    35.4,
+    3.49,
+    1.0
+   ],
+   [
+    "L_guest3_3",
+    "vanity",
+    -8.22,
+    32.82,
+    1.6,
+    0.55
+   ],
+   [
+    "L_guest3_4",
+    "bedside",
+    -12.63,
+    37.08,
+    0.85,
+    1.0
+   ],
+   [
+    "L_guest3_5",
+    "bedside",
+    -10.17,
+    37.08,
+    0.85,
+    1.0
+   ],
+   [
+    "L_guest3_6",
+    "rock_wash",
+    -11.0,
+    37.26,
+    0.1,
+    0.55
+   ],
+   [
+    "L_guest3_7",
+    "cove",
+    -11.0,
+    31.42,
+    3.73,
+    0.55
+   ],
+   [
+    "L_guest3_8",
+    "cove",
+    -11.0,
+    37.08,
+    3.73,
+    0.55
+   ],
+   [
+    "L_guest3_9",
+    "cove",
+    -13.58,
+    34.25,
+    3.73,
+    0.55
+   ],
+   [
+    "L_guest3_10",
+    "cove",
+    -8.42,
+    34.25,
+    3.73,
+    0.55
+   ]
+  ],
+  "door": [
+   "N",
+   -12.780000000000001,
+   1.2,
+   2.6
+  ]
+ },
+ "guest4": {
+  "coll": "uc_guest4",
+  "tri": {
+   "guest4_floor": 6,
+   "guest4_walls": 146,
+   "guest4_ceil": 70,
+   "guest4_props": 634,
+   "guest4_prop_bed": 140,
+   "guest4_prop_sidetables": 56,
+   "guest4_prop_wardrobe": 70
+  },
+  "objs": [
+   "guest4_floor",
+   "guest4_walls",
+   "guest4_ceil",
+   "guest4_props",
+   "guest4_prop_bed",
+   "guest4_prop_sidetables",
+   "guest4_prop_wardrobe"
+  ],
+  "S": {
+   "x0": -7.88,
+   "x1": -2.12,
+   "d0": 31.12,
+   "d1": 37.38,
+   "Hc": 3.5,
+   "Ht": 3.8
+  },
+  "O": [
+   -5.0,
+   -34.25,
+   0.0
+  ],
+  "shell": 222,
+  "props": 900,
+  "total": 1122,
+  "mats": [
+   "uc_concrete",
+   "uc_dark",
+   "uc_emit",
+   "uc_rock",
+   "uc_slate",
+   "uc_wood"
+  ],
+  "lights": [
+   [
+    "L_guest4_1",
+    "downlight",
+    -4.0,
+    32.6,
+    3.49,
+    1.0
+   ],
+   [
+    "L_guest4_2",
+    "downlight",
+    -5.0,
+    35.4,
+    3.49,
+    1.0
+   ],
+   [
+    "L_guest4_3",
+    "vanity",
+    -7.78,
+    32.82,
+    1.6,
+    0.55
+   ],
+   [
+    "L_guest4_4",
+    "bedside",
+    -5.83,
+    37.08,
+    0.85,
+    1.0
+   ],
+   [
+    "L_guest4_5",
+    "bedside",
+    -3.37,
+    37.08,
+    0.85,
+    1.0
+   ],
+   [
+    "L_guest4_6",
+    "rock_wash",
+    -5.0,
+    37.26,
+    0.1,
+    0.55
+   ],
+   [
+    "L_guest4_7",
+    "cove",
+    -5.0,
+    31.42,
+    3.73,
+    0.55
+   ],
+   [
+    "L_guest4_8",
+    "cove",
+    -5.0,
+    37.08,
+    3.73,
+    0.55
+   ],
+   [
+    "L_guest4_9",
+    "cove",
+    -7.58,
+    34.25,
+    3.73,
+    0.55
+   ],
+   [
+    "L_guest4_10",
+    "cove",
+    -2.42,
+    34.25,
+    3.73,
+    0.55
+   ]
+  ],
+  "door": [
+   "N",
+   -3.2200000000000006,
+   1.2,
+   2.6
+  ]
+ }
+}
