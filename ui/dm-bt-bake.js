@@ -23,7 +23,8 @@
   B.load = function () {
     if (!B.on) return Promise.resolve(null);
     if (loading) return loading;
-    const half = tier() < 2 ? '-half' : '';
+    // (t1644 Track 1) bt-irr / bt-ao are FULL resolution on every device (Justin's standing rule: the temple's baked light is never degraded).  ?bakehalf=1 = old A/B only.
+    const half = /[?&]bakehalf=1\b/.test(location.search) && tier() < 2 ? '-half' : '';
     loading = (async () => {
       const THREE = window.THREE;
       const [meta, bin] = await Promise.all([fetch(BASE + 'bt-lm.json?v=139').then(r => r.json()), fetch(BASE + 'bt-lm.bin?v=139').then(r => r.arrayBuffer())]);
@@ -65,7 +66,7 @@
       if (!e) e = idx.get(san(o.name) + '#0');
       if (e && o.geometry.attributes.position && o.geometry.attributes.position.count === e.nv && !Array.isArray(o.material)) hits.push([o, e]); });
     const hitCount = new Map(); for (const [o] of hits) hitCount.set(o.material, (hitCount.get(o.material) || 0) + 1);
-    const lmI = [0.55, 0.8, 1, 1][tier()] * meta.scale, aoI = [0.6, 0.8, 1, 1][tier()];
+    const lmI = 1 * meta.scale, aoI = 1;   // (t1644 Track 1) full bake strength on every tier (was 0.55 / 0.6 on the lowest shadow tier)
     const clones = new Map(); let n = 0;
     for (const [o, e] of hits) {
       const m0 = o.material; if (!m0 || !('lightMap' in m0) || m0.userData.btGlass) continue;
@@ -104,7 +105,7 @@
   B.tick = function () {   // 5 Hz: the volume at Ariel -> BTL's bounce probe (Ariel, Madison and the board all use it)
     const n = performance.now(); if (n - volT < 200 || !B.applied || !window.BTL) return; volT = n;
     try { const THREE = window.THREE, w = B._w || (B._w = new THREE.Vector3()); if (!(typeof CHAR !== 'undefined' && CHAR && CHAR.root)) return; CHAR.root.getWorldPosition(w);
-      if (B.sampleVol(w, rgb)) BTL.volRGB = rgb.map(x => x * [0.6, 0.85, 1, 1][tier()]); } catch (e) { }
+      if (B.sampleVol(w, rgb)) BTL.volRGB = rgb.slice(); } catch (e) { }   // (t1644 Track 1) full strength on every tier (was x0.6 on the lowest shadow tier)
   };
   // (v124) lazy: nothing is fetched at page load; the temple lighting asks for it on approach (BTL.preRender) and the
   // temple warm-up awaits it before the compile.
