@@ -31,6 +31,7 @@
                              colourMode:'solid'|'tint' = how a colour meets the shipped texture: solid replaces it with a flat colour, tint keeps the baked light / dark detail (default tint) } }
      accessories             false = skip safely: necklace (DMCharm), glassesLed (DMFlash), cloth (Ariel's garment cloth solver)
      materialFix             'meshy' = apply the Meshy-export material fixes (metalness default, skin emissive floor); omit for proper PBR materials
+     stance                  optional skyboard stance overrides (any BOARD_STANCE key: hips, ankleL/R, wristRelax, handGrip, ...); handsFrom:'idle' = ride with the idle clip's hands
    The logo editor (decals) is driven by items[*].spots and the LOGOS list below. */
   // Logo spots: a decal is projected onto the garment along one of four horizontal axes (the character faces +z, her left is +x).  Spot ids are shared by every
   // character; each item lists the spots it offers with their snap points (x, y as fractions of the garment's own bounding box in that view, y down) and a
@@ -88,6 +89,11 @@
           right: { label: 'Right side', base: 0.09, snaps: [{ id: 'thigh', label: 'Thigh', x: 0.5, y: 0.3 }, { id: 'shin', label: 'Shin', x: 0.5, y: 0.65 }] } } },
       },
       accessories: { necklace: false, glassesLed: false, cloth: false },
+      // (t1644u) skyboard stance overrides on top of index.html BOARD_STANCE (tuned on Ariel).  Measured off her bind pose: ankles 9.5 cm (Ariel 12.8),
+      // hip joint -> ankle 0.816 m (Ariel 0.795), so the feet sit ON the deck instead of 3 cm above it and the knees keep Ariel's soft bend; the spread is
+      // scaled by the leg ratio.  handsFrom 'idle' = her riding hands are her idle hands (studio.idle clip: the exact wrist + finger locals every free-hand
+      // clip already carries since v360), so idle -> walk -> run -> ride never re-poses her fingers; the thumb grip matches that relaxed curl.
+      stance: { hips: [0.0, 0.918, -0.04], ankleL: [0.072, 0.095, -0.38], ankleR: [-0.041, 0.095, 0.287], handsFrom: 'idle', wristRelax: 0, handGrip: 0.25 },
     },
   ];
 
@@ -110,6 +116,8 @@
     if (!d.studio || !s(d.studio.idle)) p.push('studio.idle');
     if (!d.hair || !s(d.hair.url)) p.push('hair.url');
     if (!d.accessories || typeof d.accessories !== 'object') p.push('accessories');
+    if (d.stance != null) { const st = d.stance, v3 = (a) => Array.isArray(a) && a.length === 3 && a.every((x) => typeof x === 'number' && isFinite(x) && Math.abs(x) < 2);
+      if (typeof st !== 'object' || ['hips', 'ankleL', 'ankleR'].some((k) => st[k] != null && !v3(st[k])) || (st.handsFrom != null && st.handsFrom !== 'idle' && st.handsFrom !== 'relax')) p.push('stance'); }
     if (d.hair && d.hair.groups) { if (!Array.isArray(d.hair.groups) || d.hair.groups.some((g) => !g || !/^[a-z]\w*$/.test(g.id || '') || !g.label || !Array.isArray(g.clusters) || !g.clusters.length)) p.push('hair.groups'); }
     if (d.items) for (const id of Object.keys(d.items)) { const it = d.items[id]; if (!/^[a-z]\w*$/.test(id) || !it || !it.label || typeof it.mesh !== 'string' || (it.mode !== 'flat' && it.mode !== 'baked') || !isHex(it.defaultColor) || (it.mode === 'baked' && !it.atlas) || (it.colourMode != null && it.colourMode !== 'solid' && it.colourMode !== 'tint') || (it.texture != null && typeof it.texture !== 'boolean') || (it.spots && !spotsValid(it))) p.push('items.' + id); else { try { new RegExp(it.mesh); } catch (e) { p.push('items.' + id + '.mesh'); } } }
     return p;

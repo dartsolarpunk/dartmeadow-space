@@ -324,8 +324,10 @@
     if (document.hidden || wait > 0) { setTimeout(hqPump, Math.max(200, wait)); return; }
     HQ.busy = true;
     rafGap().then(g => {
-      if (g > 90 && HQ.n++ < 40) { HQ.busy = false; setTimeout(hqPump, 700); return; }   // the page is struggling: wait (bounded, so a permanently slow device still finishes)
-      HQ.n = 0; const job = HQ.q.shift();
+      // the page is struggling: wait (bounded, so a permanently slow device still finishes).  (t1653 Track 4) bounded in TIME too: at 3-4 fps (the destroyed-buffer error storm)
+      // 40 retries of 700 ms + two slow frames was ~45 s PER STEP, minutes for the exterior + interior + hero + cliff sets ("the mansion has trouble loading"); now <= 12 s a step
+      if (g > 90 && HQ.n++ < 40 && performance.now() - (HQ.w0 || (HQ.w0 = performance.now())) < 12000) { HQ.busy = false; setTimeout(hqPump, 700); return; }
+      HQ.n = 0; HQ.w0 = 0; const job = HQ.q.shift();
       if (job.epoch !== HQ.epoch) { if (job.stale) job.stale(); HQ.busy = false; hqPump(); return; }
       crumb('begin', 'fac:' + job.name);
       let p; try { p = Promise.resolve(job.fn(() => job.epoch === HQ.epoch)); } catch (e) { p = Promise.reject(e); }

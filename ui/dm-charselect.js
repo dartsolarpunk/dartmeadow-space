@@ -102,7 +102,11 @@
         const CHAR = { root: M.root, bones: M.bones, mixer: M.mixer };
         M.charLike = CHAR;
         M.hair = await mod.attachHairStrands(CHAR, THREE, { url: def.hair.url, config: cfg, character: !!cfg, getStrandFraction: () => (o.strandFraction || 0.6),
-          getCollisionTier: () => 0, getCalm: () => false, params: { autoQuality: false } });
+          // (t1644u) the studio is a static, 30 fps-capped scene, so it no longer runs the lowest collision tier: High (fitted body / shirt / glasses capsules +
+          // keep-out boxes, capsules every pass, segment-midpoint tessellation) with 20-point strands (resampled once at load, 4 solver passes) so the hair
+          // drapes over her scalp, skin and clothes instead of through them.  Phones / tablets below High keep the file's points at tier 1 (the 20-point
+          // solve costs ~2.3x the guide solver; tools/tests/hair-collision.js has the numbers).  ?hairseg=N / ?hairtier=N override.
+          segments: () => hairStudioQ().seg, getCollisionTier: () => hairStudioQ().tier, getCalm: () => false, params: { autoQuality: false } });
         if (M.dead) { try { M.hair.dispose(); } catch (e) { } M.hair = null; }
       } catch (e) { log('hair not attached', e && e.message); }
     }
@@ -110,6 +114,14 @@
     try { if (W.DMCharLook) W.DMCharLook.apply(M.root, { THREE, env: 'studio' }); } catch (e) { log('charlook', e && e.message); }   // (ui/dm-charlook.js) smooth normals + soft sky / rim / matcap look, studio env; ?charlook=off|low|high
     return M;
   }
+  function hairStudioQ() {
+    const q = W.location ? W.location.search || '' : '', ms = /[?&]hairseg=(\d+)/.exec(q), mt = /[?&]hairtier=(\d)/.exec(q);
+    let pre = 'medium'; try { pre = typeof W.resolvePreset === 'function' ? W.resolvePreset() : ((W.GFX && W.GFX.preset) || 'medium'); } catch (e) { }
+    const mob = !!(W.GFX && W.GFX.isMobile) || /Android|iPhone|iPad/i.test((W.navigator && W.navigator.userAgent) || ''), hi = pre === 'high' || pre === 'ultra';
+    const full = !mob || hi;
+    return { seg: ms ? +ms[1] : (full ? 20 : 0), tier: mt ? Math.min(2, +mt[1]) : (full ? 2 : 1) };
+  }
+  CS.hairStudioQ = hairStudioQ;
   function meshyMaterialFix(root) {   // mirrors loadCharacterAssets: a metalness-1 default made her near black without an env map; vertex-coloured skin gets a warm floor
     const seen = new Set();
     root.traverse((o) => {
@@ -319,6 +331,15 @@
   function startLoop() { if (S.raf) return; S.last = 0; const tick = (t) => { S.raf = requestAnimationFrame(tick); studioFrame(t); }; S.raf = requestAnimationFrame(tick); }
   function stopLoop() { if (S.raf) cancelAnimationFrame(S.raf); S.raf = 0; }
   const _q = { tmp: null };
+  // idempotent per-bone look offset (pure; exported for tools/tests/head-spin.js).  st = { base, wrote, has }: base = the clip pose under the offset,
+  // wrote = the quaternion written last call.  If the bone still holds exactly `wrote`, the mixer skipped it this frame, so the clip pose is still `base`.
+  CS.lookState = (THREE) => { const mk = () => ({ base: new THREE.Quaternion(), wrote: new THREE.Quaternion(), has: false }); return { head: mk(), neck: mk() }; };
+  CS.lookApply = (st, bone, offset) => {
+    const q = bone.quaternion;
+    if (st.has && q.x === st.wrote.x && q.y === st.wrote.y && q.z === st.wrote.z && q.w === st.wrote.w) q.copy(st.base);
+    st.base.copy(q); q.multiply(offset); st.wrote.copy(q); st.has = true;
+  };
+  CS.clampLook = (v) => (v > 0.7 ? 0.7 : v < -0.7 ? -0.7 : v);   // |yaw| ≤ 0.42 rad head + 0.25 neck, pitch ≤ 0.035
   function studioFrame(t) {
     if (!S.M || !S.M.root || !R.r || D.hidden) { S.last = 0; return; }
     if (S.last && t - S.last < 30) return;                 // 30 fps cap: this is a menu
@@ -341,8 +362,12 @@
       let want = 0; if (S.dragging && S.dragX != null) want = Math.max(-0.7, Math.min(0.7, S.dragX * 0.9)); else want = Math.sin(t / 1900) * 0.22 * Math.sin(t / 7300);
       S.look += (want - S.look) * Math.min(1, dt * 6);
       if (!_q.tmp) { _q.tmp = new THREE.Quaternion(); _q.e = new THREE.Euler(); _q.n = new THREE.Quaternion(); }
-      _q.tmp.setFromEuler(_q.e.set(S.look * 0.05, S.look * 0.6, 0)); head.quaternion.multiply(_q.tmp);
-      if (neck) { _q.n.setFromEuler(_q.e.set(0, S.look * 0.35, 0)); neck.quaternion.multiply(_q.n); }
+      // (t1644u head-spin fix) the look offset is applied on top of the CLIP pose, never on top of last frame's result: three's PropertyMixer skips setValue
+      // when a track's mixed value did not change (Emma's constant wrist/finger/neck tracks, 30 fps cap frames, crossfades), so a bare multiply() accumulated
+      // into a continuous 360° spin.  CS.lookApply restores the remembered clip base when the bone still holds what we wrote last frame, then base × offset.
+      const lk = M._look || (M._look = CS.lookState(THREE));
+      CS.lookApply(lk.head, head, _q.tmp.setFromEuler(_q.e.set(CS.clampLook(S.look) * 0.05, CS.clampLook(S.look) * 0.6, 0)));
+      if (neck) CS.lookApply(lk.neck, neck, _q.n.setFromEuler(_q.e.set(0, CS.clampLook(S.look) * 0.35, 0)));
     }
     // camera
     // orbit camera: vertical drag swings the camera up over her head (top view) or down to her feet; target height + distance follow the pitch (DMMenuWorld.orbitRig, pure)
