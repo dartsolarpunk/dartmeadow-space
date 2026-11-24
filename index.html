@@ -183,7 +183,7 @@ if(location.search.indexOf('debug')!==-1){
   // PWA manifest: /manifest.webmanifest (linked in <head>; dark launch screen on Android)
 })();</script>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-<script>/* (v353) build tag: bump together with CACHE_NAME in sw.js (tools/tests/build-tag.js).  Persisted quality records (ui/dm-budget.js, dm-governor.js) are dropped when it changes. */window.DM_BUILD='v372';try{console.log('[DM build] '+window.DM_BUILD);}catch(e){}</script>
+<script>/* (v353) build tag: bump together with CACHE_NAME in sw.js (tools/tests/build-tag.js).  Persisted quality records (ui/dm-budget.js, dm-governor.js) are dropped when it changes. */window.DM_BUILD='v373';try{console.log('[DM build] '+window.DM_BUILD);}catch(e){}</script>
 <script src="ui/dm-time.js?v=97"></script>
 <script src="ui/dm-earth.js?v=292"></script>
 <script src="ui/dm-earth-paint.js?v=290"></script>
@@ -193,22 +193,22 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-parallax.js?v=372"></script>
 <script src="ui/dm-groundlib.js?v=351"></script>
 <script src="ui/dm-radical-circ.js?v=300"></script>   <!-- (lod-hide) Radical Circumference / ArcEdge radius maths (Justin Craig Venable, dartedge.com/radicaledge): the LOD discs and rims (tess patch, sea-sheet rim) -->
-<script src="ui/dm-water-core.js?v=300"></script>
-<script src="ui/dm-water.js?v=300"></script>
-<script src="ui/dm-water-basin.js?v=371"></script>
-<script src="ui/dm-water-sea.js?v=300"></script>
+<script src="ui/dm-water-core.js?v=373"></script>
+<script src="ui/dm-water.js?v=373"></script>
+<script src="ui/dm-water-basin.js?v=373"></script>
+<script src="ui/dm-water-sea.js?v=373"></script>
 <script src="ui/dm-water-curl.js?v=292"></script>   <!-- water: the breaking-wave curl (glassy turquoise barrel along the shore-parallel wave fronts; Medium+; created by dm-water-fx) -->
-<script src="ui/dm-water-fx.js?v=292"></script>   <!-- water: spray / splash / mist sprites, wake, footstep ripples, shore-break spray, underwater fog + shafts (?waterfx=0 off) -->   <!-- water: baked sea, shore, ground hook (?water=0 = the previous sea) -->
+<script src="ui/dm-water-fx.js?v=373"></script>   <!-- water: spray / splash / mist sprites, wake, footstep ripples, shore-break spray, underwater fog + shafts (?waterfx=0 off) -->   <!-- water: baked sea, shore, ground hook (?water=0 = the previous sea) -->
 <script src="ui/dm-perf.js?v=343"></script>
 <script src="ui/dm-governor.js?v=372"></script>
 <script src="ui/dm-budget.js?v=372"></script>
 <script src="ui/dm-mem.js?v=372"></script>
-<script src="ui/dm-lod.js?v=359"></script>
+<script src="ui/dm-lod.js?v=373"></script>
 <script src="ui/dm-terrain-lod.js?v=294"></script>   <!-- one terrain across every altitude band: shared slope / skirt / sea-tint contract between the globe map and the sky ground -->
 <script src="ui/dm-impostor.js?v=280"></script>   <!-- far-range LOD: vertex-clustering impostor (mansion LOD2, colours baked) -->   <!-- far-range LOD: the ONE distance table per device class (props, mansion, landmarks, vantage reach); ?lod=off|low|mobile|desktop -->
-<script src="ui/dm-light.js?v=351"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
+<script src="ui/dm-light.js?v=373"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
 <script src="ui/dm-sunfar.js?v=351"></script>   <!-- (t1537) the key light's wide, slow shadow layer past the near map (DMLight wrapper), into the haze; ?sunfar=0 off -->
-<script src="ui/dm-vlight.js?v=347"></script>   <!-- lighting overhaul: lamps / LEDs / flashlight / low sun light the volumetric fog (scene.fogNode, light list, equi-angular in-scatter); ?vlights=0|low|med|high -->
+<script src="ui/dm-vlight.js?v=373"></script>   <!-- lighting overhaul: lamps / LEDs / flashlight / low sun light the volumetric fog (scene.fogNode, light list, equi-angular in-scatter); ?vlights=0|low|med|high -->
 <script src="ui/dm-spaceshafts.js?v=349"></script>   <!-- (t1537) the key star's glare + dust scatter + the nearest world's shadow through it, in open space (Med+; off on Low); ?spaceshafts=0 off -->
 <script src="ui/dm-feedback.js?v=329"></script>
 <script src="ui/dm-gpu-defer.js?v=372"></script>   <!-- (v332) DMGpuDefer: deferred destruction of disposed geometry's GPU buffers (the Bird Temple "used in submit while destroyed" banner) -->
@@ -1079,7 +1079,7 @@ body[data-dm-screen]:not([data-dm-screen="flight"]) #dm-flash,body[data-dm-scree
 <script src="ui/dm-landzones.js?v=293" defer></script>
 <script src="ui/dm-padbind.js?v=293" defer></script>
 <script src="ui/dm-globe.js?v=339" defer></script>
-<script src="ui/dm-star.js?v=191" defer></script>
+<script src="ui/dm-star.js?v=373" defer></script>
 <script src="ui/dm-mist.js?v=8" defer></script>
 <script src="ui/dm-atmo.js?v=344" defer></script>
 <script src="ui/dm-localcollide.js?v=188" defer></script>
@@ -1096,7 +1096,7 @@ body[data-dm-screen]:not([data-dm-screen="flight"]) #dm-flash,body[data-dm-scree
 <script src="ui/dm-charlook.js?v=370" defer></script>   <!-- the character look: smooth normals, soft sky / rim / matcap light + skin wrap on every pilot, game + studio; ?charlook=off|low|high  ?charenv=analytic|matcap|both -->
 <script src="ui/dm-decalflow.js?v=366" defer></script>   <!-- staged logo flow (pending / apply / reset / delete) + placement pad geometry; pure logic -->
 <script src="ui/dm-charselect.js?v=370" defer></script>   <!-- character select cards + one-canvas studio -->
-<script src="ui/dm-starbubble.js?v=4" defer></script>
+<script src="ui/dm-starbubble.js?v=373" defer></script>
 <script src="ui/dm-hazard.js?v=372" defer></script>   <!-- hazard registry + exposure clock + protection LED / crown glow (the protective orb is gone) -->
 <script src="ui/dm-hazardhud.js?v=357" defer></script>   <!-- the hazard band / type / safe-time HUD (only while a hazard is sensed) -->
 <script src="ui/dm-birdtemple.js?v=122" defer></script>
