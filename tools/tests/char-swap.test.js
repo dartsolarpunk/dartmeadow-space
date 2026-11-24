@@ -77,7 +77,7 @@ async function scenario(label, setup) {
     ok(ctx.DART_HAIR === null, 'window.DART_HAIR no longer points at the dropped hair');
     const rr = ctx.api._charResolve(); ok(rr && rr.id === 'emma' && !rr.fellBack, 'the next load resolves to Emma (no fall-back)');
     ok(rr.def.mesh === 'characterassests/emma/Emma_Character.glb' && rr.def.anims === 'characterassests/emma/Emma_Merged_Animations.glb', 'with her registry paths (configurable from ui/dm-chars.js)');
-    ok(rr.def.accessories.necklace === false && rr.def.accessories.glassesLed === false && rr.def.accessories.cloth === false, 'and her accessories flags (Ariel-only pieces skipped, not half-built)');
+    ok(rr.def.accessories.necklace === false && rr.def.accessories.glassesLed === true && rr.def.accessories.cloth === false, 'and her accessories flags (glasses flashlight on; Ariel-only necklace / cloth skipped)');
     ok(await ctx.api._charReconcile() === false, 'a second reconcile is a no-op');
   }
   // 2. same pilot -> nothing is touched

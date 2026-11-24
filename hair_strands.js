@@ -251,8 +251,14 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     let f = fDef; try { if (opts.sdfFine != null) f = typeof opts.sdfFine === 'function' ? +opts.sdfFine() : +opts.sdfFine; } catch (e) { f = fDef; }
     if (typeof location !== 'undefined') { const m = /[?&]hairsdf=(\d)/.exec(location.search || ''); if (m) f = +m[1]; }
     f = Math.max(1, Math.min(3, f | 0));
-    // a groom already at High resolution (Emma v382: native 1.7 mm of Scalp + Body) is not refined further (cells must stay >= 1.6 mm; same budget as a 5 mm file x3)
+    // (v382, Justin 2026-11-24) Emma Scalp+Body field cell size (mm) per collision tier. Every tier is 1.67 mm, phones included.
+    // The hook below is reserved if a later pass ever sets a coarser low-tier value. Ariel 5 mm files are unchanged (hook does not fire).
+    const EMMA_SDF_TIER_MM = [1.67, 1.67, 1.67];
+    // a groom already at High resolution (Emma v382: native 1.7 mm of Scalp + Body, 10218500 bytes / ~9.75 MiB on disk)
+    // is not refined further (cells must stay >= 1.6 mm; same budget as a 5 mm file x3).
     { const cl = 1 / SDF.inv; while (f > 1 && cl / f < 0.0016) f--; }
+    const emmaMm = EMMA_SDF_TIER_MM[Math.max(0, Math.min(2, t0 | 0))];
+    if (emmaMm > (1000 / SDF.inv) + 0.05) { /* reserved: downsample to emmaMm (+ band) when a tier is set coarser than the native file */ }
     if (f > 1) { SDF = upsampleSDF(SDF, f); meta.sdfFine = f; }
     // (v380) scalp band: a groom that carries meta.sdfBand (tools/hair/scalp-band.mjs; Emma: 1.25 mm bricks within 6 mm of Emma_Scalp) reads it
     // wherever a brick exists on collision tier >= 1, so her scalp is collided at a finer grid than Ariel's tier-2 1.7 mm without refining the
@@ -739,6 +745,9 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       let tSdf = null, sdfRows = 1;
       if (SDF) {
         const n = SDF.nx * SDF.ny * SDF.nz; sdfRows = Math.ceil(n / SW);
+        // Emma's 1.7 mm field is 4.51 M cells: this Float32 upload is ~18 MB (the Int16 CPU field stays for the solver).
+        // Not dropped this pass: it is the persistent GPU-ribbon texture, not a discarded temp, and a half/int16 type
+        // change needs a shader precision check we did not have budget for.
         const d = new Float32Array(SW * sdfRows); for (let i = 0; i < n; i++) d[i] = SDF.v[i];
         tSdf = mkTex(d, SW, sdfRows, THREE.RedFormat);
       } else tSdf = mkTex(new Float32Array(1), 1, 1, THREE.RedFormat);

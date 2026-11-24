@@ -102,3 +102,49 @@ const maxScalp = Math.max(...samples.map(s => s.scalp));
 const sumScalp = samples.reduce((a, s) => a + s.scalp, 0);
 console.log('\nSUMMARY');
 console.log(JSON.stringify({ info: resInfo(), ends, peaks, maxScalp, sampleSumScalp: sumScalp, samples: samples.length }, null, 2));
+
+// Regression guard for Emma boardwalk crossings (tier 2, 6000 strands).
+// V380 = 2.5 mm file + band (the original baseline). AFTER_11604F4 = the v382 1.7 mm
+// full-field rebake already on this branch. Limits are max(v380, 11604f4) so this
+// test fails only on a regression, and the log still prints both comparisons.
+// t=0 peaks after H.reset() are ignored; mid = max in-clip sample with t>0 (not the end).
+const V380_BASELINE = {
+  'idle-settle': { end: 202, napeEnd: 17 },
+  'get-up (Emma_Land)': { mid: 777, napeMid: 666, end: 422, napeEnd: 373 },
+  'walk-to-board (Walking)': { mid: 271, end: 62 },
+  'mount (Mount_Step)': { mid: 811, napeMid: 676, end: 1060, napeEnd: 508 }
+};
+const AFTER_11604F4 = {
+  'idle-settle': { end: 167, napeEnd: 8 },
+  'get-up (Emma_Land)': { mid: 762, napeMid: 658, end: 433, napeEnd: 378 },
+  'walk-to-board (Walking)': { mid: 256, end: 111 },
+  'mount (Mount_Step)': { mid: 841, napeMid: 691, end: 1082, napeEnd: 513 }
+};
+function lim(ph, key) {
+  const a = (V380_BASELINE[ph] || {})[key], b = (AFTER_11604F4[ph] || {})[key];
+  if (a == null) return b; if (b == null) return a; return Math.max(a, b);
+}
+let failed = 0;
+for (const ph of phases) {
+  const mid = samples.filter(s => s.phase === ph.name && s.t > 0 && s.frame !== ph.frames - 1);
+  const midBest = mid.reduce((a, s) => (!a || s.scalp > a.scalp) ? s : a, null);
+  const end = ends[ph.name];
+  const chk = (label, key, got, v380) => {
+    if (got == null) return;
+    const cap = lim(ph.name, key);
+    if (cap == null) return;
+    const ok = got <= cap;
+    const v = (v380 != null) ? (', v380 ' + v380) : '';
+    console.log('  THRESHOLD', ph.name, label, got, ok ? '<=' : '>', cap, ok ? 'PASS' : 'FAIL' + v);
+    if (!ok) failed++;
+  };
+  const b380 = V380_BASELINE[ph.name] || {};
+  if (midBest) {
+    chk('mid scalp', 'mid', midBest.scalp, b380.mid);
+    chk('mid nape', 'napeMid', midBest.regs && midBest.regs.nape, b380.napeMid);
+  }
+  chk('end scalp', 'end', end && end.scalp, b380.end);
+  chk('end nape', 'napeEnd', end && end.regs && end.regs.nape, b380.napeEnd);
+}
+console.log(failed ? 'hair-emma-boardwalk: FAILED ' + failed + ' threshold(s) (regression vs max(v380, 11604f4))' : 'hair-emma-boardwalk: all thresholds passed (regression vs max(v380, 11604f4))');
+if (failed) process.exit(1);
