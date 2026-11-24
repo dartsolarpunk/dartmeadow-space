@@ -9488,10 +9488,10 @@ function _btcShell64Poll(){
   Promise.all([_btcRead(BT_SH64_LIVE).catch(()=>null),act]).then(([live,a])=>{
     live=live&&live.schema==='leatr.shell64.live/1'?live:null; a=a&&a.v===1?a:null;
     if(!live&&!a)return;
-    const total=Math.max((live&&live.totalCalcs)||0,(a&&a.total)||0), active=a?a.active:((live&&live.activeSessions)||0), perMin=a?a.calcsPerMin:((live&&live.calcsPerMin)||0);
+    const total=Math.max((live&&live.totalCalcs)||0,(a&&a.total)||0), active=(a?a.active:(live&&live.activeSessions))||0, perMin=(a?a.calcsPerMin:(live&&live.calcsPerMin))||0;
     const el=document.getElementById('bt-cube-sh64');
     if(el){el.style.display='block';el.textContent=(active?'● ':'')+'SHELL 64 · '+active+' ACTIVE · '+perMin+'/MIN · '+total.toLocaleString()+' TOTAL';}
-    const recent=(a&&a.recent&&a.recent.length)?a.recent.map(r=>({ts:new Date(r.ts).toISOString(),op:r.op,detail:r.detail})):((live&&live.recent)||[]);
+    const recent=(a&&a.recent&&a.recent.length)?a.recent.map(r=>{const t=new Date(r&&r.ts);return !r||isNaN(t)?null:{ts:t.toISOString(),op:r.op,detail:r.detail};}).filter(Boolean):((live&&live.recent)||[]);
     const fresh=recent.filter(r=>!S.seen[r.ts+r.op]); recent.forEach(r=>{S.seen[r.ts+r.op]=1;});
     const keys=Object.keys(S.seen); if(keys.length>200)keys.slice(0,keys.length-100).forEach(k=>delete S.seen[k]);
     const key=total+'|'+(recent.length?recent[recent.length-1].ts:'');
@@ -9500,7 +9500,7 @@ function _btcShell64Poll(){
       S.flash=1;BT_CUBES.walk.flare=1;
     }
     S.key=key;
-  }).finally(()=>{S.busy=false;});
+  }).catch(()=>{}).finally(()=>{S.busy=false;});
 }
 // Per frame from updateBirdTemple: walk the path, drift the cubes, poll
 // the feed while you're near enough to see them.
