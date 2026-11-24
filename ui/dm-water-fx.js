@@ -103,7 +103,8 @@
     /* ───────────── underwater: light shafts (additive, 12 quads) ───────────── */
     let shaftMesh = null;
     if (tier.under && tier.caustic) {
-      const NQ = 12, pos = [], uvs = [], idx = [], len = 46;
+      // (t1644 CE-7) shaft count scales with the preset (GTA-style volumetric rays under water; Low keeps 30 fps): low 8 / medium 12 / high 20 / ultra 28 quads, deeper on High+
+      const NQ = ({ low: 8, medium: 12, high: 20, ultra: 28 })[tier.name] || 12, pos = [], uvs = [], idx = [], len = tier.name === 'high' || tier.name === 'ultra' ? 58 : 46;
       for (let i = 0; i < NQ; i++) {
         const a = (i / NQ) * Math.PI * 2 + (i % 3) * 0.4, r = 4 + (i * 7 % 17) * 1.6, wd = 1.5 + (i * 5 % 7) * 0.55, cx = Math.cos(a) * r, cz = Math.sin(a) * r, yw = a * 1.7 + i;
         const dx = Math.cos(yw) * wd, dz = Math.sin(yw) * wd, b = pos.length / 3;
@@ -115,7 +116,11 @@
       fx.shaftU = { amt: T.uniform(0), sh: T.uniform(new THREE.Vector3(0, -1, 0)) };
       const u2 = uv(), across = abs(u2.x.mul(2.0).sub(1.0)), prof = pow(float(1.0).sub(across), 1.6), down = pow(float(1.0).sub(u2.y), 1.4).mul(smoothstep(0.0, 0.04, u2.y));
       const cz = texture(tx.caustic, positionWorld.xz.mul(0.045).add(vec2(U.time.mul(0.02), 0.0)).add(positionWorld.y.mul(0.012))).x;
-      m.colorNode = U.scatter.mul(0.9).add(U.sunCol.mul(0.25)).mul(prof.mul(down).mul(float(0.65).add(cz.mul(0.6))).mul(fx.shaftU.amt));
+      // (t1644 CE-7) volumetric SHADOWING on High / Ultra: each shaft is lit by the sun visibility where its ray enters the surface (DMLight's height-field march at the
+      // water line above the pixel), so cliffs, overhangs and the mansion cast dark gaps through the rays like a real water column.  Lower tiers: unshadowed (no march cost).
+      let shVis = null; try { if ((tier.name === 'high' || tier.name === 'ultra') && W.DMLight && W.DMLight.sunVisNode && T.vec3) shVis = W.DMLight.sunVisNode(T.vec3(positionWorld.x, float(0.0), positionWorld.z)); } catch (e) { shVis = null; }
+      const shaftC = U.scatter.mul(0.9).add(U.sunCol.mul(0.25)).mul(prof.mul(down).mul(float(0.65).add(cz.mul(0.6))).mul(fx.shaftU.amt));
+      m.colorNode = shVis ? shaftC.mul(shVis) : shaftC;
       m.opacityNode = float(1.0); m.fog = false;
       shaftMesh = new THREE.Mesh(g, m); shaftMesh.frustumCulled = false; shaftMesh.renderOrder = 5; shaftMesh.visible = false; shaftMesh.name = 'dmWaterShafts';
       // shafts follow the light: a vertical quad sheared along the refracted sun ray (done on the CPU as a rotation of the mesh's matrix, no per-vertex work)

@@ -34,10 +34,10 @@ const init = cut('SkyGround.prototype._hazeInit=', 'SkyGround.prototype._hazeTic
 const tick = cut('SkyGround.prototype._hazeTick=', '// (lod-hide) the far sea has no square.');
 ok(/m\.outputNode=W\.vec4\(W\.mix\(W\.output\.rgb,U\.c,w\),W\.output\.a\)/.test(init), 'blends three\'s final lit output (texture + lighting + shadows + fog), not just albedo');
 ok(/smoothstep\(U\.r\.x,U\.r\.y,W\.length\(W\.positionView\)\)/.test(init), 'true view distance (radial)');
-ok(/skyhaze=1/.test(init), '(t1590) the colour mix is off by default, ?skyhaze=1 A/B switch');
+ok(/_SKY_SMOOTH\?!\/\[\?&\]skyhaze=0\\b\/\.test\(q\):\/\[\?&\]skyhaze=1\\b\/\.test\(q\)/.test(init), '(t1644) the smooth haze blend is ON by default (?skyhaze=0 off; ?skyfade=dither = the t1590 opt-in)');
 ok(!/new THREE|\{[a-z]+:/.test(tick.replace(/^[^\n]*\n/, '')), 'tick allocates nothing');
 ok(/U\.c\.value\.copy\(fog\.color\)/.test(tick) && /U\.on\.value=0/.test(tick), 'haze colour follows the scene fog; airless worlds (no fog) keep the dissolve only');
-ok(/this\._fadeU\.a\.value=dz\?this\.viewR\*_SKY_FADE0:1e9; this\._fadeU\.b\.value=dz\?this\.viewR:2e9; this\._hazeTick\(\);/.test(html), 'update() moves the haze band with viewR (t1590: no dither below 0.8 resolution)');
+ok(/const hz=!!\(this\._hazeU&&this\._hazeU\.on\.value\), dz=hz\|\|_skyDitherOk\(_skyResScale\(\)\), e0=hz\?_SKY_EDGE0:_SKY_FADE0; this\._fadeU\.a\.value=dz\?this\.viewR\*e0:1e9; this\._fadeU\.b\.value=dz\?this\.viewR:2e9; this\._hazeTick\(\);/.test(html), 'update() moves the haze band with viewR (t1644: smooth haze + hairline dither; t1590: no dither below 0.8 resolution without haze)');
 ok(/Justin Craig Venable/.test(cut('// (t1516) RADIAL LOD BLEND', 'const _SKY_HAZE_RIM')), 'credited');
 console.log(fails ? 'radial-lod-blend: ' + fails + ' FAILED of ' + n : 'radial-lod-blend: all ' + n + ' checks passed');
 process.exit(fails ? 1 : 0);

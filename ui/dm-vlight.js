@@ -143,7 +143,7 @@
     if (/^(low|med|high)$/.test(FLAG)) return FLAG;
     let t = null; try { t = root.DMLight && root.DMLight.tier; } catch (e) { }
     const mobile = (() => { try { return /Android|iPhone|iPad|iPod|Mobile/i.test(root.navigator.userAgent) || (root.matchMedia && root.matchMedia('(pointer:coarse)').matches); } catch (e) { return false; } })();
-    if (mobile) return 'low';
+    if (mobile) return t === 'med' || t === 'high' || t === 'ultra' ? 'med' : 'low';   // (t1644 CE-7) a tablet on a Medium+ preset (DMLight med: phones/tablets stop there) gets 5 lights + 3 samples; Low stays low (30 fps)
     return t === 'high' || t === 'ultra' ? 'high' : t === 'med' ? 'med' : t === 'low' ? 'low' : 'med';
   }
 

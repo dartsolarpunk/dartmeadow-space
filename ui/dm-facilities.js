@@ -314,6 +314,9 @@
   const crumb = (m, n, i) => { try { window.DMCrumb && window.DMCrumb[m](n, i); } catch (e) { } };
   const isIOS = (() => { try { return /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); } catch (e) { return false; } })();
   const recentKill = () => { try { const a = window._dmPrevAlive; return !!(a && a.clean === false && !a.hidden && Date.now() - a.t < 600000); } catch (e) { return false; } };
+  // (t1644 Track 1) TABLETS (shortest screen side >= 600 css px) with the memory for it (deviceMemory >= 6, or an iPad) and no recent tab kill take the full-size mansion maps and
+  // 1K cliff rock instead of the 512 set: on a 3K tablet the 512 maps were the 'soft' rock / walls next to PR #111.  Phones are unchanged.  ?cliff=512 still forbids it.
+  const tabletHi = () => { try { const m = Math.min(screen.width || 0, screen.height || 0); if (m < 600 || /[?&]cliff=512\b/.test(location.search)) return false; return ((navigator.deviceMemory || 0) >= 6 || isIOS) && !recentKill(); } catch (e) { return false; } };
   function rafGap() { return new Promise(ok => { const t0 = performance.now(); requestAnimationFrame(() => { const t1 = performance.now(); requestAnimationFrame(() => ok(performance.now() - t1 + 0 * t0)); }); }); }
   function hqPump() {
     if (HQ.busy || !HQ.q.length) return;
@@ -340,7 +343,8 @@
     // (t1516) the macro shard-rock layer (assets/ariel-home/cliff/shards.json, tools/ariel-home/plan_shards.js): optional, a failure only means the GLB's own cliff
     if (MAN.shards === null) { MAN.shards = undefined; fetch('assets/ariel-home/cliff/shards.json?v=' + F.shardVer).then(r => r.json()).then(J => { MAN.shards = J && J.shards ? J : false; }, e => { MAN.shards = false; console.warn('[ariel-home] shards', e); }); }
     // (v223) phones/tablets load the half-size-map mansion (≈75 MB less graphics memory)
-    Promise.all([c.loadGLB('assets/ariel-home/' + (c.isMobile() ? 'ariel-home-512.glb' : 'ariel-home.glb') + '?v=' + F.ver + (c.isMobile() ? 'm292' : '')), fetch('assets/ariel-home/ariel-home-collide.json?v=' + F.ver).then(r => r.json())]).then(([gl, col]) => {
+    const _m512 = c.isMobile() && !tabletHi();   // (t1644 Track 1) capable tablets: full-size maps
+    Promise.all([c.loadGLB('assets/ariel-home/' + (_m512 ? 'ariel-home-512.glb' : 'ariel-home.glb') + '?v=' + F.ver + (_m512 ? 'm292' : '')), fetch('assets/ariel-home/ariel-home-collide.json?v=' + F.ver).then(r => r.json())]).then(([gl, col]) => {
       const bin = atob(col.data), n = bin.length >> 1, a = new Int16Array(n);
       for (let i = 0; i < n; i++) { const v = bin.charCodeAt(i * 2) | (bin.charCodeAt(i * 2 + 1) << 8); a[i] = v > 32767 ? v - 65536 : v; }
       col.h = a; MAN.col = col; MAN.glb = gl; MAN.loading = false;
@@ -581,7 +585,9 @@
     const _cq = (location.search.match(/[?&]cliff=(1k|512)\b/) || [])[1], _mem8 = (navigator.deviceMemory || 0) >= 8;
     // (t1516) iPhone / iPad report no deviceMemory, so the old `_mem8` term kept them on 512 even at Ultra, against the comment above: iOS now takes 1K from tier 3 (Ultra),
     // still only when the last session was not killed.
-    const t = c.tier(), mob = c.isMobile(), res = cliffRes(t, mob, isIOS, _mem8, _cq, recentKill());
+    const t = c.tier(), mob = c.isMobile();
+    let res = cliffRes(t, mob, isIOS, _mem8, _cq, recentKill());
+    if (!res && mob && t >= 1 && tabletHi()) res = '1k';   // (t1644 Track 1) capable tablets: 1K rock (pure cliffRes table unchanged)
     crumb('mark', 'cliffRes', res || '512');
     const byName = {}; MAN.glb.scene.traverse(o => { if (o.isMesh && o.material && /^ah_rock/.test(o.material.name)) byName[o.material.name] = o.material; });
     fetch('assets/ariel-home/cliff/cliff-materials.json?v=' + F.ver).then(r => r.json()).then(J => {

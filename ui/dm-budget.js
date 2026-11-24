@@ -280,12 +280,17 @@
   // ratio stayed 1.5 - the one lever that scales fill cost never moved, because it was only ever applied through ui/dm-governor.js, which is off for a player whose saved
   // "auto balance" is unticked (GFX.dynamicRes === false) and silent while its own gates hold.  The controller now guarantees its own cap: every ~0.5 s the drawing buffer is
   // brought down to effectivePixelRatio() x cap (and handed back to the governor / restored when the cap lifts).  Independent of the governor's state.
+  // (t1644 Track 1, single resolution authority) the enforcer no longer writes the pixel ratio by itself: it cut the drawing buffer straight to effectivePixelRatio() x 0.42
+  // behind the governor (and behind a player who had switched auto balance OFF) - one of the six layers that took PR #111's crisp native resolution away.  The cap stays
+  // ADVISORY: ui/dm-governor.js setK() reads resCap() and clamps it by its tablet / Native-Sharp floor.  ?resenf=1 restores the v273 enforcer for an A/B only.
+  const RES_ENF = /[?&]resenf=1\b/.test((W.location && W.location.search) || '');
   function enforceRes() {
     try {
+      if (!RES_ENF) return;
       if (!out.on || W.__JOTS_INTRO || (W.DMAR && W.DMAR.active) || typeof W.effectivePixelRatio !== 'function') return;
       const r = W.flightRenderer || (typeof flightRenderer !== 'undefined' ? flightRenderer : null); if (!r || !r.getPixelRatio || !r.setPixelRatio) return;
       let cap = out.resCap(); const cur = r.getPixelRatio(), base = W.effectivePixelRatio(), d = r._dr && r._dr.ring ? r._dr : null;
-      { const tf = W._dmTabletFloor ? W._dmTabletFloor(W.GFX) : 0; if (cap < tf) cap = tf; }   // (t1590) tablets: render scale floor 0.75 (ui/dm-governor.js)
+      { const tf = (W.DMGov && W.DMGov.minFloor) ? W.DMGov.minFloor(W.GFX) : (W._dmTabletFloor ? W._dmTabletFloor(W.GFX) : 0); if (cap < tf) cap = tf; }   // (t1590) tablets: render scale floor 0.75 (ui/dm-governor.js)
       const want = base * Math.min(cap, d ? d.k : 1);
       if (cap < 1 && cur > want * 1.03) { if (!r._dmEnf) S.enfFrom = d ? d.k : 1; r.setPixelRatio(base * cap); if (d) { d.k = Math.min(d.k, cap); d.since = now(); } r._dmEnf = cap; S.enf = (S.enf | 0) + 1; }
       // (t1516) the cap LIFTED (a recovery, or a render-scale step that bought nothing was handed back): give the governor back the scale it had before this enforcer cut it.

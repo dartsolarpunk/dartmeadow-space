@@ -351,8 +351,8 @@
        is false, nothing is built, shown or drawn.
      Flags: `?shield=0` no LED / crown / first-person light at all (the HUD band + the exposure clock are unaffected, `?hazardhud=0` hides the HUD) ·
             `?hazard=toxic|airless|safe` force the air kind · `?hazardzone=plume` a test plume ahead of her · `?ledfp=<gain>` first-person light gain (default 1, 0 = off).
-     Cost: 1-2 draws of the crown's own (few hundred tri) geometry, 3 tiny LED meshes (+ the chest LED, same materials), one DMVLight point (Med+, shed by
-     DMBudget 'light' >= 2), one pooled light in first person.
+     Cost: 1-2 draws of the crown's own (few hundred tri) geometry, 3 tiny LED meshes (+ the chest LED, same materials), one pooled light in first person.
+     (t1644 Track 1: the 'one DMVLight point' left in this line was removed in v357 - there is no fog / point light round the LED in any view.)
      ═══════════════════════════════════════════════════════════════════ */
   const SHQ=(()=>{ try{ return new URLSearchParams(window.location.search); }catch(e){ return null; } })();
   const SH_OFF=!!(SHQ&&SHQ.get('shield')==='0');
@@ -388,7 +388,10 @@
     pick(/^staff$/); return idx;
   }
   // the first-person head light: intensity / range from her height h (world units) and the state's colour; subtle by design (a few feet, faint)
-  const FP_I=0.05, FP_R=0.9;
+  // (t1644 Track 1) range 0.9 -> 0.55 x her height: the light sits ~0.88 h above her feet, so at 0.9 h its sphere still grazed the ground and drew a faint lit disc
+  // round her in first person (one of the 'bubble' suspects).  At 0.55 h it tints her hands / arms / what is at eye level only, never the terrain.
+  // Diagnosis aid: ?ledfp=0 (this light off), ?natlight=0 (index.html: every pooled natural light off).  The DMLight cascade half of the bubble is Track 2's (ui/dm-light.js).
+  const FP_I=0.05, FP_R=0.55;
   function fpLightParams(h,level,gain){ const g=gain==null?1:gain; return {range:h*FP_R,intensity:Math.max(0,FP_I*h*h*Math.min(1,level)*g)}; }
   const SH={state:'off',a:0,frames:0,ph:0,u:null,mats:null,hulls:null,led:null,ledGeo:null,scene:null,board:null,ledLoc:null,ledR:0.02,kT:0.05,
             warm:0,warmAt:0,sig:'',crownN:0,lastEmit:'',busy:false,col:null,body:null,bodyRig:null,bodyH:0,fpLid:null,fpState:'',fpV:null};

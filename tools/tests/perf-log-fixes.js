@@ -106,9 +106,12 @@ console.log('== 3. preset: explicit pick eases down under a sustained miss, neve
   ctx.tick(); ok(applied.join() === 'high' && ctx.GFX.runtimeTier === 'high' && ctx.GFX.preset === 'ultra' && live === 1, '12 s over budget: runtime tier ULTRA -> HIGH, GFX.preset (saved choice) still ultra');
   ok(toasts.length === 1 && /ULTRA choice is kept/.test(toasts[0]), 'one flat toast says so');
   for (let i = 0; i < 15; i++) ctx.tick(); ok(applied.length === 1, '30 s cool-down before the next look');
-  for (let i = 0; i < 6; i++) ctx.tick(); ok(applied.join() === 'high,medium', 'still missing: HIGH -> MEDIUM');
-  for (let i = 0; i < 21; i++) ctx.tick(); ok(applied.join() === 'high,medium,low', 'then MEDIUM -> LOW (= Auto for this device)');
-  for (let i = 0; i < 60; i++) ctx.tick(); ok(applied.length === 3, 'never below the device-class tier');
+  // (t1644 Track 1) an explicit High / Ultra pick eases at most ONE tier, never silently back to Low (was: ULTRA -> HIGH -> MEDIUM -> LOW on a low-class device)
+  for (let i = 0; i < 90; i++) ctx.tick(); ok(applied.join() === 'high', 'ULTRA pick: never below HIGH, however long it misses');
+  { applied.length = 0; ctx.GFX.preset = 'high'; ctx.GFX.runtimeTier = null; ctx.GFX.resScale = 1; ctx.applyPreset = (t) => { applied.push(t); ctx.GFX.resScale = 0.7; };
+    vm.runInContext('applyPreset=this.applyPreset;', ctx); for (let i = 0; i < 120; i++) ctx.tick();
+    ok(applied.join() === 'medium' && ctx.GFX.resScale === 1, 'HIGH pick: one step to MEDIUM only (never LOW), and the render scale is not part of the ease (resScale ' + ctx.GFX.resScale + ')');
+    ctx.GFX.preset = 'ultra'; applied.length = 0; }
   // a menu / hidden tab / warm-up never counts
   ctx.GFX.runtimeTier = null; applied.length = 0; for (const s of ['menu', 'loading']) { ctx.STATE.screen = s; for (let i = 0; i < 30; i++) ctx.tick(); } ok(applied.length === 0, 'menu / loading screens: no easing');
   ctx.STATE.screen = 'surface'; ctx.document.hidden = true; for (let i = 0; i < 30; i++) ctx.tick(); ok(applied.length === 0, 'hidden tab: no easing'); ctx.document.hidden = false;
