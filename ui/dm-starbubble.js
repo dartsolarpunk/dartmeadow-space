@@ -160,18 +160,30 @@
     for(const o of [SB.lens,SB.bubble,SB.plasma]) if(o.parent!==scene) scene.add(o);
   }
 
-  // nearest star and its render radius
+  // (t1644 CE-7) ONE STAR REGISTRY: every star the bubble can open on — the system's primary (celestialBodies type 'Star'), binary companions and any other
+  // star a system builds (registerStar, explicit radius), and the distant / galaxy-map stars (index.html distantSystems).  The fly-through lens works the same
+  // on every star, in every system and galaxy.  Entries: {mesh (group), renderMesh (the photosphere mesh), R (render radius, optional), name}.
+  SB.stars=[];
+  SB.registerStar=function(e){ if(!e||!e.mesh) return; for(let i=0;i<SB.stars.length;i++) if(SB.stars[i].mesh===e.mesh) return; if(!e.renderMesh) e.renderMesh=e.mesh; SB.stars.push(e); };
+  SB.clearStars=function(){ SB.stars.length=0; };
+  const _best={b:null,R:0,c:null,h:0}, _dist={mesh:null,renderMesh:null,name:''}, _dpool=[];
+  function starR(b){ if(b.R>0) return b.R; const g=b.renderMesh&&b.renderMesh.geometry; return ((g&&g.parameters&&g.parameters.radius)||160)*(b.renderMesh?b.renderMesh.scale.x:1); }
+  // nearest star and its render radius (no allocation per frame: one reused result)
+  let _bh=Infinity;
+  function consider(pos,b,R){ b.mesh.getWorldPosition(V3); const h=pos.distanceTo(V3)-R; if(h<_bh){ _bh=h; _best.b=b; _best.R=R; _best.c.copy(V3); _best.h=h; } }
   function nearestStar(pos){
-    let best=null,bh=Infinity;
+    _bh=Infinity; _best.b=null;
+    if(!_best.c) _best.c=new THREE.Vector3();
     const list=(typeof celestialBodies!=='undefined'&&celestialBodies)||[];
-    for(const b of list){
-      if(!b||b.type!=='Star'||!b.mesh||!b.renderMesh) continue;
-      const g=b.renderMesh.geometry, R=((g&&g.parameters&&g.parameters.radius)||160)*b.renderMesh.scale.x;
-      b.mesh.getWorldPosition(V3);
-      const h=pos.distanceTo(V3)-R;
-      if(h<bh){ bh=h; best={b,R,c:V3.clone(),h}; }
-    }
-    return best;
+    for(const b of list){ if(!b||b.type!=='Star'||!b.mesh||!b.renderMesh) continue; consider(pos,b,starR(b)); }
+    for(let i=0;i<SB.stars.length;i++){ const b=SB.stars[i]; if(b&&b.mesh&&b.mesh.parent) consider(pos,b,starR(b)); }
+    try{ // distant / galaxy-map stars: their group's first child is the star sphere
+      const D=(typeof distantSystems!=='undefined'&&distantSystems)||null;
+      if(D) for(let i=0;i<D.length;i++){ const s=D[i], g=s&&s.group, m=g&&g.children&&g.children[0]; if(!m||!m.isMesh||!g.parent) continue;
+        const gp=m.geometry&&m.geometry.parameters, R=((gp&&gp.radius)||s.starRadius||1)*m.scale.x*g.scale.x; if(!(R>0)) continue;
+        let e=_dpool[i]; if(!e) e=_dpool[i]={mesh:null,renderMesh:null,name:'',R:0}; e.mesh=g; e.renderMesh=m; e.name=s.name||''; e.R=R; consider(pos,e,R); }
+    }catch(e){}
+    return _best.b?_best:null;
   }
   const eob=x=>{ const c1=1.4,c3=c1+1; return 1+c3*Math.pow(x-1,3)+c1*Math.pow(x-1,2); };  // ease-out-back: the pupil overshoots open
   const appr=(v,t,up,dn,dt)=>v<t?Math.min(t,v+up*dt):Math.max(t,v-dn*dt);

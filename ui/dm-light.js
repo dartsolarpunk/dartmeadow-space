@@ -237,7 +237,14 @@
   function markProbe(c, p) { if (!c.dirty[p]) { c.dirty[p] = 1; c.dlist[c.dn++] = p; } }
   function resetCascade(c) { c.si.fill(0x7fffffff); c.sj.fill(0x7fffffff); c.pend.fill(0); c.sn = 0; c.dirty.fill(0); c.dn = 0; c.full = true; c.wi = c.wj = NaN; c.cursor = 0; c.ver++;
   }
-  function neutralProbe(d, o) { d.fill(0, o, o + 16); d[o] = 1 / Y0; }   // open sky: V = 1 everywhere -> c0 = 1/Y0 ... (sqrt(4 pi) = 1/Y0), bounce 0
+  function neutralProbe(d, o) { d.fill(0, o, o + 16); d[o] = 1 / Y0; }
+  // (t1644 CE-7) the cascade's FAR-FIELD average for an up-facing ground point: [vis, r, g, b] over the bottom layer of every traced column (untraced = skipped).
+  // Past the probe window the materials fade to THIS (not to open sky / zero bounce), so the lit window has no visible edge: no bright bubble round her.
+  function cascadeAvg(c, out) {
+    const o4 = out || [1, 0, 0, 0], L = c.L, d = c.data; let n = 0, v = 0, r = 0, g = 0, b = 0;
+    for (let col = 0; col < c.P * c.P; col++) { if (c.si[col] === 0x7fffffff || c.pend[col]) continue; const o = col * L * 16; v += shEval(d, o, 0, 1, 0); r += shEval(d, o + 4, 0, 1, 0); g += shEval(d, o + 8, 0, 1, 0); b += shEval(d, o + 12, 0, 1, 0); n++; }
+    if (n) { o4[0] = v / n; o4[1] = r / n; o4[2] = g / n; o4[3] = b / n; } return n;
+  }   // open sky: V = 1 everywhere -> c0 = 1/Y0 ... (sqrt(4 pi) = 1/Y0), bounce 0
   // Trace one probe: rays dirs, hits -> bounce radiance, escapes -> visibility.  S: {hf, sun:[x,y,z], sunI:[r,g,b], skyI:[r,g,b], albedo:[r,g,b], maxD, mSteps, sunSteps, lamps, lampK}
   const _n = [0, 1, 0], _d = new Float32Array(16 * 3 + 3);
   function traceProbe(c, o, px, py, pz, nRays, S, R) {
@@ -316,12 +323,13 @@
     const hn = e.horN || 0, cpu = e.hfN * e.hfN * cellB + e.farN * e.farN * cellB + hn * hn * cellB + e.casc * cascCpu, gpu = e.hfN * e.hfN * 2 + e.farN * e.farN * 2 + hn * hn * 2 + e.casc * probes * 32 + (e.cs ? probes * 64 : 0);
     return { cpu, gpu };
   }
-  const core = { smooth01, lampFalloff, softBounce, bounceDayScale, hyst, presetCap, rebase, IDLE_AGL, farSpacing, tierBytes, markProbe, resetCascade, capTier, FAR_CELL, NEAR_MAX, FAR_MAX, HOR_CELL, HOR_T0, HOR_MAX, horEdge, sunVisLong, rasterizeOverlay, hash1, csRayDirs, stepDownTier, bootTier, Y0, Y1, shProject, shEval, bentNormal, rng, rayDirs, createHF, overlayAt, march, marchBrute, sunVis, sunVisBrute, TIERS, TIER_ORDER, effective, cost, pickTier, createHeadroom, createCascade, neutralProbe, traceProbe, updateCascade, sampleCascade };
+  const core = { cascadeAvg, smooth01, lampFalloff, softBounce, bounceDayScale, hyst, presetCap, rebase, IDLE_AGL, farSpacing, tierBytes, markProbe, resetCascade, capTier, FAR_CELL, NEAR_MAX, FAR_MAX, HOR_CELL, HOR_T0, HOR_MAX, horEdge, sunVisLong, rasterizeOverlay, hash1, csRayDirs, stepDownTier, bootTier, Y0, Y1, shProject, shEval, bentNormal, rng, rayDirs, createHF, overlayAt, march, marchBrute, sunVis, sunVisBrute, TIERS, TIER_ORDER, effective, cost, pickTier, createHeadroom, createCascade, neutralProbe, traceProbe, updateCascade, sampleCascade };
   if (typeof module !== 'undefined' && module.exports) module.exports = core;
   if (typeof window === 'undefined') return;
 
   /* ───────────────────────── browser glue ───────────────────────── */
   const W = root, Q = (W.location && W.location.search) || '';
+  const FAR_AVG = !/[?&]lightfar=0\b/.test(Q), _avg = [1, 0, 0, 0], _avgS = [1, 0, 0, 0];   // (t1644) ?lightfar=0: the old fade to open sky / zero bounce (A/B for the bubble)
   const flag = ((Q.match(/[?&]light=(off|low|med|high|ultra|auto)\b/) || [])[1]) || 'auto';
   const csQ = (Q.match(/[?&]lightcs=(0|1)\b/) || [])[1];   // 0 = never, 1 = force (still needs ultra tier), default = automatic on ultra with headroom
   const bounceQ = +((Q.match(/[?&]lightbounce=([\d.]+)/) || [])[1] ?? 1);   // ?lightbounce=0 turns the bounce term off (A/B for a pale wash), 1 = default, >1 stronger
@@ -384,6 +392,7 @@
     U = {
       k: T.uniform(0), base: T.uniform(0), cam: T.uniform(new Tt.Vector2(0, 0)), sun: T.uniform(new Tt.Vector3(0.4, 0.8, 0.45)), hfSteps: T.uniform(e.sunSteps), farSteps: T.uniform(e.farSteps), hfK: T.uniform(0.5), gain: T.uniform(gainQ * 0.9), bk: T.uniform(1), bb: T.uniform(0.02),
       pen: T.uniform(0.05), penF: T.uniform(0.09), csK: T.uniform(0), lowSun: T.uniform(0),
+      vAvg: T.uniform(1), bAvg: T.uniform(new Tt.Vector3(0, 0, 0)),   // (t1644) far-field fallback past the probe window (cascadeAvg, eased in tick): no lit ring round her
       hc: T.uniform(new Tt.Vector2(0, 0)), fc: T.uniform(new Tt.Vector2(0, 0)),   // (v297) centres of the near / far height windows (the shader masks reads outside them)
       // (fov-fill 2) horizon field centre + steps; the sun shadow map's own fade band (inside its box; far off = no change) and the far-lighting band (index.html, DMLod.bands)
       h3: T.uniform(new Tt.Vector2(0, 0)), horSteps: T.uniform(e.horSteps || 0), sm: T.uniform(new Tt.Vector2(1e9, 2e9)), lf: T.uniform(new Tt.Vector2(1e9, 2e9)),
@@ -550,6 +559,9 @@
       hf3.fill(hf3.N * hf3.N, 1024, 0.25);
     }
     const sd = o.sunDir; if (sd) { sunV[0] = sd.x; sunV[1] = sd.y; sunV[2] = sd.z; }
+    if (FAR_AVG && casc.length && U) {   // (t1644) far-field fallback: the outer cascade's average, refreshed twice a second and eased (no pop, no allocation)
+      D._avgT = (D._avgT || 0) + dt; if (D._avgT > 0.5) { D._avgT = 0; if (cascadeAvg(casc[casc.length - 1], _avg)) { _avgS[0] += (_avg[0] - _avgS[0]) * 0.35; _avgS[1] += (_avg[1] - _avgS[1]) * 0.35; _avgS[2] += (_avg[2] - _avgS[2]) * 0.35; _avgS[3] += (_avg[3] - _avgS[3]) * 0.35; U.vAvg.value = Math.max(0, Math.min(1, _avgS[0])); U.bAvg.value.set(Math.max(0, _avgS[1]), Math.max(0, _avgS[2]), Math.max(0, _avgS[3])); } }
+    }
     lightParams(); const day = o.day == null ? 1 : o.day;
     const hm = sceneLights(o.scene || (W.PW && W.PW.scene)).hemi; if (hm && hm.color) { const k = hm.intensity == null ? 1 : hm.intensity; skyI[0] = hm.color.r * k; skyI[1] = hm.color.g * k; skyI[2] = hm.color.b * k; }
     const Sx = D._S || (D._S = { hf, sun: sunV, sunI, skyI, albedo, maxD: 40, mSteps: 8, sunSteps: 8, lamps: null, lampK: 0 });
@@ -692,14 +704,15 @@
       let vis = lookups[0].vis, bounce = lookups[0].bounce;
       if (lookups.length > 1) { const w = lookups[0].w; vis = mix(lookups[1].vis, vis, w); bounce = mix(lookups[1].bounce, bounce, w); }
       { // (v297) past the outermost cascade window the probes are the wrapped ones of the opposite edge: fade to neutral (open sky, no bounce)
-        const cl = casc[casc.length - 1], hl = cl.P * cl.sp * 0.5, dxz = T.length(vec2(p.x.sub(U.cam.x), p.z.sub(U.cam.y))), wOut = smoothstep(hl * 0.72, hl * 0.9, dxz);
+        const cl = casc[casc.length - 1], hl = cl.P * cl.sp * 0.5, dxz = T.length(vec2(p.x.sub(U.cam.x), p.z.sub(U.cam.y))), wOut = FAR_AVG ? smoothstep(hl * 0.5, hl * 0.9, dxz) : smoothstep(hl * 0.72, hl * 0.9, dxz);   // (t1644) a long, soft hand-off
         // (fov-fill 2) both hand-offs use the true distance (a circle inside the square window: its corners were a visible square ring of probe light), and
         // the outermost one fades to the FAR term instead of plain open sky: the far ground was flat-lit (no AO at all) from ~170 m to the horizon.  Sky visibility from the
         // shading normal (a slope sees less sky: 0.78 + 0.22 n.y) and, where the horizon field exists, its cavity (the ground 96 m round sits higher: a valley / gully
         // floor sees less sky), held to the ground's dissolve (U.lf) and only built where wOut > 0 (a branch: the near ground keeps the probes).
         // (t1590) open TERRAIN (o.terrain: the ground material, index.html _terrainDetailMat) fades to plain open sky past the probes, as before fov-fill 2: the 0.78 + 0.22 n.y
         // slope term read as darker rings of far ground on Mars (Justin wants full brightness to the horizon).  Architecture / props keep the far term.
-        const farVis = o.terrain ? float(1) : T.Fn ? T.Fn(() => {
+        // (t1644) terrain fades to the window's own average sky visibility (U.vAvg) instead of 1: the ground past the probes is exactly as bright as the ground inside them
+        const farVis = o.terrain ? (FAR_AVG ? U.vAvg : float(1)) : T.Fn ? T.Fn(() => {
           const v = float(1).toVar();
           If(wOut.greaterThan(0.0), () => {
             let fv = float(0.78).add(clamp(n.y, 0.0, 1.0).mul(0.22));
@@ -713,7 +726,9 @@
           });
           return v;
         })() : float(1);
-        vis = mix(vis, farVis, wOut); bounce = mix(bounce, vec3(0, 0, 0), wOut);
+        // (t1644) the bounce fades to the window's average (lit by the same sun / sky), shaped by the normal, not to zero: no bright disc of bounced light round her
+        const farB = FAR_AVG ? U.bAvg.mul(clamp(n.y, 0.0, 1.0).mul(0.65).add(0.35)) : vec3(0, 0, 0);
+        vis = mix(vis, farVis, wOut); bounce = mix(bounce, farB, wOut);
       }
       const skyVis = clamp(vis, 0.0, 1.0), hRel = o.h || m.userData.dmReliefH || null;
       // crevices: the relief height (parallax / ground atlas) darkens the sky term further, weighted by how closed the sky is

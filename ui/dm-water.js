@@ -59,12 +59,19 @@
     const ct = new THREE.DataTexture(tex.coverData, cN, cN, THREE.RGBAFormat, THREE.HalfFloatType);
     ct.wrapS = ct.wrapT = THREE.ClampToEdgeWrapping; ct.magFilter = ct.minFilter = THREE.LinearFilter; ct.generateMipmaps = false; ct.colorSpace = THREE.NoColorSpace; ct.needsUpdate = true;
     tex.cover = ct; tex.bytes += cN * cN * 8;
+    // (t1644 CE-7) FAR coverage window from the world's contour basin map (ui/dm-water-basin.js): FAR_N x FAR_N cells of FAR_CELL units round her, so past the
+    // near grid the sheet is drawn only inside a coastline / lake perimeter (was: everything).  -10 (wet) until filled; coverFOn = 0 keeps it unused.
+    tex.coverFarData = new Uint16Array(FAR_N * FAR_N * 4); for (let i = 0; i < FAR_N * FAR_N; i++) tex.coverFarData[i * 4] = h(-10);
+    const cf = new THREE.DataTexture(tex.coverFarData, FAR_N, FAR_N, THREE.RGBAFormat, THREE.HalfFloatType);
+    cf.wrapS = cf.wrapT = THREE.ClampToEdgeWrapping; cf.magFilter = cf.minFilter = THREE.LinearFilter; cf.generateMipmaps = false; cf.colorSpace = THREE.NoColorSpace; cf.needsUpdate = true;
+    tex.coverFar = cf; tex.bytes += FAR_N * FAR_N * 8;
     return tex;
   }
+  const FAR_N = 64, FAR_CELL = 256;   // (t1644) far coverage window: 16.4 km square, 256-unit cells (the basin map is 29-58 units a cell; its 3x3 minimum keeps every coast)
   const coverN = (tier) => (tier.name === 'ultra' || tier.name === 'high') ? 64 : (tier.name === 'medium' ? 48 : 32);
   function disposeTextures() {
     const t = S.tex; if (!t) return;
-    try { t.bands.forEach((x) => x.dispose()); t.detail.dispose(); if (t.cells) t.cells.dispose(); t.caustic.dispose(); t.shore.dispose(); } catch (e) { }
+    try { t.bands.forEach((x) => x.dispose()); t.detail.dispose(); if (t.cells) t.cells.dispose(); t.caustic.dispose(); t.shore.dispose(); if (t.cover) t.cover.dispose(); if (t.coverFar) t.coverFar.dispose(); } catch (e) { }
     crumb('gpu', 'water:tex', 0); S.tex = null;
   }
 
@@ -76,7 +83,7 @@
       sunDir: uniform(new THREE.Vector3(0.3, 0.8, 0.3).normalize()), sunCol: uniform(new THREE.Color(1, 0.96, 0.88)), skyTop: uniform(Cc(P.colors.skyTop)), skyHor: uniform(Cc(P.colors.skyHor)),
       deep: uniform(Cc(P.colors.deep)), shallow: uniform(Cc(P.colors.shallow)), scatter: uniform(Cc(P.colors.scatter)), foamCol: uniform(Cc(P.colors.foam)), absorb: uniform(Raw(P.absorb)),
       glowCol: uniform(Cc(P.glowCol)), glowCol2: uniform(Cc(P.glowCol2)), glow: uniform(P.glow), pulse: uniform(1), ice: uniform(P.ice), steam: uniform(P.steam),
-      seaRim: uniform(new THREE.Vector2(1e9, 2e9)), under: uniform(0), curlOn: uniform(0), layerFar: uniform(260), hexFar: uniform(90), time: uniform(0), nRip: uniform(0, 'int'), shoreOn: uniform(0), coverOn: uniform(0), coverC: uniform(V3()), shoreC: uniform(V3()), shoreP: uniform(V3()), wetTop: uniform(0), swashA: uniform(P.swash), swashT: uniform(0),
+      seaRim: uniform(new THREE.Vector2(1e9, 2e9)), under: uniform(0), curlOn: uniform(0), layerFar: uniform(260), hexFar: uniform(90), time: uniform(0), nRip: uniform(0, 'int'), shoreOn: uniform(0), coverOn: uniform(0), coverC: uniform(V3()), coverFOn: uniform(0), coverFC: uniform(V3()), shoreC: uniform(V3()), shoreP: uniform(V3()), wetTop: uniform(0), swashA: uniform(P.swash), swashT: uniform(0),
       bandAmt: [], bm: [], bg: [], boff: [], bhw: []
     };
     spec.bands.forEach((b, i) => {
@@ -205,6 +212,7 @@
     packRipples();
     if (S.fx) S.fx.tick(dt, ctx, S);
     if (tier.shore && ctx.H) shoreTick(dt, ctx);
+    farTick(ctx);
     if (ctx.Hw || ctx.H) coverTick(dt, ctx);
     cullTick(dt);
     wetTick(dt);
@@ -230,6 +238,31 @@
       const t0 = now(), budget = tier.mobile ? 0.5 : 0.9; try { while (now() - t0 < budget) { const r = cv.job.next(); if (r.done) { cv.job = null; finishCover(cv); break; } } } catch (e) { cv.job = null; cv.wait = 8; try { console.warn('[water] cover', e); } catch (_) { } }
     }
   }
+  /* (t1644 CE-7) contour-bounded water past the near grid.  The world's basin map (ui/dm-water-basin.js, baked from the same height field as the ground by
+     index.html worldMapFor) answers "can liquid be here?" for every tile and fragment the near cover grid does not reach, and before it is first built: no more
+     conservative "draw everything" over continents.  setBasin(name, sx, sz, D) is called by index.html _pwBuildGround (site offset = world - local). */
+  function setBasin(name, sx, sz, D) { S.basin = { name, sx: sx || 0, sz: sz || 0, D: D || 0.008, ver: -1, cx: 1e9, cz: 1e9, B: null }; S.farFn = farBoxWet; if (S.cover) S.cover.dirty = true; }
+  function basinNow() { const b = S.basin, R = W.DMWaterBasin; if (!b || !R || !R.on) return null; const B = R.get(b.name); return B || null; }
+  function farBoxWet(x0, x1, z0, z1) { const b = S.basin, B = b && b.B; if (!B) return true; return W.DMWaterBasin.boxWet(B, x0 + b.sx, x1 + b.sx, z0 + b.sz, z1 + b.sz, b.D, C().COVER_LAND); }
+  function farTick(ctx) {
+    const b = S.basin; if (!b || !S.tex || !S.tex.coverFar || ctx.x == null) return;
+    const B = basinNow(), R = W.DMWaterBasin; if (!B) { if (b.B) { b.B = null; if (S.U) S.U.coverFOn.value = 0; if (S.cover) S.cover.dirty = true; } return; }
+    const moved = Math.max(Math.abs(ctx.x - b.cx), Math.abs(ctx.z - b.cz));
+    if (B === b.B && R.ver === b.ver && moved < FAR_N * FAR_CELL * 0.2) return;
+    const cx = Math.round(ctx.x / FAR_CELL) * FAR_CELL, cz = Math.round(ctx.z / FAR_CELL) * FAR_CELL, tmp = S.farTmp || (S.farTmp = new Float32Array(FAR_N * FAR_N));
+    R.windowInto(B, tmp, FAR_N, FAR_CELL, cx, cz, b.sx, b.sz, b.D);
+    const th = W.THREE.DataUtils.toHalfFloat, d = S.tex.coverFarData; for (let k = 0; k < tmp.length; k++) d[k * 4] = th(clamp(tmp[k], -200, 200));
+    S.tex.coverFar.needsUpdate = true; b.B = B; b.ver = R.ver; b.cx = cx; b.cz = cz;
+    if (S.U) { S.U.coverFC.value.set(cx, cz, FAR_N * FAR_CELL); S.U.coverFOn.value = 1; }
+    if (S.cover) S.cover.dirty = true; S.farDirty = true;
+    log('far cover', FAR_N + 'x' + FAR_N, B.oceans + ' ocean(s)', B.lakes + ' lake(s)');
+  }
+  // the swim / buoyancy test: is the water column at LOCAL (x, z) inside a basin?  (Hw = the natural ground; the near field is exact, the basin map backs it up)
+  function wetColumn(x, z, Hfn, surfaceY) {
+    const sy = surfaceY || 0;
+    if (Hfn) { try { const h = Hfn(x, z); if (h > -1e5 && h < 1e5) return h < sy + 0.25; } catch (e) { } }
+    const b = S.basin, B = b && (b.B || basinNow()); return B ? W.DMWaterBasin.wetAt(B, x + b.sx, z + b.sz, b.D, 2) : true;
+  }
   function finishCover(cv) {
     const th = W.THREE.DataUtils.toHalfFloat, d = S.tex.coverData, m = cv.mask; for (let k = 0; k < m.length; k++) d[k * 4] = th(clamp(m[k], -200, 200));
     S.tex.cover.needsUpdate = true; cv.has = true; cv.wait = 1; cv.dirty = true;
@@ -238,9 +271,10 @@
   }
   // re-pack the clip-map's index list from the tiles that can show water (cheap: a few hundred box tests; the buffer is rewritten only when the set changes)
   function cullTick(dt) {
-    const cm = S.cmTiles, cv = S.cover; if (!cm || !cv || !cv.has || !S.mesh) return;
-    S.cullT = (S.cullT || 0) - dt; if (S.cullT > 0 && !cv.dirty) return; S.cullT = 0.1; cv.dirty = false;
-    const kept = C().tilesWet(cm.tiles, S.focus, cv.mask, cv.N, cv.cell, cv.cx, cv.cz, cm.flags); let h = 0; for (let k = 0; k < cm.flags.length; k++) h = (h * 31 + cm.flags[k] + 7) | 0;
+    const cm = S.cmTiles, cv = S.cover, far = S.basin && S.basin.B ? S.farFn : null; if (!cm || !S.mesh || !((cv && cv.has) || far)) return;
+    const dirty = (cv && cv.dirty) || S.farDirty;
+    S.cullT = (S.cullT || 0) - dt; if (S.cullT > 0 && !dirty) return; S.cullT = 0.1; if (cv) cv.dirty = false; S.farDirty = false;
+    const near = cv && cv.has, kept = C().tilesWet(cm.tiles, S.focus, near ? cv.mask : null, near ? cv.N : 0, near ? cv.cell : 1, near ? cv.cx : 0, near ? cv.cz : 0, cm.flags, far); let h = 0; for (let k = 0; k < cm.flags.length; k++) h = (h * 31 + cm.flags[k] + 7) | 0;
     if (h === cm.hash) return; cm.hash = h;
     const out = cm.packed; let o = 0; for (let k = 0; k < cm.tiles.length; k++) if (cm.flags[k]) { const t = cm.tiles[k]; out.set(cm.full.subarray(t.start, t.start + t.count), o); o += t.count; }
     const geo = S.mesh.geometry; geo.index.needsUpdate = true; geo.setDrawRange(0, o); cm.drawn = o; cm.keptTiles = kept;
@@ -324,14 +358,14 @@
     if (S.fx) { try { S.fx.dispose(); } catch (e) { } S.fx = null; }
     if (pumpT) { clearTimeout(pumpT); pumpT = 0; }
     if (S.bakeBegun) { crumb('end', 'water:bake'); S.bakeBegun = false; }
-    S.job = null; S.active = false; S.on = false; S.mesh = null; S.shore = null; S.cover = null; S.cmTiles = null; S.matBuilt = false; S.wetTop = 0; S.bandDoneAt = null; S.sprayTex = null;
+    S.job = null; S.active = false; S.on = false; S.mesh = null; S.shore = null; S.cover = null; S.cmTiles = null; S.basin = null; S.farDirty = false; S.matBuilt = false; S.wetTop = 0; S.bandDoneAt = null; S.sprayTex = null;
     disposeTextures(); S.U = null; S.model = null;
     if (S.matCache) { try { S.matCache.dispose && S.matCache.dispose(); } catch (e) { } S.matCache = null; }
     crumb('live', 'water', 0);
   }
 
   W.DMWater = {
-    S, enabled, begin, end, tick, follow, seaRim, attachSea, bakeNow, pump, heightAt, slopeAt, ripple,
+    S, enabled, begin, end, tick, follow, seaRim, attachSea, bakeNow, pump, heightAt, slopeAt, ripple, setBasin, wetColumn,
     get active() { return S.active; }, get tier() { return S.tier; }, get identity() { return S.P; }, get ready() { return S.ready; },
     status: () => ({ cover: S.cover && S.cmTiles ? { has: S.cover.has, wet: S.cover.wetFrac, tiles: S.cmTiles.keptTiles + '/' + S.cmTiles.tiles.length, idx: S.cmTiles.drawn + '/' + S.cmTiles.full.length } : null, active: S.active, tier: S.tier && S.tier.name, ready: S.ready, bands: S.spec && S.spec.bands.length, jobMs: +S.jobMs.toFixed(0), wallMs: +S.bakeWall.toFixed(0), lvl: S.lvl, bytes: S.tex ? Math.round(S.tex.bytes) : 0, kind: S.P && S.P.kind, sig: S.P && S.P.sig, mats: S.mats, curl: S.fx && S.fx.curl ? S.fx.curl.status() : null, cells: !!(S.tex && S.tex.cells), shore: S.shore ? { has: S.shore.has, minD: S.shore.minD, ver: S.shore.ver } : null }),
     _crumb: crumb, _log: log

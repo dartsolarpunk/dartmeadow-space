@@ -41,7 +41,7 @@ for (const viewR of [1200, 1500, 3000]) {
 }
 // (3) dither floor
 ok(E._skyDitherOk(1) && E._skyDitherOk(0.8) && !E._skyDitherOk(0.79) && !E._skyDitherOk(0.42), 'dissolve dither only at >= ' + E._SKY_DITHER_MIN + ' of the chosen resolution');
-ok(/!\/\[\?&\]skyhaze=1\\b\/\.test\(location\.search\)\) return;/.test(cut('SkyGround.prototype._hazeInit=', 'SkyGround.prototype._hazeTick=')), 'the #259 colour mix is off by default (?skyhaze=1 A/B)');
+ok(/\|\|!on\) return;/.test(cut('SkyGround.prototype._hazeInit=', 'SkyGround.prototype._hazeTick=')) && /const _SKY_EDGE0=0\.96;/.test(html) && /skyfade=dither/.test(html), '(t1644) smooth haze blend on by default, the dither only a hairline past 0.96 R; ?skyfade=dither / ?skyhaze=0 A/B');
 // (4) source pins
 ok(/Justin Craig Venable/.test(cut('// (t1590) ONE RADIAL FALLOFF', 'function _skyFalloff')), 'credited: Radical Circumference / ArcEdge (Justin Craig Venable)');
 ok(/function _skyFalloff\(R,out\)\{ return _skyHazeBand\(R,out\); \}/.test(html), 'one rim function (_skyHazeBand -> DMRadCirc.rim) feeds the bands');

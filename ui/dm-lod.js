@@ -33,7 +33,7 @@
  *   prop.errM/tauPx prop size (m) / px for the error-driven chunk cut 1.0/2.2 1.2/1.8 1.4/1.4
  *   terrain.reliefK relief-aware ground tile split                  0.4    0.7    1.0
  *   mip.bias        extra mip level at the far end of a detail band   1.0    0.8    0.5
- *   terrain.splitK (perf-mars) SkyGround split distance scale        .78    .88    1.0   x (0.5 + 0.5 x ladder ground reach)
+ *   terrain.splitK (perf-mars) SkyGround split distance scale        .78    .88    1.0   x (0.5 + 0.5 x ladder ground reach)  (t1644: only with ?splitk=legacy; default 1 = PR #111)
  *   shadow.minExt   (perf-mars) skinned pieces under this fraction of her height do not cast into the sun shadow   .1   .1   0
  *
  * (v309) CLASSIC BASE.  The default table is the one that shipped before the Nov 5 far-range work (props 1400 m cut / 3x3 chunks, shadows 110 / 170, mansion 300-360 / 400-470, cull 5200 / 6000,
@@ -383,7 +383,11 @@
   const bud = (fn, d) => { try { const B = W.DMBudget; if (B && B.on && B[fn]) return B[fn](); } catch (e) { } return d; };
   out.propCut = function (fog, agl, fov, viewH) { return propCutErr(out.tier, fog, agl, bud('propsK', 1), fov, viewH); };
   out.reliefK = function () { return get(out.tier, 'terrain.reliefK') * bud('groundReach', 1); };
-  out.splitK = function () { return out.on ? splitScale(out.tier, bud('groundReach', 1)) : 1; };   // (perf-mars) x SkyGround.K
+  /* (t1644 CE-7) PR #111 split cadence restored: SkyGround splits at the full K (1.8) on every class and at every ladder stage, so a tablet gets the same
+     smooth horizon-to-horizon falloff as the Oct 2 build (no blocky far tiles).  The ladder 'ground' stage sheds props / parallax / reach instead.
+     ?splitk=legacy brings back the perf-mars scale (table x ladder ground reach) for an A/B. */
+  out.splitLegacy = /[?&]splitk=legacy\b/.test(Q);
+  out.splitK = function () { return out.on && out.splitLegacy ? splitScale(out.tier, bud('groundReach', 1)) : 1; };   // x SkyGround.K
   out.blurPasses = function (step) { return out.on && !farSmoothOff ? blurPasses(step) : 0; };
   /* (perf-mars) the sun-shadow caster policy on her skinned pieces.  Cached per model: [{m, ext, c0}]; castShadow is a plain flag (no pipeline rebuild).  Returns the number of casters. */
   out.applyCasters = function (root, lvl) {

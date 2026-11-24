@@ -285,7 +285,7 @@ const stats = (mdl, t, N) => { let s = 0, s2 = 0; for (let i = 0; i < N; i++) { 
   ok(C.coverBoxWet(new Float32Array(NG * NG).fill(50), NG, cell, 0, 0, 5000, 5100, 0, 10), 'outside the grid everything is wet (drawn)');
   ok(!C.coverBoxWet(new Float32Array(NG * NG).fill(50), NG, cell, 0, 0, -100, 100, -100, 100), 'inside the grid, all high ground: nothing drawn');
   { const m = new Float32Array(NG * NG).fill(50); m[32 * NG + 32] = -20; ok(C.coverBoxWet(m, NG, cell, 0, 0, -cell * 2.5, -cell * 2.2, 0, 10) === false || true, 'x'); ok(C.coverBoxWet(m, NG, cell, 0, 0, 2, 10, 2, 10), 'a one-cell lake keeps its tile'); ok(C.coverBoxWet(m, NG, cell, 0, 0, cell * 1.2, cell * 1.6, 2, 10), 'the tile next to a lake keeps one cell of margin'); }
-  ok(C.coverAlpha(-5) === 1 && C.coverAlpha(40) === 0 && C.coverAlpha(14) > 0.2 && C.coverAlpha(14) < 1, 'coverAlpha: wet below the shore band, dry well above, smooth between');
+  ok(C.coverAlpha(-5) === 1 && C.coverAlpha(40) === 0 && C.coverAlpha(C.COVER_LAND - 2) > 0.2 && C.coverAlpha(C.COVER_LAND - 2) < 1, 'coverAlpha: wet below the shore band, dry well above, smooth between');
   // a bad height callback never hides water
   { const m = new Float32Array(16), g = C.coverJob(() => NaN, 0, 0, 4, 10, 2, 0, m); while (!g.next().done); ok(m.every((v) => v < 0), 'unreadable heights read as sea'); }
 }

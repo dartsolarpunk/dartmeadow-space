@@ -44,7 +44,7 @@ ok(/scene\.overrideMaterial = S\.mat/.test(sf) && /cam\.layers\.set\(LAYER\)/.te
 ok(/o\.isSkinnedMesh/.test(sf) && /dmFarSkip/.test(sf) && /DMSunFar\.hooks\.skip=\(a\)=>/.test(html), 'moving casters (her, the board) are kept out of the slow layer');
 { const tick = sf.slice(sf.indexOf('D.tick = function'), sf.indexOf('D.covers')); ok(!/new [A-Z]|\[\s*\]|=\s*\{\s*\}|=>/.test(tick.replace(/\/\/.*$/gm, '')), 'D.tick allocates nothing (no new / [] / {} / closures)'); }
 ok(/const farV = \(!o\.terrain && W\.DMSunFar && W\.DMSunFar\.node\)/.test(lt) && (lt.match(/mix\(farV, /g) || []).length === 4, 'dm-light: all four sun-wrapper branches hand off to the far layer, except on open terrain (t1590: lit past the near box)');
-ok(/const farVis = o\.terrain \? float\(1\)/.test(lt), 'dm-light (t1590): open terrain fades to plain open sky past the probes (no 0.78 slope darkening)');
+ok(/const farVis = o\.terrain \? \(FAR_AVG \? U\.vAvg : float\(1\)\)/.test(lt), 'dm-light (t1590/t1644): open terrain past the probes takes no 0.78 slope darkening; it fades to the window average sky visibility (no bubble; ?lightfar=0 = plain open sky)');
 ok(/terrain:!opts\.noTerrainLight/.test(html), 'index.html (t1590): the ground material is marked terrain for DMLight');
 ok(/!!S\.cfg\.recv && coversAt/.test(sf) && /if \(!S\.cfg \|\| !S\.cfg\.recv\) return null;/.test(sf), 'dm-sunfar (t1590): covers() / receivers only on a receiving tier (TIGHT_FAR follows it)');
 ok(/DMSunFar\.tick\(flightRenderer,scene,up,px,fy,pz\)/.test(html), 'index.html: the far layer is fitted with the same key direction `up` as the near box (_pwKeyDir)');

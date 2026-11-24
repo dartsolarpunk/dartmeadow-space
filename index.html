@@ -183,7 +183,7 @@ if(location.search.indexOf('debug')!==-1){
   // PWA manifest: /manifest.webmanifest (linked in <head>; dark launch screen on Android)
 })();</script>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-<script>/* (v353) build tag: bump together with CACHE_NAME in sw.js (tools/tests/build-tag.js).  Persisted quality records (ui/dm-budget.js, dm-governor.js) are dropped when it changes. */window.DM_BUILD='v372';try{console.log('[DM build] '+window.DM_BUILD);}catch(e){}</script>
+<script>/* (v353) build tag: bump together with CACHE_NAME in sw.js (tools/tests/build-tag.js).  Persisted quality records (ui/dm-budget.js, dm-governor.js) are dropped when it changes. */window.DM_BUILD='v373';try{console.log('[DM build] '+window.DM_BUILD);}catch(e){}</script>
 <script src="ui/dm-time.js?v=97"></script>
 <script src="ui/dm-earth.js?v=292"></script>
 <script src="ui/dm-earth-paint.js?v=290"></script>
@@ -193,21 +193,22 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-parallax.js?v=372"></script>
 <script src="ui/dm-groundlib.js?v=351"></script>
 <script src="ui/dm-radical-circ.js?v=300"></script>   <!-- (lod-hide) Radical Circumference / ArcEdge radius maths (Justin Craig Venable, dartedge.com/radicaledge): the LOD discs and rims (tess patch, sea-sheet rim) -->
-<script src="ui/dm-water-core.js?v=300"></script>
-<script src="ui/dm-water.js?v=300"></script>
-<script src="ui/dm-water-sea.js?v=300"></script>
+<script src="ui/dm-water-core.js?v=373"></script>
+<script src="ui/dm-water.js?v=373"></script>
+<script src="ui/dm-water-basin.js?v=373"></script>
+<script src="ui/dm-water-sea.js?v=373"></script>
 <script src="ui/dm-water-curl.js?v=292"></script>   <!-- water: the breaking-wave curl (glassy turquoise barrel along the shore-parallel wave fronts; Medium+; created by dm-water-fx) -->
-<script src="ui/dm-water-fx.js?v=292"></script>   <!-- water: spray / splash / mist sprites, wake, footstep ripples, shore-break spray, underwater fog + shafts (?waterfx=0 off) -->   <!-- water: baked sea, shore, ground hook (?water=0 = the previous sea) -->
+<script src="ui/dm-water-fx.js?v=373"></script>   <!-- water: spray / splash / mist sprites, wake, footstep ripples, shore-break spray, underwater fog + shafts (?waterfx=0 off) -->   <!-- water: baked sea, shore, ground hook (?water=0 = the previous sea) -->
 <script src="ui/dm-perf.js?v=343"></script>
 <script src="ui/dm-governor.js?v=372"></script>
 <script src="ui/dm-budget.js?v=372"></script>
 <script src="ui/dm-mem.js?v=372"></script>
-<script src="ui/dm-lod.js?v=359"></script>
+<script src="ui/dm-lod.js?v=373"></script>
 <script src="ui/dm-terrain-lod.js?v=294"></script>   <!-- one terrain across every altitude band: shared slope / skirt / sea-tint contract between the globe map and the sky ground -->
 <script src="ui/dm-impostor.js?v=280"></script>   <!-- far-range LOD: vertex-clustering impostor (mansion LOD2, colours baked) -->   <!-- far-range LOD: the ONE distance table per device class (props, mansion, landmarks, vantage reach); ?lod=off|low|mobile|desktop -->
-<script src="ui/dm-light.js?v=351"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
+<script src="ui/dm-light.js?v=373"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
 <script src="ui/dm-sunfar.js?v=351"></script>   <!-- (t1537) the key light's wide, slow shadow layer past the near map (DMLight wrapper), into the haze; ?sunfar=0 off -->
-<script src="ui/dm-vlight.js?v=347"></script>   <!-- lighting overhaul: lamps / LEDs / flashlight / low sun light the volumetric fog (scene.fogNode, light list, equi-angular in-scatter); ?vlights=0|low|med|high -->
+<script src="ui/dm-vlight.js?v=373"></script>   <!-- lighting overhaul: lamps / LEDs / flashlight / low sun light the volumetric fog (scene.fogNode, light list, equi-angular in-scatter); ?vlights=0|low|med|high -->
 <script src="ui/dm-spaceshafts.js?v=349"></script>   <!-- (t1537) the key star's glare + dust scatter + the nearest world's shadow through it, in open space (Med+; off on Low); ?spaceshafts=0 off -->
 <script src="ui/dm-feedback.js?v=329"></script>
 <script src="ui/dm-gpu-defer.js?v=372"></script>   <!-- (v332) DMGpuDefer: deferred destruction of disposed geometry's GPU buffers (the Bird Temple "used in submit while destroyed" banner) -->
@@ -1078,7 +1079,7 @@ body[data-dm-screen]:not([data-dm-screen="flight"]) #dm-flash,body[data-dm-scree
 <script src="ui/dm-landzones.js?v=293" defer></script>
 <script src="ui/dm-padbind.js?v=293" defer></script>
 <script src="ui/dm-globe.js?v=339" defer></script>
-<script src="ui/dm-star.js?v=191" defer></script>
+<script src="ui/dm-star.js?v=373" defer></script>
 <script src="ui/dm-mist.js?v=8" defer></script>
 <script src="ui/dm-atmo.js?v=344" defer></script>
 <script src="ui/dm-localcollide.js?v=188" defer></script>
@@ -1095,7 +1096,7 @@ body[data-dm-screen]:not([data-dm-screen="flight"]) #dm-flash,body[data-dm-scree
 <script src="ui/dm-charlook.js?v=370" defer></script>   <!-- the character look: smooth normals, soft sky / rim / matcap light + skin wrap on every pilot, game + studio; ?charlook=off|low|high  ?charenv=analytic|matcap|both -->
 <script src="ui/dm-decalflow.js?v=366" defer></script>   <!-- staged logo flow (pending / apply / reset / delete) + placement pad geometry; pure logic -->
 <script src="ui/dm-charselect.js?v=370" defer></script>   <!-- character select cards + one-canvas studio -->
-<script src="ui/dm-starbubble.js?v=4" defer></script>
+<script src="ui/dm-starbubble.js?v=373" defer></script>
 <script src="ui/dm-hazard.js?v=372" defer></script>   <!-- hazard registry + exposure clock + protection LED / crown glow (the protective orb is gone) -->
 <script src="ui/dm-hazardhud.js?v=357" defer></script>   <!-- the hazard band / type / safe-time HUD (only while a hazard is sensed) -->
 <script src="ui/dm-birdtemple.js?v=122" defer></script>
@@ -2693,6 +2694,7 @@ function _restoreAnchor(w){
 // Ground / sky / deck: through the game's own seamless entries (the world is
 // built round the spot while the current view runs, then takes over; she is
 // mounted or set down by the same code as a normal landing / boarding).
+const _resumeWaitBody=new WeakSet();   // (t1644) saves already waiting for their world's mesh
 function _restoreWhereMode(w,data,t0){
   const sp=STATE.flight;
   if(w.mode==='deck'){
@@ -2718,7 +2720,18 @@ function _restoreWhereMode(w,data,t0){
   }
   const g=w.mode==='surface'?w.ground:w.sky; if(!g) return false;
   const body=celestialBodies.find(x=>x&&x.name===g.body&&x.mesh);
-  if(!body){ toast('⚠ '+(g.body||'That world')+' is not here any more','','warn'); return false; }
+  if(!body){
+    // (t1644 CE-7) a RACE, not missing data: on resume the home system (Veyra / Solenne) is often still building its meshes (async MC / brick build behind the
+    // intro gate), so wait for the world to exist WITH its mesh (like waitTemple above) before giving up; the warning only after 45 s.
+    if(!_resumeWaitBody.has(w)){ _resumeWaitBody.add(w); const tw=Date.now();
+      (function waitBody(){
+        if(celestialBodies.some(x=>x&&x.name===g.body&&x.mesh)){ if(!_restoreWhereMode(w,data,t0)) _resumeHold(false); return; }
+        if(Date.now()-tw<45000) setTimeout(waitBody,250); else { _resumeHold(false); toast('⚠ '+(g.body||'That world')+' is not here any more','','warn'); }
+      })();
+      return true;
+    }
+    toast('⚠ '+(g.body||'That world')+' is not here any more','','warn'); return false;
+  }
   // the space board waits in this world's orbit (where leaving it puts you)
   try{
     const r=(_bodyVisRadius(body)||6), d=w.near&&w.near.name===body.name?new THREE.Vector3(w.near.off[0],w.near.off[1],w.near.off[2]):sp.pos.clone().sub(body.mesh.position);
@@ -15494,6 +15507,7 @@ async function _rebuildFlightForSystem(system){
   const sysRand=seedRand(system.seed||hashStr('sys:'+system.name));
 
   // Central star — from its class, by the world engine (ui/dm-star.js)
+  try{ if(window.DMStarBubble&&DMStarBubble.clearStars) DMStarBubble.clearStars(); }catch(e){}   // (t1644) the star registry is per system
   const starK=system.starK||DMStar.tempFor(system.starType);
   const _star=DMStar.build({radius:system.starR||SOL_SUN_RADIUS,temp:starK,seed:(system.seed||hashStr('sys:'+system.name))%997+1});
   const starGroup=_star.group, starMesh=_star.mesh;
@@ -15501,7 +15515,8 @@ async function _rebuildFlightForSystem(system){
   sunMesh=starMesh;
   const _starSrc=[{obj:starGroup,radius:system.starR||SOL_SUN_RADIUS,temp:starK,name:system.name}];
   if(system.ariel){ const a=_ah(); const sb=a?a.buildStars(system,_star,starK):null;   // the Veyra binary: scale A, build B, swing both about the barycentre
-    if(sb&&sb.group) _starSrc.push({obj:sb.group,radius:(system.binary&&system.binary.rB)||system.starR*0.66||60,temp:system.starK2||DMStar.tempFor(system.star2||'K orange'),name:system.name+' B'}); }
+    if(sb&&sb.group){ _starSrc.push({obj:sb.group,radius:(system.binary&&system.binary.rB)||system.starR*0.66||60,temp:system.starK2||DMStar.tempFor(system.star2||'K orange'),name:system.name+' B'});
+      try{ if(window.DMStarBubble&&DMStarBubble.registerStar) DMStarBubble.registerStar({mesh:sb.group,renderMesh:sb.mesh||sb.group,R:(system.binary&&system.binary.rB)||0,name:system.name+' B'}); }catch(e){} } }   // (t1644 CE-7) the companion gets the fly-through bubble too
   try{ if(window.DMStars) DMStars.setSources(_starSrc); }catch(e){}   // (v334) both of Veyra's stars light Solenne's sky (and every other world's)
   celestialBodies.push({mesh:starGroup,name:system.name,type:'Star',temp:Math.round(starK/100)*100+' K',orbitR:0,orbitSpd:0,angle:0,renderMesh:starMesh});
 
@@ -19642,10 +19657,19 @@ function worldMapFor(body,onPass){
       for(let x=0;x<W;x++){ hs[y*W+x]=heightAt(lat,(x+0.5)/W*360-180); }
       if(performance.now()-t0>7){ await new Promise(r=>setTimeout(r,0)); t0=performance.now(); }
     }
-    m.W=W; m.H=Hh; m.heights=hs; m.tex=_worldMapTexture(m,pal);
+    m.W=W; m.H=Hh; m.heights=hs;
+    // (t1644 CE-7) the world's CONTOUR BASINS (ui/dm-water-basin.js): the same heights cut at sea level, oceans and lakes flood-filled; the sea sheet, its tiles,
+    // the swim volume and the orbit coast all read this one map, so no water is generated under a continent on any seeded world
+    if(pal.water&&window.DMWaterBasin){ try{ const tb=performance.now(); m.basin=DMWaterBasin.fromGrid(hs,W,Hh,0); DMWaterBasin.put(body.name,m.basin); if(performance.now()-tb>6) await new Promise(r=>setTimeout(r,0)); }catch(e){ console.warn('[basin]',e); } }
+    // (t1644) the big passes colour in slices too (a 1.5-2K map is 1-2 M pixels: never one long frame)
+    if(W*Hh>400000){ const g=_worldMapTextureGen(m,pal); let t1=performance.now(), r; while(!(r=g.next()).done){ if(performance.now()-t1>7){ await new Promise(q=>setTimeout(q,0)); t1=performance.now(); } } const prev=m.tex; m.tex=r.value; if(prev&&prev!==m.tex) m._prevTex=prev; }
+    else m.tex=_worldMapTexture(m,pal);
     m.listeners.forEach(f=>{ try{ f&&f(m); }catch(e){} });
+    m._prevTex=null;   // the coarser pass's texture is let go, never disposed here: a material elsewhere may still bind it this frame (an invalid bind group otherwise)
   };
-  m.promise=(async()=>{ await pass(256,128); await pass(768,384); m.done=true; m.listeners=[]; return m; })();
+  // (t1644 CE-7) crisp orbit maps: 256x128 -> 768x384 -> the full pass (desktop 2048x1024, tablet 1536x768, small / low-memory handhelds 1024x512; ?wmres=N forces the width)
+  const fin=_wmFinalSize();
+  m.promise=(async()=>{ await pass(256,128); await pass(768,384); if(fin>768) await pass(fin,fin/2); m.done=true; m.listeners=[]; return m; })();
   return m.promise;
 }
 // colour the map like the ground shader colours the terrain: water below
@@ -19671,7 +19695,14 @@ function _wmDry(c,g1,g2,sand,rock,snow,h,slope,la,hx,hz,cw,cell,ws){
   c.multiplyScalar(shade);
   return c;
 }
-function _worldMapTexture(m,pal){
+function _wmFinalSize(){
+  const q=+((location.search.match(/[?&]wmres=(\d+)/)||[])[1]||0); if(q>=256) return Math.min(4096,Math.round(q/256)*256);
+  const G=window.GFX||{}, mem=G.deviceMem||navigator.deviceMemory||0;
+  if(!G.isMobile) return 2048;
+  return mem>=6||(mem===0&&Math.min(screen.width||0,screen.height||0)>=700)?1536:1024;   // tablets (or unknown-memory large screens) 1.5K; phones 1K
+}
+function _worldMapTexture(m,pal){ const g=_worldMapTextureGen(m,pal); let r; while(!(r=g.next()).done){} return r.value; }
+function* _worldMapTextureGen(m,pal){
   const W=m.W, Hh=m.H, hs=m.heights;
   const cv=document.createElement('canvas'); cv.width=W; cv.height=Hh;
   const cx=cv.getContext('2d'), img=cx.createImageData(W,Hh), d=img.data;
@@ -19735,6 +19766,7 @@ function _worldMapTexture(m,pal){
       }
       d[i*4]=Math.min(255,c.r*255); d[i*4+1]=Math.min(255,c.g*255); d[i*4+2]=Math.min(255,c.b*255); d[i*4+3]=255;
     }
+    if((y&7)===7) yield;   // (t1644) a slice point every 8 rows (the async passes yield the frame here)
   }
   cx.putImageData(img,0,0);
   try{ cv.__dmRGBA=d; }catch(e){}   // the pixels as built: readers (the globe) take these instead of a synchronous canvas readback
@@ -26123,6 +26155,12 @@ function SkyGround(scene,F,pal,o){
 // no blending) between _SKY_FADE0 x viewR and viewR by its true distance from the camera, so the edge is a circle.  Nothing inside the
 // circle can be uncovered: a tile is only let go when its nearest point is past viewR (tools/tests/skyground-radial.js).
 const _SKY_FADE0=0.82;
+// (t1644 CE-7) SMOOTH HORIZON.  The screen-door dissolve over 0.82 R -> R read as a crunchy, pixelated rim (each dither cell several pixels at a tablet's render
+// scale).  By default the ground's final lit colour now blends SMOOTHLY into the scene haze over 0.82 R -> _SKY_EDGE0 x R (no dither, no discard, uniforms only),
+// and the dither is kept only as a hairline over the last 4 % (_SKY_EDGE0 R -> R) where every pixel is already the haze colour, so no edge or pattern can be seen.
+// Airless worlds (no fog) keep the plain dissolve.  ?skyfade=dither: the old full-band screen-door (A/B); ?skyhaze=0: no haze blend; ?skyfade=0: no dissolve.
+const _SKY_EDGE0=0.96;
+const _SKY_SMOOTH=!/[?&]skyfade=dither\b/.test((typeof location!=='undefined'&&location.search)||'');
 function _skyGroundFade(d,viewR){ const a=viewR*_SKY_FADE0, t=Math.min(1,Math.max(0,(d-a)/Math.max(1e-6,viewR-a))); return 1-t*t*(3-2*t); }
 SkyGround.prototype._radialFade=function(){
   const W=window, m=this.mat;
@@ -26162,12 +26200,16 @@ const _SKY_DET_END_LOWG=1.25;   // (Perf guard #275 F2) Mali-class tablets: the 
 const _SKY_DITHER_MIN=0.8;
 function _skyDitherOk(resScale){ return !(resScale<_SKY_DITHER_MIN); }
 function _skyHazeBand(R,out){ const RC=window.DMRadCirc, o=out||{outer:0,inner:0,centre:0}; if(RC&&RC.rim) return RC.rim(R,o); o.outer=R; o.inner=R-R*0.25; o.centre=(o.inner+R)*0.5; return o; }
+// (t1644) the haze blend's span: smooth mode 0.82 R -> 0.96 R (the haze is at full density by 0.82 R, so this only finishes it before the hairline dither);
+// ?skyfade=dither: the #259 rim band (0.75 R -> 0.875 R).  out = {inner, centre} reused.
+function _skyHazeSpan(R,out){ if(!_SKY_SMOOTH) return _skyHazeBand(R,out); const o=out||{outer:0,inner:0,centre:0}; o.outer=R; o.inner=R*_SKY_FADE0; o.centre=R*_SKY_EDGE0; return o; }
 function _skyHazeW(d,inner,centre){ if(d<=inner) return 0; if(d>=centre) return 1; const t=(d-inner)/Math.max(1e-6,centre-inner); return t*t*(3-2*t); }
 SkyGround.prototype._hazeInit=function(){
   const W=window, m=this.mat; this._hazeU=null;
-  if(!m||!this._fadeU||typeof W.uniform!=='function'||!W.output||!W.mix||!W.vec4||!/[?&]skyhaze=1\b/.test(location.search)) return;   // (t1590) off by default; ?skyhaze=1: the #259 colour mix (A/B)
+  const q=location.search, on=_SKY_SMOOTH?!/[?&]skyhaze=0\b/.test(q):/[?&]skyhaze=1\b/.test(q);   // (t1644) ON by default (smooth horizon); ?skyhaze=0 off; with ?skyfade=dither only ?skyhaze=1 (the #259 mix)
+  if(!m||!this._fadeU||typeof W.uniform!=='function'||!W.output||!W.mix||!W.vec4||!on) return;
   try{
-    const b=_skyHazeBand(this.viewR,_SKY_HAZE_RIM);
+    const b=_skyHazeSpan(this.viewR,_SKY_HAZE_RIM);
     const U=this._hazeU={c:W.uniform(new THREE.Color(this.pal&&this.pal.fog!=null?this.pal.fog:0x8899aa)),r:W.uniform(new THREE.Vector2(b.inner,b.centre)),on:W.uniform(0)};
     const w=W.smoothstep(U.r.x,U.r.y,W.length(W.positionView)).mul(U.on);
     m.outputNode=W.vec4(W.mix(W.output.rgb,U.c,w),W.output.a);
@@ -26175,7 +26217,7 @@ SkyGround.prototype._hazeInit=function(){
 };
 SkyGround.prototype._hazeTick=function(){
   const U=this._hazeU; if(!U) return;
-  const b=_skyHazeBand(this.viewR,_SKY_HAZE_RIM); U.r.value.set(b.inner,b.centre);
+  const b=_skyHazeSpan(this.viewR,_SKY_HAZE_RIM); U.r.value.set(b.inner,b.centre);
   const sc=this.group.parent, fog=sc&&sc.fog;
   if(fog&&fog.color){ U.c.value.copy(fog.color); U.on.value=1; } else U.on.value=0;
 };
@@ -26328,7 +26370,7 @@ SkyGround.prototype.update=function(cam,budgetMs){
   const st=this.stat; st.built=built; st.focus=nf; st.emerg=em?1:0; st.skipped=skipped; st.left=Q.length-built; st.settle=B>this.budget&&budgetMs==null?1:0;
   if(st.left>0){ st.converged=0; st.convT=0; } else if(!st.converged){ st.converged=1; st.convT=t0; }   // (t1590) 'converged': nothing left to build for this view (?perf=1 / SkyGround.stat)
   if(st.left>0) this._idleKick();   // (v330 streaming) what is left fills in after this frame, outside it
-  if(this._fadeU){ const dz=_skyDitherOk(_skyResScale()); this._fadeU.a.value=dz?this.viewR*_SKY_FADE0:1e9; this._fadeU.b.value=dz?this.viewR:2e9; this._hazeTick(); }   // (Wave 2a) the circle follows the drawn radius; (t1516) so does the haze band; (t1590) no dither below 0.8 resolution
+  if(this._fadeU){ const hz=!!(this._hazeU&&this._hazeU.on.value), dz=hz||_skyDitherOk(_skyResScale()), e0=hz?_SKY_EDGE0:_SKY_FADE0; this._fadeU.a.value=dz?this.viewR*e0:1e9; this._fadeU.b.value=dz?this.viewR:2e9; this._hazeTick(); }   // (Wave 2a) the circle follows the drawn radius; (t1516) so does the haze band; (t1590) no dither below 0.8 resolution
   this._seaRimTick();   // (lod-hide) the sea's circular rim follows the sheet
   this.roots.forEach(this._show,this);
   const now=performance.now(), dt=this._lastT?Math.min(0.1,(now-this._lastT)/1000):0; this._lastT=now;
@@ -26644,6 +26686,7 @@ function _pwBuildGround(pal,fx,fz,mode){
   TERRAIN.pal=pal; TERRAIN.H=Hs; TERRAIN.Hg=H; TERRAIN.Hw=(()=>{ const h0=F.H0||H; try{ const f=_fac(); return f&&f.seaField?f.seaField(h0):h0; }catch(e){ return h0; } })();   /* Hw: the natural ground (no decks / mansion solids, no mansion-box carve) = what the sea's shore field should read; (t1516) plus the sea at the mansion cliff's foot (DMFac.seaField: the GLB's sea cells + the apron in front of the face) */ TERRAIN.exBox=(()=>{ try{ const f=_fac(); return f&&f.exBox?f.exBox:null; }catch(e){ return null; } })(); TERRAIN.seed=seed; TERRAIN.siteBias=F.siteBias; TERRAIN.siteLat=F.siteLat;
   try{ if(window.DMGround) DMGround.beginWorld({style:F.ws,seed,water:!!pal.water,lat:F.siteLat}); }catch(e){ console.warn('[ground lib] bake',e); }
   try{ if(window.DMWater) DMWater.begin({body,pal,seed,lat:F.siteLat}); }catch(e){ console.warn('[water] begin',e); }   // (ui/dm-water*.js) the sea's wave tiles / identity from this world's gravity, air and liquid, baked in 2-3 ms slices   // atlas + region map baked in 2-3 ms slices between frames (the materials start on a neutral atlas, so nothing waits)
+  try{ if(pal.water&&window.DMWater&&DMWater.setBasin){ DMWater.setBasin(body&&body.name,F.sw.x,F.sw.z,ATMO_DEG_PER_UNIT); if(body&&!(window.DMWaterBasin&&DMWaterBasin.forBody(body))) worldMapFor(body); } }catch(e){ console.warn('[water] basin',e); }   // (t1644 CE-7) contour-bounded sea: the world's basin map (built with its whole-planet map)
   TERRAIN.mcY=null; TERRAIN.mcN=null; TERRAIN.cpuMc=null; TERRAIN.mcGpu=false; TERRAIN._mcBusy=false; TERRAIN._mcUpg=false;
   TERRAIN.mcTier='low'; TERRAIN.mcUpgradeLocked=false; TERRAIN.mcDensityArray=null; TERRAIN.mcGridInfo=null; TERRAIN.mcGroup=null;
   TERRAIN.waterFollow=null; TERRAIN._wgx=null; TERRAIN.rockGeo=null;
@@ -26742,7 +26785,10 @@ function _pwBuildGround(pal,fx,fz,mode){
     vol.userData.liquidName=pal.liquidName||'water'; vol.userData.waterSurfaceY=WATER_SURFACE_Y; vol.userData.waterFloorY=WATER_FLOOR_Y;
     vol.userData.bounds={minX:fx-SZ/2,maxX:fx+SZ/2,minY:WATER_FLOOR_Y,maxY:WATER_SURFACE_Y,minZ:fz-SZ/2,maxZ:fz+SZ/2};
     PW.scene.add(vol); TERRAIN.waterVolume=vol; TERRAIN.waterFollow=[vol];
-    window._surfWaterAt=function(x,y,z){ const b=vol.userData.bounds; return x>=b.minX&&x<=b.maxX&&y>=b.minY&&y<=b.maxY&&z>=b.minZ&&z<=b.maxZ; };
+    // (t1644 CE-7) the swim / buoyancy volume holds only INSIDE a coastline or lake perimeter: the column's natural ground must lie below the surface
+    // (DMWater.wetColumn: exact ground near her, the world's contour basin map past it).  ?water=legacy: the plain box (A/B).
+    const _wetCol=(window.DMWater&&DMWater.wetColumn&&window.DMWaterBasin&&DMWaterBasin.on)?DMWater.wetColumn:null, _Hw=TERRAIN.Hw;
+    window._surfWaterAt=function(x,y,z){ const b=vol.userData.bounds; if(!(x>=b.minX&&x<=b.maxX&&y>=b.minY&&y<=b.maxY&&z>=b.minZ&&z<=b.maxZ)) return false; return _wetCol?_wetCol(x,z,_Hw,WATER_SURFACE_Y):true; };
     window.JOTS_WATER={surfaceY:WATER_SURFACE_Y,floorY:WATER_FLOOR_Y,liquidName:pal.liquidName||'water',volumeMesh:vol,surfaceMesh:wm,
       containsPoint(p){ return !!p&&window._surfWaterAt(p.x,p.y,p.z); },
       immersionDepth(p){ return this.containsPoint(p)?Math.max(0,WATER_SURFACE_Y-p.y):0; }};
