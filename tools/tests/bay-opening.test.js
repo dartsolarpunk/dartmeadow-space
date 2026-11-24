@@ -16,7 +16,8 @@ const local = (n) => { const [x, y, z, w] = n.rotation || [0, 0, 0, 1], [sx, sy,
 const parent = {}; J.nodes.forEach((n, i) => (n.children || []).forEach((c) => { parent[c] = i; }));
 const world = (i) => { let M = local(J.nodes[i]); while (parent[i] != null) { i = parent[i]; M = mul(local(J.nodes[i]), M); } return M; };
 const acc = (ai) => { const a = J.accessors[ai], bv = J.bufferViews[a.bufferView], off = BIN + (bv.byteOffset || 0) + (a.byteOffset || 0); return { a, off }; };
-const inV = (p) => Math.abs(p[0]) < V.x && p[1] > V.y0 && p[1] < V.y1 && p[2] > V.z0 && p[2] < V.z1;
+// plus the view out through the open doors: nothing standing above deck height (gantry rails stay below 1 m) 14 m out in front of the opening
+const inV = (p) => Math.abs(p[0]) < V.x && p[1] < V.y1 && ((p[1] > V.y0 && p[2] > V.z0 && p[2] < V.z1) || (p[1] > 1.0 && p[2] <= V.z0 && p[2] > OPEN_Z - 14));
 let bad = 0, tris = 0, inDoor = 0;
 J.nodes.forEach((n, i) => {
   if (n.mesh == null) return; const nm = n.name || '';
@@ -40,5 +41,5 @@ J.nodes.forEach((n, i) => {
 ok(tris > 1000, 'bay GLB parsed (' + tris + ' triangles)');
 ok(bad === 0, 'no static bay geometry inside the door opening (' + bad + ' triangles; the leaves slide clear: ' + inDoor + ' door triangles)');
 const names = J.nodes.map((n) => n.name || '');
-ok(!names.some((s) => /Pillar|Mullion|Glass|Pane/i.test(s)), 'no Pillar / Mullion / Glass / Pane nodes');
+ok(!names.some((s) => /Pillar|Mullion|Glass|Pane|Mast/i.test(s)), 'no Pillar / Mullion / Glass / Pane / Mast nodes');
 console.log(fails ? fails + ' FAILED' : 'bay-opening OK'); process.exit(fails ? 1 : 0);

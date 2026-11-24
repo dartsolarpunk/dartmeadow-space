@@ -1040,11 +1040,18 @@
           d.H = b.position.clone(); d.Q = b.quaternion.clone();
           const a = b.userData.deckAnchor || { x: 0, y: 0, z: 0 }, ac = b.localToWorld(new THREE.Vector3(a.x, a.y, a.z));
           // where she rides: a little toward the tail and toward the rock-side edge (a shorter walk and a single step up), on the deck
-          const Rw = ac.clone(); Rw.z += Lb * 0.2; Rw.x += -side * Wb * 0.22; d.Dl = b.worldToLocal(Rw.clone()); d.Dl.y += 0.03 / Math.max(1e-4, Math.abs(b.getWorldScale(_dq.s).y));
+          // (v380) centered on the deck anchor like the in-game mount (atmo / interstellar: rider centered on deckAnchor, no side offset); v379 shifted
+          // each rider toward the tail and toward her rock-side edge, mirrored per side, so Emma hung half off her board
+          const Rw = ac.clone(); d.Dl = b.worldToLocal(Rw.clone()); d.Dl.y += 0.03 / Math.max(1e-4, Math.abs(b.getWorldScale(_dq.s).y));
           // walk: from in front of her seat, round her side of the rock, to the deck's rock-side edge
           const Sx = X.holder.localToWorld(X.ankleDown.clone()); Sx.y = surfY(Sx.x, Sx.z, [ground]);
-          const Wp = new THREE.Vector3(lane, 0, Math.min(Rw.z, rb.min.z - 0.4));
-          const pts = [Sx, new THREE.Vector3(lane, 0, Math.max(rb.min.z + 0.2, Math.min(0.15, Sx.z - 0.3))), new THREE.Vector3(lane, 0, rb.min.z - 0.05), Wp].map(p => { p.y = surfY(p.x, p.z, [ground]); return p; });
+          // (v380) both riders step on the same way, not mirrored: from the board's LEFT side (screen left, the nose points away from the lens) facing
+          // the nose, as the in-game mount.  Emma's rock-side lane is already her board's left; Ariel walks round the tail to her board's outer side.
+          const leftX = pb.min.x - 0.35, Wp = new THREE.Vector3(leftX, 0, Rw.z);
+          const ptsA = [Sx, new THREE.Vector3(lane, 0, Math.max(rb.min.z + 0.2, Math.min(0.15, Sx.z - 0.3))), new THREE.Vector3(lane, 0, rb.min.z - 0.05)];
+          if (side < 0) ptsA.push(new THREE.Vector3((lane + leftX) * 0.5, 0, pb.max.z + 0.45), new THREE.Vector3(leftX, 0, pb.max.z + 0.1));
+          ptsA.push(Wp);
+          const pts = ptsA.map(p => { p.y = surfY(p.x, p.z, [ground]); return p; });
           d.curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal'); d.len = d.curve.getLength();
           const ys = new Float32Array(33); for (let j = 0; j <= 32; j++) { d.curve.getPointAt(j / 32, _dq.v); ys[j] = surfY(_dq.v.x, _dq.v.z, [ground]); } d.ys = ys;
           d.walkDur = Math.max(2.0, Math.min(6.0, d.len / 1.25));
@@ -1065,8 +1072,10 @@
           d.yClear = yClear;
           d.seatPos = X.holder.position.clone(); d.seatQ = X.holder.quaternion.clone();
           d.walkQ0 = new THREE.Quaternion(); d.curve.getTangentAt(0.02, _dq.v); d.walkQ0.setFromAxisAngle(_dq.Y, Math.atan2(_dq.v.x, _dq.v.z));
-          d.faceQ = new THREE.Quaternion().setFromAxisAngle(_dq.Y, Math.atan2(Rw.x - Wp.x, Rw.z - Wp.z));
-          d.rideQ = new THREE.Quaternion().setFromAxisAngle(_dq.Y, rideYaw);
+          d.faceQ = new THREE.Quaternion().setFromAxisAngle(_dq.Y, rideYaw);   // end of the walk: beside the board, facing its nose
+          // (v380) from the step on: the in-game mount's Z-mirror on her root (index.html: CHAR.root.scale (s, s, -s); BOARD_STANCE is tuned in it), so
+          // the holder turns by PI to keep the same facing; step, climb, flight and bay all ride this one transform for both riders (chest to screen right)
+          d.rideQ = new THREE.Quaternion().setFromAxisAngle(_dq.Y, rideYaw + Math.PI); d.mir = 1;
           d.Wp = Wp; d.Rw = Rw; d.hq = new THREE.Quaternion(); d.hp = new THREE.Vector3();
           d.walk = mkSampler(X.clips.walk, X.bones); d.step = mkSampler(X.clips.step, X.bones);
           d.keep = Object.keys(X.bones).map(n => [X.bones[n], X.bones[n].position.clone(), X.bones[n].quaternion.clone()]);
@@ -1114,6 +1123,7 @@
         for (let i = 0; i < DU.P.length; i++) {
           const X = DU.P[i], d = X.du, b = d.board, h = X.holder;
           if (d.bScale && !b.scale.equals(d.bScale)) b.scale.copy(d.bScale);
+          { const m = (DU.inBay || t >= d.tS0) ? -1 : 1; if (d.mir !== m) { d.mir = m; X.root.scale.z = m * Math.abs(X.root.scale.z); X.root.updateMatrixWorld(true); } }
           if (DU.inBay) duoBayBoard(X, i, t - DU.tBay);
           else if (t < DU.tDep + i * 0.3) {
             const tf = t - d.dl;
@@ -1160,7 +1170,7 @@
           } else if (t < d.tL) {    // step up onto the deck
             const k = (t - d.tS0) / d.stepDur, ks = k * k * (3 - 2 * k); d.hp.copy(d.Dl); b.localToWorld(d.hp);
             h.position.lerpVectors(d.Wp, d.hp, ks); h.position.y = d.Wp.y + (d.hp.y - d.Wp.y) * smooth(0.1, 0.75, k) + Math.sin(Math.PI * k) * 0.06;
-            h.quaternion.slerpQuaternions(d.faceQ, d.rideQ, smooth(0.35, 1, k));
+            h.quaternion.copy(d.rideQ);   // mirrored root from the step on: rideQ IS the walk's facing (see d.rideQ)
           } else {                  // planted on the deck: from now on she rides the board's transform rigidly
             d.hp.copy(d.Dl); b.localToWorld(d.hp); h.position.copy(d.hp); h.quaternion.copy(d.rideQ); h.updateMatrixWorld(true);
             d.lockM = new THREE.Matrix4().copy(b.matrixWorld).invert().multiply(h.matrixWorld);
@@ -1237,6 +1247,7 @@
           try { if (d.board.parent) d.board.parent.remove(d.board); } catch (e) {}
           if (X.holder.parent !== scene) { try { if (X.holder.parent) X.holder.parent.remove(X.holder); scene.add(X.holder); } catch (e) {} }
           d.keep.forEach(([bn, p, q]) => { bn.position.copy(p); bn.quaternion.copy(q); });
+          if (X.root.scale.z < 0) { X.root.scale.z = -X.root.scale.z; X.root.updateMatrixWorld(true); }   // (v380) undo the riding Z-mirror for the seated menu
           X.holder.position.copy(d.seatPos); X.holder.quaternion.copy(d.seatQ); X.holder.updateMatrixWorld(true); X.du = null;
           if (!d.board.userData.duoClone) d.board.traverse(m => { if (!m.geometry && !m.material) return; try { m.geometry && m.geometry.dispose(); } catch (e) {}
             (Array.isArray(m.material) ? m.material : [m.material]).forEach(mt => { if (!mt) return; if (!D.share[i]) for (const k in mt) { const v = mt[k]; if (v && v.isTexture) try { v.dispose(); } catch (e) {} } try { mt.dispose(); } catch (e) {} }); }); });

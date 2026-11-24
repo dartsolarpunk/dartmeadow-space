@@ -7,7 +7,8 @@ pillar boxes (Pillar / PillarCap / PillarBase / PillarLed / PillarMark at
 x = +-2.15, +-5.4, z = OPEN_Z + 0.55) live inside the Bay_* meshes.  A triangle
 is dropped when all three of its world-space vertices lie inside one pillar's
 footprint box; the index accessor is compacted in place (vertex data untouched).
-No Collide_* body ever covered the pillars, so collision is unchanged.
+No Collide_* body ever covered the pillars, so collision is unchanged.  The exterior Mast seen through
+the opening is removed the same way.
 
   python3 tools/places/strip_bay_pillars.py assets/places/menu_cargobay.glb
 """
@@ -83,6 +84,8 @@ def main(path):
                 # the sill's lip LEDs (LipLed_*: y 0.10-0.14, z OPEN_Z + 0.19..0.25) share the pillars' footprint at deck level: kept
                 lip = ((y >= 0.09) & (y <= 0.15)).all(1) & (z <= OPEN_Z + 0.26).all(1)
                 inside |= inx & iny & inz & ~lip
+            # the exterior Mast / MastLit (x -7.4, z OPEN_Z - 9, 0.4 .. 10.3 m tall) stood as a column in the view through the open doors: also dropped
+            inside |= ((np.abs(x + 7.4) <= 0.2).all(1) & (np.abs(z - (OPEN_Z - 9)) <= 0.2).all(1) & (y >= 0.95).all(1) & (y <= 10.4).all(1))
             k = int(inside.sum())
             if not k:
                 continue

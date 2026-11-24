@@ -108,10 +108,23 @@ with sync_playwright() as p:
             P('grab-fallback-raw', e)
         return {'via': 'canvas', 'overlay': ov}
 
+    PROBE_JS = '''() => { const C = window.DM_MENUSCENE && window.DM_MENUSCENE._ctx; if (!C) return null; const D = C.duo(); if (!D) return null;
+      const T = window.DM_MENUSCENE.THREE || (D.mid && D.mid.constructor && null); const out = [];
+      C.pilots().forEach((X, i) => { const d = X.du; if (!d || !d.board) return; const b = d.board, B = X.bones; b.updateMatrixWorld(true); X.root.updateMatrixWorld(true);
+        const V = D.mid.constructor, w = (n) => B[n] ? B[n].getWorldPosition(new V()) : null, L = (v) => v ? b.worldToLocal(v.clone()) : null;
+        const hip = w('Hips'), ul = w('LeftUpLeg'), ur = w('RightUpLeg'), fl = w('LeftFoot'), fr = w('RightFoot'), hd = w('Head');
+        const lat = ul.clone().sub(ur), up = hd.clone().sub(hip), fwd = new V().crossVectors(lat, up).normalize();
+        const bs = b.getWorldScale(new V()), o = b.localToWorld(new V()), fl0 = b.localToWorld(new V(0, 0, 0)), fwdL = b.worldToLocal(fl0.clone().add(fwd)).sub(b.worldToLocal(fl0.clone()));
+        const r = (v) => v ? [+v.x.toFixed(3), +v.y.toFixed(3), +v.z.toFixed(3)] : null;
+        const a = b.userData.deckAnchor || {x:0,y:0,z:0};
+        out.push({ id: X.id, anchor: [a.x, a.y, a.z], hipsL: r(L(hip)), footL: r(L(fl)), footR: r(L(fr)), chestFwdBoardLocal: r(fwdL.normalize()), chestFwdWorld: r(fwd) }); });
+      return out; }'''
     results = []
     for name, t in beats:
         st = pg.evaluate('(t) => window.seek(t)', t)
         P('seek', name, t, st)
+        if _os.environ.get('LAUNCH_PROBE'):   # (v380) rider stance probe: hips / feet / chest-forward in each board's local frame
+            P('probe', name, pg.evaluate(PROBE_JS))
         path = out / ('launch_%s.png' % name)
         meta = grab(path)
         P('shot', path, path.stat().st_size, meta)

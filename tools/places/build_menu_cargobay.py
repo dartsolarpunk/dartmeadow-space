@@ -549,11 +549,7 @@ def build(tex):
             mk = box(f"GantryLed_{sx}_{i}", (sx * 7.4, 0.75, OPEN_Z - 3 - i * 2.4), (0.18, 0.18, 0.18), M_CYAN)
             mk.parent = root
             gantries.append(mk)
-    # one mast
-    mast = box("Mast", (-7.4, 5.5, OPEN_Z - 9), (0.35, 9.0, 0.35), M_HULL)
-    mast_lit = box("MastLit", (-7.4, 10.2, OPEN_Z - 9), (0.28, 0.28, 0.28), M_AMBER)
-    mast.parent = root
-    mast_lit.parent = root
+    # (v380) no mast: it stood as a column in the view through the open doors
 
     # ── sliding blast doors (two armored leaves, authored closed) ──
     # Each leaf is a hook empty (Door_L / Door_R) the runtime translates on X.
