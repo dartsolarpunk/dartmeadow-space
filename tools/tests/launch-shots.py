@@ -52,15 +52,25 @@ with sync_playwright() as p:
     tBay = float(times.get('tBay') or (tDep + 5.2))
     tL = float(times.get('tL') or (tDep - 1.3))
     # 6 required beats + a peak-dissolve check
-    beats = [
+    import os as _os
+    FPS = float(_os.environ.get('LAUNCH_FPS', '0') or 0)
+    if FPS > 0:
+        T1 = float(_os.environ.get('LAUNCH_T1', '0') or 0) or (tBay + 3.2)
+        beats = [('v%04d' % i, round(0.05 + i / FPS, 4)) for i in range(int((T1 - 0.05) * FPS) + 1)]
+    else:
+      beats = [
+        ('00_descent', 1.2),
         ('01_approach', 2.45),
+        ('01b_landed', 4.6),
+        ('02a_stepon', max(0.4, tL - 1.0)),
         ('02_boarding', max(0.4, tL - 0.35)),
+        ('02c_liftoff', tDep + 1.0),
         ('03_jets', tDep + 2.55),
         ('03b_midflight', min(tBay - 0.8, tDep + 3.45)),
         ('04_dissolve', tBay - 0.22),
         ('05_doors', tBay + 0.75),
         ('06_arrival', tBay + 2.4),
-    ]
+      ]
     def grab(path):
         """Prefer canvas pixels + optional .ms-dissolve composite (SwiftShader page.screenshot can hang)."""
         import base64, io

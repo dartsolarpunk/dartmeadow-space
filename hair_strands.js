@@ -244,9 +244,13 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   if (SDF) {
     // x2 on Medium / High / Ultra and the Pilot Editor (collision tier >= 1 at load); tier 0 (Low: 3-4 GB iPhone / iPad Safari) keeps the file's grid
     let t0 = 0; try { const ct = opts.params && opts.params.collisionTier; t0 = (ct != null && ct !== 'auto') ? +ct : (opts.getCollisionTier ? +opts.getCollisionTier() : 0); } catch (e) { t0 = 0; }
-    let f = t0 > 0 ? 2 : 1; try { if (opts.sdfFine != null) f = typeof opts.sdfFine === 'function' ? +opts.sdfFine() : +opts.sdfFine; } catch (e) { f = t0 > 0 ? 2 : 1; }
+    // (v379) High (tier 2 at load: menu desktop, game Medium / High / Ultra) refines x3 -> 1.7 mm cells (~9.4 MB per groom), Mid x2 -> 2.5 mm, Low the file's 5 mm
+    const fDef = t0 >= 2 ? 3 : t0 > 0 ? 2 : 1;
+    let f = fDef; try { if (opts.sdfFine != null) f = typeof opts.sdfFine === 'function' ? +opts.sdfFine() : +opts.sdfFine; } catch (e) { f = fDef; }
     if (typeof location !== 'undefined') { const m = /[?&]hairsdf=(\d)/.exec(location.search || ''); if (m) f = +m[1]; }
     f = Math.max(1, Math.min(3, f | 0));
+    // a groom baked finer than 5 mm (Emma v379: native 2.5 mm) is refined only while the cells stay >= 1.6 mm (memory: same budget as a 5 mm file x3)
+    { const cl = 1 / SDF.inv; while (f > 1 && cl / f < 0.0016) f--; }
     if (f > 1) { SDF = upsampleSDF(SDF, f); meta.sdfFine = f; }
   }
 
@@ -484,6 +488,89 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   const sp = new Float32Array(GK * 3);      // sim position (root-local)
   const sq = new Float32Array(GK * 3);      // previous position
   const restM = new Float32Array(GK * 3);   // guide rest in root-local (current head pose)
+
+  /* ---------------- (v379) skin-following head collision (scalp / head / neck / shoulder skin) ----------------
+     The head SDF and the pinned roots live in the HEAD bone frame, which is exact for a scalp that is 100 % Head-weighted (Ariel: Scalp 21,719 verts,
+     all Head).  Emma's scalp (2,740 verts) and the neck / nape skin under her hair are blended to neck / Jaw / shoulders / Spine (1,003 scalp verts), so
+     as soon as her neck bends the real skin slides away from the head-frame SDF and strands sink into it (tools/tests/hair-scalp.js: 2,523 scalp
+     crossings in idle / head turn / run before this).  Fix: a load-time SKIN-WEIGHT FIELD over the SDF box (every skinned mesh piece the hair can touch:
+     scalp, head, face, neck, shoulders, collar), 5 mm nodes, each node = the distance-weighted blend of the nearby vertices' non-Head bone weights (top 2).
+     Per frame: one 3x4 delta matrix per bone slot (A_j - I, head-local).  The SDF is then read in BIND space (q = x - sum w_j (A_j - I) x), so the
+     collision surface rides the skinned scalp / neck exactly where the mesh bends, and the guide / child roots are carried by the same field.
+     A character whose hair region is pure Head (Ariel) builds nothing: bit-identical.  ?hairwarp=0 / params.skinWarp:false = off.  Zero per-frame allocation. */
+  const WARP = (() => {
+    if (!SDF || P.skinWarp === false) return null;
+    if (typeof location !== 'undefined' && /[?&]hairwarp=0\b/.test(location.search || '')) return null;
+    const WC = 0.005, R = 0.014, R2 = R * R;
+    const ox = SDF.ox, oy = SDF.oy, oz = SDF.oz, ex = (SDF.nx - 1) / SDF.inv, ey = (SDF.ny - 1) / SDF.inv, ez = (SDF.nz - 1) / SDF.inv;
+    const nx = Math.ceil(ex / WC) + 1, ny = Math.ceil(ey / WC) + 1, nz = Math.ceil(ez / WC) + 1, NN = nx * ny * nz;
+    const slots = [], slotOf = new Map(), MAXS = 8;
+    const pts = [];   // [x, y, z, (slot, w) x up to 4] bind head-local
+    const v4 = new THREE.Vector4(), vp = new THREE.Vector3(), Mb = new THREE.Matrix4();
+    root.updateMatrixWorld(true);
+    root.traverse((o) => {
+      if (!o.isSkinnedMesh || !o.skeleton || !o.geometry || !o.geometry.attributes.skinIndex) return;
+      const bonesS = o.skeleton.bones, hi = bonesS.indexOf(head); if (hi < 0) return;
+      Mb.multiplyMatrices(o.skeleton.boneInverses[hi], o.bindMatrix);   // mesh bind -> bind head-local (the SDF / groom frame)
+      const Pp = o.geometry.attributes.position, SI = o.geometry.attributes.skinIndex, SW = o.geometry.attributes.skinWeight;
+      for (let i = 0; i < Pp.count; i++) {
+        vp.fromBufferAttribute(Pp, i).applyMatrix4(Mb);
+        if (vp.x < ox - R || vp.y < oy - R || vp.z < oz - R || vp.x > ox + ex + R || vp.y > oy + ey + R || vp.z > oz + ez + R) continue;
+        const e = [vp.x, vp.y, vp.z];
+        v4.fromBufferAttribute(SI, i); const ii = [v4.x, v4.y, v4.z, v4.w]; v4.fromBufferAttribute(SW, i); const ww = [v4.x, v4.y, v4.z, v4.w];
+        for (let c = 0; c < 4; c++) { const b = bonesS[ii[c]]; if (!b || b === head || !(ww[c] > 0.004)) continue;
+          let s = slotOf.get(b);
+          if (s == null) { if (slots.length >= MAXS) continue; s = slots.length; slotOf.set(b, s); slots.push({ bone: b, C: new THREE.Matrix4().multiplyMatrices(o.skeleton.boneInverses[ii[c]], new THREE.Matrix4().copy(o.skeleton.boneInverses[hi]).invert()) }); }
+          e.push(s, ww[c]); }
+        pts.push(e);
+      }
+    });
+    if (!slots.length) return null;
+    const S = slots.length, acc = new Float32Array(NN * S), wsum = new Float32Array(NN), rc = Math.ceil(R / WC);
+    for (const e of pts) {
+      const ci = Math.round((e[0] - ox) / WC), cj = Math.round((e[1] - oy) / WC), ck = Math.round((e[2] - oz) / WC);
+      for (let i = Math.max(0, ci - rc); i <= Math.min(nx - 1, ci + rc); i++) for (let j = Math.max(0, cj - rc); j <= Math.min(ny - 1, cj + rc); j++) for (let k = Math.max(0, ck - rc); k <= Math.min(nz - 1, ck + rc); k++) {
+        const dx = ox + i * WC - e[0], dy = oy + j * WC - e[1], dz = oz + k * WC - e[2], d2 = dx * dx + dy * dy + dz * dz; if (d2 >= R2) continue;
+        const q = 1 - d2 / R2, g = q * q, n = (i * ny + j) * nz + k; wsum[n] += g;
+        for (let t = 3; t < e.length; t += 2) acc[n * S + e[t]] += g * e[t + 1];
+      }
+    }
+    const sl = new Uint8Array(NN * 2).fill(255), wt = new Float32Array(NN * 2); let used = 0;
+    for (let n = 0; n < NN; n++) { const W = wsum[n]; if (!(W > 0)) continue; let b0 = -1, b1 = -1, w0 = 0, w1 = 0;
+      for (let s = 0; s < S; s++) { const w = acc[n * S + s] / W; if (w > w0) { b1 = b0; w1 = w0; b0 = s; w0 = w; } else if (w > w1) { b1 = s; w1 = w; } }
+      if (w0 > 0.002) { sl[n * 2] = b0; wt[n * 2] = w0; used++; } if (w1 > 0.002) { sl[n * 2 + 1] = b1; wt[n * 2 + 1] = w1; } }
+    if (!used) return null;
+    return { WC, ox, oy, oz, nx, ny, nz, sl, wt, slots, D: new Float32Array(S * 12), tm: new THREE.Matrix4(), hInv: new THREE.Matrix4(), on: false, nodes: used, verts: pts.length };
+  })();
+  // node index of a head-local point (-1 = outside the field / no skin blend there)
+  function warpNode(x, y, z) {
+    const W = WARP, i = Math.round((x - W.ox) / W.WC), j = Math.round((y - W.oy) / W.WC), k = Math.round((z - W.oz) / W.WC);
+    if (i < 0 || j < 0 || k < 0 || i >= W.nx || j >= W.ny || k >= W.nz) return -1;
+    const n = (i * W.ny + j) * W.nz + k; return W.sl[n * 2] === 255 ? -1 : n;
+  }
+  // skin displacement at node n for head-local point (x, y, z) -> wd[0..2] (head-local, = sum w_j (A_j - I) p)
+  const wd = new Float32Array(3);
+  function warpDisp(n, x, y, z) {
+    const W = WARP, D = W.D; wd[0] = wd[1] = wd[2] = 0;
+    for (let c = 0; c < 2; c++) { const s = W.sl[n * 2 + c]; if (s === 255) continue; const w = W.wt[n * 2 + c], o = s * 12;
+      wd[0] += w * (D[o] * x + D[o + 1] * y + D[o + 2] * z + D[o + 3]);
+      wd[1] += w * (D[o + 4] * x + D[o + 5] * y + D[o + 6] * z + D[o + 7]);
+      wd[2] += w * (D[o + 8] * x + D[o + 9] * y + D[o + 10] * z + D[o + 11]); }
+  }
+  // per frame: A_j = HeadW^-1 . Bone_j W . (boneInverse_j . boneInverse_head^-1), stored as A_j - I (rows); W.on = any bone moved off the head frame
+  function warpFrame() {
+    const W = WARP; if (!W) return; W.hInv.copy(head.matrixWorld).invert(); let mx = 0;
+    for (let s = 0; s < W.slots.length; s++) { const Sl = W.slots[s]; W.tm.multiplyMatrices(W.hInv, Sl.bone.matrixWorld).multiply(Sl.C); const e = W.tm.elements, o = s * 12;
+      W.D[o] = e[0] - 1; W.D[o + 1] = e[4]; W.D[o + 2] = e[8]; W.D[o + 3] = e[12];
+      W.D[o + 4] = e[1]; W.D[o + 5] = e[5] - 1; W.D[o + 6] = e[9]; W.D[o + 7] = e[13];
+      W.D[o + 8] = e[2]; W.D[o + 9] = e[6]; W.D[o + 10] = e[10] - 1; W.D[o + 11] = e[14];
+      for (let q = 0; q < 12; q++) { const a = Math.abs(W.D[o + q]); if (a > mx) mx = a; } }
+    W.on = mx > 1e-5;
+  }
+  // roots carried by the field: per guide the node at its root (or -1); a child strand takes its guide's root displacement with its deflection
+  const wNodeG = WARP ? new Int32Array(G).fill(-1) : null;
+  const wG = new Float32Array(G * 3);   // per guide: root skin displacement, root-local (added to its rest; children read it with their guide's deflection)
+  if (WARP) for (let g = 0; g < G; g++) wNodeG[g] = warpNode(gRest[g * K * 3], gRest[g * K * 3 + 1], gRest[g * K * 3 + 2]);
   let needInit = true;
 
   const SP = new Float32Array(K * 3);
@@ -828,7 +915,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   }
   let curIts = 0;     // solver iterations this frame = P.iterations x physics intensity (ui/dm-cgroup.js); 0 = P.iterations
   let time = 0, frame = 0, ema = 2, cool = 0;
-  const stats = { ms: 0, simMs: 0, strands: N, drawn: NR, guides: G, sdf: !!SDF, contacts: 0, intensity: 1, segLen: (() => { let s = 0, c = 0; for (let i = 0; i < segLen.length; i++) if (segLen[i] > 0) { s += segLen[i]; c++; } return c ? s / c : 0; })() };
+  const stats = { ms: 0, simMs: 0, strands: N, drawn: NR, guides: G, sdf: !!SDF, skinWarp: WARP ? { slots: WARP.slots.length, nodes: WARP.nodes, verts: WARP.verts } : null, contacts: 0, intensity: 1, segLen: (() => { let s = 0, c = 0; for (let i = 0; i < segLen.length; i++) if (segLen[i] > 0) { s += segLen[i]; c++; } return c ? s / c : 0; })() };
   let me = M.elements, mi = Mi.elements;
   // SDF box bounding sphere (head-local centre / radius), moved to root-local each frame
   let hcx = 0, hcy = 0, hcz = 0, hcR2 = 0, hsc2 = 1;
@@ -843,7 +930,9 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     const hx = mi[0] * x + mi[4] * y + mi[8] * z + mi[12];
     const hy = mi[1] * x + mi[5] * y + mi[9] * z + mi[13];
     const hz = mi[2] * x + mi[6] * y + mi[10] * z + mi[14];
-    const d = sdf(hx, hy, hz);
+    let d;
+    if (WARP && WARP.on) { const n = warpNode(hx, hy, hz); if (n >= 0) { warpDisp(n, hx, hy, hz); d = sdf(hx - wd[0], hy - wd[1], hz - wd[2]); } else d = sdf(hx, hy, hz); }
+    else d = sdf(hx, hy, hz);
     const cu = P.softHead === false ? 0 : cushion();
     if (d >= c + cu) return false;
     const p = (cu > 0 ? softTo(d, c) : c) - d, nx = hx + sg[0] * p, ny = hy + sg[1] * p, nz = hz + sg[2] * p;
@@ -1081,6 +1170,9 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
               }
             }
           }
+          // (v379) closing head pass: capsule / box / segment-sample pushes above can leave a point back inside the scalp; the head SDF is the
+          // closest surface, so it gets the last word on the final iteration (same near() pruning, no allocation)
+          if (last && doSdf) for (let k = 2; k <= km && k < K; k++) { const o = gb + k * 3; if (headCollide(sp, o, clrG[sb + k])) contacts++; }
         }
       }
     }
@@ -1221,6 +1313,15 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       restM[o + 1] = me[1] * x + me[5] * y + me[9] * z + me[13];
       restM[o + 2] = me[2] * x + me[6] * y + me[10] * z + me[14];
     }
+    // (v379) the roots ride the skinned scalp / nape: each guide's rest is carried by the skin displacement at its root
+    warpFrame();
+    if (WARP && WARP.on && !onGPU) {
+      for (let g = 0; g < G; g++) { const n = wNodeG[g], q = g * 3; if (n < 0) { wG[q] = wG[q + 1] = wG[q + 2] = 0; continue; }
+        const r0 = g * K * 3; warpDisp(n, gRest[r0], gRest[r0 + 1], gRest[r0 + 2]);
+        const dx = me[0] * wd[0] + me[4] * wd[1] + me[8] * wd[2], dy = me[1] * wd[0] + me[5] * wd[1] + me[9] * wd[2], dz = me[2] * wd[0] + me[6] * wd[1] + me[10] * wd[2];
+        wG[q] = dx; wG[q + 1] = dy; wG[q + 2] = dz;
+        for (let k = 0; k < K; k++) { const o = r0 + k * 3; restM[o] += dx; restM[o + 1] += dy; restM[o + 2] += dz; } }
+    } else if (WARP) wG.fill(0);
     if (needInit) { if (!onGPU) { sp.set(restM); sq.set(restM); } needInit = false; }
     if (popped) { if (!onGPU) { sp.set(restM); sq.set(restM); } velS.set(0, 0, 0); haveLast = false; }
 
@@ -1329,7 +1430,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       if (gc) stats.mode = 'gpu';
       // deflection of every guide point from its groom (exactly what the CPU loop adds per child)
       const d = gpu.disp;
-      for (let i = 0; i < GK; i++) { const o = i * 3, q = i * 4; d[q] = sp[o] - restM[o]; d[q + 1] = sp[o + 1] - restM[o + 1]; d[q + 2] = sp[o + 2] - restM[o + 2]; }
+      for (let i = 0; i < GK; i++) { const o = i * 3, q = i * 4, w3 = ((i / K) | 0) * 3; d[q] = sp[o] - restM[o] + wG[w3]; d[q + 1] = sp[o + 1] - restM[o + 1] + wG[w3 + 1]; d[q + 2] = sp[o + 2] - restM[o + 2] + wG[w3 + 2]; }
       gpu.tDisp.needsUpdate = true;   // (GPU solve: never set, the compute pass writes this texture)
       const U = gpu.U;
       U.M.value.copy(M); U.Mi.value.copy(Mi); U.cam.value.copy(camL);
@@ -1348,7 +1449,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       for (let k = 0; k < K; k++) {
         const o = rb + k * 3, x = rest[o], y = rest[o + 1], z = rest[o + 2];
         const go = gb + k * 3, so = k * 3;
-        const ddx = sp[go] - restM[go], ddy = sp[go + 1] - restM[go + 1], ddz = sp[go + 2] - restM[go + 2];
+        const ddx = sp[go] - restM[go] + wG[g * 3], ddy = sp[go + 1] - restM[go + 1] + wG[g * 3 + 1], ddz = sp[go + 2] - restM[go + 2] + wG[g * 3 + 2];
         SP[so] = me[0] * x + me[4] * y + me[8] * z + me[12] + ddx;
         SP[so + 1] = me[1] * x + me[5] * y + me[9] * z + me[13] + ddy;
         SP[so + 2] = me[2] * x + me[6] * y + me[10] * z + me[14] + ddz;
@@ -1427,7 +1528,9 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       for (let g = 0; g < G; g++) for (let k = 2; k <= kMaxG[g]; k++) {
         const o = (g * K + k) * 3, x = a[o], y = a[o + 1], z = a[o + 2];
         const hx = mi[0] * x + mi[4] * y + mi[8] * z + mi[12], hy = mi[1] * x + mi[5] * y + mi[9] * z + mi[13], hz = mi[2] * x + mi[6] * y + mi[10] * z + mi[14];
-        const d = sdf(hx, hy, hz); if (d < 0) inside++; else if (d < clrG[g * K + k] * 0.5) under++;
+        let d; const n = (WARP && WARP.on) ? warpNode(hx, hy, hz) : -1; // same skin-following field the solver collides with
+        if (n >= 0) { warpDisp(n, hx, hy, hz); d = sdf(hx - wd[0], hy - wd[1], hz - wd[2]); } else d = sdf(hx, hy, hz);
+        if (d < 0) inside++; else if (d < clrG[g * K + k] * 0.5) under++;
       }
       return { inside, under };
     },

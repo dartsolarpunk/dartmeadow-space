@@ -180,6 +180,9 @@
     hx = hx || 0.3; hy = hy || 0.2; hz = hz || 0.3;
     for (let i = 0; i < cols.length; i++) {
       const c = cols[i], mn = c.min, mx = c.max; if (!mn || !mx) continue;
+      // (v379) skip size-0 entries: a collider whose AABB was never written (empty / not yet loaded mesh) stays at min = max = 0 and pushed anything
+      // spanning the origin; a point or a line has no face to separate from.  A plane (one zero axis) is still a valid wall / floor.
+      if (((mx[0] > mn[0]) ? 1 : 0) + ((mx[1] > mn[1]) ? 1 : 0) + ((mx[2] > mn[2]) ? 1 : 0) < 2) continue;
       const x0 = pos.x - hx, x1 = pos.x + hx, y0 = pos.y - hy, y1 = pos.y + hy, z0 = pos.z - hz, z1 = pos.z + hz;
       if (x1 <= mn[0] || x0 >= mx[0] || y1 <= mn[1] || y0 >= mx[1] || z1 <= mn[2] || z0 >= mx[2]) continue;
       const pxL = x1 - mn[0], pxR = mx[0] - x0, pyD = y1 - mn[1], pyU = mx[1] - y0, pzB = z1 - mn[2], pzF = mx[2] - z0;
