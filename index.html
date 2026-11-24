@@ -183,7 +183,7 @@ if(location.search.indexOf('debug')!==-1){
   // PWA manifest: /manifest.webmanifest (linked in <head>; dark launch screen on Android)
 })();</script>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-<script>/* (v353) build tag: bump together with CACHE_NAME in sw.js (tools/tests/build-tag.js).  Persisted quality records (ui/dm-budget.js, dm-governor.js) are dropped when it changes. */window.DM_BUILD='v370';try{console.log('[DM build] '+window.DM_BUILD);}catch(e){}</script>
+<script>/* (v353) build tag: bump together with CACHE_NAME in sw.js (tools/tests/build-tag.js).  Persisted quality records (ui/dm-budget.js, dm-governor.js) are dropped when it changes. */window.DM_BUILD='v371';try{console.log('[DM build] '+window.DM_BUILD);}catch(e){}</script>
 <script src="ui/dm-time.js?v=97"></script>
 <script src="ui/dm-earth.js?v=292"></script>
 <script src="ui/dm-earth-paint.js?v=290"></script>
@@ -9287,7 +9287,11 @@ const BT_CUBE_POLL_MS=30000, BT_CUBE_WALK=28;   // each poll is two GitHub reads
 // Deep transparent blue walls, a neon green walked path.
 const BT_CUBE_COL={corridor:'#2f5dff',shell:'#1a3cc0',quiet:'#10277a',path:'#39ff9c',event:'#c9ffe6',head:'#ffffff'};
 const BT_CUBES={root:null,parts:[],copies:[],walk:{pts:[],events:[],step:0,index:-1,flare:0},
-  lastKey:'',live:false,hasLive:false,status:'SESSION CUBE',log:[],pollAt:0,busy:false,built:false};
+  lastKey:'',live:false,hasLive:false,status:'SESSION CUBE',log:[],pollAt:0,busy:false,built:false,
+  sh64:{key:'',seen:{},flash:0,pollAt:0,busy:false}};   // Shell 64 (shell64.dartmeadow.com) activity riding the same cubes
+// Shell 64 feed: ashtree/analytics-live/shell64/live.json (totals, through ashread) + shell64activity (cache-only,
+// who is calculating now). Contract: DART-Skyboard/Autumn docs/SHELL64_FEED_CONTRACT.md.
+const BT_SH64_LIVE='ashtree/analytics-live/shell64/live.json', BT_SH64_COL='#5ff6ff';
 const _BTC_FACE={left:[-1,0,0],right:[1,0,0],bottom:[0,-1,0],top:[0,1,0],back:[0,0,-1],front:[0,0,1]};
 const _BTC_FACES=['right','front','top','left','back','bottom'];
 function _btcKey(x,y,z){return x+','+y+','+z;}
@@ -9450,6 +9454,7 @@ function _btcHud(){
   d.style.cssText='position:absolute;left:16px;bottom:calc(360px + var(--safe-bot,0px));z-index:30;display:none;pointer-events:none;'+
     'font:600 10px/1.45 ui-monospace,Menlo,monospace;letter-spacing:.06em;color:#e9f6ff;text-shadow:0 1px 3px #000;max-width:60vw';
   d.innerHTML='<div id="bt-cube-log" style="font-weight:500;opacity:.85"></div>'+
+    '<div id="bt-cube-sh64" style="display:none;color:'+BT_SH64_COL+';font-weight:600"></div>'+
     '<div style="display:flex;gap:6px;align-items:center"><span id="bt-cube-dot" style="width:7px;height:7px;border-radius:50%;background:#8ea39a;display:inline-block"></span><span id="bt-cube-label">SESSION CUBE</span></div>'+
     '<a href="https://cube.leatr.xyz" target="_blank" rel="noopener" style="display:table;margin-top:4px;padding:3px 9px;border:1px solid rgba(95,232,255,.7);border-radius:4px;background:rgba(7,16,20,.55);color:#e6f6ff;text-decoration:none;font-weight:700;letter-spacing:.12em;pointer-events:auto">SESSION CUBE ↗</a>';
   const host=document.getElementById('flight-hud')||document.body;host.appendChild(d);
@@ -9477,6 +9482,26 @@ function _btcPoll(){
     if(k===BT_CUBES.lastKey)return;BT_CUBES.lastKey=k;_btcBuild(raw);
   }).catch(()=>_btcStatus(false,BT_CUBES.hasLive?'SESSION CUBE · RECONNECTING':'SESSION CUBE')).finally(()=>{BT_CUBES.busy=false;});
 }
+function _btcShell64Poll(){
+  const S=BT_CUBES.sh64; if(S.busy)return; S.busy=true;
+  const act=fetch(FEEDBACK_GAS_URL+'?action=shell64activity&t='+Date.now(),{cache:'no-store'}).then(r=>r.ok?r.json():null).catch(()=>null);
+  Promise.all([_btcRead(BT_SH64_LIVE).catch(()=>null),act]).then(([live,a])=>{
+    live=live&&live.schema==='leatr.shell64.live/1'?live:null; a=a&&a.v===1?a:null;
+    if(!live&&!a)return;
+    const total=Math.max((live&&live.totalCalcs)||0,(a&&a.total)||0), active=(a?a.active:(live&&live.activeSessions))||0, perMin=(a?a.calcsPerMin:(live&&live.calcsPerMin))||0;
+    const el=document.getElementById('bt-cube-sh64');
+    if(el){el.style.display='block';el.textContent=(active?'● ':'')+'SHELL 64 · '+active+' ACTIVE · '+perMin+'/MIN · '+total.toLocaleString()+' TOTAL';}
+    const recent=(a&&a.recent&&a.recent.length)?a.recent.map(r=>{const t=new Date(r&&r.ts);return !r||isNaN(t)?null:{ts:t.toISOString(),op:r.op,detail:r.detail};}).filter(Boolean):((live&&live.recent)||[]);
+    const fresh=recent.filter(r=>!S.seen[r.ts+r.op]); recent.forEach(r=>{S.seen[r.ts+r.op]=1;});
+    const keys=Object.keys(S.seen); if(keys.length>200)keys.slice(0,keys.length-100).forEach(k=>delete S.seen[k]);
+    const key=total+'|'+(recent.length?recent[recent.length-1].ts:'');
+    if(S.key&&key!==S.key&&(active>0||perMin>0)){
+      fresh.slice(-3).forEach(r=>_btcLogEvent({label:'shell64 '+r.op,detail:r.detail,ts:r.ts}));
+      S.flash=1;BT_CUBES.walk.flare=1;
+    }
+    S.key=key;
+  }).catch(()=>{}).finally(()=>{S.busy=false;});
+}
 // Per frame from updateBirdTemple: walk the path, drift the cubes, poll
 // the feed while you're near enough to see them.
 function btCubesUpdate(dt){
@@ -9489,6 +9514,8 @@ function btCubesUpdate(dt){
   if(hud)hud.style.display=(SHIP_WALK.active||(near&&d<45))?'block':'none';
   if(!B.root.visible)return;
   if(near&&now>=B.pollAt&&!document.hidden){B.pollAt=now+BT_CUBE_POLL_MS;_btcPoll();}
+  if(near&&now>=B.sh64.pollAt&&!document.hidden){B.sh64.pollAt=now+BT_CUBE_POLL_MS+Math.random()*3000;_btcShell64Poll();}
+  B.sh64.flash=Math.max(0,B.sh64.flash-dt*0.6);
   // slow drift of the whole constellation
   B.root.rotation.y+=dt*0.008;
   B.root.position.y=Math.sin(now*0.00035)*0.15/Math.max(1e-6,bt.group.scale.x);
@@ -9515,7 +9542,7 @@ function btCubesUpdate(dt){
   }
   B.trav.instanceMatrix.needsUpdate=true;B.halo.instanceMatrix.needsUpdate=true;
   B.mats.traveler.color.set(W.flare>0.05?BT_CUBE_COL.head:BT_CUBE_COL.event);
-  B.mats.halo.color.set(W.flare>0.05?BT_CUBE_COL.head:BT_CUBE_COL.path);
+  B.mats.halo.color.set(B.sh64.flash>0.05?BT_SH64_COL:(W.flare>0.05?BT_CUBE_COL.head:BT_CUBE_COL.path));   // Shell 64 calcs flash the halos cyan
 }
 
 // The temple gives off its own light: every surface glows softly in its
