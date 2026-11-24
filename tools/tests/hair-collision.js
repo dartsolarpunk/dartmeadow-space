@@ -3,10 +3,15 @@
 // For both characters, collision tiers 0 (Low, = v357 behaviour), 1 (Mid), 2 (High) and the poses idle / head turn / run / climb:
 //  1. guide points: none inside the head SDF, none inside the active body capsules (> 0.75 mm) or keep-out boxes, solver stays finite   (every tier; tier 0 has no boxes)
 //  2. ground truth: child strand centrelines against the SKINNED body / shirt / glasses triangles (segment-triangle crossings): High must cut crossings clearly versus Low
+// (t1644u) a 4th configuration "High+20" = tier 2 with strands resampled to 20 points (4 solver passes at tier 2) (opts.segments, Pilot Editor / menu / High-Ultra in game): judged like the
+// others, and it must not cross the body / shirt / glasses more than tier 2 at the file's resolution.  --seg N picks the point count (default 20).
+// (t1645u) defaults under test also include the 2x refined head SDF (opts.sdfFine), the soft contact layer (params.softBand / softK) and 1..3 contact samples per
+// segment at tier 2 (params.contactSpacing).  HAIR_OPTS='{"sdfFine":1,"params":{"softBand":0}}' runs every configuration with extra options (A/B), HAIR_CHARS=ariel one character.
 // Skips (exit 0) when three@0.185 is not installed (npm i three@0.185.0 in ~/.cache/dm-harness).  --quick: idle + head turn only.
 'use strict';
 const path = require('path'), { pathToFileURL } = require('url');
 const quick = process.argv.includes('--quick'), report = process.argv.includes('--report');
+const SEG = (() => { const i = process.argv.indexOf('--seg'); return i > 0 ? +process.argv[i + 1] : 20; })();
 (async () => {
   const L = await import(pathToFileURL(path.join(__dirname, 'lib-hair-probe.mjs')).href);
   if (!L.HAVE_THREE) { console.log('SKIP: three@0.185.0 not installed (npm i three@0.185.0 in ~/.cache/dm-harness)'); process.exit(0); }
@@ -29,11 +34,14 @@ const quick = process.argv.includes('--quick'), report = process.argv.includes('
     return { capIn, boxIn, worst, nonFinite, head: H._penetration(sp).inside };
   }
   const totals = {}, guide = {};   // [char][tier] -> summed ground-truth crossings
-  for (const name of ['ariel', 'emma']) {
+  // A/B: HAIR_OPTS='{"sdfFine":1,"params":{"softBand":0}}' merges into every configuration; HAIR_CHARS=ariel limits the characters
+  const XO = (() => { try { return JSON.parse(process.env.HAIR_OPTS || '{}'); } catch (e) { return {}; } })();
+  const xo = (o) => Object.assign({}, XO, o, { params: Object.assign({}, XO.params || {}, o.params || {}) });
+  for (const name of (process.env.HAIR_CHARS || 'ariel,emma').split(',')) {
     const C = L.CHARS[name];
-    for (const tier of [0, 1, 2]) {
-      const S = await L.setup(name, mod, { params: { collisionTier: tier } });
-      const cfgTier = S.H.stats.tier;   // set by the first update
+    for (const tier of [0, 1, 2, 'seg']) {
+      const S = await L.setup(name, mod, xo(tier === 'seg' ? { segments: SEG, params: { collisionTier: 2 } } : { params: { collisionTier: tier } }));
+      if (tier === 'seg') ok(S.H.meta.points === SEG && S.H.meta.pointsFile < SEG, name + ': strands resampled ' + S.H.meta.pointsFile + ' -> ' + S.H.meta.points + ' points');
       let bad = { capIn: 0, boxIn: 0, nonFinite: 0, head: 0 }, pts = 0, worst = 0, sim = 0, n = 0; const gt = { body: 0, shirt: 0, glasses: 0 };
       for (const pose of poseList) {
         const [clip, steps, turn] = POSES[pose]; S.H.reset(); L.play(S, clip || C.idle, 0); const head = S.bones.Head, eul = new THREE.Euler(), offQ = new THREE.Quaternion();
@@ -48,7 +56,7 @@ const quick = process.argv.includes('--quick'), report = process.argv.includes('
         if (report) console.log(' ', name, 'tier', tier, pose.padEnd(8), JSON.stringify({ body: r.body.cross, shirt: r.shirt.cross, glasses: r.glasses.cross }), 'sim ms', (sim / n).toFixed(2));
       }
       (totals[name] ||= {})[tier] = gt;
-      ok(S.H.stats.tier === tier && bad.nonFinite === 0, name + ' tier ' + tier + ': solver finite, active tier ' + S.H.stats.tier + ', ' + S.H.stats.cols + ' capsules, ' + S.H.stats.boxes + ' boxes');
+      ok(S.H.stats.tier === (tier === 'seg' ? 2 : tier) && bad.nonFinite === 0, name + ' tier ' + tier + ': solver finite, active tier ' + S.H.stats.tier + ', ' + S.H.stats.cols + ' capsules, ' + S.H.stats.boxes + ' boxes');
       (guide[name] ||= {})[tier] = { ...bad, worst, pts };
       if (report) console.log('  guide points', name, 'tier', tier, JSON.stringify({ head: bad.head, capIn: bad.capIn, boxIn: bad.boxIn, worstMm: +(worst * 1000).toFixed(1), of: pts }));
       if (report) console.log('  ground truth', name, 'tier', tier, JSON.stringify(gt), 'mean sim ms (node, solver only)', (sim / n).toFixed(2));
@@ -57,11 +65,14 @@ const quick = process.argv.includes('--quick'), report = process.argv.includes('
     const g0 = guide[name][0], g1 = guide[name][1], g2 = guide[name][2], cb = (g) => g.capIn + g.boxIn;
     // each tier is judged against ITS OWN collider set (Low has no boxes, Mid / High add the fitted capsules + keep-out boxes), so this is an absolute rate: <= 5 % of guide points
     // end a step inside a capsule / box (the rest are held by the pins / segment-length constraints, which beat the contact on the last iteration)
-    for (const [t, g] of [[0, g0], [1, g1], [2, g2]]) ok(cb(g) <= g.pts * 0.05, name + ' tier ' + t + ': guide points inside own capsules / boxes <= 5 % (' + cb(g) + ' of ' + g.pts + ')');
+    const gS = guide[name].seg, tS = totals[name].seg;
+    for (const [t, g] of [[0, g0], [1, g1], [2, g2], ['2+' + SEG, gS]]) ok(cb(g) <= g.pts * 0.05, name + ' tier ' + t + ': guide points inside own capsules / boxes <= 5 % (' + cb(g) + ' of ' + g.pts + ')');
     ok(g2.head <= g0.head + 5 && g1.head <= g0.head + 5, name + ': Mid / High do not push more guide points into the head SDF than Low (' + g0.head + ' / ' + g1.head + ' / ' + g2.head + ')');
     const t0 = totals[name][0], t1 = totals[name][1], t2 = totals[name][2], sum = (t) => t.body + t.shirt + t.glasses;
     ok(sum(t2) <= sum(t0) * 0.7, name + ': High cuts strand/skin/shirt/glasses crossings by >= 30 % (' + sum(t0) + ' -> ' + sum(t2) + ')');
     ok(sum(t1) <= sum(t0) * 0.9, name + ': Mid cuts crossings by >= 10 % (' + sum(t0) + ' -> ' + sum(t1) + ')');
+    ok(sum(tS) <= sum(t2) * 1.1 + 5, name + ': High with ' + SEG + '-point strands crosses no more than High (' + sum(t2) + ' -> ' + sum(tS) + ')');
+    ok(gS.head <= g0.head + 5, name + ': ' + SEG + '-point strands keep out of the head SDF (' + g0.head + ' -> ' + gS.head + ')');
     ok(t2.glasses <= t0.glasses * 0.5 + 5, name + ': High keeps the strands out of the lenses / frame front (' + t0.glasses + ' -> ' + t2.glasses + ')');
   }
   console.log(fails ? fails + ' FAILED' : 'ALL OK'); process.exit(fails ? 1 : 0);

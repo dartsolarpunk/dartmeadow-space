@@ -156,6 +156,49 @@ export async function attachHairStrands(CHAR, THREE, opts = {}) {
 
 const BOXS = 32;   // floats per keep-out box in the per-frame buffer: t(3) Ainv(9) A(9) h(3) margin(1) sphere(4) + pad
 
+// strands [N][K0][3] -> [N][K1][3]: points 0 and 1 (scalp-pinned) kept, points 1..K0-1 resampled to 1..K1-1 in groom-index space (keeps the root-dense
+// spacing the groom builder chose), centripetal-free uniform Catmull-Rom so the new points lie on a smooth curve through the groom points.  Load time only.
+export function resampleStrands(src, N, K0, K1) {
+  const out = new Float32Array(N * K1 * 3), n0 = K0 - 1, span = K0 - 2, steps = K1 - 2;
+  for (let s = 0; s < N; s++) {
+    const a = s * K0 * 3, b = s * K1 * 3;
+    for (let c = 0; c < 6; c++) out[b + c] = src[a + c];   // points 0, 1
+    for (let j = 2; j < K1; j++) {
+      const u = 1 + (j - 1) * span / steps, i1 = Math.min(n0 - 1, Math.floor(u)), t = u - i1, i0 = Math.max(0, i1 - 1), i2 = Math.min(n0, i1 + 1), i3 = Math.min(n0, i1 + 2);
+      const t2 = t * t, t3 = t2 * t, w0 = -0.5 * t3 + t2 - 0.5 * t, w1 = 1.5 * t3 - 2.5 * t2 + 1, w2 = -1.5 * t3 + 2 * t2 + 0.5 * t, w3 = 0.5 * t3 - 0.5 * t2;
+      for (let c = 0; c < 3; c++) out[b + j * 3 + c] = w0 * src[a + i0 * 3 + c] + w1 * src[a + i1 * 3 + c] + w2 * src[a + i2 * 3 + c] + w3 * src[a + i3 * 3 + c];
+    }
+    for (let c = 0; c < 3; c++) out[b + (K1 - 1) * 3 + c] = src[a + n0 * 3 + c];   // tip exactly
+  }
+  return out;
+}
+
+// (t1645u) refine a DHS1 head SDF grid by an integer factor: three separable 1-D Catmull-Rom passes (z, y, x), clamped ends, int16 out. Same origin /
+// extent; cell / f.  Exported for tools/tests.
+export function upsampleSDF(S, f) {
+  const nx = S.nx, ny = S.ny, nz = S.nz, mx = (nx - 1) * f + 1, my = (ny - 1) * f + 1, mz = (nz - 1) * f + 1;
+  const W = new Float32Array(4 * f);
+  for (let j = 0; j < f; j++) { const t = j / f, t2 = t * t, t3 = t2 * t;
+    W[j * 4] = -0.5 * t3 + t2 - 0.5 * t; W[j * 4 + 1] = 1.5 * t3 - 2.5 * t2 + 1; W[j * 4 + 2] = -1.5 * t3 + 2 * t2 + 0.5 * t; W[j * 4 + 3] = 0.5 * t3 - 0.5 * t2; }
+  // one axis: src lines of length n (stride st) -> dst lines of length m; lines enumerated by (outer, inner) with the given strides
+  const pass = (src, dst, n, m, nOut, nIn, sOutS, sInS, sS, sOutD, sInD, sD) => {
+    for (let a = 0; a < nOut; a++) for (let b = 0; b < nIn; b++) {
+      const bs = a * sOutS + b * sInS, bd = a * sOutD + b * sInD;
+      for (let i = 0; i < n - 1; i++) {
+        const v0 = src[bs + Math.max(0, i - 1) * sS], v1 = src[bs + i * sS], v2 = src[bs + (i + 1) * sS], v3 = src[bs + Math.min(n - 1, i + 2) * sS];
+        for (let j = 0; j < f; j++) { const w = j * 4; dst[bd + (i * f + j) * sD] = W[w] * v0 + W[w + 1] * v1 + W[w + 2] * v2 + W[w + 3] * v3; }
+      }
+      dst[bd + (m - 1) * sD] = src[bs + (n - 1) * sS];
+    }
+  };
+  // layout: v[(i * ny + j) * nz + k]
+  const A = new Float32Array(nx * ny * mz); pass(S.v, A, nz, mz, nx, ny, ny * nz, nz, 1, ny * mz, mz, 1);
+  const B = new Float32Array(nx * my * mz); pass(A, B, ny, my, nx, mz, ny * mz, 1, mz, my * mz, 1, mz);
+  const C = new Float32Array(mx * my * mz); pass(B, C, nx, mx, my, mz, mz, 1, my * mz, mz, 1, my * mz);
+  const v = new Int16Array(C.length); for (let i = 0; i < C.length; i++) { const x = Math.round(C[i]); v[i] = x > 32767 ? 32767 : x < -32768 ? -32768 : x; }
+  return { v, nx: mx, ny: my, nz: mz, ox: S.ox, oy: S.oy, oz: S.oz, inv: S.inv * f, unit: S.unit, fine: f };
+}
+
 export function buildHair(CHAR, THREE, buf, opts = {}) {
   /* ---------------- parse ---------------- */
   const dv = new DataView(buf);
@@ -167,8 +210,19 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   const CFG = hairConfig(meta, opts);
   const clusterOf = (g) => CFG.clusters[g] || {};
   let off = dataStart;
-  const N = meta.count, K = meta.points, G = meta.guides;
-  const rest = new Float32Array(buf, off, N * K * 3); off += N * K * 12;
+  const N = meta.count, K0 = meta.points, G = meta.guides;
+  let rest = new Float32Array(buf, off, N * K0 * 3); off += N * K0 * 12;
+  // (t1644u) strand resolution: opts.segments (number or () => number) = points per strand wanted.  The groom file stores K0 (Ariel 14, Emma 16) root-dense
+  // points; when more are asked for, every strand is resampled ONCE here (Catmull-Rom in groom-index space, so the root-dense spacing and the pinned
+  // points 0 / 1 are kept exactly) and the whole solver / ribbon path simply runs at the new K.  Never fewer than the file has; capped at 24 (16 with the
+  // opt-in GPU guide solver, whose WGSL path holds <= 16).  No option = the file's K0, bit-identical to before.
+  let K = K0;
+  {
+    let want = 0; try { want = typeof opts.segments === 'function' ? +opts.segments() : +(opts.segments || 0); } catch (e) { want = 0; }
+    const gpuWanted = (opts.params && opts.params.gpuCompute === true) || (typeof location !== 'undefined' && /[?&]hairgpu=1\b/.test(location.search || ''));
+    want = Math.min(gpuWanted ? 16 : 24, want | 0);
+    if (want > K0 && K0 >= 3) { rest = resampleStrands(rest, N, K0, want); K = want; meta.points = K; meta.pointsFile = K0; }
+  }
   const group = new Uint8Array(buf, off, N); off += (N + 3) & ~3;
   const guideOf = new Uint32Array(buf, off, N); off += N * 4;
   const guideStrand = new Uint32Array(buf, off, G);
@@ -182,6 +236,16 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     if (dataStart + s.byteOffsetFromData + n * 2 <= buf.byteLength)
       SDF = { v: new Int16Array(buf, dataStart + s.byteOffsetFromData, n), nx: s.dims[0], ny: s.dims[1], nz: s.dims[2],
               ox: s.origin[0], oy: s.origin[1], oz: s.origin[2], inv: 1 / s.cell, unit: s.unit || 1e-4 };
+  }
+  // (t1645u) the collision surface is denser than anything that touches it: the groom's head SDF (5 mm cells) is refined ONCE here by `sdfFine`
+  // (default 2 -> 2.5 mm, below the finest strand segment: Emma 3.8 mm at the root, Ariel 9 mm; 3 -> 1.7 mm) with a separable Catmull-Rom (C1) resample, so
+  // the trilinear field + gradient the solver reads changes direction every 2.5 mm instead of 5 and contacts slide over the scalp instead of stepping
+  // cell to cell.  Load time only (~15-40 ms, ~2.8 MB per groom at x2); per frame it is the same one lookup.  ?hairsdf=1 / opts.sdfFine:1 = the file's grid.
+  if (SDF) {
+    let f = 2; try { if (opts.sdfFine != null) f = typeof opts.sdfFine === 'function' ? +opts.sdfFine() : +opts.sdfFine; } catch (e) { f = 2; }
+    if (typeof location !== 'undefined') { const m = /[?&]hairsdf=(\d)/.exec(location.search || ''); if (m) f = +m[1]; }
+    f = Math.max(1, Math.min(3, f | 0));
+    if (f > 1) { SDF = upsampleSDF(SDF, f); meta.sdfFine = f; }
   }
 
   /* ---------------- guard: only attach to Ariel ---------------- */
@@ -270,6 +334,13 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     stretchBias: 0.5,                                // parent share of a length correction (root side heavier)
     wind: new THREE.Vector3(0, 0, 0), windGust: 0.35, iterations: 2, reach: 0.08, hairRadius: 0.006,
     minClear: 0.002, maxClear: 0.02, sdfEvery: 1, capsuleEveryIteration: false, broadPhase: true, friction: 0.35, collideChildren: true,
+    // (t1645u) soft, damped contacts (softBand m, softK share per pass): body capsules get a compliant cushion just OUTSIDE their contact distance
+    // (strands decelerate onto shoulders / torso / arms over a few passes instead of hitting a wall; nothing rests inside the capsule), the scalp SDF a soft
+    // layer just INSIDE the groom clearance (hard floor = clearance - band, >= 40 % of it, always outside the head).  Every push also moves the previous
+    // position (no injected velocity) and friction applies, so contacts are damped.  softBand 0 = the old rigid projection (?hairsoft=0); softHead:false
+    // = rigid scalp only.  contactSpacing: at tier 2 every segment is tested at ceil(restLength / contactSpacing) - 1 interior points (1..3), so long
+    // segments cannot chord through an ear / shoulder between samples.  All load-time tables; zero per-frame allocation.
+    softBand: 0.0025, softK: 0.4, contactSpacing: 0.016,
     maxRootStep: 0.06, hitchMs: 250, settleTime: 0.45, maxDeflect: 2.5, drag: 1.6, motionWind: 0.05, maxMotionWind: 14, teleportSpeed: 400, popSpeed: 22, bodyColliders: true,
     minGravityScale: 0.0, interleave: 1, autoQuality: true, strandFraction: 1, scalpSheenOff: true,
     deferToRender: true,   // hooked mode: simulate in the strands' onBeforeRender, after every pose layer (see hook below)
@@ -278,6 +349,11 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     ...CFG.params,
     ...(opts.params || {})
   };
+  // finer strands need more constraint passes to keep the file resolution's drape length / stiffness and contact quality (tools/tests/hair-collision.js
+  // High+20: Ariel 14->20 pts x 4 passes 555 -> 546 crossings, Emma 16->20 x 4 575 -> 571, head-SDF points 1101 -> 1076; at 3 passes both got worse).
+  // The extra passes run only at collision tier 2 (studio / menu / High-Ultra); when the frame-budget ladder drops hair to Low the file's pass count is used.
+  if (typeof location !== 'undefined' && /[?&]hairsoft=0\b/.test(location.search || '')) P.softBand = 0;
+  if (K > K0 && !(opts.params && opts.params.iterations != null)) { P.iterationsFine = P.iterationsFine || (P.iterations | 0) * 2; P.iterations = Math.max(P.iterations | 0, Math.ceil((P.iterations | 0) * K / K0 / 1.25)); }
   if (opts.strandFraction != null) P.strandFraction = opts.strandFraction;
   if (opts.getStrandFraction) { try { const f = +opts.getStrandFraction(); if (f > 0) P.strandFraction = Math.min(1, f); } catch (e) {} }
 
@@ -324,6 +400,10 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
 
   /* ---------------- guide rest data ---------------- */
   const GK = G * K;
+  // (t1645u) contact samples per guide segment (tier 2): ceil(rest length / contactSpacing) - 1, 1..3 (see the segment pass in the solver)
+  const segS = new Uint8Array(GK);
+  for (let g = 0; g < G; g++) { const st = guideStrand[g]; for (let k = 1; k < K; k++) { const a0 = (st * K + k - 1) * 3, a1 = (st * K + k) * 3;
+    const L = Math.hypot(rest[a1] - rest[a0], rest[a1 + 1] - rest[a0 + 1], rest[a1 + 2] - rest[a0 + 2]); segS[g * K + k] = Math.max(1, Math.min(3, Math.ceil(L / Math.max(1e-3, P.contactSpacing || 0.016)) - 1)); } }
   const gRest = new Float32Array(GK * 3);
   const segLen = new Float32Array(G * (K - 1));
   const bendLen = new Float32Array(GK);   // |p_k - p_(k-2)| in the groom: symmetric bending constraint
@@ -729,6 +809,15 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   const extra = [];   // user colliders
   let curTier = 0, tMrg = false, tMid = false, tSep = false;   // collision quality tier this frame (see resolveTier) and its features
   const tmpP = new Float32Array(3);
+  // (t1645u) soft, damped contact = a thin compliant cushion OUTSIDE each collider's contact distance c: a point in [c, c + band) is eased outward
+  // softK of the remaining way per pass (it decelerates onto the surface over a few passes / frames instead of hitting a wall); a point inside c goes
+  // straight to c plus that share.  Nothing ever rests inside c (no clipping, the hard floor is unchanged); continuous at c.  softBand 0 = rigid (old).
+  function cushion() { return P.softBand > 0 ? P.softBand : 0; }
+  function softTo(d, c) {
+    const sb = P.softBand > 0 ? P.softBand : 0;
+    if (sb <= 0) return c;
+    return d < c ? c + sb * P.softK : d + (c + sb - d) * P.softK;
+  }
   let curIts = 0;     // solver iterations this frame = P.iterations x physics intensity (ui/dm-cgroup.js); 0 = P.iterations
   let time = 0, frame = 0, ema = 2, cool = 0;
   const stats = { ms: 0, simMs: 0, strands: N, drawn: NR, guides: G, sdf: !!SDF, contacts: 0, intensity: 1, segLen: (() => { let s = 0, c = 0; for (let i = 0; i < segLen.length; i++) if (segLen[i] > 0) { s += segLen[i]; c++; } return c ? s / c : 0; })() };
@@ -747,8 +836,9 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     const hy = mi[1] * x + mi[5] * y + mi[9] * z + mi[13];
     const hz = mi[2] * x + mi[6] * y + mi[10] * z + mi[14];
     const d = sdf(hx, hy, hz);
-    if (d >= c) return false;
-    const p = c - d, nx = hx + sg[0] * p, ny = hy + sg[1] * p, nz = hz + sg[2] * p;
+    const cu = P.softHead === false ? 0 : cushion();
+    if (d >= c + cu) return false;
+    const p = (cu > 0 ? softTo(d, c) : c) - d, nx = hx + sg[0] * p, ny = hy + sg[1] * p, nz = hz + sg[2] * p;
     a[o] = me[0] * nx + me[4] * ny + me[8] * nz + me[12];
     a[o + 1] = me[1] * nx + me[5] * ny + me[9] * nz + me[13];
     a[o + 2] = me[2] * nx + me[6] * ny + me[10] * nz + me[14];
@@ -768,9 +858,9 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     t = t < 0 ? 0 : t > 1 ? 1 : t;
     const cx = ax + abx * t, cy = ay + aby * t, cz = az + abz * t;
     const dx = px - cx, dy = py - cy, dz = pz - cz;
-    const d2 = dx * dx + dy * dy + dz * dz, rr = r + P.hairRadius;
-    if (d2 < rr * rr) {
-      const d = Math.sqrt(d2) || 1e-6, k = rr / d;
+    const d2 = dx * dx + dy * dy + dz * dz, rr = r + P.hairRadius, ro = rr + cushion();
+    if (d2 < ro * ro) {
+      const d = Math.sqrt(d2) || 1e-6, k = softTo(d, rr) / d;
       const nx = cx + dx * k, ny = cy + dy * k, nz = cz + dz * k;
       // move the previous position with the push (a contact must not inject velocity), then friction:
       // hair resting on a shoulder / arm settles instead of buzzing
@@ -784,7 +874,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   // keep-out box (head / bone frame): push a point out along the axis of least penetration. bq = offset in CS.bbuf, mg = extra margin (child bundle). returns true on contact
   function boxPush(o, bq, mg) {
     const bb = CS.bbuf, dx = sp[o] - bb[bq], dy = sp[o + 1] - bb[bq + 1], dz = sp[o + 2] - bb[bq + 2];
-    const m = (bb[bq + 24] + P.hairRadius + mg) * bb[bq + 25];
+    const m = (bb[bq + 24] + P.hairRadius + mg + (P.softBox === false ? 0 : cushion())) * bb[bq + 25];   // (t1645u) keep-out boxes (glasses, face) carry the same cushion width as the scalp, so strands the soft scalp layer lifts are not pushed into them
     const hx = bb[bq + 21] + m, hy = bb[bq + 22] + m, hz = bb[bq + 23] + m;
     const lx = bb[bq + 3] * dx + bb[bq + 4] * dy + bb[bq + 5] * dz, ly = bb[bq + 6] * dx + bb[bq + 7] * dy + bb[bq + 8] * dz, lz = bb[bq + 9] * dx + bb[bq + 10] * dy + bb[bq + 11] * dz;
     const ex = hx - Math.abs(lx), ey = hy - Math.abs(ly), ez = hz - Math.abs(lz);
@@ -835,7 +925,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       }
     }
     // 2. constraints
-    const its = Math.max(1, curIts || (P.iterations | 0)), wp = P.stretchBias, sdfEvery = Math.max(1, P.sdfEvery | 0), capsAll = !!P.capsuleEveryIteration || (curTier >= 2 && !P.noCapsAll);
+    const its = Math.max(1, curIts || ((curTier >= 2 && P.iterationsFine) ? P.iterationsFine : (P.iterations | 0))), wp = P.stretchBias, sdfEvery = Math.max(1, P.sdfEvery | 0), capsAll = !!P.capsuleEveryIteration || (curTier >= 2 && !P.noCapsAll);
     for (let it = 0; it < its; it++) {
       const last = it === its - 1;
       const doSdf = SDF && (last || (it % sdfEvery) === sdfEvery - 1);
@@ -877,7 +967,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
         }
         if (capsAll || last) {
           // body capsules (+ keep-out boxes at tier >= 1), broad phase per 4-point chunk (chunk AABB vs capsule / box bounding sphere)
-          const fr2 = 1 - P.friction, hr = P.hairRadius, nb = P.noBoxes ? 0 : CS.nb, bb = CS.bbuf, bhit = CS.bhit, tmg = tMrg, gl = CS.gl, bgl = CS.bgl;
+          const cush = cushion(), fr2 = 1 - P.friction, hr = P.hairRadius, nb = P.noBoxes ? 0 : CS.nb, bb = CS.bbuf, bhit = CS.bhit, tmg = tMrg, gl = CS.gl, bgl = CS.bgl;
           // guide-level broad phase first (one AABB over the whole chain): a guide that is nowhere near a capsule / box skips the per-chunk tests (pure pruning: same contacts)
           let gx0 = 1e9, gy0 = 1e9, gz0 = 1e9, gx1 = -1e9, gy1 = -1e9, gz1 = -1e9;
           for (let k = (tMid && last ? 1 : 2); k < K; k++) {
@@ -921,7 +1011,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
               for (let h2 = 0; h2 < nh; h2++) {
                 const c = colHit[h2], q = c * 7, q8 = c * 8;
                 const px = sp[o], py = sp[o + 1], pz = sp[o + 2];
-                { const ex = px - colSph[q8], ey = py - colSph[q8 + 1], ez = pz - colSph[q8 + 2], R = colSph[q8 + 3] + 1e-4; if (ex * ex + ey * ey + ez * ez > R * R) continue; }   // per-point sphere reject (pure pruning, same contacts)
+                { const ex = px - colSph[q8], ey = py - colSph[q8 + 1], ez = pz - colSph[q8 + 2], R = colSph[q8 + 3] + 1e-4 + cush; if (ex * ex + ey * ey + ez * ez > R * R) continue; }   // per-point sphere reject (pure pruning, same contacts)
                 const ax = colBuf[q], ay = colBuf[q + 1], az = colBuf[q + 2];
                 const abx = colBuf[q + 3] - ax, aby = colBuf[q + 4] - ay, abz = colBuf[q + 5] - az;
                 const ab2 = abx * abx + aby * aby + abz * abz;
@@ -929,8 +1019,8 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
                 t = t < 0 ? 0 : t > 1 ? 1 : t;
                 const ccx = ax + abx * t, ccy = ay + aby * t, ccz = az + abz * t;
                 const dx = px - ccx, dy = py - ccy, dz = pz - ccz, d2 = dx * dx + dy * dy + dz * dz, rr = colBuf[q + 6] + hr + mg;
-                if (d2 < rr * rr) {
-                  const d = Math.sqrt(d2) || 1e-6, kk = rr / d;
+                if (d2 < (rr + cush) * (rr + cush)) {
+                  const d = Math.sqrt(d2) || 1e-6, kk = softTo(d, rr) / d;
                   const nx = ccx + dx * kk, ny = ccy + dy * kk, nz = ccz + dz * kk;
                   sq[o] += nx - px; sq[o + 1] += ny - py; sq[o + 2] += nz - pz;   // a contact must not inject velocity
                   sp[o] = nx; sp[o + 1] = ny; sp[o + 2] = nz; hit = true;
@@ -947,27 +1037,38 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
             // tier 2 tessellation: the midpoint of every segment of the chunk against head SDF / capsules / boxes (a long segment can chord through an ear or a shoulder
             // although both end points are clear); the push goes to both end points (point 1 is pinned: its partner takes it all)
             if (tMid && last) {
+              // (t1645u) not just the midpoint: ns = 1..3 evenly spaced interior samples per segment by its rest length (segS), each a PBD point
+              // constraint on the interpolated position (end-point shares (1-u) / u over (1-u)^2 + u^2; pinned point 1: its partner takes e / u)
               for (let k = k0; k < k1; k++) {
-                const o = gb + k * 3, o0 = o - 3, free0 = k > 2;   // k-1 >= 2 is free; point 1 is pinned
-                const mx0 = (sp[o] + sp[o0]) * 0.5, my0 = (sp[o + 1] + sp[o0 + 1]) * 0.5, mz0 = (sp[o + 2] + sp[o0 + 2]) * 0.5, mg = tmg ? (mrgG[sb + k] + mrgG[sb + k - 1]) * 0.5 : 0;
-                tmpP[0] = mx0; tmpP[1] = my0; tmpP[2] = mz0;
-                let moved = false;
-                if (SDF && k <= km) {
-                  const rx = (restM[o] + restM[o0]) * 0.5 - mx0, ry = (restM[o + 1] + restM[o0 + 1]) * 0.5 - my0, rz = (restM[o + 2] + restM[o0 + 2]) * 0.5 - mz0, sl = Math.min(slkG[sb + k], slkG[sb + k - 1]);
-                  if (rx * rx + ry * ry + rz * rz > sl * hsc2 && headCollide(tmpP, 0, (clrG[sb + k] + clrG[sb + k - 1]) * 0.5)) moved = true;
-                }
-                for (let h2 = 0; h2 < nh; h2++) {
-                  const q = colHit[h2] * 7, ax = colBuf[q], ay = colBuf[q + 1], az = colBuf[q + 2], abx = colBuf[q + 3] - ax, aby = colBuf[q + 4] - ay, abz = colBuf[q + 5] - az;
-                  const px = tmpP[0], py = tmpP[1], pz = tmpP[2], ab2 = abx * abx + aby * aby + abz * abz;
-                  let t = ab2 > 1e-12 ? ((px - ax) * abx + (py - ay) * aby + (pz - az) * abz) / ab2 : 0; t = t < 0 ? 0 : t > 1 ? 1 : t;
-                  const ccx = ax + abx * t, ccy = ay + aby * t, ccz = az + abz * t, dx = px - ccx, dy = py - ccy, dz = pz - ccz, d2 = dx * dx + dy * dy + dz * dz, rr = colBuf[q + 6] + hr + mg;
-                  if (d2 < rr * rr) { const d = Math.sqrt(d2) || 1e-6, kk = rr / d; tmpP[0] = ccx + dx * kk; tmpP[1] = ccy + dy * kk; tmpP[2] = ccz + dz * kk; moved = true; }
-                }
-                if (moved) {
-                  const sc = free0 ? 1 : 2, ex = (tmpP[0] - mx0) * sc, ey = (tmpP[1] - my0) * sc, ez = (tmpP[2] - mz0) * sc;
-                  sp[o] += ex; sp[o + 1] += ey; sp[o + 2] += ez; sq[o] += ex; sq[o + 1] += ey; sq[o + 2] += ez;
-                  if (free0) { sp[o0] += ex; sp[o0 + 1] += ey; sp[o0 + 2] += ez; sq[o0] += ex; sq[o0 + 1] += ey; sq[o0 + 2] += ez; }
-                  contacts++;
+                const o = gb + k * 3, o0 = o - 3, free0 = k > 2, ns = segS[sb + k] || 1;   // k-1 >= 2 is free; point 1 is pinned
+                const mg = tmg ? (mrgG[sb + k] + mrgG[sb + k - 1]) * 0.5 : 0, cl = (clrG[sb + k] + clrG[sb + k - 1]) * 0.5, sl = Math.min(slkG[sb + k], slkG[sb + k - 1]);
+                for (let si = 1; si <= ns; si++) {
+                  const u = si / (ns + 1), u0 = 1 - u;
+                  const mx0 = sp[o0] * u0 + sp[o] * u, my0 = sp[o0 + 1] * u0 + sp[o + 1] * u, mz0 = sp[o0 + 2] * u0 + sp[o + 2] * u;
+                  tmpP[0] = mx0; tmpP[1] = my0; tmpP[2] = mz0;
+                  let moved = false;
+                  if (SDF && k <= km) {
+                    const rx = restM[o0] * u0 + restM[o] * u - mx0, ry = restM[o0 + 1] * u0 + restM[o + 1] * u - my0, rz = restM[o0 + 2] * u0 + restM[o + 2] * u - mz0;
+                    if (rx * rx + ry * ry + rz * rz > sl * hsc2 && headCollide(tmpP, 0, cl)) moved = true;
+                  }
+                  for (let h2 = 0; h2 < nh; h2++) {
+                    const q = colHit[h2] * 7, ax = colBuf[q], ay = colBuf[q + 1], az = colBuf[q + 2], abx = colBuf[q + 3] - ax, aby = colBuf[q + 4] - ay, abz = colBuf[q + 5] - az;
+                    const px = tmpP[0], py = tmpP[1], pz = tmpP[2], ab2 = abx * abx + aby * aby + abz * abz;
+                    let t = ab2 > 1e-12 ? ((px - ax) * abx + (py - ay) * aby + (pz - az) * abz) / ab2 : 0; t = t < 0 ? 0 : t > 1 ? 1 : t;
+                    const ccx = ax + abx * t, ccy = ay + aby * t, ccz = az + abz * t, dx = px - ccx, dy = py - ccy, dz = pz - ccz, d2 = dx * dx + dy * dy + dz * dz, rr = colBuf[q + 6] + hr + mg;
+                    if (d2 < (rr + cush) * (rr + cush)) { const d = Math.sqrt(d2) || 1e-6, kk = softTo(d, rr) / d; tmpP[0] = ccx + dx * kk; tmpP[1] = ccy + dy * kk; tmpP[2] = ccz + dz * kk; moved = true; }
+                  }
+                  if (moved) {
+                    const ex = tmpP[0] - mx0, ey = tmpP[1] - my0, ez = tmpP[2] - mz0;
+                    if (free0) {
+                      const D = 1 / (u0 * u0 + u * u), a1 = u * D, a0 = u0 * D;
+                      sp[o] += ex * a1; sp[o + 1] += ey * a1; sp[o + 2] += ez * a1; sq[o] += ex * a1; sq[o + 1] += ey * a1; sq[o + 2] += ez * a1;
+                      sp[o0] += ex * a0; sp[o0 + 1] += ey * a0; sp[o0 + 2] += ez * a0; sq[o0] += ex * a0; sq[o0 + 1] += ey * a0; sq[o0 + 2] += ez * a0;
+                    } else {
+                      const a1 = 1 / u; sp[o] += ex * a1; sp[o + 1] += ey * a1; sp[o + 2] += ez * a1; sq[o] += ex * a1; sq[o + 1] += ey * a1; sq[o + 2] += ez * a1;
+                    }
+                    contacts++;
+                  }
                 }
               }
             }
@@ -1076,7 +1177,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       colBuf[q] = tmpA.x; colBuf[q + 1] = tmpA.y; colBuf[q + 2] = tmpA.z; colBuf[q + 3] = tmpB.x; colBuf[q + 4] = tmpB.y; colBuf[q + 5] = tmpB.z; colBuf[q + 6] = C.r;
       const p8 = c * 8;
       colSph[p8] = (tmpA.x + tmpB.x) / 2; colSph[p8 + 1] = (tmpA.y + tmpB.y) / 2; colSph[p8 + 2] = (tmpA.z + tmpB.z) / 2;
-      colSph[p8 + 3] = tmpA.distanceTo(tmpB) / 2 + C.r + hrM;
+      colSph[p8 + 3] = tmpA.distanceTo(tmpB) / 2 + C.r + hrM + cushion();
     }
     // keep-out boxes (tier >= 1) -> root-local frame: t, Ainv (3x3 rows), A (3 columns), half extents, margin, 1/scale, bounding sphere
     for (let c = 0; c < nbAct; c++) {
@@ -1167,7 +1268,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     // physics intensity (character group): scales iterations + substeps; exactly 1 = the original behaviour
     let kI = 1; if (opts.getIntensity) { try { kI = +opts.getIntensity(); } catch (e) { kI = 1; } }
     kI = kI >= 0.5 ? Math.min(3, kI) : (kI > 0 ? 0.5 : 1); stats.intensity = kI;
-    curIts = Math.max(1, Math.round((P.iterations | 0) * kI));
+    curIts = Math.max(1, Math.round(((curTier >= 2 && P.iterationsFine) ? P.iterationsFine : (P.iterations | 0)) * kI));
     const n = Math.min(3, Math.max(1, Math.round(Math.min(2, Math.max(1, Math.ceil(dt / (1 / 60)))) * kI)));
     const h = Math.min(dt, 1 / 30) / n;
     const fillF = () => {

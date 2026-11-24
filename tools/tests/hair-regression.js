@@ -44,7 +44,13 @@ async function run(modPath, THREE, binBuf, opts, scalpName) {
   const gf = path.join(__dirname, 'fixtures', 'ariel-hair-golden.json');
   if (writeGolden) { fs.writeFileSync(gf, JSON.stringify(a1, null, 1)); console.log('golden written', a1); }
   else if (against) { const old = await run(path.resolve(against), THREE, binBuf); ok(JSON.stringify({ h0: old.h0, h90: old.h90, col: old.col }) === JSON.stringify({ h0: a1.h0, h90: a1.h90, col: a1.col }), 'identical to ' + against + ' (ribbon pos/nrm after 1 and 90 steps, colours)'); }
-  else { const g = JSON.parse(fs.readFileSync(gf)); ok(JSON.stringify(g) === JSON.stringify(a1), 'identical to the golden recorded before the loader became data-driven'); if (JSON.stringify(g) !== JSON.stringify(a1)) console.log(' golden', g, '\n now   ', a1); }
+  else {
+    // (t1645u) the default now refines the head SDF x2 and uses the soft contact cushion; with both off (sdfFine 1, softBand 0) the solver must still be
+    // bit-identical to the golden, and the new default must differ (it is really on) and stay finite
+    const leg = await run(path.join(ROOT, 'hair_strands.js'), THREE, binBuf, { sdfFine: 1, params: { softBand: 0 } }), l1 = { h0: leg.h0, h90: leg.h90, col: leg.col, stats: leg.stats };
+    const g = JSON.parse(fs.readFileSync(gf)); ok(JSON.stringify(g) === JSON.stringify(l1), 'sdfFine 1 + softBand 0: identical to the golden recorded before the loader became data-driven'); if (JSON.stringify(g) !== JSON.stringify(l1)) console.log(' golden', g, '\n now   ', l1);
+    ok(JSON.stringify(g.h90) !== JSON.stringify(a1.h90) && cur.finite && cur.H.meta.sdfFine === 2, 'default (fine SDF x2 + soft contacts) is active, differs from the rigid path and stays finite');
+  }
   // data-driven config: a 4-cluster character with its own widths/colours/stiffness (the strand file's groups are reused as cluster ids)
   try {
     const cfg = { name: 'Test', character: true, clusters: [{ name: 'a', color: [0.4, 0.2, 0.1], stiffBoost: 1.3, widthScale: 0.8 }, { name: 'b', color: [0.5, 0.3, 0.1], colorJitter: [0.9, 1.1], stiffBoost: 2.0, bendBoost: 1.0, widthScale: 1.5, clearance: { min: 0.001, max: 0.01 } }, { name: 'c', gradient: { root: [0.2, 0.1, 0.05], tip: [0.8, 0.6, 0.3], tipStart: 0.3 } }, { name: 'd' }], body: [['Spine01', 'Spine', 0.1], ['Hips', 'Spine02', 0.12]], params: { gravity: 5 } };

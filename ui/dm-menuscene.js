@@ -339,9 +339,12 @@
       const G = (typeof GFX !== 'undefined' && GFX) ? GFX : {};
       const mobile = !!G.isMobile || /Android|iPhone|iPad/i.test(navigator.userAgent || '');
       const lowTier = G.preset === 'low' || (mobile && G.preset === 'auto');
-      const sc = { pr: Math.min(window.devicePixelRatio || 1, mobile ? 1.5 : 2) * (G.resScale && G.resScale < 1 ? G.resScale : 1), shadow: lowTier ? 1024 : (mobile ? 1536 : 2048), hair: lowTier ? 0.55 : (mobile ? 0.8 : 1) };
+      const sc = { pr: Math.min(window.devicePixelRatio || 1, mobile ? 1.5 : 2) * (G.resScale && G.resScale < 1 ? G.resScale : 1), shadow: lowTier ? 1024 : (mobile ? 1536 : 2048), hair: lowTier ? 0.55 : (mobile ? 0.8 : 1), hairTier: (lowTier || mobile) ? 0 : 1 };   // (t1644u) desktop menu hair: collision tier 1 (fitted body / shirt capsules + keep-out boxes) for both pilots
       const q = location.search || ''; const qs = (k, d) => { const m = q.match(new RegExp('[?&]' + k + '=([^&]*)')); return m ? decodeURIComponent(m[1]) : d; };
       if (qs('msq', '')) sc.pr = Math.min(sc.pr, parseFloat(qs('msq', '1')) || 1);
+      // (t1644u) DUO: Ariel AND Emma sit on the rock together and both fly out on the launch (?intro=solo or ?menuduo=0 = the single-pilot scene / intro)
+      const DUO_WANT = qs('intro', '') !== 'solo' && qs('menuduo', '1') !== '0' && !!(window.DMChars && DMChars.get && DMChars.get('emma') && DMChars.get('emma').ready);
+      let B = null;   // the second pilot (built below when she loaded)
 
       /* renderer */
       const renderer = new THREE.WebGPURenderer({ canvas: cv, antialias: !lowTier, alpha: true, powerPreference: 'high-performance' });
@@ -364,7 +367,7 @@
       let camBase = new THREE.Vector3();
       function frame() {                             // keep boulder + her in frame whatever the aspect
         const asp = camera.aspect, tanH = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
-        const needH = 2.45, needW = 3.5;
+        const needH = 2.45, needW = B ? 4.3 : 3.5;   // (t1644u) two pilots on the rock: a little wider
         const dist = Math.max(needH / (2 * tanH), needW / (2 * tanH * asp));
         camBase.set(0.55, 1.15, dist); camera.position.copy(camBase); camera.lookAt(TARGET);
       }
@@ -418,7 +421,11 @@
 
       /* Ariel */
       const holder = new THREE.Object3D(); scene.add(holder);
-      const gltf = await new Promise((res, rej) => new THREE.GLTFLoader().load(CHAR_URL, res, undefined, rej));
+      const gltfP = (url) => new Promise((res, rej) => new THREE.GLTFLoader().load(url, res, undefined, rej));
+      // (t1644u) the second pilot downloads alongside Ariel; if she is not in within 14 s (slow link) the scene starts with Ariel alone (solo intro)
+      const pBdef = DUO_WANT ? DMChars.get('emma') : null;
+      const pB = pBdef ? Promise.race([gltfP(pBdef.mesh), new Promise((_, rej) => setTimeout(() => rej(new Error('companion timeout')), 14000))]).catch((e) => { info('second pilot not loaded:', e && e.message); return null; }) : Promise.resolve(null);
+      const gltf = await gltfP(CHAR_URL);
       if (MS.disposed) return;
       const root = gltf.scene; holder.add(root);
       const bones = {}; root.traverse(o => { if (o.isBone) bones[o.name] = o; if (o.isSkinnedMesh || o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false;
@@ -430,11 +437,12 @@
       P.fingers([22, 32, 17], { Index: 5, Middle: 0, Ring: -3, Pinky: -8 });
 
       /* seat: hips settle on the boulder; yaw her so she faces screen-left */
-      const YAW = -Math.PI * 0.22;                      // character +Z (forward) → world −X
+      const gB = await pB; if (MS.disposed) return;
+      const YAW = gB ? -Math.PI * 0.14 : -Math.PI * 0.22;   // character +Z (forward) → world −X   (duo: Ariel on the left half of the rock, turned a little more to the camera)
       holder.rotation.y = YAW;
       const ray = new THREE.Raycaster(), down = new THREE.Vector3(0, -1, 0);
       const surfY = (x, z, extra) => { ray.set(new THREE.Vector3(x, 6, z), down); const hits = ray.intersectObjects(extra || [boulder, ground], false); return hits.length ? hits[0].point.y : 0; };
-      const SEAT_X = 0.2;
+      const SEAT_X = gB ? -0.36 : 0.2;
       const hipsRoot = new THREE.Vector3(0, 0.80, -0.04);
       const place = () => { holder.updateMatrixWorld(true); const wp = holder.localToWorld(hipsRoot.clone()); holder.position.x += SEAT_X - wp.x; holder.position.z += 0 - wp.z;
         holder.position.y += (surfY(SEAT_X, 0, [boulder]) + 0.115) - wp.y; holder.updateMatrixWorld(true); };
@@ -442,15 +450,18 @@
       const toRoot = (wx, wz, lift) => { const y = Math.max(surfY(wx, wz, [boulder]), surfY(wx, wz, [ground]) ) + lift; return holder.worldToLocal(new THREE.Vector3(wx, y, wz)); };
       // foot targets (root space): near (her left) foot up on the boulder's front slope, far foot lower & further out
       const fwd = (f, s) => { const w = holder.localToWorld(new THREE.Vector3(s, 0, f)); return [w.x, w.z]; };
-      const ankleL = (() => { const [x, z] = fwd(0.34, 0.14); return toRoot(x, z, 0.105); })();
-      const ankleR = (() => { const [x, z] = fwd(0.72, -0.16); return toRoot(x, z, 0.105); })();
+      // (duo) both feet stay ON the rock: the reach is shortened until the point is over the boulder (a target past its edge dropped the foot to the
+      // ground and the shin ran through the rock)
+      const onRock = (fw, f, sd, to, lift) => { let x = 0, z = 0; for (let ff = f; ff >= 0.22; ff -= 0.03) { [x, z] = fw(ff, sd); if (surfY(x, z, [boulder]) > surfY(x, z, [ground]) + 0.14) break; } return to(x, z, lift); };
+      const ankleL = gB ? onRock(fwd, 0.34, 0.14, toRoot, 0.105) : (() => { const [x, z] = fwd(0.34, 0.14); return toRoot(x, z, 0.105); })();
+      const ankleR = gB ? onRock(fwd, 0.62, -0.16, toRoot, 0.105) : (() => { const [x, z] = fwd(0.72, -0.16); return toRoot(x, z, 0.105); })();
 
       /* hair: build via buildHair directly so nothing leaks into window.DART_HAIR */
       let hair = null;
       (async () => { try {
         const [mod, buf] = await Promise.all([import('../hair_strands.js'), fetch(HAIR_URL).then(r => { if (!r.ok) throw new Error('hair ' + r.status); return r.arrayBuffer(); })]);
         if (MS.disposed) return;
-        hair = mod.buildHair({ root, bones, mixer: C.mixer }, THREE, buf, { getStrandFraction: () => sc.hair, getGravityScale: () => 1, params: { windGust: 0.5 } });
+        hair = mod.buildHair({ root, bones, mixer: C.mixer }, THREE, buf, { getStrandFraction: () => sc.hair, getGravityScale: () => 1, getCollisionTier: () => sc.hairTier, params: { windGust: 0.5 } });
         info('strand hair attached');
       } catch (e) { info('hair not attached:', e && e.message); } })();
 
@@ -491,7 +502,7 @@
       const headW = new THREE.Vector3(), closeP = new THREE.Vector3(), tgtW = new THREE.Vector3();
       // hands: roll each wrist so the palm lies DOWN on the leg with the thumb on the inside (the curl itself was set at rest)
       const _ha = new THREE.Vector3(), _hl = new THREE.Vector3(), _hn = new THREE.Vector3(), _ht = new THREE.Vector3(), _hp = new THREE.Vector3(), _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _DN = new THREE.Vector3(0, -1, 0);
-      const handDown = (side, k) => {
+      const handDown = (bones, side, k) => {
         const H = bones[side + 'Hand'], M = bones[side + 'HandMiddle1'], I = bones[side + 'HandIndex1'], K = bones[side + 'HandPinky1']; if (!H || !M || !I || !K) return;
         H.updateWorldMatrix(true, true);
         H.getWorldPosition(_hp); M.getWorldPosition(_ha).sub(_hp).normalize(); I.getWorldPosition(_hl); K.getWorldPosition(_ht); _hl.sub(_ht).normalize();
@@ -501,35 +512,99 @@
         _q1.setFromAxisAngle(_ha, Math.max(-2.2, Math.min(2.2, phi)));
         H.parent.getWorldQuaternion(_q2); H.quaternion.premultiply(_q2.clone().invert().multiply(_q1).multiply(_q2));
       };
-      function pose(t) {
+      // (t1644u) the seated pose is per pilot: X = { holder, P (poser), bones, hipsRoot, ankleL/R, mir (+1 = Ariel's layout, -1 = mirrored for the pilot on
+      // the other side of the rock), handDown, hands (idle-clip hand locals, optional) }.  Mirroring swaps which leg is up on the rock / which arm reaches and
+      // negates every yaw / roll, so the second pilot sits as Ariel's mirror image and glances toward the camera from her side.
+      const _mv = new THREE.Vector3(), _mv2 = new THREE.Vector3();
+      const mirX = (v, m, out) => out.set(v.x * m, v.y, v.z);
+      function poseSeated(X, t) {
+        const P = X.P, bones = X.bones, holder = X.holder, m = X.mir || 1;
         const br = Math.sin(t * 1.35), br2 = Math.sin(t * 0.67 + 1.1);
         const rw = reachAt(t);
         // weight shift + hips (seat is fixed, tiny sway)
-        Hp.copy(hipsRoot); Hp.x += 0.004 * Math.sin(t * 0.31); Hp.y += 0.003 * br;
+        Hp.copy(X.hipsRoot); Hp.x += 0.004 * Math.sin(t * 0.31) * m; Hp.y += 0.003 * br;
         tmpW.copy(Hp).applyMatrix4(holder.matrixWorld); const par = bones.Hips.parent; par.updateWorldMatrix(true, false); par.worldToLocal(tmpW); bones.Hips.position.copy(tmpW);
-        P.rot('Hips', 8 + 1.5 * br2, 3 + 0.5 * br, 1.0 * br2);
+        P.rot('Hips', m * (8 + 1.5 * br2), 3 + 0.5 * br, m * 1.0 * br2);
         const lean = 6 + 2.2 * Math.sin(t * 0.21) - rw * 4, twist = 4 + 5 * Math.sin(t * 0.13) + rw * 8;   // toward the camera / menu
-        P.rot('Spine02', 8 + twist * 0.25, 1 + lean * 0.3 + 0.6 * br, 0);
-        P.rot('Spine01', 8 + twist * 0.5, 2 + lean * 0.55 + 0.8 * br, 0);
-        P.rot('Spine', 8 + twist * 0.8, 3 + lean * 0.85 + 0.9 * br, 0);
+        P.rot('Spine02', m * (8 + twist * 0.25), 1 + lean * 0.3 + 0.6 * br, 0);
+        P.rot('Spine01', m * (8 + twist * 0.5), 2 + lean * 0.55 + 0.8 * br, 0);
+        P.rot('Spine', m * (8 + twist * 0.8), 3 + lean * 0.85 + 0.9 * br, 0);
         const sweep = Math.sin(t * 0.21) + 0.45 * Math.sin(t * 0.53 + 0.8), lookYaw0 = 12 + 17 * sweep + 4 * Math.sin(t * 1.1) - rw * 14, lookYaw = lookYaw0, lookPitch0 = -9 + 9 * Math.sin(t * 0.17 + 2.0) + 2.5 * Math.sin(t * 0.43) + 1.2 * br, lookPitch = lookPitch0;   // slow sweeps: away toward the menu / up at the stars / round to the camera
-        P.rot('neck', 8 + lookYaw * 0.35, lookPitch * 0.4, 0.8 * Math.sin(t * 0.19));
-        P.rot('Head', 8 + lookYaw * 0.9, lookPitch, 1.2 * Math.sin(t * 0.19 + 0.5));
-        // legs: IK to planted feet, knee up on the near side
-        P.leg(P.S.limb.legL, ankleL, poleL, 1); P.rot('LeftFoot', 0, -10, 0);
-        P.leg(P.S.limb.legR, ankleR, poleR, 1); P.rot('RightFoot', 0, -38, 0);
+        P.rot('neck', m * (8 + lookYaw * 0.35), lookPitch * 0.4, m * 0.8 * Math.sin(t * 0.19));
+        P.rot('Head', m * (8 + lookYaw * 0.9), lookPitch, m * 1.2 * Math.sin(t * 0.19 + 0.5));
+        // legs: IK to planted feet, knee up on the near side (mirrored: the other leg is the one up on the rock)
+        const legUp = m > 0 ? P.S.limb.legL : P.S.limb.legR, legDown = m > 0 ? P.S.limb.legR : P.S.limb.legL;
+        P.leg(legUp, X.ankleUp, poleL, 1); P.rot(m > 0 ? 'LeftFoot' : 'RightFoot', 0, -10, 0);
+        P.leg(legDown, X.ankleDown, poleR, 1); P.rot(m > 0 ? 'RightFoot' : 'LeftFoot', 0, -38, 0);
         // arms: far arm rests on the thigh, near arm on the knee → reaches toward the menu now and then
-        const yaw = THREE.MathUtils.degToRad(8 + twist * 0.8);
+        const yaw = THREE.MathUtils.degToRad(m * (8 + twist * 0.8));
         const dir = (a, out) => out.copy(a).applyAxisAngle(P.Y, yaw);
         const sw = 0.012 * br;
         const upL = tmpA.copy(Rest.upL).lerp(Reach.upL, rw).normalize(), foL = tmpB.copy(Rest.foreL).lerp(Reach.foreL, rw).normalize();
-        upL.y += sw; foL.y += sw * 0.5;
-        P.limb(P.S.limb.armL, dir(upL.normalize(), P.S.v[17]), dir(foL.normalize(), P.S.v[18]), 1, 0);
-        P.limb(P.S.limb.armR, dir(Rest.upR, P.S.v[17]), dir(Rest.foreR, P.S.v[18]), 1, 0);
-        handDown('Left', 1); handDown('Right', 1);
+        upL.y += sw; foL.y += sw * 0.5; upL.normalize(); foL.normalize();
+        if (m > 0) {
+          P.limb(P.S.limb.armL, dir(upL, P.S.v[17]), dir(foL, P.S.v[18]), 1, 0);
+          P.limb(P.S.limb.armR, dir(Rest.upR, P.S.v[17]), dir(Rest.foreR, P.S.v[18]), 1, 0);
+        } else {
+          P.limb(P.S.limb.armR, dir(mirX(upL, -1, _mv), P.S.v[17]), dir(mirX(foL, -1, _mv2), P.S.v[18]), 1, 0);
+          P.limb(P.S.limb.armL, dir(mirX(Rest.upR, -1, _mv), P.S.v[17]), dir(mirX(Rest.foreR, -1, _mv2), P.S.v[18]), 1, 0);
+        }
+        if (X.hands) { for (const n in X.hands) { const bn = bones[n]; if (bn) bn.quaternion.copy(X.hands[n]); } }
+        else if (X.handDown !== false) { handDown(bones, 'Left', 1); handDown(bones, 'Right', 1); }
         return rw;
       }
+      const A = { id: 'ariel', holder, root, bones, rest, C, P, hipsRoot, ankleUp: ankleL, ankleDown: ankleR, mir: 1, handDown: true, hair: null };
+      const pose = (t) => poseSeated(A, t);
       pose(0); root.updateMatrixWorld(true);
+
+      /* (t1644u) the second pilot (Emma) on the right half of the rock: her own GLB / rig / groom, the same seated poser mirrored (her right leg up on the
+         rock, she glances toward the camera from her side).  Her hands use her idle clip's wrist + finger locals once her clips are in (see loadClips). */
+      function buildCompanion(g, def) {
+        const h = new THREE.Object3D(); scene.add(h);
+        const r = g.scene; h.add(r);
+        const bn = {}; r.traverse(o => { if (o.isBone) bn[o.name] = o; if (o.isSkinnedMesh || o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false; } });
+        const rs = {}; Object.keys(bn).forEach(n => { const b = bn[n]; rs[n] = { p: b.position.clone(), q: b.quaternion.clone(), s: b.scale.clone() }; });
+        const Cb = { root: r, bones: bn, rest: rs, mixer: new THREE.AnimationMixer(r) };
+        const Pb = makePoser(THREE, Cb); if (!Pb.ready()) throw new Error('rig bones missing');
+        Pb.fingers([22, 32, 17], { Index: 5, Middle: 0, Ring: -3, Pinky: -8 });
+        h.rotation.y = Math.PI * 0.14;
+        const seatX = 0.5, hr = new THREE.Vector3(0, 0.79, -0.02);   // her hips sit 1 cm lower than Ariel's
+        const placeB = () => { h.updateMatrixWorld(true); const wp = h.localToWorld(hr.clone()); h.position.x += seatX - wp.x; h.position.z += 0 - wp.z;
+          h.position.y += (surfY(seatX, 0, [boulder]) + 0.115) - wp.y; h.updateMatrixWorld(true); };
+        placeB(); placeB();
+        const toR = (wx, wz, lift) => { const y = Math.max(surfY(wx, wz, [boulder]), surfY(wx, wz, [ground])) + lift; return h.worldToLocal(new THREE.Vector3(wx, y, wz)); };
+        const fw = (f, sd) => { const w = h.localToWorld(new THREE.Vector3(sd, 0, f)); return [w.x, w.z]; };
+        const up = onRock(fw, 0.34, -0.14, toR, 0.095);   // her ankles are 9.5 cm (Ariel 10.5 with the shoe); both feet on the rock (see onRock)
+        const dn = onRock(fw, 0.62, 0.16, toR, 0.095);
+        const X = { id: def.id, def, holder: h, root: r, bones: bn, rest: rs, C: Cb, P: Pb, hipsRoot: hr, ankleUp: up, ankleDown: dn, mir: -1, handDown: false, hair: null };
+        (async () => { try {
+          const [mod, buf, cfg] = await Promise.all([import('../hair_strands.js'), fetch(def.hair.url).then(rr => { if (!rr.ok) throw new Error('hair ' + rr.status); return rr.arrayBuffer(); }),
+            def.hair.configUrl ? fetch(def.hair.configUrl).then(rr => rr.ok ? rr.json() : null).catch(() => null) : Promise.resolve(null)]);
+          if (MS.disposed || B !== X) return;
+          X.hair = mod.buildHair({ root: r, bones: bn, mixer: Cb.mixer }, THREE, buf, { config: cfg || undefined, character: true, getStrandFraction: () => sc.hair, getGravityScale: () => 1, getCollisionTier: () => sc.hairTier, params: { windGust: 0.5 } });
+          info('second pilot hair attached');
+        } catch (e) { info('second pilot hair not attached:', e && e.message); } })();
+        return X;
+      }
+      if (gB) { try { B = buildCompanion(gB, pBdef); poseSeated(B, 7.3); B.root.updateMatrixWorld(true); info('second pilot on the rock:', pBdef.name); } catch (e) { info('second pilot failed:', e && e.message); B = null; } }
+      A.def = (window.DMChars && DMChars.get && DMChars.get('ariel')) || null;
+      // each pilot's own walk / Mount_Step / idle clips for the duo launch, fetched in idle time once the scene is up (the game loads the chosen pilot's
+      // clips from the same URL, so one of the two is usually a cache hit).  Until both are in, a press plays the single-pilot intro.
+      const loadClips = async (X) => {
+        if (!X || !X.def || X.clips || X._clipP) return X && X._clipP;
+        X._clipP = gltfP(X.def.anims).then((ag) => {
+          if (MS.disposed) return;
+          const f = (n) => ag.animations.find((a) => a.name === n) || null, cm = X.def.clipMap || {};
+          X.clips = { walk: f(cm.walk || 'Walking'), step: f(cm.step || 'Mount_Step'), idle: f((X.def.studio && X.def.studio.idle) || '') };
+          if (X !== A && X.clips.idle) {   // her idle hands (wrist + fingers) for the seated pose too: the same pose her walk / run / ride carry
+            const hands = {}; for (const tr of X.clips.idle.tracks) { const i = tr.name.lastIndexOf('.'), n = tr.name.slice(0, i); if (tr.name.slice(i + 1) !== 'quaternion' || !/^(Left|Right)Hand(Thumb|Index|Middle|Ring|Pinky)?\d?$/.test(n) || !X.bones[n]) continue;
+              hands[n] = new THREE.Quaternion().fromArray(tr.createInterpolant().evaluate(0)); }
+            X.hands = hands;
+          }
+        }).catch((e) => { info('clips for', X.id, 'failed:', e && e.message); });
+        return X._clipP;
+      };
+      if (B) setTimeout(() => { if (!MS.disposed) { loadClips(A); loadClips(B); } }, 2500);
       // a first look at the hip pose so shoulders sit sensibly even before the first frame
       /* camera + render loop */
       const clock = new THREE.Clock(); let t = 0, last = performance.now(), ema = 16, adj = 0, menuT = -1, framesSeen = 0;
@@ -553,6 +628,8 @@
       const IN = { on: false, t: 0, board: null };
       const introStart = (o) => {
         if (IN.on || !o || !o.board) return false;
+        if (DUO_WANT && !o.solo && DUO_READY()) { try { return duoStart(o); } catch (e) { info('duo launch failed, single-pilot intro:', e && e.message); try { duoReset(); } catch (_) {} } }
+        if (o.board2 && o.board2 !== o.board) { const b2 = o.board2; o.board2 = null; try { b2.traverse(m => { try { m.geometry && m.geometry.dispose(); } catch (e) {} (Array.isArray(m.material) ? m.material : [m.material]).forEach(mt => { if (!mt) return; if (!o.sharedTex2) for (const k in mt) { const v = mt[k]; if (v && v.isTexture) try { v.dispose(); } catch (e) {} } try { mt.dispose(); } catch (e) {} }); }); } catch (e) {} }   // the single-pilot intro: the companion's board is not used
         const b = o.board; const warm = (b === IN.parked && IN.warmed === b); if (b === IN.parked) IN.parked = null; b.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(b), sz = bb.getSize(new THREE.Vector3());
         // gameplay proportion: in flight she wears CHAR.scaleForBoard inside the board's frame, so board = her ÷ scaleForBoard (o.scale)
         holder.updateMatrixWorld(true); const hs = Math.abs(holder.getWorldScale(new THREE.Vector3()).x) || 1;
@@ -630,6 +707,329 @@
         if (warm) { IN.warmed = null; b.visible = true; IN.on = true; return Promise.resolve(true); }
         let pc = null; b.visible = true; try { pc = renderer.compileAsync(scene, camera); } catch (e) { pc = null; } finally { b.visible = false; }
         return Promise.resolve(pc).catch(() => {}).then(() => { if (!IN.board) return; b.visible = true; IN.on = true; });
+      };
+      /* ───────────── (t1644u) DUO launch: both pilots, both boards, then the interstellar cargo-bay arrival ─────────────
+         Timeline (s, intro clock): 0-3.4 the two boards come in from behind the camera, one past each side of the rock, and settle hovering behind it; each
+         pilot's head follows HER board as it passes (Ariel looks left, Emma right) · ~3 both rise off the rock · each walks round her side of the rock to her
+         board · Mount_Step onto the deck · the STANDING skyboard stance (index.html BOARD_STANCE solved on her own rig + her DMChars stance overrides; never the
+         seated pose) · both lift off together toward the horizon while the camera pans up after them · warp flash · the cargo bay: both fly in through the lit
+         bay doors and settle over the deck · onFlyOff (index.html fades to the loader / the game with the chosen pilot).  Tap-to-skip stays index.html's.
+         Per-frame work reuses preallocated vectors / quaternions and clip interpolants; everything is built in duoStart.  ?intro=solo = the v151 intro. */
+      const BS_FALLBACK = { hips: [0.0, 0.93, -0.04], ankleL: [0.07, 0.128, -0.37], ankleR: [-0.04, 0.128, 0.28], yawHips: 80, pitchHips: 5, yawChest: -15, pitchChest: 3, yawHead: -45, pitchHead: -4,
+        footYawL: 95, footYawR: 45, kneeOut: 0.25, upL: [0.636, -0.711, -0.3], foreL: [0.438, -0.852, -0.286], proL: -19, upR: [-0.601, -0.654, 0.46], foreR: [-0.389, -0.753, 0.531], proR: 60, wristShare: 0.7,
+        sway: { shift: 0.020, side: 0.010, bob: 0.010, roll: 2.6, yaw: 2.0, chest: 0.75, arm: 5.0, periods: [4.3, 5.9, 3.7, 6.6] } };
+      const BS_FWD = [0, 0, 1];
+      let DU = null;
+      const _dq = { q: new THREE.Quaternion(), q2: new THREE.Quaternion(), q3: new THREE.Quaternion(), v: new THREE.Vector3(), v2: new THREE.Vector3(), v3: new THREE.Vector3(), d1: new THREE.Vector3(), d2: new THREE.Vector3(), d3: new THREE.Vector3(), t: new THREE.Vector3(), Y: new THREE.Vector3(0, 1, 0), Z: new THREE.Vector3(0, 0, 1), m: new THREE.Matrix4(), s: new THREE.Vector3() };
+      const DUO_READY = () => !!(B && A.clips && B.clips && A.clips.walk && B.clips.walk && A.clips.step && B.clips.step && qs('intro', '') !== 'solo');
+      // clip sampler: evaluates a clip's tracks at a time and writes them over the current pose with weight w (no AnimationMixer: three's PropertyMixer skips
+      // a track whose mixed value did not change, which would leave the seated pose under Emma's constant hand tracks)
+      function mkSampler(clip, bones) {
+        const tr = [];
+        for (const t of clip.tracks) { const i = t.name.lastIndexOf('.'), bn = bones[t.name.slice(0, i)], pr = t.name.slice(i + 1); if (!bn) continue;
+          if (pr === 'quaternion') tr.push({ bn, q: 1, it: t.createInterpolant() }); else if (pr === 'position' && bn.name === 'Hips') tr.push({ bn, q: 0, it: t.createInterpolant() }); }
+        return { dur: clip.duration, apply(time, w) {
+          if (w <= 0.001) return; const tt = ((time % clip.duration) + clip.duration) % clip.duration;
+          for (let i = 0; i < tr.length; i++) { const e = tr[i], r = e.it.evaluate(tt);
+            if (e.q) { _dq.q.fromArray(r); if (w >= 0.999) e.bn.quaternion.copy(_dq.q); else e.bn.quaternion.slerp(_dq.q, w); }
+            else { _dq.v.fromArray(r); if (w >= 0.999) e.bn.position.copy(_dq.v); else e.bn.position.lerp(_dq.v, w); } } },
+          applyClamped(time, w) { this.apply(Math.min(Math.max(0, time), clip.duration - 1e-4), w); } };
+      }
+      // the standing skyboard stance on a menu rig (port of index.html _boardStancePose onto makePoser; BOARD_STANCE is read live, the pilot's DMChars
+      // `stance` overrides layered on top: Emma's own hip / ankle heights)
+      function stanceParams(X) { const base = window.BOARD_STANCE || BS_FALLBACK, o = X.def && X.def.stance, out = X.bsP || (X.bsP = {}); for (const k in base) out[k] = base[k]; if (o) for (const k in o) out[k] = o[k]; if (!out.sway) out.sway = BS_FALLBACK.sway; return out; }
+      const bsDir = (out, a, yaw, roll) => { out.set(a[0], a[1], a[2]); if (roll) out.applyAxisAngle(_dq.Z, roll * Math.PI / 180); return out.applyAxisAngle(_dq.Y, yaw * Math.PI / 180).normalize(); };
+      const bsPro = (d) => Math.max(-60, Math.min(60, d || 0)) * Math.PI / 180;
+      function standPose(X, t, w) {
+        if (w <= 0.001) return;
+        const P = X.P, S = P.S, b = X.bones, Bp = stanceParams(X), Wd = Bp.sway, Pd = Wd.periods || BS_FALLBACK.sway.periods, T2 = Math.PI * 2, ws = Math.max(0, Math.min(0.8, Bp.wristShare || 0));
+        const s1 = Math.sin(T2 * t / Pd[0]), s2 = Math.sin(T2 * t / Pd[1] + 1.3), s3 = Math.sin(T2 * t / Pd[2] + 0.4), s4 = Math.sin(T2 * t / Pd[3] + 2.1);
+        const roll = Wd.roll * s1, yaw = Wd.yaw * s4;
+        _dq.t.set(Bp.hips[0] + Wd.side * s2, Bp.hips[1] - Wd.bob * (0.5 + 0.5 * s3), Bp.hips[2] + Wd.shift * s1);
+        if (w >= 0.999) b.Hips.position.copy(_dq.t); else b.Hips.position.lerp(_dq.t, w);
+        const yH = Bp.yawHips + yaw; P.rot('Hips', yH, Bp.pitchHips, roll, w);
+        const cr = -roll * Wd.chest, cy = -yaw * Wd.chest;
+        P.rot('Spine02', yH + cy / 3 + Bp.yawChest / 3, Bp.pitchHips + Bp.pitchChest / 3, roll + cr / 3, w);
+        P.rot('Spine01', yH + cy * 2 / 3 + Bp.yawChest * 2 / 3, Bp.pitchHips + Bp.pitchChest * 2 / 3, roll + cr * 2 / 3, w);
+        P.rot('Spine', yH + cy + Bp.yawChest, Bp.pitchHips + Bp.pitchChest, roll + cr, w);
+        const yC = Bp.yawHips + Bp.yawChest;
+        P.rot('neck', yC + Bp.yawHead * 0.4, (Bp.pitchHips + Bp.pitchChest) * 0.3 + Bp.pitchHead * 0.4, 0, w);
+        P.rot('Head', yC + Bp.yawHead, Bp.pitchHead, 0, w);
+        const ya = yH + cy + Bp.yawChest, ar = -roll * Wd.arm / Wd.roll * 0.5, sw2 = Wd.arm * 0.4 * s2;
+        P.limb(S.limb.armL, bsDir(_dq.d1, Bp.upL, ya + sw2, ar), bsDir(_dq.d2, Bp.foreL, ya + sw2, ar), w, bsPro(Bp.proL) * (1 - ws));
+        P.limb(S.limb.armR, bsDir(_dq.d1, Bp.upR, ya + sw2, ar), bsDir(_dq.d2, Bp.foreR, ya + sw2, ar), w, -bsPro(Bp.proR) * (1 - ws));
+        const pole = bsDir(_dq.d3, BS_FWD, Bp.yawHips, 0);
+        pole.z -= Bp.kneeOut; P.leg(S.limb.legL, _dq.t.set(Bp.ankleL[0], Bp.ankleL[1], Bp.ankleL[2]), pole, w); P.rot('LeftFoot', Bp.footYawL, 0, 0, w);
+        pole.z += 2 * Bp.kneeOut; P.leg(S.limb.legR, _dq.t.set(Bp.ankleR[0], Bp.ankleR[1], Bp.ankleR[2]), pole, w); P.rot('RightFoot', Bp.footYawR, 0, 0, w);
+      }
+      // her head (and neck) follow a world point: yaw about world up, clamped to ±75°, split neck 40 % / head 60 %, weight w; idempotent (the pose under it is
+      // re-solved every frame, nothing accumulates)
+      const _lq = { pw: new THREE.Quaternion(), pi: new THREE.Quaternion(), r: new THREE.Quaternion(), hw: new THREE.Quaternion(), h: new THREE.Vector3(), f: new THREE.Vector3() };
+      function yawBoneWorld(bone, ang) { bone.parent.getWorldQuaternion(_lq.pw); _lq.pi.copy(_lq.pw).invert(); _lq.r.setFromAxisAngle(_dq.Y, ang); bone.quaternion.premultiply(_lq.pw).premultiply(_lq.r).premultiply(_lq.pi); bone.updateMatrixWorld(true); }
+      function lookAtPoint(X, target, w) {
+        const H = X.bones.Head, N = X.bones.neck; if (!H || w <= 0.001 || !X.headFwd) return;
+        X.root.updateMatrixWorld(true); H.getWorldPosition(_lq.h); H.getWorldQuaternion(_lq.hw);
+        _lq.f.copy(X.headFwd).applyQuaternion(_lq.hw);
+        let err = Math.atan2(target.x - _lq.h.x, target.z - _lq.h.z) - Math.atan2(_lq.f.x, _lq.f.z); err = Math.atan2(Math.sin(err), Math.cos(err));
+        err = Math.max(-1.31, Math.min(1.31, err)) * w;
+        if (N) yawBoneWorld(N, err * 0.4); yawBoneWorld(H, N ? err * 0.6 : err);
+      }
+      function headForward(X) {   // head-local forward = her rest +z (root) through the rest chain of the Head bone
+        const R = X.rest, q = new THREE.Quaternion(); let o = X.bones.Head; if (!o) return null;
+        q.identity(); const chain = []; while (o && o !== X.root) { chain.push(o); o = o.parent; }
+        for (let i = chain.length - 1; i >= 0; i--) q.multiply(R[chain[i].name] ? R[chain[i].name].q : chain[i].quaternion);
+        return new THREE.Vector3(0, 0, 1).applyQuaternion(q.invert()).normalize();
+      }
+      const boardQ = (N, out) => { out.setFromAxisAngle(_dq.Y, Math.atan2(-N.z, N.x)); return out.multiply(IN.qFlip); };
+      const smoothE = (a, b, x) => smooth(a, b, x);
+      // the cargo bay: one procedural hangar (deck, ribbed walls, light strips, landing chevrons, door frame + force field, a planet and stars outside), lit with
+      // the SAME light types / counts as the rock scene (hemi, shadowed spot, 3 directional, 2 point; exp fog) so the pilots' and boards' pipelines carry over
+      function buildBay(Lb, Wb) {
+        const S = new THREE.Scene(); S.fog = new THREE.FogExp2(0x05070c, 0.004);
+        const Lz = Math.max(26, Lb * 3.2), Wx = Math.max(14, Wb * 2 + Lb * 0.9), Hy = Math.max(8, Lb * 0.8), owned = [];
+        const own = (o) => { owned.push(o); return o; };
+        const tex = (() => { const c = document.createElement('canvas'); c.width = c.height = 256; const g = c.getContext('2d');
+          g.fillStyle = '#23272e'; g.fillRect(0, 0, 256, 256); for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) { const v = 32 + ((i * 7 + j * 13) % 5) * 4; g.fillStyle = 'rgb(' + v + ',' + (v + 3) + ',' + (v + 8) + ')'; g.fillRect(i * 64 + 2, j * 64 + 2, 60, 60); }
+          g.strokeStyle = '#0e1014'; g.lineWidth = 3; for (let i = 0; i <= 4; i++) { g.beginPath(); g.moveTo(i * 64, 0); g.lineTo(i * 64, 256); g.stroke(); g.beginPath(); g.moveTo(0, i * 64); g.lineTo(256, i * 64); g.stroke(); }
+          const t = own(new THREE.CanvasTexture(c)); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t; })();
+        const deckT = tex.clone(); deckT.repeat.set(Wx / 4, Lz / 4); deckT.needsUpdate = true; own(deckT);
+        const wallT = tex.clone(); wallT.repeat.set(Lz / 6, Hy / 6); wallT.needsUpdate = true; own(wallT);
+        const metal = own(new THREE.MeshStandardMaterial({ color: 0x9aa3ad, map: deckT, metalness: 0.55, roughness: 0.42 }));
+        const wallM = own(new THREE.MeshStandardMaterial({ color: 0x5d6672, map: wallT, metalness: 0.55, roughness: 0.6 }));
+        const deck = new THREE.Mesh(own(new THREE.PlaneGeometry(Wx, Lz)), metal); deck.rotation.x = -Math.PI / 2; deck.receiveShadow = true; S.add(deck);
+        const box = own(new THREE.BoxGeometry(1, 1, 1));
+        const wall = (x, y, z, sx, sy, sz) => { const m = new THREE.Mesh(box, wallM); m.position.set(x, y, z); m.scale.set(sx, sy, sz); m.receiveShadow = true; S.add(m); return m; };
+        wall(-Wx / 2 - 0.3, Hy / 2, 0, 0.6, Hy, Lz); wall(Wx / 2 + 0.3, Hy / 2, 0, 0.6, Hy, Lz); wall(0, Hy + 0.3, 0, Wx + 1.2, 0.6, Lz); wall(0, Hy / 2, Lz / 2 + 0.3, Wx + 1.2, Hy, 0.6);
+        // ribs: columns on both walls + ceiling beams
+        const NR = 9, ribM = own(new THREE.MeshStandardMaterial({ color: 0x5b636e, metalness: 0.7, roughness: 0.35 })), ribs = new THREE.InstancedMesh(box, ribM, NR * 3), dm = new THREE.Object3D();
+        for (let i = 0; i < NR; i++) { const z = -Lz / 2 + (i + 0.5) * Lz / NR;
+          dm.position.set(-Wx / 2 + 0.2, Hy / 2, z); dm.scale.set(0.5, Hy, 0.6); dm.updateMatrix(); ribs.setMatrixAt(i * 3, dm.matrix);
+          dm.position.set(Wx / 2 - 0.2, Hy / 2, z); dm.updateMatrix(); ribs.setMatrixAt(i * 3 + 1, dm.matrix);
+          dm.position.set(0, Hy - 0.25, z); dm.scale.set(Wx, 0.5, 0.6); dm.updateMatrix(); ribs.setMatrixAt(i * 3 + 2, dm.matrix); }
+        ribs.instanceMatrix.needsUpdate = true; ribs.castShadow = false; ribs.receiveShadow = true; S.add(ribs);
+        // light strips (unlit, toned bright): ceiling edges + deck edges, and the landing chevrons (pulse toward the pads)
+        const stripM = own(new THREE.MeshBasicMaterial({ color: new THREE.Color(0.55, 0.85, 1.0).multiplyScalar(2.2), fog: false }));
+        const strips = new THREE.InstancedMesh(box, stripM, 4);
+        [[-Wx / 2 + 0.55, Hy - 0.6], [Wx / 2 - 0.55, Hy - 0.6], [-Wx / 2 + 0.6, 0.04], [Wx / 2 - 0.6, 0.04]].forEach(([x, y], i) => { dm.position.set(x, y, 0); dm.scale.set(0.08, 0.05, Lz * 0.98); dm.updateMatrix(); strips.setMatrixAt(i, dm.matrix); });
+        strips.instanceMatrix.needsUpdate = true; S.add(strips);
+        const chevM = own(new THREE.MeshBasicMaterial({ color: new THREE.Color(1.0, 0.55, 0.12), fog: false })), NC = 7, chev = new THREE.InstancedMesh(box, chevM, NC * 2);
+        for (let i = 0; i < NC; i++) for (let s2 = 0; s2 < 2; s2++) { dm.position.set((s2 ? 1 : -1) * 0.7, 0.012, -Lz / 2 + 2 + i * (Lz * 0.45 / NC)); dm.rotation.set(0, (s2 ? -1 : 1) * 0.6, 0); dm.scale.set(1.3, 0.02, 0.18); dm.updateMatrix(); chev.setMatrixAt(i * 2 + s2, dm.matrix); }
+        chev.instanceMatrix.needsUpdate = true; dm.rotation.set(0, 0, 0); S.add(chev);
+        // door frame (amber) + force field
+        const frameM = own(new THREE.MeshBasicMaterial({ color: new THREE.Color(1.0, 0.62, 0.2).multiplyScalar(1.6), fog: false }));
+        [[-Wx / 2, Hy / 2, 0.25, Hy], [Wx / 2, Hy / 2, 0.25, Hy], [0, Hy, Wx, 0.25], [0, 0.02, Wx, 0.1]].forEach(([x, y, sx, sy]) => { const m = new THREE.Mesh(box, frameM); m.position.set(x, y, -Lz / 2); m.scale.set(sx, sy, 0.3); S.add(m); });
+        const fieldM = own(new THREE.MeshBasicMaterial({ color: 0x5aa8ff, transparent: true, opacity: 0.1, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, fog: false }));
+        const field = new THREE.Mesh(own(new THREE.PlaneGeometry(Wx, Hy)), fieldM); field.position.set(0, Hy / 2, -Lz / 2); S.add(field);
+        // light shafts under the ceiling lamps (additive cones)
+        const shaftM = own(new THREE.MeshBasicMaterial({ color: 0xbfe4ff, transparent: true, opacity: 0.028, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
+        const cone = own(new THREE.ConeGeometry(Wx * 0.16, Hy * 0.95, 24, 1, true)); cone.translate(0, -Hy * 0.475, 0);
+        for (let i = 0; i < 4; i++) { const m = new THREE.Mesh(cone, shaftM); m.position.set((i % 2 ? 1 : -1) * Wx * 0.22, Hy - 0.5, -Lz * 0.22 + Math.floor(i / 2) * Lz * 0.3); m.renderOrder = 2; S.add(m); }
+        // outside: stars + a lit planet below the door line
+        const NS = lowTier ? 900 : 1800, sp = new Float32Array(NS * 3); for (let i = 0; i < NS; i++) { const u = Math.random() * 2 - 1, a = Math.random() * 6.283, r = 260, q = Math.sqrt(1 - u * u); sp[i * 3] = r * q * Math.cos(a); sp[i * 3 + 1] = r * u; sp[i * 3 + 2] = -Math.abs(r * q * Math.sin(a)) - Lz; }
+        const sg = own(new THREE.BufferGeometry()); sg.setAttribute('position', new THREE.BufferAttribute(sp, 3));
+        S.add(new THREE.Points(sg, own(new THREE.PointsMaterial({ size: 1.1, color: 0xdfe8ff, sizeAttenuation: true, fog: false, depthWrite: false }))));
+        const planet = new THREE.Mesh(own(new THREE.SphereGeometry(70, 48, 32)), own(new THREE.MeshStandardMaterial({ color: 0x3a6fb0, roughness: 0.8, metalness: 0, emissive: 0x0a1a33, emissiveIntensity: 0.6, fog: false })));
+        planet.position.set(-55, -62, -Lz / 2 - 150); S.add(planet);
+        // lights (same rig types as the rock scene)
+        const hemi2 = new THREE.HemisphereLight(0x8fb4ff, 0x20242c, 0.55); S.add(hemi2);
+        const spot2 = new THREE.SpotLight(0xffffff, 26, 0, 0.55, 0.7, 0); spot2.position.set(0, Hy - 0.4, -Lz * 0.06); spot2.target.position.set(0, 0, -Lz * 0.08);
+        spot2.castShadow = true; spot2.shadow.mapSize.set(sc.shadow, sc.shadow); spot2.shadow.bias = -0.0004; spot2.shadow.normalBias = 0.025; spot2.shadow.camera.near = 1; spot2.shadow.camera.far = Hy * 3; S.add(spot2, spot2.target);
+        const sun2 = new THREE.DirectionalLight(0xfff0dc, 1.8); sun2.position.set(-30, 20, -80); S.add(sun2);
+        const fill2 = new THREE.DirectionalLight(0x9cc8ff, 0.7); fill2.position.set(4, 6, 20); S.add(fill2);
+        const bnc2 = new THREE.DirectionalLight(0xffa860, 0.35); bnc2.position.set(0, -2, 4); S.add(bnc2);
+        const pA = new THREE.PointLight(0x7fd0ff, 6, Lz * 0.5, 1.8), pB2 = new THREE.PointLight(0xffb070, 14, Lz * 0.5, 1.6);
+        pA.position.set(0, Hy * 0.85, 0); pB2.position.set(0, 1.2, -Lz / 2 + 0.6); S.add(pA, pB2);
+        const cam = new THREE.PerspectiveCamera(42, camera.aspect, 0.1, 900);
+        const deckY = 0;
+        return { scene: S, cam, Lz, Wx, Hy, deckY, field, chevM, fieldM, owned, planet,
+          tick(t) { fieldM.opacity = 0.08 + 0.04 * Math.sin(t * 3.1); const k = 0.6 + 0.4 * Math.max(0, Math.sin(t * 5.0)); chevM.color.setRGB(1.0 * k, 0.55 * k, 0.12 * k); planet.rotation.y += 0.0004; },
+          dispose() { owned.forEach(o => { try { o.dispose(); } catch (e) {} }); try { ribs.dispose(); strips.dispose(); chev.dispose(); } catch (e) {} } };
+      }
+      const duoStart = (o) => {
+        const now0 = performance.now();
+        const ratio = o.ratio > 0 ? o.ratio : 37 / 6, pilot = o.pilot === 'emma' ? 'emma' : 'ariel';
+        const bA = pilot === 'ariel' ? o.board : (o.board2 || null), bB = pilot === 'emma' ? o.board : (o.board2 || null);
+        const shareA = pilot === 'ariel' ? !!o.sharedTex : !!o.sharedTex2, shareB = pilot === 'emma' ? !!o.sharedTex : !!o.sharedTex2;
+        const clone = (b) => { const c = b.clone(true); c.userData = Object.assign({}, b.userData, { duoClone: true }); return c; };   // no companion board handed in: a clone of hers (shares geometry / materials; never disposed)
+        const boards = [bA || clone(bB || o.board), bB || clone(bA || o.board)];
+        if (o.board === IN.parked) IN.parked = null; if (IN.warmed === o.board) IN.warmed = null;
+        IN.qFlip = IN.qFlip || new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
+        const rb = new THREE.Box3().setFromObject(boulder), gY = surfY(rb.min.x - 3, 0, [ground]);
+        IN.yClear = Math.max(rb.max.y, new THREE.Box3().setFromObject(ground).max.y) + 0.05;
+        DU = { t: 0, P: [], boards, share: [shareA, shareB], inBay: false, bay: null, flew: false, warp: null, scene, camLook: new THREE.Vector3().copy(TARGET), camPos: new THREE.Vector3(), mid: new THREE.Vector3(), Hmid: new THREE.Vector3() };
+        const NOSE = new THREE.Vector3(0, 0, -1), rideYaw = Math.atan2(NOSE.x, NOSE.z);
+        [A, B].forEach((X, i) => {
+          const side = i === 0 ? -1 : 1, b = boards[i], d = {};
+          X.headFwd = X.headFwd || headForward(X);
+          X.root.updateMatrixWorld(true);
+          // board size from what is on screen: her bone-chain height x the gameplay board:rider ratio over the board's own world length (as the v151 intro)
+          b.updateMatrixWorld(true); const len0 = (() => { const sz = new THREE.Box3().setFromObject(b).getSize(new THREE.Vector3()); return Math.max(sz.x, sz.z); })();
+          const herH = (() => { const v = (n) => X.bones[n] ? X.bones[n].getWorldPosition(new THREE.Vector3()) : null; const H = v('Hips'), Hd = v('Head'), U = v('LeftUpLeg'), K = v('LeftLeg'), F = v('LeftFoot');
+            return (H && Hd && U && K && F) ? (H.distanceTo(Hd) + U.distanceTo(K) + K.distanceTo(F)) * 1.1 : 1.6; })();
+          const k = len0 > 1e-4 ? herH * ratio / len0 : 1; b.scale.multiplyScalar(k); d.bScale = b.scale.clone();
+          b.traverse(m => { if (m.isMesh) { m.castShadow = true; m.frustumCulled = false; } });
+          b.rotation.order = 'XYZ'; boardQ(NOSE, b.quaternion); b.position.set(0, gY + 0.32, 0); b.updateMatrixWorld(true);
+          let pb = new THREE.Box3().setFromObject(b); const sz = pb.getSize(new THREE.Vector3()), Lb = Math.max(sz.x, sz.z), Wb = Math.max(0.3, Math.min(sz.x, sz.z)); d.Lb = Lb; d.Wb = Wb;
+          const edge = side < 0 ? rb.min.x : rb.max.x, lane = edge + side * 0.38;
+          // parked: beside her side of the rock, behind it, nose away (toward the horizon), tail end just behind the rock's back
+          b.position.x += side < 0 ? (edge - 0.75) - pb.max.x : (edge + 0.75) - pb.min.x;
+          b.position.z += (rb.min.z + 0.35) - pb.max.z; b.updateMatrixWorld(true); pb = new THREE.Box3().setFromObject(b);
+          d.H = b.position.clone(); d.Q = b.quaternion.clone();
+          const a = b.userData.deckAnchor || { x: 0, y: 0, z: 0 }, ac = b.localToWorld(new THREE.Vector3(a.x, a.y, a.z));
+          // where she rides: a little toward the tail and toward the rock-side edge (a shorter walk and a single step up), on the deck
+          const Rw = ac.clone(); Rw.z += Lb * 0.2; Rw.x += -side * Wb * 0.22; d.Dl = b.worldToLocal(Rw.clone()); d.Dl.y += 0.03 / Math.max(1e-4, Math.abs(b.getWorldScale(_dq.s).y));
+          // walk: from in front of her seat, round her side of the rock, to the deck's rock-side edge
+          const Sx = X.holder.localToWorld(X.ankleDown.clone()); Sx.y = surfY(Sx.x, Sx.z, [ground]);
+          const Wp = new THREE.Vector3(lane, 0, Math.min(Rw.z, rb.min.z - 0.4));
+          const pts = [Sx, new THREE.Vector3(lane, 0, Math.max(rb.min.z + 0.2, Math.min(0.15, Sx.z - 0.3))), new THREE.Vector3(lane, 0, rb.min.z - 0.05), Wp].map(p => { p.y = surfY(p.x, p.z, [ground]); return p; });
+          d.curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal'); d.len = d.curve.getLength();
+          const ys = new Float32Array(33); for (let j = 0; j <= 32; j++) { d.curve.getPointAt(j / 32, _dq.v); ys[j] = surfY(_dq.v.x, _dq.v.z, [ground]); } d.ys = ys;
+          d.walkDur = Math.max(2.0, Math.min(6.0, d.len / 1.25));
+          d.stepDur = X.clips.step ? Math.max(0.7, Math.min(1.15, X.clips.step.duration * 0.85)) : 0.9;
+          // timeline
+          d.dl = i === 0 ? 0 : 0.35; d.TF = 3.4;
+          d.tR0 = 3.0 + d.dl * 0.6; d.tR1 = d.tR0 + 1.4; d.tW0 = d.tR1 - 0.15; d.tW1 = d.tW0 + d.walkDur; d.tS0 = d.tW1; d.tL = d.tS0 + d.stepDur;
+          // fly-in from behind the camera, past her side of the rock, decelerating into the hover
+          const cw = camera.position;
+          d.P0 = new THREE.Vector3(cw.x + side * (Wb * 0.5 + 1.6), cw.y - 0.2, cw.z + Lb * 0.95 + 3.0);   // nose (Lb / 2 ahead of centre) still well behind the lens on frame one
+          d.P1 = new THREE.Vector3(edge + side * (0.75 + Wb * 0.5 + 0.9), gY + 1.7, Math.max(1.2, cw.z * 0.35));
+          d.P2 = d.H.clone().add(new THREE.Vector3(0, 0.5, Lb * 0.35)); d.P3 = d.H.clone();
+          d.seatPos = X.holder.position.clone(); d.seatQ = X.holder.quaternion.clone();
+          d.walkQ0 = new THREE.Quaternion(); d.curve.getTangentAt(0.02, _dq.v); d.walkQ0.setFromAxisAngle(_dq.Y, Math.atan2(_dq.v.x, _dq.v.z));
+          d.faceQ = new THREE.Quaternion().setFromAxisAngle(_dq.Y, Math.atan2(Rw.x - Wp.x, Rw.z - Wp.z));
+          d.rideQ = new THREE.Quaternion().setFromAxisAngle(_dq.Y, rideYaw);
+          d.Wp = Wp; d.Rw = Rw; d.hq = new THREE.Quaternion(); d.hp = new THREE.Vector3();
+          d.walk = mkSampler(X.clips.walk, X.bones); d.step = mkSampler(X.clips.step, X.bones);
+          d.keep = Object.keys(X.bones).map(n => [X.bones[n], X.bones[n].position.clone(), X.bones[n].quaternion.clone()]);
+          d.lockM = null; d.lockW = new THREE.Matrix4(); d.lockS = new THREE.Vector3();
+          d.side = side; d.wR = 0; d.board = b;
+          b.position.copy(d.P0); b.visible = false; scene.add(b);
+          X.du = d; DU.P.push(X);
+        });
+        DU.tDep = Math.max(A.du.tL, B.du.tL) + 1.3; DU.tBay = DU.tDep + 5.2; DU.tFly = DU.tBay + 5.0;
+        DU.Hmid.copy(A.du.H).add(B.du.H).multiplyScalar(0.5);
+        DU.dep = DU.P.map(() => ({ s: 0, v: 0 }));
+        // warp flash: one DOM layer over the canvas (pointer-events none: taps still reach index.html's skip)
+        try { const wv = document.createElement('div'); wv.className = 'ms-warp'; wv.style.cssText = 'position:absolute;inset:0;pointer-events:none;opacity:0;z-index:1;background:radial-gradient(ellipse at 50% 45%,rgba(255,255,255,1) 0%,rgba(170,215,255,.92) 30%,rgba(40,70,140,.55) 62%,rgba(0,0,0,0) 85%)';
+          (cv.parentNode || document.body).insertBefore(wv, cv.nextSibling); DU.warp = wv; } catch (e) { DU.warp = null; }
+        IN.duo = true; IN.t = 0; IN.w = 0; IN.onFly = o.onFlyOff; IN.flew = false; IN.board = boards[0]; IN.sharedTex = true; IN.lift = false; IN.dep = null; IN.list = null; IN._n = 0; IN._s = 0; MS.half = false;
+        // compile both boards (and, a moment later and off the critical path, the bay) before the first fly-in frame
+        boards.forEach(b => { b.visible = true; });
+        let pc = null; try { pc = renderer.compileAsync(scene, camera); } catch (e) { pc = null; } finally { boards.forEach(b => { b.visible = false; }); }
+        return Promise.resolve(pc).catch(() => {}).then(() => {
+          if (!DU) return;
+          boards.forEach(b => { b.visible = true; }); IN.on = true; info('duo launch on (' + Math.round(performance.now() - now0) + ' ms)');
+          setTimeout(() => { if (!DU || DU.bay) return; try { DU.bay = buildBay(Math.max(A.du.Lb, B.du.Lb), Math.max(A.du.Wb, B.du.Wb)); DU.bay.cam.position.set(0, DU.bay.Hy * 0.5, DU.bay.Lz * 0.4); DU.bay.cam.lookAt(0, 1, 0); renderer.compileAsync(DU.bay.scene, DU.bay.cam).catch(() => {}); } catch (e) { info('bay build failed:', e && e.message); } }, 1200);
+        });
+      };
+      // boards + holders for this frame (before the poses)
+      const duoPre = (dt) => {
+        IN.t += dt; DU.t = IN.t; const t = IN.t;
+        // warp flash around the scene switch
+        if (DU.warp) { const tb = t - DU.tBay, op = tb < -0.4 ? 0 : tb < 0 ? smooth(-0.4, 0, tb) : 1 - smooth(0.05, 0.8, tb); if (op !== DU._wop) { DU.warp.style.opacity = op.toFixed(3); DU._wop = op; } }
+        if (!DU.inBay && t >= DU.tBay && DU.bay) duoEnterBay();
+        for (let i = 0; i < DU.P.length; i++) {
+          const X = DU.P[i], d = X.du, b = d.board, h = X.holder;
+          if (d.bScale && !b.scale.equals(d.bScale)) b.scale.copy(d.bScale);
+          if (DU.inBay) duoBayBoard(X, i, t - DU.tBay);
+          else if (t < DU.tDep + i * 0.3) {
+            const tf = t - d.dl;
+            if (tf < 0) { b.visible = false; }
+            else if (tf < d.TF) {   // in from behind the camera, past her side, easing into the hover
+              b.visible = true; const u = tf / d.TF, e = 1 - Math.pow(1 - u, 3);
+              bez3(d.P0, d.P1, d.P2, d.P3, e, b.position); bez3(d.P0, d.P1, d.P2, d.P3, Math.min(1, e + 0.01), _dq.v);
+              _dq.v.sub(b.position); _dq.v.y = 0; if (_dq.v.lengthSq() < 1e-10) _dq.v.set(0, 0, -1); _dq.v.normalize();
+              const head = _dq.v2.copy(_dq.v).lerp(_dq.v3.set(0, 0, -1), smooth(0.75, 1, u)).normalize(); boardQ(head, b.quaternion);
+              b.quaternion.premultiply(_dq.q.setFromAxisAngle(head, d.side * 0.38 * Math.sin(Math.PI * Math.min(1, u * 1.15))));
+            } else {               // hover
+              b.position.copy(d.H); b.position.y += 0.03 * Math.sin(t * 2.6 + i) * (1 - smooth(DU.tDep - 0.9, DU.tDep, t)) - (t > d.tL ? 0.05 * smooth(d.tL, d.tL + 0.15, t) * (1 - smooth(d.tL + 0.15, d.tL + 1.0, t)) : 0);
+              b.quaternion.copy(d.Q);
+            }
+          } else {                 // together toward the horizon: eased speed, a gentle climb, a little weave and bank
+            const D = DU.dep[i], ds = Math.min(dt, 0.05), tt = t - DU.tDep - i * 0.3; D.v = 16 * smooth(0, 2.6, tt); D.s += D.v * ds;
+            b.position.set(d.H.x + d.side * 0.6 * Math.sin(tt * 0.9) * smooth(0, 1.5, tt), d.H.y + 0.24 * D.s + 0.6 * smooth(0, 1.8, tt), d.H.z - D.s);
+            b.quaternion.copy(d.Q).premultiply(_dq.q.setFromAxisAngle(_dq.v.set(1, 0, 0), 0.22 * smooth(0, 1.4, tt))).premultiply(_dq.q2.setFromAxisAngle(_dq.v2.set(0, 0, -1), d.side * 0.12 * Math.cos(tt * 0.9) * smooth(0, 1.5, tt)));
+          }
+          b.updateMatrixWorld(true);
+          // her: seated -> rise -> walk round the rock -> step onto the deck -> ride (locked to the board)
+          if (d.lockM) { d.lockW.multiplyMatrices(b.matrixWorld, d.lockM); d.lockW.decompose(h.position, h.quaternion, d.lockS); h.updateMatrixWorld(true); continue; }
+          d.wR = smooth(d.tR0, d.tR1, t);
+          if (t < d.tR0) continue;
+          if (t < d.tW0 + 0.15) {   // rise off the rock onto her feet in front of it, turning toward her walk
+            d.curve.getPointAt(0, _dq.v); h.position.lerpVectors(d.seatPos, _dq.v, d.wR); h.quaternion.slerpQuaternions(d.seatQ, d.walkQ0, d.wR);
+          } else if (t < d.tW1) {   // walk (arc length, ground height sampled at setup), facing along the path, turning to the board at the end
+            const u = Math.min(1, (t - d.tW0) / d.walkDur); d.curve.getPointAt(u, h.position); const f = u * 32, j = Math.min(31, Math.floor(f)); h.position.y = d.ys[j] + (d.ys[j + 1] - d.ys[j]) * (f - j);
+            { const ua = Math.min(0.995, Math.max(0, u - 0.004)); d.curve.getPointAt(ua, _dq.v2); d.curve.getPointAt(ua + 0.005, _dq.v); _dq.v.sub(_dq.v2); }   // tangent without Curve.getTangent's two temp vectors
+            _dq.q.setFromAxisAngle(_dq.Y, Math.atan2(_dq.v.x, _dq.v.z));
+            _dq.q.slerp(d.faceQ, smooth(d.tW1 - 0.5, d.tW1, t)); h.quaternion.slerp(_dq.q, Math.min(1, dt * 8));
+          } else if (t < d.tL) {    // step up onto the deck
+            const k = (t - d.tS0) / d.stepDur, ks = k * k * (3 - 2 * k); d.hp.copy(d.Dl); b.localToWorld(d.hp);
+            h.position.lerpVectors(d.Wp, d.hp, ks); h.position.y = d.Wp.y + (d.hp.y - d.Wp.y) * smooth(0.1, 0.75, k) + Math.sin(Math.PI * k) * 0.06;
+            h.quaternion.slerpQuaternions(d.faceQ, d.rideQ, smooth(0.35, 1, k));
+          } else {                  // planted on the deck: from now on she rides the board's transform rigidly
+            d.hp.copy(d.Dl); b.localToWorld(d.hp); h.position.copy(d.hp); h.quaternion.copy(d.rideQ); h.updateMatrixWorld(true);
+            d.lockM = new THREE.Matrix4().copy(b.matrixWorld).invert().multiply(h.matrixWorld);
+          }
+          h.updateMatrixWorld(true);
+        }
+        if (!IN.flew && t >= DU.tFly) { IN.flew = true; try { IN.onFly && IN.onFly(); } catch (e) {} }
+      };
+      // poses on top of the seated pose: rise (seated -> walk frame), walk, Mount_Step, the standing stance; heads follow the boards on the fly-in
+      const duoPost = () => {
+        const t = IN.t;
+        for (let i = 0; i < DU.P.length; i++) {
+          const X = DU.P[i], d = X.du;
+          if (d.wR > 0) d.walk.apply(t < d.tW0 ? 0 : (t - d.tW0) * 1.0, d.wR);
+          const wS = smooth(d.tS0 - 0.12, d.tS0 + 0.12, t); if (wS > 0 && t < d.tL + 1.0) d.step.applyClamped((t - d.tS0) * (d.step.dur * 0.98 / d.stepDur), wS * (1 - smooth(d.tL, d.tL + 0.9, t)));
+          const wT = smooth(d.tL - 0.15, d.tL + 0.85, t); if (wT > 0) standPose(X, t, wT);
+          const wl = smooth(d.dl + 0.4, d.dl + 1.3, t) * (1 - smooth(d.tR0 + 0.4, d.tR0 + 1.5, t));
+          if (wl > 0.001 && !DU.inBay) { X.root.updateMatrixWorld(true); lookAtPoint(X, d.board.position, wl); }
+          X.root.updateMatrixWorld(true);
+        }
+      };
+      const duoCamera = () => {
+        const t = IN.t;
+        if (DU.inBay) {
+          const bay = DU.bay, tb = t - DU.tBay, c = bay.cam;
+          if (c.aspect !== camera.aspect) { c.aspect = camera.aspect; c.updateProjectionMatrix(); }
+          const k = smooth(0, 6, tb); c.position.set(0.6 * Math.sin(tb * 0.2), bay.Hy * (0.5 - 0.1 * k), bay.Lz * (0.42 - 0.1 * k));
+          DU.mid.copy(A.du.board.position).add(B.du.board.position).multiplyScalar(0.5); DU.mid.y += 0.8;
+          DU.camLook.lerp(DU.mid, tb < 0.1 ? 1 : 0.06); c.lookAt(DU.camLook); bay.tick(tb); return;
+        }
+        // dolly back + up so both walks and the step-ons stay in frame, then pan up after the boards as they leave
+        const k1 = smooth(2.4, Math.min(A.du.tW0, B.du.tW0) + 1.2, t), kd = smooth(DU.tDep, DU.tDep + 3.5, t);
+        camera.position.x += 0; camera.position.y += 1.35 * k1 + 1.6 * kd; camera.position.z += 3.0 * k1 - 0.8 * kd;
+        _dq.v.set(0, TARGET.y - 0.1 * k1, DU.Hmid.z * 0.55 * k1).lerp(TARGET, 1 - k1);
+        if (kd > 0) { DU.mid.copy(A.du.board.position).add(B.du.board.position).multiplyScalar(0.5); _dq.v.lerp(DU.mid, 0.9 * kd); }
+        DU.camLook.lerp(_dq.v, 0.12); camera.lookAt(DU.camLook);
+      };
+      // the switch to the cargo bay (at the warp flash's peak): pilots and boards move into the bay scene
+      const duoEnterBay = () => {
+        DU.inBay = true; const bay = DU.bay;
+        DU.P.forEach((X, i) => { const d = X.du; scene.remove(d.board); bay.scene.add(d.board); scene.remove(X.holder); bay.scene.add(X.holder);
+          if (!d.lockM) { d.hp.copy(d.Dl); d.board.updateMatrixWorld(true); d.board.localToWorld(d.hp); X.holder.position.copy(d.hp); X.holder.quaternion.copy(d.rideQ); X.holder.updateMatrixWorld(true); d.lockM = new THREE.Matrix4().copy(d.board.matrixWorld).invert().multiply(X.holder.matrixWorld); }
+          d.bayIn = new THREE.Vector3(d.side * (d.Wb * 0.5 + 1.6), bay.Hy * 0.55, -bay.Lz / 2 - d.Lb * 1.4); d.bayPark = new THREE.Vector3(d.side * (d.Wb * 0.5 + 0.9), bay.deckY + 0.6, -bay.Lz * 0.06);
+          d.bayQ = boardQ(new THREE.Vector3(0, 0, 1), new THREE.Quaternion()); });
+        try { hair && hair.reset && hair.reset(); B && B.hair && B.hair.reset && B.hair.reset(); } catch (e) {}   // the heads jumped scenes: re-seed the strands, no whip
+        info('cargo bay arrival');
+      };
+      const duoBayBoard = (X, i, tb) => {
+        const d = X.du, b = d.board, u = Math.min(1, Math.max(0, (tb - i * 0.25) / 4.2)), e = 1 - Math.pow(1 - u, 3);
+        b.position.lerpVectors(d.bayIn, d.bayPark, e); b.position.y += Math.sin(Math.PI * e) * 0.6 + (u >= 1 ? 0.03 * Math.sin(tb * 2.4 + i) : 0);
+        b.quaternion.copy(d.bayQ).premultiply(_dq.q.setFromAxisAngle(_dq.v.set(1, 0, 0), -0.18 * (1 - e))).premultiply(_dq.q2.setFromAxisAngle(_dq.v2.set(0, 0, 1), -d.side * 0.25 * Math.sin(Math.PI * e)));
+      };
+      const duoReset = () => {
+        const D = DU; DU = null; IN.duo = false; IN.on = false; IN.board = null; IN.flew = false;
+        if (!D) return;
+        try { if (D.warp) D.warp.remove(); } catch (e) {}
+        D.P.forEach((X, i) => { const d = X.du; if (!d) return;
+          try { if (d.board.parent) d.board.parent.remove(d.board); } catch (e) {}
+          if (X.holder.parent !== scene) { try { if (X.holder.parent) X.holder.parent.remove(X.holder); scene.add(X.holder); } catch (e) {} }
+          d.keep.forEach(([bn, p, q]) => { bn.position.copy(p); bn.quaternion.copy(q); });
+          X.holder.position.copy(d.seatPos); X.holder.quaternion.copy(d.seatQ); X.holder.updateMatrixWorld(true); X.du = null;
+          if (!d.board.userData.duoClone) d.board.traverse(m => { if (!m.geometry && !m.material) return; try { m.geometry && m.geometry.dispose(); } catch (e) {}
+            (Array.isArray(m.material) ? m.material : [m.material]).forEach(mt => { if (!mt) return; if (!D.share[i]) for (const k in mt) { const v = mt[k]; if (v && v.isTexture) try { v.dispose(); } catch (e) {} } try { mt.dispose(); } catch (e) {} }); }); });
+        try { if (D.bay) D.bay.dispose(); } catch (e) {}
       };
       const bez3 = (a, b1, c, d, u, out) => { const v = 1 - u; return out.set(0, 0, 0).addScaledVector(a, v * v * v).addScaledVector(b1, 3 * v * v * u).addScaledVector(c, 3 * v * u * u).addScaledVector(d, u * u * u); };
       // board + her placement for this frame (before the bones are posed)
@@ -714,6 +1114,7 @@ IN.D.copy(IN.Dl); b.localToWorld(IN.D); IN.D.y += 0.03;
         return Promise.resolve(pc).catch(() => {}).then(() => new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)))).then(() => { if (IN.parked === b) { b.visible = false; IN.warmed = b; } return true; });
       };
       const introReset = () => {
+        if (DU || IN.duo) { duoReset(); MS.half = false; return; }
         if (IN.parked && !IN.board) { const pb = IN.parked; IN.parked = null; try { disposeBoard(pb); } catch (e) {} }
         if (IN.board) { // the intro board is its own instance (GLB clones own geometry+materials); textures of a GLB template stay with the game's cache
           const b = IN.board; scene.remove(b); IN.board = null;
@@ -771,12 +1172,15 @@ IN.D.copy(IN.Dl); b.localToWorld(IN.D); IN.D.y += 0.03;
         if (window._dmWarming || MS.skipN > 1) { ema = 16; adj = 0; } else ema += (dt * 1000 - ema) * 0.04;
         if (++adj > 90) { adj = 0; if (ema > 36 && pr > sc.pr * 0.5) { pr = Math.max(0.5, pr - 0.15); fit(); } else if (ema < 20 && pr < sc.pr) { pr = Math.min(sc.pr, pr + 0.1); fit(); } }
         if (IN.on) { IN._n = (IN._n | 0) + 1; if (IN._n > 6 && IN._n <= 36) IN._s = (IN._s || 0) + dt; if (IN._n === 36) { const av = IN._s / 30 * 1000; MS.half = av > 20 && av < 36; } }
-        if (IN.on) introPre(dt);
+        if (IN.on) { if (IN.duo) { if (DU) duoPre(dt); } else introPre(dt); }
         if (IN.on || tAlive) trailTick(dt);
-        pose(t); face(t); if (IN.on) introSnap(); root.updateMatrixWorld(true);
+        pose(t); face(t); if (IN.on && !IN.duo) introSnap(); root.updateMatrixWorld(true);
+        if (B) { poseSeated(B, t + 7.3); B.root.updateMatrixWorld(true); }
+        if (IN.duo && DU) duoPost();
         if (hair) { wind.set(0.35 + 0.25 * Math.sin(t * 0.37), 0.02, 0.15 + 0.2 * Math.sin(t * 0.53 + 1)); hair.params.wind.copy(wind); }
-        C.mixer.update(dt);
-        if (IN.on) introPost();
+        if (B && B.hair && B.hair.params) { wind.set(0.35 + 0.25 * Math.sin(t * 0.37 + 0.6), 0.02, 0.15 + 0.2 * Math.sin(t * 0.53 + 1.7)); B.hair.params.wind.copy(wind); }
+        C.mixer.update(dt); if (B) B.C.mixer.update(dt);
+        if (IN.on && !IN.duo) introPost();
         // dust motes drift on the wind
         for (let i = 0; i < NM; i++) { const o = i * 3; mp[o] += mv[o] * dt; mp[o + 1] += mv[o + 1] * dt + Math.sin(t * 0.7 + i) * 0.0008; mp[o + 2] += mv[o + 2] * dt; if (mp[o] > 6) mp[o] = -6; if (mp[o + 1] > 3.6) mp[o + 1] = 0; if (mp[o + 1] < 0) mp[o + 1] = 3.6; }
         mg.attributes.position.needsUpdate = true;
@@ -801,6 +1205,8 @@ IN.D.copy(IN.Dl); b.localToWorld(IN.D); IN.D.y += 0.03;
           camera.position.lerp(closeP, e); camera.position.y += arc * 0.28; camera.position.addScaledVector(tmpC, arc * 0.18);
           tgtW.copy(headW); tgtW.y -= 0.03; tgtW.addScaledVector(tmpC, -0.12);
           camera.lookAt(tmpB.lerpVectors(TARGET, tgtW, e));
+        } else if (IN.on && IN.duo && DU) {
+          duoCamera();
         } else if (IN.on) {
           // intro: dolly back + pan left so her walk to the parked board and the step-on stay in frame
           const k = smooth(IN.T_WALK - 0.3, IN.T_STEP, IN.t);
@@ -811,11 +1217,11 @@ IN.D.copy(IN.Dl); b.localToWorld(IN.D); IN.D.y += 0.03;
         } else camera.lookAt(TARGET);
         if (MS._dbg) { camera.position.copy(MS._dbg.pos); camera.lookAt(MS._dbg.target); }
         if (cv.clientWidth !== lw || cv.clientHeight !== lh) { lw = cv.clientWidth; lh = cv.clientHeight; if (lw > 1) { fit(); adj = -120; ema = 16; } }
-        renderer.render(scene, camera);
+        if (DU && DU.inBay && DU.bay) renderer.render(DU.bay.scene, DU.bay.cam); else renderer.render(scene, camera);
         if (++framesSeen === 3 && !MS.ready) { MS.ready = true; cv.classList.add('ms-in'); document.dispatchEvent(new CustomEvent('menuscene-ready')); try { const mv = document.querySelector('.menu-version'); if (mv && !/scene b/.test(mv.textContent)) mv.textContent += ' · scene b7'; } catch (e) {} info('ready (' + (renderer.backend && renderer.backend.isWebGPUBackend ? 'WebGPU' : 'WebGL2') + ', pr ' + pr.toFixed(2) + ')'); }
       };
       raf = requestAnimationFrame(loop);
-      MS._ctx = { introStart, introReset, introPrecompile, intro: IN, focus: startFocus, FOC, renderer, scene, camera, hair: () => hair, pose, setMenuOpen: () => { menuT = t; }, cv, holder, root, boulder, ground, P, bones };
+      MS._ctx = { introStart, introReset, introPrecompile, intro: IN, duo: () => DU, pilots: () => [A, B], duoReady: () => { try { return DUO_READY(); } catch (e) { return false; } }, loadClips: () => Promise.all([loadClips(A), loadClips(B)]), focus: startFocus, FOC, renderer, scene, camera, hair: () => hair, pose, setMenuOpen: () => { menuT = t; }, cv, holder, root, boulder, ground, P, bones };
       MS.dispose = function () {
         MS.disposed = true; MS.ready = false; cancelAnimationFrame(raf); window.removeEventListener('resize', onResize); window.removeEventListener('orientationchange', onResize); window.removeEventListener('pointermove', onPtr); window.removeEventListener('pointerdown', onDown); window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp);
         try { if (window.visualViewport) window.visualViewport.removeEventListener('resize', onResize); } catch (e) {}
