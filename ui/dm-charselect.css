@@ -154,8 +154,7 @@
 .cs-tag{color:var(--cyan);letter-spacing:.22em;}
 #cs-studio{background:radial-gradient(ellipse 80% 70% at 50% 55%,#101820 0%,#070a12 60%,#04060a 100%);}
 #cs-panel{
-  /* (v381) chrome is .mm-frame; keep the body typography hooks below. */
-  background:transparent;
+  /* (v381) chrome is .mm-frame — do not set background here (transparent would kill the ring and fill). */
   border-left:none;
   box-shadow:none;
   backdrop-filter:none;
@@ -192,7 +191,7 @@
 #screen-character .cs-card-slot{
   flex:0 0 var(--cs-cw);scroll-snap-align:center;margin:0 clamp(6px,2vw,16px);padding:0;border:0;background:none;
   color:inherit;font:inherit;cursor:pointer;text-align:center;display:flex;flex-direction:column;align-items:stretch;
-  transform-origin:50% 60%;touch-action:manipulation;appearance:none;-webkit-appearance:none;
+  transform-origin:50% 60%;transform-style:preserve-3d;touch-action:manipulation;appearance:none;-webkit-appearance:none;
 }
 #screen-character .cs-card-slot:focus{outline:none;}
 #screen-character .cs-card-slot:focus-visible .cs-card{outline:2px solid var(--gold);outline-offset:3px;}

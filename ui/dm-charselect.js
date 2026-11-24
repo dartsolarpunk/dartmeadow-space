@@ -290,13 +290,16 @@
     const cur = W.DMChars.list()[activeIdx];
     uiApply(uiMachine(UI, { type: 'pick', id: cur ? cur.id : UI.pickedId }));
     const nx = $('cs-next');
-    if (nx) nx.textContent = (cur ? 'CONTINUE AS ' + cur.name.toUpperCase() : 'CONTINUE') + ' ⟶';
+    if (!nx) return;
+    const named = (cur && cur.ready) ? cur : (W.DMChars.get(W.DMChars.selectedId()) || null);
+    nx.textContent = (named ? 'CONTINUE AS ' + named.name.toUpperCase() : 'CONTINUE') + ' ⟶';
   }
 
   /* ───────────────────────── the studio ───────────────────────── */
   const S = { M: null, X: null, cam: null, F: null, raf: 0, yaw: 0, vyaw: 0, dragging: false, pointers: new Map(), pinch0: 0, zoom: 1, pitch: 0, last: 0, accum: 0, nextExtra: 0, look: 0, lookT: 0, def: null, token: 0, leased: false };
   async function openStudio(id, fromEl) {
     const def = W.DMChars.get(id); if (!def || CS.studioOpen) return;
+    clearTimeout(closeStudio._t); closeStudio._t = 0;   // a reopen inside the 550 ms close must not be hidden by finish()
     CS.studioOpen = true; thumbAbort = true; const token = ++S.token; S.def = def; if (CW.w) CW.w.pause(true); try { CS._resetFlow && CS._resetFlow(); } catch (e) { }
     uiApply(uiMachine(UI, { type: 'edit', id: def.id }));
     const root = $('cs-studio'), stage = $('cs-stage');
@@ -345,12 +348,12 @@
     const hideChrome = opts.visual !== false;
     const reduce = (function () { try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return true; } })();
     const finish = () => { if (!root) return; root.classList.remove('open', 'leaving'); root.style.clipPath = ''; root.style.transition = ''; };
-    clearTimeout(closeStudio._t);
+    clearTimeout(closeStudio._t); closeStudio._t = 0;
     if (hideChrome && root && root.classList.contains('open') && !reduce && !opts.immediate) {
       root.classList.add('leaving');
       closeStudio._t = setTimeout(finish, 550);
-    } else if (hideChrome) {
-      finish();
+    } else {
+      finish();   // always including !hideChrome (leave / goScreen) and opts.immediate, so .open cannot linger
     }
     CS.studioOpen = false; if (refreshed && S.def) paintCard(S.def.id);
     if (hideChrome) uiApply(uiMachine(UI, { type: 'back' }));
@@ -781,6 +784,9 @@
   /* ───────────────────────── screen lifecycle ───────────────────────── */
   CS.enter = function () {
     if (!W.DMChars) return; CS.entered = true;
+    const sc = $('screen-character'); if (sc) sc.classList.remove('cs-leaving');
+    const studio = $('cs-studio');
+    if (studio && !CS.studioOpen) { studio.classList.remove('open', 'leaving'); studio.style.clipPath = ''; studio.style.transition = ''; }
     const pick = W.DMChars.selectedId();
     uiApply(uiMachine(UI, { type: 'enter', pickedId: pick }));
     buildCards(); requestAnimationFrame(() => { const i = Math.max(0, W.DMChars.list().findIndex((d) => d.id === W.DMChars.selectedId())); centreOn(i, false); layoutWheel(); });

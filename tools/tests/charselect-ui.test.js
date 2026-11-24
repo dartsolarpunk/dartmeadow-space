@@ -66,5 +66,165 @@ const done = M.uiMachine(leaving, { type: 'idle' });
 ok(done.mode === 'idle', 'idle after the screen is gone');
 ok(M.uiState().mode === 'idle', 'uiState starts idle before enter (no DOM)');
 
-console.log(fails ? 'charselect-ui: ' + fails + ' FAILED of ' + n : 'charselect-ui: all ' + n + ' passed');
-process.exit(fails ? 1 : 0);
+function finishTests() {
+  console.log(fails ? 'charselect-ui: ' + fails + ' FAILED of ' + n : 'charselect-ui: all ' + n + ' passed');
+  process.exit(fails ? 1 : 0);
+}
+
+// ── Watcher NAY contracts (v381 fix)
+const mw = rd('ui/dm-menuworld.css');
+ok(/transform-style:\s*preserve-3d/.test(css), '3D carousel: .cs-card-slot keeps preserve-3d so rotateY reaches the wheel perspective');
+ok(!/#cs-panel\{[^}]*background:\s*transparent/.test(css), '#cs-panel does not set background:transparent (would kill the .mm-frame ring and fill)');
+ok(!/#screen-character\.mw-on \.cs-card\{[^}]*clip-path:/.test(mw) && !/#screen-character\.mw-on \.cs-card\{[^}]*background:/.test(mw), 'mw-on .cs-card does not override mm-frame clip-path or background');
+ok(/\.cs-card-slot:nth-child\(2n\) \.cs-card\{animation-duration:7\.7s/.test(mw) && /\.cs-card-slot:nth-child\(3n\) \.cs-card\{animation-duration:8\.9s/.test(mw), 'mw-on bob stagger is keyed off .cs-card-slot:nth-child (the wheel children)');
+ok(/cur && cur\.ready/.test(js) && /W\.DMChars\.get\(W\.DMChars\.selectedId\(\)\)/.test(js), 'Continue names the centred card only when it is ready, otherwise the saved pick');
+ok(/clearTimeout\(closeStudio\._t\)/.test(js) && /openStudio[\s\S]{0,250}clearTimeout\(closeStudio\._t\)/.test(js), 'openStudio clears the closeStudio finish timer before reopening');
+ok(/studio && !CS\.studioOpen[\s\S]{0,80}classList\.remove\('open', 'leaving'\)/.test(js), 'CS.enter strips leftover .open / .leaving when the studio is not open');
+ok(/sc\.classList\.remove\('cs-leaving'\)/.test(js), 'CS.enter clears .cs-leaving');
+
+// ── stuck-editor regressions: leave with the editor open then re-enter; reopen during the 550 ms close
+function makeDom() {
+  const byId = {};
+  const mkClass = (init) => {
+    const s = new Set((init || '').split(/\s+/).filter(Boolean));
+    return {
+      add(...c) { c.forEach((x) => s.add(x)); },
+      remove(...c) { c.forEach((x) => s.delete(x)); },
+      contains(c) { return s.has(c); },
+      toggle(c, on) { if (on === undefined) { s.has(c) ? s.delete(c) : s.add(c); } else if (on) s.add(c); else s.delete(c); },
+    };
+  };
+  const el = (id, className) => {
+    const rec = {
+      id, className: className || '', style: {}, hidden: false, textContent: '', innerHTML: '',
+      children: [], dataset: {}, parentNode: null, _bound: false,
+      classList: mkClass(className),
+      addEventListener() {}, setAttribute() {}, getAttribute() { return null; },
+      appendChild(c) { this.children.push(c); if (c) c.parentNode = this; return c; },
+      querySelector() { return { textContent: '', style: {}, classList: mkClass(''), className: 'cs-thumb empty' }; },
+      querySelectorAll() { return []; },
+      getBoundingClientRect() { return { top: 0, right: 0, bottom: 0, left: 0, width: 200, height: 200 }; },
+      offsetWidth: 200, offsetHeight: 250, offsetLeft: 0, clientWidth: 800, scrollLeft: 0,
+      scrollTo() {},
+    };
+    if (id) byId[id] = rec;
+    return rec;
+  };
+  const studio = el('cs-studio', 'open');
+  const screen = el('screen-character', 'screen active');
+  const wheel = el('cs-wheel');
+  const next = el('cs-next');
+  const stage = el('cs-stage');
+  el('cs-head'); el('cs-back'); el('cs-sback'); el('cs-sselect'); el('cs-continue');
+  el('cs-pname'); el('cs-ptag'); el('cs-load'); el('cs-turn'); el('cs-panel');
+  el('cs-tabs'); el('cs-pbody'); el('cs-dots'); el('cs-bg'); el('cs-list'); el('cs-hint');
+  const els = { studio, screen, wheel, next, stage, byId };
+  const createElement = (tag) => {
+    const rec = el(null, tag === 'button' ? 'cs-card-slot mm-panel' : '');
+    rec.tagName = String(tag).toUpperCase();
+    rec.type = ''; rec.textContent = '';
+    const q = {};
+    rec.innerHTML = '';
+    rec.querySelector = (sel) => {
+      if (!q[sel]) q[sel] = { textContent: '', style: { display: '' }, classList: mkClass(sel.includes('thumb') ? 'cs-thumb empty' : ''), className: sel.includes('thumb') ? 'cs-thumb empty' : '', setAttribute() {}, getAttribute() { return ''; } };
+      return q[sel];
+    };
+    rec.addEventListener = () => {};
+    return rec;
+  };
+  return { els, createElement, byId };
+}
+
+function loadSelect(dom, chars) {
+  const box = {
+    window: {},
+    document: {
+      readyState: 'complete',
+      getElementById: (id) => dom.byId[id] || null,
+      addEventListener() {},
+      createElement: dom.createElement,
+      querySelector(sel) { return null; },
+      querySelectorAll(sel) {
+        if (sel === '#cs-wheel .cs-card-slot') return dom.els.wheel.children;
+        if (sel === '#cs-dots i') return [];
+        return [];
+      },
+    },
+    console,
+    setTimeout, clearTimeout,
+    requestAnimationFrame: (fn) => setTimeout(fn, 0),
+    cancelAnimationFrame: (id) => clearTimeout(id),
+    matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
+    addEventListener() {}, removeEventListener() {},
+    performance: { now: () => Date.now() },
+    innerWidth: 800, innerHeight: 600,
+    localStorage: { getItem() { return null; }, setItem() {}, removeItem() {} },
+    STATE: { screen: 'character' },
+  };
+  box.window = box;
+  box.DMChars = chars;
+  vm.runInNewContext(js, box, { filename: 'dm-charselect.js' });
+  return box;
+}
+
+const ariel = { id: 'ariel', name: 'Ariel', tag: 'READY', ready: true };
+const soon = { id: 'soon', name: 'Nova', tag: 'SOON', ready: false };
+const chars = {
+  list: () => [ariel, soon],
+  get: (id) => [ariel, soon].find((d) => d.id === id) || null,
+  selectedId: () => 'ariel',
+  lookSig: () => '1',
+  onChange() { return () => {}; },
+  setSelected() {},
+  regions: () => [],
+  look: () => ({ colors: {} }),
+  isDefaultLook: () => true,
+  resolveForGame: () => ({ def: ariel, wanted: 'ariel', fellBack: false }),
+};
+
+{
+  const dom = makeDom();
+  const box = loadSelect(dom, chars);
+  const CS = box.window.DMCharSelect;
+  CS.studioOpen = true;
+  box.STATE.screen = 'menu';   // goScreen already left the character screen
+  CS.leave();
+  ok(!CS.studioOpen, 'leave with the editor open clears studioOpen');
+  ok(!dom.els.studio.classList.contains('open') && !dom.els.studio.classList.contains('leaving'), 'leave strips #cs-studio .open / .leaving (no stuck empty editor)');
+}
+
+{
+  const dom = makeDom();
+  const box = loadSelect(dom, chars);
+  const CS = box.window.DMCharSelect;
+  // leftover chrome from a previous leave that failed to finish(), then re-enter
+  CS.studioOpen = false;
+  dom.els.studio.classList.add('open', 'leaving');
+  dom.els.screen.classList.add('cs-leaving');
+  box.STATE.screen = 'character';
+  CS.enter();
+  ok(!dom.els.studio.classList.contains('open') && !dom.els.studio.classList.contains('leaving'), 're-enter strips a leftover empty editor when studioOpen is false');
+  ok(!dom.els.screen.classList.contains('cs-leaving'), 're-enter clears .cs-leaving');
+  ok(CS.uiState().mode === 'select', 're-enter lands in select mode');
+}
+
+const reopenP = (() => {
+  const dom = makeDom();
+  const box = loadSelect(dom, chars);
+  const CS = box.window.DMCharSelect;
+  CS.studioOpen = true;
+  box.STATE.screen = 'character';
+  CS.closeStudio({ thumb: false });   // animated close: finish() is scheduled for 550 ms
+  ok(!CS.studioOpen, 'closeStudio clears studioOpen immediately');
+  ok(dom.els.studio.classList.contains('leaving') || dom.els.studio.classList.contains('open'), 'animated close starts with the editor still visible');
+  ok(!!CS.closeStudio._t, 'animated close scheduled finish()');
+  const p = CS.openStudio('ariel');
+  ok(!CS.closeStudio._t, 'reopen during close clears the finish timer');
+  return Promise.resolve(p).then(() => new Promise((r) => setTimeout(r, 650))).then(() => {
+    ok(dom.els.studio.classList.contains('open'), 'reopen during close is not hidden by a late finish()');
+    ok(!dom.els.studio.classList.contains('leaving'), 'reopened editor is not stuck in .leaving');
+    ok(CS.studioOpen, 'reopen leaves studioOpen true');
+  });
+})();
+
+reopenP.then(finishTests, (e) => { console.log(e && e.stack || e); fails++; finishTests(); });
