@@ -22424,7 +22424,7 @@ async function loadCharacterAssets(){
   const _cd = _charResolve(true), _cdef = _cd?_cd.def:null, _cfiles = _charFiles();
   CHAR.charId = _cd?_cd.id:'ariel';
   const _myGen=_charGen;   // (bugfix-1119) hair / cloth that attach late stand down when this pilot was dropped meanwhile
-  if(_cd&&_cd.fellBack){ try{ const w=DMChars.get(_cd.wanted); toast('⚠ '+(w?w.name:'That pilot')+' is not ready to fly yet — flying as '+_cdef.name,4200); }catch(e){} }
+  if(_cd&&_cd.fellBack){ try{ const w=DMChars.get(_cd.wanted); toast('⚠ '+(w?w.name:'That Articren')+' is not ready to fly yet — flying as '+_cdef.name,4200); }catch(e){} }
   const gltfLoader = _getGLBLoader();
   if(!gltfLoader){
     CHAR.loading=false;

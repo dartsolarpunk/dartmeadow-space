@@ -33,6 +33,16 @@ ok(MW.sunDirFor(1.5, 50, 1, 13, 0.55)[0] > 0, 'side +1 puts the sun right');
 // light rig: rim comes from the sun side (behind her), key from the front
 const sun = MW.sunDirFor(1.2, 30, -1, 9, 0.62), rig = MW.lightRig(sun);
 ok(rig.rim.dir[2] < 0 && rig.rim.dir[0] < 0 && rig.rim.dir[1] > 0 && rig.key.dir[2] > 0 && rig.key.dir[1] > 0, 'rim from the sun (behind-left-above), key from front-right');
+const br = MW.bayStudioRig('studio'), bc = MW.bayStudioRig('cards');
+ok(br && bc && br.key && br.spot && br.rim && br.hemi && br.fill && br.fixture, 'bayStudioRig returns the studio spotlight fields');
+ok(br.key.dir[0] > 0 && br.key.dir[1] > 0 && br.key.dir[2] > 0, 'studio key is front-3/4 (right, above, toward camera)');
+ok(br.rim.dir[2] < 0 && br.rim.color === 0x8fb0ff, 'studio rim is cool from the window / planet side');
+ok(br.hemi.intensity <= 0.85 && br.fill.intensity <= 0.5 && bc.hemi.intensity <= 0.9, 'ambient stays modest so black hair does not wash out');
+ok(br.spot.intensity > 0 && br.spot.angle > 0 && br.spot.distance > 0 && br.spot.penumbra > 0, 'crisp key spotlight is present');
+ok(bc.spot.distance > br.spot.distance && bc.spot.intensity >= br.spot.intensity, 'cards rig covers the wider observation deck');
+ok(br.fixture.intensity > 0 && bc.fixture.distance > br.fixture.distance, 'fixture point lights scale with the bay');
+ok(MW.STUDIO_CAM && MW.STUDIO_CAM.maxY < 4.25 && MW.STUDIO_CAM.maxR < 5.45 && MW.STUDIO_CAM.minY > 0, 'studio camera clamp stays inside the scaled bay');
+
 // parallax + sway
 ok(MW.parallaxOffset([1, 2, 3], [0, 0, 0], 10).join() === '-10,-20,-30' && MW.parallaxOffset([1, 1, 1], [1, 1, 1], 99).every((v) => v === 0 || Object.is(v, -0)), 'parallax offset');
 ok(MW.PARALLAX_K.starsFar < MW.PARALLAX_K.starsMid && MW.PARALLAX_K.starsMid < MW.PARALLAX_K.starsNear && MW.PARALLAX_K.planet < MW.PARALLAX_K.starsFar, 'nearer layers shift more');

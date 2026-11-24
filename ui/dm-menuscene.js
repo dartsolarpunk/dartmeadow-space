@@ -483,6 +483,11 @@
         if (!X || !X._seatCol) return;
         X._seatCol.forEach((h) => { h._bone.updateWorldMatrix(true, false); h.center.copy(h._a).applyMatrix4(h._bone.matrixWorld); h.end.copy(h._b).applyMatrix4(h._bone.matrixWorld); h.radius = h._r; });
       };
+      const clearSeatCols = (X) => {
+        if (!X || !X._seatCol) return;
+        X._seatCol.forEach((h) => { h.radius = 0; });   // drop seated capsules so they are not left at the rock while she stands / walks
+      };
+      const clearAllSeatCols = () => { clearSeatCols(A); if (B) clearSeatCols(B); };
       /* hair: build via buildHair directly so nothing leaks into window.DART_HAIR */
       let hair = null;
       (async () => { try {
@@ -746,9 +751,9 @@
         // hidden again at once; when introPrecompile already did this during the loader hold, this is a cache hit.
         // (launch) when the idle-time precompile already finished for this very board (introPrecompile: pipelines, buffers, textures, bind groups,
         // two real frames), nothing is left to compile: the fly-out starts THIS frame instead of after another compile round-trip
-        if (warm) { IN.warmed = null; b.visible = true; IN.on = true; return Promise.resolve(true); }
+        if (warm) { IN.warmed = null; b.visible = true; IN.on = true; clearAllSeatCols(); return Promise.resolve(true); }
         let pc = null; b.visible = true; try { pc = renderer.compileAsync(scene, camera); } catch (e) { pc = null; } finally { b.visible = false; }
-        return Promise.resolve(pc).catch(() => {}).then(() => { if (!IN.board) return; b.visible = true; IN.on = true; });
+        return Promise.resolve(pc).catch(() => {}).then(() => { if (!IN.board) return; b.visible = true; IN.on = true; clearAllSeatCols(); });
       };
       /* ───────────── (t1644u) DUO launch: both pilots, both boards, then the interstellar cargo-bay arrival ─────────────
          Timeline (s, intro clock): 0-3.4 the two boards come in from behind the camera, one past each side of the rock, and settle hovering behind it; each
@@ -898,7 +903,7 @@
         };
         let glbBay = mountG();
         if (!glbBay && window.DMMenuWorld && window.DMMenuWorld.loadBayGLB) {
-          try { window.DMMenuWorld.loadBayGLB(THREE).then(() => { if (!glbBay) glbBay = mountG(); }); } catch (e) { }
+          try { window.DMMenuWorld.loadBayGLB(THREE).then(() => { if (MS.disposed) return; if (!glbBay) glbBay = mountG(); }); } catch (e) { }
         }
         const cam = new THREE.PerspectiveCamera(42, camera.aspect, 0.1, 900);
         const deckY = 0;
@@ -985,7 +990,7 @@
         let pc = null; try { pc = renderer.compileAsync(scene, camera); } catch (e) { pc = null; } finally { boards.forEach(b => { b.visible = false; }); }
         return Promise.resolve(pc).catch(() => {}).then(() => {
           if (!DU) return;
-          boards.forEach(b => { b.visible = true; }); IN.on = true; info('duo launch on (' + Math.round(performance.now() - now0) + ' ms)');
+          boards.forEach(b => { b.visible = true; }); IN.on = true; clearAllSeatCols(); info('duo launch on (' + Math.round(performance.now() - now0) + ' ms)');
           setTimeout(() => { if (!DU || DU.bay) return; try { DU.bay = buildBay(Math.max(A.du.Lb, B.du.Lb), Math.max(A.du.Wb, B.du.Wb)); DU.bay.cam.position.set(0, DU.bay.Hy * 0.5, DU.bay.Lz * 0.4); DU.bay.cam.lookAt(0, 1, 0); renderer.compileAsync(DU.bay.scene, DU.bay.cam).catch(() => {}); } catch (e) { info('bay build failed:', e && e.message); } }, 1200);
         });
       };
@@ -1242,8 +1247,9 @@ IN.D.copy(IN.Dl); b.localToWorld(IN.D); IN.D.y += 0.03;
         if (IN.on) { if (IN.duo) { if (DU) duoPre(dt); } else introPre(dt); }
         if (IN.on || tAlive) trailTick(dt);
         C.mixer.update(dt); if (B) B.C.mixer.update(dt);
+        if (!IN.on || IN.duo) pose(t);
         if (IN.on) { face(t); if (!IN.duo) introSnap(); }
-        else { pose(t); face(t); if (B) poseSeated(B, t + 7.3); }
+        else { face(t); if (B) poseSeated(B, t + 7.3); }
         root.updateMatrixWorld(true);
         if (B) { if (IN.on) poseSeated(B, t + 7.3); B.root.updateMatrixWorld(true); }
         if (!IN.on) { tickSeatCols(A); if (B) tickSeatCols(B); }

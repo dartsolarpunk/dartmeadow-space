@@ -292,7 +292,7 @@
       try { if (M.mixer) { M.mixer.update(0); M.mixer.update(1 / 30); } } catch (e) { }
       M.root.updateMatrixWorld(true); const minY = new W.THREE.Box3().setFromObject(M.root).min.y; M.root.position.y = -minY; M.root.updateMatrixWorld(true);
       M.root.visible = true;
-      S.cam = new W.THREE.PerspectiveCamera(30, 1, 0.05, 60); S.yaw = 0.35; S.vyaw = 0; S.zoom = 1; S.pitch = 0; S.vpitch = 0; S.ty = 0; S.home = false; S.F = null;
+      S.cam = new W.THREE.PerspectiveCamera(30, 1, 0.05, 60); S.yaw = -0.35; S.vyaw = 0; S.zoom = 1; S.pitch = 0; S.vpitch = 0; S.ty = 0; S.home = false; S.F = null;
       if (S.X.world) S.X.world.prepCamera(S.cam);
       try { CS.onStudioModel && CS.onStudioModel(M, def); } catch (e) { log('onStudioModel', e); }
       $('cs-load').style.display = 'none'; S.last = 0; S.accum = 0; S.nextExtra = performance.now() + 2200; S.look = 0;
@@ -379,17 +379,21 @@
       if (S.pitch < lo) { S.pitch = lo; S.vpitch = 0; } else if (S.pitch > hi) { S.pitch = hi; S.vpitch = 0; }
       if (S.home) {   // double-tap: ease back to the default view (nearest turn of yaw)
         const k = 1 - Math.exp(-dt * 8); S.pitch += (0 - S.pitch) * k; S.zoom += (1 - S.zoom) * k; S.ty += (0 - S.ty) * k; S.vpitch = 0; S.vyaw = 0;
-        const hy = MWc ? MWc.nearestYaw(S.yaw, 0.35) : 0.35; S.yaw += (hy - S.yaw) * k;
+        const hy = MWc ? MWc.nearestYaw(S.yaw, -0.35) : -0.35; S.yaw += (hy - S.yaw) * k;
         if (Math.abs(S.pitch) + Math.abs(S.zoom - 1) + Math.abs(S.ty) + Math.abs(S.yaw - hy) < 0.01) { S.pitch = 0; S.zoom = 1; S.ty = 0; S.yaw = hy; S.home = false; }
       }
       if (MWc) {
-        const o = MWc.orbitRig(S.pitch, F.H, F.dist, S.zoom, S.ty, { floorY: 0 });
+        const o = MWc.orbitRig(S.pitch, F.H, F.dist, S.zoom, S.ty, { floorY: 0 }), lim = MWc.STUDIO_CAM || { maxY: 3.55, maxR: 4.55, minY: 0.16 };
+        const camY = Math.max(lim.minY, Math.min(o.camY, lim.maxY)), camR = Math.min(o.camR, lim.maxR);
         S.tgt = S.tgt || new THREE.Vector3(); S.tgt.set(0, o.ty, 0);
-        S.cam.position.set(Math.sin(S.yaw) * o.camR, o.camY, Math.cos(S.yaw) * o.camR); S.cam.lookAt(S.tgt);
-      } else { const d = F.dist * S.zoom, py = Math.max(-0.22, Math.min(0.3, S.pitch)); S.cam.position.set(Math.sin(S.yaw) * Math.cos(py) * d, F.camY + Math.sin(py) * d * 0.6, Math.cos(S.yaw) * Math.cos(py) * d); S.cam.lookAt(F.target); }
+        // -S.yaw: drag-right is a natural orbit (see her right side). The bay/sky/lights use the same heading so the camera stays inside the hangar and the key stays in front of her.
+        const yw = -S.yaw;
+        S.cam.position.set(Math.sin(yw) * camR, camY, Math.cos(yw) * camR); S.cam.lookAt(S.tgt);
+        S._yw = yw;
+      } else { const d = F.dist * S.zoom, py = Math.max(-0.22, Math.min(0.3, S.pitch)); S.cam.position.set(Math.sin(-S.yaw) * Math.cos(py) * d, F.camY + Math.sin(py) * d * 0.6, Math.cos(-S.yaw) * Math.cos(py) * d); S.cam.lookAt(F.target); S._yw = -S.yaw; }
       S.cam.updateMatrixWorld(true);
     }
-    if (S.X.world) { try { S.X.world.update(t, dt, S.cam, S.yaw, S.tgt, S.dragging); if (S.X.world.rescale) { S.X.world.rescale = false; layoutStudio(); } } catch (e) { log('menu world update', e && e.message); S.X.world.update = () => { }; } }
+    if (S.X.world) { try { S.X.world.update(t, dt, S.cam, S._yw == null ? -S.yaw : S._yw, S.tgt, S.dragging); if (S.X.world.rescale) { S.X.world.rescale = false; layoutStudio(); } } catch (e) { log('menu world update', e && e.message); S.X.world.update = () => { }; } }
     if (S.X.world && S.X.world.render) S.X.world.render(R.r, S.X.scene, S.cam); else R.r.render(S.X.scene, S.cam);
     CS.onStudioFrame && CS.onStudioFrame(dt);
   }
@@ -446,10 +450,10 @@
   function rgbToHsv(r, g, b) { r /= 255; g /= 255; b /= 255; const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min; let h = 0; if (d) { if (max === r) h = ((g - b) / d) % 6; else if (max === g) h = (b - r) / d + 2; else h = (r - g) / d + 4; h *= 60; if (h < 0) h += 360; } return { h, s: max ? d / max : 0, v: max }; }
   function hsvToRgb(h, s, v) { const c = v * s, x = c * (1 - Math.abs((h / 60) % 2 - 1)), m = v - c; let r = 0, g = 0, b = 0; if (h < 60) { r = c; g = x; } else if (h < 120) { r = x; g = c; } else if (h < 180) { g = c; b = x; } else if (h < 240) { g = x; b = c; } else if (h < 300) { r = x; b = c; } else { r = c; b = x; } return [(r + m) * 255, (g + m) * 255, (b + m) * 255]; }
   function openPicker(start, onLive, onPick, anchor, label) {
-    const prev = D.getElementById('cs-picker'); if (prev) prev.remove();
+    const prev = D.getElementById('cs-picker'); if (prev) { if (prev._close) prev._close(); else prev.remove(); }
     const pop = D.createElement('div'); pop.id = 'cs-picker'; pop.className = 'cs-picker'; pop.setAttribute('role', 'dialog'); pop.setAttribute('aria-label', label || 'Colour picker');
     const rgb0 = hexToRgb(start), hsv = rgbToHsv(rgb0[0], rgb0[1], rgb0[2]);
-    pop.innerHTML = '<div class="cs-pk-sv"><canvas width="180" height="140"></canvas><i></i></div><div class="cs-pk-hue"><canvas width="180" height="14"></canvas><i></i></div><div class="cs-pk-row"><span class="cs-pk-chip"></span><input class="cs-pk-hex" maxlength="7" spellcheck="false" aria-label="Hex colour"><button type="button" class="cs-pk-ok">SET</button></div>';
+    pop.innerHTML = '<div class="cs-pk-sv"><canvas width="180" height="140"></canvas><i></i></div><div class="cs-pk-hue"><canvas width="180" height="24"></canvas><i></i></div><div class="cs-pk-row"><span class="cs-pk-chip"></span><input class="cs-pk-hex" maxlength="7" spellcheck="false" aria-label="Hex colour"><button type="button" class="cs-pk-ok">SET</button></div>';
     const sv = pop.querySelector('.cs-pk-sv canvas'), hue = pop.querySelector('.cs-pk-hue canvas'), hex = pop.querySelector('.cs-pk-hex'), chip = pop.querySelector('.cs-pk-chip');
     const svx = pop.querySelector('.cs-pk-sv i'), hx = pop.querySelector('.cs-pk-hue i');
     const paint = () => {
@@ -466,7 +470,17 @@
       svx.style.left = (hsv.s * 100) + '%'; svx.style.top = ((1 - hsv.v) * 100) + '%'; hx.style.left = (hsv.h / 360 * 100) + '%';
       return hxv;
     };
-    const commit = (live) => { const h = paint(); if (live && onLive) onLive(h); };
+    let liveT = 0, liveH = null, liveTimer = 0, closed = false;
+    const flushLive = () => { if (liveTimer) { clearTimeout(liveTimer); liveTimer = 0; } if (liveH && onLive) onLive(liveH); liveH = null; };
+    const commit = (live) => {
+      const h = paint();
+      if (!live) { flushLive(); return h; }
+      if (!onLive) return h;
+      liveH = h; const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      if (now - liveT >= 180) { liveT = now; onLive(h); liveH = null; }
+      else if (!liveTimer) liveTimer = setTimeout(() => { liveTimer = 0; liveT = (typeof performance !== 'undefined' ? performance.now() : Date.now()); if (liveH && onLive) onLive(liveH); liveH = null; }, 180);
+      return h;
+    };
     paint();
     const bind = (cv, fn) => {
       const go = (e) => { const r = cv.getBoundingClientRect(); fn((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height); commit(true); };
@@ -476,10 +490,13 @@
     bind(sv, (x, y) => { hsv.s = Math.max(0, Math.min(1, x)); hsv.v = Math.max(0, Math.min(1, 1 - y)); });
     bind(hue, (x) => { hsv.h = Math.max(0, Math.min(359, x * 360)); });
     hex.addEventListener('change', () => { const v = hex.value.trim(); if (/^#?[0-9a-f]{6}$/i.test(v)) { const c = hexToRgb(v); const n = rgbToHsv(c[0], c[1], c[2]); hsv.h = n.h; hsv.s = n.s; hsv.v = n.v; commit(true); } });
-    pop.querySelector('.cs-pk-ok').addEventListener('click', () => { onPick(paint()); pop.remove(); });
-    const outside = (e) => { if (!pop.contains(e.target) && e.target !== anchor) { pop.remove(); D.removeEventListener('pointerdown', outside, true); } };
+    const close = () => { if (closed) return; closed = true; flushLive(); D.removeEventListener('pointerdown', outside, true); if (pop.parentNode) pop.remove(); };
+    pop._close = close;
+    pop.querySelector('.cs-pk-ok').addEventListener('click', () => { const h = commit(false); onPick(h); close(); });
+    const outside = (e) => { if (!pop.contains(e.target) && e.target !== anchor) close(); };
     D.addEventListener('pointerdown', outside, true);
-    (anchor && anchor.parentNode ? anchor.parentNode : $('cs-pbody')).appendChild(pop);
+    const host = (anchor && anchor.closest && anchor.closest('.cs-reg')) || (anchor && anchor.parentNode) || $('cs-pbody');
+    host.appendChild(pop);
   }
 
   function swatchGrid(region, def, rerender) {

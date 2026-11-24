@@ -564,10 +564,21 @@ def build(tex):
     mast.parent = root
     mast_lit.parent = root
 
-    # UV project every mesh child
-    meshes = [o for o in bpy.data.objects if o.type == "MESH"]
-    for o in meshes:
-        apply_and_uv(o, 0.28 if "Deck" in o.name or "Hazard" in o.name or "Rail" in o.name else 0.32)
+    # Merge mesh primitives per material so one bay instance is ~8 draw calls, not 228.
+    # Light_* empties stay as placement hooks. join_named also applies box UVs.
+    from collections import defaultdict
+    buckets = defaultdict(list)
+    for o in list(root.children):
+        if o.type != "MESH":
+            continue
+        mat = o.data.materials[0] if o.data.materials else None
+        buckets[mat.name if mat else "_none"].append(o)
+    for key, objs in buckets.items():
+        mat = objs[0].data.materials[0] if objs[0].data.materials else None
+        scale = 0.28 if key in ("BayDeck", "BayHazard") else 0.32
+        joined = join_named("Bay_" + key, objs, mat, uv_scale=scale)
+        if joined is not None:
+            joined.parent = root
 
     return root, fixtures
 
