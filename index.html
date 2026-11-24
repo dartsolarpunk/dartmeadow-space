@@ -183,7 +183,7 @@ if(location.search.indexOf('debug')!==-1){
   // PWA manifest: /manifest.webmanifest (linked in <head>; dark launch screen on Android)
 })();</script>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-<script>/* (v353) build tag: bump together with CACHE_NAME in sw.js (tools/tests/build-tag.js).  Persisted quality records (ui/dm-budget.js, dm-governor.js) are dropped when it changes. */window.DM_BUILD='v378';try{console.log('[DM build] '+window.DM_BUILD);}catch(e){}</script>
+<script>/* (v353) build tag: bump together with CACHE_NAME in sw.js (tools/tests/build-tag.js).  Persisted quality records (ui/dm-budget.js, dm-governor.js) are dropped when it changes. */window.DM_BUILD='v379';try{console.log('[DM build] '+window.DM_BUILD);}catch(e){}</script>
 <script src="ui/dm-time.js?v=97"></script>
 <script src="ui/dm-earth.js?v=292"></script>
 <script src="ui/dm-earth-paint.js?v=290"></script>
@@ -1089,9 +1089,9 @@ body[data-dm-screen]:not([data-dm-screen="flight"]) #dm-flash,body[data-dm-scree
 <script src="ui/dm-necklace-sim.js?v=357" defer></script>
 <script src="ui/dm-charm.js?v=365" defer></script>
 <script src="ui/dm-flash.js?v=365" defer></script>
-<script src="ui/dm-menuscene.js?v=378" defer></script>
-<script src="ui/dm-menuworld.js?v=378" defer></script>   <!-- 3D world behind the character select + studio (hangar bay / observation deck, planet, stars); ?menuscene=off|low -->
-<script src="ui/dm-chars.js?v=377" defer></script>   <!-- character registry + profile (selection / colours / logos); pure data -->
+<script src="ui/dm-menuscene.js?v=379" defer></script>
+<script src="ui/dm-menuworld.js?v=379" defer></script>   <!-- 3D world behind the character select + studio (hangar bay / observation deck, planet, stars); ?menuscene=off|low -->
+<script src="ui/dm-chars.js?v=379" defer></script>   <!-- character registry + profile (selection / colours / logos); pure data -->
 <script src="ui/dm-charpaint.js?v=370" defer></script>   <!-- applies the player's colours / logos to a loaded character (studio + game) -->
 <script src="ui/dm-charlook.js?v=378" defer></script>   <!-- the character look: smooth normals, soft sky / rim / matcap light + skin wrap on every pilot, game + studio; ?charlook=off|low|high  ?charenv=analytic|matcap|both -->
 <script src="ui/dm-decalflow.js?v=366" defer></script>   <!-- staged logo flow (pending / apply / reset / delete) + placement pad geometry; pure logic -->
@@ -22659,7 +22659,7 @@ async function loadCharacterAssets(){
   // Strand count by graphics preset — ONLY on Auto (an explicit Low/Medium/High/Ultra pick keeps all
   // 5,665 strands). Guides (the physics) always simulate; this only thins the drawn children.
   const _hairUrl=(_cdef&&_cdef.hair&&_cdef.hair.url)||(CHAR_ASSET_BASE+'ariel_hair_strands.bin'), _hairCfgUrl=_cdef&&_cdef.hair?_cdef.hair.configUrl:null;
-  window.DM_HAIR_MODULE=window.DM_HAIR_MODULE||new URL('./hair_strands.js?v=378',document.baseURI).href;   // one URL for the game and the studio (ui/dm-charselect.js): a single module instance
+  window.DM_HAIR_MODULE=window.DM_HAIR_MODULE||new URL('./hair_strands.js?v=379',document.baseURI).href;   // one URL for the game and the studio (ui/dm-charselect.js): a single module instance
   function _hairStrandFraction(){ try{ const G=window.GFX; if(!G||G.preset!=='auto') return 1; const r=(typeof resolvePreset==='function')?resolvePreset():'medium'; return r==='low'?0.5:(r==='medium'||r==='balanced')?0.75:1; }catch(e){ return 1; } }
   // Real-time strand hair (hair_strands.js + characterassests/ariel_hair_strands.bin). Fails soft: if the
   // module/data is missing or the loaded character is a different file, she simply has no strand hair.
@@ -22668,7 +22668,7 @@ async function loadCharacterAssets(){
   // ?cloth=1 forces the CPU path, ?cloth=0 / dm_cloth_v1='0' turns it off. Post-skin offsets on her garments only (rig, stance, skyboard pose and
   // the hair solver untouched). Collision = the character group's patch (DMCGroup ground grid) + body/hair capsules + the skyboard; substeps scale
   // with DMCGroup.intensity; a frame-budget governor sheds work (GFX.isMobile: 1.5 ms total, else 3 ms). Fails soft.
-  try{ if(!/[?&]cloth=0\b/.test(location.search)&&(!_cdef||!_cdef.accessories||_cdef.accessories.cloth!==false)) import('./ui/dm-ariel-cloth.js?v=214').then(async m=>{ if(CHAR._menuPrep){ for(let i=0;i<900&&!(typeof flightRenderer!=='undefined'&&flightRenderer&&flightRenderer.backend);i++) await new Promise(r=>setTimeout(r,100)); }   /* (menu-perf) loaded early from the menu: the cloth's GPU path needs the flight renderer, so it attaches once that exists (same attach, same options) */
+  try{ if(!/[?&]cloth=0\b/.test(location.search)&&(!_cdef||!_cdef.accessories||_cdef.accessories.cloth!==false)) import('./ui/dm-ariel-cloth.js?v=379').then(async m=>{ if(CHAR._menuPrep){ for(let i=0;i<900&&!(typeof flightRenderer!=='undefined'&&flightRenderer&&flightRenderer.backend);i++) await new Promise(r=>setTimeout(r,100)); }   /* (menu-perf) loaded early from the menu: the cloth's GPU path needs the flight renderer, so it attaches once that exists (same attach, same options) */
     if(_myGen!==_charGen) return null; return m.attachArielCloth(CHAR,THREE,{TSL:THREE.TSL||window.TSL,renderer:(typeof flightRenderer!=='undefined')?flightRenderer:null,
     getGravityScale:()=>{try{if(surfaceActive)return 1;if(CHAR.mounted)return atmoActive?0.3:0.08;}catch(e){}return 1;},
     getBudgetMs:()=>(GFX&&GFX.isMobile)?1.5:3,
