@@ -3,7 +3,7 @@
 //  (1) the near detail fade (_skyDetailFall) is a continuous smoothstep over ~0.56 .. 1.5 reach: no value step, slope bounded (no "sharp disc"), radial
 //  (2) on open ground on foot the drawn radius is the walk radius and the haze is at full density by 0.82 R, inside the rim; the sky / a vantage opens it continuously
 //  (3) the dissolve dither steps aside below 0.8 of the chosen resolution; the #259 colour mix is opt-in (?skyhaze=1)
-//  (4) source: one rim function feeds the bands, the world she stands on keeps its orbit globe hidden after a rebuild on foot, tablets keep >= 0.75 render scale
+//  (4) source: one rim function feeds the bands, the world she stands on keeps its orbit globe hidden after a rebuild on foot, tablets keep >= 0.85 render scale (t1644)
 'use strict';
 const fs = require('fs'), path = require('path');
 const root = path.join(__dirname, '..', '..'), rd = p => fs.readFileSync(path.join(root, p), 'utf8');
@@ -48,7 +48,7 @@ ok(/function _skyFalloff\(R,out\)\{ return _skyHazeBand\(R,out\); \}/.test(html)
 ok(/fall:_df/.test(html) && /ctx\.fall \? smoothstep\(float\(ctx\.fall\[0\]\)/.test(rd('ui/dm-groundlib.js')), 'the ground library (82e25cd) fades on the same detail rim, not its own 0.5 .. 1.0 reach edge');
 ok(/const _pwHid=!!\(typeof PW!=='undefined'&&PW\.active&&PW\.body===b&&oldGroup&&oldGroup\.visible===false\);/.test(html) && /if\(_pwHid&&PW\.active&&PW\.body===b&&b\.mesh===newGroup\) newGroup\.visible=false;/.test(html), 'a planet rebuild that finishes on foot keeps the orbit globe hidden (no brick shell through the ground)');
 ok(/_SKY_SETTLE=\{after:300,anchor:6,/.test(html), 'settle anchor 6 u');
-{ const gv = rd('ui/dm-governor.js'), bd = rd('ui/dm-budget.js'); ok(/const TABLET_FLOOR = 0\.75;/.test(gv) && /if \(k < tf\) k = tf;/.test(gv) && /if \(cap < tf\) cap = tf;/.test(bd), 'tablets keep >= 0.75 render scale (governor + budget enforcer)'); }
+{ const gv = rd('ui/dm-governor.js'), bd = rd('ui/dm-budget.js'); ok(/const TABLET_FLOOR = 0\.85,/.test(gv) && /if \(k < tf\) k = tf;/.test(gv) && /if \(cap < tf\) cap = tf;/.test(bd), 'tablets keep >= 0.85 render scale (t1644; governor + the opt-in budget enforcer)'); }
 { const up = cut('SkyGround.prototype.update=', 'SkyGround.prototype._rootKeep='); ok(!/new [A-Z]|\[\s*\]|=>/.test(up.replace(/\/\/[^\n]*/g, '')), 'update() allocates nothing'); }
 ok(/const ATMO_DEFAULT_AGL\s*=\s*46\b/.test(html), 'ATMO_DEFAULT_AGL stays 46');
 console.log(fails ? 'radial-falloff: ' + fails + ' FAILED of ' + n : 'radial-falloff: all ' + n + ' checks passed');

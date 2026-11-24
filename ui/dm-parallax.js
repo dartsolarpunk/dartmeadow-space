@@ -57,16 +57,18 @@
   // steps = layers of the linear search at grazing (face-on the shader uses 35 %); minSteps = what the governor can never go below; shadow = soft shadow on/off; relief = binary
   // refine on/off; depth = relief depth multiplier; reach = multiplier of every near/far fade distance; lodBias = added to the height-mip level; hTile = ground atlas tile texels;
   // hMax = cap (px) of height maps derived from normal / colour maps.   Every tier is non-zero in every column (Low is small, never off).
+  // (t1644 Track 1) Low's lodBias 1.0 -> 0.0 on desktop AND mobile: a whole extra height-mip level blurred the ground relief on Low (one of the six 'soft' layers);
+  // the march is already cheap there (3-4 steps) and the bias only saved texture bandwidth a 30 fps Low budget does not miss.
   const TIERS = {
     desktop: {
-      low:    { steps: 4,  minSteps: 2, shadow: 0, relief: 0, depth: 0.5, reach: 0.55, lodBias: 1.0, hTile: 96,  hMax: 256 },
+      low:    { steps: 4,  minSteps: 2, shadow: 0, relief: 0, depth: 0.5, reach: 0.55, lodBias: 0.0, hTile: 96,  hMax: 256 },
       medium: { steps: 16, minSteps: 3, shadow: 0, relief: 0, depth: 0.8, reach: 0.85, lodBias: 0.0, hTile: 160, hMax: 512 },
       high:   { steps: 20, minSteps: 4, shadow: 1, relief: 1, depth: 1.0, reach: 1.0,  lodBias: 0.0, hTile: 192, hMax: 512 },
       ultra:  { steps: 24, minSteps: 4, shadow: 1, relief: 1, depth: 1.1, reach: 1.2,  lodBias: 0.0, hTile: 256, hMax: 1024 },
       custom: { steps: 16, minSteps: 3, shadow: 0, relief: 0, depth: 0.8, reach: 0.85, lodBias: 0.0, hTile: 160, hMax: 512 },
     },
     mobile: {
-      low:    { steps: 3,  minSteps: 2, shadow: 0, relief: 0, depth: 0.45, reach: 0.5,  lodBias: 1.0, hTile: 96,  hMax: 256 },
+      low:    { steps: 3,  minSteps: 2, shadow: 0, relief: 0, depth: 0.45, reach: 0.5,  lodBias: 0.0, hTile: 96,  hMax: 256 },
       medium: { steps: 8,  minSteps: 3, shadow: 0, relief: 0, depth: 0.7,  reach: 0.7,  lodBias: 0.5, hTile: 128, hMax: 256 },
       high:   { steps: 12, minSteps: 3, shadow: 0, relief: 1, depth: 0.9,  reach: 0.9,  lodBias: 0.0, hTile: 160, hMax: 512 },
       ultra:  { steps: 16, minSteps: 4, shadow: 1, relief: 1, depth: 1.0,  reach: 1.0,  lodBias: 0.0, hTile: 192, hMax: 512 },

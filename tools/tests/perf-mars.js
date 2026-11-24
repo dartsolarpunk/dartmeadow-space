@@ -92,7 +92,7 @@ let n = 0; const ok = (c, m) => { n++; assert(c, m); };
   ok(/this\.K0=o\.k\|\|1\.8; this\.K=this\.K0;/.test(h) && /this\.K=this\.K0\*\(\(window\.DMLod&&DMLod\.on&&DMLod\.splitK\)\?DMLod\.splitK\(\):1\)/.test(h), 'SkyGround K scaled by DMLod.splitK');
   ok(/DMLod\.core\.blurRGB\(ext,GC,bpass,etmp\)/.test(h) && /DMLod\.blurPasses\(step\)/.test(h), 'far colour blur in SkyGround._build');
   ok(/DMLod\.applyCasters\(CHAR\.root/.test(h), 'caster policy applied in the world tick');
-  ok(/atmohalf=0/.test(h) && /return _taAuto\(\)\|\|!!GFX\.isMobile;/.test(h), 'half-res air on mobile');
+  ok(/atmohalf=0/.test(h) && /if\(GFX\.isMobile\)\{ let tab=false;[^\n]*tab=m>=600;[^\n]*return !tab; \}/.test(h), 'half-res air on PHONES only (t1644: tablets + desktops full-res)');
   ok(/const _fitNow=/.test(h), 'sun box held on stale-map frames');
 }
 console.log('perf-mars OK (' + n + ' checks)');
