@@ -154,17 +154,16 @@
   // ── the FUNCTION button (same bubble look as the room-light switch) ────────────────────────────────────────────────
   function hud() {
     if (S.hud) return S.hud; const d = G.document; if (!d || !d.createElement) return null;
-    const st = d.createElement('style'); st.textContent = '#dm-hatch{position:absolute;left:22px;bottom:calc(292px + var(--safe-bot,0px));min-width:84px;height:84px;padding:0 12px;border:1.5px solid rgba(150,220,255,.85);border-radius:42px;background:radial-gradient(circle at 32% 26%,rgba(190,235,255,.45),rgba(30,80,120,.28) 60%,rgba(6,14,22,.62));color:#e6f6ff;font:800 .6rem var(--font-hud,ui-monospace,monospace);letter-spacing:.12em;z-index:33;opacity:0;transform:scale(.4);pointer-events:none;transition:opacity .18s,transform .28s cubic-bezier(.2,1.5,.4,1);touch-action:none;-webkit-tap-highlight-color:transparent;box-shadow:0 0 18px rgba(110,190,255,.45)}#dm-hatch.on{opacity:1;transform:scale(1);pointer-events:auto}#dm-hatch b{display:block;font-size:1.5rem;line-height:1}#dm-hatch span{display:block;margin-top:2px;white-space:nowrap}@media (orientation:portrait){#dm-hatch{bottom:calc(396px + var(--safe-bot,0px))}}';
-    d.head.appendChild(st);
+    if (!d.getElementById('dm-hatch-css')) { const st = d.createElement('style'); st.id = 'dm-hatch-css'; st.textContent = '#dm-hatch{position:absolute;left:22px;bottom:calc(292px + var(--safe-bot,0px));min-width:84px;height:84px;padding:0 12px;border:1.5px solid rgba(150,220,255,.85);border-radius:42px;background:radial-gradient(circle at 32% 26%,rgba(190,235,255,.45),rgba(30,80,120,.28) 60%,rgba(6,14,22,.62));color:#e6f6ff;font:800 .6rem var(--font-hud,ui-monospace,monospace);letter-spacing:.12em;z-index:33;opacity:0;transform:scale(.4);pointer-events:none;transition:opacity .18s,transform .28s cubic-bezier(.2,1.5,.4,1);touch-action:none;-webkit-tap-highlight-color:transparent;box-shadow:0 0 18px rgba(110,190,255,.45)}#dm-hatch.on{opacity:1;transform:scale(1);pointer-events:auto}#dm-hatch b{display:block;font-size:1.5rem;line-height:1}#dm-hatch span{display:block;margin-top:2px;white-space:nowrap}@media (orientation:portrait){#dm-hatch{bottom:calc(396px + var(--safe-bot,0px))}}'; d.head.appendChild(st); }
     const b = d.createElement('button'); b.id = 'dm-hatch'; b.type = 'button'; b.setAttribute('aria-label', 'Hangar hatch'); b.innerHTML = '<b>F</b><span id="dm-hatch-t">FUNCTION</span>';
     b.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); });
     b.addEventListener('pointerup', e => { e.preventDefault(); e.stopPropagation(); use(); });
     (d.getElementById('ship-jump-btn') && d.getElementById('ship-jump-btn').parentNode || d.body).appendChild(b);
-    G.addEventListener('keydown', e => {
+    if (!S.keyOn) { S.keyOn = true; G.addEventListener('keydown', e => {   // once per page: detach() drops S.hud, so a re-visit must not stack a second listener
       if (!S.hudOn || e.code !== 'KeyF' || e.repeat || G.DM_TERMINAL_OPEN) return; const t = e.target; if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || '')) return;
       try { if (G.DMLamps && G.DMLamps.status && G.DMLamps.status().near >= 0) return; } catch (er) { }   // a room-light switch in reach takes F first
       e.preventDefault(); use();
-    }, true);
+    }, true); }
     S.hud = b; return b;
   }
   function setHud(on) { if (on === S.hudOn) return; S.hudOn = on; const h = on ? hud() : S.hud; if (h) h.classList.toggle('on', on); S.lastLbl = ''; }
@@ -340,7 +339,7 @@
     isLive() { return S.live; }, isInside() { return S.live && S.inside; },
     status() { return { state: S.state, live: S.live, inside: S.inside, loaded: !!S.root, open: +S.open.toFixed(3), want: S.want, hud: S.hudOn, feet: +S.feet.toFixed(2), lx: +S.lx.toFixed(2), ly: +S.ly.toFixed(2), lights: S.nat.length, vtolLod: S.lodK }; },
     spawn() { return NAV ? NAV.spawn : null; },
-    _test: { parse: j => { NAV = parseNav(j); }, surf, blocked, owns, wallAt, setFrame(px, pz, y0, th) { S.px = px; S.pz = pz; S.y0 = y0; S.ct = Math.cos(th); S.st = Math.sin(th); S.state = 2; S.rec = {}; }, setOpen(v) { S.open = v; }, nav: () => NAV, S },
+    _test: { setHud, parse: j => { NAV = parseNav(j); }, surf, blocked, owns, wallAt, setFrame(px, pz, y0, th) { S.px = px; S.pz = pz; S.y0 = y0; S.ct = Math.cos(th); S.st = Math.sin(th); S.state = 2; S.rec = {}; }, setOpen(v) { S.open = v; }, nav: () => NAV, S },
   };
   G.DMUndercliff = API;
   if (typeof module !== 'undefined' && module.exports) module.exports = API;
