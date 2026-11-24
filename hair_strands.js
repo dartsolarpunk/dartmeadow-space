@@ -242,9 +242,11 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   // the trilinear field + gradient the solver reads changes direction every 2.5 mm instead of 5 and contacts slide over the scalp instead of stepping
   // cell to cell.  Load time only (~15-40 ms, ~2.8 MB per groom at x2); per frame it is the same one lookup.  ?hairsdf=1 / opts.sdfFine:1 = the file's grid.
   if (SDF) {
-    // x2 on Medium / High / Ultra and the Pilot Editor (collision tier >= 1 at load); tier 0 (Low: 3-4 GB iPhone / iPad Safari) keeps the file's grid
+    // refine by the collision tier at load: tier 0 (frame-budget fallback / explicit Low-0 callers) keeps the file's grid
     let t0 = 0; try { const ct = opts.params && opts.params.collisionTier; t0 = (ct != null && ct !== 'auto') ? +ct : (opts.getCollisionTier ? +opts.getCollisionTier() : 0); } catch (e) { t0 = 0; }
-    // (v379) High (tier 2 at load: menu desktop, game Medium / High / Ultra) refines x3 -> 1.7 mm cells (~9.4 MB per groom), Mid x2 -> 2.5 mm, Low the file's 5 mm
+    // (v379, approved by Justin 2026-11-24) tier 2 at load (game Medium / High / Ultra, menu desktop) refines x3 -> 1.7 mm cells (~9.4 MB for Ariel's 5 mm groom);
+    // tier 1 (game Low, menu phones / tablets: 3-4 GB iPhone, Tab A11) x2 -> 2.5 mm (~2.8 MB); tier 0 the file's grid.  Emma's groom is baked at 2.5 mm, so the
+    // 1.6 mm clamp below keeps her at the native grid on every tier
     const fDef = t0 >= 2 ? 3 : t0 > 0 ? 2 : 1;
     let f = fDef; try { if (opts.sdfFine != null) f = typeof opts.sdfFine === 'function' ? +opts.sdfFine() : +opts.sdfFine; } catch (e) { f = fDef; }
     if (typeof location !== 'undefined') { const m = /[?&]hairsdf=(\d)/.exec(location.search || ''); if (m) f = +m[1]; }
@@ -497,9 +499,10 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
      scalp, head, face, neck, shoulders, collar), 5 mm nodes, each node = the distance-weighted blend of the nearby vertices' non-Head bone weights (top 2).
      Per frame: one 3x4 delta matrix per bone slot (A_j - I, head-local).  The SDF is then read in BIND space (q = x - sum w_j (A_j - I) x), so the
      collision surface rides the skinned scalp / neck exactly where the mesh bends, and the guide / child roots are carried by the same field.
-     A character whose hair region is pure Head (Ariel) builds nothing: bit-identical.  ?hairwarp=0 / params.skinWarp:false = off.  Zero per-frame allocation. */
+     OPT-IN per groom: only a character config with params.skinWarp === true (characterassests/emma/emma_hair_config.json) builds it; every other groom
+     (Ariel, made-up configs) builds nothing and stays bit-identical (stats.skinWarp null).  ?hairwarp=0 forces it off.  Zero per-frame allocation. */
   const WARP = (() => {
-    if (!SDF || P.skinWarp === false) return null;
+    if (!SDF || P.skinWarp !== true) return null;
     if (typeof location !== 'undefined' && /[?&]hairwarp=0\b/.test(location.search || '')) return null;
     const WC = 0.005, R = 0.014, R2 = R * R;
     const ox = SDF.ox, oy = SDF.oy, oz = SDF.oz, ex = (SDF.nx - 1) / SDF.inv, ey = (SDF.ny - 1) / SDF.inv, ez = (SDF.nz - 1) / SDF.inv;
