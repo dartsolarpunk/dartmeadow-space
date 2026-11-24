@@ -6,7 +6,7 @@
    CARDS: the same universe seen from an observation deck (window frame, deck plates with guide lines, consoles, a hologram ring); the DOM cards float in front of it.
 
    Budget: tiers from ?menuscene=low|off, GFX.isMobile and the DMBudget pressure (tierFor).  Mobile: fewer stars, planet with fewer noise octaves + a coarser sphere, no band
-   shader, pixel-ratio cap, a blob contact shadow only (no shadow maps, no extra lights).  Everything is generated here (no fetches, nothing to fail offline), and dispose()
+   shader, pixel-ratio cap, and real-time PCF shadow maps from a dim overhead lamp.  Everything is generated here (no fetches, nothing to fail offline), and dispose()
    frees every geometry / material the world made (it makes no textures).  The orbit camera maths (orbitRig) is pure and also lives here so ?menuscene=off keeps it.
 
    API: DMMenuWorld.mode() · .tier() · .attachStudio(THREE, X, o) · .cardWorld(o) · .orbitRig(...) · pure core (module.exports for node: tools/tests/menuworld-unit.js)
@@ -26,8 +26,8 @@
   const TIERS = {
     off: { name: 'off', on: false },
     low: { name: 'low', on: true, stars: 260, motes: 24, planetSeg: 28, planetOct: 3, cloudOct: 2, prCap: 1.0, band: false, fps: 24 },
-    mid: { name: 'mid', on: true, stars: 600, motes: 50, planetSeg: 40, planetOct: 4, cloudOct: 2, prCap: 1.25, band: false, fps: 30 },
-    high: { name: 'high', on: true, stars: 1500, motes: 90, planetSeg: 64, planetOct: 5, cloudOct: 3, prCap: 1.5, band: true, fps: 30 },
+    mid: { name: 'mid', on: true, stars: 600, motes: 50, planetSeg: 48, planetOct: 4, cloudOct: 2, prCap: 1.25, band: false, fps: 30 },
+    high: { name: 'high', on: true, stars: 1500, motes: 90, planetSeg: 96, planetOct: 6, cloudOct: 4, prCap: 1.5, band: true, fps: 30 },
   };
   // o: { mode, isMobile, pressure }.  Mobile starts at 'mid'; the frame-budget pressure (DMBudget.p) or ?menuscene=low drops a tier.
   function tierFor(o) {
@@ -104,21 +104,28 @@
   // circle, a cool rim from the planet/window (-Z), and a gentle hemi/fill lift so
   // PBR deck plating and inner pillar faces read clearly.  Ambient stays modest so
   // Ariel's black hair does not wash to grey (hair uses metalness 0.02 / env 0.15).
-  function bayStudioRig(kind) {
+  function bayStudioRig(kind, tierName) {
     const cards = kind === 'cards';
+    const tname = tierName || 'high';
+    const modest = tname === 'low' || tname === 'mid';   // 512 map, one shadow caster (the overhead lamp)
+    const map = modest ? 512 : 1024;
+    // Editor: a dim overhead lamp (not a sun). Cards keep the slightly brighter but still moody selection bay.
     return {
-      hemi: { sky: 0x9aa8d0, ground: 0x3d2c28, intensity: cards ? 0.82 : 0.68 },
-      key: { dir: [1.8, 2.6, 2.2], color: 0xffe4c4, intensity: cards ? 2.35 : 2.15 },
+      hemi: { sky: 0x8ea0c4, ground: 0x2a2424, intensity: cards ? 0.55 : 0.22 },
+      key: { dir: [1.2, 2.2, 1.6], color: 0xffe2c0, intensity: cards ? 1.05 : 0.28 },   // no sun glare in the editor
       spot: {
-        pos: cards ? [2.4, 7.4, 5.6] : [1.05, 3.55, 2.2],
-        target: cards ? [0, 0.2, -2.0] : [0, 0.85, 0.15],
-        color: 0xfff2dc, intensity: cards ? 140 : 70,
-        angle: cards ? 0.72 : 0.58, penumbra: 0.48, distance: cards ? 30 : 12, decay: 2
+        pos: cards ? [0.4, 7.2, 3.2] : [0.12, 3.62, 0.55],
+        target: cards ? [0, 0.15, -1.2] : [0, 0.04, 0.08],
+        color: 0xffefd4, intensity: cards ? 64 : 22,
+        angle: cards ? 0.7 : 0.62, penumbra: cards ? 0.58 : 0.74, distance: cards ? 28 : 11, decay: 2,
+        shadow: !modest, map: map, bias: -0.00022, normalBias: 0.035, near: cards ? 1.2 : 0.55, far: cards ? 22 : 9.5
       },
-      rim: { dir: cards ? [-2.2, 2.6, -6.5] : [-1.7, 1.85, -2.9], color: 0x8fb0ff, intensity: cards ? 1.35 : 1.2 },
-      fill: { dir: cards ? [-5.0, 1.4, 3.2] : [-1.5, 0.4, 1.7], color: 0xffc8a0, intensity: 0.42 },
-      kick: { dir: cards ? [0.2, 8, -1.5] : [0.15, 3.8, -0.6], color: 0xfff6e8, intensity: cards ? 0.55 : 0.45 },
-      fixture: { color: 0xfff3e4, intensity: cards ? 28 : 16, distance: cards ? 12 : 6.2, decay: 2 }
+      // almost-vertical lamp directional: a visible puddle shadow under the Articren (spot shadows alone wash out under hemi/fill)
+      lamp: { dir: [0.16, 4.1, 0.28], color: 0xffefd4, intensity: cards ? 0.7 : 0.48, size: cards ? 5.5 : 3.2, near: 0.35, far: cards ? 16 : 9.5, shadow: true, map: map },
+      rim: { dir: cards ? [-2.2, 2.6, -6.5] : [-1.6, 1.6, -2.6], color: 0x8fb0ff, intensity: cards ? 0.7 : 0.36 },
+      fill: { dir: cards ? [-5.0, 1.4, 3.2] : [-1.4, 0.35, 1.5], color: 0xffc8a0, intensity: cards ? 0.22 : 0.08 },
+      kick: { dir: cards ? [0.2, 8, -1.5] : [0.1, 3.6, -0.4], color: 0xfff6e8, intensity: cards ? 0.18 : 0.06 },
+      fixture: { color: 0xfff3e4, intensity: cards ? 9 : 2.2, distance: cards ? 10 : 5.2, decay: 2 }
     };
   }
   const swayAt = (t, amp) => ({ x: Math.sin(t * 0.23) * amp + Math.sin(t * 0.071) * amp * 0.6, y: Math.sin(t * 0.31 + 1.3) * amp * 0.25 });
@@ -167,8 +174,71 @@
     return { sx, sy, sz, x: 0, y: 0, z: openZ - ref.openZ * sz };
   }
 
+  // Push a world-space position (with half-extents hx/hy/hz) out of bay collider AABBs. Mutates pos, no allocations.
+  function separateBay(pos, hx, hy, hz, cols) {
+    if (!pos || !cols || !cols.length) return pos;
+    hx = hx || 0.3; hy = hy || 0.2; hz = hz || 0.3;
+    for (let i = 0; i < cols.length; i++) {
+      const c = cols[i], mn = c.min, mx = c.max; if (!mn || !mx) continue;
+      const x0 = pos.x - hx, x1 = pos.x + hx, y0 = pos.y - hy, y1 = pos.y + hy, z0 = pos.z - hz, z1 = pos.z + hz;
+      if (x1 <= mn[0] || x0 >= mx[0] || y1 <= mn[1] || y0 >= mx[1] || z1 <= mn[2] || z0 >= mx[2]) continue;
+      const pxL = x1 - mn[0], pxR = mx[0] - x0, pyD = y1 - mn[1], pyU = mx[1] - y0, pzB = z1 - mn[2], pzF = mx[2] - z0;
+      let ax = 'x', pen = pxL, sgn = -1;
+      if (pxR < pen) { pen = pxR; sgn = 1; }
+      if (pyD < pen) { ax = 'y'; pen = pyD; sgn = -1; }
+      if (pyU < pen) { ax = 'y'; pen = pyU; sgn = 1; }
+      if (pzB < pen) { ax = 'z'; pen = pzB; sgn = -1; }
+      if (pzF < pen) { ax = 'z'; pen = pzF; sgn = 1; }
+      pos[ax] += sgn * (pen + 0.01);
+    }
+    return pos;
+  }
+
   const STUDIO_CAM = { maxY: 3.55, maxR: 4.55, minY: 0.16 };   // stay inside the scaled studio bay (walls ±3.4, ceiling 4.25, aft ~5.45)
-  const core = { parseMode, tierFor, TIERS, rng, starfield, starQuads, mergeBoxes, sunDirFor, lightRig, swayAt, parallaxOffset, PARALLAX_K, orbitRig, PITCH_MIN, PITCH_MAX, nearestYaw, makeGovernor, clamp, ease, placeBayTransform, BAY_REF, bayStudioRig, STUDIO_CAM };
+
+  // Gather Collide_* meshes once and preallocate AABB entries (Float32Array min/max/center/size).
+  // Subsequent bayColliders() calls reuse the same list and entry objects and write AABBs in place.
+  function cacheBayColliders(root) {
+    const list = [];
+    if (!root) return list;
+    const consider = (o) => {
+      const nm = o.name || '';
+      if (!o.isMesh || (!/^Collide_/i.test(nm) && !(o.userData && o.userData.collider))) return;
+      list.push({ name: nm, mesh: o, min: new Float32Array(3), max: new Float32Array(3), center: new Float32Array(3), size: new Float32Array(3) });
+    };
+    if (typeof root.traverse === 'function') root.traverse(consider);
+    if (!root.userData) root.userData = {};
+    root.userData._bayCols = list;
+    return list;
+  }
+  const _cb = { b: null };
+  function bayColliders(THREE, root) {
+    if (!root) return [];
+    let list = root.userData && root.userData._bayCols;
+    if (!list) list = cacheBayColliders(root);
+    if (THREE && THREE.Box3 && !_cb.b) _cb.b = new THREE.Box3();
+    if (typeof root.updateMatrixWorld === 'function') root.updateMatrixWorld(true);
+    const box = _cb.b;
+    for (let i = 0; i < list.length; i++) {
+      const e = list[i], o = e.mesh; if (!o) continue;
+      if (typeof o.updateWorldMatrix === 'function') o.updateWorldMatrix(true, false);
+      if (box && typeof box.setFromObject === 'function') {
+        box.setFromObject(o);
+        if ((typeof box.isEmpty === 'function' && box.isEmpty()) || !isFinite(box.min.x)) continue;
+        e.min[0] = box.min.x; e.min[1] = box.min.y; e.min[2] = box.min.z;
+        e.max[0] = box.max.x; e.max[1] = box.max.y; e.max[2] = box.max.z;
+      }
+      e.center[0] = (e.min[0] + e.max[0]) * 0.5;
+      e.center[1] = (e.min[1] + e.max[1]) * 0.5;
+      e.center[2] = (e.min[2] + e.max[2]) * 0.5;
+      e.size[0] = e.max[0] - e.min[0];
+      e.size[1] = e.max[1] - e.min[1];
+      e.size[2] = e.max[2] - e.min[2];
+    }
+    return list;
+  }
+
+  const core = { parseMode, tierFor, TIERS, rng, starfield, starQuads, mergeBoxes, sunDirFor, lightRig, swayAt, parallaxOffset, PARALLAX_K, orbitRig, PITCH_MIN, PITCH_MAX, nearestYaw, makeGovernor, clamp, ease, placeBayTransform, BAY_REF, bayStudioRig, separateBay, cacheBayColliders, bayColliders, STUDIO_CAM };
   if (typeof module !== 'undefined' && module.exports) { module.exports = core; return; }
 
   /* ───────────────────────── browser: the world ───────────────────────── */
@@ -184,7 +254,7 @@
   MW.govern = (ms) => MW.gov.step(ms);
   MW.prCap = () => { const t = MW.tier(); return t.on ? t.prCap * MW.gov.scale : 0; };
   MW.stats = { worlds: 0, live: 0 };
-  MW.BAY_URL = '/assets/places/menu_cargobay.glb';
+  MW.BAY_URL = '/assets/places/menu_cargobay.glb?v=378';   // isolated stamp: append ?v=N to match DM_BUILD (v378 stamp must set ?v=378)
   MW.BAY_REF = BAY_REF;
   MW.placeBayTransform = placeBayTransform;
   // two-pass: space backdrop first, then clear depth and draw the hangar + character so a translucent
@@ -214,8 +284,10 @@
     const xf = placeBayTransform(kind, dims);
     root.scale.set(xf.sx, xf.sy, xf.sz); root.position.set(xf.x, xf.y, xf.z);
     root.traverse((o) => {
-      if (!o.isMesh) return;
-      o.frustumCulled = false; o.castShadow = !!o.castShadow; o.receiveShadow = true;
+      if (o.isMesh) {
+      o.frustumCulled = false; o.receiveShadow = !/^Collide_/i.test(o.name || '');
+      o.castShadow = !/deck|floor|hazard|ceil|collide_/i.test(o.name || '');
+      if (/^Collide_/i.test(o.name || '')) { o.visible = false; o.userData.collider = 1; }
       const mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
       mats.forEach((m) => {
         if (!m) return;
@@ -227,20 +299,69 @@
         m.envMapIntensity = 0;   // never pick up a bright studio env (hair stays on its own material)
         m.needsUpdate = true;
       });
+      }
     });
+    if (kind === 'studio' || kind === 'cards') MW.setBayDoors(root, 1);   // menus look out through an open portal; arrival starts closed
+    cacheBayColliders(root);
     return root;
+  };
+
+  // Sliding blast-door leaves (Door_L / Door_R, authored closed). k=0 closed, k=1 fully open. No allocations after first call.
+  MW.setBayDoors = function (root, k) {
+    if (!root) return 0;
+    k = Math.max(0, Math.min(1, k == null ? 1 : k));
+    let n = 0;
+    root.traverse((o) => {
+      const nm = o.name || '';
+      if (!/^Door_[LR]$/i.test(nm) && !/^BayDoor_[LR]$/i.test(nm)) return;
+      if (o.userData._doorClosedX == null) {
+        const cx = (o.userData.closedX != null) ? o.userData.closedX : o.position.x;
+        const side = /_R/i.test(nm) ? 1 : -1;
+        const openX = (o.userData.openX != null) ? o.userData.openX : (cx + side * (o.userData.slide || 8.2));
+        o.userData._doorClosedX = cx; o.userData._doorOpenX = openX;
+      }
+      o.position.x = o.userData._doorClosedX + (o.userData._doorOpenX - o.userData._doorClosedX) * k;
+      n++;
+    });
+    return n;
+  };
+
+  // World-space AABB colliders for walls / floor / ceiling / current door poses.
+  // Meshes are gathered once (cacheBayColliders); each entry's Float32Arrays are updated in place. Same list + entry references every call.
+  MW.cacheBayColliders = cacheBayColliders;
+  MW.bayColliders = bayColliders;
+  MW.separateBay = separateBay;
+
+  // Hair-safe knobs on any strand mesh under a character root (studio, cards, game, menu). Idempotent, no allocs besides the walk.
+  MW.protectHair = function (root) {
+    if (!root) return 0; let n = 0;
+    root.traverse((o) => {
+      if (!o.isMesh || !o.material) return;
+      if (!/hair|strand/i.test((o.name || '') + ' ' + (o.material.name || ''))) return;
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      mats.forEach((m) => {
+        if (!m) return;
+        if (typeof m.metalness === 'number') m.metalness = 0;
+        if (typeof m.roughness === 'number') m.roughness = Math.max(m.roughness || 0, 0.86);
+        if ('envMapIntensity' in m) m.envMapIntensity = 0;
+        if ('specularIntensity' in m) m.specularIntensity = Math.min(m.specularIntensity == null ? 0.16 : m.specularIntensity, 0.2);
+        if ('sheen' in m && !(m.userData && m.userData.hairFuzz)) m.sheen = 0;
+        m.envMap = null; m.needsUpdate = true; n++;
+      });
+    });
+    return n;
   };
 
   // one-shot studio rig (no per-frame allocs).  Retunes existing key/rim/hemi
   // when the caller already built a charlook studio, then adds a crisp key
   // spotlight, a window-side cool rim, and a gentle fill / kick.
   MW.applyBayStudioLights = function (THREE, scene, kind, existing) {
-    const R = bayStudioRig(kind), lights = [];
+    const R = bayStudioRig(kind, (MW.tier && MW.tier().name) || 'high'), lights = [];
     existing = existing || {};
     const addDir = (color, intensity, dir) => {
       const l = new THREE.DirectionalLight(color, intensity);
       l.position.set(dir[0], dir[1], dir[2]); l.castShadow = false;
-      scene.add(l); lights.push(l); return l;
+      scene.add(l, l.target); lights.push(l); return l;
     };
     let hemi = existing.hemi;
     if (!hemi) scene.traverse((ob) => { if (!hemi && ob.isHemisphereLight) hemi = ob; });
@@ -255,11 +376,27 @@
     const spot = new THREE.SpotLight(R.spot.color, R.spot.intensity, R.spot.distance, R.spot.angle, R.spot.penumbra, R.spot.decay);
     spot.position.set(R.spot.pos[0], R.spot.pos[1], R.spot.pos[2]);
     spot.target.position.set(R.spot.target[0], R.spot.target[1], R.spot.target[2]);
-    spot.castShadow = false; scene.add(spot, spot.target); lights.push(spot);
-    return { hemi, fill, kick, spot, lights, kind };
+    if (R.spot.shadow) {
+      spot.castShadow = true; const sh = spot.shadow, map = R.spot.map || 1024;
+      sh.mapSize.set(map, map); sh.bias = R.spot.bias; sh.normalBias = R.spot.normalBias;
+      sh.camera.near = R.spot.near; sh.camera.far = R.spot.far; sh.focus = 1;
+      sh.camera.updateProjectionMatrix();
+    } else spot.castShadow = false;
+    scene.add(spot, spot.target); lights.push(spot);
+    // Overhead lamp directional: tight ortho frustum, almost straight down, so a crisp puddle reads on the deck.
+    let lamp = null;
+    if (R.lamp) {
+      lamp = addDir(R.lamp.color, R.lamp.intensity, R.lamp.dir);
+      lamp.castShadow = true; lamp.target.position.set(R.spot.target[0], R.spot.target[1], R.spot.target[2]);
+      const sh = lamp.shadow, half = R.lamp.size || 3.2, map = R.lamp.map || R.spot.map || 1024;
+      sh.mapSize.set(map, map); sh.bias = R.spot.bias; sh.normalBias = R.spot.normalBias;
+      const cam = sh.camera; cam.near = R.lamp.near || 0.35; cam.far = R.lamp.far || 9.5;
+      cam.left = -half; cam.right = half; cam.top = half; cam.bottom = -half; cam.updateProjectionMatrix();
+    }
+    return { hemi, fill, kick, spot, lamp, lights, kind };
   };
   MW.attachBayFixtureLights = function (THREE, host, inst, kind) {
-    const R = bayStudioRig(kind), list = []; if (!inst || !host) return list;
+    const R = bayStudioRig(kind, (MW.tier && MW.tier().name) || 'high'), list = []; if (!inst || !host) return list;
     const wp = new THREE.Vector3(); inst.updateMatrixWorld(true); host.updateMatrixWorld(true);
     inst.traverse((o) => {
       if (!/^Light_\d+/.test(o.name)) return;
@@ -353,21 +490,25 @@
       const g = quadGeo(THREE, starQuads(starfield([d], 11 + i * 7, { hemi: !!o.hemi }))), grp = new THREE.Group(), me = mk(new THREE.Mesh(g, starsMat)); me.renderOrder = -10; grp.add(me); group.add(grp); return { grp, k: d.k };
     });
     // planet: continents / ocean / ice caps / clouds / sun glint / terminator / atmosphere rim, all in one fragment shader
-    const pc = o.planet, R = pc.r, planetMat = (() => {
+    const pc = o.planet, R = pc.r, crisp = (tier && tier.name === 'solenne') || !!(o && o.crisp);
+    const landF = crisp ? 4.6 : 2.4, cloudF = crisp ? 7.2 : 3.6, atmScale = crisp ? 1.085 : 1.11, atmW = crisp ? 0.036 : 0.055;
+    const planetMat = (() => {
       const m = new THREE.MeshBasicNodeMaterial({}), dl = normalize(positionLocal), N = normalize(normalWorld), L = normalize(U.sun), V = normalize(cameraPosition.sub(positionWorld));
       const cs = cos(U.cloud), sn = sin(U.cloud), dc = vec3(dl.x.mul(cs).sub(dl.z.mul(sn)), dl.y, dl.x.mul(sn).add(dl.z.mul(cs)));
-      const h = mx_fractal_noise_float(dl.mul(2.1).add(vec3(3.0, 1.0, 7.0)), tier.planetOct, 2.0, 0.5).mul(0.5).add(0.5), e = h.sub(0.52);
-      const land = smoothstep(0.0, 0.012, e), moist = mx_fractal_noise_float(dl.mul(3.1).add(vec3(9.0, 4.0, 2.0)), 2, 2.0, 0.5).mul(0.5).add(0.5);
+      const h = mx_fractal_noise_float(dl.mul(landF).add(vec3(3.0, 1.0, 7.0)), tier.planetOct, 2.0, 0.5).mul(0.5).add(0.5), e = h.sub(0.52);
+      const land = smoothstep(0.0, crisp ? 0.008 : 0.012, e), moist = mx_fractal_noise_float(dl.mul(crisp ? 5.2 : 3.1).add(vec3(9.0, 4.0, 2.0)), 2, 2.0, 0.5).mul(0.5).add(0.5);
       let ter = mix(vec3(0.14, 0.27, 0.1), vec3(0.45, 0.38, 0.2), smoothstep(0.35, 0.6, float(1).sub(moist).sub(abs(dl.y).mul(0.5))));
       ter = mix(ter, vec3(0.32, 0.29, 0.26), smoothstep(0.1, 0.22, e)); const ice = smoothstep(0.8, 0.9, abs(dl.y).add(h.sub(0.5).mul(0.14)));
       ter = mix(ter, vec3(0.9, 0.93, 0.97), ice);
       const ocean = mix(vec3(0.01, 0.06, 0.2), vec3(0.03, 0.3, 0.45), smoothstep(-0.07, 0.0, e)), surf = mix(ocean, ter, land);
-      const cl = smoothstep(0.5, 0.74, mx_fractal_noise_float(dc.mul(3.6).add(vec3(5.0, 8.0, 1.0)), tier.cloudOct, 2.0, 0.5).mul(0.5).add(0.5)).mul(0.92);
+      const clA = smoothstep(crisp ? 0.52 : 0.5, crisp ? 0.7 : 0.74, mx_fractal_noise_float(dc.mul(cloudF).add(vec3(5.0, 8.0, 1.0)), tier.cloudOct, 2.0, 0.5).mul(0.5).add(0.5));
+      const clB = crisp ? smoothstep(0.62, 0.82, mx_fractal_noise_float(dc.mul(cloudF * 1.7).add(vec3(1.0, 3.0, 9.0)), Math.max(2, tier.cloudOct - 1), 2.0, 0.5).mul(0.5).add(0.5)).mul(0.55) : float(0);
+      const cl = clA.add(clB).mul(crisp ? 0.95 : 0.92);
       const ndl = dot(N, L), lit = max(ndl, 0), day = smoothstep(-0.28, 0.2, ndl), Hh = normalize(L.add(V)), nh = max(dot(N, Hh), 0);
       const sp = pow(nh, 110.0).mul(2.4).add(pow(nh, 14.0).mul(0.18)), oceanMask = float(1).sub(land), sunC = vec3(1.0, 0.95, 0.86);
       let col = mix(surf, vec3(1.0, 1.0, 1.0), cl).mul(sunC).mul(lit.mul(1.25).mul(day)).add(mix(surf, vec3(0.8, 0.85, 0.9), cl).mul(vec3(0.05, 0.075, 0.14))).add(sunC.mul(sp).mul(oceanMask).mul(float(1).sub(cl)).mul(day));
       col = col.add(vec3(1.0, 0.42, 0.18).mul(exp(ndl.mul(ndl).mul(-22.0)).mul(0.22)).mul(float(1).sub(ice.mul(0.5))));
-      col = col.add(vec3(0.22, 0.5, 1.0).mul(pow(float(1).sub(max(dot(N, V), 0)), 3.0)).mul(day.mul(0.9).add(0.12)).mul(1.2));
+      col = col.add(vec3(0.35, 0.62, 1.0).mul(pow(float(1).sub(max(dot(N, V), 0)), crisp ? 2.4 : 3.0)).mul(day.mul(0.92).add(0.16)).mul(crisp ? 1.85 : 1.2));
       m.colorNode = col; return m;
     })();
     const planet = mk(new THREE.Mesh(new THREE.SphereGeometry(R, tier.planetSeg, Math.round(tier.planetSeg * 0.75)), planetMat)); planet.rotation.z = 0.35;
@@ -376,10 +517,10 @@
     const atmMat = (() => {
       const m = new THREE.MeshBasicNodeMaterial({ side: THREE.BackSide, transparent: true, depthWrite: false, depthTest: true, blending: THREE.AdditiveBlending, toneMapped: false });
       const cN = uniform(new THREE.Vector3()), rd = normalize(positionWorld.sub(cameraPosition)), t = dot(cN.sub(cameraPosition), rd), cp = cameraPosition.add(rd.mul(t)), b = length(cp.sub(cN)).div(R);
-      const a = pow(float(1).sub(tc(b.sub(1.0).div(0.036), 0, 1)), 2.6), dd = dot(normalize(cp.sub(cN)), normalize(U.sun)), day = smoothstep(-0.35, 0.5, dd);
-      m.colorNode = mix(vec3(1.0, 0.55, 0.28), vec3(0.22, 0.46, 0.95), smoothstep(-0.05, 0.45, dd)).mul(a).mul(day.mul(0.8).add(0.03)); m.opacityNode = float(1); parts.atmCenter = cN; return m;
+      const a = pow(float(1).sub(tc(b.sub(1.0).div(atmW), 0, 1)), crisp ? 1.6 : 2.2), dd = dot(normalize(cp.sub(cN)), normalize(U.sun)), day = smoothstep(-0.35, 0.5, dd);
+      m.colorNode = mix(vec3(1.0, 0.55, 0.28), vec3(0.28, 0.55, 1.0), smoothstep(-0.05, 0.45, dd)).mul(a).mul(day.mul(crisp ? 1.05 : 0.8).add(crisp ? 0.12 : 0.03)); m.opacityNode = float(1); parts.atmCenter = cN; return m;
     })();
-    const atm = mk(new THREE.Mesh(new THREE.SphereGeometry(R * 1.07, Math.max(20, tier.planetSeg), Math.round(tier.planetSeg * 0.7)), atmMat)); atm.renderOrder = -5; pg.add(atm);
+    const atm = mk(new THREE.Mesh(new THREE.SphereGeometry(R * atmScale, Math.max(24, tier.planetSeg), Math.round(tier.planetSeg * 0.75)), atmMat)); atm.renderOrder = -5; pg.add(atm);
     // sun with glare (additive, never depth-hidden: it is far behind everything)
     const sunQ = mk(new THREE.Mesh(new THREE.PlaneGeometry(1, 1), (() => {
       const m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, depthTest: true, blending: THREE.AdditiveBlending, toneMapped: false }), p = uv().sub(0.5).mul(2.0), r = length(p);
@@ -394,6 +535,27 @@
     parts.update = (t) => { U.cloud.value = t * 0.006; planet.rotation.y = t * 0.0026; };
     return parts;
   }
+
+  // High-resolution Solenne (home world) + volumetric Fresnel/Rayleigh atmosphere for the cargo-bay window.
+  // Reuses the same TSL continent / cloud / atmosphere shaders as the studio sky, at the high-tier (or better) tessellation.
+  MW.buildSolenne = function (THREE, o) {
+    o = o || {};
+    if (!THREE || !THREE.TSL) return null;
+    const group = o.group || new THREE.Group(); group.name = group.name || 'solenne';
+    const owned = o.own || [];
+    const r = o.r || 90, pos = o.position || [-70, -80, o.z || -160];
+    const sun = o.sun || [-0.55, 0.28, -0.78];
+    const host = (MW.tier && MW.tier()) || { name: 'high' };
+    const modestP = host.name === 'low' || host.name === 'mid';
+    const tier = { name: 'solenne', stars: 0, planetSeg: o.seg || (modestP ? 48 : 128), planetOct: o.oct || (modestP ? 4 : 7), cloudOct: o.cloudOct || (modestP ? 2 : 5), band: true };
+    const sky = buildSky(THREE, group, tier, { sun: sun, planet: { x: pos[0], y: pos[1], z: pos[2], r: r }, starLayers: [], hemi: !!o.hemi }, owned);
+    // drop the giant sky sphere / sun billboard if the caller only wants the planet (stars optional)
+    if (!o.keepSky) {
+      group.traverse((c) => { if (c.geometry && c.geometry.type === 'SphereGeometry' && c.geometry.parameters && c.geometry.parameters.radius > 1000) c.visible = false; });
+      if (sky.sunQ) sky.sunQ.visible = false;
+    }
+    return { group, sky, owned, update: (t) => sky.update(t), sync: () => sky.syncAtm && sky.syncAtm() };
+  };
   function motesMesh(THREE, count, gen, seed, M, own, group) {
     const r = rng(seed), st = []; for (let i = 0; i < count; i++) st.push(gen(r));
     const me = new THREE.Mesh(quadGeo(THREE, starQuads(st)), M.points(1.4)); me.frustumCulled = false; own.push(me); group.add(me); return me;
@@ -405,7 +567,7 @@
     const own = [], dispose = trackDispose(own), T = THREE.TSL, M = mats(THREE), scene = X.scene, group = new THREE.Group(); group.name = 'menuworld-studio';
     const skyScene = new THREE.Scene(); skyScene.background = new THREE.Color(0x02030a);
     const fov = 30, sun0 = sunDirFor(o.aspect || 1.2, fov, -1, 9, 0.62);
-    const sky = buildSky(THREE, skyScene, tier, { sun: sun0, planet: { x: 140, y: -700, z: -1250, r: 760 } }, own); sky.syncAtm();
+    const sky = buildSky(THREE, skyScene, tier, { sun: sun0, planet: { x: 140, y: -700, z: -1250, r: 760 }, crisp: true }, own); sky.syncAtm();
     const proc = new THREE.Group(); proc.name = 'bay-proc'; group.add(proc);
     scene.traverse((ob) => { if (ob.userData && ob.userData.dmSet) ob.visible = false; });   // the plain pad / ring / rocks give way to the bay
     const studioL = MW.applyBayStudioLights(THREE, scene, 'studio', { key: X.key, rim: X.rim });
@@ -424,19 +586,17 @@
     for (let i = 0; i < 22; i++) box(i % 4 === 3 ? ledA : ledB, -3.2 + i * 0.3, -0.18, -2.62, 0.06, 0.05, 0.03);   // lip LEDs
     box(steelB, 5.4, -1.0, -30, 1.0, 1.0, 56, 0); for (let i = 0; i < 8; i++) box(ledA, 5.4, -0.4, -12 - i * 7, 0.2, 0.2, 0.2);   // far gantries leaving the hull, and a mast on one
     box(steelB, -5.4, -1.0, -30, 1.0, 1.0, 56, 0); box(steelB, -5.4, 6.5, -42, 0.8, 14, 0.8, 0); box(ledA, -5.4, 13.8, -42, 0.6, 0.6, 0.6); box(ledB, -5.4, 8, -41.6, 0.3, 0.3, 0.3);
-    const mesh = (m, mat, ph) => { const me = new THREE.Mesh(geo(THREE, mergeBoxes(m), ph), mat); me.frustumCulled = false; own.push(me); proc.add(me); return me; };
+    const mesh = (m, mat, ph) => { const me = new THREE.Mesh(geo(THREE, mergeBoxes(m), ph), mat); me.frustumCulled = false; me.receiveShadow = true; own.push(me); proc.add(me); return me; };
     const floorM = M.floor({ plate: 1, guides: [-1.9, 1.9], noise: tier.name === 'high' }), hazM = M.hazard(), steelM = M.steel({ a: [0.07, 0.08, 0.1], b: [0.13, 0.14, 0.17] });
     mesh(floorB, floorM); mesh(hazB, hazM); mesh(steelB, steelM); mesh(strips, M.glow([0.25, 0.8, 1.7]));
     mesh(ledB, M.led([0.2, 0.7, 2.0], 3.1), true); mesh(ledA, M.led([2.0, 1.1, 0.2], 2.3), true);
-    // turntable disc (turns with her), ring light, contact blob
+    // turntable disc (turns with her) + ring light; real-time shadows land on the disc
     const { vec3, atan, positionLocal, length, step, fract, smoothstep, float, uv } = T;
     const discMat = (() => { const m = new THREE.MeshStandardNodeMaterial({ roughness: 0.85, metalness: 0.0 }), ang = atan(positionLocal.x, positionLocal.z).div(6.2832).add(0.5), rr = length(positionLocal.xz);
       const tick = step(0.82, fract(ang.mul(36))).mul(step(1.05, rr)), ring = smoothstep(0.02, 0.0, rr.sub(1.0).abs());
       m.colorNode = vec3(0.045, 0.05, 0.065).add(vec3(0.025, 0.03, 0.04).mul(step(0.5, fract(rr.mul(7.0))))); m.emissiveNode = vec3(0.15, 0.7, 1.6).mul(tick.add(ring.mul(0.7))); return m; })();
-    const disc = new THREE.Mesh(new THREE.CylinderGeometry(1.25, 1.28, 0.02, 56), discMat); disc.position.y = -0.002; disc.frustumCulled = false; own.push(disc); group.add(disc);
-    const ringM = new THREE.Mesh(new THREE.RingGeometry(1.29, 1.34, 64), M.glow([0.2, 0.75, 1.9])); ringM.rotation.x = -Math.PI / 2; ringM.position.y = 0.012; ringM.frustumCulled = false; own.push(ringM); group.add(ringM);
-    const blobMat = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, toneMapped: false }); blobMat.colorNode = vec3(0, 0, 0); blobMat.opacityNode = float(1).sub(smoothstep(0.0, 1.0, length(uv().sub(0.5)).mul(2.0))).mul(0.6);
-    const blob = new THREE.Mesh(new THREE.CircleGeometry(0.75, 28), blobMat); blob.rotation.x = -Math.PI / 2; blob.position.y = 0.014; blob.renderOrder = 2; own.push(blob); group.add(blob);
+    const disc = new THREE.Mesh(new THREE.CylinderGeometry(1.25, 1.28, 0.02, 56), discMat); disc.position.y = -0.002; disc.frustumCulled = false; disc.receiveShadow = true; disc.castShadow = false; own.push(disc); group.add(disc);
+    const ringM = new THREE.Mesh(new THREE.RingGeometry(1.29, 1.34, 64), M.glow([0.2, 0.75, 1.9])); ringM.rotation.x = -Math.PI / 2; ringM.position.y = 0.012; ringM.frustumCulled = false; ringM.receiveShadow = false; own.push(ringM); group.add(ringM);
     // near-field dust motes: real parallax at real distance
     const motes = tier.motes ? motesMesh(THREE, tier.motes, (r) => { const a = r() * TAU, d = 3 + r() * 9; return { x: Math.cos(a) * d * 0.6, y: r() * 5 - 0.5, z: -Math.abs(Math.sin(a)) * d - 1.5, dist: 1, size: 0.018 + r() * 0.03, r: 0.6, g: 0.8, b: 1, a: 0.3 + r() * 0.5 }; }, 77, M, own, group) : null;
     const yawGroup = new THREE.Group(); yawGroup.name = 'studio-yaw';
@@ -444,6 +604,7 @@
     const adopt = (o) => { if (o && o.parent !== yawGroup) yawGroup.attach(o); };
     adopt(studioL.hemi); adopt(studioL.fill); adopt(studioL.kick); adopt(studioL.spot);
     if (studioL.spot && studioL.spot.target) adopt(studioL.spot.target);
+    if (studioL.lamp) { adopt(studioL.lamp); if (studioL.lamp.target) adopt(studioL.lamp.target); }
     if (X.key) adopt(X.key); if (X.rim) adopt(X.rim); if (X.fill) adopt(X.fill);
     const skyYaw = new THREE.Group(); skyYaw.name = 'sky-yaw';
     [...skyScene.children].forEach((c) => skyYaw.add(c)); skyScene.add(skyYaw);
@@ -473,7 +634,7 @@
     const skyScene = new THREE.Scene(); skyScene.background = new THREE.Color(0x02030a);
     const fov = 50, cam = new THREE.PerspectiveCamera(fov, 1.6, 0.1, 6500), R = rng(9); let sun = sunDirFor(1.6, fov, 1, 13, 0.55), sunA = 1.6;
     const proc = new THREE.Group(); proc.name = 'bay-proc'; group.add(proc);
-    const sky = buildSky(THREE, skyScene, tier, { sun, hemi: true, planet: { x: -300, y: -1050, z: -1500, r: 1180 }, starLayers: [
+    const sky = buildSky(THREE, skyScene, tier, { sun, hemi: true, crisp: true, planet: { x: -300, y: -1050, z: -1500, r: 1180 }, starLayers: [
       { n: Math.round(tier.stars * 0.45), dist: 2600, ang: [0.0016, 0.0042], k: PARALLAX_K.starsFar }, { n: Math.round(tier.stars * 0.35), dist: 1500, ang: [0.0016, 0.0046], k: PARALLAX_K.starsMid }, { n: Math.round(tier.stars * 0.2), dist: 900, ang: [0.002, 0.0055], k: PARALLAX_K.starsNear }] }, own); sky.syncAtm();
     const studioL = MW.applyBayStudioLights(THREE, scene, 'cards', {});
     const steelB = [], strips = [], ledB = [], ledA = [], floorB = [{ c: [0, -0.3, -0.5], s: [24, 0.6, 17] }], hazB = [{ c: [0, 0.006, -8.7], s: [24, 0.014, 0.6] }];
@@ -489,7 +650,7 @@
     for (let i = 0; i < 6; i++) { box(steelB, 0, 8.6, -6 + i * 3.2, 24, 0.3, 0.3, 0); box(strips, 0, 8.4, -6 + i * 3.2, 20, 0.04, 0.04, 0); }
     for (let i = 0; i < 24; i++) box(i % 4 === 3 ? ledA : ledB, -11 + i * 0.95, -0.2, -9.63, 0.1, 0.07, 0.03);
     box(steelB, -9, -1.5, -50, 1.5, 1.5, 80, 0); for (let i = 0; i < 10; i++) box(ledA, -9, -0.6, -14 - i * 8, 0.3, 0.3, 0.3);
-    const mesh = (m, mat, ph) => { const me = new THREE.Mesh(geo(THREE, mergeBoxes(m), ph), mat); me.frustumCulled = false; own.push(me); proc.add(me); return me; };
+    const mesh = (m, mat, ph) => { const me = new THREE.Mesh(geo(THREE, mergeBoxes(m), ph), mat); me.frustumCulled = false; me.receiveShadow = true; own.push(me); proc.add(me); return me; };
     mesh(floorB, M.floor({ plate: 0.8, guides: [-3.2, -1.1, 1.1, 3.2], glow: 1.5, noise: tier.name === 'high' })); mesh(hazB, M.hazard()); mesh(steelB, M.steel({ a: [0.06, 0.07, 0.09], b: [0.12, 0.13, 0.16] })); mesh(strips, M.glow([0.25, 0.8, 1.7]));
     mesh(ledB, M.led([0.2, 0.7, 2.0], 3.1), true); mesh(ledA, M.led([2.0, 1.1, 0.2], 2.3), true);
     // hologram ring on the deck under the cards

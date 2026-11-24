@@ -281,7 +281,16 @@
   function lookMaterial(THREE, E, m, meshName, tierNow) {
     if (!m || (m.userData && m.userData.dmCharLook && m.userData.dmCharLook.tier === tierNow)) return m;
     const kind = classify(matProps(m, meshName)), P = kindParams(kind, tierNow);
-    if (kind === 'hair' || kind === 'glass') { tuneTextures(m, tierNow); return m; }   // hair untouched; glass keeps the GLB's transparency values
+    if (kind === 'hair') {
+      tuneTextures(m, tierNow);
+      if (typeof m.metalness === 'number') m.metalness = 0;
+      if (typeof m.roughness === 'number') m.roughness = Math.max(m.roughness || 0, 0.86);
+      if ('envMapIntensity' in m) m.envMapIntensity = 0;
+      if ('specularIntensity' in m) m.specularIntensity = Math.min(m.specularIntensity == null ? 0.16 : m.specularIntensity, 0.2);
+      if ('sheen' in m && !(m.userData && m.userData.hairFuzz)) m.sheen = 0;
+      m.envMap = null; m.needsUpdate = true; return m;   // no IBL / sheen: white specular washout on real WebGPU
+    }
+    if (kind === 'glass') { tuneTextures(m, tierNow); return m; }   // glass keeps the GLB's transparency values
     const t = twin(THREE, m, kind); if (!t || !t.isNodeMaterial) return m;
     if (!t.roughnessMap && t.roughness !== undefined) t.roughness = clamp(t.roughness, P.rMin, P.rMax);
     if (kind === 'skin' && !t.metalnessMap) t.metalness = 0;

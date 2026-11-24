@@ -39,7 +39,8 @@
         const cv = D.createElement('canvas'); cv.id = 'cs-canvas';
         const r = new THREE.WebGPURenderer({ canvas: cv, antialias: true, alpha: true });
         await r.init();
-        r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 1.05; r.setClearColor(0x000000, 0);
+        r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 1.0; r.setClearColor(0x000000, 0);
+        r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFSoftShadowMap;
         R.r = r; R.canvas = cv; return r;
       })().finally(() => { R.making = null; });
       try { await R.making; } catch (e) { R.leases--; throw e; }
@@ -97,7 +98,7 @@
     }
     if (o.hair !== false) {
       try {
-        const mod = await import(W.DM_HAIR_MODULE || new URL('hair_strands.js', D.baseURI).href);
+        const mod = await import(W.DM_HAIR_MODULE || new URL('hair_strands.js?v=378', D.baseURI).href);
         let cfg; if (def.hair.configUrl) { const r = await fetch(def.hair.configUrl); if (r.ok) cfg = await r.json(); }
         const CHAR = { root: M.root, bones: M.bones, mixer: M.mixer };
         M.charLike = CHAR;
@@ -112,6 +113,8 @@
     }
     applyLook(M, def);
     try { if (W.DMCharLook) W.DMCharLook.apply(M.root, { THREE, env: 'studio' }); } catch (e) { log('charlook', e && e.message); }   // (ui/dm-charlook.js) smooth normals + soft sky / rim / matcap look, studio env; ?charlook=off|low|high
+    try { if (W.DMMenuWorld && W.DMMenuWorld.protectHair) W.DMMenuWorld.protectHair(M.root); } catch (e) {}
+    M.root.traverse((n) => { if (n.isMesh || n.isSkinnedMesh) { n.castShadow = !/hair|strand/i.test(n.name || ''); n.receiveShadow = !/hair|strand/i.test(n.name || ''); if (n.isSkinnedMesh) n.frustumCulled = false; } });
     return M;
   }
   function hairStudioQ() {

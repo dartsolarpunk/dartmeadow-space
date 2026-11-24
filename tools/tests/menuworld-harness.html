@@ -10,7 +10,7 @@ try{
 await new Promise(r=>{const s=document.createElement('script'); s.src='/ui/dm-menuworld.js'; s.onload=r; s.onerror=()=>{errs.push('script load failed'); window.done=true;}; document.head.appendChild(s);});
 const MW=window.DMMenuWorld; window.tier=MW.tier().name;
 const host=document.getElementById('host'), cv=document.createElement('canvas'); host.appendChild(cv); host.style.width=w+'px'; host.style.height=h+'px';
-const r=new TH.WebGPURenderer({canvas:cv,forceWebGL:true,antialias:false,alpha:true}); await r.init(); r.toneMapping=TH.ACESFilmicToneMapping; r.toneMappingExposure=1.05; r.setClearColor(0,0); r.setPixelRatio(1); r.setSize(w,h,false);
+const r=new TH.WebGPURenderer({canvas:cv,forceWebGL:true,antialias:false,alpha:true}); await r.init(); r.toneMapping=TH.ACESFilmicToneMapping; r.toneMappingExposure=1.0; r.setClearColor(0,0); r.setPixelRatio(1); r.setSize(w,h,false); r.shadowMap.enabled=true; r.shadowMap.type=TH.PCFSoftShadowMap;
 const shot=(k)=>{window.shots[k]=cv.toDataURL('image/png');};
 const t0=performance.now(); const L=(m)=>{console.log('[h] '+m+' '+Math.round(performance.now()-t0));}; L('renderer ok');
 if(sceneKind==='cards'){
@@ -24,15 +24,33 @@ if(sceneKind==='cards'){
   const key=new TH.DirectionalLight(0xffd7a8,2.6); key.position.set(1.6,2.6,2.4); S.add(key); const rim=new TH.DirectionalLight(0x6a8cff,1.9); rim.position.set(-2.2,1.6,-2.0); S.add(rim);
   const pad=new TH.Mesh(new TH.CircleGeometry(1.35,24),new TH.MeshStandardMaterial({color:0x4a2418})); pad.rotation.x=-Math.PI/2; pad.userData.dmSet=1; S.add(pad);
   const X={scene:S,key,rim,items:[]};
-  let root=null; try{ const g=await new GLTFLoader().loadAsync(q.get('glb')||'/characterassests/Meshy_AI_Autumn_biped_Character_output.glb'); root=g.scene; S.add(root); root.updateMatrixWorld(true); const b=new TH.Box3().setFromObject(root); root.position.y=-b.min.y; root.updateMatrixWorld(true); window.H=b.max.y-b.min.y;
-    root.traverse(o=>{ if(o.isMesh&&o.material&&o.material.metalness>0.9){o.material.metalness=0.08;o.material.roughness=0.55;} }); }catch(e){ errs.push('glb '+e.message); window.H=1.7; }
-  L('glb'); const H=window.H||1.7, world=MW.attachStudio(THREE,X,{aspect:w/h}); window.world=!!world;
+  let root=null, hairMixer=null; try{ const g=await new GLTFLoader().loadAsync(q.get('glb')||'/characterassests/Meshy_AI_Autumn_biped_Character_output.glb'); root=g.scene; S.add(root); root.updateMatrixWorld(true); const b=new TH.Box3().setFromObject(root); root.position.y=-b.min.y; root.updateMatrixWorld(true); window.H=b.max.y-b.min.y;
+    root.traverse(o=>{ if(o.isMesh||o.isSkinnedMesh){ o.castShadow=true; o.receiveShadow=true; if(o.material&&o.material.metalness>0.9){o.material.metalness=0.08;o.material.roughness=0.55;} } });
+    if(q.get('hair')!=='0'){
+      try{
+        const bones={}; root.traverse(o=>{ if(o.isBone) bones[o.name]=o; });
+        hairMixer=new TH.AnimationMixer(root); const mixer=hairMixer;
+        const [mod,buf]=await Promise.all([
+          import('/hair_strands.js'),
+          fetch('/characterassests/ariel_hair_strands.bin').then(r=>{ if(!r.ok) throw new Error('hair '+r.status); return r.arrayBuffer(); })
+        ]);
+        const hair=mod.buildHair({root,bones,mixer},THREE,buf,{getStrandFraction:()=>0.7,getGravityScale:()=>1,getCollisionTier:()=>0,params:{windGust:0.08}});
+        if(MW.protectHair) MW.protectHair(root);
+        for(let i=0;i<24;i++) mixer.update(1/30);
+        root.updateMatrixWorld(true);
+        const info=[]; root.traverse(o=>{ if(o.isMesh&&/hair|strand/i.test(o.name||'')){ const b=new TH.Box3().setFromObject(o); info.push({n:o.name,vis:o.visible,cnt:o.geometry&&o.geometry.attributes&&o.geometry.attributes.position&&o.geometry.attributes.position.count,min:b.min.toArray(),max:b.max.toArray(),mat:o.material&&o.material.type}); } });
+        window.hair=!!hair; window.hairInfo=info; console.log('[h] hair meshes '+JSON.stringify(info).slice(0,500));
+      }catch(e){ errs.push('hair '+e.message); window.hair=false; }
+    }
+  }catch(e){ errs.push('glb '+e.message); window.H=1.7; }
+  L('glb hair='+(window.hair?'yes':'no')); const H=window.H||1.7, world=MW.attachStudio(THREE,X,{aspect:w/h}); window.world=!!world;
   L('world '+!!world); try{ await Promise.race([MW.loadBayGLB(THREE), new Promise(res=>setTimeout(res,8000))]); }catch(e){ errs.push('bay '+e); }
   L('bay '+(MW._bayGltf?'yes':'no'));
+  if(world&&world.bay&&q.get('doors')!=null){ try{ MW.setBayDoors(world.bay, +q.get('doors')); }catch(e){ errs.push('doors '+e); } }
   for(const hd of (q.get('hide')||'').split(',')){ if(!world) break; if(hd==='sun') world.sky.sunQ.visible=false; if(hd==='planet') world.sky.planetGroup.visible=false; if(hd==='stars') world.sky.layers.forEach(l=>l.grp.visible=false); } const cam=new TH.PerspectiveCamera(30,w/h,0.05,60); world&&world.prepCamera(cam);
   const th=Math.tan(15*Math.PI/180), dist=Math.max(H*0.62/th,(0.62/(w/h))/th), tgt=new TH.Vector3();
   const views=(q.get('views')||'0:0.35').split(',');
-  const draw=(cam,tgt,yd)=>{ world&&world.update(5000,0.03,cam,yd||0,tgt,false); if(world&&world.render) world.render(r,S,cam); else r.render(S,cam); };
+  const draw=(cam,tgt,yd)=>{ if(hairMixer) hairMixer.update(0.03); world&&world.update(5000,0.03,cam,yd||0,tgt,false); if(world&&world.render) world.render(r,S,cam); else r.render(S,cam); };
   for(const v of views){ const [pd,yd,zm]=v.split(':').map(Number); const pitch=pd*Math.PI/180;
     const o=MW.orbitRig(pitch,H,dist,zm||1,0,{floorY:0}), lim=MW.STUDIO_CAM||{maxY:3.55,maxR:4.55,minY:0.16};
     const camY=Math.max(lim.minY,Math.min(o.camY,lim.maxY)), camR=Math.min(o.camR,lim.maxR);
