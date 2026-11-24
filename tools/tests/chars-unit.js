@@ -19,8 +19,9 @@ for (const d of C.list()) {
   ok(C.problems(d).length === 0, d.id + ' validates: ' + C.problems(d).join(','));
   ok(fs.existsSync(path.join(root, d.mesh)), d.id + ' mesh exists');
   ok(fs.existsSync(path.join(root, d.anims)), d.id + ' anims exist');
-  ok(fs.existsSync(path.join(root, d.hair.url)), d.id + ' hair groom exists');
-  if (d.hair.configUrl) { ok(fs.existsSync(path.join(root, d.hair.configUrl)), d.id + ' hair config exists'); JSON.parse(rd(d.hair.configUrl)); }
+  const noQ = (u) => u.split('?')[0];   // (v379) cache-busting ?v= tags on the groom / config URLs are not part of the file path
+  ok(fs.existsSync(path.join(root, noQ(d.hair.url))), d.id + ' hair groom exists');
+  if (d.hair.configUrl) { ok(fs.existsSync(path.join(root, noQ(d.hair.configUrl))), d.id + ' hair config exists'); JSON.parse(rd(noQ(d.hair.configUrl))); }
   const clips = glbJson(d.anims).animations.map((a) => a.name);
   for (const [k, v] of Object.entries(d.clipMap)) ok(clips.includes(v), d.id + ' clip ' + k + ' -> ' + v + ' exists in its animation GLB');
   ok(clips.includes(d.studio.idle), d.id + ' studio idle clip exists');

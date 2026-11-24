@@ -339,7 +339,7 @@
       const G = (typeof GFX !== 'undefined' && GFX) ? GFX : {};
       const mobile = !!G.isMobile || /Android|iPhone|iPad/i.test(navigator.userAgent || '');
       const lowTier = G.preset === 'low' || (mobile && G.preset === 'auto');
-      const sc = { pr: Math.min(window.devicePixelRatio || 1, mobile ? 1.5 : 2) * (G.resScale && G.resScale < 1 ? G.resScale : 1), shadow: lowTier ? 1024 : (mobile ? 1536 : 2048), hair: lowTier ? 0.55 : (mobile ? 0.8 : 1), hairTier: (lowTier || mobile) ? 0 : 1 };   // (t1644u) desktop menu hair: collision tier 1 (fitted body / shirt capsules + keep-out boxes) for both pilots
+      const sc = { pr: Math.min(window.devicePixelRatio || 1, mobile ? 1.5 : 2) * (G.resScale && G.resScale < 1 ? G.resScale : 1), shadow: lowTier ? 1024 : (mobile ? 1536 : 2048), hair: lowTier ? 0.55 : (mobile ? 0.8 : 1), hairTier: (lowTier || mobile) ? 1 : 2 };   // (v379, follows the game default approved by Justin 2026-11-24) menu hair collision: phones / tablets / low tier 1, desktop tier 2; was 0 / 1. The frame-budget ladder still drops hair to tier 0 under load
       const q = location.search || ''; const qs = (k, d) => { const m = q.match(new RegExp('[?&]' + k + '=([^&]*)')); return m ? decodeURIComponent(m[1]) : d; };
       if (qs('msq', '')) sc.pr = Math.min(sc.pr, parseFloat(qs('msq', '1')) || 1);
       // (t1644u) DUO: Ariel AND Emma sit on the rock together and both fly out on the launch (?intro=solo or ?menuduo=0 = the single-pilot scene / intro)
@@ -386,6 +386,27 @@
       await sleep(60);
       const boulder = new THREE.Mesh(buildBoulderGeo(THREE), boulderMat); boulder.castShadow = true; boulder.receiveShadow = true; scene.add(boulder);
       const rocks = buildRocks(THREE, rockMat, scene);
+      /* (v379) camera collision for the launch pan: bounding spheres of every rock instance big enough to swallow the lens (+ the boulder as an
+         ellipsoid, + the ground).  Built once here; duoCamera pushes the lens out of them each frame (no per-frame allocation).  Justin saw the pan
+         fly through a rock and show its hollow inside. */
+      const CAMCOL = (() => {
+        const m4 = new THREE.Matrix4(), p = new THREE.Vector3(), q = new THREE.Quaternion(), sc3 = new THREE.Vector3(), out = [];
+        rocks.meshes.slice(0, 3).forEach((im, k) => { const g = rocks.geos[k]; if (!g.boundingSphere) g.computeBoundingSphere(); const gr = g.boundingSphere.radius, gc = g.boundingSphere.center;
+          for (let i = 0; i < im.count; i++) { im.getMatrixAt(i, m4); m4.decompose(p, q, sc3); const r = gr * Math.max(sc3.x, sc3.y, sc3.z); if (r < 0.12 || Math.hypot(p.x, p.z) > 30) continue;
+            p.add(sc3.multiply(gc)); out.push(p.x, p.y, p.z, r); } });
+        return { s: new Float32Array(out), n: out.length / 4 };
+      })();
+      const camAvoid = (c) => {
+        const S = CAMCOL.s, PAD = 0.45;
+        for (let it = 0; it < 2; it++) {
+          for (let i = 0; i < CAMCOL.n; i++) { const o = i * 4, dx = c.x - S[o], dy = c.y - S[o + 1], dz = c.z - S[o + 2], rr = S[o + 3] + PAD, d2 = dx * dx + dy * dy + dz * dz;
+            if (d2 < rr * rr) { const d = Math.sqrt(d2) || 1e-6, k = rr / d; c.x = S[o] + dx * k; c.y = S[o + 1] + dy * k; c.z = S[o + 2] + dz * k; } }
+          // the boulder (ellipsoid, a little inflated) and the ground
+          const ex = (c.x - BOULDER.cx) / (BOULDER.rx * 1.25 + PAD), ey = (c.y - BOULDER.cy) / (BOULDER.ry * 1.25 + PAD), ez = (c.z - BOULDER.cz) / (BOULDER.rz * 1.25 + PAD), e2 = ex * ex + ey * ey + ez * ez;
+          if (e2 < 1) { const k = 1 / (Math.sqrt(e2) || 1e-6); c.x = BOULDER.cx + (c.x - BOULDER.cx) * k; c.y = BOULDER.cy + (c.y - BOULDER.cy) * k; c.z = BOULDER.cz + (c.z - BOULDER.cz) * k; }
+          const gy = groundH(c.x, c.z) + PAD; if (c.y < gy) c.y = gy;
+        }
+      };
       scene.updateMatrixWorld(true);
 
       /* horizon haze behind everything (glows red where the star sky meets the ridges) */
@@ -422,87 +443,62 @@
       const trail = new THREE.Points(tgeo, new THREE.PointsMaterial({ size: 0.16, vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
       trail.frustumCulled = false; trail.visible = false; scene.add(trail);
       let tHead = 0, tAcc = 0, tAlive = 0;
-      // luminous atmospheric jet-stream ribbons (teal / violet / silver / cyan) streaming off the board tail — same idea as in-flight wake, no per-frame allocs
-      const mkJets = () => {
-        const LANES = 4, SEG = 48, SPACING = 0.12;
-        const cols = [0x5ce8ff, 0x9b7dff, 0xeaf4ff, 0x3ad6b8];   // teal / violet / silver / cyan, anchored at the tail
-        const grp = new THREE.Group(); grp.name = 'board-jets';
-        const _o = new THREE.Vector3(), _x = new THREE.Vector3(), _y = new THREE.Vector3(), _z = new THREE.Vector3();
-        const _side = new THREE.Vector3();
-        const lanes = cols.map((c) => {
-          const pos = new Float32Array(SEG * 2 * 3), hist = new Float32Array(SEG * 3);
-          const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-          const idx = []; for (let s = 0; s < SEG - 1; s++) { const a = s * 2, b = a + 1, c2 = (s + 1) * 2, d = c2 + 1; idx.push(a, b, c2, b, d, c2); }
-          geo.setIndex(idx);
-          const mat = new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, fog: false, toneMapped: false });
-          const mesh = new THREE.Mesh(geo, mat); mesh.frustumCulled = false; mesh.renderOrder = 5; grp.add(mesh);
-          return { pos, hist, geo, mat, mesh, filled: 0, acc: 0 };
-        });
-        const offs = [[-0.46, -0.02], [0.46, -0.02], [-0.20, -0.06], [0.20, -0.06]];
-        const tick = (board, speed, dt) => {
-          if (!board) return;
-          board.updateMatrixWorld(true);
-          const e = board.matrixWorld.elements;
-          _x.set(e[0], e[1], e[2]).normalize(); _y.set(e[4], e[5], e[6]).normalize(); _z.set(e[8], e[9], e[10]).normalize();
-          // nose is local -X after qFlip; the tail (rear thrusters) is +X
-          const Lb = board.userData._jetLb || 4, Wb = board.userData._jetWb || 0.8;
-          const half = Lb * 0.50, wide = Wb * 0.38;
-          const on = speed > 0.45;
-          for (let i = 0; i < LANES; i++) {
-            const L = lanes[i], ox = offs[i][0] * wide, oy = offs[i][1];
-            _o.set(e[12], e[13], e[14]).addScaledVector(_x, half).addScaledVector(_y, oy).addScaledVector(_z, ox);
-            if (on) {
-              if (L.filled <= 0) {
-                for (let s = 0; s < SEG; s++) { L.hist[s * 3] = _o.x; L.hist[s * 3 + 1] = _o.y; L.hist[s * 3 + 2] = _o.z; }
-                L.filled = 1; L.acc = 0;
-              } else {
-                const dx = _o.x - L.hist[0], dy = _o.y - L.hist[1], dz = _o.z - L.hist[2];
-                L.acc += Math.sqrt(dx * dx + dy * dy + dz * dz);
-                if (L.acc >= SPACING || L.filled < 2) {
-                  L.acc = 0;
-                  for (let s = SEG - 1; s > 0; s--) { L.hist[s * 3] = L.hist[(s - 1) * 3]; L.hist[s * 3 + 1] = L.hist[(s - 1) * 3 + 1]; L.hist[s * 3 + 2] = L.hist[(s - 1) * 3 + 2]; }
-                  if (L.filled < SEG) L.filled++;
-                }
-                L.hist[0] = _o.x; L.hist[1] = _o.y; L.hist[2] = _o.z;
-              }
+      /* (v379) board jet streams = the GAME's skyboard wake (index.html _makeWake / updateBoardWake), ported 1:1: WAKE_N instanced thin streaks
+         (two crossed quads, bright at the head, fading to the tail) in the board's OWN frame, emitted from the four tail corners (upper pair / lower
+         pair), each living 0.35-0.8 s, length 15-50 % of the board, thickness 0.9 % of its length.  Replaces the v378 4-lane ribbons (too thick / wide).
+         Colours = the game's trail palette when the launch hands it in (o.trail: the four wisp colours), else the game's default glow tones.
+         Everything is allocated here, once per board; tick() writes instance matrices / colours in place (zero per-frame allocation). */
+      const WAKE_N = 110, WAKE_DEF = ['#5ce8ff', '#9b7dff', '#d8ecff', '#3ad6b8'];
+      const mkJets = (board, cols) => {
+        const P = [], Cc = [];
+        const quad = (ax) => { const q = ax === 'y' ? [[-1, -.5, 0], [0, -.5, 0], [0, .5, 0], [-1, -.5, 0], [0, .5, 0], [-1, .5, 0]] : [[-1, 0, -.5], [0, 0, -.5], [0, 0, .5], [-1, 0, -.5], [0, 0, .5], [-1, 0, .5]];
+          q.forEach((v) => { P.push(v[0], v[1], v[2]); const c = v[0] < -0.5 ? 0 : 1; Cc.push(c, c, c); }); };
+        quad('y'); quad('z');
+        const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(Cc, 3));
+        const mat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, toneMapped: false, fog: false });
+        const mesh = new THREE.InstancedMesh(g, mat, WAKE_N); mesh.matrixAutoUpdate = false; mesh.frustumCulled = false; mesh.renderOrder = 2; mesh.name = 'board-jets';
+        // board-local bounds (nose -X, tail +X), measured once
+        const box = new THREE.Box3(), tb = new THREE.Box3(), mm = new THREE.Matrix4(); board.updateMatrixWorld(true); const inv = new THREE.Matrix4().copy(board.matrixWorld).invert();
+        board.traverse((o) => { if (!o.isMesh || !o.geometry) return; if (!o.geometry.boundingBox) o.geometry.computeBoundingBox(); tb.copy(o.geometry.boundingBox).applyMatrix4(mm.multiplyMatrices(inv, o.matrixWorld)); box.union(tb); });
+        if (box.isEmpty()) box.set(new THREE.Vector3(-1.5, -0.1, -0.4), new THREE.Vector3(1.5, 0.1, 0.4));
+        const L = Math.max(0.2, box.max.x - box.min.x), hy = (box.max.y - box.min.y) * 0.5, cy = (box.max.y + box.min.y) * 0.5, hz = (box.max.z - box.min.z) * 0.5, cz = (box.max.z + box.min.z) * 0.5, th = L * 0.009;
+        const life = new Float32Array(WAKE_N), age = new Float32Array(WAKE_N).fill(1), pp = new Float32Array(WAKE_N * 3), vv = new Float32Array(WAKE_N), sl = new Float32Array(WAKE_N);
+        const tint = [], pal = (Array.isArray(cols) && cols.length ? cols : WAKE_DEF);
+        const glow = (hex) => { const c = new THREE.Color(hex), h = {}; c.getHSL(h); return h.s < 0.08 ? c.setHSL(h.h, h.s, Math.min(0.85, Math.max(0.62, h.l))) : c.setHSL(h.h, Math.max(0.6, h.s), Math.min(0.78, Math.max(0.6, h.l))); };
+        for (let i = 0; i < WAKE_N; i++) { let c; try { c = glow(pal[i & 3] || WAKE_DEF[i & 3]); } catch (e) { c = new THREE.Color(WAKE_DEF[i & 3]); } tint.push(c); mesh.setColorAt(i, new THREE.Color(0, 0, 0)); }
+        const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3(), _c = new THREE.Color();
+        let emit = 0;
+        const grp = mesh;   // callers treat .group as the scene node (parented next to the board, never as its child)
+        const tick = (b, speed, dt) => {
+          if (!b) return;
+          const k = Math.max(0, Math.min(1.4, (speed - 0.45) / 6));   // menu board speed (m/s) -> the game's wake intensity (0..1)
+          b.updateMatrixWorld(true); mesh.matrix.copy(b.matrixWorld);
+          if (mesh.parent && mesh.parent.matrixWorld && !mesh.parent.isScene) mesh.matrix.premultiply(mm.copy(mesh.parent.matrixWorld).invert());
+          mesh.matrixWorldNeedsUpdate = true;
+          if (k > 0.02) {
+            emit += dt * WAKE_N * 1.6 * Math.min(1, k);
+            for (let i = 0; i < WAKE_N && emit >= 1; i++) {
+              if (age[i] < life[i]) continue; emit -= 1; const lane = i & 3;
+              pp[i * 3] = box.max.x - L * 0.05;
+              pp[i * 3 + 1] = cy + (lane < 2 ? 0.6 : -0.3) * hy + (Math.random() - 0.5) * hy * 0.5;
+              pp[i * 3 + 2] = cz + ((lane & 1) ? 0.75 : -0.75) * hz + (Math.random() - 0.5) * hz * 0.35;
+              vv[i] = L * (1.1 + Math.random() * 1.4) * (0.7 + 0.5 * Math.min(1, k)); sl[i] = L * (0.15 + Math.random() * 0.35) * (0.5 + 0.6 * Math.min(1, k));
+              life[i] = 0.35 + Math.random() * 0.45; age[i] = 0;
             }
-            const n = L.filled, use = n >= 2 && (on || L.mat.opacity > 0.02);
-            const maxLen = on ? Math.max(5.5, Math.min(11.5, speed * 1.2)) : 8;
-            let nDraw = n, accL = 0;
-            if (use) {
-              for (let s = 1; s < n; s++) {
-                const dx = L.hist[(s - 1) * 3] - L.hist[s * 3], dy = L.hist[(s - 1) * 3 + 1] - L.hist[s * 3 + 1], dz = L.hist[(s - 1) * 3 + 2] - L.hist[s * 3 + 2];
-                accL += Math.sqrt(dx * dx + dy * dy + dz * dz);
-                if (accL >= maxLen) { nDraw = s + 1; break; }
-              }
-            }
-            for (let s = 0; s < SEG; s++) {
-              const i0 = s * 6;
-              if (!use || s >= nDraw) { L.pos[i0] = L.pos[i0 + 3] = _o.x; L.pos[i0 + 1] = L.pos[i0 + 4] = _o.y; L.pos[i0 + 2] = L.pos[i0 + 5] = _o.z; continue; }
-              const px = L.hist[s * 3], py = L.hist[s * 3 + 1], pz = L.hist[s * 3 + 2];
-              let tx, ty, tz;
-              if (s + 1 < n) { tx = px - L.hist[(s + 1) * 3]; ty = py - L.hist[(s + 1) * 3 + 1]; tz = pz - L.hist[(s + 1) * 3 + 2]; }
-              else if (s > 0) { tx = L.hist[(s - 1) * 3] - px; ty = L.hist[(s - 1) * 3 + 1] - py; tz = L.hist[(s - 1) * 3 + 2] - pz; }
-              else { tx = _x.x; ty = _x.y; tz = _x.z; }
-              const tl = Math.hypot(tx, ty, tz) || 1; tx /= tl; ty /= tl; tz /= tl;
-              _side.set(ty * _y.z - tz * _y.y, tz * _y.x - tx * _y.z, tx * _y.y - ty * _y.x);
-              if (_side.lengthSq() < 1e-8) _side.copy(_z);
-              _side.normalize();
-              const fade = nDraw > 1 ? 1 - s / (nDraw - 1) : 1, wx = 0.035 + fade * 0.13;
-              const qy = py - (1 - fade) * 0.06;
-              L.pos[i0] = px + _side.x * wx; L.pos[i0 + 1] = qy + _side.y * wx; L.pos[i0 + 2] = pz + _side.z * wx;
-              L.pos[i0 + 3] = px - _side.x * wx; L.pos[i0 + 4] = qy - _side.y * wx; L.pos[i0 + 5] = pz - _side.z * wx;
-            }
-            L.geo.attributes.position.needsUpdate = true;
-            const target = on && nDraw >= 2 ? Math.min(0.7, 0.38 + speed * 0.02) : 0;
-            L.mat.opacity = L.mat.opacity + (target - L.mat.opacity) * Math.min(1, (dt || 0.05) * 6);
+            emit = Math.min(emit, 4);
           }
-          let any = false; for (let i = 0; i < LANES; i++) if (lanes[i].mat.opacity > 0.02) any = true;
-          grp.visible = any;
-          if (!on && !any) for (let i = 0; i < LANES; i++) { lanes[i].filled = 0; lanes[i].acc = 0; }
+          let any = false;
+          for (let i = 0; i < WAKE_N; i++) {
+            let a = 0;
+            if (age[i] < life[i]) { age[i] += dt; pp[i * 3] += vv[i] * dt; const t = age[i] / life[i]; a = t < 1 ? Math.sin(Math.PI * Math.min(1, t)) * 0.32 * Math.min(1, k + 0.25) : 0; any = true; }
+            _p.set(pp[i * 3], pp[i * 3 + 1], pp[i * 3 + 2]); _s.set(a > 0 ? -sl[i] : 1e-4, th, th); _m.compose(_p, _q, _s); mesh.setMatrixAt(i, _m);
+            _c.copy(tint[i]).multiplyScalar(a); mesh.setColorAt(i, _c);
+          }
+          mesh.visible = any; mesh.instanceMatrix.needsUpdate = true; if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
         };
-        const dispose = () => { try { if (grp.parent) grp.parent.remove(grp); } catch (e) {} lanes.forEach((L) => { try { L.geo.dispose(); L.mat.dispose(); } catch (e) {} }); };
-        return { group: grp, tick, dispose, lanes };
+        const reset = () => { age.fill(1); life.fill(0); emit = 0; };
+        const dispose = () => { try { if (mesh.parent) mesh.parent.remove(mesh); } catch (e) {} try { g.dispose(); mat.dispose(); mesh.dispose && mesh.dispose(); } catch (e) {} };
+        return { group: grp, tick, dispose, reset, mesh };
       };
 
       /* Ariel */
@@ -1019,7 +1015,7 @@
         IN.qFlip = IN.qFlip || new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
         const rb = new THREE.Box3().setFromObject(boulder), gY = surfY(rb.min.x - 3, 0, [ground]);
         IN.yClear = Math.max(rb.max.y, new THREE.Box3().setFromObject(ground).max.y) + 0.05;
-        DU = { t: 0, P: [], boards, share: [shareA, shareB], inBay: false, bay: null, flew: false, warp: null, scene, camLook: new THREE.Vector3().copy(TARGET), camPos: new THREE.Vector3(), mid: new THREE.Vector3(), Hmid: new THREE.Vector3() };
+        DU = { _bb: new THREE.Box3(), rb: rb.clone(), t: 0, P: [], boards, share: [shareA, shareB], inBay: false, bay: null, flew: false, warp: null, scene, camLook: new THREE.Vector3().copy(TARGET), camPos: new THREE.Vector3(), mid: new THREE.Vector3(), Hmid: new THREE.Vector3() };
         const NOSE = new THREE.Vector3(0, 0, -1), rideYaw = Math.atan2(NOSE.x, NOSE.z);
         [A, B].forEach((X, i) => {
           const side = i === 0 ? -1 : 1, b = boards[i], d = {};
@@ -1058,11 +1054,14 @@
           d.tR0 = 3.0 + d.dl * 0.6; d.tR1 = d.tR0 + 1.4; d.tW0 = d.tR1 - 0.15; d.tW1 = d.tW0 + d.walkDur; d.tS0 = d.tW1; d.tL = d.tS0 + d.stepDur;
           // fly-in from behind the camera, past her side of the rock, decelerating into the hover
           const cw = camera.position;
-          // hover just above boarding height (a short step up), not a metre above the rock top
-          const yClear = Math.max(gY + 0.42, (IN.yClear || rb.max.y) + 0.08);
-          d.P0 = new THREE.Vector3(cw.x + side * (Wb * 0.35 + 1.1), yClear + 0.35, Math.min(cw.z * 0.55, 2.2));   // visible beside the lens, at rock height
-          d.P1 = new THREE.Vector3(edge + side * (0.75 + Wb * 0.45 + 0.4), yClear + 0.45, Math.max(0.4, cw.z * 0.25));
-          d.P2 = d.H.clone().add(new THREE.Vector3(0, 0.15, Lb * 0.2)); d.P2.y = Math.max(d.P2.y, yClear); d.P3 = d.H.clone();
+          // (v379) the boards DESCEND out of the sky over the lens and settle at GROUND level beside her side of the rock (deck a short step up), the
+          // original composition.  v378 clamped the whole approach + hover to IN.yClear = the highest point of the entire ground mesh (far hills,
+          // ~10.9 m), so the boards parked 10 m up, out of frame, and the riders 'stepped' all the way up to them.  The floor is now LOCAL:
+          // the ground under the board's footprint (+ the boulder's top only where the footprint overlaps it), see the per-frame lift below.
+          const yClear = gY + 0.12;
+          d.P0 = new THREE.Vector3(cw.x + side * (Wb * 0.35 + 1.1), d.H.y + 6.5, Math.min(cw.z * 0.55, 2.2));   // high over the lens: dropping in from the sky
+          d.P1 = new THREE.Vector3(edge + side * (0.75 + Wb * 0.45 + 0.4), d.H.y + 2.4, Math.max(0.4, cw.z * 0.25));
+          d.P2 = d.H.clone().add(new THREE.Vector3(0, 0.45, Lb * 0.2)); d.P3 = d.H.clone();
           d.yClear = yClear;
           d.seatPos = X.holder.position.clone(); d.seatQ = X.holder.quaternion.clone();
           d.walkQ0 = new THREE.Quaternion(); d.curve.getTangentAt(0.02, _dq.v); d.walkQ0.setFromAxisAngle(_dq.Y, Math.atan2(_dq.v.x, _dq.v.z));
@@ -1074,7 +1073,7 @@
           d.lockM = null; d.lockW = new THREE.Matrix4(); d.lockS = new THREE.Vector3();
           d.side = side; d.wR = 0; d.board = b;
           b.position.copy(d.P0); b.visible = false; scene.add(b);
-          d.jets = mkJets(); d.jets.group.visible = false; scene.add(d.jets.group);
+          d.jets = mkJets(b, o.trail); d.jets.group.visible = false; scene.add(d.jets.group);
           X.du = d; DU.P.push(X);
         });
         DU.tDep = Math.max(A.du.tL, B.du.tL) + 1.3; DU.tBay = DU.tDep + 5.2; DU.tFly = DU.tBay + 5.0;
@@ -1090,7 +1089,13 @@
         return Promise.resolve(pc).catch(() => {}).then(() => {
           if (!DU) return;
           boards.forEach(b => { b.visible = true; }); IN.on = true; clearAllSeatCols(); info('duo launch on (' + Math.round(performance.now() - now0) + ' ms)');
-          const buildBaySoon = () => { if (!DU || DU.bay) return; try { DU.bay = buildBay(Math.max(A.du.Lb, B.du.Lb), Math.max(A.du.Wb, B.du.Wb)); DU.bay.cam.position.set(0, DU.bay.Hy * 0.5, DU.bay.Lz * 0.4); DU.bay.cam.lookAt(0, 1, 0); if (renderer.compileAsync) renderer.compileAsync(DU.bay.scene, DU.bay.cam).catch(() => {}); } catch (e) { info('bay build failed:', e && e.message); } };
+          // (v379) the bay AND the riders are compiled for the bay's lights before the switch: v378 compiled only the empty bay, so on a phone both riders'
+          // materials (+ shadow variants) compiled on their first bay frame, the boards flew in empty and the riders popped on ~3 s later (Justin's recording)
+          const buildBaySoon = () => { if (!DU || DU.bay) return; try { DU.bay = buildBay(Math.max(A.du.Lb, B.du.Lb), Math.max(A.du.Wb, B.du.Wb)); DU.bay.cam.position.set(0, DU.bay.Hy * 0.5, DU.bay.Lz * 0.4); DU.bay.cam.lookAt(0, 1, 0);
+            const D0 = DU, bs = DU.bay.scene, bc = DU.bay.cam, pr = [];
+            if (renderer.compileAsync) { const c = (o, tgt) => { try { pr.push(Promise.resolve(tgt ? renderer.compileAsync(o, bc, tgt) : renderer.compileAsync(o, bc)).catch(() => {})); } catch (e) {} };
+              c(bs); DU.P.forEach((X) => { c(X.holder, bs); c(X.du.board, bs); if (X.du.jets) c(X.du.jets.group, bs); }); }
+            Promise.all(pr).then(() => { if (DU === D0) { DU.bayReady = true; info('cargo bay + riders compiled'); } }); } catch (e) { info('bay build failed:', e && e.message); } };
           if (o.syncBay || window.__MS_DEBUG) buildBaySoon(); else setTimeout(buildBaySoon, 1200);
         });
       };
@@ -1098,7 +1103,9 @@
       const duoPre = (dt) => {
         IN.t += dt; DU.t = IN.t; const t = IN.t;
         // dip-to-black dissolve around the scene switch (peak at tBay)
-        if (DU.warp) { const tb = t - DU.tBay, op = (tb < -0.55 ? 0 : tb < 0 ? smooth(-0.55, 0, tb) : 1 - smooth(0.05, 0.7, tb)); if (op !== DU._wop) { DU.warp.style.opacity = op.toFixed(3); DU._wop = op; } }
+        // (v379) hold at the dark peak only while the bay / riders are still compiling (<= 1.5 s, then go anyway); a short dip (0.35 s in, 0.45 s out)
+        if (!DU.inBay && t >= DU.tBay && !(DU.bay && DU.bayReady) && (DU._wait || 0) < 1.5) { DU._wait = (DU._wait || 0) + dt; DU.tBay += dt; DU.tFly += dt; }
+        if (DU.warp) { const tb = t - DU.tBay, op = (tb < -0.35 ? 0 : tb < 0 ? smooth(-0.35, 0, tb) : 1 - smooth(0.0, 0.45, tb)); if (op !== DU._wop) { DU.warp.style.opacity = op.toFixed(3); DU._wop = op; } }
         if (!DU.inBay && t >= DU.tBay && DU.bay) duoEnterBay();
         if (DU.inBay && DU.bay) {
           DU.doorK = smooth(0, 1.6, t - DU.tBay);
@@ -1123,13 +1130,14 @@
             }
           } else {                 // together toward the horizon: eased speed, a gentle climb, a little weave and bank
             const D = DU.dep[i], ds = Math.min(dt, 0.05), tt = t - DU.tDep - i * 0.3; D.v = 12 * smooth(0, 2.2, tt); D.s += D.v * ds;
-            b.position.set(d.H.x + d.side * 0.55 * Math.sin(tt * 0.9) * smooth(0, 1.5, tt), d.H.y + 0.06 * D.s + 0.25 * smooth(0, 2.4, tt), d.H.z - D.s);
+            b.position.set(d.H.x + d.side * 0.55 * Math.sin(tt * 0.9) * smooth(0, 1.5, tt), d.H.y + 0.34 * D.s * smooth(0.3, 2.0, tt) + 0.25 * smooth(0, 2.4, tt), d.H.z - D.s);   // (v379) lift off from the ground and climb ~19 deg (the camera pans up after them), clear of the rocks / far ridges
             b.quaternion.copy(d.Q).premultiply(_dq.q.setFromAxisAngle(_dq.v.set(1, 0, 0), 0.22 * smooth(0, 1.4, tt))).premultiply(_dq.q2.setFromAxisAngle(_dq.v2.set(0, 0, -1), d.side * 0.12 * Math.cos(tt * 0.9) * smooth(0, 1.5, tt)));
           }
-          if (!DU.inBay && d.yClear) {
-            if (!DU._bb) DU._bb = new THREE.Box3();
-            b.updateMatrixWorld(true); DU._bb.setFromObject(b);
-            const lift = d.yClear - DU._bb.min.y; if (lift > 0) b.position.y += lift;
+          if (!DU.inBay && d.yClear) {   // (v379) local floor: ground under the footprint (analytic groundH, no raycast) + the boulder top where it overlaps
+            const bb = DU._bb; b.updateMatrixWorld(true); bb.setFromObject(b);
+            let need = Math.max(groundH(bb.min.x, bb.min.z), groundH(bb.max.x, bb.max.z), groundH(bb.min.x, bb.max.z), groundH(bb.max.x, bb.min.z), groundH((bb.min.x + bb.max.x) * 0.5, (bb.min.z + bb.max.z) * 0.5)) + 0.12;
+            const R = DU.rb; if (bb.max.x > R.min.x && bb.min.x < R.max.x && bb.max.z > R.min.z && bb.min.z < R.max.z) need = Math.max(need, R.max.y + 0.06);
+            const lift = need - bb.min.y; if (lift > 0) b.position.y += lift;
           }
           b.updateMatrixWorld(true);
           if (d.jets) {
@@ -1189,6 +1197,7 @@
         _dq.v.copy(TARGET); _dq.v.y += 0.15 * k1;
         if (k1 > 0) { DU.mid.set(0, TARGET.y + 0.2, 0); _dq.v.lerp(DU.mid, 0.35 * k1); }
         if (kd > 0) { DU.mid.copy(A.du.board.position).add(B.du.board.position).multiplyScalar(0.5); DU.mid.y += 0.35; _dq.v.lerp(DU.mid, 0.75 * kd); }
+        camAvoid(camera.position);
         DU.camLook.lerp(_dq.v, 0.12); camera.lookAt(DU.camLook);
       };
       // the switch to the cargo bay (at the warp flash's peak): pilots and boards move into the bay scene
@@ -1433,6 +1442,7 @@ IN.D.copy(IN.Dl); b.localToWorld(IN.D); IN.D.y += 0.03;
         if (!IN.on || !IN.duo || !DU) return { ok: false, reason: 'not-duo' };
         MS.paused = true;
         if (tAbs + 1e-4 < IN.t) return { ok: false, t: IN.t, reason: 'backward' };
+        if (DU) DU.bayReady = true;   // seek is synchronous: the compile promise cannot resolve inside it (the hold is a real-time-only guard)
         if (DU && !DU.bay && tAbs >= (DU.tBay || 0) - 0.2) {
           try { DU.bay = buildBay(Math.max(A.du.Lb, B.du.Lb), Math.max(A.du.Wb, B.du.Wb)); DU.bay.cam.position.set(0, DU.bay.Hy * 0.5, DU.bay.Lz * 0.4); DU.bay.cam.lookAt(0, 1, 0); } catch (e) { info('seek bay', e && e.message); }
         }

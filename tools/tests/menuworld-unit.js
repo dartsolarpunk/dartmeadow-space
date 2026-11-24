@@ -50,6 +50,10 @@ const pUp = { x: 0, y: 0.5, z: 0 }; MW.separateBay(pUp, 0.5, 0.5, 0.5, [{ min: [
 ok(pUp.y >= 0.7, 'separateBay pushes a volume up out of a floor collider');
 const pFree = { x: 10, y: 1, z: 10 }; MW.separateBay(pFree, 0.4, 0.2, 0.4, [{ min: [-1, 0, -1], max: [1, 2, 1] }]);
 ok(pFree.x === 10 && pFree.z === 10, 'separateBay leaves a volume that misses the boxes alone');
+const pZero = { x: 0, y: 0.3, z: 0 }; MW.separateBay(pZero, 0.5, 0.5, 0.5, [{ min: new Float32Array(3), max: new Float32Array(3), size: new Float32Array(3) }]);
+ok(pZero.x === 0 && pZero.y === 0.3 && pZero.z === 0, 'separateBay skips a size-0 (never written) collider entry');
+const pPlane = { x: 0, y: 0.2, z: 0 }; MW.separateBay(pPlane, 0.5, 0.5, 0.5, [{ min: [-2, 0, -2], max: [2, 0, 2] }]);
+ok(pPlane.y > 0.2, 'separateBay still separates from a zero-thickness plane collider');
 function _colMesh(name, min, max) { return { name, isMesh: true, userData: { collider: 1 }, _min: min, _max: max, updateWorldMatrix() {} }; }
 const _floor = _colMesh('Collide_Floor', [-2, -0.2, -2], [2, 0.2, 2]), _door = _colMesh('Collide_Door_L', [-4, 0, -1], [-3.5, 4, 1]);
 const _bayRoot = { userData: {}, isMesh: false, name: 'bay', updateMatrixWorld() {}, traverse(fn) { fn(this); fn(_floor); fn(_door); } };

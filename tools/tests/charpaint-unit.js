@@ -72,7 +72,7 @@ ok(P.hexToLinear('#ffffff').every((v) => near(v, 1)) && near(P.hexToLinear('#808
 // ── hair: group -> cluster tints (the registry declares the groups)
 for (const d of C.list()) {
   const names = d.hair.groups.flatMap((g) => g.clusters); ok(new Set(names).size === names.length, d.id + ' hair group clusters do not overlap');
-  const bin = fs.readFileSync(path.join(root, d.hair.url)), jl = bin.readUInt32LE(4), meta = JSON.parse(bin.slice(12, 12 + jl).toString());
+  const bin = fs.readFileSync(path.join(root, d.hair.url.split('?')[0])), jl = bin.readUInt32LE(4), meta = JSON.parse(bin.slice(12, 12 + jl).toString());
   ok(names.every((c) => meta.groups.includes(c)) && meta.groups.every((c) => names.includes(c)), d.id + ' hair groups cover exactly the groom\'s clusters (' + meta.groups.join(',') + ')');
 }
 {

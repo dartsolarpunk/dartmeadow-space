@@ -40,6 +40,12 @@ const CAPS = [ // bone a, bone b, radius (m), back offset (z, for the hair mass)
   ['LeftUpLeg', 'LeftLeg', 0.085, 0], ['RightUpLeg', 'RightLeg', 0.085, 0],
   ['LeftArm', 'LeftForeArm', 0.05, 0], ['RightArm', 'RightForeArm', 0.05, 0],
   ['neck', 'Spine01', 0.075, -0.07],   // hair: the hanging hair mass behind her back
+  // (v379) finer collision coverage, every body piece the garments can touch (was torso, thighs, upper arms only): upper chest, neck, shoulders,
+  // forearms, shins.  Same rule as before: a particle may sit no deeper in a capsule than its skinned rest (minR), so nothing pops at attach.
+  ['Spine', 'neck', 0.105, 0], ['neck', 'Head', 0.055, 0],
+  ['LeftShoulder', 'LeftArm', 0.06, 0], ['RightShoulder', 'RightArm', 0.06, 0],
+  ['LeftForeArm', 'LeftHand', 0.04, 0], ['RightForeArm', 'RightHand', 0.04, 0],
+  ['LeftLeg', 'LeftFoot', 0.06, 0], ['RightLeg', 'RightFoot', 0.06, 0],
 ];
 export function clothWanted() { // true = forced on, false = off, null = automatic (on only with the GPU path)
   try { if (/[?&]cloth=0\b/.test(location.search)) return false; if (/[?&]cloth=1\b/.test(location.search)) return true;
