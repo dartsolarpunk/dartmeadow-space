@@ -3,7 +3,7 @@
 // (Door_* hooks) are excluded: they slide clear on X.  node tools/tests/bay-opening.test.js
 'use strict';
 const fs = require('fs'), path = require('path');
-const ROOT = path.join(__dirname, '..', '..'), b = fs.readFileSync(path.join(ROOT, 'assets/places/menu_cargobay.glb'));
+const ROOT = path.join(__dirname, '..', '..'), b = fs.readFileSync(process.env.BAY_GLB || path.join(ROOT, 'assets/places/menu_cargobay.glb'));
 const jl = b.readUInt32LE(12), J = JSON.parse(b.slice(20, 20 + jl).toString()), BIN = 20 + jl + 8;
 let fails = 0; const ok = (c, m) => { if (!c) fails++; console.log((c ? 'ok   ' : 'FAIL ') + m); };
 const W = 16, H = 10, OPEN_Z = -8, HALF_W = W / 2;
@@ -19,6 +19,13 @@ const acc = (ai) => { const a = J.accessors[ai], bv = J.bufferViews[a.bufferView
 // plus the view out through the open doors: nothing standing above deck height (gantry rails stay below 1 m) 14 m out in front of the opening
 const inV = (p) => Math.abs(p[0]) < V.x && p[1] < V.y1 && ((p[1] > V.y0 && p[2] > V.z0 && p[2] < V.z1) || (p[1] > 1.0 && p[2] <= V.z0 && p[2] > OPEN_Z - 14));
 let bad = 0, tris = 0, inDoor = 0;
+// geometry that must SURVIVE the strip (Watcher NAY @3457206: a shared index accessor was filtered twice and took these with it).  Triangles whose 3
+// vertices sit in each box, counted per box: the wall ribs' webs (RibWeb_*: x = +-(HALF_W - 0.18), 0.12 x 9.8 x 0.22) and the gantry LEDs (GantryLed_*)
+const KEEP = [];
+for (const sx of [-1, 1]) for (let i = 0; i < 9; i++) { const z = OPEN_Z + 0.9 + i * (18 - 1.6) / 8; KEEP.push({ name: 'RibWeb_' + i + '_' + sx + ' (z ' + z.toFixed(2) + ')', lo: [sx * 7.82 - 0.08, 0.08, z - 0.13], hi: [sx * 7.82 + 0.08, 9.92, z + 0.13], n: 0 }); }
+for (const sx of [-1, 1]) for (let i = 0; i < 5; i++) { const z = OPEN_Z - 3 - i * 2.4; KEEP.push({ name: 'GantryLed_' + sx + '_' + i, lo: [sx * 7.4 - 0.11, 0.64, z - 0.11], hi: [sx * 7.4 + 0.11, 0.86, z + 0.11], n: 0 }); }
+const inBox = (q, k) => q[0] >= k.lo[0] && q[0] <= k.hi[0] && q[1] >= k.lo[1] && q[1] <= k.hi[1] && q[2] >= k.lo[2] && q[2] <= k.hi[2];
+const perNode = {};
 J.nodes.forEach((n, i) => {
   if (n.mesh == null) return; const nm = n.name || '';
   let p = i, door = false; while (p != null) { if (/^Door_/.test(J.nodes[p].name || '')) door = true; p = parent[p]; }
@@ -35,11 +42,17 @@ J.nodes.forEach((n, i) => {
       ok(!hit || hi[1] <= V.y0 + 0.01 || lo[1] >= V.y1 - 0.01 || hi[0] <= -V.x + 0.6 || lo[0] >= V.x - 0.6, nm + ' does not intrude into the opening');
       continue;
     }
-    for (let t = 0; t < ia.count; t += 3) { tris++; const A = P(rd(t)), B = P(rd(t + 1)), C = P(rd(t + 2)); if (inV(A) && inV(B) && inV(C)) { if (door) inDoor++; else bad++; } }
+    perNode[nm] = (perNode[nm] || 0) + ia.count / 3;
+    for (let t = 0; t < ia.count; t += 3) { tris++; const A = P(rd(t)), B = P(rd(t + 1)), C = P(rd(t + 2)); if (!door) for (const k of KEEP) if (inBox(A, k) && inBox(B, k) && inBox(C, k)) k.n++; if (inV(A) && inV(B) && inV(C)) { if (door) inDoor++; else bad++; } }
   }
 });
 ok(tris > 1000, 'bay GLB parsed (' + tris + ' triangles)');
 ok(bad === 0, 'no static bay geometry inside the door opening (' + bad + ' triangles; the leaves slide clear: ' + inDoor + ' door triangles)');
+if (process.env.BAY_DUMP) console.log(JSON.stringify({ perNode, keep: KEEP.map((k) => [k.name, k.n]) }));
+for (const k of KEEP) ok(k.n >= 12, k.name + ' survives (' + k.n + ' triangles)');
+// per-node triangle counts: main (v379 GLB) minus exactly the pillar boxes (4 x Pillar/Cap/Base/Led/Mark) and the Mast / MastLit, nothing else
+const EXPECT = { Bay_BayEmitAmber: 420 - 60, Bay_BayEmitCyan: 540 - 48, Bay_BayHull: 540 - 60, Bay_BayTrim: 1148 - 96 };
+if (!process.env.BAY_GLB) for (const [k, v] of Object.entries(EXPECT)) ok(perNode[k] === v, k + ' has ' + perNode[k] + ' triangles (main ' + ({ Bay_BayEmitAmber: 420, Bay_BayEmitCyan: 540, Bay_BayHull: 540, Bay_BayTrim: 1148 })[k] + ', expected ' + v + ')');
 const names = J.nodes.map((n) => n.name || '');
 ok(!names.some((s) => /Pillar|Mullion|Glass|Pane|Mast/i.test(s)), 'no Pillar / Mullion / Glass / Pane / Mast nodes');
 console.log(fails ? fails + ' FAILED' : 'bay-opening OK'); process.exit(fails ? 1 : 0);

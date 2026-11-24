@@ -60,6 +60,42 @@ def main(path):
         off = bin_off + bv.get('byteOffset', 0) + a.get('byteOffset', 0)
         return off, np.frombuffer(bytes(b[off:off + a['count'] * ncomp * np.dtype(dtype).itemsize]), dtype).reshape(-1, ncomp) if ncomp > 1 else None
 
+    # (v380 fix) the exporter dedups identical index data, so one index accessor can serve primitives of different meshes
+    # (acc 11 = Bay_BayEmitCyan CeilStrip + Bay_BayHull Beam).  Filtering it per node would drop the OTHER node's boxes, so
+    # every shared index accessor is first un-shared: each extra user gets its own copy in a new bufferView at the end of BIN.
+    bin_len = struct.unpack_from('<I', b, 20 + jl)[0]
+    assert bytes(b[20 + jl + 4:20 + jl + 8]) == b'BIN\x00'
+    users = {}
+    for m in J['meshes']:
+        for p in m['primitives']:
+            if 'indices' in p:
+                users.setdefault(p['indices'], []).append(p)
+    unshared = 0
+    for ai, ps in users.items():
+        for p in ps[1:]:
+            ia = J['accessors'][ai]
+            bv = J['bufferViews'][ia['bufferView']]
+            isz = {5121: 1, 5123: 2, 5125: 4}[ia['componentType']]
+            src = bin_off + bv.get('byteOffset', 0) + ia.get('byteOffset', 0)
+            raw = bytes(b[src:src + ia['count'] * isz])
+            pad = (4 - bin_len % 4) % 4
+            b[bin_off + bin_len:bin_off + bin_len] = bytes(pad) + raw
+            off = bin_len + pad
+            bin_len = off + len(raw)
+            J['bufferViews'].append({'buffer': 0, 'byteOffset': off, 'byteLength': len(raw), **({'target': bv['target']} if 'target' in bv else {})})
+            na = {k: v for k, v in ia.items() if k not in ('bufferView', 'byteOffset')}
+            na['bufferView'] = len(J['bufferViews']) - 1
+            J['accessors'].append(na)
+            p['indices'] = len(J['accessors']) - 1
+            unshared += 1
+    pad = (4 - bin_len % 4) % 4
+    b[bin_off + bin_len:bin_off + bin_len] = bytes(pad)
+    bin_len += pad
+    struct.pack_into('<I', b, 20 + jl, bin_len)
+    J['buffers'][0]['byteLength'] = bin_len
+    if unshared:
+        print('un-shared', unshared, 'index accessor users')
+
     total = 0
     for i, n in enumerate(J['nodes']):
         nm = n.get('name') or ''
