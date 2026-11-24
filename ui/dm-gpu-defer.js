@@ -94,6 +94,8 @@
           try { const due = []; Q.take(st.frame, due); if (!st.inFlight) destroyList(due); else for (let i = 0; i < due.length; i++) Q.push(due[i], st.frame); } catch (e) { }
           try { return origCB.call(this, desc); } catch (e2) {
             if (!desc.mappedAtCreation) throw e2;
+            const MAPRW = ((root && root.GPUBufferUsage) ? (root.GPUBufferUsage.MAP_READ | root.GPUBufferUsage.MAP_WRITE) : 0x0003);
+            if ((desc.usage | 0) & MAPRW) throw e2;   // (Watcher #278) COPY_DST is invalid with MAP_READ / MAP_WRITE: no shadow fallback for a mappable buffer
             const d2 = Object.assign({}, desc, { mappedAtCreation: false, usage: (desc.usage | 0) | COPY_DST });
             const buf = origCB.call(this, d2), q = this.queue, ranges = [];
             buf.getMappedRange = function (off, size) { off = off | 0; const n = size == null ? desc.size - off : size; const ab = new ArrayBuffer(n); ranges.push(off, ab); return ab; };

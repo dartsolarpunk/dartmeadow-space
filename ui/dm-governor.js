@@ -190,7 +190,9 @@
     if (sharp(gfx)) { let lo = false; try { lo = (gfx.runtimeTier || (typeof root.resolvePreset === 'function' ? root.resolvePreset() : gfx.preset)) === 'low'; } catch (e) { } f = Math.max(f, lo ? SHARP_FLOOR_LOW : SHARP_FLOOR); }
     return f;
   }
-  root._dmTabletFloor = minFloor;   // (t1644) the budget ladder's advisory cap reads the same floor
+  // (Watcher #278) _dmTabletFloor stays TABLET-only: ui/dm-groundlib.js tabPress() reads it to start its terrain shed, which must not run on phones / desktops.
+  // The Native / Sharp floor is DMGov.minFloor (exported below; the opt-in budget enforcer reads it).
+  root._dmTabletFloor = tabletFloor;
   function bcap() { const B = root.DMBudget; return B && B.on && B.resCap ? B.resCap() : 1; }
   function setK(r, d, gfx, basePR, k, now) {
     k = snap(Math.min(1, Math.max(0.3, k))); const cp = bcap(); if (k > cp) k = snap(cp);

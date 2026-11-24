@@ -5177,7 +5177,8 @@ const _PX_MP={ultra:12,high:5.2,custom:5.2,auto:4.2,medium:3.6,low:2.0};
 // (t1644 Track 1, single resolution authority) THE one place the render resolution is decided.  Everything else (DMGov ui/dm-governor.js, the budget ladder's
 // advisory cap, AR) only multiplies a scale k <= 1 on top of this, never below the floor DMGov.minFloor() gives (tablets 0.85, Native / Sharp 0.9 / Low 0.85).
 //  - NATIVE / SHARP (GFX.sharp, default ON): PR #111's rule exactly - min(devicePixelRatio, 2) x resolution scale.  No megapixel cap.  On Low the scale is held at
-//    >= 0.85 (PR #111 Low ran 0.7: kept as 30 fps headroom only when Native / Sharp is OFF).  Custom keeps the player's own scale.
+//    0.85 when it is at its 0.7 default (PR #111 Low ran 0.7: kept as 30 fps headroom only when Native / Sharp is OFF).  Any other scale (Medium's 0.85, the player's own
+//    Resolution Scale pick, Custom) is respected as-is.
 //  - Native / Sharp OFF: the v259 megapixel budget still exists, but on DESKTOP only (a 4K / 5K monitor), never on a phone or tablet (it squeezed a 3K tablet on Low to 2 MP).
 function effectivePixelRatio(){
   let r=Math.min(GFX.dpr,GFX.maxPixelRatio);
@@ -5188,7 +5189,8 @@ function effectivePixelRatio(){
     }catch(e){}
   }
   let rs=GFX.resScale;
-  if(GFX.sharp&&GFX.preset!=='custom'){ let lo=false; try{ lo=resolvePreset()==='low'; }catch(e){} rs=Math.max(rs,lo?0.85:1); }
+  // (Watcher #278) only Low's own 0.7 default is lifted to 0.85; Medium's 0.85 and any scale the player picked in Settings > Resolution Scale are respected as-is
+  if(GFX.sharp&&GFX.preset!=='custom'&&Math.abs(rs-0.7)<1e-6){ let lo=false; try{ lo=resolvePreset()==='low'; }catch(e){} if(lo) rs=0.85; }
   return r*rs;
 }
 window.effectivePixelRatio=effectivePixelRatio;
@@ -6742,10 +6744,11 @@ async function initFlightScene(){
   // The GPU can drop the page (a phone reclaiming memory in the background, a
   // driver reset). Three.js can't bring a lost device back, so save where she
   // is and reload into it rather than sit on a black screen.
-  const _gpuLost=(why)=>{
+  const _gpuLost=(why,reason)=>{
     if(window._dmGpuLost) return; window._dmGpuLost=true;
     console.warn('[gpu] lost:',why);
-    try{ if(GFX.isIOS&&_isRealWebGPU(flightRenderer)&&!/[?&]gl=0\b/.test(location.search)){ localStorage.setItem('dm_forceGL',JSON.stringify({at:Date.now(),b:window.DM_BUILD||'',why:String(why).slice(0,120)})); console.warn('[gpu] iOS: next launch uses the WebGL2 backend (?gl=0 to retry WebGPU)'); } }catch(e){}   // (t1644 Track 1)
+    // (Watcher #278) only a real loss while visible: a normal teardown (reason 'destroyed') or a background-tab reclaim never sets the 3-day WebGL2 fallback
+    try{ if(GFX.isIOS&&reason!=='destroyed'&&!document.hidden&&_isRealWebGPU(flightRenderer)&&!/[?&]gl=0\b/.test(location.search)){ localStorage.setItem('dm_forceGL',JSON.stringify({at:Date.now(),b:window.DM_BUILD||'',why:String(why).slice(0,120)})); console.warn('[gpu] iOS: next launch uses the WebGL2 backend (?gl=0 to retry WebGPU)'); } }catch(e){}   // (t1644 Track 1)
     try{ window.dmBreadcrumb&&window.dmBreadcrumb('gpulost',why); }catch(e){}
     try{ localStorage.setItem('dm_lastGpuLost',JSON.stringify({at:new Date().toISOString(),why:String(why).slice(0,200),screen:STATE&&STATE.screen,aboard:!!((typeof SHIP_WALK!=='undefined'&&SHIP_WALK.active)||(window.BTI&&(BTI.cur||BTI._depth>0))),build:window._dmSwCache||null})); }catch(e){}   // (v104) the next session's perf report carries why the last one died
     // (webkit-polish) silent save on every in-world screen (flight / surface / atmo), not only flight; and a reload-loop guard:
@@ -6760,7 +6763,7 @@ async function initFlightScene(){
     if(document.hidden){ const f=()=>{ if(!document.hidden){ document.removeEventListener('visibilitychange',f); setTimeout(_go,300); } }; document.addEventListener('visibilitychange',f); }
     else setTimeout(_go,1200);
   };
-  try{ flightRenderer.onDeviceLost=(info)=>_gpuLost(info&&info.message||'device lost'); }catch(e){}
+  try{ flightRenderer.onDeviceLost=(info)=>_gpuLost(info&&info.message||'device lost',info&&info.reason); }catch(e){}
   try{ cv.addEventListener('webglcontextlost',ev=>{ ev.preventDefault(); _gpuLost('webgl context lost'); },false); }catch(e){}
   flightRenderer.setPixelRatio(effectivePixelRatio());
   flightRenderer.setClearColor(0x000000,1); // pure black vacuum
@@ -8863,7 +8866,7 @@ async function buildSolarSystem(){
     // y fixed). Without this rotation the ring rendered perpendicular to the
     // actual path the planet travels. Rotate -90° about X so the ring lies flat in XZ.
     // Tube scales with oR so Neptune ring stays readable on tablet at AU_UNITS
-    // (t1644 Track 1) a crisp constant-width (1 device pixel) LINE LOOP in world XZ instead of the 3-sided torus tube (tens of thousands of AU-scale segments with a
+    // (t1644 Track 1) a crisp constant-width (1 device pixel) closed LINE in world XZ instead of the 3-sided torus tube (tens of thousands of AU-scale segments with a
     // sub-pixel tube faceted / shimmered / broke up far out, e.g. past the Milky Way).  No rotation needed: the points are already in XZ.
     const orbit=_orbitRingLine(p.oR,0x223344,0.3);
     flightScene.add(orbit);if(typeof _trackSystemExtra==='function')_trackSystemExtra(orbit);
@@ -13468,13 +13471,13 @@ function updateFollowCam(dt){
 
 // ── Worlds: arm-cell → seeded system enter (no dual flat-planet stacks) ──
 let _flightSystemExtras=[];
-// (t1644 Track 1) orbit overlay: one closed line in world XZ, constant 1 device-pixel width at any distance (no tube to tessellate), 512 segments
+// (t1644 Track 1) orbit overlay: one closed THREE.Line strip in world XZ, constant 1 device-pixel width at any distance (no tube to tessellate), 512 segments
 // (a 0.012 deg chord: smooth at any zoom a ring can fill the screen), no depth write so it never z-fights the planets it passes.
 function _orbitRingLine(r,color,opacity){
-  const N=512, pos=new Float32Array(N*3);
-  for(let i=0;i<N;i++){ const a=i/N*Math.PI*2; pos[i*3]=Math.cos(a)*r; pos[i*3+1]=0; pos[i*3+2]=Math.sin(a)*r; }
+  const N=512, pos=new Float32Array((N+1)*3);   // N+1 points: point N repeats point 0 and closes the ring
+  for(let i=0;i<=N;i++){ const a=i/N*Math.PI*2; pos[i*3]=Math.cos(a)*r; pos[i*3+1]=0; pos[i*3+2]=Math.sin(a)*r; }
   const g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.BufferAttribute(pos,3)); g.computeBoundingSphere();
-  const l=new THREE.LineLoop(g,new THREE.LineBasicMaterial({color,transparent:true,opacity,depthWrite:false}));
+  const l=new THREE.Line(g,new THREE.LineBasicMaterial({color,transparent:true,opacity,depthWrite:false}));   // THREE.Line, not LineLoop: three r185's WebGPURenderer has no LineLoop (console.error every frame, never drawn)
   l.name='JOTS_OrbitRing'; l.userData.orbitRing=true; l.raycast=()=>{}; l.renderOrder=-1; return l;
 }
 function _trackSystemExtra(obj){
@@ -15551,7 +15554,7 @@ async function _rebuildFlightForSystem(system){
       ringGroup.isPlanetExtra=true;
       group.add(ringGroup);
     }
-    const orbit=_orbitRingLine(oR,0x223344,0.28);   // (t1644 Track 1) crisp line loop (see _orbitRingLine)
+    const orbit=_orbitRingLine(oR,0x223344,0.28);   // (t1644 Track 1) crisp closed line (see _orbitRingLine)
     flightScene.add(orbit);_trackSystemExtra(orbit);
 
     group.position.set(Math.cos(ang)*oR,0,Math.sin(ang)*oR);
