@@ -183,7 +183,7 @@ if(location.search.indexOf('debug')!==-1){
   // PWA manifest: /manifest.webmanifest (linked in <head>; dark launch screen on Android)
 })();</script>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-<script>/* (v353) build tag: bump together with CACHE_NAME in sw.js (tools/tests/build-tag.js).  Persisted quality records (ui/dm-budget.js, dm-governor.js) are dropped when it changes. */window.DM_BUILD='v374';try{console.log('[DM build] '+window.DM_BUILD);}catch(e){}</script>
+<script>/* (v353) build tag: bump together with CACHE_NAME in sw.js (tools/tests/build-tag.js).  Persisted quality records (ui/dm-budget.js, dm-governor.js) are dropped when it changes. */window.DM_BUILD='v375';try{console.log('[DM build] '+window.DM_BUILD);}catch(e){}</script>
 <script src="ui/dm-time.js?v=97"></script>
 <script src="ui/dm-earth.js?v=292"></script>
 <script src="ui/dm-earth-paint.js?v=290"></script>
@@ -1089,13 +1089,13 @@ body[data-dm-screen]:not([data-dm-screen="flight"]) #dm-flash,body[data-dm-scree
 <script src="ui/dm-necklace-sim.js?v=357" defer></script>
 <script src="ui/dm-charm.js?v=365" defer></script>
 <script src="ui/dm-flash.js?v=365" defer></script>
-<script src="ui/dm-menuscene.js?v=343" defer></script>
+<script src="ui/dm-menuscene.js?v=375" defer></script>
 <script src="ui/dm-menuworld.js?v=368" defer></script>   <!-- 3D world behind the character select + studio (hangar bay / observation deck, planet, stars); ?menuscene=off|low -->
-<script src="ui/dm-chars.js?v=367" defer></script>   <!-- character registry + profile (selection / colours / logos); pure data -->
+<script src="ui/dm-chars.js?v=375" defer></script>   <!-- character registry + profile (selection / colours / logos); pure data -->
 <script src="ui/dm-charpaint.js?v=370" defer></script>   <!-- applies the player's colours / logos to a loaded character (studio + game) -->
 <script src="ui/dm-charlook.js?v=370" defer></script>   <!-- the character look: smooth normals, soft sky / rim / matcap light + skin wrap on every pilot, game + studio; ?charlook=off|low|high  ?charenv=analytic|matcap|both -->
 <script src="ui/dm-decalflow.js?v=366" defer></script>   <!-- staged logo flow (pending / apply / reset / delete) + placement pad geometry; pure logic -->
-<script src="ui/dm-charselect.js?v=370" defer></script>   <!-- character select cards + one-canvas studio -->
+<script src="ui/dm-charselect.js?v=375" defer></script>   <!-- character select cards + one-canvas studio -->
 <script src="ui/dm-starbubble.js?v=373" defer></script>
 <script src="ui/dm-hazard.js?v=372" defer></script>   <!-- hazard registry + exposure clock + protection LED / crown glow (the protective orb is gone) -->
 <script src="ui/dm-hazardhud.js?v=357" defer></script>   <!-- the hazard band / type / safe-time HUD (only while a hazard is sensed) -->
@@ -3274,6 +3274,23 @@ function _introTick2(){
   const nx=window.DMLaunch.introNext({phase:'wait',worldReady:INTRO.stable>=10,stalled,over});
   if(nx==='dissolve'){ clearInterval(INTRO.iv); try{ if(_TR.rec) _TR.rec.why=INTRO.stable>=10?'ready':stalled?'stall':'ceiling'; }catch(e){} _introDissolve(900); }
 }
+// (t1644u) duo launch: both pilots' boards fly in. Each pilot's last-used board is remembered here (per pilot, on every launch); the companion
+// rides hers, or the factory default board when she has never launched. STATE.boardConfig is swapped only for the one synchronous build, then restored.
+const _BOARD_FACTORY=(()=>{ try{ return JSON.parse(JSON.stringify(STATE.boardConfig)); }catch(e){ return null; } })();
+const _PILOT_BOARDS_KEY='dm_pilot_boards_v1';
+function _introPilotBoards(){ try{ const o=JSON.parse(localStorage.getItem(_PILOT_BOARDS_KEY)||'{}'); return (o&&typeof o==='object')?o:{}; }catch(e){ return {}; } }
+function _introRememberBoard(){ try{ const id=(CHAR&&CHAR.charId)||'ariel', o=_introPilotBoards(); o[id]=JSON.parse(JSON.stringify(STATE.boardConfig)); localStorage.setItem(_PILOT_BOARDS_KEY,JSON.stringify(o)); }catch(e){} }
+function _introCompanionBoard(){
+  if(/[?&](intro=solo|menuduo=0)/.test(location.search||'')) return null;
+  const me=(CHAR&&CHAR.charId)||'ariel', other=me==='emma'?'ariel':'emma', cfg=_introPilotBoards()[other]||_BOARD_FACTORY;
+  if(!cfg) return null;
+  const keep=STATE.boardConfig; let mesh=null;
+  try{ STATE.boardConfig=Object.assign(JSON.parse(JSON.stringify(keep)),JSON.parse(JSON.stringify(cfg))); mesh=buildBoardMesh(); }
+  catch(e){ console.warn('[intro] companion board',e); mesh=null; }
+  finally{ STATE.boardConfig=keep; }
+  if(!mesh) return null;
+  const t=cfg.template; return {mesh,shared:!!(t&&t!=='R'&&t!=='procedural'&&!(mesh.userData&&mesh.userData.procFallback))};   // a procedural stand-in (template still loading) owns its textures
+}
 // The fly-out starts here, on the press (or at the end of the bounded fallback hold). Nothing in this function waits for the world.
 function _introPlay(why){
   try{ _trPhase('play',why||''); }catch(e){}
@@ -3290,14 +3307,15 @@ function _introPlay(why){
     if(rec&&rec.mesh&&rec.sig===boardStyleSig()&&(rec.state==='warm'||rec.state==='built')) b=rec.mesh;
     else if(rec){ try{ M.introReset(); }catch(e){} }
     INTRO.board=b||buildBoardMesh();
-    p=M.introStart({ratio:BOARD_REAL_LEN_FT/CHAR_REAL_HEIGHT_FT,scale:CHAR.scaleForBoard>0?1/CHAR.scaleForBoard:0,walk:clip('walk'),board:INTRO.board,sharedTex:!!(_t&&_t!=='R'&&_t!=='procedural'),jump:clip(_boardTransition().clip),ride:clip('skyboard'),onFlyOff:()=>_introFlown('flown')});
+    _introRememberBoard(); const _b2=_introCompanionBoard();
+    p=M.introStart({board2:_b2?_b2.mesh:null,sharedTex2:_b2?_b2.shared:false,pilot:(CHAR&&CHAR.charId)||'ariel',ratio:BOARD_REAL_LEN_FT/CHAR_REAL_HEIGHT_FT,scale:CHAR.scaleForBoard>0?1/CHAR.scaleForBoard:0,walk:clip('walk'),board:INTRO.board,sharedTex:!!(_t&&_t!=='R'&&_t!=='procedural'),jump:clip(_boardTransition().clip),ride:clip('skyboard'),onFlyOff:()=>_introFlown('flown')});
   }catch(e){ console.warn('[intro]',e); }
   if(!p){ _introFlown('nostart'); return; }
   try{ const r=_TR.rec; Promise.resolve(p).then(()=>{ if(r&&_TR.rec===r&&r.flyOnMs==null) r.flyOnMs=Math.round(performance.now()-r.t0); }); }catch(e){}
-  // safety: end the fly-out if it stalls (no progress for ~10 s) or runs past 30 s of intro time
-  let _lt=-1,_sn=0; const _sf=setInterval(()=>{ const c=M._ctx&&M._ctx.intro, t=c?c.t:0;
+  // safety: end the fly-out if it stalls (no progress for ~10 s) or runs past 30 s of intro time (45 s for the duo launch + cargo-bay arrival)
+  let _lt=-1,_sn=0; const _sf=setInterval(()=>{ const c=M._ctx&&M._ctx.intro, t=c?c.t:0, _lim=(c&&c.duo)?45:30;
     if(INTRO.phase!=='play'){ clearInterval(_sf); return; }
-    _sn=(t===_lt)?_sn+1:0; if(_sn>=5||t>30){ clearInterval(_sf); _introFlown('safety'); } _lt=t; },2000);
+    _sn=(t===_lt)?_sn+1:0; if(_sn>=5||t>_lim){ clearInterval(_sf); _introFlown('safety'); } _lt=t; },2000);
 }
 // The fly-out is over (the board left, or it was skipped / failed): NOW the destination world may be built (gate opens), and the loader shows over the
 // last menu frame until the world is stable. Cross-fade happens in _introDissolve.
@@ -22571,7 +22589,7 @@ async function loadCharacterAssets(){
   CHAR.clips.idle = walkClip ? _staticPoseClip(walkClip, 0, 'idle_held_pose') : null;
   // Ride stance: hand-authored pose solved on her rig (one-key clip, so the mixer
   // crossfades it like any state); the balance sway is layered in _charPosePost.
-  try{ CHAR.clips.skyboard = _boardStanceClip(CHAR.clips.idle); }catch(e){ console.warn('[stance] build failed',e); CHAR.clips.skyboard=null; }
+  try{ CHAR.clips.skyboard = _boardStanceClip(CHAR.clips.idle, (_cdef&&_cdef.studio&&_cdef.studio.idle)?findClip(_cdef.studio.idle):null); }catch(e){ console.warn('[stance] build failed',e); CHAR.clips.skyboard=null; }
 
   Object.keys(CHAR.clips).forEach(name=>{
     const clip = CHAR.clips[name];
@@ -22639,11 +22657,11 @@ async function loadCharacterAssets(){
   // Strand count by graphics preset — ONLY on Auto (an explicit Low/Medium/High/Ultra pick keeps all
   // 5,665 strands). Guides (the physics) always simulate; this only thins the drawn children.
   const _hairUrl=(_cdef&&_cdef.hair&&_cdef.hair.url)||(CHAR_ASSET_BASE+'ariel_hair_strands.bin'), _hairCfgUrl=_cdef&&_cdef.hair?_cdef.hair.configUrl:null;
-  window.DM_HAIR_MODULE=window.DM_HAIR_MODULE||new URL('./hair_strands.js?v=365',document.baseURI).href;   // one URL for the game and the studio (ui/dm-charselect.js): a single module instance
+  window.DM_HAIR_MODULE=window.DM_HAIR_MODULE||new URL('./hair_strands.js?v=375',document.baseURI).href;   // one URL for the game and the studio (ui/dm-charselect.js): a single module instance
   function _hairStrandFraction(){ try{ const G=window.GFX; if(!G||G.preset!=='auto') return 1; const r=(typeof resolvePreset==='function')?resolvePreset():'medium'; return r==='low'?0.5:(r==='medium'||r==='balanced')?0.75:1; }catch(e){ return 1; } }
   // Real-time strand hair (hair_strands.js + characterassests/ariel_hair_strands.bin). Fails soft: if the
   // module/data is missing or the loaded character is a different file, she simply has no strand hair.
-  try{ (async()=>{ const m=await import(window.DM_HAIR_MODULE); let _hc; if(_hairCfgUrl){ const r=await fetch(_hairCfgUrl); if(r.ok) _hc=await r.json(); } if(_myGen!==_charGen) return null; return m.attachHairStrands(CHAR,THREE,{isCurrent:()=>_myGen===_charGen,url:_hairUrl,config:_hc,character:!!_hc,getStrandFraction:_hairStrandFraction,getCollisionTier:()=>{ try{ const r=(typeof resolvePreset==='function')?resolvePreset():'medium'; return r==='low'?0:(r==='high'||r==='ultra')?2:1; }catch(e){ return 0; } },getCalm:()=>{ try{ return _hairCalm(); }catch(e){ return false; } },getFrameVel:o=>{ try{ return _hairFrameVel(o); }catch(e){ return o.set(0,0,0); } },getIntensity:()=>{ try{ return (window.DMCGroup&&surfaceActive)?Math.max(1,DMCGroup.intensity):1; }catch(e){ return 1; } },getGravityScale:()=>{try{if(surfaceActive)return 1;if(CHAR.mounted)return atmoActive?0.3:0.08;}catch(e){}return 1;}}); })().then(H=>{ try{ if(H&&window.DMCharPaint&&_cd&&!DMChars.isDefaultLook(_cd.look)) DMCharPaint.applyHair(H,_cdef,_cd.look); }catch(e){ console.warn('[char] hair look',e); } }).catch(e=>console.info('[hair] strands not attached:',e&&e.message)); }catch(e){}
+  try{ (async()=>{ const m=await import(window.DM_HAIR_MODULE); let _hc; if(_hairCfgUrl){ const r=await fetch(_hairCfgUrl); if(r.ok) _hc=await r.json(); } if(_myGen!==_charGen) return null; return m.attachHairStrands(CHAR,THREE,{isCurrent:()=>_myGen===_charGen,url:_hairUrl,config:_hc,character:!!_hc,getStrandFraction:_hairStrandFraction,segments:()=>{ /* (t1644u) finer strands (20 pts, resampled at load) on High / Ultra; ?hairseg=N overrides (0 = file resolution) */ try{ const q=/[?&]hairseg=(\d+)/.exec(location.search); if(q) return +q[1]; const r=(typeof resolvePreset==='function')?resolvePreset():'medium'; return (r==='high'||r==='ultra')?20:0; }catch(e){ return 0; } },getCollisionTier:()=>{ try{ const r=(typeof resolvePreset==='function')?resolvePreset():'medium'; return r==='low'?0:(r==='high'||r==='ultra')?2:1; }catch(e){ return 0; } },getCalm:()=>{ try{ return _hairCalm(); }catch(e){ return false; } },getFrameVel:o=>{ try{ return _hairFrameVel(o); }catch(e){ return o.set(0,0,0); } },getIntensity:()=>{ try{ return (window.DMCGroup&&surfaceActive)?Math.max(1,DMCGroup.intensity):1; }catch(e){ return 1; } },getGravityScale:()=>{try{if(surfaceActive)return 1;if(CHAR.mounted)return atmoActive?0.3:0.08;}catch(e){}return 1;}}); })().then(H=>{ try{ if(H&&window.DMCharPaint&&_cd&&!DMChars.isDefaultLook(_cd.look)) DMCharPaint.applyHair(H,_cdef,_cd.look); }catch(e){ console.warn('[char] hair look',e); } }).catch(e=>console.info('[hair] strands not attached:',e&&e.message)); }catch(e){}
   // (v206) Ariel's garment cloth (ui/dm-ariel-cloth.js, finished from draft #213). Automatic = ON only with the WebGPU compute path;
   // ?cloth=1 forces the CPU path, ?cloth=0 / dm_cloth_v1='0' turns it off. Post-skin offsets on her garments only (rig, stance, skyboard pose and
   // the hair solver untouched). Collision = the character group's patch (DMCGroup ground grid) + body/hair capsules + the skyboard; substeps scale
@@ -22846,6 +22864,12 @@ const BOARD_STANCE = window.BOARD_STANCE = window.BOARD_STANCE || {
 // Legacy name still read by the Ariel Rig Viewer's kernel (radicaldeepscale.com/ariel-rig-viewer.html
 // returns it from the blocks it runs); the stance plays no clip, so it is a plain 1.
 const SKYBOARD_ANIM_SPEED = 1;
+// (t1644u) per-pilot stance: DMChars registry `stance` overrides (Emma: her own hip / ankle heights, idle hands) layered over BOARD_STANCE.
+// _bsP() refreshes one preallocated object from BOARD_STANCE (still live-tunable) + the loaded pilot's overrides; no per-frame allocation. Keys only a
+// pilot's overrides add (Emma's handsFrom) are dropped first, so an Emma -> Ariel swap never carries them over.
+const _bsEff={};
+function _bsOv(){ try{ const d=window.DMChars&&CHAR.charId&&DMChars.get(CHAR.charId); return (d&&d.stance)||null; }catch(e){ return null; } }
+function _bsP(){ const o=_bsOv(); for(const k in _bsEff) if(!(k in BOARD_STANCE)) delete _bsEff[k]; for(const k in BOARD_STANCE) _bsEff[k]=BOARD_STANCE[k]; if(o) for(const k in o) _bsEff[k]=o[k]; return _bsEff; }
 const _BS_SOLVE=['Hips','Spine02','Spine01','Spine','neck','Head','LeftArm','LeftForeArm','RightArm','RightForeArm','LeftUpLeg','LeftLeg','LeftFoot','RightUpLeg','RightLeg','RightFoot'];
 let _bs=null;
 function _bsInit(){
@@ -22898,7 +22922,7 @@ function _bsLimb(Lb,du,dl,w,pro){
 }
 // small residual forearm/wrist twist (deg → rad, clamped to ±60: the palm comes from the shoulder roll) and its wrist share
 function _bsPro(d){ return Math.max(-60,Math.min(60,d||0))*Math.PI/180; }
-function _bsWS(){ return Math.max(0,Math.min(0.8,BOARD_STANCE.wristShare||0)); }
+function _bsWS(){ return Math.max(0,Math.min(0.8,_bsP().wristShare||0)); }
 // root-space rotation = Ry(yaw)·Rz(roll)·Rx(pitch)·rest   (degrees)
 function _bsRot(name,yaw,pitch,roll,w){
   const S=_bs, b=CHAR.bones[name], R=CHAR.restPose; if(!b||!R[name]) return;
@@ -22912,7 +22936,8 @@ function _bsRot(name,yaw,pitch,roll,w){
 function _bsDir(out,a,yaw,roll){ out.set(a[0],a[1],a[2]); if(roll) out.applyAxisAngle(_BS_Z,roll*Math.PI/180); return out.applyAxisAngle(_BS_Y,yaw*Math.PI/180).normalize(); }
 let _BS_Y=null,_BS_Z=null,_BS_FWD=[0,0,1];
 function _bsReady(){
-  if(_bs&&_bs.ok) return true;
+  if(_bs&&_bs.ok&&_bs.root===CHAR.root) return true;
+  if(_bs) _bs.ok=false;   // (t1644u) a different pilot was loaded: her limbs / rest pose must be measured again (old refs pointed at the dropped rig)
   const b=CHAR.bones, R=CHAR.restPose;
   if(!R||!_BS_SOLVE.every(n=>b[n]&&R[n])||!b.LeftHand||!b.RightHand) return false;
   _bsInit(); _BS_Y=new THREE.Vector3(0,1,0); _BS_Z=new THREE.Vector3(0,0,1);
@@ -22921,7 +22946,7 @@ function _bsReady(){
   _bs.limb.armR=_bsLimbRest(b.RightArm,b.RightForeArm,b.RightHand);
   _bs.limb.legL=_bsLimbRest(b.LeftUpLeg,b.LeftLeg,b.LeftFoot,lat);
   _bs.limb.legR=_bsLimbRest(b.RightUpLeg,b.RightLeg,b.RightFoot,lat);
-  _bs.ok=true; return true;
+  _bs.ok=true; _bs.root=CHAR.root; return true;
 }
 // two-bone IK: hip joint -> ankle target T, knee toward pole; returns via _bsLimb
 function _bsLeg(Lb,T,pole,w){
@@ -22940,7 +22965,7 @@ function _bsFoot(name,yaw,w){ _bsRot(name,yaw,0,0,w); }
 // the whole stance; sw = sway signals [s1..s4] (zeros = the still pose)
 function _boardStancePose(s1,s2,s3,s4,w){
   if(!_bsReady()) return false;
-  const P=BOARD_STANCE, W=P.sway, b=CHAR.bones, S=_bs;
+  const P=_bsP(), W=P.sway, b=CHAR.bones, S=_bs;
   const roll=W.roll*s1, yaw=W.yaw*s4;
   // hips: low, between the feet, weight drifting front/back and toe/heel
   const hp=S.v[3].set(P.hips[0]+W.side*s2, P.hips[1]-W.bob*(0.5+0.5*s3), P.hips[2]+W.shift*s1);
@@ -22973,7 +22998,7 @@ function _boardStancePose(s1,s2,s3,s4,w){
 // per-frame sway, called from the mixer post step with the stance blend weight
 function _boardStanceFrame(dt,w){
   if(!BOARD_STANCE.on||!_bsReady()) return;
-  const S=_bs, Pd=BOARD_STANCE.sway.periods, T2=Math.PI*2;
+  const S=_bs, Pd=_bsP().sway.periods, T2=Math.PI*2;
   S.t+=Math.min(dt||0,0.1);
   const t=S.t;
   _boardStancePose(Math.sin(T2*t/Pd[0]),Math.sin(T2*t/Pd[1]+1.3),Math.sin(T2*t/Pd[2]+0.4),Math.sin(T2*t/Pd[3]+2.1),w);
@@ -22981,7 +23006,7 @@ function _boardStanceFrame(dt,w){
 // one-key clip of the still pose; non-solved bones (fingers, toes, face, hair) come from `template` (idle)
 // relaxed-hand finger rotations (locals), solved from the rest hand; call with the bones at rest
 function _bsFingerRelax(){
-  const b=CHAR.bones, R=CHAR.restPose, P=BOARD_STANCE, out={}, cl=(v,a)=>Math.max(-a,Math.min(a,v||0))*Math.PI/180;
+  const b=CHAR.bones, R=CHAR.restPose, P=_bsP(), out={}, cl=(v,a)=>Math.max(-a,Math.min(a,v||0))*Math.PI/180;
   const rp=n=>_bsRP(b[n],new THREE.Vector3()), q=new THREE.Quaternion(), r=new THREE.Quaternion(), ax=new THREE.Vector3();
   for(const side of ['Left','Right']){
     const H=side+'Hand', n=f=>H+f; if(!b[H]||!b[n('Middle1')]||!b[n('Index1')]||!b[n('Pinky1')]) continue;
@@ -22999,33 +23024,47 @@ function _bsFingerRelax(){
   }
   return out;
 }
-function _boardStanceClip(template){
+function _boardStanceClip(template,handTemplate){
   if(!_bsReady()) return null;
+  const P=_bsP(), useIdleHands=P.handsFrom==='idle'&&!!handTemplate;
   const b=CHAR.bones, saved={};
   Object.keys(b).forEach(n=>{ saved[n]=[b[n].position.clone(),b[n].quaternion.clone(),b[n].scale.clone()]; });
   const R=CHAR.restPose;
   Object.keys(b).forEach(n=>{ if(R[n]){ b[n].position.copy(R[n].p); b[n].quaternion.copy(R[n].q); b[n].scale.copy(R[n].s); } });
-  const tracks=[], seen={}, relax=_bsFingerRelax();
+  const tracks=[], seen={}, relax=useIdleHands?{}:_bsFingerRelax();
+  const _HANDRX=/^(Left|Right)Hand(Thumb|Index|Middle|Ring|Pinky)?\d?$/;
   if(template) template.tracks.forEach(tr=>{
     const dot=tr.name.lastIndexOf('.'), bn=tr.name.slice(0,dot), prop=tr.name.slice(dot+1), bone=b[bn];
     if(!bone||_BS_SOLVE.includes(bn)) return;
     const v=tr.createInterpolant().evaluate(0);
     if(prop==='quaternion'){ bone.quaternion.fromArray(v);
       // fingers loosely open and spread: mostly the rest (open) hand, a little of the idle curl
-      if(relax[bn]) bone.quaternion.copy(relax[bn]);
-      else if(/Hand(Index|Middle|Ring|Pinky)/.test(bn)&&R[bn]) bone.quaternion.slerp(R[bn].q,BOARD_STANCE.fingerOpen);
+      if(useIdleHands){ /* hands come from the idle clip below */ }
+      else if(relax[bn]) bone.quaternion.copy(relax[bn]);
+      else if(/Hand(Index|Middle|Ring|Pinky)/.test(bn)&&R[bn]) bone.quaternion.slerp(R[bn].q,P.fingerOpen);
       // wrists neutral (the idle clip extends them, which read as a tray hold under the pronated forearms)
-      if(/^(Left|Right)Hand$/.test(bn)&&R[bn]) bone.quaternion.slerp(R[bn].q,Math.max(0,Math.min(1,BOARD_STANCE.wristRelax||0))); }
+      if(!useIdleHands&&/^(Left|Right)Hand$/.test(bn)&&R[bn]) bone.quaternion.slerp(R[bn].q,Math.max(0,Math.min(1,P.wristRelax||0))); }
     else if(prop==='position') bone.position.fromArray(v); else if(prop==='scale') bone.scale.fromArray(v);
+  });
+  // (t1644u) idle hands: wrist + every finger joint take the idle clip's first-frame locals (the same constant pose her walk / run carry), softened toward
+  // the rest wrist by wristRelax, so the ride stance never re-poses her hands
+  const handTracks=[];
+  if(useIdleHands) handTemplate.tracks.forEach(tr=>{
+    const dot=tr.name.lastIndexOf('.'), bn=tr.name.slice(0,dot), prop=tr.name.slice(dot+1), bone=b[bn];
+    if(!bone||prop!=='quaternion'||!_HANDRX.test(bn)) return;
+    bone.quaternion.fromArray(tr.createInterpolant().evaluate(0));
+    if(/^(Left|Right)Hand$/.test(bn)&&R[bn]) bone.quaternion.slerp(R[bn].q,Math.max(0,Math.min(1,P.wristRelax||0)));
+    handTracks.push(bn);
   });
   _boardStancePose(0,0,0,0,1);
   // the wrist share of the pronation, about the forearm's long axis (hands aren't re-solved per frame, so it lives in the clip)
-  [['Left',_bsPro(BOARD_STANCE.proL)],['Right',-_bsPro(BOARD_STANCE.proR)]].forEach(([sd,a])=>{ const h=b[sd+'Hand']; if(h&&a) h.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(h.position.clone().normalize(),a*_bsWS())); });
+  [['Left',_bsPro(P.proL)],['Right',-_bsPro(P.proR)]].forEach(([sd,a])=>{ const h=b[sd+'Hand']; if(h&&a) h.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(h.position.clone().normalize(),a*_bsWS())); });
   const add=(n,prop)=>{ const bone=b[n]; const k=n+'.'+prop; if(seen[k]) return; seen[k]=1;
     if(prop==='quaternion') tracks.push(new THREE.QuaternionKeyframeTrack(k,[0],bone.quaternion.toArray()));
     else tracks.push(new THREE.VectorKeyframeTrack(k,[0],bone[prop].toArray())); };
   if(template) template.tracks.forEach(tr=>{ const dot=tr.name.lastIndexOf('.'), bn=tr.name.slice(0,dot), prop=tr.name.slice(dot+1); if(b[bn]&&(prop==='quaternion'||prop==='position'||prop==='scale')) add(bn,prop); });
   Object.keys(relax).forEach(n=>{ b[n].quaternion.copy(relax[n]); add(n,'quaternion'); });   // (also when the template has no key for it)
+  handTracks.forEach(n=>add(n,'quaternion'));
   _BS_SOLVE.forEach(n=>add(n,'quaternion')); add('Hips','position');
   Object.keys(b).forEach(n=>{ b[n].position.copy(saved[n][0]); b[n].quaternion.copy(saved[n][1]); b[n].scale.copy(saved[n][2]); });
   return new THREE.AnimationClip('skyboard_stance', 1/30, tracks);
@@ -23125,8 +23164,12 @@ function applySkyboardHeadOverride(){
   const b=CHAR.bones; if(!b||!b.Head) return;
   const a=CHAR.actions&&CHAR.actions.skyboard, live=!!(a&&a.isScheduled());
   const w=live?Math.min(1,a.getEffectiveWeight()):(CHAR.mounted?1:0);
+  const H=_hoHold||(_hoHold={n:new THREE.Quaternion(),h:new THREE.Quaternion(),cn:new THREE.Quaternion(),ch:new THREE.Quaternion(),t:new THREE.Quaternion(),wn:new THREE.Quaternion(),wh:new THREE.Quaternion(),wok:false,ok:false});
+  // (t1644u head-spin fix) the clip base must be the CLIP pose: when the mixer skipped a bone this frame (constant track / unchanged mixed value, see
+  // PropertyMixer.apply) it still holds last frame's override, so restore last frame's base instead of stacking the override on top of itself.
+  const _same=(q,w)=>q.x===w.x&&q.y===w.y&&q.z===w.z&&q.w===w.w;
+  if(H.wok){ if(b.neck&&_same(b.neck.quaternion,H.wn)) b.neck.quaternion.copy(H.cn); if(_same(b.Head.quaternion,H.wh)) b.Head.quaternion.copy(H.ch); H.wok=false; }
   if(w<=0.001) return;
-  const H=_hoHold||(_hoHold={n:new THREE.Quaternion(),h:new THREE.Quaternion(),cn:new THREE.Quaternion(),ch:new THREE.Quaternion(),t:new THREE.Quaternion(),ok:false});
   if(b.neck) H.cn.copy(b.neck.quaternion); H.ch.copy(b.Head.quaternion);
   if(CHAR.mounted){
     _applySkyboardHeadOverride1();
@@ -23140,6 +23183,7 @@ function applySkyboardHeadOverride(){
     if(b.neck){ H.t.copy(b.neck.quaternion); b.neck.quaternion.slerpQuaternions(H.cn,H.t,w); }
     H.t.copy(b.Head.quaternion); b.Head.quaternion.slerpQuaternions(H.ch,H.t,w);
   }
+  if(b.neck) H.wn.copy(b.neck.quaternion); H.wh.copy(b.Head.quaternion); H.wok=true;
   if(b.neck) b.neck.updateMatrixWorld(true); else b.Head.updateMatrixWorld(true);
 }
 function _applySkyboardHeadOverride1(){
@@ -23269,7 +23313,7 @@ function _charHandsPost(sm,bones,grip,rideW){
     const o=grip==null?null:(typeof grip==='number'?grip:grip[side[0]]);
     let g=(o!=null&&isFinite(o))?o:DART_THUMB.relax+(1-DART_THUMB.relax)*DART_THUMB.follow*_thumbCurl(r);
     // riding (and no explicit grip): fade to the stance's relaxed open grip with the stance weight
-    if(rideW>0.001&&(o==null||!isFinite(o))&&typeof BOARD_STANCE!=='undefined') g+=(Math.max(0,Math.min(1,BOARD_STANCE.handGrip))-g)*Math.min(1,rideW);
+    if(rideW>0.001&&(o==null||!isFinite(o))&&typeof BOARD_STANCE!=='undefined') g+=(Math.max(0,Math.min(1,_bsP().handGrip))-g)*Math.min(1,rideW);
     _thumbPose(r,g);
   }
 }
