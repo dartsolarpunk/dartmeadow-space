@@ -106,7 +106,7 @@
           // keep-out boxes, capsules every pass, segment-midpoint tessellation) with 20-point strands (resampled once at load, 4 solver passes) so the hair
           // drapes over her scalp, skin and clothes instead of through them.  Phones / tablets below High keep the file's points at tier 1 (the 20-point
           // solve costs ~2.3x the guide solver; tools/tests/hair-collision.js has the numbers).  ?hairseg=N / ?hairtier=N override.
-          segments: () => hairStudioQ().seg, getCollisionTier: () => hairStudioQ().tier, getCalm: () => false, params: { autoQuality: false } });
+          segments: () => hairStudioQ().seg, getCollisionTier: () => hairStudioQ().tier, getCalm: () => !!(CS.studioOpen && S.dragging), params: { autoQuality: false } });
         if (M.dead) { try { M.hair.dispose(); } catch (e) { } M.hair = null; }
       } catch (e) { log('hair not attached', e && e.message); }
     }
@@ -288,8 +288,10 @@
       $('cs-studio').classList.toggle('mw-on', !!S.X.world);
       const M = await buildCharacter(def, { anims: true, hair: true, strandFraction: 0.75, onProgress: (p) => { if (token === S.token) $('cs-load').textContent = 'LOADING ' + def.name.toUpperCase() + ' ' + Math.round(p * 100) + '%'; } });
       if (token !== S.token) { disposeCharacter(M); return; }
-      S.M = M; S.X.scene.add(M.root); M.root.position.y = 0;
+      S.M = M; M.root.visible = false; S.X.scene.add(M.root); M.root.position.y = 0;
+      try { if (M.mixer) { M.mixer.update(0); M.mixer.update(1 / 30); } } catch (e) { }
       M.root.updateMatrixWorld(true); const minY = new W.THREE.Box3().setFromObject(M.root).min.y; M.root.position.y = -minY; M.root.updateMatrixWorld(true);
+      M.root.visible = true;
       S.cam = new W.THREE.PerspectiveCamera(30, 1, 0.05, 60); S.yaw = 0.35; S.vyaw = 0; S.zoom = 1; S.pitch = 0; S.vpitch = 0; S.ty = 0; S.home = false; S.F = null;
       if (S.X.world) S.X.world.prepCamera(S.cam);
       try { CS.onStudioModel && CS.onStudioModel(M, def); } catch (e) { log('onStudioModel', e); }
@@ -346,9 +348,9 @@
     const dt = S.last ? Math.min(0.1, (t - S.last) / 1000) : 0.016; S.last = t;
     if (R.r._csW !== $('cs-stage').clientWidth || R.r._csH !== $('cs-stage').clientHeight) layoutStudio();
     const THREE = W.THREE, M = S.M;
-    // turntable: drag spins, release keeps a little inertia, otherwise a slow idle drift so it reads as a live stage
+    // orbit the camera around Y (do not spin the character root: that would fling the hair)
     if (!S.dragging) { S.yaw += S.vyaw * dt; S.vyaw *= Math.pow(0.02, dt); if (Math.abs(S.vyaw) < 0.05) S.vyaw = 0; }
-    M.root.rotation.y = S.yaw;
+    M.root.rotation.y = 0;
     // extra clip (wave / expression) now and then, back to idle when it ends
     if (M.extras.length && t > S.nextExtra && !M.playing) {
       const a = M.extras[(Math.random() * M.extras.length) | 0]; a.reset(); a.setEffectiveWeight(1); a.fadeIn(0.25).play(); M.actions.idle && M.actions.idle.crossFadeTo(a, 0.25, false); M.playing = a;
@@ -382,12 +384,13 @@
       }
       if (MWc) {
         const o = MWc.orbitRig(S.pitch, F.H, F.dist, S.zoom, S.ty, { floorY: 0 });
-        S.cam.position.set(0, o.camY, o.camR); S.tgt = S.tgt || new THREE.Vector3(); S.tgt.set(0, o.ty, 0); S.cam.lookAt(S.tgt);
-      } else { const d = F.dist * S.zoom, py = Math.max(-0.22, Math.min(0.3, S.pitch)); S.cam.position.set(0, F.camY + Math.sin(py) * d * 0.6, Math.cos(py) * d); S.cam.lookAt(F.target); }
+        S.tgt = S.tgt || new THREE.Vector3(); S.tgt.set(0, o.ty, 0);
+        S.cam.position.set(Math.sin(S.yaw) * o.camR, o.camY, Math.cos(S.yaw) * o.camR); S.cam.lookAt(S.tgt);
+      } else { const d = F.dist * S.zoom, py = Math.max(-0.22, Math.min(0.3, S.pitch)); S.cam.position.set(Math.sin(S.yaw) * Math.cos(py) * d, F.camY + Math.sin(py) * d * 0.6, Math.cos(S.yaw) * Math.cos(py) * d); S.cam.lookAt(F.target); }
       S.cam.updateMatrixWorld(true);
     }
     if (S.X.world) { try { S.X.world.update(t, dt, S.cam, S.yaw, S.tgt, S.dragging); if (S.X.world.rescale) { S.X.world.rescale = false; layoutStudio(); } } catch (e) { log('menu world update', e && e.message); S.X.world.update = () => { }; } }
-    R.r.render(S.X.scene, S.cam);
+    if (S.X.world && S.X.world.render) S.X.world.render(R.r, S.X.scene, S.cam); else R.r.render(S.X.scene, S.cam);
     CS.onStudioFrame && CS.onStudioFrame(dt);
   }
   function bindStage() {
@@ -431,11 +434,54 @@
     const def = S.def; if (!def) return;
     if (!def.ready) { toast(def.name + ' is not ready to fly yet'); return; }
     W.DMChars.setSelected(def.id); closeStudio();
-    /* (bugfix-1119) a pilot that was already preloaded is dropped and the chosen one loads when the game starts (loadCharacterAssets -> _charReconcile): no reload needed */ W.DMChars.list().forEach((d) => paintCard(d.id)); refreshFoot(); toast('Pilot: ' + def.name);
+    /* (bugfix-1119) a pilot that was already preloaded is dropped and the chosen one loads when the game starts (loadCharacterAssets -> _charReconcile): no reload needed */ W.DMChars.list().forEach((d) => paintCard(d.id)); refreshFoot(); toast('Articren: ' + def.name);
   }
 
   /* ───────────────────────── COLOURS panel (registry regions: hair groups + clothing items) ───────────────────────── */
   let activeRegion = null;
+
+  /* in-app HSV / hex colour picker (no native OS colour dialog) */
+  function hexToRgb(h) { const m = /^#?([0-9a-f]{6})$/i.exec(h || ''); return m ? [parseInt(m[1].slice(0, 2), 16), parseInt(m[1].slice(2, 4), 16), parseInt(m[1].slice(4, 6), 16)] : [128, 128, 128]; }
+  function rgbToHex(r, g, b) { const u = (n) => ('0' + Math.max(0, Math.min(255, n | 0)).toString(16)).slice(-2); return '#' + u(r) + u(g) + u(b); }
+  function rgbToHsv(r, g, b) { r /= 255; g /= 255; b /= 255; const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min; let h = 0; if (d) { if (max === r) h = ((g - b) / d) % 6; else if (max === g) h = (b - r) / d + 2; else h = (r - g) / d + 4; h *= 60; if (h < 0) h += 360; } return { h, s: max ? d / max : 0, v: max }; }
+  function hsvToRgb(h, s, v) { const c = v * s, x = c * (1 - Math.abs((h / 60) % 2 - 1)), m = v - c; let r = 0, g = 0, b = 0; if (h < 60) { r = c; g = x; } else if (h < 120) { r = x; g = c; } else if (h < 180) { g = c; b = x; } else if (h < 240) { g = x; b = c; } else if (h < 300) { r = x; b = c; } else { r = c; b = x; } return [(r + m) * 255, (g + m) * 255, (b + m) * 255]; }
+  function openPicker(start, onLive, onPick, anchor, label) {
+    const prev = D.getElementById('cs-picker'); if (prev) prev.remove();
+    const pop = D.createElement('div'); pop.id = 'cs-picker'; pop.className = 'cs-picker'; pop.setAttribute('role', 'dialog'); pop.setAttribute('aria-label', label || 'Colour picker');
+    const rgb0 = hexToRgb(start), hsv = rgbToHsv(rgb0[0], rgb0[1], rgb0[2]);
+    pop.innerHTML = '<div class="cs-pk-sv"><canvas width="180" height="140"></canvas><i></i></div><div class="cs-pk-hue"><canvas width="180" height="14"></canvas><i></i></div><div class="cs-pk-row"><span class="cs-pk-chip"></span><input class="cs-pk-hex" maxlength="7" spellcheck="false" aria-label="Hex colour"><button type="button" class="cs-pk-ok">SET</button></div>';
+    const sv = pop.querySelector('.cs-pk-sv canvas'), hue = pop.querySelector('.cs-pk-hue canvas'), hex = pop.querySelector('.cs-pk-hex'), chip = pop.querySelector('.cs-pk-chip');
+    const svx = pop.querySelector('.cs-pk-sv i'), hx = pop.querySelector('.cs-pk-hue i');
+    const paint = () => {
+      const sctx = sv.getContext('2d'), [rr, gg, bb] = hsvToRgb(hsv.h, 1, 1);
+      const grdX = sctx.createLinearGradient(0, 0, sv.width, 0); grdX.addColorStop(0, '#fff'); grdX.addColorStop(1, 'rgb(' + (rr|0) + ',' + (gg|0) + ',' + (bb|0) + ')');
+      sctx.fillStyle = grdX; sctx.fillRect(0, 0, sv.width, sv.height);
+      const grdY = sctx.createLinearGradient(0, 0, 0, sv.height); grdY.addColorStop(0, 'rgba(0,0,0,0)'); grdY.addColorStop(1, '#000');
+      sctx.fillStyle = grdY; sctx.fillRect(0, 0, sv.width, sv.height);
+      const hctx = hue.getContext('2d'), hg = hctx.createLinearGradient(0, 0, hue.width, 0);
+      for (let i = 0; i <= 6; i++) { const [r, g, b] = hsvToRgb(i * 60, 1, 1); hg.addColorStop(i / 6, 'rgb(' + (r|0) + ',' + (g|0) + ',' + (b|0) + ')'); }
+      hctx.fillStyle = hg; hctx.fillRect(0, 0, hue.width, hue.height);
+      const col = hsvToRgb(hsv.h, hsv.s, hsv.v), hxv = rgbToHex(col[0], col[1], col[2]);
+      chip.style.background = hxv; if (D.activeElement !== hex) hex.value = hxv;
+      svx.style.left = (hsv.s * 100) + '%'; svx.style.top = ((1 - hsv.v) * 100) + '%'; hx.style.left = (hsv.h / 360 * 100) + '%';
+      return hxv;
+    };
+    const commit = (live) => { const h = paint(); if (live && onLive) onLive(h); };
+    paint();
+    const bind = (cv, fn) => {
+      const go = (e) => { const r = cv.getBoundingClientRect(); fn((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height); commit(true); };
+      cv.addEventListener('pointerdown', (e) => { cv.setPointerCapture(e.pointerId); go(e); });
+      cv.addEventListener('pointermove', (e) => { if (e.buttons) go(e); });
+    };
+    bind(sv, (x, y) => { hsv.s = Math.max(0, Math.min(1, x)); hsv.v = Math.max(0, Math.min(1, 1 - y)); });
+    bind(hue, (x) => { hsv.h = Math.max(0, Math.min(359, x * 360)); });
+    hex.addEventListener('change', () => { const v = hex.value.trim(); if (/^#?[0-9a-f]{6}$/i.test(v)) { const c = hexToRgb(v); const n = rgbToHsv(c[0], c[1], c[2]); hsv.h = n.h; hsv.s = n.s; hsv.v = n.v; commit(true); } });
+    pop.querySelector('.cs-pk-ok').addEventListener('click', () => { onPick(paint()); pop.remove(); });
+    const outside = (e) => { if (!pop.contains(e.target) && e.target !== anchor) { pop.remove(); D.removeEventListener('pointerdown', outside, true); } };
+    D.addEventListener('pointerdown', outside, true);
+    (anchor && anchor.parentNode ? anchor.parentNode : $('cs-pbody')).appendChild(pop);
+  }
+
   function swatchGrid(region, def, rerender) {
     const wrap = D.createElement('div'); wrap.className = 'cs-reg';
     const grid = D.createElement('div'); grid.className = 'cs-sws'; wrap.appendChild(grid);
@@ -446,11 +492,9 @@
     // an item with a shipped texture offers DEFAULT TEXTURE (one tap back to the baked look); a colour swatch overrides the texture with a flat colour
     const d0 = mk('def' + (region.texture ? ' tex wide' : '') + (cur ? '' : ' on'), region.label + (region.texture ? ' default texture' : ' default')); d0.textContent = region.texture ? 'DEFAULT TEXTURE' : 'DEF'; d0.addEventListener('click', () => pick(null)); grid.appendChild(d0);
     pal.forEach((hex) => { const b = mk(cur === hex ? 'on' : '', region.label + ' ' + hex); b.style.background = hex; b.addEventListener('click', () => pick(hex)); grid.appendChild(b); });
-    const lb = D.createElement('label'); lb.className = 'cs-sw custom' + (cur && !pal.includes(cur) ? ' on' : ''); lb.title = region.label + ' custom colour'; lb.setAttribute('aria-label', region.label + ' custom colour');
-    const inp = D.createElement('input'); inp.type = 'color'; inp.value = cur || region.defaultColor || '#808080'; lb.appendChild(inp); lb.insertAdjacentHTML('beforeend', '<span>+</span>');
-    let tm = 0; inp.addEventListener('input', () => { clearTimeout(tm); tm = setTimeout(() => { W.DMChars.setColor(def.id, region.id, inp.value); applyStudio(def); noteGame(def); }, 220); });
-    inp.addEventListener('change', () => { clearTimeout(tm); pick(inp.value); });
-    grid.appendChild(lb); return wrap;
+    const plus = mk('custom' + (cur && !pal.includes(cur) ? ' on' : ''), region.label + ' custom colour'); plus.textContent = '+';
+    plus.addEventListener('click', () => openPicker(cur || region.defaultColor || '#808080', (h) => { W.DMChars.setColor(def.id, region.id, h); applyStudio(def); }, pick, plus, region.label + ' colour'));
+    grid.appendChild(plus); return wrap;
   }
   function noteGame(def) {   // the game already holds a pilot in memory: new colours show from the next game start
     try { if (typeof CHAR !== 'undefined' && CHAR.loaded && CHAR.charId === def.id && !CS._noted) { CS._noted = true; toast('Colours show in the game from its next start (reload) — she is already loaded this session', 4200); } } catch (e) { }
@@ -575,7 +619,7 @@
       function sync() { if (outs.size) { outs.size.r.value = FS.scale; outs.size.o.textContent = FS.scale.toFixed(2) + 'x'; } if (outs.turn) { outs.turn.r.value = FS.rotation; outs.turn.o.textContent = FS.rotation + '°'; } if (outs.reset) outs.reset.disabled = F.isDefaultPlacement(FS, def); }
 
       if (!FS.pending) {
-        const msg = mk('p', 'cs-hint', !FS.logo ? 'Pick a logo, then tap SHIRT or PANTS. It appears on the pilot as a preview; nothing is saved until you press APPLY.' :
+        const msg = mk('p', 'cs-hint', !FS.logo ? 'Pick a logo, then tap SHIRT or PANTS. It appears on the Articren as a preview; nothing is saved until you press APPLY.' :
           FS.item ? 'Applied. Add another ' + lgName(FS.logo) + ' on the ' + itName(FS.item) + ' below, pick a different logo, or tap a garment.' : 'Now tap a garment to preview ' + lgName(FS.logo) + ' on it.'); el.appendChild(msg);
         if (FS.logo && FS.item) { const full = cnt(FS.item) >= DC.MAX_DECALS; const b = btn('cs-btn gold cs-wide', full ? itName(FS.item).toUpperCase() + ' IS FULL' : '+ ADD ANOTHER ' + lgName(FS.logo).toUpperCase() + ' ON ' + itName(FS.item).toUpperCase(), () => { const r = F.addAnother(FS, def, DC.look(def.id)); if (r.ok) { applyStudio(def); rr(); } else toast('That garment is full. Delete one first'); }); b.disabled = full; el.appendChild(b); }
       } else {
@@ -607,8 +651,8 @@
         el.appendChild(mk('div', 'cs-reg-h', 'LOGO COLOUR'));
         const sw = mk('div', 'cs-sws'), setCol = (hex) => { F.setPlacement(FS, def, { colour: hex }); applyStudio(def); rr(); };
         DC.PALETTE_CLOTH.concat(['#ffffff']).forEach((hex) => { const b = btn('cs-sw' + (FS.colour === hex ? ' on' : ''), '', () => setCol(hex), 'Logo colour ' + hex); b.style.background = hex; sw.appendChild(b); });
-        const lb = mk('label', 'cs-sw custom'), inp = mk('input'); inp.type = 'color'; inp.value = FS.colour; lb.appendChild(inp); lb.insertAdjacentHTML('beforeend', '<span>+</span>'); lb.setAttribute('aria-label', 'Custom logo colour');
-        inp.addEventListener('change', () => setCol(inp.value)); sw.appendChild(lb); el.appendChild(sw);
+        const plus = btn('cs-sw custom', '+', () => openPicker(FS.colour || '#ffffff', (h) => { F.setPlacement(FS, def, { colour: h }); applyStudio(def); }, setCol, plus, 'Custom logo colour'), 'Custom logo colour');
+        sw.appendChild(plus); el.appendChild(sw);
         /* actions: always in reach (sticky) */
         const bar = mk('div', 'cs-actbar'), chk = F.canApply(FS, def, L);
         const rs = btn('cs-btn', 'RESET', () => { F.reset(FS, def); applyStudio(def); rr(); }, 'Reset position, size and turn to default'); rs.disabled = F.isDefaultPlacement(FS, def); outs.reset = rs;
@@ -622,7 +666,7 @@
       /* applied logos: select -> delete, edit, clear a garment */
       const total = L.decals.length;
       el.appendChild(mk('div', 'cs-reg-h', 'APPLIED LOGOS  ' + total));
-      if (!total) el.appendChild(mk('p', '', 'No logos applied. Your pilot keeps her original look until you add one.'));
+      if (!total) el.appendChild(mk('p', '', 'No logos applied. Your Articren keeps her original look until you add one.'));
       else {
         const list = mk('div', 'cs-applied'); L.decals.forEach((d, i) => { const sel = FS.sel.includes(i), row = mk('div', 'cs-arow' + (sel ? ' sel' : '') + (FS.editIndex === i ? ' editing' : ''));
           const pick = btn('cs-apick', '', () => { F.toggleSel(FS, i); rr(); }, (sel ? 'Deselect ' : 'Select ') + lgName(d.id) + ' on ' + itName(d.item)); pick.setAttribute('aria-pressed', sel ? 'true' : 'false');

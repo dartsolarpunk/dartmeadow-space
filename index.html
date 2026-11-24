@@ -1331,7 +1331,7 @@ body[data-dm-screen]:not([data-dm-screen="flight"]) #dm-flash,body[data-dm-scree
     </div>
     <div class="mm-stack mm-frame">
       <button class="menu-btn gold" id="resume-btn" onclick="launchFlight()" style="display:none;">▶ RESUME GAME</button>
-      <button class="menu-btn" onclick="goScreen('character')"><span class="mb-ico">⚡</span>PILOT &amp; SKYBOARD</button>
+      <button class="menu-btn" onclick="goScreen('character')"><span class="mb-ico">⚡</span>ARTICREN &amp; SKYBOARD</button>
       <button class="menu-btn" onclick="openSettings()"><span class="mb-ico">⚙</span>SETTINGS</button>
       <button class="menu-btn" onclick="openGalaxyMap()"><span class="mb-ico">⬡</span>GALAXY MAP</button>
       <button class="menu-btn mm-exit" onclick="promptExit()"><span class="mb-ico">⏻</span>EXIT GAME</button>
@@ -1355,7 +1355,7 @@ body[data-dm-screen]:not([data-dm-screen="flight"]) #dm-flash,body[data-dm-scree
         <button class="mm-mini" onclick="showGfxScreen(true)" title="Graphics setup"><span>🖥</span>GRAPHICS</button>
       </div>
       <div class="mm-status">
-        <div class="mm-st-row"><span>PILOT</span><b id="mm-st-pilot">—</b></div>
+        <div class="mm-st-row"><span>ARTICREN</span><b id="mm-st-pilot">—</b></div>
         <div class="mm-st-row"><span>LOCATION</span><b id="mm-st-loc">Sol · Milky Way</b></div>
         <div class="mm-st-row"><span>LAST SAVE</span><b id="mm-st-save">—</b></div>
       </div>
@@ -1419,11 +1419,11 @@ body[data-dm-screen]:not([data-dm-screen="flight"]) #dm-flash,body[data-dm-scree
 </div>
 
 <!-- CHARACTER SELECT: main menu -> CHARACTER -> SKYBOARD BUILDER -> game. Cards + the one-canvas studio are filled by ui/dm-charselect.js from the DMChars registry. -->
-<div id="screen-character" class="screen" aria-label="Choose your pilot">
+<div id="screen-character" class="screen" aria-label="Choose your Articren">
   <div id="cs-bg" aria-hidden="true"></div><div id="cs-scan" aria-hidden="true"></div>
-  <div id="cs-head"><button id="cs-back" class="cs-btn" type="button">← MENU</button><div id="cs-title">CHOOSE YOUR PILOT</div></div>
+  <div id="cs-head"><button id="cs-back" class="cs-btn" type="button">← MENU</button><div id="cs-title">CHOOSE YOUR ARTICREN</div></div>
   <div id="cs-list">
-    <div id="cs-wheel" role="listbox" aria-label="Pilots" tabindex="0"></div>
+    <div id="cs-wheel" role="listbox" aria-label="Articren" tabindex="0"></div>
     <div id="cs-dots" aria-hidden="true"></div>
     <div id="cs-hint">SWIPE TO BROWSE · TAP THE CENTRE CARD FOR HER STUDIO</div>
   </div>
@@ -1642,7 +1642,7 @@ body[data-dm-screen]:not([data-dm-screen="flight"]) #dm-flash,body[data-dm-scree
     <div id="builder-hud"><div id="bh-fps">—</div><div id="bh-poly">—</div></div>
     <div id="builder-name-display">UNNAMED BOARD</div>
     <div id="builder-footer">
-      <button class="launch-btn" onclick="goScreen('character')" title="Back to the pilot select">← PILOT</button>
+      <button class="launch-btn" onclick="goScreen('character')" title="Back to the Articren select">← ARTICREN</button>
       <button class="launch-btn" onclick="goScreen('menu')">← MENU</button>
       <button class="launch-btn gold" onclick="launchFlight()">LAUNCH TO ORBIT ⟶</button>
     </div>
@@ -2345,7 +2345,7 @@ function saveToSlot(idx,name){
 // saves/slots-index.json, so any device you sign in on lists them all.
 // The JOURNEYS tab in your profile loads, exports, imports and deletes them.
 const JOURNEY_MAX=60;
-function _jnWho(){ try{ return (window.JOTS&&JOTS.identity&&JOTS.identity.name)||(STATE.boardConfig&&STATE.boardConfig.name)||'Pilot'; }catch(e){ return 'Pilot'; } }
+function _jnWho(){ try{ return (window.JOTS&&JOTS.identity&&JOTS.identity.name)||(STATE.boardConfig&&STATE.boardConfig.name)||'Articren'; }catch(e){ return 'Articren'; } }
 function _jnSlots(){ return getSaveSlots().map((d,i)=>d?Object.assign({_i:i},d):null).filter(Boolean); }
 function journeyAutoName(){
   let remote=[]; try{ remote=JSON.parse(localStorage.getItem('dm_saves_remote')||'[]'); }catch(e){}
@@ -15883,7 +15883,7 @@ function _pfEnsure(){
     '<div class="pf-btns"><button class="pf-btn" id="pf-th-export">\u21E9 EXPORT PROFILE</button><button class="pf-btn" id="pf-th-import">\u21E7 IMPORT PROFILE</button></div>'+
     '<input type="file" id="pf-th-file" accept=".json,application/json" style="display:none">'+
     '<div class="pf-sec">COMING LATER</div>'+
-    '<div class="pf-soon">Your full pilot profile, achievements, and the tech to analyse unknown discoveries.</div>'+
+    '<div class="pf-soon">Your full Articren profile, achievements, and the tech to analyse unknown discoveries.</div>'+
     '</div>'+
     '<div id="pf-tab-journeys" style="display:none">'+
     '<div class="pf-row-d" id="pf-jn-note" style="margin:4px 0 8px;"></div>'+
@@ -15897,7 +15897,7 @@ function _pfEnsure(){
     '<div id="pf-admin-list" class="pf-admin-list"></div>'+
     '<div class="pf-row-d" id="pf-q-status" style="margin:6px 0"></div>'+
     '<div class="pf-btns"><button class="pf-btn" id="pf-cl-btn">CHARACTER LOOK: ...</button></div>'+
-    '<div class="pf-row-d" style="margin:2px 0 6px;">Soft sky light, rim and skin softness on the pilots. AUTO follows the graphics preset; the studio and the next character load pick the change up.</div>'+
+    '<div class="pf-row-d" style="margin:2px 0 6px;">Soft sky light, rim and skin softness on the Articren. AUTO follows the graphics preset; the studio and the next character load pick the change up.</div>'+
     '<div class="pf-btns"><button class="pf-btn" id="pf-q-reset">⟲ RESET QUALITY (re-measure)</button><button class="pf-btn" id="pf-admin-clear">↻ REFRESH GAME FILES (CLEAR CACHE &amp; RELOAD)</button></div>'+
     '</div>'+
     '<div class="pf-btns"><button class="pf-btn" id="pf-close">CLOSE</button></div>'+
@@ -16217,7 +16217,7 @@ const CREDITS=[
   w:'Approach for density-field planet terrain; rewritten for the browser, no code copied.'},
  {t:'Coding Adventure: Simulating Fluids · Fluid-Sim',a:'Sebastian Lague',l:'MIT',use:'code',
   u:['https://youtu.be/rSKMYc1CQHE','https://github.com/SebLague/Fluid-Sim'],
-  w:'SPH kernels and steps (spiky density / near-density, shared-pressure force, Poly6 viscosity, predicted positions, trapped-air foam rule) ported to JavaScript for the live water around the pilot (ui/dm-fluid.js), as in ArcLake.'},
+  w:'SPH kernels and steps (spiky density / near-density, shared-pressure force, Poly6 viscosity, predicted positions, trapped-air foam rule) ported to JavaScript for the live water around the Articren (ui/dm-fluid.js), as in ArcLake.'},
  {t:'Unified Spray, Foam and Bubbles for Particle-Based Fluids',a:'M. Ihmsen, N. Akinci, G. Akinci, M. Teschner (2012)',l:'Published paper',use:'technique',
   u:['https://cg.informatik.uni-freiburg.de/publications/2012_CGI_sprayFoamBubbles.pdf'],
   w:'Foam, spray and bubble particles thrown up by churned water.'},
@@ -28806,7 +28806,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
     <div class="jots-sub">JOURNEY OF THE SKYBOARD</div>
     <div id="jots-welcome-main">
       <p class="jots-p">Play as a <b>guest</b>, or <b>sign in with GitHub</b> to get your own private <code>jots-&lt;you&gt;</code> repository that keeps your saves and loads them for you on any device.</p>
-      <p class="jots-p">Either way you can play <b>Story</b> on your own or join <b>Multiplayer</b>, one shared world with everyone online. In multiplayer, other players see your pilot name, your board and where you fly, and read what you type in chat.</p>
+      <p class="jots-p">Either way you can play <b>Story</b> on your own or join <b>Multiplayer</b>, one shared world with everyone online. In multiplayer, other players see your Articren name, your board and where you fly, and read what you type in chat.</p>
       <p class="jots-p">To keep the LEATR network and its Session Cubes alive, the game sends <b>anonymous gameplay events</b> (landings, travel, discoveries), never your name, account, chat or location. Details: <a href="privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</p>
       <label class="jots-chk"><input type="checkbox" id="jots-agree"> <span>I have read and agree to the <a href="privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</span></label>
       <button class="jots-btn primary" id="jots-gh-btn" disabled>⌥ SIGN IN WITH GITHUB</button>
@@ -29391,7 +29391,7 @@ toast('🚀 DART Meadow v3 — Click LAUNCH SEQUENCE',4000);
     // the placeholder gets a soft glow in their colour; her model needs none
     let glow=null;
     if(!full){ glow=new THREE.Mesh(new THREE.SphereGeometry(L*0.35,12,8),new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:0.12,blending:THREE.AdditiveBlending,depthWrite:false})); board.add(glow); }
-    const label=nameSprite(window.DMSafety?DMSafety.clean(peer.n||'Pilot'):(peer.n||'Pilot'),peer.k==='h'?'#bfffe0':'#cfd9ff');
+    const label=nameSprite(window.DMSafety?DMSafety.clean(peer.n||'Articren'):(peer.n||'Articren'),peer.k==='h'?'#bfffe0':'#cfd9ff');
     label.scale.set(L*1.2,L*0.225,1);
     g.add(label);
     g.userData={board,seat,rider,mixer,actions,cur:null,full,label,L,glow,mounted:null};

@@ -134,3 +134,56 @@
 .cs-arow.sel .cs-achk{background:#e0554f;border-color:#e0554f;}
 .cs-aedit{flex:0 0 58px;min-height:48px;border-radius:8px;border:1px solid var(--cyan);background:rgba(var(--acc-rgb),.12);color:var(--cyan);font-family:var(--font-hud);font-size:.52rem;letter-spacing:.12em;cursor:pointer;touch-action:manipulation;}
 .cs-chips .cs-btn{flex:1 1 auto;font-size:.55rem;}
+
+
+/* ── Track 6: Articren select / editor AAA chrome + in-app colour picker ── */
+#screen-character{
+  background:
+    radial-gradient(ellipse 80% 60% at 50% 0%,rgba(var(--acc-rgb),.14),transparent 55%),
+    radial-gradient(ellipse 120% 90% at 50% 40%,#0c1220 0%,#070814 55%,#04050a 100%);
+}
+#cs-head{border-bottom:1px solid rgba(var(--acc-rgb),.22);background:linear-gradient(180deg,rgba(6,10,18,.72),rgba(6,10,18,.15));}
+#cs-title{letter-spacing:.34em;font-weight:700;}
+.cs-card{
+  background:
+    linear-gradient(180deg,rgba(10,16,28,.55),rgba(8,12,22,.88));
+  border:1px solid rgba(var(--acc-rgb),.4);
+  border-radius:0;
+  clip-path:polygon(12px 0,100% 0,100% calc(100% - 12px),calc(100% - 12px) 100%,0 100%,0 12px);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.04),0 10px 28px rgba(0,0,0,.35);
+}
+.cs-card.on{border-color:var(--cyan);box-shadow:0 0 28px rgba(var(--acc-rgb),.4),inset 0 0 0 1px rgba(var(--acc-rgb),.35);}
+.cs-thumb{aspect-ratio:3/5;object-fit:cover;object-position:50% 12%;}
+.cs-meta{background:linear-gradient(180deg,transparent,rgba(0,0,0,.45));padding:12px 10px 14px;}
+.cs-name{text-shadow:0 0 12px rgba(var(--acc-rgb),.45);}
+.cs-tag{color:var(--cyan);letter-spacing:.22em;}
+#cs-studio{background:radial-gradient(ellipse 80% 70% at 50% 55%,#101820 0%,#070a12 60%,#04060a 100%);}
+#cs-panel{
+  background:
+    linear-gradient(180deg,rgba(8,14,24,.78),rgba(6,10,18,.94));
+  border-left:1px solid rgba(var(--acc-rgb),.55);
+  box-shadow:-16px 0 40px rgba(0,0,0,.35),inset 1px 0 0 rgba(255,255,255,.05);
+  backdrop-filter:blur(10px);
+}
+#cs-ptitle{background:linear-gradient(90deg,rgba(var(--acc-rgb),.2),transparent);border-bottom:1px solid rgba(var(--acc-rgb),.3);padding:14px 16px 10px;}
+#cs-pname{text-shadow:0 0 12px rgba(var(--acc-rgb),.7);}
+#cs-ptag{color:var(--cyan);}
+#cs-tabs{background:rgba(0,0,0,.2);}
+#cs-tabs button{position:relative;letter-spacing:.2em;}
+#cs-tabs button.on{background:rgba(var(--acc-rgb),.1);text-shadow:0 0 8px rgba(var(--acc-rgb),.6);}
+#cs-pbody{scrollbar-color:rgba(var(--acc-rgb),.45) transparent;}
+.cs-sw{border-radius:2px;clip-path:polygon(6px 0,100% 0,100% calc(100% - 6px),calc(100% - 6px) 100%,0 100%,0 6px);}
+.cs-chip{border-radius:0;clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px);}
+.cs-picker{
+  position:relative;margin:10px 0 14px;padding:12px;background:linear-gradient(180deg,rgba(8,14,24,.96),rgba(6,10,16,.98));
+  border:1px solid rgba(var(--acc-rgb),.55);box-shadow:0 12px 32px rgba(0,0,0,.45),inset 0 0 0 1px rgba(255,255,255,.04);
+}
+.cs-pk-sv{position:relative;width:100%;height:140px;margin:0 0 10px;border:1px solid rgba(var(--acc-rgb),.35);overflow:hidden;touch-action:none;cursor:crosshair;}
+.cs-pk-sv canvas,.cs-pk-hue canvas{display:block;width:100%;height:100%;}
+.cs-pk-sv i{position:absolute;width:12px;height:12px;border:2px solid #fff;border-radius:50%;box-shadow:0 0 0 1px #000,0 0 8px rgba(0,0,0,.6);transform:translate(-50%,-50%);pointer-events:none;}
+.cs-pk-hue{position:relative;width:100%;height:14px;border:1px solid rgba(var(--acc-rgb),.35);touch-action:none;cursor:pointer;margin:0 0 10px;}
+.cs-pk-hue i{position:absolute;top:-2px;width:8px;height:18px;background:#fff;border:1px solid #000;transform:translateX(-50%);pointer-events:none;}
+.cs-pk-row{display:flex;align-items:center;gap:8px;}
+.cs-pk-chip{flex:0 0 28px;width:28px;height:28px;border:1px solid rgba(255,255,255,.3);box-shadow:inset 0 0 0 1px #000;}
+.cs-pk-hex{flex:1;min-height:40px;background:rgba(0,0,0,.4);border:1px solid rgba(var(--acc-rgb),.35);color:var(--text);font-family:var(--font-mono);font-size:.85rem;letter-spacing:.08em;padding:0 10px;text-transform:uppercase;}
+.cs-pk-ok{min-height:40px;padding:0 14px;border:1px solid var(--cyan);background:rgba(var(--acc-rgb),.16);color:var(--cyan);font-family:var(--font-hud);font-size:.58rem;letter-spacing:.16em;cursor:pointer;}

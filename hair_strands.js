@@ -558,8 +558,8 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   // across each ribbon's width. Ariel's file has no fuzz block, so her material is unchanged.
   const FZ = meta.fuzz || null;
   const mat = new (FZ && THREE.MeshPhysicalMaterial ? THREE.MeshPhysicalMaterial : THREE.MeshStandardMaterial)({
-    vertexColors: true, color: 0xffffff, roughness: meta.roughness ?? 0.5, metalness: 0.15,
-    side: THREE.DoubleSide
+    vertexColors: true, color: 0xffffff, roughness: meta.roughness ?? 0.74, metalness: meta.metalness ?? 0.02,
+    side: THREE.DoubleSide, envMapIntensity: 0.15
   });
   // fuzz.glow: a little self-light from the strand colour so dark yarn still reads in a dim room (no lights added)
   if (FZ && FZ.glow && GR && mat.emissive) { mat.emissive.setRGB((GR.root[0] + GR.tip[0]) / 2, (GR.root[1] + GR.tip[1]) / 2, (GR.root[2] + GR.tip[2]) / 2); mat.emissiveIntensity = FZ.glow; }

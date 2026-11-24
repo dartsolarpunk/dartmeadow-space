@@ -56,4 +56,12 @@ ok(Math.abs(MW.nearestYaw(0.35 + 6.2832 * 3 + 0.1, 0.35) - (0.35 + 6.2832 * 3)) 
 { const g = MW.makeGovernor(); let dropped = 0; for (let i = 0; i < 600; i++) if (g.step(33.3)) dropped++; ok(dropped === 0 && g.scale === 1, 'a 30 fps menu is left alone');
   for (let i = 0; i < 600; i++) if (g.step(70)) dropped++; ok(dropped >= 3 && Math.abs(g.scale - 0.6) < 1e-9, 'a slow menu steps the pixel ratio down to the 0.6 floor (' + dropped + ' steps)');
   const g2 = MW.makeGovernor(); for (let i = 0; i < 8; i++) g2.step(120); for (let i = 0; i < 200; i++) g2.step(30); ok(g2.scale === 1, 'a short hitch does not step'); }
+
+// cargo-bay placement (canonical 16 x 18 x 10, opening at z=-8)
+ok(MW.placeBayTransform && MW.BAY_REF && MW.BAY_REF.w === 16 && MW.BAY_REF.openZ === -8, 'bay ref exported');
+{ const s = MW.placeBayTransform('studio'); ok(Math.abs(s.sx - 6.8 / 16) < 1e-9 && Math.abs(s.z - (-2.2 - (-8) * s.sz)) < 1e-9 && s.y === 0, 'studio scales width 6.8 and lines the opening up at z=-2.2');
+  const c = MW.placeBayTransform('cards'); ok(Math.abs(c.sx - 24 / 16) < 1e-9 && Math.abs(c.z - (-9.2 - (-8) * c.sz)) < 1e-9, 'cards scales width 24 and lines the opening up at z=-9.2');
+  const Lz = 30, Wx = 18, Hy = 9, L = MW.placeBayTransform('launch', { w: Wx, d: Lz, h: Hy, openZ: -Lz / 2 });
+  ok(Math.abs(L.sx - Wx / 16) < 1e-9 && Math.abs(L.sy - Hy / 10) < 1e-9 && Math.abs(L.sz - Lz / 18) < 1e-9, 'launch scales each axis to the hangar');
+  ok(Math.abs((-Lz / 2) - (L.z + (-8) * L.sz)) < 1e-9, 'launch opening sits at -Lz/2'); }
 console.log('menuworld-unit OK (' + n + ' checks)');
