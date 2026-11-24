@@ -1423,16 +1423,20 @@ body[data-dm-screen]:not([data-dm-screen="flight"]) #dm-flash,body[data-dm-scree
 <!-- CHARACTER SELECT: main menu -> CHARACTER -> SKYBOARD BUILDER -> game. Cards + the one-canvas studio are filled by ui/dm-charselect.js from the DMChars registry. -->
 <div id="screen-character" class="screen" aria-label="Choose your Articren">
   <div id="cs-bg" aria-hidden="true"></div><div id="cs-scan" aria-hidden="true"></div>
-  <div id="cs-head"><button id="cs-back" class="cs-btn" type="button">← MENU</button><div id="cs-title">CHOOSE YOUR ARTICREN</div></div>
+  <div id="cs-head" class="mm-panel mm-hinge-top"><button id="cs-back" class="cs-btn" type="button">← MENU</button><div id="cs-title">CHOOSE YOUR ARTICREN</div></div>
   <div id="cs-list">
     <div id="cs-wheel" role="listbox" aria-label="Articren" tabindex="0"></div>
     <div id="cs-dots" aria-hidden="true"></div>
-    <div id="cs-hint">SWIPE TO BROWSE · TAP THE CENTRE CARD FOR HER STUDIO</div>
+    <div id="cs-hint">SWIPE TO BROWSE · TAP A CARD TO EDIT</div>
   </div>
-  <div id="cs-foot"><button id="cs-open" class="cs-btn" type="button">VIEW</button><button id="cs-next" class="cs-btn gold" type="button">CONTINUE ⟶</button></div>
+  <div id="cs-continue-dock">
+    <div id="cs-continue" class="mm-panel mm-frame mm-hinge-bottom" hidden>
+      <button id="cs-next" class="cs-btn gold" type="button">CONTINUE ⟶</button>
+    </div>
+  </div>
   <div id="cs-studio">
     <div id="cs-stage"><div id="cs-load"></div><div id="cs-turn">DRAG TO ORBIT · PINCH TO ZOOM · DOUBLE-TAP TO RESET</div></div>
-    <div id="cs-panel">
+    <div id="cs-panel" class="mm-panel mm-frame mm-hinge-right">
       <div id="cs-ptitle"><span id="cs-pname"></span><span id="cs-ptag"></span></div>
       <div id="cs-tabs"></div>
       <div id="cs-pbody"></div>
@@ -3043,6 +3047,12 @@ function goScreen(name){
       mm.classList.add('mm-leaving');
       clearTimeout(goScreen._leaveT);
       goScreen._leaveT=setTimeout(()=>mm.classList.remove('mm-leaving'),700);
+    }
+    const cs=$('screen-character');
+    if(cs&&cs.classList.contains('active')&&name!=='character'&&!matchMedia('(prefers-reduced-motion: reduce)').matches){
+      cs.classList.add('cs-leaving');
+      clearTimeout(goScreen._csLeaveT);
+      goScreen._csLeaveT=setTimeout(()=>cs.classList.remove('cs-leaving'),700);
     }
   }catch(e){}
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));

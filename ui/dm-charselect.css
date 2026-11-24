@@ -145,26 +145,20 @@
 }
 #cs-head{border-bottom:1px solid rgba(var(--acc-rgb),.22);background:linear-gradient(180deg,rgba(6,10,18,.72),rgba(6,10,18,.15));}
 #cs-title{letter-spacing:.34em;font-weight:700;}
-.cs-card{
-  background:
-    linear-gradient(180deg,rgba(10,16,28,.55),rgba(8,12,22,.88));
-  border:1px solid rgba(var(--acc-rgb),.4);
-  border-radius:0;
-  clip-path:polygon(12px 0,100% 0,100% calc(100% - 12px),calc(100% - 12px) 100%,0 100%,0 12px);
-  box-shadow:inset 0 0 0 1px rgba(255,255,255,.04),0 10px 28px rgba(0,0,0,.35);
-}
-.cs-card.on{border-color:var(--cyan);box-shadow:0 0 28px rgba(var(--acc-rgb),.4),inset 0 0 0 1px rgba(var(--acc-rgb),.35);}
+/* (v381) card chrome comes from .mm-frame (ui/dm-ui.css), same as the main menu. */
+.cs-card.on{--lc:var(--cyan);}
+.cs-card.chosen{--lc:rgba(var(--hi-rgb),.9);}
 .cs-thumb{aspect-ratio:3/5;object-fit:cover;object-position:50% 12%;}
 .cs-meta{background:linear-gradient(180deg,transparent,rgba(0,0,0,.45));padding:12px 10px 14px;}
 .cs-name{text-shadow:0 0 12px rgba(var(--acc-rgb),.45);}
 .cs-tag{color:var(--cyan);letter-spacing:.22em;}
 #cs-studio{background:radial-gradient(ellipse 80% 70% at 50% 55%,#101820 0%,#070a12 60%,#04060a 100%);}
 #cs-panel{
-  background:
-    linear-gradient(180deg,rgba(8,14,24,.78),rgba(6,10,18,.94));
-  border-left:1px solid rgba(var(--acc-rgb),.55);
-  box-shadow:-16px 0 40px rgba(0,0,0,.35),inset 1px 0 0 rgba(255,255,255,.05);
-  backdrop-filter:blur(10px);
+  /* (v381) chrome is .mm-frame; keep the body typography hooks below. */
+  background:transparent;
+  border-left:none;
+  box-shadow:none;
+  backdrop-filter:none;
 }
 #cs-ptitle{background:linear-gradient(90deg,rgba(var(--acc-rgb),.2),transparent);border-bottom:1px solid rgba(var(--acc-rgb),.3);padding:14px 16px 10px;}
 #cs-pname{text-shadow:0 0 12px rgba(var(--acc-rgb),.7);}
@@ -188,3 +182,79 @@
 .cs-pk-chip{flex:0 0 28px;width:28px;height:28px;border:1px solid rgba(255,255,255,.3);box-shadow:inset 0 0 0 1px #000;}
 .cs-pk-hex{flex:1;min-height:40px;background:rgba(0,0,0,.4);border:1px solid rgba(var(--acc-rgb),.35);color:var(--text);font-family:var(--font-mono);font-size:.85rem;letter-spacing:.08em;padding:0 10px;text-transform:uppercase;}
 .cs-pk-ok{min-height:40px;padding:0 14px;border:1px solid var(--cyan);background:rgba(var(--acc-rgb),.16);color:var(--cyan);font-family:var(--font-hud);font-size:.58rem;letter-spacing:.16em;cursor:pointer;}
+
+
+/* ── v381: Articren selector + editor reuse the main-menu card system
+   (.mm-frame hairline, .mm-panel hinges, mmOpen / mmClose keyframes in ui/dm-menu.css).
+   Motion is CSS on enter / leave only; the wheel still writes transforms on scroll,
+   never per frame, and never allocates. The editor card stays on screen; there is no dismiss control. */
+#cs-list{padding-bottom:calc(84px + var(--safe-bot));}
+#screen-character .cs-card-slot{
+  flex:0 0 var(--cs-cw);scroll-snap-align:center;margin:0 clamp(6px,2vw,16px);padding:0;border:0;background:none;
+  color:inherit;font:inherit;cursor:pointer;text-align:center;display:flex;flex-direction:column;align-items:stretch;
+  transform-origin:50% 60%;touch-action:manipulation;appearance:none;-webkit-appearance:none;
+}
+#screen-character .cs-card-slot:focus{outline:none;}
+#screen-character .cs-card-slot:focus-visible .cs-card{outline:2px solid var(--gold);outline-offset:3px;}
+#cs-wheel .cs-card{
+  flex:none;width:100%;margin:0;display:flex;flex-direction:column;align-items:stretch;gap:0;padding:8px 8px 0;
+  cursor:inherit;text-align:center;overflow:hidden;position:relative;transform-origin:50% 60%;will-change:transform;
+  border:none;border-radius:0;touch-action:manipulation;
+}
+#cs-head.mm-panel{position:relative;z-index:3;}
+
+/* enter / leave: same hinge language as #screen-menu */
+#screen-character.active #cs-head.mm-hinge-top{transform-origin:50% 0;animation:mmOpenT .7s cubic-bezier(.2,.9,.25,1) 0s both;}
+#screen-character.active .cs-card-slot{transform-origin:50% 100%;animation:mmOpenB .7s cubic-bezier(.2,.9,.25,1) both;}
+#screen-character.active .cs-card-slot:nth-child(1){animation-delay:.05s;}
+#screen-character.active .cs-card-slot:nth-child(2){animation-delay:.12s;}
+#screen-character.active .cs-card-slot:nth-child(3){animation-delay:.19s;}
+#screen-character.active #cs-continue.cs-pop{transform-origin:50% 100%;animation:mmOpenB .65s cubic-bezier(.2,.9,.25,1) .2s both;}
+#screen-character.cs-leaving{display:flex !important;z-index:60;pointer-events:none;}
+#screen-character.cs-leaving #cs-head.mm-hinge-top{transform-origin:50% 0;animation:mmCloseT .5s cubic-bezier(.6,0,.8,.4) both;}
+#screen-character.cs-leaving .cs-card-slot{transform-origin:50% 100%;animation:mmCloseB .5s cubic-bezier(.6,0,.8,.4) both;}
+#screen-character.cs-leaving #cs-continue{transform-origin:50% 100%;animation:mmCloseB .45s cubic-bezier(.6,0,.8,.4) both;}
+
+/* small continue pop-out (shown once a card is picked / centred) */
+#cs-continue-dock{
+  position:absolute;left:0;right:0;bottom:calc(14px + var(--safe-bot));z-index:4;
+  display:flex;justify-content:center;pointer-events:none;padding:0 14px;
+}
+#cs-continue{
+  position:relative;padding:12px 14px;min-width:min(340px,calc(100vw - 28px));max-width:420px;
+  display:flex;justify-content:center;box-sizing:border-box;pointer-events:auto;
+}
+#cs-continue[hidden]{display:none !important;}
+#cs-continue .cs-btn{width:100%;min-height:48px;max-width:none;}
+
+/* editor: one taller framed card over the stage, always visible while editing */
+#cs-studio.open{display:block;}
+#cs-studio #cs-stage{position:absolute;inset:0;flex:none;width:auto;min-width:0;min-height:0;}
+#cs-studio #cs-panel{
+  position:absolute;right:clamp(12px,3vw,40px);top:max(16px,calc(50% - 360px));bottom:auto;
+  width:clamp(280px,34vw,400px);height:min(720px,calc(var(--app-h) - 32px));
+  max-height:calc(var(--app-h) - 32px);
+  flex:none;display:flex;flex-direction:column;min-height:0;z-index:3;box-sizing:border-box;padding:8px 8px 10px;
+}
+#cs-studio.open #cs-panel.mm-hinge-right{transform-origin:100% 50%;animation:mmOpenR .8s cubic-bezier(.2,.9,.25,1) .05s both;}
+#cs-studio.leaving #cs-panel.mm-hinge-right{transform-origin:100% 50%;animation:mmCloseR .55s cubic-bezier(.6,0,.8,.4) both;}
+
+@media (max-width:760px) and (orientation:portrait),(max-width:560px){
+  #cs-studio{flex-direction:unset;}
+  #cs-stage{flex:none;}
+  #cs-studio #cs-panel{
+    left:12px;right:12px;width:auto;top:auto;bottom:calc(12px + var(--safe-bot));
+    height:min(54vh,520px);max-height:54vh;border-top:none;
+  }
+  #cs-turn{bottom:calc(min(54vh,520px) + 22px + var(--safe-bot));}
+  #cs-studio.open #cs-panel.mm-hinge-right{transform-origin:50% 100%;animation-name:mmOpenB;}
+  #cs-studio.leaving #cs-panel.mm-hinge-right{transform-origin:50% 100%;animation-name:mmCloseB;}
+}
+@media (max-height:430px) and (orientation:landscape){
+  #cs-list{padding-bottom:calc(64px + var(--safe-bot));}
+  #cs-continue{padding:8px 10px;min-width:min(300px,calc(100vw - 24px));}
+  #cs-studio #cs-panel{top:8px;bottom:8px;height:auto;width:min(320px,42vw);}
+}
+@media (prefers-reduced-motion:reduce){
+  #screen-character #cs-head,#screen-character .cs-card-slot,#screen-character #cs-continue,#cs-studio #cs-panel{animation:none !important;}
+}
