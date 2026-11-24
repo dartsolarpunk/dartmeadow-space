@@ -71,26 +71,29 @@ for (const k of ['mars', 'venus', 'titan']) {
     } } }
 assert(/A\.setAniso\(1\/_pwfAnisoG\(\)\)/.test(html) && /U\.ax\.value=1\/g/.test(html), 'surface passes take the stretch every frame');
 
-// 4. ui/dm-gpu-defer.js: parked, then destroyed >= 3 frames later after the GPU finished; nothing allocated while idle
+// 4. ui/dm-gpu-defer.js (t1653 Track 4): parked, then destroyed at the top of a frame once >= MIN frames passed AND a fence issued after the release resolved; nothing allocated while idle
 { const G = require('../../ui/dm-gpu-defer.js');
   const q = G.createQueue(3), out = []; q.push('a', 0); q.push('b', 1); q.push(null, 1);
   assert.strictEqual(q.size(), 2); assert.strictEqual(q.take(2, out), 0); assert.strictEqual(q.take(3, out), 1); assert.deepStrictEqual(out, ['a']); assert.strictEqual(q.take(9, out), 1); assert.strictEqual(q.size(), 0);
   let destroyed = [], waits = [], data = new Map(), deleted = [];
   const buf = (n) => ({ n, destroy() { destroyed.push(n); } });
-  const be = { device: { queue: { onSubmittedWorkDone() { return new Promise(r => waits.push(r)); } } }, get(k) { if (!data.has(k)) data.set(k, {}); return data.get(k); }, delete(k) { deleted.push(k); data.delete(k); } };
+  const be = { device: { queue: { onSubmittedWorkDone() { return new Promise(r => waits.push(r)); } } }, get(k) { if (!data.has(k)) data.set(k, {}); return data.get(k); }, has(k) { return data.has(k); }, delete(k) { deleted.push(k); data.delete(k); } };
   const au = { backend: be, _getBufferAttribute(a) { return a.isInterleavedBufferAttribute ? a.data : a; }, destroyAttribute(a) { const d = be.get(this._getBufferAttribute(a)); d.buffer.destroy(); be.delete(a); } };
   const api = G.install({ backend: Object.assign(be, { attributeUtils: au }) }, { minFrames: 3 });
   assert(api && G.install({ backend: be }) === api, 'installs once');
   const A1 = {}, A2 = {}; be.get(A1).buffer = buf('A1'); be.get(A2).buffer = buf('A2');
   au.destroyAttribute(A1); assert.deepStrictEqual(destroyed, [], 'not destroyed on dispose'); assert.deepStrictEqual(deleted, [A1], 'three forgets it at once');
-  api.tick(); api.tick(); assert.strictEqual(waits.length, 0, 'held for 3 frames');
-  au.destroyAttribute(A2); api.tick(); assert.strictEqual(waits.length, 1, 'due: waits for submitted work');
-  api.tick(); api.tick(); api.tick(); assert.strictEqual(waits.length, 1, 'one batch in flight at a time');
-  assert.deepStrictEqual(destroyed, []); waits[0]();
+  api.tick(); assert.strictEqual(waits.length, 1, 'a fence is issued after the release');
+  api.tick(); api.tick(); assert.strictEqual(waits.length, 1, 'one fence in flight at a time');
+  au.destroyAttribute(A2); api.tick(); api.tick();
+  assert.deepStrictEqual(destroyed, [], 'MIN frames passed but the fence has not resolved: nothing destroyed');
+  waits[0]();
   setTimeout(() => {
-    assert.deepStrictEqual(destroyed, ['A1'], 'destroyed after the GPU finished');
-    api.tick(); assert.strictEqual(waits.length, 2); waits[1]();
+    assert.deepStrictEqual(destroyed, [], 'fence resolved: still only destroyed at the top of a frame (tick), never from the promise');
+    api.tick(); assert.deepStrictEqual(destroyed, ['A1'], 'destroyed after frames + fence; A2 (released after that fence) waits');
+    assert.strictEqual(waits.length, 2); waits[1]();
     setTimeout(() => {
+      api.tick(); api.tick();
       assert.deepStrictEqual(destroyed, ['A1', 'A2']); assert.strictEqual(api.pending(), 0);
       const w = waits.length; for (let i = 0; i < 50; i++) api.tick(); assert.strictEqual(waits.length, w, 'idle: no work');
       assert.throws(() => au.destroyAttribute({}), /destroy/, 'no buffer: falls through to three\'s own path unchanged');

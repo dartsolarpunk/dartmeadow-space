@@ -6753,7 +6753,9 @@ async function initFlightScene(){
   try{ _gpuProfInstall(flightRenderer); }catch(e){ console.warn('[gpuprof]',e); }
   // (v332) vertex / storage buffers of disposed geometry are destroyed a few frames late, after the GPU finished the work that
   // named them (ui/dm-gpu-defer.js) — the "[Buffer (unlabeled)] used in submit while destroyed" banner. ?gpudefer=0 turns it off.
-  try{ if(window.DMGpuDefer&&!/[?&]gpudefer=0\b/.test(location.search)&&_isRealWebGPU(flightRenderer)) window._dmGpuDefer=DMGpuDefer.install(flightRenderer,{minFrames:3}); }catch(e){ console.warn('[gpudefer]',e); }
+  // (t1653 Track 4) >= 4 frames AND an onSubmittedWorkDone fence issued after the release; shared interleaved (quantized / meshopt GLB) buffers are ref-counted; buffers labeled.
+  try{ if(window.DMGpuDefer&&!/[?&]gpudefer=0\b/.test(location.search)&&_isRealWebGPU(flightRenderer)) window._dmGpuDefer=DMGpuDefer.install(flightRenderer,{minFrames:4}); }catch(e){ console.warn('[gpudefer]',e); }
+  try{ if(typeof _btGpuWatch==='function') _btGpuWatch(); }catch(e){}   // (t1653 Track 4) the device error listener (heal + coalesce) from the first frame, not only once the temple spawns
   // The GPU can drop the page (a phone reclaiming memory in the background, a
   // driver reset). Three.js can't bring a lost device back, so save where she
   // is and reload into it rather than sit on a black screen.
@@ -9677,10 +9679,17 @@ function _btGpuWatch(){
   const bt=BIRD_TEMPLE; if(bt._gpuWatch) return; let dev=null;
   try{ dev=flightRenderer&&flightRenderer.backend&&flightRenderer.backend.device; }catch(e){}
   if(!dev||!dev.addEventListener) return; bt._gpuWatch=1;
+  // (t1653 Track 4) this listener sees EVERY uncaptured error of the flight device, not only the temple's: the banner says "GPU error" and, with ui/dm-gpu-defer.js labels,
+  // names the buffer's owner ("dm:ivb#12:..."). A repeating error (one per frame) is recorded / logged once per 2 s with a repeat count instead of per frame (the log + string
+  // work at 60 errors/s was part of the 3-4 fps), and a "used in submit while destroyed" naming a buffer we destroyed is healed (three re-creates it on the next draw).
   dev.addEventListener('uncapturederror',ev=>{ try{
-    const m=String((ev&&ev.error&&ev.error.message)||ev); (bt._gpuErrs||(bt._gpuErrs=[])).push(m.slice(0,240)); if(bt._gpuErrs.length>12) bt._gpuErrs.shift();
-    _btNote('gpu',m); const now=performance.now();
-    if(bt.group&&bt.spawned&&now-(bt._gpuSayAt||0)>6000&&_btDist()<BT_KEEP_R){ bt._gpuSayAt=now; _btSay('Bird Temple GPU error: '+m.replace(/\s+/g,' ').slice(0,110),'err'); }
+    const m=String((ev&&ev.error&&ev.error.message)||ev), now=performance.now();
+    try{ if(/destroyed/i.test(m)&&window._dmGpuDefer&&window._dmGpuDefer.heal) window._dmGpuDefer.heal(m); }catch(e){}
+    const k=m.slice(0,160); if(k===bt._gpuLastMsg&&now-(bt._gpuLastAt||0)<2000){ bt._gpuRepeat=(bt._gpuRepeat|0)+1; return; }
+    const rep=bt._gpuRepeat|0; bt._gpuLastMsg=k; bt._gpuLastAt=now; bt._gpuRepeat=0;
+    (bt._gpuErrs||(bt._gpuErrs=[])).push(m.slice(0,240)+(rep?' (x'+(rep+1)+')':'')); if(bt._gpuErrs.length>12) bt._gpuErrs.shift();
+    _btNote('gpu',m);
+    if(bt.group&&bt.spawned&&now-(bt._gpuSayAt||0)>6000&&_btDist()<BT_KEEP_R){ bt._gpuSayAt=now; _btSay('GPU error: '+m.replace(/\s+/g,' ').slice(0,110),'err'); }
   }catch(e){} });
 }
 // compile every unique temple material under a validation scope; replace the rejected ones with plain materials (keeps map / colour / emissive)

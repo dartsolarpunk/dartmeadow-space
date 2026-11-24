@@ -291,9 +291,12 @@ function teardown(w,full){
   if(!w) return; try{ clearProps(w); for(const rec of w.recs) dropObj(w,rec); if(w.G.parent) w.G.parent.remove(w.G); }catch(e){}
   if(full){ S.cache.forEach(a=>{ disposeTpl(a); a.state=0; a.refs=0; }); S.loadQ.length=0; S.loading=0; }
 }
+function recountRefs(){ S.cache.forEach(a=>{ a.refs=0; }); const sp=S.space; if(sp&&sp.recs) for(const rec of sp.recs){ if(rec.a) rec.a.refs++; } const w=S.world; if(w){ if(w.recs) for(const rec of w.recs){ if(rec.a) rec.a.refs++; } if(w.propAssets) w.propAssets.forEach(a=>{ a.refs++; }); } }
 function onWorldClose(){ // before _pwClose disposes the whole scene: our templates must survive, our group must not be disposed with it
   const w=S.world; if(w){ teardown(w,false); S.world=null; }
-  S.cache.forEach(a=>{ a.refs=0; });
+  // (t1653 Track 4) recount instead of zeroing: the SPACE stations / hubs (flightScene, S.space) keep drawing clones of their templates across a world visit; zeroing
+  // every ref let trim() evict a template whose clones were still on screen (re-parse + a second GPU copy of the same GLB = buffer churn on the tablet)
+  recountRefs();
   if(root.DMCreatures&&root.DMCreatures.onWorldClose) root.DMCreatures.onWorldClose();
   trim();
 }
@@ -394,11 +397,12 @@ function spaceModel(sp,rec,st){
   if(!rec.g){ rec.g=new T.Group(); rec.g.scale.setScalar(o.size/Math.max(1,rec.d.radius)); rec.g.rotation.y=o.yaw||0; sp.G.add(rec.g); rec.g.position.set(rec.wx,rec.wy,rec.wz); }
   S.cloneBudget=1; rec.h=rec.d.height||rec.d.radius*0.5; fillModel(rec,st);
 }
-function teardownSpace(sp){ for(const rec of sp.recs){ if(rec.beacon){ rec.beacon.material.dispose(); } if(rec.a) rec.a.refs--; } if(sp.G.parent) sp.G.parent.remove(sp.G); }
+function teardownSpace(sp){ for(const rec of sp.recs){ if(rec.beacon){ rec.beacon.material.dispose(); rec.beacon=null; } if(rec.a){ rec.a.refs--; rec.a=null; } }   // (t1653 Track 4) rec.a cleared: a second teardown cannot drive refs negative
+ if(sp.G.parent) sp.G.parent.remove(sp.G); }
 
 function stats(){ return Object.assign({},S.stats,{manifest:S.man,defs:S.defs?S.defs.length:0,found:Object.keys(loadFound()).length}); }
 root.DMPlaces={tick,spaceTick,onWorldClose,qtNode,travel,stats,loadFound,
   pause(on){ S.pause=!!on; },   // A/B perf switch (tools/perf only)
   reset(){ if(S.world) teardown(S.world,false); S.world=null; if(S.space) teardownSpace(S.space); S.space=null; },
-  _S:S,get off(){ return OFF; }};
+  _S:S,_recountRefs:recountRefs,get off(){ return OFF; }};
 })(window);
