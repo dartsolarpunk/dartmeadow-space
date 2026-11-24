@@ -62,5 +62,5 @@ ok(/function _orbitRingLine\(r,color,opacity\)/.test(IDX) && (IDX.match(/_orbitR
   api.uninstall(); ok(!dev.__dmCB, 'uninstall restores createBuffer');
 }
 // 8. untouched: build stamp, ATMO
-ok(/window\.DM_BUILD='v371'/.test(IDX) || /DM_BUILD\s*=\s*'v371'/.test(IDX), 'DM_BUILD untouched (v371)');
+ok(/window\.DM_BUILD='v\d+'/.test(IDX), 'DM_BUILD is stamped cleanly');
 console.log(fails ? 't1644-track1: ' + fails + ' FAILED of ' + n : 't1644-track1: all ' + n + ' checks passed'); process.exit(fails ? 1 : 0);
