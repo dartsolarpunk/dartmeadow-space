@@ -128,6 +128,7 @@
   }
   // updateSurface calls this right after it moves p.pos in x/z (feet = pos.y - 3). Walls/props stop the move; she slides along them.
   function walk(pos) {
+    if (G.DMMarsFac) G.DMMarsFac.walk(pos);   // (Track 5) the Valles Rim annex only records her feet height (its walls are DMCollide boxes)
     if (G.DMUndercliff && G.DMUndercliff.walk(pos)) { S.live = false; S.have = false; return; }   // (Track 5) she is in the undercliff (bay, rooms, stair, hangar, hatch): it swept the move
     if (NAV === null || S.rec === null) return;
     const dx = pos.x - S.px, dz = pos.z - S.pz;
@@ -217,7 +218,7 @@
       } else if (d2 > DROP_D * DROP_D) { if (!S.farAt) S.farAt = now; if (now - S.farAt > 3000) { unload(); S.nearAt = S.farAt = 0; } } else S.farAt = 0;
     },
     detach() { unload(); if (S.F && S.F.ovr === ovr) S.F.ovr = null; if (G.DMMansionLook) { try { G.DMMansionLook.destroy(); } catch (e) { } } S.rec = null; S.F = null; },
-    walk, ground, ray,
+    walk, ground, ray, inGround: () => _q,   // inGround (Track 5): true only inside ground() = her own floor query
     status() { return { state: S.state, live: S.live, loaded: !!S.root, feet: S.feet, lx: S.lx, ly: S.ly }; },
     spawn() { return NAV ? NAV.spawn : null; },
     _test: { parse: j => { NAV = parseNav(j); }, surf, blocked, setFrame(px, pz, y0, th) { S.px = px; S.pz = pz; S.y0 = y0; S.ct = Math.cos(th); S.st = Math.sin(th); S.state = 2; S.F = { ovr: null }; }, ovr, S },

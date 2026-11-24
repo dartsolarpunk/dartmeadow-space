@@ -187,10 +187,10 @@
     for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
       const k = y * S + x, o = k * 4, h = hgt[k], t = tint[((y / P) | 0) * 4 + ((x / P) | 0)];
       const dust = Math.max(0, Math.min(1, 0.25 + 0.55 * (y / S) + (rnd() - 0.5) * 0.35)) * (h < 0.5 ? 1.4 : 1);   // regolith settles low + in seams
-      const r0 = 46 + t * 18, g0 = 36 + t * 12, b0 = 32 + t * 10;   // dark composite, per-panel variation
+      const r0 = 158 + t * 18, g0 = 148 + t * 12, b0 = 134 + t * 10;   // (Track 5) light composite, per-panel variation (was 46/36/32: near-black on metal = a black silhouette with no env map)
       iA.data[o] = Math.min(255, r0 * (1 - dust * 0.6) + 168 * dust * 0.6); iA.data[o + 1] = Math.min(255, g0 * (1 - dust * 0.6) + 92 * dust * 0.6); iA.data[o + 2] = Math.min(255, b0 * (1 - dust * 0.6) + 58 * dust * 0.6); iA.data[o + 3] = 255;
       const dd = dust * 0.8 + (h < 0.5 ? 0.2 : 0);   // deck: darker plates, heavier dust
-      iD.data[o] = Math.min(255, 26 * (1 - dd) + 150 * dd); iD.data[o + 1] = Math.min(255, 24 * (1 - dd) + 84 * dd); iD.data[o + 2] = Math.min(255, 26 * (1 - dd) + 54 * dd); iD.data[o + 3] = 255;
+      iD.data[o] = Math.min(255, 96 * (1 - dd) + 160 * dd); iD.data[o + 1] = Math.min(255, 92 * (1 - dd) + 98 * dd); iD.data[o + 2] = Math.min(255, 90 * (1 - dd) + 68 * dd); iD.data[o + 3] = 255;
       const ro = Math.round(255 * Math.min(1, 0.42 + dust * 0.45 + (h < 0.5 ? 0.15 : 0)));
       iR.data[o] = ro; iR.data[o + 1] = ro; iR.data[o + 2] = ro; iR.data[o + 3] = 255;
       const hx = hgt[y * S + ((x + 1) % S)] - hgt[y * S + ((x + S - 1) % S)], hy = hgt[((y + 1) % S) * S + x] - hgt[((y + S - 1) % S) * S + x];
@@ -205,8 +205,8 @@
     if (MV) return MV;
     const t = mvMaps(THREE), std = (o) => new THREE.MeshStandardMaterial(o);
     MV = {
-      hull: std({ color: 0xffffff, map: t.hullA, roughnessMap: t.hullR, normalMap: t.hullN, normalScale: new THREE.Vector2(0.9, 0.9), metalness: 0.55, roughness: 1 }),
-      deck: std({ color: 0xffffff, map: t.deckA, roughnessMap: t.deckR, normalMap: t.deckN, normalScale: new THREE.Vector2(0.6, 0.6), metalness: 0.35, roughness: 1 }),
+      hull: std({ color: 0xffffff, map: t.hullA, roughnessMap: t.hullR, normalMap: t.hullN, normalScale: new THREE.Vector2(0.9, 0.9), metalness: 0.05, roughness: 1 }),
+      deck: std({ color: 0xffffff, map: t.deckA, roughnessMap: t.deckR, normalMap: t.deckN, normalScale: new THREE.Vector2(0.6, 0.6), metalness: 0.0, roughness: 1 }),
       warm: new THREE.MeshBasicMaterial({ color: 0xffd9a0, toneMapped: false }),
       red: new THREE.MeshBasicMaterial({ color: 0xff3a2a, toneMapped: false })
     };
@@ -782,6 +782,7 @@
     }
   }
 
+  F.addSolids = addSolids;   // (Track 5) ui/dm-mars-facility.js registers the annex roofs / apron through the same path
   // ── landmark lifecycle ──────────────────────────────────────────────────────────────────────────────────
   const hashS = s => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
   function dispose(o) { o.traverse(n => { if (n.geometry) n.geometry.dispose(); }); }
@@ -792,6 +793,7 @@
     if (window.DMHolo) { try { DMHolo.detach(); } catch (e) { } }
     if (window.DMLamps) { try { DMLamps.detach(); } catch (e) { } }
     if (window.DMMansionInt) { try { DMMansionInt.detach(); } catch (e) { } }
+    for (const r of F.sites.values()) { if (r.ext) { try { r.ext.detach(); } catch (e) { } r.ext = null; } }   // (Track 5) site extensions (the Mars annex) free their GLB, colliders, solids, lights
     if (window.DMUndercliff) { try { DMUndercliff.detach(); } catch (e) { } }   // (Track 5) the undercliff level: its GLB, nav, hatch button, pooled lights
     for (const r of F.sites.values()) { if (r.group && r.group.parent) r.group.parent.remove(r.group); if (r.group && !r.mansion) dispose(r.group); if (r.shardGeos) { r.shardGeos.forEach(g => g.dispose()); r.shardGeos = null; } if (r.group && r.group.userData && r.group.userData.shardMats) { r.group.userData.shardMats.forEach(m => { try { m.dispose(); } catch (e) { } }); r.group.userData.shardMats = null; } }
     try { if (window.DMCollide && DMCollide.clearGroup) DMCollide.clearGroup('facility'); } catch (e) { }
@@ -852,6 +854,7 @@
     PW.scene.add(rec.group); F.ctx.mapTag(rec.group); rec.x = px; rec.z = pz; rec.y = y0; rec.th = th; rec.ready = true; rec.bay = built.bay;
     addSolids(built.solids, px, pz, th, y0);
     if (site.variant === 'mars') rec.colN = marsCollide(px, pz, th, y0);   // (v336) Valles Rim walls / fins / mast
+    if (site.variant === 'mars' && window.DMMarsFac) { try { rec.ext = DMMarsFac.attach(F, rec) || null; } catch (e) { console.warn('[facilities] mars annex attach', e); rec.ext = null; } }   // (Track 5) the Valles Rim annex (ui/dm-mars-facility.js)
     if (built.bay) { F.bay = rec; }
   }
   function teleport(rec) {
@@ -931,7 +934,7 @@
         if (window.DMHolo) { try { DMHolo.tick(rec, d3sq, now, dt); } catch (e) { if (!rec.holoWarn) { rec.holoWarn = 1; console.warn('[holo] tick', e); } } }
         if (window.DMLamps) { try { DMLamps.tick(rec, d3sq, now, dt, f, mode); } catch (e) { if (!rec.lampWarn) { rec.lampWarn = 1; console.warn('[lamps] tick', e); } } }   // street lamps + room switches (a failure here must never stop the facility upkeep)
         if (window.DMUndercliff) { try { DMUndercliff.tick(rec, d3sq, now, dt, f, mode, DM.arriveAt === rec.def.id); } catch (e) { if (!rec.ucWarn) { rec.ucWarn = 1; console.warn('[undercliff] tick', e); } } }   // (Track 5) stream in / out, hatch, lights
-      } else { const fc = window.DMLod && DMLod.on ? DMLod.get('facility.cull') : 6000; const dyB = f.y - rec.y; rec.group.visible = d2 + (dyB === dyB && isFinite(dyB) ? dyB * dyB : 0) < fc * fc; }   // (v289) altitude counts here too
+      } else { const fc = window.DMLod && DMLod.on ? DMLod.get('facility.cull') : 6000; const dyB = f.y - rec.y; const ddB = d2 + (dyB === dyB && isFinite(dyB) ? dyB * dyB : 0); rec.group.visible = ddB < fc * fc; if (rec.ext) { try { rec.ext.tick(rec, ddB, now, dt, f, mode); } catch (e) { if (!rec.extWarn) { rec.extWarn = 1; console.warn('[facilities] site ext tick', e); } } } }   // (v289) altitude counts here too
       if (rec.clouds) for (const p of rec.clouds) { const t = p.material.map; t.offset.x += p.userData.v * dt; t.offset.y += p.userData.v * 0.6 * dt; }
       if (rec.bay) {
         const bm = rec.bay.meshes; for (let i = 0; i < bm.length; i++) { const t = bm[i].material.map; t.offset.x += (0.012 + i * 0.004) * dt; t.offset.y += 0.006 * dt; }

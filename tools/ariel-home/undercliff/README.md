@@ -25,7 +25,7 @@ The level has:
 Use Blender 4.2. Keep the output out of folders named `build`/`dist`, because the box wipes them.
 
 ```sh
-BL=/home/box/blender-4.2/blender
+BL=/home/box/apps/blender-4.2.3-linux-x64/blender
 OUT=/workspace/jots-t1516/undercliff/p2-out
 REPO=$(git rev-parse --show-toplevel)
 UC_OUT=$OUT UC_REPO=$REPO $BL -b --factory-startup -P tools/ariel-home/undercliff/p2_build.py
