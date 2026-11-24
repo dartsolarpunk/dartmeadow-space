@@ -570,7 +570,7 @@
     const own = [], dispose = trackDispose(own), T = THREE.TSL, M = mats(THREE), scene = X.scene, group = new THREE.Group(); group.name = 'menuworld-studio';
     const skyScene = new THREE.Scene(); skyScene.background = new THREE.Color(0x02030a);
     const fov = 30, sun0 = sunDirFor(o.aspect || 1.2, fov, -1, 9, 0.62);
-    const sky = buildSky(THREE, skyScene, tier, { sun: sun0, planet: { x: 140, y: -700, z: -1250, r: 760 }, crisp: true }, own); sky.syncAtm();
+    const sky = buildSky(THREE, skyScene, tier, { sun: sun0, planet: { x: -300, y: -1050, z: -1500, r: 1180 }, crisp: true }, own); sky.syncAtm();   // (v382) same planet/atmosphere placement as the selector (cardWorld); the old studio pose put a close offset surface in the upper-left and lost the limb glow
     const proc = new THREE.Group(); proc.name = 'bay-proc'; group.add(proc);
     scene.traverse((ob) => { if (ob.userData && ob.userData.dmSet) ob.visible = false; });   // the plain pad / ring / rocks give way to the bay
     const studioL = MW.applyBayStudioLights(THREE, scene, 'studio', { key: X.key, rim: X.rim });
@@ -615,13 +615,19 @@
     Wd.setYaw = (yaw) => { const y = yaw || 0; yawGroup.rotation.y = y; skyYaw.rotation.y = y; };
     Wd.prepCamera = (cam) => { if (cam.far < 6000) { cam.near = 0.08; cam.far = 6000; cam.updateProjectionMatrix(); } };
     Wd.setAspect = (a) => { if (Math.abs(a - Wd.aspect) < 0.03) return; Wd.aspect = a; Wd.sun = sunDirFor(a, fov, -1, 9, 0.62); sky.setSun(Wd.sun); };
+    // loc: camera world -> sky-local (undo setYaw). cy/sy live in this scope so the closures are allocated once, not per frame.
+    let locCy = 1, locSy = 0;
+    const loc = (p) => [p.x * locCy - p.z * locSy, p.y, p.x * locSy + p.z * locCy];
+    const setParallax = (g, k, c) => { const v = parallaxOffset(c, rest, k); g.position.set(v[0], v[1], v[2]); };
     Wd.update = (t, dt, cam, yaw, target, dragging) => {   // t in ms; after the camera pose is set, before render
       const ts = t / 1000; sky.update(ts); Wd.rescale = MW.govern(dt * 1000);   // true = the pixel ratio just dropped: the caller re-lays out
       Wd.setYaw(yaw || 0);   // bay + sky + lights follow the orbit so the camera stays inside and she stays front-lit
-      if (rest[0] == null) { rest[0] = cam.position.x; rest[1] = cam.position.y; rest[2] = cam.position.z; }
+      // (v382) parallax in yaw-local space: setYaw already rotates the sky; loc() uses cos(y0)/sin(y0) to undo that yaw
+      const y0 = yaw || 0; locCy = Math.cos(y0); locSy = Math.sin(y0);
+      if (rest[0] == null) { const r0 = loc(cam.position); rest[0] = r0[0]; rest[1] = r0[1]; rest[2] = r0[2]; }
       const sw = swayAt(ts, dragging ? 0.02 : 0.06); cam.position.x += sw.x; cam.position.y = Math.max(0.1, cam.position.y + sw.y); if (target) cam.lookAt(target); cam.updateMatrixWorld(true);
-      const c = [cam.position.x, cam.position.y, cam.position.z], set = (g, k) => { const v = parallaxOffset(c, rest, k); g.position.set(v[0], v[1], v[2]); };
-      sky.placePlanet(parallaxOffset(c, rest, PARALLAX_K.planet)); sky.layers.forEach((L) => set(L.grp, L.k)); sky.syncAtm();
+      const c = loc(cam.position);
+      sky.placePlanet(parallaxOffset(c, rest, PARALLAX_K.planet)); sky.layers.forEach((L) => setParallax(L.grp, L.k, c)); sky.syncAtm();
       if (motes) motes.position.y = Math.sin(ts * 0.12) * 0.25;
     };
     try { MW.loadBayGLB(THREE).then((g) => { if (!g || Wd._dead) return; const inst = MW.instanceBay(THREE, 'studio'); if (!inst) return; proc.visible = false; group.add(inst); Wd.bay = inst; Wd.fixL = MW.attachBayFixtureLights(THREE, yawGroup, inst, 'studio'); info('studio bay glb'); }); } catch (e) { info('studio bay glb failed', e && e.message); }

@@ -77,7 +77,7 @@ ok(/transform-style:\s*preserve-3d/.test(css), '3D carousel: .cs-card-slot keeps
 ok(!/#cs-panel\{[^}]*background:\s*transparent/.test(css), '#cs-panel does not set background:transparent (would kill the .mm-frame ring and fill)');
 ok(!/#cs-panel\{[^}]*background:/.test(css), '#cs-panel does not set a competing background (mm-frame owns the ring and fill)');
 ok(/#cs-studio \.cs-sw::before[\s\S]{0,400}clip-path:polygon\(var\(--cut\)/.test(css) && /#cs-studio \.cs-sw\.on[\s\S]{0,180}--lc:var\(--cyan\)/.test(css), 'editor swatches are chamfered framed buttons with a lit cyan selected state');
-ok(/#cs-studio \.cs-sw,#cs-studio \.cs-lg\{[^}]*filter:drop-shadow/.test(css) && !/#cs-studio \.cs-sw,#cs-studio \.cs-lg\{[^}]*clip-path:/.test(css), 'swatch/logo drop-shadow is on the host, not under clip-path');
+ok(/#cs-studio \.cs-sw,#cs-studio \.cs-lg\{[^}]*filter:drop-shadow/.test(css) && /#cs-studio \.cs-sw,#cs-studio \.cs-lg\{[^}]*clip-path:\s*none/.test(css) && /#cs-studio \.cs-sw,#cs-studio \.cs-lg\{[^}]*box-shadow:\s*none/.test(css), 'editor swatch/logo host clip-path is none (chamfer lives on ::before); box-shadow none so the glow is the drop-shadow');
 ok(/#cs-studio #cs-tabs button\{[\s\S]{0,360}background:rgba\(var\(--acc-rgb\),\.06\)/.test(css) && /#cs-studio \.cs-btn\{[\s\S]{0,360}background:rgba\(var\(--acc-rgb\),\.06\)/.test(css), 'editor tabs and Back/Select reuse the menu-row glass');
 
 ok(!/#screen-character\.mw-on \.cs-card\{[^}]*clip-path:/.test(mw) && !/#screen-character\.mw-on \.cs-card\{[^}]*background:/.test(mw), 'mw-on .cs-card does not override mm-frame clip-path or background');

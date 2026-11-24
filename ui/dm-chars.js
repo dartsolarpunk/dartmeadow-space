@@ -72,7 +72,7 @@
       clipMap: { walk: 'Walking', run: 'Running', jump: 'Regular_Jump', climbLoop: 'climbing_up_wall', step: 'Mount_Step', stepOff: 'Dismount_Step', swim: 'Swim_Forward',
         crouch: 'Crouch_Walk_Right_with_Torch_inplace', prone: 'Crawl_Backward_inplace', rope: 'Swing_on_Rope_to_Ground', cliff: 'Grab_Bar_and_Swing_Forward' },
       studio: { idle: 'Emma_Idle', extras: ['Acting_Wave_Happy', 'Acting_Surprised', 'Acting_Thinking'] },
-      hair: { url: 'characterassests/emma/emma_hair_strands.bin?v=380', configUrl: 'characterassests/emma/emma_hair_config.json?v=379',
+      hair: { url: 'characterassests/emma/emma_hair_strands.bin?v=382', configUrl: 'characterassests/emma/emma_hair_config.json?v=382',
         groups: [{ id: 'main', label: 'Hair', clusters: ['back', 'sideburns', 'top', 'underlayer'] }, { id: 'fringe', label: 'Fringe', clusters: ['bangs'] }] },
       // shirt (baked LEAD EDGE print, own 1024 map) and pants (flat 1024 map) each have their own baked atlas: the item's UV islands are recoloured inside a canvas copy of it (detail kept)
       items: {
@@ -88,7 +88,7 @@
           left: { label: 'Left side', base: 0.09, snaps: [{ id: 'thigh', label: 'Thigh', x: 0.5, y: 0.3 }, { id: 'shin', label: 'Shin', x: 0.5, y: 0.65 }] },
           right: { label: 'Right side', base: 0.09, snaps: [{ id: 'thigh', label: 'Thigh', x: 0.5, y: 0.3 }, { id: 'shin', label: 'Shin', x: 0.5, y: 0.65 }] } } },
       },
-      accessories: { necklace: false, glassesLed: false, cloth: false },
+      accessories: { necklace: false, glassesLed: true, cloth: false },
       // (t1644u) skyboard stance overrides on top of index.html BOARD_STANCE (tuned on Ariel).  Measured off her bind pose: ankles 9.5 cm (Ariel 12.8),
       // hip joint -> ankle 0.816 m (Ariel 0.795), so the feet sit ON the deck instead of 3 cm above it and the knees keep Ariel's soft bend; the spread is
       // scaled by the leg ratio.  handsFrom 'idle' = her riding hands are her idle hands (studio.idle clip: the exact wrist + finger locals every free-hand

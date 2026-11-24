@@ -39,7 +39,7 @@ for (const d of C.list()) {
   ok(C.get('ariel').hair.url === 'characterassests/ariel_hair_strands.bin' && !C.get('ariel').hair.configUrl, "Ariel keeps the loader's built-in hair config");
 }
 ok(C.get('ariel').accessories.necklace && C.get('ariel').accessories.glassesLed && C.get('ariel').accessories.cloth, 'Ariel keeps necklace / glasses LED / cloth');
-ok(C.get('emma').accessories.necklace === false && C.get('emma').accessories.glassesLed === false && C.get('emma').accessories.cloth === false, 'Emma skips the Ariel-only accessories');
+ok(C.get('emma').accessories.necklace === false && C.get('emma').accessories.glassesLed === true && C.get('emma').accessories.cloth === false, 'Emma has the glasses flashlight, skips the Ariel-only necklace / cloth');
 // adding a character is one entry
 {
   const before = C.list().length;

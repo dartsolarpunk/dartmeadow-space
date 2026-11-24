@@ -59,7 +59,8 @@
   // noise = dust texture in the beam (phones never pay for it).  low = the Low graphics preset / weak GPU, phone = handhelds, desktop = the rest.
   // (v324) tablets / phones: 512 map at every 2nd frame (the 1024 / 100 m map was ~4x the caster fill for a soft shadow that 512 shows just as well on a 54 deg halo), 80 m reach, 6 beam samples.
   const TIERS = { low: { map: 512, every: 3, far: 45, steps: 5, noise: false }, phone: { map: 512, every: 2, far: 80, steps: 6, noise: false }, desktop: { map: 2048, every: 1, far: 180, steps: 14, noise: true } };
-  const R = { width: 0.153, top: 1.6689, front: -0.0133, band: 0.027 };   // GLB-measured fallback (metres, bind pose)
+  const R = { width: 0.153, top: 1.6689, front: -0.0133, band: 0.027 };   // GLB-measured fallback (metres, bind / mesh space — only with inverseBind)
+  const R_HEAD = { width: 0.153, top: 0.18, front: 0.044, band: 0.027 };   // Head-local fallback (Ariel rim in Head space; NOT bind-space y=1.67)
   const S = { on: false, step: 3, cone: 0, built: false, led: null, casing: null, strip: null, light: null, target: null, dims: null, mode: '', rc: 0, tries: 0, placed: false, prof: 'ground', pairs: [], ui: null, dirty: true, wait: 0, err: null,
     flags: null, tier: null, tierName: '', mapSize: 2048, shadowOn: false, shFrame: 0, shEvery: 1, shNear: 0.25, shFar: 180, bias: -0.0004, normalBias: 0.06, biasK: 0.012, biasM: 0.03, tilt: 0.07, halo: 1, gain: 1, fl: 0, vlCone: { angle: 0.6, penumbra: 0.7 }, shadowFloor: 0.9, fresh: 0, shUpdates: 0,
     t: 0, dtEma: 16, slow: 0, fast: 0, autoOff: 0, retry: 0, beamOn: false, dens: 0.01, beamK: 1, wasOn: false, shadowUser: true, pair: null, U: null, beam: undefined };
@@ -159,9 +160,24 @@
   function initPre() { if (!_v && T) { _v = new T.Vector3(); _d = new T.Vector3(); _q = new T.Vector3(0, 0, 1); _z = new T.Vector3(); _f = new T.Vector3(); } }
   // ── the LED bar on the glasses
   function glassesMesh(rootObj) {
-    let best = null;
-    rootObj.traverse(o => { if (best || !o.isSkinnedMesh || !o.skeleton) return; if (o.name === 'Mesh_1' || o.name === 'Mesh 1' || (o.material && /Material_1\.001/.test(o.material.name || '') && o.skeleton.bones.some(b => b.name === 'Head'))) best = o; });
-    return best;
+    let best = null, named = null;
+    rootObj.traverse(o => { if (!o.isSkinnedMesh || !o.skeleton) return; const n = o.name || '';
+      if (n === 'Mesh_1' || n === 'Mesh 1' || /Glasses_Frame|Glasses Frame/i.test(n)) { if (!best) best = o; }
+      else if (!named && o.material && /Material_1\.001/.test(o.material.name || '') && o.skeleton.bones.some(b => b.name === 'Head')) named = o;
+    });
+    return best || named;
+  }
+  // authored LED already on the character (Emma: Emma_LED_Light / Cover / Housing) — do not add a second bar
+  function glbLedMesh(rootObj) {
+    let light = null;
+    if (rootObj) rootObj.traverse(o => { if (o.isMesh && /LED_Light|LED Light/i.test(o.name || '')) light = o; });
+    return light;
+  }
+  function headBone(CHAR, skel) {
+    if (skel && skel.bones) { for (let i = 0; i < skel.bones.length; i++) if (skel.bones[i].name === 'Head') return { head: skel.bones[i], hi: i, skel }; }
+    if (CHAR && CHAR.bones && CHAR.bones.Head) return { head: CHAR.bones.Head, hi: -1, skel: null };
+    let head = null; if (CHAR && CHAR.root) CHAR.root.traverse(o => { if (!head && o.isBone && o.name === 'Head') head = o; });
+    return head ? { head, hi: -1, skel: null } : null;
   }
   // frame proportions from its own bind-pose vertices (mesh space): front face, top of the rim over the bridge, width, rim band
   function measure(m) {
@@ -176,28 +192,52 @@
     return { width: x1 - x0, top, front: zf, band: top - lo };
   }
   F.dimsFrom = function (d) {   // pure: LED bar proportions from the frame
-    d = d || R;
+    d = d || R_HEAD;
     const len = d.width / 3, h = Math.max(0.0022, Math.min(0.004, d.band / 8)), dep = 0.006;
     return { len, h, dep, stripLen: len * 0.88, stripH: h * 0.38, x: 0, y: d.top + h * 0.5, z: d.front - dep * 0.5 + 0.0006, frame: d };
   };
   F.attach = function (CHAR) {
     T = root.THREE; if (S.built || !T || !CHAR || !CHAR.root) return false;
     F.refreshTier();
-    const m = glassesMesh(CHAR.root); if (!m) return false;
-    const bones = m.skeleton.bones; let hi = -1; for (let i = 0; i < bones.length; i++) if (bones[i].name === 'Head') { hi = i; break; }
-    if (hi < 0) return false;
-    const head = bones[hi], D = F.dimsFrom(measure(m) || R);
-    // mesh (bind) space -> head-bone local: inverseBind(Head) x bindMatrix
-    const M = new T.Matrix4().copy(m.skeleton.boneInverses[hi]).multiply(m.bindMatrix).multiply(new T.Matrix4().makeTranslation(D.x, D.y, D.z));
-    const g = new T.Group(); g.name = 'jots_glasses_led'; M.decompose(g.position, g.quaternion, g.scale);
-    const cas = new T.Mesh(new T.BoxGeometry(D.len, D.h, D.dep), new T.MeshStandardMaterial({ color: 0x060607, roughness: 0.55, metalness: 0.2 }));
-    cas.name = 'jots_glasses_led_casing';
-    const str = new T.Mesh(new T.BoxGeometry(D.stripLen, D.stripH, 0.0008), new T.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }));
-    str.name = 'jots_glasses_led_strip'; str.position.z = D.dep * 0.5 + 0.0002;
-    for (const o of [g, cas, str]) { o.userData.noCollide = true; o.userData.dmFlash = true; o.raycast = () => { }; }
-    cas.castShadow = false; cas.receiveShadow = false; str.castShadow = false;
-    g.add(cas); g.add(str); head.add(g);
-    S.led = g; S.casing = cas; S.strip = str; S.dims = D; S.built = true;
+    const ledM = glbLedMesh(CHAR.root);
+    const m = ledM || glassesMesh(CHAR.root);
+    const hb = headBone(CHAR, m && m.skeleton); if (!hb) return false;
+    const head = hb.head;
+    const g = new T.Group(); g.name = 'jots_glasses_led';
+    let D, cas = null, str = null, glb = false;
+    if (ledM && ledM.geometry && ledM.geometry.attributes && ledM.geometry.attributes.position && hb.hi >= 0 && ledM.skeleton) {
+      // use the authored LED (Emma_LED_Light): locator on Head at its Head-local centroid, no second bar
+      const P = ledM.geometry.attributes.position, Mb = new T.Matrix4().copy(ledM.skeleton.boneInverses[hb.hi]).multiply(ledM.bindMatrix), v = new T.Vector3();
+      let cx = 0, cy = 0, cz = 0, x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9, z0 = 1e9, z1 = -1e9;
+      for (let i = 0; i < P.count; i++) {
+        v.fromBufferAttribute(P, i).applyMatrix4(Mb);
+        cx += v.x; cy += v.y; cz += v.z;
+        if (v.x < x0) x0 = v.x; if (v.x > x1) x1 = v.x;
+        if (v.y < y0) y0 = v.y; if (v.y > y1) y1 = v.y;
+        if (v.z < z0) z0 = v.z; if (v.z > z1) z1 = v.z;
+      }
+      const n = P.count || 1; cx /= n; cy /= n; cz /= n;
+      const len = Math.max(0.01, x1 - x0), h = Math.max(0.0022, y1 - y0), dep = Math.max(0.003, z1 - z0);
+      D = { len, h, dep, stripLen: len * 0.88, stripH: h * 0.38, x: cx, y: cy, z: cz, frame: { width: x1 - x0, top: y1, front: z1, band: y1 - y0 } };
+      new T.Matrix4().makeTranslation(cx, cy, cz).decompose(g.position, g.quaternion, g.scale);
+      g.userData.noCollide = true; g.userData.dmFlash = true; g.raycast = () => { };
+      head.add(g);
+      str = ledM; glb = true;
+    } else {
+      const measured = m && measure(m);
+      D = F.dimsFrom(measured || (m ? R : R_HEAD));
+      // mesh (bind) space -> head-bone local: inverseBind(Head) x bindMatrix; no glasses mesh: Head-local R_HEAD (not bind y=1.67)
+      const M = (m && hb.hi >= 0) ? new T.Matrix4().copy(m.skeleton.boneInverses[hb.hi]).multiply(m.bindMatrix).multiply(new T.Matrix4().makeTranslation(D.x, D.y, D.z)) : new T.Matrix4().makeTranslation(D.x, D.y, D.z);
+      M.decompose(g.position, g.quaternion, g.scale);
+      cas = new T.Mesh(new T.BoxGeometry(D.len, D.h, D.dep), new T.MeshStandardMaterial({ color: 0x060607, roughness: 0.55, metalness: 0.2 }));
+      cas.name = 'jots_glasses_led_casing';
+      str = new T.Mesh(new T.BoxGeometry(D.stripLen, D.stripH, 0.0008), new T.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }));
+      str.name = 'jots_glasses_led_strip'; str.position.z = D.dep * 0.5 + 0.0002;
+      for (const o of [g, cas, str]) { o.userData.noCollide = true; o.userData.dmFlash = true; o.raycast = () => { }; }
+      cas.castShadow = false; cas.receiveShadow = false; str.castShadow = false;
+      g.add(cas); g.add(str); head.add(g);
+    }
+    S.led = g; S.casing = cas; S.strip = str; S.dims = D; S.glbLed = glb; S.built = true;
     initPre();
     sync();
     return true;
@@ -206,8 +246,11 @@
   // (the beam's lights / shadow pairs belong to the scenes, not to her, and stay).
   F.detach = function () {
     if (!S.built) return false;
-    try { for (const o of [S.casing, S.strip]) { if (o) { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); } } if (S.led && S.led.parent) S.led.parent.remove(S.led); } catch (e) { }
-    S.led = S.casing = S.strip = null; S.dims = null; S.built = false; S.on = false; S.wasOn = false;
+    try {
+      if (!S.glbLed) { for (const o of [S.casing, S.strip]) { if (o) { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); } } }
+      if (S.led && S.led.parent) S.led.parent.remove(S.led);
+    } catch (e) { }
+    S.led = S.casing = S.strip = null; S.dims = null; S.glbLed = false; S.built = false; S.on = false; S.wasOn = false;
     try { if (S.light) S.light.intensity = 0; } catch (e) { }
     try { ui(); } catch (e) { }
     return true;
@@ -346,7 +389,7 @@
   }
   function intensityNow(pn) { return F.intensityFor(STEPS[S.step]) * PROF[pn].gain * CONES[S.cone].gain; }
   function sync() {   // state -> LED glow / light intensity (no allocation)
-    if (S.strip) S.strip.material.color.setScalar(S.on ? 1 : 0.18);
+    try { if (S.strip && S.strip.material && S.strip.material.color && !S.glbLed) S.strip.material.color.setScalar(S.on ? 1 : 0.18); else if (S.glbLed && S.strip && S.strip.material) { const m = S.strip.material; if (m.emissiveIntensity != null) m.emissiveIntensity = S.on ? 2 : 0.15; else if (m.color) m.color.setScalar(S.on ? 1 : 0.18); } } catch (e) { }
     if (S.on && S.built) ensureLight();
     if (S.light) S.light.intensity = S.on ? intensityNow(S.prof) : 0;
     if (!S.on) darkAll();

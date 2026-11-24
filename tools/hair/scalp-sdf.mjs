@@ -71,10 +71,12 @@ if (process.argv.includes('--write')) {
   const sOff = s0.byteOffsetFromData, sdfBytes = Buffer.from(V.buffer), pad = (4 - (sdfBytes.length % 4)) % 4;
   const lay = meta.layout || {}, cOff = lay.clusterByteOffsetFromData;
   const head = Buffer.from(buf.slice(ds, ds + sOff)); Buffer.from(R.buffer).copy(head, 0);
-  const tail = cOff != null ? buf.slice(ds + cOff) : Buffer.alloc(0);
-  meta.sdf = Object.assign({}, s0, { cell: CELL, dims, byteOffsetFromData: sOff, note: 'v379: native ' + (CELL * 1000) + ' mm, re-baked vs the bind scalp + head skin, flood-fill sign (space under the scalp shell is inside)' });
+  // cluster data only (uint8[N]); never keep a stale scalp band after the SDF size changes
+  const tail = cOff != null ? buf.slice(ds + cOff, ds + cOff + N) : Buffer.alloc(0);
+  delete meta.sdfBand;
+  meta.sdf = Object.assign({}, s0, { cell: CELL, dims, byteOffsetFromData: sOff, note: 'v382: native ' + (CELL * 1000) + ' mm full-field SDF of bind scalp + body skin (same High cell size as Ariel 5 mm x3), flood-fill sign, no scalp-band proxy' });
   if (cOff != null) lay.clusterByteOffsetFromData = sOff + sdfBytes.length + pad;
-  meta.note = (meta.note || '') + ' v379: head SDF re-baked (2.5 mm native, flood-fill sign incl. the scalp shell) and the rest lifted >= 3 mm out of it (tools/hair/scalp-sdf.mjs).';
+  meta.note = (meta.note || '') + ' v382: head SDF re-baked at ' + (CELL * 1000) + ' mm (Emma_Scalp + Emma_Body, Ariel High-equivalent full field, flood-fill sign) and the rest lifted >= 3 mm out of it (tools/hair/scalp-sdf.mjs).';
   let js = Buffer.from(JSON.stringify(meta)); const jpad = (4 - ((12 + js.length) % 4)) % 4; js = Buffer.concat([js, Buffer.alloc(jpad, 0x20)]);
   const hdr = Buffer.alloc(12); hdr.write('DHS1', 0); hdr.writeUInt32LE(js.length, 4); hdr.writeUInt32LE(buf.readUInt32LE(8), 8);
   fs.writeFileSync(OUT, Buffer.concat([hdr, js, head, sdfBytes, Buffer.alloc(pad), tail])); console.log('wrote', OUT, fs.statSync(OUT).size, 'bytes');

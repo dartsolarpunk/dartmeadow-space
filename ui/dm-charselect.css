@@ -285,6 +285,7 @@
   --cut:6px;--lc:rgba(var(--acc-rgb),.8);
   position:relative;isolation:isolate;overflow:visible;
   border:none;border-radius:0;
+  clip-path:none;box-shadow:none;
   filter:drop-shadow(0 0 5px rgba(var(--acc-rgb),.4));
 }
 #cs-studio .cs-sw::before,#cs-studio .cs-lg::before{

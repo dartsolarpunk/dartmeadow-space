@@ -138,5 +138,30 @@ let fails = 0, n = 0; const ok = (c, m) => { n++; if (!c) { fails++; console.log
   ok(F.STICK2.walk === 'surf-look-zone' && /fixed bottom-left slot/.test(src) && /OBST/.test(src), 'second-choice slots + fixed fallback + obstacle test in dock()');
   ok(['space', 'fly', 'walk'].every(m => F.STICK[m]), 'a stick (dock reference) for each of space / fly / walk (on foot, mansion, sky, space)');
   ok(!/>[^<]*[A-Za-z]{3,}[^<]*<\/button>/.test(src.slice(src.indexOf('const ICON'), src.indexOf('const CSS'))), 'icon only (custom SVG, no text label)');
+  // no-glasses fallback must be Head-local (y ~ 0.18), not bind-space R.top=1.67
+  F.detach();
+  {
+    const rootN = new THREE.Group(), headN = new THREE.Bone(); headN.name = 'Head'; rootN.add(headN);
+    ok(F.attach({ root: rootN, bones: { Head: headN } }) === true, 'attach() with no glasses mesh still builds a Head-local bar');
+    const p = F.S.led.position;
+    ok(Math.abs(p.y - 0.18) < 0.04 && Math.abs(p.z - 0.044) < 0.02 && p.y < 0.5, 'no-glasses fallback is Head-local (y=' + p.y.toFixed(3) + ', not bind 1.67)');
+    ok(F.S.casing && F.S.strip && !F.S.glbLed, 'procedural casing/strip when no authored LED is present');
+  }
+  // Emma GLB LED: Emma_LED_Light already on the character — no second procedural bar
+  F.detach();
+  {
+    const rootE = new THREE.Group(), headE = new THREE.Bone(); headE.name = 'Head'; rootE.add(headE);
+    const geoE = new THREE.BoxGeometry(0.028, 0.005, 0.005); geoE.translate(0, 0.1174, 0.0775);
+    const ledE = new THREE.SkinnedMesh(geoE, new THREE.MeshStandardMaterial()); ledE.name = 'Emma_LED_Light'; rootE.add(ledE);
+    rootE.updateMatrixWorld(true);
+    const ibm = new THREE.Matrix4(); ledE.bind(new THREE.Skeleton([headE], [ibm]), new THREE.Matrix4());
+    ok(F.attach({ root: rootE, bones: { Head: headE } }) === true, 'attach() uses the authored Emma_LED_Light');
+    ok(F.S.glbLed === true && !F.S.casing && F.S.strip === ledE, 'no doubled LED bar: locator only, strip is the GLB mesh');
+    ok(ledE.parent === rootE, 'the GLB LED mesh was not re-parented or disposed');
+    ok(Math.abs(F.S.led.position.y - 0.1174) < 0.01 && Math.abs(F.S.led.position.z - 0.0775) < 0.01, 'locator sits at the LED Head-local centroid');
+    F.detach();
+    ok(ledE.parent === rootE && ledE.geometry, 'detach() does not dispose or remove the GLB LED');
+  }
+
   console.log(fails ? 'glasses-flash: FAILED ' + fails + '/' + n : 'glasses-flash: all ' + n + ' checks passed'); process.exit(fails ? 1 : 0);
 })().catch(e => { console.log('glasses-flash: ERROR', e); process.exit(1); });
