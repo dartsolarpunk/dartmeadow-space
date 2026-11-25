@@ -183,7 +183,7 @@ if(location.search.indexOf('debug')!==-1){
   // PWA manifest: /manifest.webmanifest (linked in <head>; dark launch screen on Android)
 })();</script>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-<script>/* (v353) build tag: bump together with CACHE_NAME in sw.js (tools/tests/build-tag.js).  Persisted quality records (ui/dm-budget.js, dm-governor.js) are dropped when it changes. */window.DM_BUILD='v383';try{console.log('[DM build] '+window.DM_BUILD);}catch(e){}</script>
+<script>/* (v353) build tag: bump together with CACHE_NAME in sw.js (tools/tests/build-tag.js).  Persisted quality records (ui/dm-budget.js, dm-governor.js) are dropped when it changes. */window.DM_BUILD='v384';try{console.log('[DM build] '+window.DM_BUILD);}catch(e){}</script>
 <script src="ui/dm-time.js?v=97"></script>
 <script src="ui/dm-earth.js?v=292"></script>
 <script src="ui/dm-earth-paint.js?v=290"></script>
@@ -19232,7 +19232,7 @@ function renderWithPostFX(){
   try{ if(window.DMStarBubble) { const n=performance.now(), d=_sbT?(n-_sbT)/1000:1/60; _sbT=n; if(window.DMStar) DMStar.frame(flightCamera,d); if(window.DMMist) DMMist.frame(flightCamera,d); if(window.DMFluidWorld) DMFluidWorld.frame(flightCamera,d); DMStarBubble.frame(flightCamera,flightScene,d); } }catch(e){ console.warn('[starbubble] '+(e&&e.stack||e)); }
   try{ if(window.DMBtInterior&&DMBtInterior.pre) DMBtInterior.pre(flightCamera); }catch(e){}   // (v116) sealed? decided before the temple lighting (the glass probe waits while no glass is in view)
   try{ if(window.BTL&&BTL.preRender) BTL.preRender(flightRenderer,flightScene,flightCamera); }catch(e){ if(window.BTL) BTL._err=String(e&&e.stack||e).slice(0,300); }
-  try{ if(window.DMCharLook&&CHAR.root){ const _pa=(typeof PW!=='undefined'&&PW&&PW.active); const _sc=_pa&&PW.scene?PW.scene:flightScene; const _kd=_pa?_pwKeyDir():null; DMCharLook.tick(0.016,{scene:_sc,sunDir:_kd,day:_pa&&TERRAIN.sky&&typeof TERRAIN.sky.day==='number'?TERRAIN.sky.day:1,sunLight:_sunLight,pos:CHAR.root.position}); } }catch(e){ if(!window._dmclWarn){ window._dmclWarn=1; console.warn('[charlook] tick',e); } }   // (ui/dm-charlook.js) 4 Hz scene-light read + uniform easing: the character's sky / rim / wrap follow the sun and day-night
+  try{ if(window.DMCharLook&&CHAR.root){ const _pa=(typeof PW!=='undefined'&&PW&&PW.active); const _sc=_pa&&PW.scene?PW.scene:flightScene; const _kd=_pa?_pwKeyDir():null; DMCharLook.tick(0.016,{scene:_sc,sunDir:_kd,day:_pa&&TERRAIN.sky&&typeof TERRAIN.sky.day==='number'?TERRAIN.sky.day:1,sunLight:_sunLight,pos:CHAR.root.getWorldPosition(window._dmclWp||(window._dmclWp=new THREE.Vector3()))}); } }catch(e){ if(!window._dmclWarn){ window._dmclWarn=1; console.warn('[charlook] tick',e); } }   // (v384, t1771u) pos is her WORLD position (was CHAR.root.position, local to the board: in space the key light pointed from the board origin, i.e. lit / shaded her from the side away from the sun)   // (ui/dm-charlook.js) 4 Hz scene-light read + uniform easing: the character's sky / rim / wrap follow the sun and day-night
   try{ if(window.DMCharShadow&&DMCharShadow.S.handles.length) DMCharShadow.tick(CHAR,(typeof PW!=='undefined'&&PW&&PW.active&&PW.board)?PW.board:(typeof boardFlight!=='undefined'?boardFlight:null)); }catch(e){ if(!window._dmcsWarn){ window._dmcsWarn=1; console.warn('[charshadow] tick',e); } }   // (lamp shadows 3) her bones + the board OBB -> the analytic lamp shadow uniforms (ui/dm-charshadow.js; no allocation, nothing while no lamp light is attached)   // v110 temple lights/shadow cache/glass probe
   // (v116) below deck with no opening in view: the outside world is hidden for this render and the atmosphere pass skipped (ui/dm-bt-interior.js)
   let _seal=false, _btib=false; try{ if(window.DMBtBake) DMBtBake.tick(); }catch(e){} try{ if(window.DMBtHull) DMBtHull.tick(); }catch(e){} try{ if(window.DMBtPbr) DMBtPbr.tick(); }catch(e){} try{ if(window.DMBtInterior){ DMBtInterior.tick(); _btib=true; _seal=DMBtInterior.begin(flightScene,flightCamera); } }catch(e){ _seal=false; }
@@ -20532,6 +20532,7 @@ function _pwCamBlend(dt){
   if(b.t>=1) PW.blend=null;
 }
 const _pwV=[0,0,0,0,0].map(()=>null);
+const _LOD_CAM=/[?&]lodcam=1\b/.test(location.search);   // (v384, t1771u) pre-shield LOD (3f8922c): the LOD centre is the driver again (her / the board), not the camera's or view-centre ground point; ?lodcam=1 brings back the Nov 18 camera / view-centre rule
 const _LCT={x:0,z:0,y:0,g:0,agl:0,camera:false,off:0}, _LCT_CAM=[0,0,0], _LCT_DRV=[0,0,0], _VG={x:0,z:0,g:0,hit:false,off:0,eye:3,horizon:0}, _VG_FWD=[0,0,-1], _VGF={x:0,y:0,z:0};   // (shield-lod) + the view-centre ground point record   // (bubble-lod) the LOD centre record, written in place
 function _pwVec(i){ return _pwV[i]||(_pwV[i]=new THREE.Vector3()); }
 // Per frame: the planet frame re-centres on whoever is driving, the camera
@@ -20580,12 +20581,12 @@ function _pwWorldTick(dt){
   _LCT_DRV[0]=px; _LCT_DRV[1]=pz; _LCT_DRV[2]=space?1e9:agl;
   const _cf=(!space&&PW._camFlat)?PW._camFlat.p:null;
   if(_cf){ _LCT_CAM[0]=_cf.x; _LCT_CAM[1]=_cf.y; _LCT_CAM[2]=_cf.z; }
-  const _gcam=_cf?H(_cf.x,_cf.z):0, lc=(window.DMLod&&DMLod.centre)?DMLod.centre(_cf?_LCT_CAM:null,isFinite(_gcam)?_gcam:gH,_LCT_DRV,_LCT):(_LCT.x=px,_LCT.z=pz,_LCT.y=f.y,_LCT.g=gH,_LCT.agl=space?1e9:agl,_LCT.camera=false,_LCT);
+  const _gcam=_cf?H(_cf.x,_cf.z):0, lc=(_LOD_CAM&&window.DMLod&&DMLod.centre)?DMLod.centre(_cf?_LCT_CAM:null,isFinite(_gcam)?_gcam:gH,_LCT_DRV,_LCT):(_LCT.x=px,_LCT.z=pz,_LCT.y=f.y,_LCT.g=gH,_LCT.agl=space?1e9:agl,_LCT.camera=false,_LCT);
   // (shield-lod) THE VIEW-CENTRE RULE (ui/dm-lod.js viewGround): when the camera looks DOWN at the ground (the orbit camera, a head-height camera looking at her face, third person over the
   // shoulder) the LOD centre is the ground point at the centre of the view (the forward ray against the plane, refined on the terrain heights), and the horizon / reach are those of a camera
   // standing LEVEL on the ground at that point (her eye height), not of the camera's own height.  A camera looking level / up keeps its own ground point (no change).  Any world: it is pure geometry.
   let _vgOn=false;
-  if(!space&&_cf&&window.DMLod&&DMLod.on&&DMLod.viewGround&&PW._camFlat.q){
+  if(_LOD_CAM&&!space&&_cf&&window.DMLod&&DMLod.on&&DMLod.viewGround&&PW._camFlat.q){
     try{
       {const q=PW._camFlat.q,qx=q.x,qy=q.y,qz=q.z,qw=q.w, vx=0,vy=0,vz=-1, tx=2*(qy*vz-qz*vy), ty=2*(qz*vx-qx*vz), tz=2*(qx*vy-qy*vx); _VGF.x=vx+qw*tx+(qy*tz-qz*ty); _VGF.y=vy+qw*ty+(qz*tx-qx*tz); _VGF.z=vz+qw*tz+(qx*ty-qy*tx);} _VG_FWD[0]=_VGF.x; _VG_FWD[1]=_VGF.y; _VG_FWD[2]=_VGF.z;
       const vg=DMLod.viewGround(_LCT_CAM,_VG_FWD,H,_planetR(),3.0,Math.min(2000,Math.max(_SKY_RELIEF,(PW.ground&&PW.ground.reliefSeen)||0)),_VG);
