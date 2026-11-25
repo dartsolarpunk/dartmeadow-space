@@ -432,7 +432,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   const clrOf = (x, y, z, i) => {
     if (!SDF) return 0;
     const cc_ = clusterOf(group[(i / K) | 0]).clearance, d = sdf(x, y, z), c = cc_ ? Math.min(cc_.max ?? P.maxClear, Math.max(cc_.min ?? P.minClear, d * (cc_.scale ?? 0.7))) : Math.min(P.maxClear, Math.max(P.minClear, d * 0.7));
-    const sl = d >= FAR ? 1 : Math.max(0, d - c); slkC[i] = sl * sl; return c;
+    const sl = d >= FAR ? (P.tipsCollide ? 0.05 : 1) : Math.max(0, d - c); slkC[i] = sl * sl; return c;   // (v383) tipsCollide: a point groomed outside the SDF box is tested once it swings 5 cm
   };
   const kMaxC = new Uint8Array(N);   // last point of each strand that can reach the head (groom within P.reach of it)
   for (let st = 0; st < N; st++) {
@@ -440,7 +440,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     for (let k = 1; k < K; k++) {
       const i = st * K + k, x = rest[i * 3], y = rest[i * 3 + 1], z = rest[i * 3 + 2];
       clrC[i] = clrOf(x, y, z, i);
-      if (SDF && sdf(x, y, z) < (P.reach || 0.08)) km = k;
+      if (SDF && (P.tipsCollide || sdf(x, y, z) < (P.reach || 0.08))) km = k;   // (v383) params.tipsCollide (per groom): long hair whose tips can fold back over the head (head pitched 65 deg in Mount_Step) collides to the tip
     }
     kMaxC[st] = Math.min(K - 1, km + 1);
   }
@@ -582,7 +582,8 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       for (let s = 0; s < S; s++) { const w = acc[n * S + s] / W; if (w > w0) { b1 = b0; w1 = w0; b0 = s; w0 = w; } else if (w > w1) { b1 = s; w1 = w; } }
       if (w0 > 0.002) { sl[n * 2] = b0; wt[n * 2] = w0; used++; } if (w1 > 0.002) { sl[n * 2 + 1] = b1; wt[n * 2 + 1] = w1; } }
     if (!used) return null;
-    return { WC, ox, oy, oz, nx, ny, nz, sl, wt, slots, D: new Float32Array(S * 12), tm: new THREE.Matrix4(), hInv: new THREE.Matrix4(), on: false, nodes: used, verts: pts.length };
+    const pMax = Math.hypot(Math.max(Math.abs(ox), Math.abs(ox + ex)), Math.max(Math.abs(oy), Math.abs(oy + ey)), Math.max(Math.abs(oz), Math.abs(oz + ez)));
+    return { WC, ox, oy, oz, nx, ny, nz, sl, wt, slots, D: new Float32Array(S * 12), tm: new THREE.Matrix4(), hInv: new THREE.Matrix4(), on: false, nodes: used, verts: pts.length, pMax, reach: 0, RI: new Float32Array(12) };
   })();
   // node index of a head-local point (-1 = outside the field / no skin blend there)
   function warpNode(x, y, z) {
@@ -599,20 +600,95 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       wd[1] += w * (D[o + 4] * x + D[o + 5] * y + D[o + 6] * z + D[o + 7]);
       wd[2] += w * (D[o + 8] * x + D[o + 9] * y + D[o + 10] * z + D[o + 11]); }
   }
+  /* (v383) bind-space lookup point for a DEFORMED head-local point (x, y, z) -> wq[0..2]; returns the node used (-1 = rigid head frame).
+     Was q = x - disp(node at x): a first-order inverse that only holds while the skin moves a few mm.  Measured on Emma (tools/tests/hair-emma-boardwalk.mjs):
+     through Emma_Land / Mount_Step her nape skin moves 64-137 mm (p95) off the head frame, the node at the deformed point has no weights (or the wrong
+     ones), and the solver read the field at the un-bent neck: 0 guide points "inside" by its own field while 170-198 were inside the real skinned scalp.
+     Now: an exact per-node affine inverse of q + disp(q) = x (warpFix), seeded with the skin under the point's own guide point / root (wHint: a nape
+     strand hangs on the skin its root rides) and, if that does not close, from the old seed; the best residual wins.  Zero allocation. */
+  const wq = new Float32Array(3), tmpC = new Float32Array(3);
+  let wHint = -1, wHintK = 0;   // guide / point along it of the point being collided (set by the callers / from the array offset)
+  // exact per-node inverse: inside node k the skin map is affine, x = (I + B_lin) q + B_t with B = sum w_j (A_j - I); q = (I + B_lin)^-1 (x - B_t).
+  // Iterated from the current wq (the node can change as q moves).  A plain fixed point q = x - disp(q) diverges once the neck bends past ~60 deg
+  // relative to the head (|A - I| > 1; Mount_Step pitches 65 deg); this does not.  Returns the residual^2, the final node in wFixN.
+  function warpFix(x, y, z) {
+    const W = WARP, D = W.D; let k = -1;
+    for (let it = 0; it < 4; it++) {
+      const n = warpNode(wq[0], wq[1], wq[2]); if (n < 0 || n === k) break; k = n;
+      let a = 1, b = 0, c = 0, tx = 0, d = 0, e = 1, f = 0, ty = 0, g = 0, h = 0, i = 1, tz = 0;
+      for (let q = 0; q < 2; q++) { const s = W.sl[n * 2 + q]; if (s === 255) continue; const w = W.wt[n * 2 + q], o = s * 12;
+        a += w * D[o]; b += w * D[o + 1]; c += w * D[o + 2]; tx += w * D[o + 3];
+        d += w * D[o + 4]; e += w * D[o + 5]; f += w * D[o + 6]; ty += w * D[o + 7];
+        g += w * D[o + 8]; h += w * D[o + 9]; i += w * D[o + 10]; tz += w * D[o + 11]; }
+      const A = e * i - f * h, B = f * g - d * i, C = d * h - e * g, det = a * A + b * B + c * C; if (!(Math.abs(det) > 1e-6)) break;
+      const rx = x - tx, ry = y - ty, rz = z - tz, id = 1 / det;
+      wq[0] = (A * rx + (c * h - b * i) * ry + (b * f - c * e) * rz) * id;
+      wq[1] = (B * rx + (a * i - c * g) * ry + (c * d - a * f) * rz) * id;
+      wq[2] = (C * rx + (b * g - a * h) * ry + (a * e - b * d) * rz) * id;
+    }
+    const n = warpNode(wq[0], wq[1], wq[2]); wFixN = n;
+    if (n < 0) { wd[0] = wd[1] = wd[2] = 0; } else warpDisp(n, wq[0], wq[1], wq[2]);
+    const rx = wq[0] + wd[0] - x, ry = wq[1] + wd[1] - y, rz = wq[2] + wd[2] - z;
+    return rx * rx + ry * ry + rz * rz;
+  }
+  let wFixN = -1;
+  const wsg = new Float32Array(3);
+  // warped head SDF at a deformed head-local point, gradient in sg (deformed frame).  Where the bent skin overlaps itself (head tipped far forward /
+  // back: the nape skin folds against the occiput) a point can be the image of two skin regions; it is inside if it is inside EITHER, so every
+  // self-consistent solution found (seed A: the skin under the guide point / root, B: the point itself, C: the most-moved bone) is read and the smallest distance wins.
+  function warpSdf(x, y, z) {
+    let r = -1; const TOL = 4e-6;   // residual (2 mm)^2
+    if (wHint >= 0) { r = wNodeGK[wHint * K + wHintK]; if (r < 0) r = wNodeG[wHint]; }   // seed: the skin under this guide point's groom position, else under its root
+    let rA = 1e9, nA = -1, ax = 0, ay = 0, az = 0;
+    if (r >= 0) { warpDisp(r, x, y, z); wq[0] = x - wd[0]; wq[1] = y - wd[1]; wq[2] = z - wd[2]; rA = warpFix(x, y, z); nA = wFixN; ax = wq[0]; ay = wq[1]; az = wq[2]; }
+    const n0 = warpNode(x, y, z);
+    if (n0 >= 0) { warpDisp(n0, x, y, z); wq[0] = x - wd[0]; wq[1] = y - wd[1]; wq[2] = z - wd[2]; } else { wq[0] = x; wq[1] = y; wq[2] = z; }
+    const rB = warpFix(x, y, z), nB = wFixN;
+    let dB = FAR;
+    if (rB < TOL || rB <= rA) { dB = sdf(wq[0], wq[1], wq[2]); if (dB !== FAR) warpGrad(nB); }
+    if (r >= 0 && (rA < TOL || rA < rB)) {
+      wsg[0] = sg[0]; wsg[1] = sg[1]; wsg[2] = sg[2];
+      const dA = sdf(ax, ay, az);
+      if (dA < dB) { warpGrad(nA); dB = dA; } else { sg[0] = wsg[0]; sg[1] = wsg[1]; sg[2] = wsg[2]; }
+    }
+    if (dB > 0) {   // seed C (only while nothing put the point inside): the most-moved bone's rigid inverse.  A strand point hanging off the lower nape
+      // whose groom spot and root both sit on head-rigid skin has no seed on the neck skin that bent into it (Emma_Land: 45 "clear" crossings 17 mm off)
+      const R = WARP.RI; wq[0] = R[0] * x + R[1] * y + R[2] * z + R[3]; wq[1] = R[4] * x + R[5] * y + R[6] * z + R[7]; wq[2] = R[8] * x + R[9] * y + R[10] * z + R[11];
+      if (warpFix(x, y, z) < TOL) { const nC = wFixN; wsg[0] = sg[0]; wsg[1] = sg[1]; wsg[2] = sg[2]; const dC = sdf(wq[0], wq[1], wq[2]);
+        if (dC < dB) { warpGrad(nC); return dC; } sg[0] = wsg[0]; sg[1] = wsg[1]; sg[2] = wsg[2]; }
+    }
+    return dB;
+  }
+  // gradient sg (bind frame) -> deformed head-local through node n's blended linear part (sg += sum w D_lin sg), renormalised
+  function warpGrad(n) {
+    if (n < 0) return; const W = WARP, D = W.D; let gx = sg[0], gy = sg[1], gz = sg[2];
+    for (let c = 0; c < 2; c++) { const s = W.sl[n * 2 + c]; if (s === 255) continue; const w = W.wt[n * 2 + c], o = s * 12;
+      gx += w * (D[o] * sg[0] + D[o + 1] * sg[1] + D[o + 2] * sg[2]); gy += w * (D[o + 4] * sg[0] + D[o + 5] * sg[1] + D[o + 6] * sg[2]); gz += w * (D[o + 8] * sg[0] + D[o + 9] * sg[1] + D[o + 10] * sg[2]); }
+    const l = Math.sqrt(gx * gx + gy * gy + gz * gz); if (l > 1e-9) { sg[0] = gx / l; sg[1] = gy / l; sg[2] = gz / l; }
+  }
   // per frame: A_j = HeadW^-1 . Bone_j W . (boneInverse_j . boneInverse_head^-1), stored as A_j - I (rows); W.on = any bone moved off the head frame
   function warpFrame() {
-    const W = WARP; if (!W) return; W.hInv.copy(head.matrixWorld).invert(); let mx = 0;
+    const W = WARP; if (!W) return; W.hInv.copy(head.matrixWorld).invert(); let mx = 0, rch = 0, big = -1;
     for (let s = 0; s < W.slots.length; s++) { const Sl = W.slots[s]; W.tm.multiplyMatrices(W.hInv, Sl.bone.matrixWorld).multiply(Sl.C); const e = W.tm.elements, o = s * 12;
       W.D[o] = e[0] - 1; W.D[o + 1] = e[4]; W.D[o + 2] = e[8]; W.D[o + 3] = e[12];
       W.D[o + 4] = e[1]; W.D[o + 5] = e[5] - 1; W.D[o + 6] = e[9]; W.D[o + 7] = e[13];
       W.D[o + 8] = e[2]; W.D[o + 9] = e[6]; W.D[o + 10] = e[10] - 1; W.D[o + 11] = e[14];
-      for (let q = 0; q < 12; q++) { const a = Math.abs(W.D[o + q]); if (a > mx) mx = a; } }
-    W.on = mx > 1e-5;
+      for (let q = 0; q < 12; q++) { const a = Math.abs(W.D[o + q]); if (a > mx) mx = a; }
+      const D = W.D, rs = Math.max(Math.abs(D[o]) + Math.abs(D[o + 1]) + Math.abs(D[o + 2]), Math.abs(D[o + 4]) + Math.abs(D[o + 5]) + Math.abs(D[o + 6]), Math.abs(D[o + 8]) + Math.abs(D[o + 9]) + Math.abs(D[o + 10]));
+      const r = rs * W.pMax + Math.hypot(D[o + 3], D[o + 7], D[o + 11]); if (r > rch) { rch = r; big = s; } }
+    W.on = mx > 1e-5; W.reach = rch;
+    if (big >= 0) { W.tm.multiplyMatrices(W.hInv, W.slots[big].bone.matrixWorld).multiply(W.slots[big].C).invert(); const e = W.tm.elements, R = W.RI;   // rigid inverse of the most-moved bone: seed C
+      R[0] = e[0]; R[1] = e[4]; R[2] = e[8]; R[3] = e[12]; R[4] = e[1]; R[5] = e[5]; R[6] = e[9]; R[7] = e[13]; R[8] = e[2]; R[9] = e[6]; R[10] = e[10]; R[11] = e[14]; }   // (v383) bound on the skin's displacement inside the SDF box (head-local m): grows the bounding-sphere prune
   }
   // roots carried by the field: per guide the node at its root (or -1); a child strand takes its guide's root displacement with its deflection
   const wNodeG = WARP ? new Int32Array(G).fill(-1) : null;
   const wG = new Float32Array(G * 3);   // per guide: root skin displacement, root-local (added to its rest; children read it with their guide's deflection)
   if (WARP) for (let g = 0; g < G; g++) wNodeG[g] = warpNode(gRest[g * K * 3], gRest[g * K * 3 + 1], gRest[g * K * 3 + 2]);
+  // (v383) per guide point: the skin node under its groom position, and per frame how far that skin moved off the head frame (squared, root-local
+  // scale applied in the gate).  The contact gates (near(), the child slack test) measured only the strand's own deflection: hair hanging still while
+  // the jaw / neck / nape skin slid INTO it was never tested (Emma idle: cheek / jaw side tips 17 mm inside).  Gate = (deflection + skin motion) > slack.
+  const wNodeGK = WARP ? new Int32Array(G * K).fill(-1) : null, wSkG = WARP ? new Float32Array(G * K) : null;
+  if (WARP) for (let i = 0; i < G * K; i++) wNodeGK[i] = warpNode(gRest[i * 3], gRest[i * 3 + 1], gRest[i * 3 + 2]);
   let needInit = true;
 
   const SP = new Float32Array(K * 3);
@@ -1041,7 +1117,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   const stats = { ms: 0, simMs: 0, strands: N, drawn: NR, guides: G, sdf: !!SDF, sdfBand: BAND ? { bricks: BAND.v.length / BAND.bv3, cell: 1 / BAND.inv } : null, skinWarp: WARP ? { slots: WARP.slots.length, nodes: WARP.nodes, verts: WARP.verts } : null, contacts: 0, intensity: 1, segLen: (() => { let s = 0, c = 0; for (let i = 0; i < segLen.length; i++) if (segLen[i] > 0) { s += segLen[i]; c++; } return c ? s / c : 0; })() };
   let me = M.elements, mi = Mi.elements;
   // SDF box bounding sphere (head-local centre / radius), moved to root-local each frame
-  let hcx = 0, hcy = 0, hcz = 0, hcR2 = 0, hsc2 = 1;
+  let hcx = 0, hcy = 0, hcz = 0, hcR2 = 0, hsc2 = 1, hcR2w = 0;   // hcR2w: the sphere grown by the skin warp's reach (v383)
   const sdfC = SDF ? [SDF.ox + (SDF.nx - 1) / SDF.inv / 2, SDF.oy + (SDF.ny - 1) / SDF.inv / 2, SDF.oz + (SDF.nz - 1) / SDF.inv / 2] : [0, 0, 0];
   const sdfR = SDF ? 0.5 * Math.hypot(SDF.nx - 1, SDF.ny - 1, SDF.nz - 1) / SDF.inv : 0;
 
@@ -1049,12 +1125,12 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   function headCollide(a, o, c) {
     const x = a[o], y = a[o + 1], z = a[o + 2];
     const ex = x - hcx, ey = y - hcy, ez = z - hcz;
-    if (ex * ex + ey * ey + ez * ez > hcR2) return false;   // outside the SDF box's bounding sphere
+    if (ex * ex + ey * ey + ez * ez > (WARP && WARP.on ? hcR2w : hcR2)) return false;   // outside the SDF box's bounding sphere (+ the skin's reach while it bends)
     const hx = mi[0] * x + mi[4] * y + mi[8] * z + mi[12];
     const hy = mi[1] * x + mi[5] * y + mi[9] * z + mi[13];
     const hz = mi[2] * x + mi[6] * y + mi[10] * z + mi[14];
     let d;
-    if (WARP && WARP.on) { const n = warpNode(hx, hy, hz); if (n >= 0) { warpDisp(n, hx, hy, hz); d = sdf(hx - wd[0], hy - wd[1], hz - wd[2]); } else d = sdf(hx, hy, hz); }
+    if (WARP && WARP.on) { if (a === sp) wHintK = ((o / 3) | 0) % K; else if (a === SP) wHintK = (o / 3) | 0; d = warpSdf(hx, hy, hz); if (d === FAR) return false; }   // (v383) exact inverse skin lookup, gradient carried to the bent skin
     else d = sdf(hx, hy, hz);
     const cu = P.softHead === false ? 0 : cushion();
     if (d >= c + cu) return false;
@@ -1072,10 +1148,9 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     for (let r = 0; r < 4; r++) {
       const x = a[o], y = a[o + 1], z = a[o + 2];
       const ex = x - hcx, ey = y - hcy, ez = z - hcz;
-      if (ex * ex + ey * ey + ez * ez > hcR2) return moved;
+      if (ex * ex + ey * ey + ez * ez > hcR2w) return moved;
       const hx = mi[0] * x + mi[4] * y + mi[8] * z + mi[12], hy = mi[1] * x + mi[5] * y + mi[9] * z + mi[13], hz = mi[2] * x + mi[6] * y + mi[10] * z + mi[14];
-      const n = warpNode(hx, hy, hz); let d;
-      if (n >= 0) { warpDisp(n, hx, hy, hz); d = sdf(hx - wd[0], hy - wd[1], hz - wd[2]); } else d = sdf(hx, hy, hz);
+      if (a === sp) wHintK = ((o / 3) | 0) % K; const d = warpSdf(hx, hy, hz); if (d === FAR) return moved;   // (v383) same exact lookup as headCollide
       if (d >= (r === 0 ? 0 : -1e-5)) return moved;
       if (r === 3) {   // the field's gradient did not lead out (deep in a thin shell / fold): fall back to the groom point, which sits >= 3 mm clear
         sq[o] += restM[o] - x; sq[o + 1] += restM[o + 1] - y; sq[o + 2] += restM[o + 2] - z; a[o] = restM[o]; a[o + 1] = restM[o + 1]; a[o + 2] = restM[o + 2]; return true;
@@ -1090,6 +1165,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   // guide point deflected far enough from its groom position that it might touch the head?
   function near(a, o, i) {
     const dx = a[o] - restM[o], dy = a[o + 1] - restM[o + 1], dz = a[o + 2] - restM[o + 2];
+    if (WARP && WARP.on) { const s = wSkG[i]; if (s > 0) { const l = Math.sqrt(dx * dx + dy * dy + dz * dz) + s; return l * l > slkG[i] * hsc2; } }   // (v383) + the skin's own motion there
     return dx * dx + dy * dy + dz * dz > slkG[i] * hsc2;
   }
   function capsuleCollide(o, ax, ay, az, bx, by, bz, r) {
@@ -1174,7 +1250,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       if (tSep && last) separate();
       for (let g = 0; g < G; g++) {
         const gb = g * K * 3, lb = g * (K - 1), sb = g * K;
-        const km = kMaxG[g];
+        const km = kMaxG[g]; wHint = g;   // (v383) the skin lookup seeds from this guide's root blend
         for (let k = 2; k < K; k++) {
           const a = gb + (k - 1) * 3, b = gb + k * 3;
           // bending: distance to the point two up the chain (resists folding; strong at the root, soft at the tip)
@@ -1461,6 +1537,8 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     }
     // (v379) the roots ride the skinned scalp / nape: each guide's rest is carried by the skin displacement at its root
     warpFrame();
+    hcR2w = WARP ? (Math.sqrt(hcR2) + WARP.reach * Math.sqrt(hsc2)) ** 2 : hcR2;
+    if (WARP && WARP.on) { const sc = Math.sqrt(hsc2); for (let i = 0; i < G * K; i++) { const n = wNodeGK[i]; if (n < 0) { wSkG[i] = 0; continue; } warpDisp(n, gRest[i * 3], gRest[i * 3 + 1], gRest[i * 3 + 2]); wSkG[i] = Math.sqrt(wd[0] * wd[0] + wd[1] * wd[1] + wd[2] * wd[2]) * sc; } }
     if (WARP && WARP.on && !onGPU) {
       for (let g = 0; g < G; g++) { const n = wNodeG[g], q = g * 3; if (n < 0) { wG[q] = wG[q + 1] = wG[q + 2] = 0; continue; }
         const r0 = g * K * 3; warpDisp(n, gRest[r0], gRest[r0 + 1], gRest[r0 + 2]);
@@ -1559,6 +1637,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     /* ---- write render ribbons ---- */
     if (haveCam) camL.copy(camPos).applyMatrix4(rootInv); else camL.set(0, 1.6, 3);
     const wR = P.widthRoot, wT = P.widthTip, cc = SDF && P.collideChildren;
+    const wSk = !!(WARP && WARP.on && !onGPU);
     frame++;
     // host-driven child count (game: Auto graphics preset); re-read every ~2 s, cheap
     if (opts.getStrandFraction && frame % 120 === 1) { try { const f = +opts.getStrandFraction(); if (f > 0 && Math.abs(f - P.strandFraction) > 1e-3) setStrandFraction(f); } catch (e) {} }
@@ -1593,7 +1672,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     const il = headMoved || gpu ? 1 : (P.interleave | 0 || 1);
     for (let s = frame % il; s < NR; s += il) {
       const g = guideOf[s], wS = wScale[s];
-      const rb = s * K * 3, gb = g * K * 3, cb = s * K, kmc = kMaxC[s];
+      const rb = s * K * 3, gb = g * K * 3, cb = s * K, kmc = kMaxC[s]; wHint = g;
       for (let k = 0; k < K; k++) {
         const o = rb + k * 3, x = rest[o], y = rest[o + 1], z = rest[o + 2];
         const go = gb + k * 3, so = k * 3;
@@ -1602,7 +1681,15 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
         SP[so + 1] = me[1] * x + me[5] * y + me[9] * z + me[13] + ddy;
         SP[so + 2] = me[2] * x + me[6] * y + me[10] * z + me[14] + ddz;
         // children never cut into the scalp (only checked once deflected past their groom slack)
-        if (cc && k >= 2 && k <= kmc && ddx * ddx + ddy * ddy + ddz * ddz > slkC[cb + k] * hsc2) headCollide(SP, so, clrC[cb + k]);
+        if (cc && k >= 2 && k <= kmc) { let l2 = ddx * ddx + ddy * ddy + ddz * ddz; if (wSk) { const l = Math.sqrt(l2) + wSkG[g * K + k]; l2 = l * l; } if (l2 > slkC[cb + k] * hsc2) {
+          if (headCollide(SP, so, clrC[cb + k]) && wSk) for (let r = 0; r < 3 && headCollide(SP, so, clrC[cb + k]); r++);
+          if (wSk) {   // (v383) the segment's midpoint too (child segments are 13-67 mm: a chord cut through the jaw / ear / nape rim with both ends clear); both ends take the midpoint's push (the end alone, twice, next to the pinned root)
+            const po = so - 3, mx = (SP[po] + SP[so]) * 0.5, my = (SP[po + 1] + SP[so + 1]) * 0.5, mz = (SP[po + 2] + SP[so + 2]) * 0.5;
+            tmpC[0] = mx; tmpC[1] = my; tmpC[2] = mz;
+            if (headCollide(tmpC, 0, (clrC[cb + k] + clrC[cb + k - 1]) * 0.5)) { const ex = tmpC[0] - mx, ey = tmpC[1] - my, ez = tmpC[2] - mz, w = k > 2 ? 1 : 2; SP[so] += w * ex; SP[so + 1] += w * ey; SP[so + 2] += w * ez; if (k > 2) { SP[po] += ex; SP[po + 1] += ey; SP[po + 2] += ez; for (let r = 0; r < 3 && headCollide(SP, po, clrC[cb + k - 1]); r++); }
+              for (let r = 0; r < 3 && headCollide(SP, so, clrC[cb + k]); r++); }
+          }
+        } }   // (v383) + the skin motion under the guide point; on a skin-warp groom re-sampled (<= 3) until clear: one gradient step from deep inside a thin part (cheek, jaw, nape) fell short   // (v383) + the skin motion under the guide point; on a skin-warp groom re-sampled (<= 3) until clear: one gradient step from deep inside a thin part (cheek, jaw, nape) fell short
       }
       // per-strand view vector (normalised once) for the volumetric normal
       let sx0 = camL.x - SP[0], sy0 = camL.y - SP[1], sz0 = camL.z - SP[2];
@@ -1676,8 +1763,8 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       for (let g = 0; g < G; g++) for (let k = 2; k <= kMaxG[g]; k++) {
         const o = (g * K + k) * 3, x = a[o], y = a[o + 1], z = a[o + 2];
         const hx = mi[0] * x + mi[4] * y + mi[8] * z + mi[12], hy = mi[1] * x + mi[5] * y + mi[9] * z + mi[13], hz = mi[2] * x + mi[6] * y + mi[10] * z + mi[14];
-        let d; const n = (WARP && WARP.on) ? warpNode(hx, hy, hz) : -1; // same skin-following field the solver collides with
-        if (n >= 0) { warpDisp(n, hx, hy, hz); d = sdf(hx - wd[0], hy - wd[1], hz - wd[2]); } else d = sdf(hx, hy, hz);
+        let d; wHint = g; wHintK = k; // same skin-following field the solver collides with
+        if (WARP && WARP.on) d = warpSdf(hx, hy, hz); else d = sdf(hx, hy, hz);
         if (d < 0) inside++; else if (d < clrG[g * K + k] * 0.5) under++;
       }
       return { inside, under };
