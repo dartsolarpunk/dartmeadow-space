@@ -183,7 +183,7 @@ if(location.search.indexOf('debug')!==-1){
   // PWA manifest: /manifest.webmanifest (linked in <head>; dark launch screen on Android)
 })();</script>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-<script>/* (v353) build tag: bump together with CACHE_NAME in sw.js (tools/tests/build-tag.js).  Persisted quality records (ui/dm-budget.js, dm-governor.js) are dropped when it changes. */window.DM_BUILD='v384';try{console.log('[DM build] '+window.DM_BUILD);}catch(e){}</script>
+<script>/* (v353) build tag: bump together with CACHE_NAME in sw.js (tools/tests/build-tag.js).  Persisted quality records (ui/dm-budget.js, dm-governor.js) are dropped when it changes. */window.DM_BUILD='v385';try{console.log('[DM build] '+window.DM_BUILD);}catch(e){}</script>
 <script src="ui/dm-time.js?v=97"></script>
 <script src="ui/dm-earth.js?v=292"></script>
 <script src="ui/dm-earth-paint.js?v=290"></script>
@@ -236,6 +236,7 @@ window.DMFT=window.DMFT||(function(){ const E=Object.create(null), X=Object.crea
 <script src="ui/dm-journal.js?v=98"></script>
 <script src="ui/dm-worldstyle.js?v=343"></script>
 <script src="ui/dm-polish.js?v=347"></script>
+<script src="ui/dm-lightdir.js?v=385"></script>   <!-- (v385) DMLightDir: the key star's true direction (any system, open space), the character shadow light rig and the cheap planet-bounce fill -->
 <script src="ui/dm-stars.js?v=344"></script>   <!-- (v334 Cosmos) DMStars: the system's real stars as seen from the world - per-star direction / colour / weight + the ONE key-light direction (keyDir) the sky, the air, the sun light and its shadows share -->
 <script src="ui/dm-sky.js?v=347"></script>
 <script src="ui/dm-dust.js?v=191"></script>
@@ -5532,7 +5533,7 @@ function buildEnvMap(renderer,scene){
 // ══════════════════════════════════════════════════════════════
 let flightRenderer,flightScene,flightCamera,boardFlight,flightInited=false;
 try{ Object.defineProperty(window,'flightRenderer',{get:()=>flightRenderer,configurable:true}); }catch(e){}   // (v273) a top-level `let` is not a window property: DMGov.stats / DMBudget read window.flightRenderer
-let _charShadowLight=null;
+let _charShadowLight=null, _dmStarW=null;
 let _builtBoardTemplate=null; // last template key that was built into boardFlight
 let _landTargetBody=null,_approachBestDist=Infinity,_approachBestBody=null;
 let flightAnimId,flightTime=0,celestialBodies=[],sunMesh,earthMesh;
@@ -7315,11 +7316,16 @@ function _startFlightLoop(){
         if(Math.abs(sc.right-want)>1e-3){ sc.left=-want; sc.right=want; sc.top=want; sc.bottom=-want; sc.far=20+(want*6-20)*_btG; sc.updateProjectionMatrix(); _charShadowLight.shadow.bias=-0.0015+0.0007*_btG; _charShadowLight.shadow.normalBias=want*0.005*_btG; }
         const bp=_csCp||(_csCp=new THREE.Vector3()); if(_btNear){ _bt.group.getWorldPosition(bp); bp.lerp(_ap,1-_f); bp.lerp(boardFlight.position,1-_btG); } else bp.copy(boardFlight.position);   // (v124) ship centre <-> Ariel by the same blend   // scratch copy: the board's own position is never touched
         if(_btNear){ const tx=want*2/Math.max(256,GFX.shadowSize||1024); bp.set(Math.round(bp.x/tx)*tx,Math.round(bp.y/tx)*tx,Math.round(bp.z/tx)*tx); }
-        const dir=_csDirV||(_csDirV=new THREE.Vector3()); if(bp.lengthSq()>0.001) dir.copy(bp).normalize(); else dir.set(1,0.3,0.2).normalize();   // scratch: no per-frame allocation
-        _charShadowLight.position.copy(bp).addScaledVector(dir,-(sc.far*0.5));
+        // (v385) toward the KEY STAR'S real world position, not the origin: Veyra's two stars swing round a barycentre, so the star is only at (0,0,0) in Sol.  dir = board -> star; the
+        // light sits that way (between the star and the board) and looks at the board.  The unshadowed star point light follows the star as well, so lit face and shadow always agree.
+        const _sp=_dmStarW||(_dmStarW=new THREE.Vector3()); _sp.set(0,0,0); try{ if(sunMesh){ if(sunMesh.parent&&sunMesh.parent.isGroup) sunMesh.parent.getWorldPosition(_sp); else sunMesh.getWorldPosition(_sp); } }catch(e){}
+        if(_sunLight) _sunLight.position.copy(_sp);
+        const dir=_csDirV||(_csDirV=new THREE.Vector3()); dir.copy(_sp).sub(bp); if(dir.lengthSq()>1e-6) dir.normalize(); else dir.set(1,0.3,0.2).normalize();   // scratch: no per-frame allocation
+        _charShadowLight.position.copy(bp).addScaledVector(dir,(sc.far*0.5));
         _charShadowLight.target.position.copy(bp);
         _charShadowLight.target.updateMatrixWorld();
       }
+      _dmBounceTick(false);   // (v385) planet-bounce fill, every 8th frame (read by _natLightTick and DMCharLook)
     }catch(e){_animLoopWarn('charShadow',e);}
     DMPerf.b('updateBodies'); try{updateBodies(dt);}catch(e){_animLoopWarn('updateBodies',e);} DMPerf.e();
     // (menu-perf) housekeeping that builds geometry (a world's ground for the way down, planet LOD meshes) waits out the launch fly-out, the
@@ -11447,6 +11453,30 @@ function _natMoonlight(P,out){
   if(sum>0) out.normalize();
   _NAT.info.moons=n; return sum*auK;
 }
+// (v385) planet-bounce fill: the lit planets near the board / her reflect starlight into shade (colour x albedo x phase x (r/d)^2, ui/dm-lightdir.js).  Refreshed every 8th frame
+// from the bodies' world positions (no allocation after the first call), then read by the flight scene's ambient term (_natLightTick: boards, everything) and by the character look
+// (DMCharLook second light, 'bounce' in its tick ctx).  No light, no shadow map, no recompile.  In a world's OPEN SPACE the direction is turned into the drawn frame like DMStars'; on the ground / in the air there is none.
+const _dmBn={ n:0, out:null, bodies:[], p:[0,0,0], s:[0,0,0], v:null, on:!/[?&]bounce=0\b/.test(location.search) };
+function _dmBounceTick(pw){
+  const B=_dmBn, LD=window.DMLightDir; if(!B.on||!LD||typeof celestialBodies==='undefined') return null;
+  if(!B.out){ B.out=LD.newBounce(); B.v=new THREE.Vector3(); }
+  if((B.n++&7)!==0) return B.out.I>0?B.out:null;
+  const O=B.out; O.I=0; O.rgb[0]=O.rgb[1]=O.rgb[2]=0;
+  try{
+    let at=null;
+    if(pw){ if(PW.mode==='space'&&STATE.flight&&STATE.flight.pos) at=STATE.flight.pos; } else if(boardFlight) at=boardFlight.position;
+    if(!at||!sunMesh) return null;
+    B.p[0]=at.x; B.p[1]=at.y; B.p[2]=at.z;
+    const sv=B.v; if(sunMesh.parent&&sunMesh.parent.isGroup) sunMesh.parent.getWorldPosition(sv); else sunMesh.getWorldPosition(sv); B.s[0]=sv.x; B.s[1]=sv.y; B.s[2]=sv.z;
+    let k=0;
+    for(let i=0;i<celestialBodies.length;i++){ const b=celestialBodies[i]; if(!b||!b.mesh||b.type==='Star'||!b.collisionRadius) continue;
+      b.mesh.getWorldPosition(sv); let e=B.bodies[k]; if(!e) e=B.bodies[k]={x:0,y:0,z:0,r:1,col:0x888888}; e.x=sv.x; e.y=sv.y; e.z=sv.z; e.r=b.collisionRadius; e.col=b.mcColor!=null?b.mcColor:0x888888; k++; }
+    B.bodies.length=k;
+    LD.bounce(B.bodies,B.p,B.s,null,O);
+    if(pw&&O.I>0&&typeof _pwStarsLive==='function'&&_pwStarsLive()&&_pwStQ.q){ sv.set(O.dir[0],O.dir[1],O.dir[2]).applyQuaternion(_pwStQ.q); O.dir[0]=sv.x; O.dir[1]=sv.y; O.dir[2]=sv.z; }
+  }catch(e){ O.I=0; }
+  return O.I>0?O:null;
+}
 function _natLightTick(cam,sunPos){
   if(!_NAT.amb||!cam||!_NAT.amb.parent) return;
   // nearest world (by surface distance)
@@ -11462,6 +11492,8 @@ function _natLightTick(cam,sunPos){
     if(k>0){ c.r+=L.color.r*k; c.g+=L.color.g*k; c.b+=L.color.b*k; nf+=k; }
   }
   if(nf>_NAT.nfCap){ const s=_NAT.nfCap/nf; c.sub(_NAT.base).multiplyScalar(s).add(_NAT.base); nf=_NAT.nfCap; }
+  // (v385) planet bounce on the flight scene's ambient (boards, her, everything that is lit): a faint tint from the lit planets nearby; 0 in a world's air / on the ground
+  if(_dmBn.out&&_dmBn.out.I>0&&!(typeof PW!=='undefined'&&PW&&PW.active)){ const o=_dmBn.out; c.r+=o.rgb[0]; c.g+=o.rgb[1]; c.b+=o.rgb[2]; }
   // 2) galaxy/star skylight: faint, everywhere in space (night sides included)
   c.r+=_NAT.gal.r*_NAT.galK; c.g+=_NAT.gal.g*_NAT.galK; c.b+=_NAT.gal.b*_NAT.galK;
   const I=Math.max(c.r,c.g,c.b)||1; _NAT.amb.color.setRGB(c.r/I,c.g/I,c.b/I); _NAT.amb.intensity=I;
@@ -19232,7 +19264,7 @@ function renderWithPostFX(){
   try{ if(window.DMStarBubble) { const n=performance.now(), d=_sbT?(n-_sbT)/1000:1/60; _sbT=n; if(window.DMStar) DMStar.frame(flightCamera,d); if(window.DMMist) DMMist.frame(flightCamera,d); if(window.DMFluidWorld) DMFluidWorld.frame(flightCamera,d); DMStarBubble.frame(flightCamera,flightScene,d); } }catch(e){ console.warn('[starbubble] '+(e&&e.stack||e)); }
   try{ if(window.DMBtInterior&&DMBtInterior.pre) DMBtInterior.pre(flightCamera); }catch(e){}   // (v116) sealed? decided before the temple lighting (the glass probe waits while no glass is in view)
   try{ if(window.BTL&&BTL.preRender) BTL.preRender(flightRenderer,flightScene,flightCamera); }catch(e){ if(window.BTL) BTL._err=String(e&&e.stack||e).slice(0,300); }
-  try{ if(window.DMCharLook&&CHAR.root){ const _pa=(typeof PW!=='undefined'&&PW&&PW.active); const _sc=_pa&&PW.scene?PW.scene:flightScene; const _kd=_pa?_pwKeyDir():null; DMCharLook.tick(0.016,{scene:_sc,sunDir:_kd,day:_pa&&TERRAIN.sky&&typeof TERRAIN.sky.day==='number'?TERRAIN.sky.day:1,sunLight:_sunLight,pos:CHAR.root.getWorldPosition(window._dmclWp||(window._dmclWp=new THREE.Vector3()))}); } }catch(e){ if(!window._dmclWarn){ window._dmclWarn=1; console.warn('[charlook] tick',e); } }   // (v384, t1771u) pos is her WORLD position (was CHAR.root.position, local to the board: in space the key light pointed from the board origin, i.e. lit / shaded her from the side away from the sun)   // (ui/dm-charlook.js) 4 Hz scene-light read + uniform easing: the character's sky / rim / wrap follow the sun and day-night
+  try{ if(window.DMCharLook&&CHAR.root){ const _pa=(typeof PW!=='undefined'&&PW&&PW.active); const _sc=_pa&&PW.scene?PW.scene:flightScene; const _kd=_pa?_pwKeyDir():null; DMCharLook.tick(0.016,{scene:_sc,sunDir:_kd,bounce:(_pa?_dmBounceTick(true):(_dmBn.out&&_dmBn.out.I>0?_dmBn.out:null)),day:_pa&&TERRAIN.sky&&typeof TERRAIN.sky.day==='number'?TERRAIN.sky.day:1,sunLight:_sunLight,pos:CHAR.root.getWorldPosition(window._dmclWp||(window._dmclWp=new THREE.Vector3()))}); } }catch(e){ if(!window._dmclWarn){ window._dmclWarn=1; console.warn('[charlook] tick',e); } }   // (v384, t1771u) pos is her WORLD position (was CHAR.root.position, local to the board: in space the key light pointed from the board origin, i.e. lit / shaded her from the side away from the sun)   // (ui/dm-charlook.js) 4 Hz scene-light read + uniform easing: the character's sky / rim / wrap follow the sun and day-night
   try{ if(window.DMCharShadow&&DMCharShadow.S.handles.length) DMCharShadow.tick(CHAR,(typeof PW!=='undefined'&&PW&&PW.active&&PW.board)?PW.board:(typeof boardFlight!=='undefined'?boardFlight:null)); }catch(e){ if(!window._dmcsWarn){ window._dmcsWarn=1; console.warn('[charshadow] tick',e); } }   // (lamp shadows 3) her bones + the board OBB -> the analytic lamp shadow uniforms (ui/dm-charshadow.js; no allocation, nothing while no lamp light is attached)   // v110 temple lights/shadow cache/glass probe
   // (v116) below deck with no opening in view: the outside world is hidden for this render and the atmosphere pass skipped (ui/dm-bt-interior.js)
   let _seal=false, _btib=false; try{ if(window.DMBtBake) DMBtBake.tick(); }catch(e){} try{ if(window.DMBtHull) DMBtHull.tick(); }catch(e){} try{ if(window.DMBtPbr) DMBtPbr.tick(); }catch(e){} try{ if(window.DMBtInterior){ DMBtInterior.tick(); _btib=true; _seal=DMBtInterior.begin(flightScene,flightCamera); } }catch(e){ _seal=false; }
@@ -20716,11 +20748,14 @@ function _pwWorldTick(dt){
   if(sun){
     // (shadow 2) the shadow direction follows the sun down to ~3 deg and a little below (clamped to 3.4 deg): it used to switch to a fixed high fallback light once the sun was under ~3 deg, i.e. through all of dusk her shadow pointed the wrong way / was short and faint
     let d=_pwKeyDir(), up=null; const fy=f.y||0;   // (v334) the key star: the same direction as the sky, the air and DMLight
+    let upSh=null;   // (v385) the direction the shadow light uses; in OPEN SPACE it is the star's true direction (no horizon there: the clamp / fixed high fallback below lit the board and her from "above" with the star below or behind them: the sun-facing side dark, the shadow thrown the wrong way)
     if(d&&d.y>-0.08){ if(d.y>0.05) up=d; else { const sv=TERRAIN._shDir||(TERRAIN._shDir=new THREE.Vector3()); const hl=Math.hypot(d.x,d.z)||1, k=Math.sqrt(1-0.06*0.06)/hl; sv.set(d.x*k,0.06,d.z*k); up=sv; } }
+    if(mode==='space'&&d){ const sv=TERRAIN._shSp||(TERRAIN._shSp=new THREE.Vector3()); sv.copy(d); if(sv.lengthSq()>1e-8){ sv.normalize(); upSh=sv; } }
+    if(!upSh) upSh=up;
     // (perf-mars) on a frame that keeps last frame's shadow map the box is NOT moved (a stale depth map sampled through a moved light camera slides every shadow by the box's step)
     const _fitNow=!sun.castShadow||(TERRAIN._shEvery||1)<=1||TERRAIN._shRef||/[?&]shadowcad=0\b/.test(location.search);
-    if(_fitNow&&!(up&&window.DMPolish&&sun.castShadow&&DMPolish.fitSun(sun,up,px,fy,pz,mode==='walk'))){   // texel-snapped, tightened on foot (ui/dm-polish.js)
-      if(up) sun.position.set(px+up.x*160,fy+up.y*160,pz+up.z*160); else sun.position.set(px+80,fy+120,pz+40);
+    if(_fitNow&&!(upSh&&window.DMPolish&&sun.castShadow&&DMPolish.fitSun(sun,upSh,px,fy,pz,mode==='walk'))){   // texel-snapped, tightened on foot (ui/dm-polish.js)
+      if(upSh) sun.position.set(px+upSh.x*160,fy+upSh.y*160,pz+upSh.z*160); else sun.position.set(px+80,fy+120,pz+40);
       sun.target.position.set(px,fy,pz); sun.target.updateMatrixWorld();
     }
     try{ if(window.DMSunFar&&DMSunFar.S.U){ if(sun.castShadow) DMSunFar.tick(flightRenderer,scene,up,px,fy,pz); else DMSunFar.reset(); } }catch(e){ if(!window._dmsfWarn){ window._dmsfWarn=1; console.warn('[sunfar] tick',e); } }   // (t1537) the same key direction as the near box (up = _pwKeyDir, clamped)
