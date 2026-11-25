@@ -416,7 +416,7 @@
 
 
   function trackDispose(list) {
-    return function () { list.forEach((o) => { try { if (o.geometry) o.geometry.dispose(); if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => m.dispose()); } catch (e) { } }); list.length = 0; };
+    return function () { list.forEach((o) => { try { if (o.atmoVolume) o.atmoVolume.dispose(); if (o.geometry) o.geometry.dispose(); if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => m.dispose()); } catch (e) { } }); list.length = 0; };
   }
   function geo(THREE, m, withPh) {
     const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(m.pos, 3)); g.setAttribute('normal', new THREE.BufferAttribute(m.nrm, 3)); g.setAttribute('uv', new THREE.BufferAttribute(m.uv, 2));
@@ -522,7 +522,7 @@
       const V = W.DMAtmoVolume;
       if (V && V.enabled()) {
         vol = V.create(THREE, T, { R, top: R * (atmScale - 1), co: V.core.coefficients({ scatter: crisp ? 3.4 : 2.6 }), tint: 0x4a78ff, tier: V.deviceTier().id, kind: 'earth', segW: Math.max(24, tier.planetSeg), segH: Math.round(tier.planetSeg * 0.75) });
-        if (vol) { vol.shell.renderOrder = -5; vol.shell.material.toneMapped = false; mk(vol.shell); if (vol.wisps) { vol.wisps.renderOrder = -4; mk(vol.wisps); } vol.setSun(new THREE.Vector3(o.sun[0], o.sun[1], o.sun[2]).normalize()); }
+        if (vol) { vol.shell.renderOrder = -5; vol.shell.material.toneMapped = false; own.push({ atmoVolume: vol }); if (vol.wisps) vol.wisps.renderOrder = -4; vol.setSun(new THREE.Vector3(o.sun[0], o.sun[1], o.sun[2]).normalize()); }
       }
     } catch (e) { vol = null; }
     // atmosphere: back faces of a larger shell, glow from the closest approach of the view ray to the planet centre
