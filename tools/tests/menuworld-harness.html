@@ -7,6 +7,7 @@ const THREE=Object.assign({},TH); THREE.TSL=TSL; THREE.GLTFLoader=GLTFLoader; wi
 addEventListener('error',e=>errs.push(String(e.message).slice(0,300)));
 const q=new URLSearchParams(location.search), sceneKind=q.get('scene')||'studio', w=+(q.get('w')||640), h=+(q.get('h')||400);
 try{
+await new Promise(r=>{const s=document.createElement('script'); s.src='/ui/dm-atmo-volume.js'; s.onload=r; s.onerror=()=>r(); document.head.appendChild(s);});   // (v385) ?atmo=shell
 await new Promise(r=>{const s=document.createElement('script'); s.src='/ui/dm-menuworld.js'; s.onload=r; s.onerror=()=>{errs.push('script load failed'); window.done=true;}; document.head.appendChild(s);});
 const MW=window.DMMenuWorld; window.tier=MW.tier().name;
 const host=document.getElementById('host'), cv=document.createElement('canvas'); host.appendChild(cv); host.style.width=w+'px'; host.style.height=h+'px';

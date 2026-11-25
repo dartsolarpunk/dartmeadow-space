@@ -516,14 +516,23 @@
     })();
     const planet = mk(new THREE.Mesh(new THREE.SphereGeometry(R, tier.planetSeg, Math.round(tier.planetSeg * 0.75)), planetMat)); planet.rotation.z = 0.35;
     const pg = new THREE.Group(); pg.position.set(pc.x, pc.y, pc.z); pg.add(planet); group.add(pg);
+    // (v385) ?atmo=shell: the planet's air is the shared world-space volume (ui/dm-atmo-volume.js: ray-marched Rayleigh shell + gas wisps), not the faked closest-approach glow below
+    let vol = null;
+    try {
+      const V = W.DMAtmoVolume;
+      if (V && V.enabled()) {
+        vol = V.create(THREE, T, { R, top: R * (atmScale - 1), co: V.core.coefficients({ scatter: crisp ? 3.4 : 2.6 }), tint: 0x4a78ff, tier: V.deviceTier().id, kind: 'earth', segW: Math.max(24, tier.planetSeg), segH: Math.round(tier.planetSeg * 0.75) });
+        if (vol) { vol.shell.renderOrder = -5; vol.shell.material.toneMapped = false; mk(vol.shell); if (vol.wisps) { vol.wisps.renderOrder = -4; mk(vol.wisps); } vol.setSun(new THREE.Vector3(o.sun[0], o.sun[1], o.sun[2]).normalize()); }
+      }
+    } catch (e) { vol = null; }
     // atmosphere: back faces of a larger shell, glow from the closest approach of the view ray to the planet centre
-    const atmMat = (() => {
+    const atmMat = vol ? null : (() => {
       const m = new THREE.MeshBasicNodeMaterial({ side: THREE.BackSide, transparent: true, depthWrite: false, depthTest: true, blending: THREE.AdditiveBlending, toneMapped: false });
       const cN = uniform(new THREE.Vector3()), rd = normalize(positionWorld.sub(cameraPosition)), t = dot(cN.sub(cameraPosition), rd), cp = cameraPosition.add(rd.mul(t)), b = length(cp.sub(cN)).div(R);
       const a = pow(float(1).sub(tc(b.sub(1.0).div(atmW), 0, 1)), crisp ? 1.6 : 2.2), dd = dot(normalize(cp.sub(cN)), normalize(U.sun)), day = smoothstep(-0.35, 0.5, dd);
       m.colorNode = mix(vec3(1.0, 0.55, 0.28), vec3(0.28, 0.55, 1.0), smoothstep(-0.05, 0.45, dd)).mul(a).mul(day.mul(crisp ? 1.05 : 0.8).add(crisp ? 0.12 : 0.03)); m.opacityNode = float(1); parts.atmCenter = cN; return m;
     })();
-    const atm = mk(new THREE.Mesh(new THREE.SphereGeometry(R * atmScale, Math.max(24, tier.planetSeg), Math.round(tier.planetSeg * 0.75)), atmMat)); atm.renderOrder = -5; pg.add(atm);
+    if (vol) pg.add(vol.group); else { const atm = mk(new THREE.Mesh(new THREE.SphereGeometry(R * atmScale, Math.max(24, tier.planetSeg), Math.round(tier.planetSeg * 0.75)), atmMat)); atm.renderOrder = -5; pg.add(atm); }
     // sun with glare (additive, never depth-hidden: it is far behind everything)
     const sunQ = mk(new THREE.Mesh(new THREE.PlaneGeometry(1, 1), (() => {
       const m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, depthTest: true, blending: THREE.AdditiveBlending, toneMapped: false }), p = uv().sub(0.5).mul(2.0), r = length(p);
@@ -531,11 +540,11 @@
       m.colorNode = vec3(1.0, 0.93, 0.8).mul(core.add(halo)).add(vec3(0.6, 0.75, 1.0).mul(streak)).mul(smoothstep(1.0, 0.7, r)); m.opacityNode = float(1); return m;
     })())); sunQ.renderOrder = -4; group.add(sunQ);
     parts.sunDist = 3200;
-    parts.setSun = (d) => { U.sun.value.set(d[0], d[1], d[2]); sunQ.position.set(d[0] * parts.sunDist, d[1] * parts.sunDist, d[2] * parts.sunDist); sunQ.scale.set(360, 360, 1); sunQ.lookAt(0, 0, 0); }; parts.setSun(o.sun);
+    parts.setSun = (d) => { U.sun.value.set(d[0], d[1], d[2]); if (vol) vol.setSun(new THREE.Vector3(d[0], d[1], d[2]).normalize()); sunQ.position.set(d[0] * parts.sunDist, d[1] * parts.sunDist, d[2] * parts.sunDist); sunQ.scale.set(360, 360, 1); sunQ.lookAt(0, 0, 0); }; parts.setSun(o.sun);
     parts.placePlanet = (v) => pg.position.set(pc.x + v[0], pc.y + v[1], pc.z + v[2]);
     parts.planetGroup = pg; parts.planet = planet; parts.sunQ = sunQ;
-    parts.syncAtm = () => { parts.atmCenter.value.copy(pg.position); };
-    parts.update = (t) => { U.cloud.value = t * 0.006; planet.rotation.y = t * 0.0026; };
+    parts.syncAtm = () => { if (parts.atmCenter) parts.atmCenter.value.copy(pg.position); };
+    parts.update = (t) => { if (vol) vol.setTime(t); U.cloud.value = t * 0.006; planet.rotation.y = t * 0.0026; };
     return parts;
   }
 
