@@ -12285,7 +12285,19 @@ function _buildArielBoard(){
   return grp;
 }
 
-function buildBoardMesh(){
+// (v383) every skyboard casts AND receives, whatever built it.  Root cause of the missing board shadows: only the GLB-template path
+// (applyPartStyle) set castShadow / receiveShadow; Ariel's board ('R', _buildArielBoard) and the procedural board / loading stand-in never
+// did, and the flight-board rebuilds (heal, restyle, worlds-scale, launch) never traversed afterwards (only the planet-world build and the
+// rider heal did) - so in flight / space the char cast onto a board that could not receive and the board cast nothing; in a world it held
+// until the first heal / restyle swapped the board.  As in the Oct 2 build (#111: every board mesh cast + receive), one rule at the one
+// builder: opaque meshes cast + receive, transparent ones (crystal shards, energy rings) receive only.  Off when GFX.shadows is off.
+function _boardShadow(g){
+  if(!g||!g.traverse) return g; const on=!!(typeof GFX!=='undefined'&&GFX&&GFX.shadows);
+  g.traverse(o=>{ if(!o.isMesh) return; const m=o.material, tr=!!(m&&!Array.isArray(m)&&m.transparent); o.castShadow=on&&!tr; o.receiveShadow=on; });
+  g.userData.boardShadow=on; return g;
+}
+function buildBoardMesh(){ return _boardShadow(_buildBoardMeshRaw()); }
+function _buildBoardMeshRaw(){
   // GLB template selected? use the sculpted model (falls back to procedural if
   // the template hasn't finished loading yet).
   const tmpl=STATE.boardConfig.template;
