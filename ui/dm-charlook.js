@@ -385,8 +385,18 @@
     if (ctx.sunDir) { const sd = [ctx.sunDir.x, ctx.sunDir.y, ctx.sunDir.z]; sun = sun ? Object.assign({}, sun, { dir: sd }) : { dir: sd, color: [1, 0.95, 0.86], intensity: 1.5 }; }
     const d = deriveEnv({ sun, hemi, amb, moon, day: ctx.day == null ? 1 : ctx.day });
     E.tgt = { dirA: d.dir, colA: mul3(d.key, 0.14), dirB: normalize3([-d.dir[0], 0.25, -d.dir[2]]), colB: mul3(d.fill, 0.5), top: d.skyTop, hor: d.skyHor, gnd: d.ground, key: d.key, rim: d.rim, fill: d.fill, L: d.dir };
+    foldBounce(E.tgt, ctx.bounce);   // (v385) the nearest lit planet's reflected light fills the shade side (same two uniforms: no recompile)
     // anti-acne for the shadow-only light the board + character use (it ships with a bias but no normal bias: curved skin self-shadows into bands)
     for (const o of ctx.scene.children) if (o.isDirectionalLight && o.userData && o.userData.shadowOnlyLight && o.shadow && !S.shadowSeen.has(o)) { S.shadowSeen.add(o); if (!(o.shadow.normalBias >= 0.02)) o.shadow.normalBias = 0.02; }
+  }
+  /* planet-bounce fill (v385): bounce = { dir:[x,y,z] toward the lit planet(s), rgb:[r,g,b] light units (colour x albedo x phase x (r/d)^2, capped ~0.1), I }.  It is folded into the shade-side
+     second light (dirB / colB): the direction eases from 'away from the sun' towards the planet by its share of that light, the colour adds.  Pure; no new uniform, light or texture. */
+  const BOUNCE_GAIN = 2.5;
+  function foldBounce(tgt, b) {
+    if (!tgt || !b || !b.rgb || !(b.I > 1e-4)) return tgt;
+    const bl = lum3(b.rgb) * BOUNCE_GAIN, fl = lum3(tgt.colB), w = bl / (bl + fl + 1e-4), bd = normalize3(b.dir || [0, -1, 0]);
+    tgt.dirB = normalize3([lerp(tgt.dirB[0], bd[0], w), lerp(tgt.dirB[1], bd[1], w), lerp(tgt.dirB[2], bd[2], w)]);
+    tgt.colB = add3(tgt.colB, mul3(b.rgb, BOUNCE_GAIN)); return tgt;
   }
   const normalize3 = (v) => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
 
@@ -398,7 +408,7 @@
   const status = () => ({ tier: tier(), envKind: envKind(), stored: lsGet(LS), roots: S.roots.size, ...S.stats });
 
   const api = { tier, setTier, envKind, apply, refresh, forget, rigStudio, syncStudio, tick, status, S, envFor,
-    pickTier, pickEnvKind, norm, smoothNormals, seamStats, deriveEnv, classify, kindParams, matcapPixel, matcapBytes, matcapPalette, MATCAP_SCALE, STUDIO, ANISO, TIERS };
-  api.core = { pickTier, pickEnvKind, norm, smoothNormals, seamStats, deriveEnv, classify, kindParams, matcapPixel, matcapBytes, matcapPalette, MATCAP_SCALE, STUDIO, ANISO, TIERS };
+    pickTier, pickEnvKind, norm, smoothNormals, seamStats, deriveEnv, foldBounce, classify, kindParams, matcapPixel, matcapBytes, matcapPalette, MATCAP_SCALE, STUDIO, ANISO, TIERS };
+  api.core = { pickTier, pickEnvKind, norm, smoothNormals, seamStats, deriveEnv, foldBounce, classify, kindParams, matcapPixel, matcapBytes, matcapPalette, MATCAP_SCALE, STUDIO, ANISO, TIERS };
   return { api };
 });

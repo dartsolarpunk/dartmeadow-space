@@ -19,7 +19,7 @@ for (const on of [true, false]) {
 // light follows the board in each mode
 ok(/_charShadowLight\.target\.position\.copy\(bp\)/.test(html) && /else bp\.copy\(boardFlight\.position\)/.test(html), 'flight / space: the key shadow light is centred on boardFlight');
 ok(/if\(m==='space'\) return PW\.board\?PW\.board\.position/.test(html) && /if\(m==='fly'\) return atmoState\?atmoState\.pos/.test(html) && /if\(m==='walk'\) return surfPlayer\?surfPlayer\.pos/.test(html), 'worlds: the focus is the board / rider in space, atmosphere and on foot');
-ok(/sun\.target\.position\.set\(px,fy,pz\)/.test(html) && /DMPolish\.fitSun\(sun,up,px,fy,pz/.test(html), 'worlds: TERRAIN.sun box centred on the focus');
+ok(/sun\.target\.position\.set\(px,fy,pz\)/.test(html) && /DMPolish\.fitSun\(sun,upSh,px,fy,pz/.test(html), 'worlds: TERRAIN.sun box centred on the focus');
 // frustum: the board sits inside the fitted box (ortho half-extent >= board reach) for every map size
 const half = { 512: 45, 1024: 70, 2048: 110, 4096: 150 }; for (const k in half) ok(half[k] > 3 * 2 && 6 > 3, 'box ' + k + ' covers a 3-unit board at the centre');
 console.log('board-shadow OK (' + n + ' checks)');
