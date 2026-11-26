@@ -22717,7 +22717,7 @@ async function loadCharacterAssets(){
   // Strand count by graphics preset — ONLY on Auto (an explicit Low/Medium/High/Ultra pick keeps all
   // 5,665 strands). Guides (the physics) always simulate; this only thins the drawn children.
   const _hairUrl=(_cdef&&_cdef.hair&&_cdef.hair.url)||(CHAR_ASSET_BASE+'ariel_hair_strands.bin'), _hairCfgUrl=_cdef&&_cdef.hair?_cdef.hair.configUrl:null;
-  window.DM_HAIR_MODULE=window.DM_HAIR_MODULE||new URL('./hair_strands.js?v=383',document.baseURI).href;   // one URL for the game and the studio (ui/dm-charselect.js): a single module instance
+  window.DM_HAIR_MODULE=window.DM_HAIR_MODULE||new URL('./hair_strands.js?v=385',document.baseURI).href;   // one URL for the game and the studio (ui/dm-charselect.js): a single module instance
   function _hairStrandFraction(){ try{ const G=window.GFX; if(!G||G.preset!=='auto') return 1; const r=(typeof resolvePreset==='function')?resolvePreset():'medium'; return r==='low'?0.5:(r==='medium'||r==='balanced')?0.75:1; }catch(e){ return 1; } }
   // Real-time strand hair (hair_strands.js + characterassests/ariel_hair_strands.bin). Fails soft: if the
   // module/data is missing or the loaded character is a different file, she simply has no strand hair.

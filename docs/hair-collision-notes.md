@@ -78,3 +78,39 @@ Needs a real device: the GPU ribbon path (the shots use WebGL2 on SwiftShader), 
 `/home/claude/hair-collision-shots/` (not in the repo): `before_*`, `after_mid_*`, `after_high_*` for Ariel and Emma, idle front / side / back / three-quarter, head turn and run front / side / back.
 Seen by eye: Emma's fringe no longer hangs across her eyes and lenses at High (it did before); Ariel's face-front strands are pushed off the lenses a little. Side effect at High: the hair outline on both characters
 is rougher / more flared at the sides (neighbour separation + capsule pushes on every iteration spread the bundles), so High trades smoothness for fewer intersections. Not tuned further; worth a look on device before making High the default.
+
+## v385: the scalp as a real collision body (branch `claude/scalp-collision-1125`)
+
+### What was missing (measured with `tools/tests/hair-scalp.js`, skinned scalp triangles of the same frame as ground truth)
+* Emma's head field (SDF in the Head frame + skin warp) is NOT the drawn scalp once the neck moves: through Emma_Land / Mount_Step 55-95 scalp vertices are 5-85 mm off the field, and 10 % of Emma_Scalp's
+  vertices (neck / shoulder weighted, y < -20 mm head-local) lie below the SDF box (no scalp collision at all, even at rest). The solver's own count said 0 points inside while 60-110 guide segments crossed the mesh.
+  `hair-emma-boardwalk.mjs` PASSED because it only guards a regression band (60-190 crossings) of CHILD centrelines sampled every 15 frames; guides and the ears were never measured.
+* Ears (3-5 mm sheets): strand chords pass through them with both end points clear (both characters' ear keep-out boxes are tier >= 1 and point-sampled).
+* Ariel's tier 1/2 solve had no closing head pass (only Emma's skin-warp branch did): points were left inside her scalp after the length / capsule passes (Running tier 1: 265 guide points behind the sheet).
+* The GPU ribbon shader (the path the game really runs, WebGPU) collides children with the pre-v383 first-order warp inverse and no skin-motion gate, i.e. not what the CPU twin (and every test) does for Emma. NOT fixed here (needs a device to validate a TSL port): children now also get the guide's tangent plane on the skinned scalp, which does not depend on that inverse.
+
+### Changes
+1. `DYN` (hair_strands.js): triangles of the scalp mesh with a non-Head-weighted vertex (Emma 1,712 tris; Ariel 0) plus the scalp triangles inside the groom's `ear*` boxes (static; Ariel too) are CPU-skinned each frame from the bone matrices,
+   binned in a 6 mm grid (reach 7 mm, `params.dynReach`), and every guide point (>= 1 contact gate shared with the SDF: `near()`) is pushed out of the real triangles (closest point, smooth-normal sign, one-sided rim) with the SAME clearance, soft cushion and friction as the head SDF, on the closing pass of every step, all tiers; tier 2 also tests two samples per segment.
+   Each guide point stores the tangent plane it rests on; children (CPU ribbon loop and the GPU ribbon shader, same dot product) are pushed to their clearance from it. Ariel: no skinned triangles, static ears only at tier 2.
+2. Closing head pass (`headOut`) now also runs with the rigid field for grooms without a skin warp at tier >= 1 (`params.headClose:false` = v379). **Intentional Ariel change** at tiers 1 / 2 (tier 0 and the v357 solve untouched): golden `v385` hashes in `ariel-probe-golden.json`, and the probe proves tier 1 with `headClose:false` is still bit-identical to main.
+3. Versions: DM_BUILD / sw CACHE_NAME / hair_strands.js `?v=` -> 385. Test hooks `_fieldAt`, `_sdfBox`, `_dyn`.
+
+### Numbers (peak crossing segments over the sampled frames of a pose; guides / children), Emma tier 2: main -> v385
+idle 52 / 52 -> 23 / 66 (v384 main sample: guide 67), Running 63 / 75 -> 24 / 51, climb 95 / 206 -> 64 / 228, Mount_Step 65 / 128 -> 14 / 63, Emma_Land 97 / 202 -> 16 / 85, Emma_Climb_Hang 73 / 113 -> 39 / 102.
+Boardwalk (children, tier 2) mid-motion: get-up 167 -> 108 (nape 66 -> 18), mount 155 -> 24 (nape 109 -> 3); walk-to-board is slightly WORSE (mid 99 -> 116, end 33 -> 52: side / ear region). Ariel tier 1 Running guide 401 -> 152, tier 2 128 -> 48.
+Cost (x86 node, this loaded box is ~3x slower than the doc box; `stats.simMs`): Emma tier 1 32.7 -> 45.3 ms (+39 %), tier 2 52.7 -> 62.4 (+18 %); Ariel tier 1 7.5 -> 8.7 (+16 %), tier 2 17.5 -> 19.9 (+14 %). Re-measure on device.
+
+### Still open
+Emma tiers 0 / 1 children cross the ear sheets (static ears are tier 2 only; ~240-290 child segments at idle), tiers 0 / 1 are far from zero in motion for both characters (Ariel climb childX 917-1052), the GPU shader's first-order warp inverse (above), walk-to-board side crossings, and no on-device frame times.
+
+### v385 round 2 (same branch)
+* Static ears/scalp edge for ALL tiers (both characters): the ear-box scalp triangles are built once in the head frame (`DYN.st`, no per-frame skinning); `dynFind` merges static + skinned sets. Emma's skinned set stays per frame.
+* `tipsCollide` default on (tips beyond the groom reach were the Ariel climb crossings); `maxStretch: 1.6` reel-in pass (fast climb stretched chains through the head); tier 0/1 chord midpoint sample vs the head field (`midHead1`); closing head pass at every tier (`headClose`).
+* Head-field refine x3 at all tiers (`fDef = 3`): Ariel now matches Emma. Memory: about 4.5M cells = 9.4 MB Int16 on CPU, 18.8 MB Float32 GPU texture at tiers 0/1 (Emma already paid this); load +0.7-1.0 s.
+* Determinism: `lib-hair-probe.mjs` setup passes `hitchMs:1e9` (wall-clock hitch detection made "High with 20-point strands" flaky).
+* Goldens: Ariel main hashes kept under `tiers`; new `v385` hashes (t0 e55e62a09ac69492, t1 efeff680e379cb57, t2 5c91917fe270d139); the probe also proves that with all v385 switches off and main field refine the main hashes are reproduced exactly.
+* Not ported (item 5): the WebGPU ribbon shader still uses the first-order skin-warp inverse for children. Cannot be validated without a device or a TSL emulator; children now also receive the guide's tangent plane (CPU and shader), which does not depend on the inverse. Left documented.
+* Peaks (guide / child crossing segments, full pose list): Ariel t0 <=14/102, t1 <=13/126, t2 <=75/99 (main: climb t0 502/1052). Emma t0 <=109/385, t1 <=71/128, t2 <=43/89. Thresholds in `hair-scalp.js` are these +25 %.
+* Cost (slow box simMs, real device ~1/3): Ariel climb t0 6.3 -> ~10.3, t1 7.5 -> ~11.1, t2 17.7 -> ~20.1; Emma Land t2 52.7 -> ~63.5.
+* Remaining: Emma t0 climb children 385; Emma t1 idle guides 47; Ariel t2 Mount_Step guides 75; no real-device timing.

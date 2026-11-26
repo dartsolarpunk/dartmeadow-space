@@ -35,7 +35,7 @@ export async function setup(name, hairMod, opts = {}) {
   const mixer = new THREE.AnimationMixer(root); const CHAR = { root, bones, mixer };
   const buf = (b => b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength))(fs.readFileSync(D + C.bin));
   const cfg = C.cfg ? JSON.parse(fs.readFileSync(D + C.cfg)) : undefined;
-  const H = hairMod.buildHair(CHAR, THREE, buf, Object.assign({ manual: true, config: cfg, character: true }, opts, { params: Object.assign({ deferToRender: false, autoQuality: false }, opts.params || {}) }));
+  const H = hairMod.buildHair(CHAR, THREE, buf, Object.assign({ manual: true, config: cfg, character: true }, opts, { params: Object.assign({ deferToRender: false, autoQuality: false, hitchMs: 1e9 }, opts.params || {}) }));
   const meshes = {}; root.traverse(o => { if (o.isSkinnedMesh) meshes[o.name] = o; });
   return { C, CHAR, H, meshes, clips: ga.animations, mixer, root, bones, restQ: bones.Head.quaternion.clone() };
 }
