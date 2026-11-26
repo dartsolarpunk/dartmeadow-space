@@ -20,6 +20,8 @@ Use: **code** = code or tables included (licence terms apply) · **technique** =
   <https://radicaldeepscale.com/ArcLakeFluidSim.html>
 - **Procedural Planets (cube-sphere)** — Sebastian Lague. *MIT* (technique). Cube-to-sphere planet patches used by the sandbox’s quadtree LOD planet.
   <https://github.com/SebLague/Procedural-Planets>
+- **Secret Paint · Geo-Scatter · Plant Library / Biome Reader · Arboris** — orencloud (Secret Paint, GPL-3.0-or-later); BD3D (Geo-Scatter); Cgi Lab (Arboris). *Concepts only; no code, data or assets used* (technique). Inspiration for the biome scatter (`ui/dm-biome-scatter.js`): a biome as a list of plants with density, scale, slope / elevation / noise masks and clustering, placed by seeded noise so it stays non-destructive and works on any terrain; layered tree wind (trunk, branch, leaf) and LOD0-3. Independent implementation; nothing copied or translated. Details: `docs/CREDITS-scatter.md`.
+  <https://orencloud.art/secretpaint> · <https://geoscatter.com> · <https://superhivemarket.com/>
 - **Polygonising a scalar field (marching cubes tables)** — Paul Bourke; tables by Cory Gene Bloyd. *Free to use with attribution* (code). MC_EDGE_TABLE / MC_TRI_TABLE lookup tables.
   <https://paulbourke.net/geometry/polygonise/> · <https://gist.github.com/dwilliamson/c041e3454a713e58baf6e4f8e5fffecd>
 - **Marching Cubes: A High Resolution 3D Surface Construction Algorithm** — W. E. Lorensen & H. E. Cline, SIGGRAPH 1987. *Published paper* (technique). The original marching cubes algorithm.
