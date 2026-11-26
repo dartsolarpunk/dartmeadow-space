@@ -183,7 +183,7 @@ if(location.search.indexOf('debug')!==-1){
   // PWA manifest: /manifest.webmanifest (linked in <head>; dark launch screen on Android)
 })();</script>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-<script>/* (v353) build tag: bump together with CACHE_NAME in sw.js (tools/tests/build-tag.js).  Persisted quality records (ui/dm-budget.js, dm-governor.js) are dropped when it changes. */window.DM_BUILD='v384';try{console.log('[DM build] '+window.DM_BUILD);}catch(e){}</script>
+<script>/* (v353) build tag: bump together with CACHE_NAME in sw.js (tools/tests/build-tag.js).  Persisted quality records (ui/dm-budget.js, dm-governor.js) are dropped when it changes. */window.DM_BUILD='v386';try{console.log('[DM build] '+window.DM_BUILD);}catch(e){}</script>
 <script src="ui/dm-time.js?v=97"></script>
 <script src="ui/dm-earth.js?v=292"></script>
 <script src="ui/dm-earth-paint.js?v=290"></script>
@@ -204,6 +204,8 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-budget.js?v=372"></script>
 <script src="ui/dm-mem.js?v=372"></script>
 <script src="ui/dm-lod.js?v=373"></script>
+<script src="ui/dm-biome-scatter.js?v=386"></script>   <!-- (v386) procedural biome scatter (foliage / rocks, 4 LODs, 3-layer wind, budget tiers); opt-in ?scatter=1; docs/biome-scatter.md -->
+<script src="ui/dm-biome-defs.js?v=386"></script>   <!-- the three starter biomes (temperate forest, meadow, dry / desert) as JSON-compatible data -->
 <script src="ui/dm-terrain-lod.js?v=294"></script>   <!-- one terrain across every altitude band: shared slope / skirt / sea-tint contract between the globe map and the sky ground -->
 <script src="ui/dm-impostor.js?v=280"></script>   <!-- far-range LOD: vertex-clustering impostor (mansion LOD2, colours baked) -->   <!-- far-range LOD: the ONE distance table per device class (props, mansion, landmarks, vantage reach); ?lod=off|low|mobile|desktop -->
 <script src="ui/dm-light.js?v=373"></script>   <!-- Cosmos lighting 2-4: radiance cache (SH L1 probes, ~16 rays EMA), height-cache sun visibility, tiers + budget stage; ?light=off|low|med|high|ultra -->
@@ -16254,6 +16256,9 @@ const CREDITS=[
  {t:'Procedural Planets (cube-sphere)',a:'Sebastian Lague',l:'MIT',use:'technique',
   u:['https://github.com/SebLague/Procedural-Planets'],
   w:'Cube-to-sphere planet patches used by the sandbox’s quadtree LOD planet.'},
+ {t:'Secret Paint · Geo-Scatter · Plant Library / Biome Reader · Arboris',a:'orencloud (Secret Paint, GPL-3.0-or-later); BD3D (Geo-Scatter); Cgi Lab (Arboris)',l:'Concepts only; no code, data or assets used',use:'technique',
+  u:['https://orencloud.art/secretpaint','https://geoscatter.com','https://superhivemarket.com/'],
+  w:'Inspiration for the biome scatter (ui/dm-biome-scatter.js): a biome as a list of plants with density, scale, slope / elevation / noise masks and clustering, placed by seeded noise so it stays non-destructive and works on any terrain; layered tree wind (trunk, branch, leaf) and LOD0-3. Independent implementation; nothing copied or translated.'},
  {t:'Polygonising a scalar field (marching cubes tables)',a:'Paul Bourke; tables by Cory Gene Bloyd',l:'Free to use with attribution',use:'code',
   u:['https://paulbourke.net/geometry/polygonise/','https://gist.github.com/dwilliamson/c041e3454a713e58baf6e4f8e5fffecd'],
   w:'MC_EDGE_TABLE / MC_TRI_TABLE lookup tables.'},
@@ -20785,6 +20790,17 @@ function _pwPropsTick(px,pz,agl,dx,dz){
   }
   _propsLod(px,pz,agl);
   _farCanopyTick(px,pz,agl);
+  _scatterTick(px,pz,agl);
+}
+// (v386) ?scatter=1: ui/dm-biome-scatter.js - procedural biome scatter, pooled instanced draws (<= entries x 4), own chunk stream; one call per frame, a no-op without the flag
+function _scatterTick(px,pz,agl){
+  const S=window.DMBiomeScatter; if(!S||!S.on||!PW.scene||!PW.camera||!TERRAIN.group||!TERRAIN.pal) return;
+  const cam=PW.camera, cf=PW._camFlat, p=cf?cf.p:cam.position, q=cf?cf.q:cam.quaternion;   // the flat-frame camera (the bend only moves far geometry down)
+  let _ctx=PW._scx; if(!_ctx){ _ctx=PW._scx={THREE,cam:{x:0,y:0,z:0,qx:0,qy:0,qz:0,qw:1,fov:60,aspect:1.6},tag:o=>{ try{ _pwMapTag(o); }catch(e){} }}; }
+  const c=_ctx.cam; c.x=p.x; c.y=p.y; c.z=p.z; c.qx=q.x; c.qy=q.y; c.qz=q.z; c.qw=q.w; c.fov=cam.fov; c.aspect=cam.aspect;
+  _ctx.parent=TERRAIN.group; _ctx.seed=TERRAIN.seed||1; _ctx.gen=PW.gen; _ctx.style=TERRAIN.style; _ctx.ground=TERRAIN.pal.ground; _ctx.H=TERRAIN.Hg||TERRAIN.H; _ctx.sea=0; _ctx.px=px; _ctx.pz=pz; _ctx.agl=agl;
+  _ctx.isMobile=!!GFX.isMobile; try{ _ctx.preset=resolvePreset(); }catch(e){ _ctx.preset='medium'; } _ctx.now=performance.now();
+  S.tick(_ctx);
 }
 function _propAdopt(k,g,ci,cj,pi,pj){
   const M=PW.props; g.visible=false; PW._plodF=5; PW.propsGroup.add(g); M.set(k,g);   /* hidden until _propsLod shows it inside the draw cut (next frame) */
@@ -21000,7 +21016,7 @@ function _pwClose(opts){
   try{ _applyCamOffset(); }catch(e){}
   try{ if(window.DMCollide) DMCollide.closeWorld(); }catch(e){}   // every collider, body, actor and the debug / particle objects go with the world
   try{ if(window.DMSunFar) DMSunFar.reset(); }catch(e){}
-  PW.renderer=PW.scene=PW.camera=PW.board=PW.ground=null; PW.props=new Map(); PW.propsGroup=null; PW.seaSpan=0; _FC.mesh=null;   // (fov-fill 2) the far canopy went with the scene
+  PW.renderer=PW.scene=PW.camera=PW.board=PW.ground=null; PW.props=new Map(); PW.propsGroup=null; PW.seaSpan=0; _FC.mesh=null; PW._scx=null; try{ if(window.DMBiomeScatter) DMBiomeScatter.dispose(); }catch(e){}   // (fov-fill 2) the far canopy went with the scene   (v386) the biome scatter's pooled meshes went with it
   surfRenderer=atmoRenderer=null; surfScene=atmoScene=null; surfCamera=atmoCamera=null;
   surfPlayer=null; surfBoard=null; atmoBoard=null; atmoState=null; _atmoSky=null; _atmoHeight=null; _atmoPal=null;
   surfTerrainMesh=null; surfWater=null; surfCausticCtx=null; surfCausticTex=null;
@@ -26772,7 +26788,7 @@ function _pwBuildGround(pal,fx,fz,mode){
   const dd=drawDistanceTier(); TERRAIN.rootSize=dd.rootSize;
   TERRAIN.group=new THREE.Group(); TERRAIN.group.name='JOTS_PlanetGround'; PW.scene.add(TERRAIN.group);
   surfTerrainMesh=TERRAIN.group;
-  PW.props=new Map(); PW.propsGroup=null; PW.seaSpan=0;
+  PW.props=new Map(); PW.propsGroup=null; PW.seaSpan=0; PW._scx=null; try{ if(window.DMBiomeScatter) DMBiomeScatter.dispose(); }catch(e){}
   const G=new SkyGround(TERRAIN.group,F,pal); PW.ground=G;
   // first look: the coarse cover all round, finer toward the spot (the rest refines as the camera moves)
   G.viewR=mode==='space'?1e9:6000; G.update({position:_pwfMap(fx,(H(fx,fz)||0)+(mode==='space'?2e5:(mode==='walk'?3:60)),fz)},mode==='space'?60:500);
@@ -27155,7 +27171,7 @@ function* _hmChunkScatterG(i,j){
     for(let q=rocks.length-1;q>=0;q--){ const r=rocks[q]; if(pal.water&&r.h<WL+r.s*0.6) rocks.splice(q,1); } }
   mkRocks(rocks.filter(r=>r.s<=1.35),false); mkRocks(rocks.filter(r=>r.s>1.35),true);
   // trees on the green worlds
-  if(pal.ground===0x3a7d34){
+  if(pal.ground===0x3a7d34&&!(window.DMBiomeScatter&&DMBiomeScatter.replacesTrees&&DMBiomeScatter.replacesTrees())){   // (v386) ?scatter=1 with a tree biome plants the near trees itself (no doubled trees)
     const trees=rocks.filter(r=>r.h>WL+1&&r.h<40&&((r.x*12.9898+r.z*78.233)%1+1)%1>0.6);
     if(trees.length){
       const K=_propKit();
