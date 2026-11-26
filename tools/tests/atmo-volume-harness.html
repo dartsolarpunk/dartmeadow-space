@@ -1,0 +1,31 @@
+<!doctype html><meta charset=utf8><body style="margin:0;background:#000"><canvas id=c width=800 height=500></canvas>
+<script type="importmap">{"imports":{"three":"/three/build/three.webgpu.js","three/webgpu":"/three/build/three.webgpu.js","three/tsl":"/three/build/three.tsl.js"}}</script>
+<script type="module">
+// headless look + compile check for ui/dm-atmo-volume.js (WebGL2 fallback under SwiftShader): ?tier=0..3 &view=orbit|inside &wake=1
+import * as TH from 'three/webgpu'; import * as TSL from 'three/tsl';
+const THREE=Object.assign({},TH); THREE.TSL=TSL; window.THREE=THREE; window.errs=[]; window.shots={};
+addEventListener('error',e=>errs.push(String(e.message).slice(0,300)));
+const q=new URLSearchParams(location.search), tier=+(q.get('tier')||3), view=q.get('view')||'orbit';
+try{
+  await new Promise(r=>{const s=document.createElement('script'); s.src='/ui/dm-atmo-volume.js'; s.onload=r; s.onerror=()=>{errs.push('load'); r();}; document.head.appendChild(s);});
+  const cv=document.getElementById('c'), r=new TH.WebGPURenderer({canvas:cv,forceWebGL:true,antialias:false,logarithmicDepthBuffer:q.get('log')!=='0'}); await r.init(); r.setSize(800,500,false); r.setClearColor(0x000004,1);
+  const S=new TH.Scene(), cam=new TH.PerspectiveCamera(45,800/500,0.05,1000);
+  const R=10, planet=new TH.Mesh(new TH.SphereGeometry(R,64,48),new TH.MeshStandardMaterial({color:0x3a6a3a,roughness:1})); S.add(planet);
+  const sun=new TH.DirectionalLight(0xffffff,3); sun.position.set(1,0.4,0.6); S.add(sun,new TH.AmbientLight(0x202030,1));
+  const blocker=new TH.Mesh(new TH.SphereGeometry(0.7,24,16),new TH.MeshStandardMaterial({color:0xcc3333})); S.add(blocker);
+  const co={sc:[1.1,1.9,3.0].map(v=>v*0.9),ex:[1.0,1.7,2.6].map(v=>v*0.9)};
+  const vol=DMAtmoVolume.create(THREE,TSL,{R,top:R*0.18,co,falloff:5.5,tint:0x3366ff,tier,kind:'earth',sunDirU:TSL.uniform(new TH.Vector3(1,0.4,0.6).normalize())});
+  window.volOK=!!vol; if(!vol) throw new Error('create returned null');
+  S.add(vol.group);
+  if(view==='orbit'){ cam.position.set(0,6,32); cam.lookAt(0,R*0.6,0); blocker.position.set(5,8.5,16); }
+  else { cam.position.set(0,R+0.6,0); cam.lookAt(6,R+3,-8); blocker.position.set(2,R+1.6,-6); }
+  const frames=[]; let t=0;
+  for(let i=0;i<40;i++){
+    t+=1/30; if(q.get('wake')==='1'&&view==='orbit'){ cam.position.set(Math.sin(t*2)*4,R+1+Math.cos(t*2),0.0+8); cam.lookAt(0,R,0); }
+    vol.update(1/30,cam); const t0=performance.now(); await r.renderAsync(S,cam); frames.push(performance.now()-t0);
+  }
+  window.live=vol.wake.live(); window.wispCount=vol.wisps?vol.wisps.count:0; window.tierName=vol.tier.name; window.ms=frames.slice(-10).reduce((a,b)=>a+b,0)/10;
+  window.shots.a=cv.toDataURL('image/png');
+}catch(e){ errs.push('EXC '+(e&&e.stack||e).toString().slice(0,500)); }
+window.done=true;
+</script>

@@ -76,6 +76,7 @@ const CENSUS = [
   { file: 'ui/dm-marine.js', pat: /InstancedMesh\(geo,mat,cap\)/, id: 'marine life (fish)', status: 'exempt', why: 'swim-through ambient life in the water volume' },
   { file: 'ui/dm-fluid.js', pat: /JOTS_FluidDrops|JOTS_FluidFoam/, id: 'fluid drops / foam', status: 'exempt', why: 'effect particles (they collide with the fluid solver itself)' },
   { file: 'ui/dm-hazard.js', pat: /S\.bub=new THREE\.InstancedMesh/, id: 'underwater bubble trail', status: 'exempt', why: 'effect particles' },
+  { file: 'ui/dm-atmo-volume.js', pat: /new THREE\.InstancedMesh\(geo, mat, N\)/, id: 'atmosphere gas wisps', status: 'exempt', why: 'planet-air effect sprites (raycast disabled)' },
   { file: 'ui/dm-mist.js', pat: /InstancedMesh\(new THREE\.PlaneGeometry/, id: 'mist sprites', status: 'exempt', why: 'effect sprites' },
   { file: 'ui/dm-star.js', pat: /InstancedMesh\(new THREE\.PlaneGeometry/, id: 'star sprites', status: 'exempt', why: 'sky' },
   { file: 'ui/dm-menuscene.js', pat: /InstancedMesh\(geos\[k\]|InstancedMesh\(pg,/, id: 'menu scene rocks / particles', status: 'exempt', why: 'menu scene, no player body' },

@@ -212,6 +212,7 @@ if(location.search.indexOf('debug')!==-1){
 <script src="ui/dm-spaceshafts.js?v=349"></script>   <!-- (t1537) the key star's glare + dust scatter + the nearest world's shadow through it, in open space (Med+; off on Low); ?spaceshafts=0 off -->
 <script src="ui/dm-feedback.js?v=329"></script>
 <script src="ui/dm-gpu-defer.js?v=374"></script>   <!-- (v332) DMGpuDefer: deferred destruction of disposed geometry's GPU buffers (the Bird Temple "used in submit while destroyed" banner) -->
+<script src="ui/dm-atmo-volume.js?v=385"></script>   <!-- (v385) DMAtmoVolume: the planet air as world geometry (ray-marched shell + wake + gas wisps), ?atmo=shell -->
 <script src="ui/dm-atmo-shell.js?v=332"></script>   <!-- (v297) DMAtmoShell.radii/worldR/ratio: the faded atmosphere perimeter of a body (Solenne 1.18 R) for the space -> world hand-off (Worlds) -->
 <script src="ui/dm-spawn.js?v=314"></script>   <!-- (v314) DMSpawn: new-game spawn in interstellar space near Sol + the arrival push-out from every world's hand-off radius -->
 <script src="ui/dm-pw-handoff.js?v=299"></script>   <!-- (v299) the space -> surface hand-off policy: pre-build hidden from PWS_OPEN, show the world + minimap globe at the DMAtmoShell perimeter (Worlds) -->
@@ -1091,7 +1092,7 @@ body[data-dm-screen]:not([data-dm-screen="flight"]) #dm-flash,body[data-dm-scree
 <script src="ui/dm-charm.js?v=365" defer></script>
 <script src="ui/dm-flash.js?v=382" defer></script>
 <script src="ui/dm-menuscene.js?v=380" defer></script>
-<script src="ui/dm-menuworld.js?v=382" defer></script>   <!-- 3D world behind the character select + studio (hangar bay / observation deck, planet, stars); ?menuscene=off|low -->
+<script src="ui/dm-menuworld.js?v=385" defer></script>   <!-- 3D world behind the character select + studio (hangar bay / observation deck, planet, stars); ?menuscene=off|low -->
 <script src="ui/dm-chars.js?v=383" defer></script>   <!-- character registry + profile (selection / colours / logos); pure data -->
 <script src="ui/dm-charpaint.js?v=370" defer></script>   <!-- applies the player's colours / logos to a loaded character (studio + game) -->
 <script src="ui/dm-charlook.js?v=378" defer></script>   <!-- the character look: smooth normals, soft sky / rim / matcap light + skin wrap on every pilot, game + studio; ?charlook=off|low|high  ?charenv=analytic|matcap|both -->
@@ -7768,6 +7769,19 @@ function _buildJotsDustyAtmoShell(radius, opts){
   const tint=new THREE.Color(opts.tint!=null?opts.tint:0x6688cc);
   const useNode=typeof _isRealWebGPU==='function'&&typeof flightRenderer!=='undefined'&&_isRealWebGPU(flightRenderer)
     &&!!(THREE&&THREE.MeshBasicNodeMaterial)&&typeof Fn==='function';
+  if(useNode&&_atmoShellOn()){
+    // (v385) ?atmo=shell: the same ray-march, built by ui/dm-atmo-volume.js as a world asset that also carries the wake + gas wisps; any failure falls through to the classic shell below
+    try{
+      const sunDirU=uniform(new THREE.Vector3(1,0.3,0.2).normalize()), planetCenterU=uniform(new THREE.Vector3(0,0,0));
+      const _lk=opts.kind&&_ATMO_LOOK[_atmoLookKey(opts.kind)], co=_atmoCoeffs(_lk&&_lk.albedo?_lk:{},scatterMul,[tint.r,tint.g,tint.b]);
+      const vol=DMAtmoVolume.create(THREE,THREE.TSL,{R,top:ATMO_R-R,co,falloff:opts.densityFalloff!=null?opts.densityFalloff:5.5,tint:tint.getHex(),opacityScale:opts.opacityScale!=null?opts.opacityScale:0.55,kind:opts.kind||'giant',sunDirU,segW:Math.max(32,(_webglPlanetSegForPreset()|0)),segH:24});
+      if(vol){
+        const m=vol.shell; Object.assign(m.userData,{atmoScatter:scatterMul,atmoTint:tint.getHex()});
+        group.add(vol.group); group.userData.atmoVolume=vol; _registerJotsAtmoFog({mesh:m,sunDirU,planetCenterU});
+        return group;
+      }
+    }catch(e){ console.warn('atmo volume fallback:',e); }
+  }
   if(useNode){
     try{
       const atmoMat=new THREE.MeshBasicNodeMaterial({transparent:true,side:THREE.BackSide,depthWrite:false,depthTest:true,blending:THREE.AdditiveBlending});   // (v133) depth-tested: nearer geometry (Bird Temple walls, moons, the ship) occludes it; the side flips per frame (_jotsShellSide)
@@ -8556,7 +8570,16 @@ async function buildProceduralPlanetMesh(radius, seedVal, colorHex, hasAtmospher
   }
   group.add(planetMcMesh);
 
-  if(hasAtmosphere){
+  // (v385) ?atmo=shell: the world's air is a world-space volume asset (ray-march shell + wake + gas wisps); falls back to the classic shell below on any failure
+  let _amv=null;
+  if(hasAtmosphere&&_atmoShellOn()&&typeof _isRealWebGPU==='function'&&typeof flightRenderer!=='undefined'&&_isRealWebGPU(flightRenderer)){
+    try{
+      const look=_atmoLook(kind), sunDirU=uniform(new THREE.Vector3(1,0.3,0.2).normalize()), planetCenterU=uniform(new THREE.Vector3(0,0,0));
+      _amv=DMAtmoVolume.create(THREE,THREE.TSL,{R:radius,top:radius*look.mul-radius,co:_atmoCoeffs(look),falloff:5.5,opacityScale:look.op,kind:_atmoLookKey(kind),sunDirU,tint:(look.gl&&look.gl.tint)||0x6688cc});
+      if(_amv){ Object.assign(_amv.shell.userData,{atmoScatter:look.scatter||2.2,atmoEarth:(_atmoLookKey(kind)==='earth')}); group.add(_amv.group); group.userData.atmoVolume=_amv; _registerJotsAtmoFog({mesh:_amv.shell,sunDirU,planetCenterU}); }
+    }catch(e){ console.warn('atmo volume (planet) fallback:',e); _amv=null; }
+  }
+  if(hasAtmosphere&&!_amv){
     // (No Earth-only water shell: seas are the map's own two-tone blue, like
     // every world's liquid, with no extra transparent full-planet pass.)
 
@@ -19268,6 +19291,7 @@ function renderWithPostFX(){
   try{ if(window.DMCharShadow&&DMCharShadow.S.handles.length) DMCharShadow.tick(CHAR,(typeof PW!=='undefined'&&PW&&PW.active&&PW.board)?PW.board:(typeof boardFlight!=='undefined'?boardFlight:null)); }catch(e){ if(!window._dmcsWarn){ window._dmcsWarn=1; console.warn('[charshadow] tick',e); } }   // (lamp shadows 3) her bones + the board OBB -> the analytic lamp shadow uniforms (ui/dm-charshadow.js; no allocation, nothing while no lamp light is attached)   // v110 temple lights/shadow cache/glass probe
   // (v116) below deck with no opening in view: the outside world is hidden for this render and the atmosphere pass skipped (ui/dm-bt-interior.js)
   let _seal=false, _btib=false; try{ if(window.DMBtBake) DMBtBake.tick(); }catch(e){} try{ if(window.DMBtHull) DMBtHull.tick(); }catch(e){} try{ if(window.DMBtPbr) DMBtPbr.tick(); }catch(e){} try{ if(window.DMBtInterior){ DMBtInterior.tick(); _btib=true; _seal=DMBtInterior.begin(flightScene,flightCamera); } }catch(e){ _seal=false; }
+  try{ if(_atmoShellOn()){ const _n=performance.now(), _d=window._amvT?Math.min(0.1,(_n-window._amvT)/1000):1/60; window._amvT=_n; DMAtmoVolume.frame(flightCamera,_d); } }catch(e){ _animLoopWarn('atmoVolume',e); }   // (v385) wake + gas wisps of every live world shell
   try{ const _hs=_taHideShells(); try{ DMGpuProf.push('atmo'); let _ta=false; try{ if(!_seal){ const _a0=performance.now(); try{ _ta=_trueAtmoRender(flightRenderer,flightScene,flightCamera); } finally{ DMFT.add('atmoPass',performance.now()-_a0); } } } finally{ DMGpuProf.pop(); } if(!_ta){ const _s0=performance.now(); flightRenderer.render(flightScene,flightCamera); DMFT.add('sceneRender',performance.now()-_s0); } } finally{ _taShowShells(_hs); } _shotGrab(flightRenderer); try{ DMGpuProf.tick&&DMGpuProf.tick(); }catch(e){} }
   finally{ if(_btib) try{ DMBtInterior.end(flightScene); }catch(e){} if(_spec) try{ DMSpec.post(flightCamera); }catch(e){} }
   const _rtMs = performance.now()-_rt0;
@@ -20207,6 +20231,9 @@ function _pwFrame(dt){
 // shells for the session. Steps follow the chosen quality tier only (no
 // automatic quality drops here — those stay Auto-only).
 const _TA={pipes:new Map(),t:0,failed:false,loc:{t:0,x:NaN,z:NaN,gen:-1}};
+// (v385) ?atmo=shell: the planet air is a WORLD-SPACE asset (ui/dm-atmo-volume.js: ray-marched shell mesh + wake + gas wisps in the body's group), so the
+// full-screen space pass is not run and the bodies' own shells stay visible.  The ground / sky-flight pass is unchanged (phase 2, docs/atmo-volume.md).
+function _atmoShellOn(){ try{ return !!(window.DMAtmoVolume&&DMAtmoVolume.enabled()&&THREE.TSL); }catch(e){ return false; } }
 function _trueAtmoOn(){
   if(window.DMAR&&DMAR.noAtmo) return false;   // (v154) AR overlays: the opaque full-screen gas pass is left out
   try{
@@ -20324,7 +20351,7 @@ function _taParamsFor(ud){
 const _taShellBuf=[];
 function _taHideShells(){
   _taShellBuf.length=0;
-  try{ if(_TA.failed||!_trueAtmoOn()||_taPerfOff()) return 0;
+  try{ if(_TA.failed||!_trueAtmoOn()||_taPerfOff()||_atmoShellOn()) return 0;
     for(let i=0;i<_jotsFogAtmoRegistry.length;i++){ const e=_jotsFogAtmoRegistry[i], m=e&&e.mesh; if(m&&m.visible&&/^JOTS_(PlanetAtmo|DustyAtmo|WebGLAtmo)$/.test(m.name||'')){ m.visible=false; _taShellBuf.push(m); } }
   }catch(e){}
   return _taShellBuf.length;
@@ -20332,7 +20359,7 @@ function _taHideShells(){
 function _taShowShells(n){ for(let i=0;i<_taShellBuf.length;i++) _taShellBuf[i].visible=true; _taShellBuf.length=0; }
 // open space / orbit: the nearest world's gas (others keep their light classic shells — cheap multi-planet)
 function _trueAtmoRender(r,scene,cam){
-  if(_TA.failed||!_trueAtmoOn()||_taPerfOff()) return false;
+  if(_TA.failed||!_trueAtmoOn()||_taPerfOff()||_atmoShellOn()) return false;
   try{
     let best=null,bd=Infinity,pd=Infinity; const c=_TA._c||(_TA._c=new THREE.Vector3()), q=_TA._q||(_TA._q=new THREE.Quaternion());
     for(let i=0;i<_jotsFogAtmoRegistry.length;i++){
@@ -20394,7 +20421,7 @@ function _trueAtmoRender(r,scene,cam){
 // freeze on entering any world's air (measured: 5–11 s single frames at Saturn and on autopilot toward Jupiter).
 // The pass is kept under the same key the frame uses, so that world reuses it as-is.
 async function _taWarm(r,scene,cam){
-  if(_TA.failed||!_trueAtmoOn()||_taPerfOff()||!r||!scene||!cam) return;
+  if(_TA.failed||!_trueAtmoOn()||_taPerfOff()||_atmoShellOn()||!r||!scene||!cam) return;
   let best=null,bd=Infinity; const c=new THREE.Vector3();
   for(let i=0;i<_jotsFogAtmoRegistry.length;i++){ const e=_jotsFogAtmoRegistry[i]; if(!e||!e.mesh||!e.mesh.parent||!e.mesh.userData.planetR) continue;
     e.mesh.getWorldPosition(c); const d=c.distanceTo(cam.position)/e.mesh.userData.planetR; if(d<bd){ bd=d; best=e; } }
