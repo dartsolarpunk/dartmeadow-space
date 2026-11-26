@@ -47,11 +47,11 @@ async function run(modPath, THREE, binBuf, opts, scalpName) {
   else {
     // (t1645u) the default now refines the head SDF x2 and uses the soft contact cushion; with both off (sdfFine 1, softBand 0) the solver must still be
     // bit-identical to the golden, and the new default must differ (it is really on) and stay finite
-    const leg = await run(path.join(ROOT, 'hair_strands.js'), THREE, binBuf, { sdfFine: 1, params: { softBand: 0 } }), l1 = { h0: leg.h0, h90: leg.h90, col: leg.col, stats: leg.stats };
+    const leg = await run(path.join(ROOT, 'hair_strands.js'), THREE, binBuf, { sdfFine: 1, params: { softBand: 0, tipsCollide: false, maxStretch: 0, headClose: false, midHead1: false, dynStatic: false } }), l1 = { h0: leg.h0, h90: leg.h90, col: leg.col, stats: leg.stats };
     const g = JSON.parse(fs.readFileSync(gf)); ok(JSON.stringify(g) === JSON.stringify(l1), 'sdfFine 1 + softBand 0: identical to the golden recorded before the loader became data-driven'); if (JSON.stringify(g) !== JSON.stringify(l1)) console.log(' golden', g, '\n now   ', l1);
     const fine = await run(path.join(ROOT, 'hair_strands.js'), THREE, binBuf, { params: { collisionTier: 1 } });
-    ok(cur.H.meta.sdfFine == null, 'tier 0 / Low keeps the file SDF grid (1x, mobile RAM)');
-    ok(fine.H.meta.sdfFine === 2 && fine.finite && JSON.stringify(fine.h90) !== JSON.stringify(g.h90), 'tier >= 1: fine SDF x2 + soft contacts active, differs from the rigid path, finite');
+    ok(cur.H.meta.sdfFine === 3, 'v385: every tier reads the 1.67 mm field (x3, Emma parity; +9.4 MB CPU / +18.8 MB GPU for Ariel at tiers 0 / 1)');
+    ok(fine.H.meta.sdfFine === 3 && fine.finite && JSON.stringify(fine.h90) !== JSON.stringify(g.h90), 'tier >= 1: fine SDF x3 + soft contacts active, differs from the rigid path, finite');
   }
   // data-driven config: a 4-cluster character with its own widths/colours/stiffness (the strand file's groups are reused as cluster ids)
   try {

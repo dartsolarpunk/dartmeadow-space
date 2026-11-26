@@ -23,8 +23,8 @@ const TIERS = (arg('--tiers', quick ? '2' : '0,1,2')).split(',').map(Number), CH
   const only = arg('--poses', ''), full = process.argv.includes('--full'), poseList = POSES.filter((p) => only ? only.split(',').includes(p[0]) : quick ? ['idle', 'Mount_Step', 'Emma_Land'].includes(p[0]) : (full || ['idle', 'Running', 'climbing_up_wall', 'Mount_Step', 'Emma_Land', 'Emma_Climb_Hang'].includes(p[0])));
   // measured (this branch, peak over all sampled poses) + ~25 %: peak over the sampled frames of a pose, [guideX, childX]; tier 0 / 1 are looser (fewer contact passes)
   const TH = {
-    ariel: { 0: [650, 1320], 1: [290, 1160], 2: [95, 150] },
-    emma: { 0: [470, 850], 1: [265, 480], 2: [80, 285] }
+    ariel: { 0: [20, 130], 1: [20, 160], 2: [95, 125] },
+    emma: { 0: [140, 480], 1: [90, 160], 2: [55, 115] }
   };
 
   const res = [], t0all = Date.now();

@@ -103,3 +103,14 @@ Cost (x86 node, this loaded box is ~3x slower than the doc box; `stats.simMs`): 
 
 ### Still open
 Emma tiers 0 / 1 children cross the ear sheets (static ears are tier 2 only; ~240-290 child segments at idle), tiers 0 / 1 are far from zero in motion for both characters (Ariel climb childX 917-1052), the GPU shader's first-order warp inverse (above), walk-to-board side crossings, and no on-device frame times.
+
+### v385 round 2 (same branch)
+* Static ears/scalp edge for ALL tiers (both characters): the ear-box scalp triangles are built once in the head frame (`DYN.st`, no per-frame skinning); `dynFind` merges static + skinned sets. Emma's skinned set stays per frame.
+* `tipsCollide` default on (tips beyond the groom reach were the Ariel climb crossings); `maxStretch: 1.6` reel-in pass (fast climb stretched chains through the head); tier 0/1 chord midpoint sample vs the head field (`midHead1`); closing head pass at every tier (`headClose`).
+* Head-field refine x3 at all tiers (`fDef = 3`): Ariel now matches Emma. Memory: about 4.5M cells = 9.4 MB Int16 on CPU, 18.8 MB Float32 GPU texture at tiers 0/1 (Emma already paid this); load +0.7-1.0 s.
+* Determinism: `lib-hair-probe.mjs` setup passes `hitchMs:1e9` (wall-clock hitch detection made "High with 20-point strands" flaky).
+* Goldens: Ariel main hashes kept under `tiers`; new `v385` hashes (t0 e55e62a09ac69492, t1 efeff680e379cb57, t2 5c91917fe270d139); the probe also proves that with all v385 switches off and main field refine the main hashes are reproduced exactly.
+* Not ported (item 5): the WebGPU ribbon shader still uses the first-order skin-warp inverse for children. Cannot be validated without a device or a TSL emulator; children now also receive the guide's tangent plane (CPU and shader), which does not depend on the inverse. Left documented.
+* Peaks (guide / child crossing segments, full pose list): Ariel t0 <=14/102, t1 <=13/126, t2 <=75/99 (main: climb t0 502/1052). Emma t0 <=109/385, t1 <=71/128, t2 <=43/89. Thresholds in `hair-scalp.js` are these +25 %.
+* Cost (slow box simMs, real device ~1/3): Ariel climb t0 6.3 -> ~10.3, t1 7.5 -> ~11.1, t2 17.7 -> ~20.1; Emma Land t2 52.7 -> ~63.5.
+* Remaining: Emma t0 climb children 385; Emma t1 idle guides 47; Ariel t2 Mount_Step guides 75; no real-device timing.
