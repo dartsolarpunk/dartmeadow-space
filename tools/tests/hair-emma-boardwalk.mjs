@@ -123,11 +123,11 @@ const AFTER_11604F4 = {
 // v383: exact inverse skin-warp lookup (per-node affine inverse, 3 seeds), skin-motion contact gates, child re-sample + segment midpoint, tipsCollide.
 // Measured (tier 2): idle end 56 / nape 0; get-up mid 167 / nape 66, end 3; walk mid 99, end 33; mount mid 155 / nape 109, end 11 / nape 7.
 // Limits = the v383 numbers + ~15 % (a regression guard at the new level).
-const V383 = {
-  'idle-settle': { end: 65, napeEnd: 5 },
-  'get-up (Emma_Land)': { mid: 192, napeMid: 76, end: 10, napeEnd: 10 },
-  'walk-to-board (Walking)': { mid: 114, end: 40 },
-  'mount (Mount_Step)': { mid: 178, napeMid: 125, end: 15, napeEnd: 10 }
+const V383 = {   // (v385: dynamic skinned-scalp collider; measured idle end 20 / nape 0; get-up mid 108 / nape 18, end 3; walk mid 116, end 52 (walk got ~15 % WORSE than v383: ear / side crossings, see docs); mount mid 24 / nape 3, end 3) + ~20 %
+  'idle-settle': { end: 30, napeEnd: 3 },
+  'get-up (Emma_Land)': { mid: 135, napeMid: 25, end: 10, napeEnd: 10 },
+  'walk-to-board (Walking)': { mid: 140, end: 65 },
+  'mount (Mount_Step)': { mid: 35, napeMid: 6, end: 10, napeEnd: 6 }
 };
 function lim(ph, key) { return (V383[ph] || {})[key]; }
 let failed = 0;

@@ -841,6 +841,8 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
         const nv = BAND.v.length, r1 = Math.ceil(nv / SW), bv = new Float32Array(SW * r1); for (let i = 0; i < nv; i++) bv[i] = BAND.v[i];
         tBI = mkTex(bi, SW, r0, THREE.RedFormat); tBV = mkTex(bv, SW, r1, THREE.RedFormat);
       }
+      // (v385) per guide point: tangent plane (n.xyz, n.x0 = offset; w = 1e9 none) of the skinned scalp triangle it rests on, rewritten while DYN is on (CPU guides: dynGuides())
+      const tPl = DYN ? mkTex(DYN.pl, K, G, THREE.RGBAFormat) : null;
       // static per-vertex data: (strand, point, side), (guide, last collidable point)
       const ids = new Float32Array(VERTS * 3), gk = new Float32Array(VERTS * 2);
       for (let st = 0; st < N; st++) for (let k = 0; k < K; k++) for (let sd = 0; sd < 2; sd++) {
@@ -848,7 +850,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       }
       const U = {
         M: uniform(new THREE.Matrix4()), Mi: uniform(new THREE.Matrix4()), cam: uniform(new THREE.Vector3()),
-        hc: uniform(new THREE.Vector3()), hcR2: uniform(0), hsc2: uniform(1), wR: uniform(P.widthRoot), wT: uniform(P.widthTip), cc: uniform(0), wOn: uniform(0)
+        hc: uniform(new THREE.Vector3()), hcR2: uniform(0), hsc2: uniform(1), wR: uniform(P.widthRoot), wT: uniform(P.widthTip), cc: uniform(0), wOn: uniform(0), dyn: uniform(0)
       };
       const S0 = SDF || { ox: 0, oy: 0, oz: 0, inv: 1, nx: 2, ny: 2, nz: 2, unit: 1 };
       const sdfAt = (b) => textureLoad(tSdf, ivec2(b.mod(int(SW)), b.div(int(SW)))).x;
@@ -950,6 +952,12 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
         const p = U.M.mul(vec4(r.xyz, 1)).xyz.add(dd).toVar();
         const slk = textureLoad(tRad, ivec2(k, s)).w;
         If(U.cc.greaterThan(0.5).and(k.greaterThanEqual(2)).and(k.lessThanEqual(kmc)).and(dd.dot(dd).greaterThan(slk.mul(U.hsc2))), () => { p.assign(collideC(p, r.w)); });
+        if (tPl) {   // (v385) the guide's tangent plane on the skinned scalp: d = n.p - w, pushed to the child's clearance (same dot product as the CPU ribbon loop)
+          If(U.dyn.greaterThan(0.5).and(k.greaterThanEqual(2)).and(k.lessThanEqual(kmc)), () => {
+            const pl = textureLoad(tPl, ivec2(k, g));
+            If(pl.w.lessThan(1e8), () => { const dc = pl.xyz.dot(p).sub(pl.w); If(dc.lessThan(r.w), () => { p.assign(p.add(pl.xyz.mul(r.w.sub(dc)))); }); });
+          });
+        }
         return p;
       };
       const ribbon = (sF, kF, side, gF, kmF) => {
@@ -993,7 +1001,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       gmat.colorWrite = mat.colorWrite; gmat.depthWrite = mat.depthWrite;
       mesh.material = gmat; mat.dispose();
       stats.gpu = true; stats.mode = 'gpu';
-      return { U, disp, tDisp, tWD, ribbon, mat: gmat, wasOn: false, textures: [tRest, tRad, tDisp, tSdf, tWn, tWD, tBI, tBV].filter(Boolean) };
+      return { U, disp, tDisp, tWD, tPl, ribbon, mat: gmat, wasOn: false, textures: [tRest, tRad, tDisp, tSdf, tWn, tWD, tBI, tBV, tPl].filter(Boolean) };
     } catch (e) {
       console.warn('[hair] GPU ribbons unavailable, CPU path', e);
       return false;
@@ -1114,7 +1122,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
   }
   let curIts = 0;     // solver iterations this frame = P.iterations x physics intensity (ui/dm-cgroup.js); 0 = P.iterations
   let time = 0, frame = 0, ema = 2, cool = 0;
-  const stats = { ms: 0, simMs: 0, strands: N, drawn: NR, guides: G, sdf: !!SDF, sdfBand: BAND ? { bricks: BAND.v.length / BAND.bv3, cell: 1 / BAND.inv } : null, skinWarp: WARP ? { slots: WARP.slots.length, nodes: WARP.nodes, verts: WARP.verts } : null, contacts: 0, intensity: 1, segLen: (() => { let s = 0, c = 0; for (let i = 0; i < segLen.length; i++) if (segLen[i] > 0) { s += segLen[i]; c++; } return c ? s / c : 0; })() };
+  const stats = { ms: 0, simMs: 0, strands: N, drawn: NR, guides: G, sdf: !!SDF, sdfBand: BAND ? { bricks: BAND.v.length / BAND.bv3, cell: 1 / BAND.inv } : null, dyn: null, skinWarp: WARP ? { slots: WARP.slots.length, nodes: WARP.nodes, verts: WARP.verts } : null, contacts: 0, intensity: 1, segLen: (() => { let s = 0, c = 0; for (let i = 0; i < segLen.length; i++) if (segLen[i] > 0) { s += segLen[i]; c++; } return c ? s / c : 0; })() };
   let me = M.elements, mi = Mi.elements;
   // SDF box bounding sphere (head-local centre / radius), moved to root-local each frame
   let hcx = 0, hcy = 0, hcz = 0, hcR2 = 0, hsc2 = 1, hcR2w = 0;   // hcR2w: the sphere grown by the skin warp's reach (v383)
@@ -1147,10 +1155,11 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     let moved = false;
     for (let r = 0; r < 4; r++) {
       const x = a[o], y = a[o + 1], z = a[o + 2];
-      const ex = x - hcx, ey = y - hcy, ez = z - hcz;
-      if (ex * ex + ey * ey + ez * ez > hcR2w) return moved;
+      const ex = x - hcx, ey = y - hcy, ez = z - hcz, wp = !!(WARP && WARP.on);
+      if (ex * ex + ey * ey + ez * ez > (wp ? hcR2w : hcR2)) return moved;
       const hx = mi[0] * x + mi[4] * y + mi[8] * z + mi[12], hy = mi[1] * x + mi[5] * y + mi[9] * z + mi[13], hz = mi[2] * x + mi[6] * y + mi[10] * z + mi[14];
-      if (a === sp) wHintK = ((o / 3) | 0) % K; const d = warpSdf(hx, hy, hz); if (d === FAR) return moved;   // (v383) same exact lookup as headCollide
+      let d; if (wp) { if (a === sp) wHintK = ((o / 3) | 0) % K; d = warpSdf(hx, hy, hz); } else d = sdf(hx, hy, hz);   // (v383) same exact lookup as headCollide; (v385) rigid field for a scalp without a skin warp (Ariel)
+      if (d === FAR) return moved;
       if (d >= (r === 0 ? 0 : -1e-5)) return moved;
       if (r === 3) {   // the field's gradient did not lead out (deep in a thin shell / fold): fall back to the groom point, which sits >= 3 mm clear
         sq[o] += restM[o] - x; sq[o + 1] += restM[o + 1] - y; sq[o + 2] += restM[o + 2] - z; a[o] = restM[o]; a[o + 1] = restM[o + 1]; a[o + 2] = restM[o + 2]; return true;
@@ -1219,6 +1228,231 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     }
   }
 
+  /* ---------------- (v385) dynamic skin collider: the SKINNED scalp triangles that leave the Head frame ----------------
+     The head SDF lives in the Head-bone frame.  Measured on Emma (tools/tests/hair-scalp.js): her scalp sheet is blended to neck / shoulder bones below the
+     hairline, 10 % of its vertices sit below the SDF box (no scalp collision there at all, at rest), and the skin-following inverse field (WARP) stands the
+     collision surface 5-85 mm off the real skinned scalp in 55-95 vertices while she gets up / mounts: the solver's own field reports 0 points inside while 60-110 guide
+     segments cross the mesh.  The exact answer is the mesh itself: every frame the (few hundred) triangles with a non-Head-weighted vertex are CPU-skinned from the
+     bone matrices, binned in a 12 mm grid, and strand points / segment midpoints are pushed out of the real triangles (closest point, smooth-normal sign, boundary edges
+     are one-sided), with the same clearance, soft cushion and friction as the head SDF.  Each guide point also records the tangent plane of the surface it sits on;
+     children collide with that plane (CPU ribbons and the GPU ribbon shader do the same dot product, no field lookup).
+     A scalp that is 100 % Head-weighted (Ariel) has no dynamic triangle: DYN is null, nothing is built, bit-identical, zero cost.  Idle (skin within 2 mm of the head frame): off. */
+  const DYN = (() => {
+    if (P.dynSkin === false || !scalpMesh || !scalpMesh.isSkinnedMesh) return null;
+    if (typeof location !== 'undefined' && /[?&]hairdyn=0\b/.test(location.search || '')) return null;
+    const meshes = [scalpMesh];
+    // thin parts the field cannot hold (the ears are 3-5 mm sheets): the scalp triangles inside the groom's ear keep-out boxes join the set even though they are head-rigid
+    const ears = (COLL.boxes || []).filter((b) => /^ear/i.test(b.name || '') && (!b.bone || b.bone === (meta.headBone || 'Head')));
+    for (const nme of (COLL.skinMeshes || [])) { const o = root.getObjectByName(nme); if (o && o.isSkinnedMesh && meshes.indexOf(o) < 0) meshes.push(o); }
+    const vb = [], vh = [], vs = [], tri = [], tdyn = [], slots = [];   // bind head-local, head-local bind coords, [(slot, w) x4]
+    const slotOf = new Map(); let always = false;
+    const lim = SDF ? 0.04 : 0;
+    root.updateMatrixWorld(true);
+    const Mb = new THREE.Matrix4(), q = new THREE.Vector3();
+    for (const m of meshes) {
+      const g = m.geometry, PA = g.attributes.position, SI = g.attributes.skinIndex, SW = g.attributes.skinWeight, ix = g.index; if (!SI || !SW) continue;
+      const bn = m.skeleton.bones, hi = bn.indexOf(head);
+      const nv = PA.count, dyn = new Uint8Array(nv), inBox = new Uint8Array(nv), earV = new Uint8Array(nv);
+      Mb.multiplyMatrices(hi >= 0 ? m.skeleton.boneInverses[hi] : new THREE.Matrix4(), m.bindMatrix);
+      for (let i = 0; i < nv; i++) {
+        let nh = 0; for (let c = 0; c < 4; c++) { const w = SW.getComponent(i, c); if (w > 0 && bn[SI.getComponent(i, c)] !== head) nh += w; }
+        dyn[i] = nh > 0.02 ? 1 : 0;
+        if (m === scalpMesh && ears.length) { q.fromBufferAttribute(PA, i).applyMatrix4(Mb); for (const E of ears) if (Math.abs(q.x - E.c[0]) < E.h[0] && Math.abs(q.y - E.c[1]) < E.h[1] && Math.abs(q.z - E.c[2]) < E.h[2]) earV[i] = 1; }
+        if (m !== scalpMesh && SDF) { q.fromBufferAttribute(PA, i).applyMatrix4(Mb); inBox[i] = (q.x > SDF.ox - lim && q.y > SDF.oy - lim && q.z > SDF.oz - lim && q.x < SDF.ox + (SDF.nx - 1) / SDF.inv + lim && q.y < SDF.oy + (SDF.ny - 1) / SDF.inv + lim && q.z < SDF.oz + (SDF.nz - 1) / SDF.inv + lim) ? 1 : 0; } else inBox[i] = 1;
+      }
+      const map = new Map(), nt = ix ? ix.count / 3 : nv / 3;
+      const use = (i) => {
+        let l = map.get(i); if (l != null) return l; l = vb.length / 3; map.set(i, l);
+        q.fromBufferAttribute(PA, i); vb.push(q.x, q.y, q.z); q.applyMatrix4(Mb); vh.push(q.x, q.y, q.z);
+        for (let c = 0; c < 4; c++) {
+          const w = SW.getComponent(i, c), bi = SI.getComponent(i, c);
+          if (!(w > 0)) { vs.push(-1, 0); continue; }
+          const key = m.uuid + ':' + bi; let s = slotOf.get(key); if (s == null) { s = slots.length; slotOf.set(key, s); slots.push({ m, bi, bone: bn[bi], C: new THREE.Matrix4(), mb: m.bindMatrix }); }
+          vs.push(s, w);
+        }
+        return l;
+      };
+      for (let t = 0; t < nt; t++) {
+        const a = ix ? ix.getX(t * 3) : t * 3, b = ix ? ix.getX(t * 3 + 1) : t * 3 + 1, c = ix ? ix.getX(t * 3 + 2) : t * 3 + 2;
+        if (!(dyn[a] || dyn[b] || dyn[c] || earV[a] || earV[b] || earV[c]) || !(inBox[a] && inBox[b] && inBox[c])) continue;
+        if (earV[a] || earV[b] || earV[c]) always = true;
+        tri.push(use(a), use(b), use(c)); tdyn.push(dyn[a] || dyn[b] || dyn[c] ? 1 : 0);
+      }
+    }
+    if (!tri.length) return null;
+    const NV = vb.length / 3, NT = tri.length / 3, T = Uint32Array.from(tri);
+    const allL = Int32Array.from({ length: NT }, (_, i) => i), statL = Int32Array.from(allL.filter((i) => !tdyn[i]));
+    // welded topology (GLB seams duplicate vertices): boundary edges / vertices are one-sided (the sheet's rim, where the "back" side is not inside anything)
+    const key = (i) => Math.round(vh[i * 3] * 1e4) + ',' + Math.round(vh[i * 3 + 1] * 1e4) + ',' + Math.round(vh[i * 3 + 2] * 1e4), canon = new Int32Array(NV), cm = new Map();
+    for (let i = 0; i < NV; i++) { const k = key(i); let c = cm.get(k); if (c == null) { c = i; cm.set(k, c); } canon[i] = c; }
+    const em = new Map(), eB = new Uint8Array(NT * 3), vB = new Uint8Array(NV);
+    for (let t = 0; t < NT; t++) for (let e = 0; e < 3; e++) { const a = canon[T[t * 3 + e]], b = canon[T[t * 3 + (e + 1) % 3]], k = a < b ? a * NV + b : b * NV + a; em.set(k, (em.get(k) || 0) + 1); }
+    for (let t = 0; t < NT; t++) for (let e = 0; e < 3; e++) { const a = canon[T[t * 3 + e]], b = canon[T[t * 3 + (e + 1) % 3]], k = a < b ? a * NV + b : b * NV + a; if (em.get(k) === 1) { eB[t * 3 + e] = 1; vB[T[t * 3 + e]] = 1; vB[T[t * 3 + (e + 1) % 3]] = 1; } }
+    const vc = new Map(); for (let i = 0; i < NV; i++) { if (vB[i]) vc.set(canon[i], 1); } for (let i = 0; i < NV; i++) if (vc.has(canon[i])) vB[i] = 1;
+    const REACH = P.dynReach ?? 0.007, CELL = Math.max(0.004, REACH * 0.86);   // a point reads ONE cell; a triangle is listed in every cell within REACH of it. Beyond 7 mm of the skin the head field is in charge (reach 10 mm: +50 % cost, same crossings; 24 mm: 15x cost)
+    return { NV, NT, T, vb: Float32Array.from(vb), vh: Float32Array.from(vh), vs: Float32Array.from(vs), slots, eB, vB, canon,
+      V: new Float32Array(NV * 3), VN: new Float32Array(NV * 3), FN: new Float32Array(NT * 3), TB: new Float32Array(NT * 6),
+      CELL, REACH, inv: 1 / CELL, always, all: allL, stat: statL, moving: false, on: false, dev: 0, ox: 0, oy: 0, oz: 0, nx: 0, ny: 0, nz: 0, cs: null, ci: null, cnt: null, tmp: new THREE.Matrix4(), tm2: new THREE.Matrix4(),
+      guideMs: 0, frameMs: 0, pl: new Float32Array(G * K * 4).fill(0), plOn: false, queries: 0, hits: 0 };
+  })();
+  const dcp = new Float32Array(3);   // closest point of the last dynClosest()
+  let dRegion = 0, dU = 0, dV = 0, dW = 0, dTri = -1, dSg = 1, dD = 0, dNx = 0, dNy = 1, dNz = 0;
+  // per frame: skin the dynamic vertices from the bone matrices, gate on how far they left the head frame, normals, grid.  While the skin stays on the head frame only the
+  // static (ear) triangles are posed (rigidly) and binned; the skinned neck / nape triangles join when it moves (WARP's bone reach is the cheap pre-test, the skinned vertices decide)
+  function dynFrame() {
+    const D = DYN; if (!D) return; const tq = nowMs(), sc = Math.sqrt(hsc2) || 1, gate = P.dynGate ?? 0.002;
+    const V = D.V, vb = D.vb, vs = D.vs, vh = D.vh; let moving = false;
+    if (!WARP || (WARP.on && WARP.reach * sc > gate)) {
+      // slot matrices in root-local: rootInv . mesh . bindInv . boneWorld . boneInverse . bind
+      for (const S of D.slots) { const m = S.m; D.tmp.multiplyMatrices(rootInv, m.matrixWorld).multiply(m.bindMatrixInverse).multiply(S.bone.matrixWorld).multiply(m.skeleton.boneInverses[S.bi]); S.C.multiplyMatrices(D.tmp, m.bindMatrix); }
+      let dev2 = 0;
+      for (let i = 0; i < D.NV; i++) {
+        const x = vb[i * 3], y = vb[i * 3 + 1], z = vb[i * 3 + 2]; let px = 0, py = 0, pz = 0;
+        for (let c = 0; c < 4; c++) { const s = vs[i * 8 + c * 2]; if (s < 0) continue; const w = vs[i * 8 + c * 2 + 1], e = D.slots[s].C.elements;
+          px += w * (e[0] * x + e[4] * y + e[8] * z + e[12]); py += w * (e[1] * x + e[5] * y + e[9] * z + e[13]); pz += w * (e[2] * x + e[6] * y + e[10] * z + e[14]); }
+        V[i * 3] = px; V[i * 3 + 1] = py; V[i * 3 + 2] = pz;
+        const hx = vh[i * 3], hy = vh[i * 3 + 1], hz = vh[i * 3 + 2];
+        const rx = me[0] * hx + me[4] * hy + me[8] * hz + me[12] - px, ry = me[1] * hx + me[5] * hy + me[9] * hz + me[13] - py, rz = me[2] * hx + me[6] * hy + me[10] * hz + me[14] - pz;
+        const d2 = rx * rx + ry * ry + rz * rz; if (d2 > dev2) dev2 = d2;
+      }
+      D.dev = Math.sqrt(dev2) / sc; moving = D.dev > gate;
+    } else D.dev = 0;
+    if (!moving) for (let i = 0; i < D.NV; i++) { const hx = vh[i * 3], hy = vh[i * 3 + 1], hz = vh[i * 3 + 2]; V[i * 3] = me[0] * hx + me[4] * hy + me[8] * hz + me[12]; V[i * 3 + 1] = me[1] * hx + me[5] * hy + me[9] * hz + me[13]; V[i * 3 + 2] = me[2] * hx + me[6] * hy + me[10] * hz + me[14]; }
+    D.moving = moving; D.on = (D.always && curTier >= 2 && P.dynStatic !== false) || moving;   // the static ear sheets are a tier-2 contact (tiers 0 / 1 keep Ariel's v357 / v379 solve bit-identical; her ears are keep-out boxes there)
+    if (!D.on) { D.frameMs = nowMs() - tq; return; }
+    const act = moving ? D.all : D.stat, NA = act.length;
+    // face + smooth vertex normals (area weighted), per-triangle AABB, grid bounds
+    const T = D.T, FN = D.FN, VN = D.VN, TB = D.TB; VN.fill(0);
+    let x0 = 1e9, y0 = 1e9, z0 = 1e9, x1 = -1e9, y1 = -1e9, z1 = -1e9;
+    for (let ai = 0; ai < NA; ai++) {
+      const t = act[ai], a = T[t * 3] * 3, b = T[t * 3 + 1] * 3, c = T[t * 3 + 2] * 3;
+      const ux = V[b] - V[a], uy = V[b + 1] - V[a + 1], uz = V[b + 2] - V[a + 2], wx = V[c] - V[a], wy = V[c + 1] - V[a + 1], wz = V[c + 2] - V[a + 2];
+      const nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx, l = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1e-12;
+      VN[a] += nx; VN[a + 1] += ny; VN[a + 2] += nz; VN[b] += nx; VN[b + 1] += ny; VN[b + 2] += nz; VN[c] += nx; VN[c + 1] += ny; VN[c + 2] += nz;
+      FN[t * 3] = nx / l; FN[t * 3 + 1] = ny / l; FN[t * 3 + 2] = nz / l;
+      const mnx = Math.min(V[a], V[b], V[c]), mxx = Math.max(V[a], V[b], V[c]), mny = Math.min(V[a + 1], V[b + 1], V[c + 1]), mxy = Math.max(V[a + 1], V[b + 1], V[c + 1]), mnz = Math.min(V[a + 2], V[b + 2], V[c + 2]), mxz = Math.max(V[a + 2], V[b + 2], V[c + 2]);
+      TB[t * 6] = mnx; TB[t * 6 + 1] = mny; TB[t * 6 + 2] = mnz; TB[t * 6 + 3] = mxx; TB[t * 6 + 4] = mxy; TB[t * 6 + 5] = mxz;
+      if (mnx < x0) x0 = mnx; if (mny < y0) y0 = mny; if (mnz < z0) z0 = mnz; if (mxx > x1) x1 = mxx; if (mxy > y1) y1 = mxy; if (mxz > z1) z1 = mxz;
+    }
+    // seam-duplicated vertices share one normal (welded): sum by canonical vertex
+    { const cs = D.cs2 || (D.cs2 = new Float32Array(D.NV * 3)); cs.fill(0);
+      for (let i = 0; i < D.NV; i++) { const c = D.canon[i] * 3; cs[c] += VN[i * 3]; cs[c + 1] += VN[i * 3 + 1]; cs[c + 2] += VN[i * 3 + 2]; }
+      for (let i = 0; i < D.NV; i++) { const c = D.canon[i] * 3; const nx = cs[c], ny = cs[c + 1], nz = cs[c + 2], l = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1e-12; VN[i * 3] = nx / l; VN[i * 3 + 1] = ny / l; VN[i * 3 + 2] = nz / l; } }
+    const R = D.REACH, inv = D.inv; D.ox = x0 - R; D.oy = y0 - R; D.oz = z0 - R;
+    D.nx = Math.ceil((x1 - x0 + 2 * R) * inv) + 1; D.ny = Math.ceil((y1 - y0 + 2 * R) * inv) + 1; D.nz = Math.ceil((z1 - z0 + 2 * R) * inv) + 1;
+    const NC = D.nx * D.ny * D.nz;
+    if (!D.cnt || D.cnt.length < NC + 1) D.cnt = new Int32Array(NC + 1);
+    const cnt = D.cnt; cnt.fill(0, 0, NC + 1);
+    // counting sort: triangle t goes into every cell its AABB grown by R overlaps (a point query then reads ONE cell)
+    const ny = D.ny, nz = D.nz; let total = 0;
+    for (let ai = 0; ai < NA; ai++) {
+      const o = act[ai] * 6, i0 = Math.max(0, Math.floor((TB[o] - R - D.ox) * inv)), i1 = Math.min(D.nx - 1, Math.floor((TB[o + 3] + R - D.ox) * inv)), j0 = Math.max(0, Math.floor((TB[o + 1] - R - D.oy) * inv)), j1 = Math.min(ny - 1, Math.floor((TB[o + 4] + R - D.oy) * inv)), k0 = Math.max(0, Math.floor((TB[o + 2] - R - D.oz) * inv)), k1 = Math.min(nz - 1, Math.floor((TB[o + 5] + R - D.oz) * inv));
+      for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) for (let k = k0; k <= k1; k++) { cnt[(i * ny + j) * nz + k + 1]++; total++; }
+    }
+    for (let c = 0; c < NC; c++) cnt[c + 1] += cnt[c];
+    if (!D.ci || D.ci.length < total) D.ci = new Int32Array(total + 1024);
+    if (!D.fill || D.fill.length < NC) D.fill = new Int32Array(NC);
+    D.fill.fill(0, 0, NC); const ci = D.ci, fl = D.fill;
+    for (let ai = 0; ai < NA; ai++) {
+      const t = act[ai], o = t * 6, i0 = Math.max(0, Math.floor((TB[o] - R - D.ox) * inv)), i1 = Math.min(D.nx - 1, Math.floor((TB[o + 3] + R - D.ox) * inv)), j0 = Math.max(0, Math.floor((TB[o + 1] - R - D.oy) * inv)), j1 = Math.min(ny - 1, Math.floor((TB[o + 4] + R - D.oy) * inv)), k0 = Math.max(0, Math.floor((TB[o + 2] - R - D.oz) * inv)), k1 = Math.min(nz - 1, Math.floor((TB[o + 5] + R - D.oz) * inv));
+      for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) for (let k = k0; k <= k1; k++) { const c = (i * ny + j) * nz + k; ci[cnt[c] + fl[c]++] = t; }
+    }
+    D.frameMs = nowMs() - tq;
+  }
+  // closest point on triangle t (Ericson) -> dcp, barycentrics dU/dV/dW, region code (0 face, 1-3 vertex A/B/C, 4 AB, 5 BC, 6 CA); returns d^2
+  function dynTri(t, px, py, pz) {
+    const D = DYN, V = D.V, T = D.T, a = T[t * 3] * 3, b = T[t * 3 + 1] * 3, c = T[t * 3 + 2] * 3;
+    const ax = V[a], ay = V[a + 1], az = V[a + 2], abx = V[b] - ax, aby = V[b + 1] - ay, abz = V[b + 2] - az, acx = V[c] - ax, acy = V[c + 1] - ay, acz = V[c + 2] - az;
+    const apx = px - ax, apy = py - ay, apz = pz - az, d1 = abx * apx + aby * apy + abz * apz, d2 = acx * apx + acy * apy + acz * apz;
+    let u = 0, v = 0, w = 0, reg = 0;
+    if (d1 <= 0 && d2 <= 0) { u = 1; reg = 1; }
+    else {
+      const bpx = px - V[b], bpy = py - V[b + 1], bpz = pz - V[b + 2], d3 = abx * bpx + aby * bpy + abz * bpz, d4 = acx * bpx + acy * bpy + acz * bpz;
+      if (d3 >= 0 && d4 <= d3) { v = 1; reg = 2; }
+      else {
+        const vc = d1 * d4 - d3 * d2;
+        if (vc <= 0 && d1 >= 0 && d3 <= 0) { const s = d1 / (d1 - d3); u = 1 - s; v = s; reg = 4; }
+        else {
+          const cpx = px - V[c], cpy = py - V[c + 1], cpz = pz - V[c + 2], d5 = abx * cpx + aby * cpy + abz * cpz, d6 = acx * cpx + acy * cpy + acz * cpz;
+          if (d6 >= 0 && d5 <= d6) { w = 1; reg = 3; }
+          else {
+            const vb2 = d5 * d2 - d1 * d6;
+            if (vb2 <= 0 && d2 >= 0 && d6 <= 0) { const s = d2 / (d2 - d6); u = 1 - s; w = s; reg = 6; }
+            else {
+              const va = d3 * d6 - d5 * d4;
+              if (va <= 0 && (d4 - d3) >= 0 && (d5 - d6) >= 0) { const s = (d4 - d3) / ((d4 - d3) + (d5 - d6)); v = 1 - s; w = s; reg = 5; }
+              else { const dn = 1 / (va + vb2 + vc); v = vb2 * dn; w = vc * dn; u = 1 - v - w; reg = 0; }
+            }
+          }
+        }
+      }
+    }
+    dcp[0] = ax * u + V[b] * v + V[c] * w; dcp[1] = ay * u + V[b + 1] * v + V[c + 1] * w; dcp[2] = az * u + V[b + 2] * v + V[c + 2] * w;
+    dRegion = reg; dU = u; dV = v; dW = w;
+    const dx = px - dcp[0], dy = py - dcp[1], dz = pz - dcp[2]; return dx * dx + dy * dy + dz * dz;
+  }
+  // nearest dynamic triangle to a root-local point within REACH: sets dcp, dD (distance), dSg (+1 in front of the skin / -1 behind it), dNx..z (smooth front normal at the closest point). returns false when none / one-sided rim
+  function dynQuery(px, py, pz) {
+    const D = DYN; if (px < D.ox || py < D.oy || pz < D.oz) return false;
+    const i = Math.floor((px - D.ox) * D.inv), j = Math.floor((py - D.oy) * D.inv), k = Math.floor((pz - D.oz) * D.inv);
+    if (i >= D.nx || j >= D.ny || k >= D.nz) return false;
+    const c = (i * D.ny + j) * D.nz + k, s = D.cnt[c], e = D.cnt[c + 1]; if (e <= s) return false;
+    D.queries++;
+    let best = 1e9, bt = -1, br = 0, bu = 0, bv = 0, bw = 0, bx = 0, by = 0, bz = 0;
+    const TB = D.TB; for (let q = s; q < e; q++) { const t = D.ci[q], bo = t * 6; { const ex = px < TB[bo] ? TB[bo] - px : px > TB[bo + 3] ? px - TB[bo + 3] : 0, ey = py < TB[bo + 1] ? TB[bo + 1] - py : py > TB[bo + 4] ? py - TB[bo + 4] : 0, ez = pz < TB[bo + 2] ? TB[bo + 2] - pz : pz > TB[bo + 5] ? pz - TB[bo + 5] : 0; if (ex * ex + ey * ey + ez * ez >= best) continue; } const d2 = dynTri(t, px, py, pz); if (d2 < best) { best = d2; bt = t; br = dRegion; bu = dU; bv = dV; bw = dW; bx = dcp[0]; by = dcp[1]; bz = dcp[2]; } }
+    if (bt < 0 || best > D.REACH * D.REACH) return false;
+    const T = D.T, VN = D.VN, FN = D.FN; const a = T[bt * 3] * 3, b = T[bt * 3 + 1] * 3, cc = T[bt * 3 + 2] * 3;
+    let nx, ny, nz;
+    if (br === 0) { nx = FN[bt * 3]; ny = FN[bt * 3 + 1]; nz = FN[bt * 3 + 2]; }
+    else { nx = VN[a] * bu + VN[b] * bv + VN[cc] * bw; ny = VN[a + 1] * bu + VN[b + 1] * bv + VN[cc + 1] * bw; nz = VN[a + 2] * bu + VN[b + 2] * bv + VN[cc + 2] * bw; const l = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1e-12; nx /= l; ny /= l; nz /= l; }
+    const dx = px - bx, dy = py - by, dz = pz - bz, d = Math.sqrt(best), sg = dx * nx + dy * ny + dz * nz >= 0 ? 1 : -1;
+    if (sg < 0) {   // behind the skin: only trust it near the surface and never past the rim of the sheet (outside the head there, not inside it)
+      if (d > 0.035) return false;
+      let rim = false; if (br === 0) rim = false; else if (br <= 3) rim = !!D.vB[T[bt * 3 + br - 1]]; else rim = !!D.eB[bt * 3 + br - 4];
+      if (rim) return false;
+    }
+    dcp[0] = bx; dcp[1] = by; dcp[2] = bz; dD = d; dSg = sg; dNx = nx; dNy = ny; dNz = nz; dTri = bt; return true;
+  }
+  // push root-local point (a, o) out of the skinned surface to clearance c (same soft layer as the head SDF); returns true on contact. Always leaves the tangent plane in dN* / dcp for the caller
+  function dynCollide(a, o, c) {
+    if (!dynQuery(a[o], a[o + 1], a[o + 2])) return -1;
+    const cu = P.softHead === false ? 0 : cushion();
+    if (dSg > 0 && dD >= c + cu) return 0;
+    const tg = softTo(dSg > 0 ? dD : -1, c);
+    if (dSg > 0 && dD > 1e-6) { const k = tg / dD; a[o] = dcp[0] + (a[o] - dcp[0]) * k; a[o + 1] = dcp[1] + (a[o + 1] - dcp[1]) * k; a[o + 2] = dcp[2] + (a[o + 2] - dcp[2]) * k; }
+    else { a[o] = dcp[0] + dNx * tg; a[o + 1] = dcp[1] + dNy * tg; a[o + 2] = dcp[2] + dNz * tg; }
+    return 1;
+  }
+  // closing pass of a guide step: every free guide point and every segment midpoint against the skinned triangles; records each point's tangent plane for the children
+  function dynGuides() {
+    const D = DYN, pl = D.pl, fr = 1 - P.friction; let hits = 0; const tq = nowMs();
+    for (let g = 0; g < G; g++) {
+      const gb = g * K * 3, km = kMaxG[g], sb = g * K;
+      for (let k = 2; k <= km + 1 && k < K; k++) {
+        const o = gb + k * 3, x0 = sp[o], y0 = sp[o + 1], z0 = sp[o + 2], q = (g * K + k) * 4;
+        if (!near(sp, o, sb + k)) { pl[q + 3] = 1e9; continue; }   // same contact gate as the head SDF: deflection (+ the skin's own motion there) past the groom slack
+        const r = dynCollide(sp, o, clrG[sb + k]);
+        if (r < 0) { pl[q + 3] = 1e9; continue; }
+        pl[q] = dNx; pl[q + 1] = dNy; pl[q + 2] = dNz; pl[q + 3] = dNx * dcp[0] + dNy * dcp[1] + dNz * dcp[2];
+        if (r > 0 && k <= km) {
+          hits++; sq[o] += sp[o] - x0; sq[o + 1] += sp[o + 1] - y0; sq[o + 2] += sp[o + 2] - z0;
+          sq[o] = sp[o] + (sq[o] - sp[o]) * fr; sq[o + 1] = sp[o + 1] + (sq[o + 1] - sp[o + 1]) * fr; sq[o + 2] = sp[o + 2] + (sq[o + 2] - sp[o + 2]) * fr;
+        } else if (r > 0) { sp[o] = x0; sp[o + 1] = y0; sp[o + 2] = z0; }   // beyond the last point the groom lets reach the head: plane only
+        if (k > 2 && k <= km && curTier >= 2) {   // tier 2: the chord between k-1 and k at 1/3 and 2/3 (an ear is a 4 mm sheet); the ends take the sample's push
+          const o1 = o - 3, ns = 2;
+          for (let u = 0; u < ns; u++) {
+            const t = (u + 1) / (ns + 1), mx = sp[o1] + (sp[o] - sp[o1]) * t, my = sp[o1 + 1] + (sp[o + 1] - sp[o1 + 1]) * t, mz = sp[o1 + 2] + (sp[o + 2] - sp[o1 + 2]) * t; tmpC[0] = mx; tmpC[1] = my; tmpC[2] = mz;
+            if (dynCollide(tmpC, 0, clrG[sb + k - 1] + (clrG[sb + k] - clrG[sb + k - 1]) * t) > 0) {
+              const ex = tmpC[0] - mx, ey = tmpC[1] - my, ez = tmpC[2] - mz; hits++;
+              sp[o] += ex; sp[o + 1] += ey; sp[o + 2] += ez; sq[o] += ex; sq[o + 1] += ey; sq[o + 2] += ez;
+              if (k - 1 > 1) { sp[o1] += ex; sp[o1 + 1] += ey; sp[o1 + 2] += ez; sq[o1] += ex; sq[o1 + 1] += ey; sq[o1 + 2] += ez; }
+            }
+          }
+        }
+      }
+    }
+    D.hits = hits; D.guideMs += nowMs() - tq;
+  }
   function step(h, simTime) {
     const hh = h * h;
     const damp = Math.pow(P.damping, h * 60);
@@ -1393,11 +1627,13 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
           }
           // (v379) closing head pass: capsule / box / segment-sample pushes above can leave a point back inside the scalp; the head SDF is the
           // closest surface, so it gets the last word on the final iteration (same near() pruning, no allocation)
-          // only where the skin-following field is live (Emma: non-Head-weighted scalp); Ariel's solve stays bit-identical
-          if (last && doSdf && WARP && WARP.on) for (let k = 2; k <= km && k < K; k++) { if (headOut(sp, gb + k * 3, clrG[sb + k])) contacts++; }
+          // (v385) now for EVERY groom at collision tier >= 1 (Ariel too: her points were left inside the scalp after the length / capsule passes, tools/tests/hair-scalp.js);
+          // tier 0 and Ariel's tier 0 stay the v357 solve.  params.headClose:false = the v379 solve
+          if (last && doSdf && ((WARP && WARP.on) || (curTier >= 1 && P.headClose !== false))) for (let k = 2; k <= km && k < K; k++) { if (headOut(sp, gb + k * 3, clrG[sb + k])) contacts++; }
         }
       }
     }
+    if (DYN && DYN.on) dynGuides();   // (v385) the skinned scalp triangles get the last word on every guide point (Emma: neck / shoulder-weighted scalp)
     stats.contacts = contacts;
   }
 
@@ -1537,6 +1773,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
     }
     // (v379) the roots ride the skinned scalp / nape: each guide's rest is carried by the skin displacement at its root
     warpFrame();
+    if (DYN) { if (onGPU) DYN.on = false; else dynFrame(); if (!stats.dyn) stats.dyn = { tris: DYN.NT, staticTris: DYN.stat.length, verts: DYN.NV, on: false, moving: false, dev: 0, queries: 0, hits: 0 }; stats.dyn.on = DYN.on; stats.dyn.moving = DYN.moving; stats.dyn.dev = DYN.dev; stats.dyn.queries = DYN.queries; stats.dyn.hits = DYN.hits; DYN.queries = 0; stats.dyn.ms = DYN.frameMs + DYN.guideMs; stats.dyn.frameMs = DYN.frameMs; stats.dyn.guideMs = DYN.guideMs; DYN.guideMs = 0; }   // (v385) CPU-skinned scalp triangles (null for a 100 % Head-weighted scalp)
     hcR2w = WARP ? (Math.sqrt(hcR2) + WARP.reach * Math.sqrt(hsc2)) ** 2 : hcR2;
     if (WARP && WARP.on) { const sc = Math.sqrt(hsc2); for (let i = 0; i < G * K; i++) { const n = wNodeGK[i]; if (n < 0) { wSkG[i] = 0; continue; } warpDisp(n, gRest[i * 3], gRest[i * 3 + 1], gRest[i * 3 + 2]); wSkG[i] = Math.sqrt(wd[0] * wd[0] + wd[1] * wd[1] + wd[2] * wd[2]) * sc; } }
     if (WARP && WARP.on && !onGPU) {
@@ -1648,6 +1885,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       U.hc.value.set(hcx, hcy, hcz); U.hcR2.value = hcR2; U.hsc2.value = hsc2;
       U.wR.value = wR; U.wT.value = wT; U.cc.value = cc ? 1 : 0;
       if (gpu.tWD) { const on = !!WARP.on; U.wOn.value = on ? 1 : 0; if (on) gpu.tWD.needsUpdate = true; }   // (v380) the warp matrices warpFrame() wrote
+      if (gpu.tPl) { const on = !!(DYN && DYN.on && !onGPU); U.dyn.value = on ? 1 : 0; if (on) gpu.tPl.needsUpdate = true; }   // (v385)
       stats.ms = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0;
       stats.drawn = NR; stats.interleave = 1; stats.mode = 'gpu-compute';
       return;
@@ -1663,6 +1901,7 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       U.hc.value.set(hcx, hcy, hcz); U.hcR2.value = hcR2; U.hsc2.value = hsc2;
       U.wR.value = wR; U.wT.value = wT; U.cc.value = cc ? 1 : 0;
       if (gpu.tWD) { const on = !!WARP.on; U.wOn.value = on ? 1 : 0; if (on) gpu.tWD.needsUpdate = true; }   // (v380) the warp matrices warpFrame() wrote
+      if (gpu.tPl) { const on = !!(DYN && DYN.on && !onGPU); U.dyn.value = on ? 1 : 0; if (on) gpu.tPl.needsUpdate = true; }   // (v385)
       stats.ms = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0;
       stats.drawn = NR; stats.interleave = 1;
       if (!P.verifyRibbons) return;   // debug: also fill the CPU ribbon arrays (H.ribbonArrays) to diff against the shader
@@ -1689,7 +1928,9 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
             if (headCollide(tmpC, 0, (clrC[cb + k] + clrC[cb + k - 1]) * 0.5)) { const ex = tmpC[0] - mx, ey = tmpC[1] - my, ez = tmpC[2] - mz, w = k > 2 ? 1 : 2; SP[so] += w * ex; SP[so + 1] += w * ey; SP[so + 2] += w * ez; if (k > 2) { SP[po] += ex; SP[po + 1] += ey; SP[po + 2] += ez; for (let r = 0; r < 3 && headCollide(SP, po, clrC[cb + k - 1]); r++); }
               for (let r = 0; r < 3 && headCollide(SP, so, clrC[cb + k]); r++); }
           }
-        } }   // (v383) + the skin motion under the guide point; on a skin-warp groom re-sampled (<= 3) until clear: one gradient step from deep inside a thin part (cheek, jaw, nape) fell short   // (v383) + the skin motion under the guide point; on a skin-warp groom re-sampled (<= 3) until clear: one gradient step from deep inside a thin part (cheek, jaw, nape) fell short
+        }
+        if (DYN && DYN.on && cc && k >= 2 && k <= kmc) { const q = (g * K + k) * 4, w = DYN.pl[q + 3]; if (w < 1e8) { const nx = DYN.pl[q], ny = DYN.pl[q + 1], nz = DYN.pl[q + 2], cl = clrC[cb + k], e = cl - (nx * SP[so] + ny * SP[so + 1] + nz * SP[so + 2] - w); if (e > 0) { SP[so] += nx * e; SP[so + 1] += ny * e; SP[so + 2] += nz * e; } } }   // (v385) the guide's tangent plane on the skinned scalp (the GPU ribbon shader does the same dot product)
+        }   // (v383) + the skin motion under the guide point; on a skin-warp groom re-sampled (<= 3) until clear: one gradient step from deep inside a thin part (cheek, jaw, nape) fell short   // (v383) + the skin motion under the guide point; on a skin-warp groom re-sampled (<= 3) until clear: one gradient step from deep inside a thin part (cheek, jaw, nape) fell short
       }
       // per-strand view vector (normalised once) for the volumetric normal
       let sx0 = camL.x - SP[0], sy0 = camL.y - SP[1], sz0 = camL.z - SP[2];
@@ -1769,6 +2010,15 @@ export function buildHair(CHAR, THREE, buf, opts = {}) {
       }
       return { inside, under };
     },
+    // test / tools: the solver's own head-field value (m, FAR = 1e9 outside the field / no skin blend) at a root-local point, using guide g / point k as the skin-lookup seed
+    _fieldAt(x, y, z, g, k) {
+      if (!SDF) return FAR;
+      const hx = mi[0] * x + mi[4] * y + mi[8] * z + mi[12], hy = mi[1] * x + mi[5] * y + mi[9] * z + mi[13], hz = mi[2] * x + mi[6] * y + mi[10] * z + mi[14];
+      wHint = g == null ? -1 : g; wHintK = k | 0;
+      return (WARP && WARP.on) ? warpSdf(hx, hy, hz) : sdf(hx, hy, hz);
+    },
+    _dyn() { return DYN ? { on: DYN.on, dev: DYN.dev, tris: DYN.NT, verts: DYN.NV, query(x, y, z) { if (!DYN.on || !dynQuery(x, y, z)) return null; return { d: dD, sg: dSg, tri: dTri }; } } : null; },
+    _sdfBox() { return SDF ? { o: [SDF.ox, SDF.oy, SDF.oz], e: [(SDF.nx - 1) / SDF.inv, (SDF.ny - 1) / SDF.inv, (SDF.nz - 1) / SDF.inv], cell: 1 / SDF.inv } : null; },
     addCollider(c) { extra.push(c); return c; },
     removeCollider(c) { const i = extra.indexOf(c); if (i >= 0) extra.splice(i, 1); },
     reset() { needInit = true; haveLast = false; havePM = false; },

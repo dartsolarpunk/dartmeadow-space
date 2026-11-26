@@ -18,11 +18,17 @@ for (const tier of [0, 1, 2]) {
   out[tier] = hash(S.H.ribbonArrays.pos);
   if (!write) ok(S.H.stats.skinWarp == null, 'ariel tier ' + tier + ': no skin-following field (stats.skinWarp ' + JSON.stringify(S.H.stats.skinWarp) + ')');
 }
-if (write) { fs.writeFileSync(GOLD, JSON.stringify({ from: 'origin/main 0aa5b76', tiers: out }, null, 1) + '\n'); console.log('wrote', GOLD, JSON.stringify(out)); process.exit(0); }
+if (write) { const prev = fs.existsSync(GOLD) ? JSON.parse(fs.readFileSync(GOLD, 'utf8')) : {}; fs.writeFileSync(GOLD, JSON.stringify({ from: prev.from || 'origin/main 0aa5b76', tiers: prev.tiers || out, v385: { 1: out[1], 2: out[2] } }, null, 1) + '\n'); console.log('wrote', GOLD, JSON.stringify(out)); process.exit(0); }
 const G = JSON.parse(fs.readFileSync(GOLD, 'utf8')).tiers;
-for (const t of [0, 1]) ok(out[t] === G[t], 'ariel tier ' + t + ': ribbon hash equals main (' + out[t] + ' / ' + G[t] + ')');
+ok(out[0] === G[0], 'ariel tier 0: ribbon hash equals main (' + out[0] + ' / ' + G[0] + ')');
+{ // (v385, intentional) tiers 1 / 2 now run the closing head pass (and tier 2 the static ear sheet) for Ariel too: with params.headClose:false / dynStatic:false they must still equal main's tier 1 hash
+  const S = await L.setup('ariel', mod, { params: { collisionTier: 1, headClose: false, dynStatic: false } }); L.play(S, L.CHARS.ariel.idle, 0);
+  for (let i = 0; i < 90; i++) { S.mixer.update(1 / 60); S.root.updateMatrixWorld(true); S.H.update(1 / 60); }
+  const h = hash(S.H.ribbonArrays.pos); ok(h === G[1], 'ariel tier 1 with headClose:false: ribbon hash equals main (' + h + ' / ' + G[1] + ')');
+  const N = JSON.parse(fs.readFileSync(GOLD, 'utf8')).v385 || {}; ok(out[1] === N[1], 'ariel tier 1 (v385 golden, closing head pass): ' + out[1] + ' / ' + N[1]);
+}
 { // the ONLY tier-2 difference is the refine: tier 2 with main's x2 field must hash like main's tier 2
-  const S = await L.setup('ariel', mod, { sdfFine: 2, params: { collisionTier: 2 } }); L.play(S, L.CHARS.ariel.idle, 0);
+  const S = await L.setup('ariel', mod, { sdfFine: 2, params: { collisionTier: 2, headClose: false, dynStatic: false } }); L.play(S, L.CHARS.ariel.idle, 0);
   for (let i = 0; i < 90; i++) { S.mixer.update(1 / 60); S.root.updateMatrixWorld(true); S.H.update(1 / 60); }
   const h = hash(S.H.ribbonArrays.pos); ok(h === G[2], 'ariel tier 2 with sdfFine 2 (main refine): ribbon hash equals main (' + h + ' / ' + G[2] + ')');
 }
